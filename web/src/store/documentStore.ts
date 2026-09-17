@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { applyPatches, enablePatches, produceWithPatches, type Patch } from 'immer'
+import { enablePatches, produceWithPatches, type Patch } from 'immer'
+import * as history from '@/lib/history'
 import {
   ApiError,
   REVISION_ABSENT,
@@ -29,7 +30,6 @@ import {
 
 enablePatches()
 
-const HISTORY_LIMIT = 200
 
 /** 「最近文档」条目：只存列表要显示的字段 */
 export interface RecentDoc {
@@ -195,31 +195,8 @@ interface DocumentState {
   ) => Promise<boolean>
 }
 
-/**
- * 拖动过程中同一路径会被反复 replace，提交时压缩成一条：
- * 正向保留最后一次，反向保留最早一次。含增删的批次不压缩以保证正确性。
- *
- * **两个数组的时间序是相反的**：事务里正向补丁追加累积（末尾最新），反向补丁
- * 前插累积（`[...inverse, ...txn.inverse]`），所以**末尾才是最早的那条**——
- * 不压缩时按序全量 applyPatches，最早的最后落地，正好回到事务开始前。
- * 因此两边都取「数组里最后出现的那条」：正向拿到最新，反向拿到最早。
- * 反向若按数组顺序取第一条（= 最新），撤销就只退到倒数第二次更新。
- */
-function compress(patches: Patch[], inverse: Patch[]): [Patch[], Patch[]] {
-  const replaceOnly = (list: Patch[]) => list.every((p) => p.op === 'replace')
-  if (!replaceOnly(patches) || !replaceOnly(inverse)) return [patches, inverse]
-
-  const key = (p: Patch) => p.path.join('\u0000')
-  const fwd = new Map<string, Patch>()
-  for (const p of patches) fwd.set(key(p), p)
-  const inv = new Map<string, Patch>()
-  for (const p of inverse) inv.set(key(p), p)
-  return [[...fwd.values()], [...inv.values()]]
-}
-
 function pushHistory(state: DocumentState, entry: HistoryEntry): Partial<DocumentState> {
-  const past = [...state.past, entry]
-  if (past.length > HISTORY_LIMIT) past.splice(0, past.length - HISTORY_LIMIT)
+  const stacks = history.push(state.past, entry)
   // 匿名用量统计**唯一**的编辑埋点。挂在这里而不是散落在各个控件上：
   // 一次拖动 = 一条事务 = 一条历史 = **一个事件**，而不是 120 次 pointermove；
   // 而且 commit 与 endTxn 都汇到这一个函数，新增编辑动作自动被覆盖。
@@ -232,7 +209,7 @@ function pushHistory(state: DocumentState, entry: HistoryEntry): Partial<Documen
   // 本地活动信号（不是遥测）：教程要知道「一条真实的编辑事务落进了历史」。
   // 只带开发者写死的历史 key，不带补丁、不带对象。
   emitActivity({ kind: 'history.pushed', label: entry.label?.key ?? '' })
-  return { past, future: [] }
+  return stacks
 }
 
 /* -------------------------------------------------------------------------- */
@@ -317,14 +294,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!patches.length) return
     if (state.txn) {
       // 事务进行中的结构性操作也并入当前事务
-      set({
-        doc: next,
-        txn: {
-          label: state.txn.label,
-          patches: [...state.txn.patches, ...patches],
-          inverse: [...inverse, ...state.txn.inverse],
-        },
-      })
+      set({ doc: next, txn: history.accumulate(state.txn, patches, inverse) })
       noteCommit(label, state, next, patches, true)
       return
     }
@@ -358,14 +328,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     const [next, patches, inverse] = produceWithPatches(state.doc, recipe)
     if (!patches.length) return
-    set({
-      doc: next,
-      txn: {
-        label: state.txn.label,
-        patches: [...state.txn.patches, ...patches],
-        inverse: [...inverse, ...state.txn.inverse],
-      },
-    })
+    set({ doc: next, txn: history.accumulate(state.txn, patches, inverse) })
   },
 
   endTxn: (opts) => {
@@ -374,10 +337,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!txn) return
     if (opts?.discard || !txn.patches.length) {
       // 丢弃：把反向补丁打回去，恢复到事务开始前
-      set({
-        doc: txn.inverse.length ? applyPatches(state.doc, txn.inverse) : state.doc,
-        txn: null,
-      })
+      set({ doc: history.rollback(state.doc, txn), txn: null })
       recordDiagnosticEvent({
         type: 'transaction.cancel',
         label_key: txn.label.key,
@@ -385,7 +345,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       })
       return
     }
-    const [patches, inverse] = compress(txn.patches, txn.inverse)
+    const [patches, inverse] = history.compress(txn.patches, txn.inverse)
     set({ txn: null, ...pushHistory(state, { label: txn.label, patches, inverse }) })
     recordDiagnosticEvent({
       type: 'transaction.end',
@@ -406,29 +366,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     })
     if (state.txn) state.endTxn()
     const before = documentDigest(get().doc)
-    const entry = get().past.at(-1)
-    if (!entry) {
-      noteUndoRedo('undo.complete', false, null, before, get())
-      return null
-    }
     // 补丁按路径应用：万一与当前文档对不上（历史损坏），扔掉这一条并保持
-    // 文档不动，绝不能让栈和文档进入半应用的错位状态
-    let next: FigureDocument
-    try {
-      next = applyPatches(get().doc, entry.inverse)
-    } catch (err) {
-      console.error('撤销补丁应用失败，该条历史已丢弃', err)
-      set({ past: get().past.slice(0, -1) })
-      noteUndoRedo('undo.complete', false, entry.label, before, get())
-      return null
-    }
-    set({
-      doc: next,
-      past: get().past.slice(0, -1),
-      future: [entry, ...get().future],
-    })
-    noteUndoRedo('undo.complete', true, entry.label, before, get())
-    return entry.label
+    // 文档不动，绝不能让栈和文档进入半应用的错位状态（算法在 lib/history）
+    const step = history.undoStep(get().doc, get().past, get().future)
+    if (!step.ok && step.entry) console.error('撤销补丁应用失败，该条历史已丢弃')
+    // 栈空时什么都不写：空撤销不该换掉 past / future 的引用去惊动订阅者
+    if (step.ok || step.entry) set({ doc: step.doc, past: step.past, future: step.future })
+    noteUndoRedo('undo.complete', step.ok, step.entry?.label ?? null, before, get())
+    return step.ok && step.entry ? step.entry.label : null
   },
 
   redo: () => {
@@ -440,27 +385,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       txn_open: state.txn != null,
     })
     const before = documentDigest(state.doc)
-    const entry = state.future[0]
-    if (!entry) {
-      noteUndoRedo('redo.complete', false, null, before, get())
-      return null
-    }
-    let next: FigureDocument
-    try {
-      next = applyPatches(state.doc, entry.patches)
-    } catch (err) {
-      console.error('重做补丁应用失败，该条历史已丢弃', err)
-      set({ future: state.future.slice(1) })
-      noteUndoRedo('redo.complete', false, entry.label, before, get())
-      return null
-    }
-    set({
-      doc: next,
-      past: [...state.past, entry],
-      future: state.future.slice(1),
-    })
-    noteUndoRedo('redo.complete', true, entry.label, before, get())
-    return entry.label
+    const step = history.redoStep(state.doc, state.past, state.future)
+    if (!step.ok && step.entry) console.error('重做补丁应用失败，该条历史已丢弃')
+    if (step.ok || step.entry) set({ doc: step.doc, past: step.past, future: step.future })
+    noteUndoRedo('redo.complete', step.ok, step.entry?.label ?? null, before, get())
+    return step.ok && step.entry ? step.entry.label : null
   },
 
   canUndo: () => get().past.length > 0,
