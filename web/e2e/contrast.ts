@@ -275,7 +275,7 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
         // 豁免收得很窄，两个条件缺一不可：**元素自己标了 aria-hidden**，且**自己
         // 持有的文字里没有任何字母或数字**（`\p{L}` / `\p{N}`）。把要读的字藏进
         // aria-hidden 里绕不过去——那样的字照样量。前提：`ink-faint` 只给装饰与
-        // 禁用态（web/AGENTS.md「UI 视觉纪律」）；哪天它被用在要读的字上，这条豁免
+        // 禁用态（docs/rules/frontend/ui-visual-discipline.md）；哪天它被用在要读的字上，这条豁免
         // 挡不住，`contrast.spec.ts` 里两向的判据会先红。
         if (e.getAttribute('aria-hidden') === 'true' && !/[\p{L}\p{N}]/u.test(text)) continue
         const fgRaw = parse(cs.color)

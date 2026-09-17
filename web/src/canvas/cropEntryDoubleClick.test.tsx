@@ -1,5 +1,5 @@
 /**
- * 进裁剪的入口只有一条：`actions.beginCrop`（web/AGENTS.md「撤销防线与裁剪」）。
+ * 进裁剪的入口只有一条：`actions.beginCrop`（docs/rules/frontend/multi-selection-context-bar.md）。
  *
  * 画布上**双击**普通面板是其中一个入口，而它一度直接调 `setCropTarget(id)`
  * ——那条路不拍基线（`cropBaseline` 留在 null），于是这一轮裁完之后

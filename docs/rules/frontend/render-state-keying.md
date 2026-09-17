@@ -18,11 +18,11 @@
 文件名带 patch 哈希前 12 位），`/api/engine/png` 是「谁最后渲染谁说了算」，
 只留兼容；③ 自己那份变体还没画出来时退回该文件最近画好的那张
 （`latest` 表），否则每敲一个字画布都会闪回磁盘原图——**但那份退回来的
-manifest 只能看不能写**，见下一节；④ 连续调整期间
+manifest 只能看不能写**，见 `docs/rules/frontend/display-fallback-vs-geometry-authority.md`；④ 连续调整期间
 **只给含 `role=="image"` 的面板**发 `preview_dpi: 100`，松手/结束事务由
 `flushRender(panelId)` 按默认 dpi 定稿（纯矢量图上降 dpi 零收益，见基线补测）；
 ⑤ 编辑期每改一个值就多一条变体，`prune(live)` 按文档现存面板清理
-（**条目数策略；字节那一维另有预算，见「SVG payload 的字节预算」一节**），
+（**条目数策略；字节那一维另有预算，见 `docs/rules/frontend/svg-byte-budget.md`**），
 只留在用的与每个文件最近成功的那份；⑥ SSE 的 render.started/done 只带
 fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了的话另一个
 副本会永远转圈）；⑦ **磁盘原图冒充不了 overrides 渲染结果（2026-08-31）**：
@@ -30,7 +30,7 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
 的引擎 SVG，**确实只能退磁盘原图时必须出「近似预览」角标**（与布局版本
 预览的「近似预览」同一措辞），失败不吞、上一变体的位图不许冒充当前变体；
 「只带基线、还没动过」的面板跳过渲染的前提是后端 `baked_current` 没说
-基线已失效（判据出处见 `src/tavotto/AGENTS.md` 的「基线绑定文件身份」，
+基线已失效（判据出处见 `docs/rules/backend/project-system.md` 的「基线绑定文件身份」，
 前端唯一消费点 `isJustBakedBaseline`，`useEngineSync` 订阅素材表让失效
 发生在会话中时也能重新裁决）。看护：`web/src/store/renderStore.test.ts`、
 `web/src/hooks/useEngineSync.test.ts`、`web/src/canvas/panelPreviewMode.test.tsx`、

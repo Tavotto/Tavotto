@@ -48,7 +48,7 @@ let lookupSeq = 0
 /**
  * 项目代际。`clear()`（换项目）加一——A 项目的清单 / 查找响应在途时切到 B，
  * 落地必须作废（与 `scriptLibraryStore` / `runtimeAssetStore` / `scriptRunStore`
- * 同一条纪律，见 `web/AGENTS.md`「三个 store 都有项目代际」那条）。
+ * 同一条纪律，见 `docs/rules/frontend/asset-library.md`「三个 store 都有项目代际」那条）。
  *
  * **与 `lookupSeq` 是两条独立的轴，不能合并成一个**：序号答的是「同一个项目里
  * 哪一次查找最新」，代际答的是「这个响应属于哪个项目」。只有序号的话，A 项目

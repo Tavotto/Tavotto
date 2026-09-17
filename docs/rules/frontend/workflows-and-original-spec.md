@@ -45,7 +45,7 @@ writer、第二份对象模型：一张图在文档里只有**一个**面板对�
 - **原图规格只有 `lib/originalSpec.ts` 一份服务**（ADR 0028）。优先级
   ① 渲染回来的 manifest `size_mm` → ② 文档里的 `nativeW/nativeH` →
   ③ `/api/panels` 的 `original_spec` → ④ 明确 fallback（必带 `fallback: true`）。
-  ① 在 ② 之前正是因为**图幅不是派生字段**（见上面的派生字段表）。
+  ① 在 ② 之前正是因为**图幅不是派生字段**（见 `docs/rules/frontend/project-document-and-autosave.md` 的派生字段表）。
   画布上的缩放 / 裁剪 / 旋转 / 翻转 / 透明度只进 `spec.ignored`，**绝不套进
   原图导出**——跟着缩的话字号会一起缩。`getOriginalOutputSpec()` 对不认识的
   id 回 `null`，不发明一张不存在的图。

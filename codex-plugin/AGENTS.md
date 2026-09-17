@@ -5,7 +5,7 @@
 `docs/adr/0006-codex-mcp-app-and-publication-profile.md`、
 `docs/adr/0009-codex-workspace-root-authority.md`。改动前先读。
 交接的引擎侧（`engine/locate.py` / `engine/handoff.py` / `engine/cli.py`）在
-`src/tavotto/AGENTS.md` 的「外部交接」。
+`docs/rules/backend/external-handoff.md`。
 
 ## 首次使用契约（2026-08-25，勿破坏）
 

@@ -111,7 +111,7 @@ Python，首次渲染也不联网：
 - **CLI 双入口**：`packaging/tavotto.spec` 从同一个 Analysis 产出 GUI 的
   `Tavotto` 与 `console=True` 的 `tavotto-cli`（共用 `_internal/`）。GUI exe
   不能当 CLI 调（无终端时 stdout 落日志），交接与安装清单都指 `tavotto-cli`
-  （见 `src/tavotto/AGENTS.md` 的「外部交接」）。
+  （见 `docs/rules/backend/external-handoff.md`）。
 - 验证：`tests/test_bundled_runtime.py`（定位/优先级/布局/架构/失败路径，
   **全部平台无关**）+ `tests/test_runtime_build.py`（锁文件分层、布局、
   `._pth`、构建判据、打包卫生，另有几条只在本机构建过 runtime 时才跑的
@@ -122,7 +122,7 @@ Python，首次渲染也不联网：
   没有门禁更坏（`test_macos_ci_no_longer_fakes_a_worker_env` 看护）。
 - **浏览器 playground 的运行时锁**：`packaging/playground-runtime.json`
   钉死 Pyodide 版本与包白名单（前端 JSON import + 构建脚本共读），
-  细节见 `web/AGENTS.md` 的「浏览器 playground」。
+  细节见 `docs/rules/frontend/browser-playground.md`。
 - **包内数据文件要显式进 PyInstaller 的 datas**（2026-09-02，ADR 0039）：
   `Analysis` 只把 .py 编进 PYZ，`tavotto/profiles/publication.json` 与
   `tavotto/resources/tutorial_project/` 这类数据在冻结产物里**本来是没有的**

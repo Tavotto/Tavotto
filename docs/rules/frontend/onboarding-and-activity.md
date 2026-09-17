@@ -59,7 +59,7 @@
   - **`data-overlay-svg` = 画布覆盖层 SVG**（`canvas/OverlaySvg.tsx`）：选中描示、参考线、
     手柄都画在它里面。以前拿那个「不吃指针事件」的工具类 `pointer-events-none` 当选择器
     ——CSS class 是排版手段不是标识。本文件从 2026-09-14 起可以写出完整类名（扫描面收到
-    `web/src`，见「验证」一节）；`OverlaySvg.tsx` 里那段注释**仍然**拆着写——它是 `.tsx`、
+    `web/src`，见 `docs/rules/frontend/verification.md`）；`OverlaySvg.tsx` 里那段注释**仍然**拆着写——它是 `.tsx`、
     在面内，实测把 `web/src` 里 40 处真实用法全中和掉之后，一句注释就能把规则吊在产物里。
   - **`data-inspector-panel` = 右侧检查器栏**（`components/inspector/Inspector.tsx` 的 `aside`）：
     左抽屉（`data-left-drawer`）、版本面板、快捷任务卡也都是 `aside`。
@@ -67,7 +67,7 @@
     `inspector/controls/TypographyControls.tsx` 的 `Anchor`，值一律从
     `lib/typography.propertyPathOf()` 出）：e2e 要走到字号 / 线宽输入框时用
     `[data-prop="fontsize"] input` / `[data-prop="linewidth"] input`，不是
-    `input[aria-label="字号"]`。同一条规则在下一节「属性能力层」里已经写着，
+    `input[aria-label="字号"]`。同一条规则在 `docs/rules/frontend/typography-capability-layer.md` 里已经写着，
     这里只是把 e2e 侧的落点点名。
 * **`data-status-live` = 状态播报区**：`components/StatusBar.tsx` 的 `StatusToasts` 里那块常驻
   `aria-live="polite"` 的 sr-only 区，内容是 `uiStore.setStatus` 的 info 档（error 档在它旁边的

@@ -15,7 +15,7 @@
   **三个 store 都有项目代际（epoch）**：模块级 in-flight 请求活得比一次
   Zustand reset 长，`clear()` 必须换代 + 清 inflight，A 项目的响应绝不
   落进 B（Session 6 评审修复；vitest 各有作废用例看护）。`packageStore`
-  按同一条纪律换代（见「设置外壳与包管理」那节）——**新写一个会在项目之间
+  按同一条纪律换代（见 `docs/rules/frontend/settings-shell-and-packages.md`）——**新写一个会在项目之间
   存活的 store 时，先回来把它加进这份名单**。
 - **`scriptRunStore` 的四条纪律**（vitest 看护）：同脚本防并发（busy 即
   no-op，后端另有 409）；cancel 走后端取消端点（置标志 + 硬杀 worker），

@@ -43,6 +43,7 @@
   `preview_png`），出不来就退回磁盘图并明确标「近似预览」，**不许无提示地拿
   磁盘原图冒充版本视觉状态**。只给用户当前展开的那一份渲染。
 * 看护：`store/geometryAuthority.test.ts`、`store/alignAction.test.ts`、
-  `canvas/alignUndoConvergence.test.tsx`、`lib/authorityTrace.test.ts`。
+  `canvas/alignUndoConvergence.test.tsx`、`diagnostics/store.test.ts`（追踪环已并入
+  诊断模块，ADR 0016）。
   测试里「这一版已经精确画好」用 `test/renderFixtures.ts` 的 `seedExactRender()`
   ——手写 `{manifest, status:'ready'}` 造出来的是真实渲染永远不会有的形状。

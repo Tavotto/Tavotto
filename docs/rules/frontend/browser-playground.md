@@ -6,7 +6,7 @@
 完整版在 `docs/adr/0007-browser-playground.md` 与
 `docs/adr/0011-playground-examples-first.md`，改动前先读。引擎侧
 （`engine/browser.py` 的平铺 import 纪律与 ENGINE_FILES 白名单）见
-`src/tavotto/AGENTS.md` 末节。
+`docs/rules/backend/browser-playground-engine.md`。
 
 - 前端走 `engineTransport` 的第三条传输（`web/src/playground/`），画布 /
   inspector / stores / undo 与桌面同一份；MCP 与 playground 共用的种子层在

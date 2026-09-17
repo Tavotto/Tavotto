@@ -252,7 +252,7 @@ Tailwind 自带的 150ms——`foundation.test` 抓 `duration-150` 字面量，�
 ## 十一、2026-09-11 Session 1 的处置记录
 
 改了什么、哪些页面自动受益、哪些留给后续 Session，见同日提交信息与
-`web/AGENTS.md` 的「UI 视觉纪律」段。
+`docs/rules/frontend/ui-visual-discipline.md`。
 
 ## 十二、设置窗口（Session 5 定下的形态）
 

@@ -6,11 +6,11 @@
 完整版在 `docs/adr/0016-diagnostics-v2-frontend-state-tracing.md`，改动前先读。
 模块是 `web/src/diagnostics/`，业务代码**只 import `@/diagnostics`**。
 
-- **权威判据不在这里**：诊断报的 `authority_variant` 一律委托上一节的
-  `exactPanelRender`（ADR 0017）。诊断**绝不另立一份判据**——否则会出现
+- **权威判据不在这里**：诊断报的 `authority_variant` 一律委托
+  `docs/rules/frontend/display-fallback-vs-geometry-authority.md` 的 `exactPanelRender`（ADR 0017）。诊断**绝不另立一份判据**——否则会出现
   「诊断说权威就绪、写路径当场拒绝」，两边各说各话。因此权威只有两种取值：
   **就是当前这一版，或者根本没有**；「来自别的变体的权威」这个概念不存在。
-  ADR 0017 的追踪环（`lib/authorityTrace.ts`）已并入本模块，别再建第二个环。
+  ADR 0017 的追踪环（原 lib/authorityTrace.ts）已并入本模块，别再建第二个环。
 - **只观察，不当真源**：诊断不参与任何业务判断，快照是**读**业务 store 得来的，
   不维护影子状态（影子状态会漂移，漂移的诊断比没有诊断更坏）。
   `recordDiagnosticEvent` 整体吞异常——诊断把一次编辑弄挂比没有诊断糟得多。

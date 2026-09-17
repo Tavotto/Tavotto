@@ -10,7 +10,7 @@
   （PyInstaller onedir，无 matplotlib）→ 现有 worker 协议。前端仍由 sidecar 的
   Flask 提供，**不走 Tauri frontendDist**——桌面与浏览器跑同一份界面。
 - 会话认证与桌面/浏览器共用一道边界（ADR 0008），细节见
-  `src/tavotto/AGENTS.md` 的「会话认证」。
+  `docs/rules/backend/session-auth.md`。
 - **桌面模式差异收在 `src/tavotto/desktop.py`**：`127.0.0.1:0` 动态端口
   （werkzeug `make_server`，可优雅 shutdown）、nonce 走 **stdin 首行**
   （环境变量对同用户进程可见；桌面**不写**磁盘凭据文件，实例复用由壳的
@@ -36,7 +36,7 @@
 - 桌面交接契约 argv `--open <目录> [--stem <stem>]`：生产者唯一
   `handoff.desktop_argv()`，消费者唯一 `src-tauri/src/main.rs::parse_open_args()`，
   两侧各有单测，改一边必须同步另一边（完整交接语义见
-  `src/tavotto/AGENTS.md` 的「外部交接」）。
+  `docs/rules/backend/external-handoff.md`）。
 - wheel/sdist 不含 `src-tauri/`（hatchling 白名单）；`src-tauri/target/`、
   `src-tauri/gen/` 进 .gitignore。
 

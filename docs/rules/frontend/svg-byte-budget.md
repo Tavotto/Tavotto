@@ -3,7 +3,7 @@
 > 原文出自 `web/AGENTS.md`「SVG payload 的字节预算（2026-08-29，issue #181 Session 04）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
-**条目数不是字节预算。** 上面那条 `RECENT_VARIANTS = 4` 管的是「留几档语义
+**条目数不是字节预算。** `docs/rules/frontend/display-fallback-vs-geometry-authority.md` 里那条 `RECENT_VARIANTS = 4` 管的是「留几档语义
 状态」，它对「留了多少字节」一无所知——hybrid 之后仍有 8～12 MiB 的预览 SVG
 乘以 4 档乘以几个文件，就是几百 MB 常驻在 JS 堆里，而每一份都是合法的撤销
 落点，`prune` 一个都不该清。所以 `renderStore` 里**两条策略并存**：

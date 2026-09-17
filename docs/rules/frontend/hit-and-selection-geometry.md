@@ -5,7 +5,7 @@
 
 - 图内元素的命中 / 框选 / 描边全在 `web/src/lib/pathGeom.ts`（距离一律换到 mm
   再比，与图内箭头同一口径；填充按 nonzero 缠绕数算内部——判据的完整理由见
-  `src/tavotto/AGENTS.md` 的「PDF 后端边界」，别在别处另写一份 even-odd 的；
+  `docs/rules/backend/pdf-backend-boundary.md`，别在别处另写一份 even-odd 的；
   空心只在描边附近命中；框选是「圈墨迹」不是「戳进去」）；`OverlaySvg` 画
   `<path>` 并套上引擎给的 clip 框。**散点与只有 marker 的 Line2D 也走这一套**
   （2026-09-06）：引擎给每颗 marker 一条闭合子路径（`multi_path`），前端一个字

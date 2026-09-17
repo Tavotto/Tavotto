@@ -33,4 +33,4 @@
   身份断言兜底（源码判据在 `test_bridge_thread_model.py`）。
 - **spike 不是产品**：`python -m tavotto.engine.bridge_spike` 没有稳定契约、
   没有接进 `tavotto` CLI，别在文档 / 官网 / release notes 里提它。
-  **产品入口是 `tavotto run`**（下一节）。
+  **产品入口是 `tavotto run`**（`docs/rules/backend/tavotto-run-control-plane.md`）。
