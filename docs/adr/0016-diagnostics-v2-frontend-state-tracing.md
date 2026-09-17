@@ -113,6 +113,17 @@ web/src/diagnostics/
 * **不是 source of truth**。快照是**读**业务 store 得来的，不是诊断自己
   维护的一份影子状态——影子状态会漂移，而漂移的诊断比没有诊断更坏。
 
+第一条与第三条合起来是一个**有意的 import 环**（2026-09-17 补记，issue #397）：
+`store/{document,render,svgPreview}Store.ts` 往诊断记事件（import `@/diagnostics`），
+`diagnostics/{snapshot,authority}.ts` 读业务 store（import `@/store/*`）。它今天安全，
+靠的是一条以前没写下来的前提：**环上每个模块只在函数体内使用对端的导出，模块顶层
+不许**。踩破它的失败形状是求值期 `ReferenceError` / `TypeError`——发生在 React 挂载
+之前，`ErrorBoundary` 接不住，桌面壳空窗、网页白屏；而且主应用 / playground / MCP
+三个入口进环的顺序不同，单测全绿、应用白屏完全可能。看护：
+`web/src/importArchitecture.evaluationOrder.test.ts` 把环上每个成员各当一次「第一个
+被求值的」来 import；环的成员表登记在 `web/import-architecture-baseline.json`，
+`web/src/importArchitecture.test.ts` 钉着它不扩大。
+
 ### 3. 事件是可辨识联合，不是 `console.log`
 
 ```ts
