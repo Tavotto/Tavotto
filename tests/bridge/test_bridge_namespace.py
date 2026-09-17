@@ -17,7 +17,6 @@ AttributeError 指向完全错误的方向。
 from __future__ import annotations
 
 import json
-import re
 import sys
 import types
 from pathlib import Path
@@ -39,6 +38,7 @@ COLLIDING = (
     "figcapture",
     "patchspec",
     "pathgeom",
+    "axestraversal",
     "figsession",
     "wireproto",
     "worker",
@@ -283,24 +283,28 @@ def test_user_modules_win_over_the_engine_siblings(user_python, tmp_path):
 def test_the_late_manifest_import_resolves_inside_the_private_package(
     user_python, tmp_path, bridge_session
 ):
-    """`overrides` 的 late import 在**用户代码之后**才执行——裸名会命中用户的文件。
+    """`overrides` 在**用户代码之后**才走到的那条遍历，拿到的必须是 Tavotto 自己的。
 
     走到它的路径是刻意挑的：先把刻度定位改成 fixed 并给一串新值，再在**同一次
     全量 apply 里**改第 13 条刻度的文字。那条 gid 还不在 index 里（前提断言
     按**性质**钉住：`axes_0.xticklabels_12` 不在 build 时 instrument 的集合里，
     不数总条数——manifest 只登记画着的刻度之后，总数随 locator/视区走，
     抄一个数只会静默过期），`FigState.resolve()` 于是现解，而现解要
-    `manifest._ordered_axes`。用户项目里正好有一个 `manifest.py`——裸
-    `import manifest` 命中的就是它，`_ordered_axes` 不存在，apply 当场抛。
+    `axestraversal.ordered_axes`。用户项目里正好有一个 `manifest.py` 与一个
+    `axestraversal.py`（`COLLIDING`）——拿错任何一份，`ordered_axes` 不存在，
+    apply 当场抛。
+
+    2026-09-17 之前这里验的是 `_sibling("manifest")` 那个延后访问器（overrides
+    在函数里反取 `manifest._ordered_axes`）；权威提成 `axestraversal` 之后，
+    overrides 在**模块层**平铺 import 它，装载期就解析、装完随 `_PHASE2` 进私有包，
+    引擎里不再有 late import。用例场景不变：用户同名模块在，我们的照样对。
 
     **为什么不拿色条方向那处做判据**：`_refresh_axes_follow` 外面包着
-    `except Exception: pass`（"少一条联动不该拦渲染"），裸 import 在那里是
-    **静默**失败的——第一版就是拿它当判据的，变异跑完照样全绿。两处现在共用
-    同一个 `_sibling()` 访问器，所以这一条覆盖了机制；只改另一处的变异由下面
-    那条结构性守卫兜住。
+    `except Exception: pass`（"少一条联动不该拦渲染"），拿错模块在那里是
+    **静默**失败的——第一版就是拿它当判据的，变异跑完照样全绿。
 
-    反证：把 `_sibling("manifest")._ordered_axes` 改回
-    `from manifest import _ordered_axes`，本条当场红。
+    反证：把 overrides 里模块层的 `from axestraversal import ordered_axes` 挪进
+    `FigState.resolve` 函数体（变回延后 import），本条当场红。
     """
     proj = _user_project(tmp_path)
     write(
@@ -347,15 +351,35 @@ def test_the_late_manifest_import_resolves_inside_the_private_package(
 
 
 def test_no_bare_sibling_import_survives_in_overrides():
-    """结构性守卫：`overrides.py` 里不许再出现裸的 `import manifest`。
+    """结构性守卫：`overrides.py` 里不许出现**函数体内**的裸兄弟 import。
 
     上面那条行为判据只覆盖 `FigState.resolve` 那一处（另一处被
-    `except Exception: pass` 吞掉，测不到）。这条按源码判，两处都盖得住，
-    将来新加的第三处也盖得住——判据是"机制"，不是"某一行"。
+    `except Exception: pass` 吞掉，测不到）。这条按源码判，全部函数都盖得住，
+    将来新加的也盖得住——判据是"机制"，不是"某一行"：模块层的平铺 import
+    在装载期解析（engine 目录此刻在 `sys.path[0]`，用户同名模块已从 `sys.modules`
+    摘走），函数体里的则在用户代码跑起来之后才执行，那时裸名命中的是用户的文件。
     """
-    src = (ENGINE_DIR / "overrides.py").read_text(encoding="utf-8")
-    bad = re.findall(r"^\s*(?:from\s+manifest\s+import|import\s+manifest)\b", src, re.M)
+    import ast
+
+    tree = ast.parse((ENGINE_DIR / "overrides.py").read_text(encoding="utf-8"))
+    engine_mods = {p.stem for p in ENGINE_DIR.glob("*.py")}
+    bad = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Import):
+                bad += [
+                    f"{fn.name}:{node.lineno} import {a.name}"
+                    for a in node.names
+                    if a.name in engine_mods
+                ]
+            elif (
+                isinstance(node, ast.ImportFrom) and node.level == 0 and node.module in engine_mods
+            ):
+                bad.append(f"{fn.name}:{node.lineno} from {node.module} import …")
     assert not bad, (
-        f"overrides.py 里有 {len(bad)} 处裸的兄弟模块 import——native bridge 里"
-        f'它们会命中用户项目自己的 manifest.py。用 `_sibling("manifest")`。'
+        f"overrides.py 里有 {len(bad)} 处函数体内的裸兄弟 import——native bridge 里"
+        f"它们在用户代码之后才执行，会命中用户项目里的同名文件。挪到模块层，"
+        f"并把模块登记进 bridge_runner._PHASE2 / bridgeboot._TOPLEVEL_TO_RESTORE：{bad}"
     )
