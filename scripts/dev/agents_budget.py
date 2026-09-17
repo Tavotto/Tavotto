@@ -21,6 +21,11 @@ import json
 import sys
 from pathlib import Path
 
+# Windows 上 stdout 被重定向成管道时会退回系统区域编码（cp1252/cp936），报告里全是中文。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 
 #: 本项目试行预算（字节）。不是行业标准；来自 2026-09-17 可维护性审计任务书。
