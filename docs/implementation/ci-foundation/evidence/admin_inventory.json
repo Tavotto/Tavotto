@@ -2,7 +2,7 @@
   "schema_version": 1,
   "kind": "admin_readonly_inventory_request",
   "status": "not_run",
-  "generated": "2026-09-15 · CI00 建表；2026-09-16 · CI04 用只读 `gh api`（GET）补上「能读到的」，其余保持待填。两轮都没有 SSH / hypervisor 访问，没有登录任何机器；「已记录的假设」全部来自仓库文档与脚本。；2026-09-16 · CI05 补 observed：托管并发上限（free：20 / macOS 5）与三条拍板结果。",
+  "generated": "2026-09-15 · CI00 建表；2026-09-16 · CI04 用只读 `gh api`（GET）补上「能读到的」，其余保持待填；2026-09-16 · CI05 补 observed：托管并发上限（free：20 / macOS 5）与三条拍板结果；2026-09-17 · F 组执行完毕（`observed_2026_09_17_f_group`）：VM 侧由用户在会话里跑脚本、GitHub 侧由 lead 用 API，runner 注册层级从公开仓库级改成私有仓库级、实例数 1，A-1 / A-3 被 F 绕开；宿主 / hypervisor 六项仍待管理员。",
   "documented_assumptions": {
     "runner_labels": {
       "value": "[self-hosted, linux, x64, tavotto-lab]",
@@ -92,13 +92,13 @@
     {
       "field": "runner_registration_scope",
       "question": "现有 tavotto-lab runner 注册在仓库级还是组织级？组织是否支持 runner group？能否把新 PR 池注册到 PR 无法通过改 runs-on 触达的边界（runner group / 私有 ci-infra 仓库）？",
-      "value": null,
+      "value": "仓库级——2026-09-17 起在**私有仓库 Tavotto/ci-infra**（runner id 2 `tavotto-lab-01`，labels self-hosted,Linux,X64,tavotto-lab）；公开仓库 Tavotto/Tavotto 的 `actions/runners` total_count = 0（tavotto-ci-01 id 21 于 F-8 删除）。org 级 runner group 未用（free 计划）",
       "observed": "仓库级（`repos/Tavotto/Tavotto/actions/runners` 列出 4 台；jobs API 的 runner_group_name=Default，id 1）；org 级 runner group 列表 403；org plan=free（文档：Team 才能建额外组，Selected workflows 只见于 Enterprise Cloud）。**边界能不能形成**仍待管理员回答。"
     },
     {
       "field": "lab_vm_current_state",
       "question": "lab VM 当前 uptime、磁盘占用（/srv/tavotto-ci 各子目录）、runner 版本、最近一次 lab run 的结论（能否给一份 lab_preflight.py --json 的输出）？",
-      "value": null,
+      "value": "一台 VM（主机名 tavotto-ci-01，Ubuntu 24.04，16 vCPU / 31 GiB；两跳 SSH，用户 runner）。当前唯一活动实例 `~/actions-runner-infra` → 服务 `actions.runner.Tavotto-ci-infra.tavotto-lab-01.service`（active running）。退役实例：`~/retired-20260916/actions-runner-{2,3,4}`（A-2）、`~/retired-20260917/actions-runner`（F-8，公开仓库的 -01，服务 stop + uninstall，目录整体保留可回退）。`/srv/tavotto-ci` 状态根不变，deploy key 不变",
       "observed": "runner 版本 2.336.0（当前发行 2.337.0）；最近 30 个 lab run：26 success / 2 failure / 1 cancelled / 1 in_progress（evidence/ci04/lab_jobs_runner_assignment.tsv）；磁盘 / uptime / preflight 输出仍待管理员。"
     },
     {
@@ -109,13 +109,13 @@
     {
       "field": "runner_username",
       "question": "runner 服务的登录用户名是 github-runner（文档所写）还是 runner（另有记录）？",
-      "value": null,
+      "value": "runner（不是 bootstrap_lab_runner.sh 默认的 github-runner；文档已按此改）",
       "observed": "API 不暴露；仍待管理员。"
     },
     {
       "field": "extra_runners_identity",
       "question": "tavotto-ci-01-2 / -3 / -4 是什么：同一台 lab VM 上的三个额外 runner 服务实例，还是三台别的机器？各自的 vCPU / 内存 / 磁盘？",
-      "value": null
+      "value": "同一台 VM 上的四个 systemd 服务实例（目录 ~/actions-runner、-2、-3、-4），不是四台机器；-2/-3/-4 已于 2026-09-16 注销（A-2）"
     },
     {
       "field": "extra_runners_registrar",
@@ -125,7 +125,7 @@
     {
       "field": "extra_runners_unused",
       "question": "为什么没有任何 workflow 用 `tavotto-ci` 标签？是有意闲置，还是路由从没接上？能否注销它们（若在可信主机上，闲置的 PR 入口本身是风险）？",
-      "value": null
+      "value": "是——最近 Worker 日志均 ≥ 7 天前（A-2 脚本前置判据）；已注销"
     },
     {
       "field": "org_runner_group_state",
@@ -140,7 +140,7 @@
     {
       "field": "same_repo_branch_pr_policy",
       "question": "谁有仓库写权限（能开同仓库分支 PR 的人）？这些人的 PR 里加一行 `runs-on: [self-hosted, tavotto-lab]` 今天会不会真的派到 tavotto-ci-01（见 CI04_RUNNER_PILOT.md §2.2）？管理员是否愿意在一个空 job 上实测一次并记录结果？",
-      "value": null
+      "value": "不再靠策略：公开仓库没有任何 self-hosted runner（F-8），同仓库分支 PR 里 `runs-on: [self-hosted, tavotto-lab]` 永远 queued（F-10 实测 run 35175791807）"
     },
     {
       "field": "vm_template_and_jit_issuer",
@@ -168,5 +168,20 @@
     "runner_group_capability_by_plan": "按 GitHub 文档（2026-09-15 抓取）：「All organizations have a single default runner group. Organization owners using the GitHub Team plan can create additional organization-level runner groups.」——free 计划只有 Default 组；「Changing which workflows can access a runner group」（Selected workflows）只出现在 Enterprise Cloud 版文档。**待管理员在 org Settings → Actions → Runner groups 里确认现状**",
     "hosted_concurrency_limit_2026_09_16": "已查明（CI05）：org plan=free（evidence/ci04/org_plan.json，`gh api orgs/Tavotto --jq .plan.name`）→ GitHub 文档「Usage limits」表里 free 的托管 runner 并发是**总 20 个 job，其中 macOS 最多 5**；API 与账单页都不显示这个数。一个 full-ci run 29 个 job（快线 15 + Gate 2 + 重型 12）自己就超 20；plain PR 17 个。用户拍板：改推送习惯（stacked PR 一次只让一个在跑、full-ci 只给真要探平台腿的 PR），不加容量（docs/ci/parallel-prs.md「并发上限与推送节奏」）。",
     "decisions_2026_09_16": "用户拍板：不建 PR 池（ADMIN_HANDOFF B/C/D 留档不执行）；注销 tavotto-ci-01-2/-3/-4（A-2 改成操作项，待管理员）；lab runner 迁到私有 ci-infra 仓库（ADMIN_HANDOFF F 组，待管理员 + 两个后续 PR）。runner_pool_ready 仍 not_run，且按拍板本轮不会变 pass。"
+  },
+  "observed_2026_09_17_f_group": {
+    "note": "F 组（lab runner 迁私有仓库）的执行结果。GitHub 侧全部来自 `gh api`；VM 侧来自用户在会话里用 `! ssh` 跑的脚本输出（scratchpad/vm/02 与 06），lead 没有登录机器。",
+    "public_repo_runners": "total_count = 0（2026-09-17 02:47Z 之后）。A-2：tavotto-ci-01-2/-3/-4 注销（2026-09-16）；F-8：tavotto-ci-01（id 21）服务 stop + uninstall、目录 → ~/retired-20260917/、API DELETE runners/21",
+    "ci_infra_runners": "1：id 2 tavotto-lab-01，labels self-hosted,Linux,X64,tavotto-lab，online（同一台 VM 的第二实例，F-4 注册于 2026-09-16）",
+    "public_repo_prs": "PR A #384（1879201b）reusable 钉 Tavotto/Tavotto + lab-ci 改派发；PR B #386（fc59ab62）发布链切两段；PR C #388（254a2bcc）TAVOTTO_SOURCE_REPOSITORY 钉源仓库",
+    "ci_infra_repo": "main d6456e8：lab-qualification.yml（trust-check → qualify(reusable@main) → report 写 commit status lab/<mode>，release 绿时派发 release-publish.yml）；#2 修 cancelled → error",
+    "f5_first_green": "ci-infra run 35135034102（公开 main 97c87926，mode=main）：trust-check / qualify / report 全 success，`lab/main = success` 写回。之前三次红（35112349056 / 35126437528 / 35129441861）全是同一条用例（ambient GITHUB_REPOSITORY=Tavotto/ci-infra，PR C 修）",
+    "defects_found_only_by_real_execution": [
+      "reusable 在调用方上下文里跑：GITHUB_REPOSITORY / GITHUB_SHA / GITHUB_REF 说的是 ci-infra；GITHUB_* 是保留前缀覆盖不了 → 另设 TAVOTTO_SOURCE_REPOSITORY（PR C）",
+      "同一并发组 GitHub 只留一个 pending run：main 连续 push（254a2bcc → 97c87926）把前一次派发挤掉，qualify=cancelled，ci-infra 的 report 却按 failure|cancelled 写了 lab/main=failure——没验过的 SHA 被涂红。ci-infra#2：cancelled → error；254a2bcc 那条 status 已手动覆盖成 error"
+    ],
+    "f7_release_drill": "推迟到 v0.15.0 发版准备日（用户拍板 2026-09-17）：release.yml trust 要求「tag v<版本> 已存在必须指向同一 commit」且演练也过这道门；main 仍是 0.14.0 而 v0.14.0 指 bb736c3e，bb736c3e 的树又在 PR C 之前（release 档常规套件必红）。历史上版本号都是发版当天抬的（#325 / #283），演练在抬版本之后做",
+    "f10_reverse_probe": "见 evidence/ci04/f10_reverse_probe.json",
+    "lab_qualify_duration": "每次 qualify 在 tavotto-lab-01 上 40–47 分钟（main 档）；主档位串行"
   }
 }

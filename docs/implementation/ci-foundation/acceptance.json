@@ -327,16 +327,14 @@
       "id": "CIP-024",
       "phase": "CI04",
       "requirement": "PR无法通过修改runs-on接触可信lab/签名/真实数据",
-      "status": "not_run",
+      "status": "pass",
       "evidence": [
-        "CI04_RUNNER_PILOT.md#22-动态同仓库有写权限的人在-pr-里加一行-runs-on-self-hosted-tavotto-lab-会怎样",
-        "CI04_RUNNER_PILOT.md#23-哪一层在挡哪一层挡不住现状",
-        "tests/test_merge_queue_workflows.py::TestRunnerTrustZones（静态半边）",
-        "evidence/ci04/api_denied.json（org runner-groups 403）",
-        "evidence/ci04/org_plan.json（plan=free）",
-        "evidence/ci04/repo_fork_pr_contributor_approval.json（first_time_contributors）"
+        "ADMIN_HANDOFF_RUNNER_POOL.md#f1-操作表（F-8 / F-10 两行的验收命令与结果）",
+        "evidence/ci04/f10_reverse_probe.json（公开仓库 runners total_count=0 + 探针 job 十分钟采样：始终 queued、无 runner；同一时刻 ci-infra 的 tavotto-lab-01 online idle 作对照）",
+        "tests/test_merge_queue_workflows.py::TestRunnerTrustZones（静态半边，未变）",
+        "CI04_RUNNER_PILOT.md#22-动态同仓库有写权限的人在-pr-里加一行-runs-on-self-hosted-tavotto-lab-会怎样（当时的推断，已被 F-10 实测取代）"
       ],
-      "note": "静态半边有守卫（PR 事件的 workflow 在 main 上触不到 lab；挡合并，不挡执行）。**动态半边读不到**：runner group 的 workflow 限制 403，org 在 free 计划、按 GitHub 文档只有 Default 组且「Selected workflows」只见于 Enterprise Cloud；fork 审批只挡首次贡献者；同仓库分支 PR 不经审批。缺的是「PR 改不动的控制」——本轮没有任何证据它存在，按规则推的答案是「同仓库分支 PR 加一行 runs-on 会派到 tavotto-ci-01」。签名 / 发布凭据留在 hosted 这一条成立（desktop-tauri.yml / release.yml 相关 job 全是 hosted）。管理员答完 ADMIN_HANDOFF A-1 / A-3（含一次空 job 实测）才能判。2026-09-16 CI04。"
+      "note": "动态半边**已实测**（2026-09-17）：lab runner 迁到私有仓库 Tavotto/ci-infra（F 组，PR #384 / #386 / #388 + ci-infra），公开仓库注销全部 self-hosted runner（A-2 三台 + F-8 的 tavotto-ci-01，`actions/runners` total_count = 0）。F-10 探针：同仓库分支 PR #391 里 `runs-on: [self-hosted, tavotto-lab]` 的空 job（run 35175791807 / job 105057089268）十分钟内始终 queued、runner 为空，而同一时刻 ci-infra 的 tavotto-lab-01 online 且 idle——它接得到 ci-infra 的 job（F-5 run 35135034102 就落在它上面），接不到公开仓库的。挡住的机制是**结构**（公开仓库没有 runner），不是策略（org free 计划没有 runner group 限制）。签名 / 发布凭据留在 hosted 这一条不变。静态半边（守卫 ①–④）仍在挡合并。"
     },
     {
       "id": "CIP-025",

@@ -1,0 +1,62 @@
+{
+  "kind": "f10_reverse_probe",
+  "date": "2026-09-17",
+  "claim": "公开仓库同仓库分支 PR 里一个 runs-on: [self-hosted, tavotto-lab] 的 job 永远 queued（没有 runner 能接）；同一时刻私有仓库 ci-infra 的 tavotto-lab-01 online 且 idle 作对照",
+  "probe": {
+    "pr": 391,
+    "branch": "ci/f10-reverse-probe-do-not-merge",
+    "workflow": ".github/workflows/f10-reverse-probe.yml",
+    "run_id": 35175791807,
+    "job_id": 105057089268,
+    "job_status_at_write": "queued",
+    "job_conclusion_at_write": null,
+    "runner_name": "",
+    "runner_id": 0,
+    "labels": [
+      "self-hosted",
+      "tavotto-lab"
+    ],
+    "created_at": "2026-09-17T02:48:19Z",
+    "started_at": "2026-09-17T02:48:19Z"
+  },
+  "samples_every_60s": [
+    "02:48:42Z job=queued/null runner=none | ci-infra runner: online busy=false | public runners: 0",
+    "02:49:46Z job=queued/null runner= | ci-infra runner: online busy=false | public runners: 0",
+    "02:50:49Z job=queued/null runner= | ci-infra runner: online busy=false | public runners: 0",
+    "02:51:53Z job=queued/null runner= | ci-infra runner: online busy=false | public runners: 0",
+    "02:52:55Z job=queued/null runner= | ci-infra runner: online busy=false | public runners: 0",
+    "02:53:59Z job=queued/null runner= | ci-infra runner: online busy=false | public runners: 0",
+    "02:55:16Z job=queued/null runner= | ci-infra runner: online busy=false | public runners: 0",
+    "02:56:19Z job=queued/null runner= | ci-infra runner: online busy=false | public runners: 0",
+    "02:57:22Z job=queued/null runner= | ci-infra runner: online busy=false | public runners: 0",
+    "02:58:25Z job=queued/null runner= | ci-infra runner: online busy=false | public runners: 0"
+  ],
+  "public_repo_runners_at_write": {
+    "total_count": 0,
+    "runners": []
+  },
+  "ci_infra_runners_at_write": {
+    "total_count": 1,
+    "runners": [
+      {
+        "id": 2,
+        "name": "tavotto-lab-01",
+        "status": "online",
+        "busy": false,
+        "labels": [
+          "self-hosted",
+          "Linux",
+          "X64",
+          "tavotto-lab"
+        ]
+      }
+    ]
+  },
+  "control": "ci-infra 的 tavotto-lab-01 接得到 ci-infra 的 job（F-5 run 35135034102 的 qualify 就落在它上面，排到它时秒级接单），十分钟内没有接公开仓库的这个 job——挡住的是仓库边界，不是标签",
+  "how_it_ended": "观测完关闭 PR #391、删除分支；关闭 PR 不会取消 queued 的 run（它会等 24 h 才超时），所以显式 `POST …/runs/35175791807/cancel` → run 结论 cancelled",
+  "commands": [
+    "gh api repos/Tavotto/Tavotto/actions/jobs/105057089268",
+    "gh api repos/Tavotto/Tavotto/actions/runners",
+    "gh api repos/Tavotto/ci-infra/actions/runners"
+  ]
+}
