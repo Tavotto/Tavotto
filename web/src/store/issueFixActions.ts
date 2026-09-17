@@ -9,7 +9,7 @@
  * * **只走 documentStore**：dirty、undo、autosave 全部照常，与用户手改一模一样。
  */
 import { msg, type UiMessage } from '@/i18n'
-import { requestRender } from '@/hooks/useEngineSync'
+import { requestRender } from '@/store/renderScheduler'
 import { fixOptions, planFix, type FixChoice, type FixPlan } from '@/lib/issueFix'
 import type { PublicationProfile } from '@/lib/profile'
 import type { ValidationIssue } from '@/lib/validation'

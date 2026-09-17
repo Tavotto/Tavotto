@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { beginElementPreview, commitElementPreview } from '@/canvas/elementPreview'
-import { flushRender } from '@/hooks/useEngineSync'
+import { flushRender } from '@/store/renderScheduler'
 import type { EditableField, ManifestElement } from '@/lib/api'
 import { canPreviewStyle } from '@/lib/svgStyle'
 import { msg, t, type UiMessage } from '@/i18n'

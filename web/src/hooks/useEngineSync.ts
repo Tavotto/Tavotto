@@ -1,8 +1,15 @@
+/**
+ * 引擎渲染的**订阅与生命周期装配**。调度（防抖 / 立即 / 占位 / 定稿）在
+ * `store/renderScheduler.ts`，「只带基线、还没动过」的判据在 `lib/bakedBaseline.ts`；
+ * 这个文件只回答「此刻哪些面板该发」（`renderTargets` / `syncEngine`）并把它挂到
+ * React 的订阅上。**不 import `store/actions`**——actions 调调度器，不反过来调 hook。
+ */
 import { useEffect } from 'react'
-import { isJustBakedBaseline } from '@/store/actions'
+import { isJustBakedBaselineOf, type BakedBaselineFacts } from '@/lib/bakedBaseline'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { requestRender } from '@/store/renderScheduler'
 import { sampleDisplayState } from '@/diagnostics'
 import { useUiStore } from '@/store/uiStore'
 import {
@@ -11,112 +18,6 @@ import {
   type CanvasObject,
   type PanelObject,
 } from '@/types/document'
-
-/** 文字/数值输入合并成一次渲染的窗口；颜色、开关、拖动结束走 immediate */
-const DEBOUNCE_MS = 300
-
-/**
- * 连续调整期间的预览 dpi。**只给含图像（imshow 等）的面板**：实测那里
- * 200→100 让一次渲染的往返降 16%、SVG 体积降 75%；纯矢量面板上耗时与字节数
- * 完全相同（docs/perf-baseline.md 补测两张表），给了只会白白让图变糊。
- * 定稿（immediate / flushRender）永远用默认 dpi。
- */
-const INTERACTIVE_PREVIEW_DPI = 100
-
-/**
- * 防抖计时器按**面板**索引，不按变体：连着改同一个值会走出一串变体键，
- * 按变体存的话每个中间值都会在 300ms 后各渲染一次（打十个字 = 十次渲染）。
- * 也不能按文件——同文件的两个副本各调各的，互相取消就会有一个永远渲染不出来。
- */
-const timers = new Map<string, number>()
-
-/** 该面板的图里有没有位图元素（imshow / 图片）——降质预览只对它们有收益 */
-function hasImageElement(panel: PanelObject): boolean {
-  // 走 panelRender：变体刚换、自己那份还没画出来时退回文件最近那份。
-  // 元素构成不随 override 的取值变化，用哪个变体的 manifest 判断都一样
-  const manifest = panelRender(useRenderStore.getState(), panel)?.manifest
-  return !!manifest?.elements.some((el) => el.role === 'image')
-}
-
-/**
- * 渲染策略。**与历史无关**——无论选哪个，文档改动都已经经过
- * documentStore.commit 进了历史；这里决定的只是「什么时候麻烦 matplotlib」。
- *
- *   immediate  立刻发（定稿：松手、颜色定稿、枚举、撤销/重做）
- *   defer      防抖 300ms 后发（打字、连续数值输入）
- *   none       **本轮完全不发**，只登记 wantPatches 占位；由 flushRender
- *              在手势结束时定稿。假实时的 scrub / 取色走这条：拖动期间
- *              画面由 SVG 局部预览负责，matplotlib 一次都不用跑。
- *
- * `none` 必须照样写 wantPatches：syncEngine 的跳过判据就是它，不占位的话
- * 同步 effect 会立刻替这次改动发一次 immediate 渲染——比不加策略还糟。
- */
-export type RenderPolicy = 'immediate' | 'defer' | 'none'
-
-const policyOf = (p: boolean | RenderPolicy | undefined): RenderPolicy =>
-  p === true ? 'immediate' : p === false || p == null ? 'defer' : p
-
-/**
- * 请求渲染。同一面板的连续请求会被合并：debounce 期内只保留最后一次，
- * 真正发出后由 renderStore 的 busy/queued 再兜一层。
- */
-export function requestRender(panel: PanelObject, immediate: boolean | RenderPolicy = false) {
-  const policy = policyOf(immediate)
-  const store = useRenderStore.getState()
-  const key = renderKeyOf(panel)
-  const want = JSON.stringify(panel.overrides)
-  // 值没变就别写 store：patch() 会换掉 byKey 的引用，把依赖它的 effect
-  // 全部重跑一遍——白白多一轮渲染，也是同步循环的燃料
-  if (store.get(key).wantPatches !== want) {
-    store.patch(key, { fileId: panel.fileId, wantPatches: want })
-  }
-
-  // 防抖那一路是「还在调」，可以先给一张低清；immediate 是定稿，永远默认 dpi
-  const dpi = policy !== 'defer' || !hasImageElement(panel) ? undefined : INTERACTIVE_PREVIEW_DPI
-  const patches = panel.overrides
-  const fileId = panel.fileId
-  const fire = () => {
-    timers.delete(panel.id)
-    void store.render(fileId, patches, dpi, policy)
-  }
-  window.clearTimeout(timers.get(panel.id))
-  timers.delete(panel.id)
-  if (policy === 'none') return
-  if (policy === 'immediate') fire()
-  else timers.set(panel.id, window.setTimeout(fire, DEBOUNCE_MS))
-}
-
-/**
- * 立刻冲刷该面板挂起的渲染，并保证最终那张是定稿质量（松开滑块、退出输入框）。
- *
- * 两件事都必须做：挂起的那次直接发出去；已经画完但用的是降质 dpi 的，
- * 补一张默认 dpi 的——否则用户手一松，图就永远停在临时低清上。
- */
-export function flushRender(panelId: string) {
-  // 按 id 从文档里现取，不信调用方手里那份：事件处理器闭包里的 panel 可能是
-  // 上一帧的，拿它的 overrides 去渲染就等于把刚改的那一版丢了（而挂起的
-  // 计时器已经被清掉，同步器又因为 wantPatches 相等而跳过 → 永远画不出来）
-  const panel = useDocumentStore.getState().doc.objects.find((o) => o.id === panelId)
-  if (panel?.type !== 'panel') return
-  const store = useRenderStore.getState()
-  const pending = timers.get(panelId)
-  window.clearTimeout(pending)
-  timers.delete(panelId)
-  const want = JSON.stringify(panel.overrides)
-  const state = store.get(renderKeyOf(panel))
-  // 判据是「这一版还没画出来」，不是「有没有挂起的计时器」。
-  // 旧实现只看计时器：render:'none' 的手势（scrub / 取色）压根不设计时器，
-  // 松手时就会一声不响地什么都不做——占位的 wantPatches 还挡着同步器，
-  // 结果是用户改完之后**永远等不到那张定稿图**。
-  if (state.lastPatches !== want) {
-    void store.render(panel.fileId, panel.overrides, undefined, 'sync')
-    return
-  }
-  // 已经是这一版了：只有「现在这张是拖动期的低清」才需要补一张定稿
-  if (state.previewDpi != null) {
-    void store.render(panel.fileId, panel.overrides, undefined, 'sync')
-  }
-}
 
 /**
  * 需要引擎渲染的面板，**按 (fileId, overrides) 去重**。
@@ -132,6 +33,8 @@ export function renderTargets(
   editingId: string | null,
   tracked: Record<string, boolean | undefined>,
   latest: Record<string, string | undefined> = {},
+  // 素材的基线事实由调用方给；不给就读素材表（与 syncEngine 同一份）
+  assets: Record<string, BakedBaselineFacts | undefined> = useAssetStore.getState().byId,
 ): PanelObject[] {
   const seen = new Set<string>()
   const targets: PanelObject[] = []
@@ -150,7 +53,7 @@ export function renderTargets(
           // 白跑一次引擎（heavy 脚本要几分钟）没有意义。
           o.id === editingId ||
           !!tracked[o.fileId] ||
-          (o.overrides.length > 0 && !isJustBakedBaseline(o))
+          (o.overrides.length > 0 && !isJustBakedBaselineOf(o.overrides, assets[o.fileId]))
     if (!wants) continue
     const key = renderKeyOf(o)
     if (seen.has(key)) continue
@@ -179,7 +82,8 @@ function liveRenderKeys(objects: readonly CanvasObject[]): Set<string> {
  */
 export function syncEngine(objects: readonly CanvasObject[], editingId: string | null): void {
   const store = useRenderStore.getState()
-  for (const panel of renderTargets(objects, editingId, store.tracked, store.latest)) {
+  const assets = useAssetStore.getState().byId
+  for (const panel of renderTargets(objects, editingId, store.tracked, store.latest, assets)) {
     const want = JSON.stringify(panel.overrides)
     const state = store.byKey[renderKeyOf(panel)]
     // `svgEvicted` 打断这条跳过：这一版确实画出来过（lastPatches 对得上、
@@ -211,7 +115,7 @@ export function useEngineSync() {
   const editingId = useUiStore((s) => s.elementPanelId)
   const byKey = useRenderStore((s) => s.byKey)
   const tracked = useRenderStore((s) => s.tracked)
-  // renderTargets 的判据里有 isJustBakedBaseline，它读素材表（baked_overrides /
+  // renderTargets 的判据里有 isJustBakedBaselineOf，喂给它的是素材表（baked_overrides /
   // baked_current）。素材表变了（写回完成、SSE 报文件被外部改写后 load()）
   // 判据结论可能翻转——不订阅的话，「磁盘产物被外部刷回脚本原值」那一刻
   // 没有任何东西会让同步器重新看一眼，面板就此停在磁盘原图上。
