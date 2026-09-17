@@ -141,27 +141,34 @@ Trusted Publishing 用 OIDC 换短时凭据，仓库里不存任何 API token。
 
 ### 1. PyPI（正式）
 
-登录 <https://pypi.org/manage/account/publishing/>，因为项目还不存在，
-添加一个 **pending publisher**：
+项目已经在 PyPI 上（v0.9 起），入口是**项目页**：<https://pypi.org/manage/project/tavotto/settings/publishing/>
+（项目 tavotto → Manage → 左栏 Publishing）。账号级的 <https://pypi.org/manage/account/publishing/>
+是给**还不存在**的项目预登记 pending publisher 用的，这里用不到。
+
+页面上半部分列已登记的 publisher，下半部分 **Add a new publisher → GitHub**，四个框：
 
 | 字段 | 值 |
 |---|---|
-| PyPI Project Name | `tavotto` |
 | Owner | `Tavotto` |
-| Repository name | `tavotto` |
-| Workflow name | **`release-publish.yml`**（2026-09-16 起；F.2 之前是 `release.yml`） |
+| Repository name | `Tavotto`（PyPI 比对不分大小写，但按仓库实际名字填） |
+| Workflow name | **`release-publish.yml`**（只填文件名，不带 `.github/workflows/`；F.2 之前是 `release.yml`） |
 | Environment name | `pypi` |
 
-> **切两段之后 trusted publisher 必须改指 `release-publish.yml`。** OIDC token 的
+**登记好的 publisher 不可编辑，只能加新、删旧**：改文件名或环境名时先加新的那条，再删旧的，最后页面上
+只剩一条。PyPI 没有任何 API 或 CLI 能读写这个配置，只能在网页上点；改完也没有不发布就能验证的办法——
+OIDC 换凭据只在 `publish=true` 那一步真的发生，所以判据是下一次正式发布第二段的 `pypi` job 绿。
+
+> **切两段之后 trusted publisher 必须指向 `release-publish.yml`。** OIDC token 的
 > `workflow_ref` 是实际跑 `pypa/gh-action-pypi-publish` 的那份 workflow，现在是第二段；
 > 还登记着 `release.yml` 的话，第一次 publish=true 会在 PyPI 那一步被拒——而那时
-> GitHub Release 已经建好。演练（publish=false）测不到这一步，改配置要在 F-7 之后、
-> 第一次正式发版之前手动做。
+> GitHub Release 已经建好。演练（publish=false）测不到这一步。
+> **已于 2026-09-17 改完**：pypi.org 与 test.pypi.org 各只剩一条 `Tavotto / Tavotto / release-publish.yml`
+> （环境分别 `pypi` / `testpypi`），旧的 `release.yml` 两条都已删。
 
 ### 2. TestPyPI
 
-在 <https://test.pypi.org/manage/account/publishing/> 重复一遍，
-**Environment name 填 `testpypi`**。两边是完全独立的账号与配置。
+在 <https://test.pypi.org/manage/project/tavotto/settings/publishing/> 重复一遍（同样是项目页、
+同样先加后删），**Environment name 填 `testpypi`**。两边是完全独立的账号与配置。
 
 > 两段链里 TestPyPI 的走法：`workflow_dispatch(ref=<已有 tag 的 SHA>, publish=true, pypi=testpypi)`
 > → 第一段 `trust` 折成 `pypi_target=testpypi` 随载荷经 ci-infra 传到第二段 → `trust2`
