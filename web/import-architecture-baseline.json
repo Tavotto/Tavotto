@@ -1,0 +1,102 @@
+{
+  "_comment": [
+    "web/src 运行时 import 图的旧债基线与登记表。src/importArchitecture.test.ts 读它：",
+    "  cycles           已知的环（强连通分量）。新环、旧环多出成员或内部边 → 红；旧环消失 → 也红，把它从这里删掉。",
+    "  unknownDynamic   解析不了目标的 import() 逐条登记（目标是外部 URL / 用户代码时说明）。",
+    "  layerViolations  已知的跨层反向边（门禁规则那几条；目前为零，加一条要写理由）。",
+    "报告：node scripts/import-graph.mjs。基线是登记表不是豁免表：每一条都要说得出为什么、以及什么时候能删。"
+  ],
+  "cycles": [
+    {
+      "members": [
+        "src/diagnostics/authority.ts",
+        "src/diagnostics/index.ts",
+        "src/diagnostics/snapshot.ts",
+        "src/store/documentStore.ts",
+        "src/store/envStore.ts",
+        "src/store/renderStore.ts",
+        "src/store/svgPreviewStore.ts"
+      ],
+      "edges": [
+        [
+          "src/diagnostics/authority.ts",
+          "src/store/documentStore.ts"
+        ],
+        [
+          "src/diagnostics/authority.ts",
+          "src/store/renderStore.ts"
+        ],
+        [
+          "src/diagnostics/index.ts",
+          "src/diagnostics/authority.ts"
+        ],
+        [
+          "src/diagnostics/index.ts",
+          "src/diagnostics/snapshot.ts"
+        ],
+        [
+          "src/diagnostics/snapshot.ts",
+          "src/store/documentStore.ts"
+        ],
+        [
+          "src/diagnostics/snapshot.ts",
+          "src/store/renderStore.ts"
+        ],
+        [
+          "src/diagnostics/snapshot.ts",
+          "src/store/svgPreviewStore.ts"
+        ],
+        [
+          "src/store/documentStore.ts",
+          "src/diagnostics/index.ts"
+        ],
+        [
+          "src/store/envStore.ts",
+          "src/store/renderStore.ts"
+        ],
+        [
+          "src/store/renderStore.ts",
+          "src/diagnostics/index.ts"
+        ],
+        [
+          "src/store/renderStore.ts",
+          "src/store/envStore.ts"
+        ],
+        [
+          "src/store/svgPreviewStore.ts",
+          "src/diagnostics/index.ts"
+        ]
+      ],
+      "reason": "ADR 0016 有意的双向依赖：store 往诊断记事件，诊断快照读业务 store（不维护影子状态）。安全条件是环上每个模块只在函数体内用对端导出、模块顶层不许（issue #397）；src/importArchitecture.evaluationOrder.test.ts 把每个成员各当一次「第一个被求值的」来验。envStore → renderStore 是 import() 动态边（envStore.ts:118）。",
+      "since": "2026-08-27（ADR 0016）",
+      "remove_when": "诊断改成不 import store（快照由 store 主动喂）时删掉"
+    },
+    {
+      "members": [
+        "src/hooks/useEngineSync.ts",
+        "src/store/actions.ts"
+      ],
+      "edges": [
+        [
+          "src/hooks/useEngineSync.ts",
+          "src/store/actions.ts"
+        ],
+        [
+          "src/store/actions.ts",
+          "src/hooks/useEngineSync.ts"
+        ]
+      ],
+      "reason": "actions 用 useEngineSync.requestRender 调度渲染，useEngineSync 用 actions.isJustBakedBaseline 判「只带基线、还没动过」——两个方向都是运行时边。2026-09-17 审计任务书点名的两处环之一，PR C 把判定提成独立函数、调度逻辑提成独立模块后删掉。",
+      "since": "2026-08-31（baked_current 判据）",
+      "remove_when": "PR C 落地：isJustBakedBaseline 与 requestRender 都不再住在对方 import 的文件里"
+    }
+  ],
+  "unknownDynamic": [
+    {
+      "from": "src/playground/pyodide.worker.ts",
+      "call": "import(/* @vite-ignore */ `${pyodideBaseUrl}pyodide.mjs`)",
+      "reason": "Pyodide 从 CDN 加载（版本钉在 packaging/playground-runtime.json），不是仓库模块。"
+    }
+  ],
+  "layerViolations": []
+}
