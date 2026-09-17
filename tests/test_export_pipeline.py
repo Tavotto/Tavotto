@@ -922,9 +922,11 @@ def test_a_running_job_is_never_swept_by_the_ttl(env, monkeypatch):
     """
     client, _ = env
     gate = threading.Event()
+    producing = threading.Event()
     real = m._export_produce
 
     def slow(job, tmp_dir):
+        producing.set()  # 到这里 run() 已经建好 job._tmp_dir——「在跑」的那一刻
         gate.wait(5)
         return real(job, tmp_dir)
 
@@ -932,6 +934,14 @@ def test_a_running_job_is_never_swept_by_the_ttl(env, monkeypatch):
     _, started = _post(client, _canvas(), path="/api/export/start")
     job = exportjob.get(started["job_id"])
     assert job is not None
+    # 前提要自己摆稳：这条用例要证的是「**在跑的**作业不被清」，而 run() 里
+    # `_tmp_dir` 在 `_plan_and_claim` 之后才建——不等 worker 走到 produce 就触发
+    # sweep，慢机器上看到的是 phase=preparing、_tmp_dir=None（还没建，不是被删了），
+    # 断言会把「还没建」报成「被删了」（#393 快线 backend-fast (3.14, 2) 红一次）。
+    assert producing.wait(5), "worker 5 秒内没走到 produce，这条用例什么都没量到"
+    assert job._tmp_dir is not None and job._tmp_dir.is_dir(), (
+        "produce 已开始却没有临时目录——前提不成立"
+    )
     # 把它伪装成"很久以前建的"，然后触发一次 prepare（`_sweep` 挂在那里）
     job.created_at = time.time() - 10 * exportjob._TTL_S
     client.post("/api/export/validate", json=_canvas(filename="别的"))
