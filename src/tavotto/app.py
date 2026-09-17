@@ -52,6 +52,7 @@ from .engine import (
     ai_history as engine_ai_history,
     ai_providers as engine_ai_providers,
     atomicio as engine_atomicio,
+    bakedbaseline as engine_baked,
     bootstrap as engine_bootstrap,
     brand as engine_brand,
     cli as engine_cli,
@@ -365,56 +366,33 @@ def prune_backups(root: Path, keep: int = BACKUP_KEEP) -> int:
     return max(0, len(dirs) - keep)
 
 
-def _baked_path(ctx: "ProjectCtx") -> Path:
-    return BAKED_DIR / f"{ctx.id}.json"
+def _baked_store() -> engine_baked.BakedBaselineStore:
+    """写回基线的存储（实现在 `engine/bakedbaseline.py`）。
 
-
-def _write_baked(path: Path, data: dict) -> None:
-    """写回基线的原子落盘（唯一实现见 engine/atomicio.py）。"""
-    engine_atomicio.write_json(path, data, indent=1)
-
-
-def _migrate_global_baked(ctx: "ProjectCtx", path: Path) -> None:
-    """旧的全局 baked_overrides.json → 本项目的分键文件（只读迁移，一次性）。
-
-    按注册表过滤：只有本项目认得的 stem 才搬过来，别的项目的同名 Fig1 留在
-    旧文件里等它自己迁移（所以**不删旧文件**）。迁完就写盘——哪怕一条都没搬
-    也要写出空 dict，否则每次读都要再翻一遍旧文件，而且「本项目确实没有基线」
-    与「还没迁移」这两种状态分不开。
+    **每次现建**而不是模块级单例：`BAKED_DIR` / `BAKED_PATH` 是测试会 monkeypatch 的
+    模块变量（迁移期保留），锁则是模块级那一把——迁移与读-改-写共用同一把锁。
     """
-    try:
-        legacy = json.loads(BAKED_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        legacy = {}
-    mine = {
-        stem: v
-        for stem, v in legacy.items()
-        if isinstance(v, dict) and ctx.registry.for_stem(stem) is not None
-    }
-    try:
-        _write_baked(path, mine)
-    except OSError:  # 写不进去（只读介质）：这次照旧读旧文件，不拦渲染
-        LOG.warning("baked 基线迁移写盘失败: %s", path, exc_info=True)
-        return
-    if mine:
-        LOG.info("baked 基线迁移: %d 个 stem → %s", len(mine), path.name)
+    return engine_baked.BakedBaselineStore(BAKED_DIR, BAKED_PATH, lock=_BAKED_LOCK)
+
+
+def _baked_path(ctx: "ProjectCtx") -> Path:
+    """本项目基线文件的落点（`<BAKED_DIR>/<项目 id>.json`）。"""
+    return _baked_store().path_for(ctx.id)
+
+
+def _stem_known(ctx: "ProjectCtx"):
+    """旧全局文件迁移时「哪些 stem 是本项目的」：注册表说了算。"""
+    return lambda stem: ctx.registry.for_stem(stem) is not None
 
 
 def load_baked(ctx: "ProjectCtx | None" = None) -> dict:
-    """本项目的 {stem: {"versions": [{"ts", "patches"}...]}}；末位 = 当前基线。"""
+    """本项目的 {stem: {"versions": [{"ts", "patches"}...]}}；末位 = 当前基线。
+
+    迁移期的薄包装：不传 ctx 就取默认项目。业务实现不知道「当前项目」，
+    见 `engine/bakedbaseline.py`。
+    """
     ctx = ctx if ctx is not None else current_ctx()
-    with _BAKED_LOCK:
-        path = _baked_path(ctx)
-        if not path.exists():
-            _migrate_global_baked(ctx, path)
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
-    for stem, v in list(data.items()):  # 迁移单版本旧格式
-        if "patches" in v:
-            data[stem] = {"versions": [{"ts": v.get("updated_at", ""), "patches": v["patches"]}]}
-    return data
+    return _baked_store().load(ctx.id, stem_known=_stem_known(ctx))
 
 
 def append_baked(
@@ -424,86 +402,16 @@ def append_baked(
     *,
     files: dict | None = None,
 ) -> None:
-    """读-改-写全程持锁（同一项目内），落盘走 `_write_baked` 的原子替换。
-
-    每条版本都带 `patch_hash`（`patchspec` 的权威实现）：写回响应里回的是同一个
-    值，用户/排障时能把「磁盘上这张图」与「哪一版 patches」对上。旧条目没有这个
-    键，读取端一律按缺失兼容。
-
-    `files` 是写回 commit 之后各目标文件的身份（`{名字: {sha1, mtime_ns, size}}`，
-    出自 `_write_source_files` 的 `file_identity`）：「磁盘文件已经是这个基线的
-    样子」这句话只在文件身份没变时成立，`_baked_matches_file` 靠它判基线失效。
-    """
+    """追加一版基线（`files` = 写回 commit 之后各目标文件的身份）。迁移期薄包装，同上。"""
     ctx = ctx if ctx is not None else current_ctx()
-    with _BAKED_LOCK:
-        data = load_baked(ctx)
-        entry = data.setdefault(stem, {"versions": []})
-        version: dict = {
-            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "patches": patches,
-            "patch_hash": engine_patchspec.patch_hash(patches),
-        }
-        if files:
-            version["files"] = files
-        entry["versions"].append(version)
-        entry["versions"] = entry["versions"][-50:]
-        _write_baked(_baked_path(ctx), data)
+    _baked_store().append(ctx.id, stem, patches, stem_known=_stem_known(ctx), files=files)
 
 
-def _baseline_version(stem: str, baked: dict) -> dict | None:
-    """baked 表由调用方传进来——它曾经是个模块级缓存，多项目下那就是
-    「A 项目扫一遍素材，B 项目的基线全被换掉」。"""
-    versions = (baked.get(stem) or {}).get("versions") or []
-    return versions[-1] if versions else None
-
-
-def _baseline_patches(stem: str, baked: dict) -> list:
-    version = _baseline_version(stem, baked)
-    return version["patches"] if version else []
-
-
-#: 旧 baked 条目（没记文件身份）退回「mtime 是否晚于写回时刻」判基线失效时的
-#: 宽限：commit 与 append_baked 在同一次请求里、间隔秒级，120s 足够宽；
-#: 更宽只会把「写回后马上被外部重写」误判成仍有效。
-_BAKED_TS_GRACE_S = 120
-
-
-def _baked_matches_file(version: dict, path: Path) -> bool:
-    """写回基线是否**仍烙在这份磁盘文件上**——基线有效性判据的唯一出处。
-
-    用户在 Tavotto 之外重跑自己的构建脚本会把产物刷回脚本原值，此后
-    「文件已是基线那个样子」静默失效：预览挂磁盘原图（脚本原值）、编辑态
-    显示 script+overrides，两者永久分叉且互不报错。所以基线必须绑定文件身份：
-
-    - `size` 不同 → 失效（不读内容）；
-    - `mtime_ns` 相同 → 有效（常态路径，零额外 IO）；
-    - mtime 变了但 size 相同 → 读一次 sha1 定夺——touch / 网盘同步会换 mtime
-      不换内容，误判失效的代价是 heavy 脚本白跑几分钟。
-
-    旧条目没有 `files`：退回「文件 mtime 是否晚于写回时刻 + 宽限」的保守判据；
-    `ts` 解析不动就维持旧行为（当作有效）——不拿猜出来的结论触发 heavy 重渲染。
-    """
-    try:
-        st = path.stat()
-    except OSError:
-        return False
-    files = version.get("files")
-    if isinstance(files, dict) and isinstance(files.get(path.name), dict):
-        ident = files[path.name]
-        if ident.get("size") != st.st_size:
-            return False
-        if ident.get("mtime_ns") == st.st_mtime_ns:
-            return True
-        try:
-            return _sha1_of(path) == ident.get("sha1")
-        except OSError:
-            return False
-    ts = str(version.get("ts") or "")
-    try:
-        baked_at = time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S"))
-    except (ValueError, OverflowError):
-        return True
-    return st.st_mtime <= baked_at + _BAKED_TS_GRACE_S
+# 三个纯判据与 sha1 只有 engine/bakedbaseline.py 一份实现；这里的名字是老调用方
+# （scan_panels / 写回 / 测试）用的别名，不是第二份。
+_baseline_version = engine_baked.baseline_version
+_baseline_patches = engine_baked.baseline_patches
+_baked_matches_file = engine_baked.baseline_matches_file
 
 
 class NoProjectError(Exception):
@@ -1571,12 +1479,7 @@ def _doc_objects(doc: dict) -> list[dict]:
     return [o for o in doc.get("objects", []) if isinstance(o, dict)]
 
 
-def _sha1_of(path: Path) -> str:
-    h = hashlib.sha1()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
-    return h.hexdigest()
+_sha1_of = engine_baked.sha1_of
 
 
 @app.post("/api/package")
@@ -2555,7 +2458,7 @@ def _clear_tutorial_local_state(pid: str, meta: dict) -> list[str]:
     全局 recent 不动（路径没变），遥测同意与 onboarding 状态不属于这里。
     """
     removed: list[str] = []
-    for target in (_autosave_path(str(meta["document_id"])), BAKED_DIR / f"{pid}.json"):
+    for target in (_autosave_path(str(meta["document_id"])), _baked_store().path_for(pid)):
         try:
             target.unlink()
         except FileNotFoundError:
