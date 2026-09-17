@@ -1,0 +1,12 @@
+# 浏览器 playground（引擎侧）
+
+> 原文出自 `src/tavotto/AGENTS.md`「浏览器 playground（引擎侧）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
+> 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+
+`engine/browser.py` 平铺 import `manifest/overrides/pathgeom/patchspec` 与
+`figcapture`（**语义与捕获策略都只有一份实现**，与 worker.py 同一条 sys.path
+纪律，不许出现 browser_manifest.py 这类分叉）。engine.zip 的模块白名单在
+`scripts/build_browser_playground.py` 的 `ENGINE_FILES`：**加一个 flat import
+就得同步加进去**。完整的 playground 纪律（Pyodide、完整性校验、案例库、
+预热）在 `web/AGENTS.md` 与 `docs/adr/0007-browser-playground.md` /
+`docs/adr/0011-playground-examples-first.md`。

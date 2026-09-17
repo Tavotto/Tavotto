@@ -1,5 +1,10 @@
 # Tavotto — 仓库级规则
 
+本文件是每次会话都要读的那一份，只放四样：任务路由、跨仓库不变量、验证入口、
+索引。各层规则的**全文按主题**放在 `docs/rules/`（总览与体积预算见
+`docs/rules/README.md`）：改哪一带，就按那一层速查表里的路径读那一份细则，
+不要求每次全读。
+
 ## 任务路由
 
 - 用户要求安装、运行或试用 Tavotto，而未要求修改源码：这是**用户安装任务**。
@@ -8,64 +13,19 @@
   `pnpm`、`npm`、`cargo`、Tauri、前端构建、`run.sh`、测试套件或源码
   editable install——源码开发只留给明确说「我要贡献/开发 Tavotto」的人。
 - 用户明确要求修改 Tavotto：根据改动目录读取**最近的**子目录 `AGENTS.md`
-  （索引见文末），并先读 `docs/adr/` 里对应的架构决策。
+  （索引见文末），它是那一层的速查表，每一行指向 `docs/rules/` 里的细则与
+  `docs/adr/` 里的架构决策——动手前先读对应的那几份。
 
 ## 不可破坏的跨仓库不变量
 
 - 产品名 **Tavotto**（拼写大小写固定）。品牌与格式常量唯一出处
   `web/src/lib/brand.ts` / `engine/brand.py`——界面、导出格式、仓库地址
   不得手写。Magplot/旧品牌是**干净断裂**，不加 LEGACY_ 常量
-  （仅有的两个 mm 前缀例外见 `src/tavotto/AGENTS.md`）。
-- **单一权威原则**：每条规则/判据只有一个出处，其余侧是它的镜像或消费者。
-  改动一侧必须同步另一侧的严格同源对：
-
-  | 两侧 | 看护 |
-  | --- | --- |
-  | `engine/patchspec.py` ↔ `workerd/src/patchspec.rs`+`pyfloat.rs` | `tests/golden/patch_vectors.json`（逐字节） |
-  | `engine/preflight.py` ↔ `web/src/lib/preflight.ts` | `tests/golden/preflight_vectors.json`（只比判据不比措辞） |
-  | `src/tavotto/richtext.py` ↔ `web/src/lib/richText.ts` | pytest 真 PDF 几何看护 |
-  | `src/tavotto/glyphplan.py` ↔ `web/src/lib/glyphPlan.ts` | `tests/golden/glyph_plan_vectors.json`（**算法同源、oracle 刻意不同源**：Python 问真字体，浏览器读生成的`pdfbackend/canvas_coverage.json`；表的漂移由 `scripts/gen_canvas_coverage.py --check` 单独看住） |
-  | `web/src/lib/shapeGeometry.ts` ↔ `pdfbackend` `_polygon_points`/`_dash_pattern` | pytest get_drawings() 几何看护 |
-  | `handoff.desktop_argv()` ↔ `src-tauri/src/main.rs::parse_open_args()` | 两侧单测 |
-  | `engine/locate.py` ↔ codex-plugin `handoff.py` | `test_install_locate.py::test_plugin_mirrors_the_locator` |
-  | codex-plugin `.mcp.json` ↔ `skills/tavotto-figure/agents/openai.yaml` 依赖声明 | `tests/test_codex_plugin.py` |
-  | 上面这一对在**已装副本**里也得同步（`tavotto codex install` 换启动命令时两侧一起改） | `tests/test_codex_install_cli.py` |
-  | 遥测 `EVENTS` 表 ↔ 代理白名单 | `test_client_and_proxy_contracts_match` |
-  | 遥测 `EVENTS` 表 ↔ `web/src/lib/telemetryDisclosure.ts` + 两份界面文案 | `tests/test_telemetry_disclosure.py`（顺序也比；界面上那份「会发送哪些数据」不许漏一条，也不许多写一条） |
-  | `engine/overrides.LEGEND_ENTRY_STYLE_PROPS`+`LEGEND_BINDINGS` ↔ `web/src/lib/legendModel.ts` | `tests/test_legend_model_pairs.py`（顺序也比） |
-  | `engine/documents.py` `SCHEMA_CURRENT` ↔ `web/src/types/document.ts` 同名常量 | `test_frontend_and_backend_agree_on_the_current_schema` |
-  | `engine/originalspec.py` `DPI_SOURCES` ↔ `web/src/lib/api.ts` `dpi_source` 联合 | `test_frontend_and_backend_agree_on_the_dpi_source_set` |
-  | `engine/profiles.py` `FALLBACK_MIN_FONT_SIZE_PT` ↔ `web/src/lib/profile.ts` 同名常量 | `test_font_floor_fallback_is_one_number_on_both_sides` |
-  | codex-plugin `bridge.export_raster_issues()` ↔ `web/src/lib/validation.ts` `exportContextRaw()` | `test_the_export_context_rule_is_one_rule_on_both_sides` |
-  | `engine/exportreq.py` 文件名规则 ↔ `web/src/lib/exportName.ts` | `tests/golden/filename_vectors.json`（八条原因逐条比，顺序也比） |
-  | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `web/src/lib/typography.ts` 同名常量 | `test_typography_families.py`（闭集 + 顺序） |
-
-  出版规范规则唯一权威 `src/tavotto/profiles/publication.json`（两侧求值器
-  共读，绝不硬编码第二份）。**「这份项目有什么问题」全产品只有一份服务**
-  （ADR 0030）：求值在 `preflight`，接成可定位问题在 `web/src/lib/validation.ts`，
-  编排在 `store/validationStore.ts`，定位在 `lib/issueFocus.ts`，措辞在
-  `lib/validationText.ts`——导出面板只消费摘要，不跑第二遍求值器。
-  **「这次导出要什么」全产品只有一个结构**（ADR 0031）：`engine/exportreq.py`
-  ↔ `web/src/lib/exportRequest.ts` 的 `ExportRequest`，`scope` 只有
-  `original` / `canvas` 两个取值，**`original` 段里没有 x/y/w/h 与页面尺寸**
-  （想让画布缩放漏进原图导出得先改结构）；作业生命周期只有
-  `engine/exportjob.py` 一份（临时目录 → 原子 replace，`partial` 是独立一档，
-  取消清临时文件）；PPI **只在有位图格式时是数字**，否则是 `null`。格式闭集
-  `pdf / png / eps / tiff`（ADR 0046）：TIFF 与 PNG 同一次栅格化，EPS 只有 worker
-  的 matplotlib 写得出——给不出的那一档如实逐项报失败，**不伪称矢量**。
-  **用户自建的样式 / 规范**在用户数据目录
-  `<data_dir>/profiles/`，磁盘入口只有 `engine/profilestore.py`；「任意 id →
-  规范」只有 `profilestore.resolve_spec()`；项目里存的是**绑定 + 规则全文快照**
-  （ADR 0029，「项目结果稳定」优先于「规范升级自动生效」）。默认规范的字号下限
-  **只有一个数 8 pt**。
-  **「一段文字长什么样」全产品只有一套词汇**（ADR 0032）：规范属性名 / 取值
-  语义 / 能力表 / property path / 校验全在 `web/src/lib/typography.ts`，写入经
-  `TypographyAdapter` 的两个适配器（图内 `setOverride(s)`、画布
-  `updateObjects`），控件只有 `controls/TypographyControls.tsx` 一份。
-  `weight` / `style` 两侧同一枚举，字号一律 pt；**「不支持」「没设过」
-  「多个值」是三个不同的答案**。画布文字能选的字体族是闭集（三个通用族），
-  与 `pdfbackend.CANVAS_TEXT_FAMILIES` 严格同源——**前端摆得出的，后端必须
-  画得出**。
+  （仅有的两个 mm 前缀例外见 `docs/rules/backend/brand-and-naming.md`）。
+- **单一权威原则**：每条规则/判据只有一个出处，其余侧是它的镜像或消费者；
+  改动一侧必须同步另一侧。二十来对**严格同源对**与各自的看护用例、以及
+  出版规范 / 导出请求 / 用户样式 / 文字词汇四条「全产品只有一份」的结构，
+  全文在 `docs/rules/repo/same-origin-pairs.md`——改到表里任一侧先开那张表。
 - **安全边界**：会话认证（ADR 0008）不许被任何新端点绕过；worker 沙盒与
   `Path.unlink` 守卫不放松（safe 档的 cwd 可按项目显式切到脚本目录，ADR 0047——
   守卫原样，变的只是相对路径写到哪，且要用户按项目确认）；`pdfbackend/pymupdf_backend.py` 是全仓库唯一
@@ -88,44 +48,14 @@
 ## 判据的主语（写判据之前）
 
 写门禁 / 断言最常犯的错**不是实现写错，是判据问错了主语**——它量的不是你以为
-的那个对象，于是恒真或恒假。**跑测试发现不了：它一直是绿的。** v0.9 发版当天
-同一形状出现十几次，之后又在 Windows 路径、轮询计数、备份存档、FD 检查、泄漏
-断言的归属、性能判据的维度上照原样复发——这是个会连着犯的家族，不是一次失误。
-
-**动键盘之前先把主语说出口：谁的、哪个进程、哪个时刻、哪个维度。** 四问哪一条
-答不上来，就先答上来再写。
-
-| 判据问成了 | 该问的 | 漏掉的那一问 |
-| --- | --- | --- |
-| `ulimit -n` 有多大 | **runner 服务**的限制有多大 | 谁的 |
-| 这个文件里有没有裸 Request | **所有**起实例的脚本里有没有 | 谁的 |
-| 登录 shell 的 PATH | **服务进程**的 PATH（systemd → `.path` → `.env`，后面的赢） | 哪个进程 |
-| 父进程解码对不对 | 子进程**编码**对不对（管道有两端） | 哪个进程 |
-| `/api/version` 通不通 | **带认证的**端点通不通（公共端点没就绪时也通） | 哪个时刻 |
-| 缓存键含不含这一维 | 缓存**热**了之后再读还含不含（先摆状态才首读的话永远量不到） | 哪个时刻 |
-| 有没有写 `text=True` | 语义上是不是真的文本模式（给了 `encoding` / `errors` 就是） | 哪个维度 |
-| 源码里有没有这个名字 | 有没有真实**调用**（定义、注释、docstring 都满足子串） | 哪个维度 |
-
-配套三条：
-
-- **判源码结构用 AST，不用子串。** 注释满足它、函数定义满足它、目标写成变量又
-  匹配不到，每补一个洞露出下一个；要 `ast` 的真实 Call 节点 + 一层可达性，
-  剪掉 `if False:` 那种死分支。最高发的入口是**判据匹配到了散文**——包括自己的
-  注释、自己的 docstring、自己在告诉用户「去跑这条命令」的那句 `printf`。
-  因此判据尽量写成**正面形式**（「必须出现 `> x.log 2>&1`」而不是「不许出现
-  `2>/dev/null`」），否定断言会被解释它的那句话咬到。
-- **判不出就别判，把盲点写在明处；表达不了判据时收窄被判对象。**「排空是否与
-  子进程并发」静态证不了，那就改判「启动器一律不许开这个管道」，逃生口整个去掉。
-  假装覆盖到了比不覆盖更坏；**一个语义错的精确值也比一个诚实的粗略值更坏**
-  （`/proc/<pid>` 的 mtime 有纳秒，但它未必是进程启动那一刻）。
-- **反证要先验落点。** 「拿掉修复看它红不红」有相当一部分「没红」是变异脚本自己
-  没生效（没匹配上、或打在了同名串的更早一处）。顺序是：先断言目标串存在 →
-  再断言变异落在预期位置 → 最后才看用例红不红，结论**用退出码判**。每写一条
-  用例立刻变异一次，别攒到最后。
-
-**判据与豁免都带着它成立的前提，而前提失效时没有任何机制会提醒你**——当时正确
-的豁免会安静地变成盲区。本节自己就是例子：#59 让位给 #64 的理由写下时成立，
-8 小时后 #64 未合并即关闭。所以把前提写在判据旁边，让下一个人判得出它还成不成立。
+的那个对象，于是恒真或恒假，而测试一直是绿的。这是个会连着犯的家族。
+**动键盘之前先把主语说出口：谁的、哪个进程、哪个时刻、哪个维度**——哪一问
+答不上来，先答上来再写。配套三条：**判源码结构用 AST 不用子串**，判据写成
+正面形式（否定断言会被解释它的那句话咬到）；**判不出就别判**，把盲点写在
+明处、收窄被判对象，假装覆盖比不覆盖更坏；**反证先验落点**——目标串在 →
+变异落在预期位置 → 才看红不红，结论用退出码，每写一条用例立刻变异一次。
+判据与豁免都带着它成立的前提，把前提写在判据旁边。八个「问错主语」的实例与
+全文在 `docs/rules/repo/predicate-subject.md`。
 
 ## 最常用验证
 
@@ -138,42 +68,36 @@ cd workerd && cargo test && cargo clippy --all-targets -- -D warnings && cargo f
 python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 ```
 
-- **改完 Python 先过 Ruff，再跑针对性 pytest，最后才是完整验证。**
-  开发时 `ruff check . --fix && ruff format .` 让它替你修；提交前跑
-  `ruff check . && ruff format --check .`——**与 CI 那一格逐字相同**，
-  本地绿就不会在 CI 上因为格式再红一轮。
-  全仓 20~30 ms 回来，挡的是拼错的名字、没用的 import、没用的局部变量那一类
-  ——它们不值得先花十分钟跑完整套。能自动修的用 `ruff check . --fix`（只应用
-  安全修复；`--unsafe-fixes` 会动语义，要逐条看过再用）。规则集在
-  `pyproject.toml` 的 `[tool.ruff]`（lint、import 排序、formatter **均已启用**），
-  细节见 `docs/ci/ruff.md`。示例图库 / playground 示例 / CompatBench 语料
-  **不参与格式化**，它们的排版属于内容。
-- **新增一处会被塞进 `sys.path` 的仓库内源码根时，必须同步审查
-  `[tool.ruff]` 的 `src`**——否则从那个目录平铺 import 的模块会被 ruff 判成
-  第三方，排进 matplotlib 那一组。**在已有源码根下新增模块不用动它**，
-  ruff 按路径自然认出来。**Ruff 不替代任何语义门禁**，它只是最便宜的第一层。
+- **改完 Python 先过 Ruff，再跑针对性 pytest，最后才是完整验证。** 提交前那条
+  与 CI 那一格逐字相同；`--unsafe-fixes` 会动语义，要逐条看过再用。规则集在
+  `pyproject.toml` 的 `[tool.ruff]`，细节与取舍在 `docs/ci/ruff.md`。示例图库 /
+  playground 示例 / CompatBench 语料**不参与格式化**。**Ruff 不替代任何语义门禁。**
+- **新增一处会被塞进 `sys.path` 的仓库内源码根时，必须同步审查 `[tool.ruff]`
+  的 `src`**——否则从那个目录平铺 import 的模块会被判成第三方。在已有源码根
+  下新增模块不用动它。
 - 改了 `src/tavotto/pdfbackend/` 里字体相关的东西、或换了 PyMuPDF 版本：
-  `python scripts/gen_canvas_coverage.py`（`--write` 重新生成）——那张覆盖表
-  是前端「这个字导出后是不是方框」的唯一依据，漂了不看住的表现是
-  「预览说画得出、导出上是个方框」。
+  `python scripts/gen_canvas_coverage.py --write`——那张覆盖表是前端「这个字
+  导出后是不是方框」的唯一依据。
 - 改了 `web/src` 或引擎四模块（manifest/overrides/pathgeom/patchspec）：
-  playground 产物 `python scripts/build_browser_playground.py`（网站仓库提交它，`--check`
-  防漂移）；Codex 画布 `python scripts/build_mcp_widget.py` **只为本地试用**——它不进 git
-  （ADR 0043），CI 从每次 checkout 现建并验证，用户装到的来自发行分支 `plugin-stable`。
-- 引擎改动后重启服务：
-  `lsof -ti:5089 -sTCP:LISTEN | xargs kill; ./run.sh --no-browser`。
+  playground 产物 `python scripts/build_browser_playground.py`（网站仓库提交它，
+  `--check` 防漂移）；Codex 画布 `python scripts/build_mcp_widget.py` **只为本地
+  试用**——它不进 git（ADR 0043），CI 从每次 checkout 现建并验证。
+- 引擎改动后重启服务：`lsof -ti:5089 -sTCP:LISTEN | xargs kill; ./run.sh --no-browser`。
 - 完整验证链（CompatBench / 等价性矩阵 / 不变式 / nightly / E2E / 性能基线）
-  见 `.github/AGENTS.md`。
+  见 `.github/AGENTS.md`。指导文档自身的门禁：`tests/test_agents_rules_index.py`
+  （速查表 ↔ 细则一一对应、引用的路径 / 用例 / ADR 都在），体积按实际加载路径
+  量：`python scripts/dev/agents_budget.py`。
 
 ## 子系统索引（改哪里，先读哪份）
 
 | 目录 | 规则文件 | 覆盖 |
 | --- | --- | --- |
-| `src/tavotto/`（含 `engine/`） | `src/tavotto/AGENTS.md` | Flask、渲染引擎、worker 协议、PDF 后端、写回、编码 Agent 桥、遥测、预检、外部交接 |
-| `web/` | `web/AGENTS.md` | 前端、渲染态、预览平面、命中几何、i18n、playground、UI 视觉纪律 |
+| `src/tavotto/`（含 `engine/`） | `src/tavotto/AGENTS.md` → `docs/rules/backend/` | Flask、渲染引擎、worker 协议、PDF 后端、写回、编码 Agent 桥、遥测、预检、外部交接 |
+| `web/` | `web/AGENTS.md` → `docs/rules/frontend/` | 前端、渲染态、预览平面、命中几何、i18n、playground、UI 视觉纪律 |
 | `src-tauri/` | `src-tauri/AGENTS.md` | 桌面壳、ACL、更新通道、安装界面、壳内 i18n |
 | `workerd/` | `workerd/AGENTS.md` | Rust supervisor |
 | `packaging/` | `packaging/AGENTS.md` | wheel/sdist、内置渲染 runtime、PyInstaller、macOS 签名 |
 | `codex-plugin/` | `codex-plugin/AGENTS.md` | Codex 插件、技能、MCP server、内嵌画布、首次使用契约 |
 | `.github/` | `.github/AGENTS.md` | CI 分层、门禁纪律、验证链、发布链 |
+| 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语 |
 | 架构决策 | `docs/adr/` | 改动前先读对应 ADR |
