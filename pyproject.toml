@@ -143,6 +143,9 @@ only_mutate = [
     "src/tavotto/engine/locate.py",
     "src/tavotto/engine/preflight.py",
     "src/tavotto/engine/profiles.py",
+    # 2026-09-17 审计 PR E 从 app.py 提出来的写回基线：纯标准库、逻辑密集、算错了会安静地
+    # 让预览停在磁盘原图上（基线有效性判据）。看护 tests/test_baked_baseline_store.py。
+    "src/tavotto/engine/bakedbaseline.py",
 ]
 pytest_add_cli_args = ["-q", "-p", "no:cacheprovider"]
 
