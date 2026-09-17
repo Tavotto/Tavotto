@@ -26,6 +26,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# 报告里全是中文，而它会被 `subprocess.run(capture_output=True)` 调起来：Windows 管道下
+# stdout 退回系统区域编码，第一条中文就 UnicodeEncodeError（tests/test_windows_regressions.py 钉着）。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 SRC = ROOT / "src"
 PKG = SRC / "tavotto"
