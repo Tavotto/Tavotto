@@ -1,0 +1,19 @@
+name: F-10 reverse probe (do not merge)
+
+# ADMIN_HANDOFF_RUNNER_POOL F-10：公开仓库里一个同仓库分支 PR 加一行
+# `runs-on: [self-hosted, tavotto-lab]`，预期这个 job **永远 queued**——
+# 公开仓库已经没有任何带这个标签的 runner（F-8 之后 total_count = 0）。
+# 这是 CI04 §2.2 那个洞已关掉的直接证据。本 PR 只为观测，观测完即关。
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: [self-hosted, tavotto-lab]
+    timeout-minutes: 5
+    steps:
+      - run: echo "如果你看到这一行，公开仓库里还有能接 tavotto-lab 的 runner——F-10 失败"
