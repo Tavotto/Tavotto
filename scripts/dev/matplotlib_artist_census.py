@@ -49,6 +49,7 @@ from matplotlib.axis import Axis  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
 from matplotlib.text import Text  # noqa: E402
 
+import axestraversal as axestraversal_mod  # noqa: E402
 import manifest as manifest_mod  # noqa: E402
 import overrides as overrides_mod  # noqa: E402
 from overrides import SeriesGroup, _cls_key  # noqa: E402
@@ -113,7 +114,7 @@ def census(fig) -> dict:
     # `manifest.instrument` 早就按它遍历了，普查跟不上的话，插图里漏掉的
     # artist 在报告里不出现、`n_axes` 也少数——**一份报平安的普查比没有普查
     # 更坏**，而普查存在的唯一理由就是回答「有没有东西被我们悄悄漏掉了」。
-    _census_axes, _child_ids, _parasite_ids = manifest_mod._ordered_axes(fig)  # noqa: SLF001
+    _census_axes, _child_ids, _parasite_ids = axestraversal_mod.ordered_axes(fig)
     for owner in [fig] + list(_census_axes):
         for child in owner.get_children():
             if isinstance(child, (Axes, Axis)):

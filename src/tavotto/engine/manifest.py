@@ -28,6 +28,7 @@ from matplotlib.path import Path
 from matplotlib.text import Text
 
 import pathgeom
+from axestraversal import ordered_axes
 from overrides import (
     _ARROWSTYLES,
     _CB_EXTENDS,
@@ -155,64 +156,6 @@ def _register(
             **flags,
         }
     )
-
-
-def _ordered_axes(fig) -> tuple[list, set, set]:
-    """(全部 axes（含子 axes 与寄生轴）, 子 axes 的 id 集合, 寄生轴的 id 集合)。
-
-    `fig.axes` 只收 `add_subplot` / `add_axes` 建出来的那些。有**两族**轴不在
-    里面，各挂在各自的属性上：
-
-      * **子 axes**：`ax.inset_axes(...)` 与 `ax.secondary_[xy]axis(...)`
-        建出来的挂在 `ax.child_axes` 上——不遍历它们的话，插图里的曲线选不中、
-        次坐标轴的标签也改不了；
-      * **寄生轴**：`mpl_toolkits.axes_grid1`（与 `axisartist`）的
-        `host_subplot(...).twinx()` 建出来的挂在 `host.parasites` 上。它们
-        **既不在 `fig.axes` 也不在 `child_axes`**（宿主在自己的 `draw()` 里把
-        `ax.get_children()` 临时接到孩子列表上代画），于是整条第二组数据连同
-        它的右轴一起不进 manifest：列不出、也改不了，而且**不报错**
-        （issue #217）。
-
-    **子 axes 与寄生轴一律排在所有 `fig.axes` 之后**，编号继续 `axes_{i}`。
-    这条不是风格问题：`axes_i` 会进用户文档（override 的 gid），存量文档里的
-    编号一个字节都不能变。插在中间会让「同一张图、同一个 gid」在升级前后指向
-    不同的 axes——那是数据级的错位。
-
-    **寄生轴单独走第二趟，不与 `child_axes` 合成一趟**，理由同上：一张
-    `host_subplot` 上既开了 `twinx()` 又开了 `inset_axes()` 的图，合成一趟会
-    按属性先后把寄生轴排到插图前面，把那个插图**已经发出去的** `axes_i` 顶掉
-    一位。两趟走完，本次改动之前的那份序列是新序列的**严格前缀**——存量文档
-    里的每一个 `axes_i` 都还指向同一个 axes，新认出来的只在末尾追加。
-
-    逐层广度优先（同一层的兄弟排完再下一层），所以同一个脚本每次跑出来的
-    gid 串完全一致；插图里再开插图、寄生轴上再开插图也照样确定。按 `id()`
-    去重防环。
-    """
-    out = list(fig.axes)
-    seen = {id(a) for a in out}
-    children: set = set()
-    parasites: set = set()
-
-    def _absorb(frontier: list, sources: tuple[tuple[str, set], ...]) -> None:
-        """把 `sources` 点名的属性逐层收进 `out`（每条是「属性名, 归入的集合」）。"""
-        while frontier:
-            nxt = []
-            for parent in frontier:
-                for attr, bucket in sources:
-                    for kid in getattr(parent, attr, None) or []:
-                        if id(kid) in seen:
-                            continue
-                        seen.add(id(kid))
-                        bucket.add(id(kid))
-                        out.append(kid)
-                        nxt.append(kid)
-            frontier = nxt
-
-    _absorb(list(out), (("child_axes", children),))
-    # 第二趟从**当前全部**已知 axes 起步：寄生轴可能开在插图上，插图也可能开在
-    # 寄生轴上，两个方向都要走得到。第一趟收过的由 `seen` 挡住，不会重排。
-    _absorb(list(out), (("parasites", parasites), ("child_axes", children)))
-    return out, children, parasites
 
 
 def _is_secondary_axis(ax) -> bool:
@@ -489,17 +432,17 @@ def instrument(state: FigState) -> None:
         _register_legend(state, f"fig.legend_{i}", leg)
 
     # 色条反查：mappable.colorbar → 宿主轴（与色条方向事务共用同一份实现）
-    # **传 `_ordered_axes` 的结果**：插图（`ax.inset_axes()`）只在 `child_axes`
+    # **传 `axestraversal.ordered_axes` 的结果**：插图（`ax.inset_axes()`）只在 `child_axes`
     # 里，`fig.axes` 扫不到它，于是挂在插图上的色条整个不被认出来——连带那条
     # 色条的内部件（`cb.solids` / `cb.dividers`）会被当成用户图元登记，而它们
-    # 每次 `_draw_all()` 都被删掉重建。遍历的权威只有 `_ordered_axes` 一处。
-    _all_axes_for_cbar, _, _ = _ordered_axes(fig)
+    # 每次 `_draw_all()` 都被删掉重建。遍历的权威只有 `axestraversal.ordered_axes` 一处。
+    _all_axes_for_cbar, _, _ = ordered_axes(fig)
     cbar_of_ax, host_of_cbax = colorbar_maps(fig, _all_axes_for_cbar)
     state.colorbar_axes = set(cbar_of_ax)
     state.axes_follow = follow_map(fig, cbar_of_ax, host_of_cbax, _all_axes_for_cbar)
     # `fig.axes` 之后再接子 axes（inset / secondary），编号继续往下走——
-    # 存量文档里的 axes_i 因此一个字节不变，见 `_ordered_axes`。
-    all_axes, child_ids, parasite_ids = _ordered_axes(fig)
+    # 存量文档里的 axes_i 因此一个字节不变，见 `axestraversal.ordered_axes`。
+    all_axes, child_ids, parasite_ids = ordered_axes(fig)
     gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(all_axes)}
     cbar_ordinal: dict[int, int] = {}
     # 插图与次坐标轴**各数各的**：共用一个计数器会让「只有一个次坐标轴」的图
@@ -911,7 +854,7 @@ def _bind_legends(state: FigState) -> None:
         else:
             cands = [(g, a) for _o, g, a in sources]
             auto = []
-            for ax in _ordered_axes(state.fig)[0]:
+            for ax in ordered_axes(state.fig)[0]:
                 try:
                     auto.extend(ax.get_legend_handles_labels()[0])
                 except Exception:  # noqa: BLE001
@@ -930,13 +873,13 @@ def _internal_ids(fig, colorbar_axes=()) -> set[int]:
 
     它们由 `axes_i` 那个元素代表，不该被普查报成「漏掉的 artist」。
 
-    **必须走 `_ordered_axes`，不是 `fig.axes`**：`inset_axes` /
+    **必须走 `axestraversal.ordered_axes`，不是 `fig.axes`**：`inset_axes` /
     `secondary_[xy]axis` 挂在 `ax.child_axes` 上。少收它们的话，普查会为每个
     插图凭空报出「漏掉了一个 Rectangle 和四条 Spine」——那正是「普查一旦开始
     喊狼来了，真正的缺口就没人看了」。这条与 `census` 的遍历必须同源。
     """
     ids = {id(fig.patch)}
-    ordered, _child_ids, _parasite_ids = _ordered_axes(fig)
+    ordered, _child_ids, _parasite_ids = ordered_axes(fig)
     for ax in ordered:
         ids.add(id(ax))
         ids.add(id(ax.patch))
@@ -979,13 +922,13 @@ def census(fig, state: FigState) -> list[dict]:
             known.update(id(m) for m in art.members())
             known.update(id(m) for m in (art.artists if isinstance(art.artists, list) else []))
     seen: dict[tuple, int] = {}
-    # **必须走 `_ordered_axes`，不是 `fig.axes`**：`ax.inset_axes()` 与
+    # **必须走 `axestraversal.ordered_axes`，不是 `fig.axes`**：`ax.inset_axes()` 与
     # `ax.secondary_[xy]axis()` 建出来的挂在 `ax.child_axes` 上，`in fig.axes`
-    # 为 False。`instrument` 早就按 `_ordered_axes` 遍历了，普查却只走
+    # 为 False。`instrument` 早就按 `ordered_axes` 遍历了，普查却只走
     # `fig.axes`——于是插图里漏掉的 artist **在普查里也不出现**，报告照样说
     # 「没漏」。一个报平安的普查比没有普查更坏，而它正是「不许静默消失」
     # 那条不变式的诊断面。编号也必须同源，否则 `where` 指向另一个 axes。
-    ordered, _child_ids, _parasite_ids = _ordered_axes(fig)
+    ordered, _child_ids, _parasite_ids = ordered_axes(fig)
     for gid, owner in [("figure", fig)] + [(f"axes_{i}", ax) for i, ax in enumerate(ordered)]:
         try:
             children = list(owner.get_children())

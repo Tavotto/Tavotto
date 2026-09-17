@@ -97,6 +97,7 @@ _PHASE1 = ("figcapture", "patchspec")
 #: figcapture」同款）。
 _PHASE2 = (
     "pathgeom",
+    "axestraversal",
     "overrides",
     "manifest",
     "previewbudget",

@@ -101,7 +101,7 @@ from matplotlib.image import AxesImage
 from matplotlib.lines import Line2D
 
 import previewbudget
-from manifest import _ordered_axes
+from axestraversal import ordered_axes
 
 __all__ = [
     "FAMILIES",
@@ -661,7 +661,7 @@ def _visible(artist) -> bool:
 def _iter_artists(fig, skip_axes):
     """要算账的 artist，**确定性树序**，且**只算后端真会画的那些**。
 
-    遍历的 axes 集合借 `manifest._ordered_axes`：`ax.inset_axes()` 与
+    遍历的 axes 集合借 `axestraversal.ordered_axes`：`ax.inset_axes()` 与
     `secondary_[xy]axis()` 建出来的子 axes **不在 `fig.axes` 里**，插图里的
     大 mesh 漏掉了就是「分析器说这张图很小」。哪些 axes 存在只有一个答案，
     这里不另立一份。
@@ -674,7 +674,7 @@ def _iter_artists(fig, skip_axes):
     `ax.patches` / `ax.texts` 有意不算：一个 patch 是一个节点，它们撑不爆
     DOM；漏掉的那点顶点由 Session 01 按字节的硬闸兜底（见模块头「已知盲区」）。
     """
-    for ax in _ordered_axes(fig)[0]:
+    for ax in ordered_axes(fig)[0]:
         if ax in skip_axes or not _visible(ax):
             continue
         for artist in (*ax.collections, *ax.images, *ax.lines, *ax.artists):

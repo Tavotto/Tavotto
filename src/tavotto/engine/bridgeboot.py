@@ -29,10 +29,12 @@ no attribute 'load_runs'）指向的方向与真实原因毫无关系。
    （原本没有就删掉）；
 3. `sys.path` 逐字还原。
 
-`overrides` 里那两处 late import（`from manifest import _ordered_axes`）
-因此不能是裸名——它们在**用户代码跑起来之后**才执行，裸名会命中用户的文件。
-那两处走 `overrides._sibling()`，按模块自己的包前缀解析（safe worker 的
-平铺形态下前缀为空，行为一个字节没变）。
+**延后到用户代码跑起来之后才执行的 import 不能是裸名**——那时 engine 目录已经
+从 `sys.path` 收回，裸名会命中用户的文件。`overrides` 曾为此经 `_sibling()` 按
+包前缀反取 `manifest._ordered_axes`；2026-09-17 遍历权威提成 `axestraversal`
+之后，`overrides` 与 `manifest` 都在模块层平铺 import 它（装载期解析，与
+`import pathgeom` 同一条路），引擎里不再有 late import。将来要加的话，按
+`__name__` 的包前缀解析，别写裸名。
 
 ## 二、为什么不能提前 import pyplot
 
@@ -77,7 +79,7 @@ PRIVATE_PKG = "tavotto_bridge_runtime"
 #: 需要装进用户进程的引擎模块（装载顺序无关，import 系统自己解依赖）。
 #: `figcapture` / `patchspec` 是纯标准库；其余三个要 matplotlib/numpy，
 #: 所以它们**只在捕获之后**才装（见 `bridge_runner` 的两阶段装载）。
-ENGINE_SIBLINGS = ("figcapture", "patchspec", "pathgeom", "overrides", "manifest")
+ENGINE_SIBLINGS = ("figcapture", "patchspec", "pathgeom", "axestraversal", "overrides", "manifest")
 
 #: 装载后必须还给用户的顶层名字（= ENGINE_SIBLINGS + **它们平铺 import 的
 #: 整条传递闭包**）。

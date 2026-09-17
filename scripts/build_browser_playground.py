@@ -54,6 +54,7 @@ RUNTIME_LOCK = ROOT / "packaging" / "playground-runtime.json"
 #: 进 engine.zip 的引擎模块——manifest/overrides/pathgeom/patchspec 与桌面
 #: worker 是同一份文件（语义只有一份实现，ADR 0007）；browser* 是浏览器适配层。
 ENGINE_FILES = [
+    "axestraversal.py",
     "browser.py",
     "browser_imports.py",
     "figcapture.py",

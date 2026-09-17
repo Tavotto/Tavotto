@@ -36,6 +36,7 @@ from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Arc, Circle, Rectangle  # noqa: E402
 from matplotlib.text import Text  # noqa: E402
 
+import axestraversal as AX  # noqa: E402
 import manifest as M  # noqa: E402
 import overrides as O  # noqa: E402
 
@@ -228,7 +229,7 @@ def completeness(fig, state, man) -> dict:
     # 与 `census` / `instrument` 同一条遍历：`inset_axes` 与 `secondary_[xy]axis`
     # 挂在 `ax.child_axes` 上，**不在 `fig.axes` 里**。只走 fig.axes 的话，
     # 插图里漏掉的 artist 连这条不变式都看不见——探针自己成了那个报平安的门禁。
-    ordered, _child_ids, _parasite_ids = M._ordered_axes(fig)  # noqa: SLF001
+    ordered, _child_ids, _parasite_ids = AX.ordered_axes(fig)
     for owner_gid, owner in [("figure", fig)] + [(f"axes_{i}", ax) for i, ax in enumerate(ordered)]:
         for child in owner.get_children():
             if id(child) in known or isinstance(child, (Axes, Axis)):
@@ -259,7 +260,7 @@ def completeness(fig, state, man) -> dict:
     # gid 编号必须与产品同源（`_ordered_axes` 是那个唯一权威），这里要的
     # 独立性是**「哪些轴是色条轴」这个判据**：`cax._colorbar` 而不是
     # `mappable.colorbar`。
-    _cb_axes = M._ordered_axes(fig)[0]  # noqa: SLF001
+    _cb_axes = AX.ordered_axes(fig)[0]
     gid_of_ax = {a: f"axes_{i}" for i, a in enumerate(_cb_axes)}
     mpl_cbar_gids = {gid_of_ax[a] for a in _cb_axes if getattr(a, "_colorbar", None) is not None}
     cbar_leaks = sorted(
