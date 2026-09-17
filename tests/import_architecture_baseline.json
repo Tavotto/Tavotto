@@ -1,0 +1,175 @@
+{
+  "_comment": [
+    "src/tavotto 运行时 import 图的旧债基线与登记表。tests/test_import_architecture.py 读它：",
+    "  cycles           已知的环（强连通分量）。新环、旧环多出成员或内部边 → 红；旧环消失 → 也红，把它从这里删掉。",
+    "  dynamic_calls    解析不了目标的动态 import 逐条登记：给出目标（仓库模块）或说明目标是用户代码 / 标准库。",
+    "  extra_edges      由登记推出的边（动态装载器的目标归属到真正决定名字的那个调用方）。",
+    "  layer_violations 已知的跨层反向边（目前为零；加一条要写理由）。",
+    "报告：python tests/support/importgraph.py。基线是登记表不是豁免表：每一条都要说得出为什么、以及什么时候能删。"
+  ],
+  "dynamic_calls": [
+    {
+      "from": "tavotto/engine/overrides.py",
+      "call": "importlib.import_module(full)",
+      "targets": [
+        "tavotto/engine/manifest.py"
+      ],
+      "reason": "`_sibling(\"manifest\")` 的机制：manifest 在模块层 import overrides，overrides 反过来在 FigState 里延后取 manifest._ordered_axes（overrides.py 约 130 行）。这就是 manifest ↔ overrides 那个环的反向边；PR D 拆掉它之后删掉这条登记与 cycles 里那个环。"
+    },
+    {
+      "from": "tavotto/engine/bridgeboot.py",
+      "call": "importlib.import_module(n)",
+      "targets": [],
+      "reason": "通用装载器，名字由调用方 bridge_runner 给（_PHASE1 / _PHASE2）；边归属到 bridge_runner，见 extra_edges。"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "call": "importlib.import_module(self.script.stem)",
+      "targets": [],
+      "reason": "装的是用户的绘图脚本，不是仓库模块。"
+    }
+  ],
+  "extra_edges": [
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/figcapture.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE1)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/patchspec.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE1)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/pathgeom.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/overrides.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/manifest.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/previewbudget.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/preview_complexity.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/preview_hybrid.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/figsession.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/wireproto.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    }
+  ],
+  "cycles": [
+    {
+      "members": [
+        "tavotto/engine/manifest.py",
+        "tavotto/engine/overrides.py"
+      ],
+      "edges": [
+        [
+          "tavotto/engine/manifest.py",
+          "tavotto/engine/overrides.py"
+        ],
+        [
+          "tavotto/engine/overrides.py",
+          "tavotto/engine/manifest.py"
+        ]
+      ],
+      "load_time": false,
+      "reason": "manifest 在模块层平铺 `from overrides import (…)`；overrides.FigState 在函数里经 `_sibling(\"manifest\")` 反取 `_ordered_axes`（overrides.py 约 130 行）。逻辑上是双向依赖，加载期不成环（反向那步延后到调用时）。2026-09-17 审计任务书点名的两处环之一。",
+      "since": "2026-08（_sibling 为 native bridge 命名空间而写）",
+      "remove_when": "PR D：把 axes 遍历权威提到不依赖 manifest 构建也不依赖 overrides 分发的底层模块（只迁移一份 `_ordered_axes`），overrides 不再需要 `_sibling(\"manifest\")`"
+    },
+    {
+      "members": [
+        "tavotto/engine/bootstrap.py",
+        "tavotto/engine/managedenv.py",
+        "tavotto/engine/pool.py"
+      ],
+      "edges": [
+        [
+          "tavotto/engine/bootstrap.py",
+          "tavotto/engine/pool.py"
+        ],
+        [
+          "tavotto/engine/managedenv.py",
+          "tavotto/engine/bootstrap.py"
+        ],
+        [
+          "tavotto/engine/pool.py",
+          "tavotto/engine/bootstrap.py"
+        ],
+        [
+          "tavotto/engine/pool.py",
+          "tavotto/engine/managedenv.py"
+        ]
+      ],
+      "load_time": false,
+      "reason": "全部是函数体内的延后 import：pool 起 worker 时问 bootstrap / managedenv 要解释器，bootstrap 与 managedenv 又回头用 pool 的探测与失效接口。加载期不成环；逻辑上「解释器从哪来」与「worker 池」互相知道对方。",
+      "since": "2026-08-27（ADR 0019 受控依赖修复）",
+      "remove_when": "把「解释器候选 / 环境指纹」这层事实抽成 pool / bootstrap / managedenv 都只单向依赖的底层模块时删掉"
+    },
+    {
+      "members": [
+        "tavotto/engine/diagnostics.py",
+        "tavotto/engine/telemetry.py",
+        "tavotto/engine/updater.py"
+      ],
+      "edges": [
+        [
+          "tavotto/engine/diagnostics.py",
+          "tavotto/engine/telemetry.py"
+        ],
+        [
+          "tavotto/engine/diagnostics.py",
+          "tavotto/engine/updater.py"
+        ],
+        [
+          "tavotto/engine/telemetry.py",
+          "tavotto/engine/diagnostics.py"
+        ],
+        [
+          "tavotto/engine/updater.py",
+          "tavotto/engine/telemetry.py"
+        ]
+      ],
+      "load_time": false,
+      "reason": "diagnostics 在模块层 import telemetry 与 updater（诊断包要报同意态与更新通道）；telemetry 在函数里回头问 diagnostics.install_kind()（安装方式进事件属性），源码注释写明是刻意延迟、免得遥测被 import 那一刻拉起 pool / runtime / ai_bridge。反向那步延后，加载期不成环。",
+      "since": "2026-08-20（遥测）",
+      "remove_when": "「安装方式」的判据抽成 telemetry 与 diagnostics 都只单向依赖的底层模块时删掉"
+    }
+  ],
+  "layer_violations": []
+}
