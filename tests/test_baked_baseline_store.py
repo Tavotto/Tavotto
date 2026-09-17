@@ -204,3 +204,36 @@ def test_legacy_entry_without_files_uses_ts_with_grace(tmp_path):
     # ts 解析不动：维持旧行为（当作有效），不拿猜出来的结论触发 heavy 重渲染
     assert bb.baseline_matches_file({"ts": "not-a-time"}, p) is True
     assert bb.baseline_matches_file({}, p) is True
+
+
+# ---------------------------------------------------------------- 两条 OSError 分支（覆盖基线点名的缺口）
+
+
+def test_migration_write_failure_falls_back_to_reading_legacy(store, tmp_path, monkeypatch):
+    """只读介质：迁移写不进去时不拦渲染——这次照旧从旧文件读，下次再试。"""
+    legacy = {"Fig1": {"versions": [{"ts": "t", "patches": [{"gid": "g"}]}]}}
+    (tmp_path / "legacy.json").write_text(json.dumps(legacy), encoding="utf-8")
+
+    def refuse(_path, _data):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(store, "_write", refuse)
+    # 分键文件没写出来 → load 读不到分键文件 → 回空；但不抛、不拦
+    assert store.load("p1", stem_known=ALL) == {}
+    assert not store.path_for("p1").exists()
+    # 介质恢复后下一次读就迁移成功
+    monkeypatch.undo()
+    assert set(store.load("p1", stem_known=ALL)) == {"Fig1"}
+
+
+def test_unreadable_file_when_sha1_is_needed_counts_as_invalid(tmp_path, monkeypatch):
+    """同尺寸、mtime 变了、内容却读不出来：判失效而不是抛——判不出就当基线不在。"""
+    p = _pdf(tmp_path, b"AAAA")
+    version = {"files": _ident(p)}
+    os.utime(p, ns=(p.stat().st_atime_ns, p.stat().st_mtime_ns + 5_000_000_000))
+
+    def unreadable(_path):
+        raise OSError("EACCES")
+
+    monkeypatch.setattr(bb, "sha1_of", unreadable)
+    assert bb.baseline_matches_file(version, p) is False
