@@ -17,6 +17,13 @@ from tavotto.engine import atomicio, documents
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    # 这份夹具的前提是**没有项目开着**（`project_layout_dir` 未开项目才退回
+    # `LAYOUT_DIR`）。前提要自己立，不能赌上一个用例文件收拾干净了：
+    # `test_bundled_runtime` / `test_compat_capture_parity` 各有一条 `open_project`
+    # 之后不 reset 的用例，同一进程里排在本文件前面时，画布会存进那个项目的
+    # `tavottofile/`，这里四条用例按 `tmp_path/<名字>.json` 找就 FileNotFoundError
+    # （2026-09-17 本地按文件分片时撞到；CI 的分片恰好把它们隔开了）。
+    m.reset_projects()
     monkeypatch.setattr(m, "LAYOUT_DIR", tmp_path)
     monkeypatch.setattr(m, "AUTOSAVE_DIR", tmp_path / documents.AUTOSAVE_DIRNAME)
     monkeypatch.setattr(m, "VERSIONS_DIR", tmp_path / documents.VERSIONS_DIRNAME)
@@ -24,7 +31,8 @@ def client(tmp_path, monkeypatch):
     # tmp_path，免得用例写到真实的 ~/Library/Application Support/Tavotto
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "userdata"))
     m.app.config["TESTING"] = True
-    return m.app.test_client()
+    yield m.app.test_client()
+    m.reset_projects()
 
 
 PD = {
