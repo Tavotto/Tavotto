@@ -118,7 +118,7 @@ from . import (  # noqa: E402 —— 必须在 app 实例创建之后
 ## formatter：**已启用**（2026-08-27）
 
 当前状态一句话：**lint、import 排序（`I`）、formatter 三项均已启用**
-（AGENTS.md / .github/AGENTS.md / CONTRIBUTING.md 三处与此处必须一致）。
+（AGENTS.md / `docs/rules/ci/ruff-lint-lane.md`（`.github/AGENTS.md` 的细则）/ CONTRIBUTING.md 三处与此处必须一致）。
 
 ### 覆盖面是算得出来的
 
