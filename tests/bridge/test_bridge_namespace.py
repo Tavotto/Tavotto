@@ -40,6 +40,7 @@ COLLIDING = (
     "pathgeom",
     "axestraversal",
     "spinemodel",
+    "tickmodel",
     "figsession",
     "wireproto",
     "worker",

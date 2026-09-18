@@ -30,6 +30,7 @@ from matplotlib.axis import Axis  # noqa: E402
 
 import manifest as M  # noqa: E402
 import overrides as O  # noqa: E402
+import tickmodel  # noqa: E402
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
@@ -130,7 +131,7 @@ def _apply_inside_the_scope_raises() -> dict:
     except RuntimeError as e:  # noqa: BLE001
         outside = f"raised: {e}"
     inside = "no-raise"
-    with O.ticklabel_memo():
+    with tickmodel.ticklabel_memo():
         try:
             O.apply(state, [])
         except RuntimeError:

@@ -7,7 +7,10 @@
   刻度标签每次 draw 由 locator 现算、Text 对象现建，改 Text 属性只能靠
   tick_params 持久（字号/颜色/朝向那一档），而「几个刻度、落在哪、写成什么」
   只有 locator 与 formatter 说了算。模型存在**轴对象**上
-  （`axis._mm_tick_cfg`，`tick_cfg` / `apply_tick_model` 是唯一出处）：
+  （`axis._mm_tick_cfg`，`tickmodel.tick_cfg` / `apply_tick_model` 是唯一出处；整个刻度族——
+  `TickSet` / `TickLabel` 伪元素、四边开关、Locator / Formatter 模型、单条文字冻结、
+  `ticklabel_memo` 记忆表——2026-09-18 起住在 `engine/tickmodel.py`，`overrides` 只展开它的
+  `HANDLERS_*` / `RESTORE` 表、`manifest` 直接从它取只读判据）：
   major_mode(auto|step|fixed) / major_step / major_values / minor_visible /
   minor_mode / minor_step / format / minor_format。次刻度的格式多一档 "none"
   （不标数字）——**那才是默认**；开了之后 `TickSet.labels` 把次刻度标签也算进

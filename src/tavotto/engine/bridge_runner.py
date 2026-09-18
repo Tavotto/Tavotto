@@ -99,6 +99,7 @@ _PHASE2 = (
     "pathgeom",
     "axestraversal",
     "spinemodel",
+    "tickmodel",
     "overrides",
     "manifest",
     "previewbudget",

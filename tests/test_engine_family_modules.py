@@ -23,6 +23,7 @@ ENGINE = os.path.join(REPO, "src", "tavotto", "engine")
 FAMILIES: dict[str, tuple[str, ...]] = {
     "axestraversal": (),
     "spinemodel": ("HANDLERS_STYLE", "HANDLERS_VISIBILITY"),
+    "tickmodel": ("HANDLERS_TEXT", "HANDLERS_SIDES", "HANDLERS_MARKS"),
 }
 
 #: 族模块允许 import 的顶层名字（标准库之外）。

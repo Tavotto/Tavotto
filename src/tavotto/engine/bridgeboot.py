@@ -85,6 +85,7 @@ ENGINE_SIBLINGS = (
     "pathgeom",
     "axestraversal",
     "spinemodel",
+    "tickmodel",
     "overrides",
     "manifest",
 )

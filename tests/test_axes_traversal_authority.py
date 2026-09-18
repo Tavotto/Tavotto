@@ -64,6 +64,7 @@ _ALLOWED = {
 SCANNED = (
     "axestraversal.py",
     "spinemodel.py",
+    "tickmodel.py",
     "manifest.py",
     "overrides.py",
     "preview_complexity.py",

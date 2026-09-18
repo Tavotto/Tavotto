@@ -53,6 +53,7 @@ from matplotlib.layout_engine import TightLayoutEngine
 
 import manifest
 import overrides
+import tickmodel
 
 PIN = [0.12, 0.55, 0.30, 0.35]
 
@@ -435,7 +436,7 @@ _orig_execute = overrides.PinnedTightLayoutEngine.execute
 
 
 def _spy(self, f):
-    table = getattr(overrides._ticklabel_memo, "table", None)
+    table = getattr(tickmodel._ticklabel_memo, "table", None)
     memo_state.append(None if table is None else len(table))
     return _orig_execute(self, f)
 

@@ -35,8 +35,6 @@ from overrides import (
     _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
     _LEGEND_HANDLE_MARKER_OPTS,
     _LEGEND_LOCS,
-    _TICK_FORMATS,
-    _TICK_MINOR_FORMATS,
     BBOX_DEFAULTS,
     HATCHES,
     LEGEND_BINDINGS,
@@ -44,8 +42,6 @@ from overrides import (
     FigState,
     LegendEntries,
     SeriesGroup,
-    TickLabel,
-    TickSet,
     _arrow_style,
     _arrowstyle_name,
     _axis_arrows_on,
@@ -61,9 +57,7 @@ from overrides import (
     _legend_loc_name,
     _linecoll_linestyle_name,
     _linestyle_name,
-    _minor_tick_prop,
     _stroke_state,
-    _tick0,
     bind_legend_entries,
     cjk_fallback_candidates,
     coincident_shared_axes_pairs,
@@ -71,7 +65,6 @@ from overrides import (
     colorbar_host_count,
     colorbar_mapping_is_live,
     colorbar_maps,
-    drawn_tick_label_entries,
     follow_map,
     font_installed,
     gradient_base_hex,
@@ -83,6 +76,23 @@ from overrides import (
     remember_axis_directions,
     scale_options,
     text_linespacing,
+    to_hex,
+)
+from spinemodel import (
+    spine_all_color,
+    spine_all_width,
+    spine_cfg,
+    spine_side_color,
+    spine_side_width,
+)
+from tickmodel import (
+    _TICK_FORMATS,
+    _TICK_MINOR_FORMATS,
+    TickLabel,
+    TickSet,
+    _minor_tick_prop,
+    _tick0,
+    drawn_tick_label_entries,
     tick_cfg,
     tick_format_name,
     tick_major_mode,
@@ -94,14 +104,6 @@ from overrides import (
     tick_minor_visible,
     tick_side_visible,
     ticklabel_memo,
-    to_hex,
-)
-from spinemodel import (
-    spine_all_color,
-    spine_all_width,
-    spine_cfg,
-    spine_side_color,
-    spine_side_width,
 )
 
 CMAPS = [

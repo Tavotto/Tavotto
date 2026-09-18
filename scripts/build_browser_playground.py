@@ -66,6 +66,7 @@ ENGINE_FILES = [
     "preview_hybrid.py",
     "previewbudget.py",
     "spinemodel.py",
+    "tickmodel.py",
 ]
 
 MANIFEST_NAME = "playground-manifest.json"

@@ -7,7 +7,7 @@
   `tests/test_axes_traversal_authority.py` 的源码级门禁）。它住在只依赖标准库 +
   matplotlib 的底层模块 `engine/axestraversal.py`，`manifest` 与 `overrides` 都从它取，
   谁也不反向 import 谁（2026-09-17 拆掉 manifest ↔ overrides 环时从 `manifest._ordered_axes`
-  迁出，**只迁移一份、不复制**；按 artist family 继续切出来的模块——第一刀 `engine/spinemodel.py`——
+  迁出，**只迁移一份、不复制**；按 artist family 继续切出来的模块——`engine/spinemodel.py`、`engine/tickmodel.py`——
   同样是叶子，配方门禁 `tests/test_engine_family_modules.py`，依赖清单
   `docs/architecture/figstate-dependencies.md`）。`fig.axes` 之外有
   **两族**：`ax.inset_axes()` / `ax.secondary_[xy]axis()` 挂在 `ax.child_axes`

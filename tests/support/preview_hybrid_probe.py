@@ -52,6 +52,7 @@ import overrides as overrides_mod  # noqa: E402
 import preview_complexity as pc  # noqa: E402
 import preview_hybrid as ph  # noqa: E402
 import previewbudget  # noqa: E402
+import tickmodel  # noqa: E402
 
 # Windows 上 stdout 被重定向成管道时会退回系统区域编码（cp1252/cp936），而这个
 # 探针把**带中文的 JSON** 打给父进程——第一次 print 就 UnicodeEncodeError，
@@ -210,11 +211,7 @@ def case_lifecycle(n: int) -> dict:
         for i, ax in enumerate(fig.axes):
             for which in ("x", "y"):
                 n_drawn = len(
-                    [
-                        t
-                        for _, t in overrides_mod.drawn_tick_label_entries(ax, which)
-                        if t.get_text()
-                    ]
+                    [t for _, t in tickmodel.drawn_tick_label_entries(ax, which) if t.get_text()]
                 )
                 if n_drawn:
                     drawn[f"axes_{i}.{which}"] = n_drawn

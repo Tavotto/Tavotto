@@ -68,6 +68,14 @@ main @ 77f23250 + PR D 第一步（`axestraversal` 已提出）的树上算出�
 2. **tick**（281 行）——`tick_cfg` / `apply_tick_model` / `TickSet` / `TickLabel` /
    `invalidate_tick_cfg`。搬完 `FigState.resolve` 从这里 import `TickLabel`，那时 FigState
    才值得考虑单独成文件。
+   **已切（2026-09-18，`engine/tickmodel.py`）**：按名字前缀数的 281 行只是刻度模型那一段；
+   真正的族还包括刻度标签记忆表与「画着的刻度」判据（`ticklabel_memo` / `_ticklabels` /
+   `_keep_projected_ticks` / `drawn_tick_label_entries`）、两个伪元素类、四边开关（`_mk_tick_side`，
+   key 在 "axes" 族名下）、单条文字冻结（`_freeze_tick_texts` / `_set_ticklabel_text`）与 gid 形状
+   `TICKLABEL_GID`——实际搬出约 800 行（overrides 5636 → 4838）。`_set_ticklabel_text` 对 FigState
+   的依赖收成 `tickmodel.EditState` 协议（`.applied` + `.resolve`），族模块不 import overrides；
+   `("ticks", "fontfamily")` 属字体族，留在 overrides。FigState 现在从 tickmodel 取 `TickLabel` 与
+   `TICKLABEL_GID`，它自己仍留在 overrides（理由同上：搬它等于搬一个 dataclass）。
 3. **colorbar**（376 行）——`_cb_reorient` / extend / `_cb_release_aspect` / `ColorbarProxy` /
    `colorbar_maps` / `follow_map`。它与 axes 几何耦合（`_set_axes_position` 落到色条轴时要
    `_cb_release_aspect`），切的时候 axes 那一侧留一个调用点。

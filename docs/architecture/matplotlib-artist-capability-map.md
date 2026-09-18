@@ -233,7 +233,7 @@ artist——这是已知代价，产品侧靠「脚本 sha1 变了就重建会�
 | --- | --- | --- | --- |
 | `overrides._cb_reorient` / `_set_cb_extend` | `cb._inside`、`cb._reset_locator_formatter_scale()`、`cb._draw_all()`、`_ColorbarAxesLocator` 的 `box_aspect` 行为 | 公开 API 只有「销毁重建色条」，那会打乱 `fig.axes` 编号、废掉全部 gid | `tests/test_colorbar_orientation.py` |
 | `overrides._legend_rebuild_setter` | `leg._ncols`、`leg._legend_box`、`leg._findoffset` | 改列数没有公开的就地 setter | `tests/test_legend_text.py` |
-| `overrides.tick_cfg` / `apply_tick_model` | `axis._mm_tick_cfg`（我们自己挂的）、locator/formatter 的实况读数 | 「用户没表态就保持脚本原样」需要记住原样 | `tests/test_axes_ticks_scale.py` |
+| `tickmodel.tick_cfg` / `apply_tick_model` | `axis._mm_tick_cfg`（我们自己挂的）、locator/formatter 的实况读数 | 「用户没表态就保持脚本原样」需要记住原样 | `tests/test_axes_ticks_scale.py` |
 | `overrides._AxisArrow3D` | `axis3d._get_coord_info` / `_get_axis_line_edge_points` | 3D 轴线落边每帧现算，没有公开接口 | `tests/test_worker_roundtrip.py` |
 | `manifest` / `pathgeom` | `FancyArrowPatch._posA_posB` | 端点没有公开 getter | `tests/test_manifest_geometry.py` |
 | `overrides._arrowstyle_name` | `ArrowStyle._style_list` | 反查注册名没有公开接口 | 同上 |

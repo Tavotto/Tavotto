@@ -49,7 +49,7 @@ ENGINE = sys.argv[1]
 spec = importlib.util.spec_from_file_location("boot", os.path.join(ENGINE, "bridgeboot.py"))
 boot = importlib.util.module_from_spec(spec); spec.loader.exec_module(boot)
 pkg = boot.load_engine_modules(ENGINE, ("figcapture", "patchspec", "pathgeom", "axestraversal", "spinemodel",
-                                        "overrides", "manifest", "figsession"))
+                                        "tickmodel", "overrides", "manifest", "figsession"))
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 fig = plt.figure(); fig.add_subplot(111).plot([1, 2], [3, 4])
