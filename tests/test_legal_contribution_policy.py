@@ -263,14 +263,29 @@ class TestAgreementVersionBinding:
             )
 
     def test_draft_agreements_forbid_a_configured_provider(self, gate, policy):
-        """草案上不存在有效签署——这条是结构性的，不靠人记得。"""
+        """草案上不存在有效签署——这条是结构性的，不靠人记得。
+
+        用例**自己把一份协议改回草案**再验：从前它只在仓库里的策略仍是草案时才跑，
+        协议定版 1.0 之后永远 skip（skip 矩阵 #17）——规则还在 `_validate_provider`
+        里，看护却没了。provider 段给全（name / check_name / app_slug / 整数 app_id、
+        不是 GitHub Actions），否则先被前面那几条形状判据拦住，验不到草案那一条。
+        """
         pol = json.loads(json.dumps(policy))
-        pol["provider"] = {"configured": True, "name": "X", "check_name": "Y"}
-        drafts = [k for k, ag in pol["agreements"].items() if str(ag["version"]).endswith("-draft")]
-        if not drafts:
-            pytest.skip("协议已脱离草案")
-        with pytest.raises(gate.ConfigError):
+        name, ag = next(iter(pol["agreements"].items()))
+        assert not str(ag["version"]).endswith(gate.DRAFT_SUFFIX), "前提：仓库里的协议已定版"
+        ag["version"] = f"{ag['version']}{gate.DRAFT_SUFFIX}"
+        pol["provider"] = {
+            "configured": True,
+            "name": "X",
+            "check_name": "Y",
+            "app_slug": "some-cla-app",
+            "app_id": 12345,
+        }
+        with pytest.raises(gate.ConfigError, match="草案"):
             gate.validate_policy(pol)
+        # 对照：同一份 provider 配置在定版协议上是合法的——红的确实是草案那一条
+        ag["version"] = ag["version"][: -len(gate.DRAFT_SUFFIX)]
+        gate.validate_policy(pol)
 
     def test_draft_versions_carry_the_configuration_marker(self, policy):
         """草案必须自带 RIGHTS_HOLDER_CONFIGURATION_REQUIRED——
