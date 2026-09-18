@@ -3,7 +3,7 @@
     "body": "这份文档还有未保存的修改。关闭前要保存吗？",
     "discard": "不保存",
     "save": "保存并关闭",
-    "saveFailed": "无法保存，窗口保持打开。请处理保存问题，或选择「不保存」直接关闭。",
+    "saveFailed": "保存失败，窗口保持打开。请先解决保存问题，或选择「不保存」直接关闭。",
     "title": "有未保存的修改"
   },
   "export": {
@@ -29,17 +29,17 @@
     "editedDuringExport": "导出期间文档又改了。文件里是点「导出」时的内容。",
     "epsHint": "矢量 · 不支持透明度",
     "epsUnavailable": {
-      "canvas_scope": "EPS 只能按「原图尺寸」导出单张图。画布由 PDF 引擎合成，写不出 PostScript。",
+      "canvas_scope": "EPS 只支持按「原图尺寸」导出单张图。画布由 PDF 引擎合成，不支持 PostScript。",
       "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
     },
     "exported": "导出完成：{{files}}",
     "filenameError": {
       "control_char": "文件名里有不可见字符，请重新输入。",
-      "dot_only": "此名有特殊含义，换一个。",
+      "dot_only": "「.」和「..」不能用作文件名。",
       "empty": "请输入文件名。",
       "illegal_char": "文件名不能包含 < > : \" / \\ | ? * 字符。",
-      "reserved_name": "这是系统保留的名字，换一个。",
-      "too_long": "文件名太长，请缩短。",
+      "reserved_name": "这是系统保留名，请换一个。",
+      "too_long": "文件名超出长度限制，请缩短。",
       "trailing_dot": "文件名不能以句点结尾。",
       "whitespace_edge": "文件名的开头或结尾不能是空格。"
     },
@@ -54,7 +54,7 @@
       "rotation": "旋转",
       "scale": "缩放"
     },
-    "jobLost": "找不到这次导出，服务可能重启过。文件是否写出不确定，查看导出目录或重试。",
+    "jobLost": "找不到这次导出的作业，服务可能重启过。文件可能已写出，请检查导出目录或重新导出。",
     "locate": "定位",
     "locateAria": "定位到{{subject}}：{{title}}",
     "locatedHint": "已定位到问题。再点「导出」回到导出面板，设置还在。",
@@ -91,7 +91,7 @@
     "profileSync": "同步到新版",
     "profileUpdateAvailable": "这套规范有了新版本。",
     "replaced": "已覆盖",
-    "reportTitle": "随成图写一份 JSON：用的规范、字体字号线宽画幅、检查结果与导出设置。投稿留档用。",
+    "reportTitle": "随导出生成一份 JSON 报告：所用规范、字体、字号、线宽、图幅、检查结果与导出设置，供投稿留档。",
     "reportToggle": "生成样式检查报告",
     "retry": "重试",
     "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
@@ -102,13 +102,13 @@
     "scopeOriginal": "原图尺寸",
     "scopeOriginalFallback": "这张图的尺寸暂时读不到，用的是占位值——导出后请核对。",
     "scopeUnavailable": {
-      "no_figure": "还没选要导的图：点选下面的一张图，按原图尺寸导出。",
+      "no_figure": "尚未选择要导出的图。在下方选一张，按原图尺寸导出。",
       "no_figures": "项目里还没有可以按原图尺寸导出的图，暂时只能按画布导出。",
       "source_stale": "这张图的源文件现在找不到了，暂时只能按画布导出。",
       "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
     },
     "severityCount": "{{count}} {{label}}",
-    "sizeDiskDiffers": "磁盘上的原件是 {{dw}} × {{dh}} mm（脚本保存时裁到了内容范围）。按图幅 {{w}} × {{h}} mm 出图。",
+    "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁至内容范围）。将按图幅 {{w}} × {{h}} mm 导出。",
     "sizeUnknownShort": "尺寸未知",
     "start": "开始导出",
     "targetNoFigure": "当前没有图",
@@ -119,7 +119,7 @@
     "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致："
   },
   "layout": {
-    "conflict": "磁盘上已有一份名为「{{name}}」的文档，不是本窗口写的。",
+    "conflict": "磁盘上已存在名为「{{name}}」的文档，由其他窗口或外部工具写入。",
     "conflictDisk": "磁盘上那份：{{canvases}} 张画布 / {{objects}} 个对象",
     "empty": "项目里还没有命名文档",
     "load": "载入",
@@ -143,7 +143,7 @@
     "exported": "已导出 {{files}}",
     "issuesTitle": "出版规范预检",
     "issuesTitleStale": "出版规范预检（结论属于上一版）",
-    "panelGone": "图不见了。请让 Codex 重新打开。",
+    "panelGone": "这张图已不在会话中。请让 Codex 重新打开。",
     "pending": "有改动待应用",
     "pillClean": "预检通过",
     "pillCounts": "{{errors}} 阻断 · {{warnings}} 警告 · {{notVerifiable}} 待核验",
@@ -153,14 +153,14 @@
     "renderFailed": "渲染失败",
     "rendering": "正在重渲染",
     "splashConnecting": "正在连接 Codex…",
-    "splashNoHost": "此画布要在支持 MCP Apps 的 Codex 里打开。没有 UI 的 host 里，同一套 tavotto_* 工具也能打开、改图、预检、导出。",
+    "splashNoHost": "此画布需在支持 MCP Apps 的 Codex 中打开。没有界面的宿主里，同一套 tavotto_* 工具同样可以打开、编辑、预检和导出。",
     "splashWaiting": "正在等待 tavotto_open_figure 的结果…",
     "synced": "已同步"
   },
   "nativeRun": {
     "approve": "运行并连接",
     "approving": "正在连接…",
-    "argCount_other": "{{count}} 个（参数值不经过此窗口）",
+    "argCount_other": "{{count}} 个（参数值不会传入此窗口）",
     "cancel": "取消",
     "descriptionQueued": "还有 {{queued}} 条在排队。",
     "fields": {
@@ -171,7 +171,7 @@
       "target": "运行"
     },
     "loading": "正在读取运行请求…",
-    "permissionNotice": "使用项目自己的 Python。脚本的权限与在终端里运行时相同，Tavotto 只接管其中的 Matplotlib 图。只运行你信任的代码。",
+    "permissionNotice": "使用项目自己的 Python 运行。脚本的权限与在终端中运行相同，Tavotto 只接管其中的 Matplotlib 图。请只运行你信任的代码。",
     "pythonVersion": "Python {{version}}",
     "remember": "记住此项目和此 Python",
     "targetKind": {
@@ -371,9 +371,9 @@
     "galleryLabel": "案例库",
     "integrityChecking": "核对中",
     "integrityMismatchNote": "浏览器工作区里的文件已和你的原文不一致。重新加载脚本，忽略本次会话的所有结果。",
-    "integrityNote": "浏览器工作区里真正执行的文件的 SHA-256，与你交出来的原文逐字节比对。它查的是脚本或引擎意外改动了源文件；蓄意规避这项检查的脚本不在此列——它与你的图跑在同一个解释器里。",
+    "integrityNote": "对浏览器工作区中实际执行的文件计算 SHA-256，与你提供的原文逐字节比对，用于发现脚本或引擎意外改动源文件。蓄意绕过检查的脚本不在防护范围内：它与你的图运行在同一个解释器里。",
     "integrityTitle": "完整性",
-    "integrityUnavailableNote": "浏览器算不出哈希，比对没有执行——所以这里不说「未改动」。",
+    "integrityUnavailableNote": "此浏览器无法计算哈希，比对未执行，无法确认源文件未改动。",
     "integrityUnverified": "未核对",
     "landingSubtitle": "每个案例都是普通的 Matplotlib 脚本。运行、编辑都在浏览器里。",
     "landingTitle": "挑一张图，亲手改一次。",
@@ -411,9 +411,9 @@
     "synced": "已同步",
     "taskChecking": "正在核对源文件",
     "taskContinue": "继续探索",
-    "taskDoneBody": "图已改变。{{filename}} 一个字也没动。",
+    "taskDoneBody": "图已更新，{{filename}} 未改动。",
     "taskDoneTitle": "完成。",
-    "taskDoneUnverified": "图已改变。浏览器无法核对源文件哈希，不下「未改动」的结论。",
+    "taskDoneUnverified": "图已更新。此浏览器无法校验源文件哈希，未能确认脚本是否改动。",
     "taskEditFontsize": "把字号从 9 pt 调到 12 pt。",
     "taskSelectTitle": "点击图中的 “Reaction kinetics”。",
     "taskSkip": "跳过引导",
@@ -427,7 +427,7 @@
     "uploadHeading": "已有一个独立脚本？",
     "uploadNote": "仅适合不依赖本地数据、同目录模块或本地资源的单文件脚本。",
     "uploadScope": "查看支持范围",
-    "uploadScopeBad": "不适合：pd.read_csv(\"data.csv\")、np.load(...)、open(...) 这类本地文件读取；同目录自定义模块；本地图片与字体；项目级相对路径；完整 Conda 项目。",
+    "uploadScopeBad": "不支持：读取本地文件（pd.read_csv(\"data.csv\")、np.load(...)、open(...)）；同目录自定义模块；本地图片与字体；项目级相对路径；完整 Conda 项目。",
     "uploadScopeGood": "适合：单个 UTF-8 编码的 .py；NumPy、Matplotlib 与运行时明确支持的包；数据写在脚本里或由代码生成。",
     "viewCode": "查看代码"
   },
@@ -493,10 +493,10 @@
     "builtin.spec.lab-publication-v1": "默认规范",
     "builtin.style.default": "默认样式",
     "clearField": "清除{{field}}",
-    "conflict": "「{{name}}」已被改过。请重新打开后再改。",
+    "conflict": "「{{name}}」已在别处被修改。请重新打开后再编辑。",
     "copyOf": "{{name}} 副本",
     "delete": "删除",
-    "deleteBody": "用过它的项目不受影响，各自留有副本。",
+    "deleteBody": "已使用它的项目不受影响，各自保留独立副本。",
     "deleteTitle": "删除「{{name}}」？",
     "detail": {
       "id": "标识",
@@ -551,13 +551,13 @@
     "readOnlyBadge": "只读",
     "readOnlyBuiltinBadge": "内置 · 只读",
     "restore": "恢复默认值",
-    "restoreBody": "内容会回到它复制来源的那份，改动会丢失。",
+    "restoreBody": "内容将恢复为复制来源的版本，本地改动会丢失。",
     "restoreConfirm": "恢复",
     "restoreNeedsOrigin": "不是从内置复制来的，没有可恢复的默认值",
     "restoreTitle": "把「{{name}}」恢复成默认值？",
     "save": "保存",
     "saved": "已保存「{{name}}」",
-    "snapshotHint": "项目保存选中时的规则快照。全局同名配置后来改了也不影响，除非打开「跟随更新」。",
+    "snapshotHint": "项目保存选中时的规则快照。全局规范之后的修改不影响本项目，除非打开「跟随更新」。",
     "snapshotTitle": "本项目实际检查的规则",
     "unset": "未设置",
     "useForProject": "本项目用这套规范",
@@ -578,7 +578,7 @@
   "readiness": {
     "addToCanvas": "添加到画布",
     "allEditable_other": "{{count}} 张图已就绪",
-    "allScriptsHint": "项目里的每个 .py 都在这里，包括从脚本看不出会画哪张图的。试运行一次，Tavotto 按它实际画出的图建立关系。",
+    "allScriptsHint": "这里列出项目里的所有 .py，包括无法从代码判断输出的脚本。试运行一次后，按实际画出的图建立关联。",
     "allScriptsTitle": "全部脚本",
     "autoLink": "自动连接",
     "emptyHint": "运行一个绘图脚本，或者把 PDF / PNG 放进图库目录。",
@@ -601,7 +601,7 @@
     "moreAria": "{{name}} 的更多操作",
     "none": "—",
     "nothingNew": "扫描完成，没有新的可连接脚本",
-    "orphanConflicts": "不止一个脚本声称生成这些图名：{{stems}}。项目里还没有对应的图文件，可在下方「全部脚本」里指定。",
+    "orphanConflicts": "多个脚本指向同一图名：{{stems}}。项目里尚无对应的图文件，可在下方「全部脚本」中指定归属。",
     "pickSourceAria": "为 {{name}} 选择源脚本",
     "pickSourcePlaceholder": "选择源脚本",
     "probeAndLink": "试运行并连接",
@@ -752,14 +752,14 @@
           "cli_not_found": "找不到本机的 Tavotto 命令行（tavotto-cli）。安装包可能不完整，重装桌面版即可。",
           "codex_cli_missing": "找不到 codex 命令。请先自行安装 Codex CLI，装好后再点一次。",
           "doctor": {
-            "interpreter_unusable": "插件的启动命令在这台机器上跑不起来，Codex 里会没有工具。这次只是诊断，没有改动；装一次会换成验证能跑的解释器。",
+            "interpreter_unusable": "插件的启动命令在这台机器上无法运行，Codex 里将没有工具。本次只是诊断，未做改动；安装时会改用已验证可用的解释器。",
             "marketplace_add_failed": "还没有把 Tavotto 登记为 Codex 的插件市场。这次只是诊断，没有改动；装一次就会补上。",
             "plugin_add_failed": "插件还没装上。这次只是诊断，没有改动；装一次就会补上。",
             "provision_failed": "插件还没有匹配版本的 Tavotto 引擎。这次只是诊断，没有改动；装一次就会补上。"
           },
           "engine_too_old": "本机 Tavotto 引擎低于插件要求的最低版本，桥接层无法驱动它。升级引擎（pipx upgrade tavotto，或升级桌面版），或把插件退回与引擎匹配的版本。",
           "health_failed": "组件已装好，但检查未通过：插件仍找不到可用的 Tavotto 引擎。展开下面的详情看它报了什么。",
-          "interpreter_unusable": "插件的启动命令在这台机器上跑不起来，Codex 里会没有工具。Windows 上的 python3 常是微软商店的占位命令，看着存在，一跑就退。安装会换成验证能跑的解释器；换不成，就装一个 Python，或用 TAVOTTO_MCP_PYTHON 指一个再试。",
+          "interpreter_unusable": "插件的启动命令在这台机器上无法运行，Codex 里将没有工具。Windows 上的 python3 常是微软商店的占位程序，看似存在，运行即退出。安装时会改用已验证可用的解释器；若找不到，请安装 Python，或用 TAVOTTO_MCP_PYTHON 指定一个后重试。",
           "marketplace_add_failed": "没能把 Tavotto 登记为 Codex 的插件市场。常见原因是没有网络，或没有权限写 Codex 的配置目录。",
           "marketplace_state_unknown": "无法确定 Codex 的插件市场登记状态（codex plugin marketplace list 没有结论），所以没有改动。这不等于没登记。展开详情看 Codex 报了什么：常见原因是 codex 命令在 Tavotto 里跑不起来（例如 npm 装的 codex 找不到 node），或 Codex 没启动好。",
           "not_desktop": "此操作仅在桌面版可用。",
@@ -998,7 +998,7 @@
         "python": "Python {{version}}",
         "ready": "就绪",
         "rebuild": "重建环境…",
-        "rebuildDesc": "装坏了就重建：新建环境并按记录重装所有包"
+        "rebuildDesc": "环境损坏时重建：新建环境并按记录重装所有包"
       },
       "envTarget": "装到这里",
       "envTitle": "本项目的 {{product}} 环境",
@@ -1080,7 +1080,7 @@
       "backupDir": "原始文件备份",
       "current": "当前项目",
       "exportDir": "导出位置",
-      "noScriptsSuffix": "（项目里的图暂不支持逐元素编辑）",
+      "noScriptsSuffix": "（此项目的图暂不支持图内编辑）",
       "registry": "管理来源…",
       "scriptCount_other": "{{count}} 个脚本",
       "scripts": "可编辑来源",
@@ -1096,7 +1096,7 @@
       "sectionProject": "项目",
       "sectionLocations": "位置",
       "sectionWriteBack": "写回源图",
-      "writeBackDesc": "写回会覆盖原始 PDF / PNG 与脚本，写回前先备份到上面的位置。",
+      "writeBackDesc": "写回会覆盖原始 PDF / PNG 与脚本；执行前先将原文件备份到上面的位置。",
       "change": "更改…"
     },
     "section": {
@@ -1417,7 +1417,7 @@
     "steps": {
       "welcome": {
         "title": "用示例了解 Tavotto",
-        "body": "这是离线教程副本：随便改，随时重开，不会碰你的项目。接下来用真实操作走两条核心流程。"
+        "body": "离线教程副本，可随意修改、随时重开，不会影响你的项目。接下来走两条核心流程。"
       },
       "open_fast_edit": {
         "title": "打开一张图",
@@ -1445,10 +1445,10 @@
       },
       "export_original": {
         "title": "看看原图导出",
-        "body": "打开「导出」，确认输出范围是「原图」，然后关闭面板。",
+        "body": "打开「导出」，确认输出范围是「原图尺寸」，然后关闭面板。",
         "scope": {
           "title": "看看原图导出",
-          "body": "「原图」按图自己的尺寸输出，不使用画布缩放。确认后关闭面板继续。"
+          "body": "「原图尺寸」按图本身的尺寸输出，不受画布缩放影响。确认后关闭面板继续。"
         }
       },
       "add_to_layout": {

@@ -137,7 +137,7 @@ describe('NativeConfirmDialog', () => {
     render()
     const shown = text()
     expect(shown).toContain('项目自己的 Python')
-    expect(shown).toContain('权限与在终端里运行时相同')
+    expect(shown).toContain('权限与在终端中运行相同')
     expect(shown).toContain('只接管其中的 Matplotlib 图')
     expect(shown).toContain('只运行你信任的代码')
   })

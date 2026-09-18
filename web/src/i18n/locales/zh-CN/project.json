@@ -9,7 +9,7 @@
       "dot_only": "「.」和「..」不能用作项目名。",
       "empty": "请输入项目名。",
       "illegal_char": "项目名不能包含 < > : \" / \\ | ? *。",
-      "reserved_name": "这是系统保留的名字，换一个。",
+      "reserved_name": "这是系统保留名，请换一个。",
       "too_long": "项目名太长了，请缩短一些。",
       "trailing_dot": "项目名不能以句点结尾。",
       "whitespace_edge": "项目名的开头或结尾不能是空格。"
@@ -26,7 +26,7 @@
   "figurePicker": {
     "addToCanvas": "添加到画布",
     "description_other": "脚本产出 {{count}} 张图，选择要打开的一张",
-    "empty": "脚本还没有登记任何图。到素材库的「脚本」区运行它。",
+    "empty": "此脚本尚未登记任何图。在素材库的「脚本」区运行它以捕获图。",
     "listAria": "脚本产出的图",
     "needsRun": "先运行一次",
     "runtimeBadge": "运行时图",
@@ -67,14 +67,14 @@
     "removeAllMissing": "全部移除",
     "removeFromList": "从列表移除 {{name}}，不删除磁盘文件。",
     "removeFromListTitle": "从列表移除，不删文件",
-    "tagline": "项目是论文图所在的目录。选一个开始排版。",
+    "tagline": "项目是论文图与脚本所在的目录。选择一个开始排版。",
     "tutorial": {
       "start": "用示例了解 Tavotto",
       "resume": "继续教程",
       "restart": "再看一遍教程"
     },
     "tutorialBadge": "教程项目",
-    "tutorialHint": "离线示例项目，随便改、随时重来，不会碰你自己的项目。",
+    "tutorialHint": "离线示例项目，可随意修改、随时重来，不会影响你的项目。",
     "tutorialLabel": "新手教程",
     "tutorialOpening": "准备中…",
     "tutorialUnavailable": "教程资源不完整。请重新安装 Tavotto。"

@@ -3,7 +3,7 @@
  *   * 初始提示点击标题；选中目标后进第二步；
  *   * 未修改 / 改错属性 / 值不对：不完成；
  *   * 值达标但还在渲染：不完成；渲染完成才算，且先「正在核对源文件」；
- *   * 完整性 unchanged 才显示「一个字也没动」；unavailable 不下该结论；
+ *   * 完整性 unchanged 才显示「未改动」；unavailable 不下该结论；
  *   * changed 时整个组件闭嘴（报警横幅是权威）；
  *   * 完成态锁存：undo 把 override 拿掉也不回到第 2 步；
  *   * 跳过回调可用。
@@ -140,16 +140,16 @@ describe('GuidedTask', () => {
     })
     expect(taskState()).toBe('done')
     expect(container.textContent).toContain('正在核对源文件')
-    expect(container.textContent).not.toContain('一个字也没动')
+    expect(container.textContent).not.toContain('kinetics.py 未改动')
   })
 
-  it('核对通过才显示「kinetics.py 一个字也没动」', () => {
+  it('核对通过才显示「kinetics.py 未改动」', () => {
     render({
       overrides: [{ gid: task.targetGid, prop: 'fontsize', value: 12 }],
       verdict: 'unchanged',
     })
-    expect(container.textContent).toContain('图已改变')
-    expect(container.textContent).toContain('kinetics.py 一个字也没动')
+    expect(container.textContent).toContain('图已更新')
+    expect(container.textContent).toContain('kinetics.py 未改动')
   })
 
   it('查不了（unavailable）不下「未改动」的结论', () => {
@@ -157,8 +157,8 @@ describe('GuidedTask', () => {
       overrides: [{ gid: task.targetGid, prop: 'fontsize', value: 12 }],
       verdict: 'unavailable',
     })
-    expect(container.textContent).toContain('图已改变')
-    expect(container.textContent).not.toContain('一个字也没动')
+    expect(container.textContent).toContain('图已更新')
+    expect(container.textContent).not.toContain('kinetics.py 未改动')
   })
 
   it('完整性失效（changed）时组件整个不渲染——报警横幅才是权威', () => {

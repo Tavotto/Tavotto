@@ -100,8 +100,8 @@ describe('runtime 面板的源文件区', () => {
     const buttons = [...host.querySelectorAll('button')].map((b) => b.textContent ?? '')
     expect(buttons.some((t) => t.includes('写回原始文件'))).toBe(false)
     // 用户找写回时能看到原因——不是无声消失
-    expect(host.textContent).toContain('没有对应的原始图文件')
-    expect(host.textContent).toContain('导出会创建新文件')
+    expect(host.textContent).toContain('尚无对应的原始图文件')
+    expect(host.textContent).toContain('导出时会创建新文件')
     // 它真正支持的动作
     const rerun = [...host.querySelectorAll('button')].find((b) =>
       (b.textContent ?? '').includes('重新运行'),
@@ -116,6 +116,6 @@ describe('runtime 面板的源文件区', () => {
     await mount(filePanel)
     const buttons = [...host.querySelectorAll('button')].map((b) => b.textContent ?? '')
     expect(buttons.some((t) => t.includes('写回原始文件'))).toBe(true)
-    expect(host.textContent).not.toContain('没有对应的原始图文件')
+    expect(host.textContent).not.toContain('尚无对应的原始图文件')
   })
 })

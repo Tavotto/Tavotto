@@ -3,7 +3,7 @@
     "body": "This document has unsaved changes. Save before closing?",
     "discard": "Don’t save",
     "save": "Save and close",
-    "saveFailed": "Couldn’t save, so the window stays open. Fix the save problem, or choose “Don’t save” to close.",
+    "saveFailed": "Saving failed, so the window stays open. Resolve the problem, or choose “Don’t save” to close anyway.",
     "title": "Unsaved changes"
   },
   "export": {
@@ -31,17 +31,17 @@
     "editedDuringExport": "This document changed during export. The files hold what it looked like when you pressed Export.",
     "epsHint": "Vector · no transparency",
     "epsUnavailable": {
-      "canvas_scope": "EPS is only available at original size for a single figure. The PDF engine composes the canvas and can’t write PostScript.",
+      "canvas_scope": "EPS is available only for a single figure at original size. The canvas is composed by the PDF engine, which doesn’t produce PostScript.",
       "no_script": "This figure has no script to re-run. EPS can only come from the script."
     },
     "exported": "Exported: {{files}}",
     "filenameError": {
       "control_char": "That file name contains invisible characters. Type it again.",
-      "dot_only": "That name has a special meaning. Pick another one.",
+      "dot_only": "“.” and “..” can’t be used as a file name.",
       "empty": "Enter a file name.",
       "illegal_char": "A file name can’t contain < > : \" / \\ | ? * characters.",
-      "reserved_name": "That name is reserved by the system. Pick another one.",
-      "too_long": "That file name is too long — shorten it.",
+      "reserved_name": "This name is reserved by the system. Choose another.",
+      "too_long": "The file name is too long. Shorten it.",
       "trailing_dot": "A file name can’t end with a period.",
       "whitespace_edge": "A file name can’t start or end with a space."
     },
@@ -56,7 +56,7 @@
       "rotation": "rotation",
       "scale": "scaling"
     },
-    "jobLost": "This export job is gone from the server. Can’t tell if the files were written; check the folder or try again.",
+    "jobLost": "This export job is no longer on the server, possibly after a restart. The files may have been written; check the folder or export again.",
     "locate": "Locate",
     "locateAria": "Locate {{subject}}: {{title}}",
     "locatedHint": "Jumped to the problem. Press Export again to return; your settings are kept.",
@@ -93,7 +93,7 @@
     "profileSync": "Sync to the new version",
     "profileUpdateAvailable": "A newer version of this spec is available.",
     "replaced": "replaced",
-    "reportTitle": "Writes a JSON alongside the images: the spec, font sizes, line widths, figure size, check results, and export settings. For submission records.",
+    "reportTitle": "Writes a JSON report alongside the images: spec, fonts, sizes, line widths, figure size, check results and export settings, for submission records.",
     "reportToggle": "Generate a style check report",
     "retry": "Try again",
     "revealFailed": "Couldn’t reveal it in the file manager. The file is at: {{path}}",
@@ -104,13 +104,13 @@
     "scopeOriginal": "Original size",
     "scopeOriginalFallback": "This figure’s size can’t be read right now, so a placeholder is used — check the result.",
     "scopeUnavailable": {
-      "no_figure": "No figure is chosen yet — pick one below to export it at its original size.",
+      "no_figure": "No figure selected. Choose one below to export it at original size.",
       "no_figures": "This project has no figure to export at its original size yet, so only the canvas can be exported.",
       "source_stale": "This figure's source file can't be found right now, so only the canvas can be exported.",
       "unknown_figure": "This figure's details can't be found, so only the canvas can be exported."
     },
     "severityCount": "{{count}} {{label}}",
-    "sizeDiskDiffers": "The file on disk is {{dw}} × {{dh}} mm (the script cropped the page to its contents when saving). Exporting at the figure size, {{w}} × {{h}} mm.",
+    "sizeDiskDiffers": "The file on disk is {{dw}} × {{dh}} mm (cropped to its contents when the script saved it). Exporting at the figure size, {{w}} × {{h}} mm.",
     "sizeUnknownShort": "size unknown",
     "start": "Export",
     "targetNoFigure": "No current figure",
@@ -121,7 +121,7 @@
     "warningsIntro": "These edits couldn’t be applied to the re-rendered figures, so the output may differ from the canvas:"
   },
   "layout": {
-    "conflict": "A document named “{{name}}” already exists on disk, and this window didn’t write it.",
+    "conflict": "A document named “{{name}}” already exists on disk, written by another window or tool.",
     "conflictDisk": "On disk: {{canvases}} canvases / {{objects}} objects",
     "empty": "No named documents in this project yet",
     "load": "Load",
@@ -145,7 +145,7 @@
     "exported": "Exported {{files}}",
     "issuesTitle": "Publication preflight",
     "issuesTitleStale": "Publication preflight (verdict from the previous version)",
-    "panelGone": "The figure is gone. Ask Codex to open it again.",
+    "panelGone": "This figure is no longer in the session. Ask Codex to open it again.",
     "pending": "Edits pending",
     "pillClean": "Preflight passed",
     "pillCounts": "{{errors}} blocking · {{warnings}} warnings · {{notVerifiable}} to verify",
@@ -155,15 +155,15 @@
     "renderFailed": "Render failed",
     "rendering": "Re-rendering",
     "splashConnecting": "Connecting to Codex…",
-    "splashNoHost": "This canvas opens inside a Codex that supports MCP Apps. In a host without a UI, the same tavotto_* tools still open, edit, preflight and export the figure.",
+    "splashNoHost": "This canvas runs inside a Codex that supports MCP Apps. In a host without a UI, the same tavotto_* tools still open, edit, preflight and export figures.",
     "splashWaiting": "Waiting for the result of tavotto_open_figure…",
     "synced": "In sync"
   },
   "nativeRun": {
     "approve": "Run and connect",
     "approving": "Connecting…",
-    "argCount_one": "{{count}} — its value never reaches this window",
-    "argCount_other": "{{count}} (their values never reach this window)",
+    "argCount_one": "{{count}} (its value is not passed to this window)",
+    "argCount_other": "{{count}} (values are not passed to this window)",
     "cancel": "Cancel",
     "descriptionQueued": "{{queued}} more queued after this one.",
     "fields": {
@@ -174,7 +174,7 @@
       "target": "Runs"
     },
     "loading": "Reading the run request…",
-    "permissionNotice": "Uses the project’s own Python. The script has the same file permissions as when you run it in your terminal — Tavotto only takes over the Matplotlib figures in that process. Only run code you trust.",
+    "permissionNotice": "Runs with the project’s own Python. The script has the same permissions as in your terminal; Tavotto only takes over its Matplotlib figures. Run only code you trust.",
     "pythonVersion": "Python {{version}}",
     "remember": "Remember this project and this Python",
     "targetKind": {
@@ -374,9 +374,9 @@
     "galleryLabel": "Example library",
     "integrityChecking": "checking",
     "integrityMismatchNote": "The file in the browser workspace no longer matches your source. Load the script again, and disregard anything this session reports.",
-    "integrityNote": "SHA-256 of the file actually executed in the browser workspace, compared byte for byte with the source you supplied. It catches a script or the engine modifying the source unintentionally. It is not a defence against a script written to defeat it, which runs in the same interpreter as your figure.",
+    "integrityNote": "The SHA-256 of the file actually executed in the browser workspace is compared byte for byte with the source you supplied, to catch unintended changes by the script or the engine. A script written to defeat this check is out of scope: it runs in the same interpreter as your figure.",
     "integrityTitle": "Integrity",
-    "integrityUnavailableNote": "This browser couldn’t compute the hash, so the comparison never ran. That’s why this doesn’t claim the file is unchanged.",
+    "integrityUnavailableNote": "This browser can’t compute the hash, so the comparison didn’t run and the file can’t be confirmed unchanged.",
     "integrityUnverified": "not verified",
     "landingSubtitle": "Every example here is an ordinary Matplotlib script. Run and edit it in your browser.",
     "landingTitle": "Pick a figure. Change it yourself.",
@@ -415,9 +415,9 @@
     "synced": "In sync",
     "taskChecking": "Verifying the source file",
     "taskContinue": "Keep exploring",
-    "taskDoneBody": "The figure changed. {{filename}} didn’t change by a single byte.",
+    "taskDoneBody": "The figure was updated; {{filename}} is unchanged.",
     "taskDoneTitle": "Done.",
-    "taskDoneUnverified": "The figure changed. This browser can’t verify the source hash, so no “unchanged” claim here.",
+    "taskDoneUnverified": "The figure was updated. This browser can’t verify the source hash, so the script’s integrity is unconfirmed.",
     "taskEditFontsize": "Change the font size from 9 pt to 12 pt.",
     "taskSelectTitle": "Click “Reaction kinetics” in the figure.",
     "taskSkip": "Skip the tour",
@@ -431,7 +431,7 @@
     "uploadHeading": "Already have a standalone script?",
     "uploadNote": "For single-file scripts only — nothing that relies on local data, sibling modules or other local resources.",
     "uploadScope": "What runs here?",
-    "uploadScopeBad": "Doesn’t work: reading local files (pd.read_csv(\"data.csv\"), np.load(...), open(...)); sibling modules; local images or fonts; project-relative paths; full Conda projects.",
+    "uploadScopeBad": "Not supported: reading local files (pd.read_csv(\"data.csv\"), np.load(...), open(...)); sibling modules; local images or fonts; project-relative paths; full Conda projects.",
     "uploadScopeGood": "Works: one UTF-8 .py file; NumPy, Matplotlib and the packages pinned in this runtime; data written in the script or generated by code.",
     "viewCode": "View code"
   },
@@ -497,10 +497,10 @@
     "builtin.spec.lab-publication-v1": "Default spec",
     "builtin.style.default": "Default style",
     "clearField": "Clear {{field}}",
-    "conflict": "“{{name}}” has been changed. Reopen it before editing.",
+    "conflict": "“{{name}}” was modified elsewhere. Reopen it before editing.",
     "copyOf": "{{name}} copy",
     "delete": "Delete",
-    "deleteBody": "Projects that already use it are unaffected — each keeps its own copy.",
+    "deleteBody": "Projects already using it are unaffected; each keeps its own copy.",
     "deleteTitle": "Delete “{{name}}”?",
     "detail": {
       "id": "Identifier",
@@ -555,13 +555,13 @@
     "readOnlyBadge": "Read-only",
     "readOnlyBuiltinBadge": "Built-in · read-only",
     "restore": "Restore defaults",
-    "restoreBody": "Its contents go back to the profile it came from. Your edits are lost.",
+    "restoreBody": "Its contents revert to the profile it was copied from. Your edits will be lost.",
     "restoreConfirm": "Restore",
     "restoreNeedsOrigin": "Not copied from a built-in profile. No defaults to restore.",
     "restoreTitle": "Restore “{{name}}” to its defaults?",
     "save": "Save",
     "saved": "Saved “{{name}}”",
-    "snapshotHint": "The project keeps the rules from when you picked them. Later edits don’t affect them unless “Follow updates” is on.",
+    "snapshotHint": "The project keeps a snapshot of the rules as selected. Later edits to the global profile don’t apply unless “Follow updates” is on.",
     "snapshotTitle": "Rules this project actually checks against",
     "unset": "Not set",
     "useForProject": "Use this spec for the project",
@@ -583,7 +583,7 @@
     "addToCanvas": "Add to canvas",
     "allEditable_one": "{{count}} figure ready",
     "allEditable_other": "{{count}} figures ready",
-    "allScriptsHint": "Every .py is here, even ones whose figures aren’t obvious. Run one, and Tavotto links it by what it actually draws.",
+    "allScriptsHint": "Every .py in the project is listed here, including scripts whose output can’t be determined from the code. Run one, and it’s linked by what it actually draws.",
     "allScriptsTitle": "All scripts",
     "autoLink": "Connect automatically",
     "emptyHint": "Run a plotting script, or drop a PDF or PNG into the figure folder.",
@@ -607,7 +607,7 @@
     "moreAria": "More actions for {{name}}",
     "none": "—",
     "nothingNew": "Scan finished; nothing new to connect",
-    "orphanConflicts": "More than one script claims these figure names: {{stems}}. No matching file yet; you can assign them under “All scripts” below.",
+    "orphanConflicts": "More than one script produces these figure names: {{stems}}. No matching file exists yet; assign them under “All scripts” below.",
     "pickSourceAria": "Pick a source script for {{name}}",
     "pickSourcePlaceholder": "Pick a source script",
     "probeAndLink": "Test run and connect",
@@ -760,14 +760,14 @@
           "cli_not_found": "Couldn't find the Tavotto command line (tavotto-cli) on this machine. The install may be incomplete — reinstalling the desktop app fixes it.",
           "codex_cli_missing": "Couldn't find the codex command. Install the Codex CLI yourself first, then try again.",
           "doctor": {
-            "interpreter_unusable": "The plugin's launcher command doesn't start on this machine — Codex would show no tools at all. This run only diagnosed, so nothing changed; running the install swaps it for an interpreter verified to run.",
+            "interpreter_unusable": "The plugin’s launcher command can’t run on this machine, so Codex would show no tools. This run only diagnosed and changed nothing; installing switches to an interpreter verified to run.",
             "marketplace_add_failed": "Tavotto isn't registered as a Codex plugin marketplace yet. This run only diagnosed, so nothing changed; running the install sets it up.",
             "plugin_add_failed": "The plugin isn't installed yet. This run only diagnosed, so nothing changed; running the install sets it up.",
             "provision_failed": "The plugin doesn't have a matching version of the Tavotto engine yet. This run only diagnosed, so nothing changed; running the install sets it up."
           },
           "engine_too_old": "The Tavotto engine on this machine is older than the minimum the installed plugin requires, so the plugin's bridge can't drive it. Upgrade the engine (pipx upgrade tavotto, or update the desktop app), or roll the plugin back to a version that matches.",
           "health_failed": "Everything is installed, but the health check failed — the plugin still can't find a usable Tavotto engine. Expand the details below for what it reported.",
-          "interpreter_unusable": "The plugin's launcher command doesn't start on this machine — Codex would show no tools at all. On Windows, python3 is often the Microsoft Store placeholder: it looks present but exits immediately. Installing swaps it for an interpreter verified to run; if none is found, install a Python or point TAVOTTO_MCP_PYTHON at one and try again.",
+          "interpreter_unusable": "The plugin’s launcher command can’t run on this machine, so Codex would show no tools. On Windows, python3 is often the Microsoft Store placeholder: it appears installed but exits immediately. Installing switches to an interpreter verified to run; if none is found, install Python or set TAVOTTO_MCP_PYTHON and try again.",
           "marketplace_add_failed": "Couldn't register Tavotto as a Codex plugin marketplace. Usually there's no network access, or no permission to write Codex's config directory.",
           "marketplace_state_unknown": "Couldn't determine Codex's marketplace registration (codex plugin marketplace list produced no result), so nothing was changed. That's not the same as not registered. Expand the details for what Codex reported: usually the codex command can't start from inside Tavotto (for example an npm-installed codex that can't find node), or Codex itself isn't set up yet.",
           "not_desktop": "This action is only available in the desktop app.",
@@ -1006,7 +1006,7 @@
         "python": "Python {{version}}",
         "ready": "Ready",
         "rebuild": "Rebuild environment…",
-        "rebuildDesc": "If it breaks, rebuild: creates a fresh environment and reinstalls every recorded package"
+        "rebuildDesc": "Rebuild a broken environment: creates a fresh one and reinstalls every recorded package"
       },
       "envTarget": "Installs go here",
       "envTitle": "This project’s {{product}} environment",
@@ -1088,7 +1088,7 @@
       "backupDir": "Original file backups",
       "current": "Current project",
       "exportDir": "Export location",
-      "noScriptsSuffix": " (figures can’t be edited element by element yet)",
+      "noScriptsSuffix": " (figure editing isn’t available for this project yet)",
       "registry": "Manage sources…",
       "scriptCount_one": "{{count}} script",
       "scriptCount_other": "{{count}} scripts",
@@ -1105,7 +1105,7 @@
       "sectionProject": "Project",
       "sectionLocations": "Locations",
       "sectionWriteBack": "Writing back to sources",
-      "writeBackDesc": "Writing back overwrites the original PDF / PNG and script; the original is backed up to the location above first.",
+      "writeBackDesc": "Write-back overwrites the original PDF / PNG and script; the originals are backed up to the location above first.",
       "change": "Change…"
     },
     "section": {
@@ -1436,7 +1436,7 @@
     "steps": {
       "welcome": {
         "title": "Learn Tavotto with a sample",
-        "body": "An offline tutorial copy: change anything, restart any time, your own projects are never touched. You’ll walk through the two core workflows with real actions."
+        "body": "An offline tutorial copy: edit freely and restart any time; your own projects are never affected. Next, you’ll walk through the two core workflows."
       },
       "open_fast_edit": {
         "title": "Open a figure",
@@ -1464,10 +1464,10 @@
       },
       "export_original": {
         "title": "Look at the original export",
-        "body": "Open “Export”, confirm the scope is “Original”, then close the panel.",
+        "body": "Open “Export”, confirm the scope is “Original size”, then close the panel.",
         "scope": {
           "title": "Look at the original export",
-          "body": "“Original” outputs the figure at its own size; canvas scaling never applies. Close the panel to continue."
+          "body": "“Original size” outputs the figure at its own size, unaffected by canvas scaling. Close the panel to continue."
         }
       },
       "add_to_layout": {

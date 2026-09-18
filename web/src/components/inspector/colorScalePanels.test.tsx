@@ -517,7 +517,7 @@ describe('脚本自定义的色图（2026-09-13 用户反馈：图 A 显示 from
     expect(overrideOf('axes_0.images_0', 'cmap')).toBe('viridis')
   })
 
-  it('换走之后多一格「脚本原样」，选它清掉图像与色条两边的 override', async () => {
+  it('换走之后多一格「脚本原始值」，选它清掉图像与色条两边的 override', async () => {
     await mount('axes_0.images_0', {
       manifest: withElements(switchedImage(), colorbarEl()),
       overrides: [
@@ -534,7 +534,7 @@ describe('脚本自定义的色图（2026-09-13 用户反馈：图 A 显示 from
     expect(entries[0].getAttribute('data-cmap-entry')).toBe('restore')
     expect(entries[0].getAttribute('aria-checked')).toBe('false')
     expect(entries[0].textContent).toContain('自定义')
-    expect(entries[0].textContent).toContain('脚本原样')
+    expect(entries[0].textContent).toContain('脚本原始值')
     const bar = entries[0].querySelector('[data-cmap-gradient]') as HTMLElement
     expect(bar.getAttribute('data-cmap-gradient')).toBe('discrete')
     expect(bar.style.background).toContain('rgb(207, 106, 44)')
@@ -561,7 +561,7 @@ describe('脚本自定义的色图（2026-09-13 用户反馈：图 A 显示 from
     expect(bar.style.background).not.toContain('rgb(37, 111, 168)')
   })
 
-  it('没有原样事实（还没换走 / 老引擎）时不出「脚本原样」那一格', async () => {
+  it('没有原样事实（还没换走 / 老引擎）时不出「脚本原始值」那一格', async () => {
     await mount('axes_0.images_0')
     await click(cmapTrigger())
     expect(cmapEntries().map((e) => e.getAttribute('data-cmap-entry'))).not.toContain('restore')

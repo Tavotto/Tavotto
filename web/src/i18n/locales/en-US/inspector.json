@@ -50,7 +50,7 @@
     "refLabel": "Align to",
     "refTip": {
       "page": "Use the canvas as the reference.",
-      "primary": "Use the last-selected object as the reference; it stays put",
+      "primary": "The last-selected object is the reference and stays in place.",
       "selection": "Use the selection's bounding box as the reference"
     },
     "reflow": "Re-flow",
@@ -163,8 +163,8 @@
       "vertical": "Vertical lines"
     },
     "hatchPattern": "Hatch {{value}}",
-    "scriptOriginal": "script original",
-    "legendCustomHint": "The legend sits at a custom spot. Pick any preset (including Best fit) to snap it back.",
+    "scriptOriginal": "script value",
+    "legendCustomHint": "The legend is at a custom position. Choose any preset (including Best fit) to reset it.",
     "switchOff": "{{label}}: off (click to turn on)",
     "switchOn": "{{label}}: on (click to turn off)",
     "tickSpineDiagram": "Tick & frame diagram",
@@ -199,12 +199,12 @@
     "legendBestShort": "Auto"
   },
   "element": {
-    "absentAppearance": "Visible in the figure, but this version can't edit it here — it comes from the script.",
+    "absentAppearance": "This element comes from the script; editing it here isn’t supported in this version.",
     "advanced": "Advanced",
     "alignBaseline": "Reference",
     "alignBaselineSize": "Size reference",
     "alignHdist": "Distribute horizontally (needs 3+)",
-    "alignHint": "For axes this changes their share of the figure; for text and legends it moves the anchor. Neither affects the figure’s size on the canvas.",
+    "alignHint": "For axes this changes their share of the figure; for text and legends it moves the anchor. Neither changes the figure’s size on the canvas.",
     "alignHintAnnotations": "Canvas annotations line up on the same baseline; their position changes on the canvas object.",
     "alignHintGroup": "Dragging the group's bounding-box handles on the canvas scales it too.",
     "alignInvalid": "An element in the selection has invalid geometry. Alignment cancelled.",
@@ -230,7 +230,7 @@
       "max": "Max",
       "indexed": "Value {{n}}"
     },
-    "backToScript": "Back to the script value",
+    "backToScript": "Restore script value",
     "backToScriptPartial_one": "Back to the script value ({{count}} changed)",
     "backToScriptPartial_other": "Back to the script value ({{count}} changed)",
     "batchEdit": "Change {{label}} in bulk",
@@ -257,7 +257,7 @@
     "groupTicksGrid": "Ticks and grid",
     "hiddenElements_one": "Hidden elements ({{count}})",
     "hint": {
-      "scatterSize": "pt² is an area, not a diameter: doubling the value makes the dot about 1.4× wider."
+      "scatterSize": "pt² is an area, not a diameter; doubling the value makes each dot about 1.4× wider."
     },
     "hiddenElements_other": "Hidden elements ({{count}})",
     "invert": "Invert",
@@ -325,7 +325,7 @@
     "selectHost": "Select",
     "selectHostAxes": "Select {{label}}",
     "colorScaleLinked": "Shares a colour scale with {{label}}",
-    "colorScaleTip": "Colormap and scale limits are one state. Change one; the other follows.",
+    "colorScaleTip": "Colormap and scale limits share one state; changing either updates the other.",
     "selectScalePartner": "Select {{label}}",
     "selectScalePartnerShort": "Select",
     "groupRangeTransform": "Range & transform",
@@ -628,10 +628,10 @@
   "panel": {
     "appearance": "Appearance",
     "aspect": "Original ratio",
-    "aspectLocked": "Aspect ratio locked — changing one side changes the other",
+    "aspectLocked": "Aspect ratio locked; resizing keeps the proportions",
     "aspectTip": "Keep the width and fix the height to the original ratio",
     "aspectUnlocked": "Aspect ratio unlocked — W and H are independent",
-    "bitmapBoth": "Flipping and opacity both embed this figure as a bitmap. Vector text is no longer selectable in the exported PDF.",
+    "bitmapBoth": "Flipping and opacity both embed this figure as a bitmap in the exported PDF, so its vector text is no longer selectable.",
     "bitmapFlip": "Flipped figures embed as a bitmap at export DPI in the PDF. Vector text is no longer selectable.",
     "bitmapOpacity": "Below 100% opacity, this figure embeds as a high-resolution bitmap. Vector text is no longer selectable in the PDF.",
     "building": "Building…",
@@ -675,7 +675,7 @@
     "overrideCount_one": "This figure has {{count}} edit",
     "overrideCount_other": "{{count}} figure edits",
     "ptHint": "{{base}} pt in the original × {{scale}}% scale",
-    "ptHintBad": "{{base}} pt in the original × {{scale}}% scale — below 6 pt is unreadable in print",
+    "ptHintBad": "{{base}} pt in the original × {{scale}}% scale: effective size below 6 pt, too small for print",
     "replace": "Replace asset",
     "replaceDescription": "Position, size, crop, rotation and stacking order are kept. Figure edits can’t move across scripts; you’ll be asked before they’re cleared.",
     "replaceTip": "Keeps position, size, crop and stacking order; only swaps the image source",
@@ -1117,7 +1117,7 @@
   },
   "writeBack": {
     "annotationsBlocked": "Canvas annotations can’t come along: {{reason}}.",
-    "annotationsTitle": "Canvas arrows, text and shapes on the figure are drawn as vectors into the original PDF at their current positions, and the PNG is re-rendered to match. They’re removed from the canvas after write-back (undoable).",
+    "annotationsTitle": "Canvas arrows, text and shapes over the figure are written as vectors into the original PDF at their current positions, and the PNG is re-rendered to match. They’re removed from the canvas after write-back; this can be undone.",
     "backupDone": "The originals were backed up to {{dir}} — expand for how to restore",
     "backupSummary": "Backed up to {{dir}} before overwriting — expand for how to restore",
     "buttonLabel": "Write back to the original file",
@@ -1183,7 +1183,7 @@
     },
     "stateFollow": "Follows the plot object",
     "stateCustom": "Custom",
-    "followHint": "The handle is derived from that object in the figure. Unlink to give it its own colour, line style and marker.",
+    "followHint": "The handle is derived from the figure object. Unlink it to set its own colour, line style and marker.",
     "customHint": "The handle is no longer derived from the figure object. Relinking restores the derived look.",
     "customHintStyled": "The handle uses the style you set here. Relinking undoes those changes in one step.",
     "viewSource": "View source: {{label}}",

@@ -470,7 +470,7 @@ describe('LegendPositionPicker', () => {
     )
     expect(radioByLabel('左上')).toBeUndefined()
     expect(radioByLabel('右上')).toBeTruthy()
-    expect(host.textContent).toContain('已移到自定义位置')
+    expect(host.textContent).toContain('位于自定义位置')
   })
 
   // ------------------------------------------------------------------

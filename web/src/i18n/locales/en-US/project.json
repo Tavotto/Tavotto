@@ -9,7 +9,7 @@
       "dot_only": "“.” and “..” can’t be a project name.",
       "empty": "Enter a project name.",
       "illegal_char": "The project name can’t contain < > : \" / \\ | ? * .",
-      "reserved_name": "That name is reserved by the system. Pick another one.",
+      "reserved_name": "This name is reserved by the system. Choose another.",
       "too_long": "The project name is too long. Shorten it.",
       "trailing_dot": "The project name can’t end with a period.",
       "whitespace_edge": "The project name can’t start or end with a space."
@@ -27,7 +27,7 @@
     "addToCanvas": "Add to canvas",
     "description_one": "The script produced {{count}} figure — pick the one to open",
     "description_other": "The script produced {{count}} figures — pick the one to open",
-    "empty": "No figures are registered for this script yet. Run it from the Scripts section of the asset library.",
+    "empty": "No figures are registered for this script yet. Run it from the Scripts section of the asset library to capture them.",
     "listAria": "Figures produced by this script",
     "needsRun": "Run it first",
     "runtimeBadge": "Runtime figure",
@@ -68,14 +68,14 @@
     "removeAllMissing": "Remove all",
     "removeFromList": "Remove {{name}} from the list. Nothing on disk is deleted.",
     "removeFromListTitle": "Remove from the list — deletes nothing",
-    "tagline": "A project is the folder your figures live in. Pick one to start laying out.",
+    "tagline": "A project is the folder that holds your figures and scripts. Choose one to start.",
     "tutorial": {
       "start": "Learn Tavotto with a sample",
       "resume": "Resume tutorial",
       "restart": "Take the tutorial again"
     },
     "tutorialBadge": "Tutorial project",
-    "tutorialHint": "An offline sample project — change anything, start over anytime. Your own projects stay untouched.",
+    "tutorialHint": "An offline sample project: edit freely and start over any time. Your own projects are never affected.",
     "tutorialLabel": "Tutorial",
     "tutorialOpening": "Preparing…",
     "tutorialUnavailable": "The tutorial resources are incomplete. Reinstall Tavotto."

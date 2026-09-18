@@ -373,7 +373,7 @@ describe('输出范围', () => {
     const original = document.body.querySelector('[role="radio"]') as HTMLButtonElement
     expect(original.hasAttribute('disabled')).toBe(false)
     expect(text()).not.toContain('先选中一张图')
-    expect(text()).not.toContain('点选下面的一张图')
+    expect(text()).not.toContain('在下方选一张')
   })
 
   it('源文件不见了：主按钮灰 + **说的是源文件不见了**，不是"先选中一张图"', async () => {
@@ -1079,8 +1079,8 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     await mountDialogs()
     await openDialog()
     expect(header()).toContain('80 × 57.6 mm')
-    expect(header()).toContain('磁盘上的原件是 75.3 × 58.7 mm')
-    expect(header()).toContain('按图幅 80 × 57.6 mm 出图')
+    expect(header()).toContain('磁盘上的原文件为 75.3 × 58.7 mm')
+    expect(header()).toContain('将按图幅 80 × 57.6 mm 导出')
     // 权威只有一个：头部之外不再报第二个尺寸
     expect(text().split('80 × 57.6 mm').length - 1).toBe(2)
   })
@@ -1356,13 +1356,13 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     await setupTwo({ select: [] })
     // 默认按画布：一句「还没定要导哪一张」都不出现——那是原图范围的事，
     // 与「当前画布」并排出现就是两个状态互相矛盾；清单也不摆
-    expect(text()).not.toContain('点选下面的一张图')
+    expect(text()).not.toContain('在下方选一张')
     expect(figureOptions()).toHaveLength(0)
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     // 「原图尺寸」可点（项目里有图可挑），点了之后清单展开、指引出现、主按钮灰
     expect(originalRadio().hasAttribute('disabled')).toBe(false)
     await click(originalRadio())
-    expect(text()).toContain('点选下面的一张图')
+    expect(text()).toContain('在下方选一张')
     expect(text()).not.toContain('没有当前图')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
     const options = figureOptions()
@@ -1376,7 +1376,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     expect(originalRadio().hasAttribute('disabled')).toBe(false)
     expect(figureOptions()[1].getAttribute('aria-selected')).toBe('true')
     expect(text()).toContain('65 × 50 mm')
-    expect(text()).not.toContain('点选下面的一张图')
+    expect(text()).not.toContain('在下方选一张')
 
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
@@ -1567,7 +1567,7 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     expect(ppiSelect()).toBeNull()
     const eps = formatBox('EPS')
     expect(eps.disabled).toBe(true)
-    expect(eps.closest('label')!.title).toContain('EPS 只能按「原图尺寸」导出单张图')
+    expect(eps.closest('label')!.title).toContain('EPS 只支持按「原图尺寸」导出单张图')
     await click(formatBox('TIFF'))
     expect(ppiSelect(), 'TIFF 是位图，分辨率那一行要出现').toBeTruthy()
     // 「这次会写哪几个文件」的预览行已按工作台批次去掉；发出去的格式清单在请求体里判
@@ -1614,7 +1614,7 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     })
     await click(formatBox('EPS'))
     await click(button('当前画布')!)
-    expect(text()).toContain('EPS 只能按「原图尺寸」导出单张图')
+    expect(text()).toContain('EPS 只支持按「原图尺寸」导出单张图')
     await click(button('开始导出')!)
     expect(exportBodies[0].scope).toBe('canvas')
     expect(exportBodies[0].formats).toEqual(['pdf', 'png'])

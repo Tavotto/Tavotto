@@ -195,7 +195,7 @@ describe('空态、筛选与「查不了」', () => {
   it('「这一次没查成」与「没问题」是两句不同的话', async () => {
     useValidationStore.setState({ ready: false, failed: true, issues: [], results: [] })
     await mount(<ProblemPanel />)
-    expect(text()).toContain('这次没查成')
+    expect(text()).toContain('检查未完成')
     expect(text()).not.toContain('未发现问题')
   })
 
@@ -331,7 +331,7 @@ describe('这一轮查砸了、上一轮的结果还留着', () => {
   it('上一轮什么都没有时仍然只出错误空态，不摆一条没有清单的横幅', async () => {
     useValidationStore.setState({ ready: true, failed: true, issues: [], results: [] })
     await mount(<ProblemPanel />)
-    expect(text()).toContain('这次没查成')
+    expect(text()).toContain('检查未完成')
     expect(text()).not.toContain('未发现问题')
     expect(list()).toBeNull()
   })

@@ -533,7 +533,7 @@ describe('柱形：单位不折行，纹理有一条能力提示与源对象入�
     const note = host.querySelector('[data-absent-appearance="hatch"]')!
     expect(note, '柱形面板里连一句「纹理在哪儿改」都没有').toBeTruthy()
     expect(note.textContent).toContain('纹理')
-    expect(note.textContent).toContain('来自脚本')
+    expect(note.textContent).toContain('由脚本生成')
     // 不是摆一个点了没反应的控件
     expect(host.querySelector('[aria-label="纹理"]')).toBeNull()
 

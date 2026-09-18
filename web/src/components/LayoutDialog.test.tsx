@@ -143,7 +143,7 @@ describe('409 之后的出口', () => {
     await open()
     await clickSave()
     const text = dialog().textContent ?? ''
-    expect(text).toContain('不是本窗口写的')
+    expect(text).toContain('由其他窗口或外部工具写入')
     expect(text).toContain('7') // 磁盘上那份的对象数
     expect(buttonByText('仍然覆盖')).toBeTruthy()
     expect(useUiStore.getState().layoutOpen).toBe(true) // 没关掉，用户还要裁决

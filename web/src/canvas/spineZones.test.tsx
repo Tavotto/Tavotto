@@ -3,7 +3,7 @@
  * 外侧的动作接成「切这一边的向内 / 向外刻度」。
  *
  * 要钉住的：
- *   1. 悬停出现高亮条 + 状态文字（哪边 · 向内 / 向外 · 开着 / 关着 · 点击会怎样），
+ *   1. 悬停出现高亮条 + 状态文字（哪边 · 向内 / 向外 · 已开启 / 已关闭 · 点击会怎样），
  *      离开即消失，不常驻遮挡；
  *   2. 点击 = 一次 commit（方向 + 显隐同一条历史），选中落到那条边的子图；
  *   3. 中线（neutral）不切刻度，只选中；
@@ -247,7 +247,7 @@ afterEach(async () => {
 /* --------------------------------- 用例 ---------------------------------- */
 
 describe('悬停反馈', () => {
-  it('落在下边框里那一带：高亮条 + 状态文字（下边 · 朝内 · 关着 · 点击显示）', async () => {
+  it('落在下边框里那一带：高亮条 + 状态文字（下边 · 朝内 · 已关闭 · 点击开启）', async () => {
     await mount()
     expect(strip()).toBeNull()
     await hover(0.3, 0.9 - dy(5))
@@ -258,20 +258,20 @@ describe('悬停反馈', () => {
     const text = label()!.textContent ?? ''
     expect(text).toContain('下边')
     expect(text).toContain('朝内')
-    expect(text).toContain('关着')
-    expect(text).toContain('点击显示')
+    expect(text).toContain('已关闭')
+    expect(text).toContain('点击开启')
     expect(hitLayer().style.cursor).toBe('pointer')
     // 高亮条与命中带同一把尺：厚度 = band - neutral 屏幕像素（本层 1px = 1 世界像素 / zoom）
     expect(parseFloat((s as HTMLElement).style.height)).toBeCloseTo(ZONE_PX.band - ZONE_PX.neutral, 5)
   })
 
-  it('外侧那一带说的是向外刻度，且它此刻开着', async () => {
+  it('外侧那一带说的是向外刻度，且它此刻已开启', async () => {
     await mount()
     await hover(0.3, 0.9 + dy(5))
     expect(strip()?.getAttribute('data-spine-zone-kind')).toBe('outer')
     const text = label()!.textContent ?? ''
     expect(text).toContain('朝外')
-    expect(text).toContain('开着')
+    expect(text).toContain('已开启')
   })
 
   it('离开命中带 / 离开面板即消失，不常驻', async () => {

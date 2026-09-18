@@ -50,7 +50,7 @@
     "refLabel": "对齐到",
     "refTip": {
       "page": "以画布为基准。",
-      "primary": "以最后选中的对象为基准，它不动。",
+      "primary": "以最后选中的对象为基准，基准对象保持不动。",
       "selection": "以选区的包围盒为基准"
     },
     "reflow": "重新排列",
@@ -161,8 +161,8 @@
       "vertical": "竖线"
     },
     "hatchPattern": "纹理 {{value}}",
-    "scriptOriginal": "脚本原样",
-    "legendCustomHint": "图例已移到自定义位置。点任一预设（含「最佳位置」）即可复位。",
+    "scriptOriginal": "脚本原始值",
+    "legendCustomHint": "图例位于自定义位置。选择任一预设（含「最佳位置」）即可复位。",
     "switchOff": "{{label}}：关（点击开启）",
     "switchOn": "{{label}}：开（点击关闭）",
     "tickSpineDiagram": "刻度与边框状态图",
@@ -196,12 +196,12 @@
     "legendBestShort": "自动"
   },
   "element": {
-    "absentAppearance": "图上可见，但这一版无法在这里编辑——它来自脚本。",
+    "absentAppearance": "此元素由脚本生成，当前版本暂不支持在此编辑。",
     "advanced": "高级",
     "alignBaseline": "基准",
     "alignBaselineSize": "等宽/等高基准",
     "alignHdist": "水平等距（≥3）",
-    "alignHint": "子图改的是它在图中的占比，文字与图例改的是锚点，都不影响这张图在画布上的尺寸。",
+    "alignHint": "子图调整的是它在图内的占比，文字与图例调整的是锚点；两者都不改变这张图在画布上的尺寸。",
     "alignHintAnnotations": "画布标注跟着同一条基线排，位置改在画布对象上。",
     "alignHintGroup": "拖画布上的组包围框手柄也能成组缩放。",
     "alignInvalid": "选区里的元素几何异常，对齐已取消。",
@@ -225,7 +225,7 @@
       "max": "最大",
       "indexed": "第 {{n}} 项"
     },
-    "backToScript": "回到脚本值",
+    "backToScript": "恢复脚本值",
     "backToScriptPartial_other": "回到脚本值（{{count}} 个改过）",
     "batchEdit": "批量修改{{label}}",
     "batchEditGeneric": "批量修改",
@@ -249,7 +249,7 @@
     "groupTicksGrid": "刻度与网格",
     "hiddenElements_other": "已隐藏元素（{{count}}）",
     "hint": {
-      "scatterSize": "pt² 是面积，不是直径。数值翻倍，点约宽 1.4 倍。"
+      "scatterSize": "pt² 为面积而非直径。数值翻倍时，点径约为原来的 1.4 倍。"
     },
     "invert": "反转",
     "invertAria": "反转坐标轴",
@@ -310,7 +310,7 @@
     "selectHost": "选中",
     "selectHostAxes": "选中{{label}}",
     "colorScaleLinked": "与{{label}}共用色阶",
-    "colorScaleTip": "色图与色阶上下限是同一份状态：改一边，另一边跟着变。",
+    "colorScaleTip": "色图与色阶范围共用同一份状态，修改任一处另一处同步更新。",
     "selectScalePartner": "选中{{label}}",
     "selectScalePartnerShort": "选中",
     "groupRangeTransform": "范围与变换",
@@ -611,10 +611,10 @@
   "panel": {
     "appearance": "外观",
     "aspect": "原始比例",
-    "aspectLocked": "宽高比已锁定，改一边另一边跟着变",
+    "aspectLocked": "宽高比已锁定，调整尺寸时等比缩放",
     "aspectTip": "保持宽度，按原始长宽比修正高度",
     "aspectUnlocked": "宽高比已解锁，W 与 H 互不影响",
-    "bitmapBoth": "翻转和不透明度都会让这张图在导出 PDF 里按位图嵌入。矢量文字不再可选中。",
+    "bitmapBoth": "翻转与不透明度都会使这张图在导出的 PDF 中以位图嵌入，矢量文字将不可选中。",
     "bitmapFlip": "翻转的图在导出 PDF 里按导出 DPI 嵌入为位图。矢量文字不再可选中。",
     "bitmapOpacity": "不透明度低于 100% 时，这张图在 PDF 中导出为高分辨率位图。矢量文字不再可选中。",
     "building": "正在构建…",
@@ -656,7 +656,7 @@
     "opacity": "不透明度",
     "overrideCount_other": "{{count}} 项图内修改",
     "ptHint": "原图 {{base}} pt × 缩放 {{scale}}%",
-    "ptHintBad": "原图 {{base}} pt × 缩放 {{scale}}%，低于 6 pt 出版会看不清",
+    "ptHintBad": "原图 {{base}} pt × 缩放 {{scale}}%，有效字号低于 6 pt，不满足出版可读性",
     "replace": "替换素材",
     "replaceDescription": "位置、尺寸、裁剪、旋转与层级都会保留。图内修改无法跨脚本迁移，清空前会先征求你的同意。",
     "replaceTip": "保留位置、尺寸、裁剪与层级，只换图源",
@@ -1094,7 +1094,7 @@
   },
   "writeBack": {
     "annotationsBlocked": "画布标注无法一同写回：{{reason}}。",
-    "annotationsTitle": "压在图上的画布箭头、文字、形状会以矢量按当前位置画进原 PDF，PNG 同步重出。写回后从画布移除，可撤销。",
+    "annotationsTitle": "叠在图上的画布箭头、文字与形状将按当前位置以矢量写入原 PDF，并同步重新生成 PNG。写回后从画布移除，可撤销。",
     "backupDone": "原文件已备份到 {{dir}}，可展开看恢复办法",
     "backupSummary": "覆盖前自动备份到 {{dir}}，可展开看恢复办法",
     "buttonLabel": "写回原始文件",
@@ -1153,7 +1153,7 @@
     },
     "stateFollow": "跟随图中对象",
     "stateCustom": "自定义",
-    "followHint": "示意线由图中对象派生；断开后才能单独改它的颜色、线型和标记。",
+    "followHint": "图例示意由图中对象派生；断开关联后才能单独修改颜色、线型和标记。",
     "customHint": "示意线不再由图中对象派生；恢复链接会回到由它派生的样子。",
     "customHintStyled": "示意线用的是你在这里改的样式；恢复链接会一并撤销这些修改。",
     "viewSource": "查看源对象：{{label}}",

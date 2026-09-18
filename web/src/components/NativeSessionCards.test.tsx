@@ -95,7 +95,7 @@ describe('NativeSessionCards 的动作按钮', () => {
     put(session({ state, editable: false }))
     render()
     expect(has('继续运行脚本')).toBe(false)
-    expect(has('放手'), '「放手」也走 _require_barrier，非屏障处必然失败').toBe(false)
+    expect(has('脱离接管'), '「脱离接管」也走 _require_barrier，非屏障处必然失败').toBe(false)
     expect(has('终止脚本')).toBe(false)
   })
 
@@ -103,7 +103,7 @@ describe('NativeSessionCards 的动作按钮', () => {
     put(session({ state: 'barrier', editable: true }))
     render()
     expect(has('继续运行脚本')).toBe(true)
-    expect(has('放手')).toBe(true)
+    expect(has('脱离接管')).toBe(true)
     expect(has('终止脚本')).toBe(true)
   })
 
@@ -118,7 +118,7 @@ describe('NativeSessionCards 的动作按钮', () => {
     put(session({ state: 'ended', exit_code: 0, editable: false }))
     render()
     expect(has('继续运行脚本')).toBe(false)
-    expect(has('放手')).toBe(false)
+    expect(has('脱离接管')).toBe(false)
     expect(document.body.textContent).toContain('已结束')
   })
 })
