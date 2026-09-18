@@ -408,6 +408,28 @@ python -m build
 python -m twine check --strict dist/*     # 元数据 + PyPI 的 README 渲染
 ```
 
+### 只有人手动开环境变量才跑的六条（插件发行前跑一次）
+
+skip 矩阵（`docs/ci/skip-evidence-matrix.md` #10）里这六条要真 codex CLI / 真网络 /
+真 marketplace，**没有任何 workflow 设这些变量**（ADR 0012：默认 skip、手动 opt-in），
+所以它们没有 CI 通道——插件发行前在装了 `codex`（与 `claude`）的机器上跑一次，
+把输出贴进 release 的 PR：
+
+```sh
+# 真 codex 客户端演练（2 条；PATH 里有 codex 就跑，TAVOTTO_SKIP_REAL_CODEX=1 是关掉它）
+python -m pytest tests/test_codex_real_client.py -rs
+# 真 codex 从本地 marketplace 装插件（PATH 里有 codex 就跑）
+python -m pytest "tests/test_codex_plugin.py::test_real_codex_installs_the_plugin_from_a_local_marketplace" -rs
+# 真 codex 从 GitHub 稀疏安装（要网络）
+TAVOTTO_CODEX_NET_SMOKE=1 python -m pytest "tests/test_codex_plugin.py::test_real_codex_sparse_install_from_github" -rs
+# `tavotto codexinstall` 对着真实 marketplace 装完再 doctor（要网络）
+TAVOTTO_CODEX_REAL_SMOKE=1 python -m pytest "tests/test_codex_install_cli.py::test_real_codex_cli_install_then_doctor" -rs
+# 本机真的装了 codex / claude 时的探测
+TAVOTTO_REAL_CLI_SMOKE=1 python -m pytest "tests/test_ai_agents.py::test_real_cli_detection_smoke" -rs
+```
+
+`-rs` 让仍然 skip 的那条把理由打出来——这一步的判据是「它们真跑了」，全 skip 等于没跑。
+
 ## 独立应用（.dmg / .exe）
 
 桌面发行**只有一条链路**（v0.3.0 起）：`desktop-tauri.yml`。旧 PyInstaller

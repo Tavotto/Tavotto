@@ -626,7 +626,7 @@ jobs:
       # （安装入口读的是发行分支），只会把合并队列拖回「同一份 HTML 必撞」。在 PR 上就拦，
       # main 落地审计再查一次。判据问的是索引（git ls-files），不是 .gitignore 写了什么。
       - name: 发行生成物不许进索引
-        working-directory: .
+        working-directory: ${{ github.workspace }}
         run: python3 scripts/ci/check_generated_untracked.py
       # ── 完整插件候选（ADR 0043）─────────────────────────────────────────
       # 从**本次实际 checkout**（PR = 合并提交；merge_group = 队列组合提交）真构建
@@ -636,10 +636,10 @@ jobs:
       # `--source-sha` 取 `git rev-parse HEAD`：清单里记的必须是真造它的那个 commit，
       # 组装脚本自己会与 HEAD 对拍，传错就红。
       - name: 构建 MCP 画布（真 vite，写到临时位置）
-        working-directory: .
+        working-directory: ${{ github.workspace }}
         run: python3 scripts/build_mcp_widget.py --out "$RUNNER_TEMP/plugin/canvas.html" --json
       - name: 组装并验证完整插件候选
-        working-directory: .
+        working-directory: ${{ github.workspace }}
         env:
           EVENT: ${{ github.event_name }}
           RUN_ID: ${{ github.run_id }}
@@ -672,7 +672,7 @@ jobs:
       # 脚本随前端一起是活的；「网站上那份是不是过期」的门禁在网站仓库——
       # `pnpm check-playground` 调本仓库的 --fingerprint 重算比对。
       - name: 浏览器 playground 构建
-        working-directory: .
+        working-directory: ${{ github.workspace }}
         run: python3 scripts/build_browser_playground.py
 
   # ────────────────────────────────────────────────────────────────
@@ -785,7 +785,7 @@ jobs:
   # 只在 Linux 上跑一份：纯标准库 + serde 的 stdio 进程，没有平台分支。
   workerd:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    timeout-minutes: 15  # 实测 0.3 分钟；没有上限的 job 会堵死合并队列
+    timeout-minutes: 25  # cargo 三件实测 0.3 分钟；加上装科学栈 + 12 条 workerd 等价用例（首跑实测见 PR）；没有上限的 job 会堵死合并队列
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -806,6 +806,34 @@ jobs:
       # supervisor_behaviour.rs 起的是真二进制 + tests/fake_worker.py，
       # 靠 runner 自带的 python3（`PYTHON` 可覆盖）
       - run: cargo test
+      # skip 矩阵 #1（docs/ci/skip-evidence-matrix.md）：`test_equivalence_matrix` / `test_worker_roundtrip`
+      # 里 workerd 那 12 条（三路等价 ×N、inline svg 逐字节、preview_png 状态中立）在没有
+      # `tavotto-workerd` 产物的机器上 skip，而 CI 里唯一有 `target/debug/tavotto-workerd` 的地方就是
+      # 这里（`cargo test` 刚建的）——两条冒烟腿验的是「产物自带的 workerd 能渲染」，验不了
+      # 「三路逐字节等价」。所以在这个 job 里装上科学栈对着刚建的二进制真跑一次。
+      # `-k workerd` 选的就是那 12 条（用例名里都带 workerd）；`-rs` 把仍 skip 的理由打出来——
+      # 这一步的判据是「它们真跑了」，全 skip 也算失败（同一步末尾按 junit 核对）。
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - name: 对着刚建的 tavotto-workerd 跑 workerd 那 12 条等价用例
+        working-directory: ${{ github.workspace }}
+        timeout-minutes: 10
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          # shellcheck disable=SC2046
+          pip install $(python scripts/ci/runtime_pins.py)
+          test -x workerd/target/debug/tavotto-workerd
+          python -m pytest tests/test_equivalence_matrix.py tests/test_worker_roundtrip.py \
+            -k workerd -p no:cacheprovider -q -rs --junitxml "${{ runner.temp }}/workerd-pytest.xml"
+          python - <<'PY'
+          import xml.etree.ElementTree as ET, os
+          root = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "workerd-pytest.xml")).getroot()
+          cases = root.iter("testcase")
+          ran = [c for c in cases if c.find("skipped") is None]
+          assert ran, "workerd 那批用例一条都没真跑（全 skip）——产物没被认出来，这一步就成了空转"
+          print(f"真跑了 {len(ran)} 条 workerd 用例")
+          PY
 
   # 桌面壳（Tauri）的静态门禁 + 单测。**与 workerd 同一条纪律**，理由也一样：
   # 这些用例原先只跑在 desktop-tauri.yml 里，而那个工作流只在打 tag /
@@ -1011,6 +1039,23 @@ jobs:
           BIN="$VENV/bin"; [ -d "$BIN" ] || BIN="$VENV/Scripts"
           python scripts/ci/package_smoke.py --python "$BIN/python" \
             --workdir "${{ runner.temp }}/smoke-run" --timeout 120
+      # skip 矩阵 #5（docs/ci/skip-evidence-matrix.md）：`tests/test_tutorial.py` 里那三条读的是
+      # **产物**（wheel 含全部教程资源且无多余、sdist 同、装开的 wheel 只靠 importlib 找得到资源），
+      # 本地没 `python -m build` 就 skip；这个 job 刚打过 wheel + sdist，却从没对着它们跑过这三条
+      # ——「产物已经在那儿，只是没人对着它跑」。用冒烟 venv 的解释器跑（wheel 已装在里面：
+      # 用例 import 的 `tavotto.app` / `tavotto.engine.tutorial` 就是产物那份，不是源码树）；
+      # `TAVOTTO_DIST_DIR=dist` 显式点名产物目录，不靠「仓库根下恰好有 dist/」。
+      - name: 对着产物跑教程资源的三条用例
+        shell: bash
+        timeout-minutes: 5
+        env:
+          TAVOTTO_DIST_DIR: dist
+        run: |
+          VENV="${{ runner.temp }}/smoke-venv"
+          BIN="$VENV/bin"; [ -d "$BIN" ] || BIN="$VENV/Scripts"
+          "$BIN/python" -m pip install --quiet "pytest>=8"
+          "$BIN/python" -m pytest tests/test_tutorial.py -k "wheel or sdist or installed_wheel" \
+            -p no:cacheprovider -q -rs
       - name: 上传冒烟日志（失败时）
         if: failure()
         uses: actions/upload-artifact@v4
