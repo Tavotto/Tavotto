@@ -84,7 +84,7 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
   试用**——它不进 git（ADR 0043），CI 从每次 checkout 现建并验证。
 - 引擎改动后重启服务：`lsof -ti:5089 -sTCP:LISTEN | xargs kill; ./run.sh --no-browser`。
 - 完整验证链（CompatBench / 等价性矩阵 / 不变式 / nightly / E2E / 性能基线）
-  见 `.github/AGENTS.md`。指导文档自身的门禁：`tests/test_agents_rules_index.py`
+  见 `docs/rules/ci/verification-chain.md`（`.github/AGENTS.md` 是速查表）。指导文档自身的门禁：`tests/test_agents_rules_index.py`
   （速查表 ↔ 细则一一对应、引用的路径 / 用例 / ADR 都在），体积按实际加载路径
   量：`python scripts/dev/agents_budget.py`。
 
@@ -98,6 +98,6 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 | `workerd/` | `workerd/AGENTS.md` | Rust supervisor |
 | `packaging/` | `packaging/AGENTS.md` | wheel/sdist、内置渲染 runtime、PyInstaller、macOS 签名 |
 | `codex-plugin/` | `codex-plugin/AGENTS.md` | Codex 插件、技能、MCP server、内嵌画布、首次使用契约 |
-| `.github/` | `.github/AGENTS.md` | CI 分层、门禁纪律、验证链、发布链 |
+| `.github/` | `.github/AGENTS.md`（速查表）→ `docs/rules/ci/` | CI 分层、门禁纪律、验证链、发布链 |
 | 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语 |
 | 架构决策 | `docs/adr/` | 改动前先读对应 ADR |

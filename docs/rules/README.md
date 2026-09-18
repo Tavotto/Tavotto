@@ -15,9 +15,11 @@ CLAUDE.md                       入口，只指向根 AGENTS.md
 AGENTS.md                       每次会话都读：任务路由 / 跨仓库不变量 / 验证入口 / 索引
 src/tavotto/AGENTS.md           后端速查表：本层不可破坏 + 「改到 → 主题 → 必守要点 → 看护」
 web/AGENTS.md                   前端速查表：同上
+.github/AGENTS.md               CI / 发布 / 验证链速查表：同上（2026-09-18 纳入）
 docs/rules/repo/                跨仓库：同源对总表、判据的主语
 docs/rules/backend/<主题>.md    后端各主题的全文（30 份，各 1–10 KB）
 docs/rules/frontend/<主题>.md   前端各主题的全文（29 份，各 2–13 KB）
+docs/rules/ci/<主题>.md         CI / 发布 / 验证链各主题的全文（13 份，各 1–6 KB）
 docs/adr/                       架构决策（细则里点名哪份就读哪份）
 ```
 

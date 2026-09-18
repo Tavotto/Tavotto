@@ -39,9 +39,10 @@ AUDIT_BASELINE_BYTES = {
     "AGENTS.md": 14_773,
     "src/tavotto/AGENTS.md": 143_922,
     "web/AGENTS.md": 147_812,
+    ".github/AGENTS.md": 31_773,  # 2026-09-18 纳入（任务书之外，用户拍板）
 }
 
-SHEETS = ["AGENTS.md", "src/tavotto/AGENTS.md", "web/AGENTS.md"]
+SHEETS = ["AGENTS.md", "src/tavotto/AGENTS.md", "web/AGENTS.md", ".github/AGENTS.md"]
 
 #: 三类代表任务（任务书点名的）+ 一个「只开会话」的对照。每项 = 根 + 速查表 + 细则。
 TASK_CHAINS: dict[str, list[str]] = {
@@ -110,7 +111,7 @@ def report() -> dict:
             }
         )
     rules = []
-    for layer in ("repo", "backend", "frontend"):
+    for layer in ("repo", "backend", "frontend", "ci"):
         for p in sorted((ROOT / "docs" / "rules" / layer).glob("*.md")):
             rules.append({"file": p.relative_to(ROOT).as_posix(), "bytes": p.stat().st_size})
     chains = []
@@ -150,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"  {s['bytes']:>7,} B  预算 {s['budget'][0]:,}–{s['budget'][1]:,}  {s['verdict']:<12} {s['file']}{base}"
             )
         print("== 细则（按需读）")
-        for layer in ("repo", "backend", "frontend"):
+        for layer in ("repo", "backend", "frontend", "ci"):
             items = [x for x in r["rules"] if x["file"].startswith(f"docs/rules/{layer}/")]
             total = sum(x["bytes"] for x in items)
             biggest = max(items, key=lambda x: x["bytes"]) if items else None

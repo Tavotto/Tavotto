@@ -36,7 +36,10 @@ SHEETS: dict[str, Path] = {
     "AGENTS.md": RULES / "repo",
     "src/tavotto/AGENTS.md": RULES / "backend",
     "web/AGENTS.md": RULES / "frontend",
+    ".github/AGENTS.md": RULES / "ci",
 }
+#: 细则目录 = 速查表点名的那些（加一层只改上表）。
+LAYERS = tuple(dict.fromkeys(v.name for v in SHEETS.values()))
 
 BACKTICK = re.compile(r"`([^`\n]+)`")
 ADR_REF = re.compile(r"ADR\s*0?(\d{3,4})")
@@ -140,9 +143,11 @@ def test_the_rules_corpus_is_actually_there():
     backend = _rules_files(RULES / "backend")
     frontend = _rules_files(RULES / "frontend")
     repo = _rules_files(RULES / "repo")
+    ci = _rules_files(RULES / "ci")
     assert len(backend) >= 25, f"backend 细则只有 {len(backend)} 份"
     assert len(frontend) >= 25, f"frontend 细则只有 {len(frontend)} 份"
     assert len(repo) >= 2, f"repo 细则只有 {len(repo)} 份"
+    assert len(ci) >= 10, f"ci 细则只有 {len(ci)} 份"
     for sheet in SHEETS:
         assert (ROOT / sheet).is_file(), sheet
 
@@ -191,7 +196,7 @@ def test_every_rules_reference_in_a_sheet_resolves(sheet: str):
 def test_rules_files_declare_their_origin():
     """每份细则头部要说自己从哪份速查表迁出——读的人得知道该回哪里改那一行。"""
     missing = []
-    for layer in ("backend", "frontend", "repo"):
+    for layer in LAYERS:
         for path in _rules_files(RULES / layer):
             head = path.read_text(encoding="utf-8").split("\n", 6)
             if not any("AGENTS.md" in ln for ln in head[:6]):
@@ -204,7 +209,7 @@ def test_rules_files_declare_their_origin():
 
 def _all_guidance_files() -> list[Path]:
     files = [ROOT / s for s in SHEETS]
-    for layer in ("backend", "frontend", "repo"):
+    for layer in LAYERS:
         files.extend(_rules_files(RULES / layer))
     return files
 
