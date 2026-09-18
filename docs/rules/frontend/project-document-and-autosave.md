@@ -25,7 +25,12 @@
 - **自动保存**：磁盘为主（`PUT /api/autosave/<docId>` 原子写
   `layouts/_autosave/`），localStorage 只留索引 + 崩溃兜底副本
   （写盘成功即清、读取按 updatedAt 取新）。失败发
-  `tavotto:autosave-error` 事件 → 常驻错误 toast。
+  `tavotto:autosave-error` 事件 → 常驻错误 toast。**怎样安全地落到磁盘上**——按文档
+  排队、串行 PUT、乐观并发基线（updatedAt）与外部修改基线（内容 hash 三档 + 缺席）、
+  写前确认、409 不推基线、冲突挡住排队那份——2026-09-18 起住在
+  `lib/autosave/diskWriter.ts`（`createDiskWriter(ports)`，不认识 store、不碰 window /
+  localStorage / 遥测），`documentStore` 只装配端口；用例 `lib/autosave/diskWriter.test.ts`
+  用假端口 + 手动 gate 直接量时序。
 - **`doc` / `canvases` 的变化有三种性质**，`startAutosave` 的订阅按两个代次
   区分，**改这段之前先想清楚新写入属于哪一档**：
 

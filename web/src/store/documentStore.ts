@@ -1,15 +1,14 @@
 import { create } from 'zustand'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
 import * as history from '@/lib/history'
+import { deleteAutosave, fetchAutosave, fetchAutosaveSummary, putAutosave } from '@/lib/api'
 import {
-  ApiError,
-  REVISION_ABSENT,
-  deleteAutosave,
-  fetchAutosave,
-  fetchAutosaveSummary,
-  putAutosave,
-  type DiskDocumentSummary,
-} from '@/lib/api'
+  blocksDiskWrite,
+  createDiskWriter,
+  hasUnsavedWork,
+  type SaveIssue,
+  type SaveState,
+} from '@/lib/autosave/diskWriter'
 import { emitActivity } from '@/lib/activity'
 import { announceDocOpen } from '@/lib/docPresence'
 import { currentProjectLabel } from '@/lib/projectLabel'
@@ -785,39 +784,8 @@ function writeIndex(next: RecentDoc[]): RecentDoc[] {
 /*  唯一的真相，TopBar / 横幅 / 关闭保护全都从它读。                            */
 /* -------------------------------------------------------------------------- */
 
-/**
- * 当前文档这一次保存走到了哪一步。
- *
- * ```text
- * clean ──编辑──▶ dirty ──flush──▶ saving ──成功且期间没再编辑──▶ saved ──▶ clean
- *                   ▲                 │                └──期间又编辑了──▶ dirty
- *                   │                 ├──写盘失败──▶ save_error ──重试──▶ saving
- *                   └────编辑─────────┴──409────────▶ conflict ──裁决──▶ dirty/clean
- * ```
- *
- * `saved` 是一个**短暂反馈态**，1.6 秒后自己回到 `clean`；它存在的理由是
- * 「刚刚存好了」和「一直是干净的」对用户是两件事。
- *
- * **「未决的恢复副本」与「那份文档读不了」不在这个枚举里**（Prompt 03 §二
- * 把 `recovery_available` / `read_only` 与它们并列）。理由是它们与保存进度
- * 是**两根互不相干的轴**，塞进同一个枚举两者就会互相顶掉：恢复副本还在本机
- * 躺着，一次成功的自动保存把状态推成 `saved`，横幅就没了，而那份副本一直到
- * 下次启动才再被想起来。它们走 `DocNotice`。
- */
-export type SaveState = 'clean' | 'dirty' | 'saving' | 'saved' | 'save_error' | 'conflict'
-
-/** 保存卡住的原因；`saveState` 说卡在哪一步，它说卡的是什么 */
-export interface SaveIssue {
-  /**
-   * - `io`：写盘本身失败（磁盘满、权限、后端不可达）
-   * - `stale`：另一个标签页存了更新的版本（后端 `stale_write`）
-   * - `external`：磁盘上那份不是我上次读到/写出的那份（后端 `external_change`）
-   */
-  kind: 'io' | 'stale' | 'external'
-  docId: string
-  /** 磁盘上那份的摘要（`external` / `stale`）；拿不到时为 null */
-  disk?: DiskDocumentSummary | null
-}
+export type { SaveIssue, SaveState } from '@/lib/autosave/diskWriter'
+export { hasUnsavedWork } from '@/lib/autosave/diskWriter'
 
 /**
  * 与保存进度**正交**的一件待裁决的事，同一时刻至多一件。
@@ -865,95 +833,12 @@ function setDocNotice(notice: DocNotice | null): void {
   useDocumentStore.setState({ docNotice: notice })
 }
 
-/**
- * 这个状态下**不许碰磁盘**：磁盘上那份不是我以为的那份，得先由用户裁决，
- * 否则每一次防抖自动保存都是一次静默覆盖的尝试。
- */
-const blocksDiskWrite = (state: SaveState) => state === 'conflict'
-
-/**
- * 有没有「还没安全落盘」的工作？关闭保护、切文档提示都问它。
- *
- * `clean` / `saved` 是安全的：磁盘上就是内存里这份。**未决的恢复副本不在
- * 此列**——那份副本本身就在本机磁盘上，关掉窗口它还在，下次打开照样问。
- */
-export const hasUnsavedWork = (state: SaveState): boolean =>
-  state === 'dirty' || state === 'saving' || state === 'save_error' || state === 'conflict'
-
 /* 磁盘为主、localStorage 为崩溃兜底：
  * flush 时同步写一份本机副本（快、抗崩溃），随即异步 PUT 到后端原子落盘，
- * 成功后删掉本机副本——稳态下 localStorage 不保存文档主体。 */
-
-let diskBusy = false
-/** 按 documentId 排队：同一个 id 天然合并成最新一份，不同 id 依次串行 PUT。
- *  用单槽变量的话，切文档时后来者会顶掉前一个文档排队的那份——那份连
- *  localStorage 兜底副本都还在等写盘成功后才清，顶掉即永久丢失。
+ * 成功后删掉本机副本——稳态下 localStorage 不保存文档主体。
  *
- *  **项目 id 跟着载荷一起排队**：一次写入属于排队那一刻的项目，不属于
- *  "socket 打开那一刻碰巧是哪个"。`dropProject()` 正是先冲刷再忘掉 pj，
- *  而排出去的那次 PUT 要过几个 await 才真的发出（写之前要先确认磁盘状况）
- *  ——读全局的话它就落进了后端的默认项目，在原项目里表现为"没保存"。 */
-const diskQueue = new Map<string, { pd: ProjectDocument; pj: string | null }>()
-
-/**
- * 乐观并发基线：本标签页最后一次**成功落盘**时那份文档的 updatedAt。
- * 读档时按磁盘上的值初始化，每次 PUT 成功后推进。PUT 带上它，后端发现磁盘
- * 更新（另一个标签页存过）就回 409 stale_write，不整份覆盖。
- *
- * 没有基线（首次写、从没读过盘）时不带，后端也就不校验——那时磁盘上本来就
- * 没有别人的东西可覆盖。收到 409 后基线**故意不推进**：本窗口后续的写盘会
- * 继续 409，而不是转头把对方的版本盖掉。
- */
-const diskBaseline = new Map<string, number>()
-
-/**
- * 外部修改基线（R-08）。三种取值**含义各不相同，不许合并**：
- *
- * | 值 | 含义 | 写入时带什么 |
- * | --- | --- | --- |
- * | 内容 hash | 我最后读到/写出的就是这一份 | 那个 hash |
- * | `REVISION_ABSENT` | 我读过，磁盘上没有这份文件 | `absent` 哨兵 |
- * | `null` | 我读过，但**拿不到**内容 hash（旧后端、代理吃了响应头） | 什么都不带 |
- *
- * **条目缺席**是第四种，与上面三种都不同：本会话从没确认过这份文档的磁盘
- * 状况，写之前得先去问一次（`ensureDiskKnown`）。
- *
- * `null` 这一档不是多余的：把它并进「缺席」，`ensureDiskKnown` 每次都会去探，
- * 探到一份「我从没读过的文档」（其实读过，只是没 hash）→ 判成冲突 → 这份文档
- * **永远存不上**；把它并进 `REVISION_ABSENT`，一个明明存在的文件被说成不存在
- * → 后端 409 → 同样永远存不上。两条捷径都通向同一个死结。
- *
- * 与 `diskBaseline` 是**两个维度**而不是同一件事的两种精度：updatedAt 由
- * 文档自己声明，编辑器外的工具改完 `tavottofile/*.json` 往往一动不动；
- * 内容 hash 由字节决定，谁改都瞒不过。所以带得了 hash 就以 hash 为准，
- * 带不了就退回 updatedAt 那条判据——弱一档，但不会把用户锁死。
- */
-const diskRevision = new Map<string, string | null>()
-
-const isStaleWrite = (err: unknown) =>
-  err instanceof ApiError && err.status === 409 && err.body.code === 'stale_write'
-const isExternalChange = (err: unknown) =>
-  err instanceof ApiError && err.status === 409 && err.body.code === 'external_change'
-
-/** 落盘队列空了就通知等待方（saveNow 靠它知道"这次真的写完了"） */
-const idleWaiters: (() => void)[] = []
-
-function settleIdle(): void {
-  if (diskBusy || diskQueue.size) return
-  for (const w of idleWaiters.splice(0)) w()
-}
-
-/** 队列排空（含在途那一次）后 resolve。已经空了就立刻 resolve。 */
-function whenDiskIdle(): Promise<void> {
-  if (!diskBusy && !diskQueue.size) return Promise.resolve()
-  return new Promise<void>((resolve) => idleWaiters.push(resolve))
-}
-
-/** 记下这次读到的磁盘状况；三档的含义见 `diskRevision` 上的表。 */
-function rememberRevision(id: string, fetched: { revision: string | null } | null): void {
-  if (!fetched) diskRevision.set(id, REVISION_ABSENT)
-  else diskRevision.set(id, fetched.revision || null)
-}
+ * 排队 / 串行 PUT / 两个基线 / 写前确认 / 冲突判定都在 `lib/autosave/diskWriter`
+ * 里（它不认识 store），这里只把 store 的读写包成回调递进去。 */
 
 /** 迟到的写入结果不该去改**别的文档**的状态（切文档、恢复都会换 id） */
 const isCurrentDoc = (id: string) => useDocumentStore.getState().documentId === id
@@ -966,143 +851,44 @@ function afterWriteOk(id: string, savedAt: number): void {
   emitActivity({ kind: 'document.saved' })
 }
 
-/* -------------------------------------------------------------------------- */
-/*  遥测：一次写盘的结局。只有 manual / autosave 两档与 ok / conflict / failed  */
-/*  三种结局，没有文档名、路径、修订号。                                        */
-/*                                                                            */
-/*  「这次写是手动还是自动」在 `saveNow()` 里知道、在 `scheduleDiskWrite()` 里   */
-/*  用：手动保存先把标志举起来，下一次真正开始的写盘把它消费掉。写盘排队时     */
-/*  标志会落到排队后开始的那一次上——粗，但它就是那次手动保存推出去的内容。     */
-/* -------------------------------------------------------------------------- */
-let manualSavePending = false
-
-function captureSaveOutcome(trigger: 'manual' | 'autosave', outcome: 'ok' | 'conflict' | 'failed') {
-  captureTelemetry('document_saved', { trigger, outcome })
-}
-
-function conflictIssue(id: string, err: unknown): SaveIssue {
-  const body = err instanceof ApiError ? err.body : {}
-  const disk = (body.summary as DiskDocumentSummary | undefined) ?? null
-  // 后端在 409 体里回了磁盘当下的 hash：显式覆盖拿它当基线，
-  // 覆盖前如果又被改了一次，那次仍然会 409。
-  const revision = typeof body.revision === 'string' ? body.revision : null
-  return {
-    kind: isExternalChange(err) ? 'external' : 'stale',
-    docId: id,
-    disk: disk ?? (revision ? ({ revision } as DiskDocumentSummary) : null),
-  }
-}
-
-function scheduleDiskWrite(id: string, pd: ProjectDocument, pj = currentProjectId()): void {
-  if (diskBusy) {
-    diskQueue.set(id, { pd, pj })
-    return
-  }
-  diskBusy = true
-  const trigger: 'manual' | 'autosave' = manualSavePending ? 'manual' : 'autosave'
-  manualSavePending = false
-  if (isCurrentDoc(id)) setSaveState('saving')
-  void ensureDiskKnown(id, pj)
-    .then((issue) => {
-      if (issue) throw new PendingConflict(issue)
-      // `null`（确认过但拿不到 hash）与「缺席」在这里都变成 undefined = 不带，
-      // 但两者在 `ensureDiskKnown` 那里是两回事：前者不再探，后者要探。
-      return putAutosave(id, pd, diskBaseline.get(id), diskRevision.get(id) ?? undefined, pj)
-    })
-    .then((res) => {
-      diskBaseline.set(id, pd.updatedAt)
-      if (res.revision) diskRevision.set(id, res.revision)
-      try {
-        localStorage.removeItem(slotKey(id))
-      } catch {
-        /* 副本删不掉不影响正确性（读取时按 updatedAt 取新） */
-      }
-      afterWriteOk(id, res.saved_at ?? Date.now())
-      captureSaveOutcome(trigger, 'ok')
-    })
-    .catch((err: unknown) => {
-      // 磁盘写失败（含被 409 挡下的过期写）：本机副本仍在（flush 时已写，
-      // 这里绝不清）。**基线一个都不推进**——推进等于承认对方那版是我的起点，
-      // 下一次写就会把它盖掉。
-      const conflict =
-        err instanceof PendingConflict
-          ? err.issue
-          : isStaleWrite(err) || isExternalChange(err)
-            ? conflictIssue(id, err)
-            : null
-      captureSaveOutcome(trigger, conflict ? 'conflict' : 'failed')
-      if (isCurrentDoc(id)) {
-        setSaveState(conflict ? 'conflict' : 'save_error', conflict ?? { kind: 'io', docId: id })
-      }
-      // 事件保留：老的监听方（App.tsx 的状态条）与用例都还在用它。
-      // 它是**通知**，不是状态——状态在 store 里。
-      window.dispatchEvent(
-        new CustomEvent('tavotto:autosave-error', {
-          detail: { id, reason: conflict ? conflict.kind : 'io' },
-        }),
-      )
-    })
-    .finally(() => {
-      diskBusy = false
-      // 先出队再递归，队列里不会留下已经在写的那一份（不然同一 id 自己排自己）
-      const next = diskQueue.entries().next()
-      if (!next.done) {
-        const [qid, queued] = next.value
-        diskQueue.delete(qid)
-        // 冲突挡住之后，队列里排着的那份不能继续往磁盘上撞：它的内容已经
-        // 在本机副本里，等用户裁决完再写。
-        if (blocksDiskWrite(useDocumentStore.getState().saveState) && isCurrentDoc(qid)) {
-          settleIdle()
-          return
-        }
-        scheduleDiskWrite(qid, queued.pd, queued.pj)
-        return
-      }
-      settleIdle()
-    })
-}
-
-/** 「先别写，这是个待裁决的冲突」——走 catch 那条路，不占用 ApiError 的语义 */
-class PendingConflict extends Error {
-  issue: SaveIssue
-  constructor(issue: SaveIssue) {
-    super('pending_conflict')
-    this.issue = issue
-  }
-}
-
-/**
- * 写之前确认磁盘状况**确实是我以为的那样**。
- *
- * 触发条件是「`diskRevision` 里没有这个 id 的条目」——也就是本会话从没
- * 确认过它的磁盘状况。这**没有例外**：新建文档、载入画布文件、读盘那次
- * 抛了异常、以及应用启动时那份还没被切换过的初始文档，全都落在这条上。
- * 写一条「只有读盘失败时才确认」的规则更省一次 GET，但那三种情况一样是
- * 手里两个基线都没有，而不带基线的 PUT 后端一律放行——磁盘上要是有一份
- * 我从没读过的文档，这一次 PUT 就把它整份盖掉了。判据留了例外就会从例外
- * 那一侧漏。
- *
- * 代价是每份文档第一次落盘前多一个 GET，之后一次都不多。
- */
-async function ensureDiskKnown(id: string, pj: string | null): Promise<SaveIssue | null> {
-  if (diskRevision.has(id)) return null
-  let probe: Awaited<ReturnType<typeof fetchAutosave>>
-  try {
-    probe = await fetchAutosave(id, pj)
-  } catch {
-    // 还是问不到：不猜，也不记。这次照常尝试写（后端多半同样不可达，
-    // 那就走 save_error），下一次写之前还会再确认一遍。
-    return null
-  }
-  rememberRevision(id, probe)
-  if (!probe) return null
-  // 磁盘上有一份我从没读过的：这就是冲突，不是「首次写」
-  return {
-    kind: 'external',
-    docId: id,
-    disk: await fetchAutosaveSummary(id, pj),
-  }
-}
+const disk = createDiskWriter({
+  // 经箭头函数转发而不是直接递函数值：几份用例对 `@/lib/api` 做的是**部分** mock
+  // （没有 putAutosave），模块加载那一刻去取它就会撞上 vitest 的「export 未定义」——
+  // 搬出去之前这些名字只在调用那一刻才被读到，这里保持同样的懒。
+  api: {
+    put: (id, pd, baseline, revision, pj) => putAutosave(id, pd, baseline, revision, pj),
+    fetch: (id, pj) => fetchAutosave(id, pj),
+    fetchSummary: (id, pj) => fetchAutosaveSummary(id, pj),
+  },
+  isCurrent: isCurrentDoc,
+  onSaving: (id) => {
+    if (isCurrentDoc(id)) setSaveState('saving')
+  },
+  onWritten: afterWriteOk,
+  onFailed: (id, conflict) => {
+    if (isCurrentDoc(id)) {
+      setSaveState(conflict ? 'conflict' : 'save_error', conflict ?? { kind: 'io', docId: id })
+    }
+    // 事件保留：老的监听方（App.tsx 的状态条）与用例都还在用它。
+    // 它是**通知**，不是状态——状态在 store 里。
+    window.dispatchEvent(
+      new CustomEvent('tavotto:autosave-error', {
+        detail: { id, reason: conflict ? conflict.kind : 'io' },
+      }),
+    )
+  },
+  writeBlocked: () => blocksDiskWrite(useDocumentStore.getState().saveState),
+  dropLocalCopy: (id) => {
+    try {
+      localStorage.removeItem(slotKey(id))
+    } catch {
+      /* 副本删不掉不影响正确性（读取时按 updatedAt 取新） */
+    }
+  },
+  /* 遥测：一次写盘的结局。只有 manual / autosave 两档与 ok / conflict / failed
+   * 三种结局，没有文档名、路径、修订号。 */
+  outcome: (trigger, outcome) => captureTelemetry('document_saved', { trigger, outcome }),
+})
 
 /** 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。 */
 export function flushAutosave(): FlushResult {
@@ -1130,7 +916,7 @@ export function flushAutosave(): FlushResult {
     useDocumentStore.setState({ dirty: false })
     return localOk ? 'saved' : 'error'
   }
-  scheduleDiskWrite(state.documentId, pd)
+  disk.schedule(state.documentId, pd, currentProjectId())
   if (!localOk) return 'error'
   const pj = projectOfDoc()
   const entry: RecentDoc = {
@@ -1169,14 +955,14 @@ export function flushAutosave(): FlushResult {
  */
 export async function saveNow(): Promise<SaveState> {
   cancelPendingAutosave()
-  manualSavePending = true
+  disk.markManual()
   const result = flushAutosave()
   if (result === 'empty') {
-    manualSavePending = false
+    disk.clearManual()
     setSaveState('clean')
     return 'clean'
   }
-  await whenDiskIdle()
+  await disk.whenIdle()
   return useDocumentStore.getState().saveState
 }
 
@@ -1320,8 +1106,8 @@ export async function reloadFromDisk(): Promise<boolean> {
   }
   const pd = fetched ? migrateToProject(fetched.doc) : null
   if (!pd) return false
-  rememberRevision(id, fetched)
-  diskBaseline.set(id, pd.updatedAt)
+  disk.rememberRevision(id, fetched)
+  disk.setBaseline(id, pd.updatedAt)
   applyProject(pd, id, { dirty: false })
   setSaveState('clean')
   // 刚才那份内存版本没有丢：它进了恢复槽位，横幅立刻把它提供出来。
@@ -1354,9 +1140,9 @@ export async function overwriteDisk(): Promise<SaveState> {
     // 可比较的东西），所以这里不用再包一层 catch。
     revision = (await fetchAutosaveSummary(documentId, currentProjectId()))?.revision ?? undefined
   }
-  if (revision) diskRevision.set(documentId, revision)
-  else diskRevision.delete(documentId)
-  diskBaseline.delete(documentId)
+  if (revision) disk.setRevision(documentId, revision)
+  else disk.forgetRevision(documentId)
+  disk.forgetBaseline(documentId)
   setSaveState('dirty')
   return saveNow()
 }
@@ -1410,29 +1196,29 @@ export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
       return { doc: null, notice: { kind: 'schema_too_new', docId: id, schema: future } }
     }
   }
-  const disk = fetched ? migrateToProject(fetched.doc) : null
+  const diskDoc = fetched ? migrateToProject(fetched.doc) : null
   // 读盘失败时**删掉**条目而不是留个旧的：条目缺席的含义就是「这份文档的
   // 磁盘状况我还没确认过」，写之前 ensureDiskKnown 会去确认一次。
-  if (!reachable) diskRevision.delete(id)
-  else rememberRevision(id, fetched)
+  if (!reachable) disk.forgetRevision(id)
+  else disk.rememberRevision(id, fetched)
   // 读到什么就以什么为基线：之后本标签页的写盘都从这一版往前推进
-  if (disk && typeof disk.updatedAt === 'number') diskBaseline.set(id, disk.updatedAt)
+  if (diskDoc && typeof diskDoc.updatedAt === 'number') disk.setBaseline(id, diskDoc.updatedAt)
 
   const local = readLocalSlot(id)
   const pending = readRecovery(id)
-  if (!disk) {
+  if (!diskDoc) {
     // 磁盘上没有（或读不到）：本机那份就是文档本身
     const doc = local ?? pending
     if (!doc) return { doc: null, notice: null }
     if (!local) dropRecovery(id) // 恢复槽位转正，别再问一遍
     // 确认过磁盘上真的没有（404）才推上去。读盘失败时**不推**：那时我们
     // 不知道磁盘上有什么，一次整份 PUT 就可能盖掉一份从没读过的文档。
-    if (reachable) scheduleDiskWrite(id, doc)
+    if (reachable) disk.schedule(id, doc, currentProjectId())
     return { doc, notice: null }
   }
   // 上一轮没裁决完的恢复副本优先：它一直有效，直到用户处置它
-  const candidate = pending ?? (local && local.updatedAt > disk.updatedAt ? local : null)
-  if (local && !pending && local.updatedAt <= disk.updatedAt) {
+  const candidate = pending ?? (local && local.updatedAt > diskDoc.updatedAt ? local : null)
+  if (local && !pending && local.updatedAt <= diskDoc.updatedAt) {
     // 陈旧残留：磁盘上那份更新或一样，本机这份没有任何可恢复的东西
     try {
       localStorage.removeItem(slotKey(id))
@@ -1440,11 +1226,11 @@ export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
       /* 删不掉只是留个垃圾键，下次索引清理还会再试 */
     }
   }
-  if (!candidate) return { doc: disk, notice: null }
+  if (!candidate) return { doc: diskDoc, notice: null }
   const kept = pending ?? promoteToRecovery(id)
-  if (!kept) return { doc: disk, notice: null }
+  if (!kept) return { doc: diskDoc, notice: null }
   return {
-    doc: disk,
+    doc: diskDoc,
     notice: { kind: 'recovery', docId: id, summary: summarizeRecovery(kept) },
   }
 }
