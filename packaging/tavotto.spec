@@ -92,7 +92,7 @@ datas = [
 # 两份清单由 tests/test_runtime_build.py 从**源码的 import 闭包**反推校验，
 # 不靠人记得回来改这一行。
 for name in ("worker.py", "manifest.py", "overrides.py", "patchspec.py",
-             "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "figcapture.py", "figsession.py", "wireproto.py",
+             "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "colorbarmodel.py", "figcapture.py", "figsession.py", "wireproto.py",
              "previewbudget.py", "preview_complexity.py", "preview_hybrid.py",
              "bridge_runner.py", "bridgeboot.py"):
     datas.append((str(PKG / "engine" / name), "tavotto/engine"))

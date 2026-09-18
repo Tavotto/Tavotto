@@ -65,6 +65,7 @@ SCANNED = (
     "axestraversal.py",
     "spinemodel.py",
     "tickmodel.py",
+    "colorbarmodel.py",
     "manifest.py",
     "overrides.py",
     "preview_complexity.py",

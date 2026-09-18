@@ -788,17 +788,21 @@ def test_the_host_count_predicate_has_one_implementation():
     from pathlib import Path
 
     src = Path(__file__).resolve().parents[1] / "src" / "tavotto" / "engine"
-    tree = ast.parse((src / "overrides.py").read_text(encoding="utf-8"))
+    # 判据住在色条族模块里（2026-09-18 从 overrides 切出）；worker 侧会碰它的三个文件里
+    # 加起来只许有这一份定义
     defs = [
-        n
-        for n in ast.walk(tree)
+        (fname, n)
+        for fname in ("colorbarmodel.py", "overrides.py", "manifest.py")
+        for n in ast.walk(ast.parse((src / fname).read_text(encoding="utf-8")))
         if isinstance(n, ast.FunctionDef) and n.name == "colorbar_host_count"
     ]
-    assert len(defs) == 1, "colorbar_host_count 有多份定义"
+    assert [f for f, _ in defs] == ["colorbarmodel.py"], (
+        f"colorbar_host_count 的定义：{[f for f, _ in defs]}"
+    )
 
     # 两个消费方都必须调它，而不是各自去读 `_colorbar_info`
     for fname, func in (
-        ("overrides.py", "_set_cb_orientation"),
+        ("colorbarmodel.py", "_set_cb_orientation"),
         ("manifest.py", "_colorbar_fields"),
     ):
         t = ast.parse((src / fname).read_text(encoding="utf-8"))

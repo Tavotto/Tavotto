@@ -86,6 +86,7 @@ ENGINE_SIBLINGS = (
     "axestraversal",
     "spinemodel",
     "tickmodel",
+    "colorbarmodel",
     "overrides",
     "manifest",
 )

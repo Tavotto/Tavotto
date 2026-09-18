@@ -57,6 +57,7 @@ ENGINE_FILES = [
     "axestraversal.py",
     "browser.py",
     "browser_imports.py",
+    "colorbarmodel.py",
     "figcapture.py",
     "manifest.py",
     "overrides.py",

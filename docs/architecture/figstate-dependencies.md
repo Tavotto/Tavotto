@@ -79,6 +79,14 @@ main @ 77f23250 + PR D 第一步（`axestraversal` 已提出）的树上算出�
 3. **colorbar**（376 行）——`_cb_reorient` / extend / `_cb_release_aspect` / `ColorbarProxy` /
    `colorbar_maps` / `follow_map`。它与 axes 几何耦合（`_set_axes_position` 落到色条轴时要
    `_cb_release_aspect`），切的时候 axes 那一侧留一个调用点。
+   **已切（2026-09-18，`engine/colorbarmodel.py`）**：实际搬出约 640 行（overrides 4838 → 4194）——
+   连 `_refresh_axes_follow` / `coincident_shared_axes_pairs` 一起（它们只读 FigState 的
+   `fig` / `pending` / `colorbar_axes` / `axes_follow`，收成 `FollowState` 协议）。axes 那一侧留的两个
+   调用点是 `overrides._set_axes_position → colorbarmodel._cb_release_aspect` 与
+   `_restore_axes_position → _cb_restore_aspect`。`colorbar_mapping_is_live` 依赖 `color_mapping_is_live`
+   （映射 / 能力那一族），`_alias_colorbar_mappable` / `_alias_colorbar_ticks` 属别名分发，三者留在 overrides。
+   这一刀让族模块第一次依赖另一族（翻方向要 `tickmodel.invalidate_tick_cfg`）：配方门禁改成
+   「只许 import `FAMILIES` 里排在自己前面的族」，顺序即分层。
 4. **legend**（506 行）——最大的一族，也最独立（ADR 0034 已经把它模型化）。
 5. `apply` / `_apply_rank` / caps 三表留在 `overrides.py`，它就是分发层；到那时 overrides
    只剩分发 + 几何（axes / figure / 3d / arrow）+ 未归族的 getter / setter。

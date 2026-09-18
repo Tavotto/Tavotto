@@ -4,7 +4,10 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
 - **色条方向（2026-08-18）**：**就地**结构改造，不是普通 setter，也不是销毁
-  重建。`overrides._cb_reorient` 在同一个 Axes 对象上换 orientation/ticklocation
+  重建。`colorbarmodel._cb_reorient`（整个色条族——`ColorbarProxy`、方向 / 延伸、
+  `_cb_release_aspect` / `_cb_restore_aspect`、`colorbar_maps` / `follow_map` / 随行表——
+  2026-09-18 起住在 `engine/colorbarmodel.py`，`overrides` 只展开它的 `HANDLERS` / `RESTORE`
+  并在 axes position 那两处留调用点）在同一个 Axes 对象上换 orientation/ticklocation
   → 按 `_cb_place` 重算落位（竖↔横逐位可逆）→ `_reset_locator_formatter_scale()`
   + `_draw_all()` 让 matplotlib 自己重建色带/outline/刻度/xlim,ylim → 把长轴标签
   搬到新长轴（**旧轴那份要清掉**）。`fig.axes` 顺序一个字节不动 → gid 稳定 →

@@ -29,16 +29,25 @@ from matplotlib.text import Text
 
 import pathgeom
 from axestraversal import ordered_axes
+from colorbarmodel import (
+    _CB_EXTENDS,
+    ColorbarProxy,
+    _cb_axis,
+    _cb_tick_color,
+    _cb_tick_fontsize,
+    coincident_shared_axes_pairs,
+    colorbar_host_count,
+    colorbar_maps,
+    follow_map,
+)
 from overrides import (
     _ARROWSTYLES,
-    _CB_EXTENDS,
     _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
     _LEGEND_HANDLE_MARKER_OPTS,
     _LEGEND_LOCS,
     BBOX_DEFAULTS,
     HATCHES,
     LEGEND_BINDINGS,
-    ColorbarProxy,
     FigState,
     LegendEntries,
     SeriesGroup,
@@ -46,9 +55,6 @@ from overrides import (
     _arrowstyle_name,
     _axis_arrows_on,
     _boxstyle_info,
-    _cb_axis,
-    _cb_tick_color,
-    _cb_tick_fontsize,
     _cls_key,
     _frame_rounded,
     _grid_prop,
@@ -60,12 +66,8 @@ from overrides import (
     _stroke_state,
     bind_legend_entries,
     cjk_fallback_candidates,
-    coincident_shared_axes_pairs,
     collection_caps,
-    colorbar_host_count,
     colorbar_mapping_is_live,
-    colorbar_maps,
-    follow_map,
     font_installed,
     gradient_base_hex,
     is_linecoll_family,

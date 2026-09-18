@@ -100,6 +100,7 @@ _PHASE2 = (
     "axestraversal",
     "spinemodel",
     "tickmodel",
+    "colorbarmodel",
     "overrides",
     "manifest",
     "previewbudget",

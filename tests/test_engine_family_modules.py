@@ -19,15 +19,24 @@ import pytest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENGINE = os.path.join(REPO, "src", "tavotto", "engine")
 
-#: 模块名 → 它导出的、会被 `overrides.HANDLERS` 展开进去的表名。
+#: 模块名 → 它导出的、会被 `overrides.HANDLERS` 展开进去的表名。**顺序就是分层**：一族只许
+#: import 排在它前面的族（colorbar 翻方向要 `tickmodel.invalidate_tick_cfg`，随行表要
+#: `axestraversal.ordered_axes`），反过来不行——族与族之间和族与 overrides 之间一样，不许成环。
 FAMILIES: dict[str, tuple[str, ...]] = {
     "axestraversal": (),
     "spinemodel": ("HANDLERS_STYLE", "HANDLERS_VISIBILITY"),
     "tickmodel": ("HANDLERS_TEXT", "HANDLERS_SIDES", "HANDLERS_MARKS"),
+    "colorbarmodel": ("HANDLERS",),
 }
 
-#: 族模块允许 import 的顶层名字（标准库之外）。
-ALLOWED_THIRD_PARTY = {"matplotlib", "mpl_toolkits", "numpy", "axestraversal"}
+#: 族模块允许 import 的第三方顶层名字（标准库与更早的族之外）。
+ALLOWED_THIRD_PARTY = {"matplotlib", "mpl_toolkits", "numpy"}
+
+
+def _allowed_for(name: str) -> set[str]:
+    """`name` 这一族能 import 的仓库模块 = `FAMILIES` 里排在它前面的族。"""
+    earlier = list(FAMILIES)[: list(FAMILIES).index(name)]
+    return ALLOWED_THIRD_PARTY | set(earlier)
 
 
 def _parse(name: str) -> ast.Module:
@@ -53,12 +62,12 @@ def _is_stdlib(name: str) -> bool:
 
 @pytest.mark.parametrize("name", sorted(FAMILIES))
 def test_family_module_is_a_leaf(name: str):
-    """族模块不 import overrides / manifest，也不 import 别的族之外的仓库模块。"""
-    bad = sorted(
-        m for m in _imports(_parse(name)) if not _is_stdlib(m) and m not in ALLOWED_THIRD_PARTY
-    )
+    """族模块不 import overrides / manifest，也不 import 排在它后面（或与它同层）的族。"""
+    allowed = _allowed_for(name)
+    bad = sorted(m for m in _imports(_parse(name)) if not _is_stdlib(m) and m not in allowed)
     assert bad == [], (
-        f"{name}.py 不该 import 这些：{bad}（族模块是 overrides 与 manifest 共同的底层）"
+        f"{name}.py 不该 import 这些：{bad}（族模块是 overrides 与 manifest 共同的底层；"
+        f"族之间只许依赖 FAMILIES 里排在自己前面的）"
     )
 
 
