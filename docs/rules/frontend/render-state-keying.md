@@ -20,7 +20,8 @@
 （`latest` 表），否则每敲一个字画布都会闪回磁盘原图——**但那份退回来的
 manifest 只能看不能写**，见 `docs/rules/frontend/display-fallback-vs-geometry-authority.md`；④ 连续调整期间
 **只给含 `role=="image"` 的面板**发 `preview_dpi: 100`，松手/结束事务由
-`flushRender(panelId)` 按默认 dpi 定稿（纯矢量图上降 dpi 零收益，见基线补测）；
+`flushRender(panelId)` 按默认 dpi 定稿（防抖 / 定稿 / 取消这套调度住在
+`web/src/store/renderScheduler.ts`，`actions` 与 `useEngineSync` 都只调用它，谁也不 import 谁）（纯矢量图上降 dpi 零收益，见基线补测）；
 ⑤ 编辑期每改一个值就多一条变体，`prune(live)` 按文档现存面板清理
 （**条目数策略；字节那一维另有预算，见 `docs/rules/frontend/svg-byte-budget.md`**），
 只留在用的与每个文件最近成功的那份；⑥ SSE 的 render.started/done 只带
@@ -31,7 +32,9 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
 预览的「近似预览」同一措辞），失败不吞、上一变体的位图不许冒充当前变体；
 「只带基线、还没动过」的面板跳过渲染的前提是后端 `baked_current` 没说
 基线已失效（判据出处见 `docs/rules/backend/project-system.md` 的「基线绑定文件身份」，
-前端唯一消费点 `isJustBakedBaseline`，`useEngineSync` 订阅素材表让失效
+前端判据只有一份——纯函数 `web/src/lib/bakedBaseline.ts` 的 `isJustBakedBaselineOf`，
+`store/actions.isJustBakedBaseline` 是它读素材表的薄包装；`useEngineSync` 订阅素材表让失效
 发生在会话中时也能重新裁决）。看护：`web/src/store/renderStore.test.ts`、
+`web/src/lib/bakedBaseline.test.ts`、`web/src/store/renderScheduler.test.ts`、
 `web/src/hooks/useEngineSync.test.ts`、`web/src/canvas/panelPreviewMode.test.tsx`、
 `tests/test_engine_variants.py`、`tests/test_paths_and_baked.py`。

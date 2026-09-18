@@ -70,25 +70,6 @@
       "reason": "ADR 0016 有意的双向依赖：store 往诊断记事件，诊断快照读业务 store（不维护影子状态）。安全条件是环上每个模块只在函数体内用对端导出、模块顶层不许（issue #397）；src/importArchitecture.evaluationOrder.test.ts 把每个成员各当一次「第一个被求值的」来验。envStore → renderStore 是 import() 动态边（envStore.ts:118）。",
       "since": "2026-08-27（ADR 0016）",
       "remove_when": "诊断改成不 import store（快照由 store 主动喂）时删掉"
-    },
-    {
-      "members": [
-        "src/hooks/useEngineSync.ts",
-        "src/store/actions.ts"
-      ],
-      "edges": [
-        [
-          "src/hooks/useEngineSync.ts",
-          "src/store/actions.ts"
-        ],
-        [
-          "src/store/actions.ts",
-          "src/hooks/useEngineSync.ts"
-        ]
-      ],
-      "reason": "actions 用 useEngineSync.requestRender 调度渲染，useEngineSync 用 actions.isJustBakedBaseline 判「只带基线、还没动过」——两个方向都是运行时边。2026-09-17 审计任务书点名的两处环之一，PR C 把判定提成独立函数、调度逻辑提成独立模块后删掉。",
-      "since": "2026-08-31（baked_current 判据）",
-      "remove_when": "PR C 落地：isJustBakedBaseline 与 requestRender 都不再住在对方 import 的文件里"
     }
   ],
   "unknownDynamic": [
