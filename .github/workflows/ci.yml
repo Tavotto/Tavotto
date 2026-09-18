@@ -785,7 +785,7 @@ jobs:
   # 只在 Linux 上跑一份：纯标准库 + serde 的 stdio 进程，没有平台分支。
   workerd:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    timeout-minutes: 25  # cargo 三件实测 0.3 分钟；加上装科学栈 + 12 条 workerd 等价用例（首跑实测见 PR）；没有上限的 job 会堵死合并队列
+    timeout-minutes: 25  # 实测 1.2 分钟（cargo 三件 0.3 + 装科学栈 + 12 条 workerd 等价用例 0.9，#409 首跑）；没有上限的 job 会堵死合并队列
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -815,7 +815,7 @@ jobs:
       # 这一步的判据是「它们真跑了」，全 skip 也算失败（同一步末尾按 junit 核对）。
       - uses: actions/setup-python@v5
         with: { python-version: "3.13" }
-      - name: 对着刚建的 tavotto-workerd 跑 workerd 那 12 条等价用例
+      - name: 校验 workerd 三路等价（对着刚建的二进制跑 12 条）
         working-directory: ${{ github.workspace }}
         timeout-minutes: 10
         run: |
@@ -1045,7 +1045,9 @@ jobs:
       # ——「产物已经在那儿，只是没人对着它跑」。用冒烟 venv 的解释器跑（wheel 已装在里面：
       # 用例 import 的 `tavotto.app` / `tavotto.engine.tutorial` 就是产物那份，不是源码树）；
       # `TAVOTTO_DIST_DIR=dist` 显式点名产物目录，不靠「仓库根下恰好有 dist/」。
-      - name: 对着产物跑教程资源的三条用例
+      # 步骤名以「校验」起头：CI05 的执行分类按 step 名前缀归类（scripts/ci/ci_baseline.py::_STEP_RULES），
+      # 对不上的落进 other 而 tests/test_ci_baseline.py 会红——首跑就是这么红的。
+      - name: 校验产物里的教程资源（test_tutorial 的 wheel / sdist / 装开的 wheel 三条）
         shell: bash
         timeout-minutes: 5
         env:
