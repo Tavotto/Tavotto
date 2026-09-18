@@ -436,7 +436,11 @@ def test_ctrl_c_reaches_the_script_and_leaves_no_orphan(tmp_path):
             proc.wait(timeout=10)
     assert "READY" in out
     assert "INTERRUPTED" in out, f"用户脚本没收到 KeyboardInterrupt: {out!r}\n{err}"
-    assert proc.returncode == 130, f"没有透传脚本的退出码: {proc.returncode}"
+    # 退出码不对时把 stderr 带上：2026-09-18 合并组的 macOS 腿量到 1 ≠ 130（INTERRUPTED 已打印），
+    # 断言只报了数字，CLI 那边是抛了什么、走了哪条出口一个字都没留下——下次再红要能定位
+    assert proc.returncode == 130, (
+        f"没有透传脚本的退出码: {proc.returncode}\nstdout={out!r}\nstderr={err!r}"
+    )
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and _alive(child_pid):
         time.sleep(0.05)
