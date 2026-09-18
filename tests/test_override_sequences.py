@@ -319,6 +319,10 @@ def test_random_sequences_keep_hot_equal_to_replay(hot, replay, library, stem, s
     steps = _sequence(random.Random(f"{stem}:{seed}"), cands, fields, STEPS)
     k = _diverges_hot_vs_replay(hot, replay, stem, steps, f"{stem}-s{seed}")
     if k is not None:
+        if known:
+            # 已知种子的最小复现已经钉在 KNOWN 里（那才是该修的样本）；这里再最小化只是
+            # 每次 CI 白花 13–54 s（每次试跑起一条新 worker）。红就红，xfail 接住。
+            pytest.fail(f"{stem} seed={seed}：第 {k} 步之后热态 ≠ 清空重放（已知 {known}）")
         minimal = _minimize(library, stem, steps[: k + 1], f"{stem}-s{seed}")
         pytest.fail(
             f"{stem} seed={seed}：第 {k} 步之后热态 ≠ 清空重放。最小化后的复现序列"

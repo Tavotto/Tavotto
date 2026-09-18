@@ -98,7 +98,7 @@
   "tests/test_nsis_template.py": 0.02,
   "tests/test_open_script_route.py": 0.46,
   "tests/test_original_spec.py": 0.13,
-  "tests/test_override_sequences.py": 140.0,
+  "tests/test_override_sequences.py": 55.0,
   "tests/test_package.py": 0.06,
   "tests/test_package_lookup.py": 0.29,
   "tests/test_package_management.py": 13.8,
