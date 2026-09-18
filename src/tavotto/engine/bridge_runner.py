@@ -98,6 +98,7 @@ _PHASE1 = ("figcapture", "patchspec")
 _PHASE2 = (
     "pathgeom",
     "axestraversal",
+    "spinemodel",
     "overrides",
     "manifest",
     "previewbudget",

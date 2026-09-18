@@ -63,6 +63,7 @@ _ALLOWED = {
 #: 出来了，谁都可能「顺手」自己走一遍 `fig.axes`，所以把会拿到 fig 的模块都扫上。
 SCANNED = (
     "axestraversal.py",
+    "spinemodel.py",
     "manifest.py",
     "overrides.py",
     "preview_complexity.py",

@@ -39,6 +39,7 @@ COLLIDING = (
     "patchspec",
     "pathgeom",
     "axestraversal",
+    "spinemodel",
     "figsession",
     "wireproto",
     "worker",

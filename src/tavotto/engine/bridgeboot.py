@@ -79,7 +79,15 @@ PRIVATE_PKG = "tavotto_bridge_runtime"
 #: 需要装进用户进程的引擎模块（装载顺序无关，import 系统自己解依赖）。
 #: `figcapture` / `patchspec` 是纯标准库；其余三个要 matplotlib/numpy，
 #: 所以它们**只在捕获之后**才装（见 `bridge_runner` 的两阶段装载）。
-ENGINE_SIBLINGS = ("figcapture", "patchspec", "pathgeom", "axestraversal", "overrides", "manifest")
+ENGINE_SIBLINGS = (
+    "figcapture",
+    "patchspec",
+    "pathgeom",
+    "axestraversal",
+    "spinemodel",
+    "overrides",
+    "manifest",
+)
 
 #: 装载后必须还给用户的顶层名字（= ENGINE_SIBLINGS + **它们平铺 import 的
 #: 整条传递闭包**）。

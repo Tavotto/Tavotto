@@ -82,11 +82,6 @@ from overrides import (
     legend_pos_cfg,
     remember_axis_directions,
     scale_options,
-    spine_all_color,
-    spine_all_width,
-    spine_cfg,
-    spine_side_color,
-    spine_side_width,
     text_linespacing,
     tick_cfg,
     tick_format_name,
@@ -100,6 +95,13 @@ from overrides import (
     tick_side_visible,
     ticklabel_memo,
     to_hex,
+)
+from spinemodel import (
+    spine_all_color,
+    spine_all_width,
+    spine_cfg,
+    spine_side_color,
+    spine_side_width,
 )
 
 CMAPS = [

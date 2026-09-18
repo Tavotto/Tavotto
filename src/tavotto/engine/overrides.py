@@ -39,6 +39,7 @@ from matplotlib.text import Text
 from matplotlib.ticker import FormatStrFormatter, ScalarFormatter
 from mpl_toolkits.mplot3d import proj3d
 
+import spinemodel
 from axestraversal import ordered_axes
 
 #: 刻度标签的 gid 形状（`FigState.resolve` 按需现解时用）
@@ -1272,92 +1273,6 @@ def _grid_prop(read, default):
     return g
 
 
-def _spines_get(ax: Axes, fn, default):
-    sp = ax.spines.get("left") or next(iter(ax.spines.values()), None)
-    return fn(sp) if sp is not None else default
-
-
-# ---------------------------------------------------------------------------
-# 边框（spine）模型：一档「全部」+ 四条可各自覆盖
-#
-# 与刻度模型同一套路数（写进 cfg 再**整体重建**），原因也一样：「全部边框改成
-# 灰色」与「只把上边框改成红色」是两条会互相盖写的 setter，谁先谁后就会得到
-# 两张不同的图。改成一次重建之后，两者的应用顺序不影响结果——热会话与全量
-# 重放才收敛。
-#
-# 优先级：某一条自己的设定 > 「全部」的设定 > 脚本原样。
-# 「全部」这一档故意作用于 `ax.spines` 的**每一条**（含色条轴的 'outline'）——
-# 那是它原本的口径，收窄成四条会让色条的外框突然改不动了。
-# ---------------------------------------------------------------------------
-_SPINE_SIDES = ("top", "right", "bottom", "left")
-_SPINE_CFG_KEYS = (
-    "all_color",
-    "all_width",
-    *(f"{s}_{k}" for s in _SPINE_SIDES for k in ("color", "width")),
-)
-
-
-def spine_cfg(ax: Axes) -> dict:
-    """取（必要时新建）一条 axes 的边框模型缓存。`instrument` 在 build 之后
-    对每个 2D axes 调一次，保证 `orig` 采的是**脚本原样**。"""
-    cfg = getattr(ax, "_mm_spine_cfg", None)
-    if cfg is None:
-        cfg = {k: None for k in _SPINE_CFG_KEYS}
-        cfg["orig"] = {
-            name: (sp.get_edgecolor(), float(sp.get_linewidth())) for name, sp in ax.spines.items()
-        }
-        ax._mm_spine_cfg = cfg  # noqa: SLF001
-    return cfg
-
-
-def apply_spine_model(ax: Axes) -> None:
-    """按 cfg **整体重建**每一条边框的颜色与线宽。"""
-    cfg = spine_cfg(ax)
-    for name, sp in ax.spines.items():
-        orig = cfg["orig"].get(name)
-        if orig is None:
-            continue
-        color = cfg.get(f"{name}_color")
-        if color is None:
-            color = cfg["all_color"]
-        width = cfg.get(f"{name}_width")
-        if width is None:
-            width = cfg["all_width"]
-        sp.set_edgecolor(orig[0] if color is None else color)
-        sp.set_linewidth(orig[1] if width is None else float(width))
-    ax.stale = True
-
-
-def spine_all_color(ax: Axes):
-    cfg = spine_cfg(ax)
-    if cfg["all_color"] is not None:
-        return cfg["all_color"]
-    return _spines_get(ax, lambda s: s.get_edgecolor(), (0, 0, 0, 1))
-
-
-def spine_all_width(ax: Axes) -> float:
-    cfg = spine_cfg(ax)
-    if cfg["all_width"] is not None:
-        return float(cfg["all_width"])
-    return float(_spines_get(ax, lambda s: float(s.get_linewidth()), 0.8))
-
-
-def spine_side_color(ax: Axes, side: str):
-    cfg = spine_cfg(ax)
-    if cfg[f"{side}_color"] is not None:
-        return cfg[f"{side}_color"]
-    sp = ax.spines.get(side)
-    return sp.get_edgecolor() if sp is not None else spine_all_color(ax)
-
-
-def spine_side_width(ax: Axes, side: str) -> float:
-    cfg = spine_cfg(ax)
-    if cfg[f"{side}_width"] is not None:
-        return float(cfg[f"{side}_width"])
-    sp = ax.spines.get(side)
-    return float(sp.get_linewidth()) if sp is not None else spine_all_width(ax)
-
-
 def _set_legend_fontsize(leg, value) -> None:
     """图例字号：标量作用于每一条，序列逐条对应（多余的忽略、缺的沿用最后一个）。
 
@@ -1374,28 +1289,6 @@ def _set_legend_fontsize(leg, value) -> None:
     size = float(value)
     for t in texts:
         t.set_fontsize(size)
-
-
-def _mk_spine_handler(key: str, read):
-    def g(ax: Axes):
-        return read(ax)
-
-    def s(ax: Axes, v) -> None:
-        spine_cfg(ax)[key] = v
-        apply_spine_model(ax)
-
-    return (g, s)
-
-
-def _mk_spine_restore(key: str):
-    """撤销一条边框设定 = **退回未表态**（落回「全部」那一档，或脚本原样），
-    不是把当前推断出来的值钉死成一条显式配置。"""
-
-    def r(ax: Axes, _orig) -> None:
-        spine_cfg(ax)[key] = None
-        apply_spine_model(ax)
-
-    return r
 
 
 def _tick_axis(ts: "TickSet"):
@@ -2113,18 +2006,6 @@ def _mk_set_invert(which: str):
 def _set_aspect(a: Axes, v) -> None:
     v = str(v)
     a.set_aspect(v if v in ("auto", "equal") else float(v))
-
-
-def _mk_spine_get(name: str):
-    return lambda a: bool(a.spines[name].get_visible()) if name in a.spines else True
-
-
-def _mk_spine_set(name: str):
-    def s(a: Axes, v) -> None:
-        if name in a.spines:
-            a.spines[name].set_visible(bool(v))
-
-    return s
 
 
 def _set_image_origin(im: AxesImage, v) -> None:
@@ -4727,30 +4608,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("axes", "invert_x"): (lambda a: bool(a.xaxis_inverted()), _mk_set_invert("x")),
     ("axes", "invert_y"): (lambda a: bool(a.yaxis_inverted()), _mk_set_invert("y")),
     ("axes", "aspect"): (lambda a: a.get_aspect(), _set_aspect),
-    ("axes", "spine_top_color"): _mk_spine_handler(
-        "top_color", lambda a, _s="top": spine_side_color(a, _s)
-    ),
-    ("axes", "spine_top_linewidth"): _mk_spine_handler(
-        "top_width", lambda a, _s="top": spine_side_width(a, _s)
-    ),
-    ("axes", "spine_right_color"): _mk_spine_handler(
-        "right_color", lambda a, _s="right": spine_side_color(a, _s)
-    ),
-    ("axes", "spine_right_linewidth"): _mk_spine_handler(
-        "right_width", lambda a, _s="right": spine_side_width(a, _s)
-    ),
-    ("axes", "spine_bottom_color"): _mk_spine_handler(
-        "bottom_color", lambda a, _s="bottom": spine_side_color(a, _s)
-    ),
-    ("axes", "spine_bottom_linewidth"): _mk_spine_handler(
-        "bottom_width", lambda a, _s="bottom": spine_side_width(a, _s)
-    ),
-    ("axes", "spine_left_color"): _mk_spine_handler(
-        "left_color", lambda a, _s="left": spine_side_color(a, _s)
-    ),
-    ("axes", "spine_left_linewidth"): _mk_spine_handler(
-        "left_width", lambda a, _s="left": spine_side_width(a, _s)
-    ),
+    **spinemodel.HANDLERS_STYLE,
     ("axes", "facecolor"): (lambda a: a.get_facecolor(), lambda a, v: a.set_facecolor(v)),
     ("axes", "grid_x"): (
         lambda a: _grid_visible(a, "x"),
@@ -4783,14 +4641,8 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("axes", "ticks_top"): _mk_tick_side("x", "top", 2),
     ("axes", "ticks_left"): _mk_tick_side("y", "left", 1),
     ("axes", "ticks_right"): _mk_tick_side("y", "right", 2),
-    ("axes", "spine_top"): (_mk_spine_get("top"), _mk_spine_set("top")),
-    ("axes", "spine_right"): (_mk_spine_get("right"), _mk_spine_set("right")),
-    ("axes", "spine_bottom"): (_mk_spine_get("bottom"), _mk_spine_set("bottom")),
-    ("axes", "spine_left"): (_mk_spine_get("left"), _mk_spine_set("left")),
-    # 边框颜色 / 线宽走「模型」：一档「全部」+ 四条各自可覆盖，
-    # 应用顺序不影响结果（见上方 apply_spine_model 的注释）
-    ("axes", "spine_color"): _mk_spine_handler("all_color", spine_all_color),
-    ("axes", "spine_linewidth"): _mk_spine_handler("all_width", spine_all_width),
+    # 边框显隐 + 颜色 / 线宽的「全部」档（模型在 spinemodel，应用顺序不影响结果）
+    **spinemodel.HANDLERS_VISIBILITY,
     # ---- axes3d: 视角 / 网格（manifest 只对 3D 轴放出这些字段）----
     ("axes", "elev"): (_view3d_get("elev"), _view3d_set("elev")),
     ("axes", "azim"): (_view3d_get("azim"), _view3d_set("azim")),
@@ -5171,16 +5023,7 @@ _RESTORE: dict[tuple[str, str], object] = {
 }
 for _p in _TICK_MODEL_PROPS:
     _RESTORE[("ticks", _p)] = _mk_tick_model_restore(_p)
-for _prop, _key in [
-    ("spine_color", "all_color"),
-    ("spine_linewidth", "all_width"),
-    *[
-        (f"spine_{_s}_{_n}", f"{_s}_{_k}")
-        for _s in _SPINE_SIDES
-        for _n, _k in (("color", "color"), ("linewidth", "width"))
-    ],
-]:
-    _RESTORE[("axes", _prop)] = _mk_spine_restore(_key)
+_RESTORE.update(spinemodel.RESTORE)
 # ---------------------------------------------------------------------------
 # 背景框（bbox_*）：六条 prop 写的是**同一个 patch**，而那个 patch 可能是被
 # 第一条 override 现建出来的。所以 handler 与 restore 必须成对登记——
