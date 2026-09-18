@@ -18,6 +18,7 @@ manifest 那种先塞 `sys.path` 再裸 `import manifest`，静态解析按「�
 
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 
@@ -85,6 +86,51 @@ def test_registered_dynamic_calls_still_exist():
         if (d["from"], d["call"]) not in calls
     ]
     assert stale == [], f"这些登记的动态 import 在源码里已经没有了，删掉登记: {stale}"
+
+
+def _bridge_runner_phases() -> dict[str, set[str]]:
+    """`bridge_runner._PHASE1` / `_PHASE2` 两个字面量元组（真正决定装什么进用户进程的清单）。"""
+    tree = ast.parse((importgraph.PKG / "engine" / "bridge_runner.py").read_text(encoding="utf-8"))
+    out: dict[str, set[str]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id in ("_PHASE1", "_PHASE2") for t in node.targets
+        ):
+            assert isinstance(node.value, ast.Tuple)
+            out[node.targets[0].id] = {  # type: ignore[attr-defined]
+                f"tavotto/engine/{e.value}.py"
+                for e in node.value.elts
+                if isinstance(e, ast.Constant)
+            }
+    assert set(out) == {"_PHASE1", "_PHASE2"}, (
+        "用例前提：bridge_runner 里确实有 _PHASE1/_PHASE2 两批装载清单"
+    )
+    return out
+
+
+@pytest.mark.parametrize("phase,scope", [("_PHASE1", "module"), ("_PHASE2", "function")])
+def test_bridge_runner_load_lists_match_the_registered_extra_edges(phase, scope):
+    """`extra_edges` 是「登记推出的边」：bridge_runner 经 bridgeboot 装进用户进程的每个模块一条。
+    装载清单多了一个模块而登记没跟上，图上那条边就悄悄没了——往 `_PHASE2` 加族模块（PR D
+    第二步每切一族加一个）时这里会替你要求补登记；反过来登记了清单里没有的也红。"""
+    listed = _bridge_runner_phases()[phase]
+    registered = {
+        e["to"]
+        for e in BASELINE["extra_edges"]
+        if e["from"] == "tavotto/engine/bridge_runner.py" and phase in e.get("via", "")
+    }
+    assert registered == listed, (
+        f"bridge_runner.{phase} 与 extra_edges 的登记对不上：清单有而没登记 {sorted(listed - registered)}，"
+        f"登记了而清单没有 {sorted(registered - listed)}"
+    )
+    scopes = {
+        e["scope"]
+        for e in BASELINE["extra_edges"]
+        if e["from"] == "tavotto/engine/bridge_runner.py" and phase in e.get("via", "")
+    }
+    assert scopes == {scope}, (
+        f"{phase} 那批边的 scope 应全是 {scope}（第一阶段在模块层装、第二阶段在函数里装）：{scopes}"
+    )
 
 
 # ---------------------------------------------------------------- 环只减不增

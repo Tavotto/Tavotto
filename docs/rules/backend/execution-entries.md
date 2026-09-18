@@ -24,9 +24,14 @@
   入口——先跑 `tests/test_worker_roundtrip.py` 与 `tests/bridge/` 两套。
 - **native 里绝不能出现裸的兄弟模块 import。** engine 目录在 bridge 里是
   **临时**上 `sys.path` 的（装完就收回），用户项目里完全可能有同名的
-  `manifest.py` / `overrides.py` / `config.py`。延后执行的 import 一律走
-  `overrides._sibling(...)` 那条按包前缀解析的路（结构性守卫：
-  `tests/bridge/test_bridge_namespace.py::test_no_bare_sibling_import_survives_in_overrides`）。
+  `manifest.py` / `overrides.py` / `config.py`。兄弟模块一律在**模块层**平铺 import
+  （装载期解析，那一刻 engine 目录在 `sys.path[0]`、用户同名模块已从 `sys.modules`
+  摘走），函数体内的裸兄弟 import 在用户代码之后才执行、命中的是用户的文件；新平铺
+  进来的模块要登记进 `bridge_runner._PHASE2` / `bridgeboot._TOPLEVEL_TO_RESTORE`
+  （`overrides._sibling(...)` 那条延后访问器 2026-09-17 随 manifest ↔ overrides 环一起删掉；
+  结构性守卫：`tests/bridge/test_bridge_namespace.py::test_no_bare_sibling_import_survives_in_overrides`，
+  装载清单与 `tests/import_architecture_baseline.json` 的 `extra_edges` 对拍在
+  `tests/test_import_architecture.py`）。
 - **`bridge_runner` / `bridgeboot` 启动阶段不许 import matplotlib**，
   钩子挂在 `sys.meta_path` 的后置 import 回调上。
 - **native 侧不许起后台线程**：Figure 归主线程，`LiveFigureSession` 有线程

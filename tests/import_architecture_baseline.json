@@ -9,14 +9,6 @@
   ],
   "dynamic_calls": [
     {
-      "from": "tavotto/engine/overrides.py",
-      "call": "importlib.import_module(full)",
-      "targets": [
-        "tavotto/engine/manifest.py"
-      ],
-      "reason": "`_sibling(\"manifest\")` 的机制：manifest 在模块层 import overrides，overrides 反过来在 FigState 里延后取 manifest._ordered_axes（overrides.py 约 130 行）。这就是 manifest ↔ overrides 那个环的反向边；PR D 拆掉它之后删掉这条登记与 cycles 里那个环。"
-    },
-    {
       "from": "tavotto/engine/bridgeboot.py",
       "call": "importlib.import_module(n)",
       "targets": [],
@@ -45,6 +37,18 @@
     {
       "from": "tavotto/engine/bridge_runner.py",
       "to": "tavotto/engine/pathgeom.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/axestraversal.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/spinemodel.py",
       "scope": "function",
       "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
     },
@@ -92,26 +96,6 @@
     }
   ],
   "cycles": [
-    {
-      "members": [
-        "tavotto/engine/manifest.py",
-        "tavotto/engine/overrides.py"
-      ],
-      "edges": [
-        [
-          "tavotto/engine/manifest.py",
-          "tavotto/engine/overrides.py"
-        ],
-        [
-          "tavotto/engine/overrides.py",
-          "tavotto/engine/manifest.py"
-        ]
-      ],
-      "load_time": false,
-      "reason": "manifest 在模块层平铺 `from overrides import (…)`；overrides.FigState 在函数里经 `_sibling(\"manifest\")` 反取 `_ordered_axes`（overrides.py 约 130 行）。逻辑上是双向依赖，加载期不成环（反向那步延后到调用时）。2026-09-17 审计任务书点名的两处环之一。",
-      "since": "2026-08（_sibling 为 native bridge 命名空间而写）",
-      "remove_when": "PR D：把 axes 遍历权威提到不依赖 manifest 构建也不依赖 overrides 分发的底层模块（只迁移一份 `_ordered_axes`），overrides 不再需要 `_sibling(\"manifest\")`"
-    },
     {
       "members": [
         "tavotto/engine/bootstrap.py",
