@@ -108,7 +108,7 @@
   `export(acceptance=…)` → 提交或 `_render(B0 patches)` 回退。**任何异常都回退**。
 - **桥只翻译**：干涉检测在 `engine/interference.py`、产物验收在 `engine/artifactcheck.py`、
   逐元素裁切判据是 `preflight.element_overflow()`——三处都进了 `_BRIDGE_IMPORT` /
-  `BRIDGE_IMPORTS_AT_MIN`，下一次发版要把 `MIN_TAVOTTO_VERSION` 抬到那个版本。
+  `BRIDGE_IMPORTS_AT_MIN`，`MIN_TAVOTTO_VERSION` 因此在 v0.15.0 抬到 0.15.0。
 - **提交之后会话挂合同**（`Session.contract` / `Session.normalized`）：`apply_overrides`
   只放行与已提交列表逐条相同的重发；增删改要 `user_authorized=True`（合同解除、验收
   作废）。这一道既挡修复循环 / 模型扩权，也挡画布账本不带规范化 patch 时的静默还原
