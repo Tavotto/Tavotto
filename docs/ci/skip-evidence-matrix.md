@@ -46,15 +46,16 @@ job 验了同一件事的产品路径，但不是这条用例）/ **manual**（�
 | 14 | 1 | `node_modules` 未安装 | `test_plugin_stage::test_a_real_build_writes_only_the_requested_output` | `plugin-candidate` 用同一个脚本真建插件（产品路径），不跑这条 | `plugin-candidate` success | 否 | **product-path** |
 | 15 | 1 | 唯一装了 matplotlib 的解释器同时装了 Tavotto | `test_bridge_e2e::test_the_runner_never_imports_tavotto` | 所有 lane 都 `pip install -e .` 到同一个解释器；需要一个「有 matplotlib、没 tavotto」的解释器 | 无（行为性判据由同文件别的用例盖住，见其 skip 文案） | 是（native bridge 边界） | **unknown**——补法：任一 lane 另建一个只装 matplotlib 的 venv 当 `user_python` |
 | 16 | 1 | 这台机器的 Python 没有自带 sitecustomize | `test_bridge_injection_models::test_naive_sitecustomize_breaks_homebrew_python` | 只在 Homebrew Python 那类「有人占了 sitecustomize 坑」的解释器上有意义；CI 的 setup-python 没有 | 无 | 否（它证明的是「别用 sitecustomize」这个决定的理由） | **unknown**（环境条件，不是缺口） |
-| 17 | 1 | 「协议已脱离草案」 | `test_telemetry_integrations::TestAgreementVersionBinding::test_draft_agreements_forbid_a_configured_provider` | 永远不会再成立的前提 | — | 否 | **dead**——删掉（守着一个已经不存在的状态） |
+| 17 | 1 | 「协议已脱离草案」 | `test_legal_contribution_policy::TestAgreementVersionBinding::test_draft_agreements_forbid_a_configured_provider` | 永远不会再成立的前提（用例只在**仓库里的**策略还是草案时才验；协议已定版 1.0） | — | 否 | **dead**——但守的规则（草案上不许配置 provider）本身还在 gate 里：改成自己造一份草案策略来验，而不是删 |
 
 合计 55。分布：covered 22（11 条进了别的 lane 的 junit、11 条在 job 级不进 junit）、
 product-path 18、有通道但非同提交 2、manual 6、unknown 6、dead 1。
 
 ## 三件该做的（按便宜程度）
 
-1. **删** #17 那条死用例：它守的前提永远不会再成立，留着只会让「55 个 skip」这个数字比
-   真相大 1。
+1. **#17 那条死用例**：它的前提（仓库里的策略仍是草案）永远不会再成立，留着只会让「55 个 skip」
+   这个数字比真相大 1；但它守的规则（草案上不许配置 provider，`gate.validate_policy` 里的一条）
+   还在——正确做法是让用例**自己把一份协议改成 `-draft`** 再验，而不是删掉规则的唯一看护。
 2. **`package` job 加一步**（#5）：`TAVOTTO_DIST_DIR=dist python -m pytest tests/test_tutorial.py
    -k "wheel or sdist or installed_wheel"`——产物已经在那儿，只是没人对着它跑这三条。
 3. **workerd 那 12 条要有一个真跑的地方**（#1）：`workerd` job 已经 `cargo test`（有
