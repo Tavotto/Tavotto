@@ -14,13 +14,24 @@ import type { Page } from '@playwright/test'
  */
 const SECTION_LABELS = ['常规', '界面', '项目', '样式', '规范', '导出', '编码 Agent', '包管理', '诊断', '更新', '关于与隐私']
 
+/** 与 uiStore.MEDIUM 同值：<1024 时侧栏是盖在画布上的抽屉（e2e 不 import src，手抄一份） */
+const DRAWER_BELOW = 1024
+
 async function openSettings(page: Page, baseURL: string) {
   await page.goto(baseURL)
   // <1024 时左栏是覆盖式抽屉，首屏开着、遮罩盖住了设置按钮（遮罩自身的淡入
   // 动画让 Playwright 一直判它"不稳定"）。设置对话框是 z-50 的 portal，在抽屉之上，
-  // 所以这里绕过指针拦截直接派发 click——测的是对话框，不是抽屉
+  // 所以这里绕过指针拦截直接派发 click——测的是对话框，不是抽屉。
+  //
+  // 「有没有遮罩」按视口宽度判，不按 goto 那一刻 DOM 里有没有 [data-scrim]：遮罩是
+  // usePresence 在 effect 里挂上的，load 之后才出现，一次性 count() 在慢机器上读到 0
+  // 就走 click() 那条路，随后遮罩挂上、几百次重试全被它拦下（#409 的 Windows 腿，
+  // 两次尝试各 3 分钟）。窄屏下先等遮罩真的挂上再派发——派发早了点的是抽屉还没
+  // 盖上去的按钮，测的就不是「对话框在抽屉之上」这件事了。
   const settings = page.locator('[data-rail="settings"]')
-  if (await page.locator('[data-scrim]').count()) {
+  const narrow = (page.viewportSize()?.width ?? Infinity) < DRAWER_BELOW
+  if (narrow) {
+    await page.locator('[data-scrim]').waitFor()
     await settings.dispatchEvent('click')
   } else {
     await settings.click()
