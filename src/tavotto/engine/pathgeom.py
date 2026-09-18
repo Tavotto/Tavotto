@@ -258,6 +258,11 @@ def _to_frac(points: np.ndarray, W: float, H: float) -> list:
     return np.round(a, _ND).tolist()
 
 
+def frac_to_display(fig, fx: float, fy_top: float) -> tuple[float, float]:
+    """figure 分数（top-origin）→ display 像素（bottom-origin）。"""
+    return fx * fig.bbox.width, (1.0 - fy_top) * fig.bbox.height
+
+
 def _clip_rect(artist, W: float, H: float):
     """元素的裁剪框（figure 分数、top-origin）；不是矩形裁剪就不给。
 

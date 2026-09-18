@@ -101,6 +101,7 @@ _PHASE2 = (
     "spinemodel",
     "tickmodel",
     "colorbarmodel",
+    "legendmodel",
     "overrides",
     "manifest",
     "previewbudget",

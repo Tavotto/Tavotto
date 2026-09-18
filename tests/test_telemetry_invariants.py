@@ -333,7 +333,19 @@ def test_telemetry_module_is_pure_stdlib():
 def test_worker_knows_nothing_about_telemetry():
     """渲染 worker 与它周边的模块一行埋点都不该有。"""
     engine = ROOT / "src" / "tavotto" / "engine"
-    for name in ("worker.py", "manifest.py", "overrides.py", "pathgeom.py", "patchspec.py"):
+    for name in (
+        "worker.py",
+        "manifest.py",
+        "overrides.py",
+        "pathgeom.py",
+        "patchspec.py",
+        # 按 artist family 从 overrides 切出来的模块，同样在 worker 侧
+        "axestraversal.py",
+        "spinemodel.py",
+        "tickmodel.py",
+        "colorbarmodel.py",
+        "legendmodel.py",
+    ):
         text = (engine / name).read_text(encoding="utf-8")
         assert "telemetry" not in text, f"{name} 里出现了遥测"
 

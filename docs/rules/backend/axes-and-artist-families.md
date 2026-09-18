@@ -8,7 +8,8 @@
   matplotlib 的底层模块 `engine/axestraversal.py`，`manifest` 与 `overrides` 都从它取，
   谁也不反向 import 谁（2026-09-17 拆掉 manifest ↔ overrides 环时从 `manifest._ordered_axes`
   迁出，**只迁移一份、不复制**；按 artist family 继续切出来的模块——`engine/spinemodel.py`、`engine/tickmodel.py`、
-  `engine/colorbarmodel.py`——同样是叶子（族之间只许依赖 `FAMILIES` 里排在前面的族），配方门禁 `tests/test_engine_family_modules.py`，依赖清单
+  `engine/colorbarmodel.py`、`engine/legendmodel.py`——同样是叶子（族之间只许依赖 `FAMILIES` 里排在
+  前面的族；`pathgeom` 是它们共同的基座，`frac_to_display` 住那里），配方门禁 `tests/test_engine_family_modules.py`，依赖清单
   `docs/architecture/figstate-dependencies.md`）。`fig.axes` 之外有
   **两族**：`ax.inset_axes()` / `ax.secondary_[xy]axis()` 挂在 `ax.child_axes`
   上；`mpl_toolkits.axes_grid1`（与 `axisartist`）的

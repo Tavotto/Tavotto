@@ -42,6 +42,7 @@ COLLIDING = (
     "spinemodel",
     "tickmodel",
     "colorbarmodel",
+    "legendmodel",
     "figsession",
     "wireproto",
     "worker",

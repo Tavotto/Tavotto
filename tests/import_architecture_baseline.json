@@ -66,6 +66,12 @@
     },
     {
       "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/legendmodel.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
       "to": "tavotto/engine/overrides.py",
       "scope": "function",
       "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"

@@ -1,13 +1,13 @@
 """图例条目模型的两侧常量严格同源（ADR 0034）。
 
-`engine/overrides.LEGEND_ENTRY_STYLE_PROPS` ↔ `web/src/lib/legendModel.ts` 的
+`engine/legendmodel.LEGEND_ENTRY_STYLE_PROPS` ↔ `web/src/lib/legendModel.ts` 的
 同名常量：前端靠这张表判「这一项此刻是不是自定义」（改示意线颜色之后徽标
 要立刻变，不等渲染回来），引擎靠它判 `effective_binding`。两边少一条的表现
 是：一侧说「跟随」、另一侧说「自定义」，而两侧都不报错。`LEGEND_BINDINGS`
 同理（顺序也比）。
 
-本进程不 import matplotlib：`overrides.py` 顶层就 import 它，这里用 `ast`
-把常量读出来。
+本进程不 import matplotlib：`legendmodel.py` 顶层就 import 它，这里用 `ast`
+把常量读出来（2026-09-18 图例族从 overrides 切出，两个常量跟着搬）。
 """
 
 import ast
@@ -16,7 +16,7 @@ from pathlib import Path
 from tests.support.tsconst import exported_string_array
 
 ROOT = Path(__file__).resolve().parents[1]
-PY = ROOT / "src" / "tavotto" / "engine" / "overrides.py"
+PY = ROOT / "src" / "tavotto" / "engine" / "legendmodel.py"
 TS = ROOT / "web" / "src" / "lib" / "legendModel.ts"
 
 
@@ -29,7 +29,7 @@ def _py_tuple(name: str) -> tuple[str, ...]:
             value = ast.literal_eval(node.value)
             assert isinstance(value, tuple), f"{name} 必须是 tuple（闭集）"
             return value
-    raise AssertionError(f"overrides.py 里找不到 {name}")
+    raise AssertionError(f"legendmodel.py 里找不到 {name}")
 
 
 def _ts_list(name: str) -> tuple[str, ...]:

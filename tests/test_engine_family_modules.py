@@ -23,10 +23,12 @@ ENGINE = os.path.join(REPO, "src", "tavotto", "engine")
 #: import 排在它前面的族（colorbar 翻方向要 `tickmodel.invalidate_tick_cfg`，随行表要
 #: `axestraversal.ordered_axes`），反过来不行——族与族之间和族与 overrides 之间一样，不许成环。
 FAMILIES: dict[str, tuple[str, ...]] = {
+    "pathgeom": (),
     "axestraversal": (),
     "spinemodel": ("HANDLERS_STYLE", "HANDLERS_VISIBILITY"),
     "tickmodel": ("HANDLERS_TEXT", "HANDLERS_SIDES", "HANDLERS_MARKS"),
     "colorbarmodel": ("HANDLERS",),
+    "legendmodel": ("HANDLERS_BASIC", "HANDLERS_LAYOUT"),
 }
 
 #: 族模块允许 import 的第三方顶层名字（标准库与更早的族之外）。
@@ -148,3 +150,35 @@ def test_handlers_take_family_tables_by_unpacking_and_never_handwrite_a_family_k
     )
     dup = sorted(set(handwritten) & family_keys)
     assert dup == [], f"这些 key 在 HANDLERS 里手写了一遍、族表里又登记了一遍：{dup}"
+
+
+@pytest.mark.parametrize("name", sorted(FAMILIES))
+def test_family_restore_table_is_merged_into_overrides(name: str):
+    """族模块导出了 `RESTORE`，overrides 就必须有一句 `_RESTORE.update(<module>.RESTORE)`。
+
+    漏掉这一句不会红在任何结构门禁上：撤销那几条 prop 静默退回「setter(artist, 原值)」
+    那条通用路，只在撤销那一刻才与搬出前分岔（第四刀就漏过一次，靠 _RESTORE 键数对拍抓到）。
+    """
+    tree = _parse(name)
+    exports_restore = any(
+        isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == "RESTORE"
+        for n in tree.body
+    )
+    if not exports_restore:
+        pytest.skip(f"{name} 没有 RESTORE 表")
+    merged = {
+        f"{n.value.func.value.id}.{n.value.func.attr}:{n.value.args[0].value.id}.{n.value.args[0].attr}"
+        for n in _parse("overrides").body
+        if isinstance(n, ast.Expr)
+        and isinstance(n.value, ast.Call)
+        and isinstance(n.value.func, ast.Attribute)
+        and isinstance(n.value.func.value, ast.Name)
+        and n.value.func.value.id == "_RESTORE"
+        and n.value.func.attr == "update"
+        and len(n.value.args) == 1
+        and isinstance(n.value.args[0], ast.Attribute)
+        and isinstance(n.value.args[0].value, ast.Name)
+    }
+    assert f"_RESTORE.update:{name}.RESTORE" in merged, (
+        f"overrides.py 里没有 `_RESTORE.update({name}.RESTORE)`——那一族的撤销登记没并进来"
+    )

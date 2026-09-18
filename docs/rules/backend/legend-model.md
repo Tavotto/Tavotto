@@ -4,7 +4,10 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
 - **图例条目模型（2026-09-02，ADR 0034）**：每个图例挂一份
-  `overrides.LegendEntries`（`instrument` 时建，`_register_legend` 一处）。
+  `legendmodel.LegendEntries`（`instrument` 时建，`_register_legend` 一处；整个图例族——条目模型、
+  位置模型、示意线读写、`rebuild_legend` / `sync_legends`、重建后的接回——2026-09-18 起住在
+  `engine/legendmodel.py`，`overrides` 只展开它的 `HANDLERS_*` / `RESTORE`、接线 `legend_text` 那组镜像登记，
+  并以 `FigState.reapply` 给重建后的重放当分发入口；`legend_handle_props` 依赖映射判据、留在 overrides）。
   `axes_i.legend.texts_j` 的 **j 是原始序号**，重排 / 隐藏不改它；图例项的
   `_cls_key` 是 `legend_text`（text handler 逐条镜像 + 条目 handler：
   `handle_color/linestyle/linewidth/marker/markersize` / `binding` / `visible`），

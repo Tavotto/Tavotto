@@ -88,8 +88,17 @@ main @ 77f23250 + PR D 第一步（`axestraversal` 已提出）的树上算出�
    这一刀让族模块第一次依赖另一族（翻方向要 `tickmodel.invalidate_tick_cfg`）：配方门禁改成
    「只许 import `FAMILIES` 里排在自己前面的族」，顺序即分层。
 4. **legend**（506 行）——最大的一族，也最独立（ADR 0034 已经把它模型化）。
+   **已切（2026-09-18，`engine/legendmodel.py`）**：实际搬出约 970 行（overrides 4194 → 3263），连 `_entry_*` /
+   `_handle_read|write` / 指纹与几何助手一起——它们全只被图例用。对外只剩两条边：`_frac_to_display`
+   （text pos / arrow endpoints 也用）搬进基座 `pathgeom.frac_to_display`；重建后的重放要查 `HANDLERS`，
+   收成 `FigState.reapply(artist, prop, value)`（分发留在 overrides，族模块经 `RebuildState` 协议只提要求）。
+   `legend_handle_props`（依赖 `color_mapping_is_live`）与 `legend_text` 那组镜像登记（分发层接线）留在
+   overrides。配方门禁新增一条：族模块导出了 `RESTORE`，overrides 必须有 `_RESTORE.update(<module>.RESTORE)`
+   ——这一刀就漏过一次，靠 `_RESTORE` 键数对拍（75 → 72）抓到。
 5. `apply` / `_apply_rank` / caps 三表留在 `overrides.py`，它就是分发层；到那时 overrides
    只剩分发 + 几何（axes / figure / 3d / arrow）+ 未归族的 getter / setter。
+   **四刀切完（2026-09-18）**：overrides.py 5793 → 3263 行；HANDLERS 248 键的顺序、_RESTORE 75 键、
+   `_needs_state` 标记四刀各验一次逐字节相同。
 
 不建议一次做完：每一刀都要过 `test_invariants_engine` / `test_equivalence_matrix`（热态 ==
 全量重放）、家族自己的用例、以及 bridge 的两张装载表；一刀一个 PR，与任务书「不混 PR」

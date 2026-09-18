@@ -66,6 +66,7 @@ SCANNED = (
     "spinemodel.py",
     "tickmodel.py",
     "colorbarmodel.py",
+    "legendmodel.py",
     "manifest.py",
     "overrides.py",
     "preview_complexity.py",

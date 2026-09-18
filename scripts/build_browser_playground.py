@@ -59,6 +59,7 @@ ENGINE_FILES = [
     "browser_imports.py",
     "colorbarmodel.py",
     "figcapture.py",
+    "legendmodel.py",
     "manifest.py",
     "overrides.py",
     "patchspec.py",
