@@ -750,6 +750,68 @@ class _Autoscale:
 
 _AUTOSCALE = _Autoscale()
 
+
+class _PatchEdge:
+    """Patch 边色的**可回灌**表示（#423）：原始设定 + ≤3.10 的花纹颜色快照。
+
+    `Patch.get_edgecolor()` 回的是解析后的 RGBA；脚本原样却常常是 **`None`（没设）**这个
+    模式——`_original_edgecolor is None` 时 matplotlib 按 `patch.force_edgecolor` / 有没有
+    面自己决定画不画边，花纹颜色停在 `rcParams['hatch.color']`。按值写回 `(0, 0, 0, 0)`
+    把模式换成了「显式透明」，而 3.10 及以前 `_set_edgecolor` 顺手把 `_hatch_color` 也
+    写成同一个值——之后再加花纹，斜线是透明的：热态 ≠ 只见最终列表的全新 worker
+    （manifest 相同，像素不同；序列 harness 24 条种子抓到）。
+
+    还原「没设」这个模式（`set_edgecolor(None)`）**也救不回花纹颜色**：模式回去了，
+    `_hatch_color` 仍停在上一次显式的颜色（`color is None and fill` 那条路刻意不动它）。
+    所以 ≤3.10 要连 `_hatch_color` 一起快照 / 写回；3.11 起花纹颜色是独立属性
+    （`set_hatchcolor`，`_original_hatchcolor`），边色不再碰它，快照留 None。
+    与 `_get_coll_edgecolor` 是同一个坑（那次是 colormap 被永久关掉）；与 `_AUTOSCALE` /
+    `_NO_BBOX` 同一条纪律：只活在 `originals` 里，不进 patch、不过 JSON。
+    """
+
+    __slots__ = ("original", "hatch")
+
+    def __init__(self, original, hatch) -> None:
+        self.original = original
+        self.hatch = hatch
+
+    def __repr__(self) -> str:
+        return f"<patch edge {self.original!r} hatch={self.hatch!r}>"
+
+    def __eq__(self, other) -> bool:  # 诊断 / 对拍里会比两次采到的原样
+        return isinstance(other, _PatchEdge) and _same_value(self.original, other.original)
+
+    __hash__ = None  # 可变成员（RGBA 数组）——不进集合
+
+
+def _same_value(a, b) -> bool:
+    try:
+        return (
+            bool(np.array_equal(np.asarray(a), np.asarray(b)))
+            if a is not None and b is not None
+            else a is b
+        )
+    except Exception:  # noqa: BLE001 — 比不了就当不同
+        return False
+
+
+def _get_patch_edgecolor(p):
+    if not hasattr(p, "_original_edgecolor"):
+        return p.get_edgecolor()  # 认不出的实现：退回按值（老行为）
+    hatch = None if hasattr(p, "set_hatchcolor") else getattr(p, "_hatch_color", None)
+    return _PatchEdge(p._original_edgecolor, hatch)  # noqa: SLF001
+
+
+def _set_patch_edgecolor(p, v) -> None:
+    """吃用户的颜色（改的），或 `_PatchEdge`（还原时喂回来的）。"""
+    if isinstance(v, _PatchEdge):
+        p.set_edgecolor(v.original)
+        if v.hatch is not None and not hasattr(p, "set_hatchcolor"):
+            p._hatch_color = v.hatch  # noqa: SLF001 — ≤3.10 没有公开入口，见类注释
+        return
+    p.set_edgecolor(v)
+
+
 #: 「没有值」——不能用 None，None 本身可以是一个合法的原样。
 _NOTHING = object()
 
@@ -1866,7 +1928,9 @@ _COLLECTION_CAPS: dict[str, tuple] = {
 #: 这些 getter/setter 全在 `Patch` 基类上，子类一个都没改语义。
 _PATCH_CAPS: dict[str, tuple] = {
     "facecolor": (lambda a: a.get_facecolor(), lambda a, v: a.set_facecolor(v)),
-    "edgecolor": (lambda a: a.get_edgecolor(), lambda a, v: a.set_edgecolor(v)),
+    # 边色的 getter 回的是**模式**（`_PatchEdge`），不是解析出来的 RGBA：脚本原样常常是
+    # 「没设」，按值写回会把花纹颜色一起改掉（#423，见 `_PatchEdge`）
+    "edgecolor": (_get_patch_edgecolor, _set_patch_edgecolor),
     "linewidth": (lambda a: float(a.get_linewidth()), lambda a, v: a.set_linewidth(float(v))),
     "linestyle": (lambda a: a.get_linestyle(), _set_linestyle),
     "hatch": _CAP_HATCH,
@@ -2506,7 +2570,7 @@ _PENDING_RESTORES: dict[tuple[str, str], object] = {}
 
 for _prop, _g1, _s1 in [
     ("facecolor", lambda r: r.get_facecolor(), lambda r, v: r.set_facecolor(v)),
-    ("edgecolor", lambda r: r.get_edgecolor(), lambda r, v: r.set_edgecolor(v)),
+    ("edgecolor", _get_patch_edgecolor, _set_patch_edgecolor),  # 模式而非值，见 `_PatchEdge`
     ("linewidth", lambda r: float(r.get_linewidth()), lambda r, v: r.set_linewidth(float(v))),
     ("alpha", lambda r: r.get_alpha(), lambda r, v: r.set_alpha(None if v is None else float(v))),
     ("visible", lambda r: r.get_visible(), lambda r, v: r.set_visible(bool(v))),

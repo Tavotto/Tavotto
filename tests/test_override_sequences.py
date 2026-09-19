@@ -142,6 +142,17 @@ FIXED: list[tuple[str, str, list[list[dict]]]] = [
             [_p("axes_0.lines_1", "marker", "o"), _p(_T0, "binding", "custom")],
         ],
     ),
+    (
+        # #423：Patch 边色的原样是「没设」这个模式；按值写回透明黑把 3.10 及以前的 `_hatch_color`
+        # 一起改掉，之后加花纹斜线透明。每一步 HOT == REPLAY 都过，只有末尾 HOT == FRESH 抓得到
+        # （24 条种子才碰上）。修法：getter 回 `_PatchEdge`，setter 连花纹颜色一起还。
+        "423-edgecolor-undo-then-hatch",
+        "InvMix",
+        [
+            [_p("axes_0.patches_0", "edgecolor", "#ff00ff")],
+            [_p("axes_0.patches_0", "hatch", "/")],
+        ],
+    ),
 ]
 
 

@@ -71,5 +71,13 @@
   setter 把框建出来并露出来。前端早已按开关建模（`web/src/lib/textEffects.ts`）。采样器
   （`tests/support/overridesample.py`）里 `bbox_visible` 采成 True。看护
   `tests/test_text_bbox_visibility.py`、`test_invariants_engine.py::test_undoing_a_background_edit_removes_the_box_it_created`。
+- **getter 回的必须是 setter 能还原的形式，而原样有时是一个模式不是一个值（#423）**：
+  `Patch.get_edgecolor()` 回解析后的 RGBA，脚本原样却常是 `_original_edgecolor is None`
+  （没设）。按值写回把「没设」换成「显式透明」，3.10 及以前还顺手把 `_hatch_color` 写成
+  同一个值——撤销边色后加花纹，斜线透明；`set_fill(False)` 按原样重算轮廓，也画不出来。
+  所以 Patch / bar / bar_series 的 `edgecolor` getter 回 `_PatchEdge`（原始设定 + ≤3.10 的
+  花纹颜色快照），setter 认得它（3.11 起花纹颜色独立，快照留 None）。同族先例：
+  `_AUTOSCALE`（自动缩放）、`_NO_BBOX`（没有框）、`_get_coll_edgecolor`（映射通道）。
+  哨兵只活在 `originals` 里，不进 patch、不过 JSON。看护 `tests/test_patch_edgecolor_mode.py`。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。
