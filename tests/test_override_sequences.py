@@ -398,6 +398,42 @@ def _check_final_against_fresh(hot, library, stem, final: list[dict], tag: str) 
 # ---------------------------------------------------------------------------
 # 用例
 # ---------------------------------------------------------------------------
+def test_shape_matcher_semantics():
+    """形状比对的两把尺子自己先钉住（纯函数，不起 worker）：
+    `*` 只匹配一段——`texts_*` 认 `texts_1`，`axes_0.*` 不认 `axes_0.legend.texts_1`；
+    差异路径按 gid / prop 对齐而不按下标，标量列表（bbox）是一个叶子，单侧缺的元素报整条。
+    夹具按真实 manifest 的形状造：editable 条目只有 prop / value，没有 gid。"""
+
+    def _f(prop, value):
+        return {"prop": prop, "type": "number", "value": value}
+
+    assert _path_matches(
+        "elements[axes_0.legend.texts_*].bbox", "elements[axes_0.legend.texts_1].bbox"
+    )
+    assert not _path_matches("elements[axes_0.*].bbox", "elements[axes_0.legend.texts_1].bbox")
+    assert not _path_matches(
+        "elements[axes_0.legend.texts_*].bbox",
+        "elements[axes_0.legend.texts_1].editable[bbox_visible].value",
+    )
+    a = {
+        "elements": [
+            {"gid": "g", "bbox": [0, 0, 1, 1], "editable": [_f("a", 1), _f("b", 2)]},
+            {"gid": "g2", "bbox": [0, 0, 1, 1], "editable": []},
+        ]
+    }
+    b = {
+        "elements": [
+            {"gid": "g", "bbox": [0, 0, 1, 2], "editable": [_f("b", 3), _f("a", 1)]},
+        ]
+    }
+    assert _diff_paths(a, b) == {
+        "elements[g].bbox",
+        "elements[g].editable[b].value",
+        "elements[g2]",
+    }
+    assert _diff_paths(a, a) == set()
+
+
 @pytest.mark.parametrize("stem", STEMS)
 def test_the_candidate_pool_is_wide(hot, stem):
     """前提：随机序列真的有东西可抽——候选组不少于 20，且跨越不止一种角色。"""
