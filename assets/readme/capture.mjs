@@ -214,12 +214,15 @@ try {
   await setField('W', 150)
   await setField('H', 112.5)
 
-  // Panel (a) at the 80 mm its script drew it (the figure size, not the
-  // tight PDF box), so the inside-the-figure shot is not cropped by a frame
-  // narrower than the figure; (b) and (c) at the profile's single column.
-  await addPanel('Fig1_kinetics.pdf', { x: 5, y: 8, w: 80 })
-  await addPanel('Fig2_correlation.pdf', { x: 88, y: 8, w: 57 })
-  await addPanel('Fig2_yield.pdf', { x: 88, y: 62, w: 57 })
+  // Every panel at the size its PDF was drawn (scale 100%), which is what
+  // the README's caption says the page does. (An earlier take placed (a)
+  // at 80 mm to keep its x-axis label inside the edit-mode frame; that put
+  // it at 109% and lifted its 7.33 pt text to exactly 8.00 pt, which the
+  // preflight still fails — "exactly equal doesn't pass" — but reads as a
+  // puzzle in a screenshot. The crop is the product's, photographed as is.)
+  await addPanel('Fig1_kinetics.pdf', { x: 8, y: 8, w: 73.3 })
+  await addPanel('Fig2_correlation.pdf', { x: 85, y: 8, w: 57 })
+  await addPanel('Fig2_yield.pdf', { x: 85, y: 62, w: 57 })
 
   await page.getByRole('button', { name: S.panelLabels }).click()
   await page.waitForTimeout(1200)
