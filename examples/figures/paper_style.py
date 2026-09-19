@@ -7,7 +7,7 @@
   2. 出图走 `save(fig, stem)` 或 `fig.savefig(...)`。
 
 Tavotto 的 worker 会拦截这两个调用把 Figure 留在内存里——所以在编辑器里
-改元素时**不会**真的重写磁盘上的 PDF，你的脚本和产物都不被动。
+改元素时**不会**真的重写磁盘上的 PDF，你的脚本和产物都不会被改动。
 """
 from pathlib import Path
 

@@ -22,10 +22,10 @@
   <a href="#export-for-publication">Publication checks</a>
 </p>
 
-**Edit figures visually. Keep scripts untouched.** Tweak titles, legends, curves,
-and layouts directly on the canvas. Your underlying Python scripts remain 100%
-reproducible. Tavotto™ opens the figures matplotlib already produced and lets you
-change what you can see, right there.
+**Edit figures visually. Keep scripts untouched.** Tavotto™ opens the figures
+matplotlib has already drawn: titles, legends, curves and the page layout are all
+adjusted on the canvas. Each change is saved on its own, the script stays as it was,
+and before anything is exported the figure is checked against a publication profile.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/workbench.png" width="100%"
@@ -72,11 +72,13 @@ it again. Twenty times, for things you can see but not easily say — the legend
 millimetres to the left, the tick labels one point smaller, panel (b) aligned to
 panel (a).
 
-The other way out is to drag the PDFs into Illustrator, finish them by hand, and
-accept that the figure and the code that made it have parted company.
+The other way out is to drag the PDFs into Illustrator and finish them by hand. That
+is direct, at the price of separating the figure from the code that drew it: the next
+time the data changes and the figure is re-exported, the hand-made layout is gone.
 
-Tavotto is the third option. Open the figure, change what you can see, export. The
-script stays where it was, and every change can be undone.
+Tavotto joins the two ends. Open the figure, change it on the canvas, export. The
+script stays where it was, the changes are saved on their own, and every one of them
+can be undone.
 
 ## Edit inside the figure
 
@@ -121,9 +123,9 @@ result matches what you were looking at, and it can be locked off per project.
 
 PDF export embeds each original vector panel as it was drawn, so **the text stays
 real, selectable, searchable text**. PNG and TIFF (lossless, Deflate-compressed, with
-the DPI written into the file) are rasterised from that same PDF, so they can never
-disagree with it. Two deliberate exceptions: a panel with opacity below 1, or with
-a flip applied, is embedded as a bitmap at your export DPI — PDF vector content
+the DPI written into the file) are rasterised from that same PDF, so the raster shows
+exactly what the PDF contains. Two deliberate exceptions: a panel with opacity below 1,
+or with a flip applied, is embedded as a bitmap at your export DPI — PDF vector content
 supports neither. EPS is written by matplotlib itself, so it is available when you
 export a single figure that has a script, at its original size; the canvas
 composition and script-less figures cannot produce EPS, and Tavotto says so instead

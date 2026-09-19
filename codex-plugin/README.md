@@ -22,7 +22,7 @@ tavotto open: 交给 Tavotto 桌面窗口接着排
 | **MCP server** `mcp/` | 本地 stdio 进程 | 引擎会话、override、出版规范预检、真矢量导出。**没有 UI 的 host 里这九个工具就能走完整条流程** |
 | **MCP App 画布** `mcp/widget/canvas.html` | Codex 内嵌 iframe | 用鼠标改图。复用 Tavotto 前端**同一份**画布代码，不是另一套实现 |
 
-改动一律是 **override**（`gid + prop + value`），**你的 Python 源码一个字都不会被动**。
+改动一律是 **override**（`gid + prop + value`），**你的 Python 源码一个字都不改**。
 
 ## 安装
 
