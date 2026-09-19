@@ -46,18 +46,17 @@ const STRINGS = {
     canvas: 'Canvas', fitCanvas: 'Fit canvas', pin: 'Pin sidebar',
     panelLabels: 'Add panel labels', editElements: 'Edit figure elements',
     export: 'Export', building: /Building/, preflight: /Preflight/,
-    searchPanels: 'Search panels…', searchElements: 'Search name / role / gid',
-    textGroup: 'Text', title: 'Title “Reaction kinetics”',
-    add: (n) => `Add ${n} to the canvas`,
+    searchPanels: 'Search figures', searchElements: 'Search figure elements',
+    /** The numeric fields' accessible names, `<axis> (mm)`. */
+    mm: (axis) => `${axis} (mm)`,
   },
   'zh-CN': {
     assets: '素材', figureElements: '图内元素', properties: '属性',
     canvas: '画布', fitCanvas: '适应画布', pin: '钉住侧栏',
     panelLabels: '添加序号标签', editElements: '编辑图内元素',
     export: '导出', building: /正在构建|构建中/, preflight: /预检/,
-    searchPanels: '搜索面板…', searchElements: '搜索名称 / 角色 / gid',
-    textGroup: '文字', title: '标题 “Reaction kinetics”',
-    add: (n) => `把 ${n} 加入画布`,
+    searchPanels: '搜索图', searchElements: '搜索图内元素',
+    mm: (axis) => `${axis} (mm)`,
   },
 }
 const S = STRINGS[LOCALE]
@@ -99,6 +98,9 @@ async function boot() {
         TAVOTTO_DATA_DIR: dataDir,
         TAVOTTO_CONFIG_DIR: path.join(workdir, 'config'),
         TAVOTTO_ALLOW_SHUTDOWN: '1',
+        // A throwaway profile is asked for telemetry consent on first run; the
+        // hard switch keeps the consent dialog off a screenshot of the editor.
+        TAVOTTO_NO_TELEMETRY: '1',
         HOME: home,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -120,11 +122,22 @@ async function boot() {
     await new Promise((r) => setTimeout(r, 500))
   }
 
+  // The app admits a browser only through the credentialed link it prints
+  // (session authentication, ADR 0008): a bare `/` renders "This page has no
+  // Tavotto session". The link is on stdout as `* 打开 http://…/#dnonce=…`, so
+  // wait for it rather than for `/api/version` alone.
+  let entry = null
+  for (let i = 0; i < 40 && !entry; i++) {
+    entry = logs.join('').match(/(http:\/\/127\.0\.0\.1:\d+\/#dnonce=[^\s]+)/)?.[1] ?? null
+    if (!entry) await new Promise((r) => setTimeout(r, 250))
+  }
+  if (!entry) throw new Error(`the app never printed its credentialed link\n${logs.join('')}`)
+
   const browser = await chromium.launch()
   const ctx = await browser.newContext({ viewport: VIEW, deviceScaleFactor: SCALE, locale: LOCALE })
   await ctx.addInitScript((l) => window.localStorage.setItem('tavotto.locale', l), LOCALE)
   const page = await ctx.newPage()
-  await page.goto(baseURL)
+  await page.goto(entry)
 
   return {
     page,
@@ -144,9 +157,8 @@ async function boot() {
 const app = await boot()
 const { page } = app
 
-/** The numeric fields carry their name in the scrub handle next to the input. */
-const field = (label) =>
-  page.locator(`div:has(> span:text-is("${label}")) > input.num-input`).first()
+/** The numeric fields are labelled `X (mm)` … `H (mm)` (2026-09 inspector). */
+const field = (label) => page.getByLabel(S.mm(label), { exact: true }).first()
 
 async function setField(label, value) {
   const el = field(label)
@@ -168,14 +180,17 @@ async function ensureDrawer(railButton, tell) {
   await page.waitForTimeout(500)
 }
 
-const ensureAssets = () => ensureDrawer(S.assets, page.getByPlaceholder(S.searchPanels))
+const ensureAssets = () => ensureDrawer(S.assets, page.getByLabel(S.searchPanels).first())
 const ensureFigureElements = () =>
-  ensureDrawer(S.figureElements, page.getByPlaceholder(S.searchElements))
+  ensureDrawer(S.figureElements, page.getByLabel(S.searchElements).first())
 
 async function addPanel(name, { x, y, w }) {
   await ensureAssets()
-  await page.getByRole('button', { name: S.add(name) }).click({ timeout: 60_000 })
-  await page.waitForTimeout(2000)
+  // The card is a listbox option: Enter opens the figure for editing,
+  // Shift+Enter adds it to the canvas (AssetBrowser.tsx, `CARD_KEYSHORTCUTS`).
+  await page.locator(`li[data-card="${name}"]`).focus()
+  await page.keyboard.press('Shift+Enter')
+  await page.waitForTimeout(2500)
   await page.getByRole('tab', { name: S.properties }).click()
   await page.waitForTimeout(400)
   await setField('W', w) // width first: height follows through the aspect link
@@ -199,9 +214,12 @@ try {
   await setField('W', 150)
   await setField('H', 112.5)
 
-  await addPanel('Fig1_kinetics.pdf', { x: 8, y: 8, w: 73.3 })
-  await addPanel('Fig2_correlation.pdf', { x: 85, y: 8, w: 57 })
-  await addPanel('Fig2_yield.pdf', { x: 85, y: 62, w: 57 })
+  // Panel (a) at the 80 mm its script drew it (the figure size, not the
+  // tight PDF box), so the inside-the-figure shot is not cropped by a frame
+  // narrower than the figure; (b) and (c) at the profile's single column.
+  await addPanel('Fig1_kinetics.pdf', { x: 5, y: 8, w: 80 })
+  await addPanel('Fig2_correlation.pdf', { x: 88, y: 8, w: 57 })
+  await addPanel('Fig2_yield.pdf', { x: 88, y: 62, w: 57 })
 
   await page.getByRole('button', { name: S.panelLabels }).click()
   await page.waitForTimeout(1200)
@@ -220,7 +238,9 @@ try {
   await shot('layout')
 
   // ── 2 · inside a figure: element tree, canvas, properties of the title ──
-  await page.getByRole('button', { name: S.editElements }).click()
+  // Two buttons carry this name once a panel is selected: the inspector's and
+  // the quick-edit bar's. Either works; the inspector's is the first in DOM.
+  await page.getByRole('button', { name: S.editElements }).first().click()
   await page
     .getByText(S.building)
     .first()
@@ -230,9 +250,10 @@ try {
   await ensureFigureElements()
   await page.getByRole('button', { name: S.fitCanvas }).click()
   await page.waitForTimeout(900)
-  await page.getByText(S.textGroup, { exact: true }).first().click()
-  await page.waitForTimeout(700)
-  await page.getByText(S.title).first().click()
+  // The tree opens with its groups expanded, and every row carries the
+  // element's gid in `data-el` — language-neutral, so the title is addressed
+  // by what it is rather than by what this locale calls it.
+  await page.locator('li[role="treeitem"][data-el="axes_0.title"]').click()
   await page.waitForTimeout(1500)
   await shot('workbench')
 
@@ -241,19 +262,16 @@ try {
   await page.waitForTimeout(800)
   await page.getByRole('button', { name: S.export, exact: true }).click()
   await page.waitForTimeout(4000)
-  const items = await page.locator('button[aria-expanded] ~ ul li').allInnerTexts()
-  console.log('preflight findings:\n  ' + items.join('\n  '))
-  // Frame the findings list. The dialog is
-  // taller than the window, so bring the block into view before measuring.
-  const block = page
-    .getByRole('dialog')
-    .getByRole('button', { name: S.preflight })
-    .locator('xpath=..')
-  await block.scrollIntoViewIfNeeded()
-  await page.waitForTimeout(600)
-  const bb = await block.boundingBox()
+  // Since the 2026-09 export dialog the checks are a block of the dialog
+  // itself — the counts by severity, the first findings with their values, the
+  // written confirmation a blocking finding demands — so the shot is the
+  // dialog, not a list cropped out of it. What it found is logged so the
+  // README's caption can be checked against the run.
+  const dialog = page.getByRole('dialog')
+  console.log('export dialog:\n  ' + (await dialog.innerText()).split('\n').join('\n  '))
+  const bb = await dialog.boundingBox()
   await shot('preflight', bb
-    ? { x: bb.x - 12, y: bb.y - 6, width: bb.width + 24, height: bb.height + 12 }
+    ? { x: bb.x - 12, y: bb.y - 12, width: bb.width + 24, height: bb.height + 24 }
     : undefined)
 } catch (e) {
   console.error('capture failed:', e.message)

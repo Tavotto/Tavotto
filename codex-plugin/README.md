@@ -19,7 +19,7 @@ tavotto open: 交给 Tavotto 桌面窗口接着排
 | 层 | 是什么 | 负责什么 |
 | --- | --- | --- |
 | **技能** `skills/tavotto-figure/` | 一份约定 + 模板 | 教 Codex 写出「Tavotto 接得住」的脚本；数据、坐标、图形结构归代码 |
-| **MCP server** `mcp/` | 本地 stdio 进程 | 引擎会话、override、出版规范预检、真矢量导出。**没有 UI 的 host 里这六个工具就能走完整条流程** |
+| **MCP server** `mcp/` | 本地 stdio 进程 | 引擎会话、override、出版规范预检、真矢量导出。**没有 UI 的 host 里这九个工具就能走完整条流程** |
 | **MCP App 画布** `mcp/widget/canvas.html` | Codex 内嵌 iframe | 用鼠标改图。复用 Tavotto 前端**同一份**画布代码，不是另一套实现 |
 
 改动一律是 **override**（`gid + prop + value`），**你的 Python 源码一个字都不会被动**。
@@ -138,7 +138,7 @@ Roots 兼容状态与连接内工作区确认状态。这里不按 Codex 版本�
 一个 Python 环境，两者可以共存。启动器找不到可用解释器时不会静默退出，而是起
 一个**降级 server**：握手正常（`serverInfo.version` 固定为 `0`，这是「引擎
 不在」的显性信号），tools/list **只列真的可用的 `tavotto_health`**——不可用
-的六个工具不会被伪装成可用；对着旧会话里记住的工具名调用会得到结构化错误
+的八个工具不会被伪装成可用；对着旧会话里记住的工具名调用会得到结构化错误
 （code + 缺什么 + 恢复步骤），**绝不会**返回「画布已打开」之类的成功。
 
 定位规则本身**不在这里重复**：启动器直接调用
@@ -434,20 +434,28 @@ Codex 官方插件装出来的那份，里面没有按平台分支的写法，�
 （`pipx install tavotto` 那条已经好了：启动器会去读 Windows console script
 `.exe` 里嵌着的 shebang，找到 pipx venv 的解释器。）
 
-## 尚未验证的部分
+## 验证过什么、没验证什么
 
-**MCP App 画布在真实 Codex Desktop 里的 iframe 渲染没有实测过。** 已经验证的是：
+**MCP App 画布在真实 Codex Desktop 里的 iframe 渲染，验收做过一次，不是每个版本都做。**
+2026-08-24 的记录（macOS 26.6.1，Codex Desktop 26.818.41509，codex-cli 0.149.1，
+引擎与插件 0.9.2）在 [`docs/acceptance/codex-desktop-canvas.md`](../docs/acceptance/codex-desktop-canvas.md)：
+真实握手、拒绝授权时不建会话、批准后任务内出现画布并能拖动回传。**当前发行版
+（v0.15.0）没有重做这次验收**——历史通过不等于当前版本、当前 Codex 版本或所有
+系统都通过；要说「画布在 Desktop 里可用」，先按那份文档的步骤再跑一遍并留证据。
+
+每个版本都在跑的自动化是：
 
 * MCP 协议层（`initialize` / `tools/list` / `tools/call` / `resources/list` /
   `resources/read`）在真 stdio 上跑通，见 `tests/test_mcp_roundtrip.py`；
-* 六个工具在**没有 UI** 的情况下能走完 打开 → 改图 → 预检 → 导出 → 关闭；
+* 九个工具在**没有 UI** 的情况下能走完 打开 → 改图 → 预检 → 导出 → 关闭；
 * 画布逻辑（会话灌入、拖动→override→manifest 更新、错误透出、不建第二套状态）
   在 vitest 里有用例，见 `web/src/mcp/session.test.ts`；
 * 资源声明形状（`text/html;profile=mcp-app`、`_meta.ui.resourceUri`、空 CSP）有断言。
 
-没验证的是「Codex 真的把这块 HTML 塞进 iframe 并跑起来、握手成功、拖动能回到 server」
-这一整条。装上插件后如果画布不出现，工具照常可用（open/apply 的返回里会带
-`canvas_ui` 说明画布为什么没出现）——那正是 fallback 的设计目的。
+自动化覆盖不到的是「Codex 真的把这块 HTML 塞进 iframe 并跑起来、握手成功、拖动能
+回到 server」这一整条——只有真实 Desktop 验收能回答。装上插件后如果画布不出现，
+工具照常可用（open/apply 的返回里会带 `canvas_ui` 说明画布为什么没出现）——那正是
+fallback 的设计目的。
 
 技术细节与取舍见 [ADR 0006](../docs/adr/0006-codex-mcp-app-and-publication-profile.md)。
 工作区授权见 [ADR 0009](../docs/adr/0009-codex-workspace-root-authority.md)，真实桌面

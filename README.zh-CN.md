@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero.svg" width="100%"
-       alt="Tavotto —— matplotlib 与 AI 生成科研图的可视化编辑器。直接编辑图表，不必修改代码。">
+       alt="Tavotto —— matplotlib 与 AI 生成科研图的可视化编辑器。像画板一样直观微调，像脚本一样精确复现。">
 </p>
 
 <p align="center">
@@ -22,101 +22,43 @@
   <a href="#导出与投稿前检查">投稿前检查</a>
 </p>
 
-图早就画完了，但它还不是 **Figure 1**。Tavotto™ 直接打开 matplotlib 已经产出的图，
-让你点中标题、图例、某一条曲线——就地改。
+**像画板一样直观微调，像脚本一样精确复现。** 代码生成的论文图表，无需反复调整参数。
+画布上直接调整文字、线宽、图例与排版，底层脚本零修改。Tavotto™ 直接打开 matplotlib
+已经产出的图，让你改看得见的东西——就地改。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/workbench.zh.png" width="100%"
-       alt="Tavotto 工作台：左栏是这张图里所有元素的树，中间是 150 × 112.5 mm 的版面上排好的 (a)(b)(c) 三张面板，右栏是选中标题的属性——字体、9 pt、文字内容，以及源文件 fig1_kinetics.py。">
+       alt="Tavotto 工作台，正在图 (a) 内部编辑：左栏是它的元素树，标题处于选中；中间是 150 × 112.5 mm 版面上排好的 (a)(b)(c) 三张面板，选中的标题带着选框；右栏是标题的属性——内容、衬线、9 pt、颜色与对齐。">
 </p>
 
-<p align="center"><sub>选中的是面板 (a) 的标题。右边是它的字体与字号——也是画出它的脚本 <code>fig1_kinetics.py</code>，一个字节没动。</sub></p>
+<p align="center"><sub>选中的是面板 (a) 的标题：内容、字体与字号在右边。画出它的脚本 <code>fig1_kinetics.py</code> 在「源文件与高级」里——一个字节没动。</sub></p>
 
-## 在 Codex 中第一次使用 Tavotto
+<p align="center">
+  <a href="https://www.tavotto.com/zh/#video"><img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/launch-film-cover.webp" width="72%"
+       alt="Tavotto 发布短片的封面：深色底上的 Tavotto 标志。点开在 tavotto.com 播放。"></a>
+</p>
 
-> **普通用户不要克隆或构建这个仓库。** 源码安装只用于参与 Tavotto 开发。
+<p align="center"><sub>▶ 在 tavotto.com <a href="https://www.tavotto.com/zh/#video">看 33 秒的发布短片</a>——有配乐，播放前留意音量。</sub></p>
 
-先选你需要的方式：
+## 两条使用方式
 
-| 你要做什么 | 需要安装什么 |
-| --- | --- |
-| Codex 画完图后，在 Tavotto 桌面窗口里继续拖拽修改 | Tavotto 桌面版 + Codex 插件（不需要 Python 引擎） |
-| 在 Codex 里直接使用 Tavotto 画布、预检、修改与导出工具 | Codex 插件 + Tavotto Python 引擎 |
-| 修改 Tavotto 本身 | 见下方「贡献者：从源码开发」 |
+**在 Codex 里。** 插件让 Codex 知道「Tavotto 能接手的图」该长什么样（脚本与产物
+同目录、矢量 PDF、产出名可静态解析），本地 MCP server 给它九个工具：健康检查、
+打开图、应用修改、规范化一张图、跑预检、导出、校验重放、刷新项目、关闭会话。
+会渲染 MCP App 的宿主里，任务内会出现一块交互画布，用的是**和桌面应用同一份**
+前端代码；不渲染的宿主里工具照常能用，只是没有画布。画布在真实 Codex Desktop
+任务里的验收做过一次：2026-08-24，引擎与插件 0.9.2，Codex Desktop 26.818
+（[验收记录](docs/acceptance/codex-desktop-canvas.md)）；当前发行版没有重做，
+而「把图交接到桌面窗口」不算这块画布。不读取本机插件的宿主永远看不到这些工具。
 
-### 完整的 Codex 集成
+**在桌面版里。** macOS（Apple Silicon）与 Windows（x64）的应用自带 Python：打开
+图库、点选、拖拽、排版、检查、导出。Codex 或任何终端都能把一张图交接到已经开着的
+窗口里。Linux 没有安装包（beta，走 PyPI 在浏览器里用）；Intel Mac 不支持（PyPI
+那条路能跑，但不作承诺）——什么算支持，唯一出处是
+[`docs/support-matrix.json`](docs/support-matrix.json)。
 
-在终端依次运行：
-
-```sh
-codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins
-codex plugin add tavotto@tavotto
-pipx install "tavotto[worker]"
-```
-
-然后**关闭当前 Codex 会话并新开一个会话**。插件的 skill 与 MCP 工具不会在已经
-打开的会话里热重载。
-
-**Windows 上还要再跑一条**（macOS / Linux 不需要）：
-
-```sh
-tavotto codex install
-```
-
-插件清单里钉的启动命令是 `python3`。Windows 上这个名字常常指向微软商店的 App
-Execution Alias——命令**存在**、启动起来却只有一个 9009，于是插件的 MCP server
-一次都没起来，表现是「插件已启用，工具一个都没有」。`tavotto codex install`
-（幂等，`tavotto codex doctor` 只诊断不改）会跑一遍看它到底起不起得来，起不来就
-把已装副本的启动命令换成一个验证过的解释器。**升级插件之后要再跑一次**：升级会
-把插件目录整个换掉。
-
-新会话里可以直接说：
-
-> 用 Tavotto 画这张图。先运行 Tavotto 健康检查；健康后再画，最后在 Tavotto 里
-> 打开。不要安装或升级任何已经可用的组件。
-
-之后 Codex 修改、新建或重命名绘图脚本时，会调用插件的 `tavotto_refresh_project`
-工具：Tavotto 重新读一遍项目（只做静态分析，不运行脚本），开着的 Tavotto 窗口
-自己更新——你不需要手动刷新或重启。工具会报告哪些图现在可编辑、哪些还需要你在
-Tavotto 里点一次「试运行并连接」、哪些有源脚本冲突要你来裁决。
-
-已经画好的图只要改宽度、字体或字号下限时，直接说「把这张图改成 8 cm 宽、
-Times New Roman、字号不小于 8 pt」：Codex 会调用 `tavotto_normalize_figure`——只改你
-点名的那几项，其余内容、配色、数据、子图结构一律不动；缩小后文字装不下时先做有上限
-的边距微调，再检查最终导出的文件本身（PDF 页面尺寸与嵌入字体、PNG 像素与 dpi）。
-装不下、字体没装或需要改结构时它会停下来告诉你需要放宽哪一条，不会替你改标准，也
-不会留下一个看起来成功的文件。
-
-第一次出现项目目录授权时，确认的是 Tavotto 可以访问的本地图库目录。图、脚本和
-数据仍在本机处理。
-
-插件装在你本机的 `~/.codex` 配置里，因此只有会读取本机插件的 Codex 界面才能
-加载它——终端里的 Codex CLI 与 Codex 桌面应用。不读取本机插件的界面（纯云端
-会话、不认 `~/.codex/plugins` 的 IDE 集成）永远不会出现 Tavotto 工具——先在
-终端的 `codex` 会话里验证，不要在那些界面里反复排障。
-
-### 只交给桌面版收尾
-
-装桌面版 + 插件（上面的两条 `codex plugin` 命令；这条路**不需要** `pipx` 那行）。
-让 Codex「在 Tavotto 里打开」时，插件的 skill 会用自带的交接脚本完成交接——它会
-自己找到桌面版内置的命令行：
-
-```sh
-python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.py
-```
-
-别让 Codex 直接跑裸的 `tavotto open`：桌面安装包**刻意不改你的 PATH**，那条命令
-只在 PyPI 安装之后才存在。这条路径不要求 Codex 内嵌画布，也不需要 Python 引擎。
-脚本与产物应放在同一目录，产物优先保存为矢量 PDF。
-
-### 让 Codex 代你安装
-
-把下面一句完整发给 Codex：
-
-> 请严格按照 README 的「在 Codex 中第一次使用 Tavotto」执行普通用户安装。
-> 不要 clone 或构建源码，不要运行 pnpm、npm、cargo、Tauri、测试或 editable
-> install。只安装 Codex 插件和所需的 Tavotto 引擎，运行健康检查；需要新会话时
-> 明确告诉我并停止。
+两条路的安装都在[上手](#上手)；Codex 那条是
+[在 Codex 中第一次使用 Tavotto](#在-codex-中第一次使用-tavotto)。
 
 ## 别再为了挪一次图例重跑脚本
 
@@ -172,7 +114,7 @@ PNG 由同一份版面栅格化，两者绝不会不一致。两处明示的例�
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/preflight.zh.png" width="82%"
-       alt="导出对话框里的预检清单：两条阻断项指出文字的最终有效字号低于规范的 8.5 pt 与 8 pt 下限，两条警告分别关于边框线宽与图例字号，三条建议关于图例字重、坐标轴标签格式与没有 marker 的曲线，另有一条标为无法核验。">
+       alt="导出对话框：PDF 与 PNG、600 ppi、默认规范；导出按钮上方是这次运行查出的问题——整张画布 6 条阻断、4 条警告、2 条无法核验、3 条建议。第一组「字号低于硬下限」列出图例、两条图例项与两组刻度，都是 7.33 pt 对 8 pt 的下限，每条带「定位」；阻断问题书面确认之前，导出按钮一直不可用。">
 </p>
 
 字号一律按**最终物理尺寸**判——面板摆成 60% 时比的是 `fontsize × 0.6`，
@@ -203,14 +145,15 @@ tavotto open figures/                    # 或者整个图库
 
 **用 Codex 的话**可以装插件。它让 Codex 知道「Tavotto 能接手的图」该长什么样
 （脚本与产物同目录、矢量 PDF、产出名可静态解析），并把编辑器搬进 Codex 里——
-安装命令与第一个会话该说什么，见上面的
+安装命令与第一个会话该说什么，见下面的
 [在 Codex 中第一次使用 Tavotto](#在-codex-中第一次使用-tavotto)。
 
-插件带一个 skill、一个本地 MCP server（六个工具：打开图、应用 override、跑预检、
-按指定 DPI 导出真矢量 PDF/SVG 或 PNG、校验重放、关闭会话——在完全没有界面的宿主里
-也能用），以及一块内嵌画布，用的是**和桌面应用同一份**前端代码，拖拽、吸附、撤销
-没有第二套实现。详见 [`codex-plugin/README.md`](codex-plugin/README.md)，
-其中也写清了哪些部分**还没有在真实的 Codex Desktop 里验证过**。
+插件带一个 skill、一个本地 MCP server（九个工具：健康检查、打开图、应用 override、
+规范化一张图、跑预检、按指定 DPI 导出真矢量 PDF/SVG/EPS 或 PNG/TIFF、校验重放、
+刷新项目、关闭会话——在完全没有界面的宿主里也能用），以及一块内嵌画布，用的是
+**和桌面应用同一份**前端代码，拖拽、吸附、撤销没有第二套实现。详见
+[`codex-plugin/README.md`](codex-plugin/README.md)，其中写清了哪些部分在真实的
+Codex Desktop 里验证过、哪些没有。
 
 模型建议的路径永远不等于权限。零配置第一次打开时，支持这项能力的 Codex 会把
 规范化后的本地目录展示给你确认；批准只在当前 Tavotto MCP 连接内有效。
@@ -279,6 +222,91 @@ Beta，边界是明确的：只支持 Python 脚本或 `-m` 模块、只接管�
 两个开关互不代管。细节见[隐私政策](docs/privacy.md)与[事件契约](docs/analytics/telemetry-events.md)。
 
 ## 上手
+
+### 在 Codex 中第一次使用 Tavotto
+
+> **普通用户不要克隆或构建这个仓库。** 源码安装只用于参与 Tavotto 开发。
+
+先选你需要的方式：
+
+| 你要做什么 | 需要安装什么 |
+| --- | --- |
+| Codex 画完图后，在 Tavotto 桌面窗口里继续拖拽修改 | Tavotto 桌面版 + Codex 插件（不需要 Python 引擎） |
+| 在 Codex 里直接使用 Tavotto 画布、预检、修改与导出工具 | Codex 插件 + Tavotto Python 引擎 |
+| 修改 Tavotto 本身 | 见下方「贡献者：从源码开发」 |
+
+#### 完整的 Codex 集成
+
+在终端依次运行：
+
+```sh
+codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins
+codex plugin add tavotto@tavotto
+pipx install "tavotto[worker]"
+```
+
+然后**关闭当前 Codex 会话并新开一个会话**。插件的 skill 与 MCP 工具不会在已经
+打开的会话里热重载。
+
+**Windows 上还要再跑一条**（macOS / Linux 不需要）：
+
+```sh
+tavotto codex install
+```
+
+**升级插件之后要再跑一次。** 插件钉的启动命令是 `python3`，Windows 上这个名字
+常常是微软商店的别名——命令在、却起不来，表现是「插件已启用，工具一个都没有」。
+这条命令会真的跑一遍看启动器起不起得来，起不来就把已装副本的启动命令换成一个
+验证过的解释器（`tavotto codex doctor` 只诊断不改）。成因与症状见
+[`codex-plugin/README.md`](codex-plugin/README.md)。
+
+新会话里可以直接说：
+
+> 用 Tavotto 画这张图。先运行 Tavotto 健康检查；健康后再画，最后在 Tavotto 里
+> 打开。不要安装或升级任何已经可用的组件。
+
+之后 Codex 修改、新建或重命名绘图脚本时，会调用插件的 `tavotto_refresh_project`
+工具：Tavotto 重新读一遍项目（只做静态分析，不运行脚本），开着的 Tavotto 窗口
+自己更新——你不需要手动刷新或重启。工具会报告哪些图现在可编辑、哪些还需要你在
+Tavotto 里点一次「试运行并连接」、哪些有源脚本冲突要你来裁决。
+
+已经画好的图只要改宽度、字体或字号下限时，直接说「把这张图改成 8 cm 宽、
+Times New Roman、字号不小于 8 pt」：Codex 会调用 `tavotto_normalize_figure`——只改你
+点名的那几项，其余内容、配色、数据、子图结构一律不动；缩小后文字装不下时先做有上限
+的边距微调，再检查最终导出的文件本身（PDF 页面尺寸与嵌入字体、PNG 像素与 dpi）。
+装不下、字体没装或需要改结构时它会停下来告诉你需要放宽哪一条，不会替你改标准，也
+不会留下一个看起来成功的文件。
+
+第一次出现项目目录授权时，确认的是 Tavotto 可以访问的本地图库目录。图、脚本和
+数据仍在本机处理。
+
+插件装在你本机的 `~/.codex` 配置里，因此只有会读取本机插件的 Codex 界面才能
+加载它——终端里的 Codex CLI 与 Codex 桌面应用。不读取本机插件的界面（纯云端
+会话、不认 `~/.codex/plugins` 的 IDE 集成）永远不会出现 Tavotto 工具——先在
+终端的 `codex` 会话里验证，不要在那些界面里反复排障。
+
+#### 只交给桌面版收尾
+
+装桌面版 + 插件（上面的两条 `codex plugin` 命令；这条路**不需要** `pipx` 那行）。
+让 Codex「在 Tavotto 里打开」时，插件的 skill 会用自带的交接脚本完成交接——它会
+自己找到桌面版内置的命令行：
+
+```sh
+python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.py
+```
+
+别让 Codex 直接跑裸的 `tavotto open`：桌面安装包**刻意不改你的 PATH**，那条命令
+只在 PyPI 安装之后才存在。这条路径不要求 Codex 内嵌画布，也不需要 Python 引擎。
+脚本与产物应放在同一目录，产物优先保存为矢量 PDF。
+
+#### 让 Codex 代你安装
+
+把下面一句完整发给 Codex：
+
+> 请严格按照 README 的「在 Codex 中第一次使用 Tavotto」执行普通用户安装。
+> 不要 clone 或构建源码，不要运行 pnpm、npm、cargo、Tauri、测试或 editable
+> install。只安装 Codex 插件和所需的 Tavotto 引擎，运行健康检查；需要新会话时
+> 明确告诉我并停止。
 
 ### 桌面版
 

@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero.svg" width="100%"
-       alt="Tavotto — a visual editor for matplotlib and AI-generated scientific figures. Edit the figure, keep the code.">
+       alt="Tavotto — a visual editor for matplotlib and AI-generated scientific figures. Edit figures visually. Keep scripts untouched.">
 </p>
 
 <p align="center">
@@ -22,128 +22,48 @@
   <a href="#export-for-publication">Publication checks</a>
 </p>
 
-Your plots are finished. Turning them into **Figure 1** is not. Tavotto™ opens the
-figures matplotlib already produced and lets you click the title, the legend, a
-curve — and change it, right there.
+**Edit figures visually. Keep scripts untouched.** Tweak titles, legends, curves,
+and layouts directly on the canvas. Your underlying Python scripts remain 100%
+reproducible. Tavotto™ opens the figures matplotlib already produced and lets you
+change what you can see, right there.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/workbench.png" width="100%"
-       alt="The Tavotto window: a tree of the elements inside the figure on the left, three panels arranged as (a)(b)(c) on a 150 × 112.5 mm page in the middle, and the properties of the selected title on the right — font, 9 pt, its text, and the source file fig1_kinetics.py.">
+       alt="The Tavotto window, inside figure (a): the tree of its elements on the left, with the title selected; three panels arranged as (a)(b)(c) on a 150 × 112.5 mm page in the middle, the selected title outlined; and the title’s properties on the right: its text, Serif, 9 pt, colour and alignment.">
 </p>
 
-<p align="center"><sub>The title of panel (a) is selected. Its font and size are on the right — and so is the script that drew it, <code>fig1_kinetics.py</code>, still untouched.</sub></p>
+<p align="center"><sub>The title of panel (a) is selected: its text, font and size are on the right. The script that drew it, <code>fig1_kinetics.py</code>, is under <em>Source &amp; advanced</em> — and still untouched.</sub></p>
 
-## Using Tavotto with Codex for the first time
+<p align="center">
+  <a href="https://www.tavotto.com/#video"><img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/launch-film-cover.webp" width="72%"
+       alt="The cover of the Tavotto launch film: the Tavotto mark on a dark ground. Opens the film on tavotto.com."></a>
+</p>
 
-> **Regular users: do not clone or build this repository.** Installing from source is
-> only for people working on Tavotto itself.
+<p align="center"><sub>▶ <a href="https://www.tavotto.com/#video">Watch the 33-second launch film</a> on tavotto.com — with music; the on-screen text is in Chinese.</sub></p>
 
-Pick what you need first:
+## Two ways to use it
 
-| What you want to do | What to install |
-| --- | --- |
-| Codex draws the figure; you keep dragging and tweaking it in the Tavotto desktop window | The Tavotto desktop app + the Codex plugin (no Python engine needed) |
-| Use Tavotto's canvas, preflight, editing and export tools directly inside Codex | The Codex plugin + the Tavotto Python engine |
-| Change Tavotto itself | See "Contributors: developing from source" below |
+**In Codex.** The plugin teaches Codex the shape an editable figure has to have
+(script beside its output, vector PDF, a statically resolvable output name), and a
+local MCP server gives it nine tools: health check, open a figure, apply an edit,
+normalise a figure, run the preflight, export, verify a replay, refresh the project,
+close the session. In a host that renders MCP Apps, an interactive canvas built from the *same*
+frontend the desktop app runs appears inside the task; in a host that does not,
+the tools still work without one. The canvas inside a real Codex Desktop task was
+accepted once, on 2026-08-24 with engine and plugin 0.9.2 and Codex Desktop
+26.818 ([the record](docs/acceptance/codex-desktop-canvas.md)); it has not been
+re-run for the current release, and a figure handed over to the desktop window is
+not that canvas. Hosts that do not load local plugins never show the tools at all.
 
-### The full Codex integration
+**On the desktop.** The app for macOS (Apple Silicon) and Windows (x64) carries its
+own Python: open a figure library, click, drag, lay the page out, check it, export.
+Codex, or any terminal, can hand a figure to the window that is already open. There
+is no installer for Linux (beta, from PyPI in a browser tab) or for Intel Macs (not
+supported; the PyPI route runs there without a promise) — the one place that decides
+what is supported is [`docs/support-matrix.json`](docs/support-matrix.json).
 
-Run these in a terminal, one at a time:
-
-```sh
-codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins
-codex plugin add tavotto@tavotto
-pipx install "tavotto[worker]"
-```
-
-Then **close your current Codex session and start a new one.** The plugin's skill and
-MCP tools do not hot-reload into a session that is already open.
-
-**If you installed the engine with `pip`/`pipx`**, one command does the two
-`codex plugin` steps for you, and tells you what it skipped:
-
-```sh
-tavotto codex install     # idempotent: fixes only what is missing
-tavotto codex doctor      # diagnose only, changes nothing
-```
-
-It never installs or upgrades the Codex CLI itself, and it never reinstalls a
-component that is already healthy. `tavotto codex uninstall` removes the plugin and
-the marketplace entry (it leaves the engine alone).
-
-**On Windows, run `tavotto codex install` as well** (macOS and Linux do not need it).
-The plugin manifest pins `python3` as the command Codex uses to start the MCP server.
-On Windows that name usually points at a Microsoft Store App Execution Alias: the
-command *exists*, but starting it yields exit code 9009 and nothing else, so the
-server never starts and the plugin shows up enabled with no tools at all.
-`tavotto codex install` actually runs the command to see whether it starts the
-launcher, and pins a verified interpreter into the installed copy if it does not
-(`tavotto codex doctor` reports the same without changing anything). **Run it again
-after upgrading the plugin** — an upgrade replaces the whole plugin directory.
-
-Desktop-app-only users: the desktop installer deliberately does not touch your `PATH`,
-so a bare `tavotto` is not available — run the two `codex plugin` commands above
-instead. (A settings-page button that runs the same installer is tracked in
-[#170](https://github.com/Tavotto/Tavotto/issues/170).)
-
-In the new session you can say:
-
-> Draw this figure with Tavotto. Run the Tavotto health check first; only draw once it
-> is healthy, and open the result in Tavotto at the end. Do not install or upgrade any
-> component that is already working.
-
-When Codex later edits, adds or renames a plotting script, it calls the plugin's
-`tavotto_refresh_project` tool: Tavotto re-reads the project (static analysis only, no
-script is run) and the open Tavotto window updates by itself — you never refresh or
-restart it by hand. The tool reports which figures are now editable, which still need
-a trial run you trigger in Tavotto, and which have a source conflict for you to settle.
-
-When a figure already exists and only needs a new width, font, or font-size floor, just
-say "make this figure 8 cm wide, Times New Roman, no text below 8 pt": Codex calls
-`tavotto_normalize_figure`, which changes only what you named and leaves content,
-colours, data and subplot structure alone. If text no longer fits after shrinking it
-makes bounded margin adjustments first, then verifies the delivered file itself (PDF
-page size and embedded fonts, PNG pixels and dpi). When the request cannot be met —
-nothing fits, the font is not installed, the structure would have to change — it stops
-and tells you which constraint to relax instead of lowering the bar or leaving behind a
-file that only looks finished.
-
-The first time a project-directory approval appears, what you are confirming is the
-local figure directory Tavotto may access. Figures, scripts and data are still
-processed on your machine.
-
-The plugin installs into your local `~/.codex` configuration, so it loads only in
-Codex surfaces that read local plugins — the Codex CLI in a terminal and the Codex
-desktop app. A surface that does not load local plugins (a purely cloud-hosted
-session, an IDE integration that ignores `~/.codex/plugins`) will never show the
-Tavotto tools; verify in a terminal `codex` session first instead of debugging there.
-
-### Handing off to the desktop app only
-
-Install the desktop app plus the plugin (the two `codex plugin` commands above — the
-`pipx` line is not needed on this route). When you ask Codex to "open it in Tavotto",
-the plugin's skill hands the figure over with its own handoff script, which locates
-the CLI bundled inside the desktop app by itself:
-
-```sh
-python3 <plugin-dir>/skills/tavotto-figure/scripts/handoff.py path/to/figure.py
-```
-
-Do not tell Codex to run a bare `tavotto open` on this route: the desktop installers
-deliberately leave your `PATH` untouched, so that command only exists after a PyPI
-install. This path does not require the MCP canvas or the Python engine inside
-Codex. Keep the script and its output in the same directory, and prefer vector PDF
-for the output.
-
-### Let Codex do the install
-
-Send Codex this message, in full:
-
-> Follow the "Using Tavotto with Codex for the first time" section of the README
-> exactly, as a regular-user install. Do not clone or build the source; do not run
-> pnpm, npm, cargo, Tauri, tests, or an editable install. Install only the Codex
-> plugin and the Tavotto engine it needs, then run the health check; when a new
-> session is required, tell me so explicitly and stop.
+Both routes are in [Get started](#get-started); the Codex one is
+[Using Tavotto with Codex for the first time](#using-tavotto-with-codex-for-the-first-time).
 
 ## Stop re-running a script to move a legend
 
@@ -214,7 +134,7 @@ and tells you what a reviewer would have told you three weeks later:
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/preflight.png" width="82%"
-       alt="The preflight list in the export dialog: two blocking findings about text below the profile's 8.5 pt and 8 pt floors, warnings about a frame line width and a legend font size, suggestions about bold legend text, axis-label format and lines drawn without markers, and one item marked not verifiable.">
+       alt="The export dialog: PDF and PNG at 600 ppi against the default profile, and above the Export button the checks the run produced: 6 blocking, 4 warnings, 2 not verifiable and 3 suggestions on the whole canvas. The first group, Font below hard floor, lists the legend, its two entries and both tick sets at 7.33 pt against the 8 pt floor, each with a Locate link; the Export button stays disabled until the blocking problems are confirmed in writing.">
 </p>
 
 Font sizes are judged at their **final physical size** — a panel placed at 60% is
@@ -253,15 +173,15 @@ Tavotto-editable figure has to have (script beside its output, vector PDF, an ou
 name that resolves statically) and puts the editor inside Codex itself — the install
 commands and what to say in the first session are in
 [Using Tavotto with Codex for the first time](#using-tavotto-with-codex-for-the-first-time)
-above.
+below.
 
-It ships a skill, a local MCP server with six tools — open a figure, apply overrides,
-run the preflight, export true-vector PDF/SVG/EPS or PNG/TIFF at an explicit DPI, verify a
-replay, close a session, all usable in hosts with no interface at all — and an
-embedded canvas built from the *same* frontend code the desktop app runs, so dragging,
-snapping and undo have no second implementation. See
-[`codex-plugin/README.md`](codex-plugin/README.md), including which parts are **not
-yet verified inside a real Codex Desktop**.
+It ships a skill, a local MCP server with nine tools — health check, open a figure,
+apply overrides, normalise a figure, run the preflight, export true-vector PDF/SVG/EPS
+or PNG/TIFF at an explicit DPI, verify a replay, refresh the project, close a session,
+all usable in hosts with no interface at all — and an embedded canvas built from the
+*same* frontend code the desktop app runs, so dragging, snapping and undo have no
+second implementation. See [`codex-plugin/README.md`](codex-plugin/README.md),
+including what has and has not been verified inside a real Codex Desktop.
 
 A path suggested by the model is never treated as permission. On a zero-config first
 open, a capable Codex host shows the canonical local directory for you to approve;
@@ -343,6 +263,116 @@ The two switches are independent; neither covers the other. Details in the
 [event contract](docs/analytics/telemetry-events.md).
 
 ## Get started
+
+### Using Tavotto with Codex for the first time
+
+> **Regular users: do not clone or build this repository.** Installing from source is
+> only for people working on Tavotto itself.
+
+Pick what you need first:
+
+| What you want to do | What to install |
+| --- | --- |
+| Codex draws the figure; you keep dragging and tweaking it in the Tavotto desktop window | The Tavotto desktop app + the Codex plugin (no Python engine needed) |
+| Use Tavotto's canvas, preflight, editing and export tools directly inside Codex | The Codex plugin + the Tavotto Python engine |
+| Change Tavotto itself | See "Contributors: developing from source" below |
+
+#### The full Codex integration
+
+Run these in a terminal, one at a time:
+
+```sh
+codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins
+codex plugin add tavotto@tavotto
+pipx install "tavotto[worker]"
+```
+
+Then **close your current Codex session and start a new one.** The plugin's skill and
+MCP tools do not hot-reload into a session that is already open.
+
+**If you installed the engine with `pip`/`pipx`**, one command does the two
+`codex plugin` steps for you, and tells you what it skipped:
+
+```sh
+tavotto codex install     # idempotent: fixes only what is missing
+tavotto codex doctor      # diagnose only, changes nothing
+```
+
+It never installs or upgrades the Codex CLI itself, and it never reinstalls a
+component that is already healthy. `tavotto codex uninstall` removes the plugin and
+the marketplace entry (it leaves the engine alone).
+
+**On Windows, run `tavotto codex install` as well** (macOS and Linux do not need it),
+and **run it again after upgrading the plugin**. The plugin pins `python3` as the
+command that starts its MCP server, and on Windows that name is usually a Microsoft
+Store alias that exists but never starts — the plugin then shows up enabled with no
+tools at all. The command checks whether the launcher really starts and pins a
+verified interpreter into the installed copy if it does not; the mechanism and the
+symptoms are in [`codex-plugin/README.md`](codex-plugin/README.md).
+
+Desktop-app-only users: the desktop installer deliberately does not touch your `PATH`,
+so a bare `tavotto` is not available — run the two `codex plugin` commands above
+instead. (A settings-page button that runs the same installer is tracked in
+[#170](https://github.com/Tavotto/Tavotto/issues/170).)
+
+In the new session you can say:
+
+> Draw this figure with Tavotto. Run the Tavotto health check first; only draw once it
+> is healthy, and open the result in Tavotto at the end. Do not install or upgrade any
+> component that is already working.
+
+When Codex later edits, adds or renames a plotting script, it calls the plugin's
+`tavotto_refresh_project` tool: Tavotto re-reads the project (static analysis only, no
+script is run) and the open Tavotto window updates by itself — you never refresh or
+restart it by hand. The tool reports which figures are now editable, which still need
+a trial run you trigger in Tavotto, and which have a source conflict for you to settle.
+
+When a figure already exists and only needs a new width, font, or font-size floor, just
+say "make this figure 8 cm wide, Times New Roman, no text below 8 pt": Codex calls
+`tavotto_normalize_figure`, which changes only what you named and leaves content,
+colours, data and subplot structure alone. If text no longer fits after shrinking it
+makes bounded margin adjustments first, then verifies the delivered file itself (PDF
+page size and embedded fonts, PNG pixels and dpi). When the request cannot be met —
+nothing fits, the font is not installed, the structure would have to change — it stops
+and tells you which constraint to relax instead of lowering the bar or leaving behind a
+file that only looks finished.
+
+The first time a project-directory approval appears, what you are confirming is the
+local figure directory Tavotto may access. Figures, scripts and data are still
+processed on your machine.
+
+The plugin installs into your local `~/.codex` configuration, so it loads only in
+Codex surfaces that read local plugins — the Codex CLI in a terminal and the Codex
+desktop app. A surface that does not load local plugins (a purely cloud-hosted
+session, an IDE integration that ignores `~/.codex/plugins`) will never show the
+Tavotto tools; verify in a terminal `codex` session first instead of debugging there.
+
+#### Handing off to the desktop app only
+
+Install the desktop app plus the plugin (the two `codex plugin` commands above — the
+`pipx` line is not needed on this route). When you ask Codex to "open it in Tavotto",
+the plugin's skill hands the figure over with its own handoff script, which locates
+the CLI bundled inside the desktop app by itself:
+
+```sh
+python3 <plugin-dir>/skills/tavotto-figure/scripts/handoff.py path/to/figure.py
+```
+
+Do not tell Codex to run a bare `tavotto open` on this route: the desktop installers
+deliberately leave your `PATH` untouched, so that command only exists after a PyPI
+install. This path does not require the MCP canvas or the Python engine inside
+Codex. Keep the script and its output in the same directory, and prefer vector PDF
+for the output.
+
+#### Let Codex do the install
+
+Send Codex this message, in full:
+
+> Follow the "Using Tavotto with Codex for the first time" section of the README
+> exactly, as a regular-user install. Do not clone or build the source; do not run
+> pnpm, npm, cargo, Tauri, tests, or an editable install. Install only the Codex
+> plugin and the Tavotto engine it needs, then run the health check; when a new
+> session is required, tell me so explicitly and stop.
 
 ### Desktop
 
