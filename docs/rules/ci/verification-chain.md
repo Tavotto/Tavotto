@@ -36,6 +36,10 @@
   热态==全量重放（含**删除**）/ 不许静默消失 / 单一权威。它们与
   `tests/acceptance/` 和 CompatBench 问的不是同一个问题，**三者不能互相替代**。
   能力真实那条**用像素说话**（`preview_png` 状态中立、6ms 一张、逐字节确定）。
+  它们的推广——**带种子的随机操作序列**（`tests/test_override_sequences.py`，每步
+  HOT == CLEAR+REPLAY、末尾 HOT == FRESH）——默认 8 条种子跟着常规套件走，lab 的
+  nightly 及以上再以 `TAVOTTO_SEQ_SEEDS=32` 单跑一遍：随机负责发现，发现了最小化后
+  钉进 `FIXED` / `KNOWN`，PR 档不加时长（第四族 #423 是 24 条才碰上的）。
 - **端到端冒烟**：`python scripts/smoke_app.py --python .venv/bin/python`
   （或 `--exe dist/Tavotto/Tavotto.exe`）。隔离用户目录 → 渲染环境自检 →
   打开项目 → 渲染 → 导出 → 覆盖导出 → 干净退出（走 `/api/shutdown`，需

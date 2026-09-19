@@ -210,6 +210,17 @@ jobs:
           esac
           ${{ steps.venv.outputs.python }} -m pytest -m slow -q
 
+      - name: 操作序列 harness 放宽种子（仅 nightly 及以上）
+        # `tests/test_override_sequences.py` 默认 8 条种子 × 2 张图（PR / merge_group / 上面的
+        # 常规套件都是这个档，每条起两条 worker，约 1 分钟）。首批三族（#412–#414）8 条就抓到，
+        # 第四族（#423）放到 24 条才碰上：随机负责发现，发现了就最小化后钉进 `FIXED`，PR 上
+        # 不加时长——这里 32 条只在 nightly 及以上跑（约 4 分钟）。判据是 pytest 的退出码；
+        # 文件自己守着「候选池够宽」，不会空转。
+        if: env.LAB_MODE != 'main'
+        env:
+          TAVOTTO_SEQ_SEEDS: "32"
+        run: ${{ steps.venv.outputs.python }} -m pytest tests/test_override_sequences.py -q -rs -p no:cacheprovider
+
       - name: 前端与 Rust（仅 nightly 及以上）
         if: env.LAB_MODE != 'main'
         run: |

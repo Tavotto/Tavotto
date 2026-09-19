@@ -125,6 +125,14 @@ workflow 会先 `--collect-only` 数一遍，**一条都没选中就直接失败
 > 真建 venv 真装 matplotlib）。这一层的价值目前主要在其它环节；随着 slow 用例
 > 增加，这条会自然变重。**没有为了凑数把普通用例标成 slow。**
 
+### 操作序列 harness 放宽种子（nightly 及以上）
+
+`tests/test_override_sequences.py`（§4.2 后端序列 harness）默认 8 条种子 × 2 张图，
+PR / merge_group / 上面的常规套件都是这个档。首批三族（#412–#414）8 条就抓到，第四族
+（#423）放到 24 条才碰上——所以 nightly 及以上再以 `TAVOTTO_SEQ_SEEDS=32` 单独跑一遍
+这个文件（约 4 分钟）。随机负责发现：红了就按它报的最短复现最小化，钉进 `FIXED`
+（修好的）或 `KNOWN`（开 issue 的），PR 上的默认档不加时长。
+
 ### 升级验收 `upgrade_acceptance.py`
 
 这是临时 runner 最难做、也最有价值的一项——它需要**同一块持久化磁盘上先后跑
