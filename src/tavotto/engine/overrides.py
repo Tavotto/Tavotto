@@ -568,7 +568,9 @@ BBOX_DEFAULTS = {
     "bbox_rounded": False,
 }
 
+#: 现建的框**不可见**：显隐只归 `bbox_visible` 管（见 `_bbox_handler` 抬头的「语义」）。
 _BBOX_CREATE = dict(
+    visible=BBOX_DEFAULTS["bbox_visible"],
     boxstyle=f"square,pad={BBOX_DEFAULTS['bbox_pad']}",
     facecolor=BBOX_DEFAULTS["bbox_facecolor"],
     edgecolor=BBOX_DEFAULTS["bbox_edgecolor"],
@@ -632,7 +634,21 @@ def _text_has_bbox_left(t: Text, state: "FigState") -> bool:
 
 
 def _bbox_handler(read, write, default) -> tuple:
-    """背景框子属性：setter 按需建 patch（首次改任何背景属性即出现背景框）。
+    """背景框子属性：setter 按需建 patch，但**建出来的是不可见的**。
+
+    ## 语义（#412）：显隐只由 `bbox_visible` 决定，其它 bbox_* 只改样式
+
+    `bbox_visible = true` 显示；显式 `false` 或**不在列表里** = 脚本原样（脚本自己
+    `set_bbox` 过就显示，没有就不显示）。`bbox_facecolor` 那五条落下时框要是还没有
+    就现建一个**不可见**的，把样式写进去等开关来开——它们**永远不改显隐**。
+
+    第一版是「首次改任何背景属性即出现背景框」：现建的 patch 可见。于是同一份
+    override 列表两条路两张图——热态里用户撤掉 / 关掉 `bbox_visible`，其它样式值
+    没变被跳过，框留在隐藏；清空重放时 `bbox_edgecolor` 的 setter 又把框建出来
+    并露出来（序列 harness 抓到的 A1 / A2，`FIXED` 里钉着）。而前端早已把
+    `bbox_visible` 做成这一组的开关（`web/src/lib/textEffects.ts`：从属字段只在
+    开关开着时渲染、关掉时连从属 override 一起清），引擎是唯一还按旧语义办事的
+    一侧。
 
     ## 还原必须能把「本来就没有框」这个状态还回去
 
@@ -700,7 +716,10 @@ def _boxstyle_set(p, pad=None, rounded=None) -> None:
 
 def _set_bbox_visible(t: Text, v) -> None:
     if not v and t.get_bbox_patch() is None:
-        return  # 本来就没有背景框，无需为「关」建 patch
+        # 本来就没有背景框，无需为「关」建 patch。#412 之后现建的框本来就不可见，
+        # 所以这一句只省一个对象与一个「我们建的」记号，不再承担任何语义——变异
+        # 掉它没有用例会红，是设计上的冗余，不是漏看护。
+        return
     _bbox_ensure(t).set_visible(bool(v))
 
 
@@ -2668,7 +2687,7 @@ for _bp, (_bread, _bwrite) in _BBOX_PROPS.items():
     HANDLERS[("text", _bp)] = _bpair
     _RESTORE[("text", _bp)] = _brestore
 # `bbox_visible=False` 不该为了「关」而现建一个 patch（本来就没有框时它是
-# no-op）。其余五条照旧「首次改任何背景属性即出现背景框」。
+# no-op）。其余五条落下时现建的框**不可见**，显隐只有这一条开关管（#412）。
 HANDLERS[("text", "bbox_visible")] = (HANDLERS[("text", "bbox_visible")][0], _set_bbox_visible)
 
 # ---------------------------------------------------------------------------

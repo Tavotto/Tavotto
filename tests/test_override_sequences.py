@@ -84,38 +84,18 @@ class Shape:
 
 
 #: 已知分岔各族的形状——2026-09-19 在 `KNOWN` 四条 + `KNOWN_SEEDS` 六条上实测，两两可分：
-#: #412 只差那一条 `bbox_visible` 取值且像素不同；#414 manifest 逐字相等只有像素不同
-#: （#413 曾是「只差图例文字的 `bbox` 几何且像素相同」，修好后从这里摘掉，复现挪进 `FIXED`）。
+#: #414 manifest 逐字相等只有像素不同（#412 曾是「只差那一条 `bbox_visible` 取值且像素不同」，
+#: #413 曾是「只差图例文字的 `bbox` 几何且像素相同」；修好的从这里摘掉，复现挪进 `FIXED`）。
 #: 已知用例 / 已知种子命中时按这张表比对，形状不符就是新问题（普通红），不许被旧 issue 认领。
 FAMILIES: dict[str, Shape] = {
-    "#412": Shape(("elements[axes_0.legend.texts_*].editable[bbox_visible].value",), pixel=True),
     "#414": Shape((), pixel=True),
 }
 
 #: **已知分岔**：随机发现、最小化到两步之后钉在这里，每条挂一个 issue。用例断言它**今天仍按
 #: 登记的形状在最后一步分岔**：不再分岔 = 修好了，红着提醒挪进 `FIXED`；形状变了 = 另一个
-#: 问题。2026-09-18 首跑 8 × 10 × 2 抓到三族（#413 已修，见 `FIXED`）：
-#:   * #412 文字 bbox 组：撤掉 / 关掉 `bbox_visible` 而其它 bbox_* 仍在，热态藏框、重放露框；
+#: 问题。2026-09-18 首跑 8 × 10 × 2 抓到三族（#412 / #413 已修，见 `FIXED`）：
 #:   * #414 显式 `binding=custom` 冻结的样子只活在会话里，源随后变了重放对不上。
 KNOWN: list[tuple[str, str, str, list[list[dict]]]] = [
-    (
-        "412-bbox-visible-removed",
-        "#412",
-        "InvMix",
-        [
-            [_p(_T1, "bbox_visible", True), _p(_T1, "bbox_edgecolor", "#ff00ff")],
-            [_p(_T1, "bbox_edgecolor", "#ff00ff")],
-        ],
-    ),
-    (
-        "412-bbox-visible-toggled-off",
-        "#412",
-        "InvCont",
-        [
-            [_p(_T1, "bbox_visible", True), _p(_T1, "bbox_linewidth", 2.0)],
-            [_p(_T1, "bbox_visible", False), _p(_T1, "bbox_linewidth", 2.0)],
-        ],
-    ),
     (
         "414-custom-binding-then-source-changes",
         "#414",
@@ -132,11 +112,7 @@ KNOWN: list[tuple[str, str, str, list[list[dict]]]] = [
 #: 就会有 seed 因「不再分岔」变红，提醒摘掉。已知分岔之后的步与 HOT == FRESH **不量**（热态
 #: 带着已知漂移，量到的分不清是新问题还是它的后果），如实记进 junit 的 `unmeasured` 属性。
 KNOWN_SEEDS: dict[tuple[str, int], tuple[str, int]] = {
-    ("InvMix", 5): ("#412", 2),
-    ("InvMix", 6): ("#412", 9),
     ("InvCont", 0): ("#414", 6),
-    ("InvCont", 5): ("#412", 4),
-    ("InvCont", 6): ("#412", 3),
 }
 
 #: **固定回归**：`KNOWN` 里修好之后挪过来的序列——随机负责发现、这里负责不再回来。
@@ -148,6 +124,26 @@ FIXED: list[tuple[str, str, list[list[dict]]]] = [
         "413-preview-png-then-hide-legend",
         "InvMix",
         [[], [_p("axes_0.legend", "visible", False)]],
+    ),
+    (
+        # #412：撤掉 / 关掉 `bbox_visible` 而其它 bbox_* 仍在——第一版现建的框可见，重放时样式
+        # 的 setter 把框重新露出来。修法：现建的框不可见，显隐只归开关管。
+        "412-bbox-visible-removed",
+        "InvMix",
+        [
+            [_p(_T1, "bbox_visible", True), _p(_T1, "bbox_edgecolor", "#ff00ff")],
+            [_p(_T1, "bbox_edgecolor", "#ff00ff")],
+        ],
+    ),
+    (
+        # #412：撤掉 / 关掉 `bbox_visible` 而其它 bbox_* 仍在——第一版现建的框可见，重放时样式
+        # 的 setter 把框重新露出来。修法：现建的框不可见，显隐只归开关管。
+        "412-bbox-visible-toggled-off",
+        "InvCont",
+        [
+            [_p(_T1, "bbox_visible", True), _p(_T1, "bbox_linewidth", 2.0)],
+            [_p(_T1, "bbox_visible", False), _p(_T1, "bbox_linewidth", 2.0)],
+        ],
     ),
 ]
 

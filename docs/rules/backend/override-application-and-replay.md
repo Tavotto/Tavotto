@@ -63,5 +63,13 @@
   **与寄生轴（#217）不冲突**：布局引擎在 `Figure.draw` 最前面跑（钉住宿主），
   宿主的 `draw()` 随后把自己的 rect 推给寄生轴（寄生跟着走）；寄生轴自己的
   position 照旧是死开关（reason `parasite_host_rect`）。
+- **文字背景框的显隐只由 `bbox_visible` 决定（2026-09-19，#412）**：`true` 显示；显式 `false`
+  或不在列表里 = 脚本原样（脚本 `set_bbox` 过就显示，没有就不显示）。`bbox_facecolor` 等五条
+  只改样式、**永不改显隐**——框还没有时现建一个不可见的（`_BBOX_CREATE` 带
+  `visible=False`），样式写进去等开关来开。第一版「首次改任何背景属性即出现背景框」让同一份
+  列表两条路两张图：热态撤掉 / 关掉开关时其它样式值没变被跳过、框留在隐藏，重放时样式的
+  setter 把框建出来并露出来。前端早已按开关建模（`web/src/lib/textEffects.ts`）。采样器
+  （`tests/support/overridesample.py`）里 `bbox_visible` 采成 True。看护
+  `tests/test_text_bbox_visibility.py`、`test_invariants_engine.py::test_undoing_a_background_edit_removes_the_box_it_created`。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。

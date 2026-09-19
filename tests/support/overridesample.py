@@ -118,9 +118,9 @@ _ENABLERS: dict[str, tuple[tuple[str, object], ...]] = {
     "bbox_alpha": (("bbox_visible", True), ("bbox_facecolor", "#ff00ff")),
     "bbox_pad": (("bbox_visible", True), ("bbox_facecolor", "#ff00ff")),
     "bbox_rounded": (("bbox_visible", True), ("bbox_facecolor", "#ff00ff")),
-    # `bbox_visible` 是这一组的**关**，不是开：`_bbox_handler` 的 setter「按需
-    # 建 patch」，所以随便改一条 bbox_* 背景框就出现了。从「已经有框」的状态
-    # 把它关掉才是这个开关真正管的事——`_SAMPLE_OVERRIDE` 把采样值钉成 False。
+    # `bbox_visible` 是这一组的**开关**（#412 之后现建的框不可见，样式不改显隐）：
+    # 采样值钉成 True（`_SAMPLE_OVERRIDE`），使能项给它一个看得见的底色——合成
+    # 默认值是 lw=0 + 白底，白纸上开了也量不到像素。
     "bbox_visible": (("bbox_facecolor", "#ff00ff"),),
     "stroke_color": (("stroke_enabled", True), ("stroke_width", 2.0)),
     "stroke_width": (("stroke_enabled", True), ("stroke_color", "#ff00ff")),
@@ -146,8 +146,9 @@ _ENABLERS: dict[str, tuple[tuple[str, object], ...]] = {
 #: 位置，改它文字就移动；而图例项的锚点由 HPacker 的布局定死，对齐改了也
 #: 挪不动（实测 `axes_0.title.ha` 变、`legend.texts_j.ha` 不变）。这类差别
 #: 只能按角色写，写成全局豁免就等于把标题那半也放过了。
-#: 采样值不按 `_sample_value` 推、而是钉死的那几条（配合使能项才有意义）。
-_SAMPLE_OVERRIDE = {"bbox_visible": False}
+#: 采样值不按 `_sample_value` 推、而是钉死的那几条（配合使能项才有意义）：
+#: `bbox_visible` 是开关，量它得把它**打开**（脚本里没有框的文字上 False 是 no-op）。
+_SAMPLE_OVERRIDE = {"bbox_visible": True}
 
 _NON_VISUAL_BY_ROLE = {
     ("legend_text", "ha"): "图例项的位置由 HPacker 布局定，对齐挪不动它",

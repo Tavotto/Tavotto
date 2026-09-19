@@ -347,11 +347,12 @@ def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
 
 
 def test_undoing_a_background_edit_removes_the_box_it_created(hot_restore):
-    """只改「文字背景色」再撤销，**框要跟着消失**。
+    """只改「文字背景色」再撤销，**框要跟着消失**；开关关着时样式不露框。
 
     背景框那六条 prop 写的是**同一个 patch**，而那个 patch 可能是被第一条
-    override 现建出来的（`_bbox_ensure`，产品约定就是「首次改任何背景属性即
-    出现背景框」）。老实现撤销时把值写回默认、却把框留下了：
+    override 现建出来的（`_bbox_ensure`）。#412 之后现建的框**不可见**，显隐只归
+    `bbox_visible` 管——样式落下只是把值写进去等开关来开。老实现撤销时把值写回
+    默认、却把框留下了：
 
         文字本来没有背景框 → 只改背景色 → 撤销 →
         底色回去了，**框还在**，`bbox_visible` 从 False 变成 True 且回不去
@@ -373,25 +374,27 @@ def test_undoing_a_background_edit_removes_the_box_it_created(hot_restore):
     base = _fields(_man(hot_restore, "InvCont"), gid)
     assert base["bbox_visible"]["value"] is False, "夹具里这条文字本来就不该有框"
 
-    # 只改背景色（**不碰 bbox_visible**）——产品约定：框会因此出现
+    # 只改背景色（**不碰 bbox_visible**）：框现建了但不可见，样式已经在里面
     on = _fields(
         _man(hot_restore, "InvCont", [{"gid": gid, "prop": "bbox_facecolor", "value": "#123456"}]),
         gid,
     )
-    assert on["bbox_visible"]["value"] is True, "改了背景色却没出现框？产品约定变了"
+    assert on["bbox_visible"]["value"] is False, "改了背景色框就露出来了？显隐只归开关管（#412）"
+    assert on["bbox_facecolor"]["value"].lower() == "#123456"
 
     back = _fields(_man(hot_restore, "InvCont"), gid)
     assert back["bbox_visible"]["value"] is False, "撤销之后框还在——它再也关不掉了"
     assert back["bbox_facecolor"]["value"] == base["bbox_facecolor"]["value"]
 
-    # 组里还有别的生效时**不许**把框摘掉：只撤 pad，背景色还在
-    two = [
+    # 组里还有别的生效时**不许**把框摘掉：只撤 pad，开关和背景色还在
+    three = [
+        {"gid": gid, "prop": "bbox_visible", "value": True},
         {"gid": gid, "prop": "bbox_facecolor", "value": "#123456"},
         {"gid": gid, "prop": "bbox_pad", "value": 0.8},
     ]
-    _man(hot_restore, "InvCont", two)
-    left = _fields(_man(hot_restore, "InvCont", two[:1]), gid)
-    assert left["bbox_visible"]["value"] is True, "还有一条背景 override 生效，框不该被摘掉"
+    _man(hot_restore, "InvCont", three)
+    left = _fields(_man(hot_restore, "InvCont", three[:2]), gid)
+    assert left["bbox_visible"]["value"] is True, "还有别的背景 override 生效，框不该被摘掉"
     assert left["bbox_facecolor"]["value"].lower() == "#123456"
     assert left["bbox_pad"]["value"] == base["bbox_pad"]["value"], "撤掉的那条没写回默认"
     _man(hot_restore, "InvCont")
