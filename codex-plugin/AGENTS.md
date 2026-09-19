@@ -5,7 +5,7 @@
 `docs/adr/0006-codex-mcp-app-and-publication-profile.md`、
 `docs/adr/0009-codex-workspace-root-authority.md`。改动前先读。
 交接的引擎侧（`engine/locate.py` / `engine/handoff.py` / `engine/cli.py`）在
-`src/tavotto/AGENTS.md` 的「外部交接」。
+`docs/rules/backend/external-handoff.md`。
 
 ## 首次使用契约（2026-08-25，勿破坏）
 
@@ -52,7 +52,7 @@
 
 - **Codex 插件在 `codex-plugin/`**，市场清单在仓库根 `.agents/plugins/marketplace.json`
   （仓库即市场根）。**已不再是 skills-only**：2026-08-18 起同时带一个本地 stdio
-  MCP server 与内嵌画布（2026-09-02 起七个工具，含 `tavotto_refresh_project`）；交接这条路一字未改。**仍不做 `.app.json`**（需要
+  MCP server 与内嵌画布（2026-09-02 起七个工具，含 `tavotto_refresh_project`；2026-09-13 起八个，加 `tavotto_normalize_figure`）；交接这条路一字未改。**仍不做 `.app.json`**（需要
   OpenAI 侧注册的托管 App id）。pyproject 的 `exclude` 显式挡住 `codex-plugin/`
   进 wheel/sdist。插件版本 == `tavotto.__version__`（`tests/test_codex_plugin.py` 看护）。
 - **插件里那份路径规则是 `engine/locate.py` 的镜像**（插件 import 不到 tavotto，
@@ -98,6 +98,30 @@
 - 看护：`tests/test_mcp_server.py` 末节十六条（schema / 授权 / 越界 / 空 diff / 新脚本 / readiness /
   不 probe 不跑脚本 / 不可达 → local / 可达委托 / 可达失败 / no_project / 多项目隔离 / 无绝对路径 /
   reason 固定 / 无注册表）+ `test_mcp_resolver.py` 的降级用例。
+
+## 已有图的保留式规范化（2026-09-13，ADR 0051）
+
+- **`tavotto_normalize_figure` 是第八个工具**，也是用户「已有一张图、只要改宽度 /
+  字体 / 字号下限」时该走的那条路——技能里明写不许用 `tavotto_apply_overrides` 手拼。
+  实现全在 `bridge.normalize_figure()`，逻辑全在 `engine/normalize.py`（纯标准库、只算
+  不画）：B0 → 约定 → 计划 → `_render` → `compare` → 最多 3 轮局部修复 →
+  `export(acceptance=…)` → 提交或 `_render(B0 patches)` 回退。**任何异常都回退**。
+- **桥只翻译**：干涉检测在 `engine/interference.py`、产物验收在 `engine/artifactcheck.py`、
+  逐元素裁切判据是 `preflight.element_overflow()`——三处都进了 `_BRIDGE_IMPORT` /
+  `BRIDGE_IMPORTS_AT_MIN`，`MIN_TAVOTTO_VERSION` 因此在 v0.15.0 抬到 0.15.0。
+- **提交之后会话挂合同**（`Session.contract` / `Session.normalized`）：`apply_overrides`
+  只放行与已提交列表逐条相同的重发；增删改要 `user_authorized=True`（合同解除、验收
+  作废）。这一道既挡修复循环 / 模型扩权，也挡画布账本不带规范化 patch 时的静默还原
+  （画布 seed 的是 `overrides: []`，见 `_live_session_for` 的说明）。`export` 回执的
+  `normalized.verified` 说这次导的是不是通过验收的那一版；`acceptance` 逐格式给核验结果。
+- **由用户目标直接决定的规范规则不挡事务**（`normalize.TARGET_RULES`：要 120 mm 时
+  `page-width` 报出来但按用户要求执行，进 `profile_conflicts` 与留档）。其余新增 /
+  加重的 error 级与**确定性**干涉才挡；原图已有且未加重的保留并报告，不顺手修。
+- **图例候选只收「自己干干净净」的**：换到一个还在压别的东西的位置不叫修好。
+  外边距重排只在有裁切 / 压到别的子图的那个方向上做，且相对 B0 有预算。
+- 看护：`tests/test_normalize.py`（逻辑）、`tests/test_mcp_normalize.py`（真链路，含一条
+  真 stdio server 的工具级集成——**不是**经 Codex 宿主的端到端）、`tests/test_codex_plugin.py`
+  末节（技能文字：路由、禁止的绕路、按退出码说话）。
 
 ## MCP server 与内嵌画布（2026-08-18）
 
@@ -203,7 +227,8 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
 
 ```sh
 .venv/bin/python -m pytest tests/test_mcp_server.py tests/test_mcp_roundtrip.py \
-  tests/test_codex_plugin.py tests/test_preflight.py tests/test_install_locate.py
+  tests/test_codex_plugin.py tests/test_preflight.py tests/test_install_locate.py \
+  tests/test_normalize.py tests/test_mcp_normalize.py
 python scripts/build_mcp_widget.py --check     # 改了 web/src 就得重建
 python codex-plugin/mcp/server.py --self-check # MCP 手动冒烟
 ```

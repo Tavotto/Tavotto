@@ -1,6 +1,6 @@
 ---
 name: tavotto-figure
-description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖图例、改字号线宽、调刻度、按出版规范预检、导出矢量 PDF）。用户要画图、出图、做 figure、画折线/柱状/散点/误差棒、做论文配图、scientific plot / publication figure，或提到 Tavotto 时使用。
+description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖图例、改字号线宽、调刻度、按出版规范预检、导出矢量 PDF）；也把用户**已经画好的图**按投稿要求改宽度 / 字体 / 最小字号而不重画（保留式规范化）。用户要画图、出图、做 figure、画折线/柱状/散点/误差棒、做论文配图、scientific plot / publication figure，要把现有图改成 8 cm / 换 Times New Roman / 字号不小于 8 pt，或提到 Tavotto 时使用。
 ---
 
 # Tavotto Figure
@@ -39,6 +39,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 | 要交给 Tavotto 桌面窗口 | `references/desktop-handoff.md`（含全部错误码分诊） |
 | 用户撞上 Tavotto 的缺陷 | `references/issue-reporting.md` |
 | 用户要改的东西鼠标改不了 | `references/compatibility.md`（能改 / 必须回代码改） |
+| 用户已有一张图，要改宽度 / 字体 / 字号下限 | 本文「已有图的规范化」+ `references/compatibility.md` 的「保留式规范化」一节（受保护的内容、允许的局部适配、退出码） |
 
 普通画图任务只读前一行的两份；故障与交接文档**用到才读**。
 
@@ -122,6 +123,8 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures",
   `patches` 是 `{gid, prop, value}` 的**全量列表**——列表里没有的 `(gid, prop)`
   会自动恢复成脚本原始值，所以**每次都要发完整的一份，不要发增量**。
   gid 与 prop 从 manifest 的 `elements[].editable` 里取，别猜。
+* **已有图的规范化**（改宽度 / 字体 / 字号下限）走 `tavotto_normalize_figure`，
+  不要用 apply 手拼——见下文「已有图的规范化」。
 * **体检** `tavotto_preflight { session_id }`。四档结果：`errors`（默认阻止
   导出）、`warnings`、`not_verifiable`（查不了，需用户确认）、`suggestions`。
   把 `report` 那段念给用户听。
@@ -137,6 +140,46 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures",
 
 **这些工具不会动用户的 .py 源码。** 数据、坐标范围、加删曲线/子图、colorbar
 方向仍然只能回代码改（清单见 `references/compatibility.md`）。
+
+## 已有图的规范化：保留原图，只改点名的东西
+
+用户拿来一张**内容正确、排版已经不错**的图，只要「改成 8 cm 宽」「换 Times New
+Roman」「文字不小于 8 pt」「出 300 dpi 的 PNG」这类规范化修改时，按下面走，
+**不要**自己拼 `tavotto_apply_overrides`、不要重写脚本、不要重画：
+
+1. **先识别输入**：`tavotto_open_figure` 开它（脚本必须在产物旁边，否则这张图只是
+   位图 / 轮廓文字，改不了字号字体——如实告诉用户，不要缩放位图冒充「已改字号」）。
+   打开回来的状态就是本次的原图基准 B0。
+2. **发起保留式规范化**：`tavotto_normalize_figure { session_id, width_mm?, height_mm?,
+   font_family?, min_font_pt?, font_size_pt?, formats?, dpi? }`。只传用户点名的目标：
+   只说了宽度就只传 `width_mm`（高度按原长宽比自动推）；「不小于 8 pt」传
+   `min_font_pt`，**不是** `font_size_pt`（后者会把标题、标签、刻度全部压成同一个字号，
+   只有用户明确要求统一字号才用）。
+3. **它自己会**：只改点名的属性；在真实渲染上检测裁切 / 文字重叠 / 图例压数据；
+   需要时做**有预算的**局部适配（外边距、子图间距、图例在自己子图内换预设位置）；
+   导出并核验**最终文件本身**（PDF 页面尺寸与字体、PNG 像素与 dpi）；四件事同时
+   成立才提交，否则会话回到 B0、不出文件。
+4. **按结果说话**，工具被调用成功 / 文件生成了都不是「任务完成」——看 `exit`：
+   * `done`：向用户说清**明确要求的修改**、**必要的局部调整**（多少 mm）、
+     **保留的原有问题**（`verdict.issues.*.unchanged`，原图本来就有、这次没加重的，
+     不顺手修）、以及规范与用户要求冲突之处（`profile_conflicts`，按用户要求执行了）。
+   * `constraint_conflict` / `budget_exceeded`：装不下。把具体冲突念给用户（哪条文字
+     压了什么、需要多少 mm 只有多少 mm），**列出需要放宽的最小约束**（更大的宽度 /
+     用户允许缩小字号 / 允许把图例移到图外 / 允许改结构），让用户选，**不要自己放宽**。
+   * `font_unavailable`：那个字体这台机器上没装，Tavotto 没有替代。告诉用户装字体或
+     换字体；**不要**自己换一个相近字体再宣称达标。
+   * `requires_authorization` / `protected_changed`：需要用户明确提出新要求。
+   * `acceptance_failed`：文件没过验收，没有交付；把 `failed_files` 的原因如实报告。
+5. **提交之后会话受修改约定保护**：再调 `tavotto_apply_overrides` 改约定之外的东西会被
+   拒（`requires_authorization`）。只有用户**明确**提出了新要求，才带
+   `user_authorized: true` 重发（约定解除、验收报告作废，导出时会如实标出）。
+
+**禁止的绕路**（后端只能守住它管辖的那条路，其余靠这里）：不改用户的 .py 源码、
+不另写一份绘图脚本替代原图、不整份替换 SVG、不用 Pillow / OpenCV / 截图缩放重建
+图形、不套全局主题或 rcParams 风格、不为「消除拥挤」删曲线 / 删图例项 / 删刻度 /
+截断文字、不改配色 / 数据 / 坐标范围 / 子图结构。这些都不是「规范化」，是重做。
+`tavotto_export` 直接导出仍然可以，但它回执里的 `normalized.verified` 会说明这次
+导的是不是通过验收的那一版——不是就别把它当规范化结果交出去。
 
 ## 交接给 Tavotto 桌面窗口
 
@@ -157,6 +200,7 @@ python3 scripts/handoff.py <脚本路径>
 
 | 用户想改 | 谁来做 |
 | --- | --- |
+| 已有图改宽度 / 高度 / 字体 / 最小字号（保留原图） | `tavotto_normalize_figure`，按 `exit` 说话 |
 | 图例挪位置 / 字号 / 线宽 / 颜色 / marker 样式 | `tavotto_apply_overrides`（或画布里拖） |
 | 刻度朝内朝外、刻度标签字号 | `tavotto_apply_overrides` |
 | 标题、轴标签的文字与位置 | `tavotto_apply_overrides` |

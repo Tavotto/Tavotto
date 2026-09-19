@@ -52,6 +52,31 @@ Codex 内嵌画布、Tavotto 桌面窗口——背后是同一个引擎、同一
 **字号按最终物理尺寸判**：面板缩到 60% 摆上版面时，判据是 `fontsize × 0.6`。
 只把脚本里的 `fontsize` 调大而把图缩小，预检照样拦。
 
+## 保留式规范化（`tavotto_normalize_figure`）守什么
+
+它是一条**事务**：以打开时的状态为基准 B0，只改用户点名的目标，验不过就整个
+回到 B0。三张表：
+
+| 默认受保护（不点名就不动） | 明确要求才改 | 测量到必要时才做的局部适配（有预算） |
+| --- | --- | --- |
+| 数据、曲线 / 系列的数量与身份、坐标范围、线性 / 对数、轴方向、色标范围、配色、线型、marker、网格、背景、标题与标注文字、图例条目及顺序、显式设过的刻度、子图数量与排列、显式的数据纵横比 | `width_mm` / `height_mm`（只给一个时另一边按原长宽比）、`font_family`（含刻度）、`min_font_pt`（只补低于阈值的）、`font_size_pt`（统一字号） | 子图外边距 / 间距（`axes.position`；每条边相对 B0 按比例缩放后的位置最多挪新图幅的 15%，子图至少保留 60%）、图例在**自己**子图里换预设位置；最多 3 轮 |
+
+不做的事：不把图例挪到图外、不重组子图网格、不切换 / 新增 / 关闭布局引擎
+（脚本用了 `layout="tight"` / `"constrained"` 就让它自己重排）、不改长宽比、
+不缩到最小字号以下、不删内容。原本自动生成的刻度按新尺寸重算是合法的自适应，
+脚本 `set_xticks` 过的变了才算内容改动。
+
+结果里 `verdict.issues` 按稳定身份把问题分成 new / worsened / unchanged /
+improved：只有**新增或加重的确定性**干涉（文字重叠、压到别的子图、图例几何上压
+住数据、裁切）挡事务；原图已有且未加重的保留并报告；只有包围盒相交、量不到几何的
+（误差棒容器、图像）只标风险，不挡。最终文件按格式核验：PDF 页面 mm 与字体名、
+SVG 尺寸与 viewBox、PNG 像素与 pHYs dpi（TIFF 像素；EPS BoundingBox）；查不了的
+项写在 `acceptance.<fmt>.unverified`，不算通过。
+
+退出码：`done` / `nothing_to_do` / `constraint_conflict` / `budget_exceeded` /
+`font_unavailable` / `protected_changed` / `requires_authorization` /
+`acceptance_failed` / `unsupported`。除 `done` 外会话都是 B0、磁盘上没有新文件。
+
 ## 必须回代码改
 
 * **数据本身**：值、单位换算、拟合、筛选。

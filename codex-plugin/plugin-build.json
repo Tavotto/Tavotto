@@ -1,20 +1,20 @@
 {
   "schema": 1,
   "plugin": "tavotto",
-  "plugin_version": "0.14.0",
-  "min_tavotto_version": "0.13.0",
-  "source_sha": "bb736c3e537c401114a618c8db17e91b012453dc",
-  "build_inputs_fingerprint": "4b7baf6a65d7b595",
-  "lockfile_sha256": "55512a0a6a2a0db6c7bb7f8b9705c22d2aae8c3cf189c5ec41dd7779adbee213",
+  "plugin_version": "0.15.0",
+  "min_tavotto_version": "0.15.0",
+  "source_sha": "eb1404942ad60a776403fd4a9d3c85459bc5a8b0",
+  "build_inputs_fingerprint": "29dffc9266212fb3",
+  "lockfile_sha256": "8d9bcafda72b989c7a423565898486f7e8a78173efd5e4c7413b58d36d7580b2",
   "toolchain": {
     "python": "3.13.15",
     "node": "22.23.2",
-    "pnpm": "11.26.0"
+    "pnpm": "11.27.0"
   },
   "files": [
     {
       "path": ".codex-plugin/plugin.json",
-      "sha256": "ff686e674c8e5e341d054be86bc784f7a8912f37e80dc582b750dac5c2398694",
+      "sha256": "3c179738f0c5904a8aa3ccb5a2b212dcfe948c6af5e206057417a75d94295028",
       "size": 1929,
       "mode": "100644"
     },
@@ -26,8 +26,8 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "8adbeea7adb9f82cd72482efa58f6328dc0e4c4f09de5b2b07905d930cbc9efa",
-      "size": 18437,
+      "sha256": "bbaf5f92dc86edf88056e58edd483e8ac61f5a4e88418b8f12d5cb030d19899b",
+      "size": 20808,
       "mode": "100644"
     },
     {
@@ -44,14 +44,14 @@
     },
     {
       "path": "assets/tavotto.svg",
-      "sha256": "863743061754a3d13068b7847ca11f91d851814345765561edf4ddaf5131590b",
-      "size": 465,
+      "sha256": "bb31d245de4d7c198ca0959206d0a32b75bf9c5114393b9d4a80990d8ec955c2",
+      "size": 1896,
       "mode": "100644"
     },
     {
       "path": "mcp/server.py",
-      "sha256": "a61330b4fd464400bba483bb398fb1d48ad1b0feaf829a5140d6775a7f17e3f2",
-      "size": 41884,
+      "sha256": "24294659580c4dea0f470b4b4115691cf10b82bab3384f2b575be4ceb43f4eb9",
+      "size": 41968,
       "mode": "100644"
     },
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": "mcp/tavotto_mcp/bridge.py",
-      "sha256": "60a7c9c8144051b60367e14dbe0934327dbca13b6d63cb0935bc0428b0655e27",
-      "size": 68935,
+      "sha256": "08ea0d608ee392780477a3134f6231aa261122b8314277003fea23355dc2baa8",
+      "size": 96311,
       "mode": "100644"
     },
     {
@@ -86,8 +86,8 @@
     },
     {
       "path": "mcp/tavotto_mcp/server.py",
-      "sha256": "7dba70f06ff6ec8a0a0f6294a2adc1e447353be8efbf38cde7c1e67ba60abd62",
-      "size": 52667,
+      "sha256": "698d0fc098ed27d6970d80205118920cd0873b5d41f2a38bb4abdcfbe304be14",
+      "size": 65602,
       "mode": "100644"
     },
     {
@@ -98,14 +98,14 @@
     },
     {
       "path": "mcp/widget/canvas.html",
-      "sha256": "44da0aea865f51a7510ef6a0de72433f43a8d772383af344f7b74e30595aa218",
-      "size": 1313910,
+      "sha256": "2fa1ce827858153fd26369a2094866a4eb36b5e52407362243e3686724d06c08",
+      "size": 1320834,
       "mode": "100644"
     },
     {
       "path": "skills/tavotto-figure/SKILL.md",
-      "sha256": "e5e42dfedc513f194a6d34f9d526378ab2490e2a6f50172f75312b70c7ed0767",
-      "size": 10918,
+      "sha256": "7b6bbc32f9a19e41501db317ed368f48a5897c436291c5d74ca9159168e2f722",
+      "size": 15260,
       "mode": "100644"
     },
     {
@@ -116,8 +116,8 @@
     },
     {
       "path": "skills/tavotto-figure/references/compatibility.md",
-      "sha256": "14fd0e63c0cde7dbabc4a0dda906c6ab7b8e3702da25a87aa7ef1dfec3b255ef",
-      "size": 7959,
+      "sha256": "2df762f10234977048eb3fe4eaccf50a340143c9d27a3cf9dbafce046f231a9b",
+      "size": 10181,
       "mode": "100644"
     },
     {
@@ -183,10 +183,10 @@
       ]
     }
   },
-  "content_digest": "788785cfa7326078267deaf15256129ebfd209e63581d2ac4f8b2beaf898baff",
+  "content_digest": "de88352e1e76a1c80150a79d443189d2055f5573d01a38125716658bce6b08d8",
   "audit": {
     "workflow": "release",
-    "run_id": "34246587488",
-    "tag": "v0.14.0"
+    "run_id": "35400707899",
+    "tag": "v0.15.0"
   }
 }

@@ -33,10 +33,14 @@ from pathlib import Path
 from urllib.parse import quote
 
 from tavotto.engine import (
+    artifactcheck as engine_artifactcheck,
     config as engine_config,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
+    figcapture as engine_figcapture,
     handoff as engine_handoff,
+    interference as engine_interference,
+    normalize as engine_normalize,
     patchspec,
     pool as engine_pool,
     preflight as engine_preflight,
@@ -243,6 +247,13 @@ class Session:
     rev: int = 0
     created: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
+    #: 保留式规范化（ADR 0051）提交后的修改约定；None = 会话自由编辑。
+    #: 合同在会话上时 `apply_overrides` 只接受「原样重发」或带 `user_authorized`
+    #: 的明确要求（后者解除合同）。
+    contract: dict | None = None
+    #: 最近一次通过验收的规范化结果（裁决 + 产物验收 + 那一版的 patch_hash）。
+    #: `patch_hash` 与会话当前不一致时它就是过期的——导出必须如实说出来。
+    normalized: dict | None = None
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -1015,7 +1026,13 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     return out
 
 
-def apply_overrides(session_id: str, patches: object, *, preview_dpi: int | None = None) -> dict:
+def apply_overrides(
+    session_id: str,
+    patches: object,
+    *,
+    preview_dpi: int | None = None,
+    user_authorized: bool = False,
+) -> dict:
     """应用**全量** override 列表并重渲染。
 
     「全量列表」是 Tavotto 的 override 语义：worker 维护 applied/originals 两表，
@@ -1024,6 +1041,12 @@ def apply_overrides(session_id: str, patches: object, *, preview_dpi: int | None
     脏条目不静默丢：`patchspec.canonicalize_with_diagnostics` 把它们连同原因
     一起交出来，随响应回给 Codex（`rejected`）。发给 worker 的是**过滤后仍保持
     原始顺序**的那份，与 Flask `/api/engine/render` 走的完全一样。
+
+    **会话上有规范化合同时（ADR 0051）**：只有「与已提交的那份逐条相同」的列表
+    直接放行（画布 / 调用方原样重发）；任何增删改都要 `user_authorized=True`——
+    那是「用户明确提出了新要求」的声明，合同随之解除、验收报告作废。没有它就回
+    `requires_authorization`，列出差异，**不改任何东西**。这挡的是修复循环 / 模型
+    自己扩权，也挡住画布账本没带着规范化 patch 时把它静默还原。
     """
     session = get_session(session_id)
     canonical, dropped = patchspec.canonicalize_with_diagnostics(patches)
@@ -1032,7 +1055,33 @@ def apply_overrides(session_id: str, patches: object, *, preview_dpi: int | None
     bad = {d["index"] for d in dropped}
     clean = [p for i, p in enumerate(patches or []) if i not in bad]
 
+    released = False
+    if session.contract is not None:
+        diff = _contract_diff(session, clean)
+        if diff and not user_authorized:
+            raise BridgeError(
+                "这个会话已按修改约定完成规范化：改动超出约定范围（或会撤掉规范化的编辑）。"
+                "要改，请在用户明确提出新要求后带 user_authorized=true 再调（合同解除、"
+                "验收报告作废）；只是想再规范化一次，调 tavotto_normalize_figure。",
+                code=engine_normalize.EXIT_REQUIRES_AUTHORIZATION,
+                contract_id=session.contract["contract_id"],
+                violations=diff,
+                allowed=session.contract["allowed"],
+                allowed_adjust=session.contract["allowed_adjust"],
+            )
+        if diff and user_authorized:
+            released = True
+
     out = _render(session, clean, preview_dpi=preview_dpi)
+    if released:
+        # 明确要求之下解除合同：验收报告随之作废（它验的是另一个状态）
+        session.contract = None
+        session.normalized = None
+    if (
+        session.normalized is not None
+        and session.normalized.get("patch_hash") != session.patch_hash()
+    ):
+        session.normalized["stale"] = True
     out.update(
         {
             "ok": True,
@@ -1041,9 +1090,33 @@ def apply_overrides(session_id: str, patches: object, *, preview_dpi: int | None
             "applied": len(clean),
             "rejected": dropped,
             "canonical_patch_count": len(canonical),
+            "contract_released": released,
         }
     )
     return out
+
+
+def _contract_diff(session: Session, patches: list) -> list[dict]:
+    """与已提交的规范化 patch 列表逐条比：多出 / 少掉 / 改值的键。空 = 原样重发。"""
+    want = {(str(p["gid"]), str(p["prop"])): p["value"] for p in session.patches}
+    got = {(str(p["gid"]), str(p["prop"])): p["value"] for p in patches}
+    diff = []
+    for key in sorted(set(want) | set(got)):
+        if key not in got:
+            diff.append({"gid": key[0], "prop": key[1], "change": "dropped", "value": want[key]})
+        elif key not in want:
+            diff.append({"gid": key[0], "prop": key[1], "change": "added", "value": got[key]})
+        elif not engine_normalize._same(want[key], got[key]):
+            diff.append(
+                {
+                    "gid": key[0],
+                    "prop": key[1],
+                    "change": "changed",
+                    "before": want[key],
+                    "after": got[key],
+                }
+            )
+    return diff
 
 
 def preview_png(session: Session, patches: list, width_px: int) -> str:
@@ -1139,6 +1212,10 @@ def run_preflight(
     )
     issues = engine_preflight.run(spec, profile)
     issues += export_raster_issues(profile, export_formats, export_dpi)
+    # 真实渲染几何上的干涉（文字重叠 / 压到别的子图 / 图例压数据）：与规范求值器
+    # 分开是因为它量的是「画出来撞没撞上」，不是「该长什么样」；形状同一份，
+    # 进同一份报告（ADR 0051）。
+    issues += engine_interference.detect(session.manifest, profile, panel_id=session.stem)
     summary = engine_preflight.summarize(issues)
     # 匿名用量统计：**结果算完之后**记一次，且只记四个计数 + 一个布尔。
     # 检查项的文案、字体名、gid、对象 id、stem 一个都不发（白名单里没有这些
@@ -1224,6 +1301,7 @@ def export(
     journal: dict | None = None,
     explicit_confirm: bool = False,
     proof: bool = True,
+    acceptance: dict | None = None,
 ) -> dict:
     """先预检，再导出。**有阻断项且没有明确确认时一张图都不出。**
 
@@ -1239,6 +1317,14 @@ def export(
     `warnings` / `patch_hash` / `profile` / `preflight` / `forced` /
     `acknowledged`。新增的只有诚实所需的两项——作业终局 `status`，以及失败
     那一项自己带的 `error`。
+
+    `acceptance`（ADR 0051）：规范化事务给的**最终产物验收参数**
+    `{"expect_mm": [w, h], "font_family": str|None, "contract_id": str}`。给了它，
+    每个格式在**临时目录里**就按格式验尺寸 / 字体（`engine/artifactcheck.py`），
+    验不过的那一项以 `acceptance_failed` 进 `partial`，**不发布**——磁盘上不会
+    出现一个看起来成功的坏文件。回执多一项 `acceptance`（逐格式的核验结果）。
+    没有合同的普通导出在会话带着已验收的规范化状态时也做同一份核验（`normalized`
+    字段说明验收报告是否仍对得上当前状态）。
     """
     session = get_session(session_id)
     fmts = [f.lower().strip() for f in (formats or []) if str(f).strip()]
@@ -1319,6 +1405,14 @@ def export(
 
     worker = session.acquire()
     failures: dict[str, engine_pool.WorkerError] = {}
+    # 会话带着仍然有效的规范化验收时，普通导出也按同一份参数核验产物
+    if (
+        acceptance is None
+        and session.normalized is not None
+        and not session.normalized.get("stale")
+    ):
+        acceptance = dict(session.normalized.get("acceptance_params") or {})
+    checks_by_fmt: dict[str, dict] = {}
 
     def _produce(job, tmp_dir: Path) -> list:
         produced = []
@@ -1343,6 +1437,26 @@ def export(
             for w in resp.get("warnings") or []:
                 if w not in job.warnings:
                     job.warnings.append(w)
+            if acceptance is not None:
+                # **验的是临时目录里那个文件本身**（不是 figsize、不是预览）：
+                # 不过就不发布，回执里那一项带 `acceptance_failed`
+                check = engine_artifactcheck.check_file(
+                    tmp,
+                    fmt,
+                    expect_mm=acceptance.get("expect_mm"),
+                    dpi=dpi if fmt in engine_exportreq.RASTER_FORMATS else None,
+                    font_family=acceptance.get("font_family"),
+                )
+                checks_by_fmt[fmt] = check
+                if not check["ok"]:
+                    produced.append(
+                        engine_exportjob.Produced(
+                            format=fmt,
+                            error_code="acceptance_failed",
+                            error_params={"format": fmt, "failed": check["failed"], "check": check},
+                        )
+                    )
+                    continue
             produced.append(
                 engine_exportjob.Produced(
                     format=fmt,
@@ -1368,6 +1482,7 @@ def export(
             list(job.request.formats),
             forced=forced,
             acknowledged=acknowledged,
+            normalize=_normalize_proof_section(session, acceptance, checks_by_fmt),
         )
 
     engine_exportjob.run(job, _produce, report=_report if proof else None)
@@ -1430,7 +1545,10 @@ def export(
         # 不是强制，两件事在留档里必须分得开
         "forced": forced,
         "acknowledged": acknowledged,
+        "normalized": _normalized_status(session),
     }
+    if checks_by_fmt:
+        result["acceptance"] = checks_by_fmt
     if job.report is not None:
         if job.report.status == engine_exportjob.STATUS_DONE and job.report.name:
             result["proof_path"] = str(target_dir / job.report.name)
@@ -1444,6 +1562,33 @@ def export(
     return result
 
 
+def _normalized_status(session: Session) -> dict | None:
+    """导出回执里「这次导的是不是通过验收的规范化状态」：没做过规范化回 None。"""
+    n = session.normalized
+    if n is None:
+        return None
+    current = session.patch_hash() == n.get("patch_hash") and not n.get("stale")
+    return {
+        "contract_id": n.get("contract_id"),
+        "verified": bool(current),
+        "reason": None if current else "state_changed",
+        "verified_patch_hash": n.get("patch_hash"),
+    }
+
+
+def _normalize_proof_section(
+    session: Session, acceptance: dict | None, checks: dict
+) -> dict | None:
+    status = _normalized_status(session)
+    if status is None and acceptance is None:
+        return None
+    return {
+        **(status or {}),
+        "acceptance_params": dict(acceptance or {}),
+        "artifact_checks": dict(checks),
+    }
+
+
 def _proof_bytes(
     session: Session,
     checks: dict,
@@ -1453,6 +1598,7 @@ def _proof_bytes(
     *,
     forced: bool,
     acknowledged: list[str],
+    normalize: dict | None = None,
 ) -> bytes:
     """proof report：profile 身份 + 全部检查结果 + 无法核验项 + 是否强制导出。
 
@@ -1505,7 +1651,493 @@ def _proof_bytes(
         "files": paths,
         "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    if normalize is not None:
+        payload["normalize"] = normalize
     return json.dumps(payload, ensure_ascii=False, indent=1).encode("utf-8")
+
+
+# --------------------- 保留式规范化事务（ADR 0051） ---------------------------
+def _profile_issues(session: Session, profile: dict) -> list[dict]:
+    spec = engine_preflight.spec_from_manifest(
+        session.manifest, panel_id=session.stem, kind="pdf", scale=1.0
+    )
+    return engine_preflight.run(spec, profile)
+
+
+def _original_artifact_facts(session: Session) -> dict:
+    """B0 的证据之一：用户磁盘上的原始产物与脚本重跑出来的 live 图对不对得上。
+
+    对不上（最常见：脚本 `savefig(bbox_inches="tight")`，磁盘原件被裁成内容范围）
+    时**不替换原件、不改脚本、不猜谁更权威**，只把两个尺寸都记下来，报告里说出口。
+    """
+    rel = engine_figcapture.find_original_artifact(session.project, session.stem)
+    out: dict = {"path": rel, "size_mm": None, "mismatch": None}
+    if rel is None:
+        return out
+    path = Path(session.project) / rel
+    live = (session.manifest or {}).get("size_mm") or [None, None]
+    try:
+        if path.suffix.lower() == ".pdf":
+            from tavotto import pdfbackend
+
+            probe = pdfbackend.probe_asset(path, "pdf")
+            size = [probe["w_pt"] / 72.0 * 25.4, probe["h_pt"] / 72.0 * 25.4]
+            out["size_mm"] = [round(size[0], 3), round(size[1], 3)]
+            if live[0] is not None:
+                out["mismatch"] = (
+                    abs(size[0] - float(live[0])) > 0.5 or abs(size[1] - float(live[1])) > 0.5
+                )
+    except Exception as exc:  # noqa: BLE001 — 原件读不出来不是事务的失败，如实记下
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
+def _script_sha256(session: Session) -> str | None:
+    try:
+        data = (Path(session.project) / session.script).read_bytes()
+    except OSError:
+        return None
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def _better(new: dict, old: dict) -> bool:
+    """一个修复候选比上一版更好：不越权、不超预算、阻断项**严格更少**。"""
+    if new["protected_changes"] or new["budget"]["over"]:
+        return False
+    st = new["structure"]
+    if st["missing"] or st["extra"] or st["role_changed"] or st["legend_entries_changed"]:
+        return False
+    return len(new["blocking"]) < len(old["blocking"])
+
+
+def normalize_figure(
+    session_id: str,
+    *,
+    targets: dict,
+    formats: list[str] | None = None,
+    dpi: int = 600,
+    stem: str | None = None,
+    out_dir: str | None = None,
+    profile_id: str | None = None,
+    journal: dict | None = None,
+    replay_check: bool = False,
+    evidence: bool = False,
+) -> dict:
+    """保留式规范化：B0 → 约定 → 最小编辑 → 真实渲染检测 → 有界局部修复 → 导出验收 → 提交或回退。
+
+    整条事务跑在**这个会话的热 worker**上，候选状态经 `_render`（全量列表语义）
+    落下、验不过就用 B0 的那份列表再 `_render` 一次——worker 的 applied/originals
+    两表随之回到事务开始前的状态（ADR 0003 的还原语义），manifest / patch_hash
+    也一起回到 B0。任何异常（含 KeyboardInterrupt）都走这条回退。
+
+    成功的判据是四件事同时成立（ADR 0051 §8）：目标达成且无未授权变更；没有新增 /
+    加重的确定性干涉或裁切；局部调整在预算内；**最终文件本身**过验收。少一条就
+    退出，会话仍是 B0，并说清冲突、试过的合法调整、需要放宽的最小约束。
+    """
+    session = get_session(session_id)
+    if session.manifest is None:
+        raise BridgeError("会话还没有 manifest（先重新 open）", code="no_manifest")
+    try:
+        want = engine_normalize.normalize_targets(targets)
+    except engine_normalize.NormalizeError as exc:
+        raise BridgeError(str(exc), code=exc.code, **exc.extra) from exc
+    profile = resolve_profile(session, profile_id, journal)
+    fmts = [f.lower().strip() for f in (formats or []) if str(f).strip()]
+    bad = [f for f in fmts if f not in EXPORT_FORMATS]
+    if bad:
+        raise BridgeError(
+            f"不支持的导出格式: {', '.join(bad)}（支持 {', '.join(EXPORT_FORMATS)}）",
+            code="bad_format",
+        )
+    if not fmts:
+        fmts = list(profile["preferred_formats"]["export_default"])
+
+    # ---- B0：本次事务固定的基准 ----
+    base_patches = list(session.patches)
+    b0_manifest = session.manifest
+    b0_hash = session.patch_hash()
+    b0_profile_issues = _profile_issues(session, profile)
+    original = _original_artifact_facts(session)
+    contract = engine_normalize.build_contract(
+        b0_manifest,
+        want,
+        profile=profile,
+        base_patches=base_patches,
+        profile_issues=b0_profile_issues,
+        meta={
+            "session_id": session.id,
+            "stem": session.stem,
+            "script": session.script,
+            "script_sha256": _script_sha256(session),
+            "patch_hash": b0_hash,
+            "worker_generation": getattr(session, "rev", None),
+            "original_artifact": original,
+            "profile": engine_profiles.stamp(profile),
+        },
+    )
+    plan = engine_normalize.plan_patches(contract, b0_manifest)
+    result: dict = {
+        "ok": False,
+        "session_id": session.id,
+        "stem": session.stem,
+        "contract": {
+            k: contract[k]
+            for k in ("contract_id", "targets", "allowed", "allowed_adjust", "budget", "profile_id")
+        },
+        "baseline": {
+            "patch_hash": b0_hash,
+            "manifest_hash": contract["baseline"]["manifest_hash"],
+            "size_mm": contract["baseline"]["size_mm"],
+            "script_sha256": contract["meta"]["script_sha256"],
+            "original_artifact": original,
+            "profile_issue_count": len(b0_profile_issues),
+            "geometry_issue_count": len(contract["baseline"]["geometry_issues"]),
+        },
+        "plan": {
+            "patches": plan["patches"],
+            "notes": plan["notes"],
+            "unsupported": plan["unsupported"],
+        },
+        "adjustments": [],
+        "rounds": [],
+        "files": [],
+    }
+    if not plan["patches"]:
+        result.update(
+            {"ok": True, "exit": engine_normalize.EXIT_NOTHING_TO_DO, "patch_hash": b0_hash}
+        )
+        return result
+
+    violations = engine_normalize.authorize(contract, plan["patches"])
+    if violations:  # 计划由目标推导，不该出现；出现了就是 bug，按越权退出而不是放行
+        result.update(
+            {"exit": engine_normalize.EXIT_REQUIRES_AUTHORIZATION, "violations": violations}
+        )
+        return result
+
+    candidate = engine_normalize.merge_patches(base_patches, plan["patches"])
+    relocated: set[str] = set()
+
+    def _compare(rel: set[str]) -> dict:
+        return engine_normalize.compare(
+            contract,
+            session.manifest,
+            profile_issues=_profile_issues(session, profile),
+            profile=profile,
+            relocated_legends=rel,
+            patches=list(session.patches),
+        )
+
+    def _rollback() -> None:
+        _render(session, base_patches, preview_dpi=None)
+
+    # 证据（§4.1）：每个阶段一张位图，落在运行时数据目录（不进项目、不进导出目录），
+    # 目录名就是合同 id。它们是**候选**，不是交付物——README 里写明。
+    ev_dir: Path | None = None
+    ev_files: list[str] = []
+    if evidence:
+        ev_dir = Path(engine_config.data_dir()) / "cache" / "normalize" / contract["contract_id"]
+        ev_dir.mkdir(parents=True, exist_ok=True)
+        (ev_dir / "README.txt").write_text(
+            "Tavotto 保留式规范化的阶段证据（候选图，不是交付物）。\n"
+            f"contract {contract['contract_id']}；B0 patch_hash {b0_hash}；"
+            f"原始产物 {original.get('path')}（{original.get('size_mm')} mm）。\n"
+            "顺序：00-b0 → 01-targets → 0N-roundN-<step> → 最终导出见 export_dir。\n",
+            encoding="utf-8",
+        )
+        result["evidence_dir"] = str(ev_dir)
+
+    def _snap(tag: str) -> None:
+        if ev_dir is None:
+            return
+        try:
+            data = base64.b64decode(preview_png(session, list(session.patches), 1200))
+        except BridgeError as exc:
+            ev_files.append(f"{tag}: 位图失败 {exc.code}")
+            return
+        name = f"{len(ev_files):02d}-{tag}.png"
+        (ev_dir / name).write_bytes(data)
+        ev_files.append(name)
+
+    _snap("b0")
+    try:
+        render = _render(session, candidate, preview_dpi=None)
+        _snap("targets")
+        if render.get("warnings"):
+            # 有一条 override 没写进去 = 目标没有真的落地。不带着 warning 往下验。
+            _rollback()
+            result.update(
+                {
+                    "exit": engine_normalize.EXIT_UNSUPPORTED,
+                    "warnings": list(render["warnings"]),
+                    "patch_hash": session.patch_hash(),
+                }
+            )
+            return result
+        verdict = _compare(relocated)
+        result["rounds"].append(_round_record(0, "targets", verdict))
+
+        rounds = 0
+        while (
+            not verdict["ok"]
+            and verdict["exit"] == engine_normalize.EXIT_CONSTRAINT_CONFLICT
+            and verdict["repairable"]
+            and rounds < engine_normalize.MAX_REPAIR_ROUNDS
+        ):
+            rounds += 1
+            progressed = False
+            kinds = {b["repair"] for b in verdict["repairable"]}
+            if "margins" in kinds:
+                dirs = engine_normalize.repair_directions(
+                    [b for b in verdict["repairable"] if b["repair"] == "margins"]
+                )
+                cand = engine_normalize.adapt_margins(
+                    contract, session.manifest, directions=dirs or None
+                )
+                if "conflict" in cand:
+                    result["rounds"].append(
+                        {"round": rounds, "step": "margins", "conflict": cand["conflict"]}
+                    )
+                elif cand["patches"]:
+                    trial = engine_normalize.merge_patches(candidate, cand["patches"])
+                    if engine_normalize.authorize(contract, trial):
+                        raise BridgeError(
+                            "局部修复产生了约定之外的 patch（bug）", code="normalize_internal"
+                        )
+                    _render(session, trial, preview_dpi=None)
+                    v2 = _compare(relocated)
+                    if _better(v2, verdict):
+                        candidate, verdict = trial, v2
+                        result["adjustments"].extend(
+                            {**c, "reason": "margins", "round": rounds} for c in cand["changed"]
+                        )
+                        progressed = True
+                        result["rounds"].append(_round_record(rounds, "margins", v2))
+                        _snap(f"round{rounds}-margins")
+                    else:
+                        _render(session, candidate, preview_dpi=None)
+                        result["rounds"].append(
+                            {**_round_record(rounds, "margins", v2), "rejected": True}
+                        )
+            if "legend" in kinds:
+                legends = []
+                for b in verdict["repairable"]:
+                    if b["repair"] != "legend":
+                        continue
+                    for g in b.get("gids") or []:
+                        lg = engine_interference.legend_of(g) or (
+                            g if g.endswith(".legend") else ""
+                        )
+                        if lg and lg not in legends:
+                            legends.append(lg)
+                for lg in legends:
+                    best: tuple | None = None
+                    for loc in engine_normalize.legend_candidates(contract, lg):
+                        trial = engine_normalize.merge_patches(
+                            candidate, [{"gid": lg, "prop": "loc", "value": loc}]
+                        )
+                        _render(session, trial, preview_dpi=None)
+                        v2 = _compare(relocated | {lg})
+                        geo_now = engine_normalize.geometry_issues(session.manifest, profile)
+                        score = (
+                            len(v2["blocking"]),
+                            engine_normalize.legend_issue_count(geo_now, lg),
+                        )
+                        # 只收「图例自己干干净净」的候选：换到一个还在压别的东西的
+                        # 位置不叫修好，只是把问题换了个地方
+                        if (
+                            score[1] == 0
+                            and _better(v2, verdict)
+                            and (best is None or score < best[0])
+                        ):
+                            best = (score, trial, v2, loc)
+                            if score[0] == 0:
+                                break
+                    if best is not None:
+                        before = engine_normalize._field(
+                            engine_normalize._element(b0_manifest, lg) or {}, "loc"
+                        )
+                        candidate, verdict = best[1], best[2]
+                        relocated.add(lg)
+                        _render(session, candidate, preview_dpi=None)
+                        result["adjustments"].append(
+                            {
+                                "gid": lg,
+                                "prop": "loc",
+                                "before": before,
+                                "after": best[3],
+                                "reason": "legend",
+                                "round": rounds,
+                            }
+                        )
+                        progressed = True
+                        result["rounds"].append(_round_record(rounds, f"legend {lg}", verdict))
+                        _snap(f"round{rounds}-legend")
+                    else:
+                        _render(session, candidate, preview_dpi=None)
+                        result["rounds"].append(
+                            {"round": rounds, "step": f"legend {lg}", "rejected": True}
+                        )
+            if not progressed:
+                break
+
+        result["verdict"] = _public_verdict(verdict)
+        if ev_dir is not None:
+            result["evidence_files"] = list(ev_files)
+        if not verdict["ok"]:
+            _rollback()
+            result.update(
+                {
+                    "exit": verdict["exit"],
+                    "patch_hash": session.patch_hash(),
+                    "rolled_back": True,
+                }
+            )
+            return result
+
+        # ---- 导出 + 最终产物验收（临时目录里验，不过不发布）----
+        acceptance = {
+            "contract_id": contract["contract_id"],
+            "expect_mm": list(verdict["size_mm"]),
+            "font_family": want.get("font_family"),
+        }
+        pre_existing = [
+            i["id"]
+            for i in verdict["profile_issues"]["unchanged"] + verdict["profile_issues"]["improved"]
+            if i.get("severity") in ("error", "not_verifiable")
+        ]
+        exported = export(
+            session.id,
+            formats=fmts,
+            dpi=dpi,
+            stem=stem,
+            out_dir=out_dir,
+            profile_id=profile_id,
+            journal=journal,
+            # 事务自己已经按「新增 / 加重才挡」裁过；原有的阻断项保留并记进留档
+            explicit_confirm=True,
+            proof=True,
+            acceptance=acceptance,
+        )
+        result["files"] = exported["files"]
+        result["export_dir"] = exported["export_dir"]
+        result["proof_path"] = exported.get("proof_path")
+        result["acceptance"] = exported.get("acceptance", {})
+        result["kept_pre_existing"] = sorted(set(pre_existing))
+        failed = [f for f in exported["files"] if f["status"] != engine_exportjob.STATUS_DONE]
+        if failed:
+            # 事务失败：这一次作业里**已经发布**的其它格式与留档也撤回——它们描述的是
+            # 一个会话马上就要回退掉的状态，留在导出目录里就是「看起来成功的输出」。
+            withdrawn = []
+            for entry in exported["files"]:
+                if entry["status"] == engine_exportjob.STATUS_DONE and entry.get("path"):
+                    try:
+                        Path(entry["path"]).unlink()
+                        withdrawn.append(entry["path"])
+                    except OSError:
+                        pass
+            if exported.get("proof_path"):
+                try:
+                    Path(exported["proof_path"]).unlink()
+                    withdrawn.append(exported["proof_path"])
+                except OSError:
+                    pass
+            _rollback()
+            result.update(
+                {
+                    "exit": engine_normalize.EXIT_ACCEPTANCE_FAILED,
+                    "patch_hash": session.patch_hash(),
+                    "rolled_back": True,
+                    "failed_files": failed,
+                    "withdrawn_files": withdrawn,
+                    "files": [],
+                    "proof_path": None,
+                }
+            )
+            return result
+
+        # ---- 提交 ----
+        session.contract = contract
+        session.normalized = {
+            "contract_id": contract["contract_id"],
+            "patch_hash": session.patch_hash(),
+            "verdict_exit": verdict["exit"],
+            "acceptance_params": acceptance,
+            "files": [f["path"] for f in exported["files"]],
+            "stale": False,
+        }
+        result.update(
+            {
+                "ok": True,
+                "exit": engine_normalize.EXIT_DONE,
+                "patch_hash": session.patch_hash(),
+                "patches": list(session.patches),
+                "manifest": session.manifest,
+                "size_mm": verdict["size_mm"],
+                "rolled_back": False,
+            }
+        )
+        if replay_check:
+            replay = verify_replay(session.id)
+            result["replay"] = {
+                "ok": replay["ok"],
+                "compared_elements": replay["compared_elements"],
+                "divergence": replay["divergence"][:20],
+            }
+        return result
+    except BaseException:
+        _rollback()
+        raise
+
+
+def _round_record(n: int, step: str, verdict: dict) -> dict:
+    return {
+        "round": n,
+        "step": step,
+        "exit": verdict["exit"],
+        "blocking": [
+            {"id": b["id"], "gids": b["gids"], "bucket": b["bucket"], "repair": b["repair"]}
+            for b in verdict["blocking"]
+        ],
+        "max_edge_shift_mm": verdict["budget"]["max_edge_shift_mm"],
+    }
+
+
+def _public_verdict(v: dict) -> dict:
+    """裁决里给调用方看的那份：去掉 B0 整份快照那类大块头。"""
+
+    def slim(issues: list[dict]) -> list[dict]:
+        return [
+            {
+                "id": i["id"],
+                "severity": i.get("severity"),
+                "gids": i.get("gids"),
+                "text": i.get("text"),
+                "detail": i.get("detail"),
+                **({"before": i["before"], "after": i["after"]} if "before" in i else {}),
+            }
+            for i in issues
+        ]
+
+    return {
+        "ok": v["ok"],
+        "exit": v["exit"],
+        "size_mm": v["size_mm"],
+        "targets_met": v["targets_met"],
+        "protected_changes": v["protected_changes"],
+        "structure": v["structure"],
+        "font_unresolved": v["font_unresolved"],
+        "blocking": slim(v["blocking"]),
+        "profile_conflicts": slim(v.get("profile_conflicts") or []),
+        "issues": {
+            kind: {
+                bucket: slim(v[kind][bucket])
+                for bucket in ("new", "worsened", "unchanged", "improved")
+            }
+            for kind in ("geometry_issues", "profile_issues")
+        },
+        "budget": v["budget"],
+    }
 
 
 # --------------------------- 等价性自检（可选） -------------------------------
