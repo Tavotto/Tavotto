@@ -31,7 +31,9 @@
   必须把 `state.applied` 还原回去（还原那次的 warnings 丢弃）。不还原的话历史版本
   恢复与画布导出（每个面板各带一套 overrides）会把别人的状态留在常驻 figure 上，
   前端的 lastPatches 与 worker 真实状态错位，「全量列表」的还原就还错了东西
-  （test_export_is_state_neutral 看护）。
+  （test_export_is_state_neutral 看护）。**中立的是 override 状态，不是 matplotlib 的
+  绘制缓存**：那次别的 dpi 的 savefig 会把图例文字的像素偏移留在 figure 上，manifest
+  对此的防线在自己那边（隐藏图例按文档 dpi 现排，`legend-model.md`），不在这里补 draw。
 - **worker 请求一律有超时**（`pool.BUILD_TIMEOUT/REQUEST_TIMEOUT/EXPORT_TIMEOUT`；
   build 用**静默看门狗**而不是平坦上限（ADR 0050）：`worker.log` 还在长就一直等，
   连着 `BUILD_IDLE_TIMEOUT`（20 分钟）没长才判死，`BUILD_HARD_TIMEOUT`（4 小时）

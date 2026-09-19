@@ -98,10 +98,10 @@ def test_export_then_hide_reports_document_dpi_geometry(worker, control, tmp_pat
     assert _text_boxes(hot) == _text_boxes(control)
 
 
-def test_hidden_legend_geometry_survives_a_render_at_another_width(worker, control):
-    """图例藏着的时候再来一次别的宽度的位图（imshow 类面板的 render_png）也一样。"""
+def test_render_png_then_hide_reports_document_dpi_geometry(worker, control):
+    """第三条别的 dpi 的 draw：imshow 类面板的 `render_png`（按目标像素宽出位图）。图例可见时
+    出一张 900 px 的，再藏——藏着的时候出图不会碰图例，所以要在可见时出才量得到。"""
     _apply(worker, [])
-    _apply(worker, HIDE)
     worker.render_png(STEM, 900)
     hot = _apply(worker, HIDE)
     assert _text_boxes(hot) == _text_boxes(control)

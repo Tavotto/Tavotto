@@ -40,3 +40,15 @@
   4 元组锚框与非父容器 `bbox_transform`（拿三个点量数值等价，不比对象身份）
   **不发字段、改发 `unsupported_props`**——把 4 元组显示成「没有锚点」是个语义
   错的精确值。看护 `tests/test_legend_anchor.py`。
+- **隐藏图例的文字几何按文档 dpi 现排（2026-09-19，#413）**：图例文字的像素位置在
+  `Legend.draw → OffsetBox.draw → TextArea.set_offset` 里写死，图例（或它住的 axes）
+  一隐藏 `draw` 就跳过它，那组像素冻结在**上一次画它那回**——而 `preview_png` / `export` /
+  `render_png` 在别的 dpi 上的 savefig 恰好会画一回，之后 manifest 量到的六个文字 bbox
+  就是那次 dpi 的坐标除以文档像素（连常规 `render` 的 SVG 那次 `PREVIEW_DPI` draw 都会
+  留下来）。契约：**隐藏图例文字的 bbox = 它在当前状态、文档 dpi 下显示时的 bbox**，与
+  历史上谁画过它无关。落地在 `manifest._layout_undrawn_legends`：draw 会跳过的图例在一张
+  一次性 `RendererAgg(W, H, fig.dpi)` 上走一遍 `_legend_box.draw`（`_findoffset` 也在这条
+  路上，`loc='best'` 照常），真 canvas 不碰。**不用「preview 之后补一次文档 dpi 的 draw」**：
+  预览里图例可见、会话里图例隐藏时，补的那次 draw 同样跳过图例（3.8.4 / 3.10.8 / 3.11.1
+  都量过）。看护 `tests/test_hidden_legend_geometry.py`（七条：三种别的 dpi 的 draw、预览
+  显示 / 会话隐藏那格、藏 axes、隐藏 == 显示、可见图例不受影响）。
