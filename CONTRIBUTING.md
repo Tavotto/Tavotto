@@ -165,6 +165,11 @@ at a number in there. Two plausible-sounding optimisations are already recorded 
 Branch off `main` and open a PR; CI runs the backend matrix (Linux/macOS/Windows,
 Python 3.10 and 3.13), the frontend, packaging, and a real Windows `.exe` smoke test.
 
+The PR template opens with a short "baseline and risk" block — base/head, a risk
+tier with its reason, the one thing the PR does, what it deliberately leaves out,
+and which contracts it touches. The tier decides how the PR lands; the rules are in
+[docs/ci/pr-review-tiers.md](docs/ci/pr-review-tiers.md).
+
 Commit messages and code comments in this repository are written in Chinese;
 user-facing text — the README, release notes, the interface — is English first,
 with a Simplified Chinese README alongside. Either language is fine in a PR
