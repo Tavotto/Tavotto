@@ -16,7 +16,7 @@ import sys
 from functools import lru_cache
 
 import matplotlib as mpl
-from matplotlib import font_manager
+from matplotlib import colors as mcolors, font_manager
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
 from matplotlib.collections import Collection, LineCollection, PathCollection, PolyCollection
@@ -2136,7 +2136,7 @@ def _bar_series_fields(grp) -> list[dict]:
     lab = str(grp.container.get_label() or "") if grp.container is not None else ""
     return [
         {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab},
-        {"prop": "facecolor", "type": "color", "value": to_hex(r0.get_facecolor())},
+        {"prop": "facecolor", "type": "color", "value": _patch_face_hex(r0)},
         {"prop": "edgecolor", "type": "color", "value": to_hex(r0.get_edgecolor())},
         {
             "prop": "linewidth",
@@ -2179,7 +2179,7 @@ def _bar_series_fields(grp) -> list[dict]:
 
 def _bar_fields(rect) -> list[dict]:
     return [
-        {"prop": "facecolor", "type": "color", "value": to_hex(rect.get_facecolor())},
+        {"prop": "facecolor", "type": "color", "value": _patch_face_hex(rect)},
         {"prop": "edgecolor", "type": "color", "value": to_hex(rect.get_edgecolor())},
         {
             "prop": "linewidth",
@@ -2335,6 +2335,27 @@ def _arrowpatch_fields(a) -> list[dict]:
     ]
 
 
+def _patch_face_hex(pt) -> str:
+    """Patch 族 `facecolor` 字段的取值 = **填充会画出来的颜色**，不受 `fill` 开关影响。
+
+    `Patch.set_fill(False)` 把 `_facecolor` 的 alpha 清零、RGB 留着；`to_hex` 见到 alpha 0
+    报 `"none"`（#427）。但 `fill` 是这一组的开关，从属字段关着开关时值要留着——与
+    `bbox_visible` 下的 `bbox_facecolor` 同一模型（界面上 `visibleWhen: FILLED` 收起它，
+    开关一开就是这个色）。所以关着时按 matplotlib 自己的规则重算：`_original_facecolor`
+    （None = `rcParams['patch.facecolor']`）配 artist 的 alpha。颜色本身是 `'none'` 时
+    照样报 `"none"`——那是「没有颜色」，不是「开关关着」。
+    """
+    if pt.get_fill():
+        return to_hex(pt.get_facecolor())
+    orig = getattr(pt, "_original_facecolor", None)
+    if orig is None:
+        orig = mpl.rcParams["patch.facecolor"]
+    try:
+        return to_hex(mcolors.to_rgba(orig, pt.get_alpha()))
+    except (ValueError, TypeError):
+        return to_hex(pt.get_facecolor())
+
+
 def _patch_fields(pt) -> list[dict]:
     """Patch family 的形状：`ax.fill()` 的 Polygon、手搓的 PathPatch、pie 的
     Wedge、axhspan 的 Rectangle、Circle / Ellipse / Arc / FancyBboxPatch /
@@ -2362,7 +2383,7 @@ def _patch_fields(pt) -> list[dict]:
         # 个不诚实，只是方向相反。判据要按运行时实况来，而这条实况是
         # 「fill 关着时 facecolor 不显形」，那对**每个** Patch 都成立，是
         # `fill` 这个开关的定义，不是某个类的例外。
-        {"prop": "facecolor", "type": "color", "value": to_hex(pt.get_facecolor())},
+        {"prop": "facecolor", "type": "color", "value": _patch_face_hex(pt)},
         {"prop": "fill", "type": "bool", "value": bool(pt.get_fill())},
     ]
     fields += [

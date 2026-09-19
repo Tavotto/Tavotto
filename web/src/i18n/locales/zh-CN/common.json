@@ -11,7 +11,8 @@
     "save": "保存"
   },
   "colorField": {
-    "picker": "{{label}}：取色盘"
+    "picker": "{{label}}：取色盘",
+    "none": "无"
   },
   "count": {
     "selectedObjects_other": "已选 {{count}} 个对象"

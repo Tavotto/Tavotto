@@ -26,6 +26,7 @@
   | codex-plugin `bridge.export_raster_issues()` ↔ `web/src/lib/validation.ts` `exportContextRaw()` | `test_the_export_context_rule_is_one_rule_on_both_sides` |
   | `engine/exportreq.py` 文件名规则 ↔ `web/src/lib/exportName.ts` | `tests/golden/filename_vectors.json`（八条原因逐条比，顺序也比） |
   | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `web/src/lib/typography.ts` 同名常量 | `test_typography_families.py`（闭集 + 顺序） |
+  | `engine/overrides.NO_COLOR`（manifest 颜色字段的「无」取值）↔ `web/src/components/ui/Input.tsx` 同名常量 | `tests/test_no_color_pair.py` |
 
   出版规范规则唯一权威 `src/tavotto/profiles/publication.json`（两侧求值器
   共读，绝不硬编码第二份）。**「这份项目有什么问题」全产品只有一份服务**

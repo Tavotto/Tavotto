@@ -427,6 +427,9 @@ export function NumberField({
   )
 }
 
+/** 引擎侧「没有颜色」的取值（`engine/overrides.NO_COLOR`，严格同源，`tests/test_no_color_pair.py`） */
+export const NO_COLOR = 'none'
+
 export function ColorField({
   value,
   onChange,
@@ -453,6 +456,11 @@ export function ColorField({
    */
   ariaLabel: string
 }) {
+  // 引擎报 `none` = 这条没有颜色（没设边色的形状、`fill` 关着的面、空心 marker），
+  // 不是黑色（#427 之前 `to_hex` 丢掉 alpha，透明黑显示成 #000000，检查器摆出一条
+  // 并不存在的黑边）。色块画成「无」：白底一道红斜线，与画布图形「无填充」同一个记号；
+  // 取色盘本身只吃合法色号，喂它黑色当起点，用户一取色就是一个真的颜色。
+  const none = value === NO_COLOR
   return (
     // 只剩一块色块（2026-09-11 用户反馈：去掉色号框，点色块取色）。
     // 取色盘是**透明盖在色块上的真控件**，自带一圈 focus ring——纯键盘 Tab 到它
@@ -460,13 +468,24 @@ export function ColorField({
     // 当前色号走 title：鼠标悬停仍看得到精确值。
     <div className={cn('flex h-7 items-center', className)}>
       <div
-        title={value.toUpperCase()}
+        title={none ? t('colorField.none') : value.toUpperCase()}
+        data-none={none || undefined}
         className="relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border transition-colors hover:border-border-strong has-[:focus-visible]:focus-ring"
       >
-        <div className="absolute inset-0" style={{ background: value }} />
+        {none ? (
+          <div
+            className="absolute inset-0 bg-white"
+            style={{
+              backgroundImage:
+                'linear-gradient(to top right, transparent calc(50% - 0.75px), #d0342c calc(50% - 0.75px), #d0342c calc(50% + 0.75px), transparent calc(50% + 0.75px))',
+            }}
+          />
+        ) : (
+          <div className="absolute inset-0" style={{ background: value }} />
+        )}
         <input
           type="color"
-          value={value}
+          value={none ? '#000000' : value}
           onChange={(e) => onChange(e.target.value)}
           onBlur={onGestureEnd}
           aria-label={t('colorField.picker', { label: ariaLabel })}

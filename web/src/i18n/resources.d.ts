@@ -139,6 +139,7 @@ export default interface Resources {
       "save": "保存"
     },
     "colorField": {
+      "none": "无",
       "picker": "{{label}}：取色盘"
     },
     "count": {

@@ -150,7 +150,10 @@ export function extractPalette(manifest: Manifest): string[] {
     const prop = PALETTE_PROP[el.role]
     if (!prop) continue
     const f = el.editable.find((x) => x.prop === (el.role === 'line' ? 'color' : 'facecolor'))
-    if (typeof f?.value === 'string' && !colors.includes(f.value)) colors.push(f.value)
+    // 引擎报 `none` 的是「没有颜色」（#427），不是一种配色
+    if (typeof f?.value === 'string' && f.value !== 'none' && !colors.includes(f.value)) {
+      colors.push(f.value)
+    }
   }
   return colors.slice(0, 8)
 }

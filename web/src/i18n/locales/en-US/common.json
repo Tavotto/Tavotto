@@ -11,7 +11,8 @@
     "save": "Save"
   },
   "colorField": {
-    "picker": "{{label}}: colour picker"
+    "picker": "{{label}}: colour picker",
+    "none": "None"
   },
   "count": {
     "selectedObjects_one": "{{count}} object selected",

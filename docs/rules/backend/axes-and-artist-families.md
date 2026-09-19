@@ -84,6 +84,14 @@
     instrument 时采一次，不是每帧）：画在图上、既没进元素表也不是结构件的那些，
     按类名 + 归属报出来。容器消费掉的成员不算漏。旧前端不认识这个键会原样忽略，
     写回自检只比 gid 集合与几何。
+  * **颜色字段不把「没有颜色」显示成一个实色（2026-09-19，#427）**：`overrides.to_hex`
+    见到 alpha 为 0 的颜色报 `NO_COLOR`（`"none"`）——没设边色的 patch、`'none'`、空心
+    marker 都是；半透明照报 RGB（alpha 另有字段）。之前 `mcolors.to_hex` 默认丢 alpha，
+    透明黑显示成 `#000000`，检查器摆出一条并不存在的黑边。Patch 族的 `facecolor`
+    走 `manifest._patch_face_hex`：`fill` 是这一组的开关，关着时字段值仍是**开了会画
+    的那个色**（`_original_facecolor` 配 artist 的 alpha 重算，与 `bbox_visible` 下的
+    `bbox_facecolor` 同一模型；界面 `visibleWhen: FILLED` 收起它）。前端 `ColorField`
+    认 `NO_COLOR` 画成「无」色块，两侧常量严格同源（`tests/test_no_color_pair.py`）。
   * 开发工具 `scripts/dev/matplotlib_artist_census.py`（`--api --with-seaborn`）
     普查任意脚本或代表性 API 的 artist 图与 Tavotto 覆盖度。**只用于开发/审计，
     产品路径不依赖它**——`instrument()` 的语义化遍历才是权威。

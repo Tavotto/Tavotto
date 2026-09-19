@@ -2780,11 +2780,20 @@ for _p in legendmodel.LEGEND_ENTRY_STYLE_PROPS:
 _RESTORE.update(_PENDING_RESTORES)
 
 
+#: manifest 里颜色字段的「没有颜色」取值：alpha 为 0 的颜色（`'none'`、没设边色的 patch、
+#: `fill=False` 的面、空心 marker）**不显示成它的 RGB**。`mcolors.to_hex` 默认丢掉 alpha，
+#: 于是透明黑变成 `#000000`——检查器摆出一条并不存在的黑边（#427），一个语义错的精确值。
+#: 前端 `ColorField` 认这个串（画成「无」色块）；setter 也吃它（`set_*color("none")` 是
+#: matplotlib 自己的写法）。**只有 alpha == 0 算「无」**：半透明仍报 RGB，alpha 另有字段。
+NO_COLOR = "none"
+
+
 def to_hex(color) -> str:
     try:
-        return mcolors.to_hex(color)
+        rgba = mcolors.to_rgba(color)
     except (ValueError, TypeError):
         return "#000000"
+    return NO_COLOR if rgba[3] == 0 else mcolors.to_hex(rgba)
 
 
 # figure 锚定的 prop：setter 在应用那一刻把 figure 分数换算进 artist 的本地
