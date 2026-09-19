@@ -14,6 +14,12 @@
 失败时**最小化**：按步骤做 delta-debugging（丢掉一段仍红就丢），报最短的复现序列；
 `FIXED` 里钉的是最小化之后的固定回归——随机只负责发现，回归靠固定用例。
 
+**已知分岔不用 xfail 接。** 每族登记一份**形状**（`FAMILIES`：manifest 差在哪些路径、像素
+是否不同），已知用例 / 已知种子命中时把实测形状与登记的逐项比对：形状不符是普通红（新问题，
+不许被旧 issue 认领）；不再分岔也是红（修好了，提醒挪进 `FIXED` / 摘掉种子）。第一版用
+`xfail(strict=True)` 套整条用例：strict 只防「意外通过」，不防「失败原因不一样」——worker
+异常、warnings 断言、别的字段漂移全会被算成「已知分岔」（v0.15.0 验收 V015-TEST-01）。
+
 与前端 `documentStore.sequences.test.ts` 同一套路数（200 × 60 是纯内存；这里每一步要过
 worker 子进程，所以 8 条 × 10 步 × 两张图，本机约 2 分钟）。判据复用不变式 3 那把最严的尺
 （整份 manifest + 像素），采样器与不变式 1 / 2 共用一份（`tests/support/overridesample.py`）。
@@ -27,6 +33,8 @@ import hashlib
 import json
 import os
 import random
+import re
+from dataclasses import dataclass
 
 import pytest
 
@@ -55,8 +63,39 @@ def _p(gid: str, prop: str, value) -> dict:
 
 _T0, _T1 = "axes_0.legend.texts_0", "axes_0.legend.texts_1"
 
-#: **已知分岔**：随机发现、最小化到两步之后钉在这里，每条挂一个 issue，`xfail(strict=True)`——
-#: 修好那天它会 xpass 变红，提醒把它挪进 `FIXED`。2026-09-18 首跑 8 × 10 × 2 抓到三族：
+
+@dataclass(frozen=True)
+class Divergence:
+    """一次实测到的热态 ≠ 重放：第几步、manifest 差在哪些路径（已排序）、像素是否不同。"""
+
+    step: int
+    manifest: tuple[str, ...]
+    pixel: bool
+
+
+@dataclass(frozen=True)
+class Shape:
+    """一族已知分岔的形状：manifest 差异**只**落在这些路径模式上（每条模式至少命中一次；
+    空元组 = manifest 逐字相等），像素是否不同。模式里的 `*` 匹配 gid / prop 里的一段
+    （不跨 `.` 与方括号），同一族在不同序列里落在不同的图例项上。"""
+
+    manifest: tuple[str, ...]
+    pixel: bool
+
+
+#: 三族已知分岔各自的形状——2026-09-19 在 `KNOWN` 四条 + `KNOWN_SEEDS` 六条上实测，三族两两
+#: 可分：#412 只差那一条 `bbox_visible` 取值且像素不同；#413 只差图例文字的 `bbox` 几何且像素
+#: 相同；#414 manifest 逐字相等只有像素不同。已知用例 / 已知种子命中时按这张表比对，形状
+#: 不符就是新问题（普通红），不许被旧 issue 认领。
+FAMILIES: dict[str, Shape] = {
+    "#412": Shape(("elements[axes_0.legend.texts_*].editable[bbox_visible].value",), pixel=True),
+    "#413": Shape(("elements[axes_0.legend.texts_*].bbox",), pixel=False),
+    "#414": Shape((), pixel=True),
+}
+
+#: **已知分岔**：随机发现、最小化到两步之后钉在这里，每条挂一个 issue。用例断言它**今天仍按
+#: 登记的形状在最后一步分岔**：不再分岔 = 修好了，红着提醒挪进 `FIXED`；形状变了 = 另一个
+#: 问题。2026-09-18 首跑 8 × 10 × 2 抓到三族：
 #:   * #412 文字 bbox 组：撤掉 / 关掉 `bbox_visible` 而其它 bbox_* 仍在，热态藏框、重放露框；
 #:   * #413 `preview_png` 不是状态中立：预览那次 draw 的几何进了藏起来的图例文字的 bbox；
 #:   * #414 显式 `binding=custom` 冻结的样子只活在会话里，源随后变了重放对不上。
@@ -97,14 +136,17 @@ KNOWN: list[tuple[str, str, str, list[list[dict]]]] = [
     ),
 ]
 
-#: 随机序列里落在上面三族上的 (stem, seed)：同样 xfail(strict)，修好一族就会有 seed 变红提醒摘掉。
-KNOWN_SEEDS: dict[tuple[str, int], str] = {
-    ("InvMix", 2): "#413",
-    ("InvMix", 5): "#412",
-    ("InvMix", 6): "#412",
-    ("InvCont", 0): "#414",
-    ("InvCont", 5): "#412",
-    ("InvCont", 6): "#412",
+#: 随机序列里落在上面三族上的 (stem, seed) → (issue, 首次分岔的步)。序列由种子决定，步数也
+#: 就是定的；用例断言那一步按该族的形状分岔——早一步 / 晚一步 / 别的形状都是普通红。修好一族
+#: 就会有 seed 因「不再分岔」变红，提醒摘掉。已知分岔之后的步与 HOT == FRESH **不量**（热态
+#: 带着已知漂移，量到的分不清是新问题还是它的后果），如实记进 junit 的 `unmeasured` 属性。
+KNOWN_SEEDS: dict[tuple[str, int], tuple[str, int]] = {
+    ("InvMix", 2): ("#413", 5),
+    ("InvMix", 5): ("#412", 2),
+    ("InvMix", 6): ("#412", 9),
+    ("InvCont", 0): ("#414", 6),
+    ("InvCont", 5): ("#412", 4),
+    ("InvCont", 6): ("#412", 3),
 }
 
 #: **固定回归**：`KNOWN` 里修好之后挪过来的序列——随机负责发现、这里负责不再回来。
@@ -212,23 +254,89 @@ def _sequence(
 # ---------------------------------------------------------------------------
 # 判据与最小化
 # ---------------------------------------------------------------------------
-def _diverges_hot_vs_replay(hot, replay, stem, steps: list[list[dict]], tag: str) -> int | None:
-    """热路连续走一遍：第 k 步之后热态 ≠ 清空重放（manifest **或**像素）就返回 k，否则 None。
+def _list_key(a: list, b: list) -> str | None:
+    """两个列表都是带 `gid`（元素表）/ `prop`（editable 表）的字典时按那个键对齐，不按下标。"""
+    xs = [*a, *b]
+    if xs and all(isinstance(x, dict) for x in xs):
+        for key in ("gid", "prop"):
+            if all(key in x for x in xs):
+                return key
+    return None
+
+
+def _diff_paths(a, b, path: str = "") -> set[str]:
+    """两份 manifest 差在哪些路径：`elements[<gid>].editable[<prop>].value` 这种形状。
+    标量列表（`bbox` 四个数、`size_mm`）当一个叶子——差异形状登记的是「哪个字段」，
+    不是「第几个数」。"""
+    if isinstance(a, dict) and isinstance(b, dict):
+        out: set[str] = set()
+        for k in a.keys() | b.keys():
+            p = f"{path}.{k}" if path else str(k)
+            out |= _diff_paths(a[k], b[k], p) if k in a and k in b else {p}
+        return out
+    if isinstance(a, list) and isinstance(b, list) and (key := _list_key(a, b)):
+        da, db = {x[key]: x for x in a}, {x[key]: x for x in b}
+        out = set()
+        for k in da.keys() | db.keys():
+            p = f"{path}[{k}]"
+            out |= _diff_paths(da[k], db[k], p) if k in da and k in db else {p}
+        return out
+    return set() if a == b else {path}
+
+
+def _path_matches(pattern: str, path: str) -> bool:
+    """`Shape.manifest` 里的模式：字面匹配，`*` 匹配一段不含 `.` / 方括号的字符。
+    不用 fnmatch——路径里的方括号会被它当成字符类。"""
+    rx = re.escape(pattern).replace(r"\*", r"[^.\[\]]+")
+    return re.fullmatch(rx, path) is not None
+
+
+def _diverges_hot_vs_replay(
+    hot, replay, stem, steps: list[list[dict]], tag: str
+) -> Divergence | None:
+    """热路连续走一遍：第 k 步之后热态 ≠ 清空重放（manifest **或**像素）就返回那一步的
+    `Divergence`（步数 + 差异形状），否则 None。
 
     **不清热路**——热态的定义就是「带着前面每一步的历史」；清空重放在另一条 worker 上做。
     像素也逐步比：第一版只比 manifest，InvCont seed 0 十步走完 manifest 一路相等、最后像素
     却不同——几何尺量不到的漂移（颜色 / dash / 图例示意线）只有像素量得到，而且要在它
-    出现的那一步抓住，不是走完再猜。返回时两条会话都留在最后一步的状态。
+    出现的那一步抓住，不是走完再猜。manifest 已经不同时像素照样比：形状要两个维度都在
+    （#412 与 #413 都差 manifest，分开它们的是像素同不同）。返回时两条会话都留在分岔那一步。
     """
     for k, step in enumerate(steps):
         hot_man = _apply(hot, stem, step)
         _apply(replay, stem, [])
         replay_man = _apply(replay, stem, step)
-        if hot_man != replay_man:
-            return k
-        if _png(hot, stem, step, f"{tag}-hot-{k}") != _png(replay, stem, step, f"{tag}-replay-{k}"):
-            return k
+        paths = _diff_paths(hot_man, replay_man)
+        pixel = _png(hot, stem, step, f"{tag}-hot-{k}") != _png(
+            replay, stem, step, f"{tag}-replay-{k}"
+        )
+        if paths or pixel:
+            return Divergence(k, tuple(sorted(paths)), pixel)
     return None
+
+
+def _assert_known_shape(seen: Divergence, issue: str, step: int, tag: str) -> None:
+    """实测的分岔必须与登记的 issue **逐项**对得上：步数、manifest 差异路径（只落在该族的
+    模式里且每条模式都命中）、像素同不同。差一项就是另一个问题，不许挂在旧 issue 名下。"""
+    shape = FAMILIES[issue]
+    problems = []
+    if seen.step != step:
+        problems.append(f"分岔在第 {seen.step} 步，登记的是第 {step} 步")
+    stray = [p for p in seen.manifest if not any(_path_matches(m, p) for m in shape.manifest)]
+    if stray:
+        problems.append(f"manifest 差异落在 {issue} 之外：{stray}")
+    unhit = [m for m in shape.manifest if not any(_path_matches(m, p) for p in seen.manifest)]
+    if unhit:
+        problems.append(f"{issue} 该差的路径这次没差：{unhit}")
+    if seen.pixel != shape.pixel:
+        problems.append(
+            f"像素{'不同' if seen.pixel else '相同'}，{issue} 登记的是{'不同' if shape.pixel else '相同'}"
+        )
+    assert not problems, (
+        f"{tag}：分岔与登记的 {issue} 形状不符——这不是同一个问题，别让旧 issue 接住它\n  "
+        + "\n  ".join(problems)
+    )
 
 
 def _minimize(library, stem, steps: list[list[dict]], tag: str) -> list[list[dict]]:
@@ -304,46 +412,59 @@ def test_the_candidate_pool_is_wide(hot, stem):
 
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("stem", STEMS)
-def test_random_sequences_keep_hot_equal_to_replay(hot, replay, library, stem, seed, request):
+def test_random_sequences_keep_hot_equal_to_replay(
+    hot, replay, library, stem, seed, record_testsuite_property
+):
     """随机加 / 改 / 删之后每一步 HOT == CLEAR+REPLAY；序列结束 HOT == FRESH（manifest + 像素）。
 
     分岔时先最小化再报：报出来的是最短的复现序列，直接可以抄进 `KNOWN`（开 issue）或 `FIXED`。
+    `KNOWN_SEEDS` 里的种子：断言它**仍在登记的那一步按登记的形状**分岔，之后不再往下量。
     """
     known = KNOWN_SEEDS.get((stem, seed))
-    if known:
-        request.applymarker(
-            pytest.mark.xfail(strict=True, reason=f"已知分岔 {known}（修好会 xpass）")
-        )
     base = _apply(hot, stem)
     cands, fields = _candidates(base)
     steps = _sequence(random.Random(f"{stem}:{seed}"), cands, fields, STEPS)
-    k = _diverges_hot_vs_replay(hot, replay, stem, steps, f"{stem}-s{seed}")
-    if k is not None:
-        if known:
-            # 已知种子的最小复现已经钉在 KNOWN 里（那才是该修的样本）；这里再最小化只是
-            # 每次 CI 白花 13–54 s（每次试跑起一条新 worker）。红就红，xfail 接住。
-            pytest.fail(f"{stem} seed={seed}：第 {k} 步之后热态 ≠ 清空重放（已知 {known}）")
-        minimal = _minimize(library, stem, steps[: k + 1], f"{stem}-s{seed}")
+    tag = f"{stem}-s{seed}"
+    seen = _diverges_hot_vs_replay(hot, replay, stem, steps, tag)
+    if known:
+        issue, step = known
+        assert seen is not None, (
+            f"{tag}：登记为 {issue} 的分岔不见了——修好了就把 ({stem!r}, {seed}) 从 KNOWN_SEEDS 摘掉"
+        )
+        _assert_known_shape(seen, issue, step, tag)
+        # 已知种子的最小复现钉在 KNOWN 里（那才是该修的样本），这里不再最小化（每次试跑起
+        # 一条新 worker，13–54 s）。分岔之后的步与 HOT == FRESH 没量，写进 junit 别装量过
+        # （testsuite 级属性：testcase 级的 record_property 在 xunit2 下要吵一条 warning）。
+        later = f"steps {seen.step + 1}..{len(steps) - 1} + " if seen.step < len(steps) - 1 else ""
+        record_testsuite_property("unmeasured", f"{tag}: {later}final-vs-fresh ({issue})")
+        return
+    if seen is not None:
+        minimal = _minimize(library, stem, steps[: seen.step + 1], tag)
         pytest.fail(
-            f"{stem} seed={seed}：第 {k} 步之后热态 ≠ 清空重放。最小化后的复现序列"
+            f"{tag}：第 {seen.step} 步之后热态 ≠ 清空重放（manifest 差 {list(seen.manifest)}，"
+            f"像素{'不同' if seen.pixel else '相同'}）。最小化后的复现序列"
             f"（{len(minimal)} 步，抄进 FIXED）：\n{_describe(minimal)}"
         )
-    _check_final_against_fresh(hot, library, stem, steps[-1], f"{stem}-s{seed}")
+    _check_final_against_fresh(hot, library, stem, steps[-1], tag)
 
 
 @pytest.mark.parametrize("case_id,issue,stem,steps", KNOWN, ids=[c[0] for c in KNOWN])
-def test_known_divergences_still_diverge(
-    hot, replay, library, case_id, issue, stem, steps, request
-):
-    """最小化后的复现（每条挂一个 issue）：今天必须红（xfail strict），修好那天 xpass → 挪进 FIXED。"""
-    request.applymarker(pytest.mark.xfail(strict=True, reason=f"已知分岔 {issue}（修好会 xpass）"))
-    k = _diverges_hot_vs_replay(hot, replay, stem, steps, case_id)
-    assert k is None, f"{case_id}（{issue}）：第 {k} 步之后热态 ≠ 清空重放\n{_describe(steps)}"
-    _check_final_against_fresh(hot, library, stem, steps[-1], case_id)
+def test_known_divergences_still_diverge(hot, replay, case_id, issue, stem, steps):
+    """最小化后的复现（每条挂一个 issue）：今天必须**在最后一步按登记的形状**分岔——最小化
+    的定义就是丢掉任何一步都不再分岔，所以分岔只能在末步。修好那天它不再分岔 → 红 → 挪进
+    FIXED；形状变了 → 红 → 那是另一个问题，另开 issue。"""
+    seen = _diverges_hot_vs_replay(hot, replay, stem, steps, case_id)
+    assert seen is not None, (
+        f"{case_id}（{issue}）不再分岔——修好了就把它挪进 FIXED\n{_describe(steps)}"
+    )
+    _assert_known_shape(seen, issue, len(steps) - 1, case_id)
 
 
 @pytest.mark.parametrize("case_id,stem,steps", FIXED, ids=[c[0] for c in FIXED])
 def test_fixed_regressions(hot, replay, library, case_id, stem, steps):
-    k = _diverges_hot_vs_replay(hot, replay, stem, steps, case_id)
-    assert k is None, f"{case_id}：第 {k} 步之后热态 ≠ 清空重放\n{_describe(steps)}"
+    seen = _diverges_hot_vs_replay(hot, replay, stem, steps, case_id)
+    assert seen is None, (
+        f"{case_id}：第 {seen.step} 步之后热态 ≠ 清空重放（manifest 差 {list(seen.manifest)}，"
+        f"像素{'不同' if seen.pixel else '相同'}）\n{_describe(steps)}"
+    )
     _check_final_against_fresh(hot, library, stem, steps[-1], case_id)
