@@ -51,6 +51,7 @@ import {
   applyTickSidePlan,
   clearOverride,
   clearOverrides,
+  detachLegendEntry,
   disableTextEffect,
   setLegendPlacement,
   setOverride,
@@ -2092,14 +2093,15 @@ function FieldRow({
         'start',
       )
     case 'legend-binding':
-      // 「恢复跟随」是一次多条 override 的结构性动作，走 store 的
-      // restoreLegendEntryFollow（一条历史）；「改为自定义」是一条普通写入
+      // 「恢复跟随」与「断开」都是一次多条 override 的结构性动作，走 store 的
+      // restoreLegendEntryFollow / detachLegendEntry（各一条历史）：断开要把此刻的
+      // 五条示意线样式一起写进文档，重开后才是同一条示意线（#414）
       return wrap(
         <LegendBindingControl
           panel={panel}
           manifest={rowManifest}
           element={element}
-          onSetCustom={() => writeOnce('custom')}
+          onSetCustom={() => detachLegendEntry(panel.id, element)}
         />,
       )
     case 'arrow-style':

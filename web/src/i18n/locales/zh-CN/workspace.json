@@ -298,6 +298,7 @@
     "zUp": "上移一层",
     "hideLegendEntry": "隐藏图例项 “{{label}}”",
     "legendFollowSource": "图例项重新跟随来源",
+    "legendDetach": "断开图例项与来源的跟随",
     "tickSideOn": "{{side}}：显示{{dir}}刻度",
     "tickSideOff": "{{side}}：不显示{{dir}}刻度",
     "tickSideHide": "{{side}}：隐藏刻度线",

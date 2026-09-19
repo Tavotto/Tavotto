@@ -3742,6 +3742,7 @@ export default interface Resources {
       "insertPreset": "插入{{name}}",
       "insertShape": "插入{{name}}",
       "insertSymbol": "插入符号 {{symbol}}",
+      "legendDetach": "断开图例项与来源的跟随",
       "legendFollowSource": "图例项重新跟随来源",
       "lineEndpoint": "调整直线端点",
       "lockAspect": "锁定宽高比",

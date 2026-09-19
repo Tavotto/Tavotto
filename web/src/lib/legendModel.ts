@@ -179,6 +179,23 @@ export function restoreFollowPlan(
   return { remove: [...remove, { gid: el.gid, prop: 'binding' }], set: [] }
 }
 
+/**
+ * 「断开」要对文档做的事（#414）：写 `binding = custom`，**并把此刻的五条示意线样式按
+ * manifest 的当前值写成 override**。引擎侧脱开的项 = 脚本原样 + 文档里的 handle_*，不再
+ * 有会话内的「脱开那一刻的样子」——那份样子不在文档里，重开后重放拿不到。所以「定格
+ * 此刻」由这里兑现：五条样式落进文档，重开后与断开时看到的是同一条示意线。
+ * 只写 manifest 真的发了的字段（柱 / 填充 / 散点的示意线只有 `handle_color`）。
+ * 纯函数：调用方把它落进**一次** commit。
+ */
+export function detachPlan(el: ManifestElement): PanelOverride[] {
+  const set: PanelOverride[] = [{ gid: el.gid, prop: 'binding', value: 'custom' }]
+  for (const prop of LEGEND_ENTRY_STYLE_PROPS) {
+    const field = el.editable.find((f) => f.prop === prop)
+    if (field) set.push({ gid: el.gid, prop, value: field.value })
+  }
+  return set
+}
+
 /** 这个属性是不是图例项示意线的样式（改它会脱开跟随） */
 export function isLegendHandleProp(prop: string): boolean {
   return (LEGEND_ENTRY_STYLE_PROPS as readonly string[]).includes(prop)

@@ -292,12 +292,16 @@ class LegendEntries:
     每一项记：源对象（图中那条曲线 / 散点 / 柱系列，找不到就是 None）、
     脚本原样的绑定（源找到且示意线与源一致 → follow_source；找到但脚本
     自己改过示意线 → custom）、当前 Text（隐藏的项保留最后那个 Text 对象，
-    gid 与 override 都挂在它上面）、示意线的**脚本原样快照**（`pristine`，
-    没有源的项重建时的唯一素材，也是「撤销到底」时的样子）、以及
-    `custom_base`——一个 custom 项「不带任何 handle_* override 时长什么样」：
-    脚本原样就是 custom 的项等于 pristine；从跟随状态脱开的项等于脱开那一刻
-    从源派生出来的样子（否则改列数重排之后它会退回脚本原样，而脱开之前它
-    明明已经跟着源变过了）。
+    gid 与 override 都挂在它上面）、示意线的**脚本原样快照**（`pristine`）。
+
+    **一个 custom 项「不带任何 handle_* override 时长什么样」= `pristine`，没有第二个
+    答案（2026-09-19，#414）。** 第一版另有一份会话内的快照：从跟随状态脱开的项记成
+    「脱开那一刻从源派生出来的样子」。那份样子**只活在会话里**——文档里只有
+    `binding = custom`（或某条 handle_*），重放时脱开点落在源的所有 override 之后，
+    源随后变过的话热态与重放就不是一张图（源改 marker 后脱开 vs 脱开后改 marker）。
+    确定性只能来自文档：示意线 = 脚本原样 + 文档里的 handle_* override。界面上的
+    「断开」把此刻的五条样式写成 override（`store/actions.detachLegendEntry`），所以
+    用户看到的定格仍然成立——只是定格住的东西从此在文档里，不在进程里。
     """
 
     def __init__(self, leg: Legend, state: RebuildState) -> None:
@@ -314,7 +318,6 @@ class LegendEntries:
         # 快照只能造出 Line2D（HandlerLineCollection），拿快照比会永远对不上
         self.orig_fp: list[tuple] = [legend_handle_fingerprint(h) for h in handles[:n]]
         self.pristine: list = [self.snapshot(h) for h in handles[:n]]
-        self.custom_base: list = list(self.pristine)
         self.orig_labels: list[str] = [t.get_text() for t in texts[:n]]
         self.texts: list = texts[:n]
         self.order: list[int] = list(range(n))
@@ -348,10 +351,10 @@ class LegendEntries:
         return any((gid, p) in self.state.applied for p in LEGEND_ENTRY_STYLE_PROPS)
 
     def base_of(self, j: int):
-        """重建 / 同步时这一项该从谁派生：跟随的从源，其余从 custom_base。"""
+        """重建 / 同步时这一项该从谁派生：跟随的从源，其余从脚本原样快照。"""
         if self.effective_binding(j) == "follow_source":
             return self.sources[j]
-        return self.custom_base[j]
+        return self.pristine[j]
 
     # ---- 视图 ----
     def shown(self) -> list[int]:
@@ -363,12 +366,12 @@ class LegendEntries:
         return shown.index(j) if j in shown else None
 
     def handle_of(self, j: int):
-        """条目 j 此刻的示意线 artist；隐藏中的项回它的 custom_base。"""
+        """条目 j 此刻的示意线 artist；隐藏中的项回它的脚本原样快照。"""
         k = self.display_index(j)
         if k is None:
-            return self.custom_base[j]
+            return self.pristine[j]
         handles = [h for h in self.leg.legend_handles if h is not None]
-        return handles[k] if k < len(handles) else self.custom_base[j]
+        return handles[k] if k < len(handles) else self.pristine[j]
 
     def gid_of(self, j: int) -> str:
         return f"{self.leg.get_gid() or ''}.texts_{j}"
@@ -573,13 +576,11 @@ def sync_legends(state: RebuildState) -> None:
             try:
                 if binding == "follow_source":
                     _legend_replace_handle(leg, k, model.sources[j])
-                    # 回到跟随，「脱开时的样子」就作废了
-                    model.custom_base[j] = model.pristine[j]
                 elif not model.has_style_override(j):
-                    # custom 而没有 override：示意线该是 custom_base 的样子
-                    # （撤掉 binding override 之后要退回脚本原样）。指纹相同就
-                    # 不动——重派生不是免费的，也不该每一帧都换对象
-                    base = model.custom_base[j]
+                    # custom 而没有 override：示意线该是脚本原样的样子（撤掉
+                    # binding override 之后也退回脚本原样）。指纹相同就不动——
+                    # 重派生不是免费的，也不该每一帧都换对象
+                    base = model.pristine[j]
                     cur = model.handle_of(j)
                     if legend_handle_fingerprint(cur) != legend_handle_fingerprint(base):
                         _legend_replace_handle(leg, k, base, copy_of=base)
@@ -690,7 +691,7 @@ def rebuild_legend(leg: Legend, state: RebuildState) -> None:
     """按条目模型重排图例盒（列数 / 间距 / 顺序 / 隐藏都走这一条）。
 
     素材：跟随的项拿**源对象**重新派生（与 `ax.legend()` 同一条路，误差棒
-    仍是误差棒、markerscale 只乘一次）；其余拿它的 custom_base 快照——快照
+    仍是误差棒、markerscale 只乘一次）；其余拿它的脚本原样快照——快照
     上 markerscale 已经乘过，重派生会再乘一次，所以事后把 markersize 放回。
     文字对象整批换新：样子从旧对象搬过去，gid / 模型 / override 由
     `_reindex_legend_children` 接上。
@@ -718,7 +719,7 @@ def rebuild_legend(leg: Legend, state: RebuildState) -> None:
     new_handles = [h for h in leg.legend_handles if h is not None]
     for k, j in enumerate(shown):
         if model.effective_binding(j) != "follow_source" and k < len(new_handles):
-            fresh, copy = new_handles[k], model.custom_base[j]
+            fresh, copy = new_handles[k], model.pristine[j]
             if isinstance(fresh, Line2D) and isinstance(copy, Line2D):
                 fresh.set_markersize(copy.get_markersize())
     for k, t in enumerate(leg.get_texts()):
@@ -812,22 +813,17 @@ def _entry_binding_set(t: Text, v) -> None:
 
 
 def _detach_entry(model: LegendEntries, j: int) -> None:
-    """一个跟随中的项脱开：custom_base 记成**源此刻**派生出来的样子，图例盒里
-    那份活的示意线也换成它。
+    """一个跟随中的项脱开：图例盒里那份活的示意线换成**脚本原样快照**的副本，
+    随后落下的 handle_* override 写在它上面。
 
-    必须从源现派生，不能拿盒里那份：同一批 patch 里源的改动可能排在前面、
-    而跟随同步要到整轮结束才跑——盒里那份此刻还是上一轮的样子。拿它当
-    脱开点，会把「先把线改绿、再在图例项上改线宽」做成一条红线。
+    不从源现派生（第一版的做法）：源此刻的样子不在文档里，重放时脱开点落在源的
+    所有 override 之后，源随后变过的话热态 ≠ 重放（#414）。示意线 = 脚本原样 +
+    文档里的 handle_*，两条路才是一张图；「定格此刻的样子」由前端在断开那一刻
+    把五条样式写成 override 来兑现。
     """
-    src = model.sources[j]
-    fresh = legend_fresh_handle(model.leg, src)
-    if fresh is None:
-        model.custom_base[j] = model.snapshot(model.handle_of(j))
-        return
-    model.custom_base[j] = fresh
     k = model.display_index(j)
     if k is not None:
-        _legend_replace_handle(model.leg, k, src)
+        _legend_replace_handle(model.leg, k, model.pristine[j], copy_of=model.pristine[j])
 
 
 def _entry_handle(t: Text):

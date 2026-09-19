@@ -17,7 +17,7 @@ import {
   type ManifestElement,
   type PanelInfo,
 } from '@/lib/api'
-import { legendPlacementPlan, restoreFollowPlan, type LegendPlacement } from '@/lib/legendModel'
+import { detachPlan, legendPlacementPlan, restoreFollowPlan, type LegendPlacement } from '@/lib/legendModel'
 import type { SidePlan } from '@/lib/tickSides'
 import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
 import { TEXT_EFFECTS } from '@/lib/textEffects'
@@ -875,6 +875,23 @@ export function restoreLegendEntryFollow(panelId: string, element: ManifestEleme
       (p) => !plan.remove.some((t) => t.gid === p.gid && t.prop === p.prop),
     )
     upsertOverrides(o, plan.set)
+  })
+  const next = findObject(panelId)
+  if (next?.type === 'panel') requestRender(next, true)
+}
+
+/**
+ * 图例项「断开」（#414）：`binding = custom` 连同此刻的五条示意线样式**一次 commit**
+ * 写进文档（`detachPlan`）。引擎那边脱开 = 脚本原样 + 文档里的 handle_*，所以「定格此刻
+ * 的样子」靠这五条 override 兑现——一条撤销、一次渲染，撤销就回到跟随。
+ */
+export function detachLegendEntry(panelId: string, element: ManifestElement) {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return
+  const plan = detachPlan(element)
+  updateObject<PanelObject>(panelId, hist('legendDetach'), (o) => {
+    upsertOverrides(o, plan)
   })
   const next = findObject(panelId)
   if (next?.type === 'panel') requestRender(next, true)

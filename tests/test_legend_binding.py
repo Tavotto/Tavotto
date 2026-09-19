@@ -237,15 +237,28 @@ def test_dropping_the_override_restores_following(hot):
     _man(hot)
 
 
-def test_detaching_keeps_the_synced_look_across_a_rebuild(hot):
-    """先让源变（项跟着变绿），再在项上改线宽（脱开），再改列数重建：
-    脱开的项必须还是绿的——custom_base 是脱开那一刻的样子，不是脚本原样。"""
+def test_detaching_is_script_original_plus_overrides_and_survives_a_rebuild(hot):
+    """先让源变（项跟着变绿），再在项上改线宽（脱开），再改列数重建。
+
+    #414 之后脱开的项 = **脚本原样 + 文档里的 handle_***：颜色没写成 override，就回到
+    脚本的红——不再是「脱开那一刻的样子」（那份样子只活在会话里，重放拿不到）。
+    界面的「断开」会把五条样式写成 override，所以走界面的用户仍然看到绿：这里另
+    一段就是那条路。重建之后两者都不变。"""
     patches = [
         {"gid": "axes_0.lines_0", "prop": "color", "value": "#00ff00"},
         {"gid": T[0], "prop": "handle_linewidth", "value": 3.0},
     ]
-    _man(hot, patches)
+    man = _man(hot, patches)
+    assert _val(man, T[0], "handle_color") == "#ff0000", (
+        "脱开 = 脚本原样 + override，颜色回脚本的红"
+    )
+    assert _val(man, T[0], "handle_linewidth") == 3.0
     man = _man(hot, patches + [{"gid": LEG, "prop": "ncol", "value": 2}])
+    assert _val(man, T[0], "handle_color") == "#ff0000"
+    assert _val(man, T[0], "handle_linewidth") == 3.0
+    # 界面那条路：断开时把此刻的颜色也写成 override → 绿色留下来，重建照旧
+    pinned = patches + [{"gid": T[0], "prop": "handle_color", "value": "#00ff00"}]
+    man = _man(hot, pinned + [{"gid": LEG, "prop": "ncol", "value": 2}])
     assert _val(man, T[0], "handle_color") == "#00ff00"
     assert _val(man, T[0], "handle_linewidth") == 3.0
     _man(hot)
@@ -263,15 +276,28 @@ def test_a_script_customised_entry_can_be_told_to_follow(hot):
     assert _val(man, T[2], "handle_linewidth") == 4.0
 
 
-def test_binding_custom_freezes_the_entry_at_its_current_look(hot):
-    """显式脱开（binding=custom，不改任何样式）：示意线冻在此刻的样子，
-    源再变它不动。"""
-    green = {"gid": "axes_0.lines_0", "prop": "color", "value": "#00ff00"}
+def test_binding_custom_alone_is_script_original_and_ignores_the_source(hot, library):
+    """显式脱开（binding=custom，不带任何样式 override）：示意线是**脚本原样**，源变
+    它不动——热态与只见最终列表的全新 worker 一张图（#414：第一版冻结的是「此刻从源
+    派生的样子」，那份样子不在文档里，重放拿不到）。
+
+    源改的是 marker（与 harness 里 #414 的最小复现同形）：颜色那条 prop 恰好排在
+    binding 前面，旧实现上热态 == 重放也成立，量不出差别。"""
+    square = {"gid": "axes_0.lines_0", "prop": "marker", "value": "s"}
     freeze = {"gid": T[0], "prop": "binding", "value": "custom"}
-    man = _man(hot, [green, freeze])
-    assert _val(man, T[0], "handle_color") == "#00ff00"
-    man = _man(hot, [{**green, "value": "#0000ff"}, freeze])
-    assert _val(man, T[0], "handle_color") == "#00ff00", "冻结之后源再变，它不动"
+    man = _man(hot, [freeze])
+    assert _val(man, T[0], "handle_marker") == "None", "脚本原样：sin 没有 marker"
+    man = _man(hot, [square, freeze])
+    assert _val(man, T[0], "handle_marker") == "None", "脱开之后源再变，它不动"
+    hot_png = _png(hot, [square, freeze], "custom-hot")
+    fresh = _worker(library)
+    try:
+        assert _man(fresh, [square, freeze]) == man, "热态 ≠ 只见最终列表的全新 worker"
+        assert _png(fresh, [square, freeze], "custom-fresh") == hot_png, (
+            "manifest 一样但画出来不一样"
+        )
+    finally:
+        pool.discard(fresh)
     _man(hot)
 
 

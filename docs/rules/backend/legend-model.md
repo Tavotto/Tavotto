@@ -14,9 +14,11 @@
   图例标题仍是 `text`。每一项按 label + 示意线指纹绑定源对象
   （`bind_legend_entries`，并列时只认 `get_legend_handles_labels()` 的位置，
   **不伪造**）；跟随的项在 `apply()` 尾部 `sync_legends` 从源重新派生示意线
-  （派生显示，不进 applied）；任一 `handle_*` override 落下即脱开，脱开点
-  `custom_base` 是**源此刻**派生的样子（`_detach_entry` 从源现派生——盒里那份
-  此刻还是上一轮的）。重建型 prop（ncol / borderpad / labelspacing /
+  （派生显示，不进 applied）；任一 `handle_*` override 落下即脱开，**脱开的项 =
+  脚本原样快照 + 文档里的 handle_***（2026-09-19，#414：原来的「源此刻派生的样子」
+  只活在会话里，重放拿不到，热态 ≠ 重放；`custom_base` 字段已删）。「定格此刻」由前端
+  「断开」把五条样式写成 override 兑现（`store/actions.detachLegendEntry`）。重建型
+  prop（ncol / borderpad / labelspacing /
   handlelength / handletextpad / columnspacing / entry_order / 条目 visible）
   一律走 `rebuild_legend`：素材是源对象或脚本原样快照，**不许把
   `leg.legend_handles` 副本喂回 `_init_legend_box`**（误差棒退化成 Line2D、

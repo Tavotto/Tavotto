@@ -16,7 +16,7 @@ Typography 控件）、[0030 统一检查与问题定位](0030-validation-and-pr
 | 图例项与图中对象的关系 | 每一项**尽可能**绑定一个源对象（曲线 / 散点 / 填充 / 柱系列 / 误差棒容器）；判据是 label + 示意线指纹（见下）。找不到就没有绑定——**不伪造** |
 | 默认绑定 | 源找到且示意线与源一致 → `follow_source`；源找到但脚本在 `legend()` 之后改过示意线（或改过源）→ `custom`。后者默认不跟随：跟随等于改掉脚本此刻画出来的东西 |
 | 跟随的含义 | 示意线由源对象**派生**：每次 `apply()` 尾部按 matplotlib 自己的 handler 从源重新造一份（与 `ax.legend()` 同一条路）。**派生显示，不进文档、不进 applied、不产生历史** |
-| 脱开的含义 | 任何一条 `handle_*` override 落下即 `custom`；也可显式写 `binding = custom`（冻结在此刻从源派生出来的样子）。脱开点 `custom_base` 是**源此刻**的样子，不是脚本原样——改列数重排之后它不会退回脚本原样 |
+| 脱开的含义 | 任何一条 `handle_*` override 落下即 `custom`；也可显式写 `binding = custom`。**脱开的项 = 脚本原样快照 + 文档里的 handle_***（2026-09-19 修订，#414；原文是「冻结在此刻从源派生出来的样子」，那份样子只活在会话里，重放拿不到）。界面的「断开」把此刻的五条样式写成 override，定格由文档兑现 |
 | 恢复跟随 | 删掉全部 `handle_*` override；脚本原样是 custom 的项写一条 `binding = follow_source`。一次 commit、一条撤销 |
 | 「有没有 override」vs「值一不一样」 | 判 custom 的是**文档里有没有 override**，不是示意线的值是否等于源。用户把颜色改成与源相同的值，仍是「我要自己管这一项」 |
 | 文字与源的 label | **不同步**（沿用既有契约，`tests/test_legend_text.py`）：改曲线 label 不覆盖图例上的字，改图例上的字不动曲线 label |
@@ -49,8 +49,7 @@ override → `set_color`，于是图上是绿线、图例上是红线，而且�
 engine/overrides.LegendEntries（挂在 leg._mm_entries，instrument 时建）
   n                 项数（有 handler 的项；`legend_handles` 里的 None 不算）
   orig_fp[j]        创建时示意线的指纹（绑定用）
-  pristine[j]       示意线的脚本原样快照（独立对象；没有源的项重建时的素材）
-  custom_base[j]    这一项「不带任何 handle_* override 时长什么样」
+  pristine[j]       示意线的脚本原样快照（独立对象；也是 custom 项「不带任何 handle_* override 时长什么样」的唯一答案——2026-09-19 修订前另有一份会话内的 custom_base）
   texts[j]          当前 Text 对象（隐藏的项保留最后那个，gid 与 override 挂在它上面）
   order / hidden    显示顺序（原始序号的排列）/ 隐藏集
   sources[j]        源对象（artist 或容器）/ None
@@ -80,14 +79,13 @@ follow；只指纹相等且唯一 → follow（脚本把 labels 单独传了）�
 * **同步**（`sync_legends`，`apply()` 尾部）：跟随的项——把 handlebox 里的子
   artist 换成从源现派生的那份（`legend_fresh_handle` 画进原来的 DrawingArea），
   只动示意线本身，不动布局盒、文字、定位回调，所以**不改包围盒**。custom 而
-  没有 override 的项——示意线该是 `custom_base` 的样子（撤掉 binding override
-  之后要退回脚本原样），指纹不同才换。
+  没有 override 的项——示意线该是脚本原样快照的样子（撤掉 binding override
+  之后也退回脚本原样），指纹不同才换。
 * **脱开**（`_detach_entry`）：第一条 `handle_*` override 落下、或显式
-  `binding = custom` 时，`custom_base[j]` 记成**源此刻**派生出来的样子，盒里那份
-  也换成它。必须从源现派生、不能拿盒里那份：同一批 patch 里源的改动可能排在
-  前面，而同步要到整轮结束才跑——盒里那份此刻还是上一轮的样子。
+  `binding = custom` 时，盒里那份换成**脚本原样快照**的副本，随后的 handle_*
+  写在它上面（2026-09-19 修订，见文末）。
 * **重建**（`rebuild_legend`）：`_init_legend_box(handles, labels)` 的 handles 是
-  `base_of(j)`（跟随的取源、其余取 custom_base），文字整批换新后把旧文字的
+  `base_of(j)`（跟随的取源、其余取脚本原样快照），文字整批换新后把旧文字的
   样子（颜色 / 字体属性 / alpha / 显隐 / path effects）搬过去、标题带着字体属性
   重设；`_reindex_legend_children` 按原始序号接回 gid / 模型 / `state.index`，
   并重放已应用的 override（状态类 prop `binding` / `visible` 不重放——模型自己
@@ -257,3 +255,25 @@ manifest 发 `loc_anchor` 的条件是锚框能被这个模型表达出来。两
 （值形状逐字节，Rust 侧同一份）、
 `web/src/components/inspector/controls/pickers.test.tsx`、
 `web/src/components/inspector/legendCard.test.tsx`。
+
+> **2026-09-19 修订（#414）：脱开的项 = 脚本原样 + 文档里的 handle_*，不再有会话内的
+> `custom_base`。** 原设计把脱开点记成「源此刻派生出来的样子」，理由是重排之后不该退回
+> 脚本原样。但那份样子**只活在 worker 进程里**：文档里只有 `binding = custom`（或某条
+> handle_*），重放时脱开落在源的全部 override 之后——源在脱开之后变过的话（改 marker、改
+> 颜色），热态与重放不是一张图，写回 / 重开就换了样子。序列 harness（`tests/test_override_sequences.py`）
+> 抓到的最小复现：`[lines_1.marker=None, texts_0.binding=custom] → [lines_1.marker=o, …]`；
+> 显式路径与 handle_* 路径都中（`[color=green, handle_linewidth=3] → [color=blue, …]` 热态绿、
+> 重放蓝）。确定性只能来自文档，所以：
+>
+> * 引擎：`_detach_entry` 换成脚本原样快照的副本，`custom_base` 字段删除（结构上不再可能
+>   有第二份「不带 override 时的样子」）；
+> * 前端：「断开」（`store/actions.detachLegendEntry`）把 `binding = custom` **连同此刻的五条
+>   示意线样式按 manifest 当前值**一次 commit 写进文档（`lib/legendModel.detachPlan`）——用户
+>   看到的定格仍然成立，只是定格住的东西在文档里；「恢复跟随」删掉这六条，两者互为逆；
+> * 兼容：修订前写下的裸 `binding = custom` / 只有个别 handle_* 的项，重开后示意线从「源当前
+>   派生」变成「脚本原样 + 那几条 override」——断开时的样子本来就没存下来，找不回；
+>   要定格就再按一次「断开」。写进发行说明，不做版本门。
+>
+> 看护：`tests/test_legend_binding.py`（脱开 = 脚本原样 + override、显式 custom 热态 == 全新
+> worker）、`tests/test_override_sequences.py::test_fixed_regressions[414-…]`、
+> `web/src/store/legendDetach.test.ts`、`web/src/components/inspector/legendCard.test.tsx`。

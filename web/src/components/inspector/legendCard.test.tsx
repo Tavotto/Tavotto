@@ -30,6 +30,7 @@ import {
   legendPlacementPlan,
   placementPlanFrom,
   placementPropsOf,
+  detachPlan,
   restoreFollowPlan,
   type LegendPlacementSlot,
 } from '@/lib/legendModel'
@@ -357,6 +358,35 @@ describe('legendModel', () => {
     expect(restoreFollowPlan(cosEntry).set).toEqual([
       { gid: cosEntry.gid, prop: 'binding', value: 'follow_source' },
     ])
+  })
+
+  it('断开的计划：binding=custom 连同此刻的五条示意线样式一起写进文档（#414）', () => {
+    expect(detachPlan(sinEntry)).toEqual([
+      { gid: sinEntry.gid, prop: 'binding', value: 'custom' },
+      { gid: sinEntry.gid, prop: 'handle_color', value: '#ff0000' },
+      { gid: sinEntry.gid, prop: 'handle_linestyle', value: '-' },
+      { gid: sinEntry.gid, prop: 'handle_linewidth', value: 1.5 },
+      { gid: sinEntry.gid, prop: 'handle_marker', value: 'None' },
+      { gid: sinEntry.gid, prop: 'handle_markersize', value: 6 },
+    ])
+  })
+
+  it('断开的计划只写 manifest 真的发了的样式字段：柱的示意线只有颜色', () => {
+    const bar: ManifestElement = {
+      ...sinEntry,
+      gid: 'axes_0.legend.texts_4',
+      editable: sinEntry.editable.filter(
+        (f) => !f.prop.startsWith('handle_') || f.prop === 'handle_color',
+      ),
+    }
+    expect(detachPlan(bar)).toEqual([
+      { gid: bar.gid, prop: 'binding', value: 'custom' },
+      { gid: bar.gid, prop: 'handle_color', value: '#ff0000' },
+    ])
+    // 断开写下的六条，恢复跟随全部删掉：两条计划互为逆
+    expect(restoreFollowPlan(sinEntry).remove.map((o) => o.prop).sort()).toEqual(
+      detachPlan(sinEntry).map((o) => o.prop).sort(),
+    )
   })
 })
 
@@ -754,16 +784,23 @@ describe('选中图例项', () => {
     expect(host.querySelector('[data-binding]')?.getAttribute('data-binding')).toBe('custom')
   })
 
-  it('断开写 binding=custom；恢复链接一次撤销撤掉全部示意线 override', async () => {
+  it('断开一次写下 binding=custom 与此刻的五条样式（#414）；恢复链接一次撤销撤掉全部', async () => {
     await mount(['axes_0.legend.texts_0'])
+    const start = useDocumentStore.getState().past.length
     await click(byAria('断开链接'))
     expect(overrideOf('axes_0.legend.texts_0', 'binding')).toBe('custom')
-    useDocumentStore.getState().commit(literal('两条示意线 override'), (d) => {
-      const p = d.objects.find((o) => o.id === 'p1') as PanelObject
-      p.overrides.push({ gid: 'axes_0.legend.texts_0', prop: 'handle_color', value: '#123456' })
-      p.overrides.push({ gid: 'axes_0.legend.texts_0', prop: 'handle_linewidth', value: 3 })
-    })
-    await act(async () => {})
+    // 此刻的样子按 manifest 的当前值定格进文档：重开后才是同一条示意线
+    expect(overrideOf('axes_0.legend.texts_0', 'handle_color')).toBe('#ff0000')
+    expect(overrideOf('axes_0.legend.texts_0', 'handle_linewidth')).toBe(1.5)
+    expect(overridesOf('axes_0.legend.texts_0').map((o) => o.prop).sort()).toEqual([
+      'binding',
+      'handle_color',
+      'handle_linestyle',
+      'handle_linewidth',
+      'handle_marker',
+      'handle_markersize',
+    ])
+    expect(useDocumentStore.getState().past.length).toBe(start + 1)
     const before = useDocumentStore.getState().past.length
     await click(byAria('恢复链接'))
     expect(overridesOf('axes_0.legend.texts_0')).toEqual([])
@@ -773,7 +810,10 @@ describe('选中图例项', () => {
     expect(overridesOf('axes_0.legend.texts_0').map((o) => o.prop).sort()).toEqual([
       'binding',
       'handle_color',
+      'handle_linestyle',
       'handle_linewidth',
+      'handle_marker',
+      'handle_markersize',
     ])
   })
 

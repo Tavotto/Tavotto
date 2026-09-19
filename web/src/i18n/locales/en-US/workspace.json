@@ -311,6 +311,7 @@
     "zUp": "Bring forward",
     "hideLegendEntry": "Hide legend entry “{{label}}”",
     "legendFollowSource": "Legend entry follows source again",
+    "legendDetach": "Legend entry unlinked from its source",
     "tickSideOn": "{{side}}: show {{dir}} ticks",
     "tickSideOff": "{{side}}: hide {{dir}} ticks",
     "tickSideHide": "{{side}}: hide tick marks",
