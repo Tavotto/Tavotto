@@ -83,21 +83,19 @@ class Shape:
     pixel: bool
 
 
-#: 三族已知分岔各自的形状——2026-09-19 在 `KNOWN` 四条 + `KNOWN_SEEDS` 六条上实测，三族两两
-#: 可分：#412 只差那一条 `bbox_visible` 取值且像素不同；#413 只差图例文字的 `bbox` 几何且像素
-#: 相同；#414 manifest 逐字相等只有像素不同。已知用例 / 已知种子命中时按这张表比对，形状
-#: 不符就是新问题（普通红），不许被旧 issue 认领。
+#: 已知分岔各族的形状——2026-09-19 在 `KNOWN` 四条 + `KNOWN_SEEDS` 六条上实测，两两可分：
+#: #412 只差那一条 `bbox_visible` 取值且像素不同；#414 manifest 逐字相等只有像素不同
+#: （#413 曾是「只差图例文字的 `bbox` 几何且像素相同」，修好后从这里摘掉，复现挪进 `FIXED`）。
+#: 已知用例 / 已知种子命中时按这张表比对，形状不符就是新问题（普通红），不许被旧 issue 认领。
 FAMILIES: dict[str, Shape] = {
     "#412": Shape(("elements[axes_0.legend.texts_*].editable[bbox_visible].value",), pixel=True),
-    "#413": Shape(("elements[axes_0.legend.texts_*].bbox",), pixel=False),
     "#414": Shape((), pixel=True),
 }
 
 #: **已知分岔**：随机发现、最小化到两步之后钉在这里，每条挂一个 issue。用例断言它**今天仍按
 #: 登记的形状在最后一步分岔**：不再分岔 = 修好了，红着提醒挪进 `FIXED`；形状变了 = 另一个
-#: 问题。2026-09-18 首跑 8 × 10 × 2 抓到三族：
+#: 问题。2026-09-18 首跑 8 × 10 × 2 抓到三族（#413 已修，见 `FIXED`）：
 #:   * #412 文字 bbox 组：撤掉 / 关掉 `bbox_visible` 而其它 bbox_* 仍在，热态藏框、重放露框；
-#:   * #413 `preview_png` 不是状态中立：预览那次 draw 的几何进了藏起来的图例文字的 bbox；
 #:   * #414 显式 `binding=custom` 冻结的样子只活在会话里，源随后变了重放对不上。
 KNOWN: list[tuple[str, str, str, list[list[dict]]]] = [
     (
@@ -119,13 +117,6 @@ KNOWN: list[tuple[str, str, str, list[list[dict]]]] = [
         ],
     ),
     (
-        "413-preview-png-then-hide-legend",
-        "#413",
-        "InvMix",
-        # 第 0 步是空列表：分岔来自逐步比对时那一次 preview_png（状态中立的承诺）本身
-        [[], [_p("axes_0.legend", "visible", False)]],
-    ),
-    (
         "414-custom-binding-then-source-changes",
         "#414",
         "InvCont",
@@ -141,7 +132,6 @@ KNOWN: list[tuple[str, str, str, list[list[dict]]]] = [
 #: 就会有 seed 因「不再分岔」变红，提醒摘掉。已知分岔之后的步与 HOT == FRESH **不量**（热态
 #: 带着已知漂移，量到的分不清是新问题还是它的后果），如实记进 junit 的 `unmeasured` 属性。
 KNOWN_SEEDS: dict[tuple[str, int], tuple[str, int]] = {
-    ("InvMix", 2): ("#413", 5),
     ("InvMix", 5): ("#412", 2),
     ("InvMix", 6): ("#412", 9),
     ("InvCont", 0): ("#414", 6),
@@ -150,7 +140,16 @@ KNOWN_SEEDS: dict[tuple[str, int], tuple[str, int]] = {
 }
 
 #: **固定回归**：`KNOWN` 里修好之后挪过来的序列——随机负责发现、这里负责不再回来。
-FIXED: list[tuple[str, str, list[list[dict]]]] = []
+FIXED: list[tuple[str, str, list[list[dict]]]] = [
+    (
+        # #413：第 0 步是空列表——分岔来自逐步比对时那一次 preview_png 本身：预览在 380 px
+        # 的 dpi 上画过一回，随后藏起来的图例不再 draw，manifest 读到的六个文字 bbox 是预览
+        # dpi 的像素。修法在 manifest：draw 跳过的图例按文档 dpi 补排一次版再量。
+        "413-preview-png-then-hide-legend",
+        "InvMix",
+        [[], [_p("axes_0.legend", "visible", False)]],
+    ),
+]
 
 
 @pytest.fixture(scope="module")

@@ -3937,6 +3937,42 @@ def _ensure_agg_canvas(fig):
     return fig.canvas.get_renderer()
 
 
+def _legend_would_not_draw(leg) -> bool:
+    """这次 `fig.canvas.draw()` 会不会跳过这个图例：自己不可见，或它住的 axes 不可见。"""
+    if not leg.get_visible():
+        return True
+    parent = getattr(leg, "parent", None)
+    return parent is not None and not parent.get_visible()
+
+
+def _layout_undrawn_legends(state: FigState, fig) -> None:
+    """把 draw 跳过的图例按**文档 dpi** 重新排一次版，manifest 才能量它的文字。
+
+    图例文字的像素位置不是现算的：`Legend.draw` 走到 `OffsetBox.draw` 时才把每个
+    `TextArea` 的偏移写死成当时 renderer 下的像素（`TextArea.set_offset`），之后
+    `Text.get_window_extent` 就一直用那组数。图例一隐藏，`Legend.draw` 直接返回，
+    这组数就冻结在**上一次画它的那一回**——而那一回可能是 `preview_png` / `export`
+    在别的 dpi 上的 savefig（#413：预览 380 px 之后再藏图例，六个文字的 bbox 全是
+    预览 dpi 的坐标除以文档像素）。所以隐藏图例的文字几何不许取「上一次 draw」，
+    要按当前状态在文档 dpi 上现排：在一张一次性的 Agg renderer 上走一遍
+    `_legend_box.draw`（偏移回调 `_findoffset` 也在这条路上算，`loc='best'` 照常），
+    真 canvas 一个像素都不碰。图例本体的框（`Legend.get_window_extent`）是动态算
+    的，用不着这一步；它的**子项**才是冻结的。
+
+    只在 preview / export 之后补一次文档 dpi 的 draw 盖不住这一格：预览里图例
+    可见、会话里图例隐藏时，补的那次 draw 同样跳过图例（三档 matplotlib 上都量过）。
+    """
+    scratch = None
+    for el in state.elements:
+        if el["role"] != "legend" or not _legend_would_not_draw(el["artist"]):
+            continue
+        if scratch is None:
+            from matplotlib.backends.backend_agg import RendererAgg
+
+            scratch = RendererAgg(int(fig.bbox.width), int(fig.bbox.height), fig.dpi)
+        el["artist"]._legend_box.draw(scratch)  # noqa: SLF001
+
+
 def build_manifest(state: FigState, stem: str) -> dict:
     """一份 manifest。**刻度记忆表只在这里开**（`overrides.ticklabel_memo`）。
 
@@ -3952,6 +3988,9 @@ def _build_manifest(state: FigState, stem: str) -> dict:
     fig = state.fig
     renderer = _ensure_agg_canvas(fig)
     W, H = float(fig.bbox.width), float(fig.bbox.height)
+    # draw 跳过的图例（隐藏 / 住在隐藏的 axes 里）按文档 dpi 补排一次版，否则它的
+    # 文字几何是上一次画它那回的像素（#413）
+    _layout_undrawn_legends(state, fig)
     # 刻度伪元素按**当前**刻度状态对齐（必须在 draw 之后：标签的文字是 draw
     # 那一刻由 Formatter 填进去的）
     sync_tick_elements(state)
