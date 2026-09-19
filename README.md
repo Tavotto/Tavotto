@@ -35,11 +35,11 @@ change what you can see, right there.
 <p align="center"><sub>The title of panel (a) is selected: its text, font and size are on the right. The script that drew it, <code>fig1_kinetics.py</code>, is under <em>Source &amp; advanced</em> — and still untouched.</sub></p>
 
 <p align="center">
-  <a href="https://www.tavotto.com/#video"><img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/launch-film-cover.webp" width="72%"
-       alt="The cover of the Tavotto launch film: the Tavotto mark on a dark ground. Opens the film on tavotto.com."></a>
+  <a href="https://www.tavotto.com/#video"><img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/launch-film-cover-en.webp" width="72%"
+       alt="The cover of the Tavotto launch film: the Tavotto mark on a dark ground, with the line From Matplotlib to publication-ready figures. Opens the film on tavotto.com."></a>
 </p>
 
-<p align="center"><sub>▶ <a href="https://www.tavotto.com/#video">Watch the 33-second launch film</a> on tavotto.com — with music; the on-screen text is in Chinese.</sub></p>
+<p align="center"><sub>▶ <a href="https://www.tavotto.com/#video">Watch the 33-second launch film</a> on tavotto.com (with music).</sub></p>
 
 ## Two ways to use it
 
