@@ -795,6 +795,39 @@ def _same_value(a, b) -> bool:
         return False
 
 
+class _PatchFace:
+    """Patch 面色的可回灌表示：`_original_facecolor`（None = 没设，按 `patch.facecolor` 走）。
+
+    与 `_PatchEdge` 同一个坑的面那一半。按值写回 `get_facecolor()` 看似无害（像素相同），
+    但 `_original_facecolor` 从 None 变成一个 RGBA：`fill` 关着时 alpha 已被清零，写回去的
+    就是一个透明色——manifest 按「开了会画的那个色」报 facecolor（#427）时，撤销前后读到
+    的不再是同一个值，不变式 2「逐字还原」当场红。模式只有原样回灌才留得住。
+    """
+
+    __slots__ = ("original",)
+
+    def __init__(self, original) -> None:
+        self.original = original
+
+    def __repr__(self) -> str:
+        return f"<patch face {self.original!r}>"
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, _PatchFace) and _same_value(self.original, other.original)
+
+    __hash__ = None
+
+
+def _get_patch_facecolor(p):
+    if not hasattr(p, "_original_facecolor"):
+        return p.get_facecolor()
+    return _PatchFace(p._original_facecolor)  # noqa: SLF001
+
+
+def _set_patch_facecolor(p, v) -> None:
+    p.set_facecolor(v.original if isinstance(v, _PatchFace) else v)
+
+
 def _get_patch_edgecolor(p):
     if not hasattr(p, "_original_edgecolor"):
         return p.get_edgecolor()  # 认不出的实现：退回按值（老行为）
@@ -1927,7 +1960,10 @@ _COLLECTION_CAPS: dict[str, tuple] = {
 #: Arc / FancyBboxPatch / StepPatch / Annulus …，以及用户自己继承的子类）。
 #: 这些 getter/setter 全在 `Patch` 基类上，子类一个都没改语义。
 _PATCH_CAPS: dict[str, tuple] = {
-    "facecolor": (lambda a: a.get_facecolor(), lambda a, v: a.set_facecolor(v)),
+    # 面色 / 边色的 getter 回的是**模式**（`_PatchFace` / `_PatchEdge`），不是解析出来的
+    # RGBA：脚本原样常常是「没设」，按值写回会把模式换成一个具体值（面：fill 关着时是
+    # 透明色；边：花纹颜色跟着改掉，#423）
+    "facecolor": (_get_patch_facecolor, _set_patch_facecolor),
     # 边色的 getter 回的是**模式**（`_PatchEdge`），不是解析出来的 RGBA：脚本原样常常是
     # 「没设」，按值写回会把花纹颜色一起改掉（#423，见 `_PatchEdge`）
     "edgecolor": (_get_patch_edgecolor, _set_patch_edgecolor),
@@ -2569,7 +2605,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
 _PENDING_RESTORES: dict[tuple[str, str], object] = {}
 
 for _prop, _g1, _s1 in [
-    ("facecolor", lambda r: r.get_facecolor(), lambda r, v: r.set_facecolor(v)),
+    ("facecolor", _get_patch_facecolor, _set_patch_facecolor),  # 模式而非值，见 `_PatchFace`
     ("edgecolor", _get_patch_edgecolor, _set_patch_edgecolor),  # 模式而非值，见 `_PatchEdge`
     ("linewidth", lambda r: float(r.get_linewidth()), lambda r, v: r.set_linewidth(float(v))),
     ("alpha", lambda r: r.get_alpha(), lambda r, v: r.set_alpha(None if v is None else float(v))),

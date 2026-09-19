@@ -43,6 +43,7 @@ def main():
     ax.add_patch(Rectangle((3.7, 0.3), 1.4, 1.4, facecolor="#8844AA", fill=False, edgecolor="k"))  # patches_2 fill 关着
     ax.add_patch(Rectangle((5.4, 0.3), 1.4, 1.4, facecolor="none", edgecolor="#AA0000"))    # patches_3 面就是 none
     ax.add_patch(Rectangle((7.1, 0.3), 0.6, 1.4, facecolor="#336699", alpha=0.4))            # patches_4 半透明
+    ax.add_patch(Rectangle((0.3, 2.0), 1.4, 0.8, fill=False, edgecolor="#555555"))            # patches_5 面色没设 + fill 关着
     ax.plot([1, 3, 5, 7], [2.4, 2.6, 2.4, 2.6], marker="o", markerfacecolor="none", color="#222222")
     fig.savefig("NoColour.png")
 """
@@ -115,3 +116,28 @@ def test_no_colour_is_settable_back_and_hot_equals_fresh(tmp_path):
     finally:
         pool.discard(hot)
         pool.discard(fresh)
+
+
+def test_undoing_a_face_colour_on_an_unfilled_patch_restores_the_mode(tmp_path):
+    """面色的原样是「没设」这个模式（`_original_facecolor is None` → `patch.facecolor`）：
+    fill 关着的形状改一次面色再撤掉，字段要回到脚本原样那个色，不是「透明」。按值写回
+    的话写进去的是 alpha 已清零的 RGBA，manifest 撤销前后读到两个值（不变式 2 也会红）。"""
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / SCRIPT_NAME).write_text(LIBRARY, encoding="utf-8")
+    w = pool.one_shot(SCRIPT_NAME, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        base = w.override(STEM, [])["manifest"]
+        before = _field(base, "axes_0.patches_5", "facecolor")
+        assert before.startswith("#") and before != NO_COLOR, before  # rcParams 的默认面色
+        assert _field(base, "axes_0.patches_5", "fill") is False
+        on = w.override(
+            STEM, [{"gid": "axes_0.patches_5", "prop": "facecolor", "value": "#123456"}]
+        )
+        assert _field(on["manifest"], "axes_0.patches_5", "facecolor") == "#123456"
+        back = w.override(STEM, [])["manifest"]
+        assert _field(back, "axes_0.patches_5", "facecolor") == before
+        assert back == base
+    finally:
+        pool.discard(w)

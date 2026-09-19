@@ -76,7 +76,10 @@
   （没设）。按值写回把「没设」换成「显式透明」，3.10 及以前还顺手把 `_hatch_color` 写成
   同一个值——撤销边色后加花纹，斜线透明；`set_fill(False)` 按原样重算轮廓，也画不出来。
   所以 Patch / bar / bar_series 的 `edgecolor` getter 回 `_PatchEdge`（原始设定 + ≤3.10 的
-  花纹颜色快照），setter 认得它（3.11 起花纹颜色独立，快照留 None）。同族先例：
+  花纹颜色快照），setter 认得它（3.11 起花纹颜色独立，快照留 None）；`facecolor` 同样回
+  `_PatchFace`（`_original_facecolor`）——像素上看不出差别，但 manifest 按「开了会画的那个色」
+  报面色（#427）之后，按值写回 fill 关着时那个 alpha 已清零的 RGBA 会让撤销前后读到两个值。
+  同族先例：
   `_AUTOSCALE`（自动缩放）、`_NO_BBOX`（没有框）、`_get_coll_edgecolor`（映射通道）。
   哨兵只活在 `originals` 里，不进 patch、不过 JSON。看护 `tests/test_patch_edgecolor_mode.py`。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
