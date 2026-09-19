@@ -130,8 +130,13 @@ workflow 会先 `--collect-only` 数一遍，**一条都没选中就直接失败
 `tests/test_override_sequences.py`（§4.2 后端序列 harness）默认 8 条种子 × 2 张图，
 PR / merge_group / 上面的常规套件都是这个档。首批三族（#412–#414）8 条就抓到，第四族
 （#423）放到 24 条才碰上——所以 nightly 及以上再以 `TAVOTTO_SEQ_SEEDS=32` 单独跑一遍
-这个文件（约 4 分钟）。随机负责发现：红了就按它报的最短复现最小化，钉进 `FIXED`
-（修好的）或 `KNOWN`（开 issue 的），PR 上的默认档不加时长。
+这个文件。随机负责发现：红了就按它报的最短复现最小化，钉进 `FIXED`（修好的）或
+`KNOWN`（开 issue 的），PR 上的默认档不加时长。
+
+首次执行（ci-infra run 35448006749，2026-09-19，手动派的 nightly 档）实测：73 条
+（64 条随机序列 + 9 条固定，含 `KNOWN` 空集那条 skip；8 条种子的档是 25 条），**12 分 43 秒**（本机 3.5 分钟；
+runner 比本机慢三到四倍，与常规套件 46 分钟对本机的比例一致）。nightly 的 qualify
+整条由此从 63 分钟涨到 78 分钟；上表「≤ 30~45 min」在此之前就已经只是目标不是实测。
 
 ### 升级验收 `upgrade_acceptance.py`
 
