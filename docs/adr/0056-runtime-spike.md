@@ -65,8 +65,7 @@ PYTHONPATH=scripts:src .venv/bin/python -m dev.u02_spikes.runtime_spike \
 
 ## 4. 明确没做 / 仍缺的目标
 
-* **Windows 运行时证据**（embeddable 上 `-m venv` 失败、pbs Windows install_only 起 venv、注册表 / `%APPDATA%` / `py.exe` launcher 不被触碰）——本机是 macOS，只能静态检查 embeddable；CI dispatch 的 windows-latest 腿给运行时证据，结论写在交接文件。**在拿到之前，Windows 上不许默认启用私有 Python 准备**。
-* Linux：同上（ubuntu-latest 腿）。
+* **Windows / Linux 运行时证据已由 CI 腿取得**（run 35507598899，交接文件「其它目标」表）：windows-latest 上 pbs `x86_64-pc-windows-msvc` install_only 起得来、uv 建 venv + 离线装 + 四条负例全过，**embeddable 真跑 `python.exe -m venv` 退出 1 `No module named venv`**；ubuntu-latest 上 pbs `x86_64-unknown-linux-gnu` 15/15。仍没量的：Windows **注册表**前后快照（spike 不读不写注册表，但没有这一步的证据）、`py.exe` launcher 配置；U05 接产品时补。这仍是 spike 证据，不是启用资格（06 §2）。
 * 下载去重 / 消费者租约 / GC / 取消 / 磁盘配额 / 断点续传 / 代理与凭据配置 / 应用重开后的半环境处理（FO-025 ~ FO-028）——U05 的产品实现，本 spike 不做。
 * 签名 / 公证（pbs 的 Mach-O 逐个 codesign）、最终安装器——不在此 gate（D04）。
 * 科学栈 wheel（numpy / matplotlib）的离线安装：本 spike 用三个纯 Python 小包证明路径；大 wheel 的体积 / 时间在 U05 量。

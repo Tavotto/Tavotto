@@ -116,13 +116,15 @@ asc-desc / 覆盖表 / provenance 判据，等 U06 按 D07 一次批准迁移。
 **回退方式、不能假装可回滚的外部副作用**：revert 本 PR 即回退（全是新文件 + 一条 hygiene 例外 + 台账状态）；没有设置写入、
 没有发布。外部副作用只有本机 scratchpad 里的 spike venv / 字体 / 下载缓存与 `--keep` 留下的临时目录，删掉即可。
 
-## 其它目标（CI dispatch 的三条腿）
+## 其它目标（三条腿；`foundation-u02-spikes.yml` run [35507598899](https://github.com/Tavotto/Tavotto/actions/runs/35507598899)，head c5f13db4——之后的 rebase 没动 spike 文件与用例）
 
-（PR #455 上随 spike 文件变动自动触发（`pull_request` + paths 过滤）；结论按 run 号逐腿填在这里，没跑出来的腿保持
-**not_run**，不预填。）
+首轮 run 35507170229（head e04b9747）ubuntu / macos 全过、windows 在 `test_foundation_u02_runtime.py` 的锁文件 hash 用例红：
+`packaging/runtime-lock.json` 没钉 `eol=lf`，Windows 检出成 CRLF，字节 hash ≠ 报告值；改成 LF 归一化的内容 hash 后重跑（c5f13db4）三腿全过。
 
-| 腿 | run | fonts | render_spike | U02 用例 | freeze | runtime_spike | 备注 |
-|---|---|---|---|---|---|---|---|
-| ubuntu-latest | not_run | — | — | — | — | — | — |
-| windows-latest | not_run | — | — | — | — | — | — |
-| macos-latest | not_run | — | — | — | — | — | — |
+| 腿 | fonts | render_spike | U02 用例（spike venv） | freeze | runtime_spike | 备注 |
+|---|---|---|---|---|---|---|
+| ubuntu-latest（x86_64，Python 3.13.15） | 13 文件 hash 全对 | **52/52**；`spike.pdf` 与 git **逐字节相同**（12966287d846），PNG 与 git 不同（PDFium 栅格按平台不同，属 03 §6「需要校准」，spike 自己的 13 个采样点仍全部命中） | 43 passed / 0 skipped（真 child 用例真跑） | 7/7；`libpdfium.so` 在 `_internal/`；`RLIMIT_AS` = **set**（2 GiB 下 PDFium 渲染正常；没做超限触发试验）；产物 112 MB、14.9 s | **15/15**；pbs `x86_64-unknown-linux-gnu`；uv Linux wheel；死代理 4.8 s 拒 | Linux 的私有 Python 来源在 spike 表里，不在锁文件（U05 决定要不要抬进锁） |
+| windows-latest（AMD64，Python 3.13.15） | 同上 | **52/52**；`spike.pdf` 与 git **逐字节相同**；PNG 按平台不同 | 43 passed / 3 skipped（三条假解释器是 sh 脚本的用例，理由写明；真 child 用例在 Windows 上真跑并过） | 7/7；`pdfium.dll` 在 `_internal/`；`RLIMIT_AS` = unsupported（Windows 没有 resource 模块，像素预算是唯一护栏）；产物 57 MB、14.9 s | **16/16**：pbs `x86_64-pc-windows-msvc` install_only 作私有 Python 起得来；uv Windows wheel 建 venv + 离线装 + 死代理 20.5 s 拒；篡改 / 错 hash 拒；**embeddable 真跑 `python.exe -m venv` 退出 1：`No module named venv`**（静态检查的结论在运行时成立） | `%USERPROFILE%` 指空目录跑完仍空、PATH 不变；**注册表没量**（spike 不读不写注册表，但没有「注册表前后快照」这一步——U05 若要这条证据得加） |
+| macos-latest（arm64，Python 3.13.15） | 同上 | **52/52**；`spike.pdf` 与 git 逐字节相同；**PNG 也与 git 相同**（422b77b9408e——同平台同 PDFium 版本栅格可复现） | 43 passed / 0 skipped | 7/7；`libpdfium.dylib`；`RLIMIT_AS` = failed（内核不强制，与本机一致）；75 MB、13.1 s | **15/15**；与本机同一份钉法 | 与本机 macOS arm64 结论一致 |
+
+结论修订：runtime_spike 的 Windows / Linux **运行时证据已取得**（不再是 not_run）；仍缺的是注册表快照、大 wheel 体积 / 时间、去重 / 租约 / GC / 取消 / 配额（U05）与签名（不在此 gate）。render_spike 三平台都过；PDFium 栅格跨平台像素不同但同平台可复现——U07 的像素门要按平台分基线或按「需要校准」档记阈值，不能拿 macOS 的 PNG 当 Linux / Windows 的真值。

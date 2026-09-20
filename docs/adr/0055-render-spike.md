@@ -141,4 +141,4 @@ render child 客户端的四条变异：去锁（串行用例红）、超时不 
 
 ## 7. 其它目标（CI dispatch）
 
-`foundation-u02-spikes.yml` 在 ubuntu-latest / windows-latest / macos-latest 上各跑一遍全套（fonts → render_spike → U02 用例 → freeze_spike → runtime_spike），产物为 `u02-evidence-<os>` 工件。`gh workflow run` 只认默认分支上已登记的 workflow，所以合入前靠 `pull_request`（paths 过滤）触发。首次 run 与各腿结论记在 `docs/implementation/tavotto-foundation/handoffs/U02_spikes.md` 的「其它目标」一节；本 ADR 不预先写它们的结果。
+`foundation-u02-spikes.yml` 在 ubuntu-latest / windows-latest / macos-latest 上各跑一遍全套（fonts → render_spike → U02 用例 → freeze_spike → runtime_spike），产物为 `u02-evidence-<os>` 工件。`gh workflow run` 只认默认分支上已登记的 workflow，所以合入前靠 `pull_request`（paths 过滤）触发。run 35507598899 三腿全过；逐腿数字在 `docs/implementation/tavotto-foundation/handoffs/U02_spikes.md`「其它目标」表。要点：`spike.pdf` 在三个平台**逐字节相同**（写入侧跨平台可复现）；PDFium 的 PNG **跨平台不同、同平台可复现**（U07 的像素门要按平台分基线）；`libpdfium.{so,dll,dylib}` 三平台都过 PyInstaller 且冻结 exe 自起 child 成功；`RLIMIT_AS` Linux = set、Windows = unsupported、macOS = 内核不强制。
