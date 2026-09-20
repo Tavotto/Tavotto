@@ -62,7 +62,7 @@ def test_source_bake_verifies_fresh_source_without_runtime_overrides(tmp_path, m
     result = m._verify_ai_source_bake(target, True, str(tmp_path))
 
     assert result["status"] == "verified"
-    assert result["code"] == "source_bake_verified"
+    assert result["reason"] == "verified"
     assert fresh.override_patches == [], "最终验证必须是 source-only，不能偷偷重放 Tavotto patches"
     assert result["differences"] == []
     assert result["pixels"]["status"] == "ok"
@@ -88,7 +88,7 @@ def test_source_bake_pixel_gate_catches_geometry_neutral_style_mismatch(tmp_path
     result = m._verify_ai_source_bake(_target(tmp_path, b"target-png"), True, str(tmp_path))
 
     assert result["status"] == "mismatch"
-    assert result["code"] == "source_bake_mismatch"
+    assert result["reason"] == "visual_mismatch"
     assert result["elements_compared"] == 2, "几何可以完全一致，像素仍必须独立把关"
     pixel_diffs = [d for d in result["differences"] if d["field"] == "pixels"]
     assert len(pixel_diffs) == 1
@@ -109,6 +109,6 @@ def test_source_bake_without_source_change_is_not_reported_as_verified(tmp_path,
     result = m._verify_ai_source_bake(target, False, str(tmp_path))
 
     assert result["status"] == "mismatch"
-    assert result["code"] == "source_bake_no_source_change"
+    assert result["reason"] == "no_source_change"
     assert called is False
     assert not Path(target["target_png"]).exists()
