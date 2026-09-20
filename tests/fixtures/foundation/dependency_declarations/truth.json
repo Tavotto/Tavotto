@@ -1,0 +1,33 @@
+{
+  "fixture": "dependency_declarations",
+  "small_non_builtin_distributions": ["six", "tabulate", "sortedcontainers"],
+  "files": {
+    "requirements.txt": [
+      {"name": "six", "spec": "==1.17.0", "extras": [], "marker": null, "expected": "install"},
+      {"name": "tabulate", "spec": "==0.9.0", "extras": [], "marker": null, "expected": "install"},
+      {"name": "sortedcontainers", "spec": "==2.4.0", "extras": [], "marker": null, "expected": "install"}
+    ],
+    "requirements-marker-false.txt": [
+      {"name": "tabulate", "spec": "==0.9.0", "extras": [], "marker": "sys_platform == \"never_os\"", "expected": "skip_marker_false"},
+      {"name": "six", "spec": "==1.17.0", "extras": [], "marker": "python_version < \"3.0\"", "expected": "skip_marker_false"}
+    ],
+    "requirements-extra.txt": [
+      {"name": "tabulate", "spec": "==0.9.0", "extras": ["widechars"], "marker": null, "expected": "install_with_extra", "extra_pulls_in": ["wcwidth"]}
+    ],
+    "requirements-conflict.txt": [
+      {"name": "six", "spec": "==1.16.0", "extras": [], "marker": null, "expected": "conflict_stop"},
+      {"name": "six", "spec": "==1.17.0", "extras": [], "marker": null, "expected": "conflict_stop"}
+    ],
+    "constraints.txt": [
+      {"name": "tabulate", "spec": "<0.9", "extras": [], "marker": null, "expected": "conflicts_with_requirements_txt"}
+    ]
+  },
+  "script_unknown_local.py": {
+    "imports": {
+      "labtools_local": "local_module_not_a_distribution",
+      "tabulate": "declared_in_requirements_txt",
+      "zzz_not_a_real_distribution_u00": "unknown_do_not_guess"
+    },
+    "dump_truth": 10.0
+  }
+}

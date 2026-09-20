@@ -1,0 +1,900 @@
+有。我认为这次最值得做的，不是单纯把 `PyMuPDFBackend` 换成 `OpenSourceBackend`，而是趁这个窗口把它升级成一层真正属于 Tavotto 的 **Render Core / Publication Engine**。
+
+你现在其实已经把外围架构搭得很好：统一 ExportRequest、export job、原子发布、Style / Spec、双端 preflight 都已经存在。 所以真正缺的不是更多业务框架，而是**中间这一层 Tavotto 自己可控的渲染基础设施**。
+
+我会按下面这个结构做：
+
+```text
+                 Tavotto Document
+                        │
+                 Publication Spec
+                        │
+                        ▼
+              ┌───────────────────┐
+              │   Render Planner  │
+              └─────────┬─────────┘
+                        │
+                  Tavotto Render IR
+                        │
+       ┌────────────────┼────────────────┐
+       ▼                ▼                ▼
+ Typography Engine   Vector Engine   Raster Engine
+       │                │                │
+       └────────────┬───┴────────────────┘
+                    ▼
+               Backend Layer
+          ┌─────────┼─────────┐
+        PDF        PNG/TIFF    SVG/EPS
+          │
+          ▼
+        Artifact
+          │
+          ▼
+       Validator
+          │
+          ▼
+    Publication Proof
+```
+
+这比“PDF backend”高一个层级。
+
+---
+
+## 1. 最值得现在做：`Tavotto Render IR`
+
+这是我认为**价值最高的一项**。
+
+你现在的 `Canvas.place()` 实际上隐含了一套 Tavotto 自己的渲染语言，只是它目前直接翻译成 PyMuPDF 操作。
+
+例如：
+
+```text
+Text
+Image
+PDF page
+Line
+Arrow
+Rectangle
+Ellipse
+Polygon
+Brace
+Transform
+Clip
+Opacity
+Z-order
+```
+
+这些不应该属于 PyMuPDF。
+
+它们应该成为：
+
+```python
+tavotto/render/
+    model.py
+```
+
+比如概念上：
+
+```python
+Page(
+    width=150mm,
+    height=90mm,
+    children=[
+        ImportedPage(...),
+        TextRun(...),
+        Path(...),
+        Image(...),
+        Group(
+            transform=...,
+            clip=...,
+            children=[...],
+        )
+    ]
+)
+```
+
+然后：
+
+```text
+Tavotto document
+      ↓
+Render IR
+      ↓
+PDF backend
+```
+
+以后甚至可以：
+
+```text
+Render IR
+ ├→ PDF
+ ├→ SVG
+ ├→ PNG
+ ├→ TIFF
+ └→ Preview
+```
+
+### 为什么它对 Tavotto 特别重要
+
+因为未来你做 Pro 的很多功能都不应该知道 PDFium、pikepdf 或任何具体库。
+
+比如：
+
+> “把全文 12 张图统一成 85 mm 宽”
+
+应该变成：
+
+```text
+Document
+→ RenderPlan
+→ IR
+→ 输出
+```
+
+而不是：
+
+```text
+if pdf:
+    pymupdf...
+elif png:
+    pillow...
+```
+
+这会成为 Tavotto 真正的**渲染内核**。
+
+---
+
+# 2. 第二优先级：把 Typography 从 PDF Backend 拆出来
+
+这个我甚至认为应该**和 PyMuPDF 替换同时完成**。
+
+你目前有一套已经相当认真设计的：
+
+```text
+primary
+CJK
+fallback
+missing
+```
+
+字形归属机制，而且浏览器 coverage 与真实字体之间还有一致性看护。
+
+但它现在有一个结构上的问题：
+
+> **“Tavotto 能画什么字”实际上由 PyMuPDF 决定。**
+
+这不适合长期发展。
+
+我会新增：
+
+```text
+src/tavotto/typography/
+    registry.py
+    coverage.py
+    shaping.py
+    metrics.py
+    fallback.py
+    subset.py
+```
+
+变成：
+
+```text
+Text
+ ↓
+Tavotto Typography Engine
+ ↓
+Font selection
+ ↓
+Glyph coverage
+ ↓
+Shaping
+ ↓
+Glyph positions
+ ↓
+Font subset
+ ↓
+Render IR
+```
+
+而 PDF backend **只负责把已经决定好的 glyph 画进去**。
+
+不要让 PDF backend 决定：
+
+- 用什么字体
+- 怎么 fallback
+- CJK 用什么
+- 字符宽度是多少
+- 哪个 glyph 缺失
+
+---
+
+## 这件事对 Pro 非常重要
+
+以后你可以很自然地实现：
+
+### Embedded Fonts Audit
+
+```text
+✓ Times New Roman
+✓ Arial
+⚠ Helvetica substituted
+✕ SimSun not embedded
+```
+
+### Cross-platform deterministic typography
+
+同一个 Tavotto 项目：
+
+```text
+Windows
+macOS
+Linux
+```
+
+尽量得到同一版式。
+
+### 字体子集
+
+例如 PDF 不需要嵌入 15 MB Noto CJK：
+
+```text
+NotoSansCJK.ttf
+       ↓
+只留下论文实际用到的 183 个 glyph
+       ↓
+300 KB
+```
+
+fontTools 本身就是 MIT，并直接提供 OpenType/TrueType 操作与 font subsetting。([GitHub](https://github.com/fonttools/fonttools/blob/main/Doc/source/index.rst?utm_source=chatgpt.com "fonttools/Doc/source/index.rst at main · fonttools/fonttools · GitHub"))
+
+复杂文本以后也可以接 HarfBuzz；它就是专门的 text shaping engine，而且 API/ABI 稳定性做得非常成熟。([GitHub](https://github.com/harfbuzz/harfbuzz?utm_source=chatgpt.com "GitHub - harfbuzz/harfbuzz: HarfBuzz text shaping engine · GitHub"))
+
+这套 Typography Engine 我认为是：
+
+> **Tavotto 最值得拥有的底层资产之一。**
+
+---
+
+# 3. 加一个非常轻量的 `BackendCapabilities`
+
+这个成本很低，但以后会非常有用。
+
+不要假设每个 backend 什么都能干。
+
+例如：
+
+```python
+BackendCapabilities(
+    rasterize_pdf=True,
+    import_pdf_page=True,
+    vector_output=True,
+    embed_fonts=True,
+    subset_fonts=True,
+    transparency=True,
+    clipping=True,
+    blend_modes=False,
+    cmyk=False,
+)
+```
+
+然后整个 Tavotto 不再问：
+
+```python
+if backend == "pdfium":
+```
+
+而是问：
+
+```python
+if capabilities.import_pdf_page:
+```
+
+### 为什么重要
+
+你未来很可能会变成组合 backend：
+
+```text
+PDFium
+负责：
+- PDF parsing
+- page size
+- preview
+- rasterization
+
+QPDF / pikepdf
+负责：
+- page manipulation
+- PDF assembly
+
+Tavotto typography
+负责：
+- fonts
+
+Tavotto renderer
+负责：
+- annotation / shape / layout
+```
+
+这其实比寻找一个“新的 PyMuPDF”健康得多。
+
+pypdfium2 本身目前也是 Apache-2.0 / BSD-3-Clause，底层 PDFium 是 BSD-style license，并且已经有跨平台预编译包，很适合作为读取/渲染组件候选。([GitHub](https://github.com/pypdfium2-team/pypdfium2/blob/main/README.md?utm_source=chatgpt.com "pypdfium2/README.md at main · pypdfium2-team/pypdfium2 · GitHub"))
+
+pikepdf 背后的 qpdf 当前也是 Apache-2.0。([GitHub](https://github.com/pikepdf/pikepdf/blob/main/third-party-licenses/README.md?utm_source=chatgpt.com "pikepdf/third-party-licenses/README.md at main · pikepdf/pikepdf · GitHub"))
+
+所以未来更像：
+
+```text
+                Tavotto RenderCore
+                       │
+         ┌─────────────┼──────────────┐
+         ↓             ↓              ↓
+      PDFium         QPDF       Typography
+    read/render     assemble       fonts
+```
+
+而不是：
+
+```text
+PyMuPDF
+   ↓
+另一个大一统 PDF 库
+```
+
+这两种架构质量差很多。
+
+---
+
+# 4. 我非常建议加：`Artifact Manifest`
+
+这个功能开发成本很低，但长期商业价值非常高。
+
+每次 Tavotto 导出：
+
+```text
+figure.pdf
+figure.png
+```
+
+同时内部产生一个结构化结果：
+
+```json
+{
+  "renderer": "...",
+  "renderer_version": "...",
+  "page": {
+    "width_mm": 85,
+    "height_mm": 62
+  },
+  "fonts": [
+    {
+      "family": "Times New Roman",
+      "embedded": true,
+      "subset": true
+    }
+  ],
+  "raster": {
+    "ppi": 600
+  },
+  "source": {
+    "document_revision": "...",
+    "figure_hash": "..."
+  },
+  "validation": {
+    "profile": "Nature",
+    "errors": 0,
+    "warnings": 1
+  }
+}
+```
+
+这不是给普通用户看的 JSON。
+
+它是 Tavotto 内部的：
+
+> **Artifact Passport**
+
+以后很多东西直接吃它。
+
+---
+
+## Publication Proof
+
+用户导出后：
+
+```text
+Ready for submission
+
+✓ 85.0 mm width
+✓ 8 pt minimum text
+✓ Fonts embedded
+✓ 600 dpi raster content
+✓ Vector text preserved
+✓ No clipping detected
+✓ Journal profile: Nature
+```
+
+你 #341 已经开始做 final-artifact validation，这说明方向实际上已经出现了。
+
+我会把它正式升格为一个稳定的数据结构。
+
+---
+
+# 5. 再加一个 `RenderPlan`
+
+这个比 IR 更高一级。
+
+IR 描述：
+
+> **怎么画。**
+
+RenderPlan 描述：
+
+> **为什么这样画。**
+
+例如：
+
+```text
+PublicationJob
+
+Target
+  Nature
+  Double column
+  180 mm
+
+Sources
+  Fig1
+  Fig2
+  Fig3
+
+Operations
+  normalize fonts
+  normalize line widths
+  resize figures
+  preserve axes geometry
+
+Outputs
+  PDF
+  TIFF 600 dpi
+
+Validation
+  min_font = 8 pt
+  dpi >= 300
+  font_embedding = required
+```
+
+然后：
+
+```text
+RenderPlan
+    ↓
+Render IR
+    ↓
+Artifacts
+```
+
+---
+
+# 这就是未来 Pro 的底座
+
+以后所谓：
+
+### Manuscript Mode
+
+不是另写一套逻辑，而是：
+
+```text
+12 figures
+     ↓
+12 RenderPlans
+     ↓
+shared PublicationSpec
+     ↓
+batch compile
+```
+
+于是：
+
+```text
+Tavotto Pro
+Publication Compiler
+
+Manuscript
+├── Fig 1 ✓
+├── Fig 2 ✓
+├── Fig 3 ⚠
+├── Fig 4 ✓
+...
+```
+
+你前面谈到的：
+
+> 批量统一字体
+> 期刊规范
+> manuscript consistency
+> publication checks
+
+全部自然地长在这里。
+
+这就是为什么我认为这一次 backend 重构非常关键。
+
+---
+
+# 6. 一个很值得现在加入的小东西：Deterministic Rendering
+
+这个会让 Tavotto 非常专业。
+
+给：
+
+```text
+RenderPlan
++
+source assets
++
+font fingerprints
++
+backend version
+```
+
+算一个：
+
+```text
+render_fingerprint
+```
+
+例如：
+
+```text
+sha256(
+    IR
+    + fonts
+    + renderer_version
+    + publication_profile
+)
+```
+
+同样输入必须产生：
+
+> 可证明一致的产物。
+
+这样以后用户说：
+
+> “为什么我的 Mac 和同门 Windows 导出来不一样？”
+
+Tavotto 可以回答：
+
+```text
+Render environment differs
+
+Font:
+Times New Roman
+macOS: version X
+Windows: version Y
+```
+
+甚至：
+
+```text
+Rendering is reproducible.
+Artifact fingerprint:
+8f4c…
+```
+
+对于科研软件，这个概念非常漂亮。
+
+而且也是品牌差异。
+
+---
+
+# 7. 我还会给每个 Render Node 保留语义 ID
+
+例如：
+
+```python
+TextRun(
+    id="axes_0.title",
+    ...
+)
+
+Path(
+    id="axes_0.lines_0",
+    ...
+)
+```
+
+而不是生成后全部变成匿名 PDF objects。
+
+这会有一个非常长远的价值：
+
+## Tavotto PDF 可以被 Tavotto 重新认识
+
+未来：
+
+```text
+Tavotto
+ ↓
+export PDF
+ ↓
+某人只有这个 PDF
+ ↓
+重新打开 Tavotto
+```
+
+如果 PDF 内有：
+
+```text
+XMP metadata
+Tavotto document id
+object mapping
+source fingerprint
+```
+
+理论上你甚至可以做到：
+
+> **round-trip PDF**
+
+当然我不会现在实现完整 PDF 反向编辑。
+
+但现在保留：
+
+```text
+semantic object ID
+artifact metadata
+```
+
+成本很低。
+
+以后价值巨大。
+
+---
+
+# 8. Render Trace / Debug Trace
+
+这个也非常适合 Tavotto。
+
+每次输出都可以内部产生：
+
+```text
+Render trace
+
+page
+ ├ panel Fig1
+ │ ├ imported PDF
+ │ ├ clip
+ │ └ scale 0.82
+ ├ annotation A
+ │ ├ text
+ │ └ font Times
+ └ arrow B
+```
+
+用户正常看不到。
+
+但是：
+
+```text
+Diagnostics
+AI Agent
+Codex
+Bug report
+```
+
+都可以消费。
+
+以后用户问助手：
+
+> “为什么这个标签被裁掉了？”
+
+AI 不需要猜。
+
+它可以看到：
+
+```text
+Text axes_0.title
+bbox:
+x1 = 84.2 mm
+page edge = 83.0 mm
+
+clipped by:
+panel clip rect
+```
+
+这对于 **Tavotto for Codex** 尤其有价值。
+
+---
+
+# 但有三件东西我反而建议你不要现在做
+
+### ❌ 泛化插件系统
+
+例如：
+
+```text
+third party render plugins
+plugin API marketplace
+custom backend extension
+```
+
+现在没用户需求。
+
+会把接口过早冻结。
+
+---
+
+### ❌ 自己写完整 PDF parser
+
+没必要。
+
+PDFium/QPDF 这种成熟项目负责解析 PDF。
+
+Tavotto 应该拥有的是：
+
+> **scientific-figure rendering semantics**
+
+而不是：
+
+> PDF xref parser。
+
+---
+
+### ❌ 自己造完整字体 shaping engine
+
+同样没必要。
+
+你拥有：
+
+```text
+字体策略
+fallback 规则
+reproducibility
+publication semantics
+```
+
+底层 shaping 用 HarfBuzz，font manipulation 用 fontTools。
+
+---
+
+# 所以我会把这次工程正式命名为
+
+不要叫：
+
+> `Replace PyMuPDF`
+
+我甚至会把项目名叫：
+
+# **Tavotto RenderCore**
+
+目录大概：
+
+```text
+src/tavotto/rendercore/
+
+    model.py
+        RenderDocument
+        Page
+        Group
+        Path
+        TextRun
+        Image
+        ImportedPage
+
+    plan.py
+        RenderPlan
+        RenderTarget
+
+    capabilities.py
+        BackendCapabilities
+
+    typography/
+        registry.py
+        coverage.py
+        fallback.py
+        shaping.py
+        metrics.py
+        subset.py
+
+    artifact/
+        manifest.py
+        fingerprint.py
+        validate.py
+        provenance.py
+
+    backends/
+        pdf/
+        raster/
+
+    diagnostics/
+        trace.py
+```
+
+原来的：
+
+```text
+pdfbackend/
+```
+
+逐渐降级成：
+
+```text
+RenderCore 的一个适配出口
+```
+
+---
+
+# 按价值 / 成本排序
+
+我会这样排：
+
+| 项目价值额外工期现在做？              |       |          |             |
+| ------------------------- | ----- | -------- | ----------- |
+| **Render IR**             | ★★★★★ | +1–2 天   | **必须**      |
+| **Typography Engine 解耦**  | ★★★★★ | +1–2 天   | **必须**      |
+| BackendCapabilities       | ★★★★☆ | +0.2 天   | **必须**      |
+| Artifact Manifest         | ★★★★★ | +0.5 天   | **强烈建议**    |
+| Render Fingerprint        | ★★★★☆ | +0.5 天   | **建议**      |
+| Render Trace              | ★★★★☆ | +0.5–1 天 | **建议**      |
+| Semantic Object IDs       | ★★★★★ | +0.2 天   | **现在埋进去**   |
+| RenderPlan                | ★★★★★ | +0.5–1 天 | **建议**      |
+| Manuscript Batch Compiler | ★★★★★ | +3–5 天   | **之后做 Pro** |
+| PDF round-trip            | ★★★★☆ | 很高       | **以后**      |
+| 第三方插件系统                   | ★★☆☆☆ | 很高       | **不要**      |
+
+所以你原来大约：
+
+> **7 天替换 PyMuPDF**
+
+如果按我这套方式，我反而愿意把 Sprint 延长到：
+
+> **9–12 天。**
+
+因为多出来的 **2–4 天**不是顺手加几个功能。
+
+而是在把：
+
+```text
+PDF backend
+```
+
+升级成：
+
+```text
+Tavotto RenderCore
+```
+
+这个投入的 ROI 非常高。
+
+---
+
+## 这可能会成为 Tavotto 最核心的技术资产之一
+
+你的真正壁垒以后未必是“可以拖动 Matplotlib 图”。
+
+更可能逐渐变成：
+
+> **Tavotto understands what a scientific figure is, how it should be rendered, how it should comply with publication rules, and can prove that the final artifact actually satisfies those rules.**
+
+对应中文就是：
+
+> **Tavotto 不只是编辑图，而是理解、编译并验证科研图。**
+
+那么产品内部的概念也会很漂亮：
+
+```text
+Matplotlib / AI / Codex
+          ↓
+     Scientific Figure
+          ↓
+       Tavotto
+          ↓
+     Render Plan
+          ↓
+      RenderCore
+          ↓
+    Publication Artifact
+          ↓
+    Publication Proof
+```
+
+这条路线我认为**比单纯换掉 PyMuPDF 高一个数量级的价值**。
+
+而且它和你未来最可能收费的 Pro 能力——**批量论文图处理、Journal Profiles、Manuscript Consistency、自动修复、Agent 工作流**——几乎是完全对齐的。

@@ -1,0 +1,45 @@
+{
+  "kind": "plan_artifact_validation_only",
+  "date": "2026-09-15",
+  "checks": [
+    "original source hashes",
+    "all 114 RC + 74 compatibility requirements + 32 FO scenario mappings",
+    "stage/milestone DAG",
+    "no premature global runtime ban",
+    "decoupled environment/cutover milestones",
+    "local document links and fences",
+    "17 plan validator positive/negative tests"
+  ],
+  "commands": [
+    {
+      "argv": [
+        "python",
+        "tools/validate_plan.py",
+        "."
+      ],
+      "returncode": 0,
+      "stdout": "{\n  \"kind\": \"implementation_plan_integrity_only\",\n  \"ok\": true,\n  \"errors\": [],\n  \"product_tests_executed\": false,\n  \"product_qualification\": \"not_run\"\n}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools",
+        "-p",
+        "test_*.py",
+        "-v"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "test_01_valid_plan (test_plan_validation.PlanIntegrityTests.test_01_valid_plan) ... ok\ntest_02_dropped_requirement (test_plan_validation.PlanIntegrityTests.test_02_dropped_requirement) ... ok\ntest_03_duplicate_case (test_plan_validation.PlanIntegrityTests.test_03_duplicate_case) ... ok\ntest_04_original_requirement_cannot_be_silently_rewritten (test_plan_validation.PlanIntegrityTests.test_04_original_requirement_cannot_be_silently_rewritten) ... ok\ntest_05_source_hash_failure (test_plan_validation.PlanIntegrityTests.test_05_source_hash_failure) ... ok\ntest_06_unknown_dependency (test_plan_validation.PlanIntegrityTests.test_06_unknown_dependency) ... ok\ntest_07_cyclic_dependency (test_plan_validation.PlanIntegrityTests.test_07_cyclic_dependency) ... ok\ntest_08_enforced_without_qualification (test_plan_validation.PlanIntegrityTests.test_08_enforced_without_qualification) ... ok\ntest_09_premature_global_legacy_ban (test_plan_validation.PlanIntegrityTests.test_09_premature_global_legacy_ban) ... ok\ntest_10_changed_stable_gates (test_plan_validation.PlanIntegrityTests.test_10_changed_stable_gates) ... ok\ntest_11_unsubstantiated_product_pass (test_plan_validation.PlanIntegrityTests.test_11_unsubstantiated_product_pass) ... ok\ntest_12_missing_phase_document (test_plan_validation.PlanIntegrityTests.test_12_missing_phase_document) ... ok\ntest_13_unexecuted_plan_cannot_enable_defaults (test_plan_validation.PlanIntegrityTests.test_13_unexecuted_plan_cannot_enable_defaults) ... ok\ntest_14_missing_old_phase (test_plan_validation.PlanIntegrityTests.test_14_missing_old_phase) ... ok\ntest_15_joint_dependency_phase_is_independent_of_private_base (test_plan_validation.PlanIntegrityTests.test_15_joint_dependency_phase_is_independent_of_private_base) ... ok\ntest_16_archive_does_not_override_active_spec (test_plan_validation.PlanIntegrityTests.test_16_archive_does_not_override_active_spec) ... ok\ntest_17_markdown_links_and_fences (test_plan_validation.PlanIntegrityTests.test_17_markdown_links_and_fences) ... ok\n\n----------------------------------------------------------------------\nRan 17 tests in 0.129s\n\nOK\n"
+    }
+  ],
+  "tavotto_repository_modified": false,
+  "tavotto_product_tests_executed": false,
+  "tavotto_product_qualification": "not_run",
+  "all_product_registry_entries": "not_run"
+}

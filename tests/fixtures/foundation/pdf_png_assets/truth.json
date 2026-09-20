@@ -1,0 +1,56 @@
+{
+  "fixture": "pdf_png_assets",
+  "pdf": {
+    "file": "page.pdf",
+    "pages": 1,
+    "media_box": [
+      0,
+      0,
+      300,
+      200
+    ],
+    "crop_box": [
+      15,
+      10,
+      285,
+      170
+    ],
+    "crop_insets_pt": {
+      "left": 15,
+      "bottom": 10,
+      "right": 15,
+      "top": 30
+    },
+    "visible_size_pt": [
+      270,
+      160
+    ],
+    "text": "U00 fixture: y = 3x + 1",
+    "fonts": [
+      "Helvetica"
+    ],
+    "font_embedded": false,
+    "transparency_alpha": 0.5,
+    "vector": true
+  },
+  "png": {
+    "file": "original.png",
+    "width": 64,
+    "height": 48,
+    "bit_depth": 8,
+    "color_type": 6,
+    "has_alpha": true,
+    "phys_pixels_per_metre": 11811,
+    "dpi_declared": 300,
+    "text": {
+      "Software": "tavotto-foundation-fixture",
+      "Comment": "U00 synthetic original PNG"
+    }
+  },
+  "png_nophys": {
+    "file": "original_nophys.png",
+    "width": 64,
+    "height": 48,
+    "phys": null
+  }
+}

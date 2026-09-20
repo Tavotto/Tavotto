@@ -1,0 +1,3 @@
+# 带 extra：tabulate 的 `widechars` extra 会拉进 wcwidth——联合安装必须带上它，
+# 只装 tabulate 本体不算满足这条声明。
+tabulate[widechars]==0.9.0

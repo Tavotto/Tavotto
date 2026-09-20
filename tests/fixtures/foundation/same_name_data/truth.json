@@ -1,0 +1,9 @@
+{
+  "fixture": "same_name_data",
+  "script": "plot.py",
+  "formula": "y = 3 * x + 1",
+  "correct": {"file": "data.csv", "x": [2, 4, 8], "y": [7, 13, 25]},
+  "decoy": {"file": "decoy/data.csv", "x": [200, 400, 800], "y": [601, 1201, 2401]},
+  "expected_output": "plot.pdf",
+  "reads_relative_to": "cwd"
+}

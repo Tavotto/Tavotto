@@ -1,0 +1,15 @@
+# U00 fixture ⑤：PEP 621 形式的同一组声明（U04 的解析器要对 requirements.txt 与
+# pyproject 两种来源给出同一份 DependencyIntent）。
+[project]
+name = "u00-fixture-deps"
+version = "0.0.0"
+requires-python = ">=3.10"
+dependencies = [
+  "six==1.17.0",
+  "tabulate[widechars]==0.9.0",
+  "sortedcontainers==2.4.0; sys_platform != \"never_os\"",
+  "tabulate==0.9.0; python_version < \"3.0\"",
+]
+
+[project.optional-dependencies]
+report = ["tabulate[widechars]==0.9.0"]

@@ -1,0 +1,42 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /CropBox [15 10 285 170] /Resources << /Font << /F1 4 0 R >> /ExtGState << /GS0 6 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 158 >>
+stream
+BT
+/F1 12 Tf 30 150 Td (U00 fixture: y = 3x + 1) Tj
+ET
+0 0 1 rg 40 40 100 60 re f
+0 g 1 w 30 30 m 120 120 l 200 60 l S
+q /GS0 gs 1 0 0 rg 90 60 100 60 re f Q
+endstream
+endobj
+6 0 obj
+<< /Type /ExtGState /ca 0.5 /CA 0.5 >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000300 00000 n 
+0000000397 00000 n 
+0000000605 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+659
+%%EOF

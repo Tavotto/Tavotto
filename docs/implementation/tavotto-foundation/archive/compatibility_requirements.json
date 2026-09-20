@@ -1,0 +1,527 @@
+{
+  "schema": 1,
+  "title": "Tavotto First Open Compatibility acceptance ledger",
+  "audit_sha": "6a1a9dea5d27b1724c4aab11e38d9fb808d2a89e",
+  "generated_date": "2026-09-15",
+  "status_note": "Implementation requirements only; no product tests executed in this review. All items begin not_run.",
+  "items": [
+    {
+      "id": "FO-001",
+      "phase": "CP00",
+      "requirement": "真实入口调用图完整，区分科学执行与RenderCore",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-002",
+      "phase": "CP00",
+      "requirement": "首开旧问题有真实baseline或明确未复现说明",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-003",
+      "phase": "CP00",
+      "requirement": "相同输入的原生参考输出与科学数据身份可核验",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-004",
+      "phase": "CP00",
+      "requirement": "所有现有测试覆盖与新gap有对应关系",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-005",
+      "phase": "CP01",
+      "requirement": "只读metadata清点不执行用户脚本",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-006",
+      "phase": "CP01",
+      "requirement": "启动候选解释器/import受正确信任范围约束",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-007",
+      "phase": "CP01",
+      "requirement": "过期plan或撤销grant不能执行",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-008",
+      "phase": "CP01",
+      "requirement": "两个项目同名脚本异步状态不串用",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-009",
+      "phase": "CP01",
+      "requirement": "取消不破坏其他消费者或native计算",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-010",
+      "phase": "CP01",
+      "requirement": "已有静态源查看不被科学准备阻断",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-011",
+      "phase": "CP01",
+      "requirement": "总体probe预算有界可取消，超时不误判缺包",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-012",
+      "phase": "CP02",
+      "requirement": "真实跨Python minor选择正确且无site-packages混入",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-013",
+      "phase": "CP02",
+      "requirement": "用户显式选择不会被自动推断覆盖",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-014",
+      "phase": "CP02",
+      "requirement": "候选声明版本冲突不静默放宽",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-015",
+      "phase": "CP02",
+      "requirement": "同一base的不同venv仍被识别为不同环境",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-016",
+      "phase": "CP02",
+      "requirement": "较新合法语法不会被静态库存静默丢弃",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-017",
+      "phase": "CP02",
+      "requirement": "非UTF8合法源码与普通语法错误准确区分",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-018",
+      "phase": "CP02",
+      "requirement": "目标parser只分析不执行源码，输出stem规则同源",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-019",
+      "phase": "CP02",
+      "requirement": "命名Conda环境实际launch和关键import成功",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-020",
+      "phase": "CP02",
+      "requirement": "不支持Python/ABI不谎报full_support",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-021",
+      "phase": "CP02",
+      "requirement": "venv重建或依赖改变使健康缓存和generation失效",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-022",
+      "phase": "CP03",
+      "requirement": "无系统Python的真桌面产物能准备完整私有Python",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-023",
+      "phase": "CP03",
+      "requirement": "provisioner及runtime来源/hash/平台核验",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-024",
+      "phase": "CP03",
+      "requirement": "不改变用户PATH、注册项、shell或默认Python",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-025",
+      "phase": "CP03",
+      "requirement": "离线有缓存成功，无缓存准确受限",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-026",
+      "phase": "CP03",
+      "requirement": "校验错/磁盘满/取消不会发布ready runtime",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-027",
+      "phase": "CP03",
+      "requirement": "多消费者去重下载与引用清理正确",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-028",
+      "phase": "CP03",
+      "requirement": "不原地升级被live会话使用的Python",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-029",
+      "phase": "CP04",
+      "requirement": "保留marker/extras/constraints/Poetry约束",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-030",
+      "phase": "CP04",
+      "requirement": "未选optional/dev/test组不安装",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-031",
+      "phase": "CP04",
+      "requirement": "本地/namespace/editable模块不误装同名公网包",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-032",
+      "phase": "CP04",
+      "requirement": "多个依赖联合求解，非连续单包安装模拟",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-033",
+      "phase": "CP04",
+      "requirement": "worker兼容约束与用户锁冲突不静默放宽",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-034",
+      "phase": "CP04",
+      "requirement": "未知import不盲猜distribution",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-035",
+      "phase": "CP04",
+      "requirement": "源码构建/VCS/私有源不绕授权",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-036",
+      "phase": "CP04",
+      "requirement": "受管venv在最终路径构建，active指针原子发布",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-037",
+      "phase": "CP04",
+      "requirement": "安装失败旧环境仍可用，未完成环境不激活",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-038",
+      "phase": "CP04",
+      "requirement": "用户环境依赖与bundled环境不被默认更改",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-039",
+      "phase": "CP04",
+      "requirement": "复用envlease且不杀活跃native",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-040",
+      "phase": "CP04",
+      "requirement": "真实binary wheel与跨minor自测不是纯Python替身",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-041",
+      "phase": "CP05",
+      "requirement": "script.parent/project.root/invocation.cwd准确区分",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-042",
+      "phase": "CP05",
+      "requirement": "旧project工作目录设置语义不变",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-043",
+      "phase": "CP05",
+      "requirement": "__file__/相对import不被staging复制悄悄改变",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-044",
+      "phase": "CP05",
+      "requirement": "原合法绝对外部路径保留，不按同名重映射",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-045",
+      "phase": "CP05",
+      "requirement": "歧义数据需要确认且输入内容正确",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-046",
+      "phase": "CP05",
+      "requirement": "真实h5py/C-reader在正确执行上下文可用",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-047",
+      "phase": "CP05",
+      "requirement": "真实cwd写入许可在执行前明确授予",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-048",
+      "phase": "CP05",
+      "requirement": "protected能力有原生writer/子进程强制验证或明确不支持",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-049",
+      "phase": "CP05",
+      "requirement": "只扫描授权数据范围，超大目录可取消",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-050",
+      "phase": "CP05",
+      "requirement": "数据变更不造成旧计划假成功或自动丢edit",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-051",
+      "phase": "CP06",
+      "requirement": "已授权且齐备项目无需修复点击且无红错闪烁",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-052",
+      "phase": "CP06",
+      "requirement": "准备授权与改用户环境动作明显区分",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-053",
+      "phase": "CP06",
+      "requirement": "数据未知时单一定位出口可继续",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-054",
+      "phase": "CP06",
+      "requirement": "ready_editable需实际图与一次真实编辑",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-055",
+      "phase": "CP06",
+      "requirement": "artifact-only不冒充本次脚本成功",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-056",
+      "phase": "CP06",
+      "requirement": "native仍由终端CLI持有原上下文且确认后spawn",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-057",
+      "phase": "CP06",
+      "requirement": "MCP/桌面准备状态与权限同源",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-058",
+      "phase": "CP06",
+      "requirement": "断线/切项目/中英文/键盘等场景保持可操作",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-059",
+      "phase": "CP07",
+      "requirement": "ExecutionReceipt来自实际worker而非预检猜测",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-060",
+      "phase": "CP07",
+      "requirement": "热态/重放/写回/导出上下文和generation一致",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-061",
+      "phase": "CP07",
+      "requirement": "有限数据观察诚实标partial/unknown",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-062",
+      "phase": "CP07",
+      "requirement": "公共manifest不含敏感路径/argv/env/凭据",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-063",
+      "phase": "CP07",
+      "requirement": "科学环境不需要新PDF依赖",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-064",
+      "phase": "CP07",
+      "requirement": "RenderCore能消费不同科学Python生成的冻结源",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-065",
+      "phase": "CP07",
+      "requirement": "静态无override导出不强迫执行科学脚本",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-066",
+      "phase": "CP07",
+      "requirement": "故障阶段准确，PDF错误不触发装包",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-067",
+      "phase": "CP08",
+      "requirement": "现有CompatBench/等价矩阵/门禁不被替代或削弱",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-068",
+      "phase": "CP08",
+      "requirement": "PR固定资源测试与真实跨平台重线分层",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-069",
+      "phase": "CP08",
+      "requirement": "精确发行产物在无宿主帮助环境完成首开编辑导出",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-070",
+      "phase": "CP08",
+      "requirement": "required job缺失/skipped/取消不会假绿",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-071",
+      "phase": "CP08",
+      "requirement": "错误数据/错环境/假receipt/安装泄漏反证测试会红",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-072",
+      "phase": "CP08",
+      "requirement": "冷暖缓存与科学计算开销分离，不编造改善比例",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-073",
+      "phase": "CP08",
+      "requirement": "回退不删除用户数据或强改既有环境",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FO-074",
+      "phase": "CP08",
+      "requirement": "实际支持/未验证范围和失败分母完整呈现",
+      "status": "not_run",
+      "evidence": []
+    }
+  ]
+}

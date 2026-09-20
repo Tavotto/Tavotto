@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "plan_version": "1.0",
+  "date": "2026-09-15",
+  "nature": "implementation_spec_not_product_validation",
+  "original_audit_sha": "6a1a9dea5d27b1724c4aab11e38d9fb808d2a89e",
+  "latest_sampled_sha": "8b95256c0d08a14bfcfc4c81358894ef01168933",
+  "latest_review_scope": [
+    "main ref",
+    "aggregate_gate.py 1–162",
+    "support-matrix.json",
+    "ci.yml 1–84"
+  ],
+  "new_default_capabilities_enabled": [],
+  "stable_gate_contexts": [
+    "CI fast gate",
+    "CI integration gate",
+    "CodeQL gate"
+  ],
+  "stages": [
+    {
+      "id": "U00",
+      "title": "基线、差异与核心范围",
+      "document": "phases/U00_baseline.md",
+      "dependencies": [],
+      "milestones": [
+        "U00.baseline"
+      ],
+      "scope": "core",
+      "implementation_status": "done",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "U01",
+      "title": "共同合同与增量测试骨架",
+      "document": "phases/U01_contracts.md",
+      "dependencies": [
+        "U00.baseline"
+      ],
+      "milestones": [
+        "U01.contracts",
+        "U01.harness"
+      ],
+      "scope": "core",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "U02",
+      "title": "两条独立技术验证",
+      "document": "phases/U02_spikes.md",
+      "dependencies": [
+        "U01.contracts"
+      ],
+      "milestones": [
+        "U02.render_spike",
+        "U02.runtime_spike"
+      ],
+      "scope": "core",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "U03",
+      "title": "已有环境与数据上下文的首开闭环",
+      "document": "phases/U03_first_open.md",
+      "dependencies": [
+        "U01.contracts",
+        "U01.harness"
+      ],
+      "milestones": [
+        "U03.existing_open"
+      ],
+      "scope": "core",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "U04",
+      "title": "标准联合依赖与版本化受管环境",
+      "document": "phases/U04_dependencies.md",
+      "dependencies": [
+        "U03.existing_open"
+      ],
+      "milestones": [
+        "U04.managed_dependencies"
+      ],
+      "scope": "core",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "U05",
+      "title": "私有完整Python与无系统Python",
+      "document": "phases/U05_private_python.md",
+      "dependencies": [
+        "U04.managed_dependencies",
+        "U02.runtime_spike"
+      ],
+      "milestones": [
+        "U05.private_python"
+      ],
+      "scope": "core",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "U06",
+      "title": "Render IR与真实字体文字切片",
+      "document": "phases/U06_render_model_text.md",
+      "dependencies": [
+        "U01.contracts",
+        "U02.render_spike"
+      ],
+      "milestones": [
+        "U06.ir_text"
+      ],
+      "scope": "core",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "U07",
+      "title": "矢量合成与受控栅格运行时",
+      "document": "phases/U07_render_output.md",
+      "dependencies": [
+        "U06.ir_text"
+      ],
+      "milestones": [
+        "U07.compose_raster"
+      ],
+      "scope": "core",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "U08",
+      "title": "全入口迁移与有限产物验证",
+      "document": "phases/U08_facade_validation.md",
+      "dependencies": [
+        "U07.compose_raster"
+      ],
+      "milestones": [
+        "U08.facade_parity"
+      ],
+      "scope": "core",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "U09",
+      "title": "实际执行回执与两主线联调",
+      "document": "phases/U09_join.md",
+      "dependencies": [
+        "U03.existing_open",
+        "U08.facade_parity"
+      ],
+      "milestones": [
+        "U09.existing_env_join",
+        "U09.managed_env_join"
+      ],
+      "scope": "core",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {
+        "U09.managed_env_join": [
+          "U04.managed_dependencies",
+          "U05.private_python"
+        ]
+      }
+    },
+    {
+      "id": "U10",
+      "title": "候选启用与旧依赖退役",
+      "document": "phases/U10_cutover.md",
+      "dependencies": [
+        "U09.existing_env_join"
+      ],
+      "milestones": [
+        "U10.cutover"
+      ],
+      "scope": "core",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "U11",
+      "title": "精确发行资格与价值收口",
+      "document": "phases/U11_qualification.md",
+      "dependencies": [
+        "U10.cutover",
+        "U09.managed_env_join"
+      ],
+      "milestones": [
+        "U11.release_qualification"
+      ],
+      "scope": "core",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "X01",
+      "title": "更广兼容与深度核验",
+      "document": "extensions/X01_extended.md",
+      "dependencies": [
+        "U03.existing_open",
+        "U04.managed_dependencies"
+      ],
+      "milestones": [
+        "X01.extended_context"
+      ],
+      "scope": "later",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "X02",
+      "title": "Manuscript批量扩展",
+      "document": "extensions/X02_manuscript.md",
+      "dependencies": [
+        "U11.release_qualification"
+      ],
+      "milestones": [
+        "X02.manuscript"
+      ],
+      "scope": "later",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    },
+    {
+      "id": "X03",
+      "title": "范围明确的新增画布SVG",
+      "document": "extensions/X03_svg.md",
+      "dependencies": [
+        "U11.release_qualification"
+      ],
+      "milestones": [
+        "X03.svg"
+      ],
+      "scope": "later",
+      "implementation_status": "not_started",
+      "product_validation_status": "not_run",
+      "milestone_dependencies": {}
+    }
+  ],
+  "policy": {
+    "existing_required_gates_preserved": true,
+    "all_future_requirements_block_merge": false,
+    "enforced_missing_result": "fail",
+    "unknown_optional_blocks_regular_export": false,
+    "unknown_mandatory_can_claim_verified": false,
+    "product_failure_auto_retry": false,
+    "global_pymupdf_runtime_ban_begins": "U10",
+    "root_license_change": false
+  },
+  "note": "This JSON describes the implementation program, not an installed CI selector or a runnable Tavotto feature."
+}

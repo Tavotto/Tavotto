@@ -1,0 +1,9 @@
+{
+  "fixture": "single_file_csv",
+  "data_file": "data.csv",
+  "x": [1, 2, 3, 4],
+  "y": [2.5, 4.0, 5.5, 7.0],
+  "formula": "y = 1.5 * x + 1",
+  "expected_output": "figure.pdf",
+  "reads_relative_to": "cwd"
+}
