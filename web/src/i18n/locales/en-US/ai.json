@@ -69,6 +69,9 @@
     "actsOn": "Acts on: {{scope}}",
     "agentModel": "Agent and model",
     "agentNote": "Edits the script file directly; a snapshot is taken before each run, so any change can be reverted.",
+    "bake": "Bake edits into Python",
+    "bakePrompt": "Bake the current Tavotto visual edits into the Python source so a fresh run reproduces the final appearance without runtime overrides.",
+    "bakeTip": "Ask the coding agent to absorb the current Tavotto overrides into the script, then verify a fresh source-only render.",
     "cli": "CLI: {{version}}",
     "cliPath": "Path: {{path}}",
     "effort": "Reasoning effort",
@@ -104,6 +107,9 @@
     "figure": "Whole figure"
   },
   "session": {
+    "bakeMismatch": "Verification mismatch: the updated Python does not yet reproduce the Tavotto target without overrides. Review the diff, retry, or revert.",
+    "bakeVerified": "Verified: a fresh run of the updated Python reproduces the Tavotto target without overrides. The current overrides are still kept in this MVP.",
+    "bakeVerifyFailed": "The script changed, but source-only verification could not complete. Review the diff or revert.",
     "doneChanged": "Changes written to the script. View the diff or revert.",
     "doneNoChange": "Finished; the script is unchanged",
     "reverted": "Reverted. The script is back to its previous state.",
