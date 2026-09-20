@@ -68,6 +68,7 @@ def _fake_interpreter(
         [python, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
         timeout=60,
     ).stdout.strip()
