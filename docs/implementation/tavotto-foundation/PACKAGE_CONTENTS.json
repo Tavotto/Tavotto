@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U03（2026-09-20，PR A）加交接 / 证据 / 台账变更后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -49,8 +49,8 @@
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 3750,
-      "sha256": "e21a30e298ba64d90ddb517b62dfa4a12b0f1ddbf64df4e78979fc4bf050c1aa"
+      "bytes": 4615,
+      "sha256": "1254cae8c1b4bf75a4134fc0a51e68d825ab83ea4686da1ecf4a24e446c49176"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 5671,
-      "sha256": "3ac453d658109c68df736e9922f4e90f3978f8373ddb999d914c03c2ee44d730"
+      "bytes": 6362,
+      "sha256": "a0f9101e49afd394403439652ae5b1bc9e6f3d418a4b0303bb0bc38fe2e9359a"
     },
     {
       "path": "SOURCES.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 12383,
-      "sha256": "9e997c891bdb88b61f09f343f7102cdfd1fb56ecfd8bf8a3eac3fca1bf548a14"
+      "bytes": 18642,
+      "sha256": "7e07ae4ab7f787b0ff9b08696d705a79151ebed4e1df5ad1ff4530fdb32fe6e2"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -161,6 +161,41 @@
       "path": "evidence/u01/u01-s1-result-local.json",
       "bytes": 2439,
       "sha256": "f70f581ce81b569126e2ebd6e0f822625586942953e9e78e6cb0c832ec1c9ffb"
+    },
+    {
+      "path": "evidence/u03/fo01-result-local.json",
+      "bytes": 2141,
+      "sha256": "75c3d00ec2a6007dd73c8606271b9edddc88cc39d7aa44db63d9a52eab3ef437"
+    },
+    {
+      "path": "evidence/u03/fo02-result-local.json",
+      "bytes": 3576,
+      "sha256": "0199c796103daa57dfc00d60652f2b5342f3760ed65197709f9a6ae392a25afb"
+    },
+    {
+      "path": "evidence/u03/fo03-result-local.json",
+      "bytes": 2017,
+      "sha256": "ef1b298301b47e75542522dfcffa6fa4208292cb8b11dcfc988b55114eb794b1"
+    },
+    {
+      "path": "evidence/u03/fo07-result-local.json",
+      "bytes": 2474,
+      "sha256": "3e378bd4fb47e15fb281f31ea60d779696d66bb595089b9b7a4becb89fbc727c"
+    },
+    {
+      "path": "evidence/u03/fo15-result-local.json",
+      "bytes": 1650,
+      "sha256": "b00306514db61c6347649d239322174b54eb37a9fbb4407e263ad811340f6567"
+    },
+    {
+      "path": "evidence/u03/fo19-result-local.json",
+      "bytes": 2089,
+      "sha256": "916056e23a96c4868383764dff1b873ebdcbfd3676cd30cea209b7c862cdf690"
+    },
+    {
+      "path": "evidence/u03/foundation-harness-summary-local.md",
+      "bytes": 1581,
+      "sha256": "f5562d6968fdf6f8c51d77dfc730f81672224909b8a7151977eab6edfe23eaea"
     },
     {
       "path": "extensions/X01_extended.md",
@@ -196,6 +231,11 @@
       "path": "handoffs/U01_contracts.md",
       "bytes": 13855,
       "sha256": "1708a88b71e8549855449bec72d9fdb95458bda01e80586963d1b63a9381b73c"
+    },
+    {
+      "path": "handoffs/U03_first_open.md",
+      "bytes": 18314,
+      "sha256": "e7264e885ee6be64b4e37ff9c849387bffc7710eb2c2aadd756cc05d0d6b4de8"
     },
     {
       "path": "phase_mapping.json",
@@ -265,12 +305,12 @@
     {
       "path": "plan.json",
       "bytes": 7394,
-      "sha256": "b684c34039d8312bb93b915a7f57a2313eb2466c0b45de2108bf96ae09e9fe55"
+      "sha256": "b43d32893f558c4cc7816e39548d9258b6e543dbecb6c2e688ef931b5f948db5"
     },
     {
       "path": "registry.json",
-      "bytes": 269418,
-      "sha256": "4f553b0cd3f2a8d67a7012b4f9472fbf01fc0d48a2b7af7488579728af53f7a2"
+      "bytes": 275432,
+      "sha256": "74923d4fe1a0d8f7a38f2c2fc1b146110ddb25e2962667b47f88d0498f383f91"
     },
     {
       "path": "sources_manifest.json",

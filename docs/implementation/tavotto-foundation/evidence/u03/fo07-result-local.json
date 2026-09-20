@@ -1,0 +1,99 @@
+{
+  "case_id": "FO07",
+  "instance_id": "FO07@16daf9bae7cb125d",
+  "binding": {
+    "source_sha": "a0ae7ff762d798ee42e4242454eea607bd720129",
+    "artifact": {
+      "kind": "source_tree",
+      "identity": "a0ae7ff762d798ee42e4242454eea607bd720129"
+    },
+    "platform": "darwin-arm64",
+    "app_python": "3.13.11",
+    "runtime_lock_sha256": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c",
+    "fixture": "tests/fixtures/foundation/same_name_data",
+    "fixture_sha256": "b80929a388884baf9c9faacc5be5f62ef3941e5f67f887fc5dd33fccf3a4020e",
+    "entry": "http",
+    "capability_version": "u03"
+  },
+  "product_outcome": "guided",
+  "test_verdict": "pass",
+  "evidence": [
+    "ambiguous_data: no recommendation; render blocked before choice",
+    "choice honoured: script dir → [6.1, 25.9] (truth), project root → [511.0, 2491.0] (decoy)"
+  ],
+  "recorded_at": 1789901394.328287,
+  "observed": {
+    "backend": "pymupdf",
+    "required_input": {
+      "answer": {
+        "body": {
+          "mode": "<options[*].mode>"
+        },
+        "http": "PATCH /api/engine/workdir"
+      },
+      "code": "workdir_confirmation_required",
+      "conflicts": [
+        "data.csv"
+      ],
+      "kind": "workdir",
+      "message": "脚本目录与项目根目录各有一份同名数据且内容不同，请先选择它的运行目录",
+      "options": [
+        {
+          "cwd_origin": "project.root",
+          "found": [
+            "data.csv"
+          ],
+          "mode": "project_root",
+          "recommended": false,
+          "write_mode": "project_dir"
+        },
+        {
+          "cwd_origin": "script.parent",
+          "found": [
+            "data.csv"
+          ],
+          "mode": "project",
+          "recommended": false,
+          "write_mode": "project_dir"
+        },
+        {
+          "cwd_origin": "sandbox",
+          "found": [
+            "data.csv"
+          ],
+          "mode": "sandbox",
+          "recommended": false,
+          "write_mode": "sandboxed"
+        }
+      ],
+      "reads": [
+        "data.csv"
+      ],
+      "reason": "ambiguous_data",
+      "recommended": null,
+      "script": "sub/plot.py"
+    },
+    "ylim_by_choice": {
+      "project": [
+        6.1,
+        25.9
+      ],
+      "project_root": [
+        511.0,
+        2491.0
+      ]
+    },
+    "truth": {
+      "correct": [
+        7,
+        13,
+        25
+      ],
+      "decoy": [
+        601,
+        1201,
+        2401
+      ]
+    }
+  }
+}

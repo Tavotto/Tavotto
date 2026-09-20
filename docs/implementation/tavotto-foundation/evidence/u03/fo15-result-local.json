@@ -1,0 +1,42 @@
+{
+  "case_id": "FO15",
+  "instance_id": "FO15@cf2729f831ff1abc",
+  "binding": {
+    "source_sha": "a0ae7ff762d798ee42e4242454eea607bd720129",
+    "artifact": {
+      "kind": "source_tree",
+      "identity": "a0ae7ff762d798ee42e4242454eea607bd720129"
+    },
+    "platform": "darwin-arm64",
+    "app_python": "3.13.11",
+    "runtime_lock_sha256": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c",
+    "fixture": "tests/fixtures/foundation/single_file_csv",
+    "fixture_sha256": "3b3772e1e0196bd91cc616c20a76f18343a1236433f2c5c41a92cdc08965c538",
+    "entry": "http",
+    "capability_version": "u03"
+  },
+  "product_outcome": "safe_stop",
+  "test_verdict": "pass",
+  "evidence": [
+    "explicit env_override without matplotlib → explicit_python_unusable; no run"
+  ],
+  "recorded_at": 1789901410.630084,
+  "observed": {
+    "backend": "pymupdf",
+    "resolution_error": {
+      "code": "explicit_python_unusable",
+      "explicit": {
+        "reason": "no_matplotlib",
+        "source": "env_override"
+      },
+      "message": "环境变量 TAVOTTO_WORKER_PYTHON指定的解释器用不了：它 import 不到 matplotlib（或起不来）（<tmp>）。Tavotto 不会自动换成别的环境：请重新指定，或清除这条设置回到自动选择。"
+    },
+    "result": {
+      "status": "error",
+      "error": {
+        "code": "explicit_python_unusable",
+        "message": "环境变量 TAVOTTO_WORKER_PYTHON指定的解释器用不了：它 import 不到 matplotlib（或起不来）（<tmp>）。Tavotto 不会自动换成别的环境：请重新指定，或清除这条设置回到自动选择。"
+      }
+    }
+  }
+}

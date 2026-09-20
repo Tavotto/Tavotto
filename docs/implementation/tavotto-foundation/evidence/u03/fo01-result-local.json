@@ -1,0 +1,74 @@
+{
+  "case_id": "FO01",
+  "instance_id": "FO01@4987be2bab914c77",
+  "binding": {
+    "source_sha": "a0ae7ff762d798ee42e4242454eea607bd720129",
+    "artifact": {
+      "kind": "source_tree",
+      "identity": "a0ae7ff762d798ee42e4242454eea607bd720129"
+    },
+    "platform": "darwin-arm64",
+    "app_python": "3.13.11",
+    "runtime_lock_sha256": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c",
+    "fixture": "tests/fixtures/foundation/single_file_csv",
+    "fixture_sha256": "3b3772e1e0196bd91cc616c20a76f18343a1236433f2c5c41a92cdc08965c538",
+    "entry": "http",
+    "capability_version": "u03"
+  },
+  "product_outcome": "automatic",
+  "test_verdict": "pass",
+  "evidence": [
+    "prepare ready without input; ylim [2.275, 7.225] == truth ± 5%"
+  ],
+  "recorded_at": 1789901352.451641,
+  "observed": {
+    "backend": "pymupdf",
+    "plotted_ylim": [
+      2.275,
+      7.225
+    ],
+    "chosen_python": {
+      "source": "system",
+      "prefix": "/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13"
+    },
+    "receipt": {
+      "receipt_id": "sha256:2ca7f7eb8e517524e15b8a5d43603d57ad06a91cab8b052b44426d0479771cc4",
+      "completeness": "complete",
+      "python_source": "system",
+      "generation": 1,
+      "launch_context": {
+        "argv": [],
+        "cwd_mode": "sandbox",
+        "cwd_origin": "sandbox",
+        "entry": "__main__",
+        "grant": {
+          "cwd_write": {
+            "granted": false,
+            "granted_at": null,
+            "mode": null
+          },
+          "decided": false
+        },
+        "launch_context_version": 1,
+        "passthrough_savefig": false,
+        "profile": "safe",
+        "target": "figure.py",
+        "target_kind": "script",
+        "write_mode": "sandboxed"
+      },
+      "runtime": {
+        "machine": "arm64",
+        "packages": {
+          "matplotlib": "3.10.8",
+          "numpy": "2.4.3",
+          "pandas": "3.0.1",
+          "pillow": "12.1.0",
+          "scipy": "1.17.1"
+        },
+        "platform": "darwin",
+        "python_implementation": "CPython",
+        "python_version": "3.13.11"
+      }
+    }
+  }
+}
