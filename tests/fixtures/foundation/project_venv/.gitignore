@@ -1,0 +1,3 @@
+# 由 make_venv.py 现建的项目环境与它的回执——绝不进 git（venv 不可移动、机器相关）
+.venv
+venv_receipt.json

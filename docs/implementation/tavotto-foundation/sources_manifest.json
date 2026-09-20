@@ -1,0 +1,66 @@
+[
+  {
+    "id": "rendercore_requirements",
+    "original_filename": "acceptance_matrix.json",
+    "archived_path": "archive/rendercore_requirements.json",
+    "sha256": "6ee042ce55e313d2ecc9971934361bc12d1c57ea299190af05f071a9b3ffb441",
+    "bytes": 44909,
+    "authority": "historical_reference_only"
+  },
+  {
+    "id": "compatibility_requirements",
+    "original_filename": "acceptance_matrix.json",
+    "archived_path": "archive/compatibility_requirements.json",
+    "sha256": "28210a4a7ac967cf8c9ffcecb71735739fa71f8688dc39c6e3cafeb1e46f1235",
+    "bytes": 13708,
+    "authority": "historical_reference_only"
+  },
+  {
+    "id": "firstopen_cases",
+    "original_filename": "Tavotto_FirstOpenBench_Cases.json",
+    "archived_path": "archive/firstopen_cases.json",
+    "sha256": "0569e066dadfeb9c7cfc7055ff10fa68382ff125a68d6bc9539b06ede879d20d",
+    "bytes": 19423,
+    "authority": "historical_reference_only"
+  },
+  {
+    "id": "rendercore_full",
+    "original_filename": "Tavotto_RenderCore_Full_Prompts.md",
+    "archived_path": "archive/rendercore_full.md",
+    "sha256": "5391acdc58fc8fcd64485dc7ca87c70f2bd237cd1dde44073cd82fdcbda238fe",
+    "bytes": 126611,
+    "authority": "historical_reference_only"
+  },
+  {
+    "id": "compatibility_full",
+    "original_filename": "Tavotto_RenderCore_Compatibility_Addendum.md",
+    "archived_path": "archive/compatibility_full.md",
+    "sha256": "fc3f6a54bb4d1d2a68831bfe26c3520ea232f95e570d7e9937c0cd0536addf22",
+    "bytes": 64794,
+    "authority": "historical_reference_only"
+  },
+  {
+    "id": "firstopen_full",
+    "original_filename": "Tavotto_FirstOpenBench_CI_Implementation.md",
+    "archived_path": "archive/firstopen_full.md",
+    "sha256": "a10b0c869ae703f41ee4e641e9892fa3997b1a4a2105cda5b5ca7e1596c08824",
+    "bytes": 31315,
+    "authority": "historical_reference_only"
+  },
+  {
+    "id": "rendercore_assessment",
+    "original_filename": "Tavotto_RenderCore_Assessment.md",
+    "archived_path": "archive/rendercore_assessment.md",
+    "sha256": "1985b5776d71db7164cebac63b29a3acbdc28a038df7d8e5ec476b6d6275ab1a",
+    "bytes": 12496,
+    "authority": "historical_reference_only"
+  },
+  {
+    "id": "original_proposal",
+    "original_filename": "粘贴的 markdown (1)。md",
+    "archived_path": "archive/original_proposal",
+    "sha256": "23df2024832d14c066ab518bf8e5085339e13de188fd42763c998bb62399dbf1",
+    "bytes": 15524,
+    "authority": "historical_reference_only"
+  }
+]

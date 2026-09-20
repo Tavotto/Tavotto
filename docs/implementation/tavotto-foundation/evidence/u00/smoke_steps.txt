@@ -1,0 +1,19 @@
+# scripts/smoke_app.py --python .venv/bin/python（PYTHONPATH 指向 origin/main 干净 worktree，web/dist 由 pnpm build 现建，workerd 由 cargo test 现建于 workerd/target/debug）
+· 隔离用户目录: /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-smoke-b9l7173z
+✓ 已启动: version=0.15.0 build=index-BKEZs0uz（1.0s）
+✓ 会话认证：默认 deny + 本机凭据交接可用
+✓ 渲染环境: python=/opt/homebrew/opt/python@3.13/libexec/bin/python3 来源=system matplotlib=3.10.8
+✓ 项目: /private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/wt-baseline-main/examples/figures（2 个脚本）
+✓ 面板 3 个，其中可参数化 3 个
+✓ 引擎渲染 Fig1_kinetics.pdf: 25 个元素（12.8s，含冷启动）
+✓ 再渲染一次（热会话）（0.04s）
+✓ 渲染控制面: selected=workerd sessions=['workerd']
+✓ 导出 smoke_0920_120540.pdf（64817 字节，0.0s）
+✓ 覆盖导出 smoke_0920_120540.pdf
+✓ 诊断 7 项，其中未通过 0: []
+· 墙钟参考（**不是性能承诺**，基线见 docs/perf-baseline.md）: app_ready_s=1.03s  first_render_s=12.77s  second_render_s=0.04s  export_s=0.02s
+✓ 干净退出，退出码 0
+冒烟通过 ✅
+EXIT=0 WALL=16
+       15.26 real        11.89 user         1.15 sys
+           235487232  maximum resident set size

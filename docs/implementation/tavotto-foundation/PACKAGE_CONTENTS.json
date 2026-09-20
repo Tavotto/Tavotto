@@ -1,0 +1,276 @@
+{
+  "scope": "all files except this self-manifest",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」。",
+  "files": [
+    {
+      "path": "00_MASTER_PROMPT.md",
+      "bytes": 5397,
+      "sha256": "45dcb0b1c37086092bad65a55fa7a7e6a580afce3b68507fd19f8b022e6b96d9"
+    },
+    {
+      "path": "01_SCOPE_AND_DECISIONS.md",
+      "bytes": 6172,
+      "sha256": "1a8f6e50a647aeb59689d4e2ca94da788579abc5998df0055317b9bddaf64d62"
+    },
+    {
+      "path": "02_ROADMAP.md",
+      "bytes": 3743,
+      "sha256": "01b03054f20da546c663d828c62418c3bc8dcfa3c718714b4496b572b7924187"
+    },
+    {
+      "path": "03_CI_POLICY.md",
+      "bytes": 8331,
+      "sha256": "c1cfbeb90bab24cce6641e8cf33930a8ba29aabe29bef8d0a308d5fecd5ed48a"
+    },
+    {
+      "path": "04_ARCHITECTURE.md",
+      "bytes": 4521,
+      "sha256": "4e238ec05090bd21189dd169141d3ed32cfa00bd9d63de734d2dc2e26fb5027e"
+    },
+    {
+      "path": "05_TEST_STRATEGY.md",
+      "bytes": 5120,
+      "sha256": "f64939d848fa4cd750b7045d6ce4cd1c69dfe81e616a494552b6aef20a340b77"
+    },
+    {
+      "path": "06_ENABLE_AND_RELEASE.md",
+      "bytes": 3346,
+      "sha256": "875647eebca239cd26bba4b65c27a04080f916f9425d8de22adf8c6d74b708db"
+    },
+    {
+      "path": "07_HANDOFF.md",
+      "bytes": 1017,
+      "sha256": "21a81ad71630a4cd3b0af22a836473ae5930e96a033ea066cfc69a48b9cba545"
+    },
+    {
+      "path": "ALL_PROMPTS.md",
+      "bytes": 76027,
+      "sha256": "833c2b17971d4107049ce6cfa6651196378765e1c70a14b7a3467cd0507c58cc"
+    },
+    {
+      "path": "PACKAGE_CHECKS.json",
+      "bytes": 3326,
+      "sha256": "d11a83382f3df8db083a4be2a6229d440b8572abf4662d01102a08367bbf96a0"
+    },
+    {
+      "path": "README.md",
+      "bytes": 5194,
+      "sha256": "b76cd09a730fb52b8ed0e0e77708cdaa4677e04bc4061a1b93603d8fd2391949"
+    },
+    {
+      "path": "SOURCES.md",
+      "bytes": 2678,
+      "sha256": "abb0c055203b402dda4542e8ecd6f2b96fd02716119a825d0017829cf09bfd76"
+    },
+    {
+      "path": "U00_BASELINE.md",
+      "bytes": 27090,
+      "sha256": "5419f9f932c6c3750e9d14e4ffc14b82cebc07321e70203c805e076dc4d7a10e"
+    },
+    {
+      "path": "U00_CAPABILITY_INVENTORY.md",
+      "bytes": 16294,
+      "sha256": "bb531f511dbb2a5caffbe57ea1170eb7d337aa25811ca1c9d516d00bc6a02dee"
+    },
+    {
+      "path": "U00_FACADE_LEDGER.json",
+      "bytes": 40691,
+      "sha256": "33029ab8818c59ae293b1c2ddd020bb5f28b13700524f398a4023baf25c91319"
+    },
+    {
+      "path": "U00_FACADE_LEDGER.md",
+      "bytes": 20532,
+      "sha256": "8766e9e9cf711b5dea12fbae912287dd6e1ada63541aa4cdb7f573e85f67d1af"
+    },
+    {
+      "path": "archive/README.md",
+      "bytes": 415,
+      "sha256": "a89e45a4d2f33e707d33925e9fe6f87d018b44ac6299ef60e1d862369fad4d33"
+    },
+    {
+      "path": "archive/compatibility_full.md",
+      "bytes": 64794,
+      "sha256": "fc3f6a54bb4d1d2a68831bfe26c3520ea232f95e570d7e9937c0cd0536addf22"
+    },
+    {
+      "path": "archive/compatibility_requirements.json",
+      "bytes": 13708,
+      "sha256": "28210a4a7ac967cf8c9ffcecb71735739fa71f8688dc39c6e3cafeb1e46f1235"
+    },
+    {
+      "path": "archive/firstopen_cases.json",
+      "bytes": 19423,
+      "sha256": "0569e066dadfeb9c7cfc7055ff10fa68382ff125a68d6bc9539b06ede879d20d"
+    },
+    {
+      "path": "archive/firstopen_full.md",
+      "bytes": 31315,
+      "sha256": "a10b0c869ae703f41ee4e641e9892fa3997b1a4a2105cda5b5ca7e1596c08824"
+    },
+    {
+      "path": "archive/original_proposal",
+      "bytes": 15524,
+      "sha256": "23df2024832d14c066ab518bf8e5085339e13de188fd42763c998bb62399dbf1"
+    },
+    {
+      "path": "archive/rendercore_assessment.md",
+      "bytes": 12496,
+      "sha256": "1985b5776d71db7164cebac63b29a3acbdc28a038df7d8e5ec476b6d6275ab1a"
+    },
+    {
+      "path": "archive/rendercore_full.md",
+      "bytes": 126611,
+      "sha256": "5391acdc58fc8fcd64485dc7ca87c70f2bd237cd1dde44073cd82fdcbda238fe"
+    },
+    {
+      "path": "archive/rendercore_requirements.json",
+      "bytes": 44909,
+      "sha256": "6ee042ce55e313d2ecc9971934361bc12d1c57ea299190af05f071a9b3ffb441"
+    },
+    {
+      "path": "evidence/u00/frontend_workerd_summary.txt",
+      "bytes": 1450,
+      "sha256": "7f3ee368d62171440df43ec19989c4c8d82e90b86750e2c806201c71717b2532"
+    },
+    {
+      "path": "evidence/u00/pytest_full_summary.txt",
+      "bytes": 10881,
+      "sha256": "adda5e8d4d111a6c6ffd5f7235520c5ee5df7561875db6e42ce134d234a9503a"
+    },
+    {
+      "path": "evidence/u00/smoke_steps.txt",
+      "bytes": 1356,
+      "sha256": "87c789b6e9f23228f825e6468cce35c5751d0846dd1c99dc725e922d5b6738cf"
+    },
+    {
+      "path": "extensions/X01_extended.md",
+      "bytes": 1947,
+      "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
+    },
+    {
+      "path": "extensions/X02_manuscript.md",
+      "bytes": 1052,
+      "sha256": "dca9184a90589ae494a6d5d54c8e09fd4853544791ed980bb5b6a686f296a8c5"
+    },
+    {
+      "path": "extensions/X03_svg.md",
+      "bytes": 946,
+      "sha256": "132a7061049f4a35563d23391fb0fed68bb300b0b0b73a9e0353baf9043bcaae"
+    },
+    {
+      "path": "generated/FIRST_OPEN_SCHEDULE.md",
+      "bytes": 3899,
+      "sha256": "2e13698223d0d7daa11eee8f2d2b3cf1833da2e1112cdbe5007fb959f4be7856"
+    },
+    {
+      "path": "generated/TRACEABILITY.md",
+      "bytes": 43161,
+      "sha256": "c93f5273ed0ff74b6d2e13ea2eab1dc85e3de50c57214b8fbdf170ad10df465f"
+    },
+    {
+      "path": "handoffs/U00_baseline.md",
+      "bytes": 9549,
+      "sha256": "389e802da5db5cbca60842275c1ca465e63919c4b2905fc63fad95d0d43bfcf9"
+    },
+    {
+      "path": "phase_mapping.json",
+      "bytes": 1204,
+      "sha256": "1ce40f3ba10dc8713d899db402c33287d60883b103e1b6b290f524117b27ad25"
+    },
+    {
+      "path": "phases/U00_baseline.md",
+      "bytes": 1967,
+      "sha256": "4b349edc11aafe72d38de174d2029aa259087ec746ad27a3f5ce5571b7b7b180"
+    },
+    {
+      "path": "phases/U01_contracts.md",
+      "bytes": 1790,
+      "sha256": "fe6de266aedd8d1d999b13afe55e5d74b00695226e183ed06e15dd3794ec2773"
+    },
+    {
+      "path": "phases/U02_spikes.md",
+      "bytes": 2041,
+      "sha256": "dae2a1741a5c2fd148afce2481e64cdec7d2e5ee0c51b7227c41b69fc92ab48c"
+    },
+    {
+      "path": "phases/U03_first_open.md",
+      "bytes": 2266,
+      "sha256": "2150223bc95b7eef4c9d570ffa933d32808b716ce3a76877a18430beb4f1735e"
+    },
+    {
+      "path": "phases/U04_dependencies.md",
+      "bytes": 2246,
+      "sha256": "b20f9b53ea5361d057a9fb4dd78d2536588a2d69a14e8e6c9c69213052714b52"
+    },
+    {
+      "path": "phases/U05_private_python.md",
+      "bytes": 1912,
+      "sha256": "7dc9aa8fb62bddf1c0cf952974eeea35ccffee2c87943b93a2f0280b1a7dc399"
+    },
+    {
+      "path": "phases/U06_render_model_text.md",
+      "bytes": 2170,
+      "sha256": "00772de5e9578200ce16c3a238a65d434d5300b236bc26e90329da3091c49d6d"
+    },
+    {
+      "path": "phases/U07_render_output.md",
+      "bytes": 2003,
+      "sha256": "37a76070dee4bd9b58a8a8a9e4d0b68d7b01e9b3d2ac7dfaca839e553cea8ed6"
+    },
+    {
+      "path": "phases/U08_facade_validation.md",
+      "bytes": 2209,
+      "sha256": "8ecd59ca10ed8a8cfd18dfa397c32e5de5195b766c08cb1a4c1efd39cab63690"
+    },
+    {
+      "path": "phases/U09_join.md",
+      "bytes": 2551,
+      "sha256": "fd3adfa3129fb7c2598d533994f6d0cbec4e25958662f382a586342518c0ba9c"
+    },
+    {
+      "path": "phases/U10_cutover.md",
+      "bytes": 2058,
+      "sha256": "f5092bf9918a7e1116c7b2d9942d799c97e117b530b5b6c7c2fc5bacea16713c"
+    },
+    {
+      "path": "phases/U11_qualification.md",
+      "bytes": 2118,
+      "sha256": "65115225d5173e814919ad4c354385402c90e32d37be36273cb7a6437d5df6e7"
+    },
+    {
+      "path": "plan.json",
+      "bytes": 7401,
+      "sha256": "cc19219ce7df5195d8245b5744ef74572b5691a29d722f45c7147c6c6f325b94"
+    },
+    {
+      "path": "registry.json",
+      "bytes": 269418,
+      "sha256": "4f553b0cd3f2a8d67a7012b4f9472fbf01fc0d48a2b7af7488579728af53f7a2"
+    },
+    {
+      "path": "sources_manifest.json",
+      "bytes": 2442,
+      "sha256": "e471dcb5c4d008c0c7bdbee3832a61bc0b780e420e941aa2f68a06379d9628f9"
+    },
+    {
+      "path": "tools/generate_facade_ledger.py",
+      "bytes": 5807,
+      "sha256": "6bce5cd72c03baaef633b7e2a927177c0c6884e243ad9d77313ea4e4ef237ce7"
+    },
+    {
+      "path": "tools/generate_views.py",
+      "bytes": 5029,
+      "sha256": "08b7701d99b17991f8d90731ea29a7c06afe0248352f850e2879bbc3abcf3b5d"
+    },
+    {
+      "path": "tools/test_plan_validation.py",
+      "bytes": 3359,
+      "sha256": "13b6c852064c862d4692cf8b586d22ce4302f45ab2cb55deda3900db5375e776"
+    },
+    {
+      "path": "tools/validate_plan.py",
+      "bytes": 13658,
+      "sha256": "3340d0af92387d56055a7cb3d882a256c021822f30dbfe6557b6e707ac136d9a"
+    }
+  ]
+}

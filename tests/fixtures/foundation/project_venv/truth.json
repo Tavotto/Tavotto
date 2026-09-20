@@ -1,0 +1,13 @@
+{
+  "fixture": "project_venv",
+  "script": "figure.py",
+  "data_file": "data.csv",
+  "k": [1, 2, 3],
+  "n": [10, 20, 30],
+  "formula": "n = 10 * k",
+  "expected_output": "figure.pdf",
+  "venv_dir": ".venv",
+  "receipt": "venv_receipt.json",
+  "constructed_by": "make_venv.py",
+  "harness_preinstalls_packages": false
+}

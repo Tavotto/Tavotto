@@ -1,0 +1,112 @@
+# pytest 全量（origin/main 319a506d 干净 worktree，2026-09-20，darwin arm64，Python 3.13.11，worker=/opt/homebrew python3.13 + matplotlib 3.10.8，TAVOTTO_WORKERD=0 by conftest）
+
+ERROR    tavotto:app.py:740 worker 错误: POST /api/engine/render: 找不到装有 matplotlib 的 Python
+ERROR    tavotto:app.py:740 worker 错误: POST /api/engine/render: 缺 rdkit
+ERROR    tavotto.desktop:desktop.py:243 desktop sidecar 需要启动凭据：由 Tavotto 桌面应用启动，或调试时设置 TAVOTTO_DESKTOP_NONCE
+ERROR    tavotto:app.py:630 原子写失败: POST /api/layouts/主图: 替换失败：[Errno 28] no space left on device
+ERROR    tavotto:app.py:762 未处理异常: GET /api/versions/dinf/v1
+ERROR    tavotto.watch:project_watch.py:443 watcher 触发的刷新抛出未预期异常，保留上一次的状态
+ERROR    tavotto.watch:project_watch.py:401 watcher 回调抛出，已忽略
+ERROR    tavotto.watch:project_watch.py:443 watcher 触发的刷新抛出未预期异常，保留上一次的状态
+ERROR    tavotto.watch:project_watch.py:451 watcher 轮询异常，继续下一轮
+ERROR    tavotto.watch:project_watch.py:451 watcher 轮询异常，继续下一轮
+ERROR    tavotto:app.py:3458 引擎渲染失败: p1: 脚本报错
+ERROR    tavotto:app.py:5217 AI 任务启动失败: codex fig1.py: codex 没装
+ERROR    tavotto.engine:workerd_client.py:220 workerd 连续 4 次起来就崩，本次进程改用 Python 渲染池（日志见 /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-data-toxvn_zn/cache/workerd.log）
+ERROR    tavotto.engine:workerd_client.py:220 workerd 连续 4 次起来就崩，本次进程改用 Python 渲染池（日志见 /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-data-toxvn_zn/cache/workerd.log）
+ERROR    tavotto.engine:workerd_client.py:220 workerd 连续 4 次起来就崩，本次进程改用 Python 渲染池（日志见 /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-data-toxvn_zn/cache/workerd.log）
+ERROR    tavotto:app.py:4160 写回后尺寸自检不符: Fig1.pdf 实际 35.28×17.64mm，manifest 200.00×100.00mm
+FAILED tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan
+1 failed, 4942 passed, 51 skipped, 2 deselected, 19 warnings in 1259.76s (0:20:59)
+EXIT=1
+WALL_SECONDS=1260
+BACKEND_DONE
+
+============================= slowest 30 durations =============================
+90.43s call     tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan
+29.15s call     tests/test_invariants_engine.py::test_exact_restore_is_pixel_and_manifest_identical[InvMix]
+19.44s call     tests/test_invariants_engine.py::test_every_enum_option_can_actually_be_applied[InvMix]
+17.30s call     tests/test_invariants_engine.py::test_capability_truthfulness[InvMix]
+15.54s call     tests/test_package_smoke.py::test_the_handshake_nonce_is_redacted_from_the_log_before_it_can_be_uploaded
+15.31s call     tests/test_package_smoke.py::test_never_ready_times_out_with_the_server_log_tail
+15.21s call     tests/test_package_smoke.py::test_a_server_that_rejects_our_credentials_is_not_our_readiness
+15.18s call     tests/test_package_smoke.py::test_a_200_that_is_not_json_is_not_readiness
+15.17s call     tests/test_package_smoke.py::test_a_public_200_from_a_stranger_is_not_our_readiness
+12.41s call     tests/bridge/test_bridge_transport.py::test_the_runner_never_writes_into_the_user_home
+10.69s setup    tests/test_preview_hybrid.py::test_cold_build_already_produces_the_hybrid_preview
+10.66s call     tests/test_ci_qualification.py::test_a_replacement_process_cannot_slip_through_the_grace_period
+10.01s call     tests/test_document_persistence.py::test_two_concurrent_creates_cannot_both_win
+10.00s call     tests/test_document_persistence.py::test_two_concurrent_save_as_cannot_both_win
+8.69s call     tests/test_invariants_engine.py::test_exact_restore_is_pixel_and_manifest_identical[InvPar]
+8.26s call     tests/test_invariants_engine.py::test_exact_restore_is_pixel_and_manifest_identical[InvCont]
+8.01s call     tests/test_script_probe.py::TestErrorModel::test_timeout_maps_to_execution_timeout
+7.53s setup    tests/test_preview_complexity.py::test_ordinary_figures_stay_vector[normal_line]
+6.88s call     tests/test_package_management.py::test_install_update_uninstall_end_to_end
+5.56s call     tests/test_invariants_engine.py::test_exact_restore_is_pixel_and_manifest_identical[InvCbar]
+5.45s call     tests/test_invariants_engine.py::test_capability_truthfulness[InvPar]
+5.37s call     tests/test_workerd_client.py::test_a_foreign_supervisor_version_is_refused
+5.34s call     tests/test_equivalence_matrix.py::test_write_back_then_reopen_matches_the_hot_session[s1-range-scale-ticks]
+5.24s call     tests/test_thread_leak_gate.py::test_the_report_stays_readable_under_a_legacy_code_page
+5.18s call     tests/test_equivalence_matrix.py::test_write_back_then_reopen_matches_the_hot_session[s1-fixed-ticks-text]
+5.14s call     tests/test_thread_leak_gate.py::test_a_leaked_non_daemon_thread_fails_the_session_and_gets_named
+5.12s call     tests/test_thread_leak_gate.py::test_a_thread_closed_by_another_plugins_unconfigure_is_not_accused
+5.10s call     tests/test_invariants_engine.py::test_capability_truthfulness[InvCont]
+5.09s call     tests/test_artist_families.py::test_every_family_prop_restores_exactly[FamColl]
+5.01s teardown tests/test_workerd_client.py::test_responses_are_routed_by_request_id_not_by_arrival_order
+=========================== short test summary info ============================
+
+## SKIPPED（51）
+   1 tests/test_worker_roundtrip.py:2183: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+   1 tests/test_worker_roundtrip.py:1782: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+   1 tests/test_worker_roundtrip.py:1770: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+   1 tests/test_worker_roundtrip.py:1757: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+   1 tests/test_worker_roundtrip.py:1736: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+   1 tests/test_worker_roundtrip.py:1717: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+   1 tests/test_update_chain_gates.py:118: 探针二进制未构建（cargo build --manifest-path tools/updater-extract-probe/Cargo.toml）
+   1 tests/test_tutorial.py:762: 先 python -m build（或设 TAVOTTO_DIST_DIR）——这几条读的是产物不是源码树
+   1 tests/test_tutorial.py:745: 先 python -m build（或设 TAVOTTO_DIST_DIR）——这几条读的是产物不是源码树
+   1 tests/test_tutorial.py:729: 先 python -m build（或设 TAVOTTO_DIST_DIR）——这几条读的是产物不是源码树
+   1 tests/test_runtime_build.py:845: 本机没构建过 runtime
+   1 tests/test_runtime_build.py:804: 本机没构建过 runtime
+   1 tests/test_runtime_build.py:792: 本机没构建过 runtime
+   1 tests/test_runtime_build.py:775: 本机没构建过 runtime（跑 scripts/build_worker_runtime.py）
+   1 tests/test_plugin_stage.py:542: web/node_modules 未安装（先 pnpm install）
+   1 tests/test_plugin_candidate.py:97: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+   1 tests/test_plugin_candidate.py:84: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+   1 tests/test_plugin_candidate.py:78: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+   1 tests/test_plugin_candidate.py:64: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+   1 tests/test_plugin_candidate.py:58: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+   1 tests/test_plugin_candidate.py:108: 没有真实插件构建物（TAVOTTO_PLUGIN_CANDIDATE 未指向解包后的候选）
+   1 tests/test_override_sequences.py:490: got empty parameter set for (case_id, issue, stem, steps)
+   1 tests/test_nsis_template.py:520: 没有 tauri 渲染出来的中间脚本（Windows 打包之后才有）
+   1 tests/test_nsis_template.py:404: 没有 tauri 渲染出来的中间脚本（Windows 打包之后才有）
+   1 tests/test_mcp_stdio.py:175: 画布产物未构建：本地跑一次 scripts/build_mcp_widget.py；CI 在 plugin-candidate job 上对真产物执行
+   1 tests/test_mcp_server.py:192: 画布产物未构建
+   1 tests/test_mcp_server.py:1265: 画布产物未构建
+   1 tests/test_mcp_server.py:1215: 画布产物未构建（源码检出后跑一次 scripts/build_mcp_widget.py）
+   1 tests/test_independent_frontend_prs.py:45: 需要 pnpm 与 web/node_modules 真构建一次画布（CI 的 frontend job 上执行）
+   1 tests/test_equivalence_matrix.py:993: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+   1 tests/test_equivalence_matrix.py:968: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+   1 tests/test_equivalence_matrix.py:949: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+   1 tests/test_equivalence_matrix.py:1030: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+   1 tests/test_equivalence_matrix.py:1002: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+   1 tests/test_engine_family_modules.py:168: pathgeom 没有 RESTORE 表
+   1 tests/test_engine_family_modules.py:168: axestraversal 没有 RESTORE 表
+   1 tests/test_codex_plugin.py:866: 干净解释器里居然有 tavotto
+   1 tests/test_codex_plugin.py:856: 干净解释器里居然有 tavotto
+   1 tests/test_codex_plugin.py:827: 干净解释器里居然有 tavotto
+   1 tests/test_codex_plugin.py:814: 干净解释器里居然有 tavotto
+   1 tests/test_codex_plugin.py:803: 这台机器上真装着 Tavotto 桌面版，「什么都没装」模拟不出来
+   1 tests/test_codex_plugin.py:782: 干净解释器里居然有 tavotto
+   1 tests/test_codex_plugin.py:763: 干净解释器里居然有 tavotto
+   1 tests/test_codex_plugin.py:727: 干净解释器里居然有 tavotto
+   1 tests/test_codex_plugin.py:706: 这台机器上真装着带 CLI 的 Tavotto 桌面版，「装了但没 CLI」模拟不出来
+   1 tests/test_codex_plugin.py:680: 这台机器上真装着带 CLI 的 Tavotto 桌面版，「装了但没 CLI」模拟不出来
+   1 tests/test_codex_plugin.py:1645: 联网冒烟需 TAVOTTO_CODEX_NET_SMOKE=1（nightly/手动）
+   1 tests/test_codex_install_cli.py:831: 要网络与真实 marketplace：设 TAVOTTO_CODEX_REAL_SMOKE=1 才跑
+   1 tests/test_ci_tooling.py:225: 非 Linux，无 /proc 进程扫描
+   1 tests/test_ai_agents.py:761: 需要本机真的装了 codex / claude；设 TAVOTTO_REAL_CLI_SMOKE=1 开启
+
+## 单跑那条红（同一 worktree）
+.                                                                        [100%]
+EXIT=0

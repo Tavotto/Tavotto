@@ -1,0 +1,32 @@
+## pnpm_test
+       31.22 real       227.65 user        57.14 sys
+           356859904  maximum resident set size
+EXIT=0 WALL=31
+## pnpm_build
+        8.54 real        11.52 user         1.16 sys
+          1212940288  maximum resident set size
+EXIT=0 WALL=8
+## pnpm_install
+        1.53 real         1.14 user         2.06 sys
+           425246720  maximum resident set size
+EXIT=0 WALL=2
+## cargo_test
+       12.94 real         9.49 user         5.42 sys
+           272105472  maximum resident set size
+EXIT=0 WALL=13
+## cargo_clippy
+        1.45 real         2.35 user         0.46 sys
+           249872384  maximum resident set size
+EXIT=0 WALL=2
+ Test Files  279 passed (279)
+      Tests  4142 passed (4142)
+   Duration  29.93s (transform 20.97s, setup 28.04s, import 63.43s, tests 72.46s, environment 128.10s)
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.94s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+EXIT=0 WALL=0
+dist/assets/index-DeBZE4Qx.css      84.96 kB │ gzip:  15.00 kB
+dist/assets/index-BKEZs0uz.js    1,899.81 kB │ gzip: 595.69 kB
+✓ built in 520ms
