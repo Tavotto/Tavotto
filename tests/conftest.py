@@ -248,9 +248,14 @@ def _write_report_to_stderr(text: str) -> None:
 # 之后，才把不属于自己的那些 deselect 掉。于是「漏片」在每个 shard 进程里都会当场
 # rc 4，而不是等 CI 上两片都绿了才有人发现少了一个文件。
 #
-# **不带 `--shard` 时两个钩子完全不动 collection**：lab（`_lab-qualification.yml`）、
-# nightly、release 的 pytest 命令一个字不改，它们跑的仍是全集——
-# tests/test_merge_queue_workflows.py 钉住那几条命令里没有 `--shard`。
+# **不带 `--shard` 时两个钩子完全不动 collection**：nightly.yml / desktop-tauri.yml 的
+# pytest 命令一个字不改，它们跑的仍是全集——tests/test_merge_queue_workflows.py
+# `test_unsharded_pytest_lanes_stay_unsharded` 钉住那两个文件里没有 `--shard`。
+# lab（`_lab-qualification.yml`，含 release 的资格）的常规套件 2026-09-19 起在**同一台机器**
+# 上起 N 个 `--shard=K/N` 进程——每个进程仍走上面那条自验（并集 == 全集），覆盖面与单进程
+# 全集相同，被切开的只有时间；slow / 操作序列 harness 那两条仍不带 `--shard`。
+# `test_lab_pytest_runs_every_shard_in_one_step`（形状）与
+# `test_lab_regular_suite_step_exits_nonzero_iff_a_shard_fails`（真跑）钉住。
 #
 # 分配算法、权重表与自验的判据都在 tests/support/shard.py（纯函数，有单测）。
 

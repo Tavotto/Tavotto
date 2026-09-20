@@ -135,6 +135,13 @@ jobs:
       PYTHONHASHSEED: "0"
       MPLBACKEND: Agg
     steps:
+      # 分片产物的早清：常规套件那一步自己也清（见那里），但 checkout / 体检 / 建环境失败时
+      # 它根本不跑，而 `failure()` 的诊断包照常跑——self-hosted 的 RUNNER_TEMP 跨 run 复用，
+      # 上一轮的 junit 会被当成这一轮的。放在 checkout 之前：它不需要源码树，而 checkout 是
+      # 第一个可失败步骤。
+      - name: 清掉上一轮的分片产物
+        run: rm -f "$RUNNER_TEMP"/pytest-shard-*
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # 显式钉公开仓库：被 ci-infra 跨仓库调用时默认 repository 是调用方。
@@ -177,8 +184,82 @@ jobs:
           "$VENV/bin/python" -c "import tavotto,matplotlib,numpy,PIL;print('环境就绪', tavotto.__version__)"
 
       # ── 正确性 ────────────────────────────────────────────────
-      - name: 常规测试套件
-        run: ${{ steps.venv.outputs.python }} -m pytest -q
+      - name: 常规测试套件（同机 4 片并行）
+        id: regular
+        # 单进程 `pytest -q` 在这台 16 核 VM 上要 46 分钟（2026-09-19 实测，4897 条），
+        # 15 个核闲着；main 档 57 分钟里它占 47，单 runner 上一天 8 次合入，13:11 派发的
+        # run 14:01 才起跑。这里用 CI03a 的 `--shard=K/N`（按文件分、每个进程在自己的
+        # collection 之后算出全部 N 片并自验并集 == 全集，漏片当场 rc 4）在**同一台机器**
+        # 上起 N 个进程：覆盖面一条不减——N 片的并集就是原来那一整个集合，每个进程自己
+        # 核这一点；被切开的只有时间。不用 xdist：按用例分发会把跨用例耦合一次性摊开，
+        # `--shard` 按文件分已经解决同一个问题（docs/rules/ci/pytest-shards.md）。
+        # 判据 = 每一片的退出码，任一片非零整步红，并把那一片的日志尾巴打出来；不加
+        # `-q`（addopts 已带一个，叠成 `-qq` 后 pytest 不打总数行），`-rs` 让 skip 理由
+        # 进日志。每片各自的 junit / manifest 带片号——self-hosted 的 RUNNER_TEMP 跨 run
+        # 复用，manifest 走 `=` 形式（空格形式在路径已存在时 rc 4，见 ci.yml 同一处的注释）。
+        # basetemp 不指定：pytest 自己给每个进程编号一个 `/tmp/pytest-of-<user>/pytest-N`
+        # （建目录是原子的，撞号就退一步再试），与从前单进程的隔离一样；本机试过把它指到
+        # 路径里含 "tavotto" 的目录，`test_sitecustomize_silently_does_nothing_under_E`
+        # 立刻因为 stderr 里出现了这个词而红——那是路径，不是并发。
+        # 合同：tests/test_merge_queue_workflows.py::TestGates::test_lab_pytest_runs_every_shard_in_one_step
+        run: |
+          set -euo pipefail
+          # `set -m`（作业控制）不是装饰：无作业控制的 shell 起 `&` 后台命令时按 POSIX 把
+          # SIGINT / SIGQUIT 置成 SIG_IGN，处置跨 exec 继承到 pytest → `tavotto run` → 用户
+          # 脚本整棵树，Python 见 SIGINT 已被忽略就不装 KeyboardInterrupt——
+          # `test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 于是 90 秒超时。本机双向
+          # 验过：同一条命令 `&` 起 rc 1、`set -m` 后 `&` 起 rc 0（每片自成进程组，SIGINT
+          # 处置回到默认）。`( trap - INT; … ) &` 救不回来——进入子 shell 时已被忽略的信号
+          # 不许重置。
+          set -m
+          N=4
+          # self-hosted 的 RUNNER_TEMP 跨 run 复用：某片在 pytest 写文件之前就死掉的话，上一轮
+          # 的 junit / manifest / 日志会留在同名路径上，被 always() 的证据上传当成这一轮的。
+          # 起片之前先清干净（job 开头那一步管的是「这一步没跑到」的窗口，这里管的是「这一步
+          # 跑了」的窗口，两个窗口各一句）。
+          rm -f "$RUNNER_TEMP"/pytest-shard-*
+          pids=()
+          for k in $(seq 1 "$N"); do
+            ${{ steps.venv.outputs.python }} -m pytest -rs -p no:cacheprovider \
+              --shard="$k/$N" \
+              --shard-manifest="$RUNNER_TEMP/pytest-shard-$k-manifest.json" \
+              --junitxml="$RUNNER_TEMP/pytest-shard-$k-junit.xml" \
+              > "$RUNNER_TEMP/pytest-shard-$k.log" 2>&1 &
+            pids+=("$!")
+          done
+          fail=0
+          for i in "${!pids[@]}"; do
+            k=$((i + 1))
+            rc=0
+            wait "${pids[$i]}" || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              # 总数行（`N passed, M skipped … in Xs`），不是日志最后一行——最后一行常是
+              # 退出时的 DeprecationWarning
+              echo "片 $k/$N 绿：$(grep -E '[0-9]+ (passed|failed|error)' "$RUNNER_TEMP/pytest-shard-$k.log" | tail -n 1)"
+            else
+              fail=1
+              echo "::error::常规测试套件片 $k/$N 退出码 $rc"
+              echo "::group::片 $k/$N 日志尾巴"
+              tail -n 80 "$RUNNER_TEMP/pytest-shard-$k.log"
+              echo "::endgroup::"
+            fi
+          done
+          exit "$fail"
+
+      # 分片证据：manifest（每片分到哪些文件、估计秒数）+ junit（真实秒数）。**只作证据与
+      # 重平衡的数据，不作判定输入**——判定在上一步的退出码里。权重表从这里重算：
+      # `python tests/support/shard.py --from-junit <四份 junit>`（lab 的 VM 才是这套命令
+      # 真正跑的机器，hosted 的计时对它只是近似）。
+      - name: 常规套件分片证据
+        if: always() && steps.regular.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab-pytest-shards-${{ inputs.mode }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/pytest-shard-*-junit.xml
+            ${{ runner.temp }}/pytest-shard-*-manifest.json
+          retention-days: 30
+          if-no-files-found: warn
 
       - name: slow / 集成用例
         # pytest.ini 的 addopts 是 `-m "not slow"`，所以必须显式反选。
@@ -414,6 +495,9 @@ jobs:
           # 那些东西几百 MB 起步，而且对排查毫无帮助。
           path: |
             ${{ env.TAVOTTO_CI_STATE_ROOT }}/reports/*.json
+            ${{ runner.temp }}/pytest-shard-*.log
+            ${{ runner.temp }}/pytest-shard-*-junit.xml
+            ${{ runner.temp }}/pytest-shard-*-manifest.json
             ${{ runner.temp }}/visual/**
             ${{ runner.temp }}/compat/**
             ${{ runner.temp }}/soak-metrics.json
