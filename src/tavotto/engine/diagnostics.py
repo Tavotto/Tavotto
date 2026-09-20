@@ -163,11 +163,13 @@ def recent_errors(lines: list[str], limit: int = ERROR_TAIL) -> list[str]:
             while j < len(lines) and (not lines[j].strip() or lines[j][:1].isspace()):
                 j += 1
             tail = lines[j].strip() if j < len(lines) else ""
-            out.append(f"{ln.strip()} → {tail}" if tail else ln)
+            # 收尾那句里可能带路径（`OSError: /mnt/study/patient-a.csv`）：与 worker 证据
+            # 同一道缩写——`_redact_text` 只认主目录（评审 #443 第四轮）
+            out.append(shorten_paths(f"{ln.strip()} → {tail}") if tail else ln)
             i = j + 1 if tail else j
             continue
         if " ERROR " in ln:
-            out.append(ln)
+            out.append(shorten_paths(ln))
         i += 1
     return out[-limit:]
 
@@ -182,11 +184,18 @@ def recent_errors(lines: list[str], limit: int = ERROR_TAIL) -> list[str]:
 #: 按前缀放行就是把用户数据当证据带出门。异常行只在它**收尾一段 traceback** 时算数——
 #: 来历（前面那串帧）跟着它一起在。`[guard]` 这类引擎标记行不进包：它们不是崩溃证据，
 #: 而用户完全可以打印出同样的前缀。
-_TB_HEADER = re.compile(r"^Traceback \(most recent call last\):")
+_TB_HEADER = re.compile(r"^Traceback \(most recent call last\):$")
 _TB_FRAME = re.compile(r'^\s+File "[^"]*", line \d+')
-_FH_HEADER = re.compile(r"^(?:Fatal Python error|Windows fatal exception)\b")
-_FH_THREAD = re.compile(r"^(?:Current thread|Thread 0x)\b")
+#: 收尾的异常行：`ExcType: message` 或裸 `ExcType`（`KeyboardInterrupt`），类型名是点分标识符。
+#: `next sample: patient-124` 这种词间带空格的不算——块没有合法收尾就整块不算。
+_TB_CLOSER = re.compile(r"^[A-Za-z_][\w.]*(?::\s.*|:)?$")
+_FH_HEADER = re.compile(r"^(?:Fatal Python error|Windows fatal exception): \S")
+_FH_THREAD = re.compile(r"^(?:Current thread|Thread) 0x[0-9a-fA-F]+")
 _FH_FOOTER = re.compile(r"^Extension modules\b")
+#: **块要完整才算证据**（评审 #443 第四轮）：traceback 块 = 头 + ≥1 帧 + 合法收尾；
+#: faulthandler 块 = 头 + ≥1 `Current thread` / `Thread 0x…` + ≥1 帧。用户
+#: `print("Fatal Python error: patient-123")` 只有一个头、`print("Traceback (most recent
+#: call last):")` 后面跟一行数据——都凑不齐一个块，整块不算。
 #: 链式异常的两句连接语——**逐字**匹配（用户 `print("During handling … patient-123")`
 #: 那种带尾巴的不算），且只在它前面紧挨着一段刚收尾的 traceback 块时保留。
 _TB_CHAIN = re.compile(
@@ -245,6 +254,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
             continue
         if _TB_HEADER.match(ln):
             block = [shorten_paths(ln)]
+            frames = 0
             i += 1
             closed = False
             # 帧行留、源码行丢，直到第一条不缩进的非空行——那是异常本身
@@ -256,37 +266,55 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                 if cur[:1].isspace():
                     if _TB_FRAME.match(cur):
                         block.append(shorten_paths(cur))
+                        frames += 1
                     else:
                         dropped += 1
                     i += 1
                     continue
-                block.append(shorten_paths(cur))  # 收尾的异常行
-                i += 1
-                closed = True
+                if _TB_CLOSER.match(cur):
+                    block.append(shorten_paths(cur))  # 收尾的异常行
+                    i += 1
+                    closed = True
                 break
+            if not (closed and frames):
+                # 没凑齐「头 + 帧 + 收尾」的不是 traceback，是长得像的用户输出
+                dropped += len(block)
+                just_closed_tb = False
+                continue
             # 链式异常：上一块以链接语结尾时，这一块并进去（它们本来就是一段）
             if blocks and _TB_CHAIN.match(blocks[-1][-1]):
                 blocks[-1].extend(block)
             else:
                 blocks.append(block)
-            just_closed_tb = closed
+            just_closed_tb = True
             continue
         if _FH_HEADER.match(ln):
             block = [shorten_paths(ln)]
+            threads = frames = 0
             i += 1
             while i < n:
                 cur = tail[i].rstrip()
                 if not cur.strip():
                     i += 1
                     continue
-                if _FH_THREAD.match(cur) or _TB_FRAME.match(cur):
+                if _FH_THREAD.match(cur):
                     block.append(shorten_paths(cur))
+                    threads += 1
+                    i += 1
+                    continue
+                if _TB_FRAME.match(cur):
+                    block.append(shorten_paths(cur))
+                    frames += 1
                     i += 1
                     continue
                 if _FH_FOOTER.match(cur):
                     block.append(shorten_paths(cur))
                     i += 1
                 break
+            if not (threads and frames):
+                dropped += len(block)
+                just_closed_tb = False
+                continue
             blocks.append(block)
             just_closed_tb = False
             continue

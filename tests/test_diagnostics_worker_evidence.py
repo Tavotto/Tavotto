@@ -64,6 +64,23 @@ def test_each_traceback_is_paired_with_its_exception_line():
     ]
 
 
+def test_paths_in_the_paired_exception_line_are_shortened():
+    """评审 #443 第四轮 P1：`OSError: /mnt/study/patient-a.csv` 这种收尾句里的路径与
+    worker 证据同一道缩写——`_redact_text` 只认主目录。ERROR 行同理。"""
+    got = diagnostics.recent_errors(
+        [
+            "2026-09-20 10:00:00,000 ERROR tavotto: 导出失败: D:\\Study\\fig1.pdf 写不进去",
+            "Traceback (most recent call last):",
+            '  File "/app/x.py", line 1, in <module>',
+            "OSError: [Errno 13] Permission denied: '/mnt/private-study/patient-a/data.csv'",
+        ]
+    )
+    assert got == [
+        "2026-09-20 10:00:00,000 ERROR tavotto: 导出失败: …/fig1.pdf 写不进去",
+        "Traceback (most recent call last): → OSError: [Errno 13] Permission denied: '…/data.csv'",
+    ]
+
+
 def test_frames_stay_out_of_the_error_list():
     """帧行（文件路径 + 源码）不进报告：读的人要的是那一句，脱敏面也更小。"""
     got = "\n".join(diagnostics.recent_errors(APP_LOG))
@@ -85,6 +102,14 @@ def test_the_limit_keeps_the_most_recent_entries():
 
 
 # ------------------------------------------------------------ worker.log 尾巴
+#: 一段**完整**的 faulthandler 块：头 + 线程行 + 帧 + 收尾。
+FH_BLOCK = (
+    "Fatal Python error: Segmentation fault\n\n"
+    "Current thread 0x0000000201ac3f80 (most recent call first):\n"
+    '  File "/p/crash.py", line 6 in <module>\n'
+    "Extension modules: numpy._core._multiarray_umath (total: 4)\n"
+)
+
 #: 用例里的「当前项目」与「别的项目」：目录名前缀 = `pool.cache_digest(项目)`。
 PROJECT = "/projects/this-one"
 OTHER = "/projects/someone-elses"
@@ -101,7 +126,7 @@ def _session(root, script: str, text: str, age_s: float, *, project: str = PROJE
 
 def test_worker_log_tails_take_the_most_recent_sessions_and_flag_empty_ones(tmp_path):
     _session(tmp_path, "old.py", "old stuff\n", age_s=3600)
-    _session(tmp_path, "crashed.py", "Fatal Python error: Segmentation fault\n", age_s=10)
+    _session(tmp_path, "crashed.py", FH_BLOCK, age_s=10)
     _session(tmp_path, "silent.py", "", age_s=5)
     _session(tmp_path, "mid.py", "line1\nline2\n", age_s=60)
     got = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=60)
@@ -287,6 +312,30 @@ def test_a_lone_exception_looking_line_without_a_traceback_is_not_evidence():
     assert kept == [] and omitted == 3
 
 
+@pytest.mark.parametrize(
+    "lines",
+    [
+        # 只有一个头：用户 print 出来的
+        ["Fatal Python error: patient-123"],
+        ["Fatal Python error: Segmentation fault"],
+        # 头 + 线程行但没有帧
+        ["Fatal Python error: Segmentation fault", "Current thread 0x1 (most recent call first):"],
+        # traceback 头后面跟一行数据（不是合法的异常行）
+        ["Traceback (most recent call last):", "next sample: patient-124"],
+        # traceback 头 + 合法收尾但一帧都没有
+        ["Traceback (most recent call last):", "KeyError: 'k'"],
+        # 头 + 帧但没有收尾
+        ["Traceback (most recent call last):", '  File "/x/a.py", line 1, in <module>'],
+    ],
+)
+def test_incomplete_blocks_are_not_evidence(lines):
+    """评审 #443 第四轮 P1：块要凑齐「头 + 帧 + 收尾」/「头 + 线程 + 帧」才算，
+    否则整块按用户输出略去——README 承诺不含脚本输出，一个头不能当通行证。"""
+    kept, omitted = diagnostics.evidence_lines(lines)
+    assert kept == [], kept
+    assert omitted == len(lines)
+
+
 def test_a_traceback_block_ends_at_its_exception_line():
     """收尾的异常行之后的东西不再算这个块的：用户接着 print 的数据不能搭车。"""
     kept, omitted = diagnostics.evidence_lines(
@@ -354,8 +403,7 @@ def test_the_report_carries_redacted_worker_logs(client, tmp_path, monkeypatch):
         f"Traceback (most recent call last):\n"
         f'  File "{os.path.join(REAL_HOME, "fig.py")}", line 3, in <module>\n'
         "    token = 'sk-abcdefghijklmnop'\n"
-        "RuntimeError: bad key sk-abcdefghijklmnop\n"
-        "Fatal Python error: Segmentation fault\n",
+        "RuntimeError: bad key sk-abcdefghijklmnop\n" + FH_BLOCK,
         age_s=1,
         project=str(project),
     )

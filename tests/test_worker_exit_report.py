@@ -370,21 +370,74 @@ def test_this_interpreter_reports_its_own_exit_code_through_the_real_popen():
 
 
 # ------------------------------------------------------------ 同源对
+def _rust_code_without_comments_and_strings(source: str) -> str:
+    """把 Rust 源码里的注释（`//…` / `/* … */`，含文档注释）与字符串字面量抹掉。
+
+    留下的才是「代码」：一条写在注释或字符串里的 `pub const EXIT_GRACE …` 不该让
+    同源对的看护变绿（评审 #443）。没有 Rust 解析器，这里按词法逐字符走：只认
+    这三样，够用且不误伤。
+    """
+    out: list[str] = []
+    i, n = 0, len(source)
+    while i < n:
+        two = source[i : i + 2]
+        if two == "//":
+            j = source.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if two == "/*":
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if source[i : i + 2] == "/*":
+                    depth, i = depth + 1, i + 2
+                elif source[i : i + 2] == "*/":
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+            continue
+        ch = source[i]
+        if ch == '"':
+            i += 1
+            while i < n and source[i] != '"':
+                i += 2 if source[i] == "\\" else 1
+            i += 1
+            out.append('""')
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+_RUST_EXIT_GRACE = re.compile(
+    r"^pub const EXIT_GRACE: Duration = Duration::from_millis\((\d+)\);", re.M
+)
+
+
 def test_the_exit_grace_is_one_number_on_both_control_planes():
     """`pool.EXIT_GRACE` ↔ `workerd/src/worker.rs` 的 `EXIT_GRACE`（同源对总表有它一行）。
 
     宽限不一致的表现是：同一个「关了管道赖着不退」的进程，一条控制面说它自己
-    退了、另一条说它被终止——同一件事两个答案。
+    退了、另一条说它被终止——同一件事两个答案。判据读的是**去掉注释与字符串之后**
+    的代码，且要求那条定义**恰好一处**、行首顶格——注释里留一份旧写法骗不过它。
     """
     rs = Path(__file__).resolve().parents[1] / "workerd" / "src" / "worker.rs"
     if not rs.is_file():
         pytest.skip("没有 workerd 源码（wheel/sdist 里不含）")
-    m = re.search(
-        r"pub const EXIT_GRACE: Duration = Duration::from_millis\((\d+)\);",
-        rs.read_text(encoding="utf-8"),
+    found = _RUST_EXIT_GRACE.findall(_rust_code_without_comments_and_strings(rs.read_text("utf-8")))
+    assert len(found) == 1, f"worker.rs 里 EXIT_GRACE 的定义应恰好一处，找到 {found}"
+    assert int(found[0]) == round(pool.EXIT_GRACE * 1000)
+
+
+def test_the_rust_const_guard_ignores_comments_and_strings():
+    """看护看护者：注释 / 字符串里的同名写法不算，真定义改了会被抓到。"""
+    fake = (
+        "// pub const EXIT_GRACE: Duration = Duration::from_millis(1500);\n"
+        "/* pub const EXIT_GRACE: Duration = Duration::from_millis(1500); */\n"
+        "/// pub const EXIT_GRACE: Duration = Duration::from_millis(1500);\n"
+        'let s = "pub const EXIT_GRACE: Duration = Duration::from_millis(1500);";\n'
+        "pub const EXIT_GRACE: Duration = Duration::from_millis(2500);\n"
     )
-    assert m, "worker.rs 里找不到 EXIT_GRACE 的定义（改了写法就同步这条正则）"
-    assert int(m.group(1)) == round(pool.EXIT_GRACE * 1000)
+    assert _RUST_EXIT_GRACE.findall(_rust_code_without_comments_and_strings(fake)) == ["2500"]
 
 
 # ------------------------------------------------------------ probe 的归类
