@@ -49,6 +49,17 @@ def test_undecodable_bytes_are_a_decode_error_not_a_syntax_error(tmp_path):
     )  # 首行就解不出时 detect_encoding 说不出编码
 
 
+def test_undecodable_bytes_after_a_clean_first_line_are_a_decode_error_with_the_encoding(tmp_path):
+    """首行干净（detect_encoding 判 utf-8）、正文里有坏字节：`data.decode()` 那一步报出来，
+    带上判定的编码——与首行就解不出的那条是两条路，各自要能红。"""
+    path = tmp_path / "fig.py"
+    path.write_bytes(PLOT.encode("utf-8") + b"# tail \xff\xfe\n")
+    seen = discover.inspect_script(path, tmp_path)
+    assert seen["info"] is None
+    assert seen["problem"]["kind"] == discover.PROBLEM_DECODE
+    assert seen["problem"]["encoding"] == "utf-8"
+
+
 def test_a_bad_coding_cookie_is_a_decode_error(tmp_path):
     path = tmp_path / "fig.py"
     path.write_bytes(b"# -*- coding: no-such-codec -*-\n" + PLOT.encode("utf-8"))

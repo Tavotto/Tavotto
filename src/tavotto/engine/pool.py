@@ -915,7 +915,7 @@ def _explicit_unusable(source: str, python: str, reason: str) -> "WorkerError":
         "no_matplotlib": "它 import 不到 matplotlib（或起不来）",
     }.get(reason, reason)
     err = WorkerError(
-        f"{label}指定的解释器用不了：{why}（{python}）。"
+        f"{label} 指定的解释器用不了：{why}（{python}）。"
         "Tavotto 不会自动换成别的环境：请重新指定，或清除这条设置回到自动选择。",
         code=EXPLICIT_UNUSABLE_CODE,
     )

@@ -60,7 +60,9 @@ def test_the_enforced_set_is_exactly_what_u03_promoted_and_each_points_at_a_real
     （FO01 / FO02 / FO03 / FO07 / FO15 / FO19）；每条都指向真实存在的用例函数。多一条 / 少一条
     都要有人改这里——enrollment 不是随手加的标签。"""
     ledger = fh.load_ledger()
-    enforced = {c["case_id"]: c for c in ledger["cases"] if c["enrollment"] == fh.ENROLLMENT_ENFORCED}
+    enforced = {
+        c["case_id"]: c for c in ledger["cases"] if c["enrollment"] == fh.ENROLLMENT_ENFORCED
+    }
     assert set(enforced) == {CASE_ID, "FO01", "FO02", "FO03", "FO07", "FO15", "FO19"}
     file_part, func = enforced[CASE_ID]["test"].split("::", 1)
     assert Path(file_part).name == Path(__file__).name
@@ -73,7 +75,12 @@ def test_the_enforced_set_is_exactly_what_u03_promoted_and_each_points_at_a_real
     counts = {}
     for c in ledger["cases"]:
         counts[c["enrollment"]] = counts.get(c["enrollment"], 0) + 1
-    assert counts == {"planned": 21, "observing": 4, "later": 1, "enforced": 7}  # 33 条：32 个 FO + U01-S1
+    assert counts == {
+        "planned": 21,
+        "observing": 4,
+        "later": 1,
+        "enforced": 7,
+    }  # 33 条：32 个 FO + U01-S1
     # safe_stop 的 case 也能 enforced，但台账预期必须写明是 safe_stop（校验器据此分开计数）
     assert enforced["FO15"]["expected_product_outcome"] == "safe_stop"
 
