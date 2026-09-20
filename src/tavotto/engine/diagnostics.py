@@ -37,7 +37,12 @@ ERROR_TAIL = 30  # 报告里单列的最近错误条数
 #: （app.log 里只有一句「渲染进程退出了」）——#435 的诊断包里 24 条错误全是空壳，
 #: 正是因为这份日志不在包里。按 mtime 取最近的几份：用户报的问题就是最近发生的。
 WORKER_LOG_FILES = 3
+#: 报告里每份 worker.log 最多带多少行证据（按块截，见 `last_blocks_within`）。
 WORKER_LOG_TAIL_LINES = 60
+#: 抽证据之前先看日志的最后多少行。**必须比一段完整的 faulthandler 栈长**：先按 60 行
+#: 截、再抽证据的话，一段 80 行的崩溃栈只剩帧行、没有头，状态机一条都不认，报告里
+#: 就没有崩溃位置（评审 #443）。与 app.log 的 `LOG_TAIL_LINES` 同一个量级。
+WORKER_LOG_SCAN_LINES = 400
 
 #: 诊断包整体格式的版本。**读包的人不该靠 Tavotto 版本号去猜 schema**
 #: ——manifest.json 自报这个数。1 = 只有 report/app.log/config 的那一版；
@@ -182,7 +187,12 @@ _TB_FRAME = re.compile(r'^\s+File "[^"]*", line \d+')
 _FH_HEADER = re.compile(r"^(?:Fatal Python error|Windows fatal exception)\b")
 _FH_THREAD = re.compile(r"^(?:Current thread|Thread 0x)\b")
 _FH_FOOTER = re.compile(r"^Extension modules\b")
-_TB_CHAIN = re.compile(r"^(?:The above exception|During handling of the above exception)")
+#: 链式异常的两句连接语——**逐字**匹配（用户 `print("During handling … patient-123")`
+#: 那种带尾巴的不算），且只在它前面紧挨着一段刚收尾的 traceback 块时保留。
+_TB_CHAIN = re.compile(
+    r"^(?:The above exception was the direct cause of the following exception:"
+    r"|During handling of the above exception, another exception occurred:)$"
+)
 
 #: 绝对路径的两种写法：Windows（盘符 / UNC，正反斜杠都认）与 POSIX（至少两段，免得把
 #: argparse usage 里的 `-c/--clstr` 当成路径）。
@@ -214,25 +224,29 @@ def shorten_paths(line: str) -> str:
     return _ABS_PATH.sub(_shorten_path, line)
 
 
-def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
-    """worker.log 尾巴 → (可进诊断包的证据行, 略去的行数)。
+def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
+    """worker.log 尾巴 → (可进诊断包的证据块, 略去的行数)。
 
     只认上面说的两种结构块；留下的行里绝对路径缩成 `…/site-packages/pkg/mod.py` 或
     `…/文件名`。块外的一切（脚本自己 print 的、matplotlib 的噪音、引擎的标记行）
-    都略去只计数。
+    都略去只计数。按块交出去是为了让调用方**按块截尾**：一个块被拦腰截断之后
+    剩下的帧行没有头，读的人不知道它们是谁的。
     """
-    kept: list[str] = []
+    blocks: list[list[str]] = []
     dropped = 0
     i = 0
     n = len(tail)
+    #: 上一个非空行是不是刚收尾的 traceback 块——链接语只在这时才算数
+    just_closed_tb = False
     while i < n:
         ln = tail[i].rstrip()
         if not ln.strip():
             i += 1
             continue
         if _TB_HEADER.match(ln):
-            kept.append(shorten_paths(ln))
+            block = [shorten_paths(ln)]
             i += 1
+            closed = False
             # 帧行留、源码行丢，直到第一条不缩进的非空行——那是异常本身
             while i < n:
                 cur = tail[i].rstrip()
@@ -241,17 +255,24 @@ def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
                     continue
                 if cur[:1].isspace():
                     if _TB_FRAME.match(cur):
-                        kept.append(shorten_paths(cur))
+                        block.append(shorten_paths(cur))
                     else:
                         dropped += 1
                     i += 1
                     continue
-                kept.append(shorten_paths(cur))  # 收尾的异常行
+                block.append(shorten_paths(cur))  # 收尾的异常行
                 i += 1
+                closed = True
                 break
+            # 链式异常：上一块以链接语结尾时，这一块并进去（它们本来就是一段）
+            if blocks and _TB_CHAIN.match(blocks[-1][-1]):
+                blocks[-1].extend(block)
+            else:
+                blocks.append(block)
+            just_closed_tb = closed
             continue
         if _FH_HEADER.match(ln):
-            kept.append(shorten_paths(ln))
+            block = [shorten_paths(ln)]
             i += 1
             while i < n:
                 cur = tail[i].rstrip()
@@ -259,21 +280,49 @@ def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
                     i += 1
                     continue
                 if _FH_THREAD.match(cur) or _TB_FRAME.match(cur):
-                    kept.append(shorten_paths(cur))
+                    block.append(shorten_paths(cur))
                     i += 1
                     continue
                 if _FH_FOOTER.match(cur):
-                    kept.append(shorten_paths(cur))
+                    block.append(shorten_paths(cur))
                     i += 1
                 break
+            blocks.append(block)
+            just_closed_tb = False
             continue
-        if _TB_CHAIN.match(ln):
-            kept.append(ln)
+        if just_closed_tb and _TB_CHAIN.match(ln):
+            # 逐字相同的链接语，且紧跟在一段刚收尾的 traceback 后面：接到那一块上
+            blocks[-1].append(ln)
+            just_closed_tb = False
             i += 1
             continue
         dropped += 1
+        just_closed_tb = False
         i += 1
-    return kept, dropped
+    # 以链接语收尾却没等到下一段 traceback（尾巴正好截在中间）：链接语本身不是证据
+    if blocks and _TB_CHAIN.match(blocks[-1][-1]):
+        blocks[-1].pop()
+        dropped += 1
+    return blocks, dropped
+
+
+def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
+    """`evidence_blocks` 摊平成行（老口径）。"""
+    blocks, dropped = evidence_blocks(tail)
+    return [ln for block in blocks for ln in block], dropped
+
+
+def last_blocks_within(blocks: list[list[str]], budget: int) -> list[list[str]]:
+    """从尾巴往前**整块**地取，直到行数超预算；最后那一块再长也要——它是最新的崩溃。"""
+    out: list[list[str]] = []
+    total = 0
+    for block in reversed(blocks):
+        if out and total + len(block) > budget:
+            break
+        out.append(block)
+        total += len(block)
+    out.reverse()
+    return out
 
 
 def worker_log_tails(
@@ -317,15 +366,16 @@ def worker_log_tails(
             text = p.read_bytes().decode("utf-8", errors="replace")
         except OSError:
             continue
-        tail = text.splitlines()[-lines:]
-        kept, omitted = evidence_lines(tail)
+        scanned = text.splitlines()[-WORKER_LOG_SCAN_LINES:]
+        blocks, omitted = evidence_blocks(scanned)
+        kept = last_blocks_within(blocks, lines)
         out.append(
             {
                 "session": p.parent.name,
                 "modified": _iso(mtime),
-                "empty": not any(t.strip() for t in tail),
+                "empty": not any(t.strip() for t in scanned),
                 "omitted": omitted,
-                "tail": "\n".join(kept),
+                "tail": "\n".join(ln for block in kept for ln in block),
             }
         )
     return out

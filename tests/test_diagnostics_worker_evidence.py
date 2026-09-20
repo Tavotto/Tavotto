@@ -135,18 +135,78 @@ def test_worker_log_tails_only_take_the_current_projects_sessions(tmp_path):
     assert diagnostics.worker_log_tails(tmp_path, project_dir="") == []
 
 
-def test_worker_log_tails_keep_only_the_last_n_lines(tmp_path):
-    """尾巴先按行数截、再抽证据：截掉了 traceback 头，剩下的帧行不成块。"""
-    frames = [f'  File "/p/m{i}.py", line {i}, in f{i}' for i in range(199)]
-    body = "Traceback (most recent call last):\n" + "\n".join(frames) + "\nKeyError: 'k'\n"
-    _session(tmp_path, "long.py", body, age_s=1)
+def test_worker_log_tails_take_whole_blocks_from_the_end_within_the_budget(tmp_path):
+    """按块截尾（评审 #443）：预算装得下几块就取几块，最后那一块再长也整块要。
+
+    先按行数截、再抽证据的老做法会把一段 80 行的崩溃栈截成没有头的帧行——
+    状态机一条都不认，报告里就没有崩溃位置。
+    """
+    tb = lambda tag, n: (  # noqa: E731 —— 一段 n 帧的 traceback
+        "Traceback (most recent call last):\n"
+        + "".join(f'  File "/p/{tag}{i}.py", line {i}, in f{i}\n' for i in range(n))
+        + f"KeyError: '{tag}'\n"
+    )
+    _session(tmp_path, "long.py", tb("old", 3) + tb("mid", 3) + tb("new", 199), age_s=1)
     (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=5)
-    # 最后 5 行里没有头：4 条帧行 + 收尾句都没有来历，一条都不算
-    assert got["tail"] == "" and got["omitted"] == 5
-    (whole,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=500)
-    lines = whole["tail"].splitlines()
-    assert lines[0] == "Traceback (most recent call last):" and lines[-1] == "KeyError: 'k'"
-    assert len(lines) == 201
+    lines = got["tail"].splitlines()
+    # 预算 5 行装不下 201 行的那块，但它是最新的一块：整块都要，前面两块不要
+    assert lines[0] == "Traceback (most recent call last):" and lines[-1] == "KeyError: 'new'"
+    assert len(lines) == 201 and "KeyError: 'mid'" not in got["tail"]
+    (mid,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=206)
+    assert mid["tail"].count("Traceback (most recent call last):") == 2  # new + mid，old 装不下
+    assert "KeyError: 'old'" not in mid["tail"]
+
+
+def test_a_crash_stack_longer_than_the_line_budget_still_keeps_its_header(tmp_path):
+    """faulthandler 一段 80 帧的栈：报告里必须还是从 `Fatal Python error` 开头。"""
+    frames = "".join(f'  File "/env/site-packages/mpl/m{i}.py", line {i} in f\n' for i in range(80))
+    body = (
+        "noise line from the script\n"
+        "Fatal Python error: Segmentation fault\n\n"
+        "Current thread 0x1 (most recent call first):\n"
+        + frames
+        + "Extension modules: x (total: 1)\n"
+    )
+    _session(tmp_path, "deep.py", body, age_s=1)
+    (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
+    lines = got["tail"].splitlines()
+    assert lines[0] == "Fatal Python error: Segmentation fault"
+    assert lines[-1] == "Extension modules: x (total: 1)"
+    assert len(lines) == 83 and got["omitted"] == 1
+
+
+def test_chain_separators_count_only_between_two_traceback_blocks():
+    """链接语要逐字相同、且夹在两段 traceback 之间；用户 print 的变体不算。"""
+    chained = [
+        "Traceback (most recent call last):",
+        '  File "/x/a.py", line 1, in <module>',
+        "KeyError: 'k'",
+        "",
+        "During handling of the above exception, another exception occurred:",
+        "",
+        "Traceback (most recent call last):",
+        '  File "/x/a.py", line 3, in <module>',
+        "RuntimeError: second",
+    ]
+    kept, omitted = diagnostics.evidence_lines(chained)
+    assert kept == [
+        "Traceback (most recent call last):",
+        '  File "…/a.py", line 1, in <module>',
+        "KeyError: 'k'",
+        "During handling of the above exception, another exception occurred:",
+        "Traceback (most recent call last):",
+        '  File "…/a.py", line 3, in <module>',
+        "RuntimeError: second",
+    ]
+    assert omitted == 0
+    # 三种不算：没有 traceback 在前 / 带尾巴的变体 / 后面没有跟着第二段
+    assert diagnostics.evidence_lines(
+        ["During handling of the above exception, another exception occurred:"]
+    ) == ([], 1)
+    assert diagnostics.evidence_lines(
+        chained[:3] + ["During handling of the above exception: patient-123"]
+    ) == (kept[:3], 1)
+    assert diagnostics.evidence_lines(chained[:5]) == (kept[:3], 1)
 
 
 WORKER_LOG = """\

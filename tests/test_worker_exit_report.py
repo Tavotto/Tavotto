@@ -193,6 +193,18 @@ def test_a_script_that_wants_cli_arguments_gets_its_own_code_and_the_usage_text(
 
 
 @needs_worker
+def test_a_script_living_in_a_directory_named_click_is_not_mistaken_for_click(figs):
+    """判「参数解析库抛的」看帧的模块来历，不看路径分量（评审 #443）：项目目录叫
+    `click/`、`fire/` 的脚本自己 `sys.exit(3)`，仍是 `script_exited`。"""
+    (figs / "click").mkdir()
+    (figs / "click" / "fig_fail.py").write_text(EXIT_FAIL.replace("sys.exit(2)", "sys.exit(3)"))
+    with pytest.raises(pool.WorkerError) as err:
+        pool.build("click/fig_fail.py", str(figs), "__main__")
+    assert err.value.code == "script_exited", str(err.value)
+    assert "sys.exit(3)" in str(err.value)
+
+
+@needs_worker
 @needs_workerd
 def test_workerd_gives_the_same_answer_for_a_script_that_wants_arguments(workerd_figs):
     (workerd_figs / "metrics.py").write_text(ARGPARSE, encoding="utf-8")

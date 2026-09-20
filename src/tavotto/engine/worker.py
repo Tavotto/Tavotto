@@ -104,8 +104,9 @@ def _patched_savefig(self, fname, *args, **kwargs):
 
 
 #: 命令行参数解析库：`SystemExit` 从这些模块的帧里抛出来 = 脚本要参数而 Tavotto 没给。
-#: 判帧的文件名（`argparse.py`）或路径分量（`click/core.py`），不判异常文本——argparse
-#: 的 usage 是打到 stderr 的，异常对象里只有一个退出码 2。
+#: 判帧的**模块来历**（`f_globals["__name__"]` 的顶级包名），不判文件路径——用户把脚本
+#: 放在叫 `click/` 或 `fire/` 的目录里，路径分量就会撒谎（评审 #443）；也不判异常文本——
+#: argparse 的 usage 是打到 stderr 的，异常对象里只有一个退出码 2。
 _CLI_PARSER_MODULES = frozenset(
     {"argparse", "optparse", "getopt", "click", "typer", "docopt", "fire"}
 )
@@ -120,8 +121,8 @@ SCRIPT_EXITED = "script_exited"
 def _raised_by_cli_parser(exc: BaseException) -> bool:
     tb = exc.__traceback__
     while tb is not None:
-        path = Path(tb.tb_frame.f_code.co_filename)
-        if path.stem in _CLI_PARSER_MODULES or _CLI_PARSER_MODULES & set(path.parts):
+        module = str(tb.tb_frame.f_globals.get("__name__") or "")
+        if module.split(".")[0] in _CLI_PARSER_MODULES:
             return True
         tb = tb.tb_next
     return False
