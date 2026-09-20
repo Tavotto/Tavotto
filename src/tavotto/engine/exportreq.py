@@ -344,7 +344,10 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
     `resources` 是 `figcapture.SourceArtifact.to_payload()` 的列表——每个面板
     的源图产物；这里**只引用**它们的语义身份与字节 hash，不打开文件。
 
-    `plan_identity` 由请求的渲染语义 + 每个资源的 `semantic_identity` 派生；
+    `plan_identity` 由请求的渲染语义 + 每个资源的语义坐标（`source_id` / `origin` /
+    `kind` / 回执的**公开**身份 `receipt_identity` / `patch_hash`）派生；`receipt_id`
+    （由私有失效键 + generation 派生）只作实例元数据留在 `resources` 里、**不进**身份
+    ——否则同一语义在另一台机器或下一代会话上就是另一个「公开」身份（Codex #451 P2）。
     资源的字节 hash 单列在 `input_bytes` 里（04 §3：最终文件 hash 是另一个字段，
     不回写进身份形成自引用）。
     """
@@ -354,18 +357,23 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
     if not isinstance(resources, list) or not all(isinstance(r, dict) for r in resources):
         raise ValueError("resources 必须是 SourceArtifact payload 的列表")
     refs = []
+    semantic_refs = []
     for r in resources:
         for key in ("source_id", "origin", "kind", "bytes_sha256"):
             if not r.get(key):
                 raise ValueError(f"资源引用缺 {key}: {r!r}")
+        if r["origin"] == "execution" and not r.get("receipt_identity"):
+            raise ValueError(f"execution 资源必须带回执的公开身份 receipt_identity: {r!r}")
+        semantic = {
+            "source_id": r["source_id"],
+            "origin": r["origin"],
+            "kind": r["kind"],
+            "receipt_identity": r.get("receipt_identity"),
+            "patch_hash": r.get("patch_hash"),
+        }
+        semantic_refs.append(semantic)
         refs.append(
-            {
-                "source_id": r["source_id"],
-                "origin": r["origin"],
-                "kind": r["kind"],
-                "receipt_id": r.get("receipt_id"),
-                "patch_hash": r.get("patch_hash"),
-            }
+            {**semantic, "receipt_id": r.get("receipt_id"), "generation": r.get("generation")}
         )
     semantic = {k: getattr(req, k) for k in _PLAN_IDENTITY_FIELDS}
     semantic["formats"] = list(req.formats)
@@ -386,7 +394,11 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
             "source_kind": req.original.source_kind,
         }
     canon = json.dumps(
-        {"render_plan_version": RENDER_PLAN_VERSION, "request": semantic, "resources": refs},
+        {
+            "render_plan_version": RENDER_PLAN_VERSION,
+            "request": semantic,
+            "resources": semantic_refs,
+        },
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

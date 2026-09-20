@@ -23,16 +23,19 @@
                   └── static_source_available（没有脚本可跑 / 只要静态源：不起线程）
 
 「现有 runtime 正在运行」不是一个状态，是 `existing_runtime` 这条**事实**：计划起步时
-池里已经有这个脚本的活会话就记下它的 generation 与 built；已经 build 过的直接复用其
-回执（FO-031：二开不重复准备），正在冷启动的等它（`pool.get()` 拿到同一条会话）。
+池里已经有这个脚本的活会话就记下它的 generation 与 built。已经 build 过、且解释器决策
+没变的，**直接用它记下的 build 响应装配回执，runner 一次都不调**（FO-031：二开不重复
+准备——不是「再问一次 worker」，是一个字节都不发）；正在冷启动的等它（`pool.acquire()`
+拿到同一条会话，worker 侧对已 build 的会话早返回，脚本不重跑）。
 
 ## 取消的边界（D11 / FO-009）
 
 `cancel()` 只对**这个计划拥有的**东西负责：还没起会话时取消 = 一行用户代码都不跑；
-会话是本计划新起的（`created_runtime`）且还在 build → `pool.force_cancel` 杀掉它；
-会话本来就在（别的消费者的）→ **不杀**，只是本计划不再等它、状态记 cancelled。
-native 会话不在池里，这里永远碰不到它。取消不承诺撤销已发生的外部副作用
-（脚本可能已经写了文件），响应里 `note` 如实说。
+会话是本计划新起的（`created_runtime`，**由 `pool.build_owned()` 在池锁里给出**，不是从
+起步时的快照推断——两份计划同时起步都看到「没有」，池只建一条，主人只能是一个）且
+还在 build → `pool.force_cancel` 杀掉它；会话本来就在（别的消费者的）→ **不杀**，只是
+本计划不再等它、状态记 cancelled。native 会话不在池里，这里永远碰不到它。取消不承诺
+撤销已发生的外部副作用（脚本可能已经写了文件），响应里 `note` 如实说。
 
 ## 不做的事
 
@@ -136,8 +139,13 @@ def plan_for(
     script: str | None,
     entry: str | None,
     original_artifact: str | None,
+    original_path: str | None = None,
 ) -> PreparationPlan:
     """按产品**自己的**决定拼一份计划——这里不做任何选择，只读。
+
+    `original_artifact` 是素材的项目相对身份（进计划）；`original_path` 是**调用方已经
+    校验过**（`app.safe_resolve`：在项目根内、是文件）的绝对路径，读字节算 hash 只用它。
+    只给了前者时不读盘：这里不重复做路径校验，也不拿原串重拼。
 
     环境证据来自 `pool.resolve_worker_python()`（项目级决策的唯一出处）与
     `projectenv.state()`；解析不到解释器时 `environment.error` 带上 code，计划照样
@@ -173,12 +181,11 @@ def plan_for(
         launch_context = execspec.launch_context(spec, grant=grant)
     intents = depresolve.declared_intents(root, script) if script else []
     static = None
-    if original_artifact:
-        path = Path(root) / original_artifact
+    if original_artifact and original_path:
         try:
-            if path.is_file() and path.stat().st_size > 0:
+            if Path(original_path).stat().st_size > 0:
                 static = figcapture.source_artifact_from_file(
-                    path,
+                    original_path,
                     source_id=original_artifact.replace("\\", "/"),
                     origin=figcapture.ORIGIN_STATIC,
                 ).to_payload()
@@ -288,8 +295,8 @@ class PreparationService:
         return result
 
     def start(self, plan_id: str, *, runner, bind=None) -> None:
-        """起执行线程。`runner(plan) -> (worker, build_resp)`（app 注入 `pool.build`），
-        `bind()` 是项目绑定上下文（app 注入 `bound_project(ctx)`）。"""
+        """起执行线程。`runner(plan) -> (worker, build_resp, created)`（app 注入
+        `pool.build_owned`），`bind()` 是项目绑定上下文（app 注入 `bound_project(ctx)`）。"""
         entry = self._entry(plan_id)
         if entry is None:
             raise KeyError(plan_id)
@@ -320,8 +327,17 @@ class PreparationService:
             self._finish(entry, STATUS_CANCELLED, note="在起会话之前取消，没有执行任何脚本")
             return
         result.status = STATUS_RUNNING
+        reusable = self._reusable(existing, plan)
+        if reusable is not None:
+            # 已 build 过的会话：回执从它记下的 build 响应装配，不发任何请求、不碰脚本。
+            result.created_runtime = False
+            result.receipt = receipt.from_worker(
+                existing, reusable, control_plane=pool.control_plane_of(existing), grant=plan.grant
+            )
+            self._finish(entry, STATUS_READY, note="复用现有 runtime，没有重新执行脚本")
+            return
         try:
-            worker, resp = runner(plan)
+            worker, resp, created = runner(plan)
         except pool.WorkerError as exc:
             error = {"code": getattr(exc, "code", "") or "worker_error", "message": str(exc)}
             module = getattr(exc, "module", "")
@@ -337,9 +353,7 @@ class PreparationService:
             result.error = {"code": "internal_error", "message": f"{type(exc).__name__}: {exc}"}
             self._finish(entry, STATUS_ERROR)
             return
-        result.created_runtime = existing is None or int(existing.generation) != int(
-            worker.generation
-        )
+        result.created_runtime = bool(created)
         rcpt = receipt.from_worker(
             worker, resp, control_plane=pool.control_plane_of(worker), grant=plan.grant
         )
@@ -355,6 +369,24 @@ class PreparationService:
             self._finish(entry, STATUS_CANCELLED, note=note)
             return
         self._finish(entry, STATUS_READY)
+
+    @staticmethod
+    def _reusable(existing, plan: PreparationPlan) -> dict | None:
+        """池里那条会话能不能直接当「现有 runtime」用：活着、build 过、**且**它的解释器
+        仍是这个项目此刻的决策（用户换了环境的话它是旧世界的，`pool.get()` 会重建）。
+        能用就回它记下的 build 响应形态（descriptors + runtime），否则 None。"""
+        if existing is None or not getattr(existing, "built", False):
+            return None
+        try:
+            wanted = pool.resolve_worker_python(plan.project_root)[0]
+        except pool.WorkerError:
+            return None
+        if not pool.same_python(getattr(existing, "python", None), wanted):
+            return None
+        return {
+            "descriptors": list(getattr(existing, "last_build_descriptors", None) or []),
+            "runtime": getattr(existing, "last_build_runtime", None),
+        }
 
     def _finish(self, entry: _Entry, status: str, *, note: str = "") -> None:
         with entry.lock:

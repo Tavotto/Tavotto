@@ -2064,6 +2064,16 @@ def safe_workers_using(python: str) -> int:
 
 def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
     """取（或重建）某脚本的 worker；崩溃的自动换新；超出 MAX_ALIVE 按 LRU 淘汰。"""
+    return acquire(script_name, figures_dir, entry)[0]
+
+
+def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorker, bool]:
+    """`get()` + 「这条会话是不是**这次调用**建的」——所有权在 `_lock` 里一并给出。
+
+    调用方要判「谁拥有这条会话」时不许拿 `peek()` 的快照去猜：两个调用方都在建
+    会话之前看到「没有」，都会以为自己是主人，而池里只建了一条（Codex #451 P1）。
+    `created` 只有一次调用拿到 True。
+    """
     key = (_norm_dir(figures_dir), script_name)
     created = False
     # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
@@ -2105,7 +2115,7 @@ def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
                     threading.Thread(target=victim.shutdown, daemon=True).start()
     if created:  # 出锁再清：prune 要遍历磁盘，不能占着 _lock
         _schedule_prune()
-    return w
+    return w, created
 
 
 #: 自动切换被重试上限挡下时的 code（不是失败，是「这一轮已经切过了」）。
@@ -2198,9 +2208,23 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
     上层据此渲染恢复引导（找不到 venv / venv 也缺这个包 / 没有 matplotlib /
     Python 版本不支持），而不是干甩一段 traceback。
     """
-    worker = get(script_name, figures_dir, entry)
+    worker, resp, _created = build_owned(
+        script_name, figures_dir, entry, allow_project_env=allow_project_env
+    )
+    return worker, resp
+
+
+def build_owned(script_name: str, figures_dir: str, entry: str, *, allow_project_env: bool = True):
+    """`build()` + 所有权：回 `(worker, build 响应, created)`。
+
+    `created` 来自 `acquire()`（池里那把锁），两次 `get()`（自动切环境重试）任一次建了
+    会话就算这次调用的。准备接口据此决定取消时能不能关这条会话（ADR 0053 §四）。
+    再来一次 `build_owned()` 只是一次往返：worker 侧对已 build 的会话早返回，用户脚本
+    不重跑（`test_worker_runtime_report` 用脚本自己的副作用计数钉着）。
+    """
+    worker, created = acquire(script_name, figures_dir, entry)
     try:
-        return worker, worker.ensure_built()
+        return worker, worker.ensure_built(), created
     except WorkerError as exc:
         if not allow_project_env or not should_try_project_env(exc):
             raise
@@ -2208,8 +2232,8 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
         if not outcome.get("ok"):
             exc.project_env = outcome
             raise
-    worker = get(script_name, figures_dir, entry)
-    return worker, worker.ensure_built()
+    worker, created_again = acquire(script_name, figures_dir, entry)
+    return worker, worker.ensure_built(), created or created_again
 
 
 def invalidate(script_name: str, figures_dir: str | None = None) -> None:

@@ -85,15 +85,24 @@ def fake_pool(monkeypatch):
     }
     box["gate"].set()  # 默认不阻塞
 
-    def build(script, root, entry):
+    def build_owned(script, root, entry):
+        """替身按 pool 的合同回 `(worker, resp, created)`：所有权由这里**原子**给出，
+        默认「第一次调用创建、之后复用」——与真 pool 的 `get()` 同形。"""
         box["build_calls"] += 1
+        ordinal = box["build_calls"]  # 进门那一刻的序号：所有权在「建会话那一下」就定了
         box["gate"].wait(timeout=30)
         if box["error"] is not None:
             raise box["error"]
         factory = box["worker_factory"] or (lambda: _FakeWorker(Path(root)))
-        return factory(), _build_resp()
+        created = ordinal == 1 if box["created"] is None else box["created"]
+        return factory(), _build_resp(), created
 
-    monkeypatch.setattr(engine_pool, "build", build)
+    box["created"] = None
+    monkeypatch.setattr(engine_pool, "build_owned", build_owned)
+    monkeypatch.setattr(engine_pool, "same_python", lambda a, b: True)
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda root=None: ("/envs/fake/bin/python", "system")
+    )
     monkeypatch.setattr(engine_pool, "peek", lambda script, root: box["peek"])
     monkeypatch.setattr(
         engine_pool, "force_cancel", lambda script, root: box["force_cancel"].append((script, root))
@@ -173,11 +182,14 @@ def test_a_script_asset_runs_to_ready_with_a_complete_receipt(client, tmp_path, 
 
 
 def test_an_existing_built_runtime_is_reported_and_not_rebuilt(client, tmp_path, fake_pool):
+    """已经 build 过的会话：回执从它记下的 build 响应装配，**runner 一次都不调**
+    （Codex #451 P1：二开不许再碰用户脚本，哪怕 worker 侧本来就是幂等的）。"""
     root = _project(tmp_path, "p")
     _open(client, root)
     existing = _FakeWorker(root, generation=3, built=True)
+    existing.last_build_descriptors = [{"stem": "fig", "script": "fig.py"}]
+    existing.last_build_runtime = _build_resp()["runtime"]
     fake_pool["peek"] = existing
-    fake_pool["worker_factory"] = lambda: existing  # pool.build 复用同一条会话
     resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
     body = _wait(client, resp.get_json()["plan"]["plan_id"])
     assert body["result"]["status"] == preparation.STATUS_READY
@@ -188,6 +200,25 @@ def test_an_existing_built_runtime_is_reported_and_not_rebuilt(client, tmp_path,
     }
     assert body["result"]["created_runtime"] is False
     assert body["result"]["receipt"]["generation"] == 3
+    assert body["result"]["receipt"]["completeness"] == "complete"
+    assert fake_pool["build_calls"] == 0
+
+
+def test_an_existing_built_session_on_another_interpreter_is_not_reused(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """池里那条会话是旧解释器起的（用户刚换了环境）：它不是「现有 runtime」，
+    要走 runner（`pool.get()` 会按「渲染解释器已变」重建）。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    existing = _FakeWorker(root, generation=3, built=True)
+    fake_pool["peek"] = existing
+    monkeypatch.setattr(engine_pool, "same_python", lambda a, b: False)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    body = _wait(client, resp.get_json()["plan"]["plan_id"])
+    assert body["result"]["status"] == preparation.STATUS_READY
+    assert fake_pool["build_calls"] == 1
+    assert body["result"]["created_runtime"] is True
 
 
 def test_a_worker_error_is_reported_with_its_code_and_module(client, tmp_path, fake_pool):
@@ -245,6 +276,7 @@ def test_cancel_never_touches_a_session_that_belongs_to_someone_else(client, tmp
     existing = _FakeWorker(root, generation=7, built=False)  # 别人正在冷启动
     fake_pool["peek"] = existing
     fake_pool["worker_factory"] = lambda: existing
+    fake_pool["created"] = False  # pool 说：这条会话不是你建的
     fake_pool["gate"].clear()
     resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
     plan_id = resp.get_json()["plan"]["plan_id"]
@@ -256,6 +288,29 @@ def test_cancel_never_touches_a_session_that_belongs_to_someone_else(client, tmp
     assert body["result"]["created_runtime"] is False
     assert fake_pool["force_cancel"] == []  # FO-009：别的消费者的会话一根手指不碰
     assert "别的消费者" in body["result"]["note"]
+
+
+def test_ownership_comes_from_the_pool_not_from_a_pre_build_snapshot(client, tmp_path, fake_pool):
+    """Codex #451 P1：两份准备同时起步、都在 peek 时看到「没有会话」，只有 pool 里真正
+    建了会话的那一份是主人；另一份取消时**不许**杀掉共用的会话。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    fake_pool["gate"].clear()  # 两份都卡在 build 里，peek 对两者都回 None
+    a = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()["plan"]["plan_id"]
+    b = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()["plan"]["plan_id"]
+    deadline = time.time() + 5
+    while fake_pool["build_calls"] < 2:
+        assert time.time() < deadline
+        time.sleep(0.02)
+    assert client.post(f"/api/engine/preparation/{b}/cancel").get_json()["cancelling"] is True
+    fake_pool["gate"].set()
+    ra, rb = _wait(client, a)["result"], _wait(client, b)["result"]
+    owners = [r["created_runtime"] for r in (ra, rb)]
+    assert owners.count(True) == 1, owners  # 主人恰好一个，由 pool 的 created 决定
+    assert rb["status"] == preparation.STATUS_CANCELLED
+    # 第二份不是主人（pool 只把 created 给第一次调用）→ 共用会话一根手指不碰
+    assert rb["created_runtime"] is False
+    assert fake_pool["force_cancel"] == []
 
 
 def test_cancel_before_the_thread_touches_the_pool_runs_no_user_code(tmp_path, fake_pool):

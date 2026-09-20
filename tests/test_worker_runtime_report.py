@@ -29,6 +29,9 @@ SCRIPT = """\
 import os
 import matplotlib.pyplot as plt
 
+# 每执行一次就往项目外的计数文件追加一行（写入守卫只管真实图库里的路径）
+with open(os.environ["RT_RUNS_FILE"], "a", encoding="utf-8") as fh:
+    fh.write("run\\n")
 fig, ax = plt.subplots(figsize=(2, 1.5))
 ax.plot([0, 1], [1, 0])
 fig.savefig("Rt.pdf")
@@ -36,12 +39,26 @@ fig.savefig("Rt.pdf")
 
 
 @pytest.fixture
-def figs(tmp_path):
+def figs(tmp_path, monkeypatch):
     root = tmp_path / "figs"
     root.mkdir()
     (root / "rt.py").write_text(SCRIPT, encoding="utf-8")
+    monkeypatch.setenv("RT_RUNS_FILE", str(tmp_path / "runs.txt"))
     yield root
     pool.shutdown_all(str(root), wait=True)
+
+
+def test_a_second_build_on_the_same_session_does_not_rerun_the_script(figs, tmp_path):
+    """Codex #451 P1 的事实面：`pool.build()` 再来一次只是一次往返，用户脚本**不重跑**
+    （worker 侧 `build()` 对已 build 的会话早返回）。计数的主语是脚本自己写的副作用，
+    不是回执里的 generation——generation 不变量不到重跑。`build_owned()` 的所有权
+    只给第一次。"""
+    w1, resp1, created1 = pool.build_owned("rt.py", str(figs), "__main__")
+    w2, resp2, created2 = pool.build_owned("rt.py", str(figs), "__main__")
+    assert w1 is w2 and (created1, created2) == (True, False)
+    assert (tmp_path / "runs.txt").read_text(encoding="utf-8").count("run") == 1
+    assert resp2["runtime"]["prefix"] == resp1["runtime"]["prefix"]
+    assert w2.last_build_runtime == resp1["runtime"]
 
 
 def _independent_facts(python: str) -> dict:

@@ -4640,14 +4640,17 @@ def _preparation_target(rel_id: str) -> dict:
             "script": info["script"],
             "entry": info["entry"],
             "original_artifact": None,
+            "original_path": None,
         }
-    path = safe_resolve(rel_id)
+    path = safe_resolve(rel_id)  # 已判：在项目根之内、是文件、扩展名在闭集里
     info = current_registry().for_stem(path.stem) or {}
     return {
         "stem": path.stem,
         "script": info.get("script"),
         "entry": info.get("entry"),
         "original_artifact": rel_id.replace("\\", "/"),
+        # 读字节算 hash 用的是 safe_resolve 校验过的那一个路径，不再拿原串重拼
+        "original_path": str(path),
     }
 
 
@@ -4689,6 +4692,7 @@ def api_engine_preparation_start():
         script=target["script"],
         entry=target["entry"],
         original_artifact=target["original_artifact"],
+        original_path=target["original_path"],
     )
     result = engine_preparation.SERVICE.register(plan)
     if plan.script is not None:
@@ -4696,7 +4700,7 @@ def api_engine_preparation_start():
             plan.plan_id,
             # 「真的把 runtime 起起来」只有一份实现：`pool.build`（带一次项目环境
             # 自动 fallback）。这里不另写 get + ensure_built。
-            runner=lambda pl: engine_pool.build(pl.script, pl.project_root, pl.entry),
+            runner=lambda pl: engine_pool.build_owned(pl.script, pl.project_root, pl.entry),
             bind=lambda: bound_project(ctx),
         )
     resp = jsonify(_preparation_payload(plan, result))

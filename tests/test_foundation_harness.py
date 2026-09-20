@@ -581,6 +581,7 @@ def test_u01_s1_first_open_and_export_through_the_public_entry(tmp_path):
                 receipt_id=receipt["receipt_id"],
                 generation=receipt["generation"],
                 patch_hash=None,
+                receipt_identity=receipt["public_identity"],
             ).to_payload()
             for p in (pdf_path, png_path)
         ]

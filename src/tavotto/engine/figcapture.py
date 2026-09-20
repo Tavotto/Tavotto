@@ -412,9 +412,11 @@ def descriptor_from_payload(data: dict) -> CapturedFigureDescriptor:
 #     没有脚本的 PNG）——「静态源可用」这条产品路径（FO-010）的对象。
 #
 # 身份三分（04 §3）在这里落成三个**不同的字段**：`bytes_sha256` 是最终文件 hash
-# （只描述字节，不掺任何别的身份）；`receipt_id` + `patch_hash` 指向产出它的执行
-# 与 override 组合（公开语义身份的两个坐标）；机器路径**不进**这个结构（它是私有
-# 失效键的事，在 ExecutionReceipt 那一侧）。
+# （只描述字节，不掺任何别的身份）；`receipt_identity`（回执的**公开**身份）+
+# `patch_hash` 指向产出它的执行语义与 override 组合——语义身份的两个坐标；
+# `receipt_id` / `generation` 只是实例元数据（哪一代、哪台机器上的那一次），**不进**
+# 语义身份：它们由私有失效键派生，进了就会让同一张图在另一台机器 / 下一代会话上
+# 长出另一个「语义」身份（Codex #451 P2）。机器路径本身不进这个结构。
 # ---------------------------------------------------------------------------
 SOURCE_ARTIFACT_VERSION = 1
 ORIGIN_EXECUTION = "execution"
@@ -439,8 +441,9 @@ class SourceArtifact:
 
     `source_id` 对 execution 来源是 `runtime_asset_id()`（`runtime:<script>#<stem>`），
     对 static 来源是素材相对路径（POSIX）——两者都是跨机器稳定的身份，不含绝对路径。
-    `receipt_id` / `generation` / `patch_hash` 对 static 来源恒为 `None`：没有执行
-    就没有执行身份，**不许**拿「最近一次会话」去冒充。
+    `receipt_id` / `receipt_identity` / `generation` / `patch_hash` 对 static 来源恒为
+    `None`：没有执行就没有执行身份，**不许**拿「最近一次会话」去冒充。execution 来源
+    两个都要：`receipt_id`（实例）与 `receipt_identity`（公开语义）。
     """
 
     source_id: str
@@ -451,6 +454,7 @@ class SourceArtifact:
     receipt_id: str | None = None
     generation: int | None = None
     patch_hash: str | None = None
+    receipt_identity: str | None = None  # 回执的 public_identity()（语义身份的坐标）
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_id, str) or not self.source_id:
@@ -469,12 +473,16 @@ class SourceArtifact:
             self.receipt_id is not None
             or self.generation is not None
             or self.patch_hash is not None
+            or self.receipt_identity is not None
         ):
             raise ValueError(
-                "static 来源没有执行身份（receipt_id / generation / patch_hash 必须为 None）"
+                "static 来源没有执行身份"
+                "（receipt_id / receipt_identity / generation / patch_hash 必须为 None）"
             )
         if self.origin == ORIGIN_EXECUTION and not self.receipt_id:
             raise ValueError("execution 来源必须带产出它的 receipt_id")
+        if self.origin == ORIGIN_EXECUTION and not self.receipt_identity:
+            raise ValueError("execution 来源必须带回执的 receipt_identity（公开身份）")
 
     def to_payload(self) -> dict:
         out = dataclasses.asdict(self)
@@ -483,12 +491,13 @@ class SourceArtifact:
 
     def semantic_identity(self) -> str:
         """公开语义身份：**不含**字节 hash——它回答「这是哪张图的哪一版」，
-        字节 hash 回答「文件长什么样」，两者是不同的问题（04 §3）。"""
+        字节 hash 回答「文件长什么样」，两者是不同的问题（04 §3）。也**不含**
+        `receipt_id` / `generation`：那是实例，不是语义。"""
         payload = {
             "source_id": self.source_id,
             "origin": self.origin,
             "kind": self.kind,
-            "receipt_id": self.receipt_id,
+            "receipt_identity": self.receipt_identity,
             "patch_hash": self.patch_hash,
         }
         canon = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -503,6 +512,7 @@ def source_artifact_from_file(
     receipt_id: str | None = None,
     generation: int | None = None,
     patch_hash: str | None = None,
+    receipt_identity: str | None = None,
 ) -> SourceArtifact:
     """磁盘文件 → SourceArtifact（当场读字节算 hash；类型按扩展名）。"""
     sha, size = hash_file(path)
@@ -516,6 +526,7 @@ def source_artifact_from_file(
         receipt_id=receipt_id,
         generation=generation,
         patch_hash=patch_hash,
+        receipt_identity=receipt_identity,
     )
 
 

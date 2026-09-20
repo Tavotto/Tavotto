@@ -670,17 +670,29 @@ def declared_intents(figures_dir: str | Path, script: str | None = None) -> list
 
 
 def conflicts(intents: list[DependencyIntent]) -> list[dict]:
-    """同名 requirement 的 specifier 不一致 → 逐名列出（不裁决、不放宽）。"""
+    """同名声明的 specifier 不一致 → 逐名列出（不裁决、不放宽、不做 PEP 440 求值）。
+
+    requirement 与 **constraint** 一起分组（`requirements.txt` 的 `tabulate==0.9.0` 与
+    `constraints.txt` 的 `tabulate<0.9` 互相矛盾，只看 requirement 会把它漏掉——
+    Codex #451 P2）。判据是「specifier 字符串不止一种」：`>=1` 与 `<2` 也会被列出——
+    这里说的是「有多份不同的话」，兼容与否由 U04 拿真正的版本求值器裁决；漏报比
+    多报更坏。unknown 的行没有名字，不参与。
+    """
     by_name: dict[str, list[DependencyIntent]] = {}
     for it in intents:
-        if it.kind == INTENT_KIND_REQUIREMENT and it.name:
+        if it.kind in (INTENT_KIND_REQUIREMENT, INTENT_KIND_CONSTRAINT) and it.name:
             by_name.setdefault(it.name, []).append(it)
     out = []
     for name, items in by_name.items():
         specs = {it.specifier for it in items}
         if len(specs) > 1:
             out.append(
-                {"name": name, "specifiers": sorted(specs), "sources": [it.source for it in items]}
+                {
+                    "name": name,
+                    "specifiers": sorted(specs),
+                    "sources": [it.source for it in items],
+                    "kinds": sorted({it.kind for it in items}),
+                }
             )
     return out
 

@@ -222,10 +222,16 @@ class TestDependencyIntent:
         assert "pyproject:optional-dependencies.report" in groups
 
     def test_conflicts_are_listed_not_resolved(self):
+        """同名声明的 specifier 不一致就列出——**含 constraints.txt**（Codex #451 P2：
+        夹具里 `tabulate==0.9.0` 与约束 `tabulate<0.9` 互相矛盾，之前被丢掉）。这里不做
+        PEP 440 求值，只把「不一致」摆出来，裁决归 U04。"""
         intents = depresolve.declared_intents(FIXTURES / "dependency_declarations")
-        found = depresolve.conflicts(intents)
-        assert [c["name"] for c in found] == ["six"]
-        assert found[0]["specifiers"] == ["==1.16.0", "==1.17.0"]
+        found = {c["name"]: c for c in depresolve.conflicts(intents)}
+        assert set(found) == {"six", "tabulate"}
+        assert found["six"]["specifiers"] == ["==1.16.0", "==1.17.0"]
+        assert found["tabulate"]["specifiers"] == ["<0.9", "==0.9.0"]
+        assert depresolve.INTENT_KIND_CONSTRAINT in found["tabulate"]["kinds"]
+        assert found["six"]["kinds"] == [depresolve.INTENT_KIND_REQUIREMENT]
         # 旧的安装路径解析器仍是「第一条静默胜出」——这里不改它，只让意图层看见冲突
         assert depresolve.parse_requirements_text("six==1.16.0\nsix==1.17.0") == {"six": "==1.16.0"}
 
@@ -402,17 +408,33 @@ class TestSourceArtifact:
             )
 
     def test_semantic_identity_ignores_the_bytes_but_not_the_receipt(self, tmp_path):
+        """语义身份跟着回执的**公开**身份走（Codex #451 P2）：`receipt_id` 含私有键与
+        generation，同一台机器上重建一代、或换一台机器，语义没变、id 却变了——它只是
+        实例元数据。"""
         f1, f2 = tmp_path / "a.pdf", tmp_path / "b.pdf"
         f1.write_bytes(b"%PDF-1.4 a"), f2.write_bytes(b"%PDF-1.4 bb")
         kw = dict(
-            source_id="runtime:s.py#fig", origin=figcapture.ORIGIN_EXECUTION, receipt_id="sha256:r1"
+            source_id="runtime:s.py#fig",
+            origin=figcapture.ORIGIN_EXECUTION,
+            receipt_id="sha256:r1",
+            receipt_identity="sha256:pub1",
         )
         a = figcapture.source_artifact_from_file(f1, **kw)
         b = figcapture.source_artifact_from_file(f2, **kw)
         assert a.bytes_sha256 != b.bytes_sha256
         assert a.semantic_identity() == b.semantic_identity()  # 同一张图的同一版
-        c = figcapture.source_artifact_from_file(f1, **{**kw, "receipt_id": "sha256:r2"})
-        assert c.semantic_identity() != a.semantic_identity()
+        same_public_other_instance = figcapture.source_artifact_from_file(
+            f1, **{**kw, "receipt_id": "sha256:r2", "generation": 2}
+        )
+        assert same_public_other_instance.semantic_identity() == a.semantic_identity()
+        other_public = figcapture.source_artifact_from_file(
+            f1, **{**kw, "receipt_identity": "sha256:pub2"}
+        )
+        assert other_public.semantic_identity() != a.semantic_identity()
+        with pytest.raises(ValueError, match="receipt_identity"):
+            figcapture.source_artifact_from_file(
+                f1, source_id="runtime:s.py#fig", origin="execution", receipt_id="sha256:r1"
+            )
 
     def test_zero_byte_file_is_not_an_artifact(self, tmp_path):
         f = tmp_path / "empty.pdf"
@@ -436,13 +458,14 @@ class TestRenderPlanRef:
         spec.update(over)
         return exportreq.normalize(spec)
 
-    def _res(self, receipt_id="sha256:r1", sha="a" * 64):
+    def _res(self, receipt_id="sha256:r1", sha="a" * 64, receipt_identity="sha256:pub1"):
         return {
             "source_id": "runtime:s.py#Fig1",
             "origin": "execution",
             "kind": "pdf",
             "bytes_sha256": sha,
             "receipt_id": receipt_id,
+            "receipt_identity": receipt_identity,
             "patch_hash": "sha256:p",
         }
 
@@ -460,8 +483,14 @@ class TestRenderPlanRef:
         same_receipt_other_bytes = exportreq.render_plan_ref(self._req(), [self._res(sha="b" * 64)])
         assert a["plan_identity"] == same_receipt_other_bytes["plan_identity"]
         assert a["input_bytes"] != same_receipt_other_bytes["input_bytes"]
-        other_receipt = exportreq.render_plan_ref(self._req(), [self._res(receipt_id="sha256:r2")])
-        assert other_receipt["plan_identity"] != a["plan_identity"]
+        # 换一个实例（receipt_id / generation 变、公开身份不变）：计划身份不变（Codex #451 P2）
+        other_instance = exportreq.render_plan_ref(self._req(), [self._res(receipt_id="sha256:r2")])
+        assert other_instance["plan_identity"] == a["plan_identity"]
+        assert other_instance["resources"][0]["receipt_id"] == "sha256:r2"  # 实例元数据仍在
+        other_public = exportreq.render_plan_ref(
+            self._req(), [self._res(receipt_identity="sha256:pub2")]
+        )
+        assert other_public["plan_identity"] != a["plan_identity"]
 
     def test_resources_must_be_real_artifact_payloads(self):
         with pytest.raises(ValueError, match="bytes_sha256"):

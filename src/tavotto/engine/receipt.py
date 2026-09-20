@@ -224,4 +224,5 @@ def source_artifact_for(
         receipt_id=receipt.receipt_id,
         generation=receipt.generation,
         patch_hash=patch_hash,
+        receipt_identity=receipt.public_identity(),
     )
