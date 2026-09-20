@@ -962,9 +962,19 @@ class TestGates:
             # 是合法的 YAML 形状（lab 的常规套件就是这么写的），只查一行等于没查。
             assert "--shard" not in code, f"{name} 的可执行部分出现了 --shard"
 
-    def test_lab_pytest_runs_every_shard_in_one_step(self):
-        """lab（含 release 的资格，同一份 `_lab-qualification.yml`）的常规套件是**同机 N 片
-        并行**：覆盖面与从前的单进程全集相同，被切开的只有时间。静态钉四件事——
+    #: lab 里同机 N 片并行的 step：(step 名前缀, 片号 token, 只许出现在该 step 里的分片记号)。
+    #: 常规套件按文件分（CI03a 的 `--shard`），操作序列 harness 按种子取模分（`TAVOTTO_SEQ_SHARD`）。
+    PARALLEL_STEPS = (
+        ("常规测试套件", '--shard="$k/$N"', "--shard"),
+        ("操作序列 harness", 'TAVOTTO_SEQ_SHARD="$k/$N"', "TAVOTTO_SEQ_SHARD"),
+    )
+
+    @pytest.mark.parametrize(
+        "prefix,token,marker", PARALLEL_STEPS, ids=[s[0] for s in PARALLEL_STEPS]
+    )
+    def test_lab_pytest_runs_every_shard_in_one_step(self, prefix, token, marker):
+        """lab（含 release 的资格，同一份 `_lab-qualification.yml`）的常规套件与操作序列 harness
+        是**同机 N 片并行**：覆盖面与从前的单进程全集相同，被切开的只有时间。静态钉四件事——
 
         1. 带 `--shard=` 的 pytest 命令只有那一条，片号写成 `"$k/$N"`（变量，不是字面量：
            字面量 `1/4` 意味着有人把循环拆成了手抄的几行，漏一行就漏一片）；
@@ -995,16 +1005,16 @@ class TestGates:
         assert len(sharded) == 0, (
             "`--shard=` 该在续行上、不在 `-m pytest` 那一行——形状变了先来改本判据"
         )
-        step = _lab_step(code, "常规测试套件")
-        assert '--shard="$k/$N"' in step, '常规套件的片号必须是变量 `"$k/$N"`'
-        assert 'for k in $(seq 1 "$N")' in step, "常规套件没有按 1..N 起片的循环"
+        step = _lab_step(code, prefix)
+        assert token in step, f"{prefix} 的片号必须是变量 `{token}`"
+        assert 'for k in $(seq 1 "$N")' in step, f"{prefix} 没有按 1..N 起片的循环"
         n_def = re.search(r"^\s*N=(\d+)\s*$", step, re.M)
-        assert n_def, "常规套件没有一处 `N=<数字>` 的定义"
+        assert n_def, f"{prefix} 没有一处 `N=<数字>` 的定义"
         assert int(n_def.group(1)) >= 2, (
             "N 必须 ≥ 2：N=0 时 `seq 1 0` 一片都不起、整步 0 退出（Codex 2026-09-20 P2）；N=1 就不叫并行"
         )
         launch = re.search(r'for k in \$\(seq 1 "\$N"\); do\n(.*?)^\s*done\s*$', step, re.S | re.M)
-        assert launch, "常规套件的起片循环切不出来（`for … do` 到 `done`）"
+        assert launch, f"{prefix} 的起片循环切不出来（`for … do` 到 `done`）"
         assert 'pids+=("$!")' in launch.group(1), (
             '起片循环里没有 `pids+=("$!")`——没记下的片 `wait` 循环一次都不跑，整步 0 退出而片还在跑'
             "（Codex 2026-09-20 P2）"
@@ -1017,15 +1027,16 @@ class TestGates:
             "起片之前没有 `set -m`——`&` 起的片会继承 SIG_IGN 的 SIGINT，Ctrl-C 类用例假红"
         )
         rest = code.replace(step, "")
-        assert "-m pytest" in rest, "常规套件之外没有别的 pytest 命令了——第 5 条判据没有主语"
-        assert "--shard" not in rest, "常规套件之外出现了 --shard（含续行）：只该有那一步在分片"
+        assert "-m pytest" in rest, f"{prefix} 之外没有别的 pytest 命令了——第 5 条判据没有主语"
+        assert marker not in rest, f"{prefix} 之外出现了 {marker}（含续行）：只该有那一步用这种分片"
 
     _STUB = """#!/usr/bin/env bash
-# 假 python：认 --shard=K/N，记一笔「第 K 片跑过」，按 STUB_FAIL 里的片号决定退出码
-shard=""
+# 假 python：认 --shard=K/N（常规套件）或环境变量 TAVOTTO_SEQ_SHARD=K/N（操作序列 harness），
+# 记一笔「第 K 片跑过」，按 STUB_FAIL 里的片号决定退出码
+shard="${TAVOTTO_SEQ_SHARD:-}"
 for a in "$@"; do case "$a" in --shard=*) shard="${a#--shard=}";; esac; done
 k="${shard%%/*}"
-: "${k:?stub 没收到 --shard=K/N}"
+: "${k:?stub 没收到 --shard=K/N 也没收到 TAVOTTO_SEQ_SHARD}"
 touch "$STUB_DIR/ran-$k"
 echo "stub shard=$shard"
 case ",${STUB_FAIL:-}," in
@@ -1038,7 +1049,17 @@ esac
         sys.platform == "win32", reason="bash 脚本按 POSIX 作业控制跑，Windows 不在这一格"
     )
     @pytest.mark.parametrize("failing", ["", "3", "1,4"])
-    def test_lab_regular_suite_step_exits_nonzero_iff_a_shard_fails(self, tmp_path, failing):
+    @pytest.mark.parametrize(
+        "prefix,log_prefix,error_text",
+        [
+            ("常规测试套件", "pytest-shard-", "常规测试套件片"),
+            ("操作序列 harness", "seq-shard-", "操作序列 harness 片"),
+        ],
+        ids=["regular", "seq"],
+    )
+    def test_lab_regular_suite_step_exits_nonzero_iff_a_shard_fails(
+        self, tmp_path, failing, prefix, log_prefix, error_text
+    ):
         """把常规套件那个 step 的脚本**原样**抽出来真跑一遍，python 换成一个只认 `--shard=K/N`
         的假程序：N 片都被起了（每片留下一枚 `ran-K`），全绿时整步 0 退出并逐片打「绿」，
         任一片非零时整步非零并打出 `::error::…片 K/N`。静态那条钉形状，这一条钉**行为**——
@@ -1050,7 +1071,7 @@ esac
 
         bash = shutil.which("bash")
         assert bash, "找不到 bash——这一格的判据没法执行"
-        script = _lab_step_script("常规测试套件")
+        script = _lab_step_script(prefix)
         assert "${{ steps.venv.outputs.python }}" in script, (
             "step 脚本里没有 python 占位——抽错了 step？"
         )
@@ -1063,7 +1084,7 @@ esac
         stub_dir.mkdir()
         # self-hosted 的 RUNNER_TEMP 跨 run 复用：摆一份「上一轮」留下的同名产物，跑完必须没了
         # （Codex 2026-09-20 P2：某片在写文件前死掉，旧文件会被 always() 的证据上传当成这一轮的）
-        stale = runner_temp / "pytest-shard-9-junit.xml"
+        stale = runner_temp / f"{log_prefix}9-junit.xml"
         stale.write_text("<stale/>", encoding="utf-8")
         (tmp_path / "step.sh").write_text(
             script.replace("${{ steps.venv.outputs.python }}", str(stub)), encoding="utf-8"
@@ -1095,7 +1116,7 @@ esac
         else:
             assert r.returncode != 0, f"有片红了整步却 0 退出\n{r.stdout}\n{r.stderr}"
             for k in expected_fail:
-                assert f"::error::常规测试套件片 {k}/{n}" in r.stdout, r.stdout
+                assert f"::error::{error_text} {k}/{n}" in r.stdout, r.stdout
             assert r.stdout.count("绿：") == n - len(expected_fail), r.stdout
 
     def test_integration_gate_includes_backend_platforms(self):

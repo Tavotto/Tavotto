@@ -51,8 +51,39 @@ pytestmark = pytest.mark.skipif(
     WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
 )
 
-#: 随机序列的规模：种子固定，`TAVOTTO_SEQ_SEEDS` 可以临时放大（本地找 bug 用，CI 不动）。
-SEEDS = tuple(range(int(os.environ.get("TAVOTTO_SEQ_SEEDS", "8"))))
+
+def _seed_slice(total: str | None = None, spec: str | None = None) -> tuple[int, ...]:
+    """这个进程要跑的种子：`range(TAVOTTO_SEQ_SEEDS)` 按 `TAVOTTO_SEQ_SHARD=K/N` 取模切一片。
+
+    * 不带 `TAVOTTO_SEQ_SHARD`：全部种子（PR / merge_group / 本地都是这一档）。
+    * 带：第 K 片 = `seed % N == K-1` 的那些——N 片两两不交、并集就是全集，靠取模的定义
+      成立，不靠谁记得写循环；lab nightly 把 32 条种子切成 4 片同机并行（每片各自起
+      worker，`docs/ci/release-qualification.md`）。种子本身不变——第 5 条种子在哪一片
+      都是同一条序列，红了报出来的复现命令不带片号也能复现。
+    * 写错（`3/2`、`0/4`、`x`）或切出空片（种子比片还少）**当场抛**，pytest 收集报错
+      rc 非零——不能静默跑全集（四片各跑一遍全量，慢四倍没人知道），也不能静默跑空集
+      （一片绿着什么都没验）。
+    """
+    n_total = int(os.environ.get("TAVOTTO_SEQ_SEEDS", "8") if total is None else total)
+    spec = os.environ.get("TAVOTTO_SEQ_SHARD", "") if spec is None else spec
+    seeds = range(n_total)
+    if not spec:
+        return tuple(seeds)
+    m = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", spec)
+    if not m:
+        raise ValueError(f"TAVOTTO_SEQ_SHARD 要写成 K/N（例如 1/4），收到 {spec!r}")
+    k, n = int(m.group(1)), int(m.group(2))
+    if not 1 <= k <= n:
+        raise ValueError(f"TAVOTTO_SEQ_SHARD={spec!r}：要 1 ≤ K ≤ N")
+    picked = tuple(s for s in seeds if s % n == k - 1)
+    if not picked:
+        raise ValueError(f"TAVOTTO_SEQ_SHARD={spec!r} 在 TAVOTTO_SEQ_SEEDS={n_total} 下是空片")
+    return picked
+
+
+#: 随机序列的规模：种子固定，`TAVOTTO_SEQ_SEEDS` 可以临时放大（本地找 bug 用，CI 不动）；
+#: `TAVOTTO_SEQ_SHARD=K/N` 把它切成一片（见 `_seed_slice`）。
+SEEDS = _seed_slice()
 STEPS = 10
 STEMS = ("InvMix", "InvCont")
 
@@ -401,6 +432,22 @@ def _check_final_against_fresh(hot, library, stem, final: list[dict], tag: str) 
 # ---------------------------------------------------------------------------
 # 用例
 # ---------------------------------------------------------------------------
+def test_seed_slice_semantics():
+    """`TAVOTTO_SEQ_SHARD` 的合同：N 片两两不交且并集 == 全集；不带就是全集；写错或空片当场抛。"""
+    total = "32"
+    assert _seed_slice(total, "") == tuple(range(32))
+    slices = [_seed_slice(total, f"{k}/4") for k in (1, 2, 3, 4)]
+    assert sorted(s for sl in slices for s in sl) == list(range(32)), "四片的并集不是全集"
+    assert sum(len(sl) for sl in slices) == 32, "四片有重叠"
+    assert slices[0] == tuple(range(0, 32, 4)), "第 1 片不是 seed % 4 == 0 的那些"
+    assert _seed_slice(total, "1/1") == tuple(range(32))
+    for bad in ("3/2", "0/4", "x", "1/0", "/4"):
+        with pytest.raises(ValueError):
+            _seed_slice(total, bad)
+    with pytest.raises(ValueError, match="空片"):
+        _seed_slice("2", "3/4")
+
+
 def test_shape_matcher_semantics():
     """形状比对的两把尺子自己先钉住（纯函数，不起 worker）：
     `*` 只匹配一段——`texts_*` 认 `texts_1`，`axes_0.*` 不认 `axes_0.legend.texts_1`；
