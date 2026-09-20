@@ -443,6 +443,9 @@ def validate(expected: dict, results: Path) -> dict:
     for r in submitted:
         v = r.get("test_verdict", "invalid")
         by_verdict[v] = by_verdict.get(v, 0) + 1
+    # `bool(want)` 与上面的 `empty_expected_set` 是同一条判据的两道门：前一道已经把空集合
+    # 记成问题，这里再钉一次只是让「ok」这个词在任何路径上都读不出「空集合通过」。
+    # 单独拿掉这一半变异不会红（前一道还在）——这是有意的冗余，不是漏测。
     ok = not problems and set(valid) == set(want) and bool(want)
     return {
         "schema_version": SCHEMA_VERSION,
