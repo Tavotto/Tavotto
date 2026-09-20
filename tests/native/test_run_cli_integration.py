@@ -373,7 +373,7 @@ def test_help_goes_to_stdout_and_shows_the_delimiter(tmp_path, flag):
 
 # --------------------------------------------------------------------------
 LONG_SCRIPT = """\
-import pathlib, sys, time
+import os, pathlib, sys, time
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -385,8 +385,13 @@ print("READY", flush=True)
 # **同步点用文件不用 stdout**：stdout 是一条管道，测试进程要等 communicate()
 # 才读得到；靠它判"可以发信号了"就会在 import matplotlib 那几秒里提前发出去，
 # 于是量到的是"import 期间被打断"而不是"运行期间被打断"。
-pathlib.Path("READY").write_text("y", encoding="utf-8")
+# **同步点本身要在 try 里、而且要原子**：`Path("READY").write_text()` 一 open 文件就
+# 存在了，测试那边 exists() 一真就发 SIGINT，而这边可能还没走出 write_text、更没进
+# try——KeyboardInterrupt 从 pathlib 里抛出来，INTERRUPTED 一个字没打（2026-09-20 合并组
+# macOS 腿）。先写临时名再 os.replace：exists() 为真的那一刻内容已落盘、执行点已在 try 里。
 try:
+    pathlib.Path("READY.tmp").write_text("y", encoding="utf-8")
+    os.replace("READY.tmp", "READY")
     time.sleep(120)
 except KeyboardInterrupt:
     print("INTERRUPTED", flush=True)
