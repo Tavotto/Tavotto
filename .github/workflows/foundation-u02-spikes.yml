@@ -19,6 +19,11 @@ name: Foundation U02 spikes
 #      embeddable 的 `python.exe -m venv` 看它失败）。
 #
 # 任一步退出非零就红——红是真红，这个 workflow 没有 continue-on-error。
+#
+# **寿命**：这是 U02 的证据工作流，不长期存在。render 这一半（fonts / render_spike / U02 用例 / freeze）
+# 在 U06 / U07 把真实用例接进 src/ + tests/ 之后由那两个阶段删除或收编；runtime 这一半（runtime_spike）
+# 在 U05 把 provisioner 接进产品之后同样处理。到那时连同 scripts/dev/u02_spikes/ 与
+# tests/test_source_hygiene.py 里 render_child.py 的那条例外一起清掉；evidence/u02/ 与两份 ADR 留作记录。
 
 on:
   workflow_dispatch:
@@ -37,9 +42,12 @@ env:
   TAVOTTO_NO_UPDATE_CHECK: "1"
   PYTHONUTF8: "1"
 
+# 与 ci.yml 同一条纪律：cancel-in-progress 只对 PR 开（同一 PR 新 push 才取消旧 run）；
+# workflow_dispatch 的 run 各自是一次证据采集，排队不取消。组名带 ref：PR 的 ref 是
+# refs/pull/N/merge，与 dispatch 的分支 ref 绝不同组。
 concurrency:
-  group: foundation-u02-spikes-${{ github.ref }}
-  cancel-in-progress: true
+  group: foundation-u02-spikes-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   spikes:
