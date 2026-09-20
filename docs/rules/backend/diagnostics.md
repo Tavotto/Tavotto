@@ -30,10 +30,13 @@
 - **报告要答得出「渲染进程死在哪一句」（#435）**：`recent_errors` 把每段 traceback 与
   它收尾的异常行配成一条（帧行不进——读的人要的是那一句，脱敏面也更小）；
   `render.worker_logs` 带**当前项目**最近 `WORKER_LOG_FILES` 份 `worker.log` 尾巴里的
-  **证据行**（`evidence_lines`：traceback 头 / `File "…", line N` 帧行 / 异常行 /
-  faulthandler 的崩溃栈 / worker 自己的 `[guard]` 标记），脚本 `print` 的一切与帧
-  下面那行源码**一律略去、只留计数 `omitted`**——README 承诺包里不含脚本源码与
-  数据，这条段落不许把它变成空话。三条边界（评审 #443）：**只取目录名哈希等于
+  **证据块**（`evidence_lines` 只认两种结构块：Python traceback = 头 + `File "…",
+  line N` 帧行 + 收尾的异常行；faulthandler 崩溃栈 = 头 + `Current thread` / 帧行 +
+  `Extension modules`），块外的一切**一律略去、只留计数 `omitted`**——脚本 `print`
+  的（哪怕长得像 `RuntimeError: …` 或 `[guard] …`，用户 stdout 也在这份日志里）、
+  帧下面那行源码、引擎自己的标记行。**不按行首长相放行**：异常行只在它收尾一段
+  traceback 时算数，来历跟着它一起在。README 承诺包里不含脚本源码与数据，这条
+  段落不许把它变成空话。三条边界（评审 #443）：**只取目录名哈希等于
   `pool.cache_digest(当前项目)` 的会话**（含 `_replay-…` 重放目录），没打开项目一份
   都不带——别的项目的脚本名与报错不跟着出门；**留下的行里绝对路径缩成
   `…/site-packages/包/模块.py` 或 `…/文件名`**（`shorten_paths`：D 盘、外接盘、

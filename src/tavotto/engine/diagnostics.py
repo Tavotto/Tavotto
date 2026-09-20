@@ -167,29 +167,25 @@ def recent_errors(lines: list[str], limit: int = ERROR_TAIL) -> list[str]:
     return out[-limit:]
 
 
-#: worker.log 里**允许进诊断包**的行——只有报错与崩溃的结构性证据：
-#:   * Python traceback 的头、`File "…", line N` 帧行、收尾的异常行；
-#:   * faulthandler 的 `Fatal Python error` / `Windows fatal exception` / `Current thread`
-#:     与它的帧行（faulthandler 只打 `File "…", line N in func`，不打源码）；
-#:   * worker 自己打的 `[guard]` / `[capture]` / `[protocol]` 标记行。
-#: **不进的**：帧下面那行源码（README 承诺「不含 Python 脚本与源代码」）、脚本自己
-#: `print` 出来的一切（可能是数据）、matplotlib 的 findfont 之类噪音。被略去的行
-#: 只留一个计数——读的人要知道这里少了东西，而不是以为脚本一句话没说。
-_EVIDENCE_LINE = re.compile(
-    r"^(?:"
-    r"Traceback \(most recent call last\):"
-    r"|\s*File \"[^\"]*\", line \d+"
-    r"|(?:Fatal Python error|Windows fatal exception|Current thread|Thread 0x)\b"
-    r"|\[(?:guard|capture|protocol)\]"
-    r"|(?:[A-Za-z_][\w.]*\.)?[A-Z]\w*(?:Error|Exception|Exit|Interrupt|Warning)\b(?::|$)"
-    r"|(?:The above exception|During handling of the above exception)"
-    r"|(?:Extension modules|Segmentation fault|Aborted|Bus error|Illegal instruction)"
-    r")"
-)
+#: worker.log 里**允许进诊断包**的只有两种**结构块**，不认单行的长相：
+#:   * Python traceback 块：`Traceback (most recent call last):` 头 → 若干 `File "…", line N`
+#:     帧行（帧下面那行源码丢掉）→ 第一条不缩进的非空行是收尾的异常行，块到此为止；
+#:   * faulthandler 块：`Fatal Python error` / `Windows fatal exception` 头 →
+#:     `Current thread` / `Thread 0x` 行与 `File "…", line N` 帧行 → `Extension modules` 收尾。
+#: **不再按行首长相放行**（评审 #443 第二轮 P1）：用户脚本的 stdout 也进这份日志，
+#: `print("RuntimeError: patient-123")` 或 `print("[guard] …")` 长得和引擎的证据一模一样，
+#: 按前缀放行就是把用户数据当证据带出门。异常行只在它**收尾一段 traceback** 时算数——
+#: 来历（前面那串帧）跟着它一起在。`[guard]` 这类引擎标记行不进包：它们不是崩溃证据，
+#: 而用户完全可以打印出同样的前缀。
+_TB_HEADER = re.compile(r"^Traceback \(most recent call last\):")
+_TB_FRAME = re.compile(r'^\s+File "[^"]*", line \d+')
+_FH_HEADER = re.compile(r"^(?:Fatal Python error|Windows fatal exception)\b")
+_FH_THREAD = re.compile(r"^(?:Current thread|Thread 0x)\b")
+_FH_FOOTER = re.compile(r"^Extension modules\b")
+_TB_CHAIN = re.compile(r"^(?:The above exception|During handling of the above exception)")
 
-
-#: 绝对路径的两种写法：Windows（盘符 / UNC）与 POSIX（至少两段，免得把 argparse
-#: usage 里的 `-c/--clstr` 当成路径）。
+#: 绝对路径的两种写法：Windows（盘符 / UNC，正反斜杠都认）与 POSIX（至少两段，免得把
+#: argparse usage 里的 `-c/--clstr` 当成路径）。
 _ABS_PATH = re.compile(
     r"""(?:[A-Za-z]:[\\/]|\\\\)(?:[^\\/\s'"`<>|]+[\\/])*[^\\/\s'"`<>|]*"""
     r"""|/(?:[^/\s'"`<>|]+/)+[^/\s'"`<>|]*"""
@@ -219,17 +215,64 @@ def shorten_paths(line: str) -> str:
 
 
 def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
-    """worker.log 尾巴 → (可进诊断包的证据行, 略去的行数)。留下的行里绝对路径缩成
-    `…/site-packages/pkg/mod.py` 或 `…/文件名`。"""
+    """worker.log 尾巴 → (可进诊断包的证据行, 略去的行数)。
+
+    只认上面说的两种结构块；留下的行里绝对路径缩成 `…/site-packages/pkg/mod.py` 或
+    `…/文件名`。块外的一切（脚本自己 print 的、matplotlib 的噪音、引擎的标记行）
+    都略去只计数。
+    """
     kept: list[str] = []
     dropped = 0
-    for ln in tail:
+    i = 0
+    n = len(tail)
+    while i < n:
+        ln = tail[i].rstrip()
         if not ln.strip():
+            i += 1
             continue
-        if _EVIDENCE_LINE.match(ln):
-            kept.append(shorten_paths(ln.rstrip()))
-        else:
-            dropped += 1
+        if _TB_HEADER.match(ln):
+            kept.append(shorten_paths(ln))
+            i += 1
+            # 帧行留、源码行丢，直到第一条不缩进的非空行——那是异常本身
+            while i < n:
+                cur = tail[i].rstrip()
+                if not cur.strip():
+                    i += 1
+                    continue
+                if cur[:1].isspace():
+                    if _TB_FRAME.match(cur):
+                        kept.append(shorten_paths(cur))
+                    else:
+                        dropped += 1
+                    i += 1
+                    continue
+                kept.append(shorten_paths(cur))  # 收尾的异常行
+                i += 1
+                break
+            continue
+        if _FH_HEADER.match(ln):
+            kept.append(shorten_paths(ln))
+            i += 1
+            while i < n:
+                cur = tail[i].rstrip()
+                if not cur.strip():
+                    i += 1
+                    continue
+                if _FH_THREAD.match(cur) or _TB_FRAME.match(cur):
+                    kept.append(shorten_paths(cur))
+                    i += 1
+                    continue
+                if _FH_FOOTER.match(cur):
+                    kept.append(shorten_paths(cur))
+                    i += 1
+                break
+            continue
+        if _TB_CHAIN.match(ln):
+            kept.append(ln)
+            i += 1
+            continue
+        dropped += 1
+        i += 1
     return kept, dropped
 
 
@@ -551,17 +594,17 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- report.json：系统、运行环境与探测结果\n"
         "- app.log：最近的应用日志\n"
         "- config.json：用户配置（密钥已抹掉）\n"
-        "  （report.json 的 render.worker_logs 段：渲染进程日志里的报错与崩溃栈——\n"
-        "  只留报错行与 File/line 帧行，脚本自己打印的内容与源码行已略去）\n"
+        "  （report.json 的 render.worker_logs 段：渲染进程日志里的 Python 报错块与崩溃栈——\n"
+        "  只留 traceback 的帧行与收尾异常行，脚本自己打印的内容与源码行已略去）\n"
         + extra_zh
         + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
         "- report.json: system and runtime information\n"
         "- app.log: recent Tavotto application logs\n"
         "- config.json: user configuration (secrets removed)\n"
-        "  (report.json, render.worker_logs: errors and crash stacks from the render\n"
-        "  process logs — only error and File/line frame lines; anything your script\n"
-        "  printed, and source lines, are left out)\n"
+        "  (report.json, render.worker_logs: Python traceback blocks and crash stacks from\n"
+        "  the render process logs — only frame lines and the closing exception line;\n"
+        "  anything your script printed, and source lines, are left out)\n"
         + extra_en
         + "- manifest.json: describes this package's own format\n"
         "\n"

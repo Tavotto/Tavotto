@@ -5,11 +5,11 @@
 拿到的是一份长了一屏、信息量为零的报告，来回还得问一次。两处各一组用例：
 
 * `recent_errors`：每段 traceback 与它收尾的那句异常配成一条；ERROR 行照旧。
-* `render.worker_logs`：最近几份 worker.log 尾巴里的**证据行**进报告（按 mtime 取
+* `render.worker_logs`：最近几份 worker.log 尾巴里的**证据块**进报告（按 mtime 取
   最近的，空的要标出来），且**过同一道脱敏**（主目录、密钥）。README 承诺包里
-  不含脚本源码与数据——所以只留 traceback 头 / `File "…", line N` 帧行 / 异常行 /
-  faulthandler 的崩溃栈 / worker 自己的 `[guard]` 标记，脚本 print 的一切与帧下面
-  那行源码都略去，只留计数。
+  不含脚本源码与数据——所以只认两种结构块：Python traceback（头 + `File "…", line N`
+  帧行 + 收尾的异常行）与 faulthandler 的崩溃栈；块外的一切——脚本 print 的（哪怕
+  长得像异常行）、帧下面那行源码、引擎自己的 `[guard]` 标记——都略去，只留计数。
 """
 
 from __future__ import annotations
@@ -110,6 +110,8 @@ def test_worker_log_tails_take_the_most_recent_sessions_and_flag_empty_ones(tmp_
     assert got[0]["empty"] is True and got[0]["tail"] == ""
     assert got[1]["empty"] is False
     assert "Segmentation fault" in got[1]["tail"]
+    # 只有用户输出的那份：非空（进程留了话）、但一条证据都没有、略去两行
+    assert got[2]["empty"] is False and got[2]["tail"] == "" and got[2]["omitted"] == 2
     assert all(g["modified"] for g in got)
 
 
@@ -119,13 +121,12 @@ def test_worker_log_tails_only_take_the_current_projects_sessions(tmp_path):
     一次性重放目录（`_replay-<nonce>-<哈希>-<脚本>`）算本项目的；没打开项目时
     一份都不带——没有项目就没有「属于谁」这个判据。
     """
-    _session(tmp_path, "mine.py", "[guard] mine\n", age_s=1)
-    _session(
-        tmp_path, "theirs.py", "[guard] theirs SECRET_OTHER_PROJECT\n", age_s=0.5, project=OTHER
-    )
+    tb = 'Traceback (most recent call last):\n  File "/p/a.py", line 1, in <module>\nKeyError: {}\n'
+    _session(tmp_path, "mine.py", tb.format("'mine'"), age_s=1)
+    _session(tmp_path, "theirs.py", tb.format("'SECRET_OTHER_PROJECT'"), age_s=0.5, project=OTHER)
     replay = tmp_path / f"_replay-0123abcd-{pool.cache_digest(PROJECT)}-mine.py"
     replay.mkdir()
-    (replay / "worker.log").write_text("[guard] replay\n", encoding="utf-8")
+    (replay / "worker.log").write_text(tb.format("'replay'"), encoding="utf-8")
     got = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
     names = {g["session"] for g in got}
     assert names == {f"{pool.cache_digest(PROJECT)}-mine.py", replay.name}, names
@@ -135,15 +136,24 @@ def test_worker_log_tails_only_take_the_current_projects_sessions(tmp_path):
 
 
 def test_worker_log_tails_keep_only_the_last_n_lines(tmp_path):
-    body = "\n".join(f"[guard] L{i}" for i in range(200)) + "\n"
+    """尾巴先按行数截、再抽证据：截掉了 traceback 头，剩下的帧行不成块。"""
+    frames = [f'  File "/p/m{i}.py", line {i}, in f{i}' for i in range(199)]
+    body = "Traceback (most recent call last):\n" + "\n".join(frames) + "\nKeyError: 'k'\n"
     _session(tmp_path, "long.py", body, age_s=1)
     (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=5)
-    assert got["tail"].splitlines() == [f"[guard] L{i}" for i in range(195, 200)]
+    # 最后 5 行里没有头：4 条帧行 + 收尾句都没有来历，一条都不算
+    assert got["tail"] == "" and got["omitted"] == 5
+    (whole,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=500)
+    lines = whole["tail"].splitlines()
+    assert lines[0] == "Traceback (most recent call last):" and lines[-1] == "KeyError: 'k'"
+    assert len(lines) == 201
 
 
 WORKER_LOG = """\
 loading E:/data/run7/temperature.csv
 T = [301.2, 302.9, 305.1]     # 脚本自己 print 的数据
+RuntimeError: patient-123     # 脚本 print 出来的、长得像异常行的用户数据
+[guard] study results         # 脚本 print 出来的、长得像引擎标记的用户数据
 /env/lib/site-packages/matplotlib/pyplot.py:100: UserWarning: FigureCanvasAgg is non-interactive
   plt.show()
 [guard] 跳过删除真实图库文件: E:/data/old.png
@@ -159,33 +169,81 @@ Current thread 0x00001234 (most recent call first):
   File "/env/lib/site-packages/matplotlib/ft2font.py", line 40 in load
   File "E:/data/fig.py", line 20 in <module>
 Extension modules: numpy._core._multiarray_umath (total: 12)
+usage: x.py [-h] --gff GFF --genome GENOME
 """
 
+#: WORKER_LOG 里两个结构块之外的行数：脚本 print 的四行、matplotlib 噪音两行、
+#: 引擎标记一行、帧下面的源码两行、usage 一行
+WORKER_LOG_OMITTED = 10
 
-def test_evidence_lines_keep_errors_and_frames_but_not_prints_or_source():
-    """README 承诺：不含脚本源码、不含数据。证据行是结构性的：帧、异常、崩溃栈。"""
+
+def test_evidence_lines_keep_only_traceback_and_faulthandler_blocks():
+    """README 承诺：不含脚本源码、不含数据。证据是**结构块**，不是行首长相。
+
+    评审 #443 第二轮 P1：用户脚本的 stdout 也在这份日志里，`print("RuntimeError:
+    patient-123")` / `print("[guard] …")` 与引擎的证据一模一样——按前缀放行就是把
+    用户数据当证据带出门。异常行只在它收尾一段 traceback 时算数。
+    """
     kept, omitted = diagnostics.evidence_lines(WORKER_LOG.splitlines())
     text = "\n".join(kept)
-    # 留下的（帧里的绝对路径缩成 `…/文件名` / `…/site-packages/包/模块.py`——评审 #443 P1：
-    # README 承诺不含完整本地路径，而 `_redact_text` 只认当前主目录，E: 盘它不动）
-    assert "Traceback (most recent call last):" in text
-    assert 'File "…/fig.py", line 12, in <module>' in text
-    assert "FileNotFoundError: [Errno 2] No such file or directory: '…/missing.csv'" in text
-    assert "Fatal Python error: Segmentation fault" in text
-    assert "Current thread 0x00001234" in text
-    assert 'File "…/fig.py", line 20 in <module>' in text
-    assert 'File "…/site-packages/matplotlib/ft2font.py", line 40 in load' in text
-    assert "[guard] 跳过删除真实图库文件: …/old.png" in text
-    assert "Extension modules:" in text
-    assert "E:/data" not in text and "/env/lib" not in text
-    # 略去的：脚本 print 的数据、帧下面的源码行、matplotlib 的噪音
-    assert "temperature.csv" not in text
-    assert "301.2" not in text
-    assert "df = pd.read_csv(secret_path)" not in text
-    assert "return _read(" not in text
-    assert "UserWarning" not in text
-    assert "plt.show()" not in text
-    assert omitted == 6
+    # 留下的：两个结构块（帧里的绝对路径缩成 `…/文件名` / `…/site-packages/包/模块.py`）
+    assert kept[:4] == [
+        "Traceback (most recent call last):",
+        '  File "…/fig.py", line 12, in <module>',
+        '  File "…/site-packages/pandas/io/parsers.py", line 900, in read_csv',
+        "FileNotFoundError: [Errno 2] No such file or directory: '…/missing.csv'",
+    ], kept
+    assert kept[4:] == [
+        "Fatal Python error: Segmentation fault",
+        "Current thread 0x00001234 (most recent call first):",
+        '  File "…/site-packages/matplotlib/ft2font.py", line 40 in load',
+        '  File "…/fig.py", line 20 in <module>',
+        "Extension modules: numpy._core._multiarray_umath (total: 12)",
+    ], kept
+    # 略去的：脚本 print 的一切（含长得像异常行 / 标记行的）、帧下面的源码行、噪音、usage
+    for absent in (
+        "temperature.csv",
+        "301.2",
+        "patient-123",
+        "study results",
+        "[guard]",
+        "df = pd.read_csv(secret_path)",
+        "return _read(",
+        "UserWarning",
+        "plt.show()",
+        "usage:",
+        "E:/data",
+        "/env/lib",
+    ):
+        assert absent not in text, absent
+    assert omitted == WORKER_LOG_OMITTED
+
+
+def test_a_lone_exception_looking_line_without_a_traceback_is_not_evidence():
+    """没有 traceback 头在前面的「异常行」只是用户的一行输出。"""
+    kept, omitted = diagnostics.evidence_lines(
+        ["RuntimeError: patient-123", "ValueError: sample A failed", "SystemExit: 2"]
+    )
+    assert kept == [] and omitted == 3
+
+
+def test_a_traceback_block_ends_at_its_exception_line():
+    """收尾的异常行之后的东西不再算这个块的：用户接着 print 的数据不能搭车。"""
+    kept, omitted = diagnostics.evidence_lines(
+        [
+            "Traceback (most recent call last):",
+            '  File "/x/y.py", line 1, in <module>',
+            "    run()",
+            "KeyError: 'temperature'",
+            "next sample: patient-124",
+        ]
+    )
+    assert kept == [
+        "Traceback (most recent call last):",
+        '  File "…/y.py", line 1, in <module>',
+        "KeyError: 'temperature'",
+    ]
+    assert omitted == 2
 
 
 @pytest.mark.parametrize(
@@ -203,10 +261,7 @@ def test_evidence_lines_keep_errors_and_frames_but_not_prints_or_source():
             r"OSError: [WinError 5] 拒绝访问。: 'C:\Users\someone\x.png'",
             "OSError: [WinError 5] 拒绝访问。: '…/x.png'",
         ),
-        (
-            "error: the following arguments are required: -c/--clstr, -x/--metadata",
-            None,
-        ),  # 不是路径
+        ("error: the following arguments are required: -c/--clstr, -x/--metadata", None),
         ('  File "<frozen runpy>", line 88, in _run_code', None),
     ],
 )
@@ -217,9 +272,9 @@ def test_absolute_paths_outside_home_are_shortened_too(line, expect):
 def test_worker_log_tails_report_how_many_lines_were_left_out(tmp_path):
     _session(tmp_path, "fig.py", WORKER_LOG, age_s=1)
     (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
-    assert got["omitted"] == 6
+    assert got["omitted"] == WORKER_LOG_OMITTED
     assert got["empty"] is False
-    assert "301.2" not in got["tail"]
+    assert "301.2" not in got["tail"] and "patient-123" not in got["tail"]
 
 
 def test_worker_log_tails_survive_a_missing_cache_dir(tmp_path):
