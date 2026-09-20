@@ -18,6 +18,11 @@ U00 已于 2026-09-20 执行（`plan.json` 里 `implementation_status: done`，�
 [`U00_CAPABILITY_INVENTORY.md`](U00_CAPABILITY_INVENTORY.md)、[`handoffs/U00_baseline.md`](handoffs/U00_baseline.md)。
 每个阶段的交接放 `handoffs/`。
 
+U01 已于 2026-09-20 执行（`implementation_status: done`，产品资格仍 `not_run`）：共同合同（ADR 0053）、
+异步准备接口、case enrollment 台账（[`enrollment.json`](enrollment.json) / [`ENROLLMENT.md`](ENROLLMENT.md)）、
+闭集校验器与 `invariants` job 的三步落点；唯一 enforced 的切片 `U01-S1` 经真实 HTTP 入口走完首开 → 导出
+（旧后端终点）。交接见 [`handoffs/U01_contracts.md`](handoffs/U01_contracts.md)。
+
 ## 从哪里开始
 
 先读 [执行总提示词](00_MASTER_PROMPT.md)、[范围与修改决策](01_SCOPE_AND_DECISIONS.md)、[路线图](02_ROADMAP.md) 和 [CI 生效政策](03_CI_POLICY.md)。随后只执行 [U00](phases/U00_baseline.md)，不要在第一步删除 PyMuPDF、更换根许可证或一次启用全部兼容门禁。
