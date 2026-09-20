@@ -125,11 +125,14 @@ def build(fonts: Path, out: Path, workdir: Path) -> Path:
     log = subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(workdir)
     )
-    (out / "pyinstaller.log").write_text(
+    # .txt 而不是 .log：仓库根 .gitignore 挡掉 *.log，日志会进不了 evidence（Codex #455 P2）
+    (out / "pyinstaller-log.txt").write_text(
         log.stdout + "\n--- stderr ---\n" + log.stderr, encoding="utf-8"
     )
     if log.returncode != 0:
-        raise RuntimeError(f"PyInstaller 退出码 {log.returncode}，日志见 {out / 'pyinstaller.log'}")
+        raise RuntimeError(
+            f"PyInstaller 退出码 {log.returncode}，日志见 {out / 'pyinstaller-log.txt'}"
+        )
     exe = (
         workdir
         / "dist"

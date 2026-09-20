@@ -261,12 +261,16 @@ class Spike:
         expected_override: str | None = None,
         name: str = "cpython-3.13.15",
     ) -> Path:
-        """下载/校验 → 解到 staging → 真起一次 → 原子改名到最终目录 → 写 active 指针。
-        任何一步失败：staging 删掉、最终目录不存在、`interpreter_executions` 不增。"""
+        """下载/校验 → 解到 staging → 真起一次 → 原子改名到**按内容命名**的最终目录 → 原子切 active 指针。
+
+        最终目录名 = `<name>-<sha256 前 12 位>`：同一份字节永远落在同一个名字下（已存在就直接复用，
+        不重解、不重起），不同字节落在不同名字下——**已在用的 runtime 永远不被 rmtree**，换版本只是
+        新目录就位之后把 `active.json` 指过去（tmp + `os.replace`，指针文件从不半写）。
+        任何一步失败：staging 删掉、新目录不存在、旧目录与旧指针原样、`interpreter_executions` 不增。"""
         runtimes = self.data_dir / "runtimes"
-        final = runtimes / name
-        staging = runtimes / f".staging-{name}-{os.getpid()}"
-        expected = expected_override or src["sha256"]
+        expected = (expected_override or src["sha256"]).lower()
+        final = runtimes / f"{name}-{expected[:12]}"
+        staging = runtimes / f".staging-{name}-{expected[:12]}-{os.getpid()}"
         if archive_override is not None:
             archive = verify_sha256(archive_override, expected)  # 抛 HashMismatch 就到不了下面
         else:
@@ -275,38 +279,51 @@ class Spike:
                 self.data_dir / "downloads" / Path(src["url"]).name.replace("%2B", "+"),
                 expected,
             )
-        if staging.exists():
-            shutil.rmtree(staging)
-        staging.mkdir(parents=True)
-        try:
-            with tarfile.open(archive, "r:gz") as tar:
-                members = tar.getmembers()
-                root = members[0].name.split("/")[0]
-                tar.extractall(staging, filter="data")
-            extracted = staging / root
-            python = extracted / src["python_rel"]
-            assert_under(python, self.data_dir)
-            self.interpreter_executions += 1
-            res = self.run(
-                [
-                    str(python),
-                    "-I",
-                    "-c",
-                    "import sys, json; print(json.dumps({'version': sys.version, 'prefix': sys.prefix, 'executable': sys.executable}))",
-                ]
-            )
-            if res.returncode != 0:
-                raise SpikeFailure(f"私有解释器起不来：{res.stderr[-400:]}")
-            if final.exists():
-                shutil.rmtree(final)
-            os.replace(extracted, final)
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
-        (runtimes / "active.json").write_text(
-            json.dumps({"active": name, "sha256": expected, "url": src["url"]}, indent=1) + "\n",
+        python = final / src["python_rel"]
+        if not final.exists():
+            if staging.exists():
+                shutil.rmtree(staging)
+            staging.mkdir(parents=True)
+            try:
+                with tarfile.open(archive, "r:gz") as tar:
+                    members = tar.getmembers()
+                    root = members[0].name.split("/")[0]
+                    tar.extractall(staging, filter="data")
+                extracted = staging / root
+                assert_under(extracted / src["python_rel"], self.data_dir)
+                self._probe_interpreter(extracted / src["python_rel"])
+                os.replace(extracted, final)  # 同一文件系统内的 rename：要么在要么不在
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
+        else:
+            # 同名同 hash 的目录已在：复用，但仍真起一次（目录在 ≠ 解释器活着）
+            self._probe_interpreter(python)
+        self._switch_active(runtimes, final.name, expected, src["url"])
+        return python
+
+    def _probe_interpreter(self, python: Path) -> None:
+        self.interpreter_executions += 1
+        res = self.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                "import sys, json; print(json.dumps({'version': sys.version, 'prefix': sys.prefix, 'executable': sys.executable}))",
+            ]
+        )
+        if res.returncode != 0:
+            raise SpikeFailure(f"私有解释器起不来：{res.stderr[-400:]}")
+
+    @staticmethod
+    def _switch_active(runtimes: Path, active: str, sha256: str, url: str) -> None:
+        """active.json 只经 tmp + os.replace 落盘：写到一半断掉时磁盘上仍是上一个完整的指针。"""
+        target = runtimes / "active.json"
+        tmp = runtimes / f".active-{os.getpid()}.json.part"
+        tmp.write_text(
+            json.dumps({"active": active, "sha256": sha256, "url": url}, indent=1) + "\n",
             encoding="utf-8",
         )
-        return final / src["python_rel"]
+        os.replace(tmp, target)
 
     # -- 3. wheelhouse（有授权的联网只在这一步） ----------------------------
     def build_wheelhouse(self) -> Path:
@@ -533,7 +550,7 @@ class Spike:
                 ok
                 and self.interpreter_executions == before
                 and after == snapshot
-                and not (runtimes / f"negative-{label}").exists(),
+                and not any(p.name.startswith(f"negative-{label}") for p in runtimes.iterdir()),
                 error=err,
                 interpreter_executions_before=before,
                 interpreter_executions_after=self.interpreter_executions,

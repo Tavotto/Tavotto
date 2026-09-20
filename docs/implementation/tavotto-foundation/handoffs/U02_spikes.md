@@ -32,7 +32,7 @@ CPython 来源的单一出处）、U00 夹具 `pdf_png_assets/page.pdf` 与 `dep
 | `tests/test_source_hygiene.py` | `stdout=PIPE` 判据多一个文件的例外（`render_child.py`，行协议客户端，专门读线程），前提由 chatty 用例动态看住；搬进 `src/` 时删掉 |
 | `.github/workflows/foundation-u02-spikes.yml`（新） | `workflow_dispatch` + **只在 spike 自己的文件变动时**的 `pull_request`（paths 过滤；`gh workflow run` 只认默认分支上已登记的 workflow，合入前派发不了）、托管 runner 三平台矩阵、非 required、不进任何 Gate 闭集；跑全套 spike 并上传 evidence 工件。**寿命**：U02 的证据工作流，不长期存在——render 那一半由 U06 / U07 在真实用例进 src/ + tests/ 后删除或收编，runtime 那一半由 U05 在 provisioner 进产品后同样处理（连同 `scripts/dev/u02_spikes/` 与 hygiene 的单文件例外）；evidence 与 ADR 留作记录。已被 `tests/test_merge_queue_workflows.py` 的 workflow 合同纳入：事件闭集（`workflow_dispatch` / `pull_request` 都在 `_KNOWN_EVENTS`）、信任区（监听 PR 事件的 workflow 全部 job 在托管 runner 枚举内）、每 job `timeout-minutes`（`test_source_hygiene`）；取消规则与 ci.yml 同一形状（`cancel-in-progress` 只对 `pull_request`，组名带 event_name + ref，与 ci.yml 不同名、互不挤占）——`TestConcurrency` 只枚举 ci.yml / codeql.yml 两个文件，本 workflow 不在它的枚举里（豁免的形状是「不在枚举内」，不是白名单），所以这一条靠人读、不靠用例 |
 | `docs/adr/0055-render-spike.md`、`0056-runtime-spike.md` | 两段独立结论（版本 / 平台 / 字体来源与许可 / 实测 / 失败路线 / 选择原因 / 仍缺的目标） |
-| `docs/implementation/tavotto-foundation/evidence/u02/` | `render/`（truth.json 手写规格、spike.pdf 18 KB、spike_pdfium.png 30 KB、report.json）、`freeze/`（report + 冻结 exe 渲染的 PNG + PyInstaller 日志）、`runtime/`（report-macos-arm64.json） |
+| `docs/implementation/tavotto-foundation/evidence/u02/` | `render/`（truth.json 手写规格、spike.pdf 18 KB、spike_pdfium.png 30 KB、report.json）、`freeze/`（report + 冻结 exe 渲染的 PNG + PyInstaller 日志 `pyinstaller-log.txt`）、`runtime/`（report-macos-arm64.json） |
 | `plan.json` / `README.md` / `PACKAGE_CONTENTS.json` | U02 `implementation_status: done`、产品资格仍 `not_run`；README 加 U02 段；清单重算 |
 
 **关联旧要求 ID / 场景 ID**：R01（RC-021 ~ RC-037 的技术前提：批准字体离线可用 / 身份 / fallback 分层 / HarfBuzz
@@ -63,9 +63,9 @@ clip / 整体 opacity 的矢量透明组 / 中英 Greek 上下标可检索文字
 
 | 命令 | 目标平台 / 环境 / 产物 | 退出码 | 结果与必要证据 |
 |---|---|---|---|
-| `python -m dev.u02_spikes.runtime_spike --out evidence/u02/runtime --keep`（主仓库 `.venv` 解释器，纯标准库；`TAVOTTO_DATA_DIR` 指临时目录） | macOS arm64；`report-macos-arm64.json` | 0 | **15/15**：uv 0.12.17 从钉死的 wheel 取出并 `--version`；pbs CPython 3.13.15（来源 = 锁文件）staging → 真起 → 原子改名 → `active.json`；三个 wheel 按 hash 下到 wheelhouse；`uv venv --python <私有>`；死代理 + `--offline --no-index --require-hashes` 安装成功 0.09 s；空 wheelhouse 失败；不带 offline 的联网被代理拒（os error 61）；venv 里 `six/tabulate/sortedcontainers` 版本对、prefix / base_prefix / executable / 全部 sys.path 在 data_dir 下；篡改归档与错期望值各拒一次且执行计数 / 目录不变；embeddable 静态检查（有 `._pth`，无 venv / ensurepip / tkinter）；HOME 零新文件、PATH 不变；顶层目录全在 data_dir |
-| `pytest tests/test_foundation_u02_runtime.py`（主仓库 `.venv`，不联网） | 同上 | 0 | 12 条：hashcheck 四条负例、钉法单一出处（macOS 来源逐字等于锁；spike 表不覆盖锁里的目标；wheel 版本 == 夹具）、假归档 provisioning 控制流三条、report 与锁一致 |
-| 变异反证 | 同上 | 非零 | 去 `verify_sha256` → 两条坏 hash 用例红；去原子改名 → 目录存在性断言红 |
+| `python -m dev.u02_spikes.runtime_spike --out evidence/u02/runtime --keep`（主仓库 `.venv` 解释器，纯标准库；首轮 `TAVOTTO_DATA_DIR` 指临时目录，进 git 的那份是评审处置后用 `--data-dir` 复用 hash 校验过的下载缓存重跑的） | macOS arm64；`report-macos-arm64.json` | 0 | **15/15**：uv 0.12.17 从钉死的 wheel 取出并 `--version`；pbs CPython 3.13.15（来源 = 锁文件）staging → 真起 → 原子改名到按内容命名的目录 `cpython-3.13.15-<sha12>` → 原子切 `active.json`；三个 wheel 按 hash 下到 wheelhouse；`uv venv --python <私有>`；死代理 + `--offline --no-index --require-hashes` 安装成功 0.09 s；空 wheelhouse 失败；不带 offline 的联网被代理拒（os error 61）；venv 里 `six/tabulate/sortedcontainers` 版本对、prefix / base_prefix / executable / 全部 sys.path 在 data_dir 下；篡改归档与错期望值各拒一次且执行计数 / 目录不变；embeddable 静态检查（有 `._pth`，无 venv / ensurepip / tkinter）；HOME 零新文件、PATH 不变；顶层目录全在 data_dir |
+| `pytest tests/test_foundation_u02_runtime.py`（主仓库 `.venv`，不联网） | 同上 | 0 | 15 条：hashcheck 五条（含 LF 归一化内容 hash）、钉法单一出处（macOS 来源逐字等于锁；spike 表不覆盖锁里的目标；wheel 版本 == 夹具）、假归档 provisioning 控制流五条（staging → 原子改名 → 指针；换版本不删旧目录只切指针；指针原子；坏 hash 不执行；起不来不发布）、report 与锁一致 |
+| 变异反证 | 同上 | 非零 | 去 `verify_sha256` → 两条坏 hash 用例红；去原子改名 → 目录存在性断言红；退回「同名 rmtree 再 replace」→ 换版本用例红；指针直接 write_text → 原子指针用例红 |
 | Windows（embeddable 上 `-m venv` 真失败、pbs Windows 起 venv、注册表不动）/ Linux | `foundation-u02-spikes.yml` dispatch | 见「其它目标」 | 本机 **not_run** |
 
 结论：**通过（macOS arm64）**。一条固定 provisioner + 私有完整 Python + 最小 venv + 离线 wheel 的路径成立，四条负例

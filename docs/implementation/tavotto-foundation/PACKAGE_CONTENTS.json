@@ -164,8 +164,8 @@
     },
     {
       "path": "evidence/u02/README.md",
-      "bytes": 2362,
-      "sha256": "384e83e79cc99058c1b743100c9cd65f277d151fd5e3987631c4c5815ff8d531"
+      "bytes": 2366,
+      "sha256": "0ccff221f6d00e596ea482ad428918f32ac848a69c548e63009b4b2b48eddd9e"
     },
     {
       "path": "evidence/u02/freeze/frozen-render-darwin-arm64.png",
@@ -173,7 +173,7 @@
       "sha256": "0e5d6b78b945d73a44225a8c62f960ced3f2864aec7ee734f538a5630b40a164"
     },
     {
-      "path": "evidence/u02/freeze/pyinstaller.log",
+      "path": "evidence/u02/freeze/pyinstaller-log.txt",
       "bytes": 13788,
       "sha256": "ac22ad1da339962b16523fa5dbf37d2bce70a3d702c7746a4be4fb9165bad594"
     },
@@ -204,8 +204,8 @@
     },
     {
       "path": "evidence/u02/runtime/report-macos-arm64.json",
-      "bytes": 8637,
-      "sha256": "2a1ad9020438a2d2ee55146e5d3b354e3d9a527176676f99e72a24de3783394a"
+      "bytes": 7825,
+      "sha256": "afa69eed21841b80594bbcff86563ddef1d42ad23156d7fc0c6fa4b1f04f7898"
     },
     {
       "path": "extensions/X01_extended.md",
@@ -244,8 +244,8 @@
     },
     {
       "path": "handoffs/U02_spikes.md",
-      "bytes": 19018,
-      "sha256": "a46dd0d7a9d332bfc4080aec11ef3602876c844f7fe636e90cbffa3f3b359faf"
+      "bytes": 19488,
+      "sha256": "406f88600c76a6bbd5b4a7f487e6b9cba2c3de0678ee18b9f47ef6e3d4054b99"
     },
     {
       "path": "phase_mapping.json",

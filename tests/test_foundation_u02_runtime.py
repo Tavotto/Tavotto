@@ -190,11 +190,88 @@ def test_provisioning_goes_through_staging_and_publishes_atomically(tmp_path):
     digest = _fake_archive(archive)
     src = {"url": "file:///fake", "sha256": digest, "python_rel": "bin/python3"}
     python = spike.provision_python(src, archive_override=archive, name="fake")
-    assert python == data_dir / "runtimes" / "fake" / "bin" / "python3"
+    final = data_dir / "runtimes" / f"fake-{digest[:12]}"
+    assert python == final / "bin" / "python3"
     assert python.is_file() and spike.interpreter_executions == 1
     assert not any(p.name.startswith(".staging") for p in (data_dir / "runtimes").iterdir())
+    assert not any(p.name.startswith(".active") for p in (data_dir / "runtimes").iterdir())
     active = json.loads((data_dir / "runtimes" / "active.json").read_text(encoding="utf-8"))
-    assert active == {"active": "fake", "sha256": digest, "url": "file:///fake"}
+    assert active == {"active": final.name, "sha256": digest, "url": "file:///fake"}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="假解释器是 sh 脚本；Windows 上没有 sh")
+def test_replacing_a_runtime_never_deletes_the_one_in_use_and_only_switches_the_pointer(tmp_path):
+    """同名重跑：同一份字节 → 同一个目录，直接复用（不重解，目录里的标记文件还在）；不同字节 →
+    **新目录**就位后才切指针，旧目录原样还在（正在用它的消费者看不到「解释器消失」）。
+    第一版在 `os.replace` 之前 `rmtree(final)`——Codex 在 #455 指出那不是原子发布。"""
+    data_dir = tmp_path / "data"
+    home = tmp_path / "home"
+    data_dir.mkdir()
+    home.mkdir()
+    spike = runtime_spike.Spike(tmp_path / "out", data_dir, home, None, "linux-x86_64")
+    archive = tmp_path / "fake.tar.gz"
+    digest = _fake_archive(archive)
+    src = {"url": "file:///fake", "sha256": digest, "python_rel": "bin/python3"}
+    first = spike.provision_python(src, archive_override=archive, name="fake")
+    marker = first.parent.parent / "marker-from-consumer"
+    marker.write_text("in use", encoding="utf-8")
+    # 同一份字节再来一次：复用，不重解（标记还在），指针不变，但仍真起了一次
+    again = spike.provision_python(src, archive_override=archive, name="fake")
+    assert again == first and marker.read_text(encoding="utf-8") == "in use"
+    assert spike.interpreter_executions == 2
+    # 不同字节（第二份归档多一个文件）：新目录，旧目录原样，指针切到新的
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        data = FAKE_PY.encode()
+        info = tarfile.TarInfo("python/bin/python3")
+        info.size = len(data)
+        info.mode = 0o755
+        tar.addfile(info, io.BytesIO(data))
+        info = tarfile.TarInfo("python/lib/v2.txt")
+        info.size = 2
+        tar.addfile(info, io.BytesIO(b"v2"))
+    archive2 = tmp_path / "fake2.tar.gz"
+    archive2.write_bytes(buf.getvalue())
+    digest2 = hashcheck.sha256_file(archive2)
+    assert digest2 != digest
+    second = spike.provision_python(
+        {"url": "file:///fake2", "sha256": digest2, "python_rel": "bin/python3"},
+        archive_override=archive2,
+        name="fake",
+    )
+    assert second != first and second.is_file()
+    assert first.is_file() and marker.read_text(encoding="utf-8") == "in use", "旧 runtime 被动了"
+    active = json.loads((data_dir / "runtimes" / "active.json").read_text(encoding="utf-8"))
+    assert active["active"] == second.parent.parent.name and active["sha256"] == digest2
+
+
+@pytest.mark.skipif(os.name == "nt", reason="假解释器是 sh 脚本；Windows 上没有 sh")
+def test_active_pointer_is_replaced_atomically(tmp_path, monkeypatch):
+    """指针文件只经 tmp + os.replace 落盘：让 os.replace 在切指针那一下失败，磁盘上必须还是上一个
+    完整的 active.json，而不是半个 / 空的。"""
+    data_dir = tmp_path / "data"
+    home = tmp_path / "home"
+    data_dir.mkdir()
+    home.mkdir()
+    spike = runtime_spike.Spike(tmp_path / "out", data_dir, home, None, "linux-x86_64")
+    archive = tmp_path / "fake.tar.gz"
+    digest = _fake_archive(archive)
+    src = {"url": "file:///fake", "sha256": digest, "python_rel": "bin/python3"}
+    spike.provision_python(src, archive_override=archive, name="fake")
+    pointer = data_dir / "runtimes" / "active.json"
+    before = pointer.read_bytes()
+    real_replace = os.replace
+
+    def failing_replace(a, b):
+        if str(b).endswith("active.json"):
+            raise OSError("模拟：切指针那一下磁盘满")
+        return real_replace(a, b)
+
+    monkeypatch.setattr(runtime_spike.os, "replace", failing_replace)
+    with pytest.raises(OSError):
+        spike._switch_active(data_dir / "runtimes", "whatever", "0" * 64, "file:///x")
+    assert pointer.read_bytes() == before, "指针被半写了"
+    assert json.loads(before)["active"].startswith("fake-")
 
 
 @pytest.mark.skipif(os.name == "nt", reason="假解释器是 sh 脚本；Windows 上没有 sh")
@@ -219,6 +296,7 @@ def test_bad_hash_refuses_before_extracting_or_executing_anything(tmp_path):
         )
     assert spike.interpreter_executions == 0
     assert not (data_dir / "runtimes").exists() or list((data_dir / "runtimes").iterdir()) == []
+    assert not (data_dir / "runtimes" / "active.json").exists()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="假解释器是 sh 脚本；Windows 上没有 sh")
@@ -244,7 +322,7 @@ def test_an_interpreter_that_does_not_start_leaves_no_published_runtime(tmp_path
     }
     with pytest.raises(runtime_spike.SpikeFailure):
         spike.provision_python(src, archive_override=archive, name="broken")
-    assert not (data_dir / "runtimes" / "broken").exists()
+    assert not any(p.name.startswith("broken") for p in (data_dir / "runtimes").iterdir())
     assert not any(p.name.startswith(".staging") for p in (data_dir / "runtimes").iterdir())
     assert not (data_dir / "runtimes" / "active.json").exists()
 

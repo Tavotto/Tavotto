@@ -12,7 +12,7 @@
 |---|---|---|
 | provisioner（只选一条） | **uv 0.12.17**，取自 PyPI 的 wheel（按平台钉 sha256，从 wheel 里取出 `uv` 二进制），MIT OR Apache-2.0。只用 `uv venv --python <私有解释器>` 与 `uv pip install --offline --no-index --find-links --require-hashes`；**不用** `uv python install`（那会引入 uv 自己的解释器来源与目录约定，与锁文件成第二套真相） | `runtime_spike.UV_WHEELS`、report step `provisioner.uv_from_pinned_wheel` |
 | 私有完整 Python 来源 | **python-build-standalone 20260814 · CPython 3.13.15 · install_only**——macOS 目标**直接读 `packaging/runtime-lock.json`**（版本 / build / 三元组 / URL / sha256 单一出处）；锁里没有的 Linux 与 Windows-pbs 在 spike 里补一张同形状的表（`PBS_EXTRA`，sha256 来自该 release 的 SHA256SUMS），只服务 spike | `python_source()`、`tests/test_foundation_u02_runtime.py::test_macos_python_source_is_read_from_the_runtime_lock_not_duplicated` |
-| 安装位置 | 全部在 `engine.config.data_dir()` 之下：`runtimes/<name>`（staging 目录解包 → 真起一次 → `os.replace` 原子改名 → `active.json` 指针）、`envs/<venv>`、`tools/uv-<ver>`、`downloads/`、`wheelhouse/`、`uv-cache/` | step `isolation.everything_under_data_dir`、`verify.imports_and_everything_under_private_dir` |
+| 安装位置 | 全部在 `engine.config.data_dir()` 之下：`runtimes/<name>-<sha256 前 12 位>`（**按内容命名、不可变**：staging 目录解包 → 真起一次 → `os.replace` 原子改名；同一份字节永远同一个目录、已在就复用；换版本是新目录就位后才切 `active.json`，**已在用的 runtime 永远不被 rmtree**；指针文件 tmp + `os.replace`，从不半写）、`envs/<venv>`、`tools/uv-<ver>`、`downloads/`、`wheelhouse/`、`uv-cache/` | step `isolation.everything_under_data_dir`、`verify.imports_and_everything_under_private_dir`；快用例 `test_replacing_a_runtime_never_deletes_the_one_in_use_and_only_switches_the_pointer` / `test_active_pointer_is_replaced_atomically` |
 | 不改系统 | `HOME` / `USERPROFILE` 指到空目录整个跑完后仍为空；`PATH` 前后相同；`UV_NO_CONFIG=1` / `UV_NO_ENV_FILE=1` / `UV_CACHE_DIR=<data_dir>/uv-cache` / `PYTHONNOUSERSITE=1`；不碰系统 Python、不写 shell 配置；Windows 注册表本机无法量（见 §4） | step `isolation.home_untouched_and_path_unchanged` |
 | 无下载授权不联网 | 安装步骤在**死代理**（`HTTP(S)_PROXY=http://127.0.0.1:9`）+ `--offline --no-index` 下成功；**对照两条**：空 wheelhouse 必失败（证明来源是 wheelhouse），不带 `--offline` 装一个不在 wheelhouse 的包必被代理挡住（证明代理真在挡网） | steps `install.*` |
 | 坏 hash 不执行 | 篡改归档 / 登记错的期望值 → `HashMismatch`，**解释器执行计数不增、runtimes 目录不变、不存在半个 staging** | steps `negative.*`、`tests/test_foundation_u02_runtime.py` |
@@ -26,6 +26,10 @@
 PYTHONPATH=scripts:src .venv/bin/python -m dev.u02_spikes.runtime_spike \
     --out docs/implementation/tavotto-foundation/evidence/u02/runtime --keep     # 退出 0，ALL OK 15/15
 ```
+
+（进 git 的 `report-macos-arm64.json` 是评审处置后按同一条命令重跑的那份，只多了 `--data-dir` 指向复用了首轮
+ hash 校验过的下载缓存的临时目录——`target.resolved.via` 记着这一点；首轮走 `engine.config.data_dir()` 的落点
+判据同样在 CI 三腿的 report 里。）
 
 | step | 结果 | 关键数字 |
 |---|---|---|
@@ -53,7 +57,7 @@ PYTHONPATH=scripts:src .venv/bin/python -m dev.u02_spikes.runtime_spike \
 * **uv 走 PyPI wheel 而不是 GitHub release 二进制**：PyPI 的 digest 与我们钉其它 wheel 的方式同源，`pip download` / 校验 / 解 zip 三步全是标准库；GitHub release 的 `.tar.gz` 也可以，但多一种归档形状。
 * **pbs 与锁文件同源**：D05 说 U05 不造第二套安装器，所以 macOS 的来源就是 `runtime-lock.json` 里那一份，spike 不另抄一遍；Linux / Windows-pbs 目标锁文件里没有，spike 表只是补位，U05 接入时要么把它们抬进锁（schema 加目标），要么明确 Linux 不做私有 Python。
 * **Windows 的私有 Python 应是 pbs 的 install_only，不是 embeddable**：embeddable 没有 `venv` / `ensurepip`（§静态检查），而 uv 虽然能在它上面建 venv（uv 自己写 `pyvenv.cfg`），但那条路的「完整性」建立在 uv 的行为上，与「完整 Python」的承诺不是一回事——U05 的 Windows 产物若继续用 embeddable 当 worker runtime（`packaging/AGENTS.md` 的现状）、用 pbs 当私有准备的 base，两者分工要写清。这一条在 §4 里标 **待 Windows 目标**。
-* **staging + 原子改名 + `active.json`**：[W3] 说 venv 不可移动，所以最终目录在创建前就固定，只切指针；半个解包永远不会叫最终名字。
+* **staging + 按内容命名的不可变目录 + 原子切指针**：[W3] 说 venv 不可移动，所以最终目录在创建前就固定，只切指针；半个解包永远不会叫最终名字。第一版在 `os.replace` 前 `rmtree(final)`——Codex（#455）指出那会让正在用它的消费者看到解释器消失、且 rmtree 与 replace 之间失败就永久丢掉可用 runtime；改成目录名带 sha256 前缀：同字节复用、异字节另建，旧目录不动，只有指针换（指针本身也 tmp + replace）。
 
 ## 3. 反证
 
@@ -61,7 +65,7 @@ PYTHONPATH=scripts:src .venv/bin/python -m dev.u02_spikes.runtime_spike \
 * 空 wheelhouse：离线安装必失败——「刚才装成功」不能来自别处。
 * 死代理对照：不带 `--offline` 的联网尝试被拒（`os error 61`），证明死代理不是摆设。
 * 起不来的解释器（`exit 7` 的假 python）：不发布、不留 staging、不写指针。
-* 快用例的变异：去掉 `verify_sha256` → 两条坏 hash 用例红；去掉原子改名（直接解到最终目录）→ `.staging` / 最终目录存在性断言红。
+* 快用例的变异：去掉 `verify_sha256` → 两条坏 hash 用例红；去掉原子改名（直接解到最终目录）→ `.staging` / 最终目录存在性断言红；退回「同名 rmtree 再 replace」→ 换版本用例红（旧目录与标记文件消失）；指针直接 `write_text` → 原子指针用例红（`os.replace` 失败时磁盘上剩半个）。
 
 ## 4. 明确没做 / 仍缺的目标
 

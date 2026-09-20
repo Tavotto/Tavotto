@@ -1791,10 +1791,10 @@ def _byte_compared_generated_files() -> list[str]:
         "docs/implementation/tavotto-foundation/enrollment.json",
         "docs/implementation/tavotto-foundation/ENROLLMENT.md",
         # U02 render_spike 的 evidence：tests/test_foundation_u02_render.py 按 sha256 把 truth.json
-        # 与 spike.pdf 同 report.json 记的值互相钉住（PNG 有 NUL 又含 CRLF 字节，二进制走、不进这张表）
+        # 同 report.json 记的值互相钉住。spike.pdf / PNG 是二进制（压缩流里 0d 0a 会自然出现），
+        # 只在 .gitattributes 里钉 binary、由 hash 互钉看住，**不进这张 LF 表**（Codex #455 P2）
         "docs/implementation/tavotto-foundation/evidence/u02/render/truth.json",
         "docs/implementation/tavotto-foundation/evidence/u02/render/report.json",
-        "docs/implementation/tavotto-foundation/evidence/u02/render/spike.pdf",
     ]
 
 

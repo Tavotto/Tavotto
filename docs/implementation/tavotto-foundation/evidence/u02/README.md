@@ -10,7 +10,7 @@
 | | `spike.pdf`（18 KB） | `render_spike.py` 写出（pikepdf + fontTools + HarfBuzz） | `tests/test_foundation_u02_render.py` 用纯标准库读它 |
 | | `spike_pdfium.png`（800×640 RGBA，30 KB） | PDFium 5.13.0 / 153.0.7999.0 栅格 | 同上（像素采样） |
 | | `report.json` | 版本 / 输入输出 hash / 写入事实 / 三把独立读取器的 52 条核对 | 与上两个文件的 hash 互相钉住 |
-| `freeze/` | `report-darwin-arm64.json`、`frozen-render-darwin-arm64.png`、`pyinstaller.log` | `freeze_spike.py`（PyInstaller 6.19.0 onedir，产物 69 MB **不进 git**） | 冻结 exe 自起 child 真渲染的结果 |
+| `freeze/` | `report-darwin-arm64.json`、`frozen-render-darwin-arm64.png`、`pyinstaller-log.txt` | `freeze_spike.py`（PyInstaller 6.19.0 onedir，产物 69 MB **不进 git**） | 冻结 exe 自起 child 真渲染的结果 |
 | `runtime/` | `report-macos-arm64.json` | `runtime_spike.py`（纯标准库；uv / pbs / wheel 全按 hash 下载，落在临时 `TAVOTTO_DATA_DIR`） | 15 步各自的命令 / 退出码 / 路径 |
 
 重生成（macOS arm64；两次运行的 `spike.pdf` / PNG 字节相同）：
