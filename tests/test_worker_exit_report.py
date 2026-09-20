@@ -224,7 +224,9 @@ def test_a_hard_crash_reports_the_exit_status_and_the_python_stack(figs):
     # （POSIX 的头是 `Fatal Python error: Segmentation fault`，Windows 的是
     # `Windows fatal exception: access violation`——CPython 两个平台两句话）
     assert _FAULTHANDLER_HEADER.search(e.traceback_text), e.traceback_text
-    assert "_sigsegv" in e.traceback_text or "fig_segv.py" in e.traceback_text, e.traceback_text
+    # **崩在哪一帧**才是用户要的那一行；3.14 的 faulthandler 默认还附一段 C 栈，
+    # 30 行的尾巴装不下——worker 关掉 c_stack、pool 取 FATAL_TAIL_LINES 行，两头都钉
+    assert "fig_segv.py" in e.traceback_text, e.traceback_text
     # 日志非空，文案就不许说「没有留下任何输出」
     assert "没有留下任何输出" not in str(e)
 
@@ -243,6 +245,7 @@ def test_workerd_gives_the_same_answer_for_a_hard_crash(workerd_figs):
     _assert_segv_report(e.extra["exit"], str(e))
     assert "渲染进程退出了" in str(e)
     assert _FAULTHANDLER_HEADER.search(e.traceback_text), e.traceback_text
+    assert "fig_segv.py" in e.traceback_text, e.traceback_text
     assert not w.alive()
 
 

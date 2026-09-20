@@ -92,6 +92,11 @@ REQUEST_TIMEOUT = 300.0  # override / render_png / preview_png
 EXPORT_TIMEOUT = 600.0
 #: 优雅关停：worker 收到就 SystemExit，等不到 5 秒说明它根本没在读 stdin。
 SHUTDOWN_TIMEOUT = 5.0
+#: 进程级失败（session_dead 等 `_FATAL_CODES`）时从 worker.log 取几行给用户看。
+#: 默认的 30 行装不下 faulthandler 的一段栈：matplotlib 的 draw 栈随便就四五十帧，
+#: 崩在最上面那一帧（用户最需要的那一行）会被顶出去，尾巴里只剩引擎自己的帧。
+FATAL_TAIL_LINES = 120
+
 #: 协议管道 EOF 之后等子进程**自己**退出的宽限（秒）——与 workerd 的
 #: `EXIT_GRACE` 同一个数。EOF 那一刻直接 kill 的话，退出码永远是 TerminateProcess /
 #: SIGKILL 那一个，真正的死因（access violation / DLL 加载失败 / sys.exit）就被盖掉了。
@@ -1317,7 +1322,7 @@ class EngineWorker:
             # 摘掉进程）。**两条控制面必须给出同一个答案**——pool 是 workerd 的
             # 参考实现，判据分叉就等于有两套语义：文案由 `session_dead_message`
             # 一处产出，退出码的解释表也只有 `describe_exit` 一份。
-            tail = self._log_tail()
+            tail = self._log_tail(FATAL_TAIL_LINES)
             err = WorkerError(
                 session_dead_message(exit_info, tail, self.log_path), tail, code="session_dead"
             )
@@ -1741,7 +1746,7 @@ class WorkerdWorker:
             self._dead = True
         tb = exc.traceback_text or ""
         if not tb and code in _FATAL_CODES:
-            tb = self._log_tail()  # 进程级失败时 worker 的 traceback 全在日志里
+            tb = self._log_tail(FATAL_TAIL_LINES)  # 进程级失败时 worker 的 traceback 全在日志里
         message = str(exc)
         if code == "session_dead" and isinstance(exc.extra, dict) and "exit" in exc.extra:
             # workerd 只如实报退出状态（`ExitReport`），怎么解释、日志空不空要不要

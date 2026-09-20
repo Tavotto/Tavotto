@@ -528,8 +528,13 @@ def main() -> None:
     # 管道 EOF，报出来的是一句「渲染进程崩溃」，用户与我们都无从下手（issue #435
     # 的诊断包里正是 24 条这样的空记录）。faulthandler 让 CPython 在那一刻把
     # Python 栈写进 stderr（就是 worker.log）：崩在哪个 import、哪句 draw 一眼可见。
-    # 装在 stderr 重配之后：它记的是**此刻**的 fd。
-    faulthandler.enable(file=sys.stderr, all_threads=True)
+    # 装在 stderr 重配之后：它记的是**此刻**的 fd。3.14 起默认还会附一段 C 栈
+    # （二三十行 `Binary file …`），把最有用的 Python 帧顶出日志尾巴——关掉它，
+    # 各版本给出同一形状；老版本没有这个形参就按老样子开。
+    try:
+        faulthandler.enable(file=sys.stderr, all_threads=True, c_stack=False)
+    except TypeError:
+        faulthandler.enable(file=sys.stderr, all_threads=True)
 
     worker = Worker(ap.parse_args())
 
