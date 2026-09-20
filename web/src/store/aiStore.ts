@@ -12,6 +12,7 @@ import {
   type AiAgentId,
   type AiCapabilities,
   type AiDeltaKind,
+  type AiSourceBakeVerification,
 } from '@/lib/api'
 
 export type AiStatus = 'running' | 'done' | 'failed' | 'timeout' | 'cancelled' | 'reverted'
@@ -49,6 +50,9 @@ export interface AiSession {
   diff: string
   error?: string
   startedAt: number
+  /** true = this task is reconciling Tavotto overrides back into source. */
+  sourceBake?: boolean
+  verification?: AiSourceBakeVerification | null
 }
 
 interface AiState {
@@ -81,9 +85,17 @@ interface AiState {
     target: string
     overrides: unknown[]
     canvas?: string | null
+    bakeOverrides?: boolean
   }) => Promise<void>
   appendDelta: (sid: string, kind: AiDeltaKind, text: string) => void
-  finish: (p: { session: string; status: string; changed: boolean; diff: string; error?: string }) => void
+  finish: (p: {
+    session: string
+    status: string
+    changed: boolean
+    diff: string
+    error?: string
+    verification?: AiSourceBakeVerification | null
+  }) => void
   revert: (sid: string) => Promise<void>
   cancel: (sid: string) => Promise<void>
   clear: () => void
@@ -204,7 +216,9 @@ export const useAiStore = create<AiState>((set, get) => ({
     })
   },
 
-  start: async ({ prompt, fileId, panelId, gid, label, scope, target, overrides, canvas }) => {
+  start: async ({
+    prompt, fileId, panelId, gid, label, scope, target, overrides, canvas, bakeOverrides,
+  }) => {
     // 发任务前再确认一次：首选那个可能刚被关掉 / 刚被检测成不可用
     const caps = get().caps
     const agent = effectiveAgent(get().agent, caps)
@@ -216,7 +230,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       : null
     const res = await aiRun({
       agent, id: fileId, prompt, gid, label, overrides,
-      model, effort, scope, target, canvas,
+      model, effort, scope, target, canvas, bake_overrides: !!bakeOverrides,
     })
     const session: AiSession = {
       id: res.session,
@@ -234,6 +248,8 @@ export const useAiStore = create<AiState>((set, get) => ({
       changed: false,
       diff: '',
       startedAt: Date.now(),
+      sourceBake: !!bakeOverrides,
+      verification: null,
     }
     set((s) => ({ sessions: [...s.sessions, session] }))
   },
@@ -263,7 +279,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       }),
     })),
 
-  finish: ({ session, status, changed, diff, error }) =>
+  finish: ({ session, status, changed, diff, error, verification }) =>
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === session
@@ -273,6 +289,7 @@ export const useAiStore = create<AiState>((set, get) => ({
               changed,
               diff,
               error,
+              verification: verification ?? x.verification ?? null,
               // 会话结束，光标不该继续闪
               entries: x.entries.map((e) => (e.streaming ? { ...e, streaming: false } : e)),
             }
