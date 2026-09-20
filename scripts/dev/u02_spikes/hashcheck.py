@@ -40,6 +40,15 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def sha256_text_lf(path: Path) -> str:
+    """文本文件按 LF 归一化之后的 SHA-256——给「内容身份」用，不给「字节身份」用。
+
+    `packaging/runtime-lock.json` 这类没钉 `eol=lf` 的文本在 Windows 检出成 CRLF，
+    `sha256_file` 会把同一份内容算成两个值（U02 spikes 的 windows-latest 腿实测红过）。
+    归档 / wheel / 字体这类二进制**不许**用这个：它们的身份就是字节。"""
+    return hashlib.sha256(Path(path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def verify_sha256(path: Path, expected: str) -> Path:
     """校验通过返回 `path`（作为「已校验」的凭据）；不通过抛 HashMismatch。"""
     expected = expected.strip().lower()

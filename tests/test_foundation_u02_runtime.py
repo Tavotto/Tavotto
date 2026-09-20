@@ -88,6 +88,17 @@ def test_download_verified_reports_transport_failure_without_leaving_a_part_file
     assert not dest.exists() and not dest.with_name("nope.bin.part").exists()
 
 
+def test_sha256_text_lf_ignores_line_endings_but_not_content(tmp_path):
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    a.write_bytes(b'{"x": 1}\n{"y": 2}\n')
+    b.write_bytes(b'{"x": 1}\r\n{"y": 2}\r\n')
+    assert hashcheck.sha256_text_lf(a) == hashcheck.sha256_text_lf(b)
+    assert hashcheck.sha256_file(a) != hashcheck.sha256_file(b)
+    b.write_bytes(b'{"x": 1}\r\n{"y": 3}\r\n')
+    assert hashcheck.sha256_text_lf(a) != hashcheck.sha256_text_lf(b)
+
+
 def test_assert_under_uses_realpath_so_symlink_escapes_are_refused(tmp_path):
     root = tmp_path / "data"
     root.mkdir()
@@ -245,7 +256,8 @@ def test_macos_arm64_report_exists_all_ok_and_matches_the_lock():
     report = json.loads((EVIDENCE / "report-macos-arm64.json").read_text(encoding="utf-8"))
     assert report["all_ok"] is True and report["target"] == "macos-arm64"
     assert report["python_source"]["sha256"] == LOCK["targets"]["macos-arm64"]["python"]["sha256"]
-    assert report["lock_file"]["sha256"] == hashcheck.sha256_file(
+    # 内容 hash（LF 归一化）：锁文件没钉 eol=lf，Windows 检出是 CRLF，字节 hash 会假红（windows-latest 腿实测）
+    assert report["lock_file"]["sha256_lf"] == hashcheck.sha256_text_lf(
         ROOT / "packaging" / "runtime-lock.json"
     ), "锁文件变了，report 是按旧锁跑的：重跑 runtime_spike"
     names = [s["step"] for s in report["steps"]]

@@ -48,7 +48,7 @@
  ],
  "lock_file": {
   "path": "packaging/runtime-lock.json",
-  "sha256": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c"
+  "sha256_lf": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c"
  },
  "steps": [
   {

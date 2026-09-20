@@ -41,7 +41,7 @@ from dev.u02_spikes.hashcheck import (
     OutsidePrivateDir,
     assert_under,
     download_verified,
-    sha256_file,
+    sha256_text_lf,
     verify_sha256,
 )
 
@@ -687,7 +687,8 @@ def main(argv: list[str] | None = None) -> int:
         },
         "python_source": src,
         "wheels": WHEELS,
-        "lock_file": {"path": "packaging/runtime-lock.json", "sha256": sha256_file(LOCK)},
+        # 锁文件是文本、没钉 eol=lf：记 LF 归一化的内容 hash（Windows 检出成 CRLF 时字节 hash 会变）
+        "lock_file": {"path": "packaging/runtime-lock.json", "sha256_lf": sha256_text_lf(LOCK)},
         "steps": spike.steps,
         "all_ok": ok,
     }
