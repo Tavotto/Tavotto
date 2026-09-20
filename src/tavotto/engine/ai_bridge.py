@@ -674,7 +674,7 @@ def run(
                     LOG.exception("AI 完成后的验证失败: %s", script)
                     sess["verification"] = {
                         "status": "failed",
-                        "code": "source_bake_verify_failed",
+                        "reason": "verification_failed",
                         "error": str(exc),
                     }
             LOG.info(
