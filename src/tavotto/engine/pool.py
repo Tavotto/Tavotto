@@ -204,6 +204,30 @@ _lock = threading.Lock()
 _EMPTY_PATCH_HASH = patchspec.patch_hash([])
 
 
+def _runtime_of(resp: dict) -> dict | None:
+    """build 响应里的 worker 自报（ADR 0053）。不是对象就当没报。"""
+    rt = resp.get("runtime") if isinstance(resp, dict) else None
+    return dict(rt) if isinstance(rt, dict) else None
+
+
+def peek(script_name: str, figures_dir: str | Path):
+    """池里**现在**有没有这个脚本的活会话——只读，不建、不复用判定、不淘汰。
+
+    `get()` 的副作用（重建 / LRU）在这里一个都不发生；回来的可能是没 build 的
+    会话（正在冷启动）。给准备接口回答「现有 runtime 正在运行」（ADR 0053）用：
+    它要的是事实，不是一条新会话。
+    """
+    key = (_norm_dir(figures_dir), script_name)
+    with _lock:
+        w = _workers.get(key)
+        return w if w is not None and w.alive() else None
+
+
+def control_plane_of(worker) -> str:
+    """这条会话实际走的控制面（回执的 `control_plane`）。"""
+    return "workerd" if isinstance(worker, WorkerdWorker) else "python_pool"
+
+
 def stem_patch_hash(worker, stem: str) -> str:
     """`worker` 上**这个 stem** 最后应用的那组 patches 的规范哈希。
 
@@ -851,6 +875,9 @@ class EngineWorker:
         #: RuntimeFigureAsset 的 cache 物化从这里取（app 层复制预览文件 +
         #: 描述符即可），**不必为拿描述符再跑一次脚本**。
         self.last_build_descriptors: list = []
+        #: 最近一次 build 响应里 worker 自报的运行时事实（`figsession.runtime_report`，
+        #: ADR 0053）；老 worker 没带就是 None——回执据此标 partial，不补不猜。
+        self.last_build_runtime: dict | None = None
         self.last_used = time.time()
         # 这一代从日志的哪个字节开始（append 模式，目录跨代复用）
         self._log_offset = _log_size(self.log_path)
@@ -1170,6 +1197,7 @@ class EngineWorker:
         resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
+        self.last_build_runtime = _runtime_of(resp)
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
@@ -1474,6 +1502,7 @@ class WorkerdWorker:
         self.lock = threading.Lock()
         self.built = False
         self.last_build_descriptors: list = []
+        self.last_build_runtime: dict | None = None
         self.last_used = time.time()
         self._dead = False
         self._client = client or workerd_client.client()
@@ -1493,6 +1522,10 @@ class WorkerdWorker:
             interpreter=python,
             sandbox=str(self.sandbox),
             env=(runtime.child_env(base={}) if self.python_source == SOURCE_BUNDLED else None),
+            # 与 `_spawn_spec()` 同一个出处：这份属性是 ExecutionReceipt 的
+            # LaunchContext 来源（ADR 0053），漏了 cwd_mode 就会在 project 模式下
+            # 把「脚本目录」报成「沙盒」——而真正 spawn 的 argv 早就带着 `--cwd`。
+            cwd_mode=workdir.mode_for(figures_dir),
         )
         self._session_id = ""
         self._open()
@@ -1651,6 +1684,7 @@ class WorkerdWorker:
         resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
+        self.last_build_runtime = _runtime_of(resp)
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp

@@ -75,6 +75,7 @@ from .engine import (
     originalspec as engine_originalspec,
     patchspec as engine_patchspec,
     pool as engine_pool,
+    preparation as engine_preparation,
     probe as engine_probe,
     profilestore as engine_profilestore,
     project_refresh as engine_refresh,
@@ -4614,6 +4615,115 @@ def api_engine_workdir_set():
         engine_pool.shutdown_all(root)
         LOG.info("项目工作目录模式: %s → %s（%s）", before, state["mode"], root)
     return jsonify({"ok": True, "workdir": state, "project": _project_environment_state()})
+
+
+# --------------------- 异步准备（统一实施包 U01，ADR 0053）---------------------
+# 三个端点、一个登记表（`engine/preparation.SERVICE`）。全部在会话认证之内
+# （ADR 0008 的 guard 是全局 before_request，这里没有也不许有旁路）；项目绑定
+# 走 `bound_project(ctx)`，计划按 `project_id` 认领——两个项目里的同名脚本
+# 拿到的是两份互不可见的状态（FO-008）。
+
+
+def _preparation_target(rel_id: str) -> dict:
+    """面板 id → 这次准备要跑的东西（脚本 / 入口 / stem / 静态原件），**不起 worker**。
+
+    磁盘面板：注册表里有脚本就是「可运行」，没有就是纯静态素材（FO-010：静态源
+    可用时不被科学准备阻断）。runtime 素材：注册表正向重算（不反解 id），解析
+    不到 404 + 稳定 code。
+    """
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        if info is None:
+            abort(_runtime_asset_unknown(rel_id))
+        return {
+            "stem": info["stem"],
+            "script": info["script"],
+            "entry": info["entry"],
+            "original_artifact": None,
+        }
+    path = safe_resolve(rel_id)
+    info = current_registry().for_stem(path.stem) or {}
+    return {
+        "stem": path.stem,
+        "script": info.get("script"),
+        "entry": info.get("entry"),
+        "original_artifact": rel_id.replace("\\", "/"),
+    }
+
+
+def _preparation_payload(plan, result) -> dict:
+    return {"plan": plan.to_payload(), "result": result.to_payload()}
+
+
+def _preparation_not_found(plan_id: str):
+    resp = jsonify(
+        {
+            "error": f"没有这个准备任务（或它属于别的项目）: {plan_id}",
+            "code": "preparation_not_found",
+            "params": {"id": plan_id},
+        }
+    )
+    resp.status_code = 404
+    return resp
+
+
+@app.post("/api/engine/preparation")
+def api_engine_preparation_start():
+    """为一张图起一份准备计划，并（有脚本时）在后台把它的 runtime 起起来。
+
+    回 202 + `{plan, result}`：`plan` 是「打算怎么跑」（环境证据 / 依赖意图 /
+    LaunchContext / grant / 预算），`result` 是「到目前为止发生了什么」。没有
+    脚本的图直接落 `static_source_available`，一个子进程都不起。
+    """
+    body = request.get_json(force=True) or {}
+    rel_id = str(body.get("id") or "")
+    if not rel_id:
+        return jsonify({"error": "缺少面板 id", "code": "bad_request", "params": {}}), 400
+    ctx = current_ctx()
+    target = _preparation_target(rel_id)
+    plan = engine_preparation.plan_for(
+        project_id=ctx.id,
+        project_root=str(ctx.path),
+        asset_id=rel_id,
+        stem=target["stem"],
+        script=target["script"],
+        entry=target["entry"],
+        original_artifact=target["original_artifact"],
+    )
+    result = engine_preparation.SERVICE.register(plan)
+    if plan.script is not None:
+        engine_preparation.SERVICE.start(
+            plan.plan_id,
+            # 「真的把 runtime 起起来」只有一份实现：`pool.build`（带一次项目环境
+            # 自动 fallback）。这里不另写 get + ensure_built。
+            runner=lambda pl: engine_pool.build(pl.script, pl.project_root, pl.entry),
+            bind=lambda: bound_project(ctx),
+        )
+    resp = jsonify(_preparation_payload(plan, result))
+    resp.status_code = 202
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/engine/preparation/<plan_id>")
+def api_engine_preparation_state(plan_id: str):
+    found = engine_preparation.SERVICE.get(plan_id, current_ctx().id)
+    if found is None:
+        return _preparation_not_found(plan_id)
+    resp = jsonify(_preparation_payload(*found))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/engine/preparation/<plan_id>/cancel")
+def api_engine_preparation_cancel(plan_id: str):
+    """请求取消。回「接受了没有」——真正的收尾发生在执行线程到达接受时刻那一刻。"""
+    ctx = current_ctx()
+    outcome = engine_preparation.SERVICE.cancel(plan_id, ctx.id)
+    if not outcome["accepted"] and outcome["reason"] == "not_found":
+        return _preparation_not_found(plan_id)
+    plan, result = engine_preparation.SERVICE.get(plan_id, ctx.id)
+    return jsonify({"cancelling": outcome["accepted"], **_preparation_payload(plan, result)})
 
 
 @app.post("/api/engine/environment/install")

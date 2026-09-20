@@ -86,6 +86,7 @@
     "package_schema_unsupported": "The document in this package is neither schema 2 nor schema 3",
     "permission_denied": "No permission to read: {{path}}",
     "ppi_out_of_range": "Resolution {{value}} is out of range — use a value between {{min}} and {{max}}.",
+    "preparation_not_found": "No such preparation task (or it belongs to another project): {{id}}",
     "probe_in_progress": "A run of this script is already in progress: {{script}}",
     "profile_bad_data": "Profile content needs to be an object.",
     "profile_bad_format": "This is not a profile file exported by Tavotto.",

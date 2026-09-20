@@ -56,6 +56,7 @@ WORKER_LIKE = (
     "out_dir",  # manifest / SVG 的落点
     "export_dir",  # 导出临时件的落点（画布导出）
     "last_build_descriptors",  # runtime cache 物化的描述符
+    "last_build_runtime",  # worker 自报的运行时事实（ExecutionReceipt，ADR 0053）
     "ensure_built",
     "override",
     "export",

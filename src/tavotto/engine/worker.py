@@ -424,10 +424,16 @@ class Worker(wireproto.V1Handler):
     def build_result(self, timings: dict) -> dict:
         """v1 build 响应的 body（分派逻辑在 `wireproto.V1Handler`）。
 
-        `descriptors` 是加字段，不升协议版本（ADR 0003 §1）；**只在 v1
-        出现**，legacy 信封的形状一字不改（与 `timings` 同一条纪律）。
+        `descriptors` 与 `runtime`（执行侧自报的解释器 / prefix / 关键包版本 /
+        实际 cwd，ADR 0053）都是加字段，不升协议版本（ADR 0003 §1）；**只在 v1
+        出现**，legacy 信封的形状一字不改（与 `timings` 同一条纪律）。`runtime`
+        在 build 之后现量：cwd 那一项要的是脚本**真正**跑在哪个目录里。
         """
-        return {**self._stems_summary(), "descriptors": self._descriptor_cache}
+        return {
+            **self._stems_summary(),
+            "descriptors": self._descriptor_cache,
+            "runtime": figsession.runtime_report(),
+        }
 
 
 def _json_default(o):

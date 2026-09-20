@@ -40,7 +40,11 @@ safe worker 本来就是单线程串行读 stdin，这条断言对它恒真（�
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
+import os
+import platform
+import sys
 import threading
 import time
 from pathlib import Path
@@ -51,7 +55,51 @@ import overrides as overrides_mod
 import preview_hybrid
 import previewbudget
 
-__all__ = ["LiveFigureSession", "WrongThread", "ms_since"]
+__all__ = ["LiveFigureSession", "WrongThread", "ms_since", "runtime_report", "RECEIPT_PACKAGES"]
+
+#: ExecutionReceipt 里「关键包版本」问哪几个 distribution（ADR 0053）。**闭集**：
+#: 回执是给身份用的，不是环境普查——普查有 `runtime.probe_packages`。顺序即
+#: 输出顺序；没装的**不出现**（缺席与 `null` 是两个答案，这里选前者：报 `null`
+#: 会让读者以为问过而答不上）。
+RECEIPT_PACKAGES = ("matplotlib", "numpy", "pandas", "scipy", "pillow", "seaborn", "h5py")
+
+#: `runtime_report()` 形态的版本。加字段不升；改语义 / 删字段才升。
+RUNTIME_REPORT_VERSION = 1
+
+
+def runtime_report() -> dict:
+    """执行侧**自报**的运行时事实（ExecutionReceipt 的 worker 半边，ADR 0053）。
+
+    每个字段都是**这个进程此刻**量到的：`sys.executable` / `sys.prefix` /
+    `sys.base_prefix` 三个都给——`prefix != base_prefix` 就是 venv，这是父进程
+    从路径字符串上猜不出的事；`cwd` 是 `os.getcwd()`，即脚本真正看到的工作目录
+    （不是 spec 里打算给它的那个）；`packages` 只问 `RECEIPT_PACKAGES`，用
+    `importlib.metadata` 读 distribution 版本（不 import 它们——回执不该改变
+    进程里装了什么）。**全部是加字段，协议不升版**（ADR 0003 §1）。
+    """
+    packages: dict[str, str] = {}
+    for name in RECEIPT_PACKAGES:
+        try:
+            packages[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    try:
+        cwd = os.getcwd()
+    except OSError:  # 目录在脚本跑的时候被删了
+        cwd = ""
+    return {
+        "runtime_report_version": RUNTIME_REPORT_VERSION,
+        "python_version": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        "executable": sys.executable,
+        "prefix": sys.prefix,
+        "base_prefix": sys.base_prefix,
+        "platform": sys.platform,
+        "machine": platform.machine(),
+        "cwd": cwd,
+        "argv0": sys.argv[0] if sys.argv else "",
+        "packages": packages,
+    }
 
 
 class WrongThread(RuntimeError):

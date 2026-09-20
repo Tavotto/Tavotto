@@ -65,6 +65,36 @@ CWD_SANDBOX = "sandbox"
 CWD_PROJECT = "project"
 CWD_MODES = (CWD_SANDBOX, CWD_PROJECT)
 
+#: LaunchContext（统一实施包 U01，ADR 0053）：「脚本看到的 cwd 是从哪来的」
+#: 与「它能往哪写」两个维度，从 spec **派生**、不另存。三个来源 + 沙盒：
+#:
+#: * `sandbox`        —— safe 默认：cwd 是会话沙盒（写入边界）；
+#: * `script.parent`  —— safe 的 `cwd_mode=project`（ADR 0047）：cwd 是脚本自己
+#:                        所在的目录。**它不是 `project.root`**——FO-041 要求把
+#:                        三者分清，而现状 project 档就是 script.parent，语义不变；
+#: * `project.root`   —— 项目根。今天**没有任何生产者**（U03 若加「在项目根运行」
+#:                        才会出现），先占住枚举位，免得将来被并进 script.parent；
+#: * `invocation.cwd` —— native：用户敲命令时的 cwd 原样。
+#:
+#: 写入模式与 cwd 来源是**两个维度**：safe 两档都装着 unlink / write_text 守卫，
+#: 差别只在「相对路径写到哪」；native 没有守卫，脚本拥有用户的全部权限。
+CWD_ORIGIN_SANDBOX = "sandbox"
+CWD_ORIGIN_SCRIPT_PARENT = "script.parent"
+CWD_ORIGIN_PROJECT_ROOT = "project.root"
+CWD_ORIGIN_INVOCATION = "invocation.cwd"
+CWD_ORIGINS = (
+    CWD_ORIGIN_SANDBOX,
+    CWD_ORIGIN_SCRIPT_PARENT,
+    CWD_ORIGIN_PROJECT_ROOT,
+    CWD_ORIGIN_INVOCATION,
+)
+WRITE_MODE_SANDBOXED = "sandboxed"  # 相对路径写进沙盒；真实图库有删 / 写守卫
+WRITE_MODE_PROJECT_DIR = "project_dir"  # 相对路径写进脚本目录；守卫照旧（ADR 0047）
+WRITE_MODE_UNRESTRICTED = "unrestricted"  # native：没有守卫，与用户自己敲命令等同
+WRITE_MODES = (WRITE_MODE_SANDBOXED, WRITE_MODE_PROJECT_DIR, WRITE_MODE_UNRESTRICTED)
+#: `launch_context()` 形态的版本。加可选字段不升；改语义 / 删字段才升。
+LAUNCH_CONTEXT_VERSION = 1
+
 #: `stable_payload()` 覆盖的字段——**跨机器稳定**的那部分执行语义。
 #: `cwd_mode` 在列：它改变脚本看到的世界（相对路径指到哪），是语义不是路径。
 STABLE_FIELDS = (
@@ -176,6 +206,45 @@ class ExecutionSpec:
         out["argv"] = list(self.argv)
         out["spec_version"] = SPEC_VERSION
         return out
+
+
+def launch_context(spec: ExecutionSpec, *, grant: dict | None = None) -> dict:
+    """spec → LaunchContext（04_ARCHITECTURE §2 的那一行）：跨机器稳定的执行上下文。
+
+    只放**语义**：`interpreter` 与 `cwd` 这类机器路径不在里面（它们属于
+    `to_payload()` 与 ExecutionReceipt 的私有失效键）。字段：
+
+    * `cwd_origin` —— `CWD_ORIGINS` 之一（见常量旁的说明）；
+    * `write_mode` —— `WRITE_MODES` 之一；
+    * `target` / `entry` / `argv` / `profile` / `cwd_mode` —— 与 `stable_payload()` 同源；
+    * `grant` —— 授权记录（safe 的 `cwd_mode=project` 由 `workdir.grant_for()` 给；
+      调用方不给就是 `None`，表示「这条上下文没有附带授权信息」，**不是「没授权」**）。
+
+    派生规则是闭集，每个 profile × cwd_mode 组合各一行；不认识的组合当场抛。
+    """
+    if spec.profile == PROFILE_NATIVE:
+        origin, write_mode = CWD_ORIGIN_INVOCATION, WRITE_MODE_UNRESTRICTED
+    elif spec.cwd_mode == CWD_SANDBOX:
+        origin, write_mode = CWD_ORIGIN_SANDBOX, WRITE_MODE_SANDBOXED
+    elif spec.cwd_mode == CWD_PROJECT:
+        origin, write_mode = CWD_ORIGIN_SCRIPT_PARENT, WRITE_MODE_PROJECT_DIR
+    else:  # pragma: no cover — __post_init__ 已经拦住了不认识的 cwd_mode
+        raise ValueError(f"launch_context 不认识的组合: {spec.profile}/{spec.cwd_mode}")
+    if grant is not None and not isinstance(grant, dict):
+        raise ValueError("grant 必须是 None 或 dict")
+    return {
+        "launch_context_version": LAUNCH_CONTEXT_VERSION,
+        "profile": spec.profile,
+        "target_kind": spec.target_kind,
+        "target": spec.target,
+        "entry": spec.entry,
+        "argv": list(spec.argv),
+        "cwd_mode": spec.cwd_mode,
+        "cwd_origin": origin,
+        "write_mode": write_mode,
+        "passthrough_savefig": spec.passthrough_savefig,
+        "grant": dict(grant) if grant is not None else None,
+    }
 
 
 def spec_from_payload(data: dict) -> ExecutionSpec:
