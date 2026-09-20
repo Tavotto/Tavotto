@@ -5344,11 +5344,15 @@ def api_ai_run():
             ),
         )
     except engine_ai.AgentError as exc:
+        if source_bake_target is not None:
+            Path(source_bake_target["target_png"]).unlink(missing_ok=True)
         # 未知 / 未安装 / 被用户在 Tavotto 里关掉——前端本该已经过滤掉，
         # 但这个端点可以被直接调，判据只有一份、在后端
         LOG.warning("AI 任务被拒: %s (%s)", agent, exc.code)
         return _agent_error(exc)
     except RuntimeError as exc:
+        if source_bake_target is not None:
+            Path(source_bake_target["target_png"]).unlink(missing_ok=True)
         LOG.error("AI 任务启动失败: %s %s: %s", agent, info["script"], exc)
         return jsonify(
             {"error": str(exc), "code": "ai_start_failed", "params": {"reason": str(exc)}}
