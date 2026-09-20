@@ -479,7 +479,18 @@ def _build_prompt(
         ctx_lines.append(f"用户当前编辑的是该脚本的输出面板：{ctx['stem']}。")
     if ctx.get("gid"):
         ctx_lines.append(f"用户在界面上选中的元素：{ctx['gid']}（{ctx.get('label', '')}）。")
-    if ctx.get("overrides"):
+    source_bake = ctx.get("source_bake")
+    if isinstance(source_bake, dict):
+        ctx_lines += [
+            "这是一次 Tavotto source-bake 任务：不要把 overrides 当作运行时补丁保留下来，"
+            "而要把它们对应的最终视觉状态直接写进目标 Python 源码。",
+            "完成后，外部系统会在 overrides=[] 的条件下用全新 worker 重新运行脚本，"
+            "并将结果与用户当前 Tavotto 调整后的目标状态做 manifest 几何与 RGBA 像素比对。",
+            "不要实现 AST/CST/source mapping，也不要修改 Tavotto 自身；只修改目标绘图脚本。",
+            "SOURCE_BAKE_CONTEXT_JSON:",
+            json.dumps(source_bake, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        ]
+    elif ctx.get("overrides"):
         ctx_lines.append(
             "用户已在界面上做了这些非破坏性修改（渲染时叠加的 override，"
             f"代表期望状态，供参考）：{ctx['overrides']}"
@@ -504,6 +515,7 @@ def run(
     effort: str | None = None,
     endpoint_id: str | None = None,
     on_changed=None,
+    on_finished=None,
 ) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
@@ -586,6 +598,7 @@ def run(
         "diff": "",
         "changed": False,
         "refresh": {"status": "pending"},
+        "verification": None,
         "model": model,
         "effort": effort,
         "snapshot": str(snap),
@@ -650,6 +663,16 @@ def run(
             # 已经改了，磁盘上的事实就是改了，watcher 迟早也会看到它。刷新在
             # `ai.done` 之前做完，前端收到那条事件时后端的注册表已经是新的。
             sess["refresh"] = refresh_outcome(on_changed, script, sess["changed"])
+            if on_finished is not None:
+                try:
+                    sess["verification"] = on_finished(script, sess["changed"])
+                except Exception as exc:  # noqa: BLE001 — 验证失败不抹掉已经落盘的代码改动
+                    LOG.exception("AI 完成后的验证失败: %s", script)
+                    sess["verification"] = {
+                        "status": "failed",
+                        "code": "source_bake_verify_failed",
+                        "error": str(exc),
+                    }
             LOG.info(
                 "AI 会话结束: %s %s status=%s changed=%s refresh=%s",
                 agent,
@@ -675,6 +698,7 @@ def run(
                     "diff": sess["diff"],
                     "script": script,
                     "refresh": sess["refresh"],
+                    "verification": sess.get("verification"),
                 },
             )
         except Exception as exc:  # noqa: BLE001
