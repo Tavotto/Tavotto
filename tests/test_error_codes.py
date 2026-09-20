@@ -156,13 +156,9 @@ USER_VISIBLE_CODES = {
     "endpoint_invalid": {"reason"},
     "ai_start_failed": {"reason"},
     "ai_revert_failed": {"reason"},
-    # --- Codex source-bake：准备失败走 API 错误；验证结局也带稳定 code 进 ai.done ---
+    # --- Codex source-bake：只有请求准备阶段的失败属于 HTTP error code ---
     "source_bake_no_overrides": set(),
     "source_bake_prepare_failed": {"reason"},
-    "source_bake_no_source_change": set(),
-    "source_bake_verified": set(),
-    "source_bake_mismatch": set(),
-    "source_bake_verify_failed": set(),
     # --- 编码 Agent 注册表（ADR 0013）：全部经 AgentError 抛出、
     #     由 app.py 的 _agent_error 一个漏斗转成 JSON ---
     "ai_agent_unknown": {"agent"},
