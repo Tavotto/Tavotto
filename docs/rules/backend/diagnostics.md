@@ -37,8 +37,11 @@
   帧下面那行源码、引擎自己的标记行。**不按行首长相放行、块要完整才算**：traceback 块 =
   头 + ≥1 帧 + 合法收尾（`ExcType: …`），faulthandler 块 = 头 + ≥1 线程行 + ≥1 帧，凑不齐的
   整块按用户输出略去（一个 `print("Fatal Python error: …")` 不是通行证）；链式异常的两句
-  连接语要**逐字**相同且夹在两段 traceback 之间。`recent_errors` 里配对的异常行与 ERROR 行
-  过同一道路径缩写。**先扫 `WORKER_LOG_SCAN_LINES`（400）行再抽块、再按块截到
+  连接语要**逐字**相同且夹在两段 traceback 之间；**收尾行只留异常类型**（`KeyError: …`）——
+  用户 `traceback.print_exc()` 打出来的块结构与引擎的一模一样，来历分不出，能保证的只有
+  message 不出门；`ImportError` / `ModuleNotFoundError` 例外，那句是加载器说的。路径缩写
+  先整体处理引号里的（带空格的 `C:\Clinical Trial\…` 不能在空格处断），再处理裸路径。
+  `recent_errors` 里配对的异常行与 ERROR 行过同一道路径缩写。**先扫 `WORKER_LOG_SCAN_LINES`（400）行再抽块、再按块截到
   `WORKER_LOG_TAIL_LINES`（`last_blocks_within`：最后那块再长也整块要）**——先按行截
   再抽块会把一段长崩溃栈截成没有头的帧行，状态机一条都不认。README 承诺包里不含
   脚本源码与数据，这条段落不许把它变成空话。三条边界（评审 #443）：**只取目录名哈希等于

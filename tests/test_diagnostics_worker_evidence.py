@@ -175,11 +175,12 @@ def test_worker_log_tails_take_whole_blocks_from_the_end_within_the_budget(tmp_p
     (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=5)
     lines = got["tail"].splitlines()
     # 预算 5 行装不下 201 行的那块，但它是最新的一块：整块都要，前面两块不要
-    assert lines[0] == "Traceback (most recent call last):" and lines[-1] == "KeyError: 'new'"
-    assert len(lines) == 201 and "KeyError: 'mid'" not in got["tail"]
+    # 收尾行只留类型（message 是自由文本，不出门）；哪一块靠帧数分辨
+    assert lines[0] == "Traceback (most recent call last):" and lines[-1] == "KeyError: …"
+    assert len(lines) == 201 and "new198.py" in lines[-2]
     (mid,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=206)
     assert mid["tail"].count("Traceback (most recent call last):") == 2  # new + mid，old 装不下
-    assert "KeyError: 'old'" not in mid["tail"]
+    assert "mid2.py" in mid["tail"] and "old2.py" not in mid["tail"]
 
 
 def test_a_crash_stack_longer_than_the_line_budget_still_keeps_its_header(tmp_path):
@@ -217,11 +218,11 @@ def test_chain_separators_count_only_between_two_traceback_blocks():
     assert kept == [
         "Traceback (most recent call last):",
         '  File "…/a.py", line 1, in <module>',
-        "KeyError: 'k'",
+        "KeyError: …",
         "During handling of the above exception, another exception occurred:",
         "Traceback (most recent call last):",
         '  File "…/a.py", line 3, in <module>',
-        "RuntimeError: second",
+        "RuntimeError: …",
     ]
     assert omitted == 0
     # 三种不算：没有 traceback 在前 / 带尾巴的变体 / 后面没有跟着第二段
@@ -276,7 +277,7 @@ def test_evidence_lines_keep_only_traceback_and_faulthandler_blocks():
         "Traceback (most recent call last):",
         '  File "…/fig.py", line 12, in <module>',
         '  File "…/site-packages/pandas/io/parsers.py", line 900, in read_csv',
-        "FileNotFoundError: [Errno 2] No such file or directory: '…/missing.csv'",
+        "FileNotFoundError: …",  # message 是自由文本（可能带数据），只留类型
     ], kept
     assert kept[4:] == [
         "Fatal Python error: Segmentation fault",
@@ -299,6 +300,7 @@ def test_evidence_lines_keep_only_traceback_and_faulthandler_blocks():
         "usage:",
         "E:/data",
         "/env/lib",
+        "missing.csv",
     ):
         assert absent not in text, absent
     assert omitted == WORKER_LOG_OMITTED
@@ -336,6 +338,58 @@ def test_incomplete_blocks_are_not_evidence(lines):
     assert omitted == len(lines)
 
 
+def test_user_print_exc_blocks_lose_their_free_text_message():
+    """评审 #443 第五轮 P1：`except: traceback.print_exc()` 打出来的块结构与引擎的
+    一模一样，来历分不出来——能保证的只有 message 不出门。ImportError 家族例外：
+    那句是加载器说的（缺哪个模块 / 哪个 DLL 加载失败），正是排障要的。"""
+    kept, _ = diagnostics.evidence_lines(
+        [
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 1, in <module>',
+            "KeyError: 'patient-123 / 2026-09-20 / cohort B'",
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 2, in <module>',
+            "ModuleNotFoundError: No module named 'Bio'",
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 3, in <module>',
+            "ImportError: DLL load failed while importing _imaging: 找不到指定的模块。",
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 4, in <module>',
+            "matplotlib.units.ConversionError: Failed to convert value(s) to axis units: 'patient'",
+        ]
+    )
+    closers = [ln for ln in kept if not ln.startswith(("Traceback", "  File"))]
+    assert closers == [
+        "KeyError: …",
+        "ModuleNotFoundError: No module named 'Bio'",
+        "ImportError: DLL load failed while importing _imaging: 找不到指定的模块。",
+        "matplotlib.units.ConversionError: …",
+    ], closers
+
+
+@pytest.mark.parametrize(
+    "line, expect",
+    [
+        (
+            r'  File "C:\Clinical Trial\patient-a\plot.py", line 3, in <module>',
+            '  File "…/plot.py", line 3, in <module>',
+        ),
+        (
+            "ImportError: cannot load '/mnt/clinical trial/patient a/lib.so'",
+            "ImportError: cannot load '…/lib.so'",
+        ),
+        (r"OSError: D:\Study Data\a.pdf 写不进去", "OSError: …/a.pdf 写不进去"),
+        (
+            '  File "/env/lib/python3.11/site-packages/matplotlib/ft2font.py", line 40 in load',
+            '  File "…/site-packages/matplotlib/ft2font.py", line 40 in load',
+        ),
+    ],
+)
+def test_paths_with_spaces_are_shortened_as_a_whole(line, expect):
+    """评审 #443 第五轮 P1：带空格的路径要整体缩，不能在第一个空格处断掉留下后半截。"""
+    assert diagnostics.shorten_paths(line) == expect
+
+
 def test_a_traceback_block_ends_at_its_exception_line():
     """收尾的异常行之后的东西不再算这个块的：用户接着 print 的数据不能搭车。"""
     kept, omitted = diagnostics.evidence_lines(
@@ -350,7 +404,7 @@ def test_a_traceback_block_ends_at_its_exception_line():
     assert kept == [
         "Traceback (most recent call last):",
         '  File "…/y.py", line 1, in <module>',
-        "KeyError: 'temperature'",
+        "KeyError: …",
     ]
     assert omitted == 2
 
@@ -418,7 +472,8 @@ def test_the_report_carries_redacted_worker_logs(client, tmp_path, monkeypatch):
     assert REAL_HOME not in tail
     # 帧路径缩到文件名：主目录连出现的机会都没有（不靠 `~` 那道替换）
     assert 'File "…/fig.py", line 3' in tail
-    assert "sk-abcdefghijklmnop" not in tail and "***" in tail
+    # 收尾行只留类型：密钥所在的 message 根本不出门（不是被 `***` 替掉，是没带）
+    assert "sk-abcdefghijklmnop" not in tail and "RuntimeError: …" in tail
     assert "loading" not in tail, "脚本自己 print 的那行不进包"
     assert "token = " not in tail, "帧下面的源码行不进包（README：不含 Python 源代码）"
     assert logs[0]["omitted"] == 2

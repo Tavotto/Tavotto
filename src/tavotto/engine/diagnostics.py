@@ -189,6 +189,10 @@ _TB_FRAME = re.compile(r'^\s+File "[^"]*", line \d+')
 #: 收尾的异常行：`ExcType: message` 或裸 `ExcType`（`KeyboardInterrupt`），类型名是点分标识符。
 #: `next sample: patient-124` 这种词间带空格的不算——块没有合法收尾就整块不算。
 _TB_CLOSER = re.compile(r"^[A-Za-z_][\w.]*(?::\s.*|:)?$")
+#: 收尾行里**保留信息**的异常类型：它们的 message 是解释器 / 加载器生成的（缺哪个模块、
+#: 哪个 DLL 加载失败），正是排障要的；其余类型的 message 是自由文本，`traceback.print_exc()`
+#: 里 `KeyError: 'patient-123'` 与引擎自己的一模一样，分不出来历就只留类型名。
+_CLOSER_KEEP_MESSAGE = frozenset({"ImportError", "ModuleNotFoundError"})
 _FH_HEADER = re.compile(r"^(?:Fatal Python error|Windows fatal exception): \S")
 _FH_THREAD = re.compile(r"^(?:Current thread|Thread) 0x[0-9a-fA-F]+")
 _FH_FOOTER = re.compile(r"^Extension modules\b")
@@ -205,8 +209,10 @@ _TB_CHAIN = re.compile(
 
 #: 绝对路径的两种写法：Windows（盘符 / UNC，正反斜杠都认）与 POSIX（至少两段，免得把
 #: argparse usage 里的 `-c/--clstr` 当成路径）。
+#: Windows 那支的中间段允许带空格（`D:\\Study Data\\a.pdf`），只要后面还跟着分隔符——
+#: 末段仍以空白收尾。POSIX 裸路径无法分辨空格是不是路径的一部分，靠引号那一支。
 _ABS_PATH = re.compile(
-    r"""(?:[A-Za-z]:[\\/]|\\\\)(?:[^\\/\s'"`<>|]+[\\/])*[^\\/\s'"`<>|]*"""
+    r"""(?:[A-Za-z]:[\\/]|\\\\)(?:[^\\/'"`<>|\r\n]*?[\\/])*[^\\/\s'"`<>|]*"""
     r"""|/(?:[^/\s'"`<>|]+/)+[^/\s'"`<>|]*"""
 )
 
@@ -229,8 +235,44 @@ def _shorten_path(match: re.Match) -> str:
     return "…/" + parts[-1]
 
 
+#: 引号里的路径整体算一个（`File "C:\\Clinical Trial\\x.py", line 3` / `'/mnt/a b/c.csv'`）：
+#: 裸路径的正则在第一个空格就停了，会把 `Clinical Trial\\…` 那一截留在外面（评审 #443）。
+_QUOTED_PATH = re.compile(r"""(['"])((?:[A-Za-z]:[\\/]|\\\\|/)[^'"]*)\1""")
+
+
 def shorten_paths(line: str) -> str:
-    return _ABS_PATH.sub(_shorten_path, line)
+    def quoted(match: re.Match) -> str:
+        inner = match.group(2)
+        # 只认「像路径」的：POSIX 至少两段（`/--clstr` 不算）
+        if inner.startswith("/") and inner.count("/") < 2:
+            return match.group(0)
+        return match.group(1) + _shorten_path(re.match(r".*", inner, re.S)) + match.group(1)
+
+    line = _QUOTED_PATH.sub(quoted, line)
+
+    def unquoted(match: re.Match) -> str:
+        # 引号那一支已经缩过的（`…/site-packages/…`）别再缩一遍
+        if match.start() > 0 and line[match.start() - 1] == "…":
+            return match.group(0)
+        return _shorten_path(match)
+
+    return _ABS_PATH.sub(unquoted, line)
+
+
+def _closer_for_export(line: str) -> str:
+    """traceback 的收尾行 → 进包的形态：类型名保留，自由文本的 message 换成 `…`。
+
+    用户脚本 `except … : traceback.print_exc()` 打出来的块与引擎自己的结构一模一样
+    （评审 #443 第五轮）：结构齐全证明不了来历，能保证的只有「message 不出门」。
+    `ImportError` / `ModuleNotFoundError` 例外——那句是加载器说的，正是排障要的。
+    """
+    head, sep, message = line.partition(":")
+    exc_type = head.strip().rsplit(".", 1)[-1]
+    if not sep or not message.strip():
+        return line
+    if exc_type in _CLOSER_KEEP_MESSAGE:
+        return shorten_paths(line)
+    return f"{head}: …"
 
 
 def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
@@ -272,7 +314,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                     i += 1
                     continue
                 if _TB_CLOSER.match(cur):
-                    block.append(shorten_paths(cur))  # 收尾的异常行
+                    block.append(_closer_for_export(cur))  # 收尾的异常行
                     i += 1
                     closed = True
                 break
@@ -673,18 +715,16 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- app.log：最近的应用日志\n"
         "- config.json：用户配置（密钥已抹掉）\n"
         "  （report.json 的 render.worker_logs 段：渲染进程日志里的 Python 报错块与崩溃栈——\n"
-        "  只留 traceback 的帧行与收尾异常行，脚本自己打印的内容与源码行已略去）\n"
-        + extra_zh
-        + "- manifest.json：本诊断包自身的格式说明\n"
+        "  只留 traceback 的帧行（文件名 + 行号）与异常类型名，报错文字、脚本自己打印的内容\n"
+        "  与源码行已略去）\n" + extra_zh + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
         "- report.json: system and runtime information\n"
         "- app.log: recent Tavotto application logs\n"
         "- config.json: user configuration (secrets removed)\n"
         "  (report.json, render.worker_logs: Python traceback blocks and crash stacks from\n"
-        "  the render process logs — only frame lines and the closing exception line;\n"
-        "  anything your script printed, and source lines, are left out)\n"
-        + extra_en
-        + "- manifest.json: describes this package's own format\n"
+        "  the render process logs — only frame lines (file name + line number) and the\n"
+        "  exception type; error messages, anything your script printed, and source lines\n"
+        "  are left out)\n" + extra_en + "- manifest.json: describes this package's own format\n"
         "\n"
         "不包含 / It does NOT intentionally contain:\n"
         "- 图中文字（标题、坐标轴标签、图例、标注）\n"
