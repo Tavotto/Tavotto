@@ -320,6 +320,31 @@ export function AssistantPanel() {
     }
   }
 
+  const bakeIntoSource = async () => {
+    if (!panel || panel.overrides.length === 0 || noAgent || sending || runningHere) return
+    setSending(true)
+    setError(null)
+    jumpToBottom()
+    try {
+      await useAiStore.getState().start({
+        prompt: ai('panel.bakePrompt'),
+        fileId: panel.fileId,
+        panelId: panel.id,
+        gid: null,
+        label: null,
+        scope: 'figure',
+        target: ai('scope.figure'),
+        overrides: panel.overrides,
+        canvas: useDocumentStore.getState().activeCanvasId,
+        bakeOverrides: true,
+      })
+    } catch (e) {
+      setError(backendErrorText(e))
+    } finally {
+      setSending(false)
+    }
+  }
+
   // 发送 ↔ 中止同一颗按钮、同一个位置（ChatGPT / Claude 的约定）：正在跑的时候它就是「中止」
   const stopRunning = () => {
     const running = mine.find((s) => s.status === 'running')
@@ -461,6 +486,19 @@ export function AssistantPanel() {
               scope={scope}
               scopes={scopes}
             />
+            {panel && panel.overrides.length > 0 && (
+              <Tip label={ai('panel.bakeTip')}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-ai-bake-overrides
+                  disabled={noAgent || sending || runningHere}
+                  onClick={() => void bakeIntoSource()}
+                >
+                  {ai('panel.bake')}
+                </Button>
+              </Tip>
+            )}
             {/* 快捷键只说一次：发送钮的气泡里已经有「⌘↵」，输入框上不再常驻一枚键帽
                 （打磨 A5——已表达过的不重复） */}
             <span className="ml-auto" />
@@ -1117,6 +1155,24 @@ function SessionBlock({ session }: { session: AiSession }) {
       </p>
 
       {session.error && <p className="text-xs text-danger">{session.error}</p>}
+
+      {session.verification && (
+        <p
+          className={cn(
+            'text-xs leading-relaxed',
+            session.verification.status === 'verified' ? 'text-ink-2' : 'text-danger',
+          )}
+          data-ai-source-bake={session.verification.status}
+        >
+          {ai(
+            session.verification.status === 'verified'
+              ? 'session.bakeVerified'
+              : session.verification.status === 'mismatch'
+                ? 'session.bakeMismatch'
+                : 'session.bakeVerifyFailed',
+          )}
+        </p>
+      )}
 
       {session.changed && session.diff && (
         <div className="flex animate-settle-in flex-col gap-1.5">
