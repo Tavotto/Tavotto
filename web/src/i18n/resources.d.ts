@@ -70,6 +70,9 @@ export default interface Resources {
       "actsOn": "作用于：{{scope}}",
       "agentModel": "执行器与模型",
       "agentNote": "直接修改脚本文件；每次运行前自动快照，可随时回滚。",
+      "bake": "写入 Python",
+      "bakePrompt": "把当前 Tavotto 的人工调整吸收到 Python 源码中，使脚本在没有运行时 overrides 的情况下独立再现当前最终效果。",
+      "bakeTip": "让编码 Agent 把当前 Tavotto 调整吸收到脚本中，并用全新 source-only 渲染验证。",
       "cli": "CLI：{{version}}",
       "cliPath": "路径：{{path}}",
       "effort": "推理强度",
@@ -104,6 +107,9 @@ export default interface Resources {
       "figure": "整张图"
     },
     "session": {
+      "bakeMismatch": "验证不一致：修改后的 Python 还不能在无 overrides 时独立再现当前 Tavotto 目标。可查看 diff、重试或回滚。",
+      "bakeVerified": "验证通过：修改后的 Python 全新运行时无需 overrides 即可再现 Tavotto 目标。MVP 当前仍保留原 overrides，不会自动清除。",
+      "bakeVerifyFailed": "脚本已经修改，但 source-only 验证未能完成。请查看 diff，必要时重试或回滚。",
       "doneChanged": "改动已写入脚本，可查看差异或回滚",
       "doneNoChange": "已完成，脚本没有变化",
       "reverted": "已回滚，脚本已恢复到修改前。",
