@@ -39,7 +39,7 @@ def project(tmp_path: Path) -> Path:
     return root
 
 
-def _panel(fid: str, x=10.0, y=20.0, w=60.0, h=40.0, **kw) -> dict:
+def _panel(fid: str, x=10.0, y=20.0, w=60.0, h=30.0, **kw) -> dict:
     return {"type": "panel", "id": fid, "x_mm": x, "y_mm": y, "w_mm": w, "h_mm": h, **kw}
 
 
@@ -80,14 +80,15 @@ def _compile(root: Path, objects: list[dict], page=(180.0, 120.0), **kw) -> plan
 
 
 def test_a_panel_lands_at_mm_to_pt_with_y_flipped_exactly_once(project: Path):
-    """页 180×120 mm；面板 (10, 20, 60, 40) mm → pt 后 y 向上的矩形：
-    x = 10·k，y = (120 − 20 − 40)·k，w = 60·k，h = 40·k。"""
+    """页 180×120 mm；面板 (10, 20, 60, 30) mm → pt 后 y 向上的矩形：
+    x = 10·k，y = (120 − 20 − 30)·k = 70·k，w = 60·k，h = 30·k。（数字刻意不对称：y + h = 50 ≠ 70，
+    「翻两次」或「不翻」都会落到别的数上。）"""
     compiled = _compile(project, [_panel("figs/Fig1.pdf")])
     page = compiled.page
     assert (page.width_pt, page.height_pt) == pytest.approx((180 * MM, 120 * MM))
     node = page.children[0]
     assert isinstance(node, ir.ImportedPage)
-    assert node.rect == pytest.approx((10 * MM, 60 * MM, 60 * MM, 40 * MM))
+    assert node.rect == pytest.approx((10 * MM, 70 * MM, 60 * MM, 30 * MM))
     assert node.internal == "unknown"
 
 
