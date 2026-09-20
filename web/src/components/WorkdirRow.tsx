@@ -1,50 +1,66 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
+import type { WorkdirConfirmation, WorkdirMode } from '@/lib/api'
 import { useEnvStore } from '@/store/envStore'
-import { SettingRow, settingRowLabelId } from './settings/SettingRow'
+import { SettingRow } from './settings/SettingRow'
 import { Button } from './ui/Button'
-import { Toggle } from './ui/Toggle'
+import { Segmented } from './ui/Segmented'
 
 const en = (key: string, values?: Record<string, unknown>) =>
   translate(`engine.${key}`, { ns: 'errors', ...(values ?? {}) })
 
+//: 三档的文案键写成字面量（i18n 死键门禁按「源码里出现过这个串」判活）
+const MODE_LABEL: Record<WorkdirMode, string> = {
+  sandbox: 'engine.workdirMode_sandbox',
+  project: 'engine.workdirMode_project',
+  project_root: 'engine.workdirMode_project_root',
+}
+const MODE_STATUS: Record<WorkdirMode, string> = {
+  sandbox: 'engine.workdirHintSandbox',
+  project: 'engine.workdirHintProject',
+  project_root: 'engine.workdirHintProjectRoot',
+}
+const MODES: WorkdirMode[] = ['sandbox', 'project', 'project_root']
+
 /**
- * 「在脚本目录里运行」——safe worker 工作目录模式的项目级开关（ADR 0047）。
+ * 「脚本的运行目录」——safe worker 工作目录模式的项目级三档（ADR 0047 / 0057）：
+ * 沙盒（默认）/ 脚本目录 / 项目根。
  *
- * 文案与机制逐条一致：开了之后脚本用相对路径读的数据找得到、用相对路径写的
- * 文件落进项目目录；Tavotto 仍然不替它保存图片、不删不改项目里的文件。
- * 开启要确认一次（在 envStore.setWorkdirMode 里），关闭不用。
+ * 文案与机制逐条一致：真实目录下脚本用相对路径读的数据找得到、用相对路径写的
+ * 文件落进项目目录；Tavotto 仍然不替它保存图片、不删不改项目里的文件。切到两个
+ * 真实目录都要确认一次（在 envStore.setWorkdirMode 里），切回沙盒不用。
  */
 export function WorkdirRow() {
-  useTranslation('errors')
+  const { t } = useTranslation('errors')
   const { env, setWorkdirMode } = useEnvStore()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const project = env?.project
   if (!project?.open || !project.workdir) return null
-  const on = project.workdir.mode === 'project'
-  const flip = async (next: boolean) => {
+  const mode = project.workdir.mode
+  // 老服务端只有两档：它报的 `modes` 里没有第三档时不摆出来
+  const available = MODES.filter((m) => (project.workdir?.modes ?? MODES).includes(m))
+  const pick = async (next: WorkdirMode) => {
     setBusy(true)
-    setError(await setWorkdirMode(next ? 'project' : 'sandbox'))
+    setError(await setWorkdirMode(next))
     setBusy(false)
   }
   return (
     <div className="mt-1.5 border-t border-border pt-1.5">
-      {/* 标准设置行（全面打磨 D14）：此前这里是自己画的一副「标签左 / 开关右」，
-          高度、字级、对齐都与同一页别的行不一样。开关状态下那句话是**现状**不是说明
-          （§13：开着时的低调提醒走 `status`），所以它常驻在标题列里，不收进问号 */}
-      <SettingRow
-        label={en('workdirLabel')}
-        status={on ? en('workdirHintProject') : en('workdirHintSandbox')}
-        controlId="setting-workdir-mode"
-      >
-        <Toggle
-          id="setting-workdir-mode"
-          aria-labelledby={settingRowLabelId('setting-workdir-mode')}
-          checked={on}
-          disabled={busy}
-          onChange={(v) => void flip(v)}
+      {/* 标准设置行（全面打磨 D14）。当前档那句话是**现状**不是说明（§13：低调提醒走
+          `status`），常驻在标题列里，不收进问号。控件整行宽：三档分段放不进定宽控件列 */}
+      <SettingRow label={en('workdirLabel')} status={t(MODE_STATUS[mode])} control="fill">
+        <Segmented
+          value={mode}
+          onChange={(v) => void pick(v)}
+          ariaLabel={en('workdirLabel')}
+          data-testid="setting-workdir-mode"
+          items={available.map((m) => ({
+            value: m,
+            label: t(MODE_LABEL[m]),
+            disabled: busy,
+          }))}
         />
       </SettingRow>
       {error && <p className="text-xs text-danger">{error}</p>}
@@ -54,7 +70,7 @@ export function WorkdirRow() {
 
 /**
  * 「脚本跑完没出图」错误块里的出口：多半是沙盒 cwd 下相对路径找不到数据。
- * 已经是脚本目录模式时不显示——那时原因在别处。
+ * 已经是真实目录模式时不显示——那时原因在别处。
  */
 export function WorkdirSuggestion() {
   useTranslation('errors')
@@ -78,6 +94,24 @@ export function WorkdirSuggestion() {
         {en('workdirSuggestButton')}
       </Button>
       {error && <p className="text-xs text-danger">{error}</p>}
+    </div>
+  )
+}
+
+/**
+ * 「先选运行目录」错误块里的出口（U03）：确认框被「稍后」关掉之后，从这里再打开——
+ * 载荷留在渲染条目上（`PanelRender.confirmation`），这里只把它交回 envStore。
+ */
+export function WorkdirChooseButton({ confirmation }: { confirmation: WorkdirConfirmation | null }) {
+  useTranslation('errors')
+  const request = useEnvStore((s) => s.requestWorkdirConfirmation)
+  if (!confirmation) return null
+  return (
+    <div className="mt-1.5 flex flex-col gap-1">
+      <p className="text-xs leading-relaxed text-ink-2">{en('workdirChooseSuggest')}</p>
+      <Button className="self-start" onClick={() => request(confirmation)}>
+        {en('workdirChooseButton')}
+      </Button>
     </div>
   )
 }

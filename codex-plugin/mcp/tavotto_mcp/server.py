@@ -208,6 +208,17 @@ def _tools() -> list[dict]:
                             "想看逐条建议就调 tavotto_preflight）"
                         ),
                     },
+                    "workdir": {
+                        "type": "string",
+                        "enum": ["sandbox", "project", "project_root"],
+                        "description": (
+                            "脚本的运行目录（首开的那一次回答）。上一次 open 以 "
+                            "workdir_confirmation_required 回来时，按它 structuredContent 里的 "
+                            "confirmation.options 请用户选一档再传进来：sandbox（Tavotto 沙盒）/ "
+                            "project（脚本所在目录）/ project_root（项目根目录）。这个决定按项目"
+                            "记住，只问一次；不传就按已记住的决定走。"
+                        ),
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -635,12 +646,16 @@ def _call_open(args: dict) -> dict:
     plan = _batch_request(args)
     if plan is not None:
         return _call_open_batch(str(target), args, plan)
+    workdir = args.get("workdir")
+    if workdir is not None and not isinstance(workdir, str):
+        raise RpcError(INVALID_PARAMS, "workdir 必须是字符串（sandbox / project / project_root）")
     out = bridge.open_figure(
         str(target),
         stem=args.get("stem"),
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
         include_png=bool(args.get("include_png")),
+        workdir=workdir,
     )
     # **打开与预检分离**（issue #102）：噪声在**给 agent 读的那段文字**里——
     # 每开一张图糊一屏重复的规范建议，还挤掉了 manifest 摘要那几行真正有用的东西。

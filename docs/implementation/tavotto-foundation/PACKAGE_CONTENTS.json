@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 7816,
-      "sha256": "241f6bf6e49699e0ee4b1c1cba87904dfb18da186d12dab45af9dff80ad78d53"
+      "bytes": 8134,
+      "sha256": "2e28df6012c42a38f433de3fba6e70b11c302a8fb976e633c6250ffdae6af43c"
     },
     {
       "path": "SOURCES.md",
@@ -319,8 +319,8 @@
     },
     {
       "path": "handoffs/U03_first_open.md",
-      "bytes": 19740,
-      "sha256": "f0bedbb07de6171cd45b9d22d015d2177fb8c91bdb2c5fce4ec7f6866ed07835"
+      "bytes": 23094,
+      "sha256": "dae58e613f54a28ede5639645645a253792392ed164bb0df6a63aba2fd1f2258"
     },
     {
       "path": "handoffs/U06_ir_text.md",
@@ -394,8 +394,8 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7380,
-      "sha256": "b15593b5b61abd42846d2ca3aa90a6fffd66e3c050b87d5a510fbea393b17f63"
+      "bytes": 7373,
+      "sha256": "55a70cd23b2343ec8acc0e55093faac9c6bbe98795b28b81be7cbb97a42acd3b"
     },
     {
       "path": "registry.json",

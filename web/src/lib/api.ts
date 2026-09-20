@@ -1520,6 +1520,13 @@ export class EngineError extends Error {
    * 时 `requirement` 为 null，界面据此**不给**一键安装。
    */
   dependencyRepair?: DependencyRepairOffer
+  /**
+   * `workdir_confirmation_required`（U03）时「需要用户先选运行目录」的结构化载荷——
+   * 它不是错误块该显示的东西，是一次确认框（`WorkdirConfirmDialog`）。
+   */
+  confirmation?: WorkdirConfirmation
+  /** `explicit_python_unusable` / `project_python_unusable` 时是哪一条显式选择、为什么 */
+  explicit?: ExplicitInterpreterFailure
   constructor(
     message: string,
     traceback = '',
@@ -1527,6 +1534,7 @@ export class EngineError extends Error {
     module = '',
     projectEnv?: ProjectEnvFailure,
     dependencyRepair?: DependencyRepairOffer,
+    extra?: { confirmation?: WorkdirConfirmation; explicit?: ExplicitInterpreterFailure },
   ) {
     super(message)
     this.traceback = traceback
@@ -1534,6 +1542,8 @@ export class EngineError extends Error {
     this.module = module
     this.projectEnv = projectEnv
     this.dependencyRepair = dependencyRepair
+    this.confirmation = extra?.confirmation
+    this.explicit = extra?.explicit
   }
 }
 
@@ -1582,6 +1592,10 @@ export async function engineRender(
       (body.module as string) || '',
       body.project_env as ProjectEnvFailure | undefined,
       body.dependency_repair as DependencyRepairOffer | undefined,
+      {
+        confirmation: body.confirmation as WorkdirConfirmation | undefined,
+        explicit: body.explicit as ExplicitInterpreterFailure | undefined,
+      },
     )
   }
   return body as EngineRenderResponse
@@ -2474,14 +2488,70 @@ export interface BundledRuntime {
  * 它用相对路径读的数据（exists / glob / C++ 读取器）都能找到；它用相对路径
  * **写**的中间文件会像终端里一样落进项目目录。守卫、savefig 捕获、解释器链不变。
  */
-export type WorkdirMode = 'sandbox' | 'project'
+/**
+ * safe worker 的工作目录三档（ADR 0047 / 0057）：沙盒（默认）/ 脚本目录 / 项目根。
+ * `project` 过去是、现在也是脚本目录；`project_root` 是 U03 加的第三档。
+ */
+export type WorkdirMode = 'sandbox' | 'project' | 'project_root'
+export interface WorkdirGrant {
+  cwd_write: { granted: boolean; granted_at: number | null; mode: WorkdirMode | null }
+  /** 这个项目决定过没有（选沙盒也算决定过，只是没有授权） */
+  decided: boolean
+}
 export interface WorkdirState {
   mode: WorkdirMode
   modes: string[]
+  decided?: boolean
+  grant?: WorkdirGrant
 }
 
-/** 「脚本跑完没出图」——多半是沙盒 cwd 下相对路径找不到数据，给「在脚本目录里运行」的出口 */
-export const WORKDIR_CODES = ['no_figures_captured', 'no_figures_captured_silent'] as const
+/**
+ * 首开需要用户先选运行目录（U03，ADR 0057 §三）：后端起第一个 worker 之前按脚本的静态证据
+ * 判出「数据只有项目根找得到」或「两处同名不同值」，抛这份结构化的「需要输入」。
+ * 三个选项各带该目录下找得到的字面量；`recommended` 只在证据唯一指向项目根时给，歧义时
+ * `null`——界面不预选，机器不裁决。
+ */
+export const WORKDIR_CONFIRMATION_CODE = 'workdir_confirmation_required'
+export interface WorkdirConfirmationOption {
+  mode: WorkdirMode
+  cwd_origin: string
+  write_mode: string
+  found: string[]
+  recommended: boolean
+}
+export interface WorkdirConfirmation {
+  kind: 'workdir'
+  code: typeof WORKDIR_CONFIRMATION_CODE
+  /** 项目相对 POSIX 路径 */
+  script: string
+  reason: 'project_root_evidence' | 'ambiguous_data'
+  recommended: WorkdirMode | null
+  options: WorkdirConfirmationOption[]
+  conflicts: string[]
+  reads: string[]
+}
+
+/**
+ * 显式选择的解释器失效（U03，FO15 / FO16）：后端**不静默换一个能 import 的**，说清是哪一条、为什么。
+ * `source`：`env_override`（环境变量）/ `configured`（设置里指定的）/ `project`（为这个项目挑的）。
+ */
+export interface ExplicitInterpreterFailure {
+  source: 'env_override' | 'configured' | 'project' | string
+  reason: 'missing' | 'no_matplotlib' | string
+  trigger?: string
+  /** 项目内的显示成项目相对路径 */
+  python?: string
+}
+
+/**
+ * 「脚本跑完没出图」——多半是沙盒 cwd 下相对路径找不到数据，给「在脚本目录里运行」的出口；
+ * 「需要先选运行目录」——换了工作目录模式之后同样要重跑。
+ */
+export const WORKDIR_CODES = [
+  'no_figures_captured',
+  'no_figures_captured_silent',
+  WORKDIR_CONFIRMATION_CODE,
+] as const
 
 export interface ProjectEnvironment {
   open: boolean
@@ -2502,6 +2572,11 @@ export interface ProjectEnvironment {
   workdir?: WorkdirState
   /** Tavotto 替这个项目建过的隔离环境（ADR 0019）；没建过 exists=false */
   managed?: ManagedEnvironment
+  /**
+   * 此刻解析不出渲染解释器的原因（U03）：显式选择失效时是 `explicit_python_unusable` /
+   * `project_python_unusable` + `explicit`。`null` = 解析得出。
+   */
+  resolution_error?: { code: string; message: string; explicit?: ExplicitInterpreterFailure } | null
 }
 
 /**

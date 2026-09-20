@@ -2842,3 +2842,127 @@ def test_session_state_for_an_unknown_session_is_a_structured_error(project, fak
     res = _call("tavotto_session_state", {"session_id": "s-nope"})
     assert res["isError"] is True
     assert _body(res)["code"] == "unknown_session"
+
+
+# --------------------- U03：首开的「需要输入」与它的回答 -----------------------
+#
+# 桌面确认框、HTTP 的 `PATCH /api/engine/workdir`、MCP 的 `workdir=` 参数是**同一份**决定
+# （`engine/workdir.set_mode`，ADR 0057 §三）。这里盯 MCP 这一面：pool 抛出的
+# `workdir_confirmation_required` 要以结构化 `confirmation` + 可读的 `recovery` 回到 Codex，
+# `workdir=` 要真的写进项目设置并让下一次 open 不再撞门。
+
+
+def test_open_projects_the_workdir_confirmation_and_says_how_to_answer(project, monkeypatch):
+    from tavotto.engine import workdir
+
+    payload = {
+        "kind": "workdir",
+        "code": workdir.ERROR_CONFIRMATION_REQUIRED,
+        "script": "fig1.py",
+        "reason": workdir.REASON_PROJECT_ROOT_EVIDENCE,
+        "recommended": "project_root",
+        "options": [
+            {
+                "mode": "project_root",
+                "cwd_origin": "project.root",
+                "write_mode": "project_dir",
+                "found": ["data/x.csv"],
+                "recommended": True,
+            },
+            {
+                "mode": "project",
+                "cwd_origin": "script.parent",
+                "write_mode": "project_dir",
+                "found": [],
+                "recommended": False,
+            },
+            {
+                "mode": "sandbox",
+                "cwd_origin": "sandbox",
+                "write_mode": "sandboxed",
+                "found": [],
+                "recommended": False,
+            },
+        ],
+        "conflicts": [],
+        "reads": ["data/x.csv"],
+    }
+
+    def gate(*a, **k):
+        err = bridge.engine_pool.WorkerError("要先选目录", code=workdir.ERROR_CONFIRMATION_REQUIRED)
+        err.confirmation = payload
+        raise err
+
+    monkeypatch.setattr(bridge.engine_pool, "get", gate)
+    result = _call("tavotto_open_figure", {"project_path": str(project)})
+    assert result["isError"] is True
+    body = _body(result)
+    assert body["code"] == workdir.ERROR_CONFIRMATION_REQUIRED
+    assert body["confirmation"] == payload
+    # 给人 / 给 Codex 读的那份说得出下一步：带 workdir 再调一次；机器码不进 content
+    human = result["content"][0]["text"]
+    assert "workdir" in human and "project_root" in human
+    assert workdir.ERROR_CONFIRMATION_REQUIRED not in human
+    # 没有会话被登记（一张图都没开成）
+    assert bridge.sessions() == {}
+
+
+def test_open_with_workdir_records_the_decision_and_restarts_sessions(
+    project, fake_pool, monkeypatch
+):
+    from tavotto.engine import workdir
+
+    closed: list[str] = []
+    monkeypatch.setattr(
+        bridge.engine_pool, "shutdown_all", lambda root=None, wait=False: closed.append(root)
+    )
+    assert workdir.decided(project) is False
+    out = _body(
+        _call("tavotto_open_figure", {"project_path": str(project), "workdir": "project_root"})
+    )
+    assert out["ok"] is True
+    assert workdir.mode_for(project) == "project_root"
+    assert workdir.grant_for(project)["cwd_write"] == {
+        "granted": True,
+        "granted_at": workdir.grant_for(project)["cwd_write"]["granted_at"],
+        "mode": "project_root",
+    }
+    assert closed == [str(project)]  # 模式变了：旧会话关掉（cwd 是 spawn 时定的）
+    # 再开一次不带 workdir：决定记住了，同一模式，不再关会话
+    _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    assert closed == [str(project)]
+    # 选「继续沙盒」也是决定：模式没变，但 decided 为真，且没有授权
+    bridge.sessions().clear()
+    _body(_call("tavotto_open_figure", {"project_path": str(project), "workdir": "sandbox"}))
+    assert workdir.decided(project) is True
+    assert workdir.grant_for(project)["cwd_write"]["granted"] is False
+
+
+def test_open_with_an_unknown_workdir_is_a_structured_error(project, fake_pool):
+    from tavotto.engine import workdir
+
+    result = _call("tavotto_open_figure", {"project_path": str(project), "workdir": "native"})
+    assert result["isError"] is True
+    assert _body(result)["code"] == workdir.ERROR_MODE_INVALID
+    assert workdir.decided(project) is False
+
+
+def test_an_unusable_explicit_interpreter_is_projected_with_its_reason(project, monkeypatch):
+    def broken(*a, **k):
+        err = bridge.engine_pool.WorkerError(
+            "用不了", code=bridge.engine_pool.EXPLICIT_UNUSABLE_CODE
+        )
+        err.explicit = {
+            "source": "configured",
+            "python": "/secret/venv/bin/python",
+            "reason": "no_matplotlib",
+        }
+        raise err
+
+    monkeypatch.setattr(bridge.engine_pool, "get", broken)
+    result = _call("tavotto_open_figure", {"project_path": str(project)})
+    body = _body(result)
+    assert body["code"] == bridge.engine_pool.EXPLICIT_UNUSABLE_CODE
+    assert body["explicit"] == {"source": "configured", "reason": "no_matplotlib"}
+    assert "/secret/venv" not in json.dumps(body["explicit"])  # 投影不带机器路径
+    assert "不会自动换成别的环境" in result["content"][0]["text"]

@@ -979,6 +979,8 @@ _project_python_lock = threading.Lock()
 #: `EXPLICIT_UNUSABLE_CODE` 分开：那条是全局设置 / 环境变量，这条是项目级（用户在依赖修复
 #: 面板采用的系统解释器、或为这个项目手填的那条）；界面要指到不同的设置项。
 PROJECT_PYTHON_UNUSABLE_CODE = "project_python_unusable"
+#: 给 `tests/test_error_codes.py` 门禁读的注册表（它按字面量扫源码，常量式的 code 看不见）。
+ERROR_CODES = (EXPLICIT_UNUSABLE_CODE, PROJECT_PYTHON_UNUSABLE_CODE)
 
 #: 自动记住的项目解释器被判失效并作废的记录：项目键 → {python, reason, trigger}。给准备
 #: 计划读（`invalidated_decision`），让「为什么这次重新发现了」有据可查；`reset_worker_python()`

@@ -41,7 +41,19 @@
   本机偏好**。写反了的表现是"把窗口拖窄一次，常驻左栏就再也回不来了"，
   而用户从没关过它。判据只求值一次（`autoShowProperties` 的 `assetsYield`），
   写状态与写偏好共用它。
+- **首开的那一次确认（U03，ADR 0057 §三）**：渲染以 `workdir_confirmation_required` 回来时
+  它不是错误块，是缺一个决定——`renderStore` 把 `EngineError.confirmation` 交给
+  `envStore.requestWorkdirConfirmation`，`WorkdirConfirmDialog` 渲染三档（项目根 / 脚本目录 /
+  继续沙盒）与各档找得到的文件；**推荐项只在后端 `recommended` 有值时预选，歧义时不预选**
+  （机器不裁决，界面只翻译）；「运行」= `setWorkdirMode(mode, { confirmed: true })`（一次 PATCH，
+  不再弹第二层确认框，成功后 `retryEnvironmentFailures` 把这批面板重排）；「稍后」只关框，载荷
+  留在 `PanelRender.confirmation`，错误块的 `WorkdirChooseButton` 能再打开；同一时刻只开一份；
+  换项目 `resetProject` 清掉。设置里 `WorkdirRow` 是同一份决定的三档 `Segmented`（切到两个真实目录
+  各自确认一次，切回沙盒不确认；老服务端只报两档时第三档不摆）。**三档与选项的文案键写成字面量**
+  （`OPTION_LABEL` / `MODE_LABEL` 表），模板拼出来的键死键门禁看不见。MCP 那一面是同一份决定：
+  `tavotto_open_figure(workdir=…)`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
+  `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
   `components/ProjectReadinessBanner.test.tsx`、
   `components/left/AssetBrowser.readiness.test.tsx`、
   `canvas/panelReadinessEntry.test.tsx`、`components/inspector/panelCapabilityNote.test.tsx`、
