@@ -1,0 +1,14 @@
+# U02 spike venv 的候选包（钉死版本；只装进独立 venv，绝不进主仓库 .venv 或 pyproject 的运行时闭包）。
+#   python -m venv <scratch>/spike-venv && <scratch>/spike-venv/bin/python -m pip install -r scripts/dev/u02_spikes/requirements.txt
+# 写入侧
+pikepdf==10.13.0.post1
+fonttools==4.65.0
+uharfbuzz==0.56.1
+# 栅格 / 读取侧（三把尺子）
+pypdfium2==5.13.0
+pdfminer.six==20251107
+pypdf==6.7.5
+# 最小候选 freeze
+pyinstaller==6.19.0
+# 在 spike venv 里跑 tests/test_foundation_u02_*.py
+pytest==8.4.2

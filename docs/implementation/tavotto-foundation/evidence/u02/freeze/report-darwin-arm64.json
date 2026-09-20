@@ -1,0 +1,88 @@
+{
+ "platform": {
+  "python": "3.13.11",
+  "system": "Darwin",
+  "machine": "arm64"
+ },
+ "pyinstaller": "6.19.0",
+ "build_seconds": 12.7,
+ "dist": {
+  "files": 120,
+  "bytes": 69143733,
+  "exe_sha256": "088cb5bf5087ad2728b12a9a7f9065e6449fd7f18ad53b00601c4578dfef5457"
+ },
+ "run": {
+  "returncode": 0,
+  "stdout": "{\"ok\": true, \"frozen\": true, \"executable\": \"/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/dist/Tavotto-u02-freeze/Tavotto-u02-freeze\", \"resource_root\": \"/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/dist/Tavotto-u02-freeze/_internal\", \"fonts_bundled\": [\"LiberationMono-Bold.ttf\", \"LiberationMono-BoldItalic.ttf\", \"LiberationMono-Italic.ttf\", \"LiberationMono-Regular.ttf\", \"LiberationSans-Bold.ttf\", \"LiberationSans-BoldItalic.ttf\", \"LiberationSans-Italic.ttf\", \"LiberationSans-Regular.ttf\", \"LiberationSerif-Bold.ttf\", \"LiberationSerif-BoldItalic.ttf\", \"LiberationSerif-Italic.ttf\", \"LiberationSerif-Regular.ttf\", \"NotoSansSC-Regular.otf\"], \"font_licenses_bundled\": [\"liberation/LICENSE\", \"noto/LICENSE\"], \"pdfium_libraries\": [\"pypdfium2_raw/libpdfium.dylib\"], \"child_pid\": 19597, \"child_memory_limit\": \"failed: current limit exceeds maximum limit\", \"render\": {\"width\": 400, \"height\": 320, \"ms\": 3.6}, \"png_sha256\": \"0e5d6b78b945d73a44225a8c62f960ced3f2864aec7ee734f538a5630b40a164\", \"seconds\": 1.16}",
+  "stderr": ""
+ },
+ "result": {
+  "ok": true,
+  "frozen": true,
+  "executable": "/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/dist/Tavotto-u02-freeze/Tavotto-u02-freeze",
+  "resource_root": "/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/dist/Tavotto-u02-freeze/_internal",
+  "fonts_bundled": [
+   "LiberationMono-Bold.ttf",
+   "LiberationMono-BoldItalic.ttf",
+   "LiberationMono-Italic.ttf",
+   "LiberationMono-Regular.ttf",
+   "LiberationSans-Bold.ttf",
+   "LiberationSans-BoldItalic.ttf",
+   "LiberationSans-Italic.ttf",
+   "LiberationSans-Regular.ttf",
+   "LiberationSerif-Bold.ttf",
+   "LiberationSerif-BoldItalic.ttf",
+   "LiberationSerif-Italic.ttf",
+   "LiberationSerif-Regular.ttf",
+   "NotoSansSC-Regular.otf"
+  ],
+  "font_licenses_bundled": [
+   "liberation/LICENSE",
+   "noto/LICENSE"
+  ],
+  "pdfium_libraries": [
+   "pypdfium2_raw/libpdfium.dylib"
+  ],
+  "child_pid": 19597,
+  "child_memory_limit": "failed: current limit exceeds maximum limit",
+  "render": {
+   "width": 400,
+   "height": 320,
+   "ms": 3.6
+  },
+  "png_sha256": "0e5d6b78b945d73a44225a8c62f960ced3f2864aec7ee734f538a5630b40a164",
+  "seconds": 1.16
+ },
+ "checks": [
+  {
+   "check": "frozen_exe_runs",
+   "ok": true
+  },
+  {
+   "check": "frozen_flag_set",
+   "ok": true
+  },
+  {
+   "check": "child_is_the_same_exe",
+   "ok": true
+  },
+  {
+   "check": "pdfium_library_bundled",
+   "ok": true
+  },
+  {
+   "check": "fonts_bundled_13",
+   "ok": true
+  },
+  {
+   "check": "font_licenses_bundled_2",
+   "ok": true
+  },
+  {
+   "check": "png_rendered",
+   "ok": true
+  }
+ ],
+ "all_ok": true,
+ "workdir": "/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc"
+}

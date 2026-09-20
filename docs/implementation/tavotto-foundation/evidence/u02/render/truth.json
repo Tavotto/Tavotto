@@ -1,0 +1,128 @@
+{
+  "_comment": [
+    "render_spike 的输入规格 + 解析式真值（手写，不是写入器生成的）。",
+    "spike.pdf 由 scripts/dev/u02_spikes/render_spike.py 按这份规格写出；独立读取器",
+    "（pypdfium2 栅格 / pdfminer.six 与 pypdfium2 文字 / pypdf 结构，以及 tests/ 里的纯标准库读取器）",
+    "把产物与这里的期望比。坐标一律 pt、原点左下、y 向上。",
+    "颜色期望按 PDF 合成公式手算：50% 蓝盖白 = (128,128,255)；源页内部红 α=0.5 盖蓝 = (128,0,128)，",
+    "整组再 50% 盖白 = (191,128,191)；逐对象 alpha 的重叠 = 红 50% 盖白 → (255,128,128)，再蓝 50% → (128,64,191)。"
+  ],
+  "page_pt": [400, 320],
+  "source_page": "tests/fixtures/foundation/pdf_png_assets/page.pdf",
+  "source_visible_bbox": [15, 10, 285, 170],
+  "source_media_box": [0, 0, 300, 200],
+  "rgb_tolerance": 6,
+  "imports": [
+    {
+      "id": "A",
+      "rect": [20, 160, 135, 80],
+      "rotate_cw_deg": 0,
+      "opacity": 1.0,
+      "crop": null,
+      "samples": [
+        {"src": [60, 50], "rgb": [0, 0, 255], "why": "源页蓝矩形独占区"},
+        {"src": [115, 80], "rgb": [128, 0, 128], "why": "源页内部：红 α=0.5 盖在蓝上"},
+        {"src": [25, 150], "rgb": [255, 255, 255], "why": "源页空白处（在 CropBox 内）"}
+      ],
+      "expected_inner_rect_bounds": {"src_rect": [40, 40, 140, 100], "why": "源页蓝矩形经变换后的页面坐标包围盒"}
+    },
+    {
+      "id": "B",
+      "rect": [180, 165, 67.5, 40],
+      "rotate_cw_deg": 90,
+      "opacity": 1.0,
+      "crop": null,
+      "samples": [
+        {"src": [60, 50], "rgb": [0, 0, 255], "why": "旋转后蓝矩形独占区"},
+        {"src": [115, 80], "rgb": [128, 0, 128], "why": "旋转后内部重叠区"}
+      ],
+      "expected_inner_rect_bounds": {"src_rect": [40, 40, 140, 100]}
+    },
+    {
+      "id": "C",
+      "rect": [20, 60, 135, 80],
+      "rotate_cw_deg": 0,
+      "opacity": 0.5,
+      "crop": null,
+      "samples": [
+        {"src": [60, 50], "rgb": [128, 128, 255], "why": "整页 50%：蓝独占区 = 蓝 50% 盖白"},
+        {"src": [115, 80], "rgb": [191, 128, 191], "why": "整页 50%：内部重叠先在组内合成(128,0,128)再整体 50% 盖白；逐对象 alpha 会给 (159,96,191)"}
+      ]
+    },
+    {
+      "id": "F",
+      "rect": [290, 160, 67.5, 80],
+      "rotate_cw_deg": 0,
+      "opacity": 1.0,
+      "crop": [0.5, 0.0, 0.5, 1.0],
+      "samples": [
+        {"src": [170, 110], "rgb": [255, 128, 128], "why": "crop 右半：红 α=0.5 独占区（红盖白）"},
+        {"src": [115, 80], "rgb": [255, 255, 255], "why": "crop 之外的源点不该有墨：它被裁掉，落点由 crop 映射决定，这里量的是同一页面位置", "outside_crop": true}
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "id": "D",
+      "kind": "transparency_group",
+      "opacity": 0.5,
+      "rects": [
+        {"rect": [180, 60, 60, 50], "rgb": [1, 0, 0]},
+        {"rect": [210, 85, 60, 50], "rgb": [0, 0, 1]}
+      ],
+      "samples": [
+        {"page": [225, 97.5], "rgb": [128, 128, 255], "why": "重叠区：组内 alpha 从 1 起算，蓝盖住红，整组 50% 盖白"},
+        {"page": [190, 70], "rgb": [255, 128, 128], "why": "红独占区 50% 盖白"},
+        {"page": [260, 125], "rgb": [128, 128, 255], "why": "蓝独占区 50% 盖白"}
+      ]
+    },
+    {
+      "id": "E",
+      "kind": "per_object_alpha",
+      "opacity": 0.5,
+      "rects": [
+        {"rect": [290, 60, 60, 50], "rgb": [1, 0, 0]},
+        {"rect": [320, 85, 60, 50], "rgb": [0, 0, 1]}
+      ],
+      "samples": [
+        {"page": [335, 97.5], "rgb": [128, 64, 191], "why": "对照组：逐对象 alpha 让重叠区二次压暗——与 D 的 (128,128,255) 必须不同"}
+      ]
+    }
+  ],
+  "text": [
+    {
+      "id": "latin_greek",
+      "x": 20, "y": 300, "size": 11,
+      "family": "serif", "bold": false, "italic": false,
+      "markup": "Tavotto U02: efficient flow, cafe\u0301 — Δλ = 532 nm, μ ≈ 1.5×10⁵",
+      "expect_extract": ["efficient flow", "cafe\u0301", "Δλ = 532 nm", "μ ≈ 1.5×10⁵"],
+      "_note": "cafe\u0301 是分解形式（e + 组合重音）：HarfBuzz 合成为一个 eacute 字形，一个 code 的 ToUnicode 要回两个码位。Liberation 2.1.5 没有 liga 特性，fi/fl 不连字（用真值钉住这个事实）。",
+      "expect_faces": ["LiberationSerif"]
+    },
+    {
+      "id": "scripts",
+      "x": 20, "y": 284, "size": 11,
+      "family": "serif", "bold": false, "italic": false,
+      "markup": "E = mc^{2}, H_{2}O, k_{B}T",
+      "expect_extract_nospace": ["E=mc2", "H2O", "kBT"],
+      "expect_faces": ["LiberationSerif"]
+    },
+    {
+      "id": "cjk_mixed",
+      "x": 20, "y": 268, "size": 11,
+      "family": "serif", "bold": true, "italic": false,
+      "markup": "图一：温度 T (K) 随时间变化",
+      "expect_extract_nospace": ["图一：温度T(K)随时间变化"],
+      "expect_faces": ["LiberationSerif-Bold", "NotoSansSC-Regular"]
+    },
+    {
+      "id": "sans_italic",
+      "x": 20, "y": 252, "size": 11,
+      "family": "sans-serif", "bold": false, "italic": true,
+      "markup": "Sans Italic αβγ — 中文回退不换族",
+      "expect_extract_nospace": ["SansItalicαβγ", "中文回退不换族"],
+      "expect_faces": ["LiberationSans-Italic", "NotoSansSC-Regular"]
+    }
+  ],
+  "raster": {"scale": 2.0}
+}
