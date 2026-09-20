@@ -129,6 +129,31 @@ def _code(text: str) -> str:
     return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
 
 
+def _lab_step(code: str, name_prefix: str) -> str:
+    """按 `- name: <前缀>` 切出 lab 文件里的一个 step 块（到下一个 `- name:` 为止）；
+    切不出来当场抛。"""
+    m = re.search(
+        rf"(?m)^      - name: {re.escape(name_prefix)}.*?\n(.*?)(?=^      - name: |\Z)", code, re.S
+    )
+    assert m, f"_lab-qualification.yml 里切不出 step `{name_prefix}`——名字或缩进变了？"
+    return m.group(0)
+
+
+def _lab_step_script(name_prefix: str) -> str:
+    """把 lab 文件里一个 step 的 `run: |` 脚本按原文抽出来（去掉 10 格缩进），给真跑用。"""
+    raw = (WF / "_lab-qualification.yml").read_text(encoding="utf-8")
+    m = re.search(
+        rf"(?m)^      - name: {re.escape(name_prefix)}.*?\n.*?^        run: \|\n((?:          .*\n|\n)+?)(?=^      - name: |^      #|\Z)",
+        raw,
+        re.S,
+    )
+    assert m, f"_lab-qualification.yml 里切不出 step `{name_prefix}` 的 run 脚本"
+    return (
+        "\n".join(ln[10:] if ln.startswith(" " * 10) else ln for ln in m.group(1).splitlines())
+        + "\n"
+    )
+
+
 def _job(text: str, job_id: str) -> str:
     """按缩进切出一个 job 块；切不出来当场抛（安静的空判据比没有更坏）。"""
     m = re.search(rf"(?m)^  {re.escape(job_id)}:\n(.*?)(?=^  [\w-]+:|\Z)", text, re.S)
@@ -924,22 +949,154 @@ class TestGates:
         ), f"{job_id} 的分片证据 artifact 名字里没有片号——两片会互相覆盖"
 
     def test_unsharded_pytest_lanes_stay_unsharded(self):
-        """lab（含 release 的资格，同一份 `_lab-qualification.yml`）、nightly、desktop-tauri
-        的 pytest 命令**不带** `--shard`：不带时钩子是 no-op，它们跑的仍是全集。
+        """nightly、desktop-tauri 的 pytest 命令**不带** `--shard`：不带时钩子是 no-op，
+        它们跑的仍是全集。lab 的常规套件 2026-09-19 起在同一台机器上跑全部 N 片
+        （见 `test_lab_pytest_runs_every_shard_in_one_step`），不再在这里。
 
-        前提先钉住（否则「不含」是恒真）：每个文件至少有一条 `-m pytest` 的可执行行，
-        release.yml 的资格确实按 `mode=release` 派发到 ci-infra（那边 `uses` 的仍是
-        `_lab-qualification.yml`，F.2 起公开仓库里不再直接 `uses` 它）。
+        前提先钉住（否则「不含」是恒真）：每个文件至少有一条 `-m pytest` 的可执行行。
+        """
+        for name in ("nightly.yml", "desktop-tauri.yml"):
+            code = _code((WF / name).read_text(encoding="utf-8"))
+            assert "-m pytest" in code, f"{name} 里一条 pytest 命令都没有——判据没有主语"
+            # 看整个文件的可执行部分，不只看 `-m pytest` 那一行：`--shard=` 写在续行上
+            # 是合法的 YAML 形状（lab 的常规套件就是这么写的），只查一行等于没查。
+            assert "--shard" not in code, f"{name} 的可执行部分出现了 --shard"
+
+    def test_lab_pytest_runs_every_shard_in_one_step(self):
+        """lab（含 release 的资格，同一份 `_lab-qualification.yml`）的常规套件是**同机 N 片
+        并行**：覆盖面与从前的单进程全集相同，被切开的只有时间。静态钉四件事——
+
+        1. 带 `--shard=` 的 pytest 命令只有那一条，片号写成 `"$k/$N"`（变量，不是字面量：
+           字面量 `1/4` 意味着有人把循环拆成了手抄的几行，漏一行就漏一片）；
+        2. 同一个 step 里 `for k in $(seq 1 "$N")` 起片、`wait` 收片——N 片全在这一步；
+        3. 起片循环里 `pids+=("$!")` 记下每一片，收片循环按 `"${!pids[@]}"` 逐个 `wait`，
+           每片的退出码进控制流（`|| rc=$?` 后 `exit "$fail"`）——少了记 pid 那一句，收片
+           循环一次都不跑、整步 0 退出而片还在跑（Codex 2026-09-20 P2）；
+        4. 起片之前 `set -m`：无作业控制的 shell 给 `&` 后台命令把 SIGINT 置成 SIG_IGN 并
+           跨 exec 继承，Ctrl-C 类用例（`test_ctrl_c_reaches_the_script_and_leaves_no_orphan`）
+           会 90 秒超时——本机双向验过，`set -m` 之后每片自成进程组、处置回默认；
+        5. 常规套件那个 step 之外，整个文件的可执行部分不再出现 `--shard`——按 step 块查，
+           不按 `-m pytest` 那一行查：`--shard=` 写在续行上是合法形状（常规套件自己就
+           这么写），只查一行的判据会放过「slow / harness 单起一片、没有循环补齐其余片」
+           （Codex 2026-09-20 P2）。
+
+        进程内那一层（并集 == 全集、漏片 rc 4）由 tests/support/shard.py 自己负责；这里
+        只保证 N 个进程都被起了、都被等了、都能把整步打红。前提先钉住：release.yml 的
+        资格确实按 `mode=release` 派发到 ci-infra（那边 `uses` 的仍是这份文件）。
         """
         release = _code((WF / "release.yml").read_text(encoding="utf-8"))
         assert _DISPATCH_CMD in release and "-f mode=release" in release, (
             "release 的资格不再按 release 档派发 ci-infra——本判据对 release 的覆盖失效"
         )
-        for name in ("_lab-qualification.yml", "nightly.yml", "desktop-tauri.yml"):
-            code = _code((WF / name).read_text(encoding="utf-8"))
-            lines = [ln for ln in code.splitlines() if "-m pytest" in ln]
-            assert lines, f"{name} 里一条 pytest 命令都没有——判据没有主语"
-            assert not [ln for ln in lines if "--shard" in ln], f"{name} 的 pytest 命令带了 --shard"
+        code = _code((WF / "_lab-qualification.yml").read_text(encoding="utf-8"))
+        pytest_lines = [ln for ln in code.splitlines() if "-m pytest" in ln]
+        assert len(pytest_lines) >= 3, "lab 里的 pytest 命令少于三条——判据没有主语"
+        sharded = [ln for ln in pytest_lines if "--shard" in ln]
+        assert len(sharded) == 0, (
+            "`--shard=` 该在续行上、不在 `-m pytest` 那一行——形状变了先来改本判据"
+        )
+        step = _lab_step(code, "常规测试套件")
+        assert '--shard="$k/$N"' in step, '常规套件的片号必须是变量 `"$k/$N"`'
+        assert 'for k in $(seq 1 "$N")' in step, "常规套件没有按 1..N 起片的循环"
+        n_def = re.search(r"^\s*N=(\d+)\s*$", step, re.M)
+        assert n_def, "常规套件没有一处 `N=<数字>` 的定义"
+        assert int(n_def.group(1)) >= 2, (
+            "N 必须 ≥ 2：N=0 时 `seq 1 0` 一片都不起、整步 0 退出（Codex 2026-09-20 P2）；N=1 就不叫并行"
+        )
+        launch = re.search(r'for k in \$\(seq 1 "\$N"\); do\n(.*?)^\s*done\s*$', step, re.S | re.M)
+        assert launch, "常规套件的起片循环切不出来（`for … do` 到 `done`）"
+        assert 'pids+=("$!")' in launch.group(1), (
+            '起片循环里没有 `pids+=("$!")`——没记下的片 `wait` 循环一次都不跑，整步 0 退出而片还在跑'
+            "（Codex 2026-09-20 P2）"
+        )
+        assert 'for i in "${!pids[@]}"; do' in step, "收片循环没有按 pids 逐个遍历"
+        assert 'wait "${pids[$i]}" || rc=$?' in step, "每片的 wait 结果没有进 rc"
+        assert 'exit "$fail"' in step, "整步没有按 fail 退出"
+        body = _code(step)
+        assert body.index("set -m") < body.index('for k in $(seq 1 "$N")'), (
+            "起片之前没有 `set -m`——`&` 起的片会继承 SIG_IGN 的 SIGINT，Ctrl-C 类用例假红"
+        )
+        rest = code.replace(step, "")
+        assert "-m pytest" in rest, "常规套件之外没有别的 pytest 命令了——第 5 条判据没有主语"
+        assert "--shard" not in rest, "常规套件之外出现了 --shard（含续行）：只该有那一步在分片"
+
+    _STUB = """#!/usr/bin/env bash
+# 假 python：认 --shard=K/N，记一笔「第 K 片跑过」，按 STUB_FAIL 里的片号决定退出码
+shard=""
+for a in "$@"; do case "$a" in --shard=*) shard="${a#--shard=}";; esac; done
+k="${shard%%/*}"
+: "${k:?stub 没收到 --shard=K/N}"
+touch "$STUB_DIR/ran-$k"
+echo "stub shard=$shard"
+case ",${STUB_FAIL:-}," in
+  *",$k,"*) echo "1 failed, 9 passed in 0.01s"; exit 1 ;;
+  *) echo "10 passed, 1 skipped in 0.01s"; exit 0 ;;
+esac
+"""
+
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="bash 脚本按 POSIX 作业控制跑，Windows 不在这一格"
+    )
+    @pytest.mark.parametrize("failing", ["", "3", "1,4"])
+    def test_lab_regular_suite_step_exits_nonzero_iff_a_shard_fails(self, tmp_path, failing):
+        """把常规套件那个 step 的脚本**原样**抽出来真跑一遍，python 换成一个只认 `--shard=K/N`
+        的假程序：N 片都被起了（每片留下一枚 `ran-K`），全绿时整步 0 退出并逐片打「绿」，
+        任一片非零时整步非零并打出 `::error::…片 K/N`。静态那条钉形状，这一条钉**行为**——
+        `fail=1` 挪走、`wait` 结果不进 rc、`exit "$fail"` 改成 `exit 0`，这里都会红，不必再
+        一句一句钉字符串（Codex 2026-09-20 第三轮 P2 的解法）。
+        """
+        import shutil
+        import subprocess
+
+        bash = shutil.which("bash")
+        assert bash, "找不到 bash——这一格的判据没法执行"
+        script = _lab_step_script("常规测试套件")
+        assert "${{ steps.venv.outputs.python }}" in script, (
+            "step 脚本里没有 python 占位——抽错了 step？"
+        )
+        stub = tmp_path / "fake-python"
+        stub.write_text(self._STUB, encoding="utf-8")
+        stub.chmod(0o755)
+        runner_temp = tmp_path / "runner-temp"
+        runner_temp.mkdir()
+        stub_dir = tmp_path / "stub"
+        stub_dir.mkdir()
+        # self-hosted 的 RUNNER_TEMP 跨 run 复用：摆一份「上一轮」留下的同名产物，跑完必须没了
+        # （Codex 2026-09-20 P2：某片在写文件前死掉，旧文件会被 always() 的证据上传当成这一轮的）
+        stale = runner_temp / "pytest-shard-9-junit.xml"
+        stale.write_text("<stale/>", encoding="utf-8")
+        (tmp_path / "step.sh").write_text(
+            script.replace("${{ steps.venv.outputs.python }}", str(stub)), encoding="utf-8"
+        )
+        env = dict(
+            os.environ, RUNNER_TEMP=str(runner_temp), STUB_DIR=str(stub_dir), STUB_FAIL=failing
+        )
+        r = subprocess.run(
+            [bash, str(tmp_path / "step.sh")],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        )
+        n = int(re.search(r"(?m)^N=(\d+)$", script).group(1))
+        assert n >= 2, f"N={n}：下面的「每一片都起了」在 N=0 时恒真（Codex 2026-09-20 P2）"
+        assert not stale.exists(), "上一轮留在 RUNNER_TEMP 里的同名产物没被清掉"
+        ran = sorted(int(p.name.split("-")[1]) for p in stub_dir.glob("ran-*"))
+        assert ran == list(range(1, n + 1)), (
+            f"不是每一片都被起了：{ran} / N={n}\n{r.stdout}\n{r.stderr}"
+        )
+        expected_fail = {int(x) for x in failing.split(",") if x}
+        if not expected_fail:
+            assert r.returncode == 0, f"全绿却非零退出：rc={r.returncode}\n{r.stdout}\n{r.stderr}"
+            assert r.stdout.count("绿：") == n, r.stdout
+            assert "::error::" not in r.stdout, r.stdout
+        else:
+            assert r.returncode != 0, f"有片红了整步却 0 退出\n{r.stdout}\n{r.stderr}"
+            for k in expected_fail:
+                assert f"::error::常规测试套件片 {k}/{n}" in r.stdout, r.stdout
+            assert r.stdout.count("绿：") == n - len(expected_fail), r.stdout
 
     def test_integration_gate_includes_backend_platforms(self):
         assert "backend-platforms" in _needs_of(_job(CI, "ci-integration-gate"))

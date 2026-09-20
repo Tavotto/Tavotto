@@ -76,7 +76,7 @@
 
 - **pytest**：按文件分 2 片（不拆文件——29 个文件有 module 级 fixture，CI00 §7），同进程 collection 之后做，每个进程算全部片并自验 nodeid 集合（并集 == 全集、两两不交、每片非空、无重复，否则 rc 4）；
   权重表 `tests/support/shard_weights.json`（本机 macOS 样本；Windows 上两片最多差 399s，重算方法 CI03A §6，CI 的 junit 在 `evidence/ci05/shards/`）。
-  不带 `--shard` 是 no-op：lab / nightly / release 的命令没有它，仍跑全集（`test_unsharded_pytest_lanes_stay_unsharded`）。**serial 集合**：没有把任何用例标成「只能单进程」——CI00 §7 的候选（进程级 env / chdir / module fixture / 真子进程）在「每片一台机器、不拆文件」下都不需要 serial；同机多进程（xdist）没做、也没有为它建 serial 集。
+  不带 `--shard` 是 no-op：nightly / desktop-tauri 的命令没有它，仍跑全集（`test_unsharded_pytest_lanes_stay_unsharded`）；**lab 的常规套件 2026-09-19 起改成同机 N 片并行**（`docs/rules/ci/pytest-shards.md`，`test_lab_pytest_runs_every_shard_in_one_step`）。**serial 集合**：没有把任何用例标成「只能单进程」——hosted CI 上 CI00 §7 的候选（进程级 env / chdir / module fixture / 真子进程）在「每片一台机器、不拆文件」下都不需要 serial；lab 的同机 N 片仍按文件分、不用 xdist，隔离靠实跑证明而不是靠这条推理（本机四片两次 0 撞车、lab 首跑见 `CI03A_PYTEST_SHARDS.md` §7 末尾），撞了再建 serial 集。
 - **Playwright**：`windows-exe-smoke` 按 project 分 2 片（片 1 chromium；片 2 webkit + chromium-en），每片先跑自验（`--list` 的 (project, file:line:col, title) 集合）再 e2e；`posix-e2e` 不分片。`workers: 1` / `fullyParallel: false` / `retries: 1` 未改。
 - CI 侧完整性：[`CI05_COMPARISON.md`](CI05_COMPARISON.md) §9（五条腿 × 两片并集 == 4686 且与本机 collection 逐条相同；Playwright 并集 == 151）。
 

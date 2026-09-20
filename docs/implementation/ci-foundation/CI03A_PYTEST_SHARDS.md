@@ -10,7 +10,7 @@
   每个 job 加一步 `if: always()` 的 `upload-artifact`（`pytest-<job>-<os>-<python>-shard<K>`，`retention-days: 7`）。
 - **没改什么**：两个 Gate 的 `needs` / `--required` 闭集、`scripts/ci/aggregate_gate.py`、`timeout-minutes`（40 / 60）、`fail-fast: false`、
   任何 `if:`、顶层 `concurrency`、ruleset / runner / 凭据；`_lab-qualification.yml`（lab 与 release 共用）、`nightly.yml`、
-  `desktop-tauri.yml` 的 pytest 命令一个字不动（`test_unsharded_pytest_lanes_stay_unsharded` 钉住）。没有 `-n`，没有 xdist，没动任何产品断言或 skip 条件。
+  `desktop-tauri.yml` 的 pytest 命令一个字不动（`test_unsharded_pytest_lanes_stay_unsharded` 钉住；**2026-09-19 起 lab 的常规套件改成同机 N 片并行，见 §7 末尾与 `docs/rules/ci/pytest-shards.md`**）。没有 `-n`，没有 xdist，没动任何产品断言或 skip 条件。
 - **本轮没有任何真实 CI run**（不能 push）。下面的数字全部来自本机 macOS；Linux / Windows 的平衡与隔离归 CI 侧的 PR run。
 - 回退：matrix 去掉 `shard` 轴 + 命令去掉 `--shard=… --shard-manifest=…`（钩子留着无害：不带 `--shard` 时不动 collection，§4 D⑤）。
 
@@ -205,6 +205,11 @@ python tests/support/shard.py --from-junit junit-shard1.xml junit-shard2.xml \
   `timeout-minutes` 刻意不动（40 / 60），等 PR run 的实测再调。
 - **并发只在本机同机测过一次**（§3.2）：两片是同一台机器上的两个进程，共享 CPU / 内存 / 磁盘 / HOME / 字体缓存；CI 上每片是独立 VM，条件更松。
   同机一次没撞 ≠ 隔离已验证——CIP-018 / 019 / 020 / 021 保持 `not_run`，理由各写在 `acceptance.json`。
+  **2026-09-19 更新**：lab 的常规套件改成同机 4 片并行（`_lab-qualification.yml`，`docs/rules/ci/pytest-shards.md`），
+  同机并发因此从「边界」变成「日常」。证据两份：本机 12 核四片并行两次（4994 条；第二次按 YAML 里的 step 脚本原样，四片 252 / 258 / 354 / 291 秒、0 失败；
+  第一次的三条红分别是 basetemp 路径含 "tavotto" 撞词、`&` 起片继承 SIG_IGN 的 SIGINT，都与并发无关，见 workflow 注释）；lab 首跑是合入后 main 档的落地
+  run（ci-infra 的 trust-check 只放行 main 的祖先，PR 分支上派不了）。权重表已从这四份 junit 重算（195 个文件全有权重，此前 48 个按 p75 估）；lab 的真实平衡
+  从 `lab-pytest-shards-*` artifact 用 `--from-junit` 再算一次。
 - **本机三组跑都不是全绿**（§3.3）：一条是本轮真缺陷（已修，单跑绿，没有重跑三组——修的是 `main()` 入口，不碰 collection / 分配 / 权重表），
   一条是驱动起法的坑（§3.4，前台单跑绿）。集合级比对的结论不依赖这两条是红是绿：它们在三组里落在同一 nodeid 上。
 - **没做 xdist**、没有 `-n`、没改任何产品断言、没改任何 skip 条件。
