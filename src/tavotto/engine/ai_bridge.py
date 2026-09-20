@@ -526,6 +526,10 @@ def run(
     （app 层接的是统一刷新，ADR 0025）。本模块不 import app、不知道刷新长什么
     样——注入而不是回头 import，边界与 `project_refresh.RefreshSink` 相同。
     它的结局进 `ai.done.refresh` 与历史库的 `refresh` 列，见 `refresh_outcome()`。
+
+    `on_finished(script, changed)`：进程正常收尾后做额外验证；若 pump 本身异常，
+    仍会以 `changed=False` 调一次只用于清理它持有的临时验证材料。调用方必须
+    让这个清理路径幂等。
     """
     require_usable(agent)
     script_path = Path(figures_dir) / script
@@ -704,6 +708,14 @@ def run(
         except Exception as exc:  # noqa: BLE001
             sess["status"] = "failed"
             sess["refresh"] = sess.get("refresh") or {"status": "skipped"}
+            # source-bake 会在任务开始前冻结 target PNG。若异常发生在正常
+            # on_finished 之前，也必须给调用方一次幂等清理机会，不能让 cache
+            # 目录随着失败会话永久增长。这里不采纳返回值：会话本身已经失败。
+            if on_finished is not None:
+                try:
+                    on_finished(script, False)
+                except Exception:  # noqa: BLE001 — 清理失败不覆盖原始异常
+                    LOG.exception("AI 异常收尾时的验证材料清理失败: %s", script)
             ai_history.record_end(
                 sid,
                 "failed",
