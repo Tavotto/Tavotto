@@ -1986,6 +1986,24 @@ export interface AiRunRequest {
   scope?: string
   target?: string
   canvas?: string | null
+  /** Ask the coding agent to absorb the current Tavotto overrides into Python source. */
+  bake_overrides?: boolean
+}
+
+export interface AiSourceBakeVerification {
+  status: 'verified' | 'mismatch' | 'failed'
+  code?: string
+  schema?: string
+  patch_hash?: string
+  elements_compared?: number
+  warnings?: string[]
+  differences?: Record<string, unknown>[]
+  pixels?: {
+    status: 'ok' | 'mismatch'
+    metrics?: Record<string, unknown>
+    tolerance?: Record<string, number>
+  }
+  error?: string
 }
 
 export const aiRun = (req: AiRunRequest) =>
@@ -2140,6 +2158,8 @@ export type ServerEvent =
       error?: string
       /** 文件变了之后后端统一刷新的结局（ADR 0041）；老后端没有这个字段 */
       refresh?: AiRefreshOutcome
+      /** source-bake 专用：modified source + overrides=[] 对当前 Tavotto target 的验证。 */
+      verification?: AiSourceBakeVerification | null
     } & ProjectScoped)
 
 /**
