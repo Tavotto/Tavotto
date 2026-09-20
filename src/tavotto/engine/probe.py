@@ -395,11 +395,17 @@ def script_inventory(figures_dir: str | Path, registered: set[str] | None = None
             registered = set(reg.all_scripts())
         except (FileNotFoundError, RuntimeError):
             registered = set()
+    # 目标解析器（U03 / FO12）：宿主 AST 不认识的合法语法交给项目自己的解释器再解析一遍。
+    # 只读此刻的决策，不发现、不体检（`discover=False`）；决策不成立就没有目标解析器。
+    try:
+        target_python = pool.resolve_worker_python(str(figures_dir), discover=False)[0]
+    except pool.WorkerError:
+        target_python = None
     out: list[dict] = []
     for path in discover.iter_all_scripts(figures_dir):
         rel = discover.rel_key(path, figures_dir)
-        info = discover.analyze_script(path, figures_dir)
-        static = discover.probe_entry_candidates(path)
+        seen = discover.inspect_script(path, figures_dir, target_python=target_python)
+        info, problem, static = seen["info"], seen["problem"], seen["entry_candidates"]
         candidates: list[str] = []
         if info:
             candidates.append(info["entry"])
@@ -410,10 +416,12 @@ def script_inventory(figures_dir: str | Path, registered: set[str] | None = None
             reason = REASON_REGISTERED
         elif discover.is_infrastructure_name(path.name):
             reason = REASON_INFRASTRUCTURE
+        elif problem is not None:
+            # 读不动 / 解码不了 / 两边都判语法错误：`problem` 说清是哪一种（U03）。
+            # 文件**照样在清单里**，可以试运行——运行期会给出真正的报错。
+            reason = REASON_UNPARSEABLE
         elif info is None:
-            # analyze 的 None 分不清「不出图」与「解析不了」——静态候选
-            # 也给不出来的才是后者。
-            reason = REASON_UNPARSEABLE if static is None else REASON_NO_STATIC_OUTPUT
+            reason = REASON_NO_STATIC_OUTPUT  # 确认不产图（工具 / 样式模块）
         elif info["dynamic_names"]:
             reason = REASON_DYNAMIC
         else:
@@ -426,6 +434,9 @@ def script_inventory(figures_dir: str | Path, registered: set[str] | None = None
                 "entry_candidates": candidates,
                 "reason": reason,
                 "can_probe": True,
+                # 加字段（老前端忽略）：解析不了时是哪一种问题；由目标解释器解析的标 parser
+                "problem": problem,
+                "parser": seen.get("parser"),
             }
         )
     return out
