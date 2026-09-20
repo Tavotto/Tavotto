@@ -13,6 +13,7 @@ import {
   type WorkdirConfirmation,
 } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
+import { currentProjectId } from '@/lib/session'
 import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import { useAssetStore } from '@/store/assetStore'
 import { useEnvStore } from '@/store/envStore'
@@ -489,6 +490,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     }
     slot.busy = true
     const patch = get().patch
+    // 发请求那一刻的项目：失败回来时它决定「首开确认框」能不能弹（切了项目就不弹，
+    // A 的问题不摆到 B 上）。同一条纪律：请求序号挡旧响应、发请求那一刻的 pj 挡串项目。
+    const projectAtStart = currentProjectId()
 
     try {
       let current = patches
@@ -643,7 +647,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // `WorkdirConfirmDialog` 渲染它；条目上也留一份，「稍后」之后还能再开
           const confirmation =
             err instanceof EngineError ? (err.confirmation ?? null) : null
-          if (confirmation) useEnvStore.getState().requestWorkdirConfirmation(confirmation)
+          if (confirmation) {
+            useEnvStore.getState().requestWorkdirConfirmation(confirmation, projectAtStart)
+          }
           // 失败时保留旧 SVG，用户还能看到上一版
           patch(key, {
             fileId,

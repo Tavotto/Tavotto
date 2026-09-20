@@ -314,6 +314,85 @@ def test_a_user_who_chose_the_default_chain_is_not_overridden_by_discovery(tmp_p
     assert engine_pool.first_open_outcome(root) is None  # 连发现都没做
 
 
+# ---------------------------------------------------------------- FO16：支持矩阵外的 Python（observing）
+UNSUPPORTED_PYTHON_ENV = "TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON"
+
+
+def _unsupported_python() -> str | None:
+    """一个真实的、`projectenv.PYTHON_MIN` 之下的解释器（不需要 matplotlib：体检先看版本）。
+    nightly 的 `foundation-observing` job 用 setup-python 装一个 3.9 点名进来；本机没有就 skip。"""
+    cand = os.environ.get(UNSUPPORTED_PYTHON_ENV)
+    if not cand or not Path(cand).is_file():
+        return None
+    try:
+        out = subprocess.run(
+            [cand, "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            check=True,
+        ).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    version = (int(out[0]), int(out[1]))
+    return cand if version < projectenv.PYTHON_MIN else None
+
+
+@needs_worker
+def test_fo16_a_project_venv_on_an_unsupported_python_is_rejected_not_adopted(tmp_path):
+    """observing：项目自带的 venv 建在支持矩阵外的 Python 上——首开发现体检到它、**不采用**、
+    说得出原因（`project_env_unsupported_python` + 版本），链条继续到默认环境；静态原件与
+    图内编辑照常（默认环境能跑）；没有偷偷升级、没有装包。"""
+    unsupported = _unsupported_python()
+    if unsupported is None:
+        pytest.skip(f"not_run：{UNSUPPORTED_PYTHON_ENV} 没有指向「支持矩阵外」的真实解释器")
+    root = _project(tmp_path)
+    subprocess.run([unsupported, "-m", "venv", str(root / ".venv")], check=True, timeout=300)
+    venv_python = projectenv.interpreter_of(root / ".venv")
+    assert venv_python, "前提：venv 建成了"
+    python, source = engine_pool.resolve_worker_python(str(root), script="figure.py")
+    assert not engine_pool.same_python(python, venv_python)
+    assert source != engine_pool.SOURCE_PROJECT_VENV
+    outcome = engine_pool.first_open_outcome(root)
+    assert outcome["ok"] is False
+    rejected = outcome["rejected"][0]
+    assert rejected["code"] == projectenv.ERROR_UNSUPPORTED_PYTHON
+    assert rejected["support"] == projectenv.SUPPORT_UNSUPPORTED
+    assert rejected["python_version"].startswith("3.")
+    assert projectenv.remembered(root) is None  # 不采用就不记
+    plan = preparation.plan_for(
+        project_id="p",
+        project_root=str(root),
+        asset_id="Fig1.pdf",
+        stem="Fig1",
+        script="figure.py",
+        entry="__main__",
+        original_artifact=None,
+    )
+    assert (
+        plan.environment["discovery"]["rejected"][0]["code"] == projectenv.ERROR_UNSUPPORTED_PYTHON
+    )
+    assert plan.environment["discovery"]["rejected"][0]["venv"] == ".venv"
+    assert plan.environment["source"] == source
+    # venv 里一个字节都没被装（首开只体检）
+    packages = subprocess.run(
+        [
+            venv_python,
+            "-c",
+            "import importlib.metadata as m; print(sorted(d.metadata['Name'] for d in m.distributions()))",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+        check=True,
+    ).stdout
+    assert "matplotlib" not in packages.lower()
+
+
 # ---------------------------------------------------------------- FO11：真实不同 minor（observing）
 ALT_PYTHON_ENV = "TAVOTTO_FOUNDATION_ALT_PYTHON"
 

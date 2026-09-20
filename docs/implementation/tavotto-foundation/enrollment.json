@@ -174,7 +174,7 @@
       "fixture": null,
       "test": null,
       "expected_product_outcome": "automatic",
-      "notes": "U03 实现了前移（首开发现 + 体检 + 记住项目 venv，trigger=first_open；tests/test_first_open_environment.py 用同一 minor 的真实 venv 钉住「首次执行前选对、不先用默认跑错一次」）。真实**不同 minor** 的解释器本机与 invariants job 都没有装 matplotlib 的第二个 Python → observing：tests/test_first_open_environment.py::test_fo11_different_minor_project_venv_is_chosen_before_first_run 读 TAVOTTO_FOUNDATION_ALT_PYTHON，没有就 skip 并说明。"
+      "notes": "U03 实现了前移（首开发现 + 体检 + 记住项目 venv，trigger=first_open；tests/test_first_open_environment.py 用同一 minor 的真实 venv 钉住「首次执行前选对、不先用默认跑错一次」）。真实**不同 minor** 的解释器本机与 invariants job 都没有装 matplotlib 的第二个 Python → observing：tests/test_first_open_environment.py::test_fo11_different_minor_project_venv_is_chosen_before_first_run 读 TAVOTTO_FOUNDATION_ALT_PYTHON，没有就 skip 并说明。 observing 的具名任务：nightly.yml 的 `foundation-observing` job（非 required、不进 Gate；setup-python 交给用例真实解释器；用例 skip 一条就判红——skip 不是绿）。"
     },
     {
       "case_id": "FO12",
@@ -189,7 +189,7 @@
       "fixture": null,
       "test": null,
       "expected_product_outcome": "automatic",
-      "notes": "U03 实现了目标解释器解析（discover.inspect_script → analyze_in_interpreter，静态、不执行、同一份 stem/entry 算法）。真实场景要「项目解释器比应用新且装了 matplotlib」——本机 / CI 没有；机制用例（tests/test_discover_problems.py）用本机的另一个 Python 只验解析，observing。"
+      "notes": "U03 实现了目标解释器解析（discover.inspect_script → analyze_in_interpreter，静态、不执行、同一份 stem/entry 算法）。真实场景要「项目解释器比应用新且装了 matplotlib」——本机 / CI 没有；机制用例 tests/test_discover_problems.py::test_fo12_syntax_the_host_ast_rejects_but_the_target_accepts_keeps_the_script 读 TAVOTTO_FOUNDATION_NEWER_PYTHON（本机 python3.14 的 t-string 真跑过），observing。 observing 的具名任务：nightly.yml 的 `foundation-observing` job（非 required、不进 Gate；setup-python 交给用例真实解释器；用例 skip 一条就判红——skip 不是绿）。"
     },
     {
       "case_id": "FO13",
@@ -250,7 +250,7 @@
       "fixture": null,
       "test": null,
       "expected_product_outcome": "safe_stop",
-      "notes": "U03 实现了停止路径（project_env_unsupported_python 不采用、显式选择失效报 explicit_python_unusable / project_python_unusable）。「支持矩阵外的 Python」本机只有 /usr/bin/python3 3.9（macOS 自带），CI 没有 → observing：tests/test_first_open_environment.py 里用真实 3.9 的用例按可用性 skip。"
+      "notes": "U03 实现了停止路径（project_env_unsupported_python 不采用、显式选择失效报 explicit_python_unusable / project_python_unusable）。「支持矩阵外的 Python」本机只有 /usr/bin/python3 3.9（macOS 自带）→ observing：tests/test_first_open_environment.py::test_fo16_a_project_venv_on_an_unsupported_python_is_rejected_not_adopted 读 TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON（本机用 /usr/bin/python3 真跑过：拒绝、不采用、链条继续、零安装），没有就 skip 并说明。 observing 的具名任务：nightly.yml 的 `foundation-observing` job（非 required、不进 Gate；setup-python 交给用例真实解释器；用例 skip 一条就判红——skip 不是绿）。"
     },
     {
       "case_id": "FO17",
@@ -265,7 +265,7 @@
       "fixture": null,
       "test": null,
       "expected_product_outcome": "automatic",
-      "notes": "U03：解释器去重按路径不 realpath（既有），首开按项目各自发现；tests/test_first_open_environment.py::test_fo17_two_venvs_on_the_same_base_are_kept_apart 用同一 base 的两个真实 venv 钉住各自 prefix 与回执私有键不同。用的是同一 minor，等不同 minor 的 alt python 一起提 enforced → observing。"
+      "notes": "U03：解释器去重按路径不 realpath（既有），首开按项目各自发现；tests/test_first_open_environment.py::test_fo17_two_venvs_on_the_same_base_are_kept_apart 用同一 base 的两个真实 venv 钉住各自 prefix 与回执私有键不同。用的是同一 minor，等不同 minor 的 alt python 一起提 enforced → observing。 observing 的具名任务：nightly.yml 的 `foundation-observing` job（非 required、不进 Gate；setup-python 交给用例真实解释器；用例 skip 一条就判红——skip 不是绿）。"
     },
     {
       "case_id": "FO18",

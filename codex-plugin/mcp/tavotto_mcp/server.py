@@ -537,7 +537,7 @@ def _sum_counts(into: dict, counts: dict) -> None:
         into[key] = into.get(key, 0) + int(value or 0)
 
 
-def _call_open_batch(target: str, args: dict, plan: dict) -> dict:
+def _call_open_batch(target: str, args: dict, plan: dict, *, workdir: str | None = None) -> dict:
     """一次调用打开 N 张图。**预检按 #102 第 4 条走：默认只回汇总与阻断项。**
 
     单图那一路每开一张已经只回一行计数了；批量再逐张展开就是把同一个噪声乘以
@@ -550,6 +550,7 @@ def _call_open_batch(target: str, args: dict, plan: dict) -> dict:
         discover=plan["discover"],
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        workdir=workdir,
     )
     detailed = bool(args.get("preflight"))
     total: dict = {}
@@ -643,12 +644,13 @@ def _call_open(args: dict) -> dict:
     target = args.get("project_path") or args.get("script_path")
     if not target:
         raise RpcError(INVALID_PARAMS, "要给 project_path 或 script_path 其中之一")
-    plan = _batch_request(args)
-    if plan is not None:
-        return _call_open_batch(str(target), args, plan)
+    # `workdir` 在分派批量 / 单张**之前**校验：它是项目级的回答，两条路都要认（Codex #456 P2）
     workdir = args.get("workdir")
     if workdir is not None and not isinstance(workdir, str):
         raise RpcError(INVALID_PARAMS, "workdir 必须是字符串（sandbox / project / project_root）")
+    plan = _batch_request(args)
+    if plan is not None:
+        return _call_open_batch(str(target), args, plan, workdir=workdir)
     out = bridge.open_figure(
         str(target),
         stem=args.get("stem"),

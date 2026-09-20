@@ -709,6 +709,7 @@ def open_figures(
     discover: bool = False,
     profile_id: str | None = None,
     journal: dict | None = None,
+    workdir: str | None = None,
 ) -> dict:
     """一次调用打开 N 张独立的图，拿回 N 个**各自可编辑**的会话。
 
@@ -721,6 +722,10 @@ def open_figures(
     区别。失败那张带着稳定 code 与它自己的 stem 名回来。
     """
     ctx = _resolve_project(target, None)
+    if workdir is not None:
+        # 首开那一次回答是**项目级**的：批量与单张同一处记账，在开任何一张之前落地
+        # （Codex #456 P2：批量重试带 workdir 时不能静默忽略）
+        _answer_workdir(ctx.project, workdir)
     if discover:
         wanted = discover_stems(ctx.project, ctx.registry)
         source = "discover"
