@@ -23,3 +23,24 @@ web/src/i18n/resources.d.ts text eol=lf
 # 钉住磁盘字节才让两个读取点真正一致。
 docs/legal/CLA_INDIVIDUAL.md text eol=lf
 docs/legal/CLA_CORPORATE.md text eol=lf
+
+# U00 合成夹具（tests/fixtures/foundation/pdf_png_assets/）：`page.pdf` 是标准库手写的最小
+# PDF，**没有 NUL 字节**，git 的文本启发式把它当文本——Windows 检出成 CRLF 后
+# `test_pdf_png_assets_are_reproducible_from_the_generator` 逐字节比对必红
+# （PR #446 backend-platforms windows 片 1）。PNG 有 NUL 字节本来就按二进制走，这里一并写明。
+tests/fixtures/foundation/pdf_png_assets/page.pdf binary
+tests/fixtures/foundation/pdf_png_assets/*.png binary
+
+# 统一实施包的来源归档：`sources_manifest.json` 记每份的 sha256 + 字节数，
+# `tools/validate_plan.py` 按 `read_bytes()` 逐字节核对（PR #446 windows 片 2：
+# `source integrity mismatch: rendercore_requirements`）。逐个文件列出而不写 glob：
+# 看护用例按精确路径匹配这张表。
+docs/implementation/tavotto-foundation/archive/README.md text eol=lf
+docs/implementation/tavotto-foundation/archive/compatibility_full.md text eol=lf
+docs/implementation/tavotto-foundation/archive/compatibility_requirements.json text eol=lf
+docs/implementation/tavotto-foundation/archive/firstopen_cases.json text eol=lf
+docs/implementation/tavotto-foundation/archive/firstopen_full.md text eol=lf
+docs/implementation/tavotto-foundation/archive/original_proposal text eol=lf
+docs/implementation/tavotto-foundation/archive/rendercore_assessment.md text eol=lf
+docs/implementation/tavotto-foundation/archive/rendercore_full.md text eol=lf
+docs/implementation/tavotto-foundation/archive/rendercore_requirements.json text eol=lf

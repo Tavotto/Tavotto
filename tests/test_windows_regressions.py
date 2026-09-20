@@ -1738,6 +1738,21 @@ def _byte_compared_generated_files() -> list[str]:
         # 检出成 CRLF），所以同样归这张表管。
         "docs/legal/CLA_INDIVIDUAL.md",
         "docs/legal/CLA_CORPORATE.md",
+        # U00 合成夹具的手写 PDF：没有 NUL 字节，git 当文本；生成器逐字节比对
+        # （tests/test_foundation_fixtures.py）。钉成 binary 而不是 eol=lf——它是 PDF。
+        # PR #446 windows 片 1 红过。
+        "tests/fixtures/foundation/pdf_png_assets/page.pdf",
+        # 统一实施包的来源归档：sources_manifest.json 记 sha256，validate_plan 逐字节核
+        # （PR #446 windows 片 2 红过）。
+        "docs/implementation/tavotto-foundation/archive/README.md",
+        "docs/implementation/tavotto-foundation/archive/compatibility_full.md",
+        "docs/implementation/tavotto-foundation/archive/compatibility_requirements.json",
+        "docs/implementation/tavotto-foundation/archive/firstopen_cases.json",
+        "docs/implementation/tavotto-foundation/archive/firstopen_full.md",
+        "docs/implementation/tavotto-foundation/archive/original_proposal",
+        "docs/implementation/tavotto-foundation/archive/rendercore_assessment.md",
+        "docs/implementation/tavotto-foundation/archive/rendercore_full.md",
+        "docs/implementation/tavotto-foundation/archive/rendercore_requirements.json",
     ]
 
 
@@ -1769,8 +1784,15 @@ def test_byte_compared_artifacts_are_pinned_to_lf(rel):
         for ln in ga.read_text(encoding="utf-8").splitlines()
         if ln.strip() and not ln.strip().startswith("#")
     ]
-    hit = [r for r in rules if r.split()[0] in (rel, "*") and "eol=lf" in r]
-    assert hit, f".gitattributes 没有把 {rel} 钉成 eol=lf；现有规则：{rules}"
+    # `eol=lf` 钉文本；`binary`（= `-text -diff`）/ `-text` 让 git 根本不碰换行——
+    # 三种都挡得住 autocrlf，PDF 这类本来就不是文本的用后两种。
+    hit = [
+        r
+        for r in rules
+        if r.split()[0] in (rel, "*")
+        and ("eol=lf" in r or "binary" in r.split()[1:] or "-text" in r.split()[1:])
+    ]
+    assert hit, f".gitattributes 没有把 {rel} 钉成 eol=lf / binary；现有规则：{rules}"
 
 
 def test_no_test_judges_executability_by_filesystem_mode() -> None:
