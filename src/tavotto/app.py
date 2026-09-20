@@ -5170,6 +5170,107 @@ def api_ai_endpoint_active():
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
+def _prepare_ai_source_bake(rel_id: str, info: dict, patches: list) -> dict:
+    """冻结用户当前 Tavotto 调整后的目标态，供 Codex 改源后做 source-only 对拍。
+
+    这里只冻结 manifest + PNG；不做 native writeback，也不做 source mapping。
+    target PNG 复制到 Tavotto data_dir，避免 AI 改源后的 worker invalidate 把热会话
+    临时目录一起删掉。
+    """
+    worker, stem = _engine_worker(rel_id)
+    resp = worker.override(stem, patches)
+    warnings = [str(x) for x in (resp.get("warnings") or [])]
+    if warnings:
+        raise RuntimeError("当前 overrides 未能完整应用：" + "；".join(warnings[:3]))
+    manifest_path = Path(worker.out_dir) / f"{stem}.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    hot_png = Path(worker.render_png(stem, REPLAY_PIXEL_WIDTH))
+    target_dir = DATA_ROOT / "cache" / "ai_bake_targets"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_png = target_dir / f"{uuid.uuid4().hex}.png"
+    target_png.write_bytes(hot_png.read_bytes())
+    return {
+        "schema": "tavotto.codex_source_bake.v1",
+        "stem": stem,
+        "script": info["script"],
+        "entry": info["entry"],
+        "patches": patches,
+        "patch_hash": engine_patchspec.patch_hash(patches),
+        "manifest": manifest,
+        "target_png": str(target_png),
+    }
+
+
+def _verify_ai_source_bake(target: dict, changed: bool, figures_dir: str) -> dict:
+    """modified source + overrides=[] 与冻结的 Tavotto target 做 manifest + RGBA 对拍。"""
+    target_png = Path(target["target_png"])
+    if not changed:
+        target_png.unlink(missing_ok=True)
+        return {
+            "status": "mismatch",
+            "code": "source_bake_no_source_change",
+            "schema": target["schema"],
+            "patch_hash": target["patch_hash"],
+            "differences": [{"gid": "", "field": "source", "target": "baked", "source": "unchanged"}],
+        }
+
+    fresh = engine_pool.one_shot(target["script"], figures_dir, target["entry"])
+    warnings: list[str] = []
+    try:
+        resp = fresh.override(target["stem"], [])
+        warnings.extend(str(x) for x in (resp.get("warnings") or []))
+        source_manifest = json.loads(
+            (Path(fresh.out_dir) / f"{target['stem']}.json").read_text(encoding="utf-8")
+        )
+        diffs, compared = _compare_manifests(target["manifest"], source_manifest)
+        source_png = Path(fresh.render_png(target["stem"], REPLAY_PIXEL_WIDTH))
+        if target_png.read_bytes() == source_png.read_bytes():
+            pixel_metrics = {
+                "ok": True,
+                "changed_pixel_ratio": 0.0,
+                "mean_abs_diff": 0.0,
+                "max_abs_diff": 0,
+            }
+            exceeded = {}
+        else:
+            pixel_metrics = pdfbackend.compare_png(target_png, source_png)
+            exceeded = {
+                k: pixel_metrics.get(k)
+                for k, tol in REPLAY_PIXEL_TOL.items()
+                if _f(pixel_metrics.get(k)) is not None and _f(pixel_metrics.get(k)) > tol
+            }
+            if not pixel_metrics.get("ok", False) or exceeded:
+                diffs.append(
+                    {
+                        "gid": "",
+                        "field": "pixels",
+                        "target": "tavotto_overrides",
+                        "source": "source_only",
+                        "metrics": pixel_metrics,
+                        "exceeded": exceeded,
+                        "tolerance": dict(REPLAY_PIXEL_TOL),
+                    }
+                )
+        ok = not warnings and not diffs
+        return {
+            "status": "verified" if ok else "mismatch",
+            "code": "source_bake_verified" if ok else "source_bake_mismatch",
+            "schema": target["schema"],
+            "patch_hash": target["patch_hash"],
+            "elements_compared": compared,
+            "warnings": warnings,
+            "differences": diffs[:REPLAY_DIFF_LIMIT],
+            "pixels": {
+                "status": "ok" if not exceeded and pixel_metrics.get("ok", False) else "mismatch",
+                "metrics": pixel_metrics,
+                "tolerance": dict(REPLAY_PIXEL_TOL),
+            },
+        }
+    finally:
+        engine_pool.discard(fresh)
+        target_png.unlink(missing_ok=True)
+
+
 @app.post("/api/ai/run")
 def api_ai_run():
     """启动 codex / claude 对某脚本面板的深度修改。"""
@@ -5184,15 +5285,42 @@ def api_ai_run():
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
         ), 404
+    patches = body.get("overrides") or []
+    if not isinstance(patches, list):
+        return jsonify({"error": "overrides 必须是数组", "code": "invalid_overrides"}), 400
+    source_bake_target = None
+    if body.get("bake_overrides"):
+        if not patches:
+            return jsonify(
+                {"error": "没有可写入源码的 Tavotto 调整", "code": "source_bake_no_overrides"}
+            ), 400
+        try:
+            source_bake_target = _prepare_ai_source_bake(body.get("id", ""), info, patches)
+        except (RuntimeError, OSError, ValueError, engine_pool.WorkerError) as exc:
+            return jsonify(
+                {
+                    "error": str(exc),
+                    "code": "source_bake_prepare_failed",
+                    "params": {"reason": str(exc)},
+                }
+            ), 409
     context = {
         "stem": path.stem,
         "gid": body.get("gid"),
         "label": body.get("label"),
-        "overrides": body.get("overrides"),
+        "overrides": patches,
         "scope": body.get("scope"),
         "target": body.get("target"),
         "canvas": body.get("canvas"),
     }
+    if source_bake_target is not None:
+        context["source_bake"] = {
+            "schema": source_bake_target["schema"],
+            "stem": source_bake_target["stem"],
+            "patch_hash": source_bake_target["patch_hash"],
+            "patches": source_bake_target["patches"],
+            "goal": "modified Python must reproduce the current Tavotto visual state with overrides=[]",
+        }
     ctx = current_ctx()
     try:
         sid = engine_ai.run(
@@ -5207,6 +5335,13 @@ def api_ai_run():
             endpoint_id=body.get("endpoint"),
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
+            on_finished=(
+                (lambda _script, changed: _verify_ai_source_bake(
+                    source_bake_target, changed, str(ctx.path)
+                ))
+                if source_bake_target is not None
+                else None
+            ),
         )
     except engine_ai.AgentError as exc:
         # 未知 / 未安装 / 被用户在 Tavotto 里关掉——前端本该已经过滤掉，
