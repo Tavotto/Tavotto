@@ -2207,9 +2207,15 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
     fallback 没成功时，把结构化结果挂在异常的 `project_env` 上再抛出去，
     上层据此渲染恢复引导（找不到 venv / venv 也缺这个包 / 没有 matplotlib /
     Python 版本不支持），而不是干甩一段 traceback。
+
+    会话经 **`get()`** 取（不是 `acquire()`）：老调用方与用例只认这一个名字来
+    替换会话（monkeypatch `pool.get`），改走别的入口它们会静默拿到真池。
     """
-    worker, resp, _created = build_owned(
-        script_name, figures_dir, entry, allow_project_env=allow_project_env
+    worker, resp, _created = _build_with(
+        lambda: (get(script_name, figures_dir, entry), False),
+        script_name,
+        figures_dir,
+        allow_project_env=allow_project_env,
     )
     return worker, resp
 
@@ -2217,12 +2223,22 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
 def build_owned(script_name: str, figures_dir: str, entry: str, *, allow_project_env: bool = True):
     """`build()` + 所有权：回 `(worker, build 响应, created)`。
 
-    `created` 来自 `acquire()`（池里那把锁），两次 `get()`（自动切环境重试）任一次建了
+    `created` 来自 `acquire()`（池里那把锁），两次取会话（自动切环境重试）任一次建了
     会话就算这次调用的。准备接口据此决定取消时能不能关这条会话（ADR 0053 §四）。
     再来一次 `build_owned()` 只是一次往返：worker 侧对已 build 的会话早返回，用户脚本
     不重跑（`test_worker_runtime_report` 用脚本自己的副作用计数钉着）。
     """
-    worker, created = acquire(script_name, figures_dir, entry)
+    return _build_with(
+        lambda: acquire(script_name, figures_dir, entry),
+        script_name,
+        figures_dir,
+        allow_project_env=allow_project_env,
+    )
+
+
+def _build_with(take, script_name: str, figures_dir: str, *, allow_project_env: bool):
+    """`build` / `build_owned` 共用的编排：`take()` 回 `(worker, created)`。"""
+    worker, created = take()
     try:
         return worker, worker.ensure_built(), created
     except WorkerError as exc:
@@ -2232,7 +2248,7 @@ def build_owned(script_name: str, figures_dir: str, entry: str, *, allow_project
         if not outcome.get("ok"):
             exc.project_env = outcome
             raise
-    worker, created_again = acquire(script_name, figures_dir, entry)
+    worker, created_again = take()
     return worker, worker.ensure_built(), created or created_again
 
 

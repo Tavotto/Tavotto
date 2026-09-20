@@ -218,8 +218,11 @@ class TestDependencyIntent:
             if f != "constraints.txt"
         )
         groups = {it.group for it in intents if it.source == "pyproject.toml"}
-        assert "pyproject:project.dependencies" in groups
-        assert "pyproject:optional-dependencies.report" in groups
+        if sys.version_info >= (3, 11):  # tomllib 在：按 project / optional 分组
+            assert "pyproject:project.dependencies" in groups
+            assert "pyproject:optional-dependencies.report" in groups
+        else:  # 3.10 退化路径只认「名字带 dependencies 的数组」，组名统一 pyproject
+            assert groups == {"pyproject"}
 
     def test_conflicts_are_listed_not_resolved(self):
         """同名声明的 specifier 不一致就列出——**含 constraints.txt**（Codex #451 P2：
