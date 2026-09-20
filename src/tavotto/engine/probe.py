@@ -56,6 +56,11 @@ ERROR_TIMEOUT = "execution_timeout"
 ERROR_CANCELLED = "execution_cancelled"
 ERROR_INVALID_ENTRY = "invalid_entry"
 ERROR_STEM_CONFLICT = "multiple_stem_conflict"
+#: 两条从 worker 原样透传的码（`worker.SCRIPT_NEEDS_ARGUMENTS` / `SCRIPT_EXITED`）：
+#: 脚本要命令行参数而 Tavotto 不带参数运行 / 脚本自己 `sys.exit` 了。归成通用的
+#: `script_probe_failed` 会把出路（给默认值或 `tavotto run` / 去掉那句 exit）说丢。
+ERROR_NEEDS_ARGUMENTS = "script_needs_arguments"
+ERROR_SCRIPT_EXITED = "script_exited"
 
 #: traceback 进诊断详情的截断上限（完整日志仍在 worker.log）。
 _TRACEBACK_LIMIT = 4000
@@ -103,6 +108,16 @@ def _error_from_worker(
 
             out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)
         return out
+    if exc.code in (ERROR_NEEDS_ARGUMENTS, ERROR_SCRIPT_EXITED):
+        # 文案由前端按 code 翻；`error` 给 `script_exited` 的占位符（`SystemExit: 2`
+        # 那一行），`script_needs_arguments` 的 usage 在 traceback 里（pool 已接上）。
+        lines = [ln for ln in (exc.traceback_text or "").splitlines() if ln.strip()]
+        return _err(
+            exc.code,
+            str(exc),
+            params={"error": (lines[-1].strip() if lines else str(exc))[:200]},
+            traceback_text=exc.traceback_text,
+        )
     # build 超时有自己的码（ADR 0048）；试运行走的正是 build，两个都要认——
     # 漏掉的话「脚本执行超时」会退化成一句通用的「试运行失败」。
     if exc.code in ("worker_timeout", pool.BUILD_TIMEOUT_CODE):

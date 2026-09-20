@@ -103,6 +103,59 @@ def _patched_savefig(self, fname, *args, **kwargs):
     return None
 
 
+#: 命令行参数解析库：`SystemExit` 从这些模块的帧里抛出来 = 脚本要参数而 Tavotto 没给。
+#: 判帧的文件名（`argparse.py`）或路径分量（`click/core.py`），不判异常文本——argparse
+#: 的 usage 是打到 stderr 的，异常对象里只有一个退出码 2。
+_CLI_PARSER_MODULES = frozenset(
+    {"argparse", "optparse", "getopt", "click", "typer", "docopt", "fire"}
+)
+
+#: 脚本以非零 `sys.exit` 结束时的两个稳定 code（ADR 0003 §5 加 code 不升版）。
+#: 两者对用户是两件事：前者是「脚本要参数，Tavotto 不带参数运行」——出路是给默认值
+#: 或 `tavotto run`；后者是「脚本自己 exit 了」——出路是去掉那句 exit。
+SCRIPT_NEEDS_ARGUMENTS = "script_needs_arguments"
+SCRIPT_EXITED = "script_exited"
+
+
+def _raised_by_cli_parser(exc: BaseException) -> bool:
+    tb = exc.__traceback__
+    while tb is not None:
+        path = Path(tb.tb_frame.f_code.co_filename)
+        if path.stem in _CLI_PARSER_MODULES or _CLI_PARSER_MODULES & set(path.parts):
+            return True
+        tb = tb.tb_next
+    return False
+
+
+def _script_exit_error(exc: SystemExit) -> ProtocolError:
+    """用户脚本以非零 `sys.exit` 结束 → 结构化错误（进程不退出）。
+
+    `SystemExit` 不是 `Exception`：不接住的话它会穿过 `ensure_built`，落到主循环
+    那条给协议 `shutdown` 用的 `except SystemExit: break` 上——worker 悄无声息地
+    退出，上层只看得到管道 EOF，报成「渲染进程崩溃」，而 worker.log 里最后两行
+    其实是 argparse 的 `usage: …`（#435 一族里最常见的形状）。
+    """
+    code = exc.code
+    if _raised_by_cli_parser(exc):
+        return ProtocolError(
+            SCRIPT_NEEDS_ARGUMENTS,
+            f"脚本要求命令行参数，而 Tavotto 运行脚本时不带任何参数（sys.argv 只有脚本"
+            f"自己），参数解析于是以 sys.exit({code!r}) 结束。给这些参数写默认值，"
+            "或用 `tavotto run -- python 脚本.py 参数…` 让 Tavotto 跟着你自己的命令跑。",
+            retryable=False,
+            traceback_text=traceback.format_exc(),
+            extra={"exit_code": code},
+        )
+    return ProtocolError(
+        SCRIPT_EXITED,
+        f"脚本调用了 sys.exit({code!r}) 提前结束。Tavotto 要的是脚本跑完后留在内存里的 "
+        "Figure——去掉那句 exit，或改成只在出错时 exit。",
+        retryable=False,
+        traceback_text=traceback.format_exc(),
+        extra={"exit_code": code},
+    )
+
+
 @contextlib.contextmanager
 def _real_output():
     global _intercept
@@ -281,11 +334,7 @@ class Worker(wireproto.V1Handler):
                     getattr(module, self.entry)()
             except SystemExit as exc:
                 if exc.code not in (None, 0):
-                    raise RuntimeError(
-                        f"脚本调用了 sys.exit({exc.code!r}) 提前结束。"
-                        "Tavotto 要的是脚本跑完后留在内存里的 Figure——"
-                        "去掉那句 exit，或改成只在出错时 exit。"
-                    ) from exc
+                    raise _script_exit_error(exc) from exc
         script_ms = _ms(t_script)
 
         # pyplot 兜底：从不 savefig 的脚本（`plt.plot(...); plt.show()` 这种
@@ -428,6 +477,9 @@ class Worker(wireproto.V1Handler):
             return
         try:
             self.build(timings)
+        except ProtocolError:
+            # build 自己已经分好类的（脚本要命令行参数 / 脚本主动 exit）原样上抛
+            raise
         except Exception as exc:  # noqa: BLE001 — 转成结构化错误，进程不退出
             raise ProtocolError(
                 "script_error",

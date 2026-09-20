@@ -529,6 +529,8 @@ class TestErrorModel:
             engine_probe.ERROR_CANCELLED: set(),
             engine_probe.ERROR_INVALID_ENTRY: {"entry"},
             engine_probe.ERROR_STEM_CONFLICT: {"detail"},
+            engine_probe.ERROR_NEEDS_ARGUMENTS: set(),
+            engine_probe.ERROR_SCRIPT_EXITED: {"error"},
         }
         for locale in ("zh-CN", "en-US"):
             table = json.loads((locales / locale / "errors.json").read_text(encoding="utf-8"))[

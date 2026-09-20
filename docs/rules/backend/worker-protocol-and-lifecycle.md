@@ -58,7 +58,12 @@
   不说「崩溃（无响应）」——进程既没崩也不是无响应，它是退出了。
   worker 自己开着 `faulthandler`（stderr 重配之后装，记的是那一刻的 fd）：硬崩溃
   的 Python 栈落在 worker.log。脚本的 `sys.exit(0)` 是正常结束（`python fig.py`
-  的语义），非零是 `script_error`，都不再把 worker 带走。**Rust 读线程按字节读**
+  的语义）；非零按异常从哪个模块抛出来分两条 code（`worker._script_exit_error`）：
+  帧里有 argparse / click 等命令行解析库 → `script_needs_arguments`（脚本要参数而
+  safe 档不带参数，出路是默认值或 `tavotto run`；argparse 的 usage 打在 stderr，
+  `pool._attach_script_output` 把 worker.log 尾巴接到 traceback 前面，两条控制面
+  同一处拼），否则 `script_exited`——都不再把 worker 带走。`ensure_built` 放行
+  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。**Rust 读线程按字节读**
   （`read_until` + lossy UTF-8）：非 UTF-8 字节是「管道上有垃圾」（protocol_mismatch），
   不是 EOF——`BufRead::lines()` 会把一行坏字节当 Err 交回来，活着的 worker 被判成
   「崩溃」并被杀掉。看护：`tests/test_worker_exit_report.py`、

@@ -61,10 +61,16 @@ so a hard crash leaves its Python stack in `worker.log`; and the
 diagnostics report carries the last lines of evidence from recent
 `worker.log` files (error and frame lines only — nothing your script
 printed and no source lines) plus the exception line of each traceback.
-Two related changes: a script that ends with `sys.exit(0)` / `exit()` is a
-normal ending and no longer kills the worker (a non-zero exit is reported
-as the script's own error), and non-UTF-8 bytes on the worker's protocol
-pipe are reported as garbage on the pipe rather than as a crash.
+Two related changes: a script that calls `sys.exit()` no longer kills the
+worker — `sys.exit(0)` / `exit()` at the end is a normal ending, a script
+that parses command-line arguments with argparse (or click, typer, docopt)
+and exits because Tavotto passed none is reported as "the script requires
+command-line arguments" together with its `usage:` text (give the arguments
+defaults, or use `tavotto run -- python script.py args…`), and any other
+non-zero exit is reported as the script's own exit; and non-UTF-8 bytes on
+the worker's protocol pipe are reported as garbage on the pipe rather than
+as a crash. The `SyntaxWarning: invalid escape sequence '\o'` line that a
+full Python printed at the top of `worker.log` (from `manifest.py`) is gone.
 
 **Choosing a rendering interpreter in Settings runs the full health check.**
 Trigger: Settings → Rendering environment → pointing Tavotto at your own

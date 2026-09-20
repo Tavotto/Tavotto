@@ -113,6 +113,8 @@ worker 自己也对收到的 `payload.patches` 算一遍规范哈希。与请求
 | `unknown_cmd` | false | cmd 不在命令表（响应带 `known`） | 同上 |
 | `unknown_stem` | false | 该 stem 不在本会话（响应带 `known`） | 换 stem 或先 build |
 | `script_error` | false | 用户脚本跑不起来（build 阶段） | 报给用户改脚本 |
+| `script_needs_arguments` | false | 脚本在命令行参数解析里 `sys.exit`（argparse / click…）：它要参数，safe 档不带参数（2026-09-20 加 code，不升版） | 给参数默认值，或 `tavotto run -- python 脚本.py 参数…`；`error.exit_code` 是退出码，usage 由 pool 从 worker.log 接到 traceback |
+| `script_exited` | false | 脚本自己以非零 `sys.exit` 结束（同上加 code） | 去掉那句 exit，或只在出错时 exit |
 | `internal` | true | worker 自己也不知道为什么 | 重启后可以重试一次 |
 
 `retryable` 只有 `internal` 是 true——这是唯一「换个环境重来一次可能就好了」
@@ -125,7 +127,11 @@ worker 自己也对收到的 `payload.patches` 算一遍规范哈希。与请求
 
 `build` 阶段的任何异常一律归 `script_error`（含 mkdir / 预览落盘的 I/O 失败）。
 把它们分开需要猜 traceback 的来源，猜错比归错更难排查；真正的原因永远原样
-带在 `error.traceback` 里。
+带在 `error.traceback` 里。**唯一的例外是 `SystemExit`**（#435）：它不是 `Exception`，
+不接住就会穿到主循环那条给 `shutdown` 用的 `except SystemExit: break`，worker 悄悄
+退出、上层只看到 EOF。退出码 0 / None 是脚本正常结束（`python fig.py` 的语义，
+已画的图照常捕获）；非零按帧里有没有命令行解析库分成上表那两条——这两条不是
+「猜 traceback」，是看异常从哪个模块抛出来。
 
 ### 6. cancel 的诚实边界
 

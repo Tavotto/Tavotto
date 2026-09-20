@@ -79,6 +79,20 @@ sys.exit(2)
 #: faulthandler 崩溃报告的头：POSIX 与 Windows 各一句（CPython faulthandler.c）。
 _FAULTHANDLER_HEADER = re.compile(r"Fatal Python error|Windows fatal exception")
 
+ARGPARSE = """\
+import argparse
+import matplotlib.pyplot as plt
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-c", "--clstr", required=True)
+parser.add_argument("-x", "--metadata", required=True)
+args = parser.parse_args()          # Tavotto 不带参数运行 → usage + sys.exit(2)
+
+fig, ax = plt.subplots()
+ax.plot([1, 2], [3, 4])
+fig.savefig("metrics.png")
+"""
+
 SEGV = """\
 import faulthandler
 import matplotlib.pyplot as plt
@@ -149,9 +163,45 @@ def test_a_nonzero_sys_exit_is_the_scripts_own_failure(figs):
     (figs / "fig_fail.py").write_text(EXIT_FAIL, encoding="utf-8")
     with pytest.raises(pool.WorkerError) as err:
         pool.build("fig_fail.py", str(figs), "__main__")
-    assert err.value.code == "script_error"
+    assert err.value.code == "script_exited"
     assert "sys.exit(2)" in str(err.value)
     assert "SystemExit" in err.value.traceback_text
+
+
+@needs_worker
+def test_a_script_that_wants_cli_arguments_gets_its_own_code_and_the_usage_text(figs):
+    """微信截图里那一例：traceback 区最后两行是 argparse 的 `usage: … -c CLSTR -x METADATA`。
+
+    argparse 报缺参数后 `sys.exit(2)`，以前 worker 随之退出、上层报「崩溃」。
+    现在是一条有出路的错误：code 单独一条（前端文案讲「给默认值 / tavotto run」），
+    而 argparse 打到 stderr 的 usage 要从 worker.log 接到 traceback 里——用户要
+    知道它要哪些参数，答案只在那儿。
+    """
+    (figs / "metrics.py").write_text(ARGPARSE, encoding="utf-8")
+    with pytest.raises(pool.WorkerError) as err:
+        pool.build("metrics.py", str(figs), "__main__")
+    e = err.value
+    assert e.code == "script_needs_arguments"
+    assert "usage: metrics.py" in e.traceback_text, e.traceback_text
+    assert "-c CLSTR" in e.traceback_text and "-x METADATA" in e.traceback_text
+    assert "SystemExit: 2" in e.traceback_text
+    assert "tavotto run" in str(e)
+    assert e.extra.get("exit_code") == 2
+
+
+@needs_worker
+@needs_workerd
+def test_workerd_gives_the_same_answer_for_a_script_that_wants_arguments(workerd_figs):
+    (workerd_figs / "metrics.py").write_text(ARGPARSE, encoding="utf-8")
+    w = pool.get("metrics.py", str(workerd_figs), "__main__")
+    assert isinstance(w, pool.WorkerdWorker), type(w)
+    with pytest.raises(pool.WorkerError) as err:
+        w.ensure_built()
+    e = err.value
+    assert e.code == "script_needs_arguments"
+    assert "usage: metrics.py" in e.traceback_text, e.traceback_text
+    assert "SystemExit: 2" in e.traceback_text
+    assert w.alive(), "脚本要参数不是会话故障：进程还在，换个脚本照常用"
 
 
 @needs_worker
@@ -340,6 +390,23 @@ def _dead(report):
 def test_probe_tells_a_self_inflicted_death_from_an_interruption(report, code):
     out = engine_probe._error_from_worker(_dead(report), "__main__")
     assert out["code"] == code, out
+
+
+def test_probe_passes_the_two_script_exit_codes_through_with_the_last_line():
+    """试运行那条路同样认这两个码：归成通用的 script_probe_failed 会把出路说丢。"""
+    err = pool.WorkerError(
+        "脚本要求命令行参数…",
+        "usage: x.py -c C\nTraceback…\nSystemExit: 2",
+        code="script_needs_arguments",
+    )
+    out = engine_probe._error_from_worker(err, "__main__")
+    assert out["code"] == engine_probe.ERROR_NEEDS_ARGUMENTS == "script_needs_arguments"
+    assert out["params"]["error"] == "SystemExit: 2"
+    assert "usage: x.py" in out["traceback"]
+    err2 = pool.WorkerError("脚本调用了 sys.exit(3)…", "…\nSystemExit: 3", code="script_exited")
+    out2 = engine_probe._error_from_worker(err2, "main")
+    assert out2["code"] == engine_probe.ERROR_SCRIPT_EXITED
+    assert out2["params"]["error"] == "SystemExit: 3"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows 的 TerminateProcess 退出码是 1")

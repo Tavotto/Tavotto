@@ -475,6 +475,9 @@ class WorkerError(RuntimeError):
         #: 哪个脚本报的（missing_dependency 时由 `_error_of` 填）。依赖修复
         #: 按 (项目, 脚本) 记轮次、按脚本所在目录找依赖声明，都要它。
         self.script_name = ""
+        #: worker 错误信封里多带的字段（`known` / `exit_code` / 退出状态 `exit`…），
+        #: 两条控制面都往这里放——上层按键取，不必知道是哪条控制面给的。
+        self.extra: dict = {}
 
 
 #: 脚本跑完了、一张图都没捕获到，而调用方要的 stem 在注册表里登记过。worker
@@ -571,6 +574,25 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
     out.extra = getattr(err, "extra", {}) or {}
     out.script_name = script_name
     return out
+
+
+#: worker 侧 `worker.SCRIPT_NEEDS_ARGUMENTS` 的镜像（Flask 进程不 import worker.py）。
+SCRIPT_NEEDS_ARGUMENTS = "script_needs_arguments"
+
+
+def _attach_script_output(err: "WorkerError", log_tail: str) -> "WorkerError":
+    """`script_needs_arguments`：把 worker.log 尾巴接到 traceback 前面。
+
+    argparse 的 `usage: … -c CLSTR -x METADATA` 是打到 stderr（= worker.log）的，
+    异常对象里只有一个退出码 2——用户要知道「它要哪些参数」，答案只在日志里。
+    两条控制面同一处拼，不各拼各的。
+    """
+    if err.code != SCRIPT_NEEDS_ARGUMENTS:
+        return err
+    tail = (log_tail or "").strip()
+    if tail and tail not in err.traceback_text:
+        err.traceback_text = f"{tail}\n\n{err.traceback_text}".strip()
+    return err
 
 
 def missing_module(text: str) -> str:
@@ -1221,10 +1243,20 @@ class EngineWorker:
             exc.script_name = self.script_name
             return exc
         out = WorkerError(msg, tb, code=code)
+        out.script_name = self.script_name
         # v1 信封把 `extra` 平铺进 error 对象（`wireproto`：`err.update(exc.extra)`），
         # legacy 的扁平形状则在响应顶层。
+        if isinstance(err, dict):
+            out.extra = {
+                k: v
+                for k, v in err.items()
+                if k not in ("code", "retryable", "message", "traceback")
+            }
         known = err.get("known") if isinstance(err, dict) else resp.get("known")
-        return _explain_empty_capture(out, self.script_name, known, self._log_tail())
+        tail = self._log_tail()
+        return _explain_empty_capture(
+            _attach_script_output(out, tail), self.script_name, known, tail
+        )
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
@@ -1709,9 +1741,11 @@ class WorkerdWorker:
         err = _worker_error(message, code, tb, exc.extra)
         # 两条控制面在「缺包时上层拿得到哪些事实」上必须给同一个答案
         err.script_name = self.script_name
-        # ……「脚本跑完没出图」也是同一条纪律：workerd 把 `known` 透传在 extra 里
+        # ……「脚本跑完没出图」「脚本要命令行参数」也是同一条纪律：workerd 把
+        # `known` 透传在 extra 里，argparse 的 usage 在 worker.log 里
+        tail = self._log_tail()
         return _explain_empty_capture(
-            err, self.script_name, (exc.extra or {}).get("known"), self._log_tail()
+            _attach_script_output(err, tail), self.script_name, (exc.extra or {}).get("known"), tail
         )
 
     def _call(

@@ -132,6 +132,8 @@
     "scan_failed": "Scan failed: {{reason}}",
     "script_changed": "Write-back blocked: the script changed during this session. Re-render and try again.",
     "script_error": "The script failed while building the figure: {{error}}",
+    "script_exited": "The script ended early by calling sys.exit() ({{error}}). Tavotto needs the figures the script leaves in memory when it finishes: remove that exit, or exit only on error.",
+    "script_needs_arguments": "The script requires command-line arguments, but Tavotto runs scripts without any (sys.argv holds only the script itself), so argument parsing exited. Give those arguments defaults, or run `tavotto run -- python script.py args…` in a terminal so Tavotto follows your own command. Expand the output to see which arguments it wants.",
     "script_name_missing": "A script name is required",
     "script_no_figure": "The script ran, but no figure was captured. Entry {{entry}} may not plot.",
     "script_not_found": "Script not found: {{script}}",
