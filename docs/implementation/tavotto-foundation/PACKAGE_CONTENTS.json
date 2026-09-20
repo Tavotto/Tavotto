@@ -164,8 +164,8 @@
     },
     {
       "path": "evidence/u02/README.md",
-      "bytes": 2302,
-      "sha256": "e42e93554298484d4789be6b051c1d3d1a4eae04f42aca811b95912b84075d54"
+      "bytes": 2362,
+      "sha256": "384e83e79cc99058c1b743100c9cd65f277d151fd5e3987631c4c5815ff8d531"
     },
     {
       "path": "evidence/u02/freeze/frozen-render-darwin-arm64.png",
@@ -244,8 +244,8 @@
     },
     {
       "path": "handoffs/U02_spikes.md",
-      "bytes": 15030,
-      "sha256": "2e1fe07705d462895cec12e96eed26cb834af592cf59e59e62aa75f1b4098886"
+      "bytes": 15354,
+      "sha256": "7fa8075003fdef3a4247a467c36533eee139444e75cd5b4d006578569b702b72"
     },
     {
       "path": "phase_mapping.json",

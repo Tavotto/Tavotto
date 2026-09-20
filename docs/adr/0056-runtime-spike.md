@@ -17,7 +17,7 @@
 | 无下载授权不联网 | 安装步骤在**死代理**（`HTTP(S)_PROXY=http://127.0.0.1:9`）+ `--offline --no-index` 下成功；**对照两条**：空 wheelhouse 必失败（证明来源是 wheelhouse），不带 `--offline` 装一个不在 wheelhouse 的包必被代理挡住（证明代理真在挡网） | steps `install.*` |
 | 坏 hash 不执行 | 篡改归档 / 登记错的期望值 → `HashMismatch`，**解释器执行计数不增、runtimes 目录不变、不存在半个 staging** | steps `negative.*`、`tests/test_foundation_u02_runtime.py` |
 | embeddable vs 完整 Python | 锁文件的 windows-amd64 embeddable zip **静态检查**：有 `python313._pth`、`python313.zip` 里 541 条**没有** `venv/` 与 `ensurepip/`（也没有 tkinter）→ `python.exe -m venv` 在它上面注定失败；**运行时证据要 Windows 目标**（CI dispatch 的 windows-latest 腿在 embeddable 上真跑 `-m venv` 看它失败，并用 pbs 的 Windows install_only 走完整条链） | step `embeddable.static_inspection` |
-| 目标 | 本机 macOS arm64 15/15；Linux / Windows 由 `foundation-u02-spikes.yml`（dispatch-only）提供，run 号见交接文件 | `evidence/u02/runtime/report-macos-arm64.json` |
+| 目标 | 本机 macOS arm64 15/15；Linux / Windows 由 `foundation-u02-spikes.yml`（dispatch + spike 文件 paths 过滤的 pull_request，非 required）提供，run 号见交接文件 | `evidence/u02/runtime/report-macos-arm64.json` |
 | 启用 | **不启用**任何能力（`plan.json` `new_default_capabilities_enabled: []`）；U05 接入产品时复用 U04 的环境计划 / 事务 / 验证（D05） | — |
 
 ## 1. 实测（macOS 14+ arm64，本机 2026-09-20；纯标准库脚本，用主仓库 `.venv` 的解释器跑，写入全部在临时 `TAVOTTO_DATA_DIR`）

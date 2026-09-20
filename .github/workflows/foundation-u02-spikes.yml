@@ -1,9 +1,13 @@
 name: Foundation U02 spikes
 
 # 统一实施包 U02 的两个技术证明（render_spike / runtime_spike）在**托管 runner 的三个平台**上
-# 各跑一遍，产出 evidence 工件。**只有 workflow_dispatch**：它不是门禁、不进任何 Gate 的闭集、
-# 不是 required check——U02 任务书说「至少一个可用真实目标」，这里给 Linux / Windows / macOS 各一份
-# 真实运行的证据（`docs/adr/0055-render-spike.md` / `0056-runtime-spike.md` 引用的 run 号在 ADR 里）。
+# 各跑一遍，产出 evidence 工件。它不是门禁、不进任何 Gate 的闭集、不是 required check——U02 任务书说
+# 「至少一个可用真实目标」，这里给 Linux / Windows / macOS 各一份真实运行的证据（run 号记在
+# `docs/implementation/tavotto-foundation/handoffs/U02_spikes.md`）。
+#
+# 触发：`workflow_dispatch`，以及**只在 spike 自己的文件变动时**的 `pull_request`（paths 过滤）。后者是因为
+# `gh workflow run` 只认默认分支上已登记的 workflow——新 workflow 在合入 main 之前派发不了，而 U02 要在
+# PR 阶段就拿到另一目标的证据。合入 main 之后 dispatch 也能用。
 #
 # 每条腿做的事（全部只写 runner.temp，主仓库 .venv / pyproject 一个字不碰）：
 #   1. 建独立 spike venv，装 scripts/dev/u02_spikes/requirements.txt 钉死的候选包；
@@ -18,6 +22,12 @@ name: Foundation U02 spikes
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/foundation-u02-spikes.yml"
+      - "scripts/dev/u02_spikes/**"
+      - "tests/test_foundation_u02_*.py"
+      - "docs/implementation/tavotto-foundation/evidence/u02/render/truth.json"
 
 permissions:
   contents: read

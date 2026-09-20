@@ -23,4 +23,4 @@ PYTHONPATH=scripts:src $S/spike-venv/bin/python -m dev.u02_spikes.freeze_spike -
 PYTHONPATH=scripts:src .venv/bin/python -m dev.u02_spikes.runtime_spike --out docs/implementation/tavotto-foundation/evidence/u02/runtime
 ```
 
-其它平台的同一套产物由 `.github/workflows/foundation-u02-spikes.yml`（只 `workflow_dispatch`）以工件 `u02-evidence-<os>` 给出，不进 git；run 号记在交接文件。
+其它平台的同一套产物由 `.github/workflows/foundation-u02-spikes.yml`（`workflow_dispatch` + 只在 spike 文件变动时的 `pull_request`，非 required）以工件 `u02-evidence-<os>` 给出，不进 git；run 号记在交接文件。

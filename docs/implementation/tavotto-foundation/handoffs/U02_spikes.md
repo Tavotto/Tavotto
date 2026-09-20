@@ -29,7 +29,7 @@ CPython 来源的单一出处）、U00 夹具 `pdf_png_assets/page.pdf` 与 `dep
 | `scripts/dev/u02_spikes/`（新，spike 代码，不进产品 import 图） | `hashcheck.py`（sha256 校验 / 校验后才改名的下载 / 私有目录判据，纯标准库）、`fonts.py`（批准字体清单：URL / 每文件 sha256 / 许可 / 义务）、`pdfwrite.py`（受限 emitter）、`render_spike.py`（写 + 三把独立读取器 + report）、`render_child.py`（串行 render child + 纯标准库客户端）、`freeze_spike.py`（PyInstaller 最小候选冻结）、`runtime_spike.py`（provisioner 路径，纯标准库）、`requirements.txt`（候选包版本钉死） |
 | `tests/`（新，快、不依赖候选包） | `test_foundation_u02_render.py`（纯标准库读 evidence：结构 / ToUnicode 解码 / 嵌入子集 cmap 交叉核对 / 独立重算的导入矩阵 / PNG 像素）、`test_foundation_u02_render_child.py`（假 child 的控制流 + 真 child skip-with-reason）、`test_foundation_u02_runtime.py`（hashcheck 负例 / 钉法单一出处 / 假归档的 provisioning 控制流 / report 与锁一致） |
 | `tests/test_source_hygiene.py` | `stdout=PIPE` 判据多一个文件的例外（`render_child.py`，行协议客户端，专门读线程），前提由 chatty 用例动态看住；搬进 `src/` 时删掉 |
-| `.github/workflows/foundation-u02-spikes.yml`（新） | **只 workflow_dispatch**、托管 runner 三平台矩阵、非 required、不进任何 Gate 闭集；跑全套 spike 并上传 evidence 工件 |
+| `.github/workflows/foundation-u02-spikes.yml`（新） | `workflow_dispatch` + **只在 spike 自己的文件变动时**的 `pull_request`（paths 过滤；`gh workflow run` 只认默认分支上已登记的 workflow，合入前派发不了）、托管 runner 三平台矩阵、非 required、不进任何 Gate 闭集；跑全套 spike 并上传 evidence 工件 |
 | `docs/adr/0055-render-spike.md`、`0056-runtime-spike.md` | 两段独立结论（版本 / 平台 / 字体来源与许可 / 实测 / 失败路线 / 选择原因 / 仍缺的目标） |
 | `docs/implementation/tavotto-foundation/evidence/u02/` | `render/`（truth.json 手写规格、spike.pdf 18 KB、spike_pdfium.png 30 KB、report.json）、`freeze/`（report + 冻结 exe 渲染的 PNG + PyInstaller 日志）、`runtime/`（report-macos-arm64.json） |
 | `plan.json` / `README.md` / `PACKAGE_CONTENTS.json` | U02 `implementation_status: done`、产品资格仍 `not_run`；README 加 U02 段；清单重算 |
@@ -94,9 +94,9 @@ spike 都不经产品入口，evidence 是技术证明不是 FO / RC 场景的�
 asc-desc / 覆盖表 / provenance 判据，等 U06 按 D07 一次批准迁移。`git diff --stat` 只含上表的文件。
 
 **当前可合并依据（不等于可以默认启用 / 发行）**：中高风险档（`scripts/`、`tests/`、`.github/` 新文件 + hygiene 例外）
-→ `full-ci` + `@codex review`；ruff 两条 0；针对性 pytest 0；变异反证逐条红；全量 pytest 见 PR 正文；新 workflow 只
-`workflow_dispatch`、托管 runner、每 job 有 `timeout-minutes`、顶层 `TAVOTTO_NO_TELEMETRY=1`，`test_merge_queue_workflows`
-的事件闭集 / 信任区 / 超时判据全过。
+→ `full-ci` + `@codex review`；ruff 两条 0；针对性 pytest 0；变异反证逐条红；全量 pytest 见 PR 正文；新 workflow 只有
+`workflow_dispatch` 与 paths 过滤的 `pull_request`、托管 runner、每 job 有 `timeout-minutes`、顶层 `TAVOTTO_NO_TELEMETRY=1`，
+`test_merge_queue_workflows` 的事件闭集 / 信任区 / 超时判据全过。
 
 **仍缺哪些默认启用 / 精确安装物资格**：全部。本阶段不产生任何产品资格；render_spike 的 pass 是「候选栈 + 一个平台
 （+ dispatch 腿）」的技术证明，runtime_spike 同理。
@@ -110,15 +110,15 @@ asc-desc / 覆盖表 / provenance 判据，等 U06 按 D07 一次批准迁移。
 * U07：透明组 / 导入页 / clip 的 emitter 形状；render child 的四条路径与 `last_exit` / `restarts` 记账；freeze 结论。
 * U05：uv 的钉法与三条子命令、staging / 原子发布 / `active.json`、四条负例、embeddable 静态事实 + 「Windows base 用 pbs」
   的建议、Linux / Windows-pbs 的 sha256（进锁文件前重新从 SHA256SUMS 核）。
-* 运行 dispatch 腿：`gh workflow run foundation-u02-spikes.yml --ref <分支>`，工件 `u02-evidence-<os>`。
+* 三条腿：PR 上随 spike 文件变动自动跑；合入 main 后也可 `gh workflow run foundation-u02-spikes.yml --ref <分支>`（合入前 gh 找不到它：404 workflow not found on the default branch，实测）；工件 `u02-evidence-<os>`。
 
 **回退方式、不能假装可回滚的外部副作用**：revert 本 PR 即回退（全是新文件 + 一条 hygiene 例外 + 台账状态）；没有设置写入、
 没有发布。外部副作用只有本机 scratchpad 里的 spike venv / 字体 / 下载缓存与 `--keep` 留下的临时目录，删掉即可。
 
 ## 其它目标（CI dispatch 的三条腿）
 
-（PR 开出后由 `gh workflow run foundation-u02-spikes.yml --ref foundation/u02-spikes` 触发；结论按 run 号逐腿填在这里，
-没跑出来的腿保持 **not_run**，不预填。）
+（PR #455 上随 spike 文件变动自动触发（`pull_request` + paths 过滤）；结论按 run 号逐腿填在这里，没跑出来的腿保持
+**not_run**，不预填。）
 
 | 腿 | run | fonts | render_spike | U02 用例 | freeze | runtime_spike | 备注 |
 |---|---|---|---|---|---|---|---|

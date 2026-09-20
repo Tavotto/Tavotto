@@ -16,7 +16,7 @@
 | 文字层 | HarfBuzz 的 cluster → ToUnicode（一个 glyph 对应它覆盖的**原文**，组合序列合成的一个字形回两个码位）；**不以 outline 代替**（PDFium 对象普查里 17 个 `FPDF_PAGEOBJ_TEXT`） | 三把独立读取器 + `tests/test_foundation_u02_render.py` |
 | 整体 opacity | 透明组（`/Group /S /Transparency /I true`）+ ExtGState `ca`，组内 alpha 从 1 起算；导入页 opacity<1 时**整页包成组、仍是矢量**（旧后端这一档只能退位图） | 像素：组内重叠 (128,128,255) vs 逐对象 (128,64,191) |
 | 导入非对称源页 | qpdf 取 TrimBox → CropBox → MediaBox 当 BBox，`page.pdf` 的 CropBox [15 10 285 170] 原样成为 form 的可见框；变换 / clip / 旋转在源空间 `cm` + `re W n` | 4 处导入、6 组像素采样、`inner_rect_bounds` 经 PDFium 报的 form 矩阵回算 |
-| 目标 | 本机 macOS arm64 实测；Linux / Windows 由 `.github/workflows/foundation-u02-spikes.yml`（**只 workflow_dispatch**，非 required）提供，run 号见 §7 | `evidence/u02/render/`、`evidence/u02/freeze/` |
+| 目标 | 本机 macOS arm64 实测；Linux / Windows 由 `.github/workflows/foundation-u02-spikes.yml`（`workflow_dispatch` + 只在 spike 文件变动时的 `pull_request`，非 required、不进 Gate）提供，run 号见交接文件 | `evidence/u02/render/`、`evidence/u02/freeze/` |
 | 默认切换 | **不切**。PyMuPDF 仍是默认后端；候选包只装在 spike venv；`pyproject.toml` 一字未动 | `git diff --stat` |
 
 ## 1. 选型：为什么是这一组
@@ -134,11 +134,11 @@ render child 客户端的四条变异：去锁（串行用例红）、超时不 
 
 ## 6. 后果
 
-* 加了：`scripts/dev/u02_spikes/`（`hashcheck` / `fonts` / `pdfwrite` / `render_spike` / `render_child` / `freeze_spike` / `requirements.txt`）、`tests/test_foundation_u02_render.py`、`tests/test_foundation_u02_render_child.py`、`evidence/u02/render/`、`evidence/u02/freeze/`、`.github/workflows/foundation-u02-spikes.yml`（dispatch-only）。
+* 加了：`scripts/dev/u02_spikes/`（`hashcheck` / `fonts` / `pdfwrite` / `render_spike` / `render_child` / `freeze_spike` / `requirements.txt`）、`tests/test_foundation_u02_render.py`、`tests/test_foundation_u02_render_child.py`、`evidence/u02/render/`、`evidence/u02/freeze/`、`.github/workflows/foundation-u02-spikes.yml`（dispatch + spike 文件 paths 过滤的 pull_request；非 required）。
 * 没加：新的产品 import 边（`src/tavotto` 不 import spike）、新的运行时依赖、新的 required job、默认后端切换。
 * `tests/test_source_hygiene.py` 的 `stdout=PIPE` 判据多了**一个文件**的例外（`render_child.py`），前提由 chatty 用例动态看住；搬进 `src/` 时删掉那条例外。
 * U06 拿走：字体清单与 hash、两条字体程序路径、ToUnicode 的 cluster 写法、D07 迁移表；U07 拿走：透明组 / 导入页 / clip 的 emitter 形状、render child 的四条路径与 freeze 结论。
 
 ## 7. 其它目标（CI dispatch）
 
-`foundation-u02-spikes.yml` 在 ubuntu-latest / windows-latest / macos-latest 上各跑一遍全套（fonts → render_spike → U02 用例 → freeze_spike → runtime_spike），产物为 `u02-evidence-<os>` 工件。首次 run 与各腿结论记在 `docs/implementation/tavotto-foundation/handoffs/U02_spikes.md` 的「其它目标」一节；本 ADR 不预先写它们的结果。
+`foundation-u02-spikes.yml` 在 ubuntu-latest / windows-latest / macos-latest 上各跑一遍全套（fonts → render_spike → U02 用例 → freeze_spike → runtime_spike），产物为 `u02-evidence-<os>` 工件。`gh workflow run` 只认默认分支上已登记的 workflow，所以合入前靠 `pull_request`（paths 过滤）触发。首次 run 与各腿结论记在 `docs/implementation/tavotto-foundation/handoffs/U02_spikes.md` 的「其它目标」一节；本 ADR 不预先写它们的结果。
