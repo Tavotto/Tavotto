@@ -2181,6 +2181,87 @@ class TestLandingAudit:
             assert (root / rel).is_file(), f"landing audit 引用的 {rel} 不存在"
 
 
+# ============================================================ 首开 / 输出 harness（U01，ADR 0053 §五）
+class TestFoundationHarnessStep:
+    """统一实施包 U01 把 case enrollment 的校验接成 `invariants` job 的三步：预期集合 →
+    enforced 用例 → 闭集校验 → 证据上传。判据的主语是**这三步的顺序与它们共用的目录**：
+    预期集合必须在用例之前生成（在执行前产生，03 §5）；用例写记录的目录必须就是校验读的
+    目录（否则校验永远看到空目录——而空目录是红，于是这条 job 会恒红；反过来若把校验改成
+    读别的目录也恒红，两个方向都只会红不会假绿，这里钉的是它们**同一个**）；校验步的
+    退出码是结论；enforced case 的 lane 与 `--lane` 一致（否则预期集合恒空 → 恒红）。"""
+
+    JOB = "invariants"
+    RESULTS = "${{ runner.temp }}/foundation/results"
+
+    def _three(self) -> tuple[str, str, str]:
+        steps = _steps(_job(CI, self.JOB))
+        names = [_step_name(s) for s in steps]
+        run = [s for s in steps if _step_name(s).startswith("首开 / 输出 harness（")]
+        check = [s for s in steps if _step_name(s).startswith("首开 / 输出 harness 合同校验")]
+        upload = [s for s in steps if _step_name(s).startswith("首开 / 输出 harness 证据")]
+        assert len(run) == 1 and len(check) == 1 and len(upload) == 1, names
+        assert (
+            names.index(_step_name(run[0]))
+            < names.index(_step_name(check[0]))
+            < names.index(_step_name(upload[0]))
+        ), names
+        return run[0], check[0], upload[0]
+
+    def test_expected_set_is_generated_before_the_cases_run(self):
+        run, _, _ = self._three()
+        assert "if:" not in run, "跑用例那一步不许带 if:（必需步骤）"
+        script = _code(run)
+        assert script.index("foundation_harness.py expected") < script.index("python -m pytest"), (
+            "预期实例集合必须在执行**前**生成"
+        )
+        assert "--lane pr" in script
+        assert "tests/test_foundation_harness.py" in script, "enforced 用例所在文件没进这一步"
+        assert f"TAVOTTO_FOUNDATION_RESULTS: {self.RESULTS}" in run, (
+            "用例写记录的目录必须由这个环境变量指定，且落在 runner.temp 下"
+        )
+
+    def test_the_check_reads_the_same_directory_the_cases_wrote_and_has_its_own_verdict(self):
+        run, check, _ = self._three()
+        assert _if_of_step(check) == "always()", "校验步红时也要留下报告；结论靠它自己的退出码"
+        script = _code(check)
+        assert "foundation_harness.py validate" in script
+        # 同一个目录：env 里的 `${{ runner.temp }}/foundation/results` ↔ 脚本里的 `$RUNNER_TEMP/foundation/results`
+        assert '--results "$RUNNER_TEMP/foundation/results"' in script
+        assert '--out "$RUNNER_TEMP/foundation/expected.json"' in _code(run)
+        assert '--expected "$RUNNER_TEMP/foundation/expected.json"' in script
+        assert "|| true" not in script and "continue-on-error" not in check, (
+            "校验步的退出码不许被吞"
+        )
+
+    def test_the_evidence_upload_carries_expected_results_and_report(self):
+        _, _, upload = self._three()
+        assert _if_of_step(upload) == "always()"
+        assert "uses: actions/upload-artifact@" in upload
+        with_ = _with_block(upload)
+        assert with_["name"].startswith("foundation-harness-pr-"), with_
+        for part in ("foundation/expected.json", "foundation/results", "foundation/report"):
+            assert part in upload, f"证据里少了 {part}"
+
+    def test_the_lane_matches_the_enforced_cases_in_the_ledger(self):
+        """`--lane pr` 不是随手写的：台账里 enforced 的 case 都在这条 lane 上，否则预期集合恒空。"""
+        ledger = json.loads(
+            (
+                WF.parents[1] / "docs" / "implementation" / "tavotto-foundation" / "enrollment.json"
+            ).read_text(encoding="utf-8")
+        )
+        enforced = [c for c in ledger["cases"] if c["enrollment"] == "enforced"]
+        assert enforced, "台账里一个 enforced 的 case 都没有——这条 CI 步骤会恒红（空集合不是通过）"
+        assert {c["lane"] for c in enforced} == {"pr"}
+        assert "invariants" in _needs_of(_job(CI, "ci-fast-gate")), (
+            "harness 的落点必须在 fast gate 闭集里"
+        )
+
+
+def _if_of_step(step: str) -> str:
+    m = re.search(r"(?m)^\s*if: (.+)$", step)
+    return m.group(1).strip() if m else ""
+
+
 # ============================================================ 缓存种子（CI02 §4.1 (a)）
 #: 消费者 job 的 `runs-on` 里的 `runner.os` 值 → matrix 里的 runner 标签。种子 job 里 Linux 专属
 #: 的步骤（装 Tauri 系统依赖）用 `runner.os == 'Linux'` 判，而 matrix 用的是标签；两套名字的对应
