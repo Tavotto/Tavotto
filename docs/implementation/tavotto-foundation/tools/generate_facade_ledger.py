@@ -11,7 +11,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+# Windows 上 stdout / stderr 一被重定向就退回系统区域编码（cp1252 / cp936），第一句
+# 中文输出就 UnicodeEncodeError；这些工具都会被 subprocess 捕获着调用，两条流一起钉。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 JSON_NAME = "U00_FACADE_LEDGER.json"
 MD_NAME = "U00_FACADE_LEDGER.md"

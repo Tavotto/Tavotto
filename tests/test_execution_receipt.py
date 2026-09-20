@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -529,13 +530,16 @@ def test_pure_models_import_without_the_scientific_stack_or_the_pdf_library():
         "{'matplotlib', 'numpy', 'pymupdf', 'fitz', 'PIL', 'scipy', 'pandas'})\n"
         "print(json.dumps(bad))\n"
     )
+    # 继承环境而不是给空 env：`pool` 在 import 时就算 `config.data_dir()`，Windows 上
+    # `Path.home()` 要 USERPROFILE，空 env 会在这一步 RuntimeError（#451 windows 片 1）。
+    # 数据目录仍由 conftest 的 TAVOTTO_DATA_DIR 隔离（随环境继承进去）。
     proc = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
-        env={"PYTHONPATH": str(ROOT / "src"), "PATH": "", "TAVOTTO_NO_TELEMETRY": "1"},
+        env={**os.environ, "PYTHONPATH": str(ROOT / "src"), "TAVOTTO_NO_TELEMETRY": "1"},
         timeout=120,
     )
     assert proc.returncode == 0, proc.stderr[-2000:]

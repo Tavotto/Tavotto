@@ -480,6 +480,39 @@ def test_support_probes_reconfigure_stdout_to_utf8():
     )
 
 
+def test_foundation_pack_tools_reconfigure_stdout_to_utf8():
+    """`docs/implementation/tavotto-foundation/tools/` 里每一个入口都要钉 UTF-8 两条流。
+
+    它们与 `tests/support/` 的探针同一形状：被 `subprocess.run(capture_output=True)`
+    调起来（`generate_enrollment.py --check` 由 `test_foundation_harness` 起；
+    `validate_plan.py` 打的是 `ensure_ascii=False` 的中文 JSON），Windows 上管道退回
+    cp1252，第一句中文就 UnicodeEncodeError——PR #451 的 backend-platforms windows 片 1
+    正是这样红的（「ENROLLMENT.md 是最新的」那一句）。名单按 `__main__` 扫出来。
+    """
+    tools = (
+        Path(__file__).resolve().parent.parent
+        / "docs"
+        / "implementation"
+        / "tavotto-foundation"
+        / "tools"
+    )
+    entry_points = [
+        p
+        for p in sorted(tools.glob("*.py"))
+        if '__name__ == "__main__"' in p.read_text(encoding="utf-8")
+    ]
+    assert len(entry_points) >= 4, f"只扫到 {len(entry_points)} 个入口——目录搬家了？"
+    missing = [
+        p.name
+        for p in entry_points
+        if 'reconfigure(encoding="utf-8"' not in p.read_text(encoding="utf-8")
+    ]
+    assert not missing, (
+        f"这些实施包工具没钉 UTF-8 stdout/stderr：{missing}——Windows 管道下第一条中文输出"
+        "就会把它们打死，而父进程只看得见 exit status 1"
+    )
+
+
 # ── scripts/ 的子进程入口：输出编码必须钉住（issue #284） ──────────────────
 #
 # **判据的主语**：`scripts/**/*.py` 里**每一个会被当子进程 spawn 的入口**（AST 判出

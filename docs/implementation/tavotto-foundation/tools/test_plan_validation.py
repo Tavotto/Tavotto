@@ -1,10 +1,17 @@
 """Tests the plan validator, NOT Tavotto implementation behavior."""
 
+import sys
 import unittest
 from copy import deepcopy
 from pathlib import Path
 
 import validate_plan as v
+
+# Windows 上 stdout / stderr 一被重定向就退回系统区域编码（cp1252 / cp936），第一句
+# 中文输出就 UnicodeEncodeError；这些工具都会被 subprocess 捕获着调用，两条流一起钉。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parents[1]
 
