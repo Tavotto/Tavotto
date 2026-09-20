@@ -64,8 +64,8 @@
     },
     {
       "path": "U00_BASELINE.md",
-      "bytes": 29154,
-      "sha256": "bdf55503992d7bc777362b1ac685a714a237ecdde0d07bcb0a34c293c0c5a7bd"
+      "bytes": 29174,
+      "sha256": "9382c0a60784bca66657fcb3fd4194538f04d578f08f0ebd8817af437c91a719"
     },
     {
       "path": "U00_CAPABILITY_INVENTORY.md",
@@ -169,8 +169,8 @@
     },
     {
       "path": "handoffs/U00_baseline.md",
-      "bytes": 9873,
-      "sha256": "4100d5c8f399eec01fa554b52349f3294bd9578269244e6ed9d1206aa8345403"
+      "bytes": 9866,
+      "sha256": "cc00850dbbf97634efe564851e352f19b6f17996030cb490185496a515073406"
     },
     {
       "path": "phase_mapping.json",

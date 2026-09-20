@@ -34,7 +34,7 @@ profiles-and-preflight / runtime-figure-assets；`docs/rules/repo/same-origin-pa
   `tests/test_foundation_facade_ledger.py`、`tests/test_foundation_plan_integrity.py`。
 
 **关联旧要求 ID / 场景 ID**：FO-001（调用图）→ `U00_FACADE_LEDGER` + `U00_CAPABILITY_INVENTORY`；
-FO-002（首开旧问题 baseline）→ `U00_BASELINE.md` §4（#435 未复现 / FO19 已复现 / #240）；
+FO-002（首开旧问题 baseline）→ `U00_BASELINE.md` §4（#435 未复现 / FO19 已复现 → #447 / #240）；
 FO-003（原生参考与数据身份）→ `tests/test_foundation_fixtures.py` 的原生参考隔离用例 + 六组 `truth.json`；
 FO-004（现有测试覆盖 ↔ 新 gap）→ 清单里每个导出项的 tests 分「用户合同 / 实现特定」+ §1.6 的假设差异表；
 R00 / RC-001…006 的清点部分（迁移判据已写，验证归 U08）；CP08-A 的基线命令 / 时长（§3）。
@@ -72,7 +72,7 @@ PR 正文）；旧行为回归 = 产品源码没动，全量套件与 origin/mai
 * 真正产品失败（都不是本阶段修的）：
   1. #240 `tavotto run` Ctrl+C 在负载下 90 s 不退出（全量红、单跑绿，形状与 issue 一致）；
   2. **FO19 在 safe worker 上不成立**：用户项目里的 `manifest.py` 被引擎的 `engine/manifest.py`
-     遮住（`U00_BASELINE.md` §4.4 实测）——待主对话定处置（建议开 issue，归 U03 或独立小切片）；
+     遮住（`U00_BASELINE.md` §4.4 实测）——**issue #447**（severity:P2 / area:engine），归 U03；
   3. #435（Windows + conda configured + project cwd + 中文路径首渲染崩溃）——本机不可复现，记为 U03 的负例来源。
   4. 依赖声明解析丢 marker / extras / 冲突静默取首条（§4.3 实测）——是 `depresolve` 第一版写明的边界，
      不是回归；但它是 U04 DependencyIntent 的起点事实。

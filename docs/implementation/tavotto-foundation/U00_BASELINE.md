@@ -94,7 +94,7 @@ FO-029（保留 marker / extras / constraints）、FO-014 / FO-033（冲突不�
 | 条目 | 假设 | 当前代码（实测 / 读码） |
 |---|---|---|
 | FO-029 / FO-014 / FO-033 | marker / extras / constraints 保留；冲突不静默放宽 | §1.3：全部丢弃或静默取第一条（`depresolve.parse_requirements_text`） |
-| FO19（场景）/ FO-031 | 用户项目里的 `manifest.py` / `overrides.py` 重名时「用户 import 命中用户模块」 | **safe worker 上不成立**（§4.4 实测）：用户脚本 `import manifest` 拿到的是 Tavotto 引擎的 `engine/manifest.py`。native bridge 侧由 `bridgeboot` 还原用户顶层名（已有用例）。这是一条真实的基线缺陷，待主对话定处置（开 issue → U03 修，或独立小切片） |
+| FO19（场景）/ FO-031 | 用户项目里的 `manifest.py` / `overrides.py` 重名时「用户 import 命中用户模块」 | **safe worker 上不成立**（§4.4 实测）：用户脚本 `import manifest` 拿到的是 Tavotto 引擎的 `engine/manifest.py`。native bridge 侧由 `bridgeboot` 还原用户顶层名（已有用例）。这是一条真实的基线缺陷：**issue #447**（severity:P2 / area:engine），归 U03 |
 | FO-036 | 受管 venv 「在最终路径构建，active 指针原子发布」 | `managedenv` 建在 `<data_dir>/environments/<项目指纹>/venv`，状态是 `environment.json` 里的 `ready / incomplete` 标记，**没有 active 指针**这个概念——是 U04 的新目标，不是现状 |
 | FO-041 / FO-042 | `script.parent` / `project.root` / `invocation.cwd` 三者准确区分；旧 project 工作目录语义不变 | `execspec.cwd_mode` 只有 `sandbox` / `project` 两档，且 **`project` 档的 cwd 是 `script.parent`**（ADR 0047、`worker.py:160`），不是 project root（04 §2 已写明「旧 project 值仍是 script.parent」）。三分需 U01 在 LaunchContext 里新增字段 |
 | FO-047 | 真实 cwd 写入许可在执行前明确授予 | `PATCH /api/engine/workdir` 后端不记「谁授权过」，确认只在前端文案（`docs/rules/backend/figure-capture-and-execution.md`）；grant 是 U01 PreparationPlan 的新字段 |
@@ -179,7 +179,7 @@ test_windows_bound_subprocesses_pin_their_decoding`——**抓的是本阶段新
 | 问题 | 来源 | 本阶段结论 |
 |---|---|---|
 | Windows 桌面版 + 用户 conda 环境（configured，Python 3.13 / mpl 3.11.0）+ `workdir.mode=project` + 中文路径 `E:\嘿嘿\figure` + cp936：首次渲染「渲染进程崩溃（无响应），会话需要重建」 | issue **#435**（2026-09-20 开，用户诊断包） | **未复现**（需要 Windows + 该 conda 环境；本机 macOS）。诊断包里 `render.worker_error` 为空、`recent_errors` 是四条 traceback，根因未定。它是 U03（已有环境首开）最真实的一条负例，U03 的 Windows 实例集合要能覆盖「configured 源 + project cwd + 非 ASCII 路径 + workerd」这一组合 |
-| 用户项目里与引擎同名的 `manifest.py` | registry FO19 / FO-031 | **复现**（§4.4）：safe worker 上用户的 `import manifest` 命中引擎模块。native 侧已处理。待主对话定处置 |
+| 用户项目里与引擎同名的 `manifest.py` | registry FO19 / FO-031 | **复现**（§4.4）：safe worker 上用户的 `import manifest` 命中引擎模块。native 侧已处理。已开 **#447**，归 U03 |
 | `tavotto run` Ctrl+C 在负载下不退出 | #240 | pre-existing，见 §3.1 |
 | CI_HANDOFF §14 ①–⑥ | ci-foundation | ① 已修（#380）；② 未钉（§1.6）；③ Playwright 偶发红——本阶段没跑 e2e，`not_run`；④ Windows 特慢用例——本阶段 macOS 全量里 `InvMix` 三条 29 / 19 / 17 s，是同族最慢，Windows 数字沿用 CI00 §6；⑤ 产物依赖用例的执行位置——#409 已给 package / workerd 两组位置，runtime 4 条仍无；⑥ `WindowsPath` 参数 id——未动 |
 
@@ -211,7 +211,7 @@ FO19 lab_utils slope -> 2.0                                    # 不重名的本
 成因在 `engine/worker.py:48`（引擎目录 `sys.path.insert(0, HERE)` 后模块层 `import manifest` 等）：
 用户脚本目录虽在 build 时插到 `sys.path[0]`（`worker.py:164-166`），但 `manifest` 已在 `sys.modules`
 里，用户的同名模块永远轮不到。这不是本阶段要修的（U00 不改产品源码）；记录为 `product_failure`，
-不挂 required。
+不挂 required。**issue #447**（归 U03）。
 
 ## 5. 范围草案（供 U01 合同 / U02 spike / U06 定稿；U00 不改规则）
 
