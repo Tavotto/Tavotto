@@ -5208,7 +5208,7 @@ def _verify_ai_source_bake(target: dict, changed: bool, figures_dir: str) -> dic
         target_png.unlink(missing_ok=True)
         return {
             "status": "mismatch",
-            "code": "source_bake_no_source_change",
+            "reason": "no_source_change",
             "schema": target["schema"],
             "patch_hash": target["patch_hash"],
             "differences": [{"gid": "", "field": "source", "target": "baked", "source": "unchanged"}],
@@ -5254,7 +5254,7 @@ def _verify_ai_source_bake(target: dict, changed: bool, figures_dir: str) -> dic
         ok = not warnings and not diffs
         return {
             "status": "verified" if ok else "mismatch",
-            "code": "source_bake_verified" if ok else "source_bake_mismatch",
+            "reason": "verified" if ok else "visual_mismatch",
             "schema": target["schema"],
             "patch_hash": target["patch_hash"],
             "elements_compared": compared,
