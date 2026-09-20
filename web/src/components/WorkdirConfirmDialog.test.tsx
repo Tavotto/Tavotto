@@ -185,16 +185,30 @@ describe('WorkdirConfirmDialog', () => {
 
   it('「稍后」只关框；载荷留在渲染条目上，错误块的按钮能再打开', async () => {
     const payload = rootEvidence()
+    useRenderStore.setState({
+      byKey: {
+        k: {
+          ...(useRenderStore.getState().byKey.k ?? ({} as never)),
+          fileId: 'entry_cwd.pdf', status: 'error', code: WORKDIR_CONFIRMATION_CODE,
+          confirmation: payload, lastPatches: '[]', wantPatches: '[]', stale: false,
+        } as never,
+      },
+      tracked: {},
+    })
     await render(
       <>
         <WorkdirConfirmDialog />
-        <WorkdirChooseButton confirmation={payload} />
+        <WorkdirChooseButton confirmation={useRenderStore.getState().byKey.k.confirmation} />
       </>,
     )
     await act(async () => useEnvStore.getState().requestWorkdirConfirmation(payload))
     await act(async () => button(en('workdirChooseLater'))!.click())
+    await act(async () => {})
     expect(useEnvStore.getState().workdirConfirmation).toBeNull()
     expect(setMock).not.toHaveBeenCalled()
+    // 「稍后」不碰渲染条目：载荷还在那里，也不把这张图标成 stale（那会让同步器再撞一次门）
+    expect(useRenderStore.getState().byKey.k.confirmation).toEqual(payload)
+    expect(useRenderStore.getState().byKey.k.stale).toBe(false)
     await act(async () => button(en('workdirChooseButton'))!.click())
     expect(useEnvStore.getState().workdirConfirmation).toEqual(payload)
     expect(dialog()).not.toBeNull()
