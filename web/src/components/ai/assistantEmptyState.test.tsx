@@ -34,21 +34,32 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const ai = (k: string, v?: Record<string, unknown>) => t(k, { ns: 'ai', ...(v ?? {}) })
 
-const panel = (): PanelObject =>
+const panel = (withOverrides = false): PanelObject =>
   ({
     id: 'p1', type: 'panel', x: 0, y: 0, w: 100, h: 75,
     fileId: 'Fig1.pdf', fileKind: 'pdf', nativeW: 100, nativeH: 75,
-    name: 'Fig1', script: '/tmp/figs/fig1.py', overrides: [],
+    name: 'Fig1', script: '/tmp/figs/fig1.py',
+    overrides: withOverrides
+      ? [{ gid: 'axes_0.lines_0', prop: 'color', value: '#112233' }]
+      : [],
   }) as unknown as PanelObject
 
 let root: Root
 let host: HTMLDivElement
 
 /** 有没有选中一张可编辑的图，是两条完全不同的路径 */
-async function mount({ withPanel }: { withPanel: boolean }) {
+async function mount({
+  withPanel,
+  withOverrides = false,
+}: {
+  withPanel: boolean
+  withOverrides?: boolean
+}) {
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_assistant')
   if (withPanel) {
-    useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [panel()] } }) as never)
+    useDocumentStore.setState(
+      (s) => ({ doc: { ...s.doc, objects: [panel(withOverrides)] } }) as never,
+    )
     useSelectionStore.setState({ ids: ['p1'] } as never)
   } else {
     useSelectionStore.setState({ ids: [] } as never)
@@ -124,6 +135,19 @@ describe('还没发过任务时的信息布局', () => {
     await mount({ withPanel: false })
     const scroller = host.querySelector('.overflow-y-auto')!
     expect(scroller.textContent).toContain(ai('panel.noPanelTitle'))
+  })
+})
+
+describe('source-bake 入口', () => {
+  it('只有当前图存在 Tavotto overrides 时才显示「写入 Python」', async () => {
+    await mount({ withPanel: true })
+    expect(host.querySelector('[data-ai-bake-overrides]')).toBeNull()
+    await act(async () => root.unmount())
+
+    await mount({ withPanel: true, withOverrides: true })
+    const bake = host.querySelector('[data-ai-bake-overrides]') as HTMLButtonElement | null
+    expect(bake).toBeTruthy()
+    expect(bake!.textContent).toContain(ai('panel.bake'))
   })
 })
 
