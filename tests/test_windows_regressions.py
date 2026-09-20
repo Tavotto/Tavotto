@@ -1790,6 +1790,11 @@ def _byte_compared_generated_files() -> list[str]:
         # `tools/generate_enrollment.py --check` 与按 json 现渲染的文本逐字符比
         "docs/implementation/tavotto-foundation/enrollment.json",
         "docs/implementation/tavotto-foundation/ENROLLMENT.md",
+        # U02 render_spike 的 evidence：tests/test_foundation_u02_render.py 按 sha256 把 truth.json
+        # 与 spike.pdf 同 report.json 记的值互相钉住（PNG 有 NUL 又含 CRLF 字节，二进制走、不进这张表）
+        "docs/implementation/tavotto-foundation/evidence/u02/render/truth.json",
+        "docs/implementation/tavotto-foundation/evidence/u02/render/report.json",
+        "docs/implementation/tavotto-foundation/evidence/u02/render/spike.pdf",
     ]
 
 

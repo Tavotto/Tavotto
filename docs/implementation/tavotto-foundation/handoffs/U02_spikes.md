@@ -4,8 +4,9 @@
 架构决策：[`docs/adr/0055-render-spike.md`](../../../adr/0055-render-spike.md)、
 [`docs/adr/0056-runtime-spike.md`](../../../adr/0056-runtime-spike.md)。
 
-**开始 HEAD / 结束 HEAD / 用户原有工作区改动**：开始 `85047b75`（`foundation/u01-contracts` 的 head，即 U01 的
-PR #451；`origin/main` 当时 `89a83726`）；结束 = 本 PR 的 head（合并后以 `git log origin/main` 里 PR 号为准）。
+**开始 HEAD / 结束 HEAD / 用户原有工作区改动**：开始 `85047b75`（`foundation/u01-contracts` 当时的 head，即 U01 的
+PR #451；`origin/main` 当时 `89a83726`）；U01 评审后重写并 rebase 到新 U00（`98a55042`，含 main `8406b361`）之后本分支
+`rebase --onto a23bfef6 85047b75`，无冲突；结束 = 本 PR 的 head（合并后以 `git log origin/main` 里 PR 号为准）。
 全部在 worktree `tavotto-wt/foundation-u02` 里做，用户主工作区一个字节没碰；候选包全部装在 scratchpad 的独立
 spike venv，主仓库 `.venv` 与 `pyproject.toml` 零改动。
 
