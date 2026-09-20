@@ -188,33 +188,77 @@ _EVIDENCE_LINE = re.compile(
 )
 
 
+#: 绝对路径的两种写法：Windows（盘符 / UNC）与 POSIX（至少两段，免得把 argparse
+#: usage 里的 `-c/--clstr` 当成路径）。
+_ABS_PATH = re.compile(
+    r"""(?:[A-Za-z]:[\\/]|\\\\)(?:[^\\/\s'"`<>|]+[\\/])*[^\\/\s'"`<>|]*"""
+    r"""|/(?:[^/\s'"`<>|]+/)+[^/\s'"`<>|]*"""
+)
+
+
+def _shorten_path(match: re.Match) -> str:
+    """一条绝对路径 → 只留能定位的那一截：site-packages 之后的包内路径，否则文件名。
+
+    README 承诺包里不含「完整的本地文件路径」；`_redact_text` 只认当前主目录，
+    D 盘、外接盘、`\\\\wsl.localhost\\…` 上的项目路径它一个字都不动。帧行里
+    真正有诊断价值的是「哪个包的哪个文件第几行」，目录前缀没有。
+    """
+    raw = match.group(0)
+    parts = [seg for seg in re.split(r"[\\/]+", raw) if seg]
+    if not parts:
+        return raw
+    lowered = [seg.lower() for seg in parts]
+    if "site-packages" in lowered:
+        idx = len(lowered) - 1 - lowered[::-1].index("site-packages")
+        return "…/" + "/".join(parts[idx:])
+    return "…/" + parts[-1]
+
+
+def shorten_paths(line: str) -> str:
+    return _ABS_PATH.sub(_shorten_path, line)
+
+
 def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
-    """worker.log 尾巴 → (可进诊断包的证据行, 略去的行数)。"""
+    """worker.log 尾巴 → (可进诊断包的证据行, 略去的行数)。留下的行里绝对路径缩成
+    `…/site-packages/pkg/mod.py` 或 `…/文件名`。"""
     kept: list[str] = []
     dropped = 0
     for ln in tail:
         if not ln.strip():
             continue
         if _EVIDENCE_LINE.match(ln):
-            kept.append(ln.rstrip())
+            kept.append(shorten_paths(ln.rstrip()))
         else:
             dropped += 1
     return kept, dropped
 
 
 def worker_log_tails(
-    root: Path | None = None, *, files: int = WORKER_LOG_FILES, lines: int = WORKER_LOG_TAIL_LINES
+    root: Path | None = None,
+    *,
+    project_dir: str | Path | None,
+    files: int = WORKER_LOG_FILES,
+    lines: int = WORKER_LOG_TAIL_LINES,
 ) -> list[dict]:
-    """最近几份 `worker.log` 尾巴里的**证据行**（未脱敏——调用方经 `_redact_obj`）。
+    """**当前项目**最近几份 `worker.log` 尾巴里的证据行（未脱敏——调用方经 `_redact_obj`）。
 
-    只读、不起任何子进程。目录名是 `pool._cache_slug` 拼出来的
-    `<项目哈希>-<脚本名>`，读的人据此对上是哪个脚本的会话。`empty` 说的是
-    这一份日志尾巴**整个**是空的（进程一个字没留下就没了——硬崩溃的形状），
-    `omitted` 是按 `evidence_lines` 略去的行数。
+    只读、不起任何子进程。目录名是 `pool._cache_slug` 拼出来的 `<项目哈希>-<脚本名>`
+    （一次性重放是 `_replay-<nonce>-<项目哈希>-<脚本名>`），只取哈希等于
+    `pool.cache_digest(project_dir)` 的那些：诊断包是「当前打开的这个项目」的，
+    别的项目的脚本名与报错一个字都不该跟着出门（评审 #443 P1）。**没打开项目就
+    一份都不带**——没有项目就没有「属于谁」这个判据，宁可少给。
+    `empty` 说的是这一份日志尾巴**整个**是空的（进程一个字没留下就没了——硬崩溃
+    的形状），`omitted` 是按 `evidence_lines` 略去的行数。
     """
+    if not project_dir:
+        return []
+    digest = pool.cache_digest(project_dir)
+    owned = re.compile(rf"^(?:_replay-[0-9a-f]+-)?{re.escape(digest)}-")
     base = Path(root) if root is not None else pool.ENGINE_CACHE
     try:
-        candidates = [p for p in base.glob("*/worker.log") if p.is_file()]
+        candidates = [
+            p for p in base.glob("*/worker.log") if p.is_file() and owned.match(p.parent.name)
+        ]
     except OSError:
         return []
     stamped: list[tuple[float, Path]] = []
@@ -341,7 +385,7 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             "bundled_runtime": _runtime_section(),
             # 渲染进程自己最后说了什么：崩在 import 哪一句、faulthandler 的栈、
             # 脚本自己的报错都只在这里。app.log 里对应的只有一句「渲染进程退出了」。
-            "worker_logs": worker_log_tails(),
+            "worker_logs": worker_log_tails(project_dir=(project or {}).get("figures_dir")),
         },
         # 每个已注册编码 Agent 的探测结论。**不含就绪检查的账号细节**——
         # 那条只回 ready/needs_auth/unknown，邮箱与组织名一个字都不出现。

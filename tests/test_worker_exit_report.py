@@ -288,6 +288,8 @@ def test_session_dead_message_says_when_the_log_is_empty(tmp_path):
     )
     assert "没有留下任何输出" not in talkative
     assert "SIGSEGV" in talkative
+    # 评审 #443 P2：响应里只带尾巴，全文在哪两种情况都要说
+    assert str(log) in talkative
 
 
 # ------------------------------------------------------------ 退出状态的采集

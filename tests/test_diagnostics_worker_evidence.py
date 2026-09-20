@@ -85,8 +85,13 @@ def test_the_limit_keeps_the_most_recent_entries():
 
 
 # ------------------------------------------------------------ worker.log 尾巴
-def _session(root, name: str, text: str, age_s: float) -> None:
-    d = root / name
+#: 用例里的「当前项目」与「别的项目」：目录名前缀 = `pool.cache_digest(项目)`。
+PROJECT = "/projects/this-one"
+OTHER = "/projects/someone-elses"
+
+
+def _session(root, script: str, text: str, age_s: float, *, project: str = PROJECT) -> None:
+    d = root / f"{pool.cache_digest(project)}-{script}"
     d.mkdir()
     log = d / "worker.log"
     log.write_text(text, encoding="utf-8")
@@ -95,22 +100,44 @@ def _session(root, name: str, text: str, age_s: float) -> None:
 
 
 def test_worker_log_tails_take_the_most_recent_sessions_and_flag_empty_ones(tmp_path):
-    _session(tmp_path, "aaaa-old.py", "old stuff\n", age_s=3600)
-    _session(tmp_path, "bbbb-crashed.py", "Fatal Python error: Segmentation fault\n", age_s=10)
-    _session(tmp_path, "cccc-silent.py", "", age_s=5)
-    _session(tmp_path, "dddd-mid.py", "line1\nline2\n", age_s=60)
-    got = diagnostics.worker_log_tails(tmp_path, files=3, lines=60)
-    assert [g["session"] for g in got] == ["cccc-silent.py", "bbbb-crashed.py", "dddd-mid.py"]
+    _session(tmp_path, "old.py", "old stuff\n", age_s=3600)
+    _session(tmp_path, "crashed.py", "Fatal Python error: Segmentation fault\n", age_s=10)
+    _session(tmp_path, "silent.py", "", age_s=5)
+    _session(tmp_path, "mid.py", "line1\nline2\n", age_s=60)
+    got = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=60)
+    d = pool.cache_digest(PROJECT)
+    assert [g["session"] for g in got] == [f"{d}-silent.py", f"{d}-crashed.py", f"{d}-mid.py"]
     assert got[0]["empty"] is True and got[0]["tail"] == ""
     assert got[1]["empty"] is False
     assert "Segmentation fault" in got[1]["tail"]
     assert all(g["modified"] for g in got)
 
 
+def test_worker_log_tails_only_take_the_current_projects_sessions(tmp_path):
+    """评审 #443 P1：诊断包是「当前这个项目」的，别的项目的脚本名与报错不出门。
+
+    一次性重放目录（`_replay-<nonce>-<哈希>-<脚本>`）算本项目的；没打开项目时
+    一份都不带——没有项目就没有「属于谁」这个判据。
+    """
+    _session(tmp_path, "mine.py", "[guard] mine\n", age_s=1)
+    _session(
+        tmp_path, "theirs.py", "[guard] theirs SECRET_OTHER_PROJECT\n", age_s=0.5, project=OTHER
+    )
+    replay = tmp_path / f"_replay-0123abcd-{pool.cache_digest(PROJECT)}-mine.py"
+    replay.mkdir()
+    (replay / "worker.log").write_text("[guard] replay\n", encoding="utf-8")
+    got = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
+    names = {g["session"] for g in got}
+    assert names == {f"{pool.cache_digest(PROJECT)}-mine.py", replay.name}, names
+    assert "SECRET_OTHER_PROJECT" not in json.dumps(got)
+    assert diagnostics.worker_log_tails(tmp_path, project_dir=None) == []
+    assert diagnostics.worker_log_tails(tmp_path, project_dir="") == []
+
+
 def test_worker_log_tails_keep_only_the_last_n_lines(tmp_path):
     body = "\n".join(f"[guard] L{i}" for i in range(200)) + "\n"
-    _session(tmp_path, "aaaa-long.py", body, age_s=1)
-    (got,) = diagnostics.worker_log_tails(tmp_path, files=3, lines=5)
+    _session(tmp_path, "long.py", body, age_s=1)
+    (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=5)
     assert got["tail"].splitlines() == [f"[guard] L{i}" for i in range(195, 200)]
 
 
@@ -139,15 +166,18 @@ def test_evidence_lines_keep_errors_and_frames_but_not_prints_or_source():
     """README 承诺：不含脚本源码、不含数据。证据行是结构性的：帧、异常、崩溃栈。"""
     kept, omitted = diagnostics.evidence_lines(WORKER_LOG.splitlines())
     text = "\n".join(kept)
-    # 留下的
+    # 留下的（帧里的绝对路径缩成 `…/文件名` / `…/site-packages/包/模块.py`——评审 #443 P1：
+    # README 承诺不含完整本地路径，而 `_redact_text` 只认当前主目录，E: 盘它不动）
     assert "Traceback (most recent call last):" in text
-    assert 'File "E:/data/fig.py", line 12, in <module>' in text
-    assert "FileNotFoundError: [Errno 2]" in text
+    assert 'File "…/fig.py", line 12, in <module>' in text
+    assert "FileNotFoundError: [Errno 2] No such file or directory: '…/missing.csv'" in text
     assert "Fatal Python error: Segmentation fault" in text
     assert "Current thread 0x00001234" in text
-    assert 'File "E:/data/fig.py", line 20 in <module>' in text
-    assert "[guard] 跳过删除真实图库文件" in text
+    assert 'File "…/fig.py", line 20 in <module>' in text
+    assert 'File "…/site-packages/matplotlib/ft2font.py", line 40 in load' in text
+    assert "[guard] 跳过删除真实图库文件: …/old.png" in text
     assert "Extension modules:" in text
+    assert "E:/data" not in text and "/env/lib" not in text
     # 略去的：脚本 print 的数据、帧下面的源码行、matplotlib 的噪音
     assert "temperature.csv" not in text
     assert "301.2" not in text
@@ -158,24 +188,53 @@ def test_evidence_lines_keep_errors_and_frames_but_not_prints_or_source():
     assert omitted == 6
 
 
+@pytest.mark.parametrize(
+    "line, expect",
+    [
+        (
+            r'  File "D:\ConfidentialStudy\fig.py", line 12, in <module>',
+            '  File "…/fig.py", line 12, in <module>',
+        ),
+        (
+            r'  File "\\wsl.localhost\Ubuntu\home\u\motif\plot.py", line 20 in <module>',
+            '  File "…/plot.py", line 20 in <module>',
+        ),
+        (
+            r"OSError: [WinError 5] 拒绝访问。: 'C:\Users\someone\x.png'",
+            "OSError: [WinError 5] 拒绝访问。: '…/x.png'",
+        ),
+        (
+            "error: the following arguments are required: -c/--clstr, -x/--metadata",
+            None,
+        ),  # 不是路径
+        ('  File "<frozen runpy>", line 88, in _run_code', None),
+    ],
+)
+def test_absolute_paths_outside_home_are_shortened_too(line, expect):
+    assert diagnostics.shorten_paths(line) == (expect if expect is not None else line)
+
+
 def test_worker_log_tails_report_how_many_lines_were_left_out(tmp_path):
-    _session(tmp_path, "aaaa-fig.py", WORKER_LOG, age_s=1)
-    (got,) = diagnostics.worker_log_tails(tmp_path)
+    _session(tmp_path, "fig.py", WORKER_LOG, age_s=1)
+    (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
     assert got["omitted"] == 6
     assert got["empty"] is False
     assert "301.2" not in got["tail"]
 
 
 def test_worker_log_tails_survive_a_missing_cache_dir(tmp_path):
-    assert diagnostics.worker_log_tails(tmp_path / "nowhere") == []
+    assert diagnostics.worker_log_tails(tmp_path / "nowhere", project_dir=PROJECT) == []
 
 
 def test_the_report_carries_redacted_worker_logs(client, tmp_path, monkeypatch):
-    """报告里那一段过的是**同一道**脱敏：主目录换成 `~`、密钥抹掉。"""
+    """报告里那一段过的是**同一道**脱敏：主目录换成 `~`、密钥抹掉；且只带当前项目的。"""
     monkeypatch.setattr(pool, "ENGINE_CACHE", tmp_path)
+    project = tmp_path / "proj"
+    project.mkdir()
+    m.open_project(str(project))
     _session(
         tmp_path,
-        "eeee-fig.py",
+        "fig.py",
         f"loading {os.path.join(REAL_HOME, 'data.csv')}\n"
         f"Traceback (most recent call last):\n"
         f'  File "{os.path.join(REAL_HOME, "fig.py")}", line 3, in <module>\n'
@@ -183,14 +242,19 @@ def test_the_report_carries_redacted_worker_logs(client, tmp_path, monkeypatch):
         "RuntimeError: bad key sk-abcdefghijklmnop\n"
         "Fatal Python error: Segmentation fault\n",
         age_s=1,
+        project=str(project),
     )
+    _session(tmp_path, "other.py", "RuntimeError: OTHER_PROJECT_SECRET\n", age_s=0.5, project=OTHER)
     z = zipfile.ZipFile(BytesIO(client.get("/api/diagnostics/bundle").data))
     report = json.loads(z.read("report.json"))
     logs = report["render"]["worker_logs"]
-    assert logs and logs[0]["session"] == "eeee-fig.py"
+    assert [g["session"] for g in logs] == [f"{pool.cache_digest(str(project))}-fig.py"], logs
+    assert "OTHER_PROJECT_SECRET" not in json.dumps(report)
     tail = logs[0]["tail"]
     assert "Segmentation fault" in tail
-    assert REAL_HOME not in tail and "~" in tail
+    assert REAL_HOME not in tail
+    # 帧路径缩到文件名：主目录连出现的机会都没有（不靠 `~` 那道替换）
+    assert 'File "…/fig.py", line 3' in tail
     assert "sk-abcdefghijklmnop" not in tail and "***" in tail
     assert "loading" not in tail, "脚本自己 print 的那行不进包"
     assert "token = " not in tail, "帧下面的源码行不进包（README：不含 Python 源代码）"

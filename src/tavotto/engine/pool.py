@@ -209,10 +209,12 @@ def session_dead_message(report: dict | None, log_tail: str, log_path) -> str:
 
     三段：它怎么死的（退出码的解释）；有没有留下话（worker.log 这一代的尾巴
     空不空——空的话要**说出来**，否则用户面对一个空的「展开输出」以为界面坏了）；
-    日志在哪。
+    日志在哪（**两种情况都给**：响应里只带尾巴，要看全文得知道路径）。
     """
     text = f"渲染进程退出了：{describe_exit(report)}。会话已作废，下一次操作会重建。"
-    if not (log_tail or "").strip():
+    if (log_tail or "").strip():
+        text += f" 它最后的输出在下面（完整日志：{log_path}）。"
+    else:
         text += (
             f" 它退出前没有留下任何输出（worker.log 这一代是空的：{log_path}）"
             "——这通常是进程级崩溃，不是脚本抛的异常。"
@@ -435,13 +437,20 @@ def _next_generation(key: tuple[str, str]) -> int:
         return gen
 
 
+def cache_digest(figures_dir: str | Path) -> str:
+    """项目 → 缓存目录名前缀（8 位 sha1）。`_cache_slug` 与「这个项目有哪些会话目录」
+    （诊断包只带当前项目的 worker.log）的**唯一出处**——两处各算一遍就会有一天对不上。"""
+    return hashlib.sha1(_norm_dir(figures_dir).encode("utf-8")).hexdigest()[:8]
+
+
 def _cache_slug(figures_dir: str, script_name: str) -> str:
     """(项目, 脚本) → 缓存子目录名。
 
     以前是 `Path(script_name).stem`：不同项目 / 不同子目录下的同名脚本会共用
-    同一个 out/sandbox 目录，互相覆盖 SVG 与 manifest。
+    同一个 out/sandbox 目录，互相覆盖 SVG 与 manifest。`figures_dir` 是已经
+    `_norm_dir` 过的项目串（调用方都这么传），`cache_digest` 再规范化一次是幂等的。
     """
-    digest = hashlib.sha1(figures_dir.encode("utf-8")).hexdigest()[:8]
+    digest = cache_digest(figures_dir)
     safe = re.sub(r"[^\w.-]+", "_", script_name.replace("\\", "/").rstrip("/"))
     return f"{digest}-{safe[:60]}"
 
