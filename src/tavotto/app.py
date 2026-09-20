@@ -5211,7 +5211,9 @@ def _verify_ai_source_bake(target: dict, changed: bool, figures_dir: str) -> dic
             "reason": "no_source_change",
             "schema": target["schema"],
             "patch_hash": target["patch_hash"],
-            "differences": [{"gid": "", "field": "source", "target": "baked", "source": "unchanged"}],
+            "differences": [
+                {"gid": "", "field": "source", "target": "baked", "source": "unchanged"}
+            ],
         }
 
     fresh = engine_pool.one_shot(target["script"], figures_dir, target["entry"])
@@ -5319,7 +5321,10 @@ def api_ai_run():
             "stem": source_bake_target["stem"],
             "patch_hash": source_bake_target["patch_hash"],
             "patches": source_bake_target["patches"],
-            "goal": "modified Python must reproduce the current Tavotto visual state with overrides=[]",
+            "goal": (
+                "modified Python must reproduce the current Tavotto visual state "
+                "with overrides=[]"
+            ),
         }
     ctx = current_ctx()
     try:
