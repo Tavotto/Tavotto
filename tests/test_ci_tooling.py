@@ -310,6 +310,16 @@ class TestPreflight:
             lambda mode: [lab_preflight.Check("持久化根目录", True, "ok")],
         )
         monkeypatch.setattr(lab_preflight.shutil, "which", lambda exe: f"/usr/bin/{exe}")
+        # 遗留进程那一格也要桩掉：它扫的是**整台机器**的 /proc（`find_ci_owned_tavotto`，
+        # 按 CI 持久化根 / runner 工作目录判归属），lab 的常规套件 2026-09-20 起同机 4 片
+        # 并行，别的片正在跑的 worker 会被它当成「上一轮遗留」——首跑就是这么红的
+        # （ci-infra run 35486968045，片 1）。这条用例的主语是 main() 把各项检查串起来
+        # 之后的退出码，不是这台机器此刻干不干净；机器状态的判据在它自己的用例里。
+        monkeypatch.setattr(
+            lab_preflight,
+            "check_stale_processes",
+            lambda *a, **k: [lab_preflight.Check("上一轮遗留的 Tavotto 进程", True, "无")],
+        )
         assert lab_preflight.main(["--mode", "main", "--no-report"]) == 0
 
 
