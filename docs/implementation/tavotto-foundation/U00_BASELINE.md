@@ -152,11 +152,20 @@ pnpm 11.0.7 / node 26.7.0；cargo 1.95.0。**全部在 `origin/main` (319a506d) 
 pytest / venv 构建在跑，正是 #240 描述的「机器同时有别的重活时复现」条件。**不改 aggregate_gate、
 不加豁免**；它不属于本轨道，处置归 #240。
 
-51 条 skip 全部是「产物没建」类（workerd 二进制 11 条——注意 pytest 由 conftest 钉 `TAVOTTO_WORKERD=0`，
-且 pytest 跑在 cargo test 之前；MCP 画布 4 条；wheel 产物 3 条；runtime 4 条；插件候选 6 条；本机真装着
-Tavotto 桌面版 11 条；联网冒烟 3 条；非 Linux 1 条；族模块无 RESTORE 表 2 条；序列 harness 空参数集 1 条
-等），逐条见 `evidence/u00/pytest_full_summary.txt`。**skip 不是绿**：workerd / MCP 画布 / 产物那几组在
+51 条 skip 全部是「产物没建 / 本机形态」类（workerd 二进制 12 条——pytest 由 conftest 钉 `TAVOTTO_WORKERD=0`，
+且这次 pytest 跑在 cargo test 之前；MCP 画布 4 条；wheel 产物 3 条；runtime 4 条；插件候选 6 条；本机真装着
+Tavotto 桌面版 10 条；联网冒烟 3 条；NSIS 中间脚本 2 条；族模块无 RESTORE 表 2 条；更新链探针二进制 1 条；
+`web/node_modules` 1 条；画布真构建 1 条；非 Linux 1 条；序列 harness 空参数集 1 条），逐条见
+`evidence/u00/pytest_full_summary.txt`。**skip 不是绿**：workerd / MCP 画布 / 产物那几组在
 CI 的 merge_group 上有真实执行位置（`docs/ci/pr-review-tiers.md`、#409），本机没建就不算验过。
+
+### 3.1.1 本分支的全量（提交前，含新用例）
+
+`PYTHONPATH=$WT/src pytest`（本分支 worktree，rebase 到 `62eb7f7a` 之后）：**2 failed / 4972 passed /
+51 skipped**，22 分 00 秒。两条红：① 同一条 #240（pre-existing）；② `tests/test_source_hygiene.py::
+test_windows_bound_subprocesses_pin_their_decoding`——**抓的是本阶段新加的文件**（`make_venv.py` 与
+`test_foundation_fixtures.py` 里 6 处 `subprocess.run(text=True)` 没给 `encoding`），已按仓库纪律补
+`encoding="utf-8", errors="replace"` 并单跑该门禁绿；不是基线红。新增 30 条用例全绿。
 
 ### 3.2 已知与本机测量相关的不确定性
 

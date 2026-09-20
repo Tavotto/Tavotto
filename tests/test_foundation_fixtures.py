@@ -169,6 +169,8 @@ def test_make_venv_builds_a_venv_on_a_different_python_without_installing(tmp_pa
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=300,
     )
     assert proc.returncode == 0, proc.stderr
@@ -193,6 +195,8 @@ def test_make_venv_builds_a_venv_on_a_different_python_without_installing(tmp_pa
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=300,
     )
     assert same.returncode == 2
@@ -288,6 +292,8 @@ def test_dependency_script_imports_match_truth():
         cwd=str(base),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
@@ -408,7 +414,14 @@ def _run_native(python: str, cwd: Path, args: list[str], tmp: Path) -> subproces
     env = {**os.environ, "MPLCONFIGDIR": str(tmp / "mplconfig"), "MPLBACKEND": "Agg"}
     env.pop("PYTHONPATH", None)
     return subprocess.run(
-        [python, *args], cwd=str(cwd), env=env, capture_output=True, text=True, timeout=180
+        [python, *args],
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
     )
 
 

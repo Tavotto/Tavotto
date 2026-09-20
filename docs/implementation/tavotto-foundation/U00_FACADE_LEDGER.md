@@ -126,5 +126,5 @@ RC-002：compose() 返回的画布对象是 facade 唯一泄漏的后端对象�
 
 - U06：批准字体集合 + Typography 层 + Render IR（替换 base-14 与 Droid Sans Fallback 的 oracle）
 - U07：矢量合成 + 受控栅格运行时（PDFium 候选，集中串行）
-- U08：全部 19 个导出项 + 8 个 Canvas 面 + 8 个 probe_asset 调用点迁移 parity；有限产物验证（ArtifactManifest）
+- U08：全部 19 个导出项 + 7 个 Canvas 面（含 context manager） + 8 个 probe_asset 调用点迁移 parity；有限产物验证（ArtifactManifest）
 - U10：切默认 → 移除 pymupdf 依赖 → 发行闭包退役扫描（主语：应用 / 发行 / runtime 闭包，不是用户环境；D15）

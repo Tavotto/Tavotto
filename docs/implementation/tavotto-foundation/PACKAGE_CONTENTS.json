@@ -64,8 +64,8 @@
     },
     {
       "path": "U00_BASELINE.md",
-      "bytes": 27090,
-      "sha256": "5419f9f932c6c3750e9d14e4ffc14b82cebc07321e70203c805e076dc4d7a10e"
+      "bytes": 29154,
+      "sha256": "bdf55503992d7bc777362b1ac685a714a237ecdde0d07bcb0a34c293c0c5a7bd"
     },
     {
       "path": "U00_CAPABILITY_INVENTORY.md",
@@ -74,13 +74,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 40691,
-      "sha256": "33029ab8818c59ae293b1c2ddd020bb5f28b13700524f398a4023baf25c91319"
+      "bytes": 40716,
+      "sha256": "05591456f322fab45bd9bc89a8b0ef467f909b7146fdad1b02b29880b2423755"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 20532,
-      "sha256": "8766e9e9cf711b5dea12fbae912287dd6e1ada63541aa4cdb7f573e85f67d1af"
+      "bytes": 20557,
+      "sha256": "4b11cfe1576097595976b8f7dc28acaa59d1693251d50872cee82ebb25941311"
     },
     {
       "path": "archive/README.md",
@@ -169,8 +169,8 @@
     },
     {
       "path": "handoffs/U00_baseline.md",
-      "bytes": 9549,
-      "sha256": "389e802da5db5cbca60842275c1ca465e63919c4b2905fc63fad95d0d43bfcf9"
+      "bytes": 9873,
+      "sha256": "4100d5c8f399eec01fa554b52349f3294bd9578269244e6ed9d1206aa8345403"
     },
     {
       "path": "phase_mapping.json",

@@ -48,6 +48,7 @@ R00 / RC-001…006 的清点部分（迁移判据已写，验证归 U08）；CP0
 | `cd workerd && cargo test / clippy -D warnings / fmt --check` | 同上 | 0 / 0 / 0 | 53 tests |
 | `PYTHONPATH=$WT/src python scripts/smoke_app.py --python .venv/bin/python` | 同上；web/dist 与 workerd debug 二进制现建 | 0 | 冒烟通过：source=system、控制面 workerd、首渲染 12.8 s 冷 / 0.04 s 热、导出 + 覆盖导出、干净退出；`evidence/u00/smoke_steps.txt` |
 | `PYTHONPATH=$WT/src pytest tests/test_foundation_fixtures.py tests/test_foundation_facade_ledger.py tests/test_foundation_plan_integrity.py` | 本 PR 的 worktree | 0 | 见 PR 正文（含变异反证） |
+| `PYTHONPATH=$WT/src pytest`（全量，本分支） | 本 PR 的 worktree（rebase 到 `62eb7f7a` 后） | 1 | 2 failed / 4972 passed / 51 skipped，22 分：#240（pre-existing）+ `test_source_hygiene` 抓到本阶段新文件的 `subprocess.run(text=True)` 没给 encoding（已修、单跑绿，`U00_BASELINE.md` §3.1.1） |
 | `python tools/validate_plan.py .` / `python -m unittest discover -s tools -p 'test_*.py'` | 入库后的 `docs/implementation/tavotto-foundation` | 0 / 0 | `ok: true` / 17 tests OK——**任务书结构自检，不是产品测试** |
 | 内置 runtime 构建、e2e（Playwright）、lab 腿、Windows / Linux 任何测量 | — | — | **not_run**（本机没构建 runtime；e2e 未跑；只有 macOS） |
 

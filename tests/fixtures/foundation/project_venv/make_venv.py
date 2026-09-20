@@ -46,7 +46,13 @@ _PROBE = (
 
 def _probe(python: str) -> dict:
     out = subprocess.run(
-        [python, "-I", "-c", _PROBE], capture_output=True, text=True, check=True, timeout=60
+        [python, "-I", "-c", _PROBE],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        timeout=60,
     )
     return json.loads(out.stdout.strip().splitlines()[-1])
 
@@ -78,6 +84,8 @@ def build(python: str, dest: Path, *, app_python: str | None, link_host_site: bo
             [str(vpy), "-c", "import sysconfig;print(sysconfig.get_paths()['purelib'])"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
             timeout=60,
         ).stdout.strip()
