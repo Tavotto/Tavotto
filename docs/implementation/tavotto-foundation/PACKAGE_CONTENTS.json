@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 5671,
-      "sha256": "3ac453d658109c68df736e9922f4e90f3978f8373ddb999d914c03c2ee44d730"
+      "bytes": 6310,
+      "sha256": "7306366738196cf8ebd159211e9df21cd3b21b701f8b6afb0553f6965d08a495"
     },
     {
       "path": "SOURCES.md",
@@ -163,6 +163,51 @@
       "sha256": "f70f581ce81b569126e2ebd6e0f822625586942953e9e78e6cb0c832ec1c9ffb"
     },
     {
+      "path": "evidence/u02/README.md",
+      "bytes": 2302,
+      "sha256": "e42e93554298484d4789be6b051c1d3d1a4eae04f42aca811b95912b84075d54"
+    },
+    {
+      "path": "evidence/u02/freeze/frozen-render-darwin-arm64.png",
+      "bytes": 13922,
+      "sha256": "0e5d6b78b945d73a44225a8c62f960ced3f2864aec7ee734f538a5630b40a164"
+    },
+    {
+      "path": "evidence/u02/freeze/pyinstaller.log",
+      "bytes": 13788,
+      "sha256": "ac22ad1da339962b16523fa5dbf37d2bce70a3d702c7746a4be4fb9165bad594"
+    },
+    {
+      "path": "evidence/u02/freeze/report-darwin-arm64.json",
+      "bytes": 3158,
+      "sha256": "11192baa42e5498f6ed7801621dc40bf5156f170cc36a63a468fd1f05a77ee9e"
+    },
+    {
+      "path": "evidence/u02/render/report.json",
+      "bytes": 20404,
+      "sha256": "197203110ed255d454535b3657596f10e9fed541b8ae586a93c18e92b4ec1209"
+    },
+    {
+      "path": "evidence/u02/render/spike.pdf",
+      "bytes": 18073,
+      "sha256": "12966287d846078030c4e7c29d97014c8eec390e57a5cba5f63ebc666a14b9dc"
+    },
+    {
+      "path": "evidence/u02/render/spike_pdfium.png",
+      "bytes": 30866,
+      "sha256": "422b77b9408edf273d59fc8f359764045b17108a99e2daf575c1cb872c21d413"
+    },
+    {
+      "path": "evidence/u02/render/truth.json",
+      "bytes": 5411,
+      "sha256": "dcddcb52d52e02c765af4090747fd7748a9586eaf43bc1ecbdfc8fdf7b3daa3a"
+    },
+    {
+      "path": "evidence/u02/runtime/report-macos-arm64.json",
+      "bytes": 8634,
+      "sha256": "d38a466b395a1d2571b4fbb19d45d79041f86a559b991a3a7e56eabf7fbb2a1c"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -196,6 +241,11 @@
       "path": "handoffs/U01_contracts.md",
       "bytes": 13855,
       "sha256": "1708a88b71e8549855449bec72d9fdb95458bda01e80586963d1b63a9381b73c"
+    },
+    {
+      "path": "handoffs/U02_spikes.md",
+      "bytes": 15030,
+      "sha256": "2e1fe07705d462895cec12e96eed26cb834af592cf59e59e62aa75f1b4098886"
     },
     {
       "path": "phase_mapping.json",
@@ -264,8 +314,8 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7394,
-      "sha256": "b684c34039d8312bb93b915a7f57a2313eb2466c0b45de2108bf96ae09e9fe55"
+      "bytes": 7387,
+      "sha256": "19e98dbb685e3321f566ad950f41bdd10b4e129c51c1610fd5a2e1438b78b211"
     },
     {
       "path": "registry.json",
