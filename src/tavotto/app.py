@@ -5287,7 +5287,7 @@ def api_ai_run():
         ), 404
     patches = body.get("overrides") or []
     if not isinstance(patches, list):
-        return jsonify({"error": "overrides 必须是数组", "code": "invalid_overrides"}), 400
+        return jsonify({"error": "overrides 必须是数组", "code": "invalid_patches"}), 400
     source_bake_target = None
     if body.get("bake_overrides"):
         if not patches:
