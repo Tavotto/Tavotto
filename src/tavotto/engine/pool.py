@@ -694,17 +694,19 @@ def select_worker_python() -> tuple[str, str]:
         return _worker_python, _worker_source
     seen: set[str] = set()
     for cand, source in _prioritized_candidates():
-        if cand in seen:
-            continue
-        seen.add(cand)  # 同一个解释器不重复探测（每次探测最多 30s）
         try:
             exists = Path(cand).exists()
         except OSError:
             exists = False
         if not exists:
+            # 「不存在」按来源各自判，**在去重之前**：环境变量与设置里指着同一条已不存在的
+            # 路径时，先去重会让设置那条被跳过、然后静默滑到系统解释器（Codex #454 P2）。
             if source == SOURCE_CONFIGURED:
                 raise _explicit_unusable(source, cand, "missing")
             continue
+        if cand in seen:
+            continue
+        seen.add(cand)  # 同一个解释器不重复探测（每次探测最多 30s）
         if _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED):
             _worker_python, _worker_source = cand, source
             LOG.info("渲染解释器: %s（来源 %s）", cand, source)

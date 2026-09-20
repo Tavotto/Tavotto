@@ -235,6 +235,24 @@ def test_a_stale_env_var_is_still_ignored_but_a_stale_setting_is_not(tmp_path, m
     assert err.value.explicit["reason"] == "missing"
 
 
+def test_a_stale_env_var_and_a_stale_setting_on_the_same_path_still_stop(tmp_path, monkeypatch):
+    """环境变量与设置里指着**同一条**已不存在的路径：设置那条不能因为去重被跳过而静默滑到
+    系统解释器——仍然是 `explicit_python_unusable`（reason=missing，source=configured）
+    （Codex #454 P2）。"""
+    gone = str(tmp_path / "gone" / "python")
+    monkeypatch.setenv(engine_pool.WORKER_PYTHON_ENV, gone)
+    engine_config.set_worker_python(gone)
+    engine_pool.reset_worker_python()
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.select_worker_python()
+    assert err.value.code == engine_pool.EXPLICIT_UNUSABLE_CODE
+    assert err.value.explicit == {
+        "source": engine_pool.SOURCE_CONFIGURED,
+        "python": gone,
+        "reason": "missing",
+    }
+
+
 @needs_worker
 def test_fo16_a_user_chosen_project_interpreter_that_broke_stops_with_the_reason(tmp_path):
     root = _project(tmp_path)
