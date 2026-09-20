@@ -335,7 +335,10 @@ def test_build_prompt_source_bake_uses_versioned_structured_context(tmp_path):
             "stem": "Fig1",
             "patch_hash": "sha256:abc",
             "patches": [{"gid": "axes_0.lines_0", "prop": "color", "value": "#112233"}],
-            "goal": "modified Python must reproduce the current Tavotto visual state with overrides=[]",
+            "goal": (
+                "modified Python must reproduce the current Tavotto visual state "
+                "with overrides=[]"
+            ),
         },
     }
     prompt = ai_bridge._build_prompt("fig1.py", "写入源码", context, str(tmp_path))
