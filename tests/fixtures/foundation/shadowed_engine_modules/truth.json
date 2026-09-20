@@ -1,0 +1,11 @@
+{
+  "fixture": "shadowed_engine_modules",
+  "script": "figure.py",
+  "shadowed_engine_modules": ["manifest", "overrides"],
+  "local_package": "lab_utils",
+  "sentinel_title": "user-manifest|user-overrides|user-lab_utils",
+  "x": [0, 1, 2],
+  "y": [3.0, 6.0, 12.0],
+  "formula": "y = RUNS value * overrides.SCALE (3.0)",
+  "expected_output": "figure.pdf"
+}

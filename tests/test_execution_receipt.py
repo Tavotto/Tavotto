@@ -79,20 +79,22 @@ class TestLaunchContext:
         assert ctx["argv"] == ["--fast"]
         assert ctx["entry"] is None
 
-    def test_project_root_origin_has_no_producer_today(self):
-        """枚举里有 `project.root`，但今天没有任何 spec 组合派生出它——U03 加了才有。
-        这条钉住「占位不等于已实现」：将来谁把 project 档改成项目根，这里先红。"""
-        assert execspec.CWD_ORIGIN_PROJECT_ROOT in execspec.CWD_ORIGINS
-        produced = {
-            execspec.launch_context(spec)["cwd_origin"]
-            for spec in (_safe(), _safe(execspec.CWD_PROJECT), _native())
+    def test_every_cwd_origin_has_exactly_one_producer(self):
+        """U01 时 `project.root` 只是占位（没有 spec 组合派生出它）；U03 加了 `cwd_mode=project_root`
+        这一档之后四个来源各有且只有一个生产者。`project` 档**没有**被改成项目根（ADR 0047
+        的语义不变），而是多了第三档——这条钉住这两件事。"""
+        by_origin = {
+            execspec.launch_context(spec)["cwd_origin"]: spec.cwd_mode
+            for spec in (
+                _safe(),
+                _safe(execspec.CWD_PROJECT),
+                _safe(execspec.CWD_PROJECT_ROOT),
+                _native(),
+            )
         }
-        assert execspec.CWD_ORIGIN_PROJECT_ROOT not in produced
-        assert produced == {
-            execspec.CWD_ORIGIN_SANDBOX,
-            execspec.CWD_ORIGIN_SCRIPT_PARENT,
-            execspec.CWD_ORIGIN_INVOCATION,
-        }
+        assert set(by_origin) == set(execspec.CWD_ORIGINS)
+        assert by_origin[execspec.CWD_ORIGIN_SCRIPT_PARENT] == execspec.CWD_PROJECT
+        assert by_origin[execspec.CWD_ORIGIN_PROJECT_ROOT] == execspec.CWD_PROJECT_ROOT
 
     def test_context_carries_no_machine_paths(self):
         ctx = execspec.launch_context(_safe(interpreter="/envs/secret-venv/bin/python"))
