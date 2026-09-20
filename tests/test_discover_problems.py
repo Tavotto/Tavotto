@@ -194,6 +194,28 @@ def test_the_target_parser_result_is_cached_by_content(tmp_path, monkeypatch):
     assert len(calls) == 2
 
 
+def test_the_target_parser_cache_is_keyed_by_path_and_root_not_only_by_bytes(tmp_path):
+    """两个内容逐字相同、`Path(__file__).with_suffix('.pdf')` 自命名的脚本：stem 来自文件名，
+    只按内容缓存会让 `beta.py` 报出 `alpha`（Codex #454 P2）。"""
+    src = (
+        "from pathlib import Path\nimport matplotlib.pyplot as plt\nfig, ax = plt.subplots()\n"
+        "ax.plot([1])\nfig.savefig(Path(__file__).with_suffix('.pdf'))\n"
+    )
+    for name in ("alpha.py", "beta.py"):
+        (tmp_path / name).write_text(src, encoding="utf-8")
+    discover.reset_target_cache()
+    a = discover.analyze_in_interpreter(sys.executable, tmp_path / "alpha.py", tmp_path)
+    b = discover.analyze_in_interpreter(sys.executable, tmp_path / "beta.py", tmp_path)
+    assert a["info"]["stems"] == ["alpha"] and b["info"]["stems"] == ["beta"]
+    # 同一份脚本换一个项目根也是另一个键（`_resolve` 对的是那个根下的产物）
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "alpha.py").write_text(src, encoding="utf-8")
+    (other / "alpha.pdf").write_bytes(b"%PDF-1.4\n")
+    c = discover.analyze_in_interpreter(sys.executable, other / "alpha.py", other)
+    assert c["info"]["stems"] == ["alpha"]
+
+
 def test_an_unavailable_target_parser_keeps_the_host_verdict_and_records_why(tmp_path):
     path = tmp_path / "fig.py"
     path.write_text("def (:\n", encoding="utf-8")

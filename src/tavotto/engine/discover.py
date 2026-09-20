@@ -177,8 +177,8 @@ PARSER_TARGET = "target"
 #: 超时按「目标解析器不可用」处理（问题仍是宿主报的那个语法错误，`parser_error` 记原因）。
 TARGET_PARSE_TIMEOUT_S = 30.0
 
-#: 目标解析结果缓存：(目标解释器, 文件内容 sha1) → 结果。刷新会反复扫同一批文件，
-#: 每次都起一个解释器是分钟级的代价；文件内容变了键就变。
+#: 目标解析结果缓存：(目标解释器, 脚本路径, 项目根, 文件内容 sha1) → 结果。刷新会反复扫
+#: 同一批文件，每次都起一个解释器是分钟级的代价；文件内容 / 位置变了键就变。
 _target_cache: dict[tuple[str, str], dict] = {}
 _target_lock = threading.Lock()
 
@@ -263,7 +263,15 @@ def analyze_in_interpreter(python: str, path: Path, figures_dir: Path) -> dict:
         digest = hashlib.sha1(path.read_bytes()).hexdigest()
     except OSError as exc:
         return {"error": f"read: {exc}"[:200]}
-    key = (os.path.normcase(os.path.abspath(python)), digest)
+    # 键里除了解释器与文件内容，还得有**路径与项目根**：`_Analyzer` 拿 `path.name` 还原
+    # `Path(__file__)` 自命名的输出，`_resolve` 拿 `figures_dir` 下的产物对 `*`——两个内容
+    # 相同的 `alpha.py` / `beta.py` 只按内容缓存会让后者报出前者的 stem（Codex #454 P2）。
+    key = (
+        os.path.normcase(os.path.abspath(python)),
+        os.path.normcase(os.path.abspath(str(path))),
+        os.path.normcase(os.path.abspath(str(figures_dir))),
+        digest,
+    )
     with _target_lock:
         cached = _target_cache.get(key)
     if cached is not None:
