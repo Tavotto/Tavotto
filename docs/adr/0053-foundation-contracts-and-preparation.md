@@ -32,10 +32,10 @@
 |---|---|---|
 | LaunchContext | `engine/execspec.py`：`launch_context(spec, grant=…)` | 从 `ExecutionSpec` **派生**的只读视图：`cwd_origin ∈ {sandbox, script.parent, project.root, invocation.cwd}`、`write_mode ∈ {sandboxed, project_dir, unrestricted}`、稳定字段、`grant`。`ExecutionSpec` 与 `worker_argv` 的 golden 一个字节不变 |
 | grant（FO-047） | `engine/workdir.py`：`set_mode(project)` 记 `granted_at`，`grant_for()` 读 | 只记时刻不记人（本机单用户，记一个 `user` 字面量是假信息）；老设置「授予过但没记时刻」与「没授予」是两个答案 |
-| DependencyIntent | `engine/depresolve.py`：`DependencyIntent` / `parse_intent` / `declared_intents` / `conflicts` | **第二个读法，不是第二个安装器**：name / specifier / extras / marker / group / source / kind 原样保留；看不懂的行是 `kind=unknown` 并保留原文（unknown 不是空依赖）；`constraints.txt` 读进来标 `constraint`；冲突列出不裁决。安装路径的窄语法（安全边界）一字不动 |
+| DependencyIntent | `engine/depresolve.py`：`DependencyIntent` / `parse_intent` / `declared_intents` / `conflicts` | **第二个读法，不是第二个安装器**：name / specifier / extras / marker / group / source / kind 原样保留；看不懂的行是 `kind=unknown` 并保留原文（unknown 不是空依赖）；`constraints.txt` 读进来标 `constraint` 并**参与** `conflicts()` 的同名分组（specifier 不一致就列出，不做 PEP 440 求值、不裁决）。安装路径的窄语法（安全边界）一字不动 |
 | ExecutionReceipt | `engine/receipt.py`（Flask 侧，纯标准库） | worker 自报（§三）+ 控制面账本（generation / `script_sha1` 即 source revision / 解释器来源标签 / spec 稳定字段 / LaunchContext / 描述符）；`completeness ∈ {complete, partial}`，老 worker 没自报是 partial，不补不猜 |
-| SourceArtifact | `engine/figcapture.py`：`SourceArtifact` / `source_artifact_from_file` | `source_id`（runtime asset id 或素材相对路径）、`origin ∈ {execution, static}`、`kind`、`bytes_sha256`、`size_bytes`、`receipt_id` / `generation` / `patch_hash`（static 来源恒 None） |
-| RenderPlan 引用 | `engine/exportreq.py`：`render_plan_ref(req, resources)` | 规范化 `ExportRequest` 的渲染语义 + 资源的语义身份 → `plan_identity`；字节 hash 单列 `input_bytes`。**只做引用与身份，不做渲染** |
+| SourceArtifact | `engine/figcapture.py`：`SourceArtifact` / `source_artifact_from_file` | `source_id`（runtime asset id 或素材相对路径）、`origin ∈ {execution, static}`、`kind`、`bytes_sha256`、`size_bytes`、`receipt_identity`（回执公开身份，进语义身份）、`receipt_id` / `generation`（实例元数据，不进语义身份）、`patch_hash`（static 来源全部恒 None） |
+| RenderPlan 引用 | `engine/exportreq.py`：`render_plan_ref(req, resources)` | 规范化 `ExportRequest` 的渲染语义 + 资源的语义坐标（`source_id` / `origin` / `kind` / `receipt_identity` / `patch_hash`）→ `plan_identity`；`receipt_id` 只作实例元数据；字节 hash 单列 `input_bytes`。**只做引用与身份，不做渲染** |
 | PreparationPlan / PreparationResult | `engine/preparation.py` | 计划（不可变）与观测（可变）分开，见 §四 |
 
 `project.root` 这一档**今天没有任何生产者**（`test_project_root_origin_has_no_producer_today`
@@ -48,11 +48,12 @@ Python 要求（脚本要哪个 minor）今天没有任何地方声明，计划�
 | | 回答 | 含机器路径 | 落点 |
 |---|---|---|---|
 | 私有失效键 `private_invalidation_key()` | 还是不是同一个环境 | **含**（executable / prefix / base_prefix / 项目根 / cwd）——区分两个 venv 正靠它们 | `ExecutionReceipt` |
-| 公开语义身份 `public_identity()` | 这是哪种执行 | 不含；规范化意图 + 获准来源标签 + 版本号 + source revision | `ExecutionReceipt`；`SourceArtifact.semantic_identity()`；`render_plan_ref().plan_identity` |
+| 公开语义身份 `public_identity()` | 这是哪种执行 | 不含；规范化意图 + 获准来源标签 + 版本号 + source revision | `ExecutionReceipt`；`SourceArtifact.receipt_identity` → `semantic_identity()`；`render_plan_ref().plan_identity` |
 | 最终文件 hash | 文件长什么样 | — | `SourceArtifact.bytes_sha256`；**不回写进任何语义身份** |
 
 `receipt_id` = 公开身份 + 私有键 + generation 派生的不透明 id：同环境同脚本重建一代换一个 id；
-两个项目里的同名脚本永远不同 id（FO-008）。默认 HTTP / MCP 投影不带机器路径，
+两个项目里的同名脚本永远不同 id（FO-008）。它是**实例**元数据：语义身份（`SourceArtifact.semantic_identity()` /
+`plan_identity`）只吃回执的公开身份，不吃 `receipt_id`——否则同一语义在另一台机器或下一代会话上就是另一个「公开」身份。默认 HTTP / MCP 投影不带机器路径，
 `to_payload(include_private=True)` 给诊断包。
 
 ### 三、worker 自报：加字段，不升协议版
@@ -80,8 +81,11 @@ POST /api/engine/preparation/<plan_id>/cancel → {cancelling, plan, result}
 状态闭集：`pending → running → ready | error | cancelled`，以及不起线程的
 `static_source_available`（这张图没有脚本：FO-010，静态源可用时不被科学准备阻断）。
 「现有 runtime 正在运行」不是状态，是 `existing_runtime` 这条事实（`pool.peek()` 只读）：
-已 build 过的直接复用其回执（FO-031），正在冷启动的等它。执行只有一条路——
-`pool.build()`（带一次项目环境自动 fallback），不另写 `get + ensure_built`。
+已 build 过、解释器决策没变的会话，回执直接从它记下的 build 响应装配，**不发任何请求**
+（FO-031：二开不重复准备）；正在冷启动的等它。执行只有一条路——`pool.build_owned()`
+（= `build()` 带一次项目环境自动 fallback + 在池锁里给出的 `created`），不另写
+`get + ensure_built`；**所有权由池原子给出**，不从起步时的快照推断（两份计划同时起步都
+看到「没有」，池只建一条，主人只能是一个）。
 
 取消的边界（D11 / FO-009）：接受时刻只有两个——线程还没碰 pool（一行用户代码不跑）、
 build 返回那一刻。会话是本计划新起的才 `pool.force_cancel`；本来就在的（别的消费者的）

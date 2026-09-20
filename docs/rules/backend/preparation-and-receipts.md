@@ -9,10 +9,12 @@
   runtime 的事实 / 回执 / 错误 / 取消时刻）。计划**只读**产品自己的决定
   （`pool.resolve_worker_python` / `projectenv.state` / `workdir` / `depresolve`），不替产品
   选环境、不装包、不改 cwd。终局字段先于终局 `status` 写（与 `exportjob` 同一条纪律）。
-- **执行只有一条路**：`pool.build()`。准备接口不另写 `get + ensure_built`——自动 fallback
-  只有一份实现，漏掉一个入口就是「素材库里能打开、准备接口打不开」。
+- **执行只有一条路**：`pool.build_owned()`（`build()` + 池锁里给出的 `created`）。准备接口不另写
+  `get + ensure_built`——自动 fallback 只有一份实现，漏掉一个入口就是「素材库里能打开、准备
+  接口打不开」。已 build 且解释器决策没变的会话直接用它记下的 build 响应装配回执，不发请求。
 - **取消只碰自己起的会话**（D11 / FO-009）：接受时刻只有「还没碰 pool」与「build 返回」
-  两个；`created_runtime` 为真才 `pool.force_cancel`，别的消费者的会话不碰；native 会话不在
+  两个；`created_runtime` **由池原子给出**（不从 `peek()` 快照推断——两份计划同时起步、池只建
+  一条时主人只能是一个），为真才 `pool.force_cancel`，别的消费者的会话不碰；native 会话不在
   池里，永远碰不到；不承诺撤销外部副作用，`note` 如实说。
 - **按项目认领**（FO-008）：`SERVICE.get / cancel` 都带 `project_id`，对不上就是没有
   （404 `preparation_not_found`），绝不返回别的项目的状态；执行线程用 `bound_project`
@@ -22,8 +24,9 @@
   `script_sha1` / 来源标签 / spec 稳定字段 / LaunchContext）。老 worker 没自报是
   `partial`，不补不猜；`RECEIPT_PACKAGES` 是闭集，回执不是环境普查。
 - **身份三分不许混**：私有失效键**含**机器路径（区分两个 venv 靠它）；公开语义身份不含
-  任何路径；最终文件 hash 只在 `SourceArtifact.bytes_sha256`，不回写进语义身份。
-  默认 `to_payload()` 不带机器路径，诊断包用 `include_private=True`。
+  任何路径；最终文件 hash 只在 `SourceArtifact.bytes_sha256`，不回写进语义身份；`receipt_id` /
+  `generation` 是实例元数据，语义身份（`semantic_identity` / `plan_identity`）只吃回执的公开身份
+  `receipt_identity`。默认 `to_payload()` 不带机器路径，诊断包用 `include_private=True`。
 - **LaunchContext 是派生视图**：`execspec.launch_context(spec)` 从 spec 算，`ExecutionSpec`
   与 `worker_argv` 的 golden 一个字节不动。`project.root` 今天没有生产者（占位，U03 才有）；
   grant 只由 `workdir.set_mode / grant_for` 记账，只记时刻不记人。

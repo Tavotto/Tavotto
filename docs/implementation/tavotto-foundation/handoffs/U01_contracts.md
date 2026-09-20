@@ -35,7 +35,7 @@ force_cancel`、`workdir.mode_for`、`depresolve.parse_requirement`（窄语法�
 | `engine/receipt.py`（新） | `ExecutionReceipt`（`public_identity` / `private_invalidation_key` / `receipt_id` / `completeness`）、`from_worker`、`source_artifact_for` |
 | `engine/exportreq.py` | `render_plan_ref(req, resources)`：只做引用与身份 |
 | `engine/preparation.py`（新） | `PreparationPlan` / `PreparationResult` / `PreparationService`（状态闭集、取消边界、按项目认领） |
-| `engine/pool.py` | `peek()`、`control_plane_of()`、`last_build_runtime`（两种 worker）；**`WorkerdWorker.spec` 补 `cwd_mode`**（此前属性与真实 spawn 不一致，见「发现的产品事实」） |
+| `engine/pool.py` | `peek()`、`acquire()`（`get()` + 池锁里的 `created`）、`build_owned()`、`control_plane_of()`、`last_build_runtime`（两种 worker）；**`WorkerdWorker.spec` 补 `cwd_mode`**（此前属性与真实 spawn 不一致，见「发现的产品事实」） |
 | `engine/nativesession.py` / `enginesession.py` | `last_build_runtime` 只读投影；`WORKER_LIKE` 多一个成员 |
 | `app.py` | `POST /api/engine/preparation`、`GET /api/engine/preparation/<id>`、`POST …/cancel`（会话认证之内）；错误码 `preparation_not_found`（两种语言文案 + `resources.d.ts` 重生成） |
 | `tests/support/foundation_harness.py`（新） | 台账校验 / 预期实例集合 / `ResultRecord` / 闭集校验 / JSON + JUnit + 摘要 / CLI |
@@ -97,6 +97,11 @@ verdict / 空预期集合各自红，台账漂移 / 缺场景 / 重复 / 指向�
 **批准的字体 / 视觉差异，及未授权变更检查**：无字体 / 视觉改动；导出终点仍是 PyMuPDF。`git diff --stat`
 只含上表的文件；`LICENSE`、ruleset、`aggregate_gate.py`、默认后端、生产依赖、`security._PUBLIC_PATHS`
 一个都没动。
+
+**评审轮次与处置**：Codex 第一轮 2×P1 + 2×P2（`69657e2b`）——所有权改由池原子给出、已 build 的会话
+不再碰 runner（真 worker 用脚本副作用计数证明不重跑）、语义身份改吃回执公开身份 `receipt_identity`、
+`conflicts()` 纳入 constraints；四条线程修 + 先红后绿 + 变异红 + resolve。CodeQL 三条路径告警：改为传
+`safe_resolve` 校验过的绝对路径，处置结果以 PR 上的最终状态为准。
 
 **当前可合并依据（不等于可以默认启用 / 发行）**：中高风险档（改产品源码、协议加字段、新端点、CI 拓扑）
 → `full-ci` + `@codex review`；ruff 两条 0；针对性 pytest 0；变异反证逐条红；合同测试覆盖新 CI 步骤；
