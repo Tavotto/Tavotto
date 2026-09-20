@@ -5362,6 +5362,10 @@ def api_ai_run():
         return jsonify(
             {"error": str(exc), "code": "ai_start_failed", "params": {"reason": str(exc)}}
         ), 500
+    except Exception:
+        if source_bake_target is not None:
+            Path(source_bake_target["target_png"]).unlink(missing_ok=True)
+        raise
     LOG.info("AI 任务启动: %s %s（session %s）", agent, info["script"], sid)
     # **只在会话真的起来之后**记一条，且只记用了哪个 agent。
     # 提示词、脚本、stem、gid、label、target、画布名、会话 id ——一个都不发；
