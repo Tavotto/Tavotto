@@ -686,7 +686,8 @@ def _worker_error_payload(exc) -> dict:
         if repair is not None:
             body["dependency_repair"] = repair
     # 首开要先问用户运行目录（U03，ADR 0057）：结构化的「需要输入」原样带出去——
-    # 选项 / 证据 / 怎么回答都在里面，前端据此弹一次确认框，不是错误块。
+    # 选项 / 证据 / 怎么回答都在里面，前端据此弹一次确认框，不是错误块。状态码与别的
+    # worker 错误一样是 500（三条门禁钉着字面量 `, 500`），语义全在 `code` 上。
     confirmation = getattr(exc, "confirmation", None)
     if isinstance(confirmation, dict):
         body["confirmation"] = confirmation
@@ -701,12 +702,6 @@ def _worker_error_payload(exc) -> dict:
             "python": _project_relative(str(explicit.get("python", ""))),
         }
     return body
-
-
-def _worker_error_status(exc) -> int:
-    """worker 错误的 HTTP 状态：「需要输入」是 409（请求本身没错，是缺一个决定），
-    其余 500。前端按 `code` 分流，状态码只是给日志与代理看的语义。"""
-    return 409 if exc.code == engine_workdir.ERROR_CONFIRMATION_REQUIRED else 500
 
 
 def _dependency_repair_offer(exc, project_env: dict | None) -> dict | None:
@@ -760,7 +755,7 @@ def _worker_error(exc):
     「缺渲染环境」（该给引导）和「脚本报错」（该给 traceback）。
     """
     LOG.error("worker 错误: %s %s: %s", request.method, request.path, exc)
-    return jsonify(_worker_error_payload(exc)), _worker_error_status(exc)
+    return jsonify(_worker_error_payload(exc)), 500
 
 
 @app.errorhandler(engine_runcodes.RunError)
@@ -3479,7 +3474,7 @@ def api_engine_render():
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
-        return jsonify(_worker_error_payload(exc)), _worker_error_status(exc)
+        return jsonify(_worker_error_payload(exc)), 500
     # 阶段计时：worker 的 script_build/patch_apply/manifest/canvas_draw +
     # 控制面的 queue_wait/total。日志里一行结构化（可 grep 可喂脚本），响应里
     # 原样交给前端——「慢」这件事必须能指到具体某一段上，不能靠猜。

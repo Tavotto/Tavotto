@@ -280,6 +280,10 @@ def expected_instances(ledger: dict, lane: str, *, root: Path = ROOT) -> dict:
                     "case_id": c["case_id"],
                     "test": c["test"],
                     "binding": binding,
+                    # 台账预先写死的产品结果（05 §7：预期在执行前产生）。记录的 `product_outcome`
+                    # 必须等于它——safe_stop 的 case 报 automatic 或 automatic 的 case 报 safe_stop
+                    # 都不是通过，而是「跑成了另一个场景」。
+                    "expected_product_outcome": c.get("expected_product_outcome", ""),
                 }
             )
         else:
@@ -318,9 +322,14 @@ class ResultRecord:
             raise ValueError(f"product_outcome 非法: {self.product_outcome!r}")
         if self.test_verdict not in VERDICTS:
             raise ValueError(f"test_verdict 非法: {self.test_verdict!r}")
-        if self.test_verdict == "pass" and self.product_outcome not in ("automatic", "guided"):
+        if self.test_verdict == "pass" and self.product_outcome not in (
+            "automatic",
+            "guided",
+            "safe_stop",
+        ):
             raise ValueError(
-                "test_verdict=pass 的产品结果只能是 automatic / guided（safe_stop 另记）"
+                "test_verdict=pass 的产品结果只能是 automatic / guided / safe_stop"
+                "（failed / not_run 不可能是 pass）"
             )
 
     @property
@@ -469,6 +478,21 @@ def validate(expected: dict, results: Path) -> dict:
                 }
             )
             continue
+        wanted_outcome = exp.get("expected_product_outcome") or ""
+        if wanted_outcome and r.get("product_outcome") != wanted_outcome:
+            # 通过了，但通过的是另一个场景：safe_stop 的 case 跑出了 automatic（没停下来）、
+            # automatic 的 case 跑出了 guided（多问了一次）——预期在执行前写死，事后不挑。
+            problems.append(
+                {
+                    "kind": "outcome_mismatch",
+                    "instance_id": iid,
+                    "detail": (
+                        f"{r['_file']}: product_outcome={r.get('product_outcome')}，"
+                        f"台账预期 {wanted_outcome}"
+                    ),
+                }
+            )
+            continue
         valid[iid] = r
     for iid in want:
         if iid not in seen:
@@ -480,6 +504,11 @@ def validate(expected: dict, results: Path) -> dict:
     for r in submitted:
         v = r.get("test_verdict", "invalid")
         by_verdict[v] = by_verdict.get(v, 0) + 1
+    # 通过的实例按产品结果分开数：**safe_stop 的 pass 不进自动兼容成功的分子**（05 §7）。
+    by_outcome: dict[str, int] = {}
+    for r in valid.values():
+        o = r.get("product_outcome", "")
+        by_outcome[o] = by_outcome.get(o, 0) + 1
     # `bool(want)` 与上面的 `empty_expected_set` 是同一条判据的两道门：前一道已经把空集合
     # 记成问题，这里再钉一次只是让「ok」这个词在任何路径上都读不出「空集合通过」。
     # 单独拿掉这一半变异不会红（前一道还在）——这是有意的冗余，不是漏测。
@@ -494,6 +523,8 @@ def validate(expected: dict, results: Path) -> dict:
         "valid_count": len(valid),
         "problems": problems,
         "by_verdict": by_verdict,
+        "passed_by_outcome": by_outcome,
+        "compatibility_successes": by_outcome.get("automatic", 0) + by_outcome.get("guided", 0),
         "passed_instances": sorted(valid),
         "planned_cases": expected.get("planned_cases", []),
         "note": "planned / observing / later 的 case 只登记，不是通过；空集合不是通过",
@@ -544,6 +575,9 @@ def _summary_md(report: dict) -> str:
         "",
         f"- 预期实例 {report['expected_count']} · 提交 {report['submitted_count']} · 有效通过 {report['valid_count']}",
         f"- 按 verdict：{json.dumps(report['by_verdict'], ensure_ascii=False)}",
+        f"- 通过的按产品结果：{json.dumps(report.get('passed_by_outcome', {}), ensure_ascii=False)}"
+        f"（自动兼容成功 automatic + guided = {report.get('compatibility_successes', 0)}；"
+        "safe_stop 的通过不计入）",
         "",
         "## 通过的实例（enforced）",
         "",

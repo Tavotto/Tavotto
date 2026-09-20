@@ -55,17 +55,27 @@ def test_the_ledger_is_well_formed_and_agrees_with_the_registry():
     assert scenario_ids <= {c["case_id"] for c in ledger["cases"]}
 
 
-def test_only_one_case_is_enforced_and_it_points_at_this_file():
+def test_the_enforced_set_is_exactly_what_u03_promoted_and_each_points_at_a_real_test():
+    """台账的 enforced 集合是工程事实（03 §3）：U01 的 U01-S1 + U03 提上来的六条首开场景
+    （FO01 / FO02 / FO03 / FO07 / FO15 / FO19）；每条都指向真实存在的用例函数。多一条 / 少一条
+    都要有人改这里——enrollment 不是随手加的标签。"""
     ledger = fh.load_ledger()
-    enforced = [c for c in ledger["cases"] if c["enrollment"] == fh.ENROLLMENT_ENFORCED]
-    assert [c["case_id"] for c in enforced] == [CASE_ID]
-    file_part, func = enforced[0]["test"].split("::", 1)
+    enforced = {c["case_id"]: c for c in ledger["cases"] if c["enrollment"] == fh.ENROLLMENT_ENFORCED}
+    assert set(enforced) == {CASE_ID, "FO01", "FO02", "FO03", "FO07", "FO15", "FO19"}
+    file_part, func = enforced[CASE_ID]["test"].split("::", 1)
     assert Path(file_part).name == Path(__file__).name
     assert func in globals() and callable(globals()[func])
+    for cid, case in enforced.items():
+        file_part, func = case["test"].split("::", 1)
+        src = (ROOT / file_part).read_text(encoding="utf-8")
+        assert f"def {func}(" in src, f"{cid} 指向的用例不存在"
+        assert case["fixture"] and (ROOT / case["fixture"]).is_dir(), cid
     counts = {}
     for c in ledger["cases"]:
         counts[c["enrollment"]] = counts.get(c["enrollment"], 0) + 1
-    assert counts == {"planned": 31, "later": 1, "enforced": 1}
+    assert counts == {"planned": 21, "observing": 4, "later": 1, "enforced": 7}  # 33 条：32 个 FO + U01-S1
+    # safe_stop 的 case 也能 enforced，但台账预期必须写明是 safe_stop（校验器据此分开计数）
+    assert enforced["FO15"]["expected_product_outcome"] == "safe_stop"
 
 
 def test_the_derived_markdown_is_current():
@@ -84,10 +94,10 @@ def test_ledger_check_catches_a_drifted_or_malformed_ledger(tmp_path):
     ledger = fh.load_ledger()
     registry = json.loads((PACK / "registry.json").read_text(encoding="utf-8"))
     drifted = json.loads(json.dumps(ledger))
-    next(c for c in drifted["cases"] if c["case_id"] == "FO01")["enrollment"] = "enforced"
+    next(c for c in drifted["cases"] if c["case_id"] == "FO04")["enrollment"] = "enforced"
     errs = fh.ledger_errors(drifted, registry)
-    assert any("FO01" in e and "不一致" in e for e in errs)
-    assert any("FO01" in e and "pytest" in e for e in errs)
+    assert any("FO04" in e and "不一致" in e for e in errs)
+    assert any("FO04" in e and "pytest" in e for e in errs)
     missing = json.loads(json.dumps(ledger))
     missing["cases"] = [c for c in missing["cases"] if c["case_id"] != "FO07"]
     assert any("FO07" in e for e in fh.ledger_errors(missing, registry))
@@ -182,6 +192,7 @@ def _ledger_one(lane="pr", enrollment="enforced"):
                 "test": "tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry"
                 if enrollment == "enforced"
                 else None,
+                "expected_product_outcome": "automatic",
             }
         ],
     }
@@ -309,8 +320,35 @@ def test_non_pass_verdicts_are_reported_by_kind_and_never_count(tmp_path):
         assert report["ok"] is False
         assert [p["kind"] for p in report["problems"]] == [verdict]
         assert report["valid_count"] == 0 and report["by_verdict"] == {verdict: 1}
-    with pytest.raises(ValueError, match="pass"):
-        _record(exp, test_verdict="pass", product_outcome="safe_stop")
+    for outcome in ("failed", "not_run"):
+        with pytest.raises(ValueError, match="pass"):
+            _record(exp, test_verdict="pass", product_outcome=outcome)
+
+
+def test_a_pass_must_land_on_the_outcome_the_ledger_expected(tmp_path):
+    """预期的产品结果在执行前写死（05 §7）：safe_stop 的 case 跑出了 automatic 不是「更好」，
+    是没停下来；automatic 的 case 跑出了 safe_stop 也不是通过。safe_stop 的通过单独计数，
+    不进自动兼容成功的分子。"""
+    ledger = _ledger_one()
+    ledger["cases"][0]["expected_product_outcome"] = "safe_stop"
+    exp = fh.expected_instances(ledger, "pr")
+    assert exp["instances"][0]["expected_product_outcome"] == "safe_stop"
+    # 跑成 automatic：不是通过
+    fh.write_result(_record(exp, product_outcome="automatic"), tmp_path / "a")
+    report = fh.validate(exp, tmp_path / "a")
+    assert report["ok"] is False
+    assert [p["kind"] for p in report["problems"]] == ["outcome_mismatch"]
+    # 跑成 safe_stop 且 verdict=pass：通过，但不计入兼容成功
+    fh.write_result(_record(exp, product_outcome="safe_stop"), tmp_path / "b")
+    report = fh.validate(exp, tmp_path / "b")
+    assert report["ok"] is True
+    assert report["passed_by_outcome"] == {"safe_stop": 1}
+    assert report["compatibility_successes"] == 0
+    # 反向：台账预期 automatic，记录说 safe_stop → 不通过
+    exp2 = _expected()
+    fh.write_result(_record(exp2, product_outcome="safe_stop"), tmp_path / "c")
+    report = fh.validate(exp2, tmp_path / "c")
+    assert report["ok"] is False and report["problems"][0]["kind"] == "outcome_mismatch"
 
 
 def test_the_cli_exit_code_is_the_verdict(tmp_path):

@@ -438,10 +438,12 @@ def test_the_old_worker_is_gone_and_the_new_one_uses_the_new_interpreter(
     m.open_project(str(project))
     _probe(client)
 
-    # 修复之前先起一个用**默认**解释器的会话，握在手里
+    # 修复之前先起一个会话，握在手里。U03 起首开就采用项目 venv（发现 + 体检前移），
+    # 所以这条会话跑的**正是**将要被安装写入的那个环境——「安装期间那个环境上的旧会话
+    # 必须先停掉」这条判据在新世界里更直接：旧会话与安装目标是同一个解释器。
     old = engine_pool.get("figure.py", str(project), "__main__")
     old_pid = old.proc.pid
-    assert not engine_pool.same_python(old.python, projectenv.interpreter_of(venv))
+    assert engine_pool.same_python(old.python, projectenv.interpreter_of(venv))
 
     plan = _plan(client, FIXTURE_IMPORT, deprepair.TARGET_PROJECT_VENV)
     assert _install(client, plan["plan_id"])["state"] == deprepair.STATE_DONE
