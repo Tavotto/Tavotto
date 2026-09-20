@@ -140,7 +140,7 @@ jobs:
       # 上一轮的 junit 会被当成这一轮的。放在 checkout 之前：它不需要源码树，而 checkout 是
       # 第一个可失败步骤。
       - name: 清掉上一轮的分片产物
-        run: rm -f "$RUNNER_TEMP"/pytest-shard-*
+        run: rm -f "$RUNNER_TEMP"/pytest-shard-* "$RUNNER_TEMP"/seq-shard-*
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -299,10 +299,44 @@ jobs:
         # 2026-09-19）实测 12 分 43 秒（73 条：64 条随机序列 + 9 条固定，含 KNOWN 空集那条 skip；本机 3.5 分钟，runner
         # 比本机慢三到四倍，与常规套件的比例一致）。判据是 pytest 的退出码；文件自己守着
         # 「候选池够宽」，不会空转。
+        # 2026-09-20 起同机 4 片并行：种子按 `TAVOTTO_SEQ_SHARD=K/N` 取模切片（文件自己守着
+        # 「两两不交、并集是全集、写错或空片当场抛」，`test_seed_slice_semantics`），固定用例
+        # （FIXED / 候选池）每片各跑一遍——冗余几十秒，换来不用为「谁跑固定用例」再发明一条
+        # 规则。起片 / 收片 / 退出码的形状与上面常规套件那一步逐字相同，同一份合同看着
+        # （tests/test_merge_queue_workflows.py 的静态 + 行为两条，参数化到两个 step）。
         if: env.LAB_MODE != 'main'
+        id: seq
         env:
           TAVOTTO_SEQ_SEEDS: "32"
-        run: ${{ steps.venv.outputs.python }} -m pytest tests/test_override_sequences.py -q -rs -p no:cacheprovider
+        run: |
+          set -euo pipefail
+          # `set -m` 的理由见常规套件那一步：`&` 起的片会继承 SIG_IGN 的 SIGINT。
+          set -m
+          N=4
+          rm -f "$RUNNER_TEMP"/seq-shard-*
+          pids=()
+          for k in $(seq 1 "$N"); do
+            TAVOTTO_SEQ_SHARD="$k/$N" ${{ steps.venv.outputs.python }} -m pytest tests/test_override_sequences.py -rs -p no:cacheprovider \
+              --junitxml="$RUNNER_TEMP/seq-shard-$k-junit.xml" \
+              > "$RUNNER_TEMP/seq-shard-$k.log" 2>&1 &
+            pids+=("$!")
+          done
+          fail=0
+          for i in "${!pids[@]}"; do
+            k=$((i + 1))
+            rc=0
+            wait "${pids[$i]}" || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "片 $k/$N 绿：$(grep -E '[0-9]+ (passed|failed|error)' "$RUNNER_TEMP/seq-shard-$k.log" | tail -n 1)"
+            else
+              fail=1
+              echo "::error::操作序列 harness 片 $k/$N 退出码 $rc"
+              echo "::group::片 $k/$N 日志尾巴"
+              tail -n 80 "$RUNNER_TEMP/seq-shard-$k.log"
+              echo "::endgroup::"
+            fi
+          done
+          exit "$fail"
 
       - name: 前端与 Rust（仅 nightly 及以上）
         if: env.LAB_MODE != 'main'
@@ -498,6 +532,8 @@ jobs:
             ${{ runner.temp }}/pytest-shard-*.log
             ${{ runner.temp }}/pytest-shard-*-junit.xml
             ${{ runner.temp }}/pytest-shard-*-manifest.json
+            ${{ runner.temp }}/seq-shard-*.log
+            ${{ runner.temp }}/seq-shard-*-junit.xml
             ${{ runner.temp }}/visual/**
             ${{ runner.temp }}/compat/**
             ${{ runner.temp }}/soak-metrics.json
