@@ -141,8 +141,9 @@ wheel，**不重新 build**。重新 build 测的是「同一个 commit 能造�
 - 本机第一轮抓到两件与并发无关的事，都在合入前处理：`--basetemp` 指到路径含 "tavotto" 的目录
   会让两条「输出里不许出现 tavotto」的用例撞词（所以不指定 basetemp）；`&` 起的片继承
   SIG_IGN 的 SIGINT 会让 Ctrl-C 用例 90 秒超时（所以先 `set -m`，见 workflow 注释）。
-- 权重表 2026-09-19 从这四份 junit 重算（195 个文件全有权重，四片估计各 286 秒）；lab 的
-  真实平衡等 `lab-pytest-shards-*` artifact 再算一次。
+- 权重表先按本机四份 junit 重算（2026-09-19，四片估计各 286 秒），lab 首跑仍 412 / 950 秒不平衡；
+  2026-09-20 再按 lab 自己的 `lab-pytest-shards-main-35490778605` 重算（#441），才有上面 727 / 744 /
+  743 / 735 的结果。以后重平衡就从最近一次 lab run 的这个 artifact 算。
 
 ### slow / 集成用例
 
