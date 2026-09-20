@@ -1753,6 +1753,10 @@ def _byte_compared_generated_files() -> list[str]:
         "docs/implementation/tavotto-foundation/archive/rendercore_assessment.md",
         "docs/implementation/tavotto-foundation/archive/rendercore_full.md",
         "docs/implementation/tavotto-foundation/archive/rendercore_requirements.json",
+        # 统一实施包的 case enrollment 台账（ADR 0053 §五）：派生 md 由
+        # `tools/generate_enrollment.py --check` 与按 json 现渲染的文本逐字符比
+        "docs/implementation/tavotto-foundation/enrollment.json",
+        "docs/implementation/tavotto-foundation/ENROLLMENT.md",
     ]
 
 

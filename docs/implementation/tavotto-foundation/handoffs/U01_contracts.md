@@ -78,7 +78,12 @@ verdict / 空预期集合各自红，台账漂移 / 缺场景 / 重复 / 指向�
 
 * 未运行（not_run）：内置 runtime；Playwright e2e；lab / Windows / Linux 任何腿；registry 220 条产品实例；
   FO-006 / FO-007 / FO-011 的产品实现（本阶段只有合同层）。
-* 基础设施问题：无。
+* 基础设施问题：**issue #452**（area:ci-harness / severity:P2）——本机全量三条红不归本 PR：
+  `test_mcp_normalize` 的两条 zero-edit 像素对比（模块级 `WORKER_PY` 在 conftest 隔离前读到真实
+  配置里的 venv，`test_bootstrap` 等 `reset_worker_python()` 之后产品在隔离配置下重选中另一档
+  matplotlib，两档像素差 11% / 3%；干净 `origin/main` 同进程复现、数字逐位相同）与
+  `test_run_messages_only_stderr`（判据被解释器路径里的 `Tavotto` 子串咬到）。不改 aggregate_gate、
+  不加豁免；出口在 issue 里。
 * 真正产品失败：无新增。顺带发现的**产品事实**（不是本阶段修的缺陷，已在代码里改正或记录）：
   1. `WorkerdWorker.spec` 属性此前**没带 `cwd_mode`**，而真实 spawn（`_spawn_spec`）带——project 模式下
      从属性读 LaunchContext 会报成沙盒。已补（一行），`test_workerd_pool` 的 argv 对拍未变。
