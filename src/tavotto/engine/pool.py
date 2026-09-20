@@ -112,7 +112,10 @@ _EXIT_EXPLANATIONS: dict[int, str] = {
         "调用了 sys.exit() / os._exit()，或者把 stdout 关掉了"
     ),
     1: "退出码 1：Python 层的致命错误，或进程被外部终止；原因看下面的输出",
-    3: "abort()：C 库或扩展主动中止（典型：两份 libiomp5md.dll 的 OMP Error #15、断言失败）",
+    3: (
+        "abort()：C 库或扩展主动中止（典型：两份 libiomp5md.dll 的 OMP Error #15、断言失败；"
+        "Windows 上经 C 运行时信号路径转发的段错误也走到这里）"
+    ),
     -1073741819: (  # 0xC0000005
         "access violation（0xC0000005）：某个 C 扩展或 DLL 越界。"
         "常见于 Conda 与 pip 混装之后 numpy / Pillow / freetype 的 DLL 版本对不上"

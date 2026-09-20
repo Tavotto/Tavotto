@@ -13,7 +13,7 @@ issue #435 那一族的形状：用户在设置里把渲染环境指到自己的
   与 `scope=project` 走同一个 `probe_environment`，只是回给界面的 code 不同
   （全局的说「这个解释器」，项目的说「项目环境」）。
 
-假解释器（`_fake_interpreter`）是跨平台的：Windows 上一个 `.cmd`，其余平台 shebang。
+假解释器（`_fake_interpreter`）是一个真 venv 加 `sitecustomize` 劫持，两个平台同一份：
 它按 `-c` 里的代码文本分辨「体检」与「matplotlib 版本探测」两种问法，各回一份
 **调用方指定**的答案——用例要的是分类逻辑，不是再起一次真 matplotlib。
 """
@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -44,32 +45,54 @@ needs_worker = pytest.mark.skipif(
 
 
 # ------------------------------------------------------------------ 工具
-def _fake_interpreter(tmp_path: Path, probe_json: dict, *, mpl_version: str = "3.11.0") -> str:
-    """一个「解释器」：体检问法回 `probe_json`，`import matplotlib;print(...)` 回版本号。"""
-    script = tmp_path / "fake_python_impl.py"
-    script.write_text(
+def _fake_interpreter(
+    tmp_path: Path, probe_json: dict | None, *, mpl_version: str = "3.11.0", die: str = ""
+) -> str:
+    """一个「解释器」：真 venv + `sitecustomize` 劫持。
+
+    体检问法（`-c` 里含 `tavotto_worker_ok`）回 `probe_json`，`import matplotlib;print(…)`
+    回版本号；`die` 非空则任何调用都往 stderr 写这句并以 2 退出（「起不来」的形状）。
+    为什么不是一个 `.cmd` / `.sh` 壳：体检那段 `-c` 源码是多行带引号的，cmd.exe 的
+    `%*` 把它搅成一锅粥（Windows 腿实测四条全红成 interpreter_unusable）；而 venv 的
+    `python.exe` 是真解释器，`site` 会在 `-c` 之前处理 site-packages 里的 `.pth`
+    （`import …` 行当场执行），`sys.orig_argv` 里就有完整的命令行。走 `.pth` 而不是
+    `sitecustomize`：Homebrew 的 Python 在标准库目录里自带一份 `sitecustomize.py`，
+    排在 site-packages 前面，venv 里那份根本轮不到。POSIX / Windows 同一份夹具。
+    """
+    root = tmp_path / f"fake-{'dies' if die else 'py'}"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", str(root)], check=True, timeout=120
+    )
+    python = str(root / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+    purelib = subprocess.run(
+        [python, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    ).stdout.strip()
+    Path(purelib).mkdir(parents=True, exist_ok=True)
+    (Path(purelib) / "zz_tavotto_fake_probe.pth").write_text(
+        "import _tavotto_fake_probe\n", encoding="utf-8"
+    )
+    (Path(purelib) / "_tavotto_fake_probe.py").write_text(
         textwrap.dedent(
             f"""\
-            import sys
-            code = sys.argv[sys.argv.index("-c") + 1] if "-c" in sys.argv else ""
+            import json, os, sys
+            DIE = {die!r}
+            if DIE:
+                sys.stderr.write(DIE + "\\n"); sys.stderr.flush(); os._exit(2)
+            argv = list(getattr(sys, "orig_argv", []))
+            code = argv[argv.index("-c") + 1] if "-c" in argv else ""
             if "tavotto_worker_ok" in code:
-                sys.stdout.write({json.dumps(probe_json)!r})
-            elif "matplotlib.__version__" in code:
-                sys.stdout.write({mpl_version!r} + "\\n")
-            else:
-                sys.exit(3)
+                sys.stdout.write({json.dumps(probe_json or {})!r}); sys.stdout.flush(); os._exit(0)
+            if "matplotlib.__version__" in code:
+                sys.stdout.write({mpl_version!r} + "\\n"); sys.stdout.flush(); os._exit(0)
             """
         ),
         encoding="utf-8",
     )
-    if os.name == "nt":
-        exe = tmp_path / "fake-python.cmd"
-        exe.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
-    else:
-        exe = tmp_path / "fake-python"
-        exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
-        exe.chmod(0o755)
-    return str(exe)
+    return python
 
 
 def _probe_answer(**overrides) -> dict:
@@ -225,16 +248,8 @@ def test_global_scope_keeps_the_old_code_for_a_missing_matplotlib(client, tmp_pa
 
 def test_global_scope_reports_an_interpreter_that_cannot_start(client, tmp_path):
     """连体检都跑不起来（非零退出）→ `interpreter_unusable`，带上它自己说了什么。"""
-    script = tmp_path / "dies.py"
-    script.write_text("import sys\nsys.stderr.write('bad executable format\\n')\nsys.exit(2)\n")
-    if os.name == "nt":
-        exe = tmp_path / "dies.cmd"
-        exe.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
-    else:
-        exe = tmp_path / "dies"
-        exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
-        exe.chmod(0o755)
-    resp = client.patch("/api/engine/environment", json={"python": str(exe)})
+    exe = _fake_interpreter(tmp_path, None, die="bad executable format")
+    resp = client.patch("/api/engine/environment", json={"python": exe})
     assert resp.status_code == 400, resp.get_json()
     body = resp.get_json()
     assert body["code"] == "interpreter_unusable"

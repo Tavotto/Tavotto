@@ -120,8 +120,11 @@ def _assert_segv_report(report: dict, message: str) -> None:
     if report["lingered"]:
         assert "没有退出，已被终止" in message
         return
-    assert report["code"] in (0xC0000005, -1073741819), report
-    assert "access violation" in message
+    # 真 C 扩展越界走 SEH → 0xC0000005；`faulthandler._sigsegv()` 走的是 C 运行时的
+    # `raise(SIGSEGV)`，Windows 上默认动作是 abort() → 退出码 3（CI windows 腿实测）。
+    # 两种都是「进程级崩溃」，解释表各有一行，两个都认。
+    assert report["code"] in (0xC0000005, -1073741819, 3), report
+    assert "access violation" in message or "abort()" in message, message
 
 
 @pytest.fixture
