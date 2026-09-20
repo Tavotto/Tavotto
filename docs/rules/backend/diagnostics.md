@@ -42,12 +42,22 @@
   message 不出门；`ImportError` / `ModuleNotFoundError` 只在 message 长成加载器那几种形状
   （`No module named 'x'` / `cannot import name 'a' from 'b'` / `DLL load failed while
   importing x`，名字是标识符）时保留形状本身——它们是普通公开异常类，用户 `raise` 的
-  一样是这个类型。路径缩写先整体处理引号里的（带空格的 `C:\Clinical Trial\…` 不能在
-  空格处断），再处理裸路径；三档：`site-packages/…` 与 `tavotto/…` 之后的部分保留，
-  其余文件名换成 `file:<sha1 前 10 位><扩展名>`（README：文件名一律换成不可逆哈希）。
+  一样是这个类型。**留下的每一行都是从解析结果重建的，不是原行过一遍替换**（评审 #443
+  第七轮）：帧行只留 `File "<路径>", line N`——`in analyze_patient_123` 是用户的标识符，
+  不带；崩溃头的故障名按 CPython faulthandler 的闭集放行（`Segmentation fault` /
+  `access violation` / `code 0x…`…），`Py_FatalError` 的自由文本与用户 print 的一律 `…`；
+  `Extension modules` 只留 `(total: N)`，名单里会有用户自己的 C 扩展名。路径缩写先整体
+  处理引号里的（带空格的 `C:\Clinical Trial\…` 不能在空格处断），再处理裸路径；保留
+  原样的只有两档且**按来历验**，不看路径分量的名字：`site-packages/` 之后紧跟
+  `_KNOWN_SITE_PACKAGES` 里的包、余下每段都是模块文件名，才保留 `…/site-packages/包/…`；
+  `tavotto/engine/` 之后是引擎目录里**真实存在**的文件名（`_ENGINE_FILES`）才保留——
+  `/mnt/tavotto/private-study/patient.py`、`/mnt/site-packages/cohort/x.py` 与别的用户
+  路径一样换成 `file:<sha1 前 10 位><扩展名>`（README：文件名一律换成不可逆哈希）。
   会话 id 同样是哈希（`session:…`，目录名里带着脚本名）。扫描窗默认最后 400 行，
   但**至少回溯到最近一个崩溃头**（`_scan_start`：`all_threads=True` 一段能超过 400 行）。
-  `recent_errors` 里配对的异常行与 ERROR 行过同一道路径缩写。**先扫 `WORKER_LOG_SCAN_LINES`（400）行再抽块、再按块截到
+  `recent_errors` 里配对的收尾句走**同一个** `_closer_for_export`（只留类型 / 加载器形状——
+  「复制诊断」的文本会被贴进公开 issue，`ValueError: patient-123` 缩路径救不了），
+  ERROR 行是应用自己的日志语句，过路径缩写。**先扫 `WORKER_LOG_SCAN_LINES`（400）行再抽块、再按块截到
   `WORKER_LOG_TAIL_LINES`（`last_blocks_within`：最后那块再长也整块要）**——先按行截
   再抽块会把一段长崩溃栈截成没有头的帧行，状态机一条都不认。README 承诺包里不含
   脚本源码与数据，这条段落不许把它变成空话。三条边界（评审 #443）：**只取目录名哈希等于

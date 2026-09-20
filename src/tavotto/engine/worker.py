@@ -303,25 +303,13 @@ class Worker(wireproto.V1Handler):
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
-        # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
-        # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
-        # 任何不带 paper_style.py 的图库都会以 ModuleNotFoundError 开局。
-        try:
-            import paper_style  # noqa: PLC0415
-        except ImportError:
-            pass
-        else:
-            # 与 `_patched_savefig` 同一条来源记账：paper_style.save 是显式
-            # 「保存这张图」，来源就是 savefig（以前这里不记来源，靠读取端
-            # `.get(stem, SOURCE_SAVEFIG)` 兜底——结果一样，现在是显式的）。
-            paper_style.save = lambda fig, stem, outdir="figures": SESSION.add_figure(
-                stem, fig, figcapture.SOURCE_SAVEFIG
-            )
 
         # 脚本看到的 argv 必须是它自己的，不是 worker 的。不换的话
         # `sys.argv[1:]` 拿到的是 --script/--out-dir/--entry 这串内部参数，
         # 按参数命名输出的脚本会存出一堆叫 "--entry" 的图（试运行探测时
         # 当场撞见过）。真跑 `python fig.py` 时 argv 就只有脚本自己。
+        # **排在 paper_style 之前**：那份私有模块也是用户代码，import 期间就可能
+        # 解析参数（评审 #443）。
         sys.argv = [str(self.script)]
 
         t_script = time.perf_counter()
@@ -331,8 +319,23 @@ class Worker(wireproto.V1Handler):
         # 声息地退出，stdout EOF，supervisor 只能报「渲染进程崩溃」，worker.log
         # 里连一行 traceback 都没有。与 `python fig.py` 的语义对齐：退出码 0 /
         # None 就是脚本正常结束（已经画好的图照常捕获），非零才是它自己报的失败。
+        # paper_style 的 import 也在这道保护里：它是用户代码，import 期间一样能 exit。
         with contextlib.redirect_stdout(sys.stderr):
             try:
+                # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
+                # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
+                # 任何不带 paper_style.py 的图库都会以 ModuleNotFoundError 开局。
+                try:
+                    import paper_style  # noqa: PLC0415
+                except ImportError:
+                    pass
+                else:
+                    # 与 `_patched_savefig` 同一条来源记账：paper_style.save 是显式
+                    # 「保存这张图」，来源就是 savefig（以前这里不记来源，靠读取端
+                    # `.get(stem, SOURCE_SAVEFIG)` 兜底——结果一样，现在是显式的）。
+                    paper_style.save = lambda fig, stem, outdir="figures": SESSION.add_figure(
+                        stem, fig, figcapture.SOURCE_SAVEFIG
+                    )
                 if self.entry == "__main__":
                     import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
 

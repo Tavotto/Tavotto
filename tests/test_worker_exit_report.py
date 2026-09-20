@@ -230,6 +230,58 @@ def test_an_exit_from_inside_a_parser_callback_is_the_scripts_own(figs):
     assert err.value.code == "script_exited", str(err.value)
 
 
+PAPER_STYLE_PARSES_ARGS = """\
+import argparse
+import sys
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--style", default="nature")
+parser.parse_args()          # 看到 worker 自己的 --script/--out-dir 会报 unrecognized → exit 2
+
+
+def save(fig, stem, outdir="figures"):
+    fig.savefig(f"{stem}.png")
+"""
+
+USES_PAPER_STYLE = """\
+import matplotlib.pyplot as plt
+from paper_style import save
+
+fig, ax = plt.subplots()
+ax.plot([1, 2], [3, 4])
+save(fig, "Fig1")
+"""
+
+
+@needs_worker
+def test_paper_style_sees_the_scripts_own_argv(figs):
+    """评审 #443 第七轮 P2：`paper_style.py` 是用户代码，import 期间就可能解析参数；
+    以前 worker 先 import 它再换 argv，它看到的是 `--script … --out-dir … --entry …`。"""
+    (figs / "paper_style.py").write_text(PAPER_STYLE_PARSES_ARGS, encoding="utf-8")
+    (figs / "fig_ps.py").write_text(USES_PAPER_STYLE, encoding="utf-8")
+    worker, resp = pool.build("fig_ps.py", str(figs), "__main__")
+    assert "Fig1" in resp["stems"], resp
+    assert worker.alive()
+
+
+@needs_worker
+def test_an_exit_raised_while_importing_paper_style_is_the_scripts_own(figs):
+    """同一条 P2 的另一半：paper_style 里 argparse 缺必填参数 → `sys.exit(2)`。以前这个
+    import 在 SystemExit 保护之外，worker 随之退出、上层报 session_dead；现在与脚本自己
+    要参数同一个答案，且会话还活着。"""
+    (figs / "paper_style.py").write_text(
+        PAPER_STYLE_PARSES_ARGS.replace('default="nature"', "required=True"), encoding="utf-8"
+    )
+    (figs / "fig_ps.py").write_text(USES_PAPER_STYLE, encoding="utf-8")
+    w = pool.get("fig_ps.py", str(figs), "__main__")
+    with pytest.raises(pool.WorkerError) as err:
+        w.ensure_built()
+    e = err.value
+    assert e.code == "script_needs_arguments", str(e)
+    assert "--style STYLE" in e.traceback_text, e.traceback_text
+    assert w.alive(), "要参数不是会话故障：进程还在"
+
+
 @needs_worker
 @needs_workerd
 def test_workerd_gives_the_same_answer_for_a_script_that_wants_arguments(workerd_figs):

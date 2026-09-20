@@ -55,30 +55,37 @@ ImportError: DLL load failed while importing _imaging: 找不到指定的模块�
 
 
 def test_each_traceback_is_paired_with_its_exception_line():
+    """收尾那句与 worker 证据同一条规则：只留异常类型，ImportError 家族只留加载器形状
+    （评审 #443 第七轮 P1：`ValueError: patient-123` 这种 message 是用户数据）。"""
     got = diagnostics.recent_errors(APP_LOG)
     assert got == [
         "2026-09-20 10:47:02,622 ERROR tavotto: 引擎渲染失败: Figure 1: 渲染进程退出了",
-        "Traceback (most recent call last): → OSError: [WinError 5] 拒绝访问。: 'x.png'",
-        "Traceback (most recent call last): → ImportError: DLL load failed while importing _imaging: "
-        "找不到指定的模块。",
+        "Traceback (most recent call last): → OSError: …",
+        "Traceback (most recent call last): → ImportError: DLL load failed while importing _imaging",
     ]
 
 
-def test_paths_in_the_paired_exception_line_are_shortened():
-    """评审 #443 第四轮 P1：`OSError: /mnt/study/patient-a.csv` 这种收尾句里的路径与
-    worker 证据同一道缩写——`_redact_text` 只认主目录。ERROR 行同理。"""
+def test_the_paired_exception_line_drops_its_message_and_error_lines_lose_their_paths():
+    """评审 #443 第四轮 P1 → 第七轮 P1：收尾句里的路径先是与 worker 证据同一道缩写，
+    第七轮起整句 message 都不带（`ValueError: patient-123` 缩路径也救不了）。ERROR 行是
+    应用自己的日志语句，路径缩写、其余照旧。"""
     got = diagnostics.recent_errors(
         [
             "2026-09-20 10:00:00,000 ERROR tavotto: 导出失败: D:\\Study\\fig1.pdf 写不进去",
             "Traceback (most recent call last):",
             '  File "/app/x.py", line 1, in <module>',
             "OSError: [Errno 13] Permission denied: '/mnt/private-study/patient-a/data.csv'",
+            "Traceback (most recent call last):",
+            '  File "/app/x.py", line 2, in <module>',
+            "ValueError: patient-123",
         ]
     )
     assert got == [
         "2026-09-20 10:00:00,000 ERROR tavotto: 导出失败: …/file:6fe886ec6b.pdf 写不进去",
-        "Traceback (most recent call last): → OSError: [Errno 13] Permission denied: '…/file:1aa5784d52.csv'",
+        "Traceback (most recent call last): → OSError: …",
+        "Traceback (most recent call last): → ValueError: …",
     ]
+    assert "patient" not in "\n".join(got)
 
 
 def test_frames_stay_out_of_the_error_list():
@@ -207,7 +214,7 @@ def test_a_crash_stack_longer_than_the_line_budget_still_keeps_its_header(tmp_pa
     (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
     lines = got["tail"].splitlines()
     assert lines[0] == "Fatal Python error: Segmentation fault"
-    assert lines[-1] == "Extension modules: x (total: 1)"
+    assert lines[-1] == "Extension modules: … (total: 1)"
     assert len(lines) == 83 and got["omitted"] == 1
 
 
@@ -224,7 +231,7 @@ def test_a_crash_block_longer_than_the_scan_window_still_starts_at_its_header(tm
     (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
     lines = got["tail"].splitlines()
     assert lines[0] == "Fatal Python error: Segmentation fault"
-    assert lines[-1] == "Extension modules: x (total: 1)"
+    assert lines[-1] == "Extension modules: … (total: 1)"
     assert len(lines) == 453
 
 
@@ -244,11 +251,11 @@ def test_chain_separators_count_only_between_two_traceback_blocks():
     kept, omitted = diagnostics.evidence_lines(chained)
     assert kept == [
         "Traceback (most recent call last):",
-        '  File "…/file:bb88d7506c.py", line 1, in <module>',
+        '  File "…/file:bb88d7506c.py", line 1',
         "KeyError: …",
         "During handling of the above exception, another exception occurred:",
         "Traceback (most recent call last):",
-        '  File "…/file:bb88d7506c.py", line 3, in <module>',
+        '  File "…/file:bb88d7506c.py", line 3',
         "RuntimeError: …",
     ]
     assert omitted == 0
@@ -299,19 +306,21 @@ def test_evidence_lines_keep_only_traceback_and_faulthandler_blocks():
     """
     kept, omitted = diagnostics.evidence_lines(WORKER_LOG.splitlines())
     text = "\n".join(kept)
-    # 留下的：两个结构块（帧里的绝对路径缩成 `…/文件名` / `…/site-packages/包/模块.py`）
+    # 留下的：两个结构块。帧只留「路径 + 行号」（函数名是用户的标识符，评审 #443 第七轮），
+    # 路径缩成 `…/file:<哈希>.py` / 已知第三方包的 `…/site-packages/包/模块.py`；
+    # 崩溃头只放行 CPython 自己的故障名；`Extension modules` 只留计数（模块名可能是用户的包）。
     assert kept[:4] == [
         "Traceback (most recent call last):",
-        '  File "…/file:07dcc94317.py", line 12, in <module>',
-        '  File "…/site-packages/pandas/io/parsers.py", line 900, in read_csv',
+        '  File "…/file:07dcc94317.py", line 12',
+        '  File "…/site-packages/pandas/io/parsers.py", line 900',
         "FileNotFoundError: …",  # message 是自由文本（可能带数据），只留类型
     ], kept
     assert kept[4:] == [
         "Fatal Python error: Segmentation fault",
         "Current thread 0x00001234 (most recent call first):",
-        '  File "…/site-packages/matplotlib/ft2font.py", line 40 in load',
-        '  File "…/file:07dcc94317.py", line 20 in <module>',
-        "Extension modules: numpy._core._multiarray_umath (total: 12)",
+        '  File "…/site-packages/matplotlib/ft2font.py", line 40',
+        '  File "…/file:07dcc94317.py", line 20',
+        "Extension modules: … (total: 12)",
     ], kept
     # 略去的：脚本 print 的一切（含长得像异常行 / 标记行的）、帧下面的源码行、噪音、usage
     for absent in (
@@ -328,6 +337,10 @@ def test_evidence_lines_keep_only_traceback_and_faulthandler_blocks():
         "E:/data",
         "/env/lib",
         "missing.csv",
+        "read_csv",  # 帧里的函数名
+        "in load",
+        "<module>",
+        "_multiarray_umath",  # Extension modules 的名单
     ):
         assert absent not in text, absent
     assert omitted == WORKER_LOG_OMITTED
@@ -439,10 +452,91 @@ def test_a_traceback_block_ends_at_its_exception_line():
     )
     assert kept == [
         "Traceback (most recent call last):",
-        '  File "…/file:8332f20adb.py", line 1, in <module>',
+        '  File "…/file:8332f20adb.py", line 1',
         "KeyError: …",
     ]
     assert omitted == 2
+
+
+@pytest.mark.parametrize(
+    "line, expect",
+    [
+        # traceback 帧：`, in 函数名` 不带
+        (
+            '  File "/mnt/study/plot.py", line 12, in analyze_patient_123',
+            '  File "…/file:a19de1d7c3.py", line 12',
+        ),
+        # faulthandler 帧：`in 函数名` 不带；两种写法归成一种
+        (
+            '  File "/mnt/study/plot.py", line 12 in analyze_patient_123',
+            '  File "…/file:a19de1d7c3.py", line 12',
+        ),
+        ('  File "<frozen runpy>", line 88, in _run_code', '  File "<frozen runpy>", line 88'),
+        # 已知第三方包：路径保留，函数名同样不带
+        (
+            '  File "/env/lib/python3.11/site-packages/matplotlib/ft2font.py", line 40 in load',
+            '  File "…/site-packages/matplotlib/ft2font.py", line 40',
+        ),
+    ],
+)
+def test_exported_frames_are_rebuilt_from_path_and_line_only(line, expect):
+    """评审 #443 第七轮 P1：帧行整行过 `shorten_paths` 只换掉了文件名，`in analyze_patient_123`
+    原样出门；改成从解析出来的路径与行号**重建**一行，正则没认的后半截一律不带。"""
+    kept, _ = diagnostics.evidence_lines(
+        ["Traceback (most recent call last):", line, "KeyError: 'k'"]
+    )
+    assert kept == ["Traceback (most recent call last):", expect, "KeyError: …"], kept
+
+
+@pytest.mark.parametrize(
+    "path, expect",
+    [
+        # 一段叫 tavotto / site-packages 证明不了什么：后面跟的不是引擎文件 / 已知包就哈希
+        ("/mnt/tavotto/private-study/patient.py", "…/file:e85d6c19a0.py"),
+        ("/mnt/site-packages/cohort/patient.py", "…/file:e85d6c19a0.py"),
+        ("/env/site-packages/my_private_pkg/patient.py", "…/file:e85d6c19a0.py"),
+        ("/x/tavotto/engine/patient.py", "…/file:e85d6c19a0.py"),
+        # 真的：已知第三方包 / 引擎目录里真实存在的文件
+        ("/env/lib/site-packages/numpy/core/_methods.py", "…/site-packages/numpy/core/_methods.py"),
+        ("/opt/Tavotto/tavotto/engine/worker.py", "…/tavotto/engine/worker.py"),
+        # 已知包名后面夹了不像模块名的一段（带空格的用户路径）：整个哈希
+        ("/env/site-packages/numpy/patient a/x.py", "…/file:99a930f602.py"),
+    ],
+)
+def test_package_paths_are_kept_only_when_their_provenance_checks_out(path, expect):
+    """评审 #443 第七轮 P1：以前路径里有一段叫 `site-packages` / `tavotto` 就把后面整串原样
+    保留，`/mnt/tavotto/private-study/patient.py` 变成 `…/tavotto/private-study/patient.py`。
+    现在 site-packages 之后必须紧跟**已知第三方包**、余下每段都是模块文件名；`tavotto/engine/`
+    之后必须是引擎目录里**真实存在**的文件名——否则与别的用户路径一样哈希。"""
+    assert diagnostics.shorten_paths(f'"{path}"') == f'"{expect}"'
+
+
+@pytest.mark.parametrize(
+    "header, expect",
+    [
+        ("Fatal Python error: Segmentation fault", "Fatal Python error: Segmentation fault"),
+        ("Fatal Python error: Aborted", "Fatal Python error: Aborted"),
+        ("Windows fatal exception: access violation", "Windows fatal exception: access violation"),
+        ("Windows fatal exception: code 0xc0000409", "Windows fatal exception: code 0xc0000409"),
+        # `Py_FatalError("…")` 的自由文本 / 用户 print 出来凑成整块的：只留头
+        ("Fatal Python error: patient-123 cohort B", "Fatal Python error: …"),
+        ("Fatal Python error: Segmentation fault: patient-123", "Fatal Python error: …"),
+    ],
+)
+def test_crash_headers_pass_only_cpythons_own_fault_names(header, expect):
+    """崩溃头与 `Extension modules` 尾也是自由文本的位置：故障名按 CPython faulthandler.c
+    的闭集放行，模块名单只留计数（用户自己的 C 扩展名会在里面）。"""
+    kept, _ = diagnostics.evidence_lines(
+        [
+            header,
+            "Current thread 0x00001234 (most recent call first):",
+            '  File "/x/a.py", line 1 in <module>',
+            "Extension modules: numpy._core._multiarray_umath, cohort_secret._ext (total: 2)",
+        ]
+    )
+    assert kept[0] == expect, kept
+    assert kept[-1] == "Extension modules: … (total: 2)", kept
+    assert "cohort_secret" not in "\n".join(kept)
 
 
 @pytest.mark.parametrize(

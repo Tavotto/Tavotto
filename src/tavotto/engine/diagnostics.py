@@ -167,9 +167,10 @@ def recent_errors(lines: list[str], limit: int = ERROR_TAIL) -> list[str]:
             while j < len(lines) and (not lines[j].strip() or lines[j][:1].isspace()):
                 j += 1
             tail = lines[j].strip() if j < len(lines) else ""
-            # 收尾那句里可能带路径（`OSError: /mnt/study/patient-a.csv`）：与 worker 证据
-            # 同一道缩写——`_redact_text` 只认主目录（评审 #443 第四轮）
-            out.append(shorten_paths(f"{ln.strip()} → {tail}") if tail else ln)
+            # 收尾那句与 worker 证据同一条规则（`_closer_for_export`：只留异常类型，
+            # ImportError 家族只留加载器形状）——它的 message 同样可能是用户数据
+            # （评审 #443 第四、七轮）
+            out.append(f"{ln.strip()} → {_closer_for_export(tail)}" if tail else ln)
             i = j + 1 if tail else j
             continue
         if " ERROR " in ln:
@@ -189,7 +190,7 @@ def recent_errors(lines: list[str], limit: int = ERROR_TAIL) -> list[str]:
 #: 来历（前面那串帧）跟着它一起在。`[guard]` 这类引擎标记行不进包：它们不是崩溃证据，
 #: 而用户完全可以打印出同样的前缀。
 _TB_HEADER = re.compile(r"^Traceback \(most recent call last\):$")
-_TB_FRAME = re.compile(r'^\s+File "[^"]*", line \d+')
+_TB_FRAME = re.compile(r'^\s+File "(?P<path>[^"]*)", line (?P<line>\d+)')
 #: 收尾的异常行：`ExcType: message` 或裸 `ExcType`（`KeyboardInterrupt`），类型名是点分标识符。
 #: `next sample: patient-124` 这种词间带空格的不算——块没有合法收尾就整块不算。
 _TB_CLOSER = re.compile(r"^[A-Za-z_][\w.]*(?::\s.*|:)?$")
@@ -200,6 +201,13 @@ _CLOSER_KEEP_MESSAGE = frozenset({"ImportError", "ModuleNotFoundError"})
 _FH_HEADER = re.compile(r"^(?:Fatal Python error|Windows fatal exception): \S")
 _FH_THREAD = re.compile(r"^(?:Current thread|Thread) 0x[0-9a-fA-F]+")
 _FH_FOOTER = re.compile(r"^Extension modules\b")
+#: 崩溃头里**允许原样出门**的故障名——闭集：CPython 的信号名与 Windows 的异常名。
+#: 其它（`Py_FatalError` 的自由文本、用户 print 的伪装）一律 `…`。
+_FH_KNOWN_FAULTS = re.compile(
+    r"^(?:Segmentation fault|Bus error|Illegal instruction|Floating-point exception|Aborted"
+    r"|Stack overflow|access violation|stack overflow|int divide by zero|float divide by zero"
+    r"|code 0x[0-9a-fA-F]+)$"
+)
 #: **块要完整才算证据**（评审 #443 第四轮）：traceback 块 = 头 + ≥1 帧 + 合法收尾；
 #: faulthandler 块 = 头 + ≥1 `Current thread` / `Thread 0x…` + ≥1 帧。用户
 #: `print("Fatal Python error: patient-123")` 只有一个头、`print("Traceback (most recent
@@ -239,14 +247,40 @@ def _shorten_path(match: re.Match) -> str:
     if not parts:
         return raw
     lowered = [seg.lower() for seg in parts]
-    for anchor in ("site-packages", "tavotto"):
-        if anchor in lowered:
-            idx = len(lowered) - 1 - lowered[::-1].index(anchor)
-            return "…/" + "/".join(parts[idx:])
+    # 路径分量叫 `site-packages` 证明不了什么（评审 #443 第七轮）：只有它后面紧跟的是
+    # **已知第三方包**、且余下每一段都是标识符 / 模块文件名时才保留——那是库的文件名。
+    if "site-packages" in lowered:
+        idx = len(lowered) - 1 - lowered[::-1].index("site-packages")
+        rest = parts[idx + 1 :]
+        if rest and rest[0] in _KNOWN_SITE_PACKAGES and all(_MODULE_SEGMENT.match(x) for x in rest):
+            return "…/site-packages/" + "/".join(rest)
+    # Tavotto 自己的引擎源码：按**真实文件清单**验（`pool.WORKER_PY` 所在目录里有这个名字），
+    # 不是看路径里有没有 `tavotto` 这一段。
+    if len(parts) >= 3 and lowered[-3] == "tavotto" and lowered[-2] == "engine":
+        if parts[-1] in _ENGINE_FILES:
+            return "…/tavotto/engine/" + parts[-1]
     name = parts[-1]
     stem, dot, ext = name.rpartition(".")
     suffix = f".{ext}" if dot and stem and len(ext) <= 8 else ""
     return "…/file:" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:10] + suffix
+
+
+#: `site-packages/<这些>/…` 之后的路径原样保留：我们发行 / 认识的第三方科学栈与命令行库。
+#: 闭集，不在表里的包名连同文件名一起哈希——不认识的名字可能是用户自己 pip 安装的私有包。
+_KNOWN_SITE_PACKAGES = frozenset(
+    {
+        "matplotlib", "mpl_toolkits", "numpy", "pandas", "scipy", "seaborn", "PIL",
+        "contourpy", "cycler", "fontTools", "kiwisolver", "packaging", "pyparsing", "dateutil",
+        "six", "click", "typer", "docopt", "fire", "IPython", "matplotlib_inline",
+    }
+)  # fmt: skip
+_MODULE_SEGMENT = re.compile(r"^[A-Za-z_][\w.-]*$")
+#: 引擎目录里真实存在的文件名（一次性读，进程内不会变）。
+_ENGINE_FILES = (
+    frozenset(p.name for p in pool.WORKER_PY.parent.iterdir() if p.is_file())
+    if pool.WORKER_PY.parent.is_dir()
+    else frozenset()
+)
 
 
 #: 引号里的路径整体算一个（`File "C:\\Clinical Trial\\x.py", line 3` / `'/mnt/a b/c.csv'`）：
@@ -283,6 +317,35 @@ _LOADER_MESSAGES = (
     re.compile(r"^cannot import name '(?P<a>[A-Za-z_]\w*)' from '(?P<b>[A-Za-z_][\w.]*)'"),
     re.compile(r"^DLL load failed while importing (?P<a>[A-Za-z_]\w*)\b"),
 )
+
+
+def _frame_for_export(line: str) -> str:
+    """帧行 → `  File "<缩写路径>", line N`：函数名不带（`in analyze_patient_123` 是用户的
+    标识符，评审 #443 第七轮），faulthandler 的 `line N in f` 与 traceback 的
+    `line N, in f` 归成一种写法。"""
+    m = _TB_FRAME.match(line)
+    assert m is not None  # 调用方已经用同一个正则筛过
+    path = shorten_paths(f'"{m.group("path")}"')[1:-1] if m.group("path") else ""
+    return f'  File "{path}", line {m.group("line")}'
+
+
+def _fh_header_for_export(line: str) -> str:
+    head, _, fault = line.partition(": ")
+    return f"{head}: {fault.strip()}" if _FH_KNOWN_FAULTS.match(fault.strip()) else f"{head}: …"
+
+
+def _fh_thread_for_export(line: str) -> str:
+    m = re.match(r"^((?:Current thread|Thread) 0x[0-9a-fA-F]+)", line)
+    return (
+        f"{m.group(1)} (most recent call first):"
+        if m
+        else "Current thread (most recent call first):"
+    )
+
+
+def _fh_footer_for_export(line: str) -> str:
+    m = re.search(r"\(total: \d+\)\s*$", line)
+    return f"Extension modules: … {m.group(0)}" if m else "Extension modules: …"
 
 
 def _closer_for_export(line: str) -> str:
@@ -326,7 +389,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
             i += 1
             continue
         if _TB_HEADER.match(ln):
-            block = [shorten_paths(ln)]
+            block = [ln]
             frames = 0
             i += 1
             closed = False
@@ -338,7 +401,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                     continue
                 if cur[:1].isspace():
                     if _TB_FRAME.match(cur):
-                        block.append(shorten_paths(cur))
+                        block.append(_frame_for_export(cur))
                         frames += 1
                     else:
                         dropped += 1
@@ -362,7 +425,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
             just_closed_tb = True
             continue
         if _FH_HEADER.match(ln):
-            block = [shorten_paths(ln)]
+            block = [_fh_header_for_export(ln)]
             threads = frames = 0
             i += 1
             while i < n:
@@ -371,17 +434,17 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                     i += 1
                     continue
                 if _FH_THREAD.match(cur):
-                    block.append(shorten_paths(cur))
+                    block.append(_fh_thread_for_export(cur))
                     threads += 1
                     i += 1
                     continue
                 if _TB_FRAME.match(cur):
-                    block.append(shorten_paths(cur))
+                    block.append(_frame_for_export(cur))
                     frames += 1
                     i += 1
                     continue
                 if _FH_FOOTER.match(cur):
-                    block.append(shorten_paths(cur))
+                    block.append(_fh_footer_for_export(cur))
                     i += 1
                 break
             if not (threads and frames):
@@ -762,16 +825,19 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- app.log：最近的应用日志\n"
         "- config.json：用户配置（密钥已抹掉）\n"
         "  （report.json 的 render.worker_logs 段：渲染进程日志里的 Python 报错块与崩溃栈——\n"
-        "  只留 traceback 的帧行（文件名换成哈希 + 行号）与异常类型名，报错文字、脚本自己\n"
-        "  打印的内容与源码行已略去）\n" + extra_zh + "- manifest.json：本诊断包自身的格式说明\n"
+        "  只留 traceback 的帧行（文件名换成哈希 + 行号，函数名不带）与异常类型名；崩溃栈只留\n"
+        "  故障名与帧行、扩展模块只留计数；报错文字、脚本自己打印的内容与源码行已略去）\n"
+        + extra_zh
+        + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
         "- report.json: system and runtime information\n"
         "- app.log: recent Tavotto application logs\n"
         "- config.json: user configuration (secrets removed)\n"
         "  (report.json, render.worker_logs: Python traceback blocks and crash stacks from\n"
-        "  the render process logs — only frame lines (hashed file name + line number) and\n"
-        "  the exception type; error messages, anything your script printed, and source\n"
-        "  lines are left out)\n"
+        "  the render process logs — only frame lines (hashed file name + line number, no\n"
+        "  function names) and the exception type; crash stacks keep the fault name, frames\n"
+        "  and the extension-module count; error messages, anything your script printed, and\n"
+        "  source lines are left out)\n"
         + extra_en
         + "- manifest.json: describes this package's own format\n"
         "\n"
