@@ -322,3 +322,28 @@ def test_build_prompt_normalized(tmp_path):
         "fig1.py", "换配色", {"stem": "Fig1", "gid": "axes_0"}, str(tmp_path)
     )
     assert "Fig1" in p3 and "axes_0" in p3 and "换配色" in p3
+
+
+
+def test_build_prompt_source_bake_uses_versioned_structured_context(tmp_path):
+    """source-bake 要给 Agent 明确、可机器复核的契约，而不是 Python repr 参考文本。"""
+    context = {
+        "stem": "Fig1",
+        "overrides": [{"gid": "axes_0.lines_0", "prop": "color", "value": "#112233"}],
+        "source_bake": {
+            "schema": "tavotto.codex_source_bake.v1",
+            "stem": "Fig1",
+            "patch_hash": "sha256:abc",
+            "patches": [{"gid": "axes_0.lines_0", "prop": "color", "value": "#112233"}],
+            "goal": "modified Python must reproduce the current Tavotto visual state with overrides=[]",
+        },
+    }
+    prompt = ai_bridge._build_prompt("fig1.py", "写入源码", context, str(tmp_path))
+
+    assert "SOURCE_BAKE_CONTEXT_JSON:" in prompt
+    assert '"schema":"tavotto.codex_source_bake.v1"' in prompt
+    assert '"patch_hash":"sha256:abc"' in prompt
+    assert "overrides=[]" in prompt
+    assert "只修改目标绘图脚本" in prompt
+    # source-bake 模式不能退回旧的“仅供参考”语义；那样 Agent 可以合法地什么也不吸收。
+    assert "代表期望状态，供参考" not in prompt
