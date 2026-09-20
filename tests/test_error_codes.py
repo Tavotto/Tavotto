@@ -57,6 +57,9 @@ _CODE_REGISTRIES = (
     "tavotto.engine.exportjob",
     # safe 档工作目录模式（ADR 0047）：端点用 `workdir.ERROR_MODE_INVALID` 常量
     "tavotto.engine.workdir",
+    # U03（ADR 0057）：显式解释器失效 / 计划过期——都是常量式的 code
+    "tavotto.engine.pool",
+    "tavotto.engine.preparation",
 )
 
 
@@ -149,6 +152,12 @@ USER_VISIBLE_CODES = {
     "interpreter_not_found": {"path"},
     # safe 档工作目录模式（ADR 0047）
     "workdir_mode_invalid": {"mode"},
+    # --- U03（ADR 0057）：首开的「需要输入」与失效的显式选择。params 空：细节在结构化字段
+    # （confirmation / explicit）里，文案不插值 ---
+    "workdir_confirmation_required": set(),
+    "explicit_python_unusable": set(),
+    "project_python_unusable": set(),
+    "preparation_plan_stale": set(),
     # 异步准备（统一实施包 U01，ADR 0053）：plan_id 不存在或属于别的项目
     "preparation_not_found": {"id"},
     "interpreter_no_matplotlib": {"path"},

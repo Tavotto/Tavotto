@@ -58,6 +58,10 @@ MIN_TAVOTTO_VERSION = "0.15.0"
 #: 2026-09-13（ADR 0051）：桥新增 import 了 artifactcheck / figcapture / interference /
 #: normalize——四个全部晚于 v0.14.0，所以 v0.15.0 发版时抬到 0.15.0（第一个装得下
 #: 这四个模块的版本）。
+#: 2026-09-20（U03，ADR 0057）：桥新增 import 了 workdir——它 v0.14.0 起就在（ADR 0047），桥只用
+#: 那时就有的名字（`MODES` / `mode_for` / `set_mode` / `ERROR_MODE_INVALID`），第三档
+#: `project_root` 在老引擎上由 `set_mode` 以 `workdir_mode_invalid` 拒绝、不静默——所以最低版本
+#: 不用抬；下次发版若要把「首开确认」当插件依赖的能力再重估。
 BRIDGE_IMPORTS_AT_MIN = frozenset(
     {
         "artifactcheck",
@@ -78,6 +82,7 @@ BRIDGE_IMPORTS_AT_MIN = frozenset(
         "readiness",
         "registry",
         "telemetry",
+        "workdir",
     }
 )
 CHANNEL = "stable"

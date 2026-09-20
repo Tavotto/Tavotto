@@ -149,16 +149,35 @@ ruleset、`aggregate_gate.py`、默认后端、生产依赖、`security._PUBLIC_
 一天内让三个 PR 红（#462 / #469 / #475），而 `probe_asset` 在 `_declared_density` 里的引用实际指着
 `_original_page_pt` 那一行，按行号的判据看不见。
 
-**下一个无阻塞阶段 / 子切片**：PR B（本阶段）：前端确认对话框（`workdir_confirmation_required` →
-三档选择 → `PATCH /api/engine/workdir` → 重排渲染）、设置里 `WorkdirRow` 改三档、i18n 四个新 code
-（`workdir_confirmation_required` / `explicit_python_unusable` / `project_python_unusable` /
-`preparation_plan_stale`）、`resources.d.ts` 重生成、MCP `open_figure` 的结构化投影（BridgeError 带
-`confirmation`）。U04 的输入：`plan.environment.discovery.rejected` 是「项目里有 venv 但缺什么」的
+**PR B（确认交互）已落**：
+
+| 层 | 变更 |
+|---|---|
+| `web/src/lib/api.ts` | `WorkdirMode` 三档、`WorkdirState.decided / grant`、`WorkdirConfirmation` / `ExplicitInterpreterFailure` 类型、`WORKDIR_CONFIRMATION_CODE`、`EngineError.confirmation / explicit`、`ProjectEnvironment.resolution_error`；`WORKDIR_CODES` 加 `workdir_confirmation_required`（换目录后重排） |
+| `web/src/store/envStore.ts` | `setWorkdirMode(mode, { confirmed })`：两个真实目录各自确认一次（项目根有自己的文案），首开确认框自己就是那一次点头；模式相同但 `confirmed` 仍 PATCH（选「继续沙盒」也要记决定）；`workdirConfirmation` + `request / dismiss`（同一时刻一份；`resetProject` 清） |
+| `web/src/store/renderStore.ts` | `PanelRender.confirmation`；失败路径把 `EngineError.confirmation` 交给 envStore |
+| `web/src/components/WorkdirConfirmDialog.tsx`（新） | 三档单选（推荐预选、歧义不预选）、各档找得到的文件、写入含义一句、「稍后」/「运行」；锚点 `data-dialog="workdir-confirm"`、`data-workdir-option=<mode>` |
+| `web/src/components/WorkdirRow.tsx` | 设置里的三档 `Segmented`（老服务端只报两档时第三档不摆）；`WorkdirChooseButton`（错误块里再打开） |
+| `web/src/components/inspector/ElementInspector.tsx` | `workdir_confirmation_required` 的错误块给 `WorkdirChooseButton`，其余 WORKDIR_CODES 仍给 `WorkdirSuggestion` |
+| i18n（两种语言） | `engine.workdirChoose* / workdirOption* / workdirMode_* / workdirHintProjectRoot / workdirRootConfirm* / workdirNowProjectRoot`；`backend.workdir_confirmation_required / explicit_python_unusable / project_python_unusable / preparation_plan_stale`；`workdirLabel` 改「脚本的运行目录」；`resources.d.ts` 重生成 |
+| `codex-plugin/mcp/tavotto_mcp/bridge.py` / `server.py` | `_bridge_error_from_worker`：`confirmation` / `explicit` 进 `structuredContent`，`recovery` 说怎么答；`tavotto_open_figure(workdir=…)` = `workdir.set_mode` + 关旧会话；`_BRIDGE_IMPORT` / `BRIDGE_IMPORTS_AT_MIN` 加 `workdir`（最低版本不抬，理由在 `make_plugin_manifest.py`） |
+| `tests/test_error_codes.py` | `_CODE_REGISTRIES` 加 pool / preparation；四个 code 进 `USER_VISIBLE_CODES`（两种语言文案受门禁） |
+| 文档 | `docs/rules/frontend/readiness-and-left-shell.md` 一节、`web/AGENTS.md` 一行、`codex-plugin/AGENTS.md` 一条、`skills/tavotto-figure/references/compatibility.md` 码表两行 |
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `cd web && pnpm i18n:check` | 0 | 通过 |
+| `cd web && pnpm test` | 0 | 280 files · 4153 passed（含新 `WorkdirConfirmDialog.test.tsx` 9 条、改写的 `WorkdirRow.test.tsx` 8 条） |
+| `cd web && pnpm build` | 0 | tailwind-scan-check 11/11 |
+| `pytest tests/test_mcp_server.py tests/test_mcp_resolver.py tests/test_mcp_stdio.py tests/test_codex_plugin.py tests/test_error_codes.py tests/test_i18n_dead_keys.py tests/test_agents_rules_index.py tests/test_docs_references.py` | 0 | 通过（MCP 四条 U03 用例） |
+| 真浏览器实测（agent-browser，隔离实例 `--insecure-no-auth`，FO02 形状的项目，`TAVOTTO_WORKER_PYTHON` 摘掉） | — | 双击素材 → 渲染 500 + `workdir_confirmation_required` → 确认框（项目根预选、`找得到：data/points.csv`）→「运行」→ `PATCH /api/engine/workdir` 200 → 冷启动渲染 11.9 s 成功，图内元素树齐全；设置 → 诊断 → 技术详情 → 渲染环境：三档分段「项目根目录」选中（决定已持久化） |
+
+**下一个无阻塞阶段 / 子切片**：U04（联合依赖）。U04 的输入：`plan.environment.discovery.rejected` 是「项目里有 venv 但缺什么」的
 事实面；`DependencyIntent` 原样可见、`conflicts` 不裁决；安装目标仍只有项目 venv / 受管环境；首开采用
 的项目 venv（`trigger=first_open`）就是联合依赖的安装目标候选。U09 的输入：六条场景的 `receipt.backend`
 都是 `pymupdf`，RenderCore 终点要另取资格，不能混称。
 
-**回退方式、不能假装可回滚的外部副作用**：revert PR A 即回退：worker 装载形态回到平铺 import（#447 重新
+**回退方式、不能假装可回滚的外部副作用**：revert PR B 只撤界面 / MCP 投影（后端的门仍在，渲染以 500 + code 报「先选目录」、设置里只剩两档）；revert PR A 即整个回退：worker 装载形态回到平铺 import（#447 重新
 打开）、解释器链回到「缺包后接手」、`project_root` 模式与 `needs_input` 消失。项目设置里多出的
 `workdir.decided_at` / `environment.mode=default` / `trigger=first_open` 旧代码读得懂（`mode_for` 只看
 `mode`，`remembered()` 对 `mode=default` 回 None）。没有发布、没有外部副作用。
