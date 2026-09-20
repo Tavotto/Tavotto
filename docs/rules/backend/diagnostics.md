@@ -39,8 +39,14 @@
   整块按用户输出略去（一个 `print("Fatal Python error: …")` 不是通行证）；链式异常的两句
   连接语要**逐字**相同且夹在两段 traceback 之间；**收尾行只留异常类型**（`KeyError: …`）——
   用户 `traceback.print_exc()` 打出来的块结构与引擎的一模一样，来历分不出，能保证的只有
-  message 不出门；`ImportError` / `ModuleNotFoundError` 例外，那句是加载器说的。路径缩写
-  先整体处理引号里的（带空格的 `C:\Clinical Trial\…` 不能在空格处断），再处理裸路径。
+  message 不出门；`ImportError` / `ModuleNotFoundError` 只在 message 长成加载器那几种形状
+  （`No module named 'x'` / `cannot import name 'a' from 'b'` / `DLL load failed while
+  importing x`，名字是标识符）时保留形状本身——它们是普通公开异常类，用户 `raise` 的
+  一样是这个类型。路径缩写先整体处理引号里的（带空格的 `C:\Clinical Trial\…` 不能在
+  空格处断），再处理裸路径；三档：`site-packages/…` 与 `tavotto/…` 之后的部分保留，
+  其余文件名换成 `file:<sha1 前 10 位><扩展名>`（README：文件名一律换成不可逆哈希）。
+  会话 id 同样是哈希（`session:…`，目录名里带着脚本名）。扫描窗默认最后 400 行，
+  但**至少回溯到最近一个崩溃头**（`_scan_start`：`all_threads=True` 一段能超过 400 行）。
   `recent_errors` 里配对的异常行与 ERROR 行过同一道路径缩写。**先扫 `WORKER_LOG_SCAN_LINES`（400）行再抽块、再按块截到
   `WORKER_LOG_TAIL_LINES`（`last_blocks_within`：最后那块再长也整块要）**——先按行截
   再抽块会把一段长崩溃栈截成没有头的帧行，状态机一条都不认。README 承诺包里不含

@@ -119,13 +119,20 @@ SCRIPT_EXITED = "script_exited"
 
 
 def _raised_by_cli_parser(exc: BaseException) -> bool:
+    """`SystemExit` 是不是参数解析库**自己**抛的——只看抛出点（最内层）那一帧。
+
+    看整条栈会把「控制流经过了 click」当成「click 退出的」：一个无参数的 click 命令，
+    用户回调里 `sys.exit(7)`，栈里也有好几层 `click.core`（评审 #443）。argparse 的
+    `parser.error()` → `self.exit(2)` → `sys.exit` 最内层在 `argparse`；click 的用法错误
+    在 `click.core.main` 里 `sys.exit(e.exit_code)`，同样在最内层。
+    """
     tb = exc.__traceback__
-    while tb is not None:
-        module = str(tb.tb_frame.f_globals.get("__name__") or "")
-        if module.split(".")[0] in _CLI_PARSER_MODULES:
-            return True
+    if tb is None:
+        return False
+    while tb.tb_next is not None:
         tb = tb.tb_next
-    return False
+    module = str(tb.tb_frame.f_globals.get("__name__") or "")
+    return module.split(".")[0] in _CLI_PARSER_MODULES
 
 
 def _script_exit_error(exc: SystemExit) -> ProtocolError:

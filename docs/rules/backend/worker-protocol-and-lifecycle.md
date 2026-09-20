@@ -59,8 +59,9 @@
   worker 自己开着 `faulthandler`（stderr 重配之后装，记的是那一刻的 fd）：硬崩溃
   的 Python 栈落在 worker.log。脚本的 `sys.exit(0)` 是正常结束（`python fig.py`
   的语义）；非零按异常从哪个模块抛出来分两条 code（`worker._script_exit_error`）：
-  帧的**模块来历**（`f_globals["__name__"]`，不看路径分量——脚本放在叫 `click/` 的目录里
-  路径会撒谎）是 argparse / click 等命令行解析库 → `script_needs_arguments`（脚本要参数而
+  **抛出点那一帧**（最内层）的模块来历（`f_globals["__name__"]`，不看路径分量——脚本放在
+  叫 `click/` 的目录里路径会撒谎；不看整条栈——控制流经过 click 不等于 click 退出的）
+  是 argparse / click 等命令行解析库 → `script_needs_arguments`（脚本要参数而
   safe 档不带参数，出路是默认值或 `tavotto run`；argparse 的 usage 打在 stderr，
   `pool._attach_script_output` 把 worker.log 尾巴接到 traceback 前面，两条控制面
   同一处拼），否则 `script_exited`——都不再把 worker 带走。`ensure_built` 放行

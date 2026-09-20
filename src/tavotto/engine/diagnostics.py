@@ -19,6 +19,7 @@ Python」「日志在哪」）才能定位一次。有了这个包，用户点�
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -43,6 +44,9 @@ WORKER_LOG_TAIL_LINES = 60
 #: 截、再抽证据的话，一段 80 行的崩溃栈只剩帧行、没有头，状态机一条都不认，报告里
 #: 就没有崩溃位置（评审 #443）。与 app.log 的 `LOG_TAIL_LINES` 同一个量级。
 WORKER_LOG_SCAN_LINES = 400
+#: 读文件时的字节上限（一份 worker.log 可能被脚本刷到几十 MB）。`_scan_start` 会从这一截
+#: 里回溯到最近一个崩溃头，所以它要远大于一段完整的崩溃栈。
+WORKER_LOG_SCAN_BYTES = 4 * 1024 * 1024
 
 #: 诊断包整体格式的版本。**读包的人不该靠 Tavotto 版本号去猜 schema**
 #: ——manifest.json 自报这个数。1 = 只有 report/app.log/config 的那一版；
@@ -218,21 +222,31 @@ _ABS_PATH = re.compile(
 
 
 def _shorten_path(match: re.Match) -> str:
-    """一条绝对路径 → 只留能定位的那一截：site-packages 之后的包内路径，否则文件名。
+    """一条绝对路径 → 只留能定位的那一截。
 
-    README 承诺包里不含「完整的本地文件路径」；`_redact_text` 只认当前主目录，
-    D 盘、外接盘、`\\\\wsl.localhost\\…` 上的项目路径它一个字都不动。帧行里
-    真正有诊断价值的是「哪个包的哪个文件第几行」，目录前缀没有。
+    README 承诺包里不含「完整的本地文件路径」，且文件名一律换成不可逆的短哈希
+    （`file:…`）；`_redact_text` 只认当前主目录，D 盘、外接盘、`\\\\wsl.localhost\\…`
+    上的项目路径它一个字都不动。三档：
+
+    * `site-packages` 之后的包内路径保留（`…/site-packages/matplotlib/ft2font.py`）——
+      那是第三方库的文件名，不是用户的；
+    * Tavotto 自己的源码（路径里有 `tavotto` 这一段）保留 `tavotto/…` 之后的部分；
+    * 其余（用户的脚本、数据文件）只留 `…/file:<sha1 前 10 位><扩展名>`：行号还在，
+      同一个文件的哈希稳定，读的人能对上「同一份」，反推不回名字。
     """
     raw = match.group(0)
     parts = [seg for seg in re.split(r"[\\/]+", raw) if seg]
     if not parts:
         return raw
     lowered = [seg.lower() for seg in parts]
-    if "site-packages" in lowered:
-        idx = len(lowered) - 1 - lowered[::-1].index("site-packages")
-        return "…/" + "/".join(parts[idx:])
-    return "…/" + parts[-1]
+    for anchor in ("site-packages", "tavotto"):
+        if anchor in lowered:
+            idx = len(lowered) - 1 - lowered[::-1].index(anchor)
+            return "…/" + "/".join(parts[idx:])
+    name = parts[-1]
+    stem, dot, ext = name.rpartition(".")
+    suffix = f".{ext}" if dot and stem and len(ext) <= 8 else ""
+    return "…/file:" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:10] + suffix
 
 
 #: 引号里的路径整体算一个（`File "C:\\Clinical Trial\\x.py", line 3` / `'/mnt/a b/c.csv'`）：
@@ -259,19 +273,36 @@ def shorten_paths(line: str) -> str:
     return _ABS_PATH.sub(unquoted, line)
 
 
+#: 加载器生成的 ImportError 文案——**只认这几种形状**，且里面的名字必须是点分标识符：
+#: `ImportError` 是普通的公开异常类，用户 `raise ImportError("patient-123 …")` 再
+#: `print_exc()` 一样是这个类型（评审 #443 第六轮）。形状对不上的一律只留类型。
+_LOADER_MESSAGES = (
+    re.compile(
+        r"^No module named '(?P<a>[A-Za-z_][\w.]*)'(?:; '(?P<b>[A-Za-z_][\w.]*)' is not a package)?$"
+    ),
+    re.compile(r"^cannot import name '(?P<a>[A-Za-z_]\w*)' from '(?P<b>[A-Za-z_][\w.]*)'"),
+    re.compile(r"^DLL load failed while importing (?P<a>[A-Za-z_]\w*)\b"),
+)
+
+
 def _closer_for_export(line: str) -> str:
     """traceback 的收尾行 → 进包的形态：类型名保留，自由文本的 message 换成 `…`。
 
     用户脚本 `except … : traceback.print_exc()` 打出来的块与引擎自己的结构一模一样
     （评审 #443 第五轮）：结构齐全证明不了来历，能保证的只有「message 不出门」。
-    `ImportError` / `ModuleNotFoundError` 例外——那句是加载器说的，正是排障要的。
+    `ImportError` / `ModuleNotFoundError` 的 message 只在长成加载器那几种形状时保留，
+    而且只保留形状本身（模块名是标识符，`DLL load failed while importing X` 之后的
+    操作系统文案也不带）。
     """
     head, sep, message = line.partition(":")
     exc_type = head.strip().rsplit(".", 1)[-1]
     if not sep or not message.strip():
         return line
     if exc_type in _CLOSER_KEEP_MESSAGE:
-        return shorten_paths(line)
+        for pattern in _LOADER_MESSAGES:
+            m = pattern.match(message.strip())
+            if m:
+                return f"{head}: {m.group(0)}"
     return f"{head}: …"
 
 
@@ -433,15 +464,20 @@ def worker_log_tails(
     out: list[dict] = []
     for mtime, p in stamped[:files]:
         try:
-            text = p.read_bytes().decode("utf-8", errors="replace")
+            text = p.read_bytes()[-WORKER_LOG_SCAN_BYTES:].decode("utf-8", errors="replace")
         except OSError:
             continue
-        scanned = text.splitlines()[-WORKER_LOG_SCAN_LINES:]
+        all_lines = text.splitlines()
+        scanned = all_lines[_scan_start(all_lines) :]
         blocks, omitted = evidence_blocks(scanned)
         kept = last_blocks_within(blocks, lines)
         out.append(
             {
-                "session": p.parent.name,
+                # README 承诺文件名一律换成不可逆的短哈希：目录名里带着脚本名，只出哈希。
+                # 同一台机器上同一个 (项目, 脚本) 的哈希稳定，读的人能对上「是同一份」。
+                "session": "session:"
+                + hashlib.sha1(p.parent.name.encode("utf-8")).hexdigest()[:12],
+                "replay": p.parent.name.startswith("_replay-"),
                 "modified": _iso(mtime),
                 "empty": not any(t.strip() for t in scanned),
                 "omitted": omitted,
@@ -449,6 +485,17 @@ def worker_log_tails(
             }
         )
     return out
+
+
+def _scan_start(all_lines: list[str]) -> int:
+    """从哪一行开始抽证据：默认最后 `WORKER_LOG_SCAN_LINES` 行，但**至少回溯到最近一个
+    崩溃头**——`all_threads=True` 的 faulthandler 遇上几条深栈线程，一段就能超过 400 行，
+    按行截会把唯一的 `Fatal Python error` 头切掉，后面的帧一条都不算（评审 #443）。"""
+    start = max(0, len(all_lines) - WORKER_LOG_SCAN_LINES)
+    for idx in range(len(all_lines) - 1, -1, -1):
+        if _FH_HEADER.match(all_lines[idx]) or _TB_HEADER.match(all_lines[idx]):
+            return min(start, idx)
+    return start
 
 
 def _iso(ts: float) -> str:
@@ -715,16 +762,18 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- app.log：最近的应用日志\n"
         "- config.json：用户配置（密钥已抹掉）\n"
         "  （report.json 的 render.worker_logs 段：渲染进程日志里的 Python 报错块与崩溃栈——\n"
-        "  只留 traceback 的帧行（文件名 + 行号）与异常类型名，报错文字、脚本自己打印的内容\n"
-        "  与源码行已略去）\n" + extra_zh + "- manifest.json：本诊断包自身的格式说明\n"
+        "  只留 traceback 的帧行（文件名换成哈希 + 行号）与异常类型名，报错文字、脚本自己\n"
+        "  打印的内容与源码行已略去）\n" + extra_zh + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
         "- report.json: system and runtime information\n"
         "- app.log: recent Tavotto application logs\n"
         "- config.json: user configuration (secrets removed)\n"
         "  (report.json, render.worker_logs: Python traceback blocks and crash stacks from\n"
-        "  the render process logs — only frame lines (file name + line number) and the\n"
-        "  exception type; error messages, anything your script printed, and source lines\n"
-        "  are left out)\n" + extra_en + "- manifest.json: describes this package's own format\n"
+        "  the render process logs — only frame lines (hashed file name + line number) and\n"
+        "  the exception type; error messages, anything your script printed, and source\n"
+        "  lines are left out)\n"
+        + extra_en
+        + "- manifest.json: describes this package's own format\n"
         "\n"
         "不包含 / It does NOT intentionally contain:\n"
         "- 图中文字（标题、坐标轴标签、图例、标注）\n"

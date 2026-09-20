@@ -205,6 +205,32 @@ def test_a_script_living_in_a_directory_named_click_is_not_mistaken_for_click(fi
 
 
 @needs_worker
+def test_an_exit_from_inside_a_parser_callback_is_the_scripts_own(figs):
+    """评审 #443 第六轮 P2：控制流**经过**了参数解析库不等于解析库退出的——
+    只看抛出点那一帧。这里用一个假的 `click` 包模拟：回调在用户模块里 `sys.exit(7)`。"""
+    (figs / "click").mkdir()
+    (figs / "click" / "__init__.py").write_text(
+        "def command(fn):\n"
+        "    def run():\n"
+        "        return fn()          # 解析库的帧在栈上，但退出发生在用户回调里\n"
+        "    return run\n",
+        encoding="utf-8",
+    )
+    (figs / "cli_fig.py").write_text(
+        "import sys\nimport click\nimport matplotlib.pyplot as plt\n\n"
+        "@click.command\n"
+        "def main():\n"
+        "    fig, ax = plt.subplots(); ax.plot([1, 2], [3, 4]); fig.savefig('Fig1.png')\n"
+        "    sys.exit(7)\n\n"
+        "main()\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(pool.WorkerError) as err:
+        pool.build("cli_fig.py", str(figs), "__main__")
+    assert err.value.code == "script_exited", str(err.value)
+
+
+@needs_worker
 @needs_workerd
 def test_workerd_gives_the_same_answer_for_a_script_that_wants_arguments(workerd_figs):
     (workerd_figs / "metrics.py").write_text(ARGPARSE, encoding="utf-8")

@@ -76,8 +76,8 @@ def test_paths_in_the_paired_exception_line_are_shortened():
         ]
     )
     assert got == [
-        "2026-09-20 10:00:00,000 ERROR tavotto: 导出失败: …/fig1.pdf 写不进去",
-        "Traceback (most recent call last): → OSError: [Errno 13] Permission denied: '…/data.csv'",
+        "2026-09-20 10:00:00,000 ERROR tavotto: 导出失败: …/file:6fe886ec6b.pdf 写不进去",
+        "Traceback (most recent call last): → OSError: [Errno 13] Permission denied: '…/file:1aa5784d52.csv'",
     ]
 
 
@@ -115,6 +115,14 @@ PROJECT = "/projects/this-one"
 OTHER = "/projects/someone-elses"
 
 
+def _sid(script: str, *, raw: bool = False) -> str:
+    """报告里的会话 id：目录名的 sha1 前 12 位（`raw=True` 时 `script` 就是目录名）。"""
+    import hashlib
+
+    name = script if raw else f"{pool.cache_digest(PROJECT)}-{script}"
+    return "session:" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:12]
+
+
 def _session(root, script: str, text: str, age_s: float, *, project: str = PROJECT) -> None:
     d = root / f"{pool.cache_digest(project)}-{script}"
     d.mkdir()
@@ -130,8 +138,7 @@ def test_worker_log_tails_take_the_most_recent_sessions_and_flag_empty_ones(tmp_
     _session(tmp_path, "silent.py", "", age_s=5)
     _session(tmp_path, "mid.py", "line1\nline2\n", age_s=60)
     got = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=60)
-    d = pool.cache_digest(PROJECT)
-    assert [g["session"] for g in got] == [f"{d}-silent.py", f"{d}-crashed.py", f"{d}-mid.py"]
+    assert [g["session"] for g in got] == [_sid("silent.py"), _sid("crashed.py"), _sid("mid.py")]
     assert got[0]["empty"] is True and got[0]["tail"] == ""
     assert got[1]["empty"] is False
     assert "Segmentation fault" in got[1]["tail"]
@@ -154,8 +161,11 @@ def test_worker_log_tails_only_take_the_current_projects_sessions(tmp_path):
     (replay / "worker.log").write_text(tb.format("'replay'"), encoding="utf-8")
     got = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
     names = {g["session"] for g in got}
-    assert names == {f"{pool.cache_digest(PROJECT)}-mine.py", replay.name}, names
+    assert names == {_sid("mine.py"), _sid(replay.name, raw=True)}, names
+    assert {g["replay"] for g in got} == {True, False}
     assert "SECRET_OTHER_PROJECT" not in json.dumps(got)
+    # README 承诺文件名一律换成不可逆哈希：脚本名不出现在任何字段里
+    assert "mine.py" not in json.dumps(got)
     assert diagnostics.worker_log_tails(tmp_path, project_dir=None) == []
     assert diagnostics.worker_log_tails(tmp_path, project_dir="") == []
 
@@ -177,10 +187,10 @@ def test_worker_log_tails_take_whole_blocks_from_the_end_within_the_budget(tmp_p
     # 预算 5 行装不下 201 行的那块，但它是最新的一块：整块都要，前面两块不要
     # 收尾行只留类型（message 是自由文本，不出门）；哪一块靠帧数分辨
     assert lines[0] == "Traceback (most recent call last):" and lines[-1] == "KeyError: …"
-    assert len(lines) == 201 and "new198.py" in lines[-2]
+    assert len(lines) == 201 and "file:dfa9ef2ab3.py" in lines[-2]
     (mid,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3, lines=206)
     assert mid["tail"].count("Traceback (most recent call last):") == 2  # new + mid，old 装不下
-    assert "mid2.py" in mid["tail"] and "old2.py" not in mid["tail"]
+    assert "file:9153e9b2f1.py" in mid["tail"] and "file:bb6748c18d.py" not in mid["tail"]
 
 
 def test_a_crash_stack_longer_than_the_line_budget_still_keeps_its_header(tmp_path):
@@ -201,6 +211,23 @@ def test_a_crash_stack_longer_than_the_line_budget_still_keeps_its_header(tmp_pa
     assert len(lines) == 83 and got["omitted"] == 1
 
 
+def test_a_crash_block_longer_than_the_scan_window_still_starts_at_its_header(tmp_path):
+    """评审 #443 第六轮 P2：`all_threads=True` 遇上几条深栈线程，一段崩溃栈能超过 400 行；
+    扫描窗至少回溯到最近一个崩溃头，不然唯一的头被切掉、后面的帧一条都不算。"""
+    frames = "".join(
+        f'  File "/env/site-packages/mpl/m{i}.py", line {i} in f\n' for i in range(450)
+    )
+    body = "noise\n" * 50 + "Fatal Python error: Segmentation fault\n\n"
+    body += "Current thread 0x1 (most recent call first):\n" + frames
+    body += "Extension modules: x (total: 1)\n"
+    _session(tmp_path, "deep.py", body, age_s=1)
+    (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
+    lines = got["tail"].splitlines()
+    assert lines[0] == "Fatal Python error: Segmentation fault"
+    assert lines[-1] == "Extension modules: x (total: 1)"
+    assert len(lines) == 453
+
+
 def test_chain_separators_count_only_between_two_traceback_blocks():
     """链接语要逐字相同、且夹在两段 traceback 之间；用户 print 的变体不算。"""
     chained = [
@@ -217,11 +244,11 @@ def test_chain_separators_count_only_between_two_traceback_blocks():
     kept, omitted = diagnostics.evidence_lines(chained)
     assert kept == [
         "Traceback (most recent call last):",
-        '  File "…/a.py", line 1, in <module>',
+        '  File "…/file:bb88d7506c.py", line 1, in <module>',
         "KeyError: …",
         "During handling of the above exception, another exception occurred:",
         "Traceback (most recent call last):",
-        '  File "…/a.py", line 3, in <module>',
+        '  File "…/file:bb88d7506c.py", line 3, in <module>',
         "RuntimeError: …",
     ]
     assert omitted == 0
@@ -275,7 +302,7 @@ def test_evidence_lines_keep_only_traceback_and_faulthandler_blocks():
     # 留下的：两个结构块（帧里的绝对路径缩成 `…/文件名` / `…/site-packages/包/模块.py`）
     assert kept[:4] == [
         "Traceback (most recent call last):",
-        '  File "…/fig.py", line 12, in <module>',
+        '  File "…/file:07dcc94317.py", line 12, in <module>',
         '  File "…/site-packages/pandas/io/parsers.py", line 900, in read_csv',
         "FileNotFoundError: …",  # message 是自由文本（可能带数据），只留类型
     ], kept
@@ -283,7 +310,7 @@ def test_evidence_lines_keep_only_traceback_and_faulthandler_blocks():
         "Fatal Python error: Segmentation fault",
         "Current thread 0x00001234 (most recent call first):",
         '  File "…/site-packages/matplotlib/ft2font.py", line 40 in load',
-        '  File "…/fig.py", line 20 in <module>',
+        '  File "…/file:07dcc94317.py", line 20 in <module>',
         "Extension modules: numpy._core._multiarray_umath (total: 12)",
     ], kept
     # 略去的：脚本 print 的一切（含长得像异常行 / 标记行的）、帧下面的源码行、噪音、usage
@@ -356,14 +383,23 @@ def test_user_print_exc_blocks_lose_their_free_text_message():
             "Traceback (most recent call last):",
             '  File "/x/a.py", line 4, in <module>',
             "matplotlib.units.ConversionError: Failed to convert value(s) to axis units: 'patient'",
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 5, in <module>',
+            "ImportError: patient-123 confidential cohort",  # 用户自己 raise 的
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 6, in <module>',
+            "ImportError: cannot import name 'foo' from 'pkg.mod' (/env/pkg/mod.py)",
         ]
     )
     closers = [ln for ln in kept if not ln.startswith(("Traceback", "  File"))]
     assert closers == [
         "KeyError: …",
         "ModuleNotFoundError: No module named 'Bio'",
-        "ImportError: DLL load failed while importing _imaging: 找不到指定的模块。",
+        # 加载器形状只保留到模块名，后面的操作系统文案不带
+        "ImportError: DLL load failed while importing _imaging",
         "matplotlib.units.ConversionError: …",
+        "ImportError: …",  # 形状对不上加载器的：只留类型（评审 #443 第六轮）
+        "ImportError: cannot import name 'foo' from 'pkg.mod'",
     ], closers
 
 
@@ -372,13 +408,13 @@ def test_user_print_exc_blocks_lose_their_free_text_message():
     [
         (
             r'  File "C:\Clinical Trial\patient-a\plot.py", line 3, in <module>',
-            '  File "…/plot.py", line 3, in <module>',
+            '  File "…/file:a19de1d7c3.py", line 3, in <module>',
         ),
         (
             "ImportError: cannot load '/mnt/clinical trial/patient a/lib.so'",
-            "ImportError: cannot load '…/lib.so'",
+            "ImportError: cannot load '…/file:68de22c57c.so'",
         ),
-        (r"OSError: D:\Study Data\a.pdf 写不进去", "OSError: …/a.pdf 写不进去"),
+        (r"OSError: D:\Study Data\a.pdf 写不进去", "OSError: …/file:0e6c2a272c.pdf 写不进去"),
         (
             '  File "/env/lib/python3.11/site-packages/matplotlib/ft2font.py", line 40 in load',
             '  File "…/site-packages/matplotlib/ft2font.py", line 40 in load',
@@ -403,7 +439,7 @@ def test_a_traceback_block_ends_at_its_exception_line():
     )
     assert kept == [
         "Traceback (most recent call last):",
-        '  File "…/y.py", line 1, in <module>',
+        '  File "…/file:8332f20adb.py", line 1, in <module>',
         "KeyError: …",
     ]
     assert omitted == 2
@@ -414,15 +450,15 @@ def test_a_traceback_block_ends_at_its_exception_line():
     [
         (
             r'  File "D:\ConfidentialStudy\fig.py", line 12, in <module>',
-            '  File "…/fig.py", line 12, in <module>',
+            '  File "…/file:07dcc94317.py", line 12, in <module>',
         ),
         (
             r'  File "\\wsl.localhost\Ubuntu\home\u\motif\plot.py", line 20 in <module>',
-            '  File "…/plot.py", line 20 in <module>',
+            '  File "…/file:a19de1d7c3.py", line 20 in <module>',
         ),
         (
             r"OSError: [WinError 5] 拒绝访问。: 'C:\Users\someone\x.png'",
-            "OSError: [WinError 5] 拒绝访问。: '…/x.png'",
+            "OSError: [WinError 5] 拒绝访问。: '…/file:3fc7759e1c.png'",
         ),
         ("error: the following arguments are required: -c/--clstr, -x/--metadata", None),
         ('  File "<frozen runpy>", line 88, in _run_code', None),
@@ -465,13 +501,15 @@ def test_the_report_carries_redacted_worker_logs(client, tmp_path, monkeypatch):
     z = zipfile.ZipFile(BytesIO(client.get("/api/diagnostics/bundle").data))
     report = json.loads(z.read("report.json"))
     logs = report["render"]["worker_logs"]
-    assert [g["session"] for g in logs] == [f"{pool.cache_digest(str(project))}-fig.py"], logs
+    assert len(logs) == 1 and logs[0]["session"].startswith("session:"), logs
+    assert "fig.py" not in json.dumps(logs), "脚本名不出门（README：文件名一律换成哈希）"
+    assert "crash.py" not in json.dumps(logs)
     assert "OTHER_PROJECT_SECRET" not in json.dumps(report)
     tail = logs[0]["tail"]
     assert "Segmentation fault" in tail
     assert REAL_HOME not in tail
     # 帧路径缩到文件名：主目录连出现的机会都没有（不靠 `~` 那道替换）
-    assert 'File "…/fig.py", line 3' in tail
+    assert 'File "…/file:07dcc94317.py", line 3' in tail
     # 收尾行只留类型：密钥所在的 message 根本不出门（不是被 `***` 替掉，是没带）
     assert "sk-abcdefghijklmnop" not in tail and "RuntimeError: …" in tail
     assert "loading" not in tail, "脚本自己 print 的那行不进包"
