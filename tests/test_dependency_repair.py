@@ -466,7 +466,7 @@ def test_workers_on_the_mutating_environment_are_stopped(monkeypatch):
 def test_a_new_session_is_refused_while_the_environment_is_mutating(project, monkeypatch):
     """安装期间不许起新会话——半装完的包 import 到一半是最难解释的失败。"""
     monkeypatch.setattr(
-        engine_pool, "resolve_worker_python", lambda d=None: ("/env/a/bin/python", "system")
+        engine_pool, "resolve_worker_python", lambda d=None, **kw: ("/env/a/bin/python", "system")
     )
     with engine_pool.mutating_environment(engine_pool.env_key_of("/env/a/bin/python"), ""):
         with pytest.raises(engine_pool.WorkerError) as err:

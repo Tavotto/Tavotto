@@ -103,7 +103,7 @@ def fake_pool(monkeypatch):
     monkeypatch.setattr(engine_pool, "build_owned", build_owned)
     monkeypatch.setattr(engine_pool, "same_python", lambda a, b: True)
     monkeypatch.setattr(
-        engine_pool, "resolve_worker_python", lambda root=None: ("/envs/fake/bin/python", "system")
+        engine_pool, "resolve_worker_python", lambda root=None, **kw: ("/envs/fake/bin/python", "system")
     )
     monkeypatch.setattr(engine_pool, "peek", lambda script, root: box["peek"])
     monkeypatch.setattr(

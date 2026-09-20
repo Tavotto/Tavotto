@@ -122,24 +122,38 @@ class TestGrant:
     def test_switching_to_project_records_the_moment_and_back_erases_it(self, tmp_path):
         root = tmp_path / "p"
         root.mkdir()
-        assert workdir.grant_for(root) == {"cwd_write": {"granted": False, "granted_at": None}}
+        assert workdir.grant_for(root) == {
+            "cwd_write": {"granted": False, "granted_at": None, "mode": None},
+            "decided": False,
+        }
         state = workdir.set_mode(root, workdir.MODE_PROJECT)
         grant = workdir.grant_for(root)["cwd_write"]
-        assert grant["granted"] is True
+        assert grant["granted"] is True and grant["mode"] == workdir.MODE_PROJECT
         assert isinstance(grant["granted_at"], float)
         assert state["grant"]["cwd_write"] == grant  # state() 是同一份记录的投影
         # 再设一次不刷新时刻：授权是那一次点头，不是每次保存
         again = workdir.set_mode(root, workdir.MODE_PROJECT)
         assert again["grant"]["cwd_write"]["granted_at"] == grant["granted_at"]
+        # 换到另一档授权模式（脚本目录 → 项目根）是新的一次点头：时刻重记、mode 跟着变
+        rooted = workdir.set_mode(root, workdir.MODE_PROJECT_ROOT)["grant"]["cwd_write"]
+        assert rooted["granted"] is True and rooted["mode"] == workdir.MODE_PROJECT_ROOT
+        assert rooted["granted_at"] >= grant["granted_at"]
+        # 切回沙盒 = 撤销授权；但「决定过」留着（U03：首开的确认框不再问）
         workdir.set_mode(root, workdir.MODE_SANDBOX)
-        assert workdir.grant_for(root) == {"cwd_write": {"granted": False, "granted_at": None}}
+        assert workdir.grant_for(root) == {
+            "cwd_write": {"granted": False, "granted_at": None, "mode": None},
+            "decided": True,
+        }
 
     def test_legacy_setting_without_a_moment_is_granted_but_undated(self, tmp_path):
         """老设置只有 `{"mode": "project"}`：授予过但没记时刻——两个答案不许压成一个。"""
         root = tmp_path / "p"
         root.mkdir()
         engine_config.set_project_settings(str(root), {workdir.SETTINGS_KEY: {"mode": "project"}})
-        assert workdir.grant_for(root) == {"cwd_write": {"granted": True, "granted_at": None}}
+        assert workdir.grant_for(root) == {
+            "cwd_write": {"granted": True, "granted_at": None, "mode": workdir.MODE_PROJECT},
+            "decided": True,
+        }
         assert workdir.mode_for(root) == workdir.MODE_PROJECT
 
     def test_grant_is_project_scoped(self, tmp_path):

@@ -672,7 +672,7 @@ class TestConcurrencyAndFailure:
         inside_a, b_done, a_done = threading.Event(), threading.Event(), threading.Event()
         real_merge = engine_discover.merge
 
-        def blocking_merge(path):
+        def blocking_merge(path, **kw):
             if Path(path) == Path(a):
                 inside_a.set()
                 b_done.wait(10)  # A 停在临界区里不出来
@@ -714,7 +714,7 @@ class TestConcurrencyAndFailure:
         met: list[bool] = []
         real_merge = engine_discover.merge
 
-        def instrumented(path):
+        def instrumented(path, **kw):
             try:
                 barrier.wait(timeout=0.5)
                 met.append(True)

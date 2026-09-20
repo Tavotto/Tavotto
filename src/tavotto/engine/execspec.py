@@ -57,13 +57,17 @@ TARGET_KINDS = (TARGET_SCRIPT, TARGET_MODULE)
 #: spec 序列化形态的版本。加可选字段不升；改语义 / 删字段才升。
 SPEC_VERSION = 1
 
-#: safe 档的工作目录模式（ADR 0047）。`sandbox` = 会话沙盒（默认，写入边界）；
-#: `project` = 脚本自己所在的目录——脚本用相对路径找数据（`exists` / `glob` /
-#: C++ 读取器）时唯一能让它们全部成立的形态。守卫、savefig 捕获、解释器链
-#: 一字不动；变的只有 cwd。
+#: safe 档的工作目录模式（ADR 0047 / ADR 0057）。`sandbox` = 会话沙盒（默认，写入
+#: 边界）；`project` = 脚本自己所在的目录——脚本用相对路径找数据（`exists` / `glob` /
+#: C++ 读取器）时唯一能让它们全部成立的形态；`project_root` = 项目根（Tavotto 打开的
+#: 那个目录）——`paper/scripts/figure.py` 读 `data/x.csv` 而数据在 `paper/data/` 时，
+#: 用户在终端里就是站在 `paper/` 敲 `python scripts/figure.py` 的（FO02）。守卫、
+#: savefig 捕获、解释器链一字不动；变的只有 cwd。**`project` 的语义不变**：它过去是、
+#: 现在也是脚本目录（ADR 0047），项目根是新加的第三档而不是对它的重新解释。
 CWD_SANDBOX = "sandbox"
 CWD_PROJECT = "project"
-CWD_MODES = (CWD_SANDBOX, CWD_PROJECT)
+CWD_PROJECT_ROOT = "project_root"
+CWD_MODES = (CWD_SANDBOX, CWD_PROJECT, CWD_PROJECT_ROOT)
 
 #: LaunchContext（统一实施包 U01，ADR 0053）：「脚本看到的 cwd 是从哪来的」
 #: 与「它能往哪写」两个维度，从 spec **派生**、不另存。三个来源 + 沙盒：
@@ -72,8 +76,10 @@ CWD_MODES = (CWD_SANDBOX, CWD_PROJECT)
 #: * `script.parent`  —— safe 的 `cwd_mode=project`（ADR 0047）：cwd 是脚本自己
 #:                        所在的目录。**它不是 `project.root`**——FO-041 要求把
 #:                        三者分清，而现状 project 档就是 script.parent，语义不变；
-#: * `project.root`   —— 项目根。今天**没有任何生产者**（U03 若加「在项目根运行」
-#:                        才会出现），先占住枚举位，免得将来被并进 script.parent；
+#: * `project.root`   —— safe 的 `cwd_mode=project_root`（ADR 0057）：cwd 是项目根，
+#:                        即 Tavotto 打开的那个目录。U01 时它只是占位；U03 起由
+#:                        `workdir` 的决策（用户确认过的目录）生产，并被三条 spawn
+#:                        路径真实消费到 `--cwd`；
 #: * `invocation.cwd` —— native：用户敲命令时的 cwd 原样。
 #:
 #: 写入模式与 cwd 来源是**两个维度**：safe 两档都装着 unlink / write_text 守卫，
@@ -228,6 +234,8 @@ def launch_context(spec: ExecutionSpec, *, grant: dict | None = None) -> dict:
         origin, write_mode = CWD_ORIGIN_SANDBOX, WRITE_MODE_SANDBOXED
     elif spec.cwd_mode == CWD_PROJECT:
         origin, write_mode = CWD_ORIGIN_SCRIPT_PARENT, WRITE_MODE_PROJECT_DIR
+    elif spec.cwd_mode == CWD_PROJECT_ROOT:
+        origin, write_mode = CWD_ORIGIN_PROJECT_ROOT, WRITE_MODE_PROJECT_DIR
     else:  # pragma: no cover — __post_init__ 已经拦住了不认识的 cwd_mode
         raise ValueError(f"launch_context 不认识的组合: {spec.profile}/{spec.cwd_mode}")
     if grant is not None and not isinstance(grant, dict):
@@ -291,15 +299,18 @@ def safe_spec(
     边界）、savefig 吞掉捕获（passthrough=False）。`env` 只接受增量
     （bundled runtime 时传 `runtime.child_env(base={})`，其余场合 None）。
 
-    `cwd_mode=project`（ADR 0047）时 cwd 换成**脚本自己所在的目录**，其余
+    `cwd_mode=project`（ADR 0047）时 cwd 换成**脚本自己所在的目录**，
+    `cwd_mode=project_root`（ADR 0057）时换成**项目根**（`figures_dir` 原串），其余
     一字不变：沙盒目录仍交给 worker 当写入边界的参照，守卫与 savefig 捕获
     照旧。脚本用相对路径**写**的中间文件会像终端里一样落进项目目录——
-    这是这个模式的定义，不是漏洞；文案里要如实说。
+    这是这两个模式的定义，不是漏洞；文案里要如实说。
     """
     if cwd_mode not in CWD_MODES:
         raise ValueError(f"cwd_mode 非法: {cwd_mode!r}（可选 {CWD_MODES}）")
     if cwd_mode == CWD_PROJECT:
         cwd = str((Path(figures_dir) / figcapture.normalize_relative_script(script)).parent)
+    elif cwd_mode == CWD_PROJECT_ROOT:
+        cwd = str(Path(figures_dir))
     else:
         cwd = sandbox
     return ExecutionSpec(
@@ -444,7 +455,9 @@ def worker_argv(
         "--entry",
         spec.entry,
     ]
-    if spec.cwd_mode == CWD_PROJECT:
+    if spec.cwd_mode != CWD_SANDBOX:
         # 只在非默认模式下多两个 token：默认模式的 argv 逐字节不变（golden）。
+        # `project`（脚本目录）与 `project_root`（项目根）都走这两个 token——worker 只
+        # 认「cwd 换到哪」，模式的名字是控制面的事。
         out += ["--cwd", spec.cwd]
     return out
