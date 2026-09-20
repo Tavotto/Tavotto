@@ -53,7 +53,8 @@
   `error.exit`，Python 池放在 `WorkerError.extra["exit"]`；加字段不升协议版本），
   **怎么解释归 Python 侧一处**：`pool.describe_exit` 是退出码 → 人话的唯一表
   （Windows NTSTATUS 的两种写法——Python 的无符号 DWORD 与 Rust 的 i32——查到
-  同一条），`pool.session_dead_message` 是两条控制面共用的那句话：它怎么死的 /
+  同一条；**只在 Windows 成立的一列单独放 `_NT_EXIT_EXPLANATIONS`**——退出码 3 在
+  Windows 是 C 运行时收下的 abort()，在 POSIX 只是某个 `os._exit(3)`，abort 走信号 6），`pool.session_dead_message` 是两条控制面共用的那句话：它怎么死的 /
   worker.log 这一代**空不空要说出来** / 日志在哪。文案说「渲染进程退出了」，
   不说「崩溃（无响应）」——进程既没崩也不是无响应，它是退出了。
   worker 自己开着 `faulthandler`（stderr 重配之后装，记的是那一刻的 fd）：硬崩溃

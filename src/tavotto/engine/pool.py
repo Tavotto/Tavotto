@@ -112,10 +112,6 @@ _EXIT_EXPLANATIONS: dict[int, str] = {
         "调用了 sys.exit() / os._exit()，或者把 stdout 关掉了"
     ),
     1: "退出码 1：Python 层的致命错误，或进程被外部终止；原因看下面的输出",
-    3: (
-        "abort()：C 库或扩展主动中止（典型：两份 libiomp5md.dll 的 OMP Error #15、断言失败；"
-        "Windows 上经 C 运行时信号路径转发的段错误也走到这里）"
-    ),
     -1073741819: (  # 0xC0000005
         "access violation（0xC0000005）：某个 C 扩展或 DLL 越界。"
         "常见于 Conda 与 pip 混装之后 numpy / Pillow / freetype 的 DLL 版本对不上"
@@ -127,6 +123,15 @@ _EXIT_EXPLANATIONS: dict[int, str] = {
     -1073741571: "0xC00000FD：栈溢出（递归过深，或某个 C 扩展用光了栈）",
     -1073741510: "0xC000013A：收到 Ctrl+C / 控制台被关闭",
 }
+#: **只在 Windows 上成立**的退出码：POSIX 的 abort() 走信号 6（下表），退出码 3 在那里
+#: 只是某个 `os._exit(3)`——把它说成「C 扩展中止」会把排障引到错的方向（评审 #443 第八轮）。
+#: NTSTATUS 那几条是负数，POSIX 的退出码 0–255 撞不上，不用分表。
+_NT_EXIT_EXPLANATIONS: dict[int, str] = {
+    3: (
+        "abort()：C 库或扩展主动中止（典型：两份 libiomp5md.dll 的 OMP Error #15、断言失败；"
+        "Windows 上经 C 运行时信号路径转发的段错误也走到这里）"
+    ),
+}
 _SIGNAL_EXPLANATIONS: dict[int, str] = {
     6: "SIGABRT：C 库或扩展主动中止（断言失败、两份 OpenMP 运行时）",
     9: "SIGKILL：被系统或别的进程杀掉（内存不足时 OOM killer 最常见）",
@@ -135,13 +140,15 @@ _SIGNAL_EXPLANATIONS: dict[int, str] = {
 }
 
 
-def describe_exit(report: dict | None) -> str:
+def describe_exit(report: dict | None, *, windows: bool | None = None) -> str:
     """`{"code", "signal", "lingered"}` → 用户能据以行动的一句话。
 
     不认识的退出码如实报数字，不猜；`None` = 没拿到退出状态（老 workerd、
     假 Popen）。faulthandler 写进 worker.log 的栈是它的下半句——调用方把日志
-    尾巴一起交出去。
+    尾巴一起交出去。`windows` 默认按本机判，只给用例覆盖另一个平台的那一列。
     """
+    if windows is None:
+        windows = os.name == "nt"
     if not isinstance(report, dict):
         return "退出状态未知"
     if report.get("lingered"):
@@ -154,7 +161,8 @@ def describe_exit(report: dict | None) -> str:
         # （-1073741819）。同一个死因两个数——统一成有符号的那一个再查表。
         if code >= 2**31:
             code -= 2**32
-        return _EXIT_EXPLANATIONS.get(code) or f"退出码 {code}"
+        explained = _EXIT_EXPLANATIONS.get(code) or (windows and _NT_EXIT_EXPLANATIONS.get(code))
+        return explained or f"退出码 {code}"
     if isinstance(signal, int) and not isinstance(signal, bool):
         return _SIGNAL_EXPLANATIONS.get(signal) or f"被信号 {signal} 终止"
     return "退出状态未知"

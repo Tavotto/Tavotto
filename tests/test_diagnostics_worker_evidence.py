@@ -307,18 +307,19 @@ def test_evidence_lines_keep_only_traceback_and_faulthandler_blocks():
     kept, omitted = diagnostics.evidence_lines(WORKER_LOG.splitlines())
     text = "\n".join(kept)
     # 留下的：两个结构块。帧只留「路径 + 行号」（函数名是用户的标识符，评审 #443 第七轮），
-    # 路径缩成 `…/file:<哈希>.py` / 已知第三方包的 `…/site-packages/包/模块.py`；
-    # 崩溃头只放行 CPython 自己的故障名；`Extension modules` 只留计数（模块名可能是用户的包）。
+    # 路径缩成 `…/file:<哈希>.py`，已知第三方包只多留一个包名 `…/site-packages/包/file:<哈希>.py`
+    # （包名之后的每一段都可能是用户起的，评审 #443 第八轮）；崩溃头只放行 CPython 自己的
+    # 故障名；`Extension modules` 只留计数（模块名可能是用户的包）。
     assert kept[:4] == [
         "Traceback (most recent call last):",
         '  File "…/file:07dcc94317.py", line 12',
-        '  File "…/site-packages/pandas/io/parsers.py", line 900',
+        '  File "…/site-packages/pandas/file:c28586813a.py", line 900',
         "FileNotFoundError: …",  # message 是自由文本（可能带数据），只留类型
     ], kept
     assert kept[4:] == [
         "Fatal Python error: Segmentation fault",
         "Current thread 0x00001234 (most recent call first):",
-        '  File "…/site-packages/matplotlib/ft2font.py", line 40',
+        '  File "…/site-packages/matplotlib/file:6ad788fb3e.py", line 40',
         '  File "…/file:07dcc94317.py", line 20',
         "Extension modules: … (total: 12)",
     ], kept
@@ -341,6 +342,8 @@ def test_evidence_lines_keep_only_traceback_and_faulthandler_blocks():
         "in load",
         "<module>",
         "_multiarray_umath",  # Extension modules 的名单
+        "parsers.py",  # 库里的文件名也哈希：包名之后的每一段都可能是用户起的
+        "ft2font",
     ):
         assert absent not in text, absent
     assert omitted == WORKER_LOG_OMITTED
@@ -430,7 +433,7 @@ def test_user_print_exc_blocks_lose_their_free_text_message():
         (r"OSError: D:\Study Data\a.pdf 写不进去", "OSError: …/file:0e6c2a272c.pdf 写不进去"),
         (
             '  File "/env/lib/python3.11/site-packages/matplotlib/ft2font.py", line 40 in load',
-            '  File "…/site-packages/matplotlib/ft2font.py", line 40 in load',
+            '  File "…/site-packages/matplotlib/file:6ad788fb3e.py", line 40 in load',
         ),
     ],
 )
@@ -472,10 +475,10 @@ def test_a_traceback_block_ends_at_its_exception_line():
             '  File "…/file:a19de1d7c3.py", line 12',
         ),
         ('  File "<frozen runpy>", line 88, in _run_code', '  File "<frozen runpy>", line 88'),
-        # 已知第三方包：路径保留，函数名同样不带
+        # 已知第三方包：多留一个包名，文件名照样哈希，函数名同样不带
         (
             '  File "/env/lib/python3.11/site-packages/matplotlib/ft2font.py", line 40 in load',
-            '  File "…/site-packages/matplotlib/ft2font.py", line 40',
+            '  File "…/site-packages/matplotlib/file:6ad788fb3e.py", line 40',
         ),
     ],
 )
@@ -491,24 +494,37 @@ def test_exported_frames_are_rebuilt_from_path_and_line_only(line, expect):
 @pytest.mark.parametrize(
     "path, expect",
     [
-        # 一段叫 tavotto / site-packages 证明不了什么：后面跟的不是引擎文件 / 已知包就哈希
+        # 一段叫 tavotto / site-packages 证明不了什么：后面跟的不是已知包 / 引擎文件就整个哈希
         ("/mnt/tavotto/private-study/patient.py", "…/file:e85d6c19a0.py"),
         ("/mnt/site-packages/cohort/patient.py", "…/file:e85d6c19a0.py"),
         ("/env/site-packages/my_private_pkg/patient.py", "…/file:e85d6c19a0.py"),
         ("/x/tavotto/engine/patient.py", "…/file:e85d6c19a0.py"),
-        # 真的：已知第三方包 / 引擎目录里真实存在的文件
-        ("/env/lib/site-packages/numpy/core/_methods.py", "…/site-packages/numpy/core/_methods.py"),
+        # 已知包：只多留包名这一位来自闭集的信息，包名之后的每一段（子目录、文件名）都哈希——
+        # 用户完全可以把项目放在 `…/site-packages/numpy/private-study/`（评审 #443 第八轮）
+        (
+            "/mnt/site-packages/numpy/private-study/patient.py",
+            "…/site-packages/numpy/file:e85d6c19a0.py",
+        ),
+        (
+            "/env/lib/site-packages/numpy/core/_methods.py",
+            "…/site-packages/numpy/file:e6995c4ddf.py",
+        ),
+        ("/env/site-packages/numpy/patient a/x.py", "…/site-packages/numpy/file:99a930f602.py"),
+        ("/env/site-packages/numpy", "…/site-packages/numpy"),
+        # 引擎目录里真实存在的文件：原样
         ("/opt/Tavotto/tavotto/engine/worker.py", "…/tavotto/engine/worker.py"),
-        # 已知包名后面夹了不像模块名的一段（带空格的用户路径）：整个哈希
-        ("/env/site-packages/numpy/patient a/x.py", "…/file:99a930f602.py"),
     ],
 )
-def test_package_paths_are_kept_only_when_their_provenance_checks_out(path, expect):
-    """评审 #443 第七轮 P1：以前路径里有一段叫 `site-packages` / `tavotto` 就把后面整串原样
-    保留，`/mnt/tavotto/private-study/patient.py` 变成 `…/tavotto/private-study/patient.py`。
-    现在 site-packages 之后必须紧跟**已知第三方包**、余下每段都是模块文件名；`tavotto/engine/`
-    之后必须是引擎目录里**真实存在**的文件名——否则与别的用户路径一样哈希。"""
+def test_package_paths_keep_only_the_package_name_from_a_closed_set(path, expect):
+    """评审 #443 第七、八轮 P1：以前路径里有一段叫 `site-packages` / `tavotto` 就把后面整串
+    原样保留；第七轮改成查已知包名，第八轮指出 `/mnt/site-packages/numpy/private-study/patient.py`
+    照样过——包名之后的每一段都是用户能起的名字。现在出门的只有「属于哪个已知库」这一位
+    信息（闭集 `_KNOWN_SITE_PACKAGES`），文件名与用户文件一样哈希：库的文件名公开可枚举，
+    读的人拿包里的文件名逐个哈希就能对上；`tavotto/engine/` 之后仍要是引擎目录里真实存在的
+    文件名（`_ENGINE_FILES`）。这个进程里未必装着 matplotlib（它在 worker 的解释器里），
+    按真实安装根验不可靠。"""
     assert diagnostics.shorten_paths(f'"{path}"') == f'"{expect}"'
+    assert "patient" not in diagnostics.shorten_paths(f'"{path}"')
 
 
 @pytest.mark.parametrize(

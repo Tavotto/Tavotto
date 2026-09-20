@@ -47,12 +47,15 @@
   不带；崩溃头的故障名按 CPython faulthandler 的闭集放行（`Segmentation fault` /
   `access violation` / `code 0x…`…），`Py_FatalError` 的自由文本与用户 print 的一律 `…`；
   `Extension modules` 只留 `(total: N)`，名单里会有用户自己的 C 扩展名。路径缩写先整体
-  处理引号里的（带空格的 `C:\Clinical Trial\…` 不能在空格处断），再处理裸路径；保留
-  原样的只有两档且**按来历验**，不看路径分量的名字：`site-packages/` 之后紧跟
-  `_KNOWN_SITE_PACKAGES` 里的包、余下每段都是模块文件名，才保留 `…/site-packages/包/…`；
-  `tavotto/engine/` 之后是引擎目录里**真实存在**的文件名（`_ENGINE_FILES`）才保留——
-  `/mnt/tavotto/private-study/patient.py`、`/mnt/site-packages/cohort/x.py` 与别的用户
-  路径一样换成 `file:<sha1 前 10 位><扩展名>`（README：文件名一律换成不可逆哈希）。
+  处理引号里的（带空格的 `C:\Clinical Trial\…` 不能在空格处断），再处理裸路径；**出门的
+  字符串没有一段是用户能起的名字**：`site-packages/<已知包>/…` 只多留一个来自闭集
+  `_KNOWN_SITE_PACKAGES` 的包名，包名之后的子目录与文件名照样哈希
+  （`…/site-packages/matplotlib/file:6ad788fb3e.py`——库的文件名公开可枚举，读的人拿包里的
+  文件名逐个哈希就能对上；`/mnt/site-packages/numpy/private-study/patient.py` 出门只剩
+  `…/site-packages/numpy/file:…py`）；`tavotto/engine/` 之后是引擎目录里**真实存在**的文件名
+  （`_ENGINE_FILES`）才原样保留；其余一律 `file:<sha1 前 10 位><扩展名>`（README：文件名一律
+  换成不可逆哈希）。不按「真实安装根」验：这个进程里未必装着 matplotlib（它在 worker 的
+  解释器里），而路径分量的名字证明不了来历（评审 #443 第七、八轮）。
   会话 id 同样是哈希（`session:…`，目录名里带着脚本名）。扫描窗默认最后 400 行，
   但**至少回溯到最近一个崩溃头**（`_scan_start`：`all_threads=True` 一段能超过 400 行）。
   `recent_errors` 里配对的收尾句走**同一个** `_closer_for_export`（只留类型 / 加载器形状——

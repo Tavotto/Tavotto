@@ -366,6 +366,21 @@ def test_describe_exit_names_the_cause_or_reports_the_raw_number(report, needle)
     assert needle in text, text
 
 
+def test_exit_code_three_means_abort_only_on_windows():
+    """评审 #443 第八轮 P2：POSIX 的 abort() 走信号 6，退出码 3 在那里只是某个 `os._exit(3)`——
+    说成「C 扩展中止」会把排障引到错的方向。Windows 上 C 运行时把 abort() / 转发的段错误
+    都收成退出码 3，那一列只在 Windows 成立。"""
+    report = {"code": 3, "signal": None, "lingered": False}
+    assert pool.describe_exit(report, windows=False) == "退出码 3"
+    assert "abort()" in pool.describe_exit(report, windows=True)
+    # 默认按本机判：与显式传本机平台的结果逐字相同
+    assert pool.describe_exit(report) == pool.describe_exit(report, windows=os.name == "nt")
+    # NTSTATUS 是负数，两个平台查到同一条（POSIX 的退出码 0–255 撞不上）
+    assert "access violation" in pool.describe_exit(
+        {"code": -1073741819, "signal": None, "lingered": False}, windows=False
+    )
+
+
 def test_the_two_spellings_of_an_ntstatus_land_on_the_same_line():
     signed = pool.describe_exit({"code": -1073741819, "signal": None, "lingered": False})
     unsigned = pool.describe_exit({"code": 3221225477, "signal": None, "lingered": False})

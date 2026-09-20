@@ -236,9 +236,14 @@ def _shorten_path(match: re.Match) -> str:
     （`file:…`）；`_redact_text` 只认当前主目录，D 盘、外接盘、`\\\\wsl.localhost\\…`
     上的项目路径它一个字都不动。三档：
 
-    * `site-packages` 之后的包内路径保留（`…/site-packages/matplotlib/ft2font.py`）——
-      那是第三方库的文件名，不是用户的；
-    * Tavotto 自己的源码（路径里有 `tavotto` 这一段）保留 `tavotto/…` 之后的部分；
+    * `site-packages/<已知第三方包>/…`：保留**包名**，文件名照样哈希
+      （`…/site-packages/matplotlib/file:2f0c1e…py`）。包名来自闭集 `_KNOWN_SITE_PACKAGES`，
+      出门的只有「属于哪个库」这一位信息；库的文件名是公开的、可枚举的，读的人拿包里的
+      文件名逐个哈希就能对上，而用户的文件名不可枚举——同一个哈希对两种人两种意义。
+      路径分量的名字证明不了来历（`/mnt/site-packages/numpy/private-study/patient.py`，
+      评审 #443 第七、八轮），而这个进程里未必装着 matplotlib（它在 worker 的解释器里），
+      按「真实安装根」验不可靠；结构上不带任何用户能控制的字符串才是稳的。
+    * Tavotto 自己的引擎源码：`tavotto/engine/<引擎目录里真实存在的文件>` 保留；
     * 其余（用户的脚本、数据文件）只留 `…/file:<sha1 前 10 位><扩展名>`：行号还在，
       同一个文件的哈希稳定，读的人能对上「同一份」，反推不回名字。
     """
@@ -247,25 +252,26 @@ def _shorten_path(match: re.Match) -> str:
     if not parts:
         return raw
     lowered = [seg.lower() for seg in parts]
-    # 路径分量叫 `site-packages` 证明不了什么（评审 #443 第七轮）：只有它后面紧跟的是
-    # **已知第三方包**、且余下每一段都是标识符 / 模块文件名时才保留——那是库的文件名。
-    if "site-packages" in lowered:
-        idx = len(lowered) - 1 - lowered[::-1].index("site-packages")
-        rest = parts[idx + 1 :]
-        if rest and rest[0] in _KNOWN_SITE_PACKAGES and all(_MODULE_SEGMENT.match(x) for x in rest):
-            return "…/site-packages/" + "/".join(rest)
-    # Tavotto 自己的引擎源码：按**真实文件清单**验（`pool.WORKER_PY` 所在目录里有这个名字），
-    # 不是看路径里有没有 `tavotto` 这一段。
-    if len(parts) >= 3 and lowered[-3] == "tavotto" and lowered[-2] == "engine":
-        if parts[-1] in _ENGINE_FILES:
-            return "…/tavotto/engine/" + parts[-1]
     name = parts[-1]
     stem, dot, ext = name.rpartition(".")
     suffix = f".{ext}" if dot and stem and len(ext) <= 8 else ""
-    return "…/file:" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:10] + suffix
+    hashed = "file:" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:10] + suffix
+    # `site-packages/<已知包>/…`：只留包名这一位来自闭集的信息，文件名照样哈希——
+    # 包名之后的每一段都可能是用户起的（评审 #443 第八轮），一律不带。
+    if "site-packages" in lowered:
+        idx = len(lowered) - 1 - lowered[::-1].index("site-packages")
+        rest = parts[idx + 1 :]
+        if rest and rest[0] in _KNOWN_SITE_PACKAGES:
+            return f"…/site-packages/{rest[0]}" + (f"/{hashed}" if len(rest) > 1 else "")
+    # Tavotto 自己的引擎源码：按**真实文件清单**验（`pool.WORKER_PY` 所在目录里有这个名字），
+    # 不是看路径里有没有 `tavotto` 这一段。
+    if len(parts) >= 3 and lowered[-3] == "tavotto" and lowered[-2] == "engine":
+        if name in _ENGINE_FILES:
+            return "…/tavotto/engine/" + name
+    return "…/" + hashed
 
 
-#: `site-packages/<这些>/…` 之后的路径原样保留：我们发行 / 认识的第三方科学栈与命令行库。
+#: `site-packages/<这些>/…` 保留包名：我们发行 / 认识的第三方科学栈与命令行库。
 #: 闭集，不在表里的包名连同文件名一起哈希——不认识的名字可能是用户自己 pip 安装的私有包。
 _KNOWN_SITE_PACKAGES = frozenset(
     {
@@ -274,7 +280,6 @@ _KNOWN_SITE_PACKAGES = frozenset(
         "six", "click", "typer", "docopt", "fire", "IPython", "matplotlib_inline",
     }
 )  # fmt: skip
-_MODULE_SEGMENT = re.compile(r"^[A-Za-z_][\w.-]*$")
 #: 引擎目录里真实存在的文件名（一次性读，进程内不会变）。
 _ENGINE_FILES = (
     frozenset(p.name for p in pool.WORKER_PY.parent.iterdir() if p.is_file())
@@ -825,19 +830,19 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- app.log：最近的应用日志\n"
         "- config.json：用户配置（密钥已抹掉）\n"
         "  （report.json 的 render.worker_logs 段：渲染进程日志里的 Python 报错块与崩溃栈——\n"
-        "  只留 traceback 的帧行（文件名换成哈希 + 行号，函数名不带）与异常类型名；崩溃栈只留\n"
-        "  故障名与帧行、扩展模块只留计数；报错文字、脚本自己打印的内容与源码行已略去）\n"
-        + extra_zh
-        + "- manifest.json：本诊断包自身的格式说明\n"
+        "  只留 traceback 的帧行（文件名换成哈希 + 行号，函数名不带；第三方库的文件多留一个\n"
+        "  包名）与异常类型名；崩溃栈只留故障名与帧行、扩展模块只留计数；报错文字、脚本自己\n"
+        "  打印的内容与源码行已略去）\n" + extra_zh + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
         "- report.json: system and runtime information\n"
         "- app.log: recent Tavotto application logs\n"
         "- config.json: user configuration (secrets removed)\n"
         "  (report.json, render.worker_logs: Python traceback blocks and crash stacks from\n"
         "  the render process logs — only frame lines (hashed file name + line number, no\n"
-        "  function names) and the exception type; crash stacks keep the fault name, frames\n"
-        "  and the extension-module count; error messages, anything your script printed, and\n"
-        "  source lines are left out)\n"
+        "  function names; files of known third-party libraries also carry the package name)\n"
+        "  and the exception type; crash stacks keep the fault name, frames and the\n"
+        "  extension-module count; error messages, anything your script printed, and source\n"
+        "  lines are left out)\n"
         + extra_en
         + "- manifest.json: describes this package's own format\n"
         "\n"
