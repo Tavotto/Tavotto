@@ -10,6 +10,7 @@ import {
   type WorkdirConfirmation,
   type WorkdirMode,
 } from '@/lib/api'
+import { currentProjectId } from '@/lib/session'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import { msg } from '@/i18n'
 
@@ -48,7 +49,11 @@ interface EnvState {
    * 同一时刻只开一份（同一项目多张图同时撞上时后来的不覆盖先到的）。
    */
   workdirConfirmation: WorkdirConfirmation | null
-  requestWorkdirConfirmation: (payload: WorkdirConfirmation) => void
+  /**
+   * `projectId` 是**发那次渲染时**的项目：渲染在途中用户切了项目，A 的失败回来时不许把 A 的
+   * 问题摆到 B 上（一点「运行」就把真实目录的授权给错项目，Codex #456 P1）——对不上就丢。
+   */
+  requestWorkdirConfirmation: (payload: WorkdirConfirmation, projectId?: string | null) => void
   dismissWorkdirConfirmation: () => void
   /**
    * 换项目：`env.project`（项目环境 / 工作目录模式）属于旧项目，立刻清掉再按
@@ -66,7 +71,8 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   installing: false,
   workdirConfirmation: null,
 
-  requestWorkdirConfirmation: (payload) => {
+  requestWorkdirConfirmation: (payload, projectId) => {
+    if (projectId !== undefined && projectId !== currentProjectId()) return
     if (get().workdirConfirmation) return
     set({ workdirConfirmation: payload })
   },

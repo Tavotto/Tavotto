@@ -2612,6 +2612,30 @@ def test_open_with_workdir_records_the_decision_and_restarts_sessions(
     assert workdir.grant_for(project)["cwd_write"]["granted"] is False
 
 
+def test_batch_open_honours_workdir_before_opening_anything(project, fake_pool, monkeypatch):
+    """批量（stems / discover_stems）与单张同一处记账：带 workdir 的重试不能静默忽略，
+    而且非字符串在分派之前就被拒（Codex #456 P2）。"""
+    from tavotto.engine import workdir
+
+    closed: list[str] = []
+    monkeypatch.setattr(
+        bridge.engine_pool, "shutdown_all", lambda root=None, wait=False: closed.append(root)
+    )
+    out = _body(
+        _call(
+            "tavotto_open_figure",
+            {"project_path": str(project), "stems": ["Fig1"], "workdir": "project"},
+        )
+    )
+    assert out["status"] in ("done", "partial", "failed")
+    assert workdir.mode_for(project) == "project" and workdir.decided(project) is True
+    assert closed == [str(project)]
+    with pytest.raises(rpc.RpcError):
+        _call(
+            "tavotto_open_figure", {"project_path": str(project), "stems": ["Fig1"], "workdir": 3}
+        )
+
+
 def test_open_with_an_unknown_workdir_is_a_structured_error(project, fake_pool):
     from tavotto.engine import workdir
 

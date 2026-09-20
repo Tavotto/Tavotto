@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 18642,
-      "sha256": "7e07ae4ab7f787b0ff9b08696d705a79151ebed4e1df5ad1ff4530fdb32fe6e2"
+      "bytes": 19730,
+      "sha256": "986200a1aaac24321b66178f965442b58d74a827306d032ac7c36b4cccf8b312"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -234,8 +234,8 @@
     },
     {
       "path": "handoffs/U03_first_open.md",
-      "bytes": 23094,
-      "sha256": "dae58e613f54a28ede5639645645a253792392ed164bb0df6a63aba2fd1f2258"
+      "bytes": 24708,
+      "sha256": "1383f67aa469f8c37d3980421fe81d299295fed6b5a814dbfe5d4224a300c0b0"
     },
     {
       "path": "phase_mapping.json",

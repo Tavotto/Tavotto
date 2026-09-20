@@ -24,6 +24,7 @@ import {
 import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { WorkdirChooseButton } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
+import { setCurrentProjectId } from '@/lib/session'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
@@ -220,6 +221,22 @@ describe('WorkdirConfirmDialog', () => {
     await act(async () => useEnvStore.getState().requestWorkdirConfirmation(first))
     await act(async () => useEnvStore.getState().requestWorkdirConfirmation(ambiguous()))
     expect(useEnvStore.getState().workdirConfirmation).toEqual(first)
+  })
+
+  it('在途渲染的失败回来时项目已经换了：A 的问题不弹到 B 上（Codex #456 P1）', async () => {
+    await render(<WorkdirConfirmDialog />)
+    setCurrentProjectId('proj-b')
+    try {
+      // 渲染是在 A 上发出去的（那一刻的 pj = proj-a），回来时当前项目是 B → 丢
+      await act(async () => useEnvStore.getState().requestWorkdirConfirmation(rootEvidence(), 'proj-a'))
+      expect(useEnvStore.getState().workdirConfirmation).toBeNull()
+      expect(dialog()).toBeNull()
+      // 同一个项目的照常弹
+      await act(async () => useEnvStore.getState().requestWorkdirConfirmation(rootEvidence(), 'proj-b'))
+      expect(dialog()).not.toBeNull()
+    } finally {
+      setCurrentProjectId(null)
+    }
   })
 
   it('换项目时清掉：A 项目问的问题不能由 B 项目回答', async () => {

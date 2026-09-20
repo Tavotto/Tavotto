@@ -172,6 +172,20 @@ ruleset、`aggregate_gate.py`、默认后端、生产依赖、`security._PUBLIC_
 | `pytest tests/test_mcp_server.py tests/test_mcp_resolver.py tests/test_mcp_stdio.py tests/test_codex_plugin.py tests/test_error_codes.py tests/test_i18n_dead_keys.py tests/test_agents_rules_index.py tests/test_docs_references.py` | 0 | 通过（MCP 四条 U03 用例） |
 | 真浏览器实测（agent-browser，隔离实例 `--insecure-no-auth`，FO02 形状的项目，`TAVOTTO_WORKER_PYTHON` 摘掉） | — | 双击素材 → 渲染 500 + `workdir_confirmation_required` → 确认框（项目根预选、`找得到：data/points.csv`）→「运行」→ `PATCH /api/engine/workdir` 200 → 冷启动渲染 11.9 s 成功，图内元素树齐全；设置 → 诊断 → 技术详情 → 渲染环境：三档分段「项目根目录」选中（决定已持久化） |
 
+**observing 四条的具名任务（03 §3）**：`nightly.yml` 新 job `foundation-observing`（非 required、不进 Gate、
+不产出 required context）：setup-python 各装一个 3.12（+matplotlib，模拟「用户本来就有」）/ 3.14 / 3.9，按
+`TAVOTTO_FOUNDATION_ALT_PYTHON` / `TAVOTTO_FOUNDATION_NEWER_PYTHON` / `TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON`
+交给用例，跑 `tests/test_first_open_environment.py` + `tests/test_discover_problems.py`；收尾
+`scripts/ci/foundation_observing_check.py` 数 junit 里 FO11 / FO12 / FO16 / FO17 的 skip，有一条就红（skip 不是绿；
+解释器没交到位是基础设施问题）；失败保留在 pytest 退出码里。本机：FO12（python3.14）与 FO16（/usr/bin/python3 3.9）
+真跑过，FO11 / FO17 的不同 minor 本机没有。**第一次真跑要等它合入后的下一个夜里**——那之前 observing 是登记，不是成绩。
+
+**Codex 评审处置**：#454 第一轮 1 P1 + 2 P2：P1「门要有消费者」= #456（叠栈下一层）已实现并真浏览器实测，
+回复并 resolve；P2 两条修在 a912b768（去重前判「不存在」；目标解析器缓存键带路径与项目根），各一条用例 + 变异。
+#456 第一轮 1 P1 + 1 P2：P1「在途渲染的失败回来时项目已换」→ `renderStore` 记发请求那一刻的 pj，
+`envStore.requestWorkdirConfirmation(payload, pj)` 对不上就丢（renderStore 与对话框各一条用例）；P2「批量 open
+不认 workdir」→ `workdir` 在分派批量 / 单张之前校验，`open_figures(workdir=)` 在开任何一张之前落地（用例）。
+
 **下一个无阻塞阶段 / 子切片**：U04（联合依赖）。U04 的输入：`plan.environment.discovery.rejected` 是「项目里有 venv 但缺什么」的
 事实面；`DependencyIntent` 原样可见、`conflicts` 不裁决；安装目标仍只有项目 venv / 受管环境；首开采用
 的项目 venv（`trigger=first_open`）就是联合依赖的安装目标候选。U09 的输入：六条场景的 `receipt.backend`
