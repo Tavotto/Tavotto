@@ -51,7 +51,11 @@ tavotto codex install     # 修：把已装副本的启动命令钉到一个验�
   pipx install "tavotto[worker]"                     # 或者装 pip 形态的引擎
   ```
 
-  装完**新开会话**才拿得到工具。
+  装完**新开会话**才拿得到工具。`--provision` 自己会挑一个 Python 3.10–3.14 建环境
+  （跑它的 `python3` 老一点没关系）；它回 `no_supported_python` 时机器上确实没有这个
+  区间的 Python——把它 `error` 里逐个列出的版本和 `recovery` 转达给用户（装一个再重跑，
+  或 `--python <路径>` 指定），**不要**把它读成「这一版 tavotto 还没发」，也不要在
+  老 Python 上手动 `pip install`。
 * `tavotto_missing` —— 机器上确实没有 Tavotto。按用户的需求引导：只要桌面收尾
   就装桌面版（<https://github.com/Tavotto/Tavotto/releases>），要 Codex 内嵌
   工具就 `pipx install "tavotto[worker]"`。

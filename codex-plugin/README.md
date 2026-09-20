@@ -118,6 +118,13 @@ runtime，自管环境必须自己能渲染）。**不碰**系统 Python、Conda
 用 `--from /path/to/tavotto-x.y.z-py3-none-any.whl`（或源码目录）。
 装完**新开一个 Codex 会话**。
 
+跑这条命令的 `python3` **可以很老**（macOS 自带的是 3.9）：它只负责找一个
+Python 3.10–3.14 来建 venv——当前解释器、PATH 上的 `python3.14…3.10`、
+Homebrew / python.org / Windows `py` 启动器的常见位置都会试一遍，每个都真的
+跑起来问版本。机器上一个都没有时它以 `no_supported_python` 失败并逐个说出
+版本（不会在老 Python 上跑 pip 然后留下一句误导的 "No matching distribution
+found"）；装一个 Python 3.10–3.14 后重跑即可，或 `--python <解释器路径>` 明确指一个。
+
 ### 健康检查
 
 ```bash

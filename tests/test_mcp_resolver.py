@@ -312,14 +312,45 @@ def test_plugin_version_is_read_from_the_manifest():
     assert launcher._plugin_version() == manifest["version"]
 
 
-def test_provision_pins_the_plugin_version_and_verifies(tmp_path, monkeypatch):
-    """默认装 `tavotto[worker]==<插件版本>`（钉版本可复现；`[worker]` 自带
-    渲染栈——pip 形态发现不了桌面 App 的内置 runtime），装完必须验证过 import。"""
-    ran = []
+def _fake_probe(versions: dict, default=None):
+    """`_probe_python` 的替身：按 argv[0]（或整条 argv 拼成的字符串）查版本。
+
+    provision 的用例把 `subprocess.run` 整个换掉了，真探测拿到的是空 stdout——
+    所以基础解释器的版本要在这里单独给；没列出来的候选按 `default`。
+    """
+
+    by_key = {launcher._interp_key(k.split(" ", 1)[0]): v for k, v in versions.items()}
+
+    def probe(argv, **kw):
+        # 路径按 `_interp_key` 比：Windows 上 `shutil.which("python3.13")` 回的是
+        # `…\python3.13.EXE`（扩展名按 PATHEXT 里的拼法），与用例里写的 `.exe` 只差大小写
+        version = by_key.get(launcher._interp_key(argv[0]), default)
+        return {"python": argv[0], "version": version} if version else None
+
+    return probe
+
+
+def _exe_name(stem: str) -> str:
+    """PATH 上能被 `shutil.which` 找到的文件名：Windows 只认 PATHEXT 里的扩展名。"""
+    return f"{stem}.exe" if os.name == "nt" else stem
+
+
+def _same_interp(a: str, b: str) -> bool:
+    return launcher._interp_key(a) == launcher._interp_key(b)
+
+
+@pytest.fixture()
+def launcher_is_supported(monkeypatch):
+    """当前解释器（也是 provision 的第一个候选）在支持区间内：老用例的默认前提。"""
+    monkeypatch.setattr(launcher, "_probe_python", _fake_probe({}, default=(3, 13)))
+
+
+def _ok_run(ran, create_managed=True):
+    """`subprocess.run` 的替身：一律成功；venv 那一步顺手把自管解释器文件摆出来。"""
 
     def fake_run(argv, **kw):
         ran.append(list(argv))
-        if argv[1:3] == ["-m", "venv"]:
+        if argv[1:3] == ["-m", "venv"] and create_managed:
             Path(launcher.managed_python()).parent.mkdir(parents=True, exist_ok=True)
             Path(launcher.managed_python()).write_text("", encoding="utf-8")
 
@@ -329,7 +360,16 @@ def test_provision_pins_the_plugin_version_and_verifies(tmp_path, monkeypatch):
 
         return R()
 
-    monkeypatch.setattr(launcher.subprocess, "run", fake_run)
+    return fake_run
+
+
+def test_provision_pins_the_plugin_version_and_verifies(
+    tmp_path, monkeypatch, launcher_is_supported
+):
+    """默认装 `tavotto[worker]==<插件版本>`（钉版本可复现；`[worker]` 自带
+    渲染栈——pip 形态发现不了桌面 App 的内置 runtime），装完必须验证过 import。"""
+    ran: list = []
+    monkeypatch.setattr(launcher.subprocess, "run", _ok_run(ran))
     monkeypatch.setattr(launcher, "_importable", lambda p, **kw: True)
     report, rc = launcher.provision()
     assert rc == 0 and report["ok"] is True
@@ -338,9 +378,12 @@ def test_provision_pins_the_plugin_version_and_verifies(tmp_path, monkeypatch):
     assert report["spec"] in pip_call
     # 只写自管目录，不碰任何全局环境
     assert report["python"].startswith(launcher.managed_runtime_dir())
+    # 第一次建：目录还不在，不该带 --clear
+    venv_call = next(c for c in ran if c[1:3] == ["-m", "venv"])
+    assert venv_call[0] == sys.executable and "--clear" not in venv_call
 
 
-def test_provision_failure_is_structured(tmp_path, monkeypatch):
+def test_provision_failure_is_structured(tmp_path, monkeypatch, launcher_is_supported):
     def fake_run(argv, **kw):
         class R:
             returncode = 1
@@ -355,8 +398,173 @@ def test_provision_failure_is_structured(tmp_path, monkeypatch):
     assert report["code"] == "provision_failed"
 
 
-def test_provision_half_built_env_is_not_reported_as_success(monkeypatch):
+def test_provision_half_built_env_is_not_reported_as_success(monkeypatch, launcher_is_supported):
     """pip 说成了、import 却失败（半成品环境）——不许报 ok。"""
+    ran: list = []
+    monkeypatch.setattr(launcher.subprocess, "run", _ok_run(ran))
+    monkeypatch.setattr(launcher, "_importable", lambda p, **kw: False)
+    report, rc = launcher.provision()
+    assert rc == 1 and report["ok"] is False
+
+
+# ------------------------- provision 的基础解释器 ---------------------------
+# 2026-09-20：macOS 用户在 Codex 里跑 `python3 …/server.py --provision`，`python3`
+# 是 Xcode CLT 的 3.9.6；venv 继承了它，pip 对 `tavotto[worker]==0.15.0` 只说了一句
+# "No matching distribution found"（3.9 自带的 pip 21 不打印被 Requires-Python 忽略
+# 的版本），Codex 把它读成「0.15.0 还没发」。启动器允许在老 Python 上跑，但 venv
+# 不能建在老 Python 上。
+def test_provision_python_range_mirrors_the_engine():
+    """插件 import 不到 tavotto，区间是 `engine/projectenv` 那两个常量的镜像——改一侧必须改另一侧。"""
+    from tavotto.engine import projectenv
+
+    assert launcher.PYTHON_MIN == projectenv.PYTHON_MIN
+    assert launcher.PYTHON_MAX_EXCLUSIVE == projectenv.PYTHON_MAX_EXCLUSIVE
+
+
+def test_provision_builds_the_venv_on_a_supported_python_not_the_launcher(
+    tmp_path, monkeypatch, no_path_pythons
+):
+    """启动器是 3.9、PATH 上有 python3.13：venv 建在 3.13 上，pip 照常跑。
+
+    夹具名按平台给（Windows 上 `shutil.which` 模拟 cmd.exe：没有 PATHEXT 扩展名的文件
+    根本找不到——2026-09-20 Windows 腿就是这么红的，产品代码没错，错的是用例的夹具形状）。
+    """
+    newer = _touch_exe(no_path_pythons / _exe_name("python3.13"))
+    monkeypatch.setattr(
+        launcher, "_probe_python", _fake_probe({sys.executable: (3, 9), newer: (3, 13)})
+    )
+    ran: list = []
+    monkeypatch.setattr(launcher.subprocess, "run", _ok_run(ran))
+    monkeypatch.setattr(launcher, "_importable", lambda p, **kw: True)
+    report, rc = launcher.provision()
+    assert rc == 0 and report["ok"] is True, report
+    venv_call = next(c for c in ran if c[1:3] == ["-m", "venv"])
+    assert _same_interp(venv_call[0], newer), "venv 必须建在区间内的那个解释器上"
+    assert sys.executable not in {c[0] for c in ran}, "区间外的启动器不该被用来建 venv"
+    base = next(s for s in report["steps"] if s["step"] == "base")
+    assert _same_interp(base["python"], newer)
+    assert [t["version"] for t in base["tried"]] == ["3.9", "3.13"], "试过的每一个都要带版本"
+    assert report["python_version"] == "3.13"
+
+
+def test_provision_names_every_unsupported_python_and_never_reaches_pip(
+    tmp_path, monkeypatch, no_path_pythons
+):
+    """一个候选都不在区间内：`no_supported_python`，逐个说出版本，**不起 pip**。
+
+    在区间外的解释器上跑 pip 得到的只有 "No matching distribution found"——那句话
+    把用户（和替他读输出的模型）引向「包没发」，正是这次事故的形状。
+    """
+    monkeypatch.setattr(launcher, "_probe_python", _fake_probe({}, default=(3, 9)))
+    ran: list = []
+    monkeypatch.setattr(launcher.subprocess, "run", _ok_run(ran))
+    report, rc = launcher.provision()
+    assert rc == 1 and report["ok"] is False
+    assert report["code"] == "no_supported_python"
+    assert not any("pip" in c for c in ran), "区间外的解释器上不许起 pip"
+    assert not any(c[1:3] == ["-m", "venv"] for c in ran), "更不许先把 venv 建出来"
+    assert report["tried"] and all(t["version"] == "3.9" for t in report["tried"])
+    assert sys.executable in report["error"] and "3.9" in report["error"]
+    assert launcher.python_range_text() in report["error"]
+    assert any("--python" in step for step in report["recovery"])
+    assert any("pipx" in step for step in report["recovery"])
+
+
+def test_provision_rebuilds_a_venv_left_by_an_unsupported_python(
+    tmp_path, monkeypatch, no_path_pythons
+):
+    """上一次在 3.9 上建出来的 venv 还在：重建（`--clear`），不在旧壳上重复撞墙。"""
+    managed = Path(launcher.managed_python())
+    managed.parent.mkdir(parents=True, exist_ok=True)
+    managed.write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        launcher,
+        "_probe_python",
+        _fake_probe({str(managed): (3, 9), sys.executable: (3, 13)}),
+    )
+    ran: list = []
+    monkeypatch.setattr(launcher.subprocess, "run", _ok_run(ran))
+    monkeypatch.setattr(launcher, "_importable", lambda p, **kw: True)
+    report, rc = launcher.provision()
+    assert rc == 0 and report["ok"] is True, report
+    venv_call = next(c for c in ran if c[1:3] == ["-m", "venv"])
+    assert venv_call[0] == sys.executable and "--clear" in venv_call
+
+
+def test_provision_keeps_a_venv_that_is_already_supported(tmp_path, monkeypatch, no_path_pythons):
+    """已有的 venv 在区间内：不重建、不换解释器，直接 pip（幂等重跑 = 只升级）。"""
+    managed = Path(launcher.managed_python())
+    managed.parent.mkdir(parents=True, exist_ok=True)
+    managed.write_text("", encoding="utf-8")
+    monkeypatch.setattr(launcher, "_probe_python", _fake_probe({str(managed): (3, 12)}))
+    ran: list = []
+    monkeypatch.setattr(launcher.subprocess, "run", _ok_run(ran))
+    monkeypatch.setattr(launcher, "_importable", lambda p, **kw: True)
+    report, rc = launcher.provision()
+    assert rc == 0 and report["ok"] is True, report
+    assert not any(c[1:3] == ["-m", "venv"] for c in ran)
+    assert not any(s["step"] == "base" for s in report["steps"])
+    assert report["python_version"] == "3.12"
+
+
+def test_provision_explicit_python_is_the_only_candidate(
+    tmp_path, monkeypatch, no_path_pythons, capsys
+):
+    """`--python` 指错了要指名道姓地失败，不许悄悄换成别的（同 TAVOTTO_MCP_PYTHON 的纪律）。"""
+    wrong = _touch_exe(no_path_pythons / "old-python3")
+    monkeypatch.setattr(
+        launcher, "_probe_python", _fake_probe({wrong: (3, 8), sys.executable: (3, 13)})
+    )
+    ran: list = []
+    monkeypatch.setattr(launcher.subprocess, "run", _ok_run(ran))
+    monkeypatch.setattr(sys, "argv", ["server.py", "--provision", "--python", wrong])
+    rc = launcher.main()
+    report = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert rc == 1 and report["code"] == "no_supported_python"
+    assert [t["python"] for t in report["tried"]] == [wrong], "显式指定时只认那一个"
+    assert not ran
+
+
+def test_provision_explicit_python_is_validated_even_when_a_good_venv_exists(
+    tmp_path, monkeypatch, no_path_pythons
+):
+    """已有的 venv 在区间内 + `--python` 指错：仍然要失败，不许静默沿用旧环境报成功（#453 P2）。"""
+    managed = Path(launcher.managed_python())
+    managed.parent.mkdir(parents=True, exist_ok=True)
+    managed.write_text("", encoding="utf-8")
+    monkeypatch.setattr(launcher, "_probe_python", _fake_probe({str(managed): (3, 12)}))
+    ran: list = []
+    monkeypatch.setattr(launcher.subprocess, "run", _ok_run(ran))
+    report, rc = launcher.provision(python_base=str(no_path_pythons / "missing-python"))
+    assert rc == 1 and report["code"] == "no_supported_python"
+    assert not ran, "指错了就什么都不该跑——尤其不该在旧 venv 上 pip"
+
+
+def test_provision_explicit_python_rebuilds_an_existing_venv_on_it(
+    tmp_path, monkeypatch, no_path_pythons
+):
+    """已有的 venv 在区间内 + `--python` 指了另一个合规解释器：换到它上面（`--clear`），不是沿用。"""
+    managed = Path(launcher.managed_python())
+    managed.parent.mkdir(parents=True, exist_ok=True)
+    managed.write_text("", encoding="utf-8")
+    chosen = _touch_exe(no_path_pythons / _exe_name("python3.13"))
+    monkeypatch.setattr(
+        launcher, "_probe_python", _fake_probe({str(managed): (3, 12), chosen: (3, 13)})
+    )
+    ran: list = []
+    monkeypatch.setattr(launcher.subprocess, "run", _ok_run(ran))
+    monkeypatch.setattr(launcher, "_importable", lambda p, **kw: True)
+    report, rc = launcher.provision(python_base=chosen)
+    assert rc == 0 and report["ok"] is True, report
+    venv_call = next(c for c in ran if c[1:3] == ["-m", "venv"])
+    assert venv_call[0] == chosen and "--clear" in venv_call
+    assert report["python_version"] == "3.13"
+
+
+def test_provision_pip_failure_on_a_supported_python_points_at_the_index(
+    tmp_path, monkeypatch, launcher_is_supported
+):
+    """基础解释器验过在区间内、pip 仍失败：话术指向索引 / 镜像 / 离线，而不是让人怀疑版本。"""
 
     def fake_run(argv, **kw):
         if argv[1:3] == ["-m", "venv"]:
@@ -364,12 +572,31 @@ def test_provision_half_built_env_is_not_reported_as_success(monkeypatch):
             Path(launcher.managed_python()).write_text("", encoding="utf-8")
 
         class R:
-            returncode = 0
-            stdout = stderr = ""
+            returncode = 0 if argv[1:3] == ["-m", "venv"] else 1
+            stdout = ""
+            stderr = "ERROR: No matching distribution found for tavotto[worker]==0.15.0"
 
         return R()
 
     monkeypatch.setattr(launcher.subprocess, "run", fake_run)
-    monkeypatch.setattr(launcher, "_importable", lambda p, **kw: False)
     report, rc = launcher.provision()
-    assert rc == 1 and report["ok"] is False
+    assert rc == 1 and report["code"] == "provision_failed"
+    assert "3.13" in report["error"] and "镜像" in report["error"]
+    assert "PIP_INDEX_URL" in report["error"]
+
+
+def test_degraded_health_reports_what_provision_would_build_on(tmp_path, monkeypatch):
+    """降级体检里要有一行「启动器是 3.9、机器上有没有 3.10+」：读体检的人不必等 pip 报错再猜。"""
+    monkeypatch.setattr(launcher, "_current_engine_ok", lambda: False)
+    monkeypatch.setattr(
+        launcher, "resolve", lambda found: {"python": None, "source": None, "tried": []}
+    )
+    tried = [{"python": sys.executable, "version": "3.9", "supported": False}]
+    monkeypatch.setattr(launcher, "find_venv_base", lambda explicit=None: (None, tried))
+    report, rc = launcher.health()
+    assert rc == 3 and report["mode"] == "degraded"
+    assert report["provision"]["launcher_python"] == sys.executable
+    assert report["provision"]["launcher_version"] == f"{sys.version_info[0]}.{sys.version_info[1]}"
+    assert report["provision"]["base"] is None
+    assert report["provision"]["tried"] == tried
+    assert any("no_supported_python" in n for n in report["notes"])

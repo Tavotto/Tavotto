@@ -167,6 +167,18 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   `canvas_ui: {available: false, code: "widget_missing"}` 并在文字里说出口，
   `resources/read` 对缺失产物报「缺失 + 修法」而不是回空 HTML。
   看护 `tests/test_mcp_resolver.py` + `tests/test_mcp_stdio.py`。
+- **`--provision` 建 venv 之前先验基础解释器的版本**（2026-09-20）：启动器允许在很老的
+  `python3` 上跑（纯标准库），但 venv 继承它的版本——macOS 上 `python3` 常是 Xcode CLT
+  的 3.9，而引擎的 `requires-python` 是 `>=3.10,<3.15`，区间外的解释器上 pip 只会说一句
+  "No matching distribution found"（3.9 自带的 pip 21 连被 Requires-Python 忽略的版本都
+  不列），Codex 把它读成「这一版还没发」。`find_venv_base()` 按 当前解释器 → PATH 上的
+  `python3.14…3.10` → Homebrew / python.org / `py` 启动器的常见位置 → 裸 `python3` 的顺序
+  **真的跑一遍**每个候选问版本（判据是执行不是文件名），第一个在区间内的当 base；上次
+  在区间外建出来的 venv 用 `venv --clear` 重建；一个都没有就以 `no_supported_python`
+  失败并逐个说出版本，**不在区间外的解释器上起 pip**；`--python` 显式指定时只认那一个——
+  先验它、已有的 venv 也换到它上面（已有环境在区间内不是跳过它的理由，#453 评审 P2）。
+  区间常量 `PYTHON_MIN` / `PYTHON_MAX_EXCLUSIVE` 是 `engine/projectenv.py` 的镜像
+  （`test_provision_python_range_mirrors_the_engine` 对拍），改 `requires-python` 要一起改。
   **装完插件/引擎必须新开 Codex 会话**——已开的会话不重载工具，
   `codex plugin list` 的 enabled 不代表 server 健康（README 里写明了）。
 - **导出先预检**：有 error **或 `not_verifiable`** 且没有 `explicit_confirm` 时
