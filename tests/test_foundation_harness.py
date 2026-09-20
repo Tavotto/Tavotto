@@ -370,7 +370,7 @@ def test_u01_s1_first_open_and_export_through_the_public_entry(tmp_path):
     )
     out_dir = fh.results_dir() or (tmp_path / "results")
     evidence: list[str] = []
-    observed: dict = {"backend": case.get("backend"), "worker_python": WORKER_PY}
+    observed: dict = {"backend": case.get("backend"), "native_reference_python": WORKER_PY}
 
     # ---- 假想用户环境：夹具的独立副本 + 用户自己跑过一次脚本（磁盘上有 figure.pdf）
     proj = tmp_path / "proj"
