@@ -58,6 +58,17 @@ def main():
     ap.add_argument("--bad-protocol-version", action="store_true")
     ap.add_argument("--garbage", action="store_true", help="往 stdout 写一行非 JSON")
     ap.add_argument(
+        "--garbage-bytes",
+        action="store_true",
+        help="往 fd 1 直接写一行**非 UTF-8 字节**（cp936 的子进程输出 / C 扩展 printf 的形状）",
+    )
+    ap.add_argument(
+        "--exit-code",
+        type=int,
+        default=0,
+        help="配合 --die-on-render：退出时用这个退出码（模拟脚本 sys.exit(N) / 致命错误）",
+    )
+    ap.add_argument(
         "--die-on-render", action="store_true", help="收到 render 就直接退出（模拟 worker 崩溃）"
     )
     ap.add_argument(
@@ -117,7 +128,7 @@ def main():
                     sys.stdout.close()
                     os.close(1)
                     time.sleep(args.linger_after_close_ms / 1000.0)
-                return
+                sys.exit(args.exit_code)
             if args.hang:
                 time.sleep(3600)
             seen_heavy += 1
@@ -143,6 +154,10 @@ def main():
 
         if args.garbage:
             sys.stdout.write("这不是 JSON\n")
+        if args.garbage_bytes:
+            # 绕开 TextIOWrapper：这一行就是要坏的字节，不能让 errors="replace" 洗干净
+            sys.stdout.flush()
+            os.write(1, "这不是 JSON".encode("gbk") + b"\n")
         sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
         sys.stdout.flush()
 

@@ -167,6 +167,12 @@ worker 原样回显。**读线程给它读到的每一行都打上自己那一�
 - **崩溃**：worker 进程退出 → `session_dead`；会话本身还在，下一条请求原地重建。
   这是安全的：worker 的每条命令都会 `_ensure_built()`，而 override 是全量列表语义，
   新起的进程只是多跑一次 build。
+  **退出状态随信封带出（2026-09-20，#435）**：EOF 之后先给子进程 `EXIT_GRACE`
+  （1.5 秒）自己退出，`error.exit = {"code", "signal", "lingered"}`——`code` 是
+  进程自己的退出码（Windows 上是 NTSTATUS 按 i32），`signal` 是 POSIX 信号，
+  `lingered` = 关了管道却没退、被 workerd 收掉。加字段不升协议版本。怎么解释这个
+  数归 Python 侧一处（`pool.describe_exit`）；supervisor 的文案只说「退出了（退出码 N）」，
+  不说「崩溃」。读线程按字节读：非 UTF-8 字节是 `protocol_mismatch`，不是 EOF。
 
 ### 8. 错误码
 

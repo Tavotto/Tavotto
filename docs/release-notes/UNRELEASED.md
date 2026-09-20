@@ -46,3 +46,34 @@ overrides, and the inspector draws it as an empty swatch labelled "None".
 A filled shape's `facecolor` keeps reporting the colour that would draw
 while `fill` is off, as it did before. Anything that parses these fields
 as a hex string must accept `none` as well. (#427)
+
+**A render process that dies now says how it died, instead of "crashed
+(unresponsive)".** Trigger: the rendering worker exits during the first
+build or a later render — most reports came from people rendering with
+their own Conda or venv interpreter on Windows. Symptom: every attempt ended
+in the same sentence, "渲染进程崩溃（无响应），会话需要重建", and the
+diagnostics report listed bare `Traceback (most recent call last):` lines
+with nothing after them (#435). Now the message states the exit status
+(`sys.exit()`, a Python fatal error, an access violation, a missing DLL, a
+signal, or "closed the pipe but kept running") and says explicitly when the
+worker left no output at all; the worker runs with `faulthandler` enabled,
+so a hard crash leaves its Python stack in `worker.log`; and the
+diagnostics report carries the last lines of evidence from recent
+`worker.log` files (error and frame lines only — nothing your script
+printed and no source lines) plus the exception line of each traceback.
+Two related changes: a script that ends with `sys.exit(0)` / `exit()` is a
+normal ending and no longer kills the worker (a non-zero exit is reported
+as the script's own error), and non-UTF-8 bytes on the worker's protocol
+pipe are reported as garbage on the pipe rather than as a crash.
+
+**Choosing a rendering interpreter in Settings runs the full health check.**
+Trigger: Settings → Rendering environment → pointing Tavotto at your own
+Python. Symptom: the setting was accepted as long as `import matplotlib`
+worked, so an interpreter with an unsupported Python version, or one whose
+Pillow / numpy DLLs are broken, was stored — and the first render failed
+with "crashed" (#435). The check is now the same one used for project
+environments (Python version range, matplotlib, and Tavotto's own worker
+imports), and refuses with a specific reason: unsupported Python version,
+no matplotlib, worker cannot start (with the failing import), or the
+interpreter cannot start. An environment already stored before this
+version is not re-checked until you pick it again.

@@ -28,6 +28,18 @@
   （`execspec.worker_argv` 起用户解释器就是这样），cwd 换成空临时目录挡住
   父进程 cwd 进 `sys.path[0]`。以前的 `-I` 关掉了用户 site 与 `PYTHONPATH`，
   `pip install --user` 的科学栈在体检里「不存在」而 worker 里明明 import 得到。
+- **体检的主语是 worker 的启动导入链**（#435）：`_PROBE_SRC` import 的是 `worker`
+  模块本身（目录由 `projectenv.ENGINE_DIR` 给，用例可指到假引擎目录），不是一份
+  手抄的 `figcapture, manifest, overrides` 清单——清单只在写下的那一天与 worker.py
+  相同，而 worker 还要 `matplotlib.figure`（→ Pillow）、`figsession`、`wireproto`。
+  matplotlib 在、worker 起不来单独成码 `project_env_worker_import_failed`（`error`
+  带断在哪一句），与「没有 matplotlib」是两条出路。**全局「渲染环境」
+  （`PATCH /api/engine/environment` 不带 scope）与项目路径走同一份体检**，
+  只是回给界面的 code 不同（`interpreter_unsupported_python` /
+  `interpreter_no_matplotlib` / `interpreter_worker_import_failed` /
+  `interpreter_unusable`）：以前全局只问一句 `import matplotlib`，Python 3.9 或
+  Pillow 的 DLL 坏了的 Conda 都能被存下来，第一次渲染才以「渲染进程退出」收场。
+  看护：`tests/test_environment_health_parity.py`。
   解释器去重 / 缓存键**按路径字符串不 realpath**（`.venv/bin/python` 是指向基础
   解释器的软链接，realpath 会把 venv 与它的基础 Python 判成同一个）。
 - **import 名不是包名**。只认 `project_declared` / `curated` 两档高置信解析，

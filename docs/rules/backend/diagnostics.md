@@ -27,3 +27,11 @@
   * 坏载荷（超限 / 畸形 JSON / 类型不对）**一律退化成不带前端那两个文件的包**，
     并在 manifest 记 `trace_truncated`。用户是来排障的，不该拿到一个 400。
   * **不写磁盘、不自动上传、不进 telemetry**。trace 只在用户点导出那一刻进 zip。
+- **报告要答得出「渲染进程死在哪一句」（#435）**：`recent_errors` 把每段 traceback 与
+  它收尾的异常行配成一条（帧行不进——读的人要的是那一句，脱敏面也更小）；
+  `render.worker_logs` 带最近 `WORKER_LOG_FILES` 份 `worker.log` 尾巴里的**证据行**
+  （`evidence_lines`：traceback 头 / `File "…", line N` 帧行 / 异常行 / faulthandler
+  的崩溃栈 / worker 自己的 `[guard]` 标记），脚本 `print` 的一切与帧下面那行源码
+  **一律略去、只留计数 `omitted`**——README 承诺包里不含脚本源码与数据，这条
+  段落不许把它变成空话。`empty` 标出「进程一个字没留下就没了」（硬崩溃的形状）。
+  整段过同一道 `_redact_obj`。看护：`tests/test_diagnostics_worker_evidence.py`。

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import faulthandler
 import importlib
 import json
 import os
@@ -263,14 +264,28 @@ class Worker(wireproto.V1Handler):
         sys.argv = [str(self.script)]
 
         t_script = time.perf_counter()
+        # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
+        # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
+        # 那条给协议 `shutdown` 用的 `except SystemExit: break` 上——worker 悄无
+        # 声息地退出，stdout EOF，supervisor 只能报「渲染进程崩溃」，worker.log
+        # 里连一行 traceback 都没有。与 `python fig.py` 的语义对齐：退出码 0 /
+        # None 就是脚本正常结束（已经画好的图照常捕获），非零才是它自己报的失败。
         with contextlib.redirect_stdout(sys.stderr):
-            if self.entry == "__main__":
-                import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
+            try:
+                if self.entry == "__main__":
+                    import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
 
-                runpy.run_path(str(self.script), run_name="__main__")
-            else:
-                module = importlib.import_module(self.script.stem)
-                getattr(module, self.entry)()
+                    runpy.run_path(str(self.script), run_name="__main__")
+                else:
+                    module = importlib.import_module(self.script.stem)
+                    getattr(module, self.entry)()
+            except SystemExit as exc:
+                if exc.code not in (None, 0):
+                    raise RuntimeError(
+                        f"脚本调用了 sys.exit({exc.code!r}) 提前结束。"
+                        "Tavotto 要的是脚本跑完后留在内存里的 Figure——"
+                        "去掉那句 exit，或改成只在出错时 exit。"
+                    ) from exc
         script_ms = _ms(t_script)
 
         # pyplot 兜底：从不 savefig 的脚本（`plt.plot(...); plt.show()` 这种
@@ -455,6 +470,14 @@ def main() -> None:
     sys.stdin.reconfigure(encoding="utf-8", errors="replace")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+    # 硬崩溃（access violation / segfault / abort：DLL 冲突、C 扩展里的越界）不经过
+    # Python 的异常机制，进程当场消失，worker.log 里一个字都没有——父进程只看得到
+    # 管道 EOF，报出来的是一句「渲染进程崩溃」，用户与我们都无从下手（issue #435
+    # 的诊断包里正是 24 条这样的空记录）。faulthandler 让 CPython 在那一刻把
+    # Python 栈写进 stderr（就是 worker.log）：崩在哪个 import、哪句 draw 一眼可见。
+    # 装在 stderr 重配之后：它记的是**此刻**的 fd。
+    faulthandler.enable(file=sys.stderr, all_threads=True)
 
     worker = Worker(ap.parse_args())
 

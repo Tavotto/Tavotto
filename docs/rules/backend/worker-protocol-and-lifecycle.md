@@ -45,6 +45,25 @@
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
   死循环脚本持着 `w.lock` 把整个会话占死，连 shutdown 都抢不到锁
   （test_request_timeout_kills_and_rebuilds_worker 看护）。
+- **管道 EOF 先问死因，再说话（#435）**。EOF 之后两条控制面都先给子进程
+  `EXIT_GRACE`（1.5 秒，Python 与 Rust 同一个数）自己退出，拿到退出状态才 kill
+  兜底（`pool.exit_report` / `WorkerProc::reap_after_eof`）——EOF 那一刻直接 kill，
+  退出码永远是 TerminateProcess / SIGKILL 的那一个，真正的死因就被盖掉了。
+  退出状态 `{"code", "signal", "lingered"}` 随 `session_dead` 的信封带出（Rust 放在
+  `error.exit`，Python 池放在 `WorkerError.extra["exit"]`；加字段不升协议版本），
+  **怎么解释归 Python 侧一处**：`pool.describe_exit` 是退出码 → 人话的唯一表
+  （Windows NTSTATUS 的两种写法——Python 的无符号 DWORD 与 Rust 的 i32——查到
+  同一条），`pool.session_dead_message` 是两条控制面共用的那句话：它怎么死的 /
+  worker.log 这一代**空不空要说出来** / 日志在哪。文案说「渲染进程退出了」，
+  不说「崩溃（无响应）」——进程既没崩也不是无响应，它是退出了。
+  worker 自己开着 `faulthandler`（stderr 重配之后装，记的是那一刻的 fd）：硬崩溃
+  的 Python 栈落在 worker.log。脚本的 `sys.exit(0)` 是正常结束（`python fig.py`
+  的语义），非零是 `script_error`，都不再把 worker 带走。**Rust 读线程按字节读**
+  （`read_until` + lossy UTF-8）：非 UTF-8 字节是「管道上有垃圾」（protocol_mismatch），
+  不是 EOF——`BufRead::lines()` 会把一行坏字节当 Err 交回来，活着的 worker 被判成
+  「崩溃」并被杀掉。看护：`tests/test_worker_exit_report.py`、
+  `workerd/tests/supervisor_behaviour.rs` 的 `a_dead_worker_reports_how_it_died…` /
+  `non_utf8_bytes_on_the_protocol_pipe…`。
 - **关停必须闭环：`kill()` ≠「进程已经退出并释放了文件」**。`Popen.kill()`
   两个平台上都只是发出请求（POSIX 是 SIGKILL，Windows 是 TerminateProcess），
   调用返回时进程可能还在，它打开的句柄一定还在。`EngineWorker.shutdown()` /

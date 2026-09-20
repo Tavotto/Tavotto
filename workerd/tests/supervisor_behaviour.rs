@@ -323,6 +323,29 @@ fn garbage_on_the_protocol_pipe_is_protocol_mismatch() {
     assert_eq!(err_code(&resp), "protocol_mismatch");
 }
 
+#[test]
+fn non_utf8_bytes_on_the_protocol_pipe_are_garbage_not_a_crash() {
+    // `BufRead::lines()` 把一行非法 UTF-8 当 Err 交回来，读线程一 break 就是 EOF：
+    // 一条活着的 worker 被报成「渲染进程崩溃」并被杀掉。Windows 上 cp936 的
+    // 子进程输出、C 扩展直接 printf 都是这个形状。判据要对得上事实：字节坏了
+    // 是「管道上有垃圾」，进程没死。
+    let mut wd = Workerd::start();
+    let (sid, _) = wd.open(&["--garbage-bytes"], 10_000);
+    let resp = wd.call(
+        "render",
+        json!({"patches": []}),
+        Some(&sid),
+        Some("Fig1"),
+        10_000,
+    );
+    assert_eq!(err_code(&resp), "protocol_mismatch", "{resp:#?}");
+    let tb = resp["error"]["traceback"].as_str().unwrap_or("");
+    assert!(
+        tb.contains("JSON"),
+        "那一行要原样带出去（坏字节以 U+FFFD 代替）: {tb:?}"
+    );
+}
+
 // ------------------------------ 队列 ------------------------------
 
 #[test]
@@ -676,6 +699,31 @@ fn a_crashed_worker_reports_session_dead_and_rebuilds() {
 }
 
 #[test]
+fn a_dead_worker_reports_how_it_died_not_just_that_it_did() {
+    // 「崩溃（无响应）」以前是 EOF 的全部描述。退出码是用户与诊断包分辨
+    // 「脚本 sys.exit」「Python 致命错误」「access violation」的唯一凭据，
+    // 信封里必须带着它，文案里也要说得出来。
+    let mut wd = Workerd::start();
+    let (sid, _) = wd.open(&["--die-on-render", "--exit-code", "7"], 10_000);
+    let resp = wd.call(
+        "render",
+        json!({"patches": []}),
+        Some(&sid),
+        Some("Fig1"),
+        10_000,
+    );
+    assert_eq!(err_code(&resp), "session_dead", "{resp:#?}");
+    assert_eq!(resp["error"]["exit"]["code"], 7, "{resp:#?}");
+    assert_eq!(resp["error"]["exit"]["lingered"], false, "{resp:#?}");
+    let message = resp["error"]["message"].as_str().unwrap_or("");
+    assert!(message.contains("退出码 7"), "{message:?}");
+    assert!(
+        !message.contains("崩溃"),
+        "它是退出了，不是崩溃；文案不许把两件事说成一件: {message:?}"
+    );
+}
+
+#[test]
 fn a_worker_that_closed_the_pipe_but_has_not_exited_yet_still_rebuilds() {
     // **「没了」不能只看进程对象。** 子进程关掉 stdout 到被回收之间有一个窗口，
     // `try_wait()` 在那期间回 `Ok(None)`——如果 `ensure_worker` 只信这一个判据，
@@ -704,6 +752,9 @@ fn a_worker_that_closed_the_pipe_but_has_not_exited_yet_still_rebuilds() {
         10_000,
     );
     assert_eq!(err_code(&resp), "session_dead", "{resp:#?}");
+    // linger 1.5 秒 == 宽限 1.5 秒：它要么在宽限期最后一刻自己退出，要么被收掉。
+    // 两种结局都要如实报（`lingered` 是布尔，不是猜测），这里只钉「字段在」。
+    assert!(resp["error"]["exit"]["lingered"].is_boolean(), "{resp:#?}");
 
     // 此刻子进程**还没退**（还在 linger 里），`try_wait()` 回 Ok(None)。
     // 只信它的话下面这条会写进死管道、等满超时。

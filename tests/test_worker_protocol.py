@@ -7,6 +7,7 @@
 """
 
 import json
+import subprocess
 import threading
 
 import pytest
@@ -71,7 +72,13 @@ class _FakeProc:
             self.returncode = -9
 
     def wait(self, timeout=None):
-        return self.returncode if self.returncode is not None else 0
+        # 照着真的 `Popen.wait` 来：没退出的进程等到 timeout 就抛，不会凭空
+        # 回一个 0——回 0 等于替一个还活着的进程编了一个死因。
+        if self.returncode is None:
+            if timeout is not None:
+                raise subprocess.TimeoutExpired("fake", timeout)
+            return 0
+        return self.returncode
 
 
 def _worker(responder, tmp_path) -> pool.EngineWorker:
@@ -204,8 +211,11 @@ def test_pipe_eof_kills_the_session_so_get_cannot_reuse_it(tmp_path):
     assert w.proc.poll() is None, "前提：进程对象此刻还『活着』"
     with pytest.raises(pool.WorkerError) as e:
         w.request({"cmd": "ping"})
-    assert "崩溃" in str(e.value)
-    assert w.proc.killed, "读到 EOF 的 worker 必须就地杀掉，不许留给 get() 复用"
+    assert e.value.code == "session_dead"
+    assert "渲染进程退出了" in str(e.value)
+    # 关了管道却还活着：宽限期内等不到它退出，就得杀——文案也要这么说
+    assert "没有退出，已被终止" in str(e.value)
+    assert w.proc.killed, "读到 EOF 却不退出的 worker 必须就地杀掉，不许留给 get() 复用"
     # **关键的一句**：假进程的 `kill()` 刻意**不**同步回收（真的 `Popen.kill()`
     # 也不会），所以 `poll()` 此刻**仍然回 None**。`alive()` 还敢说「活着」的话，
     # `get()` 就会把这条死 worker 复用掉。
@@ -288,10 +298,10 @@ def test_hash_mismatch_is_logged_but_the_result_is_used(tmp_path, caplog):
 
 
 def test_dead_worker_and_empty_response_keep_their_old_errors(tmp_path):
-    """老的两条兜底不变：进程已退出 / 无响应。"""
-    w = _worker(lambda env: "", tmp_path)  # 空行 = EOF = 崩了
+    """老的两条兜底不变：进程已退出 / 管道 EOF。"""
+    w = _worker(lambda env: "", tmp_path)  # 空行 = EOF = 它没了
     w.proc.pending.clear()
-    with pytest.raises(pool.WorkerError, match="崩溃"):
+    with pytest.raises(pool.WorkerError, match="渲染进程退出了"):
         w.request({"cmd": "ping"})
 
     w2 = _worker(lambda env: _echo(env), tmp_path)

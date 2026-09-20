@@ -113,6 +113,16 @@ def _error_from_worker(
             traceback_text=exc.traceback_text,
         )
     if exc.code == "session_dead":
+        # 退出状态在手（#435）：进程**自己**死的（脚本把它带崩、access violation、
+        # sys.exit）不是「被中断」——报成取消等于把一次真崩溃藏起来。只有被杀 /
+        # 状态未知的才归 execution_cancelled（用户点的取消在调用方就已经分出去了）。
+        if pool.exited_on_its_own((getattr(exc, "extra", None) or {}).get("exit")):
+            return _err(
+                ERROR_PROBE_FAILED,
+                f"试运行失败（入口 {entry}）：{exc}",
+                params={"entry": entry, "reason": str(exc)},
+                traceback_text=exc.traceback_text,
+            )
         return _err(
             ERROR_CANCELLED,
             "试运行被中断（会话在执行期间被终止）",

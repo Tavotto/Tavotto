@@ -150,6 +150,10 @@ USER_VISIBLE_CODES = {
     # safe 档工作目录模式（ADR 0047）
     "workdir_mode_invalid": {"mode"},
     "interpreter_no_matplotlib": {"path"},
+    # --- #435：全局「渲染环境」与项目路径同一份体检，三种新结论各一码 ---
+    "interpreter_unsupported_python": {"path", "python_version"},
+    "interpreter_worker_import_failed": {"path", "detail"},
+    "interpreter_unusable": {"path", "detail"},
     "invalid_consent": set(),
     "name_missing": set(),
     "endpoint_save_failed": {"reason"},

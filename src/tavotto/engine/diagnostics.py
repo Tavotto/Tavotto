@@ -25,6 +25,7 @@ import os
 import platform
 import re
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -32,6 +33,11 @@ from . import ai_bridge, bootstrap, config, diagnostics_frontend, pool, runtime,
 
 LOG_TAIL_LINES = 400
 ERROR_TAIL = 30  # 报告里单列的最近错误条数
+#: 报告里带几份 worker.log 的尾巴、每份多少行。渲染进程死在哪一句只有它知道
+#: （app.log 里只有一句「渲染进程退出了」）——#435 的诊断包里 24 条错误全是空壳，
+#: 正是因为这份日志不在包里。按 mtime 取最近的几份：用户报的问题就是最近发生的。
+WORKER_LOG_FILES = 3
+WORKER_LOG_TAIL_LINES = 60
 
 #: 诊断包整体格式的版本。**读包的人不该靠 Tavotto 版本号去猜 schema**
 #: ——manifest.json 自报这个数。1 = 只有 report/app.log/config 的那一版；
@@ -131,6 +137,117 @@ def _log_tail(n: int = LOG_TAIL_LINES) -> list[str]:
     return lines[-n:]
 
 
+def recent_errors(lines: list[str], limit: int = ERROR_TAIL) -> list[str]:
+    """app.log 尾巴里的错误条目：ERROR 行，以及每段 traceback **最后那一句**。
+
+    以前只留含 `Traceback` 的那一行，于是 24 条 `Traceback (most recent call last):`
+    并排躺在报告里，而每一段真正说了什么（`ModuleNotFoundError: …`、
+    `OSError: [WinError 5] …`）一个字都没带出来——报告长了一屏，信息量为零。
+    这里把 traceback 头与它的收尾异常行配成一条；文件路径那些帧不进报告
+    （脱敏面更小，读的人要的也只是那一句）。
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        if "Traceback (most recent call last):" in ln:
+            j = i + 1
+            # 帧行以空白开头（`  File …` / 源码行 / `    ^^^`）；第一条不缩进的
+            # 非空行就是异常本身。链式异常（`The above exception…`）中间会再出现
+            # 一段 traceback，各自配对，不合并。
+            while j < len(lines) and (not lines[j].strip() or lines[j][:1].isspace()):
+                j += 1
+            tail = lines[j].strip() if j < len(lines) else ""
+            out.append(f"{ln.strip()} → {tail}" if tail else ln)
+            i = j + 1 if tail else j
+            continue
+        if " ERROR " in ln:
+            out.append(ln)
+        i += 1
+    return out[-limit:]
+
+
+#: worker.log 里**允许进诊断包**的行——只有报错与崩溃的结构性证据：
+#:   * Python traceback 的头、`File "…", line N` 帧行、收尾的异常行；
+#:   * faulthandler 的 `Fatal Python error` / `Windows fatal exception` / `Current thread`
+#:     与它的帧行（faulthandler 只打 `File "…", line N in func`，不打源码）；
+#:   * worker 自己打的 `[guard]` / `[capture]` / `[protocol]` 标记行。
+#: **不进的**：帧下面那行源码（README 承诺「不含 Python 脚本与源代码」）、脚本自己
+#: `print` 出来的一切（可能是数据）、matplotlib 的 findfont 之类噪音。被略去的行
+#: 只留一个计数——读的人要知道这里少了东西，而不是以为脚本一句话没说。
+_EVIDENCE_LINE = re.compile(
+    r"^(?:"
+    r"Traceback \(most recent call last\):"
+    r"|\s*File \"[^\"]*\", line \d+"
+    r"|(?:Fatal Python error|Windows fatal exception|Current thread|Thread 0x)\b"
+    r"|\[(?:guard|capture|protocol)\]"
+    r"|(?:[A-Za-z_][\w.]*\.)?[A-Z]\w*(?:Error|Exception|Exit|Interrupt|Warning)\b(?::|$)"
+    r"|(?:The above exception|During handling of the above exception)"
+    r"|(?:Extension modules|Segmentation fault|Aborted|Bus error|Illegal instruction)"
+    r")"
+)
+
+
+def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
+    """worker.log 尾巴 → (可进诊断包的证据行, 略去的行数)。"""
+    kept: list[str] = []
+    dropped = 0
+    for ln in tail:
+        if not ln.strip():
+            continue
+        if _EVIDENCE_LINE.match(ln):
+            kept.append(ln.rstrip())
+        else:
+            dropped += 1
+    return kept, dropped
+
+
+def worker_log_tails(
+    root: Path | None = None, *, files: int = WORKER_LOG_FILES, lines: int = WORKER_LOG_TAIL_LINES
+) -> list[dict]:
+    """最近几份 `worker.log` 尾巴里的**证据行**（未脱敏——调用方经 `_redact_obj`）。
+
+    只读、不起任何子进程。目录名是 `pool._cache_slug` 拼出来的
+    `<项目哈希>-<脚本名>`，读的人据此对上是哪个脚本的会话。`empty` 说的是
+    这一份日志尾巴**整个**是空的（进程一个字没留下就没了——硬崩溃的形状），
+    `omitted` 是按 `evidence_lines` 略去的行数。
+    """
+    base = Path(root) if root is not None else pool.ENGINE_CACHE
+    try:
+        candidates = [p for p in base.glob("*/worker.log") if p.is_file()]
+    except OSError:
+        return []
+    stamped: list[tuple[float, Path]] = []
+    for p in candidates:
+        try:
+            stamped.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+    stamped.sort(reverse=True)
+    out: list[dict] = []
+    for mtime, p in stamped[:files]:
+        try:
+            text = p.read_bytes().decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        tail = text.splitlines()[-lines:]
+        kept, omitted = evidence_lines(tail)
+        out.append(
+            {
+                "session": p.parent.name,
+                "modified": _iso(mtime),
+                "empty": not any(t.strip() for t in tail),
+                "omitted": omitted,
+                "tail": "\n".join(kept),
+            }
+        )
+    return out
+
+
+def _iso(ts: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts))
+
+
 def install_kind() -> str:
     """怎么装的——升级指令、路径写权限、能不能自己修都由它决定。
 
@@ -179,7 +296,7 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
     mpl = bootstrap.matplotlib_version(worker_python) if worker_python else None
     caps = ai_bridge.capabilities()
     lines = _log_tail()
-    errors = [ln for ln in lines if " ERROR " in ln or "Traceback" in ln][-ERROR_TAIL:]
+    errors = recent_errors(lines)
 
     report = {
         "tavotto": {
@@ -222,6 +339,9 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             # 实测能不能 import。只贴 manifest 不够——杀毒软件隔离掉一个 .pyd
             # 时 manifest 照样完好。
             "bundled_runtime": _runtime_section(),
+            # 渲染进程自己最后说了什么：崩在 import 哪一句、faulthandler 的栈、
+            # 脚本自己的报错都只在这里。app.log 里对应的只有一句「渲染进程退出了」。
+            "worker_logs": worker_log_tails(),
         },
         # 每个已注册编码 Agent 的探测结论。**不含就绪检查的账号细节**——
         # 那条只回 ready/needs_auth/unknown，邮箱与组织名一个字都不出现。
@@ -387,12 +507,17 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- report.json：系统、运行环境与探测结果\n"
         "- app.log：最近的应用日志\n"
         "- config.json：用户配置（密钥已抹掉）\n"
+        "  （report.json 的 render.worker_logs 段：渲染进程日志里的报错与崩溃栈——\n"
+        "  只留报错行与 File/line 帧行，脚本自己打印的内容与源码行已略去）\n"
         + extra_zh
         + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
         "- report.json: system and runtime information\n"
         "- app.log: recent Tavotto application logs\n"
         "- config.json: user configuration (secrets removed)\n"
+        "  (report.json, render.worker_logs: errors and crash stacks from the render\n"
+        "  process logs — only error and File/line frame lines; anything your script\n"
+        "  printed, and source lines, are left out)\n"
         + extra_en
         + "- manifest.json: describes this package's own format\n"
         "\n"
