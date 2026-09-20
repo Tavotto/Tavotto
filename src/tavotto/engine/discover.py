@@ -39,7 +39,7 @@ import threading
 import tokenize
 from pathlib import Path, PurePosixPath
 
-from . import atomicio, figcapture, registry
+from . import atomicio, figcapture, registry, runtime
 
 #: 「什么算一份图产物」的唯一出处在 `figcapture.ARTIFACT_EXTS`（捕获描述符
 #: 判原件、handoff 找产物、这里的静态扫描必须是同一张表）；旧名保留作镜像。
@@ -278,6 +278,8 @@ def analyze_in_interpreter(python: str, path: Path, figures_dir: Path) -> dict:
             errors="replace",
             timeout=TARGET_PARSE_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
+            # GUI 拥有的隐藏子进程（与 `projectenv.probe_environment` 同一类）
+            creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return {"error": f"spawn: {exc}"[:200]}

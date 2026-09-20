@@ -310,6 +310,8 @@ def _alt_python() -> str | None:
             [alt, "-c", "import sys, matplotlib; print(sys.version_info[1])"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
             check=True,
         ).stdout.strip()
@@ -317,6 +319,8 @@ def _alt_python() -> str | None:
             [sys.executable, "-c", "import sys; print(sys.version_info[1])"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
             check=True,
         ).stdout.strip()

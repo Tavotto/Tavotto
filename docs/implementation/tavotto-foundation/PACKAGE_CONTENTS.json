@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 8101,
-      "sha256": "1b8f8c6593a135d57b4aae1253ec5eaf75432acfc32335d375d251835e9e1077"
+      "bytes": 7816,
+      "sha256": "241f6bf6e49699e0ee4b1c1cba87904dfb18da186d12dab45af9dff80ad78d53"
     },
     {
       "path": "SOURCES.md",
@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 43257,
-      "sha256": "29778d7be9e04b68d8a759bbf104223ad85377093b27071ed53ab5642931aa0d"
+      "sha256": "1e596b5bb16db1f8f432d9263c8661a945799955377e78f07d286464a7cd4c93"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 22150,
-      "sha256": "f994324be65742b3fa51534dd431d86d941b2c4f83ac29e66db2f330b1f73a2a"
+      "bytes": 23896,
+      "sha256": "f762e2db290a97e1bd0ee80c0865ee380913f88da615ad02647b6fadaa0a2913"
     },
     {
       "path": "archive/README.md",
