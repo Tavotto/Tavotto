@@ -76,7 +76,9 @@ path = "src/tavotto/__init__.py"
 # hatchling 默认跳过 VCS 忽略的文件，targets 的 include 也救不回来——必须在这里
 # 用 artifacts 显式收回，否则打出来的包没有界面（首页 404）。
 [tool.hatch.build]
-artifacts = ["src/tavotto/web/**"]
+# 批准字体（src/tavotto/resources/fonts/，scripts/fetch_fonts.py 按 sha256 取下来）同理：
+# 在 .gitignore 里，必须靠 artifacts 收回，否则 wheel 里的 RenderCore 没有字体（ADR 0060）。
+artifacts = ["src/tavotto/web/**", "src/tavotto/resources/fonts/**"]
 # Windows 桌面版的内置渲染 runtime（仓库根的 runtime/，200 MiB 上下）只跟着
 # 安装包走，**绝不能混进 wheel / sdist**：pip 用户拿到的是轻量包，
 # 而且那是一堆 Windows 二进制。它已经在 .gitignore 里（hatchling 默认就会跳过），
