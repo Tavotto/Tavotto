@@ -314,21 +314,24 @@ def render_evidence(
     except ImportError:
         report["reader_pdfminer"] = {"skipped": "pdfminer.six 未装"}
 
-    # 尺子 4：poppler pdftotext（系统里有就用）
+    # 尺子 4：poppler pdftotext（系统里有就用）。**显式 `-enc UTF-8`**：输出编码是 poppler 的构建期默认，
+    # Git for Windows 自带的那份是 Latin1——`²` 以 0xb2 一个字节出来、U+1D538 直接被丢
+    # （u06-rendercore.yml Windows 腿在 b2394d82 上就红在这一行：读线程炸、stdout 成 None）。
+    # 与 tests/test_rendercore_writer.py 的 _pdftotext 同一条纪律。
     exe = shutil.which("pdftotext")
     if exe:
-        proc = subprocess.run(
-            [exe, str(pdf_path), "-"], capture_output=True, text=True, encoding="utf-8"
-        )
-        report["reader_poppler"] = {"text": proc.stdout, "stderr": proc.stderr}
+        proc = subprocess.run([exe, "-enc", "UTF-8", str(pdf_path), "-"], capture_output=True)
+        pp_text = proc.stdout.decode("utf-8")
+        pp_err = proc.stderr.decode("utf-8", errors="replace")
+        report["reader_poppler"] = {"text": pp_text, "stderr": pp_err}
         checks.append(
             (
                 "poppler.no_syntax_error",
-                proc.returncode == 0 and "Syntax Error" not in proc.stderr,
+                proc.returncode == 0 and "Syntax Error" not in pp_err,
                 {},
             )
         )
-        pp_flat = "".join(ch for ch in proc.stdout if not ch.isspace())
+        pp_flat = "".join(ch for ch in pp_text if not ch.isspace())
         for line in truth["text"]:
             want = "".join(ch for ch in line["logical"] if not ch.isspace())
             checks.append((f"poppler.text.{line['id']}", want in pp_flat, {}))
