@@ -996,8 +996,9 @@ class TestRealArchive:
         if cache and (Path(cache) / src.archive_name).is_file():
             privatepython.downloads_dir().mkdir(parents=True, exist_ok=True)
             shutil.copy2(Path(cache) / src.archive_name, privatepython.archive_path(src))
-        monkeypatch.delenv("HTTP_PROXY", raising=False)
-        monkeypatch.delenv("HTTPS_PROXY", raising=False)
+        # 夹具设的死代理两种拼法都要摘掉，真下载才走得出去
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            monkeypatch.delenv(name, raising=False)
         python = privatepython.provision(src)
         info = json.loads(
             subprocess.run(
