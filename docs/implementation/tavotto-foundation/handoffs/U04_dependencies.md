@@ -87,7 +87,53 @@ hash 模式缺一条就 blocked；冲突 blocked 且冲突可见；目标事实�
 **仍缺哪些默认启用 / 精确安装物资格**：全部。PR A 只是计划层；U04 的场景资格在 PR C，且仍是「源码树 + 旧后端 +
 一个平台」的切片证据。
 
-**下一个无阻塞阶段 / 子切片**：PR B（事务）。它的输入：`JointPlan.requirements / constraints / hashes / require_hashes /
+## PR B：受管环境按代的事务、联合安装、取消与租约
+
+**实际代码与 API / 数据结构变更**（细节见 ADR 0061 §四–§六）：
+
+| 层 | 变更 |
+|---|---|
+| `engine/managedenv.py` | 按代：`generation_dir / generation_python`（`envs/g<身份>/`，代号只许 `[a-z0-9-]`）、`generations()`（旧布局 `venv/` 是隐式 `legacy` 一代）、`active_generation()`、`register_generation`（先记 `incomplete`；第一次按代时把 legacy 登记进 `generations` 并保持 active）、`mark_generation`、`activate`（manifest `active` 字段原子写 = **唯一**指针）、`create_generation_venv`（最终目录里建，残留目录先删）、`is_managed_python`（任一代）、`retire_unused(in_use=)`（active 永不删、在用的不删）；`venv_dir / venv_python(generation=None)` 默认跟 active；`python_of` 按 active 那一代的状态；`mark_ready / mark_incomplete` 落在 active 那一代；`state()` 多 `active_generation` / `generations`（只出代号与状态）。schema 仍是 1（加可选字段不升） |
+| `engine/deprepair.py` | `JointRepairPlan` + `create_joint_plan`（不是 `ready` 的计划拒绝绑定 `dependency_plan_blocked` 带 `joint`；用户 venv 目标必须就是此刻选中的；建代前查磁盘）/ `get_joint_plan` / `prepare` / `prepare_async` / `cancel_status`（提交点后 `committed`）；`_GenerationJob` + `_run_generation(_locked)`——**四条路共用**（联合准备 / 单包修复到受管环境 / `rebuild_managed` / 包管理首装）：建 → 一次 pip → `pip check` → `probe_imports` → `worker_self_test` → `activate` → 快照 → 记账 → remember → 作废会话 → `retire_unused`；`generation_requirements`（adapter + 账 + delta）；`write_plan_files`（从解析结构生成、每行过形状关）；`pip_install_joint_argv` / `pip_check_argv`（唯一出处）；`probe_imports`；`_run_joint_in_place`（用户 venv 原地）；新码 `dependency_consistency_failed` / `dependency_hash_mismatch` / `dependency_plan_blocked`；`classify_pip_failure` 多 hash 一档；`_fingerprint_managed` 含 active 代号；`_emit` 认 `joint` 与 `committed`；`list_managed_packages.busy` 同时看合成 key；`_create_managed` 删除（被代事务取代） |
+| `engine/pool.py` | `mutating_environment(key, python, *, shutdown=True)`：换代传 `shutdown=False`（不收旧代 worker）；`remembered_source` 用 `managedenv.is_managed_python`（任一代都算受管） |
+| `tests/support/dependency_repair.py` | `build_wheel` 多 `requires` / `provides_extras` / `body`；`offline_managed_env` 同时替换 `create_generation_venv`（建 + 挂宿主 site-packages，建不了目录回 `(False, 原因)`）并把 `depplan.ADAPTER_REQUIREMENTS` 换成空表（离线 CI 里 matplotlib 来自宿主；生产值有单元用例钉着） |
+| 既有用例 | `test_dependency_repair::test_rebuild_and_install_are_mutually_exclusive` 探针改放 `base_python`（重建不再有 `_create_managed`），并多断言合成 key 也放掉；`test_package_management::test_a_missing_package_is_reported_with_its_own_code` 改成新语义：首装失败 = 第一代 `incomplete`、没有 active（不假装有环境）、下一次装得上的照常成代 |
+| `tests/test_dependency_transaction.py`（新） | 30 条（见 evidence/u04/mutations_pr_b.md 的用例名） |
+| 文档 | ADR 0061 §五 按落地形状修订（manifest `active` 字段是唯一指针，不设 `active.json`）；`dependency-repair-and-packages.md` 事务一节；本文件；`evidence/u04/mutations_pr_b.md` |
+
+**关联旧要求 ID / 场景 ID**：FO-036（最终目录建、原子切 active、不移动已建环境）、FO-037（安装失败旧环境仍可用、未完成不激活）、
+FO-039（复用 envlease、不杀 native）、FO-032 / FO-033（联合求解一次 pip、约束进同一次求解）；FO18 / FO20 / FO21 / FO22 / FO27 /
+FO28 / FO29 / FO31 的**机制面**各有一条真事务用例（经真实公共入口的场景资格在 PR C 取）。FO-040（真实二进制 wheel）与 FO13
+未做（纯 Python wheel 装成功不算 ABI 资格，台账仍 planned）。
+
+| 命令 | 目标平台 / 环境 / 产物 | 退出码 | 结果与必要证据 |
+|---|---|---|---|
+| `ruff check .` / `ruff format --check .` | macOS arm64，worktree | 0 / 0 | 全绿 |
+| `PYTHONPATH=$WT/src pytest tests/test_dependency_transaction.py` | 同上；真 venv（`python -m venv`）、真 pip（离线 wheelhouse：七个手工 wheel，含 extra 拉进第四个包）、真 worker 自检（本机 worker 解释器 3.11.14 / mpl 3.11.1） | 0 | 30 passed（约 6 分钟） |
+| `pytest tests/test_dependency_repair.py tests/test_dependency_repair_e2e.py tests/test_package_management.py tests/test_package_lookup.py tests/test_project_env.py tests/test_first_open_environment.py tests/test_preparation_api.py tests/test_import_architecture.py tests/test_error_codes.py tests/test_dependency_plan.py` | 同上 | 0 | 通过（旧单包路径的 e2e 十条全绿——受管目标已在走代事务） |
+| 变异反证 17 条（`evidence/u04/mutations_pr_b.md`） | 同上 | 每条非零；还原后 0 | B17 第一次绿是脚本 `-k` 指错用例，用例本身早就钉着 |
+| `PYTHONPATH=$WT/src pytest`（全量） | 同上 | 见 PR 正文 | 见 PR 正文 |
+| Windows（`envs/` 目录退役时文件占用）、Linux、内置 runtime、e2e | — | — | **not_run**（本机只有 macOS；退役删不掉的目录留到下次是为 Windows 占用写的，没有本机证据） |
+
+**本切片的正例、负例、旧行为回归**：正例 = 三包一次成代（extra 拉进的第四个也在、账三笔、prefix 在代目录、脚本会话作废、
+项目从此用它）；二开 `nothing_needed`；重建成新一代（旧代退役）；单包修复走同一事务；用户 venv 原地只装缺的。负例 =
+声明冲突停在建代之前、求解器冲突 / 无 wheel / 坏 hash / 取消 / 自检不过 / `pip check` 不过 / 关键 import 失败 / 只读目录 /
+磁盘不足各**不切 active**；native 租约拒绝开始且租约原样；旧代在用不删；提交点后拒取消；过期计划拒执行；blocked 计划
+拒绑定；用户 venv 目标不是此刻选中的拒绝。旧行为回归 = 单包路径的 `pip_install_argv` 逐字不变；包管理原地路径不变；
+`test_dependency_repair` 的十五条负向反证全绿；envlease 两个方向的拒绝不变。
+
+**未运行 / 基础设施问题 / 真正产品失败**：未运行见上表；基础设施 = 本机 `worker_python` 指向 3.11 的 venv（#452），所以真事务
+用例的 worker 是 3.11——与应用 `.venv`（3.13）不同 minor，反而顺带证明了「建代的 base 不必是应用自己的解释器」；真正产品
+失败无新增。顺带发现：① `_prepare_guarded` 把夹具里没接住的 `PermissionError` 收成 `dependency_install_failed`——真实
+`create_generation_venv` 自己接 `OSError` 回 `(False, 原因)`，夹具第一版没照做（已改）；② `monkeypatch.undo()` 会连同夹具的
+环境变量一起撤掉，用例内改判据要用 `MonkeyPatch.context()`。
+
+**当前可合并依据**：中高风险档（改产品行为：受管环境布局与安装事务）→ `full-ci` + `@codex review`；ruff 两条 0；针对性
+pytest 0；变异 17/17；旧 e2e 全绿。**回退**：revert PR B 即回到原地改写的单份 `venv/`；已经按代建出来的环境 manifest
+里多出 `generations` / `active`，旧代码 `read_manifest` 读得懂（schema 未变）但 `venv_python()` 会指回 `venv/`——若那时
+`venv/` 不存在，`python_of` 回 None，用户看到「环境不存在」，重装即可；没有别的外部副作用。
+
+**下一个无阻塞阶段 / 子切片**：PR C（门 / 端点 / 前端 / MCP / 场景）。PR B 给它的输入：`deprepair.joint_plan_for`（只读算计划）、`create_joint_plan` / `prepare_async` / `progress` / `cancel_status`、`JointRepairPlan.to_payload()`（不含路径）。PR A 给 PR B 的输入曾是：`JointPlan.requirements / constraints / hashes / require_hashes /
 adapter / identity`；`depplan.reset_cache(python)` 在事务结束时调；`ADAPTER_REQUIREMENTS` 是受管环境每一代的基座。
 U05 的输入：ADR §四（安装器接入规则）。U06 并行：本 PR 只碰 `pyproject.toml` 的 `dependencies` 三行（U06 加可选 extra，
 相邻不重叠）。

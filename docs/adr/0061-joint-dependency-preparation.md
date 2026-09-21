@@ -150,28 +150,46 @@ U05 接私有 Python 时怎么不出现两套安装器：事务（§五）的接
 
 ```
 <data_dir>/environments/<项目指纹>/
-    environment.json           schema 2：generations[]（每代：id / dir / state / requirements / created_at / python_version）
-    active.json                指针 {"generation": <id>}——tmp + os.replace，从不半写
-    envs/<身份前 12 位>/        每代一个 venv；目录名 = 计划身份（§三）——同一份意图同一个目录
+    environment.json           manifest（schema 仍是 1：加可选字段不升）：generations{代号: state / requirements /
+                               constraints / identity / created_at / python_version / provisioner} + active（代号）
+    envs/g<身份前 12 位>/       每代一个 venv；目录名 = 计划身份（§三）——同一份意图同一个目录
+    plans/<代号>/              这一代交给 pip 的 requirements.txt / constraints.txt（我们生成的，可审计）
+    venv/                      旧布局那一份，作为隐式的 `legacy` 一代继续认（第一次按代时登记进 generations）
     snapshots/
 ```
 
-事务（`deprepair.prepare_joint()`，**与单包修复共用**，单包只是 requirement_set 只有一条的特例）：
+「哪一代是 active」只有 manifest 的 `active` 字段**一处**（manifest 本身 tmp + `os.replace` 原子写，从不半写）；
+ADR 0056 的 spike 用了独立的 `active.json`，这里刻意不设第二个指针文件——同一件事记两处迟早不一致。
 
-1. 拿锁：`pool.mutating_environment(key, python)` → `envlease.mutating`，**只有这一张表**（ADR 0021 §6）；受管环境的 key 是
-   `tavotto_managed:<项目指纹>`（序列化同一项目的两次准备），项目 venv 的 key 是解释器路径（既有）。两个项目各自独立
-   （FO29）。有活跃 native 会话的环境拒绝开始（`environment_in_use_by_native_session`），**不杀 native**；受管环境换代
-   **不收掉旧代上的 worker**——旧代目录不动，它们跑完自然作废。
-2. **在最终目录建**：`envs/<id>/` 直接 `python -m venv`，manifest 记这一代 `state=incomplete`。不在 tmp 里建完再 rename
-   （venv 不可移动，[W3]）；已经存在同名目录（同一份意图上次建到一半）先删掉重来——它从没 active 过。
-3. 装：`pip install -r <生成的需求文件> -c <生成的约束文件> [--require-hashes]`，需求 = 这一代的完整集合（adapter +
-   账上记过的 + 这次的 delta），约束 = 计划的约束。项目 venv 目标只装 delta、只用项目自己的约束（§三）。
-4. 验：`pip check`（依赖一致性）→ 关键 import（这次 needed 的每个 import 名 + matplotlib，一个子进程）→
-   `worker_self_test`（真起一次 worker 跑通 build）。**任一步不过就是 `incomplete`，不切 active**（FO22 / FO-037）。
-5. 切：`active.json` 原子指向新代 → `projectenv.remember(trigger=dependency_repair)` → `pool.invalidate` 该脚本会话 →
-   `depplan.reset_cache(python)`。这是**提交点**。
-6. 收：旧代目录保留到没有 worker / native 租约再用它（`managedenv.gc()`：`pool.safe_workers_using` 与
-   `envlease.native_sessions_on` 都为零才删；每个项目至少留 active 一代）。
+事务（`deprepair.prepare()`，**与单包修复共用**，单包只是 delta 只有一条的特例）：
+
+1. 拿锁：`pool.mutating_environment(key, python, shutdown=False)` → `envlease.mutating`，**只有这一张表**（ADR 0021 §6）；
+   受管环境的 key 是 `tavotto_managed:<项目指纹>` + active 那一代的解释器路径（序列化同一项目的两次换代，也挡住包管理的
+   原地作业并发改 active 那一代），项目 venv 的 key 是解释器路径（既有，`shutdown=True`）。两个项目各自独立（FO29）。
+   有活跃 native 会话的环境拒绝开始（`environment_in_use_by_native_session`），**不杀 native**；受管环境换代
+   **不收掉旧代上的 worker**（`shutdown=False`）——旧代目录不动，它们跑完自然作废；换代期间新会话按既有语义
+   `environment_mutating` 拒起。
+2. **在最终目录建**：`envs/g<身份>/` 直接 `python -m venv`（`create_generation_venv`），manifest 先记这一代
+   `state=incomplete`（`register_generation`）。不在 tmp 里建完再 rename（venv 不可移动，[W3]）；已经存在同名目录
+   （同一份意图上次建到一半）先删掉重来——它从没 active 过。
+3. 装：`pip install -r <生成的需求文件> -c <生成的约束文件> [--require-hashes]`（`pip_install_joint_argv`，唯一出处），
+   需求 = 这一代的完整集合（`generation_requirements`：adapter + 账上记过的 `dist==当时版本` + 这次的 delta，delta 里的
+   同名让账上那条让位），约束 = 计划的约束。两份文件由 `write_plan_files` 从解析结构生成（每行过 `parse_intent` 的
+   形状关、`requirement_string` 重新序列化；`--hash` 只能在需求文件里——pip 的规定）。项目 venv 目标只装 delta、只用
+   项目自己的约束（§三）。
+4. 验：`pip check`（依赖一致性 → `dependency_consistency_failed`）→ 关键 import（这次 needed 的每个 import 名 +
+   matplotlib，一个子进程 `probe_imports` → `dependency_import_still_failed`）→ `worker_self_test`（真起一次 worker 跑通
+   build → `dependency_worker_selftest_failed`）。**任一步不过就是 `incomplete`，不切 active**（FO22 / FO-037）。
+   pip 的失败按既有 `classify_pip_failure` 分档，多一档 `dependency_hash_mismatch`（`--require-hashes` 不符）。
+5. 切：manifest 的 `active` 原子指向新代（`managedenv.activate`）→ 装完的 freeze 快照 → 记账 →
+   `projectenv.remember(trigger=dependency_repair)` → `pool.invalidate` 该脚本会话 → `depplan.reset_cache(python)`。
+   这是**提交点**。
+6. 收：旧代目录保留到没有 worker / native 租约再用它（`managedenv.retire_unused(in_use=…)`：`pool.safe_workers_using`
+   与 `envlease.native_sessions_on` 都为零才删；active 永远不删；事务开始与提交后各试一次，删不掉的留到下次）。
+
+四条路共用同一个 `_run_generation()`：联合准备（`prepare()`）、单包修复到受管环境（`install()`，delta 只有一条）、
+重建（`rebuild_managed()`，delta 为空 = 按账重建一代）、包管理里「环境还不在」的首装（`_run_package_job`）。没有第二套
+建环境 / 装包 / 验证的代码；包管理对**已有** active 那一代的原地 install / update / uninstall（ADR 0038）不变。
 
 **用户的 venv 没有代**（我们不能克隆它）：仍是 ADR 0019 §八的原地安装——明确确认、只进不退、取消后如实说「可能已部分修改」。
 这条不对称写在计划里（`modifies_user_environment`），界面上说出来。
@@ -211,7 +229,7 @@ U05 接私有 Python 时怎么不出现两套安装器：事务（§五）的接
 | PR | 内容 | 本 ADR 的节 |
 |---|---|---|
 | A `foundation/u04-dependencies` | `packaging` 依赖；`depresolve` 无损读法与 unsupported 闭集；`importscan`；`depplan`（计划模型，不装） | §一 / §二 / §三 / §四（裁决） |
-| B `…-b` | `managedenv` 代布局 + `active.json`；`deprepair.prepare_joint()` 事务、`pip_install_joint_argv`、三层验证、取消、租约、gc；单包修复与重建走同一事务 | §五 / §六（绑定与取消） |
+| B `…-b` | `managedenv` 代布局 + manifest `active`；`deprepair.create_joint_plan / prepare()` 事务、`pip_install_joint_argv` / `write_plan_files`、三层验证、取消（提交点后拒）、租约、退役；单包修复 / 重建 / 包管理首装走同一事务 | §五 / §六（绑定与取消） |
 | C `…-c` | `pool._new_worker` 的门与 `preparation.plan_for` 的 `dependency_preparation` / `needs_input`；HTTP / MCP 端点与前端一次授权对话框；FO18 / 20 / 21 / 22 / 27 / 28 / 29 / 31 场景与台账 | §六（门与重计划） |
 
 ### 九、后果与修订

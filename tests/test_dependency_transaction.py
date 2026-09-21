@@ -104,12 +104,15 @@ def _in(python: str, code: str) -> str:
 
 
 def _importable(python: str, name: str) -> bool:
-    return (
-        subprocess.run(
-            [python, "-c", f"import {name}"], capture_output=True, text=True, timeout=120
-        ).returncode
-        == 0
+    proc = subprocess.run(
+        [python, "-c", f"import {name}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
     )
+    return proc.returncode == 0
 
 
 # ===========================================================================
