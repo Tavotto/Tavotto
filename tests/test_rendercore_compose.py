@@ -783,6 +783,101 @@ def test_a_raster_whose_bytes_are_not_the_declared_kind_is_refused(provider, tmp
     assert not (tmp_path / "out.pdf").exists()
 
 
+def test_a_huge_raster_is_refused_before_it_is_decoded(provider, tmp_path, monkeypatch):
+    """Codex #463 P2：压缩得很小的高分辨率位图（IHDR 说 9000×9000 = 81M 像素，IDAT 几乎为空）在解码**之前**按
+    头里的尺寸拒（`raster_too_large`，预算 64M），不分配整幅；JPEG 直通路同样按 SOF 尺寸拒。9000² 刻意落在
+    Pillow 自己的炸弹闸（89M 警告 / 178M 报错）之下：响的必须是**我们的**预算。变异「不传预算」时 Pillow 会
+    真去解——本用例把 Pillow 的 `load` 换成必爆的探针，证明拒绝发生在解码之前。"""
+    import struct
+    import zlib
+
+    from PIL import ImageFile
+
+    def chunk(tag: bytes, body: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(body))
+            + tag
+            + body
+            + struct.pack(">I", zlib.crc32(tag + body) & 0xFFFFFFFF)
+        )
+
+    huge_png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 9000, 9000, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00" * 8))
+        + chunk(b"IEND", b"")
+    )
+
+    def boom(self, *a, **k):  # 解码一旦开始就炸：证明预算判在它之前
+        raise AssertionError("解码不该开始")
+
+    monkeypatch.setattr(ImageFile.ImageFile, "load", boom)
+    with pytest.raises(pdfwriter.WriterError) as ei:
+        _write(
+            tmp_path,
+            provider,
+            [ir.Image("im", (0, 0, 10, 10))],
+            {"im": _res("huge.png", "png", huge_png)},
+            {"im": huge_png},
+        )
+    assert ei.value.code == "source_unreadable" and ei.value.params["why"] == "raster_too_large"
+    # JPEG：SOF 说 9000×9000（直通要真解一遍——但预算判在解码之前，`load` 探针同样不该被碰）
+    huge_jpg = b"\xff\xd8\xff\xc0" + struct.pack(">HBHHB", 8, 8, 9000, 9000, 3) + b"\xff\xd9"
+    with pytest.raises(pdfwriter.WriterError) as ei:
+        _write(
+            tmp_path,
+            provider,
+            [ir.Image("im", (0, 0, 10, 10))],
+            {"im": _res("huge.jpg", "jpg", huge_jpg)},
+            {"im": huge_jpg},
+        )
+    assert ei.value.params["why"] == "raster_too_large"
+
+
+def test_a_jpeg_that_readers_cannot_decode_is_not_passed_through(provider, tmp_path):
+    """Codex #463 P2：只有 SOI + 一个像样的 SOF 的 12 字节假 JPEG：不直通、`decode()` 解不开 → `raster_unreadable`；
+    把一张好 JPEG 的熵编码段截掉一半也一样。"""
+    import struct
+
+    fake = b"\xff\xd8\xff\xc0" + struct.pack(">HBHHB", 8, 8, 1, 1, 3)
+    with pytest.raises(pdfwriter.WriterError) as ei:
+        _write(
+            tmp_path,
+            provider,
+            [ir.Image("im", (0, 0, 10, 10))],
+            {"im": _res("fake.jpg", "jpg", fake)},
+            {"im": fake},
+        )
+    assert ei.value.code == "source_unreadable" and ei.value.params["why"] == "raster_unreadable"
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), (10, 200, 30)).save(buf, "JPEG", quality=95)
+    good = buf.getvalue()
+    from tavotto.rendercore import rasterio
+
+    assert rasterio.jpeg_passthrough(good, "jpg") is not None
+    truncated = good[: len(good) // 2]
+    assert rasterio.jpeg_passthrough(truncated, "jpg") is None
+    assert not (tmp_path / "out.pdf").exists()
+
+
+def test_a_source_page_with_a_degenerate_box_is_a_source_error_not_a_crash(provider, tmp_path):
+    """Codex #463 P2：语法上读得出、MediaBox 却零宽的源页 → `source_unreadable(why=degenerate_box)`，
+    不是 placement 里的 ZeroDivisionError（`job` 要能把它变成该格式的 format_failed）。"""
+    data = _pdf(b"0 0 1 rg 0 0 10 10 re f", media=(0, 0, 0, 100))
+    with pytest.raises(pdfwriter.WriterError) as ei:
+        _write(
+            tmp_path,
+            provider,
+            [ir.ImportedPage("pg", (0, 0, 100, 100))],
+            {"pg": _res("flat.pdf", "pdf", data)},
+            {"pg": data},
+        )
+    assert ei.value.code == "source_unreadable" and ei.value.params["why"] == "degenerate_box"
+    assert not (tmp_path / "out.pdf").exists()
+
+
 # ================================================================ 实例隔离（RC-015 / RC-016）
 
 

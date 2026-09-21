@@ -18,7 +18,7 @@ registry RC-038 ~ RC-046）。
 | 面板整体 opacity | **透明组**（`/Group /S /Transparency`）包住 `cm + clip + Do`，组内 alpha 从 1 起算：源页内部重叠不被二次压暗（RC-041）；**仍是矢量、文字层在**（RC-040：旧后端这一档退位图，新写入器不退）。位图的 opacity 是 ExtGState 常量 alpha（一次填充，没有组内重叠） | `test_panel_opacity_is_a_transparency_group_not_per_object_alpha`：重叠区 (255,128,128)，逐对象会给 (191,64,128)；`test_the_u00_fixture_with_internal_alpha…`：(191,128,191) vs (160,96,191) |
 | opacity = 0 | 是取值不是缺席（RC-042 must_fail `or 1.0`）：像素全白、对象仍在（form + 文字层） | `test_opacity_zero_paints_nothing_but_the_vector_object_is_still_there`；`plan` 层 `test_panel_opacity_zero_is_a_value_not_an_absence` |
 | 镜像 | `cm` 里的负缩放，不退位图（RC-040 must_fail：flip 触发整页 Image XObject） | `test_a_mirrored_import_keeps_its_vector_and_text_layer`：墨从左半移到右半 + 对象普查无 image + 文字抽得到 |
-| 位图源 | `rasterio.decode()`（Pillow）→ `RasterBuffer` → 8 bit DeviceRGB Image XObject（Flate），alpha 单独成 /SMask（straight）；8 bit RGB / 灰度 JPEG **原字节直通** `/DCTDecode`（与旧 `insert_image` 同一取舍，不重编码）；CMYK / 12 bit / 无损 JPEG 走解码路。像素网格不变，缩放只在 `cm` 里 | `test_png_with_alpha_is_placed_with_an_smask…`、`test_an_rgb_jpeg_passes_through_as_dct_and_a_cmyk_one_is_decoded`、`test_image_crop_flip_and_rotation_use_the_same_contract_as_pages` |
+| 位图源 | `rasterio.decode()`（Pillow）→ `RasterBuffer` → 8 bit DeviceRGB Image XObject（Flate），alpha 单独成 /SMask（straight）；8 bit RGB / 灰度 JPEG **原字节直通** `/DCTDecode`（与旧 `insert_image` 同一取舍，不重编码；直通前整张真解一遍，读取器解不开的不直通）；CMYK / 12 bit / 无损 JPEG 走解码路。像素预算 `raster.SOURCE_MAX_PIXELS`（64M）在解码**之前**按头里的尺寸判，超过 `source_unreadable(why=raster_too_large)`。像素网格不变，缩放只在 `cm` 里 | `test_png_with_alpha_is_placed_with_an_smask…`、`test_an_rgb_jpeg_passes_through_as_dct_and_a_cmyk_one_is_decoded`、`test_image_crop_flip_and_rotation_use_the_same_contract_as_pages` |
 | 不可信源（RC-046） | 只有内容流与资源会被 `as_form_xobject` 收进 form：注释 / 页面动作 / /OpenAction / Names JavaScript **不进**产物；加密源 `source_unreadable(why=encrypted)` 拒绝、坏文件 `why=broken`、页号越界 `why=page_index`——都不画一张空框 | `test_actions_annotations_and_javascript_of_the_source_are_not_imported`、`test_an_encrypted_source_is_refused_structurally`、`test_a_broken_source_and_a_missing_page_are_refused_structurally` |
 | 字节身份 | 作业里 `sources.read_frozen()` 核过 hash 的那一份字节经 `files` 交给写入器，写入器**再核一次** sha256（`source_identity`）——两道是有意冗余（RC-014）；没交字节 `source_bytes_missing` | `test_source_bytes_must_match_the_resource_identity`、`test_rendercore_job.py::test_a_panel_canvas_exports_a_vector_pdf…` |
 | 实例隔离 | 每个 `PdfWriter` 自己一份 `pikepdf.Pdf`、自己的外来文档表、自己的 XObject 缓存；8 线程并发写各自文档互不串 | `test_concurrent_writers_do_not_share_any_state` |
@@ -80,7 +80,7 @@ pypdf 路线的实测代价（不采用，但写明）：pypdf 6.7.5 没有「�
 | `_obj_morph` 顺时针取负 | `rotate_ccw(-deg)` 同一约定 |
 | 探测 `probe_asset` 忽略 /UserUnit | render child 的 probe（ADR 0066）按 UserUnit 乘——**有意差异**，记进 U08 对拍表 |
 
-## 5. 反证（每条变异一次就红，`scratchpad/u07/mutate_a.py`，16 条）
+## 5. 反证（每条变异一次就红，`scratchpad/u07/mutate_a.py` 16 条 + 评审处置 4 条）
 
 | 变异 | 红在 |
 |---|---|
@@ -97,6 +97,9 @@ pypdf 路线的实测代价（不采用，但写明）：pypdf 6.7.5 没有「�
 | 能力表把 imported_page 改回 unsupported | 写入器交叉核对 + ir 用例 |
 | `split_alpha` 把颜色当 alpha | raster 用例 + PNG alpha 用例 |
 | `job` 不把冻结字节交给写入器 | job 用例 |
+| 位图解码不传像素预算 / JPEG 直通不核 SOF 尺寸（Codex #463 P2） | `test_a_huge_raster_is_refused_before_it_is_decoded`（9000² 落在 Pillow 自己的炸弹闸之下，响的是我们的预算；`load` 探针证明拒绝在解码之前） |
+| JPEG 直通不整张真解（Codex #463 P2） | `test_a_jpeg_that_readers_cannot_decode_is_not_passed_through`（12 字节假头、截半的真 JPEG） |
+| 退化页盒不拦（Codex #463 P2） | `test_a_source_page_with_a_degenerate_box_is_a_source_error_not_a_crash`（MediaBox 零宽 → `source_unreadable(why=degenerate_box)`，不是 ZeroDivisionError） |
 
 ## 6. 没做 / 边界
 
