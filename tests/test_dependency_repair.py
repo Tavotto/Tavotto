@@ -1496,9 +1496,12 @@ def test_a_joint_plan_is_claimed_before_the_worker_starts(client, project, monke
     while "jp-claim" in deprepair._running and time.time() < deadline:
         time.sleep(0.02)
     assert "jp-claim" not in deprepair._running
-    # 同步入口也认领：已在途的第二次调用拿 not_allowed
-    assert deprepair._claim("jp-sync") is True
-    with pytest.raises(deprepair.RepairError) as err:
-        deprepair.prepare("jp-sync")
-    assert err.value.code == deprepair.ERROR_NOT_ALLOWED
-    deprepair._running.discard("jp-sync")
+    # 同步入口也认领：计划还在、但已被别人认领 → not_allowed（不是「没有这个计划」）
+    assert deprepair._claim("jp-claim") is True
+    try:
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.prepare("jp-claim")
+        assert err.value.code == deprepair.ERROR_NOT_ALLOWED
+        assert "已经在执行" in str(err.value)
+    finally:
+        deprepair._running.discard("jp-claim")
