@@ -312,12 +312,13 @@ class TestDependencyIntent:
             "requests",
         )
         table = by_raw["numpy = {'version': '~1.26', 'extras': ['all']}"]
-        assert (table.kind, table.reason) == (depresolve.INTENT_KIND_UNSUPPORTED, "poetry_constraint")
+        assert (table.kind, table.reason) == (
+            depresolve.INTENT_KIND_UNSUPPORTED,
+            "poetry_constraint",
+        )
         plain = by_raw["six = '1.17.0'"]
         assert (plain.name, plain.specifier, plain.kind) == ("six", "==1.17.0", "requirement")
-        assert all(
-            it.group == "pyproject.toml:tool.poetry.dependencies" for it in by_raw.values()
-        )
+        assert all(it.group == "pyproject.toml:tool.poetry.dependencies" for it in by_raw.values())
 
     def test_intent_payload_round_trips_every_field(self):
         it = depresolve.parse_intent("a[b]>=1; os_name == 'nt'", group="g", source="s")
