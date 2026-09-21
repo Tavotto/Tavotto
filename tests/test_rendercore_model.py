@@ -143,6 +143,24 @@ print(len(compiled.page.children), sorted(m for m in sys.modules if m.split(".")
 """
 
 
+def _blocker_env() -> dict[str, str]:
+    """子解释器的环境：只带 PYTHONPATH / 一条最小 PATH，**stdout / stderr 钉成 UTF-8**。
+
+    不钉的话 Windows 上子进程的 stderr 是 cp1252：traceback 里的中文异常文本会被
+    backslashreplace 写成 `\\u7eaf\\u6a21…`，父进程按 UTF-8 解出来的是六个 ASCII 字符，
+    `"纯模型不该 import pymupdf" in proc.stderr` 于是只在 Windows 那条腿红
+    （PR #458 backend-platforms windows 片 2 / u06-rendercore.yml windows）。
+    本机反证：把这里改成 PYTHONIOENCODING=cp1252，macOS 上同一条用例同一句红。
+    """
+    return {
+        "PYTHONPATH": str(ROOT / "src"),
+        "PATH": "/usr/bin:/bin",
+        "TAVOTTO_NO_TELEMETRY": "1",
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
+    }
+
+
 def test_the_pure_model_imports_and_compiles_with_every_heavy_package_blocked(tmp_path: Path):
     """在 matplotlib / numpy / pymupdf / flask / 候选包全部「不存在」的解释器里：纯模型 import
     得起来、编译得出一页（文字 + 形状 + 箭头）。`sys.modules` 里也不许出现它们。"""
@@ -152,7 +170,7 @@ def test_the_pure_model_imports_and_compiles_with_every_heavy_package_blocked(tm
         capture_output=True,
         text=True,
         encoding="utf-8",
-        env={"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin", "TAVOTTO_NO_TELEMETRY": "1"},
+        env=_blocker_env(),
         timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
@@ -169,7 +187,7 @@ def test_the_blocker_itself_works():
         capture_output=True,
         text=True,
         encoding="utf-8",
-        env={"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin", "TAVOTTO_NO_TELEMETRY": "1"},
+        env=_blocker_env(),
         timeout=60,
     )
     assert proc.returncode != 0
