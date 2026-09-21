@@ -263,7 +263,8 @@ def _shorten_path_text(raw: str) -> str:
     lowered = [seg.lower() for seg in parts]
     name = parts[-1]
     stem, dot, ext = name.rpartition(".")
-    suffix = f".{ext}" if dot and stem and len(ext) <= 8 else ""
+    # 扩展名也是用户起的字符串（`data.patient`，评审 #443 第十二轮）：只带闭集里的那些
+    suffix = f".{ext.lower()}" if dot and stem and ext.lower() in _KNOWN_EXTENSIONS else ""
     hashed = "file:" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:10] + suffix
     # `site-packages/<已知包>/…`：只留包名这一位来自闭集的信息，文件名照样哈希——
     # 包名之后的每一段都可能是用户起的（评审 #443 第八轮），一律不带。
@@ -280,6 +281,17 @@ def _shorten_path_text(raw: str) -> str:
     return "…/" + hashed
 
 
+#: 哈希后的文件名还带着的扩展名——闭集：Python 源码 / 扩展模块 / 常见的图与数据格式。
+#: 不在表里的（`.patient`）一个字不带，不看长度。
+_KNOWN_EXTENSIONS = frozenset(
+    {
+        "py", "pyc", "pyi", "pyx", "pyw", "so", "pyd", "dll", "dylib",
+        "png", "pdf", "svg", "eps", "ps", "tif", "tiff", "jpg", "jpeg", "gif", "bmp", "webp",
+        "csv", "tsv", "txt", "json", "yaml", "yml", "toml", "ini", "cfg", "log", "md", "dat",
+        "npy", "npz", "pkl", "pickle", "h5", "hdf5", "parquet", "feather", "xlsx", "xls", "mat",
+        "zip", "gz", "tar", "bz2", "xz", "fasta", "fa", "fastq", "gff", "gtf", "bed", "vcf", "bam",
+    }
+)  # fmt: skip
 #: `site-packages/<这些>/…` 保留包名：我们发行 / 认识的第三方科学栈与命令行库。
 #: 闭集，不在表里的包名连同文件名一起哈希——不认识的名字可能是用户自己 pip 安装的私有包。
 _KNOWN_SITE_PACKAGES = frozenset(
@@ -331,6 +343,32 @@ _LOADER_MESSAGES = (
     re.compile(r"^cannot import name '(?P<a>[A-Za-z_]\w*)' from '(?P<b>[A-Za-z_][\w.]*)'"),
     re.compile(r"^DLL load failed while importing (?P<a>[A-Za-z_]\w*)\b"),
 )
+#: 加载器文案里**允许原样出门**的模块名：标准库（CPython 自己的闭集）与已知第三方包的
+#: **顶层名**；点分名的余下部分与不认识的名字一律 `mod:<sha1 前 10 位>`（`numpy.mod:…` /
+#: `mod:…`）——`raise ModuleNotFoundError("No module named 'patient_123'")` 再 `print_exc()`
+#: 形状与加载器一模一样，名字却是用户的（评审 #443 第十二轮）；真缺的私有包名同样可能是
+#: 项目术语。与路径、异常类型名同一条规则：出门的每一段要么是闭集成员要么是哈希。
+_STDLIB_MODULES = frozenset(getattr(sys, "stdlib_module_names", ()))
+
+
+def _module_name_for_export(name: str) -> str:
+    top, dot, rest = name.partition(".")
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:10]
+    if top in _STDLIB_MODULES or top in _KNOWN_SITE_PACKAGES:
+        return f"{top}.mod:{digest}" if dot else top
+    return "mod:" + digest
+
+
+def _loader_message_for_export(m: re.Match) -> str:
+    """命中的加载器文案 → 形状原样、里面的名字按闭集放行或哈希。"""
+    text = m.group(0)
+    # 从后往前换，前面的位置不漂
+    for key, value in sorted(m.groupdict().items(), key=lambda kv: -m.start(kv[0])):
+        if value is None:
+            continue
+        start, end = m.span(key)
+        text = text[:start] + _module_name_for_export(value) + text[end:]
+    return text
 
 
 def _frame_for_export(line: str) -> str:
@@ -409,7 +447,7 @@ def _closer_for_export(line: str) -> str:
         for pattern in _LOADER_MESSAGES:
             m = pattern.match(message.strip())
             if m:
-                return f"{exc_type}: {m.group(0)}"
+                return f"{exc_type}: {_loader_message_for_export(m)}"
     return f"{exc_type}: …"
 
 

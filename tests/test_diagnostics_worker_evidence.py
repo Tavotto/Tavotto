@@ -65,7 +65,7 @@ def test_each_traceback_is_paired_with_its_exception_line():
     assert got == [
         "2026-09-20 10:47:02,622 ERROR tavotto: 引擎渲染失败: Figure 1: 渲染进程退出了",
         "Traceback (most recent call last): → OSError: …",
-        "Traceback (most recent call last): → ImportError: DLL load failed while importing _imaging",
+        "Traceback (most recent call last): → ImportError: DLL load failed while importing mod:c2efbf3758",
         "Traceback (most recent call last): → exc:a7bb77bcf2: …",  # 用户定义的异常类名也不出门
     ]
 
@@ -439,13 +439,16 @@ def test_user_print_exc_blocks_lose_their_free_text_message():
     closers = [ln for ln in kept if not ln.startswith(("Traceback", "  File"))]
     assert closers == [
         "KeyError: …",
-        "ModuleNotFoundError: No module named 'Bio'",
-        # 加载器形状只保留到模块名，后面的操作系统文案不带
-        "ImportError: DLL load failed while importing _imaging",
+        # 加载器形状保留，里面的名字按闭集放行（标准库 / 已知包的顶层名）或哈希：
+        # `Bio` 不在闭集里（第十二轮：`raise ModuleNotFoundError("No module named 'patient_123'")`
+        # 与真缺包的形状一模一样），读的人拿候选名哈希就能对上
+        "ModuleNotFoundError: No module named 'mod:b31fc969b4'",
+        # 只保留到模块名，后面的操作系统文案不带；扩展模块名同样哈希
+        "ImportError: DLL load failed while importing mod:c2efbf3758",
         # 点分名只留来自闭集的包名，其余哈希（库的异常类可枚举，读的人对得上）
         "matplotlib.exc:c9a2cd5a8f: …",
         "ImportError: …",  # 形状对不上加载器的：只留类型（评审 #443 第六轮）
-        "ImportError: cannot import name 'foo' from 'pkg.mod'",
+        "ImportError: cannot import name 'mod:0beec7b5ea' from 'mod:a71f3f77bd'",
         # 类型名不是 builtins 的异常类：哈希
         "exc:a7bb77bcf2: …",
         "exc:3b0b364cbf: …",
@@ -456,6 +459,58 @@ def test_user_print_exc_blocks_lose_their_free_text_message():
     ], closers
     assert "Patient" not in "\n".join(kept) and "mystudy" not in "\n".join(kept)
     assert "ConversionError" not in "\n".join(kept)
+    assert "Bio" not in "\n".join(kept) and "_imaging" not in "\n".join(kept)
+
+
+@pytest.mark.parametrize(
+    "message, expect",
+    [
+        ("No module named 'numpy'", "No module named 'numpy'"),  # 已知包的顶层名
+        ("No module named 'os'", "No module named 'os'"),  # 标准库
+        ("No module named 'patient_123'", "No module named 'mod:0be612298b'"),
+        # 顶层名在闭集里，后面的段仍是用户能起的：`os.patient`
+        ("No module named 'os.patient'", "No module named 'os.mod:e87388d0a7'"),
+        (
+            "No module named 'json.patient'; 'json' is not a package",
+            "No module named 'json.mod:a50cee6e34'; 'json' is not a package",
+        ),
+        (
+            "cannot import name 'axes' from 'matplotlib' (x)",
+            "cannot import name 'mod:495f723e9f' from 'matplotlib'",
+        ),
+        (
+            "DLL load failed while importing _imaging: 找不到指定的模块。",
+            "DLL load failed while importing mod:c2efbf3758",
+        ),
+    ],
+)
+def test_loader_messages_keep_their_shape_but_only_closed_set_names(message, expect):
+    """评审 #443 第十二轮 P1：加载器文案的形状是闭集，里面的名字不是——用户 `raise
+    ModuleNotFoundError("No module named 'patient_123'")` 再 `print_exc()` 一模一样。名字只在是
+    标准库 / 已知第三方包的**顶层名**时原样，点分名的余下部分与不认识的名字 `mod:<哈希>`。"""
+    kept, _ = diagnostics.evidence_lines(
+        [
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 1, in <module>',
+            f"ImportError: {message}",
+        ]
+    )
+    assert kept[-1] == f"ImportError: {expect}", kept
+
+
+@pytest.mark.parametrize(
+    "path, expect",
+    [
+        ("/mnt/private/file.patient", "…/file:3938b8c339"),  # 扩展名也是用户起的：不在闭集就不带
+        ("/mnt/x/a.PY", "…/file:41a21914c8.py"),  # 闭集里的按小写带出
+        ("/x/data.csv", "…/file:1aa5784d52.csv"),
+        ("/x/noext", "…/file:6bdce06546"),
+        ("/x/.hidden", "…/file:92f73832be"),  # 没有词干：不算扩展名
+    ],
+)
+def test_file_extensions_are_kept_only_from_a_closed_set(path, expect):
+    """评审 #443 第十二轮 P1：`len(ext) <= 8` 放行了 `.patient` 这种用户起的后缀。"""
+    assert diagnostics.shorten_paths(f'"{path}"') == f'"{expect}"'
 
 
 @pytest.mark.parametrize(
@@ -637,6 +692,8 @@ def test_worker_log_tails_read_only_the_tail_of_a_huge_log(tmp_path, monkeypatch
     这里把 `Path.read_bytes` 钉成炸弹，走到它就是整读。"""
     body = "noise\n" * 5000 + FH_BLOCK
     _session(tmp_path, "huge.py", body, age_s=1)
+    log = next(tmp_path.glob("*/worker.log"))
+    raw = log.read_bytes()  # 磁盘上的真字节（Windows 的 write_text 写的是 CRLF），装炸弹之前读
     monkeypatch.setattr(diagnostics, "WORKER_LOG_SCAN_BYTES", 4096)
 
     def boom(self):  # noqa: ARG001
@@ -648,8 +705,6 @@ def test_worker_log_tails_read_only_the_tail_of_a_huge_log(tmp_path, monkeypatch
     # 读进来的只有最后 4096 字节：略去的行数按这一截算，而不是 5000 行噪音
     assert got["omitted"] < 1000, got["omitted"]
     # 而且真的只读了那么多——不是 seek 之后又把整个文件读回来
-    log = next(tmp_path.glob("*/worker.log"))
-    raw = body.encode("utf-8")
     assert diagnostics._read_tail_bytes(log, 4096) == raw[-4096:]
     assert diagnostics._read_tail_bytes(log, len(raw) + 10) == raw  # 比文件还大：整份
 

@@ -46,8 +46,11 @@
   `numpy.exc:…`），不带包名的一律 `exc:<sha1 前 10 位>`——`class Patient_123Error(Exception)`
   的名字是用户源码里的标识符（评审 #443 第九、十一轮）；`ImportError` / `ModuleNotFoundError` 只在 message 长成加载器那几种形状
   （`No module named 'x'` / `cannot import name 'a' from 'b'` / `DLL load failed while
-  importing x`，名字是标识符）时保留形状本身——它们是普通公开异常类，用户 `raise` 的
-  一样是这个类型。**留下的每一行都是从解析结果重建的，不是原行过一遍替换**（评审 #443
+  importing x`，名字是标识符）时保留**形状**——它们是普通公开异常类，用户 `raise` 的
+  一样是这个类型；形状里的名字只在是标准库 / `_KNOWN_SITE_PACKAGES` 的**顶层名**时原样，
+  点分名的余下部分与不认识的名字 `mod:<sha1 前 10 位>`（`No module named 'patient_123'`
+  用户 raise 得出来，真缺的私有包名同样可能是项目术语，第十二轮）；哈希后的文件名只带
+  `_KNOWN_EXTENSIONS` 里的扩展名（`.patient` 一个字不带）。**留下的每一行都是从解析结果重建的，不是原行过一遍替换**（评审 #443
   第七轮）：帧行只留 `File "<路径>", line N`——`in analyze_patient_123` 是用户的标识符，
   不带；文件名不论绝对 / 相对 / 虚拟（`exec(compile(src, "patient_123.py", "exec"))` 的
   相对名、`<string>`、`<frozen runpy>`）走同一条缩写 `_shorten_path_text`，不经只认绝对路径
