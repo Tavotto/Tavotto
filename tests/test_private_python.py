@@ -45,7 +45,9 @@ def _isolated(tmp_path, monkeypatch):
     # 代理配置同一张脸（urllib 只认环境变量），不是给产品代码开的口子。
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    # urllib 先读小写 `no_proxy` 再读大写：两种拼法都设，别让宿主 shell 里的小写那份决定判据
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
     privatepython.reset_for_tests()
     yield
     privatepython.reset_for_tests()
@@ -383,6 +385,7 @@ class TestRefusals:
         """对照组：把回环从 NO_PROXY 里拿掉，本地服务也连不上——证明死代理不是摆设。"""
         archive, sha, rel = _make(tmp_path, launches)
         monkeypatch.setenv("NO_PROXY", "")
+        monkeypatch.setenv("no_proxy", "")  # 小写优先于大写：两种都清
         with LoopbackServer(tmp_path / "serve") as server:
             src = _source(server, archive, sha, rel)
             with pytest.raises(privatepython.ProvisionError) as err:
@@ -561,6 +564,44 @@ class TestConsumers:
         assert _launch_count(launches) in (1, None)
         assert _runtime_dirs() == {privatepython.runtime_dir(src).name}
 
+    def test_two_processes_provisioning_the_same_runtime_both_succeed(self, tmp_path, launches):
+        """跨进程：两个 Tavotto 进程同时供应同一份——各写各的 `.part`、各自 staging，先就位的赢，后来的复用；
+        两个都退出 0、同一个路径、一个最终目录、没有 `.part` 残留（Codex #464 P2）。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        with LoopbackServer(tmp_path / "serve") as server:
+            server.mode = "hold"
+            server.gate.clear()
+            src = _source(server, archive, sha, rel)
+            code = (
+                "import json, sys; from tavotto.engine import privatepython as pp; "
+                "src = pp.PythonSource(**json.loads(sys.argv[1])); print(pp.provision(src))"
+            )
+            env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+            procs = [
+                subprocess.Popen(
+                    [sys.executable, "-c", code, json.dumps(src.__dict__)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    env=env,
+                )
+                for _ in range(2)
+            ]
+            deadline = time.time() + 60
+            while len(server.requests) < 2 and time.time() < deadline:
+                time.sleep(0.05)
+            assert len(server.requests) == 2, (
+                "判据的前提：两个进程各发了一次请求（进程间没有共享的去重表）"
+            )
+            server.gate.set()
+            outs = [p.communicate(timeout=180) for p in procs]
+            assert [p.returncode for p in procs] == [0, 0], outs
+            paths = {o[0].strip() for o in outs}
+            assert paths == {str(privatepython.runtime_python(src))}
+        assert _runtime_dirs() == {src.id} and _parts() == []
+        assert privatepython.archive_path(src).is_file()
+
     def test_one_consumer_cancelling_does_not_stop_the_others(self, tmp_path, launches):
         """取消按消费者管理（D11）：A 取消只是 A 退出，B 照样拿到；下载不因 A 而中止。"""
         archive, sha, rel = _make(tmp_path, launches)
@@ -729,6 +770,29 @@ class TestConsumers:
             assert _runtime_dirs() == {src.id}
 
 
+# ================================================================ 探测链末级
+class TestBaseChain:
+    def test_a_provisioned_runtime_is_not_used_once_the_capability_is_off(
+        self, tmp_path, launches, monkeypatch
+    ):
+        """早先（逃生门开着 / 旧版锁 enabled）供应好的一份躺在磁盘上：能力关掉之后探测链末级不再用它，
+        行为回到 U04 的 `managed_env_unavailable`（Codex #464 P2）。"""
+        from tavotto.engine import bootstrap, managedenv
+
+        archive, sha, rel = _make(tmp_path, launches)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            python = privatepython.provision(src)
+        monkeypatch.setattr(privatepython, "source_for", lambda target=None, lock=None: src)
+        monkeypatch.setattr(bootstrap, "find_base_python", lambda accept=None: None)
+        assert managedenv.base_python() == python  # 逃生门 1：用
+        monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")
+        assert privatepython.python_of(src) == python  # 磁盘上还在
+        assert managedenv.base_python() is None  # 但不再是 base
+        monkeypatch.delenv("TAVOTTO_PRIVATE_PYTHON")
+        assert managedenv.base_python() is None  # 锁 enabled=false 也一样
+
+
 # ================================================================ 隔离
 class TestIsolation:
     def test_everything_lands_under_data_dir_and_home_path_env_are_untouched(
@@ -787,7 +851,7 @@ class TestIsolation:
             ):
                 config_calls.add(node.func.attr)
         allowed = {
-            "dataclasses", "hashlib", "http", "json", "logging", "os", "posixpath", "shutil",
+            "dataclasses", "hashlib", "http", "json", "logging", "os", "posixpath", "secrets", "shutil",
             "socket", "stat", "subprocess", "tarfile", "threading", "time", "urllib", "pathlib",
             "importlib", "__future__", "brand", "config", "runtime", "files", "__version__",
         }  # fmt: skip
