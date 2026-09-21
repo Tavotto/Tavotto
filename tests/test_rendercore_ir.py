@@ -97,15 +97,21 @@ def test_capability_table_covers_every_format_and_operation_with_a_reason():
             assert cap.reason.strip(), (fmt, op)
 
 
-def test_u07_pdf_declares_every_operation_native_and_raster_formats_not_yet():
+def test_u07_pdf_is_native_png_tiff_are_rasterized_and_eps_has_no_writer():
     """诚实边界：PDF 里的十个操作全是 native（写入器在树里，`test_rendercore_writer.py` 逐操作交叉核对；
     导入页 / 位图 / 镜像随 U07 翻成 native，`test_rendercore_compose.py` 用真源页与像素钉住）；
-    PNG / TIFF 在 render child 收编之前全 unsupported；EPS 没有写入器。"""
+    PNG / TIFF 的每个操作都是 `rasterized`（render child 把 Canonical PDF 栅格化，ADR 0066——如实的档位，
+    不是 unsupported 也不冒充 native）；EPS 没有写入器。"""
     pdf = ir.CAPABILITIES["pdf"]
     assert {pdf[o].level for o in ir.OPERATIONS} == {"native"}
     assert "Form XObject" in pdf["imported_page"].reason and "位图" in pdf["flip"].reason
-    for fmt in ("png", "tiff", "eps"):
-        assert {c.level for c in ir.CAPABILITIES[fmt].values()} == {"unsupported"}, fmt
+    for fmt in ("png", "tiff"):
+        assert {c.level for c in ir.CAPABILITIES[fmt].values()} == {"rasterized"}, fmt
+        assert all(
+            "PDFium" in c.reason or "RasterBuffer" in c.reason
+            for c in ir.CAPABILITIES[fmt].values()
+        )
+    assert {c.level for c in ir.CAPABILITIES["eps"].values()} == {"unsupported"}
 
 
 def test_operations_of_and_unsupported_for_report_what_a_page_actually_uses():
@@ -121,7 +127,8 @@ def test_operations_of_and_unsupported_for_report_what_a_page_actually_uses():
     assert ir.operations_of(page.children[2]) == ("clip", "group_opacity")
     assert ir.operations_of(page.children[3]) == ("text",)
     assert ir.unsupported_for(page, "pdf") == []  # PDF 的十个操作全 native（U07）
-    gaps = ir.unsupported_for(page, "png")
+    assert ir.unsupported_for(page, "png") == []  # PNG / TIFF 全 rasterized（U07 render child）
+    gaps = ir.unsupported_for(page, "eps")
     # 去重后按遍历顺序：每个 (操作, 对象) 一条
     assert [(g["operation"], g["object_id"]) for g in gaps][:3] == [
         ("page_background", ""),
@@ -130,7 +137,7 @@ def test_operations_of_and_unsupported_for_report_what_a_page_actually_uses():
     ]
     assert all(g["reason"] for g in gaps)
     assert ir.unsupported_for(_page(_rect()), "pdf") == []
-    assert {g["operation"] for g in ir.unsupported_for(_page(_rect()), "png")} == {
+    assert {g["operation"] for g in ir.unsupported_for(_page(_rect()), "eps")} == {
         "page_background",
         "path_fill",
     }

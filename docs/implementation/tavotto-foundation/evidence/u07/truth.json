@@ -1,0 +1,188 @@
+{
+  "kind": "u07_compose_raster_truth",
+  "note": "手写规格。页面 160×120 mm 白底（H = 340.1575 pt）。像素采样点的页面坐标（pt，y 向上）由本文件按「源点 → 可见框 → 目标框」手算：mm→pt = 2.834646；panel 的目标框 = (x_mm, y_mm, w_mm, h_mm)·2.834646，rect_y = H − y_top − h。渲染 150 ppi：像素 = (x·150/72, (H − y)·150/72)。",
+  "page": {
+    "w_mm": 160,
+    "h_mm": 120,
+    "transparent": false
+  },
+  "objects": [
+    {
+      "type": "panel",
+      "id": "figs/page.pdf",
+      "x_mm": 5,
+      "y_mm": 5,
+      "w_mm": 95.25,
+      "h_mm": 56.4444,
+      "_note": "U00 夹具，CropBox [15 10 285 170] = 270×160 pt；框恰好 270×160 pt → 缩放 1：源 (sx, sy) → 页 (14.1732 + sx − 15, 165.9843 + sy − 10)"
+    },
+    {
+      "type": "panel",
+      "id": "figs/overlap.pdf",
+      "x_mm": 105,
+      "y_mm": 5,
+      "w_mm": 70.5556,
+      "h_mm": 35.2778,
+      "opacity": 0.5,
+      "_note": "蓝 (20,20,100×60) 下、红 (60,40,100×40) 上，都不透明；整体 0.5 → 透明组。框 200×100 pt，缩放 1：源 (sx, sy) → 页 (297.6378 + sx, 225.9843 + sy)"
+    },
+    {
+      "type": "panel",
+      "id": "figs/a.pdf",
+      "x_mm": 5,
+      "y_mm": 65,
+      "w_mm": 70.5556,
+      "h_mm": 35.2778,
+      "_note": "/F1 Helvetica + /X1 红 1×1 图（画在 (50,25,100×50)）；框 200×100 pt，缩放 1：源 → 页 (14.1732 + sx, 55.9055 + sy)"
+    },
+    {
+      "type": "panel",
+      "id": "figs/b.pdf",
+      "x_mm": 80,
+      "y_mm": 65,
+      "w_mm": 70.5556,
+      "h_mm": 35.2778,
+      "_note": "/F1 Courier + /X1 绿 1×1 图；同名资源不许撞车。源 → 页 (226.7717 + sx, 55.9055 + sy)"
+    },
+    {
+      "type": "panel",
+      "id": "figs/original.png",
+      "x_mm": 105,
+      "y_mm": 45,
+      "w_mm": 16.9333,
+      "h_mm": 12.7,
+      "_note": "U00 夹具 64×48 RGBA：左半不透明蓝 (30,60,200)，右半红 (200,40,40) alpha = 255·(63−x)/31。框 48×36 pt：像素列 c → 页 x = 297.6378 + (c + 0.5)/64·48；rect_y = 176.5984"
+    },
+    {
+      "type": "text",
+      "id": "t1",
+      "text": "U07 合成 Δλ = 532 nm",
+      "x_mm": 5,
+      "y_mm": 105,
+      "w_mm": 90,
+      "h_mm": 8,
+      "size_pt": 10
+    }
+  ],
+  "expect": {
+    "imported_pages": 4,
+    "images": 1,
+    "transparency_groups": 1,
+    "forms": 4,
+    "census_min": {
+      "form": 4,
+      "text": 1,
+      "path": 1
+    },
+    "texts": [
+      "U00 fixture: y = 3x + 1",
+      "alpha-text",
+      "bravo-text",
+      "U07"
+    ],
+    "image_objects_total": 3,
+    "_note_image_objects": "PDFium 的对象普查递归进 Form XObject：1 张自己放的位图 + a.pdf / b.pdf 各带一个 /X1（1×1 图）= 3；导入页本身没有任何一个是整页位图（RC-040）"
+  },
+  "samples": [
+    {
+      "id": "page_blue_only",
+      "x_pt": 59.17,
+      "y_pt": 200.98,
+      "rgba": [
+        0,
+        0,
+        255
+      ],
+      "_note": "page.pdf 源 (60,45)：蓝矩形内、红矩形与折线外"
+    },
+    {
+      "id": "page_purple_overlap",
+      "x_pt": 99.17,
+      "y_pt": 235.98,
+      "rgba": [
+        128,
+        0,
+        128
+      ],
+      "_note": "page.pdf 源 (100,80)：α=0.5 红盖蓝"
+    },
+    {
+      "id": "page_outside_cropbox_is_white",
+      "x_pt": 12.0,
+      "y_pt": 245.0,
+      "rgba": [
+        255,
+        255,
+        255
+      ],
+      "_note": "目标框左边缘之外 2 pt：CropBox 之外的 MediaBox 区域没有被画出来"
+    },
+    {
+      "id": "group_overlap_not_double_darkened",
+      "x_pt": 397.64,
+      "y_pt": 295.98,
+      "rgba": [
+        255,
+        128,
+        128
+      ],
+      "_note": "overlap.pdf 源 (100,70) 红盖蓝，整体 0.5：红以 0.5 合成到白；逐对象 alpha 会给 (191,64,128)"
+    },
+    {
+      "id": "group_blue_only",
+      "x_pt": 327.64,
+      "y_pt": 255.98,
+      "rgba": [
+        128,
+        128,
+        255
+      ],
+      "_note": "overlap.pdf 源 (30,30) 蓝单独，0.5 合成到白"
+    },
+    {
+      "id": "same_name_a_is_red",
+      "x_pt": 114.17,
+      "y_pt": 105.91,
+      "rgba": [
+        255,
+        0,
+        0
+      ],
+      "_note": "a.pdf 的 /X1（红）中心 源 (100,50)"
+    },
+    {
+      "id": "same_name_b_is_green",
+      "x_pt": 326.77,
+      "y_pt": 105.91,
+      "rgba": [
+        0,
+        255,
+        0
+      ],
+      "_note": "b.pdf 的 /X1（绿）中心 源 (100,50)"
+    },
+    {
+      "id": "png_left_opaque_blue",
+      "x_pt": 309.64,
+      "y_pt": 194.6,
+      "rgba": [
+        30,
+        60,
+        200
+      ],
+      "_note": "original.png 第 16 列附近（左半）"
+    },
+    {
+      "id": "png_right_alpha_over_white",
+      "x_pt": 328.01,
+      "y_pt": 194.6,
+      "rgba": [
+        214,
+        95,
+        95
+      ],
+      "tol": 8,
+      "_note": "original.png 第 40 列：alpha = 255·23/31 = 0.742 → 红 (200,40,40) 以 0.742 合成到白 = (200·0.742 + 255·0.258, 40·0.742 + 255·0.258, 同) = (214, 95, 95)；PDFium 放大位图时双线性插值，相邻列的 alpha 会掺进来，容差 8"
+    }
+  ]
+}

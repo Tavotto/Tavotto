@@ -97,10 +97,18 @@ def test_no_module_in_rendercore_mentions_pymupdf(graph: importgraph.Graph):
 
 
 def test_native_adapters_import_candidate_packages_lazily():
-    """`hbshaper` / `pdfwriter` 若存在：模块层不许 import 候选包（那会让没装 extra 的机器连
-    `import tavotto.rendercore.pdfwriter` 都炸）；函数 / 类里再 import。"""
-    candidates = {"pikepdf", "fontTools", "uharfbuzz", "pypdfium2"}
-    for name in ("hbshaper.py", "pdfwriter.py"):
+    """`hbshaper` / `pdfwriter` / `rasterio` / `renderchild` 若存在：模块层不许 import 候选包（那会让没装
+    extra 的机器连 `import tavotto.rendercore.pdfwriter` 都炸；`renderchild` 被父进程 import 时更不该拉起
+    PDFium——native 只在 child 进程里）；函数 / 类里再 import。"""
+    candidates = {"pikepdf", "fontTools", "uharfbuzz", "pypdfium2", "PIL"}
+    for name in (
+        "hbshaper.py",
+        "pdfwriter.py",
+        "rasterio.py",
+        "renderchild.py",
+        "renderhost.py",
+        "preview.py",
+    ):
         path = PKG / name
         if not path.is_file():
             continue

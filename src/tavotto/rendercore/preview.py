@@ -1,0 +1,226 @@
+"""预览缓存：面板源（PDF）→ 指定像素宽度的 PNG，带磁盘缓存（统一实施包 U07，ADR 0066）。
+
+旧后端那一面的用户合同（`app.py` 的 `/api/render` + `_write_render_cache` + `_publish_render_cache`，
+`docs/rules/backend/pdf-backend-boundary.md`「`/api/render` 的磁盘缓存键」）逐条搬到这里，栅格由 render child
+出（`renderhost.RenderHost.render(width_px=…)`），编码是本包的 PNG 编码器（`raster.encode_png`）。
+**U07 不接 `app.py`**：`/api/render` 仍走 PyMuPDF；U08 换线时 `app.py` 的那三段（键 / 写 / 发布）由本模块
+替掉，`source_sha1` 的 (mtime, size) memo 一并收编到这里的 `source_identity()`（本轮不做 memo：读一遍字节算
+sha256，主语只有「内容」，没有 mtime 这一维）。
+
+## 键（RC-061：内容身份，不是 mtime）
+
+`sha1(source_id | 内容 sha256 | 宽度 | 背景 | rendercore 名-版本 | PDFium 版本 | 字体政策版本)`：
+
+* **内容 sha256** 而不是 mtime：touch / 从备份还原 / 同步工具改了 mtime 而内容没变 → 键不变、缓存照常命中；
+  内容变了 → 键必变；
+* **后端 build**（`rendercore.BACKEND_VERSION` + child 报的 PDFium 版本）与**字体政策版本**（allowlist 的 sha256）
+  进键：换了栅格器 / 换了批准字体集合，像素可能已经不同，旧预览不许再命中——`must_fail_example`「mtime 当唯一
+  cache key」与「改 backend / font 但内容路径不变」都在这里挡住；
+* **像素 / 颜色参数**（宽度、透明 / 白底）进键。
+
+## 写 / 发布（与旧 `_write_render_cache` / `_publish_render_cache` 同一条纪律）
+
+* 同键并发只让一个线程真渲染（每键一把锁，锁表封顶、只丢没人拿着的）；锁内复查一次，看到成品直接用；
+* 渲染进临时文件（**后缀仍是 .png**，同一目录）再 `os.replace`：读者要么看到旧的（完整）要么看到新的（完整）；
+* **Windows 上 `os.replace` 盖不掉正被读的目标**（`PermissionError`）：目标已在且非空 → **退让**（同键字节
+  必然相同）；目标不存在 / 零字节才重试，重试完仍不行如实抛出；
+* 零字节缓存当场删掉重建；
+* **异常一律抛出**——不返回空白图、不拿旧文件冒充这次成功（`must_fail`：异常返回空白图或旧图作成功）；
+* `prune()` 按 mtime 从旧到新删至预算内（与旧 `prune_render_cache` 同形）。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import threading
+import time
+from pathlib import Path
+
+from . import BACKEND_NAME, BACKEND_VERSION
+from .fonts import allowlist_path
+from .raster import encode_png
+from .renderhost import RenderChildError, RenderHost
+
+__all__ = ["PreviewCache", "PreviewError", "cache_key", "fonts_policy_version"]
+
+#: 换名撞上 Windows 独占读句柄时的重试次数与间隔（总计 ~0.2s 的退让窗口）。
+_REPLACE_TRIES = 5
+_REPLACE_BACKOFF_S = 0.05
+_LOCKS_MAX = 512
+
+
+class PreviewError(RuntimeError):
+    """渲染 / 落盘失败。调用方拿到的是异常，不是一张空白图。"""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def fonts_policy_version() -> str:
+    """字体政策版本 = allowlist 文件的 sha256 前 16 位（加一张脸 / 换一个 hash 都会变）。"""
+    return hashlib.sha256(Path(allowlist_path()).read_bytes()).hexdigest()[:16]
+
+
+def cache_key(
+    source_id: str,
+    content_sha256: str,
+    width_px: int,
+    *,
+    transparent: bool,
+    renderer_version: str,
+    fonts_version: str,
+) -> str:
+    parts = (
+        source_id,
+        content_sha256,
+        str(int(width_px)),
+        "transparent" if transparent else "white",
+        f"{BACKEND_NAME}-{BACKEND_VERSION}",
+        f"pdfium-{renderer_version}",
+        f"fonts-{fonts_version}",
+    )
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+
+
+class PreviewCache:
+    def __init__(
+        self,
+        cache_dir: Path,
+        host: RenderHost,
+        *,
+        max_bytes: int = 500 * 1024 * 1024,
+    ) -> None:
+        self.cache_dir = Path(cache_dir)
+        self.host = host
+        self.max_bytes = int(max_bytes)
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+        self._renderer_version: str | None = None
+        self._fonts_version: str | None = None
+        self.renders = 0  # 真渲染的次数（同键去重的判据用）
+
+    # -- 身份 -------------------------------------------------------------
+    def renderer_version(self) -> str:
+        if self._renderer_version is None:
+            self._renderer_version = str(self.host.ping().get("pdfium", "?"))
+        return self._renderer_version
+
+    def fonts_version(self) -> str:
+        if self._fonts_version is None:
+            self._fonts_version = fonts_policy_version()
+        return self._fonts_version
+
+    @staticmethod
+    def source_identity(path: Path) -> str:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+    def key_for(self, source_id: str, path: Path, width_px: int, *, transparent: bool) -> str:
+        return cache_key(
+            source_id,
+            self.source_identity(path),
+            width_px,
+            transparent=transparent,
+            renderer_version=self.renderer_version(),
+            fonts_version=self.fonts_version(),
+        )
+
+    def path_for(self, key: str) -> Path:
+        return self.cache_dir / f"{key}.png"
+
+    # -- 锁表 -------------------------------------------------------------
+    def _lock_for(self, cached: Path) -> threading.Lock:
+        key = str(cached)
+        with self._locks_guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                if len(self._locks) >= _LOCKS_MAX:
+                    # 只丢没人拿着的那些：正被持有的锁一旦从表里消失，下一个线程会为同一个键另建一把
+                    for stale, held in list(self._locks.items()):
+                        if not held.locked():
+                            del self._locks[stale]
+                lock = threading.Lock()
+                self._locks[key] = lock
+            return lock
+
+    # -- 取 / 渲染 --------------------------------------------------------
+    @staticmethod
+    def _usable(cached: Path) -> bool:
+        try:
+            return cached.stat().st_size > 0
+        except OSError:
+            return False
+
+    def get(
+        self,
+        source_id: str,
+        path: Path,
+        width_px: int,
+        *,
+        transparent: bool = False,
+        page: int = 0,
+    ) -> Path:
+        """命中就回缓存文件；否则渲染、临时发布、回最终文件。任何失败抛 `PreviewError`。"""
+        cached = self.path_for(self.key_for(source_id, path, width_px, transparent=transparent))
+        if self._usable(cached):
+            return cached
+        with self._lock_for(cached):
+            if self._usable(cached):
+                return cached
+            cached.unlink(missing_ok=True)  # 零字节 = 上一次写到一半就断电 / 被杀
+            self._write(path, width_px, cached, transparent=transparent, page=page)
+            self.prune()
+        return cached
+
+    def _write(
+        self, src: Path, width_px: int, cached: Path, *, transparent: bool, page: int
+    ) -> None:
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = cached.with_name(f"{cached.stem}.{os.getpid()}-{threading.get_ident():x}.part.png")
+        try:
+            try:
+                buf = self.host.render(src, width_px=width_px, page=page, transparent=transparent)
+            except RenderChildError as exc:
+                raise PreviewError(exc.code, exc.message) from exc
+            tmp.write_bytes(encode_png(buf))
+            self.renders += 1
+            self._publish(tmp, cached)
+        finally:
+            tmp.unlink(missing_ok=True)  # replace 成功后已经不在了，这里是 no-op
+
+    @staticmethod
+    def _publish(tmp: Path, cached: Path) -> None:
+        for attempt in range(_REPLACE_TRIES):
+            try:
+                os.replace(tmp, cached)
+                return
+            except PermissionError:
+                try:
+                    if cached.stat().st_size > 0:
+                        return  # 别人写好的同一张图（同键同字节），让给它
+                except OSError:
+                    pass
+                if attempt == _REPLACE_TRIES - 1:
+                    raise
+                time.sleep(_REPLACE_BACKOFF_S)
+
+    def prune(self) -> int:
+        """按 mtime 从旧到新删至预算内，返回删除数。"""
+        try:
+            files = sorted(self.cache_dir.glob("*.png"), key=lambda p: p.stat().st_mtime)
+            total = sum(p.stat().st_size for p in files)
+        except OSError:
+            return 0
+        removed = 0
+        for p in files:
+            if total <= self.max_bytes:
+                break
+            try:
+                size = p.stat().st_size
+                p.unlink()
+                total -= size
+                removed += 1
+            except OSError:
+                continue
+        return removed

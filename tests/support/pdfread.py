@@ -265,34 +265,37 @@ def paths_and_cms(content: bytes) -> tuple[list[str], list[tuple[float, ...]]]:
 
 
 # ---------------------------------------------------------------------------
-# PNG（RGBA 8 位）
+# PNG（8 位 RGB / RGBA，非交错，五种行滤波）
 # ---------------------------------------------------------------------------
-def decode_png(data: bytes) -> tuple[int, int, bytes]:
+def decode_png_any(data: bytes) -> tuple[int, int, int, bytes]:
+    """(宽, 高, 通道数 3 或 4, 紧凑像素)。RenderCore 的 PNG 编码器白底出色型 2（RGB）、透明底出色型 6（RGBA）
+    （U07，ADR 0066），两种都要读得回来；调色板 / 灰度 / 16 位 / 交错不在本读取器的主语里。"""
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise AssertionError("不是 PNG")
-    pos, idat, w, h = 8, b"", 0, 0
+    pos, idat, w, h, bpp = 8, b"", 0, 0, 0
     while pos < len(data):
         (length,) = struct.unpack(">I", data[pos : pos + 4])
         tag = data[pos + 4 : pos + 8]
         body = data[pos + 8 : pos + 8 + length]
         if tag == b"IHDR":
-            w, h, depth, ctype = struct.unpack(">IIBB", body[:10])
-            if (depth, ctype) != (8, 6):
-                raise AssertionError(f"只认 8 位 RGBA：{(depth, ctype)}")
+            w, h, depth, ctype, _comp, _filt, interlace = struct.unpack(">IIBBBBB", body[:13])
+            if depth != 8 or ctype not in (2, 6) or interlace != 0:
+                raise AssertionError(f"只认 8 位 RGB / RGBA 非交错：{(depth, ctype, interlace)}")
+            bpp = 4 if ctype == 6 else 3
         elif tag == b"IDAT":
             idat += body
         pos += 12 + length
     raw = zlib.decompress(idat)
-    stride = w * 4
+    stride = w * bpp
     out = bytearray()
     prev = bytearray(stride)
     for row in range(h):
         f = raw[row * (stride + 1)]
         line = bytearray(raw[row * (stride + 1) + 1 : (row + 1) * (stride + 1)])
         for i in range(stride):
-            a = line[i - 4] if i >= 4 else 0
+            a = line[i - bpp] if i >= bpp else 0
             b = prev[i]
-            c = prev[i - 4] if i >= 4 else 0
+            c = prev[i - bpp] if i >= bpp else 0
             if f == 1:
                 line[i] = (line[i] + a) & 0xFF
             elif f == 2:
@@ -307,4 +310,12 @@ def decode_png(data: bytes) -> tuple[int, int, bytes]:
                 ) & 0xFF
         out += line
         prev = line
-    return w, h, bytes(out)
+    return w, h, bpp, bytes(out)
+
+
+def decode_png(data: bytes) -> tuple[int, int, bytes]:
+    """只认 8 位 RGBA 的旧签名（U02 / U06 用例在用）：`decode_png_any` 的 RGBA 投影。"""
+    w, h, bpp, out = decode_png_any(data)
+    if bpp != 4:
+        raise AssertionError("只认 8 位 RGBA：色型是 RGB（用 decode_png_any）")
+    return w, h, out
