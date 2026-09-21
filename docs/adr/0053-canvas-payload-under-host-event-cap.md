@@ -47,9 +47,12 @@ rollout 的**事件副本**封顶在 1 MiB（`core/src/mcp_tool_call.rs` 的
    计数与阻断布尔永远留着（逐步省时留 2 KiB 给说明本身）。省过东西就写
    `structuredContent.elided`（省了什么、为什么、去哪儿取、最终体积）并在文字里提一句。
    说明加完**再量一次**：结构化字段省到底了还超（`preflight=true` 把整份报告放在
-   `content` 里），就把文字截到装得下为止并标 `content_truncated`——宿主量的是整个结果，
-   文字把它顶过上限的话 structuredContent 一样被清空。**没超预算的结果一个字段都不动**
-   ——小图走的还是 08-24 验收过的那条路。
+   `content` 里），先退到**只剩把手**（`HANDLE_ONLY_KEYS`：会话 id、项目 / stem / 脚本、
+   规范、patch_hash、预检计数——省略表之外的字段也可能很大，几千个 stem 的
+   `registry.stems` 就是），再把文字截到装得下为止并标 `content_truncated`——宿主量的是
+   整个结果，文字把它顶过上限的话 structuredContent 一样被清空。fitter 只对**带出 iframe
+   的那一次**（单图 open 且画布产物在）跑：批量与画布缺失的结果没有 iframe、也没有一个
+   能取件的会话。**没超预算的结果一个字段都不动**——小图走的还是 08-24 验收过的那条路。
 2. **`_meta` 只挂资源元数据，不再复制 `widgetData`**。MCP Apps 标准路径下 iframe 拿到
    的就是整份 `CallToolResult`，ChatGPT 侧读 `window.openai.toolOutput`
    （= structuredContent）——两条路都用不着第二份。
@@ -61,7 +64,8 @@ rollout 的**事件副本**封顶在 1 MiB（`core/src/mcp_tool_call.rs` 的
    一份，键没变也不算数）。它走的是画布自己发的 `tools/call`——
    宿主直接代理（`codex_thread.call_mcp_tool` → `mcp_runtime.latest_call_tool`），
    原样返回、不进模型上下文、不受事件上限约束。模型只在 open 结果标了 `elided`
-   且确实要逐元素 gid 时才需要它。
+   且确实要逐元素 gid 时才需要它。沿用会话时 `cost` 跟着这次读到的注册表走：画布按
+   它装渲染看门狗（light 2 min / heavy 15 min），旧档会掐掉一次合法的重渲染。
 4. **画布启动按来货分三路**（`web/src/mcp/boot.ts`）：完整的 open 结果 → 直接种（零
    往返）；只有把手（`session_id` 在、不是完整 open 结果——**`elided` 在就一律算不完整**，
    不管省的是什么：只省了 svg 时六项齐全、种下去却是空画布；没有 `elided` 的老结果再按

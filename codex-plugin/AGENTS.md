@@ -132,9 +132,9 @@
   `content` 文本整段丢弃。全文在 ADR 0053。
 - **只有单图 open 守预算**（`CANVAS_INLINE_BUDGET_BYTES` 768 KiB，量整个 `CallToolResult`
   的紧凑 UTF-8 字节，别用默认 ensure_ascii），按 `INLINE_ELISION_STEPS` 省 svg → manifest →
-  位图 → 预检清单，写 `structuredContent.elided`；说明加完再量一次，还超就截 `content` 文字
-  （`preflight=true` 的整份报告）并标 `content_truncated`；**apply 不守**（画布靠它拿新
-  manifest）；`_meta` 不再复制 `widgetData`。
+  位图 → 预检清单，写 `structuredContent.elided`；说明加完再量一次，还超先退到只剩把手
+  （`HANDLE_ONLY_KEYS`）再截 `content` 文字；只在单图 + 有画布时跑（批量 / 无画布没有
+  iframe）；**apply 不守**（画布靠它拿新 manifest）；`_meta` 不再复制 `widgetData`。
 - **`tavotto_session_state` 是画布的取件通道**：只读、不重渲染，全部来自 `Session` 上最近一次
   `_render` 留下的字段（加字段先加到 `Session`），预检复用 `Session.preflight_cache`（`_render` 必清）。降级
   `NORMAL_TOOLS` 由 `test_degraded_normal_tool_names_mirror_the_real_server` 钉成镜像。
