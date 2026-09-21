@@ -2992,6 +2992,15 @@ def _alias_colorbar_mappable(narrow_prop: str):
         m = getattr(getattr(artist, "cb", None), "mappable", None)
         if m is None:
             return []
+        # 色阶兄弟（与 mappable 共用同一份 norm 对象的已登记 mappable，
+        # `colorbarmodel.scale_siblings`）也是组员：cmap 由色条的 setter 逐个写，
+        # vmin / vmax 经共用的 norm 天然一起变——两种都是「色条一动它们就被盖掉」，
+        # 原样必须在色条动手之前替它们采下来
+        siblings = [
+            (sg, narrow_prop)
+            for sib in colorbarmodel.scale_siblings(state, m)
+            if (sg := rev.get(id(sib))) is not None
+        ]
         gid = rev.get(id(m))
         if gid is None:
             # **独立 mappable**（`fig.colorbar(ScalarMappable(...), ax=ax)`）：
@@ -3008,8 +3017,8 @@ def _alias_colorbar_mappable(narrow_prop: str):
             # Artist，`HANDLERS` 里没有它的 cmap，`state.resolve` 也回 None。
             # 共享原样因此走「对等广播端」那条回退（见 `apply` 里采 originals
             # 那一段）。分组令牌照样是需要的：没有它连组都不成立。
-            return [(f"mappable#{id(m):x}", narrow_prop)]
-        return [(gid, narrow_prop)]
+            return [(f"mappable#{id(m):x}", narrow_prop), *siblings]
+        return [(gid, narrow_prop), *siblings]
 
     return resolve
 

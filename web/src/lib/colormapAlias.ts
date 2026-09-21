@@ -15,8 +15,16 @@ export function colormapAliasGids(
 ): string[] {
   const out = [el.gid]
   if (el.mappable_gid) out.push(el.mappable_gid)
+  // 色阶兄弟（`scale_gids`，共用 norm 对象的那几块）与 mappable 同一组：色条的
+  // 色图落在它们身上，回到脚本原样也要一起清
+  out.push(...(el.scale_gids ?? []))
   for (const other of manifest?.elements ?? []) {
-    if (other.role === 'colorbar' && other.mappable_gid === el.gid) out.push(other.gid)
+    if (other.role === 'colorbar' && colorbarCovers(other, el.gid)) out.push(other.gid)
   }
   return [...new Set(out)]
+}
+
+/** 这条色条给 `gid` 上色吗：它的 mappable，或与之共用色阶的兄弟 */
+export function colorbarCovers(colorbar: ManifestElement, gid: string): boolean {
+  return colorbar.mappable_gid === gid || (colorbar.scale_gids ?? []).includes(gid)
 }

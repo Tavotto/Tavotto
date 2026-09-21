@@ -25,6 +25,7 @@ import { resetPreview, setHistoryMode } from '@/store/svgPreviewStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { ElementInspector } from './ElementInspector'
 import { colorScalePartner } from './ColorScaleLink'
+import { colormapAliasGids } from '@/lib/colormapAlias'
 
 const engineRender = vi.fn()
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -255,6 +256,29 @@ describe('色阶共用关系（审计 T22 / T23）', () => {
     const cb = colorbarEl({ mappable: false })
     await mount('axes_0.images_0', { manifest: manifestOf(cb) })
     expect(host.querySelector('[data-color-scale-link]')).toBeNull()
+  })
+
+  /**
+   * 色阶兄弟（2026-09-21 用户的 PRB 三联图）：两块 pcolormesh 共用一份 norm、
+   * 只有一条色条。引擎在色条上发 `scale_gids`，兄弟也归这条色条上色——
+   * 「与色条共用色阶」在兄弟页也要出现，回到脚本原样要把色条那条一起清。
+   */
+  it('scale_gids 里的兄弟也认这条色条为对家；别名组把色条与整组一起收进来', () => {
+    const sibling = { ...imageEl, gid: 'axes_2.collections_0', label: '彩色网格 1' }
+    const cb = { ...colorbarEl(), scale_gids: ['axes_2.collections_0'] } as ManifestElement
+    const m = { ...manifestOf(cb), elements: [axesEl, imageEl, sibling, cb] } as Manifest
+    expect(colorScalePartner(m, sibling)?.gid).toBe('axes_1.colorbar')
+    // 色条的对家仍是它直接挂着的 mappable（`mappable_gid`），不是兄弟
+    expect(colorScalePartner(m, cb)?.gid).toBe('axes_0.images_0')
+    expect(colormapAliasGids(m, sibling)).toEqual(['axes_2.collections_0', 'axes_1.colorbar'])
+    expect(colormapAliasGids(m, cb)).toEqual([
+      'axes_1.colorbar',
+      'axes_0.images_0',
+      'axes_2.collections_0',
+    ])
+    // 没有 `scale_gids` 的老 manifest：兄弟不认色条（判据只认引擎发的事实）
+    const plain = manifestOf()
+    expect(colorScalePartner({ ...plain, elements: [...plain.elements, sibling] } as Manifest, sibling)).toBeNull()
   })
 })
 

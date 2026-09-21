@@ -832,6 +832,79 @@ def test_patch_shapes_are_draggable_via_pos_frac(tmp_path):
         proc.wait(timeout=10)
 
 
+SHARED_SCALE_SCRIPT = """\
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import PowerNorm
+
+
+def main():
+    rng = np.random.RandomState(0)
+    fig, (ax_b, ax_c) = plt.subplots(1, 2, figsize=(4.6, 2.4))
+    x = np.linspace(0.5, 2.0, 7)
+    f = np.linspace(1.30, 1.52, 7)
+    norm = PowerNorm(gamma=1.45, vmin=0.0, vmax=1.0)     # 一份 norm，两块网格
+    mesh_b = ax_b.pcolormesh(x, f, rng.rand(7, 7), cmap="Greens", norm=norm,
+                             shading="nearest", rasterized=True)
+    ax_c.pcolormesh(x, f, rng.rand(7, 7), cmap="Greens", norm=norm,
+                    shading="nearest", rasterized=True)
+    for ax in (ax_b, ax_c):
+        ax.set_ylim(1.34, 1.51)
+    fig.colorbar(mesh_b, ax=ax_c)                        # 挂在 (b) 上、摆在 (c) 旁
+    fig.savefig("Shared.pdf")
+"""
+
+
+def test_colorbar_colormap_reaches_every_mappable_sharing_its_norm(tmp_path):
+    """色条的色图落到**共用同一份 norm 对象**的每一块网格上，不只是 `cb.mappable`。
+
+    2026-09-21 用户的 PRB 三联图：(b)(c) 两块 pcolormesh 传同一个 PowerNorm、色条
+    挂在 (b) 上却摆在 (c) 旁边——从色条换色图只有 (b) 变，紧挨着色条的 (c) 纹丝
+    不动。契约：manifest 的色条条目发 `scale_gids`（兄弟的 gid，不含 mappable
+    本人）；色条的 cmap override 之后两块网格的 `cmap` 字段都是新值，兄弟也报
+    `cmap_original`；空列表还原后两块都回脚本原样。上下限走共用的 norm，本来就
+    一起变。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_shared.py").write_text(SHARED_SCALE_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_shared.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": []})["manifest"]
+        cb = next(e for e in man["elements"] if e["role"] == "colorbar")
+        assert cb["mappable_gid"] == "axes_0.collections_0"
+        assert cb["scale_gids"] == ["axes_1.collections_0"]
+        assert _field_value(man, "axes_1.collections_0", "cmap") == "Greens"
+
+        patches = [{"gid": cb["gid"], "prop": "cmap", "value": "plasma"}]
+        resp = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": patches})
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        man = resp["manifest"]
+        assert _field_value(man, "axes_0.collections_0", "cmap") == "plasma"
+        assert _field_value(man, "axes_1.collections_0", "cmap") == "plasma", (
+            "共用 norm 的兄弟没有跟着色条换色图"
+        )
+        assert _field_value(man, cb["gid"], "cmap") == "plasma"
+        # 兄弟也说得出「脚本原样」是哪张（Greens 在白名单里就不发事实，看别名 gid 即可）
+        sib = next(e for e in man["elements"] if e["gid"] == "axes_1.collections_0")
+        assert any(f["prop"] == "cmap" for f in sib["editable"])
+
+        # 上下限：一处写、两块变（共用的 norm）
+        patches.append({"gid": cb["gid"], "prop": "vmin", "value": 0.25})
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": patches})["manifest"]
+        assert _field_value(man, "axes_1.collections_0", "vmin") == pytest.approx(0.25)
+
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": []})["manifest"]
+        for gid in ("axes_0.collections_0", "axes_1.collections_0", cb["gid"]):
+            assert _field_value(man, gid, "cmap") == "Greens", gid
+            assert _field_value(man, gid, "vmin") == pytest.approx(0.0), gid
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
 def test_closed_figure_still_builds(tmp_path):
     """脚本 `savefig` 完就 `plt.close(fig)` 时仍要能起来。
 

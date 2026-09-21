@@ -48,3 +48,20 @@
   每次 draw 从 original 现算的结果，回灌成 original 之后再改图幅会与全新重放分岔
   （实测 6×4 改 4×6 色条轴高度 0.77 → 0.34）。看护 `tests/test_colorbar_resize.py`
   （热会话 vs 全新重放逐位相同、撤销后再改图幅仍一致）。
+  **色阶兄弟（2026-09-21，用户的 PRB 三联图：从色条换色图，紧挨着色条的那块网格
+  纹丝不动）**：脚本把**同一个 norm 对象**交给几块 `pcolormesh` / `imshow`、只挂
+  一条色条，就是在声明它们是同一个色阶——matplotlib 眼里 vmin / vmax 经共用的 norm
+  天然一起变，cmap 却各拿各的引用。判据是 norm 的**对象身份**（不是名字、不是数值
+  相等），唯一出处 `colorbarmodel.scale_siblings(state, mappable)`（只在登记表里找，
+  色条代理不算）。三处消费它：① 色条的 `cmap` setter 写到 mappable **和全部兄弟**
+  （`_set_cb_cmap`，带 state），撤销 `_restore_cb_cmap` 让兄弟**各回各的原样**
+  （别名组在色条动手之前替它们采的，采不到退回 mappable 的那份）；② 别名组
+  `overrides._alias_colorbar_mappable` 把兄弟的 `(gid, cmap/vmin/vmax)` 一并算进组员
+  ——vmin / vmax 不必逐个写（norm 是同一份），但兄弟的「脚本原样」必须在色条动过
+  之前采下来；③ manifest 的色条条目发 `scale_gids`（兄弟的 gid，不含 mappable 本人，
+  没有兄弟就不发），`_cmap_alias_gids` 也把兄弟算进「脚本原样记在谁名下」。前端
+  （`lib/colormapAlias.ts` 的 `colorbarCovers`）据此把「与色条共用色阶」与「回到脚本
+  原样」扩到整组。兄弟自己的 cmap override 仍**压过**色条（`_rank` 的组内次序：窄的
+  排在广播之后）。看护 `tests/test_invariants_engine.py` 的 `H-shared-*`（含撤色条 /
+  撤兄弟 / 全撤三种减法，像素 + 全量 manifest）、
+  `test_worker_roundtrip.py::test_colorbar_colormap_reaches_every_mappable_sharing_its_norm`。

@@ -39,6 +39,8 @@ from colorbarmodel import (
     colorbar_host_count,
     colorbar_maps,
     follow_map,
+    scale_gids,
+    scale_siblings,
 )
 from legendmodel import (
     _LEGEND_HANDLE_MARKER_OPTS,
@@ -1988,11 +1990,17 @@ def _cmap_alias_gids(state: FigState, artist, gid: str) -> list[str]:
         target = artist.cb.mappable
     else:
         target = artist
+    # 色阶兄弟（共用 norm 对象的 mappable，`colorbarmodel.scale_siblings`）也在
+    # 同一组里：色条的 cmap 写到它们身上，「脚本原样记在谁名下」同样要问到色条
     for el in state.elements:
         other = el["artist"]
-        if isinstance(other, ColorbarProxy) and other.cb.mappable is target and el["gid"] != gid:
-            out.append(el["gid"])
-        elif isinstance(artist, ColorbarProxy) and other is target:
+        if isinstance(other, ColorbarProxy) and el["gid"] != gid:
+            m = other.cb.mappable
+            if m is target or target in scale_siblings(state, m):
+                out.append(el["gid"])
+        elif isinstance(artist, ColorbarProxy) and (
+            other is target or other in scale_siblings(state, target)
+        ):
             out.append(el["gid"])
     return list(dict.fromkeys(out))
 
@@ -4211,6 +4219,13 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             mappable_gid = gid_by_artist_id.get(id(artist.cb.mappable))
             if mappable_gid:
                 entry["mappable_gid"] = mappable_gid
+            # 这条色条**还给谁上色**：与 mappable 共用同一份 norm 对象的其它元素
+            # （`colorbarmodel.scale_siblings`）。色条的 cmap / vmin / vmax 也落到它们
+            # 身上（别名组同一批），界面据此把「与 X 共用色阶」与「回到脚本原样」
+            # 扩到整组。可选：没有兄弟就不发。
+            scale = [g for g in scale_gids(state, artist.cb.mappable) if g != mappable_gid]
+            if scale:
+                entry["scale_gids"] = scale
             # **能力为什么不在，要说出来。** 少一个控件而不给理由，用户只会
             # 以为是漏了或是坏了。这里给的是稳定 code，供界面按 code 翻译成
             # 「这条色条横跨多个子图，方向切换在 1.0 里不支持」。

@@ -1,4 +1,4 @@
-"""不变式用例的图库：一个脚本出四张图（InvMix / InvCont / InvCbar / InvPar / InvTight），
+"""不变式用例的图库：一个脚本出一批图（InvMix / InvCont / InvCbar / InvCbar2 / InvShared / InvPar / InvTight…），
 `tests/test_invariants_engine.py` 与 `tests/test_override_sequences.py` 共用。2026-09-18 从前者
 逐字搬出——两套用例量的必须是同一批图。
 """
@@ -17,7 +17,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize
+from matplotlib.colors import Normalize, PowerNorm
 from matplotlib.patches import Arc, Circle, Rectangle
 from mpl_toolkits.axes_grid1 import host_subplot
 
@@ -136,6 +136,24 @@ def main():
     fig.colorbar(sm, ax=ax, location="left")
     fig.colorbar(sm, ax=ax, location="top", fraction=0.046)
     fig.savefig("InvCbar2.pdf")
+
+    # ---- InvShared：**两块网格共用一份 norm 对象 + 一条色条**（色阶兄弟） ----
+    # 2026-09-21 用户的 PRB 三联图：(b)(c) 两块 pcolormesh 传的是同一个 PowerNorm，
+    # 色条只挂在 (b) 上、却摆在 (c) 旁边。matplotlib 眼里 vmin/vmax 经共用的 norm
+    # 天然一起变，cmap 却各拿各的引用——「同一个色阶」这件事在 cmap 上要由
+    # Tavotto 兑现（`colorbarmodel.scale_siblings`）。这张图让别名组里多出一种
+    # 组员：不是 mappable 本人、也不是同一个 mappable 的第二条色条，而是**共用
+    # norm 的兄弟**——撤销时它要各回各的原样，不是跟着 mappable 走。
+    fig, (sa, sb) = plt.subplots(1, 2, figsize=(4.6, 2.4))
+    shared = PowerNorm(gamma=1.45, vmin=0.0, vmax=1.0)
+    mesh_a = sa.pcolormesh(np.linspace(0.5, 2.0, 7), np.linspace(1.3, 1.52, 7),
+                           rng.rand(7, 7), cmap="Greens", norm=shared, shading="nearest")
+    sb.pcolormesh(np.linspace(0.5, 2.0, 7), np.linspace(1.3, 1.52, 7),
+                  rng.rand(7, 7), cmap="Greens", norm=shared, shading="nearest")
+    sa.set_ylim(1.34, 1.51)
+    sb.set_ylim(1.34, 1.51)
+    fig.colorbar(mesh_a, ax=sb)
+    fig.savefig("InvShared.pdf")
 
     # ---- InvPar：`axes_grid1` 的 host_subplot + twinx（**寄生轴**，#217） ----
     # 这一族轴既不在 `fig.axes` 也不在 `child_axes`，只挂在 `host.parasites`

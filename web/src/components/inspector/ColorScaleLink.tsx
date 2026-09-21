@@ -2,6 +2,7 @@ import { ChevronRight, Link2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'
+import { colorbarCovers } from '@/lib/colormapAlias'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
 import { Tip } from '../ui/Tooltip'
@@ -13,8 +14,8 @@ import { engineLabel } from './roles/registry'
  * gid）。这一行把关系说出口，并给一个「选中对方」的入口——两边各显示一次
  * 色阶字段本身没有错，错的是不说它们是同一份。
  *
- * 判据只认 manifest 的 `mappable_gid`（引擎反查 `cb.mappable` 得来），不猜
- * 「两边 cmap 名字相同就是一对」。原理挂在按钮的悬停提示上（键盘也到得了），
+ * 判据只认 manifest 的 `mappable_gid` / `scale_gids`（引擎反查 `cb.mappable`
+ * 与共用 norm 对象的兄弟得来），不猜「两边 cmap 名字相同就是一对」。原理挂在按钮的悬停提示上（键盘也到得了），
  * 不是一段常驻说明。
  */
 const el = (key: string, values?: Record<string, unknown>) =>
@@ -30,7 +31,8 @@ export function colorScalePartner(
       ? (manifest.elements.find((e) => e.gid === element.mappable_gid) ?? null)
       : null
   }
-  return manifest.elements.find((e) => e.role === 'colorbar' && e.mappable_gid === element.gid) ?? null
+  // 给它上色的色条：直接挂着的，或经共用 norm 一起上色的（`scale_gids`）
+  return manifest.elements.find((e) => e.role === 'colorbar' && colorbarCovers(e, element.gid)) ?? null
 }
 
 export function ColorScaleLink({

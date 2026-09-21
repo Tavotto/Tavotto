@@ -22,12 +22,18 @@ from axestraversal import ordered_axes
 
 
 class FollowState(Protocol):
-    """色条族对 `overrides.FigState` 的全部要求——只这四样，族模块不 import 它。"""
+    """色条族对 `overrides.FigState` 的全部要求，族模块不 import 它。
+
+    前四样是方向翻转要的；`elements` / `originals` 是**共用色阶组**要的
+    （`scale_siblings` 只在登记表里找兄弟、`_restore_cb_cmap` 按各自的原样放回）。
+    """
 
     fig: object
     pending: dict | None
     colorbar_axes: set
     axes_follow: dict
+    elements: list
+    originals: dict
 
 
 class ColorbarProxy:
@@ -168,6 +174,65 @@ def _set_cb_extend(p: "ColorbarProxy", v) -> None:
 
 def _restore_cb_extend(p: "ColorbarProxy", orig) -> None:
     _set_cb_extend(p, orig)
+
+
+def scale_siblings(state: FollowState, mappable) -> list:
+    """与 `mappable` **共用同一份 norm 对象**的其它已登记 mappable——它的色阶兄弟。
+
+    判据是 norm 的**对象身份**，不是名字、也不是数值相等：脚本把同一个
+    `Normalize` / `PowerNorm` 实例交给几个 `pcolormesh` / `imshow`，就是在声明
+    「这几块是同一个色阶」——matplotlib 自己也这么理解，`set_clim` 改的是那一份
+    norm，几块一起变。而 cmap 是各拿各的引用（哪怕脚本传的是同一个对象，
+    `set_cmap` 只换自己那份），所以「同一个色阶」这件事在 cmap 上要由我们兑现。
+    2026-09-21 用户的 PRB 三联图：(b)(c) 两块网格共用一份 `PowerNorm`、只在 (c)
+    旁边挂一条色条——从色条换色图，只有 (b) 变了，紧挨着色条的 (c) 纹丝不动。
+
+    只在 `state.elements` 里找：不是登记元素的 mappable 没有 gid，别名组里放不下
+    它、原样也无处可采。色条代理自己不算（它的 `norm` 是转发 mappable 的）。
+    """
+    norm = getattr(mappable, "norm", None)
+    if norm is None:
+        return []
+    out = []
+    for el in state.elements:
+        a = el["artist"]
+        if a is mappable or isinstance(a, ColorbarProxy):
+            continue
+        if getattr(a, "norm", None) is norm and hasattr(a, "set_cmap"):
+            out.append(a)
+    return out
+
+
+def scale_gids(state: FollowState, mappable) -> list[str]:
+    """`scale_siblings` 的 gid 版（manifest 下发 `scale_gids` 用）。"""
+    sibs = scale_siblings(state, mappable)
+    return [el["gid"] for el in state.elements if el["artist"] in sibs]
+
+
+def _set_cb_cmap(p: "ColorbarProxy", v, state: FollowState) -> None:
+    """色条的色图写到它的 mappable **和全部色阶兄弟**上（见 `scale_siblings`）。"""
+    m = p.cb.mappable
+    m.set_cmap(v)
+    for sib in scale_siblings(state, m):
+        sib.set_cmap(v)
+
+
+_set_cb_cmap._needs_state = True  # noqa: SLF001
+
+
+def _restore_cb_cmap(p: "ColorbarProxy", orig, state: FollowState) -> None:
+    """撤销：mappable 放回它自己的原样；兄弟各放各的——它们的原样由别名组在
+    广播动手之前代采（`overrides.apply` 的 `alias_seeded`），采不到的（不该发生）
+    退回 mappable 的那份。"""
+    m = p.cb.mappable
+    m.set_cmap(orig)
+    sibs = scale_siblings(state, m)
+    for el in state.elements:
+        if el["artist"] in sibs:
+            el["artist"].set_cmap(state.originals.get((el["gid"], "cmap"), orig))
+
+
+_restore_cb_cmap._needs_state = True  # noqa: SLF001
 
 
 def _cb_label_text(cb) -> str:
@@ -632,10 +697,12 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda p: _cb_axis(p).label.get_text(),
         lambda p, v: p.cb.set_label(str(v)),
     ),
-    ("colorbar", "cmap"): (
-        lambda p: p.cb.mappable.get_cmap(),
-        lambda p, v: p.cb.mappable.set_cmap(v),
-    ),
+    # 色图写到 mappable 与它的色阶兄弟（共用 norm 对象的那些，`scale_siblings`）；
+    # 原样仍是 mappable 自己那张 Colormap（`manifest._cmap_original` 读它）
+    ("colorbar", "cmap"): (lambda p: p.cb.mappable.get_cmap(), _set_cb_cmap),
+    # vmin / vmax 写的是 norm，而 norm 是兄弟们共用的那一份——不必逐个写，
+    # 但别名组要把兄弟算进来（`overrides._alias_colorbar_mappable`），否则兄弟的
+    # 「脚本原样」会在色条动过之后才采
     ("colorbar", "vmin"): (
         lambda p: p.cb.mappable.get_clim()[0],
         lambda p, v: p.cb.mappable.set_clim(vmin=(None if v is None else float(v))),
@@ -671,6 +738,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
 
 #: 撤销：方向按快照原样放回（落位 / 长宽比 / 锚点一并还原），延伸退回原值并同步 `_inside`。
 RESTORE: dict[tuple[str, str], object] = {
+    ("colorbar", "cmap"): _restore_cb_cmap,
     ("colorbar", "orientation"): _restore_cb_orientation,
     ("colorbar", "extend"): _restore_cb_extend,
 }

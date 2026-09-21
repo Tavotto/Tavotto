@@ -854,6 +854,69 @@ REMOVAL_CASES = [
             [],
         ],
     ),
+    # ---- 色阶兄弟：色条的 cmap 落到与 mappable 共用 norm 的那块网格上 ----
+    #
+    # InvShared：axes_0 / axes_1 两块网格共用一份 PowerNorm，色条（axes_2）挂在
+    # axes_0 的网格上。别名组里 `(axes_1.collections_0, cmap)` 是**兄弟**成员：
+    # 色条一动它被盖掉，它的「脚本原样」必须在色条动手之前采、撤销时各回各的。
+    # 三格分别撤色条 / 撤兄弟自己的 / 全撤（全撤那格从前会停在色条那张图上——
+    # 兄弟不是 mappable，`set_cmap(orig)` 只写 mappable）。
+    # 只设色条、再撤：兄弟必须跟着回原样（色条的 restore 只写 mappable 的话，
+    # 热态里兄弟停在色条那张图上，而全新重放里它是脚本原样）
+    (
+        "H-shared-drop-colorbar-alone",
+        "InvShared",
+        [[{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}], []],
+    ),
+    (
+        "H-shared-drop-colorbar",
+        "InvShared",
+        [
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"}],
+        ],
+    ),
+    (
+        "H-shared-drop-sibling",
+        "InvShared",
+        [
+            [{"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"}],
+            [
+                {"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"},
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+            ],
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}],
+        ],
+    ),
+    (
+        "H-shared-drop-both",
+        "InvShared",
+        [
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"},
+            ],
+            [],
+        ],
+    ),
+    # 上下限走的是共用的 norm 本身（一处写、两块变）：兄弟自己的 vmax 要在
+    # 色条动过 vmin 之后采到**未被污染**的原样
+    (
+        "H-shared-clim-drop-colorbar",
+        "InvShared",
+        [
+            [{"gid": "axes_2.colorbar", "prop": "vmin", "value": 0.2}],
+            [
+                {"gid": "axes_2.colorbar", "prop": "vmin", "value": 0.2},
+                {"gid": "axes_1.collections_0", "prop": "vmax", "value": 0.8},
+            ],
+            [{"gid": "axes_1.collections_0", "prop": "vmax", "value": 0.8}],
+        ],
+    ),
     (
         "A-colorbar-drop-mappable",
         "InvCbar",
