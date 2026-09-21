@@ -394,8 +394,8 @@
     },
     {
       "path": "handoffs/U08_facade_parity.md",
-      "bytes": 18780,
-      "sha256": "987f5494b56dbad44354515cf5d22472acc84b8c9a5aa8bca76cdca2343f7054"
+      "bytes": 26401,
+      "sha256": "74a9241a5c9707309bf231e698b75bd86135ad3da266b9818db67a5b6b7afcda"
     },
     {
       "path": "phase_mapping.json",

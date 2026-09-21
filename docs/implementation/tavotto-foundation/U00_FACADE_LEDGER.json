@@ -252,6 +252,14 @@
         {
           "stage": "U08",
           "test": "tests/test_rendercore_facade.py::test_annotate_asset_refuses_panel_objects"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_app.py::test_writeback_with_annotations_under_the_candidate_overlays_the_staged_pdf_then_commits"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_app.py::test_writeback_with_annotations_fails_closed_when_the_staged_pdf_is_unusable"
         }
       ]
     },
@@ -423,6 +431,14 @@
         {
           "stage": "U08",
           "test": "tests/test_rendercore_app.py::test_a_child_failure_under_the_candidate_is_partial_and_leaves_nothing_behind"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_app.py::test_export_under_the_candidate_verifies_text_layer_fonts_and_carrier_from_the_plan"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_app.py::test_strict_export_under_the_candidate_accepts_clean_text_and_rejects_low_ppi_panels"
         }
       ]
     },
@@ -1341,6 +1357,7 @@
     "suites": [
       "tests/test_export_pipeline.py",
       "tests/test_export_endpoint.py",
+      "tests/test_export_inspection.py",
       "tests/test_export_request.py",
       "tests/test_original_spec.py",
       "tests/test_annotate_asset.py",
