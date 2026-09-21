@@ -70,28 +70,30 @@ def read_frozen(fs: FrozenSource) -> bytes:
 
     **有界分块读**（Codex #463 第五轮 P2）：冻结时记下了 `size_bytes`，磁盘上那份此刻若比它大，一定不是
     冻结的那份——多读一个字节就停、报 `source_changed`，不把一个几 GB 的替身整个读进内存再发现 hash 不对；
-    hash 边读边算，读到的字节就是核过的那份（写入器接下来用的正是它）。
+    hash 边读边算，读到的字节就是核过的那份（写入器接下来用的正是它）。缓冲只有一份（预分配 + `readinto`），
+    不再 chunk 列表 + join 双份。
     """
     limit = int(fs.artifact.size_bytes)
     digest = hashlib.sha256()
-    chunks: list[bytes] = []
+    # 预分配 limit + 1 字节、`readinto` 直接填：整个过程只有一份缓冲（外加最后 `bytes()` 那一次拷贝——
+    # 作业级预算 `job.SOURCE_BYTES_BUDGET` 把这份瞬时拷贝也算进去，Codex #463 第六轮 P2）
+    buf = bytearray(limit + 1)
+    view = memoryview(buf)
     total = 0
     try:
         with open(fs.path, "rb") as fh:
-            while True:
-                want = min(READ_CHUNK, limit + 1 - total)
-                chunk = fh.read(want)
-                if not chunk:
+            while total < limit + 1:
+                n = fh.readinto(view[total : min(total + READ_CHUNK, limit + 1)])
+                if not n:
                     break
-                total += len(chunk)
+                digest.update(view[total : total + n])
+                total += n
                 if total > limit:
                     raise SourceError(
                         "source_changed",
                         f"{fs.artifact.source_id} 的字节在冻结之后变了（磁盘上那份比冻结时的 {limit} 字节大）",
                         {"figure": fs.artifact.source_id, "frozen_bytes": limit},
                     )
-                digest.update(chunk)
-                chunks.append(chunk)
     except OSError as exc:
         raise SourceError(
             "source_missing", f"{fs.path}: {exc}", {"figure": fs.artifact.source_id}
@@ -106,7 +108,7 @@ def read_frozen(fs: FrozenSource) -> bytes:
             f"（{fs.artifact.bytes_sha256[:12]} → {sha[:12]}）",
             {"figure": fs.artifact.source_id},
         )
-    return b"".join(chunks)
+    return bytes(view[:total])
 
 
 def needs_execution(obj: dict) -> bool:

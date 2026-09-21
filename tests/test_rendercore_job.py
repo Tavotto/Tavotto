@@ -170,7 +170,7 @@ def test_the_aggregate_frozen_source_bytes_budget_fails_before_any_byte_is_read(
 
     shutil.copy(FIXTURE / "page.pdf", project / "figs" / "Fig1b.pdf")
     size = (FIXTURE / "page.pdf").stat().st_size
-    monkeypatch.setattr(rcjob, "SOURCE_BYTES_BUDGET", size * 2 - 1)
+    monkeypatch.setattr(rcjob, "SOURCE_BYTES_BUDGET", size * 3 - 1)  # 记账 = 两份之和 + 最大一份
     calls = {"n": 0}
     real = rcjob.read_frozen
 
@@ -208,9 +208,10 @@ def test_the_aggregate_frozen_source_bytes_budget_fails_before_any_byte_is_read(
     assert payload["error"]["code"] == "export_render_failed"
     assert "source_budget_exceeded" in payload["error"]["params"]["reason"]
     assert payload["error"]["params"]["source_bytes"] == size * 2
+    assert payload["error"]["params"]["peak_bytes"] == size * 3
     assert calls["n"] == 0
     # 预算够时照常（同一份文件两次只算一份资源）
-    monkeypatch.setattr(rcjob, "SOURCE_BYTES_BUDGET", size * 2)
+    monkeypatch.setattr(rcjob, "SOURCE_BYTES_BUDGET", size * 3)
     job = exportjob.prepare(
         _spec(
             [
@@ -262,6 +263,11 @@ def test_a_source_replaced_by_a_bigger_file_is_refused_after_reading_at_most_one
             seen["n"] += len(data)
             return data
 
+        def readinto(self, view):
+            n = self.fh.readinto(view)
+            seen["n"] += n or 0
+            return n
+
         def __enter__(self):
             return self
 
@@ -278,6 +284,50 @@ def test_a_source_replaced_by_a_bigger_file_is_refused_after_reading_at_most_one
     assert ei.value.code == "source_changed" and ei.value.params["frozen_bytes"] == frozen
     assert seen["n"] <= frozen + rcsources.READ_CHUNK, seen  # 有界：最多多读一块，不是整个替身
     assert seen["n"] < frozen * 8
+
+
+def test_read_frozen_holds_one_buffer_not_a_chunk_list_plus_join(project, tmp_path, monkeypatch):
+    """Codex #463 第六轮 P2：512 MiB 的源不该在 `b"".join(chunks)` 那一刻变成 1 GiB。判据：读的是 `readinto`
+    进预分配缓冲（一份），`read()` 一次不叫（没有 chunk 列表可 join）。"""
+    import builtins
+
+    from tavotto.rendercore import sources as rcsources
+
+    fs = rcsources.StaticSourceResolver(project).resolve({"id": "figs/Fig1.pdf"})
+    real_open = builtins.open
+    calls = {"readinto": 0, "read": 0}
+
+    class Only:
+        def __init__(self, fh):
+            self.fh = fh
+
+        def readinto(self, view):
+            calls["readinto"] += 1
+            return self.fh.readinto(view)
+
+        def read(self, n=-1):
+            calls["read"] += 1
+            return self.fh.read(n)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return self.fh.__exit__(*a)
+
+    monkeypatch.setattr(
+        rcsources,
+        "open",
+        lambda path, *a, **k: (
+            Only(real_open(path, *a, **k))
+            if str(path) == str(fs.path)
+            else real_open(path, *a, **k)
+        ),
+        raising=False,
+    )
+    data = rcsources.read_frozen(fs)
+    assert data == (FIXTURE / "page.pdf").read_bytes()
+    assert calls["readinto"] >= 1 and calls["read"] == 0
 
 
 def test_a_frozen_source_that_changes_before_writing_fails_the_job(
