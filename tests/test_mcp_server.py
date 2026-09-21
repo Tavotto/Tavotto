@@ -2713,6 +2713,28 @@ def test_cached_preflight_is_invalidated_by_patch_hash_and_profile(project, fake
     assert bridge.cached_preflight(session) is None, "规范版本变了就不能复用"
 
 
+def test_rerender_drops_the_cached_preflight_even_when_the_hash_is_unchanged(
+    project, fake_pool, monkeypatch
+):
+    """重开沿用会话（patches 仍为空）→ `_render` 出了一份新 manifest：键没变，结论
+    也不能沿用。脚本改过、worker 重建后同一组 patches 画出来的就是另一张图。"""
+    first = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    runs: list[str] = []
+    real = server._safe_preflight
+
+    def counted(session_id):
+        runs.append(session_id)
+        return real(session_id)
+
+    monkeypatch.setattr(server, "_safe_preflight", counted)
+    again = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    assert again["reused"] is True and again["patch_hash"] == first["patch_hash"]
+    assert runs == [first["session_id"]], "重渲染之后预检必须重算，不能吃上一次的缓存"
+    # 而没有重渲染的取件仍然复用
+    _call("tavotto_session_state", {"session_id": first["session_id"]})
+    assert runs == [first["session_id"]]
+
+
 def test_session_state_for_an_unknown_session_is_a_structured_error(project, fake_pool):
     res = _call("tavotto_session_state", {"session_id": "s-nope"})
     assert res["isError"] is True

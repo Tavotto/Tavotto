@@ -265,7 +265,8 @@ class Session:
     #: 最近一次**默认参数**的预检结果（`run_preflight` 不带 profile / journal /
     #: 导出参数那一档），连同它算出时的 `patch_hash` 与 profile 印章。
     #: `session_state()` 只在两者都还对得上时复用；否则重算——预检是 manifest
-    #: 与规范的纯函数，键对得上就没有第二个答案。
+    #: 与规范的纯函数，键对得上就没有第二个答案。每次 `_render` 都把它清掉：
+    #: manifest 换了一份，键没变也不算数。
     preflight_cache: dict | None = None
 
     def patch_hash(self) -> str:
@@ -1008,6 +1009,9 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     session.warnings = list(resp.get("warnings", []) or [])
     # 上一版的位图属于上一组 patches；这一次不是 raster 档就没有位图可配对。
     session.preview_png_base64 = None
+    # 预检是 manifest 的函数，而 manifest 刚换了一份——哪怕 patches 没变（脚本改了、
+    # worker 重建、重开沿用会话），键对得上也不代表结论还对。缓存只活在两次渲染之间。
+    session.preflight_cache = None
     session.rev = getattr(worker, "rev", session.rev + 1)
     session.last_used = time.time()
     out = {
