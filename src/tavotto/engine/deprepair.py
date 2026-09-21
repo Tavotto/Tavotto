@@ -3183,6 +3183,10 @@ def joint_targets(project: str | Path, target_kind: str, python: str) -> list[di
         )
     managed = managedenv.state(root)
     available = True if managed["exists"] else managed_available()
+    # 没有基础解释器但本目标提供私有 Python（U05）：这条路仍可用，授权里多一项「先下载 N 字节」
+    private = privatepython.offer_payload() if available is False else None
+    if private is not None:
+        available = True
     out.append(
         {
             "kind": TARGET_MANAGED,
@@ -3192,6 +3196,7 @@ def joint_targets(project: str | Path, target_kind: str, python: str) -> list[di
             "creates_environment": not managed["exists"],
             "available": available,
             "reason": "" if available is not False else ERROR_MANAGED_UNAVAILABLE,
+            "private_python": private,
         }
     )
     return out
@@ -3208,6 +3213,9 @@ def preparation_offer(project: str | Path, script: str) -> dict | None:
         joint, target_kind, python = joint_plan_for(root, script)
     except pool.WorkerError:
         return None
+    # 干净机器（U05 PR B）：`joint_plan_for` 已经以私有 Python 为目标算过了；这里把「要先下载」说出口，
+    # 门据此在 nothing_needed 时也问（没有任何解释器，环境本身就是要的）
+    clean = private_python_target(root, script) is not None
     return {
         "code": ERROR_PREPARATION_REQUIRED,
         "script": script,
@@ -3216,6 +3224,7 @@ def preparation_offer(project: str | Path, script: str) -> dict | None:
         "targets": joint_targets(root, target_kind, python),
         "rounds_remaining": rounds_remaining(root, script),
         "skipped": preparation_skipped(root, script),
+        "private_python": privatepython.offer_payload() if clean else None,
     }
 
 
@@ -3226,9 +3235,14 @@ def gate(project: str | Path, script: str) -> dict | None:
     if rounds_remaining(root, script) <= 0 or preparation_skipped(root, script):
         return None
     offer = preparation_offer(root, script)
-    if offer is None or offer["plan"]["status"] != depplan.STATUS_READY:
+    if offer is None:
         return None
-    return offer
+    if offer["plan"]["status"] == depplan.STATUS_READY:
+        return offer
+    # 干净机器：什么都不缺也没有解释器可跑——环境（含私有 Python）本身就是要授权的东西
+    if offer.get("private_python") and offer["plan"]["status"] == depplan.STATUS_NOTHING_NEEDED:
+        return offer
+    return None
 
 
 def _spawn_gate(figures_dir: str, script_name: str) -> None:
