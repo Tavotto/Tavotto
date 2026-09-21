@@ -66,12 +66,18 @@
   safe 档不带参数，出路是默认值或 `tavotto run`；argparse 的 usage 打在 stderr，
   `pool._attach_script_output` 把 worker.log 尾巴接到 traceback 前面，两条控制面
   同一处拼），否则 `script_exited`——都不再把 worker 带走。`ensure_built` 放行
-  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。**Rust 读线程按字节读**
-  （`read_until` + lossy UTF-8）：非 UTF-8 字节是「管道上有垃圾」（protocol_mismatch），
-  不是 EOF——`BufRead::lines()` 会把一行坏字节当 Err 交回来，活着的 worker 被判成
-  「崩溃」并被杀掉。看护：`tests/test_worker_exit_report.py`、
+  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。**协议管道上的
+  一行先判 UTF-8、再解析 JSON，两条控制面同一口径**：非 UTF-8 字节是「管道上有垃圾」
+  （protocol_mismatch，杀掉重建，那一行以 U+FFFD 代替坏字节带出去），不是 EOF——Rust 读线程
+  按字节读（`read_until` + `std::str::from_utf8`，`BufRead::lines()` 会把一行坏字节当 Err 交回来，
+  活着的 worker 被判成「崩溃」并被杀掉），Python 池 Popen 用 `errors="surrogateescape"`、
+  `_parse_line` 在 `json.loads` 之前查 U+DC80–U+DCFF 的残留。**不许先 lossy 再解析**：坏字节夹在
+  合法 JSON 字串里时 U+FFFD 之后的信封照样合法、request_id 也对得上，一条被篡改的响应会被当成
+  正常结果收下（评审 #443 第九轮）。非 JSON 的一行同样是 protocol_mismatch，不许让 `json.loads`
+  的异常炸出去。看护：`tests/test_worker_exit_report.py`、`tests/test_worker_protocol.py` 的
+  `test_non_utf8_bytes_inside_a_json_response…` / `test_a_non_json_line…`、
   `workerd/tests/supervisor_behaviour.rs` 的 `a_dead_worker_reports_how_it_died…` /
-  `non_utf8_bytes_on_the_protocol_pipe…`。
+  `non_utf8_bytes_on_the_protocol_pipe…` / `non_utf8_bytes_inside_a_json_envelope…`。
 - **关停必须闭环：`kill()` ≠「进程已经退出并释放了文件」**。`Popen.kill()`
   两个平台上都只是发出请求（POSIX 是 SIGKILL，Windows 是 TerminateProcess），
   调用返回时进程可能还在，它打开的句柄一定还在。`EngineWorker.shutdown()` /

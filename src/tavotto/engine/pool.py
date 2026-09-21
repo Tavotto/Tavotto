@@ -132,6 +132,10 @@ _NT_EXIT_EXPLANATIONS: dict[int, str] = {
         "Windows 上经 C 运行时信号路径转发的段错误也走到这里）"
     ),
 }
+#: `surrogateescape` 给每个解不出的字节留下的痕迹：U+DC80–U+DCFF。合法 UTF-8 解出来的
+#: 文本里不可能有孤立代理项，所以「行里有这一段」⇔「管道上有坏字节」，不会误伤正文里
+#: 真的 U+FFFD。
+_BAD_BYTES = re.compile("[\udc80-\udcff]")
 _SIGNAL_EXPLANATIONS: dict[int, str] = {
     6: "SIGABRT：C 库或扩展主动中止（断言失败、两份 OpenMP 运行时）",
     9: "SIGKILL：被系统或别的进程杀掉（内存不足时 OOM killer 最常见）",
@@ -1072,8 +1076,12 @@ class EngineWorker:
             bufsize=1,
             # 显式 UTF-8：text=True 默认跟随系统区域编码，Windows 上是 cp1252/
             # cp936，读 worker 回来的中文/µ/⁻¹ 会解码失败。worker 侧同样钉死。
+            # `surrogateescape` 而不是 `replace`：坏字节要**看得出来**（U+DC80–U+DCFF
+            # 在合法 UTF-8 里永远不会出现），`_check_bytes` 在解析 JSON 之前拦——
+            # `replace` 把坏字节洗成 U+FFFD，夹在合法 JSON 字串里的话整条响应照样
+            # 解析成功、被当成正常结果收下（评审 #443 第九轮；workerd 同一口径）。
             encoding="utf-8",
-            errors="replace",
+            errors="surrogateescape",
             creationflags=runtime.CREATE_NO_WINDOW,
         )
 
@@ -1240,6 +1248,29 @@ class EngineWorker:
             code="protocol_mismatch",
         )
 
+    def _parse_line(self, line: str) -> dict:
+        """协议管道上的一行 → 响应对象；不是合法 UTF-8 / 不是 JSON 都是 `protocol_mismatch`。
+
+        与 workerd 读线程同一口径（`worker.rs`：先 `from_utf8` 再 `serde_json`）：
+        坏字节是「管道上有垃圾」，进程没死，但这一行不能当响应收——它可能是一条
+        被 C 扩展往 fd 1 写的几个字节篡改过的、request_id 对得上的合法信封。
+        杀掉重建：管道是串行的，垃圾之后的每一行都不知道对不对得上号。
+        """
+        if _BAD_BYTES.search(line):
+            reason = "渲染进程往协议管道里写了非 UTF-8 的字节，会话已重启。"
+        else:
+            try:
+                resp = json.loads(line)
+            except json.JSONDecodeError:
+                reason = "渲染进程往协议管道里写了非 JSON 的内容，会话已重启。"
+            else:
+                if isinstance(resp, dict):
+                    return resp
+                reason = "渲染进程往协议管道里写了非 JSON 对象的内容，会话已重启。"
+        self._kill_now()
+        shown = line.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+        raise WorkerError(reason, shown[:400], code="protocol_mismatch")
+
     def _error_of(self, resp: dict) -> WorkerError:
         """v1 错误信封 → WorkerError（legacy 的扁平形状一并兼容）。"""
         err = resp.get("error")
@@ -1339,7 +1370,7 @@ class EngineWorker:
             )
             err.extra = {"exit": exit_info} if exit_info is not None else {}
             raise err
-        resp = json.loads(line)
+        resp = self._parse_line(line)
         self._check_envelope(resp, rid)
         if resp.get("hash_mismatch"):
             # 不影响本次结果（worker 照常执行了），但两侧的规范化实现已经分叉

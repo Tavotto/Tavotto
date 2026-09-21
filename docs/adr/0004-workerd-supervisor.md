@@ -172,7 +172,9 @@ worker 原样回显。**读线程给它读到的每一行都打上自己那一�
   进程自己的退出码（Windows 上是 NTSTATUS 按 i32），`signal` 是 POSIX 信号，
   `lingered` = 关了管道却没退、被 workerd 收掉。加字段不升协议版本。怎么解释这个
   数归 Python 侧一处（`pool.describe_exit`）；supervisor 的文案只说「退出了（退出码 N）」，
-  不说「崩溃」。读线程按字节读：非 UTF-8 字节是 `protocol_mismatch`，不是 EOF。
+  不说「崩溃」。读线程按字节读：非 UTF-8 字节是 `protocol_mismatch`，不是 EOF；UTF-8 在
+  解析 JSON **之前**判（先 lossy 再解析会把夹在合法字串里的坏字节洗成 U+FFFD、把一条被
+  篡改的响应当正常结果收下），lossy 的形态只用来把那一行带给人看。
 
 ### 8. 错误码
 

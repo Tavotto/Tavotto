@@ -39,7 +39,11 @@
   整块按用户输出略去（一个 `print("Fatal Python error: …")` 不是通行证）；链式异常的两句
   连接语要**逐字**相同且夹在两段 traceback 之间；**收尾行只留异常类型**（`KeyError: …`）——
   用户 `traceback.print_exc()` 打出来的块结构与引擎的一模一样，来历分不出，能保证的只有
-  message 不出门；`ImportError` / `ModuleNotFoundError` 只在 message 长成加载器那几种形状
+  message 不出门；**类型名本身也按闭集放行**：本进程 `builtins` 里的异常类
+  （`_BUILTIN_EXCEPTIONS`，`__main__` 里定义的类打印出来与 builtins 一样不带前缀）与
+  已知第三方包开头的点分名（`matplotlib.units.ConversionError`），其余
+  `exc:<sha1 前 10 位>`——`class Patient_123Error(Exception)` 的名字是用户源码里的标识符
+  （评审 #443 第九轮）；`ImportError` / `ModuleNotFoundError` 只在 message 长成加载器那几种形状
   （`No module named 'x'` / `cannot import name 'a' from 'b'` / `DLL load failed while
   importing x`，名字是标识符）时保留形状本身——它们是普通公开异常类，用户 `raise` 的
   一样是这个类型。**留下的每一行都是从解析结果重建的，不是原行过一遍替换**（评审 #443

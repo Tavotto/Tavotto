@@ -51,6 +51,10 @@ Traceback (most recent call last):
   File "/app/a.py", line 1, in <module>
     import PIL
 ImportError: DLL load failed while importing _imaging: 找不到指定的模块。
+Traceback (most recent call last):
+  File "/app/a.py", line 2, in <module>
+    raise Patient_123Error("cohort B")
+Patient_123Error: cohort B
 """.splitlines()
 
 
@@ -62,6 +66,7 @@ def test_each_traceback_is_paired_with_its_exception_line():
         "2026-09-20 10:47:02,622 ERROR tavotto: 引擎渲染失败: Figure 1: 渲染进程退出了",
         "Traceback (most recent call last): → OSError: …",
         "Traceback (most recent call last): → ImportError: DLL load failed while importing _imaging",
+        "Traceback (most recent call last): → exc:a7bb77bcf2: …",  # 用户定义的异常类名也不出门
     ]
 
 
@@ -384,7 +389,9 @@ def test_incomplete_blocks_are_not_evidence(lines):
 def test_user_print_exc_blocks_lose_their_free_text_message():
     """评审 #443 第五轮 P1：`except: traceback.print_exc()` 打出来的块结构与引擎的
     一模一样，来历分不出来——能保证的只有 message 不出门。ImportError 家族例外：
-    那句是加载器说的（缺哪个模块 / 哪个 DLL 加载失败），正是排障要的。"""
+    那句是加载器说的（缺哪个模块 / 哪个 DLL 加载失败），正是排障要的。
+    第九轮 P1：类型名也是用户能起的（`class Patient_123Error(Exception)`），只放行
+    本进程 builtins 里的异常类与已知第三方包开头的点分名，其余 `exc:<哈希>`。"""
     kept, _ = diagnostics.evidence_lines(
         [
             "Traceback (most recent call last):",
@@ -405,6 +412,23 @@ def test_user_print_exc_blocks_lose_their_free_text_message():
             "Traceback (most recent call last):",
             '  File "/x/a.py", line 6, in <module>',
             "ImportError: cannot import name 'foo' from 'pkg.mod' (/env/pkg/mod.py)",
+            # 用户自己定义的异常类：`class Patient_123Error(Exception)`，在 __main__ 里定义的
+            # 与 builtins 一样不带模块前缀（评审 #443 第九轮）；用户模块里的带前缀
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 7, in <module>',
+            "Patient_123Error: cohort B failed",
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 8, in <module>',
+            "mystudy.CohortError: patient 123",
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 9, in <module>',
+            "Patient_123Error",
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 10, in <module>',
+            "KeyboardInterrupt",
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 11, in <module>',
+            "numpy.exceptions.AxisError: axis 2 is out of bounds",
         ]
     )
     closers = [ln for ln in kept if not ln.startswith(("Traceback", "  File"))]
@@ -416,7 +440,14 @@ def test_user_print_exc_blocks_lose_their_free_text_message():
         "matplotlib.units.ConversionError: …",
         "ImportError: …",  # 形状对不上加载器的：只留类型（评审 #443 第六轮）
         "ImportError: cannot import name 'foo' from 'pkg.mod'",
+        # 类型名不在闭集（builtins 的异常类 / 已知第三方包开头的点分名）里：哈希
+        "exc:a7bb77bcf2: …",
+        "exc:3b0b364cbf: …",
+        "exc:a7bb77bcf2",
+        "KeyboardInterrupt",
+        "numpy.exceptions.AxisError: …",
     ], closers
+    assert "Patient" not in "\n".join(kept) and "mystudy" not in "\n".join(kept)
 
 
 @pytest.mark.parametrize(

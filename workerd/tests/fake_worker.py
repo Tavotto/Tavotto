@@ -63,6 +63,11 @@ def main():
         help="往 fd 1 直接写一行**非 UTF-8 字节**（cp936 的子进程输出 / C 扩展 printf 的形状）",
     )
     ap.add_argument(
+        "--garbage-inside-json",
+        action="store_true",
+        help="render 的响应本身合法，但 result 里的一个字串夹着非 UTF-8 字节（C 扩展往 fd 1 写的几个字节恰好夹进正在输出的响应）",
+    )
+    ap.add_argument(
         "--exit-code",
         type=int,
         default=0,
@@ -158,6 +163,14 @@ def main():
             # 绕开 TextIOWrapper：这一行就是要坏的字节，不能让 errors="replace" 洗干净
             sys.stdout.flush()
             os.write(1, "这不是 JSON".encode("gbk") + b"\n")
+        if args.garbage_inside_json and cmd == "render" and resp.get("ok"):
+            # 合法信封、正确的 request_id，只是 stem 这个字串里夹了一个 0xFF：
+            # lossy 解码后它是 U+FFFD，JSON 仍然合法——不先判 UTF-8 就会被当成正常响应收下
+            raw = json.dumps(resp, ensure_ascii=False).encode("utf-8")
+            raw = raw.replace(stem.encode("utf-8"), stem.encode("utf-8") + b"\xff", 1)
+            sys.stdout.flush()
+            os.write(1, raw + b"\n")
+            continue
         sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
         sys.stdout.flush()
 

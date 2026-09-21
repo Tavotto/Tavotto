@@ -277,19 +277,35 @@ impl WorkerProc {
                     // cp936 的子进程输出、C 扩展直接 printf 都是这个形状）。
                     // 判据要对得上事实：字节坏了是「管道上有垃圾」（protocol_mismatch，
                     // 并把那一行原样带出去），只有 read 回 0 / 出错才是 EOF。
-                    // 与 Python 池同一口径：那边 Popen 是 `errors="replace"`。
+                    //
+                    // **先判 UTF-8，再解析 JSON**（评审 #443 第九轮）：坏字节落在一个
+                    // 合法 JSON 字串**里面**时（C 扩展往 fd 1 写的几个字节恰好夹进
+                    // worker 正在输出的响应），lossy 替换成 U+FFFD 之后 serde 照样
+                    // 解析成功、request_id 也对得上——一条被篡改过的响应就这么当成
+                    // 正常结果收下了。lossy 的形态只用来把那一行带给人看。
+                    // 与 Python 池同一口径：那边是 `surrogateescape` + 解析前查残留。
                     match reader.read_until(b'\n', &mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(_) => {}
                     }
-                    let line = String::from_utf8_lossy(&buf);
-                    let line = line.trim_end_matches(['\n', '\r']);
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    let event = match serde_json::from_str::<Value>(line) {
-                        Ok(value) => WorkerEvent::Line(generation, value),
-                        Err(_) => WorkerEvent::Garbage(generation, line.to_string()),
+                    let event = match std::str::from_utf8(&buf) {
+                        Ok(text) => {
+                            let line = text.trim_end_matches(['\n', '\r']);
+                            if line.trim().is_empty() {
+                                continue;
+                            }
+                            match serde_json::from_str::<Value>(line) {
+                                Ok(value) => WorkerEvent::Line(generation, value),
+                                Err(_) => WorkerEvent::Garbage(generation, line.to_string()),
+                            }
+                        }
+                        Err(_) => {
+                            let shown = String::from_utf8_lossy(&buf);
+                            WorkerEvent::Garbage(
+                                generation,
+                                shown.trim_end_matches(['\n', '\r']).to_string(),
+                            )
+                        }
                     };
                     if events.send(event).is_err() {
                         return; // 会话没了，读线程跟着退出

@@ -22,9 +22,11 @@
   正在退出的进程当成就绪的 workerd——重启计数一次都不加，起来就崩的二进制
   于是无限重启，每次渲染白等一轮 spawn + 握手，还永远退不到 Python 池。
   半启动的那条要先 kill 再重启（否则每次泄漏一个子进程）。
-- **EOF 先问死因再说话（#435）**：读线程按字节读（`read_until` + lossy UTF-8）——
-  非 UTF-8 字节是「管道上有垃圾」（`protocol_mismatch`），不是 EOF；`lines()` 会把
-  一行坏字节当 Err 交回来，活着的 worker 被判成「崩溃」并被杀。真 EOF 之后
+- **EOF 先问死因再说话（#435）**：读线程按字节读（`read_until` + `std::str::from_utf8`，
+  **先判 UTF-8 再解析 JSON**，lossy 只用来把那一行带给人看）——非 UTF-8 字节是「管道上
+  有垃圾」（`protocol_mismatch`），不是 EOF；`lines()` 会把一行坏字节当 Err 交回来，活着的
+  worker 被判成「崩溃」并被杀；先 lossy 再解析则会把夹在合法字串里的坏字节洗成 U+FFFD、
+  把一条被篡改的响应当正常结果收下。真 EOF 之后
   `reap_after_eof(EXIT_GRACE)`：先等它自己退出，拿到 `ExitReport{code, signal,
   lingered}` 放进 `session_dead` 的 `error.exit`，宽限到了才 kill。**这里只如实报数**，
   退出码怎么解释归 Python（`pool.describe_exit`，唯一的一张表）——别在 Rust 里

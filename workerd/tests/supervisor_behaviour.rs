@@ -346,6 +346,28 @@ fn non_utf8_bytes_on_the_protocol_pipe_are_garbage_not_a_crash() {
     );
 }
 
+#[test]
+fn non_utf8_bytes_inside_a_json_envelope_are_garbage_not_a_response() {
+    // 评审 #443 第九轮：坏字节夹在一个**合法 JSON 字串里面**时，lossy 替换成 U+FFFD
+    // 之后 serde 照样解析成功、request_id 也对得上——一条被篡改过的响应会被当成
+    // 正常结果收下。UTF-8 要在解析 JSON **之前**判，lossy 的形态只用来带给人看。
+    let mut wd = Workerd::start();
+    let (sid, _) = wd.open(&["--garbage-inside-json"], 10_000);
+    let resp = wd.call(
+        "render",
+        json!({"patches": []}),
+        Some(&sid),
+        Some("Fig1"),
+        10_000,
+    );
+    assert_eq!(err_code(&resp), "protocol_mismatch", "{resp:#?}");
+    let tb = resp["error"]["traceback"].as_str().unwrap_or("");
+    assert!(
+        tb.contains("Fig1\u{FFFD}"),
+        "那一行要带出去，坏字节以 U+FFFD 代替: {tb:?}"
+    );
+}
+
 // ------------------------------ 队列 ------------------------------
 
 #[test]

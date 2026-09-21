@@ -19,6 +19,7 @@ Python」「日志在哪」）才能定位一次。有了这个包，用户点�
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import io
 import json
@@ -353,25 +354,49 @@ def _fh_footer_for_export(line: str) -> str:
     return f"Extension modules: … {m.group(0)}" if m else "Extension modules: …"
 
 
+#: 收尾行里**允许原样出门**的异常类型名：本进程 `builtins` 里的异常类（闭集——traceback
+#: 打印 builtins 与 `__main__` 里定义的类都不带模块前缀，`Patient_123Error` 与 `KeyError`
+#: 长得一样，只有查表分得开），以及 `matplotlib.units.ConversionError` 这种以已知第三方包
+#: 开头的点分名。其它一律 `exc:<sha1 前 10 位>`：用户 `class Patient_123Error(Exception)`
+#: 再 `traceback.print_exc()`，类型名就是用户源码里的标识符（评审 #443 第九轮）。
+_BUILTIN_EXCEPTIONS = frozenset(
+    name
+    for name, obj in vars(builtins).items()
+    if isinstance(obj, type) and issubclass(obj, BaseException)
+)
+
+
+def _exception_type_for_export(head: str) -> str:
+    name = head.strip()
+    if name in _BUILTIN_EXCEPTIONS:
+        return name
+    segments = name.split(".")
+    if len(segments) > 1 and segments[0] in _KNOWN_SITE_PACKAGES:
+        if all(seg.isidentifier() for seg in segments):
+            return name
+    return "exc:" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:10]
+
+
 def _closer_for_export(line: str) -> str:
-    """traceback 的收尾行 → 进包的形态：类型名保留，自由文本的 message 换成 `…`。
+    """traceback 的收尾行 → 进包的形态：类型名按闭集放行（否则哈希），自由文本的
+    message 换成 `…`。
 
     用户脚本 `except … : traceback.print_exc()` 打出来的块与引擎自己的结构一模一样
-    （评审 #443 第五轮）：结构齐全证明不了来历，能保证的只有「message 不出门」。
-    `ImportError` / `ModuleNotFoundError` 的 message 只在长成加载器那几种形状时保留，
-    而且只保留形状本身（模块名是标识符，`DLL load failed while importing X` 之后的
-    操作系统文案也不带）。
+    （评审 #443 第五轮）：结构齐全证明不了来历，能保证的只有「message 不出门」、
+    「类型名不是用户起的」。`ImportError` / `ModuleNotFoundError` 的 message 只在长成
+    加载器那几种形状时保留，而且只保留形状本身（模块名是标识符，`DLL load failed while
+    importing X` 之后的操作系统文案也不带）。
     """
     head, sep, message = line.partition(":")
-    exc_type = head.strip().rsplit(".", 1)[-1]
+    exc_type = _exception_type_for_export(head)
     if not sep or not message.strip():
-        return line
-    if exc_type in _CLOSER_KEEP_MESSAGE:
+        return exc_type
+    if head.strip() in _CLOSER_KEEP_MESSAGE:
         for pattern in _LOADER_MESSAGES:
             m = pattern.match(message.strip())
             if m:
-                return f"{head}: {m.group(0)}"
-    return f"{head}: …"
+                return f"{exc_type}: {m.group(0)}"
+    return f"{exc_type}: …"
 
 
 def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
