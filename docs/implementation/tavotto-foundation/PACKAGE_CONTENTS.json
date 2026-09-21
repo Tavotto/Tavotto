@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A / PR B）加交接 / 证据 / README / plan.json 后各算一次；U05（2026-09-21，PR A / C）加交接 / 证据 / README / plan.json / 台账后各算一次；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次；U09（2026-09-21）两条链第一次汇合（merge 4973a28f 进 foundation/u09-join）后按并集重算；U09（2026-09-21）加 evidence/u09 / 交接 / ADR 引用 / README / plan.json / 台账（FO30 enforced、FO32 observing）后再算一次；U10（2026-09-22）加 evidence/u10、交接、ADR 引用、ledger / enrollment / plan / registry 变更后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A / PR B）加交接 / 证据 / README / plan.json 后各算一次；U05（2026-09-21，PR A / C）加交接 / 证据 / README / plan.json / 台账后各算一次；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次；U09（2026-09-21）两条链第一次汇合（merge 4973a28f 进 foundation/u09-join）后按并集重算；U09（2026-09-21）加 evidence/u09 / 交接 / ADR 引用 / README / plan.json / 台账（FO30 enforced、FO32 observing）后再算一次；U10（2026-09-22）加 evidence/u10、交接、ADR 引用、ledger / enrollment / plan / registry 变更后再算一次；2026-09-22 用户拍板（Intel 矩阵改口 / 字体两默认）落到 ADR 与交接后再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -44,8 +44,8 @@
     },
     {
       "path": "ALL_PROMPTS.md",
-      "bytes": 88801,
-      "sha256": "64bb5dd6064402766122fc1c2a982c4f01aba534e7fd21af1382cfb82f0eb967"
+      "bytes": 88836,
+      "sha256": "49542f4615b655b177b854e63e4be123f3255486f5de6ebb2234bb5783da523a"
     },
     {
       "path": "ENROLLMENT.md",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 16835,
-      "sha256": "ab636d83c8a96e852af9015ba57110605746177edfac3c1de8f8a34b456cc2f0"
+      "bytes": 16870,
+      "sha256": "6642c6ca7e8359ee8cf55c73b576ed41afba2fda719966a3167a0faeab810209"
     },
     {
       "path": "SOURCES.md",
@@ -534,8 +534,8 @@
     },
     {
       "path": "handoffs/U10_cutover.md",
-      "bytes": 26860,
-      "sha256": "4a7c7bd2e3d53522efb0fecb5c082b39a38e8263f827db63874d1953854a0d15"
+      "bytes": 27230,
+      "sha256": "d481f0369b45624e3ec137dbf41b294c8764daadb131444ec686c4a626a802c4"
     },
     {
       "path": "phase_mapping.json",
@@ -609,8 +609,8 @@
     },
     {
       "path": "registry.json",
-      "bytes": 294748,
-      "sha256": "20b830fdfb4ccf3432bd58a31e2c00118ca698dfff1c29ea5ae57f1a8a140dc0"
+      "bytes": 294850,
+      "sha256": "2cc6cfe88195684e7a1014b8a2e8841fd163664797df8363ffb34c6c194b4337"
     },
     {
       "path": "sources_manifest.json",

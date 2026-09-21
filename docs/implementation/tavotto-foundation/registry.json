@@ -2871,7 +2871,7 @@
       "evidence": [],
       "merge_rule": "现有门禁+本切片测试；本项端到端实例只在明确准入后成为该lane必需。",
       "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。",
-      "u10_note": "U10：scripts/dev/u10_wheel_matrix.py 逐格 pip download --only-binary（evidence/u10/wheel_matrix.json）：五个原生包 × 3.10–3.14 × win x64 / macOS arm64 / Linux x86_64 75/75；macOS x86_64 pikepdf 10.x 无 wheel（informational，待拍板）。一次性测量，不是 CI 门禁——observing。"
+      "u10_note": "U10：scripts/dev/u10_wheel_matrix.py 逐格 pip download --only-binary（evidence/u10/wheel_matrix.json）：五个原生包 × 3.10–3.14 × win x64 / macOS arm64 / Linux x86_64 75/75；macOS x86_64 pikepdf 10.x 无 wheel（informational；用户 2026-09-22 拍板：支持矩阵如实改口「需自行编译 qpdf，未验证」，保持 pikepdf 10.x）。一次性测量，不是 CI 门禁——observing。"
     },
     {
       "id": "RC-101",

@@ -1,6 +1,6 @@
 # ADR 0073：字体默认变更的布局政策与旧项目处理
 
-日期：2026-09-22 · 状态：**Accepted（U10；随 ADR 0072 切默认生效；两处默认取值待用户拍板，见 §4）**
+日期：2026-09-22 · 状态：**Accepted（U10；随 ADR 0072 切默认生效；两处默认取值用户 2026-09-22 已拍板，见 §4）**
 相关：[0072 默认后端切换与 PyMuPDF 退役](0072-default-render-backend-cutover-and-pymupdf-retirement.md)、
 [0060 字体政策与 allowlist](0060-font-policy-and-allowlist.md)、[0059 Render IR](0059-render-ir-and-render-plan.md)、
 [0033 字形回退](0033-scientific-text-and-font-fallback.md)、[0045 CJK 回退链](0045-cjk-font-fallback-chain.md)；
@@ -29,7 +29,7 @@ Liberation Serif（`FontRegistry.record_for("serif", bold, italic)`）。打开�
 `tests/test_typography_families.py::test_the_family_reaches_the_pdf_font_resources` 钉的「缺省那一条走衬线」
 就是「老文档不重排」的直接证据。
 
-## 2. 集合外限制的产品表达（默认不加脸，待拍板）
+## 2. 集合外限制的产品表达（不加脸；已拍板）
 
 批准字体集合能画的码位从 61 238 降到 32 608（ADR 0060 §1 量的）：Hangul（11 172）、阿拉伯 / 天城 / 希伯来、
 数学字母（U+1Dxxx）、emoji（U+1Fxxx）、部分古文字不在——旧后端由渲染器自己挑一张 Noto Serif 画出，
@@ -42,10 +42,11 @@ Liberation Serif（`FontRegistry.record_for("serif", bold, italic)`）。打开�
 * 文档口径：本轮画布文字支持 Liberation 三族的拉丁 / 希腊 / 西里尔 / 常用符号 + Noto Sans SC 的中日文（含假名、
   常用符号），**不支持** Hangul 及上述脚本——在 `docs/rules/backend/pdf-backend-boundary.md` 与 ADR 0060 §1 写明；
   图内文字（matplotlib 画的）不受影响，那一侧仍是 worker 解释器里的字体与 ADR 0045 的回退链；
-* 要救回其中任何一段：allowlist 加一张 OFL 脸（改 `fonts_allowlist.json` + ADR 0060 §1 的限制表），
-  `fetch_fonts.py` 不用改——**是否加、加哪张，待用户拍板**（RC-028 split）。
+* **后续路径**（不在本轮）：要救回其中任何一段，就是 allowlist 加一张 OFL 脸——改 `fonts_allowlist.json`（名字 / URL /
+  sha256）+ ADR 0060 §1 的限制表 + 重生成覆盖表与向量（`gen_canvas_coverage.py` / `gen_glyph_plan_vectors.py`），
+  `fetch_fonts.py` 与冻结 / CI 步骤不用改；加哪张按 RC-028 split 另开决策。
 
-## 3. 前端同源预览（默认不做，待拍板）
+## 3. 前端同源预览（不做；已拍板）
 
 画布预览仍用 CSS 系统字体栈（`web/src/lib/typography.ts` 的 `canvasFontStack`），不把 Liberation / Noto 带进
 浏览器：`test_no_web_font_is_fetched_or_embedded` 继续成立，playground 的产物指纹不变。代价是预览里的字形与
@@ -54,12 +55,12 @@ Liberation Serif（`FontRegistry.record_for("serif", bold, italic)`）。打开�
 的三处改动（字体文件进 web 产物、`canvasFontStack` 指向它、`test_no_web_font_is_fetched_or_embedded`
 的判据改口）在 U06 交接里写明，本轮不动。
 
-## 4. 待用户拍板（主对话已问，尚无答复；本 ADR 按默认执行）
+## 4. 用户拍板（2026-09-22，主对话确认）
 
-1. 覆盖收窄：默认**不加脸**、如实表达（§2）。
-2. 前端同源预览：默认**不做**（§3）。
+1. 覆盖收窄：**不加脸**、如实表达（§2）——认可。
+2. 前端同源预览：**不做**，只切覆盖表与测量来源（§3）——认可。
 
-两条任一拍板改口，只动 allowlist / 前端字体栈那几处，本 ADR 的布局政策（§裁决摘要）不变。
+两条日后若改口，只动 allowlist / 前端字体栈那几处（§2 的后续路径），本 ADR 的布局政策（§裁决摘要）不变。
 
 ## 5. 反证
 

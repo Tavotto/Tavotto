@@ -39,8 +39,10 @@ registry R13 / R14 / R15 / CP08 / CP08-E）；`docs/legal/COMMERCIALIZATION_DEPE
   Python 3.10–3.14 × 三个正式目标（win x64 / macOS arm64 / Linux x86_64）**75/75 有 wheel**；informational：
   Linux aarch64 全有；**macOS x86_64：pikepdf 10.x 五档全部没有 wheel**（9.11.0 是最后一版有 Intel wheel 的）。
   这不是本 ADR 的裁决范围（支持矩阵里 Intel Mac 本来就是 unsupported 桌面版），但 `support-matrix.json` 那条
-  「Intel 用 pip 浏览器模式」的出路从此要多一句：pip 装 pikepdf 得自己编译（qpdf + C++ 工具链）。**待用户拍板**
-  的两条路：如实改口（本 ADR 先按这条写进 note），或把 pikepdf 下界放到 9.x（要另验 API 与 U02 的钉死版本）。
+  「Intel 用 pip 浏览器模式」的出路从此要多一句：pip 装 pikepdf 得自己编译（qpdf + C++ 工具链）。**用户 2026-09-22
+  拍板：支持矩阵如实改口**——pip 模式标「需自行编译 qpdf，未验证」，不冒称支持；**保持 pikepdf 10.x**（不放下界到 9.x、
+  不把 Intel 移出矩阵）。落点：`docs/support-matrix.json` 的 `macos-x86_64` 是唯一出处，两份 README 的 Intel 句与它同口径，
+  网站口径随它（`tests/test_support_matrix.py` 看护 README ↔ 矩阵）。
 * **许可与 NOTICE**（D15 主语是应用 / 发行闭包）：pikepdf MPL-2.0（qpdf Apache-2.0；传递 lxml BSD-3 / Pillow HPND）
   / fontTools MIT / uharfbuzz Apache-2.0（HarfBuzz MIT-old）/ pypdfium2 Apache-2.0 + BSD-3（PDFium）/ Liberation 与
   Noto Sans SC OFL 1.1。义务：MPL §3.2 告知源码获取方式（与既有 5 个 MPL crate 同一类，#182 的 NOTICE 链）；
@@ -101,14 +103,14 @@ registry R13 / R14 / R15 / CP08 / CP08-E）；`docs/legal/COMMERCIALIZATION_DEPE
 * 没有新增 required job；新增的都是接在现有 job 上的步骤（字体、退役扫描）。`03_CI_POLICY` §4 的提升条件
   ——预期、合法输入、fixture 先验、命令、产物、证据、负例、预算——在 `enrollment.json` 的 notes 里逐项。
 
-## 6. 没做 / 边界 / 待拍板
+## 6. 没做 / 边界 / 已拍板的默认
 
 * **发行资格未取得**（U11）：最终签名安装物、no-system-Python 目标、SBOM 尺子的第一次真跑（发布链演练）。
-* **Intel Mac 的 pip 渠道**（§1 的 wheel 表）——待用户拍板；本 ADR 只如实记事实。
+* **Intel Mac 的 pip 渠道**（§1 的 wheel 表）——已拍板：如实改口、保持 pikepdf 10.x；没有 Intel 机器，这条路仍是「未验证」。
 * **覆盖收窄**（61 238 → 32 608 个可画码位；Hangul / 阿拉伯 / 天城 / 数学字母 / emoji 不在）默认**不加脸**：
   产品如实表达（覆盖表 / 预检 / 问题面板），文档写明集合与集合外行为（ADR 0073 §2）；加脸 = allowlist 加一张
-  OFL 脸，随时可做——待用户拍板。
-* **前端同源预览**（把字体带进浏览器、改 `canvasFontStack`）默认**不做**：画布预览继续用 CSS 字体栈，只切覆盖表
-  与测量来源；`test_no_web_font_is_fetched_or_embedded` 继续成立。
+  OFL 脸，是后续路径不是本轮——**用户 2026-09-22 已认可这个默认**。
+* **前端同源预览**（把字体带进浏览器、改 `canvasFontStack`）**不做**（用户 2026-09-22 已认可）：画布预览继续用
+  CSS 字体栈，只切覆盖表与测量来源；`test_no_web_font_is_fetched_or_embedded` 继续成立。
 * `glyph-substituted` 规则与 `fallback` 层保留为空档（ADR 0060 的四步顺序不变、两侧闭集常量不变），不删。
 * `MIN_TAVOTTO_VERSION`：桥的 import 集本阶段没变，仍按 U08 的备注在下次发版抬。

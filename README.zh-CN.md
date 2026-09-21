@@ -54,7 +54,7 @@
 **在桌面版里。** macOS（Apple Silicon）与 Windows（x64）的应用自带 Python：打开
 图库、点选、拖拽、排版、检查、导出。Codex 或任何终端都能把一张图交接到已经开着的
 窗口里。Linux 没有安装包（beta，走 PyPI 在浏览器里用）；Intel Mac 不支持（PyPI
-那条路能跑，但不作承诺）——什么算支持，唯一出处是
+那条路需自行编译 qpdf，未验证）——什么算支持，唯一出处是
 [`docs/support-matrix.json`](docs/support-matrix.json)。
 
 两条路的安装都在[上手](#上手)；Codex 那条是
@@ -326,8 +326,10 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 这套内置环境也是安装包偏大的原因：**macOS 下载约 195 MB，Windows 约 89 MB，
 装完约半个 GB**。只付一次，而且完全离线。
 
-> macOS 版**只发 Apple Silicon（arm64）**。Intel Mac 没有构建、也没有验证过，
-> 请走下面的 PyPI 安装。没有 Linux 安装包；Linux 走 PyPI（浏览器模式，beta）。
+> macOS 版**只发 Apple Silicon（arm64）**。Intel Mac 没有构建、也没有验证过；
+> 下面的 PyPI 安装在 Intel Mac 上**未验证**，且自渲染后端切到 RenderCore 起要自行
+> 编译 qpdf / pikepdf（pikepdf 10.x 没有 x86_64 wheel）。没有 Linux 安装包；Linux
+> 走 PyPI（浏览器模式，beta）。
 > Windows 安装包是否经过代码签名，以各版 Release 页的说明为准；未签名的安装包
 > 首次运行会弹 **SmartScreen** 提示（点「更多信息 → 仍要运行」，或先对照
 > Release 页的 `SHA256SUMS.txt` 核验下载）。支持 / beta / 不支持的唯一权威

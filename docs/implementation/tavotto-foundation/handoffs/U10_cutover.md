@@ -50,7 +50,7 @@ U06 / U07 / U08 / U09 交接、`U00_FACADE_LEDGER.json`。复用（权威不动�
 
 | ID | 处置 | 证据 |
 |---|---|---|
-| RC-100 依赖实际覆盖当前 Python / OS 承诺 | **observing**：`u10_wheel_matrix.py` 五个原生包 × 3.10–3.14 × 正式三格 75/75；Linux aarch64 全有；**macOS x86_64 pikepdf 10.x 无 wheel**（待拍板） | `evidence/u10/wheel_matrix.json` |
+| RC-100 依赖实际覆盖当前 Python / OS 承诺 | **observing**：`u10_wheel_matrix.py` 五个原生包 × 3.10–3.14 × 正式三格 75/75；Linux aarch64 全有；**macOS x86_64 pikepdf 10.x 无 wheel**（已拍板：矩阵如实改口、保持 10.x） | `evidence/u10/wheel_matrix.json` |
 | RC-101 PIL / native / data 与 PyInstaller 正确打包 | **enforced**（integration）：spec 显式收 PDFium / qpdf、PIL 出 excludes、缺字体拒绝打包、每个跟踪的数据文件在 datas；产物腿扫 native 名单 | `test_runtime_build.py` 两条 + `retirement_scan_frozen_dist.json`（111 个原生文件，零 mupdf，libpdfium + libqpdf 在，字体 13） |
 | RC-102 科学 worker 与应用 runtime 继续隔离 | observing：`child_env()` 摘 PYTHONPATH 不变；FO32 出口断言科学环境里没有 pikepdf / pypdfium2 / uharfbuzz | `tests/test_foundation_join.py`（observing 腿） |
 | RC-103 wheel / sdist 在源码目录之外真实可用 | **enforced**（integration）：package job 干净 venv 装 wheel → 起服务冒烟；wheel 扫描 Requires-Dist 七个包 / 字体 13 / 覆盖表 / 零原生文件 | `retirement_scan_wheel.json` |
@@ -118,16 +118,17 @@ registry：RC-101 / 103 / 107 / 109 → enforced（各带 promotion 合同），
 （`enabled` 全 false 未翻）；SBOM 尺子首跑；Intel Mac pip 渠道；FO32 其它平台；`MIN_TAVOTTO_VERSION` 下次发版抬（U08 备注，本阶段
 桥的 import 集没变）。
 
-**待用户拍板（主对话已问，尚无答复；按默认执行并写进 ADR）**：① 覆盖收窄（61 238 → 32 608）默认不加脸、如实表达（ADR 0073 §2）；
-② 前端同源预览默认不做（ADR 0073 §3）；③ **新增**：Intel Mac 的 pip 渠道——pikepdf 10.x 无 x86_64 wheel，本轮按「支持矩阵与 README 如实
-改口」处理，放宽 pikepdf 下界到 9.x 是另一条路（ADR 0072 §1 / §6）。
+**用户拍板（2026-09-22，主对话确认，已写进 ADR）**：① 覆盖收窄（61 238 → 32 608）**不加脸**、如实表达（ADR 0073 §2；加脸 = allowlist
+加一张 OFL 脸，是后续路径）；② 前端同源预览**不做**，只切覆盖表与测量来源（ADR 0073 §3）；③ Intel Mac 的 pip 渠道——**支持矩阵如实改口**：
+pip 模式标「需自行编译 qpdf，未验证」，不冒称支持，**保持 pikepdf 10.x**（不放下界、不移出矩阵）；`docs/support-matrix.json` 是唯一出处，
+两份 README 同口径（`tests/test_support_matrix.py` 看护），**网站口径要跟着改**（官网仓库另做，见下一阶段输入 ⑥）。
 
 **下一个无阻塞阶段 / 子切片**：U11（发行资格）。给 U11 的输入：① 退役扫描的 `--sbom` 尺子只在发布链有输入——`release-publish.yml`
 生成 SBOM 之后接一步 `retirement_scan.py --sbom out/tavotto-sbom.spdx.json --wheel dist/*.whl`（本阶段没接：那条链每一步都是「第一次
 执行就失败」，要随 U11 的演练一起验）；② 冻结产物的 native 名单本机 111 个（`retirement_scan_frozen_dist.json` 的 `sample`），Windows /
 macOS 产物腿的扫描步在 PR 上首跑；③ `lab_acceptance.py` 结构检查多了三条（字体 / 覆盖表 / 闭包），lab 首跑看它；④ 打包依赖改装
 `requirements.txt`，发行链里任何还手写 `flask + pymupdf` 的地方（grep 过 `.github/`：没有）都要跟着；⑤ `MIN_TAVOTTO_VERSION` 抬版；
-⑥ 待拍板三条的结论落下来只动 allowlist / 前端字体栈 / support-matrix。
+⑥ 官网（tavotto-website 仓库）的 Intel Mac 口径改成与 `support-matrix.json` 一致（「需自行编译 qpdf，未验证」）——本仓库管不到那边。
 
 **回退方式、不能假装可回滚的外部副作用**：`git revert` 本 PR 即回到 U09 tip 的形状（候选未启用、旧后端为默认、旧生成物 / 旧用例 /
 旧工作流全部回来）；不自动发布、不删用户项目 / 环境、不把旧依赖装进新发行包。用户机器上：预览缓存旧文件不用清（键含后端身份，

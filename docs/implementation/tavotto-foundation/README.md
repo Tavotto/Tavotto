@@ -103,7 +103,7 @@ U10 已于 2026-09-22 执行（`implementation_status: done`；产品资格仍 `
 （`scripts/ci/retirement_scan.py`，五把尺子——应用源码 AST / 声明依赖闭包 / 干净进程阻断器跑主要路径 / 产物 native + wheel METADATA + 字体 /
 SBOM；主语是应用 / 发行 / runtime 闭包，例外按类别写明，`--selftest` 七条正负例）在旧闭包上三尺全红、候选在阻断器下 17 步 + smoke_app
 全路径全过；`u08_parity` 654 / 0 / 13 skip；闭包 wheel 表（`scripts/dev/u10_wheel_matrix.py`）正式三格 75/75，Intel Mac 无 pikepdf wheel
-（待拍板）；本机冻结 child 7/7。然后一个可审查变更：`BACKEND_DEFAULT = rendercore`、`pymupdf_backend.py` 删除、`pymupdf` 只剩
+（已拍板：矩阵如实改口、保持 10.x）；本机冻结 child 7/7。然后一个可审查变更：`BACKEND_DEFAULT = rendercore`、`pymupdf_backend.py` 删除、`pymupdf` 只剩
 `legacy-pymupdf` extra（测试读取器）、五个 native 包进 `dependencies`；`app.py` 旧分支删除；生成物换到默认落点（旧表存档为批准资产）；
 旧测试改走契约层 + 独立读取器（排版期望值一字未改）、U08 的 14 条 deselect 逐条处置；打包（spec 收 PDFium / qpdf、缺字体拒绝打包、
 `entry.py` 先分派 `--render-child`）与 CI（每条腿取字体、产物腿跑退役扫描）；根 `AGENTS.md` 两条不变量正式改写、`pdf-backend-boundary.md`

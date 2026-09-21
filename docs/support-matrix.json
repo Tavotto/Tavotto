@@ -3,7 +3,13 @@
   "note": "支持矩阵的唯一权威文件（1.0 审计 P1-06）。README、发布页、官网、应用内文案都以这里为准；tests/test_support_matrix.py 逐条与 pyproject / runtime-lock 对拍，防止承诺与事实分叉。status 语义：supported = 有安装包 + CI 门禁 + 真产物冒烟；beta = 可用但验收面没到 supported；unsupported = 不构建不承诺（能跑也别写进宣传）。label_en / en 是发布页用的英文成文（scripts/make_release_support_section.py 渲染进每个 Release body）——状态词由 status 派生，en 只写渠道与出路，不写支持等级。",
   "python": {
     "requires": ">=3.10,<3.15",
-    "tested": ["3.10", "3.11", "3.12", "3.13", "3.14"],
+    "tested": [
+      "3.10",
+      "3.11",
+      "3.12",
+      "3.13",
+      "3.14"
+    ],
     "note": "与 CI 矩阵一致（backend-fast 跑 3.10 / 3.13 / 3.14，package 的 wheel 冒烟多一档 Linux 3.14；tests/test_support_matrix.py 钉住 tested 的最高档必须在 backend-fast 里有腿）。3.14 于 2026-09-14 放开（issue #33）：Homebrew / pipx 默认解释器已是 3.14，而只有没写上界的 0.8.0 能被 3.14 的 pip 解析到。桌面版内置 runtime 仍是 3.13（packaging/runtime-lock.json），放开上界不等于换发行 runtime。"
   },
   "targets": [
@@ -30,9 +36,9 @@
       "label": "macOS Intel",
       "label_en": "macOS Intel",
       "status": "unsupported",
-      "channel": "pip / pipx（浏览器模式）",
-      "en": "No desktop build (never built or smoke-tested on Intel hardware). The PyPI browser mode (`pipx install \"tavotto[worker]\"`) is untested on Intel Macs and, since the renderer switched to RenderCore, needs pikepdf built from source there (pikepdf 10.x publishes no macOS x86_64 wheel).",
-      "note": "桌面产物没构建过也没冒烟过（runtime-lock 里 shipped=false，CI 无 Intel runner）。宣传物料不得写「支持 Intel」。pip 渠道自 2026-09-22（ADR 0072，RenderCore 是默认渲染后端）起多一条事实：pikepdf 10.x 在 PyPI 上没有 macOS x86_64 wheel（evidence/u10/wheel_matrix.json），`pip install tavotto` 在 Intel Mac 上要自己编译 pikepdf（qpdf + C++ 工具链）——本仓库没有 Intel 机器验证这条路；改口或放宽 pikepdf 下界待用户拍板。"
+      "channel": "pip / pipx（浏览器模式；需自行编译 qpdf，未验证）",
+      "en": "No desktop build (never built or smoke-tested on Intel hardware). The PyPI browser mode (`pipx install \"tavotto[worker]\"`) is **unverified** on Intel Macs and, since the renderer moved to RenderCore (2026-09-22), requires building qpdf / pikepdf from source there: pikepdf 10.x publishes no macOS x86_64 wheel. Not a supported route; the pikepdf lower bound stays at 10.x.",
+      "note": "桌面产物没构建过也没冒烟过（runtime-lock 里 shipped=false，CI 无 Intel runner）。宣传物料不得写「支持 Intel」。pip 渠道自 2026-09-22（ADR 0072，RenderCore 是默认渲染后端）起标「需自行编译 qpdf，未验证」：pikepdf 10.x 在 PyPI 上没有 macOS x86_64 wheel（evidence/u10/wheel_matrix.json），`pip install tavotto` 在 Intel Mac 上要自己编译 qpdf + pikepdf（C++ 工具链），本仓库没有 Intel 机器验证这条路，不冒称支持。用户 2026-09-22 拍板：如实改口，保持 pikepdf 10.x（不放下界、不移出矩阵）；README / 网站的 Intel 口径以本条为准。"
     },
     {
       "id": "windows-arm64",

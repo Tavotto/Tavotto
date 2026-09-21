@@ -59,7 +59,7 @@ not that canvas. Hosts that do not load local plugins never show the tools at al
 own Python: open a figure library, click, drag, lay the page out, check it, export.
 Codex, or any terminal, can hand a figure to the window that is already open. There
 is no installer for Linux (beta, from PyPI in a browser tab) or for Intel Macs (not
-supported; the PyPI route runs there without a promise) — the one place that decides
+supported; the PyPI route there is unverified and needs qpdf built from source) — the one place that decides
 what is supported is [`docs/support-matrix.json`](docs/support-matrix.json).
 
 Both routes are in [Get started](#get-started); the Codex one is
@@ -393,9 +393,9 @@ That runtime is also why the installers are large: **195 MB to download on macOS
 89 MB on Windows, around half a gigabyte once installed.** Paid once, and offline.
 
 > macOS builds are **Apple Silicon (arm64) only**. Intel Macs are neither built nor
-> tested — the PyPI install below runs there without a promise, and since the
-> renderer moved to RenderCore it needs `pikepdf` built from source on Intel Macs
-> (no x86_64 wheel on PyPI). There is no Linux installer; Linux runs from
+> tested — the PyPI install below is **unverified** there, and since the renderer
+> moved to RenderCore it needs `qpdf` / `pikepdf` built from source on Intel Macs
+> (pikepdf 10.x has no x86_64 wheel on PyPI). There is no Linux installer; Linux runs from
 > PyPI (browser mode, beta). On Windows, each release page states whether its
 > installer is code signed; an unsigned installer makes Windows show a
 > **SmartScreen** prompt on first run (choose *More info → Run anyway*, or verify
