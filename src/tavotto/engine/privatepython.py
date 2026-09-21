@@ -699,7 +699,11 @@ def _fetch(source: PythonSource, part: Path, job: _Inflight) -> str:
     h = hashlib.sha256()
     done = 0
     _emit(job, STAGE_DOWNLOADING, 0, source.size)
-    with urllib.request.urlopen(req, timeout=NETWORK_TIMEOUT_S) as resp, part.open("wb") as fh:
+    # 每次现建 opener 而不是模块级 `urlopen`：后者第一次调用时把 `ProxyHandler` 连同**当时**的
+    # `HTTP(S)_PROXY` / `NO_PROXY` 缓存进全局 opener，之后环境变量再变它也不看——代理配置要在
+    # 下载那一刻读（用例的死代理对照就是这样量的）。TLS 校验仍是 `HTTPSHandler` 的默认。
+    opener = urllib.request.build_opener()
+    with opener.open(req, timeout=NETWORK_TIMEOUT_S) as resp, part.open("wb") as fh:
         while True:
             _check_abort(job)
             chunk = resp.read(CHUNK)
