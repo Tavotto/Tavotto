@@ -31,6 +31,7 @@ on:
       - "src/tavotto/pdfbackend/__init__.py"
       - "src/tavotto/pixelmetrics.py"
       - "tests/test_rendercore_*.py"
+      - "tests/test_export_inspection.py"
       - "tests/golden/glyph_plan_vectors.rendercore.json"
       - "docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.json"
       - "tests/support/pdfread.py"
@@ -109,8 +110,8 @@ jobs:
         shell: bash
         run: |
           # 用例集就是 tests/test_rendercore_*.py（与本文件头、src/tavotto/AGENTS.md 说的同一个 glob）：手写清单会漂——
-          # U07 A 加的 compose / placement / raster 三个文件在清单里漏了整整六轮评审（Codex #463 第七轮 P2）
-          "$RC_PY" -m pytest tests/test_rendercore_*.py tests/test_font_provenance.py tests/test_import_architecture.py -p no:cacheprovider -rs -q --junitxml="$RUNNER_TEMP/pytest-u06.xml"
+          # U07 A 加的 compose / placement / raster 三个文件在清单里漏了整整六轮评审（Codex #463 第七轮 P2）；U08 B 的 test_export_inspection.py 不在 glob 里，单列
+          "$RC_PY" -m pytest tests/test_rendercore_*.py tests/test_export_inspection.py tests/test_font_provenance.py tests/test_import_architecture.py -p no:cacheprovider -rs -q --junitxml="$RUNNER_TEMP/pytest-u06.xml"
 
       - name: U08 对拍（旧契约用例在候选后端下逐字重跑；清单在 ledger candidate_parity，退出码 0 才算过）
         shell: bash
