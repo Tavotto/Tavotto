@@ -382,6 +382,54 @@ class TestPrivateBase:
             gen = managedenv.active_generation(proj)
             assert managedenv.generations(proj)[gen]["base_runtime"] == src.id
 
+    def test_a_new_private_runtime_makes_a_new_generation_and_never_touches_the_active_one(
+        self, tmp_path, house, no_base, fake, monkeypatch
+    ):
+        """Codex #464 P1：项目意图没变、锁换了版本（新 runtime id）→ 重建走的是**另一代**（代号折进 base），
+        active 那一代的记录与目录一个字节不动；新代失败时旧的照常可用，成功后才切过去。"""
+        server, src_a, _ = fake
+        project = _project(tmp_path)
+        rec, _ = _prepare(deprepair.create_joint_plan(project, "figure.py").plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        gen_a = managedenv.active_generation(project)
+        python_a = managedenv.python_of(project)
+        assert managedenv.generations(project)[gen_a]["base_runtime"] == src_a.id
+        # 锁换版本：另一份假归档（字节不同 → 新 id），已被别的项目供应到磁盘上
+        launches_b = tmp_path / "launches-b.log"
+        archive_b, sha_b, rel_b = fake_archive(
+            tmp_path / "serve-b", host_python=WORKER_PY, launches_log=launches_b
+        )
+        with LoopbackServer(tmp_path / "serve-b") as server_b:
+            src_b = source_from(
+                archive_b, sha_b, rel_b, url=server_b.url(archive_b.name), version=src_a.version
+            )
+            monkeypatch.setattr(privatepython, "source_for", lambda target=None, lock=None: src_b)
+            assert src_b.id != src_a.id
+            privatepython.provision(src_b)
+        deprepair.reset_state()
+        assert deprepair.base_python() == privatepython.python_of(src_b)
+        # 重建（delta 为空 → 与 gen_a 同一份意图），但 wheelhouse 被清空 → pip 必失败
+        monkeypatch.setenv("PIP_FIND_LINKS", str(tmp_path / "empty-house"))
+        (tmp_path / "empty-house").mkdir()
+        out = deprepair._rebuild_guarded(project, None)
+        assert out["state"] == deprepair.STATE_FAILED, out
+        assert managedenv.active_generation(project) == gen_a
+        assert managedenv.python_of(project) == python_a
+        assert Path(python_a).is_file() and _in(python_a, "print('alive')") == "alive"
+        gens = managedenv.generations(project)
+        assert gens[gen_a]["state"] == "ready" and gens[gen_a]["base_runtime"] == src_a.id
+        failed = [g for g in gens if g != gen_a]
+        assert len(failed) == 1 and gens[failed[0]]["state"] == "incomplete"
+        assert gens[failed[0]]["base_runtime"] == src_b.id
+        # wheelhouse 回来：重建成功 → 新代（≠ gen_a）active、base 是 B；旧代退役
+        monkeypatch.setenv("PIP_FIND_LINKS", str(house))
+        out2 = deprepair._rebuild_guarded(project, None)
+        assert out2.get("ok") is True, out2  # 成功时回的是事务结果（ok / generation），不是进度记录
+        gen_b = managedenv.active_generation(project)
+        assert gen_b != gen_a and gen_b == failed[0]
+        assert managedenv.generations(project)[gen_b]["base_runtime"] == src_b.id
+        assert gen_a not in managedenv.generations(project)
+
     def test_an_old_private_runtime_survives_while_a_generation_records_it(
         self, tmp_path, house, no_base, fake
     ):

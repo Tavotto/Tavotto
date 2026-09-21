@@ -2697,6 +2697,10 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     identity = job.identity or depplan._digest(
         {"requirements": sorted(requirements), "constraints": sorted(job.constraints)}
     )
+    if base_runtime:
+        # 私有 Python 换了版本（新 id）而项目意图没变：venv 挪不走 base，建在另一份 base 上的是
+        # **另一代**——身份把 base 折进去（Codex #464 P1）；系统 base 的身份形状不变（U04 的纪律）。
+        identity = depplan._digest({"identity": identity, "base_runtime": base_runtime})
     # 目录名永远不撞**在册**的代（active / 旧代还有人用）：重建两次同一份账是同一个身份，
     # 不能把 active 那代删掉重来（Codex #461 P1）
     generation = managedenv.fresh_generation(project, identity)

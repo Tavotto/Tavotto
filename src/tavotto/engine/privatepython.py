@@ -44,6 +44,7 @@ import json
 import logging
 import os
 import posixpath
+import secrets
 import shutil
 import socket
 import stat
@@ -640,7 +641,10 @@ def _download(source: PythonSource, job: _Inflight) -> Path:
             dest.unlink()  # 缓存里躺着一份对不上的：不是复用对象
     except OSError as exc:
         raise ProvisionError(ERROR_WRITE_FAILED, f"归档缓存不可读: {exc}") from exc
-    part = dest.with_name(dest.name + ".part")
+    # `.part` 带 pid + 随机后缀：两个进程同时供应同一份时各写各的，先完成的把正式名 `os.replace`
+    # 上去，后完成的再 replace 一次同一份字节（校验过才会走到这里）——不会有谁在 rename 时发现
+    # 自己的 `.part` 已被别人搬走（Codex #464 P2）。孤儿 `.part` 由 `_reap_orphans` 按时限清。
+    part = dest.with_name(f"{dest.name}.{os.getpid()}-{secrets.token_hex(4)}.part")
     last: Exception | None = None
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
         _check_abort(job)

@@ -474,7 +474,12 @@ def base_python() -> str | None:
     # 这台机器上没有合格的基础解释器 → **已经供应好的**私有 Python（U05，ADR 0063）。
     # 只认磁盘上已就位的那份，这里一个字节都不下载：下载要经计划里明示的授权
     # （`deprepair` 的事务在 `provision_private` 为真时才去取），探测路径上不联网。
-    return privatepython.python_of()
+    # **且只在这个目标仍提供这条路时**：锁文件 `enabled=false` 而没有逃生门（或逃生门是 0）时，
+    # 哪怕磁盘上躺着早先供应好的一份也不用——能力关掉就是关掉，行为回到 U04（Codex #464 P2）。
+    source = privatepython.source_for()
+    if source is None or not privatepython.offered(source):
+        return None
+    return privatepython.python_of(source)
 
 
 def _run(argv: list[str], timeout: int) -> tuple[int, str]:
