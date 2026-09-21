@@ -15,6 +15,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   createJointDependencyPlan: vi.fn(),
   prepareJointDependencies: vi.fn(),
   cancelJointDependencies: vi.fn(),
+  skipDependencyPreparation: vi.fn(),
   fetchEngineEnvironment: vi.fn(),
 }))
 
@@ -23,6 +24,7 @@ import {
   DEPENDENCY_PREPARATION_CODE,
   prepareJointDependencies,
   fetchEngineEnvironment,
+  skipDependencyPreparation,
   type DependencyPreparationOffer,
   type JointDependencyPlan,
 } from '@/lib/api'
@@ -31,6 +33,7 @@ import { DependencyPrepareButton } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDepRepairStore } from '@/store/depRepairStore'
+import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 
 declare global {
@@ -42,6 +45,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const planMock = vi.mocked(createJointDependencyPlan)
 const prepareMock = vi.mocked(prepareJointDependencies)
 const envMock = vi.mocked(fetchEngineEnvironment)
+const skipMock = vi.mocked(skipDependencyPreparation)
 const en = (key: string, values?: Record<string, unknown>) => t(`engine.${key}`, { ns: 'errors', ...values })
 
 const joint = (over: Partial<JointDependencyPlan> = {}): JointDependencyPlan => ({
@@ -76,7 +80,7 @@ const offer = (over: Partial<DependencyPreparationOffer> = {}): DependencyPrepar
     { kind: 'tavotto_managed', venv: '', python: '', modifies_user_environment: false, creates_environment: true, available: true, reason: '' },
   ],
   rounds_remaining: 3,
-  asked_before: false,
+  skipped: false,
   ...over,
 })
 
@@ -113,6 +117,8 @@ beforeEach(() => {
   planMock.mockReset()
   prepareMock.mockReset()
   envMock.mockReset()
+  skipMock.mockReset()
+  useEnvStore.setState({ dependencyPreparation: null })
   envMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
   setCurrentProjectId('p1')
   useDepRepairStore.getState().reset()
@@ -132,7 +138,7 @@ describe('DependencyPrepareDialog', () => {
 
   it('列出要装的包（项目声明的完整形态）、认不出的 import、目标默认是后端算的那个', async () => {
     await render(<DependencyPrepareDialog />)
-    await act(async () => useDepRepairStore.getState().requestPreparation(offer()))
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
     expect(dialog()).not.toBeNull()
     expect(text()).toContain(en('dependencyPrepareTitle', { count: 2 }))
     expect(text()).toContain('tabulate[widechars]==0.9.0')
@@ -145,7 +151,7 @@ describe('DependencyPrepareDialog', () => {
 
   it('项目 venv 就是此刻选中的解释器时：它是默认目标，文案说清会改用户环境', async () => {
     await render(<DependencyPrepareDialog />)
-    await act(async () => useDepRepairStore.getState().requestPreparation(withProjectVenv()))
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(withProjectVenv()))
     expect(radio('project_venv')!.checked).toBe(true)
     expect(radio('tavotto_managed')!.checked).toBe(false)
     expect(text()).toContain(en('dependencyTargetHint_project_venv', { venv: '.venv' }))
@@ -171,7 +177,7 @@ describe('DependencyPrepareDialog', () => {
       tracked: {},
     })
     await render(<DependencyPrepareDialog />)
-    await act(async () => useDepRepairStore.getState().requestPreparation(offer()))
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
     await act(async () => button(en('dependencyPrepareRun'))!.click())
     await act(async () => {})
     expect(planMock).toHaveBeenCalledTimes(1)
@@ -186,7 +192,7 @@ describe('DependencyPrepareDialog', () => {
     await act(async () =>
       useDepRepairStore.getState().onProgress({ plan_id: 'jp1', state: 'done', log: '', error: null, code: '', flow: 'joint', committed: true }),
     )
-    expect(useDepRepairStore.getState().preparation).toBeNull()
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
     expect(dialog()).toBeNull()
     expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true)
   })
@@ -197,7 +203,7 @@ describe('DependencyPrepareDialog', () => {
     })
     prepareMock.mockResolvedValue({ started: true, plan_id: 'jp2', state: 'preparing', log: '', error: null, code: '' })
     await render(<DependencyPrepareDialog />)
-    await act(async () => useDepRepairStore.getState().requestPreparation(offer()))
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
     await act(async () => button(en('dependencyPrepareRun'))!.click())
     await act(async () =>
       useDepRepairStore.getState().onProgress({ plan_id: 'jp2', state: 'failed', log: '', error: '', code: 'dependency_hash_mismatch', flow: 'joint' }),
@@ -214,7 +220,7 @@ describe('DependencyPrepareDialog', () => {
       }),
     )
     await render(<DependencyPrepareDialog />)
-    await act(async () => useDepRepairStore.getState().requestPreparation(offer()))
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
     await act(async () => button(en('dependencyPrepareRun'))!.click())
     await act(async () => {})
     expect(prepareMock).not.toHaveBeenCalled()
@@ -230,20 +236,42 @@ describe('DependencyPrepareDialog', () => {
         <DependencyPrepareButton offer={payload} />
       </>,
     )
-    await act(async () => useDepRepairStore.getState().requestPreparation(payload))
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(payload))
     await act(async () => button(en('dependencyPrepareLater'))!.click())
     expect(dialog()).toBeNull()
-    expect(useDepRepairStore.getState().preparation).toBeNull()
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
     await act(async () => button(en('dependencyPrepareOpen'))!.click())
     expect(dialog()).not.toBeNull()
   })
 
+  it('「不准备，直接运行」= 明确的 skip：POST 一次、关框、把那次「先准备」的面板重新排上', async () => {
+    skipMock.mockResolvedValue({ ok: true, script: 'figure.py', skipped: true })
+    useRenderStore.setState({
+      byKey: {
+        k: {
+          ...(useRenderStore.getState().byKey.k ?? ({} as never)),
+          fileId: 'figure.pdf', status: 'error', code: DEPENDENCY_PREPARATION_CODE,
+          lastPatches: '[]', wantPatches: '[]', stale: false,
+        } as never,
+      },
+      tracked: {},
+    })
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    await act(async () => button(en('dependencyPrepareSkip'))!.click())
+    await act(async () => {})
+    expect(skipMock).toHaveBeenCalledWith('figure.py')
+    expect(planMock).not.toHaveBeenCalled()
+    expect(dialog()).toBeNull()
+    expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true)
+  })
+
   it('换了项目的旧载荷不弹；同一时刻只开一份', async () => {
     await render(<DependencyPrepareDialog />)
-    await act(async () => useDepRepairStore.getState().requestPreparation(offer(), 'p0'))
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer(), 'p0'))
     expect(dialog()).toBeNull()
-    await act(async () => useDepRepairStore.getState().requestPreparation(offer(), 'p1'))
-    await act(async () => useDepRepairStore.getState().requestPreparation(offer({ script: 'other.py' }), 'p1'))
-    expect(useDepRepairStore.getState().preparation?.script).toBe('figure.py')
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer(), 'p1'))
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer({ script: 'other.py' }), 'p1'))
+    expect(useEnvStore.getState().dependencyPreparation?.script).toBe('figure.py')
   })
 })

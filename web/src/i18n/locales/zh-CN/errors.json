@@ -185,6 +185,7 @@
     "dependencyPrepareOpen": "准备依赖…",
     "dependencyPrepareRetry": "重试",
     "dependencyPrepareRun": "准备并继续",
+    "dependencyPrepareSkip": "不准备，直接运行",
     "dependencyPrepareState_creating_env": "正在创建 Python 环境…",
     "dependencyPrepareState_installing": "正在安装…",
     "dependencyPrepareState_preparing": "正在准备…",

@@ -185,6 +185,7 @@
     "dependencyPrepareOpen": "Prepare dependencies…",
     "dependencyPrepareRetry": "Retry",
     "dependencyPrepareRun": "Prepare and continue",
+    "dependencyPrepareSkip": "Run without preparing",
     "dependencyPrepareState_creating_env": "Creating the Python environment…",
     "dependencyPrepareState_installing": "Installing…",
     "dependencyPrepareState_preparing": "Preparing…",
