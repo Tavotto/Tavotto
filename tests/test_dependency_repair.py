@@ -1451,3 +1451,54 @@ def test_run_pip_does_not_start_when_already_cancelled(tmp_path):
     assert not marker.exists()
     code, _out = deprepair._run_pip(argv, threading.Event(), lambda _t: None)
     assert code == "" and marker.exists()  # 没取消照常跑
+
+
+def test_a_joint_plan_is_claimed_before_the_worker_starts(client, project, monkeypatch):
+    """P1：第一次完成前重复提交 `/dependencies/prepare` 不起第二个线程——认领在起线程之前、在锁内；
+    第二次只把在途的进度交回去（`started: false`）。"""
+    from tavotto import app as m
+
+    m.open_project(str(project))
+
+    root = str(project)
+
+    class _Plan:
+        project = root
+        plan_id = "jp-claim"
+
+    monkeypatch.setattr(
+        deprepair, "get_joint_plan", lambda pid: _Plan if pid == "jp-claim" else None
+    )
+    started: list[str] = []
+    gate = threading.Event()
+
+    def _held(plan_id, on_event, *, claimed=False):
+        started.append(plan_id)
+        gate.wait(timeout=30)
+        with deprepair._lock:  # 与真 prepare() 的 finally 同形：释放认领与句柄
+            deprepair._running.discard(plan_id)
+            deprepair._cancels.pop(plan_id, None)
+        return {"state": "done"}
+
+    monkeypatch.setattr(deprepair, "_prepare_guarded", _held)
+    first = client.post("/api/engine/dependencies/prepare", json={"plan_id": "jp-claim"})
+    second = client.post("/api/engine/dependencies/prepare", json={"plan_id": "jp-claim"})
+    assert first.status_code == 200 and first.get_json()["started"] is True
+    assert second.status_code == 200 and second.get_json()["started"] is False
+    deadline = time.time() + 5
+    while len(started) < 1 and time.time() < deadline:
+        time.sleep(0.02)
+    time.sleep(0.2)  # 给「本不该起」的第二个线程一点时间露面
+    assert started == ["jp-claim"], started  # 只起了一个
+    assert deprepair.cancel_status("jp-claim")["accepted"] is True  # 在途的那份可以取消
+    gate.set()
+    deadline = time.time() + 5
+    while "jp-claim" in deprepair._running and time.time() < deadline:
+        time.sleep(0.02)
+    assert "jp-claim" not in deprepair._running
+    # 同步入口也认领：已在途的第二次调用拿 not_allowed
+    assert deprepair._claim("jp-sync") is True
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.prepare("jp-sync")
+    assert err.value.code == deprepair.ERROR_NOT_ALLOWED
+    deprepair._running.discard("jp-sync")

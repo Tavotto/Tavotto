@@ -270,6 +270,7 @@
       "managed_env_broken": "This Tavotto environment is broken. You can rebuild it.",
       "managed_env_create_failed": "Couldn’t create the Tavotto environment.",
       "managed_env_unavailable": "No Python on this machine can be used to create an environment. Install Python 3.10 or newer, or pick an existing environment.",
+      "managed_env_write_failed": "Couldn’t write the Tavotto environment manifest (the disk may be full or read-only); the environment was not switched. Free up space and retry.",
       "package_disk_low": "Less than 200 MB of disk space is free. Free some space, then install.",
       "package_env_missing": "This project has no Tavotto environment yet. Install a package first and the environment is created with it.",
       "package_lookup_failed": "Couldn’t read the index’s answer. You can still type the package name and install it.",

@@ -327,6 +327,41 @@ class TestGenerations:
             with pytest.raises(ValueError):
                 managedenv.generation_dir(tmp_path, bad)
 
+    def test_manifest_write_failure_is_visible_at_registration_and_activation(
+        self, tmp_path, monkeypatch
+    ):
+        """登记一代与切 active 都是事务判据：清单写不下去（卷满 / 只读 / replace 被拒）照抛 `OSError`，
+        `active` 在磁盘上仍指旧的一代；记账那些路仍尽力而为（回 False，不抛）（Codex #470 P1）。"""
+        project = tmp_path / "paper"
+        project.mkdir()
+        managedenv.register_generation(
+            project, "g1", requirements=[], constraints=[], identity="a", base_python="/x"
+        )
+        py = managedenv.generation_python(project, "g1")
+        py.parent.mkdir(parents=True, exist_ok=True)
+        py.write_text("", encoding="utf-8")
+        managedenv.activate(project, "g1")
+        assert managedenv.active_generation(project) == "g1"
+        managedenv.register_generation(
+            project, "g2", requirements=[], constraints=[], identity="b", base_python="/x"
+        )
+
+        def _disk_full(self, target):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(Path, "replace", _disk_full)
+        with pytest.raises(OSError):
+            managedenv.activate(project, "g2")
+        with pytest.raises(OSError):
+            managedenv.register_generation(
+                project, "g3", requirements=[], constraints=[], identity="c", base_python="/x"
+            )
+        # 记账那些路不抛：回 False
+        assert managedenv.write_manifest(project, managedenv.read_manifest(project)) is False
+        monkeypatch.undo()
+        assert managedenv.active_generation(project) == "g1"  # 磁盘上没切
+        assert "g3" not in managedenv.generations(project)  # 也没登记
+
     def test_fresh_generation_never_reuses_a_registered_name(self, tmp_path):
         """同一份身份再来一次：在册的（active / 旧代有人用）不复用，加序号；没在册的原名（Codex #461 P1）。"""
         project = tmp_path / "paper"
@@ -788,6 +823,41 @@ class TestJointTransaction:
         assert managedenv.active_generation(project) == f"{active}-2"
         assert managedenv.generations(project)[f"{active}-2"]["identity"] == identity
         assert _importable(managedenv.python_of(project), ALPHA[1])
+
+    def test_activation_write_failure_is_a_failure_not_a_commit(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        """提交点那一下清单写不下去（卷满 / 只读）：事务报 `managed_env_write_failed`、不宣称
+        committed、磁盘上 `active` 仍指上一代、上一代照旧可用（Codex #470 P1：此前吞掉写失败，
+        `done` + `activated: true` 而清单还指旧的一代）。"""
+        project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
+        assert _prepare(project)["state"] == deprepair.STATE_DONE
+        old_gen = managedenv.active_generation(project)
+        (project / "figure.py").write_text(
+            f"import {ALPHA[1]}\nimport {BETA[1]}\n", encoding="utf-8"
+        )
+        (project / "requirements.txt").write_text(f"{ALPHA[0]}\n{BETA[0]}\n", encoding="utf-8")
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        real_activate = managedenv.activate
+
+        def _activate_on_a_full_disk(p, generation, **kw):
+            def _full(self, target):
+                raise OSError(28, "No space left on device")
+
+            with pytest.MonkeyPatch.context() as mp:
+                mp.setattr(Path, "replace", _full)
+                return real_activate(p, generation, **kw)
+
+        monkeypatch.setattr(managedenv, "activate", _activate_on_a_full_disk)
+        rec = _prepare_with(plan)
+        assert rec["state"] == deprepair.STATE_FAILED, rec
+        assert rec["code"] == deprepair.ERROR_MANAGED_WRITE_FAILED
+        assert rec.get("committed") is not True
+        assert managedenv.active_generation(project) == old_gen
+        gens = managedenv.generations(project)
+        assert [g for g, rec_ in gens.items() if rec_["state"] == "ready"] == [old_gen]
+        assert _importable(managedenv.python_of(project), ALPHA[1])
+        assert deprepair.cancel_status(plan.plan_id)["reason"] == "not_found"  # 没有「已提交」
 
     def test_hash_locked_managed_generation_installs_only_the_lock(
         self, tmp_path, house, offline_managed_env, monkeypatch

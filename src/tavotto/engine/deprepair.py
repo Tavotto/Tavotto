@@ -89,6 +89,8 @@ ERROR_PIP_UNAVAILABLE = "pip_unavailable"
 ERROR_MANAGED_UNAVAILABLE = "managed_env_unavailable"
 ERROR_MANAGED_CREATE_FAILED = "managed_env_create_failed"
 ERROR_MANAGED_BROKEN = "managed_env_broken"
+#: 受管环境的 manifest 写不下去（卷满 / 只读）：登记 / 切 active 没落盘，事务不宣称成功
+ERROR_MANAGED_WRITE_FAILED = "managed_env_write_failed"
 ERROR_PLAN_STALE = "repair_plan_stale"
 ERROR_BUSY = "dependency_install_busy"
 #: 环境被一条活跃的 `tavotto run` 会话占着（ADR 0021 §6）。**与 `ERROR_BUSY`
@@ -289,6 +291,7 @@ def reset_state(project: str | Path | None = None) -> None:
         if project is None:
             _plans.clear()
             _joint_plans.clear()
+            _running.clear()
             _committed.clear()
             _gate_skipped.clear()
             _progress.clear()
@@ -2414,14 +2417,35 @@ def get_joint_plan(plan_id: str) -> JointRepairPlan | None:
         return _joint_plans.get(str(plan_id or ""))
 
 
-def prepare_async(plan_id: str, on_event=None) -> None:
-    """起线程执行一份联合计划。**取消句柄在起线程之前登记**：调用方一回 202 用户就可能取消，
+#: 已认领（正在执行）的联合计划 id：同一份计划只起一个执行线程（Codex #470 P1：第一次还没
+#: 消费掉计划前重复提交 `/prepare`，两个线程各自重算事实、排队拿锁、各装一遍）。
+_running: set[str] = set()
+
+
+def _claim(plan_id: str) -> bool:
+    """认领一份计划：回 True = 这次认领成功；False = 已有人在跑。**在起线程之前**。"""
+    with _lock:
+        if plan_id in _running:
+            return False
+        _running.add(plan_id)
+        return True
+
+
+def prepare_async(plan_id: str, on_event=None) -> bool:
+    """起线程执行一份联合计划；回 False = 这份计划已在执行，**不再起第二个线程**（调用方把
+    在途的进度原样交回去）。**认领与取消句柄都在起线程之前**：调用方一回 202 用户就可能取消，
     那时线程可能还在重算事实、还没拿锁——句柄不在表里的话 `cancel_status` 只能回 `not_found`，
     安装照常改环境（Codex #470 P1）。`prepare()` 复用这一个句柄。"""
-    _register_cancel(plan_id)
+    pid = str(plan_id or "")
+    if not _claim(pid):
+        return False
+    _register_cancel(pid)
     threading.Thread(
-        target=lambda: _prepare_guarded(plan_id, on_event), daemon=True, name="tavotto-dep-prepare"
+        target=lambda: _prepare_guarded(pid, on_event, claimed=True),
+        daemon=True,
+        name="tavotto-dep-prepare",
     ).start()
+    return True
 
 
 def _register_cancel(plan_id: str) -> threading.Event:
@@ -2434,9 +2458,9 @@ def _register_cancel(plan_id: str) -> threading.Event:
         return ev
 
 
-def _prepare_guarded(plan_id: str, on_event) -> dict:
+def _prepare_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
     try:
-        return prepare(plan_id, on_event)
+        return prepare(plan_id, on_event, claimed=claimed)
     except RepairError as exc:
         return _emit(plan_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
     except Exception as exc:  # noqa: BLE001
@@ -2444,13 +2468,17 @@ def _prepare_guarded(plan_id: str, on_event) -> dict:
         return _emit(plan_id, STATE_FAILED, on_event, code=ERROR_FAILED, error=str(exc))
 
 
-def prepare(plan_id: str, on_event=None) -> dict:
+def prepare(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
     """执行一份联合计划。执行端只认 `plan_id`；执行前重算环境指纹与事实（`repair_plan_stale`）。
 
-    取消句柄从第一行起就在表里（`prepare_async` 已登记的复用）：重算事实那几秒里来的取消，在拿锁
-    之前就生效，一个字节不写（ADR 0061 §六 ①）；不论怎么退出，句柄与计划都在 finally 里清掉。
+    同一份计划只能被执行一次（`_claim`；`prepare_async` 已认领的传 `claimed=True`），第二个
+    调用方拿到 `dependency_install_not_allowed`。取消句柄从第一行起就在表里（`prepare_async`
+    已登记的复用）：重算事实那几秒里来的取消，在拿锁之前就生效，一个字节不写（ADR 0061 §六 ①）；
+    不论怎么退出，认领、句柄与计划都在 finally 里清掉。
     """
     pid = str(plan_id or "")
+    if not claimed and not _claim(pid):
+        raise RepairError(ERROR_NOT_ALLOWED, "这份准备计划已经在执行")
     cancel_ev = _register_cancel(pid)
     try:
         plan = get_joint_plan(pid)
@@ -2505,6 +2533,7 @@ def prepare(plan_id: str, on_event=None) -> dict:
         with _lock:
             _cancels.pop(pid, None)
             _joint_plans.pop(pid, None)
+            _running.discard(pid)
 
 
 def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Event) -> dict:
@@ -2538,17 +2567,20 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
         raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
-    if cancel_ev.is_set():
-        # 自检期间接受的取消（`cancel_status` 还没过提交点）要算数：包已经在用户 venv 里了，
-        # 如实报 cancelled + 体检，不接着 remember / 作废会话（Codex #461 P2）
+    # 自检期间接受的取消（`cancel_status` 还没过提交点）要算数：包已经在用户 venv 里了，
+    # 如实报 cancelled + 体检，不接着 remember / 作废会话（Codex #461 P2）。「看事件 + 定提交」
+    # 与 `cancel_status` 同一把锁，两边只会有一个赢
+    with _lock:
+        late_cancel = cancel_ev.is_set()
+        if not late_cancel:
+            _committed[plan.plan_id] = time.time()
+    if late_cancel:
         health = projectenv.probe_environment(python)
         detail = {"health_ok": bool(health.get("ok")), "health_code": health.get("code", "")}
         _emit(
             plan.plan_id, STATE_CANCELLED, on_event, joint=plan, code=ERROR_CANCELLED, result=detail
         )
         return {"ok": False, "code": ERROR_CANCELLED, **detail}
-    with _lock:
-        _committed[plan.plan_id] = time.time()
     projectenv.remember(plan.project, python, automatic=False, trigger="dependency_repair")
     pool.note_project_python_ok(python)
     pool.invalidate(plan.script, plan.project)
@@ -2658,14 +2690,17 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         )
     # ---- 建：最终目录里，先登记为 incomplete ----
     job.emit(STATE_CREATING_ENV)
-    managedenv.register_generation(
-        project,
-        generation,
-        requirements=list(requirements),
-        constraints=list(job.constraints),
-        identity=identity,
-        base_python=base,
-    )
+    try:
+        managedenv.register_generation(
+            project,
+            generation,
+            requirements=list(requirements),
+            constraints=list(job.constraints),
+            identity=identity,
+            base_python=base,
+        )
+    except OSError as exc:
+        raise RepairError(ERROR_MANAGED_WRITE_FAILED, f"环境清单写入失败: {exc}") from exc
     ok, out = managedenv.create_generation_venv(project, generation, base)
     if not ok:
         managedenv.mark_generation(
@@ -2740,8 +2775,16 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "worker 自检未通过"
         )
         raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
-    if cancel_ev.is_set():
-        # 自检期间接受的取消要算数：`cancel_status` 到这里都还没过提交点（Codex #461 P2）
+    # ---- 提交点：切 active。之后拒绝取消 ----
+    # 自检期间接受的取消要算数（Codex #461 P2）：「看事件 + 定提交」与 `cancel_status`「看提交 +
+    # 设事件」同一把锁——接受了的取消不会与提交交错，两边只会有一个赢
+    with _lock:
+        if cancel_ev.is_set():
+            late_cancel = True
+        else:
+            late_cancel = False
+            _committed[job.progress_id] = time.time()
+    if late_cancel:
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "验证期间取消"
         )
@@ -2750,10 +2793,18 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             code=ERROR_CANCELLED,
             result={"generation": generation, "activated": False},
         )
-    # ---- 提交点：切 active。之后拒绝取消 ----
-    with _lock:
-        _committed[job.progress_id] = time.time()
-    managedenv.activate(project, generation, python_version=managedenv.python_version_of(python))
+    try:
+        managedenv.activate(
+            project, generation, python_version=managedenv.python_version_of(python)
+        )
+    except OSError as exc:
+        # 清单没落盘 = 没切：撤回「已提交」，这一代按 incomplete 记（尽力而为），如实报失败
+        with _lock:
+            _committed.pop(job.progress_id, None)
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "激活清单写入失败"
+        )
+        raise RepairError(ERROR_MANAGED_WRITE_FAILED, f"环境清单写入失败: {exc}") from exc
     # 这一代装完之后的 freeze 快照：修复时的对照（不是回滚，ADR 0038）
     managedenv.record_snapshot(project, f"after-{job.label}", _freeze(python))
     installed = _versions_of(python, [r["distribution"] for r in job.record])
@@ -2945,9 +2996,9 @@ def cancel_status(plan_id: str) -> dict:
         if pid in _committed:
             return {"accepted": False, "reason": "committed"}
         ev = _cancels.get(pid)
-    if ev is None:
-        return {"accepted": False, "reason": "not_found"}
-    ev.set()
+        if ev is None:
+            return {"accepted": False, "reason": "not_found"}
+        ev.set()  # 与事务「定提交」那一下同一把锁：接受了就不会再被提交
     return {"accepted": True, "reason": ""}
 
 
