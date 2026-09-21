@@ -719,23 +719,29 @@ def test_the_dependency_door_projection_carries_no_machine_paths(
     text = json.dumps(body, ensure_ascii=False)
     for label, needle in needles.items():
         assert needle not in text, f"依赖门投影里带了机器路径 {label}: {needle}"
-    # 项目 venv 目标：`targets[].venv / python` 是项目相对路径，不是绝对路径
+    # 项目 venv 目标：`targets[].venv / python` 是项目相对的 **POSIX** 路径（不是绝对路径，也不随 OS
+    # 换分隔符——投影给前端显示、也进计划的身份，跨平台要长一个样）。两种布局各量一次：POSIX 的
+    # `.venv/bin/python` 与 Windows 的 `.venv/Scripts/python.exe`；解释器由替身给，不要求真的存在。
     outside = tmp_path / "elsewhere" / "envs" / "sci" / "bin" / "python"
-    venv_python = root / ".venv" / "bin" / "python"
-    monkeypatch.setattr(
-        deprepair,
-        "joint_target_for",
-        lambda p, s: (deprepair.TARGET_PROJECT_VENV, str(venv_python), "project_venv"),
-    )
-    deprepair.reset_state(root)
-    body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
-    door = body["result"]["required_input"]
-    assert door["target_kind"] == deprepair.TARGET_PROJECT_VENV
-    venv_target = next(t for t in door["targets"] if t["kind"] == deprepair.TARGET_PROJECT_VENV)
-    assert venv_target["venv"] == ".venv" and venv_target["python"] == ".venv/bin/python"
-    text = json.dumps(body, ensure_ascii=False)
-    for label, needle in {**needles, "outside": str(outside), "venv": str(venv_python)}.items():
-        assert needle not in text, f"依赖门投影里带了机器路径 {label}: {needle}"
+    for layout in (("bin", "python"), ("Scripts", "python.exe")):
+        venv_python = root / ".venv" / layout[0] / layout[1]
+        monkeypatch.setattr(
+            deprepair,
+            "joint_target_for",
+            lambda p, s, vp=venv_python: (deprepair.TARGET_PROJECT_VENV, str(vp), "project_venv"),
+        )
+        deprepair.reset_state(root)
+        body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
+        door = body["result"]["required_input"]
+        assert door["target_kind"] == deprepair.TARGET_PROJECT_VENV
+        venv_target = next(t for t in door["targets"] if t["kind"] == deprepair.TARGET_PROJECT_VENV)
+        assert venv_target["venv"] == ".venv"
+        assert venv_target["python"] == f".venv/{layout[0]}/{layout[1]}", venv_target
+        assert "\\" not in json.dumps(venv_target)
+        text = json.dumps(body, ensure_ascii=False)
+        needles_here = {**needles, "outside": str(outside), "venv": str(venv_python)}
+        for label, needle in needles_here.items():
+            assert needle not in text, f"依赖门投影里带了机器路径 {label}: {needle}"
 
 
 def _facts_of(python: str):
