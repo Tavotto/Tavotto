@@ -66,7 +66,7 @@
   负缩放（RC-040）——两者都仍是矢量、文字层在；`opacity: 0` 是取值不是缺席（RC-042）。注释 / 动作 / JavaScript 不进产物，
   加密 / 坏文件 / 缺页以 `source_unreadable` 拒绝（RC-046），不画空框。
 - **位图源经 `rasterio.decode()`（Pillow，U07 起是 `rendercore` extra 的直接依赖）成 `RasterBuffer`**：8 bit RGB / RGBA、
-  紧凑 stride、**alpha 一律 straight**；写成 DeviceRGB Image XObject + /SMask；8 bit RGB / 灰度 JPEG 原字节直通 `/DCTDecode`。
+  紧凑 stride、**alpha 一律 straight**（Pillow 报 `RGBa` / `La` 的预乘图先反预乘，不许静默丢 alpha）；写成 DeviceRGB Image XObject + /SMask；8 bit RGB / 灰度 JPEG 原字节直通 `/DCTDecode`。
   像素网格不变，缩放只在 `cm` 里。`raster.RasterBuffer` 是本包里一块像素的唯一形状（栅格输出也用它，U07 第二切片的 ADR）。
 - **写入器再核一次字节身份**：`files`（`job` 里是 `sources.read_frozen()` 核过 hash 的那一份）交进来的每份字节按 sha256
   与 `FileResource.sha256` 比，不符 `source_identity`、没交 `source_bytes_missing`——与 `read_frozen()` 是有意的两道（RC-014）。
