@@ -687,3 +687,64 @@ def test_a_failed_explicit_environment_is_an_error_with_the_explicit_reason(
     body = _wait(client, plan["plan_id"])
     assert body["result"]["status"] == preparation.STATUS_ERROR
     assert body["result"]["error"]["code"] == engine_pool.EXPLICIT_UNUSABLE_CODE
+
+
+def test_the_dependency_door_projection_carries_no_machine_paths(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """U04 加进投影的那一支——`needs_input` 的 `dependency_preparation_required`（联合计划 + 可选
+    目标 + 轮次）——同一份合同、同一套针：数据目录 / 用户目录 / 解释器 / 临时目录一个都不进 HTTP
+    投影（ADR 0053 §二；计划的公开身份不含路径是 ADR 0061 §三）。目标是受管环境（项目里没有
+    venv）与项目 venv 两种各量一次——后者的 `targets[].venv / python` 只能是项目相对路径。"""
+    from tavotto.engine import deprepair
+
+    deprepair.reset_state()
+    root = _project(tmp_path, "d")
+    (root / "fig.py").write_text("import tavotto_test_nowhere\n" + SCRIPT, encoding="utf-8")
+    (root / "requirements.txt").write_text("tavotto-test-nowhere==1.0\n", encoding="utf-8")
+    _open(client, root)
+    # 这组用例的解释器是隔离出来的假路径（conftest），目标事实由替身给：这里量的是投影的形状
+    monkeypatch.setattr(
+        deprepair.depplan, "target_facts", lambda python, use_cache=True: _facts_of(python)
+    )
+    needles = {**_machine_paths(root), "tmp": str(tmp_path)}
+    body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
+    assert body["result"]["status"] == preparation.STATUS_NEEDS_INPUT, body["result"]
+    door = body["result"]["required_input"]
+    assert door["code"] == deprepair.ERROR_PREPARATION_REQUIRED
+    assert door["plan"]["status"] == "ready"
+    assert door["plan"]["requirements"] == ["tavotto-test-nowhere==1.0"]
+    assert [t["kind"] for t in door["targets"]] == [deprepair.TARGET_MANAGED]
+    assert body["plan"]["dependency_preparation"]["plan"]["identity"] == door["plan"]["identity"]
+    text = json.dumps(body, ensure_ascii=False)
+    for label, needle in needles.items():
+        assert needle not in text, f"依赖门投影里带了机器路径 {label}: {needle}"
+    # 项目 venv 目标：`targets[].venv / python` 是项目相对路径，不是绝对路径
+    outside = tmp_path / "elsewhere" / "envs" / "sci" / "bin" / "python"
+    venv_python = root / ".venv" / "bin" / "python"
+    monkeypatch.setattr(
+        deprepair,
+        "joint_target_for",
+        lambda p, s: (deprepair.TARGET_PROJECT_VENV, str(venv_python), "project_venv"),
+    )
+    deprepair.reset_state(root)
+    body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
+    door = body["result"]["required_input"]
+    assert door["target_kind"] == deprepair.TARGET_PROJECT_VENV
+    venv_target = next(t for t in door["targets"] if t["kind"] == deprepair.TARGET_PROJECT_VENV)
+    assert venv_target["venv"] == ".venv" and venv_target["python"] == ".venv/bin/python"
+    text = json.dumps(body, ensure_ascii=False)
+    for label, needle in {**needles, "outside": str(outside), "venv": str(venv_python)}.items():
+        assert needle not in text, f"依赖门投影里带了机器路径 {label}: {needle}"
+
+
+def _facts_of(python: str):
+    from tavotto.engine import depplan, importscan
+
+    return depplan.TargetFacts(
+        python=python,
+        marker_env={"python_version": "3.12", "sys_platform": sys.platform},
+        stdlib=importscan.HOST_STDLIB,
+        installed={"matplotlib": "3.10.0", "numpy": "2.2.0"},
+        prefix=str(Path(python).parent.parent),
+    )
