@@ -301,7 +301,7 @@ def test_an_automatically_remembered_interpreter_that_broke_is_invalidated_and_r
     )
     assert plan.environment["invalidated"]["reason"] == "no_matplotlib"
     assert plan.environment["trigger"] == projectenv.TRIGGER_FIRST_OPEN
-    assert plan.environment["evidence"]["python_version"]
+    assert plan.environment["python_version"] and plan.environment["support"]
 
 
 @needs_worker

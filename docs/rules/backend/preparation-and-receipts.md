@@ -35,7 +35,8 @@
   grant 只由 `workdir.set_mode / grant_for` 记账，只记时刻不记人，多 `mode` 与 `decided`。
 - **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一）：它调 `pool.resolve_worker_python(root,
   script=…)`——项目 venv 的发现 + 体检 + 记住在这里已经发生（每进程每项目一次），计划里
-  `environment.evidence / discovery / invalidated / error.explicit` 如实写下选了谁、凭什么、发现了什么
+  `environment.python_version / matplotlib_version / support / discovery / invalidated / error.explicit`
+  如实写下选了谁、凭什么（体检量到的事实，ADR 0053 的公开投影：项目外的路径一律 None）、发现了什么
   没采用、上一条自动决策是不是刚作废、显式选择为什么用不了。计划仍然只读产品的决定，不替它选。
 - **首开要问的事是终局 `needs_input`**（U03，ADR 0057 §三）：`workdir.decision_for` 说要问
   （数据只在项目根找得到 / 两处同名不同值）时 `register()` 直接落 `needs_input`，

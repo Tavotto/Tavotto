@@ -144,8 +144,10 @@ def test_fo01_same_directory_csv_opens_automatically(tmp_path):
         assert plan["workdir_decision"]["evidence"]["verdict"] == "default_ok"
         assert plan["launch_context"]["cwd_origin"] == "sandbox"
         assert plan["grant"]["cwd_write"]["granted"] is False
-        # 环境是产品自己选的：计划里有证据（首开发现在这个夹具里找不到 venv——如实记）
-        assert plan["environment"]["python"] and plan["environment"]["source"]
+        # 环境是产品自己选的：计划里有证据（首开发现在这个夹具里找不到 venv——如实记）；
+        # 选中的是项目外的解释器，公开投影只给来源标签，路径一律 None（ADR 0053 §二）
+        assert plan["environment"]["source"] and plan["environment"]["source_label"]
+        assert plan["environment"]["python"] is None
         assert plan["environment"]["error"] is None
         assert plan["environment"]["discovery"]["ok"] is False
         assert plan["environment"]["discovery"]["code"] == "project_env_not_found"
@@ -481,7 +483,7 @@ def test_fo15_explicit_interpreter_without_matplotlib_stops_with_a_reason(tmp_pa
         plan, result = state["plan"], state["result"]
         assert plan["environment"]["error"]["code"] == "explicit_python_unusable"
         assert plan["environment"]["error"]["explicit"]["source"] == "env_override"
-        assert plan["environment"]["python"] == ""  # 没有擅自选别的
+        assert plan["environment"]["python"] is None  # 没有擅自选别的（公开投影：没有就是 None）
         assert result["status"] == "error", result
         assert result["error"]["code"] == "explicit_python_unusable"
         assert result["receipt"] is None and result["created_runtime"] is False
