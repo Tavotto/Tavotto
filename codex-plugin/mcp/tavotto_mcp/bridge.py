@@ -254,6 +254,19 @@ class Session:
     #: 最近一次通过验收的规范化结果（裁决 + 产物验收 + 那一版的 patch_hash）。
     #: `patch_hash` 与会话当前不一致时它就是过期的——导出必须如实说出来。
     normalized: dict | None = None
+    #: 注册表里这张图的开销档位（画布的渲染看门狗按它分级）。
+    cost: str = ""
+    #: 最近一次渲染的 worker 警告；与 manifest / svg 同一次响应。
+    warnings: list = field(default_factory=list)
+    #: raster 档下最近一次渲染**同一次响应**里带回的受控尺寸位图（base64）。
+    #: 非 raster 档恒为 None。留着它是为了 `session_state()` 不必再画一遍：
+    #: 位图与 manifest 的配对纪律（ADR 0022）要求它来自同一次渲染。
+    preview_png_base64: str | None = None
+    #: 最近一次**默认参数**的预检结果（`run_preflight` 不带 profile / journal /
+    #: 导出参数那一档），连同它算出时的 `patch_hash` 与 profile 印章。
+    #: `session_state()` 只在两者都还对得上时复用；否则重算——预检是 manifest
+    #: 与规范的纯函数，键对得上就没有第二个答案。
+    preflight_cache: dict | None = None
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -523,6 +536,7 @@ def open_figure(
             script=info["script"],
             entry=info["entry"],
             profile=profile,
+            cost=str(info.get("cost", "") or ""),
         )
         # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
         # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
@@ -991,6 +1005,9 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     session.manifest = resp["manifest"]
     session.svg = resp.get("svg")
     session.preview = resp.get("preview")
+    session.warnings = list(resp.get("warnings", []) or [])
+    # 上一版的位图属于上一组 patches；这一次不是 raster 档就没有位图可配对。
+    session.preview_png_base64 = None
     session.rev = getattr(worker, "rev", session.rev + 1)
     session.last_used = time.time()
     out = {
@@ -999,7 +1016,7 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
         "patch_hash": session.patch_hash(),
         "worker_generation": getattr(worker, "generation", None),
         "render_revision": session.rev,
-        "warnings": resp.get("warnings", []),
+        "warnings": session.warnings,
         "timings": resp.get("timings", {}),
     }
     if session.preview is not None:
@@ -1019,6 +1036,7 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
             out["preview_png_base64"] = preview_png(
                 session, list(patches), previewbudget.RASTER_PREVIEW_WIDTH_PX
             )
+            session.preview_png_base64 = out["preview_png_base64"]
         except BridgeError as exc:
             # 位图失败不该把这次**成功的渲染**变成一条错误：manifest 是对的、
             # 编辑语义是完整的，缺的只是画面。如实回一个 code，别静默。
@@ -1117,6 +1135,47 @@ def _contract_diff(session: Session, patches: list) -> list[dict]:
                 }
             )
     return diff
+
+
+def session_state(session_id: str) -> dict:
+    """会话**此刻**的完整快照——manifest / SVG / 位图 / patches——**不重渲染**。
+
+    这是内嵌画布的取件通道（issue #457）：`tavotto_open_figure` 的工具结果会进
+    宿主的模型上下文、rollout 与 UI 事件三条路，Codex 把最后那条封顶在 1 MiB，
+    超过就把 `structuredContent` 整个置空（`server.HOST_EVENT_RESULT_CAP_BYTES`）。
+    画布自己发的 `tools/call` 走的是宿主直接代理的那条路，不进模型上下文也不
+    截断，所以大图的负载从这里取，open 的结果里只留一个够画布认出会话的把手。
+
+    全部字段都来自会话对象上最近一次 `_render` 留下的东西：manifest 与 svg /
+    位图**同一次响应**（ADR 0022 不变量 5）；`patches` 是它们对应的那一组——
+    画布必须用它来 seed 账本，否则下一次编辑会把模型已经应用的修改静默还原。
+    """
+    session = get_session(session_id)
+    if session.manifest is None:
+        raise BridgeError(
+            "会话还没有 manifest（先 apply 一次 override 或重新 open）", code="no_manifest"
+        )
+    out = {
+        "ok": True,
+        "session_id": session.id,
+        "project": session.project,
+        "stem": session.stem,
+        "script": session.script,
+        "entry": session.entry,
+        "cost": session.cost,
+        "profile": engine_profiles.stamp(session.profile),
+        "patches": list(session.patches),
+        "patch_hash": session.patch_hash(),
+        "render_revision": session.rev,
+        "manifest": session.manifest,
+        "svg": session.svg,
+        "warnings": list(session.warnings),
+    }
+    if session.preview is not None:
+        out["preview"] = session.preview
+    if session.preview_png_base64 is not None:
+        out["preview_png_base64"] = session.preview_png_base64
+    return out
 
 
 def preview_png(session: Session, patches: list, width_px: int) -> str:
@@ -1232,7 +1291,7 @@ def run_preflight(
             "passed": not counts.get("error", 0) and not counts.get("warn", 0),
         },
     )
-    return {
+    out = {
         "ok": True,
         "session_id": session.id,
         "stem": session.stem,
@@ -1252,6 +1311,24 @@ def run_preflight(
         "needs_confirm": bool(summary["blocking"] or summary["not_verifiable"]),
         "report": format_preflight(session, profile, issues, summary),
     }
+    if profile_id is None and journal is None and not export_formats and export_dpi is None:
+        # 默认参数那一档缓存到会话上：open 刚算过一遍，画布随后经
+        # `session_state()` 取快照时不必再等一次（大图的预检是十秒级）。
+        # 键 = patch_hash + profile 印章，两者任一变了就作废（见 Session 注释）。
+        session.preflight_cache = out
+    return out
+
+
+def cached_preflight(session: Session) -> dict | None:
+    """会话上还**对得上**的默认预检结果；对不上或没有就 None。"""
+    cached = session.preflight_cache
+    if not cached:
+        return None
+    if cached.get("patch_hash") != session.patch_hash():
+        return None
+    if cached.get("profile") != engine_profiles.stamp(session.profile):
+        return None
+    return cached
 
 
 def format_preflight(session: Session, profile: dict, issues: list[dict], summary: dict) -> str:

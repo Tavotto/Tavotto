@@ -180,6 +180,7 @@ def test_tools_list_shape():
         "tavotto_export",
         "tavotto_verify_replay",
         "tavotto_refresh_project",
+        "tavotto_session_state",
         "tavotto_close_session",
     ]
     for t in tools:
@@ -198,6 +199,7 @@ def test_only_canvas_tools_carry_the_ui_resource():
         "tavotto_preflight",
         "tavotto_export",
         "tavotto_refresh_project",
+        "tavotto_session_state",
         "tavotto_close_session",
     ):
         assert "_meta" not in tools[name]
@@ -2516,3 +2518,202 @@ def test_batch_params_are_declared_in_the_schema(batch_project):
     assert props["stems"]["type"] == "array" and props["stems"]["items"]["type"] == "string"
     assert props["discover_stems"]["type"] == "boolean"
     assert schema["additionalProperties"] is False
+
+
+# ------- issue #457：工具结果的体积预算与画布经 session_state 取件 -------------
+#
+# Codex 把 MCP 工具结果送给桌面 UI 的那份副本封顶在 1 MiB，超过就把
+# structuredContent / _meta 整个置空（`server.HOST_EVENT_RESULT_CAP_BYTES` 的注释）。
+# 症状是分裂的：模型看到完整结果、后续工具都好使，iframe 永远停在「等待 open」。
+# 这一节钉的是：结果自己守预算、省略有顺序且说出口、画布另有一条不截断的取件路。
+
+
+class BigFakeWorker(FakeWorker):
+    """manifest 有几百个带长 editable 表的元素——issue 里那张 422 元素的图的形状。"""
+
+    def __init__(self, elements: int = 600, pad: int = 1800) -> None:
+        super().__init__()
+        self.elements = elements
+        self.pad = pad
+
+    def _manifest(self, patches):
+        base = super()._manifest(patches)
+        # 摆成互不重叠的网格：六百段文字叠在同一处会让预检报出 C(600, 2) 条
+        # text-overlap（73 MB），那测的就不再是「manifest 大」而是「预检大」。
+        for i in range(self.elements):
+            x, y = (i % 25) * 0.04, (i // 25) * 0.04
+            base["elements"].append(
+                {
+                    "gid": f"axes_0.texts_{i}",
+                    "role": "text",
+                    "label": f"文字 “p{i}”",
+                    "draggable": True,
+                    "bbox": [x, y, 0.03, 0.03],
+                    "anchor": [x, y],
+                    "drag_prop": "pos_frac",
+                    "editable": [{"prop": "text", "type": "text", "value": "x" * self.pad}],
+                }
+            )
+        return base
+
+
+@pytest.fixture
+def big_pool(monkeypatch):
+    worker = BigFakeWorker()
+    monkeypatch.setattr(bridge.engine_pool, "get", lambda *a, **k: worker)
+    return worker
+
+
+@pytest.fixture
+def widget_present(monkeypatch):
+    """画布产物在不在磁盘上与这一节无关：只要 `_meta` 会被挂上，预算就得连它一起量。"""
+    monkeypatch.setattr(widget, "available", lambda: True)
+
+
+def _wire_bytes(result: dict) -> int:
+    return server._serialized_bytes(result)
+
+
+def test_inline_budget_sits_under_the_host_cap_with_headroom():
+    """预算是宿主上限的镜像，而且**必须留余量**：贴着 1 MiB 量的是序列化差异。"""
+    assert server.HOST_EVENT_RESULT_CAP_BYTES == 1024 * 1024
+    assert server.CANVAS_INLINE_BUDGET_BYTES <= server.HOST_EVENT_RESULT_CAP_BYTES * 3 // 4
+
+
+def test_serialized_bytes_counts_like_serde_json():
+    """量的口径 = 紧凑 JSON、UTF-8、非 ASCII 不转义（Python 默认的 ensure_ascii 会把
+    每个汉字数成 6 字节，预算就会在 CJK 标签多的图上提前触发）。"""
+    assert server._serialized_bytes({"a": "中"}) == len('{"a":"中"}'.encode("utf-8"))
+    assert server._serialized_bytes({"a": [1, 2]}) == len('{"a":[1,2]}')
+
+
+def test_open_result_no_longer_duplicates_the_payload_into_meta(project, fake_pool, widget_present):
+    """`_meta` 只挂资源元数据。复制一份 structuredContent 进 `_meta.widgetData` 会让结果
+    体积翻倍——issue #457 那张图正是被这一半推过宿主上限的。"""
+    res = _call("tavotto_open_figure", {"project_path": str(project)})
+    assert res["_meta"]["ui"]["resourceUri"] == widget.RESOURCE_URI
+    assert "widgetData" not in res["_meta"]
+
+
+def test_small_open_result_is_left_exactly_as_it_was(project, fake_pool, widget_present):
+    """没超预算的结果一个字段都不动：小图走的还是 08-24 验收过的那条路。"""
+    res = _call("tavotto_open_figure", {"project_path": str(project)})
+    body = _body(res)
+    assert _wire_bytes(res) <= server.CANVAS_INLINE_BUDGET_BYTES
+    assert "elided" not in body
+    assert body["manifest"]["elements"] and body["svg"].startswith("<svg")
+    assert "tavotto_session_state" not in res["content"][0]["text"]
+
+
+def test_open_result_over_the_cap_elides_in_order_and_says_so(project, big_pool, widget_present):
+    """超预算：先省 svg，不够再省 manifest，够了就停；预检的计数与阻断布尔永远在；
+    `elided` 说清省了什么、去哪儿取；文字里也提一句。"""
+    res = _call("tavotto_open_figure", {"project_path": str(project)})
+    body = _body(res)
+    assert not res.get("isError")
+    assert _wire_bytes(res) <= server.CANVAS_INLINE_BUDGET_BYTES
+    assert body["elided"]["fields"] == ["svg", "manifest"]
+    assert body["elided"]["fetch_with"] == "tavotto_session_state"
+    assert body["elided"]["inline_bytes"] > server.CANVAS_INLINE_BUDGET_BYTES
+    assert "manifest" not in body and "svg" not in body
+    # 画布认会话靠的把手一个都不能少
+    for key in ("session_id", "project", "stem", "script", "profile", "patch_hash"):
+        assert key in body, key
+    assert "counts" in body["preflight"] and "blocking" in body["preflight"]
+    assert "tavotto_session_state" in res["content"][0]["text"]
+    assert "widgetData" not in res["_meta"]
+
+
+def test_elision_keeps_going_into_the_preflight_lists_only_when_it_must(
+    project, big_pool, widget_present, monkeypatch
+):
+    """manifest / svg 都省了还超（预检清单本身巨大）：先省 warn / suggestion /
+    not_verifiable 三档，最后才是 errors——计数永远留着。"""
+    real = server._safe_preflight
+
+    def bloated(session_id):
+        out = real(session_id)
+        assert out is not None and "counts" in out
+        out["warnings"] = [
+            {"id": "w", "severity": "warn", "text": "y" * 2000, "object_ids": [], "gids": []}
+            for _ in range(500)
+        ]
+        out["counts"] = {**out["counts"], "warn": 500}
+        return out
+
+    monkeypatch.setattr(server, "_safe_preflight", bloated)
+    res = _call("tavotto_open_figure", {"project_path": str(project)})
+    body = _body(res)
+    assert _wire_bytes(res) <= server.CANVAS_INLINE_BUDGET_BYTES
+    assert body["elided"]["fields"] == [
+        "svg",
+        "manifest",
+        "preflight.warnings",
+        "preflight.suggestions",
+        "preflight.not_verifiable",
+    ]
+    assert body["preflight"]["counts"]["warn"] == 500
+    assert "errors" in body["preflight"], "阻断项清单还放得下就不该省"
+
+
+def test_session_state_hands_the_canvas_the_full_payload_without_rerendering(
+    project, big_pool, widget_present, monkeypatch
+):
+    """画布取件那条路：manifest / svg 全量、与 open 那次渲染同一份；不碰 worker；
+    预检复用会话上缓存的那份（大图的预检是十秒级，画布不该再等一次）。"""
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    assert "manifest" not in opened  # 前提：这张图确实被省略了
+    renders_before = len(big_pool.calls)
+    monkeypatch.setattr(
+        server, "_safe_preflight", lambda sid: pytest.fail("session_state 不该重算预检")
+    )
+
+    res = _call("tavotto_session_state", {"session_id": opened["session_id"]})
+    body = _body(res)
+    assert not res.get("isError")
+    assert "_meta" not in res, "取件不带出第二块 iframe"
+    assert len(big_pool.calls) == renders_before
+    assert body["session_id"] == opened["session_id"]
+    assert body["manifest"] == big_pool._manifest([])
+    assert body["svg"].startswith("<svg")
+    assert body["patches"] == [] and body["patch_hash"] == opened["patch_hash"]
+    assert body["preflight"] == opened["preflight"]
+    for key in ("project", "stem", "script", "profile", "render_revision"):
+        assert body[key] == opened[key], key
+    assert "elided" not in body, "取件通道不截断"
+
+
+def test_session_state_after_apply_carries_the_patches_and_a_fresh_preflight(
+    project, fake_pool, widget_present
+):
+    """apply 之后取快照：patches 是当前那组、manifest 是它们对应的那份、预检按新
+    hash 重算——画布 seed 账本靠的就是这三样对得上。"""
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    patches = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 7.0}]
+    applied = _body(
+        _call("tavotto_apply_overrides", {"session_id": opened["session_id"], "patches": patches})
+    )
+    body = _body(_call("tavotto_session_state", {"session_id": opened["session_id"]}))
+    assert body["patches"] == patches
+    assert body["patch_hash"] == applied["patch_hash"] != opened["patch_hash"]
+    assert body["manifest"] == applied["manifest"]
+    assert body["preflight"]["counts"]  # 算出来了，而且不是 open 那份的复用
+    assert body["render_revision"] == applied["render_revision"]
+
+
+def test_cached_preflight_is_invalidated_by_patch_hash_and_profile(project, fake_pool):
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    session = bridge.get_session(opened["session_id"])
+    assert bridge.cached_preflight(session) is not None
+    session.patches = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 7.0}]
+    assert bridge.cached_preflight(session) is None, "patch_hash 变了就不能复用"
+    session.patches = []
+    assert bridge.cached_preflight(session) is not None
+    session.profile = {**session.profile, "version": "9.9.9"}
+    assert bridge.cached_preflight(session) is None, "规范版本变了就不能复用"
+
+
+def test_session_state_for_an_unknown_session_is_a_structured_error(project, fake_pool):
+    res = _call("tavotto_session_state", {"session_id": "s-nope"})
+    assert res["isError"] is True
+    assert _body(res)["code"] == "unknown_session"

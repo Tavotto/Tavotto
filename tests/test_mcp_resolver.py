@@ -271,6 +271,14 @@ def test_degraded_refresh_tool_is_a_structured_error_too():
     assert "已刷新" not in result["content"][0]["text"]
 
 
+def test_degraded_normal_tool_names_mirror_the_real_server():
+    """降级 server 那份名单是真 server 工具表的镜像：少一个，旧会话里模型对着那个
+    名字调用就是 method_not_found 而不是「缺什么、怎么修」（#457 加第九个时补的门禁）。"""
+    from tavotto_mcp import server as real
+
+    assert set(launcher.NORMAL_TOOLS) == set(real.HANDLERS) - {"tavotto_health"}
+
+
 def test_degraded_health_tool_reports_the_gap_without_pretending():
     (res,) = _degraded_roundtrip(
         {
