@@ -1024,7 +1024,12 @@ def test_cancel_right_after_the_acknowledgement_is_honoured(tmp_path, wheelhouse
     assert rec["state"] == deprepair.STATE_CANCELLED, rec
     assert rec["result"] == {"activated": False}
     probe = subprocess.run(
-        [python, "-c", f"import {FIXTURE_IMPORT}"], capture_output=True, text=True, timeout=120
+        [python, "-c", f"import {FIXTURE_IMPORT}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
     )
     assert probe.returncode != 0, "取消被接受了，venv 却被改了"
     assert deprepair.cancel_status(plan.plan_id)["reason"] == "not_found"  # 句柄随计划一起清掉
