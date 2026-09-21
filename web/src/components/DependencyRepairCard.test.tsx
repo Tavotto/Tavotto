@@ -22,13 +22,16 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   cancelDependencyPlan: vi.fn(),
   fetchEngineEnvironment: vi.fn(),
   setProjectEnvironment: vi.fn(),
+  setEngineEnvironment: vi.fn(),
 }))
 
 import {
+  ApiError,
   cancelDependencyPlan,
   createDependencyPlan,
   fetchEngineEnvironment,
   installDependencyPlan,
+  setEngineEnvironment,
   setProjectEnvironment,
   type DependencyRepairOffer,
   type DependencyRepairPlan,
@@ -50,6 +53,7 @@ const installMock = vi.mocked(installDependencyPlan)
 const cancelMock = vi.mocked(cancelDependencyPlan)
 const envMock = vi.mocked(fetchEngineEnvironment)
 const adoptMock = vi.mocked(setProjectEnvironment)
+const clearGlobalMock = vi.mocked(setEngineEnvironment)
 
 const en = (key: string, v?: Record<string, unknown>) =>
   t(`engine.${key}`, { ns: 'errors', ...(v ?? {}) })
@@ -139,6 +143,7 @@ beforeEach(() => {
   envMock.mockReset()
   envMock.mockResolvedValue({} as never)
   adoptMock.mockReset()
+  clearGlobalMock.mockReset()
   useDepRepairStore.getState().reset()
 })
 
@@ -423,6 +428,111 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
   })
 })
 
+describe('渲染解释器被全局固定（#465）', () => {
+  const PINNED: DependencyRepairOffer = {
+    ...OFFER,
+    targets: [],
+    code: 'dependency_interpreter_pinned',
+    pinned: { python: '/opt/venv/bin/python', source: 'configured' },
+  }
+  const failing = () =>
+    useRenderStore.setState({
+      byKey: {
+        k: {
+          ...(useRenderStore.getState().byKey.k ?? ({} as never)),
+          fileId: 'Fig1.pdf', status: 'error', code: 'missing_dependency',
+          module: 'lmfit', lastPatches: '[]', wantPatches: '[]', stale: false,
+        } as never,
+      },
+      tracked: {},
+    })
+
+  it('不列任何安装目标、也不给「选择其他 Python」——装进去也不会被用', async () => {
+    await render(PINNED)
+    expect(document.querySelector('[data-dependency-repair-pinned]')).toBeTruthy()
+    expect(text()).toContain(en('repairTitle', { module: 'lmfit' }))
+    expect(text()).toContain('/opt/venv/bin/python')
+    expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
+    expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
+    expect(document.querySelector('input')).toBeNull()
+  })
+
+  it('设置里指定的：「恢复自动检测」清全局设置、把失败的渲染重新排上', async () => {
+    clearGlobalMock.mockResolvedValue({ ok: true } as never)
+    failing()
+    await render(PINNED)
+    await click(en('repairPinnedClear'))
+    expect(clearGlobalMock).toHaveBeenCalledWith(null)
+    expect(planMock).not.toHaveBeenCalled()
+    const after = useRenderStore.getState()
+    expect(after.byKey.k.stale, '没标过期，图永远不会自己出来').toBe(true)
+    expect(after.tracked['Fig1.pdf']).toBe(true)
+  })
+
+  it('清不掉时把后端那句话显示出来，渲染不重排', async () => {
+    clearGlobalMock.mockRejectedValue(new Error('设置写入失败'))
+    failing()
+    await render(PINNED)
+    await click(en('repairPinnedClear'))
+    expect(text()).toContain('设置写入失败')
+    expect(useRenderStore.getState().byKey.k.stale).toBe(false)
+  })
+
+  it('环境变量固定的：没有可清的按钮，点名供值的那个变量、然后重启', async () => {
+    await render({
+      ...PINNED,
+      pinned: { python: '/opt/venv/bin/python', source: 'env_override', variable: 'MM_WORKER_PYTHON' },
+    })
+    expect(byName(en('repairPinnedClear'))).toBeUndefined()
+    // 旧名供的值：只让用户清新名的话固定还在，所以这里必须是 MM_WORKER_PYTHON
+    expect(text()).toContain(en('repairPinnedEnvHint', { variable: 'MM_WORKER_PYTHON' }))
+    expect(text()).not.toContain('TAVOTTO_WORKER_PYTHON')
+  })
+
+  it('老服务端没给 variable 时退到新名', async () => {
+    await render({ ...PINNED, pinned: { python: '/opt/venv/bin/python', source: 'env_override' } })
+    expect(text()).toContain(en('repairPinnedEnvHint', { variable: 'TAVOTTO_WORKER_PYTHON' }))
+  })
+
+  it('offer 之后才钉上的：plan 的 400 带回 pinned，卡片切到「恢复自动检测」而不是留着旧目标', async () => {
+    // Codex 评审 P2：只读 offer.pinned 的话，关掉错误又是那几个注定无效的目标
+    planMock.mockRejectedValue(
+      new ApiError('渲染解释器已固定', 400, {
+        code: 'dependency_interpreter_pinned',
+        pinned: { python: '/opt/late/bin/python', source: 'configured', variable: '' },
+      }),
+    )
+    await render()
+    await click(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))
+    expect(document.querySelector('[data-dependency-repair-pinned]')).toBeTruthy()
+    expect(text()).toContain('/opt/late/bin/python')
+    expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
+    expect(byName(en('repairPinnedClear'))).toBeTruthy()
+  })
+
+  it('确认之后才钉上的：安装失败事件带回 pinned，同样切到「恢复自动检测」', async () => {
+    planMock.mockResolvedValue({ plan: PLAN })
+    installMock.mockResolvedValue({ started: true } as never)
+    await render()
+    await click(en('repairUseProjectEnv'))
+    await click(en('repairInstallToProject'))
+    await act(() => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-abc', state: 'failed', log: '', error: '渲染解释器已固定',
+        code: 'dependency_interpreter_pinned',
+        pinned: { python: '/opt/late/bin/python', source: 'configured', variable: '' },
+      } as never)
+    })
+    expect(document.querySelector('[data-dependency-repair-pinned]')).toBeTruthy()
+    expect(text()).not.toContain(en('repairFailed'))
+    // 清掉之后 store 里的那条固定也要清，否则卡片永远停在这一支
+    clearGlobalMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
+    await click(en('repairPinnedClear'))
+    expect(useDepRepairStore.getState().pinned).toBeNull()
+    expect(document.querySelector('[data-dependency-repair-pinned]')).toBeNull()
+  })
+})
+
 describe('安装进度', () => {
   const progress = (state: string, extra: Record<string, unknown> = {}) =>
     act(() => {
@@ -487,6 +597,14 @@ describe('安装进度', () => {
     await render()
     await progress('failed', { code: 'dependency_requires_build', error: '后端中文原文' })
     expect(text()).toContain(en('repairError.dependency_requires_build'))
+    expect(text()).not.toContain('后端中文原文')
+  })
+
+  it('只在 backend.* 表里有文案的 code 也按当前语言翻，不漏后端原文', async () => {
+    await i18n.changeLanguage('en-US')
+    await render()
+    await progress('failed', { code: 'environment_in_use_by_native_session', error: '后端中文原文' })
+    expect(text()).toContain(t('backend.environment_in_use_by_native_session', { ns: 'errors' }))
     expect(text()).not.toContain('后端中文原文')
   })
 

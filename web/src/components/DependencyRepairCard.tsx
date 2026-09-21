@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { t as translate } from '@/i18n'
+import { i18n, t as translate } from '@/i18n'
 import type {
   DependencyRepairOffer,
   DependencyTarget,
+  InterpreterPin,
   SystemInterpreterRejection,
 } from '@/lib/api'
+import { useRenderStore } from '@/store/renderStore'
 import { isRepairRunning, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -58,6 +60,7 @@ export function DependencyRepairCard({
     busy,
     errorCode,
     errorText,
+    pinned: pinnedSince,
     makePlan,
     install,
     adoptSystemPython,
@@ -67,6 +70,18 @@ export function DependencyRepairCard({
   const [manual, setManual] = useState('')
   const running = isRepairRunning(progress)
   const pkg = offer.requirement?.distribution || module
+
+  // ---- 全局显式解释器压住了项目级决策（#465）：只有一条出口 ---------------
+  // offer 形成时就有的（`offer.pinned`）与之后才钉上的（plan 的 400 / 安装失败
+  // 事件带回来的 `pinnedSince`）走同一支。装进任何目标都不会被用，所以这里
+  // **不列安装目标、不给「选择其他 Python」**（那条写的也是项目级决策）。能解开
+  // 它的只有清掉那条固定：设置里指定的在这里一键清，环境变量的说清楚要清什么、
+  // 然后重启。排在进度之前：安装失败在「已被钉上」那一刻就结束了，进度页只会
+  // 再说一遍失败。
+  const pinned = offer.pinned ?? pinnedSince
+  if (pinned) {
+    return <Pinned module={pkg} pinned={pinned} onCleared={reset} />
+  }
 
   // ---- 安装进行中 / 刚结束：只显示进度，不再显示一堆选项 ------------------
   if (progress && (running || progress.state !== 'idle')) {
@@ -219,6 +234,74 @@ export function DependencyRepairCard({
       <OtherPython />
 
       <Failure code={errorCode} text={errorText} />
+    </div>
+  )
+}
+
+/**
+ * 渲染解释器被全局固定时的卡片（#465）。
+ *
+ * 「恢复自动检测」清的是**全局**设置（`setPython(null)`）——这是这张卡里唯一
+ * 一处碰全局设置的地方，理由正相反于 `OtherPython`：要解开的就是那条全局固定。
+ * 清掉之后把因缺包失败的渲染重新排上：项目记住的环境（本例里已经装好包的
+ * 受管环境）从此轮得到；没有记住的会再走一遍缺包 → 卡片 → 安装，那时安装
+ * 才真的有用。
+ */
+function Pinned({
+  module,
+  pinned,
+  onCleared,
+}: {
+  module: string
+  pinned: InterpreterPin
+  onCleared: () => void
+}) {
+  useTranslation('errors')
+  const { setPython } = useEnvStore()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const fromEnv = pinned.source === 'env_override'
+  // 环境变量那档的来源标签按**供值的那个**变量拼（`sourceLabel.env_override` 写死
+  // 的是新名）：正文说「环境变量 TAVOTTO_WORKER_PYTHON」、提示却让清
+  // MM_WORKER_PYTHON，两句话打架。老服务端没有 variable 时退到新名。
+  const variable = pinned.variable || 'TAVOTTO_WORKER_PYTHON'
+  const source = fromEnv
+    ? en('repairPinnedEnvSource', { variable })
+    : en(`sourceLabel.${pinned.source || 'unknown'}`, { product: PRODUCT_NAME })
+  const clear = async () => {
+    setBusy(true)
+    const failure = await setPython(null)
+    setBusy(false)
+    setError(failure)
+    if (failure) return
+    // 清掉之后这张卡的前提没了：先把 store 里记下的那条固定与错误清空，再把因
+    // 缺包失败的渲染重新排上（顺序无所谓，两者都不依赖对方）
+    onCleared()
+    useRenderStore.getState().retryEnvironmentFailures()
+  }
+  return (
+    <div data-dependency-repair-pinned className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
+      <div>
+        <h3 className="type-section">{en('repairTitle', { module })}</h3>
+        <p className="mt-1 text-xs leading-relaxed text-ink-2">
+          {en('repairPinnedBody', { python: pinned.python, source })}
+        </p>
+        {fromEnv && (
+          // 点名**供值的那个**变量：旧名 MM_WORKER_PYTHON 供的值同样是 env_override，
+          // 只让用户清新名的话固定还在、重启后照旧挡着。
+          <p className="mt-1 text-xs leading-relaxed text-ink-3">
+            {en('repairPinnedEnvHint', { variable })}
+          </p>
+        )}
+      </div>
+      {!fromEnv && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button variant="primary" disabled={busy} onClick={() => void clear()}>
+            {en('repairPinnedClear')}
+          </Button>
+        </div>
+      )}
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   )
 }
@@ -378,9 +461,12 @@ function RepairProgress({
  */
 export function repairCodeMessage(code: string): string | null {
   if (!code) return null
-  const key = `repairError.${code}`
-  const text = en(key)
-  return text === `engine.${key}` ? null : text
+  // 先查修复专用表，再查后端通用表：`environment_in_use_by_native_session` 这种
+  // 两条控制面共用的 code 文案只在 `backend.*` 里有一份，不为这张卡再抄一份。
+  for (const key of [`engine.repairError.${code}`, `backend.${code}`]) {
+    if (i18n.exists(key, { ns: 'errors' })) return translate(key, { ns: 'errors' })
+  }
+  return null
 }
 
 function Failure({ code, text }: { code: string; text: string }) {

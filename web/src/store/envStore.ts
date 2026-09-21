@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { t } from '@/i18n'
 import {
+  backendErrorText,
   fetchEngineEnvironment,
   installEngineEnvironment,
   setEngineEnvironment,
@@ -78,10 +79,15 @@ export const useEnvStore = create<EnvState>((set, get) => ({
 
   setPython: async (path) => {
     try {
-      set({ env: await setEngineEnvironment(path) })
+      const env = await setEngineEnvironment(path)
+      set({ env })
+      // PATCH 的响应现在与 GET 同形（带 `project`）；老服务端没带的话整体替换会把
+      // 受管环境 / 工作目录那几行藏到下一次无关刷新——补一次 GET（Codex 评审 P2）
+      if (!env.project) await get().refresh()
       return null
     } catch (e) {
-      return e instanceof Error ? e.message : t('engine.setPythonFailed', { ns: 'errors' })
+      // 按 code 翻（`environment_mutating` = 安装进行中，暂时不能改），查不到才原文
+      return e instanceof Error ? backendErrorText(e) : t('engine.setPythonFailed', { ns: 'errors' })
     }
   },
 

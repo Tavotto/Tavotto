@@ -33,7 +33,7 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "line": 854,
+          "line": 855,
           "function": "api_render",
           "role": "/api/render 磁盘缓存键 sha1(id|内容|宽|后端-版本)"
         },
@@ -56,7 +56,7 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "line": 854,
+          "line": 855,
           "function": "api_render",
           "role": "缓存键"
         },
@@ -179,7 +179,7 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "line": 4072,
+          "line": 4073,
           "function": "_write_source_files",
           "role": "写回 verify 阶段：把画布标注画进 staging 的 PDF，再由同一份 PDF 栅格化 PNG（incremental save）"
         }
@@ -214,7 +214,7 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "line": 3921,
+          "line": 3922,
           "function": "_replay_pixel_diff",
           "role": "写回像素门（ADR 0049，issue #81）：热态 vs 一次性 worker 重放的 render_png 逐 RGBA 比，阈值 app.REPLAY_PIXEL_TOL"
         }
@@ -263,7 +263,7 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "line": 1007,
+          "line": 1008,
           "function": "_export_produce_canvas",
           "role": "scope=canvas：建一页画布，逐对象 place，再 save_pdf / save_png / save_tiff；EPS 逐项报 eps_not_for_canvas"
         }
@@ -426,13 +426,13 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "line": 1188,
+          "line": 1189,
           "function": "_original_page_pt",
           "role": "请求里已解析的物理尺寸 → 页面 pt"
         },
         {
           "file": "src/tavotto/app.py",
-          "line": 1192,
+          "line": 1193,
           "function": "_original_page_pt",
           "role": "originalspec 现算的逻辑尺寸 → 页面 pt"
         }
@@ -481,7 +481,7 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "line": 1123,
+          "line": 1124,
           "function": "_export_produce_original",
           "role": "scope=original 的 PDF：矢量源 insert_pdf 整页搬运（只搬第一页）；位图源装进 page_pt 大小的页面，vector=False"
         }
@@ -535,7 +535,7 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "line": 1150,
+          "line": 1151,
           "function": "_export_produce_original",
           "role": "scope=original 的 PNG：PNG 源逐字节复制；JPEG 换容器不换像素；矢量源按 ppi 栅格化（transparent 带 alpha）"
         }
@@ -581,7 +581,7 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "line": 1142,
+          "line": 1143,
           "function": "_export_produce_original",
           "role": "scope=original 的 TIFF（ADR 0046）：位图源保源像素网格、分辨率标签只写 originalspec 读到的声明密度（_declared_density）；矢量源按 ppi 栅格化"
         }
@@ -646,25 +646,25 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "line": 551,
+          "line": 552,
           "function": "scan_panels",
           "role": "/api/panels：素材原始尺寸 → originalspec.asset_spec（native_*_mm 与 original_spec 同一次计算）"
         },
         {
           "file": "src/tavotto/app.py",
-          "line": 1189,
+          "line": 1190,
           "function": "_original_page_pt",
           "role": "老客户端 / MCP 没带尺寸时现算位图页面"
         },
         {
           "file": "src/tavotto/app.py",
-          "line": 1205,
+          "line": 1206,
           "function": "_declared_density",
           "role": "TIFF 分辨率标签的来源判据（只认 dpi_source == metadata）"
         },
         {
           "file": "src/tavotto/app.py",
-          "line": 4155,
+          "line": 4156,
           "function": "_post_check_size",
           "role": "写回 commit 后自检：PDF 页面尺寸 vs 重放 manifest 的 size_mm（容差 0.5mm，不回滚）"
         },
@@ -728,7 +728,7 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "line": 319,
+          "line": 320,
           "function": "_write_render_cache",
           "role": "/api/render：矢量面板首页 → 指定像素宽的 PNG，临时文件 + os.replace 落进磁盘缓存（键含后端身份；Windows 撞读者退让）"
         }
@@ -863,7 +863,7 @@
         "callers": [
           {
             "file": "src/tavotto/app.py",
-            "line": 1020,
+            "line": 1021,
             "function": "_export_produce_canvas"
           }
         ],
@@ -875,7 +875,7 @@
         "callers": [
           {
             "file": "src/tavotto/app.py",
-            "line": 1028,
+            "line": 1029,
             "function": "_export_produce_canvas"
           }
         ],
@@ -887,7 +887,7 @@
         "callers": [
           {
             "file": "src/tavotto/app.py",
-            "line": 1045,
+            "line": 1046,
             "function": "_export_produce_canvas"
           }
         ],
@@ -899,7 +899,7 @@
         "callers": [
           {
             "file": "src/tavotto/app.py",
-            "line": 1057,
+            "line": 1058,
             "function": "_export_produce_canvas"
           }
         ],
@@ -911,7 +911,7 @@
         "callers": [
           {
             "file": "src/tavotto/app.py",
-            "line": 1059,
+            "line": 1060,
             "function": "_export_produce_canvas"
           }
         ],
@@ -923,7 +923,7 @@
         "callers": [
           {
             "file": "src/tavotto/app.py",
-            "line": 1081,
+            "line": 1082,
             "function": "_export_produce_canvas"
           }
         ],
