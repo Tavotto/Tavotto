@@ -32,6 +32,7 @@ const TARGET_HINT: Record<Target, string> = {
 }
 const STATE_TEXT: Record<string, string> = {
   preparing: 'engine.dependencyPrepareState_preparing',
+  downloading_python: 'engine.dependencyPrepareState_downloading_python',
   creating_env: 'engine.dependencyPrepareState_creating_env',
   installing: 'engine.dependencyPrepareState_installing',
   verifying: 'engine.dependencyPrepareState_verifying',
@@ -155,6 +156,20 @@ export function DependencyPrepareDialog() {
                     ? en(TARGET_HINT[kind], { venv: opt.venv || opt.python })
                     : en(TARGET_HINT[kind])}
                 </span>
+                {opt.private_python && (
+                  // 这台机器没有可用的 Python：这次授权包含先下载 Tavotto 自己的一份（U05）。
+                  // 体积必须说出口；已有校验过的缓存时不联网。
+                  <span className="mt-0.5 block text-xs leading-relaxed text-ink-2" data-dependency-private-python>
+                    {opt.private_python.cached
+                      ? en('engine.dependencyPreparePrivatePythonCached', {
+                          version: opt.private_python.version,
+                        })
+                      : en('engine.dependencyPreparePrivatePython', {
+                          version: opt.private_python.version,
+                          mb: Math.max(1, Math.round(opt.private_python.download_bytes / 1048576)),
+                        })}
+                  </span>
+                )}
                 {opt.available === false && (
                   <span className="mt-0.5 block text-xs text-danger">
                     {t(`engine.repairError.${opt.reason}`, { defaultValue: opt.reason })}

@@ -2791,6 +2791,23 @@ export interface DependencyTarget {
   matplotlib_version?: string
   /** verified / unverified_but_compatible（unsupported 的不会成为目标） */
   support?: string
+  /**
+   * 受管目标才有（U05，ADR 0063）：这台机器没有可用的基础解释器、而本目标提供私有 Python 时，
+   * 这次授权**包含先下载它**——`download_bytes` 界面必须说出口（`cached` 时为 0、不联网）。
+   */
+  private_python?: PrivatePythonOffer | null
+}
+
+/** 「先准备私有 Python」段：版本 / 目标 / 体积 / 来源域名，没有机器路径 */
+export interface PrivatePythonOffer {
+  id: string
+  version: string
+  target: string
+  download_bytes: number
+  source_host: string
+  required: boolean
+  cached: boolean
+  network_required: boolean
 }
 
 /**
@@ -2954,6 +2971,8 @@ export interface DependencyPreparationOffer {
   rounds_remaining: number
   /** 用户已明确「不准备，直接运行」（这时后端不会再拦） */
   skipped: boolean
+  /** 干净机器（一个解释器都没有）：门以私有 Python 为目标算的计划，这里说明要先下载它（U05） */
+  private_python?: PrivatePythonOffer | null
 }
 
 /** 绑定好的联合计划（`plan_id` 是这次授权的凭据，一次性、有有效期） */
@@ -2974,6 +2993,9 @@ export interface JointDependencyRepairPlan {
   network_required: boolean
   expires_at: number
   joint: JointDependencyPlan
+  /** 这次授权包含先下载私有 Python（U05）；`replan` = 计划的事实是替身，供应后按真解释器重算 */
+  private_python?: PrivatePythonOffer | null
+  replan?: boolean
 }
 
 export const fetchDependencyOffer = (script: string) =>
