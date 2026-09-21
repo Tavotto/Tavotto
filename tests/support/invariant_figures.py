@@ -148,8 +148,10 @@ def main():
     shared = PowerNorm(gamma=1.45, vmin=0.0, vmax=1.0)
     mesh_a = sa.pcolormesh(np.linspace(0.5, 2.0, 7), np.linspace(1.3, 1.52, 7),
                            rng.rand(7, 7), cmap="Greens", norm=shared, shading="nearest")
+    # 兄弟**换一张**色图：两块同名（都是 Greens）时「把 mappable 的原样安到兄弟头上」
+    # 这种错与正确结果逐位相同，K-sibling-narrow-then-cb-drop-both 在变异下恒绿
     sb.pcolormesh(np.linspace(0.5, 2.0, 7), np.linspace(1.3, 1.52, 7),
-                  rng.rand(7, 7), cmap="Greens", norm=shared, shading="nearest")
+                  rng.rand(7, 7), cmap="Purples", norm=shared, shading="nearest")
     sa.set_ylim(1.34, 1.51)
     sb.set_ylim(1.34, 1.51)
     fig.colorbar(mesh_a, ax=sb)

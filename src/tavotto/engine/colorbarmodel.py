@@ -234,14 +234,17 @@ _set_cb_cmap._needs_state = True  # noqa: SLF001
 
 def _restore_cb_cmap(p: "ColorbarProxy", orig, state: FollowState) -> None:
     """撤销：mappable 放回它自己的原样；兄弟各放各的——它们的原样由别名组在
-    广播动手之前代采（`overrides.apply` 的 `alias_seeded`），采不到的（不该发生）
-    退回 mappable 的那份。"""
+    广播动手之前代采（`overrides.apply` 的 `alias_seeded`）。**记录不在就不动它**：
+    组员都采得到原样（`scale_siblings` 只收有 cmap handler 的），记录不在只有一种
+    情形——兄弟自己的 override 在同一轮撤销里排在色条之前、刚被它自己的 key 还原
+    并把记录收走了，这时它已经站在原样上；再拿 mappable 的原样盖上去就是把别人的
+    色图安在它头上（第九轮评审 P2）。"""
     m = p.cb.mappable
     m.set_cmap(orig)
     sibs = scale_siblings(state, m)
     for el in state.elements:
-        if el["artist"] in sibs:
-            el["artist"].set_cmap(state.originals.get((el["gid"], "cmap"), orig))
+        if el["artist"] in sibs and (el["gid"], "cmap") in state.originals:
+            el["artist"].set_cmap(state.originals[(el["gid"], "cmap")])
 
 
 _restore_cb_cmap._needs_state = True  # noqa: SLF001

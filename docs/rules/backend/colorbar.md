@@ -73,6 +73,10 @@
   不报，否则 A 的选择器会拿 B 的原样当 A 的、点回去清的却是 B。兄弟自己的 cmap override 仍**压过**色条（`_rank` 的组内次序：窄的
   排在广播之后）。`apply` 里「对等广播端共用一份原样」只看组员表的**第一个**（色条 → 它的
   mappable / 独立 mappable 的令牌），兄弟组员不参与——独立 mappable 的色条与登记网格共用
-  norm 时，按同名去兄弟身上找会把别人的色图当成自己的原样（`J-standalone-*` 看护）。看护 `tests/test_invariants_engine.py` 的 `H-shared-*`（含撤色条 /
+  norm 时，按同名去兄弟身上找会把别人的色图当成自己的原样（`J-standalone-*` 看护）。
+  色条的原样**就是组员的原样**（resolver 上的 `_shared_value`：cmap 与它的 mappable 同值、
+  vmin / vmax 与全部组员同值）：组员名下已有的记录优先复用，不读 getter——分两步「先改组员
+  自己的、下一轮再改色条」时 getter 读到的是改过的实况，全撤会停在中间态（`K-*` 看护）。撤销时
+  兄弟自己那条排在色条前面、先被还原并收走记录的，色条的 restore 不再碰它（记录不在 = 已在原样上）。看护 `tests/test_invariants_engine.py` 的 `H-shared-*`（含撤色条 /
   撤兄弟 / 全撤三种减法，像素 + 全量 manifest）、
   `test_worker_roundtrip.py::test_colorbar_colormap_reaches_every_mappable_sharing_its_norm`。

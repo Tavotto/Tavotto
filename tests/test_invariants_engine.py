@@ -995,6 +995,62 @@ REMOVAL_CASES = [
             [],
         ],
     ),
+    # ---- 分两步、窄的先来：先改组员自己的，**下一轮**再改色条，最后全撤 ----
+    #
+    # 同一步里 `_rank` 把广播排在组员之前，色条采原样时组员还是脚本原样；分两步就不
+    # 一样了——色条应用那一刻组员已经被改过，读 getter 读到的是改过的值（实测三条
+    # 全部停在中间态：mappable 色图 cividis / 兄弟 custom_a / norm 0.2）。色条的原样
+    # 就是组员的原样（cmap 与它的 mappable 同值、vmin/vmax 与全部组员同值），组员
+    # 名下已有的记录必须复用；撤销时兄弟自己那条排在色条前面被先还原、记录被收走，
+    # 色条的 restore 不能再拿 mappable 的色图盖上去（第九轮评审两条 P2）。
+    (
+        "K-mappable-narrow-then-cb-drop-both",
+        "InvCbar",
+        [
+            [{"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [],
+        ],
+    ),
+    (
+        "K-sibling-narrow-then-cb-drop-both",
+        "InvShared",
+        [
+            [{"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"}],
+            [
+                {"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"},
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+            ],
+            [],
+        ],
+    ),
+    (
+        "K-sibling-vmin-then-cb-vmin-drop-both",
+        "InvShared",
+        [
+            [{"gid": "axes_1.collections_0", "prop": "vmin", "value": 0.2}],
+            [
+                {"gid": "axes_1.collections_0", "prop": "vmin", "value": 0.2},
+                {"gid": "axes_2.colorbar", "prop": "vmin", "value": 0.3},
+            ],
+            [],
+        ],
+    ),
+    (
+        "K-sibling-vmin-then-cb-vmin-drop-sibling",
+        "InvShared",
+        [
+            [{"gid": "axes_1.collections_0", "prop": "vmin", "value": 0.2}],
+            [
+                {"gid": "axes_1.collections_0", "prop": "vmin", "value": 0.2},
+                {"gid": "axes_2.colorbar", "prop": "vmin", "value": 0.3},
+            ],
+            [{"gid": "axes_2.colorbar", "prop": "vmin", "value": 0.3}],
+        ],
+    ),
     (
         "A-colorbar-drop-mappable",
         "InvCbar",

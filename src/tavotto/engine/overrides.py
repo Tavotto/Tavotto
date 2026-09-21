@@ -3029,6 +3029,13 @@ def _alias_colorbar_mappable(narrow_prop: str):
             return [(f"mappable#{id(m):x}", narrow_prop), *siblings]
         return [(gid, narrow_prop), *siblings]
 
+    # 色条这条 prop 的「原样」**就是**组员的原样（色条没有自己的状态）：cmap 只与
+    # 它的 mappable（组员表第一个）同值——兄弟各拿各的色图；vmin / vmax 与**全部**
+    # 组员同值——norm 是共用的那一份。`apply` 采色条的原样时据此优先复用组员已经
+    # 采下的那份，而不是读 getter：getter 读的是此刻的实况，组员先被 override 过
+    # 的话实况已经是改过的值（实测：先改 mappable 色图再改色条、全撤，热态停在
+    # 中间态；先改兄弟 vmin 再改色条 vmin、全撤，norm 停在 0.2）。
+    resolve._shared_value = "primary" if narrow_prop == "cmap" else "all"  # noqa: SLF001
     return resolve
 
 
@@ -3422,19 +3429,25 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                     # 的原样（#474 评审第八轮）。
                     _members = _alias_members(key, artist)
                     _prim = _members[0] if _members else None
-                    # **判据不是「同名」**，是「这个窄成员上真的还站着另一个对等
-                    # 广播端」。柱系列的 `facecolor` 广播到每根柱子也是同名，但那是
-                    # **容器 → 成员**：每根柱子有自己的一份值，共用原样会拿错形状
-                    # （实测：还原时报 `Invalid RGBA argument: 0.1215…`，等价矩阵的
-                    # s8-alias-mixed-reversed 当场红）。只有「两个 gid 指着同一个值」
-                    # 才该共用，而那一定表现为同一个窄 key 上挂着两个以上同名广播端。
-                    if (
-                        _prim is not None
-                        and _prim[1] == key[1]
-                        and _prim in state.originals
-                        and any(_b != key and _b[1] == key[1] for _b in owner.get(_prim, ()))
-                    ):
-                        _seeded = state.originals[_prim]
+                    # **判据不是「同名」**，是这条广播的 prop 与组员**指着同一个值**
+                    # （resolver 上的 `_shared_value`，见 `_alias_colorbar_mappable`）。
+                    # 柱系列的 `facecolor` 广播到每根柱子也是同名，但那是**容器 → 成员**：
+                    # 每根柱子有自己的一份值，共用原样会拿错形状（实测：还原时报
+                    # `Invalid RGBA argument: 0.1215…`，等价矩阵的 s8-alias-mixed-reversed
+                    # 当场红）——那一族没有这个标记，照旧读 getter。
+                    # 色条：cmap 只与它的 mappable（第一个组员）同值，vmin / vmax 与全部
+                    # 组员同值（norm 是共用的一份）。组员里谁已经有原样记录（被自己的
+                    # override 采过、或被另一条广播代采过），那份就是色条的原样；读 getter
+                    # 读到的是**改过之后**的实况，全撤会停在中间态（第九轮评审两条 P2）。
+                    _shared = getattr(
+                        ALIAS_GROUPS.get((_cls_key(artist), key[1])), "_shared_value", None
+                    )
+                    if _shared is not None:
+                        _cands = _members if _shared == "all" else _members[:1]
+                        for _nk in _cands:
+                            if _nk[1] == key[1] and _nk in state.originals:
+                                _seeded = state.originals[_nk]
+                                break
                     if _seeded is _NOTHING and _prim is not None:
                         # ② 对等广播端采过：**它也得把同一个窄成员当第一个组员**——
                         # 独立 mappable 的两条色条共用一个令牌是这种；把兄弟当组员的
