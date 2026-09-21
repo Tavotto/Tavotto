@@ -56,7 +56,8 @@ preparation-and-receipts / process-boundaries；`docs/rules/repo/same-origin-pai
 | **【B】** `engine/exportreq.py` | `InspectionPolicy(mode, profile_id)`（`INSPECTION_POLICIES = standard / strict`）；请求 `inspection` 段（缺省 standard；非对象 / 未知 mode → `bad_inspection`）；`to_payload()` 回显 |
 | **【B】** `engine/exportjob.py` | `run(..., inspect=)` / `run_async(..., inspect=)` 钩子（`produce` 之后、提交点之前，phase `inspecting`）；`Produced.manifest` / `Output.manifest`（payload 多一个 `manifest` 键，旧键不动）；错误码 `artifact_rejected` |
 | **【B】** `rendercore/job.py` | `plan_facts(rp)`：计划半张（page_pt / 期望文字行 = 每个 ShapedText 的用户原文 / 面板包围盒 / 源与回执公开身份），随 `Produced.manifest["plan"]` 交出 |
-| **【B】** `app.py` | `_export_plan_half`（生产者给了就用，旧后端只有请求级事实）、`_inspection_profile`（strict 才经 `profilestore.resolve_spec`）、`_export_inspect`（拒绝 → `artifact_rejected` 带 manifest 投影；检查器炸 → `uninspected`）；两个入口都传 `inspect=`（异步那条钉项目） |
+| **【B】** `engine/artifactinspect.py`（新，HTTP 与 MCP 共用的接线层） | `plan_half`（生产者给了就用，旧后端只有请求级事实）、`inspection_profile`（strict 才经 `profilestore.resolve_spec`）、`inspect_produced`（拒绝 → `artifact_rejected` 带 manifest 投影；检查器炸 → `uninspected`） |
+| **【B】** `app.py` | `_export_inspect` 只交后端名与契约层 `probe_asset`；两个入口都传 `inspect=`（异步那条钉项目） |
 | **【B】** i18n | `errors.json` 两种语言加 `artifact_rejected` / `bad_inspection`；`tests/test_error_codes.py` 登记 params |
 | **【B】** `tests/test_rendercore_inspector.py`（新，17 条） | PNG / TIFF 纯标准库正负例、ToUnicode 解析、PDF 可见尺寸、改页盒、截断 / 加密、声明 vs 使用 + Form、自引用预算、有效 ppi、候选写入器产物 strict 全 verified + 三条负例（换期望文字 / 摘 FontFile / 错 ToUnicode） |
 | **【B】** `tests/test_export_inspection.py`（新，12 条，任何机器） | 发布文件带 manifest 且 sha256 = 磁盘字节、旧后端文字层不显示绿、坏文件 / 伪造 proof / 错尺寸在发布前拦住、partial、strict vs standard、阈值来自规范 + 未知 id、未知 mode 400、钩子在提交点之前、检查器炸 = unknown |

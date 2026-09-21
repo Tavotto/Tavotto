@@ -5,6 +5,7 @@
  "suites": [
   "tests/test_export_pipeline.py",
   "tests/test_export_endpoint.py",
+  "tests/test_export_inspection.py",
   "tests/test_export_request.py",
   "tests/test_original_spec.py",
   "tests/test_annotate_asset.py",
@@ -43,17 +44,20 @@
   "tests/test_glyph_plan.py::test_scientific_mode_draws_everything_with_one_face",
   "tests/test_mcp_normalize.py::test_zero_edit_roundtrip_keeps_page_size_and_pixels"
  ],
- "exit_code": 0,
+ "exit_code": 1,
  "counts": {
-  "passed": 517,
-  "failed": 0,
+  "passed": 528,
+  "failed": 1,
   "errors": 0,
-  "skipped": 9,
-  "total": 526,
+  "skipped": 10,
+  "total": 539,
   "deselected": 14
  },
- "failed": [],
+ "failed": [
+  "tests/test_cjk_figure_text.py::test_font_collections_open_the_face_matplotlib_named_not_the_first_one"
+ ],
  "skipped": [
+  "SKIPPED [1] tests/test_export_inspection.py:108: 旧后端专属（候选侧的文字层判据在 tests/test_rendercore_app.py）",
   "SKIPPED [1] tests/test_tutorial.py:729: 先 python -m build（或设 TAVOTTO_DIST_DIR）——这几条读的是产物不是源码树",
   "SKIPPED [1] tests/test_tutorial.py:745: 先 python -m build（或设 TAVOTTO_DIST_DIR）——这几条读的是产物不是源码树",
   "SKIPPED [1] tests/test_tutorial.py:762: 先 python -m build（或设 TAVOTTO_DIST_DIR）——这几条读的是产物不是源码树",
@@ -64,11 +68,11 @@
   "SKIPPED [1] tests/test_worker_roundtrip.py:1782: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）",
   "SKIPPED [1] tests/test_worker_roundtrip.py:2183: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）"
  ],
- "elapsed_s": 121.6,
+ "elapsed_s": 159.7,
  "versions": {
   "python": "3.13.11",
   "pikepdf": "10.13.0.post1",
-  "pypdfium2": null,
+  "pypdfium2": "5.13.0 (pdfium 153.0.7999.0)",
   "uharfbuzz": "0.56.1",
   "fontTools": "4.65.0",
   "PIL": "12.3.0",
