@@ -99,7 +99,7 @@ RenderBench 实例的登记留给 U08 接 facade 之后）。
 | `PYTHONPATH=scripts:src <rc-venv> -m dev.u02_spikes.render_spike`（经薄 shim） | 同上 | 0 | 52/52，`spike.pdf` sha256 `12966287d846…` 与 git 里逐字节相同（shim 没改变任何字节） |
 | PR B 变异反证 9 条（注册表按文件名收 / 写入器按 face_id 找 + 不核身份 / Span 前不 flush / Span 里两个 TJ / 缺字换 CJK 脸 / 不核冻结 hash / imported_page 假报 native / ToUnicode 少三条 / 透明组不建组） | 同上 | 每条非零 | 「按 face_id 找」单独变异绿：`face.resource != resource` 的第二道核对还在；两道一起去掉才红——两道是有意冗余，ADR 0060 §5 记了 |
 | `PYTHONPATH=$WT/src pytest`（全量，**PR B** 树 `9635536c`，主仓库 `.venv`，后台 + 日志，28 分钟） | 同上 | 1 | **5286 通过 / 91 skip / 5 红**：4 条是已知本机噪音（同上），**1 条真回归**——`test_tutorial.py::test_pyproject_keeps_resources_inside_the_wheel_and_sdist` 用子串 `"resources" not in ignore` 守「教程资源不被 gitignore」，本 PR 新加的 `/src/tavotto/resources/fonts/` 撞上；判据改成按**规则**判（resources 下被 ignore 的每条必须有 artifacts 收回、教程项目不许被挡），去掉 artifacts 那条变异红。91 skip 里 38 条是 rendercore 用例（主 `.venv` 没装候选包），真跑在 rc-venv |
-| Linux / Windows / 3.10 | `foundation-u06-rendercore.yml`（PR 上随 rendercore 文件变动自动触发） | 见 PR 正文 | run 号与四条腿结论填在 PR 正文与下面「其它目标」 |
+| Linux / Windows / 3.10 | `foundation-u06-rendercore.yml`（PR 上随 rendercore 文件变动自动触发） | run 35570612388 四腿 0 | 234 用例四平台 0 红；PDF / 覆盖表四平台逐字节相同；Windows 是唯一真跑 poppler 尺子的腿（42/42）；逐腿数字与 Windows 腿的三轮红在下面「其它目标」 |
 | 前端 `pnpm test && pnpm build` | — | — | **not_run**：本阶段没有改 `web/src`（PR C 未做） |
 
 **本切片的正例、负例、旧行为回归**：正例 = 简单页 + 形状 / 箭头 + 中英 Greek 上下标 / 组合序列的真实 PDF（evidence
@@ -117,8 +117,9 @@ RenderBench 实例不登记：facade 尚未接（U08）。
 **未运行 / 基础设施问题 / 真正产品失败，分别说明**：
 
 * 未运行（not_run）：前端（PR C 未做，`web/src` 零改动）；`Image` / `ImportedPage` 写入、透明组里的文字、栅格 / PNG /
-  TIFF（U07）；`scope=original`（U08）；跨项目并发真图（U08）；Linux / Windows / 3.10 的 rendercore 用例在 PR 上由
-  非 required workflow 给（结论填 PR 正文）；macOS x86_64；registry 220 条产品实例。
+  TIFF（U07）；`scope=original`（U08）；跨项目并发真图（U08）；macOS x86_64；registry 220 条产品实例。Linux /
+  Windows / 3.10 的 rendercore 用例**已跑**（非 required workflow，run 35570612388，见「其它目标」）；poppler 尺子
+  只在 Windows 腿真跑，ubuntu / macOS runner 没有 pdftotext（那一条 skip 有理由）。
 * 基础设施问题：主仓库 `.venv` 没装候选包，rendercore 的 38 条用例在必需矩阵里是 skip（有理由）——**skip 不是绿**，
   它们真跑的地方是 rc-venv 与 `foundation-u06-rendercore.yml`；候选栈切默认（U10）时进必需矩阵。全量 pytest 的
   4 条本机红是 #240 / #452（U01 交接已记）。
@@ -194,9 +195,27 @@ paths 过滤的 `pull_request`、托管 runner、有 `timeout-minutes`、顶层 
 
 （PR B 上随 rendercore 文件变动自动触发；结论按 run 号逐腿填在这里，没跑出来的腿保持 **not_run**，不预填。）
 
+树 `c9d8e92a`，run [35570612388](https://github.com/Tavotto/Tavotto/actions/runs/35570612388)，四条腿全绿。
+用例数取自各腿上传的 `pytest-u06.xml`（不是数点），evidence 比对取自日志里 `IDENTICAL / DIFFERS` 那三行。
+
 | 腿 | run | fetch_fonts --check | rendercore 用例 | evidence PDF 与 git 逐字节 | 备注 |
 |---|---|---|---|---|---|
-| ubuntu-latest py3.10 | not_run | — | — | — | — |
-| ubuntu-latest py3.13 | not_run | — | — | — | — |
-| windows-latest py3.13 | not_run | — | — | — | — |
-| macos-latest py3.13 | not_run | — | — | — | — |
+| ubuntu-latest py3.10 | 35570612388 | 13 张脸 sha256 全部一致 | 234 收 / 0 红 / **4 skip** | `u06.pdf` `cb303505e879…` 相同；`canvas_coverage.rendercore.json` 相同；PNG `87701ed23012…` ≠ git | 4 skip = 3 条 tomllib（3.10 没有）+ poppler 尺子（runner 没有 pdftotext）；evidence 36/36（poppler 6 条 skip） |
+| ubuntu-latest py3.13 | 35570612388 | 同上 | 234 收 / 0 红 / 1 skip | 同上；PNG `87701ed23012…` ≠ git | skip = poppler；evidence 36/36 |
+| windows-latest py3.13 | 35570612388 | 同上 | 234 收 / 0 红 / **0 skip** | `u06.pdf` 相同；覆盖表相同；**PNG `95245d41e586…` 与 git 相同** | **唯一真跑 poppler 尺子的腿**（Git for Windows 自带 pdftotext），evidence **42/42**；见下面「Windows 腿的三轮」 |
+| macos-latest py3.13 | 35570612388 | 同上 | 234 收 / 0 红 / 1 skip | `u06.pdf` 相同；覆盖表相同；PNG 与 git 相同 | skip = poppler（macOS runner 没有 pdftotext）；evidence 36/36 |
+
+事实：`u06.pdf` 与 `canvas_coverage.rendercore.json` 四平台逐字节相同；PDFium 的 PNG macOS = Windows = git，
+Linux 不同（与 U02 「PDFium PNG 跨平台不同、像素门按平台分基线」一致，但这一轮 Windows 与 macOS 竟相同——只是这一张图
+的事实，不据此放宽 U07 的按平台基线）。
+
+**Windows 腿的三轮**（都是 Windows 独有的形状，本机每条先复现再修，修法都是纯追加）：
+
+| 树 | run | 结论 | 根因 → 修法 |
+|---|---|---|---|
+| `d7070138` | [35565336034](https://github.com/Tavotto/Tavotto/actions/runs/35565336034) | pytest 4 红 | ① `test_rendercore_model.py` 阻断用例：子进程 stderr 是 cp1252，中文异常文本被 backslashreplace 成 `\u7eaf…` → 子进程 env 钉 `PYTHONUTF8=1` + `PYTHONIOENCODING=utf-8`（同一条也是 #458 backend-platforms windows 片 2 的红，修在 A `643b2e77`，B cherry-pick）；②③ 两条 poppler 用例：Git for Windows 的 pdftotext 默认 Latin1 输出，`²` 以 0xb2 一个字节出来让父进程读线程炸（stdout 成 None → TypeError）、U+1D538 放不下直接丢（notdef 用例抽回 `ab`）→ 显式 `-enc UTF-8`、按字节抓再 decode；④ `test_rendercore_evidence.py` allowlist sha256：CRLF 检出（`abd2b64e…` 变 `ab9a94c8…`）→ `.gitattributes` 钉 `fonts_allowlist.json text eol=lf` + 进 `test_windows_regressions.py` 看护表 |
+| `b2394d82` | [35570340099](https://github.com/Tavotto/Tavotto/actions/runs/35570340099) | pytest 234/0 红/0 skip；**evidence 步骤红** | 生成器 `scripts/dev/u06_evidence.py` 里还有第二个 pdftotext 消费点（上一轮只扫了用例）→ 同样显式 `-enc UTF-8`；本机 evidence 字节重生成一字未变 |
+| `c9d8e92a` | 35570612388 | 全绿 | — |
+
+反证（本机 macOS，poppler 26.03.0）：`-enc` 换成 `Latin1` → 两条 poppler 用例与生成器各红在与 Windows 逐字相同的那一句；
+子进程编码换成 cp1252 → 阻断用例同一句红；删掉 `.gitattributes` 那一行 → 看护红。
