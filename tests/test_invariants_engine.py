@@ -956,6 +956,45 @@ REMOVAL_CASES = [
             [],
         ],
     ),
+    # 登记网格的色条（axes_1）与共用 norm 的**独立 mappable** 色条（axes_2）：独立那条
+    # 的原样不能从兄弟（登记网格）身上「共用」过来——先设登记那条、再设独立那条、全撤，
+    # 独立色条要回它自己的 custom_s（#474 评审第八轮）
+    (
+        "J-standalone-peer-drop-both",
+        "InvShared3",
+        [
+            [{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [],
+        ],
+    ),
+    (
+        "J-standalone-peer-drop-registered",
+        "InvShared3",
+        [
+            [{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}],
+        ],
+    ),
+    (
+        "J-standalone-first-drop-both",
+        "InvShared3",
+        [
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}],
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"},
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+            ],
+            [],
+        ],
+    ),
     (
         "A-colorbar-drop-mappable",
         "InvCbar",

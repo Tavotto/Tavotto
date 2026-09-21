@@ -292,6 +292,9 @@ describe('色阶共用关系（审计 T22 / T23）', () => {
       'axes_1.colorbar',
     ])
     expect(colormapAliasGids(two, cb)).toContain('axes_3.colorbar')
+    // 兄弟页的对家是**直接挂着它的** B，不是清单里先出现、只经 scale_gids 盖着它的 A
+    expect(colorScalePartner(two, sibling)?.gid).toBe('axes_3.colorbar')
+    expect(colorScalePartner(two, imageEl)?.gid).toBe('axes_1.colorbar')
     // 网格页：给它上色的两条色条都在组里
     expect(colormapAliasGids(two, sibling)).toEqual([
       'axes_2.collections_0',

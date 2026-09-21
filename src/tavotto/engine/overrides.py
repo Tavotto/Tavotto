@@ -3414,27 +3414,37 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                     #      没有它的 cmap，窄成员根本采不了原样（`alias_seeded`
                     #      为空）。对等广播端的 getter 与自己是同一个，类型天然
                     #      一致。
-                    for _nk in _alias_members(key, artist):
-                        # **判据不是「同名」**，是「这个窄成员上真的还站着
-                        # 另一个对等广播端」。柱系列的 `facecolor` 广播到每根
-                        # 柱子也是同名，但那是**容器 → 成员**：每根柱子有自己
-                        # 的一份值，共用原样会拿错形状（实测：还原时报
-                        # `Invalid RGBA argument: 0.1215…`，等价矩阵的
-                        # s8-alias-mixed-reversed 当场红）。
-                        # 只有「两个 gid 指着同一个值」才该共用，而那一定表现为
-                        # 同一个窄 key 上挂着两个以上同名广播端。
-                        if _nk[1] != key[1] or _nk not in state.originals:
-                            continue
-                        if any(_b != key and _b[1] == key[1] for _b in owner.get(_nk, ())):
-                            _seeded = state.originals[_nk]
-                            break
-                    if _seeded is _NOTHING:
-                        for _nk in _alias_members(key, artist):
-                            for _b in owner.get(_nk, ()):
-                                if _b != key and _b[1] == key[1] and _b in state.originals:
-                                    _seeded = state.originals[_b]
-                                    break
-                            if _seeded is not _NOTHING:
+                    # **只看组员表里的第一个**——它是这条广播「指着同一个值」的那个
+                    # 窄成员（色条 → 它的 mappable；独立 mappable 是分组令牌）。后面的
+                    # 组员是**色阶兄弟**（共用 norm、各拿各的 cmap），它们的原样不是
+                    # 我的：两条色条各挂一块共用 norm 的网格、或独立 mappable 与登记
+                    # 网格共用 norm 时，按「同名」去兄弟身上找会把别人的色图当成自己
+                    # 的原样（#474 评审第八轮）。
+                    _members = _alias_members(key, artist)
+                    _prim = _members[0] if _members else None
+                    # **判据不是「同名」**，是「这个窄成员上真的还站着另一个对等
+                    # 广播端」。柱系列的 `facecolor` 广播到每根柱子也是同名，但那是
+                    # **容器 → 成员**：每根柱子有自己的一份值，共用原样会拿错形状
+                    # （实测：还原时报 `Invalid RGBA argument: 0.1215…`，等价矩阵的
+                    # s8-alias-mixed-reversed 当场红）。只有「两个 gid 指着同一个值」
+                    # 才该共用，而那一定表现为同一个窄 key 上挂着两个以上同名广播端。
+                    if (
+                        _prim is not None
+                        and _prim[1] == key[1]
+                        and _prim in state.originals
+                        and any(_b != key and _b[1] == key[1] for _b in owner.get(_prim, ()))
+                    ):
+                        _seeded = state.originals[_prim]
+                    if _seeded is _NOTHING and _prim is not None:
+                        # ② 对等广播端采过：**它也得把同一个窄成员当第一个组员**——
+                        # 独立 mappable 的两条色条共用一个令牌是这种；把兄弟当组员的
+                        # 色条不是（它的第一个组员是它自己的 mappable）
+                        for _b in owner.get(_prim, ()):
+                            if _b == key or _b[1] != key[1] or _b not in state.originals:
+                                continue
+                            _bm = _alias_members(_b, state.resolve(_b[0]))
+                            if _bm and _bm[0] == _prim:
+                                _seeded = state.originals[_b]
                                 break
                     state.originals[key] = getter(artist) if _seeded is _NOTHING else _seeded
                 # 广播型 prop：**在自己动手之前**把组内窄 prop 的「脚本原样」

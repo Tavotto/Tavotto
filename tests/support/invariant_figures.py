@@ -170,6 +170,19 @@ def main():
     fig.colorbar(m_b, ax=tb)
     fig.savefig("InvShared2.pdf")
 
+    # ---- InvShared3：登记网格 + 它的色条，再加一条**独立 ScalarMappable** 的色条，两者共用 norm ----
+    # 独立 mappable 不是 Artist、没有 gid，它在别名组里只有一个分组令牌；而登记网格是它的
+    # 色阶兄弟。两条色条的原样各是各的（custom_a / custom_s）：登记色条先应用、独立色条后应用
+    # 时，后者的原样不能从兄弟（登记网格）那里「共用」过来（#474 评审第八轮）。
+    fig, sx = plt.subplots(figsize=(3.6, 2.6))
+    shared3 = PowerNorm(gamma=1.2, vmin=0.0, vmax=1.0)
+    cm_s = LinearSegmentedColormap.from_list("custom_s", ["#ffffff", "#76008a"])
+    m_s = sx.pcolormesh(np.linspace(0, 1, 6), np.linspace(0, 1, 6), rng.rand(6, 6),
+                        cmap=cm_a, norm=shared3, shading="nearest")
+    fig.colorbar(m_s, ax=sx, location="right")
+    fig.colorbar(ScalarMappable(norm=shared3, cmap=cm_s), ax=sx, location="bottom", fraction=0.046)
+    fig.savefig("InvShared3.pdf")
+
     # ---- InvPar：`axes_grid1` 的 host_subplot + twinx（**寄生轴**，#217） ----
     # 这一族轴既不在 `fig.axes` 也不在 `child_axes`，只挂在 `host.parasites`
     # 上——遍历漏了它，第二组数据在 Tavotto 里既列不出也改不了，而且**不报错**。

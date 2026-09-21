@@ -35,13 +35,14 @@ export function colorScalePartner(
   // 还摆着色阶控件的色条**（它的 cmap 字段在）：色条自己的 mappable 映射断了时引擎把
   // 控件收起来，这里不摆一个指向空处的入口；覆盖关系本身（回到脚本原样要清谁）
   // 走 `colormapAliasGids`，与这条链接分开判。
+  // 两块共用 norm 的网格各挂一条色条时，A 的 `scale_gids` 也盖着 mesh_b——B 的页面要
+  // 指向**直接挂着它的** B（名称 / 方向 / 落位各是各的），不是先出现在清单里的 A
+  const withControls = (e: ManifestElement) =>
+    e.role === 'colorbar' && e.editable.some((f) => f.prop === 'cmap')
   return (
-    manifest.elements.find(
-      (e) =>
-        e.role === 'colorbar' &&
-        colorbarCovers(e, element.gid) &&
-        e.editable.some((f) => f.prop === 'cmap'),
-    ) ?? null
+    manifest.elements.find((e) => withControls(e) && e.mappable_gid === element.gid) ??
+    manifest.elements.find((e) => withControls(e) && colorbarCovers(e, element.gid)) ??
+    null
   )
 }
 
