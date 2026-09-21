@@ -1357,9 +1357,9 @@ def test_cancel_right_after_the_acknowledgement_is_honoured(tmp_path, wheelhouse
     gate = threading.Event()
     real_guarded = deprepair._prepare_guarded
 
-    def _held_at_entry(plan_id, on_event):
+    def _held_at_entry(plan_id, on_event, *, claimed=False):
         gate.wait(timeout=30)
-        return real_guarded(plan_id, on_event)
+        return real_guarded(plan_id, on_event, claimed=claimed)
 
     monkeypatch.setattr(deprepair, "_prepare_guarded", _held_at_entry)
     deprepair.prepare_async(plan.plan_id)

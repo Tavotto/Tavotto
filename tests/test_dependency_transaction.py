@@ -648,7 +648,9 @@ class TestJointTransaction:
 
     @pytest.mark.skipif(os.name == "nt" or os.geteuid() == 0, reason="需要 POSIX 权限位且非 root")
     def test_read_only_environments_dir_fails_cleanly(self, tmp_path, house, offline_managed_env):
-        """FO28（只读目录，真实权限位）：建不了代 → `managed_env_create_failed`，没有半个 active。"""
+        """FO28（只读目录，真实权限位）：第一步就是登记一代——清单写不进只读目录 →
+        `managed_env_write_failed`（Codex #470 P1 起写失败照抛，不再走到建 venv 那步才报
+        `managed_env_create_failed`），没有半个 active、磁盘上没有清单。"""
         project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
         envs = managedenv.env_dir(project).parent
         envs.mkdir(parents=True, exist_ok=True)
@@ -658,8 +660,9 @@ class TestJointTransaction:
         finally:
             envs.chmod(0o700)
         assert rec["state"] == deprepair.STATE_FAILED
-        assert rec["code"] == deprepair.ERROR_MANAGED_CREATE_FAILED
+        assert rec["code"] == deprepair.ERROR_MANAGED_WRITE_FAILED
         assert managedenv.python_of(project) is None
+        assert managedenv.read_manifest(project) is None
 
     def test_disk_low_is_refused_before_building(
         self, tmp_path, house, offline_managed_env, monkeypatch
