@@ -148,7 +148,9 @@ spike 里「一条 resolver」的选择；产品里再下载一个 37 MB 的 uv 
 走同一条路（`_facts_for_plan`：替身确定，同锁同机就同 digest；期间私有 Python 被别的项目供应则真量 → stale
 → 用户重算）。「有 worker、没 base」的机器同理：`_facts_for` 在 `base_python()` 为空时用 `private_fresh_facts()`
 量新的一代。干净机器上「什么都不缺」（脚本只用标准库）也建环境——没有任何解释器，环境本身就是要授权的，
-门在有私有段时 `nothing_needed` 也问。
+门按 `clean_machine` 在 `nothing_needed` 时也问。「要不要下载」与「要不要建本项目的代」是两件事：私有 Python 被别的
+项目供应过之后本项目仍是干净机器，门照样问、照样建代，载荷从「要下载 N 字节」变成「已就位、不联网」
+（`present_payload()`），界面照样把来源说出口（Codex #475 P1：只看载荷会把它放行成 `no_worker_python`）。
 
 入口三处（U04 C 的形状，一个字段）：`preparation_offer()` 多 `private_python` 段、`joint_targets()` 的受管目标带
 `private_python`（可用性看的是**有没有基础解释器**——受管目标每次都建新的一代）、`preparation.plan_for` 在

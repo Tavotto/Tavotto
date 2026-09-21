@@ -3116,6 +3116,16 @@ def test_open_on_a_clean_machine_says_the_download_out_loud(project, monkeypatch
         }
     )
     assert "选择 tavotto_managed 时会先使用已下载" in human and "MB" not in human
+    # 别的项目已经供应好了（required=false、零字节）：本项目仍是干净机器，来源照样说出口（Codex #475 P1）
+    present = {
+        **private,
+        "required": False,
+        "cached": True,
+        "download_bytes": 0,
+        "network_required": False,
+    }
+    human = _open_with({**_dependency_offer(), "clean_machine": True, "private_python": present})
+    assert "这台电脑没有可用的 Python：授权后会先使用已下载" in human and "3.13.15" in human
 
 
 def test_open_with_prepare_dependencies_runs_the_same_transaction_then_opens(
