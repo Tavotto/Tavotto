@@ -50,7 +50,9 @@ class FakeHost:
             time.sleep(self.delay)
         if self.fail is not None:
             raise self.fail
-        color = (0, 0, 0, 0) if transparent else (10, 20, 30, 255)
+        color = (
+            (0, 0, 0, 0) if transparent else (10, 20, 30 + int(page), 255)
+        )  # 页号进颜色：哪一页看得出来
         return raster.RasterBuffer(width_px, 1, 4, bytes(color) * width_px, width_px * 4)
 
 
@@ -134,6 +136,19 @@ def test_the_key_carries_width_background_renderer_build_and_fonts_policy(cache,
             )
             != k
         ), kw
+
+
+def test_different_pages_of_one_source_are_different_previews(cache, tmp_path):
+    """Codex #471 P2：多页源的第 1 页不许拿第 0 页的缓存冒充——页号进键。"""
+    c, host = cache
+    src = _pdf(tmp_path)
+    p0 = c.get("figs/a.pdf", src, 400, page=0)
+    p1 = c.get("figs/a.pdf", src, 400, page=1)
+    assert p0 != p1 and host.renders == 2
+    _, _, rgba0 = pdfread.decode_png(p0.read_bytes())
+    _, _, rgba1 = pdfread.decode_png(p1.read_bytes())
+    assert rgba0[:4] == bytes((10, 20, 30, 255)) and rgba1[:4] == bytes((10, 20, 31, 255))
+    assert c.get("figs/a.pdf", src, 400, page=1) == p1 and host.renders == 2
 
 
 def test_fonts_policy_version_is_the_allowlist_hash_prefix():

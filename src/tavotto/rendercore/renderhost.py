@@ -179,18 +179,26 @@ class RenderHost:
             return resp
 
     def request(self, op: str, *, timeout: float | None = None, **fields) -> dict:
+        """一个 deadline 管到底：等锁 + 起 child + 发 + 收都算在 `timeout` 里。等锁超时**不 kill child**——
+        它正在做别人的请求，只是本次来不及（Codex #471 P2：否则短超时的预览要排在前面每个慢请求后面才开始计时）。"""
         timeout = self.default_timeout if timeout is None else float(timeout)
+        deadline = time.monotonic() + timeout
         if not self._slots.acquire(blocking=False):
             raise RenderChildError(
                 "render_queue_full", f"已有 {self.max_waiting} 个请求在排队（有界队列，背压）"
             )
         try:
-            with self._lock:
+            if not self._lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+                raise RenderChildError(
+                    "render_child_timeout",
+                    f"等待 render child 空闲超过 {timeout}s（child 未被打断）",
+                )
+            try:
                 self.requests += 1
                 self._ensure()
                 try:
                     rid = self._send({"op": op, **fields})
-                    resp = self._recv(rid, timeout)
+                    resp = self._recv(rid, max(0.0, deadline - time.monotonic()))
                 except RenderChildError as exc:
                     if exc.code in (
                         "render_child_timeout",
@@ -206,6 +214,8 @@ class RenderHost:
                         code = "render_failed"
                     raise RenderChildError(code, str(err.get("message", "")))
                 return resp
+            finally:
+                self._lock.release()
         finally:
             self._slots.release()
 

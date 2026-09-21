@@ -168,6 +168,40 @@ def test_a_bounded_queue_pushes_back_instead_of_piling_up(fake_host, tmp_path):
     assert fake_host.starts == 1
 
 
+def test_the_timeout_covers_waiting_for_the_lock_and_does_not_kill_a_busy_child(
+    fake_host, tmp_path
+):
+    """Codex #471 P2：一个 deadline 管到底。A 拿着锁渲一个 0.3 s 的慢请求；B 带 0.05 s 超时进来，必须在
+    ~0.05 s 内拿到 `render_child_timeout`（不是等 A 做完才开始计时），而且 **child 不被打断**——A 照常成功、
+    没有重启。"""
+    slow = tmp_path / "slow.pdf"
+    slow.write_bytes(b"%PDF-")
+    ok = tmp_path / "ok.pdf"
+    ok.write_bytes(b"%PDF-")
+    fake_host.ping()
+    pid = fake_host.pid
+    results: dict[str, object] = {}
+    started = threading.Event()
+
+    def slow_work() -> None:
+        started.set()
+        results["a"] = fake_host.render(slow, width_px=2)
+
+    t = threading.Thread(target=slow_work)
+    t.start()
+    started.wait()
+    time.sleep(0.05)  # 让 A 先拿到锁
+    t0 = time.monotonic()
+    with pytest.raises(rh.RenderChildError) as ei:
+        fake_host.render(ok, width_px=2, timeout=0.05)
+    elapsed = time.monotonic() - t0
+    assert ei.value.code == "render_child_timeout" and elapsed < 0.25, elapsed
+    t.join()
+    assert results["a"].width == 2  # A 没被打断
+    assert fake_host.pid == pid and fake_host.restarts == 0  # child 没被 kill、没重启
+    assert fake_host.render(ok, width_px=2).width == 2
+
+
 def test_timeout_kills_the_child_and_the_next_request_recovers(fake_host, tmp_path):
     hang = tmp_path / "hang.pdf"
     hang.write_bytes(b"%PDF-")
