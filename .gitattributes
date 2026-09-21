@@ -48,3 +48,11 @@ docs/implementation/tavotto-foundation/archive/rendercore_requirements.json text
 # 拿派生 md 与按 json 现渲染的文本逐字符比；两份都钉 LF，换行符不进比对。
 docs/implementation/tavotto-foundation/enrollment.json text eol=lf
 docs/implementation/tavotto-foundation/ENROLLMENT.md text eol=lf
+# U02 render_spike 的 evidence（docs/implementation/tavotto-foundation/evidence/u02/render/）：
+# `tests/test_foundation_u02_render.py` 按 sha256 把 truth.json / spike.pdf / spike_pdfium.png 与
+# report.json 记的值互相钉住，Windows 检出成 CRLF 就对不上。PDF / PNG 有 NUL 字节本来按二进制走，
+# 一并写明；两份 JSON 钉 LF。
+docs/implementation/tavotto-foundation/evidence/u02/render/truth.json text eol=lf
+docs/implementation/tavotto-foundation/evidence/u02/render/report.json text eol=lf
+docs/implementation/tavotto-foundation/evidence/u02/render/spike.pdf binary
+docs/implementation/tavotto-foundation/evidence/u02/**/*.png binary

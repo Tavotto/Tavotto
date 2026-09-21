@@ -1,0 +1,108 @@
+
+--- stderr ---
+43 INFO: PyInstaller: 6.19.0, contrib hooks: 2026.7
+43 INFO: Python: 3.13.11
+50 INFO: Platform: macOS-27.0-arm64-arm-64bit-Mach-O
+50 INFO: Python environment: /private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv
+50 INFO: wrote /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/Tavotto-u02-freeze.spec
+52 INFO: Removing temporary files and cleaning cache in /Users/jiaqi/Library/Application Support/pyinstaller
+170 INFO: Module search paths (PYTHONPATH):
+['/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc',
+ '/Volumes/Projects/tavotto-wt/foundation-u02/scripts',
+ '/Volumes/Projects/tavotto-wt/foundation-u02/src',
+ '/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python313.zip',
+ '/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13',
+ '/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/lib-dynload',
+ '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages',
+ '/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc',
+ '/Volumes/Projects/tavotto-wt/foundation-u02/scripts']
+269 INFO: Appending 'binaries' from .spec
+269 INFO: Appending 'datas' from .spec
+269 INFO: checking Analysis
+269 INFO: Building Analysis because Analysis-00.toc is non existent
+269 INFO: Looking for Python shared library...
+271 INFO: Using Python shared library: /opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/Python
+271 INFO: Running Analysis Analysis-00.toc
+271 INFO: Target bytecode optimization level: 0
+271 INFO: Initializing module dependency graph...
+272 INFO: Initializing module graph hook caches...
+278 INFO: Analyzing modules for base_library.zip ...
+748 INFO: Processing standard module hook 'hook-encodings.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+1541 INFO: Processing standard module hook 'hook-pickle.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+2023 INFO: Processing standard module hook 'hook-heapq.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+2233 INFO: Caching module dependency graph...
+2250 INFO: Analyzing /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/u02_freeze_entry.py
+2272 INFO: Processing standard module hook 'hook-platform.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+2288 INFO: Processing standard module hook 'hook-xml.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+2307 INFO: Processing standard module hook 'hook-sysconfig.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+2314 INFO: Processing standard module hook 'hook-_osx_support.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+2316 INFO: Processing standard module hook 'hook-_ctypes.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+2331 INFO: Processing standard module hook 'hook-pypdfium2.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+2338 INFO: Processing standard module hook 'hook-pypdfium2_raw.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+2456 INFO: Processing standard module hook 'hook-PIL.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+2513 INFO: Processing standard module hook 'hook-PIL.Image.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+2654 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+2751 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+3306 INFO: Processing pre-safe-import-module hook 'hook-importlib_metadata.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/pre_safe_import_module'
+3307 INFO: SetuptoolsInfo: initializing cached setuptools info...
+3481 INFO: Setuptools: 'importlib_metadata' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.importlib_metadata'!
+3485 INFO: Processing standard module hook 'hook-setuptools.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+3493 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/pre_safe_import_module'
+3510 INFO: Processing pre-safe-import-module hook 'hook-jaraco.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/pre_safe_import_module'
+3510 INFO: Setuptools: 'jaraco' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco'!
+3516 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/pre_safe_import_module'
+3516 INFO: Setuptools: 'more_itertools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.more_itertools'!
+3581 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/pre_safe_import_module'
+3589 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/pre_safe_import_module'
+3722 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+3723 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/pre_safe_import_module'
+3824 INFO: Processing pre-safe-import-module hook 'hook-backports.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/pre_safe_import_module'
+3825 INFO: Setuptools: 'backports' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.backports'!
+4098 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/pre_safe_import_module'
+4098 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.tomli'!
+4359 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/pre_safe_import_module'
+4360 INFO: Setuptools: 'wheel' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.wheel'!
+4403 INFO: Processing standard module hook 'hook-setuptools._vendor.importlib_metadata.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+4414 INFO: Processing pre-safe-import-module hook 'hook-zipp.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/pre_safe_import_module'
+4415 INFO: Setuptools: 'zipp' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.zipp'!
+4428 INFO: Processing module hooks (post-graph stage)...
+4484 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+4825 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks'
+4884 INFO: Performing binary vs. data reclassification (29 entries)
+4891 INFO: Looking for ctypes DLLs
+4919 INFO: Analyzing run-time hooks ...
+4921 INFO: Including run-time hook 'pyi_rth_inspect.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/rthooks'
+4922 INFO: Including run-time hook 'pyi_rth_setuptools.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/rthooks'
+4923 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/rthooks'
+4924 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from '/private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/hooks/rthooks'
+4928 INFO: Creating base_library.zip...
+4937 INFO: Looking for dynamic libraries
+5017 INFO: Warnings written to /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/build/Tavotto-u02-freeze/warn-Tavotto-u02-freeze.txt
+5028 INFO: Graph cross-reference written to /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/build/Tavotto-u02-freeze/xref-Tavotto-u02-freeze.html
+5065 INFO: checking PYZ
+5065 INFO: Building PYZ because PYZ-00.toc is non existent
+5065 INFO: Building PYZ (ZlibArchive) /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/build/Tavotto-u02-freeze/PYZ-00.pyz
+5323 INFO: Building PYZ (ZlibArchive) /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/build/Tavotto-u02-freeze/PYZ-00.pyz completed successfully.
+5328 INFO: EXE target arch: arm64
+5328 INFO: Code signing identity: None
+5329 INFO: checking PKG
+5329 INFO: Building PKG because PKG-00.toc is non existent
+5329 INFO: Building PKG (CArchive) Tavotto-u02-freeze.pkg
+5336 INFO: Building PKG (CArchive) Tavotto-u02-freeze.pkg completed successfully.
+5337 INFO: Bootloader /private/tmp/claude-501/-Volumes-Projects-Tavotto/2f95cefd-6a3e-4a9a-83ae-78c681e24ce7/scratchpad/u02/spike-venv/lib/python3.13/site-packages/PyInstaller/bootloader/Darwin-64bit/run
+5337 INFO: checking EXE
+5337 INFO: Building EXE because EXE-00.toc is non existent
+5337 INFO: Building EXE from EXE-00.toc
+5337 INFO: Copying bootloader EXE to /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/build/Tavotto-u02-freeze/Tavotto-u02-freeze
+5337 INFO: Converting EXE to target arch (arm64)
+9979 INFO: Removing signature(s) from EXE
+9995 INFO: Modifying Mach-O image UUID(s) in EXE
+9998 INFO: Appending PKG archive to EXE
+9999 INFO: Fixing EXE headers for code signing
+10002 INFO: Re-signing the EXE
+10020 INFO: Building EXE from EXE-00.toc completed successfully.
+10022 INFO: checking COLLECT
+10022 INFO: Building COLLECT because COLLECT-00.toc is non existent
+10022 INFO: Building COLLECT COLLECT-00.toc
+12649 INFO: Building COLLECT COLLECT-00.toc completed successfully.
+12651 INFO: Build complete! The results are available in: /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-freeze-blc65uqc/dist

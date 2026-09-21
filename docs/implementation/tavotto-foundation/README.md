@@ -23,6 +23,12 @@ U01 已于 2026-09-20 执行（`implementation_status: done`，产品资格仍 `
 闭集校验器与 `invariants` job 的三步落点；唯一 enforced 的切片 `U01-S1` 经真实 HTTP 入口走完首开 → 导出
 （旧后端终点）。交接见 [`handoffs/U01_contracts.md`](handoffs/U01_contracts.md)。
 
+U02 已于 2026-09-20 执行（`implementation_status: done`，产品资格仍 `not_run`）：两个独立技术证明——
+render_spike（ADR 0055：PDFium 栅格 + pikepdf/fontTools/HarfBuzz 受限 emitter，Liberation + Noto Sans SC 为默认字体，
+串行 render child，最小 PyInstaller 冻结）与 runtime_spike（ADR 0056：uv + python-build-standalone 私有 Python +
+离线 wheel，坏 hash / 无网负例）。证据在 [`evidence/u02/`](evidence/u02/)，spike 代码在 `scripts/dev/u02_spikes/`
+（不进产品 import 图，候选包只在独立 venv）。交接见 [`handoffs/U02_spikes.md`](handoffs/U02_spikes.md)。
+
 ## 从哪里开始
 
 先读 [执行总提示词](00_MASTER_PROMPT.md)、[范围与修改决策](01_SCOPE_AND_DECISIONS.md)、[路线图](02_ROADMAP.md) 和 [CI 生效政策](03_CI_POLICY.md)。随后只执行 [U00](phases/U00_baseline.md)，不要在第一步删除 PyMuPDF、更换根许可证或一次启用全部兼容门禁。

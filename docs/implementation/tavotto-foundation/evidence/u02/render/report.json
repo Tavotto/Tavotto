@@ -1,0 +1,1151 @@
+{
+ "platform": {
+  "python": "3.13.11",
+  "system": "Darwin",
+  "machine": "arm64"
+ },
+ "versions": {
+  "pypdfium2": "5.13.0",
+  "pdfium": "153.0.7999.0",
+  "pikepdf": "10.13.0.post1",
+  "libqpdf": "12.3.2",
+  "fonttools": "4.65.0",
+  "uharfbuzz": "0.56.1",
+  "harfbuzz": "14.4.0",
+  "pdfminer.six": "20251107",
+  "pypdf": "6.7.5"
+ },
+ "inputs": {
+  "truth": "docs/implementation/tavotto-foundation/evidence/u02/render/truth.json",
+  "truth_sha256": "dcddcb52d52e02c765af4090747fd7748a9586eaf43bc1ecbdfc8fdf7b3daa3a",
+  "source_page_sha256": "18bf03ac337a97872329cbf002580e89ae9e984dc1b46b1d753d31bd2c230771",
+  "fonts": {
+   "LiberationSerif-Regular": "058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74",
+   "LiberationSerif-Bold": "d754ba427cfe0bca54ae052384baa8f842da5bd6550ad4da024ac441e7a7d5ce",
+   "LiberationSerif-Italic": "0e3dea9f8d613e006ccfa62201f33e265d19167bd0907725c3e145368b04fc2e",
+   "LiberationSerif-BoldItalic": "f17db8af71e24d2066b587546021d4f0b296be389512b658dec3c09affeb11a7",
+   "LiberationSans-Regular": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+   "LiberationSans-Bold": "788abee4c806d660e8aee46689dd8540cd4bb98da03dcc9d171ce3efd99a9173",
+   "LiberationSans-Italic": "e5bae5c4cde31f22142753855f4f8fb86da6ff39955ed3c0a11248b0d16948b0",
+   "LiberationSans-BoldItalic": "698da70fc191cc5f33ad4d6d3fe830fe4624b898ea2e3169955928b7c491f1ee",
+   "LiberationMono-Regular": "f2b83c763e8afd21709333370bed4774337fae82267937e2b5aea7e2fbd922c1",
+   "LiberationMono-Bold": "bd62a0672d0b9b6710b01df434c80ad54fa5f0835207eb7b17b7a761463067bb",
+   "LiberationMono-Italic": "605c01c711b44480a7508d349dfbf3264e81fa43d69e61cfa7d10b86e764c4d1",
+   "LiberationMono-BoldItalic": "79451f3c09fe25116098853b7a2ca6e2436220ccc11af022979adbcf195be130",
+   "NotoSansSC-Regular": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9"
+  }
+ },
+ "outputs": {
+  "spike.pdf": {
+   "sha256": "12966287d846078030c4e7c29d97014c8eec390e57a5cba5f63ebc666a14b9dc",
+   "bytes": 18073
+  },
+  "spike_pdfium.png": {
+   "sha256": "422b77b9408edf273d59fc8f359764045b17108a99e2daf575c1cb872c21d413",
+   "bytes": 30866,
+   "width": 800,
+   "height": 640
+  }
+ },
+ "writer_facts": {
+  "page": [
+   400.0,
+   320.0
+  ],
+  "imports": [
+   {
+    "name": "Fm1",
+    "source": "page.pdf",
+    "bbox": [
+     15.0,
+     10.0,
+     285.0,
+     170.0
+    ],
+    "source_rect": [
+     15.0,
+     10.0,
+     270.0,
+     160.0
+    ],
+    "target_rect": [
+     20,
+     160,
+     135,
+     80
+    ],
+    "rotate_cw_deg": 0,
+    "crop": null,
+    "matrix": [
+     0.5,
+     0.0,
+     0.0,
+     0.5,
+     12.5,
+     155.0
+    ],
+    "opacity": 1.0
+   },
+   {
+    "name": "Fm2",
+    "source": "page.pdf",
+    "bbox": [
+     15.0,
+     10.0,
+     285.0,
+     170.0
+    ],
+    "source_rect": [
+     15.0,
+     10.0,
+     270.0,
+     160.0
+    ],
+    "target_rect": [
+     180,
+     165,
+     67.5,
+     40
+    ],
+    "rotate_cw_deg": 90,
+    "crop": null,
+    "matrix": [
+     1.5308084989341915e-17,
+     -0.25,
+     0.25,
+     1.5308084989341915e-17,
+     191.25,
+     222.5
+    ],
+    "opacity": 1.0
+   },
+   {
+    "name": "Fm3",
+    "source": "page.pdf",
+    "bbox": [
+     15.0,
+     10.0,
+     285.0,
+     170.0
+    ],
+    "source_rect": [
+     15.0,
+     10.0,
+     270.0,
+     160.0
+    ],
+    "target_rect": [
+     20,
+     60,
+     135,
+     80
+    ],
+    "rotate_cw_deg": 0,
+    "crop": null,
+    "matrix": [
+     0.5,
+     0.0,
+     0.0,
+     0.5,
+     12.5,
+     55.0
+    ],
+    "opacity": 0.5,
+    "group": "Grp4"
+   },
+   {
+    "name": "Fm5",
+    "source": "page.pdf",
+    "bbox": [
+     15.0,
+     10.0,
+     285.0,
+     170.0
+    ],
+    "source_rect": [
+     150.0,
+     10.0,
+     135.0,
+     160.0
+    ],
+    "target_rect": [
+     290,
+     160,
+     67.5,
+     80
+    ],
+    "rotate_cw_deg": 0,
+    "crop": [
+     0.5,
+     0.0,
+     0.5,
+     1.0
+    ],
+    "matrix": [
+     0.5,
+     0.0,
+     0.0,
+     0.5,
+     215.0,
+     155.0
+    ],
+    "opacity": 1.0
+   }
+  ],
+  "groups": [
+   {
+    "name": "Grp6",
+    "bbox": [
+     180,
+     60,
+     270,
+     135
+    ],
+    "opacity": 0.5,
+    "transparency_group": true
+   }
+  ],
+  "text": [
+   {
+    "x": 20,
+    "y": 300,
+    "size": 11,
+    "advance_pt": 274.4306640625,
+    "text": "Tavotto U02: efficient flow, café — Δλ = 532 nm, μ ≈ 1.5×10⁵",
+    "faces": [
+     "LiberationSerif"
+    ]
+   },
+   {
+    "x": 20,
+    "y": 284,
+    "size": 11,
+    "advance_pt": 82.33714843749999,
+    "text": "E = mc2, H2O, kBT",
+    "faces": [
+     "LiberationSerif"
+    ]
+   },
+   {
+    "x": 20,
+    "y": 268,
+    "size": 11,
+    "advance_pt": 140.9845078125,
+    "text": "图一：温度 T (K) 随时间变化",
+    "faces": [
+     "LiberationSerif-Bold",
+     "NotoSansSC-Regular"
+    ]
+   },
+   {
+    "x": 20,
+    "y": 252,
+    "size": 11,
+    "advance_pt": 165.97216796875,
+    "text": "Sans Italic αβγ — 中文回退不换族",
+    "faces": [
+     "LiberationSans-Italic",
+     "NotoSansSC-Regular"
+    ]
+   }
+  ],
+  "fonts": [
+   {
+    "file": "LiberationSans-Italic.ttf",
+    "kind": "truetype",
+    "base_font": "UXYPSQ+LiberationSans-Italic",
+    "glyphs_in_source": 2622,
+    "glyphs_in_subset": 15,
+    "used_glyphs": 14,
+    "font_program_bytes": 2248,
+    "resource": "F1"
+   },
+   {
+    "file": "LiberationSerif-Regular.ttf",
+    "kind": "truetype",
+    "base_font": "BSDTAO+LiberationSerif",
+    "glyphs_in_source": 2602,
+    "glyphs_in_subset": 39,
+    "used_glyphs": 37,
+    "font_program_bytes": 4276,
+    "resource": "F2"
+   },
+   {
+    "file": "LiberationSerif-Bold.ttf",
+    "kind": "truetype",
+    "base_font": "ACDIFM+LiberationSerif-Bold",
+    "glyphs_in_source": 2602,
+    "glyphs_in_subset": 6,
+    "used_glyphs": 5,
+    "font_program_bytes": 1304,
+    "resource": "F3"
+   },
+   {
+    "file": "NotoSansSC-Regular.otf",
+    "kind": "cff-cid",
+    "base_font": "XTMDEF+NotoSansSC-Regular",
+    "glyphs_in_source": 31036,
+    "glyphs_in_subset": 19,
+    "used_glyphs": 18,
+    "font_program_bytes": 2998,
+    "resource": "F4"
+   }
+  ],
+  "faces": {
+   "cjk/regular/upright": {
+    "file": "NotoSansSC-Regular.otf",
+    "sha256": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9",
+    "kind": "cff-cid",
+    "postscript_name": "NotoSansSC-Regular"
+   },
+   "serif/regular/upright": {
+    "file": "LiberationSerif-Regular.ttf",
+    "sha256": "058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74",
+    "kind": "truetype",
+    "postscript_name": "LiberationSerif"
+   },
+   "serif/bold/upright": {
+    "file": "LiberationSerif-Bold.ttf",
+    "sha256": "d754ba427cfe0bca54ae052384baa8f842da5bd6550ad4da024ac441e7a7d5ce",
+    "kind": "truetype",
+    "postscript_name": "LiberationSerif-Bold"
+   },
+   "sans-serif/regular/italic": {
+    "file": "LiberationSans-Italic.ttf",
+    "sha256": "e5bae5c4cde31f22142753855f4f8fb86da6ff39955ed3c0a11248b0d16948b0",
+    "kind": "truetype",
+    "postscript_name": "LiberationSans-Italic"
+   }
+  }
+ },
+ "readers": {
+  "pdfium_text": "U00 fixture: y = 3x + 1 U00 fixture: y = 3x + 1 U00 fixture: y = 3x + 1 U00 fixture: y = 3x + 1\r\nTavotto U02: efficient flow, café — Δλ = 532 nm, μ ≈ 1.5×10⁵\r\nE = mc2\r\n, H2O, kBT\r\n图一：温度 T (K) 随时间变化\r\nSans Italic αβγ — 中文回退不换族",
+  "pdfium_object_census": {
+   "form": 6,
+   "text": 17,
+   "path": 16
+  },
+  "pdfminer_text": "Tavotto U02: efficient flow, café — Δλ = 532 nm, μ ≈ 1.5×10⁵\nE = mc2, H2O, kBT\n图一：温度 T (K) 随时间变化\nSans Italic αβγ — 中文回退不换族\n\nU00 fixture: y = 3x + 1U00 fixture: y = 3x + 1U00 fixture: y = 3x + 1U00 fixture: y = 3x + 1\f",
+  "pypdf_fonts": {
+   "/F1": {
+    "base_font": "/UXYPSQ+LiberationSans-Italic",
+    "subtype": "/Type0",
+    "encoding": "/Identity-H",
+    "descendant_subtype": "/CIDFontType2",
+    "cid_to_gid": "/Identity",
+    "font_file": "/FontFile2",
+    "font_file_subtype": "",
+    "font_program_bytes": 2248,
+    "to_unicode": true,
+    "w_entries": 14
+   },
+   "/F2": {
+    "base_font": "/BSDTAO+LiberationSerif",
+    "subtype": "/Type0",
+    "encoding": "/Identity-H",
+    "descendant_subtype": "/CIDFontType2",
+    "cid_to_gid": "/Identity",
+    "font_file": "/FontFile2",
+    "font_file_subtype": "",
+    "font_program_bytes": 4276,
+    "to_unicode": true,
+    "w_entries": 37
+   },
+   "/F3": {
+    "base_font": "/ACDIFM+LiberationSerif-Bold",
+    "subtype": "/Type0",
+    "encoding": "/Identity-H",
+    "descendant_subtype": "/CIDFontType2",
+    "cid_to_gid": "/Identity",
+    "font_file": "/FontFile2",
+    "font_file_subtype": "",
+    "font_program_bytes": 1304,
+    "to_unicode": true,
+    "w_entries": 5
+   },
+   "/F4": {
+    "base_font": "/XTMDEF+NotoSansSC-Regular",
+    "subtype": "/Type0",
+    "encoding": "/Identity-H",
+    "descendant_subtype": "/CIDFontType0",
+    "cid_to_gid": "",
+    "font_file": "/FontFile3",
+    "font_file_subtype": "/CIDFontType0C",
+    "font_program_bytes": 2998,
+    "to_unicode": true,
+    "w_entries": 18
+   }
+  }
+ },
+ "results": [
+  {
+   "check": "pdfium.page_size",
+   "ok": true,
+   "got": [
+    400.0,
+    320.0
+   ]
+  },
+  {
+   "check": "writer.import.A.matrix_matches_independent_recompute",
+   "ok": true,
+   "expected": [
+    0.5,
+    -0.0,
+    0.0,
+    0.5,
+    12.5,
+    155.0
+   ],
+   "writer": [
+    0.5,
+    0.0,
+    0.0,
+    0.5,
+    12.5,
+    155.0
+   ]
+  },
+  {
+   "check": "pdfium.import.A.pixel",
+   "ok": true,
+   "src": [
+    60,
+    50
+   ],
+   "page": [
+    42.5,
+    180.0
+   ],
+   "expected": [
+    0,
+    0,
+    255
+   ],
+   "got": [
+    0,
+    0,
+    255
+   ],
+   "why": "源页蓝矩形独占区"
+  },
+  {
+   "check": "pdfium.import.A.pixel",
+   "ok": true,
+   "src": [
+    115,
+    80
+   ],
+   "page": [
+    70.0,
+    195.0
+   ],
+   "expected": [
+    128,
+    0,
+    128
+   ],
+   "got": [
+    127,
+    0,
+    128
+   ],
+   "why": "源页内部：红 α=0.5 盖在蓝上"
+  },
+  {
+   "check": "pdfium.import.A.pixel",
+   "ok": true,
+   "src": [
+    25,
+    150
+   ],
+   "page": [
+    25.0,
+    230.0
+   ],
+   "expected": [
+    255,
+    255,
+    255
+   ],
+   "got": [
+    255,
+    255,
+    255
+   ],
+   "why": "源页空白处（在 CropBox 内）"
+  },
+  {
+   "check": "writer.import.B.matrix_matches_independent_recompute",
+   "ok": true,
+   "expected": [
+    0.0,
+    -0.25,
+    0.25,
+    0.0,
+    191.25,
+    222.5
+   ],
+   "writer": [
+    1.5308084989341915e-17,
+    -0.25,
+    0.25,
+    1.5308084989341915e-17,
+    191.25,
+    222.5
+   ]
+  },
+  {
+   "check": "pdfium.import.B.pixel",
+   "ok": true,
+   "src": [
+    60,
+    50
+   ],
+   "page": [
+    203.75,
+    207.5
+   ],
+   "expected": [
+    0,
+    0,
+    255
+   ],
+   "got": [
+    0,
+    0,
+    255
+   ],
+   "why": "旋转后蓝矩形独占区"
+  },
+  {
+   "check": "pdfium.import.B.pixel",
+   "ok": true,
+   "src": [
+    115,
+    80
+   ],
+   "page": [
+    211.25,
+    193.75
+   ],
+   "expected": [
+    128,
+    0,
+    128
+   ],
+   "got": [
+    127,
+    0,
+    128
+   ],
+   "why": "旋转后内部重叠区"
+  },
+  {
+   "check": "writer.import.C.matrix_matches_independent_recompute",
+   "ok": true,
+   "expected": [
+    0.5,
+    -0.0,
+    0.0,
+    0.5,
+    12.5,
+    55.0
+   ],
+   "writer": [
+    0.5,
+    0.0,
+    0.0,
+    0.5,
+    12.5,
+    55.0
+   ]
+  },
+  {
+   "check": "pdfium.import.C.pixel",
+   "ok": true,
+   "src": [
+    60,
+    50
+   ],
+   "page": [
+    42.5,
+    80.0
+   ],
+   "expected": [
+    128,
+    128,
+    255
+   ],
+   "got": [
+    128,
+    128,
+    255
+   ],
+   "why": "整页 50%：蓝独占区 = 蓝 50% 盖白"
+  },
+  {
+   "check": "pdfium.import.C.pixel",
+   "ok": true,
+   "src": [
+    115,
+    80
+   ],
+   "page": [
+    70.0,
+    95.0
+   ],
+   "expected": [
+    191,
+    128,
+    191
+   ],
+   "got": [
+    191,
+    128,
+    191
+   ],
+   "why": "整页 50%：内部重叠先在组内合成(128,0,128)再整体 50% 盖白；逐对象 alpha 会给 (159,96,191)"
+  },
+  {
+   "check": "writer.import.F.matrix_matches_independent_recompute",
+   "ok": true,
+   "expected": [
+    0.5,
+    -0.0,
+    0.0,
+    0.5,
+    215.0,
+    155.0
+   ],
+   "writer": [
+    0.5,
+    0.0,
+    0.0,
+    0.5,
+    215.0,
+    155.0
+   ]
+  },
+  {
+   "check": "pdfium.import.F.pixel",
+   "ok": true,
+   "src": [
+    170,
+    110
+   ],
+   "page": [
+    300.0,
+    210.0
+   ],
+   "expected": [
+    255,
+    128,
+    128
+   ],
+   "got": [
+    255,
+    128,
+    128
+   ],
+   "why": "crop 右半：红 α=0.5 独占区（红盖白）"
+  },
+  {
+   "check": "pdfium.import.F.pixel",
+   "ok": true,
+   "src": [
+    115,
+    80
+   ],
+   "page": [
+    272.5,
+    195.0
+   ],
+   "expected": [
+    255,
+    255,
+    255
+   ],
+   "got": [
+    255,
+    255,
+    255
+   ],
+   "why": "crop 之外的源点不该有墨：它被裁掉，落点由 crop 映射决定，这里量的是同一页面位置"
+  },
+  {
+   "check": "pdfium.group.D.pixel",
+   "ok": true,
+   "page": [
+    225,
+    97.5
+   ],
+   "expected": [
+    128,
+    128,
+    255
+   ],
+   "got": [
+    128,
+    128,
+    255
+   ],
+   "why": "重叠区：组内 alpha 从 1 起算，蓝盖住红，整组 50% 盖白"
+  },
+  {
+   "check": "pdfium.group.D.pixel",
+   "ok": true,
+   "page": [
+    190,
+    70
+   ],
+   "expected": [
+    255,
+    128,
+    128
+   ],
+   "got": [
+    255,
+    128,
+    128
+   ],
+   "why": "红独占区 50% 盖白"
+  },
+  {
+   "check": "pdfium.group.D.pixel",
+   "ok": true,
+   "page": [
+    260,
+    125
+   ],
+   "expected": [
+    128,
+    128,
+    255
+   ],
+   "got": [
+    128,
+    128,
+    255
+   ],
+   "why": "蓝独占区 50% 盖白"
+  },
+  {
+   "check": "pdfium.group.E.pixel",
+   "ok": true,
+   "page": [
+    335,
+    97.5
+   ],
+   "expected": [
+    128,
+    64,
+    191
+   ],
+   "got": [
+    128,
+    64,
+    191
+   ],
+   "why": "对照组：逐对象 alpha 让重叠区二次压暗——与 D 的 (128,128,255) 必须不同"
+  },
+  {
+   "check": "pdfium.group_vs_per_object_differ",
+   "ok": true,
+   "got": [
+    [
+     128,
+     128,
+     255
+    ],
+    [
+     128,
+     64,
+     191
+    ]
+   ]
+  },
+  {
+   "check": "pdfium.text.latin_greek.ink",
+   "ok": true,
+   "dark_pixels": 362
+  },
+  {
+   "check": "pdfium.text.scripts.ink",
+   "ok": true,
+   "dark_pixels": 293
+  },
+  {
+   "check": "pdfium.text.cjk_mixed.ink",
+   "ok": true,
+   "dark_pixels": 369
+  },
+  {
+   "check": "pdfium.text.sans_italic.ink",
+   "ok": true,
+   "dark_pixels": 479
+  },
+  {
+   "check": "pdfium.objects.text_objects_present",
+   "ok": true,
+   "census": {
+    "form": 6,
+    "text": 17,
+    "path": 16
+   }
+  },
+  {
+   "check": "pdfium.import.A.inner_rect_bounds",
+   "ok": true,
+   "expected": [
+    32.5,
+    175.0,
+    82.5,
+    205.0
+   ],
+   "candidates": [
+    [
+     32.5,
+     175.0,
+     82.5,
+     205.0
+    ],
+    [
+     26.793,
+     169.293,
+     113.2,
+     215.66
+    ],
+    [
+     57.5,
+     185.0,
+     107.5,
+     215.0
+    ],
+    [
+     201.25,
+     187.5,
+     216.25,
+     212.5
+    ],
+    [
+     198.396,
+     172.15,
+     221.58,
+     215.354
+    ],
+    [
+     206.25,
+     175.0,
+     221.25,
+     200.0
+    ],
+    [
+     32.5,
+     75.0,
+     82.5,
+     105.0
+    ],
+    [
+     26.793,
+     69.293,
+     113.2,
+     115.66
+    ],
+    [
+     57.5,
+     85.0,
+     107.5,
+     115.0
+    ],
+    [
+     235.0,
+     175.0,
+     285.0,
+     205.0
+    ],
+    [
+     229.293,
+     169.293,
+     315.7,
+     215.66
+    ],
+    [
+     260.0,
+     185.0,
+     310.0,
+     215.0
+    ]
+   ]
+  },
+  {
+   "check": "pdfium.import.B.inner_rect_bounds",
+   "ok": true,
+   "expected": [
+    201.25,
+    187.5,
+    216.25,
+    212.5
+   ],
+   "candidates": [
+    [
+     32.5,
+     175.0,
+     82.5,
+     205.0
+    ],
+    [
+     26.793,
+     169.293,
+     113.2,
+     215.66
+    ],
+    [
+     57.5,
+     185.0,
+     107.5,
+     215.0
+    ],
+    [
+     201.25,
+     187.5,
+     216.25,
+     212.5
+    ],
+    [
+     198.396,
+     172.15,
+     221.58,
+     215.354
+    ],
+    [
+     206.25,
+     175.0,
+     221.25,
+     200.0
+    ],
+    [
+     32.5,
+     75.0,
+     82.5,
+     105.0
+    ],
+    [
+     26.793,
+     69.293,
+     113.2,
+     115.66
+    ],
+    [
+     57.5,
+     85.0,
+     107.5,
+     115.0
+    ],
+    [
+     235.0,
+     175.0,
+     285.0,
+     205.0
+    ],
+    [
+     229.293,
+     169.293,
+     315.7,
+     215.66
+    ],
+    [
+     260.0,
+     185.0,
+     310.0,
+     215.0
+    ]
+   ]
+  },
+  {
+   "check": "pdfium.text.latin_greek.contains",
+   "ok": true,
+   "expected": "efficient flow"
+  },
+  {
+   "check": "pdfium.text.latin_greek.contains",
+   "ok": true,
+   "expected": "café"
+  },
+  {
+   "check": "pdfium.text.latin_greek.contains",
+   "ok": true,
+   "expected": "Δλ = 532 nm"
+  },
+  {
+   "check": "pdfium.text.latin_greek.contains",
+   "ok": true,
+   "expected": "μ ≈ 1.5×10⁵"
+  },
+  {
+   "check": "pdfium.text.scripts.contains_nospace",
+   "ok": true,
+   "expected": "E=mc2"
+  },
+  {
+   "check": "pdfium.text.scripts.contains_nospace",
+   "ok": true,
+   "expected": "H2O"
+  },
+  {
+   "check": "pdfium.text.scripts.contains_nospace",
+   "ok": true,
+   "expected": "kBT"
+  },
+  {
+   "check": "pdfium.text.cjk_mixed.contains_nospace",
+   "ok": true,
+   "expected": "图一：温度T(K)随时间变化"
+  },
+  {
+   "check": "pdfium.text.sans_italic.contains_nospace",
+   "ok": true,
+   "expected": "SansItalicαβγ"
+  },
+  {
+   "check": "pdfium.text.sans_italic.contains_nospace",
+   "ok": true,
+   "expected": "中文回退不换族"
+  },
+  {
+   "check": "pdfminer.text.latin_greek.contains",
+   "ok": true,
+   "expected": "efficient flow"
+  },
+  {
+   "check": "pdfminer.text.latin_greek.contains",
+   "ok": true,
+   "expected": "café"
+  },
+  {
+   "check": "pdfminer.text.latin_greek.contains",
+   "ok": true,
+   "expected": "Δλ = 532 nm"
+  },
+  {
+   "check": "pdfminer.text.latin_greek.contains",
+   "ok": true,
+   "expected": "μ ≈ 1.5×10⁵"
+  },
+  {
+   "check": "pdfminer.text.scripts.contains_nospace",
+   "ok": true,
+   "expected": "E=mc2"
+  },
+  {
+   "check": "pdfminer.text.scripts.contains_nospace",
+   "ok": true,
+   "expected": "H2O"
+  },
+  {
+   "check": "pdfminer.text.scripts.contains_nospace",
+   "ok": true,
+   "expected": "kBT"
+  },
+  {
+   "check": "pdfminer.text.cjk_mixed.contains_nospace",
+   "ok": true,
+   "expected": "图一：温度T(K)随时间变化"
+  },
+  {
+   "check": "pdfminer.text.sans_italic.contains_nospace",
+   "ok": true,
+   "expected": "SansItalicαβγ"
+  },
+  {
+   "check": "pdfminer.text.sans_italic.contains_nospace",
+   "ok": true,
+   "expected": "中文回退不换族"
+  },
+  {
+   "check": "pypdf.font./F1.structure",
+   "ok": true,
+   "font": {
+    "base_font": "/UXYPSQ+LiberationSans-Italic",
+    "subtype": "/Type0",
+    "encoding": "/Identity-H",
+    "descendant_subtype": "/CIDFontType2",
+    "cid_to_gid": "/Identity",
+    "font_file": "/FontFile2",
+    "font_file_subtype": "",
+    "font_program_bytes": 2248,
+    "to_unicode": true,
+    "w_entries": 14
+   }
+  },
+  {
+   "check": "pypdf.font./F2.structure",
+   "ok": true,
+   "font": {
+    "base_font": "/BSDTAO+LiberationSerif",
+    "subtype": "/Type0",
+    "encoding": "/Identity-H",
+    "descendant_subtype": "/CIDFontType2",
+    "cid_to_gid": "/Identity",
+    "font_file": "/FontFile2",
+    "font_file_subtype": "",
+    "font_program_bytes": 4276,
+    "to_unicode": true,
+    "w_entries": 37
+   }
+  },
+  {
+   "check": "pypdf.font./F3.structure",
+   "ok": true,
+   "font": {
+    "base_font": "/ACDIFM+LiberationSerif-Bold",
+    "subtype": "/Type0",
+    "encoding": "/Identity-H",
+    "descendant_subtype": "/CIDFontType2",
+    "cid_to_gid": "/Identity",
+    "font_file": "/FontFile2",
+    "font_file_subtype": "",
+    "font_program_bytes": 1304,
+    "to_unicode": true,
+    "w_entries": 5
+   }
+  },
+  {
+   "check": "pypdf.font./F4.structure",
+   "ok": true,
+   "font": {
+    "base_font": "/XTMDEF+NotoSansSC-Regular",
+    "subtype": "/Type0",
+    "encoding": "/Identity-H",
+    "descendant_subtype": "/CIDFontType0",
+    "cid_to_gid": "",
+    "font_file": "/FontFile3",
+    "font_file_subtype": "/CIDFontType0C",
+    "font_program_bytes": 2998,
+    "to_unicode": true,
+    "w_entries": 18
+   }
+  },
+  {
+   "check": "pypdf.fonts.expected_faces_embedded",
+   "ok": true,
+   "expected": [
+    "LiberationSans-Italic",
+    "LiberationSerif",
+    "LiberationSerif-Bold",
+    "NotoSansSC-Regular"
+   ],
+   "embedded": [
+    "LiberationSans-Italic",
+    "LiberationSerif",
+    "LiberationSerif-Bold",
+    "NotoSansSC-Regular"
+   ]
+  },
+  {
+   "check": "pypdf.content.uses_text_operators",
+   "ok": true
+  }
+ ],
+ "all_ok": true
+}
