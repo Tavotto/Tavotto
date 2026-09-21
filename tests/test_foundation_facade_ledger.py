@@ -115,8 +115,12 @@ def _symbol_source(path: str, symbol: str) -> str:
     assert node is not None and isinstance(node, _DEFS), (
         f"{path} 里没有函数 / 方法 `{symbol}`——清单指着的符号已经不在了"
     )
-    a, b = _span(node)
-    return "\n".join(lines[a - 1 : b])
+    # 装饰器 + 函数体；**不含 `def` 那几行**——`test_hex2rgb` 的名字里就有 `hex2rgb`，
+    # 把 def 行算进去，「片段还在不在用例里」这条判据对这类名字恒真。
+    a, _ = _span(node)
+    dec_end = max([a - 1] + [d.end_lineno for d in node.decorator_list])
+    body_start = node.body[0].lineno
+    return "\n".join(lines[a - 1 : dec_end] + lines[body_start - 1 : node.end_lineno])
 
 
 def test_every_cited_caller_symbol_still_mentions_the_export():
@@ -158,10 +162,15 @@ def test_every_migration_evidence_points_at_a_test_that_exists():
 
 
 def test_every_cited_test_symbol_still_contains_its_snippet():
-    """用例引用同样按用例函数名锚定：那个用例（含它的装饰器）里仍有登记的片段。"""
+    """用例引用同样按用例函数名锚定：那个用例（装饰器 + 函数体）里仍有登记的片段。
+    片段就是 `def <用例名>` 的（经端点的 user_contract 用例，登记的只是「这条用例存在」）
+    由符号查找本身证明——找不到符号已经 fail 了。"""
     for e in _ledger()["exports"]:
         for t in e["tests"]:
-            assert t["contains"] in _symbol_source(t["file"], t["symbol"]), (
+            body = _symbol_source(t["file"], t["symbol"])  # 符号不在 → 这里已 fail
+            if t["contains"] == f"def {t['symbol'].rsplit('.', 1)[-1]}":
+                continue
+            assert t["contains"] in body, (
                 f"{t['file']} 的 `{t['symbol']}` 已不含 `{t['contains']}`（{e['name']}）"
             )
 
