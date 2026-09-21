@@ -1308,7 +1308,8 @@ def _repair_error_codes() -> dict[str, str]:
         if isinstance(node, ast.AnnAssign):
             targets = [node.target]
         for t in targets:
-            if isinstance(t, ast.Name) and t.id.startswith("ERROR_"):
+            # `ERROR_CODES` 是给 `test_error_codes.py` 读的登记表（元组），不是一个 code
+            if isinstance(t, ast.Name) and t.id.startswith("ERROR_") and t.id != "ERROR_CODES":
                 names.add(t.id)
     out = {n: getattr(deprepair, n) for n in names}
     assert all(isinstance(v, str) and v for v in out.values()), out
