@@ -141,7 +141,7 @@ enforced 在 PR B 随真实入口的场景一起，按 03 §4 逐条写正例 + 
 | `python scripts/ci/private_python_windows_snapshot.py <a>` ×2 + `--diff` | 本机（POSIX：reg 不存在也是一种状态，逐字节比） | 0；篡改 PATH / 加 `.python-version` → 1 | 判据的两侧各量到 |
 | `pytest tests/test_source_hygiene.py tests/test_merge_queue_workflows.py tests/test_e2e_leg_topology.py tests/test_release_workflow_contract.py` | 本机 | 0 | 186 passed |
 | `actionlint .github/workflows/private-python-targets.yml` | 本机 | 0 | — |
-| 三条腿的真实运行 | ubuntu / windows / macos 托管 runner | — | **not_run**（新 workflow 合入 main 之前只有本 PR 的 `pull_request` 触发能跑它；run 号随评审处置补在这里） |
+| 三条腿的首次真实运行：run [35578901967](https://github.com/Tavotto/Tavotto/actions/runs/35578901967)（#467 的 `pull_request` 触发，head b93b782b） | ubuntu-latest / windows-latest / macos-latest | ubuntu 0 / macos 0 / windows 1 | **真链三腿全绿**：ubuntu 真下载 `x86_64-unknown-linux-gnu`（披露 118 484 282 B）→ 事务 → venv `base_prefix` == runtime → PDF 10 610 B，15.6 s；**空镜像**：`Ubuntu 24.04.5 LTS` / glibc 2.39 里无 python3 / pip / uv，runtime 只读挂载真起、venv、离线装 11 个 wheel、pip check 0、PDF 10 108 B；macos 真下载 `aarch64-apple-darwin`（25 304 407 B）→ PDF 10 610 B，33.7 s；windows 真下载 `x86_64-pc-windows-msvc`（47 131 996 B）→ 事务 → `base_prefix` == runtime → PDF 10 610 B，22.6 s，**注册表 / PATH / USERPROFILE 前后一致**（顶层新增 ⊆ {.matplotlib}）。windows 腿唯一的红在最后一步「机制用例」：替身找 `Lib/venv/scripts/nt/python.exe`，3.13 起启动器改名 `venvlauncher.exe`（装置问题，产品代码没碰）——A 分支 533fb736 两个名字都找，下一次运行看它 |
 
 **本段的正例 / 负例**：正例 = 上表；负例 = 空镜像脚本的「镜像里有 python3 → exit 9」（用 `python:3.13-slim` 跑一次退出 9
 ——本机验过）、快照 `--diff` 对篡改的 PATH / 新条目非零。
