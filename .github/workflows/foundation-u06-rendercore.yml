@@ -8,6 +8,11 @@ name: Foundation U06 rendercore
 # U07 起这也是 enrollment 台账里 RenderBench 实例 `U07-R1`（observing）挂的那条具名非 required 任务；U08 起
 # `U08-R1`（observing）也挂在这里：facade 候选实现的用例 + 真实入口（HTTP / 预览 / 原图 / 带 override 的面板）+
 # 旧契约用例在 `TAVOTTO_RENDER_BACKEND=rendercore` 下逐字重跑（scripts/dev/u08_parity.py，ADR 0067）。
+# U09 起 FO32 的第一个出口 `existing_env_join`（observing）也挂在这里：第二个解释器（setup-python 3.12 +
+# matplotlib / numpy / h5py = 「用户本来就有的项目环境」）经 `TAVOTTO_FOUNDATION_PROJECT_PYTHON` 交给用例，
+# 用例经真实 `python -m tavotto` 入口首开 → 问一次 → 真值 → patch → 重放 → RenderCore 导出三格式 → 独立核文件
+# （tests/test_foundation_join.py；四身份 / 公开投影 / 故障阶段在 tests/test_export_identity.py）。skip 不是绿：
+# FO32 那两条用例 skip 了这一步就红。
 #
 # 它不是门禁、不进任何 Gate 的闭集、不是 required check（候选栈未默认启用，U06 不切默认）。
 # 触发：`workflow_dispatch`，以及**只在 rendercore 自己的文件变动时**的 `pull_request`（paths 过滤）——
@@ -32,6 +37,19 @@ on:
       - "src/tavotto/pixelmetrics.py"
       - "tests/test_rendercore_*.py"
       - "tests/test_export_inspection.py"
+      - "tests/test_export_identity.py"
+      - "tests/test_trace.py"
+      - "tests/test_foundation_join.py"
+      - "tests/fixtures/foundation/join_h5/**"
+      - "tests/fixtures/foundation/project_venv/make_venv.py"
+      - "tests/support/foundation_app.py"
+      - "src/tavotto/engine/receipt.py"
+      - "src/tavotto/engine/preparation.py"
+      - "src/tavotto/engine/trace.py"
+      - "src/tavotto/engine/artifactinspect.py"
+      - "src/tavotto/engine/databinding.py"
+      - "src/tavotto/engine/figcapture.py"
+      - "src/tavotto/engine/exportjob.py"
       - "tests/golden/glyph_plan_vectors.rendercore.json"
       - "docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.json"
       - "tests/support/pdfread.py"
@@ -76,6 +94,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      # 「用户本来就有的项目环境」（U09 / FO32 existing_env_join）：另一个 minor（≠ 应用的 ${{ matrix.python }}）、
+      # 已装 matplotlib / numpy / h5py。这一步装的是用户的环境，不是产品的——harness 不替产品装包。
+      - uses: actions/setup-python@v5
+        id: project_python
+        with:
+          python-version: "3.12"
+      - name: 用户的项目环境（3.12 + matplotlib / numpy / h5py）
+        shell: bash
+        run: |
+          "${{ steps.project_python.outputs.python-path }}" -m pip install --disable-pip-version-check "matplotlib>=3.8,<3.12" numpy h5py
+          "${{ steps.project_python.outputs.python-path }}" -c "import sys, matplotlib, h5py; print(sys.version, matplotlib.__version__, h5py.__version__)"
+          echo "TAVOTTO_FOUNDATION_PROJECT_PYTHON=${{ steps.project_python.outputs.python-path }}" >> "$GITHUB_ENV"
 
       - name: 路径与独立 venv
         shell: bash
@@ -90,6 +120,8 @@ jobs:
           print("U06_EVIDENCE=" + str(tmp / "u06-evidence"))
           print("U07_EVIDENCE=" + str(tmp / "u07-evidence"))
           print("U08_EVIDENCE=" + str(tmp / "u08-evidence"))
+          print("U09_EVIDENCE=" + str(tmp / "u09-evidence"))
+          print("TAVOTTO_FOUNDATION_RESULTS=" + str(tmp / "u09-evidence" / "results"))
           EOF
       - name: 建 venv、装 rendercore extra（候选包）、worker extra（U08 对拍里带 override 的真 worker 用例）与只读尺子
         shell: bash
@@ -112,6 +144,27 @@ jobs:
           # 用例集就是 tests/test_rendercore_*.py（与本文件头、src/tavotto/AGENTS.md 说的同一个 glob）：手写清单会漂——
           # U07 A 加的 compose / placement / raster 三个文件在清单里漏了整整六轮评审（Codex #463 第七轮 P2）；U08 B 的 test_export_inspection.py 不在 glob 里，单列
           "$RC_PY" -m pytest tests/test_rendercore_*.py tests/test_export_inspection.py tests/test_font_provenance.py tests/test_import_architecture.py -p no:cacheprovider -rs -q --junitxml="$RUNNER_TEMP/pytest-u06.xml"
+
+      - name: U09 联调（FO32 existing_env_join 经真实入口到 RenderCore 终点；四身份 / 公开投影 / 故障阶段）
+        shell: bash
+        run: |
+          mkdir -p "$TAVOTTO_FOUNDATION_RESULTS"
+          "$RC_PY" -m pytest tests/test_foundation_join.py tests/test_export_identity.py tests/test_trace.py \
+            -k "not managed" -p no:cacheprovider -rs -q --junitxml="$U09_EVIDENCE/pytest-u09.xml"
+          # skip 不是绿：FO32 的两条（existing_env / wrong_choice）必须真跑过
+          "$RC_PY" - <<'EOF'
+          import os, pathlib, sys, xml.etree.ElementTree as ET
+          root = ET.parse(pathlib.Path(os.environ["U09_EVIDENCE"]) / "pytest-u09.xml").getroot()
+          ran, skipped = [], []
+          for case in root.iter("testcase"):
+              name = case.get("name", "")
+              if not name.startswith("test_fo32_"):
+                  continue
+              (skipped if case.find("skipped") is not None else ran).append(name)
+          print("ran:", ran, "skipped:", skipped)
+          sys.exit(1 if skipped or len(ran) < 2 else 0)
+          EOF
+          ls -1 "$TAVOTTO_FOUNDATION_RESULTS"
 
       - name: U08 对拍（旧契约用例在候选后端下逐字重跑；清单在 ledger candidate_parity，退出码 0 才算过）
         shell: bash
@@ -173,6 +226,7 @@ jobs:
             ${{ env.U06_EVIDENCE }}
             ${{ env.U07_EVIDENCE }}
             ${{ env.U08_EVIDENCE }}
+            ${{ env.U09_EVIDENCE }}
             ${{ runner.temp }}/pytest-u06.xml
           if-no-files-found: warn
           retention-days: 30

@@ -1,0 +1,13 @@
+{
+  "fixture": "join_h5",
+  "script": "scripts/figure_h5.py",
+  "formula": "y = 3 * x + 1",
+  "reads_relative_to": "project_root",
+  "correct": {"file": "data/measure.h5", "dataset": "x", "x": [2, 4, 8], "y": [7, 13, 25]},
+  "decoy": {"file": "scripts/data/measure.h5", "dataset": "x", "x": [200, 400, 800], "y": [601, 1201, 2401]},
+  "expected_output": "figure_h5.pdf",
+  "title_prefix": "join h5 · Python ",
+  "requires": ["h5py", "matplotlib"],
+  "project_python_must_differ_from_app": true,
+  "native_io": "h5py opens the file through the HDF5 C library; not observable by Python open()"
+}

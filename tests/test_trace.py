@@ -85,6 +85,17 @@ def test_a_failure_pins_the_phase_it_happened_in():
     assert t2.failed_phase == "execute" and t2.failed_code == "cancelled"
 
 
+def test_the_first_failure_is_the_root_cause_even_when_later_steps_also_fail():
+    """部分失败的收尾 / 发布那一步的连带失败跟在根因后面：`failed_phase` 钉在**第一次**坏的那一步。"""
+    t = trace.Trace()
+    t.mark("prepare")
+    t.fail("compose", "source_unreadable")
+    t.mark("inspect")
+    t.fail("publish", "format_failed")
+    assert (t.failed_phase, t.failed_code) == ("compose", "source_unreadable")
+    assert [e["outcome"] for e in t.to_payload()["events"]] == ["ok", "failed", "ok", "failed"]
+
+
 def test_preparation_and_export_results_both_carry_a_trace(tmp_path):
     """两条链同一个形状：准备结果与导出作业的载荷里都有 `trace`（有界、带 failed_phase）。"""
     result = preparation.PreparationResult()

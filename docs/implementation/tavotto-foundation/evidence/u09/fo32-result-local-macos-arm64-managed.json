@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "instance_id": "FO32@17e75c755bc76d9c",
+  "case_id": "FO32",
+  "binding": {
+    "source_sha": "e4bfed34fc81bee7770357ad924fbb2905cfb24e",
+    "artifact": {
+      "kind": "source_tree",
+      "identity": "e4bfed34fc81bee7770357ad924fbb2905cfb24e"
+    },
+    "platform": "darwin-arm64",
+    "app_python": "3.13.11",
+    "runtime_lock_sha256": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c",
+    "fixture": "tests/fixtures/foundation/join_h5",
+    "fixture_sha256": "60aa6bedf0706bc0c2f31abc041078cad6c9f021f163399d3e4c25f4048d8855",
+    "entry": "http",
+    "capability_version": "u04"
+  },
+  "product_outcome": "guided",
+  "test_verdict": "pass",
+  "observed": {
+    "backend": "rendercore",
+    "milestone": "managed_env_join",
+    "private_python": {
+      "id": "cpython-3.13.15-7d50bb42813a",
+      "version": "3.13.15"
+    },
+    "generation": "g79cfdc1c3c77",
+    "app_python": "3.13.11",
+    "receipt": {
+      "binding": {
+        "base": "project.root",
+        "binding_version": 1,
+        "expected": {
+          "data/measure.h5": "9a34fd8061d27f3e8fb27c87491f74607e6737651b3ce8e04474b6349eb47e4f"
+        },
+        "missing": [],
+        "mode": "project_root",
+        "outside": [],
+        "revision": "sha256:fe3e4ceb18713756a6f108116ededb8da7e26b48c44ac7065340b2d703d6ab40"
+      },
+      "binding_check": {
+        "changed": [],
+        "matched": null,
+        "observation": "partial",
+        "revision": "sha256:fe3e4ceb18713756a6f108116ededb8da7e26b48c44ac7065340b2d703d6ab40",
+        "same": [],
+        "unobserved": [
+          "data/measure.h5"
+        ]
+      },
+      "completeness": "complete",
+      "control_plane": "python_pool",
+      "descriptors": [
+        {
+          "asset_id": "runtime:scripts/figure_h5.py#figure_h5",
+          "can_writeback_artifact": true,
+          "can_writeback_source": false,
+          "capture_source": "savefig",
+          "entry": "__main__",
+          "execution_profile": "safe",
+          "original_artifact": "figure_h5.pdf",
+          "script": "scripts/figure_h5.py",
+          "size_mm": [
+            81.28,
+            60.96
+          ],
+          "source_fingerprint": "sha256:12bbb25bd2a8a79cace08c4683a6a6b5e8ab39a0c1ef0ecaa7e8888bd76e09a9",
+          "stem": "figure_h5"
+        }
+      ],
+      "generation": 1,
+      "inputs": {
+        "channels": [
+          "python_open"
+        ],
+        "files": [],
+        "local_modules": [],
+        "observation": "partial",
+        "truncated": false,
+        "unobserved": [
+          "native_io",
+          "network",
+          "subprocess",
+          "os_open"
+        ]
+      },
+      "launch_context": {
+        "argv": [],
+        "cwd_mode": "project_root",
+        "cwd_origin": "project.root",
+        "entry": "__main__",
+        "grant": {
+          "cwd_write": {
+            "granted": true,
+            "granted_at": 1790004189.19589,
+            "mode": "project_root"
+          },
+          "decided": true
+        },
+        "launch_context_version": 1,
+        "passthrough_savefig": false,
+        "profile": "safe",
+        "target": "scripts/figure_h5.py",
+        "target_kind": "script",
+        "write_mode": "project_dir"
+      },
+      "pid_check": "ok",
+      "profile": "safe",
+      "public_identity": "sha256:181c699cc9ef2e5cc4ed8bf193eedeb205e5b3a000f4cda1657d9036971ff8b2",
+      "python_source": "managed_project_env",
+      "receipt_id": "sha256:14cbb3e45e57ce677af4295d0814b9f37740d976047ab8186f7ad645cbff8124",
+      "receipt_version": 1,
+      "runtime": {
+        "inputs": {
+          "channels": [
+            "python_open"
+          ],
+          "files": [],
+          "local_modules": [],
+          "observation": "partial",
+          "truncated": false,
+          "unobserved": [
+            "native_io",
+            "network",
+            "subprocess",
+            "os_open"
+          ]
+        },
+        "machine": "arm64",
+        "packages": {
+          "h5py": "3.16.0",
+          "matplotlib": "3.11.1",
+          "numpy": "2.5.2",
+          "pillow": "12.3.0"
+        },
+        "pid": 12674,
+        "platform": "darwin",
+        "python_implementation": "CPython",
+        "python_version": "3.13.15",
+        "report_origin": "build",
+        "runtime_report_version": 1
+      },
+      "runtime_rejected": null,
+      "source_revision": "f68feef7668c098fd34f74c39f5b94e7e3ed5b9d",
+      "spec": {
+        "argv": [],
+        "cwd_mode": "project_root",
+        "entry": "__main__",
+        "passthrough_savefig": false,
+        "profile": "safe",
+        "spec_version": 1,
+        "target": "scripts/figure_h5.py",
+        "target_kind": "script"
+      }
+    },
+    "plotted_ylim": [
+      6.1,
+      25.9
+    ],
+    "outputs": {
+      "pdf": {
+        "sha256": "cd10e9f30c120aacd9592bc81efab30c05133bda85ecb6f1762589b4aa6231e3",
+        "identity": {
+          "artifact": "cd10e9f30c120aacd9592bc81efab30c05133bda85ecb6f1762589b4aa6231e3",
+          "identity_version": 1,
+          "render": "sha256:0bfcc6028f279846a1f4a870abd9ebb2b350944406e714ea3c78d088d07463e2",
+          "run": "8cb893e580324a55",
+          "semantic": "sha256:a112c84ca34fd8d773ba514d98f1bb23cc31d8c1f64d8b4ceb5eaad041ffe468"
+        }
+      },
+      "png": {
+        "sha256": "6f0f4bb6d6cb6ed27f5da462ef6079c3ca4935bb8ec8d95c798e84022305b910",
+        "identity": {
+          "artifact": "6f0f4bb6d6cb6ed27f5da462ef6079c3ca4935bb8ec8d95c798e84022305b910",
+          "identity_version": 1,
+          "render": "sha256:4b7ea2a423bb8e83e301e6a27b3d6bd4708242f401f3a59da71132494e2f1ce4",
+          "run": "8cb893e580324a55",
+          "semantic": "sha256:a112c84ca34fd8d773ba514d98f1bb23cc31d8c1f64d8b4ceb5eaad041ffe468"
+        }
+      },
+      "tiff": {
+        "sha256": "3c468d4c07e19ebf0c417b78248f752d2a66dc3b49bf83d9360365cd4c5dcb50",
+        "identity": {
+          "artifact": "3c468d4c07e19ebf0c417b78248f752d2a66dc3b49bf83d9360365cd4c5dcb50",
+          "identity_version": 1,
+          "render": "sha256:4b7ea2a423bb8e83e301e6a27b3d6bd4708242f401f3a59da71132494e2f1ce4",
+          "run": "8cb893e580324a55",
+          "semantic": "sha256:a112c84ca34fd8d773ba514d98f1bb23cc31d8c1f64d8b4ceb5eaad041ffe468"
+        }
+      }
+    }
+  },
+  "evidence": [
+    "asked workdir (ambiguous_data) then dependencies (private python cpython-3.13.15-7d50bb42813a, download_bytes=0)",
+    "generation g79cfdc1c3c77 on private python 3.13.15 (app 3.13.11); h5py 3.16.0 installed by the product",
+    "rendercore export pdf/png/tiff verified; final sha256 cd10e9f30c12…"
+  ],
+  "recorded_at": 1790004207.920769
+}

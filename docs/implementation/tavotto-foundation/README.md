@@ -87,6 +87,17 @@ Canvas 面）之间选一个，选定即定、不静默回退；产品导出路�
 [`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 全部有 U08 迁移证据。交接见
 [`handoffs/U08_facade_parity.md`](handoffs/U08_facade_parity.md)。
 
+U09 已于 2026-09-21 执行（`implementation_status: done`，两个 milestone 各 `done`；产品资格仍 `not_run`，**不切默认**）：两条主线
+第一次汇合（merge，12 处冲突全是两边各加一段，零回归）。回执完整化（ADR 0070）：自报只收跑了脚本的那个进程的（`report_origin=build`
++ pid 核对，体检 / 探针冒充一律拒收）、输入观察永远 `partial` 且观察到的数据身份进公开语义身份、数据绑定 `binding_for` 进计划并与
+观察到的输入逐条对；四身份（semantic / render / artifact / run 并列）与 manifest 的来源段，可以离开本机的只有
+`inspector.public_projection()`（九根针钉住）；MCP 直出路同一份算法。Trace 与旧计划失效政策（ADR 0071）：有界阶段轨迹、第一次失败
+是根因；起会话前授权 / 解释器 / 数据绑定三比、不一致作废点名理由，复用热态会话时不一致是明示旧快照（不自动重算、不清编辑）。
+核心联合实例 FO32 两个出口本机 macOS 都真跑过：`existing_env_join`（项目 venv 3.11 + 真 h5py + 同名干扰 + 中文空格路径 → 真实入口
+→ 问一次 → 真值 → patch → RenderCore PDF / PNG / TIFF → 独立核）与 `managed_env_join`（真 pbs 私有 Python + 联合装 h5py → 同一终点）；
+FO32 登记 observing（两条具名任务），FO30 拆合同后 enforced。证据在 [`evidence/u09/`](evidence/u09/)。交接见
+[`handoffs/U09_join.md`](handoffs/U09_join.md)。
+
 
 ## 从哪里开始
 

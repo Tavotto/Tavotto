@@ -462,13 +462,14 @@
         "FO30"
       ],
       "stage": "U09",
-      "enrollment": "planned",
-      "lane": "integration",
+      "enrollment": "enforced",
+      "lane": "pr",
       "entry": "http",
-      "fixture": null,
-      "test": null,
-      "expected_product_outcome": "contractual",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "fixture": "tests/fixtures/foundation/single_file_csv",
+      "test": "tests/test_foundation_join.py::test_fo30_data_changed_after_execution_is_an_explicit_snapshot_until_the_user_rebuilds",
+      "expected_product_outcome": "guided",
+      "notes": "U09（ADR 0071）：registry 的 expected_product_outcome 是 contractual，先拆成具体合同再登记——① prepare 与 execute 之间数据变（同大小同 mtime 也算：判内容 sha256）→ `preparation_plan_stale` / `data_binding_changed` 一行不跑（safe_stop）；② 计划之后项目的解释器决策变 → `environment_changed` 不跑（safe_stop）；③ spawn 与读取之间数据变 → 按观察到的输入作废（`executed=true`，safe_stop）；④ execute 与 export 之间数据变 → 复用热会话是 `ready` + 回执 `binding_check.matched=false` + note「旧快照」，render / export 仍是明示的旧快照、不自动重算、编辑不丢；用户明确「重新构建」（/api/engine/invalidate）后新一代读到新数据、回执 matched=true，改脚本再重建则 `source_revision` 随文件（guided）。①②③ 在 tests/test_preparation_api.py（进程内 HTTP + 替身 pool，产品的准备服务是真的）；④ 是这条经真实 `python -m tavotto` 入口的用例，写结果记录。旧计划的回执从不冒充实际执行：被拒的自报 / 过期的计划都有稳定 code。",
+      "backend": "pymupdf"
     },
     {
       "case_id": "FO31",
@@ -493,13 +494,14 @@
         "FO32"
       ],
       "stage": "U09",
-      "enrollment": "planned",
+      "enrollment": "observing",
       "lane": "release",
       "entry": "http",
-      "fixture": null,
+      "fixture": "tests/fixtures/foundation/join_h5",
       "test": null,
       "expected_product_outcome": "guided",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U09 两个独立出口（D06：与 U03 旧后端终点的 FO 记录分开，backend=rendercore）。existing_env_join：tests/test_foundation_join.py::test_fo32_existing_env_open_edit_replay_export_through_the_new_rendercore（+ 负例 test_fo32_wrong_choice_reads_the_decoy_and_the_identities_say_so）——项目 .venv 由夹具构造脚本现建（基础解释器 ≠ 应用、已有 matplotlib + h5py，经 TAVOTTO_FOUNDATION_PROJECT_PYTHON 点名，harness 不装包）、真 h5py 读 HDF5 [2,4,8]、脚本目录同名干扰 [200,400,800]、中文 + 空格路径；经真实 `python -m tavotto` 入口（TAVOTTO_RENDER_BACKEND=rendercore）：ambiguous_data 问一次 → 选项目根 → 回执 = 那个 venv（版本 / h5py / source revision，pid 核过，观察 partial、h5 未观察不冒充）→ 值 [7,13,25] → 可见 patch → 重放 → RenderCore 导出 PDF / PNG / TIFF → 独立读取器（PDFium 文字层 / 标准库 PNG / TIFF）→ manifest 四身份 + 回执事实 == 准备回执，artifact == 发布字节；科学环境里没有 PDF 候选包（FO-063）。managed_env_join：tests/test_foundation_join.py::TestManagedEnvJoin::test_fo32_managed_env_private_python_joint_install_then_rendercore——发现链末端置空（U05 进程内形态）→ 先问工作目录再问依赖（private_python 载荷）→ 一次授权：真 pbs 归档供应私有 Python + U04 代事务从 wheelhouse 装 h5py → ready（回执 = 那一代：pbs 版本、prefix 在受管环境）→ 同一条链到 RenderCore 终点。observing 的具名任务：foundation-u06-rendercore.yml「U09 联调」步（三平台 + 3.10 腿：setup-python 3.12 + matplotlib / numpy / h5py 当用户环境；两条 FO32 用例 skip 即红）与 private-python-targets.yml「U09 联调：managed_env_join」步（三平台，TestRealChain 供应好的 runtime 零下载复用；skip 即红）。本机 macOS arm64 两个出口都真跑过（evidence/u09）。**不提升 enforced 的理由**：候选后端未切默认（U08-R1 同一理由，U10 切）；required 矩阵没有第二解释器 + h5py + 候选包 + 字体；Linux / Windows 只有这两条 observing 腿的证据；无系统 Python 的目标资格在 U11。",
+      "backend": "rendercore"
     },
     {
       "case_id": "U01-S1",

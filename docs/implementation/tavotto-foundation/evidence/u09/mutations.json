@@ -1,0 +1,183 @@
+[
+ {
+  "set": "mut_a",
+  "id": "M01 自报不核 report_origin（体检结果冒充回执）",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_a",
+  "id": "M02 自报不核 pid（别的进程的事实冒充）",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_a",
+  "id": "M03 公开身份不含观察到的数据身份",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_a",
+  "id": "M04 binding_check 把「没观察到」当匹配",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_a",
+  "id": "M05 起会话之前不比数据绑定",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_a",
+  "id": "M06 起会话之前不比解释器决策",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_a",
+  "id": "M07 build 之后不按观察到的输入核绑定",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_a",
+  "id": "M08 观察器什么都不记",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_a",
+  "id": "M09 观察器先于回退装的顺序反了（记的是回退前的相对名而不是实际路径）",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_a",
+  "id": "M10 worker 报的 pid 是父进程给的常数而不是自己的",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_a",
+  "id": "M11 源码文件混进数据输入",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M12 render fingerprint 不含字体政策版本",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M13 run 进语义身份",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M14 公开投影带 notes（含期望文字行）",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M15 公开投影的源带 source_id（用户的文件名）",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M16 公开投影的回执带 interpreter 路径",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M17 artifact 身份不是文件字节的 sha256",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M18 MCP 直出路的来源段丢掉回执",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M19 MCP 直出路的语义身份随格式变（kind = 扩展名）",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M20 PDF 元数据里的脚本名被当成脚本（扫描登记）",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M21 轨迹 facts 原样带对象（路径 / 正文进公开投影）",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M22 轨迹无界（不丢中间）",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_b",
+  "id": "M23 观察器把观察报成 complete",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_c",
+  "id": "M24 导出路的执行侧源不附回执",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_c",
+  "id": "M25 同一份源放两次合成一个节点",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_c",
+  "id": "M26 外来页编造内部语义",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_c",
+  "id": "M28 节点表无界",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_c",
+  "id": "M29 ambiguous 时产品替用户挑项目根（不问）",
+  "exit": 1,
+  "red": true
+ },
+ {
+  "set": "mut_c",
+  "id": "M30 检查器把文字层 unknown 报成 verified（报告假绿）",
+  "exit": 4,
+  "red": true
+ },
+ {
+  "set": "mut_c27",
+  "id": "M27 轨迹让后来的失败盖掉根因",
+  "exit": 1,
+  "red": true,
+  "note": "M27 第一版落在 exportjob 的守卫后面（冗余保证，变异不可杀）；给 Trace 补了一条单测后再跑，红"
+ }
+]

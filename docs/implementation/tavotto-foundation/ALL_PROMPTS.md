@@ -60,6 +60,12 @@ U01 已于 2026-09-20 执行（`implementation_status: done`，产品资格仍 `
 闭集校验器与 `invariants` job 的三步落点；唯一 enforced 的切片 `U01-S1` 经真实 HTTP 入口走完首开 → 导出
 （旧后端终点）。交接见 [`handoffs/U01_contracts.md`](handoffs/U01_contracts.md)。
 
+U02 已于 2026-09-20 执行（`implementation_status: done`，产品资格仍 `not_run`）：两个独立技术证明——
+render_spike（ADR 0055：PDFium 栅格 + pikepdf/fontTools/HarfBuzz 受限 emitter，Liberation + Noto Sans SC 为默认字体，
+串行 render child，最小 PyInstaller 冻结）与 runtime_spike（ADR 0056：uv + python-build-standalone 私有 Python +
+离线 wheel，坏 hash / 无网负例）。证据在 [`evidence/u02/`](evidence/u02/)，spike 代码在 `scripts/dev/u02_spikes/`
+（不进产品 import 图，候选包只在独立 venv）。交接见 [`handoffs/U02_spikes.md`](handoffs/U02_spikes.md)。
+
 U03 已于 2026-09-20 执行（`implementation_status: done`——PR A 后端编排 + 场景用例，PR B 确认交互（前端对话框 /
 三档设置 / i18n / MCP 投影）；产品资格仍 `not_run`）：解释器选择前移（项目 venv 首开发现 + 体检 + 记住，显式选择失效不静默替换）、
 cwd 三分的生产者（`project_root` 第三档 + 首开按静态证据问一次）、safe worker 经 `bridgeboot` 私有包（#447）、
@@ -84,6 +90,51 @@ PR C 接了目标验证腿（`private-python-targets.yml`：三平台真 pbs 经
 供应后重算；一次授权里把「先下载 N MB」说出口；FO24 / FO25 / FO26 经产品 HTTP 入口 → enforced）。`implementation_status: done`；
 **无系统 Python 的资格仍未取得**（五个目标 `enabled` 全 false，第三档在 U11）。交接见
 [`handoffs/U05_private_python.md`](handoffs/U05_private_python.md)。
+
+
+U06 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）：RenderCore 的第一个
+产品切片——纯模型层 `src/tavotto/rendercore/`（Render IR / RenderPlan 编译 / 排版 / 字体注册表，只许标准库，
+ADR 0059）+ 字体政策与可检索文字写入（allowlist 逐字节钉住的 Liberation + Noto Sans SC，pikepdf/fontTools/HarfBuzz
+适配层走 pyproject 的 `rendercore` extra，ADR 0060）。真字体 → RenderPlan → PDF → 四把独立读取器的证据在
+[`evidence/u06/`](evidence/u06/)（生成器 `scripts/dev/u06_evidence.py`）；D07 会变的旧断言逐条在
+[`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 的 `migration_evidence` 指向替代用例。交接见
+[`handoffs/U06_ir_text.md`](handoffs/U06_ir_text.md)。
+
+U07 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）：合成（ADR 0065）——外来页作
+Form XObject 整页矢量导入（页盒 / `/Rotate` / `/UserUnit` 由 qpdf 折进 /Matrix、恰好一次），crop / 翻转 / 旋转的顺序合同只在
+`rendercore/placement.py`，面板 opacity 是透明组、镜像是负缩放（不再退位图），位图经 `rasterio`（Pillow，正式依赖）成
+straight-alpha 的 `RasterBuffer`，pikepdf 正式裁决；栅格（ADR 0066）——应用自己的 PDFium render child（一把锁串行 + 有界
+队列 + 超时 kill / reap / 重启），PNG 与 TIFF 从同一个 RasterBuffer 编码、只从 Canonical PDF 来，预览缓存键 = 内容身份 +
+后端 build + 字体政策，旧新后端按 case 阈值校准，U02 spike 的 render 半边退役。证据在 [`evidence/u07/`](evidence/u07/)
+（生成器 `scripts/dev/u07_evidence.py`，最小 freeze `scripts/dev/u07_freeze_child.py`）；enrollment 加 `U07-R1`（observing）。
+交接见 [`handoffs/U07_compose_raster.md`](handoffs/U07_compose_raster.md)。
+
+U08 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）。第一切片（ADR 0067）：
+契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 在 PyMuPDF（默认）与 `rendercore/facade.py`（候选，19 项同签名 +
+Canvas 面）之间选一个，选定即定、不静默回退；产品导出路在候选下把 `scope=canvas` 交给 `job.produce` + `ExecutionSourceResolver`
+（带 override / runtime 素材由当次 worker 现画并附回执，native 会话经 `receipt.from_native_session`），`scope=original` /
+预览 / 探测 / 写回标注经契约层自动切换；候选的覆盖表与字形向量各一份生成物（与默认表的差异钉成闭集）；旧契约用例在候选下
+逐字重跑（`scripts/dev/u08_parity.py`，清单在 ledger `candidate_parity`，14 条实现特定断言各带替代证据，用户合同一条不删）。
+第二切片（ADR 0068）：`rendercore/inspector.py` 在提交点之前重新打开封口产物量事实（完整性 / 尺寸 / 字体实际使用 / 文字层 /
+有效 ppi / 位图密度，四值判据 `unknown` 不是 `verified`），D08 两档政策（standard 缺省只拦完整性与核心尺寸、strict 按出版规范
+阈值连 unknown 也拦），回执 `outputs[].manifest`。第三切片（入口审计）：MCP `tavotto_export` 接同一份检查器接线、回执 `files[].manifest`
+与给模型的三组点名；前端每件产出一行（全部可判项 verified 才画绿、未核验中性点名、失败红色点名、没有 manifest = 未核验）、高级选项
+「严格核验产物」、`/api/render` 背压的有界重试；后端阶段名 ↔ 前端文案同源判据；Playground 审计（无导出面板、不发 `/api/*`）。
+证据在 [`evidence/u08/`](evidence/u08/)；enrollment 加 `U08-R1`（observing）；facade 19 项在
+[`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 全部有 U08 迁移证据。交接见
+[`handoffs/U08_facade_parity.md`](handoffs/U08_facade_parity.md)。
+
+U09 已于 2026-09-21 执行（`implementation_status: done`，两个 milestone 各 `done`；产品资格仍 `not_run`，**不切默认**）：两条主线
+第一次汇合（merge，12 处冲突全是两边各加一段，零回归）。回执完整化（ADR 0070）：自报只收跑了脚本的那个进程的（`report_origin=build`
++ pid 核对，体检 / 探针冒充一律拒收）、输入观察永远 `partial` 且观察到的数据身份进公开语义身份、数据绑定 `binding_for` 进计划并与
+观察到的输入逐条对；四身份（semantic / render / artifact / run 并列）与 manifest 的来源段，可以离开本机的只有
+`inspector.public_projection()`（九根针钉住）；MCP 直出路同一份算法。Trace 与旧计划失效政策（ADR 0071）：有界阶段轨迹、第一次失败
+是根因；起会话前授权 / 解释器 / 数据绑定三比、不一致作废点名理由，复用热态会话时不一致是明示旧快照（不自动重算、不清编辑）。
+核心联合实例 FO32 两个出口本机 macOS 都真跑过：`existing_env_join`（项目 venv 3.11 + 真 h5py + 同名干扰 + 中文空格路径 → 真实入口
+→ 问一次 → 真值 → patch → RenderCore PDF / PNG / TIFF → 独立核）与 `managed_env_join`（真 pbs 私有 Python + 联合装 h5py → 同一终点）；
+FO32 登记 observing（两条具名任务），FO30 拆合同后 enforced。证据在 [`evidence/u09/`](evidence/u09/)。交接见
+[`handoffs/U09_join.md`](handoffs/U09_join.md)。
+
 
 ## 从哪里开始
 
