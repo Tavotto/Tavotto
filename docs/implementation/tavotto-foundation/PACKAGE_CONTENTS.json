@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 6310,
-      "sha256": "7306366738196cf8ebd159211e9df21cd3b21b701f8b6afb0553f6965d08a495"
+      "bytes": 7125,
+      "sha256": "1958e2c0b19988ad091548b3861b2bb59eb6dcf09cc8567b4114354a869bd873"
     },
     {
       "path": "SOURCES.md",
@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 40716,
-      "sha256": "7c8eabac8bb8262e8d4b94651d169c83b3eb078fe6675b8ebf958f131a4ea05b"
+      "bytes": 43257,
+      "sha256": "4656eda15cf4ce5d1a1b7a26ff406bca1290a9be3c903c5099d325823832b6f4"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 20557,
-      "sha256": "fcbba77a3362dfa5980d1e018c3f0c82d992598994b8a1ec9650ab587f643be7"
+      "bytes": 22150,
+      "sha256": "7c52e6ddfe37cdb6bcc9687fd1f945ee1cf5b7aea703ac8dce1bb6b28728ddd7"
     },
     {
       "path": "archive/README.md",
@@ -208,6 +208,41 @@
       "sha256": "afa69eed21841b80594bbcff86563ddef1d42ad23156d7fc0c6fa4b1f04f7898"
     },
     {
+      "path": "evidence/u06/README.md",
+      "bytes": 2457,
+      "sha256": "4217bd1dab3e866e7e2cfdfd18987bfb0f915df7cf4b853f1c635a8559a707b9"
+    },
+    {
+      "path": "evidence/u06/canvas_coverage.rendercore.json",
+      "bytes": 8405,
+      "sha256": "1f84172f1893a26fb9fea524a039024606615b8e8d974284575767cdfdf1e12d"
+    },
+    {
+      "path": "evidence/u06/coverage_diff.json",
+      "bytes": 5642,
+      "sha256": "fbb4a8190999ebfb307e9ac7d8cb3af2a24191eb3200cde0d123f5e89c9ab8f2"
+    },
+    {
+      "path": "evidence/u06/report.json",
+      "bytes": 14710,
+      "sha256": "d09be245838692133be3a4c3b9b6c9dee7a4730d31a4cbd4c6c140e0ce169729"
+    },
+    {
+      "path": "evidence/u06/truth.json",
+      "bytes": 4676,
+      "sha256": "351865147a97c0059f67e3824f216b3bb471d29fd2dd42aead21f6939c5c4066"
+    },
+    {
+      "path": "evidence/u06/u06.pdf",
+      "bytes": 14041,
+      "sha256": "cb303505e879dd31326d07b18fe0fa1481cfb3e2673daafadcaff7433ad1774c"
+    },
+    {
+      "path": "evidence/u06/u06_pdfium.png",
+      "bytes": 28494,
+      "sha256": "95245d41e586891f352324e95b2852a7a24192cb0b8e27ca3121fd81f02e2ddc"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -246,6 +281,11 @@
       "path": "handoffs/U02_spikes.md",
       "bytes": 19488,
       "sha256": "406f88600c76a6bbd5b4a7f487e6b9cba2c3de0678ee18b9f47ef6e3d4054b99"
+    },
+    {
+      "path": "handoffs/U06_ir_text.md",
+      "bytes": 29941,
+      "sha256": "4d0b5abd7278f2810c289da3635914c02f24d1f6ce1ca2442969c3817b3c5370"
     },
     {
       "path": "phase_mapping.json",
@@ -314,8 +354,8 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7387,
-      "sha256": "19e98dbb685e3321f566ad950f41bdd10b4e129c51c1610fd5a2e1438b78b211"
+      "bytes": 7380,
+      "sha256": "fbd76fff715429594e27f1a1bc26722703f7dc56b301e907974bc76f3d54c13b"
     },
     {
       "path": "registry.json",
@@ -334,8 +374,8 @@
     },
     {
       "path": "tools/generate_facade_ledger.py",
-      "bytes": 6181,
-      "sha256": "5ca7da541aaacb1a0f587c18aa948847a5cfaddac6dea1e02d8faf22587b49a9"
+      "bytes": 6300,
+      "sha256": "b6643a822ccd70cdb4e122795b4c6110c1cc0d4737bca028770a7321abbc2738"
     },
     {
       "path": "tools/generate_views.py",

@@ -29,6 +29,14 @@ render_spike（ADR 0055：PDFium 栅格 + pikepdf/fontTools/HarfBuzz 受限 emit
 离线 wheel，坏 hash / 无网负例）。证据在 [`evidence/u02/`](evidence/u02/)，spike 代码在 `scripts/dev/u02_spikes/`
 （不进产品 import 图，候选包只在独立 venv）。交接见 [`handoffs/U02_spikes.md`](handoffs/U02_spikes.md)。
 
+U06 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）：RenderCore 的第一个
+产品切片——纯模型层 `src/tavotto/rendercore/`（Render IR / RenderPlan 编译 / 排版 / 字体注册表，只许标准库，
+ADR 0059）+ 字体政策与可检索文字写入（allowlist 逐字节钉住的 Liberation + Noto Sans SC，pikepdf/fontTools/HarfBuzz
+适配层走 pyproject 的 `rendercore` extra，ADR 0060）。真字体 → RenderPlan → PDF → 四把独立读取器的证据在
+[`evidence/u06/`](evidence/u06/)（生成器 `scripts/dev/u06_evidence.py`）；D07 会变的旧断言逐条在
+[`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 的 `migration_evidence` 指向替代用例。交接见
+[`handoffs/U06_ir_text.md`](handoffs/U06_ir_text.md)。
+
 ## 从哪里开始
 
 先读 [执行总提示词](00_MASTER_PROMPT.md)、[范围与修改决策](01_SCOPE_AND_DECISIONS.md)、[路线图](02_ROADMAP.md) 和 [CI 生效政策](03_CI_POLICY.md)。随后只执行 [U00](phases/U00_baseline.md)，不要在第一步删除 PyMuPDF、更换根许可证或一次启用全部兼容门禁。

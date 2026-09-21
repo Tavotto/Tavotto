@@ -19,6 +19,12 @@
       "call": "importlib.import_module(self.script.stem)",
       "targets": [],
       "reason": "装的是用户的绘图脚本，不是仓库模块。"
+    },
+    {
+      "from": "tavotto/rendercore/hbshaper.py",
+      "call": "importlib.import_module(name)",
+      "targets": [],
+      "reason": "`require()` 按需探测候选包（uharfbuzz / fontTools / pikepdf / pypdfium2，pyproject 的 rendercore extra），名字是常量闭集、全是第三方，不是仓库模块（ADR 0060）。"
     }
   ],
   "extra_edges": [

@@ -376,6 +376,17 @@ LAYERS: dict[str, tuple[str, ...]] = {
     ),
     "bridge": ("tavotto/engine/bridge_runner.py", "tavotto/engine/bridgeboot.py"),
     "pdfbackend": ("tavotto/pdfbackend/",),
+    # RenderCore（统一实施包 U06，ADR 0059）：纯模型那几份先列（`layer_of` 按顺序首个命中），
+    # 包里其余的（native 适配 / 入口）落到下面那条目录前缀。
+    "rendercore_model": (
+        "tavotto/rendercore/__init__.py",
+        "tavotto/rendercore/ir.py",
+        "tavotto/rendercore/geometry.py",
+        "tavotto/rendercore/typography.py",
+        "tavotto/rendercore/sources.py",
+        "tavotto/rendercore/plan.py",
+    ),
+    "rendercore_native": ("tavotto/rendercore/",),
 }
 
 #: (from 层, to 层) 不许有运行时边。每条都要说得出理由（在 baseline 的 `layer_rules` 里）。
@@ -383,6 +394,18 @@ LAYER_RULES: tuple[tuple[str, str], ...] = (
     ("*", "entry"),  # 入口层只被入口层 import：底层反向依赖 app.py 就是任务书点名要挡的
     ("worker", "entry"),
     ("bridge", "entry"),
+    # 新核心零 pymupdf（D03：先限制新核心不借旧库）——整包不许有边进 pdfbackend
+    ("rendercore_model", "pdfbackend"),
+    ("rendercore_native", "pdfbackend"),
+    # 纯模型不许依赖 native 适配层（候选包只能从适配层进来），也不许碰 worker 侧（科学栈）
+    ("rendercore_model", "rendercore_native"),
+    ("rendercore_model", "worker"),
+    ("rendercore_native", "worker"),
+    # 反方向：旧后端 / worker 也不许反过来 import 新核心（默认通道一字不变，U08 之前两边不接）
+    ("pdfbackend", "rendercore_model"),
+    ("pdfbackend", "rendercore_native"),
+    ("worker", "rendercore_model"),
+    ("worker", "rendercore_native"),
 )
 
 

@@ -122,7 +122,7 @@
         "U06.ir_text"
       ],
       "scope": "core",
-      "implementation_status": "not_started",
+      "implementation_status": "done",
       "product_validation_status": "not_run",
       "milestone_dependencies": {}
     },

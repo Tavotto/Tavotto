@@ -12,7 +12,7 @@
   | `engine/preflight.py` ↔ `web/src/lib/preflight.ts` | `tests/golden/preflight_vectors.json`（只比判据不比措辞） |
   | `src/tavotto/richtext.py` ↔ `web/src/lib/richText.ts` | pytest 真 PDF 几何看护 |
   | `src/tavotto/glyphplan.py` ↔ `web/src/lib/glyphPlan.ts` | `tests/golden/glyph_plan_vectors.json`（**算法同源、oracle 刻意不同源**：Python 问真字体，浏览器读生成的`pdfbackend/canvas_coverage.json`；表的漂移由 `scripts/gen_canvas_coverage.py --check` 单独看住） |
-  | `web/src/lib/shapeGeometry.ts` ↔ `pdfbackend` `_polygon_points`/`_dash_pattern` | pytest get_drawings() 几何看护 |
+  | `web/src/lib/shapeGeometry.ts` ↔ `pdfbackend` `_polygon_points`/`_dash_pattern` ↔ `rendercore/geometry.py` `polygon_points`/`dash_pattern`（U06 起的第三份宿主，ADR 0059） | pytest get_drawings() 几何看护；`tests/test_rendercore_geometry.py` 拿旧 facade 当 oracle 对拍 |
   | `handoff.desktop_argv()` ↔ `src-tauri/src/main.rs::parse_open_args()` | 两侧单测 |
   | `engine/locate.py` ↔ codex-plugin `handoff.py` | `test_install_locate.py::test_plugin_mirrors_the_locator` |
   | `engine/projectenv.PYTHON_MIN`/`PYTHON_MAX_EXCLUSIVE` ↔ `codex-plugin/mcp/server.py` 同名常量（`--provision` 挑 venv 基础解释器用） | `test_mcp_resolver.py::test_provision_python_range_mirrors_the_engine`（projectenv 那侧再由 `test_support_matrix.py` 钉在 pyproject 的 `requires-python` 上） |
@@ -26,7 +26,7 @@
   | `engine/profiles.py` `FALLBACK_MIN_FONT_SIZE_PT` ↔ `web/src/lib/profile.ts` 同名常量 | `test_font_floor_fallback_is_one_number_on_both_sides` |
   | codex-plugin `bridge.export_raster_issues()` ↔ `web/src/lib/validation.ts` `exportContextRaw()` | `test_the_export_context_rule_is_one_rule_on_both_sides` |
   | `engine/exportreq.py` 文件名规则 ↔ `web/src/lib/exportName.ts` | `tests/golden/filename_vectors.json`（八条原因逐条比，顺序也比） |
-  | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `web/src/lib/typography.ts` 同名常量 | `test_typography_families.py`（闭集 + 顺序） |
+  | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `web/src/lib/typography.ts` 同名常量 ↔ `rendercore/typography.py` 同名常量（U06 起） | `test_typography_families.py`（闭集 + 顺序）；`tests/test_rendercore_typography.py` |
   | `engine/overrides.NO_COLOR`（manifest 颜色字段的「无」取值）↔ `web/src/components/ui/Input.tsx` 同名常量 | `tests/test_no_color_pair.py` |
   | `engine/pool.EXIT_GRACE`（管道 EOF 后等子进程自己退出的宽限）↔ `workerd/src/worker.rs` `EXIT_GRACE` | 两侧各自钉在 `tests/golden/exit_grace_ms.txt`：`tests/test_worker_exit_report.py::test_the_exit_grace_is_one_number_on_both_control_planes` + `workerd/tests/exit_grace_pair.rs`（不读对方源码） |
 

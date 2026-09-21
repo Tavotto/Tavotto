@@ -1,0 +1,247 @@
+{
+ "schema": 1,
+ "comment": "批准字体 allowlist（ADR 0060）。每张脸：文件相对字体目录的路径、sha256（身份）、族 / 粗斜、字体程序格式、许可证、来源。字体文件不进 git：scripts/fetch_fonts.py 按这里的 sha256 取到 src/tavotto/resources/fonts/，包装（wheel artifacts / PyInstaller datas）随包带走。改这份表 = 改字体政策，先改 ADR 0060。 license_files 里 sha256 是来源（tarball 或文件）的，file_sha256 是落盘后那份许可证全文自己的——两个都核。",
+ "faces": {
+  "LiberationSerif-Regular": {
+   "file": "liberation/LiberationSerif-Regular.ttf",
+   "sha256": "058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74",
+   "family": "serif",
+   "bold": false,
+   "italic": false,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationSerif-Regular.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "LiberationSerif-Bold": {
+   "file": "liberation/LiberationSerif-Bold.ttf",
+   "sha256": "d754ba427cfe0bca54ae052384baa8f842da5bd6550ad4da024ac441e7a7d5ce",
+   "family": "serif",
+   "bold": true,
+   "italic": false,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationSerif-Bold.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "LiberationSerif-Italic": {
+   "file": "liberation/LiberationSerif-Italic.ttf",
+   "sha256": "0e3dea9f8d613e006ccfa62201f33e265d19167bd0907725c3e145368b04fc2e",
+   "family": "serif",
+   "bold": false,
+   "italic": true,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationSerif-Italic.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "LiberationSerif-BoldItalic": {
+   "file": "liberation/LiberationSerif-BoldItalic.ttf",
+   "sha256": "f17db8af71e24d2066b587546021d4f0b296be389512b658dec3c09affeb11a7",
+   "family": "serif",
+   "bold": true,
+   "italic": true,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationSerif-BoldItalic.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "LiberationSans-Regular": {
+   "file": "liberation/LiberationSans-Regular.ttf",
+   "sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+   "family": "sans-serif",
+   "bold": false,
+   "italic": false,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationSans-Regular.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "LiberationSans-Bold": {
+   "file": "liberation/LiberationSans-Bold.ttf",
+   "sha256": "788abee4c806d660e8aee46689dd8540cd4bb98da03dcc9d171ce3efd99a9173",
+   "family": "sans-serif",
+   "bold": true,
+   "italic": false,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationSans-Bold.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "LiberationSans-Italic": {
+   "file": "liberation/LiberationSans-Italic.ttf",
+   "sha256": "e5bae5c4cde31f22142753855f4f8fb86da6ff39955ed3c0a11248b0d16948b0",
+   "family": "sans-serif",
+   "bold": false,
+   "italic": true,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationSans-Italic.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "LiberationSans-BoldItalic": {
+   "file": "liberation/LiberationSans-BoldItalic.ttf",
+   "sha256": "698da70fc191cc5f33ad4d6d3fe830fe4624b898ea2e3169955928b7c491f1ee",
+   "family": "sans-serif",
+   "bold": true,
+   "italic": true,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationSans-BoldItalic.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "LiberationMono-Regular": {
+   "file": "liberation/LiberationMono-Regular.ttf",
+   "sha256": "f2b83c763e8afd21709333370bed4774337fae82267937e2b5aea7e2fbd922c1",
+   "family": "monospace",
+   "bold": false,
+   "italic": false,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationMono-Regular.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "LiberationMono-Bold": {
+   "file": "liberation/LiberationMono-Bold.ttf",
+   "sha256": "bd62a0672d0b9b6710b01df434c80ad54fa5f0835207eb7b17b7a761463067bb",
+   "family": "monospace",
+   "bold": true,
+   "italic": false,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationMono-Bold.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "LiberationMono-Italic": {
+   "file": "liberation/LiberationMono-Italic.ttf",
+   "sha256": "605c01c711b44480a7508d349dfbf3264e81fa43d69e61cfa7d10b86e764c4d1",
+   "family": "monospace",
+   "bold": false,
+   "italic": true,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationMono-Italic.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "LiberationMono-BoldItalic": {
+   "file": "liberation/LiberationMono-BoldItalic.ttf",
+   "sha256": "79451f3c09fe25116098853b7a2ca6e2436220ccc11af022979adbcf195be130",
+   "family": "monospace",
+   "bold": true,
+   "italic": true,
+   "format": "truetype",
+   "license": "OFL-1.1",
+   "license_file": "liberation/LICENSE",
+   "source": {
+    "kind": "tarball-member",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "member": "liberation-fonts-ttf-2.1.5/LiberationMono-BoldItalic.ttf"
+   },
+   "notice": "Liberation Fonts 2.1.5 © 2012 Red Hat, Inc.; digitised data © 2010 Google Corporation with Reserved Font Names Arimo, Tinos and Cousine. SIL OFL 1.1."
+  },
+  "NotoSansSC-Regular": {
+   "file": "noto/NotoSansSC-Regular.otf",
+   "sha256": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9",
+   "family": "cjk",
+   "bold": false,
+   "italic": false,
+   "format": "cff-cid",
+   "license": "OFL-1.1",
+   "license_file": "noto/LICENSE",
+   "source": {
+    "kind": "file",
+    "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf",
+    "sha256": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9"
+   },
+   "notice": "Noto Sans CJK (Sans2.004) © Google LLC / Adobe; SIL OFL 1.1 with Reserved Font Name 'Noto'."
+  }
+ },
+ "license_files": {
+  "liberation/LICENSE": {
+   "kind": "tarball-member",
+   "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+   "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+   "member": "liberation-fonts-ttf-2.1.5/LICENSE",
+   "file_sha256": "93fed46019c38bbe566b479d22148e2e8a1e85ada614accb0211c37b2c61c19b"
+  },
+  "noto/LICENSE": {
+   "kind": "file",
+   "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/LICENSE",
+   "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+   "file_sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+  }
+ },
+ "obligations": [
+  "随发行物附带许可证全文（OFL 1.1）与版权声明",
+  "字体文件可以原样或子集嵌入 PDF（OFL §1 明确允许嵌入文档）",
+  "修改后的字体不得使用 Reserved Font Name；本仓库不修改字体，只做 PDF 子集嵌入",
+  "不得单独出售字体本身；随软件捆绑分发被 OFL 允许"
+ ]
+}

@@ -1,0 +1,671 @@
+{
+ "kind": "u06_ir_text_evidence",
+ "platform": {
+  "system": "Darwin",
+  "machine": "arm64",
+  "python": "3.13.11"
+ },
+ "versions": {
+  "uharfbuzz": "0.56.1",
+  "fonttools": "4.65.0",
+  "pikepdf": "10.13.0.post1",
+  "pypdfium2": "5.13.0"
+ },
+ "inputs": {
+  "truth_sha256": "351865147a97c0059f67e3824f216b3bb471d29fd2dd42aead21f6939c5c4066",
+  "fonts": {
+   "LiberationMono-Bold": "bd62a0672d0b9b6710b01df434c80ad54fa5f0835207eb7b17b7a761463067bb",
+   "LiberationMono-BoldItalic": "79451f3c09fe25116098853b7a2ca6e2436220ccc11af022979adbcf195be130",
+   "LiberationMono-Italic": "605c01c711b44480a7508d349dfbf3264e81fa43d69e61cfa7d10b86e764c4d1",
+   "LiberationMono-Regular": "f2b83c763e8afd21709333370bed4774337fae82267937e2b5aea7e2fbd922c1",
+   "LiberationSans-Bold": "788abee4c806d660e8aee46689dd8540cd4bb98da03dcc9d171ce3efd99a9173",
+   "LiberationSans-BoldItalic": "698da70fc191cc5f33ad4d6d3fe830fe4624b898ea2e3169955928b7c491f1ee",
+   "LiberationSans-Italic": "e5bae5c4cde31f22142753855f4f8fb86da6ff39955ed3c0a11248b0d16948b0",
+   "LiberationSans-Regular": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+   "LiberationSerif-Bold": "d754ba427cfe0bca54ae052384baa8f842da5bd6550ad4da024ac441e7a7d5ce",
+   "LiberationSerif-BoldItalic": "f17db8af71e24d2066b587546021d4f0b296be389512b658dec3c09affeb11a7",
+   "LiberationSerif-Italic": "0e3dea9f8d613e006ccfa62201f33e265d19167bd0907725c3e145368b04fc2e",
+   "LiberationSerif-Regular": "058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74",
+   "NotoSansSC-Regular": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9"
+  },
+  "allowlist_sha256": "abd2b64e71edb2112972b23bf03c3aea34ed5b305e87b123dd867b6cb01e18b2"
+ },
+ "outputs": {
+  "u06.pdf": {
+   "sha256": "cb303505e879dd31326d07b18fe0fa1481cfb3e2673daafadcaff7433ad1774c",
+   "bytes": 14041
+  },
+  "u06_pdfium.png": {
+   "sha256": "95245d41e586891f352324e95b2852a7a24192cb0b8e27ca3121fd81f02e2ddc"
+  },
+  "canvas_coverage.rendercore.json": {
+   "sha256": "1f84172f1893a26fb9fea524a039024606615b8e8d974284575767cdfdf1e12d"
+  }
+ },
+ "coverage_diff": {
+  "drawable": {
+   "old": 61238,
+   "new": 32595,
+   "lost": 36554,
+   "gained": 7911,
+   "lost_sample": [
+    "U+007F ",
+    "U+0080 ",
+    "U+0081 ",
+    "U+0082 ",
+    "U+0083 ",
+    "U+0084 ",
+    "U+0085 ",
+    "U+0086 ",
+    "U+0087 ",
+    "U+0088 ",
+    "U+0089 ",
+    "U+008A ",
+    "U+008B ",
+    "U+008C ",
+    "U+008D ",
+    "U+008E ",
+    "U+008F ",
+    "U+0090 ",
+    "U+0091 ",
+    "U+0092 "
+   ],
+   "gained_sample": [
+    "U+02EA ˪",
+    "U+02EB ˫",
+    "U+254C ╌",
+    "U+254D ╍",
+    "U+254E ╎",
+    "U+254F ╏",
+    "U+2575 ╵",
+    "U+2576 ╶",
+    "U+2577 ╷",
+    "U+2578 ╸",
+    "U+2579 ╹",
+    "U+257A ╺",
+    "U+257B ╻",
+    "U+257C ╼",
+    "U+257D ╽",
+    "U+257E ╾",
+    "U+257F ╿",
+    "U+2596 ▖",
+    "U+2597 ▗",
+    "U+2598 ▘",
+    "U+2599 ▙",
+    "U+259A ▚",
+    "U+259B ▛",
+    "U+259C ▜",
+    "U+259D ▝",
+    "U+259E ▞",
+    "U+259F ▟",
+    "U+2E80 ⺀",
+    "U+2E81 ⺁",
+    "U+2E82 ⺂",
+    "U+2E83 ⺃",
+    "U+2E84 ⺄",
+    "U+2E85 ⺅",
+    "U+2E86 ⺆",
+    "U+2E87 ⺇",
+    "U+2E88 ⺈",
+    "U+2E89 ⺉",
+    "U+2E8A ⺊",
+    "U+2E8B ⺋",
+    "U+2E8C ⺌"
+   ]
+  },
+  "scientific_matrix": {
+   "raw_missing": [
+    "⁻"
+   ],
+   "rendered_missing_auto": [],
+   "layers": {
+    "⁻": "missing"
+   }
+  }
+ },
+ "compiled": {
+  "problems": [
+   {
+    "code": "cjk_face",
+    "object_id": "cjk",
+    "chars": [
+     "图",
+     "一",
+     "：",
+     "温",
+     "度",
+     "随",
+     "时",
+     "间",
+     "变",
+     "化",
+     "℃"
+    ]
+   }
+  ],
+  "dropped_hidden": [
+   "hidden"
+  ],
+  "resources": [
+   "font:LiberationMono-Italic",
+   "font:LiberationSans-Bold",
+   "font:LiberationSerif-Regular",
+   "font:NotoSansSC-Regular"
+  ]
+ },
+ "writer_facts": {
+  "page": [
+   425.1968503937008,
+   226.7716535433071
+  ],
+  "fonts": [
+   {
+    "resource": "F4",
+    "face_id": "LiberationMono-Italic",
+    "sha256": "605c01c711b44480a7508d349dfbf3264e81fa43d69e61cfa7d10b86e764c4d1",
+    "kind": "truetype",
+    "base_font": "WWQNMZ+LiberationMono-Italic",
+    "glyphs_in_source": 2425,
+    "glyphs_in_subset": 11,
+    "used_glyphs": 8,
+    "font_program_bytes": 1852,
+    "tounicode_entries": 7
+   },
+   {
+    "resource": "F3",
+    "face_id": "LiberationSans-Bold",
+    "sha256": "788abee4c806d660e8aee46689dd8540cd4bb98da03dcc9d171ce3efd99a9173",
+    "kind": "truetype",
+    "base_font": "ACDIFM+LiberationSans-Bold",
+    "glyphs_in_source": 2620,
+    "glyphs_in_subset": 6,
+    "used_glyphs": 5,
+    "font_program_bytes": 1260,
+    "tounicode_entries": 5
+   },
+   {
+    "resource": "F1",
+    "face_id": "LiberationSerif-Regular",
+    "sha256": "058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74",
+    "kind": "truetype",
+    "base_font": "TMBTPE+LiberationSerif",
+    "glyphs_in_source": 2602,
+    "glyphs_in_subset": 38,
+    "used_glyphs": 37,
+    "font_program_bytes": 4212,
+    "tounicode_entries": 37
+   },
+   {
+    "resource": "F2",
+    "face_id": "NotoSansSC-Regular",
+    "sha256": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9",
+    "kind": "cff-cid",
+    "base_font": "KFCNKV+NotoSansSC-Regular",
+    "glyphs_in_source": 31036,
+    "glyphs_in_subset": 12,
+    "used_glyphs": 11,
+    "font_program_bytes": 2008,
+    "tounicode_entries": 11
+   }
+  ],
+  "text_objects": 5,
+  "paths": 7,
+  "groups": 9,
+  "transparency_groups": 0,
+  "actualtext_spans": 3,
+  "notdef_codes": 0,
+  "sha256": "cb303505e879dd31326d07b18fe0fa1481cfb3e2673daafadcaff7433ad1774c",
+  "bytes": 14041,
+  "versions": {
+   "uharfbuzz": "0.56.1",
+   "fonttools": "4.65.0",
+   "pikepdf": "10.13.0.post1",
+   "pypdfium2": "5.13.0"
+  }
+ },
+ "reader_stdlib": {
+  "media_box": [
+   0.0,
+   0.0,
+   425.19685,
+   226.771654
+  ],
+  "fonts": {
+   "F1": {
+    "type0": true,
+    "identity_h": true,
+    "tag": "TMBTPE",
+    "base": "LiberationSerif",
+    "kind": "truetype",
+    "cid_to_gid_identity": true,
+    "length1_ok": true,
+    "w_entries": 37,
+    "program_bytes": 4212,
+    "tounicode_entries": 37
+   },
+   "F2": {
+    "type0": true,
+    "identity_h": true,
+    "tag": "KFCNKV",
+    "base": "NotoSansSC-Regular",
+    "kind": "cff-cid",
+    "fontfile3_subtype_ok": true,
+    "w_entries": 11,
+    "program_bytes": 2008,
+    "tounicode_entries": 11
+   },
+   "F3": {
+    "type0": true,
+    "identity_h": true,
+    "tag": "ACDIFM",
+    "base": "LiberationSans-Bold",
+    "kind": "truetype",
+    "cid_to_gid_identity": true,
+    "length1_ok": true,
+    "w_entries": 5,
+    "program_bytes": 1260,
+    "tounicode_entries": 5
+   },
+   "F4": {
+    "type0": true,
+    "identity_h": true,
+    "tag": "WWQNMZ",
+    "base": "LiberationMono-Italic",
+    "kind": "truetype",
+    "cid_to_gid_identity": true,
+    "length1_ok": true,
+    "w_entries": 8,
+    "program_bytes": 1852,
+    "tounicode_entries": 8
+   }
+  },
+  "lines_logical": [
+   "Tavotto U06: efficient flow, E = mc2, H2O",
+   "10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5",
+   "图一：温度 T (K) 随时间变化 ℃",
+   "café x̃y é",
+   "rotated"
+  ],
+  "lines_tounicode": [
+   "Tavotto U06: efficient flow, E = mc2, H2O",
+   "10⁵ m-2 — Δλ = 532 nm, μ ≈ 1.5",
+   "图一：温度 T (K) 随时间变化 ℃",
+   "café x̃y é",
+   "rotated"
+  ]
+ },
+ "reader_pdfium": {
+  "version": "153.0.7999.0",
+  "text": "Tavotto U06: efficient flow, E = mc2\r\n, H2O\r\n10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5\r\n图一：温度 T (K) 随时间变化 ℃\r\ncafé x̃y é\r\nrotated",
+  "objects": {
+   "text": 18,
+   "path": 8
+  }
+ },
+ "reader_pdfminer": {
+  "text": "Tavotto U06: efficient flow, E = mc2, H2O\n\n10⁵ m-2 — Δλ = 532 nm, μ ≈ 1.5\n\n图一：温度 T (K) 随时间变化 ℃\n\ncafé x̃y é\n\nrotated\n\n\f"
+ },
+ "reader_poppler": {
+  "text": "Tavotto U06: efficient flow, E = mc2, H2O\n10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5\n图一：温度 T (K) 随时间变化 ℃\ncafé x̃y é\n\nrota\n\nted\n\n\f",
+  "stderr": ""
+ },
+ "checks": [
+  {
+   "check": "coverage.liberation_intersection_recorded",
+   "ok": true,
+   "detail": {
+    "intersection": 2305,
+    "union": 2336,
+    "missing_vs_union": {
+     "LiberationMono-Bold": 31,
+     "LiberationMono-BoldItalic": 31,
+     "LiberationMono-Italic": 31,
+     "LiberationMono-Regular": 31,
+     "LiberationSans-Bold": 9,
+     "LiberationSans-BoldItalic": 9,
+     "LiberationSans-Italic": 9,
+     "LiberationSans-Regular": 9,
+     "LiberationSerif-Bold": 15,
+     "LiberationSerif-BoldItalic": 14,
+     "LiberationSerif-Italic": 7,
+     "LiberationSerif-Regular": 15
+    }
+   }
+  },
+  {
+   "check": "coverage.scientific_matrix_renders_without_boxes",
+   "ok": true,
+   "detail": {
+    "raw_missing": [
+     "⁻"
+    ],
+    "rendered_missing_auto": [],
+    "layers": {
+     "⁻": "missing"
+    }
+   }
+  },
+  {
+   "check": "writer.deterministic_bytes",
+   "ok": true
+  },
+  {
+   "check": "stdlib.media_box",
+   "ok": true
+  },
+  {
+   "check": "stdlib.text.ascii.logical",
+   "ok": true,
+   "detail": {
+    "got": [
+     "Tavotto U06: efficient flow, E = mc2, H2O",
+     "10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5",
+     "图一：温度 T (K) 随时间变化 ℃",
+     "café x̃y é",
+     "rotated"
+    ]
+   }
+  },
+  {
+   "check": "stdlib.text.ascii.tounicode",
+   "ok": true,
+   "detail": {
+    "got": [
+     "Tavotto U06: efficient flow, E = mc2, H2O",
+     "10⁵ m-2 — Δλ = 532 nm, μ ≈ 1.5",
+     "图一：温度 T (K) 随时间变化 ℃",
+     "café x̃y é",
+     "rotated"
+    ]
+   }
+  },
+  {
+   "check": "stdlib.text.sci.logical",
+   "ok": true,
+   "detail": {
+    "got": [
+     "Tavotto U06: efficient flow, E = mc2, H2O",
+     "10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5",
+     "图一：温度 T (K) 随时间变化 ℃",
+     "café x̃y é",
+     "rotated"
+    ]
+   }
+  },
+  {
+   "check": "stdlib.text.sci.tounicode",
+   "ok": true,
+   "detail": {
+    "got": [
+     "Tavotto U06: efficient flow, E = mc2, H2O",
+     "10⁵ m-2 — Δλ = 532 nm, μ ≈ 1.5",
+     "图一：温度 T (K) 随时间变化 ℃",
+     "café x̃y é",
+     "rotated"
+    ]
+   }
+  },
+  {
+   "check": "stdlib.text.cjk.logical",
+   "ok": true,
+   "detail": {
+    "got": [
+     "Tavotto U06: efficient flow, E = mc2, H2O",
+     "10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5",
+     "图一：温度 T (K) 随时间变化 ℃",
+     "café x̃y é",
+     "rotated"
+    ]
+   }
+  },
+  {
+   "check": "stdlib.text.cjk.tounicode",
+   "ok": true,
+   "detail": {
+    "got": [
+     "Tavotto U06: efficient flow, E = mc2, H2O",
+     "10⁵ m-2 — Δλ = 532 nm, μ ≈ 1.5",
+     "图一：温度 T (K) 随时间变化 ℃",
+     "café x̃y é",
+     "rotated"
+    ]
+   }
+  },
+  {
+   "check": "stdlib.text.combining.logical",
+   "ok": true,
+   "detail": {
+    "got": [
+     "Tavotto U06: efficient flow, E = mc2, H2O",
+     "10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5",
+     "图一：温度 T (K) 随时间变化 ℃",
+     "café x̃y é",
+     "rotated"
+    ]
+   }
+  },
+  {
+   "check": "stdlib.text.combining.tounicode",
+   "ok": true,
+   "detail": {
+    "got": [
+     "Tavotto U06: efficient flow, E = mc2, H2O",
+     "10⁵ m-2 — Δλ = 532 nm, μ ≈ 1.5",
+     "图一：温度 T (K) 随时间变化 ℃",
+     "café x̃y é",
+     "rotated"
+    ]
+   }
+  },
+  {
+   "check": "stdlib.text.rot.logical",
+   "ok": true,
+   "detail": {
+    "got": [
+     "Tavotto U06: efficient flow, E = mc2, H2O",
+     "10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5",
+     "图一：温度 T (K) 随时间变化 ℃",
+     "café x̃y é",
+     "rotated"
+    ]
+   }
+  },
+  {
+   "check": "stdlib.text.rot.tounicode",
+   "ok": true,
+   "detail": {
+    "got": [
+     "Tavotto U06: efficient flow, E = mc2, H2O",
+     "10⁵ m-2 — Δλ = 532 nm, μ ≈ 1.5",
+     "图一：温度 T (K) 随时间变化 ℃",
+     "café x̃y é",
+     "rotated"
+    ]
+   }
+  },
+  {
+   "check": "stdlib.no_unmapped_code",
+   "ok": true
+  },
+  {
+   "check": "stdlib.font.F1.embedded_subset_with_tounicode",
+   "ok": true
+  },
+  {
+   "check": "stdlib.font.F2.embedded_subset_with_tounicode",
+   "ok": true
+  },
+  {
+   "check": "stdlib.font.F3.embedded_subset_with_tounicode",
+   "ok": true
+  },
+  {
+   "check": "stdlib.font.F4.embedded_subset_with_tounicode",
+   "ok": true
+  },
+  {
+   "check": "stdlib.every_content_code_has_tounicode",
+   "ok": true,
+   "detail": {
+    "orphans": []
+   }
+  },
+  {
+   "check": "pdfium.text.ascii",
+   "ok": true
+  },
+  {
+   "check": "pdfium.text.sci",
+   "ok": true
+  },
+  {
+   "check": "pdfium.text.cjk",
+   "ok": true
+  },
+  {
+   "check": "pdfium.text.combining",
+   "ok": true
+  },
+  {
+   "check": "pdfium.text.rot",
+   "ok": true
+  },
+  {
+   "check": "pdfium.text_objects_not_outlines",
+   "ok": true,
+   "detail": {
+    "got": 18
+   }
+  },
+  {
+   "check": "pdfium.pixel.background",
+   "ok": true,
+   "detail": {
+    "got": [
+     255,
+     255,
+     255
+    ],
+    "want": [
+     255,
+     255,
+     255
+    ],
+    "why": "白底"
+   }
+  },
+  {
+   "check": "pdfium.pixel.overlap_is_blue",
+   "ok": true,
+   "detail": {
+    "got": [
+     0,
+     0,
+     255
+    ],
+    "want": [
+     0,
+     0,
+     255
+    ],
+    "why": "红 (90,50,30x20) 在前、蓝 (100,55,30x20) 在后：重叠区是蓝——列表顺序，不是 id 顺序（z-red / a-blue 故意逆序）"
+   }
+  },
+  {
+   "check": "pdfium.pixel.only_red",
+   "ok": true,
+   "detail": {
+    "got": [
+     255,
+     0,
+     0
+    ],
+    "want": [
+     255,
+     0,
+     0
+    ],
+    "why": "只有红矩形覆盖的点"
+   }
+  },
+  {
+   "check": "pdfium.pixel.ellipse_half_alpha",
+   "ok": true,
+   "detail": {
+    "got": [
+     255,
+     128,
+     128
+    ],
+    "want": [
+     255,
+     128,
+     128
+    ],
+    "why": "0.5 红叠在白上"
+   }
+  },
+  {
+   "check": "pdfium.pixel.hidden_object_area_stays_white",
+   "ok": true,
+   "detail": {
+    "got": [
+     255,
+     255,
+     255
+    ],
+    "want": [
+     255,
+     255,
+     255
+    ],
+    "why": "hidden 文字的框内没有墨"
+   }
+  },
+  {
+   "check": "pdfminer.text.ascii",
+   "ok": true
+  },
+  {
+   "check": "pdfminer.text.sci",
+   "ok": true
+  },
+  {
+   "check": "pdfminer.text.cjk",
+   "ok": true
+  },
+  {
+   "check": "pdfminer.text.combining",
+   "ok": true
+  },
+  {
+   "check": "pdfminer.text.rot",
+   "ok": true
+  },
+  {
+   "check": "poppler.no_syntax_error",
+   "ok": true
+  },
+  {
+   "check": "poppler.text.ascii",
+   "ok": true
+  },
+  {
+   "check": "poppler.text.sci",
+   "ok": true
+  },
+  {
+   "check": "poppler.text.cjk",
+   "ok": true
+  },
+  {
+   "check": "poppler.text.combining",
+   "ok": true
+  },
+  {
+   "check": "poppler.text.rot",
+   "ok": true
+  }
+ ],
+ "all_ok": true
+}
