@@ -760,7 +760,7 @@ from matplotlib.patches import FancyBboxPatch
 def main():
     fig = plt.figure(figsize=(4, 3))
     ax = fig.add_axes([0.05, 0.05, 0.9, 0.9])
-    ax.set_xlim(0, 100)
+    ax.set_xlim(1, 100)     # 下界取 1：对数轴用例要把这条轴换成 log
     ax.set_ylim(0, 100)
     ax.axis("off")
     # 流程图的画法（2026-09-21 用户脚本）：圆角框 + 单独的 ax.text 标签
@@ -1132,6 +1132,50 @@ def test_frac_anchored_props_survive_geometry_moves(tmp_path):
         resp = _rpc(proc, {"cmd": "override", "stem": "ReplayFig", "patches": p3})
         bbox_replay = _bbox_of(resp["manifest"], txt)
         assert bbox_replay == pytest.approx(bbox_live, abs=0.005), (bbox_live, bbox_replay)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+def test_frac_anchored_props_survive_axis_scale_changes(tmp_path):
+    """先拖、再把轴换成对数：拖过的形状与文字仍钉在声明的 figure 锚点上。
+
+    `[xy]scale` 被 `_apply_rank` 钉在 pos_frac 之前（第 4 档），所以它是第 0–4 档里
+    唯一不算几何的 prop：热会话里 pos_frac「值没变」被跳过，形状 / 文字带着线性轴下
+    算出的本地坐标随对数轴漂走；全量重放里 log 先于 pos_frac，落在声明处——写回校验
+    当场 replay_divergence（#472 评审实测：文字 0.677 vs 0.429，形状 0.577 vs 0.343）。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_shapes.py").write_text(FLOWCHART_SHAPES_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_shapes.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": []})["manifest"]
+        box, label = "axes_0.patches_0", "axes_0.texts_0"
+        targets = {
+            box: [round(_anchor_of(man, box)[0] + 0.2, 4), round(_anchor_of(man, box)[1] - 0.1, 4)],
+            label: [
+                round(_anchor_of(man, label)[0] + 0.2, 4),
+                round(_anchor_of(man, label)[1] - 0.1, 4),
+            ],
+        }
+        drag = [{"gid": g, "prop": "pos_frac", "value": v} for g, v in targets.items()]
+        # 先拖（热会话第一步），再换对数轴（第二步，pos_frac 一个字节没变）
+        _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": drag})
+        both = drag + [{"gid": "axes_0", "prop": "xscale", "value": "log"}]
+        hot = _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": both})["manifest"]
+        for gid, want in targets.items():
+            assert _anchor_of(hot, gid) == pytest.approx(want, abs=1e-3), (
+                gid,
+                _anchor_of(hot, gid),
+            )
+        # 清空再一次性全量应用（≈ 冷启动重放）：与热会话逐位收敛
+        _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": []})
+        replay = _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": both})["manifest"]
+        for gid in targets:
+            assert _bbox_of(replay, gid) == pytest.approx(_bbox_of(hot, gid), abs=1e-6), gid
     finally:
         if proc.poll() is None:
             proc.kill()

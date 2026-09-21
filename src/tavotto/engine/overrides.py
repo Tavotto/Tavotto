@@ -2896,13 +2896,22 @@ _FRAC_ANCHORED = {"pos_frac", "loc_frac", "endpoints_frac"}
 
 
 def _is_geometry_key(prop: str, artist) -> bool:
-    """会改变 figure 分数 ↔ 本地坐标换算关系的 prop。"""
+    """会改变 figure 分数 ↔ 本地坐标换算关系的 prop。
+
+    **判据是「这条 prop 在规范顺序里排在 figure 锚定 prop 之前」**，不是「它动没动
+    几何」：xlim / invert 也让数据锚定的 artist 挪位，但它们与 pos_frac 同档、按列表
+    序应用，热会话与全量重放走的是同一个顺序，分歧不出来。`[xy]scale` 不同——它被
+    `_apply_rank` 钉在第 4 档、永远排在 pos_frac 之前：热会话里先拖后换 log 轴时
+    pos_frac「值没变」被跳过，形状 / 文字带着线性轴下算出的本地坐标随对数轴漂走；
+    全量重放里 log 先于 pos_frac，落在声明的锚点上（2026-09-21 #472 评审实测，
+    文字与形状同样中招）。第 0–4 档里只有它不算几何，补上之后档位与判据一致。
+    """
     if prop == "size_mm":
         return isinstance(artist, Figure)
     if isinstance(artist, ColorbarProxy) and prop in ("orientation", "extend"):
         # 长短边互换 / 给延伸三角让地方，两者都让色条轴换了一块地方
         return True
-    return prop == "position" and isinstance(artist, Axes)
+    return prop in ("position", "xscale", "yscale", "zscale") and isinstance(artist, Axes)
 
 
 def _must_replay(prop: str, artist) -> bool:

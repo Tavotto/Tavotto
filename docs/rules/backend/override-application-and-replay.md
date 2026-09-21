@@ -37,7 +37,7 @@
   刻度类的 prop 还必须**每次都重放**（`_must_replay`）——它们按当前状态重算，
   而 applied 表里的值一个字节没变，走「值没变就跳过」的捷径就会停在旧刻度上；
   pos_frac / loc_frac / endpoints_frac 的 setter 在应用那一刻把 figure 分数换算进
-  artist 本地坐标（独立形状的 `pos_frac` 换算成叠在 transform 上的平移，同一档），**几何一变（含还原）必须重放它们**，否则热会话状态 ≠ 全量
+  artist 本地坐标（独立形状的 `pos_frac` 换算成叠在 transform 上的平移，同一档），**几何一变（含还原）必须重放它们**——「几何」的判据（`_is_geometry_key`）是**排在 figure 锚定 prop 之前的那几档**：图幅、色条方向 / extend、子图 position，以及 `[xy]scale`（它钉在第 4 档，热会话先拖后换 log 轴时不重放就随对数轴漂走，全量重放却落在声明处；xlim / invert 与 pos_frac 同档按列表序走，不分歧），否则热会话状态 ≠ 全量
   重放——用户「写回时的样子」重开后全体文字错位（FigS3 事故，
   test_frac_anchored_props_survive_geometry_moves 看护）。新增 figure 锚定
   prop 时记得加进 `_FRAC_ANCHORED`。aspect="equal" 的子图只有 draw 才
