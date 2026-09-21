@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A）加交接 / 证据 / README / plan.json 后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A / PR B）加交接 / 证据 / README / plan.json 后各算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -203,6 +203,11 @@
       "sha256": "8a570da733673aaa522abffc612ebf6b6fb3929eaf78998e1e727a5241c7d28f"
     },
     {
+      "path": "evidence/u04/mutations_pr_b.md",
+      "bytes": 2529,
+      "sha256": "b652364fa0519a4252f51ab0a227ca2c5caba51044a73f004d5a64fdd9a8c8ce"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -244,8 +249,8 @@
     },
     {
       "path": "handoffs/U04_dependencies.md",
-      "bytes": 12304,
-      "sha256": "d00aa2a8ad7973fddaa492d61a26cd4a822a6b730719a0f12894bbbb368a54c1"
+      "bytes": 20312,
+      "sha256": "3cb444544fb0de9ac1a7615b886bfdb7456a3989eaa2a23651641643233ff5de"
     },
     {
       "path": "phase_mapping.json",
