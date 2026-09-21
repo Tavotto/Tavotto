@@ -156,7 +156,9 @@
   闭集 `UNSUPPORTED_REASONS`）。**两档都不是空依赖**：选中组里出现任一条，联合计划就 `blocked`，不把 `^` /
   marker / 约束剥掉偷偷继续。加一条 reason 就要在 ADR §三的「下一步」表与前端文案里说清用户该做什么。
 - **`-r` / `-c` 只在项目根内有界跟进**（`MAX_DECL_FILES`；resolve 后仍在根下，软链接跳出去算越界）；缺失 / 越界 /
-  环 / 超限各是一条 unsupported **留在引用它的那一行的位置**，不是忽略。被 include 的条目归引用它的组。
+  环 / 超限各是一条 unsupported **留在引用它的那一行的位置**，不是忽略；读不了 / 超过 `MAX_DECL_BYTES` 的文件是
+  `unreadable`（不是空）。被 include 的条目归引用它的组；同一文件按 (文件, 组, kind) 只读一次——换组或换成约束再
+  include 是另一份条目。
 - **组与默认选中**：文件组 id = 相对项目根的路径；pyproject 的是 `pyproject.toml:<段>`；脚本的 PEP 723 是
   `pep723:<脚本>`。默认只选任何层级的 `requirements.txt`、pyproject 主依赖、PEP 723（`default_group`）；其余组
   由项目设置 `dependency_groups` 点名；约束不分组、永远生效。
@@ -171,7 +173,8 @@
   hash 模式 = 锁文件语义：整份选中集合按 `--require-hashes` 装，缺一条 hash 就 `blocked`。
 - **交给安装器的字符串一律 `requirement_string()` 重新序列化**（名字 PEP 503、extras PEP 685、specifier 规范串）；
   原文不进 argv / 需求文件。
-- 状态闭集 `nothing_needed` / `ready` / `blocked`；blocked 理由闭集 `BLOCK_REASONS`（四条）。`identity` 只由意图
+- 状态闭集 `nothing_needed` / `ready` / `blocked`，**blocked 优先于 nothing_needed**（不完整的计划什么都不缺也是
+  blocked）；blocked 理由闭集 `BLOCK_REASONS`（四条）。`identity` 只由意图
   决定、不含路径（受管环境代目录按它命名，PR B）。
 - 看护：`tests/test_dependency_plan.py`（语法 / include 边界 / PEP 723 / PEP 735 / Poetry / 3.10 无 tomllib 的分支 /
   上下文 × 桶 / 选择 / 计划的每一条「不装」）+ `tests/test_execution_receipt.py::TestDependencyIntent`。
