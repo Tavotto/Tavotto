@@ -354,6 +354,32 @@ def test_prune_deletes_oldest_first_down_to_the_budget(cache, tmp_path):
     assert not paths[0].exists() and paths[1].exists() and paths[2].exists()
 
 
+def test_prune_leaves_in_flight_part_files_and_the_just_published_one_alone(cache, tmp_path):
+    """Codex #471 第五轮 P2：`prune()` 的 glob 会把别人正在写的 `<key>.<pid>-<tid>.part.png` 当缓存删掉——那个
+    请求随后在 `os.replace` 上 FileNotFoundError；预算够小时连刚发布、马上要交出去的那张也删。现在只认成品名
+    `<sha1>.png`，且 `keep=` 那张预算再小也留着。"""
+    c, host = cache
+    src = _pdf(tmp_path)
+    published = c.get("figs/a.pdf", src, 100)
+    os.utime(published, (1_000_000, 1_000_000))
+    cache_dir = tmp_path / "cache"
+    part = cache_dir / f"{published.stem}.{os.getpid()}-abc.part.png"  # 别人在飞的临时文件，最旧
+    part.write_bytes(b"x" * 4096)
+    os.utime(part, (900_000, 900_000))
+    staged = cache_dir / "stage.1-2.src.part"
+    staged.write_bytes(b"y" * 4096)
+    os.utime(staged, (900_000, 900_000))
+    c.max_bytes = 1  # 预算小到什么成品都留不下
+    assert c.prune(keep=published) == 0
+    assert published.exists() and part.exists() and staged.exists()
+    assert c.prune() == 1  # 不带 keep：成品可删，在飞的仍不碰
+    assert not published.exists() and part.exists() and staged.exists()
+    # 端到端：预算 1 字节时 get() 交出来的路径必须存在
+    host.renders = 0
+    p = c.get("figs/a.pdf", src, 200)
+    assert p.exists() and host.renders == 1
+
+
 needs = pytest.mark.skipif(
     importlib.util.find_spec("pypdfium2") is None or importlib.util.find_spec("pikepdf") is None,
     reason="候选包未装（not_run）",

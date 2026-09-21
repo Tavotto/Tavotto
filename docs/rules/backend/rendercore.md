@@ -75,8 +75,9 @@
   render / inspect 三种 op 都经 `RenderHost`（一个进程一个 child，`renderhost.shared()`；有界等待队列 `max_waiting`，
   满了立刻 `render_queue_full`——背压不堆积）；像素预算**父子两侧都判**；每请求一个 deadline 管到底（等锁超时不打断正在忙的 child），收响应到点 kill → `wait()` reap →
   本次 `render_child_timeout` → 下一次自动重启；child 崩溃 / 外杀 → `render_child_died` → 下一次重启；起不来（exe 不在 / 冻结产物命令写错）→ `Popen` 的
-  OSError 翻译成 `render_child_spawn_failed`（结构化，job 落到该格式的 `format_failed`）；像素文件的长度核对在
-  `request()` 的**锁内**做（`verify` 回调），说谎的 child 在释放锁之前就被 kill + reap；`close()` 之后一定 reap。
+  OSError 翻译成 `render_child_spawn_failed`（结构化，job 落到该格式的 `format_failed`）；像素文件的长度核对与
+  整个 `RasterBuffer` 的构造都在 `request()` 的**锁内**做（`verify` 回调），bytes 对得上而尺寸不成一张图同样是
+  `render_child_protocol`，说谎的 child 在释放锁之前就被 kill + reap；`close()` 之后一定 reap。
   dpi 是**物理**密度：位图尺寸 = PDFium 尺寸 × `/UserUnit` × dpi / 72（与 probe 同一次乘）。child 里 doc / page / bitmap 在 `finally` 关，像素在关之前复制成 `bytes`——`RasterBuffer` 不共享 native
   句柄。`RLIMIT_AS` 只在 Linux 生效（macOS 内核不强制、Windows 无 resource），像素预算是那两处唯一护栏——不假装。
   child 是应用运行时的一部分，绝不装进用户的科学环境；冻结产物里同一个 exe 以 `--render-child` 再起自己
@@ -90,7 +91,8 @@
   超时 → PNG / TIFF 各自 `format_failed` 带 `raster_code`，PDF 照常；PDF 没写出来 → 位图无从栅格，不拿旧文件冒充。
 - **预览缓存的键是内容身份，不是 mtime**（`rendercore/preview.py`，RC-061）：`sha1(源 id | 内容 sha256 | 页号 | 宽 | 背景 |
   rendercore 名-版本 | PDFium 版本 | 字体政策版本)`——换 build / 换字体集合旧预览不命中；同键并发只渲染一次（每键一把锁、
-  锁表封顶，淘汰只看登记使用者数——拿到手还没 acquire 的也算在用）；临时文件（.png 后缀）+ `os.replace`、Windows 撞读者句柄退让、零字节重建；hash 与渲染绑在同一份字节上——源先一次读成缓存目录里
+  锁表封顶，淘汰只看登记使用者数——拿到手还没 acquire 的也算在用）；临时文件（.png 后缀）+ `os.replace`、Windows 撞读者句柄退让、零字节重建；`prune()` 只删成品 `<sha1>.png`（在飞的
+  `.part.png` / `stage.*.src.part` 不碰，刚发布要交出去的那张也不删）；hash 与渲染绑在同一份字节上——源先一次读成缓存目录里
   的不可变副本（边抄边算 sha256，`.src.part`，用完即删），child 渲染的是副本，算键与渲染之间源被换掉哪怕又换回去都影响
   不到这张预览；身份分块算不整个读进内存；**异常抛出**，不返回空白图 / 旧图。U07 不接 `app.py`（`/api/render` 仍走 PyMuPDF），U08 换线时把 `app.py` 那三段与 `source_sha1` 的 memo 收编到这里。
 - **PDFium 的 PNG 跨平台像素不同、同平台可复现**（ADR 0055 §7）：`evidence/u07/u07_pdfium.png` 是 macOS arm64 基线，
