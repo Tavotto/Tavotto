@@ -26,6 +26,11 @@ from . import ir, pdfwriter, plan
 from .hbshaper import HbFaceProvider
 from .sources import SourceError, SourceResolver, read_frozen
 
+#: 一次作业里全部冻结源的字节总预算（读进内存之前按 `SourceArtifact.size_bytes` 判）。像素预算只管解码后的
+#: 位图，管不住「几份很大的 PDF / 压缩得很小的位图」把导出进程挤死（Codex #463 第四轮 P2）；超过就是结构化
+#: 失败（`export_render_failed` + `source_budget_exceeded`），一个字节不读。
+SOURCE_BYTES_BUDGET = 512 * 1024 * 1024
+
 
 def produce(
     job: exportjob.ExportJob,
@@ -61,7 +66,20 @@ def produce(
         msg = f"{oid}: hidden"
         if msg not in job.warnings:
             job.warnings.append(msg)
-    # 冻结源在写入之前逐个读进内存并核 hash（RC-014）：写入器用的就是这一份字节，不再碰文件
+    # 冻结源在写入之前逐个读进内存并核 hash（RC-014）：写入器用的就是这一份字节，不再碰文件。
+    # 读之前先按冻结时记下的大小判总预算——超过的作业一个字节不读、结构化失败
+    total_bytes = sum(int(fs.artifact.size_bytes) for fs in rp.sources.values())
+    if total_bytes > SOURCE_BYTES_BUDGET:
+        raise exportreq.ExportRequestError(
+            "export_render_failed",
+            f"冻结源合计 {total_bytes} 字节，超过预算 {SOURCE_BYTES_BUDGET}",
+            {
+                "id": "",
+                "reason": f"source_budget_exceeded: {total_bytes} > {SOURCE_BYTES_BUDGET}",
+                "source_bytes": total_bytes,
+                "budget": SOURCE_BYTES_BUDGET,
+            },
+        )
     files: dict[str, bytes] = {}
     for key, fs in rp.sources.items():
         job.check_cancelled()
