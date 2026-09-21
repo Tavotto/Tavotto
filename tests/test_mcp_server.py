@@ -2787,6 +2787,15 @@ def test_prepare_dependencies_target_is_a_closed_set_and_failures_are_structured
     assert result["isError"] is True
     body = _body(result)
     assert body["code"] == deprepair.ERROR_PLAN_BLOCKED and body["joint"] == joint
+    # skip = 用户明确不准备、直接运行：记进门、不装、照常开图
+    skipped: list = []
+    monkeypatch.setattr(deprepair, "skip_preparation", lambda p, s: skipped.append((p, s)))
+    monkeypatch.setattr(deprepair, "prepare", lambda *a, **k: pytest.fail("skip 不该执行任何安装"))
+    out = _body(
+        _call("tavotto_open_figure", {"project_path": str(project), "prepare_dependencies": "skip"})
+    )
+    assert out["ok"] is True and out["prepared"]["target_kind"] == "skip"
+    assert skipped == [(str(project), "fig1.py")]
     # 非字符串在分派之前就拒；批量不接受
     with pytest.raises(rpc.RpcError):
         _call("tavotto_open_figure", {"project_path": str(project), "prepare_dependencies": 3})
