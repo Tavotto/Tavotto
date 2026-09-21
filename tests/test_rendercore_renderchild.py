@@ -61,6 +61,10 @@ for raw in sys.stdin.buffer:
         if w * w > req["max_pixels"]:
             resp = {"id": req["id"], "ok": False, "seq": seq, "error": {"code": "pixel_budget_exceeded", "message": "child side"}}
         else:
+            if req["pdf"].endswith("hangpart.pdf"):
+                with open(req["out"] + ".part", "wb") as fh:  # 写到一半被杀：留下 .part
+                    fh.write(b"\x00" * 16)
+                time.sleep(30)
             if req["pdf"].endswith("hang.pdf"):
                 time.sleep(30)
             if req["pdf"].endswith("crash.pdf"):
@@ -70,7 +74,8 @@ for raw in sys.stdin.buffer:
             data = bytes([255, 0, 0, 255, 0, 0, 255, 128])
             with open(req["out"], "wb") as fh:
                 fh.write(data)
-            resp = {"id": req["id"], "ok": True, "seq": seq, "width": 2, "height": 1, "stride": 8, "channels": 4, "bytes": 8, "ms": 0}
+            nbytes = 999 if req["pdf"].endswith("shortbytes.pdf") else 8  # 说的与写的对不上
+            resp = {"id": req["id"], "ok": True, "seq": seq, "width": 2, "height": 1, "stride": 8, "channels": 4, "bytes": nbytes, "ms": 0}
     else:
         resp = {"id": req["id"], "ok": False, "seq": seq, "error": {"code": "bad_request", "message": op}}
     out.write((json.dumps(resp) + "\n").encode()); out.flush()
@@ -289,6 +294,34 @@ def test_the_pixel_file_is_removed_after_reading(fake_host, tmp_path):
     pdf.write_bytes(b"%PDF-")
     fake_host.render(pdf, width_px=2)
     assert not list(tmp_path.glob("render-*.rgba"))
+
+
+def test_a_stale_part_file_is_removed_when_the_render_fails(fake_host, tmp_path):
+    """Codex #471 P2：child 写到一半被 kill 留下的 `.part` 也要清，不然每次 mkstemp 新名字、失败的高分辨率
+    渲染会攒成一堆孤儿。"""
+    pdf = tmp_path / "hangpart.pdf"
+    pdf.write_bytes(b"%PDF-")
+    with pytest.raises(rh.RenderChildError) as ei:
+        fake_host.render(pdf, width_px=2, timeout=0.5)
+    assert ei.value.code == "render_child_timeout"
+    assert not list(tmp_path.glob("render-*.rgba*")), list(tmp_path.glob("render-*"))
+
+
+def test_a_pixel_file_that_disagrees_with_the_response_reaps_the_child(fake_host, tmp_path):
+    """Codex #471 P2：child 说 999 字节、写了 8 字节——协议不可信，与 request() 里的 protocol 失败同一处置：
+    kill + reap，下一次请求换一个 child。"""
+    pdf = tmp_path / "shortbytes.pdf"
+    pdf.write_bytes(b"%PDF-")
+    fake_host.ping()
+    pid = fake_host.pid
+    with pytest.raises(rh.RenderChildError) as ei:
+        fake_host.render(pdf, width_px=2)
+    assert ei.value.code == "render_child_protocol"
+    _assert_not_alive(pid)
+    assert fake_host.last_exit is not None and fake_host.pid is None
+    ok = tmp_path / "ok.pdf"
+    ok.write_bytes(b"%PDF-")
+    assert fake_host.render(ok, width_px=2).width == 2 and fake_host.restarts == 1
 
 
 def test_error_codes_are_a_closed_set():

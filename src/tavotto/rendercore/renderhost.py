@@ -292,11 +292,23 @@ class RenderHost:
             )
             samples = out.read_bytes()
         finally:
-            try:
-                out.unlink()
-            except OSError:
-                pass
-        buf = RasterBuffer(
+            # 目标文件与 child 的 `.part` 一起清：超时 / 崩溃可能停在 write_bytes 之后、os.replace 之前，
+            # 每次 mkstemp 名字都不同，不清就攒成一堆接近像素预算的孤儿（Codex #471 P2）
+            for stale in (out, out.with_name(out.name + ".part")):
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
+        if len(samples) != int(resp.get("bytes", len(samples))):
+            # child 说的与它写的对不上：协议已经不可信，与 request() 里的 protocol 失败同一处置——kill + reap，
+            # 下一次请求重启，而不是继续用这个 child（Codex #471 P2）
+            with self._lock:
+                self._kill_and_reap()
+            raise RenderChildError(
+                "render_child_protocol",
+                f"像素文件 {len(samples)} 字节与响应说的 {resp.get('bytes')} 不符",
+            )
+        return RasterBuffer(
             width=int(resp["width"]),
             height=int(resp["height"]),
             channels=int(resp["channels"]),
@@ -304,9 +316,6 @@ class RenderHost:
             stride=int(resp["stride"]),
             dpi=float(dpi) if dpi is not None else None,
         )
-        if len(samples) != int(resp.get("bytes", len(samples))):
-            raise RenderChildError("render_child_protocol", "像素文件长度与响应不符")
-        return buf
 
 
 # ---------------------------------------------------------------------------
