@@ -384,8 +384,8 @@
     },
     {
       "path": "handoffs/U07_compose_raster.md",
-      "bytes": 24360,
-      "sha256": "f2452be9029deda07eb80671f3d6e09cdfdd8f54558f13dafe8925f0503cd630"
+      "bytes": 25399,
+      "sha256": "db3e7ec98afbc91b058b511df1785279e83386525bf0dc9a777ac61b45479c53"
     },
     {
       "path": "phase_mapping.json",
