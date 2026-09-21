@@ -4243,12 +4243,15 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             # 的线组（`LineCollection(..., array=z, colors="red")`）换色图一个像素不动，
             # 界面上不能摆一条「与色条共用色阶」（#474 评审第四轮）。判据与它自己那侧的
             # cmap 字段同一处答案：`color_mapping_is_live`。
+            # 色条自己的三个色阶控件由 `colorbar_mapping_is_live(cb)` 开闸（它的 mappable
+            # 映射断了就收起来，见 `_colorbar_fields`）；闸关着时这条链接也不发——否则兄弟页
+            # 会指向一条没有控件的色条（#474 评审第六轮）。兄弟自己那侧的 cmap 字段照旧。
             scale = [
                 g
                 for g in scale_gids(state, artist.cb.mappable)
                 if g != mappable_gid and color_mapping_is_live(state.resolve(g))
             ]
-            if scale:
+            if scale and colorbar_mapping_is_live(artist.cb):
                 entry["scale_gids"] = scale
             # **能力为什么不在，要说出来。** 少一个控件而不给理由，用户只会
             # 以为是漏了或是坏了。这里给的是稳定 code，供界面按 code 翻译成

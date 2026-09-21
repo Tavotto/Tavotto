@@ -1051,6 +1051,67 @@ def test_scale_siblings_only_count_artists_whose_colormap_can_be_restored(tmp_pa
         proc.wait(timeout=10)
 
 
+GATED_COLORBAR_SCRIPT = """\
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+from matplotlib.colors import PowerNorm
+
+
+def main():
+    rng = np.random.RandomState(0)
+    fig, ax = plt.subplots(figsize=(4.0, 2.6))
+    norm = PowerNorm(gamma=1.2, vmin=0.0, vmax=1.0)
+    ax.pcolormesh(np.linspace(0, 1, 6), np.linspace(0, 1, 6), rng.rand(6, 6),
+                  cmap="Greens", norm=norm, shading="nearest")
+    # 色条挂在**映射着色的线组**上；给它设过 edgecolor 之后映射就断了
+    lc = LineCollection([[(0.1, 1.15), (0.9, 1.15)]], array=np.array([0.7]),
+                        cmap="Greens", norm=norm, linewidths=4)
+    ax.add_collection(lc)
+    ax.set_ylim(0, 1.3)
+    fig.colorbar(lc, ax=ax)
+    fig.savefig("Gated.pdf")
+"""
+
+
+def test_scale_link_follows_the_colorbars_own_gate(tmp_path):
+    """色条自己的映射断了（它的线组被设了 edgecolor）→ 三个色阶控件收起来，
+    `scale_gids` 也不再发：兄弟页不能指向一条没有控件的色条（#474 评审第六轮）。
+    兄弟自己那侧的 cmap 字段照旧在。"""
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_gated.py").write_text(GATED_COLORBAR_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_gated.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": []})["manifest"]
+        cb = next(e for e in man["elements"] if e["role"] == "colorbar")
+        mesh = next(
+            e
+            for e in man["elements"]
+            if e["role"] == "collection" and e["gid"] != cb["mappable_gid"]
+        )
+        assert cb["scale_gids"] == [mesh["gid"]]
+        assert any(f["prop"] == "cmap" for f in cb["editable"])
+
+        kill = [{"gid": cb["mappable_gid"], "prop": "edgecolor", "value": "#804000"}]
+        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": kill})["manifest"]
+        cb2 = next(e for e in man["elements"] if e["gid"] == cb["gid"])
+        assert not any(f["prop"] == "cmap" for f in cb2["editable"]), "映射断了色条还给 cmap"
+        assert "scale_gids" not in cb2, cb2.get("scale_gids")
+        mesh2 = next(e for e in man["elements"] if e["gid"] == mesh["gid"])
+        assert any(f["prop"] == "cmap" for f in mesh2["editable"])
+
+        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": []})["manifest"]
+        assert next(e for e in man["elements"] if e["gid"] == cb["gid"])["scale_gids"] == [
+            mesh["gid"]
+        ]
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
 def test_closed_figure_still_builds(tmp_path):
     """脚本 `savefig` 完就 `plt.close(fig)` 时仍要能起来。
 
