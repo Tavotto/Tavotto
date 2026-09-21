@@ -359,7 +359,7 @@
       "fixture": null,
       "test": null,
       "expected_product_outcome": "guided",
-      "notes": "U05（ADR 0063 / 0064）：供应器与接进 U04 代事务已实现（pr lane 机制面用例 tests/test_private_python.py + tests/test_private_python_transaction.py）。observing 的具名任务 = .github/workflows/private-python-targets.yml（dispatch / 每日 schedule / 本能力文件变动时的 PR；非 required、不进 Gate）：三个托管 runner 上真 pbs 归档经产品代码走完整链（tests/test_private_python_transaction.py::TestRealChain::test_real_pbs_python_through_the_transaction_to_a_figure，「没有基础解释器」= 发现链末端置空）、Linux 把 runtime 挂进没有 Python 的空镜像出图、Windows 注册表 / PATH / USERPROFILE 前后快照；observing 用例一条不许 skip（wheelhouse 由每条腿先建）。**资格未取得**：真实无系统 Python 目标 + 冻结产物 + 正常入口是 U11 release lane 的事（ADR 0064 §一 第三档），五个目标 enabled 全 false。"
+      "notes": "U05（ADR 0063 / 0064）：供应器与接进 U04 代事务已实现（pr lane 机制面用例 tests/test_private_python.py + tests/test_private_python_transaction.py）。observing 的具名任务 = .github/workflows/private-python-targets.yml（dispatch / 每周 schedule / 本能力文件变动时的 PR；非 required、不进 Gate）：三个托管 runner 上真 pbs 归档经产品代码走完整链（tests/test_private_python_transaction.py::TestRealChain::test_real_pbs_python_through_the_transaction_to_a_figure，「没有基础解释器」= 发现链末端置空）、Linux 把 runtime 挂进没有 Python 的空镜像出图、Windows 注册表 / PATH / USERPROFILE 前后快照；observing 用例一条不许 skip（wheelhouse 由每条腿先建）。**资格未取得**：真实无系统 Python 目标 + 冻结产物 + 正常入口是 U11 release lane 的事（ADR 0064 §一 第三档），五个目标 enabled 全 false。"
     },
     {
       "case_id": "FO24",
