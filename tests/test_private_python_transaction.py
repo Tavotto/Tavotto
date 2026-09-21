@@ -31,6 +31,7 @@ from tavotto.engine import (
     deprepair,
     envlease,
     managedenv,
+    pool as engine_pool,
     privatepython,
 )
 
@@ -492,6 +493,113 @@ class TestPrivateBase:
             in_use=deprepair._private_runtime_in_use, source=newer
         )
         assert removed == [old_id] and not (privatepython.runtimes_dir() / old_id).exists()
+
+
+# ================================================================ 干净机器：一个渲染解释器都没有（PR B）
+@pytest.fixture
+def no_interpreter(monkeypatch, no_base):
+    """`resolve_worker_python` 什么都找不到（`no_worker_python`）：干净机器的形状——`no_base` 之外连渲染解释器
+    也没有。发现链那一层的输入，其余全是产品代码。"""
+    real = engine_pool.resolve_worker_python
+
+    def _none(figures_dir=None, *, script=None, discover=True):
+        raise engine_pool._no_python_error()
+
+    monkeypatch.setattr(engine_pool, "resolve_worker_python", _none)
+    return real
+
+
+class TestCleanMachine:
+    def test_first_plan_uses_standin_facts_then_replans_on_the_real_private_python(
+        self, tmp_path, house, no_interpreter, fake, monkeypatch
+    ):
+        """FO23 的机制面（干净机器）：没有任何解释器 → 计划以私有 Python 为目标（替身事实：锁的版本 + 本机平台、
+        已装为空）→ 明示下载 → 一次 prepare：供应 → 按真解释器重算 delta → 建代 → 装 → 验 → 切 active → 项目
+        从此用它（`resolve_worker_python` 真的那一份回受管环境）。"""
+        server, src, _ = fake
+        project = _project(tmp_path)
+        joint, kind, python = deprepair.joint_plan_for(project, "figure.py")
+        assert kind == deprepair.TARGET_MANAGED and python == ""
+        # 替身的已装集合为空：matplotlib（curated 映射，裸名）与 fixture 包都算缺——披露的是「空环境要装什么」
+        assert joint.status == "ready" and set(joint.requirements) == {"matplotlib", ALPHA[0]}
+        assert joint.facts["python_version"] == src.version and joint.facts["installed_count"] == 0
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.replan is True and plan.private_python["required"] is True
+        assert plan.to_payload()["replan"] is True
+        rec, events = _prepare(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert [e["state"] for e in events].index(deprepair.STATE_DOWNLOADING_PYTHON) < [
+            e["state"] for e in events
+        ].index(deprepair.STATE_CREATING_ENV)
+        gen = rec["result"]["generation"]
+        record = managedenv.generations(project)[gen]
+        assert record["base_runtime"] == src.id
+        # 真量出来的 delta 装进去了；账上一笔
+        managed = managedenv.python_of(project)
+        assert managed and _in(managed, f"import {ALPHA[1]}; print('ok')") == "ok"
+        assert [e["distribution"] for e in managedenv.state(project)["installed"]] == [ALPHA[0]]
+        # 从此这个项目的解释器就是它（真实的 resolve 链：记住的受管环境）
+        monkeypatch.setattr(engine_pool, "resolve_worker_python", no_interpreter)
+        engine_pool.reset_worker_python()
+        resolved, source = engine_pool.resolve_worker_python(str(project), script="figure.py")
+        assert engine_pool.same_python(resolved, managed)
+        assert source == engine_pool.SOURCE_MANAGED_PROJECT
+
+    def test_nothing_needed_still_builds_the_environment(
+        self, tmp_path, house, no_interpreter, fake
+    ):
+        """干净机器上「脚本只用 matplotlib」也得有环境：nothing_needed 照样成计划（delta 空 = 只装 adapter）。"""
+        server, src, _ = fake
+        project = _project(tmp_path)
+        (project / "requirements.txt").write_text("", encoding="utf-8")
+        (project / "figure.py").write_text(
+            "import matplotlib.pyplot as plt\nplt.plot([0, 1])\n", encoding="utf-8"
+        )
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.private_python is not None and plan.requirements == (
+            "matplotlib",
+        )  # 替身：空环境
+        rec, _ = _prepare(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert managedenv.python_of(project)
+        # 真解释器重算之后 matplotlib 已在（离线夹具里来自宿主 site-packages）：账上一笔都没有、delta 为空
+        assert managedenv.state(project)["installed"] == []
+
+    def test_without_the_offer_a_clean_machine_still_reports_no_worker_python(
+        self, tmp_path, house, no_interpreter, fake, monkeypatch
+    ):
+        """资格未取得：干净机器上照旧 `no_worker_python`（原路径的错误，不替它说话），一个字节不下。"""
+        server, src, _ = fake
+        monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")
+        project = _project(tmp_path)
+        assert deprepair.private_python_target(project, "figure.py") is None
+        with pytest.raises(engine_pool.WorkerError) as err:
+            deprepair.create_joint_plan(project, "figure.py")
+        assert err.value.code == deprepair.NO_WORKER_PYTHON
+        assert server.requests == []
+
+    def test_offline_clean_machine_is_a_safe_stop_without_a_generation(
+        self, tmp_path, house, no_interpreter, fake, monkeypatch
+    ):
+        """FO25 在干净机器上：计划说要下载、执行时断网 → `private_python_offline`；没登记任何一代、没有目录。"""
+        server, src, _ = fake
+        offline = source_from(
+            Path(tmp_path / "serve" / src.archive_name),
+            src.sha256,
+            src.python_rel,
+            url=closed_port_url(src.archive_name),
+            version=src.version,
+        )
+        monkeypatch.setattr(privatepython, "source_for", lambda target=None, lock=None: offline)
+        project = _project(tmp_path)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.replan is True
+        rec, _ = _prepare(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_FAILED and rec["code"] == privatepython.ERROR_OFFLINE
+        assert managedenv.generations(project) == {}
+        assert not privatepython.runtimes_dir().exists() or not any(
+            privatepython.runtimes_dir().iterdir()
+        )
 
 
 # ================================================================ 真归档的完整链（工程验证；目标腿）

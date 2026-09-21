@@ -444,6 +444,44 @@ def _cached_archive_ok(source: PythonSource) -> bool:
     return path.is_file() and _sha256_file(path) == source.sha256
 
 
+#: 锁里目标名的 os 段 → PEP 508 marker 的三个平台字段（与目标解释器自报的取法一致：`sys.platform` /
+#: `os.name` / `platform.system()`）。
+_MARKER_PLATFORM = {
+    "macos": ("darwin", "posix", "Darwin"),
+    "linux": ("linux", "posix", "Linux"),
+    "windows": ("win32", "nt", "Windows"),
+}
+
+
+def standin_marker_env(source: PythonSource) -> dict:
+    """私有 Python **还没落盘**时替它答 PEP 508 的 marker 环境（PR B：干净机器上算第一份计划要用）。
+
+    判据的主语：Python 相关字段来自**锁**（版本 / 实现），平台字段来自**这台机器**（目标就是这台机器：
+    `platform_machine` / `platform_release` / `platform_version` 与真起后自报的相同，`sys_platform` /
+    `os_name` / `platform_system` 由锁的 os 段定）。它只服务「要装什么」的第一次披露；供应之后事务按真解释器
+    重新量（`depplan.target_facts`），不拿替身当真值。
+    """
+    import platform as _platform
+
+    sys_platform, os_name, system = _MARKER_PLATFORM.get(
+        source.target.split("-", 1)[0], ("", "", "")
+    )
+    major_minor = ".".join(source.version.split(".")[:2])
+    return {
+        "implementation_name": "cpython",
+        "implementation_version": source.version,
+        "os_name": os_name,
+        "platform_machine": _platform.machine(),
+        "platform_release": _platform.release(),
+        "platform_system": system,
+        "platform_version": _platform.version(),
+        "python_full_version": source.version,
+        "platform_python_implementation": "CPython",
+        "python_version": major_minor,
+        "sys_platform": sys_platform,
+    }
+
+
 def require_free_disk(source: PythonSource) -> None:
     """下载 + 解开要落得下（`size × EXTRACTED_FACTOR + 余量`）；量不出来不拦。"""
     need = int(source.size) * EXTRACTED_FACTOR + DISK_MARGIN_BYTES
