@@ -345,7 +345,12 @@ class Canvas:
         if kind == "panel":
             self._resolver.paths[str(o.get("id", ""))] = Path(resolve_panel(o, dpi))
         self._objects.append(o)
-        self._compiled = None  # 页面变了，下一次保存重新编译
+        # 页面变了：编译结果、Canonical PDF、栅格缓冲一起作废——只丢编译结果会让下一次 save 复用
+        # 上一次的 PDF 文件，新放的对象静默丢失（Codex #476 P2）
+        self._compiled = None
+        self._files = None
+        self._pdf = None
+        self._buffers.clear()
 
     # -- 编译 / 写 --------------------------------------------------------
     def _compile(self) -> plan.CompiledPage:

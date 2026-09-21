@@ -585,3 +585,58 @@ def test_three_families_reach_three_different_embedded_faces(candidate, fonts_re
     head, _content = pdfread.page(objs)
     fonts = pdfread.fonts(objs, head)
     assert len(fonts) == 3 and all(f["program"] for f in fonts.values()), fonts  # 三张脸都真嵌了
+
+
+@needs_candidate
+def test_placing_after_a_save_invalidates_the_canonical_pdf_not_just_the_compiled_page(
+    candidate, fonts_ready, tmp_path
+):
+    """Codex #476 P2：save → 再 place → 再 save，第二份 PDF 必须含新对象（不能复用上一次的 Canonical PDF 文件）。"""
+    canvas = pdfbackend.compose(80, 40)
+    text = {
+        "type": "text",
+        "id": "a",
+        "text": "first",
+        "x_mm": 5,
+        "y_mm": 5,
+        "w_mm": 60,
+        "h_mm": 8,
+        "size_pt": 9,
+    }
+    canvas.place(text, 150, lambda o, d: None)
+    canvas.save_pdf(tmp_path / "one.pdf")
+    canvas.save_png(tmp_path / "one.png", 150)
+    canvas.place({**text, "id": "b", "text": "second", "y_mm": 20}, 150, lambda o, d: None)
+    canvas.save_pdf(tmp_path / "two.pdf")
+    canvas.save_png(tmp_path / "two.png", 150)
+    canvas.close()
+    objs1 = pdfread.objects((tmp_path / "one.pdf").read_bytes())
+    objs2 = pdfread.objects((tmp_path / "two.pdf").read_bytes())
+    _h1, c1 = pdfread.page(objs1)
+    _h2, c2 = pdfread.page(objs2)
+    assert c1.count(b"TJ") == 1 and c2.count(b"TJ") == 2
+    assert (tmp_path / "one.png").read_bytes() != (tmp_path / "two.png").read_bytes()
+
+
+@needs_candidate
+def test_dpi_renders_of_a_userunit_page_have_as_many_pixels_as_the_probe_says(
+    candidate, fonts_ready, tmp_path
+):
+    """Codex #476 P2：`/UserUnit 2` 的页按 150 ppi 出图，像素数要与 probe 报的物理尺寸一致（540 × 320 pt →
+    1125 × 667），不是未乘 UserUnit 的 562 × 333。"""
+    import pikepdf
+
+    src = tmp_path / "uu.pdf"
+    with pikepdf.open(str(FIXTURE / "page.pdf")) as pdf:
+        pdf.pages[0].obj["/UserUnit"] = 2
+        pdf.save(str(src))
+    probe = pdfbackend.probe_asset(src, "pdf")
+    facts = pdfbackend.original_png(src, tmp_path / "uu.png", 150)
+    want = (round(probe["w_pt"] * 150 / 72), round(probe["h_pt"] * 150 / 72))
+    assert (facts["px_w"], facts["px_h"]) == want == (1125, 667)
+    assert _png_size((tmp_path / "uu.png").read_bytes()) == want
+    tiff = pdfbackend.original_tiff(src, tmp_path / "uu.tiff", 150)
+    assert (tiff["px_w"], tiff["px_h"]) == want
+    # 按宽定尺寸的预览不受影响（比例不变）
+    pdfbackend.render_preview_png(src, 400, tmp_path / "prev.png")
+    assert _png_size((tmp_path / "prev.png").read_bytes()) == (400, 237)
