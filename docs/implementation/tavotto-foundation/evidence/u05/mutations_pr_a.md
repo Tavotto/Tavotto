@@ -32,6 +32,23 @@
 20/20 变异被抓住（17 条第一轮红；M06 / M17 / M20 第一轮绿，各补一条用例后红——三条用例已进提交 `U05（A）：三条变异反证补钉`）；
 Codex 第一轮处置后再加 M21–M23，三条红。
 
+## Codex #464 第二 / 三轮处置后的变异（M24–M29 编号归 PR B 的 `mutations_pr_b.md`）
+
+第二轮（提交 `U05（A）Codex #464 第二轮处置`）三条修复各钉一条用例：`test_an_unwritable_download_dir_is_a_write_error_not_offline`（`.part` 打不开归 write_failed 不归 offline）、`test_a_cancellation_set_before_provisioning_starts_is_honoured`（进来之前已取消：不起线程、不挂到别人的下载上）、`test_single_package_repair_on_an_existing_environment_still_offers_the_private_base`（有 active 代、系统 Python 没了：计划仍带 `private_python`）——三条都先红后绿。
+
+| # | 变异 | 模块 | 抓住它的用例 | 退出码 |
+|---|---|---|---|---|
+| M30 | 包作业 / 单包修复把代事务自己的 done 原样外露（两次 emit 之间轮询者看到没有 version 的 done；#464 backend-fast 红的形状） | deprepair | test_the_job_never_shows_done_without_its_result | 1 |
+| M31 | offer 里受管目标的「可用」退回 `True if exists else managed_available()`（有 active 代就不问 base，载荷丢了） | deprepair | test_single_package_repair_on_an_existing_environment_still_offers_the_private_base（offer 侧断言） | 1（`private_python` 是 None） |
+| M32 | 软链接目标不拒反斜杠 / 盘符 | privatepython | test_member_validation_is_our_own_first_line[win1/win2/win3] | 1（三条参数各红） |
+| M33 | 解包时的 OSError 归 invalid_archive | privatepython | test_an_unwritable_staging_dir_is_a_write_error_not_an_invalid_archive | 1 |
+| M34 | 提交点不在锁下（`_check_abort` + `os.replace` 与消费者的取消判断交错） | privatepython | test_a_cancellation_racing_the_commit_never_publishes_after_being_accepted | 1（「报了取消，目录却在」） |
+| M35 | 真归档用例只摘大写代理（夹具改为两种拼法都设之后） | 测试夹具 | TestRealArchive（`TAVOTTO_PRIVATE_PYTHON_REAL=1`、无缓存） | 1（`Connection refused`；修后有缓存 / 无缓存各跑一次都 0） |
+| M36 | `.part → 正式名` 被拒后不复用正式名上那份（#467 Windows 腿确定性红的形状） | privatepython | test_archive_rename_refused_while_another_process_holds_it_reuses_that_copy | 1 |
+| M37 | 复用不校 hash | privatepython | test_archive_rename_refused_with_wrong_bytes_on_the_name_is_a_write_error | 1 |
+
+M36 / M37 的用例按 Windows 语义摆场景（本机没有 Windows）：replace 被拒之前先把同一份字节落到正式名上。Windows 上的真实判据是 #467 目标腿里的 `test_two_processes_provisioning_the_same_runtime_both_succeed`——修前两次运行都红（退出 [1, 0]）。
+
 ## 真归档的工程验证（不是资格）
 
 `tests/test_private_python.py::TestRealArchive`（`TAVOTTO_PRIVATE_PYTHON_REAL=1`，归档来自 scratchpad 缓存，hash 校验过）：真 pbs 3.13.15 供应 → `-I -c` 自报版本 3.13.15、prefix 在 `runtimes/<id>` 下 → `-m venv` → venv 里 `pip --version` 退出 0、`sys.base_prefix` == runtime 目录。2.66 s。
