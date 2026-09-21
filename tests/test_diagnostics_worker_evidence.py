@@ -505,7 +505,11 @@ def test_a_traceback_block_ends_at_its_exception_line():
             '  File "/mnt/study/plot.py", line 12 in analyze_patient_123',
             '  File "…/file:a19de1d7c3.py", line 12',
         ),
-        ('  File "<frozen runpy>", line 88, in _run_code', '  File "<frozen runpy>", line 88'),
+        # 相对名 / 虚拟名也是用户能起的字符串（`exec(compile(src, "patient_123.py", "exec"))`，
+        # 评审 #443 第十轮）：与绝对路径同一条规则；CPython 的伪文件名可枚举，哈希了也对得上
+        ('  File "patient_123.py", line 3, in <module>', '  File "…/file:b86e17862c.py", line 3'),
+        ('  File "<string>", line 1, in <module>', '  File "…/file:b851f3d271", line 1'),
+        ('  File "<frozen runpy>", line 88, in _run_code', '  File "…/file:19f15fd060", line 88'),
         # 已知第三方包：多留一个包名，文件名照样哈希，函数名同样不带
         (
             '  File "/env/lib/python3.11/site-packages/matplotlib/ft2font.py", line 40 in load',
@@ -515,11 +519,13 @@ def test_a_traceback_block_ends_at_its_exception_line():
 )
 def test_exported_frames_are_rebuilt_from_path_and_line_only(line, expect):
     """评审 #443 第七轮 P1：帧行整行过 `shorten_paths` 只换掉了文件名，`in analyze_patient_123`
-    原样出门；改成从解析出来的路径与行号**重建**一行，正则没认的后半截一律不带。"""
+    原样出门；改成从解析出来的路径与行号**重建**一行，正则没认的后半截一律不带。
+    第十轮 P1：文件名不经 `shorten_paths`（它只认绝对路径），相对名 / 虚拟名一样哈希。"""
     kept, _ = diagnostics.evidence_lines(
         ["Traceback (most recent call last):", line, "KeyError: 'k'"]
     )
     assert kept == ["Traceback (most recent call last):", expect, "KeyError: …"], kept
+    assert "patient" not in expect and "_run_code" not in expect
 
 
 @pytest.mark.parametrize(

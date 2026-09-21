@@ -28,10 +28,13 @@
   （`execspec.worker_argv` 起用户解释器就是这样），cwd 换成空临时目录挡住
   父进程 cwd 进 `sys.path[0]`。以前的 `-I` 关掉了用户 site 与 `PYTHONPATH`，
   `pip install --user` 的科学栈在体检里「不存在」而 worker 里明明 import 得到。
-- **体检的主语是 worker 的启动导入链**（#435）：`_PROBE_SRC` import 的是 `worker`
-  模块本身（目录由 `projectenv.ENGINE_DIR` 给，用例可指到假引擎目录），不是一份
-  手抄的 `figcapture, manifest, overrides` 清单——清单只在写下的那一天与 worker.py
-  相同，而 worker 还要 `matplotlib.figure`（→ Pillow）、`figsession`、`wireproto`。
+- **体检的主语是 worker 的启动导入链**（#435）：`_PROBE_SRC` 执行的是 `worker.py`
+  这个文件本身（`spec_from_file_location` + `exec_module`，目录由 `projectenv.ENGINE_DIR`
+  给，用例可指到假引擎目录），不是一份手抄的 `figcapture, manifest, overrides` 清单——
+  清单只在写下的那一天与 worker.py 相同，而 worker 还要 `matplotlib.figure`（→ Pillow）、
+  `figsession`、`wireproto`；也**不是 `import worker`**：那个解释器的 sitecustomize / .pth
+  若已经 import 过一个不相干的顶层 `worker`，import 语句拿到的是缓存里那一个、体检就绿了
+  （评审 #443 第十轮；真 worker 是 `python worker.py` 起的，与体检一样执行的是文件）。
   matplotlib 在、worker 起不来单独成码 `project_env_worker_import_failed`（`error`
   带断在哪一句），与「没有 matplotlib」是两条出路。**全局「渲染环境」
   （`PATCH /api/engine/environment` 不带 scope）与项目路径走同一份体检**，

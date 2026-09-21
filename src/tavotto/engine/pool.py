@@ -134,7 +134,9 @@ _NT_EXIT_EXPLANATIONS: dict[int, str] = {
 }
 #: `surrogateescape` 给每个解不出的字节留下的痕迹：U+DC80–U+DCFF。合法 UTF-8 解出来的
 #: 文本里不可能有孤立代理项，所以「行里有这一段」⇔「管道上有坏字节」，不会误伤正文里
-#: 真的 U+FFFD。
+#: 真的 U+FFFD。Popen 用它而不是 `errors="replace"`：`replace` 把坏字节洗成 U+FFFD，
+#: 夹在合法 JSON 字串里的话整条响应照样解析成功、被当成正常结果收下——`_parse_line`
+#: 在解析 JSON 之前拦（评审 #443 第九轮；workerd 读线程同一口径）。
 _BAD_BYTES = re.compile("[\udc80-\udcff]")
 _SIGNAL_EXPLANATIONS: dict[int, str] = {
     6: "SIGABRT：C 库或扩展主动中止（断言失败、两份 OpenMP 运行时）",
@@ -1076,10 +1078,7 @@ class EngineWorker:
             bufsize=1,
             # 显式 UTF-8：text=True 默认跟随系统区域编码，Windows 上是 cp1252/
             # cp936，读 worker 回来的中文/µ/⁻¹ 会解码失败。worker 侧同样钉死。
-            # `surrogateescape` 而不是 `replace`：坏字节要**看得出来**（U+DC80–U+DCFF
-            # 在合法 UTF-8 里永远不会出现），`_check_bytes` 在解析 JSON 之前拦——
-            # `replace` 把坏字节洗成 U+FFFD，夹在合法 JSON 字串里的话整条响应照样
-            # 解析成功、被当成正常结果收下（评审 #443 第九轮；workerd 同一口径）。
+            # `surrogateescape` 不是 `replace`：坏字节要看得出来，见 `_BAD_BYTES`。
             encoding="utf-8",
             errors="surrogateescape",
             creationflags=runtime.CREATE_NO_WINDOW,

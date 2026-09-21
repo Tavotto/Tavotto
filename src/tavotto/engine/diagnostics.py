@@ -231,7 +231,11 @@ _ABS_PATH = re.compile(
 
 
 def _shorten_path(match: re.Match) -> str:
-    """一条绝对路径 → 只留能定位的那一截。
+    return _shorten_path_text(match.group(0))
+
+
+def _shorten_path_text(raw: str) -> str:
+    """一条路径（或帧里的任何「文件名」）→ 只留能定位的那一截。
 
     README 承诺包里不含「完整的本地文件路径」，且文件名一律换成不可逆的短哈希
     （`file:…`）；`_redact_text` 只认当前主目录，D 盘、外接盘、`\\\\wsl.localhost\\…`
@@ -247,8 +251,12 @@ def _shorten_path(match: re.Match) -> str:
     * Tavotto 自己的引擎源码：`tavotto/engine/<引擎目录里真实存在的文件>` 保留；
     * 其余（用户的脚本、数据文件）只留 `…/file:<sha1 前 10 位><扩展名>`：行号还在，
       同一个文件的哈希稳定，读的人能对上「同一份」，反推不回名字。
+
+    帧里的文件名不一定是绝对路径（评审 #443 第十轮）：`exec(compile(src, "patient_123.py",
+    "exec"))` 打出来的帧是相对名，`<string>` / `<frozen runpy>` 是虚拟名——都是用户能起的
+    字符串，与绝对路径同一条规则（`<frozen runpy>` 也哈希：CPython 的伪文件名可枚举，
+    读的人对得上）。
     """
-    raw = match.group(0)
     parts = [seg for seg in re.split(r"[\\/]+", raw) if seg]
     if not parts:
         return raw
@@ -331,7 +339,9 @@ def _frame_for_export(line: str) -> str:
     `line N, in f` 归成一种写法。"""
     m = _TB_FRAME.match(line)
     assert m is not None  # 调用方已经用同一个正则筛过
-    path = shorten_paths(f'"{m.group("path")}"')[1:-1] if m.group("path") else ""
+    # 直接对文件名做缩写，不经 `shorten_paths`：那条只认绝对路径，相对名 / 虚拟名
+    # （`patient_123.py`、`<string>`）会原样漏出去（评审 #443 第十轮）
+    path = _shorten_path_text(m.group("path")) if m.group("path") else ""
     return f'  File "{path}", line {m.group("line")}'
 
 

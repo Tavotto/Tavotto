@@ -141,12 +141,14 @@ def _top_level_imports(path: Path) -> set[str]:
     return names
 
 
-def test_the_probe_imports_the_worker_module_itself():
-    """体检 import 的是 `worker`——不是一份手抄的模块清单。
+def test_the_probe_executes_the_worker_file_itself():
+    """体检执行的是 `worker.py` 这个文件——不是一份手抄的模块清单，也不是 `import worker`。
 
     手抄清单的问题在于它只在写下的那一天与 worker.py 相同：2026-09 之前这里是
     `figcapture, manifest, overrides`，而 worker.py 还要 `matplotlib.figure`、
-    `figsession`、`wireproto`。清单不会自己跟着 worker 长。
+    `figsession`、`wireproto`。清单不会自己跟着 worker 长。`import worker` 的问题是
+    （评审 #443 第十轮）：这个解释器的 sitecustomize / .pth 若已经 import 过一个不相干的
+    顶层 `worker`，import 语句拿到的是缓存里那一个、体检就绿了。
     """
     probe = ast.parse(projectenv._PROBE_SRC)
     imported = {
@@ -155,7 +157,9 @@ def test_the_probe_imports_the_worker_module_itself():
         if isinstance(node, ast.Import)
         for alias in node.names
     }
-    assert "worker" in imported, imported
+    assert "worker" not in imported, imported
+    assert "spec_from_file_location" in projectenv._PROBE_SRC
+    assert '"worker.py"' in projectenv._PROBE_SRC
     # 而 worker.py 自己确实平铺 import 了那几个体检从前只抄了一部分的名字
     assert {"figcapture", "figsession", "wireproto"} <= _top_level_imports(ENGINE / "worker.py")
 
@@ -192,6 +196,25 @@ def test_a_broken_worker_import_chain_fails_the_probe_even_when_matplotlib_impor
     assert info["ok"] is False, info
     assert info["code"] == projectenv.ERROR_WORKER_IMPORT
     assert info["matplotlib_version"], "前提：matplotlib 本身 import 得动，断的只是 worker"
+    assert "DLL load failed while importing _imaging" in (info.get("error") or "")
+
+
+@needs_worker
+def test_a_preimported_stranger_named_worker_does_not_pass_the_probe(tmp_path, monkeypatch):
+    """评审 #443 第十轮 P2：解释器启动时（sitecustomize / .pth）已经 import 过一个不相干的
+    顶层 `worker`——`import worker` 拿到的是缓存里那一个，真 worker.py 一行都没执行，
+    体检却绿。按文件加载就没有这条缓存可走。这里用 `PYTHONPATH` 里的 `sitecustomize.py`
+    当启动钩子（`site` 在 `-c` 之前 import 它）。"""
+    hook = tmp_path / "hook"
+    hook.mkdir()
+    (hook / "worker.py").write_text("STRANGER = True\n", encoding="utf-8")
+    (hook / "sitecustomize.py").write_text("import worker  # noqa: F401\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(hook))
+    eng = _fake_engine_dir(tmp_path, worker_error="DLL load failed while importing _imaging")
+    monkeypatch.setattr(projectenv, "ENGINE_DIR", eng)
+    info = projectenv.probe_environment(WORKER_PY)
+    assert info["ok"] is False, info
+    assert info["code"] == projectenv.ERROR_WORKER_IMPORT
     assert "DLL load failed while importing _imaging" in (info.get("error") or "")
 
 

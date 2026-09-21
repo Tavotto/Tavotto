@@ -317,14 +317,22 @@ try:
 except Exception as exc:
     out["error"] = "matplotlib: %s" % exc
 if out["matplotlib_version"]:
+    import importlib.util, os
     sys.path.insert(0, engine_dir)
     try:
         # **就是 worker 自己的启动导入链**，不是它的一个子集：以前这里只 import
         # figcapture / manifest / overrides，而 worker.py 还要 matplotlib.figure
         # （→ PIL）、figsession、wireproto——体检绿、worker 一起就死在 import 上，
-        # 用户看到的是「渲染进程崩溃」。import worker 模块本身，它多一条 import
+        # 用户看到的是「渲染进程崩溃」。执行 worker.py 本身，它多一条 import
         # 这里就多查一条，不靠人记得回来同步清单。
-        import worker  # noqa: F401
+        # **按文件加载，不走 `import worker`**（评审 #443 第十轮）：这个解释器的
+        # sitecustomize / .pth 若已经 import 过一个不相干的顶层 `worker`，import 语句
+        # 拿到的是缓存里那一个、体检就绿了；真 worker 是 `python worker.py` 起的，
+        # 与这里一样执行的是文件。
+        spec = importlib.util.spec_from_file_location(
+            "tavotto_probe_worker", os.path.join(engine_dir, "worker.py")
+        )
+        spec.loader.exec_module(importlib.util.module_from_spec(spec))
         out["tavotto_worker_ok"] = True
     except BaseException as exc:  # SystemExit 也算：起不来就是起不来
         out["error"] = "worker: %s: %s" % (type(exc).__name__, exc)

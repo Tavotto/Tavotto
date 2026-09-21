@@ -48,7 +48,9 @@
   importing x`，名字是标识符）时保留形状本身——它们是普通公开异常类，用户 `raise` 的
   一样是这个类型。**留下的每一行都是从解析结果重建的，不是原行过一遍替换**（评审 #443
   第七轮）：帧行只留 `File "<路径>", line N`——`in analyze_patient_123` 是用户的标识符，
-  不带；崩溃头的故障名按 CPython faulthandler 的闭集放行（`Segmentation fault` /
+  不带；文件名不论绝对 / 相对 / 虚拟（`exec(compile(src, "patient_123.py", "exec"))` 的
+  相对名、`<string>`、`<frozen runpy>`）走同一条缩写 `_shorten_path_text`，不经只认绝对路径
+  的 `shorten_paths`（第十轮）；崩溃头的故障名按 CPython faulthandler 的闭集放行（`Segmentation fault` /
   `access violation` / `code 0x…`…），`Py_FatalError` 的自由文本与用户 print 的一律 `…`；
   `Extension modules` 只留 `(total: N)`，名单里会有用户自己的 C 扩展名。路径缩写先整体
   处理引号里的（带空格的 `C:\Clinical Trial\…` 不能在空格处断），再处理裸路径；**出门的
