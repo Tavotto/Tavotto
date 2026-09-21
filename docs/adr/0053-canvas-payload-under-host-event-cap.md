@@ -54,7 +54,8 @@ rollout 的**事件副本**封顶在 1 MiB（`core/src/mcp_tool_call.rs` 的
    SVG 或位图 / 当前 patches / patch_hash / render_revision / 预检），**只读、不重渲染**
    ——全部来自会话对象上最近一次 `_render` 留下的东西，manifest 与 SVG / 位图仍是同一次
    响应（ADR 0022 不变量 5）。预检复用会话上缓存的默认结果（`Session.preflight_cache`，
-   键 = patch_hash + 规范印章，任一变了就重算）。它走的是画布自己发的 `tools/call`——
+   键 = patch_hash + 规范印章，任一变了就重算；每次 `_render` 都清空它——manifest 换了
+   一份，键没变也不算数）。它走的是画布自己发的 `tools/call`——
    宿主直接代理（`codex_thread.call_mcp_tool` → `mcp_runtime.latest_call_tool`），
    原样返回、不进模型上下文、不受事件上限约束。模型只在 open 结果标了 `elided`
    且确实要逐元素 gid 时才需要它。

@@ -135,7 +135,7 @@
   位图 → 预检清单，写 `structuredContent.elided`；**apply 不守**（画布靠它拿新 manifest）；
   `_meta` 不再复制 `widgetData`。
 - **`tavotto_session_state` 是画布的取件通道**：只读、不重渲染，全部来自 `Session` 上最近一次
-  `_render` 留下的字段（加字段先加到 `Session`），预检复用 `Session.preflight_cache`。降级
+  `_render` 留下的字段（加字段先加到 `Session`），预检复用 `Session.preflight_cache`（`_render` 必清）。降级
   `NORMAL_TOOLS` 由 `test_degraded_normal_tool_names_mirror_the_real_server` 钉成镜像。
 - **画布启动三路**（`web/src/mcp/boot.ts`）：完整结果直接种；只有把手就取件、回来的
   `patches` 原样种进账本；空壳当场报形状（`data-boot-state` / `data-boot-detail`），30 秒没
