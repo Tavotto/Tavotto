@@ -45,7 +45,9 @@ base = main 的 `synchronize`，四个 workflow 一起跑；反过来（先 push
 PR 上没有任何结论，补救是再推一个空提交（`git commit --allow-empty`）。实证：PR #371 在
 #370 合入（2026-09-16 09:34:29Z）后 09:34:30Z 自动 retarget，之后没有任何 `pull_request`
 run，09:35:34Z 的 push 才起了 CI / CodeQL / conflict domains 三个。看护：
-`tests/test_merge_queue_workflows.py::TestPullRequestBaseFilter`（监听 `pull_request` 的
-workflow 集合 == 登记的四个；每一个 `branches` == `[main]`；`edited` 不在任何一个的 types
-里）——新加一个 PR 级 workflow 要到 `PR_WORKFLOWS` 登记并带同一条过滤（叠栈分支上的
-`foundation-u06-rendercore.yml` / `private-python-targets.yml` 进 main 时就是这样）。
+`tests/test_merge_queue_workflows.py::TestPullRequestBaseFilter`（目录里**每一个**监听
+`pull_request` 的 workflow——算出来的集合，`.yaml` 也算，三个常驻的必须在里面——`branches` ==
+`[main]`；`edited` 不在任何一个的 types 里）。刻意**不是**一张要人登记的名单：名单是共享序列
+的读改写，两条并行的叠栈链各带一个新证据 workflow 时谁后合谁的合并组就红。新加一个 PR 级
+workflow 只要带同一行过滤（叠栈分支上的 `foundation-u06-rendercore.yml` /
+`private-python-targets.yml` 已经带了）。

@@ -694,36 +694,44 @@ class TestPullRequestBaseFilter:
     push 后 retarget 会两头落空，补救是再推一个空提交。实证：PR #371 在 #370 合入（09:34:29Z）
     后 09:34:30Z `automatic_base_change_succeeded`，没有任何 run，09:35:34Z 的 push 才起了三个。
 
-    判据是正面的集合相等：监听 `pull_request` 的 workflow == 登记的那几个（多一个新 PR
-    workflow 要来登记，顺便被问一句「它带过滤了吗」），每一个的 `branches` == `[main]`
-    （掉了、写成 `main*`、多一个分支、写成 `branches-ignore` 都红）。
+    判据的对象是**算出来的**集合：目录里每一个监听 `pull_request` 的 workflow（不是一张要人来
+    登记的名单——名单是共享序列的读改写，两条并行的叠栈链各带一个新证据 workflow 时，谁后合
+    谁的合并组就红，而它们的过滤明明都在），每一个的 `branches` == `[main]`（掉了、写成
+    `main*`、多一个分支、写成 `branches-ignore` 都红）。先证明观测有效：三个常驻的 PR 级
+    workflow 必须在算出来的集合里，否则是判据量错了对象，不是「没有人监听」。
     """
 
-    #: 今天监听 `pull_request` 的四个 workflow（三个常驻 + U02 的证据 workflow，后者 `paths` 过滤之外
-    #: 再加 `branches`，两者是 AND）。新加一个 PR 级 workflow 要来这里登记，并带同一条过滤。
-    PR_WORKFLOWS = frozenset(
-        {"ci.yml", "codeql.yml", "pr-conflict-domains.yml", "foundation-u02-spikes.yml"}
-    )
+    #: 常驻的三个 PR 级 workflow——**判据的主语的下界**，不是闭集：叠栈轨道的证据 workflow
+    #: （`foundation-u02-spikes.yml` 等）也监听 `pull_request`，它们进出 main 不需要来这里改名单，
+    #: 只要带着同一条过滤。
+    ALWAYS_LISTENING = frozenset({"ci.yml", "codeql.yml", "pr-conflict-domains.yml"})
 
-    def test_exactly_the_registered_workflows_listen_to_pull_request(self):
+    @classmethod
+    def _listening(cls) -> dict[str, str]:
+        """目录里每一个监听 `pull_request` 的 workflow → 文本；三个常驻的不在里面就是量错了对象。"""
         texts = _workflow_texts()
-        listening = {n for n, t in texts.items() if "pull_request" in _events_of(t)}
-        assert listening == self.PR_WORKFLOWS, (
-            f"监听 pull_request 的 workflow 集合变了：{sorted(listening)}（登记的是 "
-            f"{sorted(self.PR_WORKFLOWS)}）——新的 PR 级 workflow 到 PR_WORKFLOWS 登记，"
-            "并给它的 on.pull_request 加 `branches: [main]`（叠栈 PR 不跑 PR 级 CI）"
+        listening = {n: t for n, t in texts.items() if "pull_request" in _events_of(t)}
+        missing = cls.ALWAYS_LISTENING - set(listening)
+        assert not missing, f"{sorted(missing)} 居然不监听 pull_request——判据量错了对象"
+        return listening
+
+    def test_the_subject_is_every_workflow_that_listens_to_pull_request(self):
+        """主语是算出来的：目录里每个监听 `pull_request` 的文件都在集合里，`.yaml` 也算。"""
+        listening = self._listening()
+        assert self.ALWAYS_LISTENING <= set(listening)
+        assert "foundation-u02-spikes.yml" in listening, (
+            "U02 的证据 workflow（#455）监听 pull_request 却不在集合里——集合是怎么算的？"
         )
 
     def test_every_pull_request_workflow_only_triggers_on_a_main_base(self):
-        texts = _workflow_texts()
-        for name in sorted(self.PR_WORKFLOWS):
-            branches = _pull_request_filter(texts[name], "branches")
+        for name, text in sorted(self._listening().items()):
+            branches = _pull_request_filter(text, "branches")
             assert branches == ["main"], (
                 f"{name} 的 on.pull_request.branches 是 {branches!r}，要恰好是 [main]——"
                 "None = 没写过滤（base ≠ main 的叠栈 PR 每次 push 又会起整套 CI）；"
                 "别的值 = 过滤对象不是「base 是 main」"
             )
-            assert _pull_request_filter(texts[name], "branches-ignore") is None, (
+            assert _pull_request_filter(text, "branches-ignore") is None, (
                 f"{name} 同时写了 branches-ignore——GitHub 不许两者并存，且它不是这条规则的形状"
             )
 
@@ -734,9 +742,8 @@ class TestPullRequestBaseFilter:
         代价是每次改标题 / 正文都重跑整条快线——那要先回到 TestPullRequestEventTypes 的闭集
         和 CI01 §4 ① 重新算账，而不是顺手加。
         """
-        texts = _workflow_texts()
-        for name in sorted(self.PR_WORKFLOWS):
-            types = _pull_request_filter(texts[name], "types")
+        for name, text in sorted(self._listening().items()):
+            types = _pull_request_filter(text, "types")
             effective = set(types) if types is not None else {"opened", "synchronize", "reopened"}
             assert "edited" not in effective, f"{name} 监听了 pull_request.edited"
             assert "synchronize" in effective, (
