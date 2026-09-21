@@ -841,6 +841,35 @@ def test_managed_environment_is_not_offered_without_a_base_python(project, monke
     assert err.value.code == deprepair.ERROR_MANAGED_UNAVAILABLE
 
 
+def test_a_probe_finished_after_a_reset_does_not_write_the_stale_answer_back(monkeypatch):
+    """`managed_available()` 在后台探基础解释器；探到一半 `reset_state()`（用例之间 / 用户重来）之后
+    才结束的那次探测不能把重置前的答案写回缓存——否则「没有基础解释器」的场景会莫名其妙看见一个。
+    （用例之间的真实形状：上一个文件的后台探测在本文件的 `no_base` 之后才结束，计划里 `private_python` 是 None。）"""
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _slow_base_python():
+        entered.set()
+        release.wait(30)
+        return "/stale/python"
+
+    monkeypatch.setattr(deprepair.managedenv, "base_python", _slow_base_python)
+    deprepair.reset_state()
+    assert deprepair.managed_available() is None  # 后台探测起步
+    assert entered.wait(30)
+    deprepair.reset_state()  # 探测进行中重置：从此「没有基础解释器」
+    monkeypatch.setattr(deprepair.managedenv, "base_python", lambda: None)
+    release.set()
+    for _ in range(200):  # 等旧探测线程结束（它不该写回）
+        if not any(t.name == "tavotto-base-python" and t.is_alive() for t in threading.enumerate()):
+            break
+        time.sleep(0.02)
+    assert deprepair.base_python() is None
+    assert deprepair.managed_available() is False
+
+
 # ===========================================================================
 # 六b、这台机器上已有的解释器：采用，不装（ADR 0044）
 # ===========================================================================

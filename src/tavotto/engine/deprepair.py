@@ -165,6 +165,9 @@ _attempted: set[tuple[str, str, str]] = set()
 #: 子进程，而问它的地方在**渲染出错**那条路上。
 _base_python: str | None = None
 _base_python_known = False
+#: 基础解释器缓存的世代：`reset_state()` 每次 +1。探测（后台线程或同步）起步时记下世代，写回时世代变了就
+#: 丢弃——否则重置之后才结束的旧探测会把重置前的答案写回来（用例之间 / 用户改设置后重来，都会撞到）。
+_base_epoch = 0
 
 
 class RepairError(RuntimeError):
@@ -282,7 +285,7 @@ def _note_round(project: str, script: str) -> None:
 
 def reset_state(project: str | Path | None = None) -> None:
     """丢弃计划 / 轮次 / 已试过（测试之间、用户手动重来时）。"""
-    global _base_python, _base_python_known
+    global _base_python, _base_python_known, _base_epoch
     with _lock:
         if project is None:
             _plans.clear()
@@ -294,6 +297,7 @@ def reset_state(project: str | Path | None = None) -> None:
             _rounds.clear()
             _attempted.clear()
             _base_python, _base_python_known = None, False
+            _base_epoch += 1
             return
         pid = managedenv.project_fingerprint(project)
         for key in [k for k, p in _plans.items() if p.project_id == pid]:
@@ -337,22 +341,27 @@ def managed_available() -> bool | None:
 
 
 def _warm_base_python() -> None:
+    _probe_base_python()
+
+
+def _probe_base_python() -> str | None:
+    """探一次并写回缓存——只在探测期间没被 `reset_state()` 过时才写（世代相同）。"""
     global _base_python, _base_python_known
+    with _lock:
+        epoch = _base_epoch
     found = managedenv.base_python()
     with _lock:
-        _base_python, _base_python_known = found, True
+        if epoch == _base_epoch:
+            _base_python, _base_python_known = found, True
+    return found
 
 
 def base_python() -> str | None:
     """基础解释器（同步；没有回 None）。计划创建那条路上用它。"""
-    global _base_python, _base_python_known
     with _lock:
         if _base_python_known:
             return _base_python
-    found = managedenv.base_python()
-    with _lock:
-        _base_python, _base_python_known = found, True
-    return found
+    return _probe_base_python()
 
 
 def offer(project: str | Path, script: str, module: str, project_env: dict | None = None) -> dict:
