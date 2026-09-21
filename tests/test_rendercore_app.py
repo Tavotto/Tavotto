@@ -421,3 +421,165 @@ def test_a_panel_with_overrides_is_rendered_by_the_worker_and_carries_a_receipt(
     finally:
         doc.close()
     assert "Overridden" in text and "Time (s)" not in text
+
+
+# ---------------------------------------------------------------------------
+# 有限产物验证（ADR 0068）在候选下：计划半张来自 RenderPlan，文字层 / 字体 / 载体真的被核
+# ---------------------------------------------------------------------------
+def _text_only(**over) -> dict:
+    spec = _canvas(**over)
+    spec["canvas"]["objects"] = [o for o in spec["canvas"]["objects"] if o["type"] == "text"]
+    return spec
+
+
+def test_export_under_the_candidate_verifies_text_layer_fonts_and_carrier_from_the_plan(
+    client, tmp_path
+):
+    _project(tmp_path)
+    body = client.post("/api/export", json=_text_only()).get_json()
+    assert body["status"] == "done", body
+    mf = _out(body, "pdf")["manifest"]
+    assert mf["backend"] == "rendercore" and mf["plan_identity"].startswith("sha256:")
+    assert mf["checks"]["text_layer"] == "verified"  # 期望的行「Hello 图」从 ToUnicode 抽回来了
+    assert mf["checks"]["fonts_embedded"] == "verified" and mf["checks"]["carrier"] == "verified"
+    assert mf["fonts_used"] == ["LiberationSerif", "NotoSansSC-Regular"]
+    png = _out(body, "png")["manifest"]
+    assert png["checks"]["dpi_tag"] == "verified"  # 候选的 PNG 写真实 ppi 的 pHYs
+    # 面板里的源页用的是没嵌入的 Helvetica（夹具）：候选如实报 fonts_embedded failed（可选项，standard 照样交付）
+    body = client.post("/api/export", json=_canvas(filename="Panel")).get_json()
+    assert body["status"] == "done", body
+    mf = _out(body, "pdf")["manifest"]
+    assert mf["checks"]["fonts_embedded"] == "failed" and mf["verdict"] == "accepted"
+    assert "Helvetica" in mf["fonts_used"]
+
+
+def test_strict_export_under_the_candidate_accepts_clean_text_and_rejects_low_ppi_panels(
+    client, tmp_path
+):
+    """D08：严格政策下，纯文字画布全部必需项 verified → 交付；位图面板的有效 ppi（64 px 铺 67.5 mm ≈ 24 ppi）
+    低于规范 → `image_ppi` failed → 不发布。阈值来自出版规范，不是这里写的数。"""
+    _project(tmp_path)
+    body = client.post(
+        "/api/export",
+        json=_text_only(filename="StrictText", ppi=600, inspection={"mode": "strict"}),
+    ).get_json()
+    assert body["status"] == "done", body
+    mf = _out(body, "pdf")["manifest"]
+    assert mf["policy"] == "strict" and mf["verdict"] == "accepted"
+    png = _out(body, "png")["manifest"]
+    assert png["verdict"] == "accepted" and png["checks"]["raster_density"] == "verified"
+    # 同一张画布 150 ppi 就过不了规范的 300：PNG 那一项被拦、PDF 照常（partial）
+    body = client.post(
+        "/api/export",
+        json=_text_only(filename="StrictLow", ppi=150, inspection={"mode": "strict"}),
+    ).get_json()
+    assert body["status"] == "partial", body
+    assert _out(body, "png")["error"]["params"]["failed"] == "raster_density"
+    assert not (Path(body["export_dir"]) / "StrictLow.png").exists()
+    assert all(
+        mf["checks"][k] == "verified"
+        for k in ("integrity", "size", "carrier", "fonts_embedded", "text_layer")
+    )
+    assert mf["checks"]["image_ppi"] == "not_applicable"
+    spec = _text_only(filename="StrictRaster", formats=["pdf"], inspection={"mode": "strict"})
+    spec["canvas"]["objects"].append(
+        {"type": "panel", "id": "r1.png", "x_mm": 5, "y_mm": 5, "w_mm": 67.5, "h_mm": 40}
+    )
+    body = client.post("/api/export", json=spec).get_json()
+    assert body["status"] == "failed", body
+    o = _out(body, "pdf")
+    assert (
+        o["error"]["code"] == "artifact_rejected" and "image_ppi" in o["error"]["params"]["failed"]
+    )
+    assert o["manifest"]["checks"]["image_ppi"] == "failed" and o["manifest"]["carrier"] == "mixed"
+    assert not (Path(body["export_dir"]) / "StrictRaster.pdf").exists()
+
+
+# ---------------------------------------------------------------------------
+# 写回携带标注（RC-058 / RC-059 / RC-060）在候选下：事务是 app 的既有权威，标注经契约层的 annotate_asset
+# ---------------------------------------------------------------------------
+def _writeback_env(client, tmp_path, monkeypatch, *, staged_pdf: bytes):
+    """复用 `test_write_back.py` 的假 worker（写回事务与真实渲染无关），只把重放侧导出的 PDF 换成给定字节。"""
+    import test_write_back as wb
+
+    monkeypatch.setattr(m, "BAKED_DIR", tmp_path / "_baked")
+    monkeypatch.setattr(m, "BAKED_PATH", tmp_path / "_legacy_baked.json")
+    figs = wb._figs(tmp_path)
+    (figs / "Fig1.pdf").write_bytes((FIXTURE / "page.pdf").read_bytes())
+    hot, fresh = wb._pair(figs, tmp_path)
+
+    def export(stem, patches, path, fmt="pdf", dpi=600):
+        fresh.calls.append(fmt)
+        Path(path).write_bytes(staged_pdf if fmt == "pdf" else b"\x89PNG\r\n\x1a\nplaceholder")
+        return {"ok": True, "path": path, "warnings": []}
+
+    fresh.export = export
+    wb._use(monkeypatch, hot, fresh)
+    return figs
+
+
+_ANNOTATIONS = [
+    {
+        "type": "text",
+        "id": "n",
+        "text": "note",
+        "x_mm": 5,
+        "y_mm": 5,
+        "w_mm": 30,
+        "h_mm": 8,
+        "size_pt": 9,
+    }
+]
+
+
+def test_writeback_with_annotations_under_the_candidate_overlays_the_staged_pdf_then_commits(
+    client, tmp_path, monkeypatch
+):
+    from tavotto.rendercore import inspector
+
+    figs = _writeback_env(
+        client, tmp_path, monkeypatch, staged_pdf=(FIXTURE / "page.pdf").read_bytes()
+    )
+    resp = client.post(
+        "/api/engine/update_source",
+        json={"id": "Fig1.pdf", "patches": [], "annotations": _ANNOTATIONS},
+    )
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()
+    assert sorted(body["updated"]) == ["Fig1.pdf", "Fig1.png"]
+    o = inspector.observe_pdf(figs / "Fig1.pdf")
+    assert o["integrity"] == "verified" and "note" in o["text_lines"]
+    assert "U00 fixture: y = 3x + 1" in o["text_lines"]  # 源内容流没动
+    assert o["census"]["forms"] == 1  # 覆盖层是一个 Form
+    w, h, _bpp, _px = pdfread.decode_png_any((figs / "Fig1.png").read_bytes())
+    assert (w, h) == (
+        2250,
+        1333,
+    )  # 600 dpi 由同一份注好的 PDF 栅格：round(270·600/72), round(160·600/72)
+    assert not [p for p in figs.iterdir() if p.name.endswith(".updating")]
+
+
+@pytest.mark.parametrize("kind", ["broken", "encrypted"])
+def test_writeback_with_annotations_fails_closed_when_the_staged_pdf_is_unusable(
+    client, tmp_path, monkeypatch, kind
+):
+    """RC-059 / RC-060：staging PDF 是坏的 / 加密的 → annotate 结构化失败 → 409、原件零改动、临时文件清干净；
+    不承诺「加密文件也能注」。"""
+    import pikepdf
+
+    if kind == "broken":
+        staged = b"%PDF-1.4 not really"
+    else:
+        with pikepdf.open(str(FIXTURE / "page.pdf")) as pdf:
+            pdf.save(str(tmp_path / "enc.pdf"), encryption=pikepdf.Encryption(owner="o", user="u"))
+        staged = (tmp_path / "enc.pdf").read_bytes()
+    figs = _writeback_env(client, tmp_path, monkeypatch, staged_pdf=staged)
+    before_pdf, before_png = (figs / "Fig1.pdf").read_bytes(), (figs / "Fig1.png").read_bytes()
+    resp = client.post(
+        "/api/engine/update_source",
+        json={"id": "Fig1.pdf", "patches": [], "annotations": _ANNOTATIONS},
+    )
+    assert resp.status_code != 200, resp.get_json()
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert (figs / "Fig1.png").read_bytes() == before_png
+    assert not [p for p in figs.iterdir() if p.name.endswith(".updating")]

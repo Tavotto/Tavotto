@@ -260,6 +260,10 @@ USER_VISIBLE_CODES = {
     "tutorial_locked": {"reason"},
     # --- #264：版本时间线读不出来时拒绝整份写回（写入侧那道闸）---
     "versions_unreadable": set(),
+    # --- U08（ADR 0068）：有限产物验证。`artifact_rejected` 是逐项失败（partial 那一档），
+    #     `bad_inspection` 是请求里的检查政策不合法 / 指向的规范不可用 ---
+    "artifact_rejected": {"failed", "policy"},
+    "bad_inspection": {"value"},
 }
 
 pytestmark = pytest.mark.skipif(
