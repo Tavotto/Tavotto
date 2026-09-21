@@ -59,7 +59,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from . import ir, placement, rasterio
+from . import ir, placement, raster, rasterio
 from .hbshaper import HbFace, HbFaceProvider, require
 
 WRITER_ERROR_CODES = (
@@ -342,6 +342,13 @@ class PdfWriter:
         matrix = form.get("/Matrix")
         fm = tuple(float(v) for v in matrix) if matrix is not None else None
         visible = placement.visible_box(bbox, fm)
+        if not (all(math.isfinite(v) for v in visible) and visible[2] > 0 and visible[3] > 0):
+            # 语法上读得出、页盒却是零宽 / 零高（或 NaN）：这是源的问题，不许在 placement 里变成 ZeroDivisionError
+            raise WriterError(
+                "source_unreadable",
+                f"{res.source_id}: 源页可见框退化 {visible}（页盒零宽 / 零高）",
+                {"figure": res.source_id, "object_id": node.object_id, "why": "degenerate_box"},
+            )
         pl = placement.place(
             visible,
             node.rect,
@@ -400,7 +407,15 @@ class PdfWriter:
         hit = self._image_objs.get(node.resource)
         if hit is not None:
             return hit
-        jpeg = rasterio.jpeg_passthrough(data, res.kind)
+        try:
+            # 直通判据里预算按 SOF 尺寸先判（解码之前），再整张真解一遍（读取器解得开才直通）
+            jpeg = rasterio.jpeg_passthrough(data, res.kind, max_pixels=raster.SOURCE_MAX_PIXELS)
+        except rasterio.RasterDecodeError as exc:
+            raise WriterError(
+                "source_unreadable",
+                f"{res.source_id}: {exc}",
+                {"figure": res.source_id, "object_id": node.object_id, "why": exc.code},
+            ) from exc
         if jpeg is not None:
             obj = pikepdf.Stream(self.pdf, data)
             obj["/Type"] = pikepdf.Name.XObject
@@ -423,7 +438,8 @@ class PdfWriter:
             self._image_objs[node.resource] = hit
             return hit
         try:
-            buf = rasterio.decode(data, res.kind)
+            # 预算在解码**之前**按头里的尺寸判（Pillow 是懒打开）：超过就是结构化拒绝，不分配整幅
+            buf = rasterio.decode(data, res.kind, max_pixels=raster.SOURCE_MAX_PIXELS)
         except rasterio.RasterDecodeError as exc:
             raise WriterError(
                 "source_unreadable",
