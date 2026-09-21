@@ -331,14 +331,24 @@ def test_a_blank_page_still_rasterizes_and_eps_is_refused_structurally(
 
 
 @needs
+@pytest.mark.parametrize(
+    ("command", "raster_code"),
+    [
+        ([sys.executable, "-c", "import sys; sys.exit(7)"], "render_child_died"),
+        (["{tmp}/no-such-render-child"], "render_child_spawn_failed"),
+    ],
+    ids=["exits-at-once", "cannot-spawn"],
+)
 def test_a_child_failure_fails_only_the_raster_formats_and_keeps_the_pdf(
-    project, provider, tmp_path
+    project, provider, tmp_path, command, raster_code
 ):
-    """render child 起不来（命令指向一个立刻退出的解释器）：PNG / TIFF `format_failed` 带 child 的 code，PDF 照常。"""
+    """render child 起不来——命令指向一个立刻退出的解释器，或指向不存在的 exe（冻结产物命令写错；Codex #471
+    第三轮 P2：`Popen` 的 OSError 也要是结构化的 `render_child_spawn_failed`）：PNG / TIFF `format_failed` 带 child
+    的 code，PDF 照常，作业不炸。"""
     from tavotto.rendercore import renderhost
 
     dead = renderhost.RenderHost(
-        [sys.executable, "-c", "import sys; sys.exit(7)"], default_timeout=5
+        [c.replace("{tmp}", str(tmp_path)) for c in command], default_timeout=5
     )
     try:
         export_dir = tmp_path / "out"
@@ -351,7 +361,7 @@ def test_a_child_failure_fails_only_the_raster_formats_and_keeps_the_pdf(
     assert by["pdf"]["status"] == "done"
     for fmt in ("png", "tiff"):
         assert by[fmt]["status"] == "failed" and by[fmt]["error"]["code"] == "format_failed"
-        assert by[fmt]["error"]["params"]["raster_code"] == "render_child_died"
+        assert by[fmt]["error"]["params"]["raster_code"] == raster_code
         assert not (export_dir / f"Fig 1.{fmt}").exists()
 
 

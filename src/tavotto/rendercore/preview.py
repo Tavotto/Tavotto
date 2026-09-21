@@ -13,6 +13,8 @@ sha256，主语只有「内容」，没有 mtime 这一维）。
 
 * **内容 sha256** 而不是 mtime：touch / 从备份还原 / 同步工具改了 mtime 而内容没变 → 键不变、缓存照常命中；
   内容变了 → 键必变；
+* hash 与渲染**绑在同一份字节上**：源先一次读成缓存目录里的不可变副本（边抄边算 hash），child 渲染的是副本——
+  算键与渲染之间源被换掉（哪怕又换回去）都影响不到它，「渲染后再核一次」挡不住的 A→B→A 也挡住了；
 * **后端 build**（`rendercore.BACKEND_VERSION` + child 报的 PDFium 版本）与**字体政策版本**（allowlist 的 sha256）
   进键：换了栅格器 / 换了批准字体集合，像素可能已经不同，旧预览不许再命中——`must_fail_example`「mtime 当唯一
   cache key」与「改 backend / font 但内容路径不变」都在这里挡住；
@@ -124,6 +126,19 @@ class PreviewCache:
                 digest.update(chunk)
         return digest.hexdigest()
 
+    def _stage(self, path: Path) -> tuple[Path, str]:
+        """把源**一次读**成缓存目录里的一份不可变副本，边抄边算 sha256：键说的是这份字节，child 渲染的也是这份字节
+        （Codex #471 第三轮 P2：只在渲染后复核 hash 挡不住 A→B→A 的换回——渲染的是 B，复核时已经换回 A）。
+        副本与预览同目录、`.src.part` 后缀，`prune()` 只扫 *.png 不会碰它；用完即删。"""
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        staged = self.cache_dir / f"stage.{os.getpid()}-{threading.get_ident():x}.src.part"
+        digest = hashlib.sha256()
+        with open(path, "rb") as src, open(staged, "wb") as dst:
+            for chunk in iter(lambda: src.read(_HASH_CHUNK), b""):
+                digest.update(chunk)
+                dst.write(chunk)
+        return staged, digest.hexdigest()
+
     def key_for(
         self, source_id: str, path: Path, width_px: int, *, transparent: bool, page: int = 0
     ) -> str:
@@ -173,50 +188,45 @@ class PreviewCache:
         page: int = 0,
     ) -> Path:
         """命中就回缓存文件；否则渲染、临时发布、回最终文件。任何失败抛 `PreviewError`。"""
-        content = self.source_identity(path)
-        cached = self.path_for(
-            cache_key(
-                source_id,
-                content,
-                width_px,
-                transparent=transparent,
-                renderer_version=self.renderer_version(),
-                fonts_version=self.fonts_version(),
-                page=page,
+        staged, content = self._stage(path)
+        try:
+            cached = self.path_for(
+                cache_key(
+                    source_id,
+                    content,
+                    width_px,
+                    transparent=transparent,
+                    renderer_version=self.renderer_version(),
+                    fonts_version=self.fonts_version(),
+                    page=page,
+                )
             )
-        )
-        if self._usable(cached):
-            return cached
-        with self._lock_for(cached):
             if self._usable(cached):
                 return cached
-            cached.unlink(missing_ok=True)  # 零字节 = 上一次写到一半就断电 / 被杀
-            self._write(path, width_px, cached, transparent=transparent, page=page, content=content)
-            self.prune()
-        return cached
+            with self._lock_for(cached):
+                if self._usable(cached):
+                    return cached
+                cached.unlink(missing_ok=True)  # 零字节 = 上一次写到一半就断电 / 被杀
+                self._write(staged, width_px, cached, transparent=transparent, page=page)
+                self.prune()
+            return cached
+        finally:
+            staged.unlink(missing_ok=True)
 
     def _write(
-        self,
-        src: Path,
-        width_px: int,
-        cached: Path,
-        *,
-        transparent: bool,
-        page: int,
-        content: str,
+        self, staged: Path, width_px: int, cached: Path, *, transparent: bool, page: int
     ) -> None:
+        """`staged` 是 `_stage()` 抄出来的不可变副本：child 渲染的就是键里 hash 过的那份字节，源文件此后怎么改
+        都影响不到这张预览。"""
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         tmp = cached.with_name(f"{cached.stem}.{os.getpid()}-{threading.get_ident():x}.part.png")
         try:
             try:
-                buf = self.host.render(src, width_px=width_px, page=page, transparent=transparent)
+                buf = self.host.render(
+                    staged, width_px=width_px, page=page, transparent=transparent
+                )
             except RenderChildError as exc:
                 raise PreviewError(exc.code, exc.message) from exc
-            # 渲染的是磁盘上**此刻**的文件；键里的是算 key 时的内容 hash。两次之间文件若被换了，这些像素
-            # 就不属于键说的那份内容——发布前再核一次，不符就不发布（Codex #471 P2：否则日后把旧文件还原回来，
-            # 命中的会是中间那一版的预览）
-            if self.source_identity(src) != content:
-                raise PreviewError("source_changed", f"{src} 在算键与渲染之间被改写，预览未发布")
             tmp.write_bytes(encode_png(buf))
             self.renders += 1
             self._publish(tmp, cached)

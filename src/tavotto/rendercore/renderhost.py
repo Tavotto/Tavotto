@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 from .raster import RasterBuffer
 from .renderchild import DEFAULT_MAX_PIXELS, ERROR_CODES, RenderChildError, child_argv
@@ -85,13 +86,21 @@ class RenderHost:
     def _start(self) -> None:
         self.starts += 1
         self._lines = queue.Queue()
-        self._proc = subprocess.Popen(
-            self.command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            env=self.env,
-        )
+        try:
+            self._proc = subprocess.Popen(
+                self.command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                env=self.env,
+            )
+        except OSError as exc:
+            # exe 不在 / 没权限 / 冻结产物的命令不对：结构化错误，让 job 把它落到该格式的 format_failed，
+            # 而不是整个作业炸掉（Codex #471 第三轮 P2）
+            self._proc = None
+            raise RenderChildError(
+                "render_child_spawn_failed", f"起不来 render child {self.command[:1]}: {exc}"
+            ) from exc
         proc = self._proc
         q = self._lines
 
@@ -178,9 +187,18 @@ class RenderHost:
                 continue
             return resp
 
-    def request(self, op: str, *, timeout: float | None = None, **fields) -> dict:
+    def request(
+        self,
+        op: str,
+        *,
+        timeout: float | None = None,
+        verify: Callable[[dict], None] | None = None,
+        **fields,
+    ) -> dict:
         """一个 deadline 管到底：等锁 + 起 child + 发 + 收都算在 `timeout` 里。等锁超时**不 kill child**——
-        它正在做别人的请求，只是本次来不及（Codex #471 P2：否则短超时的预览要排在前面每个慢请求后面才开始计时）。"""
+        它正在做别人的请求，只是本次来不及（Codex #471 P2：否则短超时的预览要排在前面每个慢请求后面才开始计时）。
+        `verify(resp)` 在**锁内**、响应到手之后跑：它抛的 `render_child_protocol` 与收不到 JSON 同一处置
+        （kill + reap），排在后面的请求绝不会拿到一个刚说了谎的 child（第三轮 P2）。"""
         timeout = self.default_timeout if timeout is None else float(timeout)
         deadline = time.monotonic() + timeout
         if not self._slots.acquire(blocking=False):
@@ -199,6 +217,8 @@ class RenderHost:
                 try:
                     rid = self._send({"op": op, **fields})
                     resp = self._recv(rid, max(0.0, deadline - time.monotonic()))
+                    if verify is not None and resp.get("ok"):
+                        verify(resp)
                 except RenderChildError as exc:
                     if exc.code in (
                         "render_child_timeout",
@@ -278,10 +298,23 @@ class RenderHost:
         fd, name = tempfile.mkstemp(prefix="render-", suffix=".rgba", dir=self.scratch_dir)
         os.close(fd)
         out = Path(name)
+        got: dict[str, bytes] = {}
+
+        def verify(resp: dict) -> None:
+            # 锁内读像素文件并核长度：child 说的与它写的对不上 → protocol 失败 → 当场 kill + reap
+            samples = out.read_bytes()
+            if len(samples) != int(resp.get("bytes", -1)):
+                raise RenderChildError(
+                    "render_child_protocol",
+                    f"像素文件 {len(samples)} 字节与响应说的 {resp.get('bytes')} 不符",
+                )
+            got["samples"] = samples
+
         try:
             resp = self.request(
                 "render",
                 timeout=timeout,
+                verify=verify,
                 pdf=str(pdf),
                 out=str(out),
                 page=int(page),
@@ -290,7 +323,7 @@ class RenderHost:
                 transparent=bool(transparent),
                 max_pixels=self.max_pixels,
             )
-            samples = out.read_bytes()
+            samples = got["samples"]
         finally:
             # 目标文件与 child 的 `.part` 一起清：超时 / 崩溃可能停在 write_bytes 之后、os.replace 之前，
             # 每次 mkstemp 名字都不同，不清就攒成一堆接近像素预算的孤儿（Codex #471 P2）
@@ -299,15 +332,6 @@ class RenderHost:
                     stale.unlink()
                 except OSError:
                     pass
-        if len(samples) != int(resp.get("bytes", len(samples))):
-            # child 说的与它写的对不上：协议已经不可信，与 request() 里的 protocol 失败同一处置——kill + reap，
-            # 下一次请求重启，而不是继续用这个 child（Codex #471 P2）
-            with self._lock:
-                self._kill_and_reap()
-            raise RenderChildError(
-                "render_child_protocol",
-                f"像素文件 {len(samples)} 字节与响应说的 {resp.get('bytes')} 不符",
-            )
         return RasterBuffer(
             width=int(resp["width"]),
             height=int(resp["height"]),

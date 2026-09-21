@@ -154,23 +154,33 @@ def test_different_pages_of_one_source_are_different_previews(cache, tmp_path):
     assert c.get("figs/a.pdf", src, 400, page=1) == p1 and host.renders == 2
 
 
-def test_pixels_rendered_from_a_swapped_file_are_not_published_under_the_old_hash(cache, tmp_path):
-    """Codex #471 P2：算键之后、child 打开文件之前源被换掉——渲出来的像素不属于键说的那份内容，不发布；
-    下一次按新内容算键照常。"""
+def test_the_child_renders_the_hashed_bytes_even_if_the_source_is_swapped_and_restored(
+    cache, tmp_path
+):
+    """Codex #471 第三轮 P2：算键之后、child 打开文件之前源被换成 B 再换回 A——「渲染后再核一次 hash」看到的是 A，
+    挡不住（第二轮的修法）。现在 child 渲染的是抄出来的不可变副本：它打开的路径不是源文件，源在渲染期间
+    换成什么、换回来没有，它看到的字节都是键里 hash 过的那份；副本用完即删；下一次源真的变了 → 新键、再渲。"""
     c, host = cache
-    src = _pdf(tmp_path)
+    src = _pdf(tmp_path, body=b"%PDF-1.4 A")
+    seen: dict[str, object] = {}
 
-    def swap(pdf):
-        Path(pdf).write_bytes(b"%PDF-1.4 swapped")
-        host.on_render = None
+    def swap_and_restore(pdf):
+        seen["path"] = Path(pdf)
+        seen["before"] = Path(pdf).read_bytes()
+        src.write_bytes(b"%PDF-1.4 B")  # A → B
+        seen["during"] = Path(pdf).read_bytes()
+        src.write_bytes(b"%PDF-1.4 A")  # B → A：渲染后复核 hash 会说「没变」
 
-    host.on_render = swap
-    with pytest.raises(preview.PreviewError) as ei:
-        c.get("figs/a.pdf", src, 400)
-    assert ei.value.code == "source_changed"
-    assert not list((tmp_path / "cache").glob("*.png")) and host.renders == 1
-    p = c.get("figs/a.pdf", src, 400)  # 现在磁盘上是 swapped 那份：按它的 hash 建键、渲染、发布
-    assert p.exists() and host.renders == 2
+    host.on_render = swap_and_restore
+    p = c.get("figs/a.pdf", src, 400)
+    assert seen["path"] != src and seen["path"].parent == tmp_path / "cache"
+    assert seen["before"] == seen["during"] == b"%PDF-1.4 A"
+    assert p.exists() and host.renders == 1
+    assert not list((tmp_path / "cache").glob("*.src.part"))  # 副本用完即删
+    host.on_render = None
+    src.write_bytes(b"%PDF-1.4 B")
+    p2 = c.get("figs/a.pdf", src, 400)  # 现在磁盘上是 B：按它的 hash 建键、渲染、发布
+    assert p2 != p and p2.exists() and host.renders == 2
 
 
 def test_source_identity_hashes_in_chunks_without_read_bytes(cache, tmp_path, monkeypatch):
