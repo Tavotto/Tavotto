@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 叠到含 #456 的 main（U07 B 6472ea7c，清单 symbol 格式）后（2026-09-22）再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -484,8 +484,8 @@
     },
     {
       "path": "tools/generate_facade_ledger.py",
-      "bytes": 6274,
-      "sha256": "d877a6b4d6e8cbac112d0dc62c6886ba3a23c5929f686f50d6d05c64697b3d5b"
+      "bytes": 7138,
+      "sha256": "bcaac21c6ea4958efe4cc3974929944bdb746d2ca5f015ac88de67526583e6f6"
     },
     {
       "path": "tools/generate_views.py",
