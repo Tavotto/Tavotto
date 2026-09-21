@@ -856,9 +856,26 @@ def test_pyproject_keeps_resources_inside_the_wheel_and_sdist():
     assert not any("resources" in e for e in build.get("exclude", []))
     assert "src/tavotto" in cfg["tool"]["hatch"]["build"]["targets"]["sdist"]["include"]
     assert cfg["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["src/tavotto"]
-    # 资源文件不能被 .gitignore 挡掉（hatchling 默认跳过 VCS 忽略的文件）
-    ignore = (REPO / ".gitignore").read_text(encoding="utf-8")
-    assert "*.pdf" not in ignore.splitlines() and "resources" not in ignore
+    # 资源文件不能被 .gitignore 挡掉（hatchling 默认跳过 VCS 忽略的文件）。判据的主语是**规则**，
+    # 不是子串：`resources/` 下若有被 ignore 的子目录（U06 起的批准字体 `resources/fonts/`，ADR 0060），
+    # 那一条必须由 `[tool.hatch.build] artifacts` 收回；教程项目本身绝不能被任何规则挡住。
+    rules = [
+        ln.strip()
+        for ln in (REPO / ".gitignore").read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+    assert "*.pdf" not in rules
+    ignored_under_resources = [r for r in rules if "resources" in r]
+    artifacts = build.get("artifacts", [])
+    for rule in ignored_under_resources:
+        assert rule.startswith("/src/tavotto/resources/"), (
+            f"resources 之外的规则却提到 resources: {rule}"
+        )
+        assert "tutorial" not in rule, f"教程项目被 .gitignore 挡住了: {rule}"
+        recovered = rule.lstrip("/").rstrip("/") + "/**"
+        assert recovered in artifacts, (
+            f"{rule} 被 .gitignore 挡住却没有 artifacts 收回（wheel 里会少这一棵）: {artifacts}"
+        )
 
 
 # ---------------------------------------------------------------------------
