@@ -752,6 +752,86 @@ def test_arrowpatch_endpoints_and_style_roundtrip(tmp_path):
         proc.wait(timeout=10)
 
 
+FLOWCHART_SHAPES_SCRIPT = """\
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch
+
+
+def main():
+    fig = plt.figure(figsize=(4, 3))
+    ax = fig.add_axes([0.05, 0.05, 0.9, 0.9])
+    ax.set_xlim(1, 100)     # 下界取 1：对数轴用例要把这条轴换成 log
+    ax.set_ylim(0, 100)
+    ax.axis("off")
+    # 流程图的画法（2026-09-21 用户脚本）：圆角框 + 单独的 ax.text 标签
+    ax.add_patch(FancyBboxPatch((10, 60), 30, 12, boxstyle="round,pad=1.2",
+                                facecolor="#E8F2FA", edgecolor="#8BB7DA"))
+    ax.text(25, 66, "step", ha="center", va="center")
+    ax.axhspan(20, 30, alpha=0.2)                      # patches_1：混合 transform
+    ax.bar([70, 85], [20, 35], width=8)                 # 柱：不是形状，不可拖
+    fig.savefig("Shapes.pdf")
+"""
+
+
+def test_patch_shapes_are_draggable_via_pos_frac(tmp_path):
+    """独立形状（FancyBboxPatch / axhspan 的 Rectangle …）可在画布上拖动。
+
+    2026-09-21 用户反馈：流程图脚本里的框拖不动——从前 Patch family 只开样式，
+    位置一条没有。契约：manifest 标 `draggable` + `anchor`（包围盒左下角、figure
+    分数、y 向下）+ `drag_prop == "pos_frac"`；override 值是锚点该落到哪，bbox
+    随之整体平移；空列表还原后锚点与包围盒逐位回到脚本原样。柱形系列**不**
+    拖（位置是数据），它是伪元素，不在这条契约里。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_shapes.py").write_text(FLOWCHART_SHAPES_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_shapes.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": []})["manifest"]
+        shapes = [e for e in man["elements"] if e["role"] == "patch"]
+        assert [e["gid"] for e in shapes] == ["axes_0.patches_0", "axes_0.patches_1"], shapes
+        for e in shapes:
+            assert e["draggable"] is True, e
+            assert e["drag_prop"] == "pos_frac", e
+            # 锚点 = 包围盒左下角（y 向下：左下角的 fy 是 bbox 的底边）
+            x, y, _w, h = e["bbox"]
+            assert e["anchor"] == pytest.approx([x, y + h], abs=1e-6), e
+        bars = next(e for e in man["elements"] if e["role"] == "bar_series")
+        assert bars["draggable"] is False and "drag_prop" not in bars
+
+        box = shapes[0]
+        target = [round(box["anchor"][0] + 0.2, 4), round(box["anchor"][1] - 0.15, 4)]
+        resp = _rpc(
+            proc,
+            {
+                "cmd": "override",
+                "stem": "Shapes",
+                "patches": [{"gid": box["gid"], "prop": "pos_frac", "value": target}],
+            },
+        )
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        moved = next(e for e in resp["manifest"]["elements"] if e["gid"] == box["gid"])
+        assert moved["anchor"] == pytest.approx(target, abs=1e-4)
+        # 整个框跟着锚点平移（尺寸不变）
+        assert moved["bbox"][0] - box["bbox"][0] == pytest.approx(0.2, abs=1e-4)
+        assert moved["bbox"][1] - box["bbox"][1] == pytest.approx(-0.15, abs=1e-4)
+        assert moved["bbox"][2:] == pytest.approx(box["bbox"][2:], abs=1e-6)
+        # 标签是独立的 Text，不跟着框走（拖框只挪框；一起挪走多选）
+        label0 = next(e for e in man["elements"] if e["gid"] == "axes_0.texts_0")
+        label1 = next(e for e in resp["manifest"]["elements"] if e["gid"] == "axes_0.texts_0")
+        assert label1["anchor"] == pytest.approx(label0["anchor"], abs=1e-6)
+
+        back = _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": []})["manifest"]
+        restored = next(e for e in back["elements"] if e["gid"] == box["gid"])
+        assert restored["anchor"] == pytest.approx(box["anchor"], abs=1e-9)
+        assert restored["bbox"] == pytest.approx(box["bbox"], abs=1e-9)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
 def test_closed_figure_still_builds(tmp_path):
     """脚本 `savefig` 完就 `plt.close(fig)` 时仍要能起来。
 
@@ -1052,6 +1132,116 @@ def test_frac_anchored_props_survive_geometry_moves(tmp_path):
         resp = _rpc(proc, {"cmd": "override", "stem": "ReplayFig", "patches": p3})
         bbox_replay = _bbox_of(resp["manifest"], txt)
         assert bbox_replay == pytest.approx(bbox_live, abs=0.005), (bbox_live, bbox_replay)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+def test_frac_anchored_props_survive_axis_scale_changes(tmp_path):
+    """先拖、再把轴换成对数：拖过的形状与文字仍钉在声明的 figure 锚点上。
+
+    `[xy]scale` 被 `_apply_rank` 钉在 pos_frac 之前（第 4 档），所以它是第 0–4 档里
+    唯一不算几何的 prop：热会话里 pos_frac「值没变」被跳过，形状 / 文字带着线性轴下
+    算出的本地坐标随对数轴漂走；全量重放里 log 先于 pos_frac，落在声明处——写回校验
+    当场 replay_divergence（#472 评审实测：文字 0.677 vs 0.429，形状 0.577 vs 0.343）。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_shapes.py").write_text(FLOWCHART_SHAPES_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_shapes.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": []})["manifest"]
+        box, label = "axes_0.patches_0", "axes_0.texts_0"
+        targets = {
+            box: [round(_anchor_of(man, box)[0] + 0.2, 4), round(_anchor_of(man, box)[1] - 0.1, 4)],
+            label: [
+                round(_anchor_of(man, label)[0] + 0.2, 4),
+                round(_anchor_of(man, label)[1] - 0.1, 4),
+            ],
+        }
+        drag = [{"gid": g, "prop": "pos_frac", "value": v} for g, v in targets.items()]
+        # 先拖（热会话第一步），再换对数轴（第二步，pos_frac 一个字节没变）
+        _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": drag})
+        both = drag + [{"gid": "axes_0", "prop": "xscale", "value": "log"}]
+        hot = _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": both})["manifest"]
+        for gid, want in targets.items():
+            assert _anchor_of(hot, gid) == pytest.approx(want, abs=1e-3), (
+                gid,
+                _anchor_of(hot, gid),
+            )
+        # 清空再一次性全量应用（≈ 冷启动重放）：与热会话逐位收敛
+        _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": []})
+        replay = _rpc(proc, {"cmd": "override", "stem": "Shapes", "patches": both})["manifest"]
+        for gid in targets:
+            assert _bbox_of(replay, gid) == pytest.approx(_bbox_of(hot, gid), abs=1e-6), gid
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+SUBFIGURE_SCRIPT = """\
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrowPatch, Rectangle
+
+
+def main():
+    fig = plt.figure(figsize=(6, 3))
+    left, right = fig.subfigures(1, 2)
+    lax = left.subplots()
+    lax.plot([0, 1], [0, 1])
+    # 右半边子图幅：这里的 artist `get_figure()` 回的是 SubFigure，figure 分数却按根算
+    ax = right.subplots()
+    ax.add_patch(Rectangle((0.2, 0.2), 0.3, 0.3, facecolor="#E8F2FA"))
+    ax.text(0.6, 0.7, "note")
+    ax.add_patch(FancyArrowPatch(posA=(0.1, 0.8), posB=(0.5, 0.9), transform=ax.transData,
+                                 arrowstyle="-|>", mutation_scale=8))
+    fig.savefig("SubFig.pdf")
+"""
+
+
+def test_frac_anchored_props_land_inside_subfigures(tmp_path):
+    """SubFigure 里的形状 / 文字 / 独立箭头：拖到哪就落到哪。
+
+    `artist.get_figure()` 在子图幅里回的是 SubFigure，而 manifest 的 anchor 与 pos_frac
+    都按根 Figure 的分数算——拿子图幅的 bbox 换算，右半边的目标 0.845 落在 0.4225
+    （正好一半）（#472 评审 P2，文字与箭头是同一条缺口）。`pathgeom.frac_to_display`
+    现在一律回到根 Figure。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_sub.py").write_text(SUBFIGURE_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_sub.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "SubFig", "patches": []})["manifest"]
+        movers = {
+            e["gid"]: e for e in man["elements"] if e.get("anchor") or e.get("arrow_endpoints")
+        }
+        assert {e["role"] for e in movers.values()} >= {"patch", "text", "arrow_patch"}, (
+            movers.keys()
+        )
+        patches, want = [], {}
+        for gid, e in movers.items():
+            if e.get("arrow_endpoints"):
+                (ax_, ay_), (bx_, by_) = e["arrow_endpoints"]
+                want[gid] = [ax_ + 0.05, ay_ - 0.05, bx_ + 0.05, by_ - 0.05]
+                patches.append({"gid": gid, "prop": "endpoints_frac", "value": want[gid]})
+            else:
+                want[gid] = [e["anchor"][0] + 0.05, e["anchor"][1] - 0.05]
+                patches.append({"gid": gid, "prop": e["drag_prop"], "value": want[gid]})
+        resp = _rpc(proc, {"cmd": "override", "stem": "SubFig", "patches": patches})
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        for gid, target in want.items():
+            e = next(x for x in resp["manifest"]["elements"] if x["gid"] == gid)
+            got = (
+                [*e["arrow_endpoints"][0], *e["arrow_endpoints"][1]]
+                if e.get("arrow_endpoints")
+                else e["anchor"]
+            )
+            assert got == pytest.approx(target, abs=2e-3), (gid, target, got)
     finally:
         if proc.poll() is None:
             proc.kill()

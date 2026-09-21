@@ -1412,6 +1412,11 @@ export interface ManifestElement {
    * set_position 一挪天然跟着走。
    */
   follow_gids?: string[]
+  /**
+   * 可拖元素的锚点（figure 分数、y 向下）与拖动写哪条 override：文字 / 独立形状
+   * 是 `pos_frac`（形状的锚点是包围盒左下角），图例是 `loc_frac`。前端只按
+   * `anchor + 位移` 写绝对值，不关心锚点在元素上的哪一处。
+   */
   anchor?: [number, number]
   drag_prop?: string
   /**

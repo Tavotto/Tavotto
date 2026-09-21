@@ -48,6 +48,7 @@ import sys
 import numpy as np
 from matplotlib.collections import Collection, PathCollection, PolyCollection, QuadMesh
 from matplotlib.colors import to_rgba
+from matplotlib.figure import SubFigure
 from matplotlib.lines import Line2D, _mark_every_path
 from matplotlib.markers import MarkerStyle
 from matplotlib.patches import FancyArrowPatch, PathPatch, Polygon
@@ -258,8 +259,21 @@ def _to_frac(points: np.ndarray, W: float, H: float) -> list:
     return np.round(a, _ND).tolist()
 
 
+def root_figure(fig):
+    """`artist.get_figure()` 在 SubFigure 里的 axes 上回的是那个 **SubFigure**；而 manifest
+    的 W / H、anchor、pos_frac 全按**根 Figure** 算。拿子图幅的 bbox 去换算 figure 分数，
+    右半边 / 下半边子图幅里的文字、形状、箭头一拖就跳到别处（#472 评审实测：目标 0.845、
+    落点 0.4225——正好是子图幅宽度那一半）。`SubFigure.figure` 指向根（3.8 是父级、父级
+    再指根，循环同样收口），不依赖 3.10 才有的 `get_figure(root=True)`。"""
+    while isinstance(fig, SubFigure):
+        fig = fig.figure
+    return fig
+
+
 def frac_to_display(fig, fx: float, fy_top: float) -> tuple[float, float]:
-    """figure 分数（top-origin）→ display 像素（bottom-origin）。"""
+    """figure 分数（top-origin）→ display 像素（bottom-origin）。`fig` 可以是 SubFigure，
+    一律按根 Figure 的 bbox 换算（见 `root_figure`）。"""
+    fig = root_figure(fig)
     return fx * fig.bbox.width, (1.0 - fy_top) * fig.bbox.height
 
 

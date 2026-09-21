@@ -84,7 +84,7 @@ _CJK_CANDIDATES = (
 LIBRARY = """\
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyArrowPatch
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
 CJK = {cjk!r}
 
@@ -172,6 +172,10 @@ def main():
     gx1.pcolormesh(np.linspace(7, 9, 9), np.linspace(0, 1, 9), M)   # collections_1
     gx1.contour(np.linspace(7, 9, 8), np.linspace(1.4, 2.4, 8), M)  # collections_2
     gx1.stem([1.0, 2.0, 3.0], [1.8, 2.2, 1.5])               # stemseries_0
+    # 流程图那种「摆在图上的框」（2026-09-21 用户反馈：框拖不动）——
+    # 位置是排版不是数据，拖动走 pos_frac                        # patches_0
+    gx1.add_patch(FancyBboxPatch((4.0, 0.2), 2.0, 0.5, boxstyle="round,pad=0.1",
+                                 facecolor="#E8F2FA", edgecolor="#8BB7DA"))
     gx1.set_xlim(0, 10)
     gx1.set_ylim(-0.4, 2.6)
     gx1.set_title("Families")
@@ -506,6 +510,25 @@ def _g_patch_family_and_stem(_getbase):
     )
 
 
+def _g_patch_drag(getbase):
+    """独立形状拖动（pos_frac，figure 分数、y 向下）→ 改样式 → 再改图幅。
+
+    形状的平移叠在 artist 级 transform 上（`overrides._set_patch_pos_frac`），
+    图幅一变它属于 `_FRAC_ANCHORED`、必须重放——三条腿在图幅变化之后仍要
+    落在同一个 figure 分数上，否则「写回时框在这儿、重开后框在那儿」。
+    """
+    a = _el(getbase(), "axes_0.patches_0")["anchor"]
+    return _cumulative(
+        {
+            "gid": "axes_0.patches_0",
+            "prop": "pos_frac",
+            "value": [round(a[0] + 0.12, 4), round(a[1] - 0.18, 4)],
+        },
+        {"gid": "axes_0.patches_0", "prop": "facecolor", "value": "#B34700"},
+        {"gid": "figure", "prop": "size_mm", "value": [148.0, 66.0]},
+    )
+
+
 def _g_axes_range_scale_and_ticks(_getbase):
     """坐标轴范围 / 缩放类型 / spine + 刻度定位模型（Locator + Formatter）。
 
@@ -695,6 +718,7 @@ GROUPS = [
     ("s5-mathtext-labels", "EqvMath", _g_labels_and_title),
     ("s7-collection-family", "EqvFam", _g_collection_family),
     ("s7-patch-and-stem", "EqvFam", _g_patch_family_and_stem),
+    ("s7-patch-drag", "EqvFam", _g_patch_drag),
     # 色条的 `tick_*` 与色条轴刻度组**刻意不在这里**：它俩覆盖的是同一批
     # 标签（不是「整组 vs 其中一个」），后应用的必然盖掉前一个，manifest 也
     # 只报得出一个值——`_assert_effect` 表达不了「两个都落地」。它的还原语义
@@ -827,6 +851,9 @@ WRITE_BACK_GROUPS = [
     # 新开放的 family 也要走一遍**写回原件 → 重开**：能改却写不回去，
     # 等于给用户一个下次打开就消失的编辑（§49）
     ("s7-collection-family", "EqvFam", _g_collection_family, ("Families",)),
+    # 拖过的形状：平移是叠在 transform 上的，写回的 PDF 与重开后的重放要落在
+    # 同一处（图幅还变过一次）
+    ("s7-patch-drag", "EqvFam", _g_patch_drag, ("Families",)),
     # 别名组：广播型 prop 与窄 prop 叠加。写回这条腿尤其要紧——热态是
     # 「先整体后单条」的增量，写回校验拿的是**全量重放**，两者不一致时
     # 事务会回 409 replay_divergence，正是这个 bug 当初现形的地方。

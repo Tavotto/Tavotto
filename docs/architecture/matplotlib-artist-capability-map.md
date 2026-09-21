@@ -127,7 +127,7 @@ census()：既没登记、也不是结构件的 → manifest 的 `unsupported` �
 | --- | --- | --- | --- |
 | Line | `Line2D`（含用户子类） | `axes_i.lines_j` | 颜色/线宽/线型/marker/几何轮廓 |
 | Text | `Text` / `Annotation` | `axes_i.texts_j`、标题、轴标签、图例项 | 可拖、上下标、描边、背景框 |
-| Patch | `Rectangle` `Polygon` `PathPatch` `Wedge` `Circle` `Ellipse` `Arc` `StepPatch` `FancyBboxPatch` `Annulus` `RegularPolygon` + 用户子类 | `axes_i.patches_j` | 填充/描边/花纹/线型；**几何不给编辑**（几何=数据） |
+| Patch | `Rectangle` `Polygon` `PathPatch` `Wedge` `Circle` `Ellipse` `Arc` `StepPatch` `FancyBboxPatch` `Annulus` `RegularPolygon` + 用户子类 | `axes_i.patches_j` | 填充/描边/花纹/线型；**可整体拖动**（`pos_frac`，平移叠在 artist 级 transform 上，2026-09-21）；形状本身（顶点 / 半径）不给编辑 |
 | Arrow | `FancyArrowPatch` `ConnectionPatch` | `axes_i.arrows_j` | 独立箭头另有端点拖动；`annotate` 的箭头**不给**端点 |
 | Image | `AxesImage` | `axes_i.images_j` | cmap/clim/插值/单色渐变换基色 |
 | Colorbar | `Colorbar`（代理） | `axes_i.colorbar` + 语义身份 `cbar:<宿主>:<序号>` | 方向/extend 是就地结构改造 |
