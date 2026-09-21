@@ -22,6 +22,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 
 import { ExportDialog } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
+import { readExportDefaults } from '@/lib/exportDefaults'
 import { postTelemetryEvent } from '@/lib/api'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -83,6 +84,8 @@ let exportBodies: Record<string, unknown>[]
 
 /** 后端把作业**一次跑完**就回终局：用例不必等轮询 */
 let jobStatus: 'done' | 'conflict' = 'done'
+/** 终局回执里的 outputs（不设 = 一件没有 manifest 的 PDF） */
+let jobOutputs: Record<string, unknown>[] | null = null
 
 function stubFetch() {
   exportBodies = []
@@ -96,7 +99,7 @@ function stubFetch() {
           status: jobStatus,
           outputs:
             jobStatus === 'done'
-              ? [
+              ? (jobOutputs ?? [
                   {
                     format: 'pdf',
                     name: 'a.pdf',
@@ -108,7 +111,7 @@ function stubFetch() {
                     replaced: false,
                     error: null,
                   },
-                ]
+                ])
               : [],
           warnings: [],
           conflicts: jobStatus === 'conflict' ? ['a.pdf'] : [],
@@ -249,6 +252,7 @@ const click = async (el: Element) => {
 beforeEach(() => {
   localStorage.clear()
   jobStatus = 'done'
+  jobOutputs = null
   resetExportState()
   useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
   useSelectionStore.getState().clear()
@@ -721,6 +725,88 @@ describe('照抄源位图 vs 引擎重画', () => {
       text(),
       '带 override = 引擎重画，拿到的是 PDF；再报源像素网格就是界面与文件各说各的',
     ).not.toContain('120 × 80')
+  })
+})
+
+describe('产物核验（ADR 0068）：未核验不显示绿', () => {
+  const output = (manifest: Record<string, unknown> | null | undefined) => ({
+    format: 'pdf',
+    name: 'a.pdf',
+    url: '/exports/a.pdf',
+    bytes: 1234,
+    dimensions: { px: null, mm: [80, 60] },
+    vector: true,
+    status: 'done',
+    replaced: false,
+    error: null,
+    ...(manifest === undefined ? {} : { manifest }),
+  })
+  const manifest = (checks: Record<string, string>) => ({
+    manifest_version: 1,
+    format: 'pdf',
+    sha256: 'x',
+    bytes: 1234,
+    policy: 'standard',
+    verdict: 'accepted',
+    required: ['integrity', 'size'],
+    checks,
+    notes: [],
+  })
+  const badge = () => document.body.querySelector<HTMLElement>('[data-inspection]')
+
+  it('回执里没有 manifest（老服务端 / 检查器没跑）：画「未核验」，没有绿勾', async () => {
+    await setup(9)
+    await click(button('开始导出')!)
+    expect(badge()?.dataset.inspection).toBe('unknown')
+    expect(badge()?.textContent).toBe('未核验')
+    expect(document.body.querySelector('[data-inspection="verified"]')).toBeNull()
+  })
+
+  it('全部可判项 verified 才画绿；not_applicable 不算', async () => {
+    jobOutputs = [
+      output(manifest({ integrity: 'verified', size: 'verified', text_layer: 'not_applicable' })),
+    ]
+    await setup(9)
+    await click(button('开始导出')!)
+    expect(badge()?.dataset.inspection).toBe('verified')
+    expect(badge()?.textContent).toContain('已核验')
+    expect(badge()?.className).toContain('text-ok')
+  })
+
+  it('有一项 unknown 就不画绿，按名字列出未核验的项', async () => {
+    jobOutputs = [
+      output(manifest({ integrity: 'verified', size: 'verified', clipping: 'unknown' })),
+    ]
+    await setup(9)
+    await click(button('开始导出')!)
+    expect(badge()?.dataset.inspection).toBe('unknown')
+    expect(badge()?.textContent).toBe('未核验：裁切')
+    expect(badge()?.className).not.toContain('text-ok')
+  })
+
+  it('可选项 failed：文件已交付，但红着说出是哪一项', async () => {
+    jobOutputs = [
+      output(manifest({ integrity: 'verified', size: 'verified', dpi_tag: 'failed', raster_density: 'unknown' })),
+    ]
+    await setup(9)
+    await click(button('开始导出')!)
+    expect(badge()?.dataset.inspection).toBe('failed')
+    expect(badge()?.textContent).toBe('核验未通过：分辨率标签')
+    expect(badge()?.className).toContain('text-danger')
+  })
+
+  it('严格核验默认不勾（请求里没有 inspection 键）；勾上后带 strict 与当前规范', async () => {
+    await setup(9)
+    await click(button('开始导出')!)
+    expect('inspection' in exportBodies[0]).toBe(false)
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label="严格核验产物"]')
+    expect(toggle, '高级选项里缺少严格核验开关').toBeTruthy()
+    await click(toggle!)
+    await click(button('开始导出')!)
+    expect(exportBodies[1].inspection).toEqual({
+      mode: 'strict',
+      profile_id: useDocumentStore.getState().doc.profile?.id ?? readExportDefaults().profileId,
+    })
   })
 })
 

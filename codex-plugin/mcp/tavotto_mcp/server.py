@@ -694,6 +694,10 @@ def _call_export(args: dict) -> dict:
     ok = [f for f in out["files"] if f["status"] == "done"]
     failed = [f for f in out["files"] if f["status"] != "done"]
     lines = ["已导出：" + "、".join(f["path"] for f in ok)] if ok else []
+    if ok:
+        # 产物检查（ADR 0068）逐文件说清楚：`unknown` 不是 `verified`——模型转述
+        # 「已核验」之前，这一行就是它唯一的依据
+        lines.append("产物核验：" + "；".join(_inspection_summary(f) for f in ok))
     for f in failed:
         code = (f.get("error") or {}).get("code") or "export_failed"
         lines.append(f"未出成：{f['format']}（{code}）——这次导出是部分完成的。")
@@ -713,6 +717,21 @@ def _call_export(args: dict) -> dict:
     if out["warnings"]:
         lines.append("worker 警告: " + "; ".join(out["warnings"][:5]))
     return {"content": _text(*lines), "structuredContent": out}
+
+
+def _inspection_summary(entry: dict) -> str:
+    """一个已发布文件的核验一句话：三组各自点名（未通过 / 已核验 / 未核验），一组都不省——
+    「已核验 integrity, size」旁边站着「未核验 text_layer」，模型才不会把整份文件说成通过；
+    没有 manifest = 整份未核验。"""
+    checks = (entry.get("manifest") or {}).get("checks") or {}
+    groups = (
+        ("未通过", [k for k, v in checks.items() if v == "failed"]),
+        ("已核验", [k for k, v in checks.items() if v == "verified"]),
+        ("未核验", [k for k, v in checks.items() if v == "unknown"]),
+    )
+    name = entry.get("path") or entry.get("format") or "?"
+    parts = [f"{label} {', '.join(keys)}" for label, keys in groups if keys]
+    return f"{name}：{'，'.join(parts)}" if parts else f"{name}：未核验"
 
 
 def _call_normalize(args: dict) -> dict:

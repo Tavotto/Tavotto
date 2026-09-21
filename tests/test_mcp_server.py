@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "codex-plugin"
 sys.path.insert(0, str(PLUGIN / "mcp"))
 
+from support import artifactbytes  # noqa: E402
 from tavotto.engine import previewbudget  # noqa: E402
 from tavotto_mcp import bridge, rpc, server, widget  # noqa: E402
 
@@ -99,7 +100,19 @@ class FakeWorker:
     def export(self, stem, patches, path, fmt="pdf", dpi=600):
         self.exported.append((stem, list(patches), path, fmt, dpi))
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_bytes(b"%PDF-fake\n" if fmt == "pdf" else b"fake")
+        # 写出来的得是**合法**的最小文件（U08：导出产物在提交点之前会被重新打开检查；
+        # 一个假 PDF 会被如实判成 integrity failed、不发布——那是检查器该有的样子，
+        # 不是协议层用例想量的东西）；尺寸与 `_manifest` 的 80 × 60 mm 对齐
+        w_mm, h_mm = self._manifest(patches)["size_mm"]
+        if fmt == "pdf":
+            data = artifactbytes.blank_pdf(w_mm / 25.4 * 72.0, h_mm / 25.4 * 72.0)
+        elif fmt == "png":
+            data = artifactbytes.solid_png(
+                int(round(w_mm / 25.4 * dpi)), int(round(h_mm / 25.4 * dpi)), dpi=dpi
+            )
+        else:
+            data = b"fake"  # SVG / EPS / TIFF：本模块没有读取器，检查器如实记 unknown
+        Path(path).write_bytes(data)
         return {"path": path, "warnings": []}
 
     def preview_png(self, stem, patches, width, tag):

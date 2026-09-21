@@ -76,7 +76,8 @@
       "rendering": "Composing…",
       "report": "Generating the style check report…",
       "unknown": "The job is no longer on the server",
-      "writing": "Writing files ({{step}}/{{total}})…"
+      "writing": "Writing files ({{step}}/{{total}})…",
+      "inspecting": "Checking the files…"
     },
     "pngHint": "Raster",
     "ppiLabel": "Resolution",
@@ -118,7 +119,26 @@
     "title": "Export",
     "transparent": "Transparent background (PNG / TIFF only)",
     "transparentNotForRaster": "This figure is exported as-is, so its own background is kept.",
-    "warningsIntro": "These edits couldn’t be applied to the re-rendered figures, so the output may differ from the canvas:"
+    "warningsIntro": "These edits couldn’t be applied to the re-rendered figures, so the output may differ from the canvas:",
+    "strictToggle": "Strict file check",
+    "strictTitle": "Reopens each finished file and checks it against the selected profile: integrity, size, embedded fonts, text layer, image resolution. A file that fails or can’t be checked is not saved. EPS is not covered.",
+    "inspection": {
+      "verified": "Checked",
+      "unknown": "Not checked",
+      "unknownItems": "Not checked: {{items}}",
+      "failedItems": "Check failed: {{items}}",
+      "check": {
+        "integrity": "integrity",
+        "size": "size",
+        "carrier": "vector content",
+        "fonts_embedded": "embedded fonts",
+        "text_layer": "text layer",
+        "image_ppi": "image resolution",
+        "clipping": "clipping",
+        "dpi_tag": "resolution tag",
+        "raster_density": "pixel density"
+      }
+    }
   },
   "layout": {
     "conflict": "A document named “{{name}}” already exists on disk, written by another window or tool.",
@@ -157,7 +177,9 @@
     "splashConnecting": "Connecting to Codex…",
     "splashNoHost": "This canvas runs inside a Codex that supports MCP Apps. In a host without a UI, the same tavotto_* tools still open, edit, preflight and export figures.",
     "splashWaiting": "Waiting for the result of tavotto_open_figure…",
-    "synced": "In sync"
+    "synced": "In sync",
+    "inspectionUnknown": "({{files}} not checked)",
+    "inspectionFailed": "({{files}} failed the file check)"
   },
   "nativeRun": {
     "approve": "Run and connect",

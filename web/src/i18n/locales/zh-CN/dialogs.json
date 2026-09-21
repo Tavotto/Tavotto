@@ -74,7 +74,8 @@
       "rendering": "正在合成…",
       "report": "正在生成样式检查报告…",
       "unknown": "作业在服务器上找不到了",
-      "writing": "正在写入文件（{{step}}/{{total}}）…"
+      "writing": "正在写入文件（{{step}}/{{total}}）…",
+      "inspecting": "正在核验产物…"
     },
     "pngHint": "位图",
     "ppiLabel": "分辨率",
@@ -116,7 +117,26 @@
     "title": "导出",
     "transparent": "透明背景（仅 PNG / TIFF）",
     "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
-    "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致："
+    "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致：",
+    "strictToggle": "严格核验产物",
+    "strictTitle": "按所选规范重新打开写好的文件核对：完整性、尺寸、字体嵌入、文字层、图像分辨率。有一项不合格或无法核验，那个文件就不会保存。EPS 不在核验范围内。",
+    "inspection": {
+      "verified": "已核验",
+      "unknown": "未核验",
+      "unknownItems": "未核验：{{items}}",
+      "failedItems": "核验未通过：{{items}}",
+      "check": {
+        "integrity": "完整性",
+        "size": "尺寸",
+        "carrier": "矢量构成",
+        "fonts_embedded": "字体嵌入",
+        "text_layer": "文字层",
+        "image_ppi": "图像分辨率",
+        "clipping": "裁切",
+        "dpi_tag": "分辨率标签",
+        "raster_density": "像素密度"
+      }
+    }
   },
   "layout": {
     "conflict": "磁盘上已存在名为「{{name}}」的文档，由其他窗口或外部工具写入。",
@@ -155,7 +175,9 @@
     "splashConnecting": "正在连接 Codex…",
     "splashNoHost": "此画布需在支持 MCP Apps 的 Codex 中打开。没有界面的宿主里，同一套 tavotto_* 工具同样可以打开、编辑、预检和导出。",
     "splashWaiting": "正在等待 tavotto_open_figure 的结果…",
-    "synced": "已同步"
+    "synced": "已同步",
+    "inspectionUnknown": "（{{files}} 未核验）",
+    "inspectionFailed": "（{{files}} 核验未通过）"
   },
   "nativeRun": {
     "approve": "运行并连接",

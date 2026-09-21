@@ -5,6 +5,7 @@ import { Bookmark, Copy, Layers2, Pencil, RotateCcw, Trash2, X,
 } from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { RetryImg } from '@/components/ui/RetryImg'
 import {
   backendErrorText,
   createVersion,
@@ -766,7 +767,7 @@ function SnapshotPanel({
   const src = variant.url || panelSrc(panel.fileId, panel.fileKind, 200, mtime)
   if (!src) return null
   return (
-    <img
+    <RetryImg
       src={src}
       alt=""
       className="absolute object-fill"

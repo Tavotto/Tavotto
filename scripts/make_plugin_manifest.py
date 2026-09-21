@@ -58,9 +58,13 @@ MIN_TAVOTTO_VERSION = "0.15.0"
 #: 2026-09-13（ADR 0051）：桥新增 import 了 artifactcheck / figcapture / interference /
 #: normalize——四个全部晚于 v0.14.0，所以 v0.15.0 发版时抬到 0.15.0（第一个装得下
 #: 这四个模块的版本）。
+#: 2026-09-21（ADR 0068，统一实施包 U08）：桥新增 import 了 artifactinspect（导出产物检查的
+#: 接线层）——它晚于 v0.15.0，**下一次发版时 MIN_TAVOTTO_VERSION 必须抬到那一版**
+#: （`test_plugin_manifest_min_tavotto_version_is_real` 不许现在就写一个还没发的号）。
 BRIDGE_IMPORTS_AT_MIN = frozenset(
     {
         "artifactcheck",
+        "artifactinspect",
         "config",
         "exportjob",
         "exportreq",
