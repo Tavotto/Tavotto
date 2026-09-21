@@ -461,7 +461,6 @@ def test_fo22_installed_but_unimportable_is_caught_by_verification(tmp_path, hou
         encoding="utf-8",
     )
     _native_reference(proj, tmp_path, modules=(BROKEN[1],))  # 参考用一个能 import 的替身出原件
-    python = _venv_python(proj)
     evidence: list[str] = []
     with fa.running_app(proj, tmp_path / "work") as app:
         panel = _panel(app, "figure.pdf")
