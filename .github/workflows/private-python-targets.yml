@@ -26,17 +26,32 @@ on:
     - cron: "37 19 * * 0"   # 每周日 UTC 19:37（nightly 是每天 UTC 18:00）
   pull_request:
     paths:
-      # 本 workflow 直接消费的每一份输入都在这里（Codex #467 P2）：改了任何一份就得在 PR 上跑一次
+      # 本 workflow 直接消费的每一份输入都在这里（Codex #467 两轮 P2）：改了任何一份就得在 PR 上跑一次。
+      # 真链（TestRealChain）走的是 U04 代事务，不只是 privatepython.py——事务链上的模块与它们的测试支持
+      # 一并列入，否则只改 deprepair.py / managedenv.py 的 PR 会把这条三平台真链弄坏而要等到周日才发现
       - ".github/workflows/private-python-targets.yml"
       - "scripts/ci/private_python_empty_image.sh"
       - "scripts/ci/private_python_windows_snapshot.py"
       - "scripts/ci/runtime_pins.py"
       - "packaging/runtime-lock.json"
       - "src/tavotto/engine/privatepython.py"
+      - "src/tavotto/engine/deprepair.py"
+      - "src/tavotto/engine/managedenv.py"
+      - "src/tavotto/engine/depplan.py"
+      - "src/tavotto/engine/depresolve.py"
+      - "src/tavotto/engine/envlease.py"
+      - "src/tavotto/engine/bootstrap.py"
+      - "src/tavotto/engine/projectenv.py"
+      - "src/tavotto/engine/importscan.py"
+      - "src/tavotto/engine/runtime.py"
+      - "src/tavotto/engine/config.py"
       - "src/tavotto/resources/private_python_lock.json"
       - "tests/test_private_python.py"
       - "tests/test_private_python_transaction.py"
+      - "tests/test_private_python_windows_snapshot.py"
       - "tests/support/private_python.py"
+      - "tests/support/dependency_repair.py"
+      - "tests/support/venvfixture.py"
 
 permissions:
   contents: read
