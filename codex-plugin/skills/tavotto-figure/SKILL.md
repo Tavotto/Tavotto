@@ -101,7 +101,9 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures", "stem": "Fig1
 第一次 open 的工作区授权规则（绝对路径、用户确认、拒绝后不重试）在
 `references/first-run-and-recovery.md` 的「工作区授权」一节。回来的是
 `session_id` + `manifest`（哪些元素可改）+ 预览 SVG + 出版规范 + 预检结果。
-支持 UI 的 Codex 会同时开出一块交互画布，用户可以直接拖。
+支持 UI 的 Codex 会同时开出一块交互画布，用户可以直接拖。**图很大时**（几百个
+元素）结果里会带 `elided`，manifest / SVG 没随本次返回——画布会自己取，你只在确实
+要逐元素 gid 时才调 `tavotto_session_state { session_id }`（只读，不重渲染）。
 
 **一个脚本出好几张独立图时不要开 N 次**——`stems` 一次全开，拿回 N 个各自
 可编辑的 `session_id`（不知道有哪些就 `discover_stems: true`，它只认注册表里
