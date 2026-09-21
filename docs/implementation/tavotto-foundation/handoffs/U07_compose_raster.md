@@ -3,8 +3,10 @@
 **阶段 / 子切片**：U07.compose_raster，两个叠栈 PR：**A**（#463）= 合成（ImportedPage / Image 写入、页盒 / Rotate /
 UserUnit、crop / 翻转 / 旋转顺序合同、透明组、同名资源、不可信源、pikepdf 裁决，ADR 0065）；**B** = render child 收编 +
 RasterBuffer 栅格 + PNG / TIFF 同源 + 预览缓存 + 旧新后端校准对拍 + spike 退役 + evidence/u07 + 最小 freeze
-（ADR 0066）。本文件记的是 **B 之后**的状态（A 的三轮 Codex 评审处置也在 A 分支上：像素预算两级且在解码前记账、
-JPEG 直通先核 SOF 再真解、退化页盒）。
+（ADR 0066）。本文件记的是 **B 之后**的状态（A 的六轮 Codex 评审处置也在 A 分支上：像素预算两级且在解码前记账、
+JPEG 直通先核 SOF 再真解、退化页盒、`read_frozen` 单缓冲 + 峰值记账；B 的三轮：页号进键 / 一个 deadline 管到底、`.part`
+一起清 / 像素长度不符即 reap / 身份分块算、`Popen` OSError → `render_child_spawn_failed` / 像素核对进锁内 / 预览渲染
+不可变副本 / dpi 尺寸乘 `/UserUnit`——每条一用例一变异）。
 
 **开始 HEAD / 结束 HEAD / 用户原有工作区改动**：开始 `7d312482`（`foundation/u06-ir-text-b` 当时的 head，即 U06 的 PR B；
 下面依次是 U06 A #458 → U02 #455 → U01 #451 → main）；结束 = PR A 的 head（合并后以 `git log origin/main` 里 PR 号为准）。
