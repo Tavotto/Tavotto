@@ -141,7 +141,10 @@ spike 里「一条 resolver」的选择；产品里再下载一个 37 MB 的 uv 
 它为目标——已供应就真量（`depplan.fresh_venv_facts(private, provided=adapter)`），还没落盘就用**替身**
 （`privatepython.standin_marker_env`：Python 字段来自锁、平台字段来自这台机器，已装集合只有 adapter，stdlib 用
 宿主的表）。替身只服务**披露**（要装什么、要下多少）；计划带下载（`JointRepairPlan.replan`）时事务在供应之后
-按真解释器重算 delta / 关键 import / 记账 / 身份（`_replan_on_base`），blocked 就停在登记之前。执行前重量事实
+按真解释器重算 delta / 关键 import / 记账 / 身份（`_replan_on_base`），blocked 就停在登记之前。重算读的是**此刻**
+的脚本与声明，用户确认的却是按当时输入算的那份：计划绑定规划输入的指纹（`depplan.JointPlan.inputs_digest`——声明
+意图全集 + 脚本与跟进过的本地模块的字节，与事实无关），重算出来的指纹不同即 `repair_plan_stale`，一个字节不装
+（私有 Python 留着当缓存；重新规划把新输入说出口）。执行前重量事实
 走同一条路（`_facts_for_plan`：替身确定，同锁同机就同 digest；期间私有 Python 被别的项目供应则真量 → stale
 → 用户重算）。「有 worker、没 base」的机器同理：`_facts_for` 在 `base_python()` 为空时用 `private_fresh_facts()`
 量新的一代。干净机器上「什么都不缺」（脚本只用标准库）也建环境——没有任何解释器，环境本身就是要授权的，
