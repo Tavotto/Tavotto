@@ -205,11 +205,13 @@ def contained_path(root: str | Path, candidate: str | Path) -> str | None:
     except (OSError, ValueError):
         return None
     # 守卫写成静态分析认得的 barrier 形状（CodeQL py/path-injection：归一化 + `startswith`
-    # **单独**控制通往返回值的那条分支）。`real == real_root` 与 `not startswith` 合在一个
-    # 条件里语义相同，但 fall-through 分支推不出 startswith 为真，四处 sink 照报（#143–#146）。
+    # **单独**控制通往返回值的那条分支）。两点缺一不可（#143–#146 各踩过一次）：
+    # * `== real_root` 与 `not startswith` 合在一个条件里，fall-through 推不出 startswith 为真；
+    # * 相等那一支回的必须是 `real_root` 本身而不是 `real`——两者字符串相等，但 `real` 是从
+    #   候选算出来的，`==` 不是净化器，回它就仍带着候选的污点。
     real = os.path.normpath(real)
     if real == real_root:
-        return real
+        return real_root
     if not real.startswith(real_root + os.sep):
         return None
     return real
