@@ -16,7 +16,8 @@
   同层顺序原样保留，不按 id / 类型排序（RC-009）。
 * 文字经 `typography.layout_text()` 变成 `ShapedText`（已排字形），Arrow / Shape 经
   `geometry` 变成 `Path`，面板变成 `ImportedPage`（PDF）或 `Image`（位图）+ 一条
-  `FileResource`（冻结源的语义身份 + 字节 hash）。
+  `FileResource`（冻结源的语义身份 + 字节 hash）；面板的 crop / 旋转 / 翻转只记在节点上，
+  落位的矩阵由写入器经 `placement.place()` 算（顺序合同只有那一份）。
 * 编译完立刻 `ir.validate()`：非法数字 / 尺寸 / 资源引用在这里被拒，写入器只收合法的页。
 
 `scope=original` 在 U06 没有生产者（页面尺寸要探源页，U08 接 probe），`compile_plan()`
@@ -182,9 +183,10 @@ def _panel_node(
     opacity = o.get("opacity")
     opacity = 1.0 if opacity is None else max(0.0, min(1.0, float(opacity)))
     oid = str(o.get("id", ""))
+    # 面板旋转限 90° 倍数（旧 facade 用户合同：非 90 倍数时 show_pdf_page / insert_image 不填满目标
+    # 矩形，与画布语义对不上）；PDF 与位图同一条规则。
+    rot = int(round(float(o.get("rotation") or 0) / 90.0)) * 90 % 360
     if art.kind == "pdf":
-        # 面板旋转限 90° 倍数（旧 facade 用户合同：非 90 倍数时 show_pdf_page 不填满目标矩形）
-        rot = int(round(float(o.get("rotation") or 0) / 90.0)) * 90 % 360
         return ImportedPage(
             resource=key,
             rect=rect,
@@ -200,6 +202,7 @@ def _panel_node(
         rect=rect,
         opacity=opacity,
         crop=crop_t,
+        rotate_cw_deg=float(rot),
         flip_h=bool(o.get("flip_h")),
         flip_v=bool(o.get("flip_v")),
         object_id=oid,

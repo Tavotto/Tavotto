@@ -3,8 +3,9 @@
 #   python -m venv <scratch>/rc-venv && <scratch>/rc-venv/bin/python -m pip install -e '.[rendercore,dev]'
 # 或
 #   <rc-venv>/bin/python -m pip install -r requirements-rendercore.txt
-# 版本与 ADR 0055 §1 实测钉死的相同；两边的包名由 tests/test_rendercore_fonts.py 看护一致。
+# 版本与 ADR 0055 §1 实测钉死的相同（Pillow 是 U07 起的直接依赖，ADR 0066）；两边的包名由 tests/test_rendercore_fonts.py 看护一致。
 pikepdf==10.13.0.post1
 fonttools==4.65.0
 uharfbuzz==0.56.1
 pypdfium2==5.13.0
+pillow==12.3.0
