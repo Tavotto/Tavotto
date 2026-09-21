@@ -247,6 +247,32 @@ class TestDependencyIntent:
             (depresolve.INTENT_KIND_REQUIREMENT, "six==1.17.0"),
         ]
 
+    @pytest.mark.skipif(
+        sys.version_info < (3, 11), reason="Poetry 表要 tomllib（3.10 退化路径不认表）"
+    )
+    def test_poetry_caret_and_table_values_are_unknown_not_stripped(self, tmp_path):
+        """Codex（#455 转办，P2）：`requests = "^2.31"` 之前只留下名字——版本没了、raw 也是截断值，
+        等于把一条约束偷偷放宽成「任意版本」。D14：未知约束必须明确停止。Poetry 自己的语法
+        （`^` / `~` / 表值）在这里是 `unknown`，raw 保留原文；纯数字版本仍映射成 `==`，raw 也是原文。
+        完整转换归 U04 / X01。"""
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.poetry.dependencies]\n"
+            'python = "^3.10"\n'
+            'requests = "^2.31"\n'
+            'six = "1.17.0"\n'
+            'numpy = {version = "~1.26", extras = ["all"]}\n',
+            encoding="utf-8",
+        )
+        by_raw = {it.raw: it for it in depresolve.declared_intents(tmp_path)}
+        assert "python" not in " ".join(by_raw)  # 解释器版本不是依赖
+        caret = by_raw['requests = "^2.31"']
+        assert caret.kind == depresolve.INTENT_KIND_UNKNOWN and caret.name == ""
+        table = by_raw['numpy = {version = "~1.26", extras = ["all"]}']
+        assert table.kind == depresolve.INTENT_KIND_UNKNOWN
+        plain = by_raw['six = "1.17.0"']
+        assert (plain.name, plain.specifier, plain.kind) == ("six", "==1.17.0", "requirement")
+        assert all(it.group == "pyproject:tool.poetry.dependencies" for it in by_raw.values())
+
     def test_intent_payload_round_trips_every_field(self):
         it = depresolve.parse_intent("a[b]>=1; os_name == 'nt'", group="g", source="s")
         assert it.to_payload() == {

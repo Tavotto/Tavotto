@@ -533,16 +533,25 @@ class DependencyIntent:
 
 
 def parse_intent(
-    line: str, *, group: str = "", source: str = "", kind: str = INTENT_KIND_REQUIREMENT
+    line: str,
+    *,
+    group: str = "",
+    source: str = "",
+    kind: str = INTENT_KIND_REQUIREMENT,
+    raw: str | None = None,
 ) -> DependencyIntent | None:
     """一行声明 → intent。空行 / 注释回 None；看不懂的回 `kind=unknown`（不丢）。
 
     认得的形状：`name`、`name[extra,extra]`、`name<op>ver[,<op>ver]`、以上任一加
     `; <marker>`。选项行（`-r` / `--index-url` / `-e`）、URL、路径、`pkg @ url`
     一律 unknown——它们是「项目声明了别的东西」，不是「没声明」。
+
+    `raw` 给了就原样记进 intent（pyproject 里一条声明被翻译成 PEP 508 形态后，
+    `raw` 仍要是文件里那一行）；不给就是 `line` 本身。
     """
-    raw = str(line or "")
-    body = raw.split("#", 1)[0].strip()
+    line = str(line or "")
+    original = line if raw is None else raw
+    body = line.split("#", 1)[0].strip()
     if not body:
         return None
     marker = ""
@@ -557,7 +566,7 @@ def parse_intent(
     parsed = parse_requirement(name_part.replace(" ", ""))
     if parsed is None or (m and not extras):
         return DependencyIntent(
-            name="", group=group, source=source, kind=INTENT_KIND_UNKNOWN, raw=raw.strip()
+            name="", group=group, source=source, kind=INTENT_KIND_UNKNOWN, raw=original.strip()
         )
     name, spec = parsed
     return DependencyIntent(
@@ -568,7 +577,7 @@ def parse_intent(
         group=group,
         source=source,
         kind=kind,
-        raw=raw.strip(),
+        raw=original.strip(),
     )
 
 
@@ -583,40 +592,64 @@ def parse_intents_text(
     return out
 
 
-def _pyproject_intent_groups(text: str) -> list[tuple[str, str]]:
-    """pyproject.toml → `[(组名, 声明串)]`，组名区分主依赖与每个 optional 组。
+def _pyproject_intent_groups(text: str) -> list[tuple[str, str, str]]:
+    """pyproject.toml → `[(组名, 声明串, 原文)]`，组名区分主依赖与每个 optional 组。
 
     只在 tomllib 可用时分组；退化路径（3.10）沿用 `_pyproject_dependency_strings`
     的「宁可少认」，组名统一记 `pyproject`。
+
+    Poetry 表（`[tool.poetry.dependencies]`）**不是** PEP 508：`requests = "^2.31"` 的
+    `^` / `~` 是 Poetry 自己的语法，表值（`{version = …, extras = …}`）更是。安装路径
+    （`_pyproject_dependency_strings`）把它们剥成只剩名字继续走；这里不许——那等于把一条
+    约束偷偷放宽成「任意版本」（D14：未知约束必须明确停止）。纯数字开头的版本映射成
+    `==`，其余一律作为**认不出的原文**交给 `parse_intent` 判成 unknown；`raw` 都是文件
+    里那一行的形状。完整的 Poetry 转换归 U04 / X01。
     """
     try:
         import tomllib  # 3.11+
 
         data = tomllib.loads(text)
     except (ImportError, ValueError):
-        return [("pyproject", d) for d in _pyproject_dependency_strings(text)]
-    out: list[tuple[str, str]] = []
+        return [("pyproject", d, d) for d in _pyproject_dependency_strings(text)]
+    out: list[tuple[str, str, str]] = []
     project = data.get("project")
     if isinstance(project, dict):
         for d in project.get("dependencies") or []:
             if isinstance(d, str):
-                out.append(("pyproject:project.dependencies", d))
+                out.append(("pyproject:project.dependencies", d, d))
         extras = project.get("optional-dependencies")
         if isinstance(extras, dict):
             for gname, group in extras.items():
                 for d in group or []:
                     if isinstance(d, str):
-                        out.append((f"pyproject:optional-dependencies.{gname}", d))
+                        out.append((f"pyproject:optional-dependencies.{gname}", d, d))
     poetry = ((data.get("tool") or {}).get("poetry") or {}).get("dependencies") or {}
     if isinstance(poetry, dict):
+        group = "pyproject:tool.poetry.dependencies"
         for name, ver in poetry.items():
             if str(name).lower() == "python":
                 continue
-            if isinstance(ver, str) and ver and ver[0].isdigit():
-                out.append(("pyproject:tool.poetry.dependencies", f"{name}=={ver}"))
-            else:
-                out.append(("pyproject:tool.poetry.dependencies", str(name)))
+            if isinstance(ver, str):
+                raw = f'{name} = "{ver}"'
+                if ver and ver[0].isdigit():
+                    out.append((group, f"{name}=={ver}", raw))
+                else:  # `^2.31` / `~1.2` / `*` / 空：Poetry 语法，不翻译、不剥
+                    out.append((group, raw, raw))
+            else:  # 表值 / 数组：原样交出去当 unknown
+                raw = f"{name} = {_toml_inline(ver)}"
+                out.append((group, raw, raw))
     return out
+
+
+def _toml_inline(value) -> str:
+    """把 tomllib 解析出来的表 / 数组按 TOML 内联表的样子写回去（只为 `raw` 可读）。"""
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{k} = {_toml_inline(v)}" for k, v in value.items()) + "}"
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_inline(v) for v in value) + "]"
+    if isinstance(value, str):
+        return f'"{value}"'
+    return str(value)
 
 
 def declared_intents(figures_dir: str | Path, script: str | None = None) -> list[DependencyIntent]:
@@ -657,8 +690,8 @@ def declared_intents(figures_dir: str | Path, script: str | None = None) -> list
                 rel = path.name
             try:
                 if path.name == PYPROJECT_NAME:
-                    for gname, decl in _pyproject_intent_groups(text):
-                        intent = parse_intent(decl, group=gname, source=rel)
+                    for gname, decl, raw in _pyproject_intent_groups(text):
+                        intent = parse_intent(decl, group=gname, source=rel, raw=raw)
                         if intent is not None:
                             out.append(intent)
                 else:

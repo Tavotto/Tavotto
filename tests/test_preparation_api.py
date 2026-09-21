@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import json
+import sys
 import threading
 import time
 from pathlib import Path
@@ -225,7 +227,7 @@ def test_a_worker_error_is_reported_with_its_code_and_module(client, tmp_path, f
     root = _project(tmp_path, "p")
     _open(client, root)
     err = engine_pool.WorkerError("缺包", code="missing_dependency", module="lmfit")
-    err.project_env = {"ok": False, "reason": "no_venv"}
+    err.project_env = {"ok": False, "reason": "no_venv", "python": "/abs/elsewhere/python"}
     fake_pool["error"] = err
     resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
     body = _wait(client, resp.get_json()["plan"]["plan_id"])
@@ -234,7 +236,7 @@ def test_a_worker_error_is_reported_with_its_code_and_module(client, tmp_path, f
         "code": "missing_dependency",
         "message": "缺包",
         "module": "lmfit",
-        "project_env": {"ok": False, "reason": "no_venv"},
+        "project_env": {"ok": False, "reason": "no_venv"},  # 带路径的键不进公开投影
     }
     assert body["result"]["receipt"] is None
 
@@ -370,6 +372,79 @@ def test_unknown_plan_and_missing_id_are_structured_errors(client, tmp_path, fak
     bad = client.post("/api/engine/preparation", json={})
     assert bad.status_code == 400 and bad.get_json()["code"] == "bad_request"
     assert client.post("/api/engine/preparation", json={"id": "missing.pdf"}).status_code == 404
+
+
+_PATH_NEEDLES = ("data_dir", "home", "sys.prefix", "sys.base_prefix", "interpreter")
+
+
+def _machine_paths(root: Path) -> dict[str, str]:
+    """本机会泄露的那几个绝对路径（都要在公开投影里找不到）。"""
+    from tavotto.engine import config as engine_config
+
+    return {
+        "data_dir": str(engine_config.data_dir()),
+        "home": str(Path.home()),
+        "sys.prefix": sys.prefix,
+        "sys.base_prefix": sys.base_prefix,
+        "interpreter": engine_pool.resolve_worker_python(str(root))[0],
+    }
+
+
+def test_the_public_projection_carries_no_machine_paths(client, tmp_path, fake_pool, monkeypatch):
+    """Codex（#455 转办，P2）：`plan.environment.python` 对 bundled / system 解释器是绝对路径，
+    经 HTTP / MCP 投影就把安装目录 / 用户目录暴露出去，与 ADR 0053「公开身份不含机器路径」
+    矛盾。公开投影里只留公开身份（来源标签 + 项目相对路径 + 版本），绝对路径只在私有键。
+    错误分支的 `project_env` 也一样（那里会带体检到的解释器路径）。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    # 解释器决策指向项目外的一个绝对路径（system 档的形状）
+    outside = tmp_path / "elsewhere" / "envs" / "sci" / "bin" / "python"
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda r=None: (str(outside), "system")
+    )
+    needles = {**_machine_paths(root), "interpreter": str(outside), "tmp": str(tmp_path)}
+    # ready 分支
+    body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
+    body = _wait(client, body["plan"]["plan_id"])
+    text = json.dumps(body, ensure_ascii=False)
+    for label, needle in needles.items():
+        assert needle not in text, f"公开投影里带了机器路径 {label}: {needle}"
+    assert body["plan"]["environment"]["source"] == "system"
+    assert body["plan"]["environment"]["python"] is None  # 项目外：不给路径
+    # 错误分支：project_env 里带体检到的绝对路径
+    err = engine_pool.WorkerError("缺包", code="missing_dependency", module="lmfit")
+    err.project_env = {
+        "ok": False,
+        "code": "no_venv",
+        "module": "lmfit",
+        "python": str(outside),
+        "candidates": [str(outside)],
+    }
+    fake_pool["error"] = err
+    body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
+    body = _wait(client, body["plan"]["plan_id"])
+    text = json.dumps(body, ensure_ascii=False)
+    assert body["result"]["status"] == preparation.STATUS_ERROR
+    assert str(outside) not in text and str(tmp_path) not in text
+    assert body["result"]["error"]["project_env"] == {
+        "ok": False,
+        "code": "no_venv",
+        "module": "lmfit",
+    }
+
+
+def test_a_project_venv_interpreter_is_shown_project_relative(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    inside = root / ".venv" / "bin" / "python"
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda r=None: (str(inside), "project_venv")
+    )
+    plan = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()["plan"]
+    assert plan["environment"]["python"] == ".venv/bin/python"
+    assert str(root) not in json.dumps(plan, ensure_ascii=False)
 
 
 def test_the_plan_reads_the_grant_the_product_recorded(client, tmp_path, fake_pool):

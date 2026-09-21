@@ -90,11 +90,14 @@ _TTL_S = 15 * 60
 
 @dataclasses.dataclass(frozen=True)
 class PreparationPlan:
-    """打算怎么跑（不可变）。机器路径只有 `project_root` 一项，且**不进** `to_payload()`。"""
+    """打算怎么跑（不可变）。机器路径只有 `project_root` 与 `interpreter` 两项，都**不进**
+    `to_payload()`——HTTP / MCP 投影是公开身份（ADR 0053 §二），安装目录 / 用户目录 / venv
+    的绝对路径只留在私有键与本机日志里。"""
 
     plan_id: str
     project_id: str
     project_root: str
+    interpreter: str  # 解释器绝对路径（机器相关；只给执行线程与诊断用）
     asset_id: str
     stem: str
     script: str | None  # 项目相对 POSIX 路径；没有脚本（纯静态素材）时 None
@@ -158,13 +161,17 @@ def plan_for(
     except pool.WorkerError as exc:
         python, source, env_error = "", "", {"code": exc.code, "message": str(exc)}
     state = projectenv.state(root)
+    # 公开身份：来源标签 + **项目相对**路径（项目外的解释器——bundled / system / 用户在别处
+    # 挑的——一律 None：那是安装目录或用户目录，不进投影）+ 项目记住的版本事实。
     environment = {
-        "python": _project_relative(root, python) if python else "",
+        "python": _project_relative(root, python) if python else None,
         "source": source,
         "source_label": pool.SOURCE_LABELS.get(source, source),
         "automatic": bool(state.get("automatic", False)),
         "trigger": state.get("trigger", ""),
         "module": state.get("module", ""),
+        "python_version": state.get("python_version", ""),
+        "matplotlib_version": state.get("matplotlib_version", ""),
         "error": env_error,
     }
     grant = workdir.grant_for(root)
@@ -195,6 +202,7 @@ def plan_for(
         plan_id=f"prep-{uuid.uuid4().hex}",
         project_id=project_id,
         project_root=root,
+        interpreter=python,
         asset_id=asset_id,
         stem=stem,
         script=script,
@@ -214,7 +222,8 @@ def plan_for(
     )
 
 
-def _project_relative(root: str, path: str) -> str:
+def _project_relative(root: str, path: str) -> str | None:
+    """项目内的路径 → 项目相对 POSIX；项目外 → None（**不回绝对路径**，它不进公开投影）。"""
     try:
         return (
             Path(path)
@@ -223,7 +232,16 @@ def _project_relative(root: str, path: str) -> str:
             .as_posix()
         )
     except (ValueError, OSError):
-        return path
+        return None
+
+
+#: 错误分支里 `pool.try_project_env` 的结构化结果进公开投影时只留这几个键：其余
+#: （`python` / `candidates` / `system` 体检表…）都带着解释器的绝对路径。
+_PUBLIC_PROJECT_ENV_KEYS = ("ok", "code", "module", "reason")
+
+
+def _public_project_env(outcome: dict) -> dict:
+    return {k: outcome[k] for k in _PUBLIC_PROJECT_ENV_KEYS if k in outcome}
 
 
 # ---------------------------------------------------------------- 观测
@@ -345,7 +363,7 @@ class PreparationService:
                 error["module"] = module
             project_env = getattr(exc, "project_env", None)
             if isinstance(project_env, dict):
-                error["project_env"] = project_env
+                error["project_env"] = _public_project_env(project_env)
             result.error = error
             self._finish(entry, STATUS_ERROR)
             return

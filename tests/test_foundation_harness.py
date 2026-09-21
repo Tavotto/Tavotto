@@ -97,7 +97,68 @@ def test_ledger_check_catches_a_drifted_or_malformed_ledger(tmp_path):
     dangling = json.loads(json.dumps(ledger))
     row = next(c for c in dangling["cases"] if c["case_id"] == CASE_ID)
     row["test"] = "tests/test_foundation_harness.py::test_that_does_not_exist"
-    assert any("没有 def" in e for e in fh.ledger_errors(dangling, registry))
+    assert any("没有定义" in e for e in fh.ledger_errors(dangling, registry))
+
+
+def test_enforced_test_existence_is_judged_by_ast_not_by_substring(tmp_path):
+    """Codex（#455 转办，P1）：`def {func}(` 子串会把注释里的名字、别的函数**里面**的嵌套函数
+    都当成「用例存在」。判据改成 AST：模块级 FunctionDef，或 `Class::method` 按结构逐级找；
+    参数化 id（`func[x]`）剥掉再判。四个负例各自红、两个正例绿。"""
+    registry = json.loads((PACK / "registry.json").read_text(encoding="utf-8"))
+    test_file = tmp_path / "test_probe.py"
+    test_file.write_text(
+        "# def test_only_in_a_comment():\n"
+        "def outer():\n"
+        "    def test_nested_inside_outer():\n"
+        "        pass\n"
+        "\n\n"
+        "def test_module_level():\n"
+        "    pass\n"
+        "\n\n"
+        "class TestGroup:\n"
+        "    def test_method(self):\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    rel = test_file.relative_to(ROOT).as_posix() if test_file.is_relative_to(ROOT) else None
+    assert rel is None  # tmp 目录不在仓库里：走 root= 参数
+
+    def ledger_for(target: str) -> dict:
+        return {
+            "schema_version": 1,
+            "capability_version": "u01",
+            "cases": [
+                {
+                    "case_id": "X",
+                    "title": "t",
+                    "scenario_refs": [],
+                    "stage": "U01",
+                    "enrollment": "enforced",
+                    "lane": "pr",
+                    "fixture": "tests/fixtures/foundation/single_file_csv",
+                    "test": target,
+                }
+            ],
+        }
+
+    def errors(target: str) -> list[str]:
+        return [
+            e
+            for e in fh.ledger_errors(ledger_for(target), root=tmp_path)
+            if "X:" in e and "test_probe" in e
+        ]
+
+    assert errors("test_probe.py::test_module_level") == []
+    assert errors("test_probe.py::TestGroup::test_method") == []
+    assert errors("test_probe.py::test_module_level[param-1]") == []
+    for bad in (
+        "test_probe.py::test_only_in_a_comment",
+        "test_probe.py::test_nested_inside_outer",
+        "test_probe.py::TestGroup::test_only_in_a_comment",
+        "test_probe.py::test_method",  # 方法不在模块级
+    ):
+        assert errors(bad), bad
+    del registry
 
 
 # ================================================================ 二、校验器负例

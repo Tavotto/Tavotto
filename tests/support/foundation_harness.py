@@ -33,6 +33,7 @@ CLI：
 from __future__ import annotations
 
 import argparse
+import ast
 import dataclasses
 import hashlib
 import json
@@ -81,8 +82,42 @@ def load_ledger(path: Path = LEDGER_PATH) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def ledger_errors(ledger: dict, registry: dict | None = None) -> list[str]:
-    """台账自身的结构 + 与 registry 的一致性。回错误列表（空 = 好）。"""
+def pytest_target_defined(path: Path, tail: str) -> bool:
+    """`文件::函数` / `文件::类::方法` 的那个函数**真的定义在**这个位置——按 AST 判，不按子串。
+
+    子串 `def {func}(` 会把注释里的名字、别的函数**里面**的嵌套函数都当成存在
+    （`docs/rules/repo/predicate-subject.md`：判源码结构用 AST）。这里逐级找：模块级
+    `FunctionDef`，或 `ClassDef` 的直接子节点；不进函数体（嵌套函数 pytest 也收不到）。
+    参数化 id（`func[x]`）剥掉再判。
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return False
+    parts = [part.split("[", 1)[0] for part in tail.split("::") if part]
+    scope: list = list(tree.body)
+    for i, name in enumerate(parts):
+        node = next(
+            (
+                n
+                for n in scope
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and n.name == name
+            ),
+            None,
+        )
+        if node is None:
+            return False
+        if i == len(parts) - 1:
+            return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if not isinstance(node, ast.ClassDef):
+            return False
+        scope = list(node.body)
+    return False
+
+
+def ledger_errors(ledger: dict, registry: dict | None = None, *, root: Path = ROOT) -> list[str]:
+    """台账自身的结构 + 与 registry 的一致性。回错误列表（空 = 好）。`root` 是用例路径的根。"""
     errors: list[str] = []
     if ledger.get("schema_version") != SCHEMA_VERSION:
         errors.append(f"schema_version 必须是 {SCHEMA_VERSION}")
@@ -115,11 +150,13 @@ def ledger_errors(ledger: dict, registry: dict | None = None) -> list[str]:
                 errors.append(f"{cid}: enforced 的 case 必须指向一条 pytest 用例（文件::函数）")
             else:
                 file_part, func = test.split("::", 1)
-                path = ROOT / file_part
+                path = root / file_part
                 if not path.is_file():
                     errors.append(f"{cid}: 用例文件不存在 {file_part}")
-                elif f"def {func}(" not in path.read_text(encoding="utf-8"):
-                    errors.append(f"{cid}: {file_part} 里没有 def {func}(")
+                elif not pytest_target_defined(path, func):
+                    errors.append(
+                        f"{cid}: {file_part} 里没有定义 {func}（按 AST 找模块级 / 类里的那个）"
+                    )
             if not c.get("fixture"):
                 errors.append(f"{cid}: enforced 的 case 必须指明 fixture")
         elif test is not None:
