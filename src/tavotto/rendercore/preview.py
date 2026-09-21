@@ -225,14 +225,20 @@ class PreviewCache:
         """命中就回缓存文件；否则渲染、临时发布、回最终文件。任何失败抛 `PreviewError`。"""
         staged, content = self._stage(path)
         try:
+            try:
+                renderer, fonts = self.renderer_version(), self.fonts_version()
+            except RenderChildError as exc:
+                # 第一次算键要 ping child 问 PDFium 版本：child 起不来 / 队列满在这里就会炸——同样翻成
+                # PreviewError，调用方（/api/render）才能按稳定 code 回 503 / 500（Codex #476 P2）
+                raise PreviewError(exc.code, exc.message) from exc
             cached = self.path_for(
                 cache_key(
                     source_id,
                     content,
                     width_px,
                     transparent=transparent,
-                    renderer_version=self.renderer_version(),
-                    fonts_version=self.fonts_version(),
+                    renderer_version=renderer,
+                    fonts_version=fonts,
                     page=page,
                 )
             )
