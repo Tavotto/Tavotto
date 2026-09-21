@@ -324,10 +324,67 @@ def test_a_pixel_file_that_disagrees_with_the_response_reaps_the_child(fake_host
     assert fake_host.render(ok, width_px=2).width == 2 and fake_host.restarts == 1
 
 
+def test_a_child_that_cannot_be_spawned_is_a_structured_failure_not_an_oserror(tmp_path):
+    """Codex #471 第三轮 P2：exe 不在 / 没权限（冻结产物命令写错）时 `Popen` 抛 OSError——那不是 `RenderChildError`，
+    `job.produce` 的 `except RenderChildError` 接不住，整个作业会炸而不是该格式 `format_failed`。现在它是
+    `render_child_spawn_failed`；锁与队列槽都释放（第二次请求照样得到同一个结构化错误，不是卡死）。"""
+    host = rh.RenderHost(
+        [str(tmp_path / "no-such-render-child")], default_timeout=5, scratch_dir=tmp_path
+    )
+    try:
+        for _ in range(2):
+            with pytest.raises(rh.RenderChildError) as ei:
+                host.ping(timeout=2)
+            assert ei.value.code == "render_child_spawn_failed"
+            assert "no-such-render-child" in ei.value.message
+        assert host.pid is None and host.starts == 2
+        pdf = tmp_path / "ok.pdf"
+        pdf.write_bytes(b"%PDF-")
+        with pytest.raises(rh.RenderChildError) as ei:
+            host.render(pdf, width_px=2, timeout=2)
+        assert ei.value.code == "render_child_spawn_failed"
+        assert not list(tmp_path.glob("render-*.rgba*"))  # 像素临时文件照常清
+    finally:
+        host.close()
+
+
+def test_pixel_validation_runs_inside_the_request_lock(fake_host, tmp_path):
+    """Codex #471 第三轮 P2：像素文件长度核对若在 `request()` 释放锁之后才做，排在后面的请求会在「释放锁 →
+    发现说谎 → kill」之间挤进去，和那个 child 说话。判据：render 那次请求**释放锁的那一刻** child 已经被 reap。"""
+    pdf = tmp_path / "shortbytes.pdf"
+    pdf.write_bytes(b"%PDF-")
+    fake_host.ping()
+    inner = fake_host._lock
+    reaped_at_release: list[bool] = []
+
+    class SpyLock:
+        def acquire(self, *a, **k):
+            return inner.acquire(*a, **k)
+
+        def release(self):
+            reaped_at_release.append(fake_host._proc is None)
+            inner.release()
+
+        def __enter__(self):
+            inner.acquire()
+            return self
+
+        def __exit__(self, *a):
+            self.release()
+            return False
+
+    fake_host._lock = SpyLock()
+    with pytest.raises(rh.RenderChildError) as ei:
+        fake_host.render(pdf, width_px=2)
+    assert ei.value.code == "render_child_protocol"
+    assert reaped_at_release == [True], reaped_at_release
+
+
 def test_error_codes_are_a_closed_set():
     assert set(rc.ERROR_CODES) == {
         "render_child_timeout",
         "render_child_died",
+        "render_child_spawn_failed",
         "render_child_protocol",
         "render_queue_full",
         "pixel_budget_exceeded",
@@ -410,6 +467,13 @@ def test_real_child_probe_reports_the_visible_size_with_rotation_and_userunit(re
         300.0,
         200.0,
     ]
+    p = real_host.probe(_rotated_userunit_pdf(tmp_path))
+    assert (p["width_pt"], p["height_pt"], p["user_unit"], p["rotation"]) == (320.0, 540.0, 2.0, 90)
+    assert (p["raw_width_pt"], p["raw_height_pt"]) == (160.0, 270.0)
+
+
+def _rotated_userunit_pdf(tmp_path) -> Path:
+    """MediaBox 300×200、CropBox [15 10 285 170]、/Rotate 90、/UserUnit 2：PDFium 说 160 × 270，物理 320 × 540 pt。"""
     import pikepdf
 
     pdf = pikepdf.new()
@@ -423,9 +487,20 @@ def test_real_child_probe_reports_the_visible_size_with_rotation_and_userunit(re
     )
     pdf.pages.append(pikepdf.Page(page))
     pdf.save(tmp_path / "rot.pdf")
-    p = real_host.probe(tmp_path / "rot.pdf")
-    assert (p["width_pt"], p["height_pt"], p["user_unit"], p["rotation"]) == (320.0, 540.0, 2.0, 90)
-    assert (p["raw_width_pt"], p["raw_height_pt"]) == (160.0, 270.0)
+    return tmp_path / "rot.pdf"
+
+
+@real
+def test_real_child_dpi_render_is_sized_by_the_physical_page_including_userunit(
+    real_host, tmp_path
+):
+    """Codex #471 第三轮 P2：dpi 是物理密度。/UserUnit 2 的页 PDFium 报 160 × 270，物理 320 × 540 pt——72 dpi
+    必须出 320 × 540 像素（与 probe 报的尺寸同一次乘），不是 160 × 270；width_px 路径不受影响。"""
+    pdf = _rotated_userunit_pdf(tmp_path)
+    by_dpi = real_host.render(pdf, dpi=72, page_size_pt=(320, 540))
+    assert (by_dpi.width, by_dpi.height, by_dpi.dpi) == (320, 540, 72.0)
+    by_w = real_host.render(pdf, width_px=160, page_size_pt=(320, 540))
+    assert (by_w.width, by_w.height) == (160, 270)
 
 
 @real

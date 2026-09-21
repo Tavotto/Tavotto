@@ -46,6 +46,7 @@ DEFAULT_MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 ERROR_CODES = (
     "render_child_timeout",  # deadline 到，child 被 kill
     "render_child_died",  # child 自己退出 / 被外力杀死（读线程见 EOF）
+    "render_child_spawn_failed",  # child 起不来（exe 不在 / 没权限 / 冻结产物的命令不对）
     "render_child_protocol",  # 回来的不是 JSON / 对不上 id
     "render_queue_full",  # 等锁的请求超过有界队列（背压，RC-062）
     "pixel_budget_exceeded",  # 超像素预算（父侧或 child 侧）
@@ -149,9 +150,12 @@ def _render(pdfium, req: dict, default_max_pixels: int) -> dict:
                 scale = width_px / w_pt
                 height_px = max(1, int(round(h_pt * scale)))
             else:
+                # dpi 是**物理**密度：页的物理尺寸 = PDFium 的尺寸 × /UserUnit（PDFium 自己忽略它，与 probe 同一次乘；
+                # Codex #471 第三轮 P2），位图按物理尺寸定，PDFium 把页拉伸到这块位图上
                 dpi = float(req["dpi"])
-                width_px = max(1, int(round(w_pt * dpi / 72.0)))
-                height_px = max(1, int(round(h_pt * dpi / 72.0)))
+                uu = _user_unit(pdf_path, page_index)
+                width_px = max(1, int(round(w_pt * uu * dpi / 72.0)))
+                height_px = max(1, int(round(h_pt * uu * dpi / 72.0)))
             if width_px <= 0 or height_px <= 0:
                 raise RenderChildError("bad_request", "尺寸必须为正")
             if width_px * height_px > max_pixels:
