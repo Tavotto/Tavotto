@@ -130,6 +130,9 @@ class ScanResult:
     dynamic: tuple[ImportUse, ...]
     problems: tuple[dict, ...]
     truncated: bool = False  # 本地模块跟进碰到上限
+    #: 这次扫描读过的文件（脚本 + 跟进过的本地模块），相对项目根的 POSIX 路径、排好序——
+    #: 计划的输入指纹按它们的字节算（`depplan.inputs_digest`）。
+    files: tuple[str, ...] = ()
 
     def by_bucket(self, bucket: str) -> list[ImportClass]:
         return [c for c in self.classes if c.bucket == bucket]
@@ -429,6 +432,7 @@ def scan(
     local_paths: dict[str, Path] = {}
     depth_of: dict[str, int] = {"": 0}  # via → 深度
     scanned: set[str] = set()
+    read_files: list[str] = [Path(script).as_posix()]
     pending = list(uses)
     while pending:
         use = pending.pop(0)
@@ -454,6 +458,7 @@ def scan(
                 truncated = True
                 break
             scanned.add(key)
+            read_files.append(_rel(root_p, f))
             text, problem = _read(f)
             if problem is not None:
                 problems.append(problem)
@@ -516,6 +521,7 @@ def scan(
         dynamic=tuple(dynamic),
         problems=tuple(problems),
         truncated=truncated,
+        files=tuple(sorted(set(read_files))),
     )
 
 

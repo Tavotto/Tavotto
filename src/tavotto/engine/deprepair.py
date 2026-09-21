@@ -2300,6 +2300,8 @@ class JointRepairPlan:
     private_python: dict | None = None
     #: 计划的事实来自替身（私有 Python 还没落盘）：事务供应之后按真解释器重算 delta（U05 PR B）。
     replan: bool = False
+    #: 规划输入的指纹（`depplan.JointPlan.inputs_digest`）：重算前先比它，变了就是 `repair_plan_stale`。
+    inputs_digest: str = ""
 
     def to_payload(self) -> dict:
         return {
@@ -2530,6 +2532,7 @@ def create_joint_plan(
         joint=joint.to_payload(),
         private_python=private,
         replan=replan,
+        inputs_digest=joint.inputs_digest,
     )
     _prune_plans()
     with _lock:
@@ -2641,6 +2644,7 @@ def prepare(plan_id: str, on_event=None) -> dict:
                 provision_private=plan.private_python is not None,
                 groups=plan.groups,
                 replan=plan.replan,
+                inputs_digest=plan.inputs_digest,
             )
             return _run_generation(job, cancel_ev)
         key = _env_key(TARGET_PROJECT_VENV, plan.python, plan.project)
@@ -2739,6 +2743,8 @@ class _GenerationJob:
     #: 计划的事实来自替身：供应之后按真解释器重算 delta / 关键 import / 记账（`_replan_on_base`）。
     replan: bool = False
     groups: tuple[str, ...] = ()
+    #: 用户确认的那份计划是按哪些输入算的（`JointRepairPlan.inputs_digest`）：重算时输入变了就停。
+    inputs_digest: str = ""
 
 
 def generation_requirements(
@@ -3022,6 +3028,10 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
         target_kind=TARGET_MANAGED,
         groups=list(job.groups) or None,
     )
+    # 重算读的是**此刻**的脚本与声明：用户确认的是按当时输入算的那份。下载期间脚本多了一个 import、
+    # requirements 多了一行，就不能顶着旧 plan_id 装进去——输入指纹不同即 stale，一个字节不装（Codex #475 P1）
+    if plan.inputs_digest != job.inputs_digest:
+        raise RepairError(ERROR_PLAN_STALE, "下载期间脚本或依赖声明发生了变化")
     if plan.status == depplan.STATUS_BLOCKED:
         raise RepairError(ERROR_PLAN_BLOCKED, "联合计划不可执行", joint=plan.to_payload())
     return dataclasses.replace(
