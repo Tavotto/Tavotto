@@ -80,7 +80,9 @@ U05 于 2026-09-21 开始执行（`implementation_status: in_progress`；产品�
 `runtime-lock.json` 同源）+ `engine/privatepython.py`（按内容命名的不可变目录、校验先于一切执行、离线三档、并发去重、按消费者
 取消、有代记着就不退役），接进 U04 的代事务（计划上明示 `private_python` 载荷才下载；安装器仍是 pip，uv 不进产品）；ADR 0063。
 PR C 接了目标验证腿（`private-python-targets.yml`：三平台真 pbs 经产品代码走完整链、Linux 空镜像、Windows 注册表快照；ADR 0064
-把证据分成机制 / 工程 / 目标三档，FO23 → observing，资格仍未取得）；入口接线（PR B）随后。交接见
+把证据分成机制 / 工程 / 目标三档，FO23 → observing）；PR B 接了入口（干净机器上以私有 Python 为目标算第一份计划——替身事实、
+供应后重算；一次授权里把「先下载 N MB」说出口；FO24 / FO25 / FO26 经产品 HTTP 入口 → enforced）。`implementation_status: done`；
+**无系统 Python 的资格仍未取得**（五个目标 `enabled` 全 false，第三档在 U11）。交接见
 [`handoffs/U05_private_python.md`](handoffs/U05_private_python.md)。
 
 ## 从哪里开始

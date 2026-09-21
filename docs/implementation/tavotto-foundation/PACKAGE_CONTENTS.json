@@ -44,13 +44,13 @@
     },
     {
       "path": "ALL_PROMPTS.md",
-      "bytes": 80466,
-      "sha256": "e9258609957e860c32c62faac90909e2eb77bfba6e79e749f07eb1c68e74b697"
+      "bytes": 80777,
+      "sha256": "ab443d281296c4f015941d298fb2194b6aecef1cb0a800f2ea9e707b844b1b11"
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 5352,
-      "sha256": "352c85aa251d30e3f93ec1a17225c3f6643c1904dd4f7f9eb19b08d1e8784d01"
+      "bytes": 5770,
+      "sha256": "d0fc382f5c143ad4a0dd52f6aff437adbca10c3fb7eed0f504b23e90e735bdde"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 8500,
-      "sha256": "080d90fec514edfe2b4cf9d3300c47eb93a18bd076d66cdc42df13e46c8b9340"
+      "bytes": 8811,
+      "sha256": "815f1f99af6f6b86b7723e172c05a42de3db7ef4e87fe11a1e654ca5756ae9d5"
     },
     {
       "path": "SOURCES.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 26645,
-      "sha256": "ba1a2ff4f8c79afc970e5696d9147992dc7e5a098dfb5b2c3e2b4c52d22da8f3"
+      "bytes": 28318,
+      "sha256": "388c2c255b1bbedcff6452aa472ce7f054e4058b24bc4a550e5b50e82ef033a1"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -228,6 +228,11 @@
       "sha256": "051edc7fcdf6806a9aee74504f6b6b5b6732390636d9c2028b0fc81056aa5113"
     },
     {
+      "path": "evidence/u05/mutations_pr_b.md",
+      "bytes": 1613,
+      "sha256": "06221ad1f386a00132219b3145e30d0ab8dcda03328375017f2e23ee2f57dfe8"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -244,8 +249,8 @@
     },
     {
       "path": "generated/FIRST_OPEN_SCHEDULE.md",
-      "bytes": 3924,
-      "sha256": "f24890575265f07efd652e4260d8f5e188934dcda5976036b0f76856eb796af8"
+      "bytes": 3927,
+      "sha256": "3c9b00f127e367870de9f7c9c20da257bec2f55a0f8a7f562ba8b80ce4f67989"
     },
     {
       "path": "generated/TRACEABILITY.md",
@@ -274,8 +279,8 @@
     },
     {
       "path": "handoffs/U05_private_python.md",
-      "bytes": 22462,
-      "sha256": "9184fd63e814cd257420a8754bd0d5808bb34292b16651154193d6cd5ea6bb8f"
+      "bytes": 28822,
+      "sha256": "91242091fb6fa1ba2dc10f0f85cd29199b6017550013cd52494cde759fca8000"
     },
     {
       "path": "phase_mapping.json",
@@ -344,13 +349,13 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7380,
-      "sha256": "fd39b4ca6df42986980a6e131564678f175bc430f028bf4f40e15db620ab42e0"
+      "bytes": 7373,
+      "sha256": "0a72327f234623128f232dc53f8c5a0e329092510fb7445f5c7216ad85fbc14d"
     },
     {
       "path": "registry.json",
-      "bytes": 281483,
-      "sha256": "8f2926df53e15975833f06048da121e059746b47df0d50da6892e5adb7662d5d"
+      "bytes": 286147,
+      "sha256": "c1c880998cdaa70dda2ce32cc3bb500c3a1f0ad5930cc08407f89edbeabb649c"
     },
     {
       "path": "sources_manifest.json",

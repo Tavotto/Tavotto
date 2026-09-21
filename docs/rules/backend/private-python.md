@@ -37,6 +37,12 @@
   `_GenerationJob.provision_private` 在**锁内、建 venv 之前**先供应（进度状态 `downloading_python`，`result.download`
   带 stage / 字节数）；**重建 / 包管理首装没有明示过下载**，没有 base 就照旧 `managed_env_unavailable`。
   锁文件 `enabled=false` 且没开逃生门时行为与 U04 逐字相同。
+- **干净机器的第一份计划**（PR B）：一个渲染解释器都没有时 `deprepair.private_python_target()` 以私有 Python 为目标
+  ——已供应就真量，没落盘用替身（`private_fresh_facts()`：`privatepython.standin_marker_env` + adapter 已有 + 宿主 stdlib）；
+  替身只服务披露，计划带下载（`JointRepairPlan.replan`）时事务供应后按真解释器重算（`_replan_on_base`）；执行前重量
+  走同一条路（`_facts_for_plan`）。`_facts_for` 没 base 时也用它量新的一代。`nothing_needed` 在干净机器上照样成计划
+  （环境本身就是要的），门（`gate`）在有 `private_python` 段时也问；`preparation.plan_for` 在 `no_worker_python` 时也问门。
+  受管目标的可用性（`joint_targets`）看**有没有基础解释器**（每次都建新的一代），没有且提供私有 Python → 可用 + 载荷。
 - **去重 / 取消 / 租约 / GC / 配额**：同一个 id 并发只下一次（`_inflight`：一个下载线程、若干消费者各自等；跨进程靠
   staging 带 pid + 最终目录已在就复用）；取消按消费者（D11）——一个取消只是它自己以 `private_python_cancelled` 退出
   （事务收成 `cancelled`、这一代**没登记**），最后一个消费者放弃时下载才中止；提交点之后取消无效。
@@ -58,4 +64,6 @@
   退役、孤儿 staging；HOME / 环境隔离、AST 判 import 闭集；`TestRealArchive` 真 pbs 归档要
   `TAVOTTO_PRIVATE_PYTHON_REAL=1`）+ `tests/test_private_python_transaction.py`（真事务：一次授权供应 + 建代、
   资格未取得时行为不变、offer / 单包计划带下载、重建 / 首装不下载、离线 safe_stop 不登记代、坏 hash 旧 active 原样、
-  下载期间取消无残留、两项目共享一份、有代记着的旧 runtime 不删）。
+  下载期间取消无残留、两项目共享一份、有代记着的旧 runtime 不删；`TestCleanMachine` 四条干净机器；`TestRealChain`
+  真归档要 `TAVOTTO_PRIVATE_PYTHON_REAL=1`）+ `tests/test_foundation_private_python.py`（FO24 / FO25 / FO26 经产品 HTTP
+  入口，进程内 test_client）+ `web/src/components/DependencyPrepareDialog.test.tsx` + `tests/test_mcp_server.py` 的干净机器一条。
