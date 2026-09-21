@@ -238,6 +238,48 @@ def test_the_aggregate_frozen_source_bytes_budget_fails_before_any_byte_is_read(
     assert _run(job, project, provider)["status"] == "done"
 
 
+def test_a_source_replaced_by_a_bigger_file_is_refused_after_reading_at_most_one_extra_byte(
+    project, provider, tmp_path, monkeypatch
+):
+    """Codex #463 第五轮 P2：冻结后文件被换成一个大得多的替身——`read_frozen` 分块、有界：多读一个字节就停、
+    报 `source_changed`，不把整个替身读进内存。用一个记账的 `open()` 数它到底读了多少。"""
+    import builtins
+
+    from tavotto.rendercore import sources as rcsources
+
+    fs = rcsources.StaticSourceResolver(project).resolve({"id": "figs/Fig1.pdf"})
+    frozen = int(fs.artifact.size_bytes)
+    Path(fs.path).write_bytes(b"%PDF-1.4\n" + b"x" * (frozen * 8))  # 8 倍大的替身
+    seen = {"n": 0}
+    real_open = builtins.open
+
+    class Counting:
+        def __init__(self, fh):
+            self.fh = fh
+
+        def read(self, n=-1):
+            data = self.fh.read(n)
+            seen["n"] += len(data)
+            return data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return self.fh.__exit__(*a)
+
+    def counting_open(path, *a, **k):
+        fh = real_open(path, *a, **k)
+        return Counting(fh) if str(path) == str(fs.path) else fh
+
+    monkeypatch.setattr(rcsources, "open", counting_open, raising=False)
+    with pytest.raises(rcsources.SourceError) as ei:
+        rcsources.read_frozen(fs)
+    assert ei.value.code == "source_changed" and ei.value.params["frozen_bytes"] == frozen
+    assert seen["n"] <= frozen + rcsources.READ_CHUNK, seen  # 有界：最多多读一块，不是整个替身
+    assert seen["n"] < frozen * 8
+
+
 def test_a_frozen_source_that_changes_before_writing_fails_the_job(
     project, provider, tmp_path, monkeypatch
 ):
