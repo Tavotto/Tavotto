@@ -39,7 +39,7 @@ import threading
 import tokenize
 from pathlib import Path, PurePosixPath
 
-from . import atomicio, figcapture, registry, runtime
+from . import atomicio, figcapture, projectenv, registry, runtime
 
 #: 「什么算一份图产物」的唯一出处在 `figcapture.ARTIFACT_EXTS`（捕获描述符
 #: 判原件、handoff 找产物、这里的静态扫描必须是同一张表）；旧名保留作镜像。
@@ -259,6 +259,12 @@ def analyze_in_interpreter(python: str, path: Path, figures_dir: Path) -> dict:
     目标解析器自己起不来 / 超时 / 输出不合形状时回 `{"error": …}`——那不是脚本的问题，
     调用方保留宿主的判断并把 `parser_error` 记进 problem。
     """
+    # 读的是钉在项目根之内的那一条 realpath（`..` / 指到项目外的软链接在这里现出原形），
+    # 不拿调用方的原串重拼——判过与用判过的那一个是两件事（CodeQL #146）。
+    real = projectenv.contained_path(figures_dir, path)
+    if real is None:
+        return {"error": "脚本不在项目目录之内"}
+    path = Path(real)
     try:
         digest = hashlib.sha1(path.read_bytes()).hexdigest()
     except OSError as exc:
@@ -1059,7 +1065,15 @@ def inspect_script(path: Path, figures_dir: Path, *, target_python: str | None =
     宿主 `ast.parse` 判语法错误、且给了**另一个**解释器时，在那个解释器里再跑一遍同一份
     分析（`analyze_in_interpreter`）：它解析得了就按它的结果算，脚本不从列表里消失（FO12）；
     它也解析不了才是确认的语法错误（problem 里同时记两边的版本）。
+
+    读的永远是钉在 `figures_dir` 之内的 realpath：`..` 回溯、指到项目外的软链接都算
+    `io_error`（脚本不在项目目录之内），不替调用方读项目外的文件（CodeQL #145）。
     """
+    real = projectenv.contained_path(figures_dir, path)
+    if real is None:
+        problem = {"kind": PROBLEM_IO, "detail": "脚本不在项目目录之内"}
+        return {"info": None, "problem": problem, "parser": None, "entry_candidates": None}
+    path = Path(real)
     text, problem = read_source(path)
     if problem is not None:
         return {"info": None, "problem": problem, "parser": None, "entry_candidates": None}

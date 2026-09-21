@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from . import discover, pool, registry
+from . import discover, pool, projectenv, registry
 
 LOG = logging.getLogger("tavotto.probe")
 
@@ -159,7 +159,11 @@ def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
     也解得出）补齐其余。脚本解析不了时退回盲试 FALLBACK_ENTRIES——运行期
     会给出真正的报错（语法错误的 traceback 比静态猜测有解释力）。
     """
-    path = Path(figures_dir) / script
+    # 脚本钉在项目根之内的 realpath 才读；在外面就是「解析不了」那一档，退回盲试列表
+    real = projectenv.contained_path(figures_dir, script)
+    if real is None:
+        return list(FALLBACK_ENTRIES)
+    path = Path(real)
     info = discover.analyze_script(path, Path(figures_dir))
     static = discover.probe_entry_candidates(path)
     out: list[str] = []
