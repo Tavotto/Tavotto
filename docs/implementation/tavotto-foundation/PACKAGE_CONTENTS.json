@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U05（2026-09-21，里程碑合并 A + C + B）加 ADR 0063 / 0064 落地表、evidence/u05、交接与台账后再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -44,13 +44,13 @@
     },
     {
       "path": "ALL_PROMPTS.md",
-      "bytes": 76027,
-      "sha256": "833c2b17971d4107049ce6cfa6651196378765e1c70a14b7a3467cd0507c58cc"
+      "bytes": 80777,
+      "sha256": "ab443d281296c4f015941d298fb2194b6aecef1cb0a800f2ea9e707b844b1b11"
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 5350,
-      "sha256": "18f1099048f93b663109babc4c0bde8ac1ba6be30d08a6e39f4922897e1b1cc3"
+      "bytes": 5770,
+      "sha256": "d0fc382f5c143ad4a0dd52f6aff437adbca10c3fb7eed0f504b23e90e735bdde"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 8957,
-      "sha256": "9b9a669e719b78b7505d2bff0d1e7fb983a69363173bb8faa4d360193f28857e"
+      "bytes": 10265,
+      "sha256": "3814b904953603d54c81578bb78dd8c43f76d7f2ea20c25d0eac9649195deb1c"
     },
     {
       "path": "SOURCES.md",
@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 46781,
-      "sha256": "28006651bc4d7280b5ddf479769598cec2417202c0a6847226b8d37962431388"
+      "sha256": "fc5cc2b7893d01a220e1bc150e777ef6d3194b5a7da204dcfcc4885a652e555d"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 22199,
-      "sha256": "5139c16e7fe5d7f42b968349eb4d0eac270d3fecb5453898838718d39f94863f"
+      "sha256": "412b4555665b66c444d92acb14d0d322c9cac1ae4884d66b91522358fbffa782"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 25750,
-      "sha256": "71e97b154fa8acd57ccaa28bd6c48e5440d5b7ae0d1278edd9c38cdbd0b8edd9"
+      "bytes": 28318,
+      "sha256": "388c2c255b1bbedcff6452aa472ce7f054e4058b24bc4a550e5b50e82ef033a1"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -258,6 +258,26 @@
       "sha256": "57e6faa611d6b879208652301c26e14955c700aca20cadaec080c3bdb044b7b8"
     },
     {
+      "path": "evidence/u05/empty-image-linux-arm64.json",
+      "bytes": 1026,
+      "sha256": "7b3dc6ab684cf356afba56051788b7949242b53744c3eeac2cb5911c22a09d04"
+    },
+    {
+      "path": "evidence/u05/engineering-chain-macos-arm64.json",
+      "bytes": 4187,
+      "sha256": "02132cacf2156cb318aebca432a44bba4285fbebddaf56fb0b1160e7e09df960"
+    },
+    {
+      "path": "evidence/u05/mutations_pr_a.md",
+      "bytes": 9156,
+      "sha256": "afbfe51f6fe2a2acf32316dea7dad2434ec4a02f8c72b62e01decdaa1f1adf81"
+    },
+    {
+      "path": "evidence/u05/mutations_pr_b.md",
+      "bytes": 3539,
+      "sha256": "966a0b45b9cd88e46ba4586a2a3b73d1ecdb19d42cd98a4e0ca71653dab4f47b"
+    },
+    {
       "path": "evidence/u06/README.md",
       "bytes": 2457,
       "sha256": "4217bd1dab3e866e7e2cfdfd18987bfb0f915df7cf4b853f1c635a8559a707b9"
@@ -309,8 +329,8 @@
     },
     {
       "path": "generated/FIRST_OPEN_SCHEDULE.md",
-      "bytes": 3899,
-      "sha256": "2e13698223d0d7daa11eee8f2d2b3cf1833da2e1112cdbe5007fb959f4be7856"
+      "bytes": 3927,
+      "sha256": "3c9b00f127e367870de9f7c9c20da257bec2f55a0f8a7f562ba8b80ce4f67989"
     },
     {
       "path": "generated/TRACEABILITY.md",
@@ -341,6 +361,11 @@
       "path": "handoffs/U04_dependencies.md",
       "bytes": 35258,
       "sha256": "346407e2bf9637c418e10111e2e857133742fd90d4504682482c3fb66b1398c8"
+    },
+    {
+      "path": "handoffs/U05_private_python.md",
+      "bytes": 31428,
+      "sha256": "1cab939cb2a2ddd6be86abfc46f04d6b1f110c6cc3fa3d62a731f86dbdce60ca"
     },
     {
       "path": "handoffs/U06_ir_text.md",
@@ -414,13 +439,13 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7366,
-      "sha256": "21ebb556824148c96be155c3e92ef73bae76bbc9dcb646beacdaea3aaff50a9c"
+      "bytes": 7359,
+      "sha256": "98f7c6cb3882adb720adcd5d55e372298c1c027cb7ad92a8a12c60e12b20b29d"
     },
     {
       "path": "registry.json",
-      "bytes": 281481,
-      "sha256": "2efc58c8efc12cbf55e7f9780946f1ede30c5a15aa9451272e27c8190cf3a73a"
+      "bytes": 286147,
+      "sha256": "c1c880998cdaa70dda2ce32cc3bb500c3a1f0ad5930cc08407f89edbeabb649c"
     },
     {
       "path": "sources_manifest.json",
