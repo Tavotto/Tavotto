@@ -1943,7 +1943,6 @@ export default interface Resources {
         "dependency_requires_build": "该依赖没有适合当前 Python 的预编译版本。可换 Python 环境，或在终端里手动安装。",
         "dependency_unresolved": "无法确定该模块对应哪个安装包。",
         "dependency_worker_selftest_failed": "安装后环境仍无法运行。",
-        "environment_in_use_by_native_session": "这个环境正被一条 tavotto run 会话使用。结束那个脚本后再试。",
         "environment_mutating": "Python 环境正在安装依赖，请稍后再试。",
         "managed_env_broken": "Tavotto 环境已损坏，可以重建。",
         "managed_env_create_failed": "无法创建 Tavotto 环境。",
