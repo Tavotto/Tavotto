@@ -204,6 +204,9 @@ def offline_managed_env(monkeypatch):
     # 所以这里同样把 adapter 换成空表。生产上那两样各有单元用例逐字钉着
     # （`test_dependency_plan.py::test_adapter_requirements_mirror_the_worker_extra`）。
     monkeypatch.setattr(depplan, "ADAPTER_REQUIREMENTS", ())
+    # 新的一代「必然会有」的 distribution（`fresh_venv_facts(provided=)`）：生产上由 adapter 装进去，
+    # 这里由上面的 `.pth` 嫁接给——计划照样不把 matplotlib / numpy 列进要装的集合
+    monkeypatch.setattr(depplan, "adapter_distributions", lambda: ("matplotlib", "numpy"))
     original = managedenv.create_venv
     original_generation = managedenv.create_generation_venv
 

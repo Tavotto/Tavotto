@@ -133,6 +133,18 @@ pytest 0；变异 17/17；旧 e2e 全绿。**回退**：revert PR B 即回到原
 里多出 `generations` / `active`，旧代码 `read_manifest` 读得懂（schema 未变）但 `venv_python()` 会指回 `venv/`——若那时
 `venv/` 不存在，`python_of` 回 None，用户看到「环境不存在」，重装即可；没有别的外部副作用。
 
+**PR B 第二轮（Codex #461 评审，3 P1 + 2 P2，全部修在 B）**：
+
+| 评审 | 处置 | 用例 |
+|---|---|---|
+| P1 重建两次同一份账 → 同一个身份 → `register_generation` 把 active 改成 incomplete、`create_generation_venv` 把 active 目录 rmtree | `managedenv.fresh_generation(project, identity)`：目录名撞**在册**的代（active / 旧代还有人用——`retire_unused` 之后只剩这两种）就 `g<身份>-2`、`-3`……身份字段照记；`register_generation` 拒绝重新登记 active / `ready` 的代（结构性：撞上就抛，不静默覆盖） | `test_fresh_generation_never_reuses_a_registered_name`（单元）、`test_rebuild_twice_never_touches_the_active_directory`（真事务：建代那一刻 active 目录在、状态 ready） |
+| P1 hash 模式 + 受管目标：adapter 没 hash 混进 `--require-hashes` 的需求文件，整次必败（离线夹具把 adapter 换空所以从没量到） | 计划期校验 `depplan._adapter_against_lock`：锁必须把 matplotlib / numpy 用 `==` 钉在 adapter 范围内（没钉 → `dependency_hashes_incomplete` 带 `adapter`；钉在范围外 → `dependency_conflict`）；`generation_requirements(hash_mode=True)` 只给锁本身（adapter / 账上那些不进文件） | `test_hash_mode_on_the_managed_target_requires_the_lock_to_pin_the_adapter`（三个分支）、`test_generation_requirements_in_hash_mode_are_the_lock_only`、`test_hash_locked_managed_generation_installs_only_the_lock`（真 pip `--require-hashes` 成代，文件只有两行锁；锁没钉 adapter 计划期 409） |
+| P1 选中项目 venv、显式选受管目标：事实按项目 venv 量，代却从 base 建 → 新代漏装、marker 按另一个 minor | `deprepair._facts_for(kind, python, root)` 回两份：缺什么按**此刻会跑脚本的**解释器（门的主语）、装什么 / marker / stdlib 按**目标**（active 那一代；没有就 `depplan.fresh_venv_facts(base, provided=adapter_distributions())`——marker 与 stdlib 是 base 的、已装只有 adapter 必然带上的）；`depplan.plan(install_facts=)` 集合按它量 | `test_install_facts_measure_the_set_against_the_target_not_the_current_interpreter`、`test_fresh_venv_facts_provide_the_adapter_and_nothing_else`、`test_managed_target_from_a_project_venv_installs_the_full_needed_set`（真 venv 里有 alpha → 新代 alpha + beta 都装，项目 venv 一个字节不动） |
+| P2 执行前只重算解释器指纹，目标里的包变了不算 stale | `prepare()` 执行前 `_facts_for(..., use_cache=False)` 重量两份 digest，任一不同 → `repair_plan_stale`；`JointRepairPlan` 多 `facts_python` / `install_facts_digest` | `test_stale_plan_is_refused_when_the_target_packages_changed` |
+| P2 自检期间接受的取消照常提交 | 受管与用户 venv 两条路都在 `worker_self_test` 之后、提交点之前再看一次事件；用户 venv 那条如实报 cancelled + 体检（包已在里面） | `test_cancel_accepted_during_the_selftest_is_honored`（受管）/ `…_in_place`（用户 venv） |
+
+变异 B18–B27 见 `evidence/u04/mutations_pr_b.md` 第二轮。顺带：`_within` 三处合一（A 分支，team-lead 指示：`projectenv.within` 是唯一判据）。
+
 **下一个无阻塞阶段 / 子切片**：PR C（门 / 端点 / 前端 / MCP / 场景）。PR B 给它的输入：`deprepair.joint_plan_for`（只读算计划）、`create_joint_plan` / `prepare_async` / `progress` / `cancel_status`、`JointRepairPlan.to_payload()`（不含路径）。PR A 给 PR B 的输入曾是：`JointPlan.requirements / constraints / hashes / require_hashes /
 adapter / identity`；`depplan.reset_cache(python)` 在事务结束时调；`ADAPTER_REQUIREMENTS` 是受管环境每一代的基座。
 U05 的输入：ADR §四（安装器接入规则）。U06 并行：本 PR 只碰 `pyproject.toml` 的 `dependencies` 三行（U06 加可选 extra，

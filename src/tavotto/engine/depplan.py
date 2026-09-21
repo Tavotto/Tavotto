@@ -395,22 +395,29 @@ def plan(
     target_kind: str,
     groups: list[str] | None = None,
     intents: list[depresolve.DependencyIntent] | None = None,
+    install_facts: TargetFacts | None = None,
 ) -> JointPlan:
-    """拼一份联合计划。`facts` 是**当前选中的**解释器的事实（缺什么按它量）；`target_kind`
-    说安装会落到哪种环境（受管环境并入 adapter 约束，用户 venv 不并入）。"""
+    """拼一份联合计划。`facts` 是**此刻会跑脚本的**解释器的事实（缺什么按它量——门问的是
+    「现在起会话会不会缺包」）；`target_kind` 说安装会落到哪种环境（受管环境并入 adapter 约束，
+    用户 venv 不并入）；`install_facts` 是**装到哪**的事实——安装目标不是 `facts` 那个环境时给
+    （选中的是项目 venv / 系统解释器、目标是受管环境：active 那一代，或从 base 新建的一代——
+    marker 环境与 stdlib 按 base、已装集合为空）。交给安装器的集合按它量，否则新的一代会漏装
+    选中环境里碰巧有的包（Codex #461 P1）；marker 与 stdlib 也按它——脚本装完是在它里面跑。"""
     if target_kind not in TARGETS:
         raise ValueError(f"target_kind 非法: {target_kind!r}")
     root_p = Path(root)
     intents = depresolve.declared_intents(root_p, script) if intents is None else list(intents)
-    marker_env = facts.marker_env if facts is not None else None
+    target = install_facts if install_facts is not None else facts
+    marker_env = target.marker_env if target is not None else None
     selection = select(intents, marker_env=marker_env, groups=groups)
     declared = {}
     for it in selection.requirements:
         declared.setdefault(it.name, it.specifier)
     scan = importscan.scan(
-        root_p, script, declared=declared, stdlib=facts.stdlib if facts is not None else None
+        root_p, script, declared=declared, stdlib=target.stdlib if target is not None else None
     )
     installed = facts.installed if facts is not None else {}
+    target_installed = target.installed if target is not None else {}
     _requirements, _markers, specifiers, _utils, _version = depresolve._pkg()
 
     needed = tuple(c.to_payload() for c in scan.needed)
@@ -457,8 +464,10 @@ def plan(
                     matches = False
         satisfied.append({**entry, "installed_version": version, "matches_declared": matches})
 
-    # ---- 交给安装器的集合 ------------------------------------------------------
-    missing_names = {m["distribution"] for m in missing}
+    # ---- 交给安装器的集合（按**装到哪**量：目标已有的不装、其余 needed 的全装） --------------
+    to_install = {
+        c.distribution for c in scan.needed if target_installed.get(c.distribution) is None
+    }
     hash_mode = any(it.hashes for it in selection.requirements)
     reqs: list[str] = []
     hashes: dict[str, list[str]] = {}
@@ -485,7 +494,7 @@ def plan(
                 if h not in hashes[text]:
                     hashes[text].append(h)
     else:
-        for name in sorted(missing_names):
+        for name in sorted(to_install):
             for it in by_name.get(name, ()):
                 text = depresolve.requirement_string(it)
                 if text not in reqs:
@@ -495,7 +504,7 @@ def plan(
                 if name not in reqs:
                     reqs.append(name)
     for it in selection.requirements:
-        if hash_mode or it.name in missing_names:
+        if hash_mode or it.name in to_install:
             continue  # 要装的不再当约束（hash 模式下全部都是要装的）
         if it.specifier:
             text = f"{it.name}{it.specifier}"
@@ -507,6 +516,18 @@ def plan(
             if text not in cons:
                 cons.append(text)
     adapter = ADAPTER_REQUIREMENTS if target_kind == TARGET_MANAGED else ()
+    if hash_mode and adapter:
+        # 锁文件语义下 pip 要每一条都有 hash，adapter 那几条我们给不出 hash——**不写进需求文件**
+        # （`deprepair.generation_requirements` hash 模式只给锁本身），改为要求锁已经把它们钉住
+        # （`==` 且在 adapter 范围内）。锁就是闭包：它没锁 matplotlib，新的一代就装不出 worker 能跑
+        # 的环境，那是 blocked，不是「偷偷不带 hash 装一条」（Codex #461 P1）。
+        unlocked, outside = _adapter_against_lock(adapter, selection.requirements)
+        if unlocked:
+            blocked.append(
+                {"code": BLOCK_HASHES_INCOMPLETE, "adapter": unlocked, "count": len(unlocked)}
+            )
+        if outside:
+            blocked.append({"code": BLOCK_CONFLICT, "conflicts": outside})
 
     # ---- 状态 ------------------------------------------------------------------
     if facts is None:
@@ -532,6 +553,8 @@ def plan(
     else:
         status = STATUS_NOTHING_NEEDED
     facts_payload = facts.to_payload() if facts is not None else {}
+    if install_facts is not None:
+        facts_payload["install"] = install_facts.to_payload()
     identity = _identity(
         target_kind=target_kind,
         requirements=reqs,
@@ -565,6 +588,72 @@ def plan(
 
 def _digest(obj) -> str:
     return hashlib.sha256(json.dumps(obj, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def fresh_venv_facts(
+    base: str, *, use_cache: bool = True, provided: tuple[str, ...] = ()
+) -> TargetFacts | None:
+    """从 `base` 新建的一代**装之前**的事实：marker 环境与 stdlib 是 base 的（venv 继承解释器），
+    已装集合为空（不带 `--system-site-packages`，`managedenv.create_generation_venv`）——只有
+    `provided`（这一代必然会带上的 distribution：受管环境的 adapter，`adapter_distributions()`）
+    算作已有，版本未知记空串；它们不进 `requirements`（adapter 自己会装）。"""
+    facts = target_facts(base, use_cache=use_cache)
+    if facts is None:
+        return None
+    installed = {depresolve.normalize_distribution(name): "" for name in provided}
+    return dataclasses.replace(facts, installed=installed, prefix="", executable="")
+
+
+def adapter_distributions() -> tuple[str, ...]:
+    """adapter 那几条的 distribution 名（PEP 503）——受管环境的每一代都会带上它们。"""
+    requirements, _markers, _specifiers, _utils, _version = depresolve._pkg()
+    return tuple(
+        depresolve.normalize_distribution(requirements.Requirement(text).name)
+        for text in ADAPTER_REQUIREMENTS
+    )
+
+
+def _adapter_against_lock(
+    adapter: tuple[str, ...], lock: list[depresolve.DependencyIntent]
+) -> tuple[list[str], list[dict]]:
+    """hash 模式：adapter 的每一条在锁里有没有 `==` 钉住、钉住的版本在不在 adapter 范围内。
+    回 (没钉住的名字, 钉在范围外的冲突条目——与 `depresolve.conflicts()` 同一形状)。"""
+    requirements, _markers, specifiers, _utils, _version = depresolve._pkg()
+    unlocked: list[str] = []
+    outside: list[dict] = []
+    for text in adapter:
+        req = requirements.Requirement(text)
+        name = depresolve.normalize_distribution(req.name)
+        pins = [it for it in lock if it.name == name and _pinned_version(it.specifier, specifiers)]
+        if not pins:
+            unlocked.append(name)
+            continue
+        for it in pins:
+            version = _pinned_version(it.specifier, specifiers)
+            if not req.specifier.contains(version, prereleases=True):
+                outside.append(
+                    {
+                        "name": name,
+                        "specifiers": [it.specifier, str(req.specifier)],
+                        "sources": [it.source, "adapter"],
+                        "kinds": [it.kind],
+                        "reasons": [
+                            f"锁里 {name}{it.specifier} 不在 Tavotto 需要的 {req.specifier} 内"
+                        ],
+                    }
+                )
+    return unlocked, outside
+
+
+def _pinned_version(specifier: str, specifiers) -> str:
+    """`==X`（不带通配、只有这一条）→ X；否则空串。"""
+    try:
+        parsed = list(specifiers.SpecifierSet(specifier))
+    except (specifiers.InvalidSpecifier, ValueError):
+        return ""
+    if len(parsed) != 1 or parsed[0].operator != "==" or parsed[0].version.endswith("*"):
+        return ""
+    return parsed[0].version
 
 
 def _identity(
