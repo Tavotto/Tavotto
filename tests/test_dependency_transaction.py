@@ -1119,6 +1119,7 @@ class TestGate:
             plan_id="p",
             project_id="pid",
             project_root=str(tmp_path),
+            interpreter=sys.executable,
             asset_id="figure.pdf",
             stem="figure",
             script="figure.py",
