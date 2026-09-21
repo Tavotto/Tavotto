@@ -437,7 +437,7 @@ def test_a_page_with_no_operations_rasterizes_to_blank_bitmaps_and_refuses_eps(
         assert by_fmt[fmt]["status"] == "done" and by_fmt[fmt]["vector"] is False, fmt
         assert (export_dir / f"Fig 1.{fmt}").stat().st_size > 0
     assert by_fmt["eps"]["status"] == "failed"
-    assert by_fmt["eps"]["error"]["code"] == "format_failed"
+    assert by_fmt["eps"]["error"]["code"] == "eps_not_for_canvas"  # 与旧路同一个稳定码（U08）
     assert by_fmt["eps"]["error"]["params"]["unsupported"][0]["operation"] == "format"
     assert not (export_dir / "Fig 1.eps").exists()
     assert (export_dir / "Fig 1.pdf").read_bytes()[:5] == b"%PDF-"

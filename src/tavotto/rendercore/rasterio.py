@@ -100,6 +100,21 @@ def header_size(data: bytes, kind: str) -> tuple[int, int]:
     return int(im.width), int(im.height)
 
 
+def _has_alpha(im) -> bool:
+    return im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info
+
+
+def header_info(data: bytes, kind: str) -> dict:
+    """`{width, height, alpha}`，**不解码**（Pillow 懒打开只读头；JPEG 永远没有 alpha）。facade 的
+    `probe_asset(kind="raster")` 用它——`alpha` 是「这张位图带不带透明通道」（调色板的 tRNS 也算），
+    与旧后端 `Pixmap.alpha` 同一问题。密度不从这里取（`engine/originalspec` 是唯一出处）。"""
+    sof = _jpeg_sof(data, kind)
+    if sof is not None:
+        return {"width": int(sof["width"]), "height": int(sof["height"]), "alpha": False}
+    im = _open(data, kind)
+    return {"width": int(im.width), "height": int(im.height), "alpha": _has_alpha(im)}
+
+
 def decode(data: bytes, kind: str, *, max_pixels: int | None = None) -> RasterBuffer:
     """字节 → RasterBuffer（RGB 或 RGBA，紧凑 stride，alpha straight）。"""
     im = _open(data, kind)
@@ -112,8 +127,7 @@ def decode(data: bytes, kind: str, *, max_pixels: int | None = None) -> RasterBu
         if im.mode in ("I;16", "I;16B", "I;16L", "I;16N", "I"):
             # 16 bit 灰度：取高 8 位（Pillow 的 convert("L") 会把 >255 的值截断成 255）
             im = im.point(lambda v: v * (1.0 / 256.0)).convert("L")
-        has_alpha = im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info
-        rgb = im.convert("RGBA" if has_alpha else "RGB")
+        rgb = im.convert("RGBA" if _has_alpha(im) else "RGB")
         samples = rgb.tobytes()
     except (OSError, ValueError) as exc:
         raise RasterDecodeError("raster_unreadable", f"{kind}: 解码失败 {exc}") from exc
@@ -205,6 +219,7 @@ __all__ = [
     "RASTER_DECODE_CODES",
     "RasterDecodeError",
     "decode",
+    "header_info",
     "header_size",
     "jpeg_passthrough",
     "require",

@@ -11,16 +11,17 @@ partial / 取消 / 终局字段顺序）一个字不改**，全在 `exportjob` �
 = 页面不画底 + child 从全 0 起算，PNG 色型 6 / TIFF ExtraSamples 2 都是 straight alpha；密度 = 请求的 ppi）。
 PDF 没要也照样写进临时目录——它是 PNG / TIFF 的唯一来源，不存在「PNG 用另一个 layout 引擎」这条路。
 其它格式按 `ir.CAPABILITIES` 逐项报 `format_failed`（error 里带结构化理由），能出的照常交付——`partial`
-是 `exportjob` 的既有语义。写入器的 `WriterError`（不支持的操作、源打不开、字节身份不符）与 child 的
+是 `exportjob` 的既有语义；EPS 报旧路同一个稳定码 `eps_not_for_canvas`（U08 入口审计：老客户端认它）。写入器的 `WriterError`（不支持的操作、源打不开、字节身份不符）与 child 的
 `RenderChildError`（超时 / 崩溃 / 预算）同样落到该格式的 `format_failed`，不整页失败、不静默降级、不拿
 旧文件冒充。
 
 编译期的事实（缺字、落到 CJK 脸的字符、hidden 被丢）进 `job.warnings`，与旧路 worker 的
 warnings 同一个口子——「导出的图和画布上不一样」必须有个说法。
 
-**本模块在 U07 仍不接任何用户可见入口**（`app.py` 不 import 它）；由 `tests/test_rendercore_job.py` /
-`test_rendercore_rasterize.py` 经真实的 `exportjob.prepare / run` 驱动。`host=None` 时用进程级共享的
-render child（`renderhost.shared()`）。
+U08 起 `app._export_produce` 在候选后端被选中时（`pdfbackend.selected() == "rendercore"`，ADR 0067）把
+`scope=canvas` 交给这里：`sources` 是 `ExecutionSourceResolver`（带 override / runtime 素材由当次 worker 现画
+并附回执）、`provider` / `host` 来自 `rendercore.facade`（一个进程一份字体注册表、一个 render child）。
+默认后端仍是 PyMuPDF，那条路一字不变。`host=None` 时用进程级共享的 render child（`renderhost.shared()`）。
 """
 
 from __future__ import annotations
@@ -214,6 +215,16 @@ def produce(
         gaps = rp.unsupported.get(fmt) or [
             {"operation": "format", "reason": f"RenderCore 没有 {fmt} 写入器", "object_id": ""}
         ]
+        if fmt == exportreq.FORMAT_EPS:
+            # 画布合成给不出 EPS（没有 PostScript 写入器，ADR 0046）：与旧路同一个稳定码
+            # `eps_not_for_canvas`（i18n 两侧都有它），不另造一个码让界面认不出（RC-090）；
+            # 结构化理由照样带在 params 里
+            produced.append(
+                exportjob.Produced(
+                    format=fmt, error_code="eps_not_for_canvas", error_params={"unsupported": gaps}
+                )
+            )
+            continue
         failed(fmt, _gap_text(gaps), unsupported=gaps)
     return produced
 

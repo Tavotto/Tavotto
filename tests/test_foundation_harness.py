@@ -65,7 +65,7 @@ def test_only_one_case_is_enforced_and_it_points_at_this_file():
     counts = {}
     for c in ledger["cases"]:
         counts[c["enrollment"]] = counts.get(c["enrollment"], 0) + 1
-    assert counts == {"planned": 31, "later": 1, "enforced": 1, "observing": 1}
+    assert counts == {"planned": 31, "later": 1, "enforced": 1, "observing": 2}
 
 
 def test_the_derived_markdown_is_current():
