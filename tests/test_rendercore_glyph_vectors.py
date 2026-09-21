@@ -119,8 +119,9 @@ def test_the_candidate_primary_layer_is_the_intersection_of_all_twelve_faces():
     from tavotto.rendercore import facade, typography
 
     prov = facade.provider()
-    table = _load(CANDIDATE_TABLE)
-    primary = {c for lo, hi in table["layers"]["primary"] for c in range(lo, hi + 1)}
+    live = facade.coverage_ranges()  # 主语是函数本身；进了 git 的表由生成器 --check 那条看护
+    primary = {c for lo, hi in live["primary"] for c in range(lo, hi + 1)}
+    assert live == _load(CANDIDATE_TABLE)["layers"]
     faces = [
         prov.face_for(fam, b, i)
         for fam in typography.CANVAS_TEXT_FAMILIES
