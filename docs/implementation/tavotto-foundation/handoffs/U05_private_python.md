@@ -173,7 +173,7 @@ FO24 / 25 / 26 仍待 PR B 经真实入口提升。**没有取得任何平台的
 | `PYTHONPATH=$WT/src pytest tests/test_foundation_private_python.py` | 同上；进程内 HTTP 入口、真渲染 | 0 | 3 passed（约 48 s） |
 | `PYTHONPATH=$WT/src pytest tests/test_foundation_dependencies.py tests/test_foundation_harness.py tests/test_foundation_plan_integrity.py tests/test_foundation_fixtures.py tests/test_mcp_server.py -k …` | 同上 | 0 | U04 的五条 HTTP 场景仍绿；台账 / 计划 / 夹具门禁绿；MCP 两条 |
 | `cd web && pnpm test && pnpm build && pnpm i18n:check` | 同上（worktree 里真 `pnpm install`） | 0 / 0 / 0 | 281 files / 4166 tests；build 绿；i18n 绿 |
-| 变异 M24–M29、M40–M43（`evidence/u05/mutations_pr_b.md`） | 同上 | 每条非零 | 供应后不重算 / 干净机器不走私有 Python / nothing_needed 不建环境（用例第一版撞不上那条分支，改成只用标准库的脚本后红）/ 单包修复只在 creates 时问 / 进来前已取消不拒绝 / .part 打不开归成离线 / 重算前不比输入指纹（变异下 pip 真把新加的包装进去了）/ 指纹不含文件字节 / 不含声明意图 / 扫描不报本地模块文件 |
+| 变异 M24–M29、M40–M47（`evidence/u05/mutations_pr_b.md`） | 同上 | 每条非零 | 供应后不重算 / 干净机器不走私有 Python / nothing_needed 不建环境（用例第一版撞不上那条分支，改成只用标准库的脚本后红）/ 单包修复只在 creates 时问 / 进来前已取消不拒绝 / .part 打不开归成离线 / 重算前不比输入指纹（变异下 pip 真把新加的包装进去了）/ 指纹不含文件字节 / 不含声明意图 / 扫描不报本地模块文件 |
 | `PYTHONPATH=$WT/src pytest`（全量） | 同上 | 见 PR 正文 | 见 PR 正文 |
 
 **顺带发现**：① worktree 里跑起子进程的用例（`running_app` / MCP）时 `PYTHONPATH` 必须是**绝对**路径——相对的 `src` 在子进程的 cwd 下解析不到，import 到主工作区那份，表现是 `/api/engine/preparation` 404（U04 五条场景假红，`shared-workdir-contention` 那条教训的又一形状）；② `deprepair.base_python()` 的进程内缓存在锁换版本（只随升级、进程重启发生）时不会自动失效——用例用 `reset_state()` 表达重启。
