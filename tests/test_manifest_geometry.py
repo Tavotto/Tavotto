@@ -162,6 +162,19 @@ def main():
     rr, tt = np.meshgrid(np.linspace(0.2, 1.0, 6), np.linspace(0.0, np.pi, 9))
     ax9.pcolormesh(tt, rr, np.random.RandomState(1).rand(8, 5))
     fig7.savefig("MeshFig.pdf")
+
+    # MeshOffsetFig：带 offsets 的网格（渲染器按 offset_transform 变换后逐 cell 循环
+    # 加到坐标上）。collections_0 没有偏移，collections_1 一条偏移 = 整块平移，
+    # collections_2 两条不同的偏移 = cell 各奔东西、没有外轮廓可言
+    fig8, ax10 = plt.subplots(figsize=(4.0, 3.0))
+    ox, oy, oc = np.linspace(0, 1, 5), np.linspace(0, 1, 4), np.random.RandomState(2).rand(3, 4)
+    ax10.pcolormesh(ox, oy, oc)
+    ax10.pcolormesh(ox, oy, oc, offsets=[[0.5, 0.2]], offset_transform=ax10.transData)
+    ax10.pcolormesh(ox, oy, oc, offsets=[[0.0, 0.0], [0.6, 0.6]],
+                    offset_transform=ax10.transData)
+    ax10.set_xlim(0.0, 2.0)
+    ax10.set_ylim(0.0, 2.0)
+    fig8.savefig("MeshOffsetFig.pdf")
 """
 
 
@@ -678,6 +691,27 @@ def test_quadmesh_outline_follows_a_curvilinear_grid(library):
     (path,) = geom["paths"]
     assert path["closed"] is True
     assert len(path["points"]) > 8, "曲线边界抽稀后仍然远不止四个角"
+
+
+def test_quadmesh_outline_follows_collection_offsets(library):
+    """带 `offsets` 的网格：一条偏移 = 整块平移，轮廓跟着走（渲染器把偏移经
+    `offset_transform` 变换后加到坐标上，这里同一口径）；多条不同的偏移让 cell 各奔
+    东西，没有外轮廓可言——退回 bbox（#473 评审）。"""
+    man = _manifest(library, stem="MeshOffsetFig")
+    ax_box = _el(man, "axes_0")["bbox"]
+    base = _el(man, "axes_0.collections_0")["geometry"]["paths"][0]["points"]
+    moved = _el(man, "axes_0.collections_1")["geometry"]["paths"][0]["points"]
+    # 偏移是**点**经 transData：data (0.5, 0.2) 的 display 位置整个加上去。
+    # xlim / ylim 都是 (0, 2)，所以 x 方向 = 子图左沿 + 1/4 子图宽；y 方向（top-origin，
+    # 向下为正）= -(子图底沿离图底的距离 + 1/10 子图高)
+    x0, y0, w, h = ax_box
+    dx = x0 + 0.25 * w
+    dy = -((1.0 - (y0 + h)) + 0.1 * h)
+    assert len(moved) == len(base)
+    for (bx, by), (mx, my) in zip(base, moved):
+        assert mx - bx == pytest.approx(dx, abs=2e-3)
+        assert my - by == pytest.approx(dy, abs=2e-3)
+    assert "geometry" not in _el(man, "axes_0.collections_2"), "逐 cell 偏移的网格应当退回 bbox"
 
 
 def test_line_collection_traces_each_line(library):

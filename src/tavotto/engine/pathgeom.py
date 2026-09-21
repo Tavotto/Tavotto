@@ -429,7 +429,26 @@ def _quadmesh_outline_subpaths(mesh) -> list[tuple]:
     codes[0] = Path.MOVETO
     codes[-1] = Path.CLOSEPOLY
     path = Path(np.vstack([ring, ring[:1]]), codes)
-    return _display_subpaths(path, mesh.get_transform())
+    subs = _display_subpaths(path, mesh.get_transform())
+    # offsets：渲染器按 `offset_transform` 变换后**逐 cell 循环**加到坐标上
+    # （`RendererBase._iter_collection` 的口径）。默认是一条 (0, 0) 经 Identity，
+    # 什么都不加；脚本传了 `offsets=` 时整块网格是平移过的，轮廓要跟着走。
+    # 多条**不同**的偏移意味着 cell 各奔东西、不再是一整块——那时外轮廓无从谈起，
+    # 退回 bbox（bbox 同样不认 offsets，这是既有的边界，两处一起错总比轮廓单独
+    # 错更容易被看出来）。
+    try:
+        offs = np.asarray(mesh.get_offsets(), dtype=float).reshape(-1, 2)
+        toffs = np.asarray(mesh.get_offset_transform().transform(offs), dtype=float)
+    except Exception:  # noqa: BLE001 — 取不到偏移就按无偏移处理
+        toffs = np.zeros((1, 2))
+    if len(toffs) == 0:
+        return subs
+    if not np.allclose(toffs, toffs[0]):
+        return []
+    dx, dy = float(toffs[0][0]), float(toffs[0][1])
+    if dx or dy:
+        subs = [(pts + np.asarray([dx, dy]), closed) for pts, closed in subs]
+    return subs
 
 
 def _marker_subpaths(coll, budget: Budget) -> list[tuple] | None:
