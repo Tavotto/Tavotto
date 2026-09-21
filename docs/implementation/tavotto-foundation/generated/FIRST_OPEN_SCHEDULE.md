@@ -28,9 +28,9 @@
 | FO21 | 依赖约束不可同时满足 | U04 | integration_candidate | safe_stop | enforced | not_run |
 | FO22 | 已安装但原生库无法 import | U04 | integration_candidate | safe_stop | enforced | not_run |
 | FO23 | 无系统 Python/uv/pip 冷启动 | U05 | release | guided | observing | not_run |
-| FO24 | 离线且受管 runtime/wheels 缓存齐备 | U05 | integration_candidate | automatic | planned | not_run |
-| FO25 | 离线且无可用缓存 | U05 | pr_candidate | safe_stop | planned | not_run |
-| FO26 | 下载损坏、截断和错误哈希 | U05 | integration_candidate | safe_stop | planned | not_run |
+| FO24 | 离线且受管 runtime/wheels 缓存齐备 | U05 | integration_candidate | automatic | enforced | not_run |
+| FO25 | 离线且无可用缓存 | U05 | pr_candidate | safe_stop | enforced | not_run |
+| FO26 | 下载损坏、截断和错误哈希 | U05 | integration_candidate | safe_stop | enforced | not_run |
 | FO27 | 准备/运行阶段取消 | U04 | integration_candidate | safe_stop | enforced | not_run |
 | FO28 | 磁盘不足和只读目录 | U04 | integration_candidate | safe_stop | planned | not_run |
 | FO29 | 并发项目与活跃 native 会话 | U04 | integration_candidate | contractual | planned | not_run |

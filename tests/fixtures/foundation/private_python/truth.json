@@ -1,0 +1,13 @@
+{
+  "fixture": "private_python",
+  "value": 42,
+  "x": [1, 2, 3],
+  "y": [42, 84, 126],
+  "title": "u05 private python",
+  "formula": "y = VALUE * x, VALUE = 42 (from the synthetic wheel)",
+  "expected_output": "figure.pdf",
+  "wheels": {
+    "tavotto-test-alpha": {"import": "tavotto_test_alpha", "version": "1.0"}
+  },
+  "private_python": "the machine has no usable Python: the product provisions its own (lock-pinned) before building the managed environment"
+}

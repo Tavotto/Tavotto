@@ -42,6 +42,7 @@ FIXTURES = (
     "pdf_png_assets",
     "shadowed_engine_modules",  # U03（FO19 / issue #447）
     "joint_dependencies",  # U04（FO18 / FO20 / FO21 / FO27 / FO31）
+    "private_python",  # U05（FO24 / FO25 / FO26；FO23 的机制面）
 )
 
 

@@ -3269,11 +3269,12 @@ def joint_targets(project: str | Path, target_kind: str, python: str) -> list[di
             }
         )
     managed = managedenv.state(root)
-    available = True if managed["exists"] else managed_available()
-    # 没有基础解释器但本目标提供私有 Python（U05）：这条路仍可用，授权里多一项「先下载 N 字节」
-    private = privatepython.offer_payload() if available is False else None
-    if private is not None:
-        available = True
+    # 门这一侧同步问基础解释器（`base_python()` 有进程内缓存；门本来就在准备计划里跑，等一次探测是
+    # 合理的）——三态的 `managed_available()` 留给渲染出错那条响应路径（`offer()`）
+    # 受管目标**每次**都建新的一代（有没有 active 代都一样），所以「可用」看的是有没有基础解释器；
+    # 没有但本目标提供私有 Python（U05）：这条路仍可用，授权里多一项「先下载 N 字节」
+    private = privatepython.offer_payload() if not base_python() else None
+    available = bool(base_python()) or private is not None
     out.append(
         {
             "kind": TARGET_MANAGED,
