@@ -121,6 +121,9 @@ spec 的 datas，`tests/test_import_architecture.py` 把它登记成 worker.py �
 
 * 不在 `pool` / `workdir` 里猜：证据说不出话时走默认；同名文件不搜；绝对路径不碰（FO04：
   明确有效的外部绝对路径沿用，不搬数据目录）；任意绝对路径的重新定位归 X01。
+* `databinding` 不碰项目根之外的文件：相对字面量 join 到候选目录后若落在项目外（`../../x.csv`、
+  项目里指向别处的软链接——按 `projectenv.within` 的 realpath 判），登记为该候选的 `outside`，
+  不 stat、不读、不 hash，也不参与判决（Codex 评 #459 P1）。准备阶段只看用户交给 Tavotto 的那棵树。
 * 不做每脚本一份 cwd 决定：决定是项目级的（与 ADR 0047 同粒度）。同一项目里脚本形状混杂
   （一半读同目录、一半读项目根）时用户要按项目选一档——记为已知边界，看真实用户数据再说。
 * `databinding` 只认单个字符串常量：`os.path.join("data", "x.csv")` / `Path(...) / "x"` 拼出来

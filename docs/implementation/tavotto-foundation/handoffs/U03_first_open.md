@@ -84,7 +84,7 @@ FO19 三个 sentinel 齐全）+ 机制用例（首开采用 venv 且 generation 
 中文空格路径的项目根运行 + 守卫仍在）。负例 = 校验器的 `outcome_mismatch`（跑成别的场景不算通过）、
 `explicit_python_unusable` 的三种（env / configured 存在但坏、configured 不存在）、`project_python_unusable`
 两种、自动作废有记录、默认链条不被盖回、门在 spawn 前且零进程、过期计划零执行、`needs_input` 不起线程、
-databinding 的「不搜同名」「绝对路径不碰」「目录不算文件」、目标解析器不执行用户脚本、同解释器不问两次。
+databinding 的「不搜同名」「绝对路径不碰」「目录不算文件」「出了项目根不碰（`../../` 逃逸 / 软链接出界）」、目标解析器不执行用户脚本、同解释器不问两次。
 旧行为回归 = `ExecutionSpec` golden 与默认 argv 逐字节不变；`project` 档 = 脚本目录；守卫 / savefig /
 写回 / 会话认证 / 默认后端一字未动；六条既有用例按新事实改（见下）。
 
@@ -135,6 +135,12 @@ ruleset、`aggregate_gate.py`、默认后端、生产依赖、`security._PUBLIC_
 
 **仍缺哪些默认启用 / 精确安装物资格**：全部。六条 enforced 的 pass 是「源码树 + 旧后端 + 一个平台」的
 切片证据（`product_validation_status` 仍 `not_run`：registry 220 条产品实例一条没动）。
+
+**叠到 U01 ac217a27 之后**：environment 投影按 ADR 0053 摊平（`python_version / matplotlib_version / support`
+顶层，项目外解释器路径一律 None），三支首开投影（needs_input / 显式失效 / 发现与作废）各有无机器路径
+用例；ci.yml harness 步补上 `tests/test_foundation_first_open.py` 并加守卫「enforced（pr）用例文件必须在
+那一步」（U04 同门指出的漏——之前 CI 上六条 FO 根本没跑）。Codex 评 U04 #459 时报在本 PR 文件上的 P1
+（databinding 读 / hash 项目外文件）修法见 ADR 0057「不做的事」第二条。
 
 **下一个无阻塞阶段 / 子切片**：PR B（本阶段）：前端确认对话框（`workdir_confirmation_required` →
 三档选择 → `PATCH /api/engine/workdir` → 重排渲染）、设置里 `WorkdirRow` 改三档、i18n 四个新 code
