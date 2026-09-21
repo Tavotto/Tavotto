@@ -2933,7 +2933,9 @@ export interface DependencyPreparationOffer {
   rounds_remaining: number
   /** 用户已明确「不准备，直接运行」（这时后端不会再拦） */
   skipped: boolean
-  /** 干净机器（一个解释器都没有）：门以私有 Python 为目标算的计划，这里说明要先下载它（U05） */
+  /** 干净机器（一个解释器都没有）：门以私有 Python 为目标算的计划——什么都不缺也要问（环境本身就是要授权的） */
+  clean_machine?: boolean
+  /** 干净机器上私有 Python 的来源：要先下载（required=true、字节数）或已就位（required=false、不联网）（U05） */
   private_python?: PrivatePythonOffer | null
 }
 
