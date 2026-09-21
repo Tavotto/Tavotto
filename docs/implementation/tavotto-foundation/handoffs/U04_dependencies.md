@@ -202,6 +202,17 @@ observing 是本机联网各跑过一次；`registry.product_validation_status` 
 **回退**：revert PR C 即撤掉门 / 端点 / 对话框 / MCP 参数（PR B 的事务与 PR A 的计划留着，只是没人调）；台账里五条回 planned、
 两条回 planned 要一并 revert（同一 PR）；没有设置写入、没有外部副作用。
 
+**PR C 第二轮（Codex #470，1 P1 + 2 P2 + CodeQL 三条）**：
+
+| 评审 | 处置 | 用例 |
+|---|---|---|
+| P1 取消句柄在线程里、事实重算之后才登记：ack 后立刻取消 → `not_found`，安装照常改 venv | `_register_cancel` 在 `prepare_async` 起线程之前登记，`prepare()` 复用；拿锁之前看一次事件（明确终态 cancelled、什么都没改）；不论怎么退出 finally 清句柄；`_run_pip` 起 pip 之前先看事件 | `test_cancel_right_after_the_acknowledgement_is_honoured`（线程按在入口）、`test_run_pip_does_not_start_when_already_cancelled` |
+| P2 取消端点不判计划归属（`plan_id` 是广播的） | 计划还在而不属于当前项目 → 409（与 `/prepare` 同一道判据） | `test_cancel_endpoint_only_cancels_the_current_projects_plan` |
+| P2 前端对任何 `engine.dependency` 事件都收框 / 重排 | `onProgress` 只认本地 `plan` / `jointPlan` / `progress` 里的 `plan_id` | vitest 两条（对话框 / 修复卡各一） |
+| CodeQL py/path-injection ×3（`_project_script` 拿原串重拼） | 只经 `projectenv.contained_path`（先 realpath 再前缀判），文件系统只见它回的路径；不 dismiss | `test_dependencies_endpoints_pin_the_script_inside_the_project` |
+
+变异 C10–C14 见 `evidence/u04/mutations_pr_c.md` 第二轮。
+
 **下一个无阻塞阶段 / 子切片**：U05（私有 Python：base 来源；复用本阶段的事务——ADR 0061 §四的接入规则；`managedenv` 的代记 `provisioner`，今天恒 `pip`）与 U09（`managed_env_join`：`JointPlan.identity` / 代号进回执的语义身份）。历史：PR B 给 PR C 的输入曾是：`deprepair.joint_plan_for`（只读算计划）、`create_joint_plan` / `prepare_async` / `progress` / `cancel_status`、`JointRepairPlan.to_payload()`（不含路径）。PR A 给 PR B 的输入曾是：`JointPlan.requirements / constraints / hashes / require_hashes /
 adapter / identity`；`depplan.reset_cache(python)` 在事务结束时调；`ADAPTER_REQUIREMENTS` 是受管环境每一代的基座。
 U05 的输入：ADR §四（安装器接入规则）。U06 并行：本 PR 只碰 `pyproject.toml` 的 `dependencies` 三行（U06 加可选 extra，
