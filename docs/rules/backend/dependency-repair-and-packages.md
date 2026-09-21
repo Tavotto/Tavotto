@@ -91,3 +91,35 @@
 - `GET /api/diagnostics/summary`：诊断包同一份 `build_report()` 摊平成文本
   （`diagnostics.render_text`），给设置里「复制诊断」用；project 段由
   `app._diagnostics_project_status()` 与 zip 端点共用。
+
+## 联合依赖准备（统一实施包 U04，ADR 0061，2026-09-21）
+
+> 随 U04 新增；本节的模块是 `engine/depresolve.py` 的 intent 段、`engine/importscan.py`、`engine/depplan.py`
+>（PR A：纯逻辑，不装任何东西）。事务 / 门 / 端点随 PR B / C 追加到本节。
+
+- **声明的无损读法只有一份**（`depresolve.declared_intents`），交给 `packaging`（运行时依赖，只在
+  `depresolve` 里延后 import；旧安装路径 `parse_requirement` / `resolve` / 单包 `create_plan` 一个字节不用它）。
+  kind 四档闭集：`requirement` / `constraint` / `unknown`（认不出，保留原文）/ `unsupported`（认得出、不做，
+  闭集 `UNSUPPORTED_REASONS`）。**两档都不是空依赖**：选中组里出现任一条，联合计划就 `blocked`，不把 `^` /
+  marker / 约束剥掉偷偷继续。加一条 reason 就要在 ADR §三的「下一步」表与前端文案里说清用户该做什么。
+- **`-r` / `-c` 只在项目根内有界跟进**（`MAX_DECL_FILES`；resolve 后仍在根下，软链接跳出去算越界）；缺失 / 越界 /
+  环 / 超限各是一条 unsupported **留在引用它的那一行的位置**，不是忽略。被 include 的条目归引用它的组。
+- **组与默认选中**：文件组 id = 相对项目根的路径；pyproject 的是 `pyproject.toml:<段>`；脚本的 PEP 723 是
+  `pep723:<脚本>`。默认只选任何层级的 `requirements.txt`、pyproject 主依赖、PEP 723（`default_group`）；其余组
+  由项目设置 `dependency_groups` 点名；约束不分组、永远生效。
+- **「需要」按 import 的上下文判**（`importscan`）：四个桶（stdlib / local / third_party / unknown）× 六种上下文；只有
+  **模块层无条件**的第三方 import 是 `needed`；本地模块永远不装、unknown 永远不猜；经本地模块的 import 取两处里较弱
+  的上下文。stdlib 名字表按**目标解释器**的（`depplan.target_facts`），不按宿主。
+- **marker 按目标解释器求值**（`target_facts` 在目标里量 PEP 508 环境；启动条件与 `probe_environment` 对齐：不带
+  `-I`、env 继承、cwd 空目录）。Flask 进程的 `sys.platform` 不是判据的主语。
+- **计划的集合**（`depplan.plan`）：`requirements` = 缺的那些 distribution 的全部选中声明（extras / specifier 原样；只有
+  curated 映射的给裸名）；`constraints` = 其余选中声明 + 约束文件；`adapter`（`ADAPTER_REQUIREMENTS` ↔ pyproject 的
+  `worker` extra，用例钉着）**只并入受管环境**，用户 venv 不并入；版本不满足声明的已装包只报告不改（FO-038）。
+  hash 模式 = 锁文件语义：整份选中集合按 `--require-hashes` 装，缺一条 hash 就 `blocked`。
+- **交给安装器的字符串一律 `requirement_string()` 重新序列化**（名字 PEP 503、extras PEP 685、specifier 规范串）；
+  原文不进 argv / 需求文件。
+- 状态闭集 `nothing_needed` / `ready` / `blocked`；blocked 理由闭集 `BLOCK_REASONS`（四条）。`identity` 只由意图
+  决定、不含路径（受管环境代目录按它命名，PR B）。
+- 看护：`tests/test_dependency_plan.py`（语法 / include 边界 / PEP 723 / PEP 735 / Poetry / 3.10 无 tomllib 的分支 /
+  上下文 × 桶 / 选择 / 计划的每一条「不装」）+ `tests/test_execution_receipt.py::TestDependencyIntent`。
+

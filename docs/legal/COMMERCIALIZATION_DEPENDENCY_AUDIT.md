@@ -126,7 +126,7 @@ plus the wheel's runtime dependencies.
 | kiwisolver | 1.5.0 | BSD-3-Clause | matplotlib dep | Bundled | None | GREEN | Notice |
 | pyparsing | 3.3.2 | MIT | matplotlib dep | Bundled | None | GREEN | Notice |
 | python-dateutil | 2.9.0.post0 | Apache-2.0 AND BSD-3-Clause (dual) | pandas dep | Bundled | None | GREEN | Notice |
-| packaging | 26.3 | `Apache-2.0 OR BSD-2-Clause` | transitive | Bundled | None | GREEN | Notice |
+| packaging | 26.3 | `Apache-2.0 OR BSD-2-Clause` | transitive (matplotlib dep); **since U04 / ADR 0061 (2026-09-21) also a direct runtime dep of the wheel — dependency declaration parsing in the parent process** | Bundled + pip dep | None | GREEN | Notice |
 | six | 1.17.0 | MIT | transitive | Bundled | None | GREEN | Notice |
 | **CPython** | 3.13.15 (Windows embeddable) / python-build-standalone (macOS) | PSF License Agreement | The bundled interpreter itself | **Yes** — shipped inside the desktop app | None | GREEN — the PSF licence permits proprietary redistribution with notice | **Notice required.** A redistributed CPython must carry its licence. Currently missing — see the notices gap. |
 
