@@ -129,10 +129,18 @@ def load_allowlist(path: Path | None = None) -> Allowlist:
         faces[face_id] = face
     if not faces:
         raise FontsUnavailable("allowlist_invalid", f"{p}: 没有任何脸")
+    licenses = dict(data.get("license_files") or {})
+    for rel, spec in licenses.items():
+        digest = str(spec.get("file_sha256", "")).lower()
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise FontsUnavailable("allowlist_invalid", f"{p}: 许可证 {rel} 缺 file_sha256")
+    for face in faces.values():
+        if face.license_file not in licenses:
+            raise FontsUnavailable(
+                "allowlist_invalid", f"{p}: {face.face_id} 指向没登记的许可证 {face.license_file}"
+            )
     return Allowlist(
-        faces=faces,
-        license_files=dict(data.get("license_files") or {}),
-        obligations=tuple(data.get("obligations") or ()),
+        faces=faces, license_files=licenses, obligations=tuple(data.get("obligations") or ())
     )
 
 

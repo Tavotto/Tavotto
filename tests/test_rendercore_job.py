@@ -216,6 +216,26 @@ def test_a_panel_with_overrides_is_refused_without_running_anything(project, pro
     assert "source_needs_execution" in payload["error"]["params"]["reason"]
 
 
+def test_a_page_with_no_operations_still_refuses_non_pdf_formats(project, provider, tmp_path):
+    """全 hidden 的透明页：能力表上没有任何操作可判、缺口为空，但 PNG 仍然只有 U07 才给得出——
+    不能把 PDF 字节写进 .png 报成功（Codex #460 P2）。PDF 那一项照常（空页是合法产物）。"""
+    export_dir = tmp_path / "out"
+    job = exportjob.prepare(
+        _spec([_text(hidden=True)], formats=("pdf", "png", "tiff"), background="transparent"),
+        export_dir,
+    )
+    payload = _run(job, project, provider)
+    assert payload["status"] == "partial", payload
+    by_fmt = {o["format"]: o for o in payload["outputs"]}
+    assert by_fmt["pdf"]["status"] == "done" and by_fmt["pdf"]["vector"] is True
+    for fmt in ("png", "tiff"):
+        assert by_fmt[fmt]["status"] == "failed", fmt
+        assert by_fmt[fmt]["error"]["code"] == "format_failed"
+        assert by_fmt[fmt]["error"]["params"]["unsupported"][0]["operation"] == "format"
+        assert not (export_dir / f"Fig 1.{fmt}").exists()
+    assert (export_dir / "Fig 1.pdf").read_bytes()[:5] == b"%PDF-"
+
+
 def test_cancel_before_writing_leaves_nothing_behind(project, provider, tmp_path):
     export_dir = tmp_path / "out"
     job = exportjob.prepare(_spec([_text()], formats=("pdf",)), export_dir)

@@ -77,6 +77,16 @@ def produce(
     for fmt in req.formats:
         job.check_cancelled()
         gaps = rp.unsupported.get(fmt) or []
+        if fmt != exportreq.FORMAT_PDF:
+            # 本切片只有 PDF 写入器。空页 / 全 hidden 的页在能力表上没有任何操作可判、缺口为空，
+            # 但那不等于「PNG 能出」——把 PDF 字节写进 .png 报 vector=True 就是假成功（Codex #460 P2）
+            gaps = gaps or [
+                {
+                    "operation": "format",
+                    "reason": f"U06 只有 PDF 写入器；{fmt} 的栅格 / 序列化归 U07（ADR 0059）",
+                    "object_id": "",
+                }
+            ]
         if gaps:
             produced.append(
                 exportjob.Produced(

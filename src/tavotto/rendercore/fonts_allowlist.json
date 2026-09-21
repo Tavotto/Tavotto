@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "comment": "批准字体 allowlist（ADR 0060）。每张脸：文件相对字体目录的路径、sha256（身份）、族 / 粗斜、字体程序格式、许可证、来源。字体文件不进 git：scripts/fetch_fonts.py 按这里的 sha256 取到 src/tavotto/resources/fonts/，包装（wheel artifacts / PyInstaller datas）随包带走。改这份表 = 改字体政策，先改 ADR 0060。",
+ "comment": "批准字体 allowlist（ADR 0060）。每张脸：文件相对字体目录的路径、sha256（身份）、族 / 粗斜、字体程序格式、许可证、来源。字体文件不进 git：scripts/fetch_fonts.py 按这里的 sha256 取到 src/tavotto/resources/fonts/，包装（wheel artifacts / PyInstaller datas）随包带走。改这份表 = 改字体政策，先改 ADR 0060。 license_files 里 sha256 是来源（tarball 或文件）的，file_sha256 是落盘后那份许可证全文自己的——两个都核。",
  "faces": {
   "LiberationSerif-Regular": {
    "file": "liberation/LiberationSerif-Regular.ttf",
@@ -228,12 +228,14 @@
    "kind": "tarball-member",
    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
-   "member": "liberation-fonts-ttf-2.1.5/LICENSE"
+   "member": "liberation-fonts-ttf-2.1.5/LICENSE",
+   "file_sha256": "93fed46019c38bbe566b479d22148e2e8a1e85ada614accb0211c37b2c61c19b"
   },
   "noto/LICENSE": {
    "kind": "file",
    "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/LICENSE",
-   "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+   "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+   "file_sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
   }
  },
  "obligations": [

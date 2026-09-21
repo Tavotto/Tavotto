@@ -225,7 +225,7 @@
     {
       "path": "evidence/u06/report.json",
       "bytes": 14710,
-      "sha256": "e1dbb50204454b619bb818716a66b38b3ed45f970209ff7f9a3cc8939d4a973d"
+      "sha256": "d09be245838692133be3a4c3b9b6c9dee7a4730d31a4cbd4c6c140e0ce169729"
     },
     {
       "path": "evidence/u06/truth.json",
@@ -234,8 +234,8 @@
     },
     {
       "path": "evidence/u06/u06.pdf",
-      "bytes": 14037,
-      "sha256": "ac97e32ca02e83c8b707c6b7c7096dc8f96c431d617070163ad12200c4fec6a2"
+      "bytes": 14041,
+      "sha256": "cb303505e879dd31326d07b18fe0fa1481cfb3e2673daafadcaff7433ad1774c"
     },
     {
       "path": "evidence/u06/u06_pdfium.png",
@@ -284,8 +284,8 @@
     },
     {
       "path": "handoffs/U06_ir_text.md",
-      "bytes": 25292,
-      "sha256": "4450254cc91d639d5a94df2d48f0c0592952292a13f415f817bcf612777f9772"
+      "bytes": 25895,
+      "sha256": "5856035cfefb2120e580d30d9c9ba44425345496a562f566c31c14661c5681a7"
     },
     {
       "path": "phase_mapping.json",
