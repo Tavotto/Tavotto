@@ -14,5 +14,6 @@
 | M41 | 指纹不含文件字节（只有声明意图） | depplan | TestInputsDigest（script-import / local-module / 字节改动）三条 | 1 |
 | M42 | 指纹不含声明意图（只有文件字节；requirements.txt 本身不在扫描文件里） | depplan | TestInputsDigest（requirements / pyproject）两条 | 1 |
 | M43 | 扫描不报跟进过的本地模块文件（只有脚本） | importscan | TestInputsDigest（替身 / 真事实同指纹的 files 断言、local-module）两条 | 1 |
+| M44 | 基础解释器探测写回不看世代（reset 之后才结束的旧探测把重置前的答案写回——`test_dependency_repair` 之后跑 TestPrivateBase 的顺序依赖红，先于本 PR 就在） | deprepair | test_a_probe_finished_after_a_reset_does_not_write_the_stale_answer_back | 1 |
 
-10/10 红（M30–M39 编号在 PR A 的 `mutations_pr_a.md`）。三条 HTTP 场景的负例在各自用例里（FO25 是 FO24 的反面：无缓存要求下载；FO26 篡改 → hash 不符 + 旧 active 原样）。
+11/11 红（M30–M39 编号在 PR A 的 `mutations_pr_a.md`）。三条 HTTP 场景的负例在各自用例里（FO25 是 FO24 的反面：无缓存要求下载；FO26 篡改 → hash 不符 + 旧 active 原样）。
