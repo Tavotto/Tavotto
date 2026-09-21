@@ -175,6 +175,10 @@ class TestPrivateBase:
             assert len(launches.read_text("utf-8").splitlines()) >= 2
         # 同一进程里的下一次计划：基础解释器缓存已刷新，不再要求下载
         assert deprepair.base_python() == private
+        # 应用重开（缓存清空）：探测链末级在磁盘上看见已供应的那份，不再要求下载
+        deprepair.reset_state()
+        assert deprepair.base_python() == private
+        assert deprepair.managed_available() is True
         other = _project(tmp_path, "second")
         plan2 = deprepair.create_joint_plan(other, "figure.py")
         assert plan2.private_python is None
