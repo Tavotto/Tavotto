@@ -127,22 +127,24 @@
 ## 工具结果的体积预算与画布取件（2026-09-21，ADR 0053，issue #457）
 
 - **Codex 把 MCP 工具结果送给桌面 UI 的事件副本封顶在 1 MiB**，超过就把 `structuredContent`
-  / `_meta` 置空——模型那份与画布自己发的 `tools/call` 都不受影响，症状因此是「模型一切正常、
-  画布永远等待」。422 元素的图实测 1.3 MB（manifest 每元素约 2 KB）。**顺带**：codex 在
-  `structuredContent` 非空时只把它给模型，`content` 文本整段丢弃。全文与量法在 ADR 0053。
+  / `_meta` 置空——模型那份与画布自己发的 `tools/call` 不受影响，症状是「模型正常、画布永远
+  等待」（422 元素 ≈ 1.3 MB）。**顺带**：`structuredContent` 非空时 codex 只把它给模型，
+  `content` 文本整段丢弃。全文在 ADR 0053。
 - **只有单图 open 守预算**（`CANVAS_INLINE_BUDGET_BYTES` 768 KiB，量整个 `CallToolResult`
   的紧凑 UTF-8 字节，别用默认 ensure_ascii），按 `INLINE_ELISION_STEPS` 省 svg → manifest →
-  位图 → 预检清单，写 `structuredContent.elided`；**apply 不守**（画布靠它拿新 manifest）；
-  `_meta` 不再复制 `widgetData`。
+  位图 → 预检清单，写 `structuredContent.elided`；说明加完再量一次，还超就截 `content` 文字
+  （`preflight=true` 的整份报告）并标 `content_truncated`；**apply 不守**（画布靠它拿新
+  manifest）；`_meta` 不再复制 `widgetData`。
 - **`tavotto_session_state` 是画布的取件通道**：只读、不重渲染，全部来自 `Session` 上最近一次
   `_render` 留下的字段（加字段先加到 `Session`），预检复用 `Session.preflight_cache`（`_render` 必清）。降级
   `NORMAL_TOOLS` 由 `test_degraded_normal_tool_names_mirror_the_real_server` 钉成镜像。
-- **画布启动三路**（`web/src/mcp/boot.ts`）：完整结果直接种；只有把手就取件、回来的
+- **画布启动三路**（`web/src/mcp/boot.ts`）：完整结果直接种（`elided` 在就不算完整，只省 svg
+  会种出空画布；矢量图必须带 svg 字符串）；只有把手就取件、回来的
   `patches` 原样种进账本；空壳当场报形状（`data-boot-state` / `data-boot-detail`），30 秒没
   结果也说出口但继续收。都不自己发起 open。真宿主验收加大图一条（acceptance 文档 D 节）。
 - 看护：`tests/test_mcp_server.py` 末节、`tests/test_mcp_resolver.py`、`web/src/mcp/boot.test.ts`、
-  `web/e2e/mcp-canvas.spec.ts`。**跑变异前清 `__pycache__` 或带 `-B`**：等长改动一秒内还原，
-  pyc 头 mtime / size 都没变，跑的是变异版。
+  `web/e2e/mcp-canvas.spec.ts`。**跑变异一律 `-B` 并清 `__pycache__`**：等长改动一秒内还原，
+  pyc 头不变，跑的是变异版。
 
 ## MCP server 与内嵌画布（2026-08-18）
 

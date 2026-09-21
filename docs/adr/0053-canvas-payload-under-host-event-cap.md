@@ -44,9 +44,12 @@ rollout 的**事件副本**封顶在 1 MiB（`core/src/mcp_tool_call.rs` 的
    + `_meta`），按 serde_json 的紧凑 UTF-8 算（`_serialized_bytes`）。超预算按
    `INLINE_ELISION_STEPS` 的顺序省：svg（模型读不了）→ manifest → 位图 → 预检的
    warn / suggestion / not_verifiable 清单 → errors 清单；每省一步量一次，够了就停；
-   计数与阻断布尔永远留着。省过东西就写 `structuredContent.elided`（省了什么、
-   为什么、去哪儿取）并在文字里提一句。**没超预算的结果一个字段都不动**——小图走的
-   还是 08-24 验收过的那条路。
+   计数与阻断布尔永远留着（逐步省时留 2 KiB 给说明本身）。省过东西就写
+   `structuredContent.elided`（省了什么、为什么、去哪儿取、最终体积）并在文字里提一句。
+   说明加完**再量一次**：结构化字段省到底了还超（`preflight=true` 把整份报告放在
+   `content` 里），就把文字截到装得下为止并标 `content_truncated`——宿主量的是整个结果，
+   文字把它顶过上限的话 structuredContent 一样被清空。**没超预算的结果一个字段都不动**
+   ——小图走的还是 08-24 验收过的那条路。
 2. **`_meta` 只挂资源元数据，不再复制 `widgetData`**。MCP Apps 标准路径下 iframe 拿到
    的就是整份 `CallToolResult`，ChatGPT 侧读 `window.openai.toolOutput`
    （= structuredContent）——两条路都用不着第二份。
@@ -60,8 +63,10 @@ rollout 的**事件副本**封顶在 1 MiB（`core/src/mcp_tool_call.rs` 的
    原样返回、不进模型上下文、不受事件上限约束。模型只在 open 结果标了 `elided`
    且确实要逐元素 gid 时才需要它。
 4. **画布启动按来货分三路**（`web/src/mcp/boot.ts`）：完整的 open 结果 → 直接种（零
-   往返）；只有把手（`session_id` 在、不是完整 open 结果——server 省略过，或 host 用
-   apply 的结果起了新 iframe）→ 经 `tavotto_session_state` 取件再种；空壳
+   往返）；只有把手（`session_id` 在、不是完整 open 结果——**`elided` 在就一律算不完整**，
+   不管省的是什么：只省了 svg 时六项齐全、种下去却是空画布；没有 `elided` 的老结果再按
+   形状判，矢量图必须带 svg 字符串、raster 档 svg 才许为 null；或 host 用 apply 的结果
+   起了新 iframe）→ 经 `tavotto_session_state` 取件再种；空壳
    （`structuredContent` 为 null / 缺失 / 没有 session_id）→ **当场**显示可诊断的错误，
    把形状（structuredContent / _meta 是否为空、content 预览开头）原样摆出来。握手成功
    30 秒还没等到 tool-result 也把「还在等、可能等不来」摆出来——不是放弃，之后到的结果
