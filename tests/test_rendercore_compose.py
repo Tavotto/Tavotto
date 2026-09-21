@@ -875,7 +875,14 @@ def test_the_document_wide_raster_budget_stops_many_small_images_from_adding_up(
     )
     assert ei.value.params["pixels_used"] == 6144 and ei.value.params["pixels_wanted"] == 3072
     assert not (tmp_path / "three.pdf").exists()
-    # JPEG 直通路单独也记账：预算只剩 2000 时第一张 JPEG 就拒
+    # JPEG 直通路单独也记账，且记账在「整张真解一遍」**之前**（Codex #463 第三轮 P2）：预算只剩 2000 时
+    # 第一张 JPEG 就拒，而 Pillow 的 load 一次都不该被叫到——把它换成必爆探针
+    from PIL import ImageFile
+
+    def boom(self, *a, **k):
+        raise AssertionError("记账之前不该解码")
+
+    monkeypatch.setattr(ImageFile.ImageFile, "load", boom)
     monkeypatch.setattr(raster, "DOCUMENT_MAX_PIXELS", 2000)
     with pytest.raises(pdfwriter.WriterError) as ei:
         _write(tmp_path, provider, [ir.Image("c", (0, 0, 10, 10))], res, files, name="jpg.pdf")
