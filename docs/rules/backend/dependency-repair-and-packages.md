@@ -114,10 +114,16 @@
   的上下文。stdlib 名字表按**目标解释器**的（`depplan.target_facts`），不按宿主。
 - **marker 按目标解释器求值**（`target_facts` 在目标里量 PEP 508 环境；启动条件与 `probe_environment` 对齐：不带
   `-I`、env 继承、cwd 空目录）。Flask 进程的 `sys.platform` 不是判据的主语。
-- **计划的集合**（`depplan.plan`）：`requirements` = 缺的那些 distribution 的全部选中声明（extras / specifier 原样；只有
-  curated 映射的给裸名）；`constraints` = 其余选中声明 + 约束文件；`adapter`（`ADAPTER_REQUIREMENTS` ↔ pyproject 的
-  `worker` extra，用例钉着）**只并入受管环境**，用户 venv 不并入；版本不满足声明的已装包只报告不改（FO-038）。
-  hash 模式 = 锁文件语义：整份选中集合按 `--require-hashes` 装，缺一条 hash 就 `blocked`。
+- **计划的集合**（`depplan.plan`）：`requirements` = **目标里没有的**那些 needed distribution 的全部选中声明（extras /
+  specifier 原样；只有 curated 映射的给裸名）；`constraints` = 其余选中声明 + 约束文件；`adapter`（`ADAPTER_REQUIREMENTS` ↔
+  pyproject 的 `worker` extra，用例钉着）**只并入受管环境**，用户 venv 不并入；版本不满足声明的已装包只报告不改（FO-038）。
+  **两份事实**：`facts` 是此刻会跑脚本的解释器的（`missing` 按它量——门问的是「现在起会话会不会缺包」）；`install_facts`
+  是装到哪的（`deprepair._facts_for`：用户 venv = 同一个；受管 = active 那一代，没有就是从 base 新建的一代——marker 环境与
+  stdlib 按 base、已装为空 `fresh_venv_facts`）。集合、marker 求值、stdlib 名字表都按 `install_facts`；两者是同一个环境时
+  就是一份（Codex #461 P1：否则选中项目 venv 而目标受管时新的一代漏装 venv 里碰巧有的包）。
+  hash 模式 = 锁文件语义：整份选中集合按 `--require-hashes` 装，缺一条 hash 就 `blocked`；受管目标下 adapter 给不出
+  hash、**不写进需求文件**，锁必须已经把 matplotlib / numpy 用 `==` 钉在 adapter 范围内（没钉 → `dependency_hashes_incomplete`
+  带 `adapter`；钉在范围外 → `dependency_conflict`，`_adapter_against_lock`）。
 - **交给安装器的字符串一律 `requirement_string()` 重新序列化**（名字 PEP 503、extras PEP 685、specifier 规范串）；
   原文不进 argv / 需求文件。
 - 状态闭集 `nothing_needed` / `ready` / `blocked`，**blocked 优先于 nothing_needed**（不完整的计划什么都不缺也是
@@ -130,10 +136,12 @@
 
 - **受管环境按代，不再原地改写**：每次换代在最终目录 `envs/g<身份>/` 里新建 venv（`managedenv.register_generation` 先记
   `incomplete` → `create_generation_venv`），一次 pip 装**完整集合**（`generation_requirements`：adapter + 账上记过的 +
-  这次的 delta）→ `pip check` → 关键 import（`probe_imports`）→ `worker_self_test` → **才** `managedenv.activate`
+  这次的 delta；**hash 模式只有锁本身**）→ `pip check` → 关键 import（`probe_imports`）→ `worker_self_test` → **才** `managedenv.activate`
   （manifest 的 `active` 字段原子写，**唯一**指针，不设第二个指针文件）。任一步不过 = 这一代 `incomplete`、`active`
   不动、上一代原样可用；不把 tmp 里的 venv rename 过来；不往任何共享 site-packages 写。旧布局的 `venv/` 是隐式的
-  `legacy` 一代，第一次按代时登记进 `generations`。
+  `legacy` 一代，第一次按代时登记进 `generations`。**目录名永远不撞在册的代**（`managedenv.fresh_generation`：同一份
+  身份再来一次——重建两次同一份账——而那一代还 active / 旧代还有人用，就 `g<身份>-2`、`-3`……；`register_generation`
+  拒绝重新登记 active 或 `ready` 的代），身份字段照记（Codex #461 P1：否则 active 目录会被当成「上次建到一半的」删掉）。
 - **四条路一个事务**（`deprepair._run_generation`）：联合准备 `prepare()`、单包修复到受管环境 `install()`（delta 一条）、
   重建 `rebuild_managed()`（delta 为空 = 按账重建）、包管理里环境还不在时的首装。没有第二套建 / 装 / 验代码；包管理对
   **已有** active 那一代的原地 install / update / uninstall 不变。
@@ -146,15 +154,21 @@
   `parse_intent` 形状关 + `requirement_string` 重新序列化，`--hash` 只在需求文件里；其余参数与单包路径逐字相同、没有
   `--upgrade`）、`pip_check_argv`。用户 venv 的联合安装同一份 argv、只装 delta、不并入 adapter。
 - **计划绑定**（`JointRepairPlan`）：项目 / 脚本 / 完整需求 / 约束 / hash / 目标类型 / 环境指纹（含 active 代号）/ 目标事实
-  digest / 组 / 有效期；执行只认 `plan_id`，执行前重算指纹（`repair_plan_stale`）；不是 `ready` 的计划拒绝绑定
+  digest（两份：`facts_digest` + `install_facts_digest`）/ 组 / 有效期；执行只认 `plan_id`，执行前重算解释器指纹**与**
+  事实 digest（不走缓存；确认期间有人往目标里装 / 卸了包 `pyvenv.cfg` 不变而 digest 变——`repair_plan_stale`，Codex #461
+  P2）；不是 `ready` 的计划拒绝绑定
   （`dependency_plan_blocked` 带 `joint` 载荷——blocked 的理由与 `nothing_needed` 都在里面）；建代前查磁盘
   （`package_disk_low`）。
-- **取消的接受时刻**（D11）：拿锁前 / 建 venv 与 pip 期间（kill）/ 验证期间 → `cancelled`、这一代 `incomplete`、目录留给
-  同身份下次重建；**提交点（切 active）之后拒绝**（`cancel_status` → `committed`，`progress()` 带 `committed: true`）。
+- **取消的接受时刻**（D11）：拿锁前 / 建 venv 与 pip 期间（kill）/ 验证期间（含 `worker_self_test` 之后、切 active 之前
+  再看一次——接受了的取消不能照常提交，Codex #461 P2；用户 venv 原地那条路同样，包已装进去就如实报 cancelled + 体检）→
+  `cancelled`、这一代 `incomplete`；**提交点（切 active）之后拒绝**（`cancel_status` → `committed`，`progress()` 带
+  `committed: true`）。
 - 失败码新增三条：`dependency_consistency_failed`（pip check）、`dependency_hash_mismatch`（require-hashes 不符，
   `classify_pip_failure` 排在冲突之前）、`dependency_plan_blocked`。
 - 看护：`tests/test_dependency_transaction.py`（argv / 文件 / 集合钉字节；代的登记 / 切换 / 旧布局 / 退役；**真**事务：
   三包一次成代、二开不重装、marker 为假与未选组不装、声明冲突与求解器冲突各停在切 active 之前、无 wheel / 坏 hash /
   取消 / 自检 / 一致性 / 关键 import / 只读目录 / 磁盘不足各不切 active、两项目并发独立、native 租约不杀、旧代留到没人用、
-  重建成新一代、单包修复走同一事务、用户 venv 原地不并入 adapter、过期计划拒绝）。
+  重建成新一代、**重建两次不碰 active 目录**、**hash 锁真跑 `--require-hashes` 成代且文件只有锁**、**选中项目 venv 而目标
+  受管时新代装全 needed**、**自检期间的取消算数**、单包修复走同一事务、用户 venv 原地不并入 adapter、过期 / 指纹变 /
+  **目标里的包变**的计划拒绝）。
 

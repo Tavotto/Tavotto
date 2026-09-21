@@ -194,6 +194,25 @@ class TestSingleSources:
             "tabulate",
         )
 
+    def test_generation_requirements_in_hash_mode_are_the_lock_only(self, tmp_path):
+        """hash 模式：adapter 与账上那些都给不出 hash，需求文件只有锁本身（Codex #461 P1）。"""
+        project = tmp_path / "paper"
+        project.mkdir()
+        managedenv.write_manifest(project, managedenv.new_manifest(project, "/x/py"))
+        managedenv.record_install(
+            project,
+            import_name="lmfit",
+            distribution="lmfit",
+            requested_specifier="",
+            resolved_version="1.3.2",
+            reason="user_requested",
+        )
+        lock = ("matplotlib==3.10.0", "numpy==2.2.0", "six==1.17.0")
+        assert deprepair.generation_requirements(project, lock, hash_mode=True) == lock
+        assert deprepair.generation_requirements(project, lock)[
+            : len(depplan.ADAPTER_REQUIREMENTS)
+        ] == (depplan.ADAPTER_REQUIREMENTS)
+
     def test_hash_mismatch_has_its_own_code(self):
         text = "ERROR: THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE."
         assert deprepair.classify_pip_failure(text) == deprepair.ERROR_HASH_MISMATCH
@@ -307,6 +326,47 @@ class TestGenerations:
         for bad in ("../x", "g/x", "G1", "", "a b"):
             with pytest.raises(ValueError):
                 managedenv.generation_dir(tmp_path, bad)
+
+    def test_fresh_generation_never_reuses_a_registered_name(self, tmp_path):
+        """同一份身份再来一次：在册的（active / 旧代有人用）不复用，加序号；没在册的原名（Codex #461 P1）。"""
+        project = tmp_path / "paper"
+        project.mkdir()
+        identity = "abcdef0123456789"
+        assert managedenv.fresh_generation(project, identity) == "gabcdef012345"
+        managedenv.register_generation(
+            project,
+            "gabcdef012345",
+            requirements=[],
+            constraints=[],
+            identity=identity,
+            base_python="/x",
+        )
+        py = managedenv.generation_python(project, "gabcdef012345")
+        py.parent.mkdir(parents=True, exist_ok=True)
+        py.write_text("", encoding="utf-8")
+        managedenv.activate(project, "gabcdef012345")
+        assert managedenv.fresh_generation(project, identity) == "gabcdef012345-2"
+        managedenv.register_generation(
+            project,
+            "gabcdef012345-2",
+            requirements=[],
+            constraints=[],
+            identity=identity,
+            base_python="/x",
+        )
+        assert managedenv.fresh_generation(project, identity) == "gabcdef012345-3"
+        # 在册的 active 那一代不能被重新登记（静默覆盖成 incomplete 就是把它的目录交给 rmtree）
+        with pytest.raises(ValueError):
+            managedenv.register_generation(
+                project,
+                "gabcdef012345",
+                requirements=[],
+                constraints=[],
+                identity=identity,
+                base_python="/x",
+            )
+        assert managedenv.active_generation(project) == "gabcdef012345"
+        assert managedenv.generations(project)["gabcdef012345"]["state"] == "ready"
 
 
 # ===========================================================================
@@ -695,6 +755,143 @@ class TestJointTransaction:
         assert _importable(managedenv.python_of(project), ALPHA[1])
         assert deprepair.cancel_status(plan.plan_id)["reason"] == "committed"
 
+    def test_rebuild_twice_never_touches_the_active_directory(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        """重建两次：第二次算出的身份与 active 那代相同——目录名要另起，active 的目录在建代全程都在
+        （Codex #461 P1：此前 register 把 active 改成 incomplete、create 把它 rmtree）。"""
+        project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
+        assert _prepare(project)["state"] == deprepair.STATE_DONE
+        # 同步跑：`REBUILD_PROGRESS_ID` 是固定的，异步 + 轮询会把上一次的终态当成这一次的
+        assert deprepair.rebuild_managed(project)["ok"]
+        active = managedenv.active_generation(project)
+        active_dir = managedenv.generation_dir(project, active)
+        identity = managedenv.generations(project)[active]["identity"]
+        real_create = managedenv.create_generation_venv
+        seen: list[tuple[str, bool, str]] = []
+
+        def _watch(target_project, generation, base):
+            seen.append(
+                (
+                    generation,
+                    active_dir.exists(),
+                    managedenv.generations(target_project)[active]["state"],
+                )
+            )
+            return real_create(target_project, generation, base)
+
+        monkeypatch.setattr(managedenv, "create_generation_venv", _watch)
+        out = deprepair.rebuild_managed(project)
+        assert out["ok"] and out["generation"] == f"{active}-2", out
+        # 同身份 → 另起目录名；建代那一刻 active 的目录与状态原样
+        assert seen == [(f"{active}-2", True, "ready")], seen
+        assert managedenv.active_generation(project) == f"{active}-2"
+        assert managedenv.generations(project)[f"{active}-2"]["identity"] == identity
+        assert _importable(managedenv.python_of(project), ALPHA[1])
+
+    def test_hash_locked_managed_generation_installs_only_the_lock(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        """hash 模式 + 受管目标：adapter 由锁钉住、不写进需求文件；pip `--require-hashes` 真跑一次成代
+        （Codex #461 P1：此前 adapter 两条没 hash 混进文件，整次必败）。"""
+        import hashlib
+
+        alpha_whl = next(house.glob(f"{ALPHA[0].replace('-', '_')}-1.0-*.whl"))
+        beta_whl = next(house.glob(f"{BETA[0].replace('-', '_')}-1.0-*.whl"))
+        h_alpha = hashlib.sha256(alpha_whl.read_bytes()).hexdigest()
+        h_beta = hashlib.sha256(beta_whl.read_bytes()).hexdigest()
+        monkeypatch.setattr(depplan, "ADAPTER_REQUIREMENTS", (f"{ALPHA[0]}>=1,<2",))
+        project = _project(
+            tmp_path,
+            requirements=(
+                f"{ALPHA[0]}==1.0 --hash=sha256:{h_alpha}\n{BETA[0]}==1.0 --hash=sha256:{h_beta}\n"
+            ),
+            script=f"import {BETA[1]}\n",
+        )
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.require_hashes and plan.adapter == (f"{ALPHA[0]}>=1,<2",)
+        rec = _prepare_with(plan)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        gen = rec["result"]["generation"]
+        req_file = managedenv.env_dir(project) / "plans" / gen / "requirements.txt"
+        lines = req_file.read_text("utf-8").splitlines()
+        assert lines == [
+            f"{ALPHA[0]}==1.0 --hash=sha256:{h_alpha}",
+            f"{BETA[0]}==1.0 --hash=sha256:{h_beta}",
+        ]
+        python = managedenv.python_of(project)
+        assert _importable(python, ALPHA[1]) and _importable(python, BETA[1])
+        # 锁没钉住 adapter → 计划期就 blocked，一个字节不装
+        project2 = _project(
+            tmp_path,
+            requirements=f"{BETA[0]}==1.0 --hash=sha256:{h_beta}\n",
+            script=f"import {BETA[1]}\n",
+            name="paper2",
+        )
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_joint_plan(project2, "figure.py")
+        assert err.value.code == deprepair.ERROR_PLAN_BLOCKED
+        blocked = err.value.extra["joint"]["blocked"]
+        assert [b["code"] for b in blocked] == ["dependency_hashes_incomplete"]
+        assert blocked[0]["adapter"] == [ALPHA[0]]
+        assert managedenv.read_manifest(project2) is None
+
+    def test_managed_target_from_a_project_venv_installs_the_full_needed_set(
+        self, tmp_path, house, offline_managed_env
+    ):
+        """选中的是项目 venv（里面已有 alpha）、用户选受管目标：缺什么按项目 venv 量（只缺 beta），
+        装什么按新的一代量（alpha + beta 都装）——否则新代漏装 alpha（Codex #461 P1）。"""
+        project = _project(
+            tmp_path,
+            requirements=f"{ALPHA[0]}\n{BETA[0]}\n",
+            script=f"import {ALPHA[1]}\nimport {BETA[1]}\n",
+        )
+        venv = real_venv(project)
+        vpy = str(venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+        subprocess.run(
+            [vpy, "-m", "pip", "install", "-q", ALPHA[0]],
+            check=True,
+            capture_output=True,
+            timeout=300,
+        )
+        python, source = engine_pool.resolve_worker_python(str(project), script="figure.py")
+        assert source == engine_pool.SOURCE_PROJECT_VENV
+        plan = deprepair.create_joint_plan(
+            project, "figure.py", target_kind=deprepair.TARGET_MANAGED
+        )
+        assert [m["distribution"] for m in plan.joint["missing"]] == [BETA[0]]
+        assert plan.requirements == (ALPHA[0], BETA[0])
+        assert plan.creates_environment and plan.install_facts_digest
+        rec = _prepare_with(plan)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        mpy = managedenv.python_of(project)
+        assert _importable(mpy, ALPHA[1]) and _importable(mpy, BETA[1])
+        assert not _importable(python, BETA[1])  # 项目 venv 一个字节没动
+
+    def test_cancel_accepted_during_the_selftest_is_honored(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        """自检期间取消：`cancel_status` 接受（还没过提交点）→ 终态 cancelled、不切 active
+        （Codex #461 P2：此前接受了却照常提交）。"""
+        project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        real_selftest = deprepair.worker_self_test
+        answers: list[dict] = []
+
+        def _cancel_mid_selftest(python):
+            out = real_selftest(python)
+            answers.append(deprepair.cancel_status(plan.plan_id))
+            return out
+
+        monkeypatch.setattr(deprepair, "worker_self_test", _cancel_mid_selftest)
+        rec = _prepare_with(plan)
+        assert answers == [{"accepted": True, "reason": ""}]
+        assert rec["state"] == deprepair.STATE_CANCELLED, rec
+        assert rec["code"] == deprepair.ERROR_CANCELLED
+        assert managedenv.python_of(project) is None
+        gen = rec["result"]["generation"]
+        assert managedenv.generations(project)[gen]["state"] == "incomplete"
+
 
 @needs_worker
 class TestProjectVenvTarget:
@@ -732,6 +929,30 @@ class TestProjectVenvTarget:
             )
         assert err.value.code == deprepair.ERROR_NOT_ALLOWED
 
+    def test_cancel_accepted_during_the_selftest_is_honored_in_place(
+        self, tmp_path, house, monkeypatch
+    ):
+        """用户 venv 原地那条路同样：自检期间接受的取消 → cancelled（包已装进去，如实报 + 体检），
+        不 remember、不算提交（Codex #461 P2）。"""
+        project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
+        real_venv(project)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.target_kind == deprepair.TARGET_PROJECT_VENV
+        real_selftest = deprepair.worker_self_test
+        answers: list[dict] = []
+
+        def _cancel_mid_selftest(python):
+            out = real_selftest(python)
+            answers.append(deprepair.cancel_status(plan.plan_id))
+            return out
+
+        monkeypatch.setattr(deprepair, "worker_self_test", _cancel_mid_selftest)
+        rec = _prepare_with(plan)
+        assert answers == [{"accepted": True, "reason": ""}]
+        assert rec["state"] == deprepair.STATE_CANCELLED, rec
+        assert rec["result"]["health_ok"] is True  # 包在里面、环境是好的：如实
+        assert deprepair.cancel_status(plan.plan_id)["reason"] == "not_found"  # 没提交
+
 
 def _prepare_with(plan) -> dict:
     deprepair.prepare_async(plan.plan_id)
@@ -761,6 +982,34 @@ def test_stale_plan_is_refused_when_the_environment_changed(tmp_path, monkeypatc
     py.parent.mkdir(parents=True, exist_ok=True)
     py.write_text("", encoding="utf-8")
     managedenv.activate(project, "gx")
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.prepare(plan.plan_id)
+    assert err.value.code == deprepair.ERROR_PLAN_STALE
+    assert deprepair.get_joint_plan(plan.plan_id) is None
+
+
+def test_stale_plan_is_refused_when_the_target_packages_changed(tmp_path, monkeypatch):
+    """解释器指纹不变、目标里的包变了（确认期间有人装 / 卸）→ 执行前重量事实，digest 不同就 stale
+    （Codex #461 P2）。"""
+    project = tmp_path / "paper"
+    project.mkdir()
+    (project / "requirements.txt").write_text("six\n", encoding="utf-8")
+    (project / "figure.py").write_text("import six\n", encoding="utf-8")
+    monkeypatch.setattr(deprepair, "_base_python", sys.executable)
+    monkeypatch.setattr(deprepair, "_base_python_known", True)
+    monkeypatch.setattr(
+        deprepair, "joint_target_for", lambda p, s: (deprepair.TARGET_MANAGED, sys.executable, "x")
+    )
+    installed: dict = {}
+    monkeypatch.setattr(
+        depplan,
+        "target_facts",
+        lambda python, use_cache=True: depplan.TargetFacts(
+            python=python, marker_env={}, stdlib=frozenset(), installed=dict(installed)
+        ),
+    )
+    plan = deprepair.create_joint_plan(project, "figure.py")
+    installed["tabulate"] = "0.9.0"  # 确认期间目标里多了一个包
     with pytest.raises(deprepair.RepairError) as err:
         deprepair.prepare(plan.plan_id)
     assert err.value.code == deprepair.ERROR_PLAN_STALE

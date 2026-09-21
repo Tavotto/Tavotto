@@ -786,20 +786,106 @@ class TestPlan:
 
     def test_hash_mode_installs_the_whole_closure_and_requires_every_hash(self, tmp_path):
         h = "--hash=sha256:" + "a" * 64
-        proj = self._project(tmp_path, "import six\n", f"six==1.17.0 {h}\ntabulate==0.9.0 {h}\n")
+        lock = f"six==1.17.0 {h}\ntabulate==0.9.0 {h}\nmatplotlib==3.10.0 {h}\nnumpy==2.2.0 {h}\n"
+        proj = self._project(tmp_path, "import six\n", lock)
         plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
-        assert plan.status == "ready" and plan.require_hashes
-        assert plan.requirements == ("six==1.17.0", "tabulate==0.9.0")
-        assert plan.hashes == {
-            "six==1.17.0": ("sha256:" + "a" * 64,),
-            "tabulate==0.9.0": ("sha256:" + "a" * 64,),
-        }
+        assert plan.status == "ready" and plan.require_hashes, plan.blocked
+        assert plan.requirements == (  # 声明顺序，整份锁
+            "six==1.17.0",
+            "tabulate==0.9.0",
+            "matplotlib==3.10.0",
+            "numpy==2.2.0",
+        )
+        assert set(plan.hashes) == set(plan.requirements)
+        assert plan.hashes["six==1.17.0"] == ("sha256:" + "a" * 64,)
         assert plan.constraints == ()
+        assert plan.adapter == depplan.ADAPTER_REQUIREMENTS  # 身份里仍有它；需求文件里由锁兑现
         proj2 = self._project(tmp_path / "b", "import six\n", f"six==1.17.0 {h}\ntabulate==0.9.0\n")
         plan2 = depplan.plan(proj2, "plot.py", facts=_facts(), target_kind="tavotto_managed")
         assert plan2.status == "blocked"
         assert plan2.blocked[0]["code"] == "dependency_hashes_incomplete"
         assert plan2.blocked[0]["lines"] == ["tabulate==0.9.0"]
+
+    def test_hash_mode_on_the_managed_target_requires_the_lock_to_pin_the_adapter(self, tmp_path):
+        """`--require-hashes` 下 adapter 那两条给不出 hash：锁必须已经把它们钉住、且在范围内；否则
+        blocked（不是偷偷不带 hash 装一条）。用户 venv 目标没有 adapter，不受此限（Codex #461 P1）。"""
+        h = "--hash=sha256:" + "a" * 64
+        # 锁没钉 matplotlib / numpy
+        proj = self._project(tmp_path, "import six\n", f"six==1.17.0 {h}\n")
+        plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        assert plan.status == "blocked"
+        assert [b["code"] for b in plan.blocked] == ["dependency_hashes_incomplete"]
+        assert plan.blocked[0]["adapter"] == ["matplotlib", "numpy"]
+        venv_plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="project_venv")
+        assert venv_plan.status == "ready" and venv_plan.adapter == ()
+        # 钉了、但在 adapter 范围外
+        lock = f"six==1.17.0 {h}\nmatplotlib==3.5.0 {h}\nnumpy==2.2.0 {h}\n"
+        proj2 = self._project(tmp_path / "b", "import six\n", lock)
+        plan2 = depplan.plan(proj2, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        assert [b["code"] for b in plan2.blocked] == ["dependency_conflict"]
+        conflict = plan2.blocked[0]["conflicts"][0]
+        assert conflict["name"] == "matplotlib" and "adapter" in conflict["sources"]
+        assert conflict["specifiers"] == ["==3.5.0", "<3.12,>=3.8"]
+        # `>=` 不是钉住
+        lock3 = f"six==1.17.0 {h}\nmatplotlib>=3.8 {h}\nnumpy==2.2.0 {h}\n"
+        proj3 = self._project(tmp_path / "c", "import six\n", lock3)
+        plan3 = depplan.plan(proj3, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        assert plan3.blocked[0]["adapter"] == ["matplotlib"]
+
+    def test_install_facts_measure_the_set_against_the_target_not_the_current_interpreter(
+        self, tmp_path
+    ):
+        """缺什么按此刻会跑脚本的解释器量（门），装什么按目标量：目标是新的一代（已装为空）时 needed
+        的全装、marker / stdlib 按目标的 Python（Codex #461 P1）。"""
+        proj = self._project(
+            tmp_path,
+            "import six\nimport tabulate\nimport tomllib\nimport matplotlib\n",
+            'six==1.17.0\ntabulate==0.9.0\nsortedcontainers==2.4.0; python_version < "3.11"\n',
+        )
+        current = _facts({"six": "1.17.0"}, python_version="3.12", python_full_version="3.12.4")
+        fresh = depplan.TargetFacts(
+            python="/fresh/python",
+            marker_env={
+                **current.marker_env,
+                "python_version": "3.10",
+                "python_full_version": "3.10.14",
+            },
+            stdlib=frozenset(importscan.HOST_STDLIB - {"tomllib"}),
+            installed={"matplotlib": ""},  # adapter 必然带上的：算已有、版本未知
+        )
+        plan = depplan.plan(
+            proj, "plot.py", facts=current, target_kind="tavotto_managed", install_facts=fresh
+        )
+        assert plan.status == "ready", plan.blocked
+        # 门：此刻缺 matplotlib 与 tabulate（选中的解释器没有）
+        assert [m["distribution"] for m in plan.missing] == ["matplotlib", "tabulate"]
+        # 装：新的一代 six / tabulate 都要；matplotlib 由 adapter 带上，不进集合
+        assert plan.requirements == ("six==1.17.0", "tabulate==0.9.0")
+        assert plan.constraints == ("sortedcontainers==2.4.0",)  # marker 按目标的 3.10 求值：选中
+        assert plan.unknown == ("tomllib",)  # stdlib 按目标的名字表
+        assert plan.facts["install"]["installed_count"] == 1  # 只有 adapter 带上的那一样
+        assert (
+            plan.identity
+            != depplan.plan(proj, "plot.py", facts=current, target_kind="tavotto_managed").identity
+        )  # 身份含目标 Python 的 minor
+        # 目标就是当前解释器（用户 venv）时集合按它量：只装缺的（matplotlib 没声明 → 裸名）
+        same = depplan.plan(proj, "plot.py", facts=current, target_kind="project_venv")
+        assert same.requirements == ("matplotlib", "tabulate==0.9.0")
+        assert same.constraints == ("six==1.17.0",)
+
+    def test_fresh_venv_facts_provide_the_adapter_and_nothing_else(self, monkeypatch):
+        assert depplan.adapter_distributions() == ("matplotlib", "numpy")
+        monkeypatch.setattr(
+            depplan, "target_facts", lambda python, use_cache=True: _facts({"six": "1"})
+        )
+        fresh = depplan.fresh_venv_facts("/base", provided=depplan.adapter_distributions())
+        assert fresh.installed == {
+            "matplotlib": "",
+            "numpy": "",
+        }  # base 里的 six 不算：新 venv 是空的
+        assert fresh.marker_env == _facts().marker_env and fresh.prefix == ""
+        monkeypatch.setattr(depplan, "target_facts", lambda python, use_cache=True: None)
+        assert depplan.fresh_venv_facts("/base") is None
 
     def test_no_target_facts_is_blocked(self, tmp_path):
         proj = self._project(tmp_path, "import six\n", "six\n")

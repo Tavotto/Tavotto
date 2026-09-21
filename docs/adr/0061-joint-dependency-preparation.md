@@ -103,6 +103,10 @@ ADR 0019 §十「不做静态扫描后批量安装」据此修订为：**不做�
   同一套字段与取法，脚本不依赖 packaging——目标解释器不一定有它）、标准库名字表、已装 distribution 及版本。
   启动条件与 worker / `probe_environment` 对齐（不带 `-I`、env 原样继承、cwd 换空目录）：`pip install --user` 装的包
   worker 看得见，事实表就得看得见。**marker 按目标环境求值**，不按 Flask 进程的 `sys.platform`（判据的主语）。
+  **两份事实**（Codex #461 P1）：缺什么按**此刻会跑脚本的**解释器量（门的主语：现在起会话缺不缺）；装什么、marker、
+  stdlib 按**装到哪**量（`deprepair._facts_for`：用户 venv 是同一个；受管 = active 那一代，没有就是从 base 新建的一代——
+  `fresh_venv_facts(base)`：marker 环境与 stdlib 是 base 的、已装为空）。选中项目 venv 而目标受管时，新的一代要装全
+  needed，不只是 venv 里缺的那几个。
 * **选择** `select()`：默认组 + 用户点名的组；marker 为假的进 `skipped_marker`（不装、不算缺）；目标事实拿不到时
   marker 不求值、全部按选中（宁可多列让用户看见）；选中组里的 unsupported / unknown 与所有约束来源里的这类行进
   `unsupported`。
@@ -123,7 +127,7 @@ ADR 0019 §十「不做静态扫描后批量安装」据此修订为：**不做�
   |---|---|---|
   | `dependency_declaration_unsupported` | 选中的声明里有 unsupported / unknown 的行 | 改用自己的环境（项目 venv / 指定解释器）、或按提示改写那几行、或用既有的手动指定装单个包 |
   | `dependency_conflict` | 声明之间确定矛盾 | 改声明；旧环境原样保留 |
-  | `dependency_hashes_incomplete` | hash 模式下有条目没 hash | 补 hash 或去掉所有 hash |
+  | `dependency_hashes_incomplete` | hash 模式下有条目没 hash；或受管目标下锁没有把 adapter（matplotlib / numpy）用 `==` 钉住（载荷 `adapter`） | 补 hash 或去掉所有 hash；把科学栈也锁进去 |
   | `dependency_target_unavailable` | 目标解释器起不来 / 量不出 | 走既有的环境选择出口 |
 
 * **身份** `identity`：只由意图决定（要装什么 / 约束什么 / 目标类型 / 目标 Python 的 minor 与平台），不含任何机器路径
@@ -152,7 +156,8 @@ U05 接私有 Python 时怎么不出现两套安装器：事务（§五）的接
 <data_dir>/environments/<项目指纹>/
     environment.json           manifest（schema 仍是 1：加可选字段不升）：generations{代号: state / requirements /
                                constraints / identity / created_at / python_version / provisioner} + active（代号）
-    envs/g<身份前 12 位>/       每代一个 venv；目录名 = 计划身份（§三）——同一份意图同一个目录
+    envs/g<身份前 12 位>[-N]/   每代一个 venv；目录名 = 计划身份（§三）——同一份意图同一个目录；同身份的那一代还在册
+                               （active / 旧代有人用）时加序号（`fresh_generation`），身份字段不变
     plans/<代号>/              这一代交给 pip 的 requirements.txt / constraints.txt（我们生成的，可审计）
     venv/                      旧布局那一份，作为隐式的 `legacy` 一代继续认（第一次按代时登记进 generations）
     snapshots/
@@ -171,10 +176,13 @@ ADR 0056 的 spike 用了独立的 `active.json`，这里刻意不设第二个�
    `environment_mutating` 拒起。
 2. **在最终目录建**：`envs/g<身份>/` 直接 `python -m venv`（`create_generation_venv`），manifest 先记这一代
    `state=incomplete`（`register_generation`）。不在 tmp 里建完再 rename（venv 不可移动，[W3]）；已经存在同名目录
-   （同一份意图上次建到一半）先删掉重来——它从没 active 过。
+   （同一份意图上次建到一半、已被 `retire_unused` 注销）先删掉重来——它从没 active 过。**在册的代不会被选作目录名**
+   （`fresh_generation` 加序号；`register_generation` 拒绝重新登记 active / ready 的代）：重建两次同一份账是同一个身份，
+   第二次不能把 active 那代删掉重来（Codex #461 P1）。
 3. 装：`pip install -r <生成的需求文件> -c <生成的约束文件> [--require-hashes]`（`pip_install_joint_argv`，唯一出处），
    需求 = 这一代的完整集合（`generation_requirements`：adapter + 账上记过的 `dist==当时版本` + 这次的 delta，delta 里的
-   同名让账上那条让位），约束 = 计划的约束。两份文件由 `write_plan_files` 从解析结构生成（每行过 `parse_intent` 的
+   同名让账上那条让位；**hash 模式只有锁本身**——adapter 与账上那些给不出 hash，锁必须已经钉住 adapter，计划期校验，
+   §三），约束 = 计划的约束。两份文件由 `write_plan_files` 从解析结构生成（每行过 `parse_intent` 的
    形状关、`requirement_string` 重新序列化；`--hash` 只能在需求文件里——pip 的规定）。项目 venv 目标只装 delta、只用
    项目自己的约束（§三）。
 4. 验：`pip check`（依赖一致性 → `dependency_consistency_failed`）→ 关键 import（这次 needed 的每个 import 名 +
@@ -212,7 +220,8 @@ ADR 0056 的 spike 用了独立的 `active.json`，这里刻意不设第二个�
 异常不触发装包（`pool.should_try_project_env` 唯一判据，不变）。
 
 **取消**的接受时刻：① 计划之后、拿锁之前（一个字节不写）；② 建 venv / pip 期间（kill pip，这一代标 `incomplete`，
-目录留给下次同身份重建时清）；③ 验证期间（同②）。**提交点**（切 active）之后拒绝取消（`accepted=False, reason=committed`）。
+目录留给下次同身份重建时清）；③ 验证期间（同②；`worker_self_test` 之后、切 active 之前再看一次事件——接受了的取消不能
+照常提交）。**提交点**（切 active）之后拒绝取消（`accepted=False, reason=committed`）。
 取消永远不产生假 ready、不动 active、不杀 native、不收别人的 worker。
 
 ### 七、不做的事（各有出口）
