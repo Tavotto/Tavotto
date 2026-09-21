@@ -15,13 +15,15 @@ name: Private Python targets
 #      证据（FO-024 在 Windows 上唯一量得到的地方）。
 #
 # 任一步退出非零就红——红是真红，没有 continue-on-error；红不进 Gate，只进本 workflow 的结论与工件。
-# 触发：`workflow_dispatch`、每日一次 schedule、以及只在本能力自己的文件变动时的 `pull_request`（paths 过滤：
-# `gh workflow run` 只认默认分支上已登记的 workflow，PR 阶段要靠这一条拿到另两个目标的证据）。
+# 触发：`workflow_dispatch`、**每周一次** schedule（三条腿各真下载 30–120 MB 的 pbs 归档 + Linux 拉镜像，每天跑
+# 太贵；与 nightly.yml 同一天的 UTC 18:00 错开到 19:37）、以及只在本能力自己的文件变动时的 `pull_request`
+# （paths 过滤：`gh workflow run` 只认默认分支上已登记的 workflow，PR 阶段要靠这一条拿到另两个目标的证据）。
+# 资格证据按周刷新；翻某个目标的 `enabled` 之前先手动 dispatch 一次拿当天的证据（ADR 0064 §四）。
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "37 19 * * *"
+    - cron: "37 19 * * 0"   # 每周日 UTC 19:37（nightly 是每天 UTC 18:00）
   pull_request:
     paths:
       - ".github/workflows/private-python-targets.yml"
