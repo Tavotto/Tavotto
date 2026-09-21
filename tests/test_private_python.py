@@ -1008,7 +1008,7 @@ class TestIsolation:
             ):
                 config_calls.add(node.func.attr)
         allowed = {
-            "dataclasses", "hashlib", "http", "json", "logging", "os", "posixpath", "re", "secrets", "shutil",
+            "dataclasses", "hashlib", "http", "json", "logging", "os", "platform", "posixpath", "re", "secrets", "shutil",
             "socket", "stat", "subprocess", "tarfile", "threading", "time", "urllib", "pathlib",
             "importlib", "__future__", "brand", "config", "runtime", "files", "__version__",
         }  # fmt: skip
