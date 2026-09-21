@@ -737,6 +737,87 @@ def test_png_with_alpha_is_placed_with_an_smask_and_its_pixels_survive(provider,
     assert _census(pdfium, out).get(PDFIUM_IMAGE, 0) == 1
 
 
+def _associated_alpha_tiff(pixels: list[tuple[int, int, int, int]], size: tuple[int, int]) -> bytes:
+    """一张 ExtraSamples = 1（associated / 预乘 alpha）的 RGBA TIFF：Pillow 只会写 2（unassociated），
+    所以先写再把 IFD 里 tag 338 的值改成 1；像素按预乘存。"""
+    import io
+    import struct
+
+    from PIL import Image
+
+    im = Image.new("RGBA", size)
+    im.putdata(pixels)
+    buf = io.BytesIO()
+    im.save(buf, format="TIFF", compression=None)
+    data = bytearray(buf.getvalue())
+    bo = "<" if data[:2] == b"II" else ">"
+    ifd = struct.unpack(bo + "I", data[4:8])[0]
+    n = struct.unpack(bo + "H", data[ifd : ifd + 2])[0]
+    patched = 0
+    for i in range(n):
+        off = ifd + 2 + 12 * i
+        tag, typ, cnt = struct.unpack(bo + "HHI", data[off : off + 8])
+        if tag == 338 and typ == 3 and cnt == 1:
+            data[off + 8 : off + 10] = struct.pack(bo + "H", 1)
+            patched += 1
+    assert patched == 1
+    return bytes(data)
+
+
+def test_a_tiff_with_associated_alpha_comes_out_straight_with_an_smask(provider, pdfium, tmp_path):
+    """Codex #463 P2：预乘 alpha 的 TIFF（ExtraSamples = 1）不许当成不透明 RGB 嵌进去。源像素按预乘存
+    (100,50,25,128)，即 straight (200,100,50) @ alpha 0.5：解码后 alpha 还在、颜色反预乘回来（±1），
+    PDF 里带 /SMask，合成到白底 = (228,178,153)。"""
+    from tavotto.rendercore import rasterio
+
+    data = _associated_alpha_tiff([(100, 50, 25, 128)] * 16, (4, 4))
+    buf = rasterio.decode(data, "tiff")
+    assert buf.channels == 4
+    r, g, b, a = buf.pixel(0, 0)
+    assert a == 128 and abs(r - 200) <= 1 and abs(g - 100) <= 1 and abs(b - 50) <= 1, (r, g, b, a)
+    rect = (20.0, 100.0, 40.0, 40.0)
+    out, facts = _write(
+        tmp_path,
+        provider,
+        [ir.Image("im", rect, object_id="i")],
+        {"im": _res("figs/assoc.tiff", "tiff", data)},
+        {"im": data},
+    )
+    assert (facts.images[0]["channels"], facts.images[0]["smask"]) == (4, True)
+    img = _raster(pdfium, out)
+    want = tuple(round(c * 0.5 + 255 * 0.5) for c in (200, 100, 50))
+    got = _px(img, 20 + 20, 100 + 20)
+    assert _close(got, want, tol=3), (got, want)
+    assert any(b"/SMask" in h for h, _ in pdfread.objects(out.read_bytes()).values())
+
+
+def test_decode_unpremultiplies_an_rgba_or_la_mode_image_instead_of_dropping_alpha(
+    provider, monkeypatch
+):
+    """同一条 P2 的解码器层：Pillow 12.3 的 TIFF 读取器对 ExtraSamples = 1 已经在加载时反预乘、报 RGBA（上一条
+    用例走的就是它），所以 `RGBa` / `La` 这两个模式要单独喂——把 `_open` 换成直接给一张 `RGBa` / `La`：
+    没有这两个名字的话 `decode()` 走 `convert("RGB")`，alpha 静默丢、颜色带着预乘的暗。"""
+    from PIL import Image
+
+    from tavotto.rendercore import rasterio
+
+    for mode, px, want in (
+        ("RGBa", (100, 50, 25, 128), (200, 100, 50, 128)),
+        ("La", (64, 128), (128, 128, 128, 128)),
+    ):
+        im = Image.new(mode, (2, 2))
+        im.putdata([px] * 4)
+        monkeypatch.setattr(rasterio, "_open", lambda data, kind, im=im: im)
+        buf = rasterio.decode(b"", "tiff")
+        assert buf.channels == 4, mode
+        got = buf.pixel(1, 1)
+        assert got[3] == want[3] and all(abs(a - b) <= 1 for a, b in zip(got, want)), (
+            mode,
+            got,
+            want,
+        )
+
+
 def test_an_rgb_jpeg_passes_through_as_dct_and_a_cmyk_one_is_decoded(provider, pdfium, tmp_path):
     from PIL import Image
 
