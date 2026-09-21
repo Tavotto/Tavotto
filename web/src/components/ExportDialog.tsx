@@ -43,6 +43,7 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   Check,
+  CircleCheck,
   Download,
   FileExclamationPoint,
   ImageOff,
@@ -67,6 +68,8 @@ import { msg, t as translate } from "@/i18n";
 import { emitActivity } from "@/lib/activity";
 import { engineTransport } from "@/lib/engineTransport";
 import { readExportDefaults, writeExportDefaults } from "@/lib/exportDefaults";
+import { inspectionState } from "@/lib/artifactInspection";
+import { RetryImg } from "@/components/ui/RetryImg";
 import {
   contextFigureId,
   listExportableFigures,
@@ -189,6 +192,7 @@ interface ParkedState {
   filenameTouched: boolean;
   withReport: boolean;
   transparent: boolean;
+  strict: boolean;
 }
 
 /** 此刻快速编辑正在编的那张图（打开对话框那一刻现取，不从渲染闭包里拿） */
@@ -235,6 +239,10 @@ export function ExportDialog() {
     () => readExportDefaults().withProof,
   );
   const [transparent, setTransparent] = useState(false);
+  /** 严格核验产物（ADR 0068 的 `strict` 政策）：必需项失败或无法核验的那一项不发布 */
+  const [strict, setStrict] = useState(
+    () => readExportDefaults().strictInspection,
+  );
   const [advancedOpen, setAdvancedOpen] = useState(false);
   /**
    * 用户对本次导出的显式确认：阻断项与「无法核验」项都要点过才放行。
@@ -372,6 +380,7 @@ export function ExportDialog() {
       setFilenameTouched(restore.filenameTouched);
       setWithReport(restore.withReport);
       setTransparent(restore.transparent);
+      setStrict(restore.strict);
       return;
     }
     // scope 默认跟着当前工作流走，**但原图不可用时不静默改成画布**：
@@ -536,6 +545,8 @@ export function ExportDialog() {
       ppi: Number(ppi) || PPI_DEFAULT,
       background: transparent && transparentApplies ? "transparent" : "white",
       includeReport: reportOn,
+      strictInspection: strict,
+      profileId: doc.profile?.id ?? profileId,
       acknowledged:
         needsConfirm && confirmed
           ? [...new Set(errors.map((i) => i.ruleCode))]
@@ -654,7 +665,12 @@ export function ExportDialog() {
             },
           )
         : undefined;
-      writeExportDefaults({ formats, dpi: String(ppi), withProof: withReport });
+      writeExportDefaults({
+        formats,
+        dpi: String(ppi),
+        withProof: withReport,
+        strictInspection: strict,
+      });
       const job = await runExport(
         inputOf({
           overwrite,
@@ -687,6 +703,7 @@ export function ExportDialog() {
       withReport,
       scope,
       transparent,
+      strict,
       figureId,
       panel,
       availability.spec,
@@ -707,6 +724,7 @@ export function ExportDialog() {
       filenameTouched,
       withReport,
       transparent,
+      strict,
     };
     setOpen(false);
   };
@@ -1154,6 +1172,19 @@ export function ExportDialog() {
                 disabled={reportRequired}
               />
             </label>
+            {/* 严格核验（ADR 0068）：按这套规范的阈值重新打开封口的文件量事实，
+                必需项失败**或无法核验**的那一项不发布。standard 是缺省，不勾就不发这个键 */}
+            <label
+              className="flex items-center justify-between gap-4 text-xs text-ink-2"
+              title={ex("strictTitle")}
+            >
+              <span>{ex("strictToggle")}</span>
+              <Toggle
+                aria-label={ex("strictToggle")}
+                checked={strict}
+                onChange={setStrict}
+              />
+            </label>
             {/* 透明背景只在「有位图格式」且**不是照抄源文件**的那条路上有意义。
                 原图 + 位图源出来的就是那张图本身（我们只换容器不换像素），
                 背景是它自己的——开着一个不起作用的开关就是说了而不做 */}
@@ -1336,7 +1367,7 @@ function FigureThumb({ figure }: { figure: ExportableFigure }) {
           dangerouslySetInnerHTML={{ __html: svg }}
         />
       ) : src ? (
-        <img
+        <RetryImg
           data-export-thumb="file"
           src={src}
           alt=""
@@ -1521,7 +1552,7 @@ function TargetHeader({
       {original ? (
         <div className="flex h-10 w-[60px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-white">
           {src ? (
-            <img
+            <RetryImg
               src={src}
               alt=""
               className="max-h-full max-w-full object-contain p-0.5"
@@ -1996,8 +2027,63 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
           <span className="shrink-0 text-xs text-ink-3">{ex("replaced")}</span>
         )}
       </div>
+      <InspectionLine manifest={out.manifest} />
       {revealError && <p className="text-xs text-danger">{revealError}</p>}
     </div>
+  );
+}
+
+/**
+ * 这一件产物核验得怎么样（ADR 0068）。解读只有 `lib/artifactInspection.inspectionState()`
+ * 一份：**只有全部可判项都核过才画绿**；有未核验项就按「未核验」说、不画勾；有失败项
+ * 红着列出（standard 政策下文件照样交付了，用户投出去之前得知道）；`not_applicable` 不画。
+ * 没有 manifest（老服务端 / 检查器没跑）= 未核验。
+ */
+function InspectionLine({
+  manifest,
+}: {
+  manifest: ExportOutput["manifest"];
+}) {
+  useTranslation("dialogs");
+  const state = inspectionState(manifest);
+  const label = (k: string) =>
+    ex(`inspection.check.${k}`, { defaultValue: k });
+  if (state.tone === "verified") {
+    return (
+      <p
+        data-inspection="verified"
+        className="flex items-center gap-1 text-xs text-ok"
+      >
+        <CircleCheck size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+        {ex("inspection.verified")}
+      </p>
+    );
+  }
+  if (state.tone === "failed") {
+    return (
+      <p
+        data-inspection="failed"
+        className="flex items-start gap-1 text-xs text-danger"
+      >
+        <TriangleAlert
+          size={ICON_SIZE.xs}
+          className="mt-0.5 shrink-0"
+          aria-hidden
+        />
+        {ex("inspection.failedItems", {
+          items: state.failed.map(label).join("、"),
+        })}
+      </p>
+    );
+  }
+  return (
+    <p data-inspection="unknown" className="text-xs text-ink-3">
+      {state.unknown.length
+        ? ex("inspection.unknownItems", {
+            items: state.unknown.map(label).join("、"),
+          })
+        : ex("inspection.unknown")}
+    </p>
   );
 }
 

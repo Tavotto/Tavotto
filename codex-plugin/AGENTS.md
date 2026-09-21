@@ -146,6 +146,22 @@
   `web/e2e/mcp-canvas.spec.ts`。**跑变异一律 `-B` 并清 `__pycache__`**：等长改动一秒内还原，
   pyc 头不变，跑的是变异版。
 
+## 导出产物核验（2026-09-21，统一实施包 U08，ADR 0068）
+
+- **`bridge.export` 与 HTTP 导出接的是同一份检查器接线** `engine/artifactinspect.inspect_produced`
+  （`engine_exportjob.run(..., inspect=_inspect)`，`backend="worker"`）：每个封口的临时文件在提交点之前
+  重新打开量事实，不合格的那一项以 `artifact_rejected` 进 `partial`、**不发布**；合格的 `files[].manifest`
+  原样带出（`verdict / checks 四值 / notes / sha256 / px / size_pt…`）。旧键（`path / bytes / vector / dpi /
+  status / error`）一个不动。位图 `Produced` 带期望像素（图幅 × dpi，与 `artifactcheck` 同一换算），
+  `size` 那一维才量得到。契约层 `probe_asset` 按需 import（`_probe_asset`），不进桥的常驻 import 闭包。
+- **给模型看的文字里「未核验」永远不是「已核验」**：`server._inspection_summary` 三组各自点名
+  （未通过 / 已核验 / 未核验），一组都不省；没有 manifest = 整份未核验。这条入口只有 standard 政策
+  （必需 = 完整性 + 核心尺寸）；严格政策走 HTTP 的 `inspection` 段。
+- 桥新增 import `artifactinspect` → `BRIDGE_IMPORTS_AT_MIN` 已同步；它晚于 v0.15.0，**下次发版
+  `MIN_TAVOTTO_VERSION` 必须抬到那一版**（现在不能写一个还没发的号）。
+- 替身 worker 写出的文件也要过得了检查：`tests/support/artifactbytes.py`（stdlib 最小合法 PDF / PNG）。
+  看护：`tests/test_mcp_export_inspection.py`（独立读取器 + 坏文件负例 + unknown 不说已核验 + 同一份接线）。
+
 ## MCP server 与内嵌画布（2026-08-18）
 
 ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推翻**

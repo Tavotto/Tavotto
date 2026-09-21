@@ -68,12 +68,17 @@ straight-alpha 的 `RasterBuffer`，pikepdf 正式裁决；栅格（ADR 0066）�
 （生成器 `scripts/dev/u07_evidence.py`，最小 freeze `scripts/dev/u07_freeze_child.py`）；enrollment 加 `U07-R1`（observing）。
 交接见 [`handoffs/U07_compose_raster.md`](handoffs/U07_compose_raster.md)。
 
-U08 自 2026-09-21 起执行（`implementation_status: in_progress`，产品资格仍 `not_run`，**不切默认**）。第一切片（ADR 0067）：
+U08 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）。第一切片（ADR 0067）：
 契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 在 PyMuPDF（默认）与 `rendercore/facade.py`（候选，19 项同签名 +
 Canvas 面）之间选一个，选定即定、不静默回退；产品导出路在候选下把 `scope=canvas` 交给 `job.produce` + `ExecutionSourceResolver`
 （带 override / runtime 素材由当次 worker 现画并附回执，native 会话经 `receipt.from_native_session`），`scope=original` /
 预览 / 探测 / 写回标注经契约层自动切换；候选的覆盖表与字形向量各一份生成物（与默认表的差异钉成闭集）；旧契约用例在候选下
 逐字重跑（`scripts/dev/u08_parity.py`，清单在 ledger `candidate_parity`，14 条实现特定断言各带替代证据，用户合同一条不删）。
+第二切片（ADR 0068）：`rendercore/inspector.py` 在提交点之前重新打开封口产物量事实（完整性 / 尺寸 / 字体实际使用 / 文字层 /
+有效 ppi / 位图密度，四值判据 `unknown` 不是 `verified`），D08 两档政策（standard 缺省只拦完整性与核心尺寸、strict 按出版规范
+阈值连 unknown 也拦），回执 `outputs[].manifest`。第三切片（入口审计）：MCP `tavotto_export` 接同一份检查器接线、回执 `files[].manifest`
+与给模型的三组点名；前端每件产出一行（全部可判项 verified 才画绿、未核验中性点名、失败红色点名、没有 manifest = 未核验）、高级选项
+「严格核验产物」、`/api/render` 背压的有界重试；后端阶段名 ↔ 前端文案同源判据；Playground 审计（无导出面板、不发 `/api/*`）。
 证据在 [`evidence/u08/`](evidence/u08/)；enrollment 加 `U08-R1`（observing）；facade 19 项在
 [`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 全部有 U08 迁移证据。交接见
 [`handoffs/U08_facade_parity.md`](handoffs/U08_facade_parity.md)。

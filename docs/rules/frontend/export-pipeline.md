@@ -46,3 +46,17 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   列表的缩略图**不发渲染请求**：有图内修改的面板挂 `renderStore` 里已画好的
   SVG，其余走素材库同一条 `panelSrc`。「没选」（`no_figure`，让用户点一张）与
   「没得选」（`no_figures`，项目里一张图都没有）是两句话。
+- **产物核验的解读只有 `lib/artifactInspection.inspectionState()` 一处**（2026-09-21，统一实施包 U08，
+  ADR 0068）：回执 `outputs[].manifest` 是服务端重新打开封口文件量出的逐项四值
+  （`verified / failed / unknown / not_applicable`）。每件产出一行：**全部可判项 `verified` 才画绿勾
+  「已核验」**；有 `unknown` 按名字列「未核验：…」——中性色、没有勾；有 `failed` 红着列「核验未通过：…」
+  （standard 政策下文件已经交付了，用户投出去之前得知道）；`not_applicable` 不画；**没有 `manifest`
+  （老服务端 / 检查器没跑）= 未核验**，不是通过。Codex 内嵌画布的「已导出」提示按同一份解读
+  （`inspectionRollup`）按文件名点名失败 / 未核验的文件。
+- **严格核验是请求里的可选段**：高级选项「严格核验产物」→ `buildExportRequest({ strictInspection, profileId })`
+  才带 `inspection: { mode: "strict", profile_id }`；不勾时载荷**逐字节不变**（老服务端不认这个键也无妨），
+  快照指纹不含它（它改的是发不发布，不是出来的文件）。阈值只在服务端从出版规范取，前端不算第二份。
+- **`/api/render` 的一次失败可能只是背压**（候选后端下 child 队列满 → 503 + `Retry-After`）：`<img>`
+  看不见状态码，`lib/imgRetry.useRetryingSrc` 对 `/api/render` 地址按 1 / 2 / 4 s 有界重试（cache-bust
+  `r=n`，`src` 变了归零）；blob / data / `/api/file` 失败**不**重试。画布面板（`PanelView`）、缩略图
+  （`CanvasThumb`）、版本 / 图库 / 导出对话框的缩略图（`ui/RetryImg`）共用这一份。

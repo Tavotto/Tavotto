@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/icons'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { RetryImg } from '@/components/ui/RetryImg'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import {
   backendCodeMsg,
@@ -468,7 +469,7 @@ function PanelThumb({ panel }: { panel: ReadinessPanel }) {
   // 64×48 的一小格：行里的识别记号，不是看图器
   const box = 'aspect-[4/3] w-16 shrink-0 rounded-xs border border-border bg-white'
   if (!src) return <span className={cn(box, 'bg-surface-2')} aria-hidden />
-  return <img src={src} alt="" className={cn(box, 'object-contain')} />
+  return <RetryImg src={src} alt="" className={cn(box, 'object-contain')} />
 }
 
 function PanelRow({
