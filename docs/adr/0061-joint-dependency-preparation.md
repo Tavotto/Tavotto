@@ -209,10 +209,22 @@ ADR 0056 的 spike 用了独立的 `active.json`，这里刻意不设第二个�
 事实 digest，不一致 → `repair_plan_stale`。**一次「准备并打开」覆盖计划里全部已知的缺口**；它不覆盖计划之后才发现的
 东西：私有源、要构建的 sdist、用户在中途改了环境——这些各自以既有 code 停下。
 
-**跑前的门**与 U03 的工作目录门同一处（`pool._new_worker` 起会话之前；准备接口在 `plan_for` 里同一份判据）：
-`JointPlan.status == ready` 时不起会话，抛 `dependency_preparation_required` 带计划载荷（终局 `needs_input`，与
-`workdir_confirmation_required` 同形）；`blocked` / `nothing_needed` 时**放行**——blocked 的诊断挂在错误响应 /
-计划里，脚本照跑（可能以 `missing_dependency` 收场，那时用户看到的是同一份诊断）。
+**跑前的门**与 U03 的工作目录门同一处（`pool._new_worker` 起会话之前——`pool.SPAWN_GATES` 上登记的
+`deprepair._spawn_gate`，登记而不是 import 是因为 `deprepair` import `pool`；准备接口在 `plan_for` 里同一份判据
+`deprepair.gate`）：`JointPlan.status == ready` 时不起会话，抛 `dependency_preparation_required` 带计划载荷
+（`preparation_offer`：计划 + 可选目标 + 轮次 + 是否已跳过；终局 `needs_input`，与 `workdir_confirmation_required`
+同形；渲染端点 `_worker_error_payload`、素材库试运行 `probe._error_from_worker`、MCP `_bridge_error_from_worker`
+三处同一份投影）；`blocked` / `nothing_needed` 时**放行**——blocked 的诊断挂在计划的 `dependency_preparation` 上，
+脚本照跑（可能以 `missing_dependency` 收场，那时用户看到的是同一份诊断）。**门一直问到有答案**：答案是一次成功的
+准备（之后计划就是 `nothing_needed`），或用户明确「不准备，直接运行」（`deprepair.skip_preparation`：
+`POST /api/engine/dependencies/skip` / 授权框的那个按钮 / MCP `prepare_dependencies="skip"`；进程内按 (项目, 脚本) 记，
+一次成功的准备清掉它）；没有轮次了也放行。**不**做「同一个动作第二次悄悄变成另一种行为」的「只问一次」。
+
+公共入口：`GET /api/engine/dependencies?script=`（只读 offer + 选组 + 轮次）、`POST …/plan`（绑定；非 ready 409 +
+`joint`）、`POST …/prepare`（只发 `plan_id`；进度走既有 SSE `engine.dependency`，`flow: "joint"`）、`POST …/cancel`
+（`accepted / reason`）、`POST …/skip`、`PATCH /api/engine/dependencies`（选组，项目设置 `dependency_groups`）。
+桌面端 `DependencyPrepareDialog`（与 `WorkdirConfirmDialog` 同形：只翻译载荷、目标默认后端算的、blocked 摆理由不装）；
+MCP `tavotto_open_figure(prepare_dependencies=tavotto_managed | project_venv | skip)` 同步走同一个事务再开图。
 
 **有界重计划**：运行后的 `missing_dependency`（条件 / 延后 / 动态 import、跟进不到的本地模块）走既有 `offer` →
 `create_plan` 路，offer 多带一份按当时目标重算的 `JointPlan`（缺的那个名字并进 needed）；轮次仍是每 (项目, 脚本)
@@ -239,7 +251,7 @@ ADR 0056 的 spike 用了独立的 `active.json`，这里刻意不设第二个�
 |---|---|---|
 | A `foundation/u04-dependencies` | `packaging` 依赖；`depresolve` 无损读法与 unsupported 闭集；`importscan`；`depplan`（计划模型，不装） | §一 / §二 / §三 / §四（裁决） |
 | B `…-b` | `managedenv` 代布局 + manifest `active`；`deprepair.create_joint_plan / prepare()` 事务、`pip_install_joint_argv` / `write_plan_files`、三层验证、取消（提交点后拒）、租约、退役；单包修复 / 重建 / 包管理首装走同一事务 | §五 / §六（绑定与取消） |
-| C `…-c` | `pool._new_worker` 的门与 `preparation.plan_for` 的 `dependency_preparation` / `needs_input`；HTTP / MCP 端点与前端一次授权对话框；FO18 / 20 / 21 / 22 / 27 / 28 / 29 / 31 场景与台账 | §六（门与重计划） |
+| C `…-c` | `pool.SPAWN_GATES` + `deprepair.gate / skip_preparation` 的门；`preparation.plan_for` 的 `dependency_preparation` / `needs_input`；`probe` 的投影；六个 HTTP 端点；前端 `DependencyPrepareDialog` + `depRepairStore.prepare`；MCP `prepare_dependencies=`；FO20 / 21 / 22 / 27 / 31 enforced（pr）、FO18 / FO05 observing（nightly，联网）、FO13 / 28 / 29 planned 写理由 | §六（门与重计划） |
 
 ### 九、后果与修订
 

@@ -290,6 +290,7 @@ def reset_state(project: str | Path | None = None) -> None:
             _plans.clear()
             _joint_plans.clear()
             _committed.clear()
+            _gate_skipped.clear()
             _progress.clear()
             _cancels.clear()
             _rounds.clear()
@@ -301,6 +302,8 @@ def reset_state(project: str | Path | None = None) -> None:
             _plans.pop(key, None)
         for key in [k for k, p in _joint_plans.items() if p.project_id == pid]:
             _joint_plans.pop(key, None)
+        for key in [k for k in _gate_skipped if k[0] == pid]:
+            _gate_skipped.discard(key)
         for key in [k for k in _rounds if k[0] == pid]:
             _rounds.pop(key, None)
         for key in [k for k in _attempted if k[0] == pid]:
@@ -1303,7 +1306,7 @@ def _emit(
                 target_kind=joint.target_kind,
                 script=joint.script,
                 requirements=list(joint.requirements),
-                kind="joint",
+                flow="joint",
             )
         if plan_id in _committed:
             rec["committed"] = True
@@ -2526,6 +2529,8 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     pool.invalidate(plan.script, plan.project)
     depplan.reset_cache(python)
     _note_round(plan.project, plan.script)
+    with _lock:
+        _gate_skipped.discard((plan.project_id, plan.script))
     result = {
         "ok": True,
         "python": python,
@@ -2751,6 +2756,8 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     if job.script:
         pool.invalidate(job.script, project)
         _note_round(project, job.script)
+        with _lock:
+            _gate_skipped.discard((managedenv.project_fingerprint(project), job.script))
     else:
         pool.invalidate_project(project)
     depplan.reset_cache(python)
@@ -2917,3 +2924,119 @@ def cancel_status(plan_id: str) -> dict:
         return {"accepted": False, "reason": "not_found"}
     ev.set()
     return {"accepted": True, "reason": ""}
+
+
+# --------------------------------------------------------------- 跑前的门（ADR 0061 §六）
+#
+# 起第一个 worker **之前**看一眼：脚本开跑要的第三方包目标环境里缺不缺、缺的能不能一次装
+# 全。能（`JointPlan.status == ready`）就不起会话，以 `dependency_preparation_required` 把整份
+# 计划交出去让用户授权一次——与 U03 的工作目录门同一处、同一形状（`pool._new_worker`）。
+# 不能（`blocked` / `nothing_needed`）就放行：诊断挂在计划上，脚本照跑。
+#
+# 门**一直问到有答案**：答案要么是一次成功的准备（之后计划就是 nothing_needed），要么是用户
+# 明确说「不准备，直接跑」（`skip_preparation`，每进程每 (项目, 脚本) 记一次；脚本以
+# `missing_dependency` 收场时看到的是同一份联合 offer——运行后那条路，轮次
+# `MAX_DEPENDENCY_REPAIR_ROUNDS` 兜底）。没有轮次了也放行。「有答案才放行 + 轮次上限」
+# 一起就是「无无限缺包循环」——而不是让同一个动作第二次悄悄变成另一种行为。
+ERROR_PREPARATION_REQUIRED = "dependency_preparation_required"
+#: 本模块里**常量式**、且会落到用户界面的 code（`tests/test_error_codes.py` 的码表读它；
+#: `RepairError` 那一族的文案在前端 `engine.repairError.*` 表里，按既有约定不进这里）。
+ERROR_CODES = (ERROR_PREPARATION_REQUIRED,)
+_gate_skipped: set[tuple[str, str]] = set()
+
+
+def skip_preparation(project: str | Path, script: str) -> None:
+    """用户明确说「不准备，直接跑」：这一对从此放行（进程内；一次成功的准备会清掉它）。"""
+    with _lock:
+        _gate_skipped.add((managedenv.project_fingerprint(str(Path(project))), script))
+
+
+def preparation_skipped(project: str | Path, script: str) -> bool:
+    with _lock:
+        return (managedenv.project_fingerprint(str(Path(project))), script) in _gate_skipped
+
+
+def joint_targets(project: str | Path, target_kind: str, python: str) -> list[dict]:
+    """联合准备可选的目标（与 `offer()` 的 `targets` 同一形状，少了 system 那一档——跑前没有
+    「已经装着它的解释器」这一说，那是运行后体检出来的）。"""
+    root = str(Path(project))
+    out: list[dict] = []
+    if target_kind == TARGET_PROJECT_VENV and python:
+        out.append(
+            {
+                "kind": TARGET_PROJECT_VENV,
+                "venv": projectenv.project_relative(root, str(Path(python).parent.parent)) or "",
+                "python": projectenv.project_relative(root, python) or python,
+                "modifies_user_environment": True,
+                "creates_environment": False,
+                "available": True,
+                "reason": "",
+            }
+        )
+    managed = managedenv.state(root)
+    available = True if managed["exists"] else managed_available()
+    out.append(
+        {
+            "kind": TARGET_MANAGED,
+            "venv": "",
+            "python": "",
+            "modifies_user_environment": False,
+            "creates_environment": not managed["exists"],
+            "available": available,
+            "reason": "" if available is not False else ERROR_MANAGED_UNAVAILABLE,
+        }
+    )
+    return out
+
+
+def preparation_offer(project: str | Path, script: str) -> dict | None:
+    """跑前 / 准备计划要看的东西（**只读，不装**）：联合计划 + 可选目标 + 轮次。
+
+    解释器解析不出来（显式选择失效 / 一个 Python 都没有）回 None：那是另一条错误，让原路径
+    去报，这里不替它说话。
+    """
+    root = str(Path(project))
+    try:
+        joint, target_kind, python = joint_plan_for(root, script)
+    except pool.WorkerError:
+        return None
+    return {
+        "code": ERROR_PREPARATION_REQUIRED,
+        "script": script,
+        "plan": joint.to_payload(),
+        "target_kind": target_kind,
+        "targets": joint_targets(root, target_kind, python),
+        "rounds_remaining": rounds_remaining(root, script),
+        "skipped": preparation_skipped(root, script),
+    }
+
+
+def gate(project: str | Path, script: str) -> dict | None:
+    """起会话前的门：计划 `ready`、还有轮次、用户没说过「直接跑」→ 回载荷（调用方据此不起会话）；
+    否则 None（放行）。"""
+    root = str(Path(project))
+    if rounds_remaining(root, script) <= 0 or preparation_skipped(root, script):
+        return None
+    offer = preparation_offer(root, script)
+    if offer is None or offer["plan"]["status"] != depplan.STATUS_READY:
+        return None
+    return offer
+
+
+def _spawn_gate(figures_dir: str, script_name: str) -> None:
+    """挂在 `pool.SPAWN_GATES` 上的那一份：要问就抛带载荷的 `WorkerError`。"""
+    offer = gate(figures_dir, script_name)
+    if offer is None:
+        return
+    missing = ", ".join(m["distribution"] for m in offer["plan"]["missing"])
+    err = pool.WorkerError(
+        f"这个脚本开跑就需要的包目标环境里没有：{missing}。Tavotto 可以一次装全再继续；"
+        "先授权，或明确选择不准备直接运行。",
+        code=ERROR_PREPARATION_REQUIRED,
+    )
+    err.dependency_preparation = offer
+    err.script_name = script_name
+    raise err
+
+
+pool.register_spawn_gate(_spawn_gate)

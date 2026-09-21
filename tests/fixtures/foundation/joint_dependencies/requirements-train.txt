@@ -1,0 +1,2 @@
+# 未选的组（训练依赖）：默认不选、不装（FO20）
+tavotto-test-train
