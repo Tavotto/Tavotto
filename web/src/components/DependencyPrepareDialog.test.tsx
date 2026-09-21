@@ -310,6 +310,53 @@ describe('DependencyPrepareDialog', () => {
     expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true)
   })
 
+  it('这台电脑没有可用的 Python：受管目标那一行把「将先下载 N MB」说出口；有缓存时说不联网（U05）', async () => {
+    const privatePython = {
+      id: 'cpython-3.13.15-7d50bb42813a',
+      version: '3.13.15',
+      target: 'macos-arm64',
+      download_bytes: 25304407,
+      source_host: 'github.com',
+      required: true,
+      cached: false,
+      network_required: true,
+    }
+    const clean = (over: Partial<typeof privatePython>) =>
+      offer({
+        targets: [
+          {
+            kind: 'tavotto_managed',
+            venv: '',
+            python: '',
+            modifies_user_environment: false,
+            creates_environment: true,
+            available: true,
+            reason: '',
+            private_python: { ...privatePython, ...over },
+          },
+        ],
+        private_python: { ...privatePython, ...over },
+      })
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(clean({})))
+    expect(document.querySelector('[data-dependency-private-python]')).not.toBeNull()
+    expect(text()).toContain(en('dependencyPreparePrivatePython', { version: '3.13.15', mb: 24 }))
+    expect(radio('tavotto_managed')!.disabled).toBe(false)
+    // 同一时刻只开一份：换载荷要先关掉这一份
+    await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        clean({ cached: true, download_bytes: 0, network_required: false }),
+      ),
+    )
+    expect(text()).toContain(en('dependencyPreparePrivatePythonCached', { version: '3.13.15' }))
+    expect(text()).not.toContain('MB')
+    // 没有这一段（有基础解释器）时一个字都不出现
+    await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    expect(document.querySelector('[data-dependency-private-python]')).toBeNull()
+  })
+
   it('换了项目的旧载荷不弹；同一时刻只开一份', async () => {
     await render(<DependencyPrepareDialog />)
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer(), 'p0'))
