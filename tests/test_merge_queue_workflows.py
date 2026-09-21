@@ -2722,7 +2722,18 @@ def _runs_on_atoms(job_block: str, where: str) -> set[str]:
 
 
 def _workflow_texts() -> dict[str, str]:
-    texts = {p.name: p.read_text(encoding="utf-8") for p in sorted(WF.glob("*.yml"))}
+    """`.github/workflows/` 里的**每一个文件** → 文本，不是「每个 .yml」。
+
+    GitHub 同样认 `.yaml`：只 glob `*.yml` 的话，一个将来新增的 `bypass.yaml` 里可以躺着不带
+    `branches: [main]` 的 `pull_request`、或派到 self-hosted 的 job，而这里的每条集合判据
+    **照样绿**（与 `tests/test_source_hygiene.py` 的 `_WORKFLOWS` 同一课，#195 P2）。所以扫整个
+    目录；目录里出现 GitHub 不当 workflow 的后缀（比如一份 README）当场抛——它不该在这里，
+    而且下游的 `on:` 解析对它本来就是「认不出」。
+    """
+    files = sorted(p for p in WF.iterdir() if p.is_file())
+    stray = [p.name for p in files if p.suffix not in (".yml", ".yaml")]
+    assert not stray, f"{WF.relative_to(ROOT)}/ 里有 GitHub 不当 workflow 的文件：{stray}——别放这里"
+    texts = {p.name: p.read_text(encoding="utf-8") for p in files}
     assert {"ci.yml", "codeql.yml", "_lab-qualification.yml"} <= set(texts), sorted(texts)
     return texts
 

@@ -331,7 +331,7 @@ GitHub 的组语义（本轮不改、只依赖）：同一组**最多一个运�
   | M3 | `codeql.yml` 删掉 `branches: [main]` | 1 | 1 | 同上 |
   | M4 | `pr-conflict-domains.yml` 删掉 `branches: [main]` | 1 | 1 | 同上 |
   | M5 | `ci.yml` 写成 `branches: [main, plugin-stable]` | 1 | 1 | 同上 |
-  | M6 | `nightly.yml` 加 `pull_request: branches: [main]`（第四个 PR 级 workflow，未登记） | 1 | 1 | `test_exactly_the_registered_workflows_listen_to_pull_request` |
+  | M6 | `nightly.yml` 加 `pull_request: branches: [main]`（一个未登记的 PR 级 workflow） | 1 | 1 | `test_exactly_the_registered_workflows_listen_to_pull_request` |
   | M7 | `ci.yml` 的 types 加 `edited` | 1 | 1 | `test_retargeting_alone_does_not_produce_a_run` + `test_pull_request_types_are_exactly_the_six_we_rely_on` |
   | M8 | `ci.yml` 改成 `branches-ignore: [main]` | 1 | 1 | `test_every_pull_request_workflow_only_triggers_on_a_main_base`（branches 读成 None） |
   | M9b | `ci.yml` 把 `branches` 挪到 `types` 之后（语义不变） | **0** | 0 | —（解析器不依赖顺序；第一版 M9 误删了 `push` 的 `branches`，那是脚本错，重做后如预期） |
@@ -339,6 +339,8 @@ GitHub 的组语义（本轮不改、只依赖）：同一组**最多一个运�
   | M11 | `pr-conflict-domains.yml` 的 types 加 `edited` | 1 | 1 | `test_retargeting_alone_does_not_produce_a_run` |
   | M12 | `foundation-u02-spikes.yml` 删掉 `branches: [main]`（rebase 到含 #455 的 main 之后补做） | 1 | 1 | `test_every_pull_request_workflow_only_triggers_on_a_main_base` |
   | M13 | `PR_WORKFLOWS` 里去掉 `foundation-u02-spikes.yml`（文件仍监听） | 1 | 1 | `test_exactly_the_registered_workflows_listen_to_pull_request` |
+  | M14 | 新建 `.github/workflows/bypass.yaml`：不带 `branches` 的 `pull_request`（Codex P2：`_workflow_texts()` 原来只 glob `*.yml`） | 1 | 1 | `test_exactly_the_registered_workflows_listen_to_pull_request`（修之前这条变异**全绿**——盲区已按 `test_source_hygiene.py::_WORKFLOWS` 的做法改成扫整个目录） |
+  | M15 | 往 `.github/workflows/` 放一份 `NOTES.md` | 1 | 1 | 全部调用 `_workflow_texts()` 的用例（「GitHub 不当 workflow 的文件」当场抛） |
 
 - **对纪律的影响**：叠栈 PR 从此在 PR 页面上**没有任何 check**——不是「CI 还没跑完」，是结构上不跑；评审靠 `@codex review`，验证靠本地
   （`ruff` 两条 + 针对性 pytest + 全量）。链头 retarget 到 main 后的第一次 push 跑全套，之后照 `enqueue-checklist` 入队。`full-ci` 标签在
