@@ -26,16 +26,18 @@
 - **身份三分不许混**：私有失效键**含**机器路径（区分两个 venv 靠它）；公开语义身份不含
   任何路径；最终文件 hash 只在 `SourceArtifact.bytes_sha256`，不回写进语义身份；`receipt_id` /
   `generation` 是实例元数据，语义身份（`semantic_identity` / `plan_identity`）只吃回执的公开身份
-  `receipt_identity`。默认 `to_payload()` 不带机器路径，诊断包用 `include_private=True`。
+  `receipt_identity`。默认 `to_payload()` 不带机器路径，诊断包用 `include_private=True`；
+  `PreparationPlan.to_payload()` 同样：项目外的解释器只给来源标签（路径存私有字段），错误分支的
+  `project_env` 只留 `ok / code / module / reason`。
 - **LaunchContext 是派生视图**：`execspec.launch_context(spec)` 从 spec 算，`ExecutionSpec`
   与 `worker_argv` 的 golden 一个字节不动。`project.root` 今天没有生产者（占位，U03 才有）；
   grant 只由 `workdir.set_mode / grant_for` 记账，只记时刻不记人。
 - **DependencyIntent 是第二个读法，不是第二个安装器**：extras / marker / constraints / 冲突
-  原样可见，看不懂的行 `kind=unknown` 保留原文；安装路径的窄语法（ADR 0019 安全边界）
-  一字不动。
+  原样可见，看不懂的行 `kind=unknown` 保留原文（Poetry 的 `^` / `~` / 表值也是 unknown，不剥成
+  任意版本）；安装路径的窄语法（ADR 0019 安全边界）一字不动。
 - **case enrollment 台账**（`docs/implementation/tavotto-foundation/enrollment.json` +
   派生 md）：32 个 FO 场景逐一在台账里、与 registry 一致；enforced 的 case 必须指向真实
-  pytest 用例并写结果记录；预期实例集合在执行前生成；**空集合永远不是通过**。校验器在
+  pytest 用例（按 AST 找，不按子串）并写结果记录；预期实例集合在执行前生成；**空集合永远不是通过**。校验器在
   `tests/support/foundation_harness.py`，落点是 `invariants` job 的一步。
 - 看护：`tests/test_execution_receipt.py`、`tests/test_preparation_api.py`、
   `tests/test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、

@@ -32,7 +32,7 @@
 |---|---|---|
 | LaunchContext | `engine/execspec.py`：`launch_context(spec, grant=…)` | 从 `ExecutionSpec` **派生**的只读视图：`cwd_origin ∈ {sandbox, script.parent, project.root, invocation.cwd}`、`write_mode ∈ {sandboxed, project_dir, unrestricted}`、稳定字段、`grant`。`ExecutionSpec` 与 `worker_argv` 的 golden 一个字节不变 |
 | grant（FO-047） | `engine/workdir.py`：`set_mode(project)` 记 `granted_at`，`grant_for()` 读 | 只记时刻不记人（本机单用户，记一个 `user` 字面量是假信息）；老设置「授予过但没记时刻」与「没授予」是两个答案 |
-| DependencyIntent | `engine/depresolve.py`：`DependencyIntent` / `parse_intent` / `declared_intents` / `conflicts` | **第二个读法，不是第二个安装器**：name / specifier / extras / marker / group / source / kind 原样保留；看不懂的行是 `kind=unknown` 并保留原文（unknown 不是空依赖）；`constraints.txt` 读进来标 `constraint` 并**参与** `conflicts()` 的同名分组（specifier 不一致就列出，不做 PEP 440 求值、不裁决）。安装路径的窄语法（安全边界）一字不动 |
+| DependencyIntent | `engine/depresolve.py`：`DependencyIntent` / `parse_intent` / `declared_intents` / `conflicts` | **第二个读法，不是第二个安装器**：name / specifier / extras / marker / group / source / kind 原样保留；看不懂的行是 `kind=unknown` 并保留原文（unknown 不是空依赖）；`constraints.txt` 读进来标 `constraint` 并**参与** `conflicts()` 的同名分组（specifier 不一致就列出，不做 PEP 440 求值、不裁决）；Poetry 表的 `^` / `~` / 表值是 `unknown` 且 `raw` 保留原文（不剥成任意版本，D14）。安装路径的窄语法（安全边界）一字不动 |
 | ExecutionReceipt | `engine/receipt.py`（Flask 侧，纯标准库） | worker 自报（§三）+ 控制面账本（generation / `script_sha1` 即 source revision / 解释器来源标签 / spec 稳定字段 / LaunchContext / 描述符）；`completeness ∈ {complete, partial}`，老 worker 没自报是 partial，不补不猜 |
 | SourceArtifact | `engine/figcapture.py`：`SourceArtifact` / `source_artifact_from_file` | `source_id`（runtime asset id 或素材相对路径）、`origin ∈ {execution, static}`、`kind`、`bytes_sha256`、`size_bytes`、`receipt_identity`（回执公开身份，进语义身份）、`receipt_id` / `generation`（实例元数据，不进语义身份）、`patch_hash`（static 来源全部恒 None） |
 | RenderPlan 引用 | `engine/exportreq.py`：`render_plan_ref(req, resources)` | 规范化 `ExportRequest` 的渲染语义 + 资源的语义坐标（`source_id` / `origin` / `kind` / `receipt_identity` / `patch_hash`）→ `plan_identity`；`receipt_id` 只作实例元数据；字节 hash 单列 `input_bytes`。**只做引用与身份，不做渲染** |
@@ -50,6 +50,9 @@ Python 要求（脚本要哪个 minor）今天没有任何地方声明，计划�
 | 私有失效键 `private_invalidation_key()` | 还是不是同一个环境 | **含**（executable / prefix / base_prefix / 项目根 / cwd）——区分两个 venv 正靠它们 | `ExecutionReceipt` |
 | 公开语义身份 `public_identity()` | 这是哪种执行 | 不含；规范化意图 + 获准来源标签 + 版本号 + source revision | `ExecutionReceipt`；`SourceArtifact.receipt_identity` → `semantic_identity()`；`render_plan_ref().plan_identity` |
 | 最终文件 hash | 文件长什么样 | — | `SourceArtifact.bytes_sha256`；**不回写进任何语义身份** |
+
+计划的公开投影（`PreparationPlan.to_payload()`）同样不带机器路径：项目外的解释器只给来源标签与
+项目记住的版本，路径本身存私有字段；错误分支的 `project_env` 只留 `ok / code / module / reason`。
 
 `receipt_id` = 公开身份 + 私有键 + generation 派生的不透明 id：同环境同脚本重建一代换一个 id；
 两个项目里的同名脚本永远不同 id（FO-008）。它是**实例**元数据：语义身份（`SourceArtifact.semantic_identity()` /
@@ -104,8 +107,8 @@ UI 与 MCP 消费同一份 `{plan, result}`；本阶段只做 HTTP + 明确投�
 
 * **registry 里的 32 个 FO 场景在台账里逐一出现，enrollment 与 registry 一致**；本阶段全部
   `planned`（FO14 `later`），一个都不进 pytest 默认发现、不进 required 矩阵；
-* **enforced 的 case 必须指向一条真实存在的 pytest 用例**，该用例写一条结果记录
-  （`tests/support/foundation_harness.py` 的 schema）；
+* **enforced 的 case 必须指向一条真实存在的 pytest 用例**（按 AST 找模块级函数 / 类的直接方法，
+  不按子串——注释与嵌套函数不算），该用例写一条结果记录（`tests/support/foundation_harness.py` 的 schema）；
 * 预期实例集合在执行前由台账 + lane 生成，绑定源码 SHA / 平台 / runtime & 锁 / fixture
   身份 / 入口 / 能力版本；校验 = 预期集合 == 已提交有效结果集合（无重复、缺失、错 SHA、
   错产物），`product_outcome` 与 `test_verdict` 分开记；

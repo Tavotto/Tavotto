@@ -102,6 +102,11 @@ verdict / 空预期集合各自红，台账漂移 / 缺场景 / 重复 / 指向�
 不再碰 runner（真 worker 用脚本副作用计数证明不重跑）、语义身份改吃回执公开身份 `receipt_identity`、
 `conflicts()` 纳入 constraints；四条线程修 + 先红后绿 + 变异红 + resolve。CodeQL 三条路径告警：改为传
 `safe_resolve` 校验过的绝对路径，处置结果以 PR 上的最终状态为准。
+第二轮（Codex 评 #455 的旧 diff 落在本 PR 文件上，转办，`1d5b21fe`）：P1 harness 用例存在性改按 AST 判
+（注释 / 嵌套函数 / 类名不算）；P2 Poetry `^` / `~` / 表值 → unknown + raw 原文；P2 计划公开投影去掉
+机器绝对路径（项目外解释器只给来源标签与版本；错误分支 `project_env` 只留四个公开键）。CodeQL #140–#142
+在新分析里 fixed（改传 `safe_resolve` 校验过的路径即可，未 dismiss）。Windows 片两条红（空 env 下
+`Path.home()`、工具打中文到 cp1252 管道）已修并加看护 `test_foundation_pack_tools_reconfigure_stdout_to_utf8`。
 
 **当前可合并依据（不等于可以默认启用 / 发行）**：中高风险档（改产品源码、协议加字段、新端点、CI 拓扑）
 → `full-ci` + `@codex review`；ruff 两条 0；针对性 pytest 0；变异反证逐条红；合同测试覆盖新 CI 步骤；
