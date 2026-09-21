@@ -404,9 +404,10 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
             ),
             {},
         )
-        if private.get("required"):
+        # 载荷在就说（`required=False` 的是「已就位、不联网」那句——来源照样要说出口）
+        if private:
             lead = " 这台电脑没有可用的 Python：授权后会先"
-        elif managed_private.get("required"):
+        elif managed_private:
             lead, private = " 选择 tavotto_managed 时会先", managed_private
         else:
             lead = ""

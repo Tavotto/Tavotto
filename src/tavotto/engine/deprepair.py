@@ -3292,8 +3292,15 @@ def joint_targets(project: str | Path, target_kind: str, python: str) -> list[di
     # 合理的）——三态的 `managed_available()` 留给渲染出错那条响应路径（`offer()`）
     # 受管目标**每次**都建新的一代（有没有 active 代都一样），所以「可用」看的是有没有基础解释器；
     # 没有但本目标提供私有 Python（U05）：这条路仍可用，授权里多一项「先下载 N 字节」
-    private = privatepython.offer_payload() if not base_python() else None
-    available = bool(base_python()) or private is not None
+    base = base_python()
+    if not base:
+        private = privatepython.offer_payload()
+    elif _private_runtime_of(base):
+        # 基础解释器就是已就位的私有 Python（探测链末级：这台机器没有别的）：不下载，但来源要说出口
+        private = privatepython.present_payload()
+    else:
+        private = None
+    available = bool(base) or private is not None
     out.append(
         {
             "kind": TARGET_MANAGED,
@@ -3320,9 +3327,14 @@ def preparation_offer(project: str | Path, script: str) -> dict | None:
         joint, target_kind, python = joint_plan_for(root, script)
     except pool.WorkerError:
         return None
-    # 干净机器（U05 PR B）：`joint_plan_for` 已经以私有 Python 为目标算过了；这里把「要先下载」说出口，
-    # 门据此在 nothing_needed 时也问（没有任何解释器，环境本身就是要的）
+    # 干净机器（U05 PR B）：`joint_plan_for` 已经以私有 Python 为目标算过了。`clean_machine` 是门的判据
+    # （nothing_needed 也问：没有任何解释器可跑，环境本身就是要授权的东西）；`private_python` 是给界面说出口的
+    # 载荷——要下载（`required=True`、字节数）或已就位（别的项目供应过、`required=False`、不联网）。两者独立：
+    # 运行时已在 ≠ 本项目不用建代（Codex #475 P1）
     clean = private_python_target(root, script) is not None
+    private = None
+    if clean:
+        private = privatepython.offer_payload() or privatepython.present_payload()
     return {
         "code": ERROR_PREPARATION_REQUIRED,
         "script": script,
@@ -3331,7 +3343,8 @@ def preparation_offer(project: str | Path, script: str) -> dict | None:
         "targets": joint_targets(root, target_kind, python),
         "rounds_remaining": rounds_remaining(root, script),
         "skipped": preparation_skipped(root, script),
-        "private_python": privatepython.offer_payload() if clean else None,
+        "clean_machine": clean,
+        "private_python": private,
     }
 
 
@@ -3346,8 +3359,10 @@ def gate(project: str | Path, script: str) -> dict | None:
         return None
     if offer["plan"]["status"] == depplan.STATUS_READY:
         return offer
-    # 干净机器：什么都不缺也没有解释器可跑——环境（含私有 Python）本身就是要授权的东西
-    if offer.get("private_python") and offer["plan"]["status"] == depplan.STATUS_NOTHING_NEEDED:
+    # 干净机器：什么都不缺也没有解释器可跑——环境（含私有 Python）本身就是要授权的东西。判据是
+    # `clean_machine`，不是有没有下载载荷：私有 Python 被别的项目供应过之后本项目照样一个解释器都没有、
+    # 照样要建自己的一代（Codex #475 P1：只看载荷会把它放行成 no_worker_python）
+    if offer.get("clean_machine") and offer["plan"]["status"] == depplan.STATUS_NOTHING_NEEDED:
         return offer
     return None
 

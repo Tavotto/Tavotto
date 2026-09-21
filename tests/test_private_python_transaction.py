@@ -591,6 +591,84 @@ class TestCleanMachine:
         assert engine_pool.same_python(resolved, managed)
         assert source == engine_pool.SOURCE_MANAGED_PROJECT
 
+    def test_a_second_project_on_the_same_machine_still_gets_the_gate_and_its_own_generation(
+        self, tmp_path, house, no_interpreter, fake, monkeypatch
+    ):
+        """Codex #475 P1：别的项目已经把私有 Python 供应好了 → 本项目照样一个解释器都没有：门照样问（哪怕脚本
+        只用 adapter 里的包、`nothing_needed`）、载荷说「已就位、不联网」而不是 None、授权后建**本项目自己**的一代
+        （零请求、`base_runtime` 记着共享的那份）；之前的形状是门放行 → 起 worker `no_worker_python`。"""
+        server, src, _ = fake
+        first = _project(tmp_path, "first")
+        rec, _ = _prepare(deprepair.create_joint_plan(first, "figure.py").plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        requests_after_first = list(server.requests)
+        assert requests_after_first == [f"/{src.archive_name}"]
+        deprepair.reset_state()  # 第二个项目通常是另一次打开：缓存不算
+        second = _project(tmp_path, "second")
+        (second / "requirements.txt").write_text("", encoding="utf-8")
+        (second / "figure.py").write_text(
+            'import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nfig.savefig("Fig1.pdf")\n',
+            encoding="utf-8",
+        )
+        assert managedenv.python_of(second) is None
+        # 门：nothing_needed 也问；载荷是「已就位」（required=False、零字节、不联网），受管目标可用且带同一载荷
+        offer = deprepair.gate(second, "figure.py")
+        assert offer is not None, "私有 Python 已在 → 门放行 → 起 worker 只能 no_worker_python"
+        assert offer["clean_machine"] is True
+        assert offer["plan"]["status"] == "nothing_needed"
+        assert offer["private_python"]["required"] is False
+        assert offer["private_python"]["download_bytes"] == 0
+        assert offer["private_python"]["network_required"] is False
+        assert offer["private_python"]["version"] == src.version
+        managed = next(t for t in offer["targets"] if t["kind"] == deprepair.TARGET_MANAGED)
+        assert managed["available"] is True and managed["private_python"]["required"] is False
+        # 授权 → 建本项目自己的一代：不下载、base 是共享的那份
+        plan = deprepair.create_joint_plan(second, "figure.py")
+        assert plan.private_python is None and plan.replan is False and plan.requirements == ()
+        rec2, events = _prepare(plan.plan_id)
+        assert rec2["state"] == deprepair.STATE_DONE, rec2
+        assert deprepair.STATE_DOWNLOADING_PYTHON not in [e["state"] for e in events]
+        assert server.requests == requests_after_first  # 零请求
+        gen = rec2["result"]["generation"]
+        assert managedenv.generations(second)[gen]["base_runtime"] == src.id
+        assert managedenv.python_of(second) and managedenv.python_of(
+            second
+        ) != managedenv.python_of(first)
+        assert managedenv.referenced_base_runtimes() == {src.id}
+        # 从此第二个项目的解释器就是它自己的那一代
+        monkeypatch.setattr(engine_pool, "resolve_worker_python", no_interpreter)
+        engine_pool.reset_worker_python()
+        resolved, source = engine_pool.resolve_worker_python(str(second), script="figure.py")
+        assert engine_pool.same_python(resolved, managedenv.python_of(second))
+        assert source == engine_pool.SOURCE_MANAGED_PROJECT
+
+    def test_the_gate_judges_by_clean_machine_not_by_the_download_payload(
+        self, tmp_path, monkeypatch
+    ):
+        """门的判据是 `clean_machine`：载荷是给界面说出口的，没有载荷（或将来载荷形状变了）门也得问。"""
+        project = _project(tmp_path)
+        base = {
+            "code": deprepair.ERROR_PREPARATION_REQUIRED,
+            "script": "figure.py",
+            "plan": {"status": "nothing_needed", "missing": []},
+            "target_kind": deprepair.TARGET_MANAGED,
+            "targets": [],
+            "rounds_remaining": 3,
+            "skipped": False,
+        }
+        monkeypatch.setattr(
+            deprepair,
+            "preparation_offer",
+            lambda root, script: {**base, "clean_machine": True, "private_python": None},
+        )
+        assert deprepair.gate(project, "figure.py") is not None
+        monkeypatch.setattr(
+            deprepair,
+            "preparation_offer",
+            lambda root, script: {**base, "clean_machine": False, "private_python": None},
+        )
+        assert deprepair.gate(project, "figure.py") is None  # 有解释器且什么都不缺：放行
+
     def test_nothing_needed_still_builds_the_environment(
         self, tmp_path, house, no_interpreter, fake
     ):
