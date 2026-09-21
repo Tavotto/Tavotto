@@ -521,6 +521,37 @@ def test_pdf_fonts_has_a_budget_for_self_referencing_forms(candidate, fonts_read
     page.obj["/Resources"] = pikepdf.Dictionary(XObject=pikepdf.Dictionary(X0=form))
     pdf.save(str(tmp_path / "loop.pdf"))
     assert pdfbackend.pdf_fonts(tmp_path / "loop.pdf") == ["Inner"]
+    # 共享子树的扇出：每层 16 个引用指向同一个下层 form、8 层深——不按身份去重就是 16^8 次访问
+    # （深度上限挡不住指数级的重复走访），去重后只走 8 个 form。判据：有界时间内走完并找到最深处的字体
+    import threading
+
+    pdf = pikepdf.new()
+    page = pdf.add_blank_page(page_size=(100, 100))
+    deep_font = pdf.make_indirect(
+        pikepdf.Dictionary(Type=pikepdf.Name.Font, Subtype=pikepdf.Name.Type1, BaseFont="/Deep")
+    )
+    child = None
+    for level in range(8):
+        form = pikepdf.Stream(pdf, b"")
+        form["/Type"] = pikepdf.Name.XObject
+        form["/Subtype"] = pikepdf.Name.Form
+        form["/BBox"] = [0, 0, 100, 100]
+        res = pikepdf.Dictionary()
+        if child is None:
+            res["/Font"] = pikepdf.Dictionary(F0=deep_font)
+        else:
+            res["/XObject"] = pikepdf.Dictionary({f"/X{i}": child for i in range(16)})
+        form["/Resources"] = res
+        child = pdf.make_indirect(form)
+    page.obj["/Resources"] = pikepdf.Dictionary(XObject=pikepdf.Dictionary(X0=child))
+    pdf.save(str(tmp_path / "fanout.pdf"))
+    box: list = []
+    t = threading.Thread(target=lambda: box.append(pdfbackend.pdf_fonts(tmp_path / "fanout.pdf")))
+    t.daemon = True
+    t.start()
+    t.join(timeout=20)
+    assert not t.is_alive(), "pdf_fonts 在共享子树上走了指数级的路（没有按身份去重）"
+    assert box == [["Deep"]]
 
 
 @needs_candidate
