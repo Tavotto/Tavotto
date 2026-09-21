@@ -204,7 +204,13 @@ def contained_path(root: str | Path, candidate: str | Path) -> str | None:
         real = os.path.realpath(os.path.join(real_root, os.fspath(candidate)))
     except (OSError, ValueError):
         return None
-    if real != real_root and not real.startswith(real_root + os.sep):
+    # 守卫写成静态分析认得的 barrier 形状（CodeQL py/path-injection：归一化 + `startswith`
+    # **单独**控制通往返回值的那条分支）。`real == real_root` 与 `not startswith` 合在一个
+    # 条件里语义相同，但 fall-through 分支推不出 startswith 为真，四处 sink 照报（#143–#146）。
+    real = os.path.normpath(real)
+    if real == real_root:
+        return real
+    if not real.startswith(real_root + os.sep):
         return None
     return real
 
