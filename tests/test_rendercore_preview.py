@@ -450,3 +450,25 @@ def test_a_real_pdf_preview_is_rendered_by_the_child_at_the_bucket_width(tmp_pat
         assert c.get("figs/page.pdf", FIXTURE / "page.pdf", 800) == p and c.renders == 1
     finally:
         host.close()
+
+
+def test_a_failure_while_computing_the_key_is_a_preview_error_with_the_child_code(tmp_path):
+    """Codex #476 P2：第一次算键要 ping child；child 起不来 / 队列满在那一步炸时也必须是 `PreviewError`
+    （带稳定 code），调用方才能按 code 回 503 / 500，而不是漏成一个裸异常。"""
+    from tavotto.rendercore import renderhost
+
+    host = FakeHost()
+
+    def ping():
+        raise renderhost.RenderChildError("render_queue_full", "队列满了")
+
+    host.ping = ping
+    c = preview.PreviewCache(tmp_path / "cache", host, max_bytes=10_000_000)
+    with pytest.raises(preview.PreviewError) as exc:
+        c.get("figs/Fig1.pdf", FIXTURE / "page.pdf", 200)
+    assert exc.value.code == "render_queue_full"
+    assert (
+        host.renders == 0 and not list((tmp_path / "cache").glob("*"))
+        if (tmp_path / "cache").exists()
+        else True
+    )
