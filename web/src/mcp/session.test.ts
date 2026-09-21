@@ -122,6 +122,21 @@ describe('seedSession', () => {
     expect(useUiStore.getState().elementPanelId).toBe(panelId)
   })
 
+  it('会话带着 patches 时原样种进账本，渲染态的键也带着它们（#457 取件那条路）', () => {
+    const patches = [{ gid: 'axes_0.xticks', prop: 'fontsize', value: 7 }]
+    const open = { ...openResult(), patches, patch_hash: 'sha256:1' }
+    const { fileId } = seedSession(open)
+    const panel = useDocumentStore.getState().doc.objects[0] as PanelObject
+    // 账本空着而画面是改过的 = 下一次编辑把模型已应用的修改静默还原
+    expect(panel.overrides).toEqual(patches)
+    const key = renderKey(fileId, patches)
+    const r = useRenderStore.getState().byKey[key]
+    expect(r?.status).toBe('ready')
+    expect(r?.lastPatches).toBe(JSON.stringify(patches))
+    expect(useRenderStore.getState().latest[fileId]).toBe(key)
+    expect(useRenderStore.getState().byKey[renderKey(fileId, [])]).toBeUndefined()
+  })
+
   it('打开动作不进撤销栈——第一次撤销要回到「刚打开的样子」', () => {
     seedSession(openResult())
     expect(useDocumentStore.getState().past).toHaveLength(0)
