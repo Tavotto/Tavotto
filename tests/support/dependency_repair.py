@@ -210,7 +210,9 @@ def offline_managed_env(monkeypatch):
     def _make_and_graft(root, target, base):
         try:
             root.parent.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:  # 与真实 `create_generation_venv` 同一形状：建不了目录回 (False, 原因)
+        except (
+            OSError
+        ) as exc:  # 与真实 `create_generation_venv` 同一形状：建不了目录回 (False, 原因)
             return False, str(exc)
         out = subprocess.run(
             [base, "-m", "venv", str(root)],
