@@ -26,7 +26,9 @@
   "tests/test_cjk_figure_text.py",
   "tests/test_tutorial.py",
   "tests/test_worker_roundtrip.py",
-  "tests/test_windows_regressions.py"
+  "tests/test_windows_regressions.py",
+  "tests/test_mcp_server.py",
+  "tests/test_mcp_export_inspection.py"
  ],
  "deselected": [
   "tests/test_export_pipeline.py::test_nothing_is_left_behind_when_a_format_fails",
@@ -46,11 +48,11 @@
  ],
  "exit_code": 0,
  "counts": {
-  "passed": 529,
+  "passed": 644,
   "failed": 0,
   "errors": 0,
-  "skipped": 10,
-  "total": 539,
+  "skipped": 13,
+  "total": 657,
   "deselected": 14
  },
  "failed": [],
@@ -64,9 +66,12 @@
   "SKIPPED [1] tests/test_worker_roundtrip.py:1757: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）",
   "SKIPPED [1] tests/test_worker_roundtrip.py:1770: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）",
   "SKIPPED [1] tests/test_worker_roundtrip.py:1782: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）",
-  "SKIPPED [1] tests/test_worker_roundtrip.py:2183: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）"
+  "SKIPPED [1] tests/test_worker_roundtrip.py:2183: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）",
+  "SKIPPED [1] tests/test_mcp_server.py:205: 画布产物未构建",
+  "SKIPPED [1] tests/test_mcp_server.py:1228: 画布产物未构建（源码检出后跑一次 scripts/build_mcp_widget.py）",
+  "SKIPPED [1] tests/test_mcp_server.py:1278: 画布产物未构建"
  ],
- "elapsed_s": 124.2,
+ "elapsed_s": 124.8,
  "versions": {
   "python": "3.13.11",
   "pikepdf": "10.13.0.post1",
