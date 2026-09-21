@@ -71,6 +71,8 @@ for raw in sys.stdin.buffer:
                 os._exit(3)
             if req["pdf"].endswith("slow.pdf"):
                 time.sleep(0.3)
+            if req["pdf"].endswith("slower.pdf"):
+                time.sleep(1.0)
             data = bytes([255, 0, 0, 255, 0, 0, 255, 128])
             with open(req["out"], "wb") as fh:
                 fh.write(data)
@@ -176,10 +178,12 @@ def test_a_bounded_queue_pushes_back_instead_of_piling_up(fake_host, tmp_path):
 def test_the_timeout_covers_waiting_for_the_lock_and_does_not_kill_a_busy_child(
     fake_host, tmp_path
 ):
-    """Codex #471 P2：一个 deadline 管到底。A 拿着锁渲一个 0.3 s 的慢请求；B 带 0.05 s 超时进来，必须在
-    ~0.05 s 内拿到 `render_child_timeout`（不是等 A 做完才开始计时），而且 **child 不被打断**——A 照常成功、
-    没有重启。"""
-    slow = tmp_path / "slow.pdf"
+    """Codex #471 P2：一个 deadline 管到底。A 拿着锁渲一个 1 s 的慢请求；B 带 0.05 s 超时进来，必须在 A 做完
+    **之前**拿到 `render_child_timeout`（不是等 A 做完才开始计时），而且 **child 不被打断**——A 照常成功、没有重启。
+    判据的主语是「B 回来时 A 还没完」（`"a" not in results`）+ 一个余量 0.5 s 的上界：第一版写的是 0.3 s 慢请求
+    + `elapsed < 0.25`，Windows runner 上 `Lock.acquire(timeout=0.05)` 回来花了 0.28 s，贴边的定时判据量的是
+    调度抖动，不是被测行为（2026-09-21 #471 run 35590586039 windows 腿）。"""
+    slow = tmp_path / "slower.pdf"
     slow.write_bytes(b"%PDF-")
     ok = tmp_path / "ok.pdf"
     ok.write_bytes(b"%PDF-")
@@ -200,7 +204,9 @@ def test_the_timeout_covers_waiting_for_the_lock_and_does_not_kill_a_busy_child(
     with pytest.raises(rh.RenderChildError) as ei:
         fake_host.render(ok, width_px=2, timeout=0.05)
     elapsed = time.monotonic() - t0
-    assert ei.value.code == "render_child_timeout" and elapsed < 0.25, elapsed
+    a_done_when_b_returned = "a" in results
+    assert ei.value.code == "render_child_timeout"
+    assert not a_done_when_b_returned and elapsed < 0.5, (elapsed, a_done_when_b_returned)
     t.join()
     assert results["a"].width == 2  # A 没被打断
     assert fake_host.pid == pid and fake_host.restarts == 0  # child 没被 kill、没重启
