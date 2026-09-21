@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 78635,
-      "sha256": "d167eb79457e3419ffcc6e7a6b5172681f26022a6eef9d5f485fabb62f1f3de6"
+      "sha256": "0536cbc86991a13861fdb1dc53dcbddd91dc63c2f822ea0376372f57761eeac7"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 39343,
-      "sha256": "319c47d5dc1873f0a9d5261af12b28bc4d98225ef2db9cfdfb0015b18575f2d0"
+      "sha256": "5c61ecdb15fcc99baa409dcc9dc1388eda84c86bd83724a9d6234496eb2e84da"
     },
     {
       "path": "archive/README.md",
@@ -274,8 +274,8 @@
     },
     {
       "path": "evidence/u05/mutations_pr_b.md",
-      "bytes": 3539,
-      "sha256": "966a0b45b9cd88e46ba4586a2a3b73d1ecdb19d42cd98a4e0ca71653dab4f47b"
+      "bytes": 4151,
+      "sha256": "d779a923b484049659882ca625f4a116dbfd870d52aa0dd74521c46a4af3e50d"
     },
     {
       "path": "evidence/u06/README.md",
@@ -509,8 +509,8 @@
     },
     {
       "path": "handoffs/U05_private_python.md",
-      "bytes": 31428,
-      "sha256": "1cab939cb2a2ddd6be86abfc46f04d6b1f110c6cc3fa3d62a731f86dbdce60ca"
+      "bytes": 31860,
+      "sha256": "c7bf093b823ce2cad64ffe54acca0437138903363f930b31883a5dd5a1484b16"
     },
     {
       "path": "handoffs/U06_ir_text.md",

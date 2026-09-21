@@ -1015,7 +1015,7 @@
         {
           "file": "codex-plugin/mcp/tavotto_mcp/bridge.py",
           "symbol": "_probe_asset",
-          "line": 1857,
+          "line": 1858,
           "role": "MCP 导出的产物检查（U08 C，ADR 0068）：没有 pikepdf 时 PDF 的基本观测经契约层 probe，按需 import"
         }
       ],
