@@ -595,6 +595,69 @@ def test_a_confirmation_raised_by_the_runner_lands_as_needs_input(client, tmp_pa
     assert body["result"]["error"] is None
 
 
+def test_the_first_open_projection_branches_carry_no_machine_paths(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """U03 加进投影的三支——`needs_input`（确认载荷 + 静态证据）、显式失效（`error.explicit`）、
+    首开发现 / 作废（`environment.discovery / invalidated`）——与 U01 的合同一样：项目外的路径
+    一律 None，安装目录 / 用户目录 / 临时目录 / 解释器路径一个都不进 HTTP 投影（ADR 0053 §二）。"""
+    outside = tmp_path / "elsewhere" / "envs" / "sci" / "bin" / "python"
+    # ① needs_input：数据只在项目根找得到 → 计划带静态证据、结果带确认载荷
+    root = _split_project(tmp_path, "p")
+    _open(client, root)
+    needles = {**_machine_paths(root), "outside": str(outside), "tmp": str(tmp_path)}
+    body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
+    assert body["result"]["status"] == preparation.STATUS_NEEDS_INPUT
+    assert body["plan"]["workdir_decision"]["evidence"]["verdict"] == "project_root"
+    assert body["result"]["required_input"]["options"]
+    text = json.dumps(body, ensure_ascii=False)
+    for label, needle in needles.items():
+        assert needle not in text, f"needs_input 投影里带了机器路径 {label}: {needle}"
+    # ② 显式失效：用户指的解释器在项目外 → explicit.python 是 None，不是那条绝对路径
+    root = _project(tmp_path, "q")
+    _open(client, root)
+
+    def unusable(root=None, **kw):
+        exc = engine_pool.WorkerError("用不了", code=engine_pool.EXPLICIT_UNUSABLE_CODE)
+        exc.explicit = {"source": "configured", "python": str(outside), "reason": "missing"}
+        raise exc
+
+    monkeypatch.setattr(engine_pool, "resolve_worker_python", unusable)
+    body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
+    assert body["plan"]["environment"]["error"]["explicit"]["reason"] == "missing"
+    assert body["plan"]["environment"]["error"]["explicit"]["python"] is None
+    text = json.dumps(body, ensure_ascii=False)
+    for label, needle in needles.items():
+        assert needle not in text, f"显式失效投影里带了机器路径 {label}: {needle}"
+    # ③ 首开发现 / 作废：候选与被拒的 venv、作废的解释器都在项目外（system 档 / 被删的 venv）
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda r=None, **kw: (str(outside), "system")
+    )
+    monkeypatch.setattr(
+        engine_pool,
+        "first_open_outcome",
+        lambda r: {
+            "ok": False,
+            "code": "no_matplotlib",
+            "candidates": [str(outside.parent.parent)],
+            "rejected": [{"venv": str(outside.parent.parent), "code": "no_matplotlib"}],
+        },
+    )
+    monkeypatch.setattr(
+        engine_pool,
+        "invalidated_decision",
+        lambda r: {"python": str(outside), "reason": "missing", "trigger": "first_open"},
+    )
+    body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
+    env = body["plan"]["environment"]
+    assert env["discovery"]["candidates"] == [None]
+    assert env["discovery"]["rejected"][0]["venv"] is None
+    assert env["invalidated"]["python"] is None and env["invalidated"]["reason"] == "missing"
+    text = json.dumps(body, ensure_ascii=False)
+    for label, needle in needles.items():
+        assert needle not in text, f"发现 / 作废投影里带了机器路径 {label}: {needle}"
+
+
 def test_a_failed_explicit_environment_is_an_error_with_the_explicit_reason(
     client, tmp_path, fake_pool, monkeypatch
 ):
