@@ -885,11 +885,8 @@ def remembered_source(figures_dir: str | Path, python: str) -> str:
     """
     from . import managedenv
 
-    try:
-        managed = str(managedenv.venv_python(figures_dir))
-    except (OSError, ValueError):
-        managed = ""
-    if managed and same_python(python, managed):
+    # 受管环境按代（U04）：任何一代的解释器都是「Tavotto 替它建的」
+    if managedenv.is_managed_python(figures_dir, python):
         return SOURCE_MANAGED_PROJECT
     # 项目之外的解释器（用户为这个项目挑的 conda / 系统 Python，或从依赖
     # 修复面板采用的系统解释器，ADR 0044）：它既不是项目自带的也不归我们管，
@@ -2196,14 +2193,18 @@ def shutdown_workers_using(python: str) -> int:
 
 
 @contextlib.contextmanager
-def mutating_environment(key: str, python: str = ""):
+def mutating_environment(key: str, python: str = "", *, shutdown: bool = True):
     """安装期间独占一个环境：挡住新会话、先把旧会话收掉。
 
     独占语义整个在 `envlease.mutating()`（三方共用的那一份）；本函数只多做
     池自己的那件事——**把池里用这个解释器的 worker 收掉**。
+
+    `shutdown=False` 是受管环境**换代**（U04，ADR 0061 §五）用的：新的一代建在另一个
+    目录里，active 那一代的 site-packages 一个字节不动，旧代上的 worker 可以跑完——
+    锁仍然登记（新会话不起、包管理的原地作业不并发），只是不杀。
     """
     with envlease.mutating(key, python):
-        if python:
+        if python and shutdown:
             shutdown_workers_using(python)
         yield
 
