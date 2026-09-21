@@ -90,7 +90,7 @@
   超时 → PNG / TIFF 各自 `format_failed` 带 `raster_code`，PDF 照常；PDF 没写出来 → 位图无从栅格，不拿旧文件冒充。
 - **预览缓存的键是内容身份，不是 mtime**（`rendercore/preview.py`，RC-061）：`sha1(源 id | 内容 sha256 | 页号 | 宽 | 背景 |
   rendercore 名-版本 | PDFium 版本 | 字体政策版本)`——换 build / 换字体集合旧预览不命中；同键并发只渲染一次（每键一把锁、
-  锁表封顶）；临时文件（.png 后缀）+ `os.replace`、Windows 撞读者句柄退让、零字节重建；hash 与渲染绑在同一份字节上——源先一次读成缓存目录里
+  锁表封顶，淘汰只看登记使用者数——拿到手还没 acquire 的也算在用）；临时文件（.png 后缀）+ `os.replace`、Windows 撞读者句柄退让、零字节重建；hash 与渲染绑在同一份字节上——源先一次读成缓存目录里
   的不可变副本（边抄边算 sha256，`.src.part`，用完即删），child 渲染的是副本，算键与渲染之间源被换掉哪怕又换回去都影响
   不到这张预览；身份分块算不整个读进内存；**异常抛出**，不返回空白图 / 旧图。U07 不接 `app.py`（`/api/render` 仍走 PyMuPDF），U08 换线时把 `app.py` 那三段与 `source_sha1` 的 memo 收编到这里。
 - **PDFium 的 PNG 跨平台像素不同、同平台可复现**（ADR 0055 §7）：`evidence/u07/u07_pdfium.png` 是 macOS arm64 基线，
