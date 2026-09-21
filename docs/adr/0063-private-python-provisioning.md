@@ -134,6 +134,24 @@ spike 里「一条 resolver」的选择；产品里再下载一个 37 MB 的 uv 
 是工程 / CI 目标腿的逃生门（与 `TAVOTTO_RUNTIME_HOST_ARCH` 同一档），不是产品设置、不写进设置界面。取得某目标的
 资格 = 那一条 `enabled` 改 true 的 PR（带 ADR 0064 的证据）。
 
+### 九之二、干净机器上的第一份计划：替身事实，供应后重算（PR B）
+
+一个渲染解释器都没有（`pool.resolve_worker_python` 抛 `no_worker_python`）时，U04 的计划算不出目标事实
+（`dependency_target_unavailable`）。PR B 加了 `deprepair.private_python_target()`：这台机器提供私有 Python 就以
+它为目标——已供应就真量（`depplan.fresh_venv_facts(private, provided=adapter)`），还没落盘就用**替身**
+（`privatepython.standin_marker_env`：Python 字段来自锁、平台字段来自这台机器，已装集合只有 adapter，stdlib 用
+宿主的表）。替身只服务**披露**（要装什么、要下多少）；计划带下载（`JointRepairPlan.replan`）时事务在供应之后
+按真解释器重算 delta / 关键 import / 记账 / 身份（`_replan_on_base`），blocked 就停在登记之前。执行前重量事实
+走同一条路（`_facts_for_plan`：替身确定，同锁同机就同 digest；期间私有 Python 被别的项目供应则真量 → stale
+→ 用户重算）。「有 worker、没 base」的机器同理：`_facts_for` 在 `base_python()` 为空时用 `private_fresh_facts()`
+量新的一代。干净机器上「什么都不缺」（脚本只用标准库）也建环境——没有任何解释器，环境本身就是要授权的，
+门在有私有段时 `nothing_needed` 也问。
+
+入口三处（U04 C 的形状，一个字段）：`preparation_offer()` 多 `private_python` 段、`joint_targets()` 的受管目标带
+`private_python`（可用性看的是**有没有基础解释器**——受管目标每次都建新的一代）、`preparation.plan_for` 在
+`no_worker_python` 时也问门；HTTP / MCP 投影原样带上；授权动作仍是 `/plan` + `/prepare` 那两下，桌面授权框在受管
+选项下多一行「将先下载 Python x（约 N MB）」（有缓存：不联网），MCP 的 `recovery` 同一句话。
+
 ### 十、不做的事（各有出口）
 
 * 代理凭据 / 私有镜像 / 断点续传（X01 或后续：来源只有锁里那一个地址；断点续传对 25–120 MB 归档不值一个状态机）。
@@ -147,8 +165,8 @@ spike 里「一条 resolver」的选择；产品里再下载一个 37 MB 的 uv 
 | PR | 内容 | 本 ADR 的节 |
 |---|---|---|
 | A `foundation/u05-private-python` | 锁文件；`engine/privatepython.py`；`managedenv.base_python` 末级 + 代记 `base_runtime` + `referenced_base_runtimes`；`deprepair` 的计划载荷 / 事务里的供应步 / 退役；本地供应服务用例 + 真事务用例；文案 | §一–§九 |
-| B `…-b` | 入口：`preparation.plan_for` 的 `needs_input` 投影、HTTP / MCP 的授权面、前端一次授权对话框里的「将下载 N MB」；FO24 / FO25 / FO26 经真实入口的场景与台账 | §七（授权） |
-| C `…-c` | 目标验证腿（ADR 0064）：nightly 的具名非 required job 真下载真 pbs → 校验 → 起 → venv → 装 → 出图；Windows 注册表快照；Linux 空镜像 | — |
+| B `…-b`（叠在 U04 C 上） | 干净机器的第一份计划（替身事实 → 供应后重算）；入口三处 + 前端一行 + MCP 一句；FO24 / FO25 / FO26 经产品 HTTP 入口（进程内 test_client）的场景 → enforced | §七（授权）/ §九之二 |
+| C `…-c` | 目标验证腿（ADR 0064）：每周 + dispatch + paths 触发的具名非 required job 真下载真 pbs → 校验 → 起 → venv → 装 → 出图；Windows 注册表快照；Linux 空镜像；FO23 → observing | — |
 
 ## 后果与修订
 
