@@ -71,6 +71,15 @@ INLINE_ELISION_STEPS = (
     ("preflight.warnings", "preflight.suggestions", "preflight.not_verifiable"),
     ("preflight.errors",),
 )
+#: 省完之后还要写 `elided` 说明与一行文字：逐步省时给它们留这么多，免得「刚好卡进
+#: 预算」被说明本身推出去。
+INLINE_ELISION_RESERVE_BYTES = 2 * 1024
+#: 结构化字段都省到底了还超，剩下能占体积的只有 `content` 文本（`preflight=true` 把整份
+#: 预检报告放在那里）：截到能装下为止，尾巴加这一句。**不能不截**——宿主量的是整个
+#: 结果，文字把它顶过上限的话，structuredContent 一样被清空（Codex 评审 P2）。
+CONTENT_TRUNCATED_MARKER = (
+    "…（文字已截断：结果超过宿主体积上限；完整预检报告用 tavotto_preflight 取）"
+)
 
 
 def _version() -> str:
@@ -748,7 +757,7 @@ def fit_inline_budget(result: dict, budget: int = CANVAS_INLINE_BUDGET_BYTES) ->
         for dotted in step:
             if _elide(body, dotted):
                 elided.append(dotted)
-        if _serialized_bytes(result) <= budget:
+        if _serialized_bytes(result) <= budget - INLINE_ELISION_RESERVE_BYTES:
             break
     body["elided"] = {
         "fields": elided,
@@ -757,18 +766,50 @@ def fit_inline_budget(result: dict, budget: int = CANVAS_INLINE_BUDGET_BYTES) ->
         "budget_bytes": budget,
         "host_cap_bytes": HOST_EVENT_RESULT_CAP_BYTES,
         "fetch_with": "tavotto_session_state",
+        # 先占位再量：这个数字自己也在被量的对象里。占 budget 是因为最终值不会比它
+        # 大，位数只会少不会多——量出来的只会偏大，不会漏。
+        "final_bytes": budget,
     }
     note = (
         f"! 结果 {before / 1024:.0f} KiB 超过宿主对工具结果的体积上限（{budget // 1024} KiB），"
-        f"已省略 {'、'.join(elided)}；内嵌画布会自己经 tavotto_session_state 取全量，"
-        "模型要逐元素 gid 时也调它。"
+        f"已省略 {'、'.join(elided) or '（无可省字段）'}；内嵌画布会自己经 tavotto_session_state "
+        "取全量，模型要逐元素 gid 时也调它。"
     )
     content = result.get("content") or []
     if content and content[0].get("type") == "text":
         content[0]["text"] += "\n" + note
     else:
         result["content"] = _text(note)
+    # 说明加完再量一次：结构化字段都省到底了还超，只剩文字能截。
+    if _serialized_bytes(result) > budget:
+        body["elided"]["content_truncated"] = True  # 先写再截：这个键也占字节
+        _shrink_content_to_fit(result, budget)
+    # 把最终体积写进去：位数变少会让结果再小一点，收敛到自洽为止。
+    for _ in range(4):
+        final = _serialized_bytes(result)
+        if body["elided"]["final_bytes"] == final:
+            break
+        body["elided"]["final_bytes"] = final
     return result
+
+
+def _shrink_content_to_fit(result: dict, budget: int) -> None:
+    """把 `content` 的文字截到整个结果装得进预算为止，尾巴加 `CONTENT_TRUNCATED_MARKER`。
+
+    按超出的字节数截、再量、再截：JSON 转义会让文字的字节数与序列化后的不一致，
+    一次算不准，收敛几轮就够。按 UTF-8 字节切、解码时丢掉被切断的半个字。
+    """
+    text = "\n".join(
+        str(c.get("text", "")) for c in result.get("content") or [] if c.get("type") == "text"
+    )
+    for _ in range(8):
+        result["content"] = _text(text, CONTENT_TRUNCATED_MARKER)
+        over = _serialized_bytes(result) - budget
+        if over <= 0 or not text:
+            return
+        keep = max(0, len(text.encode("utf-8")) - over)
+        text = text.encode("utf-8")[:keep].decode("utf-8", errors="ignore")
+    result["content"] = _text(CONTENT_TRUNCATED_MARKER)
 
 
 def _call_apply(args: dict) -> dict:

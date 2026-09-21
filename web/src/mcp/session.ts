@@ -45,6 +45,8 @@ export interface OpenFigureResult {
   registry?: { parameterizable?: boolean | null; conflicts?: string[]; stems?: string[] }
   profile: { profile_id: string; profile_version: string; label?: string }
   preflight?: PreflightPayload
+  /** server 按宿主体积上限省略过字段时的说明；在 = 这份结果不完整，要去取件。 */
+  elided?: ElidedNote
 }
 
 /**
@@ -66,15 +68,21 @@ export interface ElidedNote {
  * `tavotto_apply_overrides` 的响应也挂着同一份 widget 资源，也就能用来初始化
  * 一个新 iframe——而它带着 `session_id` 与 `manifest`，只看这两项的话会被
  * 当成 open 结果收下。可它没有 `profile` / `project` / `script`：`McpApp`
- * 一读 `open.profile.profile_id` 就当场崩掉。server 按宿主体积上限省略过
- * manifest 的 open 结果同样不完整——这两种都走 `sessionIdOf` → 取件那条路。
+ * 一读 `open.profile.profile_id` 就当场崩掉。server 按宿主体积上限省略过字段的
+ * open 结果同样不完整——**不管省的是什么**：只省了 svg 时 manifest 还在、六项齐全，
+ * 种下去却是一张空画布（iframe 里没有可退的 HTTP 位图）。所以 `elided` 在就一律
+ * 去取件；没有 `elided` 的老 server 结果再按形状判：矢量图必须带 svg 字符串，
+ * raster 档 svg 才允许是 null。这两种都走 `sessionIdOf` → 取件那条路。
  */
 export function isOpenResult(v: unknown): v is OpenFigureResult {
   const o = v as OpenFigureResult | null
   if (!o || typeof o !== 'object') return false
+  if (o.elided) return false
+  const svgOk = typeof o.svg === 'string' || (o.svg === null && o.preview?.mode === 'raster')
   return (
     typeof o.session_id === 'string' &&
     !!o.manifest &&
+    svgOk &&
     typeof o.project === 'string' &&
     typeof o.stem === 'string' &&
     typeof o.script === 'string' &&

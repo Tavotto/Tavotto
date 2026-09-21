@@ -2656,6 +2656,45 @@ def test_elision_keeps_going_into_the_preflight_lists_only_when_it_must(
     assert "errors" in body["preflight"], "阻断项清单还放得下就不该省"
 
 
+def test_detailed_preflight_report_in_content_cannot_push_the_result_over_the_cap(
+    project, big_pool, widget_present, monkeypatch
+):
+    """`preflight=true` 把整份预检报告放进 `content`；宿主量的是整个结果，文字把它顶过
+    上限的话 structuredContent 一样被清空。结构化字段省到底之后文字也要截，
+    并在 `elided` 里说出来（Codex 评审 P2）。"""
+    real = server._safe_preflight
+
+    def huge_report(session_id):
+        out = real(session_id)
+        assert out is not None and "counts" in out
+        out["report"] = "报告" * 600_000  # 3.6 MB
+        return out
+
+    monkeypatch.setattr(server, "_safe_preflight", huge_report)
+    res = _call("tavotto_open_figure", {"project_path": str(project), "preflight": True})
+    body = _body(res)
+    assert not res.get("isError")
+    assert _wire_bytes(res) <= server.CANVAS_INLINE_BUDGET_BYTES
+    assert body["elided"]["content_truncated"] is True
+    assert body["elided"]["final_bytes"] == _wire_bytes(res)
+    text = res["content"][0]["text"]
+    assert text.endswith(server.CONTENT_TRUNCATED_MARKER)
+    assert text.startswith("已打开"), "截的是尾巴，开头那几行（会话 id、摘要）留着"
+    assert body["session_id"] and "counts" in body["preflight"]
+
+
+def test_fitted_result_records_its_final_size_and_leaves_room_for_the_note(
+    project, big_pool, widget_present
+):
+    """`elided` 说明与那行文字本身也占体积：逐步省时留了余量，省完再量一次记进
+    `final_bytes`，而不是在「刚好卡进预算」上被说明推出去。"""
+    res = _call("tavotto_open_figure", {"project_path": str(project)})
+    body = _body(res)
+    assert body["elided"]["final_bytes"] == _wire_bytes(res) <= server.CANVAS_INLINE_BUDGET_BYTES
+    assert "content_truncated" not in body["elided"]
+    assert server.INLINE_ELISION_RESERVE_BYTES >= 1024
+
+
 def test_session_state_hands_the_canvas_the_full_payload_without_rerendering(
     project, big_pool, widget_present, monkeypatch
 ):

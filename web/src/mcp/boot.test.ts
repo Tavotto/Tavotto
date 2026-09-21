@@ -94,6 +94,46 @@ describe('classifyToolResult', () => {
     })
   })
 
+  it('只省了 svg（manifest 还在、六项齐全）→ 仍是把手：种下去是空画布（Codex 评审 P1）', () => {
+    const { svg: _s, ...rest } = full()
+    const onlySvgElided = {
+      ...rest,
+      elided: {
+        fields: ['svg'],
+        reason: 'inline_budget',
+        inline_bytes: 900_000,
+        budget_bytes: 786_432,
+        fetch_with: 'tavotto_session_state',
+      },
+    }
+    expect(classifyToolResult({ content: [], structuredContent: onlySvgElided })).toEqual({
+      kind: 'handle',
+      sessionId: 's-abc',
+    })
+    // 老 server 不写 elided：矢量图缺 svg 字段同样不完整
+    expect(classifyToolResult({ content: [], structuredContent: rest })).toEqual({
+      kind: 'handle',
+      sessionId: 's-abc',
+    })
+  })
+
+  it('raster 档：svg 为 null 而 preview.mode 是 raster → 完整（位图在同一次响应里）', () => {
+    const raster = {
+      ...full(),
+      svg: null,
+      preview: { mode: 'raster', reason: 'complexity_budget', svg_bytes: 0, rasterized_artist_count: 1 },
+      preview_png_base64: 'AAAA',
+    }
+    expect(classifyToolResult({ content: [], structuredContent: raster })).toMatchObject({
+      kind: 'open',
+    })
+    // 矢量图（没有 preview 元数据 = 老引擎的 vector）svg 为 null 不算完整
+    expect(classifyToolResult({ content: [], structuredContent: { ...full(), svg: null } })).toEqual({
+      kind: 'handle',
+      sessionId: 's-abc',
+    })
+  })
+
   it('apply 形状的结果（有 manifest 没 profile）也是把手，不是 open', () => {
     const { profile: _p, project: _q, script: _r, ...apply } = full()
     expect(classifyToolResult({ content: [], structuredContent: apply })).toEqual({
