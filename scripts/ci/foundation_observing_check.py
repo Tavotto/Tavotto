@@ -16,6 +16,11 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+# Windows 上被捕获 / 重定向时两条流会退回系统区域编码，报文里的中文与文件名会静默丢掉
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 def check(junit: Path, prefixes: list[str]) -> list[str]:
     problems: list[str] = []
