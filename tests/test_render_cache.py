@@ -109,7 +109,12 @@ def test_backend_version_is_part_of_the_key(client, tmp_path, monkeypatch):
     assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200
     before = _cached_files(tmp_path)
 
-    monkeypatch.setattr(m.pdfbackend, "BACKEND_VERSION", "99.9.9")
+    # 主语是**实现模块**的版本串：契约层的 `BACKEND_VERSION` 是按选中的实现现取的（PEP 562，U08 起）；
+    # monkeypatch 契约层会在 undo 时把一个真属性写回去，把契约层永久钉在旧后端的版本上，
+    # 后面所有切换后端的用例都被它带偏
+    from tavotto.pdfbackend import pymupdf_backend
+
+    monkeypatch.setattr(pymupdf_backend, "BACKEND_VERSION", "99.9.9")
     assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200
     assert len(_cached_files(tmp_path)) == 2 and before[0] in _cached_files(tmp_path)
 
