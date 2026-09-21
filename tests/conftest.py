@@ -23,7 +23,6 @@ from support import shard as _shard
 _DATA_DIR = tempfile.mkdtemp(prefix="tavotto-data-")
 os.environ.setdefault("TAVOTTO_DATA_DIR", _DATA_DIR)
 
-
 # 渲染控制面**默认走 Python 池**。开发机上 `cargo build` 之后
 # `workerd/target/debug/tavotto-workerd` 就在那儿，pool 会自动认出来——
 # 那样整套既有用例会在不知不觉间换一条控制面跑，「Python 实现是参考实现」
@@ -170,9 +169,10 @@ def pytest_sessionfinish(session, exitstatus):
     （那种 run 本来也不产生结论），所以这个例外挡不住任何真实的泄漏。
     """
     # 兜底数据目录会话结束就删。以前从不删：U04 / U05 起真 venv + 真 pip 的用例往 `environments/` 里建受管
-    # 环境，一次会话 600 MB 上下，系统临时目录里攒了 3 300 个、31 GB，整机 ENOSPC，全量套件成片报
+    # 环境，一次会话 600 MB 上下，系统临时目录里攒了 3 311 个、31 GB，整机 ENOSPC，全量套件成片报
     # 「could not create numbered dir」（2026-09-22 U09 合并态全量撞上）。删不掉（Windows 上 worker 还握着
-    # 句柄）就算了——下一次会话仍是新目录，不复用。放在线程判定之前：目录该删与线程泄不泄漏无关。
+    # 句柄）就算了——下一次会话仍是新目录，不复用。放在线程判定之前：目录该删与线程泄不泄漏无关，
+    # Ctrl+C 那一档也一样要删。验证在 tests/test_conftest_data_dir.py：子进程跑一个会话，结束后目录不在。
     shutil.rmtree(_DATA_DIR, ignore_errors=True)
     if exitstatus == pytest.ExitCode.INTERRUPTED:
         return
