@@ -195,7 +195,10 @@ paths 过滤的 `pull_request`、托管 runner、有 `timeout-minutes`、顶层 
 
 ## 其它目标（`foundation-u06-rendercore.yml` 的四条腿）
 
-（PR B 上随 rendercore 文件变动自动触发；结论按 run 号逐腿填在这里，没跑出来的腿保持 **not_run**，不预填。）
+（随 rendercore 文件变动自动触发；结论按 run 号逐腿填在这里，没跑出来的腿保持 **not_run**，不预填。
+**只在 base = main 的 PR 上跑**（`on.pull_request.branches: [main]`，CI 收窄纪律 2026-09-21：叠栈 PR 逐层 rebase 各起一整套 CI
+把托管 runner 吃空）——叠在别的分支上时它不产出证据；下面的 run 是本 PR 还叠在 U02 上、收窄之前跑出来的，链头改 base=main
+后会再跑一次，红了要修、绿了不必回来改这张表。）
 
 树 `c9d8e92a`，run [35570612388](https://github.com/Tavotto/Tavotto/actions/runs/35570612388)，四条腿全绿。
 用例数取自各腿上传的 `pytest-u06.xml`（不是数点），evidence 比对取自日志里 `IDENTICAL / DIFFERS` 那三行。
