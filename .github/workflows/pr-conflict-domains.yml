@@ -12,6 +12,10 @@ name: PR conflict domains
 
 on:
   pull_request:
+    # 与 ci.yml / codeql.yml 同一条过滤：**只对 base 是 main 的 PR 触发**（2026-09-21）。
+    # 叠栈 PR 在 retarget 到 main 之前不进队列，「与哪些 open PR 撞域」那时再看也来得及；
+    # 四个 PR 级 workflow 同一条规则，读的人不用记「哪个跑哪个不跑」。
+    branches: [main]
     types: [opened, synchronize, reopened]
 
 # 只读。这个 workflow 不写仓库、不评论、不动任何 PR。
