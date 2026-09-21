@@ -120,3 +120,32 @@ enforced 在 PR B 随真实入口的场景一起，按 03 §4 逐条写正例 + 
 回到只看系统链；代记录里多出的 `base_source` / `base_runtime` 两个可选字段旧代码读得懂、忽略）。外部副作用：用户机器上
 不会有——`enabled` 全 false 且没有逃生门时一个字节不下；本机只有 scratchpad 里的归档缓存 / wheelhouse / 链的临时数据目录，
 删掉即可。
+
+## PR C：目标验证腿与 ADR 0064（工程档证据；不是资格）
+
+**实际变更**：
+
+| 层 | 变更 |
+|---|---|
+| `.github/workflows/private-python-targets.yml`（新，非 required、不进 Gate） | `workflow_dispatch` + 每日 schedule + 本能力文件变动时的 `pull_request`（paths 过滤）；三条腿 ubuntu / windows / macos：装应用 + 按 runtime-lock 钉科学栈 → `pip download` 宿主平台 cp313 的真 matplotlib / numpy 成 wheelhouse → （Windows 前快照）→ `TestRealChain`（真 pbs 经产品代码走完整链，公网下载单列在这一步）→（Windows 后快照并比对）→（Linux 空镜像）→ 机制用例在本目标上跑一遍 → 证据工件。托管 runner、每 job `timeout-minutes`、concurrency 与 ci.yml 同形（`tests/test_merge_queue_workflows.py` / `test_source_hygiene.py` 全绿；actionlint 0） |
+| `tests/test_private_python_transaction.py::TestRealChain`（`TAVOTTO_PRIVATE_PYTHON_REAL=1`） | 宿主目标的真 pbs 归档（缓存或公网）→ 事务 → venv 的 `sys.base_prefix` == runtime、mpl / numpy 版本 == 锁 → 独立出图；`TAVOTTO_PRIVATE_PYTHON_DATA_DIR` / `_WHEELHOUSE` / `_CACHE` / `_REPORT` 四个环境变量给腿用 |
+| `scripts/ci/private_python_empty_image.sh`（新） | 把供应好的 runtime **只读**挂进 `ubuntu:24.04`（`--network none`）：先证明镜像里没有 python3 / python / pip / uv，再真起 → venv → 离线装 → pip check → 出图 → report.json |
+| `scripts/ci/private_python_windows_snapshot.py`（新） | 注册表 `Software\Python`（HKCU / HKLM / WOW6432Node）、用户与系统 `Path` 值、进程 PATH / USERPROFILE、USERPROFILE 顶层条目、`py --list-paths`（只记）；`--diff` 逐字节比，顶层新增只允许 `.matplotlib`（既有的 `probe_environment` 写的） |
+| 台账 | FO23 planned → **observing**（`lane: release`，`test: null`——observing 的 case 不指向用例，具名任务写在 notes；registry 同步）；`ENROLLMENT.md` / `generated/FIRST_OPEN_SCHEDULE.md` / `ALL_PROMPTS.md` 重生成（后两份之前就已过期，这次一并派生）；`test_foundation_harness` 的计数 planned 20 / observing 5 |
+| 文档 | ADR 0064（三档证据、验证矩阵、翻 `enabled` 的条件）；`evidence/u05/empty-image-linux-arm64.json`；本段 |
+
+| 命令 | 目标平台 / 环境 / 产物 | 退出码 | 结果与必要证据 |
+|---|---|---|---|
+| `TAVOTTO_PRIVATE_PYTHON_REAL=1 … pytest tests/test_private_python_transaction.py -k TestRealChain` | macOS arm64 本机；真 pbs 归档（scratchpad 缓存）+ 真 wheelhouse（mpl 3.11.1 / numpy 2.5.2 cp313 macosx arm64） | 0 | 计划明示（cached、0 字节）→ `downloading_python` → 建代（base = 私有）→ 装 → 验 → 切 active；venv `base_prefix` == runtime、3.13.15；PDF 10 616 B；9.0 s |
+| `bash scripts/ci/private_python_empty_image.sh <linux-arm64 runtime> bin/python3 <wheelhouse-linux-arm64> <out>` | 本机 docker，`ubuntu:24.04`（arm64，glibc 2.39），归档 `303efcce…`（手工解开挂载——本机起不了 Linux 二进制，产品的 provision 在 ubuntu 腿上走） | 0 | 镜像里没有 python3 / python / pip / uv；`-I -c` 自报 3.13.15、prefix `/rt`；venv + 离线装 11 个 wheel；`pip check` 0；PDF 10 108 B（`evidence/u05/empty-image-linux-arm64.json`） |
+| `python scripts/ci/private_python_windows_snapshot.py <a>` ×2 + `--diff` | 本机（POSIX：reg 不存在也是一种状态，逐字节比） | 0；篡改 PATH / 加 `.python-version` → 1 | 判据的两侧各量到 |
+| `pytest tests/test_source_hygiene.py tests/test_merge_queue_workflows.py tests/test_e2e_leg_topology.py tests/test_release_workflow_contract.py` | 本机 | 0 | 186 passed |
+| `actionlint .github/workflows/private-python-targets.yml` | 本机 | 0 | — |
+| 三条腿的真实运行 | ubuntu / windows / macos 托管 runner | — | **not_run**（新 workflow 合入 main 之前只有本 PR 的 `pull_request` 触发能跑它；run 号随评审处置补在这里） |
+
+**本段的正例 / 负例**：正例 = 上表；负例 = 空镜像脚本的「镜像里有 python3 → exit 9」（用 `python:3.13-slim` 跑一次退出 9
+——本机验过）、快照 `--diff` 对篡改的 PATH / 新条目非零。
+
+**enrollment**：FO23 → observing（理由：具名非 required 任务真跑候选、保留真实失败——03 §3）；FO-022 保持 planned；
+FO24 / 25 / 26 仍待 PR B 经真实入口提升。**没有取得任何平台的资格**（ADR 0064 §二 的矩阵：五个目标资格列全是「未取得」）。
+

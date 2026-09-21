@@ -35,7 +35,8 @@ docker run --rm \
     for name in python3 python pip pip3 uv; do
       if command -v "$name" >/dev/null 2>&1; then echo "镜像里有 $name：不是空目标" >&2; exit 9; fi
     done
-    . /etc/os-release; echo "image: $PRETTY_NAME  glibc: $(ldd --version | head -1)"
+    set -a; . /etc/os-release; set +a
+    echo "image: $PRETTY_NAME  glibc: $(ldd --version | head -1)"
     PY="/rt/${PYTHON_REL}"
     # 2. 真起：自报身份，prefix 是挂载点
     "$PY" -I -c "import sys, json, platform; print(json.dumps({\"version\": platform.python_version(), \"prefix\": sys.prefix, \"executable\": sys.executable}))" | tee /out/launch.json

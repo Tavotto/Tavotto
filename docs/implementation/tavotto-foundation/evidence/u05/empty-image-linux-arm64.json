@@ -1,0 +1,25 @@
+{
+ "what": "linux-arm64 pbs install_only runtime（本机 docker，ubuntu:24.04 arm64 空镜像；不是资格）",
+ "date": "2026-09-21",
+ "archive": {
+  "name": "cpython-3.13.15+20260814-aarch64-unknown-linux-gnu-install_only.tar.gz",
+  "sha256": "303efcce34b86fd8b0d8a260327dbf8d0d4fba6d2d77b2bca311e8bbd19265e1",
+  "size": 90111080
+ },
+ "note": "归档在 scratchpad 里手工 tar 解开后只读挂进容器（本机 macOS 起不了 Linux 二进制，产品的 provision 在 ubuntu 腿上走）；容器里先证明没有 python3 / python / pip / uv；--network none；venv + 离线装 wheelhouse-linux-arm64（matplotlib 3.11.1 / numpy 2.5.2 cp313 manylinux aarch64）；出图",
+ "launch": {
+  "version": "3.13.15",
+  "prefix": "/rt",
+  "executable": "/rt/bin/python3"
+ },
+ "report": {
+  "image": "Ubuntu 24.04.5 LTS",
+  "python": "3.13.15",
+  "prefix": "/work/venv",
+  "base_prefix": "/rt",
+  "matplotlib": "3.11.1",
+  "numpy": "2.5.2",
+  "pdf_bytes": 10108
+ },
+ "script": "scripts/ci/private_python_empty_image.sh"
+}
