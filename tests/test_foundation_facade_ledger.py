@@ -1,15 +1,19 @@
 """U00 facade 迁移清单（`docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.json`）的门禁。
 
 判据的主语：**`tavotto.pdfbackend.__all__` 与清单里的 exports 名字集合**——两边必须
-逐项相等（漏一项红、多一项红、重复红）。加上「清单里点名的每个 file:line 仍含那个
-名字」——清单是按 SHA 采样的，代码挪了行清单就该跟着改，而不是继续指向一行不相干
-的代码。派生的 Markdown 必须与 JSON 一致（一个真值、一个派生）。
+逐项相等（漏一项红、多一项红、重复红）。加上「清单里点名的每个调用点 / 用例仍含那个
+名字」——调用点按 **符号** 锚定（`symbol` = 所在函数 / 方法的 AST 限定名，模块级
+`<module>`），不按绝对行号：行号量的是「第 N 行」不是「这个调用点」，别的 PR 在文件
+前面插几行它就红（2026-09-21 一天让三个 PR 红过），而真正该红的「调用被删了 / 挪进了
+别的函数」它反而看不见。`line` 只作信息，重生成时照填。派生的 Markdown 必须与 JSON
+一致（一个真值、一个派生）。
 
 这不是产品测试：它守的是 U08 / U10 迁移用的清单不腐烂。
 """
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import sys
@@ -80,26 +84,57 @@ def test_every_ledger_entry_has_a_category_and_a_migration_criterion():
             assert t["class"] in d["test_classes"], (e["name"], t)
 
 
-def _line(path: str, line: int) -> str:
-    text = (REPO / path).read_text(encoding="utf-8").splitlines()
-    assert 1 <= line <= len(text), f"{path}:{line} 超出文件长度 {len(text)}"
-    return text[line - 1]
+_DEFS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
-def test_every_cited_caller_line_still_mentions_the_export():
+def _span(node: ast.AST) -> tuple[int, int]:
+    """定义的行范围，**含装饰器**（`@pytest.mark.parametrize(..., pdfbackend.X)` 也是引用）。"""
+    start = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])])
+    return start, node.end_lineno
+
+
+def _symbol_source(path: str, symbol: str) -> str:
+    """`symbol`（AST 限定名：`f` / `Class.method` / `outer.inner`，模块级 `<module>`）在
+    `path` 里的源码；找不到这个符号就 fail——清单指着的东西已经不在了。"""
+    src = (REPO / path).read_text(encoding="utf-8")
+    lines = src.splitlines()
+    tree = ast.parse(src)
+    if symbol == "<module>":
+        tops = [n for n in tree.body if not isinstance(n, (*_DEFS, ast.ClassDef))]
+        return "\n".join("\n".join(lines[_span(n)[0] - 1 : n.end_lineno]) for n in tops)
+    defs: dict[str, ast.AST] = {}
+
+    def walk(body, prefix):
+        for node in body:
+            if isinstance(node, (*_DEFS, ast.ClassDef)):
+                defs[f"{prefix}{node.name}"] = node
+                walk(node.body, f"{prefix}{node.name}.")
+
+    walk(tree.body, "")
+    node = defs.get(symbol)
+    assert node is not None and isinstance(node, _DEFS), (
+        f"{path} 里没有函数 / 方法 `{symbol}`——清单指着的符号已经不在了"
+    )
+    a, b = _span(node)
+    return "\n".join(lines[a - 1 : b])
+
+
+def test_every_cited_caller_symbol_still_mentions_the_export():
+    """按符号锚定：清单点名的函数 / 方法体里仍有那个导出名。行号不参与判定。"""
     d = _ledger()
     for e in d["exports"]:
         for c in e["callers"]:
-            assert e["name"] in _line(c["file"], c["line"]), (
-                f"{c['file']}:{c['line']} 已不含 `{e['name']}`——代码挪了行，清单要跟着改"
+            assert e["name"] in _symbol_source(c["file"], c["symbol"]), (
+                f"{c['file']} 的 `{c['symbol']}` 已不含 `{e['name']}`——调用被删了或挪进了别的函数，清单要跟着改"
             )
     for m in d["canvas_methods"]["methods"]:
         assert m["name"] in CANVAS_METHODS, m["name"]
+        # 方法 / 属性：`.name`；`__enter__/__exit__`：那个函数体里有 `with` 语句
+        needle = "with " if "/" in m["name"] else "." + m["name"]
         for c in m["callers"]:
-            needle = m["name"].split("/")[0].strip("_") if "/" in m["name"] else m["name"]
-            assert needle in _line(c["file"], c["line"]) or "with " in _line(
-                c["file"], c["line"]
-            ), f"{c['file']}:{c['line']} 已不含 `{m['name']}`"
+            assert needle in _symbol_source(c["file"], c["symbol"]), (
+                f"{c['file']} 的 `{c['symbol']}` 已不含 `{m['name']}`"
+            )
     assert {m["name"] for m in d["canvas_methods"]["methods"]} == CANVAS_METHODS
 
 
@@ -122,12 +157,46 @@ def test_every_migration_evidence_points_at_a_test_that_exists():
     assert n >= 8, "U06 起至少 8 个导出项带迁移证据；量在空集合上的判据恒真"
 
 
-def test_every_cited_test_line_still_contains_its_snippet():
+def test_every_cited_test_symbol_still_contains_its_snippet():
+    """用例引用同样按用例函数名锚定：那个用例（含它的装饰器）里仍有登记的片段。"""
     for e in _ledger()["exports"]:
         for t in e["tests"]:
-            assert t["contains"] in _line(t["file"], t["line"]), (
-                f"{t['file']}:{t['line']} 已不含 `{t['contains']}`（{e['name']}）"
+            assert t["contains"] in _symbol_source(t["file"], t["symbol"]), (
+                f"{t['file']} 的 `{t['symbol']}` 已不含 `{t['contains']}`（{e['name']}）"
             )
+
+
+def test_cited_lines_are_information_only_but_inside_the_symbol():
+    """`line` 不参与判定，但作为信息它得指在那个符号的范围里（重生成脚本照填）；
+    否则读清单的人会被带到一行不相干的代码。"""
+    d = _ledger()
+    cites = [(c["file"], c["symbol"], c["line"]) for e in d["exports"] for c in e["callers"]]
+    cites += [
+        (c["file"], c["symbol"], c["line"])
+        for m in d["canvas_methods"]["methods"]
+        for c in m["callers"]
+    ]
+    cites += [(t["file"], t["symbol"], t["line"]) for e in d["exports"] for t in e["tests"]]
+    assert len(cites) >= 80, "引用少于 80 条，判据多半量在空集合上"
+    for path, symbol, line in cites:
+        src = (REPO / path).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        if symbol == "<module>":
+            assert 1 <= line <= len(src.splitlines()), (path, symbol, line)
+            continue
+        spans = []
+
+        def walk(body, prefix):
+            for node in body:
+                if isinstance(node, (*_DEFS, ast.ClassDef)):
+                    if f"{prefix}{node.name}" == symbol:
+                        spans.append(_span(node))
+                    walk(node.body, f"{prefix}{node.name}.")
+
+        walk(tree.body, "")
+        assert spans and spans[0][0] <= line <= spans[0][1], (
+            f"{path}:{line} 不在 `{symbol}` 的范围 {spans} 里——重生成清单把行号填回去"
+        )
 
 
 def test_canvas_methods_exist_on_the_real_canvas_object():

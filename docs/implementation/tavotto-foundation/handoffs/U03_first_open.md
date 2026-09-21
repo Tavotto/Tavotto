@@ -142,6 +142,13 @@ ruleset、`aggregate_gate.py`、默认后端、生产依赖、`security._PUBLIC_
 那一步」（U04 同门指出的漏——之前 CI 上六条 FO 根本没跑）。Codex 评 U04 #459 时报在本 PR 文件上的 P1
 （databinding 读 / hash 项目外文件）修法见 ADR 0057「不做的事」第二条。
 
+**facade 清单锚点改为符号，行号只作信息**：`U00_FACADE_LEDGER.json` 的每个调用点 / 用例引用加 `symbol`
+（AST 限定名，模块级 `<module>`；替换掉手写的 `function`——37 条里 11 条写错了函数名，按行号反查一次性
+填对），门禁 `test_every_cited_caller_symbol_still_mentions_the_export` / `test_every_cited_test_symbol_still_contains_its_snippet`
+按符号体（含装饰器）找导出名 / 片段，`line` 只作信息（另一条用例只守它落在符号范围内）。之前按绝对行号钉，
+一天内让三个 PR 红（#462 / #469 / #475），而 `probe_asset` 在 `_declared_density` 里的引用实际指着
+`_original_page_pt` 那一行，按行号的判据看不见。
+
 **下一个无阻塞阶段 / 子切片**：PR B（本阶段）：前端确认对话框（`workdir_confirmation_required` →
 三档选择 → `PATCH /api/engine/workdir` → 重排渲染）、设置里 `WorkdirRow` 改三档、i18n 四个新 code
 （`workdir_confirmation_required` / `explicit_python_unusable` / `project_python_unusable` /

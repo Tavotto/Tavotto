@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 43257,
-      "sha256": "1e596b5bb16db1f8f432d9263c8661a945799955377e78f07d286464a7cd4c93"
+      "bytes": 47198,
+      "sha256": "5c3cfbddc51d9eaf055d9e0b5b9d809e2ef6ac770c2da979f2d18ffb6790fbc4"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 23896,
-      "sha256": "f762e2db290a97e1bd0ee80c0865ee380913f88da615ad02647b6fadaa0a2913"
+      "bytes": 20606,
+      "sha256": "67d87b440fab07102059cd2f8f66332d0866b42b01046898497a54808af11bb4"
     },
     {
       "path": "archive/README.md",
@@ -319,8 +319,8 @@
     },
     {
       "path": "handoffs/U03_first_open.md",
-      "bytes": 18995,
-      "sha256": "d2310bf6028375e496446ef3aef1068b38b4b2f7208ae271a51d1a0cb2e4a209"
+      "bytes": 19740,
+      "sha256": "f0bedbb07de6171cd45b9d22d015d2177fb8c91bdb2c5fce4ec7f6866ed07835"
     },
     {
       "path": "handoffs/U06_ir_text.md",
@@ -414,8 +414,8 @@
     },
     {
       "path": "tools/generate_facade_ledger.py",
-      "bytes": 6300,
-      "sha256": "b6643a822ccd70cdb4e122795b4c6110c1cc0d4737bca028770a7321abbc2738"
+      "bytes": 6296,
+      "sha256": "93b0d0fbc27629309bff851daca3ff1262af19165b2442990a9c4f9d16ee032e"
     },
     {
       "path": "tools/generate_views.py",
