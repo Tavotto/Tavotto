@@ -43,9 +43,9 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "1")
     # 死代理：任何走代理的联网当场被拒。本地回环服务由 NO_PROXY 放行——与真实机器上的
     # 代理配置同一张脸（urllib 只认环境变量），不是给产品代码开的口子。
-    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
-    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
-    # urllib 先读小写 `no_proxy` 再读大写：两种拼法都设，别让宿主 shell 里的小写那份决定判据
+    # urllib 对 `*_proxy` 小写优先于大写：四个变量两种拼法都设，别让宿主 / runner 里的小写那份决定判据
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
     privatepython.reset_for_tests()
@@ -448,6 +448,9 @@ class TestRefusals:
             ("python/lib/abs", "sym", "/etc/passwd", False),
             ("python/lib/up", "sym", "../../other", False),
             ("python/lib/hard", "lnk", "python/bin/python3", False),
+            ("python/lib/win1", "sym", "..\\..\\outside", False),
+            ("python/lib/win2", "sym", "C:\\outside", False),
+            ("python/lib/win3", "sym", "C:/outside", False),
             ("python/dev/null", "chr", None, False),
             ("python/fifo", "fifo", None, False),
         ],
@@ -529,6 +532,31 @@ class TestRefusals:
         finally:
             downloads.chmod(0o700)
         assert _runtime_dirs() == set() and _parts() == []
+
+    @pytest.mark.skipif(
+        not POSIX or os.geteuid() == 0, reason="只读目录的判据要 POSIX 权限位且不是 root"
+    )
+    def test_an_unwritable_staging_dir_is_a_write_error_not_an_invalid_archive(
+        self, tmp_path, launches, monkeypatch
+    ):
+        """解包写不进（磁盘满 / 配额 / 权限）：归档没坏，是本机的事——write_failed，不是 invalid_archive
+        （Codex #464 P2）。让 staging 目录只读来表达。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        real_mkdir = Path.mkdir
+
+        def _readonly_staging(self, *a, **kw):
+            real_mkdir(self, *a, **kw)
+            if self.name.startswith(privatepython.STAGING_PREFIX):
+                self.chmod(0o500)
+
+        monkeypatch.setattr(Path, "mkdir", _readonly_staging)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            with pytest.raises(privatepython.ProvisionError) as err:
+                privatepython.provision(src)
+            assert err.value.code == privatepython.ERROR_WRITE_FAILED
+        assert _launch_count(launches) in (0, None)
+        assert privatepython.archive_path(src).is_file()  # 归档是好的，缓存留着
 
     def test_disk_quota_is_checked_before_any_download(self, tmp_path, launches, monkeypatch):
         archive, sha, rel = _make(tmp_path, launches)
@@ -732,6 +760,48 @@ class TestConsumers:
         with privatepython._lock:
             assert privatepython._inflight == {}
 
+    def test_a_cancellation_racing_the_commit_never_publishes_after_being_accepted(
+        self, tmp_path, launches, monkeypatch
+    ):
+        """接受与提交在同一把锁下判（Codex #464 P2）：把 `os.replace` 拖住，期间取消 → 要么取消被接受且没有
+        目录，要么提交先赢、消费者拿到的是路径——绝不会「报了取消、目录却在」。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        real_replace = os.replace
+        entered = threading.Event()
+        release = threading.Event()
+
+        def _slow_replace(src_p, dst_p):
+            if privatepython.STAGING_PREFIX in str(src_p):
+                entered.set()
+                release.wait(30)
+            return real_replace(src_p, dst_p)
+
+        monkeypatch.setattr(privatepython.os, "replace", _slow_replace)
+        cancel = threading.Event()
+        out: dict = {}
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+
+            def _go():
+                try:
+                    out["r"] = privatepython.provision(src, cancel_ev=cancel)
+                except privatepython.ProvisionError as exc:
+                    out["r"] = exc
+
+            t = threading.Thread(target=_go)
+            t.start()
+            assert entered.wait(60)
+            cancel.set()  # 提交进行中（锁被下载线程持有）：消费者的取消判断要等提交完成
+            time.sleep(0.5)
+            release.set()
+            t.join(60)
+        published = privatepython.python_of(src) is not None
+        if isinstance(out["r"], privatepython.ProvisionError):
+            assert out["r"].code == privatepython.ERROR_CANCELLED
+            assert not published, "报了取消，目录却在——接受与提交交错了"
+        else:
+            assert published and out["r"] == privatepython.python_of(src)
+
     def test_cancel_after_the_commit_point_changes_nothing(self, tmp_path, launches):
         """提交点之后取消无效：目录不可变，留下的永远是完整的一份。"""
         archive, sha, rel = _make(tmp_path, launches)
@@ -889,7 +959,7 @@ class TestIsolation:
             ):
                 config_calls.add(node.func.attr)
         allowed = {
-            "dataclasses", "hashlib", "http", "json", "logging", "os", "posixpath", "secrets", "shutil",
+            "dataclasses", "hashlib", "http", "json", "logging", "os", "posixpath", "re", "secrets", "shutil",
             "socket", "stat", "subprocess", "tarfile", "threading", "time", "urllib", "pathlib",
             "importlib", "__future__", "brand", "config", "runtime", "files", "__version__",
         }  # fmt: skip
