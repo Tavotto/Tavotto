@@ -357,6 +357,9 @@ class JointPlan:
     facts: dict
     marker_env_digest: str
     identity: str
+    #: 规划输入的指纹：声明意图（各声明文件解析出的全部条目，稳定顺序）+ 脚本与跟进过的本地模块的字节。
+    #: 与事实无关（替身事实与真事实算出来一样）——执行端据此判「用户看到的计划还是不是这些输入算的」。
+    inputs_digest: str = ""
 
     @property
     def actionable(self) -> bool:
@@ -384,6 +387,7 @@ class JointPlan:
             "facts": dict(self.facts),
             "marker_env_digest": self.marker_env_digest,
             "identity": self.identity,
+            "inputs_digest": self.inputs_digest,
         }
 
 
@@ -583,11 +587,28 @@ def plan(
         facts=facts_payload,
         marker_env_digest=_digest(marker_env or {}),
         identity=identity,
+        inputs_digest=inputs_digest(root_p, intents, scan.files),
     )
 
 
 def _digest(obj) -> str:
     return hashlib.sha256(json.dumps(obj, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def inputs_digest(
+    root: str | Path, intents: list[depresolve.DependencyIntent], files: tuple[str, ...]
+) -> str:
+    """规划输入的指纹（见 `JointPlan.inputs_digest`）。文件按字节 sha256；读不了的记 `<unreadable>`——
+    读不了也是一种输入状态，变成读得了同样算变了。"""
+    root_p = Path(root)
+    hashes: list[list[str]] = []
+    for rel in files:
+        try:
+            digest = hashlib.sha256((root_p / rel).read_bytes()).hexdigest()
+        except OSError:
+            digest = "<unreadable>"
+        hashes.append([rel, digest])
+    return _digest({"intents": [it.to_payload() for it in intents], "files": hashes})
 
 
 def fresh_venv_facts(
