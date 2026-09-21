@@ -651,6 +651,55 @@ class TestConsumers:
         assert _runtime_dirs() == {src.id} and _parts() == []
         assert privatepython.archive_path(src).is_file()
 
+    def test_archive_rename_refused_while_another_process_holds_it_reuses_that_copy(
+        self, tmp_path, launches, monkeypatch
+    ):
+        """Windows 形状（#467 目标腿确定性红）：两个进程同时供应，先到的把归档搬到正式名并打开解包，
+        后到的 `os.replace(.part → 正式名)` 被共享冲突拒掉——正式名上那份校验过、字节一样，后到的
+        必须复用它而不是报 write_failed。本机没有 Windows：把「别的进程刚把同一份放上去、且 replace
+        被拒」这一步按 Windows 语义摆出来（拒之前先把同样的字节落到正式名上）。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        real_replace = os.replace
+        refused: list[tuple[str, str]] = []
+
+        def _windows_like_replace(src_p, dst_p):
+            if str(src_p).endswith(".part"):
+                shutil.copyfile(src_p, dst_p)  # 别的进程那份已经在正式名上（同一份字节）
+                refused.append((str(src_p), str(dst_p)))
+                raise PermissionError(13, "Access is denied")  # [WinError 5]：目标被别的进程打开着
+            return real_replace(src_p, dst_p)
+
+        monkeypatch.setattr(privatepython.os, "replace", _windows_like_replace)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            python = privatepython.provision(src)
+            assert python == str(privatepython.runtime_python(src))
+            assert server.requests == [f"/{archive.name}"]
+        assert len(refused) == 1 and refused[0][1] == str(privatepython.archive_path(src))
+        assert privatepython.archive_path(src).is_file() and _parts() == []
+        assert _runtime_dirs() == {src.id}
+
+    def test_archive_rename_refused_with_wrong_bytes_on_the_name_is_a_write_error(
+        self, tmp_path, launches, monkeypatch
+    ):
+        """同一形状但正式名上的字节对不上（不是校验过的那份）：不复用、报 write_failed、不发布。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        real_replace = os.replace
+
+        def _windows_like_replace(src_p, dst_p):
+            if str(src_p).endswith(".part"):
+                Path(dst_p).write_bytes(b"not the archive")
+                raise PermissionError(13, "Access is denied")
+            return real_replace(src_p, dst_p)
+
+        monkeypatch.setattr(privatepython.os, "replace", _windows_like_replace)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            with pytest.raises(privatepython.ProvisionError) as err:
+                privatepython.provision(src)
+            assert err.value.code == privatepython.ERROR_WRITE_FAILED
+        assert _parts() == [] and _runtime_dirs() == set()
+
     def test_one_consumer_cancelling_does_not_stop_the_others(self, tmp_path, launches):
         """取消按消费者管理（D11）：A 取消只是 A 退出，B 照样拿到；下载不因 A 而中止。"""
         archive, sha, rel = _make(tmp_path, launches)
