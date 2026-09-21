@@ -973,7 +973,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1079,
+          "line": 1095,
           "role": "老客户端 / MCP 没带尺寸时现算位图页面"
         },
         {

@@ -143,6 +143,47 @@ def main():
         fig6, ax7 = plt.subplots(figsize=(4.0, 3.0))
         ax7.bar(np.arange(n), np.ones(n))
         fig6.savefig(f"{stem}.pdf")
+
+    # MeshFig：彩色网格的数据范围**超出**坐标轴范围（2026-09-21 用户的 PRB 三联图：
+    # 频率网格 1.30–1.52、ylim 1.34–1.51，`shading="nearest"` 还各向外垫半格）。
+    # 它的 bbox 是未裁剪的整块网格，用户看到的却是被 axes 裁掉之后的那块。
+    fig7, (ax8, ax9) = plt.subplots(1, 2, figsize=(6.0, 3.0),
+                                    subplot_kw={"projection": None})
+    mx = np.round(np.arange(0.5, 2.0001, 0.025), 3)
+    my = np.linspace(1.30, 1.52, 45)
+    # collections_0：直角网格，rasterized（SVG 里是一张 <image>，没有 <g id>）
+    ax8.pcolormesh(mx, my, np.random.RandomState(0).rand(45, mx.size),
+                   shading="nearest", rasterized=True)
+    ax8.set_xlim(0.5, 2.0)
+    ax8.set_ylim(1.34, 1.51)
+    # axes_1.collections_0：翘曲网格（极坐标那种曲线边界）——外轮廓是真实边界
+    fig7.delaxes(ax9)
+    ax9 = fig7.add_subplot(1, 2, 2, projection="polar")
+    rr, tt = np.meshgrid(np.linspace(0.2, 1.0, 6), np.linspace(0.0, np.pi, 9))
+    ax9.pcolormesh(tt, rr, np.random.RandomState(1).rand(8, 5))
+    fig7.savefig("MeshFig.pdf")
+
+    # MeshOffsetFig：带 offsets 的网格（渲染器按 offset_transform 变换后逐 cell 循环
+    # 加到坐标上）。collections_0 没有偏移，collections_1 一条偏移 = 整块平移，
+    # collections_2 两条不同的偏移 = cell 各奔东西、没有外轮廓可言
+    fig8, ax10 = plt.subplots(figsize=(4.0, 3.0))
+    ox, oy, oc = np.linspace(0, 1, 5), np.linspace(0, 1, 4), np.random.RandomState(2).rand(3, 4)
+    ax10.pcolormesh(ox, oy, oc)
+    ax10.pcolormesh(ox, oy, oc, offsets=[[0.5, 0.2]], offset_transform=ax10.transData)
+    ax10.pcolormesh(ox, oy, oc, offsets=[[0.0, 0.0], [0.6, 0.6]],
+                    offset_transform=ax10.transData)
+    ax10.set_xlim(0.0, 2.0)
+    ax10.set_ylim(0.0, 2.0)
+    fig8.savefig("MeshOffsetFig.pdf")
+
+    # MeshConcaveFig：U 形翘曲网格，ylim 从两条臂中间切过——外轮廓与子图框的交是
+    # **两块不相连的区域**，Sutherland–Hodgman 会造假桥，所以这种轮廓不裁、原样发
+    fig9, ax11 = plt.subplots(figsize=(4.0, 3.0))
+    uu, vv = np.meshgrid(np.linspace(0.0, 1.0, 21), np.linspace(0.0, 0.3, 4))
+    ax11.pcolormesh(uu, vv + 3.0 * (uu - 0.5) ** 2, np.random.RandomState(3).rand(3, 20))
+    ax11.set_xlim(-0.2, 1.2)
+    ax11.set_ylim(0.5, 1.2)
+    fig9.savefig("MeshConcaveFig.pdf")
 """
 
 
@@ -622,6 +663,92 @@ def test_contour_lines_trace_their_real_paths_not_the_axes_box(library):
         assert (max(xs) - min(xs)) * (max(ys) - min(ys)) < ax_box[2] * ax_box[3] * 0.9
     # 位图仍然只有 bbox（它就该整块命中，几何编辑代理回宿主子图）
     assert "geometry" not in _el(man, "axes_0.images_0")
+
+
+def test_quadmesh_outline_is_clipped_to_what_is_drawn(library):
+    """彩色网格出的是**外轮廓**（一条闭合子路径）+ 裁剪框，不是每个 cell。
+
+    数据范围超出坐标轴范围时 bbox 是未裁剪的整块网格（比子图高出一截），从前
+    没有 geometry 就拿它当选中框——「点子图背景时框罩不准」（2026-09-21 用户的
+    PRB 三联图）。发出去的轮廓**已经裁进 axes 框**：它就是画出来的那块的边界
+    （框选按「框与边相交」判，边在子图框上才圈得中，#473 评审）；bbox 一个字节不动。
+    """
+    man = _manifest(library, stem="MeshFig")
+    el = _el(man, "axes_0.collections_0")
+    ax_box = _el(man, "axes_0")["bbox"]
+    geom = el["geometry"]
+    assert geom["kind"] == "path" and len(geom["paths"]) == 1
+    (path,) = geom["paths"]
+    assert path["closed"] is True and geom["fill"] is True
+    # 直角网格裁进子图框之后就是四个角
+    assert len(path["points"]) == 4, path["points"]
+    # 轮廓 = 子图框（网格四边都伸出去了，裁完正好是它）；bbox 仍是整块网格，比子图高
+    xs = [q[0] for q in path["points"]]
+    ys = [q[1] for q in path["points"]]
+    assert [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)] == pytest.approx(
+        ax_box, abs=2e-3
+    )
+    assert el["bbox"][3] > ax_box[3] * 1.15, "夹具失效：网格没有伸出子图"
+    assert el["bbox"][1] < ax_box[1] and el["bbox"][1] + el["bbox"][3] > ax_box[1] + ax_box[3]
+    # 裁剪框照发（前端按它裁，与轮廓一致）
+    assert geom["clip"] == pytest.approx(ax_box, abs=2e-3)
+    # 框选：一个盖住整个可见子图的选择框必须与轮廓相交（边在子图框上）；
+    # 与 `web/src/lib/pathGeom.ts` 的 geomHitsRect 同一判据——任一顶点落在框内即圈中
+    marquee = (ax_box[0] - 0.01, ax_box[1] - 0.01, ax_box[2] + 0.02, ax_box[3] + 0.02)
+    assert any(
+        marquee[0] <= q[0] <= marquee[0] + marquee[2]
+        and marquee[1] <= q[1] <= marquee[1] + marquee[3]
+        for q in path["points"]
+    )
+
+
+def test_quadmesh_outline_follows_a_curvilinear_grid(library):
+    """极坐标里的网格：外轮廓是真实的曲线边界（半个圆环），不是一个矩形。"""
+    man = _manifest(library, stem="MeshFig")
+    geom = _el(man, "axes_1.collections_0")["geometry"]
+    (path,) = geom["paths"]
+    assert path["closed"] is True
+    assert len(path["points"]) > 8, "曲线边界抽稀后仍然远不止四个角"
+
+
+def test_quadmesh_outline_follows_collection_offsets(library):
+    """带 `offsets` 的网格：一条偏移 = 整块平移，轮廓跟着走（渲染器把偏移经
+    `offset_transform` 变换后加到坐标上，这里同一口径）；多条不同的偏移让 cell 各奔
+    东西，没有外轮廓可言——退回 bbox（#473 评审）。"""
+    man = _manifest(library, stem="MeshOffsetFig")
+    ax_box = _el(man, "axes_0")["bbox"]
+    base = _el(man, "axes_0.collections_0")["geometry"]["paths"][0]["points"]
+    moved = _el(man, "axes_0.collections_1")["geometry"]["paths"][0]["points"]
+    # 偏移是**点**经 transData：data (0.5, 0.2) 的 display 位置整个加上去。
+    # xlim / ylim 都是 (0, 2)，所以 x 方向 = 子图左沿 + 1/4 子图宽；y 方向（top-origin，
+    # 向下为正）= -(子图底沿离图底的距离 + 1/10 子图高)
+    x0, y0, w, h = ax_box
+    dx = x0 + 0.25 * w
+    dy = -((1.0 - (y0 + h)) + 0.1 * h)
+    assert len(moved) == len(base)
+    for (bx, by), (mx, my) in zip(base, moved):
+        assert mx - bx == pytest.approx(dx, abs=2e-3)
+        assert my - by == pytest.approx(dy, abs=2e-3)
+    assert "geometry" not in _el(man, "axes_0.collections_2"), "逐 cell 偏移的网格应当退回 bbox"
+
+
+def test_concave_quadmesh_outline_is_left_unclipped(library):
+    """凹的外轮廓（U 形网格、ylim 从两臂中间切过）**不裁**：与矩形的交不相连，
+    Sutherland–Hodgman 会沿裁剪边造假桥，前端会描出来、框选也当墨迹（#473 评审第三轮）。
+    原样发 + clip，由前端裁——U 形本身照旧在。"""
+    man = _manifest(library, stem="MeshConcaveFig")
+    geom = _el(man, "axes_0.collections_0")["geometry"]
+    ax_box = _el(man, "axes_0")["bbox"]
+    (path,) = geom["paths"]
+    pts = path["points"]
+    assert path["closed"] is True and len(pts) > 8, "U 形边界抽稀后远不止四个角"
+    assert geom["clip"] == pytest.approx(ax_box, abs=2e-3)
+    # 没裁：U 的底伸在子图框之下（top-origin：y 更大）
+    assert max(q[1] for q in pts) > ax_box[1] + ax_box[3] + 0.02
+    # 没有假桥：任何一条边都不该整段贴在子图框的上边界上
+    top = ax_box[1]
+    for a, b in zip(pts, pts[1:] + pts[:1]):
+        assert not (abs(a[1] - top) < 1e-3 and abs(b[1] - top) < 1e-3 and abs(a[0] - b[0]) > 0.05)
 
 
 def test_line_collection_traces_each_line(library):

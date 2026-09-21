@@ -65,7 +65,18 @@ LOG = logging.getLogger("tavotto.deprepair")
 # 稳定错误码（协议契约：code 不许改名，文案随便改）
 # ---------------------------------------------------------------------------
 ERROR_UNRESOLVED = "dependency_unresolved"
+#: 没有计划 / 计划不属于这里 / 安装目标不合法——**只**留给这三种「没有用户意图」
+#: 的情形，那时「请重新开始」才是对的建议。以前它还盖着「这一轮已经试过」与
+#: 「环境里已经有了」两种原因，前端那句「安装未获确认，请重新开始」对它们是假话
+#: （#466）——判据对了，它说的话不对，而判据一旦对，人更会信那句错的。
 ERROR_NOT_ALLOWED = "dependency_install_not_allowed"
+#: 同一环境上的同一需求这一轮已经装成功过：再装一遍改不了任何东西。
+ERROR_ALREADY_ATTEMPTED = "dependency_already_attempted"
+#: 目标环境里已经 import 得到它了——渲染报缺，说明渲染用的不是这个环境。
+ERROR_ALREADY_PRESENT = "dependency_already_present"
+#: 全局显式解释器（`TAVOTTO_WORKER_PYTHON` / 设置里指定的）正在生效：项目级的
+#: 环境决策全部轮不到（`pool.explicit_worker_python`，#465），装进任何目标都不会被用。
+ERROR_INTERPRETER_PINNED = "dependency_interpreter_pinned"
 ERROR_CANCELLED = "dependency_install_cancelled"
 ERROR_FAILED = "dependency_install_failed"
 ERROR_TIMEOUT = "dependency_install_timeout"
@@ -384,7 +395,18 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
         "requirement": requirement.to_payload() if requirement else None,
         "rounds_remaining": rounds_remaining(root, script),
         "targets": [],
+        "system_rejected": [],
     }
+    # ---- 全局显式解释器生效：下面每一条路都写项目级决策，一条也轮不到 ----
+    # （#465）自动接手 / 采用系统解释器 / 装进项目 .venv 或受管环境，最后都落到
+    # `pool.resolve_worker_python()` 的第 3 档，而第 1、2 档只要存在就压过它。
+    # 那时提供安装目标等于让用户真的联网装一遍、装完渲染照样缺——所以一个目标
+    # 都不给，把「指定了哪条、来源是什么」说出来，让界面给出能解开它的那一步。
+    pinned = pinned_payload()
+    if pinned:
+        out["pinned"] = pinned
+        out["code"] = ERROR_INTERPRETER_PINNED
+        return out
     # ---- 0. 这台机器上已有的解释器里已经装着它：采用，不装 ---------------
     # **排在两个提前返回之前**：采用不需要解析出包名（它什么都不装），也不
     # 消耗修复轮次——解析不出 / 轮次用完时，这条路正是用户仅剩的那条。
@@ -478,6 +500,36 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
 
 
 # ---------------------------------------------------------------------------
+# 全局显式解释器（#465）
+# ---------------------------------------------------------------------------
+def pinned_payload() -> dict | None:
+    """正在生效的全局显式解释器，投影成界面认的形状；没有回 None。
+
+    `variable` 只在 `env_override` 时有值，且是**供值的那个**名字（新名或旧名
+    `MM_WORKER_PYTHON`）：界面「清掉环境变量后重启」那句按它点名。
+    """
+    pinned = pool.explicit_worker_python()
+    if not pinned:
+        return None
+    python, source = pinned
+    out = {"python": python, "source": source, "variable": ""}
+    if source == pool.SOURCE_ENV:
+        pair = pool.worker_python_env_pair()
+        out["variable"] = pair[0] if pair else pool.WORKER_PYTHON_ENV
+    return out
+
+
+def _refuse_if_pinned() -> None:
+    pinned = pinned_payload()
+    if pinned:
+        raise RepairError(
+            ERROR_INTERPRETER_PINNED,
+            f"渲染解释器已固定为 {pinned['python']}，为项目安装的环境不会被使用",
+            pinned=pinned,
+        )
+
+
+# ---------------------------------------------------------------------------
 # 创建计划
 # ---------------------------------------------------------------------------
 def create_plan(
@@ -492,6 +544,7 @@ def create_plan(
     root = str(Path(project))
     if target_kind not in TARGETS:
         raise RepairError(ERROR_NOT_ALLOWED, f"未知的安装目标: {target_kind!r}")
+    _refuse_if_pinned()  # 与 `offer()` 同一条判据：装进去也不会被用的计划一开始就不形成
     if rounds_remaining(root, script) <= 0:
         raise RepairError(ERROR_ROUNDS_EXHAUSTED, "这个脚本的自动依赖修复已经用满")
     if not projectenv.valid_module_name(module):
@@ -517,7 +570,7 @@ def create_plan(
         if health.get("code") == projectenv.ERROR_MODULE_MISSING:
             pass  # 正是我们要修的状态
         elif health.get("ok"):
-            raise RepairError(ERROR_NOT_ALLOWED, f"这个环境里已经有 {module} 了")
+            raise RepairError(ERROR_ALREADY_PRESENT, f"这个环境里已经有 {module} 了")
         else:
             raise RepairError(
                 health.get("code") or ERROR_NOT_ALLOWED, "这个环境不适合作为安装目标", health=health
@@ -532,7 +585,7 @@ def create_plan(
     key = _env_key(target_kind, python, root)
     with _lock:
         if (managedenv.project_fingerprint(root), key, requirement.requirement()) in _attempted:
-            raise RepairError(ERROR_NOT_ALLOWED, "同一个环境上的同一个需求这一轮已经试过了")
+            raise RepairError(ERROR_ALREADY_ATTEMPTED, "同一个环境上的同一个需求这一轮已经装过了")
     now = time.time()
     plan = RepairPlan(
         plan_id=secrets.token_urlsafe(24),
@@ -619,7 +672,15 @@ def _install_guarded(plan_id: str, on_event) -> dict:
     try:
         return install(plan_id, on_event)
     except RepairError as exc:
-        return _emit(plan_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
+        pinned = (exc.extra or {}).get("pinned")
+        return _emit(
+            plan_id,
+            STATE_FAILED,
+            on_event,
+            code=exc.code,
+            error=str(exc),
+            pinned=pinned if isinstance(pinned, dict) else None,
+        )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("依赖安装线程异常")
         return _emit(plan_id, STATE_FAILED, on_event, code=ERROR_FAILED, error=str(exc))
@@ -654,6 +715,12 @@ def install(plan_id: str, on_event=None) -> dict:
                 return _run_install(plan, key, on_event, cancel_ev)
         key = _env_key(plan.target_kind, plan.python, plan.project)
         with pool.mutating_environment(key, plan.python):
+            # **租约在手之后**才复查全局固定（Codex 评审 #469 两轮 P1）：确认窗口里
+            # 从别处把全局解释器钉上，环境指纹看不见这条；而钉的那条路
+            # （`envlease.unless_mutating`）与这把租约互斥——先钉上的这里看得见，
+            # 后钉的被拒。租约之前查一次没有用：查完到拿到租约之间照样能钉。
+            # 计划照常在 finally 里作废：形成时的前提已经不成立。
+            _refuse_if_pinned()
             return _run_install(plan, key, on_event, cancel_ev)
     except pool.EnvironmentBusy as exc:
         raise _busy_error(exc) from exc
@@ -739,11 +806,20 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         raise RepairError(ERROR_PIP_UNAVAILABLE, _sanitize(out)[-800:])
 
     # ---- 安装 -------------------------------------------------------------
-    _emit(plan.plan_id, STATE_INSTALLING, on_event, plan=plan)
+    # 租约在手、解释器已知之后再查一次「这一轮装成功过没有」（Codex 评审 #469 P2）：
+    # 计划是在 `create_plan` 时查的，而另一个页签的同一需求可能在这之后才装完——
+    # 环境指纹看不见 site-packages，两个计划都有效，第二个照样跑一遍无意义的 pip。
+    # key 的算法与下面 `_attempted.add` 那一处逐字相同。
+    attempted_key = (
+        plan.project_id,
+        _env_key(plan.target_kind, python, project),
+        req.requirement(),
+    )
     with _lock:
-        _attempted.add(
-            (plan.project_id, _env_key(plan.target_kind, python, project), req.requirement())
-        )
+        already = attempted_key in _attempted
+    if already:
+        raise RepairError(ERROR_ALREADY_ATTEMPTED, "同一个环境上的同一个需求这一轮已经装过了")
+    _emit(plan.plan_id, STATE_INSTALLING, on_event, plan=plan)
     code, out = _pip_install(
         python, req.requirement(), cancel_ev, lambda text: _append_log(plan.plan_id, text, on_event)
     )
@@ -751,6 +827,12 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         return _finish_cancelled(plan, on_event, python)
     if code:
         raise RepairError(code, _sanitize(out)[-800:])
+    # pip 退出码 0 **之后**才记「试过了」（#466）：这条黑名单挡的是「装完还缺、
+    # 再装还缺」的循环——同一需求再装一遍改不了任何东西。网络断掉 / 用户取消的
+    # 那次 pip 没跑成，再来一次是有意义的；以前写在 pip 之前，失败文案说
+    # 「检查网络后重试」，重试撞到的却是「这一轮已经试过了」。
+    with _lock:
+        _attempted.add(attempted_key)
 
     # ---- 验证三层 ---------------------------------------------------------
     _emit(plan.plan_id, STATE_VERIFYING, on_event, plan=plan)
@@ -1248,12 +1330,17 @@ def _emit(
     code: str = "",
     error: str | None = None,
     result: dict | None = None,
+    pinned: dict | None = None,
 ) -> dict:
     with _lock:
         rec = dict(_progress.get(plan_id) or {"log": ""})
         rec.update(
             plan_id=plan_id, state=state, code=code, error=error, result=result or rec.get("result")
         )
+        if pinned is not None:
+            # 租约里复查到全局固定而失败：界面要的是那条固定（谁、来源、变量），
+            # 只有 code 的话它给不出「恢复自动检测」那一步
+            rec["pinned"] = pinned
         if plan is not None:
             rec.update(
                 import_name=plan.requirement.import_name,

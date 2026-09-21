@@ -328,7 +328,9 @@ def test_managed_venv_is_labelled_apart_from_user_choice(tmp_path, monkeypatch):
     managed.parent.mkdir(parents=True, exist_ok=True)
     managed.write_text("#!/bin/sh\n")
     config.set_worker_python(str(managed))
-    monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
+    # 自建 venv 排在自身之后（#469）：只有它有 matplotlib 时链条才走到它，标签仍是 managed_venv
+    monkeypatch.setattr(pool, "is_frozen", lambda: False)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: p == str(managed))
     assert pool.select_worker_python() == (str(managed), pool.SOURCE_MANAGED)
 
 
