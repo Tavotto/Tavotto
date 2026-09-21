@@ -151,10 +151,11 @@ window.addEventListener('message', (ev) => {
   }
   if (msg.method === 'ui/notifications/initialized') {
     window.__READY__ = true
-    // host 把「带出这块画布的那次工具调用」的结果推过来（MCP Apps 标准路径）
-    post({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: {
-      structuredContent: window.__OPEN__, content: [],
-    }})
+    // host 把「带出这块画布的那次工具调用」的结果推过来（MCP Apps 标准路径）。
+    // 用例可以整个换掉 params（__TOOL_RESULT__），模拟宿主递来的别的形状
+    post({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params:
+      window.__TOOL_RESULT__ ?? { structuredContent: window.__OPEN__, content: [] },
+    })
     return
   }
   if (msg.method === 'tools/call') {
@@ -172,7 +173,14 @@ interface ToolCall {
   arguments: Record<string, unknown>
 }
 
-async function boot(page: Page): Promise<FrameLocator> {
+interface BootOptions {
+  /** 宿主推给 iframe 的 tool-result params；缺省 = 完整的 open 结果 */
+  toolResult?: unknown
+  /** 等到画布真的挂起来（缺省）；false = 只等握手，失败态由用例自己断言 */
+  expectReady?: boolean
+}
+
+async function boot(page: Page, opts: BootOptions = {}): Promise<FrameLocator> {
   const widget = readFileSync(WIDGET, 'utf-8')
   await page.route(`${ORIGIN}/**`, async (route) => {
     const url = new URL(route.request().url())
@@ -183,16 +191,24 @@ async function boot(page: Page): Promise<FrameLocator> {
   })
 
   await page.addInitScript(
-    ([open, mkManifest, svg]) => {
+    ([open, mkManifest, svg, toolResult]) => {
       const w = window as unknown as Record<string, unknown>
       w.__OPEN__ = open
       w.__SVG__ = svg
+      if (toolResult !== undefined) w.__TOOL_RESULT__ = toolResult
       const build = new Function(
         'pt',
         'at',
         `return (${mkManifest})(pt, at)`,
       ) as (pt: number, at: [number, number]) => unknown
       w.__REPLY__ = (params: ToolCall) => {
+        if (params.name === 'tavotto_session_state') {
+          // 画布的取件通道：会话此刻的完整状态（与 open 同形，多 patches）
+          return {
+            content: [{ type: 'text', text: 'snapshot' }],
+            structuredContent: { ...(open as Record<string, unknown>), patches: [] },
+          }
+        }
         if (params.name === 'tavotto_apply_overrides') {
           const patches = (params.arguments.patches ?? []) as {
             gid: string
@@ -249,7 +265,7 @@ async function boot(page: Page): Promise<FrameLocator> {
         return { isError: true, structuredContent: { ok: false, error: '未知工具' } }
       }
     },
-    [OPEN_PAYLOAD, makeManifest.toString(), SVG] as const,
+    [OPEN_PAYLOAD, makeManifest.toString(), SVG, opts.toolResult] as const,
   )
 
   await page.goto(`${ORIGIN}/host.html`)
@@ -257,8 +273,32 @@ async function boot(page: Page): Promise<FrameLocator> {
     timeout: 30_000,
   })
   const frame = page.frameLocator('#f')
-  await expect(frame.getByText('FigE2E').first()).toBeVisible({ timeout: 30_000 })
+  if (opts.expectReady !== false) {
+    await expect(frame.getByText('FigE2E').first()).toBeVisible({ timeout: 30_000 })
+  }
   return frame
+}
+
+/** server 按宿主 1 MiB 事件上限省略过 manifest / SVG 的 open 结果：把手齐全，负载不在 */
+const HANDLE_PAYLOAD = (() => {
+  const { manifest: _m, svg: _s, ...rest } = OPEN_PAYLOAD
+  return {
+    ...rest,
+    elided: {
+      fields: ['svg', 'manifest'],
+      reason: 'inline_budget',
+      inline_bytes: 1_400_000,
+      budget_bytes: 786_432,
+      fetch_with: 'tavotto_session_state',
+    },
+  }
+})()
+
+/** Codex 把超过上限的结果清空后递给 iframe 的那份：只剩截断的文本预览（#457 的现场） */
+const STRIPPED_RESULT = {
+  content: [{ type: 'text', text: '{"content":[{"type":"text","text":"已打开 FigE2E（会话 s-e2e）' }],
+  structuredContent: null,
+  _meta: null,
 }
 
 const calls = (page: Page) =>
@@ -338,4 +378,43 @@ test('iframe 里不存业务数据（host 随时会重建它）', async ({ page 
     .evaluate(() => JSON.stringify(Object.entries(localStorage)))
   expect(dump).not.toContain('s-e2e')
   expect(dump).not.toContain('FigE2E')
+})
+
+test('open 结果只剩把手（大图被 server 省略过 manifest）：画布经 tavotto_session_state 取件，不自己 open', async ({
+  page,
+}) => {
+  const frame = await boot(page, { toolResult: { structuredContent: HANDLE_PAYLOAD, content: [] } })
+  await expect(frame.getByText('lab-publication-v1 v1.0.0')).toBeVisible()
+  await expect(frame.locator('[data-element-svg] svg').first()).toBeVisible()
+  // 恰好一次取件，而且是按 session_id；绝没有 tavotto_open_figure
+  expect(await calls(page)).toEqual([
+    { name: 'tavotto_session_state', arguments: { session_id: 's-e2e' } },
+  ])
+  // 取件回来的画布是活的：拖动照常走 apply（同一条既有传输）
+  const svg = frame.locator('[data-element-svg]').first()
+  const box = (await svg.boundingBox())!
+  const x = box.x + box.width * 0.5
+  const y = box.y + box.height * 0.06
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) await page.mouse.move(x - i * 3, y + i * 2)
+  await page.mouse.up()
+  await expect
+    .poll(async () => (await calls(page)).map((c) => c.name), { timeout: 30_000 })
+    .toContain('tavotto_apply_overrides')
+})
+
+test('宿主递来清空后的空壳（structuredContent 为 null）：画布当场说出口，不无限等待', async ({
+  page,
+}) => {
+  const frame = await boot(page, { toolResult: STRIPPED_RESULT, expectReady: false })
+  const splash = frame.locator('[data-boot-state="failed"]')
+  await expect(splash).toBeVisible({ timeout: 30_000 })
+  // 诊断行原样把形状写出来——报 issue 要贴的就是它
+  await expect(frame.locator('[data-boot-detail]')).toContainText('structuredContent: null')
+  await expect(frame.locator('[data-boot-detail]')).toContainText('_meta: null')
+  // 「等待 tavotto_open_figure 的结果」那句不再出现
+  await expect(frame.getByText(/等待 tavotto_open_figure/)).toHaveCount(0)
+  // 没有会话就什么都不发：不猜、不自己 open
+  expect(await calls(page)).toEqual([])
 })
