@@ -205,6 +205,8 @@ class PdfWriter:
         self._foreign_docs: list[Any] = []
         #: 资源 key → 已写好的 Image XObject（+ 它的事实）
         self._image_objs: dict[str, tuple[Any, dict]] = {}
+        #: 本文档已解码 / 已嵌入的位图像素总数（去重后按资源计），对 `raster.DOCUMENT_MAX_PIXELS` 判
+        self._raster_pixels = 0
 
     # -- 资源 -------------------------------------------------------------
     def _name(self, prefix: str) -> str:
@@ -401,6 +403,25 @@ class PdfWriter:
             rec.ops.append(inner)
         self.facts.imported_pages.append(fact)
 
+    def _charge_raster(self, node: ir.Image, res: ir.FileResource, width: int, height: int) -> None:
+        """文档级像素预算：每个**不同**的位图资源在嵌入前记一次账，累计超过就拒——单张各判一次
+        挡不住「很多张各自刚好在线下」的那种耗尽（Codex #463 第二轮 P2）。"""
+        pixels = int(width) * int(height)
+        if self._raster_pixels + pixels > raster.DOCUMENT_MAX_PIXELS:
+            raise WriterError(
+                "source_unreadable",
+                f"{res.source_id}: 本文档位图像素累计 {self._raster_pixels + pixels} > 预算 "
+                f"{raster.DOCUMENT_MAX_PIXELS}（已嵌 {len(self._image_objs)} 张）",
+                {
+                    "figure": res.source_id,
+                    "object_id": node.object_id,
+                    "why": "raster_budget_exceeded",
+                    "pixels_used": self._raster_pixels,
+                    "pixels_wanted": pixels,
+                },
+            )
+        self._raster_pixels += pixels
+
     def _image_xobject(self, node: ir.Image, res: ir.FileResource, data: bytes):
         import pikepdf
 
@@ -417,6 +438,7 @@ class PdfWriter:
                 {"figure": res.source_id, "object_id": node.object_id, "why": exc.code},
             ) from exc
         if jpeg is not None:
+            self._charge_raster(node, res, jpeg["width"], jpeg["height"])
             obj = pikepdf.Stream(self.pdf, data)
             obj["/Type"] = pikepdf.Name.XObject
             obj["/Subtype"] = pikepdf.Name.Image
@@ -438,7 +460,10 @@ class PdfWriter:
             self._image_objs[node.resource] = hit
             return hit
         try:
-            # 预算在解码**之前**按头里的尺寸判（Pillow 是懒打开）：超过就是结构化拒绝，不分配整幅
+            # 预算在解码**之前**按头里的尺寸判（Pillow 是懒打开）：单张预算在 decode 里，文档级预算在这里，
+            # 都超过就是结构化拒绝，不分配整幅
+            width, height = rasterio.header_size(data, res.kind)
+            self._charge_raster(node, res, width, height)
             buf = rasterio.decode(data, res.kind, max_pixels=raster.SOURCE_MAX_PIXELS)
         except rasterio.RasterDecodeError as exc:
             raise WriterError(

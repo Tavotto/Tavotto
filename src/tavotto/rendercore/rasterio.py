@@ -90,6 +90,12 @@ def _dpi(im) -> float | None:
     return x if abs(x - y) < 1e-6 else max(x, y)
 
 
+def header_size(data: bytes, kind: str) -> tuple[int, int]:
+    """只读文件头里的像素尺寸（Pillow 懒打开，不解码）；认不出 / 不符同 `decode()` 的错误码。"""
+    im = _open(data, kind)
+    return int(im.width), int(im.height)
+
+
 def decode(data: bytes, kind: str, *, max_pixels: int | None = None) -> RasterBuffer:
     """字节 → RasterBuffer（RGB 或 RGBA，紧凑 stride，alpha straight）。"""
     im = _open(data, kind)
@@ -195,6 +201,7 @@ __all__ = [
     "RASTER_DECODE_CODES",
     "RasterDecodeError",
     "decode",
+    "header_size",
     "jpeg_passthrough",
     "require",
     "verified_jpeg",

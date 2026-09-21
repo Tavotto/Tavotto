@@ -33,6 +33,10 @@ from typing import Iterator
 #: render child 栅格前父子两侧各判一次（ADR 0066）。超过的不是「解慢一点」，是结构化拒绝——
 #: 一张压缩得很小的高分辨率 PNG 解开是几百 MB，导出进程会被它挤死而不是报错（Codex #463 P2）。
 SOURCE_MAX_PIXELS = 64_000_000
+#: 一份文档里**全部**位图源解码后的像素总预算（去重后按资源算）。单张 64M 之下、张数不限的话，几张
+#: 8000×8000 的 RGBA 各自 256 MB 留在 pikepdf 对象里直到 save()，导出进程照样被挤死（Codex #463 第二轮
+#: P2）——预算是写入器一级的，不是每张各算一次。
+DOCUMENT_MAX_PIXELS = 160_000_000
 
 
 class RasterError(ValueError):
@@ -113,4 +117,4 @@ class RasterBuffer:
         return tuple(self.samples[i : i + self.channels])
 
 
-__all__ = ["SOURCE_MAX_PIXELS", "RasterBuffer", "RasterError"]
+__all__ = ["DOCUMENT_MAX_PIXELS", "SOURCE_MAX_PIXELS", "RasterBuffer", "RasterError"]
