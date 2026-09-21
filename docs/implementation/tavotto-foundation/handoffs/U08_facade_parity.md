@@ -3,7 +3,7 @@
 **阶段 / 子切片**：U08.facade_parity，三个叠栈 PR：**A** = 候选切换开关 + facade 候选实现（19 项 + Canvas 面）+ SourceResolver /
 ExportJob 接线（执行侧源 + 回执）+ 原图三格式 + compose + 预览 + probe + 候选生成物 + 对拍纪律（ADR 0067）；**B** =
 ArtifactInspector / ArtifactManifest / D08 检查政策 + 写回接线 + 负例（ADR 0068）；**C** = 入口审计（HTTP / SSE / MCP / 前端回执 +
-i18n）+ enrollment 提升。本文件记的是 **A 之后**的状态，B / C 落地时逐节补。
+i18n）+ enrollment 提升。本文件记的是 **B 之后**的状态（A 的内容保留，B 的追加标 **【B】**），C 落地时再补。
 
 **开始 HEAD / 结束 HEAD / 用户原有工作区改动**：开始 `d957e57d`（`foundation/u07-compose-raster-b` 的 head，即 U07 的 PR B；
 下面依次是 U07 A #463 → U06 B #460 → U06 A #458 → U02 #455 → main）；结束 = PR A 的 head（合并后以 `git log origin/main`
@@ -52,6 +52,16 @@ preparation-and-receipts / process-boundaries；`docs/rules/repo/same-origin-pai
 | `tests/test_rendercore_model.py` / `_job.py` / `_rasterize.py` / `test_foundation_harness.py` | 钩子自测改指实现模块；EPS 码；observing 计数 2 |
 | `.github/workflows/foundation-u06-rendercore.yml` | 装 `worker` extra；加四个新用例文件 + `u08_parity.py` 步骤 + `U08_EVIDENCE` 工件；paths 加契约层 / ledger / 向量 |
 | 文档 | ADR 0067；`docs/rules/backend/rendercore.md` / `pdf-backend-boundary.md`；`src/tavotto/AGENTS.md` 两行 + 验证段；ledger 19 项 U08 `migration_evidence` + `candidate_parity` + probe 备注；`enrollment.json` 加 `U08-R1`（observing）；`plan.json` U08 `in_progress`；README U08 段；本文件；PACKAGE_CONTENTS 重算 |
+| **【B】** `rendercore/inspector.py`（新，native 适配：pikepdf 只在函数里 import，PNG / TIFF 读取纯标准库） | `observe_pdf`（`check_pdf_syntax` + 页盒 / Rotate / UserUnit → 可见尺寸 + 内容流遍历：q/Q/cm 栈、Form 递归、Tf 实际使用、Tj/TJ + ActualText 抽文字、Image 有效 ppi，`Budget` 深度 8 / Form 256 / 指令 500k）、`observe_pdf_basic`（没 pikepdf：经 `probe` 核打得开 + 尺寸）、`observe_png`（签名 / 逐块 CRC / IHDR / pHYs / IEND）、`observe_tiff`（IFD / 条带越界 / 分辨率）、`parse_tounicode`、`inspect(path, fmt, plan, policy, profile, probe)` → manifest（plan / observed / checks / policy / notes / scope）、`uninspected`、`summary` |
+| **【B】** `engine/exportreq.py` | `InspectionPolicy(mode, profile_id)`（`INSPECTION_POLICIES = standard / strict`）；请求 `inspection` 段（缺省 standard；非对象 / 未知 mode → `bad_inspection`）；`to_payload()` 回显 |
+| **【B】** `engine/exportjob.py` | `run(..., inspect=)` / `run_async(..., inspect=)` 钩子（`produce` 之后、提交点之前，phase `inspecting`）；`Produced.manifest` / `Output.manifest`（payload 多一个 `manifest` 键，旧键不动）；错误码 `artifact_rejected` |
+| **【B】** `rendercore/job.py` | `plan_facts(rp)`：计划半张（page_pt / 期望文字行 = 每个 ShapedText 的用户原文 / 面板包围盒 / 源与回执公开身份），随 `Produced.manifest["plan"]` 交出 |
+| **【B】** `app.py` | `_export_plan_half`（生产者给了就用，旧后端只有请求级事实）、`_inspection_profile`（strict 才经 `profilestore.resolve_spec`）、`_export_inspect`（拒绝 → `artifact_rejected` 带 manifest 投影；检查器炸 → `uninspected`）；两个入口都传 `inspect=`（异步那条钉项目） |
+| **【B】** i18n | `errors.json` 两种语言加 `artifact_rejected` / `bad_inspection`；`tests/test_error_codes.py` 登记 params |
+| **【B】** `tests/test_rendercore_inspector.py`（新，17 条） | PNG / TIFF 纯标准库正负例、ToUnicode 解析、PDF 可见尺寸、改页盒、截断 / 加密、声明 vs 使用 + Form、自引用预算、有效 ppi、候选写入器产物 strict 全 verified + 三条负例（换期望文字 / 摘 FontFile / 错 ToUnicode） |
+| **【B】** `tests/test_export_inspection.py`（新，12 条，任何机器） | 发布文件带 manifest 且 sha256 = 磁盘字节、旧后端文字层不显示绿、坏文件 / 伪造 proof / 错尺寸在发布前拦住、partial、strict vs standard、阈值来自规范 + 未知 id、未知 mode 400、钩子在提交点之前、检查器炸 = unknown |
+| **【B】** `tests/test_rendercore_app.py` | +4：候选下文字层 / 字体 / 载体真核、strict 接受纯文字 / 拒低 ppi 面板、写回带标注（覆盖层 + 同一 PDF 栅格 PNG）、坏 / 加密 staging PDF 写回 409 原件零改动 |
+| **【B】** 文档 | ADR 0068；`rendercore.md` 加产物验证一节；`export-pipeline.md` 加一条；`src/tavotto/AGENTS.md` 速查行（顺带补上 A 漏写的那一行）；ledger `annotate_asset` / `compose` 加证据、parity 套件加 `test_export_inspection.py`；workflow 加两个用例文件；enrollment U08-R1 标题 / 备注 |
 
 **关联旧要求 ID / 场景 ID**：R09 / R10 / R12 / R13 → RC-001 ~ RC-006、RC-054 ~ RC-060、RC-083 ~ RC-090、RC-093。逐条处置（A 之后）：
 
@@ -68,9 +78,20 @@ preparation-and-receipts / process-boundaries；`docs/rules/repo/same-origin-pai
 | RC-056 PDF 只搬第一页、不吃画布变换 | 做了 | `test_original_pdf_moves_only_the_first_page_and_does_not_redraw_it` |
 | RC-057 未知密度 TIFF 不伪造 | 做了 | `test_original_tiff_writes_only_the_declared_density_and_keeps_the_pixel_grid` |
 | RC-058 标注写回同一几何 + 原件事务 | A 做了写回入口的候选实现（覆盖层 + 同一 PDF 栅格；事务在 `_write_source_files` 一字不改）；**端到端写回用例归 B** | `test_annotate_asset_overlays_vector_annotations_without_redrawing_the_source`、`test_annotate_asset.py` parity |
-| RC-059 / RC-060 写回失败不坏原件 / 签名加密不虚假承诺 | **B** | — |
-| RC-063 ~ RC-074 产物检查 / Proof | **B** | — |
-| RC-083 partial / 取消提交点 / 状态机 | 做了（`exportjob` 权威不动；候选下 `test_export_pipeline.py` 的取消 / partial / 终局顺序用例逐字过） | parity.json |
+| RC-059 / RC-060 写回失败不坏原件 / 签名加密不虚假承诺 | **【B】** 做了（候选下 `annotate_asset` 对坏 / 加密的 staging PDF 结构化失败 → 409、原件零改动、`.updating` 清干净；不承诺加密文件也能注） | `test_writeback_with_annotations_fails_closed_when_the_staged_pdf_is_unusable[broken/encrypted]` |
+| RC-063 检查重新读取封口文件 | **【B】** 做了 | `test_a_pdf_whose_page_box_was_altered_after_writing_fails_the_size_check` |
+| RC-064 真实尺寸 / DPI 标签 | **【B】** 做了（尺寸量文件；PNG / TIFF 的密度标签单列 `dpi_tag`；有效密度按像素 ÷ 页面） | `test_a_page_of_the_wrong_actual_size_is_caught_not_reported_from_the_request`、`test_raster_policy_size_is_required_and_density_only_under_strict` |
+| RC-065 声明 vs 实际使用 | **【B】** 做了（Tf 真引用的才算，Form 递归） | `test_fonts_are_reported_as_used_not_merely_declared_and_forms_are_walked` |
+| RC-066 存在 / 嵌入 / 子集 / 可搜索分开 | **【B】** 做了（三个事实分开；文字层比抽回的字符串） | `test_the_candidate_writer_output_verifies_fonts_text_and_carrier_under_strict` |
+| RC-067 vector / mixed / raster / unknown | **【B】** 做了（+ empty；计划矢量而全位图 → failed） | `test_image_effective_ppi_comes_from_pixels_over_the_accumulated_ctm` |
+| RC-068 有效 ppi 实测 | **【B】** 做了（像素 ÷ 累计 CTM；栅格输出按像素 ÷ 页面） | 同上 |
+| RC-069 裁切注明范围 | **【B】** 做了（只对计划里的对象框判、外来页内部 unknown、notes 注明） | manifest notes；`_check_pdf` |
+| RC-070 未知必需不许绿 | **【B】** 做了 | `test_unknown_is_never_reported_as_verified_and_strict_blocks_on_it` |
+| RC-071 规则权威不分叉 | **【B】** 做了（`min_raster_dpi` 只从 `profilestore.resolve_spec`） | `test_strict_inspection_takes_its_thresholds_from_the_publication_profile` |
+| RC-072 递归 / 预算 | **【B】** 做了（深度 / Form / 指令三预算，耗尽全 unknown） | `test_a_self_referencing_form_exhausts_the_budget_and_everything_downstream_is_unknown` |
+| RC-073 提交点之前 | **【B】** 做了（`exportjob.run(inspect=)` 在 `_committed` 之前） | `test_the_inspect_hook_runs_before_the_commit_point…`、`test_a_broken_artifact_is_rejected_before_publish…` |
+| RC-074 客户端 proof 不能伪造 | **【B】** 做了（报告从不进检查器） | `test_a_client_proof_cannot_override_the_server_verdict` |
+| RC-083 partial / 取消提交点 / 状态机 | 做了（`exportjob` 权威不动；候选下 `test_export_pipeline.py` 的取消 / partial / 终局顺序用例逐字过）；**【B】** 一项被拒另一项照常仍是 partial | parity.json；`test_a_partial_rejection_publishes_the_good_format_and_withholds_the_bad_one` |
 | RC-084 / RC-085 命名预留 / 不冒充整批原子 | 做了（同上） | parity.json |
 | RC-086 HTTP 同步 / 异步 / SSE 真链路 | A 做了同步 + 异步 + `/state`；**SSE 事件流与前端回执归 C** | `test_export_start_under_the_candidate_streams_progress_and_finishes` |
 | RC-087 MCP 与版本探针 | **C** | — |
@@ -89,7 +110,11 @@ preparation-and-receipts / process-boundaries；`docs/rules/repo/same-origin-pai
 | 变异反证（`scratchpad/u08/mutate_a.py`，ADR 0067 §3） | 同上 | 每条非零 | 见 PR 正文 |
 | `gen_canvas_coverage.py --backend rendercore` / `gen_glyph_plan_vectors.py --backend rendercore`（`--check`） | rc-venv | 0 / 0 | 候选表 575 区间（与 U06 evidence 表逐层相同）；向量 69 条 |
 | Linux / Windows / 3.10 | `foundation-u06-rendercore.yml`（PR 上随文件变动触发） | 见 PR 正文 | run 号与四条腿结论填在 PR 正文 |
-| 前端 `pnpm test && pnpm build` | — | — | **not_run**：A 没有改 `web/src`（C 才改） |
+| **【B】** 主 `.venv`：`pytest tests/test_export_inspection.py tests/test_rendercore_inspector.py tests/test_error_codes.py tests/test_export_request.py tests/test_export_pipeline.py tests/test_export_endpoint.py tests/test_write_back.py tests/test_annotate_asset.py tests/test_mcp_normalize.py` | 同上 | 0 | 见 PR B 正文（inspector 的 pikepdf 用例 skip 有理由） |
+| **【B】** rc-venv：`pytest tests/test_rendercore_inspector.py tests/test_export_inspection.py tests/test_rendercore_app.py` | 同上 | 0 | 见 PR B 正文 / 0 skip |
+| **【B】** rc-venv：`scripts/dev/u08_parity.py`（套件加 `test_export_inspection.py`） | 同上 | 见 PR B 正文 | 见 PR B 正文 |
+| **【B】** 变异反证（`scratchpad/u08/mutate_b.py`，ADR 0068 §3） | 同上 | 每条非零 | 见 PR B 正文 |
+| 前端 `pnpm test && pnpm build` | — | — | **not_run**：A / B 只改了 `web/src/i18n/locales/*/errors.json`（两条文案），`test_error_codes.py` 看护；组件归 C |
 
 **本切片的正例、负例、旧行为回归**：正例 = 上表；负例 = 未知后端名 / 字体缺席不回退 / `execute` 交回 static 产物 / child 死
 partial / 写入器炸 500 零遥测 / 队列满 503 / 面板混进标注 / 自引用 Form / 交集之外的码位；旧行为回归 = 默认路径零改动
@@ -106,7 +131,7 @@ partial / 写入器炸 500 零遥测 / 队列满 503 / 面板混进标注 / 自�
   MCP / 前端回执的入口审计（C）；ArtifactInspector / D08（B）；跨项目并发真图；registry 220 条产品实例。
 * 基础设施问题：主仓库 `.venv` 没装候选包，候选用例在必需矩阵里是 skip（有理由）；parity 的 9 个 skip 是 workerd 二进制
   与 dist 产物不在本机（与候选无关）。
-* 真正产品失败：无新增。顺带发现的事实：① **U07 交接里「probe 含 /UserUnit 是有意差异」不成立**——PyMuPDF 1.28.2 的
+* 真正产品失败：无新增。**【B】** 检查器如实量到的两件旧后端事实（不是本轮缺陷，也没改默认路径）：PyMuPDF `pix.save` 写出的 PNG pHYs 恒 96 dpi（画布与原图两条路都是），`dpi_tag` 在默认路上是可选项 failed；旧后端 PDF 的 base-14 不嵌入，`fonts_embedded` 可选项 failed。改不改归用户拍板（`pix.set_dpi` 一行）。顺带发现的事实：① **U07 交接里「probe 含 /UserUnit 是有意差异」不成立**——PyMuPDF 1.28.2 的
   `page.rect` 同样乘了 /UserUnit（540 = 2 × 270），忽略它的只是 PDFium 的 `get_size()`，child 已补上那一次；两边一致，
   差异表划掉；② Liberation 12 张脸的 cmap 差 16 个码位（U+0237、U+2000 ~ U+200B、U+2016、U+202F、U+F004、U+FFFC），候选
   覆盖表的 primary 必须取交集（旧后端 base-14 各脸同一字符集，这一维以前不存在）；③ PDFium 对 Type 3 字形的抗锯齿与
@@ -126,7 +151,7 @@ partial / 写入器炸 500 零遥测 / 队列满 503 / 面板混进标注 / 自�
 **仍缺哪些默认启用 / 精确安装物资格**：全部。候选栈未默认启用；前端不读候选覆盖表；产品包不带候选包 / 字体；有限产物验证
 （B）与入口审计（C）未落。
 
-**下一个无阻塞阶段 / 子切片**：U08 PR B（ArtifactInspector / Manifest / D08）→ PR C（入口审计 + i18n）→ U09（与完整准备链联调）。
+**下一个无阻塞阶段 / 子切片**：U08 PR C（入口审计：SSE / MCP / 前端回执「未核验不显示绿」/ i18n / Playground）→ U09（与完整准备链联调）。**【B】** 给 C 的输入：`Output.manifest` 是 `inspector.summary()` 的形状（`verdict` / `checks` 四值 / `notes` / `sha256` / `carrier` / `px` / `dpi` / `fonts_used` / `plan_identity` / `backend`），前端只许把 `verified` 画成绿、`unknown` 画成「未核验」、`failed` 画成红、`not_applicable` 不画；`inspection.mode` 是请求里的新可选段（TS 的 `ExportRequest` 要加同名可选字段）；MCP `export` 回执要把 `outputs[].manifest` 原样带出。
 给 B / C / U09 / U10 的输入：
 
 * 候选后端的开关只有一处（`pdfbackend.selected()`），入口审计里「哪条路」的判据一律问它，别再复制一个 `if env`；

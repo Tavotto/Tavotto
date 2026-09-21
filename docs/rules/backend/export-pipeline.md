@@ -41,3 +41,7 @@
     也让 worker 现画（`_resolve_panel_source(rerender=True)`），四个格式出自同一次
     脚本运行。**不许**用 `Pixmap.save(…, "ps")` 之类把位图裹成 PS 冒充矢量。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
+  * **有限产物验证（U08，ADR 0068）**：`exportjob.run(inspect=_export_inspect)` 在 `produce` 之后、提交点之前重新打开
+    每个封口的临时文件（`rendercore/inspector.py`），拒绝的那一项 `artifact_rejected` 不发布（partial 语义不变），合格的
+    带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,
+    profile_id}`（缺省 standard，老客户端等价）；strict 的阈值只从 `profilestore.resolve_spec` 来。细则在 `rendercore.md`。

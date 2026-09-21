@@ -29,7 +29,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..engine import exportjob, exportreq
-from . import ir, pdfwriter, plan, raster
+from . import BACKEND_NAME, ir, pdfwriter, plan, raster
 from .hbshaper import HbFaceProvider
 from .renderhost import RenderChildError, RenderHost
 from .sources import SourceError, SourceResolver, read_frozen
@@ -107,6 +107,7 @@ def produce(
 
     width_mm, height_mm = round(req.canvas.page_w_mm, 3), round(req.canvas.page_h_mm, 3)
     produced: list[exportjob.Produced] = []
+    plan_half = plan_facts(rp)
 
     def failed(fmt: str, error: str, **params) -> None:
         produced.append(
@@ -174,6 +175,7 @@ def produce(
                             "plan_identity": rp.plan_identity,
                             "sha256": pdf_facts.sha256,
                         },
+                        manifest={"plan": {**plan_half, "vector": True, "px": None}},
                     )
                 )
             continue
@@ -208,6 +210,14 @@ def produce(
                         height_mm=height_mm,
                         vector=False,
                         error_params={"plan_identity": rp.plan_identity, **raster_facts},
+                        manifest={
+                            "plan": {
+                                **plan_half,
+                                "vector": False,
+                                "px": [buf.width, buf.height],
+                                "ppi": float(dpi),
+                            }
+                        },
                     )
                 )
             continue
@@ -227,6 +237,48 @@ def produce(
             continue
         failed(fmt, _gap_text(gaps), unsupported=gaps)
     return produced
+
+
+def plan_facts(rp: plan.RenderPlan) -> dict:
+    """ArtifactManifest 的**计划**半张（04 §2：plan / observed / policy 分开）：生产者说它写了什么。
+    `text` 是每个 ShapedText 行的用户原文（合成上下标取 ActualText），检查器拿它与抽回来的文字层比；
+    `object_boxes` 是画布对象在页面空间的保守包围盒（裁切只对它们判）；`sources` / `execution_receipts`
+    是源产物与回执的公开身份（不含路径）。"""
+    page = rp.page
+    lines: list[str] = []
+    boxes: list[dict] = []
+    for node, _path in ir.walk(page):
+        if isinstance(node, ir.ShapedText):
+            text = "".join(
+                r.actual_text if r.actual_text is not None else r.cluster_text for r in node.runs
+            )
+            if text.strip():
+                lines.append(text)
+        elif isinstance(node, (ir.ImportedPage, ir.Image)):
+            x, y, w, h = node.rect
+            boxes.append({"id": node.object_id, "bbox": [x, y, x + w, y + h]})
+    sources = [
+        {
+            "source_id": fs.artifact.source_id,
+            "origin": fs.artifact.origin,
+            "kind": fs.artifact.kind,
+            "bytes_sha256": fs.artifact.bytes_sha256,
+            "receipt_identity": fs.artifact.receipt_identity,
+            "patch_hash": fs.artifact.patch_hash,
+        }
+        for fs in rp.sources.values()
+    ]
+    return {
+        "backend": BACKEND_NAME,
+        "plan_identity": rp.plan_identity,
+        "page_pt": [page.width_pt, page.height_pt],
+        "text": lines,
+        "object_boxes": boxes,
+        "sources": sources,
+        "execution_receipts": sorted(
+            {s["receipt_identity"] for s in sources if s.get("receipt_identity")}
+        ),
+    }
 
 
 def _raster_gaps(rp: plan.RenderPlan) -> list[dict]:

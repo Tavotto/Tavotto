@@ -88,6 +88,13 @@ VALIDATION_BLOCK = "block_on_error"
 VALIDATION_ACKNOWLEDGED = "acknowledged"
 VALIDATION_POLICIES = (VALIDATION_BLOCK, VALIDATION_ACKNOWLEDGED)
 
+#: 产物检查政策（统一实施包 U08，ADR 0068，D08）。`standard`（缺省）= 完整性与核心尺寸必须过，
+#: 别的检查 unknown 只说明不拒绝；`strict` = 用户选择严格规范：必需项失败**或 unknown** 都按规范阻断，
+#: 阈值来自 `profile_id` 指向的出版规范（`profilestore.resolve_spec`）。老客户端不发这一段 = standard。
+INSPECTION_STANDARD = "standard"
+INSPECTION_STRICT = "strict"
+INSPECTION_POLICIES = (INSPECTION_STANDARD, INSPECTION_STRICT)
+
 #: PPI 的合法区间。上限不是审美偏好：一张 180mm 宽的图在 2400 ppi 下是
 #: 17000 px，占内存以 GB 计——那台机器会在合成中途被系统杀掉，而用户看到的
 #: 是「导出没反应」。
@@ -141,6 +148,7 @@ ERROR_CODES = (
     "missing_figure",
     "bad_overrides",
     "name_exhausted",
+    "bad_inspection",
 )
 
 
@@ -282,6 +290,17 @@ class OriginalSource:
 
 
 @dataclass(frozen=True)
+class InspectionPolicy:
+    """产物检查政策：`mode` ∈ `INSPECTION_POLICIES`；`profile_id` 只在 strict 下有意义（阈值出处）。"""
+
+    mode: str = INSPECTION_STANDARD
+    profile_id: str | None = None
+
+    def to_payload(self) -> dict:
+        return {"mode": self.mode, "profile_id": self.profile_id}
+
+
+@dataclass(frozen=True)
 class ExportRequest:
     scope: str
     formats: tuple[str, ...]
@@ -301,6 +320,8 @@ class ExportRequest:
     original: OriginalSource | None = None
     #: 旧契约（`stem` + 时间戳后缀）。新界面一律 `False`。
     legacy_naming: bool = False
+    #: 产物检查政策（U08）。缺省 standard；老客户端没有这一段。
+    inspection: InspectionPolicy = field(default_factory=InspectionPolicy)
 
     @property
     def has_raster(self) -> bool:
@@ -325,6 +346,7 @@ class ExportRequest:
             "document_id": self.document_id,
             "document_revision": self.document_revision,
             "figure_id": self.original.figure_id if self.original else None,
+            "inspection": self.inspection.to_payload(),
         }
 
 
@@ -533,6 +555,18 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         str(c) for c in (validation.get("acknowledged") or []) if isinstance(c, (str, int))
     )
 
+    inspection_raw = spec.get("inspection")
+    if inspection_raw is None:
+        inspection = InspectionPolicy()
+    elif isinstance(inspection_raw, dict):
+        mode = _one_of(
+            inspection_raw.get("mode"), INSPECTION_POLICIES, INSPECTION_STANDARD, "bad_inspection"
+        )
+        pid = inspection_raw.get("profile_id")
+        inspection = InspectionPolicy(mode=mode, profile_id=str(pid) if pid else None)
+    else:
+        raise ExportRequestError("bad_inspection", "inspection 必须是一个对象", {"value": ""})
+
     canvas = original = None
     if scope == SCOPE_CANVAS:
         source = spec.get("canvas") if isinstance(spec.get("canvas"), dict) else spec
@@ -586,4 +620,5 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         canvas=canvas,
         original=original,
         legacy_naming=legacy,
+        inspection=inspection,
     )
