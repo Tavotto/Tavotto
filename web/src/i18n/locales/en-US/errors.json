@@ -266,7 +266,6 @@
       "dependency_requires_build": "No prebuilt version of this dependency for the current Python. Switch to another Python environment, or install it manually in a terminal.",
       "dependency_unresolved": "Can’t tell which package provides this module.",
       "dependency_worker_selftest_failed": "That environment still won’t run after installing.",
-      "environment_in_use_by_native_session": "This environment is in use by a tavotto run session. End that script and retry.",
       "environment_mutating": "That Python environment is installing dependencies. Try again shortly.",
       "managed_env_broken": "This Tavotto environment is broken. You can rebuild it.",
       "managed_env_create_failed": "Couldn’t create the Tavotto environment.",
