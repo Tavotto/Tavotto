@@ -157,8 +157,10 @@
 - **给模型看的文字里「未核验」永远不是「已核验」**：`server._inspection_summary` 三组各自点名
   （未通过 / 已核验 / 未核验），一组都不省；没有 manifest = 整份未核验。这条入口只有 standard 政策
   （必需 = 完整性 + 核心尺寸）；严格政策走 HTTP 的 `inspection` 段。
-- 桥新增 import `artifactinspect` → `BRIDGE_IMPORTS_AT_MIN` 已同步；它晚于 v0.15.0，**下次发版
-  `MIN_TAVOTTO_VERSION` 必须抬到那一版**（现在不能写一个还没发的号）。
+- 桥新增 import `artifactinspect` → **三处同源**一起改：`scripts/make_plugin_manifest.BRIDGE_IMPORTS_AT_MIN`、
+  `codex-plugin/mcp/server.py` 的 `_BRIDGE_IMPORT` 探测串（resolver 用它判老引擎够不够用，漏了它 = 交棒后桥
+  ImportError 崩死；`test_mcp_resolver.py::test_bridge_import_probe_matches_the_bridge` 对拍）、桥本身；它晚于
+  v0.15.0，**下次发版 `MIN_TAVOTTO_VERSION` 必须抬到那一版**（现在不能写一个还没发的号）。
 - 替身 worker 写出的文件也要过得了检查：`tests/support/artifactbytes.py`（stdlib 最小合法 PDF / PNG）。
   看护：`tests/test_mcp_export_inspection.py`（独立读取器 + 坏文件负例 + unknown 不说已核验 + 同一份接线）。
 
