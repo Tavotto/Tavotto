@@ -29,7 +29,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from . import projectenv
 
@@ -146,8 +146,14 @@ def looks_like_relative_data_path(text: str) -> bool:
         return False
     if any(ch in text for ch in "{}%*?<>|\"'"):
         return False  # 格式化模板 / glob 模式 / 非法文件名字符：动态或根本不是路径
-    if os.path.isabs(text) or (len(text) > 1 and text[1] == ":"):
-        return False  # 绝对路径（含 Windows 盘符）：明确指名的位置，不在本模块的问题里
+    # 绝对路径：明确指名的位置，不在本模块的问题里。判据的主语是「脚本作者写的字面量」，
+    # 它可能是在另一个 OS 上写的：`/abs/x.csv` 在 Windows 宿主上 `os.path.isabs` 说不是
+    # 绝对（3.13 起单斜杠不算），但它在作者的 POSIX 机器上就是；所以 POSIX / Windows
+    # 两套规则任一判绝对就算绝对（盘符相对的 `C:x.csv` 也一并出局）。
+    if PurePosixPath(text).is_absolute() or PureWindowsPath(text).is_absolute():
+        return False
+    if len(text) > 1 and text[1] == ":":
+        return False
     norm = text.replace("\\", "/")
     if norm.startswith("~"):
         return False
@@ -234,8 +240,20 @@ def evidence(script_path: str | os.PathLike, project_root: str | os.PathLike) ->
           "conflicts": [literal, ...] # 两处都有且内容不同的字面量
         }
     """
-    script = Path(script_path)
     root = Path(project_root)
+    # 脚本本身也钉在项目根之内再读（realpath；`..` / 指到项目外的软链接都出局）：
+    # 在外面就当没有字面量——这里不替调用方读项目外的任何文件（CodeQL #143 / #144）。
+    real = projectenv.contained_path(root, script_path)
+    if real is None:
+        return {
+            "reads": [],
+            "outputs": [],
+            "candidates": {},
+            "same_dir": False,
+            "verdict": VERDICT_NONE,
+            "conflicts": [],
+        }
+    script = Path(real)
     try:
         source = script.read_bytes().decode("utf-8", errors="replace")
     except OSError:

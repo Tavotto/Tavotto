@@ -93,8 +93,11 @@ def _expected_ylim(ys: list[float]) -> list[float]:
 
 
 def _panel(app: fa.RunningApp, file_name: str) -> dict:
+    """按项目相对路径找面板。面板 id 是产品按**宿主 OS 的分隔符**拼的（Windows 上
+    `sub\\plot.pdf`），用例这边写 POSIX，比对时归一——后面一律用产品给的 `panel["id"]`。"""
     _, panels = app.call("/api/panels", timeout=30)
-    return next(p for p in panels["panels"] if p["id"] == file_name)
+    wanted = file_name.replace("\\", "/")
+    return next(p for p in panels["panels"] if p["id"].replace("\\", "/") == wanted)
 
 
 def _native_reference(project: Path, script: str, tmp: Path) -> None:

@@ -27,6 +27,9 @@ from tavotto.engine import databinding as db, discover
         ("matplotlib.pyplot", False),
         ("/abs/x.csv", False),  # 绝对路径：明确指名的位置，不在本模块的问题里
         ("C:\\x.csv", False),
+        ("C:/x.csv", False),  # Windows 盘符绝对路径（作者在 Windows 上写、脚本在 POSIX 宿主上被扫）
+        ("\\\\srv\\share\\x.csv", False),  # UNC
+        ("C:x.csv", False),  # 盘符相对：也是指名的位置
         ("-o", False),
         ("http://x/y.csv", False),
         ("{stem}.pdf", False),  # 模板
@@ -183,6 +186,27 @@ def test_a_symlink_inside_the_project_pointing_outside_is_outside(tmp_path):
     assert ev["candidates"]["project.root"]["outside"] == ["data/x.csv"]
     assert ev["candidates"]["project.root"]["found"] == {}
     assert ev["verdict"] == db.VERDICT_UNKNOWN
+
+
+def test_a_script_outside_the_project_root_yields_no_evidence_and_is_not_read(tmp_path, monkeypatch):
+    """CodeQL #143 / #144：脚本路径本身也钉在项目根之内（realpath）再读；`../` 到项目外的
+    脚本一个字节不读，证据就是「没有字面量」（verdict none），不是把项目外文件当脚本解析。"""
+    root = _project(tmp_path, "fig.py", "open('data.csv')\n", {"data.csv": "x\n1\n"})
+    outside = tmp_path / "secret.py"
+    outside.write_text("open('data.csv')\n", encoding="utf-8")
+    reads: list[str] = []
+    real_read = Path.read_bytes
+
+    def spy(self):
+        reads.append(str(Path(self).resolve()))
+        return real_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", spy)
+    ev = db.evidence(root / ".." / "secret.py", root)
+    assert ev["verdict"] == db.VERDICT_NONE and ev["reads"] == [] and ev["candidates"] == {}
+    assert str(outside.resolve()) not in reads, "项目外的脚本被读了"
+    # 对照：项目里的同名脚本照常
+    assert db.evidence(root / "fig.py", root)["verdict"] == db.VERDICT_DEFAULT_OK
 
 
 def test_only_files_count_as_evidence_not_directories(tmp_path):
