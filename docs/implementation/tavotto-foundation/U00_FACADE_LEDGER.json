@@ -916,7 +916,7 @@
       "tests": [
         {
           "file": "tests/test_render_cache.py",
-          "line": 196,
+          "line": 201,
           "class": "user_contract",
           "note": "缓存键 / 原子落盘 / 零字节重建（monkeypatch 记录调用）",
           "contains": "render_preview_png"
