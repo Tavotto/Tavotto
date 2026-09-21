@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 9435,
-      "sha256": "e8e3aa235cc3dc865eb325d2eb3aa887e27d8e00356c8461321d0aadfbdc5d56"
+      "bytes": 10282,
+      "sha256": "60ceec7f2c412e099c080f8dbec842b03f54b23050454cab6206facb0c008443"
     },
     {
       "path": "SOURCES.md",
@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 63931,
-      "sha256": "c2d3c25c00cb4bfbbe5e5c399e0af760e198eab4c61ad8ccae881a462af40c48"
+      "bytes": 64488,
+      "sha256": "8b54013b9ef8336e3dd912ddb143f6c2e43eb90896025beac2e7b633a3399a11"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 36722,
-      "sha256": "71c710746cf22a11b532aaad24ab23abcd9013f597123188dbfa2bb55c39b82a"
+      "bytes": 37012,
+      "sha256": "1350714bb9ed43c72429b053adda537cc7bd17aa40f2f75f49f2547d8f510b46"
     },
     {
       "path": "archive/README.md",
@@ -279,8 +279,8 @@
     },
     {
       "path": "evidence/u08/parity.json",
-      "bytes": 3605,
-      "sha256": "208970d717cbebef13a59a272e2244ddf93f36aa4afa8ebd8b4b7cc838f2152d"
+      "bytes": 4142,
+      "sha256": "4e5859f27cbd24fb1dc4a269759176235c3d99770935650ca823ab7fccade123"
     },
     {
       "path": "extensions/X01_extended.md",
@@ -329,13 +329,13 @@
     },
     {
       "path": "handoffs/U07_compose_raster.md",
-      "bytes": 24360,
-      "sha256": "f2452be9029deda07eb80671f3d6e09cdfdd8f54558f13dafe8925f0503cd630"
+      "bytes": 24688,
+      "sha256": "b8178d07288874cfa5a6053be94b0ae43305a31ac10a04b200ac2a8364104746"
     },
     {
       "path": "handoffs/U08_facade_parity.md",
-      "bytes": 26401,
-      "sha256": "74a9241a5c9707309bf231e698b75bd86135ad3da266b9818db67a5b6b7afcda"
+      "bytes": 33440,
+      "sha256": "7e6d5beafcc7e3469d40921363e4b22f9243ee5467373768f56810f29ef5ac11"
     },
     {
       "path": "phase_mapping.json",
@@ -404,8 +404,8 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7373,
-      "sha256": "8200f77c68791ec9666dd9b79c8dc3842241c4cba20e335ef3ad1c0ddc7e61f9"
+      "bytes": 7366,
+      "sha256": "b5f4b2a07eb1707ba691f5eb8f2e10832b3e5286b0b063d17d7aeab9ee7e56fe"
     },
     {
       "path": "registry.json",
