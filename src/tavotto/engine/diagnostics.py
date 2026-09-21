@@ -602,14 +602,25 @@ def worker_log_tails(
     stamped: list[tuple[float, Path]] = []
     for p in candidates:
         try:
-            stamped.append((p.stat().st_mtime, p))
+            mtime = p.stat().st_mtime
+            # 这个目录最近一次 spawn 的时刻也算：worker 一个字没写就死时 worker.log 的
+            # mtime 不会动，只按它排会漏掉刚失败的那一份（评审 #443 第十四轮）
+            try:
+                mtime = max(mtime, (p.parent / pool.LOG_GENERATION_FILE).stat().st_mtime)
+            except OSError:
+                pass
+            stamped.append((mtime, p))
         except OSError:
             continue
     stamped.sort(reverse=True)
     out: list[dict] = []
     for mtime, p in stamped[:files]:
         try:
-            text = _read_tail_bytes(p, WORKER_LOG_SCAN_BYTES).decode("utf-8", errors="replace")
+            # 只看**这一代**：worker.log 是跨代追加的，`pool.start_log_generation` 在 spawn
+            # 前把起点落在旁边；不带这个边界会把上一代的 traceback 当成这一代的
+            text = _read_tail_bytes(
+                p, WORKER_LOG_SCAN_BYTES, start=pool.log_generation_start(p)
+            ).decode("utf-8", errors="replace")
         except OSError:
             continue
         all_lines = text.splitlines()
@@ -632,15 +643,17 @@ def worker_log_tails(
     return out
 
 
-def _read_tail_bytes(path: Path, limit: int) -> bytes:
-    """文件最后 `limit` 字节——**seek 过去再读**，不是整个读进来再切（评审 #443 第十一轮）：
-    一份被脚本刷了几个小时的 worker.log 能有几百 MB，`read_bytes()[-limit:]` 会先把整个
-    文件装进 Flask 进程的内存，「扫描上限」就成了一句空话。"""
+def _read_tail_bytes(path: Path, limit: int, *, start: int = 0) -> bytes:
+    """`start` 之后、最多最后 `limit` 字节——**seek 过去再读**，不是整个读进来再切（评审
+    #443 第十一轮）：一份被脚本刷了几个小时的 worker.log 能有几百 MB，`read_bytes()[-limit:]`
+    会先把整个文件装进 Flask 进程的内存，「扫描上限」就成了一句空话。`start` 是这一代的
+    起点（第十四轮）：之前的字节属于上一代，一个都不读。"""
     with path.open("rb") as fh:
         fh.seek(0, os.SEEK_END)
         size = fh.tell()
-        fh.seek(max(0, size - limit))
-        return fh.read(limit)
+        begin = max(start, size - limit, 0)
+        fh.seek(begin)
+        return fh.read(max(0, size - begin))
 
 
 def _scan_start(all_lines: list[str]) -> int:

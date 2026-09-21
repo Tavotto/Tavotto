@@ -286,3 +286,17 @@ def test_global_scope_accepts_a_healthy_interpreter_and_stores_it(client, tmp_pa
     resp = client.patch("/api/engine/environment", json={"python": exe})
     assert resp.status_code == 200, resp.get_json()
     assert engine_config.worker_python() == exe
+
+
+def test_global_scope_absolutizes_a_relative_path_before_probing(client, tmp_path, monkeypatch):
+    """评审 #443 第十四轮 P2：相对路径 `.venv/bin/python` 按 Flask 的 cwd `is_file()` 判得过，
+    体检却在一个空的 scratch 目录里 spawn 它 → ENOENT → `interpreter_unusable`。先绝对化
+    （不 resolve：venv 的 python 是软链接，落到真身就丢了 venv），存下去的也是绝对形态。"""
+    exe = _fake_interpreter(tmp_path, _probe_answer())
+    monkeypatch.chdir(tmp_path)
+    rel = os.path.relpath(exe, tmp_path)
+    assert not os.path.isabs(rel)
+    resp = client.patch("/api/engine/environment", json={"python": rel})
+    assert resp.status_code == 200, resp.get_json()
+    stored = engine_config.worker_python()
+    assert os.path.isabs(stored) and Path(stored) == Path(exe), stored

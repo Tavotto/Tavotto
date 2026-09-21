@@ -40,7 +40,10 @@
   （`PATCH /api/engine/environment` 不带 scope）与项目路径走同一份体检**，
   只是回给界面的 code 不同（`interpreter_unsupported_python` /
   `interpreter_no_matplotlib` / `interpreter_worker_import_failed` /
-  `interpreter_unusable`）：以前全局只问一句 `import matplotlib`，Python 3.9 或
+  `interpreter_unusable`）；路径先绝对化（`os.path.abspath`，**不 resolve**——venv 的
+  python 是软链接，落到真身就丢了 venv）再体检、再存：相对路径按 Flask 的 cwd `is_file()`
+  判得过，体检却在空的 scratch 目录里 spawn，ENOENT 会被报成 `interpreter_unusable`
+  （评审 #443 第十四轮）。以前全局只问一句 `import matplotlib`，Python 3.9 或
   Pillow 的 DLL 坏了的 Conda 都能被存下来，第一次渲染才以「渲染进程退出」收场。
   看护：`tests/test_environment_health_parity.py`。
   解释器去重 / 缓存键**按路径字符串不 realpath**（`.venv/bin/python` 是指向基础

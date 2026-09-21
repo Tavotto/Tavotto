@@ -74,7 +74,12 @@
   `WORKER_LOG_TAIL_LINES`（`last_blocks_within`：最后那块再长也整块要）**——先按行截
   再抽块会把一段长崩溃栈截成没有头的帧行，状态机一条都不认。文件只读最后
   `WORKER_LOG_SCAN_BYTES` 字节且是 **seek 过去再读**（`_read_tail_bytes`），不是 `read_bytes()`
-  整读再切——被脚本刷了几小时的 worker.log 能有几百 MB，整读会把 Flask 进程撑爆。README 承诺包里不含
+  整读再切——被脚本刷了几小时的 worker.log 能有几百 MB，整读会把 Flask 进程撑爆。**只看这一代**：
+  worker.log 跨代追加，pool 在 spawn 前把起点落在旁边的 `worker.log.start`
+  （`pool.start_log_generation`，两条控制面都在 Python 里量这个数），诊断包从
+  `pool.log_generation_start` 之后读——不带边界会把上一代的 traceback 当成这一代的、新一代
+  一个字没写就死时 `empty` 还报 False；排「最近三份」时起点文件的 mtime 也算，worker 没写字
+  worker.log 的 mtime 不会动（第十四轮）。README 承诺包里不含
   脚本源码与数据，这条段落不许把它变成空话。三条边界（评审 #443）：**只取目录名哈希等于
   `pool.cache_digest(当前项目)` 的会话**（含 `_replay-…` 重放目录），没打开项目一份
   都不带——别的项目的脚本名与报错不跟着出门；**留下的行里绝对路径缩成

@@ -709,6 +709,46 @@ def test_worker_log_tails_read_only_the_tail_of_a_huge_log(tmp_path, monkeypatch
     assert diagnostics._read_tail_bytes(log, len(raw) + 10) == raw  # 比文件还大：整份
 
 
+def test_worker_log_tails_only_read_the_current_generation(tmp_path):
+    """评审 #443 第十四轮 P2：worker.log 是跨代追加的（目录复用），pool 在 spawn 前把这一代的
+    起点落在旁边（`worker.log.start`）。新一代一个字没写就死：`empty` 必须是 True，上一代的
+    traceback 不能当成这一代的证据出门；新一代写了：只取它自己的。"""
+    prev = (
+        'Traceback (most recent call last):\n  File "/p/a.py", line 1, in <module>\nKeyError: 1\n'
+    )
+    _session(tmp_path, "gen.py", prev, age_s=60)
+    log = next(tmp_path.glob("*/worker.log"))
+    # 像 pool 在 spawn 前那样：量现在多大、落盘
+    assert pool.start_log_generation(log) == log.stat().st_size
+    (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
+    assert got["empty"] is True and got["tail"] == "" and got["omitted"] == 0, got
+    # 新一代写了自己的东西：只有它的
+    with log.open("ab") as fh:
+        fh.write(FH_BLOCK.encode("utf-8"))
+    (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
+    assert got["empty"] is False
+    assert got["tail"].startswith("Fatal Python error") and "KeyError" not in got["tail"], got
+    # 边界文件不合法 / 比文件还大（日志被清过）：按 0 算，退化成整份
+    (log.parent / pool.LOG_GENERATION_FILE).write_text("999999", encoding="utf-8")
+    (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
+    assert "KeyError" in got["tail"]
+    (log.parent / pool.LOG_GENERATION_FILE).write_text("garbage", encoding="utf-8")
+    assert pool.log_generation_start(log) == 0
+
+
+def test_a_fresh_spawn_that_wrote_nothing_still_ranks_as_the_newest_session(tmp_path):
+    """同一条 P2 的另一半：worker 一个字没写就死，worker.log 的 mtime 不动；只按它排
+    「最近三份」会漏掉刚失败的那一份——起点文件的 mtime 也算。"""
+    for i in range(3):
+        _session(tmp_path, f"old{i}.py", "noise\n", age_s=30 + i)
+    _session(tmp_path, "fresh.py", "noise from last month\n", age_s=3600)
+    fresh = tmp_path / f"{pool.cache_digest(PROJECT)}-fresh.py" / "worker.log"
+    pool.start_log_generation(fresh)  # 刚 spawn：起点文件是新的，worker.log 没动
+    got = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT, files=3)
+    assert got[0]["session"] == _sid("fresh.py"), [g["session"] for g in got]
+    assert got[0]["empty"] is True
+
+
 def test_worker_log_tails_survive_a_missing_cache_dir(tmp_path):
     assert diagnostics.worker_log_tails(tmp_path / "nowhere", project_dir=PROJECT) == []
 

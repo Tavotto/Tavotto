@@ -59,7 +59,9 @@
   worker.log 这一代**空不空要说出来** / 日志在哪。文案说「渲染进程退出了」，
   不说「崩溃（无响应）」——进程既没崩也不是无响应，它是退出了。
   worker 自己开着 `faulthandler`（stderr 重配之后装，记的是那一刻的 fd）：硬崩溃
-  的 Python 栈落在 worker.log。脚本的 `sys.exit(0)` 是正常结束（`python fig.py`
+  的 Python 栈落在 worker.log。worker.log 跨代追加：spawn 前 `pool.start_log_generation`
+  量它现在多大 = 这一代的起点（`_log_offset`），并落盘到旁边的 `worker.log.start` 给诊断包
+  读——两条控制面都在 Python 里量，只写这一处。脚本的 `sys.exit(0)` 是正常结束（`python fig.py`
   的语义）；非零按异常从哪个模块抛出来分两条 code（`worker._script_exit_error`）：
   **抛出点那一帧**（最内层）的模块来历（`f_globals["__name__"]`，不看路径分量——脚本放在
   叫 `click/` 的目录里路径会撒谎；不看整条栈——控制流经过 click 不等于 click 退出的）

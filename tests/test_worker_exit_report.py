@@ -159,6 +159,8 @@ def test_sys_exit_zero_at_the_end_of_a_script_is_a_normal_ending(figs):
     worker, resp = pool.build("fig_ok.py", str(figs), "__main__")
     assert "Fig1" in resp["stems"], resp
     assert worker.alive(), "脚本正常结束，会话必须还活着"
+    # spawn 前把这一代的起点落在 worker.log 旁边（诊断包据此只看这一代，评审 #443 第十四轮）
+    assert (worker.log_path.parent / pool.LOG_GENERATION_FILE).is_file()
 
 
 @needs_worker
@@ -314,6 +316,8 @@ def test_workerd_gives_the_same_answer_for_a_script_that_wants_arguments(workerd
     assert "usage: metrics.py" in e.traceback_text, e.traceback_text
     assert "SystemExit: 2" in e.traceback_text
     assert w.alive(), "脚本要参数不是会话故障：进程还在，换个脚本照常用"
+    # workerd 那条控制面同样在 spawn 前落起点（两处都在 Python 里量）
+    assert (w.log_path.parent / pool.LOG_GENERATION_FILE).is_file()
 
 
 @needs_worker

@@ -551,6 +551,42 @@ def _log_size(path: Path, root: Path | None = None) -> int:
         return 0
 
 
+#: worker.log 旁边记「这一代从哪个字节开始」的文件。`_log_offset` 只活在进程内存里，而
+#: 诊断包是另一个时刻、另一段代码读同一个文件——没有这个边界它会把上一代的 traceback
+#: 当成这一代的，新一代一个字没写就死时 `empty` 还报 False（评审 #443 第十四轮）。
+#: 两条控制面都在 Python 里量这个数，所以只写这一处。
+LOG_GENERATION_FILE = "worker.log.start"
+
+
+def start_log_generation(log_path: Path) -> int:
+    """spawn 之前量 worker.log 现在多大 = 这一代的起点，并落盘给诊断包读。
+
+    写不进去（只读介质）不影响渲染：诊断包那边读不到就按 0 算，退化成老行为。
+    文件的 mtime 顺带告诉诊断包「这个目录最近有过一次 spawn」——worker 一个字没写
+    就死时 worker.log 的 mtime 不会动，只按它排「最近三份」会漏掉刚失败的那一份。
+    """
+    try:
+        offset = os.stat(log_path).st_size
+    except OSError:
+        offset = 0  # 还没有日志：这一代从 0 开始
+    try:
+        (log_path.parent / LOG_GENERATION_FILE).write_text(str(offset), encoding="utf-8")
+    except OSError:
+        pass
+    return offset
+
+
+def log_generation_start(log_path: Path) -> int:
+    """诊断包读：这一代从哪个字节开始。没有 / 不合法 / 比文件还大（日志被清过）→ 0。"""
+    try:
+        raw = (log_path.parent / LOG_GENERATION_FILE).read_text(encoding="utf-8").strip()
+        offset = int(raw)
+        size = os.stat(log_path).st_size
+    except (OSError, ValueError):
+        return 0
+    return offset if 0 <= offset <= size else 0
+
+
 def _log_tail_from(path: Path, offset: int, n: int = 30, *, root: Path | None = None) -> str:
     """worker.log 里**这一代**的最后 `n` 行。
 
@@ -1033,7 +1069,7 @@ class EngineWorker:
         self.last_build_descriptors: list = []
         self.last_used = time.time()
         # 这一代从日志的哪个字节开始（append 模式，目录跨代复用）
-        self._log_offset = _log_size(self.log_path)
+        self._log_offset = start_log_generation(self.log_path)
         self._log = open(self.log_path, "ab", buffering=0)
         # **项目级**解释器决策：同一台机器上 A 项目可能用内置 runtime，
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
@@ -1742,7 +1778,7 @@ class WorkerdWorker:
             self.python_source,
         )
         # 这一代从日志的哪个字节开始：workerd 也是 append 到同一个文件
-        self._log_offset = _log_size(self.log_path)
+        self._log_offset = start_log_generation(self.log_path)
         try:
             resp = self._client.call(
                 "open_session", payload=self._spec(), timeout=HANDSHAKE_TIMEOUT

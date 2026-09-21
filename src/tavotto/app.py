@@ -4653,7 +4653,10 @@ def api_engine_environment_set():
     if str(body.get("scope") or "global") == "project":
         return _set_project_environment(raw, module=str(body.get("module") or "").strip())
     if raw:
-        p = Path(raw).expanduser()
+        # 绝对化但**不 resolve**：`.venv/bin/python` 是指向基解释器的软链接，落到真身
+        # 就丢了 venv；相对路径不绝对化则 `is_file()` 按 Flask 的 cwd 判得过、体检在空的
+        # scratch 目录里 spawn 就 ENOENT（评审 #443 第十四轮）。存下去的也是这个绝对形态。
+        p = Path(os.path.abspath(Path(raw).expanduser()))
         if not p.is_file():
             return jsonify(
                 {
