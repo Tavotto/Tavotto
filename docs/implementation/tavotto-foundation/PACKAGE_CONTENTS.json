@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 67783,
-      "sha256": "d269f33832ea50ec6d25a0638252c614169e18511fb3ba67c4e7a64bdff751ca"
+      "sha256": "a7b3fe88da2b12ac8ca329459c943b1277b282ffc31119991cad7a593acf5f87"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 36942,
-      "sha256": "b5811e0f972169506fb8c07cd4f4b8b170c473b8c9771e938d55a639b289ccd1"
+      "sha256": "82bca013844cfecf3df0520902552eb9f4c6f79596ebaaabff980feb4e332c36"
     },
     {
       "path": "archive/README.md",
