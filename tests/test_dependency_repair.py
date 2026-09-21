@@ -1343,8 +1343,6 @@ def test_every_repair_code_has_text_in_both_languages():
 def test_cancel_right_after_the_acknowledgement_is_honoured(tmp_path, wheelhouse, monkeypatch):
     """P1：`prepare_async` 一回来用户就取消——那时线程可能还在重算事实、还没拿锁。句柄必须在起线程
     **之前**登记，否则 `cancel_status` 只能回 not_found、安装照常改用户的 venv。"""
-    from tavotto.engine import depplan
-
     project = tmp_path / "paper"
     project.mkdir()
     (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
@@ -1353,16 +1351,16 @@ def test_cancel_right_after_the_acknowledgement_is_honoured(tmp_path, wheelhouse
     python = projectenv.interpreter_of(venv)
     plan = deprepair.create_joint_plan(project, "figure.py")
     assert plan.target_kind == deprepair.TARGET_PROJECT_VENV
-    # 把执行线程按在「重算事实」那一步（`prepare()` 里 use_cache=False 的那一次）
+    # 把执行线程按在**入口**（还没跑到 `prepare()` 的第一行）：登记若在线程里做——不管在哪一行——
+    # 这一刻 `cancel_status` 都只能回 not_found
     gate = threading.Event()
-    real_facts = depplan.target_facts
+    real_guarded = deprepair._prepare_guarded
 
-    def _slow_when_revalidating(python, use_cache=True):
-        if not use_cache:
-            gate.wait(timeout=30)
-        return real_facts(python, use_cache=use_cache)
+    def _held_at_entry(plan_id, on_event):
+        gate.wait(timeout=30)
+        return real_guarded(plan_id, on_event)
 
-    monkeypatch.setattr(depplan, "target_facts", _slow_when_revalidating)
+    monkeypatch.setattr(deprepair, "_prepare_guarded", _held_at_entry)
     deprepair.prepare_async(plan.plan_id)
     answer = deprepair.cancel_status(plan.plan_id)  # ack 之后立刻取消
     gate.set()
