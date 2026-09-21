@@ -3091,6 +3091,31 @@ def test_open_on_a_clean_machine_says_the_download_out_loud(project, monkeypatch
     assert "不联网" in human and "MB" not in human
     human = _open_with(_dependency_offer())
     assert "Python 3.13.15" not in human and "MB" not in human
+    # 有渲染解释器、没有基础解释器：顶层没有这一段，下载只挂在受管目标上——选 tavotto_managed 才会下，
+    # 版本与体积同样要说出口（Codex #475 P2）
+    nested = {
+        **_dependency_offer(),
+        "targets": [
+            {"kind": "tavotto_managed", "available": True, "reason": "", "private_python": private}
+        ],
+    }
+    human = _open_with(nested)
+    assert "选择 tavotto_managed 时会先下载" in human and "3.13.15" in human and "约 24 MB" in human
+    assert "这台电脑没有可用的 Python" not in human
+    human = _open_with(
+        {
+            **nested,
+            "targets": [
+                {
+                    "kind": "tavotto_managed",
+                    "available": True,
+                    "reason": "",
+                    "private_python": {**private, "cached": True, "download_bytes": 0},
+                }
+            ],
+        }
+    )
+    assert "选择 tavotto_managed 时会先使用已下载" in human and "MB" not in human
 
 
 def test_open_with_prepare_dependencies_runs_the_same_transaction_then_opens(
