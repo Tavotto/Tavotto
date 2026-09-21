@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次；U08 叠到 U07 B 9e4bf486 后（2026-09-22）再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 47302,
-      "sha256": "7a2992fb78817084f6b1452df1430ede46fa89554b18b05a1c7bc18ba098bc36"
+      "bytes": 64488,
+      "sha256": "21a22c14378cd8a161ea0048bdab0ee27192ca3fc9b2be0f24bd14f14936ce21"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 23972,
-      "sha256": "3c1826635e915c79366afc41fa1f0195afca976e877eeeafb95332bd3c432b69"
+      "bytes": 37012,
+      "sha256": "8047215fb64d61a9b3f6f9fdb19a9f6bd006e8f89048d691e5f1a2c4ad3092fe"
     },
     {
       "path": "archive/README.md",
