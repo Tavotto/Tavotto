@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { t } from '@/i18n'
 import {
+  type DependencyPreparationOffer,
   fetchEngineEnvironment,
   installEngineEnvironment,
   setEngineEnvironment,
@@ -56,6 +57,15 @@ interface EnvState {
   requestWorkdirConfirmation: (payload: WorkdirConfirmation, projectId?: string | null) => void
   dismissWorkdirConfirmation: () => void
   /**
+   * 跑前的那一次授权（U04，ADR 0061）：后端在起第一个 worker 之前判出「脚本开跑要的包目标环境
+   * 里没有、能一次装全」，渲染以 `dependency_preparation_required` 回来——同样不是错误块，是
+   * 一次授权。载荷放这里（与运行目录的确认同一个家），`DependencyPrepareDialog` 渲染它，执行
+   * 归 `depRepairStore.prepare`。同一时刻只开一份；换了项目的旧载荷不弹。
+   */
+  dependencyPreparation: DependencyPreparationOffer | null
+  requestDependencyPreparation: (offer: DependencyPreparationOffer, projectId?: string | null) => void
+  dismissDependencyPreparation: () => void
+  /**
    * 换项目：`env.project`（项目环境 / 工作目录模式）属于旧项目，立刻清掉再按
    * 新项目重取。不清的话在请求回来之前，开关与错误块的建议说的都是上一个
    * 项目的模式（Codex 评审 P1）。
@@ -70,6 +80,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   log: '',
   installing: false,
   workdirConfirmation: null,
+  dependencyPreparation: null,
 
   requestWorkdirConfirmation: (payload, projectId) => {
     if (projectId !== undefined && projectId !== currentProjectId()) return
@@ -77,6 +88,12 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     set({ workdirConfirmation: payload })
   },
   dismissWorkdirConfirmation: () => set({ workdirConfirmation: null }),
+  requestDependencyPreparation: (offer, projectId) => {
+    if (projectId !== undefined && projectId !== currentProjectId()) return
+    if (get().dependencyPreparation) return
+    set({ dependencyPreparation: offer })
+  },
+  dismissDependencyPreparation: () => set({ dependencyPreparation: null }),
 
   refresh: async () => {
     try {
@@ -169,8 +186,13 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   resetProject: () => {
     const env = get().env
     // 首开确认框属于旧项目：A 项目问的问题不能由 B 项目回答
-    if (env) set({ env: { ...env, project: { open: false } }, workdirConfirmation: null })
-    else set({ workdirConfirmation: null })
+    if (env)
+      set({
+        env: { ...env, project: { open: false } },
+        workdirConfirmation: null,
+        dependencyPreparation: null,
+      })
+    else set({ workdirConfirmation: null, dependencyPreparation: null })
     void get().refresh()
   },
 
