@@ -1019,7 +1019,11 @@ def test_offer_gives_no_target_while_a_global_interpreter_is_pinned(project, mon
     offer = deprepair.offer(str(project), "figure.py", FIXTURE_IMPORT, detail)
     assert offer["targets"] == []
     assert offer["code"] == deprepair.ERROR_INTERPRETER_PINNED
-    assert offer["pinned"] == {"python": sys.executable, "source": engine_pool.SOURCE_CONFIGURED}
+    assert offer["pinned"] == {
+        "python": sys.executable,
+        "source": engine_pool.SOURCE_CONFIGURED,
+        "variable": "",
+    }
     # 采用系统解释器那条同样写项目级决策，同样轮不到——也不列
     assert offer["system_rejected"] == []
 
@@ -1034,6 +1038,19 @@ def test_env_override_pins_too_and_reports_its_own_source(project, monkeypatch):
     offer = deprepair.offer(str(project), "figure.py", FIXTURE_IMPORT, None)
     assert offer["code"] == deprepair.ERROR_INTERPRETER_PINNED
     assert offer["pinned"]["source"] == engine_pool.SOURCE_ENV
+    assert offer["pinned"]["variable"] == engine_pool.WORKER_PYTHON_ENV
+
+
+def test_the_legacy_variable_is_named_when_it_supplied_the_pin(project, monkeypatch):
+    """旧名 `MM_WORKER_PYTHON` 供的值同样是 `env_override`：只让用户清新名的话，
+    固定还在、重启后卡片照旧挡着（Codex 评审 P1）。载荷点名供值的那个变量。"""
+    monkeypatch.delenv(engine_pool.WORKER_PYTHON_ENV, raising=False)
+    monkeypatch.setenv(engine_pool.LEGACY_WORKER_PYTHON_ENV, sys.executable)
+    engine_pool.reset_worker_python()
+    offer = deprepair.offer(str(project), "figure.py", FIXTURE_IMPORT, None)
+    assert offer["code"] == deprepair.ERROR_INTERPRETER_PINNED
+    assert offer["pinned"]["source"] == engine_pool.SOURCE_ENV
+    assert offer["pinned"]["variable"] == engine_pool.LEGACY_WORKER_PYTHON_ENV
 
 
 def test_a_stale_pin_does_not_block_repair(project, monkeypatch):
@@ -1075,7 +1092,31 @@ def test_the_plan_endpoint_carries_the_pin_to_the_interface(client, project, mon
     assert resp.status_code == 400
     body = resp.get_json()
     assert body["code"] == deprepair.ERROR_INTERPRETER_PINNED
-    assert body["pinned"] == {"python": sys.executable, "source": engine_pool.SOURCE_CONFIGURED}
+    assert body["pinned"] == {
+        "python": sys.executable,
+        "source": engine_pool.SOURCE_CONFIGURED,
+        "variable": "",
+    }
+
+
+def test_a_pin_set_during_confirmation_stops_the_install(project, monkeypatch):
+    """计划形成之后、用户确认之前，从别处把全局解释器钉上：环境指纹看不见这条，
+    `install()` 必须自己复查——否则 pip 照跑、装完照样不被用（Codex 评审 P1）。
+    计划一并作废。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    _pin_in_settings(monkeypatch, sys.executable)
+    monkeypatch.setattr(
+        deprepair, "_pip_install", lambda *a: pytest.fail("固定生效时一个字节都不该装")
+    )
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.install(plan.plan_id)
+    assert err.value.code == deprepair.ERROR_INTERPRETER_PINNED
+    assert err.value.extra["pinned"]["python"] == sys.executable
+    assert deprepair.get_plan(plan.plan_id) is None, "前提已不成立的计划不该留着"
 
 
 # ===========================================================================
@@ -1152,20 +1193,46 @@ def test_an_environment_that_already_has_the_module_gets_its_own_code(project, m
     assert err.value.code == deprepair.ERROR_ALREADY_PRESENT
 
 
+def _repair_error_codes() -> dict[str, str]:
+    """`deprepair` 模块级的 `ERROR_*` 常量 → 值。
+
+    **名字从 AST 取、值从模块取**：正则扫源码只认一种写法（注解 / 换行 /
+    引号一换就漏，漏了门禁还是绿的），而 `ERROR_IN_USE_BY_NATIVE` 的值是
+    `runcodes.…` 的引用，源码里根本没有那个字面量。
+    """
+    import ast
+
+    tree = ast.parse(Path(deprepair.__file__).read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else []
+        if isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for t in targets:
+            if isinstance(t, ast.Name) and t.id.startswith("ERROR_"):
+                names.add(t.id)
+    out = {n: getattr(deprepair, n) for n in names}
+    assert all(isinstance(v, str) and v for v in out.values()), out
+    return out
+
+
 def test_every_repair_code_has_text_in_both_languages():
     """`test_error_codes.py` 不扫 `RepairError`，`repairError` 那张表只有反向的
-    死键门禁：新加一个 code 忘了文案，用户看到的就是后端的中文原文。"""
-    import re
+    死键门禁：新加一个 code 忘了文案，用户看到的就是后端的中文原文。
 
+    与卡片的查法同源（`repairCodeMessage`）：先 `engine.repairError.<code>`，再
+    `backend.<code>`——`environment_in_use_by_native_session` 的文案本来就在
+    后者那张表里，不重复抄一份。
+    """
+    codes = _repair_error_codes()
+    assert "ERROR_INTERPRETER_PINNED" in codes and "ERROR_IN_USE_BY_NATIVE" in codes
     root = Path(__file__).resolve().parent.parent
-    src = (root / "src" / "tavotto" / "engine" / "deprepair.py").read_text(encoding="utf-8")
-    codes = set(re.findall(r'^ERROR_[A-Z_]+ = "([a-z_]+)"', src, re.M))
-    assert deprepair.ERROR_INTERPRETER_PINNED in codes, "正则没读到常量表——判据本身坏了"
     for locale in ("zh-CN", "en-US"):
         table = json.loads(
             (root / "web" / "src" / "i18n" / "locales" / locale / "errors.json").read_text(
                 encoding="utf-8"
             )
-        )["engine"]["repairError"]
-        missing = sorted(c for c in codes if not table.get(c))
+        )
+        repair, backend = table["engine"]["repairError"], table["backend"]
+        missing = sorted(c for c in codes.values() if not (repair.get(c) or backend.get(c)))
         assert not missing, f"{locale} 缺文案: {missing}"

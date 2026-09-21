@@ -362,9 +362,9 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     # `pool.resolve_worker_python()` 的第 3 档，而第 1、2 档只要存在就压过它。
     # 那时提供安装目标等于让用户真的联网装一遍、装完渲染照样缺——所以一个目标
     # 都不给，把「指定了哪条、来源是什么」说出来，让界面给出能解开它的那一步。
-    pinned = pool.explicit_worker_python()
+    pinned = pinned_payload()
     if pinned:
-        out["pinned"] = {"python": pinned[0], "source": pinned[1]}
+        out["pinned"] = pinned
         out["code"] = ERROR_INTERPRETER_PINNED
         return out
     # ---- 0. 这台机器上已有的解释器里已经装着它：采用，不装 ---------------
@@ -453,6 +453,36 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
 
 
 # ---------------------------------------------------------------------------
+# 全局显式解释器（#465）
+# ---------------------------------------------------------------------------
+def pinned_payload() -> dict | None:
+    """正在生效的全局显式解释器，投影成界面认的形状；没有回 None。
+
+    `variable` 只在 `env_override` 时有值，且是**供值的那个**名字（新名或旧名
+    `MM_WORKER_PYTHON`）：界面「清掉环境变量后重启」那句按它点名。
+    """
+    pinned = pool.explicit_worker_python()
+    if not pinned:
+        return None
+    python, source = pinned
+    out = {"python": python, "source": source, "variable": ""}
+    if source == pool.SOURCE_ENV:
+        pair = pool.worker_python_env_pair()
+        out["variable"] = pair[0] if pair else pool.WORKER_PYTHON_ENV
+    return out
+
+
+def _refuse_if_pinned() -> None:
+    pinned = pinned_payload()
+    if pinned:
+        raise RepairError(
+            ERROR_INTERPRETER_PINNED,
+            f"渲染解释器已固定为 {pinned['python']}，为项目安装的环境不会被使用",
+            pinned=pinned,
+        )
+
+
+# ---------------------------------------------------------------------------
 # 创建计划
 # ---------------------------------------------------------------------------
 def create_plan(
@@ -467,14 +497,7 @@ def create_plan(
     root = str(Path(project))
     if target_kind not in TARGETS:
         raise RepairError(ERROR_NOT_ALLOWED, f"未知的安装目标: {target_kind!r}")
-    pinned = pool.explicit_worker_python()
-    if pinned:
-        # 与 `offer()` 同一条判据：装进去也不会被用的计划一开始就不形成。
-        raise RepairError(
-            ERROR_INTERPRETER_PINNED,
-            f"设置里指定的渲染解释器 {pinned[0]} 正在生效，为项目安装的环境不会被使用",
-            pinned={"python": pinned[0], "source": pinned[1]},
-        )
+    _refuse_if_pinned()  # 与 `offer()` 同一条判据：装进去也不会被用的计划一开始就不形成
     if rounds_remaining(root, script) <= 0:
         raise RepairError(ERROR_ROUNDS_EXHAUSTED, "这个脚本的自动依赖修复已经用满")
     if not projectenv.valid_module_name(module):
@@ -604,6 +627,15 @@ def install(plan_id: str, on_event=None) -> dict:
         # 没有计划就没有用户意图。**后端自己就是能力边界**，不靠
         # 「按钮理论上不会调这个接口」。
         raise RepairError(ERROR_NOT_ALLOWED, "没有这个修复计划（或已过期）")
+    # 确认窗口里从别处（另一个页签 / API 客户端 / 环境变量）把全局解释器钉上：
+    # 环境指纹只看目标环境，看不见这条——不复查的话 pip 照跑、装完照样不被用
+    # （Codex 评审 #469 P1）。计划一并作废：它形成时的前提已经不成立。
+    try:
+        _refuse_if_pinned()
+    except RepairError:
+        with _lock:
+            _plans.pop(plan.plan_id, None)
+        raise
     current = _fingerprint(plan.target_kind, plan.python, plan.project)
     if current != plan.env_fingerprint:
         with _lock:

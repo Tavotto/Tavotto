@@ -307,12 +307,23 @@ def worker_python_env() -> str | None:
     空字符串按「没设」处理：`TAVOTTO_WORKER_PYTHON=` 在 CI 里是「清掉它」的
     惯用写法，当成一个路径去探测只会白等一轮超时。
     """
+    pair = worker_python_env_pair()
+    return pair[1] if pair else None
+
+
+def worker_python_env_pair() -> tuple[str, str] | None:
+    """(变量名, 值)——**哪个**变量给的值。
+
+    界面上「清掉环境变量后重启」那句要点名：旧名 `MM_WORKER_PYTHON` 供的值与
+    新名同样算 `env_override`，只让用户清 `TAVOTTO_WORKER_PYTHON` 的话，固定
+    还在、卡片重启后照旧挡着（Codex 评审 #469 P1）。
+    """
     import os
 
     for name in (WORKER_PYTHON_ENV, LEGACY_WORKER_PYTHON_ENV):
         val = os.environ.get(name)
         if val:
-            return val
+            return name, val
     return None
 
 

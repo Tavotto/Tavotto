@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { t as translate } from '@/i18n'
+import { i18n, t as translate } from '@/i18n'
 import type {
   DependencyRepairOffer,
   DependencyTarget,
@@ -247,13 +247,20 @@ function Pinned({
   pinned,
 }: {
   module: string
-  pinned: { python: string; source: EngineSource }
+  pinned: { python: string; source: EngineSource; variable?: string }
 }) {
   useTranslation('errors')
   const { setPython } = useEnvStore()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fromEnv = pinned.source === 'env_override'
+  // 环境变量那档的来源标签按**供值的那个**变量拼（`sourceLabel.env_override` 写死
+  // 的是新名）：正文说「环境变量 TAVOTTO_WORKER_PYTHON」、提示却让清
+  // MM_WORKER_PYTHON，两句话打架。老服务端没有 variable 时退到新名。
+  const variable = pinned.variable || 'TAVOTTO_WORKER_PYTHON'
+  const source = fromEnv
+    ? en('repairPinnedEnvSource', { variable })
+    : en(`sourceLabel.${pinned.source || 'unknown'}`, { product: PRODUCT_NAME })
   const clear = async () => {
     setBusy(true)
     const failure = await setPython(null)
@@ -266,13 +273,14 @@ function Pinned({
       <div>
         <h3 className="type-section">{en('repairTitle', { module })}</h3>
         <p className="mt-1 text-xs leading-relaxed text-ink-2">
-          {en('repairPinnedBody', {
-            python: pinned.python,
-            source: en(`sourceLabel.${pinned.source || 'unknown'}`, { product: PRODUCT_NAME }),
-          })}
+          {en('repairPinnedBody', { python: pinned.python, source })}
         </p>
         {fromEnv && (
-          <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('repairPinnedEnvHint')}</p>
+          // 点名**供值的那个**变量：旧名 MM_WORKER_PYTHON 供的值同样是 env_override，
+          // 只让用户清新名的话固定还在、重启后照旧挡着。
+          <p className="mt-1 text-xs leading-relaxed text-ink-3">
+            {en('repairPinnedEnvHint', { variable })}
+          </p>
         )}
       </div>
       {!fromEnv && (
@@ -442,9 +450,12 @@ function RepairProgress({
  */
 export function repairCodeMessage(code: string): string | null {
   if (!code) return null
-  const key = `repairError.${code}`
-  const text = en(key)
-  return text === `engine.${key}` ? null : text
+  // 先查修复专用表，再查后端通用表：`environment_in_use_by_native_session` 这种
+  // 两条控制面共用的 code 文案只在 `backend.*` 里有一份，不为这张卡再抄一份。
+  for (const key of [`engine.repairError.${code}`, `backend.${code}`]) {
+    if (i18n.exists(key, { ns: 'errors' })) return translate(key, { ns: 'errors' })
+  }
+  return null
 }
 
 function Failure({ code, text }: { code: string; text: string }) {

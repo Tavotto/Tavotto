@@ -297,9 +297,10 @@ optional 分支、有平台相关、有本地模块。**真实的 `ModuleNotFoun
   与设置里指定的解释器排在「项目记住的」之上，而本 ADR 的两个安装目标装完都是
   以「项目记住的」身份被采用——那时安装是空的：真的联网装了、渲染照样缺（实测
   受管环境里 pandas 3.0.6 在，worker 跑在设置里那条 venv 里）。`offer()` /
-  `create_plan()` 先问 `pool.explicit_worker_python()`，生效就一个目标都不给，
-  改发 `dependency_interpreter_pinned` + `pinned:{python, source}`，界面给「恢复
-  自动检测」（清全局设置）或「清掉环境变量后重启」。优先级本身不动。
+  `create_plan()` / `install()` 都先问 `pool.explicit_worker_python()`，生效就一个
+  目标都不给、计划不形成、已形成的也不执行，改发 `dependency_interpreter_pinned`
+  + `pinned:{python, source, variable}`，界面给「恢复自动检测」（清全局设置）或
+  「清掉环境变量 <variable> 后重启」。优先级本身不动。
 * **`dependency_install_not_allowed` 收窄到「没有用户意图」。** 「这一轮已经装成功
   过」与「目标环境里已经有了」各自有 code；`_attempted` 改在 pip 退出码 0 之后
   登记，断网 / 取消的那次可以重试。

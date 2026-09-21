@@ -2693,7 +2693,7 @@ export interface DependencyRepairOffer {
    * `source` 决定出口——`configured` / `managed_venv` 可以在这里一键清掉，
    * `env_override` 只能让用户清环境变量后重启。
    */
-  pinned?: { python: string; source: EngineSource }
+  pinned?: { python: string; source: EngineSource; variable?: string }
 }
 
 /** 后端发出来的安装计划。`plan_id` 是这次授权的凭据，不可猜、有有效期。 */

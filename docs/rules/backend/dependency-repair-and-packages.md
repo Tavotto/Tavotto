@@ -70,12 +70,16 @@
   （ADR 0018 §四），而自动接手、采用系统解释器、装进项目 `.venv` / 受管环境最后
   都写在那一档——那时提供安装等于让用户真的联网装一遍、装完渲染照样缺。判据
   唯一出处 `pool.explicit_worker_python()`（与 `resolve_worker_python` 同一份，
-  指向不存在路径的设置不算生效）；`offer()` 回 `code=dependency_interpreter_pinned`
-  + `pinned:{python, source}` 且 `targets` 为空，`create_plan()` 同样拒绝（后端是
+  指向不存在路径的设置不算生效）；载荷只从 `deprepair.pinned_payload()` 出
+  （`{python, source, variable}`，`variable` 是 `env_override` 时**供值的那个**变量名，
+  旧名 `MM_WORKER_PYTHON` 供的值要点它的名）。`offer()` 回
+  `code=dependency_interpreter_pinned` + `pinned` 且 `targets` 为空；`create_plan()`
+  拒绝；**`install()` 执行前再复查一次**——环境指纹只看目标环境，确认窗口里从
+  别处钉上的全局解释器它看不见，不复查 pip 照跑；复查不过计划一并作废（后端是
   边界，不靠按钮）。界面按 `source` 给出口：`configured` / `managed_venv` 一键
-  「恢复自动检测」（清全局设置 + 重排失败的渲染），`env_override` 说清要清哪个
-  变量、然后重启。**不改优先级本身**——「项目显式 > 全局显式」是 ADR 级的另一个
-  问题。
+  「恢复自动检测」（清全局设置 + 重排失败的渲染），`env_override` 按 `variable`
+  点名要清哪个变量、然后重启。**不改优先级本身**——「项目显式 > 全局显式」是
+  ADR 级的另一个问题。
 - **pip exit 0 不等于修好了**：验证三层——import 那个包 / import matplotlib /
   **真起一次 worker 跑通 build**（`deprepair.worker_self_test`，argv 走
   `execspec.worker_argv` 那一份，不另拼）。
@@ -91,9 +95,10 @@
   诊断只记 `custom_package_index: true/false`，**绝不记地址**。本轮**没有加
   遥测事件**（EVENTS 扩容要升 CONSENT_VERSION 并让所有人重新同意，理由见
   ADR 0019 §十二）。
-- `deprepair` 里每个 `ERROR_*` code 在两种语言的 `engine.repairError` 表里都要有
-  文案（`test_every_repair_code_has_text_in_both_languages`）：`test_error_codes.py`
-  不扫 `RepairError`，这张表以前只有反向的死键门禁。
+- `deprepair` 里每个 `ERROR_*` code 在两种语言里都要有文案——
+  `engine.repairError.<code>` 或 `backend.<code>`，与卡片 `repairCodeMessage` 的查法
+  同源（`test_every_repair_code_has_text_in_both_languages`，常量名从 AST 取、值从
+  模块取）：`test_error_codes.py` 不扫 `RepairError`，这张表以前只有反向的死键门禁。
 - 看护：`tests/test_dependency_repair.py`（十五条负向反证）+
   `tests/test_dependency_repair_e2e.py`（真建 venv、真跑 pip、真起 worker、
   真出图；不联网靠手工 wheel + `PIP_FIND_LINKS`/`PIP_NO_INDEX`）+ web 的

@@ -477,11 +477,20 @@ describe('渲染解释器被全局固定（#465）', () => {
     expect(useRenderStore.getState().byKey.k.stale).toBe(false)
   })
 
-  it('环境变量固定的：没有可清的按钮，说清楚要清什么、然后重启', async () => {
-    await render({ ...PINNED, pinned: { python: '/opt/venv/bin/python', source: 'env_override' } })
+  it('环境变量固定的：没有可清的按钮，点名供值的那个变量、然后重启', async () => {
+    await render({
+      ...PINNED,
+      pinned: { python: '/opt/venv/bin/python', source: 'env_override', variable: 'MM_WORKER_PYTHON' },
+    })
     expect(byName(en('repairPinnedClear'))).toBeUndefined()
-    expect(text()).toContain('TAVOTTO_WORKER_PYTHON')
-    expect(text()).toContain(en('repairPinnedEnvHint'))
+    // 旧名供的值：只让用户清新名的话固定还在，所以这里必须是 MM_WORKER_PYTHON
+    expect(text()).toContain(en('repairPinnedEnvHint', { variable: 'MM_WORKER_PYTHON' }))
+    expect(text()).not.toContain('TAVOTTO_WORKER_PYTHON')
+  })
+
+  it('老服务端没给 variable 时退到新名', async () => {
+    await render({ ...PINNED, pinned: { python: '/opt/venv/bin/python', source: 'env_override' } })
+    expect(text()).toContain(en('repairPinnedEnvHint', { variable: 'TAVOTTO_WORKER_PYTHON' }))
   })
 })
 
@@ -549,6 +558,14 @@ describe('安装进度', () => {
     await render()
     await progress('failed', { code: 'dependency_requires_build', error: '后端中文原文' })
     expect(text()).toContain(en('repairError.dependency_requires_build'))
+    expect(text()).not.toContain('后端中文原文')
+  })
+
+  it('只在 backend.* 表里有文案的 code 也按当前语言翻，不漏后端原文', async () => {
+    await i18n.changeLanguage('en-US')
+    await render()
+    await progress('failed', { code: 'environment_in_use_by_native_session', error: '后端中文原文' })
+    expect(text()).toContain(t('backend.environment_in_use_by_native_session', { ns: 'errors' }))
     expect(text()).not.toContain('后端中文原文')
   })
 
