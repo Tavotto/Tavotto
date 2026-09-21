@@ -37,11 +37,15 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: Editors :: Vector-Based",
 ]
 
-# Flask 父进程只要这两个：科学栈刻意不在这里——engine/registry.py、pool.py、
+# Flask 父进程只要这三个：科学栈刻意不在这里——engine/registry.py、pool.py、
 # ai_bridge.py 必须保持纯标准库可 import，matplotlib 由 worker 解释器提供。
+# `packaging` 是 PEP 508 / 440 的参考实现（pip / uv 认的就是它），纯 Python、零依赖、
+# Apache-2.0 OR BSD-2-Clause；U04（ADR 0061）起依赖声明的无损读法与 marker 求值靠它，
+# 只在 engine/depresolve.py 里延后 import。上界跟着实测走（26.x 验证过）。
 dependencies = [
     "flask>=3.1,<4",
     "pymupdf>=1.24,<2",
+    "packaging>=24,<27",
 ]
 
 [project.optional-dependencies]
