@@ -44,7 +44,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, runtime
+from . import config, privatepython, runtime
 
 LOG = logging.getLogger("tavotto.managedenv")
 
@@ -473,10 +473,16 @@ def base_python() -> str | None:
         return bool(parts) and projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE
 
     try:
-        return bootstrap.find_base_python(accept=_supported)
+        found = bootstrap.find_base_python(accept=_supported)
     except (OSError, ValueError) as exc:  # 探测本身不该让请求 500
         LOG.warning("基础解释器探测失败: %s", exc)
-        return None
+        found = None
+    if found:
+        return found
+    # 这台机器上没有合格的基础解释器 → **已经供应好的**私有 Python（U05，ADR 0063）。
+    # 只认磁盘上已就位的那份，这里一个字节都不下载：下载要经计划里明示的授权
+    # （`deprepair` 的事务在 `provision_private` 为真时才去取），探测路径上不联网。
+    return privatepython.python_of()
 
 
 def _run(argv: list[str], timeout: int) -> tuple[int, str]:
@@ -612,11 +618,16 @@ def register_generation(
     constraints: list[str],
     identity: str,
     base_python: str,
+    base_runtime: str = "",
 ) -> None:
     """登记一代（状态 `incomplete`）——在建 venv **之前**：目录名在创建前就定了。
 
     **在册的代不能被重新登记**（active、或 `ready` 的旧代——它们的目录可能正有人用；名字由
-    `fresh_generation` 给，撞上就是调用方的缺陷，抛而不是静默覆盖）。"""
+    `fresh_generation` 给，撞上就是调用方的缺陷，抛而不是静默覆盖）。
+
+    `base_runtime` 是这一代以哪份私有 Python 为 base（`privatepython` 的内容 id；系统解释器
+    为空串）：私有 runtime 的退役以「还有没有哪一代记着它」为判据（`referenced_base_runtimes`），
+    venv 挪不走 base，base 在用就不删（FO-028）。"""
     gen = _safe_generation(generation)
     with _lock:
         data = read_manifest(project)
@@ -644,6 +655,8 @@ def register_generation(
             "identity": identity,
             "base_interpreter_fingerprint": base_interpreter_fingerprint(base_python),
             "provisioner": "pip",
+            "base_source": "private_python" if base_runtime else "system",
+            "base_runtime": str(base_runtime or ""),
             "incomplete_reason": "",
         }
         data["generations"] = gens
@@ -735,6 +748,30 @@ def is_managed_python(project: str | Path, python: str | None) -> bool:
         if cand == target:
             return True
     return False
+
+
+def referenced_base_runtimes() -> set[str]:
+    """**所有**项目的受管环境里、任一代（不论状态，退役的已经不在账上）记着的私有 runtime id。
+
+    判「这份私有 Python 还有人用」的唯一出处：一代 venv 的 `pyvenv.cfg` 指着它的 base，base 一删
+    那一代当场坏掉——所以不看谁在跑，只看谁记着。读所有 manifest 不起子进程。"""
+    out: set[str] = set()
+    try:
+        roots = list(config.data_path(ENVIRONMENTS_DIRNAME).iterdir())
+    except OSError:
+        return out
+    for root in roots:
+        try:
+            data = json.loads((root / MANIFEST_NAME).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        gens = data.get("generations") if isinstance(data, dict) else None
+        if not isinstance(gens, dict):
+            continue
+        for gen in gens.values():
+            if isinstance(gen, dict) and gen.get("base_runtime"):
+                out.add(str(gen["base_runtime"]))
+    return out
 
 
 def retire_unused(project: str | Path, *, in_use) -> list[str]:
