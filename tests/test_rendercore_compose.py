@@ -834,6 +834,54 @@ def test_a_huge_raster_is_refused_before_it_is_decoded(provider, tmp_path, monke
     assert ei.value.params["why"] == "raster_too_large"
 
 
+def test_the_document_wide_raster_budget_stops_many_small_images_from_adding_up(
+    provider, tmp_path, monkeypatch
+):
+    """Codex #463 第二轮 P2：单张预算挡不住「很多张各自刚好在线下」。把两个预算都缩小到用例尺度：
+    单张 4000 像素（original.png 是 64×48 = 3072）、文档 7000 像素——第一张过、同一张再放一次不再计费（去重）、
+    第二张**不同**的位图累计 6144 过、第三张不同的 9216 > 7000 → `raster_budget_exceeded`；JPEG 直通路同样记账。"""
+    from PIL import Image
+
+    from tavotto.rendercore import raster
+
+    monkeypatch.setattr(raster, "SOURCE_MAX_PIXELS", 4000)
+    monkeypatch.setattr(raster, "DOCUMENT_MAX_PIXELS", 7000)
+    png = (FIXTURE / "original.png").read_bytes()
+    b2 = io.BytesIO()
+    Image.new("RGB", (64, 48), (1, 2, 3)).save(b2, "PNG")
+    other = b2.getvalue()
+    b3 = io.BytesIO()
+    Image.new("RGB", (64, 48), (9, 9, 9)).save(b3, "JPEG")
+    third = b3.getvalue()
+    res = {
+        "a": _res("a.png", "png", png),
+        "b": _res("b.png", "png", other),
+        "c": _res("c.jpg", "jpg", third),
+    }
+    files = {"a": png, "b": other, "c": third}
+    two = [
+        ir.Image("a", (0, 0, 10, 10)),
+        ir.Image("a", (20, 0, 10, 10)),
+        ir.Image("b", (40, 0, 10, 10)),
+    ]
+    out, facts = _write(tmp_path, provider, two, res, files, name="two.pdf")
+    assert len(facts.images) == 3 and out.exists()
+    with pytest.raises(pdfwriter.WriterError) as ei:
+        _write(
+            tmp_path, provider, two + [ir.Image("c", (60, 0, 10, 10))], res, files, name="three.pdf"
+        )
+    assert (
+        ei.value.code == "source_unreadable" and ei.value.params["why"] == "raster_budget_exceeded"
+    )
+    assert ei.value.params["pixels_used"] == 6144 and ei.value.params["pixels_wanted"] == 3072
+    assert not (tmp_path / "three.pdf").exists()
+    # JPEG 直通路单独也记账：预算只剩 2000 时第一张 JPEG 就拒
+    monkeypatch.setattr(raster, "DOCUMENT_MAX_PIXELS", 2000)
+    with pytest.raises(pdfwriter.WriterError) as ei:
+        _write(tmp_path, provider, [ir.Image("c", (0, 0, 10, 10))], res, files, name="jpg.pdf")
+    assert ei.value.params["why"] == "raster_budget_exceeded"
+
+
 def test_a_jpeg_that_readers_cannot_decode_is_not_passed_through(provider, tmp_path):
     """Codex #463 P2：只有 SOI + 一个像样的 SOF 的 12 字节假 JPEG：不直通、`decode()` 解不开 → `raster_unreadable`；
     把一张好 JPEG 的熵编码段截掉一半也一样。"""
