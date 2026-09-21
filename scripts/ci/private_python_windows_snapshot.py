@@ -88,10 +88,16 @@ def diff(before: dict, after: dict) -> list[str]:
     for name in ("PATH", "USERPROFILE"):
         if before.get("env", {}).get(name) != after.get("env", {}).get(name):
             problems.append(f"env: {name} 前后不同")
-    new_top = set(after.get("userprofile_top", [])) - set(before.get("userprofile_top", []))
-    stray = sorted(new_top - ALLOWED_NEW_TOP_LEVEL)
+    # 顶层条目两个方向都比：多出来的只放行 ALLOWED_NEW_TOP_LEVEL；少掉 / 改名的一律算改动——
+    # 放行只对「新增」有效，删了用户目录里原有的东西没有任何理由（Codex #467 P2）
+    before_top = set(before.get("userprofile_top", []))
+    after_top = set(after.get("userprofile_top", []))
+    stray = sorted((after_top - before_top) - ALLOWED_NEW_TOP_LEVEL)
     if stray:
         problems.append(f"USERPROFILE 顶层多出了 {stray}")
+    removed = sorted(before_top - after_top)
+    if removed:
+        problems.append(f"USERPROFILE 顶层少了 {removed}")
     return problems
 
 
