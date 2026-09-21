@@ -357,9 +357,9 @@ class TestPrivateBase:
         gate = threading.Event()
         real_guarded = deprepair._prepare_guarded
 
-        def _held_at_entry(plan_id, on_event):
+        def _held_at_entry(plan_id, on_event, *, claimed=False):
             gate.wait(timeout=30)  # 线程按在入口：登记若在线程里做，这一刻只能回 not_found
-            return real_guarded(plan_id, on_event)
+            return real_guarded(plan_id, on_event, claimed=claimed)
 
         monkeypatch.setattr(deprepair, "_prepare_guarded", _held_at_entry)
         events: list[dict] = []
