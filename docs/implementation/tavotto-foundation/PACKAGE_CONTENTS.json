@@ -209,8 +209,8 @@
     },
     {
       "path": "evidence/u04/mutations_pr_c.md",
-      "bytes": 3846,
-      "sha256": "9118e0d1529e09d28c1bd49f560d21aad5adfa239626220f31c00a64b459880c"
+      "bytes": 5508,
+      "sha256": "fd966814ce260614255846669180449f46118f172ed8f00605e67d7e6beba773"
     },
     {
       "path": "extensions/X01_extended.md",
@@ -254,8 +254,8 @@
     },
     {
       "path": "handoffs/U04_dependencies.md",
-      "bytes": 32670,
-      "sha256": "636d145663d78687bd284a1e6f5f7acb1a9cd0f34a6a8cd095405baacdff938a"
+      "bytes": 34017,
+      "sha256": "377c6c9162a7f4a1451726d2343a207646be2a8a52bfa8db91827b78119925b9"
     },
     {
       "path": "phase_mapping.json",

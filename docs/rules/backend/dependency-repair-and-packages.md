@@ -162,7 +162,17 @@
 - **取消的接受时刻**（D11）：拿锁前 / 建 venv 与 pip 期间（kill）/ 验证期间（含 `worker_self_test` 之后、切 active 之前
   再看一次——接受了的取消不能照常提交，Codex #461 P2；用户 venv 原地那条路同样，包已装进去就如实报 cancelled + 体检）→
   `cancelled`、这一代 `incomplete`；**提交点（切 active）之后拒绝**（`cancel_status` → `committed`，`progress()` 带
-  `committed: true`）。
+  `committed: true`）。**取消句柄在 `prepare_async` 起线程之前登记**（`_register_cancel`，`prepare()` 复用同一个）：
+  `/prepare` 一回 202 用户就能取消，哪怕线程还在重算事实、还没拿锁——句柄不在表里 `cancel_status` 只能回 `not_found`、
+  安装照常改环境（Codex #470 P1）；`prepare()` 拿锁之前看一次事件，不论怎么退出都在 finally 里清句柄；`_run_pip` 起 pip
+  之前先看事件，已取消的不起。
+- **取消端点只取消当前项目的计划**：`plan_id` 随 SSE `engine.dependency` 广播给每个订阅者，别的项目的标签页拿到 id 也
+  不能取消这里的安装——计划还在而 `plan.project != root` → 409 `dependency_not_allowed`（与 `/prepare` 同一道判据，
+  Codex #470 P2）。
+- **`script` 参数只经 `projectenv.contained_path` 钉回项目内**（`app._project_script`：先 realpath 再按前缀判——`..`
+  回溯、软链接指到项目外、项目外绝对路径都在那一步现形，项目内绝对路径照旧允许），之后交给文件系统的只有它回的那一个
+  路径，不拿原串重拼（CodeQL #470 三条 py/path-injection 的处置；`contained_path` 是 projectenv 里唯一允许把用户派生路径
+  交给文件系统的入口）。
 - 失败码新增三条：`dependency_consistency_failed`（pip check）、`dependency_hash_mismatch`（require-hashes 不符，
   `classify_pip_failure` 排在冲突之前）、`dependency_plan_blocked`。
 - 看护：`tests/test_dependency_transaction.py`（argv / 文件 / 集合钉字节；代的登记 / 切换 / 旧布局 / 退役；**真**事务：
