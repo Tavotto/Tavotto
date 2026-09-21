@@ -564,6 +564,49 @@ class TestCleanMachine:
         assert managedenv.python_of(project)
         assert managedenv.state(project)["installed"] == []  # 账上一笔都没有：只有 adapter
 
+    def test_inputs_changed_during_the_download_are_stale_and_install_nothing(
+        self, tmp_path, house, no_interpreter, fake
+    ):
+        """用户确认的是按**当时**的脚本与声明算的计划；下载私有 Python 期间 requirements 多了一行、脚本多了一个
+        import → 重算前先比输入指纹 → `repair_plan_stale`：没登记任何一代、账上一笔没有、pip 一次没跑
+        （Codex #475 P1）。私有 Python 本身留着（那是缓存，不是安装）；重新规划会把新输入说出口。"""
+        server, src, _ = fake
+        project = _project(tmp_path)
+        build_wheel(house, name=BETA[0], import_name=BETA[1], version="1.0")
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.replan is True and set(plan.requirements) == {ALPHA[0]}
+        assert plan.inputs_digest
+        server.mode = "hold"
+        server.gate.clear()
+        events: list[dict] = []
+        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        deadline = time.time() + 30
+        while not server.requests and time.time() < deadline:
+            time.sleep(0.05)
+        assert server.requests, "下载没开始"
+        # 下载被扣住的这段时间里，用户改了输入
+        (project / "requirements.txt").write_text(f"{ALPHA[0]}\n{BETA[0]}\n", encoding="utf-8")
+        (project / "figure.py").write_text(
+            (project / "figure.py").read_text(encoding="utf-8") + f"import {BETA[1]}\n",
+            encoding="utf-8",
+        )
+        server.gate.set()
+        rec = wait_for(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_FAILED, rec
+        assert rec["code"] == deprepair.ERROR_PLAN_STALE
+        states = [e["state"] for e in events]
+        assert deprepair.STATE_DOWNLOADING_PYTHON in states
+        assert (
+            deprepair.STATE_CREATING_ENV not in states and deprepair.STATE_INSTALLING not in states
+        )
+        assert managedenv.generations(project) == {}
+        assert managedenv.python_of(project) is None
+        assert privatepython.python_of(src)  # 供应好的 runtime 留着：下一次不用再下
+        # 重新规划：新输入进了计划
+        again = deprepair.create_joint_plan(project, "figure.py")
+        assert set(again.requirements) == {ALPHA[0], BETA[0]}
+        assert again.inputs_digest != plan.inputs_digest
+
     def test_without_the_offer_a_clean_machine_still_reports_no_worker_python(
         self, tmp_path, house, no_interpreter, fake, monkeypatch
     ):
