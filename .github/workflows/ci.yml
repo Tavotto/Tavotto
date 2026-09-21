@@ -395,6 +395,45 @@ jobs:
       - name: 不变式探针（人看的那份）
         if: always()
         run: python tests/support/engine_invariant_probe.py --pretty
+      # 统一实施包 U01（ADR 0053 §五）：首开 / 输出 harness 的最小落点。**先**按台账生成
+      # 本次的预期实例集合（绑定 GITHUB_SHA / 平台 / 应用 Python / runtime 锁 / fixture），
+      # **再**跑 enforced 的用例（经真实 `python -m tavotto` + 会话认证，结果记录写进
+      # TAVOTTO_FOUNDATION_RESULTS），**最后**校验「预期集合 == 已提交有效结果集合」。
+      # 三步的顺序是判据的一部分：预期集合在执行前产生，用例 skip 了结果目录就是空的，
+      # 校验步据此红——skip 不是绿；空集合不是通过。校验步 `if: always()` 只为了红时
+      # 也留下报告；它自己的退出码就是结论，不靠上一步。
+      - name: 首开 / 输出 harness（U01：预期实例集合 → enforced 用例经真实 HTTP 入口）
+        env:
+          TAVOTTO_FOUNDATION_RESULTS: ${{ runner.temp }}/foundation/results
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/foundation"
+          python tests/support/foundation_harness.py expected --lane pr \
+            --out "$RUNNER_TEMP/foundation/expected.json"
+          python -m pytest -q -rs \
+            tests/test_foundation_harness.py \
+            tests/test_execution_receipt.py \
+            tests/test_preparation_api.py \
+            tests/test_worker_runtime_report.py
+      - name: 首开 / 输出 harness 合同校验（预期实例集合 == 已提交有效结果集合）
+        if: always()
+        run: |
+          set -euo pipefail
+          python tests/support/foundation_harness.py validate \
+            --expected "$RUNNER_TEMP/foundation/expected.json" \
+            --results "$RUNNER_TEMP/foundation/results" \
+            --report-dir "$RUNNER_TEMP/foundation/report"
+      - name: 首开 / 输出 harness 证据（JSON + JUnit + 摘要，只作证据不作判定输入）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundation-harness-pr-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/foundation/expected.json
+            ${{ runner.temp }}/foundation/results
+            ${{ runner.temp }}/foundation/report
+          retention-days: 7
+          if-no-files-found: warn
 
   # 跨平台是产品承诺，就得跨平台跑——但**在哪个提交上跑**分了工：
   # backend-fast 守 Python 下界、主开发版本与上界，每个 PR push 都回来；

@@ -1,0 +1,81 @@
+{
+ "instance_id": "U01-S1@e0c7651c456083db",
+ "case_id": "U01-S1",
+ "binding": {
+  "source_sha": "7b68e2319b8b2efb495df8faa825d7f28e1e2170",
+  "artifact": {
+   "kind": "source_tree",
+   "identity": "7b68e2319b8b2efb495df8faa825d7f28e1e2170"
+  },
+  "platform": "darwin-arm64",
+  "app_python": "3.13.11",
+  "runtime_lock_sha256": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c",
+  "fixture": "tests/fixtures/foundation/single_file_csv",
+  "fixture_sha256": "3b3772e1e0196bd91cc616c20a76f18343a1236433f2c5c41a92cdc08965c538",
+  "entry": "http",
+  "capability_version": "u01"
+ },
+ "product_outcome": "automatic",
+ "test_verdict": "pass",
+ "evidence": [
+  "native reference: figure.pdf 7257 bytes",
+  "auth: unauthenticated /api/panels → 401; credentials adopted from data_dir",
+  "receipt sha256:78ffcdd3a8fce9a61f597b6daaa14a9a360d0d17e442d1b6ae62157452510cc8 generation=1 python_source=system",
+  "render: 18 elements; ylim [2.275, 7.225] == truth ± 5% margin",
+  "export: u01-s1.pdf 9826 B (text layer has the override), u01-s1.png 480x360"
+ ],
+ "observed": {
+  "backend": "pymupdf",
+  "chosen_python_source": "system",
+  "receipt": {
+   "receipt_id": "sha256:78ffcdd3a8fce9a61f597b6daaa14a9a360d0d17e442d1b6ae62157452510cc8",
+   "public_identity": "sha256:790bd3af314e817dd53c23c7ec37009485db88286ecd66790a8bc9d18e9296d9",
+   "completeness": "complete",
+   "control_plane": "python_pool",
+   "python_source": "system",
+   "generation": 1,
+   "runtime": {
+    "machine": "arm64",
+    "packages": {
+     "matplotlib": "3.10.8",
+     "numpy": "2.4.3",
+     "pandas": "3.0.1",
+     "pillow": "12.1.0",
+     "scipy": "1.17.1"
+    },
+    "platform": "darwin",
+    "python_implementation": "CPython",
+    "python_version": "3.13.11",
+    "runtime_report_version": 1
+   }
+  },
+  "plotted_ylim": [
+   2.275,
+   7.225
+  ],
+  "artifacts": [
+   {
+    "source_id": "runtime:figure.py#figure",
+    "origin": "execution",
+    "kind": "pdf",
+    "bytes_sha256": "0c3274e31107555168c60df6a963fa83bbf3945da1eac6df47dc450a343af97c",
+    "size_bytes": 9826,
+    "generation": 1
+   },
+   {
+    "source_id": "runtime:figure.py#figure",
+    "origin": "execution",
+    "kind": "png",
+    "bytes_sha256": "32b5a4a3a0bc3aaa984237450cc7b306eda6fee3b01b873fb7e6556fc5dd607c",
+    "size_bytes": 16016,
+    "generation": 1
+   }
+  ],
+  "timings_s": {
+   "app_ready_s": 0.52,
+   "prepare_s": 14.63,
+   "render_s": 0.02,
+   "export_s": 0.21
+  }
+ }
+}

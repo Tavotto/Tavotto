@@ -149,6 +149,8 @@ USER_VISIBLE_CODES = {
     "interpreter_not_found": {"path"},
     # safe 档工作目录模式（ADR 0047）
     "workdir_mode_invalid": {"mode"},
+    # 异步准备（统一实施包 U01，ADR 0053）：plan_id 不存在或属于别的项目
+    "preparation_not_found": {"id"},
     "interpreter_no_matplotlib": {"path"},
     "invalid_consent": set(),
     "name_missing": set(),

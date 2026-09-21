@@ -1,0 +1,467 @@
+"""ProjectPreparation 第一版：**计划**与**观测**分开的异步准备接口（统一实施包 U01，ADR 0053）。
+
+04_ARCHITECTURE §1 里 ProjectPreparation 站在四类入口与 ExecutionSpec 之间：环境证据 +
+完整依赖意图 + 执行上下文 + 授权。U00 清点（`U00_CAPABILITY_INVENTORY.md` §2）的结论是
+这一层今天**不存在**——四样东西分别散在 `pool.resolve_worker_python` / `depresolve` /
+`workdir` / 前端确认文案里。本模块把它们**收拢成一份可读的计划**，再把「按这份计划
+真的把 runtime 起起来」做成一个可查询、可取消的后台任务。
+
+## 两个结构，两个问题
+
+* `PreparationPlan`（不可变）——「打算怎么跑」：项目 / 入口 / 脚本、原选择与候选理由
+  （解释器来源标签 + `projectenv.state()` 的 automatic / trigger / module）、Python 要求
+  （今天没有任何地方声明，如实写 `declared: False`）、DependencyIntent 列表与冲突、
+  LaunchContext、grant、预算。**它不是执行证明。**
+* `PreparationResult`（可变、只由执行线程写）——「实际发生了什么」：状态、现有 runtime
+  的事实、这次是不是新起的会话、ExecutionReceipt、错误、取消时刻。
+
+## 状态（闭集）
+
+    pending ─▶ running ─▶ ready
+                  │  ├───▶ error
+                  │  └───▶ cancelled
+                  └── static_source_available（没有脚本可跑 / 只要静态源：不起线程）
+
+「现有 runtime 正在运行」不是一个状态，是 `existing_runtime` 这条**事实**：计划起步时
+池里已经有这个脚本的活会话就记下它的 generation 与 built。已经 build 过、且解释器决策
+没变的，**直接用它记下的 build 响应装配回执，runner 一次都不调**（FO-031：二开不重复
+准备——不是「再问一次 worker」，是一个字节都不发）；正在冷启动的等它（`pool.acquire()`
+拿到同一条会话，worker 侧对已 build 的会话早返回，脚本不重跑）。
+
+## 取消的边界（D11 / FO-009）
+
+`cancel()` 只对**这个计划拥有的**东西负责：还没起会话时取消 = 一行用户代码都不跑；
+会话是本计划新起的（`created_runtime`，**由 `pool.build_owned()` 在池锁里给出**，不是从
+起步时的快照推断——两份计划同时起步都看到「没有」，池只建一条，主人只能是一个）且
+还在 build → `pool.force_cancel` 杀掉它；会话本来就在（别的消费者的）→ **不杀**，只是
+本计划不再等它、状态记 cancelled。native 会话不在池里，这里永远碰不到它。取消不承诺
+撤销已发生的外部副作用（脚本可能已经写了文件），响应里 `note` 如实说。
+
+## 不做的事
+
+* 不复制旧 request 默认值、不解析 `tavotto run` 命令、不另起错误枚举（错误原样是
+  `pool.WorkerError` 的 code / message / module）；
+* 不新造 trust 系统：grant 只是 `workdir.grant_for()` 那一条记录；
+* 不替产品选环境、不装包、不改 cwd——计划**读**的是产品自己的决定。
+
+纯标准库 + 兄弟模块（Flask 父进程 import 链上）。项目绑定由调用方（app.py）用
+`bound_project` 注入：engine 层不 import app。
+"""
+
+from __future__ import annotations
+
+import contextlib
+import dataclasses
+import logging
+import threading
+import time
+import uuid
+from pathlib import Path
+
+from . import depresolve, execspec, figcapture, pool, projectenv, receipt, workdir
+
+LOG = logging.getLogger("tavotto.preparation")
+
+#: 计划形态的版本。加可选字段不升；改语义 / 删字段才升。
+PLAN_VERSION = 1
+
+STATUS_PENDING = "pending"
+STATUS_RUNNING = "running"
+STATUS_READY = "ready"
+STATUS_ERROR = "error"
+STATUS_CANCELLED = "cancelled"
+STATUS_STATIC = "static_source_available"
+STATUSES = (
+    STATUS_PENDING,
+    STATUS_RUNNING,
+    STATUS_READY,
+    STATUS_ERROR,
+    STATUS_CANCELLED,
+    STATUS_STATIC,
+)
+TERMINAL = frozenset({STATUS_READY, STATUS_ERROR, STATUS_CANCELLED, STATUS_STATIC})
+
+#: 作业保留多久（秒）——与导出作业同一口径：界面拿 plan_id 补拉要在窗口内。
+_TTL_S = 15 * 60
+
+
+# ---------------------------------------------------------------- 计划
+
+
+@dataclasses.dataclass(frozen=True)
+class PreparationPlan:
+    """打算怎么跑（不可变）。机器路径只有 `project_root` 与 `interpreter` 两项，都**不进**
+    `to_payload()`——HTTP / MCP 投影是公开身份（ADR 0053 §二），安装目录 / 用户目录 / venv
+    的绝对路径只留在私有键与本机日志里。"""
+
+    plan_id: str
+    project_id: str
+    project_root: str
+    interpreter: str  # 解释器绝对路径（机器相关；只给执行线程与诊断用）
+    asset_id: str
+    stem: str
+    script: str | None  # 项目相对 POSIX 路径；没有脚本（纯静态素材）时 None
+    entry: str | None
+    static_source: dict | None  # 磁盘原件的 SourceArtifact payload（没有就 None）
+    environment: dict  # 原选择与候选理由（见 `plan_for`）
+    python_requirement: dict  # {"declared": False}——今天没有任何地方声明脚本要哪个 minor
+    dependency_intents: tuple[dict, ...]
+    dependency_conflicts: tuple[dict, ...]
+    launch_context: dict | None  # 没有脚本时 None
+    grant: dict
+    budget: dict
+    created_at: float
+
+    def to_payload(self) -> dict:
+        return {
+            "plan_version": PLAN_VERSION,
+            "plan_id": self.plan_id,
+            "project_id": self.project_id,
+            "asset_id": self.asset_id,
+            "stem": self.stem,
+            "script": self.script,
+            "entry": self.entry,
+            "static_source": dict(self.static_source) if self.static_source else None,
+            "environment": dict(self.environment),
+            "python_requirement": dict(self.python_requirement),
+            "dependency_intents": [dict(d) for d in self.dependency_intents],
+            "dependency_conflicts": [dict(d) for d in self.dependency_conflicts],
+            "launch_context": dict(self.launch_context) if self.launch_context else None,
+            "grant": dict(self.grant),
+            "budget": dict(self.budget),
+            "created_at": self.created_at,
+        }
+
+
+def plan_for(
+    *,
+    project_id: str,
+    project_root: str,
+    asset_id: str,
+    stem: str,
+    script: str | None,
+    entry: str | None,
+    original_artifact: str | None,
+    original_path: str | None = None,
+) -> PreparationPlan:
+    """按产品**自己的**决定拼一份计划——这里不做任何选择，只读。
+
+    `original_artifact` 是素材的项目相对身份（进计划）；`original_path` 是**调用方已经
+    校验过**（`app.safe_resolve`：在项目根内、是文件）的绝对路径，读字节算 hash 只用它。
+    只给了前者时不读盘：这里不重复做路径校验，也不拿原串重拼。
+
+    环境证据来自 `pool.resolve_worker_python()`（项目级决策的唯一出处）与
+    `projectenv.state()`；解析不到解释器时 `environment.error` 带上 code，计划照样
+    成立（执行阶段会以同一个错误收场，那时才是 `error` 状态）。
+    """
+    root = str(project_root)
+    try:
+        python, source = pool.resolve_worker_python(root)
+        env_error = None
+    except pool.WorkerError as exc:
+        python, source, env_error = "", "", {"code": exc.code, "message": str(exc)}
+    state = projectenv.state(root)
+    # 公开身份：来源标签 + **项目相对**路径（项目外的解释器——bundled / system / 用户在别处
+    # 挑的——一律 None：那是安装目录或用户目录，不进投影）+ 项目记住的版本事实。
+    environment = {
+        "python": _project_relative(root, python) if python else None,
+        "source": source,
+        "source_label": pool.SOURCE_LABELS.get(source, source),
+        "automatic": bool(state.get("automatic", False)),
+        "trigger": state.get("trigger", ""),
+        "module": state.get("module", ""),
+        "python_version": state.get("python_version", ""),
+        "matplotlib_version": state.get("matplotlib_version", ""),
+        "error": env_error,
+    }
+    grant = workdir.grant_for(root)
+    launch_context = None
+    if script is not None and entry is not None and python:
+        spec = execspec.safe_spec(
+            script,
+            root,
+            entry,
+            interpreter=python,
+            sandbox="",
+            cwd_mode=workdir.mode_for(root),
+        )
+        launch_context = execspec.launch_context(spec, grant=grant)
+    intents = depresolve.declared_intents(root, script) if script else []
+    static = None
+    if original_artifact and original_path:
+        try:
+            if Path(original_path).stat().st_size > 0:
+                static = figcapture.source_artifact_from_file(
+                    original_path,
+                    source_id=original_artifact.replace("\\", "/"),
+                    origin=figcapture.ORIGIN_STATIC,
+                ).to_payload()
+        except (OSError, ValueError):
+            static = None
+    return PreparationPlan(
+        plan_id=f"prep-{uuid.uuid4().hex}",
+        project_id=project_id,
+        project_root=root,
+        interpreter=python,
+        asset_id=asset_id,
+        stem=stem,
+        script=script,
+        entry=entry,
+        static_source=static,
+        environment=environment,
+        python_requirement={"declared": False},
+        dependency_intents=tuple(i.to_payload() for i in intents),
+        dependency_conflicts=tuple(depresolve.conflicts(intents)),
+        launch_context=launch_context,
+        grant=grant,
+        budget={
+            "build_idle_timeout_s": pool.BUILD_IDLE_TIMEOUT,
+            "build_hard_timeout_s": pool.BUILD_HARD_TIMEOUT,
+        },
+        created_at=time.time(),
+    )
+
+
+def _project_relative(root: str, path: str) -> str | None:
+    """项目内的路径 → 项目相对 POSIX；项目外 → None（**不回绝对路径**，它不进公开投影）。"""
+    try:
+        return (
+            Path(path)
+            .resolve(strict=False)
+            .relative_to(Path(root).resolve(strict=False))
+            .as_posix()
+        )
+    except (ValueError, OSError):
+        return None
+
+
+#: 错误分支里 `pool.try_project_env` 的结构化结果进公开投影时只留这几个键：其余
+#: （`python` / `candidates` / `system` 体检表…）都带着解释器的绝对路径。
+_PUBLIC_PROJECT_ENV_KEYS = ("ok", "code", "module", "reason")
+
+
+def _public_project_env(outcome: dict) -> dict:
+    return {k: outcome[k] for k in _PUBLIC_PROJECT_ENV_KEYS if k in outcome}
+
+
+# ---------------------------------------------------------------- 观测
+
+
+@dataclasses.dataclass
+class PreparationResult:
+    """实际发生了什么（只由执行线程与 `cancel()` 写；读者拿的是快照）。
+
+    终局字段（`receipt` / `error` / `finished_at`）**先于**终局 `status` 写——与
+    `exportjob` 同一条纪律（issue #381）：另一线程读到 `ready` 时回执一定已经在。
+    """
+
+    status: str = STATUS_PENDING
+    existing_runtime: dict | None = None  # 起步时池里那条会话的事实
+    created_runtime: bool = False  # 本计划新起的会话
+    receipt: receipt.ExecutionReceipt | None = None
+    error: dict | None = None
+    started_at: float | None = None
+    finished_at: float | None = None
+    cancel_requested_at: float | None = None
+    note: str = ""
+
+    def to_payload(self) -> dict:
+        return {
+            "status": self.status,
+            "existing_runtime": dict(self.existing_runtime) if self.existing_runtime else None,
+            "created_runtime": self.created_runtime,
+            "receipt": self.receipt.to_payload() if self.receipt is not None else None,
+            "error": dict(self.error) if self.error else None,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "cancel_requested_at": self.cancel_requested_at,
+            "note": self.note,
+        }
+
+
+@dataclasses.dataclass
+class _Entry:
+    plan: PreparationPlan
+    result: PreparationResult
+    cancel: threading.Event = dataclasses.field(default_factory=threading.Event)
+    lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
+    thread: threading.Thread | None = None
+
+
+class PreparationService:
+    """计划登记表 + 执行线程。进程内一份（`SERVICE`），测试可另起实例。"""
+
+    def __init__(self) -> None:
+        self._entries: dict[str, _Entry] = {}
+        self._lock = threading.Lock()
+
+    # ---- 登记 ----
+    def register(self, plan: PreparationPlan) -> PreparationResult:
+        """登记一份计划。没有脚本可跑的直接落 `static_source_available`（不起线程）。"""
+        result = PreparationResult()
+        if plan.script is None:
+            result.note = (
+                "这张图没有脚本，只有静态原件"
+                if plan.static_source
+                else "这张图没有脚本，也没有可读的静态原件"
+            )
+            result.finished_at = time.time()
+            result.status = STATUS_STATIC
+        with self._lock:
+            self._sweep()
+            self._entries[plan.plan_id] = _Entry(plan=plan, result=result)
+        return result
+
+    def start(self, plan_id: str, *, runner, bind=None) -> None:
+        """起执行线程。`runner(plan) -> (worker, build_resp, created)`（app 注入
+        `pool.build_owned`），`bind()` 是项目绑定上下文（app 注入 `bound_project(ctx)`）。"""
+        entry = self._entry(plan_id)
+        if entry is None:
+            raise KeyError(plan_id)
+        if entry.result.status != STATUS_PENDING:
+            return
+
+        def _run() -> None:
+            with bind() if bind is not None else contextlib.nullcontext():
+                self._execute(entry, runner)
+
+        entry.thread = threading.Thread(
+            target=_run, name=f"tavotto-prep-{plan_id[-8:]}", daemon=True
+        )
+        entry.thread.start()
+
+    def _execute(self, entry: _Entry, runner) -> None:
+        plan, result = entry.plan, entry.result
+        result.started_at = time.time()
+        existing = pool.peek(plan.script, plan.project_root)
+        if existing is not None:
+            result.existing_runtime = {
+                "generation": int(existing.generation),
+                "built": bool(existing.built),
+                "control_plane": pool.control_plane_of(existing),
+            }
+        # 取消接受时刻 ①：还没碰 pool——一行用户代码都没跑，直接收工。
+        if entry.cancel.is_set():
+            self._finish(entry, STATUS_CANCELLED, note="在起会话之前取消，没有执行任何脚本")
+            return
+        result.status = STATUS_RUNNING
+        reusable = self._reusable(existing, plan)
+        if reusable is not None:
+            # 已 build 过的会话：回执从它记下的 build 响应装配，不发任何请求、不碰脚本。
+            result.created_runtime = False
+            result.receipt = receipt.from_worker(
+                existing, reusable, control_plane=pool.control_plane_of(existing), grant=plan.grant
+            )
+            self._finish(entry, STATUS_READY, note="复用现有 runtime，没有重新执行脚本")
+            return
+        try:
+            worker, resp, created = runner(plan)
+        except pool.WorkerError as exc:
+            error = {"code": getattr(exc, "code", "") or "worker_error", "message": str(exc)}
+            module = getattr(exc, "module", "")
+            if module:
+                error["module"] = module
+            project_env = getattr(exc, "project_env", None)
+            if isinstance(project_env, dict):
+                error["project_env"] = _public_project_env(project_env)
+            result.error = error
+            self._finish(entry, STATUS_ERROR)
+            return
+        except Exception as exc:  # noqa: BLE001 — 线程里不许静默死掉，如实记
+            result.error = {"code": "internal_error", "message": f"{type(exc).__name__}: {exc}"}
+            self._finish(entry, STATUS_ERROR)
+            return
+        result.created_runtime = bool(created)
+        rcpt = receipt.from_worker(
+            worker, resp, control_plane=pool.control_plane_of(worker), grant=plan.grant
+        )
+        result.receipt = rcpt
+        # 取消接受时刻 ②：build 期间来了取消。本计划新起的会话才由我们收掉；
+        # 本来就在的（别的消费者的）一根手指都不碰（FO-009）。
+        if entry.cancel.is_set():
+            if result.created_runtime:
+                pool.force_cancel(plan.script, plan.project_root)
+                note = "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
+            else:
+                note = "build 期间取消：会话属于别的消费者，未关闭；本计划不再等它"
+            self._finish(entry, STATUS_CANCELLED, note=note)
+            return
+        self._finish(entry, STATUS_READY)
+
+    @staticmethod
+    def _reusable(existing, plan: PreparationPlan) -> dict | None:
+        """池里那条会话能不能直接当「现有 runtime」用：活着、build 过、**且**它的解释器
+        仍是这个项目此刻的决策（用户换了环境的话它是旧世界的，`pool.get()` 会重建）。
+        能用就回它记下的 build 响应形态（descriptors + runtime），否则 None。"""
+        if existing is None or not getattr(existing, "built", False):
+            return None
+        try:
+            wanted = pool.resolve_worker_python(plan.project_root)[0]
+        except pool.WorkerError:
+            return None
+        if not pool.same_python(getattr(existing, "python", None), wanted):
+            return None
+        return {
+            "descriptors": list(getattr(existing, "last_build_descriptors", None) or []),
+            "runtime": getattr(existing, "last_build_runtime", None),
+        }
+
+    def _finish(self, entry: _Entry, status: str, *, note: str = "") -> None:
+        with entry.lock:
+            entry.result.finished_at = time.time()
+            if note:
+                entry.result.note = note
+            entry.result.status = status  # 终局 status 最后写
+
+    # ---- 查询 / 取消 ----
+    def _entry(self, plan_id: str) -> _Entry | None:
+        with self._lock:
+            return self._entries.get(plan_id)
+
+    def get(
+        self, plan_id: str, project_id: str
+    ) -> tuple[PreparationPlan, PreparationResult] | None:
+        """按项目取。**项目对不上就是没有**（FO-008：两个项目同名脚本的异步状态不串用）。"""
+        entry = self._entry(plan_id)
+        if entry is None or entry.plan.project_id != project_id:
+            return None
+        return entry.plan, entry.result
+
+    def cancel(self, plan_id: str, project_id: str) -> dict:
+        """请求取消。回「接受了没有」，不是「已经取消了」（提交点见模块头）。"""
+        entry = self._entry(plan_id)
+        if entry is None or entry.plan.project_id != project_id:
+            return {"accepted": False, "reason": "not_found"}
+        with entry.lock:
+            status = entry.result.status
+            if status in TERMINAL:
+                return {"accepted": False, "reason": status}
+            entry.result.cancel_requested_at = time.time()
+            entry.cancel.set()
+        # pending 且线程还没起：当场收工（起了线程由线程自己在接受时刻 ① 收）
+        if status == STATUS_PENDING and entry.thread is None:
+            self._finish(entry, STATUS_CANCELLED, note="在起会话之前取消，没有执行任何脚本")
+        return {"accepted": True, "reason": ""}
+
+    def wait(self, plan_id: str, timeout: float | None = None) -> bool:
+        """测试 / CLI 用：等执行线程结束。"""
+        entry = self._entry(plan_id)
+        if entry is None or entry.thread is None:
+            return entry is not None
+        entry.thread.join(timeout)
+        return not entry.thread.is_alive()
+
+    def _sweep(self) -> None:
+        cutoff = time.time() - _TTL_S
+        for pid, e in list(self._entries.items()):
+            fin = e.result.finished_at
+            if fin is not None and fin < cutoff:
+                del self._entries[pid]
+
+    def reset_for_tests(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+#: 进程内唯一登记表（app.py 用它）。
+SERVICE = PreparationService()

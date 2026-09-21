@@ -21,6 +21,7 @@ Tavotto 自己起的 safe worker（ADR 0021 §1 的所有权约束一个字没�
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from . import config, execspec
@@ -45,17 +46,55 @@ def mode_for(figures_dir: str | Path) -> str:
     return mode if mode in MODES else MODE_SANDBOX
 
 
+#: 授权记录的键（ADR 0053 / FO-047）。开到 `project` 那一下就是「真实 cwd 写入
+#: 许可」的授予动作：确认文案在前端，**记账在这里**——之前后端不记「谁授权过」，
+#: PreparationPlan 的 grant 字段无从填起。只记时刻不记人：本机单用户，没有第二个
+#: 主体可区分；记一个 `user` 字面量是假信息。
+GRANT_KEY = "granted_at"
+
+
 def set_mode(figures_dir: str | Path, mode: str) -> dict:
-    """记住这个项目的模式（项目级，不写全局）。默认模式 = 清掉这个键。"""
+    """记住这个项目的模式（项目级，不写全局）。默认模式 = 清掉这个键。
+
+    切到 `project` 时随模式记下授予时刻（`granted_at`，epoch 秒）；已经是
+    `project` 的再设一次**不刷新**时刻——授权是那一次点头，不是每次保存。
+    切回 `sandbox` = 撤销：键整个清掉，授权记录随之消失。
+    """
     if mode not in MODES:
         raise ValueError(f"workdir mode 非法: {mode!r}（可选 {MODES}）")
     root = str(Path(figures_dir))
-    config.set_project_settings(
-        root, {SETTINGS_KEY: None if mode == MODE_SANDBOX else {"mode": mode}}
-    )
+    if mode == MODE_SANDBOX:
+        stored = None
+    else:
+        stored = {"mode": mode}
+        previous = (config.project_settings(root) or {}).get(SETTINGS_KEY)
+        if isinstance(previous, dict) and previous.get("mode") == mode:
+            granted = previous.get(GRANT_KEY)
+            stored[GRANT_KEY] = granted if isinstance(granted, (int, float)) else time.time()
+        else:
+            stored[GRANT_KEY] = time.time()
+    config.set_project_settings(root, {SETTINGS_KEY: stored})
     return state(root)
+
+
+def grant_for(figures_dir: str | Path) -> dict:
+    """这个项目「在脚本目录里运行」的授权记录——LaunchContext 的 `grant`。
+
+    `granted` 只在模式真的是 `project` 时为 True；`granted_at` 是那一次授予的
+    epoch 秒（老设置里没记过的回 `None`：**「授予过但没记时刻」与「没授予」是
+    两个答案**，不许压成一个）。
+    """
+    stored = (config.project_settings(str(Path(figures_dir))) or {}).get(SETTINGS_KEY)
+    granted = isinstance(stored, dict) and stored.get("mode") == MODE_PROJECT
+    at = stored.get(GRANT_KEY) if granted else None
+    return {
+        "cwd_write": {
+            "granted": bool(granted),
+            "granted_at": at if isinstance(at, (int, float)) else None,
+        }
+    }
 
 
 def state(figures_dir: str | Path) -> dict:
     """给环境状态 API 与诊断包：只读设置，不起任何子进程。"""
-    return {"mode": mode_for(figures_dir), "modes": list(MODES)}
+    return {"mode": mode_for(figures_dir), "modes": list(MODES), "grant": grant_for(figures_dir)}

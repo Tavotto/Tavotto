@@ -434,6 +434,14 @@ class NativeSession:
         return self.descriptors
 
     @property
+    def last_build_runtime(self) -> dict | None:
+        """与 `pool.EngineWorker.last_build_runtime` 同名同义（ADR 0053）：bridge 的
+        build 响应里 `runtime` 那一段——用户自己那个解释器的 prefix / cwd 自报。
+        存储仍只有 `last_build` 一份，这里是只读投影。"""
+        rt = (self.last_build or {}).get("runtime") if isinstance(self.last_build, dict) else None
+        return dict(rt) if isinstance(rt, dict) else None
+
+    @property
     def export_dir(self) -> Path:
         """导出临时件的落点（画布导出取 `export_dir / f"{stem}.pdf"`）。
 

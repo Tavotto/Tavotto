@@ -328,6 +328,93 @@ class ExportRequest:
         }
 
 
+# ------------------------------ RenderPlan 引用 ------------------------------
+#: RenderPlan 引用形态的版本（统一实施包 U01，ADR 0053）。加可选字段不升。
+RENDER_PLAN_VERSION = 1
+
+#: 进 `plan_identity` 的请求字段——**渲染语义**那一部分。`filename` / `overwrite` /
+#: `include_report` / `document_*` 是交付与记账，不改变画出来的像素，所以不在列。
+_PLAN_IDENTITY_FIELDS = ("scope", "formats", "ppi", "background")
+
+
+def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
+    """RenderPlan **引用**：规范化的 ExportRequest + 资源引用 + 公开身份。
+
+    U01 只做引用与身份，不做渲染（04 §2：无文件扫描 / 包安装 / 任意脚本）。
+    `resources` 是 `figcapture.SourceArtifact.to_payload()` 的列表——每个面板
+    的源图产物；这里**只引用**它们的语义身份与字节 hash，不打开文件。
+
+    `plan_identity` 由请求的渲染语义 + 每个资源的语义坐标（`source_id` / `origin` /
+    `kind` / 回执的**公开**身份 `receipt_identity` / `patch_hash`）派生；`receipt_id`
+    （由私有失效键 + generation 派生）只作实例元数据留在 `resources` 里、**不进**身份
+    ——否则同一语义在另一台机器或下一代会话上就是另一个「公开」身份（Codex #451 P2）。
+    资源的字节 hash 单列在 `input_bytes` 里（04 §3：最终文件 hash 是另一个字段，
+    不回写进身份形成自引用）。
+    """
+    import hashlib
+    import json
+
+    if not isinstance(resources, list) or not all(isinstance(r, dict) for r in resources):
+        raise ValueError("resources 必须是 SourceArtifact payload 的列表")
+    refs = []
+    semantic_refs = []
+    for r in resources:
+        for key in ("source_id", "origin", "kind", "bytes_sha256"):
+            if not r.get(key):
+                raise ValueError(f"资源引用缺 {key}: {r!r}")
+        if r["origin"] == "execution" and not r.get("receipt_identity"):
+            raise ValueError(f"execution 资源必须带回执的公开身份 receipt_identity: {r!r}")
+        semantic = {
+            "source_id": r["source_id"],
+            "origin": r["origin"],
+            "kind": r["kind"],
+            "receipt_identity": r.get("receipt_identity"),
+            "patch_hash": r.get("patch_hash"),
+        }
+        semantic_refs.append(semantic)
+        refs.append(
+            {**semantic, "receipt_id": r.get("receipt_id"), "generation": r.get("generation")}
+        )
+    semantic = {k: getattr(req, k) for k in _PLAN_IDENTITY_FIELDS}
+    semantic["formats"] = list(req.formats)
+    if req.canvas is not None:
+        semantic["canvas"] = {
+            "page_w_mm": req.canvas.page_w_mm,
+            "page_h_mm": req.canvas.page_h_mm,
+            "objects": req.canvas.objects,
+        }
+    if req.original is not None:
+        semantic["original"] = {
+            "figure_id": req.original.figure_id,
+            "overrides": req.original.overrides,
+            "w_mm": req.original.w_mm,
+            "h_mm": req.original.h_mm,
+            "px_w": req.original.px_w,
+            "px_h": req.original.px_h,
+            "source_kind": req.original.source_kind,
+        }
+    canon = json.dumps(
+        {
+            "render_plan_version": RENDER_PLAN_VERSION,
+            "request": semantic,
+            "resources": semantic_refs,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return {
+        "render_plan_version": RENDER_PLAN_VERSION,
+        "plan_identity": "sha256:" + hashlib.sha256(canon.encode("utf-8")).hexdigest(),
+        "request": req.to_payload(),
+        "resources": refs,
+        "input_bytes": [
+            {"source_id": r["source_id"], "bytes_sha256": r["bytes_sha256"]} for r in resources
+        ],
+    }
+
+
 def _one_of(value: Any, allowed: tuple[str, ...], default: str, code: str) -> str:
     if value is None:
         return default

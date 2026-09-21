@@ -1759,6 +1759,7 @@ export default interface Resources {
       "package_schema_unsupported": "项目包里的文档既不是 schema 2 也不是 schema 3",
       "permission_denied": "无权限读取：{{path}}",
       "ppi_out_of_range": "分辨率 {{value}} 超出范围，应在 {{min}} 到 {{max}} 之间。",
+      "preparation_not_found": "没有这个准备任务（或它属于别的项目）：{{id}}",
       "probe_in_progress": "该脚本的一次运行正在进行：{{script}}",
       "profile_bad_data": "配置内容应为对象。",
       "profile_bad_format": "这不是 Tavotto 导出的配置文件",

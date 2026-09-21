@@ -204,6 +204,30 @@ _lock = threading.Lock()
 _EMPTY_PATCH_HASH = patchspec.patch_hash([])
 
 
+def _runtime_of(resp: dict) -> dict | None:
+    """build 响应里的 worker 自报（ADR 0053）。不是对象就当没报。"""
+    rt = resp.get("runtime") if isinstance(resp, dict) else None
+    return dict(rt) if isinstance(rt, dict) else None
+
+
+def peek(script_name: str, figures_dir: str | Path):
+    """池里**现在**有没有这个脚本的活会话——只读，不建、不复用判定、不淘汰。
+
+    `get()` 的副作用（重建 / LRU）在这里一个都不发生；回来的可能是没 build 的
+    会话（正在冷启动）。给准备接口回答「现有 runtime 正在运行」（ADR 0053）用：
+    它要的是事实，不是一条新会话。
+    """
+    key = (_norm_dir(figures_dir), script_name)
+    with _lock:
+        w = _workers.get(key)
+        return w if w is not None and w.alive() else None
+
+
+def control_plane_of(worker) -> str:
+    """这条会话实际走的控制面（回执的 `control_plane`）。"""
+    return "workerd" if isinstance(worker, WorkerdWorker) else "python_pool"
+
+
 def stem_patch_hash(worker, stem: str) -> str:
     """`worker` 上**这个 stem** 最后应用的那组 patches 的规范哈希。
 
@@ -851,6 +875,9 @@ class EngineWorker:
         #: RuntimeFigureAsset 的 cache 物化从这里取（app 层复制预览文件 +
         #: 描述符即可），**不必为拿描述符再跑一次脚本**。
         self.last_build_descriptors: list = []
+        #: 最近一次 build 响应里 worker 自报的运行时事实（`figsession.runtime_report`，
+        #: ADR 0053）；老 worker 没带就是 None——回执据此标 partial，不补不猜。
+        self.last_build_runtime: dict | None = None
         self.last_used = time.time()
         # 这一代从日志的哪个字节开始（append 模式，目录跨代复用）
         self._log_offset = _log_size(self.log_path)
@@ -1170,6 +1197,7 @@ class EngineWorker:
         resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
+        self.last_build_runtime = _runtime_of(resp)
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
@@ -1474,6 +1502,7 @@ class WorkerdWorker:
         self.lock = threading.Lock()
         self.built = False
         self.last_build_descriptors: list = []
+        self.last_build_runtime: dict | None = None
         self.last_used = time.time()
         self._dead = False
         self._client = client or workerd_client.client()
@@ -1493,6 +1522,10 @@ class WorkerdWorker:
             interpreter=python,
             sandbox=str(self.sandbox),
             env=(runtime.child_env(base={}) if self.python_source == SOURCE_BUNDLED else None),
+            # 与 `_spawn_spec()` 同一个出处：这份属性是 ExecutionReceipt 的
+            # LaunchContext 来源（ADR 0053），漏了 cwd_mode 就会在 project 模式下
+            # 把「脚本目录」报成「沙盒」——而真正 spawn 的 argv 早就带着 `--cwd`。
+            cwd_mode=workdir.mode_for(figures_dir),
         )
         self._session_id = ""
         self._open()
@@ -1651,6 +1684,7 @@ class WorkerdWorker:
         resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
+        self.last_build_runtime = _runtime_of(resp)
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
@@ -2030,6 +2064,16 @@ def safe_workers_using(python: str) -> int:
 
 def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
     """取（或重建）某脚本的 worker；崩溃的自动换新；超出 MAX_ALIVE 按 LRU 淘汰。"""
+    return acquire(script_name, figures_dir, entry)[0]
+
+
+def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorker, bool]:
+    """`get()` + 「这条会话是不是**这次调用**建的」——所有权在 `_lock` 里一并给出。
+
+    调用方要判「谁拥有这条会话」时不许拿 `peek()` 的快照去猜：两个调用方都在建
+    会话之前看到「没有」，都会以为自己是主人，而池里只建了一条（Codex #451 P1）。
+    `created` 只有一次调用拿到 True。
+    """
     key = (_norm_dir(figures_dir), script_name)
     created = False
     # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
@@ -2071,7 +2115,7 @@ def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
                     threading.Thread(target=victim.shutdown, daemon=True).start()
     if created:  # 出锁再清：prune 要遍历磁盘，不能占着 _lock
         _schedule_prune()
-    return w
+    return w, created
 
 
 #: 自动切换被重试上限挡下时的 code（不是失败，是「这一轮已经切过了」）。
@@ -2163,10 +2207,40 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
     fallback 没成功时，把结构化结果挂在异常的 `project_env` 上再抛出去，
     上层据此渲染恢复引导（找不到 venv / venv 也缺这个包 / 没有 matplotlib /
     Python 版本不支持），而不是干甩一段 traceback。
+
+    会话经 **`get()`** 取（不是 `acquire()`）：老调用方与用例只认这一个名字来
+    替换会话（monkeypatch `pool.get`），改走别的入口它们会静默拿到真池。
     """
-    worker = get(script_name, figures_dir, entry)
+    worker, resp, _created = _build_with(
+        lambda: (get(script_name, figures_dir, entry), False),
+        script_name,
+        figures_dir,
+        allow_project_env=allow_project_env,
+    )
+    return worker, resp
+
+
+def build_owned(script_name: str, figures_dir: str, entry: str, *, allow_project_env: bool = True):
+    """`build()` + 所有权：回 `(worker, build 响应, created)`。
+
+    `created` 来自 `acquire()`（池里那把锁），两次取会话（自动切环境重试）任一次建了
+    会话就算这次调用的。准备接口据此决定取消时能不能关这条会话（ADR 0053 §四）。
+    再来一次 `build_owned()` 只是一次往返：worker 侧对已 build 的会话早返回，用户脚本
+    不重跑（`test_worker_runtime_report` 用脚本自己的副作用计数钉着）。
+    """
+    return _build_with(
+        lambda: acquire(script_name, figures_dir, entry),
+        script_name,
+        figures_dir,
+        allow_project_env=allow_project_env,
+    )
+
+
+def _build_with(take, script_name: str, figures_dir: str, *, allow_project_env: bool):
+    """`build` / `build_owned` 共用的编排：`take()` 回 `(worker, created)`。"""
+    worker, created = take()
     try:
-        return worker, worker.ensure_built()
+        return worker, worker.ensure_built(), created
     except WorkerError as exc:
         if not allow_project_env or not should_try_project_env(exc):
             raise
@@ -2174,8 +2248,8 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
         if not outcome.get("ok"):
             exc.project_env = outcome
             raise
-    worker = get(script_name, figures_dir, entry)
-    return worker, worker.ensure_built()
+    worker, created_again = take()
+    return worker, worker.ensure_built(), created or created_again
 
 
 def invalidate(script_name: str, figures_dir: str | None = None) -> None:

@@ -469,6 +469,268 @@ def project_declared(figures_dir: str | Path, script: str | None = None) -> dict
 
 
 # ---------------------------------------------------------------------------
+# DependencyIntent（统一实施包 U01，ADR 0053）——声明的**无损**读法
+#
+# 上面那条 `parse_requirements_text` 是安装路径的解析器：它刻意窄（extras 剥掉、
+# marker 丢掉、同名取第一条），因为它的输出要交给 pip。U00 实测（`U00_BASELINE.md`
+# §4.3）证明这一层看不见 extras / marker / constraints / 同名冲突——而「项目声明了
+# 什么」这个问题需要**原样**的答案。这里是第二个读法，不是第二个安装器：
+#
+#   * 每一行都成为一条 intent，看不懂的行是 `kind=unknown` 并保留原文——
+#     **unknown 不是空依赖**（04 §2）；
+#   * extras / marker 原样保留、不求值（marker 为真还是为假是 U04 的事）；
+#   * `constraints.txt` 也读，`kind=constraint`；
+#   * 同名多条**全部保留**，`conflicts()` 把 specifier 不一致的点出来。
+#
+# 安装路径一个字节没动：`DependencyRequirement.installable` 仍只认窄语法。
+# ---------------------------------------------------------------------------
+INTENT_KIND_REQUIREMENT = "requirement"
+INTENT_KIND_CONSTRAINT = "constraint"
+INTENT_KIND_UNKNOWN = "unknown"
+INTENT_KINDS = (INTENT_KIND_REQUIREMENT, INTENT_KIND_CONSTRAINT, INTENT_KIND_UNKNOWN)
+
+CONSTRAINTS_NAME = "constraints.txt"
+
+_EXTRAS_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\[([^\]]*)\]")
+
+
+@dataclasses.dataclass(frozen=True)
+class DependencyIntent:
+    """一条依赖声明的原样描述（04 §2：name/version/extras/marker/group/source/constraints）。
+
+    `name` 是规范化后的 distribution 名（`unknown` 时为空串）；`raw` 永远是那一行的
+    原文。`group` 说它来自哪一组（`requirements.txt` / `pyproject:project.dependencies`
+    / `pyproject:optional-dependencies.<名>` / `constraints.txt`），`source` 是声明文件
+    相对项目根的 POSIX 路径。
+    """
+
+    name: str
+    specifier: str = ""
+    extras: tuple[str, ...] = ()
+    marker: str = ""
+    group: str = ""
+    source: str = ""
+    kind: str = INTENT_KIND_REQUIREMENT
+    raw: str = ""
+
+    def __post_init__(self) -> None:
+        if self.kind not in INTENT_KINDS:
+            raise ValueError(f"kind 非法: {self.kind!r}（可选 {INTENT_KINDS}）")
+        if self.kind != INTENT_KIND_UNKNOWN and not self.name:
+            raise ValueError("非 unknown 的 intent 必须有 name")
+
+    def to_payload(self) -> dict:
+        return {
+            "name": self.name,
+            "specifier": self.specifier,
+            "extras": list(self.extras),
+            "marker": self.marker,
+            "group": self.group,
+            "source": self.source,
+            "kind": self.kind,
+            "raw": self.raw,
+        }
+
+
+def parse_intent(
+    line: str,
+    *,
+    group: str = "",
+    source: str = "",
+    kind: str = INTENT_KIND_REQUIREMENT,
+    raw: str | None = None,
+) -> DependencyIntent | None:
+    """一行声明 → intent。空行 / 注释回 None；看不懂的回 `kind=unknown`（不丢）。
+
+    认得的形状：`name`、`name[extra,extra]`、`name<op>ver[,<op>ver]`、以上任一加
+    `; <marker>`。选项行（`-r` / `--index-url` / `-e`）、URL、路径、`pkg @ url`
+    一律 unknown——它们是「项目声明了别的东西」，不是「没声明」。
+
+    `raw` 给了就原样记进 intent（pyproject 里一条声明被翻译成 PEP 508 形态后，
+    `raw` 仍要是文件里那一行）；不给就是 `line` 本身。
+    """
+    line = str(line or "")
+    original = line if raw is None else raw
+    body = line.split("#", 1)[0].strip()
+    if not body:
+        return None
+    marker = ""
+    if ";" in body:
+        body, marker = (part.strip() for part in body.split(";", 1))
+    extras: tuple[str, ...] = ()
+    name_part = body
+    m = _EXTRAS_RE.match(body)
+    if m:
+        extras = tuple(x.strip() for x in m.group(2).split(",") if x.strip())
+        name_part = m.group(1) + body[m.end() :]
+    parsed = parse_requirement(name_part.replace(" ", ""))
+    if parsed is None or (m and not extras):
+        return DependencyIntent(
+            name="", group=group, source=source, kind=INTENT_KIND_UNKNOWN, raw=original.strip()
+        )
+    name, spec = parsed
+    return DependencyIntent(
+        name=normalize_distribution(name),
+        specifier=spec,
+        extras=extras,
+        marker=marker,
+        group=group,
+        source=source,
+        kind=kind,
+        raw=original.strip(),
+    )
+
+
+def parse_intents_text(
+    text: str, *, group: str = "", source: str = "", kind: str = INTENT_KIND_REQUIREMENT
+) -> list[DependencyIntent]:
+    out: list[DependencyIntent] = []
+    for line in str(text or "").splitlines():
+        intent = parse_intent(line, group=group, source=source, kind=kind)
+        if intent is not None:
+            out.append(intent)
+    return out
+
+
+def _pyproject_intent_groups(text: str) -> list[tuple[str, str, str]]:
+    """pyproject.toml → `[(组名, 声明串, 原文)]`，组名区分主依赖与每个 optional 组。
+
+    只在 tomllib 可用时分组；退化路径（3.10）沿用 `_pyproject_dependency_strings`
+    的「宁可少认」，组名统一记 `pyproject`。
+
+    Poetry 表（`[tool.poetry.dependencies]`）**不是** PEP 508：`requests = "^2.31"` 的
+    `^` / `~` 是 Poetry 自己的语法，表值（`{version = …, extras = …}`）更是。安装路径
+    （`_pyproject_dependency_strings`）把它们剥成只剩名字继续走；这里不许——那等于把一条
+    约束偷偷放宽成「任意版本」（D14：未知约束必须明确停止）。纯数字开头的版本映射成
+    `==`，其余一律作为**认不出的原文**交给 `parse_intent` 判成 unknown；`raw` 都是文件
+    里那一行的形状。完整的 Poetry 转换归 U04 / X01。
+    """
+    try:
+        import tomllib  # 3.11+
+
+        data = tomllib.loads(text)
+    except (ImportError, ValueError):
+        return [("pyproject", d, d) for d in _pyproject_dependency_strings(text)]
+    out: list[tuple[str, str, str]] = []
+    project = data.get("project")
+    if isinstance(project, dict):
+        for d in project.get("dependencies") or []:
+            if isinstance(d, str):
+                out.append(("pyproject:project.dependencies", d, d))
+        extras = project.get("optional-dependencies")
+        if isinstance(extras, dict):
+            for gname, group in extras.items():
+                for d in group or []:
+                    if isinstance(d, str):
+                        out.append((f"pyproject:optional-dependencies.{gname}", d, d))
+    poetry = ((data.get("tool") or {}).get("poetry") or {}).get("dependencies") or {}
+    if isinstance(poetry, dict):
+        group = "pyproject:tool.poetry.dependencies"
+        for name, ver in poetry.items():
+            if str(name).lower() == "python":
+                continue
+            if isinstance(ver, str):
+                raw = f'{name} = "{ver}"'
+                if ver and ver[0].isdigit():
+                    out.append((group, f"{name}=={ver}", raw))
+                else:  # `^2.31` / `~1.2` / `*` / 空：Poetry 语法，不翻译、不剥
+                    out.append((group, raw, raw))
+            else:  # 表值 / 数组：原样交出去当 unknown
+                raw = f"{name} = {_toml_inline(ver)}"
+                out.append((group, raw, raw))
+    return out
+
+
+def _toml_inline(value) -> str:
+    """把 tomllib 解析出来的表 / 数组按 TOML 内联表的样子写回去（只为 `raw` 可读）。"""
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{k} = {_toml_inline(v)}" for k, v in value.items()) + "}"
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_inline(v) for v in value) + "]"
+    if isinstance(value, str):
+        return f'"{value}"'
+    return str(value)
+
+
+def declared_intents(figures_dir: str | Path, script: str | None = None) -> list[DependencyIntent]:
+    """项目声明过的**全部**依赖意图（无损）：requirements 各文件 + constraints.txt + pyproject。
+
+    与 `project_declared()` 同一套目录范围与文件上限；只读。返回顺序 = 目录由近到远、
+    文件名排序、行序——稳定，可进指纹。
+    """
+    root = Path(figures_dir)
+    out: list[DependencyIntent] = []
+    files = 0
+    for directory in _decl_dirs(figures_dir, script):
+        candidates: list[tuple[Path, str]] = []
+        for pattern in REQUIREMENTS_GLOBS:
+            try:
+                candidates += [
+                    (p, INTENT_KIND_REQUIREMENT) for p in sorted(directory.glob(pattern))
+                ]
+            except OSError:
+                continue
+        for name, kind in ((CONSTRAINTS_NAME, INTENT_KIND_CONSTRAINT), (PYPROJECT_NAME, "")):
+            path = directory / name
+            try:
+                if path.is_file():
+                    candidates.append((path, kind))
+            except OSError:
+                pass
+        for path, kind in candidates:
+            if files >= MAX_DECL_FILES:
+                return out
+            files += 1
+            text = _read_text(path)
+            if not text:
+                continue
+            try:
+                rel = path.resolve(strict=False).relative_to(root.resolve(strict=False)).as_posix()
+            except ValueError:
+                rel = path.name
+            try:
+                if path.name == PYPROJECT_NAME:
+                    for gname, decl, raw in _pyproject_intent_groups(text):
+                        intent = parse_intent(decl, group=gname, source=rel, raw=raw)
+                        if intent is not None:
+                            out.append(intent)
+                else:
+                    out += parse_intents_text(text, group=path.name, source=rel, kind=kind)
+            except (ValueError, TypeError, RecursionError) as exc:
+                LOG.debug("依赖声明解析失败（忽略）: %s: %s", path, exc)
+                continue
+    return out
+
+
+def conflicts(intents: list[DependencyIntent]) -> list[dict]:
+    """同名声明的 specifier 不一致 → 逐名列出（不裁决、不放宽、不做 PEP 440 求值）。
+
+    requirement 与 **constraint** 一起分组（`requirements.txt` 的 `tabulate==0.9.0` 与
+    `constraints.txt` 的 `tabulate<0.9` 互相矛盾，只看 requirement 会把它漏掉——
+    Codex #451 P2）。判据是「specifier 字符串不止一种」：`>=1` 与 `<2` 也会被列出——
+    这里说的是「有多份不同的话」，兼容与否由 U04 拿真正的版本求值器裁决；漏报比
+    多报更坏。unknown 的行没有名字，不参与。
+    """
+    by_name: dict[str, list[DependencyIntent]] = {}
+    for it in intents:
+        if it.kind in (INTENT_KIND_REQUIREMENT, INTENT_KIND_CONSTRAINT) and it.name:
+            by_name.setdefault(it.name, []).append(it)
+    out = []
+    for name, items in by_name.items():
+        specs = {it.specifier for it in items}
+        if len(specs) > 1:
+            out.append(
+                {
+                    "name": name,
+                    "specifiers": sorted(specs),
+                    "sources": [it.source for it in items],
+                    "kinds": sorted({it.kind for it in items}),
+                }
+            )
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 解析入口
 # ---------------------------------------------------------------------------
 def resolve(

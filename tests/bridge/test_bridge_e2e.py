@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -89,6 +90,13 @@ def _full_chain(sess, tmp_path, *, expect_stem_count=1):
     assert desc["original_artifact"] is None
     assert desc["can_writeback_artifact"] is False
     assert desc["can_writeback_source"] is False
+
+    # 执行侧自报（ADR 0053）：native 的两条承诺——**用户自己的解释器、用户自己的 cwd**
+    # ——这里有了可核对的证据：worker 自报的 executable / cwd 就是 spec 里那两个。
+    rt = build["runtime"]
+    assert Path(rt["executable"]).resolve() == Path(sess.spec.interpreter).resolve()
+    assert Path(rt["cwd"]).resolve() == Path(sess.spec.cwd).resolve()
+    assert rt["packages"]["matplotlib"]
 
     man = json.loads((sess.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
     gid = _title_gid(man)

@@ -318,7 +318,7 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         "artifact",
         re.compile(
             r"^Run actions/(upload|download)-artifact@|^上传|^失败时收集|^失败诊断|^取回候选|"
-            r"^分片证据"
+            r"^分片证据|^首开 / 输出 harness 证据"
         ),
     ),
     (
@@ -341,7 +341,9 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"^pytest$|^Run pnpm (test|lint|i18n:check)|^Run cargo |^Ruff |^CompatBench|"
             r"^Playwright|^冒烟|^不变式|^结构性不变式|^断言|^校验|^判定$|^聚合判定|"
             r"^依赖真实插件|^核心验收|^解包并验证候选|^发行生成物|^大图预览|^架构核对|"
-            r"^起服务并请求首页|^取默认分支|^收集这个 PR|^落地信息|^workflow YAML|^CI 结构契约"
+            r"^起服务并请求首页|^取默认分支|^收集这个 PR|^落地信息|^workflow YAML|^CI 结构契约|"
+            # U01（ADR 0053）：预期集合 + enforced 用例、闭集校验——都是判定；证据上传在 artifact 那条
+            r"^首开 / 输出 harness"
         ),
     ),
 )

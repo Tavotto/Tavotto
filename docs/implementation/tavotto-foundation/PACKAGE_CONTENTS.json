@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -48,14 +48,19 @@
       "sha256": "833c2b17971d4107049ce6cfa6651196378765e1c70a14b7a3467cd0507c58cc"
     },
     {
+      "path": "ENROLLMENT.md",
+      "bytes": 3750,
+      "sha256": "e21a30e298ba64d90ddb517b62dfa4a12b0f1ddbf64df4e78979fc4bf050c1aa"
+    },
+    {
       "path": "PACKAGE_CHECKS.json",
       "bytes": 3326,
       "sha256": "d11a83382f3df8db083a4be2a6229d440b8572abf4662d01102a08367bbf96a0"
     },
     {
       "path": "README.md",
-      "bytes": 5194,
-      "sha256": "b76cd09a730fb52b8ed0e0e77708cdaa4677e04bc4061a1b93603d8fd2391949"
+      "bytes": 5671,
+      "sha256": "3ac453d658109c68df736e9922f4e90f3978f8373ddb999d914c03c2ee44d730"
     },
     {
       "path": "SOURCES.md",
@@ -75,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 40716,
-      "sha256": "05591456f322fab45bd9bc89a8b0ef467f909b7146fdad1b02b29880b2423755"
+      "sha256": "7c8eabac8bb8262e8d4b94651d169c83b3eb078fe6675b8ebf958f131a4ea05b"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 20557,
-      "sha256": "4b11cfe1576097595976b8f7dc28acaa59d1693251d50872cee82ebb25941311"
+      "sha256": "fcbba77a3362dfa5980d1e018c3f0c82d992598994b8a1ec9650ab587f643be7"
     },
     {
       "path": "archive/README.md",
@@ -128,6 +133,11 @@
       "sha256": "6ee042ce55e313d2ecc9971934361bc12d1c57ea299190af05f071a9b3ffb441"
     },
     {
+      "path": "enrollment.json",
+      "bytes": 12383,
+      "sha256": "9e997c891bdb88b61f09f343f7102cdfd1fb56ecfd8bf8a3eac3fca1bf548a14"
+    },
+    {
       "path": "evidence/u00/frontend_workerd_summary.txt",
       "bytes": 1450,
       "sha256": "7f3ee368d62171440df43ec19989c4c8d82e90b86750e2c806201c71717b2532"
@@ -141,6 +151,16 @@
       "path": "evidence/u00/smoke_steps.txt",
       "bytes": 1356,
       "sha256": "87c789b6e9f23228f825e6468cce35c5751d0846dd1c99dc725e922d5b6738cf"
+    },
+    {
+      "path": "evidence/u01/foundation-harness-summary-local.md",
+      "bytes": 1459,
+      "sha256": "30844aa19bab8c6b29a0caeb03aedf0debf5f5d09b2dc5bd2c16dc35010708f6"
+    },
+    {
+      "path": "evidence/u01/u01-s1-result-local.json",
+      "bytes": 2439,
+      "sha256": "f70f581ce81b569126e2ebd6e0f822625586942953e9e78e6cb0c832ec1c9ffb"
     },
     {
       "path": "extensions/X01_extended.md",
@@ -171,6 +191,11 @@
       "path": "handoffs/U00_baseline.md",
       "bytes": 9866,
       "sha256": "cc00850dbbf97634efe564851e352f19b6f17996030cb490185496a515073406"
+    },
+    {
+      "path": "handoffs/U01_contracts.md",
+      "bytes": 13855,
+      "sha256": "1708a88b71e8549855449bec72d9fdb95458bda01e80586963d1b63a9381b73c"
     },
     {
       "path": "phase_mapping.json",
@@ -239,8 +264,8 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7401,
-      "sha256": "cc19219ce7df5195d8245b5744ef74572b5691a29d722f45c7147c6c6f325b94"
+      "bytes": 7394,
+      "sha256": "b684c34039d8312bb93b915a7f57a2313eb2466c0b45de2108bf96ae09e9fe55"
     },
     {
       "path": "registry.json",
@@ -253,24 +278,29 @@
       "sha256": "e471dcb5c4d008c0c7bdbee3832a61bc0b780e420e941aa2f68a06379d9628f9"
     },
     {
+      "path": "tools/generate_enrollment.py",
+      "bytes": 2836,
+      "sha256": "eaa1499759a38e8d89c7291ca9248283ab1982b172d134e7c84fef19b80511ca"
+    },
+    {
       "path": "tools/generate_facade_ledger.py",
-      "bytes": 5807,
-      "sha256": "6bce5cd72c03baaef633b7e2a927177c0c6884e243ad9d77313ea4e4ef237ce7"
+      "bytes": 6181,
+      "sha256": "5ca7da541aaacb1a0f587c18aa948847a5cfaddac6dea1e02d8faf22587b49a9"
     },
     {
       "path": "tools/generate_views.py",
-      "bytes": 5029,
-      "sha256": "08b7701d99b17991f8d90731ea29a7c06afe0248352f850e2879bbc3abcf3b5d"
+      "bytes": 5403,
+      "sha256": "84bd8baf9ea492e10f16bc4df34aec99912be3c4a4110c708ce406f6e0a235d1"
     },
     {
       "path": "tools/test_plan_validation.py",
-      "bytes": 3359,
-      "sha256": "13b6c852064c862d4692cf8b586d22ce4302f45ab2cb55deda3900db5375e776"
+      "bytes": 3733,
+      "sha256": "1772cd3bf19988167db157c1ceb5181a3d68f760ebe1da5dc37b1a333613485c"
     },
     {
       "path": "tools/validate_plan.py",
-      "bytes": 13658,
-      "sha256": "3340d0af92387d56055a7cb3d882a256c021822f30dbfe6557b6e707ac136d9a"
+      "bytes": 14032,
+      "sha256": "d1a15075f41430788852a1dc79e668d015cef17f405a9bdc5d36bbd0b682ffef"
     }
   ]
 }

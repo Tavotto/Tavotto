@@ -541,6 +541,9 @@ class BridgeRun:
             # 决定，那不是 Tavotto 管的图库。写回原件在 native v1 一律不提供。
             project_root=None,
         )
+        # 与 safe worker 同一份自报（ADR 0053）：native 的 prefix / cwd 正是
+        # 「用户自己的解释器、用户自己的 cwd」这两条承诺的可核对证据。
+        out["runtime"] = _PKG.figsession.runtime_report()
         if self.script_error:
             out["script_error"] = self.script_error
         return out

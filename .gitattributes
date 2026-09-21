@@ -44,3 +44,7 @@ docs/implementation/tavotto-foundation/archive/original_proposal text eol=lf
 docs/implementation/tavotto-foundation/archive/rendercore_assessment.md text eol=lf
 docs/implementation/tavotto-foundation/archive/rendercore_full.md text eol=lf
 docs/implementation/tavotto-foundation/archive/rendercore_requirements.json text eol=lf
+# 统一实施包的 case enrollment 台账（ADR 0053 §五）：`tools/generate_enrollment.py --check`
+# 拿派生 md 与按 json 现渲染的文本逐字符比；两份都钉 LF，换行符不进比对。
+docs/implementation/tavotto-foundation/enrollment.json text eol=lf
+docs/implementation/tavotto-foundation/ENROLLMENT.md text eol=lf

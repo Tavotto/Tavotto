@@ -128,6 +128,7 @@ import io
 import json
 import os
 import pathlib
+import re
 
 __all__ = [
     "savefig_stem",
@@ -148,6 +149,12 @@ __all__ = [
     "source_fingerprint",
     "size_mm_of",
     "find_original_artifact",
+    "SOURCE_ARTIFACT_VERSION",
+    "ORIGIN_EXECUTION",
+    "ORIGIN_STATIC",
+    "SourceArtifact",
+    "hash_file",
+    "source_artifact_from_file",
 ]
 
 #: 兜底最多补多少张。`for i in range(200): plt.figure()` 是真会出现的写法
@@ -393,6 +400,134 @@ def descriptor_from_payload(data: dict) -> CapturedFigureDescriptor:
                 f"描述符字段 {key} 与派生值不一致: {data[key]!r} != {getattr(desc, key)!r}"
             )
     return desc
+
+
+# ---------------------------------------------------------------------------
+# SourceArtifact（统一实施包 U01，ADR 0053）
+#
+# 「源图产物」= 一份**已经落成字节**的图文件 + 它是谁、从哪来。两种来源：
+#   * execution —— 本次执行（safe worker / native）按某组 override 写出来的文件
+#     （导出中间件、写回 staging）；
+#   * static    —— 磁盘上本来就有的原件（用户脚本自己跑出来的 figure.pdf、或一张
+#     没有脚本的 PNG）——「静态源可用」这条产品路径（FO-010）的对象。
+#
+# 身份三分（04 §3）在这里落成三个**不同的字段**：`bytes_sha256` 是最终文件 hash
+# （只描述字节，不掺任何别的身份）；`receipt_identity`（回执的**公开**身份）+
+# `patch_hash` 指向产出它的执行语义与 override 组合——语义身份的两个坐标；
+# `receipt_id` / `generation` 只是实例元数据（哪一代、哪台机器上的那一次），**不进**
+# 语义身份：它们由私有失效键派生，进了就会让同一张图在另一台机器 / 下一代会话上
+# 长出另一个「语义」身份（Codex #451 P2）。机器路径本身不进这个结构。
+# ---------------------------------------------------------------------------
+SOURCE_ARTIFACT_VERSION = 1
+ORIGIN_EXECUTION = "execution"
+ORIGIN_STATIC = "static"
+_ORIGINS = (ORIGIN_EXECUTION, ORIGIN_STATIC)
+
+
+def hash_file(path) -> tuple[str, int]:
+    """文件的 sha256 十六进制 + 字节数。分块读，大 PDF 不整个进内存。"""
+    h = hashlib.sha256()
+    size = 0
+    with open(os.fspath(path), "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            h.update(chunk)
+            size += len(chunk)
+    return h.hexdigest(), size
+
+
+@dataclasses.dataclass(frozen=True)
+class SourceArtifact:
+    """一份源图产物：source ID、字节 hash、类型 / 大小、实例 / override 身份。
+
+    `source_id` 对 execution 来源是 `runtime_asset_id()`（`runtime:<script>#<stem>`），
+    对 static 来源是素材相对路径（POSIX）——两者都是跨机器稳定的身份，不含绝对路径。
+    `receipt_id` / `receipt_identity` / `generation` / `patch_hash` 对 static 来源恒为
+    `None`：没有执行就没有执行身份，**不许**拿「最近一次会话」去冒充。execution 来源
+    两个都要：`receipt_id`（实例）与 `receipt_identity`（公开语义）。
+    """
+
+    source_id: str
+    origin: str  # ORIGIN_EXECUTION | ORIGIN_STATIC
+    kind: str  # 文件类型（扩展名去点、小写）
+    bytes_sha256: str
+    size_bytes: int
+    receipt_id: str | None = None
+    generation: int | None = None
+    patch_hash: str | None = None
+    receipt_identity: str | None = None  # 回执的 public_identity()（语义身份的坐标）
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_id, str) or not self.source_id:
+            raise ValueError("source_id 必须是非空字符串")
+        if self.origin not in _ORIGINS:
+            raise ValueError(f"origin 非法: {self.origin!r}（可选 {_ORIGINS}）")
+        if not isinstance(self.kind, str) or not self.kind or self.kind != self.kind.lower():
+            raise ValueError(f"kind 必须是小写扩展名: {self.kind!r}")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.bytes_sha256 or ""):
+            raise ValueError("bytes_sha256 必须是 64 位十六进制 sha256")
+        if not isinstance(self.size_bytes, int) or isinstance(self.size_bytes, bool):
+            raise ValueError("size_bytes 必须是整数")
+        if self.size_bytes <= 0:
+            raise ValueError("size_bytes 必须为正：零字节的文件不是产物")
+        if self.origin == ORIGIN_STATIC and (
+            self.receipt_id is not None
+            or self.generation is not None
+            or self.patch_hash is not None
+            or self.receipt_identity is not None
+        ):
+            raise ValueError(
+                "static 来源没有执行身份"
+                "（receipt_id / receipt_identity / generation / patch_hash 必须为 None）"
+            )
+        if self.origin == ORIGIN_EXECUTION and not self.receipt_id:
+            raise ValueError("execution 来源必须带产出它的 receipt_id")
+        if self.origin == ORIGIN_EXECUTION and not self.receipt_identity:
+            raise ValueError("execution 来源必须带回执的 receipt_identity（公开身份）")
+
+    def to_payload(self) -> dict:
+        out = dataclasses.asdict(self)
+        out["source_artifact_version"] = SOURCE_ARTIFACT_VERSION
+        return out
+
+    def semantic_identity(self) -> str:
+        """公开语义身份：**不含**字节 hash——它回答「这是哪张图的哪一版」，
+        字节 hash 回答「文件长什么样」，两者是不同的问题（04 §3）。也**不含**
+        `receipt_id` / `generation`：那是实例，不是语义。"""
+        payload = {
+            "source_id": self.source_id,
+            "origin": self.origin,
+            "kind": self.kind,
+            "receipt_identity": self.receipt_identity,
+            "patch_hash": self.patch_hash,
+        }
+        canon = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+def source_artifact_from_file(
+    path,
+    *,
+    source_id: str,
+    origin: str,
+    receipt_id: str | None = None,
+    generation: int | None = None,
+    patch_hash: str | None = None,
+    receipt_identity: str | None = None,
+) -> SourceArtifact:
+    """磁盘文件 → SourceArtifact（当场读字节算 hash；类型按扩展名）。"""
+    sha, size = hash_file(path)
+    kind = os.path.splitext(os.fspath(path))[1].lstrip(".").lower()
+    return SourceArtifact(
+        source_id=source_id,
+        origin=origin,
+        kind=kind,
+        bytes_sha256=sha,
+        size_bytes=size,
+        receipt_id=receipt_id,
+        generation=generation,
+        patch_hash=patch_hash,
+        receipt_identity=receipt_identity,
+    )
 
 
 def savefig_stem(fname) -> str:
