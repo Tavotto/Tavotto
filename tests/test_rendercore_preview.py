@@ -208,6 +208,60 @@ def test_fonts_policy_version_is_the_allowlist_hash_prefix():
     )
 
 
+def test_a_handed_out_but_not_yet_acquired_lock_survives_table_eviction(cache, tmp_path):
+    """Codex #471 第四轮 P2：表满时按 `lock.locked()` 淘汰——线程 A 拿到锁对象、还没 acquire 就被调度走，那一刻它
+    是 unlocked 的，会被淘汰；第三个同键请求另建一把，A 与它同时渲染同一张预览。现在淘汰看**登记使用者数**：
+    A 在 `_locks_guard` 里已登记为 1 个使用者，表满淘汰 512 个别的键也轮不到它，C 拿到的仍是 A 那把。"""
+    c, _host = cache
+    key_a = str(tmp_path / "cache" / "a.png")
+    entry_a = c._reserve(key_a)  # A：拿到手，还没 acquire（模拟被调度走）
+    assert entry_a.users == 1 and not entry_a.lock.locked()
+    for i in range(preview._LOCKS_MAX + 5):  # 别的键把表灌满、触发淘汰
+        k = str(tmp_path / "cache" / f"other-{i}.png")
+        c._release(k, c._reserve(k))
+    assert c._locks[key_a] is entry_a, "登记在案的锁被淘汰了"
+    entry_c = c._reserve(key_a)  # C：同键，必须拿到同一把
+    assert entry_c is entry_a and entry_a.users == 2
+    c._release(key_a, entry_c)
+    c._release(key_a, entry_a)
+    assert entry_a.users == 0
+    # 没人用了才可淘汰：再灌一轮，它才消失
+    for i in range(preview._LOCKS_MAX + 5):
+        k = str(tmp_path / "cache" / f"later-{i}.png")
+        c._release(k, c._reserve(k))
+    assert key_a not in c._locks
+
+
+def test_a_half_written_staging_copy_is_removed_when_copying_fails(cache, tmp_path, monkeypatch):
+    """Codex #471 第四轮 P2：抄源到一半失败（源读不了 / 缓存卷满）——`_stage()` 在 `get()` 的 try/finally 之前
+    抛出，半截 `.src.part` 就永远留在缓存目录里（`prune()` 只扫 *.png，名字还按 pid/线程各不相同）。现在 `_stage()`
+    自己在任何异常下删掉副本再抛。"""
+    c, host = cache
+    body = b"%PDF-1.4 " + b"z" * (3 * preview._HASH_CHUNK + 17)
+    src = _pdf(tmp_path, body=body)
+    calls = {"n": 0}
+    real_sha256 = hashlib.sha256
+
+    class Boom:
+        def __init__(self):
+            self.inner = real_sha256()
+
+        def update(self, chunk):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError(28, "No space left on device")  # 第二块：副本已经写了一块
+            self.inner.update(chunk)
+
+        def hexdigest(self):
+            return self.inner.hexdigest()
+
+    monkeypatch.setattr(preview.hashlib, "sha256", Boom)
+    with pytest.raises(OSError):
+        c.get("figs/a.pdf", src, 400)
+    assert not list((tmp_path / "cache").glob("*.src.part")), list((tmp_path / "cache").iterdir())
+    assert host.renders == 0
+
+
 def test_concurrent_requests_for_the_same_key_render_exactly_once(cache, tmp_path):
     c, host = cache
     host.delay = 0.2

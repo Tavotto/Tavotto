@@ -22,7 +22,8 @@ sha256，主语只有「内容」，没有 mtime 这一维）。
 
 ## 写 / 发布（与旧 `_write_render_cache` / `_publish_render_cache` 同一条纪律）
 
-* 同键并发只让一个线程真渲染（每键一把锁，锁表封顶、只丢没人拿着的）；锁内复查一次，看到成品直接用；
+* 同键并发只让一个线程真渲染（每键一把锁，锁表封顶、只丢**登记使用者为零**的——拿到手还没 acquire 的也算在用，
+  `lock.locked()` 看不见那一刻）；锁内复查一次，看到成品直接用；
 * 渲染进临时文件（**后缀仍是 .png**，同一目录）再 `os.replace`：读者要么看到旧的（完整）要么看到新的（完整）；
 * **Windows 上 `os.replace` 盖不掉正被读的目标**（`PermissionError`）：目标已在且非空 → **退让**（同键字节
   必然相同）；目标不存在 / 零字节才重试，重试完仍不行如实抛出；
@@ -33,10 +34,12 @@ sha256，主语只有「内容」，没有 mtime 这一维）。
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 from . import BACKEND_NAME, BACKEND_VERSION
@@ -89,6 +92,16 @@ def cache_key(
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
 
 
+class _KeyLock:
+    """锁表条目：锁 + 登记在案的使用者数（拿到手还没 acquire 的也算）。"""
+
+    __slots__ = ("lock", "users")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.users = 0
+
+
 class PreviewCache:
     def __init__(
         self,
@@ -100,7 +113,7 @@ class PreviewCache:
         self.cache_dir = Path(cache_dir)
         self.host = host
         self.max_bytes = int(max_bytes)
-        self._locks: dict[str, threading.Lock] = {}
+        self._locks: dict[str, _KeyLock] = {}
         self._locks_guard = threading.Lock()
         self._renderer_version: str | None = None
         self._fonts_version: str | None = None
@@ -133,10 +146,16 @@ class PreviewCache:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         staged = self.cache_dir / f"stage.{os.getpid()}-{threading.get_ident():x}.src.part"
         digest = hashlib.sha256()
-        with open(path, "rb") as src, open(staged, "wb") as dst:
-            for chunk in iter(lambda: src.read(_HASH_CHUNK), b""):
-                digest.update(chunk)
-                dst.write(chunk)
+        try:
+            with open(path, "rb") as src, open(staged, "wb") as dst:
+                for chunk in iter(lambda: src.read(_HASH_CHUNK), b""):
+                    digest.update(chunk)
+                    dst.write(chunk)
+        except BaseException:
+            # 抄到一半失败（源读不了 / 缓存卷满）：半截副本当场删掉——`prune()` 只扫 *.png，留下就是永久占位
+            # （Codex #471 第四轮 P2）
+            staged.unlink(missing_ok=True)
+            raise
         return staged, digest.hexdigest()
 
     def key_for(
@@ -156,19 +175,35 @@ class PreviewCache:
         return self.cache_dir / f"{key}.png"
 
     # -- 锁表 -------------------------------------------------------------
-    def _lock_for(self, cached: Path) -> threading.Lock:
-        key = str(cached)
+    def _reserve(self, key: str) -> _KeyLock:
+        """在 `_locks_guard` 里把这个键的锁**登记一个使用者**再交出去：表满时只淘汰 `users == 0` 的条目。
+        判「有没有人拿着」不能看 `lock.locked()`——一个线程拿到锁对象、还没来得及 acquire 就被调度走，那一刻它
+        是 unlocked 的，被淘汰之后第三个同键请求会另建一把，两边同时渲染同一张预览（Codex #471 第四轮 P2）。"""
         with self._locks_guard:
-            lock = self._locks.get(key)
-            if lock is None:
+            entry = self._locks.get(key)
+            if entry is None:
                 if len(self._locks) >= _LOCKS_MAX:
-                    # 只丢没人拿着的那些：正被持有的锁一旦从表里消失，下一个线程会为同一个键另建一把
                     for stale, held in list(self._locks.items()):
-                        if not held.locked():
+                        if held.users == 0:
                             del self._locks[stale]
-                lock = threading.Lock()
-                self._locks[key] = lock
-            return lock
+                entry = _KeyLock()
+                self._locks[key] = entry
+            entry.users += 1
+            return entry
+
+    def _release(self, key: str, entry: _KeyLock) -> None:
+        with self._locks_guard:
+            entry.users -= 1
+
+    @contextlib.contextmanager
+    def _lock_for(self, cached: Path) -> Iterator[None]:
+        key = str(cached)
+        entry = self._reserve(key)
+        try:
+            with entry.lock:
+                yield
+        finally:
+            self._release(key, entry)
 
     # -- 取 / 渲染 --------------------------------------------------------
     @staticmethod
