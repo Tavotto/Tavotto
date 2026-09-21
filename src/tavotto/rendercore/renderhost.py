@@ -305,7 +305,14 @@ class RenderHost:
             # 与字节对不上（bytes 对得上也可能对不上）同样是协议失败 → 当场 kill + reap，释放锁之后没人会再拿到
             # 这个 child；建不出来的 RasterError / 类型错误翻译成 render_child_protocol，job 落到该格式的
             # format_failed 而不是整个作业 export_failed（Codex #471 第五轮 P2）
-            samples = out.read_bytes()
+            try:
+                samples = out.read_bytes()
+            except OSError as exc:
+                # child 说成功、像素文件却不在 / 读不了：同样是协议不可信（Codex #471 第七轮 P2）——裸 OSError
+                # 会越过 RenderChildError 的处置，锁释放而 child 不 reap、job 整个炸
+                raise RenderChildError(
+                    "render_child_protocol", f"child 说成功，像素文件读不了: {exc}"
+                ) from exc
             if len(samples) != int(resp.get("bytes", -1)):
                 raise RenderChildError(
                     "render_child_protocol",

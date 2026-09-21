@@ -154,6 +154,48 @@ def build(out: Path, workdir: Path) -> Path:
     return exe
 
 
+def _same_file(a: str | None, b: str | None) -> bool:
+    """两条路径规范化后指向同一个文件（Windows 大小写 / 8.3 名、macOS 的 /private 前缀、符号链接都归一）。"""
+    if not a or not b:
+        return False
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
+def freeze_checks(result: dict, returncode: int, png_is_file: bool) -> list[tuple[str, bool]]:
+    """七条核对，纯函数（用例直接喂 result 反证）。"""
+    return [
+        ("frozen_exe_runs", returncode == 0 and result.get("ok") is True),
+        ("frozen_flag_set", result.get("frozen") is True),
+        (
+            "child_is_the_same_exe_with_render_child_flag",
+            # 「再起自己」三件都要成立：argv[0] 规范化后就是父进程的 executable（别的 exe 也能起 child、
+            # 也能渲染成功——只看旗标与 frozen 抓不到那种回退；Codex #471 第七轮 P2）、末尾是 --render-child、
+            # child 报 frozen
+            len(result.get("child_argv") or []) == 2
+            and _same_file(result["child_argv"][0], result.get("executable"))
+            and result["child_argv"][-1] == "--render-child"
+            and result.get("child_frozen") is True,
+        ),
+        (
+            "pdfium_library_bundled",
+            any("pdfium" in lib for lib in result.get("native_libraries", [])),
+        ),
+        (
+            "fonts_bundled_13",
+            result.get("fonts_found") == 13 and not result.get("fonts_missing"),
+        ),
+        (
+            "probe_reports_the_cropbox_size",
+            result.get("probe", {}).get("width_pt") == 270.0
+            and result.get("probe", {}).get("height_pt") == 160.0,
+        ),
+        ("png_rendered", png_is_file and result.get("render", {}).get("width") == 400),
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--pdf", required=True, type=Path)
@@ -207,29 +249,7 @@ def main(argv: list[str] | None = None) -> int:
             json.loads(run.stdout.strip().splitlines()[-1]) if run.stdout.strip() else {"ok": False}
         )
         report["result"] = result
-        checks = [
-            ("frozen_exe_runs", run.returncode == 0 and result.get("ok") is True),
-            ("frozen_flag_set", result.get("frozen") is True),
-            (
-                "child_is_the_same_exe_with_render_child_flag",
-                result.get("child_argv", [None])[-1:] == ["--render-child"]
-                and result.get("child_frozen") is True,
-            ),
-            (
-                "pdfium_library_bundled",
-                any("pdfium" in lib for lib in result.get("native_libraries", [])),
-            ),
-            (
-                "fonts_bundled_13",
-                result.get("fonts_found") == 13 and not result.get("fonts_missing"),
-            ),
-            (
-                "probe_reports_the_cropbox_size",
-                result.get("probe", {}).get("width_pt") == 270.0
-                and result.get("probe", {}).get("height_pt") == 160.0,
-            ),
-            ("png_rendered", png.is_file() and result.get("render", {}).get("width") == 400),
-        ]
+        checks = freeze_checks(result, run.returncode, png.is_file())
         report["checks"] = [{"check": c, "ok": ok} for c, ok in checks]
         report["all_ok"] = all(ok for _, ok in checks)
         if png.is_file():

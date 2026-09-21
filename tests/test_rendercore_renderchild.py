@@ -76,6 +76,8 @@ for raw in sys.stdin.buffer:
             data = bytes([255, 0, 0, 255, 0, 0, 255, 128])
             with open(req["out"], "wb") as fh:
                 fh.write(data)
+            if req["pdf"].endswith("nofile.pdf"):
+                os.remove(req["out"])  # 说成功，像素文件却不在
             nbytes = 999 if req["pdf"].endswith("shortbytes.pdf") else 8  # 说的与写的对不上
             width = 3 if req["pdf"].endswith("badshape.pdf") else 2  # bytes 对得上，尺寸说谎（3×1×4 = 12 ≠ 8）
             resp = {"id": req["id"], "ok": True, "seq": seq, "width": width, "height": 1, "stride": 8, "channels": 4, "bytes": nbytes, "ms": 0}
@@ -389,6 +391,47 @@ def test_a_response_whose_shape_does_not_fit_the_bytes_is_a_protocol_failure_rea
     with pytest.raises(rh.RenderChildError) as ei:
         fake_host.render(pdf, width_px=2)
     assert ei.value.code == "render_child_protocol" and "不成一张图" in ei.value.message
+    assert reaped_at_release == [True], reaped_at_release
+    _assert_not_alive(pid)
+    fake_host._lock = inner
+    ok = tmp_path / "ok.pdf"
+    ok.write_bytes(b"%PDF-")
+    assert fake_host.render(ok, width_px=2).width == 2 and fake_host.restarts == 1
+
+
+def test_a_missing_pixel_file_after_a_successful_reply_is_a_protocol_failure_reaped_in_the_lock(
+    fake_host, tmp_path
+):
+    """Codex #471 第七轮 P2：child 说 ok、像素文件却不在（或读不了）——`read_bytes()` 的 OSError 不是
+    `RenderChildError`，会越过处置：锁释放、child 不 reap、job 整个炸。现在它是 `render_child_protocol`，
+    释放锁那一刻 child 已被 reap，下一次请求换新 child。"""
+    pdf = tmp_path / "nofile.pdf"
+    pdf.write_bytes(b"%PDF-")
+    fake_host.ping()
+    pid = fake_host.pid
+    inner = fake_host._lock
+    reaped_at_release: list[bool] = []
+
+    class SpyLock:
+        def acquire(self, *a, **k):
+            return inner.acquire(*a, **k)
+
+        def release(self):
+            reaped_at_release.append(fake_host._proc is None)
+            inner.release()
+
+        def __enter__(self):
+            inner.acquire()
+            return self
+
+        def __exit__(self, *a):
+            self.release()
+            return False
+
+    fake_host._lock = SpyLock()
+    with pytest.raises(rh.RenderChildError) as ei:
+        fake_host.render(pdf, width_px=2)
+    assert ei.value.code == "render_child_protocol" and "读不了" in ei.value.message
     assert reaped_at_release == [True], reaped_at_release
     _assert_not_alive(pid)
     fake_host._lock = inner
