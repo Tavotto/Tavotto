@@ -110,6 +110,15 @@ class FigState:
             return None
         return TickLabel(ax, which, j)
 
+    def has_handler(self, artist, prop: str) -> bool:
+        """这个 artist 所属的 family 有没有 `prop` 的 handler（族模块经协议问，不 import 表）。
+
+        色阶兄弟只收**原样采得到**的：别名组替兄弟代采原样走的正是这张表，查不到的
+        （没有数组、归 `linecoll` 族的 LineCollection 却传了共用的 norm）采不到，
+        撤销时只能拿 mappable 的原样冒充——那就不该算进组。
+        """
+        return (_cls_key(artist), prop) in HANDLERS
+
     def reapply(self, artist, prop: str, value) -> None:
         """把一条已应用的 override 值按 `HANDLERS` 落到（新的）artist 上。
 

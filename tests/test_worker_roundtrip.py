@@ -969,6 +969,70 @@ def test_peer_colorbars_on_a_shared_scale_keep_their_own_originals(tmp_path):
         proc.wait(timeout=10)
 
 
+UNMAPPED_SIBLING_SCRIPT = """\
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+from matplotlib.colors import LinearSegmentedColormap, PowerNorm
+
+CM_A = LinearSegmentedColormap.from_list("paper_b", ["#edf5df", "#3f942c"])
+CM_L = LinearSegmentedColormap.from_list("paper_l", ["#000000", "#ff0000"])
+
+
+def main():
+    rng = np.random.RandomState(0)
+    fig, ax = plt.subplots(figsize=(4.0, 2.6))
+    norm = PowerNorm(gamma=1.2, vmin=0.0, vmax=1.0)
+    mesh = ax.pcolormesh(np.linspace(0, 1, 6), np.linspace(0, 1, 6), rng.rand(6, 6),
+                         cmap=CM_A, norm=norm, shading="nearest")
+    # 没有数组、颜色写死的线组：传了共用的 norm、也有 set_cmap，但它没在映射——
+    # 归 `linecoll` 族，没有 cmap handler，原样采不到
+    ax.add_collection(LineCollection([[(0.1, 1.1), (0.9, 1.1)]], colors="#804000",
+                                     cmap=CM_L, norm=norm, linewidths=3))
+    # 有数组的线组：映射着色、归通用 collection 族，是正经的色阶兄弟
+    ax.add_collection(LineCollection([[(0.1, 1.2), (0.9, 1.2)]], array=np.array([0.7]),
+                                     cmap=CM_L, norm=norm, linewidths=3))
+    ax.set_ylim(0, 1.3)
+    fig.colorbar(mesh, ax=ax)
+    fig.savefig("Unmapped.pdf")
+"""
+
+
+def test_scale_siblings_only_count_artists_whose_colormap_can_be_restored(tmp_path):
+    """色阶兄弟只收原样采得到的：没在映射的线组即便传了共用的 norm 也不算
+    （#474 评审第三轮——它没有 cmap handler，撤销时只能拿 mappable 的原样冒充）；
+    映射着色的线组是正经兄弟，色图跟着色条走、撤销回它自己的那张。"""
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_unmapped.py").write_text(UNMAPPED_SIBLING_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_unmapped.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "Unmapped", "patches": []})["manifest"]
+        cb = next(e for e in man["elements"] if e["role"] == "colorbar")
+        plain = next(e for e in man["elements"] if e["role"] == "linecoll")
+        mapped = next(
+            e
+            for e in man["elements"]
+            if e["role"] == "collection" and e["gid"] != cb["mappable_gid"]
+        )
+        assert cb["scale_gids"] == [mapped["gid"]], cb.get("scale_gids")
+        assert plain["gid"] not in cb["scale_gids"]
+        assert _field_value(man, mapped["gid"], "cmap") == "paper_l"
+
+        patches = [{"gid": cb["gid"], "prop": "cmap", "value": "plasma"}]
+        man = _rpc(proc, {"cmd": "override", "stem": "Unmapped", "patches": patches})["manifest"]
+        assert _field_value(man, mapped["gid"], "cmap") == "plasma"
+        assert _cmap_original_name(man, mapped["gid"]) == "paper_l"
+
+        man = _rpc(proc, {"cmd": "override", "stem": "Unmapped", "patches": []})["manifest"]
+        assert _field_value(man, mapped["gid"], "cmap") == "paper_l"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
 def test_closed_figure_still_builds(tmp_path):
     """脚本 `savefig` 完就 `plt.close(fig)` 时仍要能起来。
 

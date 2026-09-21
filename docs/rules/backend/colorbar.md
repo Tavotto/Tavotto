@@ -53,7 +53,8 @@
   一条色条，就是在声明它们是同一个色阶——matplotlib 眼里 vmin / vmax 经共用的 norm
   天然一起变，cmap 却各拿各的引用。判据是 norm 的**对象身份**（不是名字、不是数值
   相等），唯一出处 `colorbarmodel.scale_siblings(state, mappable)`（只在登记表里找，
-  色条代理不算）。三处消费它：① 色条的 `cmap` setter 写到 mappable **和全部兄弟**
+  色条代理不算；**原样采不到的也不算**——`state.has_handler(a, "cmap")` 经 FollowState 协议问
+  `HANDLERS`，没有数组、归线组族的 LineCollection 传了共用 norm 也不进组，它没在映射）。三处消费它：① 色条的 `cmap` setter 写到 mappable **和全部兄弟**
   （`_set_cb_cmap`，带 state），撤销 `_restore_cb_cmap` 让兄弟**各回各的原样**
   （别名组在色条动手之前替它们采的，采不到退回 mappable 的那份）；② 别名组
   `overrides._alias_colorbar_mappable` 把兄弟的 `(gid, cmap/vmin/vmax)` 一并算进组员

@@ -35,6 +35,8 @@ class FollowState(Protocol):
     elements: list
     originals: dict
 
+    def has_handler(self, artist, prop: str) -> bool: ...
+
 
 class ColorbarProxy:
     """色条伪元素：字段落在 Colorbar 对象与其 mappable 上，命中/位置走宿主轴。
@@ -189,6 +191,10 @@ def scale_siblings(state: FollowState, mappable) -> list:
 
     只在 `state.elements` 里找：不是登记元素的 mappable 没有 gid，别名组里放不下
     它、原样也无处可采。色条代理自己不算（它的 `norm` 是转发 mappable 的）。
+    **原样采不到的也不算**（`state.has_handler(a, "cmap")`）：没有数组、归线组族的
+    LineCollection 传了共用的 norm 时有 `set_cmap` 却没有 cmap handler，别名组替它
+    代采不到原样，撤销时只能拿 mappable 的冒充（#474 评审第三轮）——不如不动它，
+    反正它没在映射、色图换不换画面都一样。
     """
     norm = getattr(mappable, "norm", None)
     if norm is None:
@@ -198,7 +204,11 @@ def scale_siblings(state: FollowState, mappable) -> list:
         a = el["artist"]
         if a is mappable or isinstance(a, ColorbarProxy):
             continue
-        if getattr(a, "norm", None) is norm and hasattr(a, "set_cmap"):
+        if (
+            getattr(a, "norm", None) is norm
+            and hasattr(a, "set_cmap")
+            and state.has_handler(a, "cmap")
+        ):
             out.append(a)
     return out
 
