@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -342,6 +343,50 @@ class TestPrivateBase:
         assert not any(privatepython.runtimes_dir().iterdir())
         if os.name != "nt":
             assert not launches.exists()  # 坏归档一次都没起
+
+    def test_cancel_right_after_the_acknowledgement_never_starts_the_download(
+        self, tmp_path, house, no_base, fake, monkeypatch
+    ):
+        """取消登记时刻的合同（U04 C，Codex #470 P1）在 `downloading_python` 这段同样成立：`prepare_async` 一回来
+        就取消——句柄在起线程之前就登记（accepted）、`prepare()` 拿锁之前看一次事件、供应进来之前已取消就直接拒绝
+        （不起下载线程、不发请求、不起子进程）→ 终态 cancelled、零请求、没有 `.part` / staging / runtime、没登记任何一代。"""
+        server, src, launches = fake
+        project = _project(tmp_path)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.private_python is not None and plan.private_python["required"] is True
+        gate = threading.Event()
+        real_guarded = deprepair._prepare_guarded
+
+        def _held_at_entry(plan_id, on_event):
+            gate.wait(timeout=30)  # 线程按在入口：登记若在线程里做，这一刻只能回 not_found
+            return real_guarded(plan_id, on_event)
+
+        monkeypatch.setattr(deprepair, "_prepare_guarded", _held_at_entry)
+        events: list[dict] = []
+        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        answer = deprepair.cancel_status(plan.plan_id)  # ack 之后立刻取消
+        gate.set()
+        assert answer == {"accepted": True, "reason": ""}, answer
+        rec = wait_for(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_CANCELLED, rec
+        assert rec["result"] == {"activated": False}
+        assert deprepair.STATE_DOWNLOADING_PYTHON not in [e["state"] for e in events]
+        assert server.requests == []  # 一个字节没下
+        assert privatepython.python_of(src) is None
+        assert not privatepython.downloads_dir().exists() or not any(
+            privatepython.downloads_dir().iterdir()
+        )
+        assert not privatepython.runtimes_dir().exists() or not any(
+            privatepython.runtimes_dir().iterdir()
+        )
+        assert managedenv.generations(project) == {}
+        if os.name != "nt":
+            assert not launches.exists()  # 子进程一次没起
+        assert deprepair.cancel_status(plan.plan_id)["reason"] == "not_found"  # 句柄随计划一起清掉
+        # 取消之后再来：同一份形状照样成
+        plan2 = deprepair.create_joint_plan(project, "figure.py")
+        rec2, _ = _prepare(plan2.plan_id)
+        assert rec2["state"] == deprepair.STATE_DONE, rec2
 
     def test_cancel_during_the_download_leaves_no_generation_and_no_runtime(
         self, tmp_path, house, no_base, fake
