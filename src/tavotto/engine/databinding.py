@@ -21,7 +21,7 @@ safe worker 默认把 cwd 切到会话沙盒，只读的 `open` 回退到**脚�
 实参归输出不归输入。窄的代价是「少问一次」——那时走默认，与今天一样；宽的代价是
 「多问一次」——用户每个项目多点一下。两边都不会把错的数据画出来。
 
-纯标准库；Flask 父进程 import 链上（被 `workdir` / `preparation` 用）。
+纯标准库（只 import 同包的 `projectenv` 取「在不在项目里」那一个判据）；Flask 父进程 import 链上（被 `workdir` / `preparation` 用）。
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ import ast
 import hashlib
 import os
 from pathlib import Path
+
+from . import projectenv
 
 #: 「像数据文件」的扩展名（小写、不带点）。表外的名字只有带目录分隔符时才算候选：
 #: `os.path` / `matplotlib.pyplot` 这类模块名带点但不带分隔符，不该被当成文件。
@@ -198,9 +200,14 @@ def _sha1_of(path: Path) -> str:
     return h.hexdigest()
 
 
-def _lookup(base: Path, literal: str) -> dict | None:
-    """字面量在 `base` 下是不是一个**文件**；是就回 `{path, sha1, size}`。"""
+def _lookup(base: Path, literal: str, root: Path) -> dict | None:
+    """字面量在 `base` 下是不是一个**文件**；是就回 `{path, sha1, size}`；候选落在项目根
+    之外（`../../secret.csv`、或项目里一条指向别处的软链接）回 `{"outside": True}`——
+    **不 stat、不读、不 hash**：准备阶段只许碰用户交给 Tavotto 的那棵目录树，项目外的
+    文件连「存不存在」都不替脚本去看（Codex 评 #459 P1）。"""
     cand = base / literal.replace("\\", "/")
+    if not projectenv.within(root, cand):
+        return {"outside": True}
     try:
         if not cand.is_file():
             return None
@@ -218,7 +225,8 @@ def evidence(script_path: str | os.PathLike, project_root: str | os.PathLike) ->
         {
           "reads": [...], "outputs": [...],
           "candidates": {
-            "script.parent": {"found": {literal: {sha1, size}}, "missing": [...]},
+            "script.parent": {"found": {literal: {sha1, size}}, "missing": [...],
+                              "outside": [...]},   # 落到项目根之外的字面量：没看、不算找到
             "project.root":  {...}
           },
           "same_dir": bool,          # 脚本就在项目根：两个候选是同一个目录
@@ -242,13 +250,16 @@ def evidence(script_path: str | os.PathLike, project_root: str | os.PathLike) ->
     for name, base in ((CANDIDATE_SCRIPT_PARENT, parent), (CANDIDATE_PROJECT_ROOT, root)):
         found: dict[str, dict] = {}
         missing: list[str] = []
+        outside: list[str] = []
         for lit in lits["reads"]:
-            hit = _lookup(base, lit)
+            hit = _lookup(base, lit, root)
             if hit is None:
                 missing.append(lit)
+            elif hit.get("outside"):
+                outside.append(lit)
             else:
                 found[lit] = {"sha1": hit["sha1"], "size": hit["size"]}
-        candidates[name] = {"found": found, "missing": missing}
+        candidates[name] = {"found": found, "missing": missing, "outside": outside}
     in_parent = candidates[CANDIDATE_SCRIPT_PARENT]["found"]
     in_root = candidates[CANDIDATE_PROJECT_ROOT]["found"]
     conflicts = sorted(

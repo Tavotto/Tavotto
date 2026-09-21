@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -143,6 +144,45 @@ def test_absolute_paths_are_never_touched(tmp_path):
     root = _project(tmp_path, "s/fig.py", f"open({str(ext)!r})\n", {})
     ev = db.evidence(root / "s/fig.py", root)
     assert ev["reads"] == [] and ev["verdict"] == db.VERDICT_NONE
+
+
+def test_a_literal_that_escapes_the_project_root_is_never_touched(tmp_path, monkeypatch):
+    """Codex 评 #459（P1）：`open('../../secret.csv')` 这样的字面量 join 到脚本目录后落在项目根
+    之外——准备阶段不许替脚本去看它：不 stat、不读、不 hash（hash / size 会进准备计划的证据）。
+    它登记在 `outside`，既不算找到也不算 missing，判决按剩下的字面量走。"""
+    secret = tmp_path / "secret.csv"
+    secret.write_text("k\nv\n", encoding="utf-8")
+    root = _project(tmp_path, "s/fig.py", "open('../../secret.csv')\nopen('data.csv')\n", {})
+    touched: list[str] = []
+    real_sha1 = db._sha1_of
+
+    def spy(path):
+        touched.append(str(Path(path).resolve()))
+        return real_sha1(path)
+
+    monkeypatch.setattr(db, "_sha1_of", spy)
+    ev = db.evidence(root / "s/fig.py", root)
+    parent = ev["candidates"]["script.parent"]
+    assert parent["outside"] == ["../../secret.csv"]
+    assert "../../secret.csv" not in parent["found"] and "../../secret.csv" not in parent["missing"]
+    assert ev["candidates"]["project.root"]["outside"] == ["../../secret.csv"]  # 从根起也出界
+    assert str(secret.resolve()) not in touched, "项目外的文件被 hash 了"
+    assert ev["verdict"] == db.VERDICT_UNKNOWN  # data.csv 两处都没有；出界那条不参与判决
+
+
+@pytest.mark.skipif(os.name == "nt", reason="软链接在 Windows 上要特权")
+def test_a_symlink_inside_the_project_pointing_outside_is_outside(tmp_path):
+    """字符串上在项目里、实体在项目外（`data/x.csv -> ~/secret.csv`）：按 realpath 判，与
+    `projectenv.within` 同一个判据。"""
+    secret = tmp_path / "secret.csv"
+    secret.write_text("k\nv\n", encoding="utf-8")
+    root = _project(tmp_path, "fig.py", "open('data/x.csv')\n", {})
+    (root / "data").mkdir()
+    os.symlink(secret, root / "data" / "x.csv")
+    ev = db.evidence(root / "fig.py", root)
+    assert ev["candidates"]["project.root"]["outside"] == ["data/x.csv"]
+    assert ev["candidates"]["project.root"]["found"] == {}
+    assert ev["verdict"] == db.VERDICT_UNKNOWN
 
 
 def test_only_files_count_as_evidence_not_directories(tmp_path):
