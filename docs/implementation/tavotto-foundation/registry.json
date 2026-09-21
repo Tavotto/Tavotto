@@ -6011,12 +6011,21 @@
         "U11"
       ],
       "recommended_deep_lane": "integration_candidate",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
       "merge_rule": "仅在显式激活到当次lane后阻断；目录中的未实现case不直接挂全局required。",
-      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。"
+      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。",
+      "promotion": {
+        "capability": "离线且私有 Python 归档缓存齐备：一次授权零请求准备好并出图",
+        "lane": "pr",
+        "test": "tests/test_foundation_private_python.py::test_fo24_cached_private_python_prepares_offline_and_renders",
+        "negative_evidence": "门的 cached=true / download_bytes=0 / network_required=false；供应来源指向没人听的端口 + 死代理（真要联网必失败）；图内值 == truth ± 5%（ylim）与标题；同文件 FO25 是无缓存的反面；tests/test_private_python.py 的坏缓存不复用 / 死代理对照；变异 M12（坏缓存照样复用）红",
+        "budget": "本机约 15 s（真 venv + 真 pip 离线 + 冷启动 worker 渲染）",
+        "target_scope": "源码树 + 旧后端（PyMuPDF）终点 + 应用 Python 3.13 + 目标 = 受管环境的新一代，base = 私有 Python（假 pbs 归档：替身 exec 宿主的 worker 解释器；供应器的状态机 / hash / 目录纪律是真的）；「这台机器没有任何可用 Python」= 发现链末端置空（进程内 test_client）；invariants job：ubuntu；本机：macOS arm64。**工程验证，不是无系统 Python 的目标资格（ADR 0064 第三档在 U11）**，不是新能力默认启用（锁 enabled 全 false）",
+        "approval": "U05 阶段（2026-09-21，ADR 0063 / 0064）：按 03_CI_POLICY §4 提升——实现 + 真实正反用例 + 台账 + 支持范围说明同一 PR；旧行为（U04 的事务 / 单包路径 / 包管理、pool._prioritized_candidates）不变；资格未取得时行为逐字回到 U04"
+      }
     },
     {
       "id": "FO25",
@@ -6046,12 +6055,21 @@
         "U11"
       ],
       "recommended_deep_lane": "pr_candidate",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
       "merge_rule": "仅在显式激活到当次lane后阻断；目录中的未实现case不直接挂全局required。",
-      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。"
+      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。",
+      "promotion": {
+        "capability": "离线且无缓存：有界 safe_stop，不建任何东西",
+        "lane": "pr",
+        "test": "tests/test_foundation_private_python.py::test_fo25_offline_without_cache_is_a_safe_stop_that_builds_nothing",
+        "negative_evidence": "门带 download_bytes == 归档大小 / network_required=true 且投影无机器路径；终态 private_python_offline 且 < 120 s；无一代登记、无 runtime 目录、无 .part；再准备仍 needs_input；变异（传输失败归成成功 / 不清 .part）在 tests/test_private_python.py 各红",
+        "budget": "本机约 5 s",
+        "target_scope": "源码树 + 旧后端（PyMuPDF）终点 + 应用 Python 3.13 + 目标 = 受管环境的新一代，base = 私有 Python（假 pbs 归档：替身 exec 宿主的 worker 解释器；供应器的状态机 / hash / 目录纪律是真的）；「这台机器没有任何可用 Python」= 发现链末端置空（进程内 test_client）；invariants job：ubuntu；本机：macOS arm64。**工程验证，不是无系统 Python 的目标资格（ADR 0064 第三档在 U11）**，不是新能力默认启用（锁 enabled 全 false）",
+        "approval": "U05 阶段（2026-09-21，ADR 0063 / 0064）：按 03_CI_POLICY §4 提升——实现 + 真实正反用例 + 台账 + 支持范围说明同一 PR；旧行为（U04 的事务 / 单包路径 / 包管理、pool._prioritized_candidates）不变；资格未取得时行为逐字回到 U04"
+      }
     },
     {
       "id": "FO26",
@@ -6081,12 +6099,21 @@
         "U11"
       ],
       "recommended_deep_lane": "integration_candidate",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
       "merge_rule": "仅在显式激活到当次lane后阻断；目录中的未实现case不直接挂全局required。",
-      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。"
+      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。",
+      "promotion": {
+        "capability": "下载损坏 / 错误哈希：拒绝使用，旧 active 环境保持有效",
+        "lane": "pr",
+        "test": "tests/test_foundation_private_python.py::test_fo26_corrupted_source_is_refused_and_the_active_environment_stays",
+        "negative_evidence": "先在好的一份上准备并渲染出真值；篡改一个字节的本地供应服务 → private_python_hash_mismatch；active 代不变、generations 只有那一代、runtimes/ 只有好的那份、坏归档的解释器一次都没起（launches.log 不存在）；变异 M01（不比对 sha256）红",
+        "budget": "本机约 25 s（两次准备 + 一次渲染）",
+        "target_scope": "源码树 + 旧后端（PyMuPDF）终点 + 应用 Python 3.13 + 目标 = 受管环境的新一代，base = 私有 Python（假 pbs 归档：替身 exec 宿主的 worker 解释器；供应器的状态机 / hash / 目录纪律是真的）；「这台机器没有任何可用 Python」= 发现链末端置空（进程内 test_client）；invariants job：ubuntu；本机：macOS arm64。**工程验证，不是无系统 Python 的目标资格（ADR 0064 第三档在 U11）**，不是新能力默认启用（锁 enabled 全 false）",
+        "approval": "U05 阶段（2026-09-21，ADR 0063 / 0064）：按 03_CI_POLICY §4 提升——实现 + 真实正反用例 + 台账 + 支持范围说明同一 PR；旧行为（U04 的事务 / 单包路径 / 包管理、pool._prioritized_candidates）不变；资格未取得时行为逐字回到 U04"
+      }
     },
     {
       "id": "FO27",
