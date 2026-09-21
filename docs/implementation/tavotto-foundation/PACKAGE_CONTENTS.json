@@ -324,8 +324,8 @@
     },
     {
       "path": "tools/generate_facade_ledger.py",
-      "bytes": 6177,
-      "sha256": "ff6760d50106925710e9a3eeafe65ddc40f0a97d27b78bca10e54820923b5bd0"
+      "bytes": 6155,
+      "sha256": "d119569fce826924c2a3ae7cf3696d7a272d3511d45b12ca319af4988d94ff4f"
     },
     {
       "path": "tools/generate_views.py",

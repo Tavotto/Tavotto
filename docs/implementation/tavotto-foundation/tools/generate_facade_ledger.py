@@ -101,9 +101,7 @@ def render(ledger: dict) -> str:
         "|---|---|---|---|",
     ]
     for m in cm["methods"]:
-        callers = "<br>".join(
-            f"`{c['file']}:{c['line']}` · `{c['symbol']}`" for c in m["callers"]
-        )
+        callers = "<br>".join(f"`{c['file']}:{c['line']}` · `{c['symbol']}`" for c in m["callers"])
         lines.append(f"| `{m['name']}` | `{m['signature']}` | {callers} | {cell(m['role'])} |")
     lines += [
         "",

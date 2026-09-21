@@ -188,7 +188,9 @@ def test_a_symlink_inside_the_project_pointing_outside_is_outside(tmp_path):
     assert ev["verdict"] == db.VERDICT_UNKNOWN
 
 
-def test_a_script_outside_the_project_root_yields_no_evidence_and_is_not_read(tmp_path, monkeypatch):
+def test_a_script_outside_the_project_root_yields_no_evidence_and_is_not_read(
+    tmp_path, monkeypatch
+):
     """CodeQL #143 / #144：脚本路径本身也钉在项目根之内（realpath）再读；`../` 到项目外的
     脚本一个字节不读，证据就是「没有字面量」（verdict none），不是把项目外文件当脚本解析。"""
     root = _project(tmp_path, "fig.py", "open('data.csv')\n", {"data.csv": "x\n1\n"})
