@@ -1,10 +1,28 @@
 """PDF 写入器：Render IR → 可检索文字的真矢量 PDF（统一实施包 U06，ADR 0059 / 0060）。
 
-U02 的受限 emitter（`scripts/dev/u02_spikes/pdfwrite.py`）收编进产品：pikepdf（qpdf）做对象模型 /
-序列化，fontTools 做子集，**内容流的操作符自己写**——只会做 `ir.CAPABILITIES["pdf"]` 里声明
-`native` 的那几件事（路径填充 / 描边 / 裁剪 / 透明组 / 常量 alpha / 可检索文字 / 页面底色），
-**不是通用 PDF 写入器，更不是 parser**。声明 `unsupported` 的节点（`Image` / `ImportedPage`，U07）
-以 `UnsupportedCapability` 拒绝，不静默跳过、不整页位图冒充矢量（RC-011）。
+U02 的受限 emitter 收编进产品：pikepdf（qpdf）做对象模型 / 序列化 / 外来页导入，fontTools 做子集，
+**内容流的操作符自己写**——只会做 `ir.CAPABILITIES["pdf"]` 里声明 `native` 的那几件事（路径填充 /
+描边 / 裁剪 / 透明组 / 常量 alpha / 可检索文字 / 页面底色 / 外来页 Form XObject / 位图 Image XObject /
+镜像），**不是通用 PDF 写入器，更不是 parser**。声明 `unsupported` 的操作以 `UnsupportedCapability`
+拒绝，不静默跳过、不整页位图冒充矢量（RC-011）。
+
+## 面板（U07，ADR 0065）
+
+* `ImportedPage`：源 PDF 的那一页经 qpdf `as_form_xobject(handle_transformations=True)` 变成 Form
+  XObject，`copy_foreign` 搬进本文档——源页的 /Resources（含从 /Pages 继承的）随 form 走，各自一份，
+  两个源里同名的 /F1 / /X1 互不相干（RC-043）；源页的 /Rotate 与 /UserUnit 由 qpdf 折进 form 的
+  /Matrix，本模块只看 BBox 经 /Matrix 映射后的**可见框**，于是恰好应用一次（RC-039）；可见框由
+  qpdf 定（TrimBox → CropBox → MediaBox），非零原点的页盒因此天然正确（RC-038）。crop / 翻转 /
+  旋转 / 填满目标框的顺序只在 `placement.place()` 一处。注释、动作、附件、JavaScript **不进** form
+  （只有内容流与资源会被 `as_form_xobject` 收进去），加密的源以 `source_unreadable` 拒绝（RC-046）。
+  `opacity < 1` 时整页包成透明组再画——组内 alpha 从 1 起算，源页内部重叠不被二次压暗
+  （RC-041），**仍是矢量、文字层随 form 保留**（RC-040）。
+* `Image`：位图经 `rasterio.decode()` 成 `RasterBuffer`，写成 8 bit DeviceRGB 的 Image XObject（Flate），
+  alpha 单独成 /SMask（straight，与 PNG / TIFF 同义）；8 bit RGB / 灰度 JPEG 原字节直通 `/DCTDecode`。
+  `opacity < 1` 是 ExtGState 常量 alpha（位图是一次填充）。同一份字节在一份文档里只嵌一次
+  （按资源 key 去重，key 含字节 hash——按身份去重，不按名字）。
+* 资源的字节由调用方经 `files` 交进来（`job` 里是 `sources.read_frozen()` 核过 hash 的那一份）；
+  写入器再核一次 sha256（`source_identity`）——两次核对是有意的冗余（RC-014）。
 
 ## 坐标
 
@@ -39,15 +57,18 @@ import hashlib
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
-from . import ir
+from . import ir, placement, rasterio
 from .hbshaper import HbFace, HbFaceProvider, require
 
 WRITER_ERROR_CODES = (
     "unsupported_capability",  # IR 用到了 CAPABILITIES["pdf"] 里声明 unsupported 的操作
     "font_identity",  # 资源里的脸与注册表里的脸身份不一致
     "font_format",  # 字体程序格式不在两条路里
+    "source_bytes_missing",  # 节点引用的文件资源没有交进来字节（files 里没有这个 key）
+    "source_identity",  # 交进来的字节 sha256 与资源身份不符
+    "source_unreadable",  # 源 PDF 打不开 / 加密 / 没有这一页 / 位图解不开
 )
 
 
@@ -79,6 +100,10 @@ class WriteFacts:
     transparency_groups: int = 0
     actualtext_spans: int = 0
     notdef_codes: int = 0
+    #: 每个 ImportedPage 一条：可见框 / 落位矩阵 / 裁剪 / 是否包了透明组（evidence 与测试读）。
+    imported_pages: list[dict] = field(default_factory=list)
+    #: 每个 Image 一条：像素尺寸 / 通道 / 编码（flate / dct）/ 落位矩阵。
+    images: list[dict] = field(default_factory=list)
     sha256: str = ""
     bytes: int = 0
     versions: dict = field(default_factory=dict)
@@ -154,12 +179,18 @@ def _subset_tag(used: dict[int, str]) -> str:
 # 写入器
 # ---------------------------------------------------------------------------
 class PdfWriter:
-    def __init__(self, page: ir.Page, provider: HbFaceProvider) -> None:
+    def __init__(
+        self,
+        page: ir.Page,
+        provider: HbFaceProvider,
+        files: Mapping[str, bytes] | None = None,
+    ) -> None:
         require("pikepdf", "fontTools", "uharfbuzz")
         import pikepdf
 
         self.page = ir.validate(page)
         self.provider = provider
+        self.files: Mapping[str, bytes] = files or {}
         self.pdf = pikepdf.new()
         self.facts = WriteFacts(page=(page.width_pt, page.height_pt))
         self._fonts: dict[str, _FontUse] = {}  # 资源 key → use
@@ -168,6 +199,12 @@ class PdfWriter:
         self._table = ir.CAPABILITIES["pdf"]
         #: 透明组的 form 内容与它的 BBox，序列化时再变成 Form XObject
         self._forms_pending: list[tuple[_Recorder, tuple[float, float, float, float]]] = []
+        #: (资源 key, page_index) → 已 copy_foreign 进来的 Form XObject（同一源两个实例共用一份对象）
+        self._foreign_forms: dict[tuple[str, int], Any] = {}
+        #: 外来 Pdf 要活到 save() 之后：qpdf 对流数据是按需读的
+        self._foreign_docs: list[Any] = []
+        #: 资源 key → 已写好的 Image XObject（+ 它的事实）
+        self._image_objs: dict[str, tuple[Any, dict]] = {}
 
     # -- 资源 -------------------------------------------------------------
     def _name(self, prefix: str) -> str:
@@ -227,8 +264,240 @@ class PdfWriter:
             self.facts.text_objects += 1
         elif isinstance(node, ir.Group):
             self._group(node, rec, ctm, depth)
-        else:  # Image / ImportedPage：能力表里是 unsupported，上面已经拒了；这里是兜底
-            raise UnsupportedCapability(type(node).__name__.lower(), "U07", node.object_id)
+        elif isinstance(node, ir.ImportedPage):
+            self._imported_page(node, rec, ctm)
+        elif isinstance(node, ir.Image):
+            self._image(node, rec)
+        else:  # validate() 已经挡住不认识的节点；这里是最后一道
+            raise UnsupportedCapability(type(node).__name__.lower(), "不认识的节点", "")
+
+    # -- 面板 -------------------------------------------------------------
+    def _source_bytes(self, node: ir.ImportedPage | ir.Image) -> tuple[ir.FileResource, bytes]:
+        res = self.page.resources[node.resource]
+        assert isinstance(res, ir.FileResource)
+        data = self.files.get(node.resource)
+        if data is None:
+            raise WriterError(
+                "source_bytes_missing",
+                f"{node.resource}: 没有交进来字节（files 里没有这个 key）",
+                {"resource": node.resource, "object_id": node.object_id},
+            )
+        sha = hashlib.sha256(data).hexdigest()
+        if sha != res.sha256:
+            raise WriterError(
+                "source_identity",
+                f"{res.source_id}: 字节 sha256 {sha[:12]} 与资源身份 {res.sha256[:12]} 不符",
+                {"resource": node.resource, "object_id": node.object_id, "figure": res.source_id},
+            )
+        return res, data
+
+    def _foreign_form(self, node: ir.ImportedPage, res: ir.FileResource, data: bytes):
+        """源 PDF 的那一页 → 本文档里的 Form XObject（同一 (资源, 页) 只搬一次）。"""
+        import io
+
+        import pikepdf
+
+        key = (node.resource, node.page_index)
+        form = self._foreign_forms.get(key)
+        if form is not None:
+            return form
+        try:
+            src = pikepdf.open(io.BytesIO(data))
+        except pikepdf.PasswordError as exc:
+            raise WriterError(
+                "source_unreadable",
+                f"{res.source_id}: 源 PDF 加密，本轮不打开加密文件（RC-046）",
+                {"figure": res.source_id, "object_id": node.object_id, "why": "encrypted"},
+            ) from exc
+        except (pikepdf.PdfError, ValueError, OSError) as exc:
+            raise WriterError(
+                "source_unreadable",
+                f"{res.source_id}: 源 PDF 打不开: {exc}",
+                {"figure": res.source_id, "object_id": node.object_id, "why": "broken"},
+            ) from exc
+        self._foreign_docs.append(src)
+        if node.page_index >= len(src.pages):
+            raise WriterError(
+                "source_unreadable",
+                f"{res.source_id}: 只有 {len(src.pages)} 页，没有第 {node.page_index} 页",
+                {"figure": res.source_id, "object_id": node.object_id, "why": "page_index"},
+            )
+        try:
+            form = self.pdf.copy_foreign(
+                src.pages[node.page_index].as_form_xobject(handle_transformations=True)
+            )
+        except (pikepdf.PdfError, ValueError, RuntimeError) as exc:
+            raise WriterError(
+                "source_unreadable",
+                f"{res.source_id}: 页面导入失败: {exc}",
+                {"figure": res.source_id, "object_id": node.object_id, "why": "import"},
+            ) from exc
+        self._foreign_forms[key] = form
+        return form
+
+    def _imported_page(self, node: ir.ImportedPage, rec: _Recorder, ctm: ir.Matrix) -> None:
+        res, data = self._source_bytes(node)
+        form = self._foreign_form(node, res, data)
+        bbox = tuple(float(v) for v in form.BBox)
+        matrix = form.get("/Matrix")
+        fm = tuple(float(v) for v in matrix) if matrix is not None else None
+        visible = placement.visible_box(bbox, fm)
+        pl = placement.place(
+            visible,
+            node.rect,
+            crop=node.crop,
+            rotate_cw_deg=node.rotate_cw_deg,
+            flip_h=node.flip_h,
+            flip_v=node.flip_v,
+        )
+        name = self._name("Fm")
+        cx, cy, cw, ch = pl.clip
+        inner = " ".join(
+            [
+                "q",
+                " ".join(_num(v) for v in pl.matrix) + " cm",
+                f"{_num(cx)} {_num(cy)} {_num(cw)} {_num(ch)} re W n",
+                f"/{name} Do",
+                "Q",
+            ]
+        )
+        fact = {
+            "object_id": node.object_id,
+            "resource": node.resource,
+            "page_index": node.page_index,
+            "bbox": list(bbox),
+            "form_matrix": list(fm) if fm else None,
+            "visible": list(visible),
+            "clip": list(pl.clip),
+            "matrix": list(pl.matrix),
+            "rect": list(node.rect),
+            "crop": list(node.crop) if node.crop else None,
+            "rotate_cw_deg": node.rotate_cw_deg,
+            "flip_h": node.flip_h,
+            "flip_v": node.flip_v,
+            "opacity": node.opacity,
+            "transparency_group": node.opacity < 1.0,
+        }
+        if node.opacity < 1.0:
+            # 整页包成透明组：组内 alpha 从 1 起算，源页内部重叠不被二次压暗（RC-041）；仍是矢量
+            wrap = _Recorder()
+            wrap.xobjects[name] = form
+            wrap.ops.append(inner)
+            self._forms_pending.append((wrap, pl.bbox))
+            wname = self._name("Grp")
+            rec.xobjects[wname] = wrap
+            rec.ops.append(f"q /{self._gs(rec, node.opacity, node.opacity)} gs /{wname} Do Q")
+            self.facts.transparency_groups += 1
+            fact["group"] = wname
+        else:
+            rec.xobjects[name] = form
+            rec.ops.append(inner)
+        self.facts.imported_pages.append(fact)
+
+    def _image_xobject(self, node: ir.Image, res: ir.FileResource, data: bytes):
+        import pikepdf
+
+        hit = self._image_objs.get(node.resource)
+        if hit is not None:
+            return hit
+        jpeg = rasterio.jpeg_passthrough(data, res.kind)
+        if jpeg is not None:
+            obj = pikepdf.Stream(self.pdf, data)
+            obj["/Type"] = pikepdf.Name.XObject
+            obj["/Subtype"] = pikepdf.Name.Image
+            obj["/Width"] = jpeg["width"]
+            obj["/Height"] = jpeg["height"]
+            obj["/ColorSpace"] = (
+                pikepdf.Name.DeviceRGB if jpeg["components"] == 3 else pikepdf.Name.DeviceGray
+            )
+            obj["/BitsPerComponent"] = 8
+            obj["/Filter"] = pikepdf.Name.DCTDecode
+            fact = {
+                "width": jpeg["width"],
+                "height": jpeg["height"],
+                "channels": jpeg["components"],
+                "encoding": "dct",
+                "smask": False,
+            }
+            hit = (self.pdf.make_indirect(obj), fact)
+            self._image_objs[node.resource] = hit
+            return hit
+        try:
+            buf = rasterio.decode(data, res.kind)
+        except rasterio.RasterDecodeError as exc:
+            raise WriterError(
+                "source_unreadable",
+                f"{res.source_id}: {exc}",
+                {"figure": res.source_id, "object_id": node.object_id, "why": exc.code},
+            ) from exc
+        rgb, alpha = buf.split_alpha()
+        obj = pikepdf.Stream(self.pdf, rgb)
+        obj["/Type"] = pikepdf.Name.XObject
+        obj["/Subtype"] = pikepdf.Name.Image
+        obj["/Width"] = buf.width
+        obj["/Height"] = buf.height
+        obj["/ColorSpace"] = pikepdf.Name.DeviceRGB
+        obj["/BitsPerComponent"] = 8
+        if alpha is not None:
+            smask = pikepdf.Stream(self.pdf, alpha)
+            smask["/Type"] = pikepdf.Name.XObject
+            smask["/Subtype"] = pikepdf.Name.Image
+            smask["/Width"] = buf.width
+            smask["/Height"] = buf.height
+            smask["/ColorSpace"] = pikepdf.Name.DeviceGray
+            smask["/BitsPerComponent"] = 8
+            obj["/SMask"] = self.pdf.make_indirect(smask)
+        fact = {
+            "width": buf.width,
+            "height": buf.height,
+            "channels": buf.channels,
+            "encoding": "flate",
+            "smask": alpha is not None,
+            "dpi": buf.dpi,
+        }
+        hit = (self.pdf.make_indirect(obj), fact)
+        self._image_objs[node.resource] = hit
+        return hit
+
+    def _image(self, node: ir.Image, rec: _Recorder) -> None:
+        res, data = self._source_bytes(node)
+        obj, fact = self._image_xobject(node, res, data)
+        # Image XObject 画进单位正方形：可见框就是 (0, 0, 1, 1)
+        pl = placement.place(
+            (0.0, 0.0, 1.0, 1.0),
+            node.rect,
+            crop=node.crop,
+            rotate_cw_deg=node.rotate_cw_deg,
+            flip_h=node.flip_h,
+            flip_v=node.flip_v,
+        )
+        name = self._name("Im")
+        rec.xobjects[name] = obj
+        parts = ["q"]
+        if node.opacity < 1.0:
+            parts.append(f"/{self._gs(rec, node.opacity, node.opacity)} gs")
+        cx, cy, cw, ch = pl.clip
+        parts += [
+            " ".join(_num(v) for v in pl.matrix) + " cm",
+            f"{_num(cx)} {_num(cy)} {_num(cw)} {_num(ch)} re W n",
+            f"/{name} Do",
+            "Q",
+        ]
+        rec.ops.append(" ".join(parts))
+        self.facts.images.append(
+            {
+                **fact,
+                "object_id": node.object_id,
+                "resource": node.resource,
+                "matrix": list(pl.matrix),
+                "clip": list(pl.clip),
+                "rect": list(node.rect),
+                "opacity": node.opacity,
+                "rotate_cw_deg": node.rotate_cw_deg,
+                "flip_h": node.flip_h,
+                "flip_v": node.flip_v,
+            }
+        )
 
     def _group(self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
         self.facts.groups += 1
@@ -494,7 +763,10 @@ class PdfWriter:
         res = pikepdf.Dictionary()
         if rec.xobjects:
             res["/XObject"] = pikepdf.Dictionary(
-                {"/" + k: self._form(v) for k, v in rec.xobjects.items()}
+                {
+                    "/" + k: (self._form(v) if isinstance(v, _Recorder) else v)
+                    for k, v in rec.xobjects.items()
+                }
             )
         if rec.extgstates:
             res["/ExtGState"] = pikepdf.Dictionary({"/" + k: v for k, v in rec.extgstates.items()})
@@ -545,6 +817,9 @@ class PdfWriter:
             deterministic_id=True,
             min_version="1.5",
         )
+        for doc in self._foreign_docs:  # 流数据已经写进文件，外来文档可以放了
+            doc.close()
+        self._foreign_docs.clear()
         data = out.read_bytes()
         self.facts.sha256 = hashlib.sha256(data).hexdigest()
         self.facts.bytes = len(data)
@@ -608,6 +883,12 @@ def _tounicode(mapping: dict[int, str]) -> bytes:
     return ("\n".join(lines) + "\n").encode("ascii")
 
 
-def write_pdf(page: ir.Page, out: Path, provider: HbFaceProvider) -> WriteFacts:
-    """IR → PDF 文件。`provider` 解析 `FontResource` → 已加载的脸（按 sha256 身份）。"""
-    return PdfWriter(page, provider).write(out)
+def write_pdf(
+    page: ir.Page,
+    out: Path,
+    provider: HbFaceProvider,
+    files: Mapping[str, bytes] | None = None,
+) -> WriteFacts:
+    """IR → PDF 文件。`provider` 解析 `FontResource` → 已加载的脸（按 sha256 身份）；`files` 是
+    `FileResource` key → 冻结字节（`sources.read_frozen()` 核过 hash 的那份），面板要它。"""
+    return PdfWriter(page, provider, files).write(out)
