@@ -4,7 +4,7 @@
 状态含义见 [`03_CI_POLICY.md`](03_CI_POLICY.md) §3 与 ADR 0053 §五：**只有 enforced 且结果目录里有有效通过记录的实例才算通过**；
 planned / observing / later 是登记，不是成绩。
 
-能力版本：`u04` · 计数：enforced 12 · later 1 · observing 6 · planned 14
+能力版本：`u04` · 计数：enforced 12 · later 1 · observing 7 · planned 13
 
 | case | 标题 | enrollment | lane | 阶段 | 用例 | fixture | 场景 |
 |---|---|---|---|---|---|---|---|
@@ -30,7 +30,7 @@ planned / observing / later 是登记，不是成绩。
 | FO20 | markers/extras/所选依赖组 | enforced | pr | U04 | `tests/test_foundation_dependencies.py::test_fo20_markers_extras_and_selected_groups_prepare_only_what_applies` | `tests/fixtures/foundation/joint_dependencies` | FO20 |
 | FO21 | 依赖约束不可同时满足 | enforced | pr | U04 | `tests/test_foundation_dependencies.py::test_fo21_conflicting_declarations_stop_and_keep_the_environment` | `tests/fixtures/foundation/joint_dependencies` | FO21 |
 | FO22 | 已安装但原生库无法 import | enforced | pr | U04 | `tests/test_foundation_dependencies.py::test_fo22_installed_but_unimportable_is_caught_by_verification` | `tests/fixtures/foundation/joint_dependencies` | FO22 |
-| FO23 | 无系统 Python/uv/pip 冷启动 | planned | release | U05 | — | — | FO23 |
+| FO23 | 无系统 Python/uv/pip 冷启动 | observing | release | U05 | — | — | FO23 |
 | FO24 | 离线且受管 runtime/wheels 缓存齐备 | planned | integration | U05 | — | — | FO24 |
 | FO25 | 离线且无可用缓存 | planned | pr | U05 | — | — | FO25 |
 | FO26 | 下载损坏、截断和错误哈希 | planned | integration | U05 | — | — | FO26 |
