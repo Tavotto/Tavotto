@@ -21,6 +21,7 @@ safe_stop 的通过**不进**自动兼容成功的分子（校验器按台账预
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -97,8 +98,15 @@ def _panel(app: fa.RunningApp, file_name: str) -> dict:
 
 
 def _native_reference(project: Path, script: str, tmp: Path) -> None:
-    """夹具的原生参考：用户在终端里跑过一次脚本，磁盘上有原件。**不是**产品路径。"""
+    """夹具的原生参考：用户在终端里跑过一次脚本，磁盘上有原件。**不是**产品路径。
+
+    环境只留装载器与系统必需的几个变量（setup-python 在 Linux 上的解释器靠
+    ``LD_LIBRARY_PATH`` 找 libpython；Windows 上没有 ``SYSTEMROOT`` 起不来），
+    渲染相关的一律不继承——这一步模拟的是用户自己的终端，不是产品。"""
     env = {"PATH": "/usr/bin:/bin", "MPLCONFIGDIR": str(tmp / "mpl"), "MPLBACKEND": "Agg"}
+    for name in ("LD_LIBRARY_PATH", "SYSTEMROOT", "TEMP", "TMP"):
+        if os.environ.get(name):
+            env[name] = os.environ[name]
     proc = subprocess.run(
         [WORKER_PY, script],
         cwd=project,
