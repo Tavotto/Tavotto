@@ -50,6 +50,7 @@ from . import (
     depresolve,
     envlease,
     execspec,
+    importscan,
     managedenv,
     pool,
     privatepython,
@@ -2210,6 +2211,8 @@ class JointRepairPlan:
     joint: dict
     #: 同 `RepairPlan.private_python`：这次授权包不包含先下载私有 Python（U05）。
     private_python: dict | None = None
+    #: 计划的事实来自替身（私有 Python 还没落盘）：事务供应之后按真解释器重算 delta（U05 PR B）。
+    replan: bool = False
 
     def to_payload(self) -> dict:
         return {
@@ -2231,6 +2234,7 @@ class JointRepairPlan:
             "expires_at": int(self.expires_at),
             "joint": dict(self.joint),
             "private_python": dict(self.private_python) if self.private_python else None,
+            "replan": self.replan,
         }
 
 
@@ -2249,16 +2253,67 @@ def joint_target_for(project: str | Path, script: str) -> tuple[str, str, str]:
     return TARGET_MANAGED, python, source
 
 
+#: 一个渲染解释器都没有（`pool._no_python_error` 的 code）——干净机器的形状。
+NO_WORKER_PYTHON = "no_worker_python"
+
+
+def private_python_target(project: str | Path, script: str) -> tuple[str, str, object] | None:
+    """**一个渲染解释器都没有**而本目标提供私有 Python 时的目标：受管环境（要新建）、解释器为空、事实按
+    私有 Python 量——已供应就真量（`depplan.target_facts`），还没落盘就用替身（锁的版本 / 实现 + 这台机器
+    的平台字段，已装集合为空）。回 None = 这条路不适用（有解释器、或不提供私有 Python），让原路径去走。
+
+    这是干净机器上第一份计划的来源（U05 PR B）：没有它，`joint_target_for` 抛 `no_worker_python`、
+    `depplan.plan(facts=None)` 是 `dependency_target_unavailable`——都不是「先下载再准备」这条路。"""
+    root = str(Path(project))
+    try:
+        pool.resolve_worker_python(root, script=script)
+        return None
+    except pool.WorkerError as exc:
+        if getattr(exc, "code", "") != NO_WORKER_PYTHON:
+            return None
+    facts = private_fresh_facts()
+    if facts is None:
+        return None
+    return TARGET_MANAGED, facts.python, facts
+
+
+def private_fresh_facts() -> depplan.TargetFacts | None:
+    """从私有 Python 新建的一代**装之前**的事实：已供应就真量（`depplan.fresh_venv_facts`）；还没落盘
+    就用替身——marker 环境按锁的版本 / 实现 + 这台机器的平台字段、stdlib 用宿主的表、已装集合只有 adapter
+    （这一代必然会带上）。不提供私有 Python 回 None。替身只服务披露；供应之后事务按真解释器重算。"""
+    source = privatepython.source_for()
+    if source is None or not privatepython.offered(source):
+        return None
+    private = privatepython.python_of(source)
+    if private:
+        return depplan.fresh_venv_facts(private, provided=depplan.adapter_distributions())
+    installed = {name: "" for name in depplan.adapter_distributions()}
+    return depplan.TargetFacts(
+        python="",
+        marker_env=privatepython.standin_marker_env(source),
+        stdlib=importscan.HOST_STDLIB,
+        installed=installed,
+    )
+
+
 def joint_plan_for(
     project: str | Path, script: str, *, groups: list[str] | None = None
 ) -> tuple[depplan.JointPlan, str, str]:
     """算一份联合计划（只读）：缺什么按**此刻选中的**解释器量、装什么按目标量（`_facts_for`）。
-    回 (计划, 目标类型, 解释器)。"""
+    回 (计划, 目标类型, 解释器)。
+
+    一个解释器都没有时（干净机器）先问 `private_python_target`：提供私有 Python 就以它为目标算
+    （缺什么与装什么都按将要新建的那一代量——替身或真量）；不提供照抛 `no_worker_python`。"""
     root = str(Path(project))
-    target_kind, python, _source = joint_target_for(root, script)
-    facts, install_facts, _measured = _facts_for(target_kind, python, root)
     if groups is None:
         groups = depplan.selected_groups_setting(root)
+    standin = private_python_target(root, script)
+    if standin is not None:
+        target_kind, python, facts = standin
+        install_facts = None
+    else:
+        target_kind, python, _source = joint_target_for(root, script)
+        facts, install_facts, _measured = _facts_for(target_kind, python, root)
     plan = depplan.plan(
         root,
         script,
@@ -2291,7 +2346,8 @@ def _facts_for(
         return run, depplan.target_facts(managed_python, use_cache=use_cache), python
     base = base_python() or ""
     if not base:
-        return run, None, python
+        # 没有基础解释器：提供私有 Python 就按它（真量 / 替身）量新的一代，否则计划只能按选中的量
+        return run, private_fresh_facts(), python
     fresh = depplan.fresh_venv_facts(
         base, use_cache=use_cache, provided=depplan.adapter_distributions()
     )
@@ -2311,18 +2367,30 @@ def create_joint_plan(
     root = str(Path(project))
     if rounds_remaining(root, script) <= 0:
         raise RepairError(ERROR_ROUNDS_EXHAUSTED, "这个脚本的自动依赖修复已经用满")
-    auto_kind, python, _source = joint_target_for(root, script)
+    standin = private_python_target(root, script)
+    if standin is not None:
+        # 干净机器：目标只能是受管环境（要新建），事实来自私有 Python（真量或替身）
+        auto_kind, python, facts = standin
+    else:
+        auto_kind, python, _source = joint_target_for(root, script)
+        facts = None
     kind = target_kind or auto_kind
     if kind not in TARGETS:
         raise RepairError(ERROR_NOT_ALLOWED, f"未知的安装目标: {kind!r}")
     if kind == TARGET_PROJECT_VENV and auto_kind != TARGET_PROJECT_VENV:
         raise RepairError(ERROR_NOT_ALLOWED, "这个项目此刻没有选中自己的虚拟环境，不能往里装")
-    facts, install_facts, measured = _facts_for(kind, python, root)
+    if standin is not None:
+        install_facts, measured = None, ""
+    else:
+        facts, install_facts, measured = _facts_for(kind, python, root)
     groups = depplan.selected_groups_setting(root) if groups is None else list(groups)
     joint = depplan.plan(
         root, script, facts=facts, target_kind=kind, groups=groups, install_facts=install_facts
     )
-    if joint.status != depplan.STATUS_READY:
+    # 干净机器上「什么都不缺」也得建环境（没有任何解释器可用）：nothing_needed 照样成计划，delta 为空 = 只装 adapter
+    if joint.status == depplan.STATUS_BLOCKED or (
+        joint.status == depplan.STATUS_NOTHING_NEEDED and standin is None
+    ):
         raise RepairError(
             ERROR_PLAN_BLOCKED,
             "联合计划不可执行" if joint.status == depplan.STATUS_BLOCKED else "没有缺的依赖",
@@ -2338,6 +2406,8 @@ def create_joint_plan(
     else:
         bound_python = python
         creates = False
+    # 计划里带着下载 = 「装到哪」的事实是替身（私有 Python 还没落盘）：供应之后事务按真解释器重算 delta
+    replan = private is not None
     now = time.time()
     plan = JointRepairPlan(
         plan_id=secrets.token_urlsafe(24),
@@ -2372,6 +2442,7 @@ def create_joint_plan(
         expires_at=now + PLAN_TTL_S,
         joint=joint.to_payload(),
         private_python=private,
+        replan=replan,
     )
     _prune_plans()
     with _lock:
@@ -2466,6 +2537,8 @@ def prepare(plan_id: str, on_event=None) -> dict:
                 on_log=lambda text: _append_log(plan.plan_id, text, on_event),
                 label=f"prepare-{len(plan.requirements)}",
                 provision_private=plan.private_python is not None,
+                groups=plan.groups,
+                replan=plan.replan,
             )
             return _run_generation(job, cancel_ev)
         key = _env_key(TARGET_PROJECT_VENV, plan.python, plan.project)
@@ -2561,6 +2634,9 @@ class _GenerationJob:
     #: 计划里明示过「将下载私有 Python」的授权才为真（U05）；重建 / 包管理首装为假——
     #: 那两条路没有说出口的下载，没有基础解释器就照旧 `managed_env_unavailable`。
     provision_private: bool = False
+    #: 计划的事实来自替身：供应之后按真解释器重算 delta / 关键 import / 记账（`_replan_on_base`）。
+    replan: bool = False
+    groups: tuple[str, ...] = ()
 
 
 def generation_requirements(
@@ -2629,6 +2705,8 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         base, base_runtime = outcome["python"], outcome["runtime"]
     if not base:
         raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
+    if job.replan:
+        job = _replan_on_base(job, base)
     if not base_runtime:
         base_runtime = _private_runtime_of(base)
     requirements = generation_requirements(project, job.delta, hash_mode=job.require_hashes)
@@ -2822,6 +2900,46 @@ def _private_runtime_of(base: str) -> str:
     except OSError:
         return ""
     return source.id if same else ""
+
+
+def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
+    """替身算的计划在真解释器上重算一遍：delta / 关键 import / 记账 / 身份都换成真量的（U05 PR B）。
+
+    干净机器上第一份计划的事实是替身（锁的版本 + 这台机器的平台字段、已装为空）；私有 Python 落盘之后
+    marker 环境要按它真量。真量出来 blocked → `dependency_plan_blocked`（这一代还没登记）；
+    `nothing_needed` 照样建（没有别的解释器，环境本身就是要的）。"""
+    facts = depplan.fresh_venv_facts(
+        base, use_cache=False, provided=depplan.adapter_distributions()
+    )
+    if facts is None:
+        raise RepairError(privatepython.ERROR_LAUNCH_FAILED, "私有 Python 量不出目标事实")
+    plan = depplan.plan(
+        job.project,
+        job.script,
+        facts=facts,
+        target_kind=TARGET_MANAGED,
+        groups=list(job.groups) or None,
+    )
+    if plan.status == depplan.STATUS_BLOCKED:
+        raise RepairError(ERROR_PLAN_BLOCKED, "联合计划不可执行", joint=plan.to_payload())
+    return dataclasses.replace(
+        job,
+        delta=tuple(plan.requirements),
+        constraints=tuple(plan.constraints),
+        hashes={k: tuple(v) for k, v in plan.hashes.items()},
+        require_hashes=plan.require_hashes,
+        needed_imports=tuple(m["import_name"] for m in plan.missing),
+        record=tuple(
+            {
+                "import_name": m["import_name"],
+                "distribution": m["distribution"],
+                "specifier": ",".join(m["specifiers"]),
+            }
+            for m in plan.missing
+        ),
+        identity=plan.identity,
+        replan=False,
+    )
 
 
 def _provision_private_base(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
