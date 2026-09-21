@@ -143,6 +143,25 @@ def main():
         fig6, ax7 = plt.subplots(figsize=(4.0, 3.0))
         ax7.bar(np.arange(n), np.ones(n))
         fig6.savefig(f"{stem}.pdf")
+
+    # MeshFig：彩色网格的数据范围**超出**坐标轴范围（2026-09-21 用户的 PRB 三联图：
+    # 频率网格 1.30–1.52、ylim 1.34–1.51，`shading="nearest"` 还各向外垫半格）。
+    # 它的 bbox 是未裁剪的整块网格，用户看到的却是被 axes 裁掉之后的那块。
+    fig7, (ax8, ax9) = plt.subplots(1, 2, figsize=(6.0, 3.0),
+                                    subplot_kw={"projection": None})
+    mx = np.round(np.arange(0.5, 2.0001, 0.025), 3)
+    my = np.linspace(1.30, 1.52, 45)
+    # collections_0：直角网格，rasterized（SVG 里是一张 <image>，没有 <g id>）
+    ax8.pcolormesh(mx, my, np.random.RandomState(0).rand(45, mx.size),
+                   shading="nearest", rasterized=True)
+    ax8.set_xlim(0.5, 2.0)
+    ax8.set_ylim(1.34, 1.51)
+    # axes_1.collections_0：翘曲网格（极坐标那种曲线边界）——外轮廓是真实边界
+    fig7.delaxes(ax9)
+    ax9 = fig7.add_subplot(1, 2, 2, projection="polar")
+    rr, tt = np.meshgrid(np.linspace(0.2, 1.0, 6), np.linspace(0.0, np.pi, 9))
+    ax9.pcolormesh(tt, rr, np.random.RandomState(1).rand(8, 5))
+    fig7.savefig("MeshFig.pdf")
 """
 
 
@@ -622,6 +641,43 @@ def test_contour_lines_trace_their_real_paths_not_the_axes_box(library):
         assert (max(xs) - min(xs)) * (max(ys) - min(ys)) < ax_box[2] * ax_box[3] * 0.9
     # 位图仍然只有 bbox（它就该整块命中，几何编辑代理回宿主子图）
     assert "geometry" not in _el(man, "axes_0.images_0")
+
+
+def test_quadmesh_outline_is_clipped_to_what_is_drawn(library):
+    """彩色网格出的是**外轮廓**（一条闭合子路径）+ 裁剪框，不是每个 cell。
+
+    数据范围超出坐标轴范围时 bbox 是未裁剪的整块网格（比子图高出一截），从前
+    没有 geometry 就拿它当选中框——「点子图背景时框罩不准」（2026-09-21 用户的
+    PRB 三联图）。轮廓 + `clip` 才是它画出来的那块；轮廓本身仍是整块网格
+    （前端按 clip 裁），bbox 一个字节不动。
+    """
+    man = _manifest(library, stem="MeshFig")
+    el = _el(man, "axes_0.collections_0")
+    ax_box = _el(man, "axes_0")["bbox"]
+    geom = el["geometry"]
+    assert geom["kind"] == "path" and len(geom["paths"]) == 1
+    (path,) = geom["paths"]
+    assert path["closed"] is True and geom["fill"] is True
+    # 直角网格的外轮廓抽稀后只剩四个角（首尾相接那一格可能多留一个点）
+    assert 4 <= len(path["points"]) <= 5, path["points"]
+    # 轮廓 = 整块网格：与（未裁剪的）bbox 同框，比子图高出一截
+    xs = [q[0] for q in path["points"]]
+    ys = [q[1] for q in path["points"]]
+    assert [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)] == pytest.approx(
+        el["bbox"], abs=2e-3
+    )
+    assert el["bbox"][3] > ax_box[3] * 1.15, "夹具失效：网格没有伸出子图"
+    # 裁剪框 = 子图框：前端按它裁，选中框与画出来的那块严丝合缝
+    assert geom["clip"] == pytest.approx(ax_box, abs=2e-3)
+
+
+def test_quadmesh_outline_follows_a_curvilinear_grid(library):
+    """极坐标里的网格：外轮廓是真实的曲线边界（半个圆环），不是一个矩形。"""
+    man = _manifest(library, stem="MeshFig")
+    geom = _el(man, "axes_1.collections_0")["geometry"]
+    (path,) = geom["paths"]
+    assert path["closed"] is True
+    assert len(path["points"]) > 8, "曲线边界抽稀后仍然远不止四个角"
 
 
 def test_line_collection_traces_each_line(library):

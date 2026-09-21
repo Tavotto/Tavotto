@@ -405,6 +405,33 @@ def _collection_subpaths(
     return out
 
 
+def _quadmesh_outline_subpaths(mesh) -> list[tuple]:
+    """彩色网格的**外轮廓**（display 像素）：沿坐标网格的四条边绕一圈。
+
+    `get_coordinates()` 是 (M+1, N+1, 2) 的顶点网格（gouraud 是 (M, N, 2)，
+    同样是一张网）。直角网格绕出来是一个矩形，RDP 抽稀后就是 4 个点；
+    曲线网格（极坐标、`pcolormesh(X, Y, C)` 的翘曲网格）绕出来的是真实边界。
+    坐标先过 artist 的 transform（非仿射的对数轴由 `_display_subpaths` 处理），
+    与 `QuadMesh.draw` 同一条路。掩码 / NaN 的顶点由 `remove_nans` 拆段。
+    """
+    coords = np.asarray(mesh.get_coordinates(), dtype=float)
+    if coords.ndim != 3 or coords.shape[0] < 2 or coords.shape[1] < 2:
+        return []
+    ring = np.concatenate(
+        [
+            coords[0, :],  # 底边（或第一行）从左到右
+            coords[1:, -1],  # 右边从下到上
+            coords[-1, -2::-1],  # 顶边从右到左
+            coords[-2:0:-1, 0],  # 左边从上到下（回到起点前一格）
+        ]
+    )
+    codes = np.full(len(ring) + 1, Path.LINETO, dtype=np.uint8)
+    codes[0] = Path.MOVETO
+    codes[-1] = Path.CLOSEPOLY
+    path = Path(np.vstack([ring, ring[:1]]), codes)
+    return _display_subpaths(path, mesh.get_transform())
+
+
 def _marker_subpaths(coll, budget: Budget) -> list[tuple] | None:
     """PathCollection（散点）每一颗 marker 的 display 空间轮廓。
 
@@ -693,12 +720,34 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
                 clip=_clip_rect(artist, W, H),
                 budget=budget,
             )
-        if isinstance(artist, Collection) and not isinstance(artist, QuadMesh):
+        if isinstance(artist, QuadMesh):
+            # 彩色网格：描**外轮廓**，不描每个 cell（`pcolormesh` 22 万个 cell 就是
+            # 22 万条路径）。从前这里什么都不给、退回 bbox，理由是「它铺满一块矩形，
+            # bbox 本来就是准的」——**那条前提在数据范围超出坐标轴范围时不成立**：
+            # bbox 是未裁剪的整个网格（`shading="nearest"` 还各向外垫半格），而
+            # 用户看到的是被 axes 裁掉之后的那块。2026-09-21 用户的 PRB 三联图：
+            # 频率网格 1.30–1.52 GHz、ylim 1.34–1.51，选中框比子图高出一截，
+            # 点击子图背景时框「罩不准」。轮廓 + `clip` 才是它画出来的那块。
+            subs = _quadmesh_outline_subpaths(artist)
+            if not subs:
+                return None
+            lw = np.asarray(artist.get_linewidths(), dtype=float).ravel()
+            lw_max = float(lw.max()) if lw.size else 0.0
+            return _pack(
+                subs,
+                W,
+                H,
+                # 网格是一整块实心面：点进去就是选它（命中评分按真实面积）
+                fill=True,
+                stroke=_has_paint(artist.get_edgecolor()) and lw_max > 0,
+                stroke_pt=lw_max,
+                clip=_clip_rect(artist, W, H),
+                budget=budget,
+            )
+        if isinstance(artist, Collection):
             # 其余 Collection：等值线（`ContourSet`，matplotlib 3.8 起本身就是
             # Collection）、线组（`LineCollection` / `EventCollection`）、三角网
-            # ……凡是 `get_paths()` 给得出路径的都描真实路径。**`QuadMesh` 除外**：
-            # 它的路径是每个 cell 一条（`pcolormesh` 22 万个 cell 就是 22 万条），
-            # 而它铺满一块矩形，bbox 本来就是准的、也没有「选到空白」的问题。
+            # ……凡是 `get_paths()` 给得出路径的都描真实路径。
             #
             # 没有 geometry 的等值线是**整块 bbox**：它盖住宿主子图，点热力图
             # 命中的是等值线，而等值线既不能拖也不能缩——用户看到的就是「热力图
