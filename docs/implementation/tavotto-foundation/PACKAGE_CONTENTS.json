@@ -284,8 +284,8 @@
     },
     {
       "path": "handoffs/U06_ir_text.md",
-      "bytes": 29230,
-      "sha256": "6604523ede4060edfb69cf983388716455542002359068980e7ef8ca9cc5dd79"
+      "bytes": 29563,
+      "sha256": "ce1f0663879d78f2f194bdc96021116603f0f225cd48565d179bf9dc375518ff"
     },
     {
       "path": "phase_mapping.json",

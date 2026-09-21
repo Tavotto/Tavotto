@@ -7,7 +7,9 @@
 
 **开始 HEAD / 结束 HEAD / 用户原有工作区改动**：开始 `e04b9747`（`foundation/u02-spikes` 当时的 head，即 U02 的
 PR #455；`origin/main` 当时 `8406b361`）；U02 三次追加 / rebase 后 `rebase --onto 1b95003a e04b9747`，无冲突；
-结束 = 两个 PR 的 head（合并后以 `git log origin/main` 里 PR 号为准）。全部在 worktree `tavotto-wt/foundation-u06`
+结束 = PR #460 的 head（合并后以 `git log origin/main` 里 PR 号为准）。原本拆成两层叠栈 A（#458，纯模型层）+ B（#460）；
+用户 2026-09-21 拍板**按里程碑合并**，只保留最上层 #460（分支 `foundation/u06-ir-text-b` 含 A 的全部提交），#458 已关闭、
+分支保留，A 的审查包整段搬进了 #460 正文。下文「PR A / PR B」指的仍是这两段改动。全部在 worktree `tavotto-wt/foundation-u06`
 里做，用户主工作区一个字节没碰；候选包只装在 scratchpad 的独立 `rc-venv`（`pip install -e '.[rendercore,dev]'`），
 主仓库 `.venv` 零改动。
 
@@ -155,7 +157,7 @@ eps 也 `format_failed`，不把 PDF 字节写进 .png 报成功）；`ShapedTex
 `file_sha256` 核（`fetch` 复用目录时截断的 LICENSE 被换掉、`--check` 红、allowlist 缺 `file_sha256` 拒）。三条各一
 变异红；evidence 随写入器字节重生成（42/42）。
 
-**当前可合并依据（不等于可以默认启用 / 发行）**：两个 PR 都是中高风险档（改 `src/` / `tests/` / `scripts/` /
+**当前可合并依据（不等于可以默认启用 / 发行）**：两段都是中高风险档（改 `src/` / `tests/` / `scripts/` /
 `pyproject.toml` / `.github/` / `packaging/AGENTS.md`）→ `full-ci` + `@codex review`；ruff 两条 0；针对性 pytest 0；
 变异反证逐条红（含一条「有意冗余」的说明）；全量 pytest 只有已知噪音；新 workflow 只有 `workflow_dispatch` +
 paths 过滤的 `pull_request`、托管 runner、有 `timeout-minutes`、顶层 `TAVOTTO_NO_TELEMETRY=1`，
@@ -187,7 +189,7 @@ paths 过滤的 `pull_request`、托管 runner、有 `timeout-minutes`、顶层 
 * **用户拍板项**：Hangul / 阿拉伯 / 天城等整段脚本要不要进 allowlist（每加一张脸改 ADR 0060 §1 一行）；
   pikepdf 的 Pillow + lxml 传递依赖接受与否（U07 裁决）。
 
-**回退方式、不能假装可回滚的外部副作用**：revert 两个 PR 即回退（全是新包 / 新文件 / 可选 extra / 台账状态；
+**回退方式、不能假装可回滚的外部副作用**：revert #460 一个 PR 即回退（全是新包 / 新文件 / 可选 extra / 台账状态；
 `scripts/dev/u02_spikes/fonts.py` 的 shim 回到 U02 版本）；没有设置写入、没有发布。外部副作用只有本机 scratchpad
 里的 rc-venv、`build/fonts-cache/` 与 `src/tavotto/resources/fonts/`（都在 .gitignore 里，删掉即可）。
 
