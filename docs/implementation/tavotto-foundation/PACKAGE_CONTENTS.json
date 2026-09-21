@@ -79,8 +79,8 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 47198,
-      "sha256": "5c3cfbddc51d9eaf055d9e0b5b9d809e2ef6ac770c2da979f2d18ffb6790fbc4"
+      "bytes": 44240,
+      "sha256": "1156a43f1e850487c64c5f4102c53898340e80ca8fa20f0b2e973b550e9c9151"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
@@ -414,8 +414,8 @@
     },
     {
       "path": "tools/generate_facade_ledger.py",
-      "bytes": 6296,
-      "sha256": "93b0d0fbc27629309bff851daca3ff1262af19165b2442990a9c4f9d16ee032e"
+      "bytes": 6274,
+      "sha256": "d877a6b4d6e8cbac112d0dc62c6886ba3a23c5929f686f50d6d05c64697b3d5b"
     },
     {
       "path": "tools/generate_views.py",
