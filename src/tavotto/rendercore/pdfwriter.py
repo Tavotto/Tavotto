@@ -318,6 +318,14 @@ class PdfWriter:
                 {"figure": res.source_id, "object_id": node.object_id, "why": "broken"},
             ) from exc
         self._foreign_docs.append(src)
+        if src.is_encrypted:
+            # 只有 owner 密码（user 密码为空）的 PDF：pikepdf.open 不抛 PasswordError 就打开了——那仍是加密文件，
+            # 合同说加密源一律拒绝（RC-046），不许把它解密后写进产物（Codex #463 第四轮 P2）
+            raise WriterError(
+                "source_unreadable",
+                f"{res.source_id}: 源 PDF 加密（只有 owner 密码），本轮不打开加密文件（RC-046）",
+                {"figure": res.source_id, "object_id": node.object_id, "why": "encrypted"},
+            )
         if node.page_index >= len(src.pages):
             raise WriterError(
                 "source_unreadable",

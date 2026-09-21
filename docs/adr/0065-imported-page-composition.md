@@ -19,7 +19,7 @@ registry RC-038 ~ RC-046）。
 | opacity = 0 | 是取值不是缺席（RC-042 must_fail `or 1.0`）：像素全白、对象仍在（form + 文字层） | `test_opacity_zero_paints_nothing_but_the_vector_object_is_still_there`；`plan` 层 `test_panel_opacity_zero_is_a_value_not_an_absence` |
 | 镜像 | `cm` 里的负缩放，不退位图（RC-040 must_fail：flip 触发整页 Image XObject） | `test_a_mirrored_import_keeps_its_vector_and_text_layer`：墨从左半移到右半 + 对象普查无 image + 文字抽得到 |
 | 位图源 | `rasterio.decode()`（Pillow）→ `RasterBuffer` → 8 bit DeviceRGB Image XObject（Flate），alpha 单独成 /SMask（straight）；8 bit RGB / 灰度 JPEG **原字节直通** `/DCTDecode`（与旧 `insert_image` 同一取舍，不重编码；直通前整张真解一遍，读取器解不开的不直通）；CMYK / 12 bit / 无损 JPEG 走解码路。像素预算两级都在解码**之前**按头里的尺寸判：单张 `raster.SOURCE_MAX_PIXELS`（64M，`why=raster_too_large`）、整份文档累计 `raster.DOCUMENT_MAX_PIXELS`（160M，去重后按资源记账，`why=raster_budget_exceeded`）。像素网格不变，缩放只在 `cm` 里 | `test_png_with_alpha_is_placed_with_an_smask…`、`test_an_rgb_jpeg_passes_through_as_dct_and_a_cmyk_one_is_decoded`、`test_image_crop_flip_and_rotation_use_the_same_contract_as_pages` |
-| 不可信源（RC-046） | 只有内容流与资源会被 `as_form_xobject` 收进 form：注释 / 页面动作 / /OpenAction / Names JavaScript **不进**产物；加密源 `source_unreadable(why=encrypted)` 拒绝、坏文件 `why=broken`、页号越界 `why=page_index`——都不画一张空框 | `test_actions_annotations_and_javascript_of_the_source_are_not_imported`、`test_an_encrypted_source_is_refused_structurally`、`test_a_broken_source_and_a_missing_page_are_refused_structurally` |
+| 不可信源（RC-046） | 只有内容流与资源会被 `as_form_xobject` 收进 form：注释 / 页面动作 / /OpenAction / Names JavaScript **不进**产物；加密源 `source_unreadable(why=encrypted)` 拒绝（`PasswordError` 与打开后 `is_encrypted` 两道：只有 owner 密码的文件不抛就打开了）、坏文件 `why=broken`、页号越界 `why=page_index`——都不画一张空框。作业级还有冻结源字节总预算 `job.SOURCE_BYTES_BUDGET`（512 MiB，读之前按 `size_bytes` 判） | `test_actions_annotations_and_javascript_of_the_source_are_not_imported`、`test_an_encrypted_source_is_refused_structurally`、`test_a_broken_source_and_a_missing_page_are_refused_structurally` |
 | 字节身份 | 作业里 `sources.read_frozen()` 核过 hash 的那一份字节经 `files` 交给写入器，写入器**再核一次** sha256（`source_identity`）——两道是有意冗余（RC-014）；没交字节 `source_bytes_missing` | `test_source_bytes_must_match_the_resource_identity`、`test_rendercore_job.py::test_a_panel_canvas_exports_a_vector_pdf…` |
 | 实例隔离 | 每个 `PdfWriter` 自己一份 `pikepdf.Pdf`、自己的外来文档表、自己的 XObject 缓存；8 线程并发写各自文档互不串 | `test_concurrent_writers_do_not_share_any_state` |
 | 对象模型库 | **正式裁决 pikepdf**（见 §2） | `pyproject.toml` `rendercore` extra |
@@ -101,6 +101,8 @@ pypdf 路线的实测代价（不采用，但写明）：pypdf 6.7.5 没有「�
 | JPEG 直通不整张真解（Codex #463 P2） | `test_a_jpeg_that_readers_cannot_decode_is_not_passed_through`（12 字节假头、截半的真 JPEG） |
 | 记账挪到 JPEG 真解之后（Codex #463 第三轮 P2） | 同一条用例：预算只剩 2000 时把 Pillow 的 `load` 换成必爆探针，拒绝必须发生在解码之前 |
 | 文档级位图像素预算不累计（Codex #463 第二轮 P2） | `test_the_document_wide_raster_budget_stops_many_small_images_from_adding_up`（预算缩到用例尺度：同一张不重复计费、第三张不同的位图超线即 `raster_budget_exceeded`，JPEG 直通路同样记账） |
+| 打开后不判 `is_encrypted`（只有 owner 密码的 PDF，Codex #463 第四轮 P2） | `test_an_owner_password_only_pdf_is_still_refused_as_encrypted` |
+| `job` 不判冻结源字节总预算（Codex #463 第四轮 P2） | `test_rendercore_job.py::test_the_aggregate_frozen_source_bytes_budget_fails_before_any_byte_is_read`（`read_frozen` 一次没被调） |
 | 退化页盒不拦（Codex #463 P2） | `test_a_source_page_with_a_degenerate_box_is_a_source_error_not_a_crash`（MediaBox 零宽 → `source_unreadable(why=degenerate_box)`，不是 ZeroDivisionError） |
 
 ## 6. 没做 / 边界

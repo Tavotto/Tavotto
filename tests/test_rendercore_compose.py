@@ -619,6 +619,36 @@ def test_actions_annotations_and_javascript_of_the_source_are_not_imported(
     assert _close(_px(img, 70, 50), (0, 0, 255))
 
 
+def _owner_only_encrypted_pdf() -> bytes:
+    """只有 owner 密码、user 密码为空：pikepdf.open 不抛就打开了——仍是加密文件。"""
+    import pikepdf
+
+    pdf = pikepdf.new()
+    pdf.add_blank_page(page_size=(100, 100))
+    out = io.BytesIO()
+    pdf.save(out, encryption=pikepdf.Encryption(owner="o", user="", R=6))
+    return out.getvalue()
+
+
+def test_an_owner_password_only_pdf_is_still_refused_as_encrypted(provider, tmp_path):
+    """Codex #463 第四轮 P2：user 密码为空的加密 PDF 打得开、不抛 PasswordError——`is_encrypted` 仍为真，照样拒。"""
+    import pikepdf
+
+    data = _owner_only_encrypted_pdf()
+    with pikepdf.open(io.BytesIO(data)) as src:  # 前提：它真的能无密码打开、且真的是加密的
+        assert src.is_encrypted
+    with pytest.raises(pdfwriter.WriterError) as ei:
+        _write(
+            tmp_path,
+            provider,
+            [ir.ImportedPage("pg", (0, 0, 100, 100))],
+            {"pg": _res("owner.pdf", "pdf", data)},
+            {"pg": data},
+        )
+    assert ei.value.code == "source_unreadable" and ei.value.params["why"] == "encrypted"
+    assert not (tmp_path / "out.pdf").exists()
+
+
 def test_an_encrypted_source_is_refused_structurally(provider, tmp_path):
     data = _encrypted_pdf()
     with pytest.raises(pdfwriter.WriterError) as ei:
