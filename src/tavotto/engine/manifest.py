@@ -748,7 +748,18 @@ def instrument(state: FigState) -> None:
                     _register(state, f"axes_{i}.arrows_{j}", pt, "arrow_patch", f"箭头 {arrow_n}")
                 elif isinstance(pt, Patch) and id(pt) not in skip_ids and not is_cbax:
                     shape_n += 1
-                    _register(state, f"axes_{i}.patches_{j}", pt, "patch", f"形状 {shape_n}")
+                    # 可拖：流程图的框、示意图的圆与多边形都是「摆在图上的形状」，
+                    # 位置是排版而不是数据（override `pos_frac`，见
+                    # `overrides._set_patch_pos_frac`）。柱不在这里：它们被
+                    # skip_ids 收进了柱形系列，挪一根柱等于改数据
+                    _register(
+                        state,
+                        f"axes_{i}.patches_{j}",
+                        pt,
+                        "patch",
+                        f"形状 {shape_n}",
+                        draggable=True,
+                    )
         # `ax.add_artist(...)` 放进来的东西（AnchoredText、自定义 Artist…）。
         # matplotlib 会把认得的类型改道进 lines/patches/collections，所以这里
         # 剩下的基本都是「我们不认识的」——**登记但只开 visible/zorder**
@@ -4335,15 +4346,24 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             try:
                 if isinstance(artist, Text):
                     dx, dy = artist.get_transform().transform(artist.get_position())
+                    drag_prop = "pos_frac"
+                elif isinstance(artist, Patch):
+                    # 独立形状：锚点用包围盒左下角。**与 setter 同一把尺**
+                    # （`Patch.get_window_extent` = 路径经 transform 的范围，
+                    # 不需要 renderer），否则第一次拖动就跳一格
+                    bb = artist.get_window_extent(renderer)
+                    dx, dy = bb.x0, bb.y0
+                    drag_prop = "pos_frac"
                 else:  # Legend：锚点用 bbox 左下角
                     bb = artist.get_window_extent(renderer)
                     dx, dy = bb.x0, bb.y0
+                    drag_prop = "loc_frac"
                 anchor = [dx / W, 1.0 - dy / H]
                 if not all(math.isfinite(v) for v in anchor):
                     # 锚点是在总闸之后算的，自己再过一遍（见上面那段说明）
                     raise ValueError("anchor 不是有限值")
                 entry["anchor"] = anchor
-                entry["drag_prop"] = "pos_frac" if isinstance(artist, Text) else "loc_frac"
+                entry["drag_prop"] = drag_prop
             except Exception:
                 entry["draggable"] = False
         # 缺字形：判据的主语是**真正会被画出来的那个 Text**。

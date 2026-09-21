@@ -215,6 +215,26 @@ def mutating(key: str, python: str = ""):
                 _mutating.pop(k, None)
 
 
+def unless_mutating(action):
+    """没有任何环境在改动时，在**同一把锁里**执行 `action` 并回它的返回值；
+    有改动在跑就抛 `EnvironmentBusy(environment_mutating)`。
+
+    给全局渲染解释器的改动用（Codex 评审 #469 P1）：依赖安装在租约里复查
+    「全局解释器有没有被钉上」，而 `PATCH /api/engine/environment` 与安装之间
+    本来没有任何锁——`_refuse_if_pinned()` 通过之后再钉，pip 照样不可逆地写进
+    一个渲染不会再用的环境。改动经这里走，两种先后各自只有一个结局：先钉上 →
+    租约里的复查看见它；先拿到租约 → 改动被拒、让用户等安装结束。`action`
+    在锁里跑，只能是不回头碰 envlease 的短操作（写一次 config）。
+    """
+    with _lock:
+        if _mutating:
+            raise EnvironmentBusy(
+                f"有安装正在进行中，暂时不能改渲染解释器: {sorted(_mutating)[0]}",
+                code=ENVIRONMENT_MUTATING,
+            )
+        return action()
+
+
 def note_mutating_python(key: str, python: str) -> None:
     """受管环境**建出来之后**把解释器路径也登记进同一次改动。"""
     if not python:

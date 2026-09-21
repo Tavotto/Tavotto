@@ -307,12 +307,23 @@ def worker_python_env() -> str | None:
     空字符串按「没设」处理：`TAVOTTO_WORKER_PYTHON=` 在 CI 里是「清掉它」的
     惯用写法，当成一个路径去探测只会白等一轮超时。
     """
+    pair = worker_python_env_pair()
+    return pair[1] if pair else None
+
+
+def worker_python_env_pair() -> tuple[str, str] | None:
+    """(变量名, 值)——**哪个**变量给的值。
+
+    界面上「清掉环境变量后重启」那句要点名：旧名 `MM_WORKER_PYTHON` 供的值与
+    新名同样算 `env_override`，只让用户清 `TAVOTTO_WORKER_PYTHON` 的话，固定
+    还在、卡片重启后照旧挡着（Codex 评审 #469 P1）。
+    """
     import os
 
     for name in (WORKER_PYTHON_ENV, LEGACY_WORKER_PYTHON_ENV):
         val = os.environ.get(name)
         if val:
-            return val
+            return name, val
     return None
 
 
@@ -705,17 +716,24 @@ def is_frozen() -> bool:
     return runtime.is_frozen()
 
 
+def _bootstrap_venv_python() -> str | None:
+    """`bootstrap.install()` 自建 venv 里的解释器路径（不保证存在）；算不出回 None。"""
+    from . import bootstrap
+
+    try:
+        return str(bootstrap.venv_python())
+    except (OSError, ValueError):
+        return None
+
+
 def _configured_source(path: str) -> str:
     """用户配置里的那条解释器是「他自己挑的」还是「Tavotto 自己建的」。
 
     两者都排在内置 runtime 前面（用户的显式选择优先），但报给界面和诊断包时
     要分得清：managed_venv 是我们该负责的，configured 是用户自己的环境。
     """
-    from . import bootstrap
-
-    try:
-        managed = str(bootstrap.venv_python())
-    except (OSError, ValueError):
+    managed = _bootstrap_venv_python()
+    if not managed:
         return SOURCE_CONFIGURED
     return SOURCE_MANAGED if same_python(path, managed) else SOURCE_CONFIGURED
 
@@ -744,10 +762,23 @@ def _prioritized_candidates() -> list[tuple[str, str]]:
     ]
     configured = config.worker_python()
     if configured:
-        cands.append((configured, _configured_source(configured)))
+        source = _configured_source(configured)
+        # `bootstrap.install()` 写进 config 的自建 venv 不占这个「用户指定」的槽位
+        # （Codex 评审 #469 P2）：它在下面自己那一档；这里也列的话去重会留住这个
+        # 靠前的位置，「自身之后」就成了空话。
+        if source != SOURCE_MANAGED:
+            cands.append((configured, source))
     cands.append((runtime.bundled_python(), SOURCE_BUNDLED))
     if not is_frozen():
         cands.append((sys.executable, SOURCE_CURRENT))
+        # Tavotto 在源码模式下自建的 venv（`bootstrap.install()`，桌面版有内置 runtime
+        # 时 `can_install` 为假、根本不会建）**自己就是一档候选**，不靠 config 里那条
+        # `worker.python`：那条被清掉（缺包卡片的「恢复自动检测」、设置里留空并应用）
+        # 之后它仍然找得到，否则这台本来就没有别的科学栈的机器会退回
+        # `no_worker_python`、再装一遍又写回同一条设置——一个圈（Codex 评审 #469 P1）。
+        # 排在自身之后、系统链之前：它只在自身与系统链都没有科学栈时才会被建出来。
+        # 与 config 那条同路径时靠 `select_worker_python` 的去重，标签不变。
+        cands.append((_bootstrap_venv_python(), SOURCE_MANAGED))
 
     # 一律用字符串拼路径：pathlib.Path 会按 os.name 分派 Posix/Windows 实现，
     # 在非目标平台上构造另一半会直接抛 UnsupportedOperation。
@@ -1003,21 +1034,15 @@ def resolve_worker_python(
     """
     if figures_dir is None:
         return select_worker_python()
-    # **两条显式来源各自判**，不能 `env or configured` 短路：环境变量指向一条
-    # 已经不存在的路径时（改过环境、跟着别的 shell 配置进来的老值），短路会让
-    # 一条完全有效的设置里的解释器被跳过，自动决策于是压过了用户的显式选择。
-    for explicit in (worker_python_env(), config.worker_python()):
-        if not explicit:
-            continue
-        try:
-            if Path(explicit).exists():
-                # 显式选择还在：交给老链条（它会挑中这条，用不了就抛），不做任何自动决策。
-                return select_worker_python()
-        except OSError:
-            continue
-    if config.worker_python():
+    if explicit_worker_python():
+        # 显式选择还在：交给老链条（它会挑中这条，用不了就抛 `explicit_python_unusable`），
+        # 不做任何自动决策。`explicit_worker_python()` 已把 `bootstrap.install()` 自建的那条
+        # 排除在「显式」之外（#469：它是自动决策，不压过项目级环境）。
+        return select_worker_python()
+    configured = config.worker_python()
+    if configured and _configured_source(configured) != SOURCE_MANAGED:
         # 设置里指定的那条已经不在了：`select_worker_python()` 会以 missing 收场——
-        # 这里不许绕过它去做自动决策。
+        # 这里不许绕过它去做自动决策。（自建 venv 不在此列：它不是用户的选择。）
         return select_worker_python()
     record = projectenv.remembered_record(figures_dir)
     if record is not None and record.get("mode") == projectenv.MODE_DEFAULT_CHAIN:
@@ -1059,6 +1084,43 @@ def resolve_worker_python(
             LOG.info("首开采用项目自带的环境: %s（%s）", python, figures_dir)
             return python, remembered_source(figures_dir, python)
     return select_worker_python()
+
+
+def explicit_worker_python() -> tuple[str, str] | None:
+    """正在生效的**全局显式**解释器：回 (路径, 来源)，没有回 None。
+
+    这是「项目级决策会不会被压掉」的唯一判据（#465）：上面 1、2 两档只要
+    **存在**就走老链条，第 3 档（项目记住的 / 用户为该项目挑的 / 依赖修复装进的
+    受管环境）永远轮不到。依赖修复在提供安装目标之前先问这里——明知装进去也
+    不会被用还照样装，用户看到的是「真的联网装了，渲染照样缺它」。
+
+    **两条显式来源各自判**，不能 `env or configured` 短路：环境变量指向一条
+    已经不存在的路径时（改过环境、跟着别的 shell 配置进来的老值），短路会让
+    一条完全有效的设置里的解释器被跳过，自动决策于是压过了用户的显式选择。
+    来源标签与 `select_worker_python()` 报的一致（`env_override` /
+    `configured` / `managed_venv`）——界面按它决定给「恢复自动检测」还是
+    「清掉环境变量后重启」。
+    """
+    env = worker_python_env()
+    candidates: list[tuple[str | None, str]] = [(env, SOURCE_ENV)]
+    configured = config.worker_python()
+    if configured:
+        source = _configured_source(configured)
+        # `bootstrap.install()` 写进 config 的那条是**自动决策**不是用户的显式选择
+        # （ADR 0018 §四的第 2 档说的是「设置里指定的」）：它不该压过项目级环境，
+        # 更不该让缺包卡片走到「清掉它」——清掉它这台机器就没有渲染器了。
+        # 它作为候选留在 `_prioritized_candidates()` 的老链条里，第 3 档之后才轮到。
+        if source != SOURCE_MANAGED:
+            candidates.append((configured, source))
+    for explicit, source in candidates:
+        if not explicit:
+            continue
+        try:
+            if Path(explicit).exists():
+                return explicit, source
+        except OSError:
+            continue
+    return None
 
 
 def _project_python_unusable(python: str, reason: str, record: dict) -> "WorkerError":

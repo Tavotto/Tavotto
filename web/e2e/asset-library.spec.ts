@@ -326,11 +326,17 @@ test('多 Figure：?pick= 打开选择器，选第二张加的就是第二张', 
   await expect(dialog).toHaveCount(0)
   await expect(page.getByText('画布是空的')).toHaveCount(0)
 
-  // 冲刷自动保存后读磁盘：面板的 fileId 指向第二张的 asset id
+  // 冲刷自动保存后读磁盘：面板的 fileId 指向第二张的 asset id。
+  // 画布不空只证明客户端恢复了文档，服务端的自动保存是异步落盘的——
+  // 目录可能还没建出来（2026-09-21 merge_group 的 windows-exe-smoke 两次 ENOENT），
+  // 所以等到磁盘上出现 json 再读，而不是读到什么算什么。
   await page.reload()
   await expect(page.getByText('画布是空的')).toHaveCount(0, { timeout: 30_000 })
   const autosaveDir = path.join(a.dataDir, 'layouts', '_autosave')
-  const saved = readdirSync(autosaveDir).filter((f) => f.endsWith('.json'))
+  const savedJson = () =>
+    existsSync(autosaveDir) ? readdirSync(autosaveDir).filter((f) => f.endsWith('.json')) : []
+  await expect.poll(() => savedJson().length, { timeout: 30_000 }).toBeGreaterThan(0)
+  const saved = savedJson()
   const pd = JSON.parse(readFileSync(path.join(autosaveDir, saved[0]), 'utf-8'))
   const panels = pd.canvases[0].objects.filter((o: { type: string }) => o.type === 'panel')
   expect(panels).toHaveLength(1)

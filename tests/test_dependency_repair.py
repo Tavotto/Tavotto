@@ -789,7 +789,9 @@ def test_reset_state_really_forgets_attempted_repairs(project, monkeypatch):
         deprepair.create_plan(
             str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
         )
-    assert err.value.code == deprepair.ERROR_NOT_ALLOWED
+    # 自己的 code（#466）：以前折进 `dependency_install_not_allowed`，前端那句
+    # 「安装未获确认，请重新开始」对这条是假话——用户确认过，重新开始也没用。
+    assert err.value.code == deprepair.ERROR_ALREADY_ATTEMPTED
 
     deprepair.reset_state(project)  # 用户重建环境时走的就是这条
     again = deprepair.create_plan(
@@ -1021,6 +1023,350 @@ def test_custom_index_is_reported_as_a_boolean_never_as_a_url(monkeypatch):
 
 
 # ===========================================================================
+# 十、全局显式解释器压住项目级决策（#465）
+# ===========================================================================
+#
+# ADR 0018 §四：`TAVOTTO_WORKER_PYTHON` / 设置里指定的解释器只要**存在**就压过
+# 「这个项目记住的」那一档——而依赖修复的两个安装目标、采用系统解释器、自动
+# 接手，最后都写在那一档。那时提供安装目标等于让用户真的联网装一遍、装完渲染
+# 照样缺（2026-09-21 实测：受管环境里 pandas 3.0.6 在，worker 跑在设置里那条
+# venv 里）。offer 一个目标都不给、create_plan 拒绝，界面据 `pinned.source`
+# 给「恢复自动检测」或「清掉环境变量后重启」。
+def _pin_in_settings(monkeypatch, python: str) -> None:
+    from tavotto.engine import config as engine_config
+
+    monkeypatch.setattr(engine_config, "worker_python", lambda: python)
+    engine_pool.reset_worker_python()
+
+
+def test_offer_gives_no_target_while_a_global_interpreter_is_pinned(project, monkeypatch):
+    """设置里指定了解释器：不提供任何目标，说出指定的是哪条、来自哪里。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    detail = {"code": projectenv.ERROR_MODULE_MISSING, "venv": ".venv", "module": FIXTURE_IMPORT}
+    baseline = deprepair.offer(str(project), "figure.py", FIXTURE_IMPORT, detail)
+    assert baseline["targets"], "没有全局指定时两个安装目标都在——否则下面的断言是空的"
+
+    _pin_in_settings(monkeypatch, sys.executable)
+    offer = deprepair.offer(str(project), "figure.py", FIXTURE_IMPORT, detail)
+    assert offer["targets"] == []
+    assert offer["code"] == deprepair.ERROR_INTERPRETER_PINNED
+    assert offer["pinned"] == {
+        "python": sys.executable,
+        "source": engine_pool.SOURCE_CONFIGURED,
+        "variable": "",
+    }
+    # 采用系统解释器那条同样写项目级决策，同样轮不到——也不列
+    assert offer["system_rejected"] == []
+
+
+def test_env_override_pins_too_and_reports_its_own_source(project, monkeypatch):
+    """环境变量那一档：界面上不能给「恢复自动检测」（设置里没有东西可清），
+    来源必须分得出来。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    monkeypatch.setenv(engine_pool.WORKER_PYTHON_ENV, sys.executable)
+    engine_pool.reset_worker_python()
+    offer = deprepair.offer(str(project), "figure.py", FIXTURE_IMPORT, None)
+    assert offer["code"] == deprepair.ERROR_INTERPRETER_PINNED
+    assert offer["pinned"]["source"] == engine_pool.SOURCE_ENV
+    assert offer["pinned"]["variable"] == engine_pool.WORKER_PYTHON_ENV
+
+
+def test_the_legacy_variable_is_named_when_it_supplied_the_pin(project, monkeypatch):
+    """旧名 `MM_WORKER_PYTHON` 供的值同样是 `env_override`：只让用户清新名的话，
+    固定还在、重启后卡片照旧挡着（Codex 评审 P1）。载荷点名供值的那个变量。"""
+    monkeypatch.delenv(engine_pool.WORKER_PYTHON_ENV, raising=False)
+    monkeypatch.setenv(engine_pool.LEGACY_WORKER_PYTHON_ENV, sys.executable)
+    engine_pool.reset_worker_python()
+    offer = deprepair.offer(str(project), "figure.py", FIXTURE_IMPORT, None)
+    assert offer["code"] == deprepair.ERROR_INTERPRETER_PINNED
+    assert offer["pinned"]["source"] == engine_pool.SOURCE_ENV
+    assert offer["pinned"]["variable"] == engine_pool.LEGACY_WORKER_PYTHON_ENV
+
+
+def test_a_stale_pin_does_not_block_repair(project, monkeypatch):
+    """指向一条已经不存在的路径的设置不算生效——`resolve_worker_python` 也不认它，
+    两边必须是同一个判据，否则这里拒绝了、渲染却真的会用项目环境。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    _pin_in_settings(monkeypatch, str(project / "gone" / "python"))
+    assert engine_pool.explicit_worker_python() is None
+    offer = deprepair.offer(str(project), "figure.py", FIXTURE_IMPORT, None)
+    assert offer.get("code") != deprepair.ERROR_INTERPRETER_PINNED
+    assert deprepair.TARGET_MANAGED in {t["kind"] for t in offer["targets"]}
+
+
+def test_create_plan_refuses_while_pinned_even_if_the_button_asks(project, monkeypatch):
+    """后端自己是边界：offer 不给目标只是界面的事，一个手工请求照样要被拒。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    _pin_in_settings(monkeypatch, sys.executable)
+    for target in deprepair.TARGETS:
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_plan(str(project), "figure.py", FIXTURE_IMPORT, target_kind=target)
+        assert err.value.code == deprepair.ERROR_INTERPRETER_PINNED
+        assert err.value.extra["pinned"]["python"] == sys.executable
+
+
+def test_the_plan_endpoint_carries_the_pin_to_the_interface(client, project, monkeypatch):
+    """HTTP 投影：code + `pinned`，界面据此给出能解开它的那一步。"""
+    from tavotto import app as m
+
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    m.open_project(str(project))
+    _pin_in_settings(monkeypatch, sys.executable)
+    resp = client.post(
+        "/api/engine/dependency/plan",
+        json={"module": FIXTURE_IMPORT, "script": "figure.py", "target": deprepair.TARGET_MANAGED},
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["code"] == deprepair.ERROR_INTERPRETER_PINNED
+    assert body["pinned"] == {
+        "python": sys.executable,
+        "source": engine_pool.SOURCE_CONFIGURED,
+        "variable": "",
+    }
+
+
+def test_a_pin_set_during_confirmation_stops_the_install(project, monkeypatch):
+    """计划形成之后、用户确认之前，从别处把全局解释器钉上：环境指纹看不见这条，
+    `install()` 必须自己复查——否则 pip 照跑、装完照样不被用（Codex 评审 P1）。
+    计划一并作废。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    _pin_in_settings(monkeypatch, sys.executable)
+    monkeypatch.setattr(
+        deprepair, "_pip_install", lambda *a: pytest.fail("固定生效时一个字节都不该装")
+    )
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.install(plan.plan_id)
+    assert err.value.code == deprepair.ERROR_INTERPRETER_PINNED
+    assert err.value.extra["pinned"]["python"] == sys.executable
+    assert deprepair.get_plan(plan.plan_id) is None, "前提已不成立的计划不该留着"
+
+
+def test_the_failed_event_carries_the_pin_for_the_interface(project, monkeypatch):
+    """确认之后才钉上：安装线程的失败事件只有 code 的话，界面给不出「恢复自动检测」
+    （Codex 评审 P2）。事件与 offer / plan 400 同一形状。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    _pin_in_settings(monkeypatch, sys.executable)
+    events: list[dict] = []
+    deprepair._install_guarded(plan.plan_id, events.append)
+    last = events[-1]
+    assert last["state"] == deprepair.STATE_FAILED
+    assert last["code"] == deprepair.ERROR_INTERPRETER_PINNED
+    assert last["pinned"] == {
+        "python": sys.executable,
+        "source": engine_pool.SOURCE_CONFIGURED,
+        "variable": "",
+    }
+    # 补拉那条路（SSE 断了之后）也要带着它
+    assert deprepair.progress(plan.plan_id)["pinned"] == last["pinned"]
+
+
+def test_a_pin_change_is_refused_while_an_install_holds_the_lease(project):
+    """安装期间改全局解释器（另一个页签 / API 客户端）：与租约互斥（Codex 第二轮 P1）。
+
+    复查在租约里做，所以只剩两种先后：先钉上 → 复查看得见；先拿到租约 → 这里
+    被拒。没有这条互斥，「复查通过 → 钉上 → pip 开跑」这条缝照样存在。
+    """
+    from tavotto.engine import config as engine_config, envlease
+
+    key = deprepair._env_key(deprepair.TARGET_PROJECT_VENV, WORKER_PY, str(project))
+    calls: list[str] = []
+    with engine_pool.mutating_environment(key, WORKER_PY):
+        with pytest.raises(envlease.EnvironmentBusy) as err:
+            envlease.unless_mutating(lambda: calls.append("set"))
+        assert err.value.code == envlease.ENVIRONMENT_MUTATING
+        assert calls == [], "租约期间那次改动一个字节都不该落盘"
+    # 租约放掉之后照常
+    assert envlease.unless_mutating(lambda: calls.append("set") or "done") == "done"
+    assert calls == ["set"]
+    assert engine_config.worker_python() is None  # 上面没有真的写 config
+
+
+def test_the_environment_endpoint_refuses_a_global_change_during_an_install(client, project):
+    """HTTP 投影：`PATCH /api/engine/environment`（全局）在安装期间 409
+    `environment_mutating`，config 一字不动；安装结束后同一请求 200。"""
+    from tavotto import app as m
+    from tavotto.engine import config as engine_config
+
+    m.open_project(str(project))
+    engine_config.set_worker_python(WORKER_PY)  # 隔离的测试 config，不是用户的
+    key = deprepair._env_key(deprepair.TARGET_PROJECT_VENV, WORKER_PY, str(project))
+    with engine_pool.mutating_environment(key, WORKER_PY):
+        resp = client.patch("/api/engine/environment", json={"python": ""})
+        assert resp.status_code == 409
+        assert resp.get_json()["code"] == "environment_mutating"
+        assert engine_config.worker_python() == WORKER_PY, "被拒的改动不该落盘"
+    resp = client.patch("/api/engine/environment", json={"python": ""})
+    assert resp.status_code == 200
+    assert engine_config.worker_python() is None
+    # 与 GET 同形：带 project（前端整体替换 env，少了这半边会藏掉受管环境那几行）
+    assert "project" in resp.get_json() and resp.get_json()["project"].get("open") is True
+
+
+# ===========================================================================
+# 十一、「已经试过」只记 pip 成功的那次（#466）
+# ===========================================================================
+def _stub_pip(monkeypatch, *, pip_code: str) -> None:
+    """pip 按 `pip_code` 出结果，其余子进程放行。**不碰 `probe_environment`**：
+    它同时是 create_plan 的「目标环境缺不缺」与安装后的「装进去了没」两处判据，
+    用例各自按需要摆。"""
+    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
+    monkeypatch.setattr(deprepair, "_pip_install", lambda *a: (pip_code, "pip output"))
+    monkeypatch.setattr(deprepair, "worker_self_test", lambda py: {"ok": True})
+    monkeypatch.setattr(deprepair, "installed_version", lambda py, dist: "1.0")
+
+
+def test_a_failed_pip_run_leaves_the_requirement_retryable(project, monkeypatch):
+    """网络断了一次：失败文案说「检查网络后重试」，重试就必须能重新形成计划。
+
+    以前 `_attempted.add` 写在 pip 之前，这里第二次 `create_plan` 会以
+    「这一轮已经试过了」拒绝——而那条黑名单要挡的是「装完还缺、再装还缺」。
+    """
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    _stub_pip(monkeypatch, pip_code=deprepair.ERROR_NETWORK)
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.install(plan.plan_id)
+    assert err.value.code == deprepair.ERROR_NETWORK
+    # 目标环境里仍然没有它（pip 没跑成）——第二次 create_plan 的体检要看到这一点
+    again = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    assert again.plan_id, "pip 没跑成的那次不该进黑名单"
+
+
+def test_a_successful_pip_run_is_not_repeated_even_when_verification_fails(project, monkeypatch):
+    """pip 退出码 0 之后再装同一个改不了任何东西——验证没过也一样进黑名单。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    _stub_pip(monkeypatch, pip_code="")
+    # 安装后的体检：还是缺——同一份 stub 也服务第二次 create_plan 的「目标缺不缺」
+    monkeypatch.setattr(
+        deprepair.projectenv,
+        "probe_environment",
+        lambda py, mod=None: {"ok": False, "code": projectenv.ERROR_MODULE_MISSING, "python": py},
+    )
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.install(plan.plan_id)
+    assert err.value.code == deprepair.ERROR_IMPORT_STILL_FAILED
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.create_plan(
+            str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+        )
+    assert err.value.code == deprepair.ERROR_ALREADY_ATTEMPTED
+
+
+def test_a_second_plan_formed_before_the_first_install_finished_does_not_repeat_pip(
+    project, monkeypatch
+):
+    """两个页签各形成一个计划（那时都还没装过），A 装成功之后 B 再点：租约里要再查
+    一次「装成功过没有」，否则 B 照样跑一遍无意义的 pip（Codex 评审 P2）。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan_a = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    plan_b = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    runs: list[str] = []
+    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
+    monkeypatch.setattr(
+        deprepair, "_pip_install", lambda py, req, ev, log: (runs.append(req), ("", ""))[1]
+    )
+    monkeypatch.setattr(
+        deprepair.projectenv, "probe_environment", lambda py, mod=None: {"ok": True, "python": py}
+    )
+    monkeypatch.setattr(deprepair, "worker_self_test", lambda py: {"ok": True})
+    monkeypatch.setattr(deprepair, "installed_version", lambda py, dist: "1.0")
+    deprepair.install(plan_a.plan_id)
+    assert len(runs) == 1
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.install(plan_b.plan_id)
+    assert err.value.code == deprepair.ERROR_ALREADY_ATTEMPTED
+    assert len(runs) == 1, "第二个计划不该再跑 pip"
+
+
+def test_an_environment_that_already_has_the_module_gets_its_own_code(project, monkeypatch):
+    """渲染报缺、目标环境里却 import 得到：说明渲染用的不是这个环境。这句话与
+    「安装未获确认」毫无关系，code 必须分开。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        deprepair.projectenv, "probe_environment", lambda py, mod=None: {"ok": True, "python": py}
+    )
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.create_plan(
+            str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+        )
+    assert err.value.code == deprepair.ERROR_ALREADY_PRESENT
+
+
+def _repair_error_codes() -> dict[str, str]:
+    """`deprepair` 模块级的 `ERROR_*` 常量 → 值。
+
+    **名字从 AST 取、值从模块取**：正则扫源码只认一种写法（注解 / 换行 /
+    引号一换就漏，漏了门禁还是绿的），而 `ERROR_IN_USE_BY_NATIVE` 的值是
+    `runcodes.…` 的引用，源码里根本没有那个字面量。
+    """
+    import ast
+
+    tree = ast.parse(Path(deprepair.__file__).read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else []
+        if isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for t in targets:
+            # `ERROR_CODES` 是给 `test_error_codes.py` 读的登记表（元组），不是一个 code
+            if isinstance(t, ast.Name) and t.id.startswith("ERROR_") and t.id != "ERROR_CODES":
+                names.add(t.id)
+    out = {n: getattr(deprepair, n) for n in names}
+    assert all(isinstance(v, str) and v for v in out.values()), out
+    return out
+
+
+def test_every_repair_code_has_text_in_both_languages():
+    """`test_error_codes.py` 不扫 `RepairError`，`repairError` 那张表只有反向的
+    死键门禁：新加一个 code 忘了文案，用户看到的就是后端的中文原文。
+
+    与卡片的查法同源（`repairCodeMessage`）：先 `engine.repairError.<code>`，再
+    `backend.<code>`——`environment_in_use_by_native_session` 的文案本来就在
+    后者那张表里，不重复抄一份。
+    """
+    codes = _repair_error_codes()
+    assert "ERROR_INTERPRETER_PINNED" in codes and "ERROR_IN_USE_BY_NATIVE" in codes
+    root = Path(__file__).resolve().parent.parent
+    for locale in ("zh-CN", "en-US"):
+        table = json.loads(
+            (root / "web" / "src" / "i18n" / "locales" / locale / "errors.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        repair, backend = table["engine"]["repairError"], table["backend"]
+        missing = sorted(c for c in codes.values() if not (repair.get(c) or backend.get(c)))
+        assert not missing, f"{locale} 缺文案: {missing}"
+
+
 # U04（C）Codex #470：取消句柄的登记时刻、取消端点的项目归属、script 参数的钉回
 # ===========================================================================
 @needs_worker

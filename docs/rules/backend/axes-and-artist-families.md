@@ -43,6 +43,19 @@
   端点由注释机制每次 draw 重定位，绝不出端点**——出了用户拖完下一帧就弹回
   （test_arrowpatch_endpoints_and_style_roundtrip 看护）。前端交互语义见
   `web/AGENTS.md`。
+- **独立形状（Patch family）可拖动（2026-09-21，用户的流程图脚本：框拖不动）**：
+  `ax.patches` 里登记成 `patch` 的形状 `draggable=True`，manifest 的 `anchor` 是
+  **包围盒左下角**（figure 分数、y 向下，`Patch.get_window_extent()` 不需要
+  renderer），`drag_prop == "pos_frac"`——与文字同名、同一套前端交互。setter
+  `overrides._set_patch_pos_frac` 不逐类写位置（Rectangle 是 `set_xy`、Circle 是
+  `set_center`、Polygon 是顶点数组…），而是把平移**叠在 artist 级 transform 上**
+  （`ScaledTranslation` 记英寸、挂 `dpi_scale_trans`：导出改 dpi 时平移量不变），
+  一份实现盖住整族与用户子类；基准 transform 记在 `_mm_pos_base`，每次应用先回到
+  基准再量，重放 / 二次拖动才幂等；原样 = 基准 transform，还原即放回。`pos_frac`
+  已在 `_FRAC_ANCHORED`，图幅 / 子图落位一变照样重放。**柱不拖**：它们进了柱形
+  系列（skip_ids），位置是数据。框里的文字是独立 Text，拖框不带字——要一起走用多选。
+  看护：`test_patch_shapes_are_draggable_via_pos_frac`、等价矩阵 `s7-patch-drag`
+  （含写回后重开）。
 - 散点 marker 可整体替换（set_paths，首改前缓存原始路径，"original" 还原）；
   散点/扁平线的 bbox 走 `_padded_bbox`（PathCollection 用 datalim 换算，零厚度边
   垫 4px，否则进不了 manifest）。
