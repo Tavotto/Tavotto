@@ -156,11 +156,12 @@ FO24 / 25 / 26 仍待 PR B 经真实入口提升。**没有取得任何平台的
 | 层 | 变更 |
 |---|---|
 | `engine/privatepython.py` | `standin_marker_env(source)`：私有 Python 还没落盘时替它答 PEP 508 marker 环境（Python 字段来自锁、平台字段来自这台机器） |
-| `engine/deprepair.py` | `NO_WORKER_PYTHON`；`private_python_target()` / `private_fresh_facts()`（真量 `fresh_venv_facts(private, provided=adapter)` 或替身 + adapter 已有 + 宿主 stdlib）；`joint_plan_for` / `create_joint_plan` 在干净机器上以私有 Python 为目标、`nothing_needed` 照样成计划；`_facts_for` 没 base 时用它量新的一代；`JointRepairPlan.replan`（计划带下载即真）；`_GenerationJob.replan / groups`；`_replan_on_base`（供应后按真解释器重算 delta / 关键 import / 记账 / 身份）；`_facts_for_plan`（执行前重量走同一条路）；`preparation_offer` 多 `private_python` 段、`joint_targets` 受管目标可用性看有没有 base + 带载荷、`gate` 有私有段时 `nothing_needed` 也问 |
+| `engine/deprepair.py` | `NO_WORKER_PYTHON`；`private_python_target()` / `private_fresh_facts()`（真量 `fresh_venv_facts(private, provided=adapter)` 或替身 + adapter 已有 + 宿主 stdlib）；`joint_plan_for` / `create_joint_plan` 在干净机器上以私有 Python 为目标、`nothing_needed` 照样成计划；`_facts_for` 没 base 时用它量新的一代；`JointRepairPlan.replan`（计划带下载即真）；`_GenerationJob.replan / groups`；`_replan_on_base`（供应后按真解释器重算 delta / 关键 import / 记账 / 身份；**重算前先比规划输入的指纹** `JointPlan.inputs_digest`——声明意图 + 脚本与本地模块的字节，与事实无关；变了即 `repair_plan_stale`、一个字节不装，Codex #475 P1）；`_facts_for_plan`（执行前重量走同一条路）；`preparation_offer` 多 `private_python` 段、`joint_targets` 受管目标可用性看有没有 base + 带载荷、`gate` 有私有段时 `nothing_needed` 也问 |
+| `engine/depplan.py` / `engine/importscan.py` | `JointPlan.inputs_digest`（`depplan.inputs_digest`：声明意图全集 + 扫描读过的文件的字节；载荷里也带）；`ScanResult.files`（脚本 + 跟进过的本地模块，相对路径排好序）——U04 的模块，两个纯增字段 |
 | `engine/preparation.py` | `plan_for` 在 `no_worker_python` 时也问依赖门（一行；不提供私有 Python 时门回 None、照旧以原错误收场） |
-| `codex-plugin/mcp/tavotto_mcp/bridge.py` | `recovery` 多一句「先下载 Python x（约 N MB）/ 不联网」 |
+| `codex-plugin/mcp/tavotto_mcp/bridge.py` | `recovery` 多一句「先下载 Python x（约 N MB）/ 不联网」；顶层没有、只挂在受管目标上（有渲染解释器没 base）时说「选择 tavotto_managed 时会先下载…」（Codex #475 P2） |
 | `web/` | `DependencyPrepareDialog` 受管选项下一行（`data-dependency-private-python`；有缓存时说不联网）、`downloading_python` 进度文案、`api.ts` 的 `PrivatePythonOffer` 类型；两种语言三条文案；组件用例一条 |
-| `tests/test_private_python_transaction.py::TestCleanMachine`（4 条真事务） | 替身 → 供应 → 重算 → 建代 → 项目从此用它（真实解析链回受管环境）；只用标准库也建环境；不提供时照旧 `no_worker_python`；离线 safe_stop 不登记代 |
+| `tests/test_private_python_transaction.py::TestCleanMachine`（5 条真事务） | 替身 → 供应 → 重算 → 建代 → 项目从此用它（真实解析链回受管环境）；只用标准库也建环境；不提供时照旧 `no_worker_python`；离线 safe_stop 不登记代；下载被扣住期间改 requirements + 脚本 → `repair_plan_stale`、零代零账、重新规划把新输入说出口 |
 | `tests/test_foundation_private_python.py`（新，3 条经产品 HTTP 入口）+ fixture ⑨ `tests/fixtures/foundation/private_python/` | FO24 缓存齐备离线零请求 automatic（图内值 == 真值）、FO25 无缓存离线 safe_stop（投影无机器路径、有界、不建任何东西、再准备仍 needs_input）、FO26 篡改来源 safe_stop（旧 active 原样、runtimes 只有好的那份、坏归档的解释器一次没起）。**进程内 test_client**：「这台机器没有任何可用 Python」是发现链末端的输入，子进程形态凑不出诚实的无 base（文件头写明理由） |
 | 台账 | FO24 / FO25 / FO26 → **enforced**（lane pr、entry `http-inprocess`；registry 的 promotion 合同；harness 集合与计数 planned 10 / observing 7 / enforced 15；ci.yml harness 步加这一文件） |
 | 文档 | ADR 0063 §九之二 + 落地表；细则；本段；`evidence/u05/mutations_pr_b.md`；README / plan.json（U05 `implementation_status: done`，产品资格仍 `not_run`）|
@@ -172,7 +173,7 @@ FO24 / 25 / 26 仍待 PR B 经真实入口提升。**没有取得任何平台的
 | `PYTHONPATH=$WT/src pytest tests/test_foundation_private_python.py` | 同上；进程内 HTTP 入口、真渲染 | 0 | 3 passed（约 48 s） |
 | `PYTHONPATH=$WT/src pytest tests/test_foundation_dependencies.py tests/test_foundation_harness.py tests/test_foundation_plan_integrity.py tests/test_foundation_fixtures.py tests/test_mcp_server.py -k …` | 同上 | 0 | U04 的五条 HTTP 场景仍绿；台账 / 计划 / 夹具门禁绿；MCP 两条 |
 | `cd web && pnpm test && pnpm build && pnpm i18n:check` | 同上（worktree 里真 `pnpm install`） | 0 / 0 / 0 | 281 files / 4166 tests；build 绿；i18n 绿 |
-| 变异 M24–M29（`evidence/u05/mutations_pr_b.md`） | 同上 | 每条非零 | 供应后不重算 / 干净机器不走私有 Python / nothing_needed 不建环境（用例第一版撞不上那条分支，改成只用标准库的脚本后红）/ 单包修复只在 creates 时问 / 进来前已取消不拒绝 / .part 打不开归成离线 |
+| 变异 M24–M29、M40–M43（`evidence/u05/mutations_pr_b.md`） | 同上 | 每条非零 | 供应后不重算 / 干净机器不走私有 Python / nothing_needed 不建环境（用例第一版撞不上那条分支，改成只用标准库的脚本后红）/ 单包修复只在 creates 时问 / 进来前已取消不拒绝 / .part 打不开归成离线 / 重算前不比输入指纹（变异下 pip 真把新加的包装进去了）/ 指纹不含文件字节 / 不含声明意图 / 扫描不报本地模块文件 |
 | `PYTHONPATH=$WT/src pytest`（全量） | 同上 | 见 PR 正文 | 见 PR 正文 |
 
 **顺带发现**：① worktree 里跑起子进程的用例（`running_app` / MCP）时 `PYTHONPATH` 必须是**绝对**路径——相对的 `src` 在子进程的 cwd 下解析不到，import 到主工作区那份，表现是 `/api/engine/preparation` 404（U04 五条场景假红，`shared-workdir-contention` 那条教训的又一形状）；② `deprepair.base_python()` 的进程内缓存在锁换版本（只随升级、进程重启发生）时不会自动失效——用例用 `reset_state()` 表达重启。

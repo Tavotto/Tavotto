@@ -391,17 +391,32 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
         reqs = ", ".join(plan.get("requirements") or [])
         kinds = " / ".join(t.get("kind", "") for t in dependency.get("targets") or [])
         unknown = ", ".join(plan.get("unknown") or [])
-        # 这台机器没有可用的 Python（U05，ADR 0063）：这次授权还包含先下载 Tavotto 自己的一份——
-        # 体积必须说出口（与桌面授权框同一句话）
+        # 先下载 Tavotto 自己的 Python（U05，ADR 0063）——体积必须说出口（与桌面授权框同一句话）。两种形状：
+        # 顶层 `private_python` = 这台机器没有可用的 Python（干净机器，哪个目标都得先下）；只挂在受管目标
+        # `targets[].private_python` 上 = 有渲染解释器（比如桌面壳自带的那份）但没有能建受管环境的基础解释器
+        # ——选 tavotto_managed 才会下（Codex #475 P2）
         private = dependency.get("private_python") or {}
+        managed_private = next(
+            (
+                t.get("private_python") or {}
+                for t in dependency.get("targets") or []
+                if t.get("kind") == "tavotto_managed"
+            ),
+            {},
+        )
         if private.get("required"):
+            lead = " 这台电脑没有可用的 Python：授权后会先"
+        elif managed_private.get("required"):
+            lead, private = " 选择 tavotto_managed 时会先", managed_private
+        else:
+            lead = ""
+        if lead:
             mb = max(1, round(int(private.get("download_bytes") or 0) / 1048576))
             private_note = (
-                f" 这台电脑没有可用的 Python：授权后会先使用已下载并校验过的 Tavotto 自己的 Python "
-                f"{private.get('version', '')}（不联网）。"
+                f"{lead}使用已下载并校验过的 Tavotto 自己的 Python {private.get('version', '')}（不联网）。"
                 if private.get("cached")
-                else f" 这台电脑没有可用的 Python：授权后会先下载 Tavotto 自己的 Python "
-                f"{private.get('version', '')}（约 {mb} MB）到 Tavotto 的数据目录，不改动系统与 PATH。"
+                else f"{lead}下载 Tavotto 自己的 Python {private.get('version', '')}（约 {mb} MB）"
+                "到 Tavotto 的数据目录，不改动系统与 PATH。"
             )
         else:
             private_note = ""
