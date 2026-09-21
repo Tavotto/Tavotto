@@ -159,6 +159,85 @@ def test_a_panel_canvas_exports_a_vector_pdf_with_the_source_page_inside(
     assert "U00 fixture: y = 3x + 1" in text
 
 
+def test_the_aggregate_frozen_source_bytes_budget_fails_before_any_byte_is_read(
+    project, provider, tmp_path, monkeypatch
+):
+    """Codex #463 第四轮 P2：像素预算管不住「几份大 PDF」。两份不同的源合计超过预算 → `export_render_failed` 带
+    `source_budget_exceeded`，且 `read_frozen` 一次都没被调（一个字节不读）。"""
+    import shutil
+
+    from tavotto.rendercore import job as rcjob
+
+    shutil.copy(FIXTURE / "page.pdf", project / "figs" / "Fig1b.pdf")
+    size = (FIXTURE / "page.pdf").stat().st_size
+    monkeypatch.setattr(rcjob, "SOURCE_BYTES_BUDGET", size * 2 - 1)
+    calls = {"n": 0}
+    real = rcjob.read_frozen
+
+    def counting(fs):
+        calls["n"] += 1
+        return real(fs)
+
+    monkeypatch.setattr(rcjob, "read_frozen", counting)
+    job = exportjob.prepare(
+        _spec(
+            [
+                {
+                    "type": "panel",
+                    "id": "figs/Fig1.pdf",
+                    "x_mm": 5,
+                    "y_mm": 5,
+                    "w_mm": 40,
+                    "h_mm": 25,
+                },
+                {
+                    "type": "panel",
+                    "id": "figs/Fig1b.pdf",
+                    "x_mm": 60,
+                    "y_mm": 5,
+                    "w_mm": 40,
+                    "h_mm": 25,
+                },
+            ],
+            formats=("pdf",),
+        ),
+        tmp_path / "out",
+    )
+    payload = _run(job, project, provider)
+    assert payload["status"] == "failed"
+    assert payload["error"]["code"] == "export_render_failed"
+    assert "source_budget_exceeded" in payload["error"]["params"]["reason"]
+    assert payload["error"]["params"]["source_bytes"] == size * 2
+    assert calls["n"] == 0
+    # 预算够时照常（同一份文件两次只算一份资源）
+    monkeypatch.setattr(rcjob, "SOURCE_BYTES_BUDGET", size * 2)
+    job = exportjob.prepare(
+        _spec(
+            [
+                {
+                    "type": "panel",
+                    "id": "figs/Fig1.pdf",
+                    "x_mm": 5,
+                    "y_mm": 5,
+                    "w_mm": 40,
+                    "h_mm": 25,
+                },
+                {
+                    "type": "panel",
+                    "id": "figs/Fig1b.pdf",
+                    "x_mm": 60,
+                    "y_mm": 5,
+                    "w_mm": 40,
+                    "h_mm": 25,
+                },
+            ],
+            formats=("pdf",),
+        ),
+        tmp_path / "out2",
+    )
+    assert _run(job, project, provider)["status"] == "done"
+
+
 def test_a_frozen_source_that_changes_before_writing_fails_the_job(
     project, provider, tmp_path, monkeypatch
 ):
