@@ -391,7 +391,12 @@ class TestPrivateBase:
         project = _project(tmp_path)
         rec, _ = _prepare(deprepair.create_joint_plan(project, "figure.py").plan_id)
         assert rec["state"] == deprepair.STATE_DONE, rec
+        # 重建一次：重建的代号只由账上的需求 + 约束算（与联合计划的身份公式不同），于是**两次重建**
+        # 之间意图不变 → 同一个代号——这正是「锁换了版本、意图没变」会撞上的那条路
+        out0 = deprepair._rebuild_guarded(project, None)
+        assert out0.get("ok") is True, out0
         gen_a = managedenv.active_generation(project)
+        assert gen_a == out0["generation"]
         python_a = managedenv.python_of(project)
         assert managedenv.generations(project)[gen_a]["base_runtime"] == src_a.id
         # 锁换版本：另一份假归档（字节不同 → 新 id），已被别的项目供应到磁盘上
