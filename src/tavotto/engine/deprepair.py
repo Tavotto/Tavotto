@@ -704,6 +704,19 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         )
 
     # ---- 安装 -------------------------------------------------------------
+    # 租约在手、解释器已知之后再查一次「这一轮装成功过没有」（Codex 评审 #469 P2）：
+    # 计划是在 `create_plan` 时查的，而另一个页签的同一需求可能在这之后才装完——
+    # 环境指纹看不见 site-packages，两个计划都有效，第二个照样跑一遍无意义的 pip。
+    # key 的算法与下面 `_attempted.add` 那一处逐字相同。
+    attempted_key = (
+        plan.project_id,
+        _env_key(plan.target_kind, python, project),
+        req.requirement(),
+    )
+    with _lock:
+        already = attempted_key in _attempted
+    if already:
+        raise RepairError(ERROR_ALREADY_ATTEMPTED, "同一个环境上的同一个需求这一轮已经装过了")
     _emit(plan.plan_id, STATE_INSTALLING, on_event, plan=plan)
     code, out = _pip_install(
         python, req.requirement(), cancel_ev, lambda text: _append_log(plan.plan_id, text, on_event)
@@ -717,9 +730,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     # 那次 pip 没跑成，再来一次是有意义的；以前写在 pip 之前，失败文案说
     # 「检查网络后重试」，重试撞到的却是「这一轮已经试过了」。
     with _lock:
-        _attempted.add(
-            (plan.project_id, _env_key(plan.target_kind, python, project), req.requirement())
-        )
+        _attempted.add(attempted_key)
 
     # ---- 验证三层 ---------------------------------------------------------
     _emit(plan.plan_id, STATE_VERIFYING, on_event, plan=plan)

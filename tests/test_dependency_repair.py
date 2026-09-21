@@ -1243,6 +1243,37 @@ def test_a_successful_pip_run_is_not_repeated_even_when_verification_fails(proje
     assert err.value.code == deprepair.ERROR_ALREADY_ATTEMPTED
 
 
+def test_a_second_plan_formed_before_the_first_install_finished_does_not_repeat_pip(
+    project, monkeypatch
+):
+    """两个页签各形成一个计划（那时都还没装过），A 装成功之后 B 再点：租约里要再查
+    一次「装成功过没有」，否则 B 照样跑一遍无意义的 pip（Codex 评审 P2）。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan_a = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    plan_b = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    runs: list[str] = []
+    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
+    monkeypatch.setattr(
+        deprepair, "_pip_install", lambda py, req, ev, log: (runs.append(req), ("", ""))[1]
+    )
+    monkeypatch.setattr(
+        deprepair.projectenv, "probe_environment", lambda py, mod=None: {"ok": True, "python": py}
+    )
+    monkeypatch.setattr(deprepair, "worker_self_test", lambda py: {"ok": True})
+    monkeypatch.setattr(deprepair, "installed_version", lambda py, dist: "1.0")
+    deprepair.install(plan_a.plan_id)
+    assert len(runs) == 1
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.install(plan_b.plan_id)
+    assert err.value.code == deprepair.ERROR_ALREADY_ATTEMPTED
+    assert len(runs) == 1, "第二个计划不该再跑 pip"
+
+
 def test_an_environment_that_already_has_the_module_gets_its_own_code(project, monkeypatch):
     """渲染报缺、目标环境里却 import 得到：说明渲染用的不是这个环境。这句话与
     「安装未获确认」毫无关系，code 必须分开。"""
