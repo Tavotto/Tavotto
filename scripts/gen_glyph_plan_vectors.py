@@ -7,9 +7,15 @@ preflight / patchspec 完全一样：**同一份向量，两边各跑一遍**。
 
     python scripts/gen_glyph_plan_vectors.py            # 校对（有分歧就非零退出）
     python scripts/gen_glyph_plan_vectors.py --write    # 按 Python 侧重新生成
+    python scripts/gen_glyph_plan_vectors.py --backend rendercore [--write]
+                                                        # 候选后端的向量（U08，ADR 0067）
 
 Python 是参考实现，而且它问的是**真字体**；TS 侧读生成的覆盖表。所以这份
 向量同时在看两件事：算法一致，以及那张表还配得上真字体。
+
+`--backend` 走契约层同一个选择开关；候选的向量落在 `glyph_plan_vectors.rendercore.json`
+（分层按 ADR 0060 §4 的 D07 迁移变化，`tests/test_rendercore_glyph_vectors.py` 看护；
+vitest 那一半仍读默认那份，切表归 U10）。
 
 纯标准库（只经 `pdfbackend` 边界层）。
 """
@@ -18,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -26,7 +33,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from tavotto import pdfbackend  # noqa: E402
 
-OUT = ROOT / "tests" / "golden" / "glyph_plan_vectors.json"
+OUTPUTS = {
+    pdfbackend.BACKEND_PYMUPDF: ROOT / "tests" / "golden" / "glyph_plan_vectors.json",
+    pdfbackend.BACKEND_RENDERCORE: ROOT / "tests" / "golden" / "glyph_plan_vectors.rendercore.json",
+}
+OUT = OUTPUTS[pdfbackend.BACKEND_PYMUPDF]
 
 #: 样例集。每一条都有理由，别随手加「看起来差不多」的第二条。
 CASES: list[tuple[str, str]] = [
@@ -101,7 +112,12 @@ def main() -> int:
     _force_utf8()
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true")
+    ap.add_argument("--backend", choices=list(pdfbackend.BACKENDS), default=None)
     args = ap.parse_args()
+    if args.backend:
+        os.environ[pdfbackend.BACKEND_ENV] = args.backend
+    global OUT
+    OUT = OUTPUTS[pdfbackend.selected()]
 
     fresh = build()
     text = json.dumps(fresh, ensure_ascii=False, indent=1) + "\n"

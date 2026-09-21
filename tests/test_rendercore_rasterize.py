@@ -323,7 +323,7 @@ def test_a_blank_page_still_rasterizes_and_eps_is_refused_structurally(
     assert payload["status"] == "partial", payload
     by = {o["format"]: o for o in payload["outputs"]}
     assert by["pdf"]["status"] == by["png"]["status"] == by["tiff"]["status"] == "done"
-    assert by["eps"]["status"] == "failed" and by["eps"]["error"]["code"] == "format_failed"
+    assert by["eps"]["status"] == "failed" and by["eps"]["error"]["code"] == "eps_not_for_canvas"
     assert by["eps"]["error"]["params"]["unsupported"][0]["operation"] == "format"
     w, h, bpp, rgba = pdfread.decode_png_any((export_dir / "Fig 1.png").read_bytes())
     assert bpp == 4 and set(rgba) == {0}  # 透明底：RGBA，全 0

@@ -40,7 +40,7 @@ matplotlib；前端 `web/`（Vite + React 19 + TS + Tailwind v4）。
 | --- | --- | --- | --- |
 | `engine/brand.py`、任何品牌 / 标识符 / 存储键 | 品牌与命名 → `brand-and-naming.md` | 干净断裂：旧名一律不认、不加 LEGACY_；唯二例外 `mm_registry.json`（`registry.existing_registry_path()`）与 `MM_WORKER_PYTHON`（`pool.worker_python_env()`）只在读取端回退；桌面 id `com.tavotto.tavotto` | `tests/test_desktop_launch.py`、`tests/test_handoff.py` |
 | Flask 侧 / 子进程侧 / bridge 侧任一模块的 import | 进程与依赖边界 → `process-boundaries.md` | 三侧模块名单与各自允许的依赖；解释器由 `pool.find_worker_python()` 探测（`TAVOTTO_WORKER_PYTHON` 覆盖） | `tests/test_install_locate.py`（`test_subcommands_run_without_flask_or_pymupdf`）、`tests/bridge/` |
-| `pdfbackend/`、`glyphplan.py`、字体 / 色图事实、`/api/render` 缓存 | PDF 后端边界 → `pdf-backend-boundary.md` | 字形归属四层只在 `glyphplan.py`；本机字体族在 manifest 顶层 `font_families` 只发一次；「自定义色图」判对象不判名（`_registered_colormap`）；CJK 回退尾巴必须在 `font.family` 列表里；缓存键 `sha1(id\|内容\|宽\|后端-版本)` 不用 mtime，Windows 上 `os.replace` 撞读者退让 | `tests/test_font_provenance.py`、`test_font_family_options.py`、`test_cmap_facts.py`、`test_cjk_figure_text.py`、`test_render_cache.py`、`test_windows_regressions.py` |
+| `pdfbackend/`、`glyphplan.py`、字体 / 色图事实、`/api/render` 缓存 | PDF 后端边界 → `pdf-backend-boundary.md` | 契约层按 `TAVOTTO_RENDER_BACKEND` 在 `pymupdf_backend`（默认）与 `rendercore/facade` 之间选一个，选定即定不静默回退、不认识的取值报错（ADR 0067）；字形归属四层只在 `glyphplan.py`；本机字体族在 manifest 顶层 `font_families` 只发一次；「自定义色图」判对象不判名（`_registered_colormap`）；CJK 回退尾巴必须在 `font.family` 列表里；缓存键 `sha1(id\|内容\|宽\|后端-版本)` 不用 mtime，Windows 上 `os.replace` 撞读者退让 | `tests/test_font_provenance.py`、`test_font_family_options.py`、`test_cmap_facts.py`、`test_cjk_figure_text.py`、`test_render_cache.py`、`test_windows_regressions.py`、`test_rendercore_facade.py` |
 | `engine/updater.py`、`/api/update/*` | 检查更新 → `update-check.md` | 纯标准库；升级永不静默、升级后 `restart_required`；源码安装只提示 `git pull`；桌面模式整个关掉 | `tests/test_updater.py` |
 | `engine/figcapture.py`、`execspec.py`、`workdir.py`、`worker.py` 的 savefig 拦截与 sys.argv | Figure 捕获、执行描述与 live-figure 会话 → `figure-capture-and-execution.md` | 捕获策略两条入口同一份实现；fallback stem 按本次捕获序号；相对路径只读回退四条同时成立才改指（`builtins.open` / `io.open` / 3.10 的 `Path.open` 三处都 patch）、不扩到 `exists` / `glob`；`safe_spec()` / `worker_argv()` 唯一出处；`import paper_style` 留在 try 里、排在 argv 换好之后且在 SystemExit 保护内；`sys.argv` 换成脚本自己的 | `tests/test_compat_capture_parity.py`、`test_execspec.py`、`test_workerd_pool.py`、`test_workdir_mode.py`、`test_zero_capture.py` |
 | `engine/pool.py`、`wireproto.py`、`workerd_client.py`、超时 / 关停 / 计时 | worker 协议、计时、超时与关停 → `worker-protocol-and-lifecycle.md` | 协议 v1 信封原样回显、`request_id` 对不上 kill；patch 规范化唯一权威 `patchspec.py`（↔ Rust 逐字节）；build 用静默看门狗（ADR 0050）；管道 EOF 先 `EXIT_GRACE` 内问退出状态再 kill，退出码进信封、解释只在 `pool.describe_exit` / `session_dead_message`，worker 开 faulthandler、脚本 `sys.exit(0)` 是正常结束（#435）；`_terminate_and_reap()` / `_kill_and_reap()` 闭环；export / preview_png 状态中立 | `tests/test_worker_protocol.py`、`test_worker_roundtrip.py`、`test_worker_exit_report.py`、`test_workerd_client.py`、`test_build_watchdog.py`、`test_windows_regressions.py` |
@@ -77,8 +77,11 @@ matplotlib；前端 `web/`（Vite + React 19 + TS + Tailwind v4）。
   `wireproto` 等于同时改两条入口，先跑 `tests/test_worker_roundtrip.py` 与 `tests/bridge/`。
 - 引擎改动后重启服务：`lsof -ti:5089 -sTCP:LISTEN | xargs kill; ./run.sh --no-browser`。
 - 改了 `pdfbackend/` 字体相关或换了 PyMuPDF：`python scripts/gen_canvas_coverage.py --write`。
-- 改了 `rendercore/` 的字体 / 写入器 / render child：先 `python scripts/fetch_fonts.py` 取批准字体，再在装了
+- 改了 `rendercore/` 的字体 / 写入器 / render child / facade：先 `python scripts/fetch_fonts.py` 取批准字体，再在装了
   `.[rendercore]` 的独立 venv 里跑 `tests/test_rendercore_*.py`（主仓库 `.venv` 不装候选包，那里这些用例 skip）；
+  改了 facade / 契约层 / 导出接线还要在那个 venv 里跑 `python scripts/dev/u08_parity.py`（旧契约用例在候选下逐字重跑，
+  退出码 0 才算对拍过）；改了批准字体集合 / typography 就重生成候选生成物 `gen_canvas_coverage.py --backend rendercore --write`、
+  `gen_glyph_plan_vectors.py --backend rendercore --write`；
   改了 evidence 的输入就重生成 `scripts/dev/u06_evidence.py --out docs/implementation/tavotto-foundation/evidence/u06` /
   `scripts/dev/u07_evidence.py --out …/evidence/u07`（PNG 是 macOS arm64 基线，其它平台看 `foundation-u06-rendercore.yml` 的工件）。
 - 改了引擎四模块（manifest / overrides / pathgeom / patchspec）：重建 playground 产物

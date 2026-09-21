@@ -517,6 +517,20 @@
    "expected_product_outcome": "automatic",
    "backend": "rendercore",
    "notes": "observing：挂在已有的非 required 具名任务 foundation-u06-rendercore.yml（ubuntu 3.10 / 3.13、windows、macos）上——每腿跑 scripts/dev/u07_evidence.py（30 条核对，u07.pdf 三平台逐字节相同、PDFium PNG 只记 sha256 不判）与 scripts/dev/u07_freeze_child.py（冻结 child 自起）；main .venv 里 tests/test_rendercore_evidence.py::test_u07_evidence_is_current 只核进了 git 的那份字节。不经产品入口（app.py 不 import rendercore），所以不是 FO 场景的资格；提升 enforced 要等 U08 把 facade 接上、再走 05 §3 的整条用户链。"
+  },
+  {
+   "case_id": "U08-R1",
+   "title": "RenderBench：facade 19 项 + Canvas 面在候选后端下的对拍——旧契约用例在 TAVOTTO_RENDER_BACKEND=rendercore 下逐字重跑（23 个套件、14 条实现特定断言各带替代证据）+ 真实入口（HTTP 同步 / 异步、/api/render、原图三格式、带 override 的面板经 worker + 回执）",
+   "scenario_refs": [],
+   "stage": "U08",
+   "enrollment": "observing",
+   "lane": "pr",
+   "entry": "http",
+   "fixture": "docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.json",
+   "test": null,
+   "expected_product_outcome": "automatic",
+   "backend": "rendercore",
+   "notes": "observing：挂在已有的非 required 具名任务 foundation-u06-rendercore.yml 上——每腿跑 tests/test_rendercore_facade.py / test_rendercore_app.py / test_rendercore_sources.py / test_rendercore_glyph_vectors.py 与 scripts/dev/u08_parity.py（退出码 0 = 对拍过；结果记 evidence/u08/parity.json）；main .venv 里 tests/test_foundation_facade_ledger.py::test_candidate_parity_deselections_have_replacement_evidence 只核清单不腐烂。默认后端仍是 PyMuPDF（候选只在显式选中时接管），所以不是 FO 场景的资格、不进 required；提升 enforced 要等 U09 与完整准备链联调、U10 切默认。"
   }
  ]
 }

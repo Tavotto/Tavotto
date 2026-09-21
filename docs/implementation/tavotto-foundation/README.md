@@ -46,6 +46,16 @@ straight-alpha 的 `RasterBuffer`，pikepdf 正式裁决；栅格（ADR 0066）�
 （生成器 `scripts/dev/u07_evidence.py`，最小 freeze `scripts/dev/u07_freeze_child.py`）；enrollment 加 `U07-R1`（observing）。
 交接见 [`handoffs/U07_compose_raster.md`](handoffs/U07_compose_raster.md)。
 
+U08 自 2026-09-21 起执行（`implementation_status: in_progress`，产品资格仍 `not_run`，**不切默认**）。第一切片（ADR 0067）：
+契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 在 PyMuPDF（默认）与 `rendercore/facade.py`（候选，19 项同签名 +
+Canvas 面）之间选一个，选定即定、不静默回退；产品导出路在候选下把 `scope=canvas` 交给 `job.produce` + `ExecutionSourceResolver`
+（带 override / runtime 素材由当次 worker 现画并附回执，native 会话经 `receipt.from_native_session`），`scope=original` /
+预览 / 探测 / 写回标注经契约层自动切换；候选的覆盖表与字形向量各一份生成物（与默认表的差异钉成闭集）；旧契约用例在候选下
+逐字重跑（`scripts/dev/u08_parity.py`，清单在 ledger `candidate_parity`，14 条实现特定断言各带替代证据，用户合同一条不删）。
+证据在 [`evidence/u08/`](evidence/u08/)；enrollment 加 `U08-R1`（observing）；facade 19 项在
+[`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 全部有 U08 迁移证据。交接见
+[`handoffs/U08_facade_parity.md`](handoffs/U08_facade_parity.md)。
+
 ## 从哪里开始
 
 先读 [执行总提示词](00_MASTER_PROMPT.md)、[范围与修改决策](01_SCOPE_AND_DECISIONS.md)、[路线图](02_ROADMAP.md) 和 [CI 生效政策](03_CI_POLICY.md)。随后只执行 [U00](phases/U00_baseline.md)，不要在第一步删除 PyMuPDF、更换根许可证或一次启用全部兼容门禁。

@@ -35,6 +35,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import os
 
 from . import execspec, figcapture
 
@@ -209,6 +210,51 @@ def from_worker(
         interpreter=spec.interpreter,
         project_root=spec.project_root,
         runtime=dict(runtime) if runtime else None,
+        descriptors=descriptors,
+    )
+
+
+#: native 会话不记 argv 的**值**（ADR 0021 §4：里面可能有路径 / 样本名 / 凭据），只记数量；
+#: 回执的 spec 里每个位置放这个占位串——数量进身份，值不进。
+NATIVE_ARGV_PLACEHOLDER = "<argv>"
+
+
+def from_native_session(session, script: str, *, grant: dict | None = None) -> ExecutionReceipt:
+    """`nativesession.NativeSession` → 回执（U08，ADR 0067：执行侧源解析器对 native 面板也要回执）。
+
+    native 会话没有 `spec` 账本，spec 由描述符元数据**重建**（`execspec.native_spec`：解释器 / cwd /
+    项目根 / 目标种类 / argv 数量）；`source_revision` 是空串——会话不记 spawn 那一刻的脚本 sha1，
+    此刻再去读文件量到的是「现在」，不是「当时」，不补不猜。`runtime` 是 bridge 自报的那一半
+    （`last_build_runtime`），没报就是 `partial`。
+    """
+    from . import execspec
+
+    kind = str(getattr(session, "target_kind", "") or execspec.TARGET_SCRIPT)
+    root = str(getattr(session, "project_root", "") or "")
+    raw_target = script if kind == execspec.TARGET_MODULE else os.path.join(root, script)
+    spec = execspec.native_spec(
+        raw_target,
+        interpreter=str(getattr(session, "interpreter", "") or ""),
+        cwd=str(getattr(session, "cwd", "") or ""),
+        project_root=root,
+        target_kind=kind,
+        argv=(NATIVE_ARGV_PLACEHOLDER,) * int(getattr(session, "arg_count", 0) or 0),
+    )
+    runtime = getattr(session, "last_build_runtime", None)
+    descriptors = tuple(
+        d for d in (getattr(session, "descriptors", None) or []) if isinstance(d, dict)
+    )
+    return ExecutionReceipt(
+        profile=execspec.PROFILE_NATIVE,
+        control_plane=CONTROL_PLANE_NATIVE,
+        python_source="",
+        generation=int(getattr(session, "generation", 1) or 1),
+        source_revision="",
+        spec_stable=spec.stable_payload(),
+        launch_context=execspec.launch_context(spec, grant=grant),
+        interpreter=spec.interpreter,
+        project_root=spec.project_root,
+        runtime=dict(runtime) if isinstance(runtime, dict) and runtime else None,
         descriptors=descriptors,
     )
 

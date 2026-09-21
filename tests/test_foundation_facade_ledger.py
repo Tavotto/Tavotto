@@ -161,3 +161,21 @@ def test_ledger_points_at_files_that_exist(path):
     assert (REPO / d["facade_module"]).is_file()
     assert (REPO / d["implementation_module"]).is_file()
     assert (REPO / path).is_file()
+
+
+def test_candidate_parity_deselections_have_replacement_evidence():
+    """U08（ADR 0067）：候选对拍清单里每一条 deselect 都是实现特定断言、有理由、有**存在的**替代证据；
+    deselect 的用例本身也存在。运行器（`scripts/dev/u08_parity.py`）用的是同一份判据——这里再钉一次，
+    让清单腐烂时主 `.venv` 就红，不用等 rc-venv。"""
+    runner = _load_module("u08_parity", REPO / "scripts" / "dev" / "u08_parity.py")
+    plan = _ledger()["candidate_parity"]
+    assert plan["suites"] and plan["deselected"], "清单为空——判据量在空集合上恒真"
+    assert runner.check_plan(plan) == []
+    broken = json.loads(json.dumps(plan))
+    broken["deselected"][0]["replacement"] = [
+        "tests/test_rendercore_app.py::test_that_does_not_exist"
+    ]
+    assert runner.check_plan(broken), "指向不存在的替代证据必须被拒"
+    empty = json.loads(json.dumps(plan))
+    empty["deselected"][0]["replacement"] = []
+    assert runner.check_plan(empty), "没有替代证据必须被拒"

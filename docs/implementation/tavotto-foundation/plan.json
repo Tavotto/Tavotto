@@ -152,7 +152,7 @@
         "U08.facade_parity"
       ],
       "scope": "core",
-      "implementation_status": "not_started",
+      "implementation_status": "in_progress",
       "product_validation_status": "not_run",
       "milestone_dependencies": {}
     },
