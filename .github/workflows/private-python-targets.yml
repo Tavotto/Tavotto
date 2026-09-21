@@ -26,8 +26,12 @@ on:
     - cron: "37 19 * * 0"   # 每周日 UTC 19:37（nightly 是每天 UTC 18:00）
   pull_request:
     paths:
+      # 本 workflow 直接消费的每一份输入都在这里（Codex #467 P2）：改了任何一份就得在 PR 上跑一次
       - ".github/workflows/private-python-targets.yml"
       - "scripts/ci/private_python_empty_image.sh"
+      - "scripts/ci/private_python_windows_snapshot.py"
+      - "scripts/ci/runtime_pins.py"
+      - "packaging/runtime-lock.json"
       - "src/tavotto/engine/privatepython.py"
       - "src/tavotto/resources/private_python_lock.json"
       - "tests/test_private_python.py"
@@ -131,10 +135,11 @@ jobs:
           REL=$(python -c "import json,os; print(json.load(open(os.environ['TAVOTTO_PRIVATE_PYTHON_REPORT']))['python_rel'])")
           bash scripts/ci/private_python_empty_image.sh "$RT" "$REL" "$PP_WHEELHOUSE" "$PP_EVIDENCE/empty-image"
 
-      - name: 机制用例在本目标上跑一遍（本地供应服务 + 假归档；Windows 的替身是 venvlauncher 副本）
+      - name: 机制用例在本目标上跑一遍（本地供应服务 + 假归档；Windows 的替身是 venvlauncher 副本；真归档那条上面已经跑过，不再下第二次）
         shell: bash
         run: |
           python -m pytest tests/test_private_python.py -p no:cacheprovider -rs -q \
+            -k "not TestRealArchive" \
             --junitxml="$PP_EVIDENCE/pytest-mechanism.xml"
 
       - name: 证据工件
