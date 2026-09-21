@@ -1136,6 +1136,11 @@ class TestGate:
             budget={},
             created_at=0.0,
         )
+        # 手拼的计划说解释器是 sys.executable：起会话前的过期判定（U09，ADR 0071）会把它与产品此刻的
+        # 决策比一次——这条用例测的是门的投影，不是环境变了，所以把决策钉成同一个
+        monkeypatch.setattr(
+            engine_pool, "resolve_worker_python", lambda root=None, **kw: (sys.executable, "system")
+        )
         service = preparation.PreparationService()
         result = service.register(plan)
 
