@@ -37,7 +37,7 @@ preparation-and-receipts / process-boundaries；`docs/rules/repo/same-origin-pai
 | `rendercore/facade.py`（新，native 入口） | 19 项同签名实现 + `Canvas` 面 + 进程级 `provider()` / `host()` / `preview_cache()`（跟着 cache_dir 走）/ `reset_for_tests()`；`pdf_fonts` 递归 Form 有预算；`coverage_ranges` primary = 12 张脸交集 |
 | `rendercore/sources.py` | `ExecutionSourceResolver(static, execute)`：`needs_execution` 的交给 `execute`，回来必须 `origin=execution` |
 | `rendercore/rasterio.py` | `header_info()`（尺寸 + alpha，不解码） |
-| `rendercore/preview.py` | `PreviewCache(identity=…)`（memo 注入点） |
+| `rendercore/preview.py` | 第一次算键时 child ping 失败也翻成 `PreviewError`（原来的 `identity=` memo 注入点随 U07「键与渲染绑同一份抄出来的字节」取消） |
 | `rendercore/job.py` | 画布 EPS 报旧路同一个稳定码 `eps_not_for_canvas`（params 带结构化 `unsupported`） |
 | `engine/receipt.py` | `from_native_session(session, script)`（argv 只记数量 `NATIVE_ARGV_PLACEHOLDER`、`source_revision` 空串不猜） |
 | `app.py` | `_serialize_figure_with_worker`（本体，多回 worker + 脚本）；`_execution_receipt` / `_execution_source`（回执 + `origin=execution` 产物）；`_export_produce_rendercore`（候选下 `scope=canvas` → `job.produce`，项目根只在碰面板时才问）；`_api_render_rendercore`（PreviewCache；队列满 503 + Retry-After）；`reset_projects(wait=True)` 末尾 `renderhost.shutdown_shared()` |
