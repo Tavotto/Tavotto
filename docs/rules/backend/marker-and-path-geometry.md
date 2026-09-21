@@ -80,4 +80,16 @@
   一根柱一条闭合子路径（Rectangle 的 `get_path()` + `get_transform()`，barh / 负高度 /
   对数轴同一条路），隐藏的不描，根数超过 `MAX_MARKERS` 整组退回 bbox（与散点同一个
   数、同一种降级）。命中 / 框选 / 描示前端一个字没改。
+  **彩色网格（QuadMesh）描外轮廓 + 裁剪框**（2026-09-21，用户的 PRB 三联图：点子图
+  背景时选中框比子图高出一截）：从前它什么都不给、退回 bbox，理由是「铺满一块矩形，
+  bbox 本来就是准的」——**数据范围超出坐标轴范围时这条前提不成立**（bbox 是未裁剪的
+  整块网格，`shading="nearest"` 还各向外垫半格），而用户看到的是被 axes 裁掉之后的
+  那块。`pathgeom._quadmesh_outline_subpaths` 沿 `get_coordinates()` 的四条边绕一圈
+  （直角网格抽稀后就是四个角，极坐标 / 翘曲网格是真实边界），**凸的外轮廓先裁进 axes 框再发**
+  （`_clip_ring_to_rect`，Sutherland–Hodgman；凹的——U 形翘曲网格——与矩形的交可能不相连，
+  S–H 会造沿裁剪边的假桥，所以原样发、由前端按 clip 裁）：前端框选按「框与边相交」判、填充内部刻意
+  不算圈中，未裁的四条边全在子图之外时盖住整个子图的选择框也圈不中它；`fill=True`、
+  `clip` 照发，仍**不逐 cell 描**（22 万个 cell 就是 22 万条路径）。`offsets` 按渲染器口径处理：
+  一条（或全相同）的偏移经 `offset_transform` 加到轮廓上，多条不同的偏移让 cell 各奔东西、
+  退回 bbox。bbox 一个字节不动。
   前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`。

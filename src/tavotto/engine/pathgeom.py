@@ -405,6 +405,93 @@ def _collection_subpaths(
     return out
 
 
+def _is_convex_ring(pts: np.ndarray) -> bool:
+    """闭合多边形是不是凸的：相邻两边叉积的符号处处一致（共线的零不算）。"""
+    ring = np.asarray(pts, dtype=float)
+    if len(ring) < 3:
+        return False
+    edges = np.roll(ring, -1, axis=0) - ring
+    cross = (
+        edges[:, 0] * np.roll(edges, -1, axis=0)[:, 1]
+        - edges[:, 1] * np.roll(edges, -1, axis=0)[:, 0]
+    )
+    signs = np.sign(cross[np.abs(cross) > 1e-9])
+    return len(signs) == 0 or bool(np.all(signs == signs[0]))
+
+
+def _clip_ring_to_rect(pts: np.ndarray, x0: float, y0: float, x1: float, y1: float) -> np.ndarray:
+    """**凸**多边形（display 像素）与一个轴对齐矩形的交（Sutherland–Hodgman）。
+
+    矩形是凸的，四条边各切一刀就是精确的交多边形——**前提是被切的多边形也是凸的**：
+    凹多边形（U 形的翘曲网格）与矩形的交可能是几块不相连的区域，S–H 会用沿着裁剪边
+    的「桥」把它们连成一环，前端会把桥描出来、框选也会把桥当墨迹（#473 评审第三轮）。
+    调用方只在 `_is_convex_ring` 成立时才裁；凹的原样发、留给前端按 clip 裁。切空了回空数组。
+    """
+    ring = np.asarray(pts, dtype=float)
+    for axis, bound, keep_ge in ((0, x0, True), (0, x1, False), (1, y0, True), (1, y1, False)):
+        if len(ring) == 0:
+            break
+        inside = ring[:, axis] >= bound if keep_ge else ring[:, axis] <= bound
+        out: list = []
+        for i in range(len(ring)):
+            cur, prev = ring[i], ring[i - 1]
+            cur_in, prev_in = inside[i], inside[i - 1]
+            if cur_in != prev_in:
+                # 与这条裁剪边的交点（沿 prev→cur 线性插值）
+                t = (bound - prev[axis]) / (cur[axis] - prev[axis])
+                out.append(prev + t * (cur - prev))
+            if cur_in:
+                out.append(cur)
+        ring = np.asarray(out, dtype=float).reshape(-1, 2)
+    return ring
+
+
+def _quadmesh_outline_subpaths(mesh) -> list[tuple]:
+    """彩色网格的**外轮廓**（display 像素）：沿坐标网格的四条边绕一圈。
+
+    `get_coordinates()` 是 (M+1, N+1, 2) 的顶点网格（gouraud 是 (M, N, 2)，
+    同样是一张网）。直角网格绕出来是一个矩形，RDP 抽稀后就是 4 个点；
+    曲线网格（极坐标、`pcolormesh(X, Y, C)` 的翘曲网格）绕出来的是真实边界。
+    坐标先过 artist 的 transform（非仿射的对数轴由 `_display_subpaths` 处理），
+    与 `QuadMesh.draw` 同一条路。掩码 / NaN 的顶点由 `remove_nans` 拆段。
+    """
+    coords = np.asarray(mesh.get_coordinates(), dtype=float)
+    if coords.ndim != 3 or coords.shape[0] < 2 or coords.shape[1] < 2:
+        return []
+    ring = np.concatenate(
+        [
+            coords[0, :],  # 底边（或第一行）从左到右
+            coords[1:, -1],  # 右边从下到上
+            coords[-1, -2::-1],  # 顶边从右到左
+            coords[-2:0:-1, 0],  # 左边从上到下（回到起点前一格）
+        ]
+    )
+    codes = np.full(len(ring) + 1, Path.LINETO, dtype=np.uint8)
+    codes[0] = Path.MOVETO
+    codes[-1] = Path.CLOSEPOLY
+    path = Path(np.vstack([ring, ring[:1]]), codes)
+    subs = _display_subpaths(path, mesh.get_transform())
+    # offsets：渲染器按 `offset_transform` 变换后**逐 cell 循环**加到坐标上
+    # （`RendererBase._iter_collection` 的口径）。默认是一条 (0, 0) 经 Identity，
+    # 什么都不加；脚本传了 `offsets=` 时整块网格是平移过的，轮廓要跟着走。
+    # 多条**不同**的偏移意味着 cell 各奔东西、不再是一整块——那时外轮廓无从谈起，
+    # 退回 bbox（bbox 同样不认 offsets，这是既有的边界，两处一起错总比轮廓单独
+    # 错更容易被看出来）。
+    try:
+        offs = np.asarray(mesh.get_offsets(), dtype=float).reshape(-1, 2)
+        toffs = np.asarray(mesh.get_offset_transform().transform(offs), dtype=float)
+    except Exception:  # noqa: BLE001 — 取不到偏移就按无偏移处理
+        toffs = np.zeros((1, 2))
+    if len(toffs) == 0:
+        return subs
+    if not np.allclose(toffs, toffs[0]):
+        return []
+    dx, dy = float(toffs[0][0]), float(toffs[0][1])
+    if dx or dy:
+        subs = [(pts + np.asarray([dx, dy]), closed) for pts, closed in subs]
+    return subs
+
+
 def _marker_subpaths(coll, budget: Budget) -> list[tuple] | None:
     """PathCollection（散点）每一颗 marker 的 display 空间轮廓。
 
@@ -693,12 +780,58 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
                 clip=_clip_rect(artist, W, H),
                 budget=budget,
             )
-        if isinstance(artist, Collection) and not isinstance(artist, QuadMesh):
+        if isinstance(artist, QuadMesh):
+            # 彩色网格：描**外轮廓**，不描每个 cell（`pcolormesh` 22 万个 cell 就是
+            # 22 万条路径）。从前这里什么都不给、退回 bbox，理由是「它铺满一块矩形，
+            # bbox 本来就是准的」——**那条前提在数据范围超出坐标轴范围时不成立**：
+            # bbox 是未裁剪的整个网格（`shading="nearest"` 还各向外垫半格），而
+            # 用户看到的是被 axes 裁掉之后的那块。2026-09-21 用户的 PRB 三联图：
+            # 频率网格 1.30–1.52 GHz、ylim 1.34–1.51，选中框比子图高出一截，
+            # 点击子图背景时框「罩不准」。轮廓 + `clip` 才是它画出来的那块。
+            subs = _quadmesh_outline_subpaths(artist)
+            if not subs:
+                return None
+            # **轮廓先裁进 axes 框再发**，发的就是画出来的那块边界（#473 评审）：网格四边
+            # 都伸出坐标轴范围时，未裁的四条边全在 clip 之外，而前端的框选按「框与边相交」
+            # 判（`geomHitsRect`，填充内部刻意不算圈中），一个盖住整个可见子图的选择框也
+            # 圈不中它——退回 bbox 的年代是圈得中的。裁完边就在子图框上，框选照旧。
+            # 裁剪路径不是矩形（`set_clip_path`）时 `_clip_rect` 回 None，不裁、照旧发 clip。
+            clip = _clip_rect(artist, W, H)
+            if clip is not None:
+                cx, cy, cw, ch = clip
+                x0, x1 = cx * W, (cx + cw) * W
+                y0, y1 = (1.0 - cy - ch) * H, (1.0 - cy) * H  # clip 是 top-origin 分数
+                clipped = []
+                for pts, closed in subs:
+                    if closed and _is_convex_ring(pts):
+                        ring = _clip_ring_to_rect(pts, x0, y0, x1, y1)
+                        if len(ring) >= 3:
+                            clipped.append((ring, True))
+                    else:
+                        # 凹的外轮廓（U 形翘曲网格）与矩形的交可能不相连，S–H 会造出沿裁剪边
+                        # 的假「桥」——原样发、由前端按 clip 裁（框选在那种图上要跨过可见
+                        # 边界才圈得中，与裁前一致）；NaN 拆出的开放段同样只能靠前端裁
+                        clipped.append((pts, closed))
+                subs = clipped
+                if not subs:
+                    return None  # 整块网格都在坐标轴范围之外：图上没有它的墨迹
+            lw = np.asarray(artist.get_linewidths(), dtype=float).ravel()
+            lw_max = float(lw.max()) if lw.size else 0.0
+            return _pack(
+                subs,
+                W,
+                H,
+                # 网格是一整块实心面：点进去就是选它（命中评分按真实面积）
+                fill=True,
+                stroke=_has_paint(artist.get_edgecolor()) and lw_max > 0,
+                stroke_pt=lw_max,
+                clip=clip,
+                budget=budget,
+            )
+        if isinstance(artist, Collection):
             # 其余 Collection：等值线（`ContourSet`，matplotlib 3.8 起本身就是
             # Collection）、线组（`LineCollection` / `EventCollection`）、三角网
-            # ……凡是 `get_paths()` 给得出路径的都描真实路径。**`QuadMesh` 除外**：
-            # 它的路径是每个 cell 一条（`pcolormesh` 22 万个 cell 就是 22 万条），
-            # 而它铺满一块矩形，bbox 本来就是准的、也没有「选到空白」的问题。
+            # ……凡是 `get_paths()` 给得出路径的都描真实路径。
             #
             # 没有 geometry 的等值线是**整块 bbox**：它盖住宿主子图，点热力图
             # 命中的是等值线，而等值线既不能拖也不能缩——用户看到的就是「热力图
