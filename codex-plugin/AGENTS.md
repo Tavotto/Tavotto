@@ -4,7 +4,7 @@
 `docs/adr/0005-external-handoff-and-codex-plugin.md`、
 `docs/adr/0006-codex-mcp-app-and-publication-profile.md`、
 `docs/adr/0009-codex-workspace-root-authority.md`、
-`docs/adr/0053-canvas-payload-under-host-event-cap.md`。改动前先读。
+`docs/adr/0069-canvas-payload-under-host-event-cap.md`。改动前先读。
 交接的引擎侧（`engine/locate.py` / `engine/handoff.py` / `engine/cli.py`）在
 `docs/rules/backend/external-handoff.md`。
 
@@ -124,12 +124,12 @@
   真 stdio server 的工具级集成——**不是**经 Codex 宿主的端到端）、`tests/test_codex_plugin.py`
   末节（技能文字：路由、禁止的绕路、按退出码说话）。
 
-## 工具结果的体积预算与画布取件（2026-09-21，ADR 0053，issue #457）
+## 工具结果的体积预算与画布取件（2026-09-21，ADR 0069，issue #457）
 
 - **Codex 把 MCP 工具结果送给桌面 UI 的事件副本封顶在 1 MiB**，超过就把 `structuredContent`
   / `_meta` 置空——模型那份与画布自己发的 `tools/call` 不受影响，症状是「模型正常、画布永远
   等待」（422 元素 ≈ 1.3 MB）。**顺带**：`structuredContent` 非空时 codex 只把它给模型，
-  `content` 文本整段丢弃。全文在 ADR 0053。
+  `content` 文本整段丢弃。全文在 ADR 0069。
 - **只有单图 open 守预算**（`CANVAS_INLINE_BUDGET_BYTES` 768 KiB，量整个 `CallToolResult`
   的紧凑 UTF-8 字节，别用默认 ensure_ascii），按 `INLINE_ELISION_STEPS` 省 svg → manifest →
   位图 → 预检清单，写 `structuredContent.elided`；说明加完再量一次，还超先退到只剩把手

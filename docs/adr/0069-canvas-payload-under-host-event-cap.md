@@ -1,4 +1,4 @@
-# ADR 0053：内嵌画布的负载不走工具结果——open 结果守宿主 1 MiB 事件上限，画布经 `tavotto_session_state` 取件
+# ADR 0069：内嵌画布的负载不走工具结果——open 结果守宿主 1 MiB 事件上限，画布经 `tavotto_session_state` 取件
 
 日期：2026-09-21 · 状态：**Accepted**（issue #457）
 相关：[0006 Codex 里的 MCP server / MCP App 画布](0006-codex-mcp-app-and-publication-profile.md)
