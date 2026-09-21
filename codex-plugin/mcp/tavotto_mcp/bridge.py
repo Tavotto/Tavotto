@@ -303,6 +303,48 @@ def _answer_workdir(project: str, mode: str) -> None:
         engine_pool.shutdown_all(project)
 
 
+def _answer_prepare_dependencies(project: str, script: str, target: str) -> dict:
+    """`tavotto_open_figure(prepare_dependencies=…)`：对跑前那一次「需要先准备依赖」的回答
+    （U04，ADR 0061）——绑定联合计划 + **同步**执行到终态（几十秒到几分钟：要联网装包），
+    再由调用方接着开图。与桌面授权框 / HTTP 端点是同一份决定、同一个事务。
+
+    `deprepair` 延后 import：它是 U04 才有的能力，桥的最低引擎版本不为它抬（老引擎上
+    `create_joint_plan` 不存在 → `engine_too_old`，不静默）。
+    """
+    from tavotto.engine import deprepair as engine_deprepair  # noqa: PLC0415
+
+    if target not in ("tavotto_managed", "project_venv", "skip"):
+        raise BridgeError(
+            f"不认识的依赖准备目标: {target!r}（可选 tavotto_managed / project_venv / skip）",
+            code="dependency_target_invalid",
+        )
+    create = getattr(engine_deprepair, "create_joint_plan", None)
+    skip = getattr(engine_deprepair, "skip_preparation", None)
+    if create is None or skip is None:
+        raise BridgeError(
+            "本机 Tavotto 版本不支持联合依赖准备，请升级 Tavotto", code="engine_too_old"
+        )
+    if target == "skip":
+        # 用户明确不准备、直接运行：这道门从此放行（缺包会以 missing_dependency 回来）
+        skip(project, script)
+        return {"target_kind": "skip", "generation": "", "installed": {}, "requirements": []}
+    try:
+        plan = create(project, script, target_kind=target)
+        outcome = engine_deprepair.prepare(plan.plan_id)
+    except engine_deprepair.RepairError as exc:
+        joint = (exc.extra or {}).get("joint")
+        raise BridgeError(str(exc), code=exc.code, **({"joint": joint} if joint else {})) from exc
+    if not outcome.get("ok"):
+        code = str(outcome.get("code") or "dependency_install_failed")
+        raise BridgeError(f"依赖准备没有完成: {code}", code=code, result=outcome)
+    return {
+        "target_kind": outcome.get("target_kind", target),
+        "generation": outcome.get("generation", ""),
+        "installed": outcome.get("installed", {}),
+        "requirements": list(plan.requirements),
+    }
+
+
 def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
     """worker 错误 → 带稳定 code 的 BridgeError；U03 的两种结构化载荷原样带出去。
 
@@ -336,6 +378,24 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
         }
         extra["recovery"] = (
             "Tavotto 不会自动换成别的环境：请用户在设置里重新指定渲染环境，或清除那条设置回到自动选择。"
+        )
+    # `dependency_preparation_required`（U04，ADR 0061）：脚本开跑要的包目标环境里没有、能一次
+    # 装全——这是「需要输入」，不是失败。整份联合计划进 `structuredContent`，`recovery` 告诉
+    # Codex 怎么答：再调一次 `tavotto_open_figure` 并带 `prepare_dependencies=`（与桌面授权框、
+    # HTTP 的 `/api/engine/dependencies/plan` + `/prepare` 是同一份决定）。
+    dependency = getattr(exc, "dependency_preparation", None)
+    if isinstance(dependency, dict):
+        extra["dependency_preparation"] = dependency
+        plan = dependency.get("plan") or {}
+        reqs = ", ".join(plan.get("requirements") or [])
+        kinds = " / ".join(t.get("kind", "") for t in dependency.get("targets") or [])
+        unknown = ", ".join(plan.get("unknown") or [])
+        extra["recovery"] = (
+            f"脚本开跑就需要的包目标环境里没有：{reqs}。请用户授权一次联合安装：再调一次 "
+            f"tavotto_open_figure 并带 prepare_dependencies=<目标>（可选 {kinds}；"
+            "tavotto_managed 是 Tavotto 自己的隔离环境、不改用户环境，project_venv 会修改项目自己的 "
+            "venv；skip = 不准备、直接运行）。安装需要联网、只装预编译 wheel；这道门一直问到有答案。"
+            + (f" 认不出对应包名、不会安装的 import：{unknown}。" if unknown else "")
         )
     return BridgeError(str(exc), code=exc.code or "worker_error", **extra)
 
@@ -544,6 +604,7 @@ def open_figure(
     journal: dict | None = None,
     include_png: bool = False,
     workdir: str | None = None,
+    prepare_dependencies: str | None = None,
 ) -> dict:
     """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。
 
@@ -551,6 +612,10 @@ def open_figure(
     `PATCH /api/engine/workdir` 同一份决定——记进项目设置、关掉这个项目的旧会话，再开。
     没给就按后端自己的决定走（决定过的直接用；没决定过而证据要问的，这次 open 以
     `workdir_confirmation_required` 回来）。
+
+    `prepare_dependencies` 是对跑前那一次「需要先准备依赖」的回答（U04，ADR 0061）：目标
+    `tavotto_managed` / `project_venv`，先同步把联合安装做完再开图；返回里多一段 `prepared`。
+    没给而脚本开跑要的包目标里没有时，这次 open 以 `dependency_preparation_required` 回来。
     """
     ctx = _resolve_project(target, stem)
     project, reg_info, registry = ctx.project, ctx.reg_info, ctx.registry
@@ -561,6 +626,9 @@ def open_figure(
     chosen = _pick_stem(project, want, registry)
     info = registry.for_stem(chosen)
     assert info is not None
+    prepared = None
+    if prepare_dependencies is not None:
+        prepared = _answer_prepare_dependencies(project, info["script"], prepare_dependencies)
 
     # 目录级交接时 `ensure_registered` 还不知道要哪个 stem，`parameterizable`
     # 会是 None。stem 定下来之后必须补判——留着 None 等于把「这张图能不能进
@@ -629,6 +697,8 @@ def open_figure(
         "profile": engine_profiles.stamp(profile),
         **render,
     }
+    if prepared is not None:
+        out["prepared"] = prepared
     if include_png:
         # 位图是**顺带产物**，不是这次 open 的成败判据。
         #

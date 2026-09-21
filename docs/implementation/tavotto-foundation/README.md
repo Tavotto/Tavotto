@@ -43,6 +43,15 @@ cwd 三分的生产者（`project_root` 第三档 + 首开按静态证据问一�
 静态扫描的问题分类与目标解释器解析（ADR 0057）。六条首开场景经真实 HTTP 入口提到 `enforced`
 （FO01 / FO02 / FO03 / FO07 / FO15 / FO19），四条 `observing`。交接见 [`handoffs/U03_first_open.md`](handoffs/U03_first_open.md)。
 
+U04 已于 2026-09-21 执行（`implementation_status: done`——三个叠栈 PR：A 无损解析 + import 分类 + 联合计划，B 受管环境按代的
+事务与联合安装，C 跑前的门 + HTTP / MCP / 前端一次授权 + 场景；产品资格仍 `not_run`）：依赖声明的无损读法交给 `packaging`
+（PEP 508 / 440、有界 `-r` / `-c`、PEP 723 / 735、`unsupported` 闭集）、按 import 上下文分类「需要」、按目标解释器求 marker 的
+联合计划；受管环境按代（最终目录里建、验完切 active、旧代留到没人用）、一个事务四条路；起会话前的依赖门（一直问到有答案：授权或
+明确 skip）、`/api/engine/dependencies/*`、`DependencyPrepareDialog`、`tavotto_open_figure(prepare_dependencies=)`。ADR 0061
+（安装器裁决：pip 留在 U04，uv 经同一事务在 U05 接入）。FO20 / FO21 / FO22 / FO27 / FO31 经真实 HTTP 入口提到 `enforced`
+（目标 = 项目自带 venv 变体），FO18 / FO05 `observing`（nightly，联网）。交接见
+[`handoffs/U04_dependencies.md`](handoffs/U04_dependencies.md)。
+
 ## 从哪里开始
 
 先读 [执行总提示词](00_MASTER_PROMPT.md)、[范围与修改决策](01_SCOPE_AND_DECISIONS.md)、[路线图](02_ROADMAP.md) 和 [CI 生效政策](03_CI_POLICY.md)。随后只执行 [U00](phases/U00_baseline.md)，不要在第一步删除 PyMuPDF、更换根许可证或一次启用全部兼容门禁。

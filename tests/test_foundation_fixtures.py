@@ -41,6 +41,7 @@ FIXTURES = (
     "dependency_declarations",
     "pdf_png_assets",
     "shadowed_engine_modules",  # U03（FO19 / issue #447）
+    "joint_dependencies",  # U04（FO18 / FO20 / FO21 / FO27 / FO31）
 )
 
 

@@ -45,7 +45,17 @@ import threading
 import time
 from pathlib import Path
 
-from . import depresolve, envlease, execspec, managedenv, pool, projectenv, runcodes, runtime
+from . import (
+    depplan,
+    depresolve,
+    envlease,
+    execspec,
+    managedenv,
+    pool,
+    projectenv,
+    runcodes,
+    runtime,
+)
 
 LOG = logging.getLogger("tavotto.deprepair")
 
@@ -79,6 +89,8 @@ ERROR_PIP_UNAVAILABLE = "pip_unavailable"
 ERROR_MANAGED_UNAVAILABLE = "managed_env_unavailable"
 ERROR_MANAGED_CREATE_FAILED = "managed_env_create_failed"
 ERROR_MANAGED_BROKEN = "managed_env_broken"
+#: 受管环境的 manifest 写不下去（卷满 / 只读）：登记 / 切 active 没落盘，事务不宣称成功
+ERROR_MANAGED_WRITE_FAILED = "managed_env_write_failed"
 ERROR_PLAN_STALE = "repair_plan_stale"
 ERROR_BUSY = "dependency_install_busy"
 #: 环境被一条活跃的 `tavotto run` 会话占着（ADR 0021 §6）。**与 `ERROR_BUSY`
@@ -247,7 +259,8 @@ def _fingerprint_managed(project: str) -> str:
     if not python:
         return "absent"
     data = managedenv.read_manifest(project) or {}
-    return f"{data.get('created_at', 0)}:{_fingerprint_project_venv(python)}"
+    active = managedenv.active_generation(project) or ""
+    return f"{data.get('created_at', 0)}:{active}:{_fingerprint_project_venv(python)}"
 
 
 def _fingerprint(target_kind: str, python: str, project: str) -> str:
@@ -277,6 +290,10 @@ def reset_state(project: str | Path | None = None) -> None:
     with _lock:
         if project is None:
             _plans.clear()
+            _joint_plans.clear()
+            _running.clear()
+            _committed.clear()
+            _gate_skipped.clear()
             _progress.clear()
             _cancels.clear()
             _rounds.clear()
@@ -286,6 +303,10 @@ def reset_state(project: str | Path | None = None) -> None:
         pid = managedenv.project_fingerprint(project)
         for key in [k for k, p in _plans.items() if p.project_id == pid]:
             _plans.pop(key, None)
+        for key in [k for k, p in _joint_plans.items() if p.project_id == pid]:
+            _joint_plans.pop(key, None)
+        for key in [k for k in _gate_skipped if k[0] == pid]:
+            _gate_skipped.discard(key)
         for key in [k for k in _rounds if k[0] == pid]:
             _rounds.pop(key, None)
         for key in [k for k in _attempted if k[0] == pid]:
@@ -297,6 +318,10 @@ def _prune_plans() -> None:
     with _lock:
         for key in [k for k, p in _plans.items() if p.expires_at < now]:
             _plans.pop(key, None)
+        for key in [k for k, p in _joint_plans.items() if p.expires_at < now]:
+            _joint_plans.pop(key, None)
+        for key in [k for k, t in _committed.items() if t < now - PLAN_TTL_S]:
+            _committed.pop(key, None)
 
 
 # ---------------------------------------------------------------------------
@@ -590,13 +615,12 @@ def progress(plan_id: str) -> dict:
 
 
 def cancel(plan_id: str) -> bool:
-    """请求取消。真正的处置在安装线程里（见 `_finish_cancelled`）。"""
-    with _lock:
-        ev = _cancels.get(str(plan_id or ""))
-    if ev is None:
-        return False
-    ev.set()
-    return True
+    """请求取消。真正的处置在安装线程里（见 `_finish_cancelled`）。
+
+    过了提交点（受管环境已切 active，U04）的计划拒绝取消：那之后没有可以「不留下」的
+    东西了，`cancel_status()` 会说 `committed`。
+    """
+    return cancel_status(plan_id)["accepted"]
 
 
 def install_async(plan_id: str, on_event=None) -> None:
@@ -644,8 +668,13 @@ def install(plan_id: str, on_event=None) -> dict:
     cancel_ev = threading.Event()
     with _lock:
         _cancels[plan.plan_id] = cancel_ev
-    key = _env_key(plan.target_kind, plan.python, plan.project)
     try:
+        if plan.target_kind == TARGET_MANAGED:
+            # 换代的锁：合成 key + active 那一代的解释器，**不收掉**旧代上的 worker
+            key = _env_key(TARGET_MANAGED, "", plan.project)
+            with pool.mutating_environment(key, plan.python, shutdown=False):
+                return _run_install(plan, key, on_event, cancel_ev)
+        key = _env_key(plan.target_kind, plan.python, plan.project)
         with pool.mutating_environment(key, plan.python):
             # **租约在手之后**才复查全局固定（Codex 评审 #469 两轮 P1）：确认窗口里
             # 从别处把全局解释器钉上，环境指纹看不见这条；而钉的那条路
@@ -681,12 +710,49 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     _emit(plan.plan_id, STATE_PREPARING, on_event, plan=plan)
 
     python = plan.python
-    if plan.target_kind == TARGET_MANAGED and not python:
-        _emit(plan.plan_id, STATE_CREATING_ENV, on_event, plan=plan)
-        python = _create_managed(project, cancel_ev)
-        # 环境刚建出来，把解释器路径也纳入同一次改动：接下来的 pip 才是
-        # 真正在写它的 site-packages，那段窗口里同样不许起 worker。
-        pool.note_mutating_python(env_key, python)
+    if plan.target_kind == TARGET_MANAGED:
+        # 受管环境按代（U04，ADR 0061 §五）：单包修复是 delta 只有一条的联合准备——建新的
+        # 一代、装完整集合、验完再切 active。这里不再往 active 那一代原地 pip。
+        job = _GenerationJob(
+            progress_id=plan.plan_id,
+            project=project,
+            script=script,
+            delta=(req.requirement(),),
+            constraints=(),
+            hashes={},
+            require_hashes=False,
+            needed_imports=(req.import_name,) if req.import_name else (),
+            record=(
+                {
+                    "import_name": req.import_name,
+                    "distribution": req.distribution,
+                    "specifier": req.specifier,
+                },
+            ),
+            reason=managedenv.REASON_MISSING_DEPENDENCY,
+            identity="",
+            emit=lambda state, **kw: _emit(plan.plan_id, state, on_event, plan=plan, **kw),
+            on_log=lambda text: _append_log(plan.plan_id, text, on_event),
+            label=f"repair-{req.distribution}",
+        )
+        with _lock:
+            _attempted.add((plan.project_id, env_key, req.requirement()))
+        outcome = _run_generation_locked(job, cancel_ev, env_key)
+        if not outcome.get("ok"):
+            return outcome
+        version = outcome["installed"].get(depresolve.normalize_distribution(req.distribution), "")
+        result = {
+            "ok": True,
+            "python": outcome["python"],
+            "version": version,
+            "distribution": req.distribution,
+            "import_name": req.import_name,
+            "target_kind": plan.target_kind,
+            "generation": outcome["generation"],
+        }
+        _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
+        LOG.info("依赖修复成功: %s %s → %s", req.distribution, version, plan.target_kind)
+        return result
     if cancel_ev.is_set():
         return _finish_cancelled(plan, on_event, python)
 
@@ -694,14 +760,8 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
     if rc != 0:
         # **不静默 ensurepip**：那是往用户环境里再加一样东西，而用户确认的是
-        # 「装 lmfit」。受管环境是我们自己建的，`python -m venv` 已经带了 pip；
-        # 走到这里说明它坏了。
-        raise RepairError(
-            ERROR_PIP_UNAVAILABLE
-            if plan.target_kind == TARGET_PROJECT_VENV
-            else ERROR_MANAGED_BROKEN,
-            _sanitize(out)[-800:],
-        )
+        # 「装 lmfit」。
+        raise RepairError(ERROR_PIP_UNAVAILABLE, _sanitize(out)[-800:])
 
     # ---- 安装 -------------------------------------------------------------
     # 租约在手、解释器已知之后再查一次「这一轮装成功过没有」（Codex 评审 #469 P2）：
@@ -748,17 +808,9 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
 
     # ---- 记账 + 换环境 + 作废旧 worker -------------------------------------
+    with _lock:
+        _committed[plan.plan_id] = time.time()
     version = installed_version(python, req.distribution)
-    if plan.target_kind == TARGET_MANAGED:
-        managedenv.record_install(
-            project,
-            import_name=req.import_name,
-            distribution=req.distribution,
-            requested_specifier=req.specifier,
-            resolved_version=version,
-            reason=managedenv.REASON_MISSING_DEPENDENCY,
-        )
-        managedenv.mark_ready(project)
     projectenv.remember(
         project,
         python,
@@ -772,6 +824,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     # 这里再点名作废一次：脚本自己的会话必须重建，import 系统 / sys.modules /
     # 已加载的动态库都不会因为磁盘上多了个包而刷新。
     pool.invalidate(script, project)
+    depplan.reset_cache(python)
     _note_round(project, script)
     result = {
         "ok": True,
@@ -784,31 +837,6 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
     LOG.info("依赖修复成功: %s %s → %s", req.distribution, version, plan.target_kind)
     return result
-
-
-def _create_managed(project: str, cancel_ev: threading.Event) -> str:
-    """建一个受管环境并装上 worker 真正需要的那点东西。"""
-    base = base_python()
-    if not base:
-        raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
-    managedenv.write_manifest(project, managedenv.new_manifest(project, base))
-    ok, out = managedenv.create_venv(project, base)
-    if not ok:
-        managedenv.mark_incomplete(project, "venv 创建失败")
-        raise RepairError(ERROR_MANAGED_CREATE_FAILED, _sanitize(out)[-800:])
-    python = str(managedenv.venv_python(project))
-    for package in managedenv.BASE_PACKAGES:
-        if cancel_ev.is_set():
-            raise RepairError(ERROR_CANCELLED, "已取消")
-        code, out = _pip_install(python, package, cancel_ev, None)
-        if code:
-            managedenv.mark_incomplete(project, f"{package} 安装失败")
-            raise RepairError(
-                ERROR_MANAGED_CREATE_FAILED if code == ERROR_FAILED else code, _sanitize(out)[-800:]
-            )
-    managedenv.update_manifest(project, python_version=managedenv.python_version_of(python))
-    managedenv.mark_ready(project)
-    return python
 
 
 #: 重建受管环境时进度用的固定 id（它没有 plan——重建不装新东西，只是把
@@ -841,77 +869,41 @@ def _rebuild_guarded(project, on_event) -> dict:
 
 
 def rebuild_managed(project: str | Path, on_event=None) -> dict:
-    """删掉重建受管环境，并把我们记过的那些装回去。
+    """重建受管环境：按账上记过的那些**建新的一代**，验完再切 active（U04 起不再删旧的
+    重来——旧代留到没人用）。
 
-    **删除、读账、重建必须在同一把环境锁之内**（Codex 评审 P1）。曾经是
-    端点先 `is_mutating()` 查一下、然后在锁外把 venv 删掉、再异步去重建：
-    那个窗口里一个已经形成的 plan 完全可以开始往这个解释器里 pip install，
-    而它的 venv 正在被删。更糟的是两边**根本不互斥**——install 拿的是
-    解释器路径 key，而重建当时拿的是 `tavotto_managed:<项目指纹>` 这个
-    合成 key（`_env_key` 在 python 为空时的分支）。
-
-    所以这里传**当前就存在的**解释器路径进锁：`mutating_environment` 会把
-    路径 key 与合成 key 一起登记，install 那条路才真的被挡在外面。
-    读 `installed_requirements()` 也搬进来了——在锁外读，读到的可能是另一次
-    安装刚写进去的账。
+    **读账与建代在同一把环境锁之内**（Codex 评审 P1 的形状）：锁是合成 key +
+    active 那一代的解释器，install 那条路（同一把）被挡在外面。
 
     **不声称 lockfile 级复现**：`environment.json` 里记的是安装当时解析出来的
     版本，重建时那个版本可能已经从 index 上撤了。真撤了就如实报错，不悄悄
     换一个别的版本装上——「重建完跟以前不一样」比「重建失败」难查得多。
     """
     root = str(Path(project))
-    key = _env_key(TARGET_MANAGED, "", root)
-    # 锁要盖住**现在这个**解释器：环境还在时它就是 install 会用的那条路径。
-    existing = managedenv.python_of(root) or str(managedenv.venv_python(root))
     cancel_ev = threading.Event()
     with _lock:
         _cancels[REBUILD_PROGRESS_ID] = cancel_ev
     try:
-        with pool.mutating_environment(key, existing):
-            # ---- 拆旧：全部在锁内 ----
-            _emit(REBUILD_PROGRESS_ID, STATE_PREPARING, on_event)
-            requirements = managedenv.installed_requirements(root)
-            if pool.same_python(projectenv.remembered(root), existing):
-                # 记住的解释器正是它：先撤决策再删，否则删完那一瞬间
-                # `resolve_worker_python()` 会指向一条已经不存在的路径。
-                projectenv.forget(root)
-            managedenv.remove(root)
-            pool.reset_worker_python()
-            # ---- 重建 ----
-            _emit(REBUILD_PROGRESS_ID, STATE_CREATING_ENV, on_event)
-            python = _create_managed(root, cancel_ev)
-            pool.note_mutating_python(key, python)
-            restored: list[str] = []
-            for req in requirements:
-                if cancel_ev.is_set():
-                    managedenv.mark_incomplete(root, "重建被取消")
-                    return _emit(
-                        REBUILD_PROGRESS_ID, STATE_CANCELLED, on_event, code=ERROR_CANCELLED
-                    )
-                _emit(REBUILD_PROGRESS_ID, STATE_INSTALLING, on_event)
-                code, out = _pip_install(
-                    python,
-                    req,
-                    cancel_ev,
-                    lambda text: _append_log(REBUILD_PROGRESS_ID, text, on_event),
-                )
-                if code:
-                    managedenv.mark_incomplete(root, f"{req} 装不回去")
-                    raise RepairError(code, _sanitize(out)[-800:])
-                restored.append(req)
-            _emit(REBUILD_PROGRESS_ID, STATE_VERIFYING, on_event)
-            selftest = worker_self_test(python)
-            if not selftest.get("ok"):
-                managedenv.mark_incomplete(root, "worker 自检未通过")
-                raise RepairError(
-                    ERROR_MANAGED_BROKEN, _sanitize(selftest.get("detail", ""))[-800:]
-                )
-            managedenv.mark_ready(root)
-            result = {"ok": True, "python": python, "restored": restored}
-            _emit(REBUILD_PROGRESS_ID, STATE_DONE, on_event, result=result)
-            return result
-    except pool.EnvironmentBusy as exc:
-        raise _busy_error(exc) from exc
+        job = _GenerationJob(
+            progress_id=REBUILD_PROGRESS_ID,
+            project=root,
+            script="",
+            delta=(),
+            constraints=(),
+            hashes={},
+            require_hashes=False,
+            needed_imports=(),
+            record=(),
+            reason=managedenv.REASON_MISSING_DEPENDENCY,
+            identity="",
+            emit=lambda state, **kw: _emit(REBUILD_PROGRESS_ID, state, on_event, **kw),
+            on_log=lambda text: _append_log(REBUILD_PROGRESS_ID, text, on_event),
+            label="rebuild",
+        )
+        outcome = _run_generation(job, cancel_ev)
+        if outcome.get("ok"):
+            outcome["restored"] = managedenv.installed_requirements(root)
+        return outcome
     finally:
         with _lock:
             _cancels.pop(REBUILD_PROGRESS_ID, None)
@@ -973,6 +965,10 @@ def classify_pip_failure(text: str) -> str:
     low = (text or "").lower()
     if any(m in low for m in _NETWORK_MARKERS):
         return ERROR_NETWORK
+    if any(m in low for m in _HASH_MARKERS):
+        # `--require-hashes` 下的 hash 不符（U04）：与「找不到」「冲突」都不是一回事——
+        # 下一步是核对锁文件，不是换源或改声明
+        return ERROR_HASH_MISMATCH
     if any(m in low for m in _CONFLICT_MARKERS):
         return ERROR_CONFLICT
     if "could not find a version" in low or "no matching distribution" in low:
@@ -1055,8 +1051,10 @@ def _run_pip(argv: list[str], cancel_ev: threading.Event, on_log) -> tuple[str, 
     """流式跑一条 pip 命令（install / uninstall 共用的唯一执行器）。
 
     可取消、有超时、日志逐行回调。**argv 由调用方的两个 `*_argv()` 出处拼好**，
-    这里不再碰它的形状。
+    这里不再碰它的形状。起 pip 之前先看一眼取消：已经取消的不起（起了再杀，包可能已经写了一半）。
     """
+    if cancel_ev.is_set():
+        return ERROR_CANCELLED, ""
     try:
         proc = subprocess.Popen(
             argv,
@@ -1286,6 +1284,7 @@ def _emit(
     on_event,
     *,
     plan: RepairPlan | None = None,
+    joint: "JointRepairPlan | None" = None,
     code: str = "",
     error: str | None = None,
     result: dict | None = None,
@@ -1307,6 +1306,15 @@ def _emit(
                 target_kind=plan.target_kind,
                 script=plan.script,
             )
+        if joint is not None:
+            rec.update(
+                target_kind=joint.target_kind,
+                script=joint.script,
+                requirements=list(joint.requirements),
+                flow="joint",
+            )
+        if plan_id in _committed:
+            rec["committed"] = True
         _progress[plan_id] = rec
         snapshot = dict(rec)
     if on_event is not None:
@@ -1592,10 +1600,9 @@ def list_managed_packages(project: str | Path | None) -> dict:
             }
         )
 
-    if python:
-        busy = envlease.is_mutating(python)
-    else:
-        busy = envlease.is_mutating_key(_env_key(TARGET_MANAGED, "", root))
+    busy = envlease.is_mutating_key(_env_key(TARGET_MANAGED, "", root)) or (
+        bool(python) and envlease.is_mutating(python)
+    )
     available = True if managed["exists"] else managed_available()
     capability = {"available": available is not False, "reason": ""}
     if available is False:
@@ -1913,15 +1920,7 @@ def create_package_job(project: str | Path, op: str, spec: str) -> PackageJob:
         ]
         dependents = tuple(_dependents_of(name, inv, accounted))
     else:
-        try:
-            target_dir = managedenv.env_dir(root)
-            probe_dir = target_dir if target_dir.exists() else target_dir.parent
-            probe_dir.mkdir(parents=True, exist_ok=True)
-            free = shutil.disk_usage(str(probe_dir)).free
-        except OSError:
-            free = None
-        if free is not None and free < MIN_FREE_BYTES:
-            raise RepairError(ERROR_PACKAGE_DISK_LOW, "磁盘剩余空间不足")
+        _require_free_disk(root)
 
     now = time.time()
     job = PackageJob(
@@ -1944,6 +1943,19 @@ def create_package_job(project: str | Path, op: str, spec: str) -> PackageJob:
         _jobs[job.job_id] = job
     LOG.info("包操作作业: %s %s", op, requirement)
     return job
+
+
+def _require_free_disk(root: str) -> None:
+    """装包前至少要有 `MIN_FREE_BYTES` 空闲（受管环境所在的卷）；量不出来不拦。"""
+    try:
+        target_dir = managedenv.env_dir(root)
+        probe_dir = target_dir if target_dir.exists() else target_dir.parent
+        probe_dir.mkdir(parents=True, exist_ok=True)
+        free = shutil.disk_usage(str(probe_dir)).free
+    except OSError:
+        free = None
+    if free is not None and free < MIN_FREE_BYTES:
+        raise RepairError(ERROR_PACKAGE_DISK_LOW, "磁盘剩余空间不足")
 
 
 def get_package_job(job_id: str) -> PackageJob | None:
@@ -2006,9 +2018,44 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
 
     python = job.python
     if job.creates_environment:
-        _emit_job(job.job_id, STATE_CREATING_ENV, on_event, job=job)
-        python = _create_managed(project, cancel_ev)
-        pool.note_mutating_python(env_key, python)
+        # 环境还不在：首装 = 建第一代（adapter + 这个包），验完切 active（U04）
+        gen_job = _GenerationJob(
+            progress_id=job.job_id,
+            project=project,
+            script="",
+            delta=(job.requirement,),
+            constraints=(),
+            hashes={},
+            require_hashes=False,
+            needed_imports=(),
+            record=(
+                {
+                    "import_name": "",
+                    "distribution": job.distribution,
+                    "specifier": job.requirement[len(job.distribution) :],
+                },
+            ),
+            reason=managedenv.REASON_USER_REQUESTED,
+            identity="",
+            emit=lambda state, **kw: _emit_job(job.job_id, state, on_event, job=job, **kw),
+            on_log=lambda text: _append_log(job.job_id, text, on_event),
+            label=f"{job.op}-{job.distribution}",
+        )
+        outcome = _run_generation_locked(gen_job, cancel_ev, env_key)
+        if not outcome.get("ok"):
+            return outcome
+        version = outcome["installed"].get(depresolve.normalize_distribution(job.distribution), "")
+        result = {
+            "ok": True,
+            "op": job.op,
+            "distribution": job.distribution,
+            "version": version,
+            "python_version": (managedenv.read_manifest(project) or {}).get("python_version", ""),
+            "generation": outcome["generation"],
+        }
+        _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
+        LOG.info("包操作完成: %s %s %s", job.op, job.distribution, version)
+        return result
     if cancel_ev.is_set():
         managedenv.mark_incomplete(project, f"{job.op} 被取消")
         return _emit_job(job.job_id, STATE_CANCELLED, on_event, job=job, code=ERROR_CANCELLED)
@@ -2133,3 +2180,939 @@ def _emit_job(
     if on_event is not None:
         on_event(snapshot)
     return snapshot
+
+
+# ---------------------------------------------------------------------------
+# 联合准备与按代的受管环境事务（统一实施包 U04，ADR 0061 §四–§六）
+#
+# 「一次准备多个依赖」的执行面。计划由 `depplan.plan()` 算（不装）；这里把它绑成
+# `JointRepairPlan`（plan_id 是唯一凭据，执行端一个字节都不从请求体读，ADR 0019 §四
+# 不变），再按目标走两条路：
+#
+#   受管环境  → **新的一代**：`envs/<身份>/` 里 `python -m venv` → 一次 pip 装完整集合
+#              （adapter + 账上记过的 + 这次的）→ `pip check` → 关键 import → worker 自检
+#              → 切 `active`（提交点）→ 记账 / 记住 / 作废会话 → 旧代留到没人用再删。
+#              任一步不过就是 `incomplete`，`active` 不动，旧环境原样可用。
+#   用户 venv → **原地**装这次缺的（ADR 0019 §八：明确确认、只进不退、不假装 rollback）。
+#
+# 单包修复（`install()`）、重建（`rebuild_managed()`）、包管理里「环境还不在」的首次安装
+# 都走同一个 `_run_generation()`——没有第二套建环境 / 装包 / 验证的代码；锁仍是
+# `envlease` 那一张表（`pool.mutating_environment`）。
+# ---------------------------------------------------------------------------
+ERROR_CONSISTENCY = "dependency_consistency_failed"
+ERROR_HASH_MISMATCH = "dependency_hash_mismatch"
+ERROR_PLAN_BLOCKED = "dependency_plan_blocked"
+
+_HASH_MARKERS = ("do not match the hashes", "hash mismatch", "hashes are required")
+
+_joint_plans: dict[str, "JointRepairPlan"] = {}
+#: 已过提交点的 plan_id → 时刻。提交点之后拒绝取消（D11）。
+_committed: dict[str, float] = {}
+
+
+@dataclasses.dataclass(frozen=True)
+class JointRepairPlan:
+    """一次联合准备的完整描述——执行端只认它。
+
+    绑定：项目 / 脚本 / 完整需求集合（规范串）/ 约束 / hash / 目标类型 / 目标解释器指纹 /
+    目标事实 digest / 选中的组 / 有效期。`joint` 是 `depplan.JointPlan` 的载荷（界面按它显示
+    要装什么、为什么），执行只读上面那些绑定字段。
+    """
+
+    plan_id: str
+    project: str
+    project_id: str
+    script: str
+    target_kind: str
+    python: str  # 当前选中的解释器（受管环境还没有时为空）
+    env_fingerprint: str
+    facts_digest: str
+    facts_python: str  # 量 `facts_digest` 的解释器（此刻会跑脚本的那个）
+    install_facts_digest: str  # 装到哪的事实的 digest（与上面不是同一个环境时才有，否则空）
+    requirements: tuple[str, ...]
+    constraints: tuple[str, ...]
+    hashes: dict
+    require_hashes: bool
+    adapter: tuple[str, ...]
+    identity: str
+    needed_imports: tuple[str, ...]
+    record: tuple[dict, ...]  # 要记进账的 (import_name, distribution, specifier)
+    groups: tuple[str, ...]
+    modifies_user_environment: bool
+    creates_environment: bool
+    created_at: float
+    expires_at: float
+    joint: dict
+
+    def to_payload(self) -> dict:
+        return {
+            "plan_id": self.plan_id,
+            "script": self.script,
+            "target_kind": self.target_kind,
+            "python": projectenv.project_relative(self.project, self.python)
+            or ("" if not self.python else "…"),
+            "requirements": list(self.requirements),
+            "constraints": list(self.constraints),
+            "require_hashes": self.require_hashes,
+            "adapter": list(self.adapter),
+            "identity": self.identity,
+            "needed_imports": list(self.needed_imports),
+            "groups": list(self.groups),
+            "modifies_user_environment": self.modifies_user_environment,
+            "creates_environment": self.creates_environment,
+            "network_required": True,
+            "expires_at": int(self.expires_at),
+            "joint": dict(self.joint),
+        }
+
+
+def joint_target_for(project: str | Path, script: str) -> tuple[str, str, str]:
+    """这个项目此刻的解释器 → (目标类型, 解释器路径, 来源)。
+
+    选中的是项目自己的 venv → 目标就是它（原地，要明确确认）；选中的是受管环境 / 内置 /
+    自身 / 系统 → 目标是受管环境（新的一代；内置与自身永远不是安装目标，系统解释器在
+    用户交给我们的边界之外——ADR 0019 §一 / ADR 0044）。解释器解析不出来（显式选择失效）
+    照抛：那是用户要先处理的事，不替他换环境。
+    """
+    root = str(Path(project))
+    python, source = pool.resolve_worker_python(root, script=script)
+    if source == pool.SOURCE_PROJECT_VENV:
+        return TARGET_PROJECT_VENV, python, source
+    return TARGET_MANAGED, python, source
+
+
+def joint_plan_for(
+    project: str | Path, script: str, *, groups: list[str] | None = None
+) -> tuple[depplan.JointPlan, str, str]:
+    """算一份联合计划（只读）：缺什么按**此刻选中的**解释器量、装什么按目标量（`_facts_for`）。
+    回 (计划, 目标类型, 解释器)。"""
+    root = str(Path(project))
+    target_kind, python, _source = joint_target_for(root, script)
+    facts, install_facts, _measured = _facts_for(target_kind, python, root)
+    if groups is None:
+        groups = depplan.selected_groups_setting(root)
+    plan = depplan.plan(
+        root,
+        script,
+        facts=facts,
+        target_kind=target_kind,
+        groups=groups,
+        install_facts=install_facts,
+    )
+    return plan, target_kind, python
+
+
+def _facts_for(
+    kind: str, python: str, root: str, *, use_cache: bool = True
+) -> tuple[depplan.TargetFacts | None, depplan.TargetFacts | None, str]:
+    """(缺什么按它量的事实, 装到哪的事实——与前者是同一个环境时 None, 前者量的解释器)。
+
+    缺什么按**此刻会跑脚本的**解释器量（门问的是「现在起会话会不会缺包」）；装到哪按**目标**量：
+    用户 venv 目标 = 同一个；受管目标 = active 那一代（有）/ 从 base 新建的一代（没有：marker
+    环境与 stdlib 按 base，已装集合为空——`depplan.fresh_venv_facts`）。两者不是同一个环境时
+    （选中的是项目 venv / 系统解释器，目标是受管环境）计划的集合按目标量，否则新的一代会漏装
+    选中环境里碰巧有的包、marker 会按另一个 minor 求值（Codex #461 P1）。
+    """
+    run = depplan.target_facts(python, use_cache=use_cache) if python else None
+    if kind != TARGET_MANAGED:
+        return run, None, python
+    managed_python = managedenv.python_of(root) or ""
+    if managed_python:
+        if python and pool.same_python(managed_python, python):
+            return run, None, python
+        return run, depplan.target_facts(managed_python, use_cache=use_cache), python
+    base = base_python() or ""
+    if not base:
+        return run, None, python
+    fresh = depplan.fresh_venv_facts(
+        base, use_cache=use_cache, provided=depplan.adapter_distributions()
+    )
+    return run, fresh, python
+
+
+def create_joint_plan(
+    project: str | Path, script: str, *, target_kind: str = "", groups: list[str] | None = None
+) -> JointRepairPlan:
+    """把联合计划绑定成可执行的（发 plan_id）。**不装任何东西。**
+
+    计划不是 `ready`（没缺的 / blocked）就拒绝：`dependency_plan_blocked` 带 blocked 理由——
+    执行端不会「把认不出的那行剥掉偷偷继续」。`target_kind` 可以由调用方指定（用户在用户
+    venv 与受管环境之间选），默认按 `joint_target_for`；指定用户 venv 时它必须就是此刻选中
+    的那个（不接受任意路径：ADR 0019 §一「从发现结果里取」）。
+    """
+    root = str(Path(project))
+    if rounds_remaining(root, script) <= 0:
+        raise RepairError(ERROR_ROUNDS_EXHAUSTED, "这个脚本的自动依赖修复已经用满")
+    auto_kind, python, _source = joint_target_for(root, script)
+    kind = target_kind or auto_kind
+    if kind not in TARGETS:
+        raise RepairError(ERROR_NOT_ALLOWED, f"未知的安装目标: {kind!r}")
+    if kind == TARGET_PROJECT_VENV and auto_kind != TARGET_PROJECT_VENV:
+        raise RepairError(ERROR_NOT_ALLOWED, "这个项目此刻没有选中自己的虚拟环境，不能往里装")
+    facts, install_facts, measured = _facts_for(kind, python, root)
+    groups = depplan.selected_groups_setting(root) if groups is None else list(groups)
+    joint = depplan.plan(
+        root, script, facts=facts, target_kind=kind, groups=groups, install_facts=install_facts
+    )
+    if joint.status != depplan.STATUS_READY:
+        raise RepairError(
+            ERROR_PLAN_BLOCKED,
+            "联合计划不可执行" if joint.status == depplan.STATUS_BLOCKED else "没有缺的依赖",
+            joint=joint.to_payload(),
+        )
+    if kind == TARGET_MANAGED:
+        managed_python = managedenv.python_of(root) or ""
+        creates = not managed_python
+        if not base_python():
+            raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
+        _require_free_disk(root)  # 新的一代要落盘（FO28）
+        bound_python = managed_python
+    else:
+        bound_python = python
+        creates = False
+    now = time.time()
+    plan = JointRepairPlan(
+        plan_id=secrets.token_urlsafe(24),
+        project=root,
+        project_id=managedenv.project_fingerprint(root),
+        script=script,
+        target_kind=kind,
+        python=bound_python,
+        env_fingerprint=_fingerprint(kind, bound_python, root),
+        facts_digest=facts.digest() if facts is not None else "",
+        facts_python=measured,
+        install_facts_digest=install_facts.digest() if install_facts is not None else "",
+        requirements=tuple(joint.requirements),
+        constraints=tuple(joint.constraints),
+        hashes={k: tuple(v) for k, v in joint.hashes.items()},
+        require_hashes=joint.require_hashes,
+        adapter=tuple(joint.adapter),
+        identity=joint.identity,
+        needed_imports=tuple(m["import_name"] for m in joint.missing),
+        record=tuple(
+            {
+                "import_name": m["import_name"],
+                "distribution": m["distribution"],
+                "specifier": ",".join(m["specifiers"]),
+            }
+            for m in joint.missing
+        ),
+        groups=tuple(joint.selection.get("selected_groups") or ()),
+        modifies_user_environment=kind == TARGET_PROJECT_VENV,
+        creates_environment=creates,
+        created_at=now,
+        expires_at=now + PLAN_TTL_S,
+        joint=joint.to_payload(),
+    )
+    _prune_plans()
+    with _lock:
+        _joint_plans[plan.plan_id] = plan
+    LOG.info("联合依赖计划: %s → %s（%s）", ", ".join(plan.requirements), kind, script)
+    return plan
+
+
+def get_joint_plan(plan_id: str) -> JointRepairPlan | None:
+    _prune_plans()
+    with _lock:
+        return _joint_plans.get(str(plan_id or ""))
+
+
+#: 已认领（正在执行）的联合计划 id：同一份计划只起一个执行线程（Codex #470 P1：第一次还没
+#: 消费掉计划前重复提交 `/prepare`，两个线程各自重算事实、排队拿锁、各装一遍）。
+_running: set[str] = set()
+
+
+def _claim(plan_id: str) -> bool:
+    """认领一份计划：回 True = 这次认领成功；False = 已有人在跑。**在起线程之前**。"""
+    with _lock:
+        if plan_id in _running:
+            return False
+        _running.add(plan_id)
+        return True
+
+
+def prepare_async(plan_id: str, on_event=None) -> bool:
+    """起线程执行一份联合计划；回 False = 这份计划已在执行，**不再起第二个线程**（调用方把
+    在途的进度原样交回去）。**认领与取消句柄都在起线程之前**：调用方一回 202 用户就可能取消，
+    那时线程可能还在重算事实、还没拿锁——句柄不在表里的话 `cancel_status` 只能回 `not_found`，
+    安装照常改环境（Codex #470 P1）。`prepare()` 复用这一个句柄。"""
+    pid = str(plan_id or "")
+    if not _claim(pid):
+        return False
+    _register_cancel(pid)
+    threading.Thread(
+        target=lambda: _prepare_guarded(pid, on_event, claimed=True),
+        daemon=True,
+        name="tavotto-dep-prepare",
+    ).start()
+    return True
+
+
+def _register_cancel(plan_id: str) -> threading.Event:
+    """这份计划的取消句柄（已有就复用——同步与异步入口、登记与执行两处共用一个）。"""
+    with _lock:
+        ev = _cancels.get(plan_id)
+        if ev is None:
+            ev = threading.Event()
+            _cancels[plan_id] = ev
+        return ev
+
+
+def _prepare_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
+    try:
+        return prepare(plan_id, on_event, claimed=claimed)
+    except RepairError as exc:
+        return _emit(plan_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        LOG.exception("联合准备线程异常")
+        return _emit(plan_id, STATE_FAILED, on_event, code=ERROR_FAILED, error=str(exc))
+
+
+def prepare(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
+    """执行一份联合计划。执行端只认 `plan_id`；执行前重算环境指纹与事实（`repair_plan_stale`）。
+
+    同一份计划只能被执行一次（`_claim`；`prepare_async` 已认领的传 `claimed=True`），第二个
+    调用方拿到 `dependency_install_not_allowed`。取消句柄从第一行起就在表里（`prepare_async`
+    已登记的复用）：重算事实那几秒里来的取消，在拿锁之前就生效，一个字节不写（ADR 0061 §六 ①）；
+    不论怎么退出，认领、句柄与计划都在 finally 里清掉。
+    """
+    pid = str(plan_id or "")
+    if not claimed and not _claim(pid):
+        raise RepairError(ERROR_NOT_ALLOWED, "这份准备计划已经在执行")
+    cancel_ev = _register_cancel(pid)
+    try:
+        plan = get_joint_plan(pid)
+        if plan is None:
+            raise RepairError(ERROR_NOT_ALLOWED, "没有这个准备计划（或已过期）")
+        if _fingerprint(plan.target_kind, plan.python, plan.project) != plan.env_fingerprint:
+            raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境发生了变化")
+        # 解释器指纹只看 `pyvenv.cfg`：确认期间有人往目标里装 / 卸了包它不变，事实 digest 会变——
+        # 重新量一次（不走缓存），不一样就是 stale，一个字节不装（Codex #461 P2）
+        run, install, _measured = _facts_for(
+            plan.target_kind, plan.facts_python, plan.project, use_cache=False
+        )
+        if (run.digest() if run is not None else "") != plan.facts_digest or (
+            install.digest() if install is not None else ""
+        ) != plan.install_facts_digest:
+            raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境里的包发生了变化")
+        if cancel_ev.is_set():
+            # ack 之后、拿锁之前来的取消：明确终态，什么都没改（Codex #470 P1 的那一刻）
+            return _emit(
+                pid,
+                STATE_CANCELLED,
+                on_event,
+                joint=plan,
+                code=ERROR_CANCELLED,
+                result={"activated": False},
+            )
+        if plan.target_kind == TARGET_MANAGED:
+            job = _GenerationJob(
+                progress_id=plan.plan_id,
+                project=plan.project,
+                script=plan.script,
+                delta=plan.requirements,
+                constraints=plan.constraints,
+                hashes=plan.hashes,
+                require_hashes=plan.require_hashes,
+                needed_imports=plan.needed_imports,
+                record=plan.record,
+                reason=managedenv.REASON_MISSING_DEPENDENCY,
+                identity=plan.identity,
+                emit=lambda state, **kw: _emit(plan.plan_id, state, on_event, joint=plan, **kw),
+                on_log=lambda text: _append_log(plan.plan_id, text, on_event),
+                label=f"prepare-{len(plan.requirements)}",
+            )
+            return _run_generation(job, cancel_ev)
+        key = _env_key(TARGET_PROJECT_VENV, plan.python, plan.project)
+        try:
+            with pool.mutating_environment(key, plan.python):
+                return _run_joint_in_place(plan, on_event, cancel_ev)
+        except pool.EnvironmentBusy as exc:
+            raise _busy_error(exc) from exc
+    finally:
+        with _lock:
+            _cancels.pop(pid, None)
+            _joint_plans.pop(pid, None)
+            _running.discard(pid)
+
+
+def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Event) -> dict:
+    """用户 venv：原地装这次缺的（ADR 0019 §八 的纪律不变）。"""
+    python = plan.python
+    _emit(plan.plan_id, STATE_PREPARING, on_event, joint=plan)
+    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
+    if rc != 0:
+        raise RepairError(ERROR_PIP_UNAVAILABLE, _sanitize(out)[-800:])
+    _emit(plan.plan_id, STATE_INSTALLING, on_event, joint=plan)
+    with tempfile.TemporaryDirectory(prefix="tavotto-joint-") as tmp:
+        req_file, con_file = write_plan_files(
+            Path(tmp), plan.requirements, plan.constraints, hashes=plan.hashes
+        )
+        code, out = _run_pip(
+            pip_install_joint_argv(python, req_file, con_file, require_hashes=plan.require_hashes),
+            cancel_ev,
+            lambda text: _append_log(plan.plan_id, text, on_event),
+        )
+    if code == ERROR_CANCELLED:
+        health = projectenv.probe_environment(python)
+        detail = {"health_ok": bool(health.get("ok")), "health_code": health.get("code", "")}
+        _emit(
+            plan.plan_id, STATE_CANCELLED, on_event, joint=plan, code=ERROR_CANCELLED, result=detail
+        )
+        return {"ok": False, "code": ERROR_CANCELLED, **detail}
+    if code:
+        raise RepairError(code, _sanitize(out)[-800:])
+    _emit(plan.plan_id, STATE_VERIFYING, on_event, joint=plan)
+    _verify_imports(python, plan.needed_imports)
+    selftest = worker_self_test(python)
+    if not selftest.get("ok"):
+        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+    # 自检期间接受的取消（`cancel_status` 还没过提交点）要算数：包已经在用户 venv 里了，
+    # 如实报 cancelled + 体检，不接着 remember / 作废会话（Codex #461 P2）。「看事件 + 定提交」
+    # 与 `cancel_status` 同一把锁，两边只会有一个赢
+    with _lock:
+        late_cancel = cancel_ev.is_set()
+        if not late_cancel:
+            _committed[plan.plan_id] = time.time()
+    if late_cancel:
+        health = projectenv.probe_environment(python)
+        detail = {"health_ok": bool(health.get("ok")), "health_code": health.get("code", "")}
+        _emit(
+            plan.plan_id, STATE_CANCELLED, on_event, joint=plan, code=ERROR_CANCELLED, result=detail
+        )
+        return {"ok": False, "code": ERROR_CANCELLED, **detail}
+    projectenv.remember(plan.project, python, automatic=False, trigger="dependency_repair")
+    pool.note_project_python_ok(python)
+    pool.invalidate(plan.script, plan.project)
+    depplan.reset_cache(python)
+    _note_round(plan.project, plan.script)
+    with _lock:
+        _gate_skipped.discard((plan.project_id, plan.script))
+    result = {
+        "ok": True,
+        "python": python,
+        "target_kind": TARGET_PROJECT_VENV,
+        "installed": _versions_of(python, [r["distribution"] for r in plan.record]),
+    }
+    _emit(plan.plan_id, STATE_DONE, on_event, joint=plan, result=result)
+    return result
+
+
+# --------------------------------------------------------------- 代事务
+@dataclasses.dataclass(frozen=True)
+class _GenerationJob:
+    """建一代受管环境要知道的全部（四条路共用：联合准备 / 单包修复 / 重建 / 包管理首装）。"""
+
+    progress_id: str
+    project: str
+    script: str  # 记轮次 / 作废会话用；重建与包管理传空串
+    delta: tuple[str, ...]  # 这次新增的需求（规范串）
+    constraints: tuple[str, ...]
+    hashes: dict
+    require_hashes: bool
+    needed_imports: tuple[str, ...]
+    record: tuple[dict, ...]  # 装完记进账的条目
+    reason: str
+    identity: str
+    emit: object  # (state, **kw) -> dict
+    on_log: object  # (text) -> None
+    label: str = "generation"  # 快照文件名里的动作名（`after-<label>`）
+
+
+def generation_requirements(
+    project: str | Path, delta: tuple[str, ...], *, hash_mode: bool = False
+) -> tuple[str, ...]:
+    """这一代的完整集合：adapter + 账上记过的 + 这次的（去重、稳定顺序）。
+
+    账上的按 `distribution==resolved_version` 给（重建时装回**当时**那个版本，ADR 0019 §九
+    不声称 lockfile 级复现）；这次的 delta 里若已含同名，账上那条让位（新声明更新）。
+
+    **hash 模式只给 delta 本身**（= 整份锁）：`--require-hashes` 下每一条都得带 hash，adapter 与
+    账上那些给不出——锁就是闭包，adapter 必须已经被锁钉住（计划期校验，`depplan._adapter_against_lock`），
+    账上不在锁里的那些不属于这一代（Codex #461 P1）。
+    """
+    if hash_mode:
+        return tuple(dict.fromkeys(delta))
+    out: list[str] = list(depplan.ADAPTER_REQUIREMENTS)
+    delta_names = {depresolve.normalize_distribution(_name_of(r)) for r in delta}
+    for req in managedenv.installed_requirements(project):
+        if depresolve.normalize_distribution(_name_of(req)) in delta_names:
+            continue
+        if req not in out:
+            out.append(req)
+    for req in delta:
+        if req not in out:
+            out.append(req)
+    return tuple(out)
+
+
+def _name_of(requirement: str) -> str:
+    text = requirement.split(";", 1)[0]
+    for i, ch in enumerate(text):
+        if ch in "[<>=!~ @":
+            return text[:i]
+    return text
+
+
+def _run_generation(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
+    project = job.project
+    key = _env_key(TARGET_MANAGED, "", project)
+    active_python = managedenv.python_of(project) or ""
+    try:
+        # 锁：合成 key（序列化同一项目的两次换代）+ active 那一代的解释器（挡住包管理的原地
+        # 作业同时改它——两者的账要一致）。**不收掉旧代上的 worker**（`shutdown=False`）：
+        # 旧代目录不动，它们跑完自然作废；native 会话同理不杀（有就拒绝开始）。
+        with pool.mutating_environment(key, active_python, shutdown=False):
+            return _run_generation_locked(job, cancel_ev, key)
+    except pool.EnvironmentBusy as exc:
+        raise _busy_error(exc) from exc
+
+
+def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key: str) -> dict:
+    project = job.project
+    job.emit(STATE_PREPARING)
+    managedenv.retire_unused(project, in_use=_generation_in_use)
+    base = base_python()
+    if not base:
+        raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
+    requirements = generation_requirements(project, job.delta, hash_mode=job.require_hashes)
+    identity = job.identity or depplan._digest(
+        {"requirements": sorted(requirements), "constraints": sorted(job.constraints)}
+    )
+    # 目录名永远不撞**在册**的代（active / 旧代还有人用）：重建两次同一份账是同一个身份，
+    # 不能把 active 那代删掉重来（Codex #461 P1）
+    generation = managedenv.fresh_generation(project, identity)
+    if cancel_ev.is_set():
+        return job.emit(
+            STATE_CANCELLED,
+            code=ERROR_CANCELLED,
+            result={"generation": generation, "activated": False},
+        )
+    # ---- 建：最终目录里，先登记为 incomplete ----
+    job.emit(STATE_CREATING_ENV)
+    try:
+        managedenv.register_generation(
+            project,
+            generation,
+            requirements=list(requirements),
+            constraints=list(job.constraints),
+            identity=identity,
+            base_python=base,
+        )
+    except OSError as exc:
+        raise RepairError(ERROR_MANAGED_WRITE_FAILED, f"环境清单写入失败: {exc}") from exc
+    ok, out = managedenv.create_generation_venv(project, generation, base)
+    if not ok:
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "venv 创建失败"
+        )
+        raise RepairError(ERROR_MANAGED_CREATE_FAILED, _sanitize(out)[-800:])
+    python = str(managedenv.generation_python(project, generation))
+    pool.note_mutating_python(key, python)
+    if cancel_ev.is_set():
+        managedenv.mark_generation(project, generation, managedenv.GEN_STATE_INCOMPLETE, "已取消")
+        return job.emit(
+            STATE_CANCELLED,
+            code=ERROR_CANCELLED,
+            result={"generation": generation, "activated": False},
+        )
+    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
+    if rc != 0:
+        managedenv.mark_generation(project, generation, managedenv.GEN_STATE_INCOMPLETE, "没有 pip")
+        raise RepairError(ERROR_MANAGED_BROKEN, _sanitize(out)[-800:])
+    # ---- 装：一次 pip，完整集合 + 约束 ----
+    job.emit(STATE_INSTALLING)
+    plans_dir = managedenv.env_dir(project) / "plans" / generation
+    req_file, con_file = write_plan_files(
+        plans_dir, requirements, job.constraints, hashes=job.hashes
+    )
+    code, out = _run_pip(
+        pip_install_joint_argv(python, req_file, con_file, require_hashes=job.require_hashes),
+        cancel_ev,
+        job.on_log,
+    )
+    if code == ERROR_CANCELLED:
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "安装被取消"
+        )
+        return job.emit(
+            STATE_CANCELLED,
+            code=ERROR_CANCELLED,
+            result={"generation": generation, "activated": False},
+        )
+    if code:
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, f"安装失败: {code}"
+        )
+        raise RepairError(code, _sanitize(out)[-800:])
+    # ---- 验：三层，任一步不过就是 incomplete，active 不动 ----
+    job.emit(STATE_VERIFYING)
+    rc, out = _run(pip_check_argv(python), PIP_PROBE_TIMEOUT_S)
+    if rc != 0:
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "依赖一致性检查未通过"
+        )
+        raise RepairError(ERROR_CONSISTENCY, _sanitize(out)[-800:])
+    try:
+        _verify_imports(python, (*job.needed_imports, "matplotlib"))
+    except RepairError as exc:
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "关键 import 失败"
+        )
+        raise exc
+    if cancel_ev.is_set():
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "验证期间取消"
+        )
+        return job.emit(
+            STATE_CANCELLED,
+            code=ERROR_CANCELLED,
+            result={"generation": generation, "activated": False},
+        )
+    selftest = worker_self_test(python)
+    if not selftest.get("ok"):
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "worker 自检未通过"
+        )
+        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+    # ---- 提交点：切 active。之后拒绝取消 ----
+    # 自检期间接受的取消要算数（Codex #461 P2）：「看事件 + 定提交」与 `cancel_status`「看提交 +
+    # 设事件」同一把锁——接受了的取消不会与提交交错，两边只会有一个赢
+    with _lock:
+        if cancel_ev.is_set():
+            late_cancel = True
+        else:
+            late_cancel = False
+            _committed[job.progress_id] = time.time()
+    if late_cancel:
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "验证期间取消"
+        )
+        return job.emit(
+            STATE_CANCELLED,
+            code=ERROR_CANCELLED,
+            result={"generation": generation, "activated": False},
+        )
+    try:
+        managedenv.activate(
+            project, generation, python_version=managedenv.python_version_of(python)
+        )
+    except OSError as exc:
+        # 清单没落盘 = 没切：撤回「已提交」，这一代按 incomplete 记（尽力而为），如实报失败
+        with _lock:
+            _committed.pop(job.progress_id, None)
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "激活清单写入失败"
+        )
+        raise RepairError(ERROR_MANAGED_WRITE_FAILED, f"环境清单写入失败: {exc}") from exc
+    # 这一代装完之后的 freeze 快照：修复时的对照（不是回滚，ADR 0038）
+    managedenv.record_snapshot(project, f"after-{job.label}", _freeze(python))
+    installed = _versions_of(python, [r["distribution"] for r in job.record])
+    for rec in job.record:
+        managedenv.record_install(
+            project,
+            import_name=str(rec.get("import_name") or ""),
+            distribution=str(rec["distribution"]),
+            requested_specifier=str(rec.get("specifier") or ""),
+            resolved_version=installed.get(
+                depresolve.normalize_distribution(str(rec["distribution"])), ""
+            ),
+            reason=job.reason,
+        )
+    health = projectenv.probe_environment(python)
+    projectenv.remember(
+        project,
+        python,
+        automatic=False,
+        trigger="dependency_repair",
+        health=health if health.get("ok") else None,
+    )
+    pool.note_project_python_ok(python)
+    pool.reset_worker_python()
+    if job.script:
+        pool.invalidate(job.script, project)
+        _note_round(project, job.script)
+        with _lock:
+            _gate_skipped.discard((managedenv.project_fingerprint(project), job.script))
+    else:
+        pool.invalidate_project(project)
+    depplan.reset_cache(python)
+    projectenv.reset_cache(project)
+    retired = managedenv.retire_unused(project, in_use=_generation_in_use)
+    result = {
+        "ok": True,
+        "python": python,
+        "target_kind": TARGET_MANAGED,
+        "generation": generation,
+        "activated": True,
+        "installed": installed,
+        "retired": retired,
+    }
+    job.emit(STATE_DONE, result=result)
+    LOG.info("受管环境换代: %s → %s（装 %d 条）", project, generation, len(requirements))
+    return result
+
+
+def _generation_in_use(python: str) -> bool:
+    return pool.safe_workers_using(python) > 0 or bool(envlease.native_sessions_on(python))
+
+
+def _versions_of(python: str, distributions: list[str]) -> dict[str, str]:
+    inv = inventory(python) or {}
+    out: dict[str, str] = {}
+    for dist in distributions:
+        key = depresolve.normalize_distribution(dist)
+        rec = inv.get(key)
+        if rec:
+            out[key] = str(rec.get("version") or "")
+    return out
+
+
+# --------------------------------------------------------------- 文件与 argv（唯一出处）
+def write_plan_files(
+    directory: Path,
+    requirements: tuple[str, ...] | list[str],
+    constraints: tuple[str, ...] | list[str],
+    *,
+    hashes: dict | None = None,
+) -> tuple[Path, Path]:
+    """把计划写成 pip 的需求文件与约束文件——**内容由我们从解析结构生成**，每一行都过一遍
+    `depresolve.parse_intent` 的形状关（requirement / constraint 之外的一律拒绝）。`--hash`
+    只能出现在需求文件里（pip 的规定）。"""
+    directory.mkdir(parents=True, exist_ok=True)
+    req_lines: list[str] = []
+    for req in requirements:
+        it = depresolve.parse_intent(req)
+        if it is None or not it.declared:
+            raise RepairError(ERROR_REQUIREMENT_INVALID, f"需求串不合形状: {req!r}")
+        line = depresolve.requirement_string(it)
+        for h in (hashes or {}).get(req, ()):
+            if not depresolve._HASH_RE.match(h):
+                raise RepairError(ERROR_REQUIREMENT_INVALID, f"hash 不合形状: {h!r}")
+            line += f" --hash={h}"
+        req_lines.append(line)
+    con_lines: list[str] = []
+    for con in constraints:
+        it = depresolve.parse_intent(con)
+        if it is None or not it.declared:
+            raise RepairError(ERROR_REQUIREMENT_INVALID, f"约束串不合形状: {con!r}")
+        con_lines.append(depresolve.requirement_string(it))
+    req_file = directory / "requirements.txt"
+    con_file = directory / "constraints.txt"
+    req_file.write_text("\n".join(req_lines) + "\n", encoding="utf-8")
+    con_file.write_text("\n".join(con_lines) + "\n", encoding="utf-8")
+    return req_file, con_file
+
+
+def pip_install_joint_argv(
+    python: str, requirements_file: Path, constraints_file: Path, *, require_hashes: bool = False
+) -> list[str]:
+    """联合安装命令——**唯一出处**，测试逐字节钉住。与 `pip_install_argv` 只差在需求从文件
+    来（`-r` / `-c` 指向我们自己生成的两份文件），其余参数逐字相同、同样没有 `--upgrade`。"""
+    argv = [
+        str(python),
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--no-input",
+        "--only-binary=:all:",
+        "-r",
+        str(requirements_file),
+        "-c",
+        str(constraints_file),
+    ]
+    if require_hashes:
+        argv.append("--require-hashes")
+    return argv
+
+
+def pip_check_argv(python: str) -> list[str]:
+    """依赖一致性检查——唯一出处。"""
+    return [str(python), "-m", "pip", "check", "--disable-pip-version-check", "--no-input"]
+
+
+_IMPORTS_PROBE_SRC = r"""
+import json, sys
+out = {}
+for name in sys.argv[1:]:
+    try:
+        __import__(name)
+        out[name] = ""
+    except Exception as exc:
+        out[name] = "%s: %s" % (type(exc).__name__, exc)
+sys.stdout.write(json.dumps(out))
+"""
+
+
+def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, str]:
+    """一个子进程里逐个 import；回 `{名字: 错误串（空 = 成功）}`。起不来时每个名字都带错误。
+
+    启动条件与 worker 对齐（不带 `-I`、env 继承、cwd 空目录）。名字先过形状关。
+    """
+    names = tuple(n for n in names if projectenv.valid_module_name(n))
+    if not names:
+        return {}
+    scratch = ""
+    try:
+        scratch = projectenv._probe_scratch_dir()
+        proc = subprocess.run(
+            [str(python), "-c", _IMPORTS_PROBE_SRC, *names],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=projectenv.PROBE_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+            cwd=scratch,
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {n: str(exc)[:200] for n in names}
+    finally:
+        if scratch:
+            shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        data = json.loads((proc.stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {n: (proc.stderr or "起不来")[:200] for n in names}
+    return {n: str(data.get(n, "no result")) for n in names}
+
+
+def _verify_imports(python: str, names: tuple[str, ...]) -> None:
+    failed = {n: e for n, e in probe_imports(python, names).items() if e}
+    if failed:
+        raise RepairError(
+            ERROR_IMPORT_STILL_FAILED,
+            "; ".join(f"{n}: {e}" for n, e in failed.items())[:800],
+            imports=failed,
+        )
+
+
+def cancel_status(plan_id: str) -> dict:
+    """取消请求的答复：接受了 / 已过提交点 / 没有这个计划。"""
+    pid = str(plan_id or "")
+    with _lock:
+        if pid in _committed:
+            return {"accepted": False, "reason": "committed"}
+        ev = _cancels.get(pid)
+        if ev is None:
+            return {"accepted": False, "reason": "not_found"}
+        ev.set()  # 与事务「定提交」那一下同一把锁：接受了就不会再被提交
+    return {"accepted": True, "reason": ""}
+
+
+# --------------------------------------------------------------- 跑前的门（ADR 0061 §六）
+#
+# 起第一个 worker **之前**看一眼：脚本开跑要的第三方包目标环境里缺不缺、缺的能不能一次装
+# 全。能（`JointPlan.status == ready`）就不起会话，以 `dependency_preparation_required` 把整份
+# 计划交出去让用户授权一次——与 U03 的工作目录门同一处、同一形状（`pool._new_worker`）。
+# 不能（`blocked` / `nothing_needed`）就放行：诊断挂在计划上，脚本照跑。
+#
+# 门**一直问到有答案**：答案要么是一次成功的准备（之后计划就是 nothing_needed），要么是用户
+# 明确说「不准备，直接跑」（`skip_preparation`，每进程每 (项目, 脚本) 记一次；脚本以
+# `missing_dependency` 收场时看到的是同一份联合 offer——运行后那条路，轮次
+# `MAX_DEPENDENCY_REPAIR_ROUNDS` 兜底）。没有轮次了也放行。「有答案才放行 + 轮次上限」
+# 一起就是「无无限缺包循环」——而不是让同一个动作第二次悄悄变成另一种行为。
+ERROR_PREPARATION_REQUIRED = "dependency_preparation_required"
+#: 本模块里**常量式**、且会落到用户界面的 code（`tests/test_error_codes.py` 的码表读它；
+#: `RepairError` 那一族的文案在前端 `engine.repairError.*` 表里，按既有约定不进这里）。
+ERROR_CODES = (ERROR_PREPARATION_REQUIRED,)
+_gate_skipped: set[tuple[str, str]] = set()
+
+
+def skip_preparation(project: str | Path, script: str) -> None:
+    """用户明确说「不准备，直接跑」：这一对从此放行（进程内；一次成功的准备会清掉它）。"""
+    with _lock:
+        _gate_skipped.add((managedenv.project_fingerprint(str(Path(project))), script))
+
+
+def preparation_skipped(project: str | Path, script: str) -> bool:
+    with _lock:
+        return (managedenv.project_fingerprint(str(Path(project))), script) in _gate_skipped
+
+
+def joint_targets(project: str | Path, target_kind: str, python: str) -> list[dict]:
+    """联合准备可选的目标（与 `offer()` 的 `targets` 同一形状，少了 system 那一档——跑前没有
+    「已经装着它的解释器」这一说，那是运行后体检出来的）。"""
+    root = str(Path(project))
+    out: list[dict] = []
+    if target_kind == TARGET_PROJECT_VENV and python:
+        out.append(
+            {
+                "kind": TARGET_PROJECT_VENV,
+                "venv": projectenv.project_relative(root, str(Path(python).parent.parent)) or "",
+                "python": projectenv.project_relative(root, python) or python,
+                "modifies_user_environment": True,
+                "creates_environment": False,
+                "available": True,
+                "reason": "",
+            }
+        )
+    managed = managedenv.state(root)
+    available = True if managed["exists"] else managed_available()
+    out.append(
+        {
+            "kind": TARGET_MANAGED,
+            "venv": "",
+            "python": "",
+            "modifies_user_environment": False,
+            "creates_environment": not managed["exists"],
+            "available": available,
+            "reason": "" if available is not False else ERROR_MANAGED_UNAVAILABLE,
+        }
+    )
+    return out
+
+
+def preparation_offer(project: str | Path, script: str) -> dict | None:
+    """跑前 / 准备计划要看的东西（**只读，不装**）：联合计划 + 可选目标 + 轮次。
+
+    解释器解析不出来（显式选择失效 / 一个 Python 都没有）回 None：那是另一条错误，让原路径
+    去报，这里不替它说话。
+    """
+    root = str(Path(project))
+    try:
+        joint, target_kind, python = joint_plan_for(root, script)
+    except pool.WorkerError:
+        return None
+    return {
+        "code": ERROR_PREPARATION_REQUIRED,
+        "script": script,
+        "plan": joint.to_payload(),
+        "target_kind": target_kind,
+        "targets": joint_targets(root, target_kind, python),
+        "rounds_remaining": rounds_remaining(root, script),
+        "skipped": preparation_skipped(root, script),
+    }
+
+
+def gate(project: str | Path, script: str) -> dict | None:
+    """起会话前的门：计划 `ready`、还有轮次、用户没说过「直接跑」→ 回载荷（调用方据此不起会话）；
+    否则 None（放行）。"""
+    root = str(Path(project))
+    if rounds_remaining(root, script) <= 0 or preparation_skipped(root, script):
+        return None
+    offer = preparation_offer(root, script)
+    if offer is None or offer["plan"]["status"] != depplan.STATUS_READY:
+        return None
+    return offer
+
+
+def _spawn_gate(figures_dir: str, script_name: str) -> None:
+    """挂在 `pool.SPAWN_GATES` 上的那一份：要问就抛带载荷的 `WorkerError`。"""
+    offer = gate(figures_dir, script_name)
+    if offer is None:
+        return
+    missing = ", ".join(m["distribution"] for m in offer["plan"]["missing"])
+    err = pool.WorkerError(
+        f"这个脚本开跑就需要的包目标环境里没有：{missing}。Tavotto 可以一次装全再继续；"
+        "先授权，或明确选择不准备直接运行。",
+        code=ERROR_PREPARATION_REQUIRED,
+    )
+    err.dependency_preparation = offer
+    err.script_name = script_name
+    raise err
+
+
+pool.register_spawn_gate(_spawn_gate)

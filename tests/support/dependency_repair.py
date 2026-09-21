@@ -196,15 +196,27 @@ def offline_managed_env(monkeypatch):
     这组用例真正证明的是：位置、项目作用域、**真 pip 把包装进了那个环境**、
     `sys.prefix` 是它、manifest 记账、重建装得回去。
     """
-    monkeypatch.setattr(managedenv, "BASE_PACKAGES", ())
-    original = managedenv.create_venv
+    from tavotto.engine import depplan
 
-    def _with_host_stack(target_project, base):
-        root = managedenv.venv_dir(target_project)
-        target = managedenv.venv_python(target_project)
-        if target.is_file():
-            return True, ""
-        root.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(managedenv, "BASE_PACKAGES", ())
+    # U04 起受管环境按代建（`create_generation_venv`），每一代的需求集合以 adapter 约束
+    # （matplotlib / numpy）打底——离线 CI 里那两样来自宿主的 site-packages 而不是 pip，
+    # 所以这里同样把 adapter 换成空表。生产上那两样各有单元用例逐字钉着
+    # （`test_dependency_plan.py::test_adapter_requirements_mirror_the_worker_extra`）。
+    monkeypatch.setattr(depplan, "ADAPTER_REQUIREMENTS", ())
+    # 新的一代「必然会有」的 distribution（`fresh_venv_facts(provided=)`）：生产上由 adapter 装进去，
+    # 这里由上面的 `.pth` 嫁接给——计划照样不把 matplotlib / numpy 列进要装的集合
+    monkeypatch.setattr(depplan, "adapter_distributions", lambda: ("matplotlib", "numpy"))
+    original = managedenv.create_venv
+    original_generation = managedenv.create_generation_venv
+
+    def _make_and_graft(root, target, base):
+        try:
+            root.parent.mkdir(parents=True, exist_ok=True)
+        except (
+            OSError
+        ) as exc:  # 与真实 `create_generation_venv` 同一形状：建不了目录回 (False, 原因)
+            return False, str(exc)
         out = subprocess.run(
             [base, "-m", "venv", str(root)],
             capture_output=True,
@@ -218,8 +230,26 @@ def offline_managed_env(monkeypatch):
         ok, why = _graft_host_site_packages(base, target)
         return ok, why or out.stderr
 
+    def _with_host_stack(target_project, base):
+        root = managedenv.venv_dir(target_project)
+        target = managedenv.venv_python(target_project)
+        if target.is_file():
+            return True, ""
+        return _make_and_graft(root, target, base)
+
+    def _generation_with_host_stack(target_project, generation, base):
+        root = managedenv.generation_dir(target_project, generation)
+        target = managedenv.generation_python(target_project, generation)
+        if root.exists():
+            import shutil
+
+            shutil.rmtree(root, ignore_errors=True)
+        return _make_and_graft(root, target, base)
+
     assert original is managedenv.create_venv  # 换的是同一个出处
+    assert original_generation is managedenv.create_generation_venv
     monkeypatch.setattr(managedenv, "create_venv", _with_host_stack)
+    monkeypatch.setattr(managedenv, "create_generation_venv", _generation_with_host_stack)
     monkeypatch.setattr(deprepair, "_base_python", WORKER_PY)
     monkeypatch.setattr(deprepair, "_base_python_known", True)
 
@@ -231,22 +261,32 @@ def build_wheel(
     name: str = FIXTURE_DIST,
     import_name: str = FIXTURE_IMPORT,
     version: str = FIXTURE_VERSION,
+    requires: tuple[str, ...] = (),
+    provides_extras: tuple[str, ...] = (),
+    body: str = "",
 ) -> Path:
     """手工造一个纯 Python wheel（不联网、不需要 build backend）。
 
     wheel 就是一个约定好目录结构的 zip。自己拼出来比 `pip wheel` 快得多，
     也不需要网络——而「不联网」正是这组用例能进 CI 的前提。
+
+    `requires` 是 `Requires-Dist` 行（可带 `; extra == "x"` 的 marker——U04 用它造
+    「extra 拉进另一个包」的形状），`provides_extras` 对应 `Provides-Extra`；`body` 是模块
+    体里额外的源码（默认只有 `VALUE` / `NAME` 两个常量）。
     """
     dest.mkdir(parents=True, exist_ok=True)
     dist = name.replace("-", "_")
     info = f"{dist}-{version}.dist-info"
+    metadata = (
+        f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\nSummary: Tavotto test fixture\n"
+    )
+    for extra in provides_extras:
+        metadata += f"Provides-Extra: {extra}\n"
+    for req in requires:
+        metadata += f"Requires-Dist: {req}\n"
     payload = {
-        f"{import_name}.py": f'VALUE = 42\nNAME = "{import_name}"\n',
-        f"{info}/METADATA": (
-            f"Metadata-Version: 2.1\nName: {name}\n"
-            f"Version: {version}\n"
-            f"Summary: Tavotto test fixture\n"
-        ),
+        f"{import_name}.py": f'VALUE = 42\nNAME = "{import_name}"\n{body}',
+        f"{info}/METADATA": metadata,
         f"{info}/WHEEL": (
             "Wheel-Version: 1.0\nGenerator: tavotto-tests\n"
             "Root-Is-Purelib: true\nTag: py3-none-any\n"

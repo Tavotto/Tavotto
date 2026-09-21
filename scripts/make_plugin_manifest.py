@@ -62,10 +62,15 @@ MIN_TAVOTTO_VERSION = "0.15.0"
 #: 那时就有的名字（`MODES` / `mode_for` / `set_mode` / `ERROR_MODE_INVALID`），第三档
 #: `project_root` 在老引擎上由 `set_mode` 以 `workdir_mode_invalid` 拒绝、不静默——所以最低版本
 #: 不用抬；下次发版若要把「首开确认」当插件依赖的能力再重估。
+#: 2026-09-21（U04，ADR 0061）：桥新增 import 了 deprepair——它 v0.9.x 起就在（ADR 0019）；桥用的
+#: `create_joint_plan` / `prepare` 是 U04 的新名字，在 `_answer_prepare_dependencies` 里以
+#: `getattr` 守着、缺就 `engine_too_old` 不静默，import 本身在最低版本上仍成立——最低版本不抬；
+#: 下次发版若要把「联合依赖准备」当插件依赖的能力再重估。
 BRIDGE_IMPORTS_AT_MIN = frozenset(
     {
         "artifactcheck",
         "config",
+        "deprepair",
         "exportjob",
         "exportreq",
         "figcapture",

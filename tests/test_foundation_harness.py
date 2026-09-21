@@ -55,15 +55,29 @@ def test_the_ledger_is_well_formed_and_agrees_with_the_registry():
     assert scenario_ids <= {c["case_id"] for c in ledger["cases"]}
 
 
-def test_the_enforced_set_is_exactly_what_u03_promoted_and_each_points_at_a_real_test():
+def test_the_enforced_set_is_exactly_what_u03_and_u04_promoted_and_each_points_at_a_real_test():
     """台账的 enforced 集合是工程事实（03 §3）：U01 的 U01-S1 + U03 提上来的六条首开场景
-    （FO01 / FO02 / FO03 / FO07 / FO15 / FO19）；每条都指向真实存在的用例函数。多一条 / 少一条
-    都要有人改这里——enrollment 不是随手加的标签。"""
+    （FO01 / FO02 / FO03 / FO07 / FO15 / FO19）+ U04 提上来的五条联合依赖场景（FO20 / FO21 /
+    FO22 / FO27 / FO31）；每条都指向真实存在的用例函数。多一条 / 少一条都要有人改这里——
+    enrollment 不是随手加的标签。"""
     ledger = fh.load_ledger()
     enforced = {
         c["case_id"]: c for c in ledger["cases"] if c["enrollment"] == fh.ENROLLMENT_ENFORCED
     }
-    assert set(enforced) == {CASE_ID, "FO01", "FO02", "FO03", "FO07", "FO15", "FO19"}
+    assert set(enforced) == {
+        CASE_ID,
+        "FO01",
+        "FO02",
+        "FO03",
+        "FO07",
+        "FO15",
+        "FO19",
+        "FO20",
+        "FO21",
+        "FO22",
+        "FO27",
+        "FO31",
+    }
     file_part, func = enforced[CASE_ID]["test"].split("::", 1)
     assert Path(file_part).name == Path(__file__).name
     assert func in globals() and callable(globals()[func])
@@ -76,10 +90,10 @@ def test_the_enforced_set_is_exactly_what_u03_promoted_and_each_points_at_a_real
     for c in ledger["cases"]:
         counts[c["enrollment"]] = counts.get(c["enrollment"], 0) + 1
     assert counts == {
-        "planned": 21,
-        "observing": 4,
+        "planned": 14,
+        "observing": 6,
         "later": 1,
-        "enforced": 7,
+        "enforced": 12,
     }  # 33 条：32 个 FO + U01-S1
     # safe_stop 的 case 也能 enforced，但台账预期必须写明是 safe_stop（校验器据此分开计数）
     assert enforced["FO15"]["expected_product_outcome"] == "safe_stop"

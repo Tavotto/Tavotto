@@ -1,12 +1,18 @@
 import { create } from 'zustand'
 import {
   cancelDependencyPlan,
+  cancelJointDependencies,
   createDependencyPlan,
+  createJointDependencyPlan,
   installDependencyPlan,
+  prepareJointDependencies,
   rebuildManagedEnvironment,
+  skipDependencyPreparation,
   type DependencyProgress,
   type DependencyRepairPlan,
   type InterpreterPin,
+  type JointDependencyPlan,
+  type JointDependencyRepairPlan,
 } from '@/lib/api'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -54,6 +60,19 @@ interface DepRepairState {
   onProgress: (p: DependencyProgress) => void
   /** 关掉确认卡片 / 换一个目标时回到干净状态 */
   reset: () => void
+
+  // ---- 联合准备（U04，ADR 0061）：跑前的那一次授权 ----
+  // 载荷本身（整份联合计划 + 可选目标）住在 `envStore.dependencyPreparation`（与运行目录的确认
+  // 同一个家；渲染 store 静态 import 得到它，本 store 反向 import 会成环）。这里只管执行。
+  /** 绑定好的联合计划（不装）；null = 还没到执行那一步 */
+  jointPlan: JointDependencyRepairPlan | null
+  /** 计划绑定不了（blocked / 什么都不缺）时后端交回的计划——界面按 blocked 的理由说下一步 */
+  jointBlocked: JointDependencyPlan | null
+  /** 一步：绑定计划 → 执行（只发 plan_id）。目标由用户在框里选；脚本来自 envStore 里的载荷。 */
+  prepare: (target: 'project_venv' | 'tavotto_managed') => Promise<void>
+  cancelPreparation: () => Promise<void>
+  /** 「不准备，直接运行」：明确的 skip（这道门一直问到有答案），然后关框并重排那次失败的渲染 */
+  skipPreparation: () => Promise<void>
 }
 
 /** 后端错误 → (code, 原文, 固定)。没有 code 的一律归到通用安装失败。 */
@@ -70,6 +89,63 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   errorCode: '',
   errorText: '',
   pinned: null,
+  jointPlan: null,
+  jointBlocked: null,
+
+  prepare: async (target) => {
+    const offer = useEnvStore.getState().dependencyPreparation
+    if (!offer || get().busy) return
+    set({ busy: true, errorCode: '', errorText: '', jointBlocked: null })
+    try {
+      const { plan } = await createJointDependencyPlan({ script: offer.script, target })
+      // 乐观地先进 preparing：SSE 的第一条要等后端线程起来
+      set({
+        jointPlan: plan,
+        progress: {
+          plan_id: plan.plan_id,
+          state: 'preparing',
+          log: '',
+          error: null,
+          code: '',
+          flow: 'joint',
+          requirements: plan.requirements,
+        },
+      })
+      await prepareJointDependencies(plan.plan_id)
+      set({ busy: false })
+    } catch (e) {
+      const { code, text } = failure(e)
+      const joint = (e as { body?: { joint?: JointDependencyPlan } })?.body?.joint ?? null
+      set({ busy: false, progress: null, jointPlan: null, jointBlocked: joint, errorCode: code, errorText: text })
+    }
+  },
+
+  cancelPreparation: async () => {
+    const id = get().progress?.plan_id
+    if (!id) return
+    try {
+      await cancelJointDependencies(id)
+    } catch {
+      // 取消与「装完了」天然赛跑，输了不是错误（过了提交点后端会说 committed）
+    }
+  },
+
+  skipPreparation: async () => {
+    const offer = useEnvStore.getState().dependencyPreparation
+    if (!offer || get().busy) return
+    set({ busy: true })
+    try {
+      await skipDependencyPreparation(offer.script)
+    } catch (e) {
+      const { code, text } = failure(e)
+      set({ busy: false, errorCode: code, errorText: text })
+      return
+    }
+    set({ busy: false, jointPlan: null, jointBlocked: null })
+    useEnvStore.getState().dismissDependencyPreparation()
+    // 门放行了：那次「先准备」的渲染重新排上，缺包会以 missing_dependency 回来（运行后那条路）
+    useRenderStore.getState().retryEnvironmentFailures()
+  },
 
   makePlan: async (args) => {
     if (get().busy) return
@@ -136,6 +212,12 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   },
 
   onProgress: (p) => {
+    // 只认**自己发起的**那条：单包计划 / 联合计划 / 自己点的重建（三处都在发请求之前就把 id 记下了）。
+    // `engine.dependency` 不带项目判别、广播给每个订阅者——别的标签页 / 项目的计划装完，不能收掉
+    // 这里的授权框、也不能把这里的渲染重排（Codex #470 P2）。
+    const { plan, jointPlan, progress } = get()
+    const owned = p.plan_id === plan?.plan_id || p.plan_id === jointPlan?.plan_id || p.plan_id === progress?.plan_id
+    if (!owned) return
     set({ progress: p })
     if (p.state === 'done' || p.state === 'failed' || p.state === 'cancelled') {
       // 环境那半边变了（换了解释器 / 建了受管环境），刷一次环境状态
@@ -146,18 +228,29 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         // 卡片就一直停在「缺 X」上，图要等到用户改点别的或刷新才出来
         // （Codex 评审 P1）。后端那半边已经作废了 worker，这里补前端这半边。
         useRenderStore.getState().retryEnvironmentFailures()
+        // 联合准备装完：授权框收掉（渲染会重排；缺的那一次错误也随之清）
+        if (p.flow === 'joint') useEnvStore.getState().dismissDependencyPreparation()
       }
       if (p.state !== 'done') {
         set({ errorCode: p.code || '', errorText: p.error || '', pinned: p.pinned ?? null })
       }
       // 计划是一次性的：成功也好失败也好，都不该留着一个已经被消费掉的
       // plan_id 让用户再点一次「安装」。
-      set({ plan: null })
+      set({ plan: null, jointPlan: null })
     }
   },
 
   reset: () =>
-    set({ plan: null, progress: null, busy: false, errorCode: '', errorText: '', pinned: null }),
+    set({
+      plan: null,
+      progress: null,
+      busy: false,
+      errorCode: '',
+      errorText: '',
+      pinned: null,
+          jointPlan: null,
+      jointBlocked: null,
+    }),
 }))
 
 /** 安装是不是正在进行（界面据此禁用按钮、显示进度而不是选项） */

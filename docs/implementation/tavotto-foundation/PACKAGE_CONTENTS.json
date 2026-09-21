@@ -49,8 +49,8 @@
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 4615,
-      "sha256": "1254cae8c1b4bf75a4134fc0a51e68d825ab83ea4686da1ecf4a24e446c49176"
+      "bytes": 5350,
+      "sha256": "18f1099048f93b663109babc4c0bde8ac1ba6be30d08a6e39f4922897e1b1cc3"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 7849,
-      "sha256": "cbb927fcf6b367584367d6b5f2e1a6fdac7eb2bd7ae1aa0c6118950170a41318"
+      "bytes": 8957,
+      "sha256": "9b9a669e719b78b7505d2bff0d1e7fb983a69363173bb8faa4d360193f28857e"
     },
     {
       "path": "SOURCES.md",
@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 46781,
-      "sha256": "b1cebdedb3c90703aca0d282c10a5ac2f04d80c4d018870174086fa53137f328"
+      "sha256": "28006651bc4d7280b5ddf479769598cec2417202c0a6847226b8d37962431388"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 22199,
-      "sha256": "67108cc5a4fa3c0ec2e149b30f40edfda152781b1c18cdc7431fd3ad6c0d3cfa"
+      "sha256": "5139c16e7fe5d7f42b968349eb4d0eac270d3fecb5453898838718d39f94863f"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 19730,
-      "sha256": "986200a1aaac24321b66178f965442b58d74a827306d032ac7c36b4cccf8b312"
+      "bytes": 25750,
+      "sha256": "71e97b154fa8acd57ccaa28bd6c48e5440d5b7ae0d1278edd9c38cdbd0b8edd9"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -243,6 +243,21 @@
       "sha256": "f5562d6968fdf6f8c51d77dfc730f81672224909b8a7151977eab6edfe23eaea"
     },
     {
+      "path": "evidence/u04/mutations_pr_a.md",
+      "bytes": 3162,
+      "sha256": "8a570da733673aaa522abffc612ebf6b6fb3929eaf78998e1e727a5241c7d28f"
+    },
+    {
+      "path": "evidence/u04/mutations_pr_b.md",
+      "bytes": 5767,
+      "sha256": "b93628aa5e1108d72f60fd2bfc02166f8053072420b42f50e5f8617b1c971859"
+    },
+    {
+      "path": "evidence/u04/mutations_pr_c.md",
+      "bytes": 7029,
+      "sha256": "57e6faa611d6b879208652301c26e14955c700aca20cadaec080c3bdb044b7b8"
+    },
+    {
       "path": "evidence/u06/README.md",
       "bytes": 2457,
       "sha256": "4217bd1dab3e866e7e2cfdfd18987bfb0f915df7cf4b853f1c635a8559a707b9"
@@ -323,6 +338,11 @@
       "sha256": "1383f67aa469f8c37d3980421fe81d299295fed6b5a814dbfe5d4224a300c0b0"
     },
     {
+      "path": "handoffs/U04_dependencies.md",
+      "bytes": 35258,
+      "sha256": "346407e2bf9637c418e10111e2e857133742fd90d4504682482c3fb66b1398c8"
+    },
+    {
       "path": "handoffs/U06_ir_text.md",
       "bytes": 29941,
       "sha256": "4d0b5abd7278f2810c289da3635914c02f24d1f6ce1ca2442969c3817b3c5370"
@@ -394,13 +414,13 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7373,
-      "sha256": "55a70cd23b2343ec8acc0e55093faac9c6bbe98795b28b81be7cbb97a42acd3b"
+      "bytes": 7366,
+      "sha256": "21ebb556824148c96be155c3e92ef73bae76bbc9dcb646beacdaea3aaff50a9c"
     },
     {
       "path": "registry.json",
-      "bytes": 275432,
-      "sha256": "74923d4fe1a0d8f7a38f2c2fc1b146110ddb25e2962667b47f88d0498f383f91"
+      "bytes": 281481,
+      "sha256": "2efc58c8efc12cbf55e7f9780946f1ede30c5a15aa9451272e27c8190cf3a73a"
     },
     {
       "path": "sources_manifest.json",

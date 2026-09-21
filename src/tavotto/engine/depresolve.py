@@ -30,8 +30,11 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 import re
 from pathlib import Path
+
+from . import projectenv
 
 LOG = logging.getLogger("tavotto.depresolve")
 
@@ -338,7 +341,7 @@ def _decl_dirs(figures_dir: str | Path, script: str | None) -> list[Path]:
         start = ((root / script).parent if script else root).resolve(strict=False)
     except OSError:
         return [root]
-    if not (start == root_real or root_real in start.parents):
+    if not projectenv.within(root, start):
         # 脚本在项目外（更早就该被 `script_path_outside_project` 拦下）
         start = root_real
     dirs: list[Path] = []
@@ -352,12 +355,19 @@ def _decl_dirs(figures_dir: str | Path, script: str | None) -> list[Path]:
 
 
 def _read_text(path: Path) -> str:
+    """旧安装路径的读法：读不了 / 太大一律当空（那条路的失败绝不阻断渲染）。"""
+    text, _problem = _read_declaration(path)
+    return text or ""
+
+
+def _read_declaration(path: Path) -> tuple[str | None, str]:
+    """无损读法用的：回 `(文本, "")` 或 `(None, 原因)`——读不了不是「没有依赖」。"""
     try:
         if path.stat().st_size > MAX_DECL_BYTES:
-            return ""
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
+            return None, f"超过 {MAX_DECL_BYTES} 字节"
+        return path.read_text(encoding="utf-8", errors="replace"), ""
+    except OSError as exc:
+        return None, str(exc)[:200]
 
 
 def parse_requirements_text(text: str) -> dict[str, str]:
@@ -469,39 +479,108 @@ def project_declared(figures_dir: str | Path, script: str | None = None) -> dict
 
 
 # ---------------------------------------------------------------------------
-# DependencyIntent（统一实施包 U01，ADR 0053）——声明的**无损**读法
+# DependencyIntent（统一实施包 U01 → U04，ADR 0053 / 0061）——声明的**无损**读法
 #
 # 上面那条 `parse_requirements_text` 是安装路径的解析器：它刻意窄（extras 剥掉、
-# marker 丢掉、同名取第一条），因为它的输出要交给 pip。U00 实测（`U00_BASELINE.md`
-# §4.3）证明这一层看不见 extras / marker / constraints / 同名冲突——而「项目声明了
-# 什么」这个问题需要**原样**的答案。这里是第二个读法，不是第二个安装器：
+# marker 丢掉、同名取第一条），因为它的输出要交给 pip 的**旧单包路径**。U00 实测
+# （`U00_BASELINE.md` §4.3）证明这一层看不见 extras / marker / constraints / 同名冲突——
+# 而「项目声明了什么」这个问题需要**原样**的答案。这里是第二个读法，U04 起交给成熟
+# 解析器（`packaging.requirements` / `.markers` / `.specifiers`，PEP 508 / 440 的参考
+# 实现；pip 与 uv 认的就是它）：
 #
 #   * 每一行都成为一条 intent，看不懂的行是 `kind=unknown` 并保留原文——
-#     **unknown 不是空依赖**（04 §2）；
-#   * extras / marker 原样保留、不求值（marker 为真还是为假是 U04 的事）；
-#   * `constraints.txt` 也读，`kind=constraint`；
-#   * 同名多条**全部保留**，`conflicts()` 把 specifier 不一致的点出来。
+#     **unknown 不是空依赖**（04 §2）；认得出、但 Tavotto 不会替用户安装的构造
+#     （直接 URL / VCS / `-e` / 本地路径 / `--index-url` 之类的选项行 / Poetry `^` /
+#     pixi 锁）是 `kind=unsupported` + 闭集 `reason`——**它们同样不是空依赖**：
+#     一条 unsupported 的声明意味着这个项目的约束 Tavotto 没法完整兑现，联合安装
+#     必须明确停下（ADR 0061 §三），不能把 `^` 或 marker 剥掉偷偷继续；
+#   * extras / marker 原样保留、marker **不在这里求值**（求值要拿目标解释器的环境，
+#     归 `depplan.select`）；
+#   * `-r` / `-c` 在**项目根之内**有界跟进（同一份文件上限、循环 / 越界 / 缺失各是一条
+#     unsupported，不是忽略）；`constraints.txt` 与 `-c` 引到的都是 `kind=constraint`；
+#   * PEP 723 脚本内联元数据、pyproject 的 `[project.dependencies]` /
+#     `[project.optional-dependencies]` / `[dependency-groups]`（PEP 735，含
+#     `include-group`）按各自元数据范围读；`[tool.poetry.dependencies]` 只读**能无损
+#     表达**的那部分（PEP 440 形态的字符串），`^` / `~` / 表结构一律 unsupported；
+#   * 同名多条**全部保留**，`conflicts()` 用 `SpecifierSet` 找出**确定**矛盾的那些。
 #
-# 安装路径一个字节没动：`DependencyRequirement.installable` 仍只认窄语法。
+# 安装路径一个字节没动：`DependencyRequirement.installable` 仍只认窄语法。联合安装交给
+# pip 的字符串由 `requirement_string()` 从**解析后的结构**重新序列化——原文一个字节
+# 都不直接进 argv（与 ADR 0038 `argv_package_name` 同一条纪律）。
 # ---------------------------------------------------------------------------
 INTENT_KIND_REQUIREMENT = "requirement"
 INTENT_KIND_CONSTRAINT = "constraint"
 INTENT_KIND_UNKNOWN = "unknown"
-INTENT_KINDS = (INTENT_KIND_REQUIREMENT, INTENT_KIND_CONSTRAINT, INTENT_KIND_UNKNOWN)
+INTENT_KIND_UNSUPPORTED = "unsupported"
+INTENT_KINDS = (
+    INTENT_KIND_REQUIREMENT,
+    INTENT_KIND_CONSTRAINT,
+    INTENT_KIND_UNKNOWN,
+    INTENT_KIND_UNSUPPORTED,
+)
+
+#: `kind=unsupported` 的原因——**闭集**。加一条就要在细则与前端文案里说清用户该做什么。
+UNSUPPORTED_DIRECT_URL = "direct_url"  # `pkg @ https://…` / `git+…`
+UNSUPPORTED_EDITABLE = "editable_install"  # `-e .` / `--editable path`
+UNSUPPORTED_LOCAL_PATH = "local_path"  # `./vendor/pkg` / `../x` / `*.whl`
+UNSUPPORTED_OPTION_LINE = "option_line"  # `--index-url` / `--find-links` / `--pre` …
+UNSUPPORTED_PER_REQ_OPTION = "per_requirement_option"  # `--global-option` 之类（`--hash` 认）
+UNSUPPORTED_INCLUDE_MISSING = "include_missing"  # `-r x.txt` 指向不存在的文件
+UNSUPPORTED_INCLUDE_OUTSIDE = "include_outside_project"  # `-r ../../x.txt`
+UNSUPPORTED_INCLUDE_CYCLE = "include_cycle"  # a -r b, b -r a
+UNSUPPORTED_INCLUDE_LIMIT = "include_limit"  # 跟进的文件超过上限
+UNSUPPORTED_POETRY_CONSTRAINT = "poetry_constraint"  # `^1.2` / `~1.2` / `{version=…}`
+UNSUPPORTED_MANAGER_LOCK = "manager_lock"  # pixi / conda / poetry.lock（X01）
+UNSUPPORTED_TOML_PARSER = "toml_parser_unavailable"  # 3.10 且没有 tomllib / tomli
+UNSUPPORTED_TOML_INVALID = "toml_invalid"  # pyproject / PEP 723 块解析失败
+UNSUPPORTED_ENV_VARIABLE = "environment_variable"  # `${TOKEN}` 展开（pip 特性，不做）
+UNSUPPORTED_UNREADABLE = "unreadable"  # 声明文件读不了 / 超过 MAX_DECL_BYTES（不是「没有依赖」）
+UNSUPPORTED_REASONS = (
+    UNSUPPORTED_DIRECT_URL,
+    UNSUPPORTED_EDITABLE,
+    UNSUPPORTED_LOCAL_PATH,
+    UNSUPPORTED_OPTION_LINE,
+    UNSUPPORTED_PER_REQ_OPTION,
+    UNSUPPORTED_INCLUDE_MISSING,
+    UNSUPPORTED_INCLUDE_OUTSIDE,
+    UNSUPPORTED_INCLUDE_CYCLE,
+    UNSUPPORTED_INCLUDE_LIMIT,
+    UNSUPPORTED_POETRY_CONSTRAINT,
+    UNSUPPORTED_MANAGER_LOCK,
+    UNSUPPORTED_TOML_PARSER,
+    UNSUPPORTED_TOML_INVALID,
+    UNSUPPORTED_ENV_VARIABLE,
+    UNSUPPORTED_UNREADABLE,
+)
 
 CONSTRAINTS_NAME = "constraints.txt"
+#: 认得出但只会被标成 unsupported 的管理器锁文件（X01 之前不做转换）。它们在项目里
+#: 出现本身就是一条信息：这个项目的约束可能不止 requirements / pyproject 里那些。
+MANAGER_LOCK_NAMES = ("poetry.lock", "pixi.lock", "pixi.toml", "environment.yml", "conda-lock.yml")
 
-_EXTRAS_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\[([^\]]*)\]")
+#: 默认选中的组：**只有**这几种（FO20：未选的 optional / dev / 训练组不装）。文件组按
+#: 文件名判（任何目录层级的 `requirements.txt`），pyproject 主依赖，脚本自己的 PEP 723。
+#: 其余组（`requirements-*.txt` / `requirements/*.txt` / optional-dependencies /
+#: dependency-groups）要用户在项目设置里点名。
+GROUP_PYPROJECT_MAIN = "project.dependencies"
+GROUP_PYPROJECT_OPTIONAL = "optional-dependencies"
+GROUP_PYPROJECT_GROUPS = "dependency-groups"
+GROUP_PYPROJECT_POETRY = "tool.poetry.dependencies"
+GROUP_PEP723 = "pep723"
 
 
 @dataclasses.dataclass(frozen=True)
 class DependencyIntent:
     """一条依赖声明的原样描述（04 §2：name/version/extras/marker/group/source/constraints）。
 
-    `name` 是规范化后的 distribution 名（`unknown` 时为空串）；`raw` 永远是那一行的
-    原文。`group` 说它来自哪一组（`requirements.txt` / `pyproject:project.dependencies`
-    / `pyproject:optional-dependencies.<名>` / `constraints.txt`），`source` 是声明文件
-    相对项目根的 POSIX 路径。
+    `name` 是规范化后的 distribution 名（`unknown` / 没有名字的 `unsupported` 时为空串）；
+    `specifier` 是 `SpecifierSet` 的规范串（`>=1.2,<2` → `<2,>=1.2`，只是排序，语义不变）；
+    `raw` 永远是那一行的原文。`group` 是它所属的组（`requirements.txt` /
+    `scripts/requirements-dev.txt` / `pyproject.toml:project.dependencies` /
+    `pyproject.toml:optional-dependencies.<名>` / `pyproject.toml:dependency-groups.<名>` /
+    `pep723:<脚本>`），`source` 是声明文件相对项目根的 POSIX 路径。`hashes` 是 pip
+    requirements 格式的 `--hash=sha256:…`（有就原样带着，联合安装按它 `--require-hashes`）。
+    `reason` 只在 `unsupported` 时有值（闭集 `UNSUPPORTED_REASONS`）。
     """
 
     name: str
@@ -512,12 +591,23 @@ class DependencyIntent:
     source: str = ""
     kind: str = INTENT_KIND_REQUIREMENT
     raw: str = ""
+    hashes: tuple[str, ...] = ()
+    reason: str = ""
 
     def __post_init__(self) -> None:
         if self.kind not in INTENT_KINDS:
             raise ValueError(f"kind 非法: {self.kind!r}（可选 {INTENT_KINDS}）")
-        if self.kind != INTENT_KIND_UNKNOWN and not self.name:
-            raise ValueError("非 unknown 的 intent 必须有 name")
+        if self.kind in (INTENT_KIND_REQUIREMENT, INTENT_KIND_CONSTRAINT) and not self.name:
+            raise ValueError("requirement / constraint 的 intent 必须有 name")
+        if self.kind == INTENT_KIND_UNSUPPORTED and self.reason not in UNSUPPORTED_REASONS:
+            raise ValueError(f"unsupported 的 reason 非法: {self.reason!r}")
+        if self.kind != INTENT_KIND_UNSUPPORTED and self.reason:
+            raise ValueError("只有 unsupported 才有 reason")
+
+    @property
+    def declared(self) -> bool:
+        """认得出名字与约束、可以进联合求解的那两档。"""
+        return self.kind in (INTENT_KIND_REQUIREMENT, INTENT_KIND_CONSTRAINT)
 
     def to_payload(self) -> dict:
         return {
@@ -529,138 +619,500 @@ class DependencyIntent:
             "source": self.source,
             "kind": self.kind,
             "raw": self.raw,
+            "hashes": list(self.hashes),
+            "reason": self.reason,
         }
 
 
-def parse_intent(
-    line: str,
+def _pkg():
+    """`packaging` 的三件套——延后到用到时才 import。
+
+    它是运行时依赖（`pyproject.toml`，ADR 0061），不是科学栈；延后 import 只是让
+    `depresolve` 的**旧安装路径**（`parse_requirement` / `resolve`）在没有它的环境里
+    照样能被 import——那条路一个字节都不需要它。
+    """
+    from packaging import markers, requirements, specifiers, utils, version
+
+    return requirements, markers, specifiers, utils, version
+
+
+#: pip requirements 格式里的**整行**选项（不是依赖）。`-r` / `-c` 单独处理（有界跟进）。
+_OPTION_PREFIXES = (
+    "-i",
+    "--index-url",
+    "--extra-index-url",
+    "--no-index",
+    "-f",
+    "--find-links",
+    "--no-binary",
+    "--only-binary",
+    "--prefer-binary",
+    "--require-hashes",
+    "--pre",
+    "--trusted-host",
+    "--use-feature",
+    "--no-build-isolation",
+)
+_INCLUDE_RE = re.compile(r"^(-r|--requirement|-c|--constraint)(?:=|\s+)(.+)$")
+_EDITABLE_RE = re.compile(r"^(-e|--editable)(?:=|\s+)")
+#: pip 的每需求选项：`pkg==1 --hash=sha256:… --hash=sha256:…`。`--hash` 认；其余不认。
+_PER_REQ_OPTION_RE = re.compile(r"\s+(--[a-z][a-z-]*)(?:=|\s+)(\S+)")
+_HASH_RE = re.compile(r"^(sha256|sha384|sha512):[0-9a-fA-F]{64,128}$")
+_ENV_VAR_RE = re.compile(r"\$\{[A-Z0-9_]+\}")
+#: 一个 token 看起来像路径 / 归档而不是包名：`./x`、`../x`、`/abs`、`x.whl`、`x.tar.gz`、`.`。
+_PATHLIKE_RE = re.compile(r"^(\.{1,2}(/|\\|$)|/|[A-Za-z]:[\\/]|~)")
+_ARCHIVE_RE = re.compile(r"\.(whl|zip|tar\.gz|tgz|tar\.bz2)$", re.I)
+#: 直接 URL 的形态（`Requirement` 认 `pkg @ url`；这里挡的是裸 URL 与 VCS 前缀）。
+_URL_RE = re.compile(r"^([a-z][a-z0-9+.-]*):(//|.*@)", re.I)
+
+
+def _unsupported(
+    raw: str, reason: str, *, group: str, source: str, name: str = ""
+) -> DependencyIntent:
+    return DependencyIntent(
+        name=name,
+        group=group,
+        source=source,
+        kind=INTENT_KIND_UNSUPPORTED,
+        raw=raw.strip(),
+        reason=reason,
+    )
+
+
+def _unknown(raw: str, *, group: str, source: str) -> DependencyIntent:
+    return DependencyIntent(
+        name="", group=group, source=source, kind=INTENT_KIND_UNKNOWN, raw=raw.strip()
+    )
+
+
+def intent_from_requirement(
+    req,
     *,
+    raw: str,
     group: str = "",
     source: str = "",
     kind: str = INTENT_KIND_REQUIREMENT,
-    raw: str | None = None,
-) -> DependencyIntent | None:
-    """一行声明 → intent。空行 / 注释回 None；看不懂的回 `kind=unknown`（不丢）。
+    hashes: tuple[str, ...] = (),
+) -> DependencyIntent:
+    """`packaging.requirements.Requirement` → intent（直接 URL 归 unsupported）。
 
-    认得的形状：`name`、`name[extra,extra]`、`name<op>ver[,<op>ver]`、以上任一加
-    `; <marker>`。选项行（`-r` / `--index-url` / `-e`）、URL、路径、`pkg @ url`
-    一律 unknown——它们是「项目声明了别的东西」，不是「没声明」。
-
-    `raw` 给了就原样记进 intent（pyproject 里一条声明被翻译成 PEP 508 形态后，
-    `raw` 仍要是文件里那一行）；不给就是 `line` 本身。
+    extras 按 PEP 685 规范化（`WideChars` → `widechars`）——同一条声明永远得到同一个串。
     """
-    line = str(line or "")
-    original = line if raw is None else raw
-    body = line.split("#", 1)[0].strip()
-    if not body:
-        return None
-    marker = ""
-    if ";" in body:
-        body, marker = (part.strip() for part in body.split(";", 1))
-    extras: tuple[str, ...] = ()
-    name_part = body
-    m = _EXTRAS_RE.match(body)
-    if m:
-        extras = tuple(x.strip() for x in m.group(2).split(",") if x.strip())
-        name_part = m.group(1) + body[m.end() :]
-    parsed = parse_requirement(name_part.replace(" ", ""))
-    if parsed is None or (m and not extras):
-        return DependencyIntent(
-            name="", group=group, source=source, kind=INTENT_KIND_UNKNOWN, raw=original.strip()
+    _requirements, _markers, _specifiers, _utils, _version = _pkg()
+    if req.url:
+        return _unsupported(
+            raw,
+            UNSUPPORTED_DIRECT_URL,
+            group=group,
+            source=source,
+            name=normalize_distribution(req.name),
         )
-    name, spec = parsed
     return DependencyIntent(
-        name=normalize_distribution(name),
-        specifier=spec,
-        extras=extras,
-        marker=marker,
+        name=normalize_distribution(req.name),
+        specifier=str(req.specifier),
+        extras=tuple(sorted(_utils.canonicalize_name(str(e)) for e in req.extras)),
+        marker=str(req.marker) if req.marker is not None else "",
         group=group,
         source=source,
         kind=kind,
-        raw=original.strip(),
+        raw=raw.strip(),
+        hashes=hashes,
     )
+
+
+def parse_intent(
+    line: str, *, group: str = "", source: str = "", kind: str = INTENT_KIND_REQUIREMENT
+) -> DependencyIntent | None:
+    """一行声明 → intent。空行 / 注释回 None；认不出的回 `kind=unknown`、认得出但不做的回
+    `kind=unsupported`（都不丢、都不是空依赖）。
+
+    认得的形状是完整的 PEP 508（`packaging.requirements.Requirement`）：`name`、`name[extra]`、
+    `name<op>ver[,<op>ver]`、`name[e]>=1; marker`，外加 pip 的每需求 `--hash=`。`-r` / `-c`
+    **不在这里**（它们要读别的文件，归 `declared_intents` 的有界跟进）：脱离文件上下文的
+    一行 include 没有可跟进的对象，回 `unknown`。
+    """
+    raw = str(line or "")
+    body = raw.split("#", 1)[0].strip()
+    if not body:
+        return None
+    if _ENV_VAR_RE.search(body):
+        return _unsupported(raw, UNSUPPORTED_ENV_VARIABLE, group=group, source=source)
+    if _EDITABLE_RE.match(body):
+        return _unsupported(raw, UNSUPPORTED_EDITABLE, group=group, source=source)
+    if _INCLUDE_RE.match(body):
+        return _unknown(raw, group=group, source=source)
+    if body.startswith("-"):
+        if any(
+            body == p or body.startswith(p + "=") or body.startswith(p + " ")
+            for p in _OPTION_PREFIXES
+        ):
+            return _unsupported(raw, UNSUPPORTED_OPTION_LINE, group=group, source=source)
+        return _unknown(raw, group=group, source=source)
+    # 每需求选项：`pkg==1 --hash=sha256:…`。`--hash` 认下（联合安装按它 require-hashes），
+    # 别的（`--global-option` / `--config-settings` / `--install-option`）不认。
+    hashes: list[str] = []
+    head = body
+    for m in _PER_REQ_OPTION_RE.finditer(body):
+        opt, val = m.group(1), m.group(2)
+        if opt == "--hash" and _HASH_RE.match(val):
+            hashes.append(val.lower())
+        else:
+            return _unsupported(raw, UNSUPPORTED_PER_REQ_OPTION, group=group, source=source)
+    if hashes:
+        head = body[: _PER_REQ_OPTION_RE.search(body).start()].strip()
+    if _URL_RE.match(head):
+        # 裸 URL / VCS（`https://…/x.whl`、`git+https://…`）。`pkg @ url` 以包名开头，不在
+        # 这里；它由 `Requirement` 认出来、在 `intent_from_requirement` 里归同一档。
+        return _unsupported(raw, UNSUPPORTED_DIRECT_URL, group=group, source=source)
+    if _ARCHIVE_RE.search(head) and " @ " not in head:
+        # `x.whl` 按 PEP 508 是个合法包名，pip 却会按文件系统把它当归档——按归档判
+        # （没有人会给包起这种名字，而本地归档正是 pip 认、Tavotto 不做的那一档）。
+        return _unsupported(raw, UNSUPPORTED_LOCAL_PATH, group=group, source=source)
+    requirements, _markers, _specifiers, _utils, _version = _pkg()
+    try:
+        req = requirements.Requirement(head)
+    except requirements.InvalidRequirement:
+        # 成熟解析器认不出：再看它是不是本地路径（`./x`、`../x`、`/abs`）；不是就是 unknown。
+        if _PATHLIKE_RE.search(head):
+            return _unsupported(raw, UNSUPPORTED_LOCAL_PATH, group=group, source=source)
+        return _unknown(raw, group=group, source=source)
+    return intent_from_requirement(
+        req, raw=raw, group=group, source=source, kind=kind, hashes=tuple(hashes)
+    )
+
+
+def _logical_lines(text: str) -> list[str]:
+    """pip requirements 格式：行尾 `\\` 续行；`#` 注释。回逻辑行（保留原文拼接）。"""
+    out: list[str] = []
+    buf = ""
+    for raw in str(text or "").splitlines():
+        line = raw.rstrip()
+        if line.endswith("\\") and not line.lstrip().startswith("#"):
+            buf += line[:-1]
+            continue
+        out.append(buf + line)
+        buf = ""
+    if buf:
+        out.append(buf)
+    return out
 
 
 def parse_intents_text(
     text: str, *, group: str = "", source: str = "", kind: str = INTENT_KIND_REQUIREMENT
 ) -> list[DependencyIntent]:
+    """一份 requirements / constraints 文本 → intents（**不跟进 `-r` / `-c`**：跟进要文件
+    上下文，归 `declared_intents`；这里遇到 include 行回 unknown）。"""
     out: list[DependencyIntent] = []
-    for line in str(text or "").splitlines():
+    for line in _logical_lines(text):
         intent = parse_intent(line, group=group, source=source, kind=kind)
         if intent is not None:
             out.append(intent)
     return out
 
 
-def _pyproject_intent_groups(text: str) -> list[tuple[str, str, str]]:
-    """pyproject.toml → `[(组名, 声明串, 原文)]`，组名区分主依赖与每个 optional 组。
+# ---- pyproject / PEP 723 ---------------------------------------------------
+def _toml_loads(text: str):
+    """`tomllib`（3.11+）→ `tomli`（若装了）→ None（3.10 且两者都没有）。
 
-    只在 tomllib 可用时分组；退化路径（3.10）沿用 `_pyproject_dependency_strings`
-    的「宁可少认」，组名统一记 `pyproject`。
-
-    Poetry 表（`[tool.poetry.dependencies]`）**不是** PEP 508：`requests = "^2.31"` 的
-    `^` / `~` 是 Poetry 自己的语法，表值（`{version = …, extras = …}`）更是。安装路径
-    （`_pyproject_dependency_strings`）把它们剥成只剩名字继续走；这里不许——那等于把一条
-    约束偷偷放宽成「任意版本」（D14：未知约束必须明确停止）。纯数字开头的版本映射成
-    `==`，其余一律作为**认不出的原文**交给 `parse_intent` 判成 unknown；`raw` 都是文件
-    里那一行的形状。完整的 Poetry 转换归 U04 / X01。
+    回 `(data, None)` / `(None, reason)`。**没有解析器不是「没有依赖」**：调用方把整份
+    pyproject 记成一条 `unsupported/toml_parser_unavailable`，联合安装据此明确停下。
     """
+    loads = None
     try:
         import tomllib  # 3.11+
 
-        data = tomllib.loads(text)
-    except (ImportError, ValueError):
-        return [("pyproject", d, d) for d in _pyproject_dependency_strings(text)]
-    out: list[tuple[str, str, str]] = []
+        loads = tomllib.loads
+    except ImportError:
+        try:
+            import tomli  # type: ignore[import-not-found]
+
+            loads = tomli.loads
+        except ImportError:
+            return None, UNSUPPORTED_TOML_PARSER
+    try:
+        return loads(text), None
+    except (ValueError, TypeError) as exc:  # tomllib.TOMLDecodeError 是 ValueError 的子类
+        LOG.debug("TOML 解析失败: %s", exc)
+        return None, UNSUPPORTED_TOML_INVALID
+
+
+def _poetry_intent(name: str, spec, *, group: str, source: str) -> DependencyIntent:
+    """Poetry 表里的一条：只有 PEP 440 形态的字符串能无损表达；`^` / `~` / 表 / 列表一律
+    unsupported——**不剥 `^` 偷偷继续**。"""
+    raw = f"{name} = {spec!r}"
+    if isinstance(spec, str):
+        text = spec.strip()
+        if text in ("*", ""):
+            intent = parse_intent(name, group=group, source=source)
+            if intent is None or intent.kind != INTENT_KIND_REQUIREMENT:
+                return _unsupported(
+                    raw,
+                    UNSUPPORTED_POETRY_CONSTRAINT,
+                    group=group,
+                    source=source,
+                    name=normalize_distribution(name),
+                )
+            return dataclasses.replace(intent, raw=raw)
+        if text[0] == "^" or (text[0] == "~" and not text.startswith("~=")):
+            # Poetry 的 caret / tilde 与 PEP 440 的 `~=` 不是一回事：不翻译、不剥掉。
+            return _unsupported(
+                raw,
+                UNSUPPORTED_POETRY_CONSTRAINT,
+                group=group,
+                source=source,
+                name=normalize_distribution(name),
+            )
+        candidate = f"{name}{text}" if text[0] in "<>=!~" else f"{name}=={text}"
+        intent = parse_intent(candidate, group=group, source=source)
+        if intent is None or intent.kind != INTENT_KIND_REQUIREMENT:
+            return _unsupported(
+                raw,
+                UNSUPPORTED_POETRY_CONSTRAINT,
+                group=group,
+                source=source,
+                name=normalize_distribution(name),
+            )
+        return dataclasses.replace(intent, raw=raw)
+    return _unsupported(
+        raw,
+        UNSUPPORTED_POETRY_CONSTRAINT,
+        group=group,
+        source=source,
+        name=normalize_distribution(name),
+    )
+
+
+def pyproject_intents(text: str, *, source: str = "pyproject.toml") -> list[DependencyIntent]:
+    """pyproject.toml → intents，组名区分主依赖 / 每个 optional 组 / 每个 dependency-group /
+    Poetry 表。PEP 735 的 `include-group` 展开成被包含组的条目（组名记**外层**组，
+    `raw` 保留 `{include-group = …}` 的出处）；循环 include 记 unsupported。"""
+    data, why = _toml_loads(text)
+    if data is None:
+        return [
+            _unsupported(
+                "<pyproject.toml>", why, group=f"{source}:{GROUP_PYPROJECT_MAIN}", source=source
+            )
+        ]
+    out: list[DependencyIntent] = []
     project = data.get("project")
     if isinstance(project, dict):
+        g = f"{source}:{GROUP_PYPROJECT_MAIN}"
         for d in project.get("dependencies") or []:
             if isinstance(d, str):
-                out.append(("pyproject:project.dependencies", d, d))
+                it = parse_intent(d, group=g, source=source)
+                if it is not None:
+                    out.append(it)
         extras = project.get("optional-dependencies")
         if isinstance(extras, dict):
             for gname, group in extras.items():
+                g = f"{source}:{GROUP_PYPROJECT_OPTIONAL}.{gname}"
                 for d in group or []:
                     if isinstance(d, str):
-                        out.append((f"pyproject:optional-dependencies.{gname}", d, d))
+                        it = parse_intent(d, group=g, source=source)
+                        if it is not None:
+                            out.append(it)
+    groups = data.get("dependency-groups")
+    if isinstance(groups, dict):
+        for gname in groups:
+            label = f"{source}:{GROUP_PYPROJECT_GROUPS}.{gname}"
+            out += _dependency_group(groups, str(gname), source=source, label=label, chain=())
     poetry = ((data.get("tool") or {}).get("poetry") or {}).get("dependencies") or {}
     if isinstance(poetry, dict):
-        group = "pyproject:tool.poetry.dependencies"
-        for name, ver in poetry.items():
+        g = f"{source}:{GROUP_PYPROJECT_POETRY}"
+        for name, spec in poetry.items():
             if str(name).lower() == "python":
                 continue
-            if isinstance(ver, str):
-                raw = f'{name} = "{ver}"'
-                if ver and ver[0].isdigit():
-                    out.append((group, f"{name}=={ver}", raw))
-                else:  # `^2.31` / `~1.2` / `*` / 空：Poetry 语法，不翻译、不剥
-                    out.append((group, raw, raw))
-            else:  # 表值 / 数组：原样交出去当 unknown
-                raw = f"{name} = {_toml_inline(ver)}"
-                out.append((group, raw, raw))
+            out.append(_poetry_intent(str(name), spec, group=g, source=source))
     return out
 
 
-def _toml_inline(value) -> str:
-    """把 tomllib 解析出来的表 / 数组按 TOML 内联表的样子写回去（只为 `raw` 可读）。"""
-    if isinstance(value, dict):
-        return "{" + ", ".join(f"{k} = {_toml_inline(v)}" for k, v in value.items()) + "}"
-    if isinstance(value, list):
-        return "[" + ", ".join(_toml_inline(v) for v in value) + "]"
-    if isinstance(value, str):
-        return f'"{value}"'
-    return str(value)
+def _dependency_group(
+    groups: dict, gname: str, *, source: str, label: str, chain: tuple[str, ...]
+) -> list[DependencyIntent]:
+    """PEP 735 一组：字符串条目是 PEP 508；`{include-group = "x"}` 展开 x（有界、防环）。
+
+    展开出来的条目归**最外层**那一组（`label`）：用户选的是外层组，被包含的组只是它的
+    实现细节；`raw` 保留各自的原文。
+    """
+    out: list[DependencyIntent] = []
+    items = groups.get(gname)
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        if isinstance(item, str):
+            it = parse_intent(item, group=label, source=source)
+            if it is not None:
+                out.append(it)
+        elif isinstance(item, dict) and "include-group" in item:
+            inc = str(item["include-group"])
+            raw = f"{{include-group = {inc!r}}}"
+            if inc == gname or inc in chain:
+                out.append(_unsupported(raw, UNSUPPORTED_INCLUDE_CYCLE, group=label, source=source))
+            elif inc not in groups:
+                out.append(
+                    _unsupported(raw, UNSUPPORTED_INCLUDE_MISSING, group=label, source=source)
+                )
+            elif len(chain) >= 8:
+                out.append(_unsupported(raw, UNSUPPORTED_INCLUDE_LIMIT, group=label, source=source))
+            else:
+                out += _dependency_group(
+                    groups, inc, source=source, label=label, chain=(*chain, gname)
+                )
+        else:
+            out.append(_unknown(repr(item), group=label, source=source))
+    return out
+
+
+#: PEP 723：`# /// script` … `# ///` 块（正则来自 PEP 原文）。
+_PEP723_RE = re.compile(r"(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$")
+
+
+def pep723_intents(script_text: str, *, source: str) -> list[DependencyIntent]:
+    """脚本自己的内联元数据（PEP 723）→ intents，组名 `pep723:<脚本>`。没有块回空列表
+    ——**这一处的空是真的空**（脚本没写）。块坏了 / 没有 TOML 解析器记 unsupported。"""
+    blocks = [m for m in _PEP723_RE.finditer(str(script_text or "")) if m.group("type") == "script"]
+    if not blocks:
+        return []
+    group = f"{GROUP_PEP723}:{source}"
+    if len(blocks) > 1:
+        return [
+            _unsupported(
+                "# /// script (multiple)", UNSUPPORTED_TOML_INVALID, group=group, source=source
+            )
+        ]
+    content = "".join(
+        line[2:] if line.startswith("# ") else line[1:]
+        for line in blocks[0].group("content").splitlines(keepends=True)
+    )
+    data, why = _toml_loads(content)
+    if data is None:
+        return [_unsupported("# /// script", why, group=group, source=source)]
+    out: list[DependencyIntent] = []
+    for d in data.get("dependencies") or []:
+        if isinstance(d, str):
+            it = parse_intent(d, group=group, source=source)
+            if it is not None:
+                out.append(it)
+        else:
+            out.append(_unknown(repr(d), group=group, source=source))
+    return out
+
+
+# ---- 文件级：有界跟进 -------------------------------------------------------
+class _Walk:
+    """一次 `declared_intents()` 的账：读过几个文件、正在跟进的链（防环）。"""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.root_real = root.resolve(strict=False)
+        self.files = 0
+        self.seen: set[tuple[str, str, str]] = set()
+
+    def rel(self, path: Path) -> str:
+        try:
+            return path.resolve(strict=False).relative_to(self.root_real).as_posix()
+        except ValueError:
+            return path.name
+
+    def inside(self, path: Path) -> bool:
+        # 「在不在项目根内」只有 `projectenv.within` 一处判据（realpath；软链接跳出去也算越界）
+        return projectenv.within(self.root, path)
+
+
+def _read_declaration_file(
+    walk: _Walk, path: Path, *, group: str, kind: str, chain: tuple[str, ...]
+) -> list[DependencyIntent]:
+    """读一份 requirements / constraints 文件并**有界**跟进 `-r` / `-c`。
+
+    边界（每一条都有用例）：文件必须在项目根内（`projectenv.within` 同一判据：resolve 后仍在
+    根下，软链接跳出去也算越界）；一次 walk 最多 `MAX_DECL_FILES` 个文件；同一条跟进链里再次
+    出现的文件是环；缺失 / 越界 / 环 / 超限各记一条 unsupported **留在引用它的那一行的
+    位置**，不是忽略。
+    """
+    key = os.path.normcase(str(path.resolve(strict=False)))
+    source = walk.rel(path)
+    if (key, group, kind) in walk.seen:
+        # 同一次 walk 里同一个文件在**同一组、同一 kind** 下只读一次（菱形 include：a -r c、
+        # b -r c 是常态，不是环）。换一个组或换成约束再 include 它是另一件事——那份条目要归
+        # 新的组 / 变成约束（Codex #459 P1），所以键是三元组而不是文件本身。
+        return []
+    walk.seen.add((key, group, kind))
+    walk.files += 1
+    text, why = _read_declaration(path)
+    if text is None:
+        return [_unsupported(source, UNSUPPORTED_UNREADABLE, group=group, source=source)]
+    out: list[DependencyIntent] = []
+    for line in _logical_lines(text):
+        body = line.split("#", 1)[0].strip()
+        m = _INCLUDE_RE.match(body)
+        if not m:
+            it = parse_intent(line, group=group, source=source, kind=kind)
+            if it is not None:
+                out.append(it)
+            continue
+        opt, target = m.group(1), m.group(2).strip()
+        inc_kind = INTENT_KIND_CONSTRAINT if opt in ("-c", "--constraint") else kind
+        if _ENV_VAR_RE.search(target) or _URL_RE.match(target):
+            out.append(
+                _unsupported(
+                    line,
+                    UNSUPPORTED_ENV_VARIABLE if "${" in target else UNSUPPORTED_DIRECT_URL,
+                    group=group,
+                    source=source,
+                )
+            )
+            continue
+        inc = (path.parent / target) if not os.path.isabs(target) else Path(target)
+        if not walk.inside(inc):
+            out.append(_unsupported(line, UNSUPPORTED_INCLUDE_OUTSIDE, group=group, source=source))
+            continue
+        inc_key = os.path.normcase(str(inc.resolve(strict=False)))
+        if inc_key == key or inc_key in chain:
+            out.append(_unsupported(line, UNSUPPORTED_INCLUDE_CYCLE, group=group, source=source))
+            continue
+        try:
+            is_file = inc.is_file()
+        except OSError:
+            is_file = False
+        if not is_file:
+            out.append(_unsupported(line, UNSUPPORTED_INCLUDE_MISSING, group=group, source=source))
+            continue
+        if walk.files >= MAX_DECL_FILES:
+            out.append(_unsupported(line, UNSUPPORTED_INCLUDE_LIMIT, group=group, source=source))
+            continue
+        # 被 include 的文件的条目归**引用它的组**：`requirements.txt` 里 `-r base.txt`，
+        # base.txt 的条目就是 requirements.txt 这一组的一部分（pip 的语义）。
+        out += _read_declaration_file(walk, inc, group=group, kind=inc_kind, chain=(*chain, key))
+    return out
 
 
 def declared_intents(figures_dir: str | Path, script: str | None = None) -> list[DependencyIntent]:
-    """项目声明过的**全部**依赖意图（无损）：requirements 各文件 + constraints.txt + pyproject。
+    """项目声明过的**全部**依赖意图（无损）：requirements 各文件（含有界跟进的 `-r` / `-c`）
+    + constraints.txt + pyproject（PEP 621 / 735 / Poetry 表）+ 脚本的 PEP 723 + 管理器锁文件
+    的存在（unsupported）。
 
-    与 `project_declared()` 同一套目录范围与文件上限；只读。返回顺序 = 目录由近到远、
-    文件名排序、行序——稳定，可进指纹。
+    与 `project_declared()` 同一套目录范围与文件上限；只读。返回顺序 = 脚本 PEP 723 →
+    目录由近到远、文件名排序、行序——稳定，可进指纹。
     """
     root = Path(figures_dir)
+    walk = _Walk(root)
     out: list[DependencyIntent] = []
-    files = 0
+    if script:
+        try:
+            script_path = root / script
+            if walk.inside(script_path) and script_path.is_file():
+                text, why = _read_declaration(script_path)
+                rel = Path(script).as_posix()
+                if text is None:
+                    out.append(
+                        _unsupported(
+                            rel, UNSUPPORTED_UNREADABLE, group=f"{GROUP_PEP723}:{rel}", source=rel
+                        )
+                    )
+                else:
+                    out += pep723_intents(text, source=rel)
+        except OSError:
+            pass
     for directory in _decl_dirs(figures_dir, script):
         candidates: list[tuple[Path, str]] = []
         for pattern in REQUIREMENTS_GLOBS:
@@ -677,57 +1129,171 @@ def declared_intents(figures_dir: str | Path, script: str | None = None) -> list
                     candidates.append((path, kind))
             except OSError:
                 pass
+        for name in MANAGER_LOCK_NAMES:
+            path = directory / name
+            try:
+                if path.is_file():
+                    out.append(
+                        _unsupported(
+                            name,
+                            UNSUPPORTED_MANAGER_LOCK,
+                            group=walk.rel(path),
+                            source=walk.rel(path),
+                        )
+                    )
+            except OSError:
+                pass
         for path, kind in candidates:
-            if files >= MAX_DECL_FILES:
-                return out
-            files += 1
-            text = _read_text(path)
-            if not text:
+            if walk.files >= MAX_DECL_FILES:
+                out.append(
+                    _unsupported(
+                        walk.rel(path),
+                        UNSUPPORTED_INCLUDE_LIMIT,
+                        group=walk.rel(path),
+                        source=walk.rel(path),
+                    )
+                )
                 continue
             try:
-                rel = path.resolve(strict=False).relative_to(root.resolve(strict=False)).as_posix()
-            except ValueError:
-                rel = path.name
-            try:
                 if path.name == PYPROJECT_NAME:
-                    for gname, decl, raw in _pyproject_intent_groups(text):
-                        intent = parse_intent(decl, group=gname, source=rel, raw=raw)
-                        if intent is not None:
-                            out.append(intent)
+                    walk.files += 1
+                    text, why = _read_declaration(path)
+                    if text is None:
+                        rel = walk.rel(path)
+                        out.append(
+                            _unsupported(
+                                rel,
+                                UNSUPPORTED_UNREADABLE,
+                                group=f"{rel}:{GROUP_PYPROJECT_MAIN}",
+                                source=rel,
+                            )
+                        )
+                    elif text:
+                        out += pyproject_intents(text, source=walk.rel(path))
                 else:
-                    out += parse_intents_text(text, group=path.name, source=rel, kind=kind)
+                    out += _read_declaration_file(
+                        walk, path, group=walk.rel(path), kind=kind, chain=()
+                    )
             except (ValueError, TypeError, RecursionError) as exc:
                 LOG.debug("依赖声明解析失败（忽略）: %s: %s", path, exc)
                 continue
     return out
 
 
+def default_group(group: str) -> bool:
+    """这个组是不是**默认选中**的：任何层级的 `requirements.txt`、pyproject 主依赖、脚本
+    自己的 PEP 723。其余要用户点名（FO20）。"""
+    if not group:
+        return False
+    if group.startswith(f"{GROUP_PEP723}:"):
+        return True
+    if group.endswith(f":{GROUP_PYPROJECT_MAIN}"):
+        return True
+    return Path(group).name == "requirements.txt" and ":" not in group
+
+
+def requirement_string(intent: DependencyIntent, *, with_marker: bool = False) -> str:
+    """交给安装器的那一个字符串——**从解析后的结构重新序列化**，原文不进 argv。
+
+    形状：`name[e1,e2]<spec>`（marker 默认不带：它已经按目标环境求过值，带上只是让 pip 再
+    求一遍；`with_marker=True` 给诊断 / 约束文件用）。名字按 PEP 503 规范化、extras 排序、
+    specifier 是 `SpecifierSet` 的规范串——同一条声明永远得到同一个字符串（可进指纹）。
+    只接受 requirement / constraint 两档；别的抛 `ValueError`。
+    """
+    if not intent.declared:
+        raise ValueError(f"不可序列化为安装需求: kind={intent.kind} raw={intent.raw!r}")
+    if not _NAME_RE.match(intent.name):
+        raise ValueError(f"包名不合形状: {intent.name!r}")
+    extras = f"[{','.join(intent.extras)}]" if intent.extras else ""
+    text = f"{intent.name}{extras}{intent.specifier}"
+    if with_marker and intent.marker:
+        text += f"; {intent.marker}"
+    return text
+
+
 def conflicts(intents: list[DependencyIntent]) -> list[dict]:
-    """同名声明的 specifier 不一致 → 逐名列出（不裁决、不放宽、不做 PEP 440 求值）。
+    """同名声明**确定**互斥的那些 → 逐名列出（不裁决、不放宽）。
 
     requirement 与 **constraint** 一起分组（`requirements.txt` 的 `tabulate==0.9.0` 与
-    `constraints.txt` 的 `tabulate<0.9` 互相矛盾，只看 requirement 会把它漏掉——
-    Codex #451 P2）。判据是「specifier 字符串不止一种」：`>=1` 与 `<2` 也会被列出——
-    这里说的是「有多份不同的话」，兼容与否由 U04 拿真正的版本求值器裁决；漏报比
-    多报更坏。unknown 的行没有名字，不参与。
+    `constraints.txt` 的 `tabulate<0.9` 互相矛盾，只看 requirement 会把它漏掉——Codex #451
+    P2）。U04 起用 `SpecifierSet` 判：任一条是精确 pin（`==` / `===`，不带通配）而另一条不含
+    那个版本、或两条 pin 不同、或下界 ≥ 上界，就是冲突。判不出（`>=1` 与 `<3` 之类）不报
+    ——真正的求解交给安装器，它会在安装前把 `ResolutionImpossible` 报回来（FO21 两条路都
+    停在切 active 之前）。unknown / unsupported 的行没有可判的约束，不参与。
     """
+    _requirements, _markers, specifiers, _utils, version_mod = _pkg()
     by_name: dict[str, list[DependencyIntent]] = {}
     for it in intents:
-        if it.kind in (INTENT_KIND_REQUIREMENT, INTENT_KIND_CONSTRAINT) and it.name:
+        if it.declared and it.name:
             by_name.setdefault(it.name, []).append(it)
     out = []
     for name, items in by_name.items():
-        specs = {it.specifier for it in items}
-        if len(specs) > 1:
+        specs = sorted({it.specifier for it in items if it.specifier})
+        if len(specs) < 2:
+            continue
+        reasons = _contradictions(specs, specifiers, version_mod)
+        if reasons:
             out.append(
                 {
                     "name": name,
-                    "specifiers": sorted(specs),
+                    "specifiers": specs,
                     "sources": [it.source for it in items],
                     "kinds": sorted({it.kind for it in items}),
+                    "reasons": reasons,
                 }
             )
     return out
+
+
+def _contradictions(specs: list[str], specifiers, version_mod) -> list[str]:
+    """两两判确定矛盾；回人读得懂的理由（空 = 判不出矛盾）。"""
+    reasons: list[str] = []
+    parsed = []
+    for s in specs:
+        try:
+            parsed.append((s, specifiers.SpecifierSet(s)))
+        except specifiers.InvalidSpecifier:
+            continue
+
+    def _pin(ss):
+        for sp in ss:
+            if sp.operator in ("==", "===") and "*" not in sp.version:
+                return sp.version
+        return None
+
+    def _bounds(ss):
+        """下界 / 上界各带「含不含端点」：`>=1` 与 `<=1` 交在一个点上，不是空（Codex #459 P2）。"""
+        lo = hi = None
+        lo_inclusive = hi_inclusive = True
+        for sp in ss:
+            try:
+                v = version_mod.Version(sp.version.rstrip(".*"))
+            except version_mod.InvalidVersion:
+                continue
+            if sp.operator in (">=", ">"):
+                inclusive = sp.operator == ">="
+                if lo is None or v > lo or (v == lo and not inclusive):
+                    lo, lo_inclusive = v, inclusive
+            elif sp.operator in ("<=", "<"):
+                inclusive = sp.operator == "<="
+                if hi is None or v < hi or (v == hi and not inclusive):
+                    hi, hi_inclusive = v, inclusive
+        return lo, hi, lo_inclusive and hi_inclusive
+
+    for i, (sa, a) in enumerate(parsed):
+        for sb, b in parsed[i + 1 :]:
+            pa, pb = _pin(a), _pin(b)
+            if pa and pb and pa != pb:
+                reasons.append(f"{sa} 与 {sb} 是两个不同的精确版本")
+            elif pa and not b.contains(pa, prereleases=True):
+                reasons.append(f"{sa} 钉住的版本不满足 {sb}")
+            elif pb and not a.contains(pb, prereleases=True):
+                reasons.append(f"{sb} 钉住的版本不满足 {sa}")
+            else:
+                lo, hi, closed = _bounds(specifiers.SpecifierSet(f"{sa},{sb}"))
+                if lo is not None and hi is not None and (lo > hi or (lo == hi and not closed)):
+                    reasons.append(f"{sa} 与 {sb} 的区间为空")
+    return reasons
 
 
 # ---------------------------------------------------------------------------

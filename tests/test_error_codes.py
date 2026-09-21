@@ -60,6 +60,8 @@ _CODE_REGISTRIES = (
     # U03（ADR 0057）：显式解释器失效 / 计划过期——都是常量式的 code
     "tavotto.engine.pool",
     "tavotto.engine.preparation",
+    # U04（ADR 0061）：跑前的依赖门——常量式 code，落到确认框与 MCP 的 recovery 上
+    "tavotto.engine.deprepair",
 )
 
 
@@ -158,6 +160,8 @@ USER_VISIBLE_CODES = {
     "explicit_python_unusable": set(),
     "project_python_unusable": set(),
     "preparation_plan_stale": set(),
+    # --- U04（ADR 0061）：跑前的依赖门 ---
+    "dependency_preparation_required": set(),
     # 异步准备（统一实施包 U01，ADR 0053）：plan_id 不存在或属于别的项目
     "preparation_not_found": {"id"},
     "interpreter_no_matplotlib": {"path"},

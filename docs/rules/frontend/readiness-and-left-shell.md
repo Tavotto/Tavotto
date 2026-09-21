@@ -52,8 +52,24 @@
   各自确认一次，切回沙盒不确认；老服务端只报两档时第三档不摆）。**三档与选项的文案键写成字面量**
   （`OPTION_LABEL` / `MODE_LABEL` 表），模板拼出来的键死键门禁看不见。MCP 那一面是同一份决定：
   `tavotto_open_figure(workdir=…)`。
+- **跑前的那一次授权（U04，ADR 0061 §六）**：渲染以 `dependency_preparation_required` 回来时同样不是
+  错误块，是缺一次授权——`renderStore` 把 `EngineError.dependencyPreparation`（整份联合计划 + 可选目标）
+  交给 `depRepairStore.requestPreparation`（动态 import，避免 store 环），`DependencyPrepareDialog` 列出
+  要装的包（项目声明的完整形态，不翻译）、认不出的 import、只作约束的条数与两档目标（Tavotto 隔离环境
+  默认；项目 venv 只在它就是此刻选中的解释器时出现，文案说清会改用户环境）；「准备并继续」= `prepare(target)`
+  先绑定计划（`POST /api/engine/dependencies/plan`）再只发 `plan_id`（`/prepare`），进度经同一条 SSE
+  `engine.dependency`（`flow: 'joint'`）按 state 换文案、装完 `retryEnvironmentFailures` 重排并关框——
+  **只认自己发起的那条**（`depRepairStore.onProgress` 按 `plan_id` 与本地的 `plan` / `jointPlan` / `progress` 比对：
+  这条 SSE 不带项目判别、广播给每个订阅者，别的标签页 / 项目的计划装完不能收掉这里的框、不能把这里的渲染重排，
+  Codex #470 P2）；
+  blocked 的计划把 `joint.blocked` 的理由摆出来、不装；「不准备，直接运行」= `POST /api/engine/dependencies/skip`
+  （这道门一直问到有答案——授权或明确跳过），载荷留在 `PanelRender.dependencyPreparation`，错误块的
+  `DependencyPrepareButton` 能再打开；同一时刻只开一份；换了项目的旧载荷不弹。**目标与状态的文案键写成
+  字面量**（`TARGET_LABEL` / `STATE_TEXT` / `BLOCKED_TEXT` 表）。MCP 那一面是同一份决定：
+  `tavotto_open_figure(prepare_dependencies=…)`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
+  `components/DependencyPrepareDialog.test.tsx`、
   `components/ProjectReadinessBanner.test.tsx`、
   `components/left/AssetBrowser.readiness.test.tsx`、
   `canvas/panelReadinessEntry.test.tsx`、`components/inspector/panelCapabilityNote.test.tsx`、

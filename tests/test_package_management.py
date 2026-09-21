@@ -642,6 +642,14 @@ def test_a_missing_package_is_reported_with_its_own_code(tmp_path, wheelhouse, o
     rec = wait_for(job.job_id)
     assert rec["state"] == deprepair.STATE_FAILED
     assert rec["code"] == deprepair.ERROR_NOT_FOUND
-    # 失败之后环境仍然可用（建好了、matplotlib 在）——失败保留环境可用性
+    # U04 起首装 = 建第一代：一次 pip 装不上就是 `incomplete`，**不切 active**（没有可用的
+    # 上一代，所以此刻没有可用环境——不假装有）；下一次装得上的照常建成并 active
+    assert managedenv.python_of(project) is None
+    gens = managedenv.generations(project)
+    assert len(gens) == 1 and next(iter(gens.values()))["state"] == managedenv.GEN_STATE_INCOMPLETE
+    job = deprepair.create_package_job(project, deprepair.OP_INSTALL, FIXTURE_DIST)
+    deprepair.run_package_job_async(job.job_id)
+    assert wait_for(job.job_id)["state"] == deprepair.STATE_DONE
     python = managedenv.python_of(project)
     assert python and _in_venv(python, "import matplotlib; print('ok')") == "ok"
+    assert managedenv.active_generation(project) in managedenv.generations(project)

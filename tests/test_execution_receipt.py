@@ -177,7 +177,8 @@ class TestDependencyIntent:
                 'six==1.17.0; python_version < "3.0"',
                 ("six", "==1.17.0", (), 'python_version < "3.0"'),
             ),
-            ("six>=1.16,<2", ("six", ">=1.16,<2", (), "")),
+            # U04 起 specifier 是 `SpecifierSet` 的规范串（只是排序，语义不变；raw 仍是原文）
+            ("six>=1.16,<2", ("six", "<2,>=1.16", (), "")),
             ("Sorted_Containers", ("sorted-containers", "", (), "")),
         ],
     )
@@ -188,21 +189,33 @@ class TestDependencyIntent:
         assert it.raw == line
 
     @pytest.mark.parametrize(
-        "line",
+        "line,kind,reason",
         [
-            "-r base.txt",
-            "--index-url https://x",
-            "pkg @ https://x/y.whl",
-            "../local",
-            "tabulate[]==1",
+            # 脱离文件上下文的 include 没有可跟进的对象：unknown（文件里的 `-r` 由
+            # `declared_intents` 有界跟进，见 test_dependency_plan.py）
+            ("-r base.txt", depresolve.INTENT_KIND_UNKNOWN, ""),
+            ("--index-url https://x", depresolve.INTENT_KIND_UNSUPPORTED, "option_line"),
+            ("pkg @ https://x/y.whl", depresolve.INTENT_KIND_UNSUPPORTED, "direct_url"),
+            ("../local", depresolve.INTENT_KIND_UNSUPPORTED, "local_path"),
+            ("foo ^1.2", depresolve.INTENT_KIND_UNKNOWN, ""),  # Poetry 语法在 requirements 里
         ],
     )
-    def test_unparseable_lines_become_unknown_intents_not_nothing(self, line):
+    def test_unparseable_lines_become_unknown_or_unsupported_intents_not_nothing(
+        self, line, kind, reason
+    ):
+        """U04：认不出的是 unknown，认得出但不做的是 unsupported + 闭集 reason；两者都保留原文，
+        都不是空依赖。"""
         it = depresolve.parse_intent(line)
         assert it is not None
-        assert it.kind == depresolve.INTENT_KIND_UNKNOWN
-        assert it.name == ""
+        assert it.kind == kind
+        assert it.reason == reason
         assert it.raw == line
+        assert not it.declared
+
+    def test_empty_extras_are_valid_pep508(self):
+        """`tabulate[]==1` 按 PEP 508 合法（空 extras）——成熟解析器认它，我们不另立规矩。"""
+        it = depresolve.parse_intent("tabulate[]==1")
+        assert (it.kind, it.name, it.extras, it.specifier) == ("requirement", "tabulate", (), "==1")
 
     def test_blank_and_comment_lines_are_nothing(self):
         assert depresolve.parse_intent("") is None
@@ -236,10 +249,17 @@ class TestDependencyIntent:
         )
         groups = {it.group for it in intents if it.source == "pyproject.toml"}
         if sys.version_info >= (3, 11):  # tomllib 在：按 project / optional 分组
-            assert "pyproject:project.dependencies" in groups
-            assert "pyproject:optional-dependencies.report" in groups
-        else:  # 3.10 退化路径只认「名字带 dependencies 的数组」，组名统一 pyproject
-            assert groups == {"pyproject"}
+            assert "pyproject.toml:project.dependencies" in groups
+            assert "pyproject.toml:optional-dependencies.report" in groups
+        else:
+            # 3.10 且没有 tomli：整份 pyproject 是一条 unsupported/toml_parser_unavailable
+            # （不是「没有依赖」）；装了 tomli 则与 3.11+ 相同（U04，test_dependency_plan.py）
+            pyproject = [it for it in intents if it.source == "pyproject.toml"]
+            assert pyproject, "pyproject 不能静默变成空"
+            assert all(
+                it.kind in (depresolve.INTENT_KIND_REQUIREMENT, depresolve.INTENT_KIND_UNSUPPORTED)
+                for it in pyproject
+            )
 
     def test_conflicts_are_listed_not_resolved(self):
         """同名声明的 specifier 不一致就列出——**含 constraints.txt**（Codex #451 P2：
@@ -252,25 +272,29 @@ class TestDependencyIntent:
         assert found["tabulate"]["specifiers"] == ["<0.9", "==0.9.0"]
         assert depresolve.INTENT_KIND_CONSTRAINT in found["tabulate"]["kinds"]
         assert found["six"]["kinds"] == [depresolve.INTENT_KIND_REQUIREMENT]
+        # U04：用 SpecifierSet 判**确定**矛盾，理由随结果一起出（判不出的不报，交给安装器）
+        assert found["six"]["reasons"] and found["tabulate"]["reasons"]
         # 旧的安装路径解析器仍是「第一条静默胜出」——这里不改它，只让意图层看见冲突
         assert depresolve.parse_requirements_text("six==1.16.0\nsix==1.17.0") == {"six": "==1.16.0"}
 
-    def test_an_unknown_line_in_a_requirements_file_is_kept(self, tmp_path):
+    def test_an_unresolvable_include_in_a_requirements_file_is_kept(self, tmp_path):
+        """`-r base.txt` 指向不存在的文件：U04 起是 unsupported/include_missing，留在原位，
+        不是忽略、更不是「没有依赖」。"""
         (tmp_path / "requirements.txt").write_text("-r base.txt\nsix==1.17.0\n", encoding="utf-8")
         intents = depresolve.declared_intents(tmp_path)
-        assert [(i.kind, i.raw) for i in intents] == [
-            (depresolve.INTENT_KIND_UNKNOWN, "-r base.txt"),
-            (depresolve.INTENT_KIND_REQUIREMENT, "six==1.17.0"),
+        assert [(i.kind, i.reason, i.raw) for i in intents] == [
+            (depresolve.INTENT_KIND_UNSUPPORTED, "include_missing", "-r base.txt"),
+            (depresolve.INTENT_KIND_REQUIREMENT, "", "six==1.17.0"),
         ]
 
     @pytest.mark.skipif(
         sys.version_info < (3, 11), reason="Poetry 表要 tomllib（3.10 退化路径不认表）"
     )
-    def test_poetry_caret_and_table_values_are_unknown_not_stripped(self, tmp_path):
+    def test_poetry_caret_and_table_values_are_unsupported_not_stripped(self, tmp_path):
         """Codex（#455 转办，P2）：`requests = "^2.31"` 之前只留下名字——版本没了、raw 也是截断值，
-        等于把一条约束偷偷放宽成「任意版本」。D14：未知约束必须明确停止。Poetry 自己的语法
-        （`^` / `~` / 表值）在这里是 `unknown`，raw 保留原文；纯数字版本仍映射成 `==`，raw 也是原文。
-        完整转换归 U04 / X01。"""
+        等于把一条约束偷偷放宽成「任意版本」。D14：未知约束必须明确停止。U04 起 Poetry 自己的语法
+        （`^` / `~` / 表值）是 `unsupported`（理由 `poetry_constraint`，名字保留、raw 是那一条的
+        原样）；纯数字版本仍映射成 `==`。完整转换归 X01。"""
         (tmp_path / "pyproject.toml").write_text(
             "[tool.poetry.dependencies]\n"
             'python = "^3.10"\n'
@@ -281,13 +305,20 @@ class TestDependencyIntent:
         )
         by_raw = {it.raw: it for it in depresolve.declared_intents(tmp_path)}
         assert "python" not in " ".join(by_raw)  # 解释器版本不是依赖
-        caret = by_raw['requests = "^2.31"']
-        assert caret.kind == depresolve.INTENT_KIND_UNKNOWN and caret.name == ""
-        table = by_raw['numpy = {version = "~1.26", extras = ["all"]}']
-        assert table.kind == depresolve.INTENT_KIND_UNKNOWN
-        plain = by_raw['six = "1.17.0"']
+        caret = by_raw["requests = '^2.31'"]
+        assert (caret.kind, caret.reason, caret.name) == (
+            depresolve.INTENT_KIND_UNSUPPORTED,
+            "poetry_constraint",
+            "requests",
+        )
+        table = by_raw["numpy = {'version': '~1.26', 'extras': ['all']}"]
+        assert (table.kind, table.reason) == (
+            depresolve.INTENT_KIND_UNSUPPORTED,
+            "poetry_constraint",
+        )
+        plain = by_raw["six = '1.17.0'"]
         assert (plain.name, plain.specifier, plain.kind) == ("six", "==1.17.0", "requirement")
-        assert all(it.group == "pyproject:tool.poetry.dependencies" for it in by_raw.values())
+        assert all(it.group == "pyproject.toml:tool.poetry.dependencies" for it in by_raw.values())
 
     def test_intent_payload_round_trips_every_field(self):
         it = depresolve.parse_intent("a[b]>=1; os_name == 'nt'", group="g", source="s")
@@ -295,11 +326,13 @@ class TestDependencyIntent:
             "name": "a",
             "specifier": ">=1",
             "extras": ["b"],
-            "marker": "os_name == 'nt'",
+            "marker": 'os_name == "nt"',  # marker 也是规范串（引号统一）；raw 保留原文
             "group": "g",
             "source": "s",
             "kind": "requirement",
             "raw": "a[b]>=1; os_name == 'nt'",
+            "hashes": [],
+            "reason": "",
         }
 
 

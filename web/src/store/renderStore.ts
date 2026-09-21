@@ -2,11 +2,13 @@ import { useMemo } from 'react'
 import { msg, type UiMessage } from '@/i18n'
 import { create } from 'zustand'
 import {
+  DEPENDENCY_PREPARATION_CODE,
   ENVIRONMENT_CODES,
   WORKDIR_CODES,
   EngineError,
   engineErrorMsg,
   engineRender,
+  type DependencyPreparationOffer,
   type DependencyRepairOffer,
   type Manifest,
   type ProjectEnvFailure,
@@ -106,6 +108,8 @@ export interface PanelRender {
    * 用户在确认框里点了「稍后」之后，错误块里还能再把它打开——不留的话那扇门只开一次。
    */
   confirmation: WorkdirConfirmation | null
+  /** `dependency_preparation_required`（U04）时后端给的联合计划载荷（同上：留着能再开） */
+  dependencyPreparation: DependencyPreparationOffer | null
   traceback: string
   warnings: string[]
   /** 最近一次成功渲染的阶段计时（毫秒，键见 api.ts）；暂不做 UI */
@@ -140,6 +144,7 @@ const EMPTY: PanelRender = {
   projectEnv: null,
   dependencyRepair: null,
   confirmation: null,
+  dependencyPreparation: null,
   traceback: '',
   warnings: [],
   timings: {},
@@ -553,6 +558,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             projectEnv: null,
             dependencyRepair: null,
             confirmation: null,
+            dependencyPreparation: null,
             traceback: '',
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
@@ -650,6 +656,15 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           if (confirmation) {
             useEnvStore.getState().requestWorkdirConfirmation(confirmation, projectAtStart)
           }
+          // 跑前的依赖门（U04）：同样不是错误块，是一次授权——载荷交给依赖修复 store，
+          // `DependencyPrepareDialog` 渲染它；条目上也留一份，「稍后」之后错误块里还能再开
+          const dependencyPreparation =
+            err instanceof EngineError ? (err.dependencyPreparation ?? null) : null
+          if (dependencyPreparation) {
+            useEnvStore
+              .getState()
+              .requestDependencyPreparation(dependencyPreparation, projectAtStart)
+          }
           // 失败时保留旧 SVG，用户还能看到上一版
           patch(key, {
             fileId,
@@ -660,6 +675,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             dependencyRepair:
               err instanceof EngineError ? (err.dependencyRepair ?? null) : null,
             confirmation,
+            dependencyPreparation,
             error: timedOut
               ? msg('render.timeout',
                     { minutes: Math.round(timeoutMs / 60_000) }, 'errors')
@@ -699,7 +715,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         v.status === 'error' &&
         ((ENVIRONMENT_CODES as readonly string[]).includes(v.code) ||
           // 「脚本跑完没出图」在换了工作目录模式之后同样值得重跑（ADR 0047）
-          (WORKDIR_CODES as readonly string[]).includes(v.code))
+          (WORKDIR_CODES as readonly string[]).includes(v.code) ||
+          // 跑前的依赖门（U04）：准备完成之后那次「需要先准备」也要重排
+          v.code === DEPENDENCY_PREPARATION_CODE)
       ) {
         ids.add(v.fileId)
       }
