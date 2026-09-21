@@ -609,7 +609,15 @@ def _install_guarded(plan_id: str, on_event) -> dict:
     try:
         return install(plan_id, on_event)
     except RepairError as exc:
-        return _emit(plan_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
+        pinned = (exc.extra or {}).get("pinned")
+        return _emit(
+            plan_id,
+            STATE_FAILED,
+            on_event,
+            code=exc.code,
+            error=str(exc),
+            pinned=pinned if isinstance(pinned, dict) else None,
+        )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("依赖安装线程异常")
         return _emit(plan_id, STATE_FAILED, on_event, code=ERROR_FAILED, error=str(exc))
@@ -1270,12 +1278,17 @@ def _emit(
     code: str = "",
     error: str | None = None,
     result: dict | None = None,
+    pinned: dict | None = None,
 ) -> dict:
     with _lock:
         rec = dict(_progress.get(plan_id) or {"log": ""})
         rec.update(
             plan_id=plan_id, state=state, code=code, error=error, result=result or rec.get("result")
         )
+        if pinned is not None:
+            # 租约里复查到全局固定而失败：界面要的是那条固定（谁、来源、变量），
+            # 只有 code 的话它给不出「恢复自动检测」那一步
+            rec["pinned"] = pinned
         if plan is not None:
             rec.update(
                 import_name=plan.requirement.import_name,

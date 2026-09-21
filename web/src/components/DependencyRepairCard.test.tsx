@@ -26,6 +26,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 }))
 
 import {
+  ApiError,
   cancelDependencyPlan,
   createDependencyPlan,
   fetchEngineEnvironment,
@@ -491,6 +492,44 @@ describe('渲染解释器被全局固定（#465）', () => {
   it('老服务端没给 variable 时退到新名', async () => {
     await render({ ...PINNED, pinned: { python: '/opt/venv/bin/python', source: 'env_override' } })
     expect(text()).toContain(en('repairPinnedEnvHint', { variable: 'TAVOTTO_WORKER_PYTHON' }))
+  })
+
+  it('offer 之后才钉上的：plan 的 400 带回 pinned，卡片切到「恢复自动检测」而不是留着旧目标', async () => {
+    // Codex 评审 P2：只读 offer.pinned 的话，关掉错误又是那几个注定无效的目标
+    planMock.mockRejectedValue(
+      new ApiError('渲染解释器已固定', 400, {
+        code: 'dependency_interpreter_pinned',
+        pinned: { python: '/opt/late/bin/python', source: 'configured', variable: '' },
+      }),
+    )
+    await render()
+    await click(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))
+    expect(document.querySelector('[data-dependency-repair-pinned]')).toBeTruthy()
+    expect(text()).toContain('/opt/late/bin/python')
+    expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
+    expect(byName(en('repairPinnedClear'))).toBeTruthy()
+  })
+
+  it('确认之后才钉上的：安装失败事件带回 pinned，同样切到「恢复自动检测」', async () => {
+    planMock.mockResolvedValue({ plan: PLAN })
+    installMock.mockResolvedValue({ started: true } as never)
+    await render()
+    await click(en('repairUseProjectEnv'))
+    await click(en('repairInstallToProject'))
+    await act(() => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-abc', state: 'failed', log: '', error: '渲染解释器已固定',
+        code: 'dependency_interpreter_pinned',
+        pinned: { python: '/opt/late/bin/python', source: 'configured', variable: '' },
+      } as never)
+    })
+    expect(document.querySelector('[data-dependency-repair-pinned]')).toBeTruthy()
+    expect(text()).not.toContain(en('repairFailed'))
+    // 清掉之后 store 里的那条固定也要清，否则卡片永远停在这一支
+    clearGlobalMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
+    await click(en('repairPinnedClear'))
+    expect(useDepRepairStore.getState().pinned).toBeNull()
+    expect(document.querySelector('[data-dependency-repair-pinned]')).toBeNull()
   })
 })
 

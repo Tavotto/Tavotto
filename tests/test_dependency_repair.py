@@ -1119,6 +1119,29 @@ def test_a_pin_set_during_confirmation_stops_the_install(project, monkeypatch):
     assert deprepair.get_plan(plan.plan_id) is None, "前提已不成立的计划不该留着"
 
 
+def test_the_failed_event_carries_the_pin_for_the_interface(project, monkeypatch):
+    """确认之后才钉上：安装线程的失败事件只有 code 的话，界面给不出「恢复自动检测」
+    （Codex 评审 P2）。事件与 offer / plan 400 同一形状。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    _pin_in_settings(monkeypatch, sys.executable)
+    events: list[dict] = []
+    deprepair._install_guarded(plan.plan_id, events.append)
+    last = events[-1]
+    assert last["state"] == deprepair.STATE_FAILED
+    assert last["code"] == deprepair.ERROR_INTERPRETER_PINNED
+    assert last["pinned"] == {
+        "python": sys.executable,
+        "source": engine_pool.SOURCE_CONFIGURED,
+        "variable": "",
+    }
+    # 补拉那条路（SSE 断了之后）也要带着它
+    assert deprepair.progress(plan.plan_id)["pinned"] == last["pinned"]
+
+
 def test_a_pin_change_is_refused_while_an_install_holds_the_lease(project):
     """安装期间改全局解释器（另一个页签 / API 客户端）：与租约互斥（Codex 第二轮 P1）。
 
@@ -1157,6 +1180,8 @@ def test_the_environment_endpoint_refuses_a_global_change_during_an_install(clie
     resp = client.patch("/api/engine/environment", json={"python": ""})
     assert resp.status_code == 200
     assert engine_config.worker_python() is None
+    # 与 GET 同形：带 project（前端整体替换 env，少了这半边会藏掉受管环境那几行）
+    assert "project" in resp.get_json() and resp.get_json()["project"].get("open") is True
 
 
 # ===========================================================================

@@ -6,6 +6,7 @@ import {
   rebuildManagedEnvironment,
   type DependencyProgress,
   type DependencyRepairPlan,
+  type InterpreterPin,
 } from '@/lib/api'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -32,6 +33,12 @@ interface DepRepairState {
   errorCode: string
   /** 后端给的中文兜底原文（前端没有对应文案时才显示） */
   errorText: string
+  /**
+   * offer 形成**之后**才被钉上的全局解释器（#465，Codex 评审 P2）：plan 的 400 与
+   * 安装失败事件都带着它。留在这里，卡片据此切到「恢复自动检测」那一支——
+   * 否则关掉错误之后又是那几个注定无效的安装目标，用户可以无限重复同一个拒绝。
+   */
+  pinned: InterpreterPin | null
   makePlan: (
     args: { module: string; script: string; target: 'project_venv' | 'tavotto_managed'; distribution?: string },
   ) => Promise<void>
@@ -49,11 +56,11 @@ interface DepRepairState {
   reset: () => void
 }
 
-/** 后端错误 → (code, 原文)。没有 code 的一律归到通用安装失败。 */
-const failure = (e: unknown): { code: string; text: string } => {
-  const body = (e as { body?: { code?: string; error?: string } })?.body
+/** 后端错误 → (code, 原文, 固定)。没有 code 的一律归到通用安装失败。 */
+const failure = (e: unknown): { code: string; text: string; pinned: InterpreterPin | null } => {
+  const body = (e as { body?: { code?: string; error?: string; pinned?: InterpreterPin } })?.body
   const text = e instanceof Error ? e.message : ''
-  return { code: body?.code || '', text: body?.error || text }
+  return { code: body?.code || '', text: body?.error || text, pinned: body?.pinned ?? null }
 }
 
 export const useDepRepairStore = create<DepRepairState>((set, get) => ({
@@ -62,6 +69,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   busy: false,
   errorCode: '',
   errorText: '',
+  pinned: null,
 
   makePlan: async (args) => {
     if (get().busy) return
@@ -70,8 +78,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       const { plan } = await createDependencyPlan(args)
       set({ plan, busy: false })
     } catch (e) {
-      const { code, text } = failure(e)
-      set({ busy: false, errorCode: code, errorText: text })
+      const { code, text, pinned } = failure(e)
+      set({ busy: false, errorCode: code, errorText: text, pinned })
     }
   },
 
@@ -86,8 +94,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       await installDependencyPlan(plan.plan_id)
       set({ busy: false })
     } catch (e) {
-      const { code, text } = failure(e)
-      set({ busy: false, progress: null, errorCode: code, errorText: text })
+      const { code, text, pinned } = failure(e)
+      set({ busy: false, progress: null, errorCode: code, errorText: text, pinned })
     }
   },
 
@@ -139,14 +147,17 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         // （Codex 评审 P1）。后端那半边已经作废了 worker，这里补前端这半边。
         useRenderStore.getState().retryEnvironmentFailures()
       }
-      if (p.state !== 'done') set({ errorCode: p.code || '', errorText: p.error || '' })
+      if (p.state !== 'done') {
+        set({ errorCode: p.code || '', errorText: p.error || '', pinned: p.pinned ?? null })
+      }
       // 计划是一次性的：成功也好失败也好，都不该留着一个已经被消费掉的
       // plan_id 让用户再点一次「安装」。
       set({ plan: null })
     }
   },
 
-  reset: () => set({ plan: null, progress: null, busy: false, errorCode: '', errorText: '' }),
+  reset: () =>
+    set({ plan: null, progress: null, busy: false, errorCode: '', errorText: '', pinned: null }),
 }))
 
 /** 安装是不是正在进行（界面据此禁用按钮、显示进度而不是选项） */

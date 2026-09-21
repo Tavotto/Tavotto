@@ -4838,7 +4838,11 @@ def api_engine_environment_set():
     except engine_envlease.EnvironmentBusy as exc:
         return jsonify({"error": str(exc), "code": exc.code}), 409
     engine_pool.reset_worker_python()
-    return jsonify(engine_bootstrap.status())
+    # 与 GET 同一形状（带 `project`）：前端拿这份整体替换 `env`，少了项目那半边
+    # 就会把受管环境 / 工作目录那几行藏到下一次无关刷新（Codex 评审 #469 P2）
+    st = engine_bootstrap.status()
+    st["project"] = _project_environment_state()
+    return jsonify(st)
 
 
 def _set_project_environment(raw: str, *, module: str = ""):

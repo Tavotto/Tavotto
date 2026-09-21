@@ -4,7 +4,7 @@ import { i18n, t as translate } from '@/i18n'
 import type {
   DependencyRepairOffer,
   DependencyTarget,
-  EngineSource,
+  InterpreterPin,
   SystemInterpreterRejection,
 } from '@/lib/api'
 import { useRenderStore } from '@/store/renderStore'
@@ -60,6 +60,7 @@ export function DependencyRepairCard({
     busy,
     errorCode,
     errorText,
+    pinned: pinnedSince,
     makePlan,
     install,
     adoptSystemPython,
@@ -69,6 +70,18 @@ export function DependencyRepairCard({
   const [manual, setManual] = useState('')
   const running = isRepairRunning(progress)
   const pkg = offer.requirement?.distribution || module
+
+  // ---- 全局显式解释器压住了项目级决策（#465）：只有一条出口 ---------------
+  // offer 形成时就有的（`offer.pinned`）与之后才钉上的（plan 的 400 / 安装失败
+  // 事件带回来的 `pinnedSince`）走同一支。装进任何目标都不会被用，所以这里
+  // **不列安装目标、不给「选择其他 Python」**（那条写的也是项目级决策）。能解开
+  // 它的只有清掉那条固定：设置里指定的在这里一键清，环境变量的说清楚要清什么、
+  // 然后重启。排在进度之前：安装失败在「已被钉上」那一刻就结束了，进度页只会
+  // 再说一遍失败。
+  const pinned = offer.pinned ?? pinnedSince
+  if (pinned) {
+    return <Pinned module={pkg} pinned={pinned} onCleared={reset} />
+  }
 
   // ---- 安装进行中 / 刚结束：只显示进度，不再显示一堆选项 ------------------
   if (progress && (running || progress.state !== 'idle')) {
@@ -106,14 +119,6 @@ export function DependencyRepairCard({
         <Failure code={errorCode} text={errorText} />
       </div>
     )
-  }
-
-  // ---- 全局显式解释器压住了项目级决策（#465）：只有一条出口 ---------------
-  // 装进任何目标都不会被用，所以这里**不列安装目标、不给「选择其他 Python」**
-  //（那条写的也是项目级决策）。能解开它的只有清掉那条固定：设置里指定的在这里
-  // 一键清，环境变量的说清楚要清什么、然后重启。
-  if (offer.pinned) {
-    return <Pinned module={pkg} pinned={offer.pinned} />
   }
 
   // ---- 起点：给出口 -------------------------------------------------------
@@ -245,9 +250,11 @@ export function DependencyRepairCard({
 function Pinned({
   module,
   pinned,
+  onCleared,
 }: {
   module: string
-  pinned: { python: string; source: EngineSource; variable?: string }
+  pinned: InterpreterPin
+  onCleared: () => void
 }) {
   useTranslation('errors')
   const { setPython } = useEnvStore()
@@ -266,7 +273,11 @@ function Pinned({
     const failure = await setPython(null)
     setBusy(false)
     setError(failure)
-    if (!failure) useRenderStore.getState().retryEnvironmentFailures()
+    if (failure) return
+    // 清掉之后这张卡的前提没了：先把 store 里记下的那条固定与错误清空，再把因
+    // 缺包失败的渲染重新排上（顺序无所谓，两者都不依赖对方）
+    onCleared()
+    useRenderStore.getState().retryEnvironmentFailures()
   }
   return (
     <div data-dependency-repair-pinned className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">

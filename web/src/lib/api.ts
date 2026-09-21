@@ -2693,7 +2693,14 @@ export interface DependencyRepairOffer {
    * `source` 决定出口——`configured` / `managed_venv` 可以在这里一键清掉，
    * `env_override` 只能让用户清环境变量后重启。
    */
-  pinned?: { python: string; source: EngineSource; variable?: string }
+  pinned?: InterpreterPin
+}
+
+/** 正在生效的全局显式解释器（#465）：offer / plan 400 / 安装失败事件三处同一形状 */
+export interface InterpreterPin {
+  python: string
+  source: EngineSource
+  variable?: string
 }
 
 /** 后端发出来的安装计划。`plan_id` 是这次授权的凭据，不可猜、有有效期。 */
@@ -2719,6 +2726,8 @@ export interface DependencyProgress {
   target_kind?: string
   script?: string
   result?: { python?: string; version?: string; distribution?: string } | null
+  /** state = failed 且 code = dependency_interpreter_pinned 时：租约里复查到的那条固定 */
+  pinned?: InterpreterPin
 }
 
 export const createDependencyPlan = (body: {
