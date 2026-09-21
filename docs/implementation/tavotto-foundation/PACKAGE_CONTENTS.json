@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 40716,
-      "sha256": "7f6b49c42de8ad84507f69c879df5f612e07d9ddc6f11b1de39e55e80f03528c"
+      "bytes": 44240,
+      "sha256": "1156a43f1e850487c64c5f4102c53898340e80ca8fa20f0b2e973b550e9c9151"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 20557,
-      "sha256": "525d3366424f6124c308f484da656a1a4c76c97046495492633f29caf36df724"
+      "bytes": 20606,
+      "sha256": "67d87b440fab07102059cd2f8f66332d0866b42b01046898497a54808af11bb4"
     },
     {
       "path": "archive/README.md",
@@ -234,8 +234,8 @@
     },
     {
       "path": "handoffs/U03_first_open.md",
-      "bytes": 18995,
-      "sha256": "d2310bf6028375e496446ef3aef1068b38b4b2f7208ae271a51d1a0cb2e4a209"
+      "bytes": 19740,
+      "sha256": "f0bedbb07de6171cd45b9d22d015d2177fb8c91bdb2c5fce4ec7f6866ed07835"
     },
     {
       "path": "phase_mapping.json",
@@ -324,8 +324,8 @@
     },
     {
       "path": "tools/generate_facade_ledger.py",
-      "bytes": 6181,
-      "sha256": "5ca7da541aaacb1a0f587c18aa948847a5cfaddac6dea1e02d8faf22587b49a9"
+      "bytes": 6177,
+      "sha256": "ff6760d50106925710e9a3eeafe65ddc40f0a97d27b78bca10e54820923b5bd0"
     },
     {
       "path": "tools/generate_views.py",
