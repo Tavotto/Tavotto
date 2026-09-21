@@ -19,7 +19,7 @@
 | 档 | 量什么 | 在哪跑 | 前提 | 能推出什么 |
 |---|---|---|---|---|
 | **机制**（pr lane，每个 PR） | 供应器状态机、事务接入、隔离、去重 / 取消 / 退役 | `tests/test_private_python.py`、`tests/test_private_python_transaction.py`（本地供应服务 + 假归档；真 venv / 真 pip） | 宿主有 Python；替身归档 | 代码按 ADR 0063 的合同工作；**不是**资格 |
-| **工程**（nightly / dispatch / 本能力文件变动时的 PR，具名非 required job `private-python-targets.yml`） | ① 真 pbs 归档经**产品代码**走完整链（公网供应探活单列一步）；② Linux：供应好的 runtime 只读挂进**没有 Python 的空镜像** `ubuntu:24.04`（`--network none`）真起 → venv → 离线装科学栈 → 出图；③ Windows：注册表 `Software\Python` / 用户与系统 `Path` / USERPROFILE 顶层前后快照 | 三个托管 runner；「没有基础解释器」= 发现链末端置空（`bootstrap.find_base_python → None`） | 归档、runtime、事务、隔离在真实目标平台上成立；**空镜像那一条**证明 runtime 在只有 glibc 的目标上可用。仍不是资格：宿主有系统 Python，产品的**入口**没有在无 Python 的机器上跑过 |
+| **工程**（每周 schedule / dispatch / 本能力文件变动时的 PR，具名非 required job `private-python-targets.yml`；三条腿各真下载 30–120 MB 归档，按周刷新） | ① 真 pbs 归档经**产品代码**走完整链（公网供应探活单列一步）；② Linux：供应好的 runtime 只读挂进**没有 Python 的空镜像** `ubuntu:24.04`（`--network none`）真起 → venv → 离线装科学栈 → 出图；③ Windows：注册表 `Software\Python` / 用户与系统 `Path` / USERPROFILE 顶层前后快照 | 三个托管 runner；「没有基础解释器」= 发现链末端置空（`bootstrap.find_base_python → None`） | 归档、runtime、事务、隔离在真实目标平台上成立；**空镜像那一条**证明 runtime 在只有 glibc 的目标上可用。仍不是资格：宿主有系统 Python，产品的**入口**没有在无 Python 的机器上跑过 |
 | **目标**（release lane，U11） | 真实无系统 Python 的目标 + **冻结产物**（Windows NSIS / macOS 签名 app）+ 正常入口（打开项目 → 一次授权 → 私有 Python → 环境 → 出图） | Windows 干净 VM / 容器（无 Python、无 py launcher）、macOS 干净用户（无 Homebrew / python.org / Conda）；Linux 没有桌面产物，只有 ② 那一档 | **资格**（FO23 / FO-022） |
 
 三档的判据各自独立：第一档红是代码坏了；第二档红分「公网供应失败」（单列那一步）与「产品 / 归档 / 平台」两类，
@@ -29,18 +29,18 @@
 
 | 目标 | 机制 | 工程 ① 产品链 | 工程 ② 空镜像 | 工程 ③ 注册表 | 目标（资格） | `enabled` |
 |---|---|---|---|---|---|---|
-| macos-arm64 | pr lane | nightly 腿 + 本机（evidence/u05） | 不适用（macOS 没有空镜像） | 不适用 | **未取得**（U11：干净用户 + 签名 app） | false |
+| macos-arm64 | pr lane | 周腿 + 本机（evidence/u05） | 不适用（macOS 没有空镜像） | 不适用 | **未取得**（U11：干净用户 + 签名 app） | false |
 | macos-x86_64 | 同上（不分架构） | 无 Intel runner | 不适用 | 不适用 | 未取得 | false |
-| linux-x86_64 | pr lane | nightly 腿 | nightly 腿 | 不适用 | 无桌面产物：以 ② 为该平台的最高档 | false |
+| linux-x86_64 | pr lane | 周腿 | 周腿 | 不适用 | 无桌面产物：以 ② 为该平台的最高档 | false |
 | linux-arm64 | 同上 | 无 arm64 runner | 本机 docker（evidence/u05/empty-image-linux-arm64.json） | 不适用 | 同上 | false |
-| windows-x86_64 | pr lane | nightly 腿 | 不适用（Windows 容器另议） | nightly 腿 | **未取得**（U11：干净 VM + NSIS） | false |
+| windows-x86_64 | pr lane | 周腿 | 不适用（Windows 容器另议） | 周腿 | **未取得**（U11：干净 VM + NSIS） | false |
 
 「不适用」是事前支持矩阵里的真实不适用，不是 skip（03 §5）。
 
 ### 三、台账
 
 FO23（无系统 Python / uv / pip 冷启动）由 planned → **observing**：具名任务 = `private-python-targets.yml`（三条腿的
-`TestRealChain` + 空镜像 + 注册表快照），`lane: release`（它的资格档在 release lane），`expected_product_outcome: guided`
+`TestRealChain` + 空镜像 + 注册表快照；每周一次 + dispatch + 本能力文件变动的 PR），`lane: release`（它的资格档在 release lane），`expected_product_outcome: guided`
 不变。它不进任何 Gate 的闭集；红保留在 workflow 结论与工件里。**observing 的用例一条都不许 skip**：`TestRealChain`
 缺 wheelhouse 才 skip，而三条腿都先建 wheelhouse——skip 就是基础设施红。FO-022（真桌面产物）保持 planned 到 U11。
 FO24 / FO25 / FO26 的机制面用例在 pr lane 已有（ADR 0063），经真实入口的场景在 PR B 提升。
@@ -48,8 +48,8 @@ FO24 / FO25 / FO26 的机制面用例在 pr lane 已有（ADR 0063），经真�
 ### 四、翻 `enabled` 的 PR 必须带什么
 
 某目标 `enabled: true` 的 PR = 第三档证据（目标系统清单、进程树、下载与安装目标、artifact SHA、编辑结果——
-`archive/firstopen_cases.json` FO23 的 `required_evidence`）+ 该目标最近一次 nightly 腿绿 + 台账里 FO23 该目标的实例
-`pass` + 06 §2 要求的升级与回退方案。翻回 false 不需要证据（关能力永远安全）。**不允许**：拿另一平台的证据替代、
+`archive/firstopen_cases.json` FO23 的 `required_evidence`）+ 该目标**当天手动 dispatch 一次** `private-python-targets.yml`
+的腿绿（周 schedule 的证据可能已过期一周）+ 台账里 FO23 该目标的实例 `pass` + 06 §2 要求的升级与回退方案。翻回 false 不需要证据（关能力永远安全）。**不允许**：拿另一平台的证据替代、
 拿清 PATH 的托管 runner 冒充干净目标、拿 spike 的 report 当产品证据。
 
 ### 五、不做的事
