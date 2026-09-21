@@ -8,7 +8,9 @@
   `engine/updater.py`、`engine/runtime.py`、`engine/project_refresh.py`、
   `engine/project_watch.py`、`engine/readiness.py`、`engine/workdir.py`、
   `engine/databinding.py`、`engine/preparation.py` 被 Flask import，
-  **必须保持纯标准库**。
+  **必须保持纯标准库**。「纯标准库」挡的是科学栈（matplotlib / numpy 由 worker 解释器提供）；
+  `pyproject.toml` 声明的三个运行时依赖（flask / pymupdf / packaging）是父进程自己的——`packaging`
+  自 U04（ADR 0061）起只在 `engine/depresolve.py` 的 intent 读法里延后 import，别处不许 import 它。
 - 渲染解释器由 `pool.resolve_worker_python(项目, script=…)` 决定（ADR 0018 / 0044 / 0057）：
   显式（环境变量 / 设置）> 项目记住的 > **项目自带的 venv（首开发现 + 体检，每进程每项目一次）**
   > 内置 / 自身 / 系统。**失效的显式选择不静默替换**：`explicit_python_unusable` /

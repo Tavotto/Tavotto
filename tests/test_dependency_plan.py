@@ -787,6 +787,21 @@ class TestPlan:
         pd = depplan.plan(a, "plot.py", facts=_facts(), target_kind="project_venv")
         assert pd.identity != pa.identity
 
+    def test_plan_classifies_stdlib_by_the_target_interpreter_not_the_host(self, tmp_path):
+        """脚本会在目标解释器里跑：目标的标准库表说了算。目标表里没有 `zoneinfo`（比如更老的解释器）
+        → 它是 unknown；目标表里多一个宿主没有的名字 → 它是 stdlib，不装。"""
+        proj = self._project(tmp_path, "import zoneinfo\nimport fakemod_from_target\n")
+        facts = _facts()
+        narrow = depplan.TargetFacts(
+            python=facts.python,
+            marker_env=facts.marker_env,
+            stdlib=frozenset({"os", "fakemod_from_target"}),
+            installed={},
+        )
+        plan = depplan.plan(proj, "plot.py", facts=narrow, target_kind="tavotto_managed")
+        assert plan.unknown == ("zoneinfo",)
+        assert plan.scan["counts"]["stdlib"] == 1 and plan.requirements == ()
+
     def test_bad_target_kind_is_rejected(self, tmp_path):
         with pytest.raises(ValueError):
             depplan.plan(tmp_path, "plot.py", facts=_facts(), target_kind="bundled")
