@@ -43,6 +43,12 @@ cwd 三分的生产者（`project_root` 第三档 + 首开按静态证据问一�
 静态扫描的问题分类与目标解释器解析（ADR 0057）。六条首开场景经真实 HTTP 入口提到 `enforced`
 （FO01 / FO02 / FO03 / FO07 / FO15 / FO19），四条 `observing`。交接见 [`handoffs/U03_first_open.md`](handoffs/U03_first_open.md)。
 
+U04 于 2026-09-21 开始执行（`implementation_status: in_progress`；产品资格仍 `not_run`）：PR A 把依赖声明的无损读法交给
+`packaging`（PEP 508 / 440、有界 `-r` / `-c`、PEP 723 / 735、Poetry 表只认 PEP 440 形态、`unsupported` 闭集、3.10 无 tomllib
+的分支）、按 import 上下文分类「需要」（`engine/importscan.py`）、按目标解释器求 marker 并算出联合计划（`engine/depplan.py`，
+不装任何东西）；ADR 0061 记安装器裁决（pip 留在 U04，uv 经同一事务在 U05 接入）与受管环境按代的事务形状（PR B）、跑前的门与
+一次授权（PR C）。交接见 [`handoffs/U04_dependencies.md`](handoffs/U04_dependencies.md)。
+
 ## 从哪里开始
 
 先读 [执行总提示词](00_MASTER_PROMPT.md)、[范围与修改决策](01_SCOPE_AND_DECISIONS.md)、[路线图](02_ROADMAP.md) 和 [CI 生效政策](03_CI_POLICY.md)。随后只执行 [U00](phases/U00_baseline.md)，不要在第一步删除 PyMuPDF、更换根许可证或一次启用全部兼容门禁。
