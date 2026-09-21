@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import faulthandler
 import importlib
 import json
 import os
@@ -100,6 +101,81 @@ def _patched_savefig(self, fname, *args, **kwargs):
     if stem and SESSION is not None:
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
     return None
+
+
+#: 命令行参数解析库：`SystemExit` 从这些模块的帧里抛出来 = 脚本要参数而 Tavotto 没给。
+#: 判帧的**模块来历**（`f_globals["__name__"]` 的顶级包名），不判文件路径——用户把脚本
+#: 放在叫 `click/` 或 `fire/` 的目录里，路径分量就会撒谎（评审 #443）；也不判异常文本——
+#: argparse 的 usage 是打到 stderr 的，异常对象里只有一个退出码 2。
+_CLI_PARSER_MODULES = frozenset(
+    {"argparse", "optparse", "getopt", "click", "typer", "docopt", "fire"}
+)
+
+#: 脚本以非零 `sys.exit` 结束时的两个稳定 code（ADR 0003 §5 加 code 不升版）。
+#: 两者对用户是两件事：前者是「脚本要参数，Tavotto 不带参数运行」——出路是给默认值
+#: 或 `tavotto run`；后者是「脚本自己 exit 了」——出路是去掉那句 exit。
+SCRIPT_NEEDS_ARGUMENTS = "script_needs_arguments"
+SCRIPT_EXITED = "script_exited"
+
+
+def _raised_by_cli_parser(exc: BaseException) -> bool:
+    """`SystemExit` 是不是参数解析库**自己**抛的——只看抛出点（最内层）那一帧。
+
+    看整条栈会把「控制流经过了 click」当成「click 退出的」：一个无参数的 click 命令，
+    用户回调里 `sys.exit(7)`，栈里也有好几层 `click.core`（评审 #443）。argparse 的
+    `parser.error()` → `self.exit(2)` → `sys.exit` 最内层在 `argparse`；click 的用法错误
+    在 `click.core.main` 里 `sys.exit(e.exit_code)`，同样在最内层。
+    """
+    tb = exc.__traceback__
+    if tb is None:
+        return False
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    module = str(tb.tb_frame.f_globals.get("__name__") or "")
+    return module.split(".")[0] in _CLI_PARSER_MODULES
+
+
+def _script_exit_error(exc: SystemExit) -> ProtocolError:
+    """用户脚本以非零 `sys.exit` 结束 → 结构化错误（进程不退出）。
+
+    `SystemExit` 不是 `Exception`：不接住的话它会穿过 `ensure_built`，落到主循环
+    那条给协议 `shutdown` 用的 `except SystemExit: break` 上——worker 悄无声息地
+    退出，上层只看得到管道 EOF，报成「渲染进程崩溃」，而 worker.log 里最后两行
+    其实是 argparse 的 `usage: …`（#435 一族里最常见的形状）。
+    """
+    # message 会进 app.log、再随诊断包出门：`sys.exit("patient-123 …")` 的载荷是用户的
+    # 文字，不进 message（评审 #443 第十三轮）；它原样在 traceback 区的 `SystemExit: …`
+    # 那一行，用户自己看得到。message 里只写 CPython 真正用的退出状态。
+    status = _exit_status(exc.code)
+    call = f"sys.exit({exc.code})" if isinstance(exc.code, int) else "sys.exit(<一段文字>)"
+    if _raised_by_cli_parser(exc):
+        return ProtocolError(
+            SCRIPT_NEEDS_ARGUMENTS,
+            f"脚本要求命令行参数，而 Tavotto 运行脚本时不带任何参数（sys.argv 只有脚本"
+            f"自己），参数解析于是以 {call} 结束。给这些参数写默认值，"
+            "或用 `tavotto run -- python 脚本.py 参数…` 让 Tavotto 跟着你自己的命令跑。",
+            retryable=False,
+            traceback_text=traceback.format_exc(),
+            extra={"exit_code": status},
+        )
+    return ProtocolError(
+        SCRIPT_EXITED,
+        f"脚本调用了 {call} 提前结束。Tavotto 要的是脚本跑完后留在内存里的 "
+        "Figure——去掉那句 exit，或改成只在出错时 exit。",
+        retryable=False,
+        traceback_text=traceback.format_exc(),
+        extra={"exit_code": status},
+    )
+
+
+def _exit_status(code) -> int:
+    """`SystemExit.code` → 进程真正会用的退出状态（CPython `handle_system_exit` 的规则）：
+    None → 0，整数原样，其它载荷打印到 stderr 后以 1 退出。"""
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return code
+    return 1
 
 
 @contextlib.contextmanager
@@ -241,36 +317,49 @@ class Worker(wireproto.V1Handler):
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
-        # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
-        # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
-        # 任何不带 paper_style.py 的图库都会以 ModuleNotFoundError 开局。
-        try:
-            import paper_style  # noqa: PLC0415
-        except ImportError:
-            pass
-        else:
-            # 与 `_patched_savefig` 同一条来源记账：paper_style.save 是显式
-            # 「保存这张图」，来源就是 savefig（以前这里不记来源，靠读取端
-            # `.get(stem, SOURCE_SAVEFIG)` 兜底——结果一样，现在是显式的）。
-            paper_style.save = lambda fig, stem, outdir="figures": SESSION.add_figure(
-                stem, fig, figcapture.SOURCE_SAVEFIG
-            )
 
         # 脚本看到的 argv 必须是它自己的，不是 worker 的。不换的话
         # `sys.argv[1:]` 拿到的是 --script/--out-dir/--entry 这串内部参数，
         # 按参数命名输出的脚本会存出一堆叫 "--entry" 的图（试运行探测时
         # 当场撞见过）。真跑 `python fig.py` 时 argv 就只有脚本自己。
+        # **排在 paper_style 之前**：那份私有模块也是用户代码，import 期间就可能
+        # 解析参数（评审 #443）。
         sys.argv = [str(self.script)]
 
         t_script = time.perf_counter()
+        # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
+        # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
+        # 那条给协议 `shutdown` 用的 `except SystemExit: break` 上——worker 悄无
+        # 声息地退出，stdout EOF，supervisor 只能报「渲染进程崩溃」，worker.log
+        # 里连一行 traceback 都没有。与 `python fig.py` 的语义对齐：退出码 0 /
+        # None 就是脚本正常结束（已经画好的图照常捕获），非零才是它自己报的失败。
+        # paper_style 的 import 也在这道保护里：它是用户代码，import 期间一样能 exit。
         with contextlib.redirect_stdout(sys.stderr):
-            if self.entry == "__main__":
-                import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
+            try:
+                # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
+                # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
+                # 任何不带 paper_style.py 的图库都会以 ModuleNotFoundError 开局。
+                try:
+                    import paper_style  # noqa: PLC0415
+                except ImportError:
+                    pass
+                else:
+                    # 与 `_patched_savefig` 同一条来源记账：paper_style.save 是显式
+                    # 「保存这张图」，来源就是 savefig（以前这里不记来源，靠读取端
+                    # `.get(stem, SOURCE_SAVEFIG)` 兜底——结果一样，现在是显式的）。
+                    paper_style.save = lambda fig, stem, outdir="figures": SESSION.add_figure(
+                        stem, fig, figcapture.SOURCE_SAVEFIG
+                    )
+                if self.entry == "__main__":
+                    import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
 
-                runpy.run_path(str(self.script), run_name="__main__")
-            else:
-                module = importlib.import_module(self.script.stem)
-                getattr(module, self.entry)()
+                    runpy.run_path(str(self.script), run_name="__main__")
+                else:
+                    module = importlib.import_module(self.script.stem)
+                    getattr(module, self.entry)()
+            except SystemExit as exc:
+                if exc.code not in (None, 0):
+                    raise _script_exit_error(exc) from exc
         script_ms = _ms(t_script)
 
         # pyplot 兜底：从不 savefig 的脚本（`plt.plot(...); plt.show()` 这种
@@ -413,6 +502,9 @@ class Worker(wireproto.V1Handler):
             return
         try:
             self.build(timings)
+        except ProtocolError:
+            # build 自己已经分好类的（脚本要命令行参数 / 脚本主动 exit）原样上抛
+            raise
         except Exception as exc:  # noqa: BLE001 — 转成结构化错误，进程不退出
             raise ProtocolError(
                 "script_error",
@@ -461,6 +553,19 @@ def main() -> None:
     sys.stdin.reconfigure(encoding="utf-8", errors="replace")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+    # 硬崩溃（access violation / segfault / abort：DLL 冲突、C 扩展里的越界）不经过
+    # Python 的异常机制，进程当场消失，worker.log 里一个字都没有——父进程只看得到
+    # 管道 EOF，报出来的是一句「渲染进程崩溃」，用户与我们都无从下手（issue #435
+    # 的诊断包里正是 24 条这样的空记录）。faulthandler 让 CPython 在那一刻把
+    # Python 栈写进 stderr（就是 worker.log）：崩在哪个 import、哪句 draw 一眼可见。
+    # 装在 stderr 重配之后：它记的是**此刻**的 fd。3.14 起默认还会附一段 C 栈
+    # （二三十行 `Binary file …`），把最有用的 Python 帧顶出日志尾巴——关掉它，
+    # 各版本给出同一形状；老版本没有这个形参就按老样子开。
+    try:
+        faulthandler.enable(file=sys.stderr, all_threads=True, c_stack=False)
+    except TypeError:
+        faulthandler.enable(file=sys.stderr, all_threads=True)
 
     worker = Worker(ap.parse_args())
 

@@ -93,6 +93,11 @@
   try/except 里，捕获靠通用的 `_patched_savefig` 兜底。曾经这行是硬 import，
   任何不带 paper_style.py 的图库（论文的 supporting_information、外部用户的图库）
   都以 ModuleNotFoundError 开局，一张图都渲染不了（test_build_without_paper_style 看护）。
+  它也是**用户代码**：import 排在 `sys.argv` 换好之后、且在与脚本同一道 `SystemExit`
+  保护里（评审 #443 第七轮）——paper_style 里 `argparse` 缺参数的 `sys.exit(2)` 与脚本
+  自己要参数同一个答案 `script_needs_arguments`，会话还活着；以前它在保护之外、argv 之前，
+  worker 随之退出、上层报 session_dead（`test_paper_style_sees_the_scripts_own_argv` /
+  `test_an_exit_raised_while_importing_paper_style_is_the_scripts_own` 看护）。
 - worker 里 **`sys.argv` 必须换成脚本自己的**。不换的话按参数命名输出的脚本
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。

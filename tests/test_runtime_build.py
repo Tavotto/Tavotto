@@ -655,6 +655,30 @@ def test_spec_ships_every_module_the_worker_imports():
     assert not missing, f"packaging/tavotto.spec 漏了 worker 要用的模块: {missing}"
 
 
+def test_worker_side_modules_compile_without_escape_warnings():
+    """执行侧源码在**完整** Python 上编译时不许有「无效转义」警告。
+
+    内置 runtime 读的是预编译 .pyc，看不到它；用户自己的 Conda / venv 是从源码
+    编译的，3.12+ 把 `"\\o"` 这类无效转义报成 SyntaxWarning——它打在 stderr 重配成
+    UTF-8 **之前**，于是 worker.log 开头多出一行乱码（issue #435 用户截图第一行
+    就是 `manifest.py:1523: SyntaxWarning: invalid escape sequence '\\o'`），而
+    CPython 早晚会把它升成 SyntaxError。3.10 / 3.11 上同一件事是 DeprecationWarning，
+    两类都记。
+    """
+    import warnings
+
+    engine = REPO / "src" / "tavotto" / "engine"
+    offenders = []
+    for path in sorted(engine.glob("*.py")):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            compile(path.read_text(encoding="utf-8"), str(path), "exec")
+        for w in caught:
+            if issubclass(w.category, (SyntaxWarning, DeprecationWarning)):
+                offenders.append(f"{path.name}:{w.lineno}: {w.message}")
+    assert not offenders, "\n".join(offenders)
+
+
 def test_release_chain_refuses_to_ship_without_the_runtime():
     """漏了 runtime 照样能编出安装包，而那个包只有到了用户手里才暴露问题。
 

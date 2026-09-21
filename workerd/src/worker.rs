@@ -129,6 +129,66 @@ pub enum WorkerEvent {
     Eof(u64),
 }
 
+/// 管道 EOF 之后子进程的下场——随 `session_dead` 的信封带出去。
+///
+/// 「渲染进程崩溃」这一句以前是 EOF 的全部描述，而 EOF 背后至少有四种事实，
+/// 用户的下一步各不相同：自己以 0 退出（脚本 `sys.exit()` / stdin 被关）、以非零
+/// 退出（Python 致命错误、`abort()`）、被信号杀掉（POSIX 的 SIGSEGV / SIGKILL）、
+/// 关了管道却还活着（fd 1 被脚本关掉）。退出码是分辨它们的唯一凭据——Windows 上
+/// 0xC0000005（access violation）与 0xC0000135（DLL not found）都藏在这个数里。
+/// **怎么解释这个数归 Python 侧**（`pool.explain_exit`），这里只如实报。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExitReport {
+    /// 进程自己的退出码。Windows 上是 NTSTATUS 按 i32 解释（0xC0000005 → -1073741819）。
+    pub code: Option<i32>,
+    /// POSIX 上被哪个信号杀掉；Windows 恒 `None`。
+    pub signal: Option<i32>,
+    /// EOF 之后进程在宽限期内**没有**自己退出，由 workerd 收掉——此时 code / signal
+    /// 说的是被收掉的那一下，不是它自己的死因。
+    pub lingered: bool,
+}
+
+impl ExitReport {
+    pub fn to_json(&self) -> Value {
+        serde_json::json!({
+            "code": self.code,
+            "signal": self.signal,
+            "lingered": self.lingered,
+        })
+    }
+
+    /// 一句人话（supervisor 层的口径；Python 侧会按退出码再解释一层）。
+    pub fn describe(&self) -> String {
+        if self.lingered {
+            return "关掉了协议管道但没有退出，已被终止".to_string();
+        }
+        match (self.code, self.signal) {
+            (Some(code), _) => format!("退出码 {code}"),
+            (None, Some(sig)) => format!("被信号 {sig} 终止"),
+            (None, None) => "退出状态未知".to_string(),
+        }
+    }
+}
+
+/// EOF 后等它自己退出的宽限：真实崩溃里「关 stdout → 进程消失」是微秒级，这里
+/// 只是给 Windows 上慢半拍的进程回收留余量，不是等脚本跑完。
+pub const EXIT_GRACE: Duration = Duration::from_millis(1500);
+
+fn exit_report_of(status: std::process::ExitStatus, lingered: bool) -> ExitReport {
+    #[cfg(unix)]
+    let signal = {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    };
+    #[cfg(not(unix))]
+    let signal: Option<i32> = None;
+    ExitReport {
+        code: status.code(),
+        signal,
+        lingered,
+    }
+}
+
 /// 一个活着的 worker 子进程。
 pub struct WorkerProc {
     /// 只在 spawn / kill / try_wait 时短暂持锁——I/O 走另外两条线程的句柄，
@@ -206,18 +266,46 @@ impl WorkerProc {
         std::thread::Builder::new()
             .name(format!("workerd-read-{pid}"))
             .spawn(move || {
-                let reader = BufReader::new(stdout);
-                for line in reader.lines() {
-                    let line = match line {
-                        Ok(line) => line,
-                        Err(_) => break,
-                    };
-                    if line.trim().is_empty() {
-                        continue;
+                let mut reader = BufReader::new(stdout);
+                let mut buf: Vec<u8> = Vec::new();
+                loop {
+                    buf.clear();
+                    // **按字节读，不用 `lines()`。** `BufRead::lines()` 把一行非法
+                    // UTF-8 当成 `Err` 交回来，上面那个 `for … in lines()` 于是 break、
+                    // 报 EOF——一条活得好好的 worker 被判成「进程崩溃」并被杀掉，
+                    // 而真正发生的只是 fd 1 上多了几个非 UTF-8 字节（Windows 上
+                    // cp936 的子进程输出、C 扩展直接 printf 都是这个形状）。
+                    // 判据要对得上事实：字节坏了是「管道上有垃圾」（protocol_mismatch，
+                    // 并把那一行原样带出去），只有 read 回 0 / 出错才是 EOF。
+                    //
+                    // **先判 UTF-8，再解析 JSON**（评审 #443 第九轮）：坏字节落在一个
+                    // 合法 JSON 字串**里面**时（C 扩展往 fd 1 写的几个字节恰好夹进
+                    // worker 正在输出的响应），lossy 替换成 U+FFFD 之后 serde 照样
+                    // 解析成功、request_id 也对得上——一条被篡改过的响应就这么当成
+                    // 正常结果收下了。lossy 的形态只用来把那一行带给人看。
+                    // 与 Python 池同一口径：那边是 `surrogateescape` + 解析前查残留。
+                    match reader.read_until(b'\n', &mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
                     }
-                    let event = match serde_json::from_str::<Value>(&line) {
-                        Ok(value) => WorkerEvent::Line(generation, value),
-                        Err(_) => WorkerEvent::Garbage(generation, line),
+                    let event = match std::str::from_utf8(&buf) {
+                        Ok(text) => {
+                            let line = text.trim_end_matches(['\n', '\r']);
+                            if line.trim().is_empty() {
+                                continue;
+                            }
+                            match serde_json::from_str::<Value>(line) {
+                                Ok(value) => WorkerEvent::Line(generation, value),
+                                Err(_) => WorkerEvent::Garbage(generation, line.to_string()),
+                            }
+                        }
+                        Err(_) => {
+                            let shown = String::from_utf8_lossy(&buf);
+                            WorkerEvent::Garbage(
+                                generation,
+                                shown.trim_end_matches(['\n', '\r']).to_string(),
+                            )
+                        }
                     };
                     if events.send(event).is_err() {
                         return; // 会话没了，读线程跟着退出
@@ -258,6 +346,44 @@ impl WorkerProc {
         match guard.as_mut() {
             Some(child) => matches!(child.try_wait(), Ok(None)),
             None => false,
+        }
+    }
+
+    /// 管道 EOF 之后收尸并报告下场：先给它 `grace` 自己退出，没退就 kill。
+    ///
+    /// 与 `kill()` 的差别只在**先看它自己怎么死的**：EOF 那一刻直接 kill，
+    /// 退出码永远是 TerminateProcess / SIGKILL 的那一个，真正的死因就被盖掉了。
+    pub fn reap_after_eof(&self, grace: Duration) -> ExitReport {
+        let mut guard = match self.child.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let Some(child) = guard.as_mut() else {
+            return ExitReport {
+                code: None,
+                signal: None,
+                lingered: false,
+            };
+        };
+        let deadline = std::time::Instant::now() + grace;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return exit_report_of(status, false),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+        let _ = child.kill();
+        match child.wait() {
+            Ok(status) => exit_report_of(status, true),
+            Err(_) => ExitReport {
+                code: None,
+                signal: None,
+                lingered: true,
+            },
         }
     }
 

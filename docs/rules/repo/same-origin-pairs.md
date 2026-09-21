@@ -28,6 +28,7 @@
   | `engine/exportreq.py` 文件名规则 ↔ `web/src/lib/exportName.ts` | `tests/golden/filename_vectors.json`（八条原因逐条比，顺序也比） |
   | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `web/src/lib/typography.ts` 同名常量 | `test_typography_families.py`（闭集 + 顺序） |
   | `engine/overrides.NO_COLOR`（manifest 颜色字段的「无」取值）↔ `web/src/components/ui/Input.tsx` 同名常量 | `tests/test_no_color_pair.py` |
+  | `engine/pool.EXIT_GRACE`（管道 EOF 后等子进程自己退出的宽限）↔ `workerd/src/worker.rs` `EXIT_GRACE` | 两侧各自钉在 `tests/golden/exit_grace_ms.txt`：`tests/test_worker_exit_report.py::test_the_exit_grace_is_one_number_on_both_control_planes` + `workerd/tests/exit_grace_pair.rs`（不读对方源码） |
 
   出版规范规则唯一权威 `src/tavotto/profiles/publication.json`（两侧求值器
   共读，绝不硬编码第二份）。**「这份项目有什么问题」全产品只有一份服务**

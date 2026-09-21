@@ -86,13 +86,20 @@ ERROR_NO_MATPLOTLIB = "project_env_no_matplotlib"
 ERROR_UNSUPPORTED_PYTHON = "project_env_unsupported_python"
 ERROR_MULTIPLE = "multiple_project_environments"
 ERROR_UNUSABLE = "project_env_unusable"
+#: matplotlib 导入得到，但 worker 自己的启动导入链（`worker.py` 平铺 import 的
+#: 那一整条闭包：matplotlib.figure → PIL、figsession → manifest / overrides…）在这个
+#: 解释器里断了。与「没有 matplotlib」是两件事、两条出路：前者装包，这条多半是
+#: Conda / pip 混装后某个 DLL 或 numpy ABI 对不上，`error` 字段带着那句异常。
+ERROR_WORKER_IMPORT = "project_env_worker_import_failed"
 
 #: 找哪些目录名。顺序即优先级（同一层同时存在时按这个顺序裁决）。
 VENV_DIRNAMES = (".venv", "venv", "env")
 
 #: 体检子进程的超时。冷启动一个解释器 + import matplotlib 在机械硬盘上可以
-#: 十几秒；给足，超时按「环境不可用」处理而不是当作缺包。
-PROBE_TIMEOUT_S = 60.0
+#: 十几秒；体检还走一遍 worker 的启动导入链，其中 `matplotlib.figure` 会在这个
+#: 环境**第一次**用 matplotlib 时建字体缓存（Windows 上扫完系统字体要几十秒）。
+#: 给足，超时按「环境不可用」处理而不是当作缺包。
+PROBE_TIMEOUT_S = 120.0
 
 #: 支持口径。**唯一权威是 `docs/support-matrix.json` 与 `pyproject.toml`**，
 #: 这里是运行时镜像（那两份文件不随 wheel 发布，运行时读不到）。
@@ -109,6 +116,12 @@ MPL_MAX_EXCLUSIVE = (3, 12)
 SUPPORT_VERIFIED = "verified"
 SUPPORT_UNVERIFIED = "unverified_but_compatible"
 SUPPORT_UNSUPPORTED = "unsupported"
+
+#: 体检要在目标解释器里 import 的 worker 源码目录（`worker.py` 与它平铺 import
+#: 的闭包所在）。模块级常量而不是函数里现算，是为了让用例能把它指到一个
+#: 「matplotlib 完好、worker 起不来」的假引擎目录上——真环境里造不出这种
+#: 断法，而它正是体检要抓的那一种。
+ENGINE_DIR = Path(__file__).resolve().parent
 
 #: 顶级模块名的合法形状。**体检要在目标解释器里 import 这个名字**，所以它
 #: 绝不能是任意字符串——`missing_module()` 从 traceback 里抠出来的东西终究
@@ -304,12 +317,25 @@ try:
 except Exception as exc:
     out["error"] = "matplotlib: %s" % exc
 if out["matplotlib_version"]:
+    import importlib.util, os
     sys.path.insert(0, engine_dir)
     try:
-        import figcapture, manifest, overrides  # noqa: F401
+        # **就是 worker 自己的启动导入链**，不是它的一个子集：以前这里只 import
+        # figcapture / manifest / overrides，而 worker.py 还要 matplotlib.figure
+        # （→ PIL）、figsession、wireproto——体检绿、worker 一起就死在 import 上，
+        # 用户看到的是「渲染进程崩溃」。执行 worker.py 本身，它多一条 import
+        # 这里就多查一条，不靠人记得回来同步清单。
+        # **按文件加载，不走 `import worker`**（评审 #443 第十轮）：这个解释器的
+        # sitecustomize / .pth 若已经 import 过一个不相干的顶层 `worker`，import 语句
+        # 拿到的是缓存里那一个、体检就绿了；真 worker 是 `python worker.py` 起的，
+        # 与这里一样执行的是文件。
+        spec = importlib.util.spec_from_file_location(
+            "tavotto_probe_worker", os.path.join(engine_dir, "worker.py")
+        )
+        spec.loader.exec_module(importlib.util.module_from_spec(spec))
         out["tavotto_worker_ok"] = True
-    except Exception as exc:
-        out["error"] = "worker: %s" % exc
+    except BaseException as exc:  # SystemExit 也算：起不来就是起不来
+        out["error"] = "worker: %s: %s" % (type(exc).__name__, exc)
 if module:
     out["requested_module"] = module
     try:
@@ -348,7 +374,7 @@ def probe_environment(python: str, module: str | None = None) -> dict:
     if module and not valid_module_name(module):
         # 不合形状的名字连体检都不做（注入面），当作「没法确认」。
         module = None
-    engine_dir = str(Path(__file__).resolve().parent)
+    engine_dir = str(ENGINE_DIR)
     # **体检的启动条件必须与真正起 worker 的一样**（`execspec.worker_argv`：
     # 用户解释器不带 `-I` / `-s` / `-E`，env 原样继承）。以前这里加了 `-I`，
     # 它顺手关掉了用户 site 目录——`pip install --user` 装的科学栈（系统 Python
@@ -405,11 +431,15 @@ def probe_environment(python: str, module: str | None = None) -> dict:
     if not version or not (PYTHON_MIN <= version < PYTHON_MAX_EXCLUSIVE):
         info.update(ok=False, code=ERROR_UNSUPPORTED_PYTHON, support=SUPPORT_UNSUPPORTED)
         return info
-    if not info.get("matplotlib_version") or not info.get("tavotto_worker_ok"):
-        # matplotlib 起不来 = 它不是一个绘图环境；worker 模块 import 不了 =
-        # 它跑不了 Tavotto（多半是 numpy 缺失或版本对不上）。两者都不该
-        # 无感切过去，但要分开报——用户的动作完全不同。
+    if not info.get("matplotlib_version"):
+        # matplotlib 起不来 = 它不是一个绘图环境
         info.update(ok=False, code=ERROR_NO_MATPLOTLIB)
+        return info
+    if not info.get("tavotto_worker_ok"):
+        # worker 的启动导入链断了 = 它跑不了 Tavotto（DLL 冲突、numpy ABI、
+        # Pillow 坏了……）。与上一条分开报——用户的动作完全不同：那条是装包，
+        # 这条是修环境，`error` 里带着断在哪一句。
+        info.update(ok=False, code=ERROR_WORKER_IMPORT)
         return info
     if module and info.get("requested_module_ok") is False:
         info.update(ok=False, code=ERROR_MODULE_MISSING)

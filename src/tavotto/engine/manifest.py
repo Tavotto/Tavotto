@@ -1516,7 +1516,7 @@ def _named_marker(verts, codes) -> str | None:
 
 
 def _marker_unit_box(verts, codes) -> list[list[float]]:
-    """等比缩放 + 居中进单位框 [-0.5, 0.5]（y 仍向上，与 matplotlib 同向）。
+    r"""等比缩放 + 居中进单位框 [-0.5, 0.5]（y 仍向上，与 matplotlib 同向）。
 
     **CLOSEPOLY 那一个顶点既不参与包围盒，也不发真坐标（一律 `[0, 0]`）。**
     它是占位——渲染器画到 CLOSEPOLY 只是闭合子路径，不读它的坐标；而

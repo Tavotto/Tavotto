@@ -92,6 +92,157 @@ REQUEST_TIMEOUT = 300.0  # override / render_png / preview_png
 EXPORT_TIMEOUT = 600.0
 #: 优雅关停：worker 收到就 SystemExit，等不到 5 秒说明它根本没在读 stdin。
 SHUTDOWN_TIMEOUT = 5.0
+#: 进程级失败（session_dead 等 `_FATAL_CODES`）时从 worker.log 取几行给用户看。
+#: 默认的 30 行装不下 faulthandler 的一段栈：matplotlib 的 draw 栈随便就四五十帧，
+#: 崩在最上面那一帧（用户最需要的那一行）会被顶出去，尾巴里只剩引擎自己的帧。
+FATAL_TAIL_LINES = 120
+
+#: 协议管道 EOF 之后等子进程**自己**退出的宽限（秒）——与 workerd 的
+#: `EXIT_GRACE` 同一个数。EOF 那一刻直接 kill 的话，退出码永远是 TerminateProcess /
+#: SIGKILL 那一个，真正的死因（access violation / DLL 加载失败 / sys.exit）就被盖掉了。
+EXIT_GRACE = 1.5
+
+#: 退出码 → 一句人话。**两条控制面共用的唯一解释表**：workerd 只如实报数
+#: （`ExitReport`），Python 池报 `Popen.returncode`，怎么解释都在这里。
+#: Windows 的 NTSTATUS 由 `Popen.returncode` / Rust `ExitStatus::code()` 按有符号
+#: 32 位交出来（0xC0000005 → -1073741819）——表里两种写法都列，免得读的人再换算。
+_EXIT_EXPLANATIONS: dict[int, str] = {
+    0: (
+        "自己以退出码 0 结束了。渲染进程不该主动退出：多半是脚本或它 import 的库"
+        "调用了 sys.exit() / os._exit()，或者把 stdout 关掉了"
+    ),
+    1: "退出码 1：Python 层的致命错误，或进程被外部终止；原因看下面的输出",
+    -1073741819: (  # 0xC0000005
+        "access violation（0xC0000005）：某个 C 扩展或 DLL 越界。"
+        "常见于 Conda 与 pip 混装之后 numpy / Pillow / freetype 的 DLL 版本对不上"
+    ),
+    -1073740791: "0xC0000409：栈缓冲区越界或 abort()（C 扩展的断言失败常报这个）",
+    -1073741515: "0xC0000135：找不到某个 DLL（环境没激活时 Conda 的 Library\\bin 不在搜索路径上）",
+    -1073741502: "0xC0000142：某个 DLL 初始化失败",
+    -1073740940: "0xC0000374：堆损坏（C 扩展写坏了内存）",
+    -1073741571: "0xC00000FD：栈溢出（递归过深，或某个 C 扩展用光了栈）",
+    -1073741510: "0xC000013A：收到 Ctrl+C / 控制台被关闭",
+}
+#: **只在 Windows 上成立**的退出码：POSIX 的 abort() 走信号 6（下表），退出码 3 在那里
+#: 只是某个 `os._exit(3)`——把它说成「C 扩展中止」会把排障引到错的方向（评审 #443 第八轮）。
+#: NTSTATUS 那几条是负数，POSIX 的退出码 0–255 撞不上，不用分表。
+_NT_EXIT_EXPLANATIONS: dict[int, str] = {
+    3: (
+        "abort()：C 库或扩展主动中止（典型：两份 libiomp5md.dll 的 OMP Error #15、断言失败；"
+        "Windows 上经 C 运行时信号路径转发的段错误也走到这里）"
+    ),
+}
+#: `surrogateescape` 给每个解不出的字节留下的痕迹：U+DC80–U+DCFF。合法 UTF-8 解出来的
+#: 文本里不可能有孤立代理项，所以「行里有这一段」⇔「管道上有坏字节」，不会误伤正文里
+#: 真的 U+FFFD。Popen 用它而不是 `errors="replace"`：`replace` 把坏字节洗成 U+FFFD，
+#: 夹在合法 JSON 字串里的话整条响应照样解析成功、被当成正常结果收下——`_parse_line`
+#: 在解析 JSON 之前拦（评审 #443 第九轮；workerd 读线程同一口径）。
+_BAD_BYTES = re.compile("[\udc80-\udcff]")
+_SIGNAL_EXPLANATIONS: dict[int, str] = {
+    6: "SIGABRT：C 库或扩展主动中止（断言失败、两份 OpenMP 运行时）",
+    9: "SIGKILL：被系统或别的进程杀掉（内存不足时 OOM killer 最常见）",
+    11: "SIGSEGV：某个 C 扩展或动态库越界",
+    15: "SIGTERM：被别的进程终止",
+}
+
+
+def describe_exit(report: dict | None, *, windows: bool | None = None) -> str:
+    """`{"code", "signal", "lingered"}` → 用户能据以行动的一句话。
+
+    不认识的退出码如实报数字，不猜；`None` = 没拿到退出状态（老 workerd、
+    假 Popen）。faulthandler 写进 worker.log 的栈是它的下半句——调用方把日志
+    尾巴一起交出去。`windows` 默认按本机判，只给用例覆盖另一个平台的那一列。
+    """
+    if windows is None:
+        windows = os.name == "nt"
+    if not isinstance(report, dict):
+        return "退出状态未知"
+    if report.get("lingered"):
+        return "关掉了协议管道但没有退出，已被终止（脚本或它调用的库关掉了 stdout？）"
+    code = report.get("code")
+    signal = report.get("signal")
+    if isinstance(code, int) and not isinstance(code, bool):
+        # Windows 的 NTSTATUS：Python 的 `Popen.returncode` 交的是无符号 DWORD
+        # （3221225477），Rust 的 `ExitStatus::code()` 交的是它按 i32 的样子
+        # （-1073741819）。同一个死因两个数——统一成有符号的那一个再查表。
+        if code >= 2**31:
+            code -= 2**32
+        explained = _EXIT_EXPLANATIONS.get(code) or (windows and _NT_EXIT_EXPLANATIONS.get(code))
+        return explained or f"退出码 {code}"
+    if isinstance(signal, int) and not isinstance(signal, bool):
+        return _SIGNAL_EXPLANATIONS.get(signal) or f"被信号 {signal} 终止"
+    return "退出状态未知"
+
+
+def exited_on_its_own(report: dict | None) -> bool:
+    """这份退出状态说的是「它自己死的」，还是「被人杀的 / 没拿到」？
+
+    给 probe 这类要分「用户取消 / 会话被回收」与「脚本把进程带崩了」的调用方。
+    判「被杀」只认我们自己会用的手段：POSIX 的 SIGKILL / SIGTERM，Windows 的
+    TerminateProcess（退出码 1——它与 Python 层致命错误的退出码撞车，这里宁可把
+    一次真崩溃说成「被终止」，也不把一次取消说成「脚本坏了」）。`lingered` 的
+    进程是我们收掉的，同样不算。没拿到状态一律 False。
+    """
+    if not isinstance(report, dict) or report.get("lingered"):
+        return False
+    code, signal = report.get("code"), report.get("signal")
+    if isinstance(signal, int) and not isinstance(signal, bool):
+        return signal not in (9, 15)
+    if isinstance(code, int) and not isinstance(code, bool):
+        return not (os.name == "nt" and code == 1)
+    return False
+
+
+def exit_report(proc, grace: float = EXIT_GRACE) -> dict | None:
+    """Python 池的 `ExitReport`（与 workerd 的同形）：EOF 之后先给 `grace` 秒等它
+    自己退出，没退就 kill。回 `None` 表示这不是一个能问退出状态的进程对象。"""
+    wait = getattr(proc, "wait", None)
+    if not callable(wait):
+        # 问不出退出状态的进程对象（协议用例的假 Popen）：至少把它杀掉——
+        # 这条路径以前就是「EOF 即 kill」，不能因为多问了一句就把 kill 丢了。
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        return None
+    lingered = False
+    try:
+        try:
+            code = wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            lingered = True
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            code = wait(timeout=grace)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {"code": None, "signal": None, "lingered": lingered}
+    if not isinstance(code, int) or isinstance(code, bool):
+        return None
+    # POSIX 的 Popen 用负数表示信号；Windows 上负数是 NTSTATUS，不许混成信号
+    if os.name != "nt" and code < 0:
+        return {"code": None, "signal": -code, "lingered": lingered}
+    return {"code": code, "signal": None, "lingered": lingered}
+
+
+def session_dead_message(report: dict | None, log_tail: str, log_path) -> str:
+    """`session_dead` 的用户可读形态——两条控制面同一句话。
+
+    三段：它怎么死的（退出码的解释）；有没有留下话（worker.log 这一代的尾巴
+    空不空——空的话要**说出来**，否则用户面对一个空的「展开输出」以为界面坏了）；
+    日志在哪（**两种情况都给**：响应里只带尾巴，要看全文得知道路径）。
+    """
+    text = f"渲染进程退出了：{describe_exit(report)}。会话已作废，下一次操作会重建。"
+    if (log_tail or "").strip():
+        text += f" 它最后的输出在下面（完整日志：{log_path}）。"
+    else:
+        text += (
+            f" 它退出前没有留下任何输出（worker.log 这一代是空的：{log_path}）"
+            "——这通常是进程级崩溃，不是脚本抛的异常。"
+        )
+    return text
+
 
 # ---- worker 协议 v1（契约见 docs/adr/0003-worker-protocol-v1.md） -----------
 #: 请求信封的协议版本。worker 双栈兼容（无此字段 = legacy），父进程只发 v1。
@@ -332,13 +483,20 @@ def _next_generation(key: tuple[str, str]) -> int:
         return gen
 
 
+def cache_digest(figures_dir: str | Path) -> str:
+    """项目 → 缓存目录名前缀（8 位 sha1）。`_cache_slug` 与「这个项目有哪些会话目录」
+    （诊断包只带当前项目的 worker.log）的**唯一出处**——两处各算一遍就会有一天对不上。"""
+    return hashlib.sha1(_norm_dir(figures_dir).encode("utf-8")).hexdigest()[:8]
+
+
 def _cache_slug(figures_dir: str, script_name: str) -> str:
     """(项目, 脚本) → 缓存子目录名。
 
     以前是 `Path(script_name).stem`：不同项目 / 不同子目录下的同名脚本会共用
-    同一个 out/sandbox 目录，互相覆盖 SVG 与 manifest。
+    同一个 out/sandbox 目录，互相覆盖 SVG 与 manifest。`figures_dir` 是已经
+    `_norm_dir` 过的项目串（调用方都这么传），`cache_digest` 再规范化一次是幂等的。
     """
-    digest = hashlib.sha1(figures_dir.encode("utf-8")).hexdigest()[:8]
+    digest = cache_digest(figures_dir)
     safe = re.sub(r"[^\w.-]+", "_", script_name.replace("\\", "/").rstrip("/"))
     return f"{digest}-{safe[:60]}"
 
@@ -372,6 +530,9 @@ class WorkerError(RuntimeError):
         #: 哪个脚本报的（missing_dependency 时由 `_error_of` 填）。依赖修复
         #: 按 (项目, 脚本) 记轮次、按脚本所在目录找依赖声明，都要它。
         self.script_name = ""
+        #: worker 错误信封里多带的字段（`known` / `exit_code` / 退出状态 `exit`…），
+        #: 两条控制面都往这里放——上层按键取，不必知道是哪条控制面给的。
+        self.extra: dict = {}
 
 
 #: 脚本跑完了、一张图都没捕获到，而调用方要的 stem 在注册表里登记过。worker
@@ -412,6 +573,42 @@ def _log_size(path: Path, root: Path | None = None) -> int:
         return os.stat(real).st_size
     except OSError:
         return 0
+
+
+#: worker.log 旁边记「这一代从哪个字节开始」的文件。`_log_offset` 只活在进程内存里，而
+#: 诊断包是另一个时刻、另一段代码读同一个文件——没有这个边界它会把上一代的 traceback
+#: 当成这一代的，新一代一个字没写就死时 `empty` 还报 False（评审 #443 第十四轮）。
+#: 两条控制面都在 Python 里量这个数，所以只写这一处。
+LOG_GENERATION_FILE = "worker.log.start"
+
+
+def start_log_generation(log_path: Path) -> int:
+    """spawn 之前量 worker.log 现在多大 = 这一代的起点，并落盘给诊断包读。
+
+    写不进去（只读介质）不影响渲染：诊断包那边读不到就按 0 算，退化成老行为。
+    文件的 mtime 顺带告诉诊断包「这个目录最近有过一次 spawn」——worker 一个字没写
+    就死时 worker.log 的 mtime 不会动，只按它排「最近三份」会漏掉刚失败的那一份。
+    """
+    try:
+        offset = os.stat(log_path).st_size
+    except OSError:
+        offset = 0  # 还没有日志：这一代从 0 开始
+    try:
+        (log_path.parent / LOG_GENERATION_FILE).write_text(str(offset), encoding="utf-8")
+    except OSError:
+        pass
+    return offset
+
+
+def log_generation_start(log_path: Path) -> int:
+    """诊断包读：这一代从哪个字节开始。没有 / 不合法 / 比文件还大（日志被清过）→ 0。"""
+    try:
+        raw = (log_path.parent / LOG_GENERATION_FILE).read_text(encoding="utf-8").strip()
+        offset = int(raw)
+        size = os.stat(log_path).st_size
+    except (OSError, ValueError):
+        return 0
+    return offset if 0 <= offset <= size else 0
 
 
 def _log_tail_from(path: Path, offset: int, n: int = 30, *, root: Path | None = None) -> str:
@@ -468,6 +665,25 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
     out.extra = getattr(err, "extra", {}) or {}
     out.script_name = script_name
     return out
+
+
+#: worker 侧 `worker.SCRIPT_NEEDS_ARGUMENTS` 的镜像（Flask 进程不 import worker.py）。
+SCRIPT_NEEDS_ARGUMENTS = "script_needs_arguments"
+
+
+def _attach_script_output(err: "WorkerError", log_tail: str) -> "WorkerError":
+    """`script_needs_arguments`：把 worker.log 尾巴接到 traceback 前面。
+
+    argparse 的 `usage: … -c CLSTR -x METADATA` 是打到 stderr（= worker.log）的，
+    异常对象里只有一个退出码 2——用户要知道「它要哪些参数」，答案只在日志里。
+    两条控制面同一处拼，不各拼各的。
+    """
+    if err.code != SCRIPT_NEEDS_ARGUMENTS:
+        return err
+    tail = (log_tail or "").strip()
+    if tail and tail not in err.traceback_text:
+        err.traceback_text = f"{tail}\n\n{err.traceback_text}".strip()
+    return err
 
 
 def missing_module(text: str) -> str:
@@ -880,7 +1096,7 @@ class EngineWorker:
         self.last_build_runtime: dict | None = None
         self.last_used = time.time()
         # 这一代从日志的哪个字节开始（append 模式，目录跨代复用）
-        self._log_offset = _log_size(self.log_path)
+        self._log_offset = start_log_generation(self.log_path)
         self._log = open(self.log_path, "ab", buffering=0)
         # **项目级**解释器决策：同一台机器上 A 项目可能用内置 runtime，
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
@@ -925,8 +1141,9 @@ class EngineWorker:
             bufsize=1,
             # 显式 UTF-8：text=True 默认跟随系统区域编码，Windows 上是 cp1252/
             # cp936，读 worker 回来的中文/µ/⁻¹ 会解码失败。worker 侧同样钉死。
+            # `surrogateescape` 不是 `replace`：坏字节要看得出来，见 `_BAD_BYTES`。
             encoding="utf-8",
-            errors="replace",
+            errors="surrogateescape",
             creationflags=runtime.CREATE_NO_WINDOW,
         )
 
@@ -1093,6 +1310,29 @@ class EngineWorker:
             code="protocol_mismatch",
         )
 
+    def _parse_line(self, line: str) -> dict:
+        """协议管道上的一行 → 响应对象；不是合法 UTF-8 / 不是 JSON 都是 `protocol_mismatch`。
+
+        与 workerd 读线程同一口径（`worker.rs`：先 `from_utf8` 再 `serde_json`）：
+        坏字节是「管道上有垃圾」，进程没死，但这一行不能当响应收——它可能是一条
+        被 C 扩展往 fd 1 写的几个字节篡改过的、request_id 对得上的合法信封。
+        杀掉重建：管道是串行的，垃圾之后的每一行都不知道对不对得上号。
+        """
+        if _BAD_BYTES.search(line):
+            reason = "渲染进程往协议管道里写了非 UTF-8 的字节，会话已重启。"
+        else:
+            try:
+                resp = json.loads(line)
+            except json.JSONDecodeError:
+                reason = "渲染进程往协议管道里写了非 JSON 的内容，会话已重启。"
+            else:
+                if isinstance(resp, dict):
+                    return resp
+                reason = "渲染进程往协议管道里写了非 JSON 对象的内容，会话已重启。"
+        self._kill_now()
+        shown = line.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+        raise WorkerError(reason, shown[:400], code="protocol_mismatch")
+
     def _error_of(self, resp: dict) -> WorkerError:
         """v1 错误信封 → WorkerError（legacy 的扁平形状一并兼容）。"""
         err = resp.get("error")
@@ -1121,10 +1361,20 @@ class EngineWorker:
             exc.script_name = self.script_name
             return exc
         out = WorkerError(msg, tb, code=code)
+        out.script_name = self.script_name
         # v1 信封把 `extra` 平铺进 error 对象（`wireproto`：`err.update(exc.extra)`），
         # legacy 的扁平形状则在响应顶层。
+        if isinstance(err, dict):
+            out.extra = {
+                k: v
+                for k, v in err.items()
+                if k not in ("code", "retryable", "message", "traceback")
+            }
         known = err.get("known") if isinstance(err, dict) else resp.get("known")
-        return _explain_empty_capture(out, self.script_name, known, self._log_tail())
+        tail = self._log_tail()
+        return _explain_empty_capture(
+            _attach_script_output(out, tail), self.script_name, known, tail
+        )
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
@@ -1164,18 +1414,25 @@ class EngineWorker:
                 # 别照着这一句去写别处的 kill：除了这个持锁窗口，
                 # **kill 之后必须 wait**。
                 self._dead = True
-                try:
-                    self.proc.kill()
-                except OSError:
-                    pass
+                # 先问它自己怎么死的（有界：`EXIT_GRACE` 秒），没退再 kill——
+                # 与 workerd 的 `reap_after_eof` 同一条顺序。退出码是分辨
+                # 「脚本 sys.exit」「Python 致命错误」「access violation」的唯一凭据，
+                # EOF 那一刻直接 kill 会把它盖成 TerminateProcess 的那一个。
+                exit_info = exit_report(self.proc)
         if not line:
             # （EOF 的判死已在锁内完成，见上。）
             #
             # workerd 那侧是同一个坑，同一天修的（`session.rs` 的 EOF 分支就地
             # 摘掉进程）。**两条控制面必须给出同一个答案**——pool 是 workerd 的
-            # 参考实现，判据分叉就等于有两套语义。
-            raise WorkerError("worker 进程崩溃（无响应）", self._log_tail())
-        resp = json.loads(line)
+            # 参考实现，判据分叉就等于有两套语义：文案由 `session_dead_message`
+            # 一处产出，退出码的解释表也只有 `describe_exit` 一份。
+            tail = self._log_tail(FATAL_TAIL_LINES)
+            err = WorkerError(
+                session_dead_message(exit_info, tail, self.log_path), tail, code="session_dead"
+            )
+            err.extra = {"exit": exit_info} if exit_info is not None else {}
+            raise err
+        resp = self._parse_line(line)
         self._check_envelope(resp, rid)
         if resp.get("hash_mismatch"):
             # 不影响本次结果（worker 照常执行了），但两侧的规范化实现已经分叉
@@ -1554,7 +1811,7 @@ class WorkerdWorker:
             self.python_source,
         )
         # 这一代从日志的哪个字节开始：workerd 也是 append 到同一个文件
-        self._log_offset = _log_size(self.log_path)
+        self._log_offset = start_log_generation(self.log_path)
         try:
             resp = self._client.call(
                 "open_session", payload=self._spec(), timeout=HANDSHAKE_TIMEOUT
@@ -1599,13 +1856,20 @@ class WorkerdWorker:
             self._dead = True
         tb = exc.traceback_text or ""
         if not tb and code in _FATAL_CODES:
-            tb = self._log_tail()  # 进程级失败时 worker 的 traceback 全在日志里
-        err = _worker_error(str(exc), code, tb, exc.extra)
+            tb = self._log_tail(FATAL_TAIL_LINES)  # 进程级失败时 worker 的 traceback 全在日志里
+        message = str(exc)
+        if code == "session_dead" and isinstance(exc.extra, dict) and "exit" in exc.extra:
+            # workerd 只如实报退出状态（`ExitReport`），怎么解释、日志空不空要不要
+            # 说，都归这边——与 Python 池的 EOF 路径同一句话（`session_dead_message`）。
+            message = session_dead_message(exc.extra.get("exit"), tb, self.log_path)
+        err = _worker_error(message, code, tb, exc.extra)
         # 两条控制面在「缺包时上层拿得到哪些事实」上必须给同一个答案
         err.script_name = self.script_name
-        # ……「脚本跑完没出图」也是同一条纪律：workerd 把 `known` 透传在 extra 里
+        # ……「脚本跑完没出图」「脚本要命令行参数」也是同一条纪律：workerd 把
+        # `known` 透传在 extra 里，argparse 的 usage 在 worker.log 里
+        tail = self._log_tail()
         return _explain_empty_capture(
-            err, self.script_name, (exc.extra or {}).get("known"), self._log_tail()
+            _attach_script_output(err, tail), self.script_name, (exc.extra or {}).get("known"), tail
         )
 
     def _call(

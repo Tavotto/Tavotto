@@ -4767,7 +4767,10 @@ def api_engine_environment_set():
     if str(body.get("scope") or "global") == "project":
         return _set_project_environment(raw, module=str(body.get("module") or "").strip())
     if raw:
-        p = Path(raw).expanduser()
+        # 绝对化但**不 resolve**：`.venv/bin/python` 是指向基解释器的软链接，落到真身
+        # 就丢了 venv；相对路径不绝对化则 `is_file()` 按 Flask 的 cwd 判得过、体检在空的
+        # scratch 目录里 spawn 就 ENOENT（评审 #443 第十四轮）。存下去的也是这个绝对形态。
+        p = Path(os.path.abspath(Path(raw).expanduser()))
         if not p.is_file():
             return jsonify(
                 {
@@ -4776,13 +4779,51 @@ def api_engine_environment_set():
                     "params": {"path": str(p)},
                 }
             ), 400
-        ver = engine_bootstrap.matplotlib_version(str(p))
-        if not ver:
+        # **全局路径与项目路径同一份体检**（`probe_environment`：Python 版本区间 +
+        # matplotlib + worker 自己的启动导入链）。以前这里只问一句
+        # `import matplotlib`——于是 Conda 里 Pillow 的 DLL 坏了、或 Python 3.9
+        # 的环境都能被存下来，第一次渲染 worker 起到一半就死，用户看到的是一句
+        # 「渲染进程崩溃」而不是「这个环境不能用，因为……」（issue #435 那一族）。
+        # 「选了但用不了」比「没选」更难查：体检不过一律 400 + 稳定 code，绝不先存。
+        health = engine_projectenv.probe_environment(str(p))
+        if not health.get("ok"):
+            # 与项目路径同一份体检、不同一套 code：那边的文案说的是「项目环境」，
+            # 用户在设置页里挑的是**全局**解释器，说成项目环境就指错了地方。
+            # 四种结论四条出路：版本不支持（换解释器）/ 没 matplotlib（装包）/
+            # worker 起不来（修环境，`detail` 是断掉的那一句）/ 起不来（路径、架构、权限）。
+            code = health.get("code", "")
+            if code == engine_projectenv.ERROR_UNSUPPORTED_PYTHON:
+                version = health.get("python_version", "")
+                return jsonify(
+                    {
+                        "error": f"{p} 的 Python {version} 不在 Tavotto 当前支持的范围内",
+                        "code": "interpreter_unsupported_python",
+                        "params": {"path": str(p), "python_version": version},
+                    }
+                ), 400
+            if code == engine_projectenv.ERROR_NO_MATPLOTLIB:
+                return jsonify(
+                    {
+                        "error": f"{p} 里 import 不到 matplotlib",
+                        "code": "interpreter_no_matplotlib",
+                        "params": {"path": str(p)},
+                    }
+                ), 400
+            if code == engine_projectenv.ERROR_WORKER_IMPORT:
+                detail = str(health.get("error") or "")[:400]
+                return jsonify(
+                    {
+                        "error": f"{p} 里能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来：{detail}",
+                        "code": "interpreter_worker_import_failed",
+                        "params": {"path": str(p), "detail": detail},
+                    }
+                ), 400
+            detail = str(health.get("detail") or health.get("error") or "")[:400]
             return jsonify(
                 {
-                    "error": f"{p} 里 import 不到 matplotlib",
-                    "code": "interpreter_no_matplotlib",
-                    "params": {"path": str(p)},
+                    "error": f"{p} 起不来：{detail}",
+                    "code": "interpreter_unusable",
+                    "params": {"path": str(p), "detail": detail},
                 }
             ), 400
         engine_config.set_worker_python(str(p))
@@ -4870,6 +4911,11 @@ def _project_env_message(health: dict) -> str:
         return "这个环境里 import 不到 matplotlib，它不是一个可用的绘图环境"
     if code == engine_projectenv.ERROR_MODULE_MISSING:
         return f"这个环境里也没有 {health.get('requested_module', '')}"
+    if code == engine_projectenv.ERROR_WORKER_IMPORT:
+        return (
+            "这个环境里能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来："
+            f"{health.get('error', '')}"
+        )
     return f"这个 Python 起不来：{health.get('detail', '')}"
 
 
