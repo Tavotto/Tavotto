@@ -661,11 +661,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           const dependencyPreparation =
             err instanceof EngineError ? (err.dependencyPreparation ?? null) : null
           if (dependencyPreparation) {
-            // 动态 import：depRepairStore 静态 import 本 store（装完要重排渲染），反向再静态
-            // import 就是模块环——与 envStore 那条同一种写法
-            void import('@/store/depRepairStore').then(({ useDepRepairStore }) =>
-              useDepRepairStore.getState().requestPreparation(dependencyPreparation, projectAtStart),
-            )
+            useEnvStore
+              .getState()
+              .requestDependencyPreparation(dependencyPreparation, projectAtStart)
           }
           // 失败时保留旧 SVG，用户还能看到上一版
           patch(key, {

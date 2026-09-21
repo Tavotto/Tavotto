@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { isRepairRunning, useDepRepairStore } from '@/store/depRepairStore'
+import { useEnvStore } from '@/store/envStore'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { Radio } from './ui/Radio'
@@ -14,8 +15,9 @@ import { Radio } from './ui/Radio'
  *
  * 目标两档：Tavotto 自己的隔离环境（默认；可删可重建）/ 项目自己的 venv（只在它就是此刻选中的
  * 解释器时出现；会改用户环境，文案说清）。「准备并继续」= 绑定计划 + 执行 + 看进度，装完后端
- * 作废旧会话、前端重排失败的渲染；「稍后」只关框——同一张图再渲染一次会直接运行（后端只问一次），
- * 缺包会以 `missing_dependency` 回来，错误块里还能再开这个框。
+ * 作废旧会话、前端重排失败的渲染；「稍后」只关框（这道门一直问到有答案，错误块里还能再开）；
+ * 「不准备，直接运行」是明确的 skip（`POST /api/engine/dependencies/skip`）——之后缺包会以
+ * `missing_dependency` 回来，走运行后那条修复路。
  */
 type Target = 'project_venv' | 'tavotto_managed'
 
@@ -43,15 +45,16 @@ const BLOCKED_TEXT: Record<string, string> = {
 
 export function DependencyPrepareDialog() {
   const { t } = useTranslation('errors')
-  const offer = useDepRepairStore((s) => s.preparation)
+  const offer = useEnvStore((s) => s.dependencyPreparation)
+  const dismiss = useEnvStore((s) => s.dismissDependencyPreparation)
   const progress = useDepRepairStore((s) => s.progress)
   const busy = useDepRepairStore((s) => s.busy)
   const errorCode = useDepRepairStore((s) => s.errorCode)
   const errorText = useDepRepairStore((s) => s.errorText)
   const blocked = useDepRepairStore((s) => s.jointBlocked)
-  const dismiss = useDepRepairStore((s) => s.dismissPreparation)
   const prepare = useDepRepairStore((s) => s.prepare)
   const cancel = useDepRepairStore((s) => s.cancelPreparation)
+  const skip = useDepRepairStore((s) => s.skipPreparation)
   const [target, setTarget] = useState<Target>('tavotto_managed')
   useEffect(() => {
     // 每一份新载荷从后端算出来的目标起步（项目 venv 是此刻选中的解释器时就是它）
@@ -91,6 +94,9 @@ export function DependencyPrepareDialog() {
           <>
             <Button variant="secondary" size="md" disabled={busy} onClick={dismiss}>
               {en('engine.dependencyPrepareLater')}
+            </Button>
+            <Button variant="secondary" size="md" disabled={busy} onClick={() => void skip()}>
+              {en('engine.dependencyPrepareSkip')}
             </Button>
             <Button
               variant="primary"

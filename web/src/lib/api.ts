@@ -2914,8 +2914,8 @@ export interface DependencyPreparationOffer {
   target_kind: 'project_venv' | 'tavotto_managed'
   targets: DependencyTarget[]
   rounds_remaining: number
-  /** 这一对（项目, 脚本）之前问过了：再渲染会直接运行 */
-  asked_before: boolean
+  /** 用户已明确「不准备，直接运行」（这时后端不会再拦） */
+  skipped: boolean
 }
 
 /** 绑定好的联合计划（`plan_id` 是这次授权的凭据，一次性、有有效期） */
@@ -2971,6 +2971,14 @@ export const cancelJointDependencies = (planId: string) =>
       body: JSON.stringify({ plan_id: planId }),
     },
   )
+
+/** 「不准备，直接运行」：这个脚本的跑前门从此放行（进程内；一次成功的准备会清掉） */
+export const skipDependencyPreparation = (script: string) =>
+  jsonFetch<{ ok: boolean; script: string; skipped: boolean }>('/api/engine/dependencies/skip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ script }),
+  })
 
 export const setDependencyGroups = (groups: string[]) =>
   jsonFetch<{ ok: boolean; groups: string[] }>('/api/engine/dependencies', {

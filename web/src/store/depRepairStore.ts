@@ -7,7 +7,7 @@ import {
   installDependencyPlan,
   prepareJointDependencies,
   rebuildManagedEnvironment,
-  type DependencyPreparationOffer,
+  skipDependencyPreparation,
   type DependencyProgress,
   type DependencyRepairPlan,
   type InterpreterPin,
@@ -16,7 +16,6 @@ import {
 } from '@/lib/api'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
-import { currentProjectId } from '@/lib/session'
 
 /**
  * 受控依赖修复的界面状态（ADR 0019）。
@@ -63,21 +62,17 @@ interface DepRepairState {
   reset: () => void
 
   // ---- 联合准备（U04，ADR 0061）：跑前的那一次授权 ----
-  /**
-   * 后端起第一个 worker 之前拦下来的「需要先准备依赖」载荷：整份联合计划 + 可选目标。
-   * 同一时刻只有一份；`DependencyPrepareDialog` 渲染它。`requestPreparation` 记下发请求那一刻
-   * 的项目，确认回来对不上就丢——切了项目的旧渲染不该弹别的项目的框。
-   */
-  preparation: DependencyPreparationOffer | null
-  requestPreparation: (offer: DependencyPreparationOffer, projectId?: string | null) => void
-  dismissPreparation: () => void
+  // 载荷本身（整份联合计划 + 可选目标）住在 `envStore.dependencyPreparation`（与运行目录的确认
+  // 同一个家；渲染 store 静态 import 得到它，本 store 反向 import 会成环）。这里只管执行。
   /** 绑定好的联合计划（不装）；null = 还没到执行那一步 */
   jointPlan: JointDependencyRepairPlan | null
   /** 计划绑定不了（blocked / 什么都不缺）时后端交回的计划——界面按 blocked 的理由说下一步 */
   jointBlocked: JointDependencyPlan | null
-  /** 一步：绑定计划 → 执行（只发 plan_id）。目标由用户在框里选。 */
+  /** 一步：绑定计划 → 执行（只发 plan_id）。目标由用户在框里选；脚本来自 envStore 里的载荷。 */
   prepare: (target: 'project_venv' | 'tavotto_managed') => Promise<void>
   cancelPreparation: () => Promise<void>
+  /** 「不准备，直接运行」：明确的 skip（这道门一直问到有答案），然后关框并重排那次失败的渲染 */
+  skipPreparation: () => Promise<void>
 }
 
 /** 后端错误 → (code, 原文, 固定)。没有 code 的一律归到通用安装失败。 */
@@ -94,19 +89,11 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   errorCode: '',
   errorText: '',
   pinned: null,
-  preparation: null,
   jointPlan: null,
   jointBlocked: null,
 
-  requestPreparation: (offer, projectId) => {
-    if (projectId !== undefined && projectId !== currentProjectId()) return
-    if (get().preparation) return
-    set({ preparation: offer, jointPlan: null, jointBlocked: null, errorCode: '', errorText: '' })
-  },
-  dismissPreparation: () => set({ preparation: null, jointPlan: null, jointBlocked: null }),
-
   prepare: async (target) => {
-    const offer = get().preparation
+    const offer = useEnvStore.getState().dependencyPreparation
     if (!offer || get().busy) return
     set({ busy: true, errorCode: '', errorText: '', jointBlocked: null })
     try {
@@ -141,6 +128,23 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     } catch {
       // 取消与「装完了」天然赛跑，输了不是错误（过了提交点后端会说 committed）
     }
+  },
+
+  skipPreparation: async () => {
+    const offer = useEnvStore.getState().dependencyPreparation
+    if (!offer || get().busy) return
+    set({ busy: true })
+    try {
+      await skipDependencyPreparation(offer.script)
+    } catch (e) {
+      const { code, text } = failure(e)
+      set({ busy: false, errorCode: code, errorText: text })
+      return
+    }
+    set({ busy: false, jointPlan: null, jointBlocked: null })
+    useEnvStore.getState().dismissDependencyPreparation()
+    // 门放行了：那次「先准备」的渲染重新排上，缺包会以 missing_dependency 回来（运行后那条路）
+    useRenderStore.getState().retryEnvironmentFailures()
   },
 
   makePlan: async (args) => {
@@ -219,7 +223,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         // （Codex 评审 P1）。后端那半边已经作废了 worker，这里补前端这半边。
         useRenderStore.getState().retryEnvironmentFailures()
         // 联合准备装完：授权框收掉（渲染会重排；缺的那一次错误也随之清）
-        if (p.flow === 'joint') set({ preparation: null })
+        if (p.flow === 'joint') useEnvStore.getState().dismissDependencyPreparation()
       }
       if (p.state !== 'done') {
         set({ errorCode: p.code || '', errorText: p.error || '', pinned: p.pinned ?? null })
@@ -238,8 +242,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       errorCode: '',
       errorText: '',
       pinned: null,
-      preparation: null,
-      jointPlan: null,
+          jointPlan: null,
       jointBlocked: null,
     }),
 }))

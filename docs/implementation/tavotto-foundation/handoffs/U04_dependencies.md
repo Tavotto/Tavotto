@@ -145,7 +145,64 @@ pytest 0；变异 17/17；旧 e2e 全绿。**回退**：revert PR B 即回到原
 
 变异 B18–B27 见 `evidence/u04/mutations_pr_b.md` 第二轮。顺带：`_within` 三处合一（A 分支，team-lead 指示：`projectenv.within` 是唯一判据）。
 
-**下一个无阻塞阶段 / 子切片**：PR C（门 / 端点 / 前端 / MCP / 场景）。PR B 给它的输入：`deprepair.joint_plan_for`（只读算计划）、`create_joint_plan` / `prepare_async` / `progress` / `cancel_status`、`JointRepairPlan.to_payload()`（不含路径）。PR A 给 PR B 的输入曾是：`JointPlan.requirements / constraints / hashes / require_hashes /
+## PR C：跑前的门、入口与场景
+
+**实际代码与 API / 数据结构变更**（细节见 ADR 0061 §六）：
+
+| 层 | 变更 |
+|---|---|
+| `engine/pool.py` | `SPAWN_GATES` + `register_spawn_gate`；`_new_worker` 在工作目录门之后逐个跑登记的门（pool 不 import deprepair） |
+| `engine/deprepair.py` | `ERROR_PREPARATION_REQUIRED` + `ERROR_CODES`（进 `test_error_codes` 码表）；`joint_targets` / `preparation_offer`（只读：计划 + 可选目标 + 轮次 + 是否已跳过）/ `gate`（ready 且有轮次且没 skip 才问）/ `skip_preparation` / `preparation_skipped`（进程内按 (项目, 脚本) 记，成功的准备清掉）/ `_spawn_gate`（import 时登记到 pool） |
+| `engine/preparation.py` | 计划多 `dependency_preparation`（无论问不问都写）；`plan_for` 用 `deprepair.gate` 落第二种 `needs_input`；`_execute` 把 runner 抛的门落 `needs_input`（不是 error） |
+| `engine/probe.py` | `_error_from_worker` 对 `confirmation` / `dependency_preparation` 两道门原样投影（此前素材库试运行把两道门都压成 `script_probe_failed`——顺带把 U03 的那一道也接上） |
+| `app.py` | `_worker_error_payload` 多 `dependency_preparation`；`_repair_error` 多 `joint`；`_project_script`（试运行同一份判据 + 三 code 闭集）；六个端点 `GET /api/engine/dependencies`、`POST …/plan`（非 ready 409）、`POST …/prepare`、`POST …/cancel`、`POST …/skip`、`PATCH /api/engine/dependencies`（选组） |
+| `web/src` | `api.ts`：`DEPENDENCY_PREPARATION_CODE`、`JointDependencyPlan` / `DependencyPreparationOffer` / `JointDependencyRepairPlan` 类型、`EngineError.dependencyPreparation`、`DependencyProgress.flow / committed`、五个函数；`envStore`：`dependencyPreparation` + `requestDependencyPreparation` / `dismissDependencyPreparation`（与运行目录确认同一个家，换项目清）；`renderStore`：载荷交 envStore、条目留一份、`retryEnvironmentFailures` 认这个 code；`depRepairStore`：`jointPlan` / `jointBlocked` / `prepare(target)` / `cancelPreparation` / `skipPreparation`，`onProgress` 对 `flow: joint` 收框；`DependencyPrepareDialog`（新）；`WorkdirRow.DependencyPrepareButton`；`ElementInspector` 错误块接按钮；`App` 挂对话框；i18n 两种语言 `engine.dependency*` 24 键 + `repairError` 4 键 + `backend.dependency_preparation_required`；`resources.d.ts` 重生成 |
+| MCP | `_bridge_error_from_worker` 投影 `dependency_preparation` + `recovery`；`_answer_prepare_dependencies`（`tavotto_managed` / `project_venv` 同步 `create_joint_plan` + `prepare`；`skip`；老引擎 `engine_too_old`）；`open_figure(prepare_dependencies=)` 返回多 `prepared`；server 工具 schema + 批量拒绝；`deprepair` 进 `_BRIDGE_IMPORT` / `BRIDGE_IMPORTS_AT_MIN`（最低版本不抬，理由在 `make_plugin_manifest.py`） |
+| 夹具 / 场景 | `tests/fixtures/foundation/joint_dependencies/`（⑧）；`tests/test_foundation_dependencies.py`（FO20 / 31 / 21 / 22 / 27 enforced，FO18 / 05 observing 联网）；`tests/test_dependency_transaction.py::TestGate` 四条；`tests/test_mcp_server.py` 三条；`web/.../DependencyPrepareDialog.test.tsx` 九条；`test_dependency_repair_e2e` 两条按门 + skip 改；`test_foundation_harness` 的 enforced 集合与计数改成 12 / 6 / 14 / 1 |
+| 台账 / CI | `enrollment.json`（`capability_version: u04`）+ 派生 md；registry 五条 `promotion` 合同、FO18 / FO05 `observing`；`ci.yml` harness 步加 `tests/test_foundation_dependencies.py`；`nightly.yml` 的 `foundation-observing` job 加该文件、`TAVOTTO_FOUNDATION_ONLINE=1`、检查前缀 `test_fo18_ test_fo05_` |
+| 文档 | ADR 0061 §六 / §八 按落地形状；`dependency-repair-and-packages.md` 门与入口一节；`readiness-and-left-shell.md`、`web/AGENTS.md`、`codex-plugin/AGENTS.md`、skill `compatibility.md` 码表；本文件；`evidence/u04/mutations_pr_c.md`；`plan.json` U04 `done`；README |
+
+**关联旧要求 ID / 场景 ID**：FO18（机制 + observing 真跑一次）、FO20 / FO21 / FO22 / FO27 / FO31（enforced）、FO05（observing 真跑一次）、
+FO-057（MCP / 桌面准备状态与权限同源——三处投影同一份载荷）、FO-052（准备授权与改环境动作分开：门只问，装要用户点）、
+FO-032 / FO-033（一次授权覆盖完整已知计划）。FO13 / FO28 / FO29 留 planned，理由在台账 notes。
+
+| 命令 | 目标平台 / 环境 / 产物 | 退出码 | 结果与必要证据 |
+|---|---|---|---|
+| `ruff check .` / `ruff format --check .` | macOS arm64，worktree | 0 / 0 | 全绿 |
+| `PYTHONPATH=$WT/src pytest tests/test_foundation_dependencies.py`（离线） | 真 HTTP 服务 + 真 venv（宿主 mpl 经 .pth）+ 真 pip（离线 wheelhouse / 慢 find-links 服务）+ 真 worker | 0 | 5 passed, 2 skipped（FO18 / FO05 要 `TAVOTTO_FOUNDATION_ONLINE=1`）；约 4 分钟 |
+| `TAVOTTO_FOUNDATION_ONLINE=1 … -k "fo18 or fo05"` | 同上 + 联网 `pip download` matplotlib / numpy / h5py | 0 | 2 passed（受管新一代真装科学栈；真 h5py 写 / 读 HDF5） |
+| harness 三步（`expected --lane pr` → 六个用例文件 → `validate`） | 同上 | 见 PR 正文 | 预期 12 · 提交 12 · 有效 12（见 PR 正文与 evidence） |
+| `pytest tests/test_dependency_transaction.py tests/test_dependency_repair_e2e.py tests/test_mcp_server.py tests/test_error_codes.py tests/test_browser_auth.py tests/test_preparation_api.py tests/test_foundation_harness.py tests/test_merge_queue_workflows.py` | 同上 | 0 | 通过（`test_browser_auth` 的 url_map 枚举自动覆盖六个新端点） |
+| `cd web && pnpm i18n:check && pnpm test && pnpm build` | 同上 | 0 / 0 / 0 | 281 files · 4165 passed；tailwind-scan-check 11/11 |
+| `actionlint .github/workflows/ci.yml .github/workflows/nightly.yml` | — | 0 | — |
+| 变异 9 条（`evidence/u04/mutations_pr_c.md`） | 同上 | 每条非零 | C9 第一次「目标串不在」：skip 那段当时没写进 bridge，补上后红 |
+| `pytest`（全量） | 同上 | 见 PR 正文 | 见 PR 正文 |
+| 真机浏览器 / Windows / Linux / 内置 runtime / e2e | — | — | **not_run**（本机只有 macOS；对话框只有 vitest（jsdom）证据） |
+
+**本切片的正例、负例、旧行为回归**：正例 = 五条 enforced 场景 + 两条 observing（见 evidence 表）；负例 = 门对 blocked / nothing_needed /
+无轮次 / 已 skip 放行、非 ready 的计划拒绝绑定、试运行不再把门压成 script_probe_failed、MCP 目标闭集 + 批量拒绝 + skip 不装、对话框
+blocked 摆理由不装 / 换项目的旧载荷不弹 / 同一时刻一份。旧行为回归 = 运行后那条修复路（`missing_dependency` → offer → 单包计划）
+原样（e2e 两条在门之后 skip 再走它，全绿）；工作目录门不变；会话认证覆盖新端点。
+
+**未运行 / 基础设施问题 / 真正产品失败**：未运行见上表；基础设施 = 本机 `worker_python` 是 3.11（#452）；真正产品失败无新增。顺带
+发现的**事实**：① 素材库试运行（`/api/registry/probe`）此前把 U03 的工作目录门也压成 `script_probe_failed`（本 PR 一并接上，U03 的
+场景用的是渲染端点所以没撞到）；② `/api/engine/environment` 的受管环境状态在 `project.managed`（不在顶层 `managed`——那是布尔）；
+③ 一开始做的是「门只问一次、第二次悄悄放行」，FO20 的用例当场证明它错：准备接口问过之后渲染入口就不问了，同一个动作两次两种行为——
+改成「一直问到有答案（授权或明确 skip）」。
+
+**批准的字体 / 视觉差异，及未授权变更检查**：无字体改动；新增一个对话框（与 `WorkdirConfirmDialog` 同形，无新视觉语言）。`LICENSE`、ruleset、
+`aggregate_gate.py`、默认后端、`security._PUBLIC_PATHS`（六个新端点都在认证之内）、worker 守卫、写回事务一个都没动。
+
+**当前可合并依据**：中高风险档（改产品行为：起会话前多一道门；新端点；前端 / MCP 交互；CI 步与 nightly job）→ `full-ci` +
+`@codex review`；ruff 0 / 0；场景 5 + 2 真跑；harness 三步 0；变异 9/9；前端 4165 passed；actionlint 0。
+
+**仍缺哪些默认启用 / 精确安装物资格**：全部——五条 enforced 是「源码树 + 旧后端 + 一个平台 + 项目 venv 变体」的切片证据，两条
+observing 是本机联网各跑过一次；`registry.product_validation_status` 与 220 条 `execution_status` 仍 `not_run`。
+
+**回退**：revert PR C 即撤掉门 / 端点 / 对话框 / MCP 参数（PR B 的事务与 PR A 的计划留着，只是没人调）；台账里五条回 planned、
+两条回 planned 要一并 revert（同一 PR）；没有设置写入、没有外部副作用。
+
+**下一个无阻塞阶段 / 子切片**：U05（私有 Python：base 来源；复用本阶段的事务——ADR 0061 §四的接入规则；`managedenv` 的代记 `provisioner`，今天恒 `pip`）与 U09（`managed_env_join`：`JointPlan.identity` / 代号进回执的语义身份）。历史：PR B 给 PR C 的输入曾是：`deprepair.joint_plan_for`（只读算计划）、`create_joint_plan` / `prepare_async` / `progress` / `cancel_status`、`JointRepairPlan.to_payload()`（不含路径）。PR A 给 PR B 的输入曾是：`JointPlan.requirements / constraints / hashes / require_hashes /
 adapter / identity`；`depplan.reset_cache(python)` 在事务结束时调；`ADAPTER_REQUIREMENTS` 是受管环境每一代的基座。
 U05 的输入：ADR §四（安装器接入规则）。U06 并行：本 PR 只碰 `pyproject.toml` 的 `dependencies` 三行（U06 加可选 extra，
 相邻不重叠）。
