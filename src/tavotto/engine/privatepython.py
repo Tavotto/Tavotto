@@ -332,7 +332,8 @@ def _write_ledger(data: dict) -> None:
     path = root_dir() / LEDGER_NAME
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
+        # 临时名带 pid：两个进程同时记账时各写各的，别在同一个 .tmp 上互相撞（Windows 上撞了是 PermissionError）
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         os.replace(tmp, path)
     except OSError as exc:
@@ -698,9 +699,22 @@ def _download(source: PythonSource, job: _Inflight) -> Path:
             os.replace(part, dest)
         except OSError as exc:
             part.unlink(missing_ok=True)
+            # Windows 上正式名被别的进程打开着（它刚把自己那份搬上去、正在解包）时 replace 会拒
+            # （共享冲突）：那一份的字节校验过才叫这个名字，hash 对得上就直接用它——两个进程同时供应
+            # 同一份，后到的复用而不是报 write_failed（#467 Windows 腿确定性红）
+            if _is_verified_archive(dest, source):
+                LOG.info("归档 %s 已由别的进程落盘，复用", source.archive_name)
+                return dest
             raise ProvisionError(ERROR_WRITE_FAILED, f"归档落盘失败: {exc}") from exc
         return dest
     raise ProvisionError(ERROR_OFFLINE, f"下载失败: {last}")
+
+
+def _is_verified_archive(dest: Path, source: PythonSource) -> bool:
+    try:
+        return dest.is_file() and _sha256_file(dest) == source.sha256
+    except OSError:
+        return False
 
 
 def _user_agent() -> str:
