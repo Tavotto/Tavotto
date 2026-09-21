@@ -91,5 +91,5 @@
   不存在或是零字节时才重试，重试完仍不行照旧抛出（假装成功 = 一个永远画不
   出来的面板）。看护 `tests/test_render_cache.py` 与
   `tests/test_windows_regressions.py`。**候选后端下 `/api/render` 走 `rendercore.preview.PreviewCache`**
-  （同一条纪律，键多三维：PDFium 版本 / 字体政策 / 背景；`source_sha1` 的 memo 经 `identity=` 注入）；
+  （同一条纪律，键多三维：PDFium 版本 / 字体政策 / 背景；身份从 PreviewCache 自己抄出来的那份源字节上算，键与渲染绑同一份字节）；
   child 有界队列满 → 503 + `Retry-After: 1`（背压不是故障）。看护 `tests/test_rendercore_app.py`。
