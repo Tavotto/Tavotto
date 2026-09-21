@@ -313,16 +313,21 @@ def _answer_prepare_dependencies(project: str, script: str, target: str) -> dict
     """
     from tavotto.engine import deprepair as engine_deprepair  # noqa: PLC0415
 
-    if target not in ("tavotto_managed", "project_venv"):
+    if target not in ("tavotto_managed", "project_venv", "skip"):
         raise BridgeError(
-            f"不认识的依赖准备目标: {target!r}（可选 tavotto_managed / project_venv）",
+            f"不认识的依赖准备目标: {target!r}（可选 tavotto_managed / project_venv / skip）",
             code="dependency_target_invalid",
         )
     create = getattr(engine_deprepair, "create_joint_plan", None)
-    if create is None:
+    skip = getattr(engine_deprepair, "skip_preparation", None)
+    if create is None or skip is None:
         raise BridgeError(
             "本机 Tavotto 版本不支持联合依赖准备，请升级 Tavotto", code="engine_too_old"
         )
+    if target == "skip":
+        # 用户明确不准备、直接运行：这道门从此放行（缺包会以 missing_dependency 回来）
+        skip(project, script)
+        return {"target_kind": "skip", "generation": "", "installed": {}, "requirements": []}
     try:
         plan = create(project, script, target_kind=target)
         outcome = engine_deprepair.prepare(plan.plan_id)
@@ -389,8 +394,7 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
             f"脚本开跑就需要的包目标环境里没有：{reqs}。请用户授权一次联合安装：再调一次 "
             f"tavotto_open_figure 并带 prepare_dependencies=<目标>（可选 {kinds}；"
             "tavotto_managed 是 Tavotto 自己的隔离环境、不改用户环境，project_venv 会修改项目自己的 "
-            "venv）。安装需要联网、只装预编译 wheel；用户不授权就再调一次不带参数——同一张图只问一次，"
-            "之后直接运行。"
+            "venv；skip = 不准备、直接运行）。安装需要联网、只装预编译 wheel；这道门一直问到有答案。"
             + (f" 认不出对应包名、不会安装的 import：{unknown}。" if unknown else "")
         )
     return BridgeError(str(exc), code=exc.code or "worker_error", **extra)
