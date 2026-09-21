@@ -419,22 +419,25 @@ def stage_export(worker, stem: str, out_dir: Path, formats: list[str]) -> dict:
 
 
 def _decode_check(path: Path, fmt: str) -> dict:
-    """导出物必须真的打得开——「文件存在」证明不了它不是半个字节流。"""
+    """导出物必须真的打得开——「文件存在」证明不了它不是半个字节流。
+
+    读取器是 pypdfium2 / Pillow：U10（ADR 0072）起两者都在 Tavotto 的运行时闭包里，所以这条判据**不再有
+    「没装就跳过」的档**——那一档以前让它在没装 PyMuPDF 的机器上恒绿。
+    """
     if fmt == "pdf":
         try:
-            import pymupdf
-        except ImportError:  # pragma: no cover
-            return {"ok": True, "decoded": "skipped_no_pymupdf"}
-        try:
-            with pymupdf.open(path) as doc:
-                if doc.page_count < 1:
+            import pypdfium2 as pdfium
+
+            doc = pdfium.PdfDocument(str(path))
+            try:
+                if len(doc) < 1:
                     return {"ok": False, "error": "PDF 里一页都没有"}
-                rect = doc[0].rect
-            return {
-                "ok": True,
-                "pages": 1,
-                "page_pt": [round(rect.width, 2), round(rect.height, 2)],
-            }
+                page = doc[0]
+                w, h = page.get_size()
+                page.close()
+            finally:
+                doc.close()
+            return {"ok": True, "pages": 1, "page_pt": [round(w, 2), round(h, 2)]}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"PDF 打不开：{exc}"}
     try:
@@ -444,8 +447,6 @@ def _decode_check(path: Path, fmt: str) -> dict:
             im.verify()
             size = im.size
         return {"ok": True, "px": list(size)}
-    except ImportError:  # pragma: no cover
-        return {"ok": True, "decoded": "skipped_no_pillow"}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"PNG 打不开：{exc}"}
 

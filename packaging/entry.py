@@ -37,14 +37,25 @@ def _redirect_streams() -> None:
         sys.stderr = target
 
 
+#: render child 的自起标志（`tavotto.rendercore.renderchild.child_argv()` 在冻结产物里给的形状，ADR 0066 / 0072）。
+RENDER_CHILD_FLAG = "--render-child"
+
+
 def main() -> None:
-    _redirect_streams()
     # 冻结应用里 sys.path 上没有源码树；datas 把包放在了 _MEIPASS 下
     base = getattr(sys, "_MEIPASS", None)
     if base and base not in sys.path:
         sys.path.insert(0, base)
+    # **render child 最先分派**（U10，ADR 0072）：父进程用同一个 exe 加 `--render-child` 起 PDFium 子进程
+    # （冻结产物里没有 `-m`），它在 stdin / stdout 上说行分隔 JSON——**不能**先走 `_redirect_streams`
+    # （那会把 GUI exe 的管道改道进 app.log，父进程永远收不到响应），也不能进 Flask。
+    if sys.argv[1:2] == [RENDER_CHILD_FLAG]:
+        from tavotto.rendercore import renderchild
+
+        sys.exit(renderchild.child_main(sys.argv[2:]))
+    _redirect_streams()
     # 子命令（open / doctor）只用纯标准库那点逻辑，**在这里就分派掉**：
-    # 走 app.main() 会 import Flask + pymupdf + 整个 app.py，而一次交接
+    # 走 app.main() 会 import Flask + RenderCore + 整个 app.py，而一次交接
     # 一个 HTTP 端点都用不上——那份冷启动全是白付的。
     from tavotto.engine import cli as engine_cli
 

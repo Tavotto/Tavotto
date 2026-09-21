@@ -123,7 +123,6 @@
         "line-width-off-preset": "warn",
         "tick-label-count": "suggestion",
         "axis-label-format": "suggestion",
-        "bitmap-embed": "warn",
         "discouraged-colormap": "suggestion",
         "bar-without-errorbar": "suggestion",
         "fit-without-ci": "suggestion",

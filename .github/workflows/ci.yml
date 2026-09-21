@@ -141,7 +141,7 @@ jobs:
       # 而那是让人不再信任 lint 门禁最快的方式。恰好一条约束，多了少了都当场抛
       # ——安静地取到 None 再 `pip install ` 会装上最新版，正好是要防的事。
       #
-      # 刻意**不装本项目**（`pip install -e .` 会拖进 flask + pymupdf）：
+      # 刻意**不装本项目**（`pip install -e .` 会拖进 flask + RenderCore 的闭包）：
       # ruff 是纯静态分析，一个 import 都不需要执行。
       - name: 安装 Ruff（版本取自 pyproject 的 dev extra，单一出处）
         run: |
@@ -382,6 +382,15 @@ jobs:
           # shellcheck disable=SC2046
           pip install $(python scripts/ci/runtime_pins.py)
           python -c "import matplotlib;print('matplotlib', matplotlib.__version__)"
+      # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
+      # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
+      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
+      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
+        shell: bash
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
       - name: 结构性不变式
         run: |
           python -m pytest -q \
@@ -416,6 +425,7 @@ jobs:
             tests/test_foundation_dependencies.py \
             tests/test_foundation_private_python.py \
             tests/test_foundation_join.py \
+            tests/test_foundation_cutover.py \
             tests/test_execution_receipt.py \
             tests/test_preparation_api.py \
             tests/test_worker_runtime_report.py
@@ -498,6 +508,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install matplotlib
+      # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
+      # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
+      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
+      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
+        shell: bash
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
       # `--shard=K/2` 的 2 与上面 matrix.shard 的长度必须是同一个数
       # （tests/test_merge_queue_workflows.py 对拍）；`-rs` 让 skip 理由进日志
       # （CI00 记录：三条腿都没带，CI 侧 skip 理由拿不到）。
@@ -565,6 +584,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install matplotlib
+      # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
+      # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
+      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
+      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
+        shell: bash
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
       # #346：先量再分片——分片前 Windows 腿比 macOS 慢一倍（40 vs 22 分钟），上限只能
       # 靠抬数字维持。让每个合并组自己把最慢的 50 条打进日志，分片 / session 级
       # worker 复用的决定要从这份名单来，不从猜。
@@ -622,6 +650,15 @@ jobs:
           # shellcheck disable=SC2046
           pip install $(python scripts/ci/runtime_pins.py --include-corpus)
           python -c "import matplotlib;print('matplotlib', matplotlib.__version__)"
+      # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
+      # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
+      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
+      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
+        shell: bash
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
       - name: CompatBench smoke
         run: |
           python scripts/ci/compat_matrix.py --smoke --no-fidelity \
@@ -746,6 +783,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install matplotlib
+      # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
+      # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
+      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
+      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
+        shell: bash
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
       # 核心验收要真跑一次 vite（见下面最后一步），所以这个 job 也装 Node
       - uses: pnpm/action-setup@v4
         with:
@@ -866,6 +912,8 @@ jobs:
           pip install -e ".[dev]"
           # shellcheck disable=SC2046
           pip install $(python scripts/ci/runtime_pins.py)
+          # 批准字体（U10）：等价性矩阵里的导出经 RenderCore，没字体就 fonts_dir_missing
+          python scripts/fetch_fonts.py && python scripts/fetch_fonts.py --check
           test -x workerd/target/debug/tavotto-workerd
           python -m pytest tests/test_equivalence_matrix.py tests/test_worker_roundtrip.py \
             -k workerd -p no:cacheprovider -q -rs --junitxml "${{ runner.temp }}/workerd-pytest.xml"
@@ -1015,10 +1063,24 @@ jobs:
         with: { node-version: 22 }
       - name: 构建前端进包
         run: python scripts/build_frontend.py
+      # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
+      # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
+      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
+      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
+        shell: bash
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
       - name: 打 wheel
         run: |
           python -m pip install --upgrade pip build
           python -m build
+      # 退役扫描（U10，ADR 0072）：wheel 的 METADATA 运行时 Requires-Dist 零 pymupdf、里面没有原生库、
+      # 批准字体 13 张 + 覆盖表都在——主语是**这个 wheel**（产物），不是 checkout。
+      - name: 退役扫描（wheel）
+        shell: bash
+        run: python scripts/ci/retirement_scan.py --skip source,deps,block --wheel dist/*.whl
       # **冒烟实例按 job 隔离**（CI03b，2026-09-16）。下面两步原先有三件事在同一台机器上跑两个
       # `package` 实例时会互相撞——托管 VM 用完即毁所以从没暴露，进了 CI04 的多 runner 主机就会
       # （docs/implementation/ci-foundation/04_BUILD_TEST_CACHE.md §4「真隔离条件」）：
@@ -1226,15 +1288,30 @@ jobs:
 
       - name: 装打包依赖
         # 主进程**不装科学栈**，免得 PyInstaller 顺手打进去——科学栈只存在于
-        # 内置 runtime 里，这条边界一破，包大小和依赖关系立刻失控。
+        # 内置 runtime 里，这条边界一破，包大小和依赖关系立刻失控。装的是 requirements.txt
+        # 那份钉死的运行时闭包（U10 起含 RenderCore 的五个包，ADR 0072）。
         run: |
           python -m pip install --upgrade pip pyinstaller
-          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+          python -m pip install -r requirements.txt
 
+      # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
+      # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
+      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
+      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
+        shell: bash
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
       - name: PyInstaller（内置 runtime 必须进包）
         env:
           TAVOTTO_REQUIRE_RUNTIME: "1"
         run: pyinstaller packaging/tavotto.spec --noconfirm
+
+      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 13 张——主语是 dist/。
+      - name: 退役扫描（冻结产物）
+        shell: bash
+        run: python scripts/ci/retirement_scan.py --skip source,deps,block --dist dist/Tavotto
 
       - name: 断言产物里真有 workerd
         run: |
@@ -1588,15 +1665,30 @@ jobs:
         run: python scripts/build_worker_runtime.py --clean
 
       - name: 装打包依赖
-        # 主进程**不装科学栈**，免得 PyInstaller 顺手打进去
+        # 主进程**不装科学栈**，免得 PyInstaller 顺手打进去；装 requirements.txt 那份钉死的运行时闭包
+        # （U10 起含 RenderCore 的五个包，ADR 0072）
         run: |
           python -m pip install --upgrade pip pyinstaller
-          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+          python -m pip install -r requirements.txt
 
+      # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
+      # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
+      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
+      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
+        shell: bash
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
       - name: PyInstaller（内置 runtime 必须进包）
         env:
           TAVOTTO_REQUIRE_RUNTIME: "1"
         run: pyinstaller packaging/tavotto.spec --noconfirm
+
+      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 13 张——主语是 dist/。
+      - name: 退役扫描（冻结产物）
+        shell: bash
+        run: python scripts/ci/retirement_scan.py --skip source,deps,block --dist dist/Tavotto
 
       - name: 断言产物里真有 workerd 与内置 runtime
         run: |
@@ -1728,6 +1820,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e . matplotlib
+
+      # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
+      # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
+      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
+      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
+        shell: bash
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
 
       - name: 构建前端进包
         # 包内 `src/tavotto/web/` 优先于 `web/dist`——不跑这一步测的是旧界面。

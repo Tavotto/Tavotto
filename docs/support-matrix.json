@@ -31,8 +31,8 @@
       "label_en": "macOS Intel",
       "status": "unsupported",
       "channel": "pip / pipx（浏览器模式）",
-      "en": "No desktop build (never built or smoke-tested on Intel hardware). Use the PyPI browser mode instead: `pipx install \"tavotto[worker]\"`.",
-      "note": "桌面产物没构建过也没冒烟过（runtime-lock 里 shipped=false，CI 无 Intel runner）。宣传物料不得写「支持 Intel」。"
+      "en": "No desktop build (never built or smoke-tested on Intel hardware). The PyPI browser mode (`pipx install \"tavotto[worker]\"`) is untested on Intel Macs and, since the renderer switched to RenderCore, needs pikepdf built from source there (pikepdf 10.x publishes no macOS x86_64 wheel).",
+      "note": "桌面产物没构建过也没冒烟过（runtime-lock 里 shipped=false，CI 无 Intel runner）。宣传物料不得写「支持 Intel」。pip 渠道自 2026-09-22（ADR 0072，RenderCore 是默认渲染后端）起多一条事实：pikepdf 10.x 在 PyPI 上没有 macOS x86_64 wheel（evidence/u10/wheel_matrix.json），`pip install tavotto` 在 Intel Mac 上要自己编译 pikepdf（qpdf + C++ 工具链）——本仓库没有 Intel 机器验证这条路；改口或放宽 pikepdf 下界待用户拍板。"
     },
     {
       "id": "windows-arm64",

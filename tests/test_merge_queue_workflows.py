@@ -2768,3 +2768,70 @@ class TestRunnerTrustZones:
             f"actionlint 声明 {sorted(declared)}，workflow 实际用 {sorted(custom)}——"
             "未部署的池不进配置：先有真 runner 与真 job，再登记标签"
         )
+
+
+class TestApprovedFontsAndRetirementScan:
+    """U10（ADR 0060 / 0072）：RenderCore 是默认后端，批准字体不进 git——ci.yml 里每条**装了本项目、会真渲染 /
+    导出 / 打包**的腿都要在跑用例 / 打 wheel / PyInstaller 之前按 allowlist 取字体（少一条腿的表现是那条腿的
+    rendercore 用例 skip 或 fonts_dir_missing，而 skip 不是绿）；两条产物腿（wheel / 冻结）之后各跑一次退役扫描
+    （主语是产物：零 mupdf 原生库、字体 13 张、METADATA 零 pymupdf）。清单是闭集：加一条装项目的腿要回到这里。"""
+
+    #: 装了本项目（`pip install -e` / `-r requirements.txt`）的 job → 字体步必须在这一步之前
+    FONTS_BEFORE = {
+        "invariants": "python -m pytest",
+        "backend-fast": "python -m pytest",
+        "backend-platforms": "python -m pytest",
+        "compat-smoke": "scripts/ci/compat_matrix.py",
+        "plugin-candidate": "python -m pytest",
+        "workerd": "python -m pytest",
+        "package": "python -m build",
+        "windows-exe-smoke": "pyinstaller packaging/tavotto.spec",
+        "macos-app-smoke": "pyinstaller packaging/tavotto.spec",
+        "posix-e2e": "pnpm e2e",
+    }
+    #: 产物腿：退役扫描的主语与它跟在哪一步之后
+    RETIREMENT = {
+        "package": ("--wheel dist/*.whl", "python -m build"),
+        "windows-exe-smoke": ("--dist dist/Tavotto", "pyinstaller packaging/tavotto.spec"),
+        "macos-app-smoke": ("--dist dist/Tavotto", "pyinstaller packaging/tavotto.spec"),
+    }
+
+    def test_every_job_that_installs_the_project_fetches_the_fonts_first(self):
+        # `package` 不装项目——它打 wheel（字体要进 wheel 的 artifacts），所以也在这张表上
+        installers = {
+            job_id
+            for job_id in _jobs_of(CI)
+            if re.search(
+                r"pip install -e|pip install -r requirements\.txt|python -m build\b",
+                _code(_job(CI, job_id)),
+            )
+        }
+        assert installers == set(self.FONTS_BEFORE), (
+            f"装了本项目的 job 变了：{sorted(installers ^ set(self.FONTS_BEFORE))}——回到 FONTS_BEFORE 决定它要不要字体"
+        )
+        for job_id, before in self.FONTS_BEFORE.items():
+            block = _code(_job(CI, job_id))
+            fetch = block.find("scripts/fetch_fonts.py")
+            check = block.find("scripts/fetch_fonts.py --check")
+            use = block.find(before)
+            assert fetch != -1 and check != -1, f"{job_id} 没有取字体 + --check"
+            assert use != -1 and fetch < use, f"{job_id}：字体要在 `{before}` 之前取到"
+
+    def test_the_artifact_jobs_run_the_retirement_scan_on_their_artifact(self):
+        for job_id, (subject, after) in self.RETIREMENT.items():
+            block = _code(_job(CI, job_id))
+            scan = block.find("scripts/ci/retirement_scan.py")
+            assert scan != -1, f"{job_id} 没有退役扫描"
+            assert subject in block[scan : scan + 200], (job_id, subject)
+            assert block.find(after) < scan, f"{job_id}：扫描要在 `{after}` 之后"
+        # 非产物腿不扫产物（主语是产物，源码 / 依赖闭包 / 阻断器那三把尺子在 tests/test_retirement_scan.py 里随 pytest 跑）
+        for job_id in set(self.FONTS_BEFORE) - set(self.RETIREMENT):
+            assert "retirement_scan.py" not in _code(_job(CI, job_id)), job_id
+
+    def test_no_workflow_installs_the_retired_backend(self):
+        """退役扫描的主语是应用闭包，CI 装什么就是那个闭包的一部分：没有一条 `pip install` 再点名 pymupdf
+        （测试的读取器经 `.[dev]` 的 legacy-pymupdf extra 进来，那是有意的，不是这里要挡的）。"""
+        for path in sorted(WF.glob("*.yml")):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if "pip install" in line and "pymupdf" in line.lower():
+                    raise AssertionError(f"{path.name}: {line.strip()}")

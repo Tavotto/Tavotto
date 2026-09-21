@@ -1,7 +1,7 @@
 """Typography —— 画布文字从字符串到**已排字形**只走这一条路（统一实施包 U06，ADR 0059 / 0060）。
 
-旧 facade 在 `pymupdf_backend._draw_text` 里把「分层 → 量宽 → 换行 → 落笔」写在一起，
-量宽问 `Font.text_length`、落笔交给 `TextWriter.append`——两者恰好同源只是 PyMuPDF 的
+旧 facade（PyMuPDF 时代的 `_draw_text`，U10 随退役删除）把「分层 → 量宽 → 换行 → 落笔」写在一起，
+量宽问 `Font.text_length`、落笔交给 `TextWriter.append`——两者恰好同源只是那个库的
 实现事实。这里把它拆成两层，**同一份 shaped plan 既用来量也用来画**（RC-030）：
 
 * `Face`（协议）：一张脸能回答三件事——覆盖（`covers`）、排版（`shape`：HarfBuzz 的
@@ -9,7 +9,7 @@
   真实实现在 `hbshaper`（uharfbuzz + fontTools，native 适配层）；测试用一张合成的
   假脸就能把本模块跑完（纯模型不需要候选包）。
 * `FaceSet`：正文脸 + 唯一一张 CJK 脸。**没有 fallback 脸**——旧后端的第 3 层
-  （PyMuPDF 自己挑 Noto Serif）在这条路上不存在，`coverage()` 的 fallback oracle 恒 False，
+  （渲染器自己挑一张 Noto Serif）在这条路上不存在，`coverage()` 的 fallback oracle 恒 False，
   于是 `glyphplan.layer_of` 只会给出 primary / cjk / missing 三档：画不出的字就是
   `missing`，进问题系统，**不暗中回退系统脸**（RC-037、任务书「本轮集合外明示限制」）。
 

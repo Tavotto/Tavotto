@@ -2,18 +2,18 @@
 
 ### 为什么自己写，而不是 Pillow
 
-Flask 父进程的依赖边界是 **flask + pymupdf**（`pyproject.toml`，`src/tavotto/AGENTS.md`
-「进程与依赖边界」），Pillow 只在 worker 解释器里（matplotlib 的依赖）与 CI 的
-`ci` extra 里有。画布合成与「按原图」导出都在父进程的 PyMuPDF 里出位图，而
-`Pixmap.save()` 不认 TIFF、`Pixmap.pil_save()` 要 Pillow。为一个容器格式把图像库
-拖进父进程，等于把那条边界松掉一格；而 Baseline TIFF + Deflate 用 `struct` + `zlib`
-一百多行就能写对，且**产物可以被任何 TIFF 读取端独立解码**（测试里用 Pillow 与
-PyMuPDF 做对拍，两侧与本模块无一行共享代码）。
+写它的时候（ADR 0046）Flask 父进程的依赖边界是 flask + pymupdf，Pillow 不在父进程里；
+旧后端的 `Pixmap.save()` 不认 TIFF、`pil_save()` 要 Pillow。为一个容器格式把图像库拖进
+父进程等于把那条边界松掉一格，而 Baseline TIFF + Deflate 用 `struct` + `zlib` 一百多行就能
+写对，且**产物可以被任何 TIFF 读取端独立解码**（测试里用 Pillow 与独立读取器做对拍，两侧
+与本模块无一行共享代码）。U10 之后 Pillow 进了运行时闭包（`rendercore/rasterio.py` 解码
+位图素材，ADR 0066 / 0072），本模块**仍是唯一的 TIFF 写入器**——RenderCore 的 `raster.write_tiff`
+复用它（PNG 与 TIFF 从同一个 `RasterBuffer` 编码，RC-052 / RC-053）。
 
 ### 写出来的是什么
 
 * Baseline TIFF 6.0，小端（`II`），单页，RGB 或 RGBA（`ExtraSamples = 2`，
-  非预乘 alpha——与 PyMuPDF 的像素语义一致，PNG 那条路写出去的也是它）；
+  非预乘 alpha——与 `RasterBuffer` 的像素语义一致（straight alpha），PNG 那条路写出去的也是它）；
 * 压缩 **8 = Adobe Deflate**（zlib），无损。不选 LZW 的理由是纯 Python 的 LZW
   逐字节编码一张 600 ppi 的整页要跑几十秒，Deflate 由 zlib 的 C 实现完成；
   libtiff / Pillow / Photoshop / ImageMagick / macOS 预览 / Windows 照片都认 8；

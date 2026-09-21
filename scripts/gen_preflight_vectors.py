@@ -107,7 +107,6 @@ def _panel(pid: str, **kw) -> dict:
         "stale": False,
         "render_error": None,
         "unapplied_overrides": 0,
-        "bitmap_embed": False,
         "hidden": False,
     }
     base.update(kw)
@@ -455,7 +454,6 @@ def cases() -> list[dict]:
                         stale=True,
                         render_error="boom",
                         unapplied_overrides=3,
-                        bitmap_embed=True,
                     )
                 ]
             ),
@@ -548,10 +546,11 @@ def cases() -> list[dict]:
 
     # 13f. 字形覆盖（Prompt 14）。四条各盯一个具体的错法：
     #      ① 画布文字里有谁都画不出的字符 → glyph-missing（导出上是方框）；
-    #      ② 画布文字里的 `⁵` 会退到另一张脸 → glyph-substituted；
-    #      ③ 同一段文字选 `scientific` 之后 `⁵` 被合成掉，**一条都不该报**
-    #         ——判据必须量渲染表示，量原文的话这条会假红；
-    #      ④ 图内文字的两张单子直接来自 manifest（产生者只有引擎一处）。
+    #      ② 画布文字里的 `⁵`：U10 之前它退到 PyMuPDF 自己挑的回退脸 → glyph-substituted；批准字体集合
+    #         （ADR 0060 / 0072）没有回退层、Liberation 自带 `⁵`，所以**期望是空**——这条向量从此守的是
+    #         「不再有替换建议」（D07：换脸不是缺陷，报一条改不动的限制只会训练用户忽略面板）；
+    #      ③ 同一段文字选 `scientific` 之后**一条都不该报**——判据必须量渲染表示，量原文的话这条会假红；
+    #      ④ 图内文字的两张单子直接来自 manifest（产生者只有引擎一处；worker 侧的 matplotlib 回退脸仍存在）。
     out.append(
         {
             "name": "canvas-text-glyph-missing",

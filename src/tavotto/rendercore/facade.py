@@ -1,8 +1,10 @@
-"""RenderCore 面的 pdfbackend 契约实现——19 个导出项 + Canvas 面，同签名同返回结构（统一实施包 U08，ADR 0067）。
+"""RenderCore 面的 pdfbackend 契约实现——19 个导出项 + Canvas 面，同签名同返回结构（统一实施包 U08 候选、
+U10 起唯一实现，ADR 0067 / 0072）。
 
-`pdfbackend/__init__.py` 是契约层：它按 `TAVOTTO_RENDER_BACKEND` 在 `pymupdf_backend`（默认）与本模块之间
-**选一条**，选定之后不换、不在失败时试另一个（06 §1）。本模块只做「用新核心兑现同一份契约」，一个字都不
-import 旧后端（D03；`tests/test_rendercore_model.py` 钉着）。
+`pdfbackend/__init__.py` 是契约层：它按 `TAVOTTO_RENDER_BACKEND` 选实现（今天闭集里只有本模块；U08–U09 时
+与旧 `pymupdf_backend` 二选一），选定之后不换、不在失败时试另一个（06 §1）。本模块只做「用新核心兑现同一份
+契约」，一个字都不 import 旧后端（D03；`tests/test_rendercore_model.py` 钉着）。下表的「与旧后端的有意差异」
+是 U08 对拍时量出来的，退役后参照只剩 `tests/fixtures/legacy_pymupdf/`（批准资产）。
 
 | 契约项 | 这里的实现 | 与旧后端的有意差异（记进 U08 交接表） |
 |---|---|---|
@@ -25,8 +27,8 @@ import 旧后端（D03；`tests/test_rendercore_model.py` 钉着）。
 适配器，同一套编译 / 写入 / 栅格函数，不是第二套实现。
 
 进程级共享：一份字体注册表（`provider()`）、一个 render child（`host()` = `renderhost.shared()`）、一个预览
-缓存（`preview_cache()`）。候选包 / 字体缺席时在**第一次用到**那一刻抛 `CandidatePackagesMissing` /
-`FontsUnavailable`——不静默退回旧后端（无静默回退政策，ADR 0067）。
+缓存（`preview_cache()`）。依赖包 / 字体缺席时在**第一次用到**那一刻抛 `CandidatePackagesMissing` /
+`FontsUnavailable`——不静默换成别的库（无静默回退政策，ADR 0067 / 0072）。
 """
 
 from __future__ import annotations

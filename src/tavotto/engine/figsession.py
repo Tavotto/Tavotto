@@ -520,7 +520,7 @@ class LiveFigureSession:
         dpi: int = 600,
         timings: dict | None = None,
     ) -> dict:
-        """全质量导出（供 PyMuPDF 合成）。
+        """全质量导出（供画布合成 / 按原图导出）。
 
         与 preview_png 同一纪律：export 是**状态中立**的一次性动作。
         不还原的话导出用的 patches 会留在常驻 figure 上——历史版本恢复、

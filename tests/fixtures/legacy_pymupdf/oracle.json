@@ -1,0 +1,88 @@
+{
+ "provenance": {
+  "backend": [
+   "pymupdf",
+   "1.28.2"
+  ],
+  "commit_before_retirement": "8961883d",
+  "generated_on": "2026-09-22",
+  "platform": "macOS arm64"
+ },
+ "probe_asset": {
+  "original.png": {
+   "kind": "raster",
+   "px_w": 64,
+   "px_h": 48,
+   "alpha": true
+  },
+  "original_nophys.png": {
+   "kind": "raster",
+   "px_w": 64,
+   "px_h": 48,
+   "alpha": true
+  },
+  "page.pdf": {
+   "kind": "pdf",
+   "w_pt": 270.0,
+   "h_pt": 160.0
+  }
+ },
+ "pdf_fonts": {
+  "page.pdf": [
+   "Helvetica"
+  ],
+  "calibration/panel_plain.pdf": [
+   "Helvetica"
+  ]
+ },
+ "text_width_12pt": {
+  "Sample": 36.0,
+  "H2O": 23.32800006866455,
+  "Fig. 1 (a)": 44.32800006866455
+ },
+ "text_plan": {
+  "Sample": [
+   [
+    "Sample",
+    "primary"
+   ]
+  ],
+  "H2O": [
+   [
+    "H2O",
+    "primary"
+   ]
+  ],
+  "Fig. 1 (a)": [
+   [
+    "Fig. 1 (a)",
+    "primary"
+   ]
+  ]
+ },
+ "CANVAS_TEXT_FAMILIES": [
+  "serif",
+  "sans-serif",
+  "monospace"
+ ],
+ "COVERAGE_MAX_CP": 196608,
+ "serif_regular_face": {
+  "name": "Times-Roman",
+  "ascender": 1.0529999732971191,
+  "descender": -0.2809999883174896
+ },
+ "preview_300.png": {
+  "rendered_by": "pymupdf_backend.render_preview_png(page.pdf, 300)",
+  "note": "MuPDF 栅格；与 PDFium 的栅格像素不同，是 compare_png 用例里「另一个栅格器」那一侧"
+ },
+ "calibration": {
+  "generated_by": "tests/test_rendercore_calibration.py::_old_pdf（旧 pdfbackend.compose，dpi 600）在退役前一提交上跑出",
+  "cases": [
+   "panel_plain",
+   "panel_rot_crop",
+   "shapes",
+   "panel_opacity",
+   "text"
+  ]
+ }
+}

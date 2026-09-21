@@ -600,6 +600,81 @@ def test_spec_ships_runtime_when_it_exists():
     assert '"runtime"' in spec, "runtime 要作为 datas 进包"
 
 
+def test_spec_ships_every_tracked_package_data_file():
+    """`Analysis` 只把 .py 编进 PYZ：包内任何非 .py 的数据文件都要有一条 datas 才会进冻结产物，而源码树 /
+    wheel 里它们自然在——漏一条的表现是桌面版第一次用到那份数据时 ENOENT（U10 的 `rendercore/fonts_allowlist.json`
+    就是这么在冻结产物真导出时才露头的）。判据从 `git ls-files` 反推：src/tavotto 下每个跟踪的非 .py 文件，
+    要么它的目录被 datas 整棵收了（`profiles/` / `resources/`），要么它被逐条点名。"""
+    import subprocess
+
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    tracked = subprocess.run(
+        ["git", "ls-files", "src/tavotto"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.split()
+    data_files = [
+        p
+        for p in tracked
+        if not p.endswith(".py")
+        and not p.startswith("src/tavotto/web/")
+        and Path(p).name != "AGENTS.md"
+    ]
+    assert data_files, "src/tavotto 下没有跟踪的数据文件——判据量在空集合上"
+    whole_dirs = [
+        m.group(1) for m in re.finditer(r'\(str\(PKG / "([a-z_]+)"\), "tavotto/\1"\)', spec)
+    ]
+    assert "resources" in whole_dirs and "profiles" in whole_dirs
+    missing = []
+    for p in data_files:
+        rel = Path(p).relative_to("src/tavotto")
+        if rel.parts[0] in whole_dirs:
+            continue
+        needle = 'str(PKG / "' + '" / "'.join(rel.parts) + '")'
+        if needle not in spec:
+            missing.append(p)
+    assert not missing, f"这些包内数据文件不在 tavotto.spec 的 datas 里（冻结产物会缺）：{missing}"
+
+
+def test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fonts():
+    """U10（ADR 0072）：RenderCore 是默认后端，冻结产物要带三样东西——PDFium 的共享库（住在 pypdfium2_raw
+    的包目录里，依赖分析看不见）、pikepdf 的 qpdf 库、批准字体（`resources/` datas；字体不进 git）。
+    缺前两样的表现是「装完的桌面版一导出就 render_child_died / ImportError」，缺字体是 fonts_dir_missing
+    ——都只在用户机器上发作。所以 spec 自己：显式收前两样、缺字体拒绝打包、不再排除 PIL（Pillow 是
+    rasterio 的直接依赖），并把退役的 pymupdf / fitz 列进 excludes（打包机上装着测试读取器也不进包）。"""
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    assert 'collect_dynamic_libs("pypdfium2_raw")' in spec
+    assert 'collect_all("pikepdf")' in spec
+    assert "from fetch_fonts import check as check_fonts" in spec and "check_fonts(" in spec
+    excludes = re.search(r"excludes=\[(.*?)\]", spec, re.S)
+    assert excludes, "spec 里读不出 excludes"
+    names = set(re.findall(r'"([^"]+)"', excludes.group(1)))
+    assert "PIL" not in names, "Pillow 是 RenderCore 的运行时依赖（rasterio），不能再排除"
+    assert {"pymupdf", "fitz"} <= names, "退役的 PyMuPDF 要显式挡在冻结产物之外"
+    # 冻结产物里 child 以同一个 exe 加 --render-child 自起（renderchild.child_argv）：入口要先分派它
+    entry = (REPO / "packaging" / "entry.py").read_text(encoding="utf-8")
+    assert 'RENDER_CHILD_FLAG = "--render-child"' in entry
+    assert entry.index("RENDER_CHILD_FLAG]:") < entry.index("_redirect_streams()\n    # 子命令"), (
+        "render child 的分派必须在 _redirect_streams 之前（child 在 stdout 上说 JSON）"
+    )
+    from tavotto.rendercore import renderchild
+
+    assert renderchild.child_argv() == [sys.executable, "-m", "tavotto.rendercore.renderchild"]
+    frozen = renderchild.child_argv.__globals__["sys"]
+    saved = getattr(frozen, "frozen", None)
+    frozen.frozen = True
+    try:
+        assert renderchild.child_argv() == [sys.executable, "--render-child"]
+    finally:
+        if saved is None:
+            del frozen.frozen
+        else:
+            frozen.frozen = saved
+
+
 def test_spec_ships_every_module_the_worker_imports():
     """worker 平铺 import 的**整条传递闭包**都必须作为真 .py 进包。
 

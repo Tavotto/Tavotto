@@ -8,20 +8,20 @@
  * ### 为什么前端也要有一份
  *
  * 导出那一端问的是真字体，永远是对的。但「这几个字导出后会是方框」必须在
- * **点导出之前**就说出来，而浏览器里没有 PyMuPDF——所以判据要有两份。
+ * **点导出之前**就说出来，而浏览器里没有字体引擎——所以判据要有两份。
  *
  * 两份的算法同源，**oracle 不同源**：Python 侧问真字体，这里读生成物
  * `canvas_coverage.json`（`@glyphcoverage` 别名整份 import 进 bundle，
  * 与 `@profiles` 同一个套路：能力常量绝不在 TS 侧再抄一遍）。这条差异由
- * `scripts/gen_canvas_coverage.py --check` 看护——PyMuPDF 换版本导致覆盖
- * 漂移时红的是那一格，而不是某个用户图上多出来的一个方框。
+ * `scripts/gen_canvas_coverage.py --check` 看护——批准字体集合（ADR 0060）
+ * 变了导致覆盖漂移时红的是那一格，而不是某个用户图上多出来的一个方框。
  *
  * ### 四层，顺序不可交换
  *
  * ```text
- * primary   请求的那个族的 base-14 脸自己画得出
- * cjk       中日韩脸画得出（只有码位在 CJK 段、或前两层都没有时才轮到它）
- * fallback  前两层都没有，但 PyMuPDF 自己挑得出一张脸（实测是 Noto Serif）
+ * primary   请求的那个族的脸（Liberation 三族，表取 12 张脸的交集）自己画得出
+ * cjk       中日韩脸（Noto Sans SC 子集）画得出（只有码位在 CJK 段、或前两层都没有时才轮到它）
+ * fallback  U10（ADR 0072）起**恒空**——没有隐式回退脸；层名保留是让四步顺序不变
  * missing   谁都画不出——导出上就是一个方框，必须进问题系统
  * ```
  */

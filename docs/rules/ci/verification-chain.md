@@ -72,4 +72,4 @@
   --insecure-no-auth` 后 `curl -X POST /api/engine/render
   -d '{"id":"Fig1_kinetics.pdf","patches":[]}'`（不带 `--insecure-no-auth` 时
   curl 要加 `X-Tavotto-Auth` 头，见 ADR 0008）。
-- 导出保真：导出 PDF 用 pymupdf `get_text()` 验证矢量文字。
+- 导出保真：导出 PDF 用独立读取器（PDFium 文字层 / `tests/support/pdfread.py`）验证矢量文字。

@@ -63,7 +63,7 @@
   runtime，桌面产物一律真窗口、不再有「启动后开浏览器」的形态。
 - **安装界面（2026-08-17）**：macOS dmg 带品牌版式——背景图
   `assets/brand/dmg-background.png` 由 `scripts/build_dmg_background.py` 生成
-  （PyMuPDF 直绘，图标落点与 `make_dmg.sh` 的 Finder 版式严格同源），
+  （维护者脚本用 PyMuPDF 直绘——它不在应用闭包里，要 `pip install -e '.[legacy-pymupdf]'`；图标落点与 `make_dmg.sh` 的 Finder 版式严格同源），
   make_dmg.sh 里 Finder 脚本失败只降级为朴素版式、绝不断发布链。
   Windows NSIS 用 vendored 模板 `src-tauri/windows/installer.nsi`
   （上游 tauri-cli v2.11.4 + `TAVOTTO PATCH` 标注的最小补丁：去欢迎页 /

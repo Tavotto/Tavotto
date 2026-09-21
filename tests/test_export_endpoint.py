@@ -9,8 +9,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from tavotto import app as m
-from tavotto.pdfbackend import pymupdf_backend as pb
+from tavotto import app as m, pdfbackend as pb
 
 
 @pytest.fixture
@@ -294,18 +293,13 @@ def test_export_event_counts_only_visible_panels(client, tmp_path, telemetry_sen
 
 def test_failed_export_captures_nothing(client, tmp_path, telemetry_sent, monkeypatch):
     """失败的导出绝不能被记成成功——那会让激活率凭空变高。"""
-    real_compose = m.pdfbackend.compose
+    from tavotto.rendercore import pdfwriter
 
-    def exploding_compose(w, h):
-        canvas = real_compose(w, h)
+    def boom(*_a, **_kw):
+        raise OSError("磁盘满了")
 
-        def boom(*_a, **_kw):
-            raise OSError("磁盘满了")
-
-        canvas.save_pdf = boom
-        return canvas
-
-    monkeypatch.setattr(m.pdfbackend, "compose", exploding_compose)
+    # 注在写入器（U10 之前是旧 `compose().save_pdf`，ADR 0072）
+    monkeypatch.setattr(pdfwriter, "write_pdf", boom)
     resp = client.post(
         "/api/export",
         json={

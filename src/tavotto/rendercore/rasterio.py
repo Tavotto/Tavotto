@@ -1,10 +1,9 @@
 """位图源解码：PNG / JPEG / TIFF 字节 → `raster.RasterBuffer`（统一实施包 U07，ADR 0065 / 0066）。
 
 native 适配层：**Pillow 只在这里 import，且在函数里按需 import**。它是 pikepdf 的硬依赖，本来就在
-`tavotto[rendercore]` 的闭包里；U07 起它有了一个我们**直接调用**的用途（把用户的位图素材解成像素
-好写进 PDF 的 Image XObject），所以 pyproject 的 `rendercore` extra 把它列成正式依赖（ADR 0066 §依赖），
-不再是「传递依赖、我们不碰」。父进程默认路径（PyMuPDF）一字不变；`tiffwrite.py` 仍是纯标准库
-编码器——Pillow 在这里只**解码**。
+闭包里；U07 起它有了一个我们**直接调用**的用途（把用户的位图素材解成像素好写进 PDF 的 Image XObject），
+所以 pyproject 把它列成正式依赖（ADR 0066 §依赖；U10 起在 `dependencies` 里，ADR 0072），不再是
+「传递依赖、我们不碰」。`tiffwrite.py` 仍是纯标准库编码器——Pillow 在这里只**解码**。
 
 ## 合同
 

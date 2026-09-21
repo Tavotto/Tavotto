@@ -23,7 +23,7 @@
   `engine/interference.py`（`text-overlap` / `text-over-axes` / `legend-over-data`，
   与预检同一形状；`measure()` / `issue_key()` 是「加没加重」的尺）、
   `engine/artifactcheck.py`（最终文件按格式验；`pdfbackend.pdf_fonts` 是它唯一的
-  PyMuPDF 入口）。`preflight.element_overflow()` 是 `element-outside-figure` 的逐元素
+  PDF 后端入口）。`preflight.element_overflow()` 是 `element-outside-figure` 的逐元素
   判据，`_check_panel_clipping` 与 B0 对比共用它——改判据只改这一处。三条干涉检查的
   severity 登记在 `publication.json`（warn），文案 key 在 `errors.json` 的 `preflight.*`
   与 `problems.title.*`（`test_i18n_dead_keys` 扫 `src/tavotto` 与插件目录）。

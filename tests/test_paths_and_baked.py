@@ -5,8 +5,7 @@ import json
 import pytest
 from werkzeug.exceptions import HTTPException
 
-from tavotto import app as m
-from tavotto.pdfbackend import pymupdf_backend as pb
+from tavotto import app as m, pdfbackend as pb
 
 
 @pytest.fixture
@@ -309,12 +308,18 @@ def test_scan_panels_reports_stale_baked_baseline(baked, tmp_path):
 
 
 def test_crop_clip_maps_normalized_rect():
-    import pymupdf
+    """归一化 crop（顶原点 x / y / w / h，相对源可见框）→ 源空间的裁剪矩形。旧后端是 `_crop_clip`
+    （PyMuPDF Rect，顶原点）；U10 起是 `rendercore.placement.place()` 的 `clip`（y 向上）——同一约定，
+    只换口径：源 100 × 200、crop (0.25, 0.5, 0.5, 0.25) 在顶原点里是 [25, 100]–[75, 150]，
+    y 向上就是底 50、高 50。"""
+    from tavotto.rendercore import placement
 
-    src = pymupdf.Rect(0, 0, 100, 200)
-    clip = pb._crop_clip(src, {"x": 0.25, "y": 0.5, "w": 0.5, "h": 0.25})
-    assert (clip.x0, clip.y0, clip.x1, clip.y1) == (25, 100, 75, 150)
-    assert pb._crop_clip(src, None) is None
+    src = (0.0, 0.0, 100.0, 200.0)
+    placed = placement.place(src, (0.0, 0.0, 50.0, 50.0), crop=(0.25, 0.5, 0.5, 0.25))
+    x, y, w, h = placed.clip
+    assert (x, x + w) == (25.0, 75.0)
+    assert (200.0 - (y + h), 200.0 - y) == (100.0, 150.0)  # 换回顶原点：[100, 150]
+    assert placement.place(src, (0.0, 0.0, 50.0, 50.0), crop=None).clip == src
 
 
 def test_hex2rgb():

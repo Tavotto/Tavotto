@@ -3,14 +3,17 @@
 > 原文出自 `src/tavotto/AGENTS.md`「进程与依赖边界（重要）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
-- Flask 跑在 `.venv`（只有 flask + pymupdf，**没有 matplotlib**）。
+- Flask 跑在 `.venv`（flask + packaging + RenderCore 的五个包：pikepdf / fonttools / uharfbuzz / pypdfium2 / pillow，
+  **没有 matplotlib**）。
   `engine/registry.py`、`engine/pool.py`、`engine/ai_bridge.py`、`engine/config.py`、
   `engine/updater.py`、`engine/runtime.py`、`engine/project_refresh.py`、
   `engine/project_watch.py`、`engine/readiness.py`、`engine/workdir.py`、
   `engine/databinding.py`、`engine/preparation.py` 被 Flask import，
   **必须保持纯标准库**。「纯标准库」挡的是科学栈（matplotlib / numpy 由 worker 解释器提供）；
-  `pyproject.toml` 声明的三个运行时依赖（flask / pymupdf / packaging）是父进程自己的——`packaging`
-  自 U04（ADR 0061）起只在 `engine/depresolve.py` 的 intent 读法里延后 import，别处不许 import 它。
+  `pyproject.toml` 声明的运行时依赖（flask / packaging + RenderCore 的五个包，U10 起；ADR 0072）是父进程自己的
+  ——`packaging` 自 U04（ADR 0061）起只在 `engine/depresolve.py` 的 intent 读法里延后 import，别处不许 import 它；
+  pikepdf / pypdfium2 / uharfbuzz / fontTools / Pillow 只在 `rendercore/` 的 native 适配层里 import，PDFium 只在
+  render child 进程里。PyMuPDF 不在闭包里（`scripts/ci/retirement_scan.py` 看护）。
 - 渲染解释器由 `pool.resolve_worker_python(项目, script=…)` 决定（ADR 0018 / 0044 / 0057）：
   显式（环境变量 / 设置）> 项目记住的 > **项目自带的 venv（首开发现 + 体检，每进程每项目一次）**
   > 内置 / 自身 / 系统。**失效的显式选择不静默替换**：`explicit_python_unusable` /

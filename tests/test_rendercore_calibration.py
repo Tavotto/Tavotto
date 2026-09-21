@@ -1,12 +1,13 @@
-"""旧后端（PyMuPDF `pdfbackend.compose`）vs 新核心（RenderCore）的**校准对拍**（统一实施包 U07，ADR 0066；
-03 §6「需要校准」、05 §5、registry RC-094 / RC-096）。
+"""旧后端（PyMuPDF `pdfbackend.compose`，退役前冻结的产物）vs 新核心（RenderCore）的**校准对拍**（统一实施包 U07，
+ADR 0066；03 §6「需要校准」、05 §5、registry RC-094 / RC-096；U10 起旧那一侧是批准资产
+`tests/fixtures/legacy_pymupdf/calibration/<case>.pdf`——06 §3：历史差分只在隔离工具 / 批准资产，ADR 0072）。
 
 纪律：**同一读取栈**（PDFium）先比几何（对象包围盒），再比固定读取器的图像（PDFium 同 scale 栅格，逐 RGBA
 通道、底噪 3——与 `pdfbackend.compare_png` 同一判据形状）；**按 case 记阈值，不全局放大，不自动位移对齐**
 （把两张图挪到最像的位置再比会把布局错误藏起来）。旧后端的行为不是绝对真值（RC-096）：它在 opacity < 1 /
 flip 时退位图，新核心保矢量——那种 case 只比几何与「像素差在预期区域」，不要求像素相同。
 
-需要 pymupdf（默认依赖）+ 候选包 + 字体：rc-venv 里两边都在；主仓库 .venv 没有候选包，skip 并写明。
+需要 RenderCore 依赖 + 批准字体（U10 起是运行时闭包）；不在的机器 skip 并写明（skip 不是绿）。
 """
 
 from __future__ import annotations
@@ -20,18 +21,19 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "foundation" / "pdf_png_assets"
+LEGACY = ROOT / "tests" / "fixtures" / "legacy_pymupdf"
 HAS = all(
-    importlib.util.find_spec(m) is not None
-    for m in ("pymupdf", "pypdfium2", "pikepdf", "uharfbuzz", "PIL")
+    importlib.util.find_spec(m) is not None for m in ("pypdfium2", "pikepdf", "uharfbuzz", "PIL")
 )
-needs = pytest.mark.skipif(not HAS, reason="pymupdf 或候选包未装（not_run，不是绿）")
+needs = pytest.mark.skipif(not HAS, reason="RenderCore 依赖未装（not_run，不是绿）")
 
 PAGE_MM = (120.0, 60.0)
 MM = 72.0 / 25.4
 SCALE = 2.0
 
 #: 每个 case 自己的阈值（03 §6：按 case 记，不全局放大）。本机（macOS arm64，PDFium 153，PyMuPDF 1.28.2）
-#: 2026-09-21 实测值写在旁边——阈值是量出来再定的，不是先定再放宽。
+#: 2026-09-21 实测值写在旁边——阈值是量出来再定的，不是先定再放宽。旧那一侧自 U10 起是冻结产物
+#: （退役前在同一台机器上跑出，见 legacy_pymupdf/oracle.json）。
 #: geometry_pt：PDFium 报的对象包围盒（页面空间 pt）逐角容差；pixels / mean：面板框（或整页）内
 #: changed_pixel_ratio 与 mean_abs_diff 的上限（逐 RGBA 通道最大差、底噪 3，与 `pdfbackend.compare_png` 同形）。
 CASES = {
@@ -136,16 +138,9 @@ def _objects(case: str) -> list[dict]:
     raise AssertionError(case)
 
 
-def _old_pdf(objects: list[dict], project: Path, out: Path) -> None:
-    from tavotto import pdfbackend
-
-    canvas = pdfbackend.compose(*PAGE_MM, False)
-    try:
-        for o in objects:
-            canvas.place(o, 600, lambda obj, dpi: project / obj["id"])
-        canvas.save_pdf(out)
-    finally:
-        canvas.close()
+def _old_pdf(case: str, out: Path) -> None:
+    """旧后端那一侧：退役前由旧 `pdfbackend.compose`（dpi 600）对同一组对象跑出的冻结产物。"""
+    shutil.copyfile(LEGACY / "calibration" / f"{case}.pdf", out)
 
 
 def _new_pdf(objects: list[dict], project: Path, out: Path, provider) -> None:
@@ -215,7 +210,7 @@ def _panel_box_px(objects: list[dict]) -> tuple[int, int, int, int]:
 def test_old_and_new_backends_agree_within_the_case_thresholds(case, project, provider, tmp_path):
     objects = _objects(case)
     old, new = tmp_path / "old.pdf", tmp_path / "new.pdf"
-    _old_pdf(objects, project, old)
+    _old_pdf(case, old)
     _new_pdf(objects, project, new, provider)
     thr = CASES[case]
 
@@ -277,7 +272,7 @@ def _ink_extent(img, box) -> tuple[float, float, float]:
 def _check_text_ink(old: Path, new: Path, thr: dict, objects: list[dict], provider) -> None:
     """`Calibration 123` 没有下伸部：墨的底边就是基线。左右边差 ≤ geometry_pt（advance 兼容）；基线差
     == 批准的度量差（同一条公式、两边各自的 ascender / descender），±baseline_tol_pt。"""
-    from tavotto.pdfbackend import pymupdf_backend as pb
+    import json
 
     o = objects[0]
     box = (
@@ -295,7 +290,10 @@ def _check_text_ink(old: Path, new: Path, thr: dict, objects: list[dict], provid
         rn,
     )
     size, line_h = float(o["size_pt"]), 1.25
-    old_face = pb.latin_font(False, False, "serif")
+    # 旧脸（Times-Roman）的 ascender / descender 是退役前从 PyMuPDF 记下的数（oracle.json）
+    old_face = json.loads((LEGACY / "oracle.json").read_text(encoding="utf-8"))[
+        "serif_regular_face"
+    ]
     new_face = provider.face_for("serif", False, False)
 
     def baseline(
@@ -303,7 +301,7 @@ def _check_text_ink(old: Path, new: Path, thr: dict, objects: list[dict], provid
     ) -> float:  # 两边同一条公式（旧 _draw_text / 新 typography），这里手写一份
         return size * ((line_h - (asc - desc)) / 2 + asc)
 
-    approved_shift = baseline(old_face.ascender, old_face.descender) - baseline(
+    approved_shift = baseline(old_face["ascender"], old_face["descender"]) - baseline(
         new_face.ascender, new_face.descender
     )
     assert approved_shift > 1.0, approved_shift  # 这是一个真实存在的、批准过的差（不是零）
@@ -315,7 +313,7 @@ def test_a_deliberately_shifted_panel_is_caught_not_aligned_away(project, provid
     """反证：把新核心那份的面板挪 2 mm 再比——几何判据必须红（不自动位移对齐）。"""
     objects = _objects("panel_plain")
     old, new = tmp_path / "old.pdf", tmp_path / "new.pdf"
-    _old_pdf(objects, project, old)
+    _old_pdf("panel_plain", old)
     shifted = [{**objects[0], "x_mm": objects[0]["x_mm"] + 2}]
     _new_pdf(shifted, project, new, provider)
     bo = [b for t, b in _pdfium_boxes(old) if t == 5][0]

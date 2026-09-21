@@ -3,7 +3,7 @@
 <!--
   公证要求开启 hardened runtime，但 Python 应用有两处必须放开：
 
-  - allow-unsigned-executable-memory / allow-jit：CPython 与 PyMuPDF 的原生扩展
+  - allow-unsigned-executable-memory / allow-jit：CPython 与 RenderCore（pikepdf / PDFium / HarfBuzz）的原生扩展
     会做运行时代码生成，hardened runtime 默认禁止，不放开会直接崩。
   - disable-library-validation：渲染 worker 是**用户自己的 Python**，那个二进制
     不是我们签的；库校验开着会拒绝加载。

@@ -147,12 +147,13 @@ jobs:
 
       # U09 / FO32 的第二个出口 managed_env_join（observing）：同一台机器上，产品自己准备环境（刚供应好的私有
       # Python 在 PP_DATA 里零下载复用）→ U04 代事务把 h5py 装进那一代 → 经产品 HTTP 入口首开 → 真值 → patch →
-      # RenderCore 导出（应用这边要候选包 + 批准字体）→ 独立核文件。仍是工程验证，不是资格（ADR 0064）。
-      - name: 应用侧候选包与批准字体（U09 联调的 RenderCore 终点）
+      # RenderCore 导出（应用这边要批准字体；五个包自 U10 起随 `pip install -e .` 进来，ADR 0072）→ 独立核文件。
+      # 仍是工程验证，不是资格（ADR 0064）。
+      - name: 应用侧批准字体（U09 联调的 RenderCore 终点）
         shell: bash
         run: |
           set -euo pipefail
-          pip install -e ".[rendercore]"
+          python -c "import pikepdf, pypdfium2, uharfbuzz, fontTools, PIL; print('rendercore deps ok')"
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
 

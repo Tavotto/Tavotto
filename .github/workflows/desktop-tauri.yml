@@ -319,9 +319,11 @@ jobs:
         run: python scripts/build_worker_runtime.py --clean
 
       - name: 装打包依赖（Flask 父进程那点；科学栈刻意不装，免得进 sidecar）
+        # requirements.txt 是钉死的运行时闭包（U10 起含 RenderCore 的五个包，ADR 0072）；批准字体由
+        # build_desktop.py 在 PyInstaller 之前按 allowlist 取（tavotto.spec 缺了就拒绝打包）
         run: |
           python -m pip install --upgrade pip pyinstaller
-          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+          python -m pip install -r requirements.txt
 
       - name: 构建前端 + workerd + sidecar（PyInstaller onedir）
         # build_desktop.py 会先 cargo build --release 出 tavotto-workerd，

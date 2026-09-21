@@ -11,8 +11,8 @@
   | `engine/patchspec.py` ↔ `workerd/src/patchspec.rs`+`pyfloat.rs` | `tests/golden/patch_vectors.json`（逐字节） |
   | `engine/preflight.py` ↔ `web/src/lib/preflight.ts` | `tests/golden/preflight_vectors.json`（只比判据不比措辞） |
   | `src/tavotto/richtext.py` ↔ `web/src/lib/richText.ts` | pytest 真 PDF 几何看护 |
-  | `src/tavotto/glyphplan.py` ↔ `web/src/lib/glyphPlan.ts` | `tests/golden/glyph_plan_vectors.json`（**算法同源、oracle 刻意不同源**：Python 问真字体，浏览器读生成的`pdfbackend/canvas_coverage.json`；表的漂移由 `scripts/gen_canvas_coverage.py --check` 单独看住） |
-  | `web/src/lib/shapeGeometry.ts` ↔ `pdfbackend` `_polygon_points`/`_dash_pattern` ↔ `rendercore/geometry.py` `polygon_points`/`dash_pattern`（U06 起的第三份宿主，ADR 0059） | pytest get_drawings() 几何看护；`tests/test_rendercore_geometry.py` 拿旧 facade 当 oracle 对拍 |
+  | `src/tavotto/glyphplan.py` ↔ `web/src/lib/glyphPlan.ts` | `tests/golden/glyph_plan_vectors.json`（**算法同源、oracle 刻意不同源**：Python 问真字体（批准字体集合，ADR 0060），浏览器读生成的`pdfbackend/canvas_coverage.json`；表的漂移由 `scripts/gen_canvas_coverage.py --check` 单独看住；与退役前旧表的差异闭集由 `tests/test_rendercore_glyph_vectors.py` 对着 `evidence/u10/*.pymupdf.json` 钉着） |
+  | `web/src/lib/shapeGeometry.ts` ↔ `rendercore/geometry.py` `polygon_points`/`dash_pattern`（U06 起的宿主，ADR 0059；旧 `pdfbackend` 的 `_polygon_points`/`_dash_pattern` 随 U10 删除） | 共享向量 `tests/golden/shape_geometry_vectors.json`（退役前从旧 facade 记下）：`tests/test_rendercore_geometry.py` 与 `web/src/lib/shapeGeometry.golden.test.ts` 各跑一遍；`tests/test_compose_arrow.py` 从合成 PDF 的内容流抽坐标做几何级看护 |
   | `handoff.desktop_argv()` ↔ `src-tauri/src/main.rs::parse_open_args()` | 两侧单测 |
   | `engine/locate.py` ↔ codex-plugin `handoff.py` | `test_install_locate.py::test_plugin_mirrors_the_locator` |
   | `engine/projectenv.PYTHON_MIN`/`PYTHON_MAX_EXCLUSIVE` ↔ `codex-plugin/mcp/server.py` 同名常量（`--provision` 挑 venv 基础解释器用） | `test_mcp_resolver.py::test_provision_python_range_mirrors_the_engine`（projectenv 那侧再由 `test_support_matrix.py` 钉在 pyproject 的 `requires-python` 上） |
@@ -26,7 +26,8 @@
   | `engine/profiles.py` `FALLBACK_MIN_FONT_SIZE_PT` ↔ `web/src/lib/profile.ts` 同名常量 | `test_font_floor_fallback_is_one_number_on_both_sides` |
   | codex-plugin `bridge.export_raster_issues()` ↔ `web/src/lib/validation.ts` `exportContextRaw()` | `test_the_export_context_rule_is_one_rule_on_both_sides` |
   | `engine/exportreq.py` 文件名规则 ↔ `web/src/lib/exportName.ts` | `tests/golden/filename_vectors.json`（八条原因逐条比，顺序也比） |
-  | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `web/src/lib/typography.ts` 同名常量 ↔ `rendercore/typography.py` 同名常量（U06 起） | `test_typography_families.py`（闭集 + 顺序）；`tests/test_rendercore_typography.py` |
+  | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `web/src/lib/typography.ts` 同名常量 ↔ `rendercore/typography.py` 同名常量（U06 起；U10 起契约层的就是 rendercore 的那一份） | `test_typography_families.py`（闭集 + 顺序）；`tests/test_rendercore_typography.py` |
+  | `pyproject.toml` `dependencies` ↔ `requirements.txt`（钉死镜像，同名同序；U10 起含 RenderCore 的五个 native 包，PyMuPDF 只在 `legacy-pymupdf` extra，ADR 0072） | `tests/test_rendercore_fonts.py::test_requirements_txt_mirrors_the_runtime_dependencies_and_is_pinned` / `test_pymupdf_is_only_the_legacy_extra_never_a_runtime_dependency`；产物侧由 `scripts/ci/retirement_scan.py` 的 wheel / deps 尺子看 |
   | `engine/overrides.NO_COLOR`（manifest 颜色字段的「无」取值）↔ `web/src/components/ui/Input.tsx` 同名常量 | `tests/test_no_color_pair.py` |
   | `src/tavotto/resources/private_python_lock.json` 两个 macOS 目标的 CPython 来源（version / release / triple / url / sha256 / size / archive_root）↔ `packaging/runtime-lock.json` 的 `macos-*` 目标 `python` 块（ADR 0063：桌面版内置渲染 runtime 与私有 Python 是同一份字节） | `tests/test_private_python.py::TestLock::test_macos_entries_are_the_same_origin_as_the_runtime_lock` |
 

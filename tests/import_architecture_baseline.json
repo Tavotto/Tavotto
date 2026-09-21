@@ -30,10 +30,9 @@
       "from": "tavotto/pdfbackend/__init__.py",
       "call": "importlib.import_module(_IMPL_MODULES[name])",
       "targets": [
-        "tavotto/pdfbackend/pymupdf_backend.py",
         "tavotto/rendercore/facade.py"
       ],
-      "reason": "契约层按 TAVOTTO_RENDER_BACKEND 在两个实现模块之间选一个（U08，ADR 0067）；名字是常量闭集 _IMPL_MODULES，两条边都登记在 extra_edges（scope=function：只在第一次用到时装载）。"
+      "reason": "契约层按 TAVOTTO_RENDER_BACKEND 选实现模块（U08，ADR 0067）；U10 退役 PyMuPDF 之后闭集 _IMPL_MODULES 只剩 rendercore/facade.py（ADR 0072），登记在 extra_edges（scope=function：只在第一次用到时装载）。"
     }
   ],
   "extra_edges": [
@@ -126,12 +125,6 @@
       "to": "tavotto/engine/wireproto.py",
       "scope": "function",
       "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
-    },
-    {
-      "from": "tavotto/pdfbackend/__init__.py",
-      "to": "tavotto/pdfbackend/pymupdf_backend.py",
-      "scope": "function",
-      "via": "_impl() → importlib.import_module(_IMPL_MODULES[name])"
     },
     {
       "from": "tavotto/pdfbackend/__init__.py",

@@ -115,11 +115,9 @@ export function dashArray(dash: DashStyle | undefined, sw: number): string | und
 }
 
 /**
- * 圆角矩形的实际圆角半径（x/y 同值）；与后端 _draw_shape 的 rect 分支同一钳制。
- *
- * 后端 `shape.draw_rect(rect, radius=frac)` 的 frac 是**相对短边**的比例，
- * pymupdf 内部按 `min(w,h) * frac` 同时作为 x、y 两个方向的圆角半径 ——
- * 永远是正圆角，且上限为短边的一半。SVG `<rect>` 只写 rx 时 ry 虽然继承 rx，
+ * 圆角矩形的实际圆角半径（x/y 同值）；与后端 `rendercore/geometry.py` 的 rect 分支同一钳制
+ * （半径相对短边、上限为短边的一半——旧后端 pymupdf 的 `draw_rect(radius=frac)` 也是
+ * 这个语义，RenderCore 照抄）。永远是正圆角。SVG `<rect>` 只写 rx 时 ry 虽然继承 rx，
  * 但 rx / ry 之后各自按半宽、半高**独立**钳制：w=60 h=6 r=4 画出来是
  * 4×3 的椭圆角（ry 撞上半高），导出却是 3×3 的正圆角。所以这里先把同一个
  * 半径算出来，两个方向都写它。

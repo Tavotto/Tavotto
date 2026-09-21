@@ -18,10 +18,10 @@ PDF 没要也照样写进临时目录——它是 PNG / TIFF 的唯一来源，�
 编译期的事实（缺字、落到 CJK 脸的字符、hidden 被丢）进 `job.warnings`，与旧路 worker 的
 warnings 同一个口子——「导出的图和画布上不一样」必须有个说法。
 
-U08 起 `app._export_produce` 在候选后端被选中时（`pdfbackend.selected() == "rendercore"`，ADR 0067）把
-`scope=canvas` 交给这里：`sources` 是 `ExecutionSourceResolver`（带 override / runtime 素材由当次 worker 现画
-并附回执）、`provider` / `host` 来自 `rendercore.facade`（一个进程一份字体注册表、一个 render child）。
-默认后端仍是 PyMuPDF，那条路一字不变。`host=None` 时用进程级共享的 render child（`renderhost.shared()`）。
+U08 起 `app._export_produce` 把 `scope=canvas` 交给这里（U08 时只在候选被选中时，U10 起默认，ADR 0067 / 0072）：
+`sources` 是 `ExecutionSourceResolver`（带 override / runtime 素材由当次 worker 现画并附回执）、`provider` / `host`
+来自 `rendercore.facade`（一个进程一份字体注册表、一个 render child）。`host=None` 时用进程级共享的 render child
+（`renderhost.shared()`）。
 """
 
 from __future__ import annotations

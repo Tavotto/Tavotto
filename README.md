@@ -393,7 +393,9 @@ That runtime is also why the installers are large: **195 MB to download on macOS
 89 MB on Windows, around half a gigabyte once installed.** Paid once, and offline.
 
 > macOS builds are **Apple Silicon (arm64) only**. Intel Macs are neither built nor
-> tested — use the PyPI install below. There is no Linux installer; Linux runs from
+> tested — the PyPI install below runs there without a promise, and since the
+> renderer moved to RenderCore it needs `pikepdf` built from source on Intel Macs
+> (no x86_64 wheel on PyPI). There is no Linux installer; Linux runs from
 > PyPI (browser mode, beta). On Windows, each release page states whether its
 > installer is code signed; an unsigned installer makes Windows show a
 > **SmartScreen** prompt on first run (choose *More info → Run anyway*, or verify

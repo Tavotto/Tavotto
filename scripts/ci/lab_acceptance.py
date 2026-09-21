@@ -115,6 +115,13 @@ out["web_index"] = (root / "web" / "index.html").is_file()
 out["worker"] = (root / "engine" / "worker.py").is_file()
 out["patchspec"] = (root / "engine" / "patchspec.py").is_file()
 out["profiles"] = (root / "profiles" / "publication.json").is_file()
+# U10（ADR 0072）：RenderCore 是默认后端——批准字体（allowlist 的 13 张脸，不进 git、随 wheel artifacts 走）
+# 与画布字形覆盖表要在包里；退役的 PyMuPDF 不许在声明的依赖闭包里
+fonts_dir = root / "resources" / "fonts"
+out["fonts"] = sorted(str(p.relative_to(fonts_dir)) for p in fonts_dir.rglob("*") if p.suffix.lower() in (".ttf", ".otf")) if fonts_dir.is_dir() else []
+out["coverage_table"] = (root / "pdfbackend" / "canvas_coverage.json").is_file()
+from importlib import metadata
+out["requires"] = sorted((metadata.distribution("tavotto").requires or []))
 out["root"] = str(root)
 print(json.dumps(out))
 """
@@ -156,6 +163,43 @@ print(json.dumps(out))
             "在" if info["profiles"] else "缺失 —— 预检规则随 wheel 分发，少了它 MCP 侧会崩",
         )
     )
+    # U10（ADR 0072）：字体不进 git，只靠 pyproject 的 artifacts 收回——漏了的表现是装完一导出就 fonts_dir_missing，
+    # 而源码树上永远看不出来（与前端产物同一种坏法）
+    allow = json.loads(
+        (REPO / "src" / "tavotto" / "rendercore" / "fonts_allowlist.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    expected = sorted(spec["file"] for spec in allow["faces"].values())
+    fonts_ok = info["fonts"] == expected
+    results.append(
+        (
+            f"批准字体 resources/fonts/（{len(expected)} 张脸）",
+            fonts_ok,
+            "齐"
+            if fonts_ok
+            else f"与 allowlist 不一致：包里 {len(info['fonts'])} 张，缺 {sorted(set(expected) - set(info['fonts']))[:3]}…",
+        )
+    )
+    results.append(
+        (
+            "画布字形覆盖表 pdfbackend/canvas_coverage.json",
+            info["coverage_table"],
+            "在" if info["coverage_table"] else "缺失 —— 预检的文字检查读它",
+        )
+    )
+    retired = [
+        r
+        for r in info["requires"]
+        if "extra ==" not in r and r.lower().startswith(("pymupdf", "fitz"))
+    ]
+    results.append(
+        (
+            "运行时依赖闭包零 PyMuPDF",
+            not retired,
+            "干净" if not retired else f"Requires-Dist 里还有：{retired}",
+        )
+    )
     return results
 
 
@@ -163,7 +207,7 @@ def cli_checks(py: Path) -> list[tuple[str, bool, str]]:
     """console script 与轻量子命令。
 
     `doctor` 那条尤其重要：它本该是「装坏了怎么查」的工具，所以必须在
-    Flask / PyMuPDF import 失败时自己也能跑——CLAUDE.md 里专门有一条纪律。
+    Flask / RenderCore 依赖 import 失败时自己也能跑——CLAUDE.md 里专门有一条纪律。
     """
     results: list[tuple[str, bool, str]] = []
     bindir = py.parent

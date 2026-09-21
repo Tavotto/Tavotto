@@ -1,12 +1,14 @@
-"""pdfbackend 契约的候选实现（`rendercore/facade.py`）与选择开关（统一实施包 U08，ADR 0067）。
+"""pdfbackend 契约的实现（`rendercore/facade.py`）与选择开关（统一实施包 U08 引入、U10 切默认：ADR 0067 / 0072）。
 
 三组主语：
 
-1. **开关**（任何机器）：默认 `pymupdf`；`TAVOTTO_RENDER_BACKEND=rendercore` 才选候选；不认识的取值当场
-   `BackendSelectionError`；候选被选中而候选包 / 字体不在 → 结构化异常，**绝不**悄悄退回 PyMuPDF。
-2. **对拍**（rc-venv：pymupdf 与候选包同在）：同一输入两个后端的返回结构逐键相同；有意差异逐条钉死
-   （/UserUnit、pHYs）。
-3. **候选自己的合同**（rc-venv）：Canvas 面 PNG / TIFF 同一 Canonical PDF；原图逐字节复制；标注覆盖不重画；
+1. **开关**（任何机器）：默认 `rendercore`（未设 / 空串同义）；`TAVOTTO_RENDER_BACKEND=pymupdf` 当场
+   `BackendSelectionError(backend_retired)`、不认识的取值 `backend_unknown`；实现被选中而它的包 / 字体不在
+   → 结构化异常，**绝不**悄悄换成别的库。
+2. **对旧后端的批准资产**（`tests/fixtures/legacy_pymupdf/oracle.json`，PyMuPDF 1.28.2 退役前记下的返回值）：
+   同一输入返回结构逐键相同、数值在批准的迁移量之内；U08 时这里是两个后端同进程对拍，U10 删掉旧实现后
+   参照改成冻结资产（06 §3：历史差分只在批准资产里）。
+3. **实现自己的合同**：Canvas 面 PNG / TIFF 同一 Canonical PDF；原图逐字节复制；标注覆盖不重画；
    独立读取器（pypdfium2 / `tests/support/pdfread.py`）检查产物而不只信返回值。
 """
 
@@ -30,21 +32,28 @@ import tiffcheck  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "foundation" / "pdf_png_assets"
+LEGACY = ROOT / "tests" / "fixtures" / "legacy_pymupdf"
 HAS_CANDIDATE = all(
     importlib.util.find_spec(m) is not None for m in ("pypdfium2", "pikepdf", "uharfbuzz", "PIL")
 )
-HAS_OLD = importlib.util.find_spec("pymupdf") is not None
-needs_candidate = pytest.mark.skipif(not HAS_CANDIDATE, reason="候选包未装（not_run，不是绿）")
-needs_both = pytest.mark.skipif(
-    not (HAS_CANDIDATE and HAS_OLD), reason="对拍要两个后端同在（rc-venv）；not_run"
+needs_candidate = pytest.mark.skipif(
+    not HAS_CANDIDATE, reason="RenderCore 依赖未装（not_run，不是绿）"
 )
+#: U10 之前「对拍」要两个后端同在；现在参照是冻结资产，条件与实现自己的合同相同
+needs_both = needs_candidate
 
 
 @pytest.fixture
 def candidate(monkeypatch):
-    """把契约层切到候选后端（只在这个用例里）。"""
-    monkeypatch.setenv(pdfbackend.BACKEND_ENV, pdfbackend.BACKEND_RENDERCORE)
+    """契约层的默认就是 rendercore（U10）；这里只把开关显式钉住，防止外面误设的变量漏进用例。"""
+    monkeypatch.delenv(pdfbackend.BACKEND_ENV, raising=False)
     yield
+
+
+def _oracle() -> dict:
+    import json
+
+    return json.loads((LEGACY / "oracle.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
@@ -66,40 +75,44 @@ def _reap_child():
     renderhost.shutdown_shared()
 
 
-def _old():
-    from tavotto.pdfbackend import pymupdf_backend
-
-    return pymupdf_backend
-
-
 # ---------------------------------------------------------------------------
 # 1. 开关
 # ---------------------------------------------------------------------------
-def test_the_default_backend_is_pymupdf_and_the_contract_names_follow_the_selection(monkeypatch):
+def test_the_default_backend_is_rendercore_and_the_contract_names_follow_the_selection(monkeypatch):
     monkeypatch.delenv(pdfbackend.BACKEND_ENV, raising=False)
-    assert pdfbackend.selected() == "pymupdf"
+    assert pdfbackend.selected() == "rendercore" == pdfbackend.BACKEND_DEFAULT
     monkeypatch.setenv(pdfbackend.BACKEND_ENV, "")
-    assert pdfbackend.selected() == "pymupdf"
-    monkeypatch.setenv(pdfbackend.BACKEND_ENV, "rendercore")
     assert pdfbackend.selected() == "rendercore"
-    # 常量按选中的实现取：名字不同 → /api/render 的缓存键天然失效（ledger：BACKEND_NAME）
+    monkeypatch.setenv(pdfbackend.BACKEND_ENV, " RenderCore ")
+    assert pdfbackend.selected() == "rendercore"
+    # 常量按选中的实现取：名字不同于旧后端 → /api/render 的旧缓存键天然失效（ledger：BACKEND_NAME）
     assert pdfbackend.BACKEND_NAME == "rendercore"
     from tavotto import rendercore
 
     assert pdfbackend.BACKEND_VERSION == rendercore.BACKEND_VERSION
-    monkeypatch.setenv(pdfbackend.BACKEND_ENV, "PyMuPDF")
-    assert pdfbackend.selected() == "pymupdf"
+    assert pdfbackend.BACKENDS == ("rendercore",)
 
 
 def test_an_unknown_backend_name_is_an_error_not_a_default(monkeypatch):
     """写错了要当场看见，不猜、不退默认——退默认会让 `TAVOTTO_RENDER_BACKEND=rendercoer` 的机器一直以为
-    自己在跑候选。"""
+    自己在跑另一个后端。"""
     monkeypatch.setenv(pdfbackend.BACKEND_ENV, "rendercoer")
     with pytest.raises(pdfbackend.BackendSelectionError) as exc:
         pdfbackend.selected()
     assert exc.value.code == "backend_unknown"
     with pytest.raises(pdfbackend.BackendSelectionError):
         pdfbackend.probe_asset(FIXTURE / "page.pdf", "pdf")
+
+
+def test_the_retired_pymupdf_name_is_a_loud_error_not_a_fallback(monkeypatch):
+    """U10（ADR 0072）：还写着 `pymupdf` 的旧配置 / 脚本第一次跑就要看见「已退役」，不许静默换成 rendercore
+    （那会让「我还在用旧栅格器」这句话在退役之后继续为真）。"""
+    monkeypatch.setenv(pdfbackend.BACKEND_ENV, "pymupdf")
+    with pytest.raises(pdfbackend.BackendSelectionError) as exc:
+        pdfbackend.selected()
+    assert exc.value.code == "backend_retired" and "ADR 0072" in str(exc.value)
+    with pytest.raises(pdfbackend.BackendSelectionError):
+        pdfbackend.text_width("x", 10.0)
 
 
 def test_the_candidate_never_falls_back_to_pymupdf_when_its_fonts_are_missing(
@@ -126,28 +139,20 @@ def test_the_contract_names_in_all_are_the_ledger_nineteen():
     from tavotto.rendercore import facade
 
     for name in pdfbackend.__all__:
-        assert hasattr(facade, name), f"候选实现缺契约项 {name}"
-        assert hasattr(_old_or_none(), name) if HAS_OLD else True
-
-
-def _old_or_none():
-    return _old() if HAS_OLD else None
+        assert hasattr(facade, name), f"实现缺契约项 {name}"
 
 
 # ---------------------------------------------------------------------------
-# 2. 对拍（两个后端同在）
+# 2. 对旧后端的批准资产（退役前记下的返回值；U08 时是同进程对拍）
 # ---------------------------------------------------------------------------
 @needs_both
-def test_probe_asset_returns_the_same_structure_and_values_on_the_fixtures(candidate, fonts_ready):
-    old = _old()
+def test_probe_asset_returns_the_same_structure_and_values_as_the_retired_backend(
+    candidate, fonts_ready
+):
+    want = _oracle()["probe_asset"]
     for f in ("original.png", "original_nophys.png"):
-        assert pdfbackend.probe_asset(FIXTURE / f, "raster") == old.probe_asset(
-            FIXTURE / f, "raster"
-        )
-    new, was = (
-        pdfbackend.probe_asset(FIXTURE / "page.pdf", "pdf"),
-        old.probe_asset(FIXTURE / "page.pdf", "pdf"),
-    )
+        assert pdfbackend.probe_asset(FIXTURE / f, "raster") == want[f]
+    new, was = pdfbackend.probe_asset(FIXTURE / "page.pdf", "pdf"), want["page.pdf"]
     assert set(new) == set(was) == {"kind", "w_pt", "h_pt"}
     assert new["kind"] == "pdf" and abs(new["w_pt"] - was["w_pt"]) < 1e-6
     assert abs(new["h_pt"] - was["h_pt"]) < 1e-6
@@ -157,71 +162,68 @@ def test_probe_asset_returns_the_same_structure_and_values_on_the_fixtures(candi
 def test_probe_pdf_applies_userunit_exactly_once_like_the_old_backend(
     candidate, fonts_ready, tmp_path
 ):
-    """`/UserUnit 2` 的页两边都报两倍（RC-039：恰好应用一次）。U07 交接把它记成「有意差异」——实测
-    **不成立**：PyMuPDF 1.28.2 的 `page.rect` 同样乘了 /UserUnit，忽略它的只是 PDFium 的 `get_size()`，
-    而 child 的 probe 已经补上那一次。量过之后这一条从差异表里划掉（measure, don't trust the comment）。"""
+    """`/UserUnit 2` 的页报两倍（RC-039：恰好应用一次）。U07 交接把它记成「有意差异」——实测
+    **不成立**：PyMuPDF 1.28.2 的 `page.rect` 同样乘了 /UserUnit（540 × 320），忽略它的只是 PDFium 的
+    `get_size()`，而 child 的 probe 已经补上那一次。量过之后这一条从差异表里划掉（measure, don't trust the comment）。"""
     import pikepdf
 
     src = tmp_path / "uu.pdf"
     with pikepdf.open(str(FIXTURE / "page.pdf")) as pdf:
         pdf.pages[0].obj["/UserUnit"] = 2
         pdf.save(str(src))
-    new, was = pdfbackend.probe_asset(src, "pdf"), _old().probe_asset(src, "pdf")
+    new = pdfbackend.probe_asset(src, "pdf")
     assert abs(new["w_pt"] - 540.0) < 1e-6 and abs(new["h_pt"] - 320.0) < 1e-6
-    assert abs(new["w_pt"] - was["w_pt"]) < 1e-6 and abs(new["h_pt"] - was["h_pt"]) < 1e-6
 
 
 @needs_both
-def test_pdf_fonts_matches_the_old_backend_including_fonts_inside_form_xobjects(
-    candidate, fonts_ready, tmp_path
+def test_pdf_fonts_matches_the_retired_backend_including_fonts_inside_form_xobjects(
+    candidate, fonts_ready
 ):
     """首页的字体名（去子集前缀、去重、保序）——含 Form XObject 里的：旧后端合成的画布把源页放成
-    XObject，那里面的字体两边都得看见。"""
-    old = _old()
-    assert pdfbackend.pdf_fonts(FIXTURE / "page.pdf") == old.pdf_fonts(FIXTURE / "page.pdf")
-    composed = tmp_path / "old-composed.pdf"
-    with old.compose(120, 60) as cv:
-        cv.place(
-            {"type": "panel", "id": "p", "x_mm": 5, "y_mm": 5, "w_mm": 67.5, "h_mm": 40},
-            150,
-            lambda o, d: FIXTURE / "page.pdf",
-        )
-        cv.save_pdf(composed)
-    got, want = pdfbackend.pdf_fonts(composed), old.pdf_fonts(composed)
-    assert got == want and "Helvetica" in got
+    XObject（冻结资产 `calibration/panel_plain.pdf`），那里面的字体也得看见。"""
+    want = _oracle()["pdf_fonts"]
+    assert pdfbackend.pdf_fonts(FIXTURE / "page.pdf") == want["page.pdf"]
+    got = pdfbackend.pdf_fonts(LEGACY / "calibration" / "panel_plain.pdf")
+    assert got == want["calibration/panel_plain.pdf"] and "Helvetica" in got
 
 
 @needs_both
-def test_compare_png_gives_the_same_metrics_as_the_old_backend(candidate, fonts_ready, tmp_path):
-    """尺子只有 `pixelmetrics` 一份：两个后端换的是解码器，三指标逐值相同。"""
-    old = _old()
-    a, b = tmp_path / "a.png", tmp_path / "b.png"
-    old.render_preview_png(FIXTURE / "page.pdf", 300, a)
-    pdfbackend.render_preview_png(FIXTURE / "page.pdf", 300, b)  # 另一个栅格器：真的有差异
-    got, want = pdfbackend.compare_png(a, b), old.compare_png(a, b)
-    assert got == want
+def test_compare_png_is_the_shared_pixelmetrics_ruler_over_the_decoded_buffers(
+    candidate, fonts_ready, tmp_path
+):
+    """尺子只有 `pixelmetrics` 一份：`compare_png` 只换解码器。拿 MuPDF 栅格的冻结 PNG（`preview_300.png`）
+    与 PDFium 现渲的比——两个栅格器真的有差异——三指标必须逐值等于直接对解码 buffer 跑 `rgba_metrics`。"""
+    from tavotto import pixelmetrics
+    from tavotto.rendercore import facade
+
+    a, b = LEGACY / "preview_300.png", tmp_path / "b.png"
+    pdfbackend.render_preview_png(FIXTURE / "page.pdf", 300, b)
+    got = pdfbackend.compare_png(a, b)
+    (ra, size_a), (rb, size_b) = facade._rgba_of(a), facade._rgba_of(b)
+    assert size_a == size_b and size_a[0] == 300
+    assert got == pixelmetrics.rgba_metrics(ra, rb, size_a, size_b)
     assert got["ok"] and got["changed_pixel_ratio"] > 0  # 判据没量在「两张一样的图」上
     same = pdfbackend.compare_png(a, a)
-    assert same == old.compare_png(a, a) and same["max_abs_diff"] == 0
-    with pytest.raises(Exception):  # noqa: B017 —— 不同后端抛的类型不同，主语是「不返回一个指标」
+    assert same["max_abs_diff"] == 0 and same["changed_pixel_ratio"] == 0
+    with pytest.raises(Exception):  # noqa: B017 —— 主语是「不返回一个指标」
         pdfbackend.compare_png(a, tmp_path / "missing.png")
 
 
 @needs_both
-def test_text_metrics_agree_with_the_old_backend_within_the_approved_migration(
+def test_text_metrics_agree_with_the_retired_backend_within_the_approved_migration(
     candidate, fonts_ready
 ):
     """ADR 0060 §4（D07）：advance 兼容（Liberation 与 base-14 同度量）；层归属只在批准的那几类字符上不同
-    （fallback 层恒空）。"""
-    old = _old()
+    （fallback 层恒空）。参照是退役前记下的数。"""
+    o = _oracle()
     for text in ("Sample", "H2O", "Fig. 1 (a)"):
-        assert abs(pdfbackend.text_width(text, 12.0) - old.text_width(text, 12.0)) < 0.2, text
-        assert pdfbackend.text_plan(text) == old.text_plan(text), text
-        assert pdfbackend.missing_glyphs(text) == old.missing_glyphs(text) == [], text
-    assert pdfbackend.CANVAS_TEXT_FAMILIES == old.CANVAS_TEXT_FAMILIES
-    assert pdfbackend.COVERAGE_MAX_CP == old.COVERAGE_MAX_CP
+        assert abs(pdfbackend.text_width(text, 12.0) - o["text_width_12pt"][text]) < 0.2, text
+        assert [list(r) for r in pdfbackend.text_plan(text)] == o["text_plan"][text], text
+        assert pdfbackend.missing_glyphs(text) == [], text
+    assert list(pdfbackend.CANVAS_TEXT_FAMILIES) == o["CANVAS_TEXT_FAMILIES"]
+    assert pdfbackend.COVERAGE_MAX_CP == o["COVERAGE_MAX_CP"]
     ranges = pdfbackend.coverage_ranges()
-    assert set(ranges) == set(old.coverage_ranges()) == {"primary", "cjk", "fallback"}
+    assert set(ranges) == {"primary", "cjk", "fallback"}
     assert ranges["fallback"] == []  # 能力边界（ADR 0060 §1），不是漏写
 
 

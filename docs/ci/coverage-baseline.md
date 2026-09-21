@@ -8,7 +8,7 @@ pytest-cov），这是第一次量。量的是 `[tool.mutmut] only_mutate` 圈�
 ## 怎么量的
 
 ```sh
-python -m venv /tmp/cov && /tmp/cov/bin/pip install coverage pytest flask pymupdf
+python -m venv /tmp/cov && /tmp/cov/bin/pip install coverage -e ".[dev]"
 COVERAGE_FILE=/tmp/covdata/f PYTHONPATH=src /tmp/cov/bin/python -m coverage run --branch \
   --source=src/tavotto/engine \
   --include='*/engine/patchspec.py,*/engine/registry.py,*/engine/locate.py,*/engine/preflight.py,*/engine/profiles.py' \

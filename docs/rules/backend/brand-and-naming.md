@@ -21,5 +21,5 @@ LEGACY_ 常量**，别照着旧模式再加一档。两个例外都在 mm 前缀
 发版说明里要写明先卸载旧版。
 
 论文 Figure 排版 + 参数化图表编辑工具。Flask 后端（`src/tavotto/app.py`）+
-PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
+RenderCore（pikepdf / HarfBuzz / PDFium，**只经 `src/tavotto/pdfbackend/` 契约层**），前端 `web/`
 （Vite + React 19 + TS + Tailwind v4）；旧 v1 前端已于 2026-08-15 删除（git 可找回）。
