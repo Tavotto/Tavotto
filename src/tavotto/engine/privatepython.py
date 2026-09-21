@@ -494,6 +494,10 @@ def provision(
     existing = python_of(source)
     if existing:
         return existing
+    if cancel_ev is not None and cancel_ev.is_set():
+        # 进来之前就取消了：不起下载线程、不挂到别人的下载上（快的本地 / 缓存供应会在第一次轮询
+        # 之前就提交，那时「已取消」的消费者拿到的是成功——Codex #464 第二轮 P2）
+        raise ProvisionError(ERROR_CANCELLED, "已取消")
     with _lock:
         job = _inflight.get(source.id)
         leader = job is None
@@ -703,17 +707,26 @@ def _fetch(source: PythonSource, part: Path, job: _Inflight) -> str:
     h = hashlib.sha256()
     done = 0
     _emit(job, STAGE_DOWNLOADING, 0, source.size)
+    # `.part` 打不开 / 写不进（只读目录、配额、预检之后磁盘满了）是**本机**的事，报 write_failed；
+    # 传输层的 OSError 才是离线——两种恢复动作不同，不能混成一个 code（Codex #464 第二轮 P2）
+    try:
+        fh = part.open("wb")
+    except OSError as exc:
+        raise ProvisionError(ERROR_WRITE_FAILED, f"归档缓存不可写: {exc}") from exc
     # 每次现建 opener 而不是模块级 `urlopen`：后者第一次调用时把 `ProxyHandler` 连同**当时**的
     # `HTTP(S)_PROXY` / `NO_PROXY` 缓存进全局 opener，之后环境变量再变它也不看——代理配置要在
     # 下载那一刻读（用例的死代理对照就是这样量的）。TLS 校验仍是 `HTTPSHandler` 的默认。
     opener = urllib.request.build_opener()
-    with opener.open(req, timeout=NETWORK_TIMEOUT_S) as resp, part.open("wb") as fh:
+    with fh, opener.open(req, timeout=NETWORK_TIMEOUT_S) as resp:
         while True:
             _check_abort(job)
             chunk = resp.read(CHUNK)
             if not chunk:
                 break
-            fh.write(chunk)
+            try:
+                fh.write(chunk)
+            except OSError as exc:
+                raise ProvisionError(ERROR_WRITE_FAILED, f"归档缓存写入失败: {exc}") from exc
             h.update(chunk)
             done += len(chunk)
             _emit(job, STAGE_DOWNLOADING, done, source.size)

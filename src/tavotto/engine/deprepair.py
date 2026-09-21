@@ -567,7 +567,9 @@ def create_plan(
     else:
         python = managedenv.python_of(root) or ""
         creates = not python
-        private = _private_python_offer() if creates else None
+        # 受管目标**每一次**都建新的一代（U04 §五），有没有 active 代都要基础解释器：已有环境的机器上
+        # 系统 Python 被删掉之后，单包修复同样要走私有 Python（Codex #464 第二轮 P2）
+        private = _private_python_offer()
 
     key = _env_key(target_kind, python, root)
     with _lock:
