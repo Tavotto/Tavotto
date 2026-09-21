@@ -744,9 +744,18 @@ class PreparationService:
             if fin is not None and fin < cutoff:
                 del self._entries[pid]
 
-    def reset_for_tests(self) -> None:
+    def reset_for_tests(self, *, join_timeout: float = 30.0) -> None:
+        """清空登记表，**并把还在跑的执行线程收回来**：用例结束时 monkeypatch 已经还原，一条没跑完的线程会在
+        还原后的世界里继续——拿真 pool 起一条真 worker，泄到下一个用例（U09 全量里 `test_workerd_pool` 就被这样
+        诬告过）。先置取消位再 join（有界），线程要么在两个取消接受时刻收工，要么跑完。"""
         with self._lock:
+            entries = list(self._entries.values())
             self._entries.clear()
+        for entry in entries:
+            entry.cancel.set()
+        for entry in entries:
+            if entry.thread is not None and entry.thread.is_alive():
+                entry.thread.join(join_timeout)
 
 
 #: 进程内唯一登记表（app.py 用它）。

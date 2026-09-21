@@ -529,8 +529,8 @@
     },
     {
       "path": "handoffs/U09_join.md",
-      "bytes": 27214,
-      "sha256": "9c40bbdd42f4bf7a9dc7fa35a4a9e8dbe98488d9f865d964dbb3b6f40072a7df"
+      "bytes": 30687,
+      "sha256": "004b659e2aca763efda6b89c80e3b2054104e7a51e8f095a4d5d5fbdaad38c9a"
     },
     {
       "path": "handoffs/U10_cutover.md",
