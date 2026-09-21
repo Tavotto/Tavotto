@@ -62,15 +62,19 @@ def _windows_launcher(host_python: str) -> tuple[bytes, bytes]:
     """(python.exe 的字节, pyvenv.cfg 的字节)：venv 模块在 Windows 上就是这么造 venv 里的 python.exe 的。"""
     base = Path(host_python).resolve().parent
     launcher = None
-    for cand in (
-        base / "Lib" / "venv" / "scripts" / "nt" / "python.exe",
-        Path(sys.base_prefix) / "Lib" / "venv" / "scripts" / "nt" / "python.exe",
-    ):
-        if cand.is_file():
-            launcher = cand
+    # 3.13 起 venv 的启动器叫 venvlauncher.exe（3.12 及之前是 scripts/nt/python.exe）——两个名字都找
+    for root in (base, Path(sys.base_prefix)):
+        for name in ("venvlauncher.exe", "python.exe"):
+            cand = root / "Lib" / "venv" / "scripts" / "nt" / name
+            if cand.is_file():
+                launcher = cand
+                break
+        if launcher is not None:
             break
     if launcher is None:
-        raise FileNotFoundError("找不到 venvlauncher（Lib/venv/scripts/nt/python.exe）")
+        raise FileNotFoundError(
+            "找不到 venvlauncher（Lib/venv/scripts/nt/venvlauncher.exe 或 python.exe）"
+        )
     cfg = f"home = {base}\ninclude-system-site-packages = false\nversion = {platform.python_version()}\n"
     return launcher.read_bytes(), cfg.encode("utf-8")
 
