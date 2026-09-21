@@ -16,8 +16,9 @@ name: Private Python targets
 #
 # 任一步退出非零就红——红是真红，没有 continue-on-error；红不进 Gate，只进本 workflow 的结论与工件。
 # 触发：`workflow_dispatch`、**每周一次** schedule（三条腿各真下载 30–120 MB 的 pbs 归档 + Linux 拉镜像，每天跑
-# 太贵；与 nightly.yml 同一天的 UTC 18:00 错开到 19:37）、以及只在本能力自己的文件变动时的 `pull_request`
-# （paths 过滤：`gh workflow run` 只认默认分支上已登记的 workflow，PR 阶段要靠这一条拿到另两个目标的证据）。
+# 太贵；与 nightly.yml 同一天的 UTC 18:00 错开到 19:37）、以及只在本能力自己的文件变动时、且 base 是 main 的
+# `pull_request`（paths + branches 过滤：`gh workflow run` 只认默认分支上已登记的 workflow，PR 阶段要靠这一条
+# 拿到另两个目标的证据；叠栈里 base ≠ main 的层不跑）。
 # 资格证据按周刷新；翻某个目标的 `enabled` 之前先手动 dispatch 一次拿当天的证据（ADR 0064 §四）。
 
 on:
@@ -25,6 +26,9 @@ on:
   schedule:
     - cron: "37 19 * * 0"   # 每周日 UTC 19:37（nightly 是每天 UTC 18:00）
   pull_request:
+    # 只对 base 是 main 的 PR 跑（与 ci.yml / codeql.yml 同一条纪律，`tests/test_merge_queue_workflows.py`
+    # 的 PR_WORKFLOWS 登记表钉着）：叠栈里 base 不是 main 的层不起这三条重腿，证据只在链头产出
+    branches: [main]
     paths:
       # 本 workflow 直接消费的每一份输入都在这里（Codex #467 两轮 P2）：改了任何一份就得在 PR 上跑一次。
       # 真链（TestRealChain）走的是 U04 代事务，不只是 privatepython.py——事务链上的模块与它们的测试支持
