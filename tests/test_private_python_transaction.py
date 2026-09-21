@@ -548,22 +548,20 @@ class TestCleanMachine:
     def test_nothing_needed_still_builds_the_environment(
         self, tmp_path, house, no_interpreter, fake
     ):
-        """干净机器上「脚本只用 matplotlib」也得有环境：nothing_needed 照样成计划（delta 空 = 只装 adapter）。"""
+        """干净机器上「脚本只用标准库」也得有环境（没有任何解释器可用）：nothing_needed 照样成计划
+        （delta 空 = 只装 adapter）。"""
         server, src, _ = fake
         project = _project(tmp_path)
         (project / "requirements.txt").write_text("", encoding="utf-8")
-        (project / "figure.py").write_text(
-            "import matplotlib.pyplot as plt\nplt.plot([0, 1])\n", encoding="utf-8"
-        )
+        (project / "figure.py").write_text("import math\nprint(math.pi)\n", encoding="utf-8")
+        joint, _, _ = deprepair.joint_plan_for(project, "figure.py")
+        assert joint.status == "nothing_needed"
         plan = deprepair.create_joint_plan(project, "figure.py")
-        assert plan.private_python is not None and plan.requirements == (
-            "matplotlib",
-        )  # 替身：空环境
+        assert plan.private_python is not None and plan.requirements == ()
         rec, _ = _prepare(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, rec
         assert managedenv.python_of(project)
-        # 真解释器重算之后 matplotlib 已在（离线夹具里来自宿主 site-packages）：账上一笔都没有、delta 为空
-        assert managedenv.state(project)["installed"] == []
+        assert managedenv.state(project)["installed"] == []  # 账上一笔都没有：只有 adapter
 
     def test_without_the_offer_a_clean_machine_still_reports_no_worker_python(
         self, tmp_path, house, no_interpreter, fake, monkeypatch
