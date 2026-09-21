@@ -794,6 +794,16 @@ class TestIsolation:
         assert imported <= allowed, imported - allowed
         assert "ssl" not in imported and "configparser" not in imported
         assert config_calls <= {"data_path", "data_dir"}, config_calls
+        # 代理在下载那一刻读：现建 opener（`build_opener()`），不用会把第一次的代理配置缓存到进程结束的
+        # 模块级 `urlopen`（全量跑时别的用例先 urlopen 一次，死代理对照就失效——2026-09-21 实测）
+        calls = {
+            f"{n.func.value.attr}.{n.func.attr}"
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and isinstance(n.func.value, ast.Attribute)
+        }
+        assert "request.build_opener" in calls and "request.urlopen" not in calls, calls
 
 
 # ================================================================ 真归档（工程验证；nightly 腿）
