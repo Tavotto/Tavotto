@@ -13,8 +13,9 @@
   钉法留作「base 没有 pip 时」的备选）。两个 macOS 目标的 CPython 来源与 `packaging/runtime-lock.json` 是同源对
   （`docs/rules/repo/same-origin-pairs.md`）；Windows 用 pbs 而不是内置 runtime 那份 embeddable（没有 venv / ensurepip）。
 - **基础解释器的优先级只有 `managedenv.base_python()` 一处**：系统合格 base（`bootstrap.find_base_python(accept=区间)`）
-  → **已供应的**私有 Python（`privatepython.python_of()`，只看磁盘、不联网、不起子进程）。私有 Python 不压过用户已有的
-  合格 Python；它不是渲染 runtime，`pool._prioritized_candidates()` 不变。
+  → **已供应的**私有 Python（`privatepython.python_of()`，只看磁盘、不联网、不起子进程，**且只在目标仍提供这条路时**
+  ——`offered()` 为假就当磁盘上那份不存在，行为回到 U04）。私有 Python 不压过用户已有的合格 Python；它不是渲染 runtime，
+  `pool._prioritized_candidates()` 不变。
 - **目录按内容命名、不可变；账不是指针**：`<data_dir>/private-python/runtimes/<cpython-<版本>-<sha256 前 12 位>>/`；
   解包 + 成员校验 + 真起一次都在 `runtimes/.staging-<id>-<pid>/`，提交点 = `os.replace` 到最终目录；`python_of` 只看
   最终目录里的解释器（且可执行），staging 对它不存在——应用中途被杀留下的半个解包**不可能**被当成可用 runtime，

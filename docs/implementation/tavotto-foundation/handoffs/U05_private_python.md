@@ -92,6 +92,12 @@ enforced 在 PR B 随真实入口的场景一起，按 03 §4 逐条写正例 + 
   `joint_target_for` 抛出——真正的干净机器要走的是 PR B 的入口：把私有 Python 当目标、供应后再算目标事实与 delta
   （`depplan.plan(facts=None)` 是 `dependency_target_unavailable`，不能拿来当计划）。这是 PR B 的第一条工作。
 
+**Codex #464 第一轮（1 P1 + 3 P2，全部修，提交 `6f138719` + 用例修订）**：P1 代号折进私有 base 的 id（锁换版本而意图不变时
+是另一代——重建的代号只由账算，两次重建之间会同号；active 那一代的记录与目录不动，新代失败旧的照常可用；变异 M21 第一版
+用例经联合计划建第一代与重建公式不同号、根本撞不上，改成两次重建后红）；P2 跨进程 `.part` 带 pid + 随机后缀（两个进程真并发
+供应各自成功、一个最终目录、无残留）；P2 探测链末级只在目标仍提供私有 Python（`offered()`）时才用磁盘上那份——能力关掉行为
+回到 U04；P2 死代理对照两种拼法的 `no_proxy` 都清。
+
 **批准的字体 / 视觉差异，及未授权变更检查**：无字体 / 视觉改动。`LICENSE`、ruleset、`aggregate_gate.py`、默认后端、
 `security._PUBLIC_PATHS`、worker 守卫、写回事务、`pool._prioritized_candidates`、`runtime-lock.json`、`pyproject.toml`
 一个都没动；没有新增运行时依赖。
