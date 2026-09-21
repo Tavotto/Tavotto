@@ -44,6 +44,7 @@ import json
 import logging
 import os
 import posixpath
+import re
 import secrets
 import shutil
 import socket
@@ -466,6 +467,7 @@ class _Inflight:
         self.done = threading.Event()
         self.abort = threading.Event()
         self.consumers = 0
+        self.committed = threading.Event()  # `os.replace` 之后置上：此后的取消对这份供应无效
         self.result: str | None = None
         self.error: ProvisionError | None = None
         self.progress: tuple[str, int, int] = (STAGE_DOWNLOADING, 0, int(source.size))
@@ -518,6 +520,10 @@ def provision(
     try:
         while not job.done.wait(0.2):
             if cancel_ev is not None and cancel_ev.is_set():
+                with _lock:
+                    committed = job.committed.is_set()
+                if committed:
+                    continue  # 提交点之后取消无效：等它记完账，拿到的是完整的一份
                 raise ProvisionError(ERROR_CANCELLED, "已取消")
             if time.time() > deadline:
                 raise ProvisionError(ERROR_OFFLINE, "等待下载超时")
@@ -526,7 +532,7 @@ def provision(
             job.consumers -= 1
             if on_progress is not None and on_progress in job.listeners:
                 job.listeners.remove(on_progress)
-            if job.consumers <= 0 and not job.done.is_set():
+            if job.consumers <= 0 and not job.committed.is_set():
                 job.abort.set()  # 最后一个消费者也走了：中止下载、清掉半成品
     if job.error is not None:
         raise ProvisionError(job.error.code, str(job.error), **job.error.detail)
@@ -602,14 +608,18 @@ def _provision_once(source: PythonSource, job: _Inflight) -> str:
         _verify_executable(python)
         _emit(job, STAGE_LAUNCHING, 0, source.size)
         probe = _launch(python, source)
-        _check_abort(job)
-        try:
-            os.replace(extracted, final)  # 提交点：同一文件系统内的 rename，要么在要么不在
-        except OSError as exc:
-            if final.exists():
-                LOG.info("私有 Python %s 已由别的进程就位，复用", source.id)
-            else:
-                raise ProvisionError(ERROR_WRITE_FAILED, f"最终目录改名失败: {exc}") from exc
+        # 提交点与「最后一个消费者放弃」在同一把锁下判：被接受的取消（abort 已置）绝不会发布，
+        # 发布之后到来的取消对这份供应无效（`committed` 已置）——两者不会交错（Codex #464 P2）
+        with _lock:
+            _check_abort(job)
+            try:
+                os.replace(extracted, final)  # 提交点：同一文件系统内的 rename，要么在要么不在
+            except OSError as exc:
+                if final.exists():
+                    LOG.info("私有 Python %s 已由别的进程就位，复用", source.id)
+                else:
+                    raise ProvisionError(ERROR_WRITE_FAILED, f"最终目录改名失败: {exc}") from exc
+            job.committed.set()
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     result = python_of(source)
@@ -746,8 +756,15 @@ def _validate_member(member: tarfile.TarInfo, root: str) -> None:
     if member.isdir() or member.isfile():
         return
     if member.issym():
-        target = posixpath.normpath(posixpath.join(posixpath.dirname(name), member.linkname))
-        if member.linkname.startswith("/") or not (target == root or target.startswith(root + "/")):
+        link = member.linkname
+        # Windows 语义也要拒：`..\\..\\x`、`C:\\x`、`C:/x`——POSIX 归一化把反斜杠当普通字符、把盘符当目录名，
+        # 没有 `data` 过滤器的解释器上会真的写到 data_dir 之外（Codex #464 P2）
+        if "\\" in link or re.match(r"^[A-Za-z]:", link):
+            raise ProvisionError(
+                ERROR_INVALID_ARCHIVE, "归档里的软链接目标不是 POSIX 相对路径", member=name
+            )
+        target = posixpath.normpath(posixpath.join(posixpath.dirname(name), link))
+        if link.startswith("/") or not (target == root or target.startswith(root + "/")):
             raise ProvisionError(ERROR_INVALID_ARCHIVE, "归档里的软链接指向目录之外", member=name)
         return
     raise ProvisionError(ERROR_INVALID_ARCHIVE, "归档里有非常规成员", member=name)
@@ -762,9 +779,18 @@ def _extract(archive: Path, staging: Path, source: PythonSource) -> Path:
             for m in members:
                 _validate_member(m, root)
             kwargs = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
-            tar.extractall(staging, members=members, **kwargs)
-    except (tarfile.TarError, EOFError, OSError, ValueError) as exc:
+            try:
+                tar.extractall(staging, members=members, **kwargs)
+            except tarfile.TarError:
+                raise
+            except OSError as exc:
+                # 目标写不进（磁盘满 / 配额 / 权限变了）：归档本身没坏，是本机的事——报 write_failed，
+                # 用户的下一步是腾空间，不是重下（Codex #464 P2）
+                raise ProvisionError(ERROR_WRITE_FAILED, f"解包写入失败: {exc}") from exc
+    except (tarfile.TarError, EOFError, ValueError) as exc:
         raise ProvisionError(ERROR_INVALID_ARCHIVE, f"归档解不开: {exc}") from exc
+    except OSError as exc:
+        raise ProvisionError(ERROR_INVALID_ARCHIVE, f"归档读不了: {exc}") from exc
     extracted = staging / root
     if not extracted.is_dir():
         raise ProvisionError(ERROR_INVALID_ARCHIVE, "归档里没有预期的顶层目录", root=root)

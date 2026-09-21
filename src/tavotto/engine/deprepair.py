@@ -464,9 +464,10 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
 
     # ---- B. Tavotto 受管环境：可删可重建，改的是我们自己的东西 ------------
     managed = managedenv.state(root)
-    available = True if managed["exists"] else managed_available()
-    # 没有基础解释器、但这个目标上提供私有 Python（U05）：这条路仍然可用，只是授权里
-    # 多一项「先下载 N 字节」——载荷挂在目标上，界面据此把数字说出口。
+    # 受管目标**每次**都建新的一代（U04 §五）：有没有 active 代都要基础解释器，「可用」看的是 base
+    # （三态：None = 还在后台探）。没有 base 但这个目标上提供私有 Python（U05）：这条路仍然可用，
+    # 只是授权里多一项「先下载 N 字节」——载荷挂在目标上，界面据此把数字说出口（Codex #464 P2）
+    available = managed_available()
     private = privatepython.offer_payload() if available is False else None
     if private is not None:
         available = True
