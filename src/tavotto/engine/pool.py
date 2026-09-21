@@ -925,18 +925,9 @@ def resolve_worker_python(figures_dir: str | Path | None = None) -> tuple[str, s
     """
     if figures_dir is None:
         return select_worker_python()
-    # **两条显式来源各自判**，不能 `env or configured` 短路：环境变量指向一条
-    # 已经不存在的路径时（改过环境、跟着别的 shell 配置进来的老值），短路会让
-    # 一条完全有效的设置里的解释器被跳过，自动决策于是压过了用户的显式选择。
-    for explicit in (worker_python_env(), config.worker_python()):
-        if not explicit:
-            continue
-        try:
-            if Path(explicit).exists():
-                # 显式选择还在：交给老链条（它会挑中这条），不做任何自动决策。
-                return select_worker_python()
-        except OSError:
-            continue
+    if explicit_worker_python():
+        # 显式选择还在：交给老链条（它会挑中这条），不做任何自动决策。
+        return select_worker_python()
     remembered = projectenv.remembered(figures_dir)
     if remembered:
         with _project_python_lock:
@@ -952,6 +943,37 @@ def resolve_worker_python(figures_dir: str | Path | None = None) -> tuple[str, s
         if ok:
             return remembered, remembered_source(figures_dir, remembered)
     return select_worker_python()
+
+
+def explicit_worker_python() -> tuple[str, str] | None:
+    """正在生效的**全局显式**解释器：回 (路径, 来源)，没有回 None。
+
+    这是「项目级决策会不会被压掉」的唯一判据（#465）：上面 1、2 两档只要
+    **存在**就走老链条，第 3 档（项目记住的 / 用户为该项目挑的 / 依赖修复装进的
+    受管环境）永远轮不到。依赖修复在提供安装目标之前先问这里——明知装进去也
+    不会被用还照样装，用户看到的是「真的联网装了，渲染照样缺它」。
+
+    **两条显式来源各自判**，不能 `env or configured` 短路：环境变量指向一条
+    已经不存在的路径时（改过环境、跟着别的 shell 配置进来的老值），短路会让
+    一条完全有效的设置里的解释器被跳过，自动决策于是压过了用户的显式选择。
+    来源标签与 `select_worker_python()` 报的一致（`env_override` /
+    `configured` / `managed_venv`）——界面按它决定给「恢复自动检测」还是
+    「清掉环境变量后重启」。
+    """
+    env = worker_python_env()
+    candidates: list[tuple[str | None, str]] = [(env, SOURCE_ENV)]
+    configured = config.worker_python()
+    if configured:
+        candidates.append((configured, _configured_source(configured)))
+    for explicit, source in candidates:
+        if not explicit:
+            continue
+        try:
+            if Path(explicit).exists():
+                return explicit, source
+        except OSError:
+            continue
+    return None
 
 
 def remembered_source(figures_dir: str | Path, python: str) -> str:

@@ -2686,8 +2686,14 @@ export interface DependencyRepairOffer {
   managed?: ManagedEnvironment
   /** 探到了但不合格的系统解释器（老服务端没有这个字段） */
   system_rejected?: SystemInterpreterRejection[]
-  /** dependency_unresolved / dependency_repair_rounds_exhausted */
+  /** dependency_unresolved / dependency_repair_rounds_exhausted / dependency_interpreter_pinned */
   code?: string
+  /**
+   * 全局显式解释器正在生效（#465）：`targets` 为空，装进任何目标都不会被用。
+   * `source` 决定出口——`configured` / `managed_venv` 可以在这里一键清掉，
+   * `env_override` 只能让用户清环境变量后重启。
+   */
+  pinned?: { python: string; source: EngineSource }
 }
 
 /** 后端发出来的安装计划。`plan_id` 是这次授权的凭据，不可猜、有有效期。 */

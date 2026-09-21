@@ -4,8 +4,10 @@ import { t as translate } from '@/i18n'
 import type {
   DependencyRepairOffer,
   DependencyTarget,
+  EngineSource,
   SystemInterpreterRejection,
 } from '@/lib/api'
+import { useRenderStore } from '@/store/renderStore'
 import { isRepairRunning, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -104,6 +106,14 @@ export function DependencyRepairCard({
         <Failure code={errorCode} text={errorText} />
       </div>
     )
+  }
+
+  // ---- 全局显式解释器压住了项目级决策（#465）：只有一条出口 ---------------
+  // 装进任何目标都不会被用，所以这里**不列安装目标、不给「选择其他 Python」**
+  //（那条写的也是项目级决策）。能解开它的只有清掉那条固定：设置里指定的在这里
+  // 一键清，环境变量的说清楚要清什么、然后重启。
+  if (offer.pinned) {
+    return <Pinned module={pkg} pinned={offer.pinned} />
   }
 
   // ---- 起点：给出口 -------------------------------------------------------
@@ -219,6 +229,60 @@ export function DependencyRepairCard({
       <OtherPython />
 
       <Failure code={errorCode} text={errorText} />
+    </div>
+  )
+}
+
+/**
+ * 渲染解释器被全局固定时的卡片（#465）。
+ *
+ * 「恢复自动检测」清的是**全局**设置（`setPython(null)`）——这是这张卡里唯一
+ * 一处碰全局设置的地方，理由正相反于 `OtherPython`：要解开的就是那条全局固定。
+ * 清掉之后把因缺包失败的渲染重新排上：项目记住的环境（本例里已经装好包的
+ * 受管环境）从此轮得到；没有记住的会再走一遍缺包 → 卡片 → 安装，那时安装
+ * 才真的有用。
+ */
+function Pinned({
+  module,
+  pinned,
+}: {
+  module: string
+  pinned: { python: string; source: EngineSource }
+}) {
+  useTranslation('errors')
+  const { setPython } = useEnvStore()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const fromEnv = pinned.source === 'env_override'
+  const clear = async () => {
+    setBusy(true)
+    const failure = await setPython(null)
+    setBusy(false)
+    setError(failure)
+    if (!failure) useRenderStore.getState().retryEnvironmentFailures()
+  }
+  return (
+    <div data-dependency-repair-pinned className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
+      <div>
+        <h3 className="type-section">{en('repairTitle', { module })}</h3>
+        <p className="mt-1 text-xs leading-relaxed text-ink-2">
+          {en('repairPinnedBody', {
+            python: pinned.python,
+            source: en(`sourceLabel.${pinned.source || 'unknown'}`, { product: PRODUCT_NAME }),
+          })}
+        </p>
+        {fromEnv && (
+          <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('repairPinnedEnvHint')}</p>
+        )}
+      </div>
+      {!fromEnv && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button variant="primary" disabled={busy} onClick={() => void clear()}>
+            {en('repairPinnedClear')}
+          </Button>
+        </div>
+      )}
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   )
 }

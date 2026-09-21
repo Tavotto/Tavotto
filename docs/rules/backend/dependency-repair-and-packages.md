@@ -57,7 +57,25 @@
   `depresolve.parse_requirement`，安装前在 `_pip_install` 里**再验一次**。
 - **计划绑定，不是 `confirmed=true`**：plan（说清楚装什么装到哪）与 install
   （只发 plan_id）分两步；执行端一个字节都不从请求体里读，且执行前重算环境
-  指纹（`repair_plan_stale`）。没有计划 → `dependency_install_not_allowed`。
+  指纹（`repair_plan_stale`）。没有计划 → `dependency_install_not_allowed`——
+  这个 code **只**留给「没有计划 / 计划不属于这里 / 目标不合法」三种没有用户
+  意图的情形（#466）；「同一环境同一需求这一轮已经装成功过」是
+  `dependency_already_attempted`，「目标环境里已经 import 得到」是
+  `dependency_already_present`，各自有各自的话。`_attempted` 只在 **pip 退出码
+  为 0 之后**登记：它挡的是「装完还缺、再装还缺」，pip 没跑成（断网 / 取消）
+  的那次允许重试——写在 pip 之前的话，失败文案说「检查网络后重试」，重试撞到的
+  是「已经试过了」。
+- **全局显式解释器生效时不提供任何目标（#465）**：`TAVOTTO_WORKER_PYTHON` /
+  设置里指定的解释器只要**存在**就压过 `pool.resolve_worker_python()` 第 3 档
+  （ADR 0018 §四），而自动接手、采用系统解释器、装进项目 `.venv` / 受管环境最后
+  都写在那一档——那时提供安装等于让用户真的联网装一遍、装完渲染照样缺。判据
+  唯一出处 `pool.explicit_worker_python()`（与 `resolve_worker_python` 同一份，
+  指向不存在路径的设置不算生效）；`offer()` 回 `code=dependency_interpreter_pinned`
+  + `pinned:{python, source}` 且 `targets` 为空，`create_plan()` 同样拒绝（后端是
+  边界，不靠按钮）。界面按 `source` 给出口：`configured` / `managed_venv` 一键
+  「恢复自动检测」（清全局设置 + 重排失败的渲染），`env_override` 说清要清哪个
+  变量、然后重启。**不改优先级本身**——「项目显式 > 全局显式」是 ADR 级的另一个
+  问题。
 - **pip exit 0 不等于修好了**：验证三层——import 那个包 / import matplotlib /
   **真起一次 worker 跑通 build**（`deprepair.worker_self_test`，argv 走
   `execspec.worker_argv` 那一份，不另拼）。
@@ -73,6 +91,9 @@
   诊断只记 `custom_package_index: true/false`，**绝不记地址**。本轮**没有加
   遥测事件**（EVENTS 扩容要升 CONSENT_VERSION 并让所有人重新同意，理由见
   ADR 0019 §十二）。
+- `deprepair` 里每个 `ERROR_*` code 在两种语言的 `engine.repairError` 表里都要有
+  文案（`test_every_repair_code_has_text_in_both_languages`）：`test_error_codes.py`
+  不扫 `RepairError`，这张表以前只有反向的死键门禁。
 - 看护：`tests/test_dependency_repair.py`（十五条负向反证）+
   `tests/test_dependency_repair_e2e.py`（真建 venv、真跑 pip、真起 worker、
   真出图；不联网靠手工 wheel + `PIP_FIND_LINKS`/`PIP_NO_INDEX`）+ web 的

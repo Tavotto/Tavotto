@@ -4937,6 +4937,11 @@ def _repair_error(exc: "engine_deprepair.RepairError", status: int = 400):
     health = (exc.extra or {}).get("health")
     if isinstance(health, dict):
         body["params"] = {"python_version": health.get("python_version", "")}
+    pinned = (exc.extra or {}).get("pinned")
+    if isinstance(pinned, dict):
+        # 全局显式解释器压住了项目级决策（#465）：与 `offer()` 同一形状，界面据此
+        # 给「恢复自动检测」或「清掉环境变量后重启」
+        body["pinned"] = pinned
     return jsonify(body), status
 
 

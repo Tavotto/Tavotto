@@ -22,6 +22,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   cancelDependencyPlan: vi.fn(),
   fetchEngineEnvironment: vi.fn(),
   setProjectEnvironment: vi.fn(),
+  setEngineEnvironment: vi.fn(),
 }))
 
 import {
@@ -29,6 +30,7 @@ import {
   createDependencyPlan,
   fetchEngineEnvironment,
   installDependencyPlan,
+  setEngineEnvironment,
   setProjectEnvironment,
   type DependencyRepairOffer,
   type DependencyRepairPlan,
@@ -50,6 +52,7 @@ const installMock = vi.mocked(installDependencyPlan)
 const cancelMock = vi.mocked(cancelDependencyPlan)
 const envMock = vi.mocked(fetchEngineEnvironment)
 const adoptMock = vi.mocked(setProjectEnvironment)
+const clearGlobalMock = vi.mocked(setEngineEnvironment)
 
 const en = (key: string, v?: Record<string, unknown>) =>
   t(`engine.${key}`, { ns: 'errors', ...(v ?? {}) })
@@ -139,6 +142,7 @@ beforeEach(() => {
   envMock.mockReset()
   envMock.mockResolvedValue({} as never)
   adoptMock.mockReset()
+  clearGlobalMock.mockReset()
   useDepRepairStore.getState().reset()
 })
 
@@ -420,6 +424,64 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
   it('未经验证的 matplotlib 版本要如实标注', async () => {
     await render({ ...OFFER, targets: [{ ...SYSTEM, support: 'unverified_but_compatible' }] })
     expect(text()).toContain(en('repairSystemUnverified'))
+  })
+})
+
+describe('渲染解释器被全局固定（#465）', () => {
+  const PINNED: DependencyRepairOffer = {
+    ...OFFER,
+    targets: [],
+    code: 'dependency_interpreter_pinned',
+    pinned: { python: '/opt/venv/bin/python', source: 'configured' },
+  }
+  const failing = () =>
+    useRenderStore.setState({
+      byKey: {
+        k: {
+          ...(useRenderStore.getState().byKey.k ?? ({} as never)),
+          fileId: 'Fig1.pdf', status: 'error', code: 'missing_dependency',
+          module: 'lmfit', lastPatches: '[]', wantPatches: '[]', stale: false,
+        } as never,
+      },
+      tracked: {},
+    })
+
+  it('不列任何安装目标、也不给「选择其他 Python」——装进去也不会被用', async () => {
+    await render(PINNED)
+    expect(document.querySelector('[data-dependency-repair-pinned]')).toBeTruthy()
+    expect(text()).toContain(en('repairTitle', { module: 'lmfit' }))
+    expect(text()).toContain('/opt/venv/bin/python')
+    expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
+    expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
+    expect(document.querySelector('input')).toBeNull()
+  })
+
+  it('设置里指定的：「恢复自动检测」清全局设置、把失败的渲染重新排上', async () => {
+    clearGlobalMock.mockResolvedValue({ ok: true } as never)
+    failing()
+    await render(PINNED)
+    await click(en('repairPinnedClear'))
+    expect(clearGlobalMock).toHaveBeenCalledWith(null)
+    expect(planMock).not.toHaveBeenCalled()
+    const after = useRenderStore.getState()
+    expect(after.byKey.k.stale, '没标过期，图永远不会自己出来').toBe(true)
+    expect(after.tracked['Fig1.pdf']).toBe(true)
+  })
+
+  it('清不掉时把后端那句话显示出来，渲染不重排', async () => {
+    clearGlobalMock.mockRejectedValue(new Error('设置写入失败'))
+    failing()
+    await render(PINNED)
+    await click(en('repairPinnedClear'))
+    expect(text()).toContain('设置写入失败')
+    expect(useRenderStore.getState().byKey.k.stale).toBe(false)
+  })
+
+  it('环境变量固定的：没有可清的按钮，说清楚要清什么、然后重启', async () => {
+    await render({ ...PINNED, pinned: { python: '/opt/venv/bin/python', source: 'env_override' } })
+    expect(byName(en('repairPinnedClear'))).toBeUndefined()
+    expect(text()).toContain('TAVOTTO_WORKER_PYTHON')
+    expect(text()).toContain(en('repairPinnedEnvHint'))
   })
 })
 
