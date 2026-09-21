@@ -70,7 +70,10 @@
   （ADR 0018 §四），而自动接手、采用系统解释器、装进项目 `.venv` / 受管环境最后
   都写在那一档——那时提供安装等于让用户真的联网装一遍、装完渲染照样缺。判据
   唯一出处 `pool.explicit_worker_python()`（与 `resolve_worker_python` 同一份，
-  指向不存在路径的设置不算生效）；载荷只从 `deprepair.pinned_payload()` 出
+  指向不存在路径的设置不算生效；**`bootstrap.install()` 写进 config 的自建 venv 不算
+  显式选择**——它是自动决策，作为 `managed_venv` 候选留在老链条里、排在自身之后
+  系统链之前，不压项目级环境、也不会让卡片走到「清掉它」）；载荷只从
+  `deprepair.pinned_payload()` 出
   （`{python, source, variable}`，`variable` 是 `env_override` 时**供值的那个**变量名，
   旧名 `MM_WORKER_PYTHON` 供的值要点它的名）。`offer()` 回
   `code=dependency_interpreter_pinned` + `pinned` 且 `targets` 为空；`create_plan()`
@@ -79,9 +82,9 @@
   而全局解释器的改动（`PATCH /api/engine/environment` 全局档）必须经
   `envlease.unless_mutating()` 走、与租约同一把锁互斥：先钉上 → 复查看得见，先拿到
   租约 → 改动 409 `environment_mutating`。租约之前查没有用（查完到拿到租约之间照样
-  能钉）。复查不过计划一并作废（后端是边界，不靠按钮）。界面按 `source` 给出口：`configured` / `managed_venv` 一键
-  「恢复自动检测」（清全局设置 + 重排失败的渲染），`env_override` 按 `variable`
-  点名要清哪个变量、然后重启。**不改优先级本身**——「项目显式 > 全局显式」是
+  能钉）。复查不过计划一并作废（后端是边界，不靠按钮）。界面按 `source` 给出口：`configured` 一键「恢复自动检测」
+  （清全局设置 + 重排失败的渲染），`env_override` 按 `variable` 点名要清哪个变量、
+  然后重启。**不改优先级本身**——「项目显式 > 全局显式」是
   ADR 级的另一个问题。
 - **pip exit 0 不等于修好了**：验证三层——import 那个包 / import matplotlib /
   **真起一次 worker 跑通 build**（`deprepair.worker_self_test`，argv 走

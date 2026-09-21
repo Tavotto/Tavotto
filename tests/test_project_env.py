@@ -551,6 +551,55 @@ def test_explicit_configuration_wins_over_automatic_discovery(project, monkeypat
 
 
 @needs_worker
+def test_the_bootstrap_venv_is_a_fallback_not_a_pin(project, monkeypatch):
+    """`bootstrap.install()` 写进 config 的那条是自动决策，不是用户的显式选择
+    （Codex 评审 #469 P1）：它不压过项目级环境，也不算「全局固定」——否则源码
+    模式下依赖修复永远空转，而缺包卡片让用户清掉它之后，这台本来就没有别的
+    科学栈的机器再也找不到渲染器。"""
+    from pathlib import Path as _P
+
+    from tavotto.engine import bootstrap as engine_bootstrap, deprepair
+
+    real_venv(project)
+    engine_pool.build("figure.py", str(project), "__main__")
+    assert engine_pool.resolve_worker_python(project)[1] == engine_pool.SOURCE_PROJECT_VENV
+    # 让 WORKER_PY 扮演自建 venv：bootstrap 认它、config 也指着它
+    monkeypatch.setattr(engine_bootstrap, "venv_python", lambda root=None: _P(WORKER_PY))
+    monkeypatch.setattr(engine_config, "worker_python", lambda: WORKER_PY)
+    engine_pool.reset_worker_python()
+    assert engine_pool.explicit_worker_python() is None
+    assert engine_pool.resolve_worker_python(project)[1] == engine_pool.SOURCE_PROJECT_VENV
+    offer = deprepair.offer(str(project), "figure.py", FIXTURE_MODULE, None)
+    assert offer.get("code") != deprepair.ERROR_INTERPRETER_PINNED
+    # 同一条路径若**不是**自建 venv（用户自己指定的），仍然是固定——判据没被放宽
+    monkeypatch.setattr(engine_bootstrap, "venv_python", lambda root=None: _P("/nowhere/python"))
+    engine_pool.reset_worker_python()
+    assert engine_pool.explicit_worker_python() == (WORKER_PY, engine_pool.SOURCE_CONFIGURED)
+
+
+def test_the_bootstrap_venv_stays_discoverable_without_the_config_entry(monkeypatch):
+    """config 里那条被清掉（「恢复自动检测」/ 设置里留空并应用）之后，自建 venv
+    仍然在候选链里；不然就是 `no_worker_python` → 再装一遍 → 写回同一条 → 循环。"""
+    from pathlib import Path as _P
+
+    from tavotto.engine import bootstrap as engine_bootstrap
+
+    monkeypatch.delenv(engine_pool.WORKER_PYTHON_ENV, raising=False)
+    monkeypatch.setattr(engine_config, "worker_python", lambda: None)
+    monkeypatch.setattr(engine_pool, "is_frozen", lambda: False)  # 源码模式才有自建 venv
+    monkeypatch.setattr(
+        engine_bootstrap, "venv_python", lambda root=None: _P("/fake/worker-env/bin/python3")
+    )
+    cands = engine_pool._prioritized_candidates()
+    assert ("/fake/worker-env/bin/python3", engine_pool.SOURCE_MANAGED) in cands
+    # 排在系统 Python 之前：它就是「自身与系统链都没有科学栈」时建的那套
+    order = [p for p, _ in cands]
+    later = order[order.index("/fake/worker-env/bin/python3") + 1 :]
+    assert later, "它后面必须还有系统链，否则这条断言量在空集合上"
+    assert all(s == engine_pool.SOURCE_SYSTEM for p, s in cands if p in later)
+
+
+@needs_worker
 def test_a_stale_env_var_does_not_hide_an_explicit_setting(project, monkeypatch):
     """环境变量指着一条已经不存在的路径时，设置里那条**仍然**压过自动决策。
 

@@ -716,17 +716,24 @@ def is_frozen() -> bool:
     return runtime.is_frozen()
 
 
+def _bootstrap_venv_python() -> str | None:
+    """`bootstrap.install()` 自建 venv 里的解释器路径（不保证存在）；算不出回 None。"""
+    from . import bootstrap
+
+    try:
+        return str(bootstrap.venv_python())
+    except (OSError, ValueError):
+        return None
+
+
 def _configured_source(path: str) -> str:
     """用户配置里的那条解释器是「他自己挑的」还是「Tavotto 自己建的」。
 
     两者都排在内置 runtime 前面（用户的显式选择优先），但报给界面和诊断包时
     要分得清：managed_venv 是我们该负责的，configured 是用户自己的环境。
     """
-    from . import bootstrap
-
-    try:
-        managed = str(bootstrap.venv_python())
-    except (OSError, ValueError):
+    managed = _bootstrap_venv_python()
+    if not managed:
         return SOURCE_CONFIGURED
     return SOURCE_MANAGED if same_python(path, managed) else SOURCE_CONFIGURED
 
@@ -759,6 +766,14 @@ def _prioritized_candidates() -> list[tuple[str, str]]:
     cands.append((runtime.bundled_python(), SOURCE_BUNDLED))
     if not is_frozen():
         cands.append((sys.executable, SOURCE_CURRENT))
+        # Tavotto 在源码模式下自建的 venv（`bootstrap.install()`，桌面版有内置 runtime
+        # 时 `can_install` 为假、根本不会建）**自己就是一档候选**，不靠 config 里那条
+        # `worker.python`：那条被清掉（缺包卡片的「恢复自动检测」、设置里留空并应用）
+        # 之后它仍然找得到，否则这台本来就没有别的科学栈的机器会退回
+        # `no_worker_python`、再装一遍又写回同一条设置——一个圈（Codex 评审 #469 P1）。
+        # 排在自身之后、系统链之前：它只在自身与系统链都没有科学栈时才会被建出来。
+        # 与 config 那条同路径时靠 `select_worker_python` 的去重，标签不变。
+        cands.append((_bootstrap_venv_python(), SOURCE_MANAGED))
 
     # 一律用字符串拼路径：pathlib.Path 会按 os.name 分派 Posix/Windows 实现，
     # 在非目标平台上构造另一半会直接抛 UnsupportedOperation。
@@ -975,7 +990,13 @@ def explicit_worker_python() -> tuple[str, str] | None:
     candidates: list[tuple[str | None, str]] = [(env, SOURCE_ENV)]
     configured = config.worker_python()
     if configured:
-        candidates.append((configured, _configured_source(configured)))
+        source = _configured_source(configured)
+        # `bootstrap.install()` 写进 config 的那条是**自动决策**不是用户的显式选择
+        # （ADR 0018 §四的第 2 档说的是「设置里指定的」）：它不该压过项目级环境，
+        # 更不该让缺包卡片走到「清掉它」——清掉它这台机器就没有渲染器了。
+        # 它作为候选留在 `_prioritized_candidates()` 的老链条里，第 3 档之后才轮到。
+        if source != SOURCE_MANAGED:
+            candidates.append((configured, source))
     for explicit, source in candidates:
         if not explicit:
             continue
