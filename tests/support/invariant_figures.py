@@ -1,4 +1,4 @@
-"""不变式用例的图库：一个脚本出四张图（InvMix / InvCont / InvCbar / InvPar / InvTight），
+"""不变式用例的图库：一个脚本出一批图（InvMix / InvCont / InvCbar / InvCbar2 / InvShared / InvPar / InvTight…），
 `tests/test_invariants_engine.py` 与 `tests/test_override_sequences.py` 共用。2026-09-18 从前者
 逐字搬出——两套用例量的必须是同一批图。
 """
@@ -17,7 +17,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize
+from matplotlib.colors import LinearSegmentedColormap, Normalize, PowerNorm
 from matplotlib.patches import Arc, Circle, Rectangle
 from mpl_toolkits.axes_grid1 import host_subplot
 
@@ -136,6 +136,54 @@ def main():
     fig.colorbar(sm, ax=ax, location="left")
     fig.colorbar(sm, ax=ax, location="top", fraction=0.046)
     fig.savefig("InvCbar2.pdf")
+
+    # ---- InvShared：**两块网格共用一份 norm 对象 + 一条色条**（色阶兄弟） ----
+    # 2026-09-21 用户的 PRB 三联图：(b)(c) 两块 pcolormesh 传的是同一个 PowerNorm，
+    # 色条只挂在 (b) 上、却摆在 (c) 旁边。matplotlib 眼里 vmin/vmax 经共用的 norm
+    # 天然一起变，cmap 却各拿各的引用——「同一个色阶」这件事在 cmap 上要由
+    # Tavotto 兑现（`colorbarmodel.scale_siblings`）。这张图让别名组里多出一种
+    # 组员：不是 mappable 本人、也不是同一个 mappable 的第二条色条，而是**共用
+    # norm 的兄弟**——撤销时它要各回各的原样，不是跟着 mappable 走。
+    fig, (sa, sb) = plt.subplots(1, 2, figsize=(4.6, 2.4))
+    shared = PowerNorm(gamma=1.45, vmin=0.0, vmax=1.0)
+    mesh_a = sa.pcolormesh(np.linspace(0.5, 2.0, 7), np.linspace(1.3, 1.52, 7),
+                           rng.rand(7, 7), cmap="Greens", norm=shared, shading="nearest")
+    # 兄弟**换一张**色图：两块同名（都是 Greens）时「把 mappable 的原样安到兄弟头上」
+    # 这种错与正确结果逐位相同，K-sibling-narrow-then-cb-drop-both 在变异下恒绿
+    sb.pcolormesh(np.linspace(0.5, 2.0, 7), np.linspace(1.3, 1.52, 7),
+                  rng.rand(7, 7), cmap="Purples", norm=shared, shading="nearest")
+    sa.set_ylim(1.34, 1.51)
+    sb.set_ylim(1.34, 1.51)
+    fig.colorbar(mesh_a, ax=sb)
+    fig.savefig("InvShared.pdf")
+
+    # ---- InvShared2：共用 norm 的两块网格**各挂一条色条**、各一张自定义色图 ----
+    # 色条 A 的 cmap 广播到 mesh_b，而色条 B 自己也是广播端：两个广播端的组员重叠、
+    # 原样却各是各的（custom_a / custom_b）。撤 A / 撤 B / 全撤三条减法都要各回各的。
+    fig, (ta, tb) = plt.subplots(1, 2, figsize=(4.6, 2.4))
+    shared2 = PowerNorm(gamma=1.2, vmin=0.0, vmax=1.0)
+    cm_a = LinearSegmentedColormap.from_list("custom_a", ["#ffffff", "#b34700"])
+    cm_b = LinearSegmentedColormap.from_list("custom_b", ["#ffffff", "#2a6f3c"])
+    m_a = ta.pcolormesh(np.linspace(0, 1, 6), np.linspace(0, 1, 6), rng.rand(6, 6),
+                        cmap=cm_a, norm=shared2, shading="nearest")
+    m_b = tb.pcolormesh(np.linspace(0, 1, 6), np.linspace(0, 1, 6), rng.rand(6, 6),
+                        cmap=cm_b, norm=shared2, shading="nearest")
+    fig.colorbar(m_a, ax=ta)
+    fig.colorbar(m_b, ax=tb)
+    fig.savefig("InvShared2.pdf")
+
+    # ---- InvShared3：登记网格 + 它的色条，再加一条**独立 ScalarMappable** 的色条，两者共用 norm ----
+    # 独立 mappable 不是 Artist、没有 gid，它在别名组里只有一个分组令牌；而登记网格是它的
+    # 色阶兄弟。两条色条的原样各是各的（custom_a / custom_s）：登记色条先应用、独立色条后应用
+    # 时，后者的原样不能从兄弟（登记网格）那里「共用」过来（#474 评审第八轮）。
+    fig, sx = plt.subplots(figsize=(3.6, 2.6))
+    shared3 = PowerNorm(gamma=1.2, vmin=0.0, vmax=1.0)
+    cm_s = LinearSegmentedColormap.from_list("custom_s", ["#ffffff", "#76008a"])
+    m_s = sx.pcolormesh(np.linspace(0, 1, 6), np.linspace(0, 1, 6), rng.rand(6, 6),
+                        cmap=cm_a, norm=shared3, shading="nearest")
+    fig.colorbar(m_s, ax=sx, location="right")
+    fig.colorbar(ScalarMappable(norm=shared3, cmap=cm_s), ax=sx, location="bottom", fraction=0.046)
+    fig.savefig("InvShared3.pdf")
 
     # ---- InvPar：`axes_grid1` 的 host_subplot + twinx（**寄生轴**，#217） ----
     # 这一族轴既不在 `fig.axes` 也不在 `child_axes`，只挂在 `host.parasites`

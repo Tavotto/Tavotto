@@ -15,8 +15,21 @@ export function colormapAliasGids(
 ): string[] {
   const out = [el.gid]
   if (el.mappable_gid) out.push(el.mappable_gid)
+  // 色阶兄弟（`scale_gids`，共用 norm 对象的那几块）与 mappable 同一组：色条的
+  // 色图落在它们身上，回到脚本原样也要一起清
+  out.push(...(el.scale_gids ?? []))
+  // 给这组里**任何一块**上色的色条都算：两条色条各挂一块共用 norm 的网格时，A 的
+  // override 落在 mesh_b 上，从 B 这边「回到脚本原样」不清 A 就什么都不会变——
+  // 只按 `el.gid` 问「谁盖着我」找不到 A（A 盖的是 mesh_b，不是 B）
+  const covered = out.filter((g) => g !== el.gid || el.role !== 'colorbar')
   for (const other of manifest?.elements ?? []) {
-    if (other.role === 'colorbar' && other.mappable_gid === el.gid) out.push(other.gid)
+    if (other.role !== 'colorbar' || other.gid === el.gid) continue
+    if (covered.some((g) => colorbarCovers(other, g))) out.push(other.gid)
   }
   return [...new Set(out)]
+}
+
+/** 这条色条给 `gid` 上色吗：它的 mappable，或与之共用色阶的兄弟 */
+export function colorbarCovers(colorbar: ManifestElement, gid: string): boolean {
+  return colorbar.mappable_gid === gid || (colorbar.scale_gids ?? []).includes(gid)
 }
