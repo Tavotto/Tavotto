@@ -313,10 +313,17 @@ class RenderHost:
                 raise RenderChildError(
                     "render_child_protocol", f"child 说成功，像素文件读不了: {exc}"
                 ) from exc
-            if len(samples) != int(resp.get("bytes", -1)):
+            try:
+                # None / 非数字也是协议不可信（Codex #471 第八轮 P2）
+                declared = int(resp.get("bytes"))
+            except (TypeError, ValueError) as exc:
+                raise RenderChildError(
+                    "render_child_protocol", f"响应的 bytes 字段不是数: {resp.get('bytes')!r}"
+                ) from exc
+            if len(samples) != declared:
                 raise RenderChildError(
                     "render_child_protocol",
-                    f"像素文件 {len(samples)} 字节与响应说的 {resp.get('bytes')} 不符",
+                    f"像素文件 {len(samples)} 字节与响应说的 {declared} 不符",
                 )
             try:
                 got["buf"] = RasterBuffer(
