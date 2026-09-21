@@ -1,0 +1,158 @@
+{
+ "schema": 1,
+ "kind": "u10_mutations",
+ "results": [
+  {
+   "mutation": "M01 BACKEND_DEFAULT 改回 pymupdf",
+   "file": "src/tavotto/pdfbackend/__init__.py",
+   "tests": [
+    "tests/test_rendercore_facade.py"
+   ],
+   "k": "default_backend_is_rendercore",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_rendercore_facade.py::test_the_default_backend_is_rendercore_and_the_contract_names_follow_the_selection"
+  },
+  {
+   "mutation": "M02 selected() 把 pymupdf 静默映射成 rendercore",
+   "file": "src/tavotto/pdfbackend/__init__.py",
+   "tests": [
+    "tests/test_rendercore_facade.py",
+    "tests/test_rendercore_app.py"
+   ],
+   "k": "retired",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_rendercore_facade.py::test_the_retired_pymupdf_name_is_a_loud_error_not_a_fallback"
+  },
+  {
+   "mutation": "M03 pyproject dependencies 塞回 pymupdf",
+   "file": "pyproject.toml",
+   "tests": [
+    "tests/test_rendercore_fonts.py"
+   ],
+   "k": "legacy_extra",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_rendercore_fonts.py::test_pymupdf_is_only_the_legacy_extra_never_a_runtime_dependency"
+  },
+  {
+   "mutation": "M04 app 源码里加一行 import fitz",
+   "file": "src/tavotto/engine/tutorial.py",
+   "tests": [
+    "tests/test_retirement_scan.py"
+   ],
+   "k": "source_set",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_retirement_scan.py::test_the_application_source_set_has_no_retired_import"
+  },
+  {
+   "mutation": "M05 spec 把 PIL 放回 excludes",
+   "file": "packaging/tavotto.spec",
+   "tests": [
+    "tests/test_runtime_build.py"
+   ],
+   "k": "rendercore_closure",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_runtime_build.py::test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fonts"
+  },
+  {
+   "mutation": "M06 ci.yml backend-fast 漏掉取字体",
+   "file": ".github/workflows/ci.yml",
+   "tests": [
+    "tests/test_merge_queue_workflows.py"
+   ],
+   "k": "ApprovedFonts",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_merge_queue_workflows.py::TestApprovedFontsAndRetirementScan::test_every_job_that_installs_the_project_fetches_the_fonts_first"
+  },
+  {
+   "mutation": "M07 覆盖表给 fallback 层塞一个码位",
+   "file": "src/tavotto/pdfbackend/canvas_coverage.json",
+   "tests": [
+    "tests/test_rendercore_glyph_vectors.py"
+   ],
+   "k": "no_fallback_layer or lost_only",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_rendercore_glyph_vectors.py::test_the_default_tables_name_the_rendercore_backend_and_have_no_fallback_layer"
+  },
+  {
+   "mutation": "M08 排版基线换回 bbox ascender（硬编码 Times 的 1.053）",
+   "file": "src/tavotto/rendercore/typography.py",
+   "tests": [
+    "tests/test_compose_text.py"
+   ],
+   "k": "baseline",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_compose_text.py::test_baseline_matches_css_line_box - asser..."
+  },
+  {
+   "mutation": "M09 ledger 把 deleted 的用例标成 migrated",
+   "file": "docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.json",
+   "tests": [
+    "tests/test_foundation_facade_ledger.py"
+   ],
+   "k": "dispositioned",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_foundation_facade_ledger.py::test_candidate_parity_deselections_were_each_dispositioned_at_cutover"
+  },
+  {
+   "mutation": "M10 entry.py 的 --render-child 分派挪到 _redirect_streams 之后",
+   "file": "packaging/entry.py",
+   "tests": [
+    "tests/test_runtime_build.py"
+   ],
+   "k": "rendercore_closure",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_runtime_build.py::test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fonts"
+  },
+  {
+   "mutation": "M11 renderhost 不再预检 pypdfium2（缺包伪装成 child died）",
+   "file": "src/tavotto/rendercore/renderhost.py",
+   "tests": [
+    "tests/test_rendercore_app.py"
+   ],
+   "k": "backend_unavailable",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_rendercore_app.py::test_a_missing_runtime_dependency_is_backend_unavailable_not_a_fallback"
+  },
+  {
+   "mutation": "M12 spec 漏掉 rendercore/fonts_allowlist.json 那条 datas",
+   "file": "packaging/tavotto.spec",
+   "tests": [
+    "tests/test_runtime_build.py"
+   ],
+   "k": "tracked_package_data",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_runtime_build.py::test_spec_ships_every_tracked_package_data_file"
+  },
+  {
+   "mutation": "M13 扫描器的阻断器不装（find_spec 直接回 None）",
+   "file": "scripts/ci/retirement_scan.py",
+   "tests": [
+    "tests/test_retirement_scan.py"
+   ],
+   "k": "selftest",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_retirement_scan.py::test_selftest_positive_and_negative_examples_all_hold"
+  },
+  {
+   "mutation": "restored",
+   "returncode": 0,
+   "red": false,
+   "tail": "........ssss                                                             [100%]"
+  }
+ ],
+ "all_red": true,
+ "note": "rc-venv（macOS arm64，Python 3.13）；每条变异：写入 → pytest -x 指定用例 → 还原 + 清 __pycache__；结论按退出码，红的那条用例名记在 tail"
+}

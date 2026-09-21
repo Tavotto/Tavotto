@@ -135,6 +135,19 @@ U09 已于 2026-09-21 执行（`implementation_status: done`，两个 milestone 
 FO32 登记 observing（两条具名任务），FO30 拆合同后 enforced。证据在 [`evidence/u09/`](evidence/u09/)。交接见
 [`handoffs/U09_join.md`](handoffs/U09_join.md)。
 
+U10 已于 2026-09-22 执行（`implementation_status: done`；产品资格仍 `not_run`：签名安装物 / no-system-Python / SBOM 首跑归 U11）：
+**默认渲染后端切成 RenderCore，PyMuPDF 退役**（ADR 0072）。切换前先做核验并留证（[`evidence/u10/`](evidence/u10/)）：退役扫描器
+（`scripts/ci/retirement_scan.py`，五把尺子——应用源码 AST / 声明依赖闭包 / 干净进程阻断器跑主要路径 / 产物 native + wheel METADATA + 字体 /
+SBOM；主语是应用 / 发行 / runtime 闭包，例外按类别写明，`--selftest` 七条正负例）在旧闭包上三尺全红、候选在阻断器下 17 步 + smoke_app
+全路径全过；`u08_parity` 654 / 0 / 13 skip；闭包 wheel 表（`scripts/dev/u10_wheel_matrix.py`）正式三格 75/75，Intel Mac 无 pikepdf wheel
+（待拍板）；本机冻结 child 7/7。然后一个可审查变更：`BACKEND_DEFAULT = rendercore`、`pymupdf_backend.py` 删除、`pymupdf` 只剩
+`legacy-pymupdf` extra（测试读取器）、五个 native 包进 `dependencies`；`app.py` 旧分支删除；生成物换到默认落点（旧表存档为批准资产）；
+旧测试改走契约层 + 独立读取器（排版期望值一字未改）、U08 的 14 条 deselect 逐条处置；打包（spec 收 PDFium / qpdf、缺字体拒绝打包、
+`entry.py` 先分派 `--render-child`）与 CI（每条腿取字体、产物腿跑退役扫描）；根 `AGENTS.md` 两条不变量正式改写、`pdf-backend-boundary.md`
+重写。字体默认变更的布局政策与旧项目处理在 ADR 0073（位置 / 内容 / 框尺寸 / 换行不变，基线按批准量变；文档只存通用族，旧项目不迁移）。
+enrollment：`U08-R1` observing → enforced（pr，`tests/test_foundation_cutover.py` 经进程内 HTTP 入口写记录）。交接见
+[`handoffs/U10_cutover.md`](handoffs/U10_cutover.md)。
+
 
 ## 从哪里开始
 

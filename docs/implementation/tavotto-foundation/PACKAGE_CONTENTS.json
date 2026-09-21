@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A / PR B）加交接 / 证据 / README / plan.json 后各算一次；U05（2026-09-21，PR A / C）加交接 / 证据 / README / plan.json / 台账后各算一次；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次；U09（2026-09-21）两条链第一次汇合（merge 4973a28f 进 foundation/u09-join）后按并集重算；U09（2026-09-21）加 evidence/u09 / 交接 / ADR 引用 / README / plan.json / 台账（FO30 enforced、FO32 observing）后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A / PR B）加交接 / 证据 / README / plan.json 后各算一次；U05（2026-09-21，PR A / C）加交接 / 证据 / README / plan.json / 台账后各算一次；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次；U09（2026-09-21）两条链第一次汇合（merge 4973a28f 进 foundation/u09-join）后按并集重算；U09（2026-09-21）加 evidence/u09 / 交接 / ADR 引用 / README / plan.json / 台账（FO30 enforced、FO32 observing）后再算一次；U10（2026-09-22）加 evidence/u10、交接、ADR 引用、ledger / enrollment / plan / registry 变更后再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -44,13 +44,13 @@
     },
     {
       "path": "ALL_PROMPTS.md",
-      "bytes": 86918,
-      "sha256": "ee189c75995fd356ff2612f1f178bb417d257e6290107f0fa9ab23230bf7621a"
+      "bytes": 88801,
+      "sha256": "64bb5dd6064402766122fc1c2a982c4f01aba534e7fd21af1382cfb82f0eb967"
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 6839,
-      "sha256": "fa0c7ccee88411bd3ab1340ebc127319b02f6b709405bea416a987d5ba961957"
+      "bytes": 6635,
+      "sha256": "13577653a0a6401e4cca0bebb036f15815f4b82fc19d23e90fb387cd6bef4ec8"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 14952,
-      "sha256": "fedff95e9a0728ab75129563e1249274a546ecba241242a6b8dd86ef32465673"
+      "bytes": 16835,
+      "sha256": "ab636d83c8a96e852af9015ba57110605746177edfac3c1de8f8a34b456cc2f0"
     },
     {
       "path": "SOURCES.md",
@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 67783,
-      "sha256": "756297c02f6b1dfe2d643a2f7ed6aab224e81f50959f1c66e1613d8c95567e75"
+      "bytes": 78635,
+      "sha256": "194d97aaa12649fb0d6656237f95d29e6dd9abf698e0177dfa1d9f1430517c3a"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 36942,
-      "sha256": "686154f905e5e8e0f89cfd8d60cd7e287ec6e30fd928600e8b18e29fd27a5190"
+      "bytes": 39343,
+      "sha256": "466794159c49dca9d23fd592f5039b856e3f0d272ace6fd23169365c033a6294"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 34578,
-      "sha256": "c38262b82248ab378dc55e928ef863461b460764e40451135075a78ecf1dca9e"
+      "bytes": 37558,
+      "sha256": "68be9f282a4459ddde7806a91e863e46c604b7d281da74d47c8d4b2eea85b3a5"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -378,6 +378,86 @@
       "sha256": "b4fb256b6cbcbb5b0e500d732f96464a16def762dae79cea4c95aea2bd0195e7"
     },
     {
+      "path": "evidence/u10/README.md",
+      "bytes": 3004,
+      "sha256": "0a437779ad75e8cdc945c014fb18709ae38ec58c0394a9e357fbc3e428fbfb34"
+    },
+    {
+      "path": "evidence/u10/canvas_coverage.pymupdf.json",
+      "bytes": 14954,
+      "sha256": "cf1d693856911fee57594a8198c087945da57ab7cb1439465b15202218fd6ccc"
+    },
+    {
+      "path": "evidence/u10/freeze/frozen-render-darwin-arm64.png",
+      "bytes": 5118,
+      "sha256": "5637a739f0c0af4a046f0aa6a8e9ba5cb412a6c457cce82195564d3424f71211"
+    },
+    {
+      "path": "evidence/u10/freeze/report-darwin-arm64.json",
+      "bytes": 3097,
+      "sha256": "2781bc66d29845d8d8c9c9679f009dd84272fe2a9b8d0315cd7bae068ff13a5c"
+    },
+    {
+      "path": "evidence/u10/glyph_plan_vectors.pymupdf.json",
+      "bytes": 15730,
+      "sha256": "f0f85c0e3acdec499ec2bafabb11b3b5030202fa227046c1146b3b5052d81899"
+    },
+    {
+      "path": "evidence/u10/mutations.json",
+      "bytes": 5232,
+      "sha256": "d37e7f289ab7594ea3e6ab25bdfebe2ca6e31321fb9744314fa3c83c7f37255a"
+    },
+    {
+      "path": "evidence/u10/post_cutover/frozen_smoke_macos_arm64.txt",
+      "bytes": 771,
+      "sha256": "570bcedd9838e140938e9b482b4ff40b82e4c02017756cdc94b598403363586c"
+    },
+    {
+      "path": "evidence/u10/post_cutover/main_venv_contrast.txt",
+      "bytes": 940,
+      "sha256": "587a8ef5884f8650fa648ce82729ffe8dc20be4aa91813e812de0878d9db37ce"
+    },
+    {
+      "path": "evidence/u10/post_cutover/retirement_scan_frozen_dist.json",
+      "bytes": 1643,
+      "sha256": "21bb88cd29bb9ecfdb5e0a583896676dc867d51a939a7156bc619ef788d5e723"
+    },
+    {
+      "path": "evidence/u10/post_cutover/retirement_scan_source_deps_block_run.json",
+      "bytes": 8353,
+      "sha256": "27aa5ec67e25220ee8f89645dd0c067c6d27010a8427856cca8cbe3bc676196f"
+    },
+    {
+      "path": "evidence/u10/post_cutover/retirement_scan_wheel.json",
+      "bytes": 1741,
+      "sha256": "e8bd893fde83f2a581a7577bb151983ef0b49129080ac10b832aec899d8ed052"
+    },
+    {
+      "path": "evidence/u10/pre_cutover/parity_u09_tip.json",
+      "bytes": 4142,
+      "sha256": "6006d2ee35928ddb8401a04bc77b8cf774195241a06fa2f367808e315af3ee2d"
+    },
+    {
+      "path": "evidence/u10/pre_cutover/retirement_scan_candidate_block.json",
+      "bytes": 4604,
+      "sha256": "9030403c4e3e35a9eb3037dd2fb0ca05fe6e72c33ac6aefd32d339d62df217fa"
+    },
+    {
+      "path": "evidence/u10/pre_cutover/retirement_scan_candidate_smoke.json",
+      "bytes": 2998,
+      "sha256": "d35f27e8c369a998959c5d3d4737ea8a0f6bb43d3ec908cc9540278d41861067"
+    },
+    {
+      "path": "evidence/u10/pre_cutover/retirement_scan_old_closure.json",
+      "bytes": 24844,
+      "sha256": "386af59dcde2db0db815530479035dff28550058259a0a688eb17a30fcec8785"
+    },
+    {
+      "path": "evidence/u10/wheel_matrix.json",
+      "bytes": 45057,
+      "sha256": "866bb6409d99ac0f4f6b6d8c51df70704c82eb4fff6ce991c167d67a80b4ef5b"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -453,6 +533,11 @@
       "sha256": "9c40bbdd42f4bf7a9dc7fa35a4a9e8dbe98488d9f865d964dbb3b6f40072a7df"
     },
     {
+      "path": "handoffs/U10_cutover.md",
+      "bytes": 26860,
+      "sha256": "4a7c7bd2e3d53522efb0fecb5c082b39a38e8263f827db63874d1953854a0d15"
+    },
+    {
       "path": "phase_mapping.json",
       "bytes": 1204,
       "sha256": "1ce40f3ba10dc8713d899db402c33287d60883b103e1b6b290f524117b27ad25"
@@ -519,13 +604,13 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7895,
-      "sha256": "2b914614b99b603afe8858266223819f7b19b17899141fbf89438e3bfa5546fd"
+      "bytes": 8676,
+      "sha256": "1e0bf18335b885264133fa91c7658f79eafe251f9a23ebd78dea34a1e60db0e2"
     },
     {
       "path": "registry.json",
-      "bytes": 287825,
-      "sha256": "eef027b8c1d76bb3ce9ee9b20371b0951773c76c5c95332a320627128c894b06"
+      "bytes": 294748,
+      "sha256": "20b830fdfb4ccf3432bd58a31e2c00118ca698dfff1c29ea5ae57f1a8a140dc0"
     },
     {
       "path": "sources_manifest.json",

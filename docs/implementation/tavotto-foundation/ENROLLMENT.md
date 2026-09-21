@@ -4,7 +4,7 @@
 状态含义见 [`03_CI_POLICY.md`](03_CI_POLICY.md) §3 与 ADR 0053 §五：**只有 enforced 且结果目录里有有效通过记录的实例才算通过**；
 planned / observing / later 是登记，不是成绩。
 
-能力版本：`u04` · 计数：enforced 16 · later 1 · observing 10 · planned 8
+能力版本：`u10` · 计数：enforced 17 · later 1 · observing 9 · planned 8
 
 | case | 标题 | enrollment | lane | 阶段 | 用例 | fixture | 场景 |
 |---|---|---|---|---|---|---|---|
@@ -42,4 +42,4 @@ planned / observing / later 是登记，不是成绩。
 | FO32 | 真实打开—编辑—重放—导出 | observing | release | U09 | — | `tests/fixtures/foundation/join_h5` | FO32 |
 | U01-S1 | single_file_csv 经真实 HTTP 服务（会话认证）首开 → 准备 → 渲染 → 旧后端导出 PDF/PNG → 独立读回 | enforced | pr | U01 | `tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry` | `tests/fixtures/foundation/single_file_csv` | FO01, FO32 |
 | U07-R1 | RenderBench：非对称页盒 / 同名资源 / 透明组 / alpha 位图 / 文字的画布经 RenderPlan → Canonical PDF → render child 栅格 → PNG + TIFF，四把独立读取器 + 三平台 | observing | pr | U07 | — | `docs/implementation/tavotto-foundation/evidence/u07/truth.json` |  |
-| U08-R1 | RenderBench：facade 19 项 + Canvas 面在候选后端下的对拍——旧契约用例在 TAVOTTO_RENDER_BACKEND=rendercore 下逐字重跑（23 个套件、14 条实现特定断言各带替代证据）+ 真实入口（HTTP 同步 / 异步、/api/render、原图三格式、带 override 的面板经 worker + 回执） + 有限产物验证（ArtifactInspector：封口产物重开检查、D08 两档政策、伪造 proof / 坏文件 / 错尺寸 / 低 ppi 负例） | observing | pr | U08 | — | `docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.json` |  |
+| U08-R1 | RenderBench：RenderCore 是默认后端之后的真实入口——/api/render 预览 + 画布导出 PDF / PNG（standard 核验）+ 独立读取器核文件 + manifest backend / identity | enforced | pr | U08 | `tests/test_foundation_cutover.py::test_u08_r1_default_export_through_the_public_entry_is_rendercore` | `tests/fixtures/foundation/pdf_png_assets` |  |

@@ -1,0 +1,14 @@
+✓ 已启动: version=0.15.0 build=index-DDLenCh2（1.0s）
+✓ 会话认证：默认 deny + 本机凭据交接可用
+✓ 渲染环境: python=<scratch>/u10/rc-venv/bin/python 来源=env_override matplotlib=3.11.2
+✓ 项目: <worktree>/examples/figures（2 个脚本）
+✓ 面板 3 个，其中可参数化 3 个
+✓ 画布预览 Fig1_kinetics.pdf: PNG 400 px（render child，0.0s）
+✓ 引擎渲染 Fig1_kinetics.pdf: 25 个元素（12.1s，含冷启动）
+✓ 再渲染一次（热会话）（0.05s）
+✓ 渲染控制面: selected=workerd sessions=['workerd']
+✓ 导出 smoke_0922_013647.pdf（21683 字节，0.2s）
+✓ 覆盖导出 smoke_0922_013647.pdf
+✓ 诊断 8 项，其中未通过 1: ['bundled_runtime']
+✓ 干净退出，退出码 0
+冒烟通过 ✅

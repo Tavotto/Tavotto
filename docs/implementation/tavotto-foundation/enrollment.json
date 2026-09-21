@@ -3,9 +3,10 @@
   "_comment": [
     "case enrollment 台账（ADR 0053 §五；03_CI_POLICY §3）。机器可读真值；ENROLLMENT.md 由 tools/generate_enrollment.py 派生。",
     "planned / observing / later 不是通过；enforced 的 case 必须指向真实 pytest 用例并在结果目录写记录；空集合不是通过。",
-    "registry.json 里 32 个 FO 场景逐一在此，enrollment / stage 与 registry 一致（tests/test_foundation_harness.py 钉着）。"
+    "registry.json 里 32 个 FO 场景逐一在此，enrollment / stage 与 registry 一致（tests/test_foundation_harness.py 钉着）。",
+    "U10（ADR 0072）：RenderCore 是唯一渲染后端，`backend` 一律 rendercore（早期 FO 记录的 pymupdf 终点是历史事实，见各条 notes）；rendercore-output 能力的状态按平台：macOS arm64 本机 enforced 候选（U08-R1 经真实入口写记录）+ CI 必需矩阵（ubuntu 3.10 / 3.13 / 3.14、macOS、Windows 3.13 每条腿都取字体真跑 tests/test_rendercore_*.py），签名安装物资格在 U11。"
   ],
-  "capability_version": "u04",
+  "capability_version": "u10",
   "cases": [
     {
       "case_id": "FO01",
@@ -20,8 +21,8 @@
       "fixture": "tests/fixtures/foundation/single_file_csv",
       "test": "tests/test_foundation_first_open.py::test_fo01_same_directory_csv_opens_automatically",
       "expected_product_outcome": "automatic",
-      "notes": "从干净应用设置（空配置、无环境变量）经真实 HTTP 服务打开：沙盒默认 + 只读回退到脚本目录即可，不问一次；U03 起 enforced（正例 = 图内值等于真值；负例 = 校验器的 outcome_mismatch + 判据变异见 handoff）。终点是旧后端。",
-      "backend": "pymupdf"
+      "notes": "从干净应用设置（空配置、无环境变量）经真实 HTTP 服务打开：沙盒默认 + 只读回退到脚本目录即可，不问一次；U03 起 enforced（正例 = 图内值等于真值；负例 = 校验器的 outcome_mismatch + 判据变异见 handoff）。终点是旧后端。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO02",
@@ -36,8 +37,8 @@
       "fixture": "tests/fixtures/foundation/split_scripts_data",
       "test": "tests/test_foundation_first_open.py::test_fo02_scripts_and_data_split_asks_once_then_runs_at_the_project_root",
       "expected_product_outcome": "guided",
-      "notes": "cwd 歧义变体（`data/points.csv` 单字面量）：准备接口 needs_input（project_root_evidence，推荐项目根）、选择前渲染被门挡住；PATCH /api/engine/workdir project_root 后 ready，cwd_origin=project.root，值等于真值；二开不再问。lane 由 integration 改 pr：整条链 ~10 s，走 invariants job。",
-      "backend": "pymupdf"
+      "notes": "cwd 歧义变体（`data/points.csv` 单字面量）：准备接口 needs_input（project_root_evidence，推荐项目根）、选择前渲染被门挡住；PATCH /api/engine/workdir project_root 后 ready，cwd_origin=project.root，值等于真值；二开不再问。lane 由 integration 改 pr：整条链 ~10 s，走 invariants job。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO03",
@@ -52,8 +53,8 @@
       "fixture": "tests/fixtures/foundation/split_scripts_data",
       "test": "tests/test_foundation_first_open.py::test_fo03_file_relative_data_and_local_package_open_automatically",
       "expected_product_outcome": "automatic",
-      "notes": "`__file__` 定位 `../data` + 本地包 `labhelpers`：静态证据说不出话（路径是拼出来的）→ 按默认走且成功；本地包不被当成包名。",
-      "backend": "pymupdf"
+      "notes": "`__file__` 定位 `../data` + 本地包 `labhelpers`：静态证据说不出话（路径是拼出来的）→ 按默认走且成功；本地包不被当成包名。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO04",
@@ -113,8 +114,8 @@
       "fixture": "tests/fixtures/foundation/same_name_data",
       "test": "tests/test_foundation_first_open.py::test_fo07_same_name_data_in_two_places_asks_and_honours_the_choice",
       "expected_product_outcome": "guided",
-      "notes": "用例现场把夹具摆成「脚本目录与项目根各有一份 data.csv、内容不同」：needs_input（ambiguous_data，无推荐）、选择前不发布图；选脚本目录得真值 [7,13,25]，选项目根得干扰 [601,1201,2401]——值等于选的那份，不就近替换。",
-      "backend": "pymupdf"
+      "notes": "用例现场把夹具摆成「脚本目录与项目根各有一份 data.csv、内容不同」：needs_input（ambiguous_data，无推荐）、选择前不发布图；选脚本目录得真值 [7,13,25]，选项目根得干扰 [601,1201,2401]——值等于选的那份，不就近替换。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO08",
@@ -234,8 +235,8 @@
       "fixture": "tests/fixtures/foundation/single_file_csv",
       "test": "tests/test_foundation_first_open.py::test_fo15_explicit_interpreter_without_matplotlib_stops_with_a_reason",
       "expected_product_outcome": "safe_stop",
-      "notes": "显式 `TAVOTTO_WORKER_PYTHON` 指向一个真实的、没有 matplotlib 的 venv：environment / 准备 / 渲染三处都报 explicit_python_unusable（source=env_override, reason=no_matplotlib），不换环境、不装包、不跑脚本。safe_stop 的通过不进兼容成功分子（校验器 passed_by_outcome 分开计数）。",
-      "backend": "pymupdf"
+      "notes": "显式 `TAVOTTO_WORKER_PYTHON` 指向一个真实的、没有 matplotlib 的 venv：environment / 准备 / 渲染三处都报 explicit_python_unusable（source=env_override, reason=no_matplotlib），不换环境、不装包、不跑脚本。safe_stop 的通过不进兼容成功分子（校验器 passed_by_outcome 分开计数）。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO16",
@@ -295,8 +296,8 @@
       "fixture": "tests/fixtures/foundation/shadowed_engine_modules",
       "test": "tests/test_foundation_first_open.py::test_fo19_user_modules_shadow_engine_names_and_still_win",
       "expected_product_outcome": "automatic",
-      "notes": "issue #447 的修复证据：safe worker 经 bridgeboot 私有包装引擎模块，用户的 manifest.py / overrides.py 与本地包 lab_utils 都命中用户那份（标题 sentinel + 真值）。",
-      "backend": "pymupdf"
+      "notes": "issue #447 的修复证据：safe worker 经 bridgeboot 私有包装引擎模块，用户的 manifest.py / overrides.py 与本地包 lab_utils 都命中用户那份（标题 sentinel + 真值）。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO20",
@@ -311,8 +312,8 @@
       "fixture": "tests/fixtures/foundation/joint_dependencies",
       "test": "tests/test_foundation_dependencies.py::test_fo20_markers_extras_and_selected_groups_prepare_only_what_applies",
       "expected_product_outcome": "guided",
-      "notes": "U04 起 enforced（lane pr）：项目自带真 venv（matplotlib 来自宿主 site-packages，脚本要的三个包只在用例现造的离线 wheelhouse 里、harness 不预装）。正例 = 跑前的门以整份计划回来（三条选中且适用：extra 拉进第四个包），一次授权装完 → ready → 图内值 == 真值 → 一次编辑；负例 = marker 为假与未选组的包 wheelhouse 里有也不装（import 不到、freeze 里没有）、渲染入口同一道门、授权前一行脚本不跑。目标是项目 venv（首开选中的解释器）；受管环境那条路的机制面在 tests/test_dependency_transaction.py 离线真跑，经 HTTP 的受管变体归 FO18（observing）。",
-      "backend": "pymupdf"
+      "notes": "U04 起 enforced（lane pr）：项目自带真 venv（matplotlib 来自宿主 site-packages，脚本要的三个包只在用例现造的离线 wheelhouse 里、harness 不预装）。正例 = 跑前的门以整份计划回来（三条选中且适用：extra 拉进第四个包），一次授权装完 → ready → 图内值 == 真值 → 一次编辑；负例 = marker 为假与未选组的包 wheelhouse 里有也不装（import 不到、freeze 里没有）、渲染入口同一道门、授权前一行脚本不跑。目标是项目 venv（首开选中的解释器）；受管环境那条路的机制面在 tests/test_dependency_transaction.py 离线真跑，经 HTTP 的受管变体归 FO18（observing）。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO21",
@@ -327,8 +328,8 @@
       "fixture": "tests/fixtures/foundation/joint_dependencies",
       "test": "tests/test_foundation_dependencies.py::test_fo21_conflicting_declarations_stop_and_keep_the_environment",
       "expected_product_outcome": "safe_stop",
-      "notes": "U04 起 enforced（lane pr）：`requirements.txt` 的 `beta<2` 与 `constraints.txt` 的 `beta>=2` 确定矛盾 → 计划 blocked（dependency_conflict 可见）、绑定被拒（409 + 计划）、门放行、脚本照跑并以 missing_dependency 收场；环境 freeze 一字不变、声明文件字节不变、三个包一个都没装。safe_stop 的通过不进自动成功分子。求解器层的冲突（pip ResolutionImpossible → 新代 incomplete、旧代仍 active）在 tests/test_dependency_transaction.py 真跑。",
-      "backend": "pymupdf"
+      "notes": "U04 起 enforced（lane pr）：`requirements.txt` 的 `beta<2` 与 `constraints.txt` 的 `beta>=2` 确定矛盾 → 计划 blocked（dependency_conflict 可见）、绑定被拒（409 + 计划）、门放行、脚本照跑并以 missing_dependency 收场；环境 freeze 一字不变、声明文件字节不变、三个包一个都没装。safe_stop 的通过不进自动成功分子。求解器层的冲突（pip ResolutionImpossible → 新代 incomplete、旧代仍 active）在 tests/test_dependency_transaction.py 真跑。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO22",
@@ -343,8 +344,8 @@
       "fixture": "tests/fixtures/foundation/joint_dependencies",
       "test": "tests/test_foundation_dependencies.py::test_fo22_installed_but_unimportable_is_caught_by_verification",
       "expected_product_outcome": "safe_stop",
-      "notes": "U04 起 enforced（lane pr）：wheel 装得上（pip 退出 0）但模块 import 一个不存在的原生库（真实 ImportError）→ 关键 import 验证挡住，终态 failed / dependency_import_still_failed，错误里带真实 import 错误；有界：门只问一次、失败不消耗轮次、再准备只跑一次并以 missing_dependency 收场（运行后那条路）。用户 venv 上的安装只进不退（包文件在、import 不了，如实报）。真实原生扩展的 ABI 隔离（FO13）不在此列。",
-      "backend": "pymupdf"
+      "notes": "U04 起 enforced（lane pr）：wheel 装得上（pip 退出 0）但模块 import 一个不存在的原生库（真实 ImportError）→ 关键 import 验证挡住，终态 failed / dependency_import_still_failed，错误里带真实 import 错误；有界：门只问一次、失败不消耗轮次、再准备只跑一次并以 missing_dependency 收场（运行后那条路）。用户 venv 上的安装只进不退（包文件在、import 不了，如实报）。真实原生扩展的 ABI 隔离（FO13）不在此列。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO23",
@@ -374,8 +375,8 @@
       "fixture": "tests/fixtures/foundation/private_python",
       "test": "tests/test_foundation_private_python.py::test_fo24_cached_private_python_prepares_offline_and_renders",
       "expected_product_outcome": "automatic",
-      "notes": "U05 PR B 起 enforced（lane pr，进程内 test_client 经产品 HTTP 入口——「这台机器没有任何可用 Python」是发现链末端的输入，子进程形态凑不出诚实的无 base）：校验过的私有 Python 归档已在缓存、网络断着（供应来源指向没人听的端口 + 死代理）→ 门说 cached / 0 字节 / 不需联网 → 一次授权（/plan + /prepare）零请求供应 + 建代 + 装 fixture 包 → ready → 图内值 == 真值。负例（同文件 FO25）= 无缓存时同样的门要求下载。仍是工程验证，不是资格（ADR 0064）。",
-      "backend": "pymupdf"
+      "notes": "U05 PR B 起 enforced（lane pr，进程内 test_client 经产品 HTTP 入口——「这台机器没有任何可用 Python」是发现链末端的输入，子进程形态凑不出诚实的无 base）：校验过的私有 Python 归档已在缓存、网络断着（供应来源指向没人听的端口 + 死代理）→ 门说 cached / 0 字节 / 不需联网 → 一次授权（/plan + /prepare）零请求供应 + 建代 + 装 fixture 包 → ready → 图内值 == 真值。负例（同文件 FO25）= 无缓存时同样的门要求下载。仍是工程验证，不是资格（ADR 0064）。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO25",
@@ -390,8 +391,8 @@
       "fixture": "tests/fixtures/foundation/private_python",
       "test": "tests/test_foundation_private_python.py::test_fo25_offline_without_cache_is_a_safe_stop_that_builds_nothing",
       "expected_product_outcome": "safe_stop",
-      "notes": "U05 PR B 起 enforced（lane pr，进程内 HTTP 入口）：无缓存 + 断网 → 门以「将下载 N 字节」回来（投影无机器路径）→ 授权 → private_python_offline（有界）→ 没登记任何一代、没有 runtime 目录、没有 .part → 再准备仍是 needs_input（不假装 ready）。safe_stop 的通过不进兼容成功分子。",
-      "backend": "pymupdf"
+      "notes": "U05 PR B 起 enforced（lane pr，进程内 HTTP 入口）：无缓存 + 断网 → 门以「将下载 N 字节」回来（投影无机器路径）→ 授权 → private_python_offline（有界）→ 没登记任何一代、没有 runtime 目录、没有 .part → 再准备仍是 needs_input（不假装 ready）。safe_stop 的通过不进兼容成功分子。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO26",
@@ -406,8 +407,8 @@
       "fixture": "tests/fixtures/foundation/private_python",
       "test": "tests/test_foundation_private_python.py::test_fo26_corrupted_source_is_refused_and_the_active_environment_stays",
       "expected_product_outcome": "safe_stop",
-      "notes": "U05 PR B 起 enforced（lane pr，进程内 HTTP 入口）：先在一份好的私有 Python 上准备好并渲染出真值；锁换到另一份、本地供应服务篡改一个字节 → private_python_hash_mismatch → 拒绝；旧 active 代原样、runtimes/ 里只有好的那份、坏归档的解释器一次都没起。",
-      "backend": "pymupdf"
+      "notes": "U05 PR B 起 enforced（lane pr，进程内 HTTP 入口）：先在一份好的私有 Python 上准备好并渲染出真值；锁换到另一份、本地供应服务篡改一个字节 → private_python_hash_mismatch → 拒绝；旧 active 代原样、runtimes/ 里只有好的那份、坏归档的解释器一次都没起。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO27",
@@ -422,8 +423,8 @@
       "fixture": "tests/fixtures/foundation/joint_dependencies",
       "test": "tests/test_foundation_dependencies.py::test_fo27_cancel_during_install_is_a_clean_terminal_state",
       "expected_product_outcome": "safe_stop",
-      "notes": "U04 起 enforced（lane pr）：wheelhouse 经一个每个 .whl 先睡 6 s 的本地 find-links HTTP 服务提供，在 installing 阶段取消 → 终态 cancelled / dependency_install_cancelled、committed 不为真、环境 freeze 一字不变（pip 被杀在装之前）、计划一次性；受管环境那一侧（新代 incomplete、active 不动、同身份可重建）与提交点后拒绝取消在 tests/test_dependency_transaction.py 真跑。",
-      "backend": "pymupdf"
+      "notes": "U04 起 enforced（lane pr）：wheelhouse 经一个每个 .whl 先睡 6 s 的本地 find-links HTTP 服务提供，在 installing 阶段取消 → 终态 cancelled / dependency_install_cancelled、committed 不为真、环境 freeze 一字不变（pip 被杀在装之前）、计划一次性；受管环境那一侧（新代 incomplete、active 不动、同身份可重建）与提交点后拒绝取消在 tests/test_dependency_transaction.py 真跑。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO28",
@@ -468,8 +469,8 @@
       "fixture": "tests/fixtures/foundation/single_file_csv",
       "test": "tests/test_foundation_join.py::test_fo30_data_changed_after_execution_is_an_explicit_snapshot_until_the_user_rebuilds",
       "expected_product_outcome": "guided",
-      "notes": "U09（ADR 0071）：registry 的 expected_product_outcome 是 contractual，先拆成具体合同再登记——① prepare 与 execute 之间数据变（同大小同 mtime 也算：判内容 sha256）→ `preparation_plan_stale` / `data_binding_changed` 一行不跑（safe_stop）；② 计划之后项目的解释器决策变 → `environment_changed` 不跑（safe_stop）；③ spawn 与读取之间数据变 → 按观察到的输入作废（`executed=true`，safe_stop）；④ execute 与 export 之间数据变 → 复用热会话是 `ready` + 回执 `binding_check.matched=false` + note「旧快照」，render / export 仍是明示的旧快照、不自动重算、编辑不丢；用户明确「重新构建」（/api/engine/invalidate）后新一代读到新数据、回执 matched=true，改脚本再重建则 `source_revision` 随文件（guided）。①②③ 在 tests/test_preparation_api.py（进程内 HTTP + 替身 pool，产品的准备服务是真的）；④ 是这条经真实 `python -m tavotto` 入口的用例，写结果记录。旧计划的回执从不冒充实际执行：被拒的自报 / 过期的计划都有稳定 code。",
-      "backend": "pymupdf"
+      "notes": "U09（ADR 0071）：registry 的 expected_product_outcome 是 contractual，先拆成具体合同再登记——① prepare 与 execute 之间数据变（同大小同 mtime 也算：判内容 sha256）→ `preparation_plan_stale` / `data_binding_changed` 一行不跑（safe_stop）；② 计划之后项目的解释器决策变 → `environment_changed` 不跑（safe_stop）；③ spawn 与读取之间数据变 → 按观察到的输入作废（`executed=true`，safe_stop）；④ execute 与 export 之间数据变 → 复用热会话是 `ready` + 回执 `binding_check.matched=false` + note「旧快照」，render / export 仍是明示的旧快照、不自动重算、编辑不丢；用户明确「重新构建」（/api/engine/invalidate）后新一代读到新数据、回执 matched=true，改脚本再重建则 `source_revision` 随文件（guided）。①②③ 在 tests/test_preparation_api.py（进程内 HTTP + 替身 pool，产品的准备服务是真的）；④ 是这条经真实 `python -m tavotto` 入口的用例，写结果记录。旧计划的回执从不冒充实际执行：被拒的自报 / 过期的计划都有稳定 code。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO31",
@@ -484,8 +485,8 @@
       "fixture": "tests/fixtures/foundation/joint_dependencies",
       "test": "tests/test_foundation_dependencies.py::test_fo31_first_second_open_and_restart_do_not_prepare_again",
       "expected_product_outcome": "automatic",
-      "notes": "U04 起 enforced（lane pr）：首开授权一次（installs=1）→ ready；二开 existing_runtime 同 generation、created_runtime=false；关掉应用再开（新进程、同数据目录）：`GET /api/engine/dependencies` 计划 nothing_needed、不再问、freeze 逐字不变、会话 generation 1 起步、值 == 真值。",
-      "backend": "pymupdf"
+      "notes": "U04 起 enforced（lane pr）：首开授权一次（installs=1）→ ready；二开 existing_runtime 同 generation、created_runtime=false；关掉应用再开（新进程、同数据目录）：`GET /api/engine/dependencies` 计划 nothing_needed、不再问、freeze 逐字不变、会话 generation 1 起步、值 == 真值。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。",
+      "backend": "rendercore"
     },
     {
       "case_id": "FO32",
@@ -500,7 +501,7 @@
       "fixture": "tests/fixtures/foundation/join_h5",
       "test": null,
       "expected_product_outcome": "guided",
-      "notes": "U09 两个独立出口（D06：与 U03 旧后端终点的 FO 记录分开，backend=rendercore）。existing_env_join：tests/test_foundation_join.py::test_fo32_existing_env_open_edit_replay_export_through_the_new_rendercore（+ 负例 test_fo32_wrong_choice_reads_the_decoy_and_the_identities_say_so）——项目 .venv 由夹具构造脚本现建（基础解释器 ≠ 应用、已有 matplotlib + h5py，经 TAVOTTO_FOUNDATION_PROJECT_PYTHON 点名，harness 不装包）、真 h5py 读 HDF5 [2,4,8]、脚本目录同名干扰 [200,400,800]、中文 + 空格路径；经真实 `python -m tavotto` 入口（TAVOTTO_RENDER_BACKEND=rendercore）：ambiguous_data 问一次 → 选项目根 → 回执 = 那个 venv（版本 / h5py / source revision，pid 核过，观察 partial、h5 未观察不冒充）→ 值 [7,13,25] → 可见 patch → 重放 → RenderCore 导出 PDF / PNG / TIFF → 独立读取器（PDFium 文字层 / 标准库 PNG / TIFF）→ manifest 四身份 + 回执事实 == 准备回执，artifact == 发布字节；科学环境里没有 PDF 候选包（FO-063）。managed_env_join：tests/test_foundation_join.py::TestManagedEnvJoin::test_fo32_managed_env_private_python_joint_install_then_rendercore——发现链末端置空（U05 进程内形态）→ 先问工作目录再问依赖（private_python 载荷）→ 一次授权：真 pbs 归档供应私有 Python + U04 代事务从 wheelhouse 装 h5py → ready（回执 = 那一代：pbs 版本、prefix 在受管环境）→ 同一条链到 RenderCore 终点。observing 的具名任务：foundation-u06-rendercore.yml「U09 联调」步（三平台 + 3.10 腿：setup-python 3.12 + matplotlib / numpy / h5py 当用户环境；两条 FO32 用例 skip 即红）与 private-python-targets.yml「U09 联调：managed_env_join」步（三平台，TestRealChain 供应好的 runtime 零下载复用；skip 即红）。本机 macOS arm64 两个出口都真跑过（evidence/u09）。**不提升 enforced 的理由**：候选后端未切默认（U08-R1 同一理由，U10 切）；required 矩阵没有第二解释器 + h5py + 候选包 + 字体；Linux / Windows 只有这两条 observing 腿的证据；无系统 Python 的目标资格在 U11。",
+      "notes": "U09 两个独立出口（D06：与 U03 旧后端终点的 FO 记录分开，backend=rendercore）。existing_env_join：tests/test_foundation_join.py::test_fo32_existing_env_open_edit_replay_export_through_the_new_rendercore（+ 负例 test_fo32_wrong_choice_reads_the_decoy_and_the_identities_say_so）——项目 .venv 由夹具构造脚本现建（基础解释器 ≠ 应用、已有 matplotlib + h5py，经 TAVOTTO_FOUNDATION_PROJECT_PYTHON 点名，harness 不装包）、真 h5py 读 HDF5 [2,4,8]、脚本目录同名干扰 [200,400,800]、中文 + 空格路径；经真实 `python -m tavotto` 入口（TAVOTTO_RENDER_BACKEND=rendercore）：ambiguous_data 问一次 → 选项目根 → 回执 = 那个 venv（版本 / h5py / source revision，pid 核过，观察 partial、h5 未观察不冒充）→ 值 [7,13,25] → 可见 patch → 重放 → RenderCore 导出 PDF / PNG / TIFF → 独立读取器（PDFium 文字层 / 标准库 PNG / TIFF）→ manifest 四身份 + 回执事实 == 准备回执，artifact == 发布字节；科学环境里没有 PDF 候选包（FO-063）。managed_env_join：tests/test_foundation_join.py::TestManagedEnvJoin::test_fo32_managed_env_private_python_joint_install_then_rendercore——发现链末端置空（U05 进程内形态）→ 先问工作目录再问依赖（private_python 载荷）→ 一次授权：真 pbs 归档供应私有 Python + U04 代事务从 wheelhouse 装 h5py → ready（回执 = 那一代：pbs 版本、prefix 在受管环境）→ 同一条链到 RenderCore 终点。observing 的具名任务：foundation-u06-rendercore.yml「U09 联调」步（三平台 + 3.10 腿：setup-python 3.12 + matplotlib / numpy / h5py 当用户环境；两条 FO32 用例 skip 即红）与 private-python-targets.yml「U09 联调：managed_env_join」步（三平台，TestRealChain 供应好的 runtime 零下载复用；skip 即红）。本机 macOS arm64 两个出口都真跑过（evidence/u09）。**不提升 enforced 的理由**（U10 更新：默认已切，这一条不再是理由）：required 矩阵没有第二解释器 + h5py + 候选包 + 字体；Linux / Windows 只有这两条 observing 腿的证据；无系统 Python 的目标资格在 U11。 U10：required 矩阵有了候选包 + 字体，但仍没有第二解释器 + h5py；Linux / Windows 只有两条 observing 腿——留 observing。",
       "backend": "rendercore"
     },
     {
@@ -517,8 +518,8 @@
       "fixture": "tests/fixtures/foundation/single_file_csv",
       "test": "tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry",
       "expected_product_outcome": "automatic",
-      "backend": "pymupdf",
-      "notes": "U01 唯一 enforced 的切片：终点是旧后端（D06），不是 RenderCore 资格；FO01 / FO32 本身仍 planned，各自在 U03 / U09 取得资格。"
+      "backend": "rendercore",
+      "notes": "U01 唯一 enforced 的切片：终点是旧后端（D06），不是 RenderCore 资格；FO01 / FO32 本身仍 planned，各自在 U03 / U09 取得资格。 U10：终点自 2026-09-22 起是 RenderCore（PyMuPDF 退役，ADR 0072）；此前的记录写的是旧后端。"
     },
     {
       "case_id": "U07-R1",
@@ -532,21 +533,21 @@
       "test": null,
       "expected_product_outcome": "automatic",
       "backend": "rendercore",
-      "notes": "observing：挂在已有的非 required 具名任务 foundation-u06-rendercore.yml（ubuntu 3.10 / 3.13、windows、macos）上——每腿跑 scripts/dev/u07_evidence.py（30 条核对，u07.pdf 三平台逐字节相同、PDFium PNG 只记 sha256 不判）与 scripts/dev/u07_freeze_child.py（冻结 child 自起）；main .venv 里 tests/test_rendercore_evidence.py::test_u07_evidence_is_current 只核进了 git 的那份字节。不经产品入口（app.py 不 import rendercore），所以不是 FO 场景的资格；提升 enforced 要等 U08 把 facade 接上、再走 05 §3 的整条用户链。"
+      "notes": "observing：挂在已有的非 required 具名任务 foundation-u06-rendercore.yml（ubuntu 3.10 / 3.13、windows、macos）上——每腿跑 scripts/dev/u07_evidence.py（30 条核对，u07.pdf 三平台逐字节相同、PDFium PNG 只记 sha256 不判）与 scripts/dev/u07_freeze_child.py（冻结 child 自起）；main .venv 里 tests/test_rendercore_evidence.py::test_u07_evidence_is_current 只核进了 git 的那份字节。不经产品入口（app.py 不 import rendercore），所以不是 FO 场景的资格；提升 enforced 要等 U08 把 facade 接上、再走 05 §3 的整条用户链。 U10：仍 observing（主语是别的平台的字节：evidence 复现 + 冻结 child 留在 foundation-u06-rendercore.yml）；切默认不改变它的资格。"
     },
     {
       "case_id": "U08-R1",
-      "title": "RenderBench：facade 19 项 + Canvas 面在候选后端下的对拍——旧契约用例在 TAVOTTO_RENDER_BACKEND=rendercore 下逐字重跑（23 个套件、14 条实现特定断言各带替代证据）+ 真实入口（HTTP 同步 / 异步、/api/render、原图三格式、带 override 的面板经 worker + 回执） + 有限产物验证（ArtifactInspector：封口产物重开检查、D08 两档政策、伪造 proof / 坏文件 / 错尺寸 / 低 ppi 负例）",
+      "title": "RenderBench：RenderCore 是默认后端之后的真实入口——/api/render 预览 + 画布导出 PDF / PNG（standard 核验）+ 独立读取器核文件 + manifest backend / identity",
       "scenario_refs": [],
       "stage": "U08",
-      "enrollment": "observing",
+      "enrollment": "enforced",
       "lane": "pr",
-      "entry": "http",
-      "fixture": "docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.json",
-      "test": null,
+      "entry": "http-inprocess",
+      "fixture": "tests/fixtures/foundation/pdf_png_assets",
+      "test": "tests/test_foundation_cutover.py::test_u08_r1_default_export_through_the_public_entry_is_rendercore",
       "expected_product_outcome": "automatic",
       "backend": "rendercore",
-      "notes": "observing：挂在已有的非 required 具名任务 foundation-u06-rendercore.yml 上——每腿跑 tests/test_rendercore_facade.py / test_rendercore_app.py / test_rendercore_sources.py / test_rendercore_glyph_vectors.py 与 test_rendercore_inspector.py / test_export_inspection.py 与 scripts/dev/u08_parity.py（退出码 0 = 对拍过；结果记 evidence/u08/parity.json）；main .venv 里 tests/test_foundation_facade_ledger.py::test_candidate_parity_deselections_have_replacement_evidence 只核清单不腐烂。默认后端仍是 PyMuPDF（候选只在显式选中时接管），所以不是 FO 场景的资格、不进 required；提升 enforced 要等 U09 与完整准备链联调、U10 切默认。"
+      "notes": "U08 时 observing（候选只在显式选中时接管，挂在非 required 的 foundation-u06-rendercore.yml 上跑 facade / app / inspector 用例 + u08_parity）。U10（ADR 0072）切默认后提升 **enforced（pr）**：① 用户预期 = 预览与画布导出经默认后端交回可核验的文件；② 合法输入 = pdf_png_assets 夹具（非对称页盒 PDF）+ 文字（拉丁 + CJK + 上标）；③ fixture 先验在 truth.json；④ 命令 = ci.yml invariants 的 harness 步（pytest tests/test_foundation_cutover.py，写 TAVOTTO_FOUNDATION_RESULTS）；⑤ 产物 = PDF（Form + 文字层 + 嵌入子集）与 PNG（桶宽 / ppi 尺寸）；⑥ 证据 = 结果记录 observed.export（manifest verdict / checks / identity / fonts）；⑦ 负例 = tests/test_rendercore_app.py 的 backend_retired（不悄悄换实现）、child 失败 partial、写入器失败 500、坏 staging 写回 409，ADR 0072 §4 的变异表；⑧ 维护责任 = rendercore 细则 + 退役扫描；⑨ 预算 ≈ 3 s（进程内，一次 child 起动）。冷 / 热重复：本机与 CI 每次都是冷 child。facade 19 项 / 产物验证 / 对拍的其余用例在必需矩阵（backend-fast / backend-platforms）里随 pytest 跑，不另开 job。"
     }
   ]
 }

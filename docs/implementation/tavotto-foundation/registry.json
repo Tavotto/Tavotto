@@ -2866,11 +2866,12 @@
         "D04"
       ],
       "follow_up_stages": [],
-      "enrollment": "planned",
+      "enrollment": "observing",
       "execution_status": "not_run",
       "evidence": [],
       "merge_rule": "现有门禁+本切片测试；本项端到端实例只在明确准入后成为该lane必需。",
-      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。"
+      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。",
+      "u10_note": "U10：scripts/dev/u10_wheel_matrix.py 逐格 pip download --only-binary（evidence/u10/wheel_matrix.json）：五个原生包 × 3.10–3.14 × win x64 / macOS arm64 / Linux x86_64 75/75；macOS x86_64 pikepdf 10.x 无 wheel（informational，待拍板）。一次性测量，不是 CI 门禁——observing。"
     },
     {
       "id": "RC-101",
@@ -2894,11 +2895,21 @@
       "current_interpretation": "保留原要求的用户意图与验证责任；按统一阶段/能力准入，在适用范围内取得证据。",
       "decision_refs": [],
       "follow_up_stages": [],
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "merge_rule": "现有门禁+本切片测试；本项端到端实例只在明确准入后成为该lane必需。",
-      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。"
+      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。",
+      "u10_note": "U10：tavotto.spec 显式 collect_dynamic_libs(pypdfium2_raw) + collect_all(pikepdf)、PIL 出 excludes、缺字体拒绝打包（tests/test_runtime_build.py::test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fonts，pr）；产物侧 scripts/ci/retirement_scan.py --dist 在 windows-exe-smoke / macos-app-smoke（merge_group 必需）扫原生库 + 字体；本机 u07_freeze_child 7/7（evidence/u10/freeze）。",
+      "promotion": {
+        "capability": "PIL/native libraries/data 与PyInstaller正确打包",
+        "target_scope": "源码树 + RenderCore 默认后端；pr lane：ubuntu 3.10 / 3.13 / 3.14；merge_group：macOS / Windows 3.13 + 产物腿（package / windows-exe-smoke / macos-app-smoke）；本机 macOS arm64",
+        "lane": "integration",
+        "test": "tests/test_runtime_build.py::test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fonts",
+        "negative_evidence": "U10：tavotto.spec 显式 collect_dynamic_libs(pypdfium2_raw) + collect_all(pikepdf)、PIL 出 excludes、缺字体拒绝打包（tests/test_runtime_build.py::test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fonts，pr）；产物侧 scripts/ci/retirement_scan.py --dist 在 windows-exe-smoke / macos-app-smoke（merge_group 必需）扫原生库 + 字体；本机 u07_freeze_child 7/7（evidence/u10/freeze）。",
+        "approval": "ADR 0072（U10 切换变更，一个可审查 PR）",
+        "budget": "pytest 用例秒级；产物扫描 < 10 s；wheel 矩阵一次性 ~4 min（不进 CI）"
+      }
     },
     {
       "id": "RC-102",
@@ -2922,11 +2933,12 @@
       "current_interpretation": "保留原要求的用户意图与验证责任；按统一阶段/能力准入，在适用范围内取得证据。",
       "decision_refs": [],
       "follow_up_stages": [],
-      "enrollment": "planned",
+      "enrollment": "observing",
       "execution_status": "not_run",
       "evidence": [],
       "merge_rule": "现有门禁+本切片测试；本项端到端实例只在明确准入后成为该lane必需。",
-      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。"
+      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。",
+      "u10_note": "U10：child_env() 摘 PYTHONPATH、RenderCore 的包只装在应用环境（FO32 两个出口断言科学环境里没有 pikepdf / pypdfium2 / uharfbuzz，tests/test_foundation_join.py，observing 腿）；退役扫描的 run 尺子里阻断器只进父进程。"
     },
     {
       "id": "RC-103",
@@ -2950,11 +2962,21 @@
       "current_interpretation": "保留原要求的用户意图与验证责任；按统一阶段/能力准入，在适用范围内取得证据。",
       "decision_refs": [],
       "follow_up_stages": [],
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "merge_rule": "现有门禁+本切片测试；本项端到端实例只在明确准入后成为该lane必需。",
-      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。"
+      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。",
+      "u10_note": "U10：package job（pr 必需）在干净 venv 装 wheel → 起服务冒烟，wheel 里字体 13 张 + 覆盖表由 retirement_scan.py --wheel 与 lab_acceptance.py 结构检查核；sdist 由 tests/test_tutorial.py 的产物用例核。",
+      "promotion": {
+        "capability": "wheel/sdist在源码目录之外真实可用",
+        "target_scope": "源码树 + RenderCore 默认后端；pr lane：ubuntu 3.10 / 3.13 / 3.14；merge_group：macOS / Windows 3.13 + 产物腿（package / windows-exe-smoke / macos-app-smoke）；本机 macOS arm64",
+        "lane": "integration",
+        "test": "ci.yml package：装进干净环境并冒烟 + 退役扫描（wheel）",
+        "negative_evidence": "U10：package job（pr 必需）在干净 venv 装 wheel → 起服务冒烟，wheel 里字体 13 张 + 覆盖表由 retirement_scan.py --wheel 与 lab_acceptance.py 结构检查核；sdist 由 tests/test_tutorial.py 的产物用例核。",
+        "approval": "ADR 0072（U10 切换变更，一个可审查 PR）",
+        "budget": "pytest 用例秒级；产物扫描 < 10 s；wheel 矩阵一次性 ~4 min（不进 CI）"
+      }
     },
     {
       "id": "RC-104",
@@ -3068,11 +3090,21 @@
         "D15"
       ],
       "follow_up_stages": [],
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "merge_rule": "现有门禁+本切片测试；本项端到端实例只在明确准入后成为该lane必需。",
-      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。"
+      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。",
+      "u10_note": "U10（ADR 0072）：scripts/ci/retirement_scan.py 五把尺子——源码 AST / 声明依赖闭包 / 干净进程阻断器 / 产物 native + wheel METADATA / SBOM；tests/test_retirement_scan.py（pr）+ package / exe / app smoke 的扫描步（merge_group）。负例：旧闭包上三尺全红（evidence/u10/pre_cutover/retirement_scan_old_closure.json）、--selftest 七条正负例。SBOM 尺子只在发布链有输入，首跑在 U11 演练。",
+      "promotion": {
+        "capability": "运行/依赖/native/SBOM均无退役PyMuPDF/fitz/MuPDF",
+        "target_scope": "源码树 + RenderCore 默认后端；pr lane：ubuntu 3.10 / 3.13 / 3.14；merge_group：macOS / Windows 3.13 + 产物腿（package / windows-exe-smoke / macos-app-smoke）；本机 macOS arm64",
+        "lane": "integration",
+        "test": "tests/test_retirement_scan.py::test_the_declared_runtime_closure_has_no_retired_distribution",
+        "negative_evidence": "U10（ADR 0072）：scripts/ci/retirement_scan.py 五把尺子——源码 AST / 声明依赖闭包 / 干净进程阻断器 / 产物 native + wheel METADATA / SBOM；tests/test_retirement_scan.py（pr）+ package / exe / app smoke 的扫描步（merge_group）。负例：旧闭包上三尺全红（evidence/u10/pre_cutover/retirement_scan_old_closure.json）、--selftest 七条正负例。SBOM 尺子只在发布链有输入，首跑在 U11 演练。",
+        "approval": "ADR 0072（U10 切换变更，一个可审查 PR）",
+        "budget": "pytest 用例秒级；产物扫描 < 10 s；wheel 矩阵一次性 ~4 min（不进 CI）"
+      }
     },
     {
       "id": "RC-108",
@@ -3098,11 +3130,12 @@
         "D15"
       ],
       "follow_up_stages": [],
-      "enrollment": "planned",
+      "enrollment": "observing",
       "execution_status": "not_run",
       "evidence": [],
       "merge_rule": "现有门禁+本切片测试；本项端到端实例只在明确准入后成为该lane必需。",
-      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。"
+      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。",
+      "u10_note": "U10：许可表与义务写在 ADR 0072 §1 / docs/legal（LICENSING.md、审计附录）；OFL 全文随字体同目录进包（fetch_fonts.py 核 file_sha256）；MPL §3.2 的 NOTICE 链仍是 #182（未关）——所以是 observing，不是 pass。"
     },
     {
       "id": "RC-109",
@@ -3128,11 +3161,21 @@
         "D03"
       ],
       "follow_up_stages": [],
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "merge_rule": "现有门禁+本切片测试；本项端到端实例只在明确准入后成为该lane必需。",
-      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。"
+      "qualification_rule": "对应核心能力默认启用/本轮发行范围声明前，适用合同必须真实验证。",
+      "u10_note": "U10：TAVOTTO_RENDER_BACKEND=pymupdf → backend_retired（tests/test_rendercore_facade.py::test_the_retired_pymupdf_name_is_a_loud_error_not_a_fallback、tests/test_rendercore_app.py::test_the_retired_backend_name_is_refused_at_the_real_entry_not_swapped）；旧项目：文档只存通用族、位置 / 内容 / 框尺寸不变、换行期望一字未改（tests/test_compose_text.py 21 条）、缺省族走衬线（tests/test_typography_families.py），ADR 0073。",
+      "promotion": {
+        "capability": "切换不静默回退旧库、不破坏旧工程",
+        "target_scope": "源码树 + RenderCore 默认后端；pr lane：ubuntu 3.10 / 3.13 / 3.14；merge_group：macOS / Windows 3.13 + 产物腿（package / windows-exe-smoke / macos-app-smoke）；本机 macOS arm64",
+        "lane": "pr",
+        "test": "tests/test_rendercore_app.py::test_the_retired_backend_name_is_refused_at_the_real_entry_not_swapped",
+        "negative_evidence": "U10：TAVOTTO_RENDER_BACKEND=pymupdf → backend_retired（tests/test_rendercore_facade.py::test_the_retired_pymupdf_name_is_a_loud_error_not_a_fallback、tests/test_rendercore_app.py::test_the_retired_backend_name_is_refused_at_the_real_entry_not_swapped）；旧项目：文档只存通用族、位置 / 内容 / 框尺寸不变、换行期望一字未改（tests/test_compose_text.py 21 条）、缺省族走衬线（tests/test_typography_families.py），ADR 0073。",
+        "approval": "ADR 0072（U10 切换变更，一个可审查 PR）",
+        "budget": "pytest 用例秒级；产物扫描 < 10 s；wheel 矩阵一次性 ~4 min（不进 CI）"
+      }
     },
     {
       "id": "RC-110",

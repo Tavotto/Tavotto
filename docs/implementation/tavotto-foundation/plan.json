@@ -194,9 +194,13 @@
         "U10.cutover"
       ],
       "scope": "core",
-      "implementation_status": "not_started",
+      "implementation_status": "done",
       "product_validation_status": "not_run",
-      "milestone_dependencies": {}
+      "milestone_dependencies": {},
+      "milestone_status": {
+        "U10.cutover": "done"
+      },
+      "note": "默认后端已切（pdfbackend.BACKEND_DEFAULT = rendercore）、pymupdf_backend.py 删除、五个 native 包进 dependencies、退役扫描（scripts/ci/retirement_scan.py 五把尺子）接进 pytest 与 package / exe / app smoke；U08-R1 提升 enforced（pr，tests/test_foundation_cutover.py 经进程内 HTTP 入口写记录）。product_validation_status 仍 not_run：这是本机 macOS arm64 + CI 矩阵的资格，签名安装物 / no-system-Python 目标 / SBOM 尺子首跑在 U11；registry 220 条 execution_status 一条没动。待用户拍板：Intel Mac 的 pip 渠道（pikepdf 10.x 无 x86_64 wheel）、覆盖收窄是否加脸、前端同源预览（ADR 0072 §6 / 0073 §4）。"
     },
     {
       "id": "U11",
