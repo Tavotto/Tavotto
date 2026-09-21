@@ -52,6 +52,26 @@ on:
   push:
     branches: [main]
   pull_request:
+    # **只对 base 是 main 的 PR 触发**（2026-09-21 用户拍板）。叠栈 PR（base 是上一层分支，
+    # 见 docs/ci/parallel-prs.md「Stacked PR」）在合入 main 之前**不跑**这套 PR 级 CI：一条
+    # 九层叠栈每层 push 都起 ~17 个 job，逐级 rebase 一次 ≈180 个 ubuntu job，把合并队列里的
+    # 候选拖到 90 分钟 `checks_timed_out` 被踢（2026-09-21 #462 / #455 两次）。叠栈 PR 靠
+    # Codex 评审 + 本地验证，等它 retarget 到 main（成为链头）再跑全套——那时它才有资格
+    # 进队列，而队列的 merge_group 事件不受这个过滤影响。四个监听 pull_request 的 workflow
+    # （ci.yml / codeql.yml / pr-conflict-domains.yml / foundation-u02-spikes.yml）同一条过滤，由
+    # tests/test_merge_queue_workflows.py::TestPullRequestBaseFilter 按集合相等钉住。
+    #
+    # **retarget 本身不产生 run**：改 base 是 `edited` 类型（GitHub webhook 文档：「The title or
+    # body of a pull request was edited, or the base branch of a pull request was changed」），
+    # 它不在下面的 types 闭集里（加进去 = 每次改标题 / 正文都重跑整条快线）。所以顺序是
+    # **先 retarget、后 push**：下层合入后 GitHub 会自动把上层 base 改到 main（仓库开着
+    # delete_branch_on_merge，时间线事件 `automatic_base_change_succeeded`），随后的
+    # `rebase --onto` push 才是那个 `synchronize`，此时 base 已是 main，四个 workflow 一起跑。
+    # 反过来（先 push 后 retarget）那次 push 会被过滤掉、retarget 又不触发，PR 上没有任何
+    # 结论——补救是再推一个空提交（`git commit --allow-empty`）。实证：PR #371 的时间线
+    # `automatic_base_change_succeeded` 09:34:30Z 之后没有任何 pull_request run，09:35:34Z 的
+    # push 才起了 CI / CodeQL / conflict domains 三个 run（2026-09-16）。
+    branches: [main]
     # 六个 type 是一个**闭集**（tests/test_merge_queue_workflows.py::TestPullRequestEventTypes
     # 按集合相等钉住，少一个多一个都红），每一个为什么在：
     #   * opened / synchronize / reopened——默认三个，PR 出现与每次 push 的资格入口；

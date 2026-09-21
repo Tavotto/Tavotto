@@ -30,9 +30,19 @@ main
 规矩：
 
 * 上层 PR 的 **base 是下层的 branch**，diff 只展示自己的增量；
+* **base ≠ main 的 PR 不跑 PR 级 CI**（2026-09-21 起，四个 PR 级 workflow 都是
+  `on.pull_request.branches: [main]`，细则在 `docs/rules/ci/ci-lanes.md`）：上层 PR
+  在 PR 页面上没有任何 check，靠 `@codex review` + 本地验证（`ruff` 两条 + pytest）；
+  `full-ci` 标签在它上面也不起作用；
 * 下层变了，从底向上做 cascading rebase（`git rebase A` 到 B，依次向上）；
-* **从底向上进队列**：A 先「Merge when ready」；A 合入后把 B 的 base 改回
-  main、rebase 一次，再让 B 进队列；
+* **从底向上进队列**：A 先「Merge when ready」；A 合入后 GitHub 会自动把 B 的 base
+  改到 main（仓库开着 delete_branch_on_merge，时间线事件
+  `automatic_base_change_succeeded`）——**改 base 本身不产生 run**（它是
+  `pull_request.edited`，不在任何 PR 级 workflow 的 types 里）；随后
+  `git rebase --onto origin/main <A 的分支> <B 的分支>` 再 push，**这次 push 才是
+  base = main 的 `synchronize`**，四个 workflow 一起跑，B 才能进队列。顺序反了
+  （A 还没合就把 rebase 后的 B 推上去）那次 push 被过滤掉，补救是再推一个空提交
+  `git commit --allow-empty`；
 * 有明确依赖的两个 PR **不要**平行指向 main——那只是把冲突推迟到队列里；
 * 用 Merge Queue 的「Merge when ready」，**不要**用普通 auto-merge 代替它；
 * 本机 `gh` 没有专门的 stack 子命令也没关系——上面全部用普通的
@@ -144,9 +154,10 @@ job 自己变快之后 PR 反馈还会退回 40 分钟：
 
 因此：
 
-1. **stacked PR 一次只让一个在跑**：从底向上直接进合并队列串行；上面的 PR 不要在下面
-   那个还在跑时再推（`synchronize` 会再起一个 17 个 job 的 run）。合并队列一次只验一个
-   候选（24–29 个 job），几乎不排队——那是它领取等待中位 2–9s 的原因。
+1. **stacked PR 一次只让一个在跑**：从底向上直接进合并队列串行。2026-09-21 起这一条
+   变成结构性的：base ≠ main 的上层 PR 根本不触发 PR 级 CI（上面「Stacked PR」），
+   `synchronize` 不再起 17 个 job 的 run；只有链头（base = main）在跑。合并队列一次验
+   最多 4 个候选（`max_entries_to_build`，2026-09-21 从 2 抬到 4），领取等待中位 2–9s。
 2. **`full-ci` 标签只给真要探平台腿的 PR**（改了 Windows / macOS 才跑到的路径、改了
    `windows-exe-smoke` / `package` / `posix-e2e` 自己）。它把一个 run 从 17 个 job 变成
    29 个，而合并组反正会把重型腿再跑一遍。

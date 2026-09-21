@@ -17,7 +17,12 @@ on:
   # 最多七天才反映出来。买到的独立价值：告警账本按 commit 粒度保持新鲜。
   push:
     branches: [main]
+  # 与 ci.yml 同一条过滤：**只对 base 是 main 的 PR 触发**（2026-09-21）。CodeQL gate 是
+  # required context——叠栈 PR 上只关 ci.yml 不关它，等于叠栈每次 push 仍起一半 workflow。
+  # 叠栈 PR retarget 到 main 之后的第一次 push（`synchronize`）才扫；retarget 本身是 `edited`，
+  # 不在默认 types（opened / synchronize / reopened）里，理由与顺序纪律见 ci.yml 那一段。
   pull_request:
+    branches: [main]
   # Merge Queue 的资格验证事件（见 docs/ci/merge-queue-rollout.md）：
   # 「CodeQL gate」是 ruleset 收敛后的三个 required contexts 之一，
   # 队列候选的组合提交上它也必须产出结论。

@@ -10,7 +10,10 @@
 * merge_group payload 里没有 pull_request.draft / labels——不分事件就读，
   条件会安静地算出错误分支；
 * 一个监听 pull_request / merge_group 的 workflow 把某个 job 派到 self-hosted
-  （`TestRunnerTrustZones`）→ 不可信代码跑在常驻的实验室真机上，而 Gate 全绿。
+  （`TestRunnerTrustZones`）→ 不可信代码跑在常驻的实验室真机上，而 Gate 全绿；
+* 某个 PR 级 workflow 掉了 `on.pull_request.branches: [main]`（`TestPullRequestBaseFilter`）
+  → 叠栈 PR 每次 push 又起整套 CI，合并队列里的候选被挤到 90 分钟超时——而 PR 上
+  什么都不红，只是慢。
 
 与 tests/test_release_workflow_contract.py 同一条纪律：**不用 PyYAML**
 （它不在 `.venv` 里，importorskip 会让整个模块静默跳过——那正是空门禁），
@@ -378,11 +381,48 @@ def _folded_if(job_id: str) -> str:
     return m.group(1)
 
 
+def _pull_request_block(text: str) -> str:
+    """`on.pull_request:` 之下缩进四格的行（注释已剥）；`on:` 里没有这个键当场抛。
+
+    值为空（`pull_request:` 后面什么都没写 = 全默认）时回空串——那是合法形状，
+    交给调用方按「没写」处理，不在这里抛。
+    """
+    lines = _top_level_block(text, "on").splitlines()
+    try:
+        start = next(i for i, ln in enumerate(lines) if ln.rstrip() == "  pull_request:")
+    except StopIteration:
+        raise AssertionError("`on:` 块里没有 `pull_request:` 键") from None
+    body: list[str] = []
+    for ln in lines[start + 1 :]:
+        if ln.strip() and not ln.startswith("    "):
+            break
+        body.append(ln)
+    return "\n".join(body)
+
+
+def _pull_request_filter(text: str, key: str) -> list[str] | None:
+    """`on.pull_request.<key>` 的行内列表（保留顺序与重复——集合化交给判据自己做）。
+
+    键不在回 None；**None ≠ 空列表**：前者是「没写 = GitHub 的默认」（`types` 默认三个、
+    `branches` 默认不过滤），后者是写了一个空列表。只认 `key: [a, b]` 一种写法——多行
+    `- x` 的形状本仓库不用，认不出就抛，不猜。
+    """
+    block = _pull_request_block(text)
+    hits = re.findall(rf"(?m)^    {re.escape(key)}: \[([^\]]*)\]$", block)
+    assert len(hits) <= 1, f"on.pull_request 里 `{key}:` 出现了 {len(hits)} 次"
+    if not hits:
+        assert not re.search(rf"(?m)^    {re.escape(key)}:", block), (
+            f"on.pull_request.{key} 不是 `{key}: [a, b]` 的行内写法（多行 `- x`？）——这里认不出"
+        )
+        return None
+    return [t.strip().strip("\"'") for t in hits[0].split(",") if t.strip()]
+
+
 def _pull_request_types() -> list[str]:
-    """`on.pull_request.types` 的原始列表（保留顺序与重复——集合化交给判据自己做）。"""
-    m = re.search(r"(?m)^  pull_request:\n(?:\s*#.*\n)*    types: \[([^\]]*)\]", CI)
-    assert m, "ci.yml 的 on.pull_request 里读不出 types: [...]"
-    return [t.strip() for t in m.group(1).split(",") if t.strip()]
+    """ci.yml 的 `on.pull_request.types`；没写当场抛（本仓库靠显式闭集，不靠默认三个）。"""
+    types = _pull_request_filter(CI, "types")
+    assert types is not None, "ci.yml 的 on.pull_request 里读不出 types: [...]"
+    return types
 
 
 # ============================================================ PR 事件类型与标签事件（CI01 §4 ① ③）
@@ -396,7 +436,9 @@ class TestPullRequestEventTypes:
 
     #: 六个 type 的闭集，与 ci.yml 里 `types:` 旁边那段注释逐条对应（每个为什么在）。
     #: 少一个 = 那类事件从此没有 run；多一个 = 又多一种会重跑整条快线并取消同 PR 运行中
-    #: run 的事件（`edited` / `assigned` / `review_requested` 都会这样）。
+    #: run 的事件（`edited` / `assigned` / `review_requested` 都会这样）。`edited` 同时也是
+    #: 「改 base」的事件——它不在这里，所以叠栈 PR retarget 到 main 本身不产生 run，
+    #: 要等下一次 push（`TestPullRequestBaseFilter` 的 docstring 写了顺序纪律）。
     EXPECTED_TYPES = frozenset(
         {
             "opened",  # PR 出现
@@ -628,6 +670,78 @@ class TestPullRequestEventTypes:
         assert G.render(cancel, self._merge_group()) == "false"
         assert G.render(group, self._push_main()) == "ci-CI-push-refs/heads/main"
         assert G.render(cancel, self._push_main()) == "false"
+
+
+# ============================================================ PR 的 base 过滤（2026-09-21）
+class TestPullRequestBaseFilter:
+    """`on.pull_request.branches: [main]`：base ≠ main 的 PR 不触发任何 PR 级 workflow。
+
+    主语：**本次 checkout 里**每个监听 `pull_request` 的 workflow 的 `on.pull_request.branches`
+    ——不是 GitHub 会不会触发（那由 PR head 上的 yml 决定），也不是 merge_group（队列候选
+    的 base 永远是 main，`merge_group` 事件不带这个过滤）。
+
+    为什么（2026-09-21 用户拍板）：统一实施包的 14 层叠栈 PR（base 是上一层分支）每层 push
+    都起一整套 PR 级 CI，逐级 rebase 一次 ≈180 个 ubuntu job，合并队列里的候选（#462 / #455
+    两次）被挤到 90 分钟 `checks_timed_out` 踢出。结构上把 base ≠ main 的 PR 关掉：叠栈 PR
+    靠 Codex 评审 + 本地验证，retarget 到 main 成为链头之后再跑全套——那时它才有资格进队列。
+    三个 Gate 的 required 语义（缺失 = 失败）在 base ≠ main 的 PR 上意味着它们合不进 main，
+    本来就该如此。
+
+    **retarget 本身不产生 run**：改 base 是 `pull_request.edited`（GitHub webhook 文档），它不在
+    ci.yml 的 types 闭集里、也不在其余几个的默认三个（opened / synchronize / reopened）里。顺序纪律：**先
+    retarget、后 push**（下层合入后仓库的 delete_branch_on_merge 让 GitHub 自动把上层 base
+    改到 main，随后 `rebase --onto` 的 push 才是那个带着 base = main 的 `synchronize`）；先
+    push 后 retarget 会两头落空，补救是再推一个空提交。实证：PR #371 在 #370 合入（09:34:29Z）
+    后 09:34:30Z `automatic_base_change_succeeded`，没有任何 run，09:35:34Z 的 push 才起了三个。
+
+    判据是正面的集合相等：监听 `pull_request` 的 workflow == 登记的那几个（多一个新 PR
+    workflow 要来登记，顺便被问一句「它带过滤了吗」），每一个的 `branches` == `[main]`
+    （掉了、写成 `main*`、多一个分支、写成 `branches-ignore` 都红）。
+    """
+
+    #: 今天监听 `pull_request` 的四个 workflow（三个常驻 + U02 的证据 workflow，后者 `paths` 过滤之外
+    #: 再加 `branches`，两者是 AND）。新加一个 PR 级 workflow 要来这里登记，并带同一条过滤。
+    PR_WORKFLOWS = frozenset(
+        {"ci.yml", "codeql.yml", "pr-conflict-domains.yml", "foundation-u02-spikes.yml"}
+    )
+
+    def test_exactly_the_registered_workflows_listen_to_pull_request(self):
+        texts = _workflow_texts()
+        listening = {n for n, t in texts.items() if "pull_request" in _events_of(t)}
+        assert listening == self.PR_WORKFLOWS, (
+            f"监听 pull_request 的 workflow 集合变了：{sorted(listening)}（登记的是 "
+            f"{sorted(self.PR_WORKFLOWS)}）——新的 PR 级 workflow 到 PR_WORKFLOWS 登记，"
+            "并给它的 on.pull_request 加 `branches: [main]`（叠栈 PR 不跑 PR 级 CI）"
+        )
+
+    def test_every_pull_request_workflow_only_triggers_on_a_main_base(self):
+        texts = _workflow_texts()
+        for name in sorted(self.PR_WORKFLOWS):
+            branches = _pull_request_filter(texts[name], "branches")
+            assert branches == ["main"], (
+                f"{name} 的 on.pull_request.branches 是 {branches!r}，要恰好是 [main]——"
+                "None = 没写过滤（base ≠ main 的叠栈 PR 每次 push 又会起整套 CI）；"
+                "别的值 = 过滤对象不是「base 是 main」"
+            )
+            assert _pull_request_filter(texts[name], "branches-ignore") is None, (
+                f"{name} 同时写了 branches-ignore——GitHub 不许两者并存，且它不是这条规则的形状"
+            )
+
+    def test_retargeting_alone_does_not_produce_a_run(self):
+        """`edited` 不在任何一个 PR workflow 的 types 里：retarget 只改 base，不起 run。
+
+        这条钉的是顺序纪律的前提。哪天有人为了「retarget 就自动跑」把 `edited` 加进来，
+        代价是每次改标题 / 正文都重跑整条快线——那要先回到 TestPullRequestEventTypes 的闭集
+        和 CI01 §4 ① 重新算账，而不是顺手加。
+        """
+        texts = _workflow_texts()
+        for name in sorted(self.PR_WORKFLOWS):
+            types = _pull_request_filter(texts[name], "types")
+            effective = set(types) if types is not None else {"opened", "synchronize", "reopened"}
+            assert "edited" not in effective, f"{name} 监听了 pull_request.edited"
+            assert "synchronize" in effective, (
+                f"{name} 不监听 synchronize——retarget 之后的 push 就不会在 base = main 上产生结论"
+            )
 
 
 # ============================================================ Gate 结构

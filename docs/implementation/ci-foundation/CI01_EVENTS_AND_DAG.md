@@ -80,6 +80,7 @@ backend-platforms ×2 2443s ─────────────────�
 | `pull_request: labeled`（加 `full-ci`） | 快线 9 个 + 重型 5 个，在 PR 自己的 head SHA 上 | 同上 | `--require-heavy --full-ci`：5 个全 success 才绿，skipped 即失败，deferred 是配置错误 | 不触发 | T3a 提前到 PR | `test_full_ci_label_still_triggers_the_heavy_layer`、`test_heavy_jobs_run_on_merge_group`（同一折叠条件）、`test_integration_gate_defers_only_on_plain_pull_requests`；`test_aggregate_gate.py::TestIntegrationGate::test_full_ci_pr_may_not_defer`；`TestPullRequestEventTypes::test_the_event_table_for_pull_request_and_label_events`（真值表：这一行算出重型跑、Gate 按 full-ci 判） |
 | `pull_request: labeled / unlabeled`（**任意**别的标签） | 快线 9 个重跑一遍（同 SHA），并取消同 PR 运行中的 run | 同上 | deferred（若 `full-ci` 仍在则同上一行） | 不触发 | —（**接受**，§4 ①：GitHub 不支持按标签名过滤事件，三种修法的代价都不可接受） | `TestPullRequestEventTypes::test_the_event_table_for_pull_request_and_label_events`（`labeled docs` / `unlabeled docs` 四行）、`test_label_events_share_the_pull_request_concurrency_slot`（与同 PR 的 synchronize 同组、cancel true） |
 | `pull_request: unlabeled`（**摘掉** `full-ci`） | 快线 9 个重跑；重型 5 个 skipped（payload 的 `labels` 已不含 full-ci） | 同上 | **`--require-heavy --full-ci`**（`GATE_FULL_CI` 在 `action == 'unlabeled' && label.name == 'full-ci'` 时仍为 true）→ 5 个 skipped → **failure**：把「此前那套重型结论不再适用于本 SHA」红出来，而不是用 deferred（绿）盖掉它。代价：要再 push 一次或重新打标签才能进队列 | 不触发 | 策略变化到同一 SHA 正确失效（02 §4） | `TestPullRequestEventTypes::test_removing_the_full_ci_label_is_judged_as_full_ci_not_as_a_plain_pr`、`test_the_event_table_for_pull_request_and_label_events`（`unlabeled full-ci` 行）；`TestEventFieldAccess::test_no_bare_head_ref_or_label_event_usage`（`github.event.action` / `github.event.label` 只许出现在 `GATE_FULL_CI` 且先按事件分支）——§4 ① 已修 |
+| `pull_request`（**PR 的 base ≠ main**，任意 type；叠栈 PR，2026-09-21 起） | **不触发**：`on.pull_request.branches: [main]`（四个 PR 级 workflow 同一条过滤）。叠栈 PR 靠 Codex 评审 + 本地验证；retarget 到 main 之后的第一次 push 才按本表第一行跑 | 不跑（required 缺失 = 合不进 main，本来就该如此） | 不跑 | 不触发（同一条 `branches: [main]`） | —（结构性省掉整套 PR 级 CI；§8） | `TestPullRequestBaseFilter::test_exactly_the_registered_workflows_listen_to_pull_request` / `test_every_pull_request_workflow_only_triggers_on_a_main_base` / `test_retargeting_alone_does_not_produce_a_run` |
 | `merge_group: checks_requested` | 快线 9 个 + 重型 5 个，在队列的组合提交上 | `--mode fast`，同上 | `--require-heavy`：deferred 是配置错误（`aggregate_gate` 直接拒绝） | `merge_group: checks_requested` → analyze ×4（SARIF 不上传）→ CodeQL gate | T3a 完整合并资格（唯一常规执行点） | `TestMergeGroupTrigger::test_ci_listens_to_merge_group_checks_requested` / `test_codeql_listens_to_merge_group_checks_requested`、`TestGates::test_heavy_jobs_run_on_merge_group`、`test_codeql_skips_the_sarif_upload_only_on_merge_group`；`test_aggregate_gate.py::TestIntegrationGate::test_merge_group_may_not_defer` / `test_require_heavy_rejects_skipped`；`test_cla_workflow_contract.py::…::test_runs_on_merge_group_too`；`TestHeavyLaneDependencies::test_a_red_backend_fast_still_blocks_the_merge_even_when_every_heavy_job_is_green` |
 | `push: main` | 只有 `main-landing-audit`（结构契约 pytest + 生成物不进索引 + 落地信息）；快线与重型都不跑，两个 Gate 也不跑 | 不跑 | 不跑 | `push: main` → analyze ×4（上传 SARIF）→ CodeQL gate | 轻量落地审计 | `TestLandingAudit::test_main_push_runs_only_the_landing_audit` / `test_landing_audit_structural_tests_exist`、`test_fast_jobs_cover_pr_and_merge_group_but_not_push`、`test_heavy_jobs_do_not_run_on_plain_prs_or_push` |
 | `schedule` | ci.yml **不监听**；codeql.yml 每周一 04:23 UTC；nightly.yml 每日 18:00 UTC；lab-ci.yml 每日 19:00 + 每周日 20:00；telemetry-metrics / metrics-freshness 各自 | — | — | 周扫描 → CodeQL gate（不是 required 场景） | T3b 深度观察 | `TestMergeGroupTrigger::test_non_required_workflows_do_not_join_the_queue`（nightly / lab / release 不进队列）；codeql 的 schedule 本身：**无测试** |
@@ -283,3 +284,64 @@ GitHub 的组语义（本轮不改、只依赖）：同一组**最多一个运�
   | `python -m pytest tests/test_gh_expr.py tests/test_ci_baseline.py tests/test_source_hygiene.py tests/test_merge_queue_ruleset.py tests/test_cla_workflow_contract.py` | 0 |
   | `python scripts/ci/ci_baseline.py dag --workflow .github/workflows/ci.yml --edge-kinds …/evidence/ci01/dag_edge_kinds_after.json --out <scratchpad>`（17 job / 19 边，未变） | 0 |
   | 变异脚本（11 条） | 0（全部按预期） |
+
+## 8. 后续 PR `ci/stacked-pr-ci-scope`：base ≠ main 的 PR 不触发 PR 级 CI（2026-09-21）
+
+- **为什么**：统一实施包轨道有 14 个叠栈 PR（base 是上一层分支）。每层 push 都起一整套 PR 级 CI（快线 17 个 job）+ 三个证据 workflow
+  （3–4 平台），九层逐级 rebase 一次 ≈180 个 ubuntu job；账号并发 20（macOS 5），合并队列里的候选（#462、#455 两次）被拖到 90 分钟
+  `checks_timed_out` 踢出。用户拍板：**结构上给 base ≠ main 的 PR 关掉 CI**——叠栈 PR 靠 Codex 评审 + 本地验证，retarget 到 main
+  成为链头再跑全套；队列 `max_entries_to_build` 同时抬到 4。
+- **选了哪种、为什么**：(a) workflow 级 `on.pull_request.branches: [main]`，四个监听 `pull_request` 的 workflow（`ci.yml` / `codeql.yml` /
+  `pr-conflict-domains.yml`，以及 #455 带进 main 的 `foundation-u02-spikes.yml`——它在 `paths` 之外再加，两者是 AND）各加一行。没选 (b) job 级
+  `if: github.event_name != 'pull_request' || github.event.pull_request.base.ref == 'main' || contains(labels, 'full-ci')`：
+  它仍会每 push 起一个 run 与十几个秒级 job（Ruff / CLA / Gate 本身也占槽），而且要动 fast 档 job 的唯一合法条件（`FAST_LANE_CONDITION`）、
+  Gate 的 skipped 语义与 `test_every_fast_lane_job_actually_runs_on_a_plain_pull_request` 的闭集——三处都是 CI01 / CI03 刚钉住的东西。
+  (a) 一刀切：`aggregate_gate.py` / required 闭集 / `concurrency` / 任何 `if:` 一行不动；`merge_group` 事件不带这个过滤，队列不受影响；
+  CodeQL gate 是 required，所以 `codeql.yml` 也加——只关 `ci.yml` 会让叠栈 PR 每次 push 仍起一半 workflow。
+- **retarget 会不会触发**（用户要求实测确认）：改 base 是 `pull_request.edited`——GitHub webhook 文档（`github/docs`
+  `src/webhooks/data/fpt/pull_request.json` 的 `edited.descriptionHtml`）原句「The title or body of a pull request was edited, or the base
+  branch of a pull request was changed」。`edited` 不在 `ci.yml` 的 types 闭集里（§4 ③：加进去 = 每次改标题 / 正文都重跑整条快线），也不在
+  其余几个的默认三个（opened / synchronize / reopened）里。**所以 retarget 本身不产生 run**——本仓库的实证：
+  PR #371（base 曾是 #370 的 `ux/bui-hierarchy`）在 #370 合入（2026-09-16 09:34:29Z）后，时间线 09:34:30Z `automatic_base_change_succeeded`
+  （仓库 `delete_branch_on_merge: true`，GitHub 自动把 base 改到 main），`actions/runs?event=pull_request&branch=ux/notice-pause-swap` 里 09:34
+  没有任何 run，09:35:34Z `head_ref_force_pushed` 之后 09:35:37Z 才起了 CI / CodeQL / PR conflict domains 三个。这一点与 `branches` 过滤无关
+  （当时还没有过滤），过滤只改变**下一次 push 会不会被过滤掉**：
+  * **先 retarget、后 push**（正常流程：下层合入 → GitHub 自动 retarget → 上层 `git rebase --onto origin/main <旧 base> <分支>` → push）：
+    push 是 base = main 的 `synchronize`，四个 workflow 一起跑。
+  * **先 push、后 retarget**（比如下层还没合就把 rebase 后的分支推上去了）：那次 push 被过滤掉，随后的 retarget 又不触发，PR 上没有任何结论。
+    补救：`git commit --allow-empty -m … && git push -u origin <分支>`（`labeled` 只在 `ci.yml` 的 types 里，打标签救不了 CodeQL；
+    close / reopen 全部都能触发——`reopened` 在每一个的 types 里都有——但要真的关一次 PR、通知所有订阅者，不推荐）。
+  这条顺序纪律写进了 `ci.yml` 的 `on.pull_request` 注释、`docs/rules/ci/ci-lanes.md`、`docs/ci/parallel-prs.md`「Stacked PR」。
+- **合同测试**（`tests/test_merge_queue_workflows.py::TestPullRequestBaseFilter`，主语写在 docstring 里：本次 checkout 里每个监听
+  `pull_request` 的 workflow 的 `on.pull_request.branches`，不是 GitHub 会不会触发、不是 merge_group）：
+  * `test_exactly_the_registered_workflows_listen_to_pull_request`：监听 `pull_request` 的 workflow 集合 == `PR_WORKFLOWS`（四个，集合相等）。
+    新加一个 PR 级 workflow 要来登记——#455 合入后本分支 rebase 时就这样把 `foundation-u02-spikes.yml` 登记了进来；叠栈分支上的
+    `foundation-u06-rendercore.yml` / `private-python-targets.yml` 进 main 时同样。
+  * `test_every_pull_request_workflow_only_triggers_on_a_main_base`：每一个的 `branches` == `["main"]`，且没有 `branches-ignore`。
+  * `test_retargeting_alone_does_not_produce_a_run`：每一个的有效 types（没写 = 默认三个）不含 `edited`、含 `synchronize`。
+  * 顺带把 `_pull_request_types()` 改成通用的 `_pull_request_filter(text, key)`：读 `on.pull_request` 块里任意 `key: [a, b]` 行，
+    **None ≠ 空列表**（没写 = GitHub 默认），多行 `- x` 形状认不出就抛；`branches` 与 `types` 的先后顺序不影响（M9b）。
+- **变异反证**（脚本在会话 scratchpad，不进仓库；每条：变异 → 只跑 `TestPullRequestBaseFilter` + `TestPullRequestEventTypes` → 记退出码与
+  红的用例 → `git checkout` 还原并核 `git status` 为空）：
+
+  | # | 变异 | 预期 rc | 实际 rc | 红的用例 |
+  |---|---|---:|---:|---|
+  | M1 | `ci.yml` 删掉 `branches: [main]` | 1 | 1 | `test_every_pull_request_workflow_only_triggers_on_a_main_base` |
+  | M2 | `ci.yml` 写成 `branches: [main*]` | 1 | 1 | 同上 |
+  | M3 | `codeql.yml` 删掉 `branches: [main]` | 1 | 1 | 同上 |
+  | M4 | `pr-conflict-domains.yml` 删掉 `branches: [main]` | 1 | 1 | 同上 |
+  | M5 | `ci.yml` 写成 `branches: [main, plugin-stable]` | 1 | 1 | 同上 |
+  | M6 | `nightly.yml` 加 `pull_request: branches: [main]`（第四个 PR 级 workflow，未登记） | 1 | 1 | `test_exactly_the_registered_workflows_listen_to_pull_request` |
+  | M7 | `ci.yml` 的 types 加 `edited` | 1 | 1 | `test_retargeting_alone_does_not_produce_a_run` + `test_pull_request_types_are_exactly_the_six_we_rely_on` |
+  | M8 | `ci.yml` 改成 `branches-ignore: [main]` | 1 | 1 | `test_every_pull_request_workflow_only_triggers_on_a_main_base`（branches 读成 None） |
+  | M9b | `ci.yml` 把 `branches` 挪到 `types` 之后（语义不变） | **0** | 0 | —（解析器不依赖顺序；第一版 M9 误删了 `push` 的 `branches`，那是脚本错，重做后如预期） |
+  | M10 | `codeql.yml` 的 `branches` 行改成空（键在、值空） | 1 | 1 | `test_every_pull_request_workflow_only_triggers_on_a_main_base` |
+  | M11 | `pr-conflict-domains.yml` 的 types 加 `edited` | 1 | 1 | `test_retargeting_alone_does_not_produce_a_run` |
+  | M12 | `foundation-u02-spikes.yml` 删掉 `branches: [main]`（rebase 到含 #455 的 main 之后补做） | 1 | 1 | `test_every_pull_request_workflow_only_triggers_on_a_main_base` |
+  | M13 | `PR_WORKFLOWS` 里去掉 `foundation-u02-spikes.yml`（文件仍监听） | 1 | 1 | `test_exactly_the_registered_workflows_listen_to_pull_request` |
+
+- **对纪律的影响**：叠栈 PR 从此在 PR 页面上**没有任何 check**——不是「CI 还没跑完」，是结构上不跑；评审靠 `@codex review`，验证靠本地
+  （`ruff` 两条 + 针对性 pytest + 全量）。链头 retarget 到 main 后的第一次 push 跑全套，之后照 `enqueue-checklist` 入队。`full-ci` 标签在
+  叠栈 PR 上**不起作用**（`labeled` 事件同样被 `branches` 过滤掉），要探平台腿先 retarget。
+- **本 PR 之外**：`docs/ci/parallel-prs.md`「Stacked PR」的规矩改成「A 合入后（GitHub 自动 retarget）→ B `rebase --onto` → push → 这次 push
+  才有 CI」；`.github/AGENTS.md` 速查行与 `docs/rules/ci/ci-lanes.md` 各一段；`ORCHESTRATION_BRIEF` 类的派工纪律由主对话同步。
