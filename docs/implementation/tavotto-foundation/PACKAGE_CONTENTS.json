@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 47302,
-      "sha256": "fd817bc2fc92aec0c85c1d5b53eea0bf309bd15aa5a4b821ffbdc0bb888ae322"
+      "sha256": "7a2992fb78817084f6b1452df1430ede46fa89554b18b05a1c7bc18ba098bc36"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 23972,
-      "sha256": "0296d72769622eb12891624339452c8b6e17ff2ea608298329cdb4c3d799922d"
+      "sha256": "3c1826635e915c79366afc41fa1f0195afca976e877eeeafb95332bd3c432b69"
     },
     {
       "path": "archive/README.md",
@@ -324,8 +324,8 @@
     },
     {
       "path": "handoffs/U07_compose_raster.md",
-      "bytes": 24360,
-      "sha256": "f2452be9029deda07eb80671f3d6e09cdfdd8f54558f13dafe8925f0503cd630"
+      "bytes": 25399,
+      "sha256": "db3e7ec98afbc91b058b511df1785279e83386525bf0dc9a777ac61b45479c53"
     },
     {
       "path": "phase_mapping.json",
