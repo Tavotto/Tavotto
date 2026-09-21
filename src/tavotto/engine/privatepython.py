@@ -110,8 +110,8 @@ CHUNK = 1 << 20
 PROBE_TIMEOUT_S = 60
 #: 等别的消费者把同一份下载完的上限；超过按离线处置（不是永远等）。
 WAIT_TIMEOUT_S = 1800
-#: 磁盘配额：归档 + 解开（实测 macOS 25 MB → 68 MB；Linux 归档更大）+ 余量。量不出来不拦。
-EXTRACTED_FACTOR = 4
+#: 磁盘配额：归档 + 解开（实测 macOS 25 MB → 106 MB；Linux 归档更大）+ 余量。量不出来不拦。
+EXTRACTED_FACTOR = 5
 DISK_MARGIN_BYTES = 64 * 1024 * 1024
 #: 别的进程留下的 staging 目录多久算孤儿（Windows 上量不了 pid 存活时的兜底）。
 STALE_STAGING_S = 3600
