@@ -49,8 +49,8 @@
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 4615,
-      "sha256": "1254cae8c1b4bf75a4134fc0a51e68d825ab83ea4686da1ecf4a24e446c49176"
+      "bytes": 5350,
+      "sha256": "18f1099048f93b663109babc4c0bde8ac1ba6be30d08a6e39f4922897e1b1cc3"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 7115,
-      "sha256": "c07e269c2c8598067d4fe4df5b0f25096c4b406cb70e2d49904ef6dbf1e67390"
+      "bytes": 7503,
+      "sha256": "7d4b3807e88941d5dfe048f2a963962cf00ec9b3b4d017a32fbea6b5be7c9082"
     },
     {
       "path": "SOURCES.md",
@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 44240,
-      "sha256": "c7420d04805a5eb94a5a20d789e0ad0a4c6b4bb7de9f13388ec0779b11c1c61c"
+      "sha256": "00fd60edf91ccbb4878e682b2919aa1fa4ff9670441229e9b1a484e2d3efd12e"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 20606,
-      "sha256": "436185e9dfc2cf871730407522bdd3d5a165584c2eb7f0e487933391e7861297"
+      "sha256": "b75bae1f94ed1bc49973b9707302031b675ce73327f2d4ca0871f511f3d758c9"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 19730,
-      "sha256": "986200a1aaac24321b66178f965442b58d74a827306d032ac7c36b4cccf8b312"
+      "bytes": 25750,
+      "sha256": "71e97b154fa8acd57ccaa28bd6c48e5440d5b7ae0d1278edd9c38cdbd0b8edd9"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -208,6 +208,11 @@
       "sha256": "b93628aa5e1108d72f60fd2bfc02166f8053072420b42f50e5f8617b1c971859"
     },
     {
+      "path": "evidence/u04/mutations_pr_c.md",
+      "bytes": 3846,
+      "sha256": "9118e0d1529e09d28c1bd49f560d21aad5adfa239626220f31c00a64b459880c"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -249,8 +254,8 @@
     },
     {
       "path": "handoffs/U04_dependencies.md",
-      "bytes": 23573,
-      "sha256": "a94c95f090e7bdd5729e411f7a7705092a77c3e2fda100b5b6df7f35422a3422"
+      "bytes": 32670,
+      "sha256": "636d145663d78687bd284a1e6f5f7acb1a9cd0f34a6a8cd095405baacdff938a"
     },
     {
       "path": "phase_mapping.json",
@@ -319,13 +324,13 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7387,
-      "sha256": "de5f9e08213c540462bd0739c7f9020185b00fcb89693da39a5d45052260fdc0"
+      "bytes": 7380,
+      "sha256": "e2ef23ec457f5524d390ebfe2b0a1e7dafd13015b85d5fece0f2e3e0bce9ad4e"
     },
     {
       "path": "registry.json",
-      "bytes": 275432,
-      "sha256": "74923d4fe1a0d8f7a38f2c2fc1b146110ddb25e2962667b47f88d0498f383f91"
+      "bytes": 281481,
+      "sha256": "2efc58c8efc12cbf55e7f9780946f1ede30c5a15aa9451272e27c8190cf3a73a"
     },
     {
       "path": "sources_manifest.json",

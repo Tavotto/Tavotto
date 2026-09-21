@@ -286,7 +286,7 @@ def test_managed_environment_end_to_end(client, project, wheelhouse, offline_man
 
     (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
-    # U04 的门先问一次（目标 = 受管环境：项目里没有 venv）；「稍后」之后走运行后那条路
+    # U04 的门先问一次（目标 = 受管环境：项目里没有 venv）；明确 skip 之后走运行后那条路
     gate = _probe(client)["error"]
     assert gate["code"] == "dependency_preparation_required"
     assert gate["dependency_preparation"]["target_kind"] == deprepair.TARGET_MANAGED
@@ -452,6 +452,9 @@ def test_the_old_worker_is_gone_and_the_new_one_uses_the_new_interpreter(
     venv = real_venv(project)
     (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
+    # U04 的门会先问（声明了、venv 里没有）；这条要握住的是**缺包状态下**的旧会话，所以明确 skip
+    assert _probe(client)["error"]["code"] == "dependency_preparation_required"
+    client.post("/api/engine/dependencies/skip", json={"script": "figure.py"})
     _probe(client)
 
     # 修复之前先起一个会话，握在手里。U03 起首开就采用项目 venv（发现 + 体检前移），
