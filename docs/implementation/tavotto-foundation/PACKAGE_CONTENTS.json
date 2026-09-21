@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -49,8 +49,8 @@
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 3750,
-      "sha256": "e21a30e298ba64d90ddb517b62dfa4a12b0f1ddbf64df4e78979fc4bf050c1aa"
+      "bytes": 4074,
+      "sha256": "e091d72bebd60dc57b9648a125562621965598829bdf2b17e40de2144c77ba83"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 7901,
-      "sha256": "9468faec2c65f061a7d4e9c944c66f47822746446a01fc6494cd3c1577eea3ac"
+      "bytes": 8247,
+      "sha256": "0284bd1d69bdb158d7c8757017d3a261901011f326d2c4068147fee28f29d51d"
     },
     {
       "path": "SOURCES.md",
@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 44586,
-      "sha256": "233b3432ef078f749d552318a5d00ed5e49d55bcbed1aba34c800925256037a2"
+      "bytes": 47302,
+      "sha256": "fd817bc2fc92aec0c85c1d5b53eea0bf309bd15aa5a4b821ffbdc0bb888ae322"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 22864,
-      "sha256": "a673fd289547932985c7e53c4034660e1d9c13cfcd89096a1a534848f2e80c9c"
+      "bytes": 23972,
+      "sha256": "0296d72769622eb12891624339452c8b6e17ff2ea608298329cdb4c3d799922d"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 12383,
-      "sha256": "9e997c891bdb88b61f09f343f7102cdfd1fb56ecfd8bf8a3eac3fca1bf548a14"
+      "bytes": 13527,
+      "sha256": "d11258a660cf666824085817da48c7072d6ae263ac54c07bf85f02d5426b671f"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -243,6 +243,41 @@
       "sha256": "95245d41e586891f352324e95b2852a7a24192cb0b8e27ca3121fd81f02e2ddc"
     },
     {
+      "path": "evidence/u07/freeze/frozen-render-darwin-arm64.png",
+      "bytes": 5118,
+      "sha256": "5637a739f0c0af4a046f0aa6a8e9ba5cb412a6c457cce82195564d3424f71211"
+    },
+    {
+      "path": "evidence/u07/freeze/pyinstaller-log.txt",
+      "bytes": 16705,
+      "sha256": "10115412d08e7c936dc18a9d10a979e779b94a41cb22452f0c76346d764738aa"
+    },
+    {
+      "path": "evidence/u07/freeze/report-darwin-arm64.json",
+      "bytes": 3096,
+      "sha256": "2fe6fbb836abbd65180092b41841578e40a61639136bc9e7e762d5b463b69bab"
+    },
+    {
+      "path": "evidence/u07/report.json",
+      "bytes": 11607,
+      "sha256": "fc70b7f124d08801b5e87d36d91727f2534f9f29cbe87b814153cde46f7c5ac7"
+    },
+    {
+      "path": "evidence/u07/truth.json",
+      "bytes": 5121,
+      "sha256": "eeb8c0d9c78ac5a2167eae5ca85c9d9cb58b154d06d9af21dff8e46921217fea"
+    },
+    {
+      "path": "evidence/u07/u07.pdf",
+      "bytes": 8179,
+      "sha256": "68866353ce661ac572fbfe2548e763e44e488fea54e0f4068a6dbdf614c5bc92"
+    },
+    {
+      "path": "evidence/u07/u07_pdfium.png",
+      "bytes": 23002,
+      "sha256": "7f2a0dbc0daac93a5c26fee5ae52d662e1191807c8cf92e6544d25586744c158"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -289,8 +324,8 @@
     },
     {
       "path": "handoffs/U07_compose_raster.md",
-      "bytes": 12849,
-      "sha256": "c2c4c296731d8735baa6ecc0521d33cee566e8ac17b2eff505c31131c2723d91"
+      "bytes": 24360,
+      "sha256": "f2452be9029deda07eb80671f3d6e09cdfdd8f54558f13dafe8925f0503cd630"
     },
     {
       "path": "phase_mapping.json",
@@ -359,8 +394,8 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7380,
-      "sha256": "77e25e01c090721e0a9f88bc9ef68fa9b8bbeca6febd71ba53ad1a3beffc7df1"
+      "bytes": 7373,
+      "sha256": "99114942ad5bf18bf0e2a86da23bdb1b94328b5753b37cced628fc4f028d36e8"
     },
     {
       "path": "registry.json",

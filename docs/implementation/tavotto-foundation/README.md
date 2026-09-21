@@ -37,12 +37,14 @@ ADR 0059）+ 字体政策与可检索文字写入（allowlist 逐字节钉住的
 [`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 的 `migration_evidence` 指向替代用例。交接见
 [`handoffs/U06_ir_text.md`](handoffs/U06_ir_text.md)。
 
-U07 进行中（2026-09-21 起，`implementation_status: in_progress`，产品资格仍 `not_run`，**不切默认**）：第一切片 =
-合成（ADR 0065）——外来页作 Form XObject 整页矢量导入（页盒 / `/Rotate` / `/UserUnit` 由 qpdf 折进 /Matrix、恰好一次），
-crop / 翻转 / 旋转的顺序合同只在 `rendercore/placement.py`，面板 opacity 是透明组、镜像是负缩放（不再退位图），位图经
-`rasterio`（Pillow，正式依赖）成 straight-alpha 的 `RasterBuffer` 写成 Image XObject + /SMask；pikepdf 正式裁决。
-第二切片（render child 收编 / RasterBuffer 栅格 / PNG-TIFF 同源 / 预览缓存 / spike 退役）见 ADR 0066。交接见
-[`handoffs/U07_compose_raster.md`](handoffs/U07_compose_raster.md)。
+U07 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）：合成（ADR 0065）——外来页作
+Form XObject 整页矢量导入（页盒 / `/Rotate` / `/UserUnit` 由 qpdf 折进 /Matrix、恰好一次），crop / 翻转 / 旋转的顺序合同只在
+`rendercore/placement.py`，面板 opacity 是透明组、镜像是负缩放（不再退位图），位图经 `rasterio`（Pillow，正式依赖）成
+straight-alpha 的 `RasterBuffer`，pikepdf 正式裁决；栅格（ADR 0066）——应用自己的 PDFium render child（一把锁串行 + 有界
+队列 + 超时 kill / reap / 重启），PNG 与 TIFF 从同一个 RasterBuffer 编码、只从 Canonical PDF 来，预览缓存键 = 内容身份 +
+后端 build + 字体政策，旧新后端按 case 阈值校准，U02 spike 的 render 半边退役。证据在 [`evidence/u07/`](evidence/u07/)
+（生成器 `scripts/dev/u07_evidence.py`，最小 freeze `scripts/dev/u07_freeze_child.py`）；enrollment 加 `U07-R1`（observing）。
+交接见 [`handoffs/U07_compose_raster.md`](handoffs/U07_compose_raster.md)。
 
 ## 从哪里开始
 

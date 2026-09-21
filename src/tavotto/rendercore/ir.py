@@ -415,8 +415,16 @@ CAPABILITIES: dict[str, dict[str, Capability]] = {
             ("image", "imported_page", "flip"),
         ),
     },
-    "png": _caps(CAP_UNSUPPORTED, "U07：PDFium render child 尚未收编", OPERATIONS),
-    "tiff": _caps(CAP_UNSUPPORTED, "U07：与 PNG 同一次栅格化", OPERATIONS),
+    # 位图格式：每个操作都以「PDFium 把 Canonical PDF 栅格化」兑现（ADR 0066）——PNG 与 TIFF 从同一个
+    # RasterBuffer 编码，不存在第二条 layout 路；`rasterized` 是如实的档位，不是降级
+    "png": _caps(
+        CAP_RASTERIZED, "U07 render child：PDFium 栅格化 Canonical PDF（ADR 0066）", OPERATIONS
+    ),
+    "tiff": _caps(
+        CAP_RASTERIZED,
+        "U07 render child：与 PNG 同一个 RasterBuffer（ADR 0046 / 0066）",
+        OPERATIONS,
+    ),
     "eps": _caps(
         CAP_UNSUPPORTED,
         "没有 PostScript 写入器；EPS 只有 worker 的 matplotlib 写得出（ADR 0046）",

@@ -1,0 +1,569 @@
+{
+  "kind": "u07_compose_raster_evidence",
+  "platform": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.13.11"
+  },
+  "versions": {
+    "uharfbuzz": "0.56.1",
+    "fonttools": "4.65.0",
+    "pikepdf": "10.13.0.post1",
+    "pypdfium2": "5.13.0",
+    "pdfium": "153.0.7999.0",
+    "rendercore": "rendercore-0.1"
+  },
+  "inputs": {
+    "truth_sha256": "eeb8c0d9c78ac5a2167eae5ca85c9d9cb58b154d06d9af21dff8e46921217fea",
+    "sources": {
+      "figs/page.pdf": "18bf03ac337a97872329cbf002580e89ae9e984dc1b46b1d753d31bd2c230771",
+      "figs/original.png": "a6b64428dd51d4915211db5dd863aab0fc52400691a1a386a5a87170f62c0b1e",
+      "figs/a.pdf": "a74b041ac5268d2f87ca2f45a86435a25c7ede473bcdf7ec6963f90e867f087b",
+      "figs/b.pdf": "2ee2519239422e7af7bce650e3f0d574974bdcd9b309a28983230faa20b5055d",
+      "figs/overlap.pdf": "928a9035b3d73f4f37b6b37252ff0c737270b2706c81be2da478182666360dc9"
+    },
+    "allowlist_sha256": "abd2b64e71edb2112972b23bf03c3aea34ed5b305e87b123dd867b6cb01e18b2"
+  },
+  "outputs": {
+    "u07.pdf": {
+      "sha256": "68866353ce661ac572fbfe2548e763e44e488fea54e0f4068a6dbdf614c5bc92",
+      "bytes": 8179
+    },
+    "u07_pdfium.png": {
+      "sha256": "7f2a0dbc0daac93a5c26fee5ae52d662e1191807c8cf92e6544d25586744c158",
+      "bytes": 23002,
+      "platform_specific": true
+    },
+    "u07.tiff(not committed)": {
+      "pixel_sha256": "454cd6285e6c6fa61d132297afb0fab8244b1d5fa9eecd34eba93b57274e24e4",
+      "px_w": 945,
+      "px_h": 709,
+      "channels": 3,
+      "strips": 2,
+      "compression": "deflate",
+      "dpi": 150.0
+    }
+  },
+  "writer_facts": {
+    "imported_pages": [
+      {
+        "object_id": "figs/page.pdf",
+        "resource": "file:18bf03ac337a9787:e42652a7bdce8c22",
+        "page_index": 0,
+        "bbox": [
+          15.0,
+          10.0,
+          285.0,
+          170.0
+        ],
+        "form_matrix": null,
+        "visible": [
+          15.0,
+          10.0,
+          270.0,
+          160.0
+        ],
+        "clip": [
+          15.0,
+          10.0,
+          270.0,
+          160.0
+        ],
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          0.9999992125984253,
+          -0.826771653543318,
+          155.98438582677164
+        ],
+        "rect": [
+          14.173228346456694,
+          165.9843779527559,
+          270.0,
+          159.99987401574805
+        ],
+        "crop": null,
+        "rotate_cw_deg": 0.0,
+        "flip_h": false,
+        "flip_v": false,
+        "opacity": 1.0,
+        "transparency_group": false
+      },
+      {
+        "object_id": "figs/overlap.pdf",
+        "resource": "file:928a9035b3d73f4f:efb86611625ad4d8",
+        "page_index": 0,
+        "bbox": [
+          0.0,
+          0.0,
+          200.0,
+          100.0
+        ],
+        "form_matrix": null,
+        "visible": [
+          0.0,
+          0.0,
+          200.0,
+          100.0
+        ],
+        "clip": [
+          0.0,
+          0.0,
+          200.0,
+          100.0
+        ],
+        "matrix": [
+          1.0000006299212598,
+          0.0,
+          0.0,
+          1.0000006299212598,
+          297.63779527559063,
+          225.98418897637794
+        ],
+        "rect": [
+          297.6377952755906,
+          225.98418897637794,
+          200.00012598425198,
+          100.00006299212599
+        ],
+        "crop": null,
+        "rotate_cw_deg": 0.0,
+        "flip_h": false,
+        "flip_v": false,
+        "opacity": 0.5,
+        "transparency_group": true,
+        "group": "Grp3"
+      },
+      {
+        "object_id": "figs/a.pdf",
+        "resource": "file:a74b041ac5268d2f:3d5ee8ae9dc544a1",
+        "page_index": 0,
+        "bbox": [
+          0.0,
+          0.0,
+          200.0,
+          100.0
+        ],
+        "form_matrix": null,
+        "visible": [
+          0.0,
+          0.0,
+          200.0,
+          100.0
+        ],
+        "clip": [
+          0.0,
+          0.0,
+          200.0,
+          100.0
+        ],
+        "matrix": [
+          1.0000006299212598,
+          0.0,
+          0.0,
+          1.0000006299212598,
+          14.17322834645671,
+          55.90544881889765
+        ],
+        "rect": [
+          14.173228346456694,
+          55.90544881889765,
+          200.00012598425198,
+          100.00006299212599
+        ],
+        "crop": null,
+        "rotate_cw_deg": 0.0,
+        "flip_h": false,
+        "flip_v": false,
+        "opacity": 1.0,
+        "transparency_group": false
+      },
+      {
+        "object_id": "figs/b.pdf",
+        "resource": "file:2ee2519239422e7a:d9985071e0ac8118",
+        "page_index": 0,
+        "bbox": [
+          0.0,
+          0.0,
+          200.0,
+          100.0
+        ],
+        "form_matrix": null,
+        "visible": [
+          0.0,
+          0.0,
+          200.0,
+          100.0
+        ],
+        "clip": [
+          0.0,
+          0.0,
+          200.0,
+          100.0
+        ],
+        "matrix": [
+          1.0000006299212598,
+          0.0,
+          0.0,
+          1.0000006299212598,
+          226.7716535433071,
+          55.90544881889765
+        ],
+        "rect": [
+          226.7716535433071,
+          55.90544881889765,
+          200.00012598425198,
+          100.00006299212599
+        ],
+        "crop": null,
+        "rotate_cw_deg": 0.0,
+        "flip_h": false,
+        "flip_v": false,
+        "opacity": 1.0,
+        "transparency_group": false
+      }
+    ],
+    "images": [
+      {
+        "width": 64,
+        "height": 48,
+        "channels": 4,
+        "encoding": "flate",
+        "smask": true,
+        "dpi": 299.9994,
+        "object_id": "figs/original.png",
+        "resource": "file:a6b64428dd51d491:c3b9ca6ac79099c1",
+        "matrix": [
+          47.99990551181102,
+          0.0,
+          0.0,
+          36.0,
+          297.6377952755906,
+          176.59842519685043
+        ],
+        "clip": [
+          0.0,
+          0.0,
+          1.0,
+          1.0
+        ],
+        "rect": [
+          297.6377952755906,
+          176.59842519685043,
+          47.99990551181102,
+          36.0
+        ],
+        "opacity": 1.0,
+        "rotate_cw_deg": 0.0,
+        "flip_h": false,
+        "flip_v": false
+      }
+    ],
+    "transparency_groups": 1,
+    "text_objects": 1,
+    "fonts": [
+      {
+        "resource": "F1",
+        "face_id": "LiberationSerif-Regular",
+        "sha256": "058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74",
+        "kind": "truetype",
+        "base_font": "UZFCAK+LiberationSerif",
+        "glyphs_in_source": 2602,
+        "glyphs_in_subset": 13,
+        "used_glyphs": 12,
+        "font_program_bytes": 2000,
+        "tounicode_entries": 12
+      },
+      {
+        "resource": "F2",
+        "face_id": "NotoSansSC-Regular",
+        "sha256": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9",
+        "kind": "cff-cid",
+        "base_font": "GRXLQY+NotoSansSC-Regular",
+        "glyphs_in_source": 31036,
+        "glyphs_in_subset": 3,
+        "used_glyphs": 2,
+        "font_program_bytes": 732,
+        "tounicode_entries": 2
+      }
+    ]
+  },
+  "raster_facts": {
+    "width": 945,
+    "height": 709,
+    "stride": 2835,
+    "channels": 3,
+    "dpi": 150.0,
+    "ms_child": null
+  },
+  "reader_pdfium": {
+    "objects": {
+      "text": 6,
+      "path": 6,
+      "image": 3,
+      "shading": 0,
+      "form": 5,
+      "other": 0
+    },
+    "text": "U00 fixture: y = 3x + 1\r\nalpha-text bravo-text\r\nU07 合成 Δλ = 532 nm",
+    "probe": {
+      "id": 4,
+      "ok": true,
+      "seq": 4,
+      "pages": 1,
+      "page": 0,
+      "width_pt": 453.5433044433594,
+      "height_pt": 340.157470703125,
+      "raw_width_pt": 453.5433044433594,
+      "raw_height_pt": 340.157470703125,
+      "user_unit": 1.0,
+      "rotation": 0,
+      "media_box": [
+        0.0,
+        0.0,
+        453.5433044433594,
+        340.157470703125
+      ],
+      "crop_box": [
+        0.0,
+        0.0,
+        453.5433044433594,
+        340.157470703125
+      ]
+    }
+  },
+  "checks": [
+    {
+      "name": "pdf.deterministic",
+      "ok": true,
+      "sha256": "68866353ce661ac572fbfe2548e763e44e488fea54e0f4068a6dbdf614c5bc92"
+    },
+    {
+      "name": "pdf.imported_pages",
+      "ok": true,
+      "n": 4
+    },
+    {
+      "name": "pdf.images",
+      "ok": true,
+      "n": 1
+    },
+    {
+      "name": "pdf.transparency_groups",
+      "ok": true,
+      "n": 1
+    },
+    {
+      "name": "pdf.no_javascript",
+      "ok": true
+    },
+    {
+      "name": "pdf.no_openaction",
+      "ok": true
+    },
+    {
+      "name": "pdf.no_annots",
+      "ok": true
+    },
+    {
+      "name": "pdf.one_form_per_source_page",
+      "ok": true,
+      "n": 4
+    },
+    {
+      "name": "raster.size",
+      "ok": true,
+      "width": 945,
+      "height": 709
+    },
+    {
+      "name": "raster.channels",
+      "ok": true,
+      "channels": 3
+    },
+    {
+      "name": "png_tiff.same_pixels",
+      "ok": true,
+      "sha256": "454cd6285e6c6fa61d132297afb0fab8244b1d5fa9eecd34eba93b57274e24e4"
+    },
+    {
+      "name": "tiff.tags",
+      "ok": true
+    },
+    {
+      "name": "pixel.page_blue_only",
+      "ok": true,
+      "got": [
+        0,
+        0,
+        255
+      ],
+      "want": [
+        0,
+        0,
+        255
+      ]
+    },
+    {
+      "name": "pixel.page_purple_overlap",
+      "ok": true,
+      "got": [
+        127,
+        0,
+        128
+      ],
+      "want": [
+        128,
+        0,
+        128
+      ]
+    },
+    {
+      "name": "pixel.page_outside_cropbox_is_white",
+      "ok": true,
+      "got": [
+        255,
+        255,
+        255
+      ],
+      "want": [
+        255,
+        255,
+        255
+      ]
+    },
+    {
+      "name": "pixel.group_overlap_not_double_darkened",
+      "ok": true,
+      "got": [
+        255,
+        128,
+        128
+      ],
+      "want": [
+        255,
+        128,
+        128
+      ]
+    },
+    {
+      "name": "pixel.group_blue_only",
+      "ok": true,
+      "got": [
+        128,
+        128,
+        255
+      ],
+      "want": [
+        128,
+        128,
+        255
+      ]
+    },
+    {
+      "name": "pixel.same_name_a_is_red",
+      "ok": true,
+      "got": [
+        255,
+        0,
+        0
+      ],
+      "want": [
+        255,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "pixel.same_name_b_is_green",
+      "ok": true,
+      "got": [
+        0,
+        255,
+        0
+      ],
+      "want": [
+        0,
+        255,
+        0
+      ]
+    },
+    {
+      "name": "pixel.png_left_opaque_blue",
+      "ok": true,
+      "got": [
+        30,
+        60,
+        200
+      ],
+      "want": [
+        30,
+        60,
+        200
+      ]
+    },
+    {
+      "name": "pixel.png_right_alpha_over_white",
+      "ok": true,
+      "got": [
+        213,
+        93,
+        93
+      ],
+      "want": [
+        214,
+        95,
+        95
+      ]
+    },
+    {
+      "name": "census.form",
+      "ok": true,
+      "got": 5,
+      "min": 4
+    },
+    {
+      "name": "census.text",
+      "ok": true,
+      "got": 6,
+      "min": 1
+    },
+    {
+      "name": "census.path",
+      "ok": true,
+      "got": 6,
+      "min": 1
+    },
+    {
+      "name": "census.image_objects_are_only_the_placed_bitmaps",
+      "ok": true,
+      "got": 3
+    },
+    {
+      "name": "text.U00 fixture: y = 3x + 1",
+      "ok": true
+    },
+    {
+      "name": "text.alpha-text",
+      "ok": true
+    },
+    {
+      "name": "text.bravo-text",
+      "ok": true
+    },
+    {
+      "name": "text.U07",
+      "ok": true
+    },
+    {
+      "name": "probe.size",
+      "ok": true,
+      "probe": [
+        453.5433044433594,
+        340.157470703125
+      ]
+    }
+  ],
+  "all_ok": true
+}

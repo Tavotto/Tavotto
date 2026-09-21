@@ -10,20 +10,19 @@ name: Foundation U02 spikes
 # PR 阶段就拿到另一目标的证据。合入 main 之后 dispatch 也能用。
 #
 # 每条腿做的事（全部只写 runner.temp，主仓库 .venv / pyproject 一个字不碰）：
-#   1. 建独立 spike venv，装 scripts/dev/u02_spikes/requirements.txt 钉死的候选包；
-#   2. 按 hash 下载批准字体（dev.u02_spikes.fonts）；
-#   3. render_spike：写 PDF → 三把独立读取器核对 → 与 git 里的 evidence 逐字节比（信息，不判）；
-#   4. tests/test_foundation_u02_*.py 在 spike venv 里跑（真 child 用例在这里不 skip）；
-#   5. freeze_spike：PyInstaller 最小候选冻结 + 冻结 exe 自起 child 真渲染；
-#   6. runtime_spike：uv + pbs CPython + 离线 wheel 安装 + 坏 hash / 无网负例（Windows 腿还真跑
+#   1. 建独立 spike venv，装 scripts/dev/u02_spikes/requirements.txt 钉死的包（runtime_spike 本身纯标准库；
+#      requirements.txt 留着是 evidence/u02/render/report.json 的版本记录，tests/test_foundation_u02_render.py 读它）；
+#   2. tests/test_foundation_u02_render.py（纯标准库读 evidence）与 test_foundation_u02_runtime.py 在 spike venv 里跑；
+#   3. runtime_spike：uv + pbs CPython + 离线 wheel 安装 + 坏 hash / 无网负例（Windows 腿还真跑
 #      embeddable 的 `python.exe -m venv` 看它失败）。
 #
 # 任一步退出非零就红——红是真红，这个 workflow 没有 continue-on-error。
 #
-# **寿命**：这是 U02 的证据工作流，不长期存在。render 这一半（fonts / render_spike / U02 用例 / freeze）
-# 在 U06 / U07 把真实用例接进 src/ + tests/ 之后由那两个阶段删除或收编；runtime 这一半（runtime_spike）
-# 在 U05 把 provisioner 接进产品之后同样处理。到那时连同 scripts/dev/u02_spikes/ 与
-# tests/test_source_hygiene.py 里 render_child.py 的那条例外一起清掉；evidence/u02/ 与两份 ADR 留作记录。
+# **寿命**：这是 U02 的证据工作流，不长期存在。render 这一半（fonts / render_spike / U02 render 用例 / freeze）
+# **已由 U06 / U07 收编并删除**（字体 → scripts/fetch_fonts.py，写入器 → rendercore/pdfwriter.py，render child →
+# rendercore/renderchild.py + renderhost.py，freeze → scripts/dev/u07_freeze_child.py，证据 workflow →
+# foundation-u06-rendercore.yml）；这里只剩 runtime 这一半（runtime_spike + hashcheck），U05 把 provisioner
+# 接进产品之后连同 scripts/dev/u02_spikes/ 一起清掉。evidence/u02/ 与两份 ADR 留作记录。
 
 on:
   workflow_dispatch:
@@ -76,7 +75,6 @@ jobs:
           print("PYTHONPATH=" + os.pathsep.join([str(ws / "scripts"), str(ws / "src")]))
           print("SPIKE_VENV=" + str(venv))
           print("SPIKE_PY=" + str(py))
-          print("U02_FONTS=" + str(tmp / "u02-fonts"))
           print("U02_EVIDENCE=" + str(tmp / "u02-evidence"))
           EOF
       - name: 建 spike venv 并装钉死的候选包
@@ -88,39 +86,10 @@ jobs:
           "$SPIKE_PY" -m pip freeze
           "$SPIKE_PY" -c "import tavotto, dev.u02_spikes; print(tavotto.__file__)"
 
-      - name: 批准字体（按 hash 下载）
+      - name: U02 用例（spike venv 里跑）
         shell: bash
         run: |
-          "$SPIKE_PY" -m dev.u02_spikes.fonts --dest "$U02_FONTS"
-
-      - name: render_spike（写 PDF + 三把独立读取器）
-        shell: bash
-        run: |
-          mkdir -p "$U02_EVIDENCE/render"
-          cp docs/implementation/tavotto-foundation/evidence/u02/render/truth.json "$U02_EVIDENCE/render/truth.json"
-          "$SPIKE_PY" -m dev.u02_spikes.render_spike --fonts "$U02_FONTS" --out "$U02_EVIDENCE/render"
-      - name: render_spike 产物与 git 里的 evidence 比（信息，不判）
-        shell: bash
-        run: |
-          "$SPIKE_PY" - <<'EOF'
-          import hashlib, os, pathlib
-          ev = pathlib.Path(os.environ["U02_EVIDENCE"]) / "render"
-          git = pathlib.Path("docs/implementation/tavotto-foundation/evidence/u02/render")
-          for name in ("spike.pdf", "spike_pdfium.png"):
-              a = hashlib.sha256((ev / name).read_bytes()).hexdigest()
-              b = hashlib.sha256((git / name).read_bytes()).hexdigest()
-              print(f"{name}: {'IDENTICAL to git' if a == b else 'DIFFERS from git'}  ci={a[:12]} git={b[:12]}")
-          EOF
-
-      - name: U02 用例（spike venv 里跑，真 child 不 skip）
-        shell: bash
-        run: |
-          "$SPIKE_PY" -m pytest tests/test_foundation_u02_render.py tests/test_foundation_u02_render_child.py tests/test_foundation_u02_runtime.py -p no:cacheprovider -rs -q --junitxml="$U02_EVIDENCE/pytest-u02.xml"
-
-      - name: freeze_spike（PyInstaller 最小候选冻结 + 冻结 exe 自起 child）
-        shell: bash
-        run: |
-          "$SPIKE_PY" -m dev.u02_spikes.freeze_spike --fonts "$U02_FONTS" --pdf docs/implementation/tavotto-foundation/evidence/u02/render/spike.pdf --out "$U02_EVIDENCE/freeze"
+          "$SPIKE_PY" -m pytest tests/test_foundation_u02_render.py tests/test_foundation_u02_runtime.py -p no:cacheprovider -rs -q --junitxml="$U02_EVIDENCE/pytest-u02.xml"
 
       - name: runtime_spike（uv + pbs CPython + 离线安装 + 负例）
         shell: bash

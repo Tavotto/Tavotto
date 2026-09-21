@@ -320,13 +320,18 @@ def test_compile_plan_reuses_the_u01_render_plan_ref_for_identity(project: Path)
 
 
 def test_compile_plan_lists_capability_gaps_per_format_and_problems(project: Path):
-    req = _request([_panel("figs/Fig1.pdf", opacity=0.5), _text("∇ 图")], background="transparent")
+    req = _request(
+        [_panel("figs/Fig1.pdf", opacity=0.5), _text("∇ 图")],
+        background="transparent",
+        formats=["pdf", "png", "eps"],
+    )
     rp = plan.compile_plan(req, sources=sources.StaticSourceResolver(project), faces=PROVIDER)
     assert rp.page.background is None
-    # PDF：导入页 / 透明组 / 文字全是 native（U07），缺口为空；PNG 在 render child 收编之前每个操作都是缺口
-    assert rp.unsupported["pdf"] == []
-    assert "page_background" not in {g["operation"] for g in rp.unsupported["png"]}
-    assert {g["operation"] for g in rp.unsupported["png"]} >= {"imported_page", "text"}
+    # PDF：导入页 / 透明组 / 文字全是 native（U07）；PNG 全 rasterized（render child）——两者缺口都为空；
+    # EPS 没有写入器，每个用到的操作都是缺口（透明背景 → page_background 不在其中）
+    assert rp.unsupported["pdf"] == [] and rp.unsupported["png"] == []
+    assert "page_background" not in {g["operation"] for g in rp.unsupported["eps"]}
+    assert {g["operation"] for g in rp.unsupported["eps"]} >= {"imported_page", "text"}
     assert rp.problems == (
         {"code": "glyph_missing", "object_id": "t1", "chars": ["∇"]},
         {"code": "cjk_face", "object_id": "t1", "chars": ["图"]},

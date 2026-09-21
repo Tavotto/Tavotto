@@ -1,8 +1,9 @@
 """RasterBuffer —— RenderCore 里一块像素的**唯一形状**（统一实施包 U07，ADR 0066）。
 
 它出现在两处：位图源解码之后（`rasterio.decode()` → 写进 PDF 的 Image XObject）、Canonical PDF
-栅格化之后（render child 的 PDFium 位图 → PNG / TIFF）。两条路共用同一个定义，PNG 与 TIFF 从
-**同一个 RasterBuffer** 编码——"同参数像素逐个相同"不是记得要一致，是同一份字节（RC-052 / 053）。
+栅格化之后（render child 的 PDFium 位图 → PNG / TIFF，`encode_png` / `write_tiff` 就在本模块）。两条路共用
+同一个定义，PNG 与 TIFF 从**同一个 RasterBuffer** 编码——"同参数像素逐个相同"不是记得要一致，是同一份字节
+（RC-052 / 053）。
 
 ## 合同（RC-051：通道、stride、alpha 语义只有这一份说法）
 
@@ -26,6 +27,8 @@
 
 from __future__ import annotations
 
+import struct
+import zlib
 from dataclasses import dataclass
 from typing import Iterator
 
@@ -117,4 +120,56 @@ class RasterBuffer:
         return tuple(self.samples[i : i + self.channels])
 
 
-__all__ = ["DOCUMENT_MAX_PIXELS", "SOURCE_MAX_PIXELS", "RasterBuffer", "RasterError"]
+# ---------------------------------------------------------------------------
+# 编码：同一个 RasterBuffer → PNG / TIFF（RC-052 / RC-053：同一份字节，两个容器）
+# ---------------------------------------------------------------------------
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+#: zlib 级别：与 `tiffwrite.DEFLATE_LEVEL` 同一档（6：再往上 CPU 翻倍、体积只小百分之几）。
+PNG_DEFLATE_LEVEL = 6
+
+
+def _png_chunk(tag: bytes, data: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(data))
+        + tag
+        + data
+        + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    )
+
+
+def encode_png(buf: RasterBuffer) -> bytes:
+    """RasterBuffer → PNG 字节：8 bit、色型 2（RGB）或 6（RGBA，straight alpha）、每行滤波 0、非交错；
+    `dpi` 已知时写 `pHYs`（像素 / 米，单位 1），未知不写——不编一个数。行尾填充在这里剥掉。"""
+    color_type = 6 if buf.channels == 4 else 2
+    raw = b"".join(b"\x00" + row for row in buf.rows())
+    out = bytearray(PNG_SIGNATURE)
+    out += _png_chunk(
+        b"IHDR", struct.pack(">IIBBBBB", buf.width, buf.height, 8, color_type, 0, 0, 0)
+    )
+    if buf.dpi is not None and buf.dpi > 0:
+        ppm = int(round(buf.dpi / 0.0254))
+        out += _png_chunk(b"pHYs", struct.pack(">IIB", ppm, ppm, 1))
+    out += _png_chunk(b"IDAT", zlib.compress(raw, PNG_DEFLATE_LEVEL))
+    out += _png_chunk(b"IEND", b"")
+    return bytes(out)
+
+
+def write_tiff(buf: RasterBuffer, path) -> dict:
+    """RasterBuffer → TIFF 文件，编码器是纯标准库的 `tavotto.tiffwrite`（ADR 0046：Deflate 无损、RGBA 写
+    `ExtraSamples = 2` 非预乘——与本类的 straight alpha 同义；`dpi=None` 写「没有绝对单位」）。像素直接
+    交 `samples` + `stride`，编码器自己剥行尾填充——与 `encode_png` 吃的是**同一份** `samples`。"""
+    from ..tiffwrite import write_tiff as _write_tiff
+
+    return _write_tiff(
+        path, buf.width, buf.height, buf.samples, buf.channels, stride=buf.stride, dpi=buf.dpi
+    )
+
+
+__all__ = [
+    "DOCUMENT_MAX_PIXELS",
+    "SOURCE_MAX_PIXELS",
+    "RasterBuffer",
+    "RasterError",
+    "encode_png",
+    "write_tiff",
+]

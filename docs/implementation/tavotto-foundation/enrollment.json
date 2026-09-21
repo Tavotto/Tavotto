@@ -503,6 +503,20 @@
    "expected_product_outcome": "automatic",
    "backend": "pymupdf",
    "notes": "U01 唯一 enforced 的切片：终点是旧后端（D06），不是 RenderCore 资格；FO01 / FO32 本身仍 planned，各自在 U03 / U09 取得资格。"
+  },
+  {
+   "case_id": "U07-R1",
+   "title": "RenderBench：非对称页盒 / 同名资源 / 透明组 / alpha 位图 / 文字的画布经 RenderPlan → Canonical PDF → render child 栅格 → PNG + TIFF，四把独立读取器 + 三平台",
+   "scenario_refs": [],
+   "stage": "U07",
+   "enrollment": "observing",
+   "lane": "pr",
+   "entry": "none",
+   "fixture": "docs/implementation/tavotto-foundation/evidence/u07/truth.json",
+   "test": null,
+   "expected_product_outcome": "automatic",
+   "backend": "rendercore",
+   "notes": "observing：挂在已有的非 required 具名任务 foundation-u06-rendercore.yml（ubuntu 3.10 / 3.13、windows、macos）上——每腿跑 scripts/dev/u07_evidence.py（30 条核对，u07.pdf 三平台逐字节相同、PDFium PNG 只记 sha256 不判）与 scripts/dev/u07_freeze_child.py（冻结 child 自起）；main .venv 里 tests/test_rendercore_evidence.py::test_u07_evidence_is_current 只核进了 git 的那份字节。不经产品入口（app.py 不 import rendercore），所以不是 FO 场景的资格；提升 enforced 要等 U08 把 facade 接上、再走 05 §3 的整条用户链。"
   }
  ]
 }

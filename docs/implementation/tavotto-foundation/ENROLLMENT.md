@@ -4,7 +4,7 @@
 状态含义见 [`03_CI_POLICY.md`](03_CI_POLICY.md) §3 与 ADR 0053 §五：**只有 enforced 且结果目录里有有效通过记录的实例才算通过**；
 planned / observing / later 是登记，不是成绩。
 
-能力版本：`u01` · 计数：enforced 1 · later 1 · planned 31
+能力版本：`u01` · 计数：enforced 1 · later 1 · observing 1 · planned 31
 
 | case | 标题 | enrollment | lane | 阶段 | 用例 | fixture | 场景 |
 |---|---|---|---|---|---|---|---|
@@ -41,3 +41,4 @@ planned / observing / later 是登记，不是成绩。
 | FO31 | 首开/二开/会话重启不重复准备 | planned | pr | U04 | — | — | FO31 |
 | FO32 | 真实打开—编辑—重放—导出 | planned | release | U09 | — | — | FO32 |
 | U01-S1 | single_file_csv 经真实 HTTP 服务（会话认证）首开 → 准备 → 渲染 → 旧后端导出 PDF/PNG → 独立读回 | enforced | pr | U01 | `tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry` | `tests/fixtures/foundation/single_file_csv` | FO01, FO32 |
+| U07-R1 | RenderBench：非对称页盒 / 同名资源 / 透明组 / alpha 位图 / 文字的画布经 RenderPlan → Canonical PDF → render child 栅格 → PNG + TIFF，四把独立读取器 + 三平台 | observing | pr | U07 | — | `docs/implementation/tavotto-foundation/evidence/u07/truth.json` |  |

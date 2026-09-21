@@ -2,7 +2,7 @@
 
 日期：2026-09-21 · 状态：**Accepted（U07 第一切片；候选栈未默认启用，不切默认后端）**
 相关：[0059 Render IR 与 RenderPlan](0059-render-ir-and-render-plan.md)、[0060 字体政策](0060-font-policy-and-allowlist.md)、
-[0055 render_spike](0055-render-spike.md)、ADR 0066（render child 与 RasterBuffer / PNG-TIFF 同源，U07 第二切片；落地后补成链接）、
+[0055 render_spike](0055-render-spike.md)、[0066 render child 与 RasterBuffer](0066-render-child-and-raster-buffer.md)、
 [0031 导出](0031-unified-export-pipeline.md)、[0046 EPS / TIFF](0046-eps-and-tiff-export-formats.md)；实施包
 `docs/implementation/tavotto-foundation/`（`phases/U07_render_output.md`、`01_SCOPE_AND_DECISIONS.md` D07 / D08、
 registry RC-038 ~ RC-046）。
@@ -66,7 +66,7 @@ pypdf 路线的实测代价（不采用，但写明）：pypdf 6.7.5 没有「�
   软遮罩（画布上没有这个能力，能力表里也没有这个操作）。
 * 位图源解不开（`raster_unreadable` / `raster_kind_mismatch`）、源 PDF 打不开 / 加密 / 缺页：`source_unreadable`
   结构化拒绝，`job` 落到该格式的 `format_failed`，不画空框、不用旧文件冒充。
-* PNG / TIFF 在 render child 收编之前（ADR 0066）仍全 `unsupported`。
+* PNG / TIFF：render child 收编后全 `rasterized`（ADR 0066）。
 
 ## 4. 与旧 facade 的对应（U08 对拍时逐项）
 
