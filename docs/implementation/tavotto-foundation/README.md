@@ -37,9 +37,6 @@ ADR 0059）+ 字体政策与可检索文字写入（allowlist 逐字节钉住的
 [`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 的 `migration_evidence` 指向替代用例。交接见
 [`handoffs/U06_ir_text.md`](handoffs/U06_ir_text.md)。
 
-U03 于 2026-09-20 开始执行（`implementation_status: in_progress`——PR A 后端编排 + 场景用例已落，PR B 确认交互
-待落；产品资格仍 `not_run`）：解释器选择前移（项目 venv 首开发现 + 体检 + 记住，显式选择失效不静默替换）、
-
 U03 已于 2026-09-20 执行（`implementation_status: done`——PR A 后端编排 + 场景用例，PR B 确认交互（前端对话框 /
 三档设置 / i18n / MCP 投影）；产品资格仍 `not_run`）：解释器选择前移（项目 venv 首开发现 + 体检 + 记住，显式选择失效不静默替换）、
 cwd 三分的生产者（`project_root` 第三档 + 首开按静态证据问一次）、safe worker 经 `bridgeboot` 私有包（#447）、
