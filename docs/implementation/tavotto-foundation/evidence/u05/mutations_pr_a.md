@@ -25,8 +25,12 @@
 | M18 | 供应失败照样登记一代 | deprepair | test_offline_prepare_is_a_safe_stop_and_registers_no_generation | 1 |
 | M19 | 不提供私有 Python 时也不再拒绝（静默放行） | deprepair | test_without_the_offer_no_base_is_still_managed_env_unavailable | 1 |
 | M20 | 软链接目标不校验 | privatepython | test_member_validation_is_our_own_first_line | 1（第一轮绿：软链接越界被 tarfile 的 data 过滤器（第二道）挡住，第一道被删了也绿——补 test_member_validation_is_our_own_first_line 直接量第一道后红） |
+| M21 | 代号不折私有 base 的 id（Codex #464 P1 的形状：锁换版本、意图没变 → 同号覆盖 active 并 rmtree） | deprepair | test_a_new_private_runtime_makes_a_new_generation_and_never_touches_the_active_one | 1（用例第一版经 create_joint_plan 建第一代 → 与重建的代号公式不同、根本不同号 → 变异绿；改成两次重建后红：`python_of` 回 None） |
+| M22 | 探测链末级不看 `offered()`（能力关掉仍用磁盘上那份） | managedenv | test_a_provisioned_runtime_is_not_used_once_the_capability_is_off | 1 |
+| M23 | `.part` 用固定名（两个进程互相搬走对方的半成品） | privatepython | test_two_processes_provisioning_the_same_runtime_both_succeed | 1 |
 
-20/20 变异被抓住（17 条第一轮红；M06 / M17 / M20 第一轮绿，各补一条用例后红——三条用例已进提交 `U05（A）：三条变异反证补钉`）。
+20/20 变异被抓住（17 条第一轮红；M06 / M17 / M20 第一轮绿，各补一条用例后红——三条用例已进提交 `U05（A）：三条变异反证补钉`）；
+Codex 第一轮处置后再加 M21–M23，三条红。
 
 ## 真归档的工程验证（不是资格）
 
