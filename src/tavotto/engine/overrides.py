@@ -30,6 +30,7 @@ from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
 from matplotlib.patches import BoxStyle, FancyArrowPatch, Patch, Rectangle
 from matplotlib.text import Text
+from matplotlib.transforms import ScaledTranslation
 from mpl_toolkits.mplot3d import proj3d
 
 import colorbarmodel
@@ -544,6 +545,55 @@ def _get_arrow_endpoints(a):
 def _restore_arrow_endpoints(a, orig) -> None:
     if orig is not None:
         a.set_positions(orig[0], orig[1])
+
+
+def _patch_base_transform(p):
+    """独立形状**没被我们挪过**时的 artist 级 transform（通常是 `transData`）。
+
+    第一次挪动时记在 artist 上：拖第二次、几何变动后的重放、还原，都要从这个
+    基准重新算，而不是在上一次的偏移上再叠一层——叠层的后果是热态与全量重放
+    各叠各的，落成两个位置。
+    """
+    base = getattr(p, "_mm_pos_base", None)
+    if base is None:
+        base = Artist.get_transform(p)
+        p._mm_pos_base = base  # noqa: SLF001
+    return base
+
+
+def _set_patch_pos_frac(p, value) -> None:
+    """拖动独立形状（Rectangle / FancyBboxPatch / Circle / Polygon / Wedge …）。
+
+    值是 figure 分数（top-origin）的 [x, y]：形状**包围盒左下角**该落到哪
+    （manifest 的 `anchor` 与此同源——`Patch.get_window_extent()` 不需要
+    renderer，两边算的是同一个框）。Patch 族没有统一的「位置」setter
+    （Rectangle 是 `set_xy`、Circle 是 `set_center`、Polygon 是顶点数组、
+    FancyBboxPatch 是 `set_x/set_y`），所以不逐类写：把平移**叠在 artist 级
+    transform 上**，一份实现盖住整族与用户自己的子类。
+
+    平移量以**英寸**记在 `dpi_scale_trans` 上，不是像素：导出时 dpi 会变
+    （`savefig(dpi=600)`），钉像素的话预览里挪了 3 mm、导出里只挪 1 mm。
+    """
+    fig = p.get_figure()
+    base = _patch_base_transform(p)
+    p.set_transform(base)  # 先回到基准再量：这一段要幂等（重放 / 二次拖动）
+    bb = p.get_window_extent()
+    tx, ty = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
+    dpi = float(fig.dpi)
+    shift = ScaledTranslation((tx - bb.x0) / dpi, (ty - bb.y0) / dpi, fig.dpi_scale_trans)
+    p.set_transform(base + shift)
+
+
+def _get_patch_pos(p):
+    """原样 = 基准 transform（还原就是把它放回去）。"""
+    return _patch_base_transform(p)
+
+
+def _restore_patch_pos(p, orig) -> None:
+    p.set_transform(orig)
+    # 基准记号一并清掉：下一次拖动从实况重新采（脚本原样不会变，清不清结果
+    # 相同；清掉是为了不让一个「我们挪过」的记号留在还原后的 artist 上）
+    p.__dict__.pop("_mm_pos_base", None)
 
 
 # ---------------------------------------------------------------------------
@@ -2422,6 +2472,10 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # 原生值分别是 transform 坐标的端点对 / ArrowStyle 对象 / linestyle 原值，
     # 恢复走 _RESTORE 里的专用函数
     ("arrowpatch", "endpoints_frac"): (_get_arrow_endpoints, _set_arrow_endpoints),
+    # 独立形状的拖动：figure 分数（top-origin）的包围盒左下角；平移叠在 artist 级
+    # transform 上（一份实现盖住整个 Patch family），原样是基准 transform。
+    # **不给 `bar`**：柱是数据，位置由 x 与宽度决定，挪一根柱等于改数据。
+    ("patch", "pos_frac"): (_get_patch_pos, _set_patch_pos_frac),
     ("arrowpatch", "arrowstyle"): (lambda a: a.get_arrowstyle(), _set_arrowstyle),
     ("arrowpatch", "linestyle"): (
         lambda a: a.get_linestyle(),
@@ -2748,6 +2802,7 @@ for _prop, _g3, _s3 in [
 _RESTORE: dict[tuple[str, str], object] = {
     ("collection", "marker"): _restore_scatter_marker,
     ("arrowpatch", "endpoints_frac"): _restore_arrow_endpoints,
+    ("patch", "pos_frac"): _restore_patch_pos,
     ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),
     ("arrowpatch", "linestyle"): lambda a, orig: a.set_linestyle(orig),
     ("text", "pos_frac"): _restore_text_pos,
