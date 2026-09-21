@@ -412,6 +412,7 @@ jobs:
             --out "$RUNNER_TEMP/foundation/expected.json"
           python -m pytest -q -rs \
             tests/test_foundation_harness.py \
+            tests/test_foundation_first_open.py \
             tests/test_execution_receipt.py \
             tests/test_preparation_api.py \
             tests/test_worker_runtime_report.py

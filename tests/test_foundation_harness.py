@@ -85,6 +85,40 @@ def test_the_enforced_set_is_exactly_what_u03_promoted_and_each_points_at_a_real
     assert enforced["FO15"]["expected_product_outcome"] == "safe_stop"
 
 
+def _ci_harness_pytest_files() -> list[str]:
+    """ci.yml 里 harness 那一步实际交给 pytest 的文件列表（只认 `python -m pytest` 后面跟着的
+    `tests/...py` 续行，别的 step 不算）。"""
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    start = text.index("python tests/support/foundation_harness.py expected --lane pr")
+    stop = text.index("foundation_harness.py validate", start)
+    block = text[start:stop]
+    head = block.index("python -m pytest")
+    files = []
+    for line in block[head:].splitlines()[1:]:
+        token = line.strip().rstrip("\\").strip()
+        if not token.startswith("tests/"):
+            break
+        files.append(token)
+    return files
+
+
+def test_every_pr_lane_enforced_case_is_in_the_ci_harness_step():
+    """校验步只认结果目录里的记录，而记录只有跑了用例才有：一条 enforced（lane pr）的用例
+    文件不在 ci.yml 那一步的 pytest 列表里，CI 上它就没跑，validate 报 missing——红的是校验步，
+    看起来却像用例坏了。2026-09-20 #454 提六条 FO 上 enforced 时漏了这一行（U04 同门指出），
+    从此这里钉死：台账里每个 pr 通道的 enforced 用例文件都必须列在那一步。"""
+    listed = _ci_harness_pytest_files()
+    assert listed, "ci.yml harness 那一步没找到 pytest 文件列表"
+    ledger = fh.load_ledger()
+    required = {
+        c["test"].split("::", 1)[0]
+        for c in ledger["cases"]
+        if c["enrollment"] == fh.ENROLLMENT_ENFORCED and c["lane"] == "pr"
+    }
+    missing = sorted(required - set(listed))
+    assert not missing, f"enforced（pr）用例文件不在 ci.yml harness 步里：{missing}"
+
+
 def test_the_derived_markdown_is_current():
     proc = subprocess.run(
         [sys.executable, str(PACK / "tools" / "generate_enrollment.py"), "--check"],
