@@ -5976,7 +5976,7 @@
         "U11"
       ],
       "recommended_deep_lane": "release",
-      "enrollment": "planned",
+      "enrollment": "observing",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
