@@ -156,6 +156,7 @@ def test_enforced_test_existence_is_judged_by_ast_not_by_substring(tmp_path):
         "test_probe.py::test_nested_inside_outer",
         "test_probe.py::TestGroup::test_only_in_a_comment",
         "test_probe.py::test_method",  # 方法不在模块级
+        "test_probe.py::TestGroup",  # 类不是用例：最后一级必须是函数
     ):
         assert errors(bad), bad
     del registry
