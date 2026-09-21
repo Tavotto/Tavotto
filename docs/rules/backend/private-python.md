@@ -42,8 +42,11 @@
   替身只服务披露，计划带下载（`JointRepairPlan.replan`）时事务供应后按真解释器重算（`_replan_on_base`）——重算前先比
   规划输入的指纹（`JointPlan.inputs_digest`：声明意图 + 脚本与本地模块的字节），下载期间输入变了即 `repair_plan_stale`、
   一个字节不装；执行前重量走同一条路（`_facts_for_plan`）。`_facts_for` 没 base 时也用它量新的一代。`nothing_needed` 在干净机器上照样成计划
-  （环境本身就是要的），门（`gate`）在有 `private_python` 段时也问；`preparation.plan_for` 在 `no_worker_python` 时也问门。
-  受管目标的可用性（`joint_targets`）看**有没有基础解释器**（每次都建新的一代），没有且提供私有 Python → 可用 + 载荷。
+  （环境本身就是要的），门（`gate`）按 `clean_machine` 也问——**判据不是有没有下载载荷**：私有 Python 被别的项目
+  供应过之后本项目照样一个解释器都没有、照样要建自己的一代，载荷那时是「已就位」（`present_payload()`：required=False、
+  零字节、不联网），界面照样说出口（Codex #475 P1）；`preparation.plan_for` 在 `no_worker_python` 时也问门。
+  受管目标的可用性（`joint_targets`）看**有没有基础解释器**（每次都建新的一代），没有且提供私有 Python → 可用 + 下载
+  载荷；基础解释器就是私有 Python → 可用 + 已就位载荷。
 - **去重 / 取消 / 租约 / GC / 配额**：同一个 id 并发只下一次（`_inflight`：一个下载线程、若干消费者各自等；跨进程靠
   staging 带 pid + 最终目录已在就复用）；取消按消费者（D11）——一个取消只是它自己以 `private_python_cancelled` 退出
   （事务收成 `cancelled`、这一代**没登记**），最后一个消费者放弃时下载才中止；提交点之后取消无效。
