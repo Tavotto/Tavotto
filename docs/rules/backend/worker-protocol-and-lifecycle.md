@@ -46,7 +46,8 @@
   死循环脚本持着 `w.lock` 把整个会话占死，连 shutdown 都抢不到锁
   （test_request_timeout_kills_and_rebuilds_worker 看护）。
 - **管道 EOF 先问死因，再说话（#435）**。EOF 之后两条控制面都先给子进程
-  `EXIT_GRACE`（1.5 秒，Python 与 Rust 同一个数）自己退出，拿到退出状态才 kill
+  `EXIT_GRACE`（1.5 秒，Python 与 Rust 同一个数——两侧各自钉在 `tests/golden/exit_grace_ms.txt`，
+  不拿正则扫对方的源码，没有解析器就分不清注释 / 字符串 / 原始字符串）自己退出，拿到退出状态才 kill
   兜底（`pool.exit_report` / `WorkerProc::reap_after_eof`）——EOF 那一刻直接 kill，
   退出码永远是 TerminateProcess / SIGKILL 的那一个，真正的死因就被盖掉了。
   退出状态 `{"code", "signal", "lingered"}` 随 `session_dead` 的信封带出（Rust 放在
@@ -66,7 +67,9 @@
   safe 档不带参数，出路是默认值或 `tavotto run`；argparse 的 usage 打在 stderr，
   `pool._attach_script_output` 把 worker.log 尾巴接到 traceback 前面，两条控制面
   同一处拼），否则 `script_exited`——都不再把 worker 带走。`ensure_built` 放行
-  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。**协议管道上的
+  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。`SystemExit`
+  的载荷若不是整数（`sys.exit("…")`）不进 message——那是用户的文字，message 会进 app.log
+  再随诊断包出门；退出状态按 CPython 的规则记 1，文字只在 traceback 区的 `SystemExit: …`。**协议管道上的
   一行先判 UTF-8、再解析 JSON，两条控制面同一口径**：非 UTF-8 字节是「管道上有垃圾」
   （protocol_mismatch，杀掉重建，那一行以 U+FFFD 代替坏字节带出去），不是 EOF——Rust 读线程
   按字节读（`read_until` + `std::str::from_utf8`，`BufRead::lines()` 会把一行坏字节当 Err 交回来，

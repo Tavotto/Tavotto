@@ -143,25 +143,39 @@ def _script_exit_error(exc: SystemExit) -> ProtocolError:
     退出，上层只看得到管道 EOF，报成「渲染进程崩溃」，而 worker.log 里最后两行
     其实是 argparse 的 `usage: …`（#435 一族里最常见的形状）。
     """
-    code = exc.code
+    # message 会进 app.log、再随诊断包出门：`sys.exit("patient-123 …")` 的载荷是用户的
+    # 文字，不进 message（评审 #443 第十三轮）；它原样在 traceback 区的 `SystemExit: …`
+    # 那一行，用户自己看得到。message 里只写 CPython 真正用的退出状态。
+    status = _exit_status(exc.code)
+    call = f"sys.exit({exc.code})" if isinstance(exc.code, int) else "sys.exit(<一段文字>)"
     if _raised_by_cli_parser(exc):
         return ProtocolError(
             SCRIPT_NEEDS_ARGUMENTS,
             f"脚本要求命令行参数，而 Tavotto 运行脚本时不带任何参数（sys.argv 只有脚本"
-            f"自己），参数解析于是以 sys.exit({code!r}) 结束。给这些参数写默认值，"
+            f"自己），参数解析于是以 {call} 结束。给这些参数写默认值，"
             "或用 `tavotto run -- python 脚本.py 参数…` 让 Tavotto 跟着你自己的命令跑。",
             retryable=False,
             traceback_text=traceback.format_exc(),
-            extra={"exit_code": code},
+            extra={"exit_code": status},
         )
     return ProtocolError(
         SCRIPT_EXITED,
-        f"脚本调用了 sys.exit({code!r}) 提前结束。Tavotto 要的是脚本跑完后留在内存里的 "
+        f"脚本调用了 {call} 提前结束。Tavotto 要的是脚本跑完后留在内存里的 "
         "Figure——去掉那句 exit，或改成只在出错时 exit。",
         retryable=False,
         traceback_text=traceback.format_exc(),
-        extra={"exit_code": code},
+        extra={"exit_code": status},
     )
+
+
+def _exit_status(code) -> int:
+    """`SystemExit.code` → 进程真正会用的退出状态（CPython `handle_system_exit` 的规则）：
+    None → 0，整数原样，其它载荷打印到 stderr 后以 1 退出。"""
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return code
+    return 1
 
 
 @contextlib.contextmanager

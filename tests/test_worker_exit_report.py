@@ -172,6 +172,25 @@ def test_a_nonzero_sys_exit_is_the_scripts_own_failure(figs):
 
 
 @needs_worker
+def test_a_sys_exit_with_a_text_payload_keeps_the_text_out_of_the_message(figs):
+    """评审 #443 第十三轮 P1：`sys.exit("patient-123 confidential cohort")`——载荷是用户的
+    文字，而 message 会进 app.log、再随诊断包出门。message 只说 `sys.exit(<一段文字>)`，
+    退出状态按 CPython 的规则记 1；文字本身在 traceback 区的 `SystemExit: …` 那一行。"""
+    (figs / "fig_text.py").write_text(
+        EXIT_FAIL.replace("sys.exit(2)", 'sys.exit("patient-123 confidential cohort")'),
+        encoding="utf-8",
+    )
+    with pytest.raises(pool.WorkerError) as err:
+        pool.build("fig_text.py", str(figs), "__main__")
+    e = err.value
+    assert e.code == "script_exited"
+    assert "patient-123" not in str(e), str(e)
+    assert "sys.exit(<一段文字>)" in str(e)
+    assert "SystemExit: patient-123 confidential cohort" in e.traceback_text
+    assert e.extra.get("exit_code") == 1
+
+
+@needs_worker
 def test_a_script_that_wants_cli_arguments_gets_its_own_code_and_the_usage_text(figs):
     """微信截图里那一例：traceback 区最后两行是 argparse 的 `usage: … -c CLSTR -x METADATA`。
 
@@ -463,74 +482,23 @@ def test_this_interpreter_reports_its_own_exit_code_through_the_real_popen():
 
 
 # ------------------------------------------------------------ 同源对
-def _rust_code_without_comments_and_strings(source: str) -> str:
-    """把 Rust 源码里的注释（`//…` / `/* … */`，含文档注释）与字符串字面量抹掉。
-
-    留下的才是「代码」：一条写在注释或字符串里的 `pub const EXIT_GRACE …` 不该让
-    同源对的看护变绿（评审 #443）。没有 Rust 解析器，这里按词法逐字符走：只认
-    这三样，够用且不误伤。
-    """
-    out: list[str] = []
-    i, n = 0, len(source)
-    while i < n:
-        two = source[i : i + 2]
-        if two == "//":
-            j = source.find("\n", i)
-            i = n if j < 0 else j
-            continue
-        if two == "/*":
-            depth, i = 1, i + 2
-            while i < n and depth:
-                if source[i : i + 2] == "/*":
-                    depth, i = depth + 1, i + 2
-                elif source[i : i + 2] == "*/":
-                    depth, i = depth - 1, i + 2
-                else:
-                    i += 1
-            continue
-        ch = source[i]
-        if ch == '"':
-            i += 1
-            while i < n and source[i] != '"':
-                i += 2 if source[i] == "\\" else 1
-            i += 1
-            out.append('""')
-            continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
-
-
-_RUST_EXIT_GRACE = re.compile(
-    r"^pub const EXIT_GRACE: Duration = Duration::from_millis\((\d+)\);", re.M
-)
+GOLDEN_EXIT_GRACE = Path(__file__).resolve().parent / "golden" / "exit_grace_ms.txt"
 
 
 def test_the_exit_grace_is_one_number_on_both_control_planes():
     """`pool.EXIT_GRACE` ↔ `workerd/src/worker.rs` 的 `EXIT_GRACE`（同源对总表有它一行）。
 
     宽限不一致的表现是：同一个「关了管道赖着不退」的进程，一条控制面说它自己
-    退了、另一条说它被终止——同一件事两个答案。判据读的是**去掉注释与字符串之后**
-    的代码，且要求那条定义**恰好一处**、行首顶格——注释里留一份旧写法骗不过它。
+    退了、另一条说它被终止——同一件事两个答案。两侧各自钉在**同一份**
+    `tests/golden/exit_grace_ms.txt` 上（Rust 侧是 `workerd/tests/exit_grace_pair.rs`）：
+    改哪一边而不改这份文件，那一边自己的测试就红。以前这里拿正则扫 worker.rs 的源码找
+    那条 `pub const`，没有 Rust 解析器就分不清注释 / 普通字符串 / 原始字符串 / 字符字面量
+    （评审 #443 第四、十三轮）——现在两边都不读对方的源码。
     """
-    rs = Path(__file__).resolve().parents[1] / "workerd" / "src" / "worker.rs"
-    if not rs.is_file():
-        pytest.skip("没有 workerd 源码（wheel/sdist 里不含）")
-    found = _RUST_EXIT_GRACE.findall(_rust_code_without_comments_and_strings(rs.read_text("utf-8")))
-    assert len(found) == 1, f"worker.rs 里 EXIT_GRACE 的定义应恰好一处，找到 {found}"
-    assert int(found[0]) == round(pool.EXIT_GRACE * 1000)
-
-
-def test_the_rust_const_guard_ignores_comments_and_strings():
-    """看护看护者：注释 / 字符串里的同名写法不算，真定义改了会被抓到。"""
-    fake = (
-        "// pub const EXIT_GRACE: Duration = Duration::from_millis(1500);\n"
-        "/* pub const EXIT_GRACE: Duration = Duration::from_millis(1500); */\n"
-        "/// pub const EXIT_GRACE: Duration = Duration::from_millis(1500);\n"
-        'let s = "pub const EXIT_GRACE: Duration = Duration::from_millis(1500);";\n'
-        "pub const EXIT_GRACE: Duration = Duration::from_millis(2500);\n"
+    golden = int(GOLDEN_EXIT_GRACE.read_text("utf-8").strip())
+    assert golden == round(pool.EXIT_GRACE * 1000), (
+        f"pool.EXIT_GRACE={pool.EXIT_GRACE}s 与 {GOLDEN_EXIT_GRACE.name}={golden}ms 不一致：两侧要一起改"
     )
-    assert _RUST_EXIT_GRACE.findall(_rust_code_without_comments_and_strings(fake)) == ["2500"]
 
 
 # ------------------------------------------------------------ probe 的归类

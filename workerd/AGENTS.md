@@ -30,7 +30,8 @@
   `reap_after_eof(EXIT_GRACE)`：先等它自己退出，拿到 `ExitReport{code, signal,
   lingered}` 放进 `session_dead` 的 `error.exit`，宽限到了才 kill。**这里只如实报数**，
   退出码怎么解释归 Python（`pool.describe_exit`，唯一的一张表）——别在 Rust 里
-  再写一份 NTSTATUS 对照。`EXIT_GRACE` 与 `pool.EXIT_GRACE` 同一个数。
+  再写一份 NTSTATUS 对照。`EXIT_GRACE` 与 `pool.EXIT_GRACE` 同一个数：两侧各自钉在
+  `tests/golden/exit_grace_ms.txt`（`tests/exit_grace_pair.rs`），不读对方源码。
 - 语义要点：generation 每 (re)spawn +1 且**上一代的迟到响应一律丢弃**；
   per (会话, stem) 的 render 队列里至多一条、新的顶掉旧的（回 `queue_superseded`）；
   export 一条都不合并；队列有界，满了立即拒绝；取消在飞 = **杀进程**
