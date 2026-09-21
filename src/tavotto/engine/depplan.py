@@ -16,7 +16,8 @@
     ready            有缺的、且能给出一份**完整已知**的安装集合（要什么 / 约束什么 / 从哪来）
     blocked          不能给出完整已知的集合：选中的声明里有 unsupported / unknown 的行、
                      声明之间确定矛盾、hash 模式下有条目没 hash、目标环境量不出来——
-                     **明确停下**，不把 `^` / marker / 约束剥掉偷偷继续（FO-029 / FO-033）
+                     **明确停下**，不把 `^` / marker / 约束剥掉偷偷继续（FO-029 / FO-033）；
+                     哪怕此刻什么都不缺也是 blocked（`missing` 为空只说明不用装）
 
 `requirements` 是要装的（脚本需要且目标缺的那些，按项目声明的完整形态：extras / specifier
 / hash），`constraints` 是**所有**选中声明的约束 + constraints 文件——不需要的包不装，但它们
@@ -522,12 +523,14 @@ def plan(
         blocked.append(
             {"code": BLOCK_CONFLICT, "conflicts": [dict(c) for c in selection.conflicts]}
         )
-    if not missing:
-        status = STATUS_NOTHING_NEEDED
-    elif blocked:
+    # blocked 优先于「没缺的」：选中的声明里有 unsupported / 矛盾 / 缺 hash / 目标量不出，这份
+    # 计划就不能自称完整——哪怕此刻什么都不缺（Codex #459 P2）。要不要装看 `missing`。
+    if blocked:
         status = STATUS_BLOCKED
-    else:
+    elif missing:
         status = STATUS_READY
+    else:
+        status = STATUS_NOTHING_NEEDED
     facts_payload = facts.to_payload() if facts is not None else {}
     identity = _identity(
         target_kind=target_kind,

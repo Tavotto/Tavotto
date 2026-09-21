@@ -22,3 +22,14 @@
 | M15 | stdlib 表用宿主而不是目标 | depplan | test_plan_classifies_stdlib_by_the_target_interpreter_not_the_host | 1（第一次跑绿：原用例只钉 importscan 层的参数，补 plan 层用例后红） |
 
 `ALL 15 MUTATIONS RED`，还原后 rc=0。
+
+## Codex #459 处置后追加（2026-09-21）
+
+| # | 变异 | 用例 | rc |
+|---|---|---|---|
+| M16 | include 的 seen 只按文件（换组 / 换成约束再 include 被吞掉） | test_the_same_file_included_as_another_group_or_as_a_constraint_counts_again | 1 |
+| M17 | 读不了 / 超上限的声明文件当空 | test_unreadable_or_oversized_declaration_files_are_unsupported_not_empty | 1 |
+| M18 | 闭区间单点交集当空（`>=1` + `<=1`） | test_only_definite_contradictions_are_reported | 1 |
+| M19 | `nothing_needed` 压过 `blocked` | test_blocked_wins_even_when_nothing_is_missing | 1 |
+
+4/4 红；还原后 rc 0。
