@@ -187,9 +187,10 @@ def test_the_pure_model_imports_and_compiles_with_every_heavy_package_blocked(tm
 
 def test_the_blocker_itself_works():
     """反证的反证：同一个 meta_path 钩子对着一个真的 import pymupdf 的模块必须炸——否则上一条
-    用例的绿只说明钩子没起作用。"""
+    用例的绿只说明钩子没起作用。主语是**实现模块** `pymupdf_backend`：契约层 `tavotto.pdfbackend`
+    自 U08 起按策略懒装载实现（ADR 0067），import 它本身不拉起任何后端。"""
     code = _BLOCKER.split("import tavotto.rendercore\n", 1)[0] % (sorted(FORBIDDEN_NAMES),)
-    code += "\nimport tavotto.pdfbackend\n"
+    code += "\nimport tavotto.pdfbackend.pymupdf_backend\n"
     proc = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,

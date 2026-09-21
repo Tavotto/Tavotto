@@ -11,9 +11,12 @@ RenderPlan；写入器读字节之前再核一次 hash（`read_frozen()`），�
   PDF-only 原图无 override 不强制重跑科学脚本），`StaticSourceResolver` 只读文件算 hash。
 * `execution`：带 override 的面板、runtime 素材——必须由当次权威 worker 现画并附回执
   （`figcapture.SourceArtifact(origin="execution", receipt_id=…, receipt_identity=…)`）。
-  这一条在 U06 **没有生产者**：`StaticSourceResolver` 遇到它抛 `source_needs_execution`，
-  不去起子进程、不拿 materialized cache 的旧文件冒充（RC-017）。U08 把 app 层的
-  `_serialize_figure` + `ExecutionReceipt` 接成 `ExecutionSourceResolver`。
+  `StaticSourceResolver` 遇到它抛 `source_needs_execution`，不去起子进程、不拿
+  materialized cache 的旧文件冒充（RC-017）。**执行侧**是 `ExecutionSourceResolver`（U08，
+  ADR 0067）：它自己不认识 worker，只拿一个 `execute(obj) -> FrozenSource` 回调——app 层把
+  `_serialize_figure`（「谁来渲染」那扇门的唯一导出调用点）+ `receipt.from_worker`（回执）+
+  `receipt.source_artifact_for`（`origin=execution` 的 SourceArtifact）接成这个回调；本模块
+  仍是纯标准库，不 import pool / app。
 
 **不复制**：解析器不把原始脚本、实验数据或整个项目目录搬进 staging；它只记路径与 hash，
 中间产物由 `exportjob` 的私有临时目录承载（RC-015 / RC-016）。
@@ -26,7 +29,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from ..engine import figcapture, runtimeasset
 from .ir import FILE_KINDS
@@ -150,3 +153,29 @@ class StaticSourceResolver:
             path, source_id=rel_id, origin=figcapture.ORIGIN_STATIC
         )
         return FrozenSource(artifact=artifact, path=path)
+
+
+@dataclass(frozen=True)
+class ExecutionSourceResolver:
+    """带 override / runtime 素材的面板交给 `execute`（当次权威 worker 现画 + 回执），其余交给
+    `static`（磁盘原件、无 override，RC-019：不强制重跑脚本）。
+
+    `execute(obj) -> FrozenSource` 由 app 层提供：它必须返回 **`origin=execution`** 的产物
+    （带 `receipt_id` / `receipt_identity` / `patch_hash`）——这里核一次，回来的不是执行产物就是
+    调用方接错了线，不放行（RC-017 must_fail：拿 materialized cache 冒充）。
+    """
+
+    static: StaticSourceResolver
+    execute: Callable[[dict], FrozenSource]
+
+    def resolve(self, obj: dict) -> FrozenSource:
+        if not needs_execution(obj):
+            return self.static.resolve(obj)
+        fs = self.execute(obj)
+        if fs.artifact.origin != figcapture.ORIGIN_EXECUTION:
+            raise SourceError(
+                "source_needs_execution",
+                f"{obj.get('id', '')}：execute 回调交回的不是执行产物（origin={fs.artifact.origin}）",
+                {"figure": str(obj.get("id", ""))},
+            )
+        return fs

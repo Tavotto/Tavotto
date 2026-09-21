@@ -84,6 +84,7 @@ from .engine import (
     project_watch as engine_watch,
     projectenv as engine_projectenv,
     readiness as engine_readiness,
+    receipt as engine_receipt,
     registry as engine_registry,
     runcodes as engine_runcodes,
     runtime as engine_runtime,
@@ -869,6 +870,8 @@ def api_render():
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
 
     path = safe_resolve(rel_id)
+    if pdfbackend.selected() == pdfbackend.BACKEND_RENDERCORE:
+        return _api_render_rendercore(rel_id, path, w)
     # 缓存身份 =（面板 id, **内容哈希**, 宽度, 渲染后端与版本）。曾经这里是
     # `path.stat().st_mtime`：mtime 是「什么时候被碰过」，不是「里面是什么」，
     # 拿它当身份两头都错——内容没变而 mtime 变了白丢缓存，换了渲染后端版本
@@ -901,6 +904,33 @@ def api_render():
                 prune_render_cache()
     # no-cache = 每次向服务器验证（304 极快）；内容一变（sha1 进 key）立即失效。
     # 不用长 max-age——「更新原图」后旧 URL 也不能再吃浏览器缓存。
+    resp = send_file(cached, mimetype="image/png", conditional=True)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+def _api_render_rendercore(rel_id: str, path: Path, w: int):
+    """候选后端下的 `/api/render`：`rendercore.preview.PreviewCache`（键 = 内容身份 + 后端 build +
+    PDFium 版本 + 字体政策 + 像素参数；键与渲染绑在同一份抄出来的字节上；同键去重；临时发布 + Windows 退让；
+    零字节重建；异常抛出）。上面那三段（键 / 写 / 发布）在这条路上由它替掉；`source_sha1` 的 memo 不收编
+    （身份本来就要读一遍字节）。
+
+    render child 的有界队列满了是**背压**不是故障：回 503 + `Retry-After`，前端按既有的图片重试
+    走；别的 child 错误（超时 / 崩溃 / 打不开）回 500 并带稳定 code。
+    """
+    from .rendercore import facade as rc_facade, preview as rc_preview
+
+    cache = rc_facade.preview_cache(CACHE_DIR, max_bytes=RENDER_CACHE_MAX_BYTES)
+    try:
+        cached = cache.get(rel_id, path, w)
+    except rc_preview.PreviewError as exc:
+        if exc.code == "render_queue_full":
+            resp = jsonify({"error": str(exc), "code": exc.code})
+            resp.status_code = 503
+            resp.headers["Retry-After"] = "1"
+            return resp
+        LOG.error("预览渲染失败 %s: %s", rel_id, exc)
+        return jsonify({"error": str(exc), "code": exc.code}), 500
     resp = send_file(cached, mimetype="image/png", conditional=True)
     resp.headers["Cache-Control"] = "no-cache"
     return resp
@@ -984,14 +1014,31 @@ def _serialize_figure(
     `eps_needs_script`）；runtime 素材解析不到由 `_engine_worker` 直接 404。
     `sink` 收 worker 的 warnings（哪些 override 没写进去），前缀是面板 id。
     """
+    rendered = _serialize_figure_with_worker(rel_id, overrides, fmt, dpi, sink, out_dir)
+    return rendered[0] if rendered is not None else None
+
+
+def _serialize_figure_with_worker(
+    rel_id: str,
+    overrides: list,
+    fmt: str,
+    dpi: int,
+    sink: list | None = None,
+    out_dir: Path | None = None,
+) -> tuple[Path, object, str] | None:
+    """`_serialize_figure` 的本体：多回 `(路径, worker-like, 脚本)`——候选后端的执行侧源解析器要拿
+    worker 装配回执（`engine/receipt`），旧调用方只取路径。"""
     if engine_runtimeasset.is_runtime_id(rel_id):
         worker, stem = _engine_worker(rel_id)
+        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        script = str(info["script"]) if info else ""
     else:
         path = safe_resolve(rel_id)
         info = current_registry().for_stem(path.stem)
         if info is None:
             return None
         stem = path.stem
+        script = str(info["script"])
         worker = _safe_worker(info["script"], info["entry"], stem)
     tmp = _panel_render_target(worker, stem, out_dir, fmt)
     resp = worker.export(stem, overrides, str(tmp), fmt, dpi)
@@ -1000,7 +1047,59 @@ def _serialize_figure(
             msg = f"{rel_id}: {w}"
             if msg not in sink:
                 sink.append(msg)
-    return tmp
+    return tmp, worker, script
+
+
+def _execution_receipt(worker, script: str):
+    """worker-like → 回执：池里的 worker 用它自己的账本（`receipt.from_worker`），native 会话按描述符
+    元数据重建（`receipt.from_native_session`）。两半缺一半就是 `partial`，不补不猜。"""
+    if engine_enginesession.is_native(worker):
+        return engine_receipt.from_native_session(worker, script)
+    resp = {
+        "descriptors": list(getattr(worker, "last_build_descriptors", None) or []),
+        "runtime": getattr(worker, "last_build_runtime", None),
+    }
+    return engine_receipt.from_worker(
+        worker, resp, control_plane=engine_pool.control_plane_of(worker), grant=None
+    )
+
+
+def _execution_source(obj: dict, dpi: int, sink: list | None, out_dir: Path | None):
+    """候选后端的执行侧源：带 override / runtime 素材的面板 → 当次权威 worker 现画的 PDF +
+    **回执**（`origin=execution`，`receipt_id` / `receipt_identity` / `patch_hash` 进 RenderPlan 的
+    资源身份）。「谁来渲染」仍只有 `_serialize_figure_with_worker` 这一扇门。
+
+    没有脚本的磁盘面板带着 override 走到这里 = 画不出用户看到的那张图：抛 `source_needs_execution`
+    而不是退回磁盘原件（那是「拿旧文件冒充本次执行」，RC-017）。
+    """
+    from .rendercore import sources as rc_sources
+
+    rel_id = str(obj.get("id", ""))
+    overrides = obj.get("overrides") or []
+    try:
+        rendered = _serialize_figure_with_worker(rel_id, overrides, "pdf", dpi, sink, out_dir)
+    except engine_pool.WorkerError as exc:
+        LOG.error("导出失败: %s 重渲染出错: %s", rel_id, exc)
+        raise engine_exportreq.ExportRequestError(
+            "export_render_failed",
+            f"{rel_id} 重渲染失败: {exc}",
+            {"id": rel_id, "reason": str(exc)},
+        ) from exc
+    if rendered is None:
+        raise rc_sources.SourceError(
+            "source_needs_execution",
+            f"{rel_id}：带 override 但注册表里没有它的脚本，画不出画布上的那张图",
+            {"figure": rel_id},
+        )
+    path, worker, script = rendered
+    rcpt = _execution_receipt(worker, script)
+    art = engine_receipt.source_artifact_for(
+        rcpt,
+        path,
+        source_id=rel_id,
+        patch_hash=engine_patchspec.patch_hash(overrides),
+    )
+    return rc_sources.FrozenSource(artifact=art, path=Path(path))
 
 
 def _panel_render_target(worker, stem: str, out_dir: Path | None, fmt: str = "pdf") -> Path:
@@ -1260,9 +1359,38 @@ def _produce_original_eps(job, src, dpi: int, tmp_dir: Path):
     )
 
 
+def _export_produce_rendercore(job, tmp_dir: Path) -> list:
+    """`scope=canvas` 在候选后端下的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08，ADR 0067）。
+
+    作业生命周期一字不改（仍是 `exportjob.run`）；这里只把三样东西接进去：执行侧源解析器（带
+    override / runtime 素材由当次 worker 现画并附回执，磁盘原件不跑脚本）、进程级字体注册表、
+    进程级 render child。中间文件全在这次作业自己的 `tmp_dir`（多实例互不串源）。
+    """
+    from .rendercore import facade as rc_facade, job as rc_job, sources as rc_sources
+
+    dpi = job.request.ppi or engine_exportreq.PPI_DEFAULT
+
+    class _StaticInProject:
+        """项目根在**第一个面板**要解析时才问（`require_project()`）：只有文字 / 形状的画布不需要
+        项目——与旧路 `safe_resolve` 只在碰面板时才要项目同一语义。"""
+
+        def resolve(self, obj: dict):
+            return rc_sources.StaticSourceResolver(require_project()).resolve(obj)
+
+    resolver = rc_sources.ExecutionSourceResolver(
+        static=_StaticInProject(),
+        execute=lambda obj: _execution_source(obj, dpi, job.warnings, tmp_dir),
+    )
+    return rc_job.produce(
+        job, tmp_dir, sources=resolver, provider=rc_facade.provider(), host=rc_facade.host()
+    )
+
+
 def _export_produce(job, tmp_dir: Path) -> list:
     if job.request.scope == engine_exportreq.SCOPE_ORIGINAL:
         return _export_produce_original(job, tmp_dir)
+    if pdfbackend.selected() == pdfbackend.BACKEND_RENDERCORE:
+        return _export_produce_rendercore(job, tmp_dir)
     return _export_produce_canvas(job, tmp_dir)
 
 
@@ -1865,6 +1993,11 @@ def reset_projects(wait: bool = False) -> None:
     engine_nativesession.REGISTRY.shutdown_all()
     if wait:
         engine_pool.shutdown_all(wait=True)  # 兜底：不属于任何项目的残留
+        # 候选后端的 render child 是应用运行时的一部分（ADR 0066）：关应用时一并收掉并 reap；
+        # 没起过就是 no-op（纯标准库模块，import 不拉起任何候选包）
+        from .rendercore import renderhost as rc_renderhost
+
+        rc_renderhost.shutdown_shared()
 
 
 def _refresh_sink(ctx: "ProjectCtx") -> engine_refresh.RefreshSink:

@@ -328,6 +328,11 @@
       "sha256": "7f2a0dbc0daac93a5c26fee5ae52d662e1191807c8cf92e6544d25586744c158"
     },
     {
+      "path": "evidence/u08/parity.json",
+      "bytes": 3605,
+      "sha256": "208970d717cbebef13a59a272e2244ddf93f36aa4afa8ebd8b4b7cc838f2152d"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -386,6 +391,11 @@
       "path": "handoffs/U07_compose_raster.md",
       "bytes": 25399,
       "sha256": "db3e7ec98afbc91b058b511df1785279e83386525bf0dc9a777ac61b45479c53"
+    },
+    {
+      "path": "handoffs/U08_facade_parity.md",
+      "bytes": 18780,
+      "sha256": "987f5494b56dbad44354515cf5d22472acc84b8c9a5aa8bca76cdca2343f7054"
     },
     {
       "path": "phase_mapping.json",

@@ -95,3 +95,6 @@ web/dist-playground/
 # 的资产，必须随代码走。
 /tests/acceptance/corpus/*.pdf
 /tests/acceptance/corpus/*.png
+
+# U08 对拍的中间产物（结论在 parity.json 里；XML / log 只在本机排查用）
+docs/implementation/tavotto-foundation/evidence/u08/parity-junit.xml
