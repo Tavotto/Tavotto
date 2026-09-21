@@ -353,12 +353,19 @@ def _decl_dirs(figures_dir: str | Path, script: str | None) -> list[Path]:
 
 
 def _read_text(path: Path) -> str:
+    """旧安装路径的读法：读不了 / 太大一律当空（那条路的失败绝不阻断渲染）。"""
+    text, _problem = _read_declaration(path)
+    return text or ""
+
+
+def _read_declaration(path: Path) -> tuple[str | None, str]:
+    """无损读法用的：回 `(文本, "")` 或 `(None, 原因)`——读不了不是「没有依赖」。"""
     try:
         if path.stat().st_size > MAX_DECL_BYTES:
-            return ""
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
+            return None, f"超过 {MAX_DECL_BYTES} 字节"
+        return path.read_text(encoding="utf-8", errors="replace"), ""
+    except OSError as exc:
+        return None, str(exc)[:200]
 
 
 def parse_requirements_text(text: str) -> dict[str, str]:
@@ -525,6 +532,7 @@ UNSUPPORTED_MANAGER_LOCK = "manager_lock"  # pixi / conda / poetry.lock（X01）
 UNSUPPORTED_TOML_PARSER = "toml_parser_unavailable"  # 3.10 且没有 tomllib / tomli
 UNSUPPORTED_TOML_INVALID = "toml_invalid"  # pyproject / PEP 723 块解析失败
 UNSUPPORTED_ENV_VARIABLE = "environment_variable"  # `${TOKEN}` 展开（pip 特性，不做）
+UNSUPPORTED_UNREADABLE = "unreadable"  # 声明文件读不了 / 超过 MAX_DECL_BYTES（不是「没有依赖」）
 UNSUPPORTED_REASONS = (
     UNSUPPORTED_DIRECT_URL,
     UNSUPPORTED_EDITABLE,
@@ -540,6 +548,7 @@ UNSUPPORTED_REASONS = (
     UNSUPPORTED_TOML_PARSER,
     UNSUPPORTED_TOML_INVALID,
     UNSUPPORTED_ENV_VARIABLE,
+    UNSUPPORTED_UNREADABLE,
 )
 
 CONSTRAINTS_NAME = "constraints.txt"
@@ -995,7 +1004,7 @@ class _Walk:
         self.root = root
         self.root_real = root.resolve(strict=False)
         self.files = 0
-        self.seen: set[str] = set()
+        self.seen: set[tuple[str, str, str]] = set()
 
     def rel(self, path: Path) -> str:
         try:
@@ -1023,11 +1032,16 @@ def _read_declaration_file(
     """
     key = os.path.normcase(str(path.resolve(strict=False)))
     source = walk.rel(path)
-    if key in walk.seen:
-        return []  # 同一次 walk 里同一个文件只读一次（两处 -r 同一份约束是常态，不是环）
-    walk.seen.add(key)
+    if (key, group, kind) in walk.seen:
+        # 同一次 walk 里同一个文件在**同一组、同一 kind** 下只读一次（菱形 include：a -r c、
+        # b -r c 是常态，不是环）。换一个组或换成约束再 include 它是另一件事——那份条目要归
+        # 新的组 / 变成约束（Codex #459 P1），所以键是三元组而不是文件本身。
+        return []
+    walk.seen.add((key, group, kind))
     walk.files += 1
-    text = _read_text(path)
+    text, why = _read_declaration(path)
+    if text is None:
+        return [_unsupported(source, UNSUPPORTED_UNREADABLE, group=group, source=source)]
     out: list[DependencyIntent] = []
     for line in _logical_lines(text):
         body = line.split("#", 1)[0].strip()
@@ -1088,7 +1102,16 @@ def declared_intents(figures_dir: str | Path, script: str | None = None) -> list
         try:
             script_path = root / script
             if walk.inside(script_path) and script_path.is_file():
-                out += pep723_intents(_read_text(script_path), source=Path(script).as_posix())
+                text, why = _read_declaration(script_path)
+                rel = Path(script).as_posix()
+                if text is None:
+                    out.append(
+                        _unsupported(
+                            rel, UNSUPPORTED_UNREADABLE, group=f"{GROUP_PEP723}:{rel}", source=rel
+                        )
+                    )
+                else:
+                    out += pep723_intents(text, source=rel)
         except OSError:
             pass
     for directory in _decl_dirs(figures_dir, script):
@@ -1135,8 +1158,18 @@ def declared_intents(figures_dir: str | Path, script: str | None = None) -> list
             try:
                 if path.name == PYPROJECT_NAME:
                     walk.files += 1
-                    text = _read_text(path)
-                    if text:
+                    text, why = _read_declaration(path)
+                    if text is None:
+                        rel = walk.rel(path)
+                        out.append(
+                            _unsupported(
+                                rel,
+                                UNSUPPORTED_UNREADABLE,
+                                group=f"{rel}:{GROUP_PYPROJECT_MAIN}",
+                                source=rel,
+                            )
+                        )
+                    elif text:
                         out += pyproject_intents(text, source=walk.rel(path))
                 else:
                     out += _read_declaration_file(
@@ -1230,17 +1263,23 @@ def _contradictions(specs: list[str], specifiers, version_mod) -> list[str]:
         return None
 
     def _bounds(ss):
+        """下界 / 上界各带「含不含端点」：`>=1` 与 `<=1` 交在一个点上，不是空（Codex #459 P2）。"""
         lo = hi = None
+        lo_inclusive = hi_inclusive = True
         for sp in ss:
             try:
                 v = version_mod.Version(sp.version.rstrip(".*"))
             except version_mod.InvalidVersion:
                 continue
             if sp.operator in (">=", ">"):
-                lo = max(lo, v) if lo else v
+                inclusive = sp.operator == ">="
+                if lo is None or v > lo or (v == lo and not inclusive):
+                    lo, lo_inclusive = v, inclusive
             elif sp.operator in ("<=", "<"):
-                hi = min(hi, v) if hi else v
-        return lo, hi
+                inclusive = sp.operator == "<="
+                if hi is None or v < hi or (v == hi and not inclusive):
+                    hi, hi_inclusive = v, inclusive
+        return lo, hi, lo_inclusive and hi_inclusive
 
     for i, (sa, a) in enumerate(parsed):
         for sb, b in parsed[i + 1 :]:
@@ -1252,8 +1291,8 @@ def _contradictions(specs: list[str], specifiers, version_mod) -> list[str]:
             elif pb and not a.contains(pb, prereleases=True):
                 reasons.append(f"{sb} 钉住的版本不满足 {sa}")
             else:
-                lo, hi = _bounds(specifiers.SpecifierSet(f"{sa},{sb}"))
-                if lo is not None and hi is not None and lo >= hi:
+                lo, hi, closed = _bounds(specifiers.SpecifierSet(f"{sa},{sb}"))
+                if lo is not None and hi is not None and (lo > hi or (lo == hi and not closed)):
                     reasons.append(f"{sa} 与 {sb} 的区间为空")
     return reasons
 

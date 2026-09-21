@@ -40,15 +40,15 @@ import**：Flask 侧「纯标准库」那条边界（`process-boundaries.md`）�
 旧安装路径（`parse_requirement` 的窄语法、`resolve()`、单包 `create_plan`）**一个字节不用它**。
 
 `DependencyIntent` 的 kind 由三档变四档：`requirement` / `constraint` / `unknown`（认不出）/ **`unsupported`**（认得出、
-Tavotto 不替用户做）+ 闭集 `reason`（`depresolve.UNSUPPORTED_REASONS`，14 条：直接 URL / VCS、`-e`、本地路径 / 归档、
+Tavotto 不替用户做）+ 闭集 `reason`（`depresolve.UNSUPPORTED_REASONS`，15 条：直接 URL / VCS、`-e`、本地路径 / 归档、
 选项行、每需求选项（`--hash` 认）、include 缺失 / 越界 / 环 / 超限、Poetry 约束、管理器锁文件、TOML 解析器缺席、
-TOML 坏、环境变量展开）。两档都保留原文、都**不是空依赖**。
+TOML 坏、环境变量展开、声明文件读不了 / 超过上限）。两档都保留原文、都**不是空依赖**。
 
 读法的范围（各自按元数据规范，不多认）：
 
 | 来源 | 认什么 | 不认（→ unsupported） |
 |---|---|---|
-| `requirements*.txt`、`requirements/*.txt` | PEP 508 全形、`--hash=`、续行、注释；`-r` / `-c` **在项目根内**有界跟进（同一次 walk 最多 `MAX_DECL_FILES` 个文件；被 include 的条目归引用它的组） | 选项行、`-e`、URL / 路径、`${VAR}`；include 缺失 / 越界（含软链接跳出）/ 环 / 超限各是一条 unsupported **留在原位** |
+| `requirements*.txt`、`requirements/*.txt` | PEP 508 全形、`--hash=`、续行、注释；`-r` / `-c` **在项目根内**有界跟进（同一次 walk 最多 `MAX_DECL_FILES` 个文件；被 include 的条目归引用它的组；同一文件在**同一组、同一 kind** 下只读一次，换组 / 换成约束再 include 是另一份条目） | 选项行、`-e`、URL / 路径、`${VAR}`；include 缺失 / 越界（含软链接跳出）/ 环 / 超限各是一条 unsupported **留在原位**；读不了 / 超过 `MAX_DECL_BYTES` 的声明文件是 `unreadable`（不是空） |
 | `constraints.txt`、`-c` 引到的 | 同上，`kind=constraint`（永远生效，不分组） | 同上 |
 | `pyproject.toml` | `[project.dependencies]`、`[project.optional-dependencies.<名>]`、`[dependency-groups.<名>]`（PEP 735，`include-group` 展开到外层组，环 / 缺失 / 超限各一条）、`[tool.poetry.dependencies]` 里 **PEP 440 形态**的字符串（`"2.13.0"` = `==2.13.0`、`">=1,<2"`、`"~=1.4"`、`"*"`） | Poetry 的 `^` / `~` / 表 / 列表（不翻译）；3.10 且没有 `tomllib` / `tomli` → 整份记 `toml_parser_unavailable`（**不是没有依赖**） |
 | 脚本自己的 PEP 723 块 | `dependencies`；组名 `pep723:<脚本>` | 多个块 / 坏 TOML → `toml_invalid` |
@@ -115,7 +115,8 @@ ADR 0019 §十「不做静态扫描后批量安装」据此修订为：**不做�
   （只列，不装）；`unknown` = 无条件 import 却映射不到的名字（只列，不装）。
 * **hash 模式**：任一条选中声明带 `--hash` 就是锁文件语义——整份选中集合就是闭包，全部 `--require-hashes` 装；
   有一条没 hash → `dependency_hashes_incomplete`（pip 的判据，提前说出来）。
-* **状态**闭集：`nothing_needed` / `ready` / `blocked`。blocked 的理由闭集四条，每条对应用户能做的下一步，
+* **状态**闭集：`nothing_needed` / `ready` / `blocked`——**blocked 优先**：选中的声明不完整时哪怕什么都不缺也是
+  blocked（`missing` 为空只说明不用装）。blocked 的理由闭集四条，每条对应用户能做的下一步，
   **都不会「剥掉认不出的那行偷偷继续」**（FO-029 / FO-033）：
 
   | code | 含义 | 用户的下一步 |

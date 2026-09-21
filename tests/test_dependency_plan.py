@@ -217,6 +217,38 @@ class TestBoundedIncludes:
         intents = depresolve.declared_intents(tmp_path)
         assert _kinds(intents) == [(R, "", "six", "six")]
 
+    def test_the_same_file_included_as_another_group_or_as_a_constraint_counts_again(
+        self, tmp_path
+    ):
+        """Codex #459 P1：`requirements.txt -r common.txt` 之后 `constraints.txt -c common.txt`
+        （或另一组再 include）不能因为「读过了」就少掉——那是另一组的条目 / 另一种 kind。"""
+        _write(tmp_path, "requirements.txt", "-r common.txt\n")
+        _write(tmp_path, "requirements-dev.txt", "-r common.txt\n")
+        _write(tmp_path, "constraints.txt", "-c common.txt\n")
+        _write(tmp_path, "common.txt", "six==1.17.0\n")
+        intents = depresolve.declared_intents(tmp_path)
+        assert [(i.kind, i.group, i.source) for i in intents] == [
+            (R, "requirements.txt", "common.txt"),
+            (R, "requirements-dev.txt", "common.txt"),
+            (C, "constraints.txt", "common.txt"),
+        ]
+
+    def test_unreadable_or_oversized_declaration_files_are_unsupported_not_empty(
+        self, tmp_path, monkeypatch
+    ):
+        """Codex #459 P2：读不了 / 超过上限的声明文件不是「没有依赖」。"""
+        _write(tmp_path, "requirements.txt", "-r big.txt\nsix\n")
+        _write(tmp_path, "big.txt", "x" * 64)
+        _write(tmp_path, "pyproject.toml", "[project]\ndependencies = ['six']\n")
+        monkeypatch.setattr(depresolve, "MAX_DECL_BYTES", 32)
+        intents = depresolve.declared_intents(tmp_path)
+        assert _kinds(intents) == [
+            (U, "unreadable", "", "big.txt"),
+            (R, "", "six", "six"),
+            (U, "unreadable", "", "pyproject.toml"),
+        ]
+        assert intents[2].group == "pyproject.toml:project.dependencies"
+
 
 class TestPyprojectAndPep723:
     def test_dependency_groups_with_include_group_are_expanded_into_the_outer_group(self, tmp_path):
@@ -366,6 +398,9 @@ class TestConflicts:
             ("six>=1", "six<3", False),
             ("six>=1.16", "six!=1.17", False),
             ("six==1.*", "six==1.2", False),  # 通配 pin 不判（交给安装器）
+            ("six>=1", "six<=1", False),  # 闭区间的单点交集不是空（Codex #459 P2）
+            ("six>=1", "six<1", True),
+            ("six>1", "six<=1", True),
         ],
     )
     def test_only_definite_contradictions_are_reported(self, a, b, expect):
@@ -724,6 +759,15 @@ class TestPlan:
         assert plan.blocked[0]["declarations"][0]["reason"] == "editable_install"
         # 不会「把认不出的那行剥掉偷偷继续」：requirements 仍算好了，但 status 不是 ready
         assert plan.requirements == ("six",) and not plan.actionable
+
+    def test_blocked_wins_even_when_nothing_is_missing(self, tmp_path):
+        """Codex #459 P2：什么都不缺也不能把选中的 `-e .` 咽下去——计划不完整就是 blocked。"""
+        proj = self._project(tmp_path, "import six\n", "six\n-e .\n")
+        plan = depplan.plan(
+            proj, "plot.py", facts=_facts({"six": "1.17.0"}), target_kind="tavotto_managed"
+        )
+        assert plan.status == "blocked" and plan.missing == ()
+        assert plan.blocked[0]["code"] == "dependency_declaration_unsupported"
 
     def test_unsupported_in_an_unselected_group_does_not_block(self, tmp_path):
         proj = self._project(
