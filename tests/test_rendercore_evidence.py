@@ -188,3 +188,101 @@ def test_coverage_table_has_no_fallback_layer_and_records_the_known_limits():
     assert 0xAC00 not in cjk and 0x4E00 in cjk and 0x3042 in cjk and 0x2103 in cjk
     assert 0x03B1 in prim and 0x2075 in prim and 0x207B not in prim and 0x207B not in cjk
     assert diff["drawable"]["lost"] > 10_000 and diff["layers"]["primary"]["gained"] > 1000
+
+
+# ================================================================ U07：合成 + 栅格的 evidence（ADR 0065 / 0066）
+#
+# 同一条纪律：进了 git 的 `evidence/u07/` 此刻的字节 vs 手写的 truth 与 report 互钉的 hash。u07.pdf 由写入器出（三平台
+# 应逐字节相同），u07_pdfium.png 是 macOS arm64 的 render child 基线（跨平台像素不同、同平台可复现——其它平台的
+# sha256 由 foundation-u06-rendercore.yml 记进工件，不在这里判）。TIFF 不进 git：report 记它的解码像素 sha256 与
+# PNG 解码像素相同（RC-053），这里用纯标准库把 PNG 解回来核那个数。
+#
+# enrollment 台账里 RenderBench 实例 `U07-R1`（observing）指向 `test_u07_evidence_is_current`。
+
+EVIDENCE7 = ROOT / "docs" / "implementation" / "tavotto-foundation" / "evidence" / "u07"
+TRUTH7 = json.loads((EVIDENCE7 / "truth.json").read_text(encoding="utf-8"))
+REPORT7 = json.loads((EVIDENCE7 / "report.json").read_text(encoding="utf-8"))
+PDF7 = (EVIDENCE7 / "u07.pdf").read_bytes()
+PNG7 = (EVIDENCE7 / "u07_pdfium.png").read_bytes()
+
+
+def test_u07_evidence_is_current():
+    """report 说的就是磁盘上这几份文件；30 条核对全 ok；truth / allowlist 的 hash 互钉。"""
+    assert REPORT7["all_ok"] is True and REPORT7["kind"] == "u07_compose_raster_evidence"
+    assert all(c["ok"] for c in REPORT7["checks"]) and len(REPORT7["checks"]) >= 30
+    assert REPORT7["outputs"]["u07.pdf"]["sha256"] == hashlib.sha256(PDF7).hexdigest()
+    assert REPORT7["outputs"]["u07_pdfium.png"]["sha256"] == hashlib.sha256(PNG7).hexdigest()
+    assert (
+        REPORT7["inputs"]["truth_sha256"]
+        == hashlib.sha256((EVIDENCE7 / "truth.json").read_bytes()).hexdigest()
+    )
+    allow = ROOT / "src" / "tavotto" / "rendercore" / "fonts_allowlist.json"
+    assert REPORT7["inputs"]["allowlist_sha256"] == hashlib.sha256(allow.read_bytes()).hexdigest()
+    fixture = ROOT / "tests" / "fixtures" / "foundation" / "pdf_png_assets"
+    for name in ("page.pdf", "original.png"):
+        assert (
+            REPORT7["inputs"]["sources"][f"figs/{name}"]
+            == hashlib.sha256((fixture / name).read_bytes()).hexdigest()
+        )
+
+
+def test_u07_pdf_has_one_form_per_source_page_and_no_actions():
+    objs = pdfread.objects(PDF7)
+    forms = [h for h, _ in objs.values() if b"/Subtype /Form" in h and b"/Group" not in h]
+    groups = [h for h, _ in objs.values() if b"/Subtype /Form" in h and b"/Group" in h]
+    images = [h for h, _ in objs.values() if b"/Subtype /Image" in h]
+    assert len(forms) == TRUTH7["expect"]["forms"]
+    assert len(groups) == TRUTH7["expect"]["transparency_groups"]
+    # 文件里的 Image XObject：自己放的位图（RGB + 它的 /SMask 各一个流）+ 两个源里各一个 /X1；没有整页位图
+    smasks = [h for h in images if b"/DeviceGray" in h]
+    assert len(images) == TRUTH7["expect"]["image_objects_total"] + len(smasks) and len(smasks) == 1
+    for needle in (b"/JavaScript", b"/OpenAction", b"/Annots"):
+        assert needle not in PDF7, needle
+    head, _ = pdfread.page(objs)
+    w_mm, h_mm = TRUTH7["page"]["w_mm"], TRUTH7["page"]["h_mm"]
+    assert pdfread.media_box(head) == pytest.approx([0, 0, w_mm * MM, h_mm * MM], abs=1e-3)
+
+
+def test_u07_png_decodes_to_the_pixels_the_tiff_had():
+    """RC-053：PNG 与 TIFF 出自同一个 RasterBuffer。TIFF 不进 git，但 report 记了它解码像素的 sha256——纯标准库
+    把 PNG 解回来算出的必须是同一个数；白底是 RGB 三通道。"""
+    w, h, bpp, samples = pdfread.decode_png_any(PNG7)
+    facts = REPORT7["raster_facts"]
+    assert (w, h, bpp) == (facts["width"], facts["height"], facts["channels"]) and bpp == 3
+    assert (
+        hashlib.sha256(samples).hexdigest()
+        == REPORT7["outputs"]["u07.tiff(not committed)"]["pixel_sha256"]
+    )
+    ppi = REPORT7["raster_facts"]["dpi"]
+    assert (w, h) == (
+        round(TRUTH7["page"]["w_mm"] * MM * ppi / 72),
+        round(TRUTH7["page"]["h_mm"] * MM * ppi / 72),
+    )
+
+
+@pytest.mark.parametrize("smp", TRUTH7["samples"], ids=[s["id"] for s in TRUTH7["samples"]])
+def test_u07_pixel_samples_match_the_hand_computed_colors(smp):
+    """采样点由 truth 手算（源点 → 可见框 → 目标框），这里只做像素查表——不调 placement。"""
+    w, h, bpp, samples = pdfread.decode_png_any(PNG7)
+    ppi = REPORT7["raster_facts"]["dpi"]
+    H = TRUTH7["page"]["h_mm"] * MM
+    x, y = int(smp["x_pt"] * ppi / 72), int((H - smp["y_pt"]) * ppi / 72)
+    got = tuple(samples[(y * w + x) * bpp : (y * w + x) * bpp + bpp])
+    tol = smp.get("tol", 6)
+    assert all(abs(a - b) <= tol for a, b in zip(got, smp["rgba"])), (smp["id"], got, smp["rgba"])
+
+
+def test_u07_freeze_report_says_the_frozen_child_started_itself():
+    """本机（macOS arm64）的最小 freeze 报告：冻结 exe 以 --render-child 自起、libpdfium 与 13 张字体在包里、真渲染。
+    其它平台的报告由 workflow 每腿写进工件，不进 git。"""
+    reports = sorted((EVIDENCE7 / "freeze").glob("report-*.json"))
+    assert reports, "至少要有本机那一份 freeze 报告"
+    for path in reports:
+        r = json.loads(path.read_text(encoding="utf-8"))
+        assert r["all_ok"] is True, path.name
+        checks = {c["check"]: c["ok"] for c in r["checks"]}
+        assert (
+            checks["child_is_the_same_exe_with_render_child_flag"]
+            and checks["pdfium_library_bundled"]
+        )
+        assert checks["fonts_bundled_13"] and checks["png_rendered"]

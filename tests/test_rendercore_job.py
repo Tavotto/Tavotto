@@ -76,19 +76,39 @@ def _text(text="Hello 图 ∇", **kw) -> dict:
     }
 
 
-def _run(job: exportjob.ExportJob, project: Path, provider) -> dict:
+@pytest.fixture(scope="module")
+def host(tmp_path_factory):
+    """真 render child（rc-venv 里有 pypdfium2）：PNG / TIFF 从 Canonical PDF 栅格（U07，ADR 0066）。"""
+    import importlib.util
+    import os
+
+    if importlib.util.find_spec("pypdfium2") is None:
+        pytest.skip("pypdfium2 未装（not_run）")
+    from tavotto.rendercore import renderhost
+
+    env = dict(os.environ)
+    root = Path(__file__).resolve().parent.parent
+    env["PYTHONPATH"] = os.pathsep.join([str(root / "src"), env.get("PYTHONPATH", "")])
+    h = renderhost.RenderHost(
+        env=env, default_timeout=60, scratch_dir=tmp_path_factory.mktemp("rgba")
+    )
+    yield h
+    h.close()
+
+
+def _run(job: exportjob.ExportJob, project: Path, provider, host=None) -> dict:
     from tavotto.rendercore import job as rcjob
 
     def produce(j, tmp_dir):
         return rcjob.produce(
-            j, tmp_dir, sources=sources.StaticSourceResolver(project), provider=provider
+            j, tmp_dir, sources=sources.StaticSourceResolver(project), provider=provider, host=host
         )
 
     return exportjob.run(job, produce)
 
 
-def test_a_text_only_canvas_exports_a_vector_pdf_and_reports_png_as_not_yet_supported(
-    project, provider, tmp_path
+def test_a_text_only_canvas_exports_a_vector_pdf_and_a_png_from_the_same_canonical_pdf(
+    project, provider, host, tmp_path
 ):
     export_dir = tmp_path / "out"
     job = exportjob.prepare(
@@ -109,16 +129,18 @@ def test_a_text_only_canvas_exports_a_vector_pdf_and_reports_png_as_not_yet_supp
         ),
         export_dir,
     )
-    payload = _run(job, project, provider)
-    assert payload["status"] == "partial", payload
+    payload = _run(job, project, provider, host)
+    assert payload["status"] == "done", payload
     by_fmt = {o["format"]: o for o in payload["outputs"]}
     pdf = by_fmt["pdf"]
     assert pdf["status"] == "done" and pdf["vector"] is True and pdf["name"] == "Fig 1.pdf"
     assert (export_dir / "Fig 1.pdf").read_bytes()[:5] == b"%PDF-"
     assert pdf["dimensions"]["mm"] == [120.0, 60.0]
     png = by_fmt["png"]
-    assert png["status"] == "failed" and png["error"]["code"] == "format_failed"
-    assert any(g["operation"] == "text" for g in png["error"]["params"]["unsupported"])
+    assert png["status"] == "done" and png["vector"] is False and png["name"] == "Fig 1.png"
+    # 600 ppi（缺省）：120×60 mm → round(2834.6) × round(1417.3)
+    assert png["dimensions"]["px"] == [2835, 1417] and png["dimensions"]["mm"] == [120.0, 60.0]
+    assert (export_dir / "Fig 1.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
     # 编译期事实进 warnings：图 / ∇ 由 CJK 脸画、hidden 对象被丢；没有静默
     assert "t1: cjk_face 图∇" in payload["warnings"] and "h: hidden" in payload["warnings"]
     assert not any(p.name.startswith(exportjob.TMP_PREFIX) for p in export_dir.iterdir())
@@ -394,23 +416,30 @@ def test_a_panel_with_overrides_is_refused_without_running_anything(project, pro
     assert "source_needs_execution" in payload["error"]["params"]["reason"]
 
 
-def test_a_page_with_no_operations_still_refuses_non_pdf_formats(project, provider, tmp_path):
-    """全 hidden 的透明页：能力表上没有任何操作可判、缺口为空，但 PNG 仍然只有 U07 才给得出——
-    不能把 PDF 字节写进 .png 报成功（Codex #460 P2）。PDF 那一项照常（空页是合法产物）。"""
+def test_a_page_with_no_operations_rasterizes_to_blank_bitmaps_and_refuses_eps(
+    project, provider, host, tmp_path
+):
+    """全 hidden 的透明页：能力表上没有任何操作可判、缺口为空——U06 时 PNG 只能 format_failed（Codex #460 P2：
+    不把 PDF 字节写进 .png 报成功），U07 起 PNG / TIFF 是真的从 Canonical PDF 栅格出来的**空**位图（合法产物，
+    RGBA 全 0）；EPS 仍没有写入器，逐项 format_failed 且理由是结构化的。PDF 那一项照常。"""
     export_dir = tmp_path / "out"
     job = exportjob.prepare(
-        _spec([_text(hidden=True)], formats=("pdf", "png", "tiff"), background="transparent"),
+        _spec(
+            [_text(hidden=True)], formats=("pdf", "png", "tiff", "eps"), background="transparent"
+        ),
         export_dir,
     )
-    payload = _run(job, project, provider)
+    payload = _run(job, project, provider, host)
     assert payload["status"] == "partial", payload
     by_fmt = {o["format"]: o for o in payload["outputs"]}
     assert by_fmt["pdf"]["status"] == "done" and by_fmt["pdf"]["vector"] is True
     for fmt in ("png", "tiff"):
-        assert by_fmt[fmt]["status"] == "failed", fmt
-        assert by_fmt[fmt]["error"]["code"] == "format_failed"
-        assert by_fmt[fmt]["error"]["params"]["unsupported"][0]["operation"] == "format"
-        assert not (export_dir / f"Fig 1.{fmt}").exists()
+        assert by_fmt[fmt]["status"] == "done" and by_fmt[fmt]["vector"] is False, fmt
+        assert (export_dir / f"Fig 1.{fmt}").stat().st_size > 0
+    assert by_fmt["eps"]["status"] == "failed"
+    assert by_fmt["eps"]["error"]["code"] == "format_failed"
+    assert by_fmt["eps"]["error"]["params"]["unsupported"][0]["operation"] == "format"
+    assert not (export_dir / "Fig 1.eps").exists()
     assert (export_dir / "Fig 1.pdf").read_bytes()[:5] == b"%PDF-"
 
 

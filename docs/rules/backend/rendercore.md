@@ -1,6 +1,6 @@
-# RenderCore：Render IR、RenderPlan、字体政策、可检索文字与合成（统一实施包 U06 / U07，ADR 0059 / 0060 / 0065）
+# RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成与栅格（统一实施包 U06 / U07，ADR 0059 / 0060 / 0065 / 0066）
 
-> 2026-09-20 随 U06 新增，2026-09-21 随 U07 加合成一节；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
+> 2026-09-20 随 U06 新增，2026-09-21 随 U07 加合成与栅格两节；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
 > 表里（`rendercore/` 那一行）。这里是这一主题规则的**唯一全文**；速查表只留一行。
 > 改规则改这里，并同步那一行。
 
@@ -8,7 +8,8 @@
   两层 + 层规则，`tests/test_rendercore_model.py` 钉外部名字）：纯模型（`ir` / `geometry` /
   `typography` / `fonts` / `sources` / `plan` / `placement` / `raster`）**只许标准库**与仓库里
   同样纯标准库的模块；候选包（pikepdf / fontTools / uharfbuzz / pypdfium2 / Pillow）只在 native 适配层
-  （`hbshaper` / `pdfwriter` / `rasterio`）的函数 / 类里 import；**整包零 `import pymupdf`**，也没有边进
+  （`hbshaper` / `pdfwriter` / `rasterio`）的函数 / 类里 import，PDFium **只在 `renderchild.child_main()` 里**（父进程
+  import `renderchild` / `renderhost` / `preview` 不拉起任何候选包，`tests/test_rendercore_model.py` 钉着）；**整包零 `import pymupdf`**，也没有边进
   `pdfbackend` / worker 侧，反方向同样不许（D03：新核心不借旧库，旧后端不认识新核心，U08 之前
   两边不接）。往纯模型里加一个第三方 import 的正确做法是把那段挪进适配层，不是给守卫开口子。
 - **IR 就是 PDF 空间**：pt、左下原点、y 向上；矩阵行向量与 `cm` 同形；`Group` 先 `transform`
@@ -67,11 +68,33 @@
   加密 / 坏文件 / 缺页以 `source_unreadable` 拒绝（RC-046），不画空框。
 - **位图源经 `rasterio.decode()`（Pillow，U07 起是 `rendercore` extra 的直接依赖）成 `RasterBuffer`**：8 bit RGB / RGBA、
   紧凑 stride、**alpha 一律 straight**（Pillow 报 `RGBa` / `La` 的预乘图先反预乘，不许静默丢 alpha）；写成 DeviceRGB Image XObject + /SMask；8 bit RGB / 灰度 JPEG 原字节直通 `/DCTDecode`。
-  像素网格不变，缩放只在 `cm` 里。`raster.RasterBuffer` 是本包里一块像素的唯一形状（栅格输出也用它，U07 第二切片的 ADR）。
+  像素网格不变，缩放只在 `cm` 里。`raster.RasterBuffer` 是本包里一块像素的唯一形状（栅格输出也用它，ADR 0066）。
 - **写入器再核一次字节身份**：`files`（`job` 里是 `sources.read_frozen()` 核过 hash 的那一份）交进来的每份字节按 sha256
   与 `FileResource.sha256` 比，不符 `source_identity`、没交 `source_bytes_missing`——与 `read_frozen()` 是有意的两道（RC-014）。
+- **native（PDFium）调用只在 render child 里，父进程一把锁串行**（ADR 0066，`renderchild.py` / `renderhost.py`）：probe /
+  render / inspect 三种 op 都经 `RenderHost`（一个进程一个 child，`renderhost.shared()`；有界等待队列 `max_waiting`，
+  满了立刻 `render_queue_full`——背压不堆积）；像素预算**父子两侧都判**；每请求带 deadline，到点 kill → `wait()` reap →
+  本次 `render_child_timeout` → 下一次自动重启；child 崩溃 / 外杀 → `render_child_died` → 下一次重启；`close()` 之后
+  一定 reap。child 里 doc / page / bitmap 在 `finally` 关，像素在关之前复制成 `bytes`——`RasterBuffer` 不共享 native
+  句柄。`RLIMIT_AS` 只在 Linux 生效（macOS 内核不强制、Windows 无 resource），像素预算是那两处唯一护栏——不假装。
+  child 是应用运行时的一部分，绝不装进用户的科学环境；冻结产物里同一个 exe 以 `--render-child` 再起自己
+  （`renderchild.child_argv()`；配方 `scripts/dev/u07_freeze_child.py`，产品打包 / 签名归 U10 / U11）。
+- **PNG 与 TIFF 从同一个 `RasterBuffer` 编码，RasterBuffer 只从 Canonical PDF 来**（RC-052 / RC-053）：`job.produce`
+  一定把 PDF 写进作业临时目录（要没要都写），要了 PNG / TIFF 就把它交给 child 按 `ppi` 栅格**一次**，`raster.encode_png`
+  与 `raster.write_tiff`（复用 ADR 0046 的纯标准库 `tiffwrite.py`）吃同一份 `samples`；白底 RGB、透明底 RGBA
+  （straight alpha，PNG 色型 6 / TIFF `ExtraSamples = 2` 同义）；尺寸 = `round(pt·ppi/72)`，报出去的就是 buffer 的尺寸；
+  dpi 未知不写（不编一个数）。同一 buffer 的两个文件规范解码后像素**必须逐个相同**（精确，03 §6）；跨 renderer 只比
+  几何再比固定读取器的图像，按 case 记阈值、不自动位移对齐（`tests/test_rendercore_calibration.py`）。child 起不来 /
+  超时 → PNG / TIFF 各自 `format_failed` 带 `raster_code`，PDF 照常；PDF 没写出来 → 位图无从栅格，不拿旧文件冒充。
+- **预览缓存的键是内容身份，不是 mtime**（`rendercore/preview.py`，RC-061）：`sha1(源 id | 内容 sha256 | 宽 | 背景 |
+  rendercore 名-版本 | PDFium 版本 | 字体政策版本)`——换 build / 换字体集合旧预览不命中；同键并发只渲染一次（每键一把锁、
+  锁表封顶）；临时文件（.png 后缀）+ `os.replace`、Windows 撞读者句柄退让、零字节重建；**异常抛出**，不返回空白图 /
+  旧图。U07 不接 `app.py`（`/api/render` 仍走 PyMuPDF），U08 换线时把 `app.py` 那三段与 `source_sha1` 的 memo 收编到这里。
+- **PDFium 的 PNG 跨平台像素不同、同平台可复现**（ADR 0055 §7）：`evidence/u07/u07_pdfium.png` 是 macOS arm64 基线，
+  `foundation-u06-rendercore.yml` 三平台只记各自的 sha256、**不判相等**；判的是 `u07.pdf` 逐字节相同与 truth 里的像素
+  采样点；pdftotext 一律显式 `-enc UTF-8`（U06 的教训）。
 - **接 ExportJob 只给 `produce`**（`rendercore/job.py`）：作业生命周期一字不改；给不出的格式逐项 `format_failed`
-  且 `error.params.unsupported` 带操作与理由，写入器的 `UnsupportedCapability` 也落到这一档；编译期事实
-  （缺字 / cjk 脸 / hidden）进 `job.warnings`；冻结源在写入前 `read_frozen()`。U06 里 `app.py` 不 import 它。
+  且 `error.params.unsupported` 带操作与理由，写入器的 `WriterError` 与 child 的 `RenderChildError` 也落到这一档；
+  编译期事实（缺字 / cjk 脸 / hidden）进 `job.warnings`；冻结源在写入前 `read_frozen()`。U06 / U07 里 `app.py` 不 import 它。
 - **不切默认**：PyMuPDF 仍是默认后端，本包在 U06 不接任何用户可见入口；facade 19 项与 Canvas 面
   的迁移在 U08（`docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.md` 逐项）。
