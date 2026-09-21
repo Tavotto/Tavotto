@@ -55,7 +55,7 @@ def render(ledger: dict) -> str:
     ]
     for e in ledger["exports"]:
         callers = (
-            "<br>".join(f"`{c['file']}:{c['line']}` · `{c['function']}`" for c in e["callers"])
+            "<br>".join(f"`{c['file']}:{c['line']}` · `{c['symbol']}`" for c in e["callers"])
             or "（无产品调用方）"
         )
         tests = (
@@ -103,9 +103,7 @@ def render(ledger: dict) -> str:
         "|---|---|---|---|",
     ]
     for m in cm["methods"]:
-        callers = "<br>".join(
-            f"`{c['file']}:{c['line']}` · `{c['function']}`" for c in m["callers"]
-        )
+        callers = "<br>".join(f"`{c['file']}:{c['line']}` · `{c['symbol']}`" for c in m["callers"])
         lines.append(f"| `{m['name']}` | `{m['signature']}` | {callers} | {cell(m['role'])} |")
     lines += ["", f"迁移判据：{cm['migration_criterion']}"]
     if cm.get("migration_evidence"):

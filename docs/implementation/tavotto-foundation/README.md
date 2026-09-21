@@ -29,6 +29,32 @@ render_spike（ADR 0055：PDFium 栅格 + pikepdf/fontTools/HarfBuzz 受限 emit
 离线 wheel，坏 hash / 无网负例）。证据在 [`evidence/u02/`](evidence/u02/)，spike 代码在 `scripts/dev/u02_spikes/`
 （不进产品 import 图，候选包只在独立 venv）。交接见 [`handoffs/U02_spikes.md`](handoffs/U02_spikes.md)。
 
+U03 已于 2026-09-20 执行（`implementation_status: done`——PR A 后端编排 + 场景用例，PR B 确认交互（前端对话框 /
+三档设置 / i18n / MCP 投影）；产品资格仍 `not_run`）：解释器选择前移（项目 venv 首开发现 + 体检 + 记住，显式选择失效不静默替换）、
+cwd 三分的生产者（`project_root` 第三档 + 首开按静态证据问一次）、safe worker 经 `bridgeboot` 私有包（#447）、
+静态扫描的问题分类与目标解释器解析（ADR 0057）。六条首开场景经真实 HTTP 入口提到 `enforced`
+（FO01 / FO02 / FO03 / FO07 / FO15 / FO19），四条 `observing`。交接见 [`handoffs/U03_first_open.md`](handoffs/U03_first_open.md)。
+
+U04 已于 2026-09-21 执行（`implementation_status: done`——三个叠栈 PR：A 无损解析 + import 分类 + 联合计划，B 受管环境按代的
+事务与联合安装，C 跑前的门 + HTTP / MCP / 前端一次授权 + 场景；产品资格仍 `not_run`）：依赖声明的无损读法交给 `packaging`
+（PEP 508 / 440、有界 `-r` / `-c`、PEP 723 / 735、`unsupported` 闭集）、按 import 上下文分类「需要」、按目标解释器求 marker 的
+联合计划；受管环境按代（最终目录里建、验完切 active、旧代留到没人用）、一个事务四条路；起会话前的依赖门（一直问到有答案：授权或
+明确 skip）、`/api/engine/dependencies/*`、`DependencyPrepareDialog`、`tavotto_open_figure(prepare_dependencies=)`。ADR 0061
+（安装器裁决：pip 留在 U04，uv 经同一事务在 U05 接入）。FO20 / FO21 / FO22 / FO27 / FO31 经真实 HTTP 入口提到 `enforced`
+（目标 = 项目自带 venv 变体），FO18 / FO05 `observing`（nightly，联网）。交接见
+[`handoffs/U04_dependencies.md`](handoffs/U04_dependencies.md)。
+
+U05 于 2026-09-21 开始执行（`implementation_status: in_progress`；产品资格仍 `not_run`，五个目标 `enabled` 全 false）：PR A
+把受管环境**基础解释器的来源**补上——包内锁文件 `resources/private_python_lock.json`（pbs install_only，两个 macOS 目标与
+`runtime-lock.json` 同源）+ `engine/privatepython.py`（按内容命名的不可变目录、校验先于一切执行、离线三档、并发去重、按消费者
+取消、有代记着就不退役），接进 U04 的代事务（计划上明示 `private_python` 载荷才下载；安装器仍是 pip，uv 不进产品）；ADR 0063。
+PR C 接了目标验证腿（`private-python-targets.yml`：三平台真 pbs 经产品代码走完整链、Linux 空镜像、Windows 注册表快照；ADR 0064
+把证据分成机制 / 工程 / 目标三档，FO23 → observing）；PR B 接了入口（干净机器上以私有 Python 为目标算第一份计划——替身事实、
+供应后重算；一次授权里把「先下载 N MB」说出口；FO24 / FO25 / FO26 经产品 HTTP 入口 → enforced）。`implementation_status: done`；
+**无系统 Python 的资格仍未取得**（五个目标 `enabled` 全 false，第三档在 U11）。交接见
+[`handoffs/U05_private_python.md`](handoffs/U05_private_python.md)。
+
+
 U06 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）：RenderCore 的第一个
 产品切片——纯模型层 `src/tavotto/rendercore/`（Render IR / RenderPlan 编译 / 排版 / 字体注册表，只许标准库，
 ADR 0059）+ 字体政策与可检索文字写入（allowlist 逐字节钉住的 Liberation + Noto Sans SC，pikepdf/fontTools/HarfBuzz
@@ -60,6 +86,7 @@ Canvas 面）之间选一个，选定即定、不静默回退；产品导出路�
 证据在 [`evidence/u08/`](evidence/u08/)；enrollment 加 `U08-R1`（observing）；facade 19 项在
 [`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 全部有 U08 迁移证据。交接见
 [`handoffs/U08_facade_parity.md`](handoffs/U08_facade_parity.md)。
+
 
 ## 从哪里开始
 

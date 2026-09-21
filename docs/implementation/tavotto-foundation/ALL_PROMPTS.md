@@ -45,6 +45,46 @@
 
 详细原审计：`6a1a9dea5d27b1724c4aab11e38d9fb808d2a89e`。本次采样 main：`8b95256c0d08a14bfcfc4c81358894ef01168933`。二者不同；最新提交没有被全面重新审计，U00 必须以实施时的实际 checkout 更新差异和基线。
 
+## 前置：ci-foundation 已完成（2026-09-16）
+
+先执行 ci-foundation 的 CI00；`ci_hosted_ready` 后进入 U00，`runner_pool_ready` 可以随后完成。CI00 与 U00 只读清点可并行。
+——2026-09-16 状态：`ci_hosted_ready: pass`（基于七个 PR 的 full-ci 实测，合入 main 后用第一个 merge_group run 复核，见 [`../ci-foundation/CI_HANDOFF.md`](../ci-foundation/CI_HANDOFF.md) §12）；`runner_pool_ready: not_run`（无部署权限，管理员操作表见 [`../ci-foundation/ADMIN_HANDOFF_RUNNER_POOL.md`](../ci-foundation/ADMIN_HANDOFF_RUNNER_POOL.md)）。U00 引用 `CI_HANDOFF.md`，不重做 CI 调查，不从别的 SHA 借产品资格。
+
+U00 已于 2026-09-20 执行（`plan.json` 里 `implementation_status: done`，产品资格仍 `not_run`）：产出见
+[`U00_BASELINE.md`](U00_BASELINE.md)、[`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md)、
+[`U00_CAPABILITY_INVENTORY.md`](U00_CAPABILITY_INVENTORY.md)、[`handoffs/U00_baseline.md`](handoffs/U00_baseline.md)。
+每个阶段的交接放 `handoffs/`。
+
+U01 已于 2026-09-20 执行（`implementation_status: done`，产品资格仍 `not_run`）：共同合同（ADR 0053）、
+异步准备接口、case enrollment 台账（[`enrollment.json`](enrollment.json) / [`ENROLLMENT.md`](ENROLLMENT.md)）、
+闭集校验器与 `invariants` job 的三步落点；唯一 enforced 的切片 `U01-S1` 经真实 HTTP 入口走完首开 → 导出
+（旧后端终点）。交接见 [`handoffs/U01_contracts.md`](handoffs/U01_contracts.md)。
+
+U03 已于 2026-09-20 执行（`implementation_status: done`——PR A 后端编排 + 场景用例，PR B 确认交互（前端对话框 /
+三档设置 / i18n / MCP 投影）；产品资格仍 `not_run`）：解释器选择前移（项目 venv 首开发现 + 体检 + 记住，显式选择失效不静默替换）、
+cwd 三分的生产者（`project_root` 第三档 + 首开按静态证据问一次）、safe worker 经 `bridgeboot` 私有包（#447）、
+静态扫描的问题分类与目标解释器解析（ADR 0057）。六条首开场景经真实 HTTP 入口提到 `enforced`
+（FO01 / FO02 / FO03 / FO07 / FO15 / FO19），四条 `observing`。交接见 [`handoffs/U03_first_open.md`](handoffs/U03_first_open.md)。
+
+U04 已于 2026-09-21 执行（`implementation_status: done`——三个叠栈 PR：A 无损解析 + import 分类 + 联合计划，B 受管环境按代的
+事务与联合安装，C 跑前的门 + HTTP / MCP / 前端一次授权 + 场景；产品资格仍 `not_run`）：依赖声明的无损读法交给 `packaging`
+（PEP 508 / 440、有界 `-r` / `-c`、PEP 723 / 735、`unsupported` 闭集）、按 import 上下文分类「需要」、按目标解释器求 marker 的
+联合计划；受管环境按代（最终目录里建、验完切 active、旧代留到没人用）、一个事务四条路；起会话前的依赖门（一直问到有答案：授权或
+明确 skip）、`/api/engine/dependencies/*`、`DependencyPrepareDialog`、`tavotto_open_figure(prepare_dependencies=)`。ADR 0061
+（安装器裁决：pip 留在 U04，uv 经同一事务在 U05 接入）。FO20 / FO21 / FO22 / FO27 / FO31 经真实 HTTP 入口提到 `enforced`
+（目标 = 项目自带 venv 变体），FO18 / FO05 `observing`（nightly，联网）。交接见
+[`handoffs/U04_dependencies.md`](handoffs/U04_dependencies.md)。
+
+U05 于 2026-09-21 开始执行（`implementation_status: in_progress`；产品资格仍 `not_run`，五个目标 `enabled` 全 false）：PR A
+把受管环境**基础解释器的来源**补上——包内锁文件 `resources/private_python_lock.json`（pbs install_only，两个 macOS 目标与
+`runtime-lock.json` 同源）+ `engine/privatepython.py`（按内容命名的不可变目录、校验先于一切执行、离线三档、并发去重、按消费者
+取消、有代记着就不退役），接进 U04 的代事务（计划上明示 `private_python` 载荷才下载；安装器仍是 pip，uv 不进产品）；ADR 0063。
+PR C 接了目标验证腿（`private-python-targets.yml`：三平台真 pbs 经产品代码走完整链、Linux 空镜像、Windows 注册表快照；ADR 0064
+把证据分成机制 / 工程 / 目标三档，FO23 → observing）；PR B 接了入口（干净机器上以私有 Python 为目标算第一份计划——替身事实、
+供应后重算；一次授权里把「先下载 N MB」说出口；FO24 / FO25 / FO26 经产品 HTTP 入口 → enforced）。`implementation_status: done`；
+**无系统 Python 的资格仍未取得**（五个目标 `enabled` 全 false，第三档在 U11）。交接见
+[`handoffs/U05_private_python.md`](handoffs/U05_private_python.md)。
+
 ## 从哪里开始
 
 先读 [执行总提示词](00_MASTER_PROMPT.md)、[范围与修改决策](01_SCOPE_AND_DECISIONS.md)、[路线图](02_ROADMAP.md) 和 [CI 生效政策](03_CI_POLICY.md)。随后只执行 [U00](phases/U00_baseline.md)，不要在第一步删除 PyMuPDF、更换根许可证或一次启用全部兼容门禁。
@@ -90,7 +130,7 @@ python -m unittest discover -s tools -p 'test_*.py' -v
 
 这两条只检查本任务书的来源、依赖图和映射，**不是 Tavotto CI，更不能证明兼容性或 PDF 渲染通过**。不要把本包固定12阶段/220来源的自检数量照搬成仓库永久required检查；实际产品runner与准入表在U01按当前代码建设。产品命令在U00确认，后续由各阶段新增。
 
-建议仓库落点：`docs/implementation/tavotto-foundation/`。不自动写回仓库或 Library。
+仓库落点：`docs/implementation/tavotto-foundation/`（U00 于 2026-09-20 入库；`tools/*.py` 只做了 ruff 的 import 排序与格式化，校验逻辑一字未改）。
 
 
 ---

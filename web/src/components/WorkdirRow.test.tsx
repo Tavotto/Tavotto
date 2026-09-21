@@ -1,7 +1,8 @@
 /**
- * 「在脚本目录里运行」开关（ADR 0047）。盯三件事：
- * ① 开启要先确认，取消则什么都不改；② 确认后只发 `mode`，成功把「没出图」的面板
- *   重新排上；③ 错误块里的建议只在沙盒模式下出现。
+ * 「脚本的运行目录」三档（ADR 0047 / 0057）。盯四件事：
+ * ① 切到真实目录（脚本目录 / 项目根）要先确认，取消则什么都不改；② 确认后只发 `mode`，
+ *   成功把「没出图」/「先选目录」的面板重新排上；③ 错误块里的建议只在沙盒模式下出现；
+ * ④ 老服务端只报两档时第三档不摆出来。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -29,7 +30,10 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const setMock = vi.mocked(setProjectWorkdir)
 const en = (key: string) => t(`engine.${key}`, { ns: 'errors' })
 
-const envWith = (mode: 'sandbox' | 'project'): EngineEnvironment =>
+const envWith = (
+  mode: 'sandbox' | 'project' | 'project_root',
+  modes: string[] = ['sandbox', 'project', 'project_root'],
+): EngineEnvironment =>
   ({
     ok: true,
     python: '/usr/bin/python3',
@@ -39,7 +43,7 @@ const envWith = (mode: 'sandbox' | 'project'): EngineEnvironment =>
     bundled: false,
     runtime: {} as never,
     state: 'idle',
-    project: { open: true, workdir: { mode, modes: ['sandbox', 'project'] } },
+    project: { open: true, workdir: { mode, modes } },
   }) as never
 
 let host: HTMLDivElement
@@ -54,7 +58,10 @@ async function render(node: React.ReactNode) {
   await act(async () => {})
 }
 const text = () => document.body.textContent ?? ''
-const switchEl = () => document.querySelector('[role="switch"]') as HTMLButtonElement | null
+const radios = () => [...document.querySelectorAll('[role="radio"]')] as HTMLButtonElement[]
+const radio = (mode: string) =>
+  document.querySelector(`[role="radio"][data-value="${mode}"]`) as HTMLButtonElement | null
+const checked = () => radios().find((r) => r.getAttribute('aria-checked') === 'true')?.dataset.value
 const answerConfirm = async (ok: boolean) => {
   const req = useUiStore.getState().confirm
   expect(req, '没有弹出确认框').toBeTruthy()
@@ -77,21 +84,39 @@ afterEach(async () => {
   await i18n.changeLanguage('zh-CN')
 })
 
-describe('在脚本目录里运行', () => {
-  it('开启要先确认；取消则什么都不改', async () => {
+describe('脚本的运行目录', () => {
+  it('三档都在，当前档选中，切到脚本目录要先确认；取消则什么都不改', async () => {
     await render(<WorkdirRow />)
     expect(text()).toContain(en('workdirHintSandbox'))
-    await act(async () => switchEl()!.click())
+    expect(radios().map((r) => r.dataset.value)).toEqual(['sandbox', 'project', 'project_root'])
+    expect(checked()).toBe('sandbox')
+    await act(async () => radio('project')!.click())
     await answerConfirm(false)
     expect(setMock).not.toHaveBeenCalled()
-    expect(switchEl()!.getAttribute('aria-checked')).toBe('false')
+    expect(checked()).toBe('sandbox')
+  })
+
+  it('切到项目根也要确认，文案是项目根那一套', async () => {
+    await render(<WorkdirRow />)
+    await act(async () => radio('project_root')!.click())
+    const req = useUiStore.getState().confirm
+    expect(req).toBeTruthy()
+    expect(JSON.stringify(req)).toContain('workdirRootConfirmTitle')
+    await answerConfirm(false)
+    expect(setMock).not.toHaveBeenCalled()
+  })
+
+  it('老服务端只报两档时第三档不摆出来', async () => {
+    useEnvStore.setState({ env: envWith('sandbox', ['sandbox', 'project']) })
+    await render(<WorkdirRow />)
+    expect(radios().map((r) => r.dataset.value)).toEqual(['sandbox', 'project'])
   })
 
   it('确认后只发 mode，成功后把「没出图」的面板重新排上', async () => {
     setMock.mockResolvedValue({
       ok: true,
       workdir: { mode: 'project', modes: [] },
-      project: { open: true, workdir: { mode: 'project', modes: [] } },
+      project: { open: true, workdir: { mode: 'project', modes: ['sandbox', 'project', 'project_root'] } },
     } as never)
     useRenderStore.setState({
       byKey: {
@@ -104,23 +129,24 @@ describe('在脚本目录里运行', () => {
       tracked: {},
     })
     await render(<WorkdirRow />)
-    await act(async () => switchEl()!.click())
+    await act(async () => radio('project')!.click())
     await answerConfirm(true)
     expect(setMock).toHaveBeenCalledWith('project')
-    expect(switchEl()!.getAttribute('aria-checked')).toBe('true')
+    expect(checked()).toBe('project')
     expect(text()).toContain(en('workdirHintProject'))
     expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true)
   })
 
-  it('关闭不用确认', async () => {
-    useEnvStore.setState({ env: envWith('project') })
+  it('切回沙盒不用确认', async () => {
+    useEnvStore.setState({ env: envWith('project_root') })
     setMock.mockResolvedValue({
       ok: true,
       workdir: { mode: 'sandbox', modes: [] },
-      project: { open: true, workdir: { mode: 'sandbox', modes: [] } },
+      project: { open: true, workdir: { mode: 'sandbox', modes: ['sandbox', 'project', 'project_root'] } },
     } as never)
     await render(<WorkdirRow />)
-    await act(async () => switchEl()!.click())
+    expect(text()).toContain(en('workdirHintProjectRoot'))
+    await act(async () => radio('sandbox')!.click())
     await act(async () => {})
     expect(useUiStore.getState().confirm).toBeNull()
     expect(setMock).toHaveBeenCalledWith('sandbox')
@@ -158,6 +184,6 @@ describe('在脚本目录里运行', () => {
     await i18n.changeLanguage('en-US')
     await render(<WorkdirRow />)
     expect(text()).not.toMatch(/[一-鿿]/)
-    expect(text()).toContain("Run in the script's directory")
+    expect(text()).toContain('Project root')
   })
 })

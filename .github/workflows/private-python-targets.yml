@@ -1,0 +1,167 @@
+name: Private Python targets
+
+# 统一实施包 U05（ADR 0063 / 0064）：私有完整 Python 在**三个托管 runner 目标**上的工程证据——不是门禁、
+# 不进任何 Gate 的闭集、不是 required check、**不是** NO_SYSTEM_PYTHON 的资格（06 §2：资格只能来自真实无
+# 系统 Python 的目标 + 冻结产物 + 正常入口，那是 U11 的 release lane）。这里每条腿量的是 ADR 0064 三档里的
+# 第二档：
+#
+#   1. 真 pbs 归档经**产品代码**（`engine/privatepython.py` + U04 代事务）走完整链：公网下载（供应探活单列一步）
+#      → 整份 sha256 → 逐成员校验 → 真起 → venv → pip 装真 matplotlib / numpy（宿主先 `pip download` 成
+#      wheelhouse，装的时候离线）→ pip check → 关键 import → worker 自检 → 切 active → 独立出图
+#      （`tests/test_private_python_transaction.py::TestRealChain`；「没有基础解释器」= 发现链末端置空）；
+#   2. Linux：把供应好的 runtime 只读挂进一个**没有 Python 的空镜像**（`ubuntu:24.04`，`--network none`）里真起、
+#      建 venv、离线装、出图——证明这份 runtime 在只有 glibc 的目标上可用（先证明镜像里没有 python3 / pip / uv）；
+#   3. Windows：注册表（HKCU / HKLM 的 Software\Python）、PATH、USERPROFILE 顶层条目前后快照——产品不改它们的
+#      证据（FO-024 在 Windows 上唯一量得到的地方）。
+#
+# 任一步退出非零就红——红是真红，没有 continue-on-error；红不进 Gate，只进本 workflow 的结论与工件。
+# 触发：`workflow_dispatch`、**每周一次** schedule（三条腿各真下载 30–120 MB 的 pbs 归档 + Linux 拉镜像，每天跑
+# 太贵；与 nightly.yml 同一天的 UTC 18:00 错开到 19:37）、以及只在本能力自己的文件变动时的 `pull_request`
+# （paths 过滤：`gh workflow run` 只认默认分支上已登记的 workflow，PR 阶段要靠这一条拿到另两个目标的证据）。
+# 资格证据按周刷新；翻某个目标的 `enabled` 之前先手动 dispatch 一次拿当天的证据（ADR 0064 §四）。
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 19 * * 0"   # 每周日 UTC 19:37（nightly 是每天 UTC 18:00）
+  pull_request:
+    paths:
+      # 本 workflow 直接消费的每一份输入都在这里（Codex #467 两轮 P2）：改了任何一份就得在 PR 上跑一次。
+      # 真链（TestRealChain）走的是 U04 代事务，不只是 privatepython.py——事务链上的模块与它们的测试支持
+      # 一并列入，否则只改 deprepair.py / managedenv.py 的 PR 会把这条三平台真链弄坏而要等到周日才发现
+      - ".github/workflows/private-python-targets.yml"
+      - "scripts/ci/private_python_empty_image.sh"
+      - "scripts/ci/private_python_windows_snapshot.py"
+      - "scripts/ci/runtime_pins.py"
+      - "packaging/runtime-lock.json"
+      - "src/tavotto/engine/privatepython.py"
+      - "src/tavotto/engine/deprepair.py"
+      - "src/tavotto/engine/managedenv.py"
+      - "src/tavotto/engine/depplan.py"
+      - "src/tavotto/engine/depresolve.py"
+      - "src/tavotto/engine/envlease.py"
+      - "src/tavotto/engine/bootstrap.py"
+      - "src/tavotto/engine/projectenv.py"
+      - "src/tavotto/engine/importscan.py"
+      - "src/tavotto/engine/runtime.py"
+      - "src/tavotto/engine/config.py"
+      - "src/tavotto/resources/private_python_lock.json"
+      - "tests/test_private_python.py"
+      - "tests/test_private_python_transaction.py"
+      - "tests/test_private_python_windows_snapshot.py"
+      - "tests/support/private_python.py"
+      - "tests/support/dependency_repair.py"
+      - "tests/support/venvfixture.py"
+
+permissions:
+  contents: read
+
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+  TAVOTTO_NO_UPDATE_CHECK: "1"
+  PYTHONUTF8: "1"
+  # 工程逃生门（ADR 0063 §九）：让产品在 enabled=false 的目标上也提供这条路——这就是它存在的用途
+  TAVOTTO_PRIVATE_PYTHON: "1"
+  TAVOTTO_PRIVATE_PYTHON_REAL: "1"
+
+# 与 ci.yml 同一条纪律：cancel-in-progress 只对 PR 开；dispatch / schedule 的 run 各自是一次证据采集，排队不取消。
+concurrency:
+  group: private-python-targets-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  targets:
+    name: private python (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 路径
+        shell: bash
+        run: |
+          python - <<'EOF' >> "$GITHUB_ENV"
+          import os, pathlib
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          print("PP_DATA=" + str(tmp / "pp-data"))
+          print("PP_WHEELHOUSE=" + str(tmp / "pp-wheelhouse"))
+          print("PP_EVIDENCE=" + str(tmp / "pp-evidence"))
+          print("TAVOTTO_PRIVATE_PYTHON_DATA_DIR=" + str(tmp / "pp-data"))
+          print("TAVOTTO_PRIVATE_PYTHON_WHEELHOUSE=" + str(tmp / "pp-wheelhouse"))
+          print("TAVOTTO_PRIVATE_PYTHON_REPORT=" + str(tmp / "pp-evidence" / "real-chain.json"))
+          EOF
+          mkdir -p "$RUNNER_TEMP/pp-evidence"
+
+      - name: 装应用依赖 + 科学栈按锁文件钉版本（这是 worker 解释器：项目缺的是 fixture 包，不是 matplotlib）
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ci]"
+          # shellcheck disable=SC2046
+          pip install $(python scripts/ci/runtime_pins.py)
+          python -c "import sys, matplotlib; print(sys.version, matplotlib.__version__)"
+
+      - name: wheelhouse（宿主平台 cp313 的真 matplotlib / numpy wheel；私有 Python 与 runner 同平台同 minor）
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$PP_WHEELHOUSE"
+          # shellcheck disable=SC2046
+          pip download --only-binary=:all: --disable-pip-version-check -d "$PP_WHEELHOUSE" $(python scripts/ci/runtime_pins.py)
+          ls -1 "$PP_WHEELHOUSE"
+
+      - name: Windows 前快照（注册表 Software\Python、PATH、USERPROFILE 顶层）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:PP_EVIDENCE" | Out-Null
+          python scripts/ci/private_python_windows_snapshot.py "$env:PP_EVIDENCE\before.json"
+
+      - name: 真 pbs 归档经产品代码走完整链（公网供应探活单列在这一步：下载失败就红在这里）
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest tests/test_private_python_transaction.py -k TestRealChain \
+            -p no:cacheprovider -rs -q --junitxml="$PP_EVIDENCE/pytest-real-chain.xml"
+          test -f "$TAVOTTO_PRIVATE_PYTHON_REPORT"
+          cat "$TAVOTTO_PRIVATE_PYTHON_REPORT"
+
+      - name: Windows 后快照并比对（产品不改注册表 / PATH / USERPROFILE 顶层）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python scripts/ci/private_python_windows_snapshot.py "$env:PP_EVIDENCE\after.json"
+          python scripts/ci/private_python_windows_snapshot.py --diff "$env:PP_EVIDENCE\before.json" "$env:PP_EVIDENCE\after.json"
+
+      - name: Linux：供应好的 runtime 挂进没有 Python 的空镜像（ubuntu:24.04，--network none）
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          RT=$(python -c "import json,os; print(json.load(open(os.environ['TAVOTTO_PRIVATE_PYTHON_REPORT']))['runtime_dir'])")
+          REL=$(python -c "import json,os; print(json.load(open(os.environ['TAVOTTO_PRIVATE_PYTHON_REPORT']))['python_rel'])")
+          bash scripts/ci/private_python_empty_image.sh "$RT" "$REL" "$PP_WHEELHOUSE" "$PP_EVIDENCE/empty-image"
+
+      - name: 机制用例在本目标上跑一遍（本地供应服务 + 假归档；Windows 的替身是 venvlauncher 副本；真归档那条上面已经跑过，不再下第二次）
+        shell: bash
+        run: |
+          python -m pytest tests/test_private_python.py -p no:cacheprovider -rs -q \
+            -k "not TestRealArchive" \
+            --junitxml="$PP_EVIDENCE/pytest-mechanism.xml"
+
+      - name: 证据工件
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-python-${{ matrix.os }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pp-evidence
+          retention-days: 30
+          if-no-files-found: warn

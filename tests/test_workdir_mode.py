@@ -131,7 +131,13 @@ def test_the_switch_is_project_scoped_and_defaults_to_the_sandbox(tmp_path):
     assert workdir.mode_for(b) == workdir.MODE_SANDBOX
     assert engine_config.load().get("worker", {}).get("workdir") is None
     workdir.set_mode(a, workdir.MODE_SANDBOX)
+    # 切回沙盒：授权记录消失，但「决定过」留着（U03，首开确认框不再问）；`forget()` 才回到没决定
+    stored = engine_config.project_settings(str(a))[workdir.SETTINGS_KEY]
+    assert stored["mode"] == workdir.MODE_SANDBOX and workdir.GRANT_KEY not in stored
+    assert workdir.decided(a) is True
+    workdir.forget(a)
     assert workdir.SETTINGS_KEY not in engine_config.project_settings(str(a))
+    assert workdir.decided(a) is False
     with pytest.raises(ValueError):
         workdir.set_mode(a, "native")
     # 设置文件被手改坏：写入边界不许悄悄消失

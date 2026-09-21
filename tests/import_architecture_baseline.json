@@ -12,7 +12,7 @@
       "from": "tavotto/engine/bridgeboot.py",
       "call": "importlib.import_module(n)",
       "targets": [],
-      "reason": "通用装载器，名字由调用方 bridge_runner 给（_PHASE1 / _PHASE2）；边归属到 bridge_runner，见 extra_edges。"
+      "reason": "通用装载器，名字由调用方给：bridge_runner 的 _PHASE1 / _PHASE2 与 worker 的 _ENGINE_MODULES（issue #447 / FO19 起 safe worker 同一份装载器）；边归属到各调用方，见 extra_edges。"
     },
     {
       "from": "tavotto/engine/worker.py",
@@ -138,6 +138,108 @@
       "to": "tavotto/rendercore/facade.py",
       "scope": "function",
       "via": "_impl() → importlib.import_module(_IMPL_MODULES[name])"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/figcapture.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/patchspec.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/pathgeom.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/axestraversal.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/spinemodel.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/tickmodel.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/colorbarmodel.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/legendmodel.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/overrides.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/manifest.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/previewbudget.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/preview_complexity.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/preview_hybrid.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/figsession.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/wireproto.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/bridgeboot.py",
+      "scope": "module",
+      "via": "importlib.util.spec_from_file_location(..., bridgeboot.py)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/bridgeboot.py",
+      "scope": "module",
+      "via": "importlib.util.spec_from_file_location(..., bridgeboot.py)"
     }
   ],
   "cycles": [

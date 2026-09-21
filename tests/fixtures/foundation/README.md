@@ -1,6 +1,6 @@
 # U00 合成 fixture（统一实施包 · 基线）
 
-六组**全合成、小体积、进 git** 的项目夹具，服务 `docs/implementation/tavotto-foundation/`
+八组**全合成、小体积、进 git** 的项目夹具（前六组 U00 建，第七组 U03 加，第八组 U04 加），服务 `docs/implementation/tavotto-foundation/`
 的 U01–U09（FirstOpenBench / RenderBench / 联合依赖）。每组自带 `truth.json`：输入真值
 **不用产品代码就能校验**（`tests/test_foundation_fixtures.py`）。这些夹具在 U00 只被
 「真值测试」与「原生参考隔离测试」消费；**没有一条产品用例挂在它们上**（首开链路的
@@ -14,6 +14,9 @@
 | `project_venv/` | ④ 项目自带 `.venv`，基础解释器**与应用的不同**；`make_venv.py` 现建（不进 git、绝不 pip install） | n = 10k → [10, 20, 30]；解释器身份在回执与 stdout | `python make_venv.py --python <另一个 python> --app-python <应用的> [--link-host-site]`，再 `.venv/bin/python figure.py` |
 | `dependency_declarations/` | ⑤ 小型非内置依赖（six / tabulate / sortedcontainers）+ marker 为假 / extra / 约束冲突 / 未知本地模块 / 不存在的导入名 | 每条声明的期望处置在 `truth.json` | 不跑（声明样例；安装由 U04 用本地 wheel 离线做） |
 | `pdf_png_assets/` | ⑥ 一页 PDF（文字 + 图形 + α=0.5 透明 + 非对称页盒 CropBox [15 10 285 170] / MediaBox 300×200）+ 带 `pHYs` 300 dpi 与 `tEXt` 的 RGBA PNG + 一张没有 `pHYs` 的同图 | `truth.json`（页盒、内缩、文字、字体、alpha、PNG 尺寸 / 密度 / 文本块） | `python make_assets.py` 重生成，字节确定 |
+| `joint_dependencies/` | ⑧（U04）脚本开跑就要三个只存在于测试 wheelhouse 里的纯 Python 包（用例现造：`support.dependency_repair.build_wheel`）；`requirements.txt` 带 extra / 上界 / marker 为假，`requirements-train.txt` 是未选的组 | y = 42·x → [42, 84, 126]；装的 / 不装的各一张表 | 先把三个 wheel 装进一个 venv 再本目录 `python figure.py` → `figure.pdf` |
+| `private_python/` | ⑨（U05）干净机器：脚本要一个只存在于测试 wheelhouse 里的纯 Python 包，而这台机器没有任何可用的 Python（用例把发现链末端置空）——Tavotto 先按锁自备私有 Python，再建受管环境装它 | y = 42·x → [42, 84, 126]；标题 `u05 private python` | 把 wheel 装进一个 venv 再本目录 `python figure.py` → `figure.pdf` |
+| `shadowed_engine_modules/` | ⑦（U03）用户自己的 `manifest.py` / `overrides.py`（与引擎模块重名）+ 本地包 `lab_utils/`；脚本 `import manifest` 必须命中用户那份（issue #447 / FO19） | 标题 sentinel `user-manifest|user-overrides|user-lab_utils`；y = [3, 6, 12] | 本目录 `python figure.py` → `figure.pdf`，标题里三个 sentinel 齐全 |
 
 ## 纪律
 

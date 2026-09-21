@@ -2529,3 +2529,368 @@ def test_batch_params_are_declared_in_the_schema(batch_project):
     assert props["stems"]["type"] == "array" and props["stems"]["items"]["type"] == "string"
     assert props["discover_stems"]["type"] == "boolean"
     assert schema["additionalProperties"] is False
+
+
+# --------------------- U03：首开的「需要输入」与它的回答 -----------------------
+#
+# 桌面确认框、HTTP 的 `PATCH /api/engine/workdir`、MCP 的 `workdir=` 参数是**同一份**决定
+# （`engine/workdir.set_mode`，ADR 0057 §三）。这里盯 MCP 这一面：pool 抛出的
+# `workdir_confirmation_required` 要以结构化 `confirmation` + 可读的 `recovery` 回到 Codex，
+# `workdir=` 要真的写进项目设置并让下一次 open 不再撞门。
+
+
+def test_open_projects_the_workdir_confirmation_and_says_how_to_answer(project, monkeypatch):
+    from tavotto.engine import workdir
+
+    payload = {
+        "kind": "workdir",
+        "code": workdir.ERROR_CONFIRMATION_REQUIRED,
+        "script": "fig1.py",
+        "reason": workdir.REASON_PROJECT_ROOT_EVIDENCE,
+        "recommended": "project_root",
+        "options": [
+            {
+                "mode": "project_root",
+                "cwd_origin": "project.root",
+                "write_mode": "project_dir",
+                "found": ["data/x.csv"],
+                "recommended": True,
+            },
+            {
+                "mode": "project",
+                "cwd_origin": "script.parent",
+                "write_mode": "project_dir",
+                "found": [],
+                "recommended": False,
+            },
+            {
+                "mode": "sandbox",
+                "cwd_origin": "sandbox",
+                "write_mode": "sandboxed",
+                "found": [],
+                "recommended": False,
+            },
+        ],
+        "conflicts": [],
+        "reads": ["data/x.csv"],
+    }
+
+    def gate(*a, **k):
+        err = bridge.engine_pool.WorkerError("要先选目录", code=workdir.ERROR_CONFIRMATION_REQUIRED)
+        err.confirmation = payload
+        raise err
+
+    monkeypatch.setattr(bridge.engine_pool, "get", gate)
+    result = _call("tavotto_open_figure", {"project_path": str(project)})
+    assert result["isError"] is True
+    body = _body(result)
+    assert body["code"] == workdir.ERROR_CONFIRMATION_REQUIRED
+    assert body["confirmation"] == payload
+    # 给人 / 给 Codex 读的那份说得出下一步：带 workdir 再调一次；机器码不进 content
+    human = result["content"][0]["text"]
+    assert "workdir" in human and "project_root" in human
+    assert workdir.ERROR_CONFIRMATION_REQUIRED not in human
+    # 没有会话被登记（一张图都没开成）
+    assert bridge.sessions() == {}
+
+
+def test_open_with_workdir_records_the_decision_and_restarts_sessions(
+    project, fake_pool, monkeypatch
+):
+    from tavotto.engine import workdir
+
+    closed: list[str] = []
+    monkeypatch.setattr(
+        bridge.engine_pool, "shutdown_all", lambda root=None, wait=False: closed.append(root)
+    )
+    assert workdir.decided(project) is False
+    out = _body(
+        _call("tavotto_open_figure", {"project_path": str(project), "workdir": "project_root"})
+    )
+    assert out["ok"] is True
+    assert workdir.mode_for(project) == "project_root"
+    assert workdir.grant_for(project)["cwd_write"] == {
+        "granted": True,
+        "granted_at": workdir.grant_for(project)["cwd_write"]["granted_at"],
+        "mode": "project_root",
+    }
+    assert closed == [str(project)]  # 模式变了：旧会话关掉（cwd 是 spawn 时定的）
+    # 再开一次不带 workdir：决定记住了，同一模式，不再关会话
+    _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    assert closed == [str(project)]
+    # 选「继续沙盒」也是决定：模式没变，但 decided 为真，且没有授权
+    bridge.sessions().clear()
+    _body(_call("tavotto_open_figure", {"project_path": str(project), "workdir": "sandbox"}))
+    assert workdir.decided(project) is True
+    assert workdir.grant_for(project)["cwd_write"]["granted"] is False
+
+
+def test_batch_open_honours_workdir_before_opening_anything(project, fake_pool, monkeypatch):
+    """批量（stems / discover_stems）与单张同一处记账：带 workdir 的重试不能静默忽略，
+    而且非字符串在分派之前就被拒（Codex #456 P2）。"""
+    from tavotto.engine import workdir
+
+    closed: list[str] = []
+    monkeypatch.setattr(
+        bridge.engine_pool, "shutdown_all", lambda root=None, wait=False: closed.append(root)
+    )
+    out = _body(
+        _call(
+            "tavotto_open_figure",
+            {"project_path": str(project), "stems": ["Fig1"], "workdir": "project"},
+        )
+    )
+    assert out["status"] in ("done", "partial", "failed")
+    assert workdir.mode_for(project) == "project" and workdir.decided(project) is True
+    assert closed == [str(project)]
+    with pytest.raises(rpc.RpcError):
+        _call(
+            "tavotto_open_figure", {"project_path": str(project), "stems": ["Fig1"], "workdir": 3}
+        )
+
+
+def test_open_with_an_unknown_workdir_is_a_structured_error(project, fake_pool):
+    from tavotto.engine import workdir
+
+    result = _call("tavotto_open_figure", {"project_path": str(project), "workdir": "native"})
+    assert result["isError"] is True
+    assert _body(result)["code"] == workdir.ERROR_MODE_INVALID
+    assert workdir.decided(project) is False
+
+
+def test_an_unusable_explicit_interpreter_is_projected_with_its_reason(project, monkeypatch):
+    def broken(*a, **k):
+        err = bridge.engine_pool.WorkerError(
+            "用不了", code=bridge.engine_pool.EXPLICIT_UNUSABLE_CODE
+        )
+        err.explicit = {
+            "source": "configured",
+            "python": "/secret/venv/bin/python",
+            "reason": "no_matplotlib",
+        }
+        raise err
+
+    monkeypatch.setattr(bridge.engine_pool, "get", broken)
+    result = _call("tavotto_open_figure", {"project_path": str(project)})
+    body = _body(result)
+    assert body["code"] == bridge.engine_pool.EXPLICIT_UNUSABLE_CODE
+    assert body["explicit"] == {"source": "configured", "reason": "no_matplotlib"}
+    assert "/secret/venv" not in json.dumps(body["explicit"])  # 投影不带机器路径
+    assert "不会自动换成别的环境" in result["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# U04（ADR 0061）：跑前的依赖门在 MCP 这一面
+#
+# 桌面授权框、HTTP 的 `/api/engine/dependencies/plan` + `/prepare`、MCP 的 `prepare_dependencies=`
+# 是**同一份**决定（`deprepair.create_joint_plan` + `prepare`）。这里盯 MCP：pool 抛出的
+# `dependency_preparation_required` 要以结构化 `dependency_preparation` + 可读的 `recovery` 回到
+# Codex；`prepare_dependencies=` 要真的走同一个事务（这里替身掉执行，事务本身在
+# `tests/test_dependency_transaction.py` 真跑）；目标闭集；批量不接受。
+# ---------------------------------------------------------------------------
+def _dependency_offer() -> dict:
+    return {
+        "code": "dependency_preparation_required",
+        "script": "fig1.py",
+        "plan": {
+            "status": "ready",
+            "requirements": ["six==1.17.0", "tabulate[widechars]==0.9.0"],
+            "constraints": [],
+            "missing": [{"import_name": "six", "distribution": "six"}],
+            "unknown": ["zzz_private"],
+            "blocked": [],
+        },
+        "target_kind": "tavotto_managed",
+        "targets": [{"kind": "tavotto_managed", "available": True, "reason": ""}],
+        "rounds_remaining": 3,
+        "asked_before": False,
+    }
+
+
+def test_open_projects_the_dependency_preparation_and_says_how_to_answer(project, monkeypatch):
+    from tavotto.engine import deprepair
+
+    payload = _dependency_offer()
+
+    def gate(*a, **k):
+        err = bridge.engine_pool.WorkerError(
+            "要先准备依赖", code=deprepair.ERROR_PREPARATION_REQUIRED
+        )
+        err.dependency_preparation = payload
+        raise err
+
+    monkeypatch.setattr(bridge.engine_pool, "get", gate)
+    result = _call("tavotto_open_figure", {"project_path": str(project)})
+    assert result["isError"] is True
+    body = _body(result)
+    assert body["code"] == deprepair.ERROR_PREPARATION_REQUIRED
+    assert body["dependency_preparation"] == payload
+    human = result["content"][0]["text"]
+    assert "prepare_dependencies" in human and "tavotto_managed" in human
+    assert "six==1.17.0" in human and "zzz_private" in human  # 装什么 / 不装什么都说了
+    assert deprepair.ERROR_PREPARATION_REQUIRED not in human
+    assert bridge.sessions() == {}
+
+
+def test_open_on_a_clean_machine_says_the_download_out_loud(project, monkeypatch):
+    """U05：门带 `private_python` 段（这台机器没有可用的 Python）时，`recovery` 把「先下载 Python x（约 N MB）」
+    说出口；有缓存时说不联网；没有这一段一个字都不出现。"""
+    from tavotto.engine import deprepair
+
+    private = {
+        "id": "cpython-3.13.15-7d50bb42813a",
+        "version": "3.13.15",
+        "target": "macos-arm64",
+        "download_bytes": 25304407,
+        "source_host": "github.com",
+        "required": True,
+        "cached": False,
+        "network_required": True,
+    }
+
+    def _open_with(payload: dict) -> str:
+        def gate(*a, **k):
+            err = bridge.engine_pool.WorkerError(
+                "要先准备依赖", code=deprepair.ERROR_PREPARATION_REQUIRED
+            )
+            err.dependency_preparation = payload
+            raise err
+
+        monkeypatch.setattr(bridge.engine_pool, "get", gate)
+        result = _call("tavotto_open_figure", {"project_path": str(project)})
+        assert result["isError"] is True
+        assert _body(result)["dependency_preparation"] == payload
+        return result["content"][0]["text"]
+
+    human = _open_with({**_dependency_offer(), "private_python": private})
+    assert "3.13.15" in human and "约 24 MB" in human and "不改动系统与 PATH" in human
+    human = _open_with(
+        {
+            **_dependency_offer(),
+            "private_python": {
+                **private,
+                "cached": True,
+                "download_bytes": 0,
+                "network_required": False,
+            },
+        }
+    )
+    assert "不联网" in human and "MB" not in human
+    human = _open_with(_dependency_offer())
+    assert "Python 3.13.15" not in human and "MB" not in human
+    # 有渲染解释器、没有基础解释器：顶层没有这一段，下载只挂在受管目标上——选 tavotto_managed 才会下，
+    # 版本与体积同样要说出口（Codex #475 P2）
+    nested = {
+        **_dependency_offer(),
+        "targets": [
+            {"kind": "tavotto_managed", "available": True, "reason": "", "private_python": private}
+        ],
+    }
+    human = _open_with(nested)
+    assert "选择 tavotto_managed 时会先下载" in human and "3.13.15" in human and "约 24 MB" in human
+    assert "这台电脑没有可用的 Python" not in human
+    human = _open_with(
+        {
+            **nested,
+            "targets": [
+                {
+                    "kind": "tavotto_managed",
+                    "available": True,
+                    "reason": "",
+                    "private_python": {**private, "cached": True, "download_bytes": 0},
+                }
+            ],
+        }
+    )
+    assert "选择 tavotto_managed 时会先使用已下载" in human and "MB" not in human
+
+
+def test_open_with_prepare_dependencies_runs_the_same_transaction_then_opens(
+    project, fake_pool, monkeypatch
+):
+    """`prepare_dependencies=` = `create_joint_plan` + `prepare`（同一个事务，这里替身掉执行）；
+    装完接着开图，返回里带 `prepared`。"""
+    from tavotto.engine import deprepair
+
+    calls: list = []
+
+    class _Plan:
+        plan_id = "jp-1"
+        requirements = ("six==1.17.0",)
+
+    def _create(root, script, *, target_kind, groups=None):
+        calls.append(("create", script, target_kind))
+        return _Plan()
+
+    def _prepare(plan_id, on_event=None):
+        calls.append(("prepare", plan_id))
+        return {
+            "ok": True,
+            "target_kind": "tavotto_managed",
+            "generation": "gabc",
+            "installed": {"six": "1.17.0"},
+        }
+
+    monkeypatch.setattr(deprepair, "create_joint_plan", _create)
+    monkeypatch.setattr(deprepair, "prepare", _prepare)
+    out = _body(
+        _call(
+            "tavotto_open_figure",
+            {"project_path": str(project), "prepare_dependencies": "tavotto_managed"},
+        )
+    )
+    assert out["ok"] is True
+    assert calls == [("create", "fig1.py", "tavotto_managed"), ("prepare", "jp-1")]
+    assert out["prepared"] == {
+        "target_kind": "tavotto_managed",
+        "generation": "gabc",
+        "installed": {"six": "1.17.0"},
+        "requirements": ["six==1.17.0"],
+    }
+
+
+def test_prepare_dependencies_target_is_a_closed_set_and_failures_are_structured(
+    project, fake_pool, monkeypatch
+):
+    from tavotto.engine import deprepair
+
+    result = _call(
+        "tavotto_open_figure", {"project_path": str(project), "prepare_dependencies": "bundled"}
+    )
+    assert result["isError"] is True
+    assert _body(result)["code"] == "dependency_target_invalid"
+    # 计划 blocked：RepairError 带 joint → 结构化回去
+    joint = {"status": "blocked", "blocked": [{"code": "dependency_conflict"}]}
+
+    def _blocked(root, script, *, target_kind, groups=None):
+        raise deprepair.RepairError(deprepair.ERROR_PLAN_BLOCKED, "联合计划不可执行", joint=joint)
+
+    monkeypatch.setattr(deprepair, "create_joint_plan", _blocked)
+    result = _call(
+        "tavotto_open_figure",
+        {"project_path": str(project), "prepare_dependencies": "tavotto_managed"},
+    )
+    assert result["isError"] is True
+    body = _body(result)
+    assert body["code"] == deprepair.ERROR_PLAN_BLOCKED and body["joint"] == joint
+    # skip = 用户明确不准备、直接运行：记进门、不装、照常开图
+    skipped: list = []
+    monkeypatch.setattr(deprepair, "skip_preparation", lambda p, s: skipped.append((p, s)))
+    monkeypatch.setattr(deprepair, "prepare", lambda *a, **k: pytest.fail("skip 不该执行任何安装"))
+    out = _body(
+        _call("tavotto_open_figure", {"project_path": str(project), "prepare_dependencies": "skip"})
+    )
+    assert out["ok"] is True and out["prepared"]["target_kind"] == "skip"
+    assert skipped == [(str(project), "fig1.py")]
+    # 非字符串在分派之前就拒；批量不接受
+    with pytest.raises(rpc.RpcError):
+        _call("tavotto_open_figure", {"project_path": str(project), "prepare_dependencies": 3})
+    with pytest.raises(rpc.RpcError):
+        _call(
+            "tavotto_open_figure",
+            {
+                "project_path": str(project),
+                "stems": ["Fig1"],
+                "prepare_dependencies": "tavotto_managed",
+            },
+        )

@@ -120,6 +120,8 @@ export function seedEmbeddedSession(
         module: '',
       projectEnv: null,
       dependencyRepair: null,
+        confirmation: null,
+        dependencyPreparation: null,
         traceback: '',
         warnings: fig.warnings ?? [],
         timings: {},

@@ -26,6 +26,8 @@ import { CanvasHud, NotificationRail } from '@/components/StatusBar'
 import { TopBar } from '@/components/TopBar'
 import { UpdateBanner } from '@/components/UpdateBanner'
 import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
+import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
+import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useEngineSync } from '@/hooks/useEngineSync'
 import { useBuildVersion } from '@/hooks/useBuildVersion'
@@ -257,6 +259,10 @@ function Workspace() {
         <CommandPalette />
         <ShortcutHelp />
         <ConfirmDialog />
+        {/* 首开要先选运行目录（U03）：渲染 store 把后端的「需要输入」交到 envStore，这里渲染 */}
+        <WorkdirConfirmDialog />
+        {/* 跑前的依赖门（U04）：同一种「需要输入」，载荷在依赖修复 store 里，这里渲染 */}
+        <DependencyPrepareDialog />
         <CloseGuardDialog />
         {/* 新手教程的 coachmark 层：没有遮罩，只在教程进行中出现 */}
         <OnboardingLayer />

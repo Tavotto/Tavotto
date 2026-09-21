@@ -149,6 +149,29 @@ def _tools() -> list[dict]:
                             "想看逐条建议就调 tavotto_preflight）"
                         ),
                     },
+                    "workdir": {
+                        "type": "string",
+                        "enum": ["sandbox", "project", "project_root"],
+                        "description": (
+                            "脚本的运行目录（首开的那一次回答）。上一次 open 以 "
+                            "workdir_confirmation_required 回来时，按它 structuredContent 里的 "
+                            "confirmation.options 请用户选一档再传进来：sandbox（Tavotto 沙盒）/ "
+                            "project（脚本所在目录）/ project_root（项目根目录）。这个决定按项目"
+                            "记住，只问一次；不传就按已记住的决定走。"
+                        ),
+                    },
+                    "prepare_dependencies": {
+                        "type": "string",
+                        "enum": ["tavotto_managed", "project_venv", "skip"],
+                        "description": (
+                            "对跑前那一次「需要先准备依赖」的回答。上一次 open 以 "
+                            "dependency_preparation_required 回来时，按它 structuredContent 里的 "
+                            "dependency_preparation.plan（装什么）与 targets（装到哪）请用户授权，"
+                            "再传目标进来：tavotto_managed（Tavotto 自己的隔离环境，不改用户环境）/ "
+                            "project_venv（项目自己的 venv，会修改它）/ skip（用户明确不准备、直接运行）。"
+                            "安装是同步的（要联网、几十秒到几分钟），装完接着开图。不传 = 这道门继续问。"
+                        ),
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -451,7 +474,7 @@ def _sum_counts(into: dict, counts: dict) -> None:
         into[key] = into.get(key, 0) + int(value or 0)
 
 
-def _call_open_batch(target: str, args: dict, plan: dict) -> dict:
+def _call_open_batch(target: str, args: dict, plan: dict, *, workdir: str | None = None) -> dict:
     """一次调用打开 N 张图。**预检按 #102 第 4 条走：默认只回汇总与阻断项。**
 
     单图那一路每开一张已经只回一行计数了；批量再逐张展开就是把同一个噪声乘以
@@ -464,6 +487,7 @@ def _call_open_batch(target: str, args: dict, plan: dict) -> dict:
         discover=plan["discover"],
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        workdir=workdir,
     )
     detailed = bool(args.get("preflight"))
     total: dict = {}
@@ -557,15 +581,31 @@ def _call_open(args: dict) -> dict:
     target = args.get("project_path") or args.get("script_path")
     if not target:
         raise RpcError(INVALID_PARAMS, "要给 project_path 或 script_path 其中之一")
+    # `workdir` 在分派批量 / 单张**之前**校验：它是项目级的回答，两条路都要认（Codex #456 P2）
+    workdir = args.get("workdir")
+    if workdir is not None and not isinstance(workdir, str):
+        raise RpcError(INVALID_PARAMS, "workdir 必须是字符串（sandbox / project / project_root）")
+    prepare = args.get("prepare_dependencies")
+    if prepare is not None and not isinstance(prepare, str):
+        raise RpcError(
+            INVALID_PARAMS,
+            "prepare_dependencies 必须是字符串（tavotto_managed / project_venv / skip）",
+        )
     plan = _batch_request(args)
     if plan is not None:
-        return _call_open_batch(str(target), args, plan)
+        if prepare is not None:
+            raise RpcError(
+                INVALID_PARAMS, "prepare_dependencies 只对单张图有效：按脚本准备，一次一张"
+            )
+        return _call_open_batch(str(target), args, plan, workdir=workdir)
     out = bridge.open_figure(
         str(target),
         stem=args.get("stem"),
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
         include_png=bool(args.get("include_png")),
+        workdir=workdir,
+        prepare_dependencies=prepare,
     )
     # **打开与预检分离**（issue #102）：噪声在**给 agent 读的那段文字**里——
     # 每开一张图糊一屏重复的规范建议，还挤掉了 manifest 摘要那几行真正有用的东西。

@@ -1,14 +1,17 @@
 import { create } from 'zustand'
 import { t } from '@/i18n'
 import {
+  type DependencyPreparationOffer,
   fetchEngineEnvironment,
   installEngineEnvironment,
   setEngineEnvironment,
   setProjectEnvironment,
   setProjectWorkdir,
   type EngineEnvironment,
+  type WorkdirConfirmation,
   type WorkdirMode,
 } from '@/lib/api'
+import { currentProjectId } from '@/lib/session'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import { msg } from '@/i18n'
 
@@ -39,7 +42,29 @@ interface EnvState {
    * 守卫与 savefig 捕获不变。用户取消回 `null` 且什么都不改；失败回错误文案。
    * 成功后把「脚本跑完没出图」那些面板重新排上。
    */
-  setWorkdirMode: (mode: WorkdirMode) => Promise<string | null>
+  setWorkdirMode: (mode: WorkdirMode, opts?: { confirmed?: boolean }) => Promise<string | null>
+  /**
+   * 首开的那一次确认（U03，ADR 0057）：后端在起第一个 worker 之前判出「数据只有项目根
+   * 找得到」或「两处同名不同值」，渲染以 `workdir_confirmation_required` 回来——这不是
+   * 错误块，是一次选择。渲染 store 把载荷交到这里，`WorkdirConfirmDialog` 渲染它；
+   * 同一时刻只开一份（同一项目多张图同时撞上时后来的不覆盖先到的）。
+   */
+  workdirConfirmation: WorkdirConfirmation | null
+  /**
+   * `projectId` 是**发那次渲染时**的项目：渲染在途中用户切了项目，A 的失败回来时不许把 A 的
+   * 问题摆到 B 上（一点「运行」就把真实目录的授权给错项目，Codex #456 P1）——对不上就丢。
+   */
+  requestWorkdirConfirmation: (payload: WorkdirConfirmation, projectId?: string | null) => void
+  dismissWorkdirConfirmation: () => void
+  /**
+   * 跑前的那一次授权（U04，ADR 0061）：后端在起第一个 worker 之前判出「脚本开跑要的包目标环境
+   * 里没有、能一次装全」，渲染以 `dependency_preparation_required` 回来——同样不是错误块，是
+   * 一次授权。载荷放这里（与运行目录的确认同一个家），`DependencyPrepareDialog` 渲染它，执行
+   * 归 `depRepairStore.prepare`。同一时刻只开一份；换了项目的旧载荷不弹。
+   */
+  dependencyPreparation: DependencyPreparationOffer | null
+  requestDependencyPreparation: (offer: DependencyPreparationOffer, projectId?: string | null) => void
+  dismissDependencyPreparation: () => void
   /**
    * 换项目：`env.project`（项目环境 / 工作目录模式）属于旧项目，立刻清掉再按
    * 新项目重取。不清的话在请求回来之前，开关与错误块的建议说的都是上一个
@@ -54,6 +79,21 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   env: null,
   log: '',
   installing: false,
+  workdirConfirmation: null,
+  dependencyPreparation: null,
+
+  requestWorkdirConfirmation: (payload, projectId) => {
+    if (projectId !== undefined && projectId !== currentProjectId()) return
+    if (get().workdirConfirmation) return
+    set({ workdirConfirmation: payload })
+  },
+  dismissWorkdirConfirmation: () => set({ workdirConfirmation: null }),
+  requestDependencyPreparation: (offer, projectId) => {
+    if (projectId !== undefined && projectId !== currentProjectId()) return
+    if (get().dependencyPreparation) return
+    set({ dependencyPreparation: offer })
+  },
+  dismissDependencyPreparation: () => set({ dependencyPreparation: null }),
 
   refresh: async () => {
     try {
@@ -98,15 +138,27 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     }
   },
 
-  setWorkdirMode: async (mode) => {
+  setWorkdirMode: async (mode, opts) => {
     const current = get().env?.project?.workdir?.mode ?? 'sandbox'
-    if (mode === current) return null
-    if (mode === 'project') {
-      const ok = await askConfirm({
-        title: msg('engine.workdirConfirmTitle', undefined, 'errors'),
-        body: msg('engine.workdirConfirmBody', undefined, 'errors'),
-        confirmLabel: msg('engine.workdirConfirmOk', undefined, 'errors'),
-      })
+    // 「决定过」与「模式相同」是两件事：首开确认框里选「继续沙盒」时模式没变，但要把
+    // 这个决定记下来（否则下一张图又问一遍）——那时 `confirmed` 为真，照样发 PATCH
+    if (mode === current && !opts?.confirmed) return null
+    // 两个真实 cwd 模式都要点头一次（ADR 0047 / 0057）：文案与机制逐条一致。首开确认框
+    // 自己就是那一次点头（`confirmed`），不再弹第二层
+    if (mode !== 'sandbox' && !opts?.confirmed) {
+      const ok = await askConfirm(
+        mode === 'project_root'
+          ? {
+              title: msg('engine.workdirRootConfirmTitle', undefined, 'errors'),
+              body: msg('engine.workdirRootConfirmBody', undefined, 'errors'),
+              confirmLabel: msg('engine.workdirRootConfirmOk', undefined, 'errors'),
+            }
+          : {
+              title: msg('engine.workdirConfirmTitle', undefined, 'errors'),
+              body: msg('engine.workdirConfirmBody', undefined, 'errors'),
+              confirmLabel: msg('engine.workdirConfirmOk', undefined, 'errors'),
+            },
+      )
       if (!ok) return null
     }
     try {
@@ -114,12 +166,17 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       const env = get().env
       if (env) set({ env: { ...env, project: res.project } })
       else await get().refresh()
-      // 后端已经关掉了这个项目的会话；把因「没出图」失败的面板重新排上
+      set({ workdirConfirmation: null })
+      // 后端已经关掉了这个项目的会话；把因「没出图」/「要先选目录」失败的面板重新排上
       const { useRenderStore } = await import('@/store/renderStore')
       useRenderStore.getState().retryEnvironmentFailures()
-      useUiStore.getState().setStatus(
-        msg(mode === 'project' ? 'engine.workdirNowProject' : 'engine.workdirNowSandbox', undefined, 'errors'),
-      )
+      const now =
+        mode === 'project_root'
+          ? 'engine.workdirNowProjectRoot'
+          : mode === 'project'
+            ? 'engine.workdirNowProject'
+            : 'engine.workdirNowSandbox'
+      useUiStore.getState().setStatus(msg(now, undefined, 'errors'))
       return null
     } catch (e) {
       return e instanceof Error ? e.message : t('engine.setPythonFailed', { ns: 'errors' })
@@ -128,7 +185,14 @@ export const useEnvStore = create<EnvState>((set, get) => ({
 
   resetProject: () => {
     const env = get().env
-    if (env) set({ env: { ...env, project: { open: false } } })
+    // 首开确认框属于旧项目：A 项目问的问题不能由 B 项目回答
+    if (env)
+      set({
+        env: { ...env, project: { open: false } },
+        workdirConfirmation: null,
+        dependencyPreparation: null,
+      })
+    else set({ workdirConfirmation: null, dependencyPreparation: null })
     void get().refresh()
   },
 

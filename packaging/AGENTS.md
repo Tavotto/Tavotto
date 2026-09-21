@@ -120,6 +120,14 @@ Python，首次渲染也不联网：
 - **别把「借一个解释器」加回冒烟**：macOS 这条腿一度现建 worker-env 再设
   `TAVOTTO_WORKER_PYTHON`，于是「runtime 根本没打进去」全程绿灯——空转的门禁比
   没有门禁更坏（`test_macos_ci_no_longer_fakes_a_worker_env` 看护）。
+- **私有完整 Python 的锁是另一份、但同源**（U05，ADR 0063）：`src/tavotto/resources/private_python_lock.json`
+  钉的是受管环境**基础解释器**的来源（pbs install_only，五个目标），放在包内 `resources/` 是因为产品
+  运行时要读它（`engine/privatepython.py` 的唯一输入；冻结产物经 `tavotto.spec` 的 `resources/` datas）。
+  两个 macOS 目标的 CPython 块**必须**与本锁文件的 `macos-*` 逐字段相同（`tests/test_private_python.py`
+  钉着，同源对表登记）——升级内置 runtime 的 CPython 时两份一起改。它**不是**渲染 runtime：内置那份
+  仍不可污染，私有 Python 只当 `python -m venv` 的 base，落在用户数据目录 `<data_dir>/private-python/`。
+  Windows 那边分工明确：embeddable 继续当渲染 runtime，pbs 当 base（embeddable 没有 venv / ensurepip）。
+  每个目标的 `enabled` 在无系统 Python 的目标资格取得前保持 false。
 - **浏览器 playground 的运行时锁**：`packaging/playground-runtime.json`
   钉死 Pyodide 版本与包白名单（前端 JSON import + 构建脚本共读），
   细节见 `docs/rules/frontend/browser-playground.md`。

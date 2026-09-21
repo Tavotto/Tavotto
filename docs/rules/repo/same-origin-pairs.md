@@ -28,6 +28,7 @@
   | `engine/exportreq.py` 文件名规则 ↔ `web/src/lib/exportName.ts` | `tests/golden/filename_vectors.json`（八条原因逐条比，顺序也比） |
   | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `web/src/lib/typography.ts` 同名常量 ↔ `rendercore/typography.py` 同名常量（U06 起） | `test_typography_families.py`（闭集 + 顺序）；`tests/test_rendercore_typography.py` |
   | `engine/overrides.NO_COLOR`（manifest 颜色字段的「无」取值）↔ `web/src/components/ui/Input.tsx` 同名常量 | `tests/test_no_color_pair.py` |
+  | `src/tavotto/resources/private_python_lock.json` 两个 macOS 目标的 CPython 来源（version / release / triple / url / sha256 / size / archive_root）↔ `packaging/runtime-lock.json` 的 `macos-*` 目标 `python` 块（ADR 0063：桌面版内置渲染 runtime 与私有 Python 是同一份字节） | `tests/test_private_python.py::TestLock::test_macos_entries_are_the_same_origin_as_the_runtime_lock` |
 
   出版规范规则唯一权威 `src/tavotto/profiles/publication.json`（两侧求值器
   共读，绝不硬编码第二份）。**「这份项目有什么问题」全产品只有一份服务**

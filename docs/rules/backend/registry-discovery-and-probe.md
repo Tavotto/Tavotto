@@ -18,6 +18,15 @@
   与常量 for 循环展开。递归扫子目录（剪掉 .venv/__pycache__/node_modules…）。
   手动生成/合并：`python -m tavotto.engine.discover <figures_dir> --write`
   （现有条目永远优先，冲突 stem 只报告不裁决）。
+  * **读不动 / 解析不了与「确认非绘图」分开（U03，ADR 0057 §五）**：`read_source` 按 PEP 263
+    声明 / BOM 解码（`tokenize.detect_encoding`），`inspect_script` 回 `{info, problem, parser,
+    entry_candidates}`，problem ∈ {io_error, decode_error, syntax_error}；报告多 `problems` 表，
+    `script_inventory` 的每条多 `problem` / `parser`（`reason` 闭集不变，`unparseable` 仍是那一档）。
+    宿主判语法错误而项目此刻决定的解释器是另一个时，`analyze_in_interpreter` 在它里面 `-I`
+    起子进程跑**同一份**分析（合成 `tavotto.engine` 命名空间包；只解析，绝不 import 用户
+    脚本；按内容缓存）：它认就按它的结果算（`parser == "target"`，脚本不从列表消失），它也不认
+    才是确认的语法错误。目标解释器由调用方给（`pool.resolve_worker_python(discover=False)`），
+    `discover` 自己不挑解释器、不 import pool。
 - **试运行探测（`engine/probe.py`）**：stem 真的只有运行期才知道时（遍历数据
   目录、读配置、命令行参数），把脚本**跑一遍**按真实产出登记——worker 本来
   就在 build 阶段拦 savefig 并按真实文件名捕获，跑得起来 = 能参数化。

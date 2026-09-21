@@ -1553,6 +1553,18 @@ export class EngineError extends Error {
    * 时 `requirement` 为 null，界面据此**不给**一键安装。
    */
   dependencyRepair?: DependencyRepairOffer
+  /**
+   * `workdir_confirmation_required`（U03）时「需要用户先选运行目录」的结构化载荷——
+   * 它不是错误块该显示的东西，是一次确认框（`WorkdirConfirmDialog`）。
+   */
+  confirmation?: WorkdirConfirmation
+  /** `explicit_python_unusable` / `project_python_unusable` 时是哪一条显式选择、为什么 */
+  explicit?: ExplicitInterpreterFailure
+  /**
+   * `dependency_preparation_required`（U04）时「脚本开跑要的包目标环境里没有、能一次装全」的
+   * 整份联合计划——同样不是错误块，是一次授权（`DependencyPrepareDialog`）。
+   */
+  dependencyPreparation?: DependencyPreparationOffer
   constructor(
     message: string,
     traceback = '',
@@ -1560,6 +1572,11 @@ export class EngineError extends Error {
     module = '',
     projectEnv?: ProjectEnvFailure,
     dependencyRepair?: DependencyRepairOffer,
+    extra?: {
+      confirmation?: WorkdirConfirmation
+      explicit?: ExplicitInterpreterFailure
+      dependencyPreparation?: DependencyPreparationOffer
+    },
   ) {
     super(message)
     this.traceback = traceback
@@ -1567,6 +1584,9 @@ export class EngineError extends Error {
     this.module = module
     this.projectEnv = projectEnv
     this.dependencyRepair = dependencyRepair
+    this.confirmation = extra?.confirmation
+    this.explicit = extra?.explicit
+    this.dependencyPreparation = extra?.dependencyPreparation
   }
 }
 
@@ -1615,6 +1635,13 @@ export async function engineRender(
       (body.module as string) || '',
       body.project_env as ProjectEnvFailure | undefined,
       body.dependency_repair as DependencyRepairOffer | undefined,
+      {
+        confirmation: body.confirmation as WorkdirConfirmation | undefined,
+        explicit: body.explicit as ExplicitInterpreterFailure | undefined,
+        dependencyPreparation: body.dependency_preparation as
+          | DependencyPreparationOffer
+          | undefined,
+      },
     )
   }
   return body as EngineRenderResponse
@@ -2507,14 +2534,70 @@ export interface BundledRuntime {
  * 它用相对路径读的数据（exists / glob / C++ 读取器）都能找到；它用相对路径
  * **写**的中间文件会像终端里一样落进项目目录。守卫、savefig 捕获、解释器链不变。
  */
-export type WorkdirMode = 'sandbox' | 'project'
+/**
+ * safe worker 的工作目录三档（ADR 0047 / 0057）：沙盒（默认）/ 脚本目录 / 项目根。
+ * `project` 过去是、现在也是脚本目录；`project_root` 是 U03 加的第三档。
+ */
+export type WorkdirMode = 'sandbox' | 'project' | 'project_root'
+export interface WorkdirGrant {
+  cwd_write: { granted: boolean; granted_at: number | null; mode: WorkdirMode | null }
+  /** 这个项目决定过没有（选沙盒也算决定过，只是没有授权） */
+  decided: boolean
+}
 export interface WorkdirState {
   mode: WorkdirMode
   modes: string[]
+  decided?: boolean
+  grant?: WorkdirGrant
 }
 
-/** 「脚本跑完没出图」——多半是沙盒 cwd 下相对路径找不到数据，给「在脚本目录里运行」的出口 */
-export const WORKDIR_CODES = ['no_figures_captured', 'no_figures_captured_silent'] as const
+/**
+ * 首开需要用户先选运行目录（U03，ADR 0057 §三）：后端起第一个 worker 之前按脚本的静态证据
+ * 判出「数据只有项目根找得到」或「两处同名不同值」，抛这份结构化的「需要输入」。
+ * 三个选项各带该目录下找得到的字面量；`recommended` 只在证据唯一指向项目根时给，歧义时
+ * `null`——界面不预选，机器不裁决。
+ */
+export const WORKDIR_CONFIRMATION_CODE = 'workdir_confirmation_required'
+export interface WorkdirConfirmationOption {
+  mode: WorkdirMode
+  cwd_origin: string
+  write_mode: string
+  found: string[]
+  recommended: boolean
+}
+export interface WorkdirConfirmation {
+  kind: 'workdir'
+  code: typeof WORKDIR_CONFIRMATION_CODE
+  /** 项目相对 POSIX 路径 */
+  script: string
+  reason: 'project_root_evidence' | 'ambiguous_data'
+  recommended: WorkdirMode | null
+  options: WorkdirConfirmationOption[]
+  conflicts: string[]
+  reads: string[]
+}
+
+/**
+ * 显式选择的解释器失效（U03，FO15 / FO16）：后端**不静默换一个能 import 的**，说清是哪一条、为什么。
+ * `source`：`env_override`（环境变量）/ `configured`（设置里指定的）/ `project`（为这个项目挑的）。
+ */
+export interface ExplicitInterpreterFailure {
+  source: 'env_override' | 'configured' | 'project' | string
+  reason: 'missing' | 'no_matplotlib' | string
+  trigger?: string
+  /** 项目内的显示成项目相对路径 */
+  python?: string
+}
+
+/**
+ * 「脚本跑完没出图」——多半是沙盒 cwd 下相对路径找不到数据，给「在脚本目录里运行」的出口；
+ * 「需要先选运行目录」——换了工作目录模式之后同样要重跑。
+ */
+export const WORKDIR_CODES = [
+  'no_figures_captured',
+  'no_figures_captured_silent',
+  WORKDIR_CONFIRMATION_CODE,
+] as const
 
 export interface ProjectEnvironment {
   open: boolean
@@ -2535,6 +2618,11 @@ export interface ProjectEnvironment {
   workdir?: WorkdirState
   /** Tavotto 替这个项目建过的隔离环境（ADR 0019）；没建过 exists=false */
   managed?: ManagedEnvironment
+  /**
+   * 此刻解析不出渲染解释器的原因（U03）：显式选择失效时是 `explicit_python_unusable` /
+   * `project_python_unusable` + `explicit`。`null` = 解析得出。
+   */
+  resolution_error?: { code: string; message: string; explicit?: ExplicitInterpreterFailure } | null
 }
 
 /**
@@ -2691,6 +2779,23 @@ export interface DependencyTarget {
   matplotlib_version?: string
   /** verified / unverified_but_compatible（unsupported 的不会成为目标） */
   support?: string
+  /**
+   * 受管目标才有（U05，ADR 0063）：这台机器没有可用的基础解释器、而本目标提供私有 Python 时，
+   * 这次授权**包含先下载它**——`download_bytes` 界面必须说出口（`cached` 时为 0、不联网）。
+   */
+  private_python?: PrivatePythonOffer | null
+}
+
+/** 「先准备私有 Python」段：版本 / 目标 / 体积 / 来源域名，没有机器路径 */
+export interface PrivatePythonOffer {
+  id: string
+  version: string
+  target: string
+  download_bytes: number
+  source_host: string
+  required: boolean
+  cached: boolean
+  network_required: boolean
 }
 
 /**
@@ -2745,7 +2850,18 @@ export interface DependencyProgress {
   distribution?: string
   target_kind?: string
   script?: string
-  result?: { python?: string; version?: string; distribution?: string } | null
+  /** 联合准备（U04）的进度带 `flow: 'joint'` 与整份需求；过了提交点带 `committed: true` */
+  flow?: 'joint'
+  requirements?: string[]
+  committed?: boolean
+  result?: {
+    python?: string
+    version?: string
+    distribution?: string
+    generation?: string
+    activated?: boolean
+    installed?: Record<string, string>
+  } | null
 }
 
 export const createDependencyPlan = (body: {
@@ -2772,6 +2888,136 @@ export const cancelDependencyPlan = (planId: string) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ plan_id: planId }),
+  })
+
+// ---------------------------------------------------------------------------
+// 联合依赖准备（统一实施包 U04，ADR 0061）
+//
+// 起第一个 worker 之前后端看一眼：脚本开跑要的第三方包目标环境里缺不缺、缺的能不能一次
+// 装全。能就以 `dependency_preparation_required` 回来——**不是错误块，是一次授权**：整份计划
+//（装什么 / 约束什么 / 装到哪 / 会不会改用户环境 / 认不出的 import）都在载荷里。与单包修复
+// 同一条纪律：先绑定计划（不装）再只发 plan_id 执行；进度同一条 SSE `engine.dependency`。
+// ---------------------------------------------------------------------------
+export const DEPENDENCY_PREPARATION_CODE = 'dependency_preparation_required'
+
+/** `depplan.JointPlan.to_payload()`：只读的联合计划（后端算的，不含机器路径） */
+export interface JointDependencyPlan {
+  plan_version: number
+  status: 'nothing_needed' | 'ready' | 'blocked'
+  target_kind: 'project_venv' | 'tavotto_managed'
+  script: string
+  /** 脚本开跑就要的第三方 import（无条件） */
+  needed: { module: string; distribution: string; resolution_source: string; via: string[] }[]
+  /** needed 里目标环境没有的 */
+  missing: {
+    import_name: string
+    distribution: string
+    resolution_source: string
+    declared: boolean
+    specifiers: string[]
+    via: string[]
+  }[]
+  satisfied: { import_name: string; distribution: string; installed_version: string; matches_declared: boolean }[]
+  /** 无条件 import 却映射不到包名的：永远不装、不猜，让用户指定 */
+  unknown: string[]
+  /** 条件 / 延后 / 可选 / 动态的第三方 import：不在跑前装 */
+  possible: { module: string; context: string; distribution: string }[]
+  /** 交给安装器的需求（规范串） */
+  requirements: string[]
+  constraints: string[]
+  require_hashes: boolean
+  /** 受管环境才有：matplotlib / numpy 的支持区间 */
+  adapter: string[]
+  /** blocked 的理由闭集（dependency_declaration_unsupported / dependency_conflict / dependency_hashes_incomplete / dependency_target_unavailable） */
+  blocked: { code: string; declarations?: { raw: string; reason: string; source: string }[]; conflicts?: { name: string; specifiers: string[]; reasons: string[] }[]; lines?: string[]; count?: number }[]
+  selection: { selected_groups: string[]; available_groups: string[]; unselected_groups: string[]; skipped_marker: { raw: string; marker: string }[] }
+  identity: string
+}
+
+/** `dependency_preparation_required` 的载荷 / `GET /api/engine/dependencies` 的 offer */
+export interface DependencyPreparationOffer {
+  code: typeof DEPENDENCY_PREPARATION_CODE
+  script: string
+  plan: JointDependencyPlan
+  target_kind: 'project_venv' | 'tavotto_managed'
+  targets: DependencyTarget[]
+  rounds_remaining: number
+  /** 用户已明确「不准备，直接运行」（这时后端不会再拦） */
+  skipped: boolean
+  /** 干净机器（一个解释器都没有）：门以私有 Python 为目标算的计划，这里说明要先下载它（U05） */
+  private_python?: PrivatePythonOffer | null
+}
+
+/** 绑定好的联合计划（`plan_id` 是这次授权的凭据，一次性、有有效期） */
+export interface JointDependencyRepairPlan {
+  plan_id: string
+  script: string
+  target_kind: 'project_venv' | 'tavotto_managed'
+  python: string
+  requirements: string[]
+  constraints: string[]
+  require_hashes: boolean
+  adapter: string[]
+  identity: string
+  needed_imports: string[]
+  groups: string[]
+  modifies_user_environment: boolean
+  creates_environment: boolean
+  network_required: boolean
+  expires_at: number
+  joint: JointDependencyPlan
+  /** 这次授权包含先下载私有 Python（U05）；`replan` = 计划的事实是替身，供应后按真解释器重算 */
+  private_python?: PrivatePythonOffer | null
+  replan?: boolean
+}
+
+export const fetchDependencyOffer = (script: string) =>
+  jsonFetch<{ offer: DependencyPreparationOffer | null; groups: string[]; rounds_remaining: number }>(
+    `/api/engine/dependencies?script=${encodeURIComponent(script)}`,
+  )
+
+/** 绑定一份联合计划（不装）。blocked / 什么都不缺 → 409，body.joint 里是计划 */
+export const createJointDependencyPlan = (body: {
+  script: string
+  target?: 'project_venv' | 'tavotto_managed'
+}) =>
+  jsonFetch<{ plan: JointDependencyRepairPlan }>('/api/engine/dependencies/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+export const prepareJointDependencies = (planId: string) =>
+  jsonFetch<{ started: boolean } & DependencyProgress>('/api/engine/dependencies/prepare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_id: planId }),
+  })
+
+/** 取消；过了提交点（受管环境已切 active）回 accepted=false, reason=committed */
+export const cancelJointDependencies = (planId: string) =>
+  jsonFetch<{ cancelling: boolean; accepted: boolean; reason: string }>(
+    '/api/engine/dependencies/cancel',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan_id: planId }),
+    },
+  )
+
+/** 「不准备，直接运行」：这个脚本的跑前门从此放行（进程内；一次成功的准备会清掉） */
+export const skipDependencyPreparation = (script: string) =>
+  jsonFetch<{ ok: boolean; script: string; skipped: boolean }>('/api/engine/dependencies/skip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ script }),
+  })
+
+export const setDependencyGroups = (groups: string[]) =>
+  jsonFetch<{ ok: boolean; groups: string[] }>('/api/engine/dependencies', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groups }),
   })
 
 /** 删掉并重建当前项目的 Tavotto 隔离环境（用户自己的 .venv 没有这个操作） */

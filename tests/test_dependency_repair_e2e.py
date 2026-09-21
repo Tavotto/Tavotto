@@ -104,6 +104,17 @@ def test_golden_path_install_into_the_project_venv(client, project, wheelhouse):
     (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
 
+    # ---- 0. U04 的门：脚本开跑要的包声明过、目标里没有 → 起会话之前先问一次 ----
+    gate = _probe(client)["error"]
+    assert gate["code"] == "dependency_preparation_required"
+    offer = gate["dependency_preparation"]
+    assert offer["plan"]["status"] == "ready"
+    assert offer["plan"]["requirements"] == [FIXTURE_DIST]
+    assert offer["target_kind"] == deprepair.TARGET_PROJECT_VENV
+    # 用户明确「不准备，直接跑」：门放行，再跑就是运行后那条路（下面的老流程）
+    resp = client.post("/api/engine/dependencies/skip", json={"script": "figure.py"})
+    assert resp.status_code == 200 and resp.get_json()["skipped"] is True
+
     # ---- 1. 跑脚本：缺依赖，且**带着可执行的修复建议** -------------------
     first = _probe(client)
     err = first["error"]
@@ -275,6 +286,11 @@ def test_managed_environment_end_to_end(client, project, wheelhouse, offline_man
 
     (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
+    # U04 的门先问一次（目标 = 受管环境：项目里没有 venv）；明确 skip 之后走运行后那条路
+    gate = _probe(client)["error"]
+    assert gate["code"] == "dependency_preparation_required"
+    assert gate["dependency_preparation"]["target_kind"] == deprepair.TARGET_MANAGED
+    client.post("/api/engine/dependencies/skip", json={"script": "figure.py"})
     first = _probe(client)
     repair = first["error"]["dependency_repair"]
     kinds = {t["kind"] for t in repair["targets"]}
@@ -436,12 +452,17 @@ def test_the_old_worker_is_gone_and_the_new_one_uses_the_new_interpreter(
     venv = real_venv(project)
     (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
+    # U04 的门会先问（声明了、venv 里没有）；这条要握住的是**缺包状态下**的旧会话，所以明确 skip
+    assert _probe(client)["error"]["code"] == "dependency_preparation_required"
+    client.post("/api/engine/dependencies/skip", json={"script": "figure.py"})
     _probe(client)
 
-    # 修复之前先起一个用**默认**解释器的会话，握在手里
+    # 修复之前先起一个会话，握在手里。U03 起首开就采用项目 venv（发现 + 体检前移），
+    # 所以这条会话跑的**正是**将要被安装写入的那个环境——「安装期间那个环境上的旧会话
+    # 必须先停掉」这条判据在新世界里更直接：旧会话与安装目标是同一个解释器。
     old = engine_pool.get("figure.py", str(project), "__main__")
     old_pid = old.proc.pid
-    assert not engine_pool.same_python(old.python, projectenv.interpreter_of(venv))
+    assert engine_pool.same_python(old.python, projectenv.interpreter_of(venv))
 
     plan = _plan(client, FIXTURE_IMPORT, deprepair.TARGET_PROJECT_VENV)
     assert _install(client, plan["plan_id"])["state"] == deprepair.STATE_DONE

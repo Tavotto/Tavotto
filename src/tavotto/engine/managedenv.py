@@ -44,7 +44,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, runtime
+from . import config, privatepython, runtime
 
 LOG = logging.getLogger("tavotto.managedenv")
 
@@ -95,14 +95,15 @@ def env_dir(project: str | Path) -> Path:
     return config.data_path(ENVIRONMENTS_DIRNAME, project_fingerprint(project))
 
 
-def venv_dir(project: str | Path) -> Path:
-    return env_dir(project) / VENV_DIRNAME
+def venv_dir(project: str | Path, generation: str | None = None) -> Path:
+    """受管环境的 venv 目录：指定的那一代，否则 **active** 那一代；还没有代（旧布局 /
+    还没建过）时是旧布局的 `venv/`（U04 起按代，见文末「代」一节）。"""
+    return generation_dir(project, generation or active_generation(project) or LEGACY_GENERATION)
 
 
-def venv_python(project: str | Path) -> Path:
+def venv_python(project: str | Path, generation: str | None = None) -> Path:
     """受管环境里的解释器路径（**不保证存在**）。"""
-    base = venv_dir(project)
-    return base / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    return generation_python(project, generation or active_generation(project) or LEGACY_GENERATION)
 
 
 def manifest_path(project: str | Path) -> Path:
@@ -173,15 +174,24 @@ def update_manifest(project: str | Path, **fields) -> dict:
 
 
 def mark_incomplete(project: str | Path, reason: str = "") -> None:
-    """把环境标成「建到一半」——**下次不直接复用，先重建**。
+    """把环境（active 那一代）标成「建到一半」——**下次不直接复用，先重建**。
 
     取消一次 pip install 之后，site-packages 里可能留着半个包。对**我们自己
     管的**环境，最安全的处置就是不再假装它是干净的。
     """
+    active = active_generation(project)
+    if active and active != LEGACY_GENERATION:
+        mark_generation(project, active, GEN_STATE_INCOMPLETE, reason)
+        return
     update_manifest(project, state=STATE_INCOMPLETE, incomplete_reason=str(reason)[:200])
 
 
 def mark_ready(project: str | Path) -> None:
+    active = active_generation(project)
+    if active and active != LEGACY_GENERATION:
+        mark_generation(project, active, GEN_STATE_READY, "")
+        update_manifest(project, last_used=int(time.time()))
+        return
     update_manifest(project, state=STATE_READY, incomplete_reason="", last_used=int(time.time()))
 
 
@@ -332,9 +342,16 @@ def python_of(project: str | Path) -> str | None:
     被取消，都会留下一个形状对但用不了的目录。
     """
     data = read_manifest(project)
-    if not data or data.get("state") != STATE_READY:
+    if not data:
         return None
-    python = venv_python(project)
+    active = active_generation(project)
+    if active and active != LEGACY_GENERATION:
+        gen = (data.get("generations") or {}).get(active) or {}
+        if gen.get("state") != GEN_STATE_READY:
+            return None
+    elif data.get("state") != STATE_READY:
+        return None
+    python = venv_python(project, active)
     try:
         return str(python) if python.is_file() else None
     except OSError:
@@ -354,13 +371,28 @@ def state(project: str | Path) -> dict:
             "python_version": "",
             "installed": [],
             "created_at": 0,
+            "active_generation": "",
+            "generations": [],
         }
+    gens = generations(project)
     return {
         "exists": python_of(project) is not None,
         "state": data.get("state", ""),
         "python_version": data.get("python_version", ""),
         "created_at": int(data.get("created_at") or 0),
         "last_used": int(data.get("last_used") or 0),
+        # 按代（U04）：active 是哪一代、各代的状态——只出代号与状态，不出路径
+        "active_generation": active_generation(project) or "",
+        "generations": [
+            {
+                "id": gid,
+                "state": str(g.get("state", "")),
+                "created_at": int(g.get("created_at") or 0),
+                "python_version": str(g.get("python_version") or ""),
+                "requirements": len(g.get("requirements") or []),
+            }
+            for gid, g in sorted(gens.items(), key=lambda kv: int(kv[1].get("created_at") or 0))
+        ],
         # 只出包名与版本：requested_specifier / reason 是本地账，
         # 诊断包不需要它们（脱敏原则：能少给就少给）。
         "installed": [
@@ -433,10 +465,21 @@ def base_python() -> str | None:
         return bool(parts) and projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE
 
     try:
-        return bootstrap.find_base_python(accept=_supported)
+        found = bootstrap.find_base_python(accept=_supported)
     except (OSError, ValueError) as exc:  # 探测本身不该让请求 500
         LOG.warning("基础解释器探测失败: %s", exc)
+        found = None
+    if found:
+        return found
+    # 这台机器上没有合格的基础解释器 → **已经供应好的**私有 Python（U05，ADR 0063）。
+    # 只认磁盘上已就位的那份，这里一个字节都不下载：下载要经计划里明示的授权
+    # （`deprepair` 的事务在 `provision_private` 为真时才去取），探测路径上不联网。
+    # **且只在这个目标仍提供这条路时**：锁文件 `enabled=false` 而没有逃生门（或逃生门是 0）时，
+    # 哪怕磁盘上躺着早先供应好的一份也不用——能力关掉就是关掉，行为回到 U04（Codex #464 P2）。
+    source = privatepython.source_for()
+    if source is None or not privatepython.offered(source):
         return None
+    return privatepython.python_of(source)
 
 
 def _run(argv: list[str], timeout: int) -> tuple[int, str]:
@@ -487,3 +530,278 @@ def python_version_of(python: str) -> str:
     """目标解释器自报的版本；问不出来回空串。"""
     rc, out = _run([str(python), "-c", "import platform;print(platform.python_version())"], 60)
     return out.strip().splitlines()[-1].strip() if rc == 0 and out.strip() else ""
+
+
+# --------------------------------------------------------------- 代（统一实施包 U04，ADR 0061 §五）
+#
+# 受管环境从「一份 `venv/` 原地改写」变成**按代**：每次联合准备在最终目录
+# `envs/<计划身份前 12 位>/` 里**新建**一个 venv、装完、验完才把 manifest 的 `active`
+# 指过去；旧代目录不动，留到没有 worker / native 租约再用它才删。于是
+#
+#   * 安装失败 / 取消 / 自检不过 → 新代标 `incomplete`、`active` 不动 → 旧环境原样可用
+#     （FO-037 / FO21 / FO22 / FO27 / FO28）；
+#   * 不把 tmp 里建好的 venv rename 过来（venv 不可移动，[W3]）——最终目录在创建前就定；
+#   * 「哪一代是 active」只有 manifest 的 `active` 字段一处（manifest 本身 tmp + `os.replace`
+#     原子写，从不半写），不另设第二个指针文件——两处记同一件事迟早不一致。
+#
+# 旧布局（`venv/`）作为隐式的一代继续认：manifest 里没有 `generations` / `active` 时，
+# `venv_dir()` / `python_of()` 仍指它（加可选字段不升 schema）。包管理（ADR 0038）与单包
+# 修复的**原地**路径仍对 active 那一代做；换代只在联合准备 / 重建时发生。
+ENVS_DIRNAME = "envs"
+GEN_STATE_INCOMPLETE = STATE_INCOMPLETE
+GEN_STATE_READY = STATE_READY
+GEN_STATE_RETIRED = "retired"
+#: 旧布局那一份 venv 的隐式代号（只用于 manifest 里没有 `generations` 时的兼容）。
+LEGACY_GENERATION = "legacy"
+
+
+def generation_dir(project: str | Path, generation: str) -> Path:
+    """某一代的 venv 目录（**不保证存在**）。"""
+    if generation == LEGACY_GENERATION:
+        return env_dir(project) / VENV_DIRNAME
+    return env_dir(project) / ENVS_DIRNAME / _safe_generation(generation)
+
+
+def generation_python(project: str | Path, generation: str) -> Path:
+    base = generation_dir(project, generation)
+    return base / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def _safe_generation(generation: str) -> str:
+    text = str(generation or "")
+    if not text or any(ch not in "0123456789abcdefghijklmnopqrstuvwxyz-" for ch in text):
+        raise ValueError(f"代号不合形状: {generation!r}")
+    return text
+
+
+def generations(project: str | Path) -> dict[str, dict]:
+    """manifest 里登记的各代（代号 → 记录）；旧布局的 venv 在时以 `legacy` 出现。"""
+    data = read_manifest(project) or {}
+    gens = data.get("generations")
+    out = (
+        {k: dict(v) for k, v in gens.items() if isinstance(v, dict)}
+        if isinstance(gens, dict)
+        else {}
+    )
+    if not out and data:
+        try:
+            if generation_python(project, LEGACY_GENERATION).is_file():
+                out[LEGACY_GENERATION] = {
+                    "state": data.get("state", STATE_INCOMPLETE),
+                    "created_at": int(data.get("created_at") or 0),
+                    "python_version": data.get("python_version", ""),
+                    "requirements": [],
+                    "identity": "",
+                }
+        except OSError:
+            pass
+    return out
+
+
+def active_generation(project: str | Path) -> str | None:
+    """现在 active 的那一代的代号；没有代（旧布局）时若 venv 在回 `legacy`，否则 None。"""
+    data = read_manifest(project) or {}
+    active = data.get("active")
+    if isinstance(active, str) and active:
+        return active
+    return LEGACY_GENERATION if LEGACY_GENERATION in generations(project) else None
+
+
+def register_generation(
+    project: str | Path,
+    generation: str,
+    *,
+    requirements: list[str],
+    constraints: list[str],
+    identity: str,
+    base_python: str,
+    base_runtime: str = "",
+) -> None:
+    """登记一代（状态 `incomplete`）——在建 venv **之前**：目录名在创建前就定了。
+
+    **在册的代不能被重新登记**（active、或 `ready` 的旧代——它们的目录可能正有人用；名字由
+    `fresh_generation` 给，撞上就是调用方的缺陷，抛而不是静默覆盖）。
+
+    `base_runtime` 是这一代以哪份私有 Python 为 base（`privatepython` 的内容 id；系统解释器
+    为空串）：私有 runtime 的退役以「还有没有哪一代记着它」为判据（`referenced_base_runtimes`），
+    venv 挪不走 base，base 在用就不删（FO-028）。"""
+    gen = _safe_generation(generation)
+    with _lock:
+        data = read_manifest(project)
+        if data is None:
+            data = new_manifest(project, base_python)
+        gens = data.get("generations")
+        if isinstance(gens, dict) and gen in gens:
+            if data.get("active") == gen or gens[gen].get("state") == GEN_STATE_READY:
+                raise ValueError(f"这一代在册、不能重新登记: {gen}")
+        if not isinstance(gens, dict):
+            # 第一次按代：旧布局的 `venv/` 若在，登记成 `legacy` 这一代（它是此刻的
+            # active），之后与别的旧代一样留到没人用再删
+            gens = {}
+            legacy = generations(project).get(LEGACY_GENERATION)
+            if legacy is not None:
+                gens[LEGACY_GENERATION] = {**legacy, "constraints": [], "provisioner": "pip"}
+                if not data.get("active"):
+                    data["active"] = LEGACY_GENERATION
+        gens[gen] = {
+            "state": GEN_STATE_INCOMPLETE,
+            "created_at": int(time.time()),
+            "python_version": "",
+            "requirements": list(requirements),
+            "constraints": list(constraints),
+            "identity": identity,
+            "base_interpreter_fingerprint": base_interpreter_fingerprint(base_python),
+            "provisioner": "pip",
+            "base_source": "private_python" if base_runtime else "system",
+            "base_runtime": str(base_runtime or ""),
+            "incomplete_reason": "",
+        }
+        data["generations"] = gens
+        write_manifest(project, data)
+
+
+def mark_generation(project: str | Path, generation: str, state: str, reason: str = "") -> None:
+    with _lock:
+        data = read_manifest(project) or {}
+        gens = data.get("generations")
+        if not isinstance(gens, dict) or generation not in gens:
+            return
+        gens[generation]["state"] = state
+        gens[generation]["incomplete_reason"] = str(reason)[:200]
+        if data.get("active") == generation:
+            data["state"] = state
+            data["incomplete_reason"] = str(reason)[:200]
+        write_manifest(project, data)
+
+
+def activate(project: str | Path, generation: str, *, python_version: str = "") -> None:
+    """**提交点**：把 `active` 指向这一代（manifest 原子写）。之前它一直是 `incomplete`。"""
+    with _lock:
+        data = read_manifest(project) or {}
+        gens = data.get("generations")
+        if not isinstance(gens, dict) or generation not in gens:
+            raise ValueError(f"没有登记过的代: {generation}")
+        gens[generation]["state"] = GEN_STATE_READY
+        gens[generation]["incomplete_reason"] = ""
+        gens[generation]["python_version"] = python_version or gens[generation].get(
+            "python_version", ""
+        )
+        data["active"] = generation
+        data["state"] = STATE_READY
+        data["incomplete_reason"] = ""
+        if python_version:
+            data["python_version"] = python_version
+        data["last_used"] = int(time.time())
+        write_manifest(project, data)
+
+
+def fresh_generation(project: str | Path, identity: str) -> str:
+    """这一代的目录名：`g<身份前 12 位>`；同名的一代**还登记着**（active、或旧代还有人用——
+    `retire_unused` 之后剩下的只有这两种）就加序号 `-2`、`-3`……**永远不把登记在册的那一代
+    的目录当成自己的建**：重建两次同一份账 → 同一个身份 → 不能把 active 那代删掉重来
+    （Codex #461 P1）。身份本身不变（`identity` 字段照记，U09 认的是它），只是目录名不同。"""
+    base = f"g{identity[:12]}"
+    gens = generations(project)
+    if base not in gens:
+        return base
+    n = 2
+    while f"{base}-{n}" in gens:
+        n += 1
+    return f"{base}-{n}"
+
+
+def create_generation_venv(project: str | Path, generation: str, base: str) -> tuple[bool, str]:
+    """在这一代的**最终目录**里建一个空 venv（带 pip）。目录已存在（上次同一份意图建到一半）
+    先删掉重来——它从没 active 过。**不用 `--system-site-packages`**（隔离，同 `create_venv`）。"""
+    root = generation_dir(project, generation)
+    target = generation_python(project, generation)
+    if root.exists():
+        shutil.rmtree(root, ignore_errors=True)
+    try:
+        root.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return False, str(exc)
+    rc, out = _run([base, "-m", "venv", str(root)], VENV_TIMEOUT_S)
+    if rc != 0 or not target.is_file():
+        return False, out[-2000:]
+    return True, out[-2000:]
+
+
+def is_managed_python(project: str | Path, python: str | None) -> bool:
+    """这条解释器是不是这个项目受管环境的**某一代**（含旧布局）。"""
+    if not python:
+        return False
+    try:
+        target = os.path.normcase(os.path.realpath(str(python)))
+    except OSError:
+        return False
+    for gen in list(generations(project)) or [LEGACY_GENERATION]:
+        try:
+            cand = os.path.normcase(os.path.realpath(str(generation_python(project, gen))))
+        except OSError:
+            continue
+        if cand == target:
+            return True
+    return False
+
+
+def referenced_base_runtimes() -> set[str]:
+    """**所有**项目的受管环境里、任一代（不论状态，退役的已经不在账上）记着的私有 runtime id。
+
+    判「这份私有 Python 还有人用」的唯一出处：一代 venv 的 `pyvenv.cfg` 指着它的 base，base 一删
+    那一代当场坏掉——所以不看谁在跑，只看谁记着。读所有 manifest 不起子进程。"""
+    out: set[str] = set()
+    try:
+        roots = list(config.data_path(ENVIRONMENTS_DIRNAME).iterdir())
+    except OSError:
+        return out
+    for root in roots:
+        try:
+            data = json.loads((root / MANIFEST_NAME).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        gens = data.get("generations") if isinstance(data, dict) else None
+        if not isinstance(gens, dict):
+            continue
+        for gen in gens.values():
+            if isinstance(gen, dict) and gen.get("base_runtime"):
+                out.add(str(gen["base_runtime"]))
+    return out
+
+
+def retire_unused(project: str | Path, *, in_use) -> list[str]:
+    """删掉不再 active、且 `in_use(python)` 为假的各代目录；回删掉的代号。
+
+    `in_use` 由调用方（deprepair）给：池里有 worker 用着它、或 envlease 上有 native 租约
+    就是在用——旧代保留到租约释放（ADR 0061 §五第 6 步）。删不掉（Windows 占用）就留着下次。
+    """
+    active = active_generation(project)
+    removed: list[str] = []
+    with _lock:
+        data = read_manifest(project) or {}
+        gens = data.get("generations")
+        if not isinstance(gens, dict):
+            return removed
+        for gen in list(gens):
+            if gen == active:
+                continue
+            python = str(generation_python(project, gen))
+            try:
+                if in_use(python):
+                    continue
+            except Exception:  # noqa: BLE001 — 判「在用」失败按在用处理，宁可留着
+                continue
+            path = generation_dir(project, gen)
+            try:
+                if path.exists():
+                    shutil.rmtree(path)
+            except OSError as exc:
+                LOG.warning("旧代目录删除失败（下次再试）: %s: %s", path, exc)
+                continue
+            gens[gen]["state"] = GEN_STATE_RETIRED
+            gens.pop(gen, None)
+            removed.append(gen)
+        if removed:
+            data["generations"] = gens
+            write_manifest(project, data)
+    return removed

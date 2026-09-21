@@ -58,7 +58,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import depresolve, execspec, figcapture, pool, projectenv, receipt, workdir
+from . import deprepair, depresolve, execspec, figcapture, pool, projectenv, receipt, workdir
 
 LOG = logging.getLogger("tavotto.preparation")
 
@@ -71,6 +71,10 @@ STATUS_READY = "ready"
 STATUS_ERROR = "error"
 STATUS_CANCELLED = "cancelled"
 STATUS_STATIC = "static_source_available"
+#: 首开需要用户先决定一件事（U03，ADR 0057）：不起线程、一行用户代码不跑。`result.required_input`
+#: 是结构化的「需要什么」（今天只有一种：`workdir` 的 cwd 选择，载荷见
+#: `workdir.confirmation_payload`）。答完（PATCH /api/engine/workdir）再起一份新计划。
+STATUS_NEEDS_INPUT = "needs_input"
 STATUSES = (
     STATUS_PENDING,
     STATUS_RUNNING,
@@ -78,8 +82,16 @@ STATUSES = (
     STATUS_ERROR,
     STATUS_CANCELLED,
     STATUS_STATIC,
+    STATUS_NEEDS_INPUT,
 )
-TERMINAL = frozenset({STATUS_READY, STATUS_ERROR, STATUS_CANCELLED, STATUS_STATIC})
+TERMINAL = frozenset(
+    {STATUS_READY, STATUS_ERROR, STATUS_CANCELLED, STATUS_STATIC, STATUS_NEEDS_INPUT}
+)
+
+#: 计划在起会话之前作废的稳定 code（FO-007 / 「过期授权」）：计划记下的授权 / 模式
+#: 与此刻项目设置里的不一致——用户在计划之后撤销或改了工作目录。不跑、不猜，报出来。
+ERROR_PLAN_STALE = "preparation_plan_stale"
+ERROR_CODES = (ERROR_PLAN_STALE,)
 
 #: 作业保留多久（秒）——与导出作业同一口径：界面拿 plan_id 补拉要在窗口内。
 _TTL_S = 15 * 60
@@ -111,6 +123,17 @@ class PreparationPlan:
     grant: dict
     budget: dict
     created_at: float
+    #: 工作目录决定（U03）：`workdir.decision_for()` 的只读结果——决定过没有、用哪一档、
+    #: 静态证据（`databinding.evidence`）。没有脚本时 None。
+    workdir_decision: dict | None = None
+    #: 起会话之前要用户先答的事（U03）；None = 不需要。有值时 `register()` 直接落
+    #: `needs_input`，不起线程。U04 起还有第二种：`dependency_preparation_required`（脚本开跑
+    #: 要的包目标环境里没有、且能一次装全——先授权一次）。
+    required_input: dict | None = None
+    #: 联合依赖计划（U04，ADR 0061 §三 / §六）：`deprepair.preparation_offer` 的只读结果——脚本
+    #: 开跑要什么 / 目标缺什么 / 交给安装器的集合 / blocked 的理由 / 可选目标。没有脚本或
+    #: 解释器解析不出来时 None。**它只是计划的一部分，不装任何东西。**
+    dependency_preparation: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -130,6 +153,11 @@ class PreparationPlan:
             "grant": dict(self.grant),
             "budget": dict(self.budget),
             "created_at": self.created_at,
+            "workdir_decision": dict(self.workdir_decision) if self.workdir_decision else None,
+            "required_input": dict(self.required_input) if self.required_input else None,
+            "dependency_preparation": (
+                dict(self.dependency_preparation) if self.dependency_preparation else None
+            ),
         }
 
 
@@ -152,17 +180,31 @@ def plan_for(
 
     环境证据来自 `pool.resolve_worker_python()`（项目级决策的唯一出处）与
     `projectenv.state()`；解析不到解释器时 `environment.error` 带上 code，计划照样
-    成立（执行阶段会以同一个错误收场，那时才是 `error` 状态）。
+    成立（执行阶段会以同一个错误收场，那时才是 `error` 状态）。**这一步就是「环境选择
+    前移」的落点**（U03，ADR 0057）：脚本的首次科学执行发生在 `start()` 之后，而项目 venv
+    的发现 + 体检 + 记住在这里已经完成——计划里写清选了谁、凭什么（`evidence`）、发现了
+    什么没采用（`discovery.rejected`）、上一条自动决策是不是刚被作废（`invalidated`）。
+    显式选择失效（`explicit_python_unusable` / `project_python_unusable`）不静默替换：
+    `error.explicit` 说明是哪一条、为什么。
     """
     root = str(project_root)
     try:
-        python, source = pool.resolve_worker_python(root)
+        python, source = pool.resolve_worker_python(root, script=script)
         env_error = None
     except pool.WorkerError as exc:
         python, source, env_error = "", "", {"code": exc.code, "message": str(exc)}
+        explicit = getattr(exc, "explicit", None)
+        if isinstance(explicit, dict):
+            env_error["explicit"] = {
+                "source": explicit.get("source", ""),
+                "reason": explicit.get("reason", ""),
+                "trigger": explicit.get("trigger", ""),
+                "python": _project_relative(root, str(explicit.get("python", ""))),
+            }
     state = projectenv.state(root)
     # 公开身份：来源标签 + **项目相对**路径（项目外的解释器——bundled / system / 用户在别处
     # 挑的——一律 None：那是安装目录或用户目录，不进投影）+ 项目记住的版本事实。
+    discovery = pool.first_open_outcome(root)
     environment = {
         "python": _project_relative(root, python) if python else None,
         "source": source,
@@ -170,12 +212,52 @@ def plan_for(
         "automatic": bool(state.get("automatic", False)),
         "trigger": state.get("trigger", ""),
         "module": state.get("module", ""),
+        # 选中那条解释器体检时量到的事实（记住时存进项目设置；没体检过的老链条为空）
         "python_version": state.get("python_version", ""),
         "matplotlib_version": state.get("matplotlib_version", ""),
+        "support": state.get("support", ""),
+        # 首开发现：找到了哪些 venv、体检过而没采用的各是为什么（项目相对路径）
+        "discovery": (
+            {
+                "ok": bool(discovery.get("ok")),
+                "code": discovery.get("code", ""),
+                "candidates": [
+                    _project_relative(root, c) for c in discovery.get("candidates") or []
+                ],
+                "rejected": [
+                    {
+                        "venv": _project_relative(root, r.get("venv", "")),
+                        "code": r.get("code", ""),
+                        "support": r.get("support", ""),
+                        "python_version": r.get("python_version", ""),
+                        "matplotlib_version": r.get("matplotlib_version", ""),
+                    }
+                    for r in discovery.get("rejected") or []
+                ],
+            }
+            if discovery is not None
+            else None
+        ),
+        # 上一条**自动**记住的决策刚被判失效并作废（venv 被删 / 重建成别的 Python）
+        "invalidated": (
+            {
+                "python": _project_relative(root, inv.get("python", "")),
+                "reason": inv.get("reason", ""),
+                "trigger": inv.get("trigger", ""),
+            }
+            if (inv := pool.invalidated_decision(root))
+            else None
+        ),
         "error": env_error,
     }
     grant = workdir.grant_for(root)
     launch_context = None
+    decision = None
+    if script is not None:
+        # 工作目录：决定过就是记住的那一档；没决定过按脚本的静态证据判要不要先问
+        # （U03，ADR 0057）。这里**只读**同一份判据（`resolve_mode()` 在 spawn 前抛的
+        # 就是它），计划里如实写下证据与「需要输入」，不替用户决定。
+        decision = workdir.decision_for(root, script)
     if script is not None and entry is not None and python:
         spec = execspec.safe_spec(
             script,
@@ -183,10 +265,25 @@ def plan_for(
             entry,
             interpreter=python,
             sandbox="",
-            cwd_mode=workdir.mode_for(root),
+            cwd_mode=decision["mode"] if decision else workdir.mode_for(root),
         )
         launch_context = execspec.launch_context(spec, grant=grant)
     intents = depresolve.declared_intents(root, script) if script else []
+    # 联合依赖（U04）：工作目录不用问、解释器也解析得出时，看一眼脚本开跑要的包目标环境里
+    # 缺不缺。缺且能一次装全 → 这是第二种「需要输入」（同一对每进程只问一次：`deprepair.gate`）；
+    # blocked / 什么都不缺 → 只把诊断写进计划，照跑。
+    dependency = None
+    required = (decision or {}).get("confirmation") or None
+    # 一个解释器都没有（`no_worker_python`）时也问一次门：干净机器上门会以私有 Python 为目标算计划
+    # （U05，ADR 0063 / 0064）——不提供私有 Python 时门回 None，照旧以原错误收场
+    clean_machine = bool(env_error) and env_error.get("code") == deprepair.NO_WORKER_PYTHON
+    if script is not None and (python or clean_machine) and required is None:
+        gate = deprepair.gate(root, script)
+        if gate is not None:
+            dependency = gate
+            required = gate
+        else:
+            dependency = deprepair.preparation_offer(root, script)
     static = None
     if original_artifact and original_path:
         try:
@@ -219,6 +316,9 @@ def plan_for(
             "build_hard_timeout_s": pool.BUILD_HARD_TIMEOUT,
         },
         created_at=time.time(),
+        workdir_decision=decision,
+        required_input=required,
+        dependency_preparation=dependency,
     )
 
 
@@ -260,6 +360,9 @@ class PreparationResult:
     created_runtime: bool = False  # 本计划新起的会话
     receipt: receipt.ExecutionReceipt | None = None
     error: dict | None = None
+    #: `status == needs_input` 时是要用户答的那件事（与 `plan.required_input` 同源；
+    #: 执行期才发现要问的——计划之后被撤销了决定——也落在这里）。
+    required_input: dict | None = None
     started_at: float | None = None
     finished_at: float | None = None
     cancel_requested_at: float | None = None
@@ -272,6 +375,7 @@ class PreparationResult:
             "created_runtime": self.created_runtime,
             "receipt": self.receipt.to_payload() if self.receipt is not None else None,
             "error": dict(self.error) if self.error else None,
+            "required_input": dict(self.required_input) if self.required_input else None,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "cancel_requested_at": self.cancel_requested_at,
@@ -307,6 +411,16 @@ class PreparationService:
             )
             result.finished_at = time.time()
             result.status = STATUS_STATIC
+        elif plan.required_input:
+            # 首开要先问用户（U03 的运行目录 / U04 的依赖准备）：不起线程、不碰 pool、一行用户代码不跑。
+            result.required_input = dict(plan.required_input)
+            result.note = (
+                "需要先授权一次依赖准备（或明确选择不准备直接运行）；答完后重新准备"
+                if plan.required_input.get("code") == deprepair.ERROR_PREPARATION_REQUIRED
+                else "需要先选择脚本的运行目录；答完后重新准备"
+            )
+            result.finished_at = time.time()
+            result.status = STATUS_NEEDS_INPUT
         with self._lock:
             self._sweep()
             self._entries[plan.plan_id] = _Entry(plan=plan, result=result)
@@ -344,6 +458,16 @@ class PreparationService:
         if entry.cancel.is_set():
             self._finish(entry, STATUS_CANCELLED, note="在起会话之前取消，没有执行任何脚本")
             return
+        # 过期授权（FO-007）：计划之后用户撤销 / 改了工作目录决定——计划记下的 grant
+        # 与此刻的不一致时**不跑**：按旧计划跑等于拿撤销前的许可执行，按新设置跑等于
+        # 回执与计划两张嘴。报 `preparation_plan_stale`，让调用方重新准备。
+        if plan.script is not None and workdir.grant_for(plan.project_root) != plan.grant:
+            result.error = {
+                "code": ERROR_PLAN_STALE,
+                "message": "工作目录的授权在计划之后变了，这份计划作废；请重新准备",
+            }
+            self._finish(entry, STATUS_ERROR, note="计划过期：授权变了，没有执行任何脚本")
+            return
         result.status = STATUS_RUNNING
         reusable = self._reusable(existing, plan)
         if reusable is not None:
@@ -357,6 +481,25 @@ class PreparationService:
         try:
             worker, resp, created = runner(plan)
         except pool.WorkerError as exc:
+            confirmation = getattr(exc, "confirmation", None)
+            if isinstance(confirmation, dict):
+                # 计划时不用问、起会话时要问（决定在中间被清掉了）：与计划期的「需要输入」
+                # 同一个终局，不是错误。
+                result.required_input = dict(confirmation)
+                self._finish(
+                    entry, STATUS_NEEDS_INPUT, note="需要先选择脚本的运行目录；答完后重新准备"
+                )
+                return
+            dependency = getattr(exc, "dependency_preparation", None)
+            if isinstance(dependency, dict):
+                # 依赖那道门（U04）在起会话那一刻拦住了：同样是「需要输入」，不是错误。
+                result.required_input = dict(dependency)
+                self._finish(
+                    entry,
+                    STATUS_NEEDS_INPUT,
+                    note="需要先授权一次依赖准备（或明确选择不准备直接运行）；答完后重新准备",
+                )
+                return
             error = {"code": getattr(exc, "code", "") or "worker_error", "message": str(exc)}
             module = getattr(exc, "module", "")
             if module:

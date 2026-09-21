@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A / PR B）加交接 / 证据 / README / plan.json 后各算一次；U05（2026-09-21，PR A / C）加交接 / 证据 / README / plan.json / 台账后各算一次；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次；U09（2026-09-21）两条链第一次汇合（merge 4973a28f 进 foundation/u09-join）后按并集重算。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -44,13 +44,13 @@
     },
     {
       "path": "ALL_PROMPTS.md",
-      "bytes": 76027,
-      "sha256": "833c2b17971d4107049ce6cfa6651196378765e1c70a14b7a3467cd0507c58cc"
+      "bytes": 80777,
+      "sha256": "ab443d281296c4f015941d298fb2194b6aecef1cb0a800f2ea9e707b844b1b11"
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 4652,
-      "sha256": "32c79d0147ff3c06035fba5381ad45d8d2a5fca0d9db7da3839b78c5e51bfdeb"
+      "bytes": 6657,
+      "sha256": "0ab061db74682cddbfd57fd6779acfea53c173d62d514f238eab4648a59fb8d2"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 10282,
-      "sha256": "60ceec7f2c412e099c080f8dbec842b03f54b23050454cab6206facb0c008443"
+      "bytes": 13424,
+      "sha256": "317a937dee1554caf906d7cff166ef9b5a47e09d4ef859ec268d233595ee1eb4"
     },
     {
       "path": "SOURCES.md",
@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 64488,
-      "sha256": "8b54013b9ef8336e3dd912ddb143f6c2e43eb90896025beac2e7b633a3399a11"
+      "bytes": 67783,
+      "sha256": "74d1deaef4e83f7ff9a13d94ffffc8435aa41dd5dacb99de317443e0fedc6d69"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 37012,
-      "sha256": "1350714bb9ed43c72429b053adda537cc7bd17aa40f2f75f49f2547d8f510b46"
+      "bytes": 36942,
+      "sha256": "03aa46e1e4cc5c340baee07c98e61f327cf10e9b3fac70d023944216205defcd"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 15047,
-      "sha256": "8eadde898d736630b2936b5dd495fa1934c9ca18e513fe852317f8fa498c4041"
+      "bytes": 31062,
+      "sha256": "0ddc3ecce128fe8434f4ca81b3387cb4a1e46628845d7ee78cbf8eb2a8c5ab2c"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -206,6 +206,76 @@
       "path": "evidence/u02/runtime/report-macos-arm64.json",
       "bytes": 7825,
       "sha256": "afa69eed21841b80594bbcff86563ddef1d42ad23156d7fc0c6fa4b1f04f7898"
+    },
+    {
+      "path": "evidence/u03/fo01-result-local.json",
+      "bytes": 2141,
+      "sha256": "75c3d00ec2a6007dd73c8606271b9edddc88cc39d7aa44db63d9a52eab3ef437"
+    },
+    {
+      "path": "evidence/u03/fo02-result-local.json",
+      "bytes": 3576,
+      "sha256": "0199c796103daa57dfc00d60652f2b5342f3760ed65197709f9a6ae392a25afb"
+    },
+    {
+      "path": "evidence/u03/fo03-result-local.json",
+      "bytes": 2017,
+      "sha256": "ef1b298301b47e75542522dfcffa6fa4208292cb8b11dcfc988b55114eb794b1"
+    },
+    {
+      "path": "evidence/u03/fo07-result-local.json",
+      "bytes": 2474,
+      "sha256": "3e378bd4fb47e15fb281f31ea60d779696d66bb595089b9b7a4becb89fbc727c"
+    },
+    {
+      "path": "evidence/u03/fo15-result-local.json",
+      "bytes": 1650,
+      "sha256": "b00306514db61c6347649d239322174b54eb37a9fbb4407e263ad811340f6567"
+    },
+    {
+      "path": "evidence/u03/fo19-result-local.json",
+      "bytes": 2089,
+      "sha256": "916056e23a96c4868383764dff1b873ebdcbfd3676cd30cea209b7c862cdf690"
+    },
+    {
+      "path": "evidence/u03/foundation-harness-summary-local.md",
+      "bytes": 1581,
+      "sha256": "f5562d6968fdf6f8c51d77dfc730f81672224909b8a7151977eab6edfe23eaea"
+    },
+    {
+      "path": "evidence/u04/mutations_pr_a.md",
+      "bytes": 3162,
+      "sha256": "8a570da733673aaa522abffc612ebf6b6fb3929eaf78998e1e727a5241c7d28f"
+    },
+    {
+      "path": "evidence/u04/mutations_pr_b.md",
+      "bytes": 5767,
+      "sha256": "b93628aa5e1108d72f60fd2bfc02166f8053072420b42f50e5f8617b1c971859"
+    },
+    {
+      "path": "evidence/u04/mutations_pr_c.md",
+      "bytes": 5508,
+      "sha256": "fd966814ce260614255846669180449f46118f172ed8f00605e67d7e6beba773"
+    },
+    {
+      "path": "evidence/u05/empty-image-linux-arm64.json",
+      "bytes": 1026,
+      "sha256": "7b3dc6ab684cf356afba56051788b7949242b53744c3eeac2cb5911c22a09d04"
+    },
+    {
+      "path": "evidence/u05/engineering-chain-macos-arm64.json",
+      "bytes": 4187,
+      "sha256": "02132cacf2156cb318aebca432a44bba4285fbebddaf56fb0b1160e7e09df960"
+    },
+    {
+      "path": "evidence/u05/mutations_pr_a.md",
+      "bytes": 9156,
+      "sha256": "afbfe51f6fe2a2acf32316dea7dad2434ec4a02f8c72b62e01decdaa1f1adf81"
+    },
+    {
+      "path": "evidence/u05/mutations_pr_b.md",
+      "bytes": 3539,
+      "sha256": "966a0b45b9cd88e46ba4586a2a3b73d1ecdb19d42cd98a4e0ca71653dab4f47b"
     },
     {
       "path": "evidence/u06/README.md",
@@ -299,8 +369,8 @@
     },
     {
       "path": "generated/FIRST_OPEN_SCHEDULE.md",
-      "bytes": 3899,
-      "sha256": "2e13698223d0d7daa11eee8f2d2b3cf1833da2e1112cdbe5007fb959f4be7856"
+      "bytes": 3927,
+      "sha256": "3c9b00f127e367870de9f7c9c20da257bec2f55a0f8a7f562ba8b80ce4f67989"
     },
     {
       "path": "generated/TRACEABILITY.md",
@@ -321,6 +391,21 @@
       "path": "handoffs/U02_spikes.md",
       "bytes": 19488,
       "sha256": "406f88600c76a6bbd5b4a7f487e6b9cba2c3de0678ee18b9f47ef6e3d4054b99"
+    },
+    {
+      "path": "handoffs/U03_first_open.md",
+      "bytes": 24708,
+      "sha256": "1383f67aa469f8c37d3980421fe81d299295fed6b5a814dbfe5d4224a300c0b0"
+    },
+    {
+      "path": "handoffs/U04_dependencies.md",
+      "bytes": 34017,
+      "sha256": "377c6c9162a7f4a1451726d2343a207646be2a8a52bfa8db91827b78119925b9"
+    },
+    {
+      "path": "handoffs/U05_private_python.md",
+      "bytes": 31125,
+      "sha256": "e8d7b31add015ff7751e63f70e09e86706a5308f6820c06132d7f3af37ef4905"
     },
     {
       "path": "handoffs/U06_ir_text.md",
@@ -404,13 +489,13 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7366,
-      "sha256": "b5f4b2a07eb1707ba691f5eb8f2e10832b3e5286b0b063d17d7aeab9ee7e56fe"
+      "bytes": 7345,
+      "sha256": "3c5e32d142073334f460149a1825c4d0e0fa2870186afab3c9f6d1ab983a4e77"
     },
     {
       "path": "registry.json",
-      "bytes": 269418,
-      "sha256": "4f553b0cd3f2a8d67a7012b4f9472fbf01fc0d48a2b7af7488579728af53f7a2"
+      "bytes": 286147,
+      "sha256": "c1c880998cdaa70dda2ce32cc3bb500c3a1f0ad5930cc08407f89edbeabb649c"
     },
     {
       "path": "sources_manifest.json",
@@ -424,8 +509,8 @@
     },
     {
       "path": "tools/generate_facade_ledger.py",
-      "bytes": 7164,
-      "sha256": "e61c8338ff3ee2c0c6d346c839a5ddc503c3abcd44fadbbb1c82fd9550b89f6f"
+      "bytes": 7138,
+      "sha256": "bcaac21c6ea4958efe4cc3974929944bdb746d2ca5f015ac88de67526583e6f6"
     },
     {
       "path": "tools/generate_views.py",

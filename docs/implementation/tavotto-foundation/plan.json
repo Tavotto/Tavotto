@@ -75,7 +75,7 @@
         "U03.existing_open"
       ],
       "scope": "core",
-      "implementation_status": "not_started",
+      "implementation_status": "done",
       "product_validation_status": "not_run",
       "milestone_dependencies": {}
     },
@@ -90,7 +90,7 @@
         "U04.managed_dependencies"
       ],
       "scope": "core",
-      "implementation_status": "not_started",
+      "implementation_status": "done",
       "product_validation_status": "not_run",
       "milestone_dependencies": {}
     },
@@ -106,7 +106,7 @@
         "U05.private_python"
       ],
       "scope": "core",
-      "implementation_status": "not_started",
+      "implementation_status": "done",
       "product_validation_status": "not_run",
       "milestone_dependencies": {}
     },

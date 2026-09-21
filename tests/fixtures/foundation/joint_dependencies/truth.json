@@ -1,0 +1,22 @@
+{
+  "fixture": "joint_dependencies",
+  "value": 42,
+  "x": [1, 2, 3],
+  "y": [42, 84, 126],
+  "formula": "y = VALUE * x, VALUE = 42 (from the synthetic wheels)",
+  "expected_output": "figure.pdf",
+  "wheels": {
+    "tavotto-test-alpha": {"import": "tavotto_test_alpha", "version": "1.0", "extra": "wide", "extra_pulls_in": "tavotto-test-wide"},
+    "tavotto-test-beta": {"import": "tavotto_test_beta", "versions": ["1.0", "2.0"], "declared": "<2", "expected_version": "1.0"},
+    "tavotto-test-gamma": {"import": "tavotto_test_gamma", "version": "1.0"},
+    "tavotto-test-wide": {"import": "tavotto_test_wide", "version": "1.0", "via": "extra of alpha"},
+    "tavotto-test-never": {"import": "tavotto_test_never", "version": "1.0", "expected": "skip_marker_false"},
+    "tavotto-test-train": {"import": "tavotto_test_train", "version": "1.0", "expected": "unselected_group"}
+  },
+  "requirements": {
+    "requirements.txt": ["tavotto-test-alpha[wide]==1.0", "tavotto-test-beta<2", "tavotto-test-gamma", "tavotto-test-never; sys_platform == \"never_os\""],
+    "requirements-train.txt": ["tavotto-test-train"]
+  },
+  "expected_installed": ["tavotto-test-alpha", "tavotto-test-beta", "tavotto-test-gamma", "tavotto-test-wide"],
+  "expected_not_installed": ["tavotto-test-never", "tavotto-test-train"]
+}

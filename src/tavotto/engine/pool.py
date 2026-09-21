@@ -651,29 +651,68 @@ def _no_python_error() -> "WorkerError":
     )
 
 
+#: 显式选择失效时的稳定 code（U03，FO15 / FO16 / FO-013）：用户在设置里指定的、或环境
+#: 变量点名的解释器**存在但用不了**（import 不到 matplotlib / 起不来），或设置里指定的那条
+#: 已经不在了。**不静默换一个能 import 的**——那正是「显式选择被自动推断覆盖」。
+#: 异常上挂 `explicit = {source, python, reason}`，界面据此说清是哪一条、为什么。
+EXPLICIT_UNUSABLE_CODE = "explicit_python_unusable"
+#: 两种「显式」来源：设置里指定的，与环境变量点名的。`managed_venv` 虽也存在同一个设置键
+#: 里，但它是 Tavotto 自建的，不是用户的选择——它坏了走老链条继续找是对的。
+_EXPLICIT_SOURCES = frozenset({SOURCE_ENV, SOURCE_CONFIGURED})
+
+
+def _explicit_unusable(source: str, python: str, reason: str) -> "WorkerError":
+    label = SOURCE_LABELS.get(source, source)
+    why = {
+        "missing": "这条路径已经不存在",
+        "no_matplotlib": "它 import 不到 matplotlib（或起不来）",
+    }.get(reason, reason)
+    err = WorkerError(
+        f"{label} 指定的解释器用不了：{why}（{python}）。"
+        "Tavotto 不会自动换成别的环境：请重新指定，或清除这条设置回到自动选择。",
+        code=EXPLICIT_UNUSABLE_CODE,
+    )
+    err.explicit = {"source": source, "python": python, "reason": reason}
+    return err
+
+
 def select_worker_python() -> tuple[str, str]:
     """挑一个装了 matplotlib 的解释器，回 (路径, 来源)。
 
     来源是给人看的（环境状态 API / 诊断包 / 冒烟断言）：同样一条路径，
     「内置」和「你自己的 conda」在排障时的含义天差地别。
+
+    **显式来源不许被跳过**（U03，ADR 0057）：设置里指定的 / 环境变量点名的解释器存在
+    但 import 不到 matplotlib 时，以前这里静默滑到下一条候选——用户以为在用 A，图是 B
+    画的，而界面一个字都不说。现在抛 `explicit_python_unusable`（带原因），由用户决定。
+    唯一保留的宽容：**环境变量**指向一条已不存在的路径按「没设」处理——它写在 shell rc /
+    别的工具的配置里，往往是过期的全局状态，`test_a_stale_env_var_does_not_hide_an_explicit_setting`
+    钉着；设置里指定的那条不在了则要说出来（那是用户在这个应用里做的选择）。
     """
     global _worker_python, _worker_source
     if _worker_python:
         return _worker_python, _worker_source
     seen: set[str] = set()
     for cand, source in _prioritized_candidates():
+        try:
+            exists = Path(cand).exists()
+        except OSError:
+            exists = False
+        if not exists:
+            # 「不存在」按来源各自判，**在去重之前**：环境变量与设置里指着同一条已不存在的
+            # 路径时，先去重会让设置那条被跳过、然后静默滑到系统解释器（Codex #454 P2）。
+            if source == SOURCE_CONFIGURED:
+                raise _explicit_unusable(source, cand, "missing")
+            continue
         if cand in seen:
             continue
         seen.add(cand)  # 同一个解释器不重复探测（每次探测最多 30s）
-        try:
-            if not Path(cand).exists():
-                continue
-        except OSError:
-            continue
         if _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED):
             _worker_python, _worker_source = cand, source
             LOG.info("渲染解释器: %s（来源 %s）", cand, source)
             return cand, source
+        if source in _EXPLICIT_SOURCES:
+            raise _explicit_unusable(source, cand, "no_matplotlib")
     raise _no_python_error()
 
 
@@ -689,20 +728,59 @@ _project_python_ok: dict[str, bool] = {}
 _project_python_lock = threading.Lock()
 
 
-def resolve_worker_python(figures_dir: str | Path | None = None) -> tuple[str, str]:
+#: 显式为**这个项目**挑的解释器失效时的稳定 code（U03，FO15 / FO16）。与
+#: `EXPLICIT_UNUSABLE_CODE` 分开：那条是全局设置 / 环境变量，这条是项目级（用户在依赖修复
+#: 面板采用的系统解释器、或为这个项目手填的那条）；界面要指到不同的设置项。
+PROJECT_PYTHON_UNUSABLE_CODE = "project_python_unusable"
+#: 给 `tests/test_error_codes.py` 门禁读的注册表（它按字面量扫源码，常量式的 code 看不见）。
+ERROR_CODES = (EXPLICIT_UNUSABLE_CODE, PROJECT_PYTHON_UNUSABLE_CODE)
+
+#: 自动记住的项目解释器被判失效并作废的记录：项目键 → {python, reason, trigger}。给准备
+#: 计划读（`invalidated_decision`），让「为什么这次重新发现了」有据可查；`reset_worker_python()`
+#: 清掉。
+_invalidated: dict[str, dict] = {}
+
+
+def invalidated_decision(figures_dir: str | Path) -> dict | None:
+    """这个项目上一条自动记住的解释器是不是刚被作废了（只读；没有回 None）。"""
+    with _project_python_lock:
+        return _invalidated.get(projectenv._key(figures_dir))
+
+
+def first_open_outcome(figures_dir: str | Path) -> dict | None:
+    """这个项目首开发现的结果（只读缓存；没做过回 None）——准备计划写 `environment.discovery`。"""
+    with projectenv._lock:
+        return projectenv._first_open.get(projectenv._key(figures_dir))
+
+
+def resolve_worker_python(
+    figures_dir: str | Path | None = None, *, script: str | None = None, discover: bool = True
+) -> tuple[str, str]:
     """**某个项目**该用哪个解释器，回 (路径, 来源)——项目级决策的唯一出处。
 
-    优先级（「用户显式选择 > 自动猜测」，ADR 0018 §优先级）：
+    优先级（「用户显式选择 > 自动猜测」，ADR 0018 §优先级；U03 / ADR 0057 加第 4 条）：
 
     1. `TAVOTTO_WORKER_PYTHON`   —— 环境变量
     2. 用户在设置里指定的         —— 全局显式选择
-    3. **这个项目记住的解释器**   —— 自动 fallback 定下来的，或用户为该项目挑的
-    4. 内置 runtime / 自身 / 系统 —— `select_worker_python()` 的老链条
+    3. **这个项目记住的解释器**   —— 自动定下来的，或用户为该项目挑的
+    4. **项目自己带的 venv**      —— 首次科学执行之前发现 + 体检，健康就采用并记住（FO11）
+    5. 内置 runtime / 自身 / 系统 —— `select_worker_python()` 的老链条
 
     第 3 条排在内置**之前**而不是之后：一旦某个项目已经确认「内置环境缺包跑
     不了它、项目 `.venv` 可以」，每次都先从内置重来一遍只是把同一个
     `missing_dependency` 重演一次，用户看到的是「每次打开都先失败一下」。
     1、2 仍然压过它——用户显式挑过的环境任何时候都不该被自动决策盖掉。
+
+    第 4 条是 U03 把「发现 / 体检 / 记住」前移到首次执行之前：以前项目 venv 只在内置
+    环境报缺包**之后**才被找出来，「先用内置跑错一次」是常态（FO11 明令禁止）。发现与
+    体检只做一次（`projectenv.first_open_candidate` 按项目缓存），采用即记住
+    （`automatic=True, trigger=first_open`），下次打开走第 3 条。`discover=False` 是给
+    只想知道「此刻的决策」而不该起子进程的读者（环境状态 API）用的。
+
+    **失效的显式选择不静默替换**（FO15 / FO16 / FO-013）：第 1、2 条由
+    `select_worker_python()` 抛 `explicit_python_unusable`；第 3 条里用户为项目挑的
+    （`automatic=False`）不在了 / 用不了抛 `project_python_unusable`；只有**自动**记住的
+    才作废并重新发现——那本来就是机器的决定，作废的事实记在 `invalidated_decision()`。
 
     不给 `figures_dir`（无项目上下文的诊断、bootstrap）时退化成
     `select_worker_python()`，行为一字不变。
@@ -717,25 +795,85 @@ def resolve_worker_python(figures_dir: str | Path | None = None) -> tuple[str, s
             continue
         try:
             if Path(explicit).exists():
-                # 显式选择还在：交给老链条（它会挑中这条），不做任何自动决策。
+                # 显式选择还在：交给老链条（它会挑中这条，用不了就抛），不做任何自动决策。
                 return select_worker_python()
         except OSError:
             continue
-    remembered = projectenv.remembered(figures_dir)
-    if remembered:
-        with _project_python_lock:
-            ok = _project_python_ok.get(remembered)
-        if ok is None:
-            # 轻量复检：venv 被删掉 / 被重建成另一个 Python 是常事，
-            # 记住过不等于现在还成立。每个进程每条解释器只做一次。
-            ok = _has_matplotlib(remembered)
+    if config.worker_python():
+        # 设置里指定的那条已经不在了：`select_worker_python()` 会以 missing 收场——
+        # 这里不许绕过它去做自动决策。
+        return select_worker_python()
+    record = projectenv.remembered_record(figures_dir)
+    if record is not None and record.get("mode") == projectenv.MODE_DEFAULT_CHAIN:
+        # 用户明确为这个项目选了默认链条：不发现、不体检、不采用项目 venv（FO-013）。
+        return select_worker_python()
+    if record is not None:
+        remembered = record["path"]
+        explicit_for_project = not record.get("automatic", False)
+        if not record.get("exists"):
+            if explicit_for_project:
+                raise _project_python_unusable(remembered, "missing", record)
+            _invalidate_remembered(figures_dir, remembered, "missing", record)
+        else:
             with _project_python_lock:
-                _project_python_ok[remembered] = ok
-            if not ok:
-                LOG.warning("项目记住的解释器已不可用，回退默认链条: %s", remembered)
-        if ok:
-            return remembered, remembered_source(figures_dir, remembered)
+                ok = _project_python_ok.get(remembered)
+            if ok is None:
+                # 轻量复检：venv 被删掉 / 被重建成另一个 Python 是常事，
+                # 记住过不等于现在还成立。每个进程每条解释器只做一次。
+                ok = _has_matplotlib(remembered)
+                with _project_python_lock:
+                    _project_python_ok[remembered] = ok
+            if ok:
+                return remembered, remembered_source(figures_dir, remembered)
+            if explicit_for_project:
+                raise _project_python_unusable(remembered, "no_matplotlib", record)
+            _invalidate_remembered(figures_dir, remembered, "no_matplotlib", record)
+    if discover:
+        outcome = projectenv.first_open_candidate(figures_dir, script)
+        if outcome.get("ok"):
+            python = outcome["python"]
+            projectenv.remember(
+                figures_dir,
+                python,
+                automatic=True,
+                trigger=projectenv.TRIGGER_FIRST_OPEN,
+                health=outcome.get("health"),
+            )
+            note_project_python_ok(python)
+            LOG.info("首开采用项目自带的环境: %s（%s）", python, figures_dir)
+            return python, remembered_source(figures_dir, python)
     return select_worker_python()
+
+
+def _project_python_unusable(python: str, reason: str, record: dict) -> "WorkerError":
+    why = {
+        "missing": "这条路径已经不存在",
+        "no_matplotlib": "它 import 不到 matplotlib（或起不来）",
+    }.get(reason, reason)
+    err = WorkerError(
+        f"为这个项目指定的解释器用不了：{why}（{python}）。"
+        "Tavotto 不会自动换成别的环境：请在渲染环境设置里重新指定，或清除它回到自动选择。",
+        code=PROJECT_PYTHON_UNUSABLE_CODE,
+    )
+    err.explicit = {
+        "source": "project",
+        "python": python,
+        "reason": reason,
+        "trigger": record.get("trigger", ""),
+    }
+    return err
+
+
+def _invalidate_remembered(figures_dir: str | Path, python: str, reason: str, record: dict) -> None:
+    """自动记住的项目解释器已失效：作废记录（回到「没记住」），把事实留下。"""
+    LOG.warning("项目自动记住的解释器已不可用（%s），作废并重新发现: %s", reason, python)
+    with _project_python_lock:
+        _invalidated[projectenv._key(figures_dir)] = {
+            "python": python,
+            "reason": reason,
+            "trigger": record.get("trigger", ""),
+        }
+    projectenv.forget(figures_dir)
 
 
 def remembered_source(figures_dir: str | Path, python: str) -> str:
@@ -747,11 +885,8 @@ def remembered_source(figures_dir: str | Path, python: str) -> str:
     """
     from . import managedenv
 
-    try:
-        managed = str(managedenv.venv_python(figures_dir))
-    except (OSError, ValueError):
-        managed = ""
-    if managed and same_python(python, managed):
+    # 受管环境按代（U04）：任何一代的解释器都是「Tavotto 替它建的」
+    if managedenv.is_managed_python(figures_dir, python):
         return SOURCE_MANAGED_PROJECT
     # 项目之外的解释器（用户为这个项目挑的 conda / 系统 Python，或从依赖
     # 修复面板采用的系统解释器，ADR 0044）：它既不是项目自带的也不归我们管，
@@ -836,6 +971,7 @@ def reset_worker_python() -> None:
         _worker_source = ""
     with _project_python_lock:
         _project_python_ok.clear()
+        _invalidated.clear()
     projectenv.reset_cache()
 
 
@@ -884,7 +1020,7 @@ class EngineWorker:
         self._log = open(self.log_path, "ab", buffering=0)
         # **项目级**解释器决策：同一台机器上 A 项目可能用内置 runtime，
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
-        python, self.python_source = resolve_worker_python(figures_dir)
+        python, self.python_source = resolve_worker_python(figures_dir, script=script_name)
         self.python = python
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
         # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。用户自己的环境
@@ -1510,7 +1646,7 @@ class WorkerdWorker:
             raise WorkerdUnavailable("workerd 不可用")
         # 与 EngineWorker 同源：项目级解释器决策的唯一出处是
         # `resolve_worker_python`，换控制面不换答案。
-        python, self.python_source = resolve_worker_python(figures_dir)
+        python, self.python_source = resolve_worker_python(figures_dir, script=script_name)
         self.python = python
         # 与 EngineWorker 同形：两条控制面都持一份 ExecutionSpec（唯一权威
         # 构造函数 `execspec.safe_spec`；argv 由 `_spec()` → `_spawn_spec`
@@ -1797,11 +1933,40 @@ def control_plane() -> dict:
     return {"selected": "workerd" if path else "python", "path": path, "sessions": sessions}
 
 
+#: 起会话前的门（除工作目录那道之外的）：`(figures_dir, script_name) -> None`，要拦就抛
+#: `WorkerError`。今天只有一份——`deprepair._spawn_gate`（联合依赖准备，U04）；它在
+#: `deprepair` import 时登记。放在这里而不是直接 import，是因为 `deprepair` import 本模块。
+SPAWN_GATES: list = []
+
+
+def register_spawn_gate(gate) -> None:
+    if gate not in SPAWN_GATES:
+        SPAWN_GATES.append(gate)
+
+
 def _new_worker(script_name: str, figures_dir: str, entry: str):
     """按可用性挑控制面。**任何失败都回退 Python 池**——渲染不能因为一个
-    可选的加速件起不来就整个不可用。"""
+    可选的加速件起不来就整个不可用。
+
+    起会话之前先过工作目录那道门（U03，ADR 0057）：这个项目还没决定过 cwd、而脚本的
+    静态证据说沙盒默认不够用（数据只在项目根找得到 / 两处同名不同值）时，**不猜、
+    不就近替换、不自动切到真实 cwd**，抛 `workdir_confirmation_required`（载荷挂在
+    `confirmation`）让调用方去问用户。四类入口都从这里起会话，所以这道门只有一处。
+    """
     from . import workerd_client
 
+    try:
+        workdir.resolve_mode(figures_dir, script_name)
+    except workdir.ConfirmationRequired as exc:
+        err = WorkerError(str(exc), code=workdir.ERROR_CONFIRMATION_REQUIRED)
+        err.confirmation = dict(exc.payload)
+        err.script_name = script_name
+        raise err from None
+    # 第二道门：依赖（U04，ADR 0061 §六）。判据住在 `deprepair`（它 import 本模块，所以这里
+    # 不能反过来 import 它——它在 import 时把自己的门登记进 `SPAWN_GATES`）。门要问就抛带
+    # `dependency_preparation` 载荷的 WorkerError；放行就什么都不做。
+    for spawn_gate in SPAWN_GATES:
+        spawn_gate(figures_dir, script_name)
     if workerd_client.find_workerd():
         try:
             return WorkerdWorker(script_name, figures_dir, entry)
@@ -2044,14 +2209,18 @@ def shutdown_workers_using(python: str) -> int:
 
 
 @contextlib.contextmanager
-def mutating_environment(key: str, python: str = ""):
+def mutating_environment(key: str, python: str = "", *, shutdown: bool = True):
     """安装期间独占一个环境：挡住新会话、先把旧会话收掉。
 
     独占语义整个在 `envlease.mutating()`（三方共用的那一份）；本函数只多做
     池自己的那件事——**把池里用这个解释器的 worker 收掉**。
+
+    `shutdown=False` 是受管环境**换代**（U04，ADR 0061 §五）用的：新的一代建在另一个
+    目录里，active 那一代的 site-packages 一个字节不动，旧代上的 worker 可以跑完——
+    锁仍然登记（新会话不起、包管理的原地作业不并发），只是不杀。
     """
     with envlease.mutating(key, python):
-        if python:
+        if python and shutdown:
             shutdown_workers_using(python)
         yield
 
@@ -2077,8 +2246,9 @@ def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorke
     key = (_norm_dir(figures_dir), script_name)
     created = False
     # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
-    # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。
-    want_python = resolve_worker_python(figures_dir)[0]
+    # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
+    # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
+    want_python = resolve_worker_python(figures_dir, script=script_name)[0]
     if is_mutating(want_python):
         # 这个环境的 site-packages 正在被写。**不起新会话**——半装完的包
         # import 到一半是最难解释的一档失败（有时成功、有时缺一个子模块）。
@@ -2156,7 +2326,7 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
         return {"ok": False, "code": PROJECT_ENV_ALREADY_ATTEMPTED, "module": module}
     # 报缺包的那个解释器：第二层体检时跳过它——它就是失败的起点。
     try:
-        failing = resolve_worker_python(figures_dir)[0]
+        failing = resolve_worker_python(figures_dir, script=script_name)[0]
     except WorkerError:
         failing = ""
     outcome = projectenv.resolve_for_missing_dependency(

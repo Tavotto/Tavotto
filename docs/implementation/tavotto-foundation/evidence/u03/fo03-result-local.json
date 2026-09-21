@@ -1,0 +1,70 @@
+{
+  "case_id": "FO03",
+  "instance_id": "FO03@5715195bda8cc375",
+  "binding": {
+    "source_sha": "a0ae7ff762d798ee42e4242454eea607bd720129",
+    "artifact": {
+      "kind": "source_tree",
+      "identity": "a0ae7ff762d798ee42e4242454eea607bd720129"
+    },
+    "platform": "darwin-arm64",
+    "app_python": "3.13.11",
+    "runtime_lock_sha256": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c",
+    "fixture": "tests/fixtures/foundation/split_scripts_data",
+    "fixture_sha256": "ce1e719ffc4b59c070e5a3f7ba490c32e95ad15ce9588f6547c66eccc58343c9",
+    "entry": "http",
+    "capability_version": "u03"
+  },
+  "product_outcome": "automatic",
+  "test_verdict": "pass",
+  "evidence": [
+    "__file__ data + labhelpers: ylim [0.7, 7.3] == truth ± 5%; no input asked"
+  ],
+  "recorded_at": 1789901365.804053,
+  "observed": {
+    "backend": "pymupdf",
+    "plotted_ylim": [
+      0.7,
+      7.3
+    ],
+    "receipt": {
+      "receipt_id": "sha256:07ec388932d399853ba13bb968eaf0d87f5ed5819008516e05b18dd49bdc221c",
+      "completeness": "complete",
+      "python_source": "system",
+      "generation": 1,
+      "launch_context": {
+        "argv": [],
+        "cwd_mode": "sandbox",
+        "cwd_origin": "sandbox",
+        "entry": "__main__",
+        "grant": {
+          "cwd_write": {
+            "granted": false,
+            "granted_at": null,
+            "mode": null
+          },
+          "decided": false
+        },
+        "launch_context_version": 1,
+        "passthrough_savefig": false,
+        "profile": "safe",
+        "target": "scripts/entry_file.py",
+        "target_kind": "script",
+        "write_mode": "sandboxed"
+      },
+      "runtime": {
+        "machine": "arm64",
+        "packages": {
+          "matplotlib": "3.10.8",
+          "numpy": "2.4.3",
+          "pandas": "3.0.1",
+          "pillow": "12.1.0",
+          "scipy": "1.17.1"
+        },
+        "platform": "darwin",
+        "python_implementation": "CPython",
+        "python_version": "3.13.11"
+      }
+    }
+  }
+}

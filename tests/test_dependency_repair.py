@@ -20,6 +20,7 @@
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -33,10 +34,12 @@ from support.dependency_repair import (
     WORKER_PY,
     needs_worker,
     real_venv,
+    wait_for,
 )
 from tavotto.engine import (
     deprepair,
     depresolve,
+    envlease,
     managedenv,
     pool as engine_pool,
     projectenv,
@@ -466,7 +469,7 @@ def test_workers_on_the_mutating_environment_are_stopped(monkeypatch):
 def test_a_new_session_is_refused_while_the_environment_is_mutating(project, monkeypatch):
     """安装期间不许起新会话——半装完的包 import 到一半是最难解释的失败。"""
     monkeypatch.setattr(
-        engine_pool, "resolve_worker_python", lambda d=None: ("/env/a/bin/python", "system")
+        engine_pool, "resolve_worker_python", lambda d=None, **kw: ("/env/a/bin/python", "system")
     )
     with engine_pool.mutating_environment(engine_pool.env_key_of("/env/a/bin/python"), ""):
         with pytest.raises(engine_pool.WorkerError) as err:
@@ -490,22 +493,22 @@ def test_rebuild_and_install_are_mutually_exclusive(tmp_path, monkeypatch):
     python.write_text("", encoding="utf-8")
     managedenv.mark_ready(project)
 
-    # 重建拿锁期间，install 那条路（按解释器路径判）必须被挡住
-    monkeypatch.setattr(
-        deprepair, "_create_managed", lambda root, ev: pytest.fail("这条用例不该真的建环境")
-    )
+    # 重建拿锁期间，install 那条路（按解释器路径判）必须被挡住。U04 起重建是「建新的一代」
+    # （`_run_generation_locked`），锁 = 合成 key + active 那一代的解释器；探针放在建代之前
+    # 一定会走到的那一步（`base_python`），不真的建环境。
     seen: list[bool] = []
 
-    def _spy(root, ev):
+    def _spy():
         seen.append(engine_pool.is_mutating(str(python)))
         raise deprepair.RepairError(deprepair.ERROR_MANAGED_CREATE_FAILED, "stop")
 
-    monkeypatch.setattr(deprepair, "_create_managed", _spy)
+    monkeypatch.setattr(deprepair, "base_python", _spy)
     with pytest.raises(deprepair.RepairError):
         deprepair.rebuild_managed(project)
     assert seen == [True], "重建期间那条解释器路径必须处于「正在改动」状态"
     # 出来之后锁要干净地放掉（按归属清，不是按进入时那几个 key）
     assert not engine_pool.is_mutating(str(python))
+    assert not envlease.is_mutating_key(deprepair._env_key(deprepair.TARGET_MANAGED, "", project))
 
 
 def test_two_installs_on_one_environment_do_not_overlap():
@@ -838,6 +841,35 @@ def test_managed_environment_is_not_offered_without_a_base_python(project, monke
     assert err.value.code == deprepair.ERROR_MANAGED_UNAVAILABLE
 
 
+def test_a_probe_finished_after_a_reset_does_not_write_the_stale_answer_back(monkeypatch):
+    """`managed_available()` 在后台探基础解释器；探到一半 `reset_state()`（用例之间 / 用户重来）之后
+    才结束的那次探测不能把重置前的答案写回缓存——否则「没有基础解释器」的场景会莫名其妙看见一个。
+    （用例之间的真实形状：上一个文件的后台探测在本文件的 `no_base` 之后才结束，计划里 `private_python` 是 None。）"""
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _slow_base_python():
+        entered.set()
+        release.wait(30)
+        return "/stale/python"
+
+    monkeypatch.setattr(deprepair.managedenv, "base_python", _slow_base_python)
+    deprepair.reset_state()
+    assert deprepair.managed_available() is None  # 后台探测起步
+    assert entered.wait(30)
+    deprepair.reset_state()  # 探测进行中重置：从此「没有基础解释器」
+    monkeypatch.setattr(deprepair.managedenv, "base_python", lambda: None)
+    release.set()
+    for _ in range(200):  # 等旧探测线程结束（它不该写回）
+        if not any(t.name == "tavotto-base-python" and t.is_alive() for t in threading.enumerate()):
+            break
+        time.sleep(0.02)
+    assert deprepair.base_python() is None
+    assert deprepair.managed_available() is False
+
+
 # ===========================================================================
 # 六b、这台机器上已有的解释器：采用，不装（ADR 0044）
 # ===========================================================================
@@ -986,3 +1018,119 @@ def test_diagnostics_state_carries_no_paths(tmp_path):
 def test_custom_index_is_reported_as_a_boolean_never_as_a_url(monkeypatch):
     monkeypatch.setenv("PIP_INDEX_URL", "https://alice:s3cr3t@pypi.corp/simple")
     assert deprepair.custom_package_index(sys.executable) is True
+
+
+# ===========================================================================
+# U04（C）Codex #470：取消句柄的登记时刻、取消端点的项目归属、script 参数的钉回
+# ===========================================================================
+@needs_worker
+def test_cancel_right_after_the_acknowledgement_is_honoured(tmp_path, wheelhouse, monkeypatch):
+    """P1：`prepare_async` 一回来用户就取消——那时线程可能还在重算事实、还没拿锁。句柄必须在起线程
+    **之前**登记，否则 `cancel_status` 只能回 not_found、安装照常改用户的 venv。"""
+    project = tmp_path / "paper"
+    project.mkdir()
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    (project / "figure.py").write_text(f"import {FIXTURE_IMPORT}\n", encoding="utf-8")
+    venv = real_venv(project)
+    python = projectenv.interpreter_of(venv)
+    plan = deprepair.create_joint_plan(project, "figure.py")
+    assert plan.target_kind == deprepair.TARGET_PROJECT_VENV
+    # 把执行线程按在**入口**（还没跑到 `prepare()` 的第一行）：登记若在线程里做——不管在哪一行——
+    # 这一刻 `cancel_status` 都只能回 not_found
+    gate = threading.Event()
+    real_guarded = deprepair._prepare_guarded
+
+    def _held_at_entry(plan_id, on_event):
+        gate.wait(timeout=30)
+        return real_guarded(plan_id, on_event)
+
+    monkeypatch.setattr(deprepair, "_prepare_guarded", _held_at_entry)
+    deprepair.prepare_async(plan.plan_id)
+    answer = deprepair.cancel_status(plan.plan_id)  # ack 之后立刻取消
+    gate.set()
+    assert answer == {"accepted": True, "reason": ""}, answer
+    rec = wait_for(plan.plan_id)
+    assert rec["state"] == deprepair.STATE_CANCELLED, rec
+    assert rec["result"] == {"activated": False}
+    probe = subprocess.run(
+        [python, "-c", f"import {FIXTURE_IMPORT}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    assert probe.returncode != 0, "取消被接受了，venv 却被改了"
+    assert deprepair.cancel_status(plan.plan_id)["reason"] == "not_found"  # 句柄随计划一起清掉
+
+
+def test_cancel_endpoint_only_cancels_the_current_projects_plan(client, project, monkeypatch):
+    """P2：`plan_id` 随 SSE 广播给每个订阅者——别的项目的标签页拿到 id 也不能取消这里的安装。"""
+    from tavotto import app as m
+
+    m.open_project(str(project))
+    calls: list[str] = []
+    monkeypatch.setattr(
+        deprepair,
+        "cancel_status",
+        lambda pid: calls.append(pid) or {"accepted": True, "reason": ""},
+    )
+
+    class _Plan:
+        def __init__(self, root):
+            self.project = root
+
+    monkeypatch.setattr(deprepair, "get_joint_plan", lambda pid: _Plan("/somewhere/else"))
+    resp = client.post("/api/engine/dependencies/cancel", json={"plan_id": "theirs"})
+    assert resp.status_code == 409 and resp.get_json()["code"] == deprepair.ERROR_NOT_ALLOWED
+    assert calls == []
+    monkeypatch.setattr(deprepair, "get_joint_plan", lambda pid: _Plan(str(project)))
+    resp = client.post("/api/engine/dependencies/cancel", json={"plan_id": "mine"})
+    assert resp.status_code == 200 and resp.get_json()["cancelling"] is True
+    assert calls == ["mine"]
+    # 计划已经不在（装完 / 过期）：交给 `cancel_status` 如实回 not_found / committed
+    monkeypatch.setattr(deprepair, "get_joint_plan", lambda pid: None)
+    resp = client.post("/api/engine/dependencies/cancel", json={"plan_id": "gone"})
+    assert resp.status_code == 200 and calls == ["mine", "gone"]
+
+
+def test_dependencies_endpoints_pin_the_script_inside_the_project(client, project):
+    """`script` 参数只经 `projectenv.contained_path` 钉回项目内：`..` 回溯、软链接指到项目外、项目外
+    绝对路径各是 400 outside；项目内绝对路径允许；非 .py / 目录 400；不存在 404（CodeQL #470 三条）。"""
+    from tavotto import app as m
+
+    m.open_project(str(project))
+    (project / "sub").mkdir()
+    (project / "sub" / "plot.py").write_text("import os\n", encoding="utf-8")
+    (project / "notes.txt").write_text("", encoding="utf-8")
+    outside = project.parent / "outside.py"
+    outside.write_text("import os\n", encoding="utf-8")
+    os.symlink(outside, project / "link.py")
+
+    def code_of(script: str) -> tuple[int, str]:
+        resp = client.get("/api/engine/dependencies", query_string={"script": script})
+        body = resp.get_json()
+        return resp.status_code, body.get("code", "") if resp.status_code != 200 else "ok"
+
+    assert code_of("../outside.py") == (400, "script_path_outside_project")
+    assert code_of(str(outside)) == (400, "script_path_outside_project")
+    assert code_of("link.py") == (400, "script_path_outside_project")
+    assert code_of("notes.txt") == (400, "unsupported_script_type")
+    assert code_of("sub") == (400, "unsupported_script_type")
+    assert code_of("missing.py") == (404, "script_not_found")
+    assert code_of("") == (404, "script_not_found")
+    assert code_of("sub/plot.py") == (200, "ok")
+    assert code_of(str(project / "sub" / "plot.py")) == (200, "ok")
+    assert code_of("sub/../sub/plot.py") == (200, "ok")
+
+
+def test_run_pip_does_not_start_when_already_cancelled(tmp_path):
+    """已取消的不起 pip（起了再杀，包可能已经写了一半）：`_run_pip` 起进程前先看一眼事件。"""
+    marker = tmp_path / "started"
+    argv = [sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"]
+    ev = threading.Event()
+    ev.set()
+    assert deprepair._run_pip(argv, ev, lambda _t: None) == (deprepair.ERROR_CANCELLED, "")
+    assert not marker.exists()
+    code, _out = deprepair._run_pip(argv, threading.Event(), lambda _t: None)
+    assert code == "" and marker.exists()  # 没取消照常跑

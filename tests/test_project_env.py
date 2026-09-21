@@ -464,19 +464,25 @@ def test_the_switch_is_remembered_project_scoped_not_globally(project, tmp_path)
 
 @needs_worker
 def test_worker_identity_includes_the_interpreter(project):
-    """环境换了还复用旧会话 = 「明明切了环境，还是报缺包」。"""
-    real_venv(project)
+    """环境换了还复用旧会话 = 「明明切了环境，还是报缺包」。
+
+    U03 起首开就会发现并采用项目 venv，所以「旧会话」要在 venv **出现之前**起：
+    先用默认链条起一条，再建 venv、清缓存，让接手把它换掉。
+    """
     stale = engine_pool.get("figure.py", str(project), "__main__")
     assert stale.python_source != engine_pool.SOURCE_PROJECT_VENV
+    real_venv(project)
+    projectenv.reset_cache(project)  # 首开发现按项目缓存了「没有 venv」
     outcome = engine_pool.try_project_env(str(project), "figure.py", FIXTURE_MODULE)
     assert outcome["ok"], outcome
     fresh = engine_pool.get("figure.py", str(project), "__main__")
     assert fresh is not stale
     assert fresh.python_source == engine_pool.SOURCE_PROJECT_VENV
     # 反向也要成立，而且这一半才真正看护 `get()` 里那条守卫：用户把项目切回
-    # 内置环境走的是 `forget()`，它**不作废任何 worker**（自动 fallback 那条
-    # 路顺手 invalidate 过，所以只测那一半是空门禁——抽掉守卫照样绿）。
-    projectenv.forget(project)
+    # 内置环境走的是 `remember_default()`（U03：明确选默认链条，首开发现不再盖回去），
+    # 它**不作废任何 worker**（自动 fallback 那条路顺手 invalidate 过，所以只测那一半
+    # 是空门禁——抽掉守卫照样绿）。
+    projectenv.remember_default(project)
     engine_pool.reset_worker_python()
     back = engine_pool.get("figure.py", str(project), "__main__")
     assert back is not fresh
@@ -598,8 +604,12 @@ def test_only_missing_dependency_triggers_a_switch(project):
     with pytest.raises(engine_pool.WorkerError) as err:
         engine_pool.build("boom.py", str(project), "__main__")
     assert err.value.code != "missing_dependency"
-    # 一次自动切换都没发生：这个项目仍然没有记住任何环境
-    assert projectenv.remembered(project) is None
+    # 一次**接手式**自动切换都没发生：没有为这一对 (项目, 脚本) 记过尝试、错误上也没挂
+    # 接手结果。（首开在执行之前就选了项目 venv——那是 U03 的前移，trigger 是 first_open，
+    # 不是因为这个错误换的环境。）
+    assert projectenv.mark_attempted(project, "boom.py") is True
+    assert not hasattr(err.value, "project_env")
+    assert projectenv.state(project)["trigger"] == projectenv.TRIGGER_FIRST_OPEN
     # 判据本身也钉住——两个消费者（pool.build 与 app 的端点重试）共用这一份
     assert not engine_pool.should_try_project_env(err.value)
     assert engine_pool.should_try_project_env(
@@ -670,8 +680,9 @@ def test_remembered_environment_survives_a_project_move(project, tmp_path):
     engine_pool.build("figure.py", str(project), "__main__")
     state = projectenv.state(project)
     assert state["automatic"] is True
-    assert state["trigger"] == "missing_dependency"
-    assert state["module"] == FIXTURE_MODULE
+    # U03：首开就发现并采用，脚本一次都没在默认环境里跑错（FO11）
+    assert state["trigger"] == projectenv.TRIGGER_FIRST_OPEN
+    assert state["module"] == ""
     assert state["python_relative"].startswith(".venv")
     stored = engine_config.project_settings(str(project))[projectenv.SETTINGS_KEY]
     assert "python" not in stored, "项目内的解释器不该存绝对路径"
@@ -680,14 +691,23 @@ def test_remembered_environment_survives_a_project_move(project, tmp_path):
 
 @needs_worker
 def test_forget_returns_the_project_to_the_default_chain(project):
-    """用户选回内置环境时，自动决策要能干净地撤掉。"""
+    """用户选回内置环境时，自动决策要能干净地撤掉——而且**不被下一次首开发现盖回去**。
+
+    U03 起 `forget()` = 回到「没决定过」，下一次解析又会把 venv 发现出来；用户明确
+    选回默认链条走 `remember_default()`（应用端点清掉项目环境时用的就是它）。
+    """
     real_venv(project)
     engine_pool.build("figure.py", str(project), "__main__")
     assert engine_pool.resolve_worker_python(project)[1] == engine_pool.SOURCE_PROJECT_VENV
-    projectenv.forget(project)
+    projectenv.remember_default(project)
     engine_pool.reset_worker_python()
     assert projectenv.remembered(project) is None
+    assert projectenv.uses_default_chain(project)
     assert engine_pool.resolve_worker_python(project)[1] != engine_pool.SOURCE_PROJECT_VENV
+    # 忘掉决定 = 没决定过：首开发现重新采用 venv（这是自动决策，不是覆盖用户的选择）
+    projectenv.forget(project)
+    engine_pool.reset_worker_python()
+    assert engine_pool.resolve_worker_python(project)[1] == engine_pool.SOURCE_PROJECT_VENV
 
 
 # ----------------------------------------------------------------- 产品 API
@@ -716,8 +736,8 @@ def test_environment_endpoint_reports_the_project_environment(client, project):
     after = client.get("/api/engine/environment").get_json()["project"]
     assert after["source"] == engine_pool.SOURCE_PROJECT_VENV
     assert after["automatic"] is True
-    assert after["trigger"] == "missing_dependency"
-    assert after["module"] == FIXTURE_MODULE
+    assert after["trigger"] == projectenv.TRIGGER_FIRST_OPEN  # U03：首开就选对，不先跑错一次
+    assert after["module"] == ""
     assert after["python"].startswith(".venv")
 
 
@@ -792,7 +812,7 @@ def test_diagnostics_explains_why_this_python_was_chosen(client, project):
     res = report["project"]["environment_resolution"]
     assert res["source"] == engine_pool.SOURCE_PROJECT_VENV
     assert res["automatic"] is True
-    assert res["trigger"] == "missing_dependency"
+    assert res["trigger"] == projectenv.TRIGGER_FIRST_OPEN
     assert res["python_version"]
     assert res["matplotlib_version"]
     # 项目内的解释器只出项目相对路径：用户主目录名不该无谓地进诊断包

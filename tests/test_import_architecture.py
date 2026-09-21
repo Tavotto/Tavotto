@@ -88,13 +88,18 @@ def test_registered_dynamic_calls_still_exist():
     assert stale == [], f"这些登记的动态 import 在源码里已经没有了，删掉登记: {stale}"
 
 
-def _bridge_runner_phases() -> dict[str, set[str]]:
-    """`bridge_runner._PHASE1` / `_PHASE2` 两个字面量元组（真正决定装什么进用户进程的清单）。"""
-    tree = ast.parse((importgraph.PKG / "engine" / "bridge_runner.py").read_text(encoding="utf-8"))
+def _load_lists(filename: str, names: tuple[str, ...]) -> dict[str, set[str]]:
+    """根入口经 `bridgeboot.load_engine_modules()` 装进私有包的字面量清单。
+
+    bridge_runner 是 `_PHASE1` / `_PHASE2`；safe worker 自 issue #447（FO19）起走同一份
+    装载器，清单是 `_ENGINE_MODULES`。它们是真正决定「装什么」的东西——装载器按名字
+    `import_module`，AST 上看不到边，清单本身就是边。
+    """
+    tree = ast.parse((importgraph.PKG / "engine" / filename).read_text(encoding="utf-8"))
     out: dict[str, set[str]] = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id in ("_PHASE1", "_PHASE2") for t in node.targets
+            isinstance(t, ast.Name) and t.id in names for t in node.targets
         ):
             assert isinstance(node.value, ast.Tuple)
             out[node.targets[0].id] = {  # type: ignore[attr-defined]
@@ -102,35 +107,62 @@ def _bridge_runner_phases() -> dict[str, set[str]]:
                 for e in node.value.elts
                 if isinstance(e, ast.Constant)
             }
-    assert set(out) == {"_PHASE1", "_PHASE2"}, (
-        "用例前提：bridge_runner 里确实有 _PHASE1/_PHASE2 两批装载清单"
-    )
+    assert set(out) == set(names), f"用例前提：{filename} 里确实有 {names} 装载清单"
     return out
 
 
-@pytest.mark.parametrize("phase,scope", [("_PHASE1", "module"), ("_PHASE2", "function")])
-def test_bridge_runner_load_lists_match_the_registered_extra_edges(phase, scope):
-    """`extra_edges` 是「登记推出的边」：bridge_runner 经 bridgeboot 装进用户进程的每个模块一条。
-    装载清单多了一个模块而登记没跟上，图上那条边就悄悄没了——往 `_PHASE2` 加族模块（PR D
-    第二步每切一族加一个）时这里会替你要求补登记；反过来登记了清单里没有的也红。"""
-    listed = _bridge_runner_phases()[phase]
+def _bridge_runner_phases() -> dict[str, set[str]]:
+    """`bridge_runner._PHASE1` / `_PHASE2` 两个字面量元组（真正决定装什么进用户进程的清单）。"""
+    return _load_lists("bridge_runner.py", ("_PHASE1", "_PHASE2"))
+
+
+@pytest.mark.parametrize(
+    "filename,listname,scope",
+    [
+        ("bridge_runner.py", "_PHASE1", "module"),
+        ("bridge_runner.py", "_PHASE2", "function"),
+        ("worker.py", "_ENGINE_MODULES", "module"),
+    ],
+)
+def test_private_package_load_lists_match_the_registered_extra_edges(filename, listname, scope):
+    """`extra_edges` 是「登记推出的边」：根入口经 bridgeboot 装进私有包的每个模块一条。
+    装载清单多了一个模块而登记没跟上，图上那条边就悄悄没了——往 `_PHASE2` /
+    `_ENGINE_MODULES` 加族模块时这里会替你要求补登记；反过来登记了清单里没有的也红。
+    `bridgeboot` 自己是按文件路径装的（不在清单里），另有一条边单独登记。"""
+    listed = _load_lists(filename, (listname,))[listname]
+    src = f"tavotto/engine/{filename}"
     registered = {
         e["to"]
         for e in BASELINE["extra_edges"]
-        if e["from"] == "tavotto/engine/bridge_runner.py" and phase in e.get("via", "")
+        if e["from"] == src and listname in e.get("via", "")
     }
     assert registered == listed, (
-        f"bridge_runner.{phase} 与 extra_edges 的登记对不上：清单有而没登记 {sorted(listed - registered)}，"
+        f"{filename}.{listname} 与 extra_edges 的登记对不上：清单有而没登记 {sorted(listed - registered)}，"
         f"登记了而清单没有 {sorted(registered - listed)}"
     )
     scopes = {
         e["scope"]
         for e in BASELINE["extra_edges"]
-        if e["from"] == "tavotto/engine/bridge_runner.py" and phase in e.get("via", "")
+        if e["from"] == src and listname in e.get("via", "")
     }
     assert scopes == {scope}, (
-        f"{phase} 那批边的 scope 应全是 {scope}（第一阶段在模块层装、第二阶段在函数里装）：{scopes}"
+        f"{listname} 那批边的 scope 应全是 {scope}（模块层装的是 module，屏障那一刻才装的是 function）：{scopes}"
     )
+
+
+@pytest.mark.parametrize("filename", ["worker.py", "bridge_runner.py"])
+def test_both_roots_register_their_file_path_load_of_bridgeboot(filename):
+    """两个根都 `spec_from_file_location(..., bridgeboot.py)`——AST 上不是 import，
+    登记成边才不会让 bridgeboot 在图上变成孤岛。"""
+    src = f"tavotto/engine/{filename}"
+    text = (importgraph.PKG / "engine" / filename).read_text(encoding="utf-8")
+    assert "spec_from_file_location(" in text and '"bridgeboot.py"' in text, (
+        f"用例前提：{filename} 按文件路径装 bridgeboot"
+    )
+    assert any(
+        e["from"] == src and e["to"] == "tavotto/engine/bridgeboot.py"
+        for e in BASELINE["extra_edges"]
+    ), f"{filename} → bridgeboot 这条边没登记"
 
 
 # ---------------------------------------------------------------- 环只减不增
