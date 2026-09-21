@@ -1182,6 +1182,72 @@ def test_frac_anchored_props_survive_axis_scale_changes(tmp_path):
         proc.wait(timeout=10)
 
 
+SUBFIGURE_SCRIPT = """\
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrowPatch, Rectangle
+
+
+def main():
+    fig = plt.figure(figsize=(6, 3))
+    left, right = fig.subfigures(1, 2)
+    lax = left.subplots()
+    lax.plot([0, 1], [0, 1])
+    # 右半边子图幅：这里的 artist `get_figure()` 回的是 SubFigure，figure 分数却按根算
+    ax = right.subplots()
+    ax.add_patch(Rectangle((0.2, 0.2), 0.3, 0.3, facecolor="#E8F2FA"))
+    ax.text(0.6, 0.7, "note")
+    ax.add_patch(FancyArrowPatch(posA=(0.1, 0.8), posB=(0.5, 0.9), transform=ax.transData,
+                                 arrowstyle="-|>", mutation_scale=8))
+    fig.savefig("SubFig.pdf")
+"""
+
+
+def test_frac_anchored_props_land_inside_subfigures(tmp_path):
+    """SubFigure 里的形状 / 文字 / 独立箭头：拖到哪就落到哪。
+
+    `artist.get_figure()` 在子图幅里回的是 SubFigure，而 manifest 的 anchor 与 pos_frac
+    都按根 Figure 的分数算——拿子图幅的 bbox 换算，右半边的目标 0.845 落在 0.4225
+    （正好一半）（#472 评审 P2，文字与箭头是同一条缺口）。`pathgeom.frac_to_display`
+    现在一律回到根 Figure。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_sub.py").write_text(SUBFIGURE_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_sub.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "SubFig", "patches": []})["manifest"]
+        movers = {
+            e["gid"]: e for e in man["elements"] if e.get("anchor") or e.get("arrow_endpoints")
+        }
+        assert {e["role"] for e in movers.values()} >= {"patch", "text", "arrow_patch"}, (
+            movers.keys()
+        )
+        patches, want = [], {}
+        for gid, e in movers.items():
+            if e.get("arrow_endpoints"):
+                (ax_, ay_), (bx_, by_) = e["arrow_endpoints"]
+                want[gid] = [ax_ + 0.05, ay_ - 0.05, bx_ + 0.05, by_ - 0.05]
+                patches.append({"gid": gid, "prop": "endpoints_frac", "value": want[gid]})
+            else:
+                want[gid] = [e["anchor"][0] + 0.05, e["anchor"][1] - 0.05]
+                patches.append({"gid": gid, "prop": e["drag_prop"], "value": want[gid]})
+        resp = _rpc(proc, {"cmd": "override", "stem": "SubFig", "patches": patches})
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        for gid, target in want.items():
+            e = next(x for x in resp["manifest"]["elements"] if x["gid"] == gid)
+            got = (
+                [*e["arrow_endpoints"][0], *e["arrow_endpoints"][1]]
+                if e.get("arrow_endpoints")
+                else e["anchor"]
+            )
+            assert got == pytest.approx(target, abs=2e-3), (gid, target, got)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
 def test_frac_anchor_exact_on_aspect_equal_axes(tmp_path):
     """aspect="equal"（imshow 方图）的子图：几何变更后 figure 锚点仍逐位可信。
 

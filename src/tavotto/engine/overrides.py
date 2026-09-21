@@ -574,7 +574,7 @@ def _set_patch_pos_frac(p, value) -> None:
     平移量以**英寸**记在 `dpi_scale_trans` 上，不是像素：导出时 dpi 会变
     （`savefig(dpi=600)`），钉像素的话预览里挪了 3 mm、导出里只挪 1 mm。
     """
-    fig = p.get_figure()
+    fig = pathgeom.root_figure(p.get_figure())  # SubFigure 里也按根 Figure 的分数算
     base = _patch_base_transform(p)
     p.set_transform(base)  # 先回到基准再量：这一段要幂等（重放 / 二次拖动）
     bb = p.get_window_extent()
