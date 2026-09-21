@@ -661,8 +661,8 @@ def test_quadmesh_outline_is_clipped_to_what_is_drawn(library):
 
     数据范围超出坐标轴范围时 bbox 是未裁剪的整块网格（比子图高出一截），从前
     没有 geometry 就拿它当选中框——「点子图背景时框罩不准」（2026-09-21 用户的
-    PRB 三联图）。轮廓 + `clip` 才是它画出来的那块；轮廓本身仍是整块网格
-    （前端按 clip 裁），bbox 一个字节不动。
+    PRB 三联图）。发出去的轮廓**已经裁进 axes 框**：它就是画出来的那块的边界
+    （框选按「框与边相交」判，边在子图框上才圈得中，#473 评审）；bbox 一个字节不动。
     """
     man = _manifest(library, stem="MeshFig")
     el = _el(man, "axes_0.collections_0")
@@ -671,17 +671,26 @@ def test_quadmesh_outline_is_clipped_to_what_is_drawn(library):
     assert geom["kind"] == "path" and len(geom["paths"]) == 1
     (path,) = geom["paths"]
     assert path["closed"] is True and geom["fill"] is True
-    # 直角网格的外轮廓抽稀后只剩四个角（首尾相接那一格可能多留一个点）
-    assert 4 <= len(path["points"]) <= 5, path["points"]
-    # 轮廓 = 整块网格：与（未裁剪的）bbox 同框，比子图高出一截
+    # 直角网格裁进子图框之后就是四个角
+    assert len(path["points"]) == 4, path["points"]
+    # 轮廓 = 子图框（网格四边都伸出去了，裁完正好是它）；bbox 仍是整块网格，比子图高
     xs = [q[0] for q in path["points"]]
     ys = [q[1] for q in path["points"]]
     assert [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)] == pytest.approx(
-        el["bbox"], abs=2e-3
+        ax_box, abs=2e-3
     )
     assert el["bbox"][3] > ax_box[3] * 1.15, "夹具失效：网格没有伸出子图"
-    # 裁剪框 = 子图框：前端按它裁，选中框与画出来的那块严丝合缝
+    assert el["bbox"][1] < ax_box[1] and el["bbox"][1] + el["bbox"][3] > ax_box[1] + ax_box[3]
+    # 裁剪框照发（前端按它裁，与轮廓一致）
     assert geom["clip"] == pytest.approx(ax_box, abs=2e-3)
+    # 框选：一个盖住整个可见子图的选择框必须与轮廓相交（边在子图框上）；
+    # 与 `web/src/lib/pathGeom.ts` 的 geomHitsRect 同一判据——任一顶点落在框内即圈中
+    marquee = (ax_box[0] - 0.01, ax_box[1] - 0.01, ax_box[2] + 0.02, ax_box[3] + 0.02)
+    assert any(
+        marquee[0] <= q[0] <= marquee[0] + marquee[2]
+        and marquee[1] <= q[1] <= marquee[1] + marquee[3]
+        for q in path["points"]
+    )
 
 
 def test_quadmesh_outline_follows_a_curvilinear_grid(library):

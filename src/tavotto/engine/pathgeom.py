@@ -405,6 +405,31 @@ def _collection_subpaths(
     return out
 
 
+def _clip_ring_to_rect(pts: np.ndarray, x0: float, y0: float, x1: float, y1: float) -> np.ndarray:
+    """闭合多边形（display 像素）与一个轴对齐矩形的交（Sutherland–Hodgman）。
+
+    矩形是凸的，四条边各切一刀就是精确的交多边形；任意简单多边形都行（极坐标那种
+    曲线边界也行）。切空了回空数组。
+    """
+    ring = np.asarray(pts, dtype=float)
+    for axis, bound, keep_ge in ((0, x0, True), (0, x1, False), (1, y0, True), (1, y1, False)):
+        if len(ring) == 0:
+            break
+        inside = ring[:, axis] >= bound if keep_ge else ring[:, axis] <= bound
+        out: list = []
+        for i in range(len(ring)):
+            cur, prev = ring[i], ring[i - 1]
+            cur_in, prev_in = inside[i], inside[i - 1]
+            if cur_in != prev_in:
+                # 与这条裁剪边的交点（沿 prev→cur 线性插值）
+                t = (bound - prev[axis]) / (cur[axis] - prev[axis])
+                out.append(prev + t * (cur - prev))
+            if cur_in:
+                out.append(cur)
+        ring = np.asarray(out, dtype=float).reshape(-1, 2)
+    return ring
+
+
 def _quadmesh_outline_subpaths(mesh) -> list[tuple]:
     """彩色网格的**外轮廓**（display 像素）：沿坐标网格的四条边绕一圈。
 
@@ -750,6 +775,27 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
             subs = _quadmesh_outline_subpaths(artist)
             if not subs:
                 return None
+            # **轮廓先裁进 axes 框再发**，发的就是画出来的那块边界（#473 评审）：网格四边
+            # 都伸出坐标轴范围时，未裁的四条边全在 clip 之外，而前端的框选按「框与边相交」
+            # 判（`geomHitsRect`，填充内部刻意不算圈中），一个盖住整个可见子图的选择框也
+            # 圈不中它——退回 bbox 的年代是圈得中的。裁完边就在子图框上，框选照旧。
+            # 裁剪路径不是矩形（`set_clip_path`）时 `_clip_rect` 回 None，不裁、照旧发 clip。
+            clip = _clip_rect(artist, W, H)
+            if clip is not None:
+                cx, cy, cw, ch = clip
+                x0, x1 = cx * W, (cx + cw) * W
+                y0, y1 = (1.0 - cy - ch) * H, (1.0 - cy) * H  # clip 是 top-origin 分数
+                clipped = []
+                for pts, closed in subs:
+                    if closed:
+                        ring = _clip_ring_to_rect(pts, x0, y0, x1, y1)
+                        if len(ring) >= 3:
+                            clipped.append((ring, True))
+                    else:
+                        clipped.append((pts, closed))  # NaN 拆出的开放段只能靠前端按 clip 裁
+                subs = clipped
+                if not subs:
+                    return None  # 整块网格都在坐标轴范围之外：图上没有它的墨迹
             lw = np.asarray(artist.get_linewidths(), dtype=float).ravel()
             lw_max = float(lw.max()) if lw.size else 0.0
             return _pack(
@@ -760,7 +806,7 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
                 fill=True,
                 stroke=_has_paint(artist.get_edgecolor()) and lw_max > 0,
                 stroke_pt=lw_max,
-                clip=_clip_rect(artist, W, H),
+                clip=clip,
                 budget=budget,
             )
         if isinstance(artist, Collection):

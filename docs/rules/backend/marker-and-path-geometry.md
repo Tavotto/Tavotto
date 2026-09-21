@@ -85,8 +85,10 @@
   bbox 本来就是准的」——**数据范围超出坐标轴范围时这条前提不成立**（bbox 是未裁剪的
   整块网格，`shading="nearest"` 还各向外垫半格），而用户看到的是被 axes 裁掉之后的
   那块。`pathgeom._quadmesh_outline_subpaths` 沿 `get_coordinates()` 的四条边绕一圈
-  （直角网格抽稀后就是四个角，极坐标 / 翘曲网格是真实边界），`fill=True`、带
-  `clip`，仍**不逐 cell 描**（22 万个 cell 就是 22 万条路径）。`offsets` 按渲染器口径处理：
+  （直角网格抽稀后就是四个角，极坐标 / 翘曲网格是真实边界），**先裁进 axes 框再发**
+  （`_clip_ring_to_rect`，Sutherland–Hodgman）：前端框选按「框与边相交」判、填充内部刻意
+  不算圈中，未裁的四条边全在子图之外时盖住整个子图的选择框也圈不中它；`fill=True`、
+  `clip` 照发，仍**不逐 cell 描**（22 万个 cell 就是 22 万条路径）。`offsets` 按渲染器口径处理：
   一条（或全相同）的偏移经 `offset_transform` 加到轮廓上，多条不同的偏移让 cell 各奔东西、
   退回 bbox。bbox 一个字节不动。
   前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`。
