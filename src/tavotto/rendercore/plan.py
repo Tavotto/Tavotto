@@ -108,22 +108,23 @@ class RenderPlan:
 # ---------------------------------------------------------------------------
 # 对象 → 节点
 # ---------------------------------------------------------------------------
-def _box_pt(o: dict) -> tuple[float, float, float, float]:
+def _box_pt(o: dict, *, allow_zero: bool = False) -> tuple[float, float, float, float]:
+    """对象框（毫米）→ pt。负的宽高一律拒；零宽 / 零高只有形状 / 箭头允许（一条水平线的框就是
+    零高，路径照样合法），文字与面板在这里就拒——它们在降低成 IR 时会丢掉框的维度（文字变成
+    基线点、面板的 rect 才会被 validate 拦），不在这里拦就没人拦了。"""
+    oid = str(o.get("id", ""))
+    what = o.get("id", o.get("type"))
     try:
         box = tuple(float(o[k]) for k in ("x_mm", "y_mm", "w_mm", "h_mm"))
     except (KeyError, TypeError, ValueError) as exc:
         raise PlanError(
-            "bad_object",
-            f"{o.get('id', o.get('type'))}: 缺 x_mm/y_mm/w_mm/h_mm 或不是数",
-            {"id": str(o.get("id", ""))},
+            "bad_object", f"{what}: 缺 x_mm/y_mm/w_mm/h_mm 或不是数", {"id": oid}
         ) from exc
     if not all(math.isfinite(v) for v in box):
-        raise PlanError(
-            "bad_object",
-            f"{o.get('id', o.get('type'))}: x_mm/y_mm/w_mm/h_mm 必须是有限数",
-            {"id": str(o.get("id", ""))},
-        )
+        raise PlanError("bad_object", f"{what}: x_mm/y_mm/w_mm/h_mm 必须是有限数", {"id": oid})
     x, y, w, h = box
+    if w < 0 or h < 0 or (not allow_zero and (w == 0 or h == 0)):
+        raise PlanError("bad_object", f"{what}: w_mm/h_mm 必须为正（{w} × {h}）", {"id": oid})
     return (mm2pt(x), mm2pt(y), mm2pt(w), mm2pt(h))
 
 
@@ -138,7 +139,7 @@ def _box_to_page(x: float, y_top: float, page_h: float) -> Matrix:
 
 def _object_transform(o: dict, page_h: float, key: str = "rotation_deg") -> Matrix:
     """框空间 → 页面空间，再绕框中心按画布语义（顺时针）旋转。"""
-    x, y, w, h = _box_pt(o)
+    x, y, w, h = _box_pt(o, allow_zero=True)
     m = _box_to_page(x, y, page_h)
     deg = _rotation_deg(o, key)
     if deg:
@@ -269,7 +270,7 @@ def _text_node(
 
 
 def _shape_node(o: dict, page_h: float) -> Node:
-    _x, _y, w, h = _box_pt(o)
+    _x, _y, w, h = _box_pt(o, allow_zero=True)
     paths = (
         geometry.arrow_paths(o, w, h) if o.get("type") == "arrow" else geometry.shape_paths(o, w, h)
     )

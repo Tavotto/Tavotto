@@ -73,6 +73,15 @@ def test_fill_opacity_lands_on_the_fill_paint_not_the_stroke():
     assert p.stroke is not None and p.stroke.paint == ir.Paint((0.0, 1.0, 0.0), 1.0)
 
 
+def test_zero_fill_opacity_is_zero_not_missing():
+    """`fill_opacity: 0` 是合法取值（完全透明的填充），不许被当成「没设」→ 1.0。旧 facade 有这个 bug，
+    RenderCore 不照抄（U08 对拍时这是有意的差异）。"""
+    [p] = geometry.shape_paths({"shape": "rect", "fill": "#ff0000", "fill_opacity": 0}, 10.0, 10.0)
+    assert p.fill == ir.Paint((1.0, 0.0, 0.0), 0.0)
+    [q] = geometry.shape_paths({"shape": "rect", "fill": "#ff0000"}, 10.0, 10.0)
+    assert q.fill == ir.Paint((1.0, 0.0, 0.0), 1.0)
+
+
 def test_line_defaults_to_the_horizontal_midline():
     [p] = geometry.shape_paths({"shape": "line"}, 40.0, 20.0)
     assert p.segments == (("M", 0.0, 10.0), ("L", 40.0, 10.0))

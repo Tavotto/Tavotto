@@ -295,8 +295,13 @@ def test_compile_plan_lists_capability_gaps_per_format_and_problems(project: Pat
     req = _request([_panel("figs/Fig1.pdf", opacity=0.5), _text("∇ 图")], background="transparent")
     rp = plan.compile_plan(req, sources=sources.StaticSourceResolver(project), faces=PROVIDER)
     assert rp.page.background is None
-    # 导入页在 PDF 里是 U07 的事；整体 opacity（透明组）本切片已是 native，所以不在缺口里
-    assert [g["operation"] for g in rp.unsupported["pdf"]] == ["imported_page"]
+    # 这棵树里还没有写入器：PDF 的缺口按遍历顺序列出页上用到的每种操作（第二个 PR 把文字 / 透明组翻成
+    # native 后只剩 imported_page）；透明背景 → page_background 不在缺口里
+    assert [g["operation"] for g in rp.unsupported["pdf"]] == [
+        "imported_page",
+        "group_opacity",
+        "text",
+    ]
     assert "page_background" not in {g["operation"] for g in rp.unsupported["png"]}
     assert {g["operation"] for g in rp.unsupported["png"]} >= {"imported_page", "text"}
     assert rp.problems == (
@@ -347,3 +352,51 @@ def test_bad_objects_are_rejected_before_any_ir_is_built(project: Path):
     with pytest.raises(ir.IRError) as ei3:  # 页面尺寸非法在 validate 那一层拒
         _compile(project, [], page=(0.0, 10.0))
     assert ei3.value.code == "non_positive_size"
+
+
+@pytest.mark.parametrize(
+    "obj",
+    [
+        _text(w=-5.0),
+        _text(h=0.0),
+        _shape(w=-1.0),
+        {
+            "type": "arrow",
+            "id": "a",
+            "x_mm": 1,
+            "y_mm": 1,
+            "w_mm": 10,
+            "h_mm": -2,
+            "start": {"rx": 0, "ry": 0.5},
+            "end": {"rx": 1, "ry": 0.5},
+        },
+        _panel("figs/Fig1.pdf", w=0.0),
+    ],
+    ids=["text-negative-w", "text-zero-h", "shape-negative-w", "arrow-negative-h", "panel-zero-w"],
+)
+def test_non_positive_boxes_are_rejected_before_lowering(project: Path, obj: dict):
+    """负宽高一律拒；零宽 / 零高对文字 / 面板也拒（降低成 IR 时框的维度会丢，这里不拦就没人拦）。"""
+    with pytest.raises(plan.PlanError) as ei:
+        _compile(project, [obj])
+    assert ei.value.code == "bad_object"
+
+
+def test_zero_height_line_boxes_are_still_allowed_for_shapes(project: Path):
+    """一条水平线的框就是零高：形状 / 箭头允许零，路径照样合法。"""
+    compiled = _compile(
+        project,
+        [
+            _shape(kind="line", h=0.0),
+            {
+                "type": "arrow",
+                "id": "a",
+                "x_mm": 1,
+                "y_mm": 1,
+                "w_mm": 10,
+                "h_mm": 0,
+                "start": {"rx": 0, "ry": 0.5},
+                "end": {"rx": 1, "ry": 0.5},
+            },
+        ],
+    )
+    assert len(compiled.page.children) == 2

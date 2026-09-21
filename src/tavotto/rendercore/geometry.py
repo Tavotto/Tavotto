@@ -133,7 +133,14 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
     `w, h` 是框的 pt 尺寸；毫米 → pt 由调用方换算（`corner_radius_mm` 除外：它是对象
     上的毫米字段，这里自己换）。"""
     sw = max(float(o.get("stroke_pt", 1.0)), 0.05)
-    fill = Paint(hex2rgb(o["fill"]), float(o.get("fill_opacity") or 1.0)) if o.get("fill") else None
+    # `fill_opacity: 0` 是合法取值（完全透明的填充），不能被 `or 1.0` 当成「没设」——旧 facade 正是
+    # 这么写的（`float(o.get("fill_opacity") or 1.0)`），U08 对拍时这一处是有意的差异
+    fill_opacity = o.get("fill_opacity")
+    fill = (
+        Paint(hex2rgb(o["fill"]), 1.0 if fill_opacity is None else float(fill_opacity))
+        if o.get("fill")
+        else None
+    )
     inset = sw / 2
     kind = o.get("shape")
     oid = str(o.get("id", ""))

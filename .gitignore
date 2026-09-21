@@ -20,6 +20,9 @@ __pycache__/
 
 # 前端构建产物（scripts/build_frontend.py 生成，随 wheel 分发但不进仓库）
 /src/tavotto/web/
+# 批准字体（scripts/fetch_fonts.py 按 allowlist 的 sha256 取下来，随 wheel / 桌面包分发但不进仓库；
+# ADR 0060，tests/test_font_provenance.py 看护「git 里零字体二进制」）
+/src/tavotto/resources/fonts/
 web/node_modules/
 web/dist/
 web/test-results/

@@ -388,10 +388,12 @@ def _caps(level: str, reason: str, ops: tuple[str, ...]) -> dict[str, Capability
 #: `UnsupportedCapability` 拒绝（RC-011 must_fail_example：未实现的后端对外声明 native）。
 #: U07 实现 image / imported_page / 位图格式时改这张表，并让那条交叉用例跟着变。
 CAPABILITIES: dict[str, dict[str, Capability]] = {
+    # 写入器（pdfwriter）随 U06 的第二个 PR 落地；在它落地并与这张表交叉核对之前，PDF 的每个操作
+    # 都如实写 unsupported——声明了 native 而树里没有写入器，就是 RC-011 要挡的那件事。
     "pdf": {
         **_caps(
-            CAP_NATIVE,
-            "U06 写入器：路径 / 裁剪 / 透明组 / 常量 alpha / 可检索文字",
+            CAP_UNSUPPORTED,
+            "U06 第二个 PR：pikepdf / fontTools / HarfBuzz 写入器尚未收编",
             (
                 "page_background",
                 "path_fill",
@@ -556,8 +558,6 @@ def _matrix(m: object, path: str) -> None:
 def _path(node: Path, path: str) -> None:
     if not isinstance(node.segments, tuple) or not node.segments:
         raise IRError("bad_path", "路径没有任何段", path)
-    if node.segments[0][0] != "M":
-        raise IRError("bad_path", f"路径必须以 M 开头: {node.segments[0]!r}", path)
     for seg in node.segments:
         if not isinstance(seg, tuple) or not seg or seg[0] not in _SEGMENT_ARITY:
             raise IRError("bad_path", f"不认识的段: {seg!r}", path)
@@ -567,6 +567,8 @@ def _path(node: Path, path: str) -> None:
             )
         for v in seg[1:]:
             _finite(v, path, "路径坐标")
+    if node.segments[0][0] != "M":  # 段的形状都对了才看第一段是不是 moveto（空元组不能先被索引）
+        raise IRError("bad_path", f"路径必须以 M 开头: {node.segments[0]!r}", path)
     if node.fill_rule not in FILL_RULES:
         raise IRError("bad_fill_rule", f"fill_rule 只能是 {FILL_RULES}: {node.fill_rule!r}", path)
     if node.fill is None and node.stroke is None:
