@@ -69,6 +69,27 @@ PR 至少附：
 
 任何一项缺失都应写成“未验证/被阻塞”，不能把自动化协议绿灯改写成“Desktop 已通过”。
 
+## D. 大图：结果超过宿主 1 MiB 事件上限时画布仍能进 ready（issue #457）
+
+Codex 把每个 MCP 工具结果送给桌面 UI 的副本封顶在 1 MiB，超过就把 `structuredContent`
+清空；A/B 用的冒烟图只有 85 KB，量不到这一维。这一节用一张 #457 量级的图
+（4 个子图、约 250 段文字、约 120 个箭头注释，元素总数 ≥ 400；同一份脚本可用
+`tests/acceptance/corpus/` 之外的任意真实图，只要 `tavotto_open_figure` 的文字里出现
+「超过宿主对工具结果的体积上限」那一行）：
+
+1. `tavotto_open_figure`（`project_path + stem`）返回成功，`structuredContent.elided`
+   存在、`fields` 含 `manifest`，`session_id` 非空；
+2. 同一任务里 iframe 从「正在等待 tavotto_open_figure 的结果」进入画布（能看到标题、
+   元素、属性页），Desktop 日志里恰好一次 `mcpServer/tool/call` 的
+   `tavotto_session_state`，**没有**第二次 `tavotto_open_figure`；
+3. 在画布里拖一个元素，`tavotto_apply_overrides` 照常发全量 patches、画布更新；
+4. 再用 `script_path` 入口重开同一张图，1–3 同样成立；
+5. 负向对照：用**未修复的插件版本**（≤ 0.15.0）开同一张图，画布永远 waiting——
+   证明这张图确实过线，这一节量到的是那一维。
+
+留证：open 的 `structuredContent`（含 `elided`）、Desktop 的 `mcpServer/tool/call`
+日志、画布截图、拖动后的 apply 参数。任何一项缺失都写成「未验证」。
+
 ## 已知的非交互对照
 
 `codex exec --ephemeral --json` 会真实声明 `elicitation`，但没有真人 UI 时会返回

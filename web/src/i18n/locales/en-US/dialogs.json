@@ -155,8 +155,12 @@
     "renderFailed": "Render failed",
     "rendering": "Re-rendering",
     "splashConnecting": "Connecting to Codex…",
+    "splashFetchFailed": "Could not fetch the session state. Reopen the figure; if it persists, report it with the diagnostics below.",
+    "splashFetching": "Fetching the session state from Tavotto…",
     "splashNoHost": "This canvas runs inside a Codex that supports MCP Apps. In a host without a UI, the same tavotto_* tools still open, edit, preflight and export figures.",
+    "splashStripped": "The tool result the host handed to the canvas has no session (structuredContent is empty). Most likely the result exceeded the host's size cap and was cleared — update the Tavotto plugin and reopen the figure; if it persists, report it with the diagnostics below.",
     "splashWaiting": "Waiting for the result of tavotto_open_figure…",
+    "splashWaitingLong": "No result from tavotto_open_figure yet ({{seconds}} s). If the tool already returned, the host did not hand its result to the canvas: reopen the figure; if it persists, report it with the diagnostics below.",
     "synced": "In sync"
   },
   "nativeRun": {
