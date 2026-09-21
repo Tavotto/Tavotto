@@ -402,7 +402,7 @@ def test_the_public_projection_carries_no_machine_paths(client, tmp_path, fake_p
     # 解释器决策指向项目外的一个绝对路径（system 档的形状）
     outside = tmp_path / "elsewhere" / "envs" / "sci" / "bin" / "python"
     monkeypatch.setattr(
-        engine_pool, "resolve_worker_python", lambda r=None: (str(outside), "system")
+        engine_pool, "resolve_worker_python", lambda r=None, **kw: (str(outside), "system")
     )
     needles = {**_machine_paths(root), "interpreter": str(outside), "tmp": str(tmp_path)}
     # ready 分支
@@ -442,7 +442,7 @@ def test_a_project_venv_interpreter_is_shown_project_relative(
     _open(client, root)
     inside = root / ".venv" / "bin" / "python"
     monkeypatch.setattr(
-        engine_pool, "resolve_worker_python", lambda r=None: (str(inside), "project_venv")
+        engine_pool, "resolve_worker_python", lambda r=None, **kw: (str(inside), "project_venv")
     )
     plan = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()["plan"]
     assert plan["environment"]["python"] == ".venv/bin/python"
@@ -616,7 +616,7 @@ def test_a_failed_explicit_environment_is_an_error_with_the_explicit_reason(
         fake_pool["error"] = exc
     resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
     plan = resp.get_json()["plan"]
-    assert plan["environment"]["python"] == ""
+    assert plan["environment"]["python"] is None  # 公开投影：没有解释器就是 None
     assert plan["environment"]["error"]["code"] == engine_pool.EXPLICIT_UNUSABLE_CODE
     assert plan["environment"]["error"]["explicit"]["source"] == "configured"
     assert plan["environment"]["error"]["explicit"]["reason"] == "missing"
