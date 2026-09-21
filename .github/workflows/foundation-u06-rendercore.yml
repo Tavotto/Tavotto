@@ -97,7 +97,9 @@ jobs:
       - name: RenderCore 用例（真字体、真候选包，不 skip）
         shell: bash
         run: |
-          "$RC_PY" -m pytest tests/test_rendercore_ir.py tests/test_rendercore_geometry.py tests/test_rendercore_typography.py tests/test_rendercore_plan.py tests/test_rendercore_model.py tests/test_rendercore_fonts.py tests/test_rendercore_writer.py tests/test_rendercore_job.py tests/test_rendercore_evidence.py tests/test_font_provenance.py tests/test_import_architecture.py -p no:cacheprovider -rs -q --junitxml="$RUNNER_TEMP/pytest-u06.xml"
+          # 用例集就是 tests/test_rendercore_*.py（与本文件头、src/tavotto/AGENTS.md 说的同一个 glob）：手写清单会漂——
+          # U07 A 加的 compose / placement / raster 三个文件在清单里漏了整整六轮评审（Codex #463 第七轮 P2）
+          "$RC_PY" -m pytest tests/test_rendercore_*.py tests/test_font_provenance.py tests/test_import_architecture.py -p no:cacheprovider -rs -q --junitxml="$RUNNER_TEMP/pytest-u06.xml"
 
       - name: 重生成 evidence 并与 git 里的比（PDF 逐字节；PNG 只作信息）
         shell: bash
