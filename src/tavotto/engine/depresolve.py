@@ -34,6 +34,8 @@ import os
 import re
 from pathlib import Path
 
+from . import projectenv
+
 LOG = logging.getLogger("tavotto.depresolve")
 
 # ---------------------------------------------------------------------------
@@ -339,7 +341,7 @@ def _decl_dirs(figures_dir: str | Path, script: str | None) -> list[Path]:
         start = ((root / script).parent if script else root).resolve(strict=False)
     except OSError:
         return [root]
-    if not (start == root_real or root_real in start.parents):
+    if not projectenv.within(root, start):
         # 脚本在项目外（更早就该被 `script_path_outside_project` 拦下）
         start = root_real
     dirs: list[Path] = []
@@ -1013,11 +1015,8 @@ class _Walk:
             return path.name
 
     def inside(self, path: Path) -> bool:
-        try:
-            real = path.resolve(strict=False)
-        except OSError:
-            return False
-        return real == self.root_real or self.root_real in real.parents
+        # 「在不在项目根内」只有 `projectenv.within` 一处判据（realpath；软链接跳出去也算越界）
+        return projectenv.within(self.root, path)
 
 
 def _read_declaration_file(
@@ -1025,8 +1024,8 @@ def _read_declaration_file(
 ) -> list[DependencyIntent]:
     """读一份 requirements / constraints 文件并**有界**跟进 `-r` / `-c`。
 
-    边界（每一条都有用例）：文件必须在项目根内（`_within` 同一判据：resolve 后仍在根下，
-    软链接跳出去也算越界）；一次 walk 最多 `MAX_DECL_FILES` 个文件；同一条跟进链里再次
+    边界（每一条都有用例）：文件必须在项目根内（`projectenv.within` 同一判据：resolve 后仍在
+    根下，软链接跳出去也算越界）；一次 walk 最多 `MAX_DECL_FILES` 个文件；同一条跟进链里再次
     出现的文件是环；缺失 / 越界 / 环 / 超限各记一条 unsupported **留在引用它的那一行的
     位置**，不是忽略。
     """

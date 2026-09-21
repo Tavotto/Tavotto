@@ -34,7 +34,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import depresolve
+from . import depresolve, projectenv
 
 BUCKET_STDLIB = "stdlib"
 BUCKET_LOCAL = "local"
@@ -341,28 +341,23 @@ def _local_module_path(name: str, search_dirs: list[Path], root: Path) -> Path |
         candidates = [base / f"{name}.py", base / name / "__init__.py"]
         try:
             for cand in candidates:
-                if cand.is_file() and _within(root, cand):
+                if cand.is_file() and projectenv.within(root, cand):
                     return cand
             pkg = base / name
-            if pkg.is_dir() and _within(root, pkg):
+            if pkg.is_dir() and projectenv.within(root, pkg):
                 # 没有 __init__.py 的目录：命名空间包，只要里面有 .py 就算本地包
                 if any(p.suffix == ".py" for p in pkg.iterdir() if p.is_file()):
                     return pkg
             for ext in base.glob(f"{name}.*"):
-                if ext.is_file() and ext.name.endswith(_EXT_SUFFIXES) and _within(root, ext):
+                if (
+                    ext.is_file()
+                    and ext.name.endswith(_EXT_SUFFIXES)
+                    and projectenv.within(root, ext)
+                ):
                     return ext
         except OSError:
             continue
     return None
-
-
-def _within(root: Path, path: Path) -> bool:
-    try:
-        real = path.resolve(strict=False)
-        root_real = root.resolve(strict=False)
-    except OSError:
-        return False
-    return real == root_real or root_real in real.parents
 
 
 def _read(path: Path) -> tuple[str | None, dict | None]:
