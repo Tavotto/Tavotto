@@ -195,7 +195,7 @@ def contained_path(root: str | Path, candidate: str | Path) -> str | None:
        用 `+ os.sep` 而不是裸 `startswith`：否则 `/a/project-evil` 会被
        `/a/project` 判成「在里面」。
 
-    `_within()` 回的是布尔、给发现流程做过滤；这一个回**净化后的路径本身**，
+    `within()` 回的是布尔、给发现流程做过滤；这一个回**净化后的路径本身**，
     调用方拿它去 open/spawn——「判过了」与「用的是判过的那一个」是两件事，
     分开写就还有把前者的结论用在后者之外的机会。
     """
@@ -228,12 +228,14 @@ def contained_file(root: str | Path, candidate: str | Path) -> str | None:
     return str(Path(holder) / rel.name) if rel.name else holder
 
 
-def _within(root: Path, path: Path) -> bool:
+def within(root: Path, path: Path) -> bool:
     """`path` 是否在 `root` 之内（**按 realpath 判**）。
 
     按 realpath 而不是按字符串前缀：项目里放一条指向别处的软链接
     （`.venv -> ~/envs/paper`）时，字符串看着在项目内，实体在项目外。
     发现的范围必须是用户交给 Tavotto 的那棵目录树，不能顺着软链接跳出去。
+    **判「在不在项目里」只有这一处**：venv 发现、`databinding` 的数据字面量查找（准备阶段
+    不许碰项目外的文件）都用它。
     """
     try:
         real_root = root.resolve(strict=False)
@@ -255,12 +257,12 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
        答案」，不是什么语义。
 
     **搜索范围严格限制在项目根内**：不上溯到项目之外（那是别人的项目），
-    不顺软链接跳出去（`_within`）。项目根就是 Tavotto 打开的图库目录
+    不顺软链接跳出去（`within`）。项目根就是 Tavotto 打开的图库目录
     `figures_dir`——用户交给我们的边界只有这一条。
     """
     root = Path(figures_dir)
     start = (root / script).parent if script else root
-    if not _within(root, start):
+    if not within(root, start):
         # 脚本在项目外（理论上更早就该被 `script_path_outside_project` 拦下）
         start = root
     found: list[str] = []
@@ -270,7 +272,7 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
         layer: list[str] = []
         for name in VENV_DIRNAMES:
             cand = cur / name
-            if not _within(root, cand):
+            if not within(root, cand):
                 continue
             if interpreter_of(cand, root=root):
                 layer.append(str(cand))
@@ -280,7 +282,7 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
             if p not in seen:
                 seen.add(p)
                 found.append(p)
-        if _same_dir(cur, root) or not _within(root, cur.parent) or _same_dir(cur.parent, cur):
+        if _same_dir(cur, root) or not within(root, cur.parent) or _same_dir(cur.parent, cur):
             break
         cur = cur.parent
     return found
