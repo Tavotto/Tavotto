@@ -51,6 +51,7 @@ from .engine import (
     ai_bridge as engine_ai,
     ai_history as engine_ai_history,
     ai_providers as engine_ai_providers,
+    artifactinspect as engine_artifactinspect,
     atomicio as engine_atomicio,
     bakedbaseline as engine_baked,
     bootstrap as engine_bootstrap,
@@ -1386,92 +1387,12 @@ def _export_produce_rendercore(job, tmp_dir: Path) -> list:
     )
 
 
-def _export_plan_half(job, p) -> dict:
-    """计划半张：生产者给了（候选路 `job.produce` 的 `manifest["plan"]`）就用它；旧后端只有请求级的事实
-    （页面 mm → pt、报出来的像素 / ppi、`vector`），期望文字行 / 对象框 / 回执它给不出——那几维就是 unknown。"""
-    req = job.request
-    given = (p.manifest or {}).get("plan") if isinstance(p.manifest, dict) else None
-    if given:
-        return dict(given)
-    plan: dict = {"backend": pdfbackend.selected(), "plan_identity": None, "vector": bool(p.vector)}
-    if p.width_mm and p.height_mm:
-        plan["page_pt"] = [p.width_mm * 72.0 / 25.4, p.height_mm * 72.0 / 25.4]
-    if p.width_px and p.height_px:
-        plan["px"] = [int(p.width_px), int(p.height_px)]
-    if p.format in engine_exportreq.RASTER_FORMATS:
-        plan["ppi"] = float(req.ppi) if req.ppi else None
-    return plan
-
-
-def _inspection_profile(job) -> dict | None:
-    """严格政策的阈值只从出版规范来（`profilestore.resolve_spec` 是唯一权威，RC-071）。standard 不需要。"""
-    ins = job.request.inspection
-    if ins.mode != engine_exportreq.INSPECTION_STRICT:
-        return None
-    spec = engine_profilestore.resolve_spec(ins.profile_id)
-    return {"profile_id": spec.get("profile_id") or ins.profile_id, **spec}
-
-
 def _export_inspect(job, produced: list) -> list:
-    """`exportjob.run` 的 `inspect` 钩子（U08，ADR 0068）：每个封口的临时文件重新打开检查，拒绝的换成
-    `artifact_rejected`（带 manifest 投影），合格的附上 manifest。检查器自己炸了 = 那一项 unknown 而不是通过：
-    standard 下如实记录并交付，strict 下按「必需 unknown」阻断。"""
-    from .rendercore import inspector as rc_inspector
-
-    profile = None
-    try:
-        profile = _inspection_profile(job)
-    except engine_profilestore.ProfileStoreError as exc:
-        raise engine_exportreq.ExportRequestError(
-            "bad_inspection",
-            f"严格检查指向的出版规范不可用：{exc}",
-            {"value": str(job.request.inspection.profile_id or "")},
-        ) from exc
-    out: list = []
-    for p in produced:
-        if p.error_code is not None or p.tmp_path is None:
-            out.append(p)
-            continue
-        plan = _export_plan_half(job, p)
-        try:
-            manifest = rc_inspector.inspect(
-                p.tmp_path,
-                p.format,
-                plan=plan,
-                policy=job.request.inspection.mode,
-                profile=profile,
-                probe=pdfbackend.probe_asset,
-            )
-        except Exception as exc:  # noqa: BLE001 —— 检查器炸了 = 没检查，不是通过
-            LOG.warning("产物检查器异常（%s）：%s", p.format, exc, exc_info=True)
-            manifest = rc_inspector.uninspected(
-                p.tmp_path,
-                p.format,
-                plan=plan,
-                policy=job.request.inspection.mode,
-                reason=str(exc)[:200],
-            )
-        summary = rc_inspector.summary(manifest)
-        if manifest["policy"]["verdict"] == rc_inspector.REJECTED:
-            # 拦住这一项的是哪些检查：失败的；严格政策下必需 unknown 也算（D08）
-            blocked = list(manifest["policy"]["failed"])
-            if manifest["policy"]["mode"] == rc_inspector.POLICY_STRICT:
-                blocked += manifest["policy"]["unknown"]
-            out.append(
-                engine_exportjob.Produced(
-                    format=p.format,
-                    error_code="artifact_rejected",
-                    error_params={
-                        "failed": ", ".join(blocked),
-                        "policy": manifest["policy"]["mode"],
-                    },
-                    manifest=summary,
-                )
-            )
-            continue
-        p.manifest = summary
-        out.append(p)
-    return out
+    """`exportjob.run` 的 `inspect` 钩子（U08，ADR 0068）：本体在 `engine/artifactinspect.py`（HTTP 与 MCP 共用），
+    这里只交两样 app 才知道的东西——选中的后端名与契约层的 `probe_asset`（没 pikepdf 时 PDF 的基本观测经它）。"""
+    return engine_artifactinspect.inspect_produced(
+        job, produced, backend=pdfbackend.selected(), probe=pdfbackend.probe_asset
+    )
 
 
 def _export_produce(job, tmp_dir: Path) -> list:

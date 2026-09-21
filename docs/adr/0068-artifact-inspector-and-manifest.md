@@ -24,7 +24,7 @@ RC-063 ~ RC-074、RC-083 ~ RC-085）。
 | 载体（RC-067） | `vector / mixed / raster / empty / unknown` 按顶层对象种类分；计划说矢量、文件全位图 → failed；mixed（面板里的位图源）在矢量计划下 verified 并注明 | `test_image_effective_ppi_…`（carrier failed）、候选 app 用例（mixed） |
 | 裁切（RC-069） | 只对**计划里知道包围盒的对象**判（面板框 vs 页面），外来页内部 unknown、注明观察范围；没有对象框就是 unknown | manifest `notes` |
 | 没有 pikepdf 的机器 | PDF 走 `observe_pdf_basic`（契约层的 `probe_asset`：打得开、有尺寸）→ 完整性与尺寸照核，其余 unknown 并写明；两者都没有 → integrity **unknown**（不是 verified） | `observe_pdf_any` |
-| 检查器自己炸 | `uninspected()`：所有项 unknown、standard 交付并说明、strict 阻断——异常不是通过 | `app._export_inspect` |
+| 检查器自己炸 | `uninspected()`：所有项 unknown、standard 交付并说明、strict 阻断——异常不是通过 | `engine/artifactinspect.inspect_produced`（HTTP 与 MCP 共用的接线层；app 只交后端名与 `probe_asset`） |
 | 写回 | staging 完整性 / 尺寸的既有合同不动（`_post_check_size` 落盘后如实报告、不回滚）；候选下 `annotate_asset` 对坏 / 加密的 staging PDF 结构化失败 → 409、原件零改动（RC-059 / RC-060） | `test_writeback_with_annotations_fails_closed_when_the_staged_pdf_is_unusable` |
 | 用户可见 | 新码 `artifact_rejected`（params `failed` / `policy`）与 `bad_inspection`（`value`）进两种语言的 `errors.json`；`Output.manifest` 是 `inspector.summary()` 的投影（verdict / 每项四值 / 说明 / sha256 / 载体 / 尺寸 / 字体），**旧字段一个不动**（RC-090）；前端「未核验不显示绿」归第三切片 | `tests/test_error_codes.py` |
 
