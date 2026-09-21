@@ -17,7 +17,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize, PowerNorm
+from matplotlib.colors import LinearSegmentedColormap, Normalize, PowerNorm
 from matplotlib.patches import Arc, Circle, Rectangle
 from mpl_toolkits.axes_grid1 import host_subplot
 
@@ -154,6 +154,21 @@ def main():
     sb.set_ylim(1.34, 1.51)
     fig.colorbar(mesh_a, ax=sb)
     fig.savefig("InvShared.pdf")
+
+    # ---- InvShared2：共用 norm 的两块网格**各挂一条色条**、各一张自定义色图 ----
+    # 色条 A 的 cmap 广播到 mesh_b，而色条 B 自己也是广播端：两个广播端的组员重叠、
+    # 原样却各是各的（custom_a / custom_b）。撤 A / 撤 B / 全撤三条减法都要各回各的。
+    fig, (ta, tb) = plt.subplots(1, 2, figsize=(4.6, 2.4))
+    shared2 = PowerNorm(gamma=1.2, vmin=0.0, vmax=1.0)
+    cm_a = LinearSegmentedColormap.from_list("custom_a", ["#ffffff", "#b34700"])
+    cm_b = LinearSegmentedColormap.from_list("custom_b", ["#ffffff", "#2a6f3c"])
+    m_a = ta.pcolormesh(np.linspace(0, 1, 6), np.linspace(0, 1, 6), rng.rand(6, 6),
+                        cmap=cm_a, norm=shared2, shading="nearest")
+    m_b = tb.pcolormesh(np.linspace(0, 1, 6), np.linspace(0, 1, 6), rng.rand(6, 6),
+                        cmap=cm_b, norm=shared2, shading="nearest")
+    fig.colorbar(m_a, ax=ta)
+    fig.colorbar(m_b, ax=tb)
+    fig.savefig("InvShared2.pdf")
 
     # ---- InvPar：`axes_grid1` 的 host_subplot + twinx（**寄生轴**，#217） ----
     # 这一族轴既不在 `fig.axes` 也不在 `child_axes`，只挂在 `host.parasites`

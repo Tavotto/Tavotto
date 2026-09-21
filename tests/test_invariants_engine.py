@@ -917,6 +917,45 @@ REMOVAL_CASES = [
             [{"gid": "axes_1.collections_0", "prop": "vmax", "value": 0.8}],
         ],
     ),
+    # 两块共用 norm 的网格各挂一条色条（InvShared2，axes_2 是 mesh_a 的、axes_3 是
+    # mesh_b 的）：两个广播端组员重叠、原样各是各的自定义色图。B 的原样经 `_seeded`
+    # 取自 mesh_b 那份代采记录（成员表里 mappable 排第一），撤 A 之后 B 重放，全撤
+    # 各回各的（#474 评审第二轮）。
+    (
+        "I-twocb-drop-first",
+        "InvShared2",
+        [
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_3.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_3.colorbar", "prop": "cmap", "value": "cividis"}],
+        ],
+    ),
+    (
+        "I-twocb-drop-second",
+        "InvShared2",
+        [
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_3.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}],
+        ],
+    ),
+    (
+        "I-twocb-drop-both",
+        "InvShared2",
+        [
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_3.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [],
+        ],
+    ),
     (
         "A-colorbar-drop-mappable",
         "InvCbar",

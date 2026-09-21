@@ -2030,7 +2030,15 @@ def _cmap_original(state: FigState, artist, gid: str) -> dict | None:
         # 那份才是「这块网格脚本原来那张」；直接拿色条那条 key 的原样等于拿
         # mappable 的色图冒充兄弟的（#474 评审）。代采的记录只在广播还在生效时
         # 存在（广播退场即清），所以这里读到的必然对应此刻压着它的那条 override。
-        own = (gid, "cmap")
+        # 色条自己没有原样可采（它的 cmap 就是 mappable 的），「自己名下」对它来说是
+        # **它的 mappable** 那份：两条色条各挂一块共用 norm 的网格时，B 的原样要问
+        # mesh_b，不能拿 A 那条 key 的（那是 mesh_a 的，#474 评审第二轮）
+        own_gid = gid
+        if isinstance(artist, ColorbarProxy):
+            own_gid = next(
+                (el["gid"] for el in state.elements if el["artist"] is artist.cb.mappable), gid
+            )
+        own = (own_gid, "cmap")
         orig = state.originals.get(own, state.originals[key])
         try:
             facts = _cmap_facts(orig)

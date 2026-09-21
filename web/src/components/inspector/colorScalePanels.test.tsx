@@ -276,6 +276,28 @@ describe('色阶共用关系（审计 T22 / T23）', () => {
       'axes_0.images_0',
       'axes_2.collections_0',
     ])
+    // 两块共用 norm 的网格各挂一条色条：A 的 override 落在 mesh_b 上，从 B 那边
+    // 「回到脚本原样」必须把 A 一起清，否则什么都不会变（#474 评审第二轮）
+    const cbB = {
+      ...colorbarEl(),
+      gid: 'axes_3.colorbar',
+      mappable_gid: 'axes_2.collections_0',
+      scale_gids: ['axes_0.images_0'],
+    } as ManifestElement
+    const two = { ...m, elements: [axesEl, imageEl, sibling, cb, cbB] } as Manifest
+    expect(colormapAliasGids(two, cbB)).toEqual([
+      'axes_3.colorbar',
+      'axes_2.collections_0',
+      'axes_0.images_0',
+      'axes_1.colorbar',
+    ])
+    expect(colormapAliasGids(two, cb)).toContain('axes_3.colorbar')
+    // 网格页：给它上色的两条色条都在组里
+    expect(colormapAliasGids(two, sibling)).toEqual([
+      'axes_2.collections_0',
+      'axes_1.colorbar',
+      'axes_3.colorbar',
+    ])
     // 没有 `scale_gids` 的老 manifest：兄弟不认色条（判据只认引擎发的事实）
     const plain = manifestOf()
     expect(colorScalePartner({ ...plain, elements: [...plain.elements, sibling] } as Manifest, sibling)).toBeNull()

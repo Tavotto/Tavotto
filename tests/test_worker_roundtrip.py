@@ -923,6 +923,52 @@ def test_colorbar_colormap_reaches_every_mappable_sharing_its_norm(tmp_path):
         proc.wait(timeout=10)
 
 
+TWO_COLORBARS_SCRIPT = SHARED_SCALE_SCRIPT.replace(
+    "    fig.colorbar(mesh_b, ax=ax_c)                        # 挂在 (b) 上、摆在 (c) 旁\n",
+    "    fig.colorbar(mesh_b, ax=ax_b)\n    fig.colorbar(mesh_c, ax=ax_c)\n",
+).replace("    ax_c.pcolormesh(", "    mesh_c = ax_c.pcolormesh(")
+
+
+def test_peer_colorbars_on_a_shared_scale_keep_their_own_originals(tmp_path):
+    """两块共用 norm 的网格**各挂一条色条**：从 A 换色图两块都变、B 的字段跟着变，
+    而 B 的 `cmap_original` 是它自己那块网格的（paper_c），不是 A 那块的（#474 评审
+    第二轮：色条代理不是别名组的窄成员，「自己名下的原样」要经它的 mappable 去取）。"""
+    assert (
+        "mesh_c = ax_c.pcolormesh(" in TWO_COLORBARS_SCRIPT
+        and "fig.colorbar(mesh_c" in TWO_COLORBARS_SCRIPT
+    )
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_two.py").write_text(TWO_COLORBARS_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_two.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": []})["manifest"]
+        cb_a, cb_b = [e for e in man["elements"] if e["role"] == "colorbar"]
+        assert (cb_a["mappable_gid"], cb_b["mappable_gid"]) == (
+            "axes_0.collections_0",
+            "axes_1.collections_0",
+        )
+        assert cb_a["scale_gids"] == ["axes_1.collections_0"]
+        assert cb_b["scale_gids"] == ["axes_0.collections_0"]
+
+        patches = [{"gid": cb_a["gid"], "prop": "cmap", "value": "plasma"}]
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": patches})["manifest"]
+        for gid in ("axes_0.collections_0", "axes_1.collections_0", cb_a["gid"], cb_b["gid"]):
+            assert _field_value(man, gid, "cmap") == "plasma", gid
+        assert _cmap_original_name(man, cb_a["gid"]) == "paper_b"
+        assert _cmap_original_name(man, cb_b["gid"]) == "paper_c", "B 报成了 A 那块的原样"
+        assert _cmap_original_name(man, "axes_1.collections_0") == "paper_c"
+
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": []})["manifest"]
+        assert _field_value(man, cb_b["gid"], "cmap") == "paper_c"
+        assert _cmap_original_name(man, cb_b["gid"]) is None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
 def test_closed_figure_still_builds(tmp_path):
     """脚本 `savefig` 完就 `plt.close(fig)` 时仍要能起来。
 

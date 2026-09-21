@@ -64,8 +64,9 @@
   它**不是可写的取值**：当前那一格点了什么都不发生（`data-cmap-entry="keep"`），
   「脚本原样」那一格（`restore`）走 `clearOverrides`，清的是 `lib/colormapAlias.
   colormapAliasGids()` 算出的整组 gid——色条 ↔ mappable ↔ 色阶兄弟（`scale_gids`）是
-  同一份色图状态的一组 gid，override 落在哪一边取决于用户从哪边改的；兄弟的
-  `cmap_original` 是它**自己**的脚本原样（引擎按各自代采的那份报）。多选时事实**全体一致才给**
+  同一份色图状态的一组 gid，override 落在哪一边取决于用户从哪边改的；给组里**任何一块**上色的色条都算进组
+  （两块各挂一条色条时另一条也在）；兄弟的 `cmap_original` 是它**自己**的脚本原样
+  （引擎按各自代采的那份报）。多选时事实**全体一致才给**
   （`sharedCmapFacts`，与 `sharedMarkerShape` 同一条纪律）。色条的方向 / 延伸小色条
   预览同样吃 `cmap_current`（`cmapFacts`），不再对自定义色图退回灰阶。
   看护 `colorScalePanels.test.tsx` 的「脚本自定义的色图」一组。

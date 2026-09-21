@@ -61,7 +61,9 @@
   之前采下来；③ manifest 的色条条目发 `scale_gids`（兄弟的 gid，不含 mappable 本人，
   没有兄弟就不发），`_cmap_alias_gids` 也把兄弟算进「脚本原样记在谁名下」。前端
   （`lib/colormapAlias.ts` 的 `colorbarCovers`）据此把「与色条共用色阶」与「回到脚本
-  原样」扩到整组。兄弟自己的 cmap override 仍**压过**色条（`_rank` 的组内次序：窄的
+  原样」扩到整组——组里**任何一块**被哪条色条盖着，那条色条就在组里（两块各挂一条色条时
+  A 的 override 落在 mesh_b 上，从 B 那边清不掉 A 就什么都不会变）。`cmap_original` 各说各的：
+  色条报的是**它的 mappable** 那份代采原样，不是别的色条那条 key 的。兄弟自己的 cmap override 仍**压过**色条（`_rank` 的组内次序：窄的
   排在广播之后）。看护 `tests/test_invariants_engine.py` 的 `H-shared-*`（含撤色条 /
   撤兄弟 / 全撤三种减法，像素 + 全量 manifest）、
   `test_worker_roundtrip.py::test_colorbar_colormap_reaches_every_mappable_sharing_its_norm`。
