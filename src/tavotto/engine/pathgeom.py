@@ -405,11 +405,27 @@ def _collection_subpaths(
     return out
 
 
-def _clip_ring_to_rect(pts: np.ndarray, x0: float, y0: float, x1: float, y1: float) -> np.ndarray:
-    """闭合多边形（display 像素）与一个轴对齐矩形的交（Sutherland–Hodgman）。
+def _is_convex_ring(pts: np.ndarray) -> bool:
+    """闭合多边形是不是凸的：相邻两边叉积的符号处处一致（共线的零不算）。"""
+    ring = np.asarray(pts, dtype=float)
+    if len(ring) < 3:
+        return False
+    edges = np.roll(ring, -1, axis=0) - ring
+    cross = (
+        edges[:, 0] * np.roll(edges, -1, axis=0)[:, 1]
+        - edges[:, 1] * np.roll(edges, -1, axis=0)[:, 0]
+    )
+    signs = np.sign(cross[np.abs(cross) > 1e-9])
+    return len(signs) == 0 or bool(np.all(signs == signs[0]))
 
-    矩形是凸的，四条边各切一刀就是精确的交多边形；任意简单多边形都行（极坐标那种
-    曲线边界也行）。切空了回空数组。
+
+def _clip_ring_to_rect(pts: np.ndarray, x0: float, y0: float, x1: float, y1: float) -> np.ndarray:
+    """**凸**多边形（display 像素）与一个轴对齐矩形的交（Sutherland–Hodgman）。
+
+    矩形是凸的，四条边各切一刀就是精确的交多边形——**前提是被切的多边形也是凸的**：
+    凹多边形（U 形的翘曲网格）与矩形的交可能是几块不相连的区域，S–H 会用沿着裁剪边
+    的「桥」把它们连成一环，前端会把桥描出来、框选也会把桥当墨迹（#473 评审第三轮）。
+    调用方只在 `_is_convex_ring` 成立时才裁；凹的原样发、留给前端按 clip 裁。切空了回空数组。
     """
     ring = np.asarray(pts, dtype=float)
     for axis, bound, keep_ge in ((0, x0, True), (0, x1, False), (1, y0, True), (1, y1, False)):
@@ -787,12 +803,15 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
                 y0, y1 = (1.0 - cy - ch) * H, (1.0 - cy) * H  # clip 是 top-origin 分数
                 clipped = []
                 for pts, closed in subs:
-                    if closed:
+                    if closed and _is_convex_ring(pts):
                         ring = _clip_ring_to_rect(pts, x0, y0, x1, y1)
                         if len(ring) >= 3:
                             clipped.append((ring, True))
                     else:
-                        clipped.append((pts, closed))  # NaN 拆出的开放段只能靠前端按 clip 裁
+                        # 凹的外轮廓（U 形翘曲网格）与矩形的交可能不相连，S–H 会造出沿裁剪边
+                        # 的假「桥」——原样发、由前端按 clip 裁（框选在那种图上要跨过可见
+                        # 边界才圈得中，与裁前一致）；NaN 拆出的开放段同样只能靠前端裁
+                        clipped.append((pts, closed))
                 subs = clipped
                 if not subs:
                     return None  # 整块网格都在坐标轴范围之外：图上没有它的墨迹

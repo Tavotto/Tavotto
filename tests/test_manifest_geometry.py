@@ -175,6 +175,15 @@ def main():
     ax10.set_xlim(0.0, 2.0)
     ax10.set_ylim(0.0, 2.0)
     fig8.savefig("MeshOffsetFig.pdf")
+
+    # MeshConcaveFig：U 形翘曲网格，ylim 从两条臂中间切过——外轮廓与子图框的交是
+    # **两块不相连的区域**，Sutherland–Hodgman 会造假桥，所以这种轮廓不裁、原样发
+    fig9, ax11 = plt.subplots(figsize=(4.0, 3.0))
+    uu, vv = np.meshgrid(np.linspace(0.0, 1.0, 21), np.linspace(0.0, 0.3, 4))
+    ax11.pcolormesh(uu, vv + 3.0 * (uu - 0.5) ** 2, np.random.RandomState(3).rand(3, 20))
+    ax11.set_xlim(-0.2, 1.2)
+    ax11.set_ylim(0.5, 1.2)
+    fig9.savefig("MeshConcaveFig.pdf")
 """
 
 
@@ -721,6 +730,25 @@ def test_quadmesh_outline_follows_collection_offsets(library):
         assert mx - bx == pytest.approx(dx, abs=2e-3)
         assert my - by == pytest.approx(dy, abs=2e-3)
     assert "geometry" not in _el(man, "axes_0.collections_2"), "逐 cell 偏移的网格应当退回 bbox"
+
+
+def test_concave_quadmesh_outline_is_left_unclipped(library):
+    """凹的外轮廓（U 形网格、ylim 从两臂中间切过）**不裁**：与矩形的交不相连，
+    Sutherland–Hodgman 会沿裁剪边造假桥，前端会描出来、框选也当墨迹（#473 评审第三轮）。
+    原样发 + clip，由前端裁——U 形本身照旧在。"""
+    man = _manifest(library, stem="MeshConcaveFig")
+    geom = _el(man, "axes_0.collections_0")["geometry"]
+    ax_box = _el(man, "axes_0")["bbox"]
+    (path,) = geom["paths"]
+    pts = path["points"]
+    assert path["closed"] is True and len(pts) > 8, "U 形边界抽稀后远不止四个角"
+    assert geom["clip"] == pytest.approx(ax_box, abs=2e-3)
+    # 没裁：U 的底伸在子图框之下（top-origin：y 更大）
+    assert max(q[1] for q in pts) > ax_box[1] + ax_box[3] + 0.02
+    # 没有假桥：任何一条边都不该整段贴在子图框的上边界上
+    top = ax_box[1]
+    for a, b in zip(pts, pts[1:] + pts[:1]):
+        assert not (abs(a[1] - top) < 1e-3 and abs(b[1] - top) < 1e-3 and abs(a[0] - b[0]) > 0.05)
 
 
 def test_line_collection_traces_each_line(library):
