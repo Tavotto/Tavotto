@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 8957,
-      "sha256": "9b9a669e719b78b7505d2bff0d1e7fb983a69363173bb8faa4d360193f28857e"
+      "bytes": 9733,
+      "sha256": "cda3de1b4217dc5d58e28213e3fcea0c2f65d8b657fc37afdc4af0d7b0735a13"
     },
     {
       "path": "SOURCES.md",
@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 46781,
-      "sha256": "28006651bc4d7280b5ddf479769598cec2417202c0a6847226b8d37962431388"
+      "bytes": 48110,
+      "sha256": "8364f00c1010ff480c2a9ab6f7b4aa68fc7a8c631e07be06c970a9bc4c1b1084"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 22199,
-      "sha256": "5139c16e7fe5d7f42b968349eb4d0eac270d3fecb5453898838718d39f94863f"
+      "bytes": 22913,
+      "sha256": "b7aa897f2d98f336c4afc0f7e81ef7c50102b1b2df4101cd650a01522a458cde"
     },
     {
       "path": "archive/README.md",
@@ -348,6 +348,11 @@
       "sha256": "4d0b5abd7278f2810c289da3635914c02f24d1f6ce1ca2442969c3817b3c5370"
     },
     {
+      "path": "handoffs/U07_compose_raster.md",
+      "bytes": 12849,
+      "sha256": "c2c4c296731d8735baa6ecc0521d33cee566e8ac17b2eff505c31131c2723d91"
+    },
+    {
       "path": "phase_mapping.json",
       "bytes": 1204,
       "sha256": "1ce40f3ba10dc8713d899db402c33287d60883b103e1b6b290f524117b27ad25"
@@ -415,7 +420,7 @@
     {
       "path": "plan.json",
       "bytes": 7366,
-      "sha256": "21ebb556824148c96be155c3e92ef73bae76bbc9dcb646beacdaea3aaff50a9c"
+      "sha256": "58ad68637e2447de58038ffda280e117ce82909423b343d597217253002a607c"
     },
     {
       "path": "registry.json",

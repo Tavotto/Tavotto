@@ -1,14 +1,14 @@
-# RenderCore：Render IR、RenderPlan、字体政策与可检索文字（统一实施包 U06，ADR 0059 / 0060）
+# RenderCore：Render IR、RenderPlan、字体政策、可检索文字与合成（统一实施包 U06 / U07，ADR 0059 / 0060 / 0065）
 
-> 2026-09-20 随 U06 新增；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」表里
-> （`rendercore/` 那一行）。这里是这一主题规则的**唯一全文**；速查表只留一行。
+> 2026-09-20 随 U06 新增，2026-09-21 随 U07 加合成一节；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
+> 表里（`rendercore/` 那一行）。这里是这一主题规则的**唯一全文**；速查表只留一行。
 > 改规则改这里，并同步那一行。
 
 - **分层是硬边界**（`tests/support/importgraph.py` 的 `rendercore_model` / `rendercore_native`
   两层 + 层规则，`tests/test_rendercore_model.py` 钉外部名字）：纯模型（`ir` / `geometry` /
-  `typography` / `fonts` / `sources` / `plan`）**只许标准库**与仓库里
-  同样纯标准库的模块；候选包（pikepdf / fontTools / uharfbuzz / pypdfium2）只在 native 适配层
-  （`hbshaper` / `pdfwriter`）的函数 / 类里 import；**整包零 `import pymupdf`**，也没有边进
+  `typography` / `fonts` / `sources` / `plan` / `placement` / `raster`）**只许标准库**与仓库里
+  同样纯标准库的模块；候选包（pikepdf / fontTools / uharfbuzz / pypdfium2 / Pillow）只在 native 适配层
+  （`hbshaper` / `pdfwriter` / `rasterio`）的函数 / 类里 import；**整包零 `import pymupdf`**，也没有边进
   `pdfbackend` / worker 侧，反方向同样不许（D03：新核心不借旧库，旧后端不认识新核心，U08 之前
   两边不接）。往纯模型里加一个第三方 import 的正确做法是把那段挪进适配层，不是给守卫开口子。
 - **IR 就是 PDF 空间**：pt、左下原点、y 向上；矩阵行向量与 `cm` 同形；`Group` 先 `transform`
@@ -54,6 +54,22 @@
   写（一个 code 记它第一次覆盖的原文），多字形 cluster / 同 code 不同原文 / 合成上下标三种情形包 ActualText。
   写入器的产物要经**不同源**的读取器验（`tests/support/pdfread.py` 纯标准库 + pypdfium2 + pdfminer + poppler），
   负例（丢 FontFile / 丢 ToUnicode / 错 GID）要在读取侧判据下真的红。
+- **面板落位只有一份顺序合同**（ADR 0065，`rendercore/placement.py::place()`）：crop（顶原点归一化、相对源可见框）→
+  缩放到内容框（90° 奇数倍宽高对调、填满目标框）→ 绕中心翻转 → 绕中心顺时针旋转 → 平移到目标框中心，逐句来自旧
+  `_place_panel` 与前端 `PanelView`（`rotate(r) scale(±1, ±1)`）。PDF 源与位图源走同一个函数，只是可见框不同；
+  `plan._panel_node` 把面板旋转四舍五入到 90 的倍数（PDF 与位图同一条）。测试里的落点期望**手算**（`tests/test_rendercore_placement.py`
+  的矩阵、`test_rendercore_compose.py` 自己的归一化公式），不调 `placement` 反推。
+- **外来页是 Form XObject，不重画、不退位图**（ADR 0065）：qpdf `as_form_xobject(handle_transformations=True)` +
+  `copy_foreign`，源页的页盒 / `/Rotate` / `/UserUnit` 全折进 form 的 /Matrix，写入器只看 `placement.visible_box()`
+  ——**不再自己转、自己乘**（RC-039：恰好一次）；资源随 form 各自一份，同名 /F1 / /X1 互不相干（RC-043），同一 (资源 key, 页)
+  只搬一次（按字节身份去重，绝不按名字）。面板 opacity < 1 是**透明组**（组内 alpha 从 1 起算，RC-041），镜像是 `cm` 里的
+  负缩放（RC-040）——两者都仍是矢量、文字层在；`opacity: 0` 是取值不是缺席（RC-042）。注释 / 动作 / JavaScript 不进产物，
+  加密 / 坏文件 / 缺页以 `source_unreadable` 拒绝（RC-046），不画空框。
+- **位图源经 `rasterio.decode()`（Pillow，U07 起是 `rendercore` extra 的直接依赖）成 `RasterBuffer`**：8 bit RGB / RGBA、
+  紧凑 stride、**alpha 一律 straight**；写成 DeviceRGB Image XObject + /SMask；8 bit RGB / 灰度 JPEG 原字节直通 `/DCTDecode`。
+  像素网格不变，缩放只在 `cm` 里。`raster.RasterBuffer` 是本包里一块像素的唯一形状（栅格输出也用它，U07 第二切片的 ADR）。
+- **写入器再核一次字节身份**：`files`（`job` 里是 `sources.read_frozen()` 核过 hash 的那一份）交进来的每份字节按 sha256
+  与 `FileResource.sha256` 比，不符 `source_identity`、没交 `source_bytes_missing`——与 `read_frozen()` 是有意的两道（RC-014）。
 - **接 ExportJob 只给 `produce`**（`rendercore/job.py`）：作业生命周期一字不改；给不出的格式逐项 `format_failed`
   且 `error.params.unsupported` 带操作与理由，写入器的 `UnsupportedCapability` 也落到这一档；编译期事实
   （缺字 / cjk 脸 / hidden）进 `job.warnings`；冻结源在写入前 `read_frozen()`。U06 里 `app.py` 不 import 它。

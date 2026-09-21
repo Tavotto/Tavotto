@@ -182,6 +182,34 @@ def test_a_raster_panel_becomes_an_image_node(project: Path):
     assert compiled.page.resources[node.resource].kind == "png"
 
 
+def test_panel_opacity_zero_is_a_value_not_an_absence(project: Path):
+    """RC-042 must_fail：`or 1.0` 把 0 变 1。`opacity: 0` / `0.0` 编译成 0.0；没写才是 1.0；越界夹到 [0, 1]。"""
+    compiled = _compile(
+        project,
+        [
+            _panel("figs/Fig1.pdf", opacity=0),
+            _panel("figs/Fig2.png", x=80, opacity=0.0),
+            _panel("figs/Fig1.pdf", x=150),
+            _panel("figs/Fig1.pdf", x=160, opacity=7),
+        ],
+    )
+    assert [n.opacity for n in compiled.page.children] == [0.0, 0.0, 1.0, 1.0]
+
+
+def test_panel_rotation_is_snapped_to_ninety_for_pdf_and_raster_alike(project: Path):
+    """旧 facade 的用户合同：面板 rotation 四舍五入到 90 的倍数（100 → 90、−90 → 270），PDF 与位图同一条。"""
+    compiled = _compile(
+        project,
+        [
+            _panel("figs/Fig1.pdf", rotation=100, flip_h=True),
+            _panel("figs/Fig2.png", x=80, rotation=-90, flip_v=True),
+        ],
+    )
+    pdf, png = compiled.page.children
+    assert isinstance(pdf, ir.ImportedPage) and pdf.rotate_cw_deg == 90.0 and pdf.flip_h
+    assert isinstance(png, ir.Image) and png.rotate_cw_deg == 270.0 and png.flip_v
+
+
 def test_a_panel_with_overrides_is_not_executed_by_the_static_resolver(project: Path):
     """RC-019 的另一面：静态解析器绝不跑脚本——带 override 的面板是结构化错误，不是子进程。"""
     with pytest.raises(plan.PlanError) as ei:
@@ -295,8 +323,8 @@ def test_compile_plan_lists_capability_gaps_per_format_and_problems(project: Pat
     req = _request([_panel("figs/Fig1.pdf", opacity=0.5), _text("∇ 图")], background="transparent")
     rp = plan.compile_plan(req, sources=sources.StaticSourceResolver(project), faces=PROVIDER)
     assert rp.page.background is None
-    # 导入页在 PDF 里是 U07 的事；整体 opacity（透明组）与文字本切片已是 native，所以不在缺口里
-    assert [g["operation"] for g in rp.unsupported["pdf"]] == ["imported_page"]
+    # PDF：导入页 / 透明组 / 文字全是 native（U07），缺口为空；PNG 在 render child 收编之前每个操作都是缺口
+    assert rp.unsupported["pdf"] == []
     assert "page_background" not in {g["operation"] for g in rp.unsupported["png"]}
     assert {g["operation"] for g in rp.unsupported["png"]} >= {"imported_page", "text"}
     assert rp.problems == (

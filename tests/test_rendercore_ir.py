@@ -97,24 +97,13 @@ def test_capability_table_covers_every_format_and_operation_with_a_reason():
             assert cap.reason.strip(), (fmt, op)
 
 
-def test_u06_pdf_declares_text_and_paths_native_and_placements_unsupported():
-    """本切片的诚实边界：PDF 里文字 / 路径 / 组是 native（写入器在树里，`test_rendercore_writer.py` 逐操作
-    交叉核对），导入页 / 位图 / 镜像是 unsupported（U07）；位图格式与 EPS 全 unsupported。"""
+def test_u07_pdf_declares_every_operation_native_and_raster_formats_not_yet():
+    """诚实边界：PDF 里的十个操作全是 native（写入器在树里，`test_rendercore_writer.py` 逐操作交叉核对；
+    导入页 / 位图 / 镜像随 U07 翻成 native，`test_rendercore_compose.py` 用真源页与像素钉住）；
+    PNG / TIFF 在 render child 收编之前全 unsupported；EPS 没有写入器。"""
     pdf = ir.CAPABILITIES["pdf"]
-    assert {
-        pdf[o].level
-        for o in (
-            "page_background",
-            "path_fill",
-            "path_stroke",
-            "clip",
-            "group_opacity",
-            "object_alpha",
-            "text",
-        )
-    } == {"native"}
-    assert {pdf[o].level for o in ("image", "imported_page", "flip")} == {"unsupported"}
-    assert "U07" in pdf["imported_page"].reason
+    assert {pdf[o].level for o in ir.OPERATIONS} == {"native"}
+    assert "Form XObject" in pdf["imported_page"].reason and "位图" in pdf["flip"].reason
     for fmt in ("png", "tiff", "eps"):
         assert {c.level for c in ir.CAPABILITIES[fmt].values()} == {"unsupported"}, fmt
 
@@ -131,11 +120,13 @@ def test_operations_of_and_unsupported_for_report_what_a_page_actually_uses():
     assert ir.operations_of(page.children[1]) == ("imported_page", "group_opacity", "flip")
     assert ir.operations_of(page.children[2]) == ("clip", "group_opacity")
     assert ir.operations_of(page.children[3]) == ("text",)
-    gaps = ir.unsupported_for(page, "pdf")
-    # 去重后按遍历顺序：每个 (操作, 对象) 一条；路径 / 文字 / 透明组是 native，不在缺口里
-    assert [(g["operation"], g["object_id"]) for g in gaps] == [
-        ("imported_page", ""),
-        ("flip", ""),
+    assert ir.unsupported_for(page, "pdf") == []  # PDF 的十个操作全 native（U07）
+    gaps = ir.unsupported_for(page, "png")
+    # 去重后按遍历顺序：每个 (操作, 对象) 一条
+    assert [(g["operation"], g["object_id"]) for g in gaps][:3] == [
+        ("page_background", ""),
+        ("path_fill", ""),
+        ("object_alpha", ""),
     ]
     assert all(g["reason"] for g in gaps)
     assert ir.unsupported_for(_page(_rect()), "pdf") == []

@@ -322,7 +322,33 @@
         }
       ],
       "status": "public_contract",
-      "migration_criterion": "U07：RenderPlan → IR → 新合成器实现同一个 Canvas 面（见 canvas_methods）；PDF 真矢量、PNG/TIFF 出自同一次栅格化；透明背景 = 不画白底 + PNG 带 alpha。"
+      "migration_criterion": "U07：RenderPlan → IR → 新合成器实现同一个 Canvas 面（见 canvas_methods）；PDF 真矢量、PNG/TIFF 出自同一次栅格化；透明背景 = 不画白底 + PNG 带 alpha。",
+      "migration_evidence": [
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_compose.py::test_the_visible_box_is_the_crop_box_not_the_media_box"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_compose.py::test_crop_flip_rotate_combinations_land_each_quadrant_where_the_contract_says"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_compose.py::test_panel_opacity_is_a_transparency_group_not_per_object_alpha"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_compose.py::test_a_mirrored_import_keeps_its_vector_and_text_layer"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_compose.py::test_png_with_alpha_is_placed_with_an_smask_and_its_pixels_survive"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_job.py::test_a_panel_canvas_exports_a_vector_pdf_with_the_source_page_inside"
+        }
+      ]
     },
     {
       "name": "coverage_ranges",
@@ -916,7 +942,8 @@
             "line": 1037
           }
         ],
-        "role": "按对象类型落一个元素：panel（PDF 真矢量 show_pdf_page；位图带 crop/rotation 经 convert_to_pdf；opacity<1 或 flip 时按 dpi 位图嵌入）/ text / arrow / shape"
+        "role": "按对象类型落一个元素：panel（PDF 真矢量 show_pdf_page；位图带 crop/rotation 经 convert_to_pdf；opacity<1 或 flip 时按 dpi 位图嵌入）/ text / arrow / shape",
+        "migration_note_u07": "U07（ADR 0065）：panel 由 plan._panel_node → ImportedPage / Image，落位顺序只在 rendercore/placement.py；PDF 真矢量 Form XObject，opacity 透明组、flip 负缩放（不再退位图）；text / arrow / shape 由 U06 的 typography / geometry 编译"
       },
       {
         "name": "size_pt",
