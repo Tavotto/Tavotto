@@ -60,7 +60,8 @@
   `overrides._alias_colorbar_mappable` 把兄弟的 `(gid, cmap/vmin/vmax)` 一并算进组员
   ——vmin / vmax 不必逐个写（norm 是同一份），但兄弟的「脚本原样」必须在色条动过
   之前采下来；③ manifest 的色条条目发 `scale_gids`（兄弟的 gid，不含 mappable 本人，
-  没有兄弟就不发），`_cmap_alias_gids` 也把兄弟算进「脚本原样记在谁名下」。前端
+  没有兄弟就不发；**只发此刻真在映射的**——组员按 family 定、一次会话里恒定，事实按
+  `color_mapping_is_live` 说，有数组却写死颜色的线组是组员但不发），`_cmap_alias_gids` 也把兄弟算进「脚本原样记在谁名下」。前端
   （`lib/colormapAlias.ts` 的 `colorbarCovers`）据此把「与色条共用色阶」与「回到脚本
   原样」扩到整组——组里**任何一块**被哪条色条盖着，那条色条就在组里（两块各挂一条色条时
   A 的 override 落在 mesh_b 上，从 B 那边清不掉 A 就什么都不会变）。`cmap_original` 各说各的：

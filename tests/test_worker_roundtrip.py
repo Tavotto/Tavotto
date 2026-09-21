@@ -992,6 +992,10 @@ def main():
     # 有数组的线组：映射着色、归通用 collection 族，是正经的色阶兄弟
     ax.add_collection(LineCollection([[(0.1, 1.2), (0.9, 1.2)]], array=np.array([0.7]),
                                      cmap=CM_L, norm=norm, linewidths=3))
+    # 有数组、颜色却写死的线组：归通用族（有 handler），但映射没在生效——组员是，
+    # 事实不发（换色图一个像素不动，界面不该摆「与色条共用色阶」）
+    ax.add_collection(LineCollection([[(0.1, 1.25), (0.9, 1.25)]], array=np.array([0.3]),
+                                     colors="#123456", cmap=CM_L, norm=norm, linewidths=3))
     ax.set_ylim(0, 1.3)
     fig.colorbar(mesh, ax=ax)
     fig.savefig("Unmapped.pdf")
@@ -1001,7 +1005,9 @@ def main():
 def test_scale_siblings_only_count_artists_whose_colormap_can_be_restored(tmp_path):
     """色阶兄弟只收原样采得到的：没在映射的线组即便传了共用的 norm 也不算
     （#474 评审第三轮——它没有 cmap handler，撤销时只能拿 mappable 的原样冒充）；
-    映射着色的线组是正经兄弟，色图跟着色条走、撤销回它自己的那张。"""
+    有数组却把颜色写死的线组是结构上的组员、**事实不发**（第四轮——换色图一个像素
+    不动，界面不摆假的「共用色阶」）；映射着色的线组是正经兄弟，色图跟着色条走、
+    撤销回它自己的那张。"""
     figs = tmp_path / "figures"
     figs.mkdir()
     (figs / "fig_unmapped.py").write_text(UNMAPPED_SIBLING_SCRIPT, encoding="utf-8")
@@ -1011,13 +1017,15 @@ def test_scale_siblings_only_count_artists_whose_colormap_can_be_restored(tmp_pa
         man = _rpc(proc, {"cmd": "override", "stem": "Unmapped", "patches": []})["manifest"]
         cb = next(e for e in man["elements"] if e["role"] == "colorbar")
         plain = next(e for e in man["elements"] if e["role"] == "linecoll")
-        mapped = next(
+        mapped, fixed = [
             e
             for e in man["elements"]
             if e["role"] == "collection" and e["gid"] != cb["mappable_gid"]
-        )
+        ]
+        # 写死颜色的那条有数组、归通用族，但它的 cmap 字段本来就不宣称（映射没在生效）
+        assert not any(f["prop"] == "cmap" for f in fixed["editable"])
         assert cb["scale_gids"] == [mapped["gid"]], cb.get("scale_gids")
-        assert plain["gid"] not in cb["scale_gids"]
+        assert plain["gid"] not in cb["scale_gids"] and fixed["gid"] not in cb["scale_gids"]
         assert _field_value(man, mapped["gid"], "cmap") == "paper_l"
 
         patches = [{"gid": cb["gid"], "prop": "cmap", "value": "plasma"}]

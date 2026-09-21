@@ -214,7 +214,9 @@ def scale_siblings(state: FollowState, mappable) -> list:
 
 
 def scale_gids(state: FollowState, mappable) -> list[str]:
-    """`scale_siblings` 的 gid 版（manifest 下发 `scale_gids` 用）。"""
+    """`scale_siblings` 的 gid 版。manifest 下发 `scale_gids` 时还会按「此刻真在映射」
+    再筛一遍（`color_mapping_is_live`，在 manifest 那侧）：组员按 family 定、恒定，
+    事实按此刻说。"""
     sibs = scale_siblings(state, mappable)
     return [el["gid"] for el in state.elements if el["artist"] in sibs]
 

@@ -74,6 +74,7 @@ from overrides import (
     _stroke_state,
     cjk_fallback_candidates,
     collection_caps,
+    color_mapping_is_live,
     colorbar_mapping_is_live,
     font_installed,
     gradient_base_hex,
@@ -4238,7 +4239,16 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             # （`colorbarmodel.scale_siblings`）。色条的 cmap / vmin / vmax 也落到它们
             # 身上（别名组同一批），界面据此把「与 X 共用色阶」与「回到脚本原样」
             # 扩到整组。可选：没有兄弟就不发。
-            scale = [g for g in scale_gids(state, artist.cb.mappable) if g != mappable_gid]
+            # **只发此刻真在映射的**：组员是结构性的（按 family 定、一次会话里恒定，
+            # 撤销才回得去），事实说的却是「这条色条此刻给谁上色」——有数组、颜色却写死
+            # 的线组（`LineCollection(..., array=z, colors="red")`）换色图一个像素不动，
+            # 界面上不能摆一条「与色条共用色阶」（#474 评审第四轮）。判据与它自己那侧的
+            # cmap 字段同一处答案：`color_mapping_is_live`。
+            scale = [
+                g
+                for g in scale_gids(state, artist.cb.mappable)
+                if g != mappable_gid and color_mapping_is_live(state.resolve(g))
+            ]
             if scale:
                 entry["scale_gids"] = scale
             # **能力为什么不在，要说出来。** 少一个控件而不给理由，用户只会
