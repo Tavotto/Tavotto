@@ -3,7 +3,7 @@
 **阶段 / 子切片**：U08.facade_parity，三个叠栈 PR：**A** = 候选切换开关 + facade 候选实现（19 项 + Canvas 面）+ SourceResolver /
 ExportJob 接线（执行侧源 + 回执）+ 原图三格式 + compose + 预览 + probe + 候选生成物 + 对拍纪律（ADR 0067）；**B** =
 ArtifactInspector / ArtifactManifest / D08 检查政策 + 写回接线 + 负例（ADR 0068）；**C** = 入口审计（HTTP / SSE / MCP / 前端回执 +
-i18n）+ enrollment 提升。本文件记的是 **B 之后**的状态（A 的内容保留，B 的追加标 **【B】**），C 落地时再补。
+i18n）+ enrollment 提升。本文件记的是 **C 之后**的状态（A 的内容保留，B 的追加标 **【B】**，C 的追加标 **【C】**）。
 
 **开始 HEAD / 结束 HEAD / 用户原有工作区改动**：开始 `d957e57d`（`foundation/u07-compose-raster-b` 的 head，即 U07 的 PR B；
 下面依次是 U07 A #463 → U06 B #460 → U06 A #458 → U02 #455 → main）；结束 = PR A 的 head（合并后以 `git log origin/main`
@@ -63,6 +63,22 @@ preparation-and-receipts / process-boundaries；`docs/rules/repo/same-origin-pai
 | **【B】** `tests/test_export_inspection.py`（新，12 条，任何机器） | 发布文件带 manifest 且 sha256 = 磁盘字节、旧后端文字层不显示绿、坏文件 / 伪造 proof / 错尺寸在发布前拦住、partial、strict vs standard、阈值来自规范 + 未知 id、未知 mode 400、钩子在提交点之前、检查器炸 = unknown |
 | **【B】** `tests/test_rendercore_app.py` | +4：候选下文字层 / 字体 / 载体真核、strict 接受纯文字 / 拒低 ppi 面板、写回带标注（覆盖层 + 同一 PDF 栅格 PNG）、坏 / 加密 staging PDF 写回 409 原件零改动 |
 | **【B】** 文档 | ADR 0068；`rendercore.md` 加产物验证一节；`export-pipeline.md` 加一条；`src/tavotto/AGENTS.md` 速查行（顺带补上 A 漏写的那一行）；ledger `annotate_asset` / `compose` 加证据、parity 套件加 `test_export_inspection.py`；workflow 加两个用例文件；enrollment U08-R1 标题 / 备注 |
+| **【C】** `codex-plugin/mcp/tavotto_mcp/bridge.py` | `export` 经 `engine_exportjob.run(..., inspect=_inspect)` 接**同一份** `engine_artifactinspect.inspect_produced`（`backend="worker"`，契约层 `probe_asset` 经 `_probe_asset` 按需 import）；位图 `Produced` 带期望像素（图幅 × dpi）；`files[].manifest` 原样带出，旧键不动 |
+| **【C】** `codex-plugin/mcp/tavotto_mcp/server.py` | 给模型的文字加一行「产物核验」：`_inspection_summary` 三组各自点名（未通过 / 已核验 / 未核验），没有 manifest = 整份未核验 |
+| **【C】** `scripts/make_plugin_manifest.py` | `BRIDGE_IMPORTS_AT_MIN` += `artifactinspect`（下次发版 `MIN_TAVOTTO_VERSION` 必须抬到那一版，备注写在常量旁） |
+| **【C】** `tests/support/artifactbytes.py`（新，纯标准库） | `blank_pdf(w_pt, h_pt)`（xref 正确、qpdf 零告警、PyMuPDF 打得开）/ `solid_png(w, h, dpi=)`：替身 worker 写出的文件也要过得了检查器 |
+| **【C】** `tests/test_mcp_server.py` | `FakeWorker.export` 改写合法最小 PDF / PNG（80 × 60 mm 与 `_manifest` 对齐）；其余一字不动 |
+| **【C】** `tests/test_mcp_export_inspection.py`（新，5 条，任何机器） | 回执 manifest 与独立读取器（stdlib `pdfread` + hashlib）逐项对得上 + 旧键点名；worker 写坏 PDF → `artifact_rejected` 进 partial、导出目录里没有它、PNG 照发；SVG `integrity: unknown` 文字不说「已核验」；桥调的是 `engine_artifactinspect.inspect_produced`（spy）且 probe = 契约层；夹具自证（坏一个字节就红，两种读取器各自的拦法） |
+| **【C】** `tests/test_export_phase_labels.py`（新） | 后端会发出的每个 `job.phase` ↔ 两份 `dialogs.json export.phase` 同源判据（`inspecting` 从此有文案，缺一条就红） |
+| **【C】** `web/src/lib/api.ts` | `ArtifactCheckVerdict` / `ArtifactManifestSummary` 类型；`ExportOutput.manifest?`；`ExportRequest.inspection?` |
+| **【C】** `web/src/lib/artifactInspection.ts`（新） | `inspectionState()`：解读只有这一份（全部可判项 verified 才 verified、没有 manifest = unknown、failed 压过 unknown、全 not_applicable 不算通过）；`inspectionRollup()`（按文件名点名） |
+| **【C】** `web/src/lib/exportRequest.ts` / `exportDefaults.ts` | `strictInspection` / `profileId` 输入 → 只在勾了时带 `inspection: {mode: "strict", profile_id}`；不勾时载荷逐字节不变、快照指纹不含它；偏好记 `strictInspection` |
+| **【C】** `web/src/components/ExportDialog.tsx` | 高级选项「严格核验产物」开关（`title` 说明覆盖范围与 EPS 不在内）；`InspectionLine`：绿勾「已核验」/ 中性「未核验：…」/ 红「核验未通过：…」/ 不画；`ParkedState` 带 `strict` |
+| **【C】** `web/src/mcp/McpApp.tsx` | 「已导出」提示后按文件名点名失败 / 未核验的文件（中性色，不是绿） |
+| **【C】** `web/src/lib/imgRetry.ts` + `ui/RetryImg.tsx` | `/api/render` 的一次失败按 1 / 2 / 4 s 有界重试（候选后端的背压 503 对 `<img>` 不可见）；blob / data / `/api/file` 不重试；接在 `PanelView`（CrossfadeImage 当前层）、`CanvasThumb`（SVG `<image>`）、`VersionDialog` / `RegistryDialog` / `ExportDialog` 的缩略图 |
+| **【C】** i18n | `dialogs.json` 两种语言：`export.phase.inspecting`、`export.strictToggle / strictTitle`、`export.inspection.*`（含 9 个检查名）、`mcp.inspectionUnknown / inspectionFailed`；`resources.d.ts` 重生成 |
+| **【C】** 前端用例 | `lib/artifactInspection.test.ts`（7）、`lib/imgRetry.test.tsx`（3）、`lib/exportRequest.test.ts`（+3）、`components/ExportDialog.test.tsx`（+5「产物核验」组：没有 manifest 不画绿、全 verified 才绿、unknown 不绿并点名、failed 红并点名、严格开关默认不带 / 勾了带 strict + 当前规范） |
+| **【C】** 文档 | ADR 0068 §5（入口审计表）；`docs/rules/frontend/export-pipeline.md` 三条；`web/AGENTS.md` 速查行；`codex-plugin/AGENTS.md` 一节；`src/tavotto/AGENTS.md` 速查行 + 用例列表；ledger `candidate_parity` 套件加 `test_mcp_server.py` / `test_mcp_export_inspection.py`；plan.json U08 `implementation_status: done`（产品资格仍 not_run） |
 
 **关联旧要求 ID / 场景 ID**：R09 / R10 / R12 / R13 → RC-001 ~ RC-006、RC-054 ~ RC-060、RC-083 ~ RC-090、RC-093。逐条处置（A 之后）：
 
@@ -94,10 +110,10 @@ preparation-and-receipts / process-boundaries；`docs/rules/repo/same-origin-pai
 | RC-074 客户端 proof 不能伪造 | **【B】** 做了（报告从不进检查器） | `test_a_client_proof_cannot_override_the_server_verdict` |
 | RC-083 partial / 取消提交点 / 状态机 | 做了（`exportjob` 权威不动；候选下 `test_export_pipeline.py` 的取消 / partial / 终局顺序用例逐字过）；**【B】** 一项被拒另一项照常仍是 partial | parity.json；`test_a_partial_rejection_publishes_the_good_format_and_withholds_the_bad_one` |
 | RC-084 / RC-085 命名预留 / 不冒充整批原子 | 做了（同上） | parity.json |
-| RC-086 HTTP 同步 / 异步 / SSE 真链路 | A 做了同步 + 异步 + `/state`；**SSE 事件流与前端回执归 C** | `test_export_start_under_the_candidate_streams_progress_and_finishes` |
-| RC-087 MCP 与版本探针 | **C** | — |
-| RC-088 UI / 错误码 / 双语 | **C**（A 只保证候选不新造用户可见码：`eps_not_for_canvas` / `format_failed` / `export_render_failed`） | — |
-| RC-089 四类 Web 构建 / Playground | **C** | — |
+| RC-086 HTTP 同步 / 异步 / SSE 真链路 | A 做了同步 + 异步 + `/state`；**【C】** SSE / 补拉两条路走同一份 `job.to_payload()`（`manifest` 随之），阶段 `inspecting` 有两种语言文案（后端阶段名 ↔ 前端文案同源判据）；前端回执按 `inspectionState()` 画 | `test_export_start_under_the_candidate_streams_progress_and_finishes`、`tests/test_export_phase_labels.py`、`ExportDialog.test.tsx`「产物核验」组 |
+| RC-087 MCP 与版本探针 | **【C】** 做了：`bridge.export` 接同一份 `inspect_produced`（spy 用例钉住不是第二份）；桥 import 集变了 → `BRIDGE_IMPORTS_AT_MIN` 同步、`MIN_TAVOTTO_VERSION` 下次发版抬（现在不能写还没发的号） | `test_mcp_uses_the_same_inspection_wiring_as_http`、`test_min_tavotto_version_is_reestimated_when_the_bridge_imports_change` |
+| RC-088 UI / 错误码 / 双语 | **【C】** 做了：全部可判项 verified 才画绿，unknown 中性色点名、failed 红色点名、没有 manifest = 未核验；MCP 文字三组点名；错误码双语（B）；进度阶段双语 | `ExportDialog.test.tsx`「产物核验」组、`artifactInspection.test.ts`、`test_unknown_is_reported_as_unknown_not_verified`、`test_export_phase_labels.py` |
+| RC-089 四类 Web 构建 / Playground | **【C】** 审计：SPA（浏览器 / 桌面壳）、MCP 画布、Playground 三套构建 + 包内 `src/tavotto/web`；本切片没改任何资源路径（`apiUrl` 相对根、playground `base: './'`）；Playground `panelSrc: () => null`、没有导出面板、不发 `/api/*`，不存在能把未核验画成绿的组件 | `browserEngineTransport.test.ts`、`tests/test_playground_build.py`（既有；本机无 playground 产物，`--check` 说「没有产物」退出 0，产物在网站仓库同步时重建） |
 | RC-090 旧响应结构兼容 | 做了（`files[] / export_dir / warnings` 投影不变，`vector` 语义不变；候选下老契约用例 `test_export_legacy_items_texts_contract` 过） | parity.json |
 | RC-093 旧几何 / 文字测试迁移保留断言意图 | 做了（14 条实现特定断言逐条替代证据；用户合同一条不删；运行器 + 主 .venv 用例拒绝无证据 deselect） | ledger `candidate_parity`、`test_candidate_parity_deselections_have_replacement_evidence` |
 
@@ -115,7 +131,11 @@ preparation-and-receipts / process-boundaries；`docs/rules/repo/same-origin-pai
 | **【B】** rc-venv：`pytest tests/test_rendercore_inspector.py tests/test_export_inspection.py tests/test_rendercore_app.py` | 同上 | 0 | 见 PR B 正文 / 0 skip |
 | **【B】** rc-venv：`scripts/dev/u08_parity.py`（套件加 `test_export_inspection.py`） | 同上 | 见 PR B 正文 | 见 PR B 正文 |
 | **【B】** 变异反证（`scratchpad/u08/mutate_b.py`，ADR 0068 §3） | 同上 | 每条非零 | 见 PR B 正文 |
-| 前端 `pnpm test && pnpm build` | — | — | **not_run**：A / B 只改了 `web/src/i18n/locales/*/errors.json`（两条文案），`test_error_codes.py` 看护；组件归 C |
+| **【C】** 主 `.venv`：`pytest tests/test_mcp_export_inspection.py tests/test_mcp_server.py tests/test_mcp_normalize.py tests/test_codex_plugin.py tests/test_export_phase_labels.py tests/test_error_codes.py` | 同上 | 见 PR C 正文 | 见 PR C 正文 |
+| **【C】** rc-venv：`pytest tests/test_mcp_export_inspection.py`（pikepdf 路） | 同上 | 0 | 5 通过 |
+| **【C】** `cd web && pnpm test && pnpm build && pnpm i18n:check` | 同上 | 见 PR C 正文 | 见 PR C 正文 |
+| **【C】** 变异反证（`scratchpad/u08/mutate_c.py`） | 同上 | 每条非零 | 见 PR C 正文 |
+| 前端 `pnpm test && pnpm build` | **【C】** 跑了（见上一行） | — | — |
 
 **本切片的正例、负例、旧行为回归**：正例 = 上表；负例 = 未知后端名 / 字体缺席不回退 / `execute` 交回 static 产物 / child 死
 partial / 写入器炸 500 零遥测 / 队列满 503 / 面板混进标注 / 自引用 Form / 交集之外的码位；旧行为回归 = 默认路径零改动
@@ -128,8 +148,9 @@ partial / 写入器炸 500 零遥测 / 队列满 503 / 面板混进标注 / 自�
 
 **未运行 / 基础设施问题 / 真正产品失败，分别说明**：
 
-* 未运行（not_run）：Linux / Windows / 3.10 上的 facade / app / parity（workflow 每腿给）；macOS x86_64；前端；SSE 事件流 /
-  MCP / 前端回执的入口审计（C）；ArtifactInspector / D08（B）；跨项目并发真图；registry 220 条产品实例。
+* 未运行（not_run）：Linux / Windows / 3.10 上的 facade / app / parity（workflow 每腿给）；macOS x86_64；跨项目并发真图；
+  registry 220 条产品实例；**【C】** 真浏览器里的徽标视觉（jsdom 只量 DOM：`data-inspection` 与文字、颜色类名）、经 Codex 宿主的端到端
+  MCP 导出（用例是工具级、假 worker）、候选后端下的 `/api/render` 503 → 重试真链路（用例是 jsdom 假计时器 + 事件）。
 * 基础设施问题：主仓库 `.venv` 没装候选包，候选用例在必需矩阵里是 skip（有理由）；parity 的 9 个 skip 是 workerd 二进制
   与 dist 产物不在本机（与候选无关）。
 * 真正产品失败：无新增。**【B】** 检查器如实量到的两件旧后端事实（不是本轮缺陷，也没改默认路径）：PyMuPDF `pix.save` 写出的 PNG pHYs 恒 96 dpi（画布与原图两条路都是），`dpi_tag` 在默认路上是可选项 failed；旧后端 PDF 的 base-14 不嵌入，`fonts_embedded` 可选项 failed。改不改归用户拍板（`pix.set_dpi` 一行）。顺带发现的事实：① **U07 交接里「probe 含 /UserUnit 是有意差异」不成立**——PyMuPDF 1.28.2 的
@@ -152,7 +173,7 @@ partial / 写入器炸 500 零遥测 / 队列满 503 / 面板混进标注 / 自�
 **仍缺哪些默认启用 / 精确安装物资格**：全部。候选栈未默认启用；前端不读候选覆盖表；产品包不带候选包 / 字体；有限产物验证
 （B）与入口审计（C）未落。
 
-**下一个无阻塞阶段 / 子切片**：U08 PR C（入口审计：SSE / MCP / 前端回执「未核验不显示绿」/ i18n / Playground）→ U09（与完整准备链联调）。**【B】** 给 C 的输入：`Output.manifest` 是 `inspector.summary()` 的形状（`verdict` / `checks` 四值 / `notes` / `sha256` / `carrier` / `px` / `dpi` / `fonts_used` / `plan_identity` / `backend`），前端只许把 `verified` 画成绿、`unknown` 画成「未核验」、`failed` 画成红、`not_applicable` 不画；`inspection.mode` 是请求里的新可选段（TS 的 `ExportRequest` 要加同名可选字段）；MCP `export` 回执要把 `outputs[].manifest` 原样带出。
+**下一个无阻塞阶段 / 子切片**：U09（与完整准备链联调）。**【C】** 给 U09 / U10 的输入：MCP 入口只有 standard 政策（要开 strict 在 `bridge.export` 加参数、经同一份 `inspection_profile`）；`MIN_TAVOTTO_VERSION` 下次发版要抬；网站的 /try 产物要在合并后重新同步（本切片改了 `web/src`）；前端「已核验」只在候选写入器 + pikepdf 机器上才会对 PDF 出现（旧后端 base-14 / 无 pikepdf 时 PDF 永远有未核验项，这是如实的）。**【B】** 给 C 的输入：`Output.manifest` 是 `inspector.summary()` 的形状（`verdict` / `checks` 四值 / `notes` / `sha256` / `carrier` / `px` / `dpi` / `fonts_used` / `plan_identity` / `backend`），前端只许把 `verified` 画成绿、`unknown` 画成「未核验」、`failed` 画成红、`not_applicable` 不画；`inspection.mode` 是请求里的新可选段（TS 的 `ExportRequest` 要加同名可选字段）；MCP `export` 回执要把 `outputs[].manifest` 原样带出。
 给 B / C / U09 / U10 的输入：
 
 * 候选后端的开关只有一处（`pdfbackend.selected()`），入口审计里「哪条路」的判据一律问它，别再复制一个 `if env`；

@@ -17,6 +17,8 @@ import { CanvasStage } from '@/canvas/CanvasStage'
 import { ElementInspector } from '@/components/inspector/ElementInspector'
 import { useEngineSync } from '@/hooks/useEngineSync'
 import { formatMessage, t as translate, type UiMessage } from '@/i18n'
+import type { ArtifactManifestSummary } from '@/lib/api'
+import { inspectionRollup } from '@/lib/artifactInspection'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelRender } from '@/store/renderStore'
@@ -117,10 +119,21 @@ export function McpApp({
             explicit_confirm: confirmForced,
           }),
         )
-        const files = (body.files as { path: string }[]) ?? []
+        const files = (body.files as { path: string; manifest?: ArtifactManifestSummary | null }[]) ?? []
         setPreflight((body.preflight as PreflightPayload) ?? preflight)
         setPreflightStale(false)
-        setNotice({ tone: 'ok', text: mc('exported', { files: files.map((f) => f.path).join('、') }) })
+        // 产物核验（ADR 0068）跟在「已导出」后面说：有失败项点名、有未核验项点名——
+        // 这条提示是中性色，不是绿；「未核验」永远不会被写成「已通过」
+        const rollup = inspectionRollup(files)
+        const verdict = rollup.failed.length
+          ? mc('inspectionFailed', { files: rollup.failed.join('、') })
+          : rollup.unknown.length
+            ? mc('inspectionUnknown', { files: rollup.unknown.join('、') })
+            : ''
+        setNotice({
+          tone: 'ok',
+          text: mc('exported', { files: files.map((f) => f.path).join('、') }) + verdict,
+        })
         // 这句是**发给 Codex 的对话内容**，不是界面文案：它进的是聊天记录，
         // 语言该跟着那边的对话走，不该被这个 webview 的界面语言改写
         bridge.sendMessage(`我在画布里改完并导出了 ${open.stem}：${files.map((f) => f.path).join('、')}`)

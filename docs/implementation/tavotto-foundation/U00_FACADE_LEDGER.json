@@ -1304,7 +1304,7 @@
     "U10：切默认 → 移除 pymupdf 依赖 → 发行闭包退役扫描（主语：应用 / 发行 / runtime 闭包，不是用户环境；D15）"
   ],
   "candidate_parity": {
-    "note": "U08（ADR 0067）：旧契约用例在 TAVOTTO_RENDER_BACKEND=rendercore 下逐字重跑（scripts/dev/u08_parity.py，rc-venv：pymupdf 只当读取器）。user_contract 一条不删；deselected 里的每一条都是实现特定断言（monkeypatch 旧 facade 内部 / base-14 字体名 / 旧字体 oracle / 旧栅格器阈值），逐条给出候选侧的替代证据；runner 拒绝没有替代证据的 deselect。结果记在 evidence/u08/parity.json。",
+    "note": "U08（ADR 0067）：旧契约用例在 TAVOTTO_RENDER_BACKEND=rendercore 下逐字重跑（scripts/dev/u08_parity.py，rc-venv：pymupdf 只当读取器）。user_contract 一条不删；deselected 里的每一条都是实现特定断言（monkeypatch 旧 facade 内部 / base-14 字体名 / 旧字体 oracle / 旧栅格器阈值），逐条给出候选侧的替代证据；runner 拒绝没有替代证据的 deselect。结果记在 evidence/u08/parity.json。 U08 C 加 tests/test_mcp_server.py / tests/test_mcp_export_inspection.py：MCP 导出的产物检查在候选下经契约层 probe_asset 走候选 child。",
     "suites": [
       "tests/test_export_pipeline.py",
       "tests/test_export_endpoint.py",
@@ -1329,7 +1329,9 @@
       "tests/test_cjk_figure_text.py",
       "tests/test_tutorial.py",
       "tests/test_worker_roundtrip.py",
-      "tests/test_windows_regressions.py"
+      "tests/test_windows_regressions.py",
+      "tests/test_mcp_server.py",
+      "tests/test_mcp_export_inspection.py"
     ],
     "deselected": [
       {

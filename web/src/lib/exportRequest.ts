@@ -179,6 +179,14 @@ export interface ExportRequestInput {
   spec?: OriginalOutputSpec | null
   /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
   report?: Record<string, unknown>
+  /**
+   * 严格核验产物（ADR 0068，D08 `strict`）：按 `profileId` 那套出版规范取阈值，必需项
+   * 失败或无法核验的那一项**不发布**。不勾 = 请求里不带 `inspection`（老形状，服务端按
+   * standard）。
+   */
+  strictInspection?: boolean
+  /** 严格核验按哪套规范；对话框里选中的那一套 */
+  profileId?: string | null
 }
 
 export interface BuiltRequest {
@@ -243,6 +251,10 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
     }
   }
   if (input.report) request.style_check_report = input.report
+  // 只在勾了严格时才带 `inspection`：不勾时载荷与从前逐字节相同（老服务端不认这个键也无妨）
+  if (input.strictInspection) {
+    request.inspection = { mode: 'strict', profile_id: input.profileId ?? null }
+  }
   const revision = snapshotRevision(request)
   request.document_revision = revision
   return { request, names: formats.map((f) => `${filename}.${f}`), revision }

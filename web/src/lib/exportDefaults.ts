@@ -12,6 +12,8 @@ export interface ExportDefaults {
    * `doc.profile`，那个才说了算（规范属于这张图，不属于这台机器）。
    */
   profileId: string
+  /** 上次是否勾了「严格核验产物」（ADR 0068）；缺省不勾 = standard */
+  strictInspection: boolean
 }
 
 const DEFAULTS: ExportDefaults = {
@@ -19,6 +21,7 @@ const DEFAULTS: ExportDefaults = {
   formats: ['pdf', 'png'],
   withProof: false,
   profileId: DEFAULT_PROFILE_ID,
+  strictInspection: false,
 }
 
 export function readExportDefaults(): ExportDefaults {
@@ -30,6 +33,7 @@ export function readExportDefaults(): ExportDefaults {
         dpi: typeof v.dpi === 'string' ? v.dpi : DEFAULTS.dpi,
         formats: Array.isArray(v.formats) && v.formats.length ? v.formats : DEFAULTS.formats,
         withProof: v.withProof === true,
+        strictInspection: v.strictInspection === true,
         // 存着一个已经删掉的 profile id 时退回默认：不能让一条陈旧的偏好
         // 把整个导出对话框卡在一个不存在的规范上
         profileId: hasProfile(v.profileId) ? (v.profileId as string) : DEFAULTS.profileId,

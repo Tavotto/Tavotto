@@ -189,6 +189,29 @@ describe('PPI 只在位图输出时有意义', () => {
   })
 })
 
+describe('产物检查政策（ADR 0068）', () => {
+  it('不勾严格时载荷里**没有** `inspection` 键：老形状一个字节不变', () => {
+    const { request } = buildExportRequest(inputOf())
+    expect('inspection' in request).toBe(false)
+    expect('inspection' in buildExportRequest(inputOf({ strictInspection: false })).request).toBe(
+      false,
+    )
+  })
+
+  it('勾了严格才带 `inspection: strict`，并带上对话框里选中的规范', () => {
+    const { request } = buildExportRequest(
+      inputOf({ strictInspection: true, profileId: 'lab-publication-v1' }),
+    )
+    expect(request.inspection).toEqual({ mode: 'strict', profile_id: 'lab-publication-v1' })
+  })
+
+  it('严格开关不进快照指纹：它改的是发不发布，不是出来的文件', () => {
+    const a = buildExportRequest(inputOf()).revision
+    const b = buildExportRequest(inputOf({ strictInspection: true, profileId: 'x' })).revision
+    expect(a).toBe(b)
+  })
+})
+
 describe('文件名', () => {
   it('顺手打上的扩展名被剥掉，非法字符当场报原因', () => {
     expect(buildExportRequest(inputOf({ filename: 'Fig 1.pdf' })).request.filename).toBe('Fig 1')

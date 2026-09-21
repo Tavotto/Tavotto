@@ -34,6 +34,7 @@ from urllib.parse import quote
 
 from tavotto.engine import (
     artifactcheck as engine_artifactcheck,
+    artifactinspect as engine_artifactinspect,
     config as engine_config,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
@@ -1403,6 +1404,14 @@ def export(
     `acknowledged`。新增的只有诚实所需的两项——作业终局 `status`，以及失败
     那一项自己带的 `error`。
 
+    **有限产物验证**（ADR 0068）：每个封口的临时文件在提交点之前重新打开量
+    事实（`engine/artifactinspect.py`——与 HTTP 导出**同一份**接线，不是第二份
+    检查器），`files[].manifest` 原样带出 `verdict / checks / notes / sha256`；
+    四值判据里 `unknown` 不是 `verified`，模型读回执时不得把「未核验」转述成
+    「已通过」。这条入口只有 standard 政策（必需 = 完整性 + 核心尺寸，不合格的
+    那一项以 `artifact_rejected` 进 `partial`、不发布）；严格政策走 HTTP 导出
+    的 `inspection` 段。
+
     `acceptance`（ADR 0051）：规范化事务给的**最终产物验收参数**
     `{"expect_mm": [w, h], "font_family": str|None, "contract_id": str}`。给了它，
     每个格式在**临时目录里**就按格式验尺寸 / 字体（`engine/artifactcheck.py`），
@@ -1542,17 +1551,30 @@ def export(
                         )
                     )
                     continue
+            raster = fmt in engine_exportreq.RASTER_FORMATS and size_mm[0] and size_mm[1]
             produced.append(
                 engine_exportjob.Produced(
                     format=fmt,
                     tmp_path=tmp,
                     width_mm=size_mm[0],
                     height_mm=size_mm[1],
+                    # 位图的期望像素 = 图幅 × dpi（与 artifactcheck 同一换算）：产物检查按它核
+                    # 文件里的像素数，不给的话 `size` 那一维只能 unknown
+                    width_px=int(round(size_mm[0] / 25.4 * dpi)) if raster else None,
+                    height_px=int(round(size_mm[1] / 25.4 * dpi)) if raster else None,
                     # PDF/SVG/EPS 是 matplotlib 直接序列化的真矢量；PNG/TIFF 才吃 dpi
                     vector=fmt in engine_exportreq.VECTOR_FORMATS,
                 )
             )
         return produced
+
+    def _inspect(job, produced: list) -> list:
+        # 与 `app.py` 的 HTTP 导出同一份接线：`backend` 只是计划半张里「谁写的」；
+        # 没有 pikepdf 时 PDF 经契约层 probe 做基本观测，所以按需 import、不进桥的
+        # 常驻 import 闭包
+        return engine_artifactinspect.inspect_produced(
+            job, produced, backend="worker", probe=_probe_asset
+        )
 
     def _report(job, outputs: list) -> bytes:
         return _proof_bytes(
@@ -1570,7 +1592,7 @@ def export(
             normalize=_normalize_proof_section(session, acceptance, checks_by_fmt),
         )
 
-    engine_exportjob.run(job, _produce, report=_report if proof else None)
+    engine_exportjob.run(job, _produce, report=_report if proof else None, inspect=_inspect)
 
     if job.status == engine_exportjob.STATUS_CONFLICT:
         raise BridgeError(
@@ -1600,6 +1622,8 @@ def export(
         }
         if o.error_code:
             entry["error"] = {"code": o.error_code, "params": o.error_params}
+        if o.manifest is not None:
+            entry["manifest"] = o.manifest
         files.append(entry)
 
     result = {
@@ -1645,6 +1669,13 @@ def export(
                 "params": job.report.error_params,
             }
     return result
+
+
+def _probe_asset(path: Path, kind: str) -> dict:
+    """契约层的 `probe_asset`，按需 import：产物检查在没有 pikepdf 的机器上用它做 PDF 基本观测。"""
+    from tavotto import pdfbackend
+
+    return pdfbackend.probe_asset(path, kind)
 
 
 def _normalized_status(session: Session) -> dict | None:
