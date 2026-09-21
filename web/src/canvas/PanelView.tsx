@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { enginePreviewPng, panelSrc, type ManifestElement } from '@/lib/api'
+import { useRetryingSrc } from '@/lib/imgRetry'
 import { engineTransport } from '@/lib/engineTransport'
 import { alignEntries, geomGid, geomTarget, segIntersectsRect } from '@/lib/elementGeom'
 import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
@@ -204,6 +205,9 @@ export function PanelView({ obj }: { obj: PanelObject }) {
         ? transport.panelSrc(obj.fileId, kind, bucket, mtime)
         : panelSrc(obj.fileId, kind, bucket, mtime)
   const src = (useEnginePng && enginePng) || fileSrc || ''
+  // `/api/render` 在候选后端下会以 503 表达背压（child 队列满）；<img> 只看得到「失败」，
+  // 有界重试同一地址（`lib/imgRetry`），blob / 磁盘原件失败不在此列
+  const retry = useRetryingSrc(src)
   // 引擎位图还没落地（首次渲染刚回来、blob 在路上）或取图失败时，**优先挂
   // 引擎 SVG，而不是退回磁盘原图**：store 里那份 SVG 就是按 overrides 画出来
   // 的（自己这版，或 Phase F 的 latest 退路），磁盘原图才是「脚本原值」——
@@ -267,7 +271,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
           />
         ) : src ? (
           <CrossfadeImage
-            src={src}
+            src={retry.src}
+            onError={retry.onError}
             alt={obj.name ?? obj.fileId}
             className="absolute select-none"
             style={{ ...layout, maxWidth: 'none' }}
@@ -376,11 +381,14 @@ function useEnginePngBlob(
  */
 function CrossfadeImage({
   src,
+  onError,
   alt,
   className,
   style,
 }: {
   src: string
+  /** 当前层加载失败时（淡出层的失败不关心：它本来就要被换掉） */
+  onError?: () => void
   alt: string
   className?: string
   style?: React.CSSProperties
@@ -421,6 +429,7 @@ function CrossfadeImage({
             src={layerSrc}
             alt={isCur ? alt : ''}
             aria-hidden={isCur ? undefined : true}
+            onError={isCur ? onError : undefined}
             draggable={false}
             className={cn(
               className,

@@ -66,9 +66,13 @@ MIN_TAVOTTO_VERSION = "0.15.0"
 #: `create_joint_plan` / `prepare` 是 U04 的新名字，在 `_answer_prepare_dependencies` 里以
 #: `getattr` 守着、缺就 `engine_too_old` 不静默，import 本身在最低版本上仍成立——最低版本不抬；
 #: 下次发版若要把「联合依赖准备」当插件依赖的能力再重估。
+#: 2026-09-21（ADR 0068，统一实施包 U08）：桥新增 import 了 artifactinspect（导出产物检查的
+#: 接线层）——它晚于 v0.15.0，**下一次发版时 MIN_TAVOTTO_VERSION 必须抬到那一版**
+#: （`test_plugin_manifest_min_tavotto_version_is_real` 不许现在就写一个还没发的号）。
 BRIDGE_IMPORTS_AT_MIN = frozenset(
     {
         "artifactcheck",
+        "artifactinspect",
         "config",
         "deprepair",
         "exportjob",

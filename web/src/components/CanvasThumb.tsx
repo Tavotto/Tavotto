@@ -20,6 +20,7 @@
  * 时明确标「近似预览」。
  */
 import { renderUrl, runtimePreviewUrl } from '@/lib/api'
+import { useRetryingSrc } from '@/lib/imgRetry'
 import { cn } from '@/lib/utils'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -85,15 +86,14 @@ export function CanvasThumb({
                 ? runtimePreviewUrl(o.fileId, nonce[o.fileId])
                 : renderUrl(o.fileId, 200, byId[o.fileId]?.mtime)
             return (
-              <image
+              <ThumbImage
                 key={key}
-                data-thumb-panel={o.fileId}
+                fileId={o.fileId}
                 href={href}
                 x={o.x}
                 y={o.y}
                 width={o.w}
                 height={o.h}
-                preserveAspectRatio="none"
               />
             )
           }
@@ -135,5 +135,36 @@ export function CanvasThumb({
           )
         })}
     </svg>
+  )
+}
+
+/** 缩略图里的一张面板图：`/api/render` 的一次失败按 `lib/imgRetry` 有界重试（候选后端的背压） */
+function ThumbImage({
+  fileId,
+  href,
+  x,
+  y,
+  width,
+  height,
+}: {
+  fileId: string
+  href: string
+  x: number
+  y: number
+  width: number
+  height: number
+}) {
+  const retry = useRetryingSrc(href)
+  return (
+    <image
+      data-thumb-panel={fileId}
+      href={retry.src}
+      onError={retry.onError}
+      x={x}
+      y={y}
+      width={width}
+      height={height}
+      preserveAspectRatio="none"
+    />
   )
 }
