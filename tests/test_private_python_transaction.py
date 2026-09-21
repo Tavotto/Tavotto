@@ -241,6 +241,13 @@ class TestPrivateBase:
         monkeypatch.setattr(bootstrap, "find_base_python", lambda accept=None: None)
         deprepair.reset_state()
         assert deprepair.base_python() is None
+        # offer 那一侧同样说出口：环境在（creates_environment=False）也要 base，载荷挂在受管目标上。
+        # 先把 beta 声明进项目：offer 只对解析得出的包给目标，解析不出时 targets 为空（那是另一条路）
+        (project / "requirements.txt").write_text(f"{ALPHA[0]}\n{BETA[0]}\n", encoding="utf-8")
+        offer = deprepair.offer(project, "figure.py", BETA[1])
+        managed = next(t for t in offer["targets"] if t["kind"] == deprepair.TARGET_MANAGED)
+        assert managed["creates_environment"] is False and managed["available"] is True
+        assert managed["private_python"]["download_bytes"] == src.size
         plan = deprepair.create_plan(
             project,
             "figure.py",
