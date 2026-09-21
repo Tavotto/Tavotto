@@ -759,7 +759,9 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             ),
             reason=managedenv.REASON_MISSING_DEPENDENCY,
             identity="",
-            emit=lambda state, **kw: _emit(plan.plan_id, state, on_event, plan=plan, **kw),
+            emit=lambda state, **kw: _emit_repair_step(
+                plan.plan_id, state, on_event, plan=plan, **kw
+            ),
             on_log=lambda text: _append_log(plan.plan_id, text, on_event),
             label=f"repair-{req.distribution}",
             provision_private=plan.private_python is not None,
@@ -2066,7 +2068,11 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             ),
             reason=managedenv.REASON_USER_REQUESTED,
             identity="",
-            emit=lambda state, **kw: _emit_job(job.job_id, state, on_event, job=job, **kw),
+            # 代事务自己的 `done` 不外露：包作业的终态由下面带 version 的那一次 emit 给——否则轮询者
+            # 会在两次 emit 之间看到一个没有 version 的 done（CI 上真撞到过，Codex #464 那条红）
+            emit=lambda state, **kw: _emit_generation_step(
+                job.job_id, state, on_event, job=job, **kw
+            ),
             on_log=lambda text: _append_log(job.job_id, text, on_event),
             label=f"{job.op}-{job.distribution}",
         )
@@ -2179,6 +2185,22 @@ def _freeze(python: str) -> str:
         [str(python), "-m", "pip", "freeze", "--disable-pip-version-check"], FREEZE_TIMEOUT_S
     )
     return _sanitize(out) if rc == 0 else ""
+
+
+def _emit_generation_step(job_id: str, state: str, on_event, *, job=None, **kw) -> dict:
+    """包作业里代事务的中间步：`done` 由作业自己带 version 发（这里吞掉），其余照发。"""
+    if state == STATE_DONE:
+        with _lock:
+            return dict(_progress.get(job_id) or {})
+    return _emit_job(job_id, state, on_event, job=job, **kw)
+
+
+def _emit_repair_step(plan_id: str, state: str, on_event, *, plan=None, **kw) -> dict:
+    """单包修复里代事务的中间步：同上，`done` 由 `_run_install` 带 version / distribution 发。"""
+    if state == STATE_DONE:
+        with _lock:
+            return dict(_progress.get(plan_id) or {})
+    return _emit(plan_id, state, on_event, plan=plan, **kw)
 
 
 def _emit_job(
