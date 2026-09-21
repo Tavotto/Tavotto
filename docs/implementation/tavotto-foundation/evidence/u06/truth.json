@@ -1,0 +1,237 @@
+{
+ "fixture": "u06_ir_text",
+ "comment": "手写规格：U06 写入器的验收页。坐标是画布语义（毫米、顶原点）；像素采样点已换成页面 pt（y 向上）——换算在写这份文件时手算，不调 plan.py。",
+ "page_mm": [
+  150,
+  80
+ ],
+ "objects": [
+  {
+   "type": "text",
+   "id": "ascii",
+   "text": "Tavotto U06: efficient flow, E = mc^{2}, H_{2}O",
+   "x_mm": 10,
+   "y_mm": 8,
+   "w_mm": 120,
+   "h_mm": 10,
+   "size_pt": 10
+  },
+  {
+   "type": "text",
+   "id": "sci",
+   "text": "10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5",
+   "x_mm": 10,
+   "y_mm": 18,
+   "w_mm": 120,
+   "h_mm": 10,
+   "size_pt": 10
+  },
+  {
+   "type": "text",
+   "id": "cjk",
+   "text": "图一：温度 T (K) 随时间变化 ℃",
+   "x_mm": 10,
+   "y_mm": 28,
+   "w_mm": 120,
+   "h_mm": 10,
+   "size_pt": 10,
+   "font_family": "sans-serif",
+   "bold": true
+  },
+  {
+   "type": "text",
+   "id": "combining",
+   "text": "café x̃y é",
+   "x_mm": 10,
+   "y_mm": 38,
+   "w_mm": 120,
+   "h_mm": 10,
+   "size_pt": 10,
+   "font_family": "monospace",
+   "italic": true
+  },
+  {
+   "type": "shape",
+   "id": "z-red",
+   "shape": "rect",
+   "x_mm": 90,
+   "y_mm": 50,
+   "w_mm": 30,
+   "h_mm": 20,
+   "fill": "#ff0000",
+   "stroke_pt": 0.05,
+   "color": "#ff0000"
+  },
+  {
+   "type": "shape",
+   "id": "a-blue",
+   "shape": "rect",
+   "x_mm": 100,
+   "y_mm": 55,
+   "w_mm": 30,
+   "h_mm": 20,
+   "fill": "#0000ff",
+   "stroke_pt": 0.05,
+   "color": "#0000ff"
+  },
+  {
+   "type": "shape",
+   "id": "ell",
+   "shape": "ellipse",
+   "x_mm": 10,
+   "y_mm": 52,
+   "w_mm": 30,
+   "h_mm": 16,
+   "fill": "#ff0000",
+   "fill_opacity": 0.5,
+   "stroke_pt": 0.05,
+   "color": "#ff0000"
+  },
+  {
+   "type": "arrow",
+   "id": "arr",
+   "x_mm": 45,
+   "y_mm": 55,
+   "w_mm": 40,
+   "h_mm": 10,
+   "start": {
+    "rx": 0,
+    "ry": 0.5
+   },
+   "end": {
+    "rx": 1,
+    "ry": 0.5
+   },
+   "head_end": "triangle",
+   "color": "#008000",
+   "stroke_pt": 1.5
+  },
+  {
+   "type": "text",
+   "id": "rot",
+   "text": "rotated",
+   "x_mm": 10,
+   "y_mm": 66,
+   "w_mm": 40,
+   "h_mm": 10,
+   "size_pt": 10,
+   "rotation_deg": 20,
+   "bg": "#ffeecc",
+   "underline": true
+  },
+  {
+   "type": "text",
+   "id": "hidden",
+   "text": "must not appear",
+   "x_mm": 60,
+   "y_mm": 66,
+   "w_mm": 40,
+   "h_mm": 10,
+   "size_pt": 10,
+   "hidden": true
+  }
+ ],
+ "text": [
+  {
+   "id": "ascii",
+   "logical": "Tavotto U06: efficient flow, E = mc2, H2O",
+   "note": "Liberation 2.1.5 没有 liga：fi 不连字；用户写的 ^{2} / _{2} 本来就是数字"
+  },
+  {
+   "id": "sci",
+   "logical": "10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5",
+   "tounicode_only": "10⁵ m-2 — Δλ = 532 nm, μ ≈ 1.5",
+   "note": "⁻ 哪张脸都没有 → auto 档折成上标 -2；ActualText 还原 ⁻²（PDFium / poppler / stdlib 读取器），只看 ToUnicode 的 pdfminer 得到 m-2"
+  },
+  {
+   "id": "cjk",
+   "logical": "图一：温度 T (K) 随时间变化 ℃",
+   "note": "汉字与 ℃ 由 Noto Sans SC（CFF CID）画；T (K) 由 LiberationSans-Bold 画"
+  },
+  {
+   "id": "combining",
+   "logical": "café x̃y é",
+   "note": "e+U+0301 合成一个字形（一个 code → 两个码位，ToUnicode 记的是首次见到的原文 e+U+0301）；x+U+0303 是一个 cluster 两个字形（ActualText）；末尾预组合的 é 用的是同一个字形 → ToUnicode 只能记一份，靠 ActualText 还原 U+00E9，只看 ToUnicode 的读取器得到 e+U+0301",
+   "tounicode_only": "café x̃y é"
+  },
+  {
+   "id": "rot",
+   "logical": "rotated"
+  }
+ ],
+ "must_not_contain": [
+  "must not appear"
+ ],
+ "min_text_objects": 9,
+ "raster": {
+  "scale": 2,
+  "rgb_tolerance": 6,
+  "samples": [
+   {
+    "id": "background",
+    "page_pt": [
+     2.8346,
+     223.937
+    ],
+    "rgb": [
+     255,
+     255,
+     255
+    ],
+    "why": "白底"
+   },
+   {
+    "id": "overlap_is_blue",
+    "page_pt": [
+     311.811,
+     56.6929
+    ],
+    "rgb": [
+     0,
+     0,
+     255
+    ],
+    "why": "红 (90,50,30x20) 在前、蓝 (100,55,30x20) 在后：重叠区是蓝——列表顺序，不是 id 顺序（z-red / a-blue 故意逆序）"
+   },
+   {
+    "id": "only_red",
+    "page_pt": [
+     260.7874,
+     79.3701
+    ],
+    "rgb": [
+     255,
+     0,
+     0
+    ],
+    "why": "只有红矩形覆盖的点"
+   },
+   {
+    "id": "ellipse_half_alpha",
+    "page_pt": [
+     70.8661,
+     56.6929
+    ],
+    "rgb": [
+     255,
+     128,
+     128
+    ],
+    "why": "0.5 红叠在白上"
+   },
+   {
+    "id": "hidden_object_area_stays_white",
+    "page_pt": [
+     226.7717,
+     25.5118
+    ],
+    "rgb": [
+     255,
+     255,
+     255
+    ],
+    "why": "hidden 文字的框内没有墨"
+   }
+  ]
+ }
+}

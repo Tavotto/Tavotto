@@ -1,0 +1,127 @@
+name: Foundation U06 rendercore
+
+# 统一实施包 U06 的候选栈用例在**托管 runner 的三个平台**上真跑一遍：装 pyproject 的 `rendercore` extra、
+# 按 allowlist 的 sha256 取批准字体、跑 tests/test_rendercore_*.py（主仓库 .venv 没装候选包，这批用例在
+# 必需矩阵里是 skip——skip 不是绿，这里才是它们真跑的地方）、重生成 evidence/u06 并与 git 里的比
+# （PDF 应逐字节相同：写入侧确定性；PDFium 的 PNG 跨平台像素不同，只作信息，ADR 0055 §7）。
+#
+# 它不是门禁、不进任何 Gate 的闭集、不是 required check（候选栈未默认启用，U06 不切默认）。
+# 触发：`workflow_dispatch`，以及**只在 rendercore 自己的文件变动时**的 `pull_request`（paths 过滤）——
+# `gh workflow run` 只认默认分支上已登记的 workflow，合入前靠 pull_request 触发。
+#
+# 任一步退出非零就红——红是真红，这个 workflow 没有 continue-on-error。
+#
+# **寿命**：候选栈切成默认（U10）时这批用例进必需矩阵、字体取用进 package job，本 workflow 删除。
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/foundation-u06-rendercore.yml"
+      - "src/tavotto/rendercore/**"
+      - "scripts/fetch_fonts.py"
+      - "scripts/dev/u06_evidence.py"
+      - "tests/test_rendercore_*.py"
+      - "tests/support/pdfread.py"
+      - "tests/support/fakeface.py"
+      - "requirements-rendercore.txt"
+      - "pyproject.toml"
+      - "docs/implementation/tavotto-foundation/evidence/u06/truth.json"
+
+permissions:
+  contents: read
+
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+  TAVOTTO_NO_UPDATE_CHECK: "1"
+  PYTHONUTF8: "1"
+
+concurrency:
+  group: foundation-u06-rendercore-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rendercore:
+    name: rendercore (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.10"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: windows-latest
+            python: "3.13"
+          - os: macos-latest
+            python: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: 路径与独立 venv
+        shell: bash
+        run: |
+          python - <<'EOF' >> "$GITHUB_ENV"
+          import os, pathlib
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          venv = tmp / "rc-venv"
+          py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+          print("RC_VENV=" + str(venv))
+          print("RC_PY=" + str(py))
+          print("U06_EVIDENCE=" + str(tmp / "u06-evidence"))
+          EOF
+      - name: 建 venv、装 rendercore extra（候选包）与只读尺子
+        shell: bash
+        run: |
+          python -m venv "$RC_VENV"
+          "$RC_PY" -m pip install --upgrade pip
+          "$RC_PY" -m pip install -e ".[rendercore,dev]" pdfminer.six==20251107 pypdf==6.7.5
+          "$RC_PY" -m pip freeze
+          "$RC_PY" -c "import tavotto, tavotto.rendercore; print(tavotto.__file__)"
+
+      - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
+        shell: bash
+        run: |
+          "$RC_PY" scripts/fetch_fonts.py
+          "$RC_PY" scripts/fetch_fonts.py --check
+
+      - name: RenderCore 用例（真字体、真候选包，不 skip）
+        shell: bash
+        run: |
+          "$RC_PY" -m pytest tests/test_rendercore_ir.py tests/test_rendercore_geometry.py tests/test_rendercore_typography.py tests/test_rendercore_plan.py tests/test_rendercore_model.py tests/test_rendercore_fonts.py tests/test_rendercore_writer.py tests/test_rendercore_job.py tests/test_rendercore_evidence.py tests/test_font_provenance.py tests/test_import_architecture.py -p no:cacheprovider -rs -q --junitxml="$RUNNER_TEMP/pytest-u06.xml"
+
+      - name: 重生成 evidence 并与 git 里的比（PDF 逐字节；PNG 只作信息）
+        shell: bash
+        run: |
+          mkdir -p "$U06_EVIDENCE"
+          cp docs/implementation/tavotto-foundation/evidence/u06/truth.json "$U06_EVIDENCE/truth.json"
+          "$RC_PY" scripts/dev/u06_evidence.py --out "$U06_EVIDENCE"
+          "$RC_PY" - <<'EOF'
+          import hashlib, os, pathlib, sys
+          ev = pathlib.Path(os.environ["U06_EVIDENCE"])
+          git = pathlib.Path("docs/implementation/tavotto-foundation/evidence/u06")
+          bad = False
+          for name, must in (("u06.pdf", True), ("u06_pdfium.png", False), ("canvas_coverage.rendercore.json", True)):
+              a = hashlib.sha256((ev / name).read_bytes()).hexdigest()
+              b = hashlib.sha256((git / name).read_bytes()).hexdigest()
+              same = a == b
+              print(f"{name}: {'IDENTICAL to git' if same else 'DIFFERS from git'}  ci={a[:12]} git={b[:12]}")
+              bad |= (must and not same)
+          sys.exit(1 if bad else 0)
+          EOF
+
+      - name: 上传 evidence 与 junit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: u06-evidence-${{ matrix.os }}-py${{ matrix.python }}
+          path: |
+            ${{ env.U06_EVIDENCE }}
+            ${{ runner.temp }}/pytest-u06.xml
+          if-no-files-found: warn
+          retention-days: 30

@@ -88,6 +88,8 @@ def render(ledger: dict) -> str:
             extra.append(f"严格同源对：{e['same_origin_pair']}")
         if e.get("note"):
             extra.append(e["note"])
+        for m in e.get("migration_evidence", []):
+            extra.append(f"{m['stage']} 迁移证据 `{m['test']}`")
         if extra:
             lines.append(f"- **`{e['name']}`**：" + "；".join(extra))
     cm = ledger["canvas_methods"]
