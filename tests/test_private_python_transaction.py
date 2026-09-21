@@ -229,6 +229,29 @@ class TestPrivateBase:
         assert server.requests == [f"/{src.archive_name}"]
         assert managedenv.referenced_base_runtimes() == {src.id}
 
+    def test_single_package_repair_on_an_existing_environment_still_offers_the_private_base(
+        self, tmp_path, house, offline_managed_env, fake, monkeypatch
+    ):
+        """受管环境已有一代（当年在系统 Python 上建的），系统 Python 后来没了：单包修复照样要建新的一代，
+        计划必须带 `private_python`，而不是执行时才撞 `managed_env_unavailable`（Codex #464 第二轮 P2）。"""
+        server, src, _ = fake
+        project = _project(tmp_path)
+        rec, _ = _prepare(deprepair.create_joint_plan(project, "figure.py").plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        monkeypatch.setattr(bootstrap, "find_base_python", lambda accept=None: None)
+        deprepair.reset_state()
+        assert deprepair.base_python() is None
+        plan = deprepair.create_plan(
+            project,
+            "figure.py",
+            BETA[1],
+            target_kind=deprepair.TARGET_MANAGED,
+            user_distribution=BETA[0],
+        )
+        assert plan.creates_environment is False  # 环境在，但新的一代仍要 base
+        assert plan.private_python is not None and plan.private_python["required"] is True
+        assert server.requests == []
+
     def test_rebuild_and_package_first_install_never_download(self, tmp_path, house, no_base, fake):
         """没有明示过下载的两条路：重建 / 包管理首装——没有基础解释器就照旧 unavailable，零请求。"""
         server, src, _ = fake

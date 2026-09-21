@@ -509,6 +509,27 @@ class TestRefusals:
             tmp_path, launches, mode="ok", code=privatepython.ERROR_INVALID_ARCHIVE, exec_bit=False
         )
 
+    @pytest.mark.skipif(
+        not POSIX or os.geteuid() == 0, reason="只读目录的判据要 POSIX 权限位且不是 root"
+    )
+    def test_an_unwritable_download_dir_is_a_write_error_not_offline(self, tmp_path, launches):
+        """`.part` 打不开是本机的事（write_failed），不是离线（offline）：两种恢复动作不同
+        （Codex #464 第二轮 P2）。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        downloads = privatepython.downloads_dir()
+        downloads.mkdir(parents=True)
+        downloads.chmod(0o500)
+        try:
+            with LoopbackServer(tmp_path / "serve") as server:
+                src = _source(server, archive, sha, rel)
+                with pytest.raises(privatepython.ProvisionError) as err:
+                    privatepython.provision(src)
+                assert err.value.code == privatepython.ERROR_WRITE_FAILED
+                assert server.requests == []  # 打不开就不去下
+        finally:
+            downloads.chmod(0o700)
+        assert _runtime_dirs() == set() and _parts() == []
+
     def test_disk_quota_is_checked_before_any_download(self, tmp_path, launches, monkeypatch):
         archive, sha, rel = _make(tmp_path, launches)
         real = shutil.disk_usage
@@ -693,6 +714,23 @@ class TestConsumers:
         assert _runtime_dirs() == set()  # 没有最终目录，也没有 staging
         assert privatepython.python_of(src) is None
         assert privatepython.read_ledger()["runtimes"] == {}
+
+    def test_a_cancellation_set_before_provisioning_starts_is_honoured(self, tmp_path, launches):
+        """进来之前就取消了：不下载、不起线程、不发布——快的缓存供应也不会在第一次轮询之前先提交
+        （Codex #464 第二轮 P2）。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        src = _source(None, archive, sha, rel)
+        privatepython.downloads_dir().mkdir(parents=True)
+        shutil.copy2(archive, privatepython.archive_path(src))  # 缓存齐备：本来会瞬间完成
+        cancel = threading.Event()
+        cancel.set()
+        with pytest.raises(privatepython.ProvisionError) as err:
+            privatepython.provision(src, cancel_ev=cancel)
+        assert err.value.code == privatepython.ERROR_CANCELLED
+        assert _runtime_dirs() == set() and privatepython.python_of(src) is None
+        assert _launch_count(launches) in (0, None)
+        with privatepython._lock:
+            assert privatepython._inflight == {}
 
     def test_cancel_after_the_commit_point_changes_nothing(self, tmp_path, launches):
         """提交点之后取消无效：目录不可变，留下的永远是完整的一份。"""
