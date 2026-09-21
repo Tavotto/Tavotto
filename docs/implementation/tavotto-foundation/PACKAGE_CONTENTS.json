@@ -274,8 +274,8 @@
     },
     {
       "path": "evidence/u05/mutations_pr_b.md",
-      "bytes": 3539,
-      "sha256": "966a0b45b9cd88e46ba4586a2a3b73d1ecdb19d42cd98a4e0ca71653dab4f47b"
+      "bytes": 4585,
+      "sha256": "76901beafe3f562bf8fdc68d4ef7dfde9a5f15e7371b1bea39c183c60206a18a"
     },
     {
       "path": "evidence/u06/README.md",
@@ -364,8 +364,8 @@
     },
     {
       "path": "handoffs/U05_private_python.md",
-      "bytes": 31428,
-      "sha256": "1cab939cb2a2ddd6be86abfc46f04d6b1f110c6cc3fa3d62a731f86dbdce60ca"
+      "bytes": 32192,
+      "sha256": "69e45313bdbde62ccaaa0c7d37a6baed647c7d0c28fd64bbabe5afa4167629b0"
     },
     {
       "path": "handoffs/U06_ir_text.md",
