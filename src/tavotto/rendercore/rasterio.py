@@ -61,6 +61,9 @@ def _open(data: bytes, kind: str):
 
     try:
         im = Image.open(io.BytesIO(data))
+    except Image.DecompressionBombError as exc:
+        # Pillow 自己的炸弹闸（默认 2 × 89M 像素）先响：同样是「太大」，不是「读不出」
+        raise RasterDecodeError("raster_too_large", f"{kind}: {exc}") from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise RasterDecodeError("raster_unreadable", f"{kind}: {exc}") from exc
     want = _FORMAT_OF_KIND.get(kind)
@@ -115,13 +118,43 @@ def decode(data: bytes, kind: str, *, max_pixels: int | None = None) -> RasterBu
     )
 
 
-def jpeg_passthrough(data: bytes, kind: str) -> dict | None:
+def jpeg_passthrough(data: bytes, kind: str, *, max_pixels: int | None = None) -> dict | None:
     """8 bit RGB / 灰度 JPEG：回 `{width, height, components, bit_depth}`，字节可原样进 `/DCTDecode`；
     其它（CMYK、12 bit、不是 JPEG）回 None，调用方改走 `decode()`。
 
     尺寸 / 分量数从 SOF 段自己读（Pillow 的 `mode` 只说 RGB / L / CMYK，不说 bit 深）；Adobe 的 CMYK
-    JPEG 还带反相约定，避开它比写 /Decode 数组更稳。
+    JPEG 还带反相约定，避开它比写 /Decode 数组更稳。**直通之前整张真解一遍**（`verified_jpeg`）：只看
+    SOI + SOF 就直通的话，一个 12 字节的假头也会被嵌进 PDF 报成功（Codex #463 P2）——解不开、尺寸 /
+    模式与 SOF 说的不一致，就回 None 让调用方走 `decode()`，坏文件在那里变成 `raster_unreadable`。
     """
+    header = _jpeg_sof(data, kind)
+    if header is None:
+        return None
+    if max_pixels is not None and header["width"] * header["height"] > max_pixels:
+        # 预算按 SOF 里的尺寸判，在真解之前——超预算的 JPEG 一个字节都不解
+        raise RasterDecodeError(
+            "raster_too_large", f"{header['width']}×{header['height']} > 像素预算 {max_pixels}"
+        )
+    return header if verified_jpeg(data, header) else None
+
+
+def verified_jpeg(data: bytes, header: dict) -> bool:
+    """Pillow 把整张 JPEG 解到底（`load()`），且 format / 尺寸 / 模式与 SOF 一致才算「读取器解得开」。"""
+    require()
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        im = Image.open(io.BytesIO(data))
+        if im.format != "JPEG":
+            return False
+        im.load()
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError):
+        return False
+    want_mode = "RGB" if header["components"] == 3 else "L"
+    return im.size == (header["width"], header["height"]) and im.mode == want_mode
+
+
+def _jpeg_sof(data: bytes, kind: str) -> dict | None:
     if kind not in ("jpg", "jpeg") or data[:2] != b"\xff\xd8":
         return None
     i = 2
@@ -158,4 +191,11 @@ def jpeg_passthrough(data: bytes, kind: str) -> dict | None:
     return None
 
 
-__all__ = ["RASTER_DECODE_CODES", "RasterDecodeError", "decode", "jpeg_passthrough", "require"]
+__all__ = [
+    "RASTER_DECODE_CODES",
+    "RasterDecodeError",
+    "decode",
+    "jpeg_passthrough",
+    "require",
+    "verified_jpeg",
+]

@@ -29,6 +29,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator
 
+#: 一块像素的预算（约 8000×8000）：位图**源**解码前按头里的尺寸判（`rasterio.decode(max_pixels=…)`），
+#: render child 栅格前父子两侧各判一次（ADR 0066）。超过的不是「解慢一点」，是结构化拒绝——
+#: 一张压缩得很小的高分辨率 PNG 解开是几百 MB，导出进程会被它挤死而不是报错（Codex #463 P2）。
+SOURCE_MAX_PIXELS = 64_000_000
+
 
 class RasterError(ValueError):
     """缓冲区不成形（尺寸 / 通道 / stride / 字节数对不上）。"""
@@ -108,4 +113,4 @@ class RasterBuffer:
         return tuple(self.samples[i : i + self.channels])
 
 
-__all__ = ["RasterBuffer", "RasterError"]
+__all__ = ["SOURCE_MAX_PIXELS", "RasterBuffer", "RasterError"]
