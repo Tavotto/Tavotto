@@ -36,3 +36,21 @@
 **预期 12 · 提交 12 · 有效 12**；verdict 全 pass；按产品结果 automatic 5 / guided 3 / safe_stop 4
 （automatic + guided = 8；safe_stop 的通过不计入自动成功）。U04 的五条：FO20 guided、FO31 automatic、
 FO21 / FO22 / FO27 safe_stop。FO18 / FO05 observing 不在 `pr` lane 的预期里，联网各跑一次的证据见上表。
+
+## 第二轮：Codex #470（1 P1 + 2 P2）+ CodeQL 三条（C10–C14）
+
+脚本：session scratchpad `u04_mutate_c2.py`（用例文件 `test_dependency_repair.py`）。
+
+| # | 变异（对应评审） | 文件 | 用例 | rc |
+|---|---|---|---|---|
+| C10 | 取消句柄登记挪回线程里（`prepare_async` 不登记；P1） | deprepair | …::test_cancel_right_after_the_acknowledgement_is_honoured（真 venv + 真 pip 离线；线程按在入口，ack 后立刻取消） | 1 |
+| C11 | `prepare()` 拿锁之前不看取消 | deprepair | 同上 | 1 |
+| C12 | 取消端点不判计划的项目（P2） | app | …::test_cancel_endpoint_only_cancels_the_current_projects_plan | 1 |
+| C13 | `script` 参数不经 `contained_path`（realpath 拼上就用；CodeQL） | app | …::test_dependencies_endpoints_pin_the_script_inside_the_project（`..` / 软链接 / 项目外绝对路径 / 非 .py / 目录 / 不存在 / 项目内绝对路径） | 1 |
+| C14 | `_run_pip` 已取消也起 pip | deprepair | …::test_run_pip_does_not_start_when_already_cancelled | 1 |
+
+前端（vitest）：去掉 `onProgress` 的归属判据 → `DependencyPrepareDialog.test.tsx`「别的计划的进度不认」与
+`DependencyRepairCard.test.tsx`「别的标签页 / 项目的计划不认」两条红（手工各跑一次），还原后 39 passed。
+
+5/5 红；还原后四条 passed。C10 第一次绿：用例把线程按在「重算事实」那一步，而变异把登记放在 `prepare()` 第一行——线程起得比
+主线程的取消快，登记仍赢了赛跑；改成把线程按在**入口**（`_prepare_guarded` 之前），登记在线程里的任何一行都红。
