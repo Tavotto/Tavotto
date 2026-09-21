@@ -197,6 +197,50 @@ describe('DependencyPrepareDialog', () => {
     expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true)
   })
 
+  it('别的计划的进度不认：另一个标签页 / 项目的联合准备装完，这里的框不关、渲染不重排', async () => {
+    planMock.mockResolvedValue({
+      plan: {
+        plan_id: 'jp-mine', script: 'figure.py', target_kind: 'tavotto_managed', python: '', requirements: ['six==1.17.0'],
+        constraints: [], require_hashes: false, adapter: [], identity: 'abc', needed_imports: ['six'], groups: [],
+        modifies_user_environment: false, creates_environment: true, network_required: true, expires_at: 0, joint: joint(),
+      },
+    })
+    prepareMock.mockResolvedValue({ started: true, plan_id: 'jp-mine', state: 'preparing', log: '', error: null, code: '' })
+    useRenderStore.setState({
+      byKey: {
+        k: {
+          ...(useRenderStore.getState().byKey.k ?? ({} as never)),
+          fileId: 'figure.pdf', status: 'error', code: DEPENDENCY_PREPARATION_CODE,
+          lastPatches: '[]', wantPatches: '[]', stale: false,
+        } as never,
+      },
+      tracked: {},
+    })
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    await act(async () => button(en('dependencyPrepareRun'))!.click())
+    await act(async () => {})
+    // 同一条广播上来了别人的计划：installing 不换进度、done 不关框、不重排
+    await act(async () =>
+      useDepRepairStore.getState().onProgress({ plan_id: 'jp-theirs', state: 'installing', log: '', error: null, code: '', flow: 'joint' }),
+    )
+    expect(useDepRepairStore.getState().progress?.plan_id).toBe('jp-mine')
+    expect(useDepRepairStore.getState().progress?.state).toBe('preparing')
+    await act(async () =>
+      useDepRepairStore.getState().onProgress({ plan_id: 'jp-theirs', state: 'done', log: '', error: null, code: '', flow: 'joint', committed: true }),
+    )
+    expect(useEnvStore.getState().dependencyPreparation).not.toBeNull()
+    expect(dialog()).not.toBeNull()
+    expect(useDepRepairStore.getState().jointPlan?.plan_id).toBe('jp-mine')
+    expect(useRenderStore.getState().byKey.k.stale, '别人的 done 把这里的渲染重排了').toBe(false)
+    // 自己的到了才算
+    await act(async () =>
+      useDepRepairStore.getState().onProgress({ plan_id: 'jp-mine', state: 'done', log: '', error: null, code: '', flow: 'joint', committed: true }),
+    )
+    expect(dialog()).toBeNull()
+    expect(useRenderStore.getState().byKey.k.stale).toBe(true)
+  })
+
   it('失败按 code 换文案、可重试；取消也是明确终态', async () => {
     planMock.mockResolvedValue({
       plan: { plan_id: 'jp2', script: 'figure.py', target_kind: 'tavotto_managed', python: '', requirements: [], constraints: [], require_hashes: false, adapter: [], identity: 'x', needed_imports: [], groups: [], modifies_user_environment: false, creates_environment: true, network_required: true, expires_at: 0, joint: joint() },

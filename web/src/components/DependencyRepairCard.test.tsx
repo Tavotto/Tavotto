@@ -428,6 +428,14 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
   })
 })
 
+/** 这个标签页「发起过」plan-abc：`install()` 在发请求前就把 progress 记下了——store 只认自己发起的那条
+ *  （`engine.dependency` 是广播，别的标签页 / 项目的计划不认；Codex #470 P2） */
+const own = () => {
+  if (!useDepRepairStore.getState().progress) {
+    useDepRepairStore.setState({ progress: { plan_id: 'plan-abc', state: 'preparing', log: '', error: null, code: '' } })
+  }
+}
+
 describe('渲染解释器被全局固定（#465）', () => {
   const PINNED: DependencyRepairOffer = {
     ...OFFER,
@@ -517,6 +525,7 @@ describe('渲染解释器被全局固定（#465）', () => {
     await click(en('repairUseProjectEnv'))
     await click(en('repairInstallToProject'))
     await act(() => {
+      own()
       useDepRepairStore.getState().onProgress({
         plan_id: 'plan-abc', state: 'failed', log: '', error: '渲染解释器已固定',
         code: 'dependency_interpreter_pinned',
@@ -536,11 +545,23 @@ describe('渲染解释器被全局固定（#465）', () => {
 describe('安装进度', () => {
   const progress = (state: string, extra: Record<string, unknown> = {}) =>
     act(() => {
+      own()
       useDepRepairStore.getState().onProgress({
         plan_id: 'plan-abc', state, log: '', error: null, code: '',
         distribution: 'lmfit', ...extra,
       } as never)
     })
+
+  it('别的标签页 / 项目的计划不认：不是自己发起的 plan_id，进度不进 store', async () => {
+    await render()
+    await act(() => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-someone-else', state: 'done', log: '', error: null, code: '',
+        distribution: 'lmfit', result: { version: '1.3.2' },
+      } as never)
+    })
+    expect(useDepRepairStore.getState().progress).toBeNull()
+  })
 
   it('四个阶段各一句话，pip 日志折叠在「安装详情」里', async () => {
     await render()
@@ -634,6 +655,7 @@ describe('英文界面', () => {
   it('失败文案也是英文', async () => {
     await render()
     await act(() => {
+      own()
       useDepRepairStore.getState().onProgress({
         plan_id: 'plan-abc', state: 'failed', log: '', error: null,
         code: 'pip_unavailable', distribution: 'lmfit',

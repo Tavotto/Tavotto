@@ -212,6 +212,12 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   },
 
   onProgress: (p) => {
+    // 只认**自己发起的**那条：单包计划 / 联合计划 / 自己点的重建（三处都在发请求之前就把 id 记下了）。
+    // `engine.dependency` 不带项目判别、广播给每个订阅者——别的标签页 / 项目的计划装完，不能收掉
+    // 这里的授权框、也不能把这里的渲染重排（Codex #470 P2）。
+    const { plan, jointPlan, progress } = get()
+    const owned = p.plan_id === plan?.plan_id || p.plan_id === jointPlan?.plan_id || p.plan_id === progress?.plan_id
+    if (!owned) return
     set({ progress: p })
     if (p.state === 'done' || p.state === 'failed' || p.state === 'cancelled') {
       // 环境那半边变了（换了解释器 / 建了受管环境），刷一次环境状态
