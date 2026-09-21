@@ -453,6 +453,40 @@ def test_export_under_the_candidate_verifies_text_layer_fonts_and_carrier_from_t
     assert "Helvetica" in mf["fonts_used"]
 
 
+def test_a_child_that_renders_the_wrong_pixel_size_is_caught_by_the_size_check(
+    client, tmp_path, monkeypatch
+):
+    """RC-064 经候选路：计划里的期望像素按页面 × dpi 算、**不抄 child 回来的尺寸**——child 把 dpi 算错
+    （这里模拟成按一半 dpi 出图）时，检查器量到的像素与计划不符 → PNG `artifact_rejected`、不发布；PDF 照常。
+    两边同源的话（计划抄 buf.width / buf.height）这条永远绿（Codex #476 第二轮 P2）。"""
+    from tavotto.rendercore import facade
+
+    real_host = facade.host()
+
+    class HalfDpiHost:
+        def render(self, pdf_path, *, dpi, transparent, page_size_pt=None, **kw):
+            return real_host.render(
+                pdf_path, dpi=dpi / 2.0, transparent=transparent, page_size_pt=page_size_pt, **kw
+            )
+
+        def __getattr__(self, name):
+            return getattr(real_host, name)
+
+    monkeypatch.setattr(facade, "host", lambda: HalfDpiHost())
+    _project(tmp_path)
+    body = client.post("/api/export", json=_canvas(filename="HalfDpi")).get_json()
+    assert body["status"] == "partial", body
+    png = _out(body, "png")
+    assert png["status"] == "failed" and png["error"]["code"] == "artifact_rejected"
+    assert png["manifest"]["checks"]["size"] == "failed"
+    # 检查器量到的是 child 真写出的像素（一半），计划里的是页面 × 150 ppi
+    assert png["manifest"]["px"] == [round(120 / 25.4 * 75), round(60 / 25.4 * 75)]
+    assert _out(body, "pdf")["status"] == "done"
+    assert not list(Path(body["export_dir"]).glob("HalfDpi*.png")), (
+        "不合格的 PNG 不许出现在导出目录"
+    )
+
+
 def test_strict_export_under_the_candidate_accepts_clean_text_and_rejects_low_ppi_panels(
     client, tmp_path
 ):
