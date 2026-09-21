@@ -117,6 +117,25 @@ describe('classifyToolResult', () => {
     })
   })
 
+  it('raster 图只省了位图：形状六项齐全、svg 合法为 null，唯有 elided 说明它不完整 → 把手', () => {
+    const rasterWithoutPng = {
+      ...full(),
+      svg: null,
+      preview: { mode: 'raster', reason: 'svg_hard_limit', svg_bytes: 0, rasterized_artist_count: 1 },
+      elided: {
+        fields: ['preview_png_base64'],
+        reason: 'inline_budget',
+        inline_bytes: 900_000,
+        budget_bytes: 786_432,
+        fetch_with: 'tavotto_session_state',
+      },
+    }
+    expect(classifyToolResult({ content: [], structuredContent: rasterWithoutPng })).toEqual({
+      kind: 'handle',
+      sessionId: 's-abc',
+    })
+  })
+
   it('raster 档：svg 为 null 而 preview.mode 是 raster → 完整（位图在同一次响应里）', () => {
     const raster = {
       ...full(),
