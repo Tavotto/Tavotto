@@ -72,7 +72,8 @@
   唯一出处 `pool.explicit_worker_python()`（与 `resolve_worker_python` 同一份，
   指向不存在路径的设置不算生效；**`bootstrap.install()` 写进 config 的自建 venv 不算
   显式选择**——它是自动决策，作为 `managed_venv` 候选留在老链条里、排在自身之后
-  系统链之前，不压项目级环境、也不会让卡片走到「清掉它」）；载荷只从
+  系统链之前（config 那条同路径时**不占**「用户指定」的靠前槽位，去重留的是第一次
+  出现的位置），不压项目级环境、也不会让卡片走到「清掉它」）；载荷只从
   `deprepair.pinned_payload()` 出
   （`{python, source, variable}`，`variable` 是 `env_override` 时**供值的那个**变量名，
   旧名 `MM_WORKER_PYTHON` 供的值要点它的名）。`offer()` 回

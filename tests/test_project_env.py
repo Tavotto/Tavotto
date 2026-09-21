@@ -599,6 +599,28 @@ def test_the_bootstrap_venv_stays_discoverable_without_the_config_entry(monkeypa
     assert all(s == engine_pool.SOURCE_SYSTEM for p, s in cands if p in later)
 
 
+def test_a_configured_bootstrap_venv_still_yields_to_the_current_process(tmp_path, monkeypatch):
+    """config 里指着自建 venv 时它也不占「用户指定」那个靠前的槽位（Codex 评审 P2）：
+    去重留的是第一次出现的位置，那样「自身之后」就成了空话——源码安装自己装了
+    matplotlib 之后仍会被一个陈旧的 worker-env 抢先。"""
+    from pathlib import Path as _P
+
+    from tavotto.engine import bootstrap as engine_bootstrap
+
+    stub = tmp_path / "worker-env" / "bin" / "python3"
+    stub.parent.mkdir(parents=True)
+    stub.write_text("#!/bin/sh\n")
+    monkeypatch.delenv(engine_pool.WORKER_PYTHON_ENV, raising=False)
+    monkeypatch.setattr(engine_pool, "is_frozen", lambda: False)
+    monkeypatch.setattr(engine_bootstrap, "venv_python", lambda root=None: _P(str(stub)))
+    monkeypatch.setattr(engine_config, "worker_python", lambda: str(stub))
+    monkeypatch.setattr(engine_pool, "_has_matplotlib", lambda p, **kw: True)
+    engine_pool.reset_worker_python()
+    assert engine_pool.select_worker_python() == (sys.executable, engine_pool.SOURCE_CURRENT)
+    order = [p for p, _ in engine_pool._prioritized_candidates()]
+    assert order.index(str(stub)) > order.index(sys.executable)
+
+
 @needs_worker
 def test_a_stale_env_var_does_not_hide_an_explicit_setting(project, monkeypatch):
     """环境变量指着一条已经不存在的路径时，设置里那条**仍然**压过自动决策。

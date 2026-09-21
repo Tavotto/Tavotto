@@ -762,7 +762,12 @@ def _prioritized_candidates() -> list[tuple[str, str]]:
     ]
     configured = config.worker_python()
     if configured:
-        cands.append((configured, _configured_source(configured)))
+        source = _configured_source(configured)
+        # `bootstrap.install()` 写进 config 的自建 venv 不占这个「用户指定」的槽位
+        # （Codex 评审 #469 P2）：它在下面自己那一档；这里也列的话去重会留住这个
+        # 靠前的位置，「自身之后」就成了空话。
+        if source != SOURCE_MANAGED:
+            cands.append((configured, source))
     cands.append((runtime.bundled_python(), SOURCE_BUNDLED))
     if not is_frozen():
         cands.append((sys.executable, SOURCE_CURRENT))
