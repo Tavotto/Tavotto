@@ -627,15 +627,6 @@ def install(plan_id: str, on_event=None) -> dict:
         # 没有计划就没有用户意图。**后端自己就是能力边界**，不靠
         # 「按钮理论上不会调这个接口」。
         raise RepairError(ERROR_NOT_ALLOWED, "没有这个修复计划（或已过期）")
-    # 确认窗口里从别处（另一个页签 / API 客户端 / 环境变量）把全局解释器钉上：
-    # 环境指纹只看目标环境，看不见这条——不复查的话 pip 照跑、装完照样不被用
-    # （Codex 评审 #469 P1）。计划一并作废：它形成时的前提已经不成立。
-    try:
-        _refuse_if_pinned()
-    except RepairError:
-        with _lock:
-            _plans.pop(plan.plan_id, None)
-        raise
     current = _fingerprint(plan.target_kind, plan.python, plan.project)
     if current != plan.env_fingerprint:
         with _lock:
@@ -648,6 +639,12 @@ def install(plan_id: str, on_event=None) -> dict:
     key = _env_key(plan.target_kind, plan.python, plan.project)
     try:
         with pool.mutating_environment(key, plan.python):
+            # **租约在手之后**才复查全局固定（Codex 评审 #469 两轮 P1）：确认窗口里
+            # 从别处把全局解释器钉上，环境指纹看不见这条；而钉的那条路
+            # （`envlease.unless_mutating`）与这把租约互斥——先钉上的这里看得见，
+            # 后钉的被拒。租约之前查一次没有用：查完到拿到租约之间照样能钉。
+            # 计划照常在 finally 里作废：形成时的前提已经不成立。
+            _refuse_if_pinned()
             return _run_install(plan, key, on_event, cancel_ev)
     except pool.EnvironmentBusy as exc:
         raise _busy_error(exc) from exc

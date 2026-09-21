@@ -74,9 +74,12 @@
   （`{python, source, variable}`，`variable` 是 `env_override` 时**供值的那个**变量名，
   旧名 `MM_WORKER_PYTHON` 供的值要点它的名）。`offer()` 回
   `code=dependency_interpreter_pinned` + `pinned` 且 `targets` 为空；`create_plan()`
-  拒绝；**`install()` 执行前再复查一次**——环境指纹只看目标环境，确认窗口里从
-  别处钉上的全局解释器它看不见，不复查 pip 照跑；复查不过计划一并作废（后端是
-  边界，不靠按钮）。界面按 `source` 给出口：`configured` / `managed_venv` 一键
+  拒绝；**`install()` 在租约（`pool.mutating_environment`）里再复查一次**——环境
+  指纹只看目标环境，确认窗口里从别处钉上的全局解释器它看不见，不复查 pip 照跑；
+  而全局解释器的改动（`PATCH /api/engine/environment` 全局档）必须经
+  `envlease.unless_mutating()` 走、与租约同一把锁互斥：先钉上 → 复查看得见，先拿到
+  租约 → 改动 409 `environment_mutating`。租约之前查没有用（查完到拿到租约之间照样
+  能钉）。复查不过计划一并作废（后端是边界，不靠按钮）。界面按 `source` 给出口：`configured` / `managed_venv` 一键
   「恢复自动检测」（清全局设置 + 重排失败的渲染），`env_override` 按 `variable`
   点名要清哪个变量、然后重启。**不改优先级本身**——「项目显式 > 全局显式」是
   ADR 级的另一个问题。

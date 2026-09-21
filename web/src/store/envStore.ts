@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { t } from '@/i18n'
 import {
+  backendErrorText,
   fetchEngineEnvironment,
   installEngineEnvironment,
   setEngineEnvironment,
@@ -81,7 +82,8 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       set({ env: await setEngineEnvironment(path) })
       return null
     } catch (e) {
-      return e instanceof Error ? e.message : t('engine.setPythonFailed', { ns: 'errors' })
+      // 按 code 翻（`environment_mutating` = 安装进行中，暂时不能改），查不到才原文
+      return e instanceof Error ? backendErrorText(e) : t('engine.setPythonFailed', { ns: 'errors' })
     }
   },
 

@@ -1119,6 +1119,46 @@ def test_a_pin_set_during_confirmation_stops_the_install(project, monkeypatch):
     assert deprepair.get_plan(plan.plan_id) is None, "前提已不成立的计划不该留着"
 
 
+def test_a_pin_change_is_refused_while_an_install_holds_the_lease(project):
+    """安装期间改全局解释器（另一个页签 / API 客户端）：与租约互斥（Codex 第二轮 P1）。
+
+    复查在租约里做，所以只剩两种先后：先钉上 → 复查看得见；先拿到租约 → 这里
+    被拒。没有这条互斥，「复查通过 → 钉上 → pip 开跑」这条缝照样存在。
+    """
+    from tavotto.engine import config as engine_config, envlease
+
+    key = deprepair._env_key(deprepair.TARGET_PROJECT_VENV, WORKER_PY, str(project))
+    calls: list[str] = []
+    with engine_pool.mutating_environment(key, WORKER_PY):
+        with pytest.raises(envlease.EnvironmentBusy) as err:
+            envlease.unless_mutating(lambda: calls.append("set"))
+        assert err.value.code == envlease.ENVIRONMENT_MUTATING
+        assert calls == [], "租约期间那次改动一个字节都不该落盘"
+    # 租约放掉之后照常
+    assert envlease.unless_mutating(lambda: calls.append("set") or "done") == "done"
+    assert calls == ["set"]
+    assert engine_config.worker_python() is None  # 上面没有真的写 config
+
+
+def test_the_environment_endpoint_refuses_a_global_change_during_an_install(client, project):
+    """HTTP 投影：`PATCH /api/engine/environment`（全局）在安装期间 409
+    `environment_mutating`，config 一字不动；安装结束后同一请求 200。"""
+    from tavotto import app as m
+    from tavotto.engine import config as engine_config
+
+    m.open_project(str(project))
+    engine_config.set_worker_python(WORKER_PY)  # 隔离的测试 config，不是用户的
+    key = deprepair._env_key(deprepair.TARGET_PROJECT_VENV, WORKER_PY, str(project))
+    with engine_pool.mutating_environment(key, WORKER_PY):
+        resp = client.patch("/api/engine/environment", json={"python": ""})
+        assert resp.status_code == 409
+        assert resp.get_json()["code"] == "environment_mutating"
+        assert engine_config.worker_python() == WORKER_PY, "被拒的改动不该落盘"
+    resp = client.patch("/api/engine/environment", json={"python": ""})
+    assert resp.status_code == 200
+    assert engine_config.worker_python() is None
+
+
 # ===========================================================================
 # 十一、「已经试过」只记 pip 成功的那次（#466）
 # ===========================================================================

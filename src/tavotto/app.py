@@ -63,6 +63,7 @@ from .engine import (
     discover as engine_discover,
     documents as engine_documents,
     enginesession as engine_enginesession,
+    envlease as engine_envlease,
     epsfile as engine_epsfile,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
@@ -4826,9 +4827,16 @@ def api_engine_environment_set():
                     "params": {"path": str(p), "detail": detail},
                 }
             ), 400
-        engine_config.set_worker_python(str(p))
+        target: str | None = str(p)
     else:
-        engine_config.set_worker_python(None)
+        target = None
+    # 与依赖安装互斥（Codex 评审 #469 P1）：安装在租约里复查「全局解释器有没有
+    # 被钉上」，这里的改动必须要么发生在租约之前（复查看得见）、要么被拒——
+    # 否则 pip 照样不可逆地写进一个渲染不会再用的环境。
+    try:
+        engine_envlease.unless_mutating(lambda: engine_config.set_worker_python(target))
+    except engine_envlease.EnvironmentBusy as exc:
+        return jsonify({"error": str(exc), "code": exc.code}), 409
     engine_pool.reset_worker_python()
     return jsonify(engine_bootstrap.status())
 
