@@ -2695,6 +2695,70 @@ def test_fitted_result_records_its_final_size_and_leaves_room_for_the_note(
     assert server.INLINE_ELISION_RESERVE_BYTES >= 1024
 
 
+def test_unlisted_large_fields_fall_back_to_a_handle_only_result(
+    project, big_pool, widget_present, monkeypatch
+):
+    """省略表之外的字段自己就能很大（几千个 stem 的 `registry.stems`）：省略表到底了
+    还超，就退到只剩把手——画布认会话、模型认结局的那几个键永远装得下（Codex 评审）。"""
+    monkeypatch.setattr(
+        bridge, "_all_stems", lambda registry: [f"stem_{i:06d}" for i in range(70_000)]
+    )
+    res = _call("tavotto_open_figure", {"project_path": str(project)})
+    body = _body(res)
+    assert not res.get("isError")
+    assert _wire_bytes(res) <= server.CANVAS_INLINE_BUDGET_BYTES
+    assert body["elided"]["handle_only"] is True
+    assert "registry" in body["elided"]["fields"] and "registry" not in body
+    for key in ("session_id", "project", "stem", "script", "profile", "patch_hash"):
+        assert key in body, key
+    assert set(body["preflight"]) <= set(server.HANDLE_PREFLIGHT_KEYS)
+    assert "counts" in body["preflight"]
+    assert set(body) <= server.HANDLE_ONLY_KEYS
+
+
+def test_batch_and_widgetless_opens_never_enter_the_fitter(project, fake_pool, monkeypatch):
+    """fitter 只为带出 iframe 的那一次调用而设：批量结果没有 iframe、也没有一个能取件的
+    会话，画布缺失时同样没有 iframe——进了 fitter 只会被指去 `tavotto_session_state`
+    （Codex 评审）。"""
+    calls: list[str] = []
+    real = server.fit_inline_budget
+    monkeypatch.setattr(
+        server,
+        "fit_inline_budget",
+        lambda result, *a, **k: (calls.append("x"), real(result, *a, **k))[1],
+    )
+
+    monkeypatch.setattr(widget, "available", lambda: True)
+    batch = _body(_call("tavotto_open_figure", {"project_path": str(project), "stems": ["Fig1"]}))
+    assert batch["mode"] == bridge.BATCH_MODE and "elided" not in batch
+    assert calls == []
+
+    monkeypatch.setattr(widget, "available", lambda: False)
+    single = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    assert single["canvas_ui"]["code"] == "widget_missing" and "elided" not in single
+    assert calls == []
+
+    monkeypatch.setattr(widget, "available", lambda: True)
+    _call("tavotto_open_figure", {"project_path": str(project)})
+    assert calls == ["x"], "单图 + 有画布：正是 fitter 该管的那一次"
+
+
+def test_reusing_a_session_refreshes_its_cost_from_the_registry(project, fake_pool):
+    """沿用会话时 `cost` 跟着这次读到的注册表走：画布经 session_state 拿的档位决定
+    渲染看门狗是 2 分钟还是 15 分钟（Codex 评审）。"""
+    first = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    assert first["cost"] == "light"
+    (project / "tavotto_registry.json").write_text(
+        json.dumps({"scripts": {"fig1.py": {"entry": "main", "cost": "heavy", "stems": ["Fig1"]}}}),
+        encoding="utf-8",
+    )
+    again = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    assert again["reused"] is True and again["session_id"] == first["session_id"]
+    assert again["cost"] == "heavy"
+    state = _body(_call("tavotto_session_state", {"session_id": first["session_id"]}))
+    assert state["cost"] == "heavy"
+
+
 def test_session_state_hands_the_canvas_the_full_payload_without_rerendering(
     project, big_pool, widget_present, monkeypatch
 ):

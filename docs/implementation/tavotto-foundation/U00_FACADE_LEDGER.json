@@ -636,7 +636,7 @@
         },
         {
           "file": "codex-plugin/mcp/tavotto_mcp/bridge.py",
-          "line": 1764,
+          "line": 1768,
           "function": "_original_artifact_facts",
           "role": "MCP 规范化：原始产物事实（页面尺寸）"
         }

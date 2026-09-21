@@ -528,6 +528,10 @@ def open_figure(
         # 把上一次的快照直接回给画布等于让它显示一个可能已经过期的画面，
         # raster 档下更是连位图都没有。
         session.profile = profile
+        # 开销档位跟着**这次**读到的注册表走：刷新过项目、light 变 heavy 之后沿用旧值，
+        # 画布经 `session_state` 拿到的就是旧档，渲染看门狗会按 2 分钟而不是 15 分钟
+        # 掐掉一次合法的重渲染（Codex 评审）。
+        session.cost = str(info.get("cost", "") or "")
         render = _render(session, list(session.patches), preview_dpi=None)
     else:
         session = Session(

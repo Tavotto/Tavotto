@@ -80,6 +80,30 @@ INLINE_ELISION_RESERVE_BYTES = 2 * 1024
 CONTENT_TRUNCATED_MARKER = (
     "…（文字已截断：结果超过宿主体积上限；完整预检报告用 tavotto_preflight 取）"
 )
+#: 最后一道：省略表与文字都到底了还超（没列进表的字段自己就很大——几千个 stem 的
+#: `registry.stems`、成堆的 worker `warnings`），就把 structuredContent 退到**只剩把手**：
+#: 画布认会话、模型认结局所需的那几个键。这些键都是定长小字段，把手永远装得下。
+HANDLE_ONLY_KEYS = frozenset(
+    {
+        "ok",
+        "session_id",
+        "reused",
+        "evicted_sessions",
+        "project",
+        "stem",
+        "script",
+        "entry",
+        "cost",
+        "profile",
+        "patch_hash",
+        "render_revision",
+        "canvas_ui",
+        "elided",
+        "preflight",  # 只留计数与布尔（见 fit_inline_budget），清单早在省略表那几步没了
+    }
+)
+#: 把手里 `preflight` 保留的键：都是定长小字段。
+HANDLE_PREFLIGHT_KEYS = ("counts", "blocking", "needs_confirm", "detailed_text", "code", "error")
 
 
 def _version() -> str:
@@ -780,7 +804,17 @@ def fit_inline_budget(result: dict, budget: int = CANVAS_INLINE_BUDGET_BYTES) ->
         content[0]["text"] += "\n" + note
     else:
         result["content"] = _text(note)
-    # 说明加完再量一次：结构化字段都省到底了还超，只剩文字能截。
+    # 说明加完再量一次：省略表到底了还超，先退到只剩把手（省略表之外的字段也可能
+    # 很大），再截文字——两步都做完仍超的只剩把手 + 一行标记，那已经是下限。
+    if _serialized_bytes(result) > budget:
+        dropped = sorted(k for k in body if k not in HANDLE_ONLY_KEYS)
+        for key in dropped:
+            del body[key]
+        preflight = body.get("preflight")
+        if isinstance(preflight, dict):
+            body["preflight"] = {k: v for k, v in preflight.items() if k in HANDLE_PREFLIGHT_KEYS}
+        body["elided"]["fields"].extend(dropped)
+        body["elided"]["handle_only"] = True
     if _serialized_bytes(result) > budget:
         body["elided"]["content_truncated"] = True  # 先写再截：这个键也占字节
         _shrink_content_to_fit(result, budget)
@@ -1212,6 +1246,12 @@ def call_tool(name: str, args: dict) -> dict:
             # 而它让结果体积翻倍，正是把 422 个元素的图推过宿主 1 MiB 上限的那一半
             # （issue #457）。
             result["_meta"] = dict(widget.resource_meta())
+            if name == "tavotto_open_figure":
+                # 只对**带出 iframe 的那次调用**守预算：apply 的结果要原样回给画布自己
+                # 发的 tools/call（那条路不截断，而画布靠它拿新 manifest / SVG）；批量
+                # 与画布缺失的结果没有 iframe，也没有一个能取件的会话，进了 fitter 只会
+                # 被指去一个错误的地方。
+                fit_inline_budget(result)
         else:
             # 画布产物缺失：工具照常干活（manifest/SVG 都在），但**必须把
             # 「这次没有内嵌画布、为什么」说出口**——静默少一块 UI，用户看到
@@ -1228,10 +1268,6 @@ def call_tool(name: str, args: dict) -> dict:
                 content[0]["text"] += "\n" + note
             else:
                 result["content"] = _text(note)
-        if name == "tavotto_open_figure":
-            # 只对**带出 iframe 的那次调用**守预算：apply 的结果要原样回给画布自己
-            # 发的 tools/call（那条路不截断，而画布靠它拿新 manifest / SVG）。
-            fit_inline_budget(result)
     return result
 
 
