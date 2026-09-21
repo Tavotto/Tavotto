@@ -39,11 +39,12 @@
   整块按用户输出略去（一个 `print("Fatal Python error: …")` 不是通行证）；链式异常的两句
   连接语要**逐字**相同且夹在两段 traceback 之间；**收尾行只留异常类型**（`KeyError: …`）——
   用户 `traceback.print_exc()` 打出来的块结构与引擎的一模一样，来历分不出，能保证的只有
-  message 不出门；**类型名本身也按闭集放行**：本进程 `builtins` 里的异常类
-  （`_BUILTIN_EXCEPTIONS`，`__main__` 里定义的类打印出来与 builtins 一样不带前缀）与
-  已知第三方包开头的点分名（`matplotlib.units.ConversionError`），其余
-  `exc:<sha1 前 10 位>`——`class Patient_123Error(Exception)` 的名字是用户源码里的标识符
-  （评审 #443 第九轮）；`ImportError` / `ModuleNotFoundError` 只在 message 长成加载器那几种形状
+  message 不出门；**类型名本身也按闭集放行**：只有本进程 `builtins` 里的异常类原样
+  （`_BUILTIN_EXCEPTIONS`，`__main__` 里定义的类打印出来与 builtins 一样不带前缀），点分名
+  只留来自 `_KNOWN_SITE_PACKAGES` 的包名、其余哈希（`matplotlib.units.ConversionError` →
+  `matplotlib.exc:<sha1 前 10 位>`；`__module__` 是用户能改的，`numpy.Patient_123Error` 也只剩
+  `numpy.exc:…`），不带包名的一律 `exc:<sha1 前 10 位>`——`class Patient_123Error(Exception)`
+  的名字是用户源码里的标识符（评审 #443 第九、十一轮）；`ImportError` / `ModuleNotFoundError` 只在 message 长成加载器那几种形状
   （`No module named 'x'` / `cannot import name 'a' from 'b'` / `DLL load failed while
   importing x`，名字是标识符）时保留形状本身——它们是普通公开异常类，用户 `raise` 的
   一样是这个类型。**留下的每一行都是从解析结果重建的，不是原行过一遍替换**（评审 #443
@@ -68,7 +69,9 @@
   「复制诊断」的文本会被贴进公开 issue，`ValueError: patient-123` 缩路径救不了），
   ERROR 行是应用自己的日志语句，过路径缩写。**先扫 `WORKER_LOG_SCAN_LINES`（400）行再抽块、再按块截到
   `WORKER_LOG_TAIL_LINES`（`last_blocks_within`：最后那块再长也整块要）**——先按行截
-  再抽块会把一段长崩溃栈截成没有头的帧行，状态机一条都不认。README 承诺包里不含
+  再抽块会把一段长崩溃栈截成没有头的帧行，状态机一条都不认。文件只读最后
+  `WORKER_LOG_SCAN_BYTES` 字节且是 **seek 过去再读**（`_read_tail_bytes`），不是 `read_bytes()`
+  整读再切——被脚本刷了几小时的 worker.log 能有几百 MB，整读会把 Flask 进程撑爆。README 承诺包里不含
   脚本源码与数据，这条段落不许把它变成空话。三条边界（评审 #443）：**只取目录名哈希等于
   `pool.cache_digest(当前项目)` 的会话**（含 `_replay-…` 重放目录），没打开项目一份
   都不带——别的项目的脚本名与报错不跟着出门；**留下的行里绝对路径缩成

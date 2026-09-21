@@ -364,11 +364,11 @@ def _fh_footer_for_export(line: str) -> str:
     return f"Extension modules: … {m.group(0)}" if m else "Extension modules: …"
 
 
-#: 收尾行里**允许原样出门**的异常类型名：本进程 `builtins` 里的异常类（闭集——traceback
+#: 收尾行里**允许原样出门**的异常类型名：只有本进程 `builtins` 里的异常类（闭集——traceback
 #: 打印 builtins 与 `__main__` 里定义的类都不带模块前缀，`Patient_123Error` 与 `KeyError`
-#: 长得一样，只有查表分得开），以及 `matplotlib.units.ConversionError` 这种以已知第三方包
-#: 开头的点分名。其它一律 `exc:<sha1 前 10 位>`：用户 `class Patient_123Error(Exception)`
-#: 再 `traceback.print_exc()`，类型名就是用户源码里的标识符（评审 #443 第九轮）。
+#: 长得一样，只有查表分得开）。点分名只留来自 `_KNOWN_SITE_PACKAGES` 的包名，其余
+#: `exc:<sha1 前 10 位>`：用户 `class Patient_123Error(Exception)` 再 `traceback.print_exc()`，
+#: 类型名就是用户源码里的标识符（评审 #443 第九、十一轮）。
 _BUILTIN_EXCEPTIONS = frozenset(
     name
     for name, obj in vars(builtins).items()
@@ -377,14 +377,18 @@ _BUILTIN_EXCEPTIONS = frozenset(
 
 
 def _exception_type_for_export(head: str) -> str:
+    """异常类型名 → 进包的形态：builtins 原样；点分名只留来自闭集的**包名**，其余哈希
+    （`matplotlib.units.ConversionError` → `matplotlib.exc:…`）——`__module__` 是用户能改的
+    （`Patient_123Error.__module__ = "numpy"` 打出来就是 `numpy.Patient_123Error`，评审 #443
+    第十一轮），包名之后的每一段都当用户起的名字看。库的异常类可枚举，读的人对得上。"""
     name = head.strip()
     if name in _BUILTIN_EXCEPTIONS:
         return name
-    segments = name.split(".")
-    if len(segments) > 1 and segments[0] in _KNOWN_SITE_PACKAGES:
-        if all(seg.isidentifier() for seg in segments):
-            return name
-    return "exc:" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:10]
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:10]
+    pkg, dot, _rest = name.partition(".")
+    if dot and pkg in _KNOWN_SITE_PACKAGES:
+        return f"{pkg}.exc:{digest}"
+    return "exc:" + digest
 
 
 def _closer_for_export(line: str) -> str:
@@ -567,7 +571,7 @@ def worker_log_tails(
     out: list[dict] = []
     for mtime, p in stamped[:files]:
         try:
-            text = p.read_bytes()[-WORKER_LOG_SCAN_BYTES:].decode("utf-8", errors="replace")
+            text = _read_tail_bytes(p, WORKER_LOG_SCAN_BYTES).decode("utf-8", errors="replace")
         except OSError:
             continue
         all_lines = text.splitlines()
@@ -588,6 +592,17 @@ def worker_log_tails(
             }
         )
     return out
+
+
+def _read_tail_bytes(path: Path, limit: int) -> bytes:
+    """文件最后 `limit` 字节——**seek 过去再读**，不是整个读进来再切（评审 #443 第十一轮）：
+    一份被脚本刷了几个小时的 worker.log 能有几百 MB，`read_bytes()[-limit:]` 会先把整个
+    文件装进 Flask 进程的内存，「扫描上限」就成了一句空话。"""
+    with path.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        fh.seek(max(0, size - limit))
+        return fh.read(limit)
 
 
 def _scan_start(all_lines: list[str]) -> int:

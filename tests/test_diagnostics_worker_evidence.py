@@ -391,7 +391,8 @@ def test_user_print_exc_blocks_lose_their_free_text_message():
     一模一样，来历分不出来——能保证的只有 message 不出门。ImportError 家族例外：
     那句是加载器说的（缺哪个模块 / 哪个 DLL 加载失败），正是排障要的。
     第九轮 P1：类型名也是用户能起的（`class Patient_123Error(Exception)`），只放行
-    本进程 builtins 里的异常类与已知第三方包开头的点分名，其余 `exc:<哈希>`。"""
+    本进程 builtins 里的异常类，其余 `exc:<哈希>`；第十一轮：点分名的 `__module__` 也是用户
+    能改的，只留来自闭集的包名（`numpy.exc:<哈希>`）。"""
     kept, _ = diagnostics.evidence_lines(
         [
             "Traceback (most recent call last):",
@@ -429,6 +430,10 @@ def test_user_print_exc_blocks_lose_their_free_text_message():
             "Traceback (most recent call last):",
             '  File "/x/a.py", line 11, in <module>',
             "numpy.exceptions.AxisError: axis 2 is out of bounds",
+            # `__module__` 是用户能改的：`Patient_123Error.__module__ = "numpy"`（评审 #443 第十一轮）
+            "Traceback (most recent call last):",
+            '  File "/x/a.py", line 12, in <module>',
+            "numpy.Patient_123Error: cohort B",
         ]
     )
     closers = [ln for ln in kept if not ln.startswith(("Traceback", "  File"))]
@@ -437,17 +442,20 @@ def test_user_print_exc_blocks_lose_their_free_text_message():
         "ModuleNotFoundError: No module named 'Bio'",
         # 加载器形状只保留到模块名，后面的操作系统文案不带
         "ImportError: DLL load failed while importing _imaging",
-        "matplotlib.units.ConversionError: …",
+        # 点分名只留来自闭集的包名，其余哈希（库的异常类可枚举，读的人对得上）
+        "matplotlib.exc:c9a2cd5a8f: …",
         "ImportError: …",  # 形状对不上加载器的：只留类型（评审 #443 第六轮）
         "ImportError: cannot import name 'foo' from 'pkg.mod'",
-        # 类型名不在闭集（builtins 的异常类 / 已知第三方包开头的点分名）里：哈希
+        # 类型名不是 builtins 的异常类：哈希
         "exc:a7bb77bcf2: …",
         "exc:3b0b364cbf: …",
         "exc:a7bb77bcf2",
         "KeyboardInterrupt",
-        "numpy.exceptions.AxisError: …",
+        "numpy.exc:f3a4e1053c: …",
+        "numpy.exc:ee491de013: …",  # 借了 numpy 的名字也只剩包名
     ], closers
     assert "Patient" not in "\n".join(kept) and "mystudy" not in "\n".join(kept)
+    assert "ConversionError" not in "\n".join(kept)
 
 
 @pytest.mark.parametrize(
@@ -621,6 +629,29 @@ def test_worker_log_tails_report_how_many_lines_were_left_out(tmp_path):
     assert got["omitted"] == WORKER_LOG_OMITTED
     assert got["empty"] is False
     assert "301.2" not in got["tail"] and "patient-123" not in got["tail"]
+
+
+def test_worker_log_tails_read_only_the_tail_of_a_huge_log(tmp_path, monkeypatch):
+    """评审 #443 第十一轮 P1：`read_bytes()[-N:]` 先把整个文件装进内存再切，「扫描上限」
+    是空话——一份被脚本刷了几小时的 worker.log 能有几百 MB。改成 seek 到尾巴再读 N 字节：
+    这里把 `Path.read_bytes` 钉成炸弹，走到它就是整读。"""
+    body = "noise\n" * 5000 + FH_BLOCK
+    _session(tmp_path, "huge.py", body, age_s=1)
+    monkeypatch.setattr(diagnostics, "WORKER_LOG_SCAN_BYTES", 4096)
+
+    def boom(self):  # noqa: ARG001
+        raise AssertionError("整读了 worker.log（read_bytes）")
+
+    monkeypatch.setattr(type(tmp_path), "read_bytes", boom)
+    (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
+    assert got["tail"].startswith("Fatal Python error: Segmentation fault"), got
+    # 读进来的只有最后 4096 字节：略去的行数按这一截算，而不是 5000 行噪音
+    assert got["omitted"] < 1000, got["omitted"]
+    # 而且真的只读了那么多——不是 seek 之后又把整个文件读回来
+    log = next(tmp_path.glob("*/worker.log"))
+    raw = body.encode("utf-8")
+    assert diagnostics._read_tail_bytes(log, 4096) == raw[-4096:]
+    assert diagnostics._read_tail_bytes(log, len(raw) + 10) == raw  # 比文件还大：整份
 
 
 def test_worker_log_tails_survive_a_missing_cache_dir(tmp_path):
