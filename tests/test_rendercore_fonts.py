@@ -66,6 +66,11 @@ def test_allowlist_is_the_thirteen_ofl_faces_with_sha256_identity():
             ),
             "allowlist_invalid",
         ),
+        (
+            lambda d: d["license_files"]["liberation/LICENSE"].pop("file_sha256"),
+            "allowlist_invalid",
+        ),
+        (lambda d: d["license_files"].pop("noto/LICENSE"), "allowlist_invalid"),
     ],
 )
 def test_a_malformed_allowlist_is_refused(tmp_path, mutate, code):
@@ -261,6 +266,31 @@ def test_fetch_fonts_check_fails_when_a_face_is_tampered_or_missing(registry, tm
     )
     assert proc.returncode == 1
     assert "LiberationSerif-Regular" in proc.stderr and "NotoSansSC-Regular" in proc.stderr
+
+
+def test_a_tampered_license_text_is_caught_and_replaced(registry, tmp_path):
+    """许可证全文与字体同一条纪律（Codex #460 P2）：截断的 `liberation/LICENSE` 在 `--check` 下红；
+    `fetch()` 复用目录时按 `file_sha256` 发现它不对就重新解出来（不联网：tarball 在缓存里）。"""
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "scripts"))
+    import fetch_fonts
+
+    root = tmp_path / "fonts"
+    shutil.copytree(registry.root, root)
+    lic = root / "liberation" / "LICENSE"
+    lic.write_bytes(lic.read_bytes()[:100])
+    problems = fetch_fonts.check(root)
+    assert any("liberation/LICENSE" in p and "SHA-256" in p for p in problems), problems
+    cache = ROOT / "build" / "fonts-cache"
+    if not (cache / "liberation-fonts-ttf-2.1.5.tar.gz").is_file():
+        pytest.skip("本机没有 tarball 缓存（不联网修复无法演示，not_run）")
+    fetch_fonts.fetch(root, cache=cache)
+    assert fetch_fonts.check(root) == []
+    assert (
+        fetch_fonts.sha256_file(lic)
+        == fetch_fonts.load_allowlist()["license_files"]["liberation/LICENSE"]["file_sha256"]
+    )
 
 
 def test_license_texts_travel_with_the_fonts(registry):

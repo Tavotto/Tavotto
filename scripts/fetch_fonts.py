@@ -158,12 +158,20 @@ def fetch(
         verify_sha256(target, spec["sha256"])
         out[face_id] = target
     for rel, src in data.get("license_files", {}).items():
+        # 许可证全文与字体同一条纪律：落盘的那份按 `file_sha256` 核（tarball 成员只核 tarball 不够——
+        # 复用的构建目录里被截断 / 替换的 LICENSE 会原样进 wheel）
         target = dest / rel
-        if src["kind"] == "tarball-member":
-            if not target.is_file():
+        if target.is_file():
+            try:
+                verify_sha256(target, src["file_sha256"])
+            except HashMismatch:
+                target.unlink()
+        if not target.is_file():
+            if src["kind"] == "tarball-member":
                 _extract_member(archive_for(src), src["member"], target)
-        else:
-            download_verified(src["url"], target, src["sha256"])
+            else:
+                download_verified(src["url"], target, src["sha256"])
+        verify_sha256(target, src["file_sha256"])
     return out
 
 
@@ -181,9 +189,15 @@ def check(dest: Path, allowlist: dict | None = None) -> list[str]:
             verify_sha256(path, spec["sha256"])
         except HashMismatch as exc:
             problems.append(f"{face_id}: {exc}")
-    for rel in data.get("license_files", {}):
-        if not (dest / rel).is_file():
+    for rel, src in data.get("license_files", {}).items():
+        path = dest / rel
+        if not path.is_file():
             problems.append(f"缺许可证全文 {rel}")
+            continue
+        try:
+            verify_sha256(path, src["file_sha256"])
+        except HashMismatch as exc:
+            problems.append(f"{rel}: {exc}")
     return problems
 
 

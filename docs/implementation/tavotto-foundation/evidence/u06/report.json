@@ -28,12 +28,12 @@
    "LiberationSerif-Regular": "058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74",
    "NotoSansSC-Regular": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9"
   },
-  "allowlist_sha256": "4d159fd5f3c55a25f53488b82b8f47a1a2c67180bc1c6975f91b497da40e40fa"
+  "allowlist_sha256": "abd2b64e71edb2112972b23bf03c3aea34ed5b305e87b123dd867b6cb01e18b2"
  },
  "outputs": {
   "u06.pdf": {
-   "sha256": "ac97e32ca02e83c8b707c6b7c7096dc8f96c431d617070163ad12200c4fec6a2",
-   "bytes": 14037
+   "sha256": "cb303505e879dd31326d07b18fe0fa1481cfb3e2673daafadcaff7433ad1774c",
+   "bytes": 14041
   },
   "u06_pdfium.png": {
    "sha256": "95245d41e586891f352324e95b2852a7a24192cb0b8e27ca3121fd81f02e2ddc"
@@ -214,8 +214,8 @@
   "transparency_groups": 0,
   "actualtext_spans": 3,
   "notdef_codes": 0,
-  "sha256": "ac97e32ca02e83c8b707c6b7c7096dc8f96c431d617070163ad12200c4fec6a2",
-  "bytes": 14037,
+  "sha256": "cb303505e879dd31326d07b18fe0fa1481cfb3e2673daafadcaff7433ad1774c",
+  "bytes": 14041,
   "versions": {
    "uharfbuzz": "0.56.1",
    "fonttools": "4.65.0",

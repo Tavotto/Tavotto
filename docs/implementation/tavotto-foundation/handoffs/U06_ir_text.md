@@ -148,6 +148,12 @@ required job、默认后端、`requirements.txt`、默认 `dependencies`、`secu
 `git ls-files` 零字体二进制，`test_repository_ships_no_font_binaries` 绿；main 从未含它们。教训进交接：叠栈里
 「上层的 .gitignore 规则」在下层不生效，取字体这类会落进 `src/` 的产物要先把 ignore 规则放在最底层的 PR。
 
+PR B（#460）Codex 第一轮 3 条 P2，全修：`job.produce` 只把 pdf 交给写入器（空页 / 全 hidden 页的 png / tiff /
+eps 也 `format_failed`，不把 PDF 字节写进 .png 报成功）；`ShapedText` 的 alpha 经 ExtGState `ca` 进 PDF（文字对象
+包 q/Q；交叉用例的 `object_alpha` 夹具加文字 + 栅格判「半透明的字比不透明的浅」）；许可证全文按
+`file_sha256` 核（`fetch` 复用目录时截断的 LICENSE 被换掉、`--check` 红、allowlist 缺 `file_sha256` 拒）。三条各一
+变异红；evidence 随写入器字节重生成（42/42）。
+
 **当前可合并依据（不等于可以默认启用 / 发行）**：两个 PR 都是中高风险档（改 `src/` / `tests/` / `scripts/` /
 `pyproject.toml` / `.github/` / `packaging/AGENTS.md`）→ `full-ci` + `@codex review`；ruff 两条 0；针对性 pytest 0；
 变异反证逐条红（含一条「有意冗余」的说明）；全量 pytest 只有已知噪音；新 workflow 只有 `workflow_dispatch` +

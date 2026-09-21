@@ -141,6 +141,8 @@ class _TextOp:
     node: ir.ShapedText
     #: 与 node.runs 对齐：每个 run 的 (_FontUse, [每个字形要不要 ActualText 的 cluster 标记])
     runs: list[tuple[_FontUse, list[bool]]]
+    #: `paint.alpha < 1` 时的 ExtGState 资源名（`ca` = 文字的填充 alpha）；None = 不透明
+    gs: str | None = None
 
 
 def _subset_tag(used: dict[int, str]) -> str:
@@ -314,7 +316,8 @@ class PdfWriter:
                     self.facts.notdef_codes += 1
                 i = j
             runs.append((use, flags))
-        return _TextOp(node, runs)
+        gs = self._gs(rec, node.paint.alpha, node.paint.alpha) if node.paint.alpha < 1.0 else None
+        return _TextOp(node, runs, gs)
 
     # -- 序列化 -----------------------------------------------------------
     def _text_stream(self, op: _TextOp) -> str:
@@ -326,7 +329,12 @@ class PdfWriter:
         里标记字形的 `y_offset` 不写（标记落在字形自己的默认高度）；段外的字形照常按 `y_offset` 抬。
         """
         node = op.node
-        out = ["BT", f"{_rgb(node.paint.rgb)} rg"]
+        # 整个文字对象包在 q/Q 里：alpha 经 ExtGState（`ca`，文字用填充色）在 BT 之前设，
+        # ET 之后随 Q 还原，不污染后面的对象
+        out = ["q"]
+        if op.gs is not None:
+            out.append(f"/{op.gs} gs")
+        out += ["BT", f"{_rgb(node.paint.rgb)} rg"]
         pen = 0.0
         for run, (use, flags) in zip(node.runs, op.runs):
             face = use.face
@@ -392,7 +400,7 @@ class PdfWriter:
                         put(g)
                 i = j
             flush()
-        out.append("ET")
+        out += ["ET", "Q"]
         return "\n".join(out)
 
     def _build_fonts(self) -> None:

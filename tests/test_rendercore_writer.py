@@ -428,6 +428,42 @@ def test_text_lines_have_ink_where_the_layout_put_them(raster, written):
     assert checked >= 4
 
 
+def test_half_transparent_text_renders_lighter_than_opaque_text(provider, tmp_path, pdfium):
+    """同一行字两份：alpha 1 与 alpha 0.5。0.5 那份最深的像素必须明显比 1 那份浅（黑字 0.5 叠白 ≈ 128），
+    否则 gs 没起作用。主语是 PDFium 栅格里的像素，不是内容流里有没有 gs。"""
+    from tavotto.rendercore import pdfwriter
+
+    face = provider.face_for("serif", False, False)
+    glyphs = face.shape("MMMM")
+    font = {"font": face.resource}
+    page = ir.Page(
+        60,
+        30,
+        (
+            ir.ShapedText(2, 18, (ir.GlyphRun("font", 12.0, glyphs),), ir.Paint((0, 0, 0), 1.0)),
+            ir.ShapedText(2, 4, (ir.GlyphRun("font", 12.0, glyphs),), ir.Paint((0, 0, 0), 0.5)),
+        ),
+        font,
+        (1.0, 1.0, 1.0),
+    )
+    out = tmp_path / "alpha.pdf"
+    pdfwriter.write_pdf(page, out, provider)
+    img = pdfium.PdfDocument(str(out))[0].render(scale=4).to_pil().convert("RGB")
+
+    def darkest(y_top: float, y_bottom: float) -> int:
+        vals = [
+            img.getpixel((x, y))[0]
+            for x in range(8, 200)
+            for y in range(int((30 - y_bottom) * 4), int((30 - y_top) * 4))
+        ]
+        return min(vals)
+
+    opaque = darkest(18, 18 + 12 * 0.7)
+    half = darkest(4, 4 + 12 * 0.7)
+    assert opaque < 40, opaque
+    assert 100 < half < 170, half
+
+
 def test_pdfium_object_census_counts_real_text_objects_not_outlines(written, pdfium):
     """RC-035：文字是文字对象（FPDF_PAGEOBJ_TEXT = 1），不是路径。"""
     doc = pdfium.PdfDocument(str(written["path"]))
@@ -468,7 +504,18 @@ def _page_with(op: str, provider) -> ir.Page:
     if op == "group_opacity":
         return ir.Page(20, 20, (ir.Group((rect,), opacity=0.5),), {}, None)
     if op == "object_alpha":
-        return ir.Page(20, 20, (ir.Path(rect.segments, fill=ir.Paint((0, 0, 0), 0.5)),), {}, None)
+        # 路径与文字各一份：文字的 alpha 走另一条发射路径（BT 之前的 gs），只用路径测会漏掉它（Codex #460 P2）
+        glyphs = face.shape("Ab")
+        return ir.Page(
+            20,
+            20,
+            (
+                ir.Path(rect.segments, fill=ir.Paint((0, 0, 0), 0.5)),
+                ir.ShapedText(2, 12, (ir.GlyphRun("font", 9.0, glyphs),), ir.Paint((0, 0, 0), 0.5)),
+            ),
+            font,
+            None,
+        )
     if op == "text":
         glyphs = face.shape("Ab")
         return ir.Page(
@@ -510,6 +557,10 @@ def test_each_declared_capability_matches_what_the_writer_really_does(op, provid
         objs = pdfread.objects(out.read_bytes())
         blob = b"".join((h + (d or b"")) for h, d in objs.values())
         assert MARKERS[op] in blob, op
+        if op == "object_alpha":
+            # 文字对象自己前面也要有 gs（不是只有路径那一处）
+            _, content = pdfread.page(objs)
+            assert re.search(rb"q\n/GS\d+ gs\nBT", content), content
     else:
         with pytest.raises(pdfwriter.UnsupportedCapability) as ei:
             pdfwriter.write_pdf(page, out, provider)
