@@ -66,8 +66,14 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { DependencyRepairCard } from '@/components/DependencyRepairCard'
-import { WorkdirChooseButton, WorkdirSuggestion } from '@/components/WorkdirRow'
-import { WORKDIR_CODES, WORKDIR_CONFIRMATION_CODE, type WorkdirConfirmation } from '@/lib/api'
+import { DependencyPrepareButton, WorkdirChooseButton, WorkdirSuggestion } from '@/components/WorkdirRow'
+import {
+  DEPENDENCY_PREPARATION_CODE,
+  WORKDIR_CODES,
+  WORKDIR_CONFIRMATION_CODE,
+  type DependencyPreparationOffer,
+  type WorkdirConfirmation,
+} from '@/lib/api'
 import {
   EngineEnvironmentCard,
   MissingDependencyCard,
@@ -356,6 +362,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             traceback={render.traceback}
             code={render.code}
             confirmation={render.confirmation}
+            dependencyPreparation={render.dependencyPreparation}
             onRetry={() => requestRender(panel, true)}
           />
         )
@@ -595,12 +602,14 @@ function ErrorBlock({
   traceback,
   code,
   confirmation,
+  dependencyPreparation,
   onRetry,
 }: {
   error: UiMessage
   traceback: string
   code?: string
   confirmation?: WorkdirConfirmation | null
+  dependencyPreparation?: DependencyPreparationOffer | null
   onRetry?: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -613,6 +622,8 @@ function ErrorBlock({
             「脚本跑完没出图」：多半是沙盒 cwd 下相对路径找不到数据，给出口（ADR 0047） */}
         {code === WORKDIR_CONFIRMATION_CODE ? (
           <WorkdirChooseButton confirmation={confirmation ?? null} />
+        ) : code === DEPENDENCY_PREPARATION_CODE ? (
+          <DependencyPrepareButton offer={dependencyPreparation ?? null} />
         ) : (
           code && (WORKDIR_CODES as readonly string[]).includes(code) && <WorkdirSuggestion />
         )}

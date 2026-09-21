@@ -57,6 +57,7 @@ from .engine import (
     brand as engine_brand,
     cli as engine_cli,
     config as engine_config,
+    depplan as engine_depplan,
     deprepair as engine_deprepair,
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
@@ -691,6 +692,12 @@ def _worker_error_payload(exc) -> dict:
     confirmation = getattr(exc, "confirmation", None)
     if isinstance(confirmation, dict):
         body["confirmation"] = confirmation
+    # 跑前的依赖门（U04，ADR 0061 §六）：整份联合计划 + 可选目标原样带出去——前端据此弹一次
+    # 授权框（装什么、装到哪、会不会改用户环境），MCP 据此说怎么答。载荷里没有机器路径
+    # （`JointPlan` 的身份不含路径，目标里的解释器是项目相对）。
+    dependency = getattr(exc, "dependency_preparation", None)
+    if isinstance(dependency, dict):
+        body["dependency_preparation"] = dependency
     # 显式选择失效（`explicit_python_unusable` / `project_python_unusable`）：说清是哪一条、
     # 为什么——机器路径按项目相对显示。
     explicit = getattr(exc, "explicit", None)
@@ -4920,6 +4927,11 @@ def _repair_error(exc: "engine_deprepair.RepairError", status: int = 400):
     health = (exc.extra or {}).get("health")
     if isinstance(health, dict):
         body["params"] = {"python_version": health.get("python_version", "")}
+    joint = (exc.extra or {}).get("joint")
+    if isinstance(joint, dict):
+        # 联合计划不可执行（blocked / 什么都不缺）：把计划原样交回去，界面按 blocked 的
+        # 理由说用户能做什么（U04）
+        body["joint"] = joint
     return jsonify(body), status
 
 
@@ -4994,6 +5006,150 @@ def api_dependency_state():
     resp = jsonify(engine_deprepair.progress(request.args.get("plan_id", "")))
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+# ------------------- 联合依赖准备（统一实施包 U04，ADR 0061）---------------------
+#
+# 「一次准备多个依赖」的公共入口。与单包修复同一条纪律（计划 → 只发 plan_id 执行）、同一个
+# 进度通道（SSE `engine.dependency` / `GET /api/engine/dependency/state`）、同一把锁。
+#
+#   GET   /api/engine/dependencies?script=…   只读：联合计划 + 可选目标 + 轮次（不装）
+#   POST  /api/engine/dependencies/plan        绑定一份计划（不装）；blocked / 没缺的 → 409 + joint
+#   POST  /api/engine/dependencies/prepare     执行那个计划（请求体只有 plan_id）
+#   POST  /api/engine/dependencies/cancel      取消；过了提交点回 accepted=false, reason=committed
+#   POST  /api/engine/dependencies/skip        「不准备，直接跑」：这个脚本的跑前门从此放行
+#   PATCH /api/engine/dependencies             选组（项目设置 `dependency_groups`）
+class _ScriptRejected(Exception):
+    """`script` 参数不合格：`code` 与试运行端点同一闭集（`script_not_found` /
+    `script_path_outside_project` / `unsupported_script_type`），HTTP 状态随 code。"""
+
+    def __init__(self, code: str, status: int, raw: str):
+        super().__init__(code)
+        self.code, self.status, self.raw = code, status, raw
+
+    def response(self):
+        text = {
+            "script_not_found": "脚本不存在",
+            "script_path_outside_project": "脚本路径在项目目录之外",
+            "unsupported_script_type": "不是 .py 脚本",
+        }[self.code]
+        return jsonify(
+            {"error": f"{text}: {self.raw}", "code": self.code, "params": {"script": self.raw}}
+        ), self.status
+
+
+def _project_script(raw: str) -> str:
+    """`script` 参数 → 项目相对 POSIX 路径。判据一律在 realpath 之后（与试运行端点同一份纪律）。"""
+    ctx = current_ctx()
+    raw = str(raw or "").strip()
+    if not raw:
+        raise _ScriptRejected("script_not_found", 404, raw)
+    root = ctx.path.resolve()
+    try:
+        target = (Path(raw) if Path(raw).is_absolute() else ctx.path / raw).resolve()
+    except OSError:
+        raise _ScriptRejected("script_not_found", 404, raw) from None
+    if not target.is_relative_to(root):
+        raise _ScriptRejected("script_path_outside_project", 400, raw)
+    if target.suffix.lower() != ".py" or target.is_dir():
+        raise _ScriptRejected("unsupported_script_type", 400, raw)
+    if not target.is_file():
+        raise _ScriptRejected("script_not_found", 404, raw)
+    return target.relative_to(root).as_posix()
+
+
+@app.get("/api/engine/dependencies")
+def api_dependencies_state():
+    root = str(require_project())
+    try:
+        script = _project_script(request.args.get("script", ""))
+    except _ScriptRejected as exc:
+        return exc.response()
+    offer = engine_deprepair.preparation_offer(root, script)
+    resp = jsonify(
+        {
+            "offer": offer,
+            "groups": engine_depplan.selected_groups_setting(root),
+            "rounds_remaining": engine_deprepair.rounds_remaining(root, script),
+        }
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/engine/dependencies/plan")
+def api_dependencies_plan():
+    root = str(require_project())
+    body = request.get_json(force=True) or {}
+    try:
+        script = _project_script(body.get("script", ""))
+    except _ScriptRejected as exc:
+        return exc.response()
+    target = str(body.get("target") or "").strip()
+    try:
+        plan = engine_deprepair.create_joint_plan(root, script, target_kind=target)
+    except engine_deprepair.RepairError as exc:
+        return _repair_error(exc, 409 if exc.code == engine_deprepair.ERROR_PLAN_BLOCKED else 400)
+    return jsonify({"plan": plan.to_payload()})
+
+
+@app.post("/api/engine/dependencies/prepare")
+def api_dependencies_prepare():
+    root = str(require_project())
+    body = request.get_json(force=True) or {}
+    plan_id = str(body.get("plan_id") or "")
+    plan = engine_deprepair.get_joint_plan(plan_id)
+    if plan is None:
+        return jsonify(
+            {
+                "error": "没有这个准备计划（或已过期），请重新开始。",
+                "code": engine_deprepair.ERROR_NOT_ALLOWED,
+            }
+        ), 409
+    if plan.project != root:
+        return jsonify(
+            {"error": "这个准备计划不属于当前项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
+        ), 409
+    engine_deprepair.prepare_async(plan_id, lambda p: sse_publish("engine.dependency", p))
+    return jsonify({"started": True, **engine_deprepair.progress(plan_id)})
+
+
+@app.post("/api/engine/dependencies/cancel")
+def api_dependencies_cancel():
+    require_project()
+    body = request.get_json(force=True) or {}
+    outcome = engine_deprepair.cancel_status(str(body.get("plan_id") or ""))
+    return jsonify({"cancelling": outcome["accepted"], **outcome})
+
+
+@app.post("/api/engine/dependencies/skip")
+def api_dependencies_skip():
+    """用户明确说「不准备，直接跑」：这个脚本的跑前门从此放行（进程内；一次成功的准备会清掉）。
+    脚本缺包时以 `missing_dependency` + 同一份联合 offer 收场——运行后那条路，轮次有上限。"""
+    root = str(require_project())
+    body = request.get_json(force=True) or {}
+    try:
+        script = _project_script(body.get("script", ""))
+    except _ScriptRejected as exc:
+        return exc.response()
+    engine_deprepair.skip_preparation(root, script)
+    return jsonify({"ok": True, "script": script, "skipped": True})
+
+
+@app.patch("/api/engine/dependencies")
+def api_dependencies_groups():
+    """选组：项目设置 `dependency_groups`（组 id 见 `depresolve.declared_intents` 的 `group`）。
+    改了就清掉这个项目的「问过了」记录——用户改了选择，下一次准备该按新集合再问。"""
+    root = str(require_project())
+    body = request.get_json(force=True) or {}
+    groups = body.get("groups")
+    if not isinstance(groups, list) or not all(isinstance(g, str) for g in groups):
+        return jsonify(
+            {"error": "groups 必须是字符串数组", "code": "bad_request", "params": {}}
+        ), 400
+    engine_config.set_project_settings(root, {engine_depplan.SETTINGS_KEY: sorted(set(groups))})
+    engine_deprepair.reset_state(root)
+    return jsonify({"ok": True, "groups": engine_depplan.selected_groups_setting(root)})
 
 
 @app.post("/api/engine/environment/managed/rebuild")

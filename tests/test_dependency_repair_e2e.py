@@ -104,6 +104,17 @@ def test_golden_path_install_into_the_project_venv(client, project, wheelhouse):
     (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
 
+    # ---- 0. U04 的门：脚本开跑要的包声明过、目标里没有 → 起会话之前先问一次 ----
+    gate = _probe(client)["error"]
+    assert gate["code"] == "dependency_preparation_required"
+    offer = gate["dependency_preparation"]
+    assert offer["plan"]["status"] == "ready"
+    assert offer["plan"]["requirements"] == [FIXTURE_DIST]
+    assert offer["target_kind"] == deprepair.TARGET_PROJECT_VENV
+    # 用户明确「不准备，直接跑」：门放行，再跑就是运行后那条路（下面的老流程）
+    resp = client.post("/api/engine/dependencies/skip", json={"script": "figure.py"})
+    assert resp.status_code == 200 and resp.get_json()["skipped"] is True
+
     # ---- 1. 跑脚本：缺依赖，且**带着可执行的修复建议** -------------------
     first = _probe(client)
     err = first["error"]
@@ -275,6 +286,11 @@ def test_managed_environment_end_to_end(client, project, wheelhouse, offline_man
 
     (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
+    # U04 的门先问一次（目标 = 受管环境：项目里没有 venv）；「稍后」之后走运行后那条路
+    gate = _probe(client)["error"]
+    assert gate["code"] == "dependency_preparation_required"
+    assert gate["dependency_preparation"]["target_kind"] == deprepair.TARGET_MANAGED
+    client.post("/api/engine/dependencies/skip", json={"script": "figure.py"})
     first = _probe(client)
     repair = first["error"]["dependency_repair"]
     kinds = {t["kind"] for t in repair["targets"]}

@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import type { WorkdirConfirmation, WorkdirMode } from '@/lib/api'
+import type { DependencyPreparationOffer, WorkdirConfirmation, WorkdirMode } from '@/lib/api'
+import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { SettingRow } from './settings/SettingRow'
 import { Button } from './ui/Button'
@@ -94,6 +95,23 @@ export function WorkdirSuggestion() {
         {en('workdirSuggestButton')}
       </Button>
       {error && <p className="text-xs text-danger">{error}</p>}
+    </div>
+  )
+}
+
+/**
+ * 「先准备依赖」错误块里的出口（U04）：授权框被「稍后」关掉之后，从这里再打开——
+ * 载荷留在渲染条目上（`PanelRender.dependencyPreparation`），这里只把它交回依赖修复 store。
+ */
+export function DependencyPrepareButton({ offer }: { offer: DependencyPreparationOffer | null }) {
+  useTranslation('errors')
+  const request = useDepRepairStore((s) => s.requestPreparation)
+  if (!offer) return null
+  return (
+    <div className="mt-1.5 flex flex-col gap-1">
+      <Button className="self-start" onClick={() => request(offer)}>
+        {en('dependencyPrepareOpen')}
+      </Button>
     </div>
   )
 }

@@ -395,7 +395,7 @@ class TestJointTransaction:
         deprepair.prepare_async(plan.plan_id)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, rec
-        assert rec["kind"] == "joint" and rec["committed"] is True
+        assert rec["flow"] == "joint" and rec["committed"] is True
         python = managedenv.python_of(project)
         assert python and rec["result"]["python"] == python
         gen = rec["result"]["generation"]
@@ -1037,3 +1037,111 @@ def test_plan_is_bound_to_the_project_and_expires(tmp_path, monkeypatch):
     assert payload["network_required"] is True
     deprepair.reset_state(project)
     assert deprepair.get_joint_plan(plan.plan_id) is None
+
+
+# ===========================================================================
+# ④ 跑前的门（PR C，ADR 0061 §六）——判据本身；经真实入口的形状在 test_foundation_dependencies.py
+# ===========================================================================
+class TestGate:
+    def _offer(self, status: str) -> dict:
+        return {
+            "code": deprepair.ERROR_PREPARATION_REQUIRED,
+            "script": "figure.py",
+            "plan": {
+                "status": status,
+                "requirements": ["six"],
+                "missing": [{"distribution": "six"}],
+            },
+            "target_kind": "tavotto_managed",
+            "targets": [],
+            "rounds_remaining": 3,
+            "skipped": False,
+        }
+
+    def test_gate_asks_only_when_the_plan_is_ready(self, tmp_path, monkeypatch):
+        project = tmp_path / "paper"
+        project.mkdir()
+        for status, expect in (("ready", True), ("blocked", False), ("nothing_needed", False)):
+            monkeypatch.setattr(
+                deprepair, "preparation_offer", lambda p, s, _st=status: self._offer(_st)
+            )
+            got = deprepair.gate(project, "figure.py")
+            assert (got is not None) is expect, status
+        # 解释器解析不出来（offer None）→ 放行
+        monkeypatch.setattr(deprepair, "preparation_offer", lambda p, s: None)
+        assert deprepair.gate(project, "figure.py") is None
+
+    def test_skip_is_an_answer_and_a_successful_prepare_clears_it(self, tmp_path, monkeypatch):
+        project = tmp_path / "paper"
+        project.mkdir()
+        monkeypatch.setattr(deprepair, "preparation_offer", lambda p, s: self._offer("ready"))
+        assert deprepair.gate(project, "figure.py") is not None
+        assert deprepair.gate(project, "figure.py") is not None, "门一直问到有答案，不是只问一次"
+        deprepair.skip_preparation(project, "figure.py")
+        assert deprepair.preparation_skipped(project, "figure.py")
+        assert deprepair.gate(project, "figure.py") is None
+        assert deprepair.gate(project, "other.py") is not None  # 按 (项目, 脚本) 记
+        # 轮次用完也放行
+        deprepair.reset_state(project)
+        assert deprepair.gate(project, "figure.py") is not None
+        for _ in range(deprepair.MAX_DEPENDENCY_REPAIR_ROUNDS):
+            deprepair._note_round(str(project), "figure.py")
+        assert deprepair.gate(project, "figure.py") is None
+
+    def test_spawn_gate_is_registered_and_raises_with_the_payload(self, tmp_path, monkeypatch):
+        """门挂在 `pool.SPAWN_GATES` 上（pool 不 import deprepair）；要问就抛带载荷的 WorkerError。"""
+        assert deprepair._spawn_gate in engine_pool.SPAWN_GATES
+        project = tmp_path / "paper"
+        project.mkdir()
+        monkeypatch.setattr(deprepair, "preparation_offer", lambda p, s: self._offer("ready"))
+        with pytest.raises(engine_pool.WorkerError) as err:
+            deprepair._spawn_gate(str(project), "figure.py")
+        assert err.value.code == deprepair.ERROR_PREPARATION_REQUIRED
+        assert err.value.dependency_preparation["plan"]["requirements"] == ["six"]
+        assert err.value.script_name == "figure.py"
+        monkeypatch.setattr(deprepair, "preparation_offer", lambda p, s: self._offer("blocked"))
+        deprepair._spawn_gate(str(project), "figure.py")  # 放行：不抛
+
+    def test_probe_and_preparation_project_the_door_as_needs_input(self, tmp_path, monkeypatch):
+        """素材库试运行与准备接口对这道门的投影：code 原样、载荷原样，不压成 script_probe_failed / error。"""
+        from tavotto.engine import preparation, probe
+
+        payload = self._offer("ready")
+        err = engine_pool.WorkerError("要先准备", code=deprepair.ERROR_PREPARATION_REQUIRED)
+        err.dependency_preparation = payload
+        out = probe._error_from_worker(
+            err, "__main__", figures_dir=str(tmp_path), script="figure.py"
+        )
+        assert out["code"] == deprepair.ERROR_PREPARATION_REQUIRED
+        assert out["dependency_preparation"] == payload
+        # 准备接口：runner 抛门 → needs_input（不是 error）
+        plan = preparation.PreparationPlan(
+            plan_id="p",
+            project_id="pid",
+            project_root=str(tmp_path),
+            asset_id="figure.pdf",
+            stem="figure",
+            script="figure.py",
+            entry="__main__",
+            static_source=None,
+            environment={},
+            python_requirement={},
+            dependency_intents=(),
+            dependency_conflicts=(),
+            launch_context=None,
+            grant=__import__("tavotto.engine.workdir", fromlist=["grant_for"]).grant_for(
+                str(tmp_path)
+            ),
+            budget={},
+            created_at=0.0,
+        )
+        service = preparation.PreparationService()
+        result = service.register(plan)
+
+        def runner(_plan):
+            raise err
+
+        service.start("p", runner=runner)
+        assert service.wait("p", 30)
+        assert result.status == preparation.STATUS_NEEDS_INPUT
+        assert result.required_input == payload and result.error is None

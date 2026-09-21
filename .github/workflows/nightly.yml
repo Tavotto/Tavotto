@@ -871,25 +871,30 @@ jobs:
           "${{ steps.alt.outputs.python-path }}" -c "import sys, matplotlib; print('alt', sys.version, matplotlib.__version__)"
           "${{ steps.newer.outputs.python-path }}" -c "import sys; print('newer', sys.version)"
           "${{ steps.unsupported.outputs.python-path }}" -c "import sys; print('unsupported', sys.version)"
-      - name: observing 用例（FO11 / FO12 / FO16 / FO17；失败保留，不进 Gate）
+      # U04（ADR 0061）再加两条：FO18（受管环境新的一代真装 matplotlib + 三个包）与 FO05（真实 h5py）——
+      # 它们要**联网**把科学栈的 wheel 下进用例自己的 wheelhouse（`TAVOTTO_FOUNDATION_ONLINE=1`；
+      # 安装本身仍是离线 `PIP_NO_INDEX` + find-links，产品命令一个字节不为测试改），PR 上不跑。
+      - name: observing 用例（FO11 / FO12 / FO16 / FO17 / FO18 / FO05；失败保留，不进 Gate）
         env:
           TAVOTTO_FOUNDATION_ALT_PYTHON: ${{ steps.alt.outputs.python-path }}
           TAVOTTO_FOUNDATION_NEWER_PYTHON: ${{ steps.newer.outputs.python-path }}
           TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON: ${{ steps.unsupported.outputs.python-path }}
+          TAVOTTO_FOUNDATION_ONLINE: "1"
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/foundation-observing"
           python -m pytest -q -rs \
             --junitxml="$RUNNER_TEMP/foundation-observing/junit.xml" \
             tests/test_first_open_environment.py \
-            tests/test_discover_problems.py
+            tests/test_discover_problems.py \
+            tests/test_foundation_dependencies.py
       - name: observing 用例一条都不许 skip（skip 不是绿：解释器没交到位是基础设施问题）
         if: always()
         run: |
           set -euo pipefail
           python scripts/ci/foundation_observing_check.py \
             "$RUNNER_TEMP/foundation-observing/junit.xml" \
-            test_fo11_ test_fo12_ test_fo16_ test_fo17_
+            test_fo11_ test_fo12_ test_fo16_ test_fo17_ test_fo18_ test_fo05_
       - name: observing 证据（junit）
         if: always()
         uses: actions/upload-artifact@v4

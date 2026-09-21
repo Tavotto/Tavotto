@@ -103,6 +103,19 @@ def _error_from_worker(
 
             out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)
         return out
+    # 起会话之前的两道门（U03 的运行目录 / U04 的依赖准备）：它们是「需要输入」，不是失败——
+    # code 原样带出、载荷原样带出（与渲染端点 `_worker_error_payload` 同一形状），素材库这条
+    # 入口才能弹同一个确认框，而不是一句「试运行失败」。
+    confirmation = getattr(exc, "confirmation", None)
+    if isinstance(confirmation, dict):
+        out = _err(exc.code, str(exc))
+        out["confirmation"] = confirmation
+        return out
+    dependency = getattr(exc, "dependency_preparation", None)
+    if isinstance(dependency, dict):
+        out = _err(exc.code, str(exc))
+        out["dependency_preparation"] = dependency
+        return out
     # build 超时有自己的码（ADR 0048）；试运行走的正是 build，两个都要认——
     # 漏掉的话「脚本执行超时」会退化成一句通用的「试运行失败」。
     if exc.code in ("worker_timeout", pool.BUILD_TIMEOUT_CODE):

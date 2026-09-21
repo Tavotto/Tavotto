@@ -1522,6 +1522,11 @@ export class EngineError extends Error {
   confirmation?: WorkdirConfirmation
   /** `explicit_python_unusable` / `project_python_unusable` 时是哪一条显式选择、为什么 */
   explicit?: ExplicitInterpreterFailure
+  /**
+   * `dependency_preparation_required`（U04）时「脚本开跑要的包目标环境里没有、能一次装全」的
+   * 整份联合计划——同样不是错误块，是一次授权（`DependencyPrepareDialog`）。
+   */
+  dependencyPreparation?: DependencyPreparationOffer
   constructor(
     message: string,
     traceback = '',
@@ -1529,7 +1534,11 @@ export class EngineError extends Error {
     module = '',
     projectEnv?: ProjectEnvFailure,
     dependencyRepair?: DependencyRepairOffer,
-    extra?: { confirmation?: WorkdirConfirmation; explicit?: ExplicitInterpreterFailure },
+    extra?: {
+      confirmation?: WorkdirConfirmation
+      explicit?: ExplicitInterpreterFailure
+      dependencyPreparation?: DependencyPreparationOffer
+    },
   ) {
     super(message)
     this.traceback = traceback
@@ -1539,6 +1548,7 @@ export class EngineError extends Error {
     this.dependencyRepair = dependencyRepair
     this.confirmation = extra?.confirmation
     this.explicit = extra?.explicit
+    this.dependencyPreparation = extra?.dependencyPreparation
   }
 }
 
@@ -1590,6 +1600,9 @@ export async function engineRender(
       {
         confirmation: body.confirmation as WorkdirConfirmation | undefined,
         explicit: body.explicit as ExplicitInterpreterFailure | undefined,
+        dependencyPreparation: body.dependency_preparation as
+          | DependencyPreparationOffer
+          | undefined,
       },
     )
   }
@@ -2782,7 +2795,18 @@ export interface DependencyProgress {
   distribution?: string
   target_kind?: string
   script?: string
-  result?: { python?: string; version?: string; distribution?: string } | null
+  /** 联合准备（U04）的进度带 `flow: 'joint'` 与整份需求；过了提交点带 `committed: true` */
+  flow?: 'joint'
+  requirements?: string[]
+  committed?: boolean
+  result?: {
+    python?: string
+    version?: string
+    distribution?: string
+    generation?: string
+    activated?: boolean
+    installed?: Record<string, string>
+  } | null
 }
 
 export const createDependencyPlan = (body: {
@@ -2809,6 +2833,123 @@ export const cancelDependencyPlan = (planId: string) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ plan_id: planId }),
+  })
+
+// ---------------------------------------------------------------------------
+// 联合依赖准备（统一实施包 U04，ADR 0061）
+//
+// 起第一个 worker 之前后端看一眼：脚本开跑要的第三方包目标环境里缺不缺、缺的能不能一次
+// 装全。能就以 `dependency_preparation_required` 回来——**不是错误块，是一次授权**：整份计划
+//（装什么 / 约束什么 / 装到哪 / 会不会改用户环境 / 认不出的 import）都在载荷里。与单包修复
+// 同一条纪律：先绑定计划（不装）再只发 plan_id 执行；进度同一条 SSE `engine.dependency`。
+// ---------------------------------------------------------------------------
+export const DEPENDENCY_PREPARATION_CODE = 'dependency_preparation_required'
+
+/** `depplan.JointPlan.to_payload()`：只读的联合计划（后端算的，不含机器路径） */
+export interface JointDependencyPlan {
+  plan_version: number
+  status: 'nothing_needed' | 'ready' | 'blocked'
+  target_kind: 'project_venv' | 'tavotto_managed'
+  script: string
+  /** 脚本开跑就要的第三方 import（无条件） */
+  needed: { module: string; distribution: string; resolution_source: string; via: string[] }[]
+  /** needed 里目标环境没有的 */
+  missing: {
+    import_name: string
+    distribution: string
+    resolution_source: string
+    declared: boolean
+    specifiers: string[]
+    via: string[]
+  }[]
+  satisfied: { import_name: string; distribution: string; installed_version: string; matches_declared: boolean }[]
+  /** 无条件 import 却映射不到包名的：永远不装、不猜，让用户指定 */
+  unknown: string[]
+  /** 条件 / 延后 / 可选 / 动态的第三方 import：不在跑前装 */
+  possible: { module: string; context: string; distribution: string }[]
+  /** 交给安装器的需求（规范串） */
+  requirements: string[]
+  constraints: string[]
+  require_hashes: boolean
+  /** 受管环境才有：matplotlib / numpy 的支持区间 */
+  adapter: string[]
+  /** blocked 的理由闭集（dependency_declaration_unsupported / dependency_conflict / dependency_hashes_incomplete / dependency_target_unavailable） */
+  blocked: { code: string; declarations?: { raw: string; reason: string; source: string }[]; conflicts?: { name: string; specifiers: string[]; reasons: string[] }[]; lines?: string[]; count?: number }[]
+  selection: { selected_groups: string[]; available_groups: string[]; unselected_groups: string[]; skipped_marker: { raw: string; marker: string }[] }
+  identity: string
+}
+
+/** `dependency_preparation_required` 的载荷 / `GET /api/engine/dependencies` 的 offer */
+export interface DependencyPreparationOffer {
+  code: typeof DEPENDENCY_PREPARATION_CODE
+  script: string
+  plan: JointDependencyPlan
+  target_kind: 'project_venv' | 'tavotto_managed'
+  targets: DependencyTarget[]
+  rounds_remaining: number
+  /** 这一对（项目, 脚本）之前问过了：再渲染会直接运行 */
+  asked_before: boolean
+}
+
+/** 绑定好的联合计划（`plan_id` 是这次授权的凭据，一次性、有有效期） */
+export interface JointDependencyRepairPlan {
+  plan_id: string
+  script: string
+  target_kind: 'project_venv' | 'tavotto_managed'
+  python: string
+  requirements: string[]
+  constraints: string[]
+  require_hashes: boolean
+  adapter: string[]
+  identity: string
+  needed_imports: string[]
+  groups: string[]
+  modifies_user_environment: boolean
+  creates_environment: boolean
+  network_required: boolean
+  expires_at: number
+  joint: JointDependencyPlan
+}
+
+export const fetchDependencyOffer = (script: string) =>
+  jsonFetch<{ offer: DependencyPreparationOffer | null; groups: string[]; rounds_remaining: number }>(
+    `/api/engine/dependencies?script=${encodeURIComponent(script)}`,
+  )
+
+/** 绑定一份联合计划（不装）。blocked / 什么都不缺 → 409，body.joint 里是计划 */
+export const createJointDependencyPlan = (body: {
+  script: string
+  target?: 'project_venv' | 'tavotto_managed'
+}) =>
+  jsonFetch<{ plan: JointDependencyRepairPlan }>('/api/engine/dependencies/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+export const prepareJointDependencies = (planId: string) =>
+  jsonFetch<{ started: boolean } & DependencyProgress>('/api/engine/dependencies/prepare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_id: planId }),
+  })
+
+/** 取消；过了提交点（受管环境已切 active）回 accepted=false, reason=committed */
+export const cancelJointDependencies = (planId: string) =>
+  jsonFetch<{ cancelling: boolean; accepted: boolean; reason: string }>(
+    '/api/engine/dependencies/cancel',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan_id: planId }),
+    },
+  )
+
+export const setDependencyGroups = (groups: string[]) =>
+  jsonFetch<{ ok: boolean; groups: string[] }>('/api/engine/dependencies', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groups }),
   })
 
 /** 删掉并重建当前项目的 Tavotto 隔离环境（用户自己的 .venv 没有这个操作） */
