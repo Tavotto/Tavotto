@@ -520,9 +520,10 @@ class TestCleanMachine:
         project = _project(tmp_path)
         joint, kind, python = deprepair.joint_plan_for(project, "figure.py")
         assert kind == deprepair.TARGET_MANAGED and python == ""
-        # 替身的已装集合为空：matplotlib（curated 映射，裸名）与 fixture 包都算缺——披露的是「空环境要装什么」
-        assert joint.status == "ready" and set(joint.requirements) == {"matplotlib", ALPHA[0]}
-        assert joint.facts["python_version"] == src.version and joint.facts["installed_count"] == 0
+        # 替身：新的一代装之前只有 adapter（matplotlib / numpy，与 `fresh_venv_facts(provided=)` 同一条纪律）
+        # ——披露的是「空环境还要装什么」：只有 fixture 包
+        assert joint.status == "ready" and set(joint.requirements) == {ALPHA[0]}
+        assert joint.facts["python_version"] == src.version and joint.facts["installed_count"] == 2
         plan = deprepair.create_joint_plan(project, "figure.py")
         assert plan.replan is True and plan.private_python["required"] is True
         assert plan.to_payload()["replan"] is True

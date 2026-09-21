@@ -2588,6 +2588,23 @@ def _register_cancel(plan_id: str) -> threading.Event:
         return ev
 
 
+def _facts_for_plan(
+    plan: "JointRepairPlan", *, use_cache: bool
+) -> tuple[depplan.TargetFacts | None, depplan.TargetFacts | None]:
+    """执行前重量事实——与计划期**同一条路**：干净机器（计划期没有解释器，`facts_python` 为空）按
+    `private_python_target` 再算一次（替身是确定的，同锁同机就同 digest；期间私有 Python 已被别的项目
+    供应则真量 → digest 变 → stale，让用户重算——那时计划该按真事实来）；其余按 `_facts_for`。"""
+    if not plan.facts_python and plan.target_kind == TARGET_MANAGED:
+        standin = private_python_target(plan.project, plan.script)
+        if standin is not None:
+            return standin[2], None
+        return None, None
+    run, install, _measured = _facts_for(
+        plan.target_kind, plan.facts_python, plan.project, use_cache=use_cache
+    )
+    return run, install
+
+
 def _prepare_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
     try:
         return prepare(plan_id, on_event, claimed=claimed)
@@ -2618,9 +2635,7 @@ def prepare(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
             raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境发生了变化")
         # 解释器指纹只看 `pyvenv.cfg`：确认期间有人往目标里装 / 卸了包它不变，事实 digest 会变——
         # 重新量一次（不走缓存），不一样就是 stale，一个字节不装（Codex #461 P2）
-        run, install, _measured = _facts_for(
-            plan.target_kind, plan.facts_python, plan.project, use_cache=False
-        )
+        run, install = _facts_for_plan(plan, use_cache=False)
         if (run.digest() if run is not None else "") != plan.facts_digest or (
             install.digest() if install is not None else ""
         ) != plan.install_facts_digest:
