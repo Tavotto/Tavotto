@@ -129,4 +129,6 @@ SVG 尺寸与 viewBox、PNG 像素与 pHYs dpi（TIFF 像素；EPS BoundingBox�
 | `stem_not_parameterizable` | 这张图没有对应脚本 | 把 `.py` 放到产物同目录，产物名写成字面量 |
 | `preflight_blocked` | 预检有阻断项 | **先修**；用户明确要求才带 `explicit_confirm: true` |
 | `missing_dependency` | 渲染解释器缺包 | 告诉用户装哪个包，或换一个带科学栈的解释器 |
+| `workdir_confirmation_required` | 首开要先选脚本的运行目录（数据只在项目根找得到 / 两处同名数据不同）——不是失败，是缺一个决定 | 按 `structuredContent.confirmation.options` 把三档（`project_root` / `project` / `sandbox`）与各自找得到的文件念给用户选，`recommended` 有值时说明推荐；**不替用户猜**。再调一次 `tavotto_open_figure` 带 `workdir=<所选>`；这个决定按项目记住，只问一次 |
+| `explicit_python_unusable` / `project_python_unusable` | 用户显式指定的渲染解释器用不了（不在了 / 没有 matplotlib）；Tavotto 不会自动换成别的环境 | 把 `structuredContent.explicit.source` / `reason` 说给用户听，让用户在设置里重新指定或清除那条设置；不要自己去换解释器 |
 | `tavotto_missing` | 机器上没装 Tavotto | `pipx install "tavotto[worker]"` 或装桌面版，然后重开会话 |

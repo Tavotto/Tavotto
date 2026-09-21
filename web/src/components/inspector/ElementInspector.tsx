@@ -66,8 +66,8 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { DependencyRepairCard } from '@/components/DependencyRepairCard'
-import { WorkdirSuggestion } from '@/components/WorkdirRow'
-import { WORKDIR_CODES } from '@/lib/api'
+import { WorkdirChooseButton, WorkdirSuggestion } from '@/components/WorkdirRow'
+import { WORKDIR_CODES, WORKDIR_CONFIRMATION_CODE, type WorkdirConfirmation } from '@/lib/api'
 import {
   EngineEnvironmentCard,
   MissingDependencyCard,
@@ -355,6 +355,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             error={render.error}
             traceback={render.traceback}
             code={render.code}
+            confirmation={render.confirmation}
             onRetry={() => requestRender(panel, true)}
           />
         )
@@ -593,11 +594,13 @@ function ErrorBlock({
   error,
   traceback,
   code,
+  confirmation,
   onRetry,
 }: {
   error: UiMessage
   traceback: string
   code?: string
+  confirmation?: WorkdirConfirmation | null
   onRetry?: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -606,8 +609,13 @@ function ErrorBlock({
       <div className="rounded-sm bg-danger-subtle px-2 py-1.5">
         {/* 描述符在**显示这一刻**才翻，切语言后这条跟着换 */}
         <p className="text-xs text-danger">{formatMessage(error)}</p>
-        {/* 「脚本跑完没出图」：多半是沙盒 cwd 下相对路径找不到数据，给出口（ADR 0047） */}
-        {code && (WORKDIR_CODES as readonly string[]).includes(code) && <WorkdirSuggestion />}
+        {/* 「先选运行目录」（U03）：确认框被「稍后」关掉之后从这里再开；
+            「脚本跑完没出图」：多半是沙盒 cwd 下相对路径找不到数据，给出口（ADR 0047） */}
+        {code === WORKDIR_CONFIRMATION_CODE ? (
+          <WorkdirChooseButton confirmation={confirmation ?? null} />
+        ) : (
+          code && (WORKDIR_CODES as readonly string[]).includes(code) && <WorkdirSuggestion />
+        )}
         <div className="mt-0.5 flex items-center gap-2">
           <p className="text-xs text-danger/70">{el('keptPrevious')}</p>
           {onRetry && (

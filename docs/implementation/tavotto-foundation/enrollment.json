@@ -1,508 +1,514 @@
 {
- "schema_version": 1,
- "_comment": [
-  "case enrollment 台账（ADR 0053 §五；03_CI_POLICY §3）。机器可读真值；ENROLLMENT.md 由 tools/generate_enrollment.py 派生。",
-  "planned / observing / later 不是通过；enforced 的 case 必须指向真实 pytest 用例并在结果目录写记录；空集合不是通过。",
-  "registry.json 里 32 个 FO 场景逐一在此，enrollment / stage 与 registry 一致（tests/test_foundation_harness.py 钉着）。"
- ],
- "capability_version": "u01",
- "cases": [
-  {
-   "case_id": "FO01",
-   "title": "脚本同目录 CSV",
-   "scenario_refs": [
-    "FO01"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "pr",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO02",
-   "title": "脚本目录与运行根目录不同",
-   "scenario_refs": [
-    "FO02"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "guided",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO03",
-   "title": "__file__ 与模块相对导入",
-   "scenario_refs": [
-    "FO03"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "pr",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO04",
-   "title": "项目外有效绝对路径",
-   "scenario_refs": [
-    "FO04"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO05",
-   "title": "h5py 原生读取",
-   "scenario_refs": [
-    "FO05"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO06",
-   "title": "exists/glob/listdir/read 一致",
-   "scenario_refs": [
-    "FO06"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "guided",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO07",
-   "title": "同名干扰数据",
-   "scenario_refs": [
-    "FO07"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "pr",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "guided",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO08",
-   "title": "项目移动与外部数据失联",
-   "scenario_refs": [
-    "FO08"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "guided",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO09",
-   "title": "中文空格、大小写、跨盘符",
-   "scenario_refs": [
-    "FO09"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO10",
-   "title": "读写权限与受保护原件",
-   "scenario_refs": [
-    "FO10"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "contractual",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO11",
-   "title": "真实不同 Python minor",
-   "scenario_refs": [
-    "FO11"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO12",
-   "title": "宿主 AST 不认识目标合法语法",
-   "scenario_refs": [
-    "FO12"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO13",
-   "title": "真实二进制依赖 ABI 隔离",
-   "scenario_refs": [
-    "FO13"
-   ],
-   "stage": "U04",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO14",
-   "title": "项目外命名 Conda 环境",
-   "scenario_refs": [
-    "FO14"
-   ],
-   "stage": "X01",
-   "enrollment": "later",
-   "lane": "nightly",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "guided",
-   "notes": "X01：命名 Conda 自动发现后置。"
-  },
-  {
-   "case_id": "FO15",
-   "title": "显式环境与项目约束冲突",
-   "scenario_refs": [
-    "FO15"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "pr",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "safe_stop",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO16",
-   "title": "不支持的 Python/能力",
-   "scenario_refs": [
-    "FO16"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "safe_stop",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO17",
-   "title": "同一基础 Python 的两个 venv",
-   "scenario_refs": [
-    "FO17"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO18",
-   "title": "三个以上额外依赖联合准备",
-   "scenario_refs": [
-    "FO18"
-   ],
-   "stage": "U04",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "guided",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO19",
-   "title": "本地实验室模块和重名引擎模块",
-   "scenario_refs": [
-    "FO19"
-   ],
-   "stage": "U03",
-   "enrollment": "planned",
-   "lane": "pr",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO20",
-   "title": "markers/extras/所选依赖组",
-   "scenario_refs": [
-    "FO20"
-   ],
-   "stage": "U04",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "guided",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO21",
-   "title": "依赖约束不可同时满足",
-   "scenario_refs": [
-    "FO21"
-   ],
-   "stage": "U04",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "safe_stop",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO22",
-   "title": "已安装但原生库无法 import",
-   "scenario_refs": [
-    "FO22"
-   ],
-   "stage": "U04",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "safe_stop",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO23",
-   "title": "无系统 Python/uv/pip 冷启动",
-   "scenario_refs": [
-    "FO23"
-   ],
-   "stage": "U05",
-   "enrollment": "planned",
-   "lane": "release",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "guided",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO24",
-   "title": "离线且受管 runtime/wheels 缓存齐备",
-   "scenario_refs": [
-    "FO24"
-   ],
-   "stage": "U05",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO25",
-   "title": "离线且无可用缓存",
-   "scenario_refs": [
-    "FO25"
-   ],
-   "stage": "U05",
-   "enrollment": "planned",
-   "lane": "pr",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "safe_stop",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO26",
-   "title": "下载损坏、截断和错误哈希",
-   "scenario_refs": [
-    "FO26"
-   ],
-   "stage": "U05",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "safe_stop",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO27",
-   "title": "准备/运行阶段取消",
-   "scenario_refs": [
-    "FO27"
-   ],
-   "stage": "U04",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "safe_stop",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO28",
-   "title": "磁盘不足和只读目录",
-   "scenario_refs": [
-    "FO28"
-   ],
-   "stage": "U04",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "safe_stop",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO29",
-   "title": "并发项目与活跃 native 会话",
-   "scenario_refs": [
-    "FO29"
-   ],
-   "stage": "U04",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "contractual",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO30",
-   "title": "预检后输入或环境改变",
-   "scenario_refs": [
-    "FO30"
-   ],
-   "stage": "U09",
-   "enrollment": "planned",
-   "lane": "integration",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "contractual",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO31",
-   "title": "首开/二开/会话重启不重复准备",
-   "scenario_refs": [
-    "FO31"
-   ],
-   "stage": "U04",
-   "enrollment": "planned",
-   "lane": "pr",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "automatic",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "FO32",
-   "title": "真实打开—编辑—重放—导出",
-   "scenario_refs": [
-    "FO32"
-   ],
-   "stage": "U09",
-   "enrollment": "planned",
-   "lane": "release",
-   "entry": "http",
-   "fixture": null,
-   "test": null,
-   "expected_product_outcome": "guided",
-   "notes": "registry 原文保留；本阶段只登记。"
-  },
-  {
-   "case_id": "U01-S1",
-   "title": "single_file_csv 经真实 HTTP 服务（会话认证）首开 → 准备 → 渲染 → 旧后端导出 PDF/PNG → 独立读回",
-   "scenario_refs": [
-    "FO01",
-    "FO32"
-   ],
-   "stage": "U01",
-   "enrollment": "enforced",
-   "lane": "pr",
-   "entry": "http",
-   "fixture": "tests/fixtures/foundation/single_file_csv",
-   "test": "tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry",
-   "expected_product_outcome": "automatic",
-   "backend": "pymupdf",
-   "notes": "U01 唯一 enforced 的切片：终点是旧后端（D06），不是 RenderCore 资格；FO01 / FO32 本身仍 planned，各自在 U03 / U09 取得资格。"
-  }
- ]
+  "schema_version": 1,
+  "_comment": [
+    "case enrollment 台账（ADR 0053 §五；03_CI_POLICY §3）。机器可读真值；ENROLLMENT.md 由 tools/generate_enrollment.py 派生。",
+    "planned / observing / later 不是通过；enforced 的 case 必须指向真实 pytest 用例并在结果目录写记录；空集合不是通过。",
+    "registry.json 里 32 个 FO 场景逐一在此，enrollment / stage 与 registry 一致（tests/test_foundation_harness.py 钉着）。"
+  ],
+  "capability_version": "u03",
+  "cases": [
+    {
+      "case_id": "FO01",
+      "title": "脚本同目录 CSV",
+      "scenario_refs": [
+        "FO01"
+      ],
+      "stage": "U03",
+      "enrollment": "enforced",
+      "lane": "pr",
+      "entry": "http",
+      "fixture": "tests/fixtures/foundation/single_file_csv",
+      "test": "tests/test_foundation_first_open.py::test_fo01_same_directory_csv_opens_automatically",
+      "expected_product_outcome": "automatic",
+      "notes": "从干净应用设置（空配置、无环境变量）经真实 HTTP 服务打开：沙盒默认 + 只读回退到脚本目录即可，不问一次；U03 起 enforced（正例 = 图内值等于真值；负例 = 校验器的 outcome_mismatch + 判据变异见 handoff）。终点是旧后端。",
+      "backend": "pymupdf"
+    },
+    {
+      "case_id": "FO02",
+      "title": "脚本目录与运行根目录不同",
+      "scenario_refs": [
+        "FO02"
+      ],
+      "stage": "U03",
+      "enrollment": "enforced",
+      "lane": "pr",
+      "entry": "http",
+      "fixture": "tests/fixtures/foundation/split_scripts_data",
+      "test": "tests/test_foundation_first_open.py::test_fo02_scripts_and_data_split_asks_once_then_runs_at_the_project_root",
+      "expected_product_outcome": "guided",
+      "notes": "cwd 歧义变体（`data/points.csv` 单字面量）：准备接口 needs_input（project_root_evidence，推荐项目根）、选择前渲染被门挡住；PATCH /api/engine/workdir project_root 后 ready，cwd_origin=project.root，值等于真值；二开不再问。lane 由 integration 改 pr：整条链 ~10 s，走 invariants job。",
+      "backend": "pymupdf"
+    },
+    {
+      "case_id": "FO03",
+      "title": "__file__ 与模块相对导入",
+      "scenario_refs": [
+        "FO03"
+      ],
+      "stage": "U03",
+      "enrollment": "enforced",
+      "lane": "pr",
+      "entry": "http",
+      "fixture": "tests/fixtures/foundation/split_scripts_data",
+      "test": "tests/test_foundation_first_open.py::test_fo03_file_relative_data_and_local_package_open_automatically",
+      "expected_product_outcome": "automatic",
+      "notes": "`__file__` 定位 `../data` + 本地包 `labhelpers`：静态证据说不出话（路径是拼出来的）→ 按默认走且成功；本地包不被当成包名。",
+      "backend": "pymupdf"
+    },
+    {
+      "case_id": "FO04",
+      "title": "项目外有效绝对路径",
+      "scenario_refs": [
+        "FO04"
+      ],
+      "stage": "U03",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "automatic",
+      "notes": "U03：外部绝对路径不搬不改（databinding 只看相对字面量，绝对路径一律不碰；fallback 沙盒外绝对路径不改指）——没有专门夹具与 HTTP 场景，planned。"
+    },
+    {
+      "case_id": "FO05",
+      "title": "h5py 原生读取",
+      "scenario_refs": [
+        "FO05"
+      ],
+      "stage": "U03",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "automatic",
+      "notes": "U03 未做：真实 h5py 需要 CI 提供带 h5py 的解释器，归 U04 联合依赖之后。"
+    },
+    {
+      "case_id": "FO06",
+      "title": "exists/glob/listdir/read 一致",
+      "scenario_refs": [
+        "FO06"
+      ],
+      "stage": "U03",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "guided",
+      "notes": "contractual：先拆成「确认目录后 exists/glob/listdir/open 一致」的成功合同（ADR 0047 的 test_workdir_mode 已覆盖 project 模式）与「沙盒模式下 exists=False 与 open 成功不矛盾」的停止合同；U03 未登记为具体用例。"
+    },
+    {
+      "case_id": "FO07",
+      "title": "同名干扰数据",
+      "scenario_refs": [
+        "FO07"
+      ],
+      "stage": "U03",
+      "enrollment": "enforced",
+      "lane": "pr",
+      "entry": "http",
+      "fixture": "tests/fixtures/foundation/same_name_data",
+      "test": "tests/test_foundation_first_open.py::test_fo07_same_name_data_in_two_places_asks_and_honours_the_choice",
+      "expected_product_outcome": "guided",
+      "notes": "用例现场把夹具摆成「脚本目录与项目根各有一份 data.csv、内容不同」：needs_input（ambiguous_data，无推荐）、选择前不发布图；选脚本目录得真值 [7,13,25]，选项目根得干扰 [601,1201,2401]——值等于选的那份，不就近替换。",
+      "backend": "pymupdf"
+    },
+    {
+      "case_id": "FO08",
+      "title": "项目移动与外部数据失联",
+      "scenario_refs": [
+        "FO08"
+      ],
+      "stage": "U03",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "guided",
+      "notes": "U03：数据失联时准备照常报真实失败（no_figures_captured 路径），不复用旧绑定；重新定位任意绝对路径归 X01。「项目移动后旧 workdir 决定失效并重新问」由 test_first_open_workdir 覆盖机制，HTTP 场景 planned。"
+    },
+    {
+      "case_id": "FO09",
+      "title": "中文空格、大小写、跨盘符",
+      "scenario_refs": [
+        "FO09"
+      ],
+      "stage": "U03",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "automatic",
+      "notes": "U03：中文 + 空格路径的机制用例在 tests/test_first_open_workdir.py（真 worker、project_root 模式）；Windows 跨盘符与 macOS 目标文件系统的实机资格 planned。"
+    },
+    {
+      "case_id": "FO10",
+      "title": "读写权限与受保护原件",
+      "scenario_refs": [
+        "FO10"
+      ],
+      "stage": "U03",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "contractual",
+      "notes": "contractual：拆成「默认沙盒不扩大写权限」（既有 test_workdir_mode 守卫用例）与「显式授权后相对写入落进项目目录、删除改名仍被拦」（同文件 project 模式用例）两条；grant 由 workdir.set_mode 记账、计划过期不执行（test_preparation_api）。HTTP 场景 planned。"
+    },
+    {
+      "case_id": "FO11",
+      "title": "真实不同 Python minor",
+      "scenario_refs": [
+        "FO11"
+      ],
+      "stage": "U03",
+      "enrollment": "observing",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "automatic",
+      "notes": "U03 实现了前移（首开发现 + 体检 + 记住项目 venv，trigger=first_open；tests/test_first_open_environment.py 用同一 minor 的真实 venv 钉住「首次执行前选对、不先用默认跑错一次」）。真实**不同 minor** 的解释器本机与 invariants job 都没有装 matplotlib 的第二个 Python → observing：tests/test_first_open_environment.py::test_fo11_different_minor_project_venv_is_chosen_before_first_run 读 TAVOTTO_FOUNDATION_ALT_PYTHON，没有就 skip 并说明。 observing 的具名任务：nightly.yml 的 `foundation-observing` job（非 required、不进 Gate；setup-python 交给用例真实解释器；用例 skip 一条就判红——skip 不是绿）。"
+    },
+    {
+      "case_id": "FO12",
+      "title": "宿主 AST 不认识目标合法语法",
+      "scenario_refs": [
+        "FO12"
+      ],
+      "stage": "U03",
+      "enrollment": "observing",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "automatic",
+      "notes": "U03 实现了目标解释器解析（discover.inspect_script → analyze_in_interpreter，静态、不执行、同一份 stem/entry 算法）。真实场景要「项目解释器比应用新且装了 matplotlib」——本机 / CI 没有；机制用例 tests/test_discover_problems.py::test_fo12_syntax_the_host_ast_rejects_but_the_target_accepts_keeps_the_script 读 TAVOTTO_FOUNDATION_NEWER_PYTHON（本机 python3.14 的 t-string 真跑过），observing。 observing 的具名任务：nightly.yml 的 `foundation-observing` job（非 required、不进 Gate；setup-python 交给用例真实解释器；用例 skip 一条就判红——skip 不是绿）。"
+    },
+    {
+      "case_id": "FO13",
+      "title": "真实二进制依赖 ABI 隔离",
+      "scenario_refs": [
+        "FO13"
+      ],
+      "stage": "U04",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "automatic",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO14",
+      "title": "项目外命名 Conda 环境",
+      "scenario_refs": [
+        "FO14"
+      ],
+      "stage": "X01",
+      "enrollment": "later",
+      "lane": "nightly",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "guided",
+      "notes": "X01：命名 Conda 自动发现后置。"
+    },
+    {
+      "case_id": "FO15",
+      "title": "显式环境与项目约束冲突",
+      "scenario_refs": [
+        "FO15"
+      ],
+      "stage": "U03",
+      "enrollment": "enforced",
+      "lane": "pr",
+      "entry": "http",
+      "fixture": "tests/fixtures/foundation/single_file_csv",
+      "test": "tests/test_foundation_first_open.py::test_fo15_explicit_interpreter_without_matplotlib_stops_with_a_reason",
+      "expected_product_outcome": "safe_stop",
+      "notes": "显式 `TAVOTTO_WORKER_PYTHON` 指向一个真实的、没有 matplotlib 的 venv：environment / 准备 / 渲染三处都报 explicit_python_unusable（source=env_override, reason=no_matplotlib），不换环境、不装包、不跑脚本。safe_stop 的通过不进兼容成功分子（校验器 passed_by_outcome 分开计数）。",
+      "backend": "pymupdf"
+    },
+    {
+      "case_id": "FO16",
+      "title": "不支持的 Python/能力",
+      "scenario_refs": [
+        "FO16"
+      ],
+      "stage": "U03",
+      "enrollment": "observing",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "safe_stop",
+      "notes": "U03 实现了停止路径（project_env_unsupported_python 不采用、显式选择失效报 explicit_python_unusable / project_python_unusable）。「支持矩阵外的 Python」本机只有 /usr/bin/python3 3.9（macOS 自带）→ observing：tests/test_first_open_environment.py::test_fo16_a_project_venv_on_an_unsupported_python_is_rejected_not_adopted 读 TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON（本机用 /usr/bin/python3 真跑过：拒绝、不采用、链条继续、零安装），没有就 skip 并说明。 observing 的具名任务：nightly.yml 的 `foundation-observing` job（非 required、不进 Gate；setup-python 交给用例真实解释器；用例 skip 一条就判红——skip 不是绿）。"
+    },
+    {
+      "case_id": "FO17",
+      "title": "同一基础 Python 的两个 venv",
+      "scenario_refs": [
+        "FO17"
+      ],
+      "stage": "U03",
+      "enrollment": "observing",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "automatic",
+      "notes": "U03：解释器去重按路径不 realpath（既有），首开按项目各自发现；tests/test_first_open_environment.py::test_fo17_two_venvs_on_the_same_base_are_kept_apart 用同一 base 的两个真实 venv 钉住各自 prefix 与回执私有键不同。用的是同一 minor，等不同 minor 的 alt python 一起提 enforced → observing。 observing 的具名任务：nightly.yml 的 `foundation-observing` job（非 required、不进 Gate；setup-python 交给用例真实解释器；用例 skip 一条就判红——skip 不是绿）。"
+    },
+    {
+      "case_id": "FO18",
+      "title": "三个以上额外依赖联合准备",
+      "scenario_refs": [
+        "FO18"
+      ],
+      "stage": "U04",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "guided",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO19",
+      "title": "本地实验室模块和重名引擎模块",
+      "scenario_refs": [
+        "FO19"
+      ],
+      "stage": "U03",
+      "enrollment": "enforced",
+      "lane": "pr",
+      "entry": "http",
+      "fixture": "tests/fixtures/foundation/shadowed_engine_modules",
+      "test": "tests/test_foundation_first_open.py::test_fo19_user_modules_shadow_engine_names_and_still_win",
+      "expected_product_outcome": "automatic",
+      "notes": "issue #447 的修复证据：safe worker 经 bridgeboot 私有包装引擎模块，用户的 manifest.py / overrides.py 与本地包 lab_utils 都命中用户那份（标题 sentinel + 真值）。",
+      "backend": "pymupdf"
+    },
+    {
+      "case_id": "FO20",
+      "title": "markers/extras/所选依赖组",
+      "scenario_refs": [
+        "FO20"
+      ],
+      "stage": "U04",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "guided",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO21",
+      "title": "依赖约束不可同时满足",
+      "scenario_refs": [
+        "FO21"
+      ],
+      "stage": "U04",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "safe_stop",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO22",
+      "title": "已安装但原生库无法 import",
+      "scenario_refs": [
+        "FO22"
+      ],
+      "stage": "U04",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "safe_stop",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO23",
+      "title": "无系统 Python/uv/pip 冷启动",
+      "scenario_refs": [
+        "FO23"
+      ],
+      "stage": "U05",
+      "enrollment": "planned",
+      "lane": "release",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "guided",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO24",
+      "title": "离线且受管 runtime/wheels 缓存齐备",
+      "scenario_refs": [
+        "FO24"
+      ],
+      "stage": "U05",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "automatic",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO25",
+      "title": "离线且无可用缓存",
+      "scenario_refs": [
+        "FO25"
+      ],
+      "stage": "U05",
+      "enrollment": "planned",
+      "lane": "pr",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "safe_stop",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO26",
+      "title": "下载损坏、截断和错误哈希",
+      "scenario_refs": [
+        "FO26"
+      ],
+      "stage": "U05",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "safe_stop",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO27",
+      "title": "准备/运行阶段取消",
+      "scenario_refs": [
+        "FO27"
+      ],
+      "stage": "U04",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "safe_stop",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO28",
+      "title": "磁盘不足和只读目录",
+      "scenario_refs": [
+        "FO28"
+      ],
+      "stage": "U04",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "safe_stop",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO29",
+      "title": "并发项目与活跃 native 会话",
+      "scenario_refs": [
+        "FO29"
+      ],
+      "stage": "U04",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "contractual",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO30",
+      "title": "预检后输入或环境改变",
+      "scenario_refs": [
+        "FO30"
+      ],
+      "stage": "U09",
+      "enrollment": "planned",
+      "lane": "integration",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "contractual",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO31",
+      "title": "首开/二开/会话重启不重复准备",
+      "scenario_refs": [
+        "FO31"
+      ],
+      "stage": "U04",
+      "enrollment": "planned",
+      "lane": "pr",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "automatic",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "FO32",
+      "title": "真实打开—编辑—重放—导出",
+      "scenario_refs": [
+        "FO32"
+      ],
+      "stage": "U09",
+      "enrollment": "planned",
+      "lane": "release",
+      "entry": "http",
+      "fixture": null,
+      "test": null,
+      "expected_product_outcome": "guided",
+      "notes": "registry 原文保留；本阶段只登记。"
+    },
+    {
+      "case_id": "U01-S1",
+      "title": "single_file_csv 经真实 HTTP 服务（会话认证）首开 → 准备 → 渲染 → 旧后端导出 PDF/PNG → 独立读回",
+      "scenario_refs": [
+        "FO01",
+        "FO32"
+      ],
+      "stage": "U01",
+      "enrollment": "enforced",
+      "lane": "pr",
+      "entry": "http",
+      "fixture": "tests/fixtures/foundation/single_file_csv",
+      "test": "tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry",
+      "expected_product_outcome": "automatic",
+      "backend": "pymupdf",
+      "notes": "U01 唯一 enforced 的切片：终点是旧后端（D06），不是 RenderCore 资格；FO01 / FO32 本身仍 planned，各自在 U03 / U09 取得资格。"
+    }
+  ]
 }

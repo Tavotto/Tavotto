@@ -33,6 +33,17 @@ from pathlib import Path
 
 from . import atomicio, discover, pool, registry
 
+
+def _target_parser(root) -> str | None:
+    """静态 merge 的目标解析器（U03 / FO12）：这个项目此刻决定用的解释器——宿主 AST 不认识的
+    合法语法交给它再解析一遍。只读决策、不发现、不体检；决策不成立（显式选择失效 / 没有
+    解释器）就没有目标解析器，静态扫描照常只用宿主。"""
+    try:
+        return pool.resolve_worker_python(str(root), discover=False)[0]
+    except pool.WorkerError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # 素材边界 —— **唯一出处**
 #
@@ -359,7 +370,7 @@ def _static_merge(root: Path, state: RefreshState) -> tuple[dict[str, list[str]]
     因此搬迁照旧发生。
     """
     try:
-        cfg, report, changes = discover.merge(root)
+        cfg, report, changes = discover.merge(root, target_python=_target_parser(root))
     except (OSError, ValueError, RuntimeError) as exc:
         # 沿用既有的 `scan_failed`：这一段就是老 `/api/registry/scan` 的内核，
         # 换个码名等于让装着旧前端的用户看到一句英文 key。

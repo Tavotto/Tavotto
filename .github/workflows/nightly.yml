@@ -821,3 +821,80 @@ jobs:
             build/**/warn-*.txt
           if-no-files-found: warn
           retention-days: 14
+
+  # ────────────────────────────────────────────────────────────────
+  # 统一实施包（docs/implementation/tavotto-foundation/）的 **observing** case
+  #
+  # 03_CI_POLICY §3：observing = 「实际跑候选、保留真实失败 / unknown，判据或 fixture 仍在
+  # 校准」，落在**非合并必需**的夜间任务上——它不进任何 Gate、不产出 required context。
+  # 登记成 observing 却没人跑是那一节点名的假状态，这个 job 就是「有人跑」的那一份。
+  #
+  # 四条（enrollment.json 里 FO11 / FO12 / FO16 / FO17）缺的都是本机与 invariants job
+  # 没有的**真实解释器**，这里用 setup-python 各装一个并按名字交给用例：
+  #   * FO11 / FO17：另一个 minor 且装了 matplotlib 的 Python（`TAVOTTO_FOUNDATION_ALT_PYTHON`）
+  #     ——harness 不替产品装包：matplotlib 装在 runner 的解释器里，模拟「用户本来就有」，
+  #     夹具的 `make_venv.py --link-host-site` 只把它接进 venv、一个字节都不下载；
+  #   * FO12：比应用新一个 minor 的 Python（`TAVOTTO_FOUNDATION_NEWER_PYTHON`，只解析、不需要
+  #     matplotlib）；
+  #   * FO16：支持矩阵外的 Python（`TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON`，3.9）。
+  # 用例没拿到对应解释器会 **skip 并说明**；skip 不是绿——最后一步数 junit 里这四条的 skip，
+  # 有一条 skip 就把 job 判红（那说明 runner 没把解释器交到位，是基础设施问题）。
+  # ────────────────────────────────────────────────────────────────
+  foundation-observing:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 顺序有讲究：setup-python 会把**最后装的那个**放到 PATH 最前，应用的 3.13 必须最后。
+      - uses: actions/setup-python@v5
+        id: alt
+        with: { python-version: "3.12" }
+      - uses: actions/setup-python@v5
+        id: newer
+        with: { python-version: "3.14" }
+      - uses: actions/setup-python@v5
+        id: unsupported
+        with: { python-version: "3.9" }
+      - uses: actions/setup-python@v5
+        id: app
+        with: { python-version: "3.13" }
+      - name: 装依赖（应用 3.13 按锁文件钉科学栈；alt 3.12 只装 matplotlib——「用户本来就有」）
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ci]"
+          # shellcheck disable=SC2046
+          pip install $(python scripts/ci/runtime_pins.py)
+          "${{ steps.alt.outputs.python-path }}" -m pip install --upgrade pip
+          "${{ steps.alt.outputs.python-path }}" -m pip install matplotlib
+          python -c "import sys, matplotlib; print('app', sys.version, matplotlib.__version__)"
+          "${{ steps.alt.outputs.python-path }}" -c "import sys, matplotlib; print('alt', sys.version, matplotlib.__version__)"
+          "${{ steps.newer.outputs.python-path }}" -c "import sys; print('newer', sys.version)"
+          "${{ steps.unsupported.outputs.python-path }}" -c "import sys; print('unsupported', sys.version)"
+      - name: observing 用例（FO11 / FO12 / FO16 / FO17；失败保留，不进 Gate）
+        env:
+          TAVOTTO_FOUNDATION_ALT_PYTHON: ${{ steps.alt.outputs.python-path }}
+          TAVOTTO_FOUNDATION_NEWER_PYTHON: ${{ steps.newer.outputs.python-path }}
+          TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON: ${{ steps.unsupported.outputs.python-path }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/foundation-observing"
+          python -m pytest -q -rs \
+            --junitxml="$RUNNER_TEMP/foundation-observing/junit.xml" \
+            tests/test_first_open_environment.py \
+            tests/test_discover_problems.py
+      - name: observing 用例一条都不许 skip（skip 不是绿：解释器没交到位是基础设施问题）
+        if: always()
+        run: |
+          set -euo pipefail
+          python scripts/ci/foundation_observing_check.py \
+            "$RUNNER_TEMP/foundation-observing/junit.xml" \
+            test_fo11_ test_fo12_ test_fo16_ test_fo17_
+      - name: observing 证据（junit）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundation-observing-${{ github.run_id }}
+          path: ${{ runner.temp }}/foundation-observing/junit.xml
+          retention-days: 14
+          if-no-files-found: warn

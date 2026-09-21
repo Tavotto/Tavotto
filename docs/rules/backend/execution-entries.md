@@ -22,7 +22,13 @@
 
 - **`figsession` / `wireproto` 是两条入口共用的。** 改它们等于同时改两条
   入口——先跑 `tests/test_worker_roundtrip.py` 与 `tests/bridge/` 两套。
-- **native 里绝不能出现裸的兄弟模块 import。** engine 目录在 bridge 里是
+- **safe worker 与 native bridge 用同一份 `bridgeboot` 装引擎模块**（issue #447 / FO19，
+  ADR 0057 §四）：`worker.py` 摘掉 CPython 塞进 `sys.path[0]` 的 engine 目录、按文件路径装
+  `bridgeboot`、`load_engine_modules(HERE, _ENGINE_MODULES)` 一次装完整条平铺 import 闭包进
+  `tavotto_bridge_runtime.*`，顶层 `manifest` / `overrides` / … 还给用户。`_ENGINE_MODULES`
+  必须等于闭包：`tests/test_runtime_build.py` 从它反推 spec 的 datas，
+  `tests/test_import_architecture.py` 要求它逐条登记成 worker.py 的 `extra_edges`。
+- **两条入口里都绝不能出现裸的兄弟模块 import。** engine 目录在 bridge 里是
   **临时**上 `sys.path` 的（装完就收回），用户项目里完全可能有同名的
   `manifest.py` / `overrides.py` / `config.py`。兄弟模块一律在**模块层**平铺 import
   （装载期解析，那一刻 engine 目录在 `sys.path[0]`、用户同名模块已从 `sys.modules`

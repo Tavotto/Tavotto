@@ -195,7 +195,7 @@ def contained_path(root: str | Path, candidate: str | Path) -> str | None:
        用 `+ os.sep` 而不是裸 `startswith`：否则 `/a/project-evil` 会被
        `/a/project` 判成「在里面」。
 
-    `_within()` 回的是布尔、给发现流程做过滤；这一个回**净化后的路径本身**，
+    `within()` 回的是布尔、给发现流程做过滤；这一个回**净化后的路径本身**，
     调用方拿它去 open/spawn——「判过了」与「用的是判过的那一个」是两件事，
     分开写就还有把前者的结论用在后者之外的机会。
     """
@@ -204,7 +204,15 @@ def contained_path(root: str | Path, candidate: str | Path) -> str | None:
         real = os.path.realpath(os.path.join(real_root, os.fspath(candidate)))
     except (OSError, ValueError):
         return None
-    if real != real_root and not real.startswith(real_root + os.sep):
+    # 守卫写成静态分析认得的 barrier 形状（CodeQL py/path-injection：归一化 + `startswith`
+    # **单独**控制通往返回值的那条分支）。两点缺一不可（#143–#146 各踩过一次）：
+    # * `== real_root` 与 `not startswith` 合在一个条件里，fall-through 推不出 startswith 为真；
+    # * 相等那一支回的必须是 `real_root` 本身而不是 `real`——两者字符串相等，但 `real` 是从
+    #   候选算出来的，`==` 不是净化器，回它就仍带着候选的污点。
+    real = os.path.normpath(real)
+    if real == real_root:
+        return real_root
+    if not real.startswith(real_root + os.sep):
         return None
     return real
 
@@ -228,12 +236,14 @@ def contained_file(root: str | Path, candidate: str | Path) -> str | None:
     return str(Path(holder) / rel.name) if rel.name else holder
 
 
-def _within(root: Path, path: Path) -> bool:
+def within(root: Path, path: Path) -> bool:
     """`path` 是否在 `root` 之内（**按 realpath 判**）。
 
     按 realpath 而不是按字符串前缀：项目里放一条指向别处的软链接
     （`.venv -> ~/envs/paper`）时，字符串看着在项目内，实体在项目外。
     发现的范围必须是用户交给 Tavotto 的那棵目录树，不能顺着软链接跳出去。
+    **判「在不在项目里」只有这一处**：venv 发现、`databinding` 的数据字面量查找（准备阶段
+    不许碰项目外的文件）都用它。
     """
     try:
         real_root = root.resolve(strict=False)
@@ -255,12 +265,12 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
        答案」，不是什么语义。
 
     **搜索范围严格限制在项目根内**：不上溯到项目之外（那是别人的项目），
-    不顺软链接跳出去（`_within`）。项目根就是 Tavotto 打开的图库目录
+    不顺软链接跳出去（`within`）。项目根就是 Tavotto 打开的图库目录
     `figures_dir`——用户交给我们的边界只有这一条。
     """
     root = Path(figures_dir)
     start = (root / script).parent if script else root
-    if not _within(root, start):
+    if not within(root, start):
         # 脚本在项目外（理论上更早就该被 `script_path_outside_project` 拦下）
         start = root
     found: list[str] = []
@@ -270,7 +280,7 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
         layer: list[str] = []
         for name in VENV_DIRNAMES:
             cand = cur / name
-            if not _within(root, cand):
+            if not within(root, cand):
                 continue
             if interpreter_of(cand, root=root):
                 layer.append(str(cand))
@@ -280,7 +290,7 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
             if p not in seen:
                 seen.add(p)
                 found.append(p)
-        if _same_dir(cur, root) or not _within(root, cur.parent) or _same_dir(cur.parent, cur):
+        if _same_dir(cur, root) or not within(root, cur.parent) or _same_dir(cur.parent, cur):
             break
         cur = cur.parent
     return found
@@ -611,6 +621,29 @@ def _key(figures_dir: str | Path) -> str:
     return os.path.normcase(str(Path(figures_dir).resolve(strict=False)))
 
 
+def remembered_record(figures_dir: str | Path) -> dict | None:
+    """项目设置里记着的那条环境决策**原样**（含 `automatic` / `trigger` / 路径），文件在不在
+    都回——「记住过但已经不在了」与「没记住过」是两个答案（U03：显式选的失效要说出原因，
+    自动选的失效要作废并重新发现），`remembered()` 把前者压成 None 是给渲染主路径的便利，
+    不是事实层。回的结构多一个 `path`（按记录算出的绝对路径）与 `exists`。
+    """
+    stored = (config.project_settings(str(Path(figures_dir))) or {}).get(SETTINGS_KEY)
+    if not isinstance(stored, dict):
+        return None
+    if stored.get("mode") == MODE_DEFAULT_CHAIN:
+        return {**stored, "path": "", "exists": False}
+    rel = stored.get("python_relative")
+    absolute = stored.get("python")
+    path = str(Path(figures_dir) / rel) if rel else (absolute or "")
+    if not path:
+        return None
+    try:
+        exists = Path(path).is_file()
+    except OSError:
+        exists = False
+    return {**stored, "path": path, "exists": exists}
+
+
 def remembered(figures_dir: str | Path) -> str | None:
     """这个项目上次定下来的解释器（先看进程缓存，再看项目设置）。
 
@@ -691,11 +724,47 @@ def remember(
         LOG.warning("项目环境决策未能持久化: %s", exc)
 
 
+#: 「这个项目明确用默认链条（内置 / 自身 / 系统）」的记录形状：`mode == "default"`。
+#: 与「没记住过」分开（U03，FO-013）：没记住过 → 首开会发现并采用项目 venv；用户明确
+#: 选回默认链条之后不许再被自动发现盖掉。
+MODE_DEFAULT_CHAIN = "default"
+
+
+def remember_default(figures_dir: str | Path) -> None:
+    """记住「这个项目明确用默认链条」（用户在设置里清掉项目环境时）——不是 `forget()`：
+    忘了等于没决定过，下一次首开又会把 venv 找出来。"""
+    key = _key(figures_dir)
+    with _lock:
+        _resolved[key] = ""
+        _first_open.pop(key, None)
+    try:
+        config.set_project_settings(
+            str(Path(figures_dir)),
+            {
+                SETTINGS_KEY: {
+                    "mode": MODE_DEFAULT_CHAIN,
+                    "automatic": False,
+                    "trigger": "user_selected",
+                }
+            },
+        )
+    except OSError as exc:
+        LOG.warning("项目环境决策未能持久化: %s", exc)
+
+
+def uses_default_chain(figures_dir: str | Path) -> bool:
+    """用户明确为这个项目选了默认链条（`remember_default()`）。"""
+    stored = (config.project_settings(str(Path(figures_dir))) or {}).get(SETTINGS_KEY)
+    return isinstance(stored, dict) and stored.get("mode") == MODE_DEFAULT_CHAIN
+
+
 def forget(figures_dir: str | Path) -> None:
-    """清掉这个项目的环境决策（用户改回内置环境时）。"""
+    """清掉这个项目的环境决策——回到**没决定过**（测试、作废失效的自动决策）。用户明确
+    选回默认链条走 `remember_default()`。"""
     key = _key(figures_dir)
     with _lock:
         _resolved.pop(key, None)
+        _first_open.pop(key, None)
         for k in [k for k in _attempted if k[0] == key]:
             _attempted.discard(k)
     try:
@@ -714,8 +783,10 @@ def reset_cache(figures_dir: str | Path | None = None) -> None:
         if key is None:
             _resolved.clear()
             _attempted.clear()
+            _first_open.clear()
         else:
             _resolved.pop(key, None)
+            _first_open.pop(key, None)
             for k in [k for k in _attempted if k[0] == key]:
                 _attempted.discard(k)
 
@@ -802,6 +873,65 @@ def _resolve_project_venv(figures_dir: str | Path, script: str, module: str) -> 
         "module": module,
         "candidates": candidates,
     }
+
+
+#: 首开发现的结果缓存：项目键 → 结果结构（`first_open_candidate()`）。同一进程里同一个
+#: 项目只做一次发现 + 体检；`reset_cache()` 一并清掉。
+_first_open: dict[str, dict] = {}
+
+#: 首开自动采用项目 venv 时记进项目设置的 trigger（与 `missing_dependency` 分开：那条是
+#: 「内置跑错一次之后接手」，这条是「一次都没跑错、开门就选对」）。
+TRIGGER_FIRST_OPEN = "first_open"
+
+
+def first_open_candidate(figures_dir: str | Path, script: str | None = None) -> dict:
+    """首次科学执行**之前**：这个项目自己带的 venv 里有没有一条健康的解释器（U03，ADR 0057）。
+
+    与 `_resolve_project_venv()`（缺包之后的接手）同一条发现 + 体检链，差别只有两点：
+    这里**不带 `module`**（还没跑过，不知道缺什么；体检的是「能不能起 Tavotto 的 worker」），
+    以及结果按项目缓存（每个进程每个项目一次）。回：
+
+        {"ok": True,  "python": …, "venv": …, "health": {…}, "rejected": [...]}
+        {"ok": False, "code": ERROR_NOT_FOUND | 第一个候选的失败码, "rejected": [...], "candidates": [...]}
+
+    `rejected` 是体检过而没采用的（各带 `code` / `python_version` / `support`），准备计划
+    把它们如实写出来——「项目里有个 .venv 但 Python 3.9 不在支持范围」比一句「用了系统
+    Python」有解释力。**只做发现与体检，不做决策**：谁压过谁仍归 `pool.resolve_worker_python`。
+    """
+    key = _key(figures_dir)
+    with _lock:
+        cached = _first_open.get(key)
+    if cached is not None:
+        return cached
+    candidates = discover(figures_dir, script)
+    rejected: list[dict] = []
+    chosen: dict | None = None
+    for venv in candidates:
+        python = interpreter_of(venv)
+        if not python:
+            continue
+        health = probe_environment(python)
+        entry = {
+            "venv": venv,
+            "python": python,
+            "ok": bool(health.get("ok")),
+            "code": health.get("code", ""),
+            "support": health.get("support", ""),
+            "python_version": health.get("python_version", ""),
+            "matplotlib_version": health.get("matplotlib_version") or "",
+        }
+        if health.get("ok"):
+            chosen = {"python": python, "venv": venv, "health": health}
+            break  # 第一个健康的就够（候选按「离脚本最近」排好）
+        rejected.append(entry)
+    if chosen is not None:
+        outcome = {"ok": True, **chosen, "rejected": rejected, "candidates": candidates}
+    else:
+        code = rejected[0]["code"] if rejected else ERROR_NOT_FOUND
+        outcome = {"ok": False, "code": code, "rejected": rejected, "candidates": candidates}
+    with _lock:
+        _first_open[key] = outcome
+    return outcome
 
 
 def state(figures_dir: str | Path) -> dict:

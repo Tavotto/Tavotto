@@ -5128,12 +5128,21 @@
         "U11"
       ],
       "recommended_deep_lane": "pr_candidate",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
       "merge_rule": "仅在显式激活到当次lane后阻断；目录中的未实现case不直接挂全局required。",
-      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。"
+      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。",
+      "promotion": {
+        "capability": "已有环境首开：同目录 CSV、沙盒默认 + 只读回退",
+        "target_scope": "源码树 + 旧后端（PyMuPDF）终点 + 应用 Python 3.13（invariants job：ubuntu；本机：macOS arm64）；不是新能力默认启用，不是发行资格",
+        "lane": "pr",
+        "test": "tests/test_foundation_first_open.py::test_fo01_same_directory_csv_opens_automatically",
+        "negative_evidence": "图内值 == truth ± 5% 边距；harness 校验器的 outcome_mismatch（跑成 guided / safe_stop 不算）；变异 never_ask 不影响它、变异 fo19_leak 不影响它——它的负例是校验器与「没问」这两条",
+        "budget": "每条经真实 HTTP 服务 6–15 s（本机实测，含冷启动 worker）",
+        "approval": "U03 阶段（2026-09-20，ADR 0057）：按 03_CI_POLICY §4 提升——实现 + 真实正反用例 + 台账 + 支持范围说明同一 PR；旧行为（ADR 0047 的 project 档 = 脚本目录、默认沙盒）不变"
+      }
     },
     {
       "id": "FO02",
@@ -5163,12 +5172,21 @@
         "U11"
       ],
       "recommended_deep_lane": "integration_candidate",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
       "merge_rule": "仅在显式激活到当次lane后阻断；目录中的未实现case不直接挂全局required。",
-      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。"
+      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。",
+      "promotion": {
+        "capability": "已有环境首开：scripts/ 与 data/ 分离（cwd 歧义）→ 问一次 → 项目根",
+        "target_scope": "源码树 + 旧后端（PyMuPDF）终点 + 应用 Python 3.13（invariants job：ubuntu；本机：macOS arm64）；不是新能力默认启用，不是发行资格",
+        "lane": "pr",
+        "test": "tests/test_foundation_first_open.py::test_fo02_scripts_and_data_split_asks_once_then_runs_at_the_project_root",
+        "negative_evidence": "选择前渲染被门挡住（render 500 + workdir_confirmation_required）；变异 never_ask（workdir.decision_for 永不问）红",
+        "budget": "每条经真实 HTTP 服务 6–15 s（本机实测，含冷启动 worker）",
+        "approval": "U03 阶段（2026-09-20，ADR 0057）：按 03_CI_POLICY §4 提升——实现 + 真实正反用例 + 台账 + 支持范围说明同一 PR；旧行为（ADR 0047 的 project 档 = 脚本目录、默认沙盒）不变"
+      }
     },
     {
       "id": "FO03",
@@ -5198,12 +5216,21 @@
         "U11"
       ],
       "recommended_deep_lane": "pr_candidate",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
       "merge_rule": "仅在显式激活到当次lane后阻断；目录中的未实现case不直接挂全局required。",
-      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。"
+      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。",
+      "promotion": {
+        "capability": "已有环境首开：__file__ 定位数据 + 本地包",
+        "target_scope": "源码树 + 旧后端（PyMuPDF）终点 + 应用 Python 3.13（invariants job：ubuntu；本机：macOS arm64）；不是新能力默认启用，不是发行资格",
+        "lane": "pr",
+        "test": "tests/test_foundation_first_open.py::test_fo03_file_relative_data_and_local_package_open_automatically",
+        "negative_evidence": "变体脚本 `entry_file.py` 用常量输出名；负例 = 校验器 outcome_mismatch + 本地包名不进任何安装意图",
+        "budget": "每条经真实 HTTP 服务 6–15 s（本机实测，含冷启动 worker）",
+        "approval": "U03 阶段（2026-09-20，ADR 0057）：按 03_CI_POLICY §4 提升——实现 + 真实正反用例 + 台账 + 支持范围说明同一 PR；旧行为（ADR 0047 的 project 档 = 脚本目录、默认沙盒）不变"
+      }
     },
     {
       "id": "FO04",
@@ -5338,12 +5365,21 @@
         "U11"
       ],
       "recommended_deep_lane": "pr_candidate",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
       "merge_rule": "仅在显式激活到当次lane后阻断；目录中的未实现case不直接挂全局required。",
-      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。"
+      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。",
+      "promotion": {
+        "capability": "已有环境首开：同名干扰数据 → 问一次（无推荐）→ 值等于选的那份",
+        "target_scope": "源码树 + 旧后端（PyMuPDF）终点 + 应用 Python 3.13（invariants job：ubuntu；本机：macOS arm64）；不是新能力默认启用，不是发行资格",
+        "lane": "pr",
+        "test": "tests/test_foundation_first_open.py::test_fo07_same_name_data_in_two_places_asks_and_honours_the_choice",
+        "negative_evidence": "选项目根得到干扰值 [601,1201,2401]（证明没有就近替换成「看起来对」的）；变异 ambiguous_as_ok（databinding 把冲突判成 default_ok）红",
+        "budget": "每条经真实 HTTP 服务 6–15 s（本机实测，含冷启动 worker）",
+        "approval": "U03 阶段（2026-09-20，ADR 0057）：按 03_CI_POLICY §4 提升——实现 + 真实正反用例 + 台账 + 支持范围说明同一 PR；旧行为（ADR 0047 的 project 档 = 脚本目录、默认沙盒）不变"
+      }
     },
     {
       "id": "FO08",
@@ -5478,7 +5514,7 @@
         "U11"
       ],
       "recommended_deep_lane": "integration_candidate",
-      "enrollment": "planned",
+      "enrollment": "observing",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
@@ -5513,7 +5549,7 @@
         "U11"
       ],
       "recommended_deep_lane": "integration_candidate",
-      "enrollment": "planned",
+      "enrollment": "observing",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
@@ -5615,12 +5651,21 @@
         "U11"
       ],
       "recommended_deep_lane": "pr_candidate",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
       "merge_rule": "仅在显式激活到当次lane后阻断；目录中的未实现case不直接挂全局required。",
-      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。"
+      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。",
+      "promotion": {
+        "capability": "显式环境失效 → safe_stop（不换、不装、不跑）",
+        "target_scope": "源码树 + 旧后端（PyMuPDF）终点 + 应用 Python 3.13（invariants job：ubuntu；本机：macOS arm64）；不是新能力默认启用，不是发行资格",
+        "lane": "pr",
+        "test": "tests/test_foundation_first_open.py::test_fo15_explicit_interpreter_without_matplotlib_stops_with_a_reason",
+        "negative_evidence": "变异 explicit_fallthrough（select_worker_python 对用不了的显式候选继续往下滑）红；bare venv 装包清单前后一致；safe_stop 的通过不进兼容成功分子（harness passed_by_outcome）",
+        "budget": "每条经真实 HTTP 服务 6–15 s（本机实测，含冷启动 worker）",
+        "approval": "U03 阶段（2026-09-20，ADR 0057）：按 03_CI_POLICY §4 提升——实现 + 真实正反用例 + 台账 + 支持范围说明同一 PR；旧行为（ADR 0047 的 project 档 = 脚本目录、默认沙盒）不变"
+      }
     },
     {
       "id": "FO16",
@@ -5650,7 +5695,7 @@
         "U11"
       ],
       "recommended_deep_lane": "integration_candidate",
-      "enrollment": "planned",
+      "enrollment": "observing",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
@@ -5685,7 +5730,7 @@
         "U11"
       ],
       "recommended_deep_lane": "integration_candidate",
-      "enrollment": "planned",
+      "enrollment": "observing",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
@@ -5755,12 +5800,21 @@
         "U11"
       ],
       "recommended_deep_lane": "pr_candidate",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
       "merge_rule": "仅在显式激活到当次lane后阻断；目录中的未实现case不直接挂全局required。",
-      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。"
+      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。",
+      "promotion": {
+        "capability": "重名引擎模块 + 本地包：用户的模块永远赢（issue #447）",
+        "target_scope": "源码树 + 旧后端（PyMuPDF）终点 + 应用 Python 3.13（invariants job：ubuntu；本机：macOS arm64）；不是新能力默认启用，不是发行资格",
+        "lane": "pr",
+        "test": "tests/test_foundation_first_open.py::test_fo19_user_modules_shadow_engine_names_and_still_win",
+        "negative_evidence": "变异 fo19_leak（把引擎的 manifest / overrides 留在 sys.modules 顶层）红：标题 sentinel 变成引擎的 / AttributeError",
+        "budget": "每条经真实 HTTP 服务 6–15 s（本机实测，含冷启动 worker）",
+        "approval": "U03 阶段（2026-09-20，ADR 0057）：按 03_CI_POLICY §4 提升——实现 + 真实正反用例 + 台账 + 支持范围说明同一 PR；旧行为（ADR 0047 的 project 档 = 脚本目录、默认沙盒）不变"
+      }
     },
     {
       "id": "FO20",

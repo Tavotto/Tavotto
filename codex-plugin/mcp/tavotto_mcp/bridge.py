@@ -51,6 +51,7 @@ from tavotto.engine import (
     readiness as engine_readiness,
     registry as engine_registry,
     telemetry as engine_telemetry,
+    workdir as engine_workdir,
 )
 
 from .roots import (
@@ -285,9 +286,58 @@ class Session:
         try:
             return engine_pool.get(self.script, self.project, self.entry)
         except engine_pool.WorkerError as exc:
-            raise BridgeError(
-                str(exc), code=exc.code or "worker_error", traceback=exc.traceback_text
-            ) from exc
+            raise _bridge_error_from_worker(exc) from exc
+
+
+def _answer_workdir(project: str, mode: str) -> None:
+    """`tavotto_open_figure(workdir=…)`：记住这个项目的运行目录决定（三档闭集）。"""
+    if mode not in engine_workdir.MODES:
+        raise BridgeError(
+            f"不认识的工作目录模式: {mode!r}（可选 {' / '.join(engine_workdir.MODES)}）",
+            code=engine_workdir.ERROR_MODE_INVALID,
+        )
+    before = engine_workdir.mode_for(project)
+    engine_workdir.set_mode(project, mode)
+    if before != mode:
+        # cwd 是 spawn 时定下的：活着的会话还端着旧目录（与 app 的端点同一条纪律）
+        engine_pool.shutdown_all(project)
+
+
+def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
+    """worker 错误 → 带稳定 code 的 BridgeError；U03 的两种结构化载荷原样带出去。
+
+    * `workdir_confirmation_required`：首开要先选运行目录——这是「需要输入」，不是失败。
+      `confirmation` 进 `structuredContent`（选项 / 证据），`recovery` 告诉 Codex 怎么答：
+      再调一次 `tavotto_open_figure` 并带 `workdir=`（与桌面确认框、HTTP 的
+      `PATCH /api/engine/workdir` 是同一份决定）；
+    * `explicit_python_unusable` / `project_python_unusable`：显式选择失效，不静默换环境——
+      `explicit` 说清是哪一条、为什么。
+    """
+    extra: dict = {"traceback": exc.traceback_text}
+    confirmation = getattr(exc, "confirmation", None)
+    if isinstance(confirmation, dict):
+        extra["confirmation"] = confirmation
+        recommended = confirmation.get("recommended")
+        modes = " / ".join(o.get("mode", "") for o in confirmation.get("options") or [])
+        extra["recovery"] = (
+            "先选脚本的运行目录：再调一次 tavotto_open_figure 并带 workdir 参数"
+            f"（可选 {modes}"
+            + (
+                f"；证据推荐 {recommended}"
+                if recommended
+                else "；两处同名数据内容不同，需要用户决定"
+            )
+            + "）。这个决定按项目记住，只问这一次。"
+        )
+    explicit = getattr(exc, "explicit", None)
+    if isinstance(explicit, dict):
+        extra["explicit"] = {
+            k: explicit.get(k, "") for k in ("source", "reason", "trigger") if k in explicit
+        }
+        extra["recovery"] = (
+            "Tavotto 不会自动换成别的环境：请用户在设置里重新指定渲染环境，或清除那条设置回到自动选择。"
+        )
+    return BridgeError(str(exc), code=exc.code or "worker_error", **extra)
 
 
 _SESSIONS: dict[str, Session] = {}
@@ -493,10 +543,19 @@ def open_figure(
     profile_id: str | None = None,
     journal: dict | None = None,
     include_png: bool = False,
+    workdir: str | None = None,
 ) -> dict:
-    """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。"""
+    """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。
+
+    `workdir` 是对首开那一次「需要输入」的回答（U03，ADR 0057）：与桌面确认框、HTTP 的
+    `PATCH /api/engine/workdir` 同一份决定——记进项目设置、关掉这个项目的旧会话，再开。
+    没给就按后端自己的决定走（决定过的直接用；没决定过而证据要问的，这次 open 以
+    `workdir_confirmation_required` 回来）。
+    """
     ctx = _resolve_project(target, stem)
     project, reg_info, registry = ctx.project, ctx.reg_info, ctx.registry
+    if workdir is not None:
+        _answer_workdir(project, workdir)
 
     want = stem or ctx.target_stem
     chosen = _pick_stem(project, want, registry)
@@ -650,6 +709,7 @@ def open_figures(
     discover: bool = False,
     profile_id: str | None = None,
     journal: dict | None = None,
+    workdir: str | None = None,
 ) -> dict:
     """一次调用打开 N 张独立的图，拿回 N 个**各自可编辑**的会话。
 
@@ -662,6 +722,10 @@ def open_figures(
     区别。失败那张带着稳定 code 与它自己的 stem 名回来。
     """
     ctx = _resolve_project(target, None)
+    if workdir is not None:
+        # 首开那一次回答是**项目级**的：批量与单张同一处记账，在开任何一张之前落地
+        # （Codex #456 P2：批量重试带 workdir 时不能静默忽略）
+        _answer_workdir(ctx.project, workdir)
     if discover:
         wanted = discover_stems(ctx.project, ctx.registry)
         source = "discover"

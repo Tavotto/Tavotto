@@ -29,6 +29,9 @@
   * cwd 切到沙盒目录——fig6/fig7 等脚本的相对路径写出/glob 删除不会碰真实 figures 目录
   * 拦截 Figure.savefig 与 paper_style.save（import 脚本前安装）——build 期间不写任何图文件
   * 脚本的 stdout 重定向到 stderr，保证协议通道干净
+  * 引擎的兄弟模块装进**私有包** `tavotto_bridge_runtime.*`（与 native bridge 同一份
+    `bridgeboot`），顶层 `manifest` / `overrides` / `figcapture` … 这些名字**还给用户**——
+    用户项目里同名的模块 import 到的是他自己那份（issue #447 / FO19）
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ import argparse
 import contextlib
 import faulthandler
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -46,25 +50,76 @@ import traceback
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 
-import matplotlib  # noqa: E402 —— 必须在 sys.path 注入之后
+# ---------------------------------------------------------------------------
+# 引擎模块的装载形态（issue #447 / 统一实施包 FO19，ADR 0057）。
+#
+# 之前这里是 `sys.path.insert(0, HERE)` 加平铺 `import figcapture / figsession /
+# wireproto`，而且 engine 目录**永远留在** `sys.path[0]`、那些模块以顶层名字**永远坐在**
+# `sys.modules` 里。用户项目里恰好有 `manifest.py` / `overrides.py` / `config.py`
+# 时，脚本的 `import manifest` 拿到的是 Tavotto 的那份（import 系统先查
+# `sys.modules`，根本不会走 sys.path）——脚本在终端里好好的，进 Tavotto 就
+# AttributeError，而报错指向完全错误的方向。native bridge 早就为此做了私有包装载
+# （`bridgeboot`）；safe worker 现在走**同一份**实现：
+#
+# 1. 把 CPython 自动塞进来的「脚本自己的目录」（= engine 目录）从 `sys.path[0]` 摘掉；
+# 2. 按文件路径装 `bridgeboot`（不能靠 sys.path——那正是它要防的事）；
+# 3. `load_engine_modules()` 把整条平铺 import 闭包装进 `tavotto_bridge_runtime.*`，
+#    装完 `sys.path` 逐字还原、顶层名字还给用户（原本没有就删掉）。
+#
+# 「装什么」的清单是 `_ENGINE_MODULES`；它必须等于 worker 侧平铺 import 的整条传递闭包
+# （`tests/test_runtime_build.py` 从它反推 PyInstaller spec 的 datas，
+# `tests/test_import_architecture.py` 把它登记成 worker.py 的边）。漏一个的后果与
+# bridge 那边一样：那个模块以真·顶层名字留在用户进程里，或者第二个消费者再装一份。
+# ---------------------------------------------------------------------------
+if sys.path and os.path.realpath(sys.path[0]) == os.path.realpath(str(HERE)):
+    del sys.path[0]
+
+_boot_spec = importlib.util.spec_from_file_location(
+    "tavotto_bridge_boot", os.path.join(str(HERE), "bridgeboot.py")
+)
+bridgeboot = importlib.util.module_from_spec(_boot_spec)
+sys.modules["tavotto_bridge_boot"] = bridgeboot
+_boot_spec.loader.exec_module(bridgeboot)
+
+import matplotlib  # noqa: E402 —— safe 档由 Tavotto 挑解释器，backend 在装引擎之前钉死
 
 matplotlib.use("Agg")
 import matplotlib.figure as mfigure  # noqa: E402
 
+#: safe worker 要装进私有包的引擎模块——**整条平铺 import 闭包**，一次装完
+#: （safe 档不像 native 那样要分两阶段避开 matplotlib：这里 matplotlib 本来就先 import）。
+_ENGINE_MODULES = (
+    "figcapture",
+    "patchspec",
+    "pathgeom",
+    "axestraversal",
+    "spinemodel",
+    "tickmodel",
+    "colorbarmodel",
+    "legendmodel",
+    "overrides",
+    "manifest",
+    "previewbudget",
+    "preview_complexity",
+    "preview_hybrid",
+    "figsession",
+    "wireproto",
+)
+_PKG = bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)
+
 # Figure 捕获策略（savefig stem 怎么取、跑完之后还活着的 pyplot Figure 怎么
 # 补进来、相对路径只读回退）与浏览器 playground **共用同一份实现**。抄一份
 # 进来的话，同一个脚本会在两个入口里产出不同的 stem——前端按 stem 索引一切。
-import figcapture  # noqa: E402
+figcapture = _PKG.figcapture
 
 # Figure 到手之后的编辑语义（instrument / manifest / override / 渲染 / 导出 /
 # 快照还原）与**信封语义**都不是 safe worker 私有的：native bridge（ADR 0020）
 # 在用户自己的进程里跑用户的脚本，捕获到 Figure 之后走的必须是同一份实现。
 # 抄一份过去就是第二份 manifest builder + 第二套协议语义——总纲原则 1 明令
 # 禁止，而分叉的表现是同一张图在两条入口里 gid 不一样（数据级错位）。
-import figsession  # noqa: E402
-import wireproto  # noqa: E402
+figsession = _PKG.figsession
+wireproto = _PKG.wireproto
 
 #: 本 worker 的常驻会话。`_patched_savefig` 是模块级函数（要顶掉
 #: `Figure.savefig` 这个类属性），拿不到 Worker 实例，只能走模块级引用。

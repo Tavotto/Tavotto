@@ -37,6 +37,12 @@ ADR 0059）+ 字体政策与可检索文字写入（allowlist 逐字节钉住的
 [`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 的 `migration_evidence` 指向替代用例。交接见
 [`handoffs/U06_ir_text.md`](handoffs/U06_ir_text.md)。
 
+U03 已于 2026-09-20 执行（`implementation_status: done`——PR A 后端编排 + 场景用例，PR B 确认交互（前端对话框 /
+三档设置 / i18n / MCP 投影）；产品资格仍 `not_run`）：解释器选择前移（项目 venv 首开发现 + 体检 + 记住，显式选择失效不静默替换）、
+cwd 三分的生产者（`project_root` 第三档 + 首开按静态证据问一次）、safe worker 经 `bridgeboot` 私有包（#447）、
+静态扫描的问题分类与目标解释器解析（ADR 0057）。六条首开场景经真实 HTTP 入口提到 `enforced`
+（FO01 / FO02 / FO03 / FO07 / FO15 / FO19），四条 `observing`。交接见 [`handoffs/U03_first_open.md`](handoffs/U03_first_open.md)。
+
 ## 从哪里开始
 
 先读 [执行总提示词](00_MASTER_PROMPT.md)、[范围与修改决策](01_SCOPE_AND_DECISIONS.md)、[路线图](02_ROADMAP.md) 和 [CI 生效政策](03_CI_POLICY.md)。随后只执行 [U00](phases/U00_baseline.md)，不要在第一步删除 PyMuPDF、更换根许可证或一次启用全部兼容门禁。

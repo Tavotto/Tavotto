@@ -103,7 +103,9 @@ def fake_pool(monkeypatch):
     monkeypatch.setattr(engine_pool, "build_owned", build_owned)
     monkeypatch.setattr(engine_pool, "same_python", lambda a, b: True)
     monkeypatch.setattr(
-        engine_pool, "resolve_worker_python", lambda root=None: ("/envs/fake/bin/python", "system")
+        engine_pool,
+        "resolve_worker_python",
+        lambda root=None, **kw: ("/envs/fake/bin/python", "system"),
     )
     monkeypatch.setattr(engine_pool, "peek", lambda script, root: box["peek"])
     monkeypatch.setattr(
@@ -400,7 +402,7 @@ def test_the_public_projection_carries_no_machine_paths(client, tmp_path, fake_p
     # 解释器决策指向项目外的一个绝对路径（system 档的形状）
     outside = tmp_path / "elsewhere" / "envs" / "sci" / "bin" / "python"
     monkeypatch.setattr(
-        engine_pool, "resolve_worker_python", lambda r=None: (str(outside), "system")
+        engine_pool, "resolve_worker_python", lambda r=None, **kw: (str(outside), "system")
     )
     needles = {**_machine_paths(root), "interpreter": str(outside), "tmp": str(tmp_path)}
     # ready 分支
@@ -440,7 +442,7 @@ def test_a_project_venv_interpreter_is_shown_project_relative(
     _open(client, root)
     inside = root / ".venv" / "bin" / "python"
     monkeypatch.setattr(
-        engine_pool, "resolve_worker_python", lambda r=None: (str(inside), "project_venv")
+        engine_pool, "resolve_worker_python", lambda r=None, **kw: (str(inside), "project_venv")
     )
     plan = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()["plan"]
     assert plan["environment"]["python"] == ".venv/bin/python"
@@ -455,3 +457,233 @@ def test_the_plan_reads_the_grant_the_product_recorded(client, tmp_path, fake_po
     assert plan["grant"]["cwd_write"]["granted"] is True
     assert plan["launch_context"]["cwd_origin"] == "script.parent"
     assert plan["launch_context"]["write_mode"] == "project_dir"
+
+
+# ---------------------------------------------------------------- U03：需要输入 / 过期计划
+
+
+def _split_project(tmp_path: Path, name: str) -> Path:
+    """`scripts/fig.py` 读 `data/x.csv`（只有项目根找得到）+ 注册表——FO02 的形状。"""
+    root = tmp_path / name
+    (root / "scripts").mkdir(parents=True)
+    (root / "data").mkdir()
+    (root / "data" / "x.csv").write_text("x\n1\n", encoding="utf-8")
+    (root / "scripts" / "fig.py").write_text(
+        "import matplotlib.pyplot as plt\nopen('data/x.csv').read()\nfig, ax = plt.subplots()\n"
+        "ax.plot([1, 2])\nfig.savefig('fig.pdf')\n",
+        encoding="utf-8",
+    )
+    (root / "tavotto_registry.json").write_text(
+        '{"version": 1, "scripts": {"scripts/fig.py": {"entry": "__main__", "cost": "light", '
+        '"notes": "", "stems": ["fig"]}}}',
+        encoding="utf-8",
+    )
+    doc = pymupdf.open()
+    doc.new_page(width=200, height=100)
+    doc.save(root / "fig.pdf")
+    doc.close()
+    return root
+
+
+def test_an_undecided_project_with_root_only_data_needs_input_and_runs_nothing(
+    client, tmp_path, fake_pool
+):
+    """FO02 的合同：没决定过 cwd、数据只在项目根找得到 → `needs_input`（推荐项目根），
+    不起线程、不碰 pool；计划里证据与「怎么回答」都在。"""
+    from tavotto.engine import workdir
+
+    root = _split_project(tmp_path, "p")
+    _open(client, root)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    assert resp.status_code == 202, resp.get_json()
+    body = resp.get_json()
+    assert body["result"]["status"] == preparation.STATUS_NEEDS_INPUT
+    need = body["result"]["required_input"]
+    assert need == body["plan"]["required_input"]
+    assert need["code"] == workdir.ERROR_CONFIRMATION_REQUIRED
+    assert need["reason"] == workdir.REASON_PROJECT_ROOT_EVIDENCE
+    assert need["recommended"] == workdir.MODE_PROJECT_ROOT
+    assert [o["mode"] for o in need["options"]] == ["project_root", "project", "sandbox"]
+    assert need["options"][0]["found"] == ["data/x.csv"]
+    assert need["answer"]["http"] == "PATCH /api/engine/workdir"
+    assert body["plan"]["workdir_decision"]["decided"] is False
+    assert body["plan"]["workdir_decision"]["evidence"]["verdict"] == "project_root"
+    assert fake_pool["build_calls"] == 0
+    assert body["result"]["finished_at"] is not None
+    # 终局：取消也无事可做
+    cancelled = client.post(f"/api/engine/preparation/{body['plan']['plan_id']}/cancel").get_json()
+    assert cancelled["cancelling"] is False
+    # 用户答了（与界面同一条路）→ 下一份计划直接走
+    patched = client.patch("/api/engine/workdir", json={"mode": "project_root"}).get_json()
+    assert patched["workdir"]["mode"] == "project_root" and patched["workdir"]["decided"] is True
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    assert plan["required_input"] is None
+    assert plan["launch_context"]["cwd_origin"] == "project.root"
+    assert (
+        plan["grant"]["cwd_write"]["granted"] is True
+        and plan["grant"]["cwd_write"]["mode"] == "project_root"
+    )
+    assert _wait(client, plan["plan_id"])["result"]["status"] == preparation.STATUS_READY
+    assert fake_pool["build_calls"] == 1
+
+
+def test_a_decision_for_sandbox_is_remembered_and_never_asked_again(client, tmp_path, fake_pool):
+    """用户在确认框里选「继续沙盒」：也是决定——之后不再问；撤销授权 ≠ 回到没决定。"""
+    root = _split_project(tmp_path, "p")
+    _open(client, root)
+    client.patch("/api/engine/workdir", json={"mode": "sandbox"})
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    body = resp.get_json()
+    assert body["result"]["status"] != preparation.STATUS_NEEDS_INPUT
+    assert body["plan"]["workdir_decision"] == {
+        "mode": "sandbox",
+        "decided": True,
+        "needs_confirmation": False,
+        "evidence": None,
+        "confirmation": None,
+    }
+    assert body["plan"]["grant"]["decided"] is True
+    assert body["plan"]["grant"]["cwd_write"]["granted"] is False
+
+
+def test_a_plan_whose_grant_changed_before_execution_is_stale_and_runs_nothing(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """过期授权（FO-007）：计划记的 grant 与起会话那一刻的项目设置不一致——撤销了 / 换了
+    模式——一行脚本都不跑，报 `preparation_plan_stale`。
+
+    执行线程在看授权**之前**先 `pool.peek()`；把替身的 peek 卡在门上，就能把「计划之后、
+    起会话之前」这个窗口摆出来。
+    """
+    root = _split_project(tmp_path, "p")
+    _open(client, root)
+    client.patch("/api/engine/workdir", json={"mode": "project_root"})
+    hold = threading.Event()
+    monkeypatch.setattr(engine_pool, "peek", lambda script, root: hold.wait(30) and None)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    assert plan["grant"]["cwd_write"]["granted"] is True
+    # 计划之后用户撤销了授权
+    client.patch("/api/engine/workdir", json={"mode": "sandbox"})
+    hold.set()  # 线程继续：先看授权，判过期就收工，runner 一次都不调
+    body = _wait(client, plan["plan_id"])
+    assert body["result"]["status"] == preparation.STATUS_ERROR
+    assert body["result"]["error"]["code"] == preparation.ERROR_PLAN_STALE
+    assert body["result"]["receipt"] is None
+    assert fake_pool["build_calls"] == 0
+
+
+def test_a_confirmation_raised_by_the_runner_lands_as_needs_input(client, tmp_path, fake_pool):
+    """计划时不用问、起会话时要问（决定在中间被清掉）：runner 抛的 `workdir_confirmation_required`
+    落成同一个 `needs_input` 终局，不是错误。"""
+    from tavotto.engine import workdir
+
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    err = engine_pool.WorkerError("要先选目录", code=workdir.ERROR_CONFIRMATION_REQUIRED)
+    err.confirmation = {
+        "kind": "workdir",
+        "code": workdir.ERROR_CONFIRMATION_REQUIRED,
+        "options": [],
+    }
+    fake_pool["error"] = err
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    body = _wait(client, resp.get_json()["plan"]["plan_id"])
+    assert body["result"]["status"] == preparation.STATUS_NEEDS_INPUT
+    assert body["result"]["required_input"]["kind"] == "workdir"
+    assert body["result"]["error"] is None
+
+
+def test_the_first_open_projection_branches_carry_no_machine_paths(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """U03 加进投影的三支——`needs_input`（确认载荷 + 静态证据）、显式失效（`error.explicit`）、
+    首开发现 / 作废（`environment.discovery / invalidated`）——与 U01 的合同一样：项目外的路径
+    一律 None，安装目录 / 用户目录 / 临时目录 / 解释器路径一个都不进 HTTP 投影（ADR 0053 §二）。"""
+    outside = tmp_path / "elsewhere" / "envs" / "sci" / "bin" / "python"
+    # ① needs_input：数据只在项目根找得到 → 计划带静态证据、结果带确认载荷
+    root = _split_project(tmp_path, "p")
+    _open(client, root)
+    needles = {**_machine_paths(root), "outside": str(outside), "tmp": str(tmp_path)}
+    body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
+    assert body["result"]["status"] == preparation.STATUS_NEEDS_INPUT
+    assert body["plan"]["workdir_decision"]["evidence"]["verdict"] == "project_root"
+    assert body["result"]["required_input"]["options"]
+    text = json.dumps(body, ensure_ascii=False)
+    for label, needle in needles.items():
+        assert needle not in text, f"needs_input 投影里带了机器路径 {label}: {needle}"
+    # ② 显式失效：用户指的解释器在项目外 → explicit.python 是 None，不是那条绝对路径
+    root = _project(tmp_path, "q")
+    _open(client, root)
+
+    def unusable(root=None, **kw):
+        exc = engine_pool.WorkerError("用不了", code=engine_pool.EXPLICIT_UNUSABLE_CODE)
+        exc.explicit = {"source": "configured", "python": str(outside), "reason": "missing"}
+        raise exc
+
+    monkeypatch.setattr(engine_pool, "resolve_worker_python", unusable)
+    body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
+    assert body["plan"]["environment"]["error"]["explicit"]["reason"] == "missing"
+    assert body["plan"]["environment"]["error"]["explicit"]["python"] is None
+    text = json.dumps(body, ensure_ascii=False)
+    for label, needle in needles.items():
+        assert needle not in text, f"显式失效投影里带了机器路径 {label}: {needle}"
+    # ③ 首开发现 / 作废：候选与被拒的 venv、作废的解释器都在项目外（system 档 / 被删的 venv）
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda r=None, **kw: (str(outside), "system")
+    )
+    monkeypatch.setattr(
+        engine_pool,
+        "first_open_outcome",
+        lambda r: {
+            "ok": False,
+            "code": "no_matplotlib",
+            "candidates": [str(outside.parent.parent)],
+            "rejected": [{"venv": str(outside.parent.parent), "code": "no_matplotlib"}],
+        },
+    )
+    monkeypatch.setattr(
+        engine_pool,
+        "invalidated_decision",
+        lambda r: {"python": str(outside), "reason": "missing", "trigger": "first_open"},
+    )
+    body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()
+    env = body["plan"]["environment"]
+    assert env["discovery"]["candidates"] == [None]
+    assert env["discovery"]["rejected"][0]["venv"] is None
+    assert env["invalidated"]["python"] is None and env["invalidated"]["reason"] == "missing"
+    text = json.dumps(body, ensure_ascii=False)
+    for label, needle in needles.items():
+        assert needle not in text, f"发现 / 作废投影里带了机器路径 {label}: {needle}"
+
+
+def test_a_failed_explicit_environment_is_an_error_with_the_explicit_reason(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """显式选择失效（FO15 / FO16）：计划的 `environment.error.explicit` 与结果的 error 都说清
+    是哪一条、为什么；不静默换环境。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+
+    def unusable(root=None, **kw):
+        exc = engine_pool.WorkerError("用不了", code=engine_pool.EXPLICIT_UNUSABLE_CODE)
+        exc.explicit = {"source": "configured", "python": "/gone/python", "reason": "missing"}
+        raise exc
+
+    monkeypatch.setattr(engine_pool, "resolve_worker_python", unusable)
+    fake_pool["error"] = unusable.__wrapped__ if hasattr(unusable, "__wrapped__") else None
+    try:
+        unusable()
+    except engine_pool.WorkerError as exc:
+        fake_pool["error"] = exc
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    assert plan["environment"]["python"] is None  # 公开投影：没有解释器就是 None
+    assert plan["environment"]["error"]["code"] == engine_pool.EXPLICIT_UNUSABLE_CODE
+    assert plan["environment"]["error"]["explicit"]["source"] == "configured"
+    assert plan["environment"]["error"]["explicit"]["reason"] == "missing"
+    assert plan["launch_context"] is None  # 没有解释器就没有启动上下文，不编一个
+    body = _wait(client, plan["plan_id"])
+    assert body["result"]["status"] == preparation.STATUS_ERROR
+    assert body["result"]["error"]["code"] == engine_pool.EXPLICIT_UNUSABLE_CODE

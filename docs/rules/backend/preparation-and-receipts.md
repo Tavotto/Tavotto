@@ -1,8 +1,8 @@
 # 准备计划、执行回执与源图产物（统一实施包 U01，ADR 0053）
 
-> 2026-09-20 随 U01 新增；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」表里
-> （`engine/preparation.py` / `receipt.py` 那一行）。这里是这一主题规则的**唯一全文**；
-> 速查表只留一行。改规则改这里，并同步那一行。
+> 2026-09-20 随 U01 新增，同日随 U03（ADR 0057）扩到「需要输入」/ 过期计划 / 环境证据；速查行在
+> `src/tavotto/AGENTS.md`「按改动路径找细则」表里（`engine/preparation.py` / `receipt.py` 那一行）。
+> 这里是这一主题规则的**唯一全文**；速查表只留一行。改规则改这里，并同步那一行。
 
 - **计划与观测分开**：`preparation.PreparationPlan` 是「打算怎么跑」（环境证据 / 依赖意图 /
   LaunchContext / grant / 预算），`PreparationResult` 是「实际发生了什么」（状态 / 现有
@@ -30,8 +30,21 @@
   `PreparationPlan.to_payload()` 同样：项目外的解释器只给来源标签（路径存私有字段），错误分支的
   `project_env` 只留 `ok / code / module / reason`。
 - **LaunchContext 是派生视图**：`execspec.launch_context(spec)` 从 spec 算，`ExecutionSpec`
-  与 `worker_argv` 的 golden 一个字节不动。`project.root` 今天没有生产者（占位，U03 才有）；
-  grant 只由 `workdir.set_mode / grant_for` 记账，只记时刻不记人。
+  与 `worker_argv` 的 golden 一个字节不动。四个 `cwd_origin` 各有且只有一个生产者
+  （`sandbox` / `project`=脚本目录 / `project_root`=项目根 / native；ADR 0057 §二）；
+  grant 只由 `workdir.set_mode / grant_for` 记账，只记时刻不记人，多 `mode` 与 `decided`。
+- **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一）：它调 `pool.resolve_worker_python(root,
+  script=…)`——项目 venv 的发现 + 体检 + 记住在这里已经发生（每进程每项目一次），计划里
+  `environment.python_version / matplotlib_version / support / discovery / invalidated / error.explicit`
+  如实写下选了谁、凭什么（体检量到的事实，ADR 0053 的公开投影：项目外的路径一律 None）、发现了什么
+  没采用、上一条自动决策是不是刚作废、显式选择为什么用不了。计划仍然只读产品的决定，不替它选。
+- **首开要问的事是终局 `needs_input`**（U03，ADR 0057 §三）：`workdir.decision_for` 说要问
+  （数据只在项目根找得到 / 两处同名不同值）时 `register()` 直接落 `needs_input`，
+  `result.required_input` = `workdir.confirmation_payload`（选项 / 证据 / 怎么回答），不起线程、
+  不碰 pool。runner 抛 `workdir_confirmation_required`（计划后决定被清掉）落同一终局。答完
+  （`PATCH /api/engine/workdir`）重新准备。
+- **过期计划不执行**（FO-007）：执行线程在起会话之前把 `workdir.grant_for(root)` 与计划记下的
+  `grant` 比一次，不一致就 `preparation_plan_stale`，一行脚本不跑。
 - **DependencyIntent 是第二个读法，不是第二个安装器**：extras / marker / constraints / 冲突
   原样可见，看不懂的行 `kind=unknown` 保留原文（Poetry 的 `^` / `~` / 表值也是 unknown，不剥成
   任意版本）；安装路径的窄语法（ADR 0019 安全边界）一字不动。
@@ -39,6 +52,10 @@
   派生 md）：32 个 FO 场景逐一在台账里、与 registry 一致；enforced 的 case 必须指向真实
   pytest 用例（按 AST 找，不按子串）并写结果记录；预期实例集合在执行前生成；**空集合永远不是通过**。校验器在
   `tests/support/foundation_harness.py`，落点是 `invariants` job 的一步。
+- **台账的 enforced 集合**：U01-S1 + U03 的 FO01 / FO02 / FO03 / FO07 / FO15 / FO19
+  （`tests/test_foundation_first_open.py`，经真实 HTTP 入口，装置在 `tests/support/foundation_app.py`）；
+  safe_stop 的 case 记录 `product_outcome=safe_stop` + `test_verdict=pass`，校验器按台账预期的结果
+  对拍（`outcome_mismatch`）并分开计数，**不进自动兼容成功的分子**。
 - 看护：`tests/test_execution_receipt.py`、`tests/test_preparation_api.py`、
   `tests/test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、
-  `tests/test_foundation_harness.py`。
+  `tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`。

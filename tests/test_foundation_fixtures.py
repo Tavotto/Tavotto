@@ -40,6 +40,7 @@ FIXTURES = (
     "project_venv",
     "dependency_declarations",
     "pdf_png_assets",
+    "shadowed_engine_modules",  # U03（FO19 / issue #447）
 )
 
 
@@ -425,8 +426,36 @@ def _run_native(python: str, cwd: Path, args: list[str], tmp: Path) -> subproces
     )
 
 
+# --------------------------------------------------------------------------- ⑦ 重名引擎模块（U03）
+def test_shadowed_engine_modules_truth_and_the_names_really_collide():
+    """用户的 `manifest.py` / `overrides.py` 与引擎的同名——这是夹具的前提，不是巧合；
+    y 由用户模块算出（RUNS × SCALE）。"""
+    t = _truth("shadowed_engine_modules")
+    engine = Path(__file__).resolve().parent.parent / "src" / "tavotto" / "engine"
+    for name in t["shadowed_engine_modules"]:
+        assert (ROOT / "shadowed_engine_modules" / f"{name}.py").is_file()
+        assert (engine / f"{name}.py").is_file(), f"引擎里已经没有 {name}.py：夹具的前提不成立"
+    manifest = _load_module("_u03_user_manifest", ROOT / "shadowed_engine_modules" / "manifest.py")
+    overrides = _load_module(
+        "_u03_user_overrides", ROOT / "shadowed_engine_modules" / "overrides.py"
+    )
+    lab = _load_module(
+        "_u03_user_lab_utils", ROOT / "shadowed_engine_modules" / "lab_utils" / "__init__.py"
+    )
+    assert "|".join((manifest.WHO, overrides.WHO, lab.WHO)) == t["sentinel_title"]
+    assert lab.scaled([v for _, v in manifest.RUNS], overrides.SCALE) == t["y"]
+    assert list(range(len(manifest.RUNS))) == t["x"]
+
+
 @pytest.mark.parametrize(
-    "name", ["single_file_csv", "split_scripts_data", "same_name_data", "project_venv"]
+    "name",
+    [
+        "single_file_csv",
+        "split_scripts_data",
+        "same_name_data",
+        "project_venv",
+        "shadowed_engine_modules",
+    ],
 )
 def test_native_reference_runs_in_an_isolated_copy_and_leaves_the_fixture_untouched(
     name, sci_python, tmp_path

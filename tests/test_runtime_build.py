@@ -630,10 +630,31 @@ def test_spec_ships_every_module_the_worker_imports():
         # `import manifest` 找的就是它们；`matplotlib` 这类第三方不在此列
         return {n for n in names if (engine / f"{n}.py").is_file()}
 
+    def load_lists(path, names):
+        """根入口经 `bridgeboot.load_engine_modules()` 装进私有包的清单（字面量元组）。
+
+        两个根都不再裸 `import manifest`：worker 走 `_ENGINE_MODULES`（issue #447 /
+        FO19，2026-09-20 起与 bridge 同一份装载器），bridge_runner 走 `_PHASE1` /
+        `_PHASE2`。装载器按名字 `import_module`，AST 上看不到边——清单本身就是边。
+        """
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        out = set()
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id in names for t in node.targets
+            ):
+                assert isinstance(node.value, ast.Tuple), f"{path.name}: {names} 必须是字面量元组"
+                out |= {e.value for e in node.value.elts if isinstance(e, ast.Constant)}
+        assert out, f"用例前提：{path.name} 里确实有 {names} 装载清单"
+        return out
+
     # **两个根**：safe worker 与 native bridge runner 是两条各自独立起进程的
     # 入口（后者由用户自己的解释器按绝对路径执行，见 ADR 0020）。只查一个根
     # 就是这条用例 docstring 里说的「只查半条链」的同款缺陷，换了个位置。
-    closure, todo = set(), ["worker", "bridge_runner"]
+    # 两个根都按文件路径装 `bridgeboot`（不经 import 语句），所以它也是根的一部分。
+    closure, todo = set(), ["worker", "bridge_runner", "bridgeboot"]
+    todo += list(load_lists(engine / "worker.py", ("_ENGINE_MODULES",)))
+    todo += list(load_lists(engine / "bridge_runner.py", ("_PHASE1", "_PHASE2")))
     while todo:
         name = todo.pop()
         if name in closure:
@@ -641,13 +662,14 @@ def test_spec_ships_every_module_the_worker_imports():
         closure.add(name)
         todo += list(flat_imports(engine / f"{name}.py"))
     siblings = {f"{n}.py" for n in closure}
-    assert "patchspec.py" in siblings, "用例前提：worker 确实平铺 import 了 patchspec"
+    assert "patchspec.py" in siblings, "用例前提：worker 的装载清单里确实有 patchspec"
     assert "pathgeom.py" in siblings, (
         "用例前提：manifest 确实平铺 import 了 pathgeom（传递闭包这一层的样本）"
     )
     assert "figsession.py" in siblings and "wireproto.py" in siblings, (
         "用例前提：worker 确实经 figsession / wireproto 复用编辑语义与信封"
     )
+    assert "bridgeboot.py" in siblings, "用例前提：两个根都按文件路径装 bridgeboot"
 
     spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
     shipped = set(re.findall(r'"(\w+\.py)"', spec))

@@ -59,12 +59,19 @@
     `EngineWorker.__init__` 与 `_spawn_spec()` 都是它的消费者
     （`test_workerd_pool.py` 对拍 + `test_execspec.py` golden 看护）。
     新入口不得再手拼 entry/cwd/argv。`spec.env` 只存**注入增量**，
-    序列化绝不携带整份父进程环境。**safe 档的 `cwd_mode`（ADR 0047）**：
-    `sandbox`（默认）/ `project`（脚本所在目录），唯一出处 `engine/workdir.py`
-    （项目设置 `workdir.mode`，不写全局），三条 spawn 路径（Python 池 /
+    序列化绝不携带整份父进程环境。**safe 档的 `cwd_mode`（ADR 0047 / 0057）**：
+    `sandbox`（默认）/ `project`（脚本所在目录）/ `project_root`（项目根），唯一出处
+    `engine/workdir.py`（项目设置 `workdir.mode`，不写全局），三条 spawn 路径（Python 池 /
     `_spawn_spec` / `one_shot`）都从它取——写回的重放必须和热态用同一个 cwd。
-    默认模式 argv 逐字节不变，project 模式只多 `--cwd`。切换走
+    默认模式 argv 逐字节不变，两个真实 cwd 模式只多 `--cwd`。切换走
     `PATCH /api/engine/workdir`，改了就 `shutdown_all(root)`。
+  * **首开的一次确认（U03，ADR 0057 §三）**：`workdir` 键不存在 = 没决定过。起第一个 worker
+    之前 `pool._new_worker()` 调 `workdir.resolve_mode(root, script)`：决定过就用记住的；没决定过
+    按 `engine/databinding.py` 的静态证据——脚本里的相对数据路径字面量只在项目根找得到
+    （`project_root`）、或脚本目录与项目根各有一份同名而内容不同（`ambiguous`）——才抛
+    `workdir_confirmation_required`（结构化选项 / 证据 / 怎么回答，四类入口同一个 code）；
+    证据说不出话（`none` / `unknown`）或默认够用（`default_ok`）不问。**不猜、不就近替换、
+    不搜同名、不自动切到真实 cwd**；决定项目级、问一次记一次，切回沙盒撤销授权但决定留着。
   * 每张捕获 Figure 的结构化描述（`CapturedFigureDescriptor`）唯一实现在
     `figcapture`：asset id `runtime:<script>#<stem>`（不透明标识，entry
     刻意不进 id）、`source_fingerprint`（只是 stale hint，别声称覆盖数据

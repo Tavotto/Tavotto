@@ -1,0 +1,123 @@
+{
+  "case_id": "FO02",
+  "instance_id": "FO02@4eef95cd589f2d3c",
+  "binding": {
+    "source_sha": "a0ae7ff762d798ee42e4242454eea607bd720129",
+    "artifact": {
+      "kind": "source_tree",
+      "identity": "a0ae7ff762d798ee42e4242454eea607bd720129"
+    },
+    "platform": "darwin-arm64",
+    "app_python": "3.13.11",
+    "runtime_lock_sha256": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c",
+    "fixture": "tests/fixtures/foundation/split_scripts_data",
+    "fixture_sha256": "ce1e719ffc4b59c070e5a3f7ba490c32e95ad15ce9588f6547c66eccc58343c9",
+    "entry": "http",
+    "capability_version": "u03"
+  },
+  "product_outcome": "guided",
+  "test_verdict": "pass",
+  "evidence": [
+    "prepare → needs_input(project_root_evidence); render blocked before any run",
+    "after PATCH workdir=project_root: ready, cwd_origin project.root, ylim [0.7, 7.3]"
+  ],
+  "recorded_at": 1789901379.58595,
+  "observed": {
+    "backend": "pymupdf",
+    "required_input": {
+      "answer": {
+        "body": {
+          "mode": "<options[*].mode>"
+        },
+        "http": "PATCH /api/engine/workdir"
+      },
+      "code": "workdir_confirmation_required",
+      "conflicts": [],
+      "kind": "workdir",
+      "message": "脚本读的数据只有在项目根目录下才找得到，请先选择它的运行目录",
+      "options": [
+        {
+          "cwd_origin": "project.root",
+          "found": [
+            "data/points.csv"
+          ],
+          "mode": "project_root",
+          "recommended": true,
+          "write_mode": "project_dir"
+        },
+        {
+          "cwd_origin": "script.parent",
+          "found": [],
+          "mode": "project",
+          "recommended": false,
+          "write_mode": "project_dir"
+        },
+        {
+          "cwd_origin": "sandbox",
+          "found": [],
+          "mode": "sandbox",
+          "recommended": false,
+          "write_mode": "sandboxed"
+        }
+      ],
+      "reads": [
+        "U03 FO02 变体：读相对路径 `data/points.csv`——只有 cwd = 项目根才成立。",
+        "data/points.csv"
+      ],
+      "reason": "project_root_evidence",
+      "recommended": "project_root",
+      "script": "scripts/entry_cwd.py"
+    },
+    "plotted_ylim": [
+      0.7,
+      7.3
+    ],
+    "grant_after": {
+      "cwd_write": {
+        "granted": true,
+        "granted_at": 1789901366.842346,
+        "mode": "project_root"
+      },
+      "decided": true
+    },
+    "receipt": {
+      "receipt_id": "sha256:748030ad2952a292a41855c78d28cfa08ae696813075088b93e45ab157351cdc",
+      "completeness": "complete",
+      "python_source": "system",
+      "generation": 1,
+      "launch_context": {
+        "argv": [],
+        "cwd_mode": "project_root",
+        "cwd_origin": "project.root",
+        "entry": "__main__",
+        "grant": {
+          "cwd_write": {
+            "granted": true,
+            "granted_at": 1789901366.842346,
+            "mode": "project_root"
+          },
+          "decided": true
+        },
+        "launch_context_version": 1,
+        "passthrough_savefig": false,
+        "profile": "safe",
+        "target": "scripts/entry_cwd.py",
+        "target_kind": "script",
+        "write_mode": "project_dir"
+      },
+      "runtime": {
+        "machine": "arm64",
+        "packages": {
+          "matplotlib": "3.10.8",
+          "numpy": "2.4.3",
+          "pandas": "3.0.1",
+          "pillow": "12.1.0",
+          "scipy": "1.17.1"
+        },
+        "platform": "darwin",
+        "python_implementation": "CPython",
+        "python_version": "3.13.11"
+      }
+    }
+  }
+}

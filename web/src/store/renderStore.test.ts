@@ -214,3 +214,70 @@ describe('building：文件级的构建提示不写进变体条目', () => {
     expect(s.building['Fig1.pdf']).toBeUndefined()
   })
 })
+
+describe('首开确认（U03）：失败路径把后端的「需要输入」交给 envStore，但只交给发请求时那个项目', () => {
+  const confirmation = () => ({
+    kind: 'workdir' as const,
+    code: 'workdir_confirmation_required' as const,
+    script: 'scripts/entry.py',
+    reason: 'project_root_evidence' as const,
+    recommended: 'project_root' as const,
+    options: [],
+    conflicts: [],
+    reads: ['data/points.csv'],
+  })
+
+  it('同一个项目：载荷交给 envStore，也留在渲染条目上', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const { useEnvStore } = await import('@/store/envStore')
+    const { setCurrentProjectId } = await import('@/lib/session')
+    useEnvStore.setState({ workdirConfirmation: null })
+    setCurrentProjectId('proj-a')
+    try {
+      engineRender.mockRejectedValue(
+        new EngineError('要先选目录', '', 'workdir_confirmation_required', '', undefined, undefined, {
+          confirmation: confirmation(),
+        }),
+      )
+      await useRenderStore.getState().render('Fig1.pdf', [])
+      const entry = useRenderStore.getState().get(renderKeyOf(panel('a', 'Fig1.pdf')))
+      expect(entry.status).toBe('error')
+      expect(entry.code).toBe('workdir_confirmation_required')
+      expect(entry.confirmation).toEqual(confirmation())
+      expect(useEnvStore.getState().workdirConfirmation).toEqual(confirmation())
+    } finally {
+      setCurrentProjectId(null)
+      useEnvStore.setState({ workdirConfirmation: null })
+    }
+  })
+
+  it('在途中切了项目：A 的失败回来时不把 A 的问题弹到 B 上（Codex #456 P1）', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const { useEnvStore } = await import('@/store/envStore')
+    const { setCurrentProjectId } = await import('@/lib/session')
+    useEnvStore.setState({ workdirConfirmation: null })
+    setCurrentProjectId('proj-a')
+    try {
+      let reject!: (e: unknown) => void
+      engineRender.mockImplementation(
+        () =>
+          new Promise((_, rej) => {
+            reject = rej
+          }),
+      )
+      const pending = useRenderStore.getState().render('Fig1.pdf', [])
+      await Promise.resolve()
+      setCurrentProjectId('proj-b') // 用户切到了 B
+      reject(
+        new EngineError('要先选目录', '', 'workdir_confirmation_required', '', undefined, undefined, {
+          confirmation: confirmation(),
+        }),
+      )
+      await pending
+      expect(useEnvStore.getState().workdirConfirmation).toBeNull()
+    } finally {
+      setCurrentProjectId(null)
+      useEnvStore.setState({ workdirConfirmation: null })
+    }
+  })
+})

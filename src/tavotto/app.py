@@ -686,6 +686,22 @@ def _worker_error_payload(exc) -> dict:
         repair = _dependency_repair_offer(exc, detail)
         if repair is not None:
             body["dependency_repair"] = repair
+    # 首开要先问用户运行目录（U03，ADR 0057）：结构化的「需要输入」原样带出去——
+    # 选项 / 证据 / 怎么回答都在里面，前端据此弹一次确认框，不是错误块。状态码与别的
+    # worker 错误一样是 500（三条门禁钉着字面量 `, 500`），语义全在 `code` 上。
+    confirmation = getattr(exc, "confirmation", None)
+    if isinstance(confirmation, dict):
+        body["confirmation"] = confirmation
+    # 显式选择失效（`explicit_python_unusable` / `project_python_unusable`）：说清是哪一条、
+    # 为什么——机器路径按项目相对显示。
+    explicit = getattr(exc, "explicit", None)
+    if isinstance(explicit, dict):
+        body["explicit"] = {
+            "source": explicit.get("source", ""),
+            "reason": explicit.get("reason", ""),
+            "trigger": explicit.get("trigger", ""),
+            "python": _project_relative(str(explicit.get("python", ""))),
+        }
     return body
 
 
@@ -2183,7 +2199,7 @@ def _diagnostics_project_status() -> dict:
             # 指了别的解释器时，项目记住的那条并不生效，诊断包写成 project_venv
             # 就是在骗人。这一步与报告里既有的 `find_worker_python()` 同档
             # 开销（都可能探测一次），不额外拖慢什么。
-            effective = engine_pool.resolve_worker_python(str(ctx.path))[1]
+            effective = engine_pool.resolve_worker_python(str(ctx.path), discover=False)[1]
         except engine_pool.WorkerError:
             effective = ""
         status["environment_resolution"] = {
@@ -4567,12 +4583,22 @@ def _project_environment_state() -> dict:
         return {"open": False}
     state = engine_projectenv.state(root)
     try:
-        python, source = engine_pool.resolve_worker_python(root)
-    except engine_pool.WorkerError:
+        # `discover=False`：这里只报「此刻的决策」，首开的 venv 发现 + 体检（起子进程）
+        # 归准备 / 起会话那一刻（U03）。显式选择失效时如实带出 code。
+        python, source = engine_pool.resolve_worker_python(root, discover=False)
+        resolution_error = None
+    except engine_pool.WorkerError as exc:
         python, source = "", ""
+        resolution_error = {"code": exc.code, "message": str(exc)}
+        explicit = getattr(exc, "explicit", None)
+        if isinstance(explicit, dict):
+            resolution_error["explicit"] = {
+                k: v for k, v in explicit.items() if k in ("source", "reason", "trigger")
+            }
     out = {
         "open": True,
         "source": source,
+        "resolution_error": resolution_error,
         "source_label": engine_pool.SOURCE_LABELS.get(source, source),
         "python": _project_relative(python) or python,
         "automatic": state.get("automatic", False),
@@ -4862,8 +4888,11 @@ def _set_project_environment(raw: str, *, module: str = ""):
     if module and not engine_projectenv.valid_module_name(module):
         module = ""
     if not raw:
-        engine_projectenv.forget(root)
+        # 清掉 = 用户明确选回默认链条（U03，FO-013）：记成一条决定，而不是「忘了」——
+        # 忘了的话下一次首开又会把项目 venv 发现出来、盖掉这次的选择。
+        engine_projectenv.remember_default(root)
         engine_pool.reset_worker_python()
+        engine_pool.shutdown_all(root)
         return jsonify({"ok": True, "project": _project_environment_state()})
     candidate = Path(raw).expanduser()
     if not candidate.is_absolute():

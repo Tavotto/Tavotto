@@ -27,11 +27,19 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
+import io
 import json
+import os
+import platform
 import re
+import subprocess
+import sys
+import threading
+import tokenize
 from pathlib import Path, PurePosixPath
 
-from . import atomicio, figcapture, registry
+from . import atomicio, figcapture, projectenv, registry, runtime
 
 #: 「什么算一份图产物」的唯一出处在 `figcapture.ARTIFACT_EXTS`（捕获描述符
 #: 判原件、handoff 找产物、这里的静态扫描必须是同一张表）；旧名保留作镜像。
@@ -139,6 +147,172 @@ MAX_DEPTH = 4  # 图库目录层级：panels/、subfigs/ 这种一两层，给�
 MAX_CALL_DEPTH = 6  # 跨函数传播的递归上限（防互递归与深调用链爆栈）
 
 UNKNOWN = "*"
+
+# --------------------------------------------------------------------------
+# 读不动 / 解析不了的分类（统一实施包 U03，ADR 0057；FO-016 / FO-017 / FO12）。
+#
+# 以前 `analyze_script()` 对 IO 错误、解码错误、语法错误与「真的不是绘图脚本」一律回
+# None，`script_inventory` 只能再猜一次（`probe_entry_candidates` 也回 None 才叫
+# unparseable）；而「宿主 AST 不认识的合法语法」（应用是 3.13、项目 venv 是 3.14 的
+# t-string）被当成语法错误，脚本从草稿里消失。现在三件事分开：
+#
+# * 读源码走 `read_source()`：按 PEP 263 的 coding 声明 / BOM 解码（`tokenize.detect_encoding`
+#   是 CPython 自己用的那份判据），解不出的是 `decode_error`，读不到的是 `io_error`；
+# * 解析走 `parse_source()`：宿主 `ast.parse` 失败是 `syntax_error`，带行号与宿主版本；
+# * 宿主判语法错误而**项目的解释器**是另一个版本时，同一份分析在目标解释器里再跑一遍
+#   （`analyze_in_interpreter`：`python -I -c …` 装载本文件做**静态**分析，不 import
+#   用户脚本、不执行）；它解析得了就按它的结果算（`parser == "target"`），解析不了才是
+#   确认的语法错误。目标解释器由调用方给（`pool.resolve_worker_python` 的决策），本模块
+#   不挑解释器。
+# --------------------------------------------------------------------------
+PROBLEM_IO = "io_error"
+PROBLEM_DECODE = "decode_error"
+PROBLEM_SYNTAX = "syntax_error"
+PROBLEMS = (PROBLEM_IO, PROBLEM_DECODE, PROBLEM_SYNTAX)
+
+PARSER_HOST = "host"
+PARSER_TARGET = "target"
+
+#: 目标解释器里跑分析的超时（秒）：冷启动一个解释器 + 解析一个文件，几秒足够；
+#: 超时按「目标解析器不可用」处理（问题仍是宿主报的那个语法错误，`parser_error` 记原因）。
+TARGET_PARSE_TIMEOUT_S = 30.0
+
+#: 目标解析结果缓存：(目标解释器, 脚本路径, 项目根, 文件内容 sha1) → 结果。刷新会反复扫
+#: 同一批文件，每次都起一个解释器是分钟级的代价；文件内容 / 位置变了键就变。
+_target_cache: dict[tuple[str, str], dict] = {}
+_target_lock = threading.Lock()
+
+
+def host_parser_version() -> str:
+    return platform.python_version()
+
+
+def read_source(path: Path) -> tuple[str | None, dict | None]:
+    """读源码 → `(文本, None)` 或 `(None, problem)`。按 PEP 263 声明 / BOM 解码。"""
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        return None, {"kind": PROBLEM_IO, "detail": str(exc)[:200]}
+    try:
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(data).readline)
+    except SyntaxError as exc:  # coding 声明本身不合法 / 与 BOM 冲突
+        return None, {"kind": PROBLEM_DECODE, "detail": str(exc)[:200], "encoding": None}
+    try:
+        text = data.decode(encoding)
+    except (UnicodeDecodeError, LookupError) as exc:
+        return None, {"kind": PROBLEM_DECODE, "detail": str(exc)[:200], "encoding": encoding}
+    return text, None
+
+
+def parse_source(text: str) -> tuple[ast.Module | None, dict | None]:
+    """宿主 `ast.parse` → `(tree, None)` 或 `(None, problem)`（带行号与宿主版本）。"""
+    try:
+        return ast.parse(text), None
+    except SyntaxError as exc:
+        return None, {
+            "kind": PROBLEM_SYNTAX,
+            "detail": (exc.msg or "")[:200],
+            "lineno": exc.lineno,
+            "parser": PARSER_HOST,
+            "parser_version": host_parser_version(),
+        }
+    except ValueError as exc:  # 源码里有 null 字节之类
+        return None, {
+            "kind": PROBLEM_SYNTAX,
+            "detail": str(exc)[:200],
+            "lineno": None,
+            "parser": PARSER_HOST,
+            "parser_version": host_parser_version(),
+        }
+
+
+def _same_interpreter(a: str | None, b: str) -> bool:
+    if not a:
+        return False
+    try:
+        return os.path.realpath(a) == os.path.realpath(b)
+    except (OSError, ValueError):
+        return a == b
+
+
+#: 在目标解释器里跑的引导代码：把 engine 目录以 `tavotto.engine` 的名字装成命名空间包
+#: （相对 import 才解析得到 `atomicio` / `figcapture` / `registry`），再调用本模块的
+#: `inspect_script`——**同一份 stem / entry 算法**，不是第二个解析器。`-I` 隔离：不读
+#: 用户 site、不读 cwd。绝不 import 用户脚本。
+_TARGET_SRC = r"""
+import json, sys, types
+engine_dir, script, root = sys.argv[1], sys.argv[2], sys.argv[3]
+pkg = types.ModuleType("tavotto"); pkg.__path__ = []
+eng = types.ModuleType("tavotto.engine"); eng.__path__ = [engine_dir]
+sys.modules["tavotto"] = pkg; sys.modules["tavotto.engine"] = eng
+from tavotto.engine import discover
+out = discover.inspect_script(discover.Path(script), discover.Path(root), target_python=None)
+out["parser_version"] = discover.host_parser_version()
+sys.stdout.write(json.dumps(out, ensure_ascii=False))
+"""
+
+
+def analyze_in_interpreter(python: str, path: Path, figures_dir: Path) -> dict:
+    """在**目标解释器**里跑一遍同一份静态分析（只解析，不执行用户脚本）。
+
+    回 `inspect_script()` 同形的结构（`info` / `problem`），外加 `parser_version`；
+    目标解析器自己起不来 / 超时 / 输出不合形状时回 `{"error": …}`——那不是脚本的问题，
+    调用方保留宿主的判断并把 `parser_error` 记进 problem。
+    """
+    # 读的是钉在项目根之内的那一条 realpath（`..` / 指到项目外的软链接在这里现出原形），
+    # 不拿调用方的原串重拼——判过与用判过的那一个是两件事（CodeQL #146）。
+    real = projectenv.contained_path(figures_dir, path)
+    if real is None:
+        return {"error": "脚本不在项目目录之内"}
+    path = Path(real)
+    try:
+        digest = hashlib.sha1(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        return {"error": f"read: {exc}"[:200]}
+    # 键里除了解释器与文件内容，还得有**路径与项目根**：`_Analyzer` 拿 `path.name` 还原
+    # `Path(__file__)` 自命名的输出，`_resolve` 拿 `figures_dir` 下的产物对 `*`——两个内容
+    # 相同的 `alpha.py` / `beta.py` 只按内容缓存会让后者报出前者的 stem（Codex #454 P2）。
+    key = (
+        os.path.normcase(os.path.abspath(python)),
+        os.path.normcase(os.path.abspath(str(path))),
+        os.path.normcase(os.path.abspath(str(figures_dir))),
+        digest,
+    )
+    with _target_lock:
+        cached = _target_cache.get(key)
+    if cached is not None:
+        return cached
+    engine_dir = str(Path(__file__).resolve().parent)
+    try:
+        proc = subprocess.run(
+            [python, "-I", "-c", _TARGET_SRC, engine_dir, str(path), str(figures_dir)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=TARGET_PARSE_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+            # GUI 拥有的隐藏子进程（与 `projectenv.probe_environment` 同一类）
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"error": f"spawn: {exc}"[:200]}
+    if proc.returncode != 0:
+        return {"error": (proc.stderr or "").strip()[-300:] or f"exit {proc.returncode}"}
+    try:
+        out = json.loads(proc.stdout.strip() or "{}")
+    except ValueError:
+        return {"error": "目标解析器的输出不是 JSON"}
+    if not isinstance(out, dict) or "info" not in out or "problem" not in out:
+        return {"error": "目标解析器的输出不合形状"}
+    with _target_lock:
+        _target_cache[key] = out
+    return out
+
+
+def reset_target_cache() -> None:
+    with _target_lock:
+        _target_cache.clear()
 
 
 # --------------------------------------------------------------------------
@@ -739,10 +913,15 @@ def probe_entry_candidates(path: Path) -> list[str] | None:
     解析不了（语法错误 / 读不动）返回 None——调用方据此分类 unparseable，
     并退回盲试列表（运行期会给出真正的报错）。
     """
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, SyntaxError):
+    text, problem = read_source(path)
+    tree = parse_source(text)[0] if problem is None else None
+    if tree is None:
         return None
+    return entry_candidates_of(tree)
+
+
+def entry_candidates_of(tree: ast.Module) -> list[str]:
+    """`probe_entry_candidates()` 的树版本——目标解释器解析出来的树也走同一份算法。"""
     funcs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     out: list[str] = []
     for preferred in ("main", "render"):
@@ -863,16 +1042,73 @@ def _resolve(patterns: set[str], figures_dir: Path) -> tuple[set[str], list[str]
     return stems, unresolved
 
 
-def analyze_script(path: Path, figures_dir: Path) -> dict | None:
-    """单个脚本 → 报告条目；不是绘图脚本（无入口 / 不存图）返回 None。"""
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return None
+def analyze_script(
+    path: Path, figures_dir: Path, *, target_python: str | None = None
+) -> dict | None:
+    """单个脚本 → 报告条目；不是绘图脚本（无入口 / 不存图）**或读不动 / 解析不了**返回 None。
+
+    老接口（None 分不清两种情况）保留给只关心「有没有产图」的调用方；要分类的走
+    `inspect_script()`。
+    """
+    return inspect_script(path, figures_dir, target_python=target_python)["info"]
+
+
+def inspect_script(path: Path, figures_dir: Path, *, target_python: str | None = None) -> dict:
+    """单个脚本 → `{"info": 报告条目 | None, "problem": 问题 | None, "parser": …, "entry_candidates": …}`。
+
+    * `info` 是 `analyze_script()` 的条目；不是绘图脚本时 None——那时 `problem` 也是 None
+      （**确认非绘图**，与「解析不了」分开）；
+    * `problem` 是 `PROBLEMS` 之一（io_error / decode_error / syntax_error）；
+    * `parser` 是谁解析的：宿主、目标解释器（宿主判语法错误而目标解析得了）、或 None（没解析成）；
+    * `entry_candidates` 是试运行的静态 entry 候选（解析得了才有，否则 None）。
+
+    宿主 `ast.parse` 判语法错误、且给了**另一个**解释器时，在那个解释器里再跑一遍同一份
+    分析（`analyze_in_interpreter`）：它解析得了就按它的结果算，脚本不从列表里消失（FO12）；
+    它也解析不了才是确认的语法错误（problem 里同时记两边的版本）。
+
+    读的永远是钉在 `figures_dir` 之内的 realpath：`..` 回溯、指到项目外的软链接都算
+    `io_error`（脚本不在项目目录之内），不替调用方读项目外的文件（CodeQL #145）。
+    """
+    real = projectenv.contained_path(figures_dir, path)
+    if real is None:
+        problem = {"kind": PROBLEM_IO, "detail": "脚本不在项目目录之内"}
+        return {"info": None, "problem": problem, "parser": None, "entry_candidates": None}
+    path = Path(real)
+    text, problem = read_source(path)
+    if problem is not None:
+        return {"info": None, "problem": problem, "parser": None, "entry_candidates": None}
+    tree, problem = parse_source(text or "")
+    if tree is None:
+        if target_python and not _same_interpreter(sys.executable, target_python):
+            remote = analyze_in_interpreter(target_python, path, figures_dir)
+            if "error" in remote:
+                problem["parser_error"] = remote["error"]
+            elif remote.get("problem") is None:
+                # 目标解释器认这份语法：按它的分析算，脚本照常在库存里
+                return {
+                    "info": remote.get("info"),
+                    "problem": None,
+                    "parser": PARSER_TARGET,
+                    "parser_version": remote.get("parser_version", ""),
+                    "entry_candidates": remote.get("entry_candidates"),
+                }
+            else:
+                problem["target"] = {
+                    "parser_version": remote.get("parser_version", ""),
+                    "detail": (remote.get("problem") or {}).get("detail", ""),
+                    "lineno": (remote.get("problem") or {}).get("lineno"),
+                }
+        return {"info": None, "problem": problem, "parser": None, "entry_candidates": None}
+    return {
+        "info": _analyze_tree(tree, path, figures_dir),
+        "problem": None,
+        "parser": PARSER_HOST,
+        "entry_candidates": entry_candidates_of(tree),
+    }
+
+
+def _analyze_tree(tree: ast.Module, path: Path, figures_dir: Path) -> dict | None:
+    """解析好的树 → 报告条目；不是绘图脚本（无入口 / 不存图）返回 None。"""
     entry = _entry_of(tree)
     if entry is None:
         # 顶层直写、既没有函数也没有 `if __name__` 守卫——AI 生成的
@@ -917,21 +1153,32 @@ def claims_of(scripts: dict[str, dict]) -> dict[str, list[str]]:
     return out
 
 
-def discover(figures_dir: str | Path) -> dict:
-    """扫描图库（含子目录）里的候选脚本，返回原始报告。"""
+def discover(figures_dir: str | Path, *, target_python: str | None = None) -> dict:
+    """扫描图库（含子目录）里的候选脚本，返回原始报告。
+
+    `problems` 是读不动 / 解析不了的脚本（`rel → problem`），与「确认不是绘图脚本」
+    分开——后者既不在 `scripts` 也不在 `problems`。`target_python` 给了就把宿主判
+    语法错误的交给它再解析一遍（见 `inspect_script`）。
+    """
     figures_dir = Path(figures_dir)
     scripts: dict[str, dict] = {}
+    problems: dict[str, dict] = {}
     for p in iter_scripts(figures_dir):
-        info = analyze_script(p, figures_dir)
-        if info is not None:
-            scripts[_rel_key(p, figures_dir)] = info
+        seen = inspect_script(p, figures_dir, target_python=target_python)
+        rel = _rel_key(p, figures_dir)
+        if seen["info"] is not None:
+            scripts[rel] = seen["info"]
+            if seen.get("parser") == PARSER_TARGET:
+                scripts[rel]["parser"] = PARSER_TARGET
+        elif seen["problem"] is not None:
+            problems[rel] = seen["problem"]
     conflicts = {s: sorted(cs) for s, cs in claims_of(scripts).items() if len(cs) > 1}
-    return {"scripts": scripts, "conflicts": conflicts}
+    return {"scripts": scripts, "conflicts": conflicts, "problems": problems}
 
 
-def build_draft(figures_dir: str | Path) -> tuple[dict, dict]:
+def build_draft(figures_dir: str | Path, *, target_python: str | None = None) -> tuple[dict, dict]:
     """报告 → 注册表草稿。冲突 stem 不分配给任何脚本，留给人工裁决。"""
-    rep = discover(figures_dir)
+    rep = discover(figures_dir, target_python=target_python)
     cfg: dict[str, dict] = {}
     for script, info in sorted(rep["scripts"].items()):
         stems = [s for s in info["stems"] if s not in rep["conflicts"]]
@@ -962,12 +1209,12 @@ def write_config(figures_dir: str | Path, cfg: dict) -> Path:
     return path
 
 
-def merge(figures_dir: str | Path) -> tuple[dict, dict, dict]:
+def merge(figures_dir: str | Path, *, target_python: str | None = None) -> tuple[dict, dict, dict]:
     """草稿并入现有注册表：现有条目原样保留，只追加新脚本与未登记的 stem。
 
     返回 (合并后的配置, 原始报告, 变更摘要)。
     """
-    draft, rep = build_draft(figures_dir)
+    draft, rep = build_draft(figures_dir, target_python=target_python)
     # 读旧名那份也算数（write_config 仍只写新名，合并结果因此自然完成搬迁）。
     path = registry.existing_registry_path(figures_dir)
     if path is None:

@@ -10,8 +10,10 @@ import {
   type DependencyRepairOffer,
   type Manifest,
   type ProjectEnvFailure,
+  type WorkdirConfirmation,
 } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
+import { currentProjectId } from '@/lib/session'
 import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import { useAssetStore } from '@/store/assetStore'
 import { useEnvStore } from '@/store/envStore'
@@ -99,6 +101,11 @@ export interface PanelRender {
    * 可选的安装目标、还剩几轮。null = 后端没给（老服务端 / 没打开项目）。
    */
   dependencyRepair: DependencyRepairOffer | null
+  /**
+   * `workdir_confirmation_required`（U03）时后端给的「先选运行目录」载荷。留在条目上是为了
+   * 用户在确认框里点了「稍后」之后，错误块里还能再把它打开——不留的话那扇门只开一次。
+   */
+  confirmation: WorkdirConfirmation | null
   traceback: string
   warnings: string[]
   /** 最近一次成功渲染的阶段计时（毫秒，键见 api.ts）；暂不做 UI */
@@ -132,6 +139,7 @@ const EMPTY: PanelRender = {
   module: '',
   projectEnv: null,
   dependencyRepair: null,
+  confirmation: null,
   traceback: '',
   warnings: [],
   timings: {},
@@ -482,6 +490,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     }
     slot.busy = true
     const patch = get().patch
+    // 发请求那一刻的项目：失败回来时它决定「首开确认框」能不能弹（切了项目就不弹，
+    // A 的问题不摆到 B 上）。同一条纪律：请求序号挡旧响应、发请求那一刻的 pj 挡串项目。
+    const projectAtStart = currentProjectId()
 
     try {
       let current = patches
@@ -541,6 +552,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             error: null,
             projectEnv: null,
             dependencyRepair: null,
+            confirmation: null,
             traceback: '',
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
@@ -631,6 +643,13 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             slot.queued = null
             continue
           }
+          // 首开要先选运行目录（U03）：不是错误块，是一次确认——载荷交给 envStore，
+          // `WorkdirConfirmDialog` 渲染它；条目上也留一份，「稍后」之后还能再开
+          const confirmation =
+            err instanceof EngineError ? (err.confirmation ?? null) : null
+          if (confirmation) {
+            useEnvStore.getState().requestWorkdirConfirmation(confirmation, projectAtStart)
+          }
           // 失败时保留旧 SVG，用户还能看到上一版
           patch(key, {
             fileId,
@@ -640,6 +659,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             projectEnv: err instanceof EngineError ? (err.projectEnv ?? null) : null,
             dependencyRepair:
               err instanceof EngineError ? (err.dependencyRepair ?? null) : null,
+            confirmation,
             error: timedOut
               ? msg('render.timeout',
                     { minutes: Math.round(timeoutMs / 60_000) }, 'errors')

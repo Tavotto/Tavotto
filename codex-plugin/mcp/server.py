@@ -82,7 +82,7 @@ DESKTOP_ONLY_HINT = (
 _BRIDGE_IMPORT = (
     "from tavotto.engine import artifactcheck, config, exportjob, exportreq, figcapture, "
     "handoff, interference, normalize, patchspec, pool, preflight, previewbudget, "
-    "profiles, profilestore, project_refresh, readiness, registry, telemetry"
+    "profiles, profilestore, project_refresh, readiness, registry, telemetry, workdir"
 )
 
 

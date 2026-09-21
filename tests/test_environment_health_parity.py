@@ -130,15 +130,14 @@ def _clean(monkeypatch):
 
 
 # --------------------------------------------- 体检的主语 = worker 的启动导入链
-def _top_level_imports(path: Path) -> set[str]:
-    """一个模块顶层 `import x` / `from x import …` 的顶级名字。"""
-    names: set[str] = set()
+def _engine_load_list(path: Path) -> set[str]:
+    """worker.py 经 bridgeboot 装进私有包的引擎模块清单（`_ENGINE_MODULES = (...)` 字面量）。"""
     for node in ast.parse(path.read_text(encoding="utf-8")).body:
-        if isinstance(node, ast.Import):
-            names.update(alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            names.add(node.module.split(".")[0])
-    return names
+        if isinstance(node, ast.Assign) and any(
+            getattr(t, "id", "") == "_ENGINE_MODULES" for t in node.targets
+        ):
+            return {elt.value for elt in node.value.elts}
+    raise AssertionError("worker.py 里没有 _ENGINE_MODULES 清单")
 
 
 def test_the_probe_executes_the_worker_file_itself():
@@ -160,8 +159,10 @@ def test_the_probe_executes_the_worker_file_itself():
     assert "worker" not in imported, imported
     assert "spec_from_file_location" in projectenv._PROBE_SRC
     assert '"worker.py"' in projectenv._PROBE_SRC
-    # 而 worker.py 自己确实平铺 import 了那几个体检从前只抄了一部分的名字
-    assert {"figcapture", "figsession", "wireproto"} <= _top_level_imports(ENGINE / "worker.py")
+    # 而 worker.py 自己确实要那几个体检从前只抄了一部分的名字——U03（ADR 0057 / #447）起
+    # 它不再顶层 `import figcapture`，而是经 bridgeboot 按 `_ENGINE_MODULES` 清单装进私有包；
+    # 跑文件本身就把清单里的每一个都装了，清单才是它真正的启动导入链
+    assert {"figcapture", "figsession", "wireproto"} <= _engine_load_list(ENGINE / "worker.py")
 
 
 def _fake_engine_dir(tmp_path: Path, *, worker_error: str) -> Path:
