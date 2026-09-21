@@ -494,23 +494,30 @@ def test_writing_the_same_page_twice_gives_identical_bytes(written, provider, tm
 # ---------------------------------------------------------------- 能力表交叉核对（RC-011）
 
 
-def _page_with(op: str, provider) -> ir.Page:
-    """用到恰好这一种操作的最小页面。"""
-    sha = "ab" * 32
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "foundation" / "pdf_png_assets"
+
+
+def _page_with(op: str, provider) -> tuple[ir.Page, dict[str, bytes]]:
+    """用到恰好这一种操作的最小页面，以及它引用的文件字节（面板要真源：U07 起 image / imported_page /
+    flip 是 native，写入器要真的写出 XObject）。"""
+    png = (FIXTURE / "original.png").read_bytes()
+    pdf = (FIXTURE / "page.pdf").read_bytes()
     black = ir.Paint((0.0, 0.0, 0.0))
     rect = ir.Path((("M", 1, 1), ("L", 10, 1), ("L", 10, 10), ("Z",)), fill=black)
     face = provider.face_for("serif", False, False)
     font = {"font": face.resource}
     if op == "page_background":
-        return ir.Page(20, 20, (), {}, (1.0, 1.0, 1.0))
+        return ir.Page(20, 20, (), {}, (1.0, 1.0, 1.0)), {}
     if op == "path_fill":
-        return ir.Page(20, 20, (rect,), {}, None)
+        return ir.Page(20, 20, (rect,), {}, None), {}
     if op == "path_stroke":
-        return ir.Page(20, 20, (ir.Path(rect.segments, stroke=ir.Stroke(black, 1.0)),), {}, None)
+        return ir.Page(
+            20, 20, (ir.Path(rect.segments, stroke=ir.Stroke(black, 1.0)),), {}, None
+        ), {}
     if op == "clip":
-        return ir.Page(20, 20, (ir.Group((rect,), clip=rect),), {}, None)
+        return ir.Page(20, 20, (ir.Group((rect,), clip=rect),), {}, None), {}
     if op == "group_opacity":
-        return ir.Page(20, 20, (ir.Group((rect,), opacity=0.5),), {}, None)
+        return ir.Page(20, 20, (ir.Group((rect,), opacity=0.5),), {}, None), {}
     if op == "object_alpha":
         # 路径与文字各一份：文字的 alpha 走另一条发射路径（BT 之前的 gs），只用路径测会漏掉它（Codex #460 P2）
         glyphs = face.shape("Ab")
@@ -523,22 +530,29 @@ def _page_with(op: str, provider) -> ir.Page:
             ),
             font,
             None,
-        )
+        ), {}
     if op == "text":
         glyphs = face.shape("Ab")
         return ir.Page(
             20, 20, (ir.ShapedText(2, 2, (ir.GlyphRun("font", 9.0, glyphs),), black),), font, None
-        )
+        ), {}
     if op == "image":
-        res = ir.FileResource("x.png", "png", sha, "static", "sha256:" + "0" * 64)
-        return ir.Page(20, 20, (ir.Image("img", (1, 1, 5, 5)),), {"img": res}, None)
+        res = ir.FileResource("x.png", "png", _sha(png), "static", "sha256:" + "0" * 64)
+        return ir.Page(20, 20, (ir.Image("img", (1, 1, 5, 5)),), {"img": res}, None), {"img": png}
     if op == "imported_page":
-        res = ir.FileResource("x.pdf", "pdf", sha, "static", "sha256:" + "0" * 64)
-        return ir.Page(20, 20, (ir.ImportedPage("pg", (1, 1, 5, 5)),), {"pg": res}, None)
+        res = ir.FileResource("x.pdf", "pdf", _sha(pdf), "static", "sha256:" + "0" * 64)
+        return ir.Page(20, 20, (ir.ImportedPage("pg", (1, 1, 5, 5)),), {"pg": res}, None), {
+            "pg": pdf
+        }
     if op == "flip":
-        res = ir.FileResource("x.png", "png", sha, "static", "sha256:" + "0" * 64)
-        return ir.Page(20, 20, (ir.Image("img", (1, 1, 5, 5), flip_h=True),), {"img": res}, None)
+        res = ir.FileResource("x.png", "png", _sha(png), "static", "sha256:" + "0" * 64)
+        page = ir.Page(20, 20, (ir.Image("img", (1, 1, 5, 5), flip_h=True),), {"img": res}, None)
+        return page, {"img": png}
     raise AssertionError(f"没有为操作 {op} 准备最小页面——能力表加了操作，这里要跟上")
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 MARKERS = {
@@ -549,6 +563,10 @@ MARKERS = {
     "group_opacity": b"/Group",
     "object_alpha": b" gs",
     "text": b"BT",
+    "image": b"/Subtype /Image",
+    "imported_page": b"/Subtype /Form",
+    # 镜像 = cm 里的负缩放：Image 的落位矩阵 a 分量为负（`-5 0 0 5 … cm`）
+    "flip": b"-5 0 0 5 ",
 }
 
 
@@ -558,10 +576,10 @@ def test_each_declared_capability_matches_what_the_writer_really_does(op, provid
     from tavotto.rendercore import pdfwriter
 
     cap = ir.capability("pdf", op)
-    page = _page_with(op, provider)
+    page, files = _page_with(op, provider)
     out = tmp_path / f"{op}.pdf"
     if cap.level == ir.CAP_NATIVE:
-        pdfwriter.write_pdf(page, out, provider)
+        pdfwriter.write_pdf(page, out, provider, files)
         objs = pdfread.objects(out.read_bytes())
         blob = b"".join((h + (d or b"")) for h, d in objs.values())
         assert MARKERS[op] in blob, op
@@ -571,7 +589,7 @@ def test_each_declared_capability_matches_what_the_writer_really_does(op, provid
             assert re.search(rb"q\n/GS\d+ gs\nBT", content), content
     else:
         with pytest.raises(pdfwriter.UnsupportedCapability) as ei:
-            pdfwriter.write_pdf(page, out, provider)
+            pdfwriter.write_pdf(page, out, provider, files)
         used = {o for n, _ in ir.walk(page) for o in ir.operations_of(n)}
         assert op in used and ei.value.operation in used
         assert ir.capability("pdf", ei.value.operation).level == ir.CAP_UNSUPPORTED

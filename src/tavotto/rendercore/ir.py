@@ -288,12 +288,15 @@ class ShapedText:
 @dataclass(frozen=True)
 class Image:
     """位图放置：资源 `resource` 的整幅像素（或 crop 后的子矩形）映到局部空间的 `rect`。
-    `crop` 是归一化 (x, y, w, h)、**顶原点**、相对源图——与旧 facade `_crop_clip` 同一约定。"""
+    `crop` 是归一化 (x, y, w, h)、**顶原点**、相对源图——与旧 facade `_crop_clip` 同一约定；
+    `rotate_cw_deg` 绕 rect 中心顺时针（CSS 语义），与 `ImportedPage` 同一条合同（`placement.place`）。
+    `opacity < 1` 是常量 alpha（`object_alpha`：位图是一次填充，没有「组内重叠」这回事）。"""
 
     resource: str
     rect: tuple[float, float, float, float]  # x, y, w, h（局部空间，y 向上）
     opacity: float = 1.0
     crop: tuple[float, float, float, float] | None = None
+    rotate_cw_deg: float = 0.0
     flip_h: bool = False
     flip_v: bool = False
     object_id: str = ""
@@ -381,12 +384,12 @@ def _caps(level: str, reason: str, ops: tuple[str, ...]) -> dict[str, Capability
     return {op: Capability(level, reason) for op in ops}
 
 
-#: **本切片（U06）写入器真实实现了什么**。格式 → 操作 → 能力。
+#: **写入器真实实现了什么**。格式 → 操作 → 能力。
 #:
 #: 这张表不是愿望清单：`tests/test_rendercore_writer.py` 逐条交叉核对——声明 `native`
 #: 的操作，写入器必须真的写出对应的操作符；声明 `unsupported` 的，写入器必须以
 #: `UnsupportedCapability` 拒绝（RC-011 must_fail_example：未实现的后端对外声明 native）。
-#: U07 实现 image / imported_page / 位图格式时改这张表，并让那条交叉用例跟着变。
+#: 改这张表（加操作 / 翻档）时那条交叉用例必须跟着变。
 CAPABILITIES: dict[str, dict[str, Capability]] = {
     # 声明 native 的每一项都由 `pdfwriter` 真的写出，`tests/test_rendercore_writer.py` 逐操作交叉核对
     # （声明了 native 而写入器写不出，就是 RC-011 要挡的那件事）。
@@ -405,9 +408,12 @@ CAPABILITIES: dict[str, dict[str, Capability]] = {
             ),
         ),
         **_caps(
-            CAP_UNSUPPORTED, "U07：Form XObject 导入与位图放置尚未收编", ("image", "imported_page")
+            CAP_NATIVE,
+            "U07 写入器：外来页整页作 Form XObject（qpdf copy_foreign，页盒 / Rotate / UserUnit 折进 /Matrix）、"
+            "位图作 Image XObject（Flate + /SMask，JPEG 直通 DCTDecode）、镜像是 cm 里的负缩放——"
+            "都是矢量落位，不退位图（ADR 0065）",
+            ("image", "imported_page", "flip"),
         ),
-        **_caps(CAP_UNSUPPORTED, "U07：镜像随导入页一起做", ("flip",)),
     },
     "png": _caps(CAP_UNSUPPORTED, "U07：PDFium render child 尚未收编", OPERATIONS),
     "tiff": _caps(CAP_UNSUPPORTED, "U07：与 PNG 同一次栅格化", OPERATIONS),
@@ -646,8 +652,8 @@ def _placement(
     _rect(node.rect, path)
     _crop(node.crop, path)
     _alpha(node.opacity, path)
+    _finite(node.rotate_cw_deg, path, "rotate_cw_deg")
     if isinstance(node, ImportedPage):
-        _finite(node.rotate_cw_deg, path, "rotate_cw_deg")
         if (
             isinstance(node.page_index, bool)
             or not isinstance(node.page_index, int)

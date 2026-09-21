@@ -124,10 +124,12 @@ def test_a_text_only_canvas_exports_a_vector_pdf_and_reports_png_as_not_yet_supp
     assert not any(p.name.startswith(exportjob.TMP_PREFIX) for p in export_dir.iterdir())
 
 
-def test_a_panel_makes_pdf_fail_structurally_in_this_slice_not_silently(
+def test_a_panel_canvas_exports_a_vector_pdf_with_the_source_page_inside(
     project, provider, tmp_path
 ):
-    """页上有面板（ImportedPage）：PDF 那一项 `format_failed`，理由指向 U07；不整页失败、不画个空框假装成功。"""
+    """页上有面板（ImportedPage，U07 起 native）：PDF 那一项 `done`、`vector: True`，源页的文字层随
+    Form XObject 一起在产物里；作业里读的是冻结那一份字节（`files` 经 `read_frozen()` 交给写入器）。"""
+    export_dir = tmp_path / "out"
     job = exportjob.prepare(
         _spec(
             [
@@ -138,18 +140,23 @@ def test_a_panel_makes_pdf_fail_structurally_in_this_slice_not_silently(
                     "y_mm": 5,
                     "w_mm": 60,
                     "h_mm": 40,
+                    "rotation": 90,
+                    "opacity": 0.5,
                 }
             ],
             formats=("pdf",),
         ),
-        tmp_path / "out",
+        export_dir,
     )
     payload = _run(job, project, provider)
-    assert payload["status"] == "failed"
+    assert payload["status"] == "done", payload
     out = payload["outputs"][0]
-    assert out["error"]["code"] == "format_failed"
-    assert out["error"]["params"]["unsupported"][0]["operation"] == "imported_page"
-    assert not (tmp_path / "out" / "Fig 1.pdf").exists()
+    assert out["status"] == "done" and out["vector"] is True
+    data = (export_dir / "Fig 1.pdf").read_bytes()
+    assert data[:5] == b"%PDF-" and b"/Subtype /Form" in data and b"/Transparency" in data
+    pdfium = pytest.importorskip("pypdfium2", reason="pypdfium2 未装（not_run）")
+    text = pdfium.PdfDocument(str(export_dir / "Fig 1.pdf"))[0].get_textpage().get_text_range()
+    assert "U00 fixture: y = 3x + 1" in text
 
 
 def test_a_frozen_source_that_changes_before_writing_fails_the_job(

@@ -4,11 +4,11 @@
 `app._export_produce_canvas`。这里给 RenderCore 一条同形的路，**作业生命周期（临时目录 → 原子发布 /
 partial / 取消 / 终局字段顺序）一个字不改**，全在 `exportjob` 里。
 
-U06 只做 `scope=canvas` + `pdf`：编译 RenderPlan → 每个面板的冻结源在写入前 `read_frozen()` 核 hash
-（RC-014）→ `pdfwriter` 写进作业自己的临时目录（RC-015 / 016：中间文件私有）。其它格式按
-`ir.CAPABILITIES` 逐项报 `format_failed`（error 里带结构化理由），PDF 照常交付——`partial` 是
-`exportjob` 的既有语义。写入器的 `unsupported_capability`（例如页上有 `ImportedPage`，U07 才收编）
-同样落到 `format_failed`，不整页失败、不静默降级。
+`scope=canvas`：编译 RenderPlan → 每个面板的冻结源在写入前 `read_frozen()` 读进内存并核 hash
+（RC-014；写入器只吃这一份字节）→ `pdfwriter` 写进作业自己的临时目录（RC-015 / 016：中间文件私有）。
+其它格式按 `ir.CAPABILITIES` 逐项报 `format_failed`（error 里带结构化理由），PDF 照常交付——`partial`
+是 `exportjob` 的既有语义。写入器的 `WriterError`（不支持的操作、源打不开、字节身份不符）同样落到
+`format_failed`，不整页失败、不静默降级。
 
 编译期的事实（缺字、落到 CJK 脸的字符、hidden 被丢）进 `job.warnings`，与旧路 worker 的
 warnings 同一个口子——「导出的图和画布上不一样」必须有个说法。
@@ -61,11 +61,12 @@ def produce(
         msg = f"{oid}: hidden"
         if msg not in job.warnings:
             job.warnings.append(msg)
-    # 冻结源在写入之前逐个核 hash（U06 的写入器还不放置它们，但核对必须在这里、在读之前）
+    # 冻结源在写入之前逐个读进内存并核 hash（RC-014）：写入器用的就是这一份字节，不再碰文件
+    files: dict[str, bytes] = {}
     for key, fs in rp.sources.items():
         job.check_cancelled()
         try:
-            read_frozen(fs)
+            files[key] = read_frozen(fs)
         except SourceError as exc:
             raise exportreq.ExportRequestError(
                 "export_render_failed",
@@ -101,7 +102,7 @@ def produce(
             continue
         tmp = tmp_dir / f"out.{fmt}"
         try:
-            facts = pdfwriter.write_pdf(rp.page, tmp, provider)
+            facts = pdfwriter.write_pdf(rp.page, tmp, provider, files)
         except pdfwriter.WriterError as exc:
             produced.append(
                 exportjob.Produced(
