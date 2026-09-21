@@ -55,7 +55,10 @@
   `mappable_gid`（色条直接挂着的那个）与 `scale_gids`（与它共用同一份 norm 对象的
   **色阶兄弟**，引擎 `colorbarmodel.scale_siblings` 判、2026-09-21），唯一谓词
   `lib/colormapAlias.colorbarCovers(colorbar, gid)`；不猜「两边 cmap 名字相同」；
-  引擎没给就整行不出现。色条页的对家仍是 `mappable_gid` 那个（兄弟页各自指回色条）。
+  引擎没给就整行不出现；**只指向还摆着色阶控件的色条**（它的 `cmap` 字段在）——色条的
+  mappable 映射断了时引擎把控件收起来，这里不摆指向空处的入口，而覆盖关系（回到脚本
+  原样要清谁）走 `colormapAliasGids`、不看控件在不在，两个问题两个判据。色条页的对家仍是
+  `mappable_gid` 那个（兄弟页各自指回色条）。
 * **色图选择器（`controls/ColormapPicker.tsx`，2026-09-13）**：白名单之外的色图长什么样
   由引擎的两条事实说——`cmap_current`（此刻这张：`custom` / `stops` / `discrete`）与
   `cmap_original`（换走之后脚本原来那张，多一个 `name`）。渐变的唯一出处

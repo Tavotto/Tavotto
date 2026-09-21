@@ -1074,10 +1074,11 @@ def main():
 """
 
 
-def test_scale_link_follows_the_colorbars_own_gate(tmp_path):
+def test_scale_coverage_survives_the_colorbars_own_gate(tmp_path):
     """色条自己的映射断了（它的线组被设了 edgecolor）→ 三个色阶控件收起来，
-    `scale_gids` 也不再发：兄弟页不能指向一条没有控件的色条（#474 评审第六轮）。
-    兄弟自己那侧的 cmap 字段照旧在。"""
+    但 `scale_gids`（覆盖关系）**照发**：先前写下的色条 cmap override 仍在给兄弟上色，
+    兄弟页「回到脚本原样」要靠它找到那条 override 并清掉（#474 评审第七轮）。「兄弟页
+    摆不摆链接」由前端按色条有没有 cmap 字段判（`colorScalePanels.test.tsx`）。"""
     figs = tmp_path / "figures"
     figs.mkdir()
     (figs / "fig_gated.py").write_text(GATED_COLORBAR_SCRIPT, encoding="utf-8")
@@ -1094,18 +1095,28 @@ def test_scale_link_follows_the_colorbars_own_gate(tmp_path):
         assert cb["scale_gids"] == [mesh["gid"]]
         assert any(f["prop"] == "cmap" for f in cb["editable"])
 
-        kill = [{"gid": cb["mappable_gid"], "prop": "edgecolor", "value": "#804000"}]
-        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": kill})["manifest"]
+        # 先从色条换色图（兄弟跟着变），再把色条的线组设死边色：控件收起、覆盖照报
+        recolor = {"gid": cb["gid"], "prop": "cmap", "value": "plasma"}
+        kill = {"gid": cb["mappable_gid"], "prop": "edgecolor", "value": "#804000"}
+        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": [recolor]})["manifest"]
+        assert _field_value(man, mesh["gid"], "cmap") == "plasma"
+        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": [recolor, kill]})[
+            "manifest"
+        ]
         cb2 = next(e for e in man["elements"] if e["gid"] == cb["gid"])
         assert not any(f["prop"] == "cmap" for f in cb2["editable"]), "映射断了色条还给 cmap"
-        assert "scale_gids" not in cb2, cb2.get("scale_gids")
-        mesh2 = next(e for e in man["elements"] if e["gid"] == mesh["gid"])
-        assert any(f["prop"] == "cmap" for f in mesh2["editable"])
+        assert cb2["scale_gids"] == [mesh["gid"]], (
+            "覆盖关系随控件一起消失，兄弟找不到该清的 override"
+        )
+        assert _field_value(man, mesh["gid"], "cmap") == "plasma"
+        assert any(
+            f["prop"] == "cmap"
+            for f in next(e for e in man["elements"] if e["gid"] == mesh["gid"])["editable"]
+        )
 
-        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": []})["manifest"]
-        assert next(e for e in man["elements"] if e["gid"] == cb["gid"])["scale_gids"] == [
-            mesh["gid"]
-        ]
+        # 兄弟页「回到脚本原样」= 清整组（含那条色条的 override）→ 兄弟回 Greens
+        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": [kill]})["manifest"]
+        assert _field_value(man, mesh["gid"], "cmap") == "Greens"
     finally:
         if proc.poll() is None:
             proc.kill()

@@ -298,6 +298,15 @@ describe('色阶共用关系（审计 T22 / T23）', () => {
       'axes_1.colorbar',
       'axes_3.colorbar',
     ])
+    // 色条自己的控件被引擎收起来了（cmap 字段不在）：兄弟页**不摆**指向它的链接，
+    // 但覆盖关系还在——「回到脚本原样」照旧把它算进要清的组（#474 评审第七轮）
+    const gated = {
+      ...cb,
+      editable: cb.editable.filter((f) => !['cmap', 'vmin', 'vmax'].includes(f.prop)),
+    } as ManifestElement
+    const gatedM = { ...m, elements: [axesEl, imageEl, sibling, gated] } as Manifest
+    expect(colorScalePartner(gatedM, sibling)).toBeNull()
+    expect(colormapAliasGids(gatedM, sibling)).toEqual(['axes_2.collections_0', 'axes_1.colorbar'])
     // 没有 `scale_gids` 的老 manifest：兄弟不认色条（判据只认引擎发的事实）
     const plain = manifestOf()
     expect(colorScalePartner({ ...plain, elements: [...plain.elements, sibling] } as Manifest, sibling)).toBeNull()

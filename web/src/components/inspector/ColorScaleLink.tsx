@@ -31,8 +31,18 @@ export function colorScalePartner(
       ? (manifest.elements.find((e) => e.gid === element.mappable_gid) ?? null)
       : null
   }
-  // 给它上色的色条：直接挂着的，或经共用 norm 一起上色的（`scale_gids`）
-  return manifest.elements.find((e) => e.role === 'colorbar' && colorbarCovers(e, element.gid)) ?? null
+  // 给它上色的色条：直接挂着的，或经共用 norm 一起上色的（`scale_gids`）。**只指向
+  // 还摆着色阶控件的色条**（它的 cmap 字段在）：色条自己的 mappable 映射断了时引擎把
+  // 控件收起来，这里不摆一个指向空处的入口；覆盖关系本身（回到脚本原样要清谁）
+  // 走 `colormapAliasGids`，与这条链接分开判。
+  return (
+    manifest.elements.find(
+      (e) =>
+        e.role === 'colorbar' &&
+        colorbarCovers(e, element.gid) &&
+        e.editable.some((f) => f.prop === 'cmap'),
+    ) ?? null
+  )
 }
 
 export function ColorScaleLink({

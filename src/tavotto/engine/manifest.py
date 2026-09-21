@@ -4243,15 +4243,18 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             # 的线组（`LineCollection(..., array=z, colors="red")`）换色图一个像素不动，
             # 界面上不能摆一条「与色条共用色阶」（#474 评审第四轮）。判据与它自己那侧的
             # cmap 字段同一处答案：`color_mapping_is_live`。
-            # 色条自己的三个色阶控件由 `colorbar_mapping_is_live(cb)` 开闸（它的 mappable
-            # 映射断了就收起来，见 `_colorbar_fields`）；闸关着时这条链接也不发——否则兄弟页
-            # 会指向一条没有控件的色条（#474 评审第六轮）。兄弟自己那侧的 cmap 字段照旧。
+            # `scale_gids` 说的是**覆盖关系**（这条色条的 cmap override 落在谁身上），与色条
+            # 自己的三个控件开不开闸（`colorbar_mapping_is_live`，见 `_colorbar_fields`）
+            # 是两个问题：色条的 mappable 映射断了、控件收起来，先前写下的 cmap override
+            # 却仍在给兄弟上色，兄弟页「回到脚本原样」要靠这份覆盖关系找到它、把它清掉
+            # （#474 评审第七轮）。「兄弟页要不要摆链接」由前端按色条有没有 cmap 字段判
+            # （`colorScalePartner`），不在这里合并成一个判据。
             scale = [
                 g
                 for g in scale_gids(state, artist.cb.mappable)
                 if g != mappable_gid and color_mapping_is_live(state.resolve(g))
             ]
-            if scale and colorbar_mapping_is_live(artist.cb):
+            if scale:
                 entry["scale_gids"] = scale
             # **能力为什么不在，要说出来。** 少一个控件而不给理由，用户只会
             # 以为是漏了或是坏了。这里给的是稳定 code，供界面按 code 翻译成
