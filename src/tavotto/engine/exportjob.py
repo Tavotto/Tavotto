@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from . import atomicio, exportreq
+from . import atomicio, exportreq, trace as tracemod
 from .exportreq import ExportRequest, ExportRequestError
 
 #: 作业状态。`partial` 是独立一档 —— 把它并进 `done` 或 `failed` 都会说谎。
@@ -185,6 +185,9 @@ class ExportJob:
     conflicts: list[str] = field(default_factory=list)
     validation_summary: dict = field(default_factory=dict)
     report: Output | None = None
+    #: 阶段轨迹（U09，ADR 0071）：prepare → source / compile / compose / raster（生产者按自己的步子记）→
+    #: inspect → publish → report；坏在哪一步就停在哪一步。有界、不记内容，随 `to_payload()` 走。
+    trace: tracemod.Trace = field(default_factory=tracemod.Trace, repr=False)
 
     # -- 取消 ---------------------------------------------------------------
     @property
@@ -210,6 +213,7 @@ class ExportJob:
             "export_dir": str(self.export_dir),
             "document_revision": self.request.document_revision,
             "progress": {"phase": self.phase, "step": self.step, "total": self.total},
+            "trace": self.trace.to_payload(),
             "timing": {
                 "started_at": self.started_at or None,
                 "finished_at": self.finished_at or None,
@@ -555,6 +559,7 @@ def run(
     job.total = len(req.formats) + (1 if req.include_report else 0)
     job.step = 0
     job.phase = "preparing"
+    job.trace.mark("prepare", formats=len(req.formats))
     _emit(job, publish)
 
     try:
@@ -603,14 +608,20 @@ def run(
     terminal = job.status
     try:
         job.phase = "rendering"
+        # 渲染从「拿源」开始（旧路解析面板原件 / 现画，候选路冻结源）；候选路自己再记 compile / compose / raster
+        job.trace.mark("source")
         _emit(job, publish)
         produced = produce(job, tmp_dir)
         job.check_cancelled()
         if inspect is not None:
             job.phase = "inspecting"
+            job.trace.mark("inspect")
             _emit(job, publish)
             produced = inspect(job, produced)
             job.check_cancelled()
+            rejected = [p.format for p in produced if p.error_code == "artifact_rejected"]
+            if rejected:
+                job.trace.fail("inspect", "artifact_rejected", formats=",".join(rejected))
 
         # 落盘之前**最后一次**问取消，并在**同一把锁里**置提交点：
         # 分开做的话，两者之间那一瞬进来的 `cancel()` 会拿到一个 True，
@@ -619,6 +630,7 @@ def run(
             job.check_cancelled()
             job._committed = True
         job.phase = "writing"
+        job.trace.mark("publish")
         _emit(job, publish)
         outputs: list[Output] = []
         for p in produced:
@@ -673,6 +685,7 @@ def run(
 
         if req.include_report:
             job.phase = "report"
+            job.trace.mark("report")
             _emit(job, publish)
             if report is None:
                 # 请求要了报告，却没有可写的内容（客户端漏发 / 载荷不合形状）。
@@ -694,24 +707,32 @@ def run(
             terminal = STATUS_FAILED
             job.error_code = outputs[0].error_code if outputs else "no_output"
             job.error_params = outputs[0].error_params if outputs else {}
+            if job.trace.failed_phase is None:  # 生产者已经记过坏在哪一步的，不再补一条
+                job.trace.fail(_last_phase(job), job.error_code)
         elif len(ok) < len(outputs) or (
             job.report is not None and job.report.status != STATUS_DONE
         ):
             terminal = STATUS_PARTIAL
+            failed = [o for o in outputs if o.status != STATUS_DONE]
+            if failed and job.trace.failed_phase is None:
+                job.trace.fail(_last_phase(job), failed[0].error_code or "partial")
         else:
             terminal = STATUS_DONE
     except Cancelled:
         terminal = STATUS_CANCELLED
         job.outputs = []
         job.report = None
+        job.trace.cancel(_last_phase(job))
     except ExportRequestError as exc:
         terminal = STATUS_FAILED
         job.error_code = exc.code
         job.error_params = exc.params
+        job.trace.fail(_last_phase(job), exc.code)
     except Exception as exc:  # noqa: BLE001 —— 作业失败不能把 HTTP 线程带走
         terminal = STATUS_FAILED
         job.error_code = "export_failed"
         job.error_params = {"error": str(exc)[:400]}
+        job.trace.fail(_last_phase(job), "export_failed")
     finally:
         _drop_tmp(job)
         _release(reserved, job.id)
@@ -721,6 +742,11 @@ def run(
         job.status = terminal
         _emit(job, publish)
     return job.to_payload()
+
+
+def _last_phase(job: ExportJob) -> str:
+    """轨迹上最后记的那一步（坏在哪一步）；一步都没记时是 `prepare`。"""
+    return job.trace.current_phase or "prepare"
 
 
 def _write_report(
@@ -780,6 +806,7 @@ def _fail(
     job.error_code = code
     job.error_params = params
     job.error_recoverable = recoverable
+    job.trace.fail(_last_phase(job), code)
     job.finished_at = time.time()
     job.phase = STATUS_FAILED
     job.status = STATUS_FAILED

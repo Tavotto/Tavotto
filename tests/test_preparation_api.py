@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -52,6 +53,12 @@ class _FakeWorker:
         self.script_sha1 = "deadbeef"
         self.python_source = "system"
         self.python = "/envs/fake/bin/python"
+        #: 控制面自己起的那个子进程（回执核自报的 pid 用，ADR 0070）
+        self.child_pid = FAKE_PID
+
+
+#: 替身 worker 的 pid：build 响应里自报的必须是它，否则回执拒收（ADR 0070）
+FAKE_PID = 4242
 
 
 def _build_resp(prefix="/envs/fake"):
@@ -60,6 +67,8 @@ def _build_resp(prefix="/envs/fake"):
         "descriptors": [{"stem": "fig", "script": "fig.py"}],
         "runtime": {
             "runtime_report_version": 1,
+            "report_origin": "build",
+            "pid": FAKE_PID,
             "python_version": "3.13.0",
             "python_implementation": "CPython",
             "executable": f"{prefix}/bin/python",
@@ -97,9 +106,11 @@ def fake_pool(monkeypatch):
             raise box["error"]
         factory = box["worker_factory"] or (lambda: _FakeWorker(Path(root)))
         created = ordinal == 1 if box["created"] is None else box["created"]
-        return factory(), _build_resp(), created
+        make_resp = box["build_resp"] or _build_resp
+        return factory(), make_resp(), created
 
     box["created"] = None
+    box["build_resp"] = None
     monkeypatch.setattr(engine_pool, "build_owned", build_owned)
     monkeypatch.setattr(engine_pool, "same_python", lambda a, b: True)
     monkeypatch.setattr(
@@ -748,3 +759,156 @@ def _facts_of(python: str):
         installed={"matplotlib": "3.10.0", "numpy": "2.2.0"},
         prefix=str(Path(python).parent.parent),
     )
+
+
+# ---------------------------------------------------------------------------
+# U09（ADR 0071 / FO30）：预检之后输入或环境变了 → 旧计划作废，理由点名；回执不冒充
+# ---------------------------------------------------------------------------
+def test_the_plan_records_the_data_binding_it_was_made_against(client, tmp_path, fake_pool):
+    """计划里有 `binding`：按此刻的 cwd 档，脚本会读到的文件 → sha256，外加修订摘要。没有路径。"""
+    root = _split_project(tmp_path, "p")
+    _open(client, root)
+    client.patch("/api/engine/workdir", json={"mode": "project_root"})
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    binding = plan["binding"]
+    assert binding["mode"] == "project_root" and binding["base"] == "project.root"
+    assert list(binding["expected"]) == ["data/x.csv"]
+    assert binding["revision"].startswith("sha256:")
+    assert str(root) not in json.dumps(binding)
+
+
+def test_data_changed_after_the_plan_makes_it_stale_before_any_script_runs(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """FO30（拆出来的第一条合同）：prepare 与 execute 之间数据被改（**同大小同 mtime 也算**——判的是内容
+    hash）→ 起会话之前发现，`preparation_plan_stale` / `data_binding_changed` 点名那个文件，runner 一次不调、
+    回执为 None；用户的编辑不在计划里，一个字不丢。"""
+    root = _split_project(tmp_path, "p")
+    _open(client, root)
+    client.patch("/api/engine/workdir", json={"mode": "project_root"})
+    hold = threading.Event()
+    monkeypatch.setattr(engine_pool, "peek", lambda script, root: hold.wait(30) and None)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    data = root / "data" / "x.csv"
+    before = data.stat()
+    data.write_text("x\n2\n", encoding="utf-8")  # 同样 4 字节
+    os.utime(data, ns=(before.st_atime_ns, before.st_mtime_ns))  # mtime 也放回去：只有内容变了
+    assert data.stat().st_size == before.st_size and data.stat().st_mtime_ns == before.st_mtime_ns
+    hold.set()
+    body = _wait(client, plan["plan_id"])
+    result = body["result"]
+    assert result["status"] == preparation.STATUS_ERROR
+    assert result["error"]["code"] == preparation.ERROR_PLAN_STALE
+    assert result["error"]["reason"] == preparation.STALE_DATA_BINDING
+    assert result["error"]["changed"] == ["data/x.csv"]
+    assert result["error"]["executed"] is False
+    assert result["receipt"] is None and fake_pool["build_calls"] == 0
+    assert result["trace"]["failed_phase"] == "check"
+    assert result["trace"]["failed_code"] == preparation.ERROR_PLAN_STALE
+    # 重新准备：新计划记下新内容，照常跑
+    resp2 = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan2 = resp2.get_json()["plan"]
+    assert plan2["binding"]["revision"] != plan["binding"]["revision"]
+    body2 = _wait(client, plan2["plan_id"])
+    assert body2["result"]["status"] == preparation.STATUS_READY
+    assert body2["result"]["trace"]["failed_phase"] is None
+    assert [e["phase"] for e in body2["result"]["trace"]["events"]] == [
+        "plan",
+        "check",
+        "spawn",
+        "execute",
+        "receipt",
+    ]
+
+
+def test_the_interpreter_decision_changing_after_the_plan_makes_it_stale(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """FO30 的环境那一半：计划之后项目选中的解释器变了（用户换了 / 删了 venv）→ 作废，不按旧计划跑、
+    也不拿新环境冒充旧计划。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    hold = threading.Event()
+    monkeypatch.setattr(engine_pool, "peek", lambda script, root: hold.wait(30) and None)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    monkeypatch.setattr(
+        engine_pool,
+        "resolve_worker_python",
+        lambda root=None, **kw: ("/envs/other/bin/python", "system"),
+    )
+    monkeypatch.setattr(engine_pool, "same_python", lambda a, b: a == b)
+    hold.set()
+    body = _wait(client, plan["plan_id"])
+    result = body["result"]
+    assert result["status"] == preparation.STATUS_ERROR
+    assert result["error"]["reason"] == preparation.STALE_ENVIRONMENT
+    assert "/envs/other" not in json.dumps(result)  # 公开投影不带路径
+    assert fake_pool["build_calls"] == 0
+
+
+def test_data_changed_between_spawn_and_read_is_caught_by_the_observed_inputs(
+    client, tmp_path, fake_pool
+):
+    """FO30 的第二道：起会话之前数据还是预检那份，脚本读到的却是另一份（在 spawn 与读取之间被改）——
+    回执如实记着观察到的 sha256，与计划的绑定对不上 → 作废（`executed=True`：脚本跑过一次）。
+    不把旧计划的回执冒充实际执行。"""
+    root = _split_project(tmp_path, "p")
+    _open(client, root)
+    client.patch("/api/engine/workdir", json={"mode": "project_root"})
+
+    def build_resp_with_other_data():
+        resp = _build_resp()
+        resp["runtime"]["inputs"] = {
+            "observation": "partial",
+            "channels": ["python_open"],
+            "unobserved": ["native_io"],
+            "truncated": False,
+            "files": [{"path": "data/x.csv", "size": 4, "sha256": "ff" * 32}],
+            "local_modules": [],
+        }
+        return resp
+
+    fake_pool["build_resp"] = build_resp_with_other_data
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    body = _wait(client, resp.get_json()["plan"]["plan_id"])
+    result = body["result"]
+    assert result["status"] == preparation.STATUS_ERROR
+    assert result["error"]["reason"] == preparation.STALE_DATA_BINDING
+    assert result["error"]["executed"] is True
+    assert result["error"]["changed"] == ["data/x.csv"]
+    assert result["receipt"]["binding_check"]["matched"] is False
+    assert result["trace"]["failed_phase"] == "receipt"
+
+
+def test_reusing_a_hot_session_after_the_data_changed_is_ready_but_says_it_is_a_snapshot(
+    client, tmp_path, fake_pool
+):
+    """04 §3：热态 Figure 代表它跑那一刻的数据。数据后来变了、再准备时复用那条已 build 的会话——不是错误，
+    `ready` + 回执 `binding_check.matched=False` + note 点明「旧快照」；不自动重跑、不清编辑。"""
+    root = _split_project(tmp_path, "p")
+    _open(client, root)
+    client.patch("/api/engine/workdir", json={"mode": "project_root"})
+    existing = _FakeWorker(root, generation=2, built=True)
+    existing.last_build_descriptors = [{"stem": "fig", "script": "scripts/fig.py"}]
+    rt = _build_resp()["runtime"]
+    rt["inputs"] = {
+        "observation": "partial",
+        "channels": ["python_open"],
+        "unobserved": ["native_io"],
+        "truncated": False,
+        "files": [{"path": "data/x.csv", "size": 4, "sha256": "ee" * 32}],  # 它当时读到的
+        "local_modules": [],
+    }
+    existing.last_build_runtime = rt
+    fake_pool["peek"] = existing
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    body = _wait(client, resp.get_json()["plan"]["plan_id"])
+    result = body["result"]
+    assert result["status"] == preparation.STATUS_READY
+    assert result["existing_runtime"]["generation"] == 2 and result["created_runtime"] is False
+    assert result["receipt"]["binding_check"]["matched"] is False
+    assert "旧快照" in result["note"]
+    assert fake_pool["build_calls"] == 0

@@ -112,3 +112,105 @@ def test_the_receipt_assembled_from_a_real_worker_is_complete(figs):
     # 同一条会话再取一次回执：id 相同（同一次执行实例）
     again = receipt.from_worker(worker, resp, control_plane="python_pool", grant=None)
     assert again.receipt_id == rcpt.receipt_id
+
+
+# ---------------------------------------------------------------------------
+# U09（ADR 0070）：自报来自跑脚本的那个进程；输入观察如实标 partial
+# ---------------------------------------------------------------------------
+OBSERVED_SCRIPT = """\
+import os
+import csv
+import pathlib
+import matplotlib.pyplot as plt
+
+import labhelp                              # 本地模块：回执要记它（观察到的本地模块）
+
+with open("data.csv", encoding="utf-8", newline="") as fh:   # Python open：观察得到
+    xs = [float(r["x"]) for r in csv.DictReader(fh)]
+raw = pathlib.Path("notes.txt").read_text(encoding="utf-8")   # Path.open：观察得到
+HERE = os.path.dirname(os.path.abspath(__file__))
+fd = os.open(os.path.join(HERE, "native.bin"), os.O_RDONLY)   # os.open：观察**不到**（如实 partial）
+os.close(fd)
+fig, ax = plt.subplots(figsize=(2, 1.5))
+ax.plot(xs, [labhelp.scale(x) for x in xs])
+ax.set_title(raw.strip())
+fig.savefig("Obs.pdf")
+"""
+
+
+@pytest.fixture
+def observed_project(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "obs.py").write_text(OBSERVED_SCRIPT, encoding="utf-8")
+    (root / "labhelp.py").write_text("def scale(x):\n    return 2 * x\n", encoding="utf-8")
+    (root / "data.csv").write_text("x\n1\n2\n3\n", encoding="utf-8")
+    (root / "notes.txt").write_text("hello\n", encoding="utf-8")
+    (root / "native.bin").write_bytes(b"\x00\x01")
+    yield root
+    pool.shutdown_all(str(root), wait=True)
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_the_report_carries_origin_pid_and_observed_inputs_of_the_process_that_ran(
+    observed_project,
+):
+    """自报是 build 回执（`report_origin`）、报的 pid 就是控制面起的那个子进程；脚本经 Python `open` /
+    `Path.open` 读的项目内文件在 `inputs.files` 里（相对路径 + sha256），import 到的本地模块在
+    `local_modules` 里；`os.open` 走的那份**不在**——`observation=partial`、`unobserved` 里写着，不冒充看全了。"""
+    worker, resp = pool.build("obs.py", str(observed_project), "__main__")
+    rt = resp["runtime"]
+    # 真 worker 报的字面量就是控制面认的那个（`figsession.REPORT_ORIGIN_BUILD` ↔ `receipt.REPORT_ORIGIN_BUILD`
+    # 的同源判据：worker 侧模块平铺 import，父进程 import 不动它，只能拿真跑出来的值对）
+    assert rt["report_origin"] == receipt.REPORT_ORIGIN_BUILD == "build"
+    assert rt["pid"] == worker.child_pid == worker.proc.pid
+    inputs = rt["inputs"]
+    assert inputs["observation"] == "partial"
+    assert "native_io" in inputs["unobserved"] and "os_open" in inputs["unobserved"]
+    files = {f["path"]: f for f in inputs["files"]}
+    assert set(files) == {"data.csv", "notes.txt"}, files
+    assert files["data.csv"]["sha256"] == _sha256(observed_project / "data.csv")
+    assert files["notes.txt"]["size"] == len(b"hello\n")
+    mods = {m["name"]: m for m in inputs["local_modules"]}
+    assert mods["labhelp"]["path"] == "labhelp.py"
+    assert mods["labhelp"]["sha256"] == _sha256(observed_project / "labhelp.py")
+    assert inputs["truncated"] is False
+    rcpt = receipt.from_worker(worker, resp, control_plane="python_pool", grant=None)
+    assert rcpt.completeness == receipt.COMPLETENESS_COMPLETE
+    assert rcpt.pid_check == receipt.PID_CHECK_OK
+    assert rcpt.observed_files()["data.csv"] == files["data.csv"]["sha256"]
+    # 公开投影：相对路径在、机器路径不在
+    public = json.dumps(rcpt.to_payload(), ensure_ascii=False)
+    assert "data.csv" in public and str(observed_project) not in public
+
+
+def test_the_binding_recorded_at_plan_time_is_matched_against_what_the_script_read(
+    observed_project,
+):
+    """预检记下 `data.csv` 的内容 → 脚本读到的一致：matched；预检之后换了内容再起会话：不一致并点名。"""
+    from tavotto.engine import databinding
+
+    binding = databinding.binding_for(observed_project / "obs.py", observed_project, "sandbox")
+    # 静态证据只认数据类扩展名 / 带分隔符的字面量：`native.bin` 不在里面（窄判据，如实）
+    assert set(binding["expected"]) == {"data.csv", "notes.txt"}
+    worker, resp = pool.build("obs.py", str(observed_project), "__main__")
+    same = receipt.from_worker(
+        worker, resp, control_plane="python_pool", grant=None, binding=binding
+    )
+    chk = same.binding_check()
+    assert chk["matched"] is True and chk["same"] == ["data.csv", "notes.txt"]
+    assert chk["unobserved"] == [] and chk["changed"] == []
+    pool.shutdown_all(str(observed_project), wait=True)
+    (observed_project / "data.csv").write_text("x\n100\n200\n300\n", encoding="utf-8")
+    worker2, resp2 = pool.build("obs.py", str(observed_project), "__main__")
+    changed = receipt.from_worker(
+        worker2, resp2, control_plane="python_pool", grant=None, binding=binding
+    )
+    chk2 = changed.binding_check()
+    assert chk2["matched"] is False and chk2["changed"] == ["data.csv"]
+    assert changed.public_identity() != same.public_identity()

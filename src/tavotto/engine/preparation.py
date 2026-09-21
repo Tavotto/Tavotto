@@ -58,7 +58,18 @@ import time
 import uuid
 from pathlib import Path
 
-from . import deprepair, depresolve, execspec, figcapture, pool, projectenv, receipt, workdir
+from . import (
+    databinding,
+    deprepair,
+    depresolve,
+    execspec,
+    figcapture,
+    pool,
+    projectenv,
+    receipt,
+    trace as tracemod,
+    workdir,
+)
 
 LOG = logging.getLogger("tavotto.preparation")
 
@@ -92,6 +103,19 @@ TERMINAL = frozenset(
 #: 与此刻项目设置里的不一致——用户在计划之后撤销或改了工作目录。不跑、不猜，报出来。
 ERROR_PLAN_STALE = "preparation_plan_stale"
 ERROR_CODES = (ERROR_PLAN_STALE,)
+#: 作废的理由（闭集，随 `error.reason` 带出；U09，ADR 0071 / FO30）：授权变了 / 项目的解释器决策变了 /
+#: 预检记下的数据绑定变了（同名文件换了内容、被删、被加）。`executed` 说的是「发现时脚本跑过没有」：
+#: 起会话之前发现的一行没跑；build 之后按观察到的输入发现的，脚本已经跑过一次——结果照样作废（不把
+#: 旧计划的回执冒充实际执行），重新准备会复用那条已 build 的会话。
+STALE_GRANT = "grant_changed"
+STALE_ENVIRONMENT = "environment_changed"
+STALE_DATA_BINDING = "data_binding_changed"
+STALE_REASONS = (STALE_GRANT, STALE_ENVIRONMENT, STALE_DATA_BINDING)
+_STALE_MESSAGES = {
+    STALE_GRANT: "工作目录的授权在计划之后变了，这份计划作废；请重新准备",
+    STALE_ENVIRONMENT: "这个项目选中的解释器在计划之后变了，这份计划作废；请重新准备",
+    STALE_DATA_BINDING: "脚本要读的数据在预检之后变了，这份计划作废；请重新准备",
+}
 
 #: 作业保留多久（秒）——与导出作业同一口径：界面拿 plan_id 补拉要在窗口内。
 _TTL_S = 15 * 60
@@ -134,6 +158,10 @@ class PreparationPlan:
     #: 开跑要什么 / 目标缺什么 / 交给安装器的集合 / blocked 的理由 / 可选目标。没有脚本或
     #: 解释器解析不出来时 None。**它只是计划的一部分，不装任何东西。**
     dependency_preparation: dict | None = None
+    #: 数据绑定（U09，ADR 0070）：预检那一刻按 cwd 档记下的「脚本会读哪些文件、内容是什么」
+    #: （`databinding.binding_for()`：相对项目根的路径 → sha256、修订摘要）。没有脚本时 None。
+    #: 执行线程起会话之前再算一次，不同就是 `preparation_plan_stale` / `data_binding_changed`。
+    binding: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -158,6 +186,7 @@ class PreparationPlan:
             "dependency_preparation": (
                 dict(self.dependency_preparation) if self.dependency_preparation else None
             ),
+            "binding": dict(self.binding) if self.binding else None,
         }
 
 
@@ -258,6 +287,14 @@ def plan_for(
         # （U03，ADR 0057）。这里**只读**同一份判据（`resolve_mode()` 在 spawn 前抛的
         # 就是它），计划里如实写下证据与「需要输入」，不替用户决定。
         decision = workdir.decision_for(root, script)
+    binding = None
+    if script is not None:
+        # 数据绑定按此刻的 cwd 档记（决定过就是记住的那一档，没决定过是默认沙盒——问的话，答完重新准备时再记）
+        binding = databinding.binding_for(
+            Path(root) / figcapture.normalize_relative_script(script),
+            root,
+            decision["mode"] if decision else workdir.mode_for(root),
+        )
     if script is not None and entry is not None and python:
         spec = execspec.safe_spec(
             script,
@@ -319,6 +356,7 @@ def plan_for(
         workdir_decision=decision,
         required_input=required,
         dependency_preparation=dependency,
+        binding=binding,
     )
 
 
@@ -367,6 +405,8 @@ class PreparationResult:
     finished_at: float | None = None
     cancel_requested_at: float | None = None
     note: str = ""
+    #: 阶段轨迹（U09，ADR 0071）：plan → check → spawn → execute → receipt，坏在哪一步就停在哪一步。
+    trace: tracemod.Trace = dataclasses.field(default_factory=tracemod.Trace)
 
     def to_payload(self) -> dict:
         return {
@@ -380,6 +420,7 @@ class PreparationResult:
             "finished_at": self.finished_at,
             "cancel_requested_at": self.cancel_requested_at,
             "note": self.note,
+            "trace": self.trace.to_payload(),
         }
 
 
@@ -446,7 +487,9 @@ class PreparationService:
 
     def _execute(self, entry: _Entry, runner) -> None:
         plan, result = entry.plan, entry.result
+        tr = result.trace
         result.started_at = time.time()
+        tr.mark("plan", plan_id=plan.plan_id)
         existing = pool.peek(plan.script, plan.project_root)
         if existing is not None:
             result.existing_runtime = {
@@ -456,28 +499,53 @@ class PreparationService:
             }
         # 取消接受时刻 ①：还没碰 pool——一行用户代码都没跑，直接收工。
         if entry.cancel.is_set():
+            tr.cancel("check")
             self._finish(entry, STATUS_CANCELLED, note="在起会话之前取消，没有执行任何脚本")
             return
-        # 过期授权（FO-007）：计划之后用户撤销 / 改了工作目录决定——计划记下的 grant
-        # 与此刻的不一致时**不跑**：按旧计划跑等于拿撤销前的许可执行，按新设置跑等于
-        # 回执与计划两张嘴。报 `preparation_plan_stale`，让调用方重新准备。
-        if plan.script is not None and workdir.grant_for(plan.project_root) != plan.grant:
+        # 过期计划（FO-007 / FO30，ADR 0071）：计划之后用户撤销 / 改了工作目录决定、项目的解释器决策变了、
+        # 或预检记下的数据绑定变了——计划记下的与此刻的不一致时**不跑**：按旧计划跑等于拿撤销前的许可 /
+        # 旧数据的判断执行，按新设置跑等于回执与计划两张嘴。报 `preparation_plan_stale` + `reason`，
+        # 让调用方重新准备（用户的 live 编辑在文档里，不在这份计划里，一个字不丢）。
+        stale = self._stale_reason(plan) if plan.script is not None else None
+        if stale is not None:
+            reason, detail = stale
+            tr.fail("check", ERROR_PLAN_STALE, reason=reason)
             result.error = {
                 "code": ERROR_PLAN_STALE,
-                "message": "工作目录的授权在计划之后变了，这份计划作废；请重新准备",
+                "reason": reason,
+                "executed": False,
+                "message": _STALE_MESSAGES[reason],
+                **detail,
             }
-            self._finish(entry, STATUS_ERROR, note="计划过期：授权变了，没有执行任何脚本")
+            self._finish(entry, STATUS_ERROR, note=f"计划过期（{reason}），没有执行任何脚本")
             return
+        tr.mark("check")
         result.status = STATUS_RUNNING
         reusable = self._reusable(existing, plan)
         if reusable is not None:
             # 已 build 过的会话：回执从它记下的 build 响应装配，不发任何请求、不碰脚本。
             result.created_runtime = False
-            result.receipt = receipt.from_worker(
-                existing, reusable, control_plane=pool.control_plane_of(existing), grant=plan.grant
+            rcpt = receipt.from_worker(
+                existing,
+                reusable,
+                control_plane=pool.control_plane_of(existing),
+                grant=plan.grant,
+                binding=plan.binding,
             )
-            self._finish(entry, STATUS_READY, note="复用现有 runtime，没有重新执行脚本")
+            result.receipt = rcpt
+            check = rcpt.binding_check()
+            tr.mark(
+                "receipt", reused=True, completeness=rcpt.completeness, binding=check["matched"]
+            )
+            # 热态 Figure 代表它跑那一刻的数据（04 §3）：此刻预检记下的数据与它当时读到的不同，不是错误——
+            # 图是明确的旧快照，回执的 `binding_check.matched=False` 如实写着；要不要重算是用户的事，
+            # 不自动清空编辑、不自动重跑
+            note = "复用现有 runtime，没有重新执行脚本"
+            if check["matched"] is False:
+                note += "；它读到的数据与此刻预检记下的不同（图是旧快照，重算请重建会话）"
+            self._finish(entry, STATUS_READY, note=note)
             return
+        tr.mark("spawn")
         try:
             worker, resp, created = runner(plan)
         except pool.WorkerError as exc:
@@ -485,6 +553,7 @@ class PreparationService:
             if isinstance(confirmation, dict):
                 # 计划时不用问、起会话时要问（决定在中间被清掉了）：与计划期的「需要输入」
                 # 同一个终局，不是错误。
+                tr.mark("spawn", code=workdir.ERROR_CONFIRMATION_REQUIRED)
                 result.required_input = dict(confirmation)
                 self._finish(
                     entry, STATUS_NEEDS_INPUT, note="需要先选择脚本的运行目录；答完后重新准备"
@@ -493,6 +562,7 @@ class PreparationService:
             dependency = getattr(exc, "dependency_preparation", None)
             if isinstance(dependency, dict):
                 # 依赖那道门（U04）在起会话那一刻拦住了：同样是「需要输入」，不是错误。
+                tr.mark("spawn", code=deprepair.ERROR_PREPARATION_REQUIRED)
                 result.required_input = dict(dependency)
                 self._finish(
                     entry,
@@ -508,17 +578,31 @@ class PreparationService:
             if isinstance(project_env, dict):
                 error["project_env"] = _public_project_env(project_env)
             result.error = error
+            # 脚本自己炸 / 缺依赖是「执行」那一步坏的；起不来（解释器 / 沙盒）是「起会话」坏的
+            tr.fail("execute" if getattr(exc, "traceback_text", None) else "spawn", error["code"])
             self._finish(entry, STATUS_ERROR)
             return
         except Exception as exc:  # noqa: BLE001 — 线程里不许静默死掉，如实记
             result.error = {"code": "internal_error", "message": f"{type(exc).__name__}: {exc}"}
+            tr.fail("spawn", "internal_error")
             self._finish(entry, STATUS_ERROR)
             return
+        tr.mark("execute", created=bool(created))
         result.created_runtime = bool(created)
         rcpt = receipt.from_worker(
-            worker, resp, control_plane=pool.control_plane_of(worker), grant=plan.grant
+            worker,
+            resp,
+            control_plane=pool.control_plane_of(worker),
+            grant=plan.grant,
+            binding=plan.binding,
         )
         result.receipt = rcpt
+        tr.mark(
+            "receipt",
+            completeness=rcpt.completeness,
+            rejected=rcpt.runtime_rejected,
+            observation=(rcpt.inputs or {}).get("observation"),
+        )
         # 取消接受时刻 ②：build 期间来了取消。本计划新起的会话才由我们收掉；
         # 本来就在的（别的消费者的）一根手指都不碰（FO-009）。
         if entry.cancel.is_set():
@@ -527,9 +611,68 @@ class PreparationService:
                 note = "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
             else:
                 note = "build 期间取消：会话属于别的消费者，未关闭；本计划不再等它"
+            tr.cancel("receipt")
             self._finish(entry, STATUS_CANCELLED, note=note)
             return
+        if self._binding_mismatch(entry, rcpt, executed=True):
+            return
         self._finish(entry, STATUS_READY)
+
+    @staticmethod
+    def _stale_reason(plan: PreparationPlan) -> tuple[str, dict] | None:
+        """起会话之前把计划记下的三样东西与此刻各比一次：授权（`workdir.grant_for`）、项目的解释器决策
+        （`pool.resolve_worker_python`）、数据绑定（`databinding.binding_for`）。第一条不一致的就是理由。"""
+        root = plan.project_root
+        if workdir.grant_for(root) != plan.grant:
+            return STALE_GRANT, {}
+        if plan.interpreter:
+            try:
+                python_now = pool.resolve_worker_python(root, script=plan.script)[0]
+            except pool.WorkerError:
+                python_now = None
+            if python_now is None or (
+                python_now != plan.interpreter
+                and not pool.same_python(python_now, plan.interpreter)
+            ):
+                # 只报「变了」，不报路径（公开投影不带机器路径，ADR 0053 §二）
+                return STALE_ENVIRONMENT, {}
+        if plan.binding is not None:
+            now = databinding.binding_for(
+                Path(root) / figcapture.normalize_relative_script(plan.script),
+                root,
+                plan.binding["mode"],
+            )
+            if now["revision"] != plan.binding["revision"]:
+                before, after = plan.binding.get("expected") or {}, now.get("expected") or {}
+                changed = sorted(
+                    k for k in set(before) | set(after) if before.get(k) != after.get(k)
+                )
+                return STALE_DATA_BINDING, {"changed": changed}
+        return None
+
+    def _binding_mismatch(
+        self, entry: _Entry, rcpt: receipt.ExecutionReceipt, *, executed: bool
+    ) -> bool:
+        """本计划**新跑**的 build 之后按观察到的输入再核一次数据绑定（FO30 的第二道：数据在起会话与读取
+        之间被改）。不一致 → 计划作废（`executed=True` 如实写着脚本已经跑过一次；重新准备会复用这条会话，
+        新计划的绑定就是它读到的那份）；一致 / 没观察到 → 不拦。复用现有 runtime 的那条路不走这里。"""
+        check = rcpt.binding_check()
+        if check["matched"] is not False:
+            return False
+        entry.result.trace.fail("receipt", ERROR_PLAN_STALE, reason=STALE_DATA_BINDING)
+        entry.result.error = {
+            "code": ERROR_PLAN_STALE,
+            "reason": STALE_DATA_BINDING,
+            "executed": executed,
+            "changed": list(check["changed"]),
+            "message": _STALE_MESSAGES[STALE_DATA_BINDING],
+        }
+        self._finish(
+            entry,
+            STATUS_ERROR,
+            note="计划过期（data_binding_changed）：脚本读到的数据与预检记下的不一致；请重新准备",
+        )
+        return True
 
     @staticmethod
     def _reusable(existing, plan: PreparationPlan) -> dict | None:

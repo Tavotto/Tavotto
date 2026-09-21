@@ -844,10 +844,12 @@ def inspect(
     profile: dict | None = None,
     budget: Budget | None = None,
     probe=None,
+    run_id: str | None = None,
 ) -> dict:
     """封口产物 → ArtifactManifest（plan / observed / checks / policy 分开；`artifact.sha256` 是文件字节）。
 
-    `plan` 由生产者给（不改）；`profile` 是出版规范（严格政策的阈值来源，调用方从 `profilestore` 解析）。
+    `plan` 由生产者给（不改）；`profile` 是出版规范（严格政策的阈值来源，调用方从 `profilestore` 解析）；
+    `run_id` 是这次作业的 id（U09 四身份里的 `run`——只进 `identity.run`，不进语义 / render 身份）。
     """
     if policy not in POLICIES:
         raise ValueError(f"policy 非法: {policy!r}")
@@ -882,10 +884,13 @@ def inspect(
         verdict = REJECTED if failed or unknown else ACCEPTED
     else:
         verdict = REJECTED if failed else ACCEPTED
+    sha256 = hashlib.sha256(data).hexdigest()
     return {
         "manifest_version": MANIFEST_VERSION,
         "format": fmt,
-        "artifact": {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)},
+        "artifact": {"sha256": sha256, "bytes": len(data)},
+        "identity": _identity_block(plan, sha256, run_id),
+        "provenance": _provenance_block(plan),
         "plan": dict(plan),
         "observed": observed,
         "checks": checks,
@@ -916,7 +921,13 @@ def inspect(
 
 
 def uninspected(
-    path: Path, fmt: str, *, plan: dict, policy: str = POLICY_STANDARD, reason: str = ""
+    path: Path,
+    fmt: str,
+    *,
+    plan: dict,
+    policy: str = POLICY_STANDARD,
+    reason: str = "",
+    run_id: str | None = None,
 ) -> dict:
     """检查器自己炸了：所有项 unknown、按政策裁决（standard 交付并说明；strict 阻断）。不是通过。"""
     data = Path(path).read_bytes()
@@ -925,10 +936,13 @@ def uninspected(
     checks = {k: UNKNOWN for k in names}
     required = list(REQUIRED[policy].get(kind, ("integrity",)))
     verdict = REJECTED if policy == POLICY_STRICT else ACCEPTED
+    sha256 = hashlib.sha256(data).hexdigest()
     return {
         "manifest_version": MANIFEST_VERSION,
         "format": fmt,
-        "artifact": {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)},
+        "artifact": {"sha256": sha256, "bytes": len(data)},
+        "identity": _identity_block(plan, sha256, run_id),
+        "provenance": _provenance_block(plan),
         "plan": dict(plan),
         "observed": {"format": fmt, "bytes": len(data), "integrity": UNKNOWN, "problems": [reason]},
         "checks": checks,
@@ -947,8 +961,33 @@ def uninspected(
     }
 
 
+def _identity_block(plan: dict, sha256: str, run_id: str | None) -> dict:
+    """四身份并列（U09，ADR 0070）：semantic / render 来自计划半张（旧后端没有 RenderPlan → None，如实），
+    artifact 是刚算的文件字节，run 是作业 id。谁也不含谁。"""
+    from .identity import identities
+
+    return identities(
+        semantic=plan.get("plan_identity"),
+        render=plan.get("render_identity"),
+        artifact_sha256=sha256,
+        run=run_id,
+    )
+
+
+def _provenance_block(plan: dict) -> dict:
+    """来源段：源产物公开身份 + 回执公开事实 + 节点表（都是计划半张里生产者给的；这里只搬，不改）。"""
+    return {
+        "sources": [dict(s) for s in plan.get("sources") or []],
+        "execution_receipts": list(plan.get("execution_receipts") or []),
+        "receipts": [dict(r) for r in plan.get("receipts") or []],
+        "nodes": [dict(n) for n in plan.get("nodes") or []],
+        "nodes_truncated": bool(plan.get("nodes_truncated", False)),
+    }
+
+
 def summary(manifest: dict) -> dict:
-    """给回执 / 前端的投影：verdict + 每项四值 + 说明；**不带 observed 的大块**（图片表、文字行）。"""
+    """给回执 / 前端的投影：verdict + 每项四值 + 说明；**不带 observed 的大块**（图片表、文字行）。
+    U09 起带 `identity`（四身份）与 `provenance`（来源 / 回执公开事实 / 节点表）。"""
     return {
         "manifest_version": manifest["manifest_version"],
         "format": manifest["format"],
@@ -966,6 +1005,77 @@ def summary(manifest: dict) -> dict:
         "fonts_used": [f["name"] for f in manifest["observed"].get("fonts_used", [])],
         "plan_identity": manifest["plan"].get("plan_identity"),
         "backend": manifest["plan"].get("backend"),
+        "identity": dict(manifest.get("identity") or {}),
+        "provenance": dict(manifest.get("provenance") or {}),
+    }
+
+
+#: 公开投影里源产物 / 回执 / 节点各自允许带出的键（闭集）：身份与结论进，名字与内容不进。
+_PUBLIC_SOURCE_KEYS = ("origin", "kind", "bytes_sha256", "receipt_identity", "patch_hash")
+_PUBLIC_RECEIPT_KEYS = (
+    "receipt_identity",
+    "completeness",
+    "runtime_rejected",
+    "pid_check",
+    "control_plane",
+    "python_source",
+    "generation",
+    "source_revision",
+    "python_version",
+    "python_implementation",
+    "platform",
+    "machine",
+    "packages",
+    "cwd_origin",
+    "observation",
+    "binding",
+)
+_PUBLIC_NODE_KEYS = ("kind", "origin", "receipt_identity", "internal")
+
+
+def public_projection(manifest: dict, *, trace: dict | None = None) -> dict:
+    """可以离开本机的那一份（XMP / 报告 / 遥测 / 诊断包的公开面，U09，RC-081 / FO-062）。
+
+    **只带身份与结论**：四身份、格式与字节数、政策与裁决、每项四值、载体 / 尺寸 / 像素 / 密度、用到的字体名、
+    源产物的（origin / kind / 字节 hash / 回执身份 / patch hash）、回执的公开事实（版本号 / 包版本 / 绑定核对
+    的计数）、节点表的（种类 / 来源关系）、可复现性口径、有界的阶段轨迹。
+
+    **不带**：`notes`（里面可能引用期望的文字行——科研正文）、`plan.text`、`object_boxes`、`source_id` /
+    节点 id / 面板 id（用户起的文件名与对象名）、`observed` 的大块、任何路径 / argv / 环境变量。
+    `tests/test_export_identity.py` 用一组「针」钉住：data_dir / home / prefix / 解释器 / 临时目录 / 脚本正文
+    片段一个都不许出现。
+    """
+    from .identity import REPRODUCIBILITY
+
+    prov = manifest.get("provenance") or {}
+    return {
+        "manifest_version": manifest["manifest_version"],
+        "format": manifest["format"],
+        "bytes": manifest["artifact"]["bytes"],
+        "identity": dict(manifest.get("identity") or {}),
+        "policy": {
+            "mode": manifest["policy"]["mode"],
+            "profile_id": manifest["policy"].get("profile_id"),
+            "verdict": manifest["policy"]["verdict"],
+            "required": list(manifest["policy"]["required"]),
+            "failed": list(manifest["policy"].get("failed") or []),
+            "unknown": list(manifest["policy"].get("unknown") or []),
+        },
+        "checks": dict(manifest["checks"]),
+        "carrier": manifest["observed"].get("carrier"),
+        "size_pt": manifest["observed"].get("size_pt"),
+        "px": manifest["observed"].get("px"),
+        "dpi": manifest["observed"].get("dpi"),
+        "fonts_used": [f["name"] for f in manifest["observed"].get("fonts_used", [])],
+        "backend": manifest["plan"].get("backend"),
+        "sources": [{k: s.get(k) for k in _PUBLIC_SOURCE_KEYS} for s in prov.get("sources") or []],
+        "receipts": [
+            {k: r.get(k) for k in _PUBLIC_RECEIPT_KEYS} for r in prov.get("receipts") or []
+        ],
+        "nodes": [{k: n.get(k) for k in _PUBLIC_NODE_KEYS} for n in prov.get("nodes") or []],
+        "nodes_truncated": bool(prov.get("nodes_truncated", False)),
+        "reproducibility": dict(REPRODUCIBILITY),
+        "trace": dict(trace) if isinstance(trace, dict) else None,
     }
 
 
@@ -992,6 +1102,7 @@ __all__ = [
     "observe_png",
     "observe_tiff",
     "parse_tounicode",
+    "public_projection",
     "summary",
     "uninspected",
 ]

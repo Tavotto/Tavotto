@@ -193,6 +193,9 @@ class Worker(wireproto.V1Handler):
         #: 脚本内容哈希必须是「实际被执行的那份」，之后脚本再被改，本会话
         #: 跑的还是旧代码（watcher 会作废会话，这里不追新）。
         self._descriptor_cache: list[dict] = []
+        #: 回执的 `inputs`（U09）：build 那一刻定格的输入观察（`figcapture.InputObserver.report()`）。
+        self._input_observer: figcapture.InputObserver | None = None
+        self._inputs_report: dict | None = None
         SESSION = SafeSession(self.out_dir, self.preview_dpi)
         super().__init__(SESSION)
 
@@ -287,6 +290,11 @@ class Worker(wireproto.V1Handler):
         # 写法在 `python figure.py` 下是天经地义的。只读、只在沙盒里确实没有
         # 这个文件时、且换算后仍落在图库内才生效——写/删/改一个字节都不经过
         # 它，沙盒作为**写入**边界完全没有松动（语义与理由见 figcapture）。
+        # 输入观察（U09，ADR 0070）：脚本经 Python `open` 只读打开的项目内文件记进回执（数据身份）。
+        # **先于**只读回退装——回退换出来的那条路径经它记下，正是脚本实际读到的那份。装了就不卸：
+        # 卸会把叠在外层的回退一起摘掉；观察器只记不改，留着也只是多几条项目外的忽略。
+        self._input_observer = figcapture.InputObserver(str(self.figures_dir))
+        self._input_observer.install()
         if self.workdir is None:
             figcapture.install_relative_read_fallback(
                 str(self.script.parent), str(self.figures_dir)
@@ -354,6 +362,12 @@ class Worker(wireproto.V1Handler):
 
         self.session.instrument_all()
         self._descriptor_cache = self._build_descriptors()
+        # 回执的 `inputs` 在**这一刻**定格：脚本已经跑完，之后进程里再读什么（导出时的字体缓存）都不是它的输入
+        self._inputs_report = self._input_observer.report(
+            local_modules=figcapture.observed_local_modules(
+                str(self.figures_dir), sys.modules, exclude_dir=str(Path(__file__).resolve().parent)
+            )
+        )
         self.built = True
         if timings is not None:
             timings["script_exec_ms"] = script_ms
@@ -487,7 +501,7 @@ class Worker(wireproto.V1Handler):
         return {
             **self._stems_summary(),
             "descriptors": self._descriptor_cache,
-            "runtime": figsession.runtime_report(),
+            "runtime": figsession.runtime_report(inputs=self._inputs_report),
         }
 
 

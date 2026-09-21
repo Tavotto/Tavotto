@@ -85,7 +85,14 @@ class _Session:
     arg_count = 2
     generation = 3
     descriptors = [{"stem": "Fig1"}]
-    last_build_runtime = {"python_version": "3.12.1", "packages": {"matplotlib": "3.9"}}
+    #: 握手帧里用户进程自报的 pid（`NativeSession.child_pid`）；自报的 `pid` 必须是它（ADR 0070）
+    child_pid = 777
+    last_build_runtime = {
+        "report_origin": "build",
+        "pid": 777,
+        "python_version": "3.12.1",
+        "packages": {"matplotlib": "3.9"},
+    }
 
     def __init__(self, root: str) -> None:
         self.project_root = root

@@ -54,10 +54,16 @@ class SourceError(RuntimeError):
 @dataclass(frozen=True)
 class FrozenSource:
     """一份已冻结的源：语义身份 + 字节 hash（`artifact`）与冻结时的路径。路径只是「去哪读」，
-    **不是身份**；读之前用 `read_frozen()` 核 hash。"""
+    **不是身份**；读之前用 `read_frozen()` 核 hash。
+
+    `receipt`（U09，ADR 0070）：执行侧源随附的回执**公开事实**（`receipt.public_facts()`：身份 / 完备性 /
+    generation / source revision / 解释器版本 / 关键包 / 数据绑定核对 / 输入观察的完备性——没有路径），
+    进 manifest 的 `receipts`；静态源没有回执，None。
+    """
 
     artifact: figcapture.SourceArtifact
     path: Path
+    receipt: dict | None = None
 
 
 class SourceResolver(Protocol):

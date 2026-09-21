@@ -43,7 +43,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from . import BACKEND_NAME, BACKEND_VERSION
-from .fonts import allowlist_path
+from .identity import fonts_policy_version as _fonts_policy_version
 from .raster import encode_png
 from .renderhost import RenderChildError, RenderHost
 
@@ -64,9 +64,8 @@ class PreviewError(RuntimeError):
         self.code = code
 
 
-def fonts_policy_version() -> str:
-    """字体政策版本 = allowlist 文件的 sha256 前 16 位（加一张脸 / 换一个 hash 都会变）。"""
-    return hashlib.sha256(Path(allowlist_path()).read_bytes()).hexdigest()[:16]
+#: 字体政策版本：与 `identity.render_identity` 同一份（U09）——缓存键与 render fingerprint 认的是同一个数
+fonts_policy_version = _fonts_policy_version
 
 
 def cache_key(
