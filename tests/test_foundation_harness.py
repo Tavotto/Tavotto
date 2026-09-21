@@ -90,8 +90,8 @@ def test_the_enforced_set_is_exactly_what_u03_and_u04_promoted_and_each_points_a
     for c in ledger["cases"]:
         counts[c["enrollment"]] = counts.get(c["enrollment"], 0) + 1
     assert counts == {
-        "planned": 14,
-        "observing": 6,
+        "planned": 13,
+        "observing": 7,  # U05：FO23 由 planned → observing（具名任务 private-python-targets.yml，ADR 0064）
         "later": 1,
         "enforced": 12,
     }  # 33 条：32 个 FO + U01-S1
