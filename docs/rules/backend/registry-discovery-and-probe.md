@@ -46,8 +46,12 @@
     script_path_outside_project / unsupported_script_type /
     script_probe_failed / script_no_figure / missing_dependency /
     execution_timeout / execution_cancelled / invalid_entry /
-    multiple_stem_conflict）：主文案按 code 由前端换语言，traceback 只进
-    诊断详情。**失败不写注册表**；产出 stem 已被另一份**仍在磁盘上的**脚本
+    multiple_stem_conflict，以及从 worker 原样透传的 script_needs_arguments /
+    script_exited——脚本要命令行参数 / 脚本自己 `sys.exit`，#435）：主文案按 code
+    由前端换语言，traceback 只进诊断详情。`session_dead` 只在退出状态说明是
+    被杀 / 未知时才归 execution_cancelled（`pool.exited_on_its_own`）；进程自己
+    死的归 script_probe_failed 并带退出码的解释——把一次真崩溃报成「被中断」
+    是撒谎。**失败不写注册表**；产出 stem 已被另一份**仍在磁盘上的**脚本
     登记时报 `multiple_stem_conflict` 而不是静默抢走（裁决走 PUT
     /api/registry 的手工路——那才是用户显式指认；归属脚本已不存在的死条目
     照旧顺畅重登记）。

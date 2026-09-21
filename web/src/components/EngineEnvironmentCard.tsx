@@ -277,6 +277,8 @@ export function MissingDependencyCard({
         })
       case 'project_env_unusable':
         return en('projectEnvUnusable', { venv: projectEnv.venv || '.venv' })
+      case 'project_env_worker_import_failed':
+        return en('projectEnvWorkerImport', { venv: projectEnv.venv || '.venv' })
       case 'project_env_not_found':
         return en('projectEnvNotFound', { module: pkg })
       default:

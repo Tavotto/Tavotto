@@ -173,8 +173,12 @@
     "renderFailed": "渲染失败",
     "rendering": "正在重渲染",
     "splashConnecting": "正在连接 Codex…",
+    "splashFetchFailed": "取回会话状态失败。重新打开这张图；仍然如此请连同下面的诊断一起报告。",
+    "splashFetching": "正在从 Tavotto 取回会话状态…",
     "splashNoHost": "此画布需在支持 MCP Apps 的 Codex 中打开。没有界面的宿主里，同一套 tavotto_* 工具同样可以打开、编辑、预检和导出。",
+    "splashStripped": "宿主交给画布的工具结果里没有会话（structuredContent 为空）。多半是结果超过了宿主的体积上限被清空——升级 Tavotto 插件后重新打开这张图；仍然如此请连同下面的诊断一起报告。",
     "splashWaiting": "正在等待 tavotto_open_figure 的结果…",
+    "splashWaitingLong": "还没有收到 tavotto_open_figure 的结果（已等 {{seconds}} 秒）。工具已经返回成功的话，是宿主没把结果交给画布：重新打开这张图；仍然如此请连同下面的诊断一起报告。",
     "synced": "已同步",
     "inspectionUnknown": "（{{files}} 未核验）",
     "inspectionFailed": "（{{files}} 核验未通过）"

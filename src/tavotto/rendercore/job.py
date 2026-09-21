@@ -145,6 +145,13 @@ def produce(
         job.check_cancelled()
         job.trace.mark("raster")
         dpi = req.ppi or exportreq.PPI_DEFAULT
+        # 计划里的期望像素**独立于渲染器**：按页面尺寸 × dpi 算（与 child 同一 round() 约定），
+        # 不抄 child 回来的 buf.width / buf.height——两边同源的话，child 尺寸算错了检查器也会
+        # 拿同一对数字互相印证、把错尺寸的位图放行（Codex #476 第二轮 P2）
+        planned_px = [
+            max(1, int(round(rp.page.width_pt * dpi / 72.0))),
+            max(1, int(round(rp.page.height_pt * dpi / 72.0))),
+        ]
         h = host if host is not None else _shared_host()
         try:
             buf = h.render(
@@ -164,7 +171,7 @@ def produce(
                 renderer="pdfium",
                 renderer_version=_renderer_version(h),
                 fonts_version=fonts_version,
-                px=(buf.width, buf.height),
+                px=planned_px,  # 与计划半张同一对数（独立于 child 的输出；Codex #476 第二轮）
                 ppi=float(dpi),
                 transparent=rp.page.background is None,
             )
@@ -238,7 +245,7 @@ def produce(
                             "plan": {
                                 **plan_half,
                                 "vector": False,
-                                "px": [buf.width, buf.height],
+                                "px": planned_px,
                                 "ppi": float(dpi),
                                 "render_identity": raster_render_identity,
                             }

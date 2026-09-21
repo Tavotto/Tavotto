@@ -571,7 +571,7 @@ def engine_too_old_hint(have: str, required: str, plugin: "str | None" = None) -
     who = f"插件 {plugin} 需要" if plugin else "这个插件需要"
     return (
         f"这台机器上的 Tavotto 是 {have}，而{who} {required} 或更新的引擎："
-        f"桥要 import 的那组引擎模块在 {have} 里还没有，所以 Codex 里的内嵌画布与七个"
+        f"桥要 import 的那组引擎模块在 {have} 里还没有，所以 Codex 里的内嵌画布与整组"
         "工具都起不来（交接——把图交给 Tavotto 窗口打开——不受影响，那条路只要求 CLI "
         "能执行）。恢复：**升级引擎**（`pipx upgrade tavotto`，或 `pip install -U "
         "tavotto`；桌面版用户升级桌面版），或者反过来把插件退回与这台引擎匹配的那一版。"
@@ -635,9 +635,9 @@ def diagnose_resolved(found: dict, resolution: dict) -> "tuple[str, str]":
 
 
 # ------------------------------- 降级 server --------------------------------
-#: 正常模式下的七个工具名。降级模式**不把它们列进 tools/list**（列了就是
-#: 伪装成可用），但对着旧会话里模型记住的名字调用时，回结构化错误而不是
-#: method_not_found——错误里说清缺什么、怎么修。
+#: 正常模式下 `tavotto_health` 之外的全部工具名。降级模式**不把它们列进
+#: tools/list**（列了就是伪装成可用），但对着旧会话里模型记住的名字调用时，
+#: 回结构化错误而不是 method_not_found——错误里说清缺什么、怎么修。
 NORMAL_TOOLS = (
     "tavotto_open_figure",
     "tavotto_apply_overrides",
@@ -646,6 +646,7 @@ NORMAL_TOOLS = (
     "tavotto_export",
     "tavotto_verify_replay",
     "tavotto_refresh_project",
+    "tavotto_session_state",
     "tavotto_close_session",
 )
 

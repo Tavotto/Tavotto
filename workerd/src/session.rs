@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 
 use crate::patchspec;
 use crate::protocol::*;
-use crate::worker::{SpawnSpec, WorkerEvent, WorkerProc};
+use crate::worker::{ExitReport, SpawnSpec, WorkerEvent, WorkerProc, EXIT_GRACE};
 
 /// 一条排队中的活。
 pub struct Job {
@@ -665,18 +665,35 @@ fn await_response(
                 //
                 // 这与 ADR 0004 里「『起来了』= hello 握过手，不是『进程对象还在』」
                 // 是同一条纪律的另一半：**「没了」同样不能只看进程对象**。
-                if let Some(proc) = inner.proc.lock().unwrap().take() {
-                    proc.kill();
+                let taken = inner.proc.lock().unwrap().take();
+                if cancelled {
+                    if let Some(proc) = taken {
+                        proc.kill();
+                    }
+                    return Err(ProtoError::new(
+                        CODE_CANCELLED,
+                        false,
+                        "请求已取消（渲染进程被终止）",
+                    ));
                 }
-                return Err(if cancelled {
-                    ProtoError::new(CODE_CANCELLED, false, "请求已取消（渲染进程被终止）")
-                } else {
-                    ProtoError::new(
-                        CODE_SESSION_DEAD,
-                        true,
-                        "渲染进程崩溃（无响应），会话需要重建",
-                    )
-                });
+                // 不是我们杀的：先看它自己怎么死的，再说话。退出码是用户与诊断包
+                // 分辨「脚本 sys.exit」「Python 致命错误」「access violation」
+                // 「DLL 加载失败」的唯一凭据——以前这里一律说「崩溃（无响应）」，
+                // 而进程既没崩也不是无响应，它是**退出了**。
+                let exit = taken.map(|proc| proc.reap_after_eof(EXIT_GRACE));
+                let described = exit
+                    .as_ref()
+                    .map(ExitReport::describe)
+                    .unwrap_or_else(|| "退出状态未知".to_string());
+                let mut err = ProtoError::new(
+                    CODE_SESSION_DEAD,
+                    true,
+                    format!("渲染进程退出了（{described}），会话需要重建"),
+                );
+                if let Some(report) = exit {
+                    err.extra = json!({ "exit": report.to_json() });
+                }
+                return Err(err);
             }
             Err(RecvTimeoutError::Timeout) => {
                 // 看门狗模式下这只是「这一片没等到回应」，不是判死：先看日志有没有

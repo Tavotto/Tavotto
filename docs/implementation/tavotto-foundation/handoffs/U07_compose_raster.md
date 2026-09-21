@@ -104,7 +104,7 @@ preview-complexity-budget / layout-versions-and-documents / writeback-transactio
 | `scripts/dev/u07_evidence.py --out evidence/u07` | 同上；`u07.pdf` 8 179 B、`u07_pdfium.png` 945 × 709 RGB、`report.json` | 0 | **30/30**；两次运行 PDF 与 PNG 逐字节相同 |
 | `scripts/dev/u07_freeze_child.py --pdf page.pdf --out evidence/u07/freeze` | 同上；PyInstaller 6.19 onedir 202 文件 87 MB（不进 git） | 0 | **7/7**：冻结 exe 以 `--render-child` 自起、libpdfium + libqpdf + 13 字体在包里、probe 270 × 160、渲染 400 × 237 |
 | PR B 变异反证 19 条（`scratchpad/u07/mutate_b.py`，ADR 0066 §2） | 同上 | 每条非零 | 「PNG 不从 Canonical PDF 出」第一版变异写了一张**相同**的 PDF（语义 no-op）绿——换成不同的页才红 |
-| Linux / Windows / 3.10 | `foundation-u06-rendercore.yml`（PR 上随 rendercore 文件变动自动触发） | 见 PR 正文 | run 号与四条腿结论填在 PR 正文与下面「其它目标」 |
+| Linux / Windows / 3.10 | `foundation-u06-rendercore.yml`（PR 上随 rendercore 文件变动自动触发） | 0（run 35595622384 四腿全绿） | 四条腿结论在下面「其它目标」 |
 | 前端 `pnpm test && pnpm build` | — | — | **not_run**：本阶段没有改 `web/src` |
 
 **本切片的正例、负例、旧行为回归**：正例 = 上表；负例 = 加密 / 坏文件 / 缺页 / 字节身份不符 / 没交字节 / 扩展名与字节
@@ -119,7 +119,7 @@ RenderBench 实例：evidence/u07 的合成 + 栅格经三平台 `foundation-u06
 
 **未运行 / 基础设施问题 / 真正产品失败，分别说明**：
 
-* 未运行（not_run）：Linux / Windows / 3.10 上的 render child 与 freeze（workflow 每腿给，结论填「其它目标」）；macOS x86_64；
+* 未运行（not_run）：macOS x86_64；
   `RLIMIT_AS` 超限触发试验（Linux 只验 set，没做超限）；跨项目并发真图 / `scope=original` / `annotate_asset` / facade 接线
   （U08）；产品包 `tavotto.spec` 带 child + 签名（U10 / U11）；registry 220 条产品实例；前端。
 * 基础设施问题：主仓库 `.venv` 没装候选包，真 child / 候选包用例在必需矩阵里是 skip（有理由；假 child / 假 host / 纯模型
@@ -169,7 +169,12 @@ PNG 的 sha256 只记不判。）
 
 | 腿 | run | rendercore 用例 | u07.pdf 与 git 逐字节 | u07 30 条 | freeze 7/7 | PNG sha256（信息） |
 |---|---|---|---|---|---|---|
-| ubuntu-latest py3.10 | not_run | — | — | — | — | — |
-| ubuntu-latest py3.13 | not_run | — | — | — | — | — |
-| windows-latest py3.13 | not_run | — | — | — | — | — |
-| macos-latest py3.13 | not_run | — | — | — | — | — |
+| ubuntu-latest py3.10 | 35595622384（B head 543d9182） | 396 通过 / 4 skip（3 条 tomllib < 3.11、1 条 poppler pdftotext 不在；均 not_run）/ 0 红 | 相同 | 30/30 | 7/7 | f11d18edf70d… |
+| ubuntu-latest py3.13 | 同上 | 399 通过 / 1 skip（pdftotext）/ 0 红 | 相同 | 30/30 | 7/7 | f11d18edf70d…（与 3.10 同） |
+| windows-latest py3.13 | 同上 | 400 通过 / 0 skip / 0 红 | 相同 | 30/30 | 7/7 | 592401658303… |
+| macos-latest py3.13 | 同上 | 399 通过 / 1 skip（pdftotext）/ 0 红 | 相同 | 30/30 | 7/7 | 7f2a0dbc0daa… = git 里的基线 |
+
+用例集是 `tests/test_rendercore_*.py` glob（含 calibration：旧新校准的四个 case 阈值按本机 macOS 实测，Linux / Windows 上
+第一次跑就过——两侧同一台机器的同一个 PDFium 读，抗锯齿差异两边抵消）。U06 evidence 也在同一 run 里（36/36，Windows 42/42
+含 CRLF 附加项）。之后的提交（第五轮 2 P2 + 叠到 A 的预乘 alpha 修复）只碰 renderhost / preview / rasterio 与它们的用例，
+最终 head 的 run 号见 PR 正文。

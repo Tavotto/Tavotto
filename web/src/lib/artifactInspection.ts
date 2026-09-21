@@ -70,3 +70,11 @@ export function inspectionRollup(
   }
   return { failed, unknown }
 }
+
+/**
+ * 内嵌画布「已导出」提示的语气：有失败项就是 `bad`（红），只有未核验项仍是中性——
+ * 「未核验」不是错误，「核验未通过」是。
+ */
+export function noticeTone(rollup: { failed: string[]; unknown: string[] }): 'ok' | 'bad' {
+  return rollup.failed.length ? 'bad' : 'ok'
+}

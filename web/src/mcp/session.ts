@@ -4,6 +4,7 @@ import type { PreviewMetadata } from '@/lib/previewBudget'
 import { EngineError } from '@/lib/api'
 import { msg } from '@/i18n'
 import { embeddedFileIdFor, seedEmbeddedSession } from '@/embedded/session'
+import type { PanelOverride } from '@/types/document'
 import type { AppsBridge, ToolCallResult } from './appsBridge'
 
 /**
@@ -16,7 +17,10 @@ import type { AppsBridge, ToolCallResult } from './appsBridge'
  * 存在那里的东西就是随时会丢的东西。
  */
 
-/** `tavotto_open_figure` 的结构化返回（server.py 的 structuredContent）。 */
+/**
+ * `tavotto_open_figure` 的结构化返回（server.py 的 structuredContent）——
+ * `tavotto_session_state` 回的也是这个形状（多一个 `patches`）。
+ */
 export interface OpenFigureResult {
   ok: boolean
   session_id: string
@@ -26,6 +30,11 @@ export interface OpenFigureResult {
   cost?: string
   manifest: Manifest
   svg: string | null
+  /**
+   * 这份 manifest / svg 对应的那组 patches（全量列表）。open 的结果里没有它
+   * （刚打开 = 空）；`tavotto_session_state` 一定带，画布据此种账本。
+   */
+  patches?: PanelOverride[]
   /** 这一版的预览表示法（ADR 0022）；老 server 不返回它。 */
   preview?: PreviewMetadata
   /** `preview.mode === 'raster'` 时**同一次响应**里带回的受控尺寸位图。 */
@@ -36,6 +45,82 @@ export interface OpenFigureResult {
   registry?: { parameterizable?: boolean | null; conflicts?: string[]; stems?: string[] }
   profile: { profile_id: string; profile_version: string; label?: string }
   preflight?: PreflightPayload
+  /** server 按宿主体积上限省略过字段时的说明；在 = 这份结果不完整，要去取件。 */
+  elided?: ElidedNote
+}
+
+/**
+ * server 把 open 结果压进宿主体积上限时留下的说明（issue #457）：省了哪些字段、
+ * 去哪儿取。画布不读它——判「要不要取件」只看 `isOpenResult`——它是给模型和
+ * 排障的人看的。
+ */
+export interface ElidedNote {
+  fields: string[]
+  reason: string
+  inline_bytes: number
+  budget_bytes: number
+  fetch_with: string
+}
+
+/**
+ * 只接受**完整的** open 结果。
+ *
+ * `tavotto_apply_overrides` 的响应也挂着同一份 widget 资源，也就能用来初始化
+ * 一个新 iframe——而它带着 `session_id` 与 `manifest`，只看这两项的话会被
+ * 当成 open 结果收下。可它没有 `profile` / `project` / `script`：`McpApp`
+ * 一读 `open.profile.profile_id` 就当场崩掉。server 按宿主体积上限省略过字段的
+ * open 结果同样不完整——**不管省的是什么**：只省了 svg 时 manifest 还在、六项齐全，
+ * 种下去却是一张空画布（iframe 里没有可退的 HTTP 位图）。所以 `elided` 在就一律
+ * 去取件；没有 `elided` 的老 server 结果再按形状判：矢量图必须带 svg 字符串，
+ * raster 档 svg 才允许是 null。这两种都走 `sessionIdOf` → 取件那条路。
+ */
+export function isOpenResult(v: unknown): v is OpenFigureResult {
+  const o = v as OpenFigureResult | null
+  if (!o || typeof o !== 'object') return false
+  if (o.elided) return false
+  const svgOk = typeof o.svg === 'string' || (o.svg === null && o.preview?.mode === 'raster')
+  return (
+    typeof o.session_id === 'string' &&
+    !!o.manifest &&
+    svgOk &&
+    typeof o.project === 'string' &&
+    typeof o.stem === 'string' &&
+    typeof o.script === 'string' &&
+    !!o.profile &&
+    typeof o.profile.profile_id === 'string'
+  )
+}
+
+/** 负载里认得出会话的把手——不完整的结果也有它，就能去取件。 */
+export function sessionIdOf(v: unknown): string | null {
+  const o = v as { session_id?: unknown } | null
+  return o && typeof o === 'object' && typeof o.session_id === 'string' && o.session_id
+    ? o.session_id
+    : null
+}
+
+/**
+ * 画布的取件通道：按 session_id 把会话此刻的完整状态拉回来。
+ *
+ * 走的是画布自己发的 `tools/call`——宿主直接代理给 server、原样返回，不进模型
+ * 上下文、也不受宿主对工具结果事件副本的体积上限约束（open 的结果超过 1 MiB
+ * 时 Codex 会把 `structuredContent` 整个置空，见 server.py 的
+ * `HOST_EVENT_RESULT_CAP_BYTES`）。回来的形状与 open 相同，多一个 `patches`。
+ */
+export async function fetchSessionState(
+  bridge: Pick<AppsBridge, 'callTool'>,
+  sessionId: string,
+): Promise<OpenFigureResult> {
+  const body = unwrap(await bridge.callTool('tavotto_session_state', { session_id: sessionId }))
+  if (!isOpenResult(body)) {
+    throw new EngineError(
+      `tavotto_session_state 回的不是完整的会话状态（有: ${Object.keys(body).join(', ')}）`,
+      '',
+      'bad_session_state',
+      '',
+    )
+  }
+  return body
 }
 
 export interface PreflightIssuePayload {
@@ -187,9 +272,10 @@ export function installMcpTransport(bridge: AppsBridge): () => void {
  */
 export function seedSession(open: OpenFigureResult): { panelId: string; fileId: string } {
   sessionOf.set(fileIdFor(open.stem), open.session_id)
+  const overrides = open.patches ?? []
   // 打开就是 raster 的图（#181 那一类）：第一帧的位图也在这次响应里。
   // 不记下来的话画布要等到用户改第一个值才有东西可显示。
-  rememberRasterPng(open.session_id, [], open.preview_png_base64)
+  rememberRasterPng(open.session_id, overrides, open.preview_png_base64)
   return seedEmbeddedSession(
     {
       stem: open.stem,
@@ -201,6 +287,7 @@ export function seedSession(open: OpenFigureResult): { panelId: string; fileId: 
       preview: open.preview,
       renderRevision: open.render_revision,
       warnings: open.warnings,
+      overrides,
     },
     msg('history.mcpOpenFigure', undefined, 'workspace'),
   )
