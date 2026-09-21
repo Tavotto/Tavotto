@@ -34,8 +34,9 @@
 * **ImportedPage 只是引用**（RC-013）：节点只有资源 key + 落位（rect / crop / 旋转 / 翻转 / opacity），
   `internal` 恒 `"unknown"`——源 PDF 里的文字 / axes 没有 gid，IR 不为它们编造身份。
 * **Capabilities 是写入器的合同不是愿望**：`unsupported_for(page, fmt)` 在编译期就列出这一页在某格式下给不出
-  的操作；U06 的表如实写着 PDF 里 `image` / `imported_page` / `flip` 尚未收编（U07）、PNG / TIFF / EPS 全
-  `unsupported`。
+  的操作；**本 PR 的树里没有写入器，所以 PDF 的每个操作都如实写 `unsupported`**（Codex #458 P2），带写入器的
+  PR 才把路径 / 文字 / 透明组翻成 native 并用交叉用例钉住；`image` / `imported_page` / `flip` 到 U07、PNG / TIFF /
+  EPS 全 `unsupported`。
 
 ## 2. 与旧 facade 的对应（U08 迁移时逐项对拍）
 
