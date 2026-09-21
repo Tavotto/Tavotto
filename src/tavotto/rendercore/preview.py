@@ -29,7 +29,8 @@ sha256，主语只有「内容」，没有 mtime 这一维）。
   必然相同）；目标不存在 / 零字节才重试，重试完仍不行如实抛出；
 * 零字节缓存当场删掉重建；
 * **异常一律抛出**——不返回空白图、不拿旧文件冒充这次成功（`must_fail`：异常返回空白图或旧图作成功）；
-* `prune()` 按 mtime 从旧到新删至预算内（与旧 `prune_render_cache` 同形）。
+* `prune()` 按 mtime 从旧到新删**成品**至预算内（与旧 `prune_render_cache` 同形）：只认 `<sha1>.png`，别人在飞的
+  `.part.png` / `stage.*.src.part` 不碰，刚发布要交出去的那张也不删。
 """
 
 from __future__ import annotations
@@ -243,7 +244,7 @@ class PreviewCache:
                     return cached
                 cached.unlink(missing_ok=True)  # 零字节 = 上一次写到一半就断电 / 被杀
                 self._write(staged, width_px, cached, transparent=transparent, page=page)
-                self.prune()
+                self.prune(keep=cached)
             return cached
         finally:
             staged.unlink(missing_ok=True)
@@ -284,10 +285,26 @@ class PreviewCache:
                     raise
                 time.sleep(_REPLACE_BACKOFF_S)
 
-    def prune(self) -> int:
-        """按 mtime 从旧到新删至预算内，返回删除数。"""
+    @staticmethod
+    def _is_final(p: Path) -> bool:
+        """成品名 = `<sha1 十六进制 40 位>.png`（`path_for`）；别人正在写的 `<key>.<pid>-<tid>.part.png` 与
+        `stage.*.src.part` 都不是成品，`prune()` 不碰——删了在飞的 `.part.png`，那个请求会在 `os.replace`
+        上 FileNotFoundError（Codex #471 第五轮 P2）。"""
+        stem = p.name[:-4]
+        return (
+            p.name.endswith(".png")
+            and len(stem) == 40
+            and all(c in "0123456789abcdef" for c in stem)
+        )
+
+    def prune(self, *, keep: Path | None = None) -> int:
+        """按 mtime 从旧到新删成品至预算内，返回删除数。`keep` = 刚发布、马上要交给调用方的那张：预算再小也不
+        删它（否则 `get()` 回一个已经不在的路径）。"""
         try:
-            files = sorted(self.cache_dir.glob("*.png"), key=lambda p: p.stat().st_mtime)
+            files = sorted(
+                (p for p in self.cache_dir.glob("*.png") if self._is_final(p)),
+                key=lambda p: p.stat().st_mtime,
+            )
             total = sum(p.stat().st_size for p in files)
         except OSError:
             return 0
@@ -295,6 +312,8 @@ class PreviewCache:
         for p in files:
             if total <= self.max_bytes:
                 break
+            if keep is not None and p == keep:
+                continue
             try:
                 size = p.stat().st_size
                 p.unlink()

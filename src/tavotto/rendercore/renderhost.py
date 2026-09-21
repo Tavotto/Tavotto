@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from .raster import RasterBuffer
+from .raster import RasterBuffer, RasterError
 from .renderchild import DEFAULT_MAX_PIXELS, ERROR_CODES, RenderChildError, child_argv
 
 __all__ = [
@@ -298,20 +298,35 @@ class RenderHost:
         fd, name = tempfile.mkstemp(prefix="render-", suffix=".rgba", dir=self.scratch_dir)
         os.close(fd)
         out = Path(name)
-        got: dict[str, bytes] = {}
+        got: dict[str, RasterBuffer] = {}
 
         def verify(resp: dict) -> None:
-            # 锁内读像素文件并核长度：child 说的与它写的对不上 → protocol 失败 → 当场 kill + reap
+            # 锁内读像素文件、核长度、**把 RasterBuffer 整个建出来**：child 说的 width / height / channels / stride
+            # 与字节对不上（bytes 对得上也可能对不上）同样是协议失败 → 当场 kill + reap，释放锁之后没人会再拿到
+            # 这个 child；建不出来的 RasterError / 类型错误翻译成 render_child_protocol，job 落到该格式的
+            # format_failed 而不是整个作业 export_failed（Codex #471 第五轮 P2）
             samples = out.read_bytes()
             if len(samples) != int(resp.get("bytes", -1)):
                 raise RenderChildError(
                     "render_child_protocol",
                     f"像素文件 {len(samples)} 字节与响应说的 {resp.get('bytes')} 不符",
                 )
-            got["samples"] = samples
+            try:
+                got["buf"] = RasterBuffer(
+                    width=int(resp["width"]),
+                    height=int(resp["height"]),
+                    channels=int(resp["channels"]),
+                    samples=samples,
+                    stride=int(resp["stride"]),
+                    dpi=float(dpi) if dpi is not None else None,
+                )
+            except (RasterError, KeyError, TypeError, ValueError) as exc:
+                raise RenderChildError(
+                    "render_child_protocol", f"响应说的尺寸与像素字节不成一张图: {exc}"
+                ) from exc
 
         try:
-            resp = self.request(
+            self.request(
                 "render",
                 timeout=timeout,
                 verify=verify,
@@ -323,7 +338,7 @@ class RenderHost:
                 transparent=bool(transparent),
                 max_pixels=self.max_pixels,
             )
-            samples = got["samples"]
+            buf = got["buf"]
         finally:
             # 目标文件与 child 的 `.part` 一起清：超时 / 崩溃可能停在 write_bytes 之后、os.replace 之前，
             # 每次 mkstemp 名字都不同，不清就攒成一堆接近像素预算的孤儿（Codex #471 P2）
@@ -332,14 +347,7 @@ class RenderHost:
                     stale.unlink()
                 except OSError:
                     pass
-        return RasterBuffer(
-            width=int(resp["width"]),
-            height=int(resp["height"]),
-            channels=int(resp["channels"]),
-            samples=samples,
-            stride=int(resp["stride"]),
-            dpi=float(dpi) if dpi is not None else None,
-        )
+        return buf
 
 
 # ---------------------------------------------------------------------------
