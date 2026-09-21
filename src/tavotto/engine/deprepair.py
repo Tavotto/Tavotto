@@ -52,6 +52,7 @@ from . import (
     execspec,
     managedenv,
     pool,
+    privatepython,
     projectenv,
     runcodes,
     runtime,
@@ -147,6 +148,8 @@ SELFTEST_TIMEOUT_S = 180
 
 #: 进度状态机。前端按它换文案，**不解析日志**。
 STATE_PREPARING = "preparing"
+#: 私有 Python 供应中（U05）：`download` 段带 stage / done_bytes / total_bytes。
+STATE_DOWNLOADING_PYTHON = "downloading_python"
 STATE_CREATING_ENV = "creating_env"
 STATE_INSTALLING = "installing"
 STATE_VERIFYING = "verifying"
@@ -208,6 +211,10 @@ class RepairPlan:
     network_required: bool
     created_at: float
     expires_at: float
+    #: 这次授权是否**包含先下载私有 Python**（U05，ADR 0063）：`privatepython.offer_payload()`
+    #: 的载荷（版本 / 目标 / `download_bytes`），没有基础解释器又提供这条路时才有值。
+    #: 界面必须把 `download_bytes` 说出口；执行端据它决定要不要在建 venv 之前先供应。
+    private_python: dict | None = None
 
     def to_payload(self) -> dict:
         """交给前端的形态。**不出绝对路径**（项目内的出项目相对）。"""
@@ -220,6 +227,7 @@ class RepairPlan:
             "modifies_user_environment": self.modifies_user_environment,
             "network_required": self.network_required,
             "expires_at": int(self.expires_at),
+            "private_python": dict(self.private_python) if self.private_python else None,
             **self.requirement.to_payload(),
         }
 
@@ -457,6 +465,11 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     # ---- B. Tavotto 受管环境：可删可重建，改的是我们自己的东西 ------------
     managed = managedenv.state(root)
     available = True if managed["exists"] else managed_available()
+    # 没有基础解释器、但这个目标上提供私有 Python（U05）：这条路仍然可用，只是授权里
+    # 多一项「先下载 N 字节」——载荷挂在目标上，界面据此把数字说出口。
+    private = privatepython.offer_payload() if available is False else None
+    if private is not None:
+        available = True
     out["targets"].append(
         {
             "kind": TARGET_MANAGED,
@@ -468,6 +481,7 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
             # 真正的答案在创建计划那一步——那时用户已经点过，等几秒是合理的。
             "available": available,
             "reason": "" if available is not False else ERROR_MANAGED_UNAVAILABLE,
+            "private_python": private,
         }
     )
     out["managed"] = managed
@@ -538,6 +552,7 @@ def create_plan(
 
     python = ""
     creates = False
+    private: dict | None = None
     if target_kind == TARGET_PROJECT_VENV:
         python = _pick_project_venv(root, script, module)
         health = projectenv.probe_environment(python, module)
@@ -552,8 +567,7 @@ def create_plan(
     else:
         python = managedenv.python_of(root) or ""
         creates = not python
-        if creates and not base_python():
-            raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
+        private = _private_python_offer() if creates else None
 
     key = _env_key(target_kind, python, root)
     with _lock:
@@ -574,12 +588,27 @@ def create_plan(
         network_required=True,
         created_at=now,
         expires_at=now + PLAN_TTL_S,
+        private_python=private,
     )
     _prune_plans()
     with _lock:
         _plans[plan.plan_id] = plan
     LOG.info("依赖修复计划: %s → %s（%s）", plan.requirement.requirement(), target_kind, script)
     return plan
+
+
+def _private_python_offer() -> dict | None:
+    """受管环境要新建而这台机器没有基础解释器时：提供私有 Python 就回它的载荷，否则照旧拒绝。
+
+    回 None = 有基础解释器（不需要下载）；回载荷 = 这份计划的授权包含下载；抛 = 两者都没有。
+    这一步不联网、不起子进程：`offer_payload` 只看锁文件与磁盘。"""
+    if base_python():
+        return None
+    private = privatepython.offer_payload()
+    if private is None:
+        raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
+    privatepython.require_free_disk(privatepython.source_for())
+    return private
 
 
 def _pick_project_venv(project: str, script: str, module: str) -> str:
@@ -731,6 +760,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             emit=lambda state, **kw: _emit(plan.plan_id, state, on_event, plan=plan, **kw),
             on_log=lambda text: _append_log(plan.plan_id, text, on_event),
             label=f"repair-{req.distribution}",
+            provision_private=plan.private_python is not None,
         )
         with _lock:
             _attempted.add((plan.project_id, env_key, req.requirement()))
@@ -2240,6 +2270,8 @@ class JointRepairPlan:
     created_at: float
     expires_at: float
     joint: dict
+    #: 同 `RepairPlan.private_python`：这次授权包不包含先下载私有 Python（U05）。
+    private_python: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -2260,6 +2292,7 @@ class JointRepairPlan:
             "network_required": True,
             "expires_at": int(self.expires_at),
             "joint": dict(self.joint),
+            "private_python": dict(self.private_python) if self.private_python else None,
         }
 
 
@@ -2357,11 +2390,11 @@ def create_joint_plan(
             "联合计划不可执行" if joint.status == depplan.STATUS_BLOCKED else "没有缺的依赖",
             joint=joint.to_payload(),
         )
+    private: dict | None = None
     if kind == TARGET_MANAGED:
         managed_python = managedenv.python_of(root) or ""
         creates = not managed_python
-        if not base_python():
-            raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
+        private = _private_python_offer()  # 没有基础解释器且不提供私有 Python 时在这里抛
         _require_free_disk(root)  # 新的一代要落盘（FO28）
         bound_python = managed_python
     else:
@@ -2400,6 +2433,7 @@ def create_joint_plan(
         created_at=now,
         expires_at=now + PLAN_TTL_S,
         joint=joint.to_payload(),
+        private_python=private,
     )
     _prune_plans()
     with _lock:
@@ -2493,6 +2527,7 @@ def prepare(plan_id: str, on_event=None) -> dict:
                 emit=lambda state, **kw: _emit(plan.plan_id, state, on_event, joint=plan, **kw),
                 on_log=lambda text: _append_log(plan.plan_id, text, on_event),
                 label=f"prepare-{len(plan.requirements)}",
+                provision_private=plan.private_python is not None,
             )
             return _run_generation(job, cancel_ev)
         key = _env_key(TARGET_PROJECT_VENV, plan.python, plan.project)
@@ -2585,6 +2620,9 @@ class _GenerationJob:
     emit: object  # (state, **kw) -> dict
     on_log: object  # (text) -> None
     label: str = "generation"  # 快照文件名里的动作名（`after-<label>`）
+    #: 计划里明示过「将下载私有 Python」的授权才为真（U05）；重建 / 包管理首装为假——
+    #: 那两条路没有说出口的下载，没有基础解释器就照旧 `managed_env_unavailable`。
+    provision_private: bool = False
 
 
 def generation_requirements(
@@ -2641,8 +2679,20 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     job.emit(STATE_PREPARING)
     managedenv.retire_unused(project, in_use=_generation_in_use)
     base = base_python()
+    base_runtime = ""
+    if not base and job.provision_private:
+        # 计划里明示过的下载（U05，ADR 0063）：在锁内、建 venv 之前先把私有 Python 备好。
+        # 取消在这一步里由 `privatepython` 按消费者处置；供应失败这一代还没登记，账不动。
+        outcome = _provision_private_base(job, cancel_ev)
+        if outcome.get("cancelled"):
+            return job.emit(
+                STATE_CANCELLED, code=ERROR_CANCELLED, result={"generation": "", "activated": False}
+            )
+        base, base_runtime = outcome["python"], outcome["runtime"]
     if not base:
         raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
+    if not base_runtime:
+        base_runtime = _private_runtime_of(base)
     requirements = generation_requirements(project, job.delta, hash_mode=job.require_hashes)
     identity = job.identity or depplan._digest(
         {"requirements": sorted(requirements), "constraints": sorted(job.constraints)}
@@ -2665,6 +2715,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         constraints=list(job.constraints),
         identity=identity,
         base_python=base,
+        base_runtime=base_runtime,
     )
     ok, out = managedenv.create_generation_venv(project, generation, base)
     if not ok:
@@ -2788,6 +2839,9 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     depplan.reset_cache(python)
     projectenv.reset_cache(project)
     retired = managedenv.retire_unused(project, in_use=_generation_in_use)
+    if base_runtime:
+        privatepython.touch(privatepython.source_for())
+    privatepython.retire_unused(in_use=_private_runtime_in_use)
     result = {
         "ok": True,
         "python": python,
@@ -2804,6 +2858,60 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
 
 def _generation_in_use(python: str) -> bool:
     return pool.safe_workers_using(python) > 0 or bool(envlease.native_sessions_on(python))
+
+
+def _private_runtime_in_use(runtime_id: str, python: str) -> bool:
+    """这份私有 Python 还有人用吗：任一项目的哪一代记着它为 base（venv 挪不走 base），
+    或池里 / envlease 上有会话直接用着它。"""
+    if runtime_id in managedenv.referenced_base_runtimes():
+        return True
+    return pool.safe_workers_using(python) > 0 or bool(envlease.native_sessions_on(python))
+
+
+def _private_runtime_of(base: str) -> str:
+    """`base` 是不是当前锁文件那份私有 Python（是就回它的 id，给这一代记账）。"""
+    source = privatepython.source_for()
+    if source is None:
+        return ""
+    try:
+        same = os.path.normcase(os.path.realpath(base)) == os.path.normcase(
+            os.path.realpath(str(privatepython.runtime_python(source)))
+        )
+    except OSError:
+        return ""
+    return source.id if same else ""
+
+
+def _provision_private_base(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
+    """事务里的「先备好私有 Python」一步：进度以 `downloading_python` 状态外露（stage / 字节数）。
+
+    回 `{"python", "runtime"}`；消费者取消回 `{"cancelled": True}`；别的失败原样带 code 抛
+    `RepairError`（`private_python_*` 闭集）。成功后刷新基础解释器缓存——同一进程里下一次计划
+    直接看见它。"""
+    source = privatepython.source_for()
+    if source is None:
+        raise RepairError(privatepython.ERROR_NOT_OFFERED, "这个目标上不提供私有 Python")
+
+    def _progress(stage: str, done: int, total: int) -> None:
+        job.emit(
+            STATE_DOWNLOADING_PYTHON,
+            result={
+                "download": {"stage": stage, "done_bytes": int(done), "total_bytes": int(total)},
+                "private_python": source.to_payload(),
+            },
+        )
+
+    _progress(privatepython.STAGE_DOWNLOADING, 0, source.size)
+    try:
+        python = privatepython.provision(source, cancel_ev=cancel_ev, on_progress=_progress)
+    except privatepython.ProvisionError as exc:
+        if exc.code == privatepython.ERROR_CANCELLED:
+            return {"cancelled": True}
+        raise RepairError(exc.code, str(exc), **exc.detail) from exc
+    global _base_python, _base_python_known
+    with _lock:
+        _base_python, _base_python_known = python, True
+    return {"python": python, "runtime": source.id}
 
 
 def _versions_of(python: str, distributions: list[str]) -> dict[str, str]:
