@@ -91,7 +91,11 @@ def _dpi(im) -> float | None:
 
 
 def header_size(data: bytes, kind: str) -> tuple[int, int]:
-    """只读文件头里的像素尺寸（Pillow 懒打开，不解码）；认不出 / 不符同 `decode()` 的错误码。"""
+    """只读文件头里的像素尺寸，**不解码**：JPEG 先读 SOF（纯标准库，一个像素都不碰），其它经 Pillow 懒打开；
+    认不出 / 不符同 `decode()` 的错误码。写入器用它在任何解码之前记两级预算的账。"""
+    sof = _jpeg_sof(data, kind)
+    if sof is not None:
+        return int(sof["width"]), int(sof["height"])
     im = _open(data, kind)
     return int(im.width), int(im.height)
 
