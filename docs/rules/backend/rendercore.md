@@ -1,6 +1,6 @@
-# RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成与栅格（统一实施包 U06 / U07，ADR 0059 / 0060 / 0065 / 0066）
+# RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成、栅格与 facade 接线（统一实施包 U06 / U07 / U08，ADR 0059 / 0060 / 0065 / 0066 / 0067）
 
-> 2026-09-20 随 U06 新增，2026-09-21 随 U07 加合成与栅格两节；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
+> 2026-09-20 随 U06 新增，2026-09-21 随 U07 加合成与栅格两节、随 U08 加 facade 接线一节；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
 > 表里（`rendercore/` 那一行）。这里是这一主题规则的**唯一全文**；速查表只留一行。
 > 改规则改这里，并同步那一行。
 
@@ -101,5 +101,20 @@
 - **接 ExportJob 只给 `produce`**（`rendercore/job.py`）：作业生命周期一字不改；给不出的格式逐项 `format_failed`
   且 `error.params.unsupported` 带操作与理由，写入器的 `WriterError` 与 child 的 `RenderChildError` 也落到这一档；
   编译期事实（缺字 / cjk 脸 / hidden）进 `job.warnings`；冻结源在写入前 `read_frozen()`。U06 / U07 里 `app.py` 不 import 它。
-- **不切默认**：PyMuPDF 仍是默认后端，本包在 U06 不接任何用户可见入口；facade 19 项与 Canvas 面
-  的迁移在 U08（`docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.md` 逐项）。
+- **候选后端接 facade（U08，ADR 0067）**：`rendercore/facade.py` 是 pdfbackend 契约的候选实现（19 项同签名 +
+  Canvas 面适配器；对拍表在模块头），由契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 选中；
+  进程级共享三样：字体注册表 `facade.provider()`、render child `facade.host()`（= `renderhost.shared()`）、
+  预览缓存 `facade.preview_cache()`。产品导出路（`app._export_produce`）在候选下 `scope=canvas` 走
+  `job.produce` + `sources.ExecutionSourceResolver`（带 override / runtime 素材由当次 worker 现画并附回执：
+  `receipt.from_worker` / `from_native_session` → `receipt.source_artifact_for`，`origin=execution` 必核；
+  磁盘原件不跑脚本），`scope=original` 经契约层的 `original_*`；EPS 报旧路同一个稳定码 `eps_not_for_canvas`；
+  作业生命周期 / 写回事务 / 命名预留 / 覆盖 / 取消提交点全是既有权威，一份不复制。`/api/render` 走 `PreviewCache`
+  （队列满 503）；`reset_projects(wait=True)` 收 child。**候选自己的生成物**：`rendercore/canvas_coverage.json`
+  （`gen_canvas_coverage.py --backend rendercore`，`primary` = 12 张 Liberation 脸的交集）与
+  `tests/golden/glyph_plan_vectors.rendercore.json`（`gen_glyph_plan_vectors.py --backend rendercore`），与默认表的
+  差异是闭集（`tests/test_rendercore_glyph_vectors.py`）。**对拍纪律**：旧契约用例在候选下逐字重跑
+  （`scripts/dev/u08_parity.py`，清单在 ledger `candidate_parity`），只许 deselect 实现特定断言且每条带存在的
+  替代证据，运行器与 `tests/test_foundation_facade_ledger.py` 都拒绝没有替代证据的 deselect；用户合同一条不删。
+- **不切默认**：PyMuPDF 仍是默认后端（`pdfbackend.BACKEND_DEFAULT`）；候选只在显式选中时接管，前端不读候选
+  覆盖表，产品包不带候选包 / 字体（U10 / U11）；facade 19 项的迁移证据逐项记在
+  `docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.md`。

@@ -25,6 +25,15 @@
       "call": "importlib.import_module(name)",
       "targets": [],
       "reason": "`require()` 按需探测候选包（uharfbuzz / fontTools / pikepdf / pypdfium2，pyproject 的 rendercore extra），名字是常量闭集、全是第三方，不是仓库模块（ADR 0060）。"
+    },
+    {
+      "from": "tavotto/pdfbackend/__init__.py",
+      "call": "importlib.import_module(_IMPL_MODULES[name])",
+      "targets": [
+        "tavotto/pdfbackend/pymupdf_backend.py",
+        "tavotto/rendercore/facade.py"
+      ],
+      "reason": "契约层按 TAVOTTO_RENDER_BACKEND 在两个实现模块之间选一个（U08，ADR 0067）；名字是常量闭集 _IMPL_MODULES，两条边都登记在 extra_edges（scope=function：只在第一次用到时装载）。"
     }
   ],
   "extra_edges": [
@@ -219,6 +228,18 @@
       "to": "tavotto/engine/bridgeboot.py",
       "scope": "module",
       "via": "importlib.util.spec_from_file_location(..., bridgeboot.py)"
+    },
+    {
+      "from": "tavotto/pdfbackend/__init__.py",
+      "to": "tavotto/pdfbackend/pymupdf_backend.py",
+      "scope": "function",
+      "via": "_impl() → importlib.import_module(_IMPL_MODULES[name])"
+    },
+    {
+      "from": "tavotto/pdfbackend/__init__.py",
+      "to": "tavotto/rendercore/facade.py",
+      "scope": "function",
+      "via": "_impl() → importlib.import_module(_IMPL_MODULES[name])"
     }
   ],
   "cycles": [

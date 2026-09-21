@@ -46,7 +46,17 @@
       ],
       "tests": [],
       "status": "public_contract",
-      "migration_criterion": "U08：新后端给出不同的 BACKEND_NAME；缓存键因此天然失效（旧预览不复用）。用例：同一 PDF 换后端名后 /api/render 必须重画（test_render_cache 的键用例扩一维）。"
+      "migration_criterion": "U08：新后端给出不同的 BACKEND_NAME；缓存键因此天然失效（旧预览不复用）。用例：同一 PDF 换后端名后 /api/render 必须重画（test_render_cache 的键用例扩一维）。",
+      "migration_evidence": [
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_the_default_backend_is_pymupdf_and_the_contract_names_follow_the_selection"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_app.py::test_switching_the_backend_changes_the_preview_cache_key"
+        }
+      ]
     },
     {
       "name": "BACKEND_VERSION",
@@ -90,7 +100,17 @@
         }
       ],
       "status": "public_contract",
-      "migration_criterion": "U08：新后端报自己的版本串；canvas_coverage.json 与 glyph_plan_vectors.json 必须由新后端重生成（--check 红即证明表在跟着后端走）。"
+      "migration_criterion": "U08：新后端报自己的版本串；canvas_coverage.json 与 glyph_plan_vectors.json 必须由新后端重生成（--check 红即证明表在跟着后端走）。",
+      "migration_evidence": [
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_the_default_backend_is_pymupdf_and_the_contract_names_follow_the_selection"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_glyph_vectors.py::test_the_candidate_generators_check_clean_against_the_live_fonts"
+        }
+      ]
     },
     {
       "name": "CANVAS_TEXT_FAMILIES",
@@ -150,6 +170,14 @@
         {
           "stage": "U06",
           "test": "tests/test_rendercore_fonts.py::test_allowlist_is_the_thirteen_ofl_faces_with_sha256_identity"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_old_backend_within_the_approved_migration"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_glyph_vectors.py::test_the_candidate_primary_layer_is_the_intersection_of_all_twelve_faces"
         }
       ]
     },
@@ -173,6 +201,10 @@
         {
           "stage": "U06",
           "test": "tests/test_rendercore_typography.py::test_the_family_closed_set_and_default_match_the_old_facade"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_old_backend_within_the_approved_migration"
         }
       ]
     },
@@ -211,7 +243,17 @@
       "known_issues": [
         "#252 原图写回缺 fsync（原子性已有；不归本项）"
       ],
-      "migration_criterion": "U08：同一组 objects 在新后端上写进 PDF，**独立读取器**（U01 选定，不是生产 transform 反算）读回文字与路径位置在容差内；PNG 由同一 PDF 栅格化；只有 PNG 的素材仍回 annotations_need_pdf（app 层判据不动）。"
+      "migration_criterion": "U08：同一组 objects 在新后端上写进 PDF，**独立读取器**（U01 选定，不是生产 transform 反算）读回文字与路径位置在容差内；PNG 由同一 PDF 栅格化；只有 PNG 的素材仍回 annotations_need_pdf（app 层判据不动）。",
+      "migration_evidence": [
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_annotate_asset_overlays_vector_annotations_without_redrawing_the_source"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_annotate_asset_refuses_panel_objects"
+        }
+      ]
     },
     {
       "name": "compare_png",
@@ -264,7 +306,13 @@
       "known_issues": [
         "#265 持久 tight 布局图上像素门比的是两张不可复现的渲染（判据问题，不是比较器）"
       ],
-      "migration_criterion": "U07/U08：PNG 解码换成新后端（或纯标准库 zlib 解码）后，三指标在 tests/test_pixel_compare.py 的全部样例上逐值相同；对拍用例保留。"
+      "migration_criterion": "U07/U08：PNG 解码换成新后端（或纯标准库 zlib 解码）后，三指标在 tests/test_pixel_compare.py 的全部样例上逐值相同；对拍用例保留。",
+      "migration_evidence": [
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_compare_png_gives_the_same_metrics_as_the_old_backend"
+        }
+      ]
     },
     {
       "name": "compose",
@@ -359,6 +407,22 @@
         {
           "stage": "U07",
           "test": "tests/test_rendercore_calibration.py::test_old_and_new_backends_agree_within_the_case_thresholds"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_the_canvas_face_saves_png_and_tiff_from_one_canonical_pdf"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_app.py::test_export_canvas_under_the_candidate_writes_a_searchable_pdf_and_a_png_from_it"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_app.py::test_a_panel_with_overrides_is_rendered_by_the_worker_and_carries_a_receipt"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_app.py::test_a_child_failure_under_the_candidate_is_partial_and_leaves_nothing_behind"
         }
       ]
     },
@@ -395,6 +459,18 @@
         {
           "stage": "U06",
           "test": "tests/test_rendercore_evidence.py::test_coverage_table_has_no_fallback_layer_and_records_the_known_limits"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_glyph_vectors.py::test_the_candidate_generators_check_clean_against_the_live_fonts"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_glyph_vectors.py::test_the_candidate_primary_layer_is_the_intersection_of_all_twelve_faces"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_glyph_vectors.py::test_candidate_vectors_differ_from_the_default_only_in_the_approved_ways"
         }
       ]
     },
@@ -421,6 +497,10 @@
         {
           "stage": "U06",
           "test": "tests/test_rendercore_ir.py::test_hex2rgb_keeps_the_old_facade_contract"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_the_contract_names_in_all_are_the_ledger_nineteen"
         }
       ]
     },
@@ -474,6 +554,14 @@
         {
           "stage": "U06",
           "test": "tests/test_rendercore_writer.py::test_a_missing_glyph_is_written_as_notdef_and_reported_not_substituted"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_old_backend_within_the_approved_migration"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_glyph_vectors.py::test_candidate_vectors_differ_from_the_default_only_in_the_approved_ways"
         }
       ]
     },
@@ -532,6 +620,10 @@
         {
           "stage": "U06",
           "test": "tests/test_rendercore_plan.py::test_a_panel_lands_at_mm_to_pt_with_y_flipped_exactly_once"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_the_canvas_face_saves_png_and_tiff_from_one_canonical_pdf"
         }
       ]
     },
@@ -592,7 +684,17 @@
       ],
       "status": "public_contract",
       "known_issues": [],
-      "migration_criterion": "U08（RC-002/003）：矢量源**整页搬运不重画**——新后端输出的页面尺寸、字体子集、路径数与源页一致（独立读取器比）；位图源 vector=False 且页面 = page_pt；original 段里没有 x/y/w/h（结构不变）。多页 PDF 只取第一页（与画布所见一致）。"
+      "migration_criterion": "U08（RC-002/003）：矢量源**整页搬运不重画**——新后端输出的页面尺寸、字体子集、路径数与源页一致（独立读取器比）；位图源 vector=False 且页面 = page_pt；original 段里没有 x/y/w/h（结构不变）。多页 PDF 只取第一页（与画布所见一致）。",
+      "migration_evidence": [
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_original_pdf_moves_only_the_first_page_and_does_not_redraw_it"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_original_pdf_of_a_raster_source_fills_the_given_page_and_is_not_vector"
+        }
+      ]
     },
     {
       "name": "original_png",
@@ -642,7 +744,17 @@
         }
       ],
       "status": "public_contract",
-      "migration_criterion": "U08（RC-003 / 03 §6「必须精确」）：PNG 源 → 输出**逐字节相同**（shutil.copyfile 语义，pHYs 保留）；JPEG 源 → 像素数不变、签名是 PNG；矢量源栅格化尺寸 = round(pt × ppi / 72)；`resampled` 恒 False。"
+      "migration_criterion": "U08（RC-003 / 03 §6「必须精确」）：PNG 源 → 输出**逐字节相同**（shutil.copyfile 语义，pHYs 保留）；JPEG 源 → 像素数不变、签名是 PNG；矢量源栅格化尺寸 = round(pt × ppi / 72)；`resampled` 恒 False。",
+      "migration_evidence": [
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_original_png_copies_a_png_source_byte_for_byte_and_transcodes_jpeg"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_app.py::test_export_original_under_the_candidate_copies_the_png_byte_for_byte"
+        }
+      ]
     },
     {
       "name": "original_tiff",
@@ -685,7 +797,13 @@
       ],
       "status": "public_contract",
       "note": "没有直接以 pdfbackend.original_tiff 为主语的单元用例，覆盖全经端点 / 作业管线；RC-001 的 must_fail_example 点名它：漏它不能被总通过掩盖。编码器 tests/test_tiffwrite.py 单独看护。",
-      "migration_criterion": "U08：位图源像素网格不变（px_w/px_h == 源）、TIFF 解码像素 == 同源 PNG 解码像素（03 §6）、分辨率标签只在源声明过时才写；矢量源与 original_png 同一次栅格化参数。编码器 tiffwrite.py 纯标准库，本身不属于后端。"
+      "migration_criterion": "U08：位图源像素网格不变（px_w/px_h == 源）、TIFF 解码像素 == 同源 PNG 解码像素（03 §6）、分辨率标签只在源声明过时才写；矢量源与 original_png 同一次栅格化参数。编码器 tiffwrite.py 纯标准库，本身不属于后端。",
+      "migration_evidence": [
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_original_tiff_writes_only_the_declared_density_and_keeps_the_pixel_grid"
+        }
+      ]
     },
     {
       "name": "pdf_fonts",
@@ -711,7 +829,17 @@
         }
       ],
       "status": "public_contract",
-      "migration_criterion": "U08：读取侧换成新后端 / 独立读取器，同一 PDF 返回同一列表（含子集前缀处理与保序）。"
+      "migration_criterion": "U08：读取侧换成新后端 / 独立读取器，同一 PDF 返回同一列表（含子集前缀处理与保序）。",
+      "migration_evidence": [
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_pdf_fonts_matches_the_old_backend_including_fonts_inside_form_xobjects"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_pdf_fonts_has_a_budget_for_self_referencing_forms"
+        }
+      ]
     },
     {
       "name": "probe_asset",
@@ -795,12 +923,20 @@
         }
       ],
       "status": "public_contract",
-      "note": "**密度刻意不从这里取**：MuPDF 的 Pixmap.xres 对「没写 pHYs」与「写着 96」一律回 96（project-system.md）。U00 夹具 pdf_png_assets 的 original_nophys.png 实测 xres=96、original.png（pHYs 300）xres=300，再次证实。",
+      "note": "**密度刻意不从这里取**：MuPDF 的 Pixmap.xres 对「没写 pHYs」与「写着 96」一律回 96（project-system.md）。U00 夹具 pdf_png_assets 的 original_nophys.png 实测 xres=96、original.png（pHYs 300）xres=300，再次证实。；U08 实测：PyMuPDF 1.28.2 的 page.rect 同样乘 /UserUnit（540 = 2×270），U07 交接里「probe 含 UserUnit 是有意差异」不成立，两边一致。",
       "migration_criterion": "U08：八个调用点一个不漏（RC-001）；返回结构逐键相同；`alpha` 真值来自新读取器；密度仍由 originalspec 解析。",
       "migration_evidence": [
         {
           "stage": "U07",
           "test": "tests/test_rendercore_renderchild.py::test_real_child_probe_reports_the_visible_size_with_rotation_and_userunit"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_probe_asset_returns_the_same_structure_and_values_on_the_fixtures"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_probe_pdf_applies_userunit_exactly_once_like_the_old_backend"
         }
       ]
     },
@@ -858,6 +994,18 @@
         {
           "stage": "U07",
           "test": "tests/test_rendercore_preview.py::test_publish_yields_to_a_reader_holding_the_target_on_windows"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_render_preview_png_renders_the_first_page_at_the_bucket_width"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_app.py::test_api_render_under_the_candidate_serves_a_png_of_the_bucket_width_from_the_cache"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_app.py::test_api_render_under_the_candidate_reports_backpressure_as_503_and_other_failures_as_500"
         }
       ]
     },
@@ -927,6 +1075,14 @@
         {
           "stage": "U06",
           "test": "tests/test_rendercore_typography.py::test_degree_sign_below_the_cjk_break_point_still_reaches_the_cjk_face_last"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_old_backend_within_the_approved_migration"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_glyph_vectors.py::test_candidate_vectors_differ_from_the_default_only_in_the_approved_ways"
         }
       ]
     },
@@ -965,6 +1121,10 @@
         {
           "stage": "U06",
           "test": "tests/test_rendercore_writer.py::test_pen_position_between_runs_equals_the_shaped_advance"
+        },
+        {
+          "stage": "U08",
+          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_old_backend_within_the_approved_migration"
         }
       ]
     }
@@ -1068,7 +1228,13 @@
         "migration_note_u07": "U07：写入器不持有跨调用的 native 句柄（外来 Pdf 在 save() 之后关；render child 的 doc / page / bitmap 每请求 finally 关）——没有对应的 close 面"
       }
     ],
-    "migration_criterion": "U07：同实例多格式保存、重复关闭 / 错误后关闭的用例（RC-002 verification）；save_png 不许重新解析另一份来源（must_fail_example）。"
+    "migration_criterion": "U07：同实例多格式保存、重复关闭 / 错误后关闭的用例（RC-002 verification）；save_png 不许重新解析另一份来源（must_fail_example）。",
+    "migration_evidence": [
+      {
+        "stage": "U08",
+        "test": "tests/test_rendercore_facade.py::test_the_canvas_face_saves_png_and_tiff_from_one_canonical_pdf"
+      }
+    ]
   },
   "bypasses": {
     "note": "这些路径**不经 facade**，替换 PyMuPDF 时它们不变——但它们是 facade 边界之外「谁还碰 PDF/位图」的完整名单，U10 的退役扫描主语要把它们分清。",
@@ -1169,5 +1335,155 @@
     "U07：矢量合成 + 受控栅格运行时（PDFium 候选，集中串行）",
     "U08：全部 19 个导出项 + 7 个 Canvas 面（含 context manager） + 8 个 probe_asset 调用点迁移 parity；有限产物验证（ArtifactManifest）",
     "U10：切默认 → 移除 pymupdf 依赖 → 发行闭包退役扫描（主语：应用 / 发行 / runtime 闭包，不是用户环境；D15）"
-  ]
+  ],
+  "candidate_parity": {
+    "note": "U08（ADR 0067）：旧契约用例在 TAVOTTO_RENDER_BACKEND=rendercore 下逐字重跑（scripts/dev/u08_parity.py，rc-venv：pymupdf 只当读取器）。user_contract 一条不删；deselected 里的每一条都是实现特定断言（monkeypatch 旧 facade 内部 / base-14 字体名 / 旧字体 oracle / 旧栅格器阈值），逐条给出候选侧的替代证据；runner 拒绝没有替代证据的 deselect。结果记在 evidence/u08/parity.json。",
+    "suites": [
+      "tests/test_export_pipeline.py",
+      "tests/test_export_endpoint.py",
+      "tests/test_export_request.py",
+      "tests/test_original_spec.py",
+      "tests/test_annotate_asset.py",
+      "tests/test_render_cache.py",
+      "tests/test_compose_annotations.py",
+      "tests/test_compose_switched_shapes.py",
+      "tests/test_typography_families.py",
+      "tests/test_glyph_plan.py",
+      "tests/test_compose_text.py",
+      "tests/test_compose_arrow.py",
+      "tests/test_paths_and_baked.py",
+      "tests/test_font_provenance.py",
+      "tests/test_pixel_compare.py",
+      "tests/test_mcp_normalize.py",
+      "tests/test_write_back.py",
+      "tests/test_glyph_coverage_figure.py",
+      "tests/test_scientific_text_matrix.py",
+      "tests/test_cjk_figure_text.py",
+      "tests/test_tutorial.py",
+      "tests/test_worker_roundtrip.py",
+      "tests/test_windows_regressions.py"
+    ],
+    "deselected": [
+      {
+        "test": "tests/test_export_pipeline.py::test_nothing_is_left_behind_when_a_format_fails",
+        "class": "implementation_specific",
+        "reason": "经 monkeypatch `pdfbackend.compose` 注错；候选路不经 compose（job.produce）。用户合同（partial + 临时目录清掉）由替代用例经真实端点注 child 失败覆盖。",
+        "replacement": [
+          "tests/test_rendercore_app.py::test_a_child_failure_under_the_candidate_is_partial_and_leaves_nothing_behind"
+        ]
+      },
+      {
+        "test": "tests/test_export_endpoint.py::test_failed_export_captures_nothing",
+        "class": "implementation_specific",
+        "reason": "同上（monkeypatch compose.save_pdf 抛 OSError）；候选侧改成写入器炸。",
+        "replacement": [
+          "tests/test_rendercore_app.py::test_a_writer_failure_under_the_candidate_is_a_500_and_captures_no_telemetry"
+        ]
+      },
+      {
+        "test": "tests/test_render_cache.py::test_backend_version_is_part_of_the_key",
+        "class": "implementation_specific",
+        "reason": "monkeypatch `pdfbackend.BACKEND_VERSION`——候选的键在 rendercore.preview 里取版本，契约常量不是它的输入；用户合同（换 build 换键）由候选的键用例 + 换后端名用例覆盖。",
+        "replacement": [
+          "tests/test_rendercore_preview.py::test_the_key_carries_width_background_renderer_build_and_fonts_policy",
+          "tests/test_rendercore_app.py::test_switching_the_backend_changes_the_preview_cache_key"
+        ]
+      },
+      {
+        "test": "tests/test_render_cache.py::test_same_key_renders_once_under_concurrency",
+        "class": "implementation_specific",
+        "reason": "monkeypatch `pdfbackend.render_preview_png` 数调用；候选路经 PreviewCache，同键去重由它自己的用例量 `renders`。",
+        "replacement": [
+          "tests/test_rendercore_preview.py::test_concurrent_requests_for_the_same_key_render_exactly_once",
+          "tests/test_rendercore_app.py::test_api_render_under_the_candidate_serves_a_png_of_the_bucket_width_from_the_cache"
+        ]
+      },
+      {
+        "test": "tests/test_typography_families.py::test_the_family_reaches_the_pdf_font_resources",
+        "class": "implementation_specific",
+        "reason": "断言 base-14 名字（Times-Roman / Helvetica / Courier）——D07：默认新合法字体仍必须叫 Times-Roman 是实现细节。用户合同（三个族各到产物里各自的脸）由候选侧用例覆盖。",
+        "replacement": [
+          "tests/test_rendercore_facade.py::test_three_families_reach_three_different_embedded_faces"
+        ]
+      },
+      {
+        "test": "tests/test_glyph_plan.py::test_golden_vectors_match_python_side",
+        "class": "implementation_specific",
+        "reason": "默认 golden 向量是旧字体 oracle 的产物（fallback 层）；候选有自己的一份向量，与默认的差异钉成闭集。",
+        "replacement": [
+          "tests/test_rendercore_glyph_vectors.py::test_candidate_vectors_differ_from_the_default_only_in_the_approved_ways",
+          "tests/test_rendercore_glyph_vectors.py::test_the_candidate_generators_check_clean_against_the_live_fonts"
+        ]
+      },
+      {
+        "test": "tests/test_glyph_plan.py::test_generator_is_up_to_date",
+        "class": "implementation_specific",
+        "reason": "同上：默认生成物对默认后端；候选生成物由候选的 --check 看护。",
+        "replacement": [
+          "tests/test_rendercore_glyph_vectors.py::test_the_candidate_generators_check_clean_against_the_live_fonts"
+        ]
+      },
+      {
+        "test": "tests/test_glyph_plan.py::test_subscript_two_stays_on_the_fallback_layer",
+        "class": "implementation_specific",
+        "reason": "钉的是旧 oracle 的 fallback 层；候选没有 fallback 层（ADR 0060 §1），₂ 是 Liberation 自带的 primary。",
+        "replacement": [
+          "tests/test_rendercore_typography.py::test_layers_are_primary_cjk_missing_and_never_fallback",
+          "tests/test_rendercore_glyph_vectors.py::test_candidate_vectors_differ_from_the_default_only_in_the_approved_ways"
+        ]
+      },
+      {
+        "test": "tests/test_glyph_plan.py::test_plan_matches_the_faces_the_pdf_actually_uses",
+        "class": "implementation_specific",
+        "reason": "断言 PDF 里用到的 base-14 / Noto Serif 回退脸名字；候选写入的是批准字体子集，落笔与计划同一份由写入器用例看护。",
+        "replacement": [
+          "tests/test_rendercore_writer.py::test_fonts_are_embedded_subsets_of_both_program_kinds_with_tounicode",
+          "tests/test_rendercore_writer.py::test_pdfium_object_census_counts_real_text_objects_not_outlines"
+        ]
+      },
+      {
+        "test": "tests/test_glyph_plan.py::test_fallback_face_is_the_same_regardless_of_family_and_weight",
+        "class": "implementation_specific",
+        "reason": "量的是 PyMuPDF 隐式回退脸；候选没有回退脸（画不出进 missing，不换脸）。",
+        "replacement": [
+          "tests/test_rendercore_typography.py::test_without_a_cjk_face_han_is_missing_not_substituted",
+          "tests/test_rendercore_writer.py::test_a_missing_glyph_is_written_as_notdef_and_reported_not_substituted"
+        ]
+      },
+      {
+        "test": "tests/test_glyph_plan.py::test_measured_width_equals_the_advance_actually_written",
+        "class": "implementation_specific",
+        "reason": "直接用 pymupdf.TextWriter + 旧后端私有 latin_font/cjk_font 落笔；候选侧「量宽 == 写进去的 advance」由写入器用例看护。",
+        "replacement": [
+          "tests/test_rendercore_writer.py::test_pen_position_between_runs_equals_the_shaped_advance",
+          "tests/test_rendercore_typography.py::test_width_is_the_sum_of_shaped_advances_of_the_same_plan"
+        ]
+      },
+      {
+        "test": "tests/test_glyph_plan.py::test_coverage_table_matches_the_live_fonts",
+        "class": "implementation_specific",
+        "reason": "读的是默认表 `glyphplan.coverage_table_path()`；候选表在 rendercore/canvas_coverage.json，由候选生成器 --check 看护。",
+        "replacement": [
+          "tests/test_rendercore_glyph_vectors.py::test_the_candidate_generators_check_clean_against_the_live_fonts"
+        ]
+      },
+      {
+        "test": "tests/test_glyph_plan.py::test_scientific_mode_draws_everything_with_one_face",
+        "class": "implementation_specific",
+        "reason": "断言 used == {Helvetica}（base-14 名字）；候选侧 scientific 合成由 typography 用例看护。",
+        "replacement": [
+          "tests/test_rendercore_typography.py::test_scientific_mode_composes_a_superscript_the_primary_face_lacks",
+          "tests/test_rendercore_writer.py::test_composed_superscript_and_multi_glyph_cluster_get_actualtext_spans"
+        ]
+      },
+      {
+        "test": "tests/test_mcp_normalize.py::test_zero_edit_roundtrip_keeps_page_size_and_pixels",
+        "class": "implementation_specific",
+        "reason": "阈值（changed_pixel_ratio < 2%）按 MuPDF 栅格器校准；PDFium 对 Type 3 vs Type 42 字形的抗锯齿差异在 Two 样例上是 3.3%（03 §6「需要校准」：跨 renderer 按 case 记阈值，不全局放大）。页面尺寸那一半两边都过；像素那一半归校准用例。",
+        "replacement": [
+          "tests/test_rendercore_calibration.py::test_old_and_new_backends_agree_within_the_case_thresholds"
+        ]
+      }
+    ]
+  }
 }

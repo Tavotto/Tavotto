@@ -91,10 +91,10 @@ def test_the_enforced_set_is_exactly_what_u03_and_u04_promoted_and_each_points_a
         counts[c["enrollment"]] = counts.get(c["enrollment"], 0) + 1
     assert counts == {
         "planned": 14,
-        "observing": 7,
+        "observing": 8,
         "later": 1,
         "enforced": 12,
-    }  # 34 条：32 个 FO + U01-S1 + U07-R1
+    }  # 35 条：32 个 FO + U01-S1 + U07-R1 + U08-R1
     # safe_stop 的 case 也能 enforced，但台账预期必须写明是 safe_stop（校验器据此分开计数）
     assert enforced["FO15"]["expected_product_outcome"] == "safe_stop"
 
