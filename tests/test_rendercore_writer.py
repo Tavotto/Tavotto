@@ -319,18 +319,26 @@ def test_pdfminer_sees_the_tounicode_layer_only(written):
     assert "".join(ch for ch in EXPECT["cjk"]["logical"] if not ch.isspace()) in flat
 
 
-def test_poppler_pdftotext_honours_actualtext_and_reports_no_syntax_error(written):
+def _pdftotext(path: Path) -> tuple[str, str]:
+    """poppler `pdftotext` 抽出的 (stdout, stderr)。**显式 `-enc UTF-8`**：输出编码是 poppler
+    的构建期默认（Git for Windows 自带的那份是 Latin1），不钉的话 `²` 会以 0xb2 一个字节出来、
+    U+1D538 这种 Latin1 放不下的直接被丢——u06-rendercore.yml 的 Windows 腿就是这样红的两条
+    （父进程按 UTF-8 解、读线程炸、stdout 成 None；notdef 用例抽回 `ab`）。本机反证：换成
+    `-enc Latin1` 同样两条红。"""
     exe = shutil.which("pdftotext")
     if not exe:
         pytest.skip("系统里没有 poppler pdftotext（not_run）")
-    proc = subprocess.run(
-        [exe, str(written["path"]), "-"], capture_output=True, text=True, encoding="utf-8"
-    )
-    assert proc.returncode == 0
-    assert "Syntax Error" not in proc.stderr, proc.stderr
-    flat = "".join(ch for ch in proc.stdout if not ch.isspace())
+    proc = subprocess.run([exe, "-enc", "UTF-8", str(path), "-"], capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout.decode("utf-8"), proc.stderr.decode("utf-8", errors="replace")
+
+
+def test_poppler_pdftotext_honours_actualtext_and_reports_no_syntax_error(written):
+    stdout, stderr = _pdftotext(written["path"])
+    assert "Syntax Error" not in stderr, stderr
+    flat = "".join(ch for ch in stdout if not ch.isspace())
     for key, exp in EXPECT.items():
-        assert "".join(ch for ch in exp["logical"] if not ch.isspace()) in flat, (key, proc.stdout)
+        assert "".join(ch for ch in exp["logical"] if not ch.isspace()) in flat, (key, stdout)
 
 
 def test_composed_superscript_and_multi_glyph_cluster_get_actualtext_spans(written):
@@ -604,10 +612,8 @@ def test_a_missing_glyph_is_written_as_notdef_and_reported_not_substituted(
     assert maps["F1"][0] == "\U0001d538"
     text = pdfium.PdfDocument(str(out))[0].get_textpage().get_text_range()
     assert re.fullmatch(r"a.b", text.strip()), text
-    exe = shutil.which("pdftotext")
-    if exe:
-        got = subprocess.run([exe, str(out), "-"], capture_output=True, text=True, encoding="utf-8")
-        assert "a\U0001d538b" in got.stdout
+    if shutil.which("pdftotext"):
+        assert "a\U0001d538b" in _pdftotext(out)[0]
 
 
 def test_a_same_named_face_with_different_bytes_is_refused(provider, tmp_path):
