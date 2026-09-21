@@ -99,6 +99,7 @@ pypdf 路线的实测代价（不采用，但写明）：pypdf 6.7.5 没有「�
 | `job` 不把冻结字节交给写入器 | job 用例 |
 | 位图解码不传像素预算 / JPEG 直通不核 SOF 尺寸（Codex #463 P2） | `test_a_huge_raster_is_refused_before_it_is_decoded`（9000² 落在 Pillow 自己的炸弹闸之下，响的是我们的预算；`load` 探针证明拒绝在解码之前） |
 | JPEG 直通不整张真解（Codex #463 P2） | `test_a_jpeg_that_readers_cannot_decode_is_not_passed_through`（12 字节假头、截半的真 JPEG） |
+| 记账挪到 JPEG 真解之后（Codex #463 第三轮 P2） | 同一条用例：预算只剩 2000 时把 Pillow 的 `load` 换成必爆探针，拒绝必须发生在解码之前 |
 | 文档级位图像素预算不累计（Codex #463 第二轮 P2） | `test_the_document_wide_raster_budget_stops_many_small_images_from_adding_up`（预算缩到用例尺度：同一张不重复计费、第三张不同的位图超线即 `raster_budget_exceeded`，JPEG 直通路同样记账） |
 | 退化页盒不拦（Codex #463 P2） | `test_a_source_page_with_a_degenerate_box_is_a_source_error_not_a_crash`（MediaBox 零宽 → `source_unreadable(why=degenerate_box)`，不是 ZeroDivisionError） |
 

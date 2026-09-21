@@ -429,7 +429,15 @@ class PdfWriter:
         if hit is not None:
             return hit
         try:
-            # 直通判据里预算按 SOF 尺寸先判（解码之前），再整张真解一遍（读取器解得开才直通）
+            # 两级预算都在**任何**解码之前按头里的尺寸记账（JPEG 读 SOF，其它 Pillow 懒打开）：单张
+            # `SOURCE_MAX_PIXELS`、文档累计 `DOCUMENT_MAX_PIXELS`；超过就是结构化拒绝，一个像素不解——
+            # JPEG 直通的「整张真解一遍」也排在记账之后（Codex #463 第三轮 P2）
+            width, height = rasterio.header_size(data, res.kind)
+            if width * height > raster.SOURCE_MAX_PIXELS:
+                raise rasterio.RasterDecodeError(
+                    "raster_too_large", f"{width}×{height} > 像素预算 {raster.SOURCE_MAX_PIXELS}"
+                )
+            self._charge_raster(node, res, width, height)
             jpeg = rasterio.jpeg_passthrough(data, res.kind, max_pixels=raster.SOURCE_MAX_PIXELS)
         except rasterio.RasterDecodeError as exc:
             raise WriterError(
@@ -438,7 +446,6 @@ class PdfWriter:
                 {"figure": res.source_id, "object_id": node.object_id, "why": exc.code},
             ) from exc
         if jpeg is not None:
-            self._charge_raster(node, res, jpeg["width"], jpeg["height"])
             obj = pikepdf.Stream(self.pdf, data)
             obj["/Type"] = pikepdf.Name.XObject
             obj["/Subtype"] = pikepdf.Name.Image
@@ -460,10 +467,6 @@ class PdfWriter:
             self._image_objs[node.resource] = hit
             return hit
         try:
-            # 预算在解码**之前**按头里的尺寸判（Pillow 是懒打开）：单张预算在 decode 里，文档级预算在这里，
-            # 都超过就是结构化拒绝，不分配整幅
-            width, height = rasterio.header_size(data, res.kind)
-            self._charge_raster(node, res, width, height)
             buf = rasterio.decode(data, res.kind, max_pixels=raster.SOURCE_MAX_PIXELS)
         except rasterio.RasterDecodeError as exc:
             raise WriterError(
