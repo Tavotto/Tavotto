@@ -54,3 +54,17 @@ FO21 / FO22 / FO27 safe_stop。FO18 / FO05 observing 不在 `pr` lane 的预期�
 
 5/5 红；还原后四条 passed。C10 第一次绿：用例把线程按在「重算事实」那一步，而变异把登记放在 `prepare()` 第一行——线程起得比
 主线程的取消快，登记仍赢了赛跑；改成把线程按在**入口**（`_prepare_guarded` 之前），登记在线程里的任何一行都红。
+
+## 第三轮：Codex #470（bc111902 那一轮，2 P1）（C15–C18）
+
+脚本：session scratchpad `u04_mutate_c3.py`（用例文件 `test_dependency_repair.py` + `test_dependency_transaction.py`）。
+
+| # | 变异（对应评审） | 文件 | 用例 | rc |
+|---|---|---|---|---|
+| C15 | `write_manifest(strict=True)` 也吞掉 OSError（P1 激活清单写失败被吞） | managedenv | …::test_manifest_write_failure_is_visible_at_registration_and_activation（单元：`Path.replace` 打成 ENOSPC）/ …::test_activation_write_failure_is_a_failure_not_a_commit（真事务：提交点写失败 → failed、不 committed、active 不动、上一代可用） | 1 |
+| C16 | 激活写失败不撤回「已提交」 | deprepair | …::test_activation_write_failure_is_a_failure_not_a_commit | 1 |
+| C17 | 认领挪到线程里（`prepare_async` 不认领；P1 重复 prepare 起两个 worker） | deprepair | …::test_a_joint_plan_is_claimed_before_the_worker_starts（两次 POST 只起一个线程、第二次 `started: false`、在途的可取消） | 1 |
+| C18 | 同步入口不认领 | deprepair | 同上（同步分支喂在途的那份计划） | 1 |
+
+4/4 红；还原后三条 passed。C18 第一次绿：同步分支喂的是不存在的计划，「没有这个计划」与「已经在执行」同一 code，变异被掩住——
+改喂在途的那份、并断言文案。三条 P2 → issue #490（换项目清依赖修复状态 / importscan 跟进本地子模块 / pyproject 畸形依赖项保留）。

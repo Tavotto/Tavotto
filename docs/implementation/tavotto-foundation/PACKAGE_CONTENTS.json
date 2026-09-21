@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A / PR B）加交接 / 证据 / README / plan.json 后各算一次；U05（2026-09-21，PR A / C）加交接 / 证据 / README / plan.json / 台账后各算一次；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次；U09（2026-09-21）两条链第一次汇合（merge 4973a28f 进 foundation/u09-join）后按并集重算；U09（2026-09-21）加 evidence/u09 / 交接 / ADR 引用 / README / plan.json / 台账（FO30 enforced、FO32 observing）后再算一次；U10（2026-09-22）加 evidence/u10、交接、ADR 引用、ledger / enrollment / plan / registry 变更后再算一次；2026-09-22 用户拍板（Intel 矩阵改口 / 字体两默认）落到 ADR 与交接后再算一次；U09（2026-09-22）merge 链 1 新 tip acfecef1（--onto 后重放的 U06 / U07 / U08 + 评审处置）后重算；U10（2026-09-22）merge U09 8f00a12d（含链 1 tip acfecef1）后再算一次；U09（2026-09-22）merge 链 2 新 tip bf77e9b7（U03-B / U04-C / U05-B 叠到 main e68f0520，含 #465 / #466 / #469）后重算；U10（2026-09-22）merge U09 8379f95b（含链 2 tip bf77e9b7）后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A / PR B）加交接 / 证据 / README / plan.json 后各算一次；U05（2026-09-21，PR A / C）加交接 / 证据 / README / plan.json / 台账后各算一次；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次；U09（2026-09-21）两条链第一次汇合（merge 4973a28f 进 foundation/u09-join）后按并集重算；U09（2026-09-21）加 evidence/u09 / 交接 / ADR 引用 / README / plan.json / 台账（FO30 enforced、FO32 observing）后再算一次；U10（2026-09-22）加 evidence/u10、交接、ADR 引用、ledger / enrollment / plan / registry 变更后再算一次；2026-09-22 用户拍板（Intel 矩阵改口 / 字体两默认）落到 ADR 与交接后再算一次；U09（2026-09-22）merge 链 1 新 tip acfecef1（--onto 后重放的 U06 / U07 / U08 + 评审处置）后重算；U10（2026-09-22）merge U09 8f00a12d（含链 1 tip acfecef1）后再算一次；U09（2026-09-22）merge 链 2 新 tip bf77e9b7（U03-B / U04-C / U05-B 叠到 main e68f0520，含 #465 / #466 / #469）后重算；U10（2026-09-22）merge U09 8379f95b（含链 2 tip bf77e9b7）后再算一次；U10（2026-09-22）merge U09 b06c1d93（含链 2 tip bf23b304）后再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -254,8 +254,8 @@
     },
     {
       "path": "evidence/u04/mutations_pr_c.md",
-      "bytes": 5508,
-      "sha256": "fd966814ce260614255846669180449f46118f172ed8f00605e67d7e6beba773"
+      "bytes": 7029,
+      "sha256": "57e6faa611d6b879208652301c26e14955c700aca20cadaec080c3bdb044b7b8"
     },
     {
       "path": "evidence/u05/empty-image-linux-arm64.json",
@@ -274,8 +274,8 @@
     },
     {
       "path": "evidence/u05/mutations_pr_b.md",
-      "bytes": 4151,
-      "sha256": "d779a923b484049659882ca625f4a116dbfd870d52aa0dd74521c46a4af3e50d"
+      "bytes": 4585,
+      "sha256": "76901beafe3f562bf8fdc68d4ef7dfde9a5f15e7371b1bea39c183c60206a18a"
     },
     {
       "path": "evidence/u06/README.md",
@@ -504,13 +504,13 @@
     },
     {
       "path": "handoffs/U04_dependencies.md",
-      "bytes": 34017,
-      "sha256": "377c6c9162a7f4a1451726d2343a207646be2a8a52bfa8db91827b78119925b9"
+      "bytes": 35258,
+      "sha256": "346407e2bf9637c418e10111e2e857133742fd90d4504682482c3fb66b1398c8"
     },
     {
       "path": "handoffs/U05_private_python.md",
-      "bytes": 31860,
-      "sha256": "c7bf093b823ce2cad64ffe54acca0437138903363f930b31883a5dd5a1484b16"
+      "bytes": 32227,
+      "sha256": "aa9a833f67b2173f2b61f56eef20ad271771e512cc6d84569e3d694d36b49b8b"
     },
     {
       "path": "handoffs/U06_ir_text.md",

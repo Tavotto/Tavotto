@@ -1976,6 +1976,7 @@ export default interface Resources {
         "managed_env_broken": "Tavotto 环境已损坏，可以重建。",
         "managed_env_create_failed": "无法创建 Tavotto 环境。",
         "managed_env_unavailable": "没有可用于创建环境的 Python。请安装 Python 3.10 以上，或选择已有环境。",
+        "managed_env_write_failed": "Tavotto 环境的清单写不进磁盘（可能已满或只读），这次没有切换环境。腾出空间后重试。",
         "package_disk_low": "磁盘剩余空间不足 200 MB，清理后再安装。",
         "package_env_missing": "项目还没有 Tavotto 环境。先安装包，环境会随之创建。",
         "package_lookup_failed": "无法解析软件源的响应。可直接输入包名安装。",

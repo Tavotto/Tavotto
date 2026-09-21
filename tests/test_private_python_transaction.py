@@ -357,9 +357,9 @@ class TestPrivateBase:
         gate = threading.Event()
         real_guarded = deprepair._prepare_guarded
 
-        def _held_at_entry(plan_id, on_event):
+        def _held_at_entry(plan_id, on_event, *, claimed=False):
             gate.wait(timeout=30)  # 线程按在入口：登记若在线程里做，这一刻只能回 not_found
-            return real_guarded(plan_id, on_event)
+            return real_guarded(plan_id, on_event, claimed=claimed)
 
         monkeypatch.setattr(deprepair, "_prepare_guarded", _held_at_entry)
         events: list[dict] = []
@@ -387,6 +387,69 @@ class TestPrivateBase:
         plan2 = deprepair.create_joint_plan(project, "figure.py")
         rec2, _ = _prepare(plan2.plan_id)
         assert rec2["state"] == deprepair.STATE_DONE, rec2
+
+    def test_a_duplicate_prepare_does_not_start_a_second_provisioning(
+        self, tmp_path, house, no_base, fake
+    ):
+        """U04 C 的认领合同（Codex #470 P1）在供应路径上：同一份计划第二次 `prepare_async` 回 False、不起第二个
+        线程——供应只发一次请求、下载线程只有一个；放开后终态 done、一代、一份 runtime。"""
+        server, src, _ = fake
+        server.mode = "hold"
+        server.gate.clear()
+        project = _project(tmp_path)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        events: list[dict] = []
+        assert deprepair.prepare_async(plan.plan_id, on_event=events.append) is True
+        deadline = time.time() + 30
+        while not server.requests and time.time() < deadline:
+            time.sleep(0.05)
+        assert server.requests == [f"/{src.archive_name}"]
+        assert deprepair.prepare_async(plan.plan_id, on_event=events.append) is False  # 已在跑
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.prepare(plan.plan_id)  # 同步入口同样认领
+        assert err.value.code == deprepair.ERROR_NOT_ALLOWED
+        time.sleep(0.3)
+        assert server.requests == [f"/{src.archive_name}"]  # 还是那一次
+        with privatepython._lock:
+            assert privatepython._inflight[src.id].consumers == 1
+        server.gate.set()
+        rec = wait_for(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert server.requests == [f"/{src.archive_name}"]
+        assert len(managedenv.generations(project)) == 1
+        assert sorted(p.name for p in privatepython.runtimes_dir().iterdir()) == [src.id]
+
+    @pytest.mark.skipif(os.name == "nt" or os.geteuid() == 0, reason="需要 POSIX 权限位且非 root")
+    def test_manifest_write_failure_after_provisioning_is_write_failed_and_keeps_the_runtime(
+        self, tmp_path, house, no_base, fake
+    ):
+        """U04 C 的清单合同（Codex #470 P1）在供应路径上：私有 Python 供应完、登记这一代时清单写不进只读目录 →
+        `managed_env_write_failed`（不是走到建 venv 才报）；供应好的 runtime 留着（它是缓存，下一次不用再下），
+        没有半个 active、磁盘上没有清单。"""
+        server, src, _ = fake
+        project = _project(tmp_path)
+        envs = managedenv.env_dir(project).parent
+        envs.mkdir(parents=True, exist_ok=True)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.private_python is not None
+        envs.chmod(0o500)
+        try:
+            rec, events = _prepare(plan.plan_id)
+        finally:
+            envs.chmod(0o700)
+        assert rec["state"] == deprepair.STATE_FAILED
+        assert rec["code"] == deprepair.ERROR_MANAGED_WRITE_FAILED
+        assert deprepair.STATE_DOWNLOADING_PYTHON in [e["state"] for e in events]
+        assert server.requests == [f"/{src.archive_name}"]
+        assert privatepython.python_of(src)  # runtime 留着
+        assert managedenv.python_of(project) is None
+        assert managedenv.read_manifest(project) is None
+        # 目录恢复后同一份形状再来：不再下载，直接建代
+        plan2 = deprepair.create_joint_plan(project, "figure.py")
+        assert plan2.private_python is None  # base 已在
+        rec2, _ = _prepare(plan2.plan_id)
+        assert rec2["state"] == deprepair.STATE_DONE, rec2
+        assert server.requests == [f"/{src.archive_name}"]
 
     def test_cancel_during_the_download_leaves_no_generation_and_no_runtime(
         self, tmp_path, house, no_base, fake

@@ -832,6 +832,297 @@ def test_patch_shapes_are_draggable_via_pos_frac(tmp_path):
         proc.wait(timeout=10)
 
 
+SHARED_SCALE_SCRIPT = """\
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap, PowerNorm
+
+# 两张**自定义**色图（用户脚本就是 from_list 出来的）：兄弟各有各的，共用的只是 norm
+GREEN_B = LinearSegmentedColormap.from_list("paper_b", ["#edf5df", "#3f942c"])
+GREEN_C = LinearSegmentedColormap.from_list("paper_c", ["#fffef5", "#e5bd00"])
+
+
+def main():
+    rng = np.random.RandomState(0)
+    fig, (ax_b, ax_c) = plt.subplots(1, 2, figsize=(4.6, 2.4))
+    x = np.linspace(0.5, 2.0, 7)
+    f = np.linspace(1.30, 1.52, 7)
+    norm = PowerNorm(gamma=1.45, vmin=0.0, vmax=1.0)     # 一份 norm，两块网格
+    mesh_b = ax_b.pcolormesh(x, f, rng.rand(7, 7), cmap=GREEN_B, norm=norm,
+                             shading="nearest", rasterized=True)
+    ax_c.pcolormesh(x, f, rng.rand(7, 7), cmap=GREEN_C, norm=norm,
+                    shading="nearest", rasterized=True)
+    for ax in (ax_b, ax_c):
+        ax.set_ylim(1.34, 1.51)
+    fig.colorbar(mesh_b, ax=ax_c)                        # 挂在 (b) 上、摆在 (c) 旁
+    fig.savefig("Shared.pdf")
+"""
+
+
+def _cmap_original_name(manifest, gid):
+    el = next(e for e in manifest["elements"] if e["gid"] == gid)
+    field = next(f for f in el["editable"] if f["prop"] == "cmap")
+    return (field.get("cmap_original") or {}).get("name")
+
+
+def test_colorbar_colormap_reaches_every_mappable_sharing_its_norm(tmp_path):
+    """色条的色图落到**共用同一份 norm 对象**的每一块网格上，不只是 `cb.mappable`。
+
+    2026-09-21 用户的 PRB 三联图：(b)(c) 两块 pcolormesh 传同一个 PowerNorm、色条
+    挂在 (b) 上却摆在 (c) 旁边——从色条换色图只有 (b) 变，紧挨着色条的 (c) 纹丝
+    不动。契约：manifest 的色条条目发 `scale_gids`（兄弟的 gid，不含 mappable
+    本人）；色条的 cmap override 之后两块网格的 `cmap` 字段都是新值，兄弟也报
+    `cmap_original`；空列表还原后两块都回脚本原样。上下限走共用的 norm，本来就
+    一起变。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_shared.py").write_text(SHARED_SCALE_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_shared.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": []})["manifest"]
+        cb = next(e for e in man["elements"] if e["role"] == "colorbar")
+        assert cb["mappable_gid"] == "axes_0.collections_0"
+        assert cb["scale_gids"] == ["axes_1.collections_0"]
+        assert _field_value(man, "axes_0.collections_0", "cmap") == "paper_b"
+        assert _field_value(man, "axes_1.collections_0", "cmap") == "paper_c"
+
+        patches = [{"gid": cb["gid"], "prop": "cmap", "value": "plasma"}]
+        resp = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": patches})
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        man = resp["manifest"]
+        assert _field_value(man, "axes_0.collections_0", "cmap") == "plasma"
+        assert _field_value(man, "axes_1.collections_0", "cmap") == "plasma", (
+            "共用 norm 的兄弟没有跟着色条换色图"
+        )
+        assert _field_value(man, cb["gid"], "cmap") == "plasma"
+        # 「脚本原样」各说各的：兄弟报的是它自己那张（paper_c），不是 mappable 的
+        # （#474 评审：拿色条那条 key 的原样冒充兄弟的，选择器会画错、点回去还原成另一张）
+        assert _cmap_original_name(man, "axes_0.collections_0") == "paper_b"
+        assert _cmap_original_name(man, "axes_1.collections_0") == "paper_c"
+        assert _cmap_original_name(man, cb["gid"]) == "paper_b"
+
+        # 上下限：一处写、两块变（共用的 norm）
+        patches.append({"gid": cb["gid"], "prop": "vmin", "value": 0.25})
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": patches})["manifest"]
+        assert _field_value(man, "axes_1.collections_0", "vmin") == pytest.approx(0.25)
+
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": []})["manifest"]
+        for gid, name in (
+            ("axes_0.collections_0", "paper_b"),
+            ("axes_1.collections_0", "paper_c"),
+            (cb["gid"], "paper_b"),
+        ):
+            assert _field_value(man, gid, "cmap") == name, gid
+            assert _field_value(man, gid, "vmin") == pytest.approx(0.0), gid
+            assert _cmap_original_name(man, gid) is None, gid
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+TWO_COLORBARS_SCRIPT = SHARED_SCALE_SCRIPT.replace(
+    "    fig.colorbar(mesh_b, ax=ax_c)                        # 挂在 (b) 上、摆在 (c) 旁\n",
+    "    fig.colorbar(mesh_b, ax=ax_b)\n    fig.colorbar(mesh_c, ax=ax_c)\n",
+).replace("    ax_c.pcolormesh(", "    mesh_c = ax_c.pcolormesh(")
+
+
+def test_peer_colorbars_on_a_shared_scale_keep_their_own_originals(tmp_path):
+    """两块共用 norm 的网格**各挂一条色条**：从 A 换色图两块都变、B 的字段跟着变，
+    而 B 的 `cmap_original` 是它自己那块网格的（paper_c），不是 A 那块的（#474 评审
+    第二轮：色条代理不是别名组的窄成员，「自己名下的原样」要经它的 mappable 去取）。"""
+    assert (
+        "mesh_c = ax_c.pcolormesh(" in TWO_COLORBARS_SCRIPT
+        and "fig.colorbar(mesh_c" in TWO_COLORBARS_SCRIPT
+    )
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_two.py").write_text(TWO_COLORBARS_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_two.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": []})["manifest"]
+        cb_a, cb_b = [e for e in man["elements"] if e["role"] == "colorbar"]
+        assert (cb_a["mappable_gid"], cb_b["mappable_gid"]) == (
+            "axes_0.collections_0",
+            "axes_1.collections_0",
+        )
+        assert cb_a["scale_gids"] == ["axes_1.collections_0"]
+        assert cb_b["scale_gids"] == ["axes_0.collections_0"]
+
+        patches = [{"gid": cb_a["gid"], "prop": "cmap", "value": "plasma"}]
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": patches})["manifest"]
+        for gid in ("axes_0.collections_0", "axes_1.collections_0", cb_a["gid"], cb_b["gid"]):
+            assert _field_value(man, gid, "cmap") == "plasma", gid
+        assert _cmap_original_name(man, cb_a["gid"]) == "paper_b"
+        assert _cmap_original_name(man, cb_b["gid"]) == "paper_c", "B 报成了 A 那块的原样"
+        assert _cmap_original_name(man, "axes_1.collections_0") == "paper_c"
+
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": []})["manifest"]
+        assert _field_value(man, cb_b["gid"], "cmap") == "paper_c"
+        assert _cmap_original_name(man, cb_b["gid"]) is None
+
+        # 只改兄弟自己的（窄 override 从没动过 A）：A 与它的色条**不**报「脚本原样」——
+        # 否则 A 的选择器会拿 B 的原样当 A 的、点回去清的却是 B（#474 评审第五轮）
+        narrow = [{"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"}]
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": narrow})["manifest"]
+        assert _field_value(man, "axes_0.collections_0", "cmap") == "paper_b"
+        assert _cmap_original_name(man, "axes_0.collections_0") is None
+        assert _cmap_original_name(man, cb_a["gid"]) is None
+        assert _cmap_original_name(man, "axes_1.collections_0") == "paper_c"
+        assert _cmap_original_name(man, cb_b["gid"]) == "paper_c"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+UNMAPPED_SIBLING_SCRIPT = """\
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+from matplotlib.colors import LinearSegmentedColormap, PowerNorm
+
+CM_A = LinearSegmentedColormap.from_list("paper_b", ["#edf5df", "#3f942c"])
+CM_L = LinearSegmentedColormap.from_list("paper_l", ["#000000", "#ff0000"])
+
+
+def main():
+    rng = np.random.RandomState(0)
+    fig, ax = plt.subplots(figsize=(4.0, 2.6))
+    norm = PowerNorm(gamma=1.2, vmin=0.0, vmax=1.0)
+    mesh = ax.pcolormesh(np.linspace(0, 1, 6), np.linspace(0, 1, 6), rng.rand(6, 6),
+                         cmap=CM_A, norm=norm, shading="nearest")
+    # 没有数组、颜色写死的线组：传了共用的 norm、也有 set_cmap，但它没在映射——
+    # 归 `linecoll` 族，没有 cmap handler，原样采不到
+    ax.add_collection(LineCollection([[(0.1, 1.1), (0.9, 1.1)]], colors="#804000",
+                                     cmap=CM_L, norm=norm, linewidths=3))
+    # 有数组的线组：映射着色、归通用 collection 族，是正经的色阶兄弟
+    ax.add_collection(LineCollection([[(0.1, 1.2), (0.9, 1.2)]], array=np.array([0.7]),
+                                     cmap=CM_L, norm=norm, linewidths=3))
+    # 有数组、颜色却写死的线组：归通用族（有 handler），但映射没在生效——组员是，
+    # 事实不发（换色图一个像素不动，界面不该摆「与色条共用色阶」）
+    ax.add_collection(LineCollection([[(0.1, 1.25), (0.9, 1.25)]], array=np.array([0.3]),
+                                     colors="#123456", cmap=CM_L, norm=norm, linewidths=3))
+    ax.set_ylim(0, 1.3)
+    fig.colorbar(mesh, ax=ax)
+    fig.savefig("Unmapped.pdf")
+"""
+
+
+def test_scale_siblings_only_count_artists_whose_colormap_can_be_restored(tmp_path):
+    """色阶兄弟只收原样采得到的：没在映射的线组即便传了共用的 norm 也不算
+    （#474 评审第三轮——它没有 cmap handler，撤销时只能拿 mappable 的原样冒充）；
+    有数组却把颜色写死的线组是结构上的组员、**事实不发**（第四轮——换色图一个像素
+    不动，界面不摆假的「共用色阶」）；映射着色的线组是正经兄弟，色图跟着色条走、
+    撤销回它自己的那张。"""
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_unmapped.py").write_text(UNMAPPED_SIBLING_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_unmapped.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "Unmapped", "patches": []})["manifest"]
+        cb = next(e for e in man["elements"] if e["role"] == "colorbar")
+        plain = next(e for e in man["elements"] if e["role"] == "linecoll")
+        mapped, fixed = [
+            e
+            for e in man["elements"]
+            if e["role"] == "collection" and e["gid"] != cb["mappable_gid"]
+        ]
+        # 写死颜色的那条有数组、归通用族，但它的 cmap 字段本来就不宣称（映射没在生效）
+        assert not any(f["prop"] == "cmap" for f in fixed["editable"])
+        assert cb["scale_gids"] == [mapped["gid"]], cb.get("scale_gids")
+        assert plain["gid"] not in cb["scale_gids"] and fixed["gid"] not in cb["scale_gids"]
+        assert _field_value(man, mapped["gid"], "cmap") == "paper_l"
+
+        patches = [{"gid": cb["gid"], "prop": "cmap", "value": "plasma"}]
+        man = _rpc(proc, {"cmd": "override", "stem": "Unmapped", "patches": patches})["manifest"]
+        assert _field_value(man, mapped["gid"], "cmap") == "plasma"
+        assert _cmap_original_name(man, mapped["gid"]) == "paper_l"
+
+        man = _rpc(proc, {"cmd": "override", "stem": "Unmapped", "patches": []})["manifest"]
+        assert _field_value(man, mapped["gid"], "cmap") == "paper_l"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+GATED_COLORBAR_SCRIPT = """\
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+from matplotlib.colors import PowerNorm
+
+
+def main():
+    rng = np.random.RandomState(0)
+    fig, ax = plt.subplots(figsize=(4.0, 2.6))
+    norm = PowerNorm(gamma=1.2, vmin=0.0, vmax=1.0)
+    ax.pcolormesh(np.linspace(0, 1, 6), np.linspace(0, 1, 6), rng.rand(6, 6),
+                  cmap="Greens", norm=norm, shading="nearest")
+    # 色条挂在**映射着色的线组**上；给它设过 edgecolor 之后映射就断了
+    lc = LineCollection([[(0.1, 1.15), (0.9, 1.15)]], array=np.array([0.7]),
+                        cmap="Greens", norm=norm, linewidths=4)
+    ax.add_collection(lc)
+    ax.set_ylim(0, 1.3)
+    fig.colorbar(lc, ax=ax)
+    fig.savefig("Gated.pdf")
+"""
+
+
+def test_scale_coverage_survives_the_colorbars_own_gate(tmp_path):
+    """色条自己的映射断了（它的线组被设了 edgecolor）→ 三个色阶控件收起来，
+    但 `scale_gids`（覆盖关系）**照发**：先前写下的色条 cmap override 仍在给兄弟上色，
+    兄弟页「回到脚本原样」要靠它找到那条 override 并清掉（#474 评审第七轮）。「兄弟页
+    摆不摆链接」由前端按色条有没有 cmap 字段判（`colorScalePanels.test.tsx`）。"""
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_gated.py").write_text(GATED_COLORBAR_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_gated.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": []})["manifest"]
+        cb = next(e for e in man["elements"] if e["role"] == "colorbar")
+        mesh = next(
+            e
+            for e in man["elements"]
+            if e["role"] == "collection" and e["gid"] != cb["mappable_gid"]
+        )
+        assert cb["scale_gids"] == [mesh["gid"]]
+        assert any(f["prop"] == "cmap" for f in cb["editable"])
+
+        # 先从色条换色图（兄弟跟着变），再把色条的线组设死边色：控件收起、覆盖照报
+        recolor = {"gid": cb["gid"], "prop": "cmap", "value": "plasma"}
+        kill = {"gid": cb["mappable_gid"], "prop": "edgecolor", "value": "#804000"}
+        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": [recolor]})["manifest"]
+        assert _field_value(man, mesh["gid"], "cmap") == "plasma"
+        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": [recolor, kill]})[
+            "manifest"
+        ]
+        cb2 = next(e for e in man["elements"] if e["gid"] == cb["gid"])
+        assert not any(f["prop"] == "cmap" for f in cb2["editable"]), "映射断了色条还给 cmap"
+        assert cb2["scale_gids"] == [mesh["gid"]], (
+            "覆盖关系随控件一起消失，兄弟找不到该清的 override"
+        )
+        assert _field_value(man, mesh["gid"], "cmap") == "plasma"
+        assert any(
+            f["prop"] == "cmap"
+            for f in next(e for e in man["elements"] if e["gid"] == mesh["gid"])["editable"]
+        )
+
+        # 兄弟页「回到脚本原样」= 清整组（含那条色条的 override）→ 兄弟回 Greens
+        man = _rpc(proc, {"cmd": "override", "stem": "Gated", "patches": [kill]})["manifest"]
+        assert _field_value(man, mesh["gid"], "cmap") == "Greens"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
 def test_closed_figure_still_builds(tmp_path):
     """脚本 `savefig` 完就 `plt.close(fig)` 时仍要能起来。
 

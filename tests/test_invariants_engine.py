@@ -854,6 +854,203 @@ REMOVAL_CASES = [
             [],
         ],
     ),
+    # ---- 色阶兄弟：色条的 cmap 落到与 mappable 共用 norm 的那块网格上 ----
+    #
+    # InvShared：axes_0 / axes_1 两块网格共用一份 PowerNorm，色条（axes_2）挂在
+    # axes_0 的网格上。别名组里 `(axes_1.collections_0, cmap)` 是**兄弟**成员：
+    # 色条一动它被盖掉，它的「脚本原样」必须在色条动手之前采、撤销时各回各的。
+    # 三格分别撤色条 / 撤兄弟自己的 / 全撤（全撤那格从前会停在色条那张图上——
+    # 兄弟不是 mappable，`set_cmap(orig)` 只写 mappable）。
+    # 只设色条、再撤：兄弟必须跟着回原样（色条的 restore 只写 mappable 的话，
+    # 热态里兄弟停在色条那张图上，而全新重放里它是脚本原样）
+    (
+        "H-shared-drop-colorbar-alone",
+        "InvShared",
+        [[{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}], []],
+    ),
+    (
+        "H-shared-drop-colorbar",
+        "InvShared",
+        [
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"}],
+        ],
+    ),
+    (
+        "H-shared-drop-sibling",
+        "InvShared",
+        [
+            [{"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"}],
+            [
+                {"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"},
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+            ],
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}],
+        ],
+    ),
+    (
+        "H-shared-drop-both",
+        "InvShared",
+        [
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"},
+            ],
+            [],
+        ],
+    ),
+    # 上下限走的是共用的 norm 本身（一处写、两块变）：兄弟自己的 vmax 要在
+    # 色条动过 vmin 之后采到**未被污染**的原样
+    (
+        "H-shared-clim-drop-colorbar",
+        "InvShared",
+        [
+            [{"gid": "axes_2.colorbar", "prop": "vmin", "value": 0.2}],
+            [
+                {"gid": "axes_2.colorbar", "prop": "vmin", "value": 0.2},
+                {"gid": "axes_1.collections_0", "prop": "vmax", "value": 0.8},
+            ],
+            [{"gid": "axes_1.collections_0", "prop": "vmax", "value": 0.8}],
+        ],
+    ),
+    # 两块共用 norm 的网格各挂一条色条（InvShared2，axes_2 是 mesh_a 的、axes_3 是
+    # mesh_b 的）：两个广播端组员重叠、原样各是各的自定义色图。B 的原样经 `_seeded`
+    # 取自 mesh_b 那份代采记录（成员表里 mappable 排第一），撤 A 之后 B 重放，全撤
+    # 各回各的（#474 评审第二轮）。
+    (
+        "I-twocb-drop-first",
+        "InvShared2",
+        [
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_3.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_3.colorbar", "prop": "cmap", "value": "cividis"}],
+        ],
+    ),
+    (
+        "I-twocb-drop-second",
+        "InvShared2",
+        [
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_3.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"}],
+        ],
+    ),
+    (
+        "I-twocb-drop-both",
+        "InvShared2",
+        [
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_3.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [],
+        ],
+    ),
+    # 登记网格的色条（axes_1）与共用 norm 的**独立 mappable** 色条（axes_2）：独立那条
+    # 的原样不能从兄弟（登记网格）身上「共用」过来——先设登记那条、再设独立那条、全撤，
+    # 独立色条要回它自己的 custom_s（#474 评审第八轮）
+    (
+        "J-standalone-peer-drop-both",
+        "InvShared3",
+        [
+            [{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [],
+        ],
+    ),
+    (
+        "J-standalone-peer-drop-registered",
+        "InvShared3",
+        [
+            [{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}],
+        ],
+    ),
+    (
+        "J-standalone-first-drop-both",
+        "InvShared3",
+        [
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}],
+            [
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"},
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+            ],
+            [],
+        ],
+    ),
+    # ---- 分两步、窄的先来：先改组员自己的，**下一轮**再改色条，最后全撤 ----
+    #
+    # 同一步里 `_rank` 把广播排在组员之前，色条采原样时组员还是脚本原样；分两步就不
+    # 一样了——色条应用那一刻组员已经被改过，读 getter 读到的是改过的值（实测三条
+    # 全部停在中间态：mappable 色图 cividis / 兄弟 custom_a / norm 0.2）。色条的原样
+    # 就是组员的原样（cmap 与它的 mappable 同值、vmin/vmax 与全部组员同值），组员
+    # 名下已有的记录必须复用；撤销时兄弟自己那条排在色条前面被先还原、记录被收走，
+    # 色条的 restore 不能再拿 mappable 的色图盖上去（第九轮评审两条 P2）。
+    (
+        "K-mappable-narrow-then-cb-drop-both",
+        "InvCbar",
+        [
+            [{"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [],
+        ],
+    ),
+    (
+        "K-sibling-narrow-then-cb-drop-both",
+        "InvShared",
+        [
+            [{"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"}],
+            [
+                {"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"},
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "plasma"},
+            ],
+            [],
+        ],
+    ),
+    (
+        "K-sibling-vmin-then-cb-vmin-drop-both",
+        "InvShared",
+        [
+            [{"gid": "axes_1.collections_0", "prop": "vmin", "value": 0.2}],
+            [
+                {"gid": "axes_1.collections_0", "prop": "vmin", "value": 0.2},
+                {"gid": "axes_2.colorbar", "prop": "vmin", "value": 0.3},
+            ],
+            [],
+        ],
+    ),
+    (
+        "K-sibling-vmin-then-cb-vmin-drop-sibling",
+        "InvShared",
+        [
+            [{"gid": "axes_1.collections_0", "prop": "vmin", "value": 0.2}],
+            [
+                {"gid": "axes_1.collections_0", "prop": "vmin", "value": 0.2},
+                {"gid": "axes_2.colorbar", "prop": "vmin", "value": 0.3},
+            ],
+            [{"gid": "axes_2.colorbar", "prop": "vmin", "value": 0.3}],
+        ],
+    ),
     (
         "A-colorbar-drop-mappable",
         "InvCbar",

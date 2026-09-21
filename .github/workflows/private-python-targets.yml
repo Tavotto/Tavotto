@@ -26,8 +26,9 @@ on:
   schedule:
     - cron: "37 19 * * 0"   # 每周日 UTC 19:37（nightly 是每天 UTC 18:00）
   pull_request:
-    # 只对 base 是 main 的 PR 跑（与 ci.yml / codeql.yml 同一条纪律，`tests/test_merge_queue_workflows.py`
-    # 的 PR_WORKFLOWS 登记表钉着）：叠栈里 base 不是 main 的层不起这三条重腿，证据只在链头产出
+    # 只对 base 是 main 的 PR 跑（与 ci.yml / codeql.yml 同一条纪律：目录里每个监听 pull_request 的 workflow
+    # 都要 branches == [main]，`tests/test_merge_queue_workflows.py` 算出来钉着）：叠栈里 base 不是 main 的层
+    # 不起这三条重腿，证据只在链头产出
     branches: [main]
     paths:
       # 本 workflow 直接消费的每一份输入都在这里（Codex #467 两轮 P2）：改了任何一份就得在 PR 上跑一次。

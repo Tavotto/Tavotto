@@ -213,6 +213,16 @@ observing 是本机联网各跑过一次；`registry.product_validation_status` 
 
 变异 C10–C14 见 `evidence/u04/mutations_pr_c.md` 第二轮。
 
+**PR C 第三轮（Codex 评 bc111902，2 P1 + 3 P2）**：
+
+| 评审 | 处置 | 用例 |
+|---|---|---|
+| P1 激活清单写失败被吞（卷满 / 只读）：内存说切了、磁盘 `active` 还指旧代 | `write_manifest(strict=True)` 在登记一代与切 active 照抛；事务撤回「已提交」、按 incomplete 记、报 `managed_env_write_failed`（文案两种语言）；记账路仍尽力而为 | `test_manifest_write_failure_is_visible_at_registration_and_activation`、`test_activation_write_failure_is_a_failure_not_a_commit` |
+| P1 第一次完成前重复 `/prepare` 起两个线程各装一遍 | `_claim` 在起线程之前、锁内认领；重复提交回在途进度 `started: false`；同步入口撞上在途的拿 `not_allowed`；提交点「看事件 + 定提交」与 `cancel_status` 同一把锁（此前自检后那次额外检查并入） | `test_a_joint_plan_is_claimed_before_the_worker_starts` |
+| P2 ×3（换项目不清依赖修复状态 / importscan 只跟进顶层包 / pyproject 畸形依赖项丢失或逐字符） | 按收口规则 → issue #490（随 #470 合入后一个小 PR；顺带旧单包路径同族的认领） | — |
+
+变异 C15–C18 见 `evidence/u04/mutations_pr_c.md` 第三轮。
+
 **下一个无阻塞阶段 / 子切片**：U05（私有 Python：base 来源；复用本阶段的事务——ADR 0061 §四的接入规则；`managedenv` 的代记 `provisioner`，今天恒 `pip`）与 U09（`managed_env_join`：`JointPlan.identity` / 代号进回执的语义身份）。历史：PR B 给 PR C 的输入曾是：`deprepair.joint_plan_for`（只读算计划）、`create_joint_plan` / `prepare_async` / `progress` / `cancel_status`、`JointRepairPlan.to_payload()`（不含路径）。PR A 给 PR B 的输入曾是：`JointPlan.requirements / constraints / hashes / require_hashes /
 adapter / identity`；`depplan.reset_cache(python)` 在事务结束时调；`ADAPTER_REQUIREMENTS` 是受管环境每一代的基座。
 U05 的输入：ADR §四（安装器接入规则）。U06 并行：本 PR 只碰 `pyproject.toml` 的 `dependencies` 三行（U06 加可选 extra，
