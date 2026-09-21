@@ -34,7 +34,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "api_render",
-          "line": 870,
+          "line": 871,
           "role": "/api/render 磁盘缓存键 sha1(id|内容|宽|后端-版本)"
         },
         {
@@ -57,7 +57,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "api_render",
-          "line": 870,
+          "line": 871,
           "role": "缓存键"
         },
         {
@@ -185,7 +185,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_write_source_files",
-          "line": 4088,
+          "line": 4089,
           "role": "写回 verify 阶段：把画布标注画进 staging 的 PDF，再由同一份 PDF 栅格化 PNG（incremental save）"
         }
       ],
@@ -222,7 +222,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_replay_pixel_diff",
-          "line": 3937,
+          "line": 3938,
           "role": "写回像素门（ADR 0049，issue #81）：热态 vs 一次性 worker 重放的 render_png 逐 RGBA 比，阈值 app.REPLAY_PIXEL_TOL"
         }
       ],
@@ -275,7 +275,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_export_produce_canvas",
-          "line": 1023,
+          "line": 1024,
           "role": "scope=canvas：建一页画布，逐对象 place，再 save_pdf / save_png / save_tiff；EPS 逐项报 eps_not_for_canvas"
         }
       ],
@@ -448,13 +448,13 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1204,
+          "line": 1205,
           "role": "请求里已解析的物理尺寸 → 页面 pt"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1204,
+          "line": 1205,
           "role": "originalspec 现算的逻辑尺寸 → 页面 pt"
         }
       ],
@@ -506,7 +506,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_export_produce_original",
-          "line": 1139,
+          "line": 1140,
           "role": "scope=original 的 PDF：矢量源 insert_pdf 整页搬运（只搬第一页）；位图源装进 page_pt 大小的页面，vector=False"
         }
       ],
@@ -565,7 +565,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_export_produce_original",
-          "line": 1166,
+          "line": 1167,
           "role": "scope=original 的 PNG：PNG 源逐字节复制；JPEG 换容器不换像素；矢量源按 ppi 栅格化（transparent 带 alpha）"
         }
       ],
@@ -615,7 +615,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_export_produce_original",
-          "line": 1158,
+          "line": 1159,
           "role": "scope=original 的 TIFF（ADR 0046）：位图源保源像素网格、分辨率标签只写 originalspec 读到的声明密度（_declared_density）；矢量源按 ppi 栅格化"
         }
       ],
@@ -684,25 +684,25 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "scan_panels",
-          "line": 551,
+          "line": 552,
           "role": "/api/panels：素材原始尺寸 → originalspec.asset_spec（native_*_mm 与 original_spec 同一次计算）"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1205,
+          "line": 1206,
           "role": "老客户端 / MCP 没带尺寸时现算位图页面"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_declared_density",
-          "line": 1221,
+          "line": 1222,
           "role": "TIFF 分辨率标签的来源判据（只认 dpi_source == metadata）"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_post_check_size",
-          "line": 4171,
+          "line": 4172,
           "role": "写回 commit 后自检：PDF 页面尺寸 vs 重放 manifest 的 size_mm（容差 0.5mm，不回滚）"
         },
         {
@@ -769,7 +769,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_write_render_cache",
-          "line": 319,
+          "line": 320,
           "role": "/api/render：矢量面板首页 → 指定像素宽的 PNG，临时文件 + os.replace 落进磁盘缓存（键含后端身份；Windows 撞读者退让）"
         }
       ],
@@ -913,7 +913,7 @@
           {
             "file": "src/tavotto/app.py",
             "symbol": "_export_produce_canvas",
-            "line": 1036
+            "line": 1037
           }
         ],
         "role": "按对象类型落一个元素：panel（PDF 真矢量 show_pdf_page；位图带 crop/rotation 经 convert_to_pdf；opacity<1 或 flip 时按 dpi 位图嵌入）/ text / arrow / shape"
@@ -925,7 +925,7 @@
           {
             "file": "src/tavotto/app.py",
             "symbol": "_export_produce_canvas",
-            "line": 1044
+            "line": 1045
           }
         ],
         "role": "样式检查报告里的页面尺寸"
@@ -937,7 +937,7 @@
           {
             "file": "src/tavotto/app.py",
             "symbol": "_export_produce_canvas",
-            "line": 1061
+            "line": 1062
           }
         ],
         "role": "真矢量 PDF（deflate）"
@@ -949,7 +949,7 @@
           {
             "file": "src/tavotto/app.py",
             "symbol": "_export_produce_canvas",
-            "line": 1073
+            "line": 1074
           }
         ],
         "role": "与 save_png 同一页同一次栅格化参数（ADR 0046）；编码器 tiffwrite.py"
@@ -961,7 +961,7 @@
           {
             "file": "src/tavotto/app.py",
             "symbol": "_export_produce_canvas",
-            "line": 1075
+            "line": 1076
           }
         ],
         "role": "同一页渲染"
@@ -973,7 +973,7 @@
           {
             "file": "src/tavotto/app.py",
             "symbol": "_export_produce_canvas",
-            "line": 1097
+            "line": 1098
           }
         ],
         "role": "finally 里关文档"
