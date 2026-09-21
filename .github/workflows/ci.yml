@@ -435,6 +435,7 @@ jobs:
             tests/test_foundation_harness.py \
             tests/test_foundation_first_open.py \
             tests/test_foundation_dependencies.py \
+            tests/test_foundation_private_python.py \
             tests/test_execution_receipt.py \
             tests/test_preparation_api.py \
             tests/test_worker_runtime_report.py

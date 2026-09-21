@@ -274,7 +274,10 @@ def plan_for(
     # blocked / 什么都不缺 → 只把诊断写进计划，照跑。
     dependency = None
     required = (decision or {}).get("confirmation") or None
-    if script is not None and python and required is None:
+    # 一个解释器都没有（`no_worker_python`）时也问一次门：干净机器上门会以私有 Python 为目标算计划
+    # （U05，ADR 0063 / 0064）——不提供私有 Python 时门回 None，照旧以原错误收场
+    clean_machine = bool(env_error) and env_error.get("code") == deprepair.NO_WORKER_PYTHON
+    if script is not None and (python or clean_machine) and required is None:
         gate = deprepair.gate(root, script)
         if gate is not None:
             dependency = gate
