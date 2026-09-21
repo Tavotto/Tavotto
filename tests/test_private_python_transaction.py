@@ -13,7 +13,9 @@ FO25 / FO26 在事务层（离线 / 坏 hash → safe_stop、这一代**没登�
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -490,3 +492,136 @@ class TestPrivateBase:
             in_use=deprepair._private_runtime_in_use, source=newer
         )
         assert removed == [old_id] and not (privatepython.runtimes_dir() / old_id).exists()
+
+
+# ================================================================ 真归档的完整链（工程验证；目标腿）
+REAL = os.environ.get("TAVOTTO_PRIVATE_PYTHON_REAL") == "1"
+
+
+@pytest.mark.skipif(
+    not REAL,
+    reason="真 pbs 归档要联网 / 要 wheelhouse：TAVOTTO_PRIVATE_PYTHON_REAL=1 才跑（private-python-targets.yml 三条腿）",
+)
+class TestRealChain:
+    """宿主目标的**真** pbs 归档经产品代码走完整链：（公网 / 缓存）取回 → 整份 sha256 → 逐成员校验 → 真起 →
+    U04 代事务（`python -m venv` on 私有 Python → pip 从 `TAVOTTO_PRIVATE_PYTHON_WHEELHOUSE` 离线装真 matplotlib /
+    numpy + fixture 包 → pip check → 关键 import → worker 自检 → 切 active）→ 独立用该 venv 出图。
+
+    「没有基础解释器」= 发现链末端置空（`bootstrap.find_base_python → None`）——这是**工程验证**，不是无系统
+    Python 的资格（ADR 0064 三档里的第二档）。`TAVOTTO_PRIVATE_PYTHON_DATA_DIR` 指定时数据目录用它（目标腿
+    随后把 runtime 挂进空镜像 / 做注册表快照要找得到它）；`TAVOTTO_PRIVATE_PYTHON_REPORT` 指定时写一份 JSON 证据。
+    """
+
+    def test_real_pbs_python_through_the_transaction_to_a_figure(self, tmp_path, monkeypatch):
+        wheelhouse = os.environ.get("TAVOTTO_PRIVATE_PYTHON_WHEELHOUSE")
+        if not wheelhouse or not Path(wheelhouse).is_dir():
+            pytest.skip(
+                "TAVOTTO_PRIVATE_PYTHON_WHEELHOUSE 没指到一个目录（要真 matplotlib / numpy 的 wheel）"
+            )
+        src = privatepython.source_for()
+        assert src is not None, "宿主目标不在锁文件里"
+        data_dir = os.environ.get("TAVOTTO_PRIVATE_PYTHON_DATA_DIR") or str(tmp_path / "data")
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("TAVOTTO_DATA_DIR", data_dir)
+        monkeypatch.delenv("HTTP_PROXY", raising=False)
+        monkeypatch.delenv("HTTPS_PROXY", raising=False)
+        cache = os.environ.get("TAVOTTO_PRIVATE_PYTHON_CACHE")
+        if cache and (Path(cache) / src.archive_name).is_file():
+            privatepython.downloads_dir().mkdir(parents=True, exist_ok=True)
+            shutil.copy2(Path(cache) / src.archive_name, privatepython.archive_path(src))
+        # wheelhouse：拷一份再加 fixture 包（不往调用方给的目录里写）
+        house = tmp_path / "house"
+        shutil.copytree(wheelhouse, house)
+        build_wheel(house, name=ALPHA[0], import_name=ALPHA[1], version="1.0")
+        monkeypatch.setenv("PIP_FIND_LINKS", str(house))
+        monkeypatch.setenv("PIP_NO_INDEX", "1")
+        # 没有基础解释器（工程表达）
+        monkeypatch.setattr(bootstrap, "find_base_python", lambda accept=None: None)
+        deprepair.reset_state()
+        assert deprepair.base_python() is None
+
+        project = tmp_path / "paper"
+        project.mkdir()
+        (project / "requirements.txt").write_text(f"{ALPHA[0]}==1.0\n", encoding="utf-8")
+        (project / "figure.py").write_text(
+            f"import {ALPHA[1]}\nimport numpy as np\nimport matplotlib.pyplot as plt\n"
+            "x = np.array([1.0, 2.0, 3.0])\nfig, ax = plt.subplots()\nax.plot(x, 3 * x + 1)\n"
+            "ax.set_title('u05-private-python')\nfig.savefig('Fig1.pdf')\n",
+            encoding="utf-8",
+        )
+        t0 = time.perf_counter()
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.private_python is not None and plan.private_python["required"] is True
+        assert plan.private_python["id"] == src.id
+        assert plan.private_python["download_bytes"] in (0, src.size)
+        events: list[dict] = []
+        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        rec = wait_for(plan.plan_id, timeout=1500)
+        elapsed = round(time.perf_counter() - t0, 1)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        states = [e["state"] for e in events]
+        assert deprepair.STATE_DOWNLOADING_PYTHON in states
+        private = privatepython.python_of(src)
+        assert private and Path(private).is_file()
+        gen = rec["result"]["generation"]
+        record = managedenv.generations(project)[gen]
+        assert record["base_runtime"] == src.id and record["base_source"] == "private_python"
+        venv_py = managedenv.python_of(project)
+        assert venv_py
+        info = json.loads(
+            _in(
+                venv_py,
+                "import sys, json, platform, matplotlib, numpy; print(json.dumps({'prefix': sys.prefix, "
+                "'base_prefix': sys.base_prefix, 'mpl': matplotlib.__version__, 'np': numpy.__version__, "
+                "'v': platform.python_version()}))",
+            )
+        )
+        runtime_root = Path(os.path.realpath(privatepython.runtime_dir(src)))
+        assert Path(os.path.realpath(info["base_prefix"])) == runtime_root
+        assert Path(os.path.realpath(info["prefix"])) == Path(
+            os.path.realpath(managedenv.generation_dir(project, gen))
+        )
+        assert info["v"] == src.version
+        # 独立再起一次：直接用这个 venv 跑脚本出图（不经 worker）
+        out_pdf = project / "Fig1.pdf"
+        run = subprocess.run(
+            [venv_py, "figure.py"],
+            cwd=project,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+            env={**os.environ, "MPLBACKEND": "Agg", "MPLCONFIGDIR": str(tmp_path / "mpl")},
+        )
+        assert run.returncode == 0, run.stderr[-800:]
+        assert out_pdf.is_file() and out_pdf.stat().st_size > 1000
+        # 账与退役：当前那份、且有代记着 → 不删
+        assert src.id in privatepython.read_ledger()["runtimes"]
+        assert privatepython.retire_unused(in_use=deprepair._private_runtime_in_use) == []
+        report = os.environ.get("TAVOTTO_PRIVATE_PYTHON_REPORT")
+        if report:
+            Path(report).parent.mkdir(parents=True, exist_ok=True)
+            Path(report).write_text(
+                json.dumps(
+                    {
+                        "target": src.target,
+                        "id": src.id,
+                        "version": src.version,
+                        "sha256": src.sha256,
+                        "url": src.url,
+                        "download_bytes_disclosed": plan.private_python["download_bytes"],
+                        "runtime_dir": str(privatepython.runtime_dir(src)),
+                        "python_rel": src.python_rel,
+                        "generation": gen,
+                        "states": sorted(set(states)),
+                        "venv": info,
+                        "pdf_bytes": out_pdf.stat().st_size,
+                        "seconds": elapsed,
+                    },
+                    ensure_ascii=False,
+                    indent=1,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
