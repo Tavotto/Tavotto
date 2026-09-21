@@ -642,6 +642,33 @@ class TestCleanMachine:
         assert engine_pool.same_python(resolved, managedenv.python_of(second))
         assert source == engine_pool.SOURCE_MANAGED_PROJECT
 
+    def test_the_gate_judges_by_clean_machine_not_by_the_download_payload(
+        self, tmp_path, monkeypatch
+    ):
+        """门的判据是 `clean_machine`：载荷是给界面说出口的，没有载荷（或将来载荷形状变了）门也得问。"""
+        project = _project(tmp_path)
+        base = {
+            "code": deprepair.ERROR_PREPARATION_REQUIRED,
+            "script": "figure.py",
+            "plan": {"status": "nothing_needed", "missing": []},
+            "target_kind": deprepair.TARGET_MANAGED,
+            "targets": [],
+            "rounds_remaining": 3,
+            "skipped": False,
+        }
+        monkeypatch.setattr(
+            deprepair,
+            "preparation_offer",
+            lambda root, script: {**base, "clean_machine": True, "private_python": None},
+        )
+        assert deprepair.gate(project, "figure.py") is not None
+        monkeypatch.setattr(
+            deprepair,
+            "preparation_offer",
+            lambda root, script: {**base, "clean_machine": False, "private_python": None},
+        )
+        assert deprepair.gate(project, "figure.py") is None  # 有解释器且什么都不缺：放行
+
     def test_nothing_needed_still_builds_the_environment(
         self, tmp_path, house, no_interpreter, fake
     ):
