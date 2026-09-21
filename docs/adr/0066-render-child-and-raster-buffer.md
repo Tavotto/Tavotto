@@ -13,7 +13,7 @@ registry RC-047 ~ RC-053、RC-061 / 062、RC-094 / 096。
 |---|---|---|
 | PDFium 在哪跑 | **一个应用自己的 render child 子进程**（`rendercore/renderchild.py`，pypdfium2 只在 `child_main()` 里 import），父进程经 `rendercore/renderhost.RenderHost` **一把锁串行**地说话；probe / render / inspect 三种 native 调用全部经它（RC-047：并发 preview / probe / export 之间没有进程内 native 并发——native 根本不在本进程）。不重写 Rust supervisor，不把 PDF 库装进科学环境（child 是应用运行时的一部分，RC-048） | `tests/test_rendercore_renderchild.py`：8 线程 × 5 请求无串包、seq 严格递增；6 线程混合 probe / render / inspect 经同一个 child |
 | 背压 | **有界队列**：`max_waiting`（默认 32）个请求在等锁时第 N+1 个立刻 `render_queue_full`，不无限堆积（RC-062） | `test_a_bounded_queue_pushes_back_instead_of_piling_up` |
-| 超时 / 崩溃 / 关停 | 每个请求带 deadline：到点 kill → `wait()` reap（`last_exit`）→ 本次 `render_child_timeout` → **下一次请求自动重启**；child 崩溃 / 被外力杀 → `render_child_died` → 下一次重启；`close()` 发 close 等它自己退出，等不到就 kill，之后一定 reap（RC-050） | 假 child 与真 child 各一组：超时 / 崩溃 / 外杀 / close |
+| 超时 / 崩溃 / 关停 | 每个请求**一个 deadline 管到底**（等锁 + 起 child + 发 + 收）：等锁超时只报 `render_child_timeout`、不打断正在忙的 child；收响应超时 → kill → `wait()` reap（`last_exit`）→ 本次 `render_child_timeout` → **下一次请求自动重启**；child 崩溃 / 被外力杀 → `render_child_died` → 下一次重启；`close()` 发 close 等它自己退出，等不到就 kill，之后一定 reap（RC-050） | 假 child 与真 child 各一组：超时 / 崩溃 / 外杀 / close |
 | 像素 / 内存上限 | 像素预算**父子两侧都判**（父侧按 probe 尺寸精确判、child 打开页面后再判一次）；`RLIMIT_AS` 只在 Linux 生效（macOS 内核不强制、Windows 无 resource 模块——ADR 0055 §2.3 实测，不假装） | `test_pixel_budget_is_rejected_by_the_parent_before_any_child_call`、真 child 侧预算用例 |
 | native 对象释放 | child 里每个请求的 doc / page / bitmap 在 `finally` 里 `close()`；像素在关之前**复制**成 `bytes`——`RasterBuffer` 拿到的是自己的字节（RC-050 must_fail：共享已关闭的 handle） | `renderchild._render` |
 | 像素怎么回父进程 | 经文件不经管道：child 把 RGB / RGBA 原样字节写进父进程给的临时文件（`.part` + `os.replace`），父进程读完就删 | `test_the_pixel_file_is_removed_after_reading` |
@@ -22,7 +22,7 @@ registry RC-047 ~ RC-053、RC-061 / 062、RC-094 / 096。
 | PNG / TIFF 从哪来 | 只从 **Canonical PDF**：`job.produce` 一定把 PDF 写进作业临时目录（要没要都写），要了 PNG / TIFF 就把这份 PDF 交给 child 按 `ppi` 栅格**一次**；透明背景 = 页面不画底 + child 从全 0 起算；尺寸 = `round(pt·ppi/72)`（报出去的就是 buffer 的尺寸）；重新栅格交付的 PDF 与交付的 PNG **逐字节相同**（RC-052 must_fail：PNG 用另一个 layout 引擎） | `test_pdf_png_and_tiff_come_from_one_canonical_pdf_and_one_raster` |
 | 能力表 | `ir.CAPABILITIES["png"] / ["tiff"]`：十个操作全 `rasterized`（理由：PDFium 栅格化 Canonical PDF）；EPS 仍 unsupported（没有 PostScript 写入器，ADR 0046） | `test_rendercore_ir.py` |
 | 失败政策 | child 起不来 / 超时 / 崩溃 → PNG / TIFF 各自 `format_failed`（带 `raster_code`），PDF 照常交付（partial）；PDF 没写出来 → PNG / TIFF 说「Canonical PDF 未写出」——**不拿旧文件冒充、不画空图** | `test_a_child_failure_fails_only_the_raster_formats_and_keeps_the_pdf`、加密源用例 |
-| 预览缓存 | `rendercore/preview.PreviewCache`：键 = `sha1(源 id \| 内容 sha256 \| 宽 \| 背景 \| rendercore 名-版本 \| PDFium 版本 \| 字体政策版本)`（RC-061：内容身份不是 mtime；换 build / 换字体集合旧预览不命中）；同键并发只渲染一次（每键一把锁、锁表封顶）；临时文件（.png 后缀）+ `os.replace`；Windows 上撞读者句柄**退让**；零字节重建；**异常抛出**，不返回空白图 / 旧图。**U07 不接 `app.py`**：`/api/render` 仍走 PyMuPDF，U08 换线 | `tests/test_rendercore_preview.py`（假 host 任何机器跑；真 child 一条） |
+| 预览缓存 | `rendercore/preview.PreviewCache`：键 = `sha1(源 id \| 内容 sha256 \| 页号 \| 宽 \| 背景 \| rendercore 名-版本 \| PDFium 版本 \| 字体政策版本)`（RC-061：内容身份不是 mtime；换 build / 换字体集合旧预览不命中）；同键并发只渲染一次（每键一把锁、锁表封顶）；临时文件（.png 后缀）+ `os.replace`；Windows 上撞读者句柄**退让**；零字节重建；**异常抛出**，不返回空白图 / 旧图。**U07 不接 `app.py`**：`/api/render` 仍走 PyMuPDF，U08 换线 | `tests/test_rendercore_preview.py`（假 host 任何机器跑；真 child 一条） |
 | probe 与 /UserUnit | PDFium 的 `get_size()` 忽略 `/UserUnit`（本机实测）；child 的 `probe` 用 pikepdf 读它并乘一次（RC-039）——与旧 `probe_asset`（PyMuPDF `page.rect`，同样忽略）是**有意差异**，进 U08 对拍表 | `test_real_child_probe_reports_the_visible_size_with_rotation_and_userunit` |
 | 冻结 | `scripts/dev/u07_freeze_child.py`（U02 freeze 配方收编）：PyInstaller onedir 里 libpdfium + pikepdf native + 13 张字体 + allowlist 都在，冻结 exe 以 `--render-child` 再起自己（`renderchild.child_argv()` frozen 分支，RC-049），干净环境下真 probe / 真渲染。**不是** `packaging/tavotto.spec`；签名 / 公证归 U11 | `evidence/u07/freeze/report-<platform>.json` |
 | spike 退役 | `scripts/dev/u02_spikes/` 的 render 半边（`fonts.py` shim / `pdfwrite.py` / `render_spike.py` / `render_child.py` / `freeze_spike.py`）删除；`tests/test_foundation_u02_render_child.py` 由 `test_rendercore_renderchild.py` 取代；`test_source_hygiene.py` 的单文件例外删除；`foundation-u02-spikes.yml` 只剩 runtime 半边（U05 收编时删）。`evidence/u02/render/` 与 `test_foundation_u02_render.py`（纯标准库读 evidence）留作记录 | `git diff --stat` |
@@ -62,7 +62,8 @@ registry RC-047 ~ RC-053、RC-061 / 062、RC-094 / 096。
 | PNG 编码不剥行尾填充 / dpi 未知也写 pHYs 72 | rasterize 纯模型用例 |
 | PNG 不从 Canonical PDF 出（另画一张空页栅格） | `test_pdf_png_and_tiff_come_from_one_canonical_pdf_and_one_raster`（第一版变异写了一张**相同**的 PDF——语义 no-op、绿；换成不同的页才红） |
 | child 失败时拿 PDF 字节冒充 PNG | `test_a_child_failure_fails_only_the_raster_formats_and_keeps_the_pdf` |
-| 预览键用 mtime / 不含 PDFium 版本 / 失败时把旧文件当成功 / 撞锁不退让 / 零字节当成品 / 同键不去重 | preview 用例（假 host，主 .venv 就能跑） |
+| 预览键用 mtime / 不含 PDFium 版本 / 不含页号（Codex #471 P2）/ 失败时把旧文件当成功 / 撞锁不退让 / 零字节当成品 / 同键不去重 | preview 用例（假 host，主 .venv 就能跑） |
+| 等锁不计时（deadline 从拿到锁才起算）/ 等锁超时也 kill 正在忙的 child（Codex #471 P2） | `test_the_timeout_covers_waiting_for_the_lock_and_does_not_kill_a_busy_child`（A 拿锁 0.3 s，B 带 0.05 s 超时必须 ~0.05 s 内拿到 timeout 且 A 照常、child 不重启） |
 
 ## 3. 没做 / 边界
 

@@ -9,14 +9,14 @@ sha256，主语只有「内容」，没有 mtime 这一维）。
 
 ## 键（RC-061：内容身份，不是 mtime）
 
-`sha1(source_id | 内容 sha256 | 宽度 | 背景 | rendercore 名-版本 | PDFium 版本 | 字体政策版本)`：
+`sha1(source_id | 内容 sha256 | 页号 | 宽度 | 背景 | rendercore 名-版本 | PDFium 版本 | 字体政策版本)`：
 
 * **内容 sha256** 而不是 mtime：touch / 从备份还原 / 同步工具改了 mtime 而内容没变 → 键不变、缓存照常命中；
   内容变了 → 键必变；
 * **后端 build**（`rendercore.BACKEND_VERSION` + child 报的 PDFium 版本）与**字体政策版本**（allowlist 的 sha256）
   进键：换了栅格器 / 换了批准字体集合，像素可能已经不同，旧预览不许再命中——`must_fail_example`「mtime 当唯一
   cache key」与「改 backend / font 但内容路径不变」都在这里挡住；
-* **像素 / 颜色参数**（宽度、透明 / 白底）进键。
+* **像素 / 颜色参数**（宽度、透明 / 白底）与**页号**进键（多页源的每一页各是一张预览）。
 
 ## 写 / 发布（与旧 `_write_render_cache` / `_publish_render_cache` 同一条纪律）
 
@@ -71,10 +71,12 @@ def cache_key(
     transparent: bool,
     renderer_version: str,
     fonts_version: str,
+    page: int = 0,
 ) -> str:
     parts = (
         source_id,
         content_sha256,
+        f"page{int(page)}",  # 多页源：不同页是不同的预览（Codex #471 P2）
         str(int(width_px)),
         "transparent" if transparent else "white",
         f"{BACKEND_NAME}-{BACKEND_VERSION}",
@@ -116,7 +118,9 @@ class PreviewCache:
     def source_identity(path: Path) -> str:
         return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
-    def key_for(self, source_id: str, path: Path, width_px: int, *, transparent: bool) -> str:
+    def key_for(
+        self, source_id: str, path: Path, width_px: int, *, transparent: bool, page: int = 0
+    ) -> str:
         return cache_key(
             source_id,
             self.source_identity(path),
@@ -124,6 +128,7 @@ class PreviewCache:
             transparent=transparent,
             renderer_version=self.renderer_version(),
             fonts_version=self.fonts_version(),
+            page=page,
         )
 
     def path_for(self, key: str) -> Path:
@@ -162,7 +167,9 @@ class PreviewCache:
         page: int = 0,
     ) -> Path:
         """命中就回缓存文件；否则渲染、临时发布、回最终文件。任何失败抛 `PreviewError`。"""
-        cached = self.path_for(self.key_for(source_id, path, width_px, transparent=transparent))
+        cached = self.path_for(
+            self.key_for(source_id, path, width_px, transparent=transparent, page=page)
+        )
         if self._usable(cached):
             return cached
         with self._lock_for(cached):

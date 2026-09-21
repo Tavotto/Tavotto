@@ -73,7 +73,7 @@
   与 `FileResource.sha256` 比，不符 `source_identity`、没交 `source_bytes_missing`——与 `read_frozen()` 是有意的两道（RC-014）。
 - **native（PDFium）调用只在 render child 里，父进程一把锁串行**（ADR 0066，`renderchild.py` / `renderhost.py`）：probe /
   render / inspect 三种 op 都经 `RenderHost`（一个进程一个 child，`renderhost.shared()`；有界等待队列 `max_waiting`，
-  满了立刻 `render_queue_full`——背压不堆积）；像素预算**父子两侧都判**；每请求带 deadline，到点 kill → `wait()` reap →
+  满了立刻 `render_queue_full`——背压不堆积）；像素预算**父子两侧都判**；每请求一个 deadline 管到底（等锁超时不打断正在忙的 child），收响应到点 kill → `wait()` reap →
   本次 `render_child_timeout` → 下一次自动重启；child 崩溃 / 外杀 → `render_child_died` → 下一次重启；`close()` 之后
   一定 reap。child 里 doc / page / bitmap 在 `finally` 关，像素在关之前复制成 `bytes`——`RasterBuffer` 不共享 native
   句柄。`RLIMIT_AS` 只在 Linux 生效（macOS 内核不强制、Windows 无 resource），像素预算是那两处唯一护栏——不假装。
@@ -86,7 +86,7 @@
   dpi 未知不写（不编一个数）。同一 buffer 的两个文件规范解码后像素**必须逐个相同**（精确，03 §6）；跨 renderer 只比
   几何再比固定读取器的图像，按 case 记阈值、不自动位移对齐（`tests/test_rendercore_calibration.py`）。child 起不来 /
   超时 → PNG / TIFF 各自 `format_failed` 带 `raster_code`，PDF 照常；PDF 没写出来 → 位图无从栅格，不拿旧文件冒充。
-- **预览缓存的键是内容身份，不是 mtime**（`rendercore/preview.py`，RC-061）：`sha1(源 id | 内容 sha256 | 宽 | 背景 |
+- **预览缓存的键是内容身份，不是 mtime**（`rendercore/preview.py`，RC-061）：`sha1(源 id | 内容 sha256 | 页号 | 宽 | 背景 |
   rendercore 名-版本 | PDFium 版本 | 字体政策版本)`——换 build / 换字体集合旧预览不命中；同键并发只渲染一次（每键一把锁、
   锁表封顶）；临时文件（.png 后缀）+ `os.replace`、Windows 撞读者句柄退让、零字节重建；**异常抛出**，不返回空白图 /
   旧图。U07 不接 `app.py`（`/api/render` 仍走 PyMuPDF），U08 换线时把 `app.py` 那三段与 `source_sha1` 的 memo 收编到这里。
