@@ -18,5 +18,8 @@
 | M45 | 取消句柄在起线程之后才登记（U04 C 合同 ① 在 `downloading_python` 段） | deprepair | test_cancel_right_after_the_acknowledgement_never_starts_the_download | 1（`cancel_status` 回 not_found） |
 | M46 | `prepare()` 拿锁之前不看事件 + 供应进来之前不看事件 | deprepair + privatepython | 同上 | 1（作业跑过了头，结果里多出 generation） |
 | M47 | 只去掉供应进来之前那一处预检 | privatepython | 同上 | **0**——`prepare()` 的预检先拦住了；那一处由 PR A 的 `test_a_cancellation_set_before_provisioning_starts_is_honoured` 单独钉（冗余保证，见 mutations_pr_a M28） |
+| M48 | 修前形状：门只看下载载荷、顶层没有「已就位」回退（Codex #475 P1：第二个项目被放行成 no_worker_python） | deprepair | test_a_second_project_on_the_same_machine_still_gets_the_gate_and_its_own_generation | 1（门回 None） |
+| M49 | 门改回只看载荷（顶层回退还在） | deprepair | test_the_gate_judges_by_clean_machine_not_by_the_download_payload | 1（第一版只有事务用例时绿——载荷回退也拦得住；补门级用例后红） |
+| M50 | 受管目标不挂「已就位」载荷 | deprepair | 同 M48 的用例（目标载荷断言） | 1 |
 
-13/14 红（M47 是预期的冗余保证，另有用例钉着）（M30–M39 编号在 PR A 的 `mutations_pr_a.md`）。三条 HTTP 场景的负例在各自用例里（FO25 是 FO24 的反面：无缓存要求下载；FO26 篡改 → hash 不符 + 旧 active 原样）。
+16/17 红（M47 是预期的冗余保证，另有用例钉着）（M30–M39 编号在 PR A 的 `mutations_pr_a.md`）。三条 HTTP 场景的负例在各自用例里（FO25 是 FO24 的反面：无缓存要求下载；FO26 篡改 → hash 不符 + 旧 active 原样）。
