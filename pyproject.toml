@@ -60,6 +60,17 @@ dev = ["pytest>=8", "build>=1.2", "twine>=5", "ruff>=0.16,<0.17"]
 # （只有 flask + pymupdf，没有科学栈）更是一个字都不能松。
 # 视觉回归要解码 PNG 并做像素级比较，这是它唯一需要的两样东西。
 ci = ["numpy>=1.24", "Pillow>=10"]
+# RenderCore 候选栈（统一实施包 U06，ADR 0059 / 0060）。**候选，未默认启用**：默认后端仍是
+# PyMuPDF，装了它也不会切换；`src/tavotto/rendercore/` 的 native 适配层在函数里按需 import，
+# 没装时 `import tavotto.rendercore` 照样成功、写入器报 CandidatePackagesMissing。上界跟着
+# U02 实测钉死的版本走（ADR 0055 §1）；pikepdf 会拖进 Pillow + lxml（传递依赖，我们不调用）。
+# `requirements-rendercore.txt` 是它的钉死镜像（tests/test_rendercore_fonts.py 看护两边名字一致）。
+rendercore = [
+    "pikepdf>=10.13,<11",
+    "fonttools>=4.65,<5",
+    "uharfbuzz>=0.56,<1",
+    "pypdfium2>=5.13,<6",
+]
 
 [project.scripts]
 tavotto = "tavotto.cli_entry:main"

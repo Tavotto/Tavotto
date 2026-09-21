@@ -133,3 +133,13 @@ Python，首次渲染也不联网：
   `packages = ["src/tavotto"]` 自然收进，前提是文件不被 `.gitignore` 挡
   （`tests/test_tutorial.py` 读产物成员对账，不在源码树上断言）。桌面冒烟①带
   `--tutorial`：教程两张图在内置 runtime 上真渲染一次再重置。
+- **批准字体随包走（2026-09-21，统一实施包 U06，ADR 0060）**：`src/tavotto/resources/fonts/`
+  由 `scripts/fetch_fonts.py` 按 `src/tavotto/rendercore/fonts_allowlist.json` 的 sha256 取下来
+  （Liberation 2.1.5 × 12 + Noto Sans SC 子集，OFL 1.1，许可证全文同目录）；**不进 git**
+  （`.gitignore` 挡、`tests/test_font_provenance.py` 看护）。wheel 靠 pyproject 的
+  `[tool.hatch.build] artifacts` 收回（与 `src/tavotto/web/**` 同一条理由），PyInstaller 靠上面那条
+  `resources/` datas 整棵带走——**构建机先跑一次 `fetch_fonts.py`**，否则冻结产物里没有字体、
+  RenderCore 报 `fonts_dir_missing`（候选栈未默认启用，U06 不影响现有安装包；切默认前把这一步
+  接进 `build_desktop.py` / package job 与 lab_acceptance 的结构检查）。运行时定位
+  `TAVOTTO_FONTS_DIR` 排他覆盖 → 包内 `tavotto/resources/fonts`；下载缓存在 `build/fonts-cache/`，
+  不在字体目录里（字体目录整棵进包）。

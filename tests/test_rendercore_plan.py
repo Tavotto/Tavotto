@@ -295,13 +295,8 @@ def test_compile_plan_lists_capability_gaps_per_format_and_problems(project: Pat
     req = _request([_panel("figs/Fig1.pdf", opacity=0.5), _text("∇ 图")], background="transparent")
     rp = plan.compile_plan(req, sources=sources.StaticSourceResolver(project), faces=PROVIDER)
     assert rp.page.background is None
-    # 这棵树里还没有写入器：PDF 的缺口按遍历顺序列出页上用到的每种操作（第二个 PR 把文字 / 透明组翻成
-    # native 后只剩 imported_page）；透明背景 → page_background 不在缺口里
-    assert [g["operation"] for g in rp.unsupported["pdf"]] == [
-        "imported_page",
-        "group_opacity",
-        "text",
-    ]
+    # 导入页在 PDF 里是 U07 的事；整体 opacity（透明组）与文字本切片已是 native，所以不在缺口里
+    assert [g["operation"] for g in rp.unsupported["pdf"]] == ["imported_page"]
     assert "page_background" not in {g["operation"] for g in rp.unsupported["png"]}
     assert {g["operation"] for g in rp.unsupported["png"]} >= {"imported_page", "text"}
     assert rp.problems == (

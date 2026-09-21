@@ -1795,6 +1795,11 @@ def _byte_compared_generated_files() -> list[str]:
         # 只在 .gitattributes 里钉 binary、由 hash 互钉看住，**不进这张 LF 表**（Codex #455 P2）
         "docs/implementation/tavotto-foundation/evidence/u02/render/truth.json",
         "docs/implementation/tavotto-foundation/evidence/u02/render/report.json",
+        # U06 的 evidence（同一条纪律：JSON 进 LF 表，PDF / PNG 只钉 binary 由 hash 互钉看住）
+        "docs/implementation/tavotto-foundation/evidence/u06/truth.json",
+        "docs/implementation/tavotto-foundation/evidence/u06/report.json",
+        "docs/implementation/tavotto-foundation/evidence/u06/canvas_coverage.rendercore.json",
+        "docs/implementation/tavotto-foundation/evidence/u06/coverage_diff.json",
     ]
 
 

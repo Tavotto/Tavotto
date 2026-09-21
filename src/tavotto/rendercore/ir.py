@@ -388,12 +388,12 @@ def _caps(level: str, reason: str, ops: tuple[str, ...]) -> dict[str, Capability
 #: `UnsupportedCapability` 拒绝（RC-011 must_fail_example：未实现的后端对外声明 native）。
 #: U07 实现 image / imported_page / 位图格式时改这张表，并让那条交叉用例跟着变。
 CAPABILITIES: dict[str, dict[str, Capability]] = {
-    # 写入器（pdfwriter）随 U06 的第二个 PR 落地；在它落地并与这张表交叉核对之前，PDF 的每个操作
-    # 都如实写 unsupported——声明了 native 而树里没有写入器，就是 RC-011 要挡的那件事。
+    # 声明 native 的每一项都由 `pdfwriter` 真的写出，`tests/test_rendercore_writer.py` 逐操作交叉核对
+    # （声明了 native 而写入器写不出，就是 RC-011 要挡的那件事）。
     "pdf": {
         **_caps(
-            CAP_UNSUPPORTED,
-            "U06 第二个 PR：pikepdf / fontTools / HarfBuzz 写入器尚未收编",
+            CAP_NATIVE,
+            "U06 写入器：路径 / 裁剪 / 透明组 / 常量 alpha / 可检索文字",
             (
                 "page_background",
                 "path_fill",

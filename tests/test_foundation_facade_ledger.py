@@ -103,6 +103,25 @@ def test_every_cited_caller_line_still_mentions_the_export():
     assert {m["name"] for m in d["canvas_methods"]["methods"]} == CANVAS_METHODS
 
 
+def test_every_migration_evidence_points_at_a_test_that_exists():
+    """D07：迁移证据（`migration_evidence`）指向的用例必须真的在——`tests/<file>::<func>` 逐条解析，
+    文件在、函数定义在。指向不存在的用例的「证据」等于没有证据。"""
+    import re
+
+    n = 0
+    for e in _ledger()["exports"]:
+        for m in e.get("migration_evidence", []):
+            assert m["stage"] in {"U06", "U07", "U08", "U10"}, (e["name"], m)
+            file, func = m["test"].split("::", 1)
+            path = REPO / file
+            assert path.is_file(), (e["name"], m["test"])
+            assert re.search(rf"(?m)^def {re.escape(func)}\(", path.read_text(encoding="utf-8")), (
+                f"{e['name']} 的迁移证据 {m['test']}：那个文件里没有这个用例"
+            )
+            n += 1
+    assert n >= 8, "U06 起至少 8 个导出项带迁移证据；量在空集合上的判据恒真"
+
+
 def test_every_cited_test_line_still_contains_its_snippet():
     for e in _ledger()["exports"]:
         for t in e["tests"]:

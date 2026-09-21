@@ -1,11 +1,17 @@
-"""字体来源：**这个仓库不分发任何字体**（Prompt 14 §四 / `00_SHARED_RULES` §10）。
+"""字体来源：**这个仓库的 git 里不含任何字体二进制**（Prompt 14 §四 / `00_SHARED_RULES` §10），
+发行物里只带 allowlist 逐字节钉住的那几张（ADR 0060）。
 
 字形回退很容易滑向「把一个覆盖全的字体塞进包里就都解决了」。那条路的代价是
 许可证：字体是独立作品，AGPL 的仓库照样不能随手带一份别人的 .ttf 出门。所以
 本仓库的每一张脸都必须来自
 * PyMuPDF 自带的 base-14 / CJK / 隐式回退（随 PyMuPDF 的许可证走），或
 * matplotlib 自带的 DejaVu（随 matplotlib 走），或
-* 用户自己机器上装的字体。
+* 用户自己机器上装的字体，或
+* **第四档（2026-09-21，统一实施包 U06 / ADR 0060）**：`src/tavotto/rendercore/fonts_allowlist.json`
+  里 sha256 钉住的 OFL 1.1 字体（Liberation 2.1.5 + Noto Sans SC），由 `scripts/fetch_fonts.py`
+  取到 `src/tavotto/resources/fonts/`（.gitignore 挡住，随 wheel / 桌面包分发，许可证全文同行）。
+  这一档的判据：目录里出现的每个字体文件都在 allowlist 里（`test_packaged_fonts_are_exactly_the_allowlist`），
+  不在的一律被注册表拒绝——放一份 Times New Roman 进去不会让它变成可用字体（RC-022）。
 
 这几条不是靠记性维持——**下面每一条都可以被一次提交破坏，所以每一条都要有
 判据**。
@@ -72,6 +78,32 @@ def test_no_web_font_is_fetched_or_embedded():
         if face.search(text):
             bad.append(rel)
     assert bad == [], f"这些文件在引入外部/内嵌字体：{bad}"
+
+
+def test_packaged_fonts_are_exactly_the_allowlist():
+    """第四档的闭集判据：`resources/fonts/` 里（若已取过）每个字体文件的 sha256 都在 allowlist 里，
+    且 allowlist 里每张脸都在。目录不存在时只核 allowlist 自身（那是没跑 fetch_fonts 的机器，不是缺陷）。"""
+    from tavotto.rendercore import fonts
+
+    allow = fonts.load_allowlist()
+    assert len(allow.faces) == 13 and {f.license for f in allow.faces.values()} == {"OFL-1.1"}
+    root = fonts.fonts_dir()
+    if not root.is_dir():
+        return
+    reg = fonts.FontRegistry.discover(root, allow)
+    assert reg.rejected == [], f"字体目录里有 allowlist 之外的文件：{reg.rejected}"
+    assert reg.missing == [], reg.missing
+    on_disk = sorted(p.name for p in root.rglob("*") if p.suffix.lower() in FONT_SUFFIXES)
+    assert on_disk == sorted(Path(f.file).name for f in allow.faces.values())
+
+
+def test_a_foreign_font_dropped_into_the_fonts_dir_is_refused(tmp_path):
+    """上一条判据的反证：目录里多一份不在 allowlist 里的 .ttf → 注册表拒绝（不是静默当字体用）。"""
+    from tavotto.rendercore import fonts
+
+    (tmp_path / "TimesNewRoman.ttf").write_bytes(b"\x00\x01\x00\x00" + b"\x00" * 64)
+    reg = fonts.FontRegistry.discover(tmp_path, fonts.load_allowlist())
+    assert reg.faces == {} and reg.rejected[0]["reason"] == "not_in_allowlist"
 
 
 def test_canvas_faces_all_come_from_the_backend_builtins():
