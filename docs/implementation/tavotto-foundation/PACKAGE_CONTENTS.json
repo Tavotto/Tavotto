@@ -254,8 +254,8 @@
     },
     {
       "path": "evidence/u04/mutations_pr_c.md",
-      "bytes": 5508,
-      "sha256": "fd966814ce260614255846669180449f46118f172ed8f00605e67d7e6beba773"
+      "bytes": 7029,
+      "sha256": "57e6faa611d6b879208652301c26e14955c700aca20cadaec080c3bdb044b7b8"
     },
     {
       "path": "evidence/u05/empty-image-linux-arm64.json",
@@ -274,8 +274,8 @@
     },
     {
       "path": "evidence/u05/mutations_pr_b.md",
-      "bytes": 3539,
-      "sha256": "966a0b45b9cd88e46ba4586a2a3b73d1ecdb19d42cd98a4e0ca71653dab4f47b"
+      "bytes": 4585,
+      "sha256": "76901beafe3f562bf8fdc68d4ef7dfde9a5f15e7371b1bea39c183c60206a18a"
     },
     {
       "path": "evidence/u06/README.md",
@@ -424,13 +424,13 @@
     },
     {
       "path": "handoffs/U04_dependencies.md",
-      "bytes": 34017,
-      "sha256": "377c6c9162a7f4a1451726d2343a207646be2a8a52bfa8db91827b78119925b9"
+      "bytes": 35258,
+      "sha256": "346407e2bf9637c418e10111e2e857133742fd90d4504682482c3fb66b1398c8"
     },
     {
       "path": "handoffs/U05_private_python.md",
-      "bytes": 31428,
-      "sha256": "1cab939cb2a2ddd6be86abfc46f04d6b1f110c6cc3fa3d62a731f86dbdce60ca"
+      "bytes": 32227,
+      "sha256": "aa9a833f67b2173f2b61f56eef20ad271771e512cc6d84569e3d694d36b49b8b"
     },
     {
       "path": "handoffs/U06_ir_text.md",

@@ -218,7 +218,14 @@
   `committed: true`）。**取消句柄在 `prepare_async` 起线程之前登记**（`_register_cancel`，`prepare()` 复用同一个）：
   `/prepare` 一回 202 用户就能取消，哪怕线程还在重算事实、还没拿锁——句柄不在表里 `cancel_status` 只能回 `not_found`、
   安装照常改环境（Codex #470 P1）；`prepare()` 拿锁之前看一次事件，不论怎么退出都在 finally 里清句柄；`_run_pip` 起 pip
-  之前先看事件，已取消的不起。
+  之前先看事件，已取消的不起。**同一份计划只认领一次**（`_claim`，同样在起线程之前、锁内）：第一次完成前重复
+  `/prepare` 不起第二个线程，只把在途进度交回去（`started: false`）；同步入口 `prepare()` 撞上在途的拿
+  `dependency_install_not_allowed`（Codex #470 P1 第二轮）。**提交点**「看事件 + 定提交」与 `cancel_status`「看提交 +
+  设事件」同一把锁，两边只会有一个赢。
+- **清单写失败不是成功**：`managedenv.write_manifest(strict=True)` 在登记一代与切 active 这两处照抛 `OSError`（卷满 /
+  只读 / `os.replace` 被拒），事务撤回「已提交」、这一代按 incomplete 记（尽力而为）、报 `managed_env_write_failed`，磁盘上
+  `active` 仍指上一代；记账那些路（mark / record / snapshot）仍尽力而为、回 False（Codex #470 P1：此前 `activate()` 吞掉
+  写失败，`done` + `activated: true` 而清单还指旧的一代）。
 - **取消端点只取消当前项目的计划**：`plan_id` 随 SSE `engine.dependency` 广播给每个订阅者，别的项目的标签页拿到 id 也
   不能取消这里的安装——计划还在而 `plan.project != root` → 409 `dependency_not_allowed`（与 `/prepare` 同一道判据，
   Codex #470 P2）。

@@ -139,7 +139,11 @@ def read_manifest(project: str | Path) -> dict | None:
     return data
 
 
-def write_manifest(project: str | Path, data: dict) -> None:
+def write_manifest(project: str | Path, data: dict, *, strict: bool = False) -> bool:
+    """写 manifest（tmp + `os.replace` 原子）。写不下去（卷满 / 只读 / replace 被拒）默认只记
+    警告回 False——记账那些路是尽力而为；**`strict=True` 照抛 `OSError`**：登记一代与切 active
+    是事务的判据，磁盘没落盘就不能说「已登记 / 已切」（Codex #470 P1：此前 `activate()` 吞掉
+    写失败，内存里说切了、磁盘上 `active` 还指旧的一代）。"""
     path = manifest_path(project)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -147,7 +151,11 @@ def write_manifest(project: str | Path, data: dict) -> None:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(path)
     except OSError as exc:
+        if strict:
+            raise
         LOG.warning("受管环境 manifest 写入失败: %s", exc)
+        return False
+    return True
 
 
 def new_manifest(project: str | Path, base_python: str) -> dict:
@@ -657,7 +665,7 @@ def register_generation(
             "incomplete_reason": "",
         }
         data["generations"] = gens
-        write_manifest(project, data)
+        write_manifest(project, data, strict=True)  # 登记没落盘就不算登记（OSError 照抛）
 
 
 def mark_generation(project: str | Path, generation: str, state: str, reason: str = "") -> None:
@@ -675,7 +683,8 @@ def mark_generation(project: str | Path, generation: str, state: str, reason: st
 
 
 def activate(project: str | Path, generation: str, *, python_version: str = "") -> None:
-    """**提交点**：把 `active` 指向这一代（manifest 原子写）。之前它一直是 `incomplete`。"""
+    """**提交点**：把 `active` 指向这一代（manifest 原子写）。之前它一直是 `incomplete`。
+    写不下去抛 `OSError`（磁盘上 `active` 仍指旧的一代，内存里也不能说切了）。"""
     with _lock:
         data = read_manifest(project) or {}
         gens = data.get("generations")
@@ -692,7 +701,8 @@ def activate(project: str | Path, generation: str, *, python_version: str = "") 
         if python_version:
             data["python_version"] = python_version
         data["last_used"] = int(time.time())
-        write_manifest(project, data)
+        # 提交点必须真的落盘：写失败照抛 `OSError`，调用方据此不宣称 committed（Codex #470 P1）
+        write_manifest(project, data, strict=True)
 
 
 def fresh_generation(project: str | Path, identity: str) -> str:

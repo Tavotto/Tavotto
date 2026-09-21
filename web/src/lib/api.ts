@@ -1506,6 +1506,13 @@ export interface ManifestElement {
    */
   mappable_gid?: string
   /**
+   * 色条**还给谁上色**：与 `mappable_gid` 那个元素共用同一份 norm 对象的其它
+   * 图像 / 集合（引擎 `colorbarmodel.scale_siblings`）。脚本把一个 `Normalize`
+   * 实例交给几块 `pcolormesh` 就是在声明它们同一个色阶，色条的色图 / 上下限
+   * 落到整组。可选：没有兄弟就不发。`mappable_gid` 不在这个列表里。
+   */
+  scale_gids?: string[]
+  /**
    * 拖动这个 axes 时该一起走的**其他 axes**（色条轴、twinx/twiny 的孪生轴）。
    * 由引擎裁决（只有那边有 matplotlib 的共享关系与落点），前端只负责把同一个
    * 位移发给它们。子图自己的标题/轴标签不在这里——它们是 Axes 的孩子，

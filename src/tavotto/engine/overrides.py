@@ -110,6 +110,15 @@ class FigState:
             return None
         return TickLabel(ax, which, j)
 
+    def has_handler(self, artist, prop: str) -> bool:
+        """这个 artist 所属的 family 有没有 `prop` 的 handler（族模块经协议问，不 import 表）。
+
+        色阶兄弟只收**原样采得到**的：别名组替兄弟代采原样走的正是这张表，查不到的
+        （没有数组、归 `linecoll` 族的 LineCollection 却传了共用的 norm）采不到，
+        撤销时只能拿 mappable 的原样冒充——那就不该算进组。
+        """
+        return (_cls_key(artist), prop) in HANDLERS
+
     def reapply(self, artist, prop: str, value) -> None:
         """把一条已应用的 override 值按 `HANDLERS` 落到（新的）artist 上。
 
@@ -2992,6 +3001,15 @@ def _alias_colorbar_mappable(narrow_prop: str):
         m = getattr(getattr(artist, "cb", None), "mappable", None)
         if m is None:
             return []
+        # 色阶兄弟（与 mappable 共用同一份 norm 对象的已登记 mappable，
+        # `colorbarmodel.scale_siblings`）也是组员：cmap 由色条的 setter 逐个写，
+        # vmin / vmax 经共用的 norm 天然一起变——两种都是「色条一动它们就被盖掉」，
+        # 原样必须在色条动手之前替它们采下来
+        siblings = [
+            (sg, narrow_prop)
+            for sib in colorbarmodel.scale_siblings(state, m)
+            if (sg := rev.get(id(sib))) is not None
+        ]
         gid = rev.get(id(m))
         if gid is None:
             # **独立 mappable**（`fig.colorbar(ScalarMappable(...), ax=ax)`）：
@@ -3008,9 +3026,16 @@ def _alias_colorbar_mappable(narrow_prop: str):
             # Artist，`HANDLERS` 里没有它的 cmap，`state.resolve` 也回 None。
             # 共享原样因此走「对等广播端」那条回退（见 `apply` 里采 originals
             # 那一段）。分组令牌照样是需要的：没有它连组都不成立。
-            return [(f"mappable#{id(m):x}", narrow_prop)]
-        return [(gid, narrow_prop)]
+            return [(f"mappable#{id(m):x}", narrow_prop), *siblings]
+        return [(gid, narrow_prop), *siblings]
 
+    # 色条这条 prop 的「原样」**就是**组员的原样（色条没有自己的状态）：cmap 只与
+    # 它的 mappable（组员表第一个）同值——兄弟各拿各的色图；vmin / vmax 与**全部**
+    # 组员同值——norm 是共用的那一份。`apply` 采色条的原样时据此优先复用组员已经
+    # 采下的那份，而不是读 getter：getter 读的是此刻的实况，组员先被 override 过
+    # 的话实况已经是改过的值（实测：先改 mappable 色图再改色条、全撤，热态停在
+    # 中间态；先改兄弟 vmin 再改色条 vmin、全撤，norm 停在 0.2）。
+    resolve._shared_value = "primary" if narrow_prop == "cmap" else "all"  # noqa: SLF001
     return resolve
 
 
@@ -3396,27 +3421,43 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                     #      没有它的 cmap，窄成员根本采不了原样（`alias_seeded`
                     #      为空）。对等广播端的 getter 与自己是同一个，类型天然
                     #      一致。
-                    for _nk in _alias_members(key, artist):
-                        # **判据不是「同名」**，是「这个窄成员上真的还站着
-                        # 另一个对等广播端」。柱系列的 `facecolor` 广播到每根
-                        # 柱子也是同名，但那是**容器 → 成员**：每根柱子有自己
-                        # 的一份值，共用原样会拿错形状（实测：还原时报
-                        # `Invalid RGBA argument: 0.1215…`，等价矩阵的
-                        # s8-alias-mixed-reversed 当场红）。
-                        # 只有「两个 gid 指着同一个值」才该共用，而那一定表现为
-                        # 同一个窄 key 上挂着两个以上同名广播端。
-                        if _nk[1] != key[1] or _nk not in state.originals:
-                            continue
-                        if any(_b != key and _b[1] == key[1] for _b in owner.get(_nk, ())):
-                            _seeded = state.originals[_nk]
-                            break
-                    if _seeded is _NOTHING:
-                        for _nk in _alias_members(key, artist):
-                            for _b in owner.get(_nk, ()):
-                                if _b != key and _b[1] == key[1] and _b in state.originals:
-                                    _seeded = state.originals[_b]
-                                    break
-                            if _seeded is not _NOTHING:
+                    # **只看组员表里的第一个**——它是这条广播「指着同一个值」的那个
+                    # 窄成员（色条 → 它的 mappable；独立 mappable 是分组令牌）。后面的
+                    # 组员是**色阶兄弟**（共用 norm、各拿各的 cmap），它们的原样不是
+                    # 我的：两条色条各挂一块共用 norm 的网格、或独立 mappable 与登记
+                    # 网格共用 norm 时，按「同名」去兄弟身上找会把别人的色图当成自己
+                    # 的原样（#474 评审第八轮）。
+                    _members = _alias_members(key, artist)
+                    _prim = _members[0] if _members else None
+                    # **判据不是「同名」**，是这条广播的 prop 与组员**指着同一个值**
+                    # （resolver 上的 `_shared_value`，见 `_alias_colorbar_mappable`）。
+                    # 柱系列的 `facecolor` 广播到每根柱子也是同名，但那是**容器 → 成员**：
+                    # 每根柱子有自己的一份值，共用原样会拿错形状（实测：还原时报
+                    # `Invalid RGBA argument: 0.1215…`，等价矩阵的 s8-alias-mixed-reversed
+                    # 当场红）——那一族没有这个标记，照旧读 getter。
+                    # 色条：cmap 只与它的 mappable（第一个组员）同值，vmin / vmax 与全部
+                    # 组员同值（norm 是共用的一份）。组员里谁已经有原样记录（被自己的
+                    # override 采过、或被另一条广播代采过），那份就是色条的原样；读 getter
+                    # 读到的是**改过之后**的实况，全撤会停在中间态（第九轮评审两条 P2）。
+                    _shared = getattr(
+                        ALIAS_GROUPS.get((_cls_key(artist), key[1])), "_shared_value", None
+                    )
+                    if _shared is not None:
+                        _cands = _members if _shared == "all" else _members[:1]
+                        for _nk in _cands:
+                            if _nk[1] == key[1] and _nk in state.originals:
+                                _seeded = state.originals[_nk]
+                                break
+                    if _seeded is _NOTHING and _prim is not None:
+                        # ② 对等广播端采过：**它也得把同一个窄成员当第一个组员**——
+                        # 独立 mappable 的两条色条共用一个令牌是这种；把兄弟当组员的
+                        # 色条不是（它的第一个组员是它自己的 mappable）
+                        for _b in owner.get(_prim, ()):
+                            if _b == key or _b[1] != key[1] or _b not in state.originals:
+                                continue
+                            _bm = _alias_members(_b, state.resolve(_b[0]))
+                            if _bm and _bm[0] == _prim:
+                                _seeded = state.originals[_b]
                                 break
                     state.originals[key] = getter(artist) if _seeded is _NOTHING else _seeded
                 # 广播型 prop：**在自己动手之前**把组内窄 prop 的「脚本原样」

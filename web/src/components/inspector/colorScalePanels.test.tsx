@@ -25,6 +25,7 @@ import { resetPreview, setHistoryMode } from '@/store/svgPreviewStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { ElementInspector } from './ElementInspector'
 import { colorScalePartner } from './ColorScaleLink'
+import { colormapAliasGids } from '@/lib/colormapAlias'
 
 const engineRender = vi.fn()
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -255,6 +256,63 @@ describe('色阶共用关系（审计 T22 / T23）', () => {
     const cb = colorbarEl({ mappable: false })
     await mount('axes_0.images_0', { manifest: manifestOf(cb) })
     expect(host.querySelector('[data-color-scale-link]')).toBeNull()
+  })
+
+  /**
+   * 色阶兄弟（2026-09-21 用户的 PRB 三联图）：两块 pcolormesh 共用一份 norm、
+   * 只有一条色条。引擎在色条上发 `scale_gids`，兄弟也归这条色条上色——
+   * 「与色条共用色阶」在兄弟页也要出现，回到脚本原样要把色条那条一起清。
+   */
+  it('scale_gids 里的兄弟也认这条色条为对家；别名组把色条与整组一起收进来', () => {
+    const sibling = { ...imageEl, gid: 'axes_2.collections_0', label: '彩色网格 1' }
+    const cb = { ...colorbarEl(), scale_gids: ['axes_2.collections_0'] } as ManifestElement
+    const m = { ...manifestOf(cb), elements: [axesEl, imageEl, sibling, cb] } as Manifest
+    expect(colorScalePartner(m, sibling)?.gid).toBe('axes_1.colorbar')
+    // 色条的对家仍是它直接挂着的 mappable（`mappable_gid`），不是兄弟
+    expect(colorScalePartner(m, cb)?.gid).toBe('axes_0.images_0')
+    expect(colormapAliasGids(m, sibling)).toEqual(['axes_2.collections_0', 'axes_1.colorbar'])
+    expect(colormapAliasGids(m, cb)).toEqual([
+      'axes_1.colorbar',
+      'axes_0.images_0',
+      'axes_2.collections_0',
+    ])
+    // 两块共用 norm 的网格各挂一条色条：A 的 override 落在 mesh_b 上，从 B 那边
+    // 「回到脚本原样」必须把 A 一起清，否则什么都不会变（#474 评审第二轮）
+    const cbB = {
+      ...colorbarEl(),
+      gid: 'axes_3.colorbar',
+      mappable_gid: 'axes_2.collections_0',
+      scale_gids: ['axes_0.images_0'],
+    } as ManifestElement
+    const two = { ...m, elements: [axesEl, imageEl, sibling, cb, cbB] } as Manifest
+    expect(colormapAliasGids(two, cbB)).toEqual([
+      'axes_3.colorbar',
+      'axes_2.collections_0',
+      'axes_0.images_0',
+      'axes_1.colorbar',
+    ])
+    expect(colormapAliasGids(two, cb)).toContain('axes_3.colorbar')
+    // 兄弟页的对家是**直接挂着它的** B，不是清单里先出现、只经 scale_gids 盖着它的 A
+    expect(colorScalePartner(two, sibling)?.gid).toBe('axes_3.colorbar')
+    expect(colorScalePartner(two, imageEl)?.gid).toBe('axes_1.colorbar')
+    // 网格页：给它上色的两条色条都在组里
+    expect(colormapAliasGids(two, sibling)).toEqual([
+      'axes_2.collections_0',
+      'axes_1.colorbar',
+      'axes_3.colorbar',
+    ])
+    // 色条自己的控件被引擎收起来了（cmap 字段不在）：兄弟页**不摆**指向它的链接，
+    // 但覆盖关系还在——「回到脚本原样」照旧把它算进要清的组（#474 评审第七轮）
+    const gated = {
+      ...cb,
+      editable: cb.editable.filter((f) => !['cmap', 'vmin', 'vmax'].includes(f.prop)),
+    } as ManifestElement
+    const gatedM = { ...m, elements: [axesEl, imageEl, sibling, gated] } as Manifest
+    expect(colorScalePartner(gatedM, sibling)).toBeNull()
+    expect(colormapAliasGids(gatedM, sibling)).toEqual(['axes_2.collections_0', 'axes_1.colorbar'])
+    // 没有 `scale_gids` 的老 manifest：兄弟不认色条（判据只认引擎发的事实）
+    const plain = manifestOf()
+    expect(colorScalePartner({ ...plain, elements: [...plain.elements, sibling] } as Manifest, sibling)).toBeNull()
   })
 })
 

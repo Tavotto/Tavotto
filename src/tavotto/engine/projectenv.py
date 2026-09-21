@@ -671,12 +671,17 @@ def remembered(figures_dir: str | Path) -> str | None:
 
 
 def project_relative(figures_dir: str | Path, python: str) -> str:
-    """解释器在项目内时的相对路径；在项目外（或算不出来）回空串。
+    """解释器在项目内时的相对路径（**POSIX 形态**，`.venv/Scripts/python.exe` 在 Windows 上也是
+    正斜杠）；在项目外（或算不出来）回空串。
 
     **绝不 `resolve()` 解释器本身**：`.venv/bin/python` 在 POSIX 上就是一条
     指向基础解释器的软链接（`/opt/homebrew/.../python3.13`），跟着它走的话
     每一个项目 venv 都会被判成「在项目外」，于是持久化的永远是绝对路径——
     项目一挪地方，记住的决策当场失效。这里要的是**布局意义上**的相对位置。
+
+    统一 POSIX：它进公开投影（准备计划 / 依赖门 / offer 的目标）与项目设置，跨平台要长一个样、
+    计划的身份不随 OS 变（U01 / U03 的公开投影同一纪律）；读回来时 `Path(root) / rel` 在 Windows
+    上照样认正斜杠。
     """
     try:
         rel = os.path.relpath(os.path.abspath(str(python)), os.path.abspath(str(figures_dir)))
@@ -684,7 +689,7 @@ def project_relative(figures_dir: str | Path, python: str) -> str:
         return ""
     if os.path.isabs(rel) or rel.split(os.sep)[0] == os.pardir:
         return ""
-    return rel
+    return Path(rel).as_posix()
 
 
 def remember(

@@ -5349,10 +5349,10 @@ def api_dependencies_prepare():
         return jsonify(
             {"error": "这个准备计划不属于当前项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
         ), 409
-    # 取消句柄在 `prepare_async` 里、起线程**之前**登记：202 一回去用户就能取消，哪怕线程还在
-    # 重算事实、还没拿锁（Codex #470 P1）
-    engine_deprepair.prepare_async(plan_id, lambda p: sse_publish("engine.dependency", p))
-    return jsonify({"started": True, **engine_deprepair.progress(plan_id)})
+    # 认领与取消句柄都在 `prepare_async` 里、起线程**之前**：202 一回去用户就能取消，哪怕线程还在
+    # 重算事实、还没拿锁；第一次完成前重复提交不起第二个线程，只把在途的进度交回去（Codex #470 P1）
+    started = engine_deprepair.prepare_async(plan_id, lambda p: sse_publish("engine.dependency", p))
+    return jsonify({"started": started, **engine_deprepair.progress(plan_id)})
 
 
 @app.post("/api/engine/dependencies/cancel")
