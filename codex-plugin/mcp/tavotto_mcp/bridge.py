@@ -390,12 +390,27 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
         reqs = ", ".join(plan.get("requirements") or [])
         kinds = " / ".join(t.get("kind", "") for t in dependency.get("targets") or [])
         unknown = ", ".join(plan.get("unknown") or [])
+        # 这台机器没有可用的 Python（U05，ADR 0063）：这次授权还包含先下载 Tavotto 自己的一份——
+        # 体积必须说出口（与桌面授权框同一句话）
+        private = dependency.get("private_python") or {}
+        if private.get("required"):
+            mb = max(1, round(int(private.get("download_bytes") or 0) / 1048576))
+            private_note = (
+                f" 这台电脑没有可用的 Python：授权后会先使用已下载并校验过的 Tavotto 自己的 Python "
+                f"{private.get('version', '')}（不联网）。"
+                if private.get("cached")
+                else f" 这台电脑没有可用的 Python：授权后会先下载 Tavotto 自己的 Python "
+                f"{private.get('version', '')}（约 {mb} MB）到 Tavotto 的数据目录，不改动系统与 PATH。"
+            )
+        else:
+            private_note = ""
         extra["recovery"] = (
             f"脚本开跑就需要的包目标环境里没有：{reqs}。请用户授权一次联合安装：再调一次 "
             f"tavotto_open_figure 并带 prepare_dependencies=<目标>（可选 {kinds}；"
             "tavotto_managed 是 Tavotto 自己的隔离环境、不改用户环境，project_venv 会修改项目自己的 "
             "venv；skip = 不准备、直接运行）。安装需要联网、只装预编译 wheel；这道门一直问到有答案。"
             + (f" 认不出对应包名、不会安装的 import：{unknown}。" if unknown else "")
+            + private_note
         )
     return BridgeError(str(exc), code=exc.code or "worker_error", **extra)
 
