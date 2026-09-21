@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ArtifactManifestSummary } from './api'
-import { inspectionRollup, inspectionState } from './artifactInspection'
+import { inspectionRollup, inspectionState, noticeTone } from './artifactInspection'
 
 const base: ArtifactManifestSummary = {
   manifest_version: 1,
@@ -73,5 +73,13 @@ describe('inspectionRollup', () => {
       { path: '/a/b/Fig1.tiff' },
     ])
     expect(r).toEqual({ failed: ['Fig1.png'], unknown: ['Fig1.svg', 'Fig1.tiff'] })
+  })
+})
+
+describe('noticeTone', () => {
+  it('有失败项就是 bad；只有未核验项仍是中性 ok', () => {
+    expect(noticeTone({ failed: ['Fig1.png'], unknown: [] })).toBe('bad')
+    expect(noticeTone({ failed: [], unknown: ['Fig1.svg'] })).toBe('ok')
+    expect(noticeTone({ failed: [], unknown: [] })).toBe('ok')
   })
 })

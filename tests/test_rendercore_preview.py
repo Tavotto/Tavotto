@@ -354,6 +354,76 @@ def test_prune_deletes_oldest_first_down_to_the_budget(cache, tmp_path):
     assert not paths[0].exists() and paths[1].exists() and paths[2].exists()
 
 
+def test_a_result_being_handed_out_by_another_get_survives_a_concurrent_pruner(cache, tmp_path):
+    """Codex #471 第六轮 P2：`keep=` 只护自己这一次 prune。线程 1 的 `get(A)` 刚发布 A、还没 return；线程 2 的
+    `get(B)` 在紧预算下发布 B 并 prune——第五轮的形状会把 A 删掉，线程 1 回一个不存在的路径。现在 `get()` 从算出键
+    到 return 都钉着自己那张，任何线程的 prune 都不删钉住的。用 `_publish` 的钩子把线程 1 卡在「发布之后、return
+    之前」，不赌时序。"""
+    c, host = cache
+    src_a = _pdf(tmp_path, "a.pdf", b"%PDF-1.4 a")
+    src_b = _pdf(tmp_path, "b.pdf", b"%PDF-1.4 bbbbbbbb")
+    published_a = threading.Event()
+    release_a = threading.Event()
+    real_publish = c._publish
+
+    def publish_then_wait(tmp, cached):
+        real_publish(tmp, cached)
+        if cached.stem in seen_keys and seen_keys[cached.stem] == "a":
+            published_a.set()
+            release_a.wait(5)
+
+    seen_keys = {c.key_for("figs/a.pdf", src_a, 400, transparent=False): "a"}
+    c._publish = publish_then_wait
+    result: dict[str, Path] = {}
+
+    def get_a():
+        result["a"] = c.get("figs/a.pdf", src_a, 400)
+
+    t = threading.Thread(target=get_a)
+    t.start()
+    assert published_a.wait(5)
+    c.max_bytes = 1  # 紧预算：B 发布之后的 prune 想把所有成品都删掉
+    path_b = c.get("figs/b.pdf", src_b, 400)
+    assert path_b.exists()  # 交出来那一刻 B 在（自己钉着自己）
+    a_after_b = result.get("a") or next(iter(seen_keys))
+    assert (tmp_path / "cache" / f"{a_after_b}.png").exists(), (
+        "线程 1 正要交出去的 A 被线程 2 的 prune 删了"
+    )
+    release_a.set()
+    t.join(5)
+    assert result["a"].exists(), "线程 1 return 时 A 必须还在"
+    # 线程 1 发布后的 prune 在 B 已经交出去（没人钉）之后跑：B 被它按预算删掉——路径不是句柄，交出去之后的
+    # 生命期归调用方；A 自己 return 之前一直钉着
+    assert not path_b.exists()
+    assert c.prune() == 1 and not result["a"].exists()  # 都 return 了没人钉着：再 prune 才删得动 A
+
+
+def test_prune_leaves_in_flight_part_files_and_the_just_published_one_alone(cache, tmp_path):
+    """Codex #471 第五轮 P2：`prune()` 的 glob 会把别人正在写的 `<key>.<pid>-<tid>.part.png` 当缓存删掉——那个
+    请求随后在 `os.replace` 上 FileNotFoundError；预算够小时连刚发布、马上要交出去的那张也删。现在只认成品名
+    `<sha1>.png`，且 `keep=` 那张预算再小也留着。"""
+    c, host = cache
+    src = _pdf(tmp_path)
+    published = c.get("figs/a.pdf", src, 100)
+    os.utime(published, (1_000_000, 1_000_000))
+    cache_dir = tmp_path / "cache"
+    part = cache_dir / f"{published.stem}.{os.getpid()}-abc.part.png"  # 别人在飞的临时文件，最旧
+    part.write_bytes(b"x" * 4096)
+    os.utime(part, (900_000, 900_000))
+    staged = cache_dir / "stage.1-2.src.part"
+    staged.write_bytes(b"y" * 4096)
+    os.utime(staged, (900_000, 900_000))
+    c.max_bytes = 1  # 预算小到什么成品都留不下
+    assert c.prune(keep=published) == 0
+    assert published.exists() and part.exists() and staged.exists()
+    assert c.prune() == 1  # 不带 keep：成品可删，在飞的仍不碰
+    assert not published.exists() and part.exists() and staged.exists()
+    # 端到端：预算 1 字节时 get() 交出来的路径必须存在
+    host.renders = 0
+    p = c.get("figs/a.pdf", src, 200)
+    assert p.exists() and host.renders == 1
+
+
 needs = pytest.mark.skipif(
     importlib.util.find_spec("pypdfium2") is None or importlib.util.find_spec("pikepdf") is None,
     reason="候选包未装（not_run）",

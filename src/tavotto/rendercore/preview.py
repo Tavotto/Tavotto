@@ -29,7 +29,9 @@ U08 起 `app.py` 的 `/api/render` 在候选后端被选中时走本模块（`re
   必然相同）；目标不存在 / 零字节才重试，重试完仍不行如实抛出；
 * 零字节缓存当场删掉重建；
 * **异常一律抛出**——不返回空白图、不拿旧文件冒充这次成功（`must_fail`：异常返回空白图或旧图作成功）；
-* `prune()` 按 mtime 从旧到新删至预算内（与旧 `prune_render_cache` 同形）。
+* `prune()` 按 mtime 从旧到新删**成品**至预算内（与旧 `prune_render_cache` 同形）：只认 `<sha1>.png`，别人在飞的
+  `.part.png` / `stage.*.src.part` 不碰；任何线程的 `get()` 正要交出去的那张（从算出键到 return 都钉着）谁的 prune 都不删，
+  pruner 之间串行。
 """
 
 from __future__ import annotations
@@ -114,6 +116,11 @@ class PreviewCache:
         self.max_bytes = int(max_bytes)
         self._locks: dict[str, _KeyLock] = {}
         self._locks_guard = threading.Lock()
+        # 正在交出去的成品：`get()` 从算出键到 return 期间钉住它，任何线程的 `prune()` 都不删（Codex #471 第六轮
+        # P2：只护自己这一次 prune 的 `keep`，两个不同键的 get 并发发布时会互删对方刚要交出的那张）
+        self._pins: dict[Path, int] = {}
+        self._pins_guard = threading.Lock()
+        self._prune_lock = threading.Lock()
         self._renderer_version: str | None = None
         self._fonts_version: str | None = None
         self.renders = 0  # 真渲染的次数（同键去重的判据用）
@@ -241,17 +248,33 @@ class PreviewCache:
                     page=page,
                 )
             )
-            if self._usable(cached):
-                return cached
-            with self._lock_for(cached):
+            self._pin(cached)
+            try:
                 if self._usable(cached):
                     return cached
-                cached.unlink(missing_ok=True)  # 零字节 = 上一次写到一半就断电 / 被杀
-                self._write(staged, width_px, cached, transparent=transparent, page=page)
-                self.prune()
-            return cached
+                with self._lock_for(cached):
+                    if self._usable(cached):
+                        return cached
+                    cached.unlink(missing_ok=True)  # 零字节 = 上一次写到一半就断电 / 被杀
+                    self._write(staged, width_px, cached, transparent=transparent, page=page)
+                    self.prune()
+                return cached
+            finally:
+                self._unpin(cached)
         finally:
             staged.unlink(missing_ok=True)
+
+    def _pin(self, cached: Path) -> None:
+        with self._pins_guard:
+            self._pins[cached] = self._pins.get(cached, 0) + 1
+
+    def _unpin(self, cached: Path) -> None:
+        with self._pins_guard:
+            n = self._pins.get(cached, 0) - 1
+            if n > 0:
+                self._pins[cached] = n
+            else:
+                self._pins.pop(cached, None)
 
     def _write(
         self, staged: Path, width_px: int, cached: Path, *, transparent: bool, page: int
@@ -289,17 +312,42 @@ class PreviewCache:
                     raise
                 time.sleep(_REPLACE_BACKOFF_S)
 
-    def prune(self) -> int:
-        """按 mtime 从旧到新删至预算内，返回删除数。"""
+    @staticmethod
+    def _is_final(p: Path) -> bool:
+        """成品名 = `<sha1 十六进制 40 位>.png`（`path_for`）；别人正在写的 `<key>.<pid>-<tid>.part.png` 与
+        `stage.*.src.part` 都不是成品，`prune()` 不碰——删了在飞的 `.part.png`，那个请求会在 `os.replace`
+        上 FileNotFoundError（Codex #471 第五轮 P2）。"""
+        stem = p.name[:-4]
+        return (
+            p.name.endswith(".png")
+            and len(stem) == 40
+            and all(c in "0123456789abcdef" for c in stem)
+        )
+
+    def prune(self, *, keep: Path | None = None) -> int:
+        """按 mtime 从旧到新删成品至预算内，返回删除数。**钉住的**（任何线程的 `get()` 正要交出去的，见 `_pin`）
+        与 `keep` 预算再小也不删——否则某个 `get()` 会回一个已经被别的 pruner 删掉的路径；pruner 之间串行，
+        两个同时算账不会把同一份预算删两遍。"""
+        with self._prune_lock:
+            return self._prune_locked(keep)
+
+    def _prune_locked(self, keep: Path | None) -> int:
         try:
-            files = sorted(self.cache_dir.glob("*.png"), key=lambda p: p.stat().st_mtime)
+            files = sorted(
+                (p for p in self.cache_dir.glob("*.png") if self._is_final(p)),
+                key=lambda p: p.stat().st_mtime,
+            )
             total = sum(p.stat().st_size for p in files)
         except OSError:
             return 0
+        with self._pins_guard:
+            pinned = set(self._pins)
         removed = 0
         for p in files:
             if total <= self.max_bytes:
                 break
+            if p in pinned or (keep is not None and p == keep):
+                continue
             try:
                 size = p.stat().st_size
                 p.unlink()

@@ -19,12 +19,15 @@ Python」「日志在哪」）才能定位一次。有了这个包，用户点�
 
 from __future__ import annotations
 
+import builtins
+import hashlib
 import io
 import json
 import os
 import platform
 import re
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -32,6 +35,19 @@ from . import ai_bridge, bootstrap, config, diagnostics_frontend, pool, runtime,
 
 LOG_TAIL_LINES = 400
 ERROR_TAIL = 30  # 报告里单列的最近错误条数
+#: 报告里带几份 worker.log 的尾巴、每份多少行。渲染进程死在哪一句只有它知道
+#: （app.log 里只有一句「渲染进程退出了」）——#435 的诊断包里 24 条错误全是空壳，
+#: 正是因为这份日志不在包里。按 mtime 取最近的几份：用户报的问题就是最近发生的。
+WORKER_LOG_FILES = 3
+#: 报告里每份 worker.log 最多带多少行证据（按块截，见 `last_blocks_within`）。
+WORKER_LOG_TAIL_LINES = 60
+#: 抽证据之前先看日志的最后多少行。**必须比一段完整的 faulthandler 栈长**：先按 60 行
+#: 截、再抽证据的话，一段 80 行的崩溃栈只剩帧行、没有头，状态机一条都不认，报告里
+#: 就没有崩溃位置（评审 #443）。与 app.log 的 `LOG_TAIL_LINES` 同一个量级。
+WORKER_LOG_SCAN_LINES = 400
+#: 读文件时的字节上限（一份 worker.log 可能被脚本刷到几十 MB）。`_scan_start` 会从这一截
+#: 里回溯到最近一个崩溃头，所以它要远大于一段完整的崩溃栈。
+WORKER_LOG_SCAN_BYTES = 4 * 1024 * 1024
 
 #: 诊断包整体格式的版本。**读包的人不该靠 Tavotto 版本号去猜 schema**
 #: ——manifest.json 自报这个数。1 = 只有 report/app.log/config 的那一版；
@@ -131,6 +147,530 @@ def _log_tail(n: int = LOG_TAIL_LINES) -> list[str]:
     return lines[-n:]
 
 
+def recent_errors(lines: list[str], limit: int = ERROR_TAIL) -> list[str]:
+    """app.log 尾巴里的错误条目：ERROR 行，以及每段 traceback **最后那一句**。
+
+    以前只留含 `Traceback` 的那一行，于是 24 条 `Traceback (most recent call last):`
+    并排躺在报告里，而每一段真正说了什么（`ModuleNotFoundError: …`、
+    `OSError: [WinError 5] …`）一个字都没带出来——报告长了一屏，信息量为零。
+    这里把 traceback 头与它的收尾异常行配成一条；文件路径那些帧不进报告
+    （脱敏面更小，读的人要的也只是那一句）。
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        if "Traceback (most recent call last):" in ln:
+            j = i + 1
+            # 帧行以空白开头（`  File …` / 源码行 / `    ^^^`）；第一条不缩进的
+            # 非空行就是异常本身。链式异常（`The above exception…`）中间会再出现
+            # 一段 traceback，各自配对，不合并。
+            while j < len(lines) and (not lines[j].strip() or lines[j][:1].isspace()):
+                j += 1
+            tail = lines[j].strip() if j < len(lines) else ""
+            # 收尾那句与 worker 证据同一条规则（`_closer_for_export`：只留异常类型，
+            # ImportError 家族只留加载器形状）——它的 message 同样可能是用户数据
+            # （评审 #443 第四、七轮）
+            out.append(f"{ln.strip()} → {_closer_for_export(tail)}" if tail else ln)
+            i = j + 1 if tail else j
+            continue
+        if " ERROR " in ln:
+            out.append(shorten_paths(ln))
+        i += 1
+    return out[-limit:]
+
+
+#: worker.log 里**允许进诊断包**的只有两种**结构块**，不认单行的长相：
+#:   * Python traceback 块：`Traceback (most recent call last):` 头 → 若干 `File "…", line N`
+#:     帧行（帧下面那行源码丢掉）→ 第一条不缩进的非空行是收尾的异常行，块到此为止；
+#:   * faulthandler 块：`Fatal Python error` / `Windows fatal exception` 头 →
+#:     `Current thread` / `Thread 0x` 行与 `File "…", line N` 帧行 → `Extension modules` 收尾。
+#: **不再按行首长相放行**（评审 #443 第二轮 P1）：用户脚本的 stdout 也进这份日志，
+#: `print("RuntimeError: patient-123")` 或 `print("[guard] …")` 长得和引擎的证据一模一样，
+#: 按前缀放行就是把用户数据当证据带出门。异常行只在它**收尾一段 traceback** 时算数——
+#: 来历（前面那串帧）跟着它一起在。`[guard]` 这类引擎标记行不进包：它们不是崩溃证据，
+#: 而用户完全可以打印出同样的前缀。
+_TB_HEADER = re.compile(r"^Traceback \(most recent call last\):$")
+_TB_FRAME = re.compile(r'^\s+File "(?P<path>[^"]*)", line (?P<line>\d+)')
+#: 收尾的异常行：`ExcType: message` 或裸 `ExcType`（`KeyboardInterrupt`），类型名是点分标识符。
+#: `next sample: patient-124` 这种词间带空格的不算——块没有合法收尾就整块不算。
+_TB_CLOSER = re.compile(r"^[A-Za-z_][\w.]*(?::\s.*|:)?$")
+#: 收尾行里**保留信息**的异常类型：它们的 message 是解释器 / 加载器生成的（缺哪个模块、
+#: 哪个 DLL 加载失败），正是排障要的；其余类型的 message 是自由文本，`traceback.print_exc()`
+#: 里 `KeyError: 'patient-123'` 与引擎自己的一模一样，分不出来历就只留类型名。
+_CLOSER_KEEP_MESSAGE = frozenset({"ImportError", "ModuleNotFoundError"})
+_FH_HEADER = re.compile(r"^(?:Fatal Python error|Windows fatal exception): \S")
+_FH_THREAD = re.compile(r"^(?:Current thread|Thread) 0x[0-9a-fA-F]+")
+_FH_FOOTER = re.compile(r"^Extension modules\b")
+#: 崩溃头里**允许原样出门**的故障名——闭集：CPython 的信号名与 Windows 的异常名。
+#: 其它（`Py_FatalError` 的自由文本、用户 print 的伪装）一律 `…`。
+_FH_KNOWN_FAULTS = re.compile(
+    r"^(?:Segmentation fault|Bus error|Illegal instruction|Floating-point exception|Aborted"
+    r"|Stack overflow|access violation|stack overflow|int divide by zero|float divide by zero"
+    r"|code 0x[0-9a-fA-F]+)$"
+)
+#: **块要完整才算证据**（评审 #443 第四轮）：traceback 块 = 头 + ≥1 帧 + 合法收尾；
+#: faulthandler 块 = 头 + ≥1 `Current thread` / `Thread 0x…` + ≥1 帧。用户
+#: `print("Fatal Python error: patient-123")` 只有一个头、`print("Traceback (most recent
+#: call last):")` 后面跟一行数据——都凑不齐一个块，整块不算。
+#: 链式异常的两句连接语——**逐字**匹配（用户 `print("During handling … patient-123")`
+#: 那种带尾巴的不算），且只在它前面紧挨着一段刚收尾的 traceback 块时保留。
+_TB_CHAIN = re.compile(
+    r"^(?:The above exception was the direct cause of the following exception:"
+    r"|During handling of the above exception, another exception occurred:)$"
+)
+
+#: 绝对路径的两种写法：Windows（盘符 / UNC，正反斜杠都认）与 POSIX（至少两段，免得把
+#: argparse usage 里的 `-c/--clstr` 当成路径）。
+#: Windows 那支的中间段允许带空格（`D:\\Study Data\\a.pdf`），只要后面还跟着分隔符——
+#: 末段仍以空白收尾。POSIX 裸路径无法分辨空格是不是路径的一部分，靠引号那一支。
+_ABS_PATH = re.compile(
+    r"""(?:[A-Za-z]:[\\/]|\\\\)(?:[^\\/'"`<>|\r\n]*?[\\/])*[^\\/\s'"`<>|]*"""
+    r"""|/(?:[^/\s'"`<>|]+/)+[^/\s'"`<>|]*"""
+)
+
+
+def _shorten_path(match: re.Match) -> str:
+    return _shorten_path_text(match.group(0))
+
+
+def _shorten_path_text(raw: str) -> str:
+    """一条路径（或帧里的任何「文件名」）→ 只留能定位的那一截。
+
+    README 承诺包里不含「完整的本地文件路径」，且文件名一律换成不可逆的短哈希
+    （`file:…`）；`_redact_text` 只认当前主目录，D 盘、外接盘、`\\\\wsl.localhost\\…`
+    上的项目路径它一个字都不动。三档：
+
+    * `site-packages/<已知第三方包>/…`：保留**包名**，文件名照样哈希
+      （`…/site-packages/matplotlib/file:2f0c1e…py`）。包名来自闭集 `_KNOWN_SITE_PACKAGES`，
+      出门的只有「属于哪个库」这一位信息；库的文件名是公开的、可枚举的，读的人拿包里的
+      文件名逐个哈希就能对上，而用户的文件名不可枚举——同一个哈希对两种人两种意义。
+      路径分量的名字证明不了来历（`/mnt/site-packages/numpy/private-study/patient.py`，
+      评审 #443 第七、八轮），而这个进程里未必装着 matplotlib（它在 worker 的解释器里），
+      按「真实安装根」验不可靠；结构上不带任何用户能控制的字符串才是稳的。
+    * Tavotto 自己的引擎源码：`tavotto/engine/<引擎目录里真实存在的文件>` 保留；
+    * 其余（用户的脚本、数据文件）只留 `…/file:<sha1 前 10 位><扩展名>`：行号还在，
+      同一个文件的哈希稳定，读的人能对上「同一份」，反推不回名字。
+
+    帧里的文件名不一定是绝对路径（评审 #443 第十轮）：`exec(compile(src, "patient_123.py",
+    "exec"))` 打出来的帧是相对名，`<string>` / `<frozen runpy>` 是虚拟名——都是用户能起的
+    字符串，与绝对路径同一条规则（`<frozen runpy>` 也哈希：CPython 的伪文件名可枚举，
+    读的人对得上）。
+    """
+    parts = [seg for seg in re.split(r"[\\/]+", raw) if seg]
+    if not parts:
+        return raw
+    lowered = [seg.lower() for seg in parts]
+    name = parts[-1]
+    stem, dot, ext = name.rpartition(".")
+    # 扩展名也是用户起的字符串（`data.patient`，评审 #443 第十二轮）：只带闭集里的那些
+    suffix = f".{ext.lower()}" if dot and stem and ext.lower() in _KNOWN_EXTENSIONS else ""
+    hashed = "file:" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:10] + suffix
+    # `site-packages/<已知包>/…`：只留包名这一位来自闭集的信息，文件名照样哈希——
+    # 包名之后的每一段都可能是用户起的（评审 #443 第八轮），一律不带。
+    if "site-packages" in lowered:
+        idx = len(lowered) - 1 - lowered[::-1].index("site-packages")
+        rest = parts[idx + 1 :]
+        if rest and rest[0] in _KNOWN_SITE_PACKAGES:
+            return f"…/site-packages/{rest[0]}" + (f"/{hashed}" if len(rest) > 1 else "")
+    # Tavotto 自己的引擎源码：按**真实文件清单**验（`pool.WORKER_PY` 所在目录里有这个名字），
+    # 不是看路径里有没有 `tavotto` 这一段。
+    if len(parts) >= 3 and lowered[-3] == "tavotto" and lowered[-2] == "engine":
+        if name in _ENGINE_FILES:
+            return "…/tavotto/engine/" + name
+    return "…/" + hashed
+
+
+#: 哈希后的文件名还带着的扩展名——闭集：Python 源码 / 扩展模块 / 常见的图与数据格式。
+#: 不在表里的（`.patient`）一个字不带，不看长度。
+_KNOWN_EXTENSIONS = frozenset(
+    {
+        "py", "pyc", "pyi", "pyx", "pyw", "so", "pyd", "dll", "dylib",
+        "png", "pdf", "svg", "eps", "ps", "tif", "tiff", "jpg", "jpeg", "gif", "bmp", "webp",
+        "csv", "tsv", "txt", "json", "yaml", "yml", "toml", "ini", "cfg", "log", "md", "dat",
+        "npy", "npz", "pkl", "pickle", "h5", "hdf5", "parquet", "feather", "xlsx", "xls", "mat",
+        "zip", "gz", "tar", "bz2", "xz", "fasta", "fa", "fastq", "gff", "gtf", "bed", "vcf", "bam",
+    }
+)  # fmt: skip
+#: `site-packages/<这些>/…` 保留包名：我们发行 / 认识的第三方科学栈与命令行库。
+#: 闭集，不在表里的包名连同文件名一起哈希——不认识的名字可能是用户自己 pip 安装的私有包。
+_KNOWN_SITE_PACKAGES = frozenset(
+    {
+        "matplotlib", "mpl_toolkits", "numpy", "pandas", "scipy", "seaborn", "PIL",
+        "contourpy", "cycler", "fontTools", "kiwisolver", "packaging", "pyparsing", "dateutil",
+        "six", "click", "typer", "docopt", "fire", "IPython", "matplotlib_inline",
+    }
+)  # fmt: skip
+#: 引擎目录里真实存在的文件名（一次性读，进程内不会变）。
+_ENGINE_FILES = (
+    frozenset(p.name for p in pool.WORKER_PY.parent.iterdir() if p.is_file())
+    if pool.WORKER_PY.parent.is_dir()
+    else frozenset()
+)
+
+
+#: 引号里的路径整体算一个（`File "C:\\Clinical Trial\\x.py", line 3` / `'/mnt/a b/c.csv'`）：
+#: 裸路径的正则在第一个空格就停了，会把 `Clinical Trial\\…` 那一截留在外面（评审 #443）。
+_QUOTED_PATH = re.compile(r"""(['"])((?:[A-Za-z]:[\\/]|\\\\|/)[^'"]*)\1""")
+
+
+def shorten_paths(line: str) -> str:
+    def quoted(match: re.Match) -> str:
+        inner = match.group(2)
+        # 只认「像路径」的：POSIX 至少两段（`/--clstr` 不算）
+        if inner.startswith("/") and inner.count("/") < 2:
+            return match.group(0)
+        return match.group(1) + _shorten_path(re.match(r".*", inner, re.S)) + match.group(1)
+
+    line = _QUOTED_PATH.sub(quoted, line)
+
+    def unquoted(match: re.Match) -> str:
+        # 引号那一支已经缩过的（`…/site-packages/…`）别再缩一遍
+        if match.start() > 0 and line[match.start() - 1] == "…":
+            return match.group(0)
+        return _shorten_path(match)
+
+    return _ABS_PATH.sub(unquoted, line)
+
+
+#: 加载器生成的 ImportError 文案——**只认这几种形状**，且里面的名字必须是点分标识符：
+#: `ImportError` 是普通的公开异常类，用户 `raise ImportError("patient-123 …")` 再
+#: `print_exc()` 一样是这个类型（评审 #443 第六轮）。形状对不上的一律只留类型。
+_LOADER_MESSAGES = (
+    re.compile(
+        r"^No module named '(?P<a>[A-Za-z_][\w.]*)'(?:; '(?P<b>[A-Za-z_][\w.]*)' is not a package)?$"
+    ),
+    re.compile(r"^cannot import name '(?P<a>[A-Za-z_]\w*)' from '(?P<b>[A-Za-z_][\w.]*)'"),
+    re.compile(r"^DLL load failed while importing (?P<a>[A-Za-z_]\w*)\b"),
+)
+#: 加载器文案里**允许原样出门**的模块名：标准库（CPython 自己的闭集）与已知第三方包的
+#: **顶层名**；点分名的余下部分与不认识的名字一律 `mod:<sha1 前 10 位>`（`numpy.mod:…` /
+#: `mod:…`）——`raise ModuleNotFoundError("No module named 'patient_123'")` 再 `print_exc()`
+#: 形状与加载器一模一样，名字却是用户的（评审 #443 第十二轮）；真缺的私有包名同样可能是
+#: 项目术语。与路径、异常类型名同一条规则：出门的每一段要么是闭集成员要么是哈希。
+_STDLIB_MODULES = frozenset(getattr(sys, "stdlib_module_names", ()))
+
+
+def _module_name_for_export(name: str) -> str:
+    top, dot, rest = name.partition(".")
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:10]
+    if top in _STDLIB_MODULES or top in _KNOWN_SITE_PACKAGES:
+        return f"{top}.mod:{digest}" if dot else top
+    return "mod:" + digest
+
+
+def _loader_message_for_export(m: re.Match) -> str:
+    """命中的加载器文案 → 形状原样、里面的名字按闭集放行或哈希。"""
+    text = m.group(0)
+    # 从后往前换，前面的位置不漂
+    for key, value in sorted(m.groupdict().items(), key=lambda kv: -m.start(kv[0])):
+        if value is None:
+            continue
+        start, end = m.span(key)
+        text = text[:start] + _module_name_for_export(value) + text[end:]
+    return text
+
+
+def _frame_for_export(line: str) -> str:
+    """帧行 → `  File "<缩写路径>", line N`：函数名不带（`in analyze_patient_123` 是用户的
+    标识符，评审 #443 第七轮），faulthandler 的 `line N in f` 与 traceback 的
+    `line N, in f` 归成一种写法。"""
+    m = _TB_FRAME.match(line)
+    assert m is not None  # 调用方已经用同一个正则筛过
+    # 直接对文件名做缩写，不经 `shorten_paths`：那条只认绝对路径，相对名 / 虚拟名
+    # （`patient_123.py`、`<string>`）会原样漏出去（评审 #443 第十轮）
+    path = _shorten_path_text(m.group("path")) if m.group("path") else ""
+    return f'  File "{path}", line {m.group("line")}'
+
+
+def _fh_header_for_export(line: str) -> str:
+    head, _, fault = line.partition(": ")
+    return f"{head}: {fault.strip()}" if _FH_KNOWN_FAULTS.match(fault.strip()) else f"{head}: …"
+
+
+def _fh_thread_for_export(line: str) -> str:
+    m = re.match(r"^((?:Current thread|Thread) 0x[0-9a-fA-F]+)", line)
+    return (
+        f"{m.group(1)} (most recent call first):"
+        if m
+        else "Current thread (most recent call first):"
+    )
+
+
+def _fh_footer_for_export(line: str) -> str:
+    m = re.search(r"\(total: \d+\)\s*$", line)
+    return f"Extension modules: … {m.group(0)}" if m else "Extension modules: …"
+
+
+#: 收尾行里**允许原样出门**的异常类型名：只有本进程 `builtins` 里的异常类（闭集——traceback
+#: 打印 builtins 与 `__main__` 里定义的类都不带模块前缀，`Patient_123Error` 与 `KeyError`
+#: 长得一样，只有查表分得开）。点分名只留来自 `_KNOWN_SITE_PACKAGES` 的包名，其余
+#: `exc:<sha1 前 10 位>`：用户 `class Patient_123Error(Exception)` 再 `traceback.print_exc()`，
+#: 类型名就是用户源码里的标识符（评审 #443 第九、十一轮）。
+_BUILTIN_EXCEPTIONS = frozenset(
+    name
+    for name, obj in vars(builtins).items()
+    if isinstance(obj, type) and issubclass(obj, BaseException)
+)
+
+
+def _exception_type_for_export(head: str) -> str:
+    """异常类型名 → 进包的形态：builtins 原样；点分名只留来自闭集的**包名**，其余哈希
+    （`matplotlib.units.ConversionError` → `matplotlib.exc:…`）——`__module__` 是用户能改的
+    （`Patient_123Error.__module__ = "numpy"` 打出来就是 `numpy.Patient_123Error`，评审 #443
+    第十一轮），包名之后的每一段都当用户起的名字看。库的异常类可枚举，读的人对得上。"""
+    name = head.strip()
+    if name in _BUILTIN_EXCEPTIONS:
+        return name
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:10]
+    pkg, dot, _rest = name.partition(".")
+    if dot and pkg in _KNOWN_SITE_PACKAGES:
+        return f"{pkg}.exc:{digest}"
+    return "exc:" + digest
+
+
+def _closer_for_export(line: str) -> str:
+    """traceback 的收尾行 → 进包的形态：类型名按闭集放行（否则哈希），自由文本的
+    message 换成 `…`。
+
+    用户脚本 `except … : traceback.print_exc()` 打出来的块与引擎自己的结构一模一样
+    （评审 #443 第五轮）：结构齐全证明不了来历，能保证的只有「message 不出门」、
+    「类型名不是用户起的」。`ImportError` / `ModuleNotFoundError` 的 message 只在长成
+    加载器那几种形状时保留，而且只保留形状本身（模块名是标识符，`DLL load failed while
+    importing X` 之后的操作系统文案也不带）。
+    """
+    head, sep, message = line.partition(":")
+    exc_type = _exception_type_for_export(head)
+    if not sep or not message.strip():
+        return exc_type
+    if head.strip() in _CLOSER_KEEP_MESSAGE:
+        for pattern in _LOADER_MESSAGES:
+            m = pattern.match(message.strip())
+            if m:
+                return f"{exc_type}: {_loader_message_for_export(m)}"
+    return f"{exc_type}: …"
+
+
+def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
+    """worker.log 尾巴 → (可进诊断包的证据块, 略去的行数)。
+
+    只认上面说的两种结构块；留下的行里绝对路径缩成 `…/site-packages/pkg/mod.py` 或
+    `…/文件名`。块外的一切（脚本自己 print 的、matplotlib 的噪音、引擎的标记行）
+    都略去只计数。按块交出去是为了让调用方**按块截尾**：一个块被拦腰截断之后
+    剩下的帧行没有头，读的人不知道它们是谁的。
+    """
+    blocks: list[list[str]] = []
+    dropped = 0
+    i = 0
+    n = len(tail)
+    #: 上一个非空行是不是刚收尾的 traceback 块——链接语只在这时才算数
+    just_closed_tb = False
+    while i < n:
+        ln = tail[i].rstrip()
+        if not ln.strip():
+            i += 1
+            continue
+        if _TB_HEADER.match(ln):
+            block = [ln]
+            frames = 0
+            i += 1
+            closed = False
+            # 帧行留、源码行丢，直到第一条不缩进的非空行——那是异常本身
+            while i < n:
+                cur = tail[i].rstrip()
+                if not cur.strip():
+                    i += 1
+                    continue
+                if cur[:1].isspace():
+                    if _TB_FRAME.match(cur):
+                        block.append(_frame_for_export(cur))
+                        frames += 1
+                    else:
+                        dropped += 1
+                    i += 1
+                    continue
+                if _TB_CLOSER.match(cur):
+                    block.append(_closer_for_export(cur))  # 收尾的异常行
+                    i += 1
+                    closed = True
+                break
+            if not (closed and frames):
+                # 没凑齐「头 + 帧 + 收尾」的不是 traceback，是长得像的用户输出
+                dropped += len(block)
+                just_closed_tb = False
+                continue
+            # 链式异常：上一块以链接语结尾时，这一块并进去（它们本来就是一段）
+            if blocks and _TB_CHAIN.match(blocks[-1][-1]):
+                blocks[-1].extend(block)
+            else:
+                blocks.append(block)
+            just_closed_tb = True
+            continue
+        if _FH_HEADER.match(ln):
+            block = [_fh_header_for_export(ln)]
+            threads = frames = 0
+            i += 1
+            while i < n:
+                cur = tail[i].rstrip()
+                if not cur.strip():
+                    i += 1
+                    continue
+                if _FH_THREAD.match(cur):
+                    block.append(_fh_thread_for_export(cur))
+                    threads += 1
+                    i += 1
+                    continue
+                if _TB_FRAME.match(cur):
+                    block.append(_frame_for_export(cur))
+                    frames += 1
+                    i += 1
+                    continue
+                if _FH_FOOTER.match(cur):
+                    block.append(_fh_footer_for_export(cur))
+                    i += 1
+                break
+            if not (threads and frames):
+                dropped += len(block)
+                just_closed_tb = False
+                continue
+            blocks.append(block)
+            just_closed_tb = False
+            continue
+        if just_closed_tb and _TB_CHAIN.match(ln):
+            # 逐字相同的链接语，且紧跟在一段刚收尾的 traceback 后面：接到那一块上
+            blocks[-1].append(ln)
+            just_closed_tb = False
+            i += 1
+            continue
+        dropped += 1
+        just_closed_tb = False
+        i += 1
+    # 以链接语收尾却没等到下一段 traceback（尾巴正好截在中间）：链接语本身不是证据
+    if blocks and _TB_CHAIN.match(blocks[-1][-1]):
+        blocks[-1].pop()
+        dropped += 1
+    return blocks, dropped
+
+
+def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
+    """`evidence_blocks` 摊平成行（老口径）。"""
+    blocks, dropped = evidence_blocks(tail)
+    return [ln for block in blocks for ln in block], dropped
+
+
+def last_blocks_within(blocks: list[list[str]], budget: int) -> list[list[str]]:
+    """从尾巴往前**整块**地取，直到行数超预算；最后那一块再长也要——它是最新的崩溃。"""
+    out: list[list[str]] = []
+    total = 0
+    for block in reversed(blocks):
+        if out and total + len(block) > budget:
+            break
+        out.append(block)
+        total += len(block)
+    out.reverse()
+    return out
+
+
+def worker_log_tails(
+    root: Path | None = None,
+    *,
+    project_dir: str | Path | None,
+    files: int = WORKER_LOG_FILES,
+    lines: int = WORKER_LOG_TAIL_LINES,
+) -> list[dict]:
+    """**当前项目**最近几份 `worker.log` 尾巴里的证据行（未脱敏——调用方经 `_redact_obj`）。
+
+    只读、不起任何子进程。目录名是 `pool._cache_slug` 拼出来的 `<项目哈希>-<脚本名>`
+    （一次性重放是 `_replay-<nonce>-<项目哈希>-<脚本名>`），只取哈希等于
+    `pool.cache_digest(project_dir)` 的那些：诊断包是「当前打开的这个项目」的，
+    别的项目的脚本名与报错一个字都不该跟着出门（评审 #443 P1）。**没打开项目就
+    一份都不带**——没有项目就没有「属于谁」这个判据，宁可少给。
+    `empty` 说的是这一份日志尾巴**整个**是空的（进程一个字没留下就没了——硬崩溃
+    的形状），`omitted` 是按 `evidence_lines` 略去的行数。
+    """
+    if not project_dir:
+        return []
+    digest = pool.cache_digest(project_dir)
+    owned = re.compile(rf"^(?:_replay-[0-9a-f]+-)?{re.escape(digest)}-")
+    base = Path(root) if root is not None else pool.ENGINE_CACHE
+    try:
+        candidates = [
+            p for p in base.glob("*/worker.log") if p.is_file() and owned.match(p.parent.name)
+        ]
+    except OSError:
+        return []
+    stamped: list[tuple[float, Path]] = []
+    for p in candidates:
+        try:
+            mtime = p.stat().st_mtime
+            # 这个目录最近一次 spawn 的时刻也算：worker 一个字没写就死时 worker.log 的
+            # mtime 不会动，只按它排会漏掉刚失败的那一份（评审 #443 第十四轮）
+            try:
+                mtime = max(mtime, (p.parent / pool.LOG_GENERATION_FILE).stat().st_mtime)
+            except OSError:
+                pass
+            stamped.append((mtime, p))
+        except OSError:
+            continue
+    stamped.sort(reverse=True)
+    out: list[dict] = []
+    for mtime, p in stamped[:files]:
+        try:
+            # 只看**这一代**：worker.log 是跨代追加的，`pool.start_log_generation` 在 spawn
+            # 前把起点落在旁边；不带这个边界会把上一代的 traceback 当成这一代的
+            text = _read_tail_bytes(
+                p, WORKER_LOG_SCAN_BYTES, start=pool.log_generation_start(p)
+            ).decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        all_lines = text.splitlines()
+        scanned = all_lines[_scan_start(all_lines) :]
+        blocks, omitted = evidence_blocks(scanned)
+        kept = last_blocks_within(blocks, lines)
+        out.append(
+            {
+                # README 承诺文件名一律换成不可逆的短哈希：目录名里带着脚本名，只出哈希。
+                # 同一台机器上同一个 (项目, 脚本) 的哈希稳定，读的人能对上「是同一份」。
+                "session": "session:"
+                + hashlib.sha1(p.parent.name.encode("utf-8")).hexdigest()[:12],
+                "replay": p.parent.name.startswith("_replay-"),
+                "modified": _iso(mtime),
+                "empty": not any(t.strip() for t in scanned),
+                "omitted": omitted,
+                "tail": "\n".join(ln for block in kept for ln in block),
+            }
+        )
+    return out
+
+
+def _read_tail_bytes(path: Path, limit: int, *, start: int = 0) -> bytes:
+    """`start` 之后、最多最后 `limit` 字节——**seek 过去再读**，不是整个读进来再切（评审
+    #443 第十一轮）：一份被脚本刷了几个小时的 worker.log 能有几百 MB，`read_bytes()[-limit:]`
+    会先把整个文件装进 Flask 进程的内存，「扫描上限」就成了一句空话。`start` 是这一代的
+    起点（第十四轮）：之前的字节属于上一代，一个都不读。"""
+    with path.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        begin = max(start, size - limit, 0)
+        fh.seek(begin)
+        return fh.read(max(0, size - begin))
+
+
+def _scan_start(all_lines: list[str]) -> int:
+    """从哪一行开始抽证据：默认最后 `WORKER_LOG_SCAN_LINES` 行，但**至少回溯到最近一个
+    崩溃头**——`all_threads=True` 的 faulthandler 遇上几条深栈线程，一段就能超过 400 行，
+    按行截会把唯一的 `Fatal Python error` 头切掉，后面的帧一条都不算（评审 #443）。"""
+    start = max(0, len(all_lines) - WORKER_LOG_SCAN_LINES)
+    for idx in range(len(all_lines) - 1, -1, -1):
+        if _FH_HEADER.match(all_lines[idx]) or _TB_HEADER.match(all_lines[idx]):
+            return min(start, idx)
+    return start
+
+
+def _iso(ts: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts))
+
+
 def install_kind() -> str:
     """怎么装的——升级指令、路径写权限、能不能自己修都由它决定。
 
@@ -179,7 +719,7 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
     mpl = bootstrap.matplotlib_version(worker_python) if worker_python else None
     caps = ai_bridge.capabilities()
     lines = _log_tail()
-    errors = [ln for ln in lines if " ERROR " in ln or "Traceback" in ln][-ERROR_TAIL:]
+    errors = recent_errors(lines)
 
     report = {
         "tavotto": {
@@ -222,6 +762,9 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             # 实测能不能 import。只贴 manifest 不够——杀毒软件隔离掉一个 .pyd
             # 时 manifest 照样完好。
             "bundled_runtime": _runtime_section(),
+            # 渲染进程自己最后说了什么：崩在 import 哪一句、faulthandler 的栈、
+            # 脚本自己的报错都只在这里。app.log 里对应的只有一句「渲染进程退出了」。
+            "worker_logs": worker_log_tails(project_dir=(project or {}).get("figures_dir")),
         },
         # 每个已注册编码 Agent 的探测结论。**不含就绪检查的账号细节**——
         # 那条只回 ready/needs_auth/unknown，邮箱与组织名一个字都不出现。
@@ -387,12 +930,20 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- report.json：系统、运行环境与探测结果\n"
         "- app.log：最近的应用日志\n"
         "- config.json：用户配置（密钥已抹掉）\n"
-        + extra_zh
-        + "- manifest.json：本诊断包自身的格式说明\n"
+        "  （report.json 的 render.worker_logs 段：渲染进程日志里的 Python 报错块与崩溃栈——\n"
+        "  只留 traceback 的帧行（文件名换成哈希 + 行号，函数名不带；第三方库的文件多留一个\n"
+        "  包名）与异常类型名；崩溃栈只留故障名与帧行、扩展模块只留计数；报错文字、脚本自己\n"
+        "  打印的内容与源码行已略去）\n" + extra_zh + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
         "- report.json: system and runtime information\n"
         "- app.log: recent Tavotto application logs\n"
         "- config.json: user configuration (secrets removed)\n"
+        "  (report.json, render.worker_logs: Python traceback blocks and crash stacks from\n"
+        "  the render process logs — only frame lines (hashed file name + line number, no\n"
+        "  function names; files of known third-party libraries also carry the package name)\n"
+        "  and the exception type; crash stacks keep the fault name, frames and the\n"
+        "  extension-module count; error messages, anything your script printed, and source\n"
+        "  lines are left out)\n"
         + extra_en
         + "- manifest.json: describes this package's own format\n"
         "\n"

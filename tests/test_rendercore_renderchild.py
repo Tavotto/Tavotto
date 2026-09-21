@@ -77,7 +77,8 @@ for raw in sys.stdin.buffer:
             with open(req["out"], "wb") as fh:
                 fh.write(data)
             nbytes = 999 if req["pdf"].endswith("shortbytes.pdf") else 8  # 说的与写的对不上
-            resp = {"id": req["id"], "ok": True, "seq": seq, "width": 2, "height": 1, "stride": 8, "channels": 4, "bytes": nbytes, "ms": 0}
+            width = 3 if req["pdf"].endswith("badshape.pdf") else 2  # bytes 对得上，尺寸说谎（3×1×4 = 12 ≠ 8）
+            resp = {"id": req["id"], "ok": True, "seq": seq, "width": width, "height": 1, "stride": 8, "channels": 4, "bytes": nbytes, "ms": 0}
     else:
         resp = {"id": req["id"], "ok": False, "seq": seq, "error": {"code": "bad_request", "message": op}}
     out.write((json.dumps(resp) + "\n").encode()); out.flush()
@@ -352,6 +353,48 @@ def test_a_child_that_cannot_be_spawned_is_a_structured_failure_not_an_oserror(t
         assert not list(tmp_path.glob("render-*.rgba*"))  # 像素临时文件照常清
     finally:
         host.close()
+
+
+def test_a_response_whose_shape_does_not_fit_the_bytes_is_a_protocol_failure_reaped_in_the_lock(
+    fake_host, tmp_path
+):
+    """Codex #471 第五轮 P2：child 说 bytes=8（对得上），但 width=3 / stride=8 / channels=4 与 8 个字节不成一张图。
+    第三轮只核 bytes，`RasterBuffer(...)` 在 request() 释放锁之后才炸（RasterError 不是 RenderChildError：job 整个
+    export_failed，说谎的 child 还留着给下一个请求用）。现在 RasterBuffer 在锁内的 verify 里建，建不出来 =
+    `render_child_protocol`，释放锁那一刻 child 已被 reap。"""
+    pdf = tmp_path / "badshape.pdf"
+    pdf.write_bytes(b"%PDF-")
+    fake_host.ping()
+    pid = fake_host.pid
+    inner = fake_host._lock
+    reaped_at_release: list[bool] = []
+
+    class SpyLock:
+        def acquire(self, *a, **k):
+            return inner.acquire(*a, **k)
+
+        def release(self):
+            reaped_at_release.append(fake_host._proc is None)
+            inner.release()
+
+        def __enter__(self):
+            inner.acquire()
+            return self
+
+        def __exit__(self, *a):
+            self.release()
+            return False
+
+    fake_host._lock = SpyLock()
+    with pytest.raises(rh.RenderChildError) as ei:
+        fake_host.render(pdf, width_px=2)
+    assert ei.value.code == "render_child_protocol" and "不成一张图" in ei.value.message
+    assert reaped_at_release == [True], reaped_at_release
+    _assert_not_alive(pid)
+    fake_host._lock = inner
+    ok = tmp_path / "ok.pdf"
+    ok.write_bytes(b"%PDF-")
+    assert fake_host.render(ok, width_px=2).width == 2 and fake_host.restarts == 1
 
 
 def test_pixel_validation_runs_inside_the_request_lock(fake_host, tmp_path):

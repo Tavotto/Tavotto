@@ -101,7 +101,8 @@ def header_size(data: bytes, kind: str) -> tuple[int, int]:
 
 
 def _has_alpha(im) -> bool:
-    return im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info
+    # 预乘的 RGBa / La 也带透明通道（`decode` 会先反预乘；`header_info` 不解码、按模式名判）
+    return im.mode in ("RGBA", "LA", "PA", "RGBa", "La") or "transparency" in im.info
 
 
 def header_info(data: bytes, kind: str) -> dict:
@@ -127,6 +128,13 @@ def decode(data: bytes, kind: str, *, max_pixels: int | None = None) -> RasterBu
         if im.mode in ("I;16", "I;16B", "I;16L", "I;16N", "I"):
             # 16 bit 灰度：取高 8 位（Pillow 的 convert("L") 会把 >255 的值截断成 255）
             im = im.point(lambda v: v * (1.0 / 256.0)).convert("L")
+        # 预乘（associated）alpha 的 `RGBa` / `La` 先反预乘成 straight（Pillow 只认 RGBa→RGBA、La→LA 这两步）：
+        # 漏掉它们就会走 `convert("RGB")`，alpha 静默丢掉、颜色带着预乘的暗（Codex #463 第八轮 P2）。
+        # Pillow 12.3 的 TIFF 读取器对 ExtraSamples=1 已经在加载时反预乘、报 RGBA，这里是兜底
+        if im.mode == "RGBa":
+            im = im.convert("RGBA")
+        elif im.mode == "La":
+            im = im.convert("LA")
         rgb = im.convert("RGBA" if _has_alpha(im) else "RGB")
         samples = rgb.tobytes()
     except (OSError, ValueError) as exc:

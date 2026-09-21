@@ -6,7 +6,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { renderKey, svgPayloadBytes, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { newId } from '@/lib/id'
-import type { PanelObject } from '@/types/document'
+import type { PanelObject, PanelOverride } from '@/types/document'
 
 /**
  * 内嵌会话的通用种子层：把「一张已经渲染好的图」灌进既有 stores，
@@ -40,6 +40,13 @@ export interface EmbeddedFigure {
   preview?: PreviewMetadata
   renderRevision?: number
   warnings?: string[]
+  /**
+   * 这份 manifest / svg 对应的那组 override（**全量列表语义**）。缺省 = 空，
+   * 即「刚打开、还没改过」。会话已经带着 patch 时（画布经 `tavotto_session_state`
+   * 取件、或 host 用 apply 的结果起了一块新 iframe）必须原样种进账本：账本空着
+   * 而画面是改过的，用户下一次编辑就把之前的修改静默还原了。
+   */
+  overrides?: PanelOverride[]
 }
 
 export const embeddedFileIdFor = (stem: string) => `${stem}.pdf`
@@ -50,6 +57,7 @@ export function seedEmbeddedSession(
 ): { panelId: string; fileId: string } {
   const [wMm, hMm] = fig.manifest.size_mm
   const fileId = embeddedFileIdFor(fig.stem)
+  const overrides = fig.overrides ?? []
 
   const info: PanelInfo = {
     id: fileId,
@@ -85,7 +93,7 @@ export function seedEmbeddedSession(
     nativeH: hMm,
     script: fig.script,
     cost: fig.cost,
-    overrides: [],
+    overrides,
   }
 
   const store = useDocumentStore.getState()
@@ -99,7 +107,8 @@ export function seedEmbeddedSession(
   // 打开动作不该出现在撤销栈里（用户的第一次撤销要回到「刚打开的样子」）
   useDocumentStore.setState({ past: [], future: [], dirty: false })
 
-  const key = renderKey(fileId, [])
+  // 渲染态的键带着这组 override：种下去的那份就是它们画出来的
+  const key = renderKey(fileId, overrides)
   useRenderStore.setState({
     byKey: {
       [key]: {
@@ -126,8 +135,8 @@ export function seedEmbeddedSession(
         warnings: fig.warnings ?? [],
         timings: {},
         stale: false,
-        lastPatches: '[]',
-        wantPatches: '[]',
+        lastPatches: JSON.stringify(overrides),
+        wantPatches: JSON.stringify(overrides),
         previewDpi: null,
       },
     },

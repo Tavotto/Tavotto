@@ -9,7 +9,7 @@ import subprocess
 
 import pytest
 
-from tavotto.engine import bootstrap, config, pool
+from tavotto.engine import bootstrap, config, pool, projectenv
 
 
 @pytest.fixture(autouse=True)
@@ -179,17 +179,24 @@ def test_install_endpoint_refuses_without_any_python(client, monkeypatch):
 
 
 def test_set_python_rejects_interpreter_without_matplotlib(client, monkeypatch, tmp_path):
+    # 全局路径与项目路径同一份体检（#435）：这里假装体检的结论是「没有 matplotlib」
     fake = tmp_path / "python3"
     fake.write_text("#!/bin/sh\n")
-    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: None)
+    monkeypatch.setattr(
+        projectenv,
+        "probe_environment",
+        lambda p, module=None: {"ok": False, "code": projectenv.ERROR_NO_MATPLOTLIB},
+    )
     resp = client.patch("/api/engine/environment", json={"python": str(fake)})
     assert resp.status_code == 400
+    assert resp.get_json()["code"] == "interpreter_no_matplotlib"
     assert "matplotlib" in resp.get_json()["error"]
 
 
 def test_set_python_accepts_and_persists(client, monkeypatch, tmp_path):
     fake = tmp_path / "python3"
     fake.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(projectenv, "probe_environment", lambda p, module=None: {"ok": True})
     monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
     monkeypatch.setattr(pool, "find_worker_python", lambda: str(fake))
     resp = client.patch("/api/engine/environment", json={"python": str(fake)})

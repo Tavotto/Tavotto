@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A / PR B）加交接 / 证据 / README / plan.json 后各算一次；U05（2026-09-21，PR A / C）加交接 / 证据 / README / plan.json / 台账后各算一次；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次；U09（2026-09-21）两条链第一次汇合（merge 4973a28f 进 foundation/u09-join）后按并集重算；U09（2026-09-21）加 evidence/u09 / 交接 / ADR 引用 / README / plan.json / 台账（FO30 enforced、FO32 observing）后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A / PR B）加交接 / 证据 / README / plan.json 后各算一次；U05（2026-09-21，PR A / C）加交接 / 证据 / README / plan.json / 台账后各算一次；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次；U09（2026-09-21）两条链第一次汇合（merge 4973a28f 进 foundation/u09-join）后按并集重算；U09（2026-09-21）加 evidence/u09 / 交接 / ADR 引用 / README / plan.json / 台账（FO30 enforced、FO32 observing）后再算一次；U09（2026-09-22）merge 链 1 新 tip acfecef1（--onto 后重放的 U06 / U07 / U08 + 评审处置）后重算。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 67783,
-      "sha256": "756297c02f6b1dfe2d643a2f7ed6aab224e81f50959f1c66e1613d8c95567e75"
+      "sha256": "d269f33832ea50ec6d25a0638252c614169e18511fb3ba67c4e7a64bdff751ca"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 36942,
-      "sha256": "686154f905e5e8e0f89cfd8d60cd7e287ec6e30fd928600e8b18e29fd27a5190"
+      "sha256": "b5811e0f972169506fb8c07cd4f4b8b170c473b8c9771e938d55a639b289ccd1"
     },
     {
       "path": "archive/README.md",
@@ -434,13 +434,13 @@
     },
     {
       "path": "handoffs/U06_ir_text.md",
-      "bytes": 29230,
-      "sha256": "6604523ede4060edfb69cf983388716455542002359068980e7ef8ca9cc5dd79"
+      "bytes": 29941,
+      "sha256": "4d0b5abd7278f2810c289da3635914c02f24d1f6ce1ca2442969c3817b3c5370"
     },
     {
       "path": "handoffs/U07_compose_raster.md",
-      "bytes": 24688,
-      "sha256": "b8178d07288874cfa5a6053be94b0ae43305a31ac10a04b200ac2a8364104746"
+      "bytes": 25399,
+      "sha256": "db3e7ec98afbc91b058b511df1785279e83386525bf0dc9a777ac61b45479c53"
     },
     {
       "path": "handoffs/U08_facade_parity.md",

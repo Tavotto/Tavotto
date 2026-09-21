@@ -17,6 +17,9 @@ name: Foundation U06 rendercore
 # 它不是门禁、不进任何 Gate 的闭集、不是 required check（候选栈未默认启用，U06 不切默认）。
 # 触发：`workflow_dispatch`，以及**只在 rendercore 自己的文件变动时**的 `pull_request`（paths 过滤）——
 # `gh workflow run` 只认默认分支上已登记的 workflow，合入前靠 pull_request 触发。
+# `branches: [main]`：只在 base 是 main 的 PR 上跑（CI 收窄纪律 2026-09-21：叠栈 PR 逐层 rebase 各起一整套 CI，
+# 把托管 runner 吃空、合并组被 90 分钟超时踢）；叠在别的分支上时**不产出**三平台证据，证据只在链头 base=main 时才有，
+# 交接的「其它目标」表写的 run 号就是那一次。
 #
 # 任一步退出非零就红——红是真红，这个 workflow 没有 continue-on-error。
 #
@@ -25,6 +28,7 @@ name: Foundation U06 rendercore
 on:
   workflow_dispatch:
   pull_request:
+    branches: [main]
     paths:
       - ".github/workflows/foundation-u06-rendercore.yml"
       - "src/tavotto/rendercore/**"
