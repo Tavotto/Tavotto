@@ -39,6 +39,7 @@ class FakeHost:
         self.fail: Exception | None = None
         self.delay = 0.0
         self.lock = threading.Lock()
+        self.on_render = None  # 渲染那一刻的钩子（模拟「文件在算键与渲染之间被换掉」）
 
     def ping(self) -> dict:
         return {"ok": True, "pdfium": self.pdfium}
@@ -50,6 +51,8 @@ class FakeHost:
             time.sleep(self.delay)
         if self.fail is not None:
             raise self.fail
+        if self.on_render is not None:
+            self.on_render(pdf)
         color = (
             (0, 0, 0, 0) if transparent else (10, 20, 30 + int(page), 255)
         )  # 页号进颜色：哪一页看得出来
@@ -149,6 +152,41 @@ def test_different_pages_of_one_source_are_different_previews(cache, tmp_path):
     _, _, rgba1 = pdfread.decode_png(p1.read_bytes())
     assert rgba0[:4] == bytes((10, 20, 30, 255)) and rgba1[:4] == bytes((10, 20, 31, 255))
     assert c.get("figs/a.pdf", src, 400, page=1) == p1 and host.renders == 2
+
+
+def test_pixels_rendered_from_a_swapped_file_are_not_published_under_the_old_hash(cache, tmp_path):
+    """Codex #471 P2：算键之后、child 打开文件之前源被换掉——渲出来的像素不属于键说的那份内容，不发布；
+    下一次按新内容算键照常。"""
+    c, host = cache
+    src = _pdf(tmp_path)
+
+    def swap(pdf):
+        Path(pdf).write_bytes(b"%PDF-1.4 swapped")
+        host.on_render = None
+
+    host.on_render = swap
+    with pytest.raises(preview.PreviewError) as ei:
+        c.get("figs/a.pdf", src, 400)
+    assert ei.value.code == "source_changed"
+    assert not list((tmp_path / "cache").glob("*.png")) and host.renders == 1
+    p = c.get("figs/a.pdf", src, 400)  # 现在磁盘上是 swapped 那份：按它的 hash 建键、渲染、发布
+    assert p.exists() and host.renders == 2
+
+
+def test_source_identity_hashes_in_chunks_without_read_bytes(cache, tmp_path, monkeypatch):
+    """Codex #471 P2：几百 MB 的源不该为了算身份整个读进内存——`Path.read_bytes` 一次都不许叫。"""
+    import pathlib
+
+    c, host = cache
+    body = b"%PDF-1.4 " + b"z" * (3 * preview._HASH_CHUNK + 17)
+    src = _pdf(tmp_path, body=body)
+    expected = hashlib.sha256(body).hexdigest()
+
+    def boom(self):
+        raise AssertionError("不该整个读进内存")
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", boom)
+    assert c.source_identity(src) == expected
 
 
 def test_fonts_policy_version_is_the_allowlist_hash_prefix():
