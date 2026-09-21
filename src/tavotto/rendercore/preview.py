@@ -48,6 +48,7 @@ __all__ = ["PreviewCache", "PreviewError", "cache_key", "fonts_policy_version"]
 _REPLACE_TRIES = 5
 _REPLACE_BACKOFF_S = 0.05
 _LOCKS_MAX = 512
+_HASH_CHUNK = 1 << 20
 
 
 class PreviewError(RuntimeError):
@@ -116,7 +117,12 @@ class PreviewCache:
 
     @staticmethod
     def source_identity(path: Path) -> str:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        """内容 sha256，分块算——一份几百 MB 的源 PDF 不该为了算身份整个读进内存（Codex #471 P2）。"""
+        digest = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(_HASH_CHUNK), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def key_for(
         self, source_id: str, path: Path, width_px: int, *, transparent: bool, page: int = 0
@@ -167,8 +173,17 @@ class PreviewCache:
         page: int = 0,
     ) -> Path:
         """命中就回缓存文件；否则渲染、临时发布、回最终文件。任何失败抛 `PreviewError`。"""
+        content = self.source_identity(path)
         cached = self.path_for(
-            self.key_for(source_id, path, width_px, transparent=transparent, page=page)
+            cache_key(
+                source_id,
+                content,
+                width_px,
+                transparent=transparent,
+                renderer_version=self.renderer_version(),
+                fonts_version=self.fonts_version(),
+                page=page,
+            )
         )
         if self._usable(cached):
             return cached
@@ -176,12 +191,19 @@ class PreviewCache:
             if self._usable(cached):
                 return cached
             cached.unlink(missing_ok=True)  # 零字节 = 上一次写到一半就断电 / 被杀
-            self._write(path, width_px, cached, transparent=transparent, page=page)
+            self._write(path, width_px, cached, transparent=transparent, page=page, content=content)
             self.prune()
         return cached
 
     def _write(
-        self, src: Path, width_px: int, cached: Path, *, transparent: bool, page: int
+        self,
+        src: Path,
+        width_px: int,
+        cached: Path,
+        *,
+        transparent: bool,
+        page: int,
+        content: str,
     ) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         tmp = cached.with_name(f"{cached.stem}.{os.getpid()}-{threading.get_ident():x}.part.png")
@@ -190,6 +212,11 @@ class PreviewCache:
                 buf = self.host.render(src, width_px=width_px, page=page, transparent=transparent)
             except RenderChildError as exc:
                 raise PreviewError(exc.code, exc.message) from exc
+            # 渲染的是磁盘上**此刻**的文件；键里的是算 key 时的内容 hash。两次之间文件若被换了，这些像素
+            # 就不属于键说的那份内容——发布前再核一次，不符就不发布（Codex #471 P2：否则日后把旧文件还原回来，
+            # 命中的会是中间那一版的预览）
+            if self.source_identity(src) != content:
+                raise PreviewError("source_changed", f"{src} 在算键与渲染之间被改写，预览未发布")
             tmp.write_bytes(encode_png(buf))
             self.renders += 1
             self._publish(tmp, cached)
