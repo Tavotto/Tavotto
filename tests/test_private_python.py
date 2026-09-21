@@ -427,6 +427,51 @@ class TestRefusals:
             not (tmp_path / "evil.txt").exists() and not (tmp_path / "data" / "evil.txt").exists()
         )
 
+    @pytest.mark.parametrize(
+        "name,kind,link,ok",
+        [
+            ("python/bin/python3", "file", None, True),
+            ("python/lib", "dir", None, True),
+            ("python/bin/python", "sym", "python3.13", True),
+            ("python/lib/x", "sym", "../bin/python3", True),
+            ("python/lib/y", "sym", "../../python/bin/python3", True),
+            ("../evil", "file", None, False),
+            ("/etc/evil", "file", None, False),
+            ("python/../../evil", "file", None, False),
+            ("other/evil", "file", None, False),
+            ("python\\bin\\python3", "file", None, False),
+            ("C:/python/evil", "file", None, False),
+            ("python/lib/escape", "sym", "../../../etc/passwd", False),
+            ("python/lib/abs", "sym", "/etc/passwd", False),
+            ("python/lib/up", "sym", "../../other", False),
+            ("python/lib/hard", "lnk", "python/bin/python3", False),
+            ("python/dev/null", "chr", None, False),
+            ("python/fifo", "fifo", None, False),
+        ],
+    )
+    def test_member_validation_is_our_own_first_line(self, name, kind, link, ok):
+        """成员校验是**我们自己的**第一道（`tarfile` 的 `data` 过滤器是第二道，3.12 前的解释器上不一定有）：
+        逐种形状钉住接受 / 拒绝，不靠第二道兜底。"""
+        import tarfile
+
+        info = tarfile.TarInfo(name)
+        info.type = {
+            "file": tarfile.REGTYPE,
+            "dir": tarfile.DIRTYPE,
+            "sym": tarfile.SYMTYPE,
+            "lnk": tarfile.LNKTYPE,
+            "chr": tarfile.CHRTYPE,
+            "fifo": tarfile.FIFOTYPE,
+        }[kind]
+        if link is not None:
+            info.linkname = link
+        if ok:
+            privatepython._validate_member(info, "python")
+        else:
+            with pytest.raises(privatepython.ProvisionError) as err:
+                privatepython._validate_member(info, "python")
+            assert err.value.code == privatepython.ERROR_INVALID_ARCHIVE
+
     @pytest.mark.skipif(
         not POSIX, reason="替身是 sh 脚本；Windows 上用 venvlauncher 副本，退出码由真解释器决定"
     )
@@ -588,6 +633,25 @@ class TestConsumers:
             server.mode = "ok"
             python = privatepython.provision(src)
             assert Path(python).is_file()
+
+    def test_an_abort_arriving_before_the_commit_point_is_honoured(self, tmp_path, launches):
+        """接受时刻的边界：下载完、解开了、真起过了，提交之前所有消费者都放弃 → 仍不提交，staging 清掉。
+        （中止信号在 `launching` 那一刻从下载线程内部置上——与消费者轮询的时序无关。）"""
+        archive, sha, rel = _make(tmp_path, launches)
+
+        def _abort_at_launch(stage, done, total):
+            if stage == privatepython.STAGE_LAUNCHING:
+                with privatepython._lock:
+                    privatepython._inflight[src.id].abort.set()
+
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            with pytest.raises(privatepython.ProvisionError) as err:
+                privatepython.provision(src, on_progress=_abort_at_launch)
+            assert err.value.code == privatepython.ERROR_CANCELLED
+        assert _runtime_dirs() == set()  # 没有最终目录，也没有 staging
+        assert privatepython.python_of(src) is None
+        assert privatepython.read_ledger()["runtimes"] == {}
 
     def test_cancel_after_the_commit_point_changes_nothing(self, tmp_path, launches):
         """提交点之后取消无效：目录不可变，留下的永远是完整的一份。"""
