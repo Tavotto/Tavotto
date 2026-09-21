@@ -1,0 +1,5 @@
+# U04 fixture ⑧：三个真依赖（完整 PEP 508 形态）+ 一条 marker 为假的（任何真实机器上都不装）
+tavotto-test-alpha[wide]==1.0
+tavotto-test-beta<2
+tavotto-test-gamma
+tavotto-test-never; sys_platform == "never_os"

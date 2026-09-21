@@ -1,15 +1,22 @@
 import { create } from 'zustand'
 import {
   cancelDependencyPlan,
+  cancelJointDependencies,
   createDependencyPlan,
+  createJointDependencyPlan,
   installDependencyPlan,
+  prepareJointDependencies,
   rebuildManagedEnvironment,
+  type DependencyPreparationOffer,
   type DependencyProgress,
   type DependencyRepairPlan,
   type InterpreterPin,
+  type JointDependencyPlan,
+  type JointDependencyRepairPlan,
 } from '@/lib/api'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
+import { currentProjectId } from '@/lib/session'
 
 /**
  * 受控依赖修复的界面状态（ADR 0019）。
@@ -54,6 +61,23 @@ interface DepRepairState {
   onProgress: (p: DependencyProgress) => void
   /** 关掉确认卡片 / 换一个目标时回到干净状态 */
   reset: () => void
+
+  // ---- 联合准备（U04，ADR 0061）：跑前的那一次授权 ----
+  /**
+   * 后端起第一个 worker 之前拦下来的「需要先准备依赖」载荷：整份联合计划 + 可选目标。
+   * 同一时刻只有一份；`DependencyPrepareDialog` 渲染它。`requestPreparation` 记下发请求那一刻
+   * 的项目，确认回来对不上就丢——切了项目的旧渲染不该弹别的项目的框。
+   */
+  preparation: DependencyPreparationOffer | null
+  requestPreparation: (offer: DependencyPreparationOffer, projectId?: string | null) => void
+  dismissPreparation: () => void
+  /** 绑定好的联合计划（不装）；null = 还没到执行那一步 */
+  jointPlan: JointDependencyRepairPlan | null
+  /** 计划绑定不了（blocked / 什么都不缺）时后端交回的计划——界面按 blocked 的理由说下一步 */
+  jointBlocked: JointDependencyPlan | null
+  /** 一步：绑定计划 → 执行（只发 plan_id）。目标由用户在框里选。 */
+  prepare: (target: 'project_venv' | 'tavotto_managed') => Promise<void>
+  cancelPreparation: () => Promise<void>
 }
 
 /** 后端错误 → (code, 原文, 固定)。没有 code 的一律归到通用安装失败。 */
@@ -70,6 +94,54 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   errorCode: '',
   errorText: '',
   pinned: null,
+  preparation: null,
+  jointPlan: null,
+  jointBlocked: null,
+
+  requestPreparation: (offer, projectId) => {
+    if (projectId !== undefined && projectId !== currentProjectId()) return
+    if (get().preparation) return
+    set({ preparation: offer, jointPlan: null, jointBlocked: null, errorCode: '', errorText: '' })
+  },
+  dismissPreparation: () => set({ preparation: null, jointPlan: null, jointBlocked: null }),
+
+  prepare: async (target) => {
+    const offer = get().preparation
+    if (!offer || get().busy) return
+    set({ busy: true, errorCode: '', errorText: '', jointBlocked: null })
+    try {
+      const { plan } = await createJointDependencyPlan({ script: offer.script, target })
+      // 乐观地先进 preparing：SSE 的第一条要等后端线程起来
+      set({
+        jointPlan: plan,
+        progress: {
+          plan_id: plan.plan_id,
+          state: 'preparing',
+          log: '',
+          error: null,
+          code: '',
+          flow: 'joint',
+          requirements: plan.requirements,
+        },
+      })
+      await prepareJointDependencies(plan.plan_id)
+      set({ busy: false })
+    } catch (e) {
+      const { code, text } = failure(e)
+      const joint = (e as { body?: { joint?: JointDependencyPlan } })?.body?.joint ?? null
+      set({ busy: false, progress: null, jointPlan: null, jointBlocked: joint, errorCode: code, errorText: text })
+    }
+  },
+
+  cancelPreparation: async () => {
+    const id = get().progress?.plan_id
+    if (!id) return
+    try {
+      await cancelJointDependencies(id)
+    } catch {
+      // 取消与「装完了」天然赛跑，输了不是错误（过了提交点后端会说 committed）
+    }
+  },
 
   makePlan: async (args) => {
     if (get().busy) return
@@ -146,18 +218,30 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         // 卡片就一直停在「缺 X」上，图要等到用户改点别的或刷新才出来
         // （Codex 评审 P1）。后端那半边已经作废了 worker，这里补前端这半边。
         useRenderStore.getState().retryEnvironmentFailures()
+        // 联合准备装完：授权框收掉（渲染会重排；缺的那一次错误也随之清）
+        if (p.flow === 'joint') set({ preparation: null })
       }
       if (p.state !== 'done') {
         set({ errorCode: p.code || '', errorText: p.error || '', pinned: p.pinned ?? null })
       }
       // 计划是一次性的：成功也好失败也好，都不该留着一个已经被消费掉的
       // plan_id 让用户再点一次「安装」。
-      set({ plan: null })
+      set({ plan: null, jointPlan: null })
     }
   },
 
   reset: () =>
-    set({ plan: null, progress: null, busy: false, errorCode: '', errorText: '', pinned: null }),
+    set({
+      plan: null,
+      progress: null,
+      busy: false,
+      errorCode: '',
+      errorText: '',
+      pinned: null,
+      preparation: null,
+      jointPlan: null,
+      jointBlocked: null,
+    }),
 }))
 
 /** 安装是不是正在进行（界面据此禁用按钮、显示进度而不是选项） */

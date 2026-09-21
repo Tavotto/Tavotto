@@ -2990,3 +2990,138 @@ def test_an_unusable_explicit_interpreter_is_projected_with_its_reason(project, 
     assert body["explicit"] == {"source": "configured", "reason": "no_matplotlib"}
     assert "/secret/venv" not in json.dumps(body["explicit"])  # 投影不带机器路径
     assert "不会自动换成别的环境" in result["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# U04（ADR 0061）：跑前的依赖门在 MCP 这一面
+#
+# 桌面授权框、HTTP 的 `/api/engine/dependencies/plan` + `/prepare`、MCP 的 `prepare_dependencies=`
+# 是**同一份**决定（`deprepair.create_joint_plan` + `prepare`）。这里盯 MCP：pool 抛出的
+# `dependency_preparation_required` 要以结构化 `dependency_preparation` + 可读的 `recovery` 回到
+# Codex；`prepare_dependencies=` 要真的走同一个事务（这里替身掉执行，事务本身在
+# `tests/test_dependency_transaction.py` 真跑）；目标闭集；批量不接受。
+# ---------------------------------------------------------------------------
+def _dependency_offer() -> dict:
+    return {
+        "code": "dependency_preparation_required",
+        "script": "fig1.py",
+        "plan": {
+            "status": "ready",
+            "requirements": ["six==1.17.0", "tabulate[widechars]==0.9.0"],
+            "constraints": [],
+            "missing": [{"import_name": "six", "distribution": "six"}],
+            "unknown": ["zzz_private"],
+            "blocked": [],
+        },
+        "target_kind": "tavotto_managed",
+        "targets": [{"kind": "tavotto_managed", "available": True, "reason": ""}],
+        "rounds_remaining": 3,
+        "asked_before": False,
+    }
+
+
+def test_open_projects_the_dependency_preparation_and_says_how_to_answer(project, monkeypatch):
+    from tavotto.engine import deprepair
+
+    payload = _dependency_offer()
+
+    def gate(*a, **k):
+        err = bridge.engine_pool.WorkerError(
+            "要先准备依赖", code=deprepair.ERROR_PREPARATION_REQUIRED
+        )
+        err.dependency_preparation = payload
+        raise err
+
+    monkeypatch.setattr(bridge.engine_pool, "get", gate)
+    result = _call("tavotto_open_figure", {"project_path": str(project)})
+    assert result["isError"] is True
+    body = _body(result)
+    assert body["code"] == deprepair.ERROR_PREPARATION_REQUIRED
+    assert body["dependency_preparation"] == payload
+    human = result["content"][0]["text"]
+    assert "prepare_dependencies" in human and "tavotto_managed" in human
+    assert "six==1.17.0" in human and "zzz_private" in human  # 装什么 / 不装什么都说了
+    assert deprepair.ERROR_PREPARATION_REQUIRED not in human
+    assert bridge.sessions() == {}
+
+
+def test_open_with_prepare_dependencies_runs_the_same_transaction_then_opens(
+    project, fake_pool, monkeypatch
+):
+    """`prepare_dependencies=` = `create_joint_plan` + `prepare`（同一个事务，这里替身掉执行）；
+    装完接着开图，返回里带 `prepared`。"""
+    from tavotto.engine import deprepair
+
+    calls: list = []
+
+    class _Plan:
+        plan_id = "jp-1"
+        requirements = ("six==1.17.0",)
+
+    def _create(root, script, *, target_kind, groups=None):
+        calls.append(("create", script, target_kind))
+        return _Plan()
+
+    def _prepare(plan_id, on_event=None):
+        calls.append(("prepare", plan_id))
+        return {
+            "ok": True,
+            "target_kind": "tavotto_managed",
+            "generation": "gabc",
+            "installed": {"six": "1.17.0"},
+        }
+
+    monkeypatch.setattr(deprepair, "create_joint_plan", _create)
+    monkeypatch.setattr(deprepair, "prepare", _prepare)
+    out = _body(
+        _call(
+            "tavotto_open_figure",
+            {"project_path": str(project), "prepare_dependencies": "tavotto_managed"},
+        )
+    )
+    assert out["ok"] is True
+    assert calls == [("create", "fig1.py", "tavotto_managed"), ("prepare", "jp-1")]
+    assert out["prepared"] == {
+        "target_kind": "tavotto_managed",
+        "generation": "gabc",
+        "installed": {"six": "1.17.0"},
+        "requirements": ["six==1.17.0"],
+    }
+
+
+def test_prepare_dependencies_target_is_a_closed_set_and_failures_are_structured(
+    project, fake_pool, monkeypatch
+):
+    from tavotto.engine import deprepair
+
+    result = _call(
+        "tavotto_open_figure", {"project_path": str(project), "prepare_dependencies": "bundled"}
+    )
+    assert result["isError"] is True
+    assert _body(result)["code"] == "dependency_target_invalid"
+    # 计划 blocked：RepairError 带 joint → 结构化回去
+    joint = {"status": "blocked", "blocked": [{"code": "dependency_conflict"}]}
+
+    def _blocked(root, script, *, target_kind, groups=None):
+        raise deprepair.RepairError(deprepair.ERROR_PLAN_BLOCKED, "联合计划不可执行", joint=joint)
+
+    monkeypatch.setattr(deprepair, "create_joint_plan", _blocked)
+    result = _call(
+        "tavotto_open_figure",
+        {"project_path": str(project), "prepare_dependencies": "tavotto_managed"},
+    )
+    assert result["isError"] is True
+    body = _body(result)
+    assert body["code"] == deprepair.ERROR_PLAN_BLOCKED and body["joint"] == joint
+    # 非字符串在分派之前就拒；批量不接受
+    with pytest.raises(rpc.RpcError):
+        _call("tavotto_open_figure", {"project_path": str(project), "prepare_dependencies": 3})
+    with pytest.raises(rpc.RpcError):
+        _call(
+            "tavotto_open_figure",
+            {
+                "project_path": str(project),
+                "stems": ["Fig1"],
+                "prepare_dependencies": "tavotto_managed",
+            },
+        )

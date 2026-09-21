@@ -225,3 +225,32 @@
   受管时新代装全 needed**、**自检期间的取消算数**、单包修复走同一事务、用户 venv 原地不并入 adapter、过期 / 指纹变 /
   **目标里的包变**的计划拒绝）。
 
+### 跑前的门与入口（PR C，ADR 0061 §六）
+
+- **门只有一处**：`pool._new_worker` 起会话之前先过 `workdir.resolve_mode`，再过 `pool.SPAWN_GATES` 上登记的
+  `deprepair._spawn_gate`（`deprepair` 在 import 时登记；`pool` 不 import `deprepair`——反向 import 是环）。
+  门的判据 `deprepair.gate`：计划 `ready`、还有轮次、用户没说「直接跑」→ 抛带 `dependency_preparation` 载荷的
+  `WorkerError(code=dependency_preparation_required)`；`blocked` / `nothing_needed` / 没轮次 / 已跳过 → 放行。
+  `preparation.plan_for` 用同一份判据落 `needs_input`，`dependency_preparation` 字段无论问不问都写（诊断面）。
+- **门一直问到有答案**：一次成功的准备（`_gate_skipped` 清掉、计划变 `nothing_needed`）或明确的
+  `skip_preparation`（`POST /api/engine/dependencies/skip` / 授权框「不准备，直接运行」/ MCP
+  `prepare_dependencies="skip"`）。不许「只问一次、第二次悄悄放行」。
+- **投影三处同一份**：渲染端点 `_worker_error_payload`、素材库试运行 `probe._error_from_worker`（U04 顺带把 U03 的
+  `confirmation` 也接上，此前试运行把两道门都压成 `script_probe_failed`）、MCP `_bridge_error_from_worker`
+  （`structuredContent.dependency_preparation` + `recovery`）。
+- **端点**：`GET /api/engine/dependencies?script=`、`POST …/plan`（非 ready → 409 `dependency_plan_blocked` + `joint`）、
+  `POST …/prepare`（只发 `plan_id`，进度 SSE `engine.dependency` `flow: joint`）、`POST …/cancel`
+  （`accepted / reason`，过提交点 `committed`）、`POST …/skip`、`PATCH /api/engine/dependencies`（`groups`，改了就
+  `reset_state(project)`）。`script` 参数按试运行端点同一份判据（realpath 之后在项目内、`.py`、存在），三个
+  code 同一闭集。全部在会话认证之内。
+- **MCP**：`tavotto_open_figure(prepare_dependencies=tavotto_managed | project_venv | skip)` = `create_joint_plan` +
+  `prepare` 同步执行再开图（返回多 `prepared`）；批量 open 不接受；`deprepair` 进 `_BRIDGE_IMPORT` /
+  `BRIDGE_IMPORTS_AT_MIN`，新名字 `getattr` 守着、缺就 `engine_too_old`。
+- **台账**：FO20 / FO21 / FO22 / FO27 / FO31 enforced（pr，`tests/test_foundation_dependencies.py`，目标 = 项目自带
+  venv 变体；受管变体的机制面在 `test_dependency_transaction.py`）；FO18 / FO05 observing（nightly
+  `foundation-observing`，`TAVOTTO_FOUNDATION_ONLINE=1` 联网取科学栈 wheel）；FO13 / FO28 / FO29 planned，理由在
+  `enrollment.json` 的 notes。
+- 看护：`tests/test_foundation_dependencies.py`、`tests/test_preparation_api.py`（门的两种终局）、
+  `tests/test_dependency_repair_e2e.py`（门之后 skip 再走运行后那条路）、`tests/test_mcp_server.py`（投影 /
+  `prepare_dependencies` 闭集 / 批量拒绝）、`web/src/components/DependencyPrepareDialog.test.tsx`。
+

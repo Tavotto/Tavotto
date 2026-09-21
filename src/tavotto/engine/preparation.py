@@ -58,7 +58,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import depresolve, execspec, figcapture, pool, projectenv, receipt, workdir
+from . import deprepair, depresolve, execspec, figcapture, pool, projectenv, receipt, workdir
 
 LOG = logging.getLogger("tavotto.preparation")
 
@@ -127,8 +127,13 @@ class PreparationPlan:
     #: 静态证据（`databinding.evidence`）。没有脚本时 None。
     workdir_decision: dict | None = None
     #: 起会话之前要用户先答的事（U03）；None = 不需要。有值时 `register()` 直接落
-    #: `needs_input`，不起线程。
+    #: `needs_input`，不起线程。U04 起还有第二种：`dependency_preparation_required`（脚本开跑
+    #: 要的包目标环境里没有、且能一次装全——先授权一次）。
     required_input: dict | None = None
+    #: 联合依赖计划（U04，ADR 0061 §三 / §六）：`deprepair.preparation_offer` 的只读结果——脚本
+    #: 开跑要什么 / 目标缺什么 / 交给安装器的集合 / blocked 的理由 / 可选目标。没有脚本或
+    #: 解释器解析不出来时 None。**它只是计划的一部分，不装任何东西。**
+    dependency_preparation: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -150,6 +155,9 @@ class PreparationPlan:
             "created_at": self.created_at,
             "workdir_decision": dict(self.workdir_decision) if self.workdir_decision else None,
             "required_input": dict(self.required_input) if self.required_input else None,
+            "dependency_preparation": (
+                dict(self.dependency_preparation) if self.dependency_preparation else None
+            ),
         }
 
 
@@ -261,6 +269,18 @@ def plan_for(
         )
         launch_context = execspec.launch_context(spec, grant=grant)
     intents = depresolve.declared_intents(root, script) if script else []
+    # 联合依赖（U04）：工作目录不用问、解释器也解析得出时，看一眼脚本开跑要的包目标环境里
+    # 缺不缺。缺且能一次装全 → 这是第二种「需要输入」（同一对每进程只问一次：`deprepair.gate`）；
+    # blocked / 什么都不缺 → 只把诊断写进计划，照跑。
+    dependency = None
+    required = (decision or {}).get("confirmation") or None
+    if script is not None and python and required is None:
+        gate = deprepair.gate(root, script)
+        if gate is not None:
+            dependency = gate
+            required = gate
+        else:
+            dependency = deprepair.preparation_offer(root, script)
     static = None
     if original_artifact and original_path:
         try:
@@ -294,7 +314,8 @@ def plan_for(
         },
         created_at=time.time(),
         workdir_decision=decision,
-        required_input=(decision or {}).get("confirmation") or None,
+        required_input=required,
+        dependency_preparation=dependency,
     )
 
 
@@ -388,9 +409,13 @@ class PreparationService:
             result.finished_at = time.time()
             result.status = STATUS_STATIC
         elif plan.required_input:
-            # 首开要先问用户（U03）：不起线程、不碰 pool、一行用户代码不跑。
+            # 首开要先问用户（U03 的运行目录 / U04 的依赖准备）：不起线程、不碰 pool、一行用户代码不跑。
             result.required_input = dict(plan.required_input)
-            result.note = "需要先选择脚本的运行目录；答完后重新准备"
+            result.note = (
+                "需要先授权一次依赖准备（或明确选择不准备直接运行）；答完后重新准备"
+                if plan.required_input.get("code") == deprepair.ERROR_PREPARATION_REQUIRED
+                else "需要先选择脚本的运行目录；答完后重新准备"
+            )
             result.finished_at = time.time()
             result.status = STATUS_NEEDS_INPUT
         with self._lock:
@@ -460,6 +485,16 @@ class PreparationService:
                 result.required_input = dict(confirmation)
                 self._finish(
                     entry, STATUS_NEEDS_INPUT, note="需要先选择脚本的运行目录；答完后重新准备"
+                )
+                return
+            dependency = getattr(exc, "dependency_preparation", None)
+            if isinstance(dependency, dict):
+                # 依赖那道门（U04）在起会话那一刻拦住了：同样是「需要输入」，不是错误。
+                result.required_input = dict(dependency)
+                self._finish(
+                    entry,
+                    STATUS_NEEDS_INPUT,
+                    note="需要先授权一次依赖准备（或明确选择不准备直接运行）；答完后重新准备",
                 )
                 return
             error = {"code": getattr(exc, "code", "") or "worker_error", "message": str(exc)}

@@ -5,7 +5,7 @@
     "planned / observing / later 不是通过；enforced 的 case 必须指向真实 pytest 用例并在结果目录写记录；空集合不是通过。",
     "registry.json 里 32 个 FO 场景逐一在此，enrollment / stage 与 registry 一致（tests/test_foundation_harness.py 钉着）。"
   ],
-  "capability_version": "u03",
+  "capability_version": "u04",
   "cases": [
     {
       "case_id": "FO01",
@@ -77,13 +77,13 @@
         "FO05"
       ],
       "stage": "U03",
-      "enrollment": "planned",
+      "enrollment": "observing",
       "lane": "integration",
       "entry": "http",
       "fixture": null,
-      "test": null,
       "expected_product_outcome": "automatic",
-      "notes": "U03 未做：真实 h5py 需要 CI 提供带 h5py 的解释器，归 U04 联合依赖之后。"
+      "notes": "U04 做的（registry 把它排在 U03，本阶段接手）。用例 tests/test_foundation_dependencies.py::test_fo05_real_h5py_reads_hdf5_in_the_prepared_environment（observing：读 TAVOTTO_FOUNDATION_ONLINE=1，没有就 skip 并说明）。U04：项目声明 h5py（真实二进制 wheel，联网取进 wheelhouse），一次授权装进受管环境的新一代，脚本用原生 HDF5 写 / 读并出图、值 == 真值——纯 Python 替身不算。要联网 → observing：用例读 TAVOTTO_FOUNDATION_ONLINE=1，没有就 skip 并说明。observing 的具名任务：nightly.yml 的 `foundation-observing` job（非 required、不进 Gate；`TAVOTTO_FOUNDATION_ONLINE=1` 让用例联网把 matplotlib / numpy（与 h5py）的 wheel 下进 wheelhouse；用例 skip 一条就判红——skip 不是绿）。",
+      "test": null
     },
     {
       "case_id": "FO06",
@@ -204,7 +204,7 @@
       "fixture": null,
       "test": null,
       "expected_product_outcome": "automatic",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U04 只登记：真实二进制 wheel 的 ABI 隔离资格需要两套独立科学栈的真实 wheel（数值真值 + 扩展文件 tag / 路径），纯 Python wheel 装成功不算（ADR 0061 §七）；机制面（按代、不混 site-packages、prefix 在代目录）在 tests/test_dependency_transaction.py。留 planned：本机与 invariants job 没有第二套科学栈，nightly 的 observing job 也只装了一份；归 U11 / 集成 lane。"
     },
     {
       "case_id": "FO14",
@@ -274,13 +274,13 @@
         "FO18"
       ],
       "stage": "U04",
-      "enrollment": "planned",
+      "enrollment": "observing",
       "lane": "integration",
       "entry": "http",
-      "fixture": null,
-      "test": null,
+      "fixture": "tests/fixtures/foundation/joint_dependencies",
       "expected_product_outcome": "guided",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "用例 tests/test_foundation_dependencies.py::test_fo18_three_packages_prepare_into_a_managed_generation（observing：读 TAVOTTO_FOUNDATION_ONLINE=1，没有就 skip 并说明）。U04 实现了受管环境按代的联合安装（tests/test_dependency_transaction.py 离线真跑：三包一次成代、adapter 打底）。经真实 HTTP 入口的受管变体要联网装 matplotlib / numpy 进新的一代 → observing：用例读 TAVOTTO_FOUNDATION_ONLINE=1，没有就 skip 并说明。observing 的具名任务：nightly.yml 的 `foundation-observing` job（非 required、不进 Gate；`TAVOTTO_FOUNDATION_ONLINE=1` 让用例联网把 matplotlib / numpy（与 h5py）的 wheel 下进 wheelhouse；用例 skip 一条就判红——skip 不是绿）。",
+      "test": null
     },
     {
       "case_id": "FO19",
@@ -305,13 +305,14 @@
         "FO20"
       ],
       "stage": "U04",
-      "enrollment": "planned",
-      "lane": "integration",
+      "enrollment": "enforced",
+      "lane": "pr",
       "entry": "http",
-      "fixture": null,
-      "test": null,
+      "fixture": "tests/fixtures/foundation/joint_dependencies",
+      "test": "tests/test_foundation_dependencies.py::test_fo20_markers_extras_and_selected_groups_prepare_only_what_applies",
       "expected_product_outcome": "guided",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U04 起 enforced（lane pr）：项目自带真 venv（matplotlib 来自宿主 site-packages，脚本要的三个包只在用例现造的离线 wheelhouse 里、harness 不预装）。正例 = 跑前的门以整份计划回来（三条选中且适用：extra 拉进第四个包），一次授权装完 → ready → 图内值 == 真值 → 一次编辑；负例 = marker 为假与未选组的包 wheelhouse 里有也不装（import 不到、freeze 里没有）、渲染入口同一道门、授权前一行脚本不跑。目标是项目 venv（首开选中的解释器）；受管环境那条路的机制面在 tests/test_dependency_transaction.py 离线真跑，经 HTTP 的受管变体归 FO18（observing）。",
+      "backend": "pymupdf"
     },
     {
       "case_id": "FO21",
@@ -320,13 +321,14 @@
         "FO21"
       ],
       "stage": "U04",
-      "enrollment": "planned",
-      "lane": "integration",
+      "enrollment": "enforced",
+      "lane": "pr",
       "entry": "http",
-      "fixture": null,
-      "test": null,
+      "fixture": "tests/fixtures/foundation/joint_dependencies",
+      "test": "tests/test_foundation_dependencies.py::test_fo21_conflicting_declarations_stop_and_keep_the_environment",
       "expected_product_outcome": "safe_stop",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U04 起 enforced（lane pr）：`requirements.txt` 的 `beta<2` 与 `constraints.txt` 的 `beta>=2` 确定矛盾 → 计划 blocked（dependency_conflict 可见）、绑定被拒（409 + 计划）、门放行、脚本照跑并以 missing_dependency 收场；环境 freeze 一字不变、声明文件字节不变、三个包一个都没装。safe_stop 的通过不进自动成功分子。求解器层的冲突（pip ResolutionImpossible → 新代 incomplete、旧代仍 active）在 tests/test_dependency_transaction.py 真跑。",
+      "backend": "pymupdf"
     },
     {
       "case_id": "FO22",
@@ -335,13 +337,14 @@
         "FO22"
       ],
       "stage": "U04",
-      "enrollment": "planned",
-      "lane": "integration",
+      "enrollment": "enforced",
+      "lane": "pr",
       "entry": "http",
-      "fixture": null,
-      "test": null,
+      "fixture": "tests/fixtures/foundation/joint_dependencies",
+      "test": "tests/test_foundation_dependencies.py::test_fo22_installed_but_unimportable_is_caught_by_verification",
       "expected_product_outcome": "safe_stop",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U04 起 enforced（lane pr）：wheel 装得上（pip 退出 0）但模块 import 一个不存在的原生库（真实 ImportError）→ 关键 import 验证挡住，终态 failed / dependency_import_still_failed，错误里带真实 import 错误；有界：门只问一次、失败不消耗轮次、再准备只跑一次并以 missing_dependency 收场（运行后那条路）。用户 venv 上的安装只进不退（包文件在、import 不了，如实报）。真实原生扩展的 ABI 隔离（FO13）不在此列。",
+      "backend": "pymupdf"
     },
     {
       "case_id": "FO23",
@@ -410,13 +413,14 @@
         "FO27"
       ],
       "stage": "U04",
-      "enrollment": "planned",
-      "lane": "integration",
+      "enrollment": "enforced",
+      "lane": "pr",
       "entry": "http",
-      "fixture": null,
-      "test": null,
+      "fixture": "tests/fixtures/foundation/joint_dependencies",
+      "test": "tests/test_foundation_dependencies.py::test_fo27_cancel_during_install_is_a_clean_terminal_state",
       "expected_product_outcome": "safe_stop",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U04 起 enforced（lane pr）：wheelhouse 经一个每个 .whl 先睡 6 s 的本地 find-links HTTP 服务提供，在 installing 阶段取消 → 终态 cancelled / dependency_install_cancelled、committed 不为真、环境 freeze 一字不变（pip 被杀在装之前）、计划一次性；受管环境那一侧（新代 incomplete、active 不动、同身份可重建）与提交点后拒绝取消在 tests/test_dependency_transaction.py 真跑。",
+      "backend": "pymupdf"
     },
     {
       "case_id": "FO28",
@@ -431,7 +435,7 @@
       "fixture": null,
       "test": null,
       "expected_product_outcome": "safe_stop",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U04 机制面已有合同（tests/test_dependency_transaction.py：真实只读权限位 → managed_env_create_failed 没有半个 active；磁盘不足故障注入 → package_disk_low 建代前拒绝；求解 / 安装失败 → 新代 incomplete、旧代仍 active、同身份可重建）。留 planned：真实配额 / 只读卷要受控 target（03 §5「不以全 mock 的安装替代真实安装主链」的另一半），函数故障注入不冒充目标 OS 资格。"
     },
     {
       "case_id": "FO29",
@@ -446,7 +450,7 @@
       "fixture": null,
       "test": null,
       "expected_product_outcome": "contractual",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "contractual 已拆成两条具体合同（ADR 0061 §五）：(a) 两个项目并行准备各自一代、各自的锁、互不串账（tests/test_dependency_transaction.py::test_two_projects_prepare_concurrently_and_independently）；(b) active 那一代上有 native 租约时拒绝开始、不杀、租约原样（…::test_active_native_session_blocks_the_transaction_and_is_not_killed）；换代不收掉旧代上的 worker（…::test_old_generation_survives_while_a_worker_uses_it）。留 planned：经真实公共入口的并发（两个服务进程 + 一条真 tavotto run 会话）归集成 lane。"
     },
     {
       "case_id": "FO30",
@@ -470,13 +474,14 @@
         "FO31"
       ],
       "stage": "U04",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "lane": "pr",
       "entry": "http",
-      "fixture": null,
-      "test": null,
+      "fixture": "tests/fixtures/foundation/joint_dependencies",
+      "test": "tests/test_foundation_dependencies.py::test_fo31_first_second_open_and_restart_do_not_prepare_again",
       "expected_product_outcome": "automatic",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U04 起 enforced（lane pr）：首开授权一次（installs=1）→ ready；二开 existing_runtime 同 generation、created_runtime=false；关掉应用再开（新进程、同数据目录）：`GET /api/engine/dependencies` 计划 nothing_needed、不再问、freeze 逐字不变、会话 generation 1 起步、值 == 真值。",
+      "backend": "pymupdf"
     },
     {
       "case_id": "FO32",
