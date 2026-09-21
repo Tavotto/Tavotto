@@ -605,13 +605,19 @@ def register_generation(
     identity: str,
     base_python: str,
 ) -> None:
-    """登记一代（状态 `incomplete`）——在建 venv **之前**：目录名在创建前就定了。"""
+    """登记一代（状态 `incomplete`）——在建 venv **之前**：目录名在创建前就定了。
+
+    **在册的代不能被重新登记**（active、或 `ready` 的旧代——它们的目录可能正有人用；名字由
+    `fresh_generation` 给，撞上就是调用方的缺陷，抛而不是静默覆盖）。"""
     gen = _safe_generation(generation)
     with _lock:
         data = read_manifest(project)
         if data is None:
             data = new_manifest(project, base_python)
         gens = data.get("generations")
+        if isinstance(gens, dict) and gen in gens:
+            if data.get("active") == gen or gens[gen].get("state") == GEN_STATE_READY:
+                raise ValueError(f"这一代在册、不能重新登记: {gen}")
         if not isinstance(gens, dict):
             # 第一次按代：旧布局的 `venv/` 若在，登记成 `legacy` 这一代（它是此刻的
             # active），之后与别的旧代一样留到没人用再删
@@ -669,6 +675,21 @@ def activate(project: str | Path, generation: str, *, python_version: str = "") 
             data["python_version"] = python_version
         data["last_used"] = int(time.time())
         write_manifest(project, data)
+
+
+def fresh_generation(project: str | Path, identity: str) -> str:
+    """这一代的目录名：`g<身份前 12 位>`；同名的一代**还登记着**（active、或旧代还有人用——
+    `retire_unused` 之后剩下的只有这两种）就加序号 `-2`、`-3`……**永远不把登记在册的那一代
+    的目录当成自己的建**：重建两次同一份账 → 同一个身份 → 不能把 active 那代删掉重来
+    （Codex #461 P1）。身份本身不变（`identity` 字段照记，U09 认的是它），只是目录名不同。"""
+    base = f"g{identity[:12]}"
+    gens = generations(project)
+    if base not in gens:
+        return base
+    n = 2
+    while f"{base}-{n}" in gens:
+        n += 1
+    return f"{base}-{n}"
 
 
 def create_generation_venv(project: str | Path, generation: str, base: str) -> tuple[bool, str]:

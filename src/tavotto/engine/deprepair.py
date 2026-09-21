@@ -2219,6 +2219,8 @@ class JointRepairPlan:
     python: str  # 当前选中的解释器（受管环境还没有时为空）
     env_fingerprint: str
     facts_digest: str
+    facts_python: str  # 量 `facts_digest` 的解释器（此刻会跑脚本的那个）
+    install_facts_digest: str  # 装到哪的事实的 digest（与上面不是同一个环境时才有，否则空）
     requirements: tuple[str, ...]
     constraints: tuple[str, ...]
     hashes: dict
@@ -2274,14 +2276,50 @@ def joint_target_for(project: str | Path, script: str) -> tuple[str, str, str]:
 def joint_plan_for(
     project: str | Path, script: str, *, groups: list[str] | None = None
 ) -> tuple[depplan.JointPlan, str, str]:
-    """算一份联合计划（只读）：目标事实按**此刻选中的**解释器量。回 (计划, 目标类型, 解释器)。"""
+    """算一份联合计划（只读）：缺什么按**此刻选中的**解释器量、装什么按目标量（`_facts_for`）。
+    回 (计划, 目标类型, 解释器)。"""
     root = str(Path(project))
     target_kind, python, _source = joint_target_for(root, script)
-    facts = depplan.target_facts(python) if python else None
+    facts, install_facts, _measured = _facts_for(target_kind, python, root)
     if groups is None:
         groups = depplan.selected_groups_setting(root)
-    plan = depplan.plan(root, script, facts=facts, target_kind=target_kind, groups=groups)
+    plan = depplan.plan(
+        root,
+        script,
+        facts=facts,
+        target_kind=target_kind,
+        groups=groups,
+        install_facts=install_facts,
+    )
     return plan, target_kind, python
+
+
+def _facts_for(
+    kind: str, python: str, root: str, *, use_cache: bool = True
+) -> tuple[depplan.TargetFacts | None, depplan.TargetFacts | None, str]:
+    """(缺什么按它量的事实, 装到哪的事实——与前者是同一个环境时 None, 前者量的解释器)。
+
+    缺什么按**此刻会跑脚本的**解释器量（门问的是「现在起会话会不会缺包」）；装到哪按**目标**量：
+    用户 venv 目标 = 同一个；受管目标 = active 那一代（有）/ 从 base 新建的一代（没有：marker
+    环境与 stdlib 按 base，已装集合为空——`depplan.fresh_venv_facts`）。两者不是同一个环境时
+    （选中的是项目 venv / 系统解释器，目标是受管环境）计划的集合按目标量，否则新的一代会漏装
+    选中环境里碰巧有的包、marker 会按另一个 minor 求值（Codex #461 P1）。
+    """
+    run = depplan.target_facts(python, use_cache=use_cache) if python else None
+    if kind != TARGET_MANAGED:
+        return run, None, python
+    managed_python = managedenv.python_of(root) or ""
+    if managed_python:
+        if python and pool.same_python(managed_python, python):
+            return run, None, python
+        return run, depplan.target_facts(managed_python, use_cache=use_cache), python
+    base = base_python() or ""
+    if not base:
+        return run, None, python
+    fresh = depplan.fresh_venv_facts(
+        base, use_cache=use_cache, provided=depplan.adapter_distributions()
+    )
+    return run, fresh, python
 
 
 def create_joint_plan(
@@ -2303,9 +2341,11 @@ def create_joint_plan(
         raise RepairError(ERROR_NOT_ALLOWED, f"未知的安装目标: {kind!r}")
     if kind == TARGET_PROJECT_VENV and auto_kind != TARGET_PROJECT_VENV:
         raise RepairError(ERROR_NOT_ALLOWED, "这个项目此刻没有选中自己的虚拟环境，不能往里装")
-    facts = depplan.target_facts(python) if python else None
+    facts, install_facts, measured = _facts_for(kind, python, root)
     groups = depplan.selected_groups_setting(root) if groups is None else list(groups)
-    joint = depplan.plan(root, script, facts=facts, target_kind=kind, groups=groups)
+    joint = depplan.plan(
+        root, script, facts=facts, target_kind=kind, groups=groups, install_facts=install_facts
+    )
     if joint.status != depplan.STATUS_READY:
         raise RepairError(
             ERROR_PLAN_BLOCKED,
@@ -2332,6 +2372,8 @@ def create_joint_plan(
         python=bound_python,
         env_fingerprint=_fingerprint(kind, bound_python, root),
         facts_digest=facts.digest() if facts is not None else "",
+        facts_python=measured,
+        install_facts_digest=install_facts.digest() if install_facts is not None else "",
         requirements=tuple(joint.requirements),
         constraints=tuple(joint.constraints),
         hashes={k: tuple(v) for k, v in joint.hashes.items()},
@@ -2392,6 +2434,17 @@ def prepare(plan_id: str, on_event=None) -> dict:
         with _lock:
             _joint_plans.pop(plan.plan_id, None)
         raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境发生了变化")
+    # 解释器指纹只看 `pyvenv.cfg`：确认期间有人往目标里装 / 卸了包它不变，事实 digest 会变——
+    # 重新量一次（不走缓存），不一样就是 stale，一个字节不装（Codex #461 P2）
+    run, install, _measured = _facts_for(
+        plan.target_kind, plan.facts_python, plan.project, use_cache=False
+    )
+    if (run.digest() if run is not None else "") != plan.facts_digest or (
+        install.digest() if install is not None else ""
+    ) != plan.install_facts_digest:
+        with _lock:
+            _joint_plans.pop(plan.plan_id, None)
+        raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境里的包发生了变化")
     cancel_ev = threading.Event()
     with _lock:
         _cancels[plan.plan_id] = cancel_ev
@@ -2457,6 +2510,15 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
         raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+    if cancel_ev.is_set():
+        # 自检期间接受的取消（`cancel_status` 还没过提交点）要算数：包已经在用户 venv 里了，
+        # 如实报 cancelled + 体检，不接着 remember / 作废会话（Codex #461 P2）
+        health = projectenv.probe_environment(python)
+        detail = {"health_ok": bool(health.get("ok")), "health_code": health.get("code", "")}
+        _emit(
+            plan.plan_id, STATE_CANCELLED, on_event, joint=plan, code=ERROR_CANCELLED, result=detail
+        )
+        return {"ok": False, "code": ERROR_CANCELLED, **detail}
     with _lock:
         _committed[plan.plan_id] = time.time()
     projectenv.remember(plan.project, python, automatic=False, trigger="dependency_repair")
@@ -2495,12 +2557,20 @@ class _GenerationJob:
     label: str = "generation"  # 快照文件名里的动作名（`after-<label>`）
 
 
-def generation_requirements(project: str | Path, delta: tuple[str, ...]) -> tuple[str, ...]:
+def generation_requirements(
+    project: str | Path, delta: tuple[str, ...], *, hash_mode: bool = False
+) -> tuple[str, ...]:
     """这一代的完整集合：adapter + 账上记过的 + 这次的（去重、稳定顺序）。
 
     账上的按 `distribution==resolved_version` 给（重建时装回**当时**那个版本，ADR 0019 §九
     不声称 lockfile 级复现）；这次的 delta 里若已含同名，账上那条让位（新声明更新）。
+
+    **hash 模式只给 delta 本身**（= 整份锁）：`--require-hashes` 下每一条都得带 hash，adapter 与
+    账上那些给不出——锁就是闭包，adapter 必须已经被锁钉住（计划期校验，`depplan._adapter_against_lock`），
+    账上不在锁里的那些不属于这一代（Codex #461 P1）。
     """
+    if hash_mode:
+        return tuple(dict.fromkeys(delta))
     out: list[str] = list(depplan.ADAPTER_REQUIREMENTS)
     delta_names = {depresolve.normalize_distribution(_name_of(r)) for r in delta}
     for req in managedenv.installed_requirements(project):
@@ -2543,11 +2613,13 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     base = base_python()
     if not base:
         raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
-    requirements = generation_requirements(project, job.delta)
+    requirements = generation_requirements(project, job.delta, hash_mode=job.require_hashes)
     identity = job.identity or depplan._digest(
         {"requirements": sorted(requirements), "constraints": sorted(job.constraints)}
     )
-    generation = f"g{identity[:12]}"
+    # 目录名永远不撞**在册**的代（active / 旧代还有人用）：重建两次同一份账是同一个身份，
+    # 不能把 active 那代删掉重来（Codex #461 P1）
+    generation = managedenv.fresh_generation(project, identity)
     if cancel_ev.is_set():
         return job.emit(
             STATE_CANCELLED,
@@ -2638,6 +2710,16 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "worker 自检未通过"
         )
         raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+    if cancel_ev.is_set():
+        # 自检期间接受的取消要算数：`cancel_status` 到这里都还没过提交点（Codex #461 P2）
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "验证期间取消"
+        )
+        return job.emit(
+            STATE_CANCELLED,
+            code=ERROR_CANCELLED,
+            result={"generation": generation, "activated": False},
+        )
     # ---- 提交点：切 active。之后拒绝取消 ----
     with _lock:
         _committed[job.progress_id] = time.time()
