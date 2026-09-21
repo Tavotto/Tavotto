@@ -6,6 +6,7 @@
 
 import os
 import pathlib
+import shutil
 import sys
 import tempfile
 import threading
@@ -167,6 +168,12 @@ def pytest_sessionfinish(session, exitstatus):
     teardown，此时还有线程活着说明不了任何事。CI 上这一档只出现在 job 被取消时
     （那种 run 本来也不产生结论），所以这个例外挡不住任何真实的泄漏。
     """
+    # 兜底数据目录会话结束就删。以前从不删：U04 / U05 起真 venv + 真 pip 的用例往 `environments/` 里建受管
+    # 环境，一次会话 600 MB 上下，系统临时目录里攒了 3 311 个、31 GB，整机 ENOSPC，全量套件成片报
+    # 「could not create numbered dir」（2026-09-22 U09 合并态全量撞上）。删不掉（Windows 上 worker 还握着
+    # 句柄）就算了——下一次会话仍是新目录，不复用。放在线程判定之前：目录该删与线程泄不泄漏无关，
+    # Ctrl+C 那一档也一样要删。验证在 tests/test_conftest_data_dir.py：子进程跑一个会话，结束后目录不在。
+    shutil.rmtree(_DATA_DIR, ignore_errors=True)
     if exitstatus == pytest.ExitCode.INTERRUPTED:
         return
     stuck = _threads_that_block_interpreter_exit()
