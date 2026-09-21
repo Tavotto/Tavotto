@@ -587,14 +587,15 @@ def test_the_bootstrap_venv_stays_discoverable_without_the_config_entry(monkeypa
     monkeypatch.delenv(engine_pool.WORKER_PYTHON_ENV, raising=False)
     monkeypatch.setattr(engine_config, "worker_python", lambda: None)
     monkeypatch.setattr(engine_pool, "is_frozen", lambda: False)  # 源码模式才有自建 venv
-    monkeypatch.setattr(
-        engine_bootstrap, "venv_python", lambda root=None: _P("/fake/worker-env/bin/python3")
-    )
+    fake = _P("/fake/worker-env/bin/python3")
+    monkeypatch.setattr(engine_bootstrap, "venv_python", lambda root=None: fake)
     cands = engine_pool._prioritized_candidates()
-    assert ("/fake/worker-env/bin/python3", engine_pool.SOURCE_MANAGED) in cands
+    # 产品侧回的是 `str(Path)`：Windows 上是反斜杠，期望值同样经 Path 拼，不按平台分支
+    expected = str(fake)
+    assert (expected, engine_pool.SOURCE_MANAGED) in cands
     # 排在系统 Python 之前：它就是「自身与系统链都没有科学栈」时建的那套
     order = [p for p, _ in cands]
-    later = order[order.index("/fake/worker-env/bin/python3") + 1 :]
+    later = order[order.index(expected) + 1 :]
     assert later, "它后面必须还有系统链，否则这条断言量在空集合上"
     assert all(s == engine_pool.SOURCE_SYSTEM for p, s in cands if p in later)
 
