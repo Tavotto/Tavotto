@@ -351,6 +351,15 @@ describe('DependencyPrepareDialog', () => {
     )
     expect(text()).toContain(en('dependencyPreparePrivatePythonCached', { version: '3.13.15' }))
     expect(text()).not.toContain('MB')
+    // 别的项目已经把私有 Python 供应好了（required=false、零字节）：本项目照样要建自己的一代，来源照样说出口
+    await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        clean({ required: false, cached: true, download_bytes: 0, network_required: false }),
+      ),
+    )
+    expect(text()).toContain(en('dependencyPreparePrivatePythonCached', { version: '3.13.15' }))
+    expect(radio('tavotto_managed')!.disabled).toBe(false)
     // 没有这一段（有基础解释器）时一个字都不出现
     await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))

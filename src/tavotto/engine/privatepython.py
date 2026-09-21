@@ -439,6 +439,22 @@ def offer_payload(source: PythonSource | None = None) -> dict | None:
     }
 
 
+def present_payload(source: PythonSource | None = None) -> dict | None:
+    """已供应就位的那份的载荷（`required=False`、零字节、不联网）：这台机器没有别的 Python、受管环境要
+    从它建时，界面照样要把「用的是 Tavotto 自己的 Python x」说出口——它不是下载授权，是环境来源的披露。
+    不提供 / 还没就位回 None。"""
+    source = source or source_for()
+    if source is None or not offered(source) or python_of(source) is None:
+        return None
+    return {
+        **source.to_payload(),
+        "required": False,
+        "cached": True,
+        "download_bytes": 0,
+        "network_required": False,
+    }
+
+
 def _cached_archive_ok(source: PythonSource) -> bool:
     path = archive_path(source)
     return path.is_file() and _sha256_file(path) == source.sha256
