@@ -5039,23 +5039,26 @@ class _ScriptRejected(Exception):
 
 
 def _project_script(raw: str) -> str:
-    """`script` 参数 → 项目相对 POSIX 路径。判据一律在 realpath 之后（与试运行端点同一份纪律）。"""
+    """`script` 参数 → 项目相对 POSIX 路径。
+
+    用户给的串只经 `projectenv.contained_path` 钉回项目内（先 realpath 再按前缀判——`..` 回溯、
+    软链接 / junction 指到项目外、项目外绝对路径都在那一步现形；项目内的绝对路径照旧允许），
+    之后交给文件系统的**只有它回的那一个路径**——「判过了」与「用的是判过的那一个」是两件事
+    （CodeQL #470 三条 py/path-injection 的处置：不再拿原串重拼）。
+    """
     ctx = current_ctx()
     raw = str(raw or "").strip()
     if not raw:
         raise _ScriptRejected("script_not_found", 404, raw)
-    root = ctx.path.resolve()
-    try:
-        target = (Path(raw) if Path(raw).is_absolute() else ctx.path / raw).resolve()
-    except OSError:
-        raise _ScriptRejected("script_not_found", 404, raw) from None
-    if not target.is_relative_to(root):
+    real = engine_projectenv.contained_path(ctx.path, raw)
+    if real is None:
         raise _ScriptRejected("script_path_outside_project", 400, raw)
+    target = Path(real)
     if target.suffix.lower() != ".py" or target.is_dir():
         raise _ScriptRejected("unsupported_script_type", 400, raw)
     if not target.is_file():
         raise _ScriptRejected("script_not_found", 404, raw)
-    return target.relative_to(root).as_posix()
+    return target.relative_to(os.path.realpath(str(ctx.path))).as_posix()
 
 
 @app.get("/api/engine/dependencies")
@@ -5110,15 +5113,25 @@ def api_dependencies_prepare():
         return jsonify(
             {"error": "这个准备计划不属于当前项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
         ), 409
+    # 取消句柄在 `prepare_async` 里、起线程**之前**登记：202 一回去用户就能取消，哪怕线程还在
+    # 重算事实、还没拿锁（Codex #470 P1）
     engine_deprepair.prepare_async(plan_id, lambda p: sse_publish("engine.dependency", p))
     return jsonify({"started": True, **engine_deprepair.progress(plan_id)})
 
 
 @app.post("/api/engine/dependencies/cancel")
 def api_dependencies_cancel():
-    require_project()
+    """取消一份**当前项目**的联合准备。`plan_id` 随 SSE 广播给每个订阅者，所以这里与 prepare 同一道
+    判据：计划还在（执行中）而不属于当前项目 → 409，不替别的项目取消（Codex #470 P2）。"""
+    root = str(require_project())
     body = request.get_json(force=True) or {}
-    outcome = engine_deprepair.cancel_status(str(body.get("plan_id") or ""))
+    plan_id = str(body.get("plan_id") or "")
+    plan = engine_deprepair.get_joint_plan(plan_id)
+    if plan is not None and plan.project != root:
+        return jsonify(
+            {"error": "这个准备计划不属于当前项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
+        ), 409
+    outcome = engine_deprepair.cancel_status(plan_id)
     return jsonify({"cancelling": outcome["accepted"], **outcome})
 
 

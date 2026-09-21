@@ -966,8 +966,10 @@ def _run_pip(argv: list[str], cancel_ev: threading.Event, on_log) -> tuple[str, 
     """流式跑一条 pip 命令（install / uninstall 共用的唯一执行器）。
 
     可取消、有超时、日志逐行回调。**argv 由调用方的两个 `*_argv()` 出处拼好**，
-    这里不再碰它的形状。
+    这里不再碰它的形状。起 pip 之前先看一眼取消：已经取消的不起（起了再杀，包可能已经写了一半）。
     """
+    if cancel_ev.is_set():
+        return ERROR_CANCELLED, ""
     try:
         proc = subprocess.Popen(
             argv,
@@ -2326,9 +2328,23 @@ def get_joint_plan(plan_id: str) -> JointRepairPlan | None:
 
 
 def prepare_async(plan_id: str, on_event=None) -> None:
+    """起线程执行一份联合计划。**取消句柄在起线程之前登记**：调用方一回 202 用户就可能取消，
+    那时线程可能还在重算事实、还没拿锁——句柄不在表里的话 `cancel_status` 只能回 `not_found`，
+    安装照常改环境（Codex #470 P1）。`prepare()` 复用这一个句柄。"""
+    _register_cancel(plan_id)
     threading.Thread(
         target=lambda: _prepare_guarded(plan_id, on_event), daemon=True, name="tavotto-dep-prepare"
     ).start()
+
+
+def _register_cancel(plan_id: str) -> threading.Event:
+    """这份计划的取消句柄（已有就复用——同步与异步入口、登记与执行两处共用一个）。"""
+    with _lock:
+        ev = _cancels.get(plan_id)
+        if ev is None:
+            ev = threading.Event()
+            _cancels[plan_id] = ev
+        return ev
 
 
 def _prepare_guarded(plan_id: str, on_event) -> dict:
@@ -2342,29 +2358,38 @@ def _prepare_guarded(plan_id: str, on_event) -> dict:
 
 
 def prepare(plan_id: str, on_event=None) -> dict:
-    """执行一份联合计划。执行端只认 `plan_id`；执行前重算环境指纹（`repair_plan_stale`）。"""
-    plan = get_joint_plan(plan_id)
-    if plan is None:
-        raise RepairError(ERROR_NOT_ALLOWED, "没有这个准备计划（或已过期）")
-    if _fingerprint(plan.target_kind, plan.python, plan.project) != plan.env_fingerprint:
-        with _lock:
-            _joint_plans.pop(plan.plan_id, None)
-        raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境发生了变化")
-    # 解释器指纹只看 `pyvenv.cfg`：确认期间有人往目标里装 / 卸了包它不变，事实 digest 会变——
-    # 重新量一次（不走缓存），不一样就是 stale，一个字节不装（Codex #461 P2）
-    run, install, _measured = _facts_for(
-        plan.target_kind, plan.facts_python, plan.project, use_cache=False
-    )
-    if (run.digest() if run is not None else "") != plan.facts_digest or (
-        install.digest() if install is not None else ""
-    ) != plan.install_facts_digest:
-        with _lock:
-            _joint_plans.pop(plan.plan_id, None)
-        raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境里的包发生了变化")
-    cancel_ev = threading.Event()
-    with _lock:
-        _cancels[plan.plan_id] = cancel_ev
+    """执行一份联合计划。执行端只认 `plan_id`；执行前重算环境指纹与事实（`repair_plan_stale`）。
+
+    取消句柄从第一行起就在表里（`prepare_async` 已登记的复用）：重算事实那几秒里来的取消，在拿锁
+    之前就生效，一个字节不写（ADR 0061 §六 ①）；不论怎么退出，句柄与计划都在 finally 里清掉。
+    """
+    pid = str(plan_id or "")
+    cancel_ev = _register_cancel(pid)
     try:
+        plan = get_joint_plan(pid)
+        if plan is None:
+            raise RepairError(ERROR_NOT_ALLOWED, "没有这个准备计划（或已过期）")
+        if _fingerprint(plan.target_kind, plan.python, plan.project) != plan.env_fingerprint:
+            raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境发生了变化")
+        # 解释器指纹只看 `pyvenv.cfg`：确认期间有人往目标里装 / 卸了包它不变，事实 digest 会变——
+        # 重新量一次（不走缓存），不一样就是 stale，一个字节不装（Codex #461 P2）
+        run, install, _measured = _facts_for(
+            plan.target_kind, plan.facts_python, plan.project, use_cache=False
+        )
+        if (run.digest() if run is not None else "") != plan.facts_digest or (
+            install.digest() if install is not None else ""
+        ) != plan.install_facts_digest:
+            raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境里的包发生了变化")
+        if cancel_ev.is_set():
+            # ack 之后、拿锁之前来的取消：明确终态，什么都没改（Codex #470 P1 的那一刻）
+            return _emit(
+                pid,
+                STATE_CANCELLED,
+                on_event,
+                joint=plan,
+                code=ERROR_CANCELLED,
+                result={"activated": False},
+            )
         if plan.target_kind == TARGET_MANAGED:
             job = _GenerationJob(
                 progress_id=plan.plan_id,
@@ -2391,8 +2416,8 @@ def prepare(plan_id: str, on_event=None) -> dict:
             raise _busy_error(exc) from exc
     finally:
         with _lock:
-            _cancels.pop(plan.plan_id, None)
-            _joint_plans.pop(plan.plan_id, None)
+            _cancels.pop(pid, None)
+            _joint_plans.pop(pid, None)
 
 
 def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Event) -> dict:
