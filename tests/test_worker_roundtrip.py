@@ -835,7 +835,11 @@ def test_patch_shapes_are_draggable_via_pos_frac(tmp_path):
 SHARED_SCALE_SCRIPT = """\
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.colors import PowerNorm
+from matplotlib.colors import LinearSegmentedColormap, PowerNorm
+
+# 两张**自定义**色图（用户脚本就是 from_list 出来的）：兄弟各有各的，共用的只是 norm
+GREEN_B = LinearSegmentedColormap.from_list("paper_b", ["#edf5df", "#3f942c"])
+GREEN_C = LinearSegmentedColormap.from_list("paper_c", ["#fffef5", "#e5bd00"])
 
 
 def main():
@@ -844,15 +848,21 @@ def main():
     x = np.linspace(0.5, 2.0, 7)
     f = np.linspace(1.30, 1.52, 7)
     norm = PowerNorm(gamma=1.45, vmin=0.0, vmax=1.0)     # 一份 norm，两块网格
-    mesh_b = ax_b.pcolormesh(x, f, rng.rand(7, 7), cmap="Greens", norm=norm,
+    mesh_b = ax_b.pcolormesh(x, f, rng.rand(7, 7), cmap=GREEN_B, norm=norm,
                              shading="nearest", rasterized=True)
-    ax_c.pcolormesh(x, f, rng.rand(7, 7), cmap="Greens", norm=norm,
+    ax_c.pcolormesh(x, f, rng.rand(7, 7), cmap=GREEN_C, norm=norm,
                     shading="nearest", rasterized=True)
     for ax in (ax_b, ax_c):
         ax.set_ylim(1.34, 1.51)
     fig.colorbar(mesh_b, ax=ax_c)                        # 挂在 (b) 上、摆在 (c) 旁
     fig.savefig("Shared.pdf")
 """
+
+
+def _cmap_original_name(manifest, gid):
+    el = next(e for e in manifest["elements"] if e["gid"] == gid)
+    field = next(f for f in el["editable"] if f["prop"] == "cmap")
+    return (field.get("cmap_original") or {}).get("name")
 
 
 def test_colorbar_colormap_reaches_every_mappable_sharing_its_norm(tmp_path):
@@ -875,7 +885,8 @@ def test_colorbar_colormap_reaches_every_mappable_sharing_its_norm(tmp_path):
         cb = next(e for e in man["elements"] if e["role"] == "colorbar")
         assert cb["mappable_gid"] == "axes_0.collections_0"
         assert cb["scale_gids"] == ["axes_1.collections_0"]
-        assert _field_value(man, "axes_1.collections_0", "cmap") == "Greens"
+        assert _field_value(man, "axes_0.collections_0", "cmap") == "paper_b"
+        assert _field_value(man, "axes_1.collections_0", "cmap") == "paper_c"
 
         patches = [{"gid": cb["gid"], "prop": "cmap", "value": "plasma"}]
         resp = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": patches})
@@ -886,9 +897,11 @@ def test_colorbar_colormap_reaches_every_mappable_sharing_its_norm(tmp_path):
             "共用 norm 的兄弟没有跟着色条换色图"
         )
         assert _field_value(man, cb["gid"], "cmap") == "plasma"
-        # 兄弟也说得出「脚本原样」是哪张（Greens 在白名单里就不发事实，看别名 gid 即可）
-        sib = next(e for e in man["elements"] if e["gid"] == "axes_1.collections_0")
-        assert any(f["prop"] == "cmap" for f in sib["editable"])
+        # 「脚本原样」各说各的：兄弟报的是它自己那张（paper_c），不是 mappable 的
+        # （#474 评审：拿色条那条 key 的原样冒充兄弟的，选择器会画错、点回去还原成另一张）
+        assert _cmap_original_name(man, "axes_0.collections_0") == "paper_b"
+        assert _cmap_original_name(man, "axes_1.collections_0") == "paper_c"
+        assert _cmap_original_name(man, cb["gid"]) == "paper_b"
 
         # 上下限：一处写、两块变（共用的 norm）
         patches.append({"gid": cb["gid"], "prop": "vmin", "value": 0.25})
@@ -896,9 +909,14 @@ def test_colorbar_colormap_reaches_every_mappable_sharing_its_norm(tmp_path):
         assert _field_value(man, "axes_1.collections_0", "vmin") == pytest.approx(0.25)
 
         man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": []})["manifest"]
-        for gid in ("axes_0.collections_0", "axes_1.collections_0", cb["gid"]):
-            assert _field_value(man, gid, "cmap") == "Greens", gid
+        for gid, name in (
+            ("axes_0.collections_0", "paper_b"),
+            ("axes_1.collections_0", "paper_c"),
+            (cb["gid"], "paper_b"),
+        ):
+            assert _field_value(man, gid, "cmap") == name, gid
             assert _field_value(man, gid, "vmin") == pytest.approx(0.0), gid
+            assert _cmap_original_name(man, gid) is None, gid
     finally:
         if proc.poll() is None:
             proc.kill()

@@ -2009,10 +2009,11 @@ def _cmap_original(state: FigState, artist, gid: str) -> dict | None:
     """**override 之前**那张色图的事实；没有 override 时是 `None`（字段不出现）。
 
     与 `_marker_original` 同一套规则：判据是 `state.applied` 里有这条
-    `(gid, "cmap")`（别名代采的 `originals` 不算），原值取 `state.originals`
+    `(gid, "cmap")`（别名代采的 `originals` **不当判据**），原值取 `state.originals`
     ——override 系统第一次应用前采下的那个 Colormap 对象，撤销时回灌的也是它。
-    别名组（色条 ↔ mappable）里任一个 gid 上有 override 都算：「这条色条的
-    脚本原样」不因用户是从图像那边改的就说不出来。
+    别名组（色条 ↔ mappable ↔ 色阶兄弟）里任一个 gid 上有 override 都算：「这条色条的
+    脚本原样」不因用户是从图像那边改的就说不出来；**原值则优先取自己名下那份**
+    ——兄弟各有各的色图，别名代采的那份才是它自己的原样（见下面的注释）。
 
     **只在原样的名字写不回它自己时才发**：白名单里的注册色图本来就在选项表
     里、选它写一条普通 override 即可；其余的（自定义的写不进 override——哪怕它
@@ -2024,8 +2025,14 @@ def _cmap_original(state: FigState, artist, gid: str) -> dict | None:
         key = (g, "cmap")
         if key not in state.applied or key not in state.originals:
             continue
+        # **自己那份原样优先**：色阶兄弟各有各的色图（共用的是 norm，不是 cmap），
+        # 色条广播动手之前别名组替每个兄弟代采了它自己的原样（`alias_seeded`），
+        # 那份才是「这块网格脚本原来那张」；直接拿色条那条 key 的原样等于拿
+        # mappable 的色图冒充兄弟的（#474 评审）。代采的记录只在广播还在生效时
+        # 存在（广播退场即清），所以这里读到的必然对应此刻压着它的那条 override。
+        own = (gid, "cmap")
+        orig = state.originals.get(own, state.originals[key])
         try:
-            orig = state.originals[key]
             facts = _cmap_facts(orig)
             return facts if _cmap_needs_facts(facts) else None
         except Exception:  # noqa: BLE001 — 说不出就是「不知道」，不能让清单构建挂掉

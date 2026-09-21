@@ -51,8 +51,11 @@
   不一致——有的成员改过、有的没改，那时同样谁的都不画。
 * `pairRows` 的查表键由 `pairKey` 自己生成，别手写字面量：`['vmin','vmax']`
   排序之后是 `vmax|vmin`，手写的键查不到就安静退回两行，界面上看不出异常。
-* 色阶共用关系（`inspector/ColorScaleLink.tsx`）判据只认 manifest 的
-  `mappable_gid`，不猜「两边 cmap 名字相同」；引擎没给就整行不出现。
+* 色阶共用关系（`inspector/ColorScaleLink.tsx`）判据只认 manifest 的两条事实：
+  `mappable_gid`（色条直接挂着的那个）与 `scale_gids`（与它共用同一份 norm 对象的
+  **色阶兄弟**，引擎 `colorbarmodel.scale_siblings` 判、2026-09-21），唯一谓词
+  `lib/colormapAlias.colorbarCovers(colorbar, gid)`；不猜「两边 cmap 名字相同」；
+  引擎没给就整行不出现。色条页的对家仍是 `mappable_gid` 那个（兄弟页各自指回色条）。
 * **色图选择器（`controls/ColormapPicker.tsx`，2026-09-13）**：白名单之外的色图长什么样
   由引擎的两条事实说——`cmap_current`（此刻这张：`custom` / `stops` / `discrete`）与
   `cmap_original`（换走之后脚本原来那张，多一个 `name`）。渐变的唯一出处
@@ -60,8 +63,9 @@
   「?」；离散的画硬边色块。`custom` 的显示成「自定义」（原名留在可达名与 title 里），
   它**不是可写的取值**：当前那一格点了什么都不发生（`data-cmap-entry="keep"`），
   「脚本原样」那一格（`restore`）走 `clearOverrides`，清的是 `lib/colormapAlias.
-  colormapAliasGids()` 算出的整组 gid——色条 ↔ mappable 是同一份色图状态的两个 gid，
-  override 落在哪一边取决于用户从哪边改的。多选时事实**全体一致才给**
+  colormapAliasGids()` 算出的整组 gid——色条 ↔ mappable ↔ 色阶兄弟（`scale_gids`）是
+  同一份色图状态的一组 gid，override 落在哪一边取决于用户从哪边改的；兄弟的
+  `cmap_original` 是它**自己**的脚本原样（引擎按各自代采的那份报）。多选时事实**全体一致才给**
   （`sharedCmapFacts`，与 `sharedMarkerShape` 同一条纪律）。色条的方向 / 延伸小色条
   预览同样吃 `cmap_current`（`cmapFacts`），不再对自定义色图退回灰阶。
   看护 `colorScalePanels.test.tsx` 的「脚本自定义的色图」一组。
