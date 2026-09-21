@@ -372,3 +372,31 @@ def test_an_inspector_crash_is_unknown_not_verified(env, monkeypatch):
     assert body["status"] == "failed"
     assert _out(body, "pdf")["error"]["code"] == "artifact_rejected"
     assert not (Path(body["export_dir"]) / "S.pdf").exists()
+
+
+def test_raster_density_is_measured_from_pixels_over_page_not_taken_from_the_request(
+    env, monkeypatch
+):
+    """RC-064 must_fail：请求 600 ppi、文件却只有 150 ppi 那么多像素（生产者如实报了像素数，所以尺寸一项对得上）
+    ——密度必须按像素 ÷ 页面量出 150，strict 下按规范拒；拿请求的 600 去判就是「请求 600 就报告实测 600」。"""
+    client, _ = env
+    real = m._export_produce
+
+    def produce(job, tmp_dir):
+        assert job.request.ppi == 600
+        lowered = job.request.__class__(**{**job.request.__dict__, "ppi": 150})
+        job.request = lowered  # 生产者按 150 画、如实报 150 那么多像素
+        try:
+            produced = real(job, tmp_dir)
+        finally:
+            job.request = job.request.__class__(**{**job.request.__dict__, "ppi": 600})
+        return produced
+
+    monkeypatch.setattr(m, "_export_produce", produce)
+    body = client.post(
+        "/api/export", json=_canvas(formats=["png"], ppi=600, inspection={"mode": "strict"})
+    ).get_json()
+    o = _out(body, "png")
+    assert o["manifest"]["checks"]["size"] == "verified"  # 像素数与生产者报的一致
+    assert o["manifest"]["checks"]["raster_density"] == "failed"
+    assert o["status"] == "failed" and o["error"]["params"]["failed"] == "raster_density"
