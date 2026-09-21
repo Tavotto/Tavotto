@@ -37,6 +37,7 @@ from support.dependency_repair import (
 from tavotto.engine import (
     deprepair,
     depresolve,
+    envlease,
     managedenv,
     pool as engine_pool,
     projectenv,
@@ -490,22 +491,22 @@ def test_rebuild_and_install_are_mutually_exclusive(tmp_path, monkeypatch):
     python.write_text("", encoding="utf-8")
     managedenv.mark_ready(project)
 
-    # 重建拿锁期间，install 那条路（按解释器路径判）必须被挡住
-    monkeypatch.setattr(
-        deprepair, "_create_managed", lambda root, ev: pytest.fail("这条用例不该真的建环境")
-    )
+    # 重建拿锁期间，install 那条路（按解释器路径判）必须被挡住。U04 起重建是「建新的一代」
+    # （`_run_generation_locked`），锁 = 合成 key + active 那一代的解释器；探针放在建代之前
+    # 一定会走到的那一步（`base_python`），不真的建环境。
     seen: list[bool] = []
 
-    def _spy(root, ev):
+    def _spy():
         seen.append(engine_pool.is_mutating(str(python)))
         raise deprepair.RepairError(deprepair.ERROR_MANAGED_CREATE_FAILED, "stop")
 
-    monkeypatch.setattr(deprepair, "_create_managed", _spy)
+    monkeypatch.setattr(deprepair, "base_python", _spy)
     with pytest.raises(deprepair.RepairError):
         deprepair.rebuild_managed(project)
     assert seen == [True], "重建期间那条解释器路径必须处于「正在改动」状态"
     # 出来之后锁要干净地放掉（按归属清，不是按进入时那几个 key）
     assert not engine_pool.is_mutating(str(python))
+    assert not envlease.is_mutating_key(deprepair._env_key(deprepair.TARGET_MANAGED, "", project))
 
 
 def test_two_installs_on_one_environment_do_not_overlap():
