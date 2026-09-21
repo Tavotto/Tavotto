@@ -963,6 +963,16 @@ def test_peer_colorbars_on_a_shared_scale_keep_their_own_originals(tmp_path):
         man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": []})["manifest"]
         assert _field_value(man, cb_b["gid"], "cmap") == "paper_c"
         assert _cmap_original_name(man, cb_b["gid"]) is None
+
+        # 只改兄弟自己的（窄 override 从没动过 A）：A 与它的色条**不**报「脚本原样」——
+        # 否则 A 的选择器会拿 B 的原样当 A 的、点回去清的却是 B（#474 评审第五轮）
+        narrow = [{"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"}]
+        man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": narrow})["manifest"]
+        assert _field_value(man, "axes_0.collections_0", "cmap") == "paper_b"
+        assert _cmap_original_name(man, "axes_0.collections_0") is None
+        assert _cmap_original_name(man, cb_a["gid"]) is None
+        assert _cmap_original_name(man, "axes_1.collections_0") == "paper_c"
+        assert _cmap_original_name(man, cb_b["gid"]) == "paper_c"
     finally:
         if proc.poll() is None:
             proc.kill()

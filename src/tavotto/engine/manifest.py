@@ -2009,12 +2009,12 @@ def _cmap_alias_gids(state: FigState, artist, gid: str) -> list[str]:
 def _cmap_original(state: FigState, artist, gid: str) -> dict | None:
     """**override 之前**那张色图的事实；没有 override 时是 `None`（字段不出现）。
 
-    与 `_marker_original` 同一套规则：判据是 `state.applied` 里有这条
-    `(gid, "cmap")`（别名代采的 `originals` **不当判据**），原值取 `state.originals`
-    ——override 系统第一次应用前采下的那个 Colormap 对象，撤销时回灌的也是它。
-    别名组（色条 ↔ mappable ↔ 色阶兄弟）里任一个 gid 上有 override 都算：「这条色条的
-    脚本原样」不因用户是从图像那边改的就说不出来；**原值则优先取自己名下那份**
-    ——兄弟各有各的色图，别名代采的那份才是它自己的原样（见下面的注释）。
+    与 `_marker_original` 同一份数据源：`state.originals` 里 override 系统第一次应用前
+    采下的那个 Colormap 对象，撤销时回灌的也是它。判据与 `_marker_original` **不同**：
+    那边只认 `state.applied`（别名代采的不算），这边要认——色条与它的 mappable、以及
+    共用 norm 的兄弟是一份色阶的几个 gid，用户从色条那边改的，mappable 与兄弟身上只有
+    代采的记录、没有 applied；不认它们，「这块网格的脚本原样」就说不出来。认的办法是
+    看**自己名下**（色条 = 它的 mappable）有没有那份记录（见下面的注释）。
 
     **只在原样的名字写不回它自己时才发**：白名单里的注册色图本来就在选项表
     里、选它写一条普通 override 即可；其余的（自定义的写不进 override——哪怕它
@@ -2022,31 +2022,30 @@ def _cmap_original(state: FigState, artist, gid: str) -> dict | None:
     从选项表里消失了）没有这条事实就再也回不去——只剩「恢复到脚本」那个入口，
     而它在色图选择器里看不见。
     """
-    for g in _cmap_alias_gids(state, artist, gid):
-        key = (g, "cmap")
-        if key not in state.applied or key not in state.originals:
-            continue
-        # **自己那份原样优先**：色阶兄弟各有各的色图（共用的是 norm，不是 cmap），
-        # 色条广播动手之前别名组替每个兄弟代采了它自己的原样（`alias_seeded`），
-        # 那份才是「这块网格脚本原来那张」；直接拿色条那条 key 的原样等于拿
-        # mappable 的色图冒充兄弟的（#474 评审）。代采的记录只在广播还在生效时
-        # 存在（广播退场即清），所以这里读到的必然对应此刻压着它的那条 override。
-        # 色条自己没有原样可采（它的 cmap 就是 mappable 的），「自己名下」对它来说是
-        # **它的 mappable** 那份：两条色条各挂一块共用 norm 的网格时，B 的原样要问
-        # mesh_b，不能拿 A 那条 key 的（那是 mesh_a 的，#474 评审第二轮）
-        own_gid = gid
-        if isinstance(artist, ColorbarProxy):
-            own_gid = next(
-                (el["gid"] for el in state.elements if el["artist"] is artist.cb.mappable), gid
-            )
-        own = (own_gid, "cmap")
-        orig = state.originals.get(own, state.originals[key])
-        try:
-            facts = _cmap_facts(orig)
-            return facts if _cmap_needs_facts(facts) else None
-        except Exception:  # noqa: BLE001 — 说不出就是「不知道」，不能让清单构建挂掉
-            return None
-    return None
+    # 「自己名下」那份原样：mappable 就是自己的 key；色条没有原样可采（它的 cmap 就是
+    # mappable 的），对它来说是**它的 mappable** 那份——两条色条各挂一块共用 norm 的网格
+    # 时，B 的原样要问 mesh_b，不能拿 A 那条 key 的（#474 评审）。
+    own_gid = gid
+    if isinstance(artist, ColorbarProxy):
+        own_gid = next(
+            (el["gid"] for el in state.elements if el["artist"] is artist.cb.mappable), gid
+        )
+    own = (own_gid, "cmap")
+    # **判据是自己名下有没有被采过原样**：只有两条路会写下这份记录——自己被 override，
+    # 或者一条**盖着自己**的色条广播在生效（别名组在广播动手之前代采，广播退场即清）。
+    # 兄弟自己的窄 override 不会写它（那条 override 从没改过我），所以「只改了兄弟」
+    # 时这里什么都不报——否则 A 的选择器会把 B 的原样当成 A 的「脚本原样」，点回去清的
+    # 却是 B（#474 评审第五轮）。别名 gid 里至少一条真在 applied 是双重确认：代采记录
+    # 必然伴随一条生效中的广播。
+    if own not in state.originals:
+        return None
+    if not any((g, "cmap") in state.applied for g in _cmap_alias_gids(state, artist, gid)):
+        return None
+    try:
+        facts = _cmap_facts(state.originals[own])
+        return facts if _cmap_needs_facts(facts) else None
+    except Exception:  # noqa: BLE001 — 说不出就是「不知道」，不能让清单构建挂掉
+        return None
 
 
 def _cmap_field(m, state: FigState, artist, gid: str) -> dict:
