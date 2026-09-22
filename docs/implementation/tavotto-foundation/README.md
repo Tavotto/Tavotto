@@ -76,6 +76,16 @@ Canvas 面）之间选一个，选定即定、不静默回退；产品导出路�
 [`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 全部有 U08 迁移证据。交接见
 [`handoffs/U08_facade_parity.md`](handoffs/U08_facade_parity.md)。
 
+U05 于 2026-09-21 开始执行（`implementation_status: in_progress`；产品资格仍 `not_run`，五个目标 `enabled` 全 false）：PR A
+把受管环境**基础解释器的来源**补上——包内锁文件 `resources/private_python_lock.json`（pbs install_only，两个 macOS 目标与
+`runtime-lock.json` 同源）+ `engine/privatepython.py`（按内容命名的不可变目录、校验先于一切执行、离线三档、并发去重、按消费者
+取消、有代记着就不退役），接进 U04 的代事务（计划上明示 `private_python` 载荷才下载；安装器仍是 pip，uv 不进产品）；ADR 0063。
+PR C 接了目标验证腿（`private-python-targets.yml`：三平台真 pbs 经产品代码走完整链、Linux 空镜像、Windows 注册表快照；ADR 0064
+把证据分成机制 / 工程 / 目标三档，FO23 → observing）；PR B 接了入口（干净机器上以私有 Python 为目标算第一份计划——替身事实、
+供应后重算；一次授权里把「先下载 N MB」说出口；FO24 / FO25 / FO26 经产品 HTTP 入口 → enforced）。`implementation_status: done`；
+**无系统 Python 的资格仍未取得**（五个目标 `enabled` 全 false，第三档在 U11）。交接见
+[`handoffs/U05_private_python.md`](handoffs/U05_private_python.md)。
+
 ## 从哪里开始
 
 先读 [执行总提示词](00_MASTER_PROMPT.md)、[范围与修改决策](01_SCOPE_AND_DECISIONS.md)、[路线图](02_ROADMAP.md) 和 [CI 生效政策](03_CI_POLICY.md)。随后只执行 [U00](phases/U00_baseline.md)，不要在第一步删除 PyMuPDF、更换根许可证或一次启用全部兼容门禁。

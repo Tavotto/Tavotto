@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -559,6 +560,30 @@ def _in_venv(python: str, expr: str) -> str:
     )
     assert out.returncode == 0, out.stderr
     return out.stdout.strip()
+
+
+@needs_worker
+def test_the_job_never_shows_done_without_its_result(
+    tmp_path, wheelhouse, offline_managed_env, monkeypatch
+):
+    """作业的每一次 `done` 都带 version：代事务自己的 done 不能先漏出来让轮询者看见一个没有 version 的
+    终态（两次 emit 之间的窗口——CI 上撞到过，Codex #464）。把算版本那一步拖慢，事件流里的 done 只许一次、带 version。"""
+    project = tmp_path / "paper"
+    project.mkdir()
+    events: list[dict] = []
+    real = deprepair._versions_of
+
+    def slow(python, distributions):
+        time.sleep(0.6)
+        return real(python, distributions)
+
+    monkeypatch.setattr(deprepair, "_versions_of", slow)
+    job = deprepair.create_package_job(project, deprepair.OP_INSTALL, FIXTURE_DIST)
+    deprepair.run_package_job_async(job.job_id, events.append)
+    rec = wait_for(job.job_id)
+    assert rec["state"] == deprepair.STATE_DONE and rec["result"]["version"] == "1.0"
+    dones = [e for e in events if e["state"] == deprepair.STATE_DONE]
+    assert len(dones) == 1 and dones[0]["result"]["version"] == "1.0"
 
 
 @needs_worker

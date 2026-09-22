@@ -4,7 +4,7 @@
 状态含义见 [`03_CI_POLICY.md`](03_CI_POLICY.md) §3 与 ADR 0053 §五：**只有 enforced 且结果目录里有有效通过记录的实例才算通过**；
 planned / observing / later 是登记，不是成绩。
 
-能力版本：`u04` · 计数：enforced 12 · later 1 · observing 8 · planned 14
+能力版本：`u04` · 计数：enforced 15 · later 1 · observing 9 · planned 10
 
 | case | 标题 | enrollment | lane | 阶段 | 用例 | fixture | 场景 |
 |---|---|---|---|---|---|---|---|
@@ -30,10 +30,10 @@ planned / observing / later 是登记，不是成绩。
 | FO20 | markers/extras/所选依赖组 | enforced | pr | U04 | `tests/test_foundation_dependencies.py::test_fo20_markers_extras_and_selected_groups_prepare_only_what_applies` | `tests/fixtures/foundation/joint_dependencies` | FO20 |
 | FO21 | 依赖约束不可同时满足 | enforced | pr | U04 | `tests/test_foundation_dependencies.py::test_fo21_conflicting_declarations_stop_and_keep_the_environment` | `tests/fixtures/foundation/joint_dependencies` | FO21 |
 | FO22 | 已安装但原生库无法 import | enforced | pr | U04 | `tests/test_foundation_dependencies.py::test_fo22_installed_but_unimportable_is_caught_by_verification` | `tests/fixtures/foundation/joint_dependencies` | FO22 |
-| FO23 | 无系统 Python/uv/pip 冷启动 | planned | release | U05 | — | — | FO23 |
-| FO24 | 离线且受管 runtime/wheels 缓存齐备 | planned | integration | U05 | — | — | FO24 |
-| FO25 | 离线且无可用缓存 | planned | pr | U05 | — | — | FO25 |
-| FO26 | 下载损坏、截断和错误哈希 | planned | integration | U05 | — | — | FO26 |
+| FO23 | 无系统 Python/uv/pip 冷启动 | observing | release | U05 | — | — | FO23 |
+| FO24 | 离线且受管 runtime/wheels 缓存齐备 | enforced | pr | U05 | `tests/test_foundation_private_python.py::test_fo24_cached_private_python_prepares_offline_and_renders` | `tests/fixtures/foundation/private_python` | FO24 |
+| FO25 | 离线且无可用缓存 | enforced | pr | U05 | `tests/test_foundation_private_python.py::test_fo25_offline_without_cache_is_a_safe_stop_that_builds_nothing` | `tests/fixtures/foundation/private_python` | FO25 |
+| FO26 | 下载损坏、截断和错误哈希 | enforced | pr | U05 | `tests/test_foundation_private_python.py::test_fo26_corrupted_source_is_refused_and_the_active_environment_stays` | `tests/fixtures/foundation/private_python` | FO26 |
 | FO27 | 准备/运行阶段取消 | enforced | pr | U04 | `tests/test_foundation_dependencies.py::test_fo27_cancel_during_install_is_a_clean_terminal_state` | `tests/fixtures/foundation/joint_dependencies` | FO27 |
 | FO28 | 磁盘不足和只读目录 | planned | integration | U04 | — | — | FO28 |
 | FO29 | 并发项目与活跃 native 会话 | planned | integration | U04 | — | — | FO29 |

@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "_comment": [
+    "Tavotto 私有完整 Python（ADR 0063，统一实施包 U05）的锁文件——engine/privatepython.py 的唯一输入。",
+    "它回答的是：这台没有合格 Python 的机器上，Tavotto 给受管环境当基础解释器的那份 CPython",
+    "从哪下、多大、字节是什么、解开后解释器在哪。每一项都是精确值，不允许 latest / 范围。",
+    "",
+    "来源与 packaging/runtime-lock.json 的 macOS 目标**同一份钉法**（python-build-standalone 的",
+    "install_only：可重定位、自带 venv / ensurepip / pip）——两个 macOS 目标的 python 块必须与",
+    "runtime-lock.json 逐字段相同（tests/test_private_python.py 钉着，同源对表登记）。",
+    "Linux / Windows 目标锁文件那边没有：这里的 sha256 是 2026-09-21 从该 release 的 SHA256SUMS",
+    "重新核过的（那份文件自己的 sha256 记在 python.checksums_sha256）。",
+    "",
+    "Windows 用 pbs 的 install_only 而**不是**内置渲染 runtime 那份 embeddable：embeddable 没有",
+    "venv / ensurepip（U02 在 windows-latest 上真跑 `python.exe -m venv` 退出 1），当不了基础解释器。",
+    "",
+    "enabled 是**产品默认是否在该目标上提供这条路**：06 §2——无系统 Python 的资格只能来自目标平台的",
+    "真实验证，取得之前保持 false（代码在、能力不默认开）。工程验证与 CI 目标腿用环境变量",
+    "TAVOTTO_PRIVATE_PYTHON=1 打开（与 TAVOTTO_RUNTIME_HOST_ARCH 同一档的逃生门，不是给用户的开关）。",
+    "换版本 = 改这里的 version / release / url / sha256 / size，并让每个目标重新取得资格，不自动追最新。"
+  ],
+  "python": {
+    "version": "3.13.15",
+    "implementation": "cpython",
+    "release": "20260814",
+    "flavor": "install_only",
+    "archive_root": "python",
+    "checksums": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/SHA256SUMS",
+    "checksums_sha256": "0e27ff80c0075aa29730035faf2b94a00498f348131c6e8997cbbb5b77584966",
+    "doc": "https://github.com/astral-sh/python-build-standalone"
+  },
+  "targets": {
+    "macos-arm64": {
+      "os": "macos",
+      "arch": "arm64",
+      "triple": "aarch64-apple-darwin",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.13.15%2B20260814-aarch64-apple-darwin-install_only.tar.gz",
+      "sha256": "7d50bb42813a5644db7c40d3ad79361d0b724bb29d25a91fab1048c2c5c6a8c5",
+      "size": 25304407,
+      "python_rel": "bin/python3",
+      "enabled": false,
+      "qualification": "spike: U02 macos-latest 与本机 15/15；产品路径的工程验证记在 handoffs/U05_private_python.md；无系统 Python 的目标资格未取得"
+    },
+    "macos-x86_64": {
+      "os": "macos",
+      "arch": "x86_64",
+      "triple": "x86_64-apple-darwin",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.13.15%2B20260814-x86_64-apple-darwin-install_only.tar.gz",
+      "sha256": "44bb8a1d97c070deb30880b2b7fe681c1e9cf727cb950709e022dc195cdfdf4f",
+      "size": 25053138,
+      "python_rel": "bin/python3",
+      "enabled": false,
+      "qualification": "none: 没有 Intel runner，锁住版本但从没构建 / 启动过（与 runtime-lock.json 的 shipped=false 同一口径）"
+    },
+    "linux-x86_64": {
+      "os": "linux",
+      "arch": "x86_64",
+      "triple": "x86_64-unknown-linux-gnu",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.13.15%2B20260814-x86_64-unknown-linux-gnu-install_only.tar.gz",
+      "sha256": "45816a2653b47a6cc48d8ada4ea1185758a4c2db389d012b31e0205e5ccb548b",
+      "size": 118484282,
+      "python_rel": "bin/python3",
+      "enabled": false,
+      "qualification": "spike: U02 ubuntu-latest 腿 15/15（起得来、uv venv、离线装）；产品路径的目标验证由 nightly 的 foundation-private-python 取"
+    },
+    "linux-arm64": {
+      "os": "linux",
+      "arch": "arm64",
+      "triple": "aarch64-unknown-linux-gnu",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.13.15%2B20260814-aarch64-unknown-linux-gnu-install_only.tar.gz",
+      "sha256": "303efcce34b86fd8b0d8a260327dbf8d0d4fba6d2d77b2bca311e8bbd19265e1",
+      "size": 90111080,
+      "python_rel": "bin/python3",
+      "enabled": false,
+      "qualification": "none: 没有 arm64 Linux runner"
+    },
+    "windows-x86_64": {
+      "os": "windows",
+      "arch": "x86_64",
+      "triple": "x86_64-pc-windows-msvc",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.13.15%2B20260814-x86_64-pc-windows-msvc-install_only.tar.gz",
+      "sha256": "4ca61e4b09c2240cc50cc6910c90664051e93ab7caa2f48b3c6b3c070670c0bd",
+      "size": 47131996,
+      "python_rel": "python.exe",
+      "enabled": false,
+      "qualification": "spike: U02 windows-latest 腿 16/16（起得来、venv、离线装；embeddable 的 -m venv 退出 1）；注册表快照与产品路径由 nightly 的 foundation-private-python 取"
+    }
+  }
+}

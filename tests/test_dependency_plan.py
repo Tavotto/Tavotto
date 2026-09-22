@@ -951,3 +951,68 @@ class TestPlan:
             str(tmp_path), {depplan.SETTINGS_KEY: ["requirements-dev.txt", 3]}
         )
         assert depplan.selected_groups_setting(tmp_path) == ["requirements-dev.txt"]
+
+
+class TestInputsDigest:
+    """`JointPlan.inputs_digest`：规划输入的指纹——与事实无关，只随声明与脚本（及跟进的本地模块）变（Codex #475 P1）。"""
+
+    def _project(self, tmp_path: Path) -> Path:
+        _write(tmp_path, "requirements.txt", "numpy\n")
+        _write(tmp_path, "helpers.py", "import os\n")
+        _write(tmp_path, "plot.py", "import numpy\nimport helpers\n")
+        return tmp_path
+
+    def test_digest_is_independent_of_the_target_facts(self, tmp_path):
+        proj = self._project(tmp_path)
+        standin = _facts()
+        real = depplan.TargetFacts(
+            python="/other/python",
+            marker_env={**standin.marker_env, "python_full_version": "3.13.7"},
+            stdlib=frozenset(importscan.HOST_STDLIB) | {"tomllib"},
+            installed={"numpy": "2.0.0"},
+        )
+        a = depplan.plan(proj, "plot.py", facts=standin, target_kind="tavotto_managed")
+        b = depplan.plan(proj, "plot.py", facts=real, target_kind="tavotto_managed")
+        assert a.inputs_digest and a.inputs_digest == b.inputs_digest
+        assert a.to_payload()["inputs_digest"] == a.inputs_digest
+        assert a.scan["counts"] and set(importscan.scan(proj, "plot.py").files) == {
+            "plot.py",
+            "helpers.py",
+        }
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            ("requirements.txt", "numpy\nscipy\n"),
+            ("plot.py", "import numpy\nimport helpers\nimport h5py\n"),
+            ("helpers.py", "import os\nimport lmfit\n"),
+            ("pyproject.toml", '[project]\nname = "x"\ndependencies = ["pandas"]\n'),
+            (
+                "plot.py",
+                "# /// script\n# dependencies = ['xarray']\n# ///\nimport numpy\nimport helpers\n",
+            ),
+        ],
+        ids=["requirements", "script-import", "local-module", "pyproject", "pep723"],
+    )
+    def test_each_kind_of_input_change_moves_the_digest(self, tmp_path, change):
+        proj = self._project(tmp_path)
+        before = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        _write(proj, *change)
+        after = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        assert after.inputs_digest != before.inputs_digest
+
+    def test_a_byte_change_without_an_import_change_still_moves_the_digest(self, tmp_path):
+        """指纹按字节，不按解析结果：用户看到计划之后改了脚本，哪怕只是注释，也该重新看一眼。"""
+        proj = self._project(tmp_path)
+        before = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        _write(proj, "plot.py", "import numpy\nimport helpers\n# comment\n")
+        after = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        assert after.inputs_digest != before.inputs_digest
+
+    def test_unrelated_files_do_not_move_the_digest(self, tmp_path):
+        proj = self._project(tmp_path)
+        before = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        _write(proj, "README.md", "notes\n")
+        _write(proj, "unused.py", "import h5py\n")  # 没人 import 它：不是这份计划的输入
+        after = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        assert after.inputs_digest == before.inputs_digest

@@ -353,13 +353,13 @@
         "FO23"
       ],
       "stage": "U05",
-      "enrollment": "planned",
+      "enrollment": "observing",
       "lane": "release",
       "entry": "http",
       "fixture": null,
       "test": null,
       "expected_product_outcome": "guided",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U05（ADR 0063 / 0064）：供应器与接进 U04 代事务已实现（pr lane 机制面用例 tests/test_private_python.py + tests/test_private_python_transaction.py）。observing 的具名任务 = .github/workflows/private-python-targets.yml（dispatch / 每周 schedule / 本能力文件变动时的 PR；非 required、不进 Gate）：三个托管 runner 上真 pbs 归档经产品代码走完整链（tests/test_private_python_transaction.py::TestRealChain::test_real_pbs_python_through_the_transaction_to_a_figure，「没有基础解释器」= 发现链末端置空）、Linux 把 runtime 挂进没有 Python 的空镜像出图、Windows 注册表 / PATH / USERPROFILE 前后快照；observing 用例一条不许 skip（wheelhouse 由每条腿先建）。**资格未取得**：真实无系统 Python 目标 + 冻结产物 + 正常入口是 U11 release lane 的事（ADR 0064 §一 第三档），五个目标 enabled 全 false。"
     },
     {
       "case_id": "FO24",
@@ -368,13 +368,14 @@
         "FO24"
       ],
       "stage": "U05",
-      "enrollment": "planned",
-      "lane": "integration",
-      "entry": "http",
-      "fixture": null,
-      "test": null,
+      "enrollment": "enforced",
+      "lane": "pr",
+      "entry": "http-inprocess",
+      "fixture": "tests/fixtures/foundation/private_python",
+      "test": "tests/test_foundation_private_python.py::test_fo24_cached_private_python_prepares_offline_and_renders",
       "expected_product_outcome": "automatic",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U05 PR B 起 enforced（lane pr，进程内 test_client 经产品 HTTP 入口——「这台机器没有任何可用 Python」是发现链末端的输入，子进程形态凑不出诚实的无 base）：校验过的私有 Python 归档已在缓存、网络断着（供应来源指向没人听的端口 + 死代理）→ 门说 cached / 0 字节 / 不需联网 → 一次授权（/plan + /prepare）零请求供应 + 建代 + 装 fixture 包 → ready → 图内值 == 真值。负例（同文件 FO25）= 无缓存时同样的门要求下载。仍是工程验证，不是资格（ADR 0064）；**Windows**：pr lane 上真跑（替身的 pyvenv.cfg 开 `include-system-site-packages`，宿主的包可见——#475 d0d331f7 查明的真根因；`support.private_python.standin_base_probe()` 探不过的机器才 skip-with-reason），Windows 的这条真链另有 private-python-targets.yml 的 windows 腿用真 pbs 归档跑（TestRealChain，run 35603820985 绿）。",
+      "backend": "pymupdf"
     },
     {
       "case_id": "FO25",
@@ -383,13 +384,14 @@
         "FO25"
       ],
       "stage": "U05",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "lane": "pr",
-      "entry": "http",
-      "fixture": null,
-      "test": null,
+      "entry": "http-inprocess",
+      "fixture": "tests/fixtures/foundation/private_python",
+      "test": "tests/test_foundation_private_python.py::test_fo25_offline_without_cache_is_a_safe_stop_that_builds_nothing",
       "expected_product_outcome": "safe_stop",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U05 PR B 起 enforced（lane pr，进程内 HTTP 入口）：无缓存 + 断网 → 门以「将下载 N 字节」回来（投影无机器路径）→ 授权 → private_python_offline（有界）→ 没登记任何一代、没有 runtime 目录、没有 .part → 再准备仍是 needs_input（不假装 ready）。safe_stop 的通过不进兼容成功分子。",
+      "backend": "pymupdf"
     },
     {
       "case_id": "FO26",
@@ -398,13 +400,14 @@
         "FO26"
       ],
       "stage": "U05",
-      "enrollment": "planned",
-      "lane": "integration",
-      "entry": "http",
-      "fixture": null,
-      "test": null,
+      "enrollment": "enforced",
+      "lane": "pr",
+      "entry": "http-inprocess",
+      "fixture": "tests/fixtures/foundation/private_python",
+      "test": "tests/test_foundation_private_python.py::test_fo26_corrupted_source_is_refused_and_the_active_environment_stays",
       "expected_product_outcome": "safe_stop",
-      "notes": "registry 原文保留；本阶段只登记。"
+      "notes": "U05 PR B 起 enforced（lane pr，进程内 HTTP 入口）：先在一份好的私有 Python 上准备好并渲染出真值；锁换到另一份、本地供应服务篡改一个字节 → private_python_hash_mismatch → 拒绝；旧 active 代原样、runtimes/ 里只有好的那份、坏归档的解释器一次都没起；**Windows**：pr lane 上真跑（替身的 pyvenv.cfg 开 `include-system-site-packages`，宿主的包可见——#475 d0d331f7 查明的真根因；`support.private_python.standin_base_probe()` 探不过的机器才 skip-with-reason），Windows 的这条真链另有 private-python-targets.yml 的 windows 腿用真 pbs 归档跑（TestRealChain，run 35603820985 绿）。",
+      "backend": "pymupdf"
     },
     {
       "case_id": "FO27",

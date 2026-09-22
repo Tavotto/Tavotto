@@ -1,0 +1,195 @@
+{
+ "platform": "darwin-arm64",
+ "steps": [
+  {
+   "step": "target.resolved",
+   "ok": true,
+   "id": "cpython-3.13.15-7d50bb42813a",
+   "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.13.15%2B20260814-aarch64-apple-darwin-install_only.tar.gz",
+   "home_now": [
+    ".matplotlib"
+   ]
+  },
+  {
+   "step": "cache.present_and_verified",
+   "ok": true,
+   "home_now": [
+    ".matplotlib"
+   ]
+  },
+  {
+   "step": "offer.cached_zero_download",
+   "ok": true,
+   "offer": {
+    "id": "cpython-3.13.15-7d50bb42813a",
+    "version": "3.13.15",
+    "target": "macos-arm64",
+    "download_bytes": 0,
+    "source_host": "github.com",
+    "required": true,
+    "cached": true,
+    "network_required": false
+   },
+   "home_now": [
+    ".matplotlib"
+   ]
+  },
+  {
+   "step": "base.none",
+   "ok": true,
+   "home_now": [
+    ".matplotlib"
+   ]
+  },
+  {
+   "step": "plan.discloses_private_python",
+   "ok": true,
+   "private_python": {
+    "id": "cpython-3.13.15-7d50bb42813a",
+    "version": "3.13.15",
+    "target": "macos-arm64",
+    "download_bytes": 0,
+    "source_host": "github.com",
+    "required": true,
+    "cached": true,
+    "network_required": false
+   },
+   "requirements": [
+    "tavotto-test-alpha==1.0"
+   ],
+   "adapter": [
+    "matplotlib>=3.8,<3.12",
+    "numpy>=1.24,<3"
+   ],
+   "home_now": [
+    ".matplotlib"
+   ]
+  },
+  {
+   "step": "prepare.done_via_private_python",
+   "ok": true,
+   "state": "done",
+   "code": "",
+   "error": null,
+   "seconds": 19.2,
+   "states": [
+    "creating_env",
+    "done",
+    "downloading_python",
+    "installing",
+    "preparing",
+    "verifying"
+   ],
+   "home_now": [
+    ".matplotlib",
+    ".rustup"
+   ]
+  },
+  {
+   "step": "prepare.downloading_python_state_seen",
+   "ok": true,
+   "home_now": [
+    ".matplotlib",
+    ".rustup"
+   ]
+  },
+  {
+   "step": "generation.records_private_base",
+   "ok": true,
+   "generation": "gcca1ee83fec4",
+   "record": {
+    "base_runtime": "cpython-3.13.15-7d50bb42813a",
+    "base_source": "private_python",
+    "python_version": "3.13.15",
+    "state": "ready"
+   },
+   "home_now": [
+    ".matplotlib",
+    ".rustup"
+   ]
+  },
+  {
+   "step": "venv.base_prefix_is_private_runtime",
+   "ok": true,
+   "prefix": "<data_dir>/environments/820cd749b58d1c46/envs/gcca1ee83fec4",
+   "base_prefix": "<data_dir>/private-python/runtimes/cpython-3.13.15-7d50bb42813a",
+   "mpl": "3.11.1",
+   "np": "2.5.2",
+   "six": "1.17.0",
+   "v": "3.13.15",
+   "home_now": [
+    ".matplotlib",
+    ".rustup"
+   ]
+  },
+  {
+   "step": "figure.rendered_by_private_env",
+   "ok": true,
+   "pdf_bytes": 10616,
+   "stderr": "",
+   "home_now": [
+    ".matplotlib",
+    ".rustup"
+   ]
+  },
+  {
+   "step": "isolation.home_only_preexisting_writers_and_path_unchanged",
+   "ok": true,
+   "home_entries": [
+    ".matplotlib",
+    ".rustup"
+   ],
+   "attributed": {
+    ".matplotlib": "projectenv.probe_environment (pre-existing)",
+    ".rustup": "ensurepip via python -m venv (machine-local, pre-existing)"
+   },
+   "home_now": [
+    ".matplotlib",
+    ".rustup"
+   ]
+  },
+  {
+   "step": "isolation.everything_under_data_dir",
+   "ok": true,
+   "top": [
+    "cache",
+    "environments",
+    "private-python"
+   ],
+   "home_now": [
+    ".matplotlib",
+    ".rustup"
+   ]
+  }
+ ],
+ "sizes_bytes": {
+  "private-python/runtimes": 106341696,
+  "private-python/downloads": 25304407,
+  "environments": 187069131
+ },
+ "ledger": {
+  "schema": 1,
+  "runtimes": {
+   "cpython-3.13.15-7d50bb42813a": {
+    "version": "3.13.15",
+    "release": "20260814",
+    "triple": "aarch64-apple-darwin",
+    "target": "macos-arm64",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.13.15%2B20260814-aarch64-apple-darwin-install_only.tar.gz",
+    "sha256": "7d50bb42813a5644db7c40d3ad79361d0b724bb29d25a91fab1048c2c5c6a8c5",
+    "size": 25304407,
+    "python_rel": "bin/python3",
+    "provisioned_at": 1789973058,
+    "last_used": 1789973076,
+    "reported_version": "3.13.15"
+   }
+  }
+ },
+ "lock_source": {
+  "id": "cpython-3.13.15-7d50bb42813a",
+  "version": "3.13.15",
+  "target": "macos-arm64",
+  "download_bytes": 25304407,
+  "source_host": "github.com"
+ }
+}

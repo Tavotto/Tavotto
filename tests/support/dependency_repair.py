@@ -331,4 +331,6 @@ def wait_for(
         if rec.get("state") in states:
             return rec
         time.sleep(0.2)
-    raise AssertionError(f"安装没有在 {timeout}s 内到终态: {deprepair.progress(plan_id)}")
+    raise AssertionError(
+        f"安装没有在 {timeout}s 内到终态: {json.dumps(deprepair.progress(plan_id), ensure_ascii=False)}"
+    )

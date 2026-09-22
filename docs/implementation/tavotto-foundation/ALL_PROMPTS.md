@@ -45,6 +45,84 @@
 
 详细原审计：`6a1a9dea5d27b1724c4aab11e38d9fb808d2a89e`。本次采样 main：`8b95256c0d08a14bfcfc4c81358894ef01168933`。二者不同；最新提交没有被全面重新审计，U00 必须以实施时的实际 checkout 更新差异和基线。
 
+## 前置：ci-foundation 已完成（2026-09-16）
+
+先执行 ci-foundation 的 CI00；`ci_hosted_ready` 后进入 U00，`runner_pool_ready` 可以随后完成。CI00 与 U00 只读清点可并行。
+——2026-09-16 状态：`ci_hosted_ready: pass`（基于七个 PR 的 full-ci 实测，合入 main 后用第一个 merge_group run 复核，见 [`../ci-foundation/CI_HANDOFF.md`](../ci-foundation/CI_HANDOFF.md) §12）；`runner_pool_ready: not_run`（无部署权限，管理员操作表见 [`../ci-foundation/ADMIN_HANDOFF_RUNNER_POOL.md`](../ci-foundation/ADMIN_HANDOFF_RUNNER_POOL.md)）。U00 引用 `CI_HANDOFF.md`，不重做 CI 调查，不从别的 SHA 借产品资格。
+
+U00 已于 2026-09-20 执行（`plan.json` 里 `implementation_status: done`，产品资格仍 `not_run`）：产出见
+[`U00_BASELINE.md`](U00_BASELINE.md)、[`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md)、
+[`U00_CAPABILITY_INVENTORY.md`](U00_CAPABILITY_INVENTORY.md)、[`handoffs/U00_baseline.md`](handoffs/U00_baseline.md)。
+每个阶段的交接放 `handoffs/`。
+
+U01 已于 2026-09-20 执行（`implementation_status: done`，产品资格仍 `not_run`）：共同合同（ADR 0053）、
+异步准备接口、case enrollment 台账（[`enrollment.json`](enrollment.json) / [`ENROLLMENT.md`](ENROLLMENT.md)）、
+闭集校验器与 `invariants` job 的三步落点；唯一 enforced 的切片 `U01-S1` 经真实 HTTP 入口走完首开 → 导出
+（旧后端终点）。交接见 [`handoffs/U01_contracts.md`](handoffs/U01_contracts.md)。
+
+U02 已于 2026-09-20 执行（`implementation_status: done`，产品资格仍 `not_run`）：两个独立技术证明——
+render_spike（ADR 0055：PDFium 栅格 + pikepdf/fontTools/HarfBuzz 受限 emitter，Liberation + Noto Sans SC 为默认字体，
+串行 render child，最小 PyInstaller 冻结）与 runtime_spike（ADR 0056：uv + python-build-standalone 私有 Python +
+离线 wheel，坏 hash / 无网负例）。证据在 [`evidence/u02/`](evidence/u02/)，spike 代码在 `scripts/dev/u02_spikes/`
+（不进产品 import 图，候选包只在独立 venv）。交接见 [`handoffs/U02_spikes.md`](handoffs/U02_spikes.md)。
+
+U06 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）：RenderCore 的第一个
+产品切片——纯模型层 `src/tavotto/rendercore/`（Render IR / RenderPlan 编译 / 排版 / 字体注册表，只许标准库，
+ADR 0059）+ 字体政策与可检索文字写入（allowlist 逐字节钉住的 Liberation + Noto Sans SC，pikepdf/fontTools/HarfBuzz
+适配层走 pyproject 的 `rendercore` extra，ADR 0060）。真字体 → RenderPlan → PDF → 四把独立读取器的证据在
+[`evidence/u06/`](evidence/u06/)（生成器 `scripts/dev/u06_evidence.py`）；D07 会变的旧断言逐条在
+[`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 的 `migration_evidence` 指向替代用例。交接见
+[`handoffs/U06_ir_text.md`](handoffs/U06_ir_text.md)。
+
+U03 已于 2026-09-20 执行（`implementation_status: done`——PR A 后端编排 + 场景用例，PR B 确认交互（前端对话框 /
+三档设置 / i18n / MCP 投影）；产品资格仍 `not_run`）：解释器选择前移（项目 venv 首开发现 + 体检 + 记住，显式选择失效不静默替换）、
+cwd 三分的生产者（`project_root` 第三档 + 首开按静态证据问一次）、safe worker 经 `bridgeboot` 私有包（#447）、
+静态扫描的问题分类与目标解释器解析（ADR 0057）。六条首开场景经真实 HTTP 入口提到 `enforced`
+（FO01 / FO02 / FO03 / FO07 / FO15 / FO19），四条 `observing`。交接见 [`handoffs/U03_first_open.md`](handoffs/U03_first_open.md)。
+
+U04 已于 2026-09-21 执行（`implementation_status: done`——三个叠栈 PR：A 无损解析 + import 分类 + 联合计划，B 受管环境按代的
+事务与联合安装，C 跑前的门 + HTTP / MCP / 前端一次授权 + 场景；产品资格仍 `not_run`）：依赖声明的无损读法交给 `packaging`
+（PEP 508 / 440、有界 `-r` / `-c`、PEP 723 / 735、`unsupported` 闭集）、按 import 上下文分类「需要」、按目标解释器求 marker 的
+联合计划；受管环境按代（最终目录里建、验完切 active、旧代留到没人用）、一个事务四条路；起会话前的依赖门（一直问到有答案：授权或
+明确 skip）、`/api/engine/dependencies/*`、`DependencyPrepareDialog`、`tavotto_open_figure(prepare_dependencies=)`。ADR 0061
+（安装器裁决：pip 留在 U04，uv 经同一事务在 U05 接入）。FO20 / FO21 / FO22 / FO27 / FO31 经真实 HTTP 入口提到 `enforced`
+（目标 = 项目自带 venv 变体），FO18 / FO05 `observing`（nightly，联网）。交接见
+[`handoffs/U04_dependencies.md`](handoffs/U04_dependencies.md)。
+
+U07 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）：合成（ADR 0065）——外来页作
+Form XObject 整页矢量导入（页盒 / `/Rotate` / `/UserUnit` 由 qpdf 折进 /Matrix、恰好一次），crop / 翻转 / 旋转的顺序合同只在
+`rendercore/placement.py`，面板 opacity 是透明组、镜像是负缩放（不再退位图），位图经 `rasterio`（Pillow，正式依赖）成
+straight-alpha 的 `RasterBuffer`，pikepdf 正式裁决；栅格（ADR 0066）——应用自己的 PDFium render child（一把锁串行 + 有界
+队列 + 超时 kill / reap / 重启），PNG 与 TIFF 从同一个 RasterBuffer 编码、只从 Canonical PDF 来，预览缓存键 = 内容身份 +
+后端 build + 字体政策，旧新后端按 case 阈值校准，U02 spike 的 render 半边退役。证据在 [`evidence/u07/`](evidence/u07/)
+（生成器 `scripts/dev/u07_evidence.py`，最小 freeze `scripts/dev/u07_freeze_child.py`）；enrollment 加 `U07-R1`（observing）。
+交接见 [`handoffs/U07_compose_raster.md`](handoffs/U07_compose_raster.md)。
+
+U08 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）。第一切片（ADR 0067）：
+契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 在 PyMuPDF（默认）与 `rendercore/facade.py`（候选，19 项同签名 +
+Canvas 面）之间选一个，选定即定、不静默回退；产品导出路在候选下把 `scope=canvas` 交给 `job.produce` + `ExecutionSourceResolver`
+（带 override / runtime 素材由当次 worker 现画并附回执，native 会话经 `receipt.from_native_session`），`scope=original` /
+预览 / 探测 / 写回标注经契约层自动切换；候选的覆盖表与字形向量各一份生成物（与默认表的差异钉成闭集）；旧契约用例在候选下
+逐字重跑（`scripts/dev/u08_parity.py`，清单在 ledger `candidate_parity`，14 条实现特定断言各带替代证据，用户合同一条不删）。
+第二切片（ADR 0068）：`rendercore/inspector.py` 在提交点之前重新打开封口产物量事实（完整性 / 尺寸 / 字体实际使用 / 文字层 /
+有效 ppi / 位图密度，四值判据 `unknown` 不是 `verified`），D08 两档政策（standard 缺省只拦完整性与核心尺寸、strict 按出版规范
+阈值连 unknown 也拦），回执 `outputs[].manifest`。第三切片（入口审计）：MCP `tavotto_export` 接同一份检查器接线、回执 `files[].manifest`
+与给模型的三组点名；前端每件产出一行（全部可判项 verified 才画绿、未核验中性点名、失败红色点名、没有 manifest = 未核验）、高级选项
+「严格核验产物」、`/api/render` 背压的有界重试；后端阶段名 ↔ 前端文案同源判据；Playground 审计（无导出面板、不发 `/api/*`）。
+证据在 [`evidence/u08/`](evidence/u08/)；enrollment 加 `U08-R1`（observing）；facade 19 项在
+[`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 全部有 U08 迁移证据。交接见
+[`handoffs/U08_facade_parity.md`](handoffs/U08_facade_parity.md)。
+
+U05 于 2026-09-21 开始执行（`implementation_status: in_progress`；产品资格仍 `not_run`，五个目标 `enabled` 全 false）：PR A
+把受管环境**基础解释器的来源**补上——包内锁文件 `resources/private_python_lock.json`（pbs install_only，两个 macOS 目标与
+`runtime-lock.json` 同源）+ `engine/privatepython.py`（按内容命名的不可变目录、校验先于一切执行、离线三档、并发去重、按消费者
+取消、有代记着就不退役），接进 U04 的代事务（计划上明示 `private_python` 载荷才下载；安装器仍是 pip，uv 不进产品）；ADR 0063。
+PR C 接了目标验证腿（`private-python-targets.yml`：三平台真 pbs 经产品代码走完整链、Linux 空镜像、Windows 注册表快照；ADR 0064
+把证据分成机制 / 工程 / 目标三档，FO23 → observing）；PR B 接了入口（干净机器上以私有 Python 为目标算第一份计划——替身事实、
+供应后重算；一次授权里把「先下载 N MB」说出口；FO24 / FO25 / FO26 经产品 HTTP 入口 → enforced）。`implementation_status: done`；
+**无系统 Python 的资格仍未取得**（五个目标 `enabled` 全 false，第三档在 U11）。交接见
+[`handoffs/U05_private_python.md`](handoffs/U05_private_python.md)。
+
 ## 从哪里开始
 
 先读 [执行总提示词](00_MASTER_PROMPT.md)、[范围与修改决策](01_SCOPE_AND_DECISIONS.md)、[路线图](02_ROADMAP.md) 和 [CI 生效政策](03_CI_POLICY.md)。随后只执行 [U00](phases/U00_baseline.md)，不要在第一步删除 PyMuPDF、更换根许可证或一次启用全部兼容门禁。
@@ -90,7 +168,7 @@ python -m unittest discover -s tools -p 'test_*.py' -v
 
 这两条只检查本任务书的来源、依赖图和映射，**不是 Tavotto CI，更不能证明兼容性或 PDF 渲染通过**。不要把本包固定12阶段/220来源的自检数量照搬成仓库永久required检查；实际产品runner与准入表在U01按当前代码建设。产品命令在U00确认，后续由各阶段新增。
 
-建议仓库落点：`docs/implementation/tavotto-foundation/`。不自动写回仓库或 Library。
+仓库落点：`docs/implementation/tavotto-foundation/`（U00 于 2026-09-20 入库；`tools/*.py` 只做了 ruff 的 import 排序与格式化，校验逻辑一字未改）。
 
 
 ---

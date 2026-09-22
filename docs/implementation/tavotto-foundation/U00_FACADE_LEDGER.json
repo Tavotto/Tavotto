@@ -908,13 +908,13 @@
         {
           "file": "codex-plugin/mcp/tavotto_mcp/bridge.py",
           "symbol": "_original_artifact_facts",
-          "line": 1933,
+          "line": 1964,
           "role": "MCP 规范化：原始产物事实（页面尺寸）"
         },
         {
           "file": "codex-plugin/mcp/tavotto_mcp/bridge.py",
           "symbol": "_probe_asset",
-          "line": 1808,
+          "line": 1839,
           "function": "_probe_asset",
           "role": "MCP 导出的产物检查（U08 C，ADR 0068）：没有 pikepdf 时 PDF 的基本观测经契约层 probe，按需 import"
         }

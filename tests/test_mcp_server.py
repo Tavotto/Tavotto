@@ -3058,6 +3058,89 @@ def test_open_projects_the_dependency_preparation_and_says_how_to_answer(project
     assert bridge.sessions() == {}
 
 
+def test_open_on_a_clean_machine_says_the_download_out_loud(project, monkeypatch):
+    """U05：门带 `private_python` 段（这台机器没有可用的 Python）时，`recovery` 把「先下载 Python x（约 N MB）」
+    说出口；有缓存时说不联网；没有这一段一个字都不出现。"""
+    from tavotto.engine import deprepair
+
+    private = {
+        "id": "cpython-3.13.15-7d50bb42813a",
+        "version": "3.13.15",
+        "target": "macos-arm64",
+        "download_bytes": 25304407,
+        "source_host": "github.com",
+        "required": True,
+        "cached": False,
+        "network_required": True,
+    }
+
+    def _open_with(payload: dict) -> str:
+        def gate(*a, **k):
+            err = bridge.engine_pool.WorkerError(
+                "要先准备依赖", code=deprepair.ERROR_PREPARATION_REQUIRED
+            )
+            err.dependency_preparation = payload
+            raise err
+
+        monkeypatch.setattr(bridge.engine_pool, "get", gate)
+        result = _call("tavotto_open_figure", {"project_path": str(project)})
+        assert result["isError"] is True
+        assert _body(result)["dependency_preparation"] == payload
+        return result["content"][0]["text"]
+
+    human = _open_with({**_dependency_offer(), "private_python": private})
+    assert "3.13.15" in human and "约 24 MB" in human and "不改动系统与 PATH" in human
+    human = _open_with(
+        {
+            **_dependency_offer(),
+            "private_python": {
+                **private,
+                "cached": True,
+                "download_bytes": 0,
+                "network_required": False,
+            },
+        }
+    )
+    assert "不联网" in human and "MB" not in human
+    human = _open_with(_dependency_offer())
+    assert "Python 3.13.15" not in human and "MB" not in human
+    # 有渲染解释器、没有基础解释器：顶层没有这一段，下载只挂在受管目标上——选 tavotto_managed 才会下，
+    # 版本与体积同样要说出口（Codex #475 P2）
+    nested = {
+        **_dependency_offer(),
+        "targets": [
+            {"kind": "tavotto_managed", "available": True, "reason": "", "private_python": private}
+        ],
+    }
+    human = _open_with(nested)
+    assert "选择 tavotto_managed 时会先下载" in human and "3.13.15" in human and "约 24 MB" in human
+    assert "这台电脑没有可用的 Python" not in human
+    human = _open_with(
+        {
+            **nested,
+            "targets": [
+                {
+                    "kind": "tavotto_managed",
+                    "available": True,
+                    "reason": "",
+                    "private_python": {**private, "cached": True, "download_bytes": 0},
+                }
+            ],
+        }
+    )
+    assert "选择 tavotto_managed 时会先使用已下载" in human and "MB" not in human
+    # 别的项目已经供应好了（required=false、零字节）：本项目仍是干净机器，来源照样说出口（Codex #475 P1）
+    present = {
+        **private,
+        "required": False,
+        "cached": True,
+        "download_bytes": 0,
+        "network_required": False,
+    }
+    human = _open_with({**_dependency_offer(), "clean_machine": True, "private_python": present})
+    assert "这台电脑没有可用的 Python：授权后会先使用已下载" in human and "3.13.15" in human
+
+
 def test_open_with_prepare_dependencies_runs_the_same_transaction_then_opens(
     project, fake_pool, monkeypatch
 ):
