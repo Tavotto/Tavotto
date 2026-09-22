@@ -94,7 +94,7 @@ registry R13 / R14 / R15 / CP08 / CP08-E）；`docs/legal/COMMERCIALIZATION_DEPE
 | 覆盖表多出一个 fallback 码位 / 少一条批准差异 | `test_the_coverage_table_lost_only_…`、`test_vectors_differ_…` |
 | 排版基线换回 bbox ascender | `test_compose_text.py::test_baseline_matches_css_line_box`、`test_rendercore_calibration.py::text` |
 | ledger 里把 deleted 的用例标成 migrated | `test_candidate_parity_deselections_were_each_dispositioned_at_cutover` |
-| spec 的 hiddenimports 拿掉 `tavotto.rendercore.facade` / 留着退役模块 `tavotto.pdfbackend.pymupdf_backend` 的 hidden import | `test_spec_lists_every_selector_target_as_a_hidden_import_and_no_retired_module`（选择器动态委托躲过 PyInstaller 静态分析——#476 干净 Windows 冻结产物的 `ModuleNotFoundError`；产物级由两条 app smoke 腿 + `retirement_scan --dist` 兜底） |
+| spec 不把 `_IMPL_MODULES` 铺进 hiddenimports / 手写模块名 / 留着退役模块 `pymupdf_backend` 的 hidden import / `_IMPL_MODULES` 加回 pymupdf | `test_spec_ships_every_backend_the_contract_layer_can_select`（选择器按名字装载躲过 PyInstaller 静态分析——#476 干净 Windows 冻结产物的 `ModuleNotFoundError`；清单只许从契约层取；产物级由两条 app smoke 腿 + `retirement_scan --dist` 兜底）；`warm()` 选错后端启动即抛：`test_warm_loads_the_selected_backend_up_front_…` |
 
 ## 5. enrollment 与门禁
 

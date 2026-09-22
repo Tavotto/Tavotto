@@ -163,6 +163,18 @@ if not WORKERD.is_file():
 binaries = [(str(WORKERD), ".")]
 print(f"[tavotto.spec] Rust supervisor: {WORKERD}")
 
+# PDF 后端契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 用 importlib **按名字**装载
+# 实现模块（U08，ADR 0067）——静态分析看不见这条边，冻结产物里就没有那个模块，表现是 `probe_asset`
+# 一调就 ModuleNotFoundError、「示例项目里一个面板都没扫到」，而源码模式一切正常（2026-09-22 #476 的
+# macOS / Windows 三条冒烟腿）。清单从契约层自己的 `_IMPL_MODULES` 取，**不在这里抄第二份**：U10 删旧
+# 后端 / 换默认时它自动跟着变（今天只剩 rendercore/facade）；
+# tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select 看护。
+sys.path.insert(0, str(ROOT / "src"))
+from tavotto import pdfbackend as _pdfbackend  # noqa: E402
+
+BACKEND_IMPLS = sorted(_pdfbackend._IMPL_MODULES.values())
+print(f"[tavotto.spec] 后端实现模块（hiddenimports）: {', '.join(BACKEND_IMPLS)}")
+
 # RenderCore 的原生闭包（U10，ADR 0072）：PDFium 的共享库住在 pypdfium2_raw 的包目录里（不是
 # Python 扩展，PyInstaller 的依赖分析看不见它），pikepdf 的 qpdf 库同理——两者都要显式收。
 # 少了前者的表现是 render child 起来就 `render_child_died`（找不到 libpdfium），少了后者是
@@ -193,10 +205,8 @@ a = Analysis(
         # render child 在冻结产物里由同一个 exe 以 `--render-child` 自起（packaging/entry.py 分派），
         # child_main 里才 import pypdfium2——入口没有静态 import 它，点名收进 PYZ
         "tavotto.rendercore.renderchild", "tavotto.rendercore.renderhost", "pypdfium2",
-        # 契约层 pdfbackend/__init__.py 按名字 import_module 委托实现（_IMPL_MODULES）：动态委托躲过静态分析
-        # ——#476 的干净 Windows 冻结产物就是这样 ModuleNotFoundError 的。规则：选择器闭集里每个取值的目标模块
-        # 都在这里点名，不靠别处恰好静态 import 到它（tests/test_runtime_build.py 与 _IMPL_MODULES 对拍）
-        "tavotto.rendercore.facade",
+        # 契约层按名字装载的后端实现（见上；清单取自 _IMPL_MODULES，不手写）
+        *BACKEND_IMPLS,
         *_pk_hidden,
     ],
     hookspath=[],

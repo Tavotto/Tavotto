@@ -6722,6 +6722,9 @@ def main():
     if n:
         LOG.info("上次运行遗留的 %d 个 AI 会话已标记为中断", n)
     engine_ai_history.purge(keep_days=180)
+    # 选中的 PDF 后端在起服务前装载好（契约层是惰性装载的）：第一次 probe 不再多付一次
+    # import 的延迟；选了装不上的后端在这里就报出来，不静默回退（ADR 0067 / 0072）
+    LOG.info("PDF 后端: %s", pdfbackend.warm())
     if not args.desktop_sidecar:
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
         engine_updater.check_in_background()  # 默认每天一次；设置里可关，关了不联网
