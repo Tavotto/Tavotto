@@ -7,17 +7,22 @@
 
     python scripts/gen_canvas_coverage.py            # 校对（有分歧就非零退出）
     python scripts/gen_canvas_coverage.py --write    # 按当前后端重新生成
+    python scripts/gen_canvas_coverage.py --backend rendercore [--write]
+                                                     # 候选后端的那张表（U08，ADR 0067）
 
 PyMuPDF 换版本、换平台导致字体覆盖漂移时，红的是这一格；不看护它的话，
 漂移的表现是「预览说画得出、导出上是一个方框」，而且只在某些字符上发作。
 
-只依赖 `pdfbackend` 边界层（不直接 import pymupdf）。
+只依赖 `pdfbackend` 边界层（不直接 import pymupdf）。`--backend` 走的是契约层同一个选择开关
+（`TAVOTTO_RENDER_BACKEND`），两张表各有各的落点：默认后端写 `pdfbackend/canvas_coverage.json`
+（前端今天读的那张），候选写 `rendercore/canvas_coverage.json`（前端切表归 U10，用户拍板前不动）。
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -26,7 +31,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from tavotto import pdfbackend  # noqa: E402
 
-OUT = ROOT / "src" / "tavotto" / "pdfbackend" / "canvas_coverage.json"
+OUTPUTS = {
+    pdfbackend.BACKEND_PYMUPDF: ROOT / "src" / "tavotto" / "pdfbackend" / "canvas_coverage.json",
+    pdfbackend.BACKEND_RENDERCORE: ROOT / "src" / "tavotto" / "rendercore" / "canvas_coverage.json",
+}
+OUT = OUTPUTS[pdfbackend.BACKEND_PYMUPDF]
 
 
 def _force_utf8() -> None:
@@ -44,12 +53,22 @@ def build() -> dict:
         "comment": (
             "生成物：画布文字三层字形覆盖的区间表（闭区间，[start, end]）。"
             "唯一产生者 scripts/gen_canvas_coverage.py；手改无效。"
-            "primary=请求族的 base-14 脸；cjk=中日韩脸；"
-            "fallback=前两层轮不到、而 PyMuPDF 自己挑得出的那一段。"
+            + (
+                "primary=批准字体集合里请求族的脸（Liberation）；cjk=Noto Sans SC 子集；"
+                "fallback 恒空（ADR 0060 §1：没有隐式回退脸）。"
+                if pdfbackend.selected() == pdfbackend.BACKEND_RENDERCORE
+                else "primary=请求族的 base-14 脸；cjk=中日韩脸；"
+                "fallback=前两层轮不到、而 PyMuPDF 自己挑得出的那一段。"
+            )
         ),
         "backend": pdfbackend.BACKEND_NAME,
         "backend_version": pdfbackend.BACKEND_VERSION,
         "max_codepoint": pdfbackend.COVERAGE_MAX_CP,
+        **(
+            {"primary_is": "12 张 Liberation 脸 cmap 的交集"}
+            if pdfbackend.selected() == pdfbackend.BACKEND_RENDERCORE
+            else {}
+        ),
         "layers": pdfbackend.coverage_ranges(),
     }
 
@@ -79,7 +98,17 @@ def main() -> int:
     _force_utf8()
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true", help="按当前后端重新生成")
+    ap.add_argument(
+        "--backend",
+        choices=list(pdfbackend.BACKENDS),
+        default=None,
+        help="选哪个后端出表（缺省按 TAVOTTO_RENDER_BACKEND / 默认 pymupdf）",
+    )
     args = ap.parse_args()
+    if args.backend:
+        os.environ[pdfbackend.BACKEND_ENV] = args.backend
+    global OUT
+    OUT = OUTPUTS[pdfbackend.selected()]
 
     fresh = build()
     text = _dump(fresh)

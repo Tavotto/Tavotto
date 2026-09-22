@@ -1033,6 +1033,39 @@ export interface ExportRequest {
   }
   /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
   style_check_report?: Record<string, unknown>
+  /**
+   * 产物检查政策（ADR 0068，D08）。**不带 = standard**（老客户端等价）：必需项只有
+   * 完整性与核心尺寸；`strict` 按 `profile_id` 指向的出版规范取阈值，必需项失败
+   * **或无法核验**都不发布那一项。规范 id 不认识 → `bad_inspection`，不退默认。
+   */
+  inspection?: { mode: 'standard' | 'strict'; profile_id?: string | null }
+}
+
+/** 一项检查的四值判据：`unknown` **不是** `verified`（不得画成绿） */
+export type ArtifactCheckVerdict = 'verified' | 'failed' | 'unknown' | 'not_applicable'
+
+/**
+ * 服务端重新打开封口产物量出来的事实（`rendercore/inspector.summary()` 的投影，ADR 0068）。
+ * `checks` 是逐项四值；`required` 是这次政策下的必需项；`verdict` 是政策结论
+ * （被拒的那一项不会出现在 `done` 里，它带着 `artifact_rejected` 走失败分支）。
+ */
+export interface ArtifactManifestSummary {
+  manifest_version: number
+  format: string
+  sha256: string | null
+  bytes: number | null
+  policy: 'standard' | 'strict'
+  verdict: 'accepted' | 'rejected'
+  required: string[]
+  checks: Record<string, ArtifactCheckVerdict>
+  notes: string[]
+  carrier?: string | null
+  size_pt?: [number, number] | null
+  px?: [number, number] | null
+  dpi?: number | [number, number] | null
+  fonts_used?: string[]
+  plan_identity?: string | null
+  backend?: string | null
 }
 
 /** 一件产出。**成功与失败是同一个结构**——失败项也要出现在清单里 */
@@ -1047,6 +1080,11 @@ export interface ExportOutput {
   status: 'done' | 'failed'
   replaced: boolean
   error: { code: string; params: Record<string, unknown> } | null
+  /**
+   * 有限产物验证的结果（ADR 0068）。没有 = 这一项**没核验过**（老服务端、检查器没跑），
+   * 界面按「未核验」画，不按通过画；`verified` 之外的任何值都不许画成绿。
+   */
+  manifest?: ArtifactManifestSummary | null
 }
 
 export type ExportJobStatus =

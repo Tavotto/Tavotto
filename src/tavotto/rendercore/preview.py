@@ -3,9 +3,9 @@
 旧后端那一面的用户合同（`app.py` 的 `/api/render` + `_write_render_cache` + `_publish_render_cache`，
 `docs/rules/backend/pdf-backend-boundary.md`「`/api/render` 的磁盘缓存键」）逐条搬到这里，栅格由 render child
 出（`renderhost.RenderHost.render(width_px=…)`），编码是本包的 PNG 编码器（`raster.encode_png`）。
-**U07 不接 `app.py`**：`/api/render` 仍走 PyMuPDF；U08 换线时 `app.py` 的那三段（键 / 写 / 发布）由本模块
-替掉，`source_sha1` 的 (mtime, size) memo 一并收编到这里的 `source_identity()`（本轮不做 memo：读一遍字节算
-sha256，主语只有「内容」，没有 mtime 这一维）。
+U08 起 `app.py` 的 `/api/render` 在候选后端被选中时走本模块（`rendercore.facade.preview_cache()`，ADR 0067）：
+`app.py` 那三段（键 / 写 / 发布）在候选路上由这里替掉；`source_sha1` 的 (mtime, size) memo **不收编**——这里的键
+与渲染绑在同一份抄出来的字节上（见下），身份本来就要读一遍；`render_queue_full` 由端点翻成 503。默认后端那条路一字不变。
 
 ## 键（RC-061：内容身份，不是 mtime）
 
@@ -232,14 +232,20 @@ class PreviewCache:
         """命中就回缓存文件；否则渲染、临时发布、回最终文件。任何失败抛 `PreviewError`。"""
         staged, content = self._stage(path)
         try:
+            try:
+                renderer, fonts = self.renderer_version(), self.fonts_version()
+            except RenderChildError as exc:
+                # 第一次算键要 ping child 问 PDFium 版本：child 起不来 / 队列满在这里就会炸——同样翻成
+                # PreviewError，调用方（/api/render）才能按稳定 code 回 503 / 500（Codex #476 P2）
+                raise PreviewError(exc.code, exc.message) from exc
             cached = self.path_for(
                 cache_key(
                     source_id,
                     content,
                     width_px,
                     transparent=transparent,
-                    renderer_version=self.renderer_version(),
-                    fonts_version=self.fonts_version(),
+                    renderer_version=renderer,
+                    fonts_version=fonts,
                     page=page,
                 )
             )

@@ -11,16 +11,17 @@ partial / 取消 / 终局字段顺序）一个字不改**，全在 `exportjob` �
 = 页面不画底 + child 从全 0 起算，PNG 色型 6 / TIFF ExtraSamples 2 都是 straight alpha；密度 = 请求的 ppi）。
 PDF 没要也照样写进临时目录——它是 PNG / TIFF 的唯一来源，不存在「PNG 用另一个 layout 引擎」这条路。
 其它格式按 `ir.CAPABILITIES` 逐项报 `format_failed`（error 里带结构化理由），能出的照常交付——`partial`
-是 `exportjob` 的既有语义。写入器的 `WriterError`（不支持的操作、源打不开、字节身份不符）与 child 的
+是 `exportjob` 的既有语义；EPS 报旧路同一个稳定码 `eps_not_for_canvas`（U08 入口审计：老客户端认它）。写入器的 `WriterError`（不支持的操作、源打不开、字节身份不符）与 child 的
 `RenderChildError`（超时 / 崩溃 / 预算）同样落到该格式的 `format_failed`，不整页失败、不静默降级、不拿
 旧文件冒充。
 
 编译期的事实（缺字、落到 CJK 脸的字符、hidden 被丢）进 `job.warnings`，与旧路 worker 的
 warnings 同一个口子——「导出的图和画布上不一样」必须有个说法。
 
-**本模块在 U07 仍不接任何用户可见入口**（`app.py` 不 import 它）；由 `tests/test_rendercore_job.py` /
-`test_rendercore_rasterize.py` 经真实的 `exportjob.prepare / run` 驱动。`host=None` 时用进程级共享的
-render child（`renderhost.shared()`）。
+U08 起 `app._export_produce` 在候选后端被选中时（`pdfbackend.selected() == "rendercore"`，ADR 0067）把
+`scope=canvas` 交给这里：`sources` 是 `ExecutionSourceResolver`（带 override / runtime 素材由当次 worker 现画
+并附回执）、`provider` / `host` 来自 `rendercore.facade`（一个进程一份字体注册表、一个 render child）。
+默认后端仍是 PyMuPDF，那条路一字不变。`host=None` 时用进程级共享的 render child（`renderhost.shared()`）。
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..engine import exportjob, exportreq
-from . import ir, pdfwriter, plan, raster
+from . import BACKEND_NAME, ir, pdfwriter, plan, raster
 from .hbshaper import HbFaceProvider
 from .renderhost import RenderChildError, RenderHost
 from .sources import SourceError, SourceResolver, read_frozen
@@ -106,6 +107,7 @@ def produce(
 
     width_mm, height_mm = round(req.canvas.page_w_mm, 3), round(req.canvas.page_h_mm, 3)
     produced: list[exportjob.Produced] = []
+    plan_half = plan_facts(rp)
 
     def failed(fmt: str, error: str, **params) -> None:
         produced.append(
@@ -136,6 +138,13 @@ def produce(
     if wants_raster and pdf_facts is not None and not _raster_gaps(rp):
         job.check_cancelled()
         dpi = req.ppi or exportreq.PPI_DEFAULT
+        # 计划里的期望像素**独立于渲染器**：按页面尺寸 × dpi 算（与 child 同一 round() 约定），
+        # 不抄 child 回来的 buf.width / buf.height——两边同源的话，child 尺寸算错了检查器也会
+        # 拿同一对数字互相印证、把错尺寸的位图放行（Codex #476 第二轮 P2）
+        planned_px = [
+            max(1, int(round(rp.page.width_pt * dpi / 72.0))),
+            max(1, int(round(rp.page.height_pt * dpi / 72.0))),
+        ]
         h = host if host is not None else _shared_host()
         try:
             buf = h.render(
@@ -173,6 +182,7 @@ def produce(
                             "plan_identity": rp.plan_identity,
                             "sha256": pdf_facts.sha256,
                         },
+                        manifest={"plan": {**plan_half, "vector": True, "px": None}},
                     )
                 )
             continue
@@ -207,6 +217,14 @@ def produce(
                         height_mm=height_mm,
                         vector=False,
                         error_params={"plan_identity": rp.plan_identity, **raster_facts},
+                        manifest={
+                            "plan": {
+                                **plan_half,
+                                "vector": False,
+                                "px": planned_px,
+                                "ppi": float(dpi),
+                            }
+                        },
                     )
                 )
             continue
@@ -214,8 +232,60 @@ def produce(
         gaps = rp.unsupported.get(fmt) or [
             {"operation": "format", "reason": f"RenderCore 没有 {fmt} 写入器", "object_id": ""}
         ]
+        if fmt == exportreq.FORMAT_EPS:
+            # 画布合成给不出 EPS（没有 PostScript 写入器，ADR 0046）：与旧路同一个稳定码
+            # `eps_not_for_canvas`（i18n 两侧都有它），不另造一个码让界面认不出（RC-090）；
+            # 结构化理由照样带在 params 里
+            produced.append(
+                exportjob.Produced(
+                    format=fmt, error_code="eps_not_for_canvas", error_params={"unsupported": gaps}
+                )
+            )
+            continue
         failed(fmt, _gap_text(gaps), unsupported=gaps)
     return produced
+
+
+def plan_facts(rp: plan.RenderPlan) -> dict:
+    """ArtifactManifest 的**计划**半张（04 §2：plan / observed / policy 分开）：生产者说它写了什么。
+    `text` 是每个 ShapedText 行的用户原文（合成上下标取 ActualText），检查器拿它与抽回来的文字层比；
+    `object_boxes` 是画布对象在页面空间的保守包围盒（裁切只对它们判）；`sources` / `execution_receipts`
+    是源产物与回执的公开身份（不含路径）。"""
+    page = rp.page
+    lines: list[str] = []
+    boxes: list[dict] = []
+    for node, _path in ir.walk(page):
+        if isinstance(node, ir.ShapedText):
+            text = "".join(
+                r.actual_text if r.actual_text is not None else r.cluster_text for r in node.runs
+            )
+            if text.strip():
+                lines.append(text)
+        elif isinstance(node, (ir.ImportedPage, ir.Image)):
+            x, y, w, h = node.rect
+            boxes.append({"id": node.object_id, "bbox": [x, y, x + w, y + h]})
+    sources = [
+        {
+            "source_id": fs.artifact.source_id,
+            "origin": fs.artifact.origin,
+            "kind": fs.artifact.kind,
+            "bytes_sha256": fs.artifact.bytes_sha256,
+            "receipt_identity": fs.artifact.receipt_identity,
+            "patch_hash": fs.artifact.patch_hash,
+        }
+        for fs in rp.sources.values()
+    ]
+    return {
+        "backend": BACKEND_NAME,
+        "plan_identity": rp.plan_identity,
+        "page_pt": [page.width_pt, page.height_pt],
+        "text": lines,
+        "object_boxes": boxes,
+        "sources": sources,
+        "execution_receipts": sorted(
+            {s["receipt_identity"] for s in sources if s.get("receipt_identity")}
+        ),
+    }
 
 
 def _raster_gaps(rp: plan.RenderPlan) -> list[dict]:

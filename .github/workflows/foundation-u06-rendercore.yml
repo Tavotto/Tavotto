@@ -1,11 +1,13 @@
 name: Foundation U06 rendercore
 
-# 统一实施包 U06 / U07 的候选栈用例在**托管 runner 的三个平台**上真跑一遍：装 pyproject 的 `rendercore` extra、
+# 统一实施包 U06 / U07 / U08 的候选栈用例在**托管 runner 的三个平台**上真跑一遍：装 pyproject 的 `rendercore` extra、
 # 按 allowlist 的 sha256 取批准字体、跑 tests/test_rendercore_*.py（主仓库 .venv 没装候选包，这批用例在
 # 必需矩阵里是 skip——skip 不是绿，这里才是它们真跑的地方）、重生成 evidence/u06 与 evidence/u07 并与 git 里的比
 # （PDF 应逐字节相同：写入侧确定性；PDFium 的 PNG 跨平台像素不同，只作信息，ADR 0055 §7 / 0066），再把
 # 最小 render child 冻结（PyInstaller）在本平台真起、真渲染（ADR 0066；最终签名归 U11）。
-# U07 起这也是 enrollment 台账里 RenderBench 实例 `U07-R1`（observing）挂的那条具名非 required 任务。
+# U07 起这也是 enrollment 台账里 RenderBench 实例 `U07-R1`（observing）挂的那条具名非 required 任务；U08 起
+# `U08-R1`（observing）也挂在这里：facade 候选实现的用例 + 真实入口（HTTP / 预览 / 原图 / 带 override 的面板）+
+# 旧契约用例在 `TAVOTTO_RENDER_BACKEND=rendercore` 下逐字重跑（scripts/dev/u08_parity.py，ADR 0067）。
 #
 # 它不是门禁、不进任何 Gate 的闭集、不是 required check（候选栈未默认启用，U06 不切默认）。
 # 触发：`workflow_dispatch`，以及**只在 rendercore 自己的文件变动时**的 `pull_request`（paths 过滤）——
@@ -29,7 +31,13 @@ on:
       - "scripts/dev/u06_evidence.py"
       - "scripts/dev/u07_evidence.py"
       - "scripts/dev/u07_freeze_child.py"
+      - "scripts/dev/u08_parity.py"
+      - "src/tavotto/pdfbackend/__init__.py"
+      - "src/tavotto/pixelmetrics.py"
       - "tests/test_rendercore_*.py"
+      - "tests/test_export_inspection.py"
+      - "tests/golden/glyph_plan_vectors.rendercore.json"
+      - "docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.json"
       - "tests/support/pdfread.py"
       - "tests/support/fakeface.py"
       - "tests/support/tiffcheck.py"
@@ -85,13 +93,14 @@ jobs:
           print("RC_PY=" + str(py))
           print("U06_EVIDENCE=" + str(tmp / "u06-evidence"))
           print("U07_EVIDENCE=" + str(tmp / "u07-evidence"))
+          print("U08_EVIDENCE=" + str(tmp / "u08-evidence"))
           EOF
-      - name: 建 venv、装 rendercore extra（候选包）与只读尺子
+      - name: 建 venv、装 rendercore extra（候选包）、worker extra（U08 对拍里带 override 的真 worker 用例）与只读尺子
         shell: bash
         run: |
           python -m venv "$RC_VENV"
           "$RC_PY" -m pip install --upgrade pip
-          "$RC_PY" -m pip install -e ".[rendercore,dev]" pdfminer.six==20251107 pypdf==6.7.5 pyinstaller==6.19.0
+          "$RC_PY" -m pip install -e ".[rendercore,dev,worker]" pdfminer.six==20251107 pypdf==6.7.5 pyinstaller==6.19.0
           "$RC_PY" -m pip freeze
           "$RC_PY" -c "import tavotto, tavotto.rendercore; print(tavotto.__file__)"
 
@@ -105,8 +114,14 @@ jobs:
         shell: bash
         run: |
           # 用例集就是 tests/test_rendercore_*.py（与本文件头、src/tavotto/AGENTS.md 说的同一个 glob）：手写清单会漂——
-          # U07 A 加的 compose / placement / raster 三个文件在清单里漏了整整六轮评审（Codex #463 第七轮 P2）
-          "$RC_PY" -m pytest tests/test_rendercore_*.py tests/test_font_provenance.py tests/test_import_architecture.py -p no:cacheprovider -rs -q --junitxml="$RUNNER_TEMP/pytest-u06.xml"
+          # U07 A 加的 compose / placement / raster 三个文件在清单里漏了整整六轮评审（Codex #463 第七轮 P2）；U08 B 的 test_export_inspection.py 不在 glob 里，单列
+          "$RC_PY" -m pytest tests/test_rendercore_*.py tests/test_export_inspection.py tests/test_font_provenance.py tests/test_import_architecture.py -p no:cacheprovider -rs -q --junitxml="$RUNNER_TEMP/pytest-u06.xml"
+
+      - name: U08 对拍（旧契约用例在候选后端下逐字重跑；清单在 ledger candidate_parity，退出码 0 才算过）
+        shell: bash
+        run: |
+          mkdir -p "$U08_EVIDENCE"
+          "$RC_PY" scripts/dev/u08_parity.py --out "$U08_EVIDENCE"
 
       - name: 重生成 evidence 并与 git 里的比（PDF 逐字节；PNG 只作信息）
         shell: bash
@@ -161,6 +176,7 @@ jobs:
           path: |
             ${{ env.U06_EVIDENCE }}
             ${{ env.U07_EVIDENCE }}
+            ${{ env.U08_EVIDENCE }}
             ${{ runner.temp }}/pytest-u06.xml
           if-no-files-found: warn
           retention-days: 30

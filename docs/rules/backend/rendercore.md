@@ -1,6 +1,6 @@
-# RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成与栅格（统一实施包 U06 / U07，ADR 0059 / 0060 / 0065 / 0066）
+# RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成、栅格、facade 接线与有限产物验证（统一实施包 U06 / U07 / U08，ADR 0059 / 0060 / 0065 / 0066 / 0067 / 0068）
 
-> 2026-09-20 随 U06 新增，2026-09-21 随 U07 加合成与栅格两节；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
+> 2026-09-20 随 U06 新增，2026-09-21 随 U07 加合成与栅格两节、随 U08 加 facade 接线与产物验证两节；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
 > 表里（`rendercore/` 那一行）。这里是这一主题规则的**唯一全文**；速查表只留一行。
 > 改规则改这里，并同步那一行。
 
@@ -94,12 +94,37 @@
   锁表封顶，淘汰只看登记使用者数——拿到手还没 acquire 的也算在用）；临时文件（.png 后缀）+ `os.replace`、Windows 撞读者句柄退让、零字节重建；`prune()` 只删成品 `<sha1>.png`（在飞的
   `.part.png` / `stage.*.src.part` 不碰；任何线程的 `get()` 正要交出去的那张从算出键到 return 都钉着、谁的 prune 都不删，pruner 串行）；hash 与渲染绑在同一份字节上——源先一次读成缓存目录里
   的不可变副本（边抄边算 sha256，`.src.part`，用完即删），child 渲染的是副本，算键与渲染之间源被换掉哪怕又换回去都影响
-  不到这张预览；身份分块算不整个读进内存；**异常抛出**，不返回空白图 / 旧图。U07 不接 `app.py`（`/api/render` 仍走 PyMuPDF），U08 换线时把 `app.py` 那三段与 `source_sha1` 的 memo 收编到这里。
+  不到这张预览；身份分块算不整个读进内存；**异常抛出**，不返回空白图 / 旧图。U07 不接 `app.py`；U08 把候选下的 `/api/render` 接到这里（ADR 0067），`source_sha1` 的 (mtime, size) memo 留在 PyMuPDF 路——这里的身份从副本上算，不从 memo 注入。
 - **PDFium 的 PNG 跨平台像素不同、同平台可复现**（ADR 0055 §7）：`evidence/u07/u07_pdfium.png` 是 macOS arm64 基线，
   `foundation-u06-rendercore.yml` 三平台只记各自的 sha256、**不判相等**；判的是 `u07.pdf` 逐字节相同与 truth 里的像素
   采样点；pdftotext 一律显式 `-enc UTF-8`（U06 的教训）。
 - **接 ExportJob 只给 `produce`**（`rendercore/job.py`）：作业生命周期一字不改；给不出的格式逐项 `format_failed`
   且 `error.params.unsupported` 带操作与理由，写入器的 `WriterError` 与 child 的 `RenderChildError` 也落到这一档；
   编译期事实（缺字 / cjk 脸 / hidden）进 `job.warnings`；冻结源在写入前 `read_frozen()`。U06 / U07 里 `app.py` 不 import 它。
-- **不切默认**：PyMuPDF 仍是默认后端，本包在 U06 不接任何用户可见入口；facade 19 项与 Canvas 面
-  的迁移在 U08（`docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.md` 逐项）。
+- **候选后端接 facade（U08，ADR 0067）**：`rendercore/facade.py` 是 pdfbackend 契约的候选实现（19 项同签名 +
+  Canvas 面适配器；对拍表在模块头），由契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 选中；
+  进程级共享三样：字体注册表 `facade.provider()`、render child `facade.host()`（= `renderhost.shared()`）、
+  预览缓存 `facade.preview_cache()`。产品导出路（`app._export_produce`）在候选下 `scope=canvas` 走
+  `job.produce` + `sources.ExecutionSourceResolver`（带 override / runtime 素材由当次 worker 现画并附回执：
+  `receipt.from_worker` / `from_native_session` → `receipt.source_artifact_for`，`origin=execution` 必核；
+  磁盘原件不跑脚本），`scope=original` 经契约层的 `original_*`；EPS 报旧路同一个稳定码 `eps_not_for_canvas`；
+  作业生命周期 / 写回事务 / 命名预留 / 覆盖 / 取消提交点全是既有权威，一份不复制。`/api/render` 走 `PreviewCache`
+  （队列满 503）；`reset_projects(wait=True)` 收 child。**候选自己的生成物**：`rendercore/canvas_coverage.json`
+  （`gen_canvas_coverage.py --backend rendercore`，`primary` = 12 张 Liberation 脸的交集）与
+  `tests/golden/glyph_plan_vectors.rendercore.json`（`gen_glyph_plan_vectors.py --backend rendercore`），与默认表的
+  差异是闭集（`tests/test_rendercore_glyph_vectors.py`）。**对拍纪律**：旧契约用例在候选下逐字重跑
+  （`scripts/dev/u08_parity.py`，清单在 ledger `candidate_parity`），只许 deselect 实现特定断言且每条带存在的
+  替代证据，运行器与 `tests/test_foundation_facade_ledger.py` 都拒绝没有替代证据的 deselect；用户合同一条不删。
+- **有限产物验证（U08，ADR 0068）**：`rendercore/inspector.py` 重新打开**封口的** staging 文件量事实（PDF 页盒 / 旋转 /
+  UserUnit → 可见尺寸、内容流普查、字体声明 vs 实际用到、抽回来的文字层、位图有效 ppi = 像素 ÷ 累计 CTM；PNG 逐块 CRC /
+  IHDR / pHYs；TIFF IFD / 条带 / 分辨率标签），manifest 的 `plan`（生产者填，候选路 `job.plan_facts()`）/ `observed`（只来自字节）/
+  `policy` 分开；四值判据 `verified / failed / unknown / not_applicable`，**unknown 不是 verified**。两档政策（D08）：`standard`
+  只要求完整性 + 核心尺寸、可选项 unknown / failed 只写说明；`strict`（请求 `inspection.mode`）必需项失败或 unknown 都阻断，
+  阈值只从 `profilestore.resolve_spec` 的规范来。钩子在 `exportjob.run(inspect=)`：`produce` 之后、**提交点之前**，拒绝的换成
+  `artifact_rejected` 不发布，合格的带 `Output.manifest` 发布（发布只是 `os.replace`，字节就是核过的）。内容流遍历有预算
+  （深度 / Form 数 / 指令数），耗尽 → 全 unknown；客户端的样式检查报告从不进检查器；检查器自己炸 → `uninspected()` 全 unknown。
+  没有 pikepdf 的机器 PDF 走 `probe_asset` 基本观测（完整性 + 尺寸），其余 unknown 并写明。两个后端都接；默认后端下
+  `dpi_tag`（PyMuPDF PNG 的 pHYs 是 96）与 `fonts_embedded`（base-14）是可选项 failed——如实记，不改默认路径。
+- **不切默认**：PyMuPDF 仍是默认后端（`pdfbackend.BACKEND_DEFAULT`）；候选只在显式选中时接管，前端不读候选
+  覆盖表，产品包不带候选包 / 字体（U10 / U11）；facade 19 项的迁移证据逐项记在
+  `docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.md`。

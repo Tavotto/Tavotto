@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 叠到含 #456 的 main（U07 B 6472ea7c，清单 symbol 格式）后（2026-09-22）再算一次；U08 叠到 U07 B 240cb918（main 78724586）后（2026-09-22）再算一次；U08 叠到 U07 B 4425d5a9 后（2026-09-22）再算一次；U08 叠到 main 13886a0b（#471 已合入）后（2026-09-22）再算一次；U08 冒烟腿修法后（2026-09-22）再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -49,8 +49,8 @@
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 5659,
-      "sha256": "8369a1dcaf3f3492476f6b37f02d112444c4bb2c97d5934705632cd9becd87bd"
+      "bytes": 6237,
+      "sha256": "7288a96ce482e0beb4c895a7a736416ff236b35f36733a7354b23ad5c2119679"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 10079,
-      "sha256": "1c07ed5c66650d7204d8947392b4362c477f568776aeaf63c41f4f21c3be041c"
+      "bytes": 12114,
+      "sha256": "43d244d3e4bc3706c9c4663e47136b71b0aaa90e0169a040cb0babbe195fb95a"
     },
     {
       "path": "SOURCES.md",
@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 50826,
-      "sha256": "5eb06b0ae9cb8fde6d01e82d1d758b15d6a9259567954c72cdefdb2a443983e4"
+      "bytes": 68010,
+      "sha256": "3e0890fa59e1ff1880c4055de98bcfd3aa0968023c24de8bfce91ab9f9d77819"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 24021,
-      "sha256": "aee5e1becbf1e98c8bacc829266ef1c70fed841b10480e4914f5585d75fbda9e"
+      "bytes": 37059,
+      "sha256": "3df999a4b8a5b455b5632d26a378226cc6cfde8f1b755e6822f5f828689523fb"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 26934,
-      "sha256": "1ffa49e5aac9a7a14743c35501d6d72c902183e933b0ba86ace8fcd1c32fd69a"
+      "bytes": 28494,
+      "sha256": "9a9935ba06bedc9f2429cec0368dc35b8d231d604fcc703f783664c1bbaf3f7c"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -328,6 +328,11 @@
       "sha256": "7f2a0dbc0daac93a5c26fee5ae52d662e1191807c8cf92e6544d25586744c158"
     },
     {
+      "path": "evidence/u08/parity.json",
+      "bytes": 4142,
+      "sha256": "4e5859f27cbd24fb1dc4a269759176235c3d99770935650ca823ab7fccade123"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -386,6 +391,11 @@
       "path": "handoffs/U07_compose_raster.md",
       "bytes": 25399,
       "sha256": "db3e7ec98afbc91b058b511df1785279e83386525bf0dc9a777ac61b45479c53"
+    },
+    {
+      "path": "handoffs/U08_facade_parity.md",
+      "bytes": 34190,
+      "sha256": "c88f29e8fe46ef4bb300307c6d40a46dbb9b4d07823d9247d4b1f99adcc7c1dc"
     },
     {
       "path": "phase_mapping.json",
@@ -454,8 +464,8 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7359,
-      "sha256": "4306e402944ff587cfbee2fa1f53ed538105e3d0ba5bff88336bd73ff5f784db"
+      "bytes": 7352,
+      "sha256": "8e65e122b1a4ae13f05af626d5a1612ff057cbcce74bed1c3787438c91db7180"
     },
     {
       "path": "registry.json",
@@ -474,8 +484,8 @@
     },
     {
       "path": "tools/generate_facade_ledger.py",
-      "bytes": 6274,
-      "sha256": "d877a6b4d6e8cbac112d0dc62c6886ba3a23c5929f686f50d6d05c64697b3d5b"
+      "bytes": 7138,
+      "sha256": "bcaac21c6ea4958efe4cc3974929944bdb746d2ca5f015ac88de67526583e6f6"
     },
     {
       "path": "tools/generate_views.py",

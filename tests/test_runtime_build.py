@@ -11,6 +11,7 @@ macos-x86_64）。分层的意义只有一条：一个平台的 wheel 绝不能�
 """
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -675,6 +676,45 @@ def test_spec_ships_every_module_the_worker_imports():
     shipped = set(re.findall(r'"(\w+\.py)"', spec))
     missing = siblings - shipped
     assert not missing, f"packaging/tavotto.spec 漏了 worker 要用的模块: {missing}"
+
+
+def test_spec_ships_every_backend_the_contract_layer_can_select():
+    """契约层 `pdfbackend/__init__.py` 用 importlib **按名字**装载后端实现（U08，ADR 0067）——
+    PyInstaller 的静态分析看不见这条边，冻结产物里就没有那个模块；源码模式下 `import_module`
+    照样找得到，所以 PR 级 pytest 全绿、只有 macOS / Windows 的冒烟腿红：`probe_asset` 一调就
+    `ModuleNotFoundError: No module named 'tavotto.pdfbackend.pymupdf_backend'`、「示例项目里一个
+    面板都没扫到」（2026-09-22 #476 run 35678017969）。
+
+    上一条只算 worker 的平铺闭包，看不见 Flask 侧的动态委托——这一条钉住：**契约层能选到的每个
+    后端实现模块都得在 spec 的 hiddenimports 里**，而且清单取自契约层自己的 `_IMPL_MODULES`
+    （spec 里不许抄第二份，U10 删旧后端时两边才不会分叉）。每个目标还得在干净解释器里真 import
+    得到（清单指着一个不存在的模块，PyInstaller 只会警告一句然后照常出一个坏包）。
+    """
+    import subprocess
+
+    from tavotto import pdfbackend
+
+    impls = sorted(pdfbackend._IMPL_MODULES.values())
+    assert len(impls) >= 2 and all(m.startswith("tavotto.") for m in impls), impls
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    # spec 从契约层取清单并铺进 hiddenimports，不手写模块名
+    assert "_pdfbackend._IMPL_MODULES.values()" in spec and "*BACKEND_IMPLS," in spec, (
+        "packaging/tavotto.spec 的 hiddenimports 必须铺进契约层 _IMPL_MODULES 的全部实现模块"
+    )
+    for m in impls:
+        assert f'"{m}"' not in spec, f"spec 里手写了 {m}——清单只许从契约层取"
+    # 目标模块在干净进程里 import 得到（-I：不带当前目录 / 用户站点 / PYTHONPATH，仓库 src 显式插进 sys.path）
+    for m in impls:
+        code = f"import sys; sys.path.insert(0, {str(REPO / 'src')!r}); import importlib; importlib.import_module({m!r})"
+        proc = subprocess.run(
+            [sys.executable, "-I", "-c", code],
+            env={"PATH": os.environ.get("PATH", "")},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+        )
+        assert proc.returncode == 0, f"{m} 在干净解释器里 import 不到：{proc.stderr[-600:]}"
 
 
 def test_worker_side_modules_compile_without_escape_warnings():

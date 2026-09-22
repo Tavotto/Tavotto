@@ -7,6 +7,20 @@
   模块；`__init__.py` 是与实现无关的契约层（probe_asset / render_preview_png /
   text_width / text_plan / missing_glyphs / coverage_ranges / compose +
   mm2pt / hex2rgb）。`app.py` 只认这些名字。
+- **契约层按一条写明的策略在两个实现之间选一个（U08 起，ADR 0067）**：
+  `TAVOTTO_RENDER_BACKEND` ∈ {`pymupdf`（默认；未设 / 空串同义）, `rendercore`}——候选实现是
+  `rendercore/facade.py`（pikepdf / HarfBuzz / PDFium render child，零 pymupdf），19 个契约名同签名
+  同返回结构。契约函数显式委托（`_impl()`），四个常量经 PEP 562；八个调用点（app.py 五处、
+  `artifactcheck` 两处、`tutorial`、MCP bridge、两个生成脚本）**一行不改**就同时切换。**选定即定、不静默
+  回退**（06 §1）：候选被选中而候选包 / 批准字体缺席，`CandidatePackagesMissing` / `FontsUnavailable`
+  原样抛出，绝不换回 PyMuPDF；不认识的取值 `BackendSelectionError(backend_unknown)`，不猜不退默认。
+  层规则：`pymupdf_backend.py`（`pdfbackend_impl` 层）与新核心两个方向零边，契约层是唯一同时认识
+  两边的模块。看护 `tests/test_rendercore_facade.py`、`tests/test_rendercore_model.py`。
+  **按名字装载的两个后果**（2026-09-22，#476 冒烟腿 + e2e）：① PyInstaller 静态分析看不见 `importlib`
+  这条边，`packaging/tavotto.spec` 的 hiddenimports 从契约层 `_IMPL_MODULES` 铺进去、不抄第二份
+  （`tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select`）；② 装载是
+  惰性的，`app.main()` 起服务前 `pdfbackend.warm()` 一次——第一次 probe 不再多付 import 的延迟，选了
+  装不上的后端在启动时就报、不退默认。
 - **字形归属计划（ADR 0033）**：一个字符由哪张脸画出来，只有
   `tavotto/glyphplan.py` 一份判据（四层 primary/cjk/fallback/missing，顺序不可
   交换）。落笔、量宽、预检、前端预览读同一份计划。`ord(ch) > 0x2E80` 只保留为
@@ -81,4 +95,6 @@
   **退让**给已经在磁盘上的那份——键含内容哈希，同键必然逐字节相同；只有目标
   不存在或是零字节时才重试，重试完仍不行照旧抛出（假装成功 = 一个永远画不
   出来的面板）。看护 `tests/test_render_cache.py` 与
-  `tests/test_windows_regressions.py`。
+  `tests/test_windows_regressions.py`。**候选后端下 `/api/render` 走 `rendercore.preview.PreviewCache`**
+  （同一条纪律，键多三维：PDFium 版本 / 字体政策 / 背景；身份从 PreviewCache 自己抄出来的那份源字节上算，键与渲染绑同一份字节）；
+  child 有界队列满 → 503 + `Retry-After: 1`（背压不是故障）。看护 `tests/test_rendercore_app.py`。

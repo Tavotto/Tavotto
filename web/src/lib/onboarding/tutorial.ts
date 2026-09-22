@@ -179,8 +179,18 @@ const inTutorialProject = (projectId: string | undefined | null) =>
  */
 export type TutorialEntrySource = 'picker' | 'help' | 'settings' | 'palette' | 'canvas'
 
+/**
+ * 正在改状态的动作（open / reset）互斥；**只读的状态探测（`status`）不算**。项目选择器一挂载就
+ * 发 `GET /api/tutorial` 探资源，用户紧接着点「用示例了解 Tavotto」——探测还在飞就把点击判成
+ * 「打不开」，用户看到的是一条无中生有的红字（U08 把后端第一次 probe 变慢了 100 ms，e2e 就撞上）。
+ */
+function mutating(): boolean {
+  const b = useTutorialStore.getState().busy
+  return b === 'open' || b === 'reset'
+}
+
 export async function startTutorial(source?: TutorialEntrySource): Promise<TutorialOutcome> {
-  if (useTutorialStore.getState().busy) return fail('open_failed')
+  if (mutating()) return fail('open_failed')
   useTutorialStore.setState({ busy: 'open', failure: null })
   // 手里这份就是教程画布时先把它从自动保存链路上摘下来（与重置同一条路）。open 可能换
   // 副本（资源升级换了目录 = 新项目 id），换副本要走认领，而认领的第一步就是把当前文档
@@ -221,7 +231,7 @@ function currentTutorialDocumentId(): string | null {
  * 点名列出来（重置换的是整个副本目录，它们会一起没）。
  */
 export async function resetTutorial(): Promise<TutorialOutcome> {
-  if (useTutorialStore.getState().busy) return fail('open_failed')
+  if (mutating()) return fail('open_failed')
   const meta = useTutorialStore.getState().meta
   const extras = await savedLayoutsInTutorial(meta)
   const ok = await askConfirm({

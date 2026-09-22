@@ -73,6 +73,9 @@ ERROR_CODES = (
     "report_failed",
     "report_write_failed",
     "report_missing_payload",
+    # 有限产物验证（U08，ADR 0068）：封口的 staging 文件在**提交点之前**重新打开检查，必需项失败
+    # （严格规范下 unknown 也算）就不发布这一项——不合格的文件不出现在用户的导出目录里（RC-073）
+    "artifact_rejected",
 )
 
 #: 作业保留多久（秒）。界面拿 job_id 补拉状态要在这个窗口内。
@@ -101,6 +104,9 @@ class Output:
     error_params: dict = field(default_factory=dict)
     #: `replace` 策略下真的盖掉了一个已有文件
     replaced: bool = False
+    #: ArtifactManifest 的投影（`rendercore.inspector.summary`）：verdict + 每项四值判据 + 说明。
+    #: 失败项也带（拒绝的理由就在里面）；没检查过是 None。
+    manifest: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -118,6 +124,7 @@ class Output:
             "error": (
                 {"code": self.error_code, "params": self.error_params} if self.error_code else None
             ),
+            "manifest": self.manifest,
         }
 
 
@@ -134,6 +141,9 @@ class Produced:
     vector: bool = False
     error_code: str | None = None
     error_params: dict = field(default_factory=dict)
+    #: 生产者交出的**计划**半张（页面 pt / 像素 / ppi / 是否矢量 / 期望文字行 / 源与回执引用）与检查器补上的
+    #: 观测 / 判据 / 政策——`run()` 里 `inspect` 钩子读写它；发布时投影进 `Output.manifest`。
+    manifest: dict | None = None
 
 
 class Cancelled(Exception):
@@ -522,6 +532,7 @@ def run(
     *,
     publish: Callable[[dict], None] | None = None,
     report: Callable[[ExportJob, list[Output]], bytes | None] | None = None,
+    inspect: Callable[[ExportJob, list[Produced]], list[Produced]] | None = None,
 ) -> dict:
     """执行一个作业。同步；`run_async` 是它的线程包装。
 
@@ -533,6 +544,10 @@ def run(
     `report(job, outputs)` 生成样式检查报告的字节（可选）。**报告失败不牵连
     成图**——那是 §七 明写的：报告生成失败不应默认让图文件全部失败，但必须
     清楚说明部分失败。
+
+    `inspect(job, produced)`（U08，ADR 0068）在 `produce` 之后、**提交点之前**跑：重新打开每个封口的临时
+    文件量事实、按政策裁决，把不合格的 `Produced` 换成 `artifact_rejected`（带 manifest），合格的附上
+    manifest。它拿到的是临时文件，发布只是 `os.replace`——发布后的字节就是它核过的字节。
     """
     req = job.request
     job.status = STATUS_RUNNING
@@ -591,6 +606,11 @@ def run(
         _emit(job, publish)
         produced = produce(job, tmp_dir)
         job.check_cancelled()
+        if inspect is not None:
+            job.phase = "inspecting"
+            _emit(job, publish)
+            produced = inspect(job, produced)
+            job.check_cancelled()
 
         # 落盘之前**最后一次**问取消，并在**同一把锁里**置提交点：
         # 分开做的话，两者之间那一瞬进来的 `cancel()` 会拿到一个 True，
@@ -609,6 +629,7 @@ def run(
                         status=STATUS_FAILED,
                         error_code=p.error_code or "no_output",
                         error_params=p.error_params,
+                        manifest=p.manifest,
                     )
                 )
                 continue
@@ -642,6 +663,7 @@ def run(
                     vector=p.vector,
                     status=STATUS_DONE,
                     replaced=replaced,
+                    manifest=p.manifest,
                 )
             )
             job.step += 1
@@ -780,12 +802,13 @@ def run_async(
     *,
     publish: Callable[[dict], None] | None = None,
     report: Callable[[ExportJob, list[Output]], bytes | None] | None = None,
+    inspect: Callable[[ExportJob, list[Produced]], list[Produced]] | None = None,
 ) -> None:
     """在后台线程里跑。**关掉对话框不取消它**——那是 §九 明写的行为。"""
     t = threading.Thread(
         target=run,
         args=(job, produce),
-        kwargs={"publish": publish, "report": report},
+        kwargs={"publish": publish, "report": report, "inspect": inspect},
         name=f"export-{job.id}",
         daemon=True,
     )

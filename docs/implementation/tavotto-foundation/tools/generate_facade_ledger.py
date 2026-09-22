@@ -105,9 +105,13 @@ def render(ledger: dict) -> str:
     for m in cm["methods"]:
         callers = "<br>".join(f"`{c['file']}:{c['line']}` · `{c['symbol']}`" for c in m["callers"])
         lines.append(f"| `{m['name']}` | `{m['signature']}` | {callers} | {cell(m['role'])} |")
+    lines += ["", f"迁移判据：{cm['migration_criterion']}"]
+    if cm.get("migration_evidence"):
+        lines.append(
+            "迁移证据："
+            + "；".join(f"{m['stage']} `{m['test']}`" for m in cm["migration_evidence"])
+        )
     lines += [
-        "",
-        f"迁移判据：{cm['migration_criterion']}",
         "",
         "## 不经 facade 的路径",
         "",
@@ -137,6 +141,24 @@ def render(ledger: dict) -> str:
     ]
     for p in ledger["promised_only_in_comments"]:
         lines.append(f"| {cell(p['where'])} | {cell(p['claim'])} | {cell(p['reality'])} |")
+    cp = ledger.get("candidate_parity")
+    if cp:
+        lines += [
+            "",
+            "## 候选后端对拍（U08）",
+            "",
+            cp["note"],
+            "",
+            f"重跑的套件（{len(cp['suites'])} 个）：{', '.join(f'`{s}`' for s in cp['suites'])}",
+            "",
+            "| 在候选下 deselect 的用例 | 类 | 理由 | 替代证据 |",
+            "|---|---|---|---|",
+        ]
+        for item in cp["deselected"]:
+            repl = "<br>".join(f"`{t}`" for t in item["replacement"])
+            lines.append(
+                f"| `{item['test']}` | `{item['class']}` | {cell(item['reason'])} | {repl} |"
+            )
     lines += ["", "## 本轮新增目标", ""]
     lines += [f"- {t}" for t in ledger["new_targets_this_program"]]
     return "\n".join(lines) + "\n"
