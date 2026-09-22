@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 叠到含 #456 的 main（U07 B 6472ea7c，清单 symbol 格式）后（2026-09-22）再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 叠到含 #456 的 main（U07 B 6472ea7c，清单 symbol 格式）后（2026-09-22）再算一次；U08 叠到 U07 B 240cb918（main 78724586）后（2026-09-22）再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -49,8 +49,8 @@
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 5659,
-      "sha256": "8369a1dcaf3f3492476f6b37f02d112444c4bb2c97d5934705632cd9becd87bd"
+      "bytes": 6237,
+      "sha256": "7288a96ce482e0beb4c895a7a736416ff236b35f36733a7354b23ad5c2119679"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 50826,
-      "sha256": "5eb06b0ae9cb8fde6d01e82d1d758b15d6a9259567954c72cdefdb2a443983e4"
+      "bytes": 68010,
+      "sha256": "3e0890fa59e1ff1880c4055de98bcfd3aa0968023c24de8bfce91ab9f9d77819"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 24021,
-      "sha256": "aee5e1becbf1e98c8bacc829266ef1c70fed841b10480e4914f5585d75fbda9e"
+      "bytes": 37059,
+      "sha256": "3df999a4b8a5b455b5632d26a378226cc6cfde8f1b755e6822f5f828689523fb"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 26934,
-      "sha256": "1ffa49e5aac9a7a14743c35501d6d72c902183e933b0ba86ace8fcd1c32fd69a"
+      "bytes": 28494,
+      "sha256": "9a9935ba06bedc9f2429cec0368dc35b8d231d604fcc703f783664c1bbaf3f7c"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -464,8 +464,8 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7359,
-      "sha256": "4306e402944ff587cfbee2fa1f53ed538105e3d0ba5bff88336bd73ff5f784db"
+      "bytes": 7352,
+      "sha256": "8e65e122b1a4ae13f05af626d5a1612ff057cbcce74bed1c3787438c91db7180"
     },
     {
       "path": "registry.json",
