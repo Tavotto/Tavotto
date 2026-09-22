@@ -193,6 +193,10 @@ a = Analysis(
         # render child 在冻结产物里由同一个 exe 以 `--render-child` 自起（packaging/entry.py 分派），
         # child_main 里才 import pypdfium2——入口没有静态 import 它，点名收进 PYZ
         "tavotto.rendercore.renderchild", "tavotto.rendercore.renderhost", "pypdfium2",
+        # 契约层 pdfbackend/__init__.py 按名字 import_module 委托实现（_IMPL_MODULES）：动态委托躲过静态分析
+        # ——#476 的干净 Windows 冻结产物就是这样 ModuleNotFoundError 的。规则：选择器闭集里每个取值的目标模块
+        # 都在这里点名，不靠别处恰好静态 import 到它（tests/test_runtime_build.py 与 _IMPL_MODULES 对拍）
+        "tavotto.rendercore.facade",
         *_pk_hidden,
     ],
     hookspath=[],

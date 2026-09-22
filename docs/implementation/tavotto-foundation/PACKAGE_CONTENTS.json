@@ -380,7 +380,7 @@
     {
       "path": "evidence/u10/README.md",
       "bytes": 3004,
-      "sha256": "0a437779ad75e8cdc945c014fb18709ae38ec58c0394a9e357fbc3e428fbfb34"
+      "sha256": "db3dce611f462e4d5715817589c606f3c1e2be9a9e7736db15680325b6c33158"
     },
     {
       "path": "evidence/u10/canvas_coverage.pymupdf.json",
@@ -404,8 +404,8 @@
     },
     {
       "path": "evidence/u10/mutations.json",
-      "bytes": 5232,
-      "sha256": "d37e7f289ab7594ea3e6ab25bdfebe2ca6e31321fb9744314fa3c83c7f37255a"
+      "bytes": 6163,
+      "sha256": "f20e6190a8b3be4d5e91ce9d8176beca1236f5d503a189f404b625a3ff136c0a"
     },
     {
       "path": "evidence/u10/post_cutover/frozen_smoke_macos_arm64.txt",
@@ -534,8 +534,8 @@
     },
     {
       "path": "handoffs/U10_cutover.md",
-      "bytes": 27230,
-      "sha256": "d481f0369b45624e3ec137dbf41b294c8764daadb131444ec686c4a626a802c4"
+      "bytes": 27311,
+      "sha256": "ea3d8fcfdf5284c304c36cfb552db2a7be0198495b4832be150907b69dfbec55"
     },
     {
       "path": "phase_mapping.json",

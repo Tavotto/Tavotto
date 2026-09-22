@@ -153,7 +153,7 @@ rc-venv = `pip install -e .[dev,worker]` 的安装闭包，批准字体已取）
 tomllib：4）/ 另一 minor 解释器（4）/ 其它（bridge sitecustomize、RESTORE 表、空参数集、cargo 探针：5）。`tests/test_foundation_cutover.py`
 与全部 `test_rendercore_*` / `test_retirement_scan.py` 都是**跑过并通过**，不是 skip。
 
-变异反证（ADR 0072 §4 + 本阶段新增判据）：`evidence/u10/mutations.json`——13 条变异逐条把指定用例打红、还原后全绿；清单与
+变异反证（ADR 0072 §4 + 本阶段新增判据）：`evidence/u10/mutations.json`——15 条变异逐条把指定用例打红、还原后全绿；清单与
 结果见该文件（默认改回 pymupdf / retired 静默映射 / dependencies 塞回 pymupdf / 源码 `import fitz` / spec 排除 PIL / CI 漏取字体 /
 覆盖表 fallback 塞码位 / 基线硬编码 Times / ledger 处置改口 / `--render-child` 分派挪到重定向之后 / renderhost 不预检 pypdfium2 /
-spec 漏 `fonts_allowlist.json` / 扫描器阻断器不装）。
+spec 漏 `fonts_allowlist.json` / 扫描器阻断器不装 / hiddenimports 拿掉 `rendercore.facade` / 留着退役模块的 hidden import）。

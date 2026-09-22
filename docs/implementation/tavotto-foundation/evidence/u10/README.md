@@ -16,6 +16,6 @@
 | `post_cutover/retirement_scan_frozen_dist.json` | `build_desktop.py --skip-tauri --skip-runtime` 出来的 `dist/Tavotto`（产品 spec） | 111 个原生文件零 mupdf、libpdfium + libqpdf 在、字体 13 |
 | `post_cutover/frozen_smoke_macos_arm64.txt` | 同一冻结产物的 `smoke_app.py --exe` | 预览 PNG（frozen render child 自起）、渲染 × 2、导出 × 2、干净退出 |
 | `post_cutover/main_venv_contrast.txt` | 主 `.venv`（没装候选包）里跑新默认 | `CandidatePackagesMissing` / `backend_unavailable` / `export_failed` 点名缺的包——没有静默回退 |
-| `mutations.json` | 13 条变异反证（ADR 0072 §4 + 本阶段新增判据），每条记变异 / 文件 / 目标用例 / 退出码 / 打红的那条用例名 | `all_red: true`：13 条各把**指定的**用例打红（不是 import 炸掉），还原后同一批用例全绿 |
+| `mutations.json` | 15 条变异反证（ADR 0072 §4 + 本阶段新增判据），每条记变异 / 文件 / 目标用例 / 退出码 / 打红的那条用例名 | `all_red: true`：15 条各把**指定的**用例打红（不是 import 炸掉），还原后同一批用例全绿 |
 
 旧后端的其它冻结资产在 `tests/fixtures/legacy_pymupdf/`（用例直接读）。

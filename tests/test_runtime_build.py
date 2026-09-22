@@ -639,6 +639,38 @@ def test_spec_ships_every_tracked_package_data_file():
     assert not missing, f"这些包内数据文件不在 tavotto.spec 的 datas 里（冻结产物会缺）：{missing}"
 
 
+def test_spec_lists_every_selector_target_as_a_hidden_import_and_no_retired_module():
+    """契约层 `pdfbackend/__init__.py` 按名字 `import_module(_IMPL_MODULES[name])` 委托实现——动态委托躲过
+    PyInstaller 的静态分析：#476 的干净 Windows 冻结产物在 U08 切成选择器之后就是这样
+    `ModuleNotFoundError: tavotto.pdfbackend.pymupdf_backend` 的（源码模式与 wheel 一切正常，只在冻结产物里发作）。
+    规则：选择器闭集里**每个取值的目标模块都在 spec 的 hiddenimports 里点名**，不靠别的模块恰好静态 import 到它
+    （今天 app.py 静态 import 了 facade，明天有人把那行改成按需 import，冻结产物就悄悄少一个模块）。
+    反向：hiddenimports 里每个 `tavotto.*` 名字都得是源码树里真有的模块——U10 删掉 `pymupdf_backend.py` 之后
+    还留着它的 hidden import，PyInstaller 在打包机上报找不到模块。
+    产物级证据不在这里：ci.yml 的 windows-exe-smoke / macos-app-smoke 用 `smoke_app.py --exe` 让冻结产物走
+    `/api/render` + 导出（都经 `_impl()`），再 `retirement_scan.py --dist` 扫它。"""
+    import importlib.util
+
+    from tavotto import pdfbackend
+
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    block = re.search(r"hiddenimports=\[(.*?)\n    \]", spec, re.S)
+    assert block, "spec 里读不出 hiddenimports"
+    hidden = set(re.findall(r'"([^"]+)"', block.group(1)))
+    targets = set(pdfbackend._IMPL_MODULES.values())
+    assert targets and targets == {"tavotto.rendercore.facade"}, targets
+    assert targets <= hidden, (
+        f"选择器的目标模块不在 hiddenimports 里（冻结产物会 ModuleNotFoundError）：{targets - hidden}"
+    )
+    for name in sorted(n for n in hidden if n.startswith("tavotto.")):
+        assert importlib.util.find_spec(name) is not None, (
+            f"hiddenimports 点名了不存在的模块 {name}"
+        )
+    assert "tavotto.pdfbackend.pymupdf_backend" not in spec, (
+        "退役模块的 hidden import 要随模块一起删"
+    )
+
+
 def test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fonts():
     """U10（ADR 0072）：RenderCore 是默认后端，冻结产物要带三样东西——PDFium 的共享库（住在 pypdfium2_raw
     的包目录里，依赖分析看不见）、pikepdf 的 qpdf 库、批准字体（`resources/` datas；字体不进 git）。

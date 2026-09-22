@@ -29,6 +29,9 @@
   层规则：新核心零边进 `pdfbackend/`（契约层认识实现是反方向）；`pdfbackend_impl` 层随旧实现删除
   （`tests/support/importgraph.py`）。看护 `tests/test_rendercore_facade.py`（开关 + 对退役前冻结的
   `tests/fixtures/legacy_pymupdf/oracle.json` 的返回值对拍）、`tests/test_rendercore_model.py`。
+  **冻结产物**：`_impl()` 按名字 `import_module` 是动态委托，PyInstaller 的静态分析看不见——`_IMPL_MODULES`
+  的每个目标模块都要在 `packaging/tavotto.spec` 的 hiddenimports 里点名，不靠别处恰好静态 import 到它；
+  退役模块的 hidden import 随模块一起删（`tests/test_runtime_build.py::test_spec_lists_every_selector_target_…`）。
 - **旧行为的参照只在批准资产里**（06 §3）：`tests/fixtures/legacy_pymupdf/`（退役前一提交上旧后端跑出的
   `oracle.json` / `preview_300.png` / `calibration/<case>.pdf`）与 `evidence/u10/*.pymupdf.json`
   （旧覆盖表 / 旧向量）。需要「旧实现当年怎么做」时读它们，不重新 import 旧库；重生成只能在装了

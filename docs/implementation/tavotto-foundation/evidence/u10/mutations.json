@@ -147,6 +147,28 @@
    "tail": "FAILED tests/test_retirement_scan.py::test_selftest_positive_and_negative_examples_all_hold"
   },
   {
+   "mutation": "M14 spec 的 hiddenimports 拿掉 tavotto.rendercore.facade（选择器目标模块不点名）",
+   "file": "packaging/tavotto.spec",
+   "tests": [
+    "tests/test_runtime_build.py"
+   ],
+   "k": "selector_target",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_runtime_build.py::test_spec_lists_every_selector_target_as_a_hidden_import_and_no_retired_module"
+  },
+  {
+   "mutation": "M15 spec 的 hiddenimports 留着退役模块 tavotto.pdfbackend.pymupdf_backend",
+   "file": "packaging/tavotto.spec",
+   "tests": [
+    "tests/test_runtime_build.py"
+   ],
+   "k": "selector_target",
+   "returncode": 1,
+   "red": true,
+   "tail": "FAILED tests/test_runtime_build.py::test_spec_lists_every_selector_target_as_a_hidden_import_and_no_retired_module"
+  },
+  {
    "mutation": "restored",
    "returncode": 0,
    "red": false,
@@ -154,5 +176,5 @@
   }
  ],
  "all_red": true,
- "note": "rc-venv（macOS arm64，Python 3.13）；每条变异：写入 → pytest -x 指定用例 → 还原 + 清 __pycache__；结论按退出码，红的那条用例名记在 tail"
+ "note": "rc-venv（macOS arm64，Python 3.13）；每条变异：写入 → pytest -x 指定用例 → 还原 + 清 __pycache__；结论按退出码，红的那条用例名记在 tail；M14 / M15（2026-09-22 晚，#476 冻结产物 ModuleNotFoundError 之后补的判据）单独跑：变异 → 红 → 还原 → 绿"
 }
