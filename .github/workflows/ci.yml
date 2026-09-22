@@ -58,7 +58,7 @@ on:
     # 候选拖到 90 分钟 `checks_timed_out` 被踢（2026-09-21 #462 / #455 两次）。叠栈 PR 靠
     # Codex 评审 + 本地验证，等它 retarget 到 main（成为链头）再跑全套——那时它才有资格
     # 进队列，而队列的 merge_group 事件不受这个过滤影响。四个监听 pull_request 的 workflow
-    # （ci.yml / codeql.yml / pr-conflict-domains.yml / foundation-u02-spikes.yml）同一条过滤，由
+    # （ci.yml / codeql.yml / pr-conflict-domains.yml / private-python-targets.yml）同一条过滤，由
     # tests/test_merge_queue_workflows.py::TestPullRequestBaseFilter 钉住：目录里**每一个**监听
     # pull_request 的 workflow（算出来的集合，不是名单）都要 branches == [main]。
     #

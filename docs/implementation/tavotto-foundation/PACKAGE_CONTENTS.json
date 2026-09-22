@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 叠到含 #456 的 main（U07 B 6472ea7c，清单 symbol 格式）后（2026-09-22）再算一次；U08 叠到 U07 B 240cb918（main 78724586）后（2026-09-22）再算一次；U08 叠到 U07 B 4425d5a9 后（2026-09-22）再算一次；U08 叠到 main 13886a0b（#471 已合入）后（2026-09-22）再算一次；U08 冒烟腿修法后（2026-09-22）再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 叠到含 #456 的 main（U07 B 6472ea7c，清单 symbol 格式）后（2026-09-22）再算一次；U08 叠到 U07 B 240cb918（main 78724586）后（2026-09-22）再算一次；U08 叠到 U07 B 4425d5a9 后（2026-09-22）再算一次；U08 叠到 main 13886a0b（#471 已合入）后（2026-09-22）再算一次；U08 冒烟腿修法后（2026-09-22）再算一次；U02 runtime 半边退役（chore/retire-u02-runtime-spike）后再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 68010,
-      "sha256": "841a4816e0e95baa22085b2734c358120322cd9b5ead0c3ee66eac1c28518648"
+      "sha256": "e67450b3fa53fa095999dae132be52f423273f220dbb76c488387164550cd811"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 37059,
-      "sha256": "673fac1f7f2d2620f6d16ee6d0e33bcb9d3c37943181db9df9501707d90023ac"
+      "sha256": "01c5fb478fe4127b906895c4efda3dea97b1aa82c80c0d4d47519055d1456fed"
     },
     {
       "path": "archive/README.md",
@@ -204,8 +204,8 @@
     },
     {
       "path": "evidence/u02/runtime/report-macos-arm64.json",
-      "bytes": 7825,
-      "sha256": "afa69eed21841b80594bbcff86563ddef1d42ad23156d7fc0c6fa4b1f04f7898"
+      "bytes": 8742,
+      "sha256": "5da160d2fe03b8c5a43867a5cc9d848ee486e4c272c4ab8fb2fbaae09619e6eb"
     },
     {
       "path": "evidence/u03/fo01-result-local.json",
@@ -294,8 +294,8 @@
     },
     {
       "path": "evidence/u06/report.json",
-      "bytes": 14710,
-      "sha256": "d09be245838692133be3a4c3b9b6c9dee7a4730d31a4cbd4c6c140e0ce169729"
+      "bytes": 14750,
+      "sha256": "cf6e73644191cf3963b5903ea3080ddecbaa173721bf3e08952b958806e1b2ff"
     },
     {
       "path": "evidence/u06/truth.json",
@@ -305,7 +305,7 @@
     {
       "path": "evidence/u06/u06.pdf",
       "bytes": 14041,
-      "sha256": "cb303505e879dd31326d07b18fe0fa1481cfb3e2673daafadcaff7433ad1774c"
+      "sha256": "7edac93bde4f9f48d6d632457fbb18d9a79518a3576da8374a33c4a8b4aaf8c3"
     },
     {
       "path": "evidence/u06/u06_pdfium.png",
@@ -330,7 +330,7 @@
     {
       "path": "evidence/u07/report.json",
       "bytes": 11607,
-      "sha256": "fc70b7f124d08801b5e87d36d91727f2534f9f29cbe87b814153cde46f7c5ac7"
+      "sha256": "04ff927b2f14a2c768471bbfc212ccd14b01b5aca19ddadaee5c3c22dace223f"
     },
     {
       "path": "evidence/u07/truth.json",
@@ -339,13 +339,13 @@
     },
     {
       "path": "evidence/u07/u07.pdf",
-      "bytes": 8179,
-      "sha256": "68866353ce661ac572fbfe2548e763e44e488fea54e0f4068a6dbdf614c5bc92"
+      "bytes": 8158,
+      "sha256": "6d774e082cbb286b5c032ae838c4e7864f6443f3f8887616e75bfe20704e687f"
     },
     {
       "path": "evidence/u07/u07_pdfium.png",
-      "bytes": 23002,
-      "sha256": "7f2a0dbc0daac93a5c26fee5ae52d662e1191807c8cf92e6544d25586744c158"
+      "bytes": 22930,
+      "sha256": "4831d0e0cceeab0c740352b91c55e5e9bc41b4d939e18f24cd3bf280ced5c1ab"
     },
     {
       "path": "evidence/u08/parity.json",
@@ -414,8 +414,8 @@
     },
     {
       "path": "handoffs/U02_spikes.md",
-      "bytes": 19488,
-      "sha256": "406f88600c76a6bbd5b4a7f487e6b9cba2c3de0678ee18b9f47ef6e3d4054b99"
+      "bytes": 20118,
+      "sha256": "76f9546a1c76dbeeaa6053f6d39878279344d8bc27ad157b0bbf6b962aa23d35"
     },
     {
       "path": "handoffs/U03_first_open.md",
