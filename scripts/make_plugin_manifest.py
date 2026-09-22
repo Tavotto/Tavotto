@@ -51,7 +51,7 @@ SCHEMA = 1
 #: 看到**：不提示的话，他们会照提示只升插件，然后撞上降级 server。
 #: **改 bridge.py 的 import 集时必须回来重估这个值**——`_BRIDGE_IMPORT` 与桥之间
 #: 有对拍（test_mcp_resolver），但它与本常量之间没有，只能靠这条约定。
-MIN_TAVOTTO_VERSION = "0.15.0"
+MIN_TAVOTTO_VERSION = "0.16.0"
 #: 上面那个版本号是**对着这一组桥 import** 算出来的。改了 `bridge.py` 的
 #: `from tavotto.engine import ...`，`tests/test_codex_plugin.py` 会红，逼你回来
 #: 重估 `MIN_TAVOTTO_VERSION` 再同步这里。散句约定靠人记得，这条靠退出码。
@@ -67,8 +67,8 @@ MIN_TAVOTTO_VERSION = "0.15.0"
 #: `getattr` 守着、缺就 `engine_too_old` 不静默，import 本身在最低版本上仍成立——最低版本不抬；
 #: 下次发版若要把「联合依赖准备」当插件依赖的能力再重估。
 #: 2026-09-21（ADR 0068，统一实施包 U08）：桥新增 import 了 artifactinspect（导出产物检查的
-#: 接线层）——它晚于 v0.15.0，**下一次发版时 MIN_TAVOTTO_VERSION 必须抬到那一版**
-#: （`test_plugin_manifest_min_tavotto_version_is_real` 不许现在就写一个还没发的号）。
+#: 接线层）——它晚于 v0.15.0，所以 v0.16.0 发版时抬到 0.16.0（第一个装得下 artifactinspect 的版本；
+#: `test_plugin_manifest_min_tavotto_version_is_real` 只允许在发那一版的 PR 里写这个号）。
 BRIDGE_IMPORTS_AT_MIN = frozenset(
     {
         "artifactcheck",
