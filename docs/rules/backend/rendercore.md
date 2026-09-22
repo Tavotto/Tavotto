@@ -125,6 +125,15 @@
   （深度 / Form 数 / 指令数），耗尽 → 全 unknown；客户端的样式检查报告从不进检查器；检查器自己炸 → `uninspected()` 全 unknown。
   没有 pikepdf 的机器 PDF 走 `probe_asset` 基本观测（完整性 + 尺寸），其余 unknown 并写明。两个后端都接；默认后端下
   `dpi_tag`（PyMuPDF PNG 的 pHYs 是 96）与 `fonts_embedded`（base-14）是可选项 failed——如实记，不改默认路径。
+- **四身份、来源段与公开投影（U09，ADR 0070）**：`rendercore/identity.py`——`semantic` = `plan_identity`、`render` =
+  semantic + 后端 build + 栅格器与版本 + 字体政策版本（`identity.fonts_policy_version()`，与预览缓存键同一份）+ 像素参数、
+  `artifact` = 封口字节 sha256（**绝不**再写进文件）、`run` = 作业 id（不进前三个）；不知道的一维写 None 不省略键。
+  manifest 多 `identity` 与 `provenance`（源产物公开身份、回执公开事实 `receipt.public_facts()`、节点表：画布对象 id +
+  实例序号，同一份源放两次是两个实例，外来页 `internal=unknown` 不编造，有界 `job.NODES_LIMIT`）；执行侧源随附
+  `FrozenSource.receipt`；MCP 直出路经 `engine/artifactinspect.execution_provenance()` 用同一份算法补齐（源是这次执行的
+  Figure，`kind=figure`，semantic 对格式不变）。**可以离开本机的只有 `inspector.public_projection()`**：身份与结论，
+  不带 notes / `plan.text` / 对象框 / `source_id` / 节点 id / 路径 / argv；本轮不写 XMP，将来 XMP / 报告 / 遥测要带产物身份
+  只许带它。故障阶段：`job.produce` 在 `compile` / `compose` / `raster` 各自 `job.trace.mark / fail`（ADR 0071）。
 - **不切默认**：PyMuPDF 仍是默认后端（`pdfbackend.BACKEND_DEFAULT`）；候选只在显式选中时接管，前端不读候选
   覆盖表，产品包不带候选包 / 字体（U10 / U11）；facade 19 项的迁移证据逐项记在
   `docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.md`。

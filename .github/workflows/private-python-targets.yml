@@ -57,6 +57,8 @@ on:
       - "tests/support/private_python.py"
       - "tests/support/dependency_repair.py"
       - "tests/support/venvfixture.py"
+      - "tests/test_foundation_join.py"
+      - "tests/fixtures/foundation/join_h5/**"
 
 permissions:
   contents: read
@@ -121,6 +123,8 @@ jobs:
           mkdir -p "$PP_WHEELHOUSE"
           # shellcheck disable=SC2046
           pip download --only-binary=:all: --disable-pip-version-check -d "$PP_WHEELHOUSE" $(python scripts/ci/runtime_pins.py)
+          # U09 / FO32 managed_env_join：项目声明的 h5py（真二进制 wheel）也要在离线 wheelhouse 里——由产品装进那一代
+          pip download --only-binary=:all: --disable-pip-version-check -d "$PP_WHEELHOUSE" h5py
           ls -1 "$PP_WHEELHOUSE"
 
       - name: Windows 前快照（注册表 Software\Python、PATH、USERPROFILE 顶层）
@@ -145,6 +149,37 @@ jobs:
         run: |
           python scripts/ci/private_python_windows_snapshot.py "$env:PP_EVIDENCE\after.json"
           python scripts/ci/private_python_windows_snapshot.py --diff "$env:PP_EVIDENCE\before.json" "$env:PP_EVIDENCE\after.json"
+
+      # U09 / FO32 的第二个出口 managed_env_join（observing）：同一台机器上，产品自己准备环境（刚供应好的私有
+      # Python 在 PP_DATA 里零下载复用）→ U04 代事务把 h5py 装进那一代 → 经产品 HTTP 入口首开 → 真值 → patch →
+      # RenderCore 导出（应用这边要候选包 + 批准字体）→ 独立核文件。仍是工程验证，不是资格（ADR 0064）。
+      - name: 应用侧候选包与批准字体（U09 联调的 RenderCore 终点）
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install -e ".[rendercore]"
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
+
+      - name: U09 联调：FO32 managed_env_join（私有 Python → 联合安装 h5py → RenderCore 终点）
+        shell: bash
+        env:
+          TAVOTTO_FOUNDATION_RESULTS: ${{ runner.temp }}/pp-evidence/u09-results
+        run: |
+          set -euo pipefail
+          mkdir -p "$TAVOTTO_FOUNDATION_RESULTS"
+          python -m pytest tests/test_foundation_join.py -k managed \
+            -p no:cacheprovider -rs -q --junitxml="$PP_EVIDENCE/pytest-u09-managed.xml"
+          # skip 不是绿：那一条必须真跑过
+          python - <<'EOF'
+          import os, pathlib, sys, xml.etree.ElementTree as ET
+          root = ET.parse(pathlib.Path(os.environ["PP_EVIDENCE"]) / "pytest-u09-managed.xml").getroot()
+          cases = [c for c in root.iter("testcase") if "managed" in c.get("name", "")]
+          bad = [c.get("name") for c in cases if c.find("skipped") is not None]
+          print("cases:", [c.get("name") for c in cases], "skipped:", bad)
+          sys.exit(1 if bad or not cases else 0)
+          EOF
+          ls -1 "$TAVOTTO_FOUNDATION_RESULTS"
 
       - name: Linux：供应好的 runtime 挂进没有 Python 的空镜像（ubuntu:24.04，--network none）
         if: runner.os == 'Linux'

@@ -1,6 +1,7 @@
 # 准备计划、执行回执与源图产物（统一实施包 U01，ADR 0053）
 
-> 2026-09-20 随 U01 新增，同日随 U03（ADR 0057）扩到「需要输入」/ 过期计划 / 环境证据；速查行在
+> 2026-09-20 随 U01 新增，同日随 U03（ADR 0057）扩到「需要输入」/ 过期计划 / 环境证据；2026-09-21 随 U09
+> （ADR 0070 / 0071）扩到「自报只收这一条会话的」/ 输入观察 / 数据绑定 / 旧计划失效政策 / 阶段轨迹；速查行在
 > `src/tavotto/AGENTS.md`「按改动路径找细则」表里（`engine/preparation.py` / `receipt.py` 那一行）。
 > 这里是这一主题规则的**唯一全文**；速查表只留一行。改规则改这里，并同步那一行。
 
@@ -45,6 +46,31 @@
   （`PATCH /api/engine/workdir`）重新准备。
 - **过期计划不执行**（FO-007）：执行线程在起会话之前把 `workdir.grant_for(root)` 与计划记下的
   `grant` 比一次，不一致就 `preparation_plan_stale`，一行脚本不跑。
+- **自报只收这一条会话的（U09，ADR 0070）**：worker 的 `runtime_report()` 带 `report_origin=build` 与 `pid`；
+  `receipt.from_worker` 核 origin，并把 pid 与控制面自己起的那个子进程对（`EngineWorker.child_pid` /
+  `WorkerdWorker.child_pid` / `NativeSession.child_pid`）。体检 / 探针 / 手拼的字典**一律拒收**：`runtime=None`、
+  `runtime_rejected ∈ {not_a_build_report, pid_mismatch}`、`completeness=partial`；控制面起的是 launcher（Windows 上 venv 的
+  `python.exe`）而解释器是它的子进程时按自报的 `ppid` 认、`pid_check=ok_via_launcher`；不知道 pid 就 `pid_check=unavailable`，
+  不冒充核过。拿预检结果冒充回执是 must_fail。
+- **输入观察永远是 partial（D13 / FO-061）**：`figcapture.InputObserver` 只包 Python 的三处 `open`（先于只读回退装，
+  记实际打开的那条路径；源码文件剔掉、去重、有界），h5py / `os.open` / 网络 / 子进程看不见——`inputs.observation=partial`
+  + `unobserved` 如实列出；观察到的文件身份（相对路径 + sha256）**进公开语义身份**，机器路径不进；`local_modules` 是
+  `sys.modules` 里落在项目根内的模块。build 那一刻定格，之后进程里再读什么都不是它的输入。
+- **数据绑定与旧计划失效（U09，ADR 0071 / FO30）**：`databinding.binding_for(script, root, mode)` 按 cwd 档记「会读哪些
+  文件、内容 sha256、修订」进 `PreparationPlan.binding`；执行线程起会话之前把授权 / 解释器决策 / 数据绑定三样与此刻各比
+  一次，不一致就 `preparation_plan_stale` + `reason ∈ {grant_changed, environment_changed, data_binding_changed}` +
+  `executed=False`，一行不跑；build 之后按观察到的输入再核（`receipt.binding_check()`），不一致就作废且 `executed=True`。
+  **复用热态会话时不一致不是错误**：`ready` + `binding_check.matched=False` + note「旧快照」——不自动重算、不清编辑，
+  用户要重算走既有 `/api/engine/invalidate`。`matched=None` = 一条都没观察到（原生读），不冒充核过。导出路的回执与准备
+  接口同一份账（`_execution_receipt` 带 grant 与 binding）。
+- **观察器的路径判据只有一份**：`figcapture._within`（realpath 之后按前缀判、`+ sep`、`normcase`，与 `projectenv.contained_path`
+  同一形状），文件观察与本地模块共用；不用 `os.path.commonpath`——Windows 上跨盘抛 ValueError，一 `except … continue` 就把
+  该记的模块吞了（`tests/test_input_observer_paths.py` 钉着 Windows 布局与跨盘）。
+- **阶段轨迹（U09，ADR 0071）**：`engine/trace.py` 的 `Trace` 有界（64 条，丢中间留头尾）、阶段名闭集、`facts` 只收标量、
+  第一次失败是根因；`PreparationResult.trace`（plan → check → spawn → execute → receipt）与 `ExportJob.trace`（prepare →
+  source → compile → compose → raster → inspect → publish → report）同一个形状，随 `to_payload()` 走。作业进 `partial` / `failed`
+  时 `failed_phase` 必须非空：图全好、只有报告坏了也要记 `report` 失败（`tests/test_export_pipeline.py` 的两条报告用例钉着）。
+  不是全系统追踪平台。
 - **DependencyIntent 是第二个读法，不是第二个安装器**：extras / marker / constraints / 冲突
   原样可见，看不懂的行 `kind=unknown` 保留原文（Poetry 的 `^` / `~` / 表值也是 unknown，不剥成
   任意版本）；安装路径的窄语法（ADR 0019 安全边界）一字不动。
@@ -56,6 +82,11 @@
   （`tests/test_foundation_first_open.py`，经真实 HTTP 入口，装置在 `tests/support/foundation_app.py`）；
   safe_stop 的 case 记录 `product_outcome=safe_stop` + `test_verdict=pass`，校验器按台账预期的结果
   对拍（`outcome_mismatch`）并分开计数，**不进自动兼容成功的分子**。
+- **台账里 U09 的两条**：FO30 → enforced（registry 的 contractual 拆成三条 safe_stop 合同在 `tests/test_preparation_api.py`
+  + 一条 guided 合同经真实入口 `tests/test_foundation_join.py::test_fo30_*`）；FO32 → observing（两个出口
+  `existing_env_join` / `managed_env_join` 各挂一条具名任务：`foundation-u06-rendercore.yml` 的「U09 联调」步、
+  `private-python-targets.yml` 的「U09 联调：managed_env_join」步；候选后端未切默认，所以不进 required）。
 - 看护：`tests/test_execution_receipt.py`、`tests/test_preparation_api.py`、
   `tests/test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、
-  `tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`。
+  `tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、
+  `tests/test_foundation_join.py`、`tests/test_export_identity.py`。

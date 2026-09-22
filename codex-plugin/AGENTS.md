@@ -154,6 +154,11 @@
   原样带出（`verdict / checks 四值 / notes / sha256 / px / size_pt…`）。旧键（`path / bytes / vector / dpi /
   status / error`）一个不动。位图 `Produced` 带期望像素（图幅 × dpi，与 `artifactcheck` 同一换算），
   `size` 那一维才量得到。契约层 `probe_asset` 按需 import（`_probe_asset`），不进桥的常驻 import 闭包。
+- **来源与四身份随 manifest 走（U09，ADR 0070）**：这条路是 worker 直接序列化、没有 RenderPlan，`_produce` 每个格式经
+  `engine_artifactinspect.execution_provenance()` 用与 HTTP 候选路同一份算法补齐——回执从**这条会话**的账本装配
+  （`report_origin=build` + pid 核过，体检结果冒充不了）、源是这次执行的 Figure（`kind=figure`，semantic 身份对格式
+  不变）、`identity{semantic, render, artifact, run}` 与 `provenance{sources, receipts, nodes}` 进 `files[].manifest`；
+  装配失败不影响导出，但要进 `warnings` 说「产物身份未核验」。桥**不**新增 import（回执 / 绑定都在 `artifactinspect` 里算）。
 - **给模型看的文字里「未核验」永远不是「已核验」**：`server._inspection_summary` 三组各自点名
   （未通过 / 已核验 / 未核验），一组都不省；没有 manifest = 整份未核验。这条入口只有 standard 政策
   （必需 = 完整性 + 核心尺寸）；严格政策走 HTTP 的 `inspection` 段。

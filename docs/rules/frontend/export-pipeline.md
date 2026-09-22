@@ -60,3 +60,8 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   看不见状态码，`lib/imgRetry.useRetryingSrc` 对 `/api/render` 地址按 1 / 2 / 4 s 有界重试（cache-bust
   `r=n`，`src` 变了归零）；blob / data / `/api/file` 失败**不**重试。画布面板（`PanelView`）、缩略图
   （`CanvasThumb`）、版本 / 图库 / 导出对话框的缩略图（`ui/RetryImg`）共用这一份。
+- **manifest 的 `identity` / `provenance` 与作业的 `trace` 只在类型上接住**（2026-09-21，统一实施包 U09，
+  ADR 0070 / 0071）：`ArtifactManifestSummary.identity`（semantic / render / artifact / run 四身份并列）、
+  `provenance`（源产物公开身份、回执公开事实 `ArtifactReceiptFacts`、节点表）、`ExportJob.trace`（有界阶段轨迹，
+  `failed_phase` 是坏在哪一步）。界面**不画、不解读**它们（解读产物核验的仍只有 `inspectionState()`）；要显示时
+  先定一份解读的唯一出处，别在组件里各自读字段。它们都是可选键：老服务端没有 = `undefined`，不是错误。

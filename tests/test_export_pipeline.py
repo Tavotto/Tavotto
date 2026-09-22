@@ -519,6 +519,9 @@ def test_a_failing_report_does_not_take_the_images_down(env, monkeypatch):
     report = next(o for o in body["outputs"] if o["format"] == "report")
     assert report["status"] == "failed"
     assert (_dir(body) / "Fig 1.pdf").is_file()
+    # 轨迹要指到坏的那一步：图全好、只有报告坏了 → `failed_phase=report`（Codex #498 P2）
+    assert body["trace"]["failed_phase"] == "report", body["trace"]
+    assert body["trace"]["events"][-1]["outcome"] == "failed"
 
 
 def test_report_is_only_written_when_asked(env):
@@ -1032,6 +1035,8 @@ def test_a_requested_report_with_no_payload_fails_loudly(env):
     report = next(o for o in body["outputs"] if o["format"] == "report")
     assert report["status"] == "failed"
     assert report["error"]["code"] == "report_missing_payload"
+    assert body["trace"]["failed_phase"] == "report"
+    assert body["trace"]["events"][-1]["code"] == "report_missing_payload"
     # 进度不许停在"还差一格"
     assert body["progress"]["step"] == body["progress"]["total"]
     assert sorted(p.name for p in _dir(body).iterdir()) == ["Fig 1.pdf"]

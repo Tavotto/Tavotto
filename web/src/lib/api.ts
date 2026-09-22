@@ -1066,6 +1066,66 @@ export interface ArtifactManifestSummary {
   fonts_used?: string[]
   plan_identity?: string | null
   backend?: string | null
+  /** 四身份（U09，ADR 0070）：semantic / render / artifact / run 并列，谁也不含谁；旧后端没有 RenderPlan 时前两个是 null */
+  identity?: ArtifactIdentity | null
+  /** 来源：源产物公开身份、回执公开事实、节点表（U09）；老服务端没有 */
+  provenance?: ArtifactProvenance | null
+}
+
+export interface ArtifactIdentity {
+  identity_version: number
+  semantic: string | null
+  render: string | null
+  artifact: string | null
+  run: string | null
+}
+
+export interface ArtifactProvenance {
+  sources: {
+    source_id: string
+    origin: 'execution' | 'static'
+    kind: string
+    bytes_sha256: string
+    receipt_identity: string | null
+    patch_hash: string | null
+  }[]
+  execution_receipts: string[]
+  receipts: ArtifactReceiptFacts[]
+  nodes: Record<string, unknown>[]
+  nodes_truncated: boolean
+}
+
+/** 回执的公开事实（`receipt.public_facts()`）：版本号与结论，没有路径 */
+export interface ArtifactReceiptFacts {
+  receipt_identity: string
+  receipt_id: string
+  completeness: 'complete' | 'partial'
+  runtime_rejected: string | null
+  pid_check: string | null
+  control_plane: string
+  python_source: string
+  generation: number
+  source_revision: string
+  python_version: string | null
+  python_implementation: string | null
+  platform: string | null
+  machine: string | null
+  packages: Record<string, string>
+  cwd_origin: string | null
+  observation: string | null
+  binding: { revision: string | null; matched: boolean | null; changed: number; unobserved: number }
+}
+
+/** 有界的阶段轨迹（U09，ADR 0071）：坏在哪一步就停在哪一步；不记内容 */
+export interface ExportTrace {
+  trace_version: number
+  events: { phase: string; at_ms: number; outcome: 'ok' | 'failed' | 'cancelled'; code?: string; facts?: Record<string, unknown> }[]
+  limit: number
+  truncated: boolean
+  dropped: number
+  current_phase: string | null
+  failed_phase: string | null
+  failed_code: string | null
 }
 
 /** 一件产出。**成功与失败是同一个结构**——失败项也要出现在清单里 */
@@ -1108,6 +1168,8 @@ export interface ExportJob {
   export_dir?: string
   document_revision?: string | null
   progress?: { phase: string; step: number; total: number }
+  /** 阶段轨迹（U09）；老服务端没有 */
+  trace?: ExportTrace
   timing?: { started_at: number | null; finished_at: number | null; elapsed_ms: number | null }
   error: { code: string; params: Record<string, unknown>; recoverable: boolean } | null
   /** 旧契约的投影（老标签页与 CI 脚本读它）；新界面读 outputs */

@@ -34,9 +34,9 @@
 | FO27 | 准备/运行阶段取消 | U04 | integration_candidate | safe_stop | enforced | not_run |
 | FO28 | 磁盘不足和只读目录 | U04 | integration_candidate | safe_stop | planned | not_run |
 | FO29 | 并发项目与活跃 native 会话 | U04 | integration_candidate | contractual | planned | not_run |
-| FO30 | 预检后输入或环境改变 | U09 | integration_candidate | contractual | planned | not_run |
+| FO30 | 预检后输入或环境改变 | U09 | integration_candidate | contractual | enforced | not_run |
 | FO31 | 首开/二开/会话重启不重复准备 | U04 | pr_candidate | automatic | enforced | not_run |
-| FO32 | 真实打开—编辑—重放—导出 | U09 | release | guided | planned | not_run |
+| FO32 | 真实打开—编辑—重放—导出 | U09 | release | guided | observing | not_run |
 
 contractual案例必须在执行前拆成具体成功/停止合同；不能运行后选择更容易过的解释。
 严禁用safe_stop测试pass计入自动兼容成功。FO23/FO32保留最终真实安装资格；FO14的新增命名Conda适配后置X01。

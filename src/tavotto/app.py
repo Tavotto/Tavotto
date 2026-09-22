@@ -58,6 +58,7 @@ from .engine import (
     brand as engine_brand,
     cli as engine_cli,
     config as engine_config,
+    databinding as engine_databinding,
     depplan as engine_depplan,
     deprepair as engine_deprepair,
     diagnostics as engine_diagnostics,
@@ -69,6 +70,7 @@ from .engine import (
     epsfile as engine_epsfile,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
+    figcapture as engine_figcapture,
     handoff as engine_handoff,
     locate as engine_locate,
     managedenv as engine_managedenv,
@@ -1053,15 +1055,38 @@ def _serialize_figure_with_worker(
 
 def _execution_receipt(worker, script: str):
     """worker-like → 回执：池里的 worker 用它自己的账本（`receipt.from_worker`），native 会话按描述符
-    元数据重建（`receipt.from_native_session`）。两半缺一半就是 `partial`，不补不猜。"""
+    元数据重建（`receipt.from_native_session`）。两半缺一半就是 `partial`，不补不猜。
+
+    U09（ADR 0070）：导出路上的回执与准备接口的回执**同一份账**——`grant` 是这个项目此刻的授权记录
+    （`workdir.grant_for`），`binding` 是此刻按会话的 cwd 档算的数据绑定（`databinding.binding_for`）；
+    回执把它与会话 build 那一刻观察到的输入对，数据在出图之后被改过的话 `binding_check.matched=False`
+    如实写着（热态 Figure 是明确的旧快照，04 §3——普通导出照常，不自动重算）。
+    """
     if engine_enginesession.is_native(worker):
-        return engine_receipt.from_native_session(worker, script)
+        root = str(getattr(worker, "project_root", "") or "")
+        grant = engine_workdir.grant_for(root) if root else None
+        return engine_receipt.from_native_session(worker, script, grant=grant)
+    spec = worker.spec
     resp = {
         "descriptors": list(getattr(worker, "last_build_descriptors", None) or []),
         "runtime": getattr(worker, "last_build_runtime", None),
     }
+    binding = None
+    if script:
+        try:
+            binding = engine_databinding.binding_for(
+                Path(spec.project_root) / engine_figcapture.normalize_relative_script(script),
+                spec.project_root,
+                spec.cwd_mode,
+            )
+        except (OSError, ValueError):  # 绑定算不出来就不带（回执如实少一段，不猜）
+            binding = None
     return engine_receipt.from_worker(
-        worker, resp, control_plane=engine_pool.control_plane_of(worker), grant=None
+        worker,
+        resp,
+        control_plane=engine_pool.control_plane_of(worker),
+        grant=engine_workdir.grant_for(spec.project_root),
+        binding=binding,
     )
 
 
@@ -1100,7 +1125,7 @@ def _execution_source(obj: dict, dpi: int, sink: list | None, out_dir: Path | No
         source_id=rel_id,
         patch_hash=engine_patchspec.patch_hash(overrides),
     )
-    return rc_sources.FrozenSource(artifact=art, path=Path(path))
+    return rc_sources.FrozenSource(artifact=art, path=Path(path), receipt=rcpt.public_facts())
 
 
 def _panel_render_target(worker, stem: str, out_dir: Path | None, fmt: str = "pdf") -> Path:

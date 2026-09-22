@@ -442,6 +442,12 @@ class NativeSession:
         return dict(rt) if isinstance(rt, dict) else None
 
     @property
+    def child_pid(self) -> int | None:
+        """与 `pool.EngineWorker.child_pid` 同名同义（ADR 0070）：握手帧里用户进程自报的 pid——回执核
+        「自报来自这一个进程」用；没握过手就是 None（那一维不核）。存储仍只有 `process_pid` 一份。"""
+        return self.process_pid
+
+    @property
     def export_dir(self) -> Path:
         """导出临时件的落点（画布导出取 `export_dir / f"{stem}.pdf"`）。
 

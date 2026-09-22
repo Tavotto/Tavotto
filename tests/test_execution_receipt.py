@@ -346,11 +346,15 @@ class _FakeWorker:
     script_sha1: str = "abc123"
     python_source: str = "project_venv"
     python: str = "/envs/a/bin/python"
+    #: 控制面自己起的那个子进程（`pool.EngineWorker.child_pid`）；自报的 pid 必须是它（ADR 0070）
+    child_pid: int | None = 4242
 
 
 def _runtime(prefix="/envs/a", **over):
     rt = {
         "runtime_report_version": 1,
+        "report_origin": "build",
+        "pid": 4242,
         "python_version": "3.13.11",
         "python_implementation": "CPython",
         "executable": f"{prefix}/bin/python",
@@ -619,3 +623,210 @@ def test_pure_models_import_without_the_scientific_stack_or_the_pdf_library():
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert json.loads(proc.stdout.strip().splitlines()[-1]) == []
+
+
+# ===========================================================================
+# U09（ADR 0070）：自报只收「这一条会话」的；观察到的输入进身份；数据绑定逐条对
+# ===========================================================================
+def _probe_shaped(prefix="/envs/a") -> dict:
+    """`projectenv.probe_environment()` 那一形状的字典（体检的结果）：没有 `report_origin`、没有 `pid`。"""
+    return {
+        "executable": f"{prefix}/bin/python",
+        "prefix": prefix,
+        "python_version": "3.13.11",
+        "version_info": [3, 13, 11],
+        "arch": "arm64",
+        "matplotlib_version": "3.10.8",
+        "tavotto_worker_ok": True,
+        "requested_module": None,
+        "requested_module_ok": None,
+        "error": None,
+    }
+
+
+class TestReceiptOnlyAcceptsThisSessionsReport:
+    def test_a_probe_result_cannot_pose_as_the_worker_report(self):
+        """FO-059 must_fail：拿预检（体检）的结果冒充本次执行的事实。体检形状的字典没有 `report_origin=build`
+        —— 拒收：`runtime` 是 None、原因写着、回执是 partial，公开投影里也看得见被拒了。"""
+        worker = _FakeWorker(spec=_safe(interpreter="/envs/a/bin/python"))
+        r = receipt.from_worker(
+            worker,
+            {"descriptors": [], "runtime": _probe_shaped()},
+            control_plane="python_pool",
+            grant=None,
+        )
+        assert r.runtime is None
+        assert r.runtime_rejected == receipt.RUNTIME_REJECTED_NOT_BUILD
+        assert r.completeness == receipt.COMPLETENESS_PARTIAL
+        assert r.to_payload()["runtime_rejected"] == "not_a_build_report"
+        assert r.pid_check is None
+
+    def test_a_build_report_from_another_process_is_rejected(self):
+        """自报说自己是 build 回执，pid 却不是控制面起的那个子进程——另一个进程（上一代会话、别的项目的
+        worker、手拼的字典）的事实，同样拒收。"""
+        worker = _FakeWorker(spec=_safe(interpreter="/envs/a/bin/python"), child_pid=4242)
+        r = receipt.from_worker(
+            worker,
+            {"descriptors": [], "runtime": _runtime(pid=4243)},
+            control_plane="python_pool",
+            grant=None,
+        )
+        assert r.runtime is None and r.runtime_rejected == receipt.RUNTIME_REJECTED_PID
+        assert r.completeness == receipt.COMPLETENESS_PARTIAL
+        missing_pid = dict(_runtime())
+        del missing_pid["pid"]
+        r2 = receipt.from_worker(
+            worker, {"runtime": missing_pid}, control_plane="python_pool", grant=None
+        )
+        assert r2.runtime_rejected == receipt.RUNTIME_REJECTED_PID
+
+    def test_a_launcher_child_is_this_sessions_process(self):
+        """Windows 上 venv 的 `python.exe` 是 launcher：控制面起的是它（`child_pid`），真正跑脚本的解释器是它的子进程，
+        自报的 `pid` 对不上、`ppid` 对得上——收，但 `pid_check` 如实写 `ok_via_launcher`，不冒充直核的 `ok`
+        （#498 第二轮 Windows 腿：受管环境的回执整份 partial）。ppid 也对不上 → 仍是 `pid_mismatch`。"""
+        worker = _FakeWorker(spec=_safe(interpreter="/envs/a/bin/python"), child_pid=4242)
+        r = receipt.from_worker(
+            worker,
+            {"descriptors": [], "runtime": _runtime(pid=5151, ppid=4242)},
+            control_plane="python_pool",
+            grant=None,
+        )
+        assert r.runtime is not None and r.runtime_rejected is None
+        assert r.pid_check == receipt.PID_CHECK_LAUNCHER
+        assert r.completeness == receipt.COMPLETENESS_COMPLETE
+        stranger = receipt.from_worker(
+            worker,
+            {"descriptors": [], "runtime": _runtime(pid=5151, ppid=1)},
+            control_plane="python_pool",
+            grant=None,
+        )
+        assert (
+            stranger.runtime is None and stranger.runtime_rejected == receipt.RUNTIME_REJECTED_PID
+        )
+        # ppid 不能拿 pid 那一格的值冒充：pid 对上就是 ok，不是 launcher
+        direct = receipt.from_worker(
+            worker,
+            {"descriptors": [], "runtime": _runtime(pid=4242, ppid=4242)},
+            control_plane="python_pool",
+            grant=None,
+        )
+        assert direct.pid_check == receipt.PID_CHECK_OK
+
+    def test_pid_check_is_recorded_as_unavailable_when_the_control_plane_has_no_pid(self):
+        """控制面不知道子进程 pid（老 workerd）：那一维**不核**，但要写明是没核（`unavailable`），
+        不是核过了（`ok`）。"""
+        worker = _FakeWorker(spec=_safe(interpreter="/envs/a/bin/python"), child_pid=None)
+        r = receipt.from_worker(
+            worker, {"runtime": _runtime(pid=99)}, control_plane="python_pool", grant=None
+        )
+        assert r.completeness == receipt.COMPLETENESS_COMPLETE
+        assert r.pid_check == receipt.PID_CHECK_UNAVAILABLE
+        ok = _receipt()
+        assert ok.pid_check == receipt.PID_CHECK_OK
+
+    def test_a_missing_report_is_partial_without_a_rejection(self):
+        """没报（老 worker）与拒了是两个答案：没报的 `runtime_rejected` 是 None。"""
+        r = _receipt(runtime=False)
+        assert r.runtime is None and r.runtime_rejected is None and r.pid_check is None
+
+    def test_the_rejected_report_cannot_be_smuggled_back_in(self):
+        with pytest.raises(ValueError):
+            receipt.ExecutionReceipt(
+                profile=execspec.PROFILE_SAFE,
+                control_plane="python_pool",
+                python_source="x",
+                generation=1,
+                source_revision="",
+                spec_stable={},
+                launch_context={},
+                interpreter="/p",
+                project_root="/r",
+                runtime=_runtime(),
+                runtime_rejected=receipt.RUNTIME_REJECTED_PID,
+            )
+
+
+def _inputs(files=(), modules=(), *, truncated=False) -> dict:
+    return {
+        "observation": "partial",
+        "channels": ["python_open"],
+        "unobserved": ["native_io", "network", "subprocess", "os_open"],
+        "truncated": truncated,
+        "files": [{"path": p, "size": 12, "sha256": s} for p, s in files],
+        "local_modules": [{"name": n, "path": p, "sha256": s} for n, p, s in modules],
+    }
+
+
+class TestObservedInputsAndBinding:
+    def test_observed_data_identity_enters_the_public_identity_but_paths_do_not(self):
+        """同一脚本、同一环境、读到**不同内容**的同名数据 = 另一次执行（同名干扰 / 预检后被改都落在这一维）；
+        公开身份仍不含任何机器路径。"""
+        a = _receipt(runtime=True)
+        worker = _FakeWorker(spec=_safe(interpreter="/envs/a/bin/python"))
+        b = receipt.from_worker(
+            worker,
+            {"runtime": _runtime(inputs=_inputs([("data.csv", "aa" * 32)]))},
+            control_plane="python_pool",
+            grant=None,
+        )
+        c = receipt.from_worker(
+            worker,
+            {"runtime": _runtime(inputs=_inputs([("data.csv", "bb" * 32)]))},
+            control_plane="python_pool",
+            grant=None,
+        )
+        assert b.public_identity() != c.public_identity()
+        assert a.public_identity() != b.public_identity()
+        assert b.observed_files() == {"data.csv": "aa" * 32}
+        payload = json.dumps(b.to_payload(), ensure_ascii=False)
+        assert "/envs/a" not in payload and "/proj" not in payload
+        assert b.inputs["observation"] == "partial"
+        assert "native_io" in b.inputs["unobserved"]
+
+    def test_binding_check_compares_expected_with_observed_and_never_pretends(self):
+        """计划记下 `data.csv` 应是 X：观察到 X → matched；观察到 Y → 不匹配并点名；根本没观察到
+        （原生读 / 没自报）→ None，不是 True。"""
+        worker = _FakeWorker(spec=_safe(interpreter="/envs/a/bin/python"))
+        binding = {"revision": "sha256:rev", "mode": "sandbox", "expected": {"data.csv": "aa" * 32}}
+        same = receipt.from_worker(
+            worker,
+            {"runtime": _runtime(inputs=_inputs([("data.csv", "aa" * 32)]))},
+            control_plane="python_pool",
+            grant=None,
+            binding=binding,
+        )
+        assert same.binding_check()["matched"] is True
+        assert same.binding_check()["same"] == ["data.csv"]
+        other = receipt.from_worker(
+            worker,
+            {"runtime": _runtime(inputs=_inputs([("data.csv", "bb" * 32)]))},
+            control_plane="python_pool",
+            grant=None,
+            binding=binding,
+        )
+        chk = other.binding_check()
+        assert chk["matched"] is False and chk["changed"] == ["data.csv"]
+        unseen = receipt.from_worker(
+            worker,
+            {"runtime": _runtime(inputs=_inputs([("other.txt", "cc" * 32)]))},
+            control_plane="python_pool",
+            grant=None,
+            binding=binding,
+        )
+        chk = unseen.binding_check()
+        assert chk["matched"] is None and chk["unobserved"] == ["data.csv"]
+        # 没自报（partial 回执）：同样 None
+        blind = receipt.from_worker(
+            worker, {"descriptors": []}, control_plane="python_pool", grant=None, binding=binding
+        )
+        assert blind.binding_check()["matched"] is None
+        assert blind.to_payload()["binding_check"]["revision"] == "sha256:rev"
+        # 大文件没算 hash（sha256=None）：算没观察到，不算匹配
+        big = receipt.from_worker(
+            worker,
+            {"runtime": _runtime(inputs=_inputs([("data.csv", None)]))},
+            control_plane="python_pool",
+            grant=None,
+            binding=binding,
+        )
+        assert big.binding_check()["matched"] is None

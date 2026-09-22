@@ -169,14 +169,19 @@
         "U09.managed_env_join"
       ],
       "scope": "core",
-      "implementation_status": "not_started",
+      "implementation_status": "done",
       "product_validation_status": "not_run",
       "milestone_dependencies": {
         "U09.managed_env_join": [
           "U04.managed_dependencies",
           "U05.private_python"
         ]
-      }
+      },
+      "milestone_status": {
+        "U09.existing_env_join": "done",
+        "U09.managed_env_join": "done"
+      },
+      "note": "两个出口都在本机 macOS arm64 真跑过（tests/test_foundation_join.py：existing_env_join 经真实 python -m tavotto 入口，managed_env_join 经产品 HTTP 入口 + 真 pbs 归档 + 离线 wheelhouse）；FO32 登记 observing（两条具名任务），FO30 enforced；product_validation_status 仍 not_run：候选后端未切默认、其它平台只有 observing 腿、无系统 Python 目标资格在 U11。"
     },
     {
       "id": "U10",

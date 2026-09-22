@@ -135,6 +135,10 @@ __all__ = [
     "collect_pyplot_figures",
     "fallback_stems",
     "install_relative_read_fallback",
+    "InputObserver",
+    "observed_local_modules",
+    "INPUT_OBSERVER_MAX_FILES",
+    "OBSERVATION_PARTIAL",
     "MAX_PYPLOT_FALLBACK",
     "SOURCE_SAVEFIG",
     "SOURCE_PYPLOT",
@@ -595,6 +599,184 @@ def collect_pyplot_figures(
     for stem, fig in zip(stems, pending):
         capture[stem] = fig
     return stems, dropped
+
+
+#: 输入观察（统一实施包 U09，ADR 0070）：脚本经 Python 的 `open` 读到的项目内文件最多记这么多条；
+#: 超过就 `truncated=True`——回执有界，不是全系统审计。
+INPUT_OBSERVER_MAX_FILES = 256
+#: 每个观察到的文件最多为它算 hash 的字节数；再大只记大小，`sha256` 为 None（大文件的 hash 归数据绑定
+#: 那一侧按需算，不在脚本跑完那一刻同步付出）。
+INPUT_OBSERVER_HASH_LIMIT = 64 * 1024 * 1024
+#: 观察不到的输入通道（D13）：这些走不到 Python 的 `open`，回执只能如实标 `partial`。
+INPUT_OBSERVER_UNOBSERVED = ("native_io", "network", "subprocess", "os_open")
+#: 观察到的文件里剔掉的源码后缀（它们归 `source_revision` / `local_modules`）。
+CODE_SUFFIXES = frozenset({"py", "pyc", "pyi", "pyw"})
+OBSERVATION_PARTIAL = "partial"
+
+
+def _within(real: str, root: str, *, pathmod=os.path) -> bool:
+    """`real` 在 `root` 之内（两者都已 realpath）：等于它，或以 `root + sep` 开头——与 `projectenv.contained_path`
+    同一形状（先 realpath 再按前缀判、`+ sep` 防 `/a/proj-evil`），只是这里两边都已经是 realpath。
+
+    不用 `os.path.commonpath`：Windows 上两条路径不在同一个盘（临时目录在 C:、checkout 在 D:）它抛 ValueError，
+    调用方一 `except … continue` 就把一个本来该记的模块吞掉了（#498 第四轮：`local_modules` 在 Windows 上恒空）。
+    比较前 `normcase`：Windows 大小写不敏感，`realpath` 对存在的路径已给出规范大小写，对短名（`RUNNER~1`）也已展开。
+    """
+    real_n, root_n = pathmod.normcase(real), pathmod.normcase(root.rstrip(pathmod.sep) or root)
+    return real_n == root_n or real_n.startswith(root_n + pathmod.sep)
+
+
+class InputObserver:
+    """记下脚本执行期间经 `builtins.open` / `io.open` / `Path.open` **以只读模式成功打开**的、落在项目根之内的
+    文件（ExecutionReceipt 的「已观察的数据身份」，ADR 0070）。
+
+    观察到的就是观察到的：h5py / netCDF / 自家 C 扩展直接调 `H5Fopen` / `fopen`，`np.memmap` 走 `os.open`，
+    `urllib` 走 socket——这些一条都进不来，所以 `observation` **永远是 `partial`**，`unobserved` 列出没看的通道；
+    回执据此不冒充「全部输入已核」。记的是**真正打开的那条路径**（相对路径只读回退换到脚本目录之后的那份），
+    去重、有界（`INPUT_OBSERVER_MAX_FILES`）。只记不改：所有调用原样交给真正的 `open`，观察器自己出错也不
+    影响脚本（记账失败就少一条，不抛）。
+
+    与 `install_relative_read_fallback()` 的叠法：观察器**先装**（贴着真正的 open），回退**后装**（在外层）——
+    回退换出来的路径经内层的观察器记下，正是脚本实际读到的那份。
+    """
+
+    def __init__(self, project_root: str) -> None:
+        self.project_root = os.path.abspath(project_root)
+        self._seen: dict[str, str] = {}  # realpath → 项目相对 POSIX 路径
+        self.truncated = False
+        self._uninstall = None
+
+    # ---- 记账 ----
+    def _note(self, file) -> None:
+        try:
+            if not isinstance(file, (str, os.PathLike)):
+                return
+            name = os.fspath(file)
+            if not isinstance(name, str) or not name:
+                return
+            real = os.path.realpath(name)
+            if real in self._seen:
+                return
+            root = os.path.realpath(self.project_root)
+            if not _within(real, root):
+                return
+            if not os.path.isfile(real):
+                return
+            if len(self._seen) >= INPUT_OBSERVER_MAX_FILES:
+                self.truncated = True
+                return
+            self._seen[real] = pathlib.PurePath(os.path.relpath(real, root)).as_posix()
+        except Exception:  # noqa: BLE001 —— 观察器绝不影响脚本
+            return
+
+    def install(self):
+        """装上三处 open 的观察包装；返回卸载函数。"""
+        real_open = builtins.open
+        real_io_open = io.open
+        real_path_open = pathlib.Path.open
+        observer = self
+
+        def _wrap(original):
+            def observed_open(file, mode="r", *args, **kwargs):
+                fh = original(file, mode, *args, **kwargs)
+                if _readonly_mode(mode):
+                    observer._note(file)
+                return fh
+
+            return observed_open
+
+        def observed_path_open(self_path, mode="r", *args, **kwargs):
+            fh = real_path_open(self_path, mode, *args, **kwargs)
+            if _readonly_mode(mode):
+                observer._note(self_path)
+            return fh
+
+        builtins.open = _wrap(real_open)
+        io.open = _wrap(real_io_open)
+        pathlib.Path.open = observed_path_open
+
+        def uninstall() -> None:
+            builtins.open = real_open
+            io.open = real_io_open
+            pathlib.Path.open = real_path_open
+
+        self._uninstall = uninstall
+        return uninstall
+
+    def uninstall(self) -> None:
+        if self._uninstall is not None:
+            self._uninstall()
+            self._uninstall = None
+
+    # ---- 报告 ----
+    def report(self, *, local_modules: list[dict] | None = None) -> dict:
+        """回执的 `inputs` 段：观察到的文件（相对路径 + 大小 + sha256）、本地模块、观察的完备性。"""
+        files = []
+        for real, rel in sorted(self._seen.items(), key=lambda kv: kv[1]):
+            # 源码文件不是数据：脚本本身是 `source_revision`，import 到的模块在 `local_modules`——
+            # 同一份事实不记两遍
+            if rel.rsplit(".", 1)[-1].lower() in CODE_SUFFIXES:
+                continue
+            entry: dict = {"path": rel, "size": None, "sha256": None}
+            try:
+                size = os.path.getsize(real)
+                entry["size"] = size
+                if size <= INPUT_OBSERVER_HASH_LIMIT:
+                    entry["sha256"] = hash_file(real)[0]
+            except OSError:
+                pass
+            files.append(entry)
+        return {
+            "observation": OBSERVATION_PARTIAL,
+            "channels": ["python_open"],
+            "unobserved": list(INPUT_OBSERVER_UNOBSERVED),
+            "truncated": bool(self.truncated),
+            "files": files,
+            "local_modules": list(local_modules or []),
+        }
+
+
+def _readonly_mode(mode) -> bool:
+    if not isinstance(mode, str):
+        return False
+    return "r" in mode and not any(c in mode for c in "+wxa")
+
+
+def observed_local_modules(
+    project_root: str, modules: dict, *, exclude_dir: str = ""
+) -> list[dict]:
+    """脚本跑完之后 `sys.modules` 里 `__file__` 落在项目根之内的模块（回执的「已观察的本地模块」）。
+    `exclude_dir` 是引擎自己平铺 import 的目录（worker 把 engine 目录放进了 sys.path，那些不是用户的）。
+    按名字排好序、有界（与文件同一个上限）。"""
+    root = os.path.realpath(os.path.abspath(project_root))
+    excl = os.path.realpath(exclude_dir) if exclude_dir else ""
+    out: list[dict] = []
+    for name in sorted(modules):
+        mod = modules.get(name)
+        file = getattr(mod, "__file__", None)
+        if not isinstance(file, str) or not file:
+            continue
+        try:
+            real = os.path.realpath(file)
+        except (ValueError, OSError):
+            continue
+        if not _within(real, root):
+            continue
+        # 引擎自己平铺 import 的那些不是用户的；不在同一个盘也只是 False、不抛
+        if excl and _within(real, excl):
+            continue
+        entry: dict = {
+            "name": name,
+            "path": pathlib.PurePath(os.path.relpath(real, root)).as_posix(),
+        }
+        try:
+            entry["sha256"] = hash_file(real)[0]
+        except OSError:
+            entry["sha256"] = None
+        out.append(entry)
+        if len(out) >= INPUT_OBSERVER_MAX_FILES:
+            break
+    return out
 
 
 def install_relative_read_fallback(
