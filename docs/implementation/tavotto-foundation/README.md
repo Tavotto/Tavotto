@@ -52,13 +52,6 @@ U04 已于 2026-09-21 执行（`implementation_status: done`——三个叠栈 P
 （目标 = 项目自带 venv 变体），FO18 / FO05 `observing`（nightly，联网）。交接见
 [`handoffs/U04_dependencies.md`](handoffs/U04_dependencies.md)。
 
-U07 进行中（2026-09-21 起，`implementation_status: in_progress`，产品资格仍 `not_run`，**不切默认**）：第一切片 =
-合成（ADR 0065）——外来页作 Form XObject 整页矢量导入（页盒 / `/Rotate` / `/UserUnit` 由 qpdf 折进 /Matrix、恰好一次），
-crop / 翻转 / 旋转的顺序合同只在 `rendercore/placement.py`，面板 opacity 是透明组、镜像是负缩放（不再退位图），位图经
-`rasterio`（Pillow，正式依赖）成 straight-alpha 的 `RasterBuffer` 写成 Image XObject + /SMask；pikepdf 正式裁决。
-第二切片（render child 收编 / RasterBuffer 栅格 / PNG-TIFF 同源 / 预览缓存 / spike 退役）见 ADR 0066。交接见
-[`handoffs/U07_compose_raster.md`](handoffs/U07_compose_raster.md)。
-
 U07 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）：合成（ADR 0065）——外来页作
 Form XObject 整页矢量导入（页盒 / `/Rotate` / `/UserUnit` 由 qpdf 折进 /Matrix、恰好一次），crop / 翻转 / 旋转的顺序合同只在
 `rendercore/placement.py`，面板 opacity 是透明组、镜像是负缩放（不再退位图），位图经 `rasterio`（Pillow，正式依赖）成
