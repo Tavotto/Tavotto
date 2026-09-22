@@ -287,29 +287,40 @@ def test_the_windows_standin_sees_the_hosts_site_packages_like_the_posix_one(tmp
     )
     vpy = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     sites = _site_packages_of(str(vpy))
-    # 「系统 site」= 这个 venv 的 base_prefix 那一层（宿主自己是 venv 时是它的 base，不是它）：问 venv 自己要
-    base_purelib = subprocess.run(
-        [
-            str(vpy),
-            "-c",
-            "import sys, sysconfig; print(sysconfig.get_path('purelib', vars={'base': sys.base_prefix, "
-            "'platbase': sys.base_exec_prefix}))",
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-        timeout=120,
-    ).stdout.strip()
-    assert Path(base_purelib).is_dir()
-    assert any(os.path.samefile(s, base_purelib) for s in sites), (sites, base_purelib)
-    # 反面：不带 --system-site-packages 的 venv 看不见它
+    # 「系统 site」= 这个 venv 的 base_prefix 那一层（宿主自己是 venv 时是它的 base，不是它）。
+    # **问 base 解释器自己要 `site.getsitepackages()`**，不能拿 sysconfig 的 purelib 猜：Debian / Ubuntu
+    # 的系统 Python 把包放在 `dist-packages`，sysconfig 算出来的 `…/site-packages` 根本不存在
+    # （lab 的 Ubuntu 24.04 系统 3.12 上这条就是这样红的，hosted CI 的 hostedtoolcache Python 看不见）。
+    # 只留真实存在的目录——与 `_site_packages_of` 同一口径，量的才是同一个东西。
+    base_sites = json.loads(
+        subprocess.run(
+            [
+                str(vpy),
+                "-c",
+                "import json, os, site, subprocess, sys\n"
+                "base = getattr(sys, '_base_executable', None) or sys.executable\n"
+                "code = 'import json, os, site; print(json.dumps([d for d in site.getsitepackages() if os.path.isdir(d)]))'\n"
+                "print(subprocess.run([base, '-c', code], capture_output=True, text=True, check=True).stdout)",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+            timeout=120,
+        ).stdout.strip()
+    )
+    assert base_sites, "夹具前提不成立：base 解释器没有一个真实存在的 site 目录"
+    missing = [b for b in base_sites if not any(os.path.samefile(s, b) for s in sites)]
+    assert not missing, (sites, base_sites, missing)
+    # 反面：不带 --system-site-packages 的 venv 看不见它们
     plain = tmp_path / "plain-venv"
     subprocess.run(
         [sys.executable, "-m", "venv", "--without-pip", str(plain)], check=True, timeout=300
     )
     ppy = plain / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    assert not any(os.path.samefile(s, base_purelib) for s in _site_packages_of(str(ppy)))
+    plain_sites = _site_packages_of(str(ppy))
+    leaked = [b for b in base_sites if any(os.path.samefile(s, b) for s in plain_sites)]
+    assert not leaked, (plain_sites, base_sites, leaked)
 
 
 # ================================================================ 正例：状态机
