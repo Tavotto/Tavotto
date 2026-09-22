@@ -297,6 +297,7 @@ def test_the_windows_standin_sees_the_hosts_site_packages_like_the_posix_one(tmp
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
         timeout=120,
     ).stdout.strip()
