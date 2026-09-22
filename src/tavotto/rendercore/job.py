@@ -29,7 +29,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..engine import exportjob, exportreq
-from . import BACKEND_NAME, ir, pdfwriter, plan, raster
+from . import BACKEND_NAME, identity, ir, pdfwriter, plan, raster
 from .hbshaper import HbFaceProvider
 from .renderhost import RenderChildError, RenderHost
 from .sources import SourceError, SourceResolver, read_frozen
@@ -51,6 +51,7 @@ def produce(
 ) -> list[exportjob.Produced]:
     req = job.request
     job.check_cancelled()
+    job.trace.mark("compile")
     try:
         rp = plan.compile_plan(req, sources=sources, faces=provider)
     except plan.PlanError as exc:
@@ -108,6 +109,9 @@ def produce(
     width_mm, height_mm = round(req.canvas.page_w_mm, 3), round(req.canvas.page_h_mm, 3)
     produced: list[exportjob.Produced] = []
     plan_half = plan_facts(rp)
+    fonts_version = identity.fonts_policy_version()
+    # 矢量输出的 render 身份：语义 + 后端 build + 字体政策；没有栅格器、没有像素参数（那是事实）
+    vector_render_identity = identity.render_identity(rp.plan_identity, fonts_version=fonts_version)
 
     def failed(fmt: str, error: str, **params) -> None:
         produced.append(
@@ -120,6 +124,7 @@ def produce(
 
     # ---- Canonical PDF：一定写（PNG / TIFF 从它出），要了才交付 -------------------------
     job.check_cancelled()
+    job.trace.mark("compose", sources=len(rp.sources))
     pdf_tmp = tmp_dir / "out.pdf"
     pdf_facts = None
     pdf_error: pdfwriter.WriterError | None = None
@@ -129,6 +134,7 @@ def produce(
             pdf_facts = pdfwriter.write_pdf(rp.page, pdf_tmp, provider, files)
         except pdfwriter.WriterError as exc:
             pdf_error = exc
+            job.trace.fail("compose", getattr(exc, "code", "") or "writer_error")
 
     # ---- 栅格：要了 PNG / TIFF 就把 Canonical PDF 交给 render child 栅格一次 --------------
     wants_raster = any(f in exportreq.RASTER_FORMATS for f in req.formats)
@@ -137,6 +143,7 @@ def produce(
     raster_facts: dict = {}
     if wants_raster and pdf_facts is not None and not _raster_gaps(rp):
         job.check_cancelled()
+        job.trace.mark("raster")
         dpi = req.ppi or exportreq.PPI_DEFAULT
         # 计划里的期望像素**独立于渲染器**：按页面尺寸 × dpi 算（与 child 同一 round() 约定），
         # 不抄 child 回来的 buf.width / buf.height——两边同源的话，child 尺寸算错了检查器也会
@@ -159,8 +166,18 @@ def produce(
                 "channels": buf.channels,
                 "dpi": buf.dpi,
             }
+            raster_render_identity = identity.render_identity(
+                rp.plan_identity,
+                renderer="pdfium",
+                renderer_version=_renderer_version(h),
+                fonts_version=fonts_version,
+                px=planned_px,  # 与计划半张同一对数（独立于 child 的输出；Codex #476 第二轮）
+                ppi=float(dpi),
+                transparent=rp.page.background is None,
+            )
         except RenderChildError as exc:
             raster_error = exc
+            job.trace.fail("raster", getattr(exc, "code", "") or "render_child_error")
 
     for fmt in req.formats:
         job.check_cancelled()
@@ -182,7 +199,14 @@ def produce(
                             "plan_identity": rp.plan_identity,
                             "sha256": pdf_facts.sha256,
                         },
-                        manifest={"plan": {**plan_half, "vector": True, "px": None}},
+                        manifest={
+                            "plan": {
+                                **plan_half,
+                                "vector": True,
+                                "px": None,
+                                "render_identity": vector_render_identity,
+                            }
+                        },
                     )
                 )
             continue
@@ -223,6 +247,7 @@ def produce(
                                 "vector": False,
                                 "px": planned_px,
                                 "ppi": float(dpi),
+                                "render_identity": raster_render_identity,
                             }
                         },
                     )
@@ -246,24 +271,89 @@ def produce(
     return produced
 
 
+#: 节点表的上限（RC-080）：超过就截断并如实记 `nodes_truncated`——manifest 有界，不是整棵 IR 的转储。
+NODES_LIMIT = 512
+
+
 def plan_facts(rp: plan.RenderPlan) -> dict:
     """ArtifactManifest 的**计划**半张（04 §2：plan / observed / policy 分开）：生产者说它写了什么。
     `text` 是每个 ShapedText 行的用户原文（合成上下标取 ActualText），检查器拿它与抽回来的文字层比；
     `object_boxes` 是画布对象在页面空间的保守包围盒（裁切只对它们判）；`sources` / `execution_receipts`
-    是源产物与回执的公开身份（不含路径）。"""
+    是源产物与回执的公开身份（不含路径）。
+
+    U09（ADR 0070 / 0071）再加两段：`receipts`（执行侧源随附的回执公开事实——解释器版本 / 关键包 / 数据绑定
+    核对 / 观察完备性，`receipt.public_facts()`）与 `nodes`（RC-079：画布对象 id → 节点种类 → 来源关系，
+    id 是画布对象自己的、跨插入 / 重排稳定的语义 id，**不是** PDF object number；外来页只记「来自哪份源」，
+    内部 `unknown`，不编造语义；有界 `NODES_LIMIT`）。
+    """
     page = rp.page
     lines: list[str] = []
     boxes: list[dict] = []
+    # 节点表：一个**画布对象实例**一条。同一个对象编译成组 + 叶子（连续出现在 DFS 里），组开一条、叶子把种类
+    # 补进去；同一个 id 再来一个组就是第二个实例（画布上放了两份同一张图），节点 id = 对象 id + 实例序号
+    # （`p1.pdf`、`p1.pdf#2`）——序号只数同名对象，中间插别的对象不影响（RC-079）
+    nodes: dict[str, dict] = {}
+    instances: dict[str, int] = {}
+    current: dict[str, str] = {}
+    truncated = False
+    res_to_source = {
+        key: fs.artifact.source_id for key, fs in rp.sources.items()
+    }  # resource key → source_id
+
+    def _open_instance(oid: str) -> str | None:
+        nonlocal truncated
+        n = instances.get(oid, 0) + 1
+        instances[oid] = n
+        key = oid if n == 1 else f"{oid}#{n}"
+        current[oid] = key
+        if len(nodes) >= NODES_LIMIT:
+            truncated = True
+            return None
+        nodes[key] = {"id": oid, "node": key, "instance": n, "kind": "group"}
+        return key
+
     for node, _path in ir.walk(page):
+        oid = str(getattr(node, "object_id", "") or "")
         if isinstance(node, ir.ShapedText):
             text = "".join(
                 r.actual_text if r.actual_text is not None else r.cluster_text for r in node.runs
             )
             if text.strip():
                 lines.append(text)
+            leaf = {"kind": "text"}
         elif isinstance(node, (ir.ImportedPage, ir.Image)):
             x, y, w, h = node.rect
-            boxes.append({"id": node.object_id, "bbox": [x, y, x + w, y + h]})
+            boxes.append({"id": oid, "bbox": [x, y, x + w, y + h]})
+            fs = rp.sources.get(node.resource)
+            leaf = {
+                "kind": "imported_page" if isinstance(node, ir.ImportedPage) else "image",
+                "source_id": res_to_source.get(node.resource),
+                "origin": fs.artifact.origin if fs is not None else None,
+                "receipt_identity": fs.artifact.receipt_identity if fs is not None else None,
+                # 外来页内部是什么，IR 不知道也不假装知道（RC-013）
+                "internal": node.internal if isinstance(node, ir.ImportedPage) else None,
+            }
+        elif isinstance(node, ir.Group):
+            if oid:
+                _open_instance(oid)
+            continue
+        elif isinstance(node, ir.Path):
+            leaf = {"kind": "path"}
+        else:
+            leaf = {"kind": type(node).__name__.lower()}
+        if not oid:
+            continue  # 没有画布对象 id 的内部节点（面板的子路径等）不进节点表
+        key = current.get(oid)
+        placed = leaf["kind"] in ("imported_page", "image")
+        entry = nodes.get(key) if key is not None else None
+        if key is None or (placed and entry is not None and entry["kind"] == leaf["kind"]):
+            # 没有组的裸叶子自己就是一个实例；同一个 id 的第二次**放置**（面板节点不套组）是第二个实例
+            key = _open_instance(oid)
+            entry = nodes.get(key) if key is not None else None
+        if entry is None:
+            continue  # 超限：这一实例没登记，`nodes_truncated` 已置上
+        if entry["kind"] in ("group", "path") and leaf["kind"] not in ("group", "path"):
+            entry.update(leaf)  # 叶子的种类更具体，换掉占位的组 / 路径
     sources = [
         {
             "source_id": fs.artifact.source_id,
@@ -275,6 +365,7 @@ def plan_facts(rp: plan.RenderPlan) -> dict:
         }
         for fs in rp.sources.values()
     ]
+    receipts = [dict(fs.receipt) for fs in rp.sources.values() if isinstance(fs.receipt, dict)]
     return {
         "backend": BACKEND_NAME,
         "plan_identity": rp.plan_identity,
@@ -285,6 +376,9 @@ def plan_facts(rp: plan.RenderPlan) -> dict:
         "execution_receipts": sorted(
             {s["receipt_identity"] for s in sources if s.get("receipt_identity")}
         ),
+        "receipts": receipts,
+        "nodes": list(nodes.values()),
+        "nodes_truncated": truncated,
     }
 
 
@@ -294,6 +388,15 @@ def _raster_gaps(rp: plan.RenderPlan) -> list[dict]:
 
 def _gap_text(gaps: list[dict]) -> str:
     return "; ".join(f"{g['operation']}: {g['reason']}" for g in gaps)
+
+
+def _renderer_version(host: RenderHost) -> str | None:
+    """child 自报的 PDFium 版本（render 身份的一维）；问不到就是 None——不知道就写 None，不猜。"""
+    try:
+        version = host.ping().get("pdfium")
+    except Exception:  # noqa: BLE001 —— 身份里少一维，不是导出失败
+        return None
+    return str(version) if version else None
 
 
 def _shared_host() -> RenderHost:

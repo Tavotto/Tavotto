@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -308,3 +309,94 @@ def evidence(script_path: str | os.PathLike, project_root: str | os.PathLike) ->
         "verdict": verdict,
         "conflicts": conflicts,
     }
+
+
+# ---------------------------------------------------------------- 数据绑定修订（U09，ADR 0070）
+
+BINDING_VERSION = 1
+
+
+def _sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def binding_for(script_path: str | os.PathLike, project_root: str | os.PathLike, mode: str) -> dict:
+    """预检那一刻的**数据绑定**：按已决定 / 默认的 cwd 档，脚本里那些相对路径字面量各自会读到哪一份文件，
+    内容是什么（sha256）。回执把它与执行时观察到的输入逐条对（`receipt.ExecutionReceipt.binding_check`），
+    准备接口在起会话之前再算一次——不同就是「预检之后数据变了」，旧计划作废（FO30）。
+
+    `mode` 是 `execspec.CWD_MODES` 之一：`sandbox` / `project` 的相对读落在**脚本目录**（沙盒默认的只读回退
+    也是回到那里），`project_root` 落在项目根。`expected` 的键是**相对项目根**的 POSIX 路径（与观察器记的
+    同一坐标），值是 sha256；找不到 / 项目外的字面量不进 `expected`（列在 `missing` / `outside`，如实）。
+    `revision` = 上面这些的规范化摘要（换一个字节就换一个修订）。**只读、不猜、不搜索**（与 `evidence()` 同一
+    条纪律）。
+    """
+    root = Path(project_root)
+    real = projectenv.contained_path(root, script_path)
+    empty = {
+        "binding_version": BINDING_VERSION,
+        "mode": mode,
+        "base": None,
+        "expected": {},
+        "missing": [],
+        "outside": [],
+        "revision": "",
+    }
+    if real is None:
+        return {**empty, "revision": _binding_revision(empty)}
+    script = Path(real)
+    try:
+        source = script.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        source = ""
+    lits = relative_path_literals(source)
+    base_name = CANDIDATE_PROJECT_ROOT if mode == "project_root" else CANDIDATE_SCRIPT_PARENT
+    base = root if base_name == CANDIDATE_PROJECT_ROOT else script.parent
+    expected: dict[str, str] = {}
+    missing: list[str] = []
+    outside: list[str] = []
+    try:
+        real_root = root.resolve(strict=False)
+    except OSError:
+        real_root = root
+    for lit in lits["reads"]:
+        hit = _lookup(base, lit, root)
+        if hit is None:
+            missing.append(lit)
+            continue
+        if hit.get("outside"):
+            outside.append(lit)
+            continue
+        cand = Path(hit["path"])
+        try:
+            rel = PurePosixPath(cand.resolve(strict=False).relative_to(real_root).as_posix())
+            expected[str(rel)] = _sha256_of(cand)
+        except (OSError, ValueError):
+            missing.append(lit)
+    out = {
+        "binding_version": BINDING_VERSION,
+        "mode": mode,
+        "base": base_name,
+        "expected": dict(sorted(expected.items())),
+        "missing": sorted(missing),
+        "outside": sorted(outside),
+    }
+    out["revision"] = _binding_revision(out)
+    return out
+
+
+def _binding_revision(binding: dict) -> str:
+    payload = {
+        "binding_version": binding.get("binding_version"),
+        "mode": binding.get("mode"),
+        "base": binding.get("base"),
+        "expected": sorted((binding.get("expected") or {}).items()),
+        "missing": sorted(binding.get("missing") or []),
+        "outside": sorted(binding.get("outside") or []),
+    }
+    canon = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canon.encode("utf-8")).hexdigest()

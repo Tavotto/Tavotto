@@ -1355,6 +1355,12 @@ class EngineWorker:
     def alive(self) -> bool:
         return not self._dead and self.proc.poll() is None
 
+    @property
+    def child_pid(self) -> int | None:
+        """自己起的那个 worker 进程的 pid（回执核「自报来自这一条会话」用，ADR 0070）。"""
+        pid = getattr(getattr(self, "proc", None), "pid", None)
+        return int(pid) if isinstance(pid, int) and pid > 0 else None
+
     def _touch(self) -> None:
         """把「最后使用时间」落到缓存根目录的 mtime 上（节流 _TOUCH_INTERVAL）。
 
@@ -1958,6 +1964,7 @@ class WorkerdWorker:
         self.built = False
         self.last_build_descriptors: list = []
         self.last_build_runtime: dict | None = None
+        self.child_pid: int | None = None
         self.last_used = time.time()
         self._dead = False
         self._client = client or workerd_client.client()
@@ -2036,6 +2043,10 @@ class WorkerdWorker:
                     LOG.debug("open 失败后清理会话 %s 也没成功", exc.session_id)
             raise self._to_worker_error(exc) from exc
         self._session_id = resp.get("session_id", "")
+        # workerd 起的那个 Python 子进程的 pid（回执核「自报来自这一条会话」用，ADR 0070）；
+        # 老 workerd 不报就是 None——那一维核不了，如实不核
+        pid = resp.get("pid")
+        self.child_pid = int(pid) if isinstance(pid, int) and pid > 0 else None
         self.built = False
         self.last_build_descriptors = []
 

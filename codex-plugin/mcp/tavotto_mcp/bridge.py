@@ -1717,6 +1717,24 @@ def export(
                     )
                     continue
             raster = fmt in engine_exportreq.RASTER_FORMATS and size_mm[0] and size_mm[1]
+            # 来源与四身份（U09，ADR 0070）：这条路是 worker 直接序列化、没有 RenderPlan，回执 / 源产物 /
+            # 语义与 render 身份由 `artifactinspect.execution_provenance` 按与 HTTP 候选路同一份算法补进
+            # 计划半张；算不出来（老 worker）就没有这一段，manifest 的身份如实是 None
+            try:
+                provenance = engine_artifactinspect.execution_provenance(
+                    job,
+                    worker,
+                    script=session.script,
+                    source_id=engine_figcapture.runtime_asset_id(session.script, session.stem),
+                    patch_hash=session.patch_hash(),
+                    tmp_path=tmp,
+                    kind=fmt,
+                )
+            except Exception as exc:  # noqa: BLE001 —— 来源段算不出不影响导出本身，但要说出口
+                provenance = None
+                note = f"{fmt}: 来源 / 回执段装配失败（{type(exc).__name__}），产物身份未核验"
+                if note not in job.warnings:
+                    job.warnings.append(note)
             produced.append(
                 engine_exportjob.Produced(
                     format=fmt,
@@ -1729,6 +1747,7 @@ def export(
                     height_px=int(round(size_mm[1] / 25.4 * dpi)) if raster else None,
                     # PDF/SVG/EPS 是 matplotlib 直接序列化的真矢量；PNG/TIFF 才吃 dpi
                     vector=fmt in engine_exportreq.VECTOR_FORMATS,
+                    manifest={"provenance": provenance} if provenance else None,
                 )
             )
         return produced

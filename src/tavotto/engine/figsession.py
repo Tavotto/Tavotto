@@ -55,7 +55,15 @@ import overrides as overrides_mod
 import preview_hybrid
 import previewbudget
 
-__all__ = ["LiveFigureSession", "WrongThread", "ms_since", "runtime_report", "RECEIPT_PACKAGES"]
+__all__ = [
+    "LiveFigureSession",
+    "WrongThread",
+    "ms_since",
+    "runtime_report",
+    "RECEIPT_PACKAGES",
+    "REPORT_ORIGIN_BUILD",
+    "REPORT_ORIGINS",
+]
 
 #: ExecutionReceipt 里「关键包版本」问哪几个 distribution（ADR 0053）。**闭集**：
 #: 回执是给身份用的，不是环境普查——普查有 `runtime.probe_packages`。顺序即
@@ -67,7 +75,13 @@ RECEIPT_PACKAGES = ("matplotlib", "numpy", "pandas", "scipy", "pillow", "seaborn
 RUNTIME_REPORT_VERSION = 1
 
 
-def runtime_report() -> dict:
+#: 自报的来源（U09，ADR 0070）：`build` = 跑完用户脚本的那个 worker 进程在 build 响应里报的；别的来源
+#: （体检 / 探针 / 控制面自己拼的）都不是「这次执行」的事实，`receipt.from_worker` 不收。
+REPORT_ORIGIN_BUILD = "build"
+REPORT_ORIGINS = (REPORT_ORIGIN_BUILD,)
+
+
+def runtime_report(*, origin: str = REPORT_ORIGIN_BUILD, inputs: dict | None = None) -> dict:
     """执行侧**自报**的运行时事实（ExecutionReceipt 的 worker 半边，ADR 0053）。
 
     每个字段都是**这个进程此刻**量到的：`sys.executable` / `sys.prefix` /
@@ -76,7 +90,13 @@ def runtime_report() -> dict:
     （不是 spec 里打算给它的那个）；`packages` 只问 `RECEIPT_PACKAGES`，用
     `importlib.metadata` 读 distribution 版本（不 import 它们——回执不该改变
     进程里装了什么）。**全部是加字段，协议不升版**（ADR 0003 §1）。
+
+    U09（ADR 0070）再加三样：`report_origin`（这份事实从哪来）、`pid`（哪个进程量的——父进程拿它与自己
+    起的那个子进程对，体检 / 探针的结果冒充不了 build 回执）、`inputs`（`figcapture.InputObserver.report()`：
+    已观察的数据文件与本地模块，`observation=partial` 如实写着没看到的通道）。
     """
+    if origin not in REPORT_ORIGINS:
+        raise ValueError(f"report origin 非法: {origin!r}")
     packages: dict[str, str] = {}
     for name in RECEIPT_PACKAGES:
         try:
@@ -99,6 +119,12 @@ def runtime_report() -> dict:
         "cwd": cwd,
         "argv0": sys.argv[0] if sys.argv else "",
         "packages": packages,
+        "report_origin": origin,
+        "pid": os.getpid(),
+        # Windows 上 venv 的 python.exe 是个 launcher：控制面起的是它，真正跑脚本的解释器是它的子进程——
+        # 控制面核 pid 时两个都要看（receipt.accept_runtime）
+        "ppid": os.getppid(),
+        "inputs": dict(inputs) if isinstance(inputs, dict) else None,
     }
 
 

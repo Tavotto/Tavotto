@@ -21,6 +21,7 @@ import csv
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import shutil
@@ -43,6 +44,7 @@ FIXTURES = (
     "shadowed_engine_modules",  # U03（FO19 / issue #447）
     "joint_dependencies",  # U04（FO18 / FO20 / FO21 / FO27 / FO31）
     "private_python",  # U05（FO24 / FO25 / FO26；FO23 的机制面）
+    "join_h5",  # U09（FO32：真实 h5py + 同名干扰 + 项目 Python ≠ 应用）
 )
 
 
@@ -508,3 +510,33 @@ def test_native_reference_runs_in_an_isolated_copy_and_leaves_the_fixture_untouc
                 sci_python
             )
     assert _snapshot(src) == before, "原生参考往夹具目录里写了东西"
+
+
+# --------------------------------------------------------------------------- ⑩ join_h5（U09 / FO32）
+def _h5_float64_dataset(path: Path) -> list[float]:
+    """不用 h5py 读一个只含一个 float64 数据集的小 HDF5：认 superblock 签名，然后在文件里找连续
+    的 float64 段——`make_h5.py` 写的是 contiguous 布局，三个 8 字节小端 float 紧挨着放。判据刻意窄：
+    这不是 HDF5 读取器，是「文件里确实是这些数」的独立第二把尺子（真值 vs 干扰只差数值）。"""
+    data = path.read_bytes()
+    assert data[:8] == b"\x89HDF\r\n\x1a\n", "不是 HDF5 文件"
+    n = 3
+    for i in range(0, len(data) - 8 * n + 1, 8):
+        vals = struct.unpack("<" + "d" * n, data[i : i + 8 * n])
+        if all(math.isfinite(v) and v == int(v) and 0 < v < 10_000 for v in vals):
+            return list(vals)
+    raise AssertionError("没找到连续的 float64 数据段")
+
+
+def test_join_h5_truth_and_decoy_are_distinguishable_only_by_value():
+    t = _truth("join_h5")
+    truth = _h5_float64_dataset(ROOT / "join_h5" / t["correct"]["file"])
+    decoy = _h5_float64_dataset(ROOT / "join_h5" / t["decoy"]["file"])
+    assert truth == [float(v) for v in t["correct"]["x"]] == [2.0, 4.0, 8.0]
+    assert decoy == [float(v) for v in t["decoy"]["x"]] == [200.0, 400.0, 800.0]
+    assert [3 * x + 1 for x in truth] == t["correct"]["y"] == [7, 13, 25]
+    assert [3 * x + 1 for x in decoy] == t["decoy"]["y"] == [601, 1201, 2401]
+    # 同名：两处都叫 data/measure.h5（相对各自的基目录），脚本读的是相对路径
+    assert Path(t["correct"]["file"]).name == Path(t["decoy"]["file"]).name == "measure.h5"
+    src = (ROOT / "join_h5" / t["script"]).read_text(encoding="utf-8")
+    assert 'h5py.File("data/measure.h5", "r")' in src and "3 * x + 1" in src
+    assert t["reads_relative_to"] == "project_root" and t["project_python_must_differ_from_app"]

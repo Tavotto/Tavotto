@@ -224,3 +224,98 @@ def test_the_hand_built_fixtures_are_what_the_inspector_would_reject_if_damaged(
     assert inspector.observe_png(png)["px"] == [12, 8]
     png.write_bytes(artifactbytes.solid_png(12, 8, dpi=300)[:-4] + b"\0\0\0\0")
     assert inspector.observe_png(png)["integrity"] == "failed"
+
+
+# ---------------------------------------------------------------------------
+# U09（ADR 0070）：MCP 导出的 manifest 与 HTTP 候选路同一份四身份 / 来源 / 回执（真 worker）
+# ---------------------------------------------------------------------------
+def _worker_python():
+    try:
+        return bridge.engine_pool.find_worker_python()
+    except bridge.engine_pool.WorkerError:
+        return None
+
+
+REAL_SCRIPT = """\
+import csv
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
+def main():
+    with open("data.csv", encoding="utf-8", newline="") as fh:
+        xs = [float(r["x"]) for r in csv.DictReader(fh)]
+    fig, ax = plt.subplots(figsize=(80 / 25.4, 50 / 25.4))
+    ax.plot(xs, [3 * x + 1 for x in xs])
+    ax.set_title("mcp identity")
+    fig.savefig("Fig1.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+@pytest.mark.skipif(_worker_python() is None, reason="没有带科学栈的解释器，跳过真链路用例")
+def test_a_real_mcp_export_carries_identities_receipt_facts_and_the_data_binding(
+    tmp_path, monkeypatch
+):
+    """真 worker 的 MCP 导出：manifest.identity 四个字段都在（semantic / render 由 `execution_provenance`
+    算，artifact = 发布字节，run = 作业 id），provenance.receipts 是**这条会话**的回执公开事实（解释器版本 /
+    关键包 / 数据绑定核对 matched=True / 观察 partial），sources 是 origin=execution 的产物；公开投影里没有路径。
+    """
+    import subprocess
+
+    figures = tmp_path / "figures"
+    figures.mkdir()
+    (figures / "fig1.py").write_text(REAL_SCRIPT, encoding="utf-8")
+    (figures / "data.csv").write_text("x\n2\n4\n8\n", encoding="utf-8")
+    (figures / "tavotto_registry.json").write_text(
+        json.dumps({"scripts": {"fig1.py": {"entry": "main", "cost": "light", "stems": ["Fig1"]}}}),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [_worker_python(), str(figures / "fig1.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(figures),
+    )
+    assert proc.returncode == 0, proc.stderr
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(tmp_path))
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
+    try:
+        sid = bridge.open_figure(str(figures), stem="Fig1")["session_id"]
+        out_dir = tmp_path / "out"
+        res = bridge.export(
+            sid, formats=["pdf", "png"], dpi=150, out_dir=str(out_dir), explicit_confirm=True
+        )
+    finally:
+        bridge.shutdown_all()
+    assert res["status"] == "done", res
+    by_fmt = {f["format"]: f for f in res["files"]}
+    pdf, png = by_fmt["pdf"]["manifest"], by_fmt["png"]["manifest"]
+    for mani, path in ((pdf, by_fmt["pdf"]["path"]), (png, by_fmt["png"]["path"])):
+        ident = mani["identity"]
+        assert ident["semantic"] and ident["render"] and ident["run"]
+        assert ident["artifact"] == hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        prov = mani["provenance"]
+        assert prov["sources"][0]["origin"] == "execution"
+        assert prov["sources"][0]["receipt_identity"] == prov["execution_receipts"][0]
+        rcpt = prov["receipts"][0]
+        assert rcpt["completeness"] == "complete" and rcpt["runtime_rejected"] is None
+        assert rcpt["python_version"] and "matplotlib" in rcpt["packages"]
+        assert rcpt["observation"] == "partial"
+        assert rcpt["binding"]["matched"] is True and rcpt["binding"]["changed"] == 0
+        assert prov["nodes"][0]["kind"] == "figure"
+    # 两种格式同一次执行、同一份意图：semantic / run 相同，render 不同（PNG 多了 ppi）
+    assert pdf["identity"]["semantic"] == png["identity"]["semantic"]
+    assert pdf["identity"]["run"] == png["identity"]["run"]
+    assert pdf["identity"]["render"] != png["identity"]["render"]
+    assert "来源 / 回执段装配失败" not in " ".join(res.get("warnings") or [])
+    # 回执 / 来源段本身就不带路径（进 manifest 的是公开事实）：临时目录 / 项目目录 / 数据目录一个都没有
+    prov_text = json.dumps(pdf["provenance"], ensure_ascii=False)
+    assert str(tmp_path) not in prov_text and str(figures) not in prov_text

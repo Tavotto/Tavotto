@@ -1,6 +1,6 @@
 # U00 合成 fixture（统一实施包 · 基线）
 
-八组**全合成、小体积、进 git** 的项目夹具（前六组 U00 建，第七组 U03 加，第八组 U04 加），服务 `docs/implementation/tavotto-foundation/`
+十组**全合成、小体积、进 git** 的项目夹具（前六组 U00 建，第七组 U03 加，第八组 U04 加，第九组 U05 加，第十组 U09 加），服务 `docs/implementation/tavotto-foundation/`
 的 U01–U09（FirstOpenBench / RenderBench / 联合依赖）。每组自带 `truth.json`：输入真值
 **不用产品代码就能校验**（`tests/test_foundation_fixtures.py`）。这些夹具在 U00 只被
 「真值测试」与「原生参考隔离测试」消费；**没有一条产品用例挂在它们上**（首开链路的
@@ -17,6 +17,7 @@
 | `joint_dependencies/` | ⑧（U04）脚本开跑就要三个只存在于测试 wheelhouse 里的纯 Python 包（用例现造：`support.dependency_repair.build_wheel`）；`requirements.txt` 带 extra / 上界 / marker 为假，`requirements-train.txt` 是未选的组 | y = 42·x → [42, 84, 126]；装的 / 不装的各一张表 | 先把三个 wheel 装进一个 venv 再本目录 `python figure.py` → `figure.pdf` |
 | `private_python/` | ⑨（U05）干净机器：脚本要一个只存在于测试 wheelhouse 里的纯 Python 包，而这台机器没有任何可用的 Python（用例把发现链末端置空）——Tavotto 先按锁自备私有 Python，再建受管环境装它 | y = 42·x → [42, 84, 126]；标题 `u05 private python` | 把 wheel 装进一个 venv 再本目录 `python figure.py` → `figure.pdf` |
 | `shadowed_engine_modules/` | ⑦（U03）用户自己的 `manifest.py` / `overrides.py`（与引擎模块重名）+ 本地包 `lab_utils/`；脚本 `import manifest` 必须命中用户那份（issue #447 / FO19） | 标题 sentinel `user-manifest|user-overrides|user-lab_utils`；y = [3, 6, 12] | 本目录 `python figure.py` → `figure.pdf`，标题里三个 sentinel 齐全 |
+| `join_h5/` | ⑩（U09 / FO32）真实 h5py：`scripts/figure_h5.py` 站在项目根读 `data/measure.h5`（x = [2, 4, 8]，正确）；脚本目录另有同名 `scripts/data/measure.h5`（x = [200, 400, 800]，干扰）；h5py 经 C 库打开，Python `open` 看不见（回执 `partial`）；项目 `.venv` 由 `project_venv/make_venv.py` 现建，基础解释器 **≠ 应用**且已有 matplotlib + h5py（`--link-host-site`） | 正确 [7, 13, 25]；干扰 [601, 1201, 2401]；`make_h5.py` 重生成、字节确定 | 项目根 `python scripts/figure_h5.py --dump` 打 `7,13,25`；`cd scripts && python figure_h5.py --dump` 打 `601,1201,2401` |
 
 ## 纪律
 

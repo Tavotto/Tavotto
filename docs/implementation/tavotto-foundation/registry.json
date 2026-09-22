@@ -6257,12 +6257,21 @@
         "U11"
       ],
       "recommended_deep_lane": "integration_candidate",
-      "enrollment": "planned",
+      "enrollment": "enforced",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
       "merge_rule": "仅在显式激活到当次lane后阻断；目录中的未实现case不直接挂全局required。",
-      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。"
+      "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。",
+      "promotion": {
+        "capability": "预检后输入或环境改变：旧计划作废点名理由、热态明示旧快照不自动重算、明确重建后回执随新数据 / 新脚本修订",
+        "lane": "pr",
+        "test": "tests/test_foundation_join.py::test_fo30_data_changed_after_execution_is_an_explicit_snapshot_until_the_user_rebuilds",
+        "negative_evidence": "tests/test_preparation_api.py 的三条停止合同（起会话前数据变 → data_binding_changed 且 build 一次不调 / 解释器决策变 → environment_changed / spawn 与读取之间数据变 → executed=true 作废）；真实入口这条：同大小同 mtime 改数据后复用热会话 binding_check.matched=false + note 旧快照、render 仍是旧值、重建后 matched=true 且 public_identity 变、改脚本后 source_revision 随文件；变异 M05 / M07（起会话前不比绑定 / build 后不核绑定）红、M03（公开身份不含数据身份）红",
+        "budget": "本机约 14 s（真 `python -m tavotto` + 两次冷启动 worker）",
+        "target_scope": "源码树 + 旧后端（PyMuPDF）终点 + 应用 Python 3.13 + 项目 = 应用自己的解释器（single_file_csv 夹具，沙盒默认 + 只读回退，Python open 观察得到数据）；invariants job：ubuntu；本机：macOS arm64。registry 的 contractual 拆成 ①②③ safe_stop + ④ guided；h5py 这类原生读的数据观察不到（partial），那一维在 FO32 里如实为 None",
+        "approval": "U09 阶段（2026-09-21，ADR 0070 / 0071）：按 03_CI_POLICY §4 提升——实现 + 正例 + 负例 + 预算 + lane 齐；细节见 handoffs/U09_join.md"
+      }
     },
     {
       "id": "FO31",
@@ -6336,7 +6345,7 @@
         "U11"
       ],
       "recommended_deep_lane": "release",
-      "enrollment": "planned",
+      "enrollment": "observing",
       "execution_status": "not_run",
       "evidence": [],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",

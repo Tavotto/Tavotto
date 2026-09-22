@@ -44,13 +44,13 @@
     },
     {
       "path": "ALL_PROMPTS.md",
-      "bytes": 85388,
-      "sha256": "90f09fc202d494e41b7d29faccc1c31c67b5dc0523be0ac89bb32961e604824d"
+      "bytes": 86917,
+      "sha256": "00763f1508c5d8712348fdeaa2e6abce9e2dfc1b6b39137458ab4e93cbda18f3"
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 6657,
-      "sha256": "0ab061db74682cddbfd57fd6779acfea53c173d62d514f238eab4648a59fb8d2"
+      "bytes": 6839,
+      "sha256": "fa0c7ccee88411bd3ab1340ebc127319b02f6b709405bea416a987d5ba961957"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 13422,
-      "sha256": "a94b768b0495d5d158f6445f7791e6fd9ae912fa9c630154836445db85721640"
+      "bytes": 14951,
+      "sha256": "5dde132d847a376487004d765d25b505c3ee6c00576833fcbc9e786a7730e62b"
     },
     {
       "path": "SOURCES.md",
@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 68010,
-      "sha256": "42ba2a8072795042995927f7fe0bd097ad368e6c455f199882f39d95df7c072c"
+      "sha256": "841a4816e0e95baa22085b2734c358120322cd9b5ead0c3ee66eac1c28518648"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 37059,
-      "sha256": "b6d846d19e97de7caf42193bf938644b474fc539d3f77399770c1267553752ea"
+      "sha256": "673fac1f7f2d2620f6d16ee6d0e33bcb9d3c37943181db9df9501707d90023ac"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 31816,
-      "sha256": "8e897e15a152cd3b3fe337c8b6209c861fdde4ef0ce96d0d33587558bd64168c"
+      "bytes": 35626,
+      "sha256": "47435d2f6a600c9ec12d9197fb5cbb43abcd939445653de1332214ad95a56bbd"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -353,6 +353,31 @@
       "sha256": "4e5859f27cbd24fb1dc4a269759176235c3d99770935650ca823ab7fccade123"
     },
     {
+      "path": "evidence/u09/fo30-result-local-macos-arm64.json",
+      "bytes": 1793,
+      "sha256": "8f69e726159be6af00460ccf2847592e7d496e69937f485bb18ca9c4053ca078"
+    },
+    {
+      "path": "evidence/u09/fo32-result-local-macos-arm64-existing.json",
+      "bytes": 8578,
+      "sha256": "405adaeb22c0ed212bd3f97c9675e1ab3a9678687d99d8ef78ed21ec06c63705"
+    },
+    {
+      "path": "evidence/u09/fo32-result-local-macos-arm64-managed.json",
+      "bytes": 6621,
+      "sha256": "ec8097e5e8fb5cba25720dca8dfca44b2c4d099d65df7da0b54e9551a6b88737"
+    },
+    {
+      "path": "evidence/u09/foundation-harness-summary-local.md",
+      "bytes": 1556,
+      "sha256": "cd0e4c7164173977adfa236f863079623f815de842dd1e5c9c4bc131acd2d325"
+    },
+    {
+      "path": "evidence/u09/mutations.json",
+      "bytes": 3504,
+      "sha256": "b4fb256b6cbcbb5b0e500d732f96464a16def762dae79cea4c95aea2bd0195e7"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -369,8 +394,8 @@
     },
     {
       "path": "generated/FIRST_OPEN_SCHEDULE.md",
-      "bytes": 3927,
-      "sha256": "3c9b00f127e367870de9f7c9c20da257bec2f55a0f8a7f562ba8b80ce4f67989"
+      "bytes": 3930,
+      "sha256": "bbf6f4ef51a69a09dc081d84b28ebdad1327df3c04d7942340587302f519528d"
     },
     {
       "path": "generated/TRACEABILITY.md",
@@ -421,6 +446,11 @@
       "path": "handoffs/U08_facade_parity.md",
       "bytes": 34190,
       "sha256": "c88f29e8fe46ef4bb300307c6d40a46dbb9b4d07823d9247d4b1f99adcc7c1dc"
+    },
+    {
+      "path": "handoffs/U09_join.md",
+      "bytes": 35905,
+      "sha256": "d94d72324a2404d48a468b49c260b2b3503e43786ed0babcbeda4507832bfef3"
     },
     {
       "path": "phase_mapping.json",
@@ -489,13 +519,13 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7345,
-      "sha256": "3c5e32d142073334f460149a1825c4d0e0fa2870186afab3c9f6d1ab983a4e77"
+      "bytes": 7895,
+      "sha256": "2b914614b99b603afe8858266223819f7b19b17899141fbf89438e3bfa5546fd"
     },
     {
       "path": "registry.json",
-      "bytes": 286147,
-      "sha256": "c1c880998cdaa70dda2ce32cc3bb500c3a1f0ad5930cc08407f89edbeabb649c"
+      "bytes": 287825,
+      "sha256": "eef027b8c1d76bb3ce9ee9b20371b0951773c76c5c95332a320627128c894b06"
     },
     {
       "path": "sources_manifest.json",

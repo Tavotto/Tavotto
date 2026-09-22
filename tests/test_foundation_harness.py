@@ -58,29 +58,33 @@ def test_the_ledger_is_well_formed_and_agrees_with_the_registry():
 def test_the_enforced_set_is_exactly_what_u03_and_u04_promoted_and_each_points_at_a_real_test():
     """台账的 enforced 集合是工程事实（03 §3）：U01 的 U01-S1 + U03 提上来的六条首开场景
     （FO01 / FO02 / FO03 / FO07 / FO15 / FO19）+ U04 提上来的五条联合依赖场景（FO20 / FO21 /
-    FO22 / FO27 / FO31）+ U05 提上来的三条私有 Python 场景（FO24 / FO25 / FO26）；每条都指向真实存在的用例函数。多一条 / 少一条都要有人改这里——
+    FO22 / FO27 / FO31）+ U05 提上来的三条私有 Python 场景（FO24 / FO25 / FO26）+ U09 提上来的 FO30；每条都指向真实存在的用例函数。多一条 / 少一条都要有人改这里——
     enrollment 不是随手加的标签。"""
     ledger = fh.load_ledger()
     enforced = {
         c["case_id"]: c for c in ledger["cases"] if c["enrollment"] == fh.ENROLLMENT_ENFORCED
     }
-    assert set(enforced) == {
-        CASE_ID,
-        "FO01",
-        "FO02",
-        "FO03",
-        "FO07",
-        "FO15",
-        "FO19",
-        "FO20",
-        "FO21",
-        "FO22",
-        "FO27",
-        "FO31",
-        "FO24",  # U05 PR B：私有 Python 三条（进程内 HTTP 入口）
-        "FO25",
-        "FO26",
-    }
+    assert (
+        set(enforced)
+        == {
+            CASE_ID,
+            "FO01",
+            "FO02",
+            "FO03",
+            "FO07",
+            "FO15",
+            "FO19",
+            "FO20",
+            "FO21",
+            "FO22",
+            "FO27",
+            "FO31",
+            "FO30",  # U09：预检后输入 / 环境改变（合同拆开后经真实入口；三条停止合同在 test_preparation_api）
+            "FO24",  # U05 PR B：私有 Python 三条（进程内 HTTP 入口）
+            "FO25",
+            "FO26",
+        }
+    )
     file_part, func = enforced[CASE_ID]["test"].split("::", 1)
     assert Path(file_part).name == Path(__file__).name
     assert func in globals() and callable(globals()[func])
@@ -92,9 +96,10 @@ def test_the_enforced_set_is_exactly_what_u03_and_u04_promoted_and_each_points_a
     counts = {}
     for c in ledger["cases"]:
         counts[c["enrollment"]] = counts.get(c["enrollment"], 0) + 1
-    # 35 条：32 个 FO + U01-S1 + U07-R1 + U08-R1；U05：FO23 planned → observing（具名任务
-    # private-python-targets.yml，ADR 0064）、FO24 / FO25 / FO26 → enforced
-    assert counts == {"planned": 10, "observing": 9, "later": 1, "enforced": 15}
+    # 35 条：32 个 FO + U01-S1 + U07-R1 + U08-R1（两条 RenderBench 实例，observing）；U05：FO23 由 planned →
+    # observing（具名任务 private-python-targets.yml，ADR 0064），U05 PR B：FO24 / FO25 / FO26 → enforced；
+    # U09：FO30 → enforced（合同拆开后经真实入口），FO32 → observing（两个出口各挂一条具名任务，候选后端未切默认）
+    assert counts == {"planned": 8, "observing": 10, "later": 1, "enforced": 16}
     # safe_stop 的 case 也能 enforced，但台账预期必须写明是 safe_stop（校验器据此分开计数）
     assert enforced["FO15"]["expected_product_outcome"] == "safe_stop"
 

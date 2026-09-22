@@ -1,0 +1,267 @@
+{
+  "schema_version": 1,
+  "instance_id": "FO32@17e75c755bc76d9c",
+  "case_id": "FO32",
+  "binding": {
+    "source_sha": "e4bfed34fc81bee7770357ad924fbb2905cfb24e",
+    "artifact": {
+      "kind": "source_tree",
+      "identity": "e4bfed34fc81bee7770357ad924fbb2905cfb24e"
+    },
+    "platform": "darwin-arm64",
+    "app_python": "3.13.11",
+    "runtime_lock_sha256": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c",
+    "fixture": "tests/fixtures/foundation/join_h5",
+    "fixture_sha256": "60aa6bedf0706bc0c2f31abc041078cad6c9f021f163399d3e4c25f4048d8855",
+    "entry": "http",
+    "capability_version": "u04"
+  },
+  "product_outcome": "guided",
+  "test_verdict": "pass",
+  "observed": {
+    "backend": "rendercore",
+    "project_python": {
+      "version": "3.11.14",
+      "h5py": "3.16.0",
+      "matplotlib": "3.11.2"
+    },
+    "app_python": "3.13.11",
+    "receipt": {
+      "binding": {
+        "base": "project.root",
+        "binding_version": 1,
+        "expected": {
+          "data/measure.h5": "9a34fd8061d27f3e8fb27c87491f74607e6737651b3ce8e04474b6349eb47e4f"
+        },
+        "missing": [],
+        "mode": "project_root",
+        "outside": [],
+        "revision": "sha256:fe3e4ceb18713756a6f108116ededb8da7e26b48c44ac7065340b2d703d6ab40"
+      },
+      "binding_check": {
+        "changed": [],
+        "matched": null,
+        "observation": "partial",
+        "revision": "sha256:fe3e4ceb18713756a6f108116ededb8da7e26b48c44ac7065340b2d703d6ab40",
+        "same": [],
+        "unobserved": [
+          "data/measure.h5"
+        ]
+      },
+      "completeness": "complete",
+      "control_plane": "python_pool",
+      "descriptors": [
+        {
+          "asset_id": "runtime:scripts/figure_h5.py#figure_h5",
+          "can_writeback_artifact": true,
+          "can_writeback_source": false,
+          "capture_source": "savefig",
+          "entry": "__main__",
+          "execution_profile": "safe",
+          "original_artifact": "figure_h5.pdf",
+          "script": "scripts/figure_h5.py",
+          "size_mm": [
+            81.28,
+            60.96
+          ],
+          "source_fingerprint": "sha256:9c28bbc9e692c77d7e805128d1dc9922a1496c2fd1dfcde296acf40d78dbb0c9",
+          "stem": "figure_h5"
+        }
+      ],
+      "generation": 1,
+      "inputs": {
+        "channels": [
+          "python_open"
+        ],
+        "files": [],
+        "local_modules": [
+          {
+            "name": "_distutils_hack",
+            "path": ".venv/lib/python3.11/site-packages/_distutils_hack/__init__.py",
+            "sha256": "df81e6bcba34ee3e3952f776551fb669143b9490fdd6c4caeb32609f97e985b4"
+          }
+        ],
+        "observation": "partial",
+        "truncated": false,
+        "unobserved": [
+          "native_io",
+          "network",
+          "subprocess",
+          "os_open"
+        ]
+      },
+      "launch_context": {
+        "argv": [],
+        "cwd_mode": "project_root",
+        "cwd_origin": "project.root",
+        "entry": "__main__",
+        "grant": {
+          "cwd_write": {
+            "granted": true,
+            "granted_at": 1790004713.5989609,
+            "mode": "project_root"
+          },
+          "decided": true
+        },
+        "launch_context_version": 1,
+        "passthrough_savefig": false,
+        "profile": "safe",
+        "target": "scripts/figure_h5.py",
+        "target_kind": "script",
+        "write_mode": "project_dir"
+      },
+      "pid_check": "ok",
+      "profile": "safe",
+      "public_identity": "sha256:6f96da623e12d70d8bfc056f7db469795c2c6ee0cf1891ed0a307eb84882abd8",
+      "python_source": "project_venv",
+      "receipt_id": "sha256:4d091a402734fccdc09fee235651fb3c6d6729718c97438513ba91f5236be110",
+      "receipt_version": 1,
+      "runtime": {
+        "inputs": {
+          "channels": [
+            "python_open"
+          ],
+          "files": [],
+          "local_modules": [
+            {
+              "name": "_distutils_hack",
+              "path": ".venv/lib/python3.11/site-packages/_distutils_hack/__init__.py",
+              "sha256": "df81e6bcba34ee3e3952f776551fb669143b9490fdd6c4caeb32609f97e985b4"
+            }
+          ],
+          "observation": "partial",
+          "truncated": false,
+          "unobserved": [
+            "native_io",
+            "network",
+            "subprocess",
+            "os_open"
+          ]
+        },
+        "machine": "arm64",
+        "packages": {
+          "h5py": "3.16.0",
+          "matplotlib": "3.11.2",
+          "numpy": "2.4.6",
+          "pillow": "12.3.0"
+        },
+        "pid": 16800,
+        "platform": "darwin",
+        "python_implementation": "CPython",
+        "python_version": "3.11.14",
+        "report_origin": "build",
+        "runtime_report_version": 1
+      },
+      "runtime_rejected": null,
+      "source_revision": "f68feef7668c098fd34f74c39f5b94e7e3ed5b9d",
+      "spec": {
+        "argv": [],
+        "cwd_mode": "project_root",
+        "entry": "__main__",
+        "passthrough_savefig": false,
+        "profile": "safe",
+        "spec_version": 1,
+        "target": "scripts/figure_h5.py",
+        "target_kind": "script"
+      }
+    },
+    "required_input": {
+      "answer": {
+        "body": {
+          "mode": "<options[*].mode>"
+        },
+        "http": "PATCH /api/engine/workdir"
+      },
+      "code": "workdir_confirmation_required",
+      "conflicts": [
+        "data/measure.h5"
+      ],
+      "kind": "workdir",
+      "message": "脚本目录与项目根目录各有一份同名数据且内容不同，请先选择它的运行目录",
+      "options": [
+        {
+          "cwd_origin": "project.root",
+          "found": [
+            "data/measure.h5"
+          ],
+          "mode": "project_root",
+          "recommended": false,
+          "write_mode": "project_dir"
+        },
+        {
+          "cwd_origin": "script.parent",
+          "found": [
+            "data/measure.h5"
+          ],
+          "mode": "project",
+          "recommended": false,
+          "write_mode": "project_dir"
+        },
+        {
+          "cwd_origin": "sandbox",
+          "found": [
+            "data/measure.h5"
+          ],
+          "mode": "sandbox",
+          "recommended": false,
+          "write_mode": "sandboxed"
+        }
+      ],
+      "reads": [
+        "data/measure.h5"
+      ],
+      "reason": "ambiguous_data",
+      "recommended": null,
+      "script": "scripts/figure_h5.py"
+    },
+    "plotted_ylim": [
+      6.1,
+      25.9
+    ],
+    "patch": {
+      "gid": "axes_0.title",
+      "prop": "text",
+      "value": "U09 joined"
+    },
+    "outputs": {
+      "pdf": {
+        "sha256": "cd10e9f30c120aacd9592bc81efab30c05133bda85ecb6f1762589b4aa6231e3",
+        "identity": {
+          "artifact": "cd10e9f30c120aacd9592bc81efab30c05133bda85ecb6f1762589b4aa6231e3",
+          "identity_version": 1,
+          "render": "sha256:b5bda9d134ba6be494b2548007d3b9806f9de907b56d2e7e165de47eb26ec4ff",
+          "run": "2476f3eb72c642de",
+          "semantic": "sha256:3e40745fb9dfb2f0ecbc1e69a9f5e930eeee861c32522f8767188e79c8c3f09a"
+        }
+      },
+      "png": {
+        "sha256": "6f0f4bb6d6cb6ed27f5da462ef6079c3ca4935bb8ec8d95c798e84022305b910",
+        "identity": {
+          "artifact": "6f0f4bb6d6cb6ed27f5da462ef6079c3ca4935bb8ec8d95c798e84022305b910",
+          "identity_version": 1,
+          "render": "sha256:e8c56ad2a424a8e3d56749b04f9ba2afedf23428cb3bffeafea259ac7dea39e7",
+          "run": "2476f3eb72c642de",
+          "semantic": "sha256:3e40745fb9dfb2f0ecbc1e69a9f5e930eeee861c32522f8767188e79c8c3f09a"
+        }
+      },
+      "tiff": {
+        "sha256": "3c468d4c07e19ebf0c417b78248f752d2a66dc3b49bf83d9360365cd4c5dcb50",
+        "identity": {
+          "artifact": "3c468d4c07e19ebf0c417b78248f752d2a66dc3b49bf83d9360365cd4c5dcb50",
+          "identity_version": 1,
+          "render": "sha256:e8c56ad2a424a8e3d56749b04f9ba2afedf23428cb3bffeafea259ac7dea39e7",
+          "run": "2476f3eb72c642de",
+          "semantic": "sha256:3e40745fb9dfb2f0ecbc1e69a9f5e930eeee861c32522f8767188e79c8c3f09a"
+        }
+      }
+    },
+    "source_revision": "f68feef7668c098fd34f74c39f5b94e7e3ed5b9d"
+  },
+  "evidence": [
+    "ambiguous_data (h5) → asked once, no recommendation, render blocked",
+    "ready on project venv python 3.11.14 (app 3.13.11); h5py 3.16.0; observation partial, binding unobserved",
+    "ylim [6.1, 25.9] == truth [7, 13, 25]; title patched and replayed",
+    "rendercore export pdf/png/tiff verified; manifest receipts == preparation receipt facts; final sha256 cd10e9f30c12…"
+  ],
+  "recorded_at": 1790004715.533717
+}

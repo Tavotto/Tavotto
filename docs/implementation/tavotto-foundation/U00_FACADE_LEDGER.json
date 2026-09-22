@@ -137,7 +137,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_plan_matches_the_faces_the_pdf_actually_uses",
-          "line": 121,
+          "line": 130,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "三个族的 plan 覆盖一致"
@@ -145,7 +145,7 @@
         {
           "file": "tests/test_font_provenance.py",
           "symbol": "test_every_offered_family_can_actually_be_drawn",
-          "line": 130,
+          "line": 131,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "本仓库不分发字体；每个族的 Sample 全在 primary 层"
@@ -153,7 +153,7 @@
         {
           "file": "tests/test_scientific_text_matrix.py",
           "symbol": "test_canvas_families_all_draw_the_matrix",
-          "line": 154,
+          "line": 155,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "三族 × 粗斜四态：科学文本矩阵 missing_glyphs 为空"
@@ -331,7 +331,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_export_produce_canvas",
-          "line": 1124,
+          "line": 1156,
           "role": "scope=canvas：建一页画布，逐对象 place，再 save_pdf / save_png / save_tiff；EPS 逐项报 eps_not_for_canvas"
         }
       ],
@@ -371,7 +371,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_canvas_tiff_with_transparent_background_carries_alpha",
-          "line": 1291,
+          "line": 1296,
           "contains": "def test_canvas_tiff_with_transparent_background_carries_alpha",
           "class": "user_contract",
           "note": "透明画布 TIFF 带 alpha"
@@ -590,13 +590,13 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1305,
+          "line": 1337,
           "role": "请求里已解析的物理尺寸 → 页面 pt"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1305,
+          "line": 1337,
           "role": "originalspec 现算的逻辑尺寸 → 页面 pt"
         }
       ],
@@ -676,7 +676,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_raster_original_pdf_honours_the_resolved_physical_size",
-          "line": 713,
+          "line": 716,
           "contains": "def test_raster_original_pdf_honours_the_resolved_physical_size",
           "class": "user_contract",
           "note": "位图源页面尺寸来自 originalspec（pHYs / 假定两档必须不同）"
@@ -684,7 +684,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_transparent_background_reaches_the_original_vector_path",
-          "line": 903,
+          "line": 906,
           "contains": "def test_transparent_background_reaches_the_original_vector_path",
           "class": "user_contract",
           "note": "透明背景到达原图矢量路径"
@@ -745,7 +745,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_a_png_source_is_copied_byte_for_byte",
-          "line": 892,
+          "line": 895,
           "contains": "def test_a_png_source_is_copied_byte_for_byte",
           "class": "user_contract",
           "note": "PNG 源逐字节复制（03 §6 必须精确）"
@@ -753,7 +753,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_a_jpeg_source_is_transcoded_not_copied_into_a_png_name",
-          "line": 871,
+          "line": 874,
           "contains": "def test_a_jpeg_source_is_transcoded_not_copied_into_a_png_name",
           "class": "user_contract",
           "note": "JPEG 源换容器不换像素"
@@ -789,7 +789,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_original_tiff_of_a_vector_source_rasterizes_at_the_requested_ppi",
-          "line": 1304,
+          "line": 1309,
           "contains": "def test_original_tiff_of_a_vector_source_rasterizes_at_the_requested_ppi",
           "class": "user_contract",
           "note": "矢量源按 ppi 栅格化"
@@ -797,7 +797,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_original_tiff_of_a_raster_source_keeps_the_grid_and_only_declared_density",
-          "line": 1316,
+          "line": 1321,
           "contains": "def test_original_tiff_of_a_raster_source_keeps_the_grid_and_only_declared_density",
           "class": "user_contract",
           "note": "位图源保网格；分辨率标签只写声明过的密度"
@@ -805,7 +805,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_canvas_tiff_is_the_same_page_as_png_pixel_for_pixel",
-          "line": 1266,
+          "line": 1271,
           "contains": "def test_canvas_tiff_is_the_same_page_as_png_pixel_for_pixel",
           "class": "user_contract",
           "note": "画布 TIFF 与 PNG 逐像素相同（Canvas.save_tiff）"
@@ -872,19 +872,19 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1306,
+          "line": 1338,
           "role": "老客户端 / MCP 没带尺寸时现算位图页面"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_declared_density",
-          "line": 1322,
+          "line": 1354,
           "role": "TIFF 分辨率标签的来源判据（只认 dpi_source == metadata）"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_post_check_size",
-          "line": 4320,
+          "line": 4352,
           "role": "写回 commit 后自检：PDF 页面尺寸 vs 重放 manifest 的 size_mm（容差 0.5mm，不回滚）"
         },
         {
@@ -908,13 +908,13 @@
         {
           "file": "codex-plugin/mcp/tavotto_mcp/bridge.py",
           "symbol": "_original_artifact_facts",
-          "line": 1964,
+          "line": 1983,
           "role": "MCP 规范化：原始产物事实（页面尺寸）"
         },
         {
           "file": "codex-plugin/mcp/tavotto_mcp/bridge.py",
           "symbol": "_probe_asset",
-          "line": 1839,
+          "line": 1858,
           "function": "_probe_asset",
           "role": "MCP 导出的产物检查（U08 C，ADR 0068）：没有 pikepdf 时 PDF 的基本观测经契约层 probe，按需 import"
         }
@@ -1162,7 +1162,7 @@
           {
             "file": "src/tavotto/app.py",
             "symbol": "_export_produce_canvas",
-            "line": 1137
+            "line": 1169
           }
         ],
         "role": "按对象类型落一个元素：panel（PDF 真矢量 show_pdf_page；位图带 crop/rotation 经 convert_to_pdf；opacity<1 或 flip 时按 dpi 位图嵌入）/ text / arrow / shape",
@@ -1175,7 +1175,7 @@
           {
             "file": "src/tavotto/app.py",
             "symbol": "_export_produce_canvas",
-            "line": 1145
+            "line": 1177
           }
         ],
         "role": "样式检查报告里的页面尺寸",

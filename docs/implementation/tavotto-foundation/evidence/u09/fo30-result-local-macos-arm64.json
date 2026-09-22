@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "instance_id": "FO30@4ea699fed11a0819",
+  "case_id": "FO30",
+  "binding": {
+    "source_sha": "e4bfed34fc81bee7770357ad924fbb2905cfb24e",
+    "artifact": {
+      "kind": "source_tree",
+      "identity": "e4bfed34fc81bee7770357ad924fbb2905cfb24e"
+    },
+    "platform": "darwin-arm64",
+    "app_python": "3.13.11",
+    "runtime_lock_sha256": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c",
+    "fixture": "tests/fixtures/foundation/single_file_csv",
+    "fixture_sha256": "3b3772e1e0196bd91cc616c20a76f18343a1236433f2c5c41a92cdc08965c538",
+    "entry": "http",
+    "capability_version": "u04"
+  },
+  "product_outcome": "guided",
+  "test_verdict": "pass",
+  "observed": {
+    "backend": "pymupdf",
+    "sha": {
+      "a": "0fd9ecee930c5380398109a49e7f60a5ac888e9cea3532d68588c882d0e26804",
+      "b": "34de51124dde156fe93bcd63e6a1d0ab7fd8573edf340ff846fc092dae859949"
+    },
+    "ylim": {
+      "a": [
+        2.275,
+        7.225
+      ],
+      "b": [
+        2.675,
+        9.825
+      ]
+    },
+    "receipts": {
+      "a": {
+        "generation": 1,
+        "matched": true
+      },
+      "reuse_after_change": {
+        "generation": 1,
+        "matched": false,
+        "note": ""
+      },
+      "rebuilt": {
+        "generation": 2,
+        "matched": true
+      },
+      "script_edited": {
+        "source_revision": "e0a28becb8940800059848895e6f3e44c0e6130b"
+      }
+    }
+  },
+  "evidence": [
+    "A: ready, binding matched, ylim [2.275, 7.225]",
+    "B written (same size/mtime): reuse → ready + matched=False + snapshot note; render still A",
+    "rebuild → generation 2, binding matched on B, ylim [2.675, 9.825]",
+    "script edited + rebuild → receipt source_revision follows the file"
+  ],
+  "recorded_at": 1790004222.454139
+}

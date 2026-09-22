@@ -66,6 +66,7 @@ render_spike（ADR 0055：PDFium 栅格 + pikepdf/fontTools/HarfBuzz 受限 emit
 离线 wheel，坏 hash / 无网负例）。证据在 [`evidence/u02/`](evidence/u02/)，spike 代码在 `scripts/dev/u02_spikes/`
 （不进产品 import 图，候选包只在独立 venv）。交接见 [`handoffs/U02_spikes.md`](handoffs/U02_spikes.md)。
 
+
 U06 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）：RenderCore 的第一个
 产品切片——纯模型层 `src/tavotto/rendercore/`（Render IR / RenderPlan 编译 / 排版 / 字体注册表，只许标准库，
 ADR 0059）+ 字体政策与可检索文字写入（allowlist 逐字节钉住的 Liberation + Noto Sans SC，pikepdf/fontTools/HarfBuzz
@@ -122,6 +123,17 @@ PR C 接了目标验证腿（`private-python-targets.yml`：三平台真 pbs 经
 供应后重算；一次授权里把「先下载 N MB」说出口；FO24 / FO25 / FO26 经产品 HTTP 入口 → enforced）。`implementation_status: done`；
 **无系统 Python 的资格仍未取得**（五个目标 `enabled` 全 false，第三档在 U11）。交接见
 [`handoffs/U05_private_python.md`](handoffs/U05_private_python.md)。
+
+U09 已于 2026-09-21 执行（`implementation_status: done`，两个 milestone 各 `done`；产品资格仍 `not_run`，**不切默认**）：两条主线
+第一次汇合（merge，12 处冲突全是两边各加一段，零回归）。回执完整化（ADR 0070）：自报只收跑了脚本的那个进程的（`report_origin=build`
++ pid 核对，体检 / 探针冒充一律拒收）、输入观察永远 `partial` 且观察到的数据身份进公开语义身份、数据绑定 `binding_for` 进计划并与
+观察到的输入逐条对；四身份（semantic / render / artifact / run 并列）与 manifest 的来源段，可以离开本机的只有
+`inspector.public_projection()`（九根针钉住）；MCP 直出路同一份算法。Trace 与旧计划失效政策（ADR 0071）：有界阶段轨迹、第一次失败
+是根因；起会话前授权 / 解释器 / 数据绑定三比、不一致作废点名理由，复用热态会话时不一致是明示旧快照（不自动重算、不清编辑）。
+核心联合实例 FO32 两个出口本机 macOS 都真跑过：`existing_env_join`（项目 venv 3.11 + 真 h5py + 同名干扰 + 中文空格路径 → 真实入口
+→ 问一次 → 真值 → patch → RenderCore PDF / PNG / TIFF → 独立核）与 `managed_env_join`（真 pbs 私有 Python + 联合装 h5py → 同一终点）；
+FO32 登记 observing（两条具名任务），FO30 拆合同后 enforced。证据在 [`evidence/u09/`](evidence/u09/)。交接见
+[`handoffs/U09_join.md`](handoffs/U09_join.md)。
 
 ## 从哪里开始
 
