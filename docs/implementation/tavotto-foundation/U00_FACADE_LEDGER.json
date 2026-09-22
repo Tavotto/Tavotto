@@ -93,7 +93,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_coverage_table_matches_the_live_fonts",
-          "line": 183,
+          "line": 187,
           "contains": "BACKEND_VERSION",
           "class": "implementation_specific",
           "note": "覆盖表 header 的 backend_version == 当前后端版本（表随后端换）"
@@ -137,7 +137,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_plan_matches_the_faces_the_pdf_actually_uses",
-          "line": 117,
+          "line": 121,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "三个族的 plan 覆盖一致"
@@ -347,7 +347,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "_place",
-          "line": 46,
+          "line": 49,
           "contains": "compose",
           "class": "user_contract",
           "note": "文字落笔与 text_plan 同一份计划（x 推进 == text_width）"
@@ -459,7 +459,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_coverage_table_matches_the_live_fonts",
-          "line": 184,
+          "line": 188,
           "contains": "coverage_ranges",
           "class": "user_contract",
           "note": "磁盘上的覆盖表 == 当前后端现算的区间表（漂移即红）"
@@ -537,7 +537,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_golden_vectors_match_python_side",
-          "line": 59,
+          "line": 63,
           "contains": "missing_glyphs",
           "class": "user_contract",
           "note": "golden 向量：哪些字符画不出来"
@@ -545,7 +545,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_unrenderable_character_is_missing_not_silently_dropped",
-          "line": 111,
+          "line": 115,
           "contains": "missing_glyphs",
           "class": "user_contract",
           "note": "阿拉伯问号 ؟ 是 missing"
@@ -1049,7 +1049,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_golden_vectors_match_python_side",
-          "line": 57,
+          "line": 61,
           "contains": "text_plan",
           "class": "user_contract",
           "note": "golden 向量：分段与层"
@@ -1057,7 +1057,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_subscript_two_stays_on_the_fallback_layer",
-          "line": 87,
+          "line": 91,
           "contains": "text_plan",
           "class": "implementation_specific",
           "note": "₂ 落在 fallback 层（PyMuPDF 隐式回退到 Noto Serif 的事实）"
@@ -1065,7 +1065,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_box_drawing_is_rescued_by_the_fourth_step",
-          "line": 93,
+          "line": 97,
           "contains": "text_plan",
           "class": "implementation_specific",
           "note": "━ 落在 cjk 层（Droid Sans Fallback 有它）"
@@ -1073,7 +1073,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_unrenderable_character_is_missing_not_silently_dropped",
-          "line": 110,
+          "line": 114,
           "contains": "text_plan",
           "class": "user_contract",
           "note": "؟ 是 missing 层"
@@ -1127,7 +1127,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_measured_width_equals_the_advance_actually_written",
-          "line": 175,
+          "line": 179,
           "contains": "text_width",
           "class": "user_contract",
           "note": "量宽 == 落笔推进（同一份计划）"
@@ -1244,7 +1244,7 @@
           {
             "file": "tests/test_glyph_plan.py",
             "symbol": "_place",
-            "line": 46
+            "line": 49
           }
         ],
         "role": "测试里的 with 形态；app.py 用显式 close()",

@@ -42,11 +42,15 @@ def _place(text: str, **kw) -> pymupdf.Document:
         "align": "left",
     }
     obj.update(kw)
-    path = Path(tempfile.mkdtemp()) / "one.pdf"
-    with pdfbackend.compose(120, 30) as canvas:
-        canvas.place(obj, dpi=300, resolve_panel=lambda o, d: path)
-        canvas.save_pdf(path)
-    return pymupdf.open(path)
+    # 临时目录随 with 收掉，回给调用方的是从字节打开的 Document：之前 mkdtemp()
+    # 一去不回，每跑一次全量就往 $TMPDIR 漏几十个目录（2026-09-22 数到 1050 个）。
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "one.pdf"
+        with pdfbackend.compose(120, 30) as canvas:
+            canvas.place(obj, dpi=300, resolve_panel=lambda o, d: path)
+            canvas.save_pdf(path)
+        data = path.read_bytes()
+    return pymupdf.open(stream=data, filetype="pdf")
 
 
 # --------------------------------------------------------------------------
