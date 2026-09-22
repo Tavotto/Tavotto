@@ -23,5 +23,6 @@
 | M50 | 受管目标不挂「已就位」载荷 | deprepair | 同 M48 的用例（目标载荷断言） | 1 |
 | M51 | `prepare_async` 不认领（同一份计划起第二个供应线程；U04 C 合同） | deprepair | test_a_duplicate_prepare_does_not_start_a_second_provisioning | 1 |
 | M52 | 供应完登记这一代的 OSError 被吞掉（走到建 venv 才报 create_failed；U04 C 合同） | deprepair | test_manifest_write_failure_after_provisioning_is_write_failed_and_keeps_the_runtime | 1（code 变成 managed_env_create_failed） |
+| M53 | 建 venv 之后不起一次里面的解释器（目录齐全就算建成——Windows 上 venvlauncher 找不到真解释器时的形状） | managedenv | test_a_venv_whose_interpreter_does_not_start_is_not_built | 1 |
 
-18/19 红（M47 是预期的冗余保证，另有用例钉着）（M30–M39 编号在 PR A 的 `mutations_pr_a.md`）。三条 HTTP 场景的负例在各自用例里（FO25 是 FO24 的反面：无缓存要求下载；FO26 篡改 → hash 不符 + 旧 active 原样）。
+19/20 红（M47 是预期的冗余保证，另有用例钉着）（M30–M39 编号在 PR A 的 `mutations_pr_a.md`）。三条 HTTP 场景的负例在各自用例里（FO25 是 FO24 的反面：无缓存要求下载；FO26 篡改 → hash 不符 + 旧 active 原样）。

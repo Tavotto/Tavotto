@@ -374,7 +374,7 @@
       "fixture": "tests/fixtures/foundation/private_python",
       "test": "tests/test_foundation_private_python.py::test_fo24_cached_private_python_prepares_offline_and_renders",
       "expected_product_outcome": "automatic",
-      "notes": "U05 PR B 起 enforced（lane pr，进程内 test_client 经产品 HTTP 入口——「这台机器没有任何可用 Python」是发现链末端的输入，子进程形态凑不出诚实的无 base）：校验过的私有 Python 归档已在缓存、网络断着（供应来源指向没人听的端口 + 死代理）→ 门说 cached / 0 字节 / 不需联网 → 一次授权（/plan + /prepare）零请求供应 + 建代 + 装 fixture 包 → ready → 图内值 == 真值。负例（同文件 FO25）= 无缓存时同样的门要求下载。仍是工程验证，不是资格（ADR 0064）；**Windows**：pr lane 上这条 skip-with-reason（替身是 venvlauncher 副本，当不了建 venv 的 base——#475 db5f994a 的 windows 两片实测 `managed_env_create_failed`；前提由 test_the_windows_standin_is_still_not_a_venv_base 看住），Windows 的这条真链在 private-python-targets.yml 的 windows 腿用真 pbs 归档跑（TestRealChain，run 35603820985 绿）。",
+      "notes": "U05 PR B 起 enforced（lane pr，进程内 test_client 经产品 HTTP 入口——「这台机器没有任何可用 Python」是发现链末端的输入，子进程形态凑不出诚实的无 base）：校验过的私有 Python 归档已在缓存、网络断着（供应来源指向没人听的端口 + 死代理）→ 门说 cached / 0 字节 / 不需联网 → 一次授权（/plan + /prepare）零请求供应 + 建代 + 装 fixture 包 → ready → 图内值 == 真值。负例（同文件 FO25）= 无缓存时同样的门要求下载。仍是工程验证，不是资格（ADR 0064）；**Windows**：pr lane 上按 `support.private_python.STANDIN_BASE_PROBE` 决定跑不跑：替身（venvlauncher 副本）建出的 venv 里的解释器起不来的机器上 skip-with-reason（#475 db5f994a 实测 `managed_env_create_failed`；探测与真实的一致性由 test_the_windows_standin_base_probe_matches_reality 看住），Windows 的这条真链在 private-python-targets.yml 的 windows 腿用真 pbs 归档跑（TestRealChain，run 35603820985 绿）。",
       "backend": "pymupdf"
     },
     {
@@ -406,7 +406,7 @@
       "fixture": "tests/fixtures/foundation/private_python",
       "test": "tests/test_foundation_private_python.py::test_fo26_corrupted_source_is_refused_and_the_active_environment_stays",
       "expected_product_outcome": "safe_stop",
-      "notes": "U05 PR B 起 enforced（lane pr，进程内 HTTP 入口）：先在一份好的私有 Python 上准备好并渲染出真值；锁换到另一份、本地供应服务篡改一个字节 → private_python_hash_mismatch → 拒绝；旧 active 代原样、runtimes/ 里只有好的那份、坏归档的解释器一次都没起；**Windows**：pr lane 上这条 skip-with-reason（替身是 venvlauncher 副本，当不了建 venv 的 base——#475 db5f994a 的 windows 两片实测 `managed_env_create_failed`；前提由 test_the_windows_standin_is_still_not_a_venv_base 看住），Windows 的这条真链在 private-python-targets.yml 的 windows 腿用真 pbs 归档跑（TestRealChain，run 35603820985 绿）。",
+      "notes": "U05 PR B 起 enforced（lane pr，进程内 HTTP 入口）：先在一份好的私有 Python 上准备好并渲染出真值；锁换到另一份、本地供应服务篡改一个字节 → private_python_hash_mismatch → 拒绝；旧 active 代原样、runtimes/ 里只有好的那份、坏归档的解释器一次都没起；**Windows**：pr lane 上按 `support.private_python.STANDIN_BASE_PROBE` 决定跑不跑：替身（venvlauncher 副本）建出的 venv 里的解释器起不来的机器上 skip-with-reason（#475 db5f994a 实测 `managed_env_create_failed`；探测与真实的一致性由 test_the_windows_standin_base_probe_matches_reality 看住），Windows 的这条真链在 private-python-targets.yml 的 windows 腿用真 pbs 归档跑（TestRealChain，run 35603820985 绿）。",
       "backend": "pymupdf"
     },
     {

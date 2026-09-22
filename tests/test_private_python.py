@@ -285,39 +285,46 @@ class TestProvision:
         assert out.returncode == 0 and out.stdout.strip() == pp_support.host_python_version()
 
     @pytest.mark.skipif(os.name != "nt", reason="看住的是 Windows 替身的前提")
-    def test_the_windows_standin_is_still_not_a_venv_base(self, tmp_path, launches):
-        """`needs_real_base` 那批 skip 的**前提**：Windows 上的替身（venvlauncher 副本）跑 `-m venv` 会失败。
-        前提成立就把失败的样子记在断言消息里（退出码 / 输出 / 目录），前提哪天不成立了这条会红——那时把
-        `needs_real_base` 摘掉、让那批用例在 Windows 上真跑，而不是让 skip 无声地活下去。"""
+    def test_the_windows_standin_base_probe_matches_reality(self, tmp_path, launches):
+        """`needs_real_base` 的前提（`support.private_python.STANDIN_BASE_PROBE`）必须与真实情况一致：把替身按产品
+        路径供应出来、用它建一个 venv、起 venv 里的 python、跑 pip——量的是**真依赖的那一步**，不是「目录建出来了」
+        （#475 db5f994a：目录齐全、下一步照样 create_failed）。探测说能、这里就得真能；探测说不能、这里就得真不能。
+        两边不一致 = 探测量错了维度，红出来。报告进 CI 日志，下次有人查这条前提时不用再猜。"""
         archive, sha, rel = _make(tmp_path, launches)
         with LoopbackServer(tmp_path / "serve") as server:
             python = privatepython.provision(_source(server, archive, sha, rel))
         root = tmp_path / "venv-from-standin"
-        out = subprocess.run(
-            [python, "-m", "venv", str(root)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=300,
-            stdin=subprocess.DEVNULL,
-        )
-        made = (root / "Scripts" / "python.exe").is_file()
-        listing = sorted(p.name for p in root.iterdir()) if root.is_dir() else []
+        steps: list[dict] = []
+
+        def _step(name: str, argv: list[str]) -> bool:
+            out = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
+                stdin=subprocess.DEVNULL,
+            )
+            steps.append(
+                {"step": name, "rc": out.returncode, "out": (out.stdout + out.stderr)[-600:]}
+            )
+            return out.returncode == 0
+
+        ok = _step("venv", [python, "-m", "venv", str(root)])
+        vpy = root / "Scripts" / "python.exe"
+        ok = ok and vpy.is_file()
+        ok = ok and _step("launch", [str(vpy), "-I", "-c", "import sys; print(sys.prefix)"])
+        ok = ok and _step("pip", [str(vpy), "-m", "pip", "--version"])
         report = json.dumps(
-            {
-                "rc": out.returncode,
-                "stdout": out.stdout[-800:],
-                "stderr": out.stderr[-800:],
-                "dir": listing,
-            },
+            {"reality": ok, "probe": pp_support.STANDIN_BASE_PROBE, "steps": steps},
             ensure_ascii=False,
         )
-        assert not (out.returncode == 0 and made), (
-            "替身现在能当 base 了：把 tests/support/private_python.py 的 needs_real_base 摘掉，"
-            f"让那批用例在 Windows 上真跑。{report}"
+        print("WINDOWS_STANDIN_BASE_REPORT " + report)
+        assert ok == pp_support.STANDIN_CAN_BE_BASE, (
+            "替身能不能当 base：探测与真实不一致（探测量错了维度，或这台机器两次结果不同）。"
+            + report
         )
-        print("WINDOWS_STANDIN_VENV_REPORT " + report)  # 进 CI 日志：下次有人查这条前提时不用再猜
 
     def test_cached_verified_archive_is_reused_without_any_network(self, tmp_path, launches):
         """FO24：缓存齐备 + 断网（死代理 + 没人听的端口）→ automatic，零请求。"""

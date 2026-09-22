@@ -525,6 +525,21 @@ def _venv_failure_detail(base: str, root: Path, target: Path, rc: int, out: str)
     return detail
 
 
+def _venv_built(base: str, root: Path, target: Path, rc: int, out: str) -> tuple[bool, str]:
+    """`-m venv` 之后的判据——量的是**真依赖的那一步**：目录建出来了 ≠ 里面的解释器起得来。venv 里的
+    `python.exe` 是个启动器，它找不到真解释器时目录照样齐全（Windows 上撞到过：Include / Lib / Scripts /
+    pyvenv.cfg 都在、下一步就 create_failed）。所以建完再让它自报一次 prefix，起不来就是没建成，detail 说清。"""
+    if rc != 0 or not target.is_file():
+        return False, _venv_failure_detail(base, root, target, rc, out)
+    prc, pout = _run([str(target), "-I", "-c", "import sys; print(sys.prefix)"], 60)
+    if prc != 0:
+        return False, (
+            f"venv 建成但里面的解释器起不来（`{target}` 退出码 {prc}）: "
+            f"{pout[-800:].strip() or '没有任何输出'}"
+        )
+    return True, out[-2000:]
+
+
 def create_venv(project: str | Path, base: str) -> tuple[bool, str]:
     """建一个空 venv（带 pip）。已经存在就原地复用。
 
@@ -544,9 +559,7 @@ def create_venv(project: str | Path, base: str) -> tuple[bool, str]:
     except OSError as exc:
         return False, str(exc)
     rc, out = _run([base, "-m", "venv", str(root)], VENV_TIMEOUT_S)
-    if rc != 0 or not target.is_file():
-        return False, _venv_failure_detail(base, root, target, rc, out)
-    return True, out[-2000:]
+    return _venv_built(base, root, target, rc, out)
 
 
 def python_version_of(python: str) -> str:
@@ -747,9 +760,7 @@ def create_generation_venv(project: str | Path, generation: str, base: str) -> t
     except OSError as exc:
         return False, str(exc)
     rc, out = _run([base, "-m", "venv", str(root)], VENV_TIMEOUT_S)
-    if rc != 0 or not target.is_file():
-        return False, _venv_failure_detail(base, root, target, rc, out)
-    return True, out[-2000:]
+    return _venv_built(base, root, target, rc, out)
 
 
 def is_managed_python(project: str | Path, python: str | None) -> bool:

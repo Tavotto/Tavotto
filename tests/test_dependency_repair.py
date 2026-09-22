@@ -682,6 +682,44 @@ def test_managed_venv_creation_is_isolated_and_minimal(tmp_path, monkeypatch):
     assert managedenv.BASE_PACKAGES == ("matplotlib",)
 
 
+def test_a_venv_whose_interpreter_does_not_start_is_not_built(tmp_path, monkeypatch):
+    """建 venv 的判据量的是真依赖的那一步：`-m venv` 退出 0、目录齐全，但里面的 python 起不来（venvlauncher 找不到
+    真解释器——Windows 上撞到过）= 没建成，detail 说清是哪一步；起得来才算建成。空输出的失败也要说得出来。"""
+    project = tmp_path / "paper"
+    project.mkdir()
+    gen = "g-test"
+    target = managedenv.generation_python(project, gen)
+
+    def _fake_run(argv, timeout):
+        if argv[1:3] == ["-m", "venv"]:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"MZ")  # 目录齐全、文件在
+            return 0, ""
+        assert argv[0] == str(target) and argv[1] == "-I"  # 建完必须起一次里面的解释器
+        return 1, "No Python at '/gone/python.exe'"
+
+    monkeypatch.setattr(managedenv, "_run", _fake_run)
+    ok, detail = managedenv.create_generation_venv(project, gen, "/base/python")
+    assert ok is False
+    assert "起不来" in detail and "No Python at" in detail
+
+    def _fake_run_ok(argv, timeout):
+        if argv[1:3] == ["-m", "venv"]:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"MZ")
+            return 0, ""
+        return 0, str(target.parent.parent)
+
+    monkeypatch.setattr(managedenv, "_run", _fake_run_ok)
+    ok, _ = managedenv.create_generation_venv(project, gen, "/base/python")
+    assert ok is True
+
+    # 一个字不吐的失败：detail 至少带退出码，别交回空串
+    monkeypatch.setattr(managedenv, "_run", lambda argv, timeout: (3, ""))
+    ok, detail = managedenv.create_generation_venv(project, gen, "/base/python")
+    assert ok is False and "退出码 3" in detail
+
+
 def test_an_environment_without_pip_is_reported_not_silently_fixed(project, monkeypatch):
     """没有 pip 的环境**不静默 `ensurepip`**——用户确认的是「装这个包」。
 
