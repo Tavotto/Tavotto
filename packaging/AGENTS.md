@@ -128,15 +128,15 @@ Python，首次渲染也不联网：
   仍不可污染，私有 Python 只当 `python -m venv` 的 base，落在用户数据目录 `<data_dir>/private-python/`。
   Windows 那边分工明确：embeddable 继续当渲染 runtime，pbs 当 base（embeddable 没有 venv / ensurepip）。
   每个目标的 `enabled` 在无系统 Python 的目标资格取得前保持 false。
-- **契约层按名字装载的后端实现要点名进 hiddenimports**（2026-09-22，#476 三条冒烟腿）：
-  `pdfbackend/__init__.py` 用 `importlib` 按 `TAVOTTO_RENDER_BACKEND` 装载实现，静态分析看不见这条
-  边——冻结产物里没有那个模块，`probe_asset` 一调就 ModuleNotFoundError、「一个面板都没扫到」，
-  而源码模式一切正常。`tavotto.spec` 从契约层 `_IMPL_MODULES` 取清单铺进 hiddenimports，**不手写模块名**
-  （U10 起闭集只剩 `rendercore/facade.py`，退役模块的 hidden import 随模块一起消失，ADR 0072）；
-  `tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select` 看护。
 - **浏览器 playground 的运行时锁**：`packaging/playground-runtime.json`
   钉死 Pyodide 版本与包白名单（前端 JSON import + 构建脚本共读），
   细节见 `docs/rules/frontend/browser-playground.md`。
+- **按名字装载的模块要显式进 PyInstaller 的 hiddenimports**（2026-09-22，U08 / ADR 0067；U10 / ADR 0072）：
+  `pdfbackend/__init__.py` 用 `importlib` 按 `TAVOTTO_RENDER_BACKEND` 装载实现，静态分析看不见这条
+  边——冻结产物里没有那个模块，`probe_asset` 一调就 ModuleNotFoundError、「一个面板都没扫到」，
+  而源码模式一切正常（#476 三条冒烟腿）。`tavotto.spec` 从契约层 `_IMPL_MODULES` 取清单铺进
+  hiddenimports，**不手写模块名**（U10 起闭集只剩 `rendercore/facade.py`，退役模块的 hidden import
+  随模块一起消失）；`tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select` 看护。
 - **包内数据文件要显式进 PyInstaller 的 datas**（2026-09-02，ADR 0039）：
   `Analysis` 只把 .py 编进 PYZ，`tavotto/profiles/publication.json` 与
   `tavotto/resources/tutorial_project/` 这类数据在冻结产物里**本来是没有的**
