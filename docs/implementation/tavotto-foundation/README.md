@@ -52,6 +52,15 @@ U04 已于 2026-09-21 执行（`implementation_status: done`——三个叠栈 P
 （目标 = 项目自带 venv 变体），FO18 / FO05 `observing`（nightly，联网）。交接见
 [`handoffs/U04_dependencies.md`](handoffs/U04_dependencies.md)。
 
+U07 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）：合成（ADR 0065）——外来页作
+Form XObject 整页矢量导入（页盒 / `/Rotate` / `/UserUnit` 由 qpdf 折进 /Matrix、恰好一次），crop / 翻转 / 旋转的顺序合同只在
+`rendercore/placement.py`，面板 opacity 是透明组、镜像是负缩放（不再退位图），位图经 `rasterio`（Pillow，正式依赖）成
+straight-alpha 的 `RasterBuffer`，pikepdf 正式裁决；栅格（ADR 0066）——应用自己的 PDFium render child（一把锁串行 + 有界
+队列 + 超时 kill / reap / 重启），PNG 与 TIFF 从同一个 RasterBuffer 编码、只从 Canonical PDF 来，预览缓存键 = 内容身份 +
+后端 build + 字体政策，旧新后端按 case 阈值校准，U02 spike 的 render 半边退役。证据在 [`evidence/u07/`](evidence/u07/)
+（生成器 `scripts/dev/u07_evidence.py`，最小 freeze `scripts/dev/u07_freeze_child.py`）；enrollment 加 `U07-R1`（observing）。
+交接见 [`handoffs/U07_compose_raster.md`](handoffs/U07_compose_raster.md)。
+
 ## 从哪里开始
 
 先读 [执行总提示词](00_MASTER_PROMPT.md)、[范围与修改决策](01_SCOPE_AND_DECISIONS.md)、[路线图](02_ROADMAP.md) 和 [CI 生效政策](03_CI_POLICY.md)。随后只执行 [U00](phases/U00_baseline.md)，不要在第一步删除 PyMuPDF、更换根许可证或一次启用全部兼容门禁。

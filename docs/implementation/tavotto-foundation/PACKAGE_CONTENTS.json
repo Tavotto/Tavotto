@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -49,8 +49,8 @@
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 5350,
-      "sha256": "18f1099048f93b663109babc4c0bde8ac1ba6be30d08a6e39f4922897e1b1cc3"
+      "bytes": 5659,
+      "sha256": "8369a1dcaf3f3492476f6b37f02d112444c4bb2c97d5934705632cd9becd87bd"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 8957,
-      "sha256": "9b9a669e719b78b7505d2bff0d1e7fb983a69363173bb8faa4d360193f28857e"
+      "bytes": 10079,
+      "sha256": "1c07ed5c66650d7204d8947392b4362c477f568776aeaf63c41f4f21c3be041c"
     },
     {
       "path": "SOURCES.md",
@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 46781,
-      "sha256": "28006651bc4d7280b5ddf479769598cec2417202c0a6847226b8d37962431388"
+      "bytes": 50826,
+      "sha256": "5eb06b0ae9cb8fde6d01e82d1d758b15d6a9259567954c72cdefdb2a443983e4"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 22199,
-      "sha256": "5139c16e7fe5d7f42b968349eb4d0eac270d3fecb5453898838718d39f94863f"
+      "bytes": 24021,
+      "sha256": "aee5e1becbf1e98c8bacc829266ef1c70fed841b10480e4914f5585d75fbda9e"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 25750,
-      "sha256": "71e97b154fa8acd57ccaa28bd6c48e5440d5b7ae0d1278edd9c38cdbd0b8edd9"
+      "bytes": 26934,
+      "sha256": "1ffa49e5aac9a7a14743c35501d6d72c902183e933b0ba86ace8fcd1c32fd69a"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -293,6 +293,41 @@
       "sha256": "95245d41e586891f352324e95b2852a7a24192cb0b8e27ca3121fd81f02e2ddc"
     },
     {
+      "path": "evidence/u07/freeze/frozen-render-darwin-arm64.png",
+      "bytes": 5118,
+      "sha256": "5637a739f0c0af4a046f0aa6a8e9ba5cb412a6c457cce82195564d3424f71211"
+    },
+    {
+      "path": "evidence/u07/freeze/pyinstaller-log.txt",
+      "bytes": 16705,
+      "sha256": "10115412d08e7c936dc18a9d10a979e779b94a41cb22452f0c76346d764738aa"
+    },
+    {
+      "path": "evidence/u07/freeze/report-darwin-arm64.json",
+      "bytes": 3096,
+      "sha256": "2fe6fbb836abbd65180092b41841578e40a61639136bc9e7e762d5b463b69bab"
+    },
+    {
+      "path": "evidence/u07/report.json",
+      "bytes": 11607,
+      "sha256": "fc70b7f124d08801b5e87d36d91727f2534f9f29cbe87b814153cde46f7c5ac7"
+    },
+    {
+      "path": "evidence/u07/truth.json",
+      "bytes": 5121,
+      "sha256": "eeb8c0d9c78ac5a2167eae5ca85c9d9cb58b154d06d9af21dff8e46921217fea"
+    },
+    {
+      "path": "evidence/u07/u07.pdf",
+      "bytes": 8179,
+      "sha256": "68866353ce661ac572fbfe2548e763e44e488fea54e0f4068a6dbdf614c5bc92"
+    },
+    {
+      "path": "evidence/u07/u07_pdfium.png",
+      "bytes": 23002,
+      "sha256": "7f2a0dbc0daac93a5c26fee5ae52d662e1191807c8cf92e6544d25586744c158"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -346,6 +381,11 @@
       "path": "handoffs/U06_ir_text.md",
       "bytes": 29941,
       "sha256": "4d0b5abd7278f2810c289da3635914c02f24d1f6ce1ca2442969c3817b3c5370"
+    },
+    {
+      "path": "handoffs/U07_compose_raster.md",
+      "bytes": 25399,
+      "sha256": "db3e7ec98afbc91b058b511df1785279e83386525bf0dc9a777ac61b45479c53"
     },
     {
       "path": "phase_mapping.json",
@@ -414,8 +454,8 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7366,
-      "sha256": "21ebb556824148c96be155c3e92ef73bae76bbc9dcb646beacdaea3aaff50a9c"
+      "bytes": 7359,
+      "sha256": "4306e402944ff587cfbee2fa1f53ed538105e3d0ba5bff88336bd73ff5f784db"
     },
     {
       "path": "registry.json",

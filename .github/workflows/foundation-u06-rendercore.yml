@@ -1,9 +1,11 @@
 name: Foundation U06 rendercore
 
-# 统一实施包 U06 的候选栈用例在**托管 runner 的三个平台**上真跑一遍：装 pyproject 的 `rendercore` extra、
+# 统一实施包 U06 / U07 的候选栈用例在**托管 runner 的三个平台**上真跑一遍：装 pyproject 的 `rendercore` extra、
 # 按 allowlist 的 sha256 取批准字体、跑 tests/test_rendercore_*.py（主仓库 .venv 没装候选包，这批用例在
-# 必需矩阵里是 skip——skip 不是绿，这里才是它们真跑的地方）、重生成 evidence/u06 并与 git 里的比
-# （PDF 应逐字节相同：写入侧确定性；PDFium 的 PNG 跨平台像素不同，只作信息，ADR 0055 §7）。
+# 必需矩阵里是 skip——skip 不是绿，这里才是它们真跑的地方）、重生成 evidence/u06 与 evidence/u07 并与 git 里的比
+# （PDF 应逐字节相同：写入侧确定性；PDFium 的 PNG 跨平台像素不同，只作信息，ADR 0055 §7 / 0066），再把
+# 最小 render child 冻结（PyInstaller）在本平台真起、真渲染（ADR 0066；最终签名归 U11）。
+# U07 起这也是 enrollment 台账里 RenderBench 实例 `U07-R1`（observing）挂的那条具名非 required 任务。
 #
 # 它不是门禁、不进任何 Gate 的闭集、不是 required check（候选栈未默认启用，U06 不切默认）。
 # 触发：`workflow_dispatch`，以及**只在 rendercore 自己的文件变动时**的 `pull_request`（paths 过滤）——
@@ -25,12 +27,16 @@ on:
       - "src/tavotto/rendercore/**"
       - "scripts/fetch_fonts.py"
       - "scripts/dev/u06_evidence.py"
+      - "scripts/dev/u07_evidence.py"
+      - "scripts/dev/u07_freeze_child.py"
       - "tests/test_rendercore_*.py"
       - "tests/support/pdfread.py"
       - "tests/support/fakeface.py"
+      - "tests/support/tiffcheck.py"
       - "requirements-rendercore.txt"
       - "pyproject.toml"
       - "docs/implementation/tavotto-foundation/evidence/u06/truth.json"
+      - "docs/implementation/tavotto-foundation/evidence/u07/truth.json"
 
 permissions:
   contents: read
@@ -48,7 +54,7 @@ jobs:
   rendercore:
     name: rendercore (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -78,13 +84,14 @@ jobs:
           print("RC_VENV=" + str(venv))
           print("RC_PY=" + str(py))
           print("U06_EVIDENCE=" + str(tmp / "u06-evidence"))
+          print("U07_EVIDENCE=" + str(tmp / "u07-evidence"))
           EOF
       - name: 建 venv、装 rendercore extra（候选包）与只读尺子
         shell: bash
         run: |
           python -m venv "$RC_VENV"
           "$RC_PY" -m pip install --upgrade pip
-          "$RC_PY" -m pip install -e ".[rendercore,dev]" pdfminer.six==20251107 pypdf==6.7.5
+          "$RC_PY" -m pip install -e ".[rendercore,dev]" pdfminer.six==20251107 pypdf==6.7.5 pyinstaller==6.19.0
           "$RC_PY" -m pip freeze
           "$RC_PY" -c "import tavotto, tavotto.rendercore; print(tavotto.__file__)"
 
@@ -97,7 +104,9 @@ jobs:
       - name: RenderCore 用例（真字体、真候选包，不 skip）
         shell: bash
         run: |
-          "$RC_PY" -m pytest tests/test_rendercore_ir.py tests/test_rendercore_geometry.py tests/test_rendercore_typography.py tests/test_rendercore_plan.py tests/test_rendercore_model.py tests/test_rendercore_fonts.py tests/test_rendercore_writer.py tests/test_rendercore_job.py tests/test_rendercore_evidence.py tests/test_font_provenance.py tests/test_import_architecture.py -p no:cacheprovider -rs -q --junitxml="$RUNNER_TEMP/pytest-u06.xml"
+          # 用例集就是 tests/test_rendercore_*.py（与本文件头、src/tavotto/AGENTS.md 说的同一个 glob）：手写清单会漂——
+          # U07 A 加的 compose / placement / raster 三个文件在清单里漏了整整六轮评审（Codex #463 第七轮 P2）
+          "$RC_PY" -m pytest tests/test_rendercore_*.py tests/test_font_provenance.py tests/test_import_architecture.py -p no:cacheprovider -rs -q --junitxml="$RUNNER_TEMP/pytest-u06.xml"
 
       - name: 重生成 evidence 并与 git 里的比（PDF 逐字节；PNG 只作信息）
         shell: bash
@@ -119,6 +128,31 @@ jobs:
           sys.exit(1 if bad else 0)
           EOF
 
+      - name: U07 evidence（合成 → Canonical PDF → render child 栅格 → PNG / TIFF；PDF 逐字节、PNG 只作信息）
+        shell: bash
+        run: |
+          mkdir -p "$U07_EVIDENCE"
+          cp docs/implementation/tavotto-foundation/evidence/u07/truth.json "$U07_EVIDENCE/truth.json"
+          "$RC_PY" scripts/dev/u07_evidence.py --out "$U07_EVIDENCE"
+          "$RC_PY" - <<'EOF'
+          import hashlib, os, pathlib, sys
+          ev = pathlib.Path(os.environ["U07_EVIDENCE"])
+          git = pathlib.Path("docs/implementation/tavotto-foundation/evidence/u07")
+          bad = False
+          for name, must in (("u07.pdf", True), ("u07_pdfium.png", False)):
+              a = hashlib.sha256((ev / name).read_bytes()).hexdigest()
+              b = hashlib.sha256((git / name).read_bytes()).hexdigest()
+              same = a == b
+              print(f"{name}: {'IDENTICAL to git' if same else 'DIFFERS from git'}  ci={a[:12]} git={b[:12]}")
+              bad |= (must and not same)
+          sys.exit(1 if bad else 0)
+          EOF
+
+      - name: 冻结最小 render child（PyInstaller onedir，冻结 exe 以 --render-child 自起，干净环境真渲染）
+        shell: bash
+        run: |
+          "$RC_PY" scripts/dev/u07_freeze_child.py --pdf tests/fixtures/foundation/pdf_png_assets/page.pdf --out "$U07_EVIDENCE/freeze"
+
       - name: 上传 evidence 与 junit
         if: always()
         uses: actions/upload-artifact@v4
@@ -126,6 +160,7 @@ jobs:
           name: u06-evidence-${{ matrix.os }}-py${{ matrix.python }}
           path: |
             ${{ env.U06_EVIDENCE }}
+            ${{ env.U07_EVIDENCE }}
             ${{ runner.temp }}/pytest-u06.xml
           if-no-files-found: warn
           retention-days: 30

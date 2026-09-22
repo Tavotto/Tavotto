@@ -322,7 +322,45 @@
         }
       ],
       "status": "public_contract",
-      "migration_criterion": "U07：RenderPlan → IR → 新合成器实现同一个 Canvas 面（见 canvas_methods）；PDF 真矢量、PNG/TIFF 出自同一次栅格化；透明背景 = 不画白底 + PNG 带 alpha。"
+      "migration_criterion": "U07：RenderPlan → IR → 新合成器实现同一个 Canvas 面（见 canvas_methods）；PDF 真矢量、PNG/TIFF 出自同一次栅格化；透明背景 = 不画白底 + PNG 带 alpha。",
+      "migration_evidence": [
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_compose.py::test_the_visible_box_is_the_crop_box_not_the_media_box"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_compose.py::test_crop_flip_rotate_combinations_land_each_quadrant_where_the_contract_says"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_compose.py::test_panel_opacity_is_a_transparency_group_not_per_object_alpha"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_compose.py::test_a_mirrored_import_keeps_its_vector_and_text_layer"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_compose.py::test_png_with_alpha_is_placed_with_an_smask_and_its_pixels_survive"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_job.py::test_a_panel_canvas_exports_a_vector_pdf_with_the_source_page_inside"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_rasterize.py::test_pdf_png_and_tiff_come_from_one_canonical_pdf_and_one_raster"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_rasterize.py::test_transparent_background_yields_rgba_with_straight_alpha_in_both"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_calibration.py::test_old_and_new_backends_agree_within_the_case_thresholds"
+        }
+      ]
     },
     {
       "name": "coverage_ranges",
@@ -758,7 +796,13 @@
       ],
       "status": "public_contract",
       "note": "**密度刻意不从这里取**：MuPDF 的 Pixmap.xres 对「没写 pHYs」与「写着 96」一律回 96（project-system.md）。U00 夹具 pdf_png_assets 的 original_nophys.png 实测 xres=96、original.png（pHYs 300）xres=300，再次证实。",
-      "migration_criterion": "U08：八个调用点一个不漏（RC-001）；返回结构逐键相同；`alpha` 真值来自新读取器；密度仍由 originalspec 解析。"
+      "migration_criterion": "U08：八个调用点一个不漏（RC-001）；返回结构逐键相同；`alpha` 真值来自新读取器；密度仍由 originalspec 解析。",
+      "migration_evidence": [
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_renderchild.py::test_real_child_probe_reports_the_visible_size_with_rotation_and_userunit"
+        }
+      ]
     },
     {
       "name": "render_preview_png",
@@ -793,7 +837,29 @@
       ],
       "status": "public_contract",
       "known_issues": [],
-      "migration_criterion": "U07/U08：新栅格运行时（PDFium 候选）按同一宽度出 PNG；缓存层不动；跨 renderer 的抗锯齿差异按 03 §6「需要校准」记录阈值，不全局放大。"
+      "migration_criterion": "U07/U08：新栅格运行时（PDFium 候选）按同一宽度出 PNG；缓存层不动；跨 renderer 的抗锯齿差异按 03 §6「需要校准」记录阈值，不全局放大。",
+      "migration_evidence": [
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_preview.py::test_a_real_pdf_preview_is_rendered_by_the_child_at_the_bucket_width"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_preview.py::test_touching_the_file_keeps_the_key_but_changing_its_bytes_changes_it"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_preview.py::test_the_key_carries_width_background_renderer_build_and_fonts_policy"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_preview.py::test_a_render_failure_raises_and_leaves_no_blank_or_stale_file"
+        },
+        {
+          "stage": "U07",
+          "test": "tests/test_rendercore_preview.py::test_publish_yields_to_a_reader_holding_the_target_on_windows"
+        }
+      ]
     },
     {
       "name": "text_plan",
@@ -916,7 +982,8 @@
             "line": 1037
           }
         ],
-        "role": "按对象类型落一个元素：panel（PDF 真矢量 show_pdf_page；位图带 crop/rotation 经 convert_to_pdf；opacity<1 或 flip 时按 dpi 位图嵌入）/ text / arrow / shape"
+        "role": "按对象类型落一个元素：panel（PDF 真矢量 show_pdf_page；位图带 crop/rotation 经 convert_to_pdf；opacity<1 或 flip 时按 dpi 位图嵌入）/ text / arrow / shape",
+        "migration_note_u07": "U07（ADR 0065）：panel 由 plan._panel_node → ImportedPage / Image，落位顺序只在 rendercore/placement.py；PDF 真矢量 Form XObject，opacity 透明组、flip 负缩放（不再退位图）；text / arrow / shape 由 U06 的 typography / geometry 编译"
       },
       {
         "name": "size_pt",
@@ -928,7 +995,8 @@
             "line": 1045
           }
         ],
-        "role": "样式检查报告里的页面尺寸"
+        "role": "样式检查报告里的页面尺寸",
+        "migration_note_u07": "U07：`ir.Page.width_pt / height_pt`（plan.compile_page 换算一次）"
       },
       {
         "name": "save_pdf",
@@ -952,7 +1020,8 @@
             "line": 1074
           }
         ],
-        "role": "与 save_png 同一页同一次栅格化参数（ADR 0046）；编码器 tiffwrite.py"
+        "role": "与 save_png 同一页同一次栅格化参数（ADR 0046）；编码器 tiffwrite.py",
+        "migration_note_u07": "U07（ADR 0066）：`rendercore/job.py` 把 Canonical PDF 交给 render child 栅格一次得到 RasterBuffer，PNG（raster.encode_png）与 TIFF（tiffwrite）从同一份字节编码；透明背景 = 页面不画底 + child 从全 0 起算，straight alpha"
       },
       {
         "name": "save_png",
@@ -964,7 +1033,8 @@
             "line": 1076
           }
         ],
-        "role": "同一页渲染"
+        "role": "同一页渲染",
+        "migration_note_u07": "U07（ADR 0066）：`rendercore/job.py` 把 Canonical PDF 交给 render child 栅格一次得到 RasterBuffer，PNG（raster.encode_png）与 TIFF（tiffwrite）从同一份字节编码；透明背景 = 页面不画底 + child 从全 0 起算，straight alpha"
       },
       {
         "name": "close",
@@ -976,7 +1046,8 @@
             "line": 1098
           }
         ],
-        "role": "finally 里关文档"
+        "role": "finally 里关文档",
+        "migration_note_u07": "U07：写入器不持有跨调用的 native 句柄（外来 Pdf 在 save() 之后关；render child 的 doc / page / bitmap 每请求 finally 关）——没有对应的 close 面"
       },
       {
         "name": "__enter__/__exit__",
@@ -993,7 +1064,8 @@
             "line": 46
           }
         ],
-        "role": "测试里的 with 形态；app.py 用显式 close()"
+        "role": "测试里的 with 形态；app.py 用显式 close()",
+        "migration_note_u07": "U07：写入器不持有跨调用的 native 句柄（外来 Pdf 在 save() 之后关；render child 的 doc / page / bitmap 每请求 finally 关）——没有对应的 close 面"
       }
     ],
     "migration_criterion": "U07：同实例多格式保存、重复关闭 / 错误后关闭的用例（RC-002 verification）；save_png 不许重新解析另一份来源（must_fail_example）。"

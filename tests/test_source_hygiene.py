@@ -148,18 +148,13 @@ def test_no_launcher_leaves_a_child_pipe_undrained():
     """
     import ast
 
-    # **唯一的例外，且只有一个文件**：U02 spike 的 render child 客户端。它不是启动器，是一个
-    # 行协议的客户端——响应只能从 stdout 回来，且由专门的读线程在子进程运行期间持续排空
-    # （与 `engine/pool.py` 读 worker 的做法同一形状；`src/` 不在本判据范围内，spike 代码
-    # 按 U02 任务书放在 scripts/dev/ 才撞上这条）。「真的在并发排空」静态证不了，所以由
-    # `tests/test_foundation_u02_render_child.py::test_reader_drains_more_than_a_pipe_buffer_while_the_child_runs`
-    # 动态证：假 child 在应答前吐 256 KiB，不并发排空就会超时。搬进 src/ 时把这条例外删掉。
-    streaming_clients = {ROOT / "scripts" / "dev" / "u02_spikes" / "render_child.py"}
-    assert all(p.is_file() for p in streaming_clients), "例外指向的文件不在了：删掉这条例外"
-
+    # 没有例外。U02 spike 的 render child 客户端曾是唯一的一个（行协议、专门读线程排空）；U07 把它收编进
+    # `src/tavotto/rendercore/renderhost.py`（`src/` 不在本判据范围内，它的「真的在并发排空」由
+    # `tests/test_rendercore_renderchild.py::test_reader_drains_more_than_a_pipe_buffer_while_the_child_runs`
+    # 动态证），scripts/ 里再出现 `stdout=PIPE` 就是新的启动器写错了，不该再有第二个例外。
     offenders = []
     for path in sorted((ROOT / "scripts").rglob("*.py")):
-        if "__pycache__" in path.parts or path in streaming_clients:
+        if "__pycache__" in path.parts:
             continue
         src = path.read_text(encoding="utf-8")
         try:

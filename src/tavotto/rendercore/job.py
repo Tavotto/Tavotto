@@ -1,20 +1,26 @@
-"""接 `engine.exportjob` 的 `produce` 形状（统一实施包 U06，ADR 0059）。
+"""接 `engine.exportjob` 的 `produce` 形状（统一实施包 U06 / U07，ADR 0059 / 0066）。
 
 `exportjob.run(job, produce)` 只要求一个 `produce(job, tmp_dir) -> list[Produced]`；旧 facade 那条路是
 `app._export_produce_canvas`。这里给 RenderCore 一条同形的路，**作业生命周期（临时目录 → 原子发布 /
 partial / 取消 / 终局字段顺序）一个字不改**，全在 `exportjob` 里。
 
-U06 只做 `scope=canvas` + `pdf`：编译 RenderPlan → 每个面板的冻结源在写入前 `read_frozen()` 核 hash
-（RC-014）→ `pdfwriter` 写进作业自己的临时目录（RC-015 / 016：中间文件私有）。其它格式按
-`ir.CAPABILITIES` 逐项报 `format_failed`（error 里带结构化理由），PDF 照常交付——`partial` 是
-`exportjob` 的既有语义。写入器的 `unsupported_capability`（例如页上有 `ImportedPage`，U07 才收编）
-同样落到 `format_failed`，不整页失败、不静默降级。
+`scope=canvas`：编译 RenderPlan → 每个面板的冻结源在写入前 `read_frozen()` 读进内存并核 hash（RC-014；写入器
+只吃这一份字节）→ `pdfwriter` 把 **Canonical PDF** 写进作业自己的临时目录（RC-015 / 016：中间文件私有）→
+要了 PNG / TIFF 时把这份 PDF 交给 render child **栅格化一次**（`renderhost.RenderHost.render(dpi=…)`），
+得到一个 `RasterBuffer`，PNG 与 TIFF 从**同一个** buffer 编码（RC-052 / RC-053：同一份字节两个容器；透明背景
+= 页面不画底 + child 从全 0 起算，PNG 色型 6 / TIFF ExtraSamples 2 都是 straight alpha；密度 = 请求的 ppi）。
+PDF 没要也照样写进临时目录——它是 PNG / TIFF 的唯一来源，不存在「PNG 用另一个 layout 引擎」这条路。
+其它格式按 `ir.CAPABILITIES` 逐项报 `format_failed`（error 里带结构化理由），能出的照常交付——`partial`
+是 `exportjob` 的既有语义。写入器的 `WriterError`（不支持的操作、源打不开、字节身份不符）与 child 的
+`RenderChildError`（超时 / 崩溃 / 预算）同样落到该格式的 `format_failed`，不整页失败、不静默降级、不拿
+旧文件冒充。
 
 编译期的事实（缺字、落到 CJK 脸的字符、hidden 被丢）进 `job.warnings`，与旧路 worker 的
 warnings 同一个口子——「导出的图和画布上不一样」必须有个说法。
 
-**本模块在 U06 不接任何用户可见入口**（`app.py` 不 import 它）；由 `tests/test_rendercore_job.py`
-经真实的 `exportjob.prepare / run` 驱动。
+**本模块在 U07 仍不接任何用户可见入口**（`app.py` 不 import 它）；由 `tests/test_rendercore_job.py` /
+`test_rendercore_rasterize.py` 经真实的 `exportjob.prepare / run` 驱动。`host=None` 时用进程级共享的
+render child（`renderhost.shared()`）。
 """
 
 from __future__ import annotations
@@ -22,9 +28,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..engine import exportjob, exportreq
-from . import ir, pdfwriter, plan
+from . import ir, pdfwriter, plan, raster
 from .hbshaper import HbFaceProvider
+from .renderhost import RenderChildError, RenderHost
 from .sources import SourceError, SourceResolver, read_frozen
+
+#: 一次作业里全部冻结源的字节总预算（读进内存之前按 `SourceArtifact.size_bytes` 判）。像素预算只管解码后的
+#: 位图，管不住「几份很大的 PDF / 压缩得很小的位图」把导出进程挤死（Codex #463 第四轮 P2）；超过就是结构化
+#: 失败（`export_render_failed` + `source_budget_exceeded`），一个字节不读。**记账 = 全部源之和 + 最大的那一份**：
+#: `read_frozen()` 交出 `bytes` 那一刻同时存在预分配缓冲与结果各一份，峰值多出最大单个源的大小（第六轮 P2）。
+SOURCE_BYTES_BUDGET = 512 * 1024 * 1024
 
 
 def produce(
@@ -33,6 +46,7 @@ def produce(
     *,
     sources: SourceResolver,
     provider: HbFaceProvider,
+    host: RenderHost | None = None,
 ) -> list[exportjob.Produced]:
     req = job.request
     job.check_cancelled()
@@ -61,11 +75,28 @@ def produce(
         msg = f"{oid}: hidden"
         if msg not in job.warnings:
             job.warnings.append(msg)
-    # 冻结源在写入之前逐个核 hash（U06 的写入器还不放置它们，但核对必须在这里、在读之前）
+    # 冻结源在写入之前逐个读进内存并核 hash（RC-014）：写入器用的就是这一份字节，不再碰文件。
+    # 读之前先按冻结时记下的大小判总预算——超过的作业一个字节不读、结构化失败
+    sizes = [int(fs.artifact.size_bytes) for fs in rp.sources.values()]
+    total_bytes = sum(sizes)
+    peak_bytes = total_bytes + (max(sizes) if sizes else 0)  # 读最大那份时的瞬时双份
+    if peak_bytes > SOURCE_BYTES_BUDGET:
+        raise exportreq.ExportRequestError(
+            "export_render_failed",
+            f"冻结源合计 {total_bytes} 字节（读取峰值 {peak_bytes}），超过预算 {SOURCE_BYTES_BUDGET}",
+            {
+                "id": "",
+                "reason": f"source_budget_exceeded: {peak_bytes} > {SOURCE_BYTES_BUDGET}",
+                "source_bytes": total_bytes,
+                "peak_bytes": peak_bytes,
+                "budget": SOURCE_BYTES_BUDGET,
+            },
+        )
+    files: dict[str, bytes] = {}
     for key, fs in rp.sources.items():
         job.check_cancelled()
         try:
-            read_frozen(fs)
+            files[key] = read_frozen(fs)
         except SourceError as exc:
             raise exportreq.ExportRequestError(
                 "export_render_failed",
@@ -73,52 +104,129 @@ def produce(
                 {"id": fs.artifact.source_id, "reason": f"{exc.code}: {exc}"},
             ) from exc
 
+    width_mm, height_mm = round(req.canvas.page_w_mm, 3), round(req.canvas.page_h_mm, 3)
     produced: list[exportjob.Produced] = []
-    for fmt in req.formats:
-        job.check_cancelled()
-        gaps = rp.unsupported.get(fmt) or []
-        if fmt != exportreq.FORMAT_PDF:
-            # 本切片只有 PDF 写入器。空页 / 全 hidden 的页在能力表上没有任何操作可判、缺口为空，
-            # 但那不等于「PNG 能出」——把 PDF 字节写进 .png 报 vector=True 就是假成功（Codex #460 P2）
-            gaps = gaps or [
-                {
-                    "operation": "format",
-                    "reason": f"U06 只有 PDF 写入器；{fmt} 的栅格 / 序列化归 U07（ADR 0059）",
-                    "object_id": "",
-                }
-            ]
-        if gaps:
-            produced.append(
-                exportjob.Produced(
-                    format=fmt,
-                    error_code="format_failed",
-                    error_params={
-                        "error": "; ".join(f"{g['operation']}: {g['reason']}" for g in gaps)[:200],
-                        "unsupported": gaps,
-                    },
-                )
-            )
-            continue
-        tmp = tmp_dir / f"out.{fmt}"
-        try:
-            facts = pdfwriter.write_pdf(rp.page, tmp, provider)
-        except pdfwriter.WriterError as exc:
-            produced.append(
-                exportjob.Produced(
-                    format=fmt,
-                    error_code="format_failed",
-                    error_params={"error": str(exc)[:200], **exc.params},
-                )
-            )
-            continue
+
+    def failed(fmt: str, error: str, **params) -> None:
         produced.append(
             exportjob.Produced(
                 format=fmt,
-                tmp_path=tmp,
-                width_mm=round(req.canvas.page_w_mm, 3),
-                height_mm=round(req.canvas.page_h_mm, 3),
-                vector=True,
-                error_params={"plan_identity": rp.plan_identity, "sha256": facts.sha256},
+                error_code="format_failed",
+                error_params={"error": error[:200], **params},
             )
         )
+
+    # ---- Canonical PDF：一定写（PNG / TIFF 从它出），要了才交付 -------------------------
+    job.check_cancelled()
+    pdf_tmp = tmp_dir / "out.pdf"
+    pdf_facts = None
+    pdf_error: pdfwriter.WriterError | None = None
+    gaps_pdf = rp.unsupported.get(exportreq.FORMAT_PDF) or []
+    if not gaps_pdf:
+        try:
+            pdf_facts = pdfwriter.write_pdf(rp.page, pdf_tmp, provider, files)
+        except pdfwriter.WriterError as exc:
+            pdf_error = exc
+
+    # ---- 栅格：要了 PNG / TIFF 就把 Canonical PDF 交给 render child 栅格一次 --------------
+    wants_raster = any(f in exportreq.RASTER_FORMATS for f in req.formats)
+    buf: raster.RasterBuffer | None = None
+    raster_error: Exception | None = None
+    raster_facts: dict = {}
+    if wants_raster and pdf_facts is not None and not _raster_gaps(rp):
+        job.check_cancelled()
+        dpi = req.ppi or exportreq.PPI_DEFAULT
+        h = host if host is not None else _shared_host()
+        try:
+            buf = h.render(
+                pdf_tmp,
+                dpi=float(dpi),
+                transparent=rp.page.background is None,
+                page_size_pt=(rp.page.width_pt, rp.page.height_pt),
+            )
+            raster_facts = {
+                "renderer": "pdfium",
+                "px": [buf.width, buf.height],
+                "channels": buf.channels,
+                "dpi": buf.dpi,
+            }
+        except RenderChildError as exc:
+            raster_error = exc
+
+    for fmt in req.formats:
+        job.check_cancelled()
+        if fmt == exportreq.FORMAT_PDF:
+            if gaps_pdf:
+                failed(fmt, _gap_text(gaps_pdf), unsupported=gaps_pdf)
+            elif pdf_error is not None:
+                failed(fmt, str(pdf_error), **pdf_error.params)
+            else:
+                assert pdf_facts is not None
+                produced.append(
+                    exportjob.Produced(
+                        format=fmt,
+                        tmp_path=pdf_tmp,
+                        width_mm=width_mm,
+                        height_mm=height_mm,
+                        vector=True,
+                        error_params={
+                            "plan_identity": rp.plan_identity,
+                            "sha256": pdf_facts.sha256,
+                        },
+                    )
+                )
+            continue
+        if fmt in exportreq.RASTER_FORMATS:
+            gaps = rp.unsupported.get(fmt) or []
+            if gaps:
+                failed(fmt, _gap_text(gaps), unsupported=gaps)
+            elif pdf_facts is None:
+                # Canonical PDF 没写出来：位图不可能从别的东西出（RC-052 must_fail：PNG 用另一个 layout 引擎）
+                reason = gaps_pdf or ([pdf_error.params] if pdf_error else [])
+                failed(fmt, "Canonical PDF 未写出，位图无从栅格", canonical_pdf=reason)
+            elif raster_error is not None:
+                failed(fmt, str(raster_error), raster_code=getattr(raster_error, "code", ""))
+            else:
+                assert buf is not None
+                tmp = tmp_dir / f"out.{fmt}"
+                try:
+                    if fmt == exportreq.FORMAT_TIFF:
+                        raster.write_tiff(buf, tmp)
+                    else:
+                        tmp.write_bytes(raster.encode_png(buf))
+                except (OSError, ValueError) as exc:  # noqa: PERF203 —— 一个格式挂了不牵连另一个
+                    failed(fmt, f"{type(exc).__name__}: {exc}")
+                    continue
+                produced.append(
+                    exportjob.Produced(
+                        format=fmt,
+                        tmp_path=tmp,
+                        width_px=buf.width,
+                        height_px=buf.height,
+                        width_mm=width_mm,
+                        height_mm=height_mm,
+                        vector=False,
+                        error_params={"plan_identity": rp.plan_identity, **raster_facts},
+                    )
+                )
+            continue
+        # EPS（及将来任何没有写入器的格式）：能力表逐项说明
+        gaps = rp.unsupported.get(fmt) or [
+            {"operation": "format", "reason": f"RenderCore 没有 {fmt} 写入器", "object_id": ""}
+        ]
+        failed(fmt, _gap_text(gaps), unsupported=gaps)
     return produced
+
+
+def _raster_gaps(rp: plan.RenderPlan) -> list[dict]:
+    return [g for fmt in exportreq.RASTER_FORMATS for g in (rp.unsupported.get(fmt) or [])]
+
+
+def _gap_text(gaps: list[dict]) -> str:
+    return "; ".join(f"{g['operation']}: {g['reason']}" for g in gaps)
+
+
+def _shared_host() -> RenderHost:
+    from .renderhost import shared
+
+    return shared()

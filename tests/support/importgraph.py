@@ -385,6 +385,9 @@ LAYERS: dict[str, tuple[str, ...]] = {
         "tavotto/rendercore/typography.py",
         "tavotto/rendercore/sources.py",
         "tavotto/rendercore/plan.py",
+        # U07（ADR 0065 / 0066）：落位几何与 RasterBuffer 也是纯模型
+        "tavotto/rendercore/placement.py",
+        "tavotto/rendercore/raster.py",
     ),
     "rendercore_native": ("tavotto/rendercore/",),
 }

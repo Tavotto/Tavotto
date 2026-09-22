@@ -65,6 +65,15 @@ docs/implementation/tavotto-foundation/evidence/u06/canvas_coverage.rendercore.j
 docs/implementation/tavotto-foundation/evidence/u06/coverage_diff.json text eol=lf
 docs/implementation/tavotto-foundation/evidence/u06/u06.pdf binary
 docs/implementation/tavotto-foundation/evidence/u06/*.png binary
+# U07 的 evidence（docs/implementation/tavotto-foundation/evidence/u07/，ADR 0065 / 0066）：同一条纪律——
+# `tests/test_rendercore_evidence.py` 按 sha256 把 truth.json / u07.pdf / u07_pdfium.png 与 report.json 互钉；
+# freeze/ 下的报告与 PyInstaller 日志是 CI 每平台各写一份的产物，只钉 LF。
+docs/implementation/tavotto-foundation/evidence/u07/truth.json text eol=lf
+docs/implementation/tavotto-foundation/evidence/u07/report.json text eol=lf
+docs/implementation/tavotto-foundation/evidence/u07/freeze/*.json text eol=lf
+docs/implementation/tavotto-foundation/evidence/u07/freeze/*.txt text eol=lf
+docs/implementation/tavotto-foundation/evidence/u07/u07.pdf binary
+docs/implementation/tavotto-foundation/evidence/u07/**/*.png binary
 # U06 的批准字体 allowlist（ADR 0060）：evidence 的 report.json 记它的 sha256（`inputs.allowlist_sha256`），
 # `tests/test_rendercore_evidence.py` 按 `read_bytes()` 逐字节核——不是生成物，是人写的 JSON，但同样
 # 「字节必须确定」。u06-rendercore.yml 的 Windows 腿红过一次：CRLF 检出后哈希 abd2b64e… 变成 ab9a94c8…。

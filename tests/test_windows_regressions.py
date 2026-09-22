@@ -1800,6 +1800,9 @@ def _byte_compared_generated_files() -> list[str]:
         "docs/implementation/tavotto-foundation/evidence/u06/report.json",
         "docs/implementation/tavotto-foundation/evidence/u06/canvas_coverage.rendercore.json",
         "docs/implementation/tavotto-foundation/evidence/u06/coverage_diff.json",
+        # U07 的 evidence（同一条纪律；u07.pdf / PNG 只钉 binary）
+        "docs/implementation/tavotto-foundation/evidence/u07/truth.json",
+        "docs/implementation/tavotto-foundation/evidence/u07/report.json",
         # U06 的批准字体 allowlist：report.json 记它的 sha256、evidence 用例逐字节核。人写的 JSON，
         # 与 CLA 正文同一类——u06-rendercore.yml windows 腿 CRLF 检出后哈希对不上红过一次。
         "src/tavotto/rendercore/fonts_allowlist.json",

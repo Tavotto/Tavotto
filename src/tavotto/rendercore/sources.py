@@ -61,17 +61,46 @@ class SourceResolver(Protocol):
     def resolve(self, obj: dict) -> FrozenSource: ...
 
 
+#: `read_frozen()` 的分块大小；有界读的粒度，不是性能旋钮。
+READ_CHUNK = 1 << 20
+
+
 def read_frozen(fs: FrozenSource) -> bytes:
-    """读冻结源的字节，并核对 `bytes_sha256`。不符 → `source_changed`（不返回新字节）。"""
+    """读冻结源的字节，并核对 `bytes_sha256`。不符 → `source_changed`（不返回新字节）。
+
+    **有界分块读**（Codex #463 第五轮 P2）：冻结时记下了 `size_bytes`，磁盘上那份此刻若比它大，一定不是
+    冻结的那份——多读一个字节就停、报 `source_changed`，不把一个几 GB 的替身整个读进内存再发现 hash 不对；
+    hash 边读边算，读到的字节就是核过的那份（写入器接下来用的正是它）。缓冲只有一份（预分配 + `readinto`），
+    不再 chunk 列表 + join 双份。
+    """
+    limit = int(fs.artifact.size_bytes)
+    digest = hashlib.sha256()
+    # 预分配 limit + 1 字节、`readinto` 直接填：整个过程只有一份缓冲（外加最后 `bytes()` 那一次拷贝——
+    # 作业级预算 `job.SOURCE_BYTES_BUDGET` 把这份瞬时拷贝也算进去，Codex #463 第六轮 P2）
+    buf = bytearray(limit + 1)
+    view = memoryview(buf)
+    total = 0
     try:
-        data = Path(fs.path).read_bytes()
+        with open(fs.path, "rb") as fh:
+            while total < limit + 1:
+                n = fh.readinto(view[total : min(total + READ_CHUNK, limit + 1)])
+                if not n:
+                    break
+                digest.update(view[total : total + n])
+                total += n
+                if total > limit:
+                    raise SourceError(
+                        "source_changed",
+                        f"{fs.artifact.source_id} 的字节在冻结之后变了（磁盘上那份比冻结时的 {limit} 字节大）",
+                        {"figure": fs.artifact.source_id, "frozen_bytes": limit},
+                    )
     except OSError as exc:
         raise SourceError(
             "source_missing", f"{fs.path}: {exc}", {"figure": fs.artifact.source_id}
         ) from exc
     # 核的是**读进内存的这一份**（写入器接下来用的正是它），不是再读一遍文件——两次读之间
     # 文件仍可能被改写，核文件等于核了另一个时刻
-    sha = hashlib.sha256(data).hexdigest()
+    sha = digest.hexdigest()
     if sha != fs.artifact.bytes_sha256:
         raise SourceError(
             "source_changed",
@@ -79,7 +108,7 @@ def read_frozen(fs: FrozenSource) -> bytes:
             f"（{fs.artifact.bytes_sha256[:12]} → {sha[:12]}）",
             {"figure": fs.artifact.source_id},
         )
-    return data
+    return bytes(view[:total])
 
 
 def needs_execution(obj: dict) -> bool:
