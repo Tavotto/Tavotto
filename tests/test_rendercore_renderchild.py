@@ -76,7 +76,13 @@ for raw in sys.stdin.buffer:
             data = bytes([255, 0, 0, 255, 0, 0, 255, 128])
             with open(req["out"], "wb") as fh:
                 fh.write(data)
+            if req["pdf"].endswith("nofile.pdf"):
+                os.remove(req["out"])  # 说成功，像素文件却不在
             nbytes = 999 if req["pdf"].endswith("shortbytes.pdf") else 8  # 说的与写的对不上
+            if req["pdf"].endswith("nullbytes.pdf"):
+                nbytes = None  # bytes 字段畸形（null）
+            if req["pdf"].endswith("strbytes.pdf"):
+                nbytes = "eight"  # bytes 字段畸形（非数字）
             width = 3 if req["pdf"].endswith("badshape.pdf") else 2  # bytes 对得上，尺寸说谎（3×1×4 = 12 ≠ 8）
             resp = {"id": req["id"], "ok": True, "seq": seq, "width": width, "height": 1, "stride": 8, "channels": 4, "bytes": nbytes, "ms": 0}
     else:
@@ -389,6 +395,89 @@ def test_a_response_whose_shape_does_not_fit_the_bytes_is_a_protocol_failure_rea
     with pytest.raises(rh.RenderChildError) as ei:
         fake_host.render(pdf, width_px=2)
     assert ei.value.code == "render_child_protocol" and "不成一张图" in ei.value.message
+    assert reaped_at_release == [True], reaped_at_release
+    _assert_not_alive(pid)
+    fake_host._lock = inner
+    ok = tmp_path / "ok.pdf"
+    ok.write_bytes(b"%PDF-")
+    assert fake_host.render(ok, width_px=2).width == 2 and fake_host.restarts == 1
+
+
+def test_a_missing_pixel_file_after_a_successful_reply_is_a_protocol_failure_reaped_in_the_lock(
+    fake_host, tmp_path
+):
+    """Codex #471 第七轮 P2：child 说 ok、像素文件却不在（或读不了）——`read_bytes()` 的 OSError 不是
+    `RenderChildError`，会越过处置：锁释放、child 不 reap、job 整个炸。现在它是 `render_child_protocol`，
+    释放锁那一刻 child 已被 reap，下一次请求换新 child。"""
+    pdf = tmp_path / "nofile.pdf"
+    pdf.write_bytes(b"%PDF-")
+    fake_host.ping()
+    pid = fake_host.pid
+    inner = fake_host._lock
+    reaped_at_release: list[bool] = []
+
+    class SpyLock:
+        def acquire(self, *a, **k):
+            return inner.acquire(*a, **k)
+
+        def release(self):
+            reaped_at_release.append(fake_host._proc is None)
+            inner.release()
+
+        def __enter__(self):
+            inner.acquire()
+            return self
+
+        def __exit__(self, *a):
+            self.release()
+            return False
+
+    fake_host._lock = SpyLock()
+    with pytest.raises(rh.RenderChildError) as ei:
+        fake_host.render(pdf, width_px=2)
+    assert ei.value.code == "render_child_protocol" and "读不了" in ei.value.message
+    assert reaped_at_release == [True], reaped_at_release
+    _assert_not_alive(pid)
+    fake_host._lock = inner
+    ok = tmp_path / "ok.pdf"
+    ok.write_bytes(b"%PDF-")
+    assert fake_host.render(ok, width_px=2).width == 2 and fake_host.restarts == 1
+
+
+@pytest.mark.parametrize("name", ["nullbytes.pdf", "strbytes.pdf"])
+def test_a_malformed_byte_count_in_a_successful_reply_is_a_protocol_failure_reaped_in_the_lock(
+    fake_host, tmp_path, name
+):
+    """Codex #471 第八轮 P2：id 对、ok 为真，但 `bytes` 是 null / 非数字——`int()` 的 TypeError / ValueError 在
+    受保护的构造之前抛，越过处置：锁释放、child 不 reap、job 整个炸。现在 bytes 在锁内的 verify 里解析，畸形 =
+    `render_child_protocol`，释放锁那一刻 child 已被 reap，下一次请求换新 child。"""
+    pdf = tmp_path / name
+    pdf.write_bytes(b"%PDF-")
+    fake_host.ping()
+    pid = fake_host.pid
+    inner = fake_host._lock
+    reaped_at_release: list[bool] = []
+
+    class SpyLock:
+        def acquire(self, *a, **k):
+            return inner.acquire(*a, **k)
+
+        def release(self):
+            reaped_at_release.append(fake_host._proc is None)
+            inner.release()
+
+        def __enter__(self):
+            inner.acquire()
+            return self
+
+        def __exit__(self, *a):
+            self.release()
+            return False
+
+    fake_host._lock = SpyLock()
+    with pytest.raises(rh.RenderChildError) as ei:
+        fake_host.render(pdf, width_px=2)
+    assert ei.value.code == "render_child_protocol" and "bytes 字段不是数" in ei.value.message
     assert reaped_at_release == [True], reaped_at_release
     _assert_not_alive(pid)
     fake_host._lock = inner

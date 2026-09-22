@@ -44,8 +44,8 @@
     },
     {
       "path": "ALL_PROMPTS.md",
-      "bytes": 86918,
-      "sha256": "ee189c75995fd356ff2612f1f178bb417d257e6290107f0fa9ab23230bf7621a"
+      "bytes": 87694,
+      "sha256": "75803b35694e271088b6ca95da82e6b7bb23b3c7f3f1eeb046e2343a2a231f6c"
     },
     {
       "path": "ENROLLMENT.md",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 14952,
-      "sha256": "fedff95e9a0728ab75129563e1249274a546ecba241242a6b8dd86ef32465673"
+      "bytes": 15728,
+      "sha256": "6df299a4466ffe355b4ab49a8b168ae5fe3e592078f5adf0e42b0e44029d6595"
     },
     {
       "path": "SOURCES.md",

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -286,3 +287,37 @@ def test_u07_freeze_report_says_the_frozen_child_started_itself():
             and checks["pdfium_library_bundled"]
         )
         assert checks["fonts_bundled_13"] and checks["png_rendered"]
+        # 报告里记的 argv[0] 就是父进程的 executable（路径规范化后逐字相同）——「自起」不是只看旗标
+        res = r["result"]
+        norm = lambda x: os.path.normcase(os.path.normpath(x))  # noqa: E731
+        assert (
+            norm(res["child_argv"][0]) == norm(res["executable"])
+            and res["child_argv"][-1] == "--render-child"
+        )
+
+
+def test_u07_freeze_check_rejects_a_child_started_from_another_executable(tmp_path):
+    """Codex #471 第七轮 P2：`child_argv()` 若回退成 `[别的 exe, "--render-child"]`，那个 exe 照样能起一个 frozen
+    child 并渲染成功，只看旗标 + frozen 的核对会照过。核对要比 argv[0] 与父进程 executable 是不是同一个文件。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "u07_freeze_child", ROOT / "scripts" / "dev" / "u07_freeze_child.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    me = tmp_path / "Tavotto"
+    other = tmp_path / "python3"
+    me.write_bytes(b"#!")
+    other.write_bytes(b"#!")
+    base = {"ok": True, "frozen": True, "child_frozen": True, "executable": str(me)}
+
+    def check(argv):
+        return dict(mod.freeze_checks({**base, "child_argv": argv}, 0, True))[
+            "child_is_the_same_exe_with_render_child_flag"
+        ]
+
+    assert check([str(me), "--render-child"]) is True
+    assert check([str(tmp_path / "." / "Tavotto"), "--render-child"]) is True  # 规范化后同一个文件
+    assert check([str(other), "--render-child"]) is False  # 别的 exe：旗标、frozen 都对，仍不算自起
+    assert check([str(me)]) is False and check([str(me), "-m", "x", "--render-child"]) is False
