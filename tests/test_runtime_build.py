@@ -11,6 +11,7 @@ macos-x86_64）。分层的意义只有一条：一个平台的 wheel 绝不能�
 """
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -768,7 +769,6 @@ def test_spec_ships_every_backend_the_contract_layer_can_select():
     windows-exe-smoke / macos-app-smoke 用 `smoke_app.py --exe` 让冻结产物走 `/api/render` + 导出
     （都经 `_impl()`），再 `retirement_scan.py --dist` 扫它。
     """
-    import os
     import subprocess
 
     from tavotto import pdfbackend
