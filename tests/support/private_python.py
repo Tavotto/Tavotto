@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import http.server
 import io
@@ -58,75 +59,6 @@ def _launcher_script(host_python: str, launches_log: Path, *, exit_code: int = 0
     else:
         body += f'exec "{host_python}" "$@"\n'
     return body.encode("utf-8")
-
-
-def _windows_standin_base_probe() -> dict:
-    """Windows 上的替身（venvlauncher 副本 + pyvenv.cfg）能不能当建 venv 的 base——**按真依赖的那一步量**：
-    `-m venv` 退出 0 且目录齐全还不算，建出来的 venv 里 `Scripts\\python.exe` 得起得来、`-m pip --version` 得退出 0
-    （#475 db5f994a：目标腿 runner 上 `-m venv` 退出 0、Include / Lib / Scripts 都在，backend-platforms 上真建受管代
-    那步却 `managed_env_create_failed`——目录能建 ≠ 里面的解释器能启动）。回 {"ok", "steps"}，每步带 rc / 输出。"""
-    import tempfile
-
-    from tavotto.engine import pool as engine_pool
-
-    # 与用例里的替身同一个宿主（`support.dependency_repair.WORKER_PY` 的取法），否则探的不是同一件事
-    try:
-        host = engine_pool.find_worker_python() or sys.executable
-    except engine_pool.WorkerError:
-        host = sys.executable
-    steps: list[dict] = []
-    with tempfile.TemporaryDirectory(prefix="tavotto-standin-probe-") as tmp:
-        root = Path(tmp)
-        try:
-            exe, cfg = _windows_launcher(host)
-        except FileNotFoundError as exc:
-            return {"ok": False, "steps": [{"step": "launcher", "error": str(exc)}]}
-        (root / "python.exe").write_bytes(exe)
-        (root / "pyvenv.cfg").write_bytes(cfg)
-        venv = root / "venv"
-
-        def _step(name: str, argv: list[str]) -> bool:
-            try:
-                out = subprocess.run(
-                    argv,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=300,
-                    stdin=subprocess.DEVNULL,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-            except (OSError, subprocess.SubprocessError) as exc:
-                steps.append({"step": name, "error": str(exc)})
-                return False
-            steps.append(
-                {"step": name, "rc": out.returncode, "out": (out.stdout + out.stderr)[-600:]}
-            )
-            return out.returncode == 0
-
-        ok = _step("venv", [str(root / "python.exe"), "-m", "venv", str(venv)])
-        vpy = venv / "Scripts" / "python.exe"
-        ok = ok and vpy.is_file()
-        ok = ok and _step("launch", [str(vpy), "-I", "-c", "import sys; print(sys.prefix)"])
-        ok = ok and _step("pip", [str(vpy), "-m", "pip", "--version"])
-    return {"ok": ok, "steps": steps}
-
-
-#: Windows 上的替身是 venvlauncher 副本 + pyvenv.cfg：能被真起（`-I -c` 自报版本）、能被校验，但能不能当**建 venv 的
-#: base** 因机器而异——目录建得出来不等于里面的解释器起得来（#475 db5f994a：backend-platforms 的 windows 两片 12 + 2 条
-#: `managed_env_create_failed`）。所以这里**按真依赖的那一步探一次**（建 venv → 起它的 python → pip），探不过的机器上
-#: 「用供应出来的解释器建受管代」的用例 skip-with-reason；Windows 的这条真链另有 `private-python-targets.yml` 的
-#: windows 腿用真 pbs 归档跑（TestRealChain）。探测结果与真实建代的一致性由
-#: `tests/test_private_python.py::test_the_windows_standin_base_probe_matches_reality` 看住。
-STANDIN_BASE_PROBE: dict = (
-    {"ok": True, "steps": []} if os.name != "nt" else _windows_standin_base_probe()
-)
-STANDIN_CAN_BE_BASE = bool(STANDIN_BASE_PROBE["ok"])
-needs_real_base = pytest.mark.skipif(
-    not STANDIN_CAN_BE_BASE,
-    reason="这台 Windows 上的替身（venvlauncher 副本）建出的 venv 起不来，当不了 base；Windows 真链在 private-python-targets 腿（真 pbs）",
-)
 
 
 def _windows_launcher(host_python: str) -> tuple[bytes, bytes]:
@@ -336,3 +268,83 @@ def snapshot_tree(root: Path) -> set[str]:
 
 def rmtree(path: Path) -> None:
     shutil.rmtree(path, ignore_errors=True)
+
+
+@functools.lru_cache(maxsize=1)
+def windows_standin_base_probe() -> dict:
+    """Windows 上的替身（venvlauncher 副本 + pyvenv.cfg）能不能当建 venv 的 base——**按真依赖的那一步量**：
+    `-m venv` 退出 0 且目录齐全还不算，建出来的 venv 里 `Scripts\\python.exe` 得起得来、`-m pip --version` 得退出 0
+    （#475 db5f994a：目标腿 runner 上 `-m venv` 退出 0、Include / Lib / Scripts 都在，backend-platforms 上真建受管代
+    那步却 `managed_env_create_failed`——目录能建 ≠ 里面的解释器能启动）。回 {"ok", "steps"}，每步带 rc / 输出。"""
+    import tempfile
+
+    from tavotto.engine import pool as engine_pool
+
+    # 与用例里的替身同一个宿主（`support.dependency_repair.WORKER_PY` 的取法），否则探的不是同一件事
+    try:
+        host = engine_pool.find_worker_python() or sys.executable
+    except engine_pool.WorkerError:
+        host = sys.executable
+    steps: list[dict] = []
+    with tempfile.TemporaryDirectory(prefix="tavotto-standin-probe-") as tmp:
+        root = Path(tmp)
+        try:
+            exe, cfg = _windows_launcher(host)
+        except FileNotFoundError as exc:
+            return {"ok": False, "steps": [{"step": "launcher", "error": str(exc)}]}
+        (root / "python.exe").write_bytes(exe)
+        (root / "pyvenv.cfg").write_bytes(cfg)
+        venv = root / "venv"
+
+        def _step(name: str, argv: list[str]) -> bool:
+            try:
+                out = subprocess.run(
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=300,
+                    stdin=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                steps.append({"step": name, "error": str(exc)})
+                return False
+            steps.append(
+                {"step": name, "rc": out.returncode, "out": (out.stdout + out.stderr)[-600:]}
+            )
+            return out.returncode == 0
+
+        ok = _step("venv", [str(root / "python.exe"), "-m", "venv", str(venv)])
+        vpy = venv / "Scripts" / "python.exe"
+        ok = ok and vpy.is_file()
+        ok = ok and _step("launch", [str(vpy), "-I", "-c", "import sys; print(sys.prefix)"])
+        ok = ok and _step("pip", [str(vpy), "-m", "pip", "--version"])
+    return {"ok": ok, "steps": steps}
+
+
+#: Windows 上的替身是 venvlauncher 副本 + pyvenv.cfg：能被真起（`-I -c` 自报版本）、能被校验，但能不能当**建 venv 的
+#: base** 因机器而异——目录建得出来不等于里面的解释器起得来（#475 db5f994a：backend-platforms 的 windows 两片 12 + 2 条
+#: `managed_env_create_failed`）。所以这里**按真依赖的那一步探一次**（建 venv → 起它的 python → pip），探不过的机器上
+#: 「用供应出来的解释器建受管代」的用例 skip-with-reason；Windows 的这条真链另有 `private-python-targets.yml` 的
+#: windows 腿用真 pbs 归档跑（TestRealChain）。探测结果与真实建代的一致性由
+#: `tests/test_private_python.py::test_the_windows_standin_base_probe_matches_reality` 看住。
+
+
+def standin_base_probe() -> dict:
+    """POSIX 上替身是 sh 包装、恒能当 base；Windows 上首次调用才真探（模块 import 不起子进程）。"""
+    return {"ok": True, "steps": []} if os.name != "nt" else windows_standin_base_probe()
+
+
+def standin_can_be_base() -> bool:
+    return bool(standin_base_probe()["ok"])
+
+
+def needs_real_base(fn):
+    """装饰器：在**用到时**才探（装饰测试函数那一刻，即测试模块收集期），模块 import 本身不起子进程、
+    也不碰 config / pool——#475 ccfad63e 在模块顶层求值，Windows 两片收集期就挂，POSIX 走不到那一支所以本机看不见。"""
+    return pytest.mark.skipif(
+        not standin_can_be_base(),
+        reason="这台 Windows 上的替身（venvlauncher 副本）建出的 venv 起不来，当不了 base；Windows 真链在 private-python-targets 腿（真 pbs）",
+    )(fn)

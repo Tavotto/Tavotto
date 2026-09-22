@@ -236,6 +236,38 @@ class TestLock:
         assert privatepython.status(src)["provisioned"] is False
 
 
+# ================================================================ 测试支持模块本身
+def test_the_support_module_imports_under_both_os_names_with_the_same_exports():
+    """`support.private_python` 的 Windows 分支只在 Windows 上走到——本机看不见它的 NameError（#475 ccfad63e：
+    Windows 两片收集期就挂）。所以在子进程里把 `os.name` 钉成 nt / posix 各 import 一次，导出集合必须相同，
+    且 import 本身不起子进程（探测延迟到首次调用）。"""
+    # 先把标准库与产品模块按真实 os.name 装进 sys.modules（shutil 之类在 nt 下会去 import nt），再翻 os.name——
+    # 翻的只影响 support 模块自己的顶层分支，这正是要量的那一层
+    code = (
+        "import os, sys, json, functools, hashlib, http.server, io, platform, shutil, subprocess, "
+        "tarfile, tempfile, threading, time, pathlib, importlib, pytest; "
+        "sys.path.insert(0, sys.argv[2]); from tavotto.engine import privatepython, pool; "
+        "os.name = sys.argv[1]; m = importlib.import_module('support.private_python'); "
+        "print(json.dumps(sorted(n for n in dir(m) if not n.startswith('__'))))"
+    )
+    outs = {}
+    for name in ("nt", "posix"):
+        proc = subprocess.run(
+            [sys.executable, "-c", code, name, str(ROOT / "tests")],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+        )
+        assert proc.returncode == 0, f"os.name={name}: {proc.stderr[-1500:]}"
+        outs[name] = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert outs["nt"] == outs["posix"]
+    assert {"needs_real_base", "standin_can_be_base", "standin_base_probe", "fake_archive"} <= set(
+        outs["nt"]
+    )
+
+
 # ================================================================ 正例：状态机
 class TestProvision:
     def test_download_verify_launch_and_commit_atomically(self, tmp_path, launches):
@@ -286,7 +318,7 @@ class TestProvision:
 
     @pytest.mark.skipif(os.name != "nt", reason="看住的是 Windows 替身的前提")
     def test_the_windows_standin_base_probe_matches_reality(self, tmp_path, launches):
-        """`needs_real_base` 的前提（`support.private_python.STANDIN_BASE_PROBE`）必须与真实情况一致：把替身按产品
+        """`needs_real_base` 的前提（`support.private_python.standin_base_probe()`）必须与真实情况一致：把替身按产品
         路径供应出来、用它建一个 venv、起 venv 里的 python、跑 pip——量的是**真依赖的那一步**，不是「目录建出来了」
         （#475 db5f994a：目录齐全、下一步照样 create_failed）。探测说能、这里就得真能；探测说不能、这里就得真不能。
         两边不一致 = 探测量错了维度，红出来。报告进 CI 日志，下次有人查这条前提时不用再猜。"""
@@ -317,11 +349,11 @@ class TestProvision:
         ok = ok and _step("launch", [str(vpy), "-I", "-c", "import sys; print(sys.prefix)"])
         ok = ok and _step("pip", [str(vpy), "-m", "pip", "--version"])
         report = json.dumps(
-            {"reality": ok, "probe": pp_support.STANDIN_BASE_PROBE, "steps": steps},
+            {"reality": ok, "probe": pp_support.standin_base_probe(), "steps": steps},
             ensure_ascii=False,
         )
         print("WINDOWS_STANDIN_BASE_REPORT " + report)
-        assert ok == pp_support.STANDIN_CAN_BE_BASE, (
+        assert ok == pp_support.standin_can_be_base(), (
             "替身能不能当 base：探测与真实不一致（探测量错了维度，或这台机器两次结果不同）。"
             + report
         )
