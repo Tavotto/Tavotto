@@ -36,6 +36,12 @@ test('同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴',
   // 这条用例测的是画布上的跨标签粘贴，所以回到画布排版再往下走。
   await tabA.getByRole('button', { name: /返回画布/ }).click()
   await expect(tabA.locator('[data-object-id]')).toHaveCount(1)
+  // 复制的前提是**选区非空**（`lib/clipboard.ts` 的 `buildClipPayload` 在选区为空时回 null，
+  // `handleCopyEvent` 静默不消费——按了等于没按，之后再也等不到「已复制」）。从快速编辑回到
+  // 画布时选区还在不在取决于重建时序：2026-09-22 同一条断言在三次 CI 里红了两次（#499），
+  // 播报区停在「正在构建 …」。这里显式点一下对象把前提摆好，再按 ⌘C——用例测的是跨标签
+  // 粘贴，不是「返回画布会不会保住选区」（那要单独一条用例说）。
+  await tabA.locator('[data-object-id]').click()
   await tabA.keyboard.press('ControlOrMeta+c')
   // 播报区认 `data-status-live`（`StatusToasts` 那块 aria-live），不认 `role="status"`：
   // 后者不唯一，`getByRole('status')` 撞上第二个产出点就是 strict 违例或量错对象。
