@@ -115,8 +115,7 @@ registry：RC-101 / 103 / 107 / 109 → enforced（各带 promotion 合同），
 真冒烟 0；退役扫描六尺全绿 + 旧闭包判红。
 
 **仍缺哪些默认启用 / 精确安装物资格**：签名 NSIS / 公证 .app / 正式 wheel 的最终字节资格（U11）；no-system-Python 目标资格
-（`enabled` 全 false 未翻）；SBOM 尺子首跑；Intel Mac pip 渠道；FO32 其它平台；`MIN_TAVOTTO_VERSION` 下次发版抬（U08 备注，本阶段
-桥的 import 集没变）。
+（`enabled` 全 false 未翻）；SBOM 尺子首跑；Intel Mac pip 渠道；FO32 其它平台；`MIN_TAVOTTO_VERSION` 本 PR **不抬**（桥的 import 集本阶段没变；U08 备注的那次抬版在 v0.17.0 由 U11 做）。
 
 **用户拍板（2026-09-22，主对话确认，已写进 ADR）**：① 覆盖收窄（61 238 → 32 608）**不加脸**、如实表达（ADR 0073 §2；加脸 = allowlist
 加一张 OFL 脸，是后续路径）；② 前端同源预览**不做**，只切覆盖表与测量来源（ADR 0073 §3）；③ Intel Mac 的 pip 渠道——**支持矩阵如实改口**：
@@ -127,7 +126,7 @@ pip 模式标「需自行编译 qpdf，未验证」，不冒称支持，**保持
 生成 SBOM 之后接一步 `retirement_scan.py --sbom out/tavotto-sbom.spdx.json --wheel dist/*.whl`（本阶段没接：那条链每一步都是「第一次
 执行就失败」，要随 U11 的演练一起验）；② 冻结产物的 native 名单本机 111 个（`retirement_scan_frozen_dist.json` 的 `sample`），Windows /
 macOS 产物腿的扫描步在 PR 上首跑；③ `lab_acceptance.py` 结构检查多了三条（字体 / 覆盖表 / 闭包），lab 首跑看它；④ 打包依赖改装
-`requirements.txt`，发行链里任何还手写 `flask + pymupdf` 的地方（grep 过 `.github/`：没有）都要跟着；⑤ `MIN_TAVOTTO_VERSION` 抬版；
+`requirements.txt`，发行链里任何还手写 `flask + pymupdf` 的地方（grep 过 `.github/`：没有）都要跟着；⑤ `MIN_TAVOTTO_VERSION` 抬到 0.17.0（U08 的 `artifactinspect` 进 bridge import 集；U10 没再动它）；
 ⑥ 官网（tavotto-website 仓库）的 Intel Mac 口径改成与 `support-matrix.json` 一致（「需自行编译 qpdf，未验证」）——本仓库管不到那边。
 
 **回退方式、不能假装可回滚的外部副作用**：`git revert` 本 PR 即回到 U09 tip 的形状（候选未启用、旧后端为默认、旧生成物 / 旧用例 /

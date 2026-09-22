@@ -1,6 +1,6 @@
 # ADR 0073：字体默认变更的布局政策与旧项目处理
 
-日期：2026-09-22 · 状态：**Accepted（U10；随 ADR 0072 切默认生效；两处默认取值用户 2026-09-22 已拍板，见 §4）**
+日期：2026-09-22 · 状态：**Accepted（U10；随 ADR 0072 切默认生效；两处默认取值用户 2026-09-22 已拍板，见 §4）** · 发行：**v0.17.0**（随 ADR 0072）
 相关：[0072 默认后端切换与 PyMuPDF 退役](0072-default-render-backend-cutover-and-pymupdf-retirement.md)、
 [0060 字体政策与 allowlist](0060-font-policy-and-allowlist.md)、[0059 Render IR](0059-render-ir-and-render-plan.md)、
 [0033 字形回退](0033-scientific-text-and-font-fallback.md)、[0045 CJK 回退链](0045-cjk-font-fallback-chain.md)；

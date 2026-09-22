@@ -1,6 +1,7 @@
 # ADR 0072：默认渲染后端切换为 RenderCore 与 PyMuPDF 退役
 
-日期：2026-09-22 · 状态：**Accepted（U10；默认已切、旧实现已删；发行资格未取得——那是 U11）**
+日期：2026-09-22 · 状态：**Accepted（U10；默认已切、旧实现已删；发行资格未取得——那是 U11）** · 发行：**v0.17.0**
+（用户 2026-09-22 拍板：v0.16.0 = 已落地的 20 个 PR（U02–U08 + 旁支），U09–U11 归 v0.17.0；v0.16.0 的发行包默认仍是 PyMuPDF）
 相关：[0067 候选切换开关](0067-render-backend-switch-and-execution-sources.md)、[0060 字体政策](0060-font-policy-and-allowlist.md)、
 [0073 字体默认变更的布局政策](0073-default-font-layout-policy.md)、[0055 render_spike](0055-render-spike.md)、
 [0059 Render IR](0059-render-ir-and-render-plan.md)、[0065 合成](0065-imported-page-composition.md)、
@@ -114,4 +115,5 @@ registry R13 / R14 / R15 / CP08 / CP08-E）；`docs/legal/COMMERCIALIZATION_DEPE
 * **前端同源预览**（把字体带进浏览器、改 `canvasFontStack`）**不做**（用户 2026-09-22 已认可）：画布预览继续用
   CSS 字体栈，只切覆盖表与测量来源；`test_no_web_font_is_fetched_or_embedded` 继续成立。
 * `glyph-substituted` 规则与 `fallback` 层保留为空档（ADR 0060 的四步顺序不变、两侧闭集常量不变），不删。
-* `MIN_TAVOTTO_VERSION`：桥的 import 集本阶段没变，仍按 U08 的备注在下次发版抬。
+* `MIN_TAVOTTO_VERSION`：桥的 import 集本阶段没变，本 PR **不抬**；U08 的备注（`artifactinspect` 进 bridge import 集）
+  随 v0.16.0 发出后在 v0.17.0 抬到 0.17.0——归 U11 的发行准备。

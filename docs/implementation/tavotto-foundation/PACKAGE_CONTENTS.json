@@ -534,8 +534,8 @@
     },
     {
       "path": "handoffs/U10_cutover.md",
-      "bytes": 27350,
-      "sha256": "62578372f35c0d6cb897b0e67cce64c678a184a10a328ba4dcfe2a54e8cc1330"
+      "bytes": 27468,
+      "sha256": "c94109fdbd4248dda5a41652c8f55c0e1bd76c3e011b565fea0b1851cad4905b"
     },
     {
       "path": "phase_mapping.json",
