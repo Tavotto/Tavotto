@@ -102,6 +102,23 @@ def test_an_unknown_backend_name_is_an_error_not_a_default(monkeypatch):
         pdfbackend.probe_asset(FIXTURE / "page.pdf", "pdf")
 
 
+def test_warm_loads_the_selected_backend_up_front_and_refuses_an_unknown_one(monkeypatch):
+    """契约层惰性装载：第一次 `probe_asset` 才 import 实现，旧 facade 却是进程 import 时就带进 PyMuPDF——
+    多出来的那 ~100 ms 让 `/api/tutorial` 的第一次探测撞上用户的点击（U08 e2e）。`main()` 起服务前
+    `warm()` 一次：选中的实现装载完毕、回它的名字；选错了当场抛，不退默认。"""
+    import sys
+
+    monkeypatch.delenv(pdfbackend.BACKEND_ENV, raising=False)
+    pdfbackend._IMPLS.clear()
+    sys.modules.pop("tavotto.pdfbackend.pymupdf_backend", None)
+    assert "tavotto.pdfbackend.pymupdf_backend" not in sys.modules
+    assert pdfbackend.warm() == "pymupdf"
+    assert "tavotto.pdfbackend.pymupdf_backend" in sys.modules, "warm() 之后实现模块必须已经装载"
+    monkeypatch.setenv(pdfbackend.BACKEND_ENV, "rendercoer")
+    with pytest.raises(pdfbackend.BackendSelectionError):
+        pdfbackend.warm()
+
+
 def test_the_candidate_never_falls_back_to_pymupdf_when_its_fonts_are_missing(
     monkeypatch, tmp_path, candidate
 ):

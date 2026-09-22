@@ -16,6 +16,11 @@
   原样抛出，绝不换回 PyMuPDF；不认识的取值 `BackendSelectionError(backend_unknown)`，不猜不退默认。
   层规则：`pymupdf_backend.py`（`pdfbackend_impl` 层）与新核心两个方向零边，契约层是唯一同时认识
   两边的模块。看护 `tests/test_rendercore_facade.py`、`tests/test_rendercore_model.py`。
+  **按名字装载的两个后果**（2026-09-22，#476 冒烟腿 + e2e）：① PyInstaller 静态分析看不见 `importlib`
+  这条边，`packaging/tavotto.spec` 的 hiddenimports 从契约层 `_IMPL_MODULES` 铺进去、不抄第二份
+  （`tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select`）；② 装载是
+  惰性的，`app.main()` 起服务前 `pdfbackend.warm()` 一次——第一次 probe 不再多付 import 的延迟，选了
+  装不上的后端在启动时就报、不退默认。
 - **字形归属计划（ADR 0033）**：一个字符由哪张脸画出来，只有
   `tavotto/glyphplan.py` 一份判据（四层 primary/cjk/fallback/missing，顺序不可
   交换）。落笔、量宽、预检、前端预览读同一份计划。`ord(ch) > 0x2E80` 只保留为

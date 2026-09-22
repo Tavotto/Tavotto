@@ -123,6 +123,12 @@ Python，首次渲染也不联网：
 - **浏览器 playground 的运行时锁**：`packaging/playground-runtime.json`
   钉死 Pyodide 版本与包白名单（前端 JSON import + 构建脚本共读），
   细节见 `docs/rules/frontend/browser-playground.md`。
+- **按名字装载的模块要显式进 PyInstaller 的 hiddenimports**（2026-09-22，U08 / ADR 0067）：
+  `pdfbackend/__init__.py` 用 `importlib` 按 `TAVOTTO_RENDER_BACKEND` 装载实现，静态分析看不见这条
+  边——冻结产物里没有 `pymupdf_backend`，`probe_asset` 一调就 ModuleNotFoundError、「一个面板都没扫到」，
+  而源码模式一切正常（#476 三条冒烟腿）。`tavotto.spec` 从契约层 `_IMPL_MODULES` 取清单铺进
+  hiddenimports，**不手写模块名**（U10 删旧后端时自动跟着变）；
+  `tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select` 看护。
 - **包内数据文件要显式进 PyInstaller 的 datas**（2026-09-02，ADR 0039）：
   `Analysis` 只把 .py 编进 PYZ，`tavotto/profiles/publication.json` 与
   `tavotto/resources/tutorial_project/` 这类数据在冻结产物里**本来是没有的**

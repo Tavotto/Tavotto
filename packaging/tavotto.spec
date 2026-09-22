@@ -144,6 +144,18 @@ if not WORKERD.is_file():
 binaries = [(str(WORKERD), ".")]
 print(f"[tavotto.spec] Rust supervisor: {WORKERD}")
 
+# PDF 后端契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 用 importlib **按名字**装载
+# 实现模块（U08，ADR 0067）——静态分析看不见这条边，冻结产物里就没有 `pymupdf_backend`，
+# 表现是 `probe_asset` 一调就 ModuleNotFoundError、「示例项目里一个面板都没扫到」，而源码模式
+# 一切正常（2026-09-22 #476 的 macOS / Windows 三条冒烟腿）。清单从契约层自己的
+# `_IMPL_MODULES` 取，**不在这里抄第二份**：U10 删旧后端 / 换默认时它自动跟着变；
+# tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select 看护。
+sys.path.insert(0, str(ROOT / "src"))
+from tavotto import pdfbackend as _pdfbackend  # noqa: E402
+
+BACKEND_IMPLS = sorted(_pdfbackend._IMPL_MODULES.values())
+print(f"[tavotto.spec] 后端实现模块（hiddenimports）: {', '.join(BACKEND_IMPLS)}")
+
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT / "src")],
@@ -152,6 +164,8 @@ a = Analysis(
     hiddenimports=[
         # Flask 的这几个依赖是运行时按名字取的，静态分析看不见
         "jinja2", "markupsafe", "itsdangerous", "click", "werkzeug",
+        # 契约层按名字装载的两个后端实现（见上）
+        *BACKEND_IMPLS,
     ],
     hookspath=[],
     runtime_hooks=[],

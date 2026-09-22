@@ -179,6 +179,33 @@ describe('startTutorial', () => {
     expect(calls.every((c) => !c.url.includes('examples'))).toBe(true)
   })
 
+  it('状态探测（GET /api/tutorial）还在飞时点「用示例了解」照样开始，不判成打不开', async () => {
+    // 项目选择器一挂载就 loadTutorialStatus()，用户紧接着点入口——两者只差几毫秒。
+    // 探测是只读的，不该与 open 互斥；互斥的只有 open / reset 自己。
+    let release: (() => void) | null = null
+    stubFetch({
+      '/api/tutorial': () => json({ available: true, problems: [], tutorial_version: 1, metadata: META }),
+    })
+    const slow = new Promise<void>((r) => (release = r))
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input), 'http://x').pathname === '/api/tutorial') await slow
+      return realFetch(input, init)
+    }) as typeof fetch
+    const probe = loadTutorialStatus()
+    expect(useTutorialStore.getState().busy).toBe('status')
+    const out = await startTutorial('picker')
+    expect(out.ok).toBe(true)
+    expect(calls.some((c) => c.url === '/api/tutorial/open' && c.method === 'POST')).toBe(true)
+    release!()
+    await probe
+    // 真正互斥的仍然互斥：open 在飞时再 open 是打不开
+    useTutorialStore.setState({ busy: 'open' })
+    expect((await startTutorial('picker')).ok).toBe(false)
+    useTutorialStore.setState({ busy: 'reset' })
+    expect((await startTutorial('picker')).ok).toBe(false)
+  })
+
   it('本机 / 磁盘有进度就用进度（不换成干净画布）', async () => {
     stubFetch({
       // 自动保存端点回的就是文档本身（修订号在响应头里）
