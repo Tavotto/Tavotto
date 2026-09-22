@@ -92,12 +92,9 @@ def test_the_enforced_set_is_exactly_what_u03_and_u04_promoted_and_each_points_a
     counts = {}
     for c in ledger["cases"]:
         counts[c["enrollment"]] = counts.get(c["enrollment"], 0) + 1
-    assert counts == {
-        "planned": 14,
-        "observing": 8,
-        "later": 1,
-        "enforced": 12,
-    }  # 35 条：32 个 FO + U01-S1 + U07-R1 + U08-R1
+    # 35 条：32 个 FO + U01-S1 + U07-R1 + U08-R1；U05：FO23 planned → observing（具名任务
+    # private-python-targets.yml，ADR 0064）、FO24 / FO25 / FO26 → enforced
+    assert counts == {"planned": 10, "observing": 9, "later": 1, "enforced": 15}
     # safe_stop 的 case 也能 enforced，但台账预期必须写明是 safe_stop（校验器据此分开计数）
     assert enforced["FO15"]["expected_product_outcome"] == "safe_stop"
 

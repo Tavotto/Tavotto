@@ -44,13 +44,13 @@
     },
     {
       "path": "ALL_PROMPTS.md",
-      "bytes": 76027,
-      "sha256": "833c2b17971d4107049ce6cfa6651196378765e1c70a14b7a3467cd0507c58cc"
+      "bytes": 85388,
+      "sha256": "90f09fc202d494e41b7d29faccc1c31c67b5dc0523be0ac89bb32961e604824d"
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 6237,
-      "sha256": "7288a96ce482e0beb4c895a7a736416ff236b35f36733a7354b23ad5c2119679"
+      "bytes": 6657,
+      "sha256": "0ab061db74682cddbfd57fd6779acfea53c173d62d514f238eab4648a59fb8d2"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 12114,
-      "sha256": "43d244d3e4bc3706c9c4663e47136b71b0aaa90e0169a040cb0babbe195fb95a"
+      "bytes": 13422,
+      "sha256": "a94b768b0495d5d158f6445f7791e6fd9ae912fa9c630154836445db85721640"
     },
     {
       "path": "SOURCES.md",
@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 68010,
-      "sha256": "3e0890fa59e1ff1880c4055de98bcfd3aa0968023c24de8bfce91ab9f9d77819"
+      "sha256": "42ba2a8072795042995927f7fe0bd097ad368e6c455f199882f39d95df7c072c"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 37059,
-      "sha256": "3df999a4b8a5b455b5632d26a378226cc6cfde8f1b755e6822f5f828689523fb"
+      "sha256": "b6d846d19e97de7caf42193bf938644b474fc539d3f77399770c1267553752ea"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 28494,
-      "sha256": "9a9935ba06bedc9f2429cec0368dc35b8d231d604fcc703f783664c1bbaf3f7c"
+      "bytes": 31816,
+      "sha256": "8e897e15a152cd3b3fe337c8b6209c861fdde4ef0ce96d0d33587558bd64168c"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -258,6 +258,26 @@
       "sha256": "57e6faa611d6b879208652301c26e14955c700aca20cadaec080c3bdb044b7b8"
     },
     {
+      "path": "evidence/u05/empty-image-linux-arm64.json",
+      "bytes": 1026,
+      "sha256": "7b3dc6ab684cf356afba56051788b7949242b53744c3eeac2cb5911c22a09d04"
+    },
+    {
+      "path": "evidence/u05/engineering-chain-macos-arm64.json",
+      "bytes": 4187,
+      "sha256": "02132cacf2156cb318aebca432a44bba4285fbebddaf56fb0b1160e7e09df960"
+    },
+    {
+      "path": "evidence/u05/mutations_pr_a.md",
+      "bytes": 9156,
+      "sha256": "afbfe51f6fe2a2acf32316dea7dad2434ec4a02f8c72b62e01decdaa1f1adf81"
+    },
+    {
+      "path": "evidence/u05/mutations_pr_b.md",
+      "bytes": 4812,
+      "sha256": "711cf0e12fa0eff186864fe777d91a7d243cef3d14bc5e6eece074ca81943f8f"
+    },
+    {
       "path": "evidence/u06/README.md",
       "bytes": 2457,
       "sha256": "4217bd1dab3e866e7e2cfdfd18987bfb0f915df7cf4b853f1c635a8559a707b9"
@@ -349,8 +369,8 @@
     },
     {
       "path": "generated/FIRST_OPEN_SCHEDULE.md",
-      "bytes": 3899,
-      "sha256": "2e13698223d0d7daa11eee8f2d2b3cf1833da2e1112cdbe5007fb959f4be7856"
+      "bytes": 3927,
+      "sha256": "3c9b00f127e367870de9f7c9c20da257bec2f55a0f8a7f562ba8b80ce4f67989"
     },
     {
       "path": "generated/TRACEABILITY.md",
@@ -381,6 +401,11 @@
       "path": "handoffs/U04_dependencies.md",
       "bytes": 35258,
       "sha256": "346407e2bf9637c418e10111e2e857133742fd90d4504682482c3fb66b1398c8"
+    },
+    {
+      "path": "handoffs/U05_private_python.md",
+      "bytes": 34476,
+      "sha256": "878424527f12131d9174d775ef7f880239ea2e21d3f78cc2dd8895036b44c018"
     },
     {
       "path": "handoffs/U06_ir_text.md",
@@ -464,13 +489,13 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7352,
-      "sha256": "8e65e122b1a4ae13f05af626d5a1612ff057cbcce74bed1c3787438c91db7180"
+      "bytes": 7345,
+      "sha256": "3c5e32d142073334f460149a1825c4d0e0fa2870186afab3c9f6d1ab983a4e77"
     },
     {
       "path": "registry.json",
-      "bytes": 281481,
-      "sha256": "2efc58c8efc12cbf55e7f9780946f1ede30c5a15aa9451272e27c8190cf3a73a"
+      "bytes": 286147,
+      "sha256": "c1c880998cdaa70dda2ce32cc3bb500c3a1f0ad5930cc08407f89edbeabb649c"
     },
     {
       "path": "sources_manifest.json",
