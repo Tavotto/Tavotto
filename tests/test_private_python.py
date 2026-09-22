@@ -268,6 +268,49 @@ def test_the_support_module_imports_under_both_os_names_with_the_same_exports():
     )
 
 
+def test_the_windows_standin_sees_the_hosts_site_packages_like_the_posix_one(tmp_path):
+    """两种替身对「宿主的包可见」要同一种语义：POSIX 的替身 exec 宿主解释器，宿主 site-packages 天然可见；Windows
+    的替身是个 venv（venvlauncher 副本 + pyvenv.cfg），必须 `include-system-site-packages = true`，否则
+    `offline_managed_env` 问它要 site-packages 挂进新代时拿到的是替身自己不存在的目录——新代 import 不到 matplotlib
+    （#475 d0d331f7 Windows FO24 / FO26 的真根因）。这条在任何平台都量得到：① cfg 的字面量；② 在本机用一个真的
+    `--system-site-packages` venv 验证「问那个解释器要 site-packages」的取法（`_site_packages_of`）确实把
+    base 的 purelib 交出来——挂进新代的就是它。"""
+    from support.dependency_repair import _site_packages_of
+
+    cfg = pp_support._windows_pyvenv_cfg(Path("/host/bin")).decode("utf-8")
+    assert "include-system-site-packages = true" in cfg and "home = " in cfg
+    venv = tmp_path / "sys-site-venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", str(venv)],
+        check=True,
+        timeout=300,
+    )
+    vpy = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    sites = _site_packages_of(str(vpy))
+    # 「系统 site」= 这个 venv 的 base_prefix 那一层（宿主自己是 venv 时是它的 base，不是它）：问 venv 自己要
+    base_purelib = subprocess.run(
+        [
+            str(vpy),
+            "-c",
+            "import sys, sysconfig; print(sysconfig.get_path('purelib', vars={'base': sys.base_prefix, "
+            "'platbase': sys.base_exec_prefix}))",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    ).stdout.strip()
+    assert Path(base_purelib).is_dir()
+    assert any(os.path.samefile(s, base_purelib) for s in sites), (sites, base_purelib)
+    # 反面：不带 --system-site-packages 的 venv 看不见它
+    plain = tmp_path / "plain-venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", str(plain)], check=True, timeout=300
+    )
+    ppy = plain / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    assert not any(os.path.samefile(s, base_purelib) for s in _site_packages_of(str(ppy)))
+
+
 # ================================================================ 正例：状态机
 class TestProvision:
     def test_download_verify_launch_and_commit_atomically(self, tmp_path, launches):

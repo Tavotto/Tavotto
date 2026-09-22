@@ -78,8 +78,18 @@ def _windows_launcher(host_python: str) -> tuple[bytes, bytes]:
         raise FileNotFoundError(
             "找不到 venvlauncher（Lib/venv/scripts/nt/venvlauncher.exe 或 python.exe）"
         )
-    cfg = f"home = {base}\ninclude-system-site-packages = false\nversion = {platform.python_version()}\n"
-    return launcher.read_bytes(), cfg.encode("utf-8")
+    return launcher.read_bytes(), _windows_pyvenv_cfg(base)
+
+
+def _windows_pyvenv_cfg(home: Path | str) -> bytes:
+    """替身的 pyvenv.cfg。**`include-system-site-packages = true`**：POSIX 的替身是 exec 宿主解释器的 sh 包装，
+    宿主的 site-packages（matplotlib 在那里）天然可见；Windows 的替身是 venvlauncher 副本，它自己是个「venv」——
+    不带这一行时宿主的包一个都看不见，`offline_managed_env` 问替身要 site-packages 挂进新代 → 挂到的是替身自己
+    不存在的目录 → 新代 import 不到 matplotlib（#475 d0d331f7 Windows FO24 / FO26 的真根因；此前 14 条
+    `managed_env_create_failed` 同源）。带上这一行，两种替身对「宿主的包可见」这件事同一种语义。"""
+    return (
+        f"home = {home}\ninclude-system-site-packages = true\nversion = {platform.python_version()}\n"
+    ).encode("utf-8")
 
 
 def fake_archive(
@@ -324,11 +334,12 @@ def windows_standin_base_probe() -> dict:
     return {"ok": ok, "steps": steps}
 
 
-#: Windows 上的替身是 venvlauncher 副本 + pyvenv.cfg：能被真起（`-I -c` 自报版本）、能被校验，但能不能当**建 venv 的
-#: base** 因机器而异——目录建得出来不等于里面的解释器起得来（#475 db5f994a：backend-platforms 的 windows 两片 12 + 2 条
-#: `managed_env_create_failed`）。所以这里**按真依赖的那一步探一次**（建 venv → 起它的 python → pip），探不过的机器上
-#: 「用供应出来的解释器建受管代」的用例 skip-with-reason；Windows 的这条真链另有 `private-python-targets.yml` 的
-#: windows 腿用真 pbs 归档跑（TestRealChain）。探测结果与真实建代的一致性由
+#: Windows 上的替身是 venvlauncher 副本 + pyvenv.cfg：能被真起（`-I -c` 自报版本）、能被校验；能不能当**建 venv 的
+#: base** 因机器而异，而且「目录建得出来」不等于「里面的解释器起得来」——所以这里**按真依赖的那一步探一次**
+#: （建 venv → 起它的 python → pip），探不过的机器上「用供应出来的解释器建受管代」的用例 skip-with-reason，探得过就
+#: 真跑。#475 那批 Windows 红（db5f994a 的 12 + 2 条 `managed_env_create_failed`）最后查明**不是**替身当不了 base，
+#: 是替身的 pyvenv.cfg 没开 `include-system-site-packages`（见 `_windows_pyvenv_cfg`）——探测过了、用例也就真跑了；
+#: 探测留着是为了不再把「建不出 venv」和「建出来的用不了」混成一句。探测与真实建代的一致性由
 #: `tests/test_private_python.py::test_the_windows_standin_base_probe_matches_reality` 看住。
 
 
