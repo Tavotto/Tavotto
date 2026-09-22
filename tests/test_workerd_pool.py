@@ -55,6 +55,11 @@ def test_control_plane_reports_both_the_choice_and_what_is_actually_running(monk
     「二进制在」就会把「打进去了但一直没用上」说成一切正常——功能全在、只是慢，
     是最难被发现的一类失灵。冒烟脚本与诊断包都按这两个字段判定。
     """
+    # 这条断言的主语是「此刻池里活着的会话」，而前面跑过的用例（首开闭环、旧后端对照）
+    # 会经 pool 起真实 worker，谁没收就漏到这里——2026-09-21 同一断言在三条不同分片上
+    # 红了三次（#471 macOS 1 / #471 组 3.10-2 / #475 3.14-2），分片划分决定它落哪。
+    # 「池是空的」这个前提要自己拥有：先清空再问，而不是指望上一个用例收干净。
+    pool.shutdown_all(wait=True)
     monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
     assert pool.control_plane() == {"selected": "python", "path": None, "sessions": []}
 
