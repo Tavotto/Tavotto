@@ -24,3 +24,30 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
 
 四条 workflow 的顶层 env 钉 `TAVOTTO_NO_TELEMETRY=1`——**CI 绝不产生真实的
 产品事件**（细节见 `src/tavotto/AGENTS.md` 的遥测一节）。
+
+**PR 级 CI 只对 base 是 main 的 PR 触发**（2026-09-21 用户拍板）：监听 `pull_request`
+的四个 workflow（`ci.yml` / `codeql.yml` / `pr-conflict-domains.yml` / `foundation-u02-spikes.yml`）
+都带 `on.pull_request.branches: [main]`（U02 那份在 `paths` 之外再加，两者是 AND）。叠栈 PR（base 是上一层分支，`docs/ci/parallel-prs.md`
+「Stacked PR」）在合入 main 之前**不跑**这套 CI——统一实施包的 14 层叠栈每层 push 都起
+~17 个 job，逐级 rebase 一次 ≈180 个 ubuntu job，合并队列的候选（#462 / #455）被挤到 90
+分钟 `checks_timed_out` 踢出；叠栈 PR 靠 Codex 评审 + 本地验证，retarget 到 main 成为链头
+之后才跑全套，那时它才有资格进队列。选的是 workflow 级过滤而不是 job 级 `if:`：后者仍
+会每 push 起十几个 job 且要改 Gate 的闭集语义；前者一刀切、三个 Gate / `aggregate_gate.py`
+/ `concurrency` / 任何 `if:` 一行不动，`merge_group` 事件不受影响（队列候选的 base 永远是
+main）。三个 Gate 的 required 语义（缺失 = 失败）让 base ≠ main 的 PR 合不进 main——本来
+就该如此。**retarget 本身不产生 run**：改 base 是 `pull_request.edited`（GitHub webhook
+文档原句「The title or body of a pull request was edited, or the base branch of a pull request
+was changed」），它不在 `ci.yml` 的 types 闭集里、也不在其余几个的默认三个里（加进去 = 每次
+改标题 / 正文都重跑整条快线）。所以顺序是**先 retarget、后 push**：下层合入后仓库的
+`delete_branch_on_merge` 让 GitHub 自动把上层 base 改到 main（时间线事件
+`automatic_base_change_succeeded`），随后 `rebase --onto origin/main` 的 push 才是那个带着
+base = main 的 `synchronize`，四个 workflow 一起跑；反过来（先 push 后 retarget）两头落空，
+PR 上没有任何结论，补救是再推一个空提交（`git commit --allow-empty`）。实证：PR #371 在
+#370 合入（2026-09-16 09:34:29Z）后 09:34:30Z 自动 retarget，之后没有任何 `pull_request`
+run，09:35:34Z 的 push 才起了 CI / CodeQL / conflict domains 三个。看护：
+`tests/test_merge_queue_workflows.py::TestPullRequestBaseFilter`（目录里**每一个**监听
+`pull_request` 的 workflow——算出来的集合，`.yaml` 也算，三个常驻的必须在里面——`branches` ==
+`[main]`；`edited` 不在任何一个的 types 里）。刻意**不是**一张要人登记的名单：名单是共享序列
+的读改写，两条并行的叠栈链各带一个新证据 workflow 时谁后合谁的合并组就红。新加一个 PR 级
+workflow 只要带同一行过滤（叠栈分支上的 `foundation-u06-rendercore.yml` /
+`private-python-targets.yml` 已经带了）。

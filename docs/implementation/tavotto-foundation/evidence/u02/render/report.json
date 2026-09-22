@@ -13,7 +13,7 @@
   "uharfbuzz": "0.56.1",
   "harfbuzz": "14.4.0",
   "pdfminer.six": "20251107",
-  "pypdf": "6.7.5"
+  "pypdf": "6.16.1"
  },
  "inputs": {
   "truth": "docs/implementation/tavotto-foundation/evidence/u02/render/truth.json",

@@ -11,6 +11,9 @@
   `full-ci` 标签 = 在 PR 自己的 SHA 上提前跑全套；push main = 落地审计 + 缓存种子
   （非门禁）。覆盖面一条不减，改的只是时机。required checks 只有三个稳定 Gate，判定
   收敛在 `scripts/ci/aggregate_gate.py`；merge_group 与 full-ci 永远不许 deferred。
+  **PR 级 workflow 只对 base 是 main 的 PR 触发**（四个都是 `pull_request.branches: [main]`）：
+  叠栈 PR 靠 Codex 评审 + 本地验证；下层合入后**先 retarget（GitHub 自动）、后 rebase push**，
+  那次 push 才出结论——改 base 本身是 `edited`，不起 run。
 - **四条 workflow 顶层 `TAVOTTO_NO_TELEMETRY=1`**：CI 绝不产生真实的产品事件。
 - **新增的核心不变式测试提交前必须手工反证一次**（拿掉修复确认它红），结论写进 PR；
   判「最近跑过没有」要数**有结论的 run**——空转的门禁比没有门禁更坏。
@@ -31,7 +34,7 @@
 
 | 改到 | 主题（细则在 `docs/rules/ci/`） | 必守要点 | 看护 |
 | --- | --- | --- | --- |
-| `.github/workflows/ci.yml` 的事件 / `needs` / Gate 闭集、`scripts/ci/aggregate_gate.py` | CI 分层 → `ci-lanes.md` | 时机分工与覆盖面不变；三个稳定 Gate；`cancel-in-progress` 只对 PR 开；顶层 `TAVOTTO_NO_TELEMETRY=1` | `tests/test_merge_queue_workflows.py`、`tests/test_aggregate_gate.py` |
+| `.github/workflows/ci.yml` 的事件 / `needs` / Gate 闭集、`scripts/ci/aggregate_gate.py` | CI 分层 → `ci-lanes.md` | 时机分工与覆盖面不变；三个稳定 Gate；`cancel-in-progress` 只对 PR 开；顶层 `TAVOTTO_NO_TELEMETRY=1`；目录里每个监听 `pull_request` 的 workflow 都带 `branches: [main]`（`TestPullRequestBaseFilter`，算出来的集合、不用登记） | `tests/test_merge_queue_workflows.py`、`tests/test_aggregate_gate.py` |
 | 任何新门禁 / 豁免表 / 「最近跑过没有」的判据 | 门禁纪律 → `gate-discipline.md` | 手工反证一次并写进 PR；豁免要写得出理由、区分「豁免」与「使能」；数有结论的 run；别人电脑上的 bug 先写用例 | `tests/test_windows_regressions.py` |
 | `python-lint` job、`pyproject.toml` 的 `[tool.ruff]` | Ruff 这一格 → `ruff-lint-lane.md` | 规则与豁免只在 `pyproject.toml`，CI 不 `--fix`；check 与 format 两个独立结论；新增 sys.path 源码根要回来审 `src` | `tests/test_merge_queue_workflows.py` |
 | `backend-fast` / `backend-platforms` 的 `--shard`、`_lab-qualification.yml` 的常规套件、`tests/support/shard.py`、`shard_weights.json` | pytest 分片（CI03a）→ `pytest-shards.md` | 选项必须 `=` 形式；进程内自验并集 == 全集；不带 `--shard` 是 no-op；lab 常规套件 = 同机 N 片并行、片号是变量、每片退出码进控制流；权重表只影响平衡不影响覆盖；不加 `-n auto` | `tests/test_merge_queue_workflows.py::TestGates`、`tests/test_pytest_shard.py` |

@@ -28,7 +28,7 @@
 | fontTools | 4.65.0 | MIT | 无 | 读字体表、子集（glyf 与 CFF 两条路） |
 | uharfbuzz | 0.56.1（HarfBuzz 14.4.0） | Apache-2.0（HarfBuzz MIT-old） | 无 | shaping：glyph / cluster / advance / offset |
 | pdfminer.six（只读） | 20251107 | MIT | charset-normalizer、cryptography | 独立文字层读取器 #2 |
-| pypdf（只读） | 6.7.5 | BSD-3-Clause | 无 | 独立字体结构读取器 |
+| pypdf（只读） | 6.7.5 → 6.16.1（2026-09-22 Dependabot #484 安全升级；报告重生成，52/52 与产物字节不变） | BSD-3-Clause | 无 | 独立字体结构读取器 |
 | PyInstaller（只构建） | 6.19.0 | GPL-2.0-or-later + 例外 | — | 最小候选 freeze |
 
 宏观取舍：

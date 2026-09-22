@@ -127,12 +127,6 @@
       "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
     },
     {
-      "from": "tavotto/pdfbackend/__init__.py",
-      "to": "tavotto/rendercore/facade.py",
-      "scope": "function",
-      "via": "_impl() → importlib.import_module(_IMPL_MODULES[name])"
-    },
-    {
       "from": "tavotto/engine/worker.py",
       "to": "tavotto/engine/figcapture.py",
       "scope": "module",
@@ -233,6 +227,12 @@
       "to": "tavotto/engine/bridgeboot.py",
       "scope": "module",
       "via": "importlib.util.spec_from_file_location(..., bridgeboot.py)"
+    },
+    {
+      "from": "tavotto/pdfbackend/__init__.py",
+      "to": "tavotto/rendercore/facade.py",
+      "scope": "function",
+      "via": "_impl() → importlib.import_module(_IMPL_MODULES[name])"
     }
   ],
   "cycles": [
