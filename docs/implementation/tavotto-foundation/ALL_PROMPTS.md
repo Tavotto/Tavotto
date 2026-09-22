@@ -60,6 +60,20 @@ U01 已于 2026-09-20 执行（`implementation_status: done`，产品资格仍 `
 闭集校验器与 `invariants` job 的三步落点；唯一 enforced 的切片 `U01-S1` 经真实 HTTP 入口走完首开 → 导出
 （旧后端终点）。交接见 [`handoffs/U01_contracts.md`](handoffs/U01_contracts.md)。
 
+U02 已于 2026-09-20 执行（`implementation_status: done`，产品资格仍 `not_run`）：两个独立技术证明——
+render_spike（ADR 0055：PDFium 栅格 + pikepdf/fontTools/HarfBuzz 受限 emitter，Liberation + Noto Sans SC 为默认字体，
+串行 render child，最小 PyInstaller 冻结）与 runtime_spike（ADR 0056：uv + python-build-standalone 私有 Python +
+离线 wheel，坏 hash / 无网负例）。证据在 [`evidence/u02/`](evidence/u02/)，spike 代码在 `scripts/dev/u02_spikes/`
+（不进产品 import 图，候选包只在独立 venv）。交接见 [`handoffs/U02_spikes.md`](handoffs/U02_spikes.md)。
+
+U06 已于 2026-09-21 执行（`implementation_status: done`，产品资格仍 `not_run`，**不切默认**）：RenderCore 的第一个
+产品切片——纯模型层 `src/tavotto/rendercore/`（Render IR / RenderPlan 编译 / 排版 / 字体注册表，只许标准库，
+ADR 0059）+ 字体政策与可检索文字写入（allowlist 逐字节钉住的 Liberation + Noto Sans SC，pikepdf/fontTools/HarfBuzz
+适配层走 pyproject 的 `rendercore` extra，ADR 0060）。真字体 → RenderPlan → PDF → 四把独立读取器的证据在
+[`evidence/u06/`](evidence/u06/)（生成器 `scripts/dev/u06_evidence.py`）；D07 会变的旧断言逐条在
+[`U00_FACADE_LEDGER.md`](U00_FACADE_LEDGER.md) 的 `migration_evidence` 指向替代用例。交接见
+[`handoffs/U06_ir_text.md`](handoffs/U06_ir_text.md)。
+
 U03 已于 2026-09-20 执行（`implementation_status: done`——PR A 后端编排 + 场景用例，PR B 确认交互（前端对话框 /
 三档设置 / i18n / MCP 投影）；产品资格仍 `not_run`）：解释器选择前移（项目 venv 首开发现 + 体检 + 记住，显式选择失效不静默替换）、
 cwd 三分的生产者（`project_root` 第三档 + 首开按静态证据问一次）、safe worker 经 `bridgeboot` 私有包（#447）、

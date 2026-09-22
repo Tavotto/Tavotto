@@ -510,6 +510,21 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
+def _venv_failure_detail(base: str, root: Path, target: Path, rc: int, out: str) -> str:
+    """`-m venv` 失败时交回去的 detail 要说得出来：子进程一个字不吐、或退出 0 却没有解释器文件时，光把
+    空输出交回去等于没说（Windows 上撞到过：`managed_env_create_failed` 的 detail 是空串，只能瞎猜）。"""
+    detail = out[-2000:]
+    if not detail.strip():
+        detail = f"`{base} -m venv` 退出码 {rc}，没有任何输出"
+    if rc == 0 and not target.is_file():
+        try:
+            names = sorted(p.name for p in root.iterdir())
+        except OSError:
+            names = []
+        detail += f"；venv 退出 0 但没有 {target.name}（目录里：{names[:20]}）"
+    return detail
+
+
 def create_venv(project: str | Path, base: str) -> tuple[bool, str]:
     """建一个空 venv（带 pip）。已经存在就原地复用。
 
@@ -530,7 +545,7 @@ def create_venv(project: str | Path, base: str) -> tuple[bool, str]:
         return False, str(exc)
     rc, out = _run([base, "-m", "venv", str(root)], VENV_TIMEOUT_S)
     if rc != 0 or not target.is_file():
-        return False, out[-2000:]
+        return False, _venv_failure_detail(base, root, target, rc, out)
     return True, out[-2000:]
 
 
@@ -733,7 +748,7 @@ def create_generation_venv(project: str | Path, generation: str, base: str) -> t
         return False, str(exc)
     rc, out = _run([base, "-m", "venv", str(root)], VENV_TIMEOUT_S)
     if rc != 0 or not target.is_file():
-        return False, out[-2000:]
+        return False, _venv_failure_detail(base, root, target, rc, out)
     return True, out[-2000:]
 
 

@@ -183,5 +183,7 @@ FO24 / 25 / 26 仍待 PR B 经真实入口提升。**没有取得任何平台的
 
 **顺带发现**：① worktree 里跑起子进程的用例（`running_app` / MCP）时 `PYTHONPATH` 必须是**绝对**路径——相对的 `src` 在子进程的 cwd 下解析不到，import 到主工作区那份，表现是 `/api/engine/preparation` 404（U04 五条场景假红，`shared-workdir-contention` 那条教训的又一形状）；② `deprepair.base_python()` 的进程内缓存在锁换版本（只随升级、进程重启发生）时不会自动失效——用例用 `reset_state()` 表达重启。
 
-**enrollment**：FO24 / FO25 / FO26 → enforced（理由：真实正例 + 负例 + 预算 + lane，03 §4；进程内 HTTP 入口的理由写在用例文件头与 registry 的 target_scope）；FO23 仍 observing；FO-022 仍 planned。**仍没有取得任何平台的 NO_SYSTEM_PYTHON 资格**——五个目标 `enabled` 全 false。
+**Windows 上的替身当不了 base**（#475 db5f994a 的 `backend-platforms (windows-latest, 1/2)` 首次在 Windows 上跑事务用例：12 + 2 条 `managed_env_create_failed`，detail 空串）：Windows 的替身是 venvlauncher 副本 + pyvenv.cfg——能被真起、校验、`-I -c` 自报版本，但用它跑 `-m venv` 失败（原因未查清，CI 上输出为空）。处置：① `managedenv._venv_failure_detail` 让 `-m venv` 失败时 detail 说得出来（退出码 / 目录清单），下次撞到不再瞎猜；② 「用供应出来的解释器建受管代」的用例（transaction 12 条 + FO24 / FO26）挂 `support.private_python.needs_real_base`，Windows 上 skip-with-reason；③ 前提由 `tests/test_private_python.py::test_the_windows_standin_is_still_not_a_venv_base` 看住（Windows 上真跑一次 `-m venv`、把退出码 / 输出 / 目录打进日志；哪天替身能当 base 了它会红，提示摘掉标记）；④ Windows 的这条真链不缺证据：`private-python-targets.yml` 的 windows 腿用真 pbs 归档跑 TestRealChain（run 35603820985 绿）。enrollment 里 FO24 / FO26 的 notes 写明。
+
+**enrollment**：FO24 / FO25 / FO26 → enforced（理由：真实正例 + 负例 + 预算 + lane，03 §4；进程内 HTTP 入口的理由写在用例文件头与 registry 的 target_scope；FO24 / FO26 在 Windows 的 pr lane 上 skip-with-reason，见上）；FO23 仍 observing；FO-022 仍 planned。**仍没有取得任何平台的 NO_SYSTEM_PYTHON 资格**——五个目标 `enabled` 全 false。
 

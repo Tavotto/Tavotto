@@ -33,7 +33,13 @@ import pytest
 
 from support import foundation_harness as fh, private_python as pp_support
 from support.dependency_repair import WORKER_PY, build_wheel, needs_worker
-from support.private_python import LoopbackServer, closed_port_url, fake_archive, source_from
+from support.private_python import (
+    LoopbackServer,
+    closed_port_url,
+    fake_archive,
+    needs_real_base,
+    source_from,
+)
 from tavotto import app as m
 from tavotto.engine import (
     bootstrap,
@@ -203,7 +209,7 @@ def _authorize(client, script: str, timeout: float = 600.0) -> tuple[dict, dict]
             deprepair.STATE_CANCELLED,
         ):
             return plan, rec
-        assert time.time() < deadline, rec
+        assert time.time() < deadline, json.dumps(rec, ensure_ascii=False)
         time.sleep(0.1)
 
 
@@ -264,6 +270,7 @@ def _managed_target(door: dict) -> dict:
 # ================================================================ FO24：离线、缓存齐备
 
 
+@needs_real_base
 def test_fo24_cached_private_python_prepares_offline_and_renders(
     client, tmp_path, house, archive, monkeypatch
 ):
@@ -284,7 +291,7 @@ def test_fo24_cached_private_python_prepares_offline_and_renders(
     assert door["private_python"]["cached"] is True
     plan, rec = _authorize(client, "figure.py")
     assert plan["private_python"]["cached"] is True and plan["replan"] is True
-    assert rec["state"] == deprepair.STATE_DONE, rec
+    assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
     assert privatepython.python_of(src) and managedenv.python_of(project)
     body = _prepare(client, "figure.pdf")
     assert body["result"]["status"] == preparation.STATUS_READY, body["result"]
@@ -365,6 +372,7 @@ def test_fo25_offline_without_cache_is_a_safe_stop_that_builds_nothing(
 # ================================================================ FO26：来源被篡改
 
 
+@needs_real_base
 def test_fo26_corrupted_source_is_refused_and_the_active_environment_stays(
     client, tmp_path, house, archive, monkeypatch
 ):
@@ -378,7 +386,7 @@ def test_fo26_corrupted_source_is_refused_and_the_active_environment_stays(
         _open(client, project)
         _door(_prepare(client, "figure.pdf"))
         plan, rec = _authorize(client, "figure.py")
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         assert server.requests == [f"/{archive[0].name}"]
         gen_a = managedenv.active_generation(project)
         assert _prepare(client, "figure.pdf")["result"]["status"] == preparation.STATUS_READY
@@ -414,7 +422,7 @@ def test_fo26_corrupted_source_is_refused_and_the_active_environment_stays(
         assert _managed_target(door)["private_python"]["id"] == src_b.id
         plan, rec = _authorize(client, "figure.py")
         assert rec["state"] == deprepair.STATE_FAILED
-        assert rec["code"] == privatepython.ERROR_HASH_MISMATCH, rec
+        assert rec["code"] == privatepython.ERROR_HASH_MISMATCH, json.dumps(rec, ensure_ascii=False)
         assert server_b.requests == [f"/{path_b.name}"]
     assert managedenv.active_generation(project) == gen_a
     assert set(managedenv.generations(project)) == {gen_a}

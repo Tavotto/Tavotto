@@ -26,6 +26,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from tavotto.engine import privatepython
 
 ARCHIVE_NAME = "cpython-test-install_only.tar.gz"
@@ -56,6 +58,19 @@ def _launcher_script(host_python: str, launches_log: Path, *, exit_code: int = 0
     else:
         body += f'exec "{host_python}" "$@"\n'
     return body.encode("utf-8")
+
+
+#: Windows 上的替身是 venvlauncher 副本 + pyvenv.cfg：它能被真起（`-I -c` 自报版本）、能被校验，但**当不了建
+#: venv 的 base**——用它跑 `-m venv` 在 CI 上失败（#475 db5f994a 的 windows 两片：12 + 2 条 `managed_env_create_failed`，
+#: 输出为空）。凡是「用供应出来的解释器建受管代」的用例在 Windows 上 skip-with-reason；Windows 的这条真链由
+#: `private-python-targets.yml` 的 windows 腿用真 pbs 归档跑（TestRealChain，绿）。前提由
+#: `tests/test_private_python.py::test_the_windows_standin_is_still_not_a_venv_base` 看住：哪天替身能当 base 了它会红，
+#: 到时把这个标记摘掉。
+STANDIN_CAN_BE_BASE = os.name != "nt"
+needs_real_base = pytest.mark.skipif(
+    not STANDIN_CAN_BE_BASE,
+    reason="Windows 上的替身（venvlauncher 副本）当不了建 venv 的 base；Windows 真链在 private-python-targets 腿（真 pbs）",
+)
 
 
 def _windows_launcher(host_python: str) -> tuple[bytes, bytes]:

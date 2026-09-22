@@ -25,7 +25,13 @@ import pytest
 
 from support import private_python as pp_support
 from support.dependency_repair import WORKER_PY, build_wheel, needs_worker, wait_for
-from support.private_python import LoopbackServer, closed_port_url, fake_archive, source_from
+from support.private_python import (
+    LoopbackServer,
+    closed_port_url,
+    fake_archive,
+    needs_real_base,
+    source_from,
+)
 from tavotto.engine import (
     bootstrap,
     depplan,
@@ -128,6 +134,7 @@ def _in(python: str, code: str) -> str:
 
 
 class TestPrivateBase:
+    @needs_real_base
     def test_one_authorization_provisions_python_then_builds_the_generation(
         self, tmp_path, house, no_base, fake
     ):
@@ -145,7 +152,7 @@ class TestPrivateBase:
         assert server.requests == []  # 计划阶段一个字节不下
 
         rec, events = _prepare(plan.plan_id)
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         assert server.requests == [f"/{src.archive_name}"]
         states = [e["state"] for e in events]
         assert deprepair.STATE_DOWNLOADING_PYTHON in states
@@ -207,6 +214,7 @@ class TestPrivateBase:
         assert managed["private_python"] is None
         assert server.requests == [] and privatepython.python_of(src) is None
 
+    @needs_real_base
     def test_offer_and_single_package_plan_carry_the_download(self, tmp_path, house, no_base, fake):
         """运行后缺包那条路（`offer` → `create_plan`）同样把下载说出口，再经同一个事务执行。"""
         server, src, _ = fake
@@ -228,7 +236,7 @@ class TestPrivateBase:
         events: list[dict] = []
         deprepair.install_async(plan.plan_id, on_event=events.append)
         rec = wait_for(plan.plan_id)
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         assert deprepair.STATE_DOWNLOADING_PYTHON in [e["state"] for e in events]
         assert server.requests == [f"/{src.archive_name}"]
         assert managedenv.referenced_base_runtimes() == {src.id}
@@ -241,7 +249,7 @@ class TestPrivateBase:
         server, src, _ = fake
         project = _project(tmp_path)
         rec, _ = _prepare(deprepair.create_joint_plan(project, "figure.py").plan_id)
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         monkeypatch.setattr(bootstrap, "find_base_python", lambda accept=None: None)
         deprepair.reset_state()
         assert deprepair.base_python() is None
@@ -275,6 +283,7 @@ class TestPrivateBase:
         assert privatepython.python_of(src) is None
         assert managedenv.referenced_base_runtimes() == set()
 
+    @needs_real_base
     def test_offline_prepare_is_a_safe_stop_and_registers_no_generation(
         self, tmp_path, house, no_base, fake, monkeypatch
     ):
@@ -318,7 +327,7 @@ class TestPrivateBase:
         server, src, launches = fake
         project = _project(tmp_path)
         rec, _ = _prepare(deprepair.create_joint_plan(project, "figure.py").plan_id)
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         gen_before = managedenv.active_generation(project)
         python_before = managedenv.python_of(project)
         assert managedenv.generations(project)[gen_before]["base_runtime"] == ""
@@ -344,6 +353,7 @@ class TestPrivateBase:
         if os.name != "nt":
             assert not launches.exists()  # 坏归档一次都没起
 
+    @needs_real_base
     def test_cancel_right_after_the_acknowledgement_never_starts_the_download(
         self, tmp_path, house, no_base, fake, monkeypatch
     ):
@@ -368,7 +378,7 @@ class TestPrivateBase:
         gate.set()
         assert answer == {"accepted": True, "reason": ""}, answer
         rec = wait_for(plan.plan_id)
-        assert rec["state"] == deprepair.STATE_CANCELLED, rec
+        assert rec["state"] == deprepair.STATE_CANCELLED, json.dumps(rec, ensure_ascii=False)
         assert rec["result"] == {"activated": False}
         assert deprepair.STATE_DOWNLOADING_PYTHON not in [e["state"] for e in events]
         assert server.requests == []  # 一个字节没下
@@ -388,6 +398,7 @@ class TestPrivateBase:
         rec2, _ = _prepare(plan2.plan_id)
         assert rec2["state"] == deprepair.STATE_DONE, rec2
 
+    @needs_real_base
     def test_a_duplicate_prepare_does_not_start_a_second_provisioning(
         self, tmp_path, house, no_base, fake
     ):
@@ -414,7 +425,7 @@ class TestPrivateBase:
             assert privatepython._inflight[src.id].consumers == 1
         server.gate.set()
         rec = wait_for(plan.plan_id)
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         assert server.requests == [f"/{src.archive_name}"]
         assert len(managedenv.generations(project)) == 1
         assert sorted(p.name for p in privatepython.runtimes_dir().iterdir()) == [src.id]
@@ -451,6 +462,7 @@ class TestPrivateBase:
         assert rec2["state"] == deprepair.STATE_DONE, rec2
         assert server.requests == [f"/{src.archive_name}"]
 
+    @needs_real_base
     def test_cancel_during_the_download_leaves_no_generation_and_no_runtime(
         self, tmp_path, house, no_base, fake
     ):
@@ -477,7 +489,7 @@ class TestPrivateBase:
             time.sleep(0.05)
         server.gate.set()
         rec = wait_for(plan.plan_id)
-        assert rec["state"] == deprepair.STATE_CANCELLED, rec
+        assert rec["state"] == deprepair.STATE_CANCELLED, json.dumps(rec, ensure_ascii=False)
         assert rec["code"] == deprepair.ERROR_CANCELLED
         assert rec["result"]["activated"] is False
         assert managedenv.generations(project) == {}
@@ -498,6 +510,7 @@ class TestPrivateBase:
         rec2, _ = _prepare(plan2.plan_id)
         assert rec2["state"] == deprepair.STATE_DONE, rec2
 
+    @needs_real_base
     def test_two_projects_share_one_private_python(self, tmp_path, house, no_base, fake):
         """FO-027 在事务层：两个项目并发准备 → 一次下载、一份 runtime、两代各自记着它。"""
         server, src, _ = fake
@@ -523,6 +536,7 @@ class TestPrivateBase:
             gen = managedenv.active_generation(proj)
             assert managedenv.generations(proj)[gen]["base_runtime"] == src.id
 
+    @needs_real_base
     def test_a_new_private_runtime_makes_a_new_generation_and_never_touches_the_active_one(
         self, tmp_path, house, no_base, fake, monkeypatch
     ):
@@ -531,7 +545,7 @@ class TestPrivateBase:
         server, src_a, _ = fake
         project = _project(tmp_path)
         rec, _ = _prepare(deprepair.create_joint_plan(project, "figure.py").plan_id)
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         # 重建一次：重建的代号只由账上的需求 + 约束算（与联合计划的身份公式不同），于是**两次重建**
         # 之间意图不变 → 同一个代号——这正是「锁换了版本、意图没变」会撞上的那条路
         out0 = deprepair._rebuild_guarded(project, None)
@@ -576,6 +590,7 @@ class TestPrivateBase:
         assert managedenv.generations(project)[gen_b]["base_runtime"] == src_b.id
         assert gen_a not in managedenv.generations(project)
 
+    @needs_real_base
     def test_an_old_private_runtime_survives_while_a_generation_records_it(
         self, tmp_path, house, no_base, fake
     ):
@@ -583,7 +598,7 @@ class TestPrivateBase:
         server, src, _ = fake
         project = _project(tmp_path)
         rec, _ = _prepare(deprepair.create_joint_plan(project, "figure.py").plan_id)
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         old_id = src.id
         # 「换了版本」：当前来源指向另一个 id（目录名不同）；旧目录仍被这一代记着
         newer = privatepython.PythonSource(**{**src.__dict__, "sha256": "f" * 64})
@@ -618,6 +633,7 @@ def no_interpreter(monkeypatch, no_base):
 
 
 class TestCleanMachine:
+    @needs_real_base
     def test_first_plan_uses_standin_facts_then_replans_on_the_real_private_python(
         self, tmp_path, house, no_interpreter, fake, monkeypatch
     ):
@@ -636,7 +652,7 @@ class TestCleanMachine:
         assert plan.replan is True and plan.private_python["required"] is True
         assert plan.to_payload()["replan"] is True
         rec, events = _prepare(plan.plan_id)
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         assert [e["state"] for e in events].index(deprepair.STATE_DOWNLOADING_PYTHON) < [
             e["state"] for e in events
         ].index(deprepair.STATE_CREATING_ENV)
@@ -654,6 +670,7 @@ class TestCleanMachine:
         assert engine_pool.same_python(resolved, managed)
         assert source == engine_pool.SOURCE_MANAGED_PROJECT
 
+    @needs_real_base
     def test_a_second_project_on_the_same_machine_still_gets_the_gate_and_its_own_generation(
         self, tmp_path, house, no_interpreter, fake, monkeypatch
     ):
@@ -663,7 +680,7 @@ class TestCleanMachine:
         server, src, _ = fake
         first = _project(tmp_path, "first")
         rec, _ = _prepare(deprepair.create_joint_plan(first, "figure.py").plan_id)
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         requests_after_first = list(server.requests)
         assert requests_after_first == [f"/{src.archive_name}"]
         deprepair.reset_state()  # 第二个项目通常是另一次打开：缓存不算
@@ -732,6 +749,7 @@ class TestCleanMachine:
         )
         assert deprepair.gate(project, "figure.py") is None  # 有解释器且什么都不缺：放行
 
+    @needs_real_base
     def test_nothing_needed_still_builds_the_environment(
         self, tmp_path, house, no_interpreter, fake
     ):
@@ -746,7 +764,7 @@ class TestCleanMachine:
         plan = deprepair.create_joint_plan(project, "figure.py")
         assert plan.private_python is not None and plan.requirements == ()
         rec, _ = _prepare(plan.plan_id)
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         assert managedenv.python_of(project)
         assert managedenv.state(project)["installed"] == []  # 账上一笔都没有：只有 adapter
 
@@ -778,7 +796,7 @@ class TestCleanMachine:
         )
         server.gate.set()
         rec = wait_for(plan.plan_id)
-        assert rec["state"] == deprepair.STATE_FAILED, rec
+        assert rec["state"] == deprepair.STATE_FAILED, json.dumps(rec, ensure_ascii=False)
         assert rec["code"] == deprepair.ERROR_PLAN_STALE
         states = [e["state"] for e in events]
         assert deprepair.STATE_DOWNLOADING_PYTHON in states
@@ -894,7 +912,7 @@ class TestRealChain:
         deprepair.prepare_async(plan.plan_id, on_event=events.append)
         rec = wait_for(plan.plan_id, timeout=1500)
         elapsed = round(time.perf_counter() - t0, 1)
-        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         states = [e["state"] for e in events]
         assert deprepair.STATE_DOWNLOADING_PYTHON in states
         private = privatepython.python_of(src)
