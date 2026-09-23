@@ -65,6 +65,25 @@ def test_a_stream_of_uneven_blocks_decodes_to_their_concatenation():
     assert zlib.decompress(deflate.zlib_stream(blocks)) == b"".join(blocks)
 
 
+def test_each_block_is_primed_with_the_previous_blocks_last_32k(monkeypatch):
+    """跨块字典的主语是**机制**，不是压缩率阈值（合成数据上两种做法只差 0.2%，阈值判据会漂）：非首块的预置字典
+    恰好是前一块末尾 32 KiB，首块没有。真实页面上它值多少（CAD / figure7 的扫描线：去掉字典 +1.2%）记在 ADR 0077。"""
+    seen = []
+    real = deflate._deflate
+
+    def spy(task):
+        seen.append(task)
+        return real(task)
+
+    monkeypatch.setattr(deflate, "_deflate", spy)
+    blocks = [_payload(40_000), _payload(20_000), _payload(50_000)]
+    deflate.zlib_stream(blocks)
+    assert [t[0] for t in seen] == blocks
+    assert seen[0][1] is None
+    assert seen[1][1] == blocks[0][-32 * 1024 :] and seen[2][1] == blocks[1][-32 * 1024 :]
+    assert [t[2] for t in seen] == [False, False, True]
+
+
 def test_compress_each_is_serial_zlib_per_item_in_order(monkeypatch):
     items = [_payload(n) for n in (1, 5000, deflate.BLOCK, 17)]
     assert list(deflate.compress_each(items, 6)) == [zlib.compress(x, 6) for x in items]
