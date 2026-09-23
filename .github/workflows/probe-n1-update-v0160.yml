@@ -1,0 +1,315 @@
+# 一次性探针（勿合）：补验 v0.16.0 的 N-1 应用内更新。
+#
+# 背景：v0.16.0 发布时 `n1_update_windows` 因为 `needs: github_release` 而被跳过
+# （当时 GITHUB_TOKEN 建不了 Release，见 issue #503，现已解除）。这一版的
+# N-1 更新路径因此**从来没有人验过**——latest.json 发出去了，通道是活的，
+# 但没有证据证明存量用户按下更新真的能换到 0.16.0。
+#
+# 这里把 release-publish.yml 里的 `n1_update_windows` **按文本原样搬过来**，
+# 只改三处依赖：去掉 needs/if，NEW_VERSION/NEW_TAG 写死成 0.16.0/v0.16.0，
+# checkout 钉到发布点 4bf86c1f。步骤本身一个字没动——手抄 150 行 PowerShell
+# 必然抄错，抄错了验的就不是同一件事。
+#
+# 它只下载**已公开**的 N-1 安装包并在一次性 runner 上安装，不写任何线上状态。
+name: probe-n1-update-v0160
+
+on:
+  pull_request:
+    # branches: [main] 是仓库不变量（tests/test_merge_queue_workflows.py::
+    # TestPullRequestBaseFilter：目录里每一个监听 pull_request 的 workflow 都要有）
+    branches: [main]
+    paths: ['.github/workflows/probe-n1-update-v0160.yml']
+
+jobs:
+  n1_update_windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      NEW_VERSION: "0.16.0"
+      NEW_TAG: "v0.16.0"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 4bf86c1fe1b209ce0c964ec81ecf81f0aff715fb
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+
+      - name: 找上一个正式版本（N-1）并下载官方安装包
+        id: prev
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $rels = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=30" | ConvertFrom-Json
+          $prev = $rels |
+            Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -match '^v\d+\.\d+\.\d+$' } |
+            Where-Object { [version]($_.tag_name.TrimStart('v')) -lt [version]$env:NEW_VERSION } |
+            Sort-Object { [version]($_.tag_name.TrimStart('v')) } -Descending |
+            Select-Object -First 1
+          if (-not $prev) { throw "找不到比 $env:NEW_VERSION 更早的正式 Release（首个版本没有 N-1，可手动跳过）" }
+          $pv = $prev.tag_name.TrimStart('v')
+          Write-Host "N-1 = $($prev.tag_name)"
+          $asset = $prev.assets | Where-Object { $_.name -eq "Tavotto-$pv-Windows-Setup.exe" }
+          if (-not $asset) { throw "N-1 Release 上没有 Tavotto-$pv-Windows-Setup.exe（资产：$($prev.assets.name -join ', ')）" }
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:RUNNER_TEMP\n1-setup.exe"
+          "prev_version=$pv" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+      - name: 静默安装 N-1 并探测 headless 触发口
+        id: probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Start-Process -Wait "$env:RUNNER_TEMP\n1-setup.exe" -ArgumentList "/S"
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
+          if (-not (Test-Path $key)) { throw "N-1 安装后没有卸载注册表项" }
+          $inst = (Get-ItemProperty $key).InstallLocation -replace '^"|"$', ''
+          $shell = Join-Path $inst "Tavotto.exe"
+          if (-not (Test-Path $shell)) { throw "N-1 装完找不到壳: $shell" }
+          $dv = (Get-ItemProperty $key).DisplayVersion
+          Write-Host "已安装 N-1：$dv → $inst"
+          "install_dir=$inst" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          # 能力探测：触发口是环境变量名的字面量，编进了壳二进制。
+          # 按二进制内容判而不是版本号——「哪一版加的」在加它的那次发布之前
+          # 没人知道号码，写死一个版本常量迟早说谎。
+          $bytes = [System.IO.File]::ReadAllBytes($shell)
+          $hay = [System.Text.Encoding]::ASCII.GetString($bytes)
+          $supported = $hay.Contains("TAVOTTO_E2E_RUN_UPDATE")
+          "supported=$($supported.ToString().ToLower())" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          if (-not $supported) {
+            Write-Host "N-1（$dv）没有 headless 触发口——本次转手动验证"
+          }
+
+      - name: N-1 无触发口：转手动验证（不算通过，也不红）
+        if: steps.probe.outputs.supported == 'false'
+        shell: pwsh
+        # 不红的理由要写在明处：0.10.0 及更早的二进制没有任何测试钩子，
+        # WebView2 的 UI 自动化不在首轮范围。这不是「验过了」——手动 checklist
+        # 在 docs/ci/release-qualification.md，证据必须记进 issue #35，
+        # 「已写进文档」不等于关闭（p2-needs-an-exit）。
+        run: |
+          Write-Host "::warning::N-1（${{ steps.prev.outputs.prev_version }}）无 headless 触发口，本次 N-1 更新验证需按 docs/ci/release-qualification.md 的手动 checklist 执行，证据记入 issue #35"
+          @(
+            '### ⚠️ N-1 应用内更新：本次需手动验证'
+            ''
+            'N-1（${{ steps.prev.outputs.prev_version }}）的二进制没有 TAVOTTO_E2E_RUN_UPDATE 触发口，自动化驱动不了它的更新 UI。'
+            '按 docs/ci/release-qualification.md 的「真实 N-1 应用内更新」checklist 手动执行一遍，证据（版本断言 + 日志/录屏）记入 issue #35。'
+            '从下一个版本起（N-1 已带触发口）本 job 全自动。'
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: 驱动真实应用内更新并断言换到了新版本
+        if: steps.probe.outputs.supported == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $inst  = "${{ steps.probe.outputs.install_dir }}"
+          $shell = Join-Path $inst "Tavotto.exe"
+          $key   = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
+          $env:TAVOTTO_E2E_RUN_UPDATE = "1"
+          # 隔离数据/配置目录：别把 runner 的用户目录当垃圾场。
+          # （job 级 env 用不了 runner 上下文，所以放在这里。）
+          $env:TAVOTTO_DATA_DIR   = "$env:RUNNER_TEMP\n1-data"
+          $env:TAVOTTO_CONFIG_DIR = "$env:RUNNER_TEMP\n1-config"
+          # 壳是 windows 子系统进程，stderr 没句柄时诊断会整个消失（nightly
+          # 的教训）——接到文件里
+          $out = Join-Path $env:RUNNER_TEMP "n1-shell-out.log"
+          $err = Join-Path $env:RUNNER_TEMP "n1-shell-err.log"
+          $p = Start-Process -FilePath $shell -PassThru `
+               -RedirectStandardOutput $out -RedirectStandardError $err
+          Write-Host "N-1 壳已启动（pid $($p.Id)），等待应用内更新……"
+
+          # 判据一：注册表 DisplayVersion 变成新版本（NSIS /UPDATE 装完才写）。
+          # 上限 20 分钟：下载 ~100MB + passive 安装。
+          $updated = $false
+          foreach ($i in 1..1200) {
+            Start-Sleep 1
+            $dv = (Get-ItemProperty $key -ErrorAction SilentlyContinue).DisplayVersion
+            if ($dv -eq $env:NEW_VERSION) { $updated = $true; break }
+          }
+          if (-not $updated) {
+            foreach ($f in @($out, $err)) {
+              if (Test-Path $f) { Write-Host "---- $f ----"; Get-Content $f -Tail 80 }
+            }
+            Get-Process Tavotto -ErrorAction SilentlyContinue |
+              ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+            throw "20 分钟内 DisplayVersion 没变成 $env:NEW_VERSION（仍是 $dv）——应用内更新没走完"
+          }
+          Write-Host "✓ DisplayVersion → $env:NEW_VERSION"
+
+          # 判据二：**等新进程出现，不等旧进程优雅退出**——更新装完 NSIS 以
+          # /R 重启应用，旧进程 std::process::exit(0) 不走 RunEvent::Exit。
+          #
+          # 「新进程」的主语必须钉到**壳的映像路径**，不能钉到进程名。安装目录
+          # 里有两个都叫 Tavotto.exe 的二进制——壳在安装根，sidecar 在
+          # $inst\sidecar\Tavotto\Tavotto.exe（下一步的冒烟正是这么找它的）
+          # ——而 `Get-Process Tavotto` 按**进程名**匹配，两个都收。sidecar 是
+          # PyInstaller 产物，**根本没有版本资源**（对 0.12.0 安装包实测：壳
+          # ProductVersion=0.12.0，sidecar 连 StringFileInfo 都没有），一旦选中
+          # 它，ProductVersion 必然是空的，而且**等多久都不会变**——那不是时序
+          # 问题，加再多重试也救不回来。v0.12.0 run 33027201414 的
+          # 「✓ 新进程 pid 1284，ProductVersion=」就是这个形状：它在
+          # DisplayVersion 确认后第一轮轮询（1 秒）就命中了。
+          # 两侧路径**规范化后再比**，不比逐字。这三样任一对不上，首测就红在
+          # 正式发布中途，代价最高：
+          #  · `InstallLocation` 带不带尾部反斜杠，注册表里两种写法都有；
+          #  · Windows 路径大小写不敏感，CIM 与注册表未必给同一种拼法；
+          #  · 8.3 短名（`C:\Users\RUNNER~1\…`）与长名指向同一个文件。
+          # 判据两个方向都要成立：同一个文件的畸形写法必须匹配上，**不同的
+          # 文件必须匹配不上**——只钉一条边是这个仓库反复出现的形状。
+          function Resolve-TavottoPath([string]$Path) {
+            if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+            $q = $Path.Trim().Trim('"')
+            # GetFullPath 归并重复分隔符、解 `..`、统一分隔符
+            try { $q = [System.IO.Path]::GetFullPath($q) } catch { }
+            # 8.3 短名展开。**只有 Windows 有**，失败就退回上一步的结果——
+            # 这一段本机（macOS）验不了，见 PR 正文的「仍未执行」一节。
+            try {
+              if (-not ([System.Management.Automation.PSTypeName]'TavottoLongPath').Type) {
+                # 别用 @'…'@ here-string：它的定界符必须顶格，而顶格会终结
+                # YAML 的块标量，整个 workflow 直接解析失败。
+                $sig = '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]' +
+                       ' public static extern uint GetLongPathName(string s,' +
+                       ' System.Text.StringBuilder b, uint n);'
+                Add-Type -Name TavottoLongPath -Namespace '' -MemberDefinition $sig
+              }
+              $sb = New-Object System.Text.StringBuilder 32767
+              if ([TavottoLongPath]::GetLongPathName($q, $sb, 32767) -gt 0 -and $sb.Length -gt 0) {
+                $q = $sb.ToString()
+              }
+            } catch { }
+            return $q.TrimEnd([System.IO.Path]::DirectorySeparatorChar,
+                              [System.IO.Path]::AltDirectorySeparatorChar)
+          }
+          $shellCanon = Resolve-TavottoPath $shell
+          Write-Host "壳的规范化映像路径：$shellCanon"
+
+          $fresh = $null
+          $procPath = ""
+          $seen = @{}
+          foreach ($i in 1..120) {
+            Start-Sleep 1
+            foreach ($c in @(Get-Process Tavotto -ErrorAction SilentlyContinue)) {
+              if ($c.Id -eq $p.Id) { continue }
+              # 映像路径走 CIM（Win32_Process.ExecutablePath），不走 .NET 的
+              # MainModule：新进程刚起时模块表可能还没填好，读回空串。
+              $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$($c.Id)" `
+                    -ErrorAction SilentlyContinue
+              $exe = if ($ci) { "$($ci.ExecutablePath)" } else { "" }
+              if ([string]::IsNullOrWhiteSpace($exe)) { continue }
+              $seen[$c.Id] = $exe
+              if ([string]::Equals((Resolve-TavottoPath $exe), $shellCanon,
+                                   [System.StringComparison]::OrdinalIgnoreCase)) {
+                $fresh = $c; $procPath = $exe; break
+              }
+            }
+            if ($fresh) { break }
+          }
+          if (-not $fresh) {
+            $other = ($seen.GetEnumerator() |
+                      ForEach-Object { "pid $($_.Key) → $($_.Value)" }) -join "; "
+            if (-not $other) { $other = "（一个都没有）" }
+            throw ("2 分钟内没有出现映像为 $shell 的新进程（/R 重启失败？）。" +
+                   "期间看到的其它 Tavotto 进程：$other")
+          }
+
+          # 判据三：**跑起来的那个壳**是新版本。
+          # 不变式的主语是「重启后新进程的 ProductVersion」
+          # （docs/ci/release-qualification.md「n1_update_windows」一节）。只验
+          # 安装目录里的文件不够：「装对了但 /R 起错了二进制」恰好从中间漏过去。
+          # 「在安装目录下」也不够——sidecar 就在安装目录下，那条检查放它过去。
+          # 判据二已经把主语钉到 $shell 的映像路径上，这里只剩版本资源。
+          #
+          # 版本资源从**那个映像路径**读，不从进程句柄读，并且轮询 15s：
+          # 安装器此刻可能仍在替换 exe，磁盘上那份同样会读到中间态。诊断里
+          # 写了轮询窗口，代码里就必须真有——错误信息本身也是断言。
+          $vi = $null
+          $procPv = ""
+          foreach ($i in 1..15) {
+            $vi = (Get-Item $procPath -ErrorAction SilentlyContinue).VersionInfo
+            if ($vi) { $procPv = "$($vi.ProductVersion)".Trim() }
+            if (-not [string]::IsNullOrWhiteSpace($procPv)) { break }
+            Start-Sleep 1
+          }
+          # 句柄那份只当诊断：读不到不构成失败，但读到什么必须留在日志里
+          # ——「ProductVersion 为何为空」要靠它定性（#147 关闭条件 3）。
+          $handlePv = "<未读取>"
+          try { $handlePv = "$($fresh.MainModule.FileVersionInfo.ProductVersion)" }
+          catch { $handlePv = "<读取失败：$($_.Exception.GetType().Name)>" }
+
+          Write-Host "✓ 新进程 pid $($fresh.Id)"
+          Write-Host "  映像路径：$procPath"
+          Write-Host "    ProductVersion='$procPv'  FileVersion='$(if ($vi) { $vi.FileVersion })'"
+          Write-Host "  进程句柄 MainModule → ProductVersion='$handlePv'（仅诊断）"
+          if ($seen.Count -gt 1) {
+            Write-Host "  同名的其它 Tavotto 进程（按映像路径已排除）："
+            $seen.GetEnumerator() | Where-Object { $_.Key -ne $fresh.Id } |
+              ForEach-Object { Write-Host "    pid $($_.Key) → $($_.Value)" }
+          }
+          if ([string]::IsNullOrWhiteSpace($procPv)) {
+            throw ("读不到新进程映像的 ProductVersion（$procPath，已轮询 15s）。" +
+                   "pid $($fresh.Id)，句柄读值='$handlePv'——更新链可能是成功的，" +
+                   "先看上面的诊断再判。")
+          }
+          if (-not $procPv.StartsWith($env:NEW_VERSION)) {
+            throw "重启后跑的不是新版本：ProductVersion=$procPv，期望 $env:NEW_VERSION"
+          }
+          # 收掉窗口进程，下一步对 sidecar 冒烟
+          Get-Process Tavotto -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+          Start-Sleep 3
+          # 这一步的契约是「三条判据都过 = 成功」，别把它托付给 $LASTEXITCODE
+          # 的隐式传播——那个值来自与结论无关的命令。runner 会在每个 pwsh 步骤
+          # 末尾追加 `if (Test-Path variable:\LASTEXITCODE) { exit $LASTEXITCODE }`
+          # （actions/runner `ScriptHandlerHelpers.cs` 的 `FixUpScriptContents`），
+          # `-Command` 再把非 0/1 折成 1（about_pwsh「-Command | -c」一节）——
+          # issue #197 的「脚本跑到最后一行仍退 1」就是这两层。显式 `exit 0` 在追加
+          # 的那一行之前退出；所有失败路径都是 throw，走不到这里，所以不掩盖任何
+          # 真失败。规则见 `.github/AGENTS.md`「pwsh 步骤的退出码」。
+          exit 0
+
+      - name: 更新后的产物冒烟（复用 smoke_app 的既有断言）
+        if: steps.probe.outputs.supported == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $inst = "${{ steps.probe.outputs.install_dir }}"
+          $shell = Join-Path $inst "Tavotto.exe"
+          $side = Get-ChildItem $inst -Recurse -Filter Tavotto.exe |
+                  Where-Object { $_.FullName -ne $shell } | Select-Object -First 1
+          if (-not $side) { throw "更新后的安装目录里没有 sidecar" }
+          $env:TAVOTTO_WORKER_PYTHON = $null
+          python scripts\smoke_app.py --exe "$($side.FullName)" `
+            --figures examples\runtime_check --expect-source bundled `
+            --expect-runtime --expect-control-plane workerd
+          if ($LASTEXITCODE -ne 0) { throw "更新后的 sidecar 冒烟失败（退出码 $LASTEXITCODE）" }
+          @(
+            "### ✅ 真实 N-1 应用内更新通过（Windows）"
+            ""
+            "${{ steps.prev.outputs.prev_version }} → $env:NEW_VERSION：官方安装包安装 → 应用内更新器下载/验签/解包/安装 → 重启为新版本 → 冒烟渲染通过。"
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: 清理（卸载）
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process Tavotto -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
+          if (Test-Path $key) {
+            $inst = (Get-ItemProperty $key).InstallLocation -replace '^"|"$', ''
+            $un = Join-Path $inst "uninstall.exe"
+            if (Test-Path $un) { Start-Process -Wait $un -ArgumentList "/S" }
+          }
+
+      - name: 失败时收集日志
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: n1-update-windows-logs
+          path: |
+            ${{ runner.temp }}/n1-shell-*.log
+            ${{ runner.temp }}/n1-data/**/app.log
+          if-no-files-found: warn
+          retention-days: 14
+
