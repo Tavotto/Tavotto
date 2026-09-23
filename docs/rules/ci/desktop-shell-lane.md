@@ -13,7 +13,7 @@
   **两条腿：`ubuntu-latest` + `macos-latest`（2026-09-07，issue #282）。**
   clippy 只看得见参与编译的那一支，而 `main.rs` 的应用菜单有
   `#[cfg(target_os = "macos")]` 分支——只跑 Linux 腿时，那一支的 lint 在任何
-  工作流里都没有执行位置（`desktop-tauri.yml` 的 macOS 腿只跑 `cargo test`，
+  工作流里都没有执行位置（`desktop-tauri.yml` 的 Apple Silicon 腿只跑 `cargo test`，
   不 deny warnings：编译错误抓得到、lint 抓不到），又是一条「登记了但从不执行」
   的判据。这条边界现在**已经关掉**，不再是已知边界。`cargo fmt` 不吃 cfg
   （rustfmt 解析整个文件），本来就两支都看得见。

@@ -49,7 +49,7 @@
   构建就地关掉 createUpdaterArtifacts 并打 warning**，安装包照发。
   **macOS 的更新包必须在签名/公证之后重做**——tauri build 顺手打的那份装的是
   没签名的 .app，换上去 Gatekeeper 当场拦。清单 `latest.json` 由
-  `scripts/make_updater_manifest.py` 在两条 matrix 腿都跑完后合成
+  `scripts/make_updater_manifest.py` 在三条 matrix 腿（macOS arm64 / macOS x86_64 / Windows，ADR 0076）都跑完后合成
   （少了它壳永远显示「已是最新」而 CI 全绿）。细节见 ADR 0002 末节。
 - 桌面模式下 Python updater 停用（升级归 Tauri 层），`/api/update/*` 回
   禁用响应；浏览器模式照旧。

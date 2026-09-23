@@ -34,8 +34,11 @@
 - release.yml 的插件版本清单（`codex-plugin.json`）由 `build` job 生成（不再在没有 Node 的
   `validate_artifacts`——现在在第二段——里从源码目录打包），**不能挪进 desktop-tauri.yml 的 updater-manifest**
   （那个 job 没配 minisign 私钥就整个跳过，插件更新通道会悄悄停而且全绿）。
-- 桌面更新清单 `latest.json` 由 `scripts/make_updater_manifest.py` 在两条
-  matrix 腿都跑完后合成；macOS 更新包必须在签名/公证之后重做
-  （见 `src-tauri/AGENTS.md`）。
+- 桌面更新清单 `latest.json` 由 `scripts/make_updater_manifest.py` 在三条
+  matrix 腿（macOS Apple Silicon / macOS Intel / Windows，ADR 0076）都跑完后合成，
+  `--require` 三个平台缺一不可；两个 macOS 更新包按精确名区分，名字取自
+  `brand.PRODUCT_NAME`（workflow 里经 `APP_NAME`）。macOS 更新包必须在签名/公证之后重做
+  （见 `src-tauri/AGENTS.md`）。Intel 腿不在合并队列里，每个版本的第一次执行是
+  `release.yml` 的 `publish=false` 演练——打 tag 前必须先跑。
 - 遥测部署顺序：先发代理 → 验 PostHog 收得到 → 配采集器 → 再发客户端
   （反过来新事件被静默 400 而且全绿）。发行量采集器失败必须让 workflow 红。
