@@ -6,7 +6,8 @@ smoke_app 会导出一次 PDF，但它不问「是哪个后端导的」，也不
 包内字体。所以这里逐条问：
 
 1. 启动日志里的后端是 `rendercore`（默认值在 beta 分支改了，装不上会在启动时抛）；
-2. `/api/render` 出一张 PNG 预览（PDFium 在 render child 里）；
+2. `/api/render` 对**每一类素材**各出一张 PNG 预览：PDF 面板（PDFium 在 render child 里）与 PNG 面板
+   （父进程解码缩放）。只测 PDF 素材漏过一次：位图素材被交给 PDFium，素材库缩略图全是 500；
 3. `/api/export` 同时导 PDF + PNG + TIFF（文字排版用包内字体、面板是外来页、位图从 Canonical PDF 来）。
 
 用法：python scripts/beta_rendercore_check.py --exe <sidecar> --figures examples/figures
@@ -22,7 +23,10 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
+import struct
+import zlib
 from pathlib import Path
 
 
@@ -30,6 +34,17 @@ def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def _png_bytes(w: int = 240, h: int = 160) -> bytes:
+    """标准库拼一张不透明 RGB PNG（左半蓝、右半橙），检查脚本不依赖 Pillow。"""
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
+    row = b"\x00" + b"\x1f\x77\xb4" * (w // 2) + b"\xff\x7f\x0e" * (w - w // 2)
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(row * h)) + chunk(b"IEND", b"")
 
 
 def _req(url: str, body: dict | None = None, timeout: float = 120) -> bytes:
@@ -49,6 +64,7 @@ def main() -> int:
     # 导出默认落在项目目录里：拷一份示例图库再跑，别往仓库的 examples/ 里写东西
     figures = work / "figures"
     shutil.copytree(args.figures, figures)
+    (figures / "beta-raster-probe.png").write_bytes(_png_bytes())
     port = _free_port()
     log = work / "sidecar.log"
     env = {"TAVOTTO_DATA_DIR": str(work / "data"), "PATH": "/usr/bin:/bin", "HOME": str(Path.home())}
@@ -77,13 +93,21 @@ def main() -> int:
 
         panels = json.loads(_req(f"{base}/api/panels"))
         panels = panels.get("panels", panels) if isinstance(panels, dict) else panels
-        pid = panels[0]["id"]
+        ids = [p["id"] for p in panels]
+        pid = next((i for i in ids if i.lower().endswith(".pdf")), None)
+        raster_id = next((i for i in ids if i.endswith("beta-raster-probe.png")), None)
+        if pid is None or raster_id is None:
+            raise SystemExit(f"素材库里缺 PDF 或 PNG 面板：{ids[:20]}")
 
-        t0 = time.time()
-        png = _req(f"{base}/api/render?id={urllib.request.quote(pid)}&w=900")
-        if not png.startswith(b"\x89PNG") or len(png) < 1000:
-            raise SystemExit(f"/api/render 回的不是 PNG（{len(png)} 字节）")
-        print(f"✓ 预览 PNG {len(png)} 字节（{time.time() - t0:.2f}s，PDFium 在 render child 里）")
+        for rid, what in ((pid, "PDF 素材，PDFium 在 render child 里"), (raster_id, "PNG 素材，父进程解码缩放")):
+            t0 = time.time()
+            try:
+                png = _req(f"{base}/api/render?id={urllib.request.quote(rid)}&w=900")
+            except urllib.error.HTTPError as exc:
+                raise SystemExit(f"/api/render {rid} → HTTP {exc.code}（{what}）\n" + log.read_text(errors="replace")[-2000:])
+            if not png.startswith(b"\x89PNG") or len(png) < 200:
+                raise SystemExit(f"/api/render {rid} 回的不是 PNG（{len(png)} 字节）")
+            print(f"✓ 预览 {rid} {len(png)} 字节（{time.time() - t0:.2f}s，{what}）")
 
         spec = {
             "page_w_mm": 90,
@@ -93,7 +117,8 @@ def main() -> int:
             "objects": [
                 {"type": "text", "text": "RenderCore 中文 cm^{-1}", "x_mm": 5, "y_mm": 4, "w_mm": 80,
                  "h_mm": 8, "size_pt": 10, "bold": False, "color": "#000000", "align": "left"},
-                {"type": "panel", "id": pid, "x_mm": 5, "y_mm": 14, "w_mm": 60, "h_mm": 32},
+                {"type": "panel", "id": pid, "x_mm": 5, "y_mm": 14, "w_mm": 50, "h_mm": 32},
+                {"type": "panel", "id": raster_id, "x_mm": 58, "y_mm": 14, "w_mm": 27, "h_mm": 18},
             ],
         }
         t0 = time.time()
