@@ -125,7 +125,8 @@ def install_roots(
         if home:
             out.append(home + "/Applications/Tavotto.app")
     elif _is_win(system):
-        # 新装固定 %LOCALAPPDATA%\Tavotto（installer.nsi 的 .onInit）；
+        # 新装默认 %LOCALAPPDATA%\Tavotto（installer.nsi 的 .onInit；首次安装可在
+        # 目录页改，改了的靠安装清单与 HKCU InstallLocation 找）；
         # 后两条是历史上管理员装出来的位置，升级时 $INSTDIR 会沿用它们。
         for key in ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"):
             base = (env.get(key) or "").rstrip("\\")

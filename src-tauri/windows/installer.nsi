@@ -2,9 +2,10 @@
 ; TAVOTTO VENDORED TEMPLATE
 ; 上游：tauri-apps/tauri @ tauri-cli-v2.11.4
 ;       crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi
-; 改动：全部以 `TAVOTTO PATCH` 注释标出。首次 GUI 安装只剩两页——
-;       真实安装进度（MUI_PAGE_INSTFILES）→ 完成页（MUI_PAGE_FINISH）：
-;       欢迎页删除、目录页与开始菜单页恒被 Skip 掉、日志列表 nevershow、
+; 改动：全部以 `TAVOTTO PATCH` 注释标出。首次 GUI 安装是三页——
+;       选安装位置（MUI_PAGE_DIRECTORY）→ 真实安装进度（MUI_PAGE_INSTFILES）
+;       → 完成页（MUI_PAGE_FINISH）；覆盖安装 / 自动更新 / 被动模式不问位置，
+;       只剩后两页。欢迎页删除、开始菜单页恒被 Skip 掉、日志列表 nevershow、
 ;       完成页去掉伪 README 复选框并本地化「打开 Tavotto」。
 ;       异常流程（同版本 / 降级 / WiX 迁移 / 应用在跑 / WebView2 失败 /
 ;       卸载）的页面与判断一个都没动。头图与侧栏图不在此文件——走
@@ -93,6 +94,9 @@ Var UpdateMode
 Var NoShortcutMode
 Var WixMode
 Var OldMainBinaryName
+; TAVOTTO PATCH: 这台机器上**现在**有没有一份安装（卸载注册表项的
+; UninstallString）。目录页只在它为空时出现，见「5. Choose install directory」。
+Var ExistingInstall
 
 Name "${PRODUCTNAME}"
 ; TAVOTTO PATCH: 左下角不放角标文字，界面更安静
@@ -202,8 +206,8 @@ ShowUninstDetails nevershow
 ; Installer pages, must be ordered as they appear
 ; 1. Welcome Page
 ; TAVOTTO PATCH: 欢迎页删除（宏一并去掉，不是藏起来）。
-; 首次 GUI 安装从这里直接落到进度页：没有欢迎页、没有目录页、
-; 没有开始菜单页、没有许可证页——启动安装器即开始装。
+; 首次 GUI 安装的第一屏就是选安装位置（默认值已填好，直接点「安装」
+; 等于旧行为）；没有欢迎页、没有开始菜单页、没有许可证页。
 
 ; 2. License Page (if defined)
 !if "${LICENSE}" != ""
@@ -421,12 +425,23 @@ Function PageLeaveReinstall
 FunctionEnd
 
 ; 5. Choose install directory page
-; TAVOTTO PATCH: 目录页恒不可见（PRE 从 SkipIfPassive 换成 Skip = 无条件
-; Abort）。安装位置由 .onInit 决定：新装固定 $LOCALAPPDATA\Tavotto，
-; 已有安装则 RestorePreviousInstallLocation 从注册表读回老路径。
-; **宏本身保留**——它是 Tauri 模板的既有依赖，命令行 /D= 也照旧生效；
-; 这里删的只是那一屏「你要装到哪儿」，不是安装位置的能力。
-!define MUI_PAGE_CUSTOMFUNCTION_PRE Skip
+; TAVOTTO PATCH: 目录页**只在首次安装时**出现（2026-09-23 用户拍板，推翻
+; 730bfcee 的「恒不可见」）。默认值仍由 .onInit 决定：新装是
+; $LOCALAPPDATA\Tavotto，以前装过（注册表里留着老路径）就预填老路径。
+; 三种情况不问（SkipDirectoryIfInstalled）：
+;   - 已经装着一份（覆盖安装 / 升级）：换位置会在老目录留下一份没人管的
+;     副本，卸载项却只指向新的那份；
+;   - /UPDATE（应用内更新）与 /P（被动）：本来就不该有任何交互。
+; 离开时（DirectoryLeave）先验写权限：安装器是 currentUser + asInvoker，
+; 选到 Program Files 这类要管理员的目录，不拦的话会在解压到一半时失败。
+; 按钮与说明文字：NSIS 按**静态**页序决定「下一步 / 安装」——紧挨在
+; instfiles 前面的是（恒被跳过的）开始菜单页，于是这一屏会写着「下一步」、
+; 说明里也是「单击下一步继续」，点了却直接开始装。SHOW 里把按钮改成
+; 「安装」，说明文字用自己的一句。
+!define MUI_DIRECTORYPAGE_TEXT_TOP "$(installDirText)"
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipDirectoryIfInstalled
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW DirectoryShow
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE DirectoryLeave
 !insertmacro MUI_PAGE_DIRECTORY
 
 ; 6. Start menu shortcut page
@@ -545,7 +560,7 @@ FunctionEnd
   !include "{{this}}"
 {{/each}}
 
-; TAVOTTO PATCH: 品牌文案。安装器只剩两页，这几句就是用户会读到的全部。
+; TAVOTTO PATCH: 品牌文案。安装器页面极少，这几句就是用户会读到的全部。
 ; 为什么不走 tauri.conf.json 的 customLanguageFiles：那个开关是**整份替换**
 ; 内置语言文件，为一句「打开 Tavotto」要把上游三十来条字符串抄一份，
 ; 升级 CLI 时必然漂。就地 LangString 更小也更难错。
@@ -560,6 +575,8 @@ FunctionEnd
   LangString finishText        ${LANG_ENGLISH} "Tavotto has been installed on this computer."
   LangString openTavotto       ${LANG_ENGLISH} "Open Tavotto"
   LangString registeringTavotto ${LANG_ENGLISH} "Registering the Tavotto command line"
+  LangString installDirText    ${LANG_ENGLISH} "Tavotto will be installed in the folder below. To use a different folder, click Browse."
+  LangString installDirNotWritable ${LANG_ENGLISH} "This folder can't be written to without administrator rights. Choose a folder in your user profile or on another drive."
 !endif
 !ifdef LANG_SIMPCHINESE
   LangString preparingTavotto  ${LANG_SIMPCHINESE} "正在准备 Tavotto"
@@ -568,6 +585,8 @@ FunctionEnd
   LangString finishText        ${LANG_SIMPCHINESE} "Tavotto 已经装到这台电脑上。"
   LangString openTavotto       ${LANG_SIMPCHINESE} "打开 Tavotto"
   LangString registeringTavotto ${LANG_SIMPCHINESE} "正在登记 Tavotto 命令行入口"
+  LangString installDirText    ${LANG_SIMPCHINESE} "Tavotto 将安装到下面这个文件夹。要换位置，请点「浏览」。"
+  LangString installDirNotWritable ${LANG_SIMPCHINESE} "没有管理员权限写不进这个文件夹。请换一个用户目录下或其他磁盘上的位置。"
 !endif
 
 Function .onInit
@@ -591,6 +610,13 @@ Function .onInit
   !endif
 
   !insertmacro SetContext
+
+  ; TAVOTTO PATCH: 必须在这里记，不能等到目录页的 PRE 再读——重装页
+  ; （PageLeaveReinstall）可能已经先把旧版卸掉了，那时注册表是空的，
+  ; 覆盖安装会被误当成首次安装而弹出目录页。判据用卸载项而不是
+  ; MANUPRODUCTKEY：后者在普通卸载后仍留着（只有勾了删除数据才清），
+  ; 它回答的是「以前装在哪儿」，不是「现在装着没有」。
+  ReadRegStr $ExistingInstall SHCTX "${UNINSTKEY}" "UninstallString"
 
   ${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
     ; Set default install location
@@ -1058,6 +1084,48 @@ FunctionEnd
 Function SkipIfPassive
   ${IfThen} $PassiveMode = 1  ${|} Abort ${|}
 FunctionEnd
+
+; TAVOTTO PATCH: 目录页的 PRE。只有「首次、交互式」安装才问装到哪儿。
+Function SkipDirectoryIfInstalled
+  ${IfThen} $PassiveMode = 1 ${|} Abort ${|}
+  ${IfThen} $UpdateMode = 1 ${|} Abort ${|}
+  ${IfThen} $ExistingInstall != "" ${|} Abort ${|}
+FunctionEnd
+
+; TAVOTTO PATCH: 目录页的 SHOW。按钮写「安装」（理由见「5. Choose install directory」）。
+Function DirectoryShow
+  GetDlgItem $0 $HWNDPARENT 1
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:$(^InstallBtn)"
+FunctionEnd
+
+; TAVOTTO PATCH: 目录页的 LEAVE。在这一屏就验「装得进去」，而不是等解压失败。
+; 判据就是安装本身要做的两件事：建出 $INSTDIR、在里面写文件。**不**去问
+; 「最近的祖先目录能不能写」——那需要先判断哪一层存在，而一层目录只要列不出
+; 内容（ACL 拒了 SYNCHRONIZE / FILE_LIST_DIRECTORY），IfFileExists 就当它不存在，
+; 往上找到的可写祖先会替目标目录作证。2026-09-24 真机实测：对 Deny 写的目录
+; 选它下面的子目录，旧写法放行了，装到解压 Tavotto.exe 才报错。
+; 离开本页即开始安装（后面只有恒被跳过的开始菜单页与进度页），所以先建目录
+; 不会在「取消」时留下空目录。被拒时只收拾本函数刚建的那一层：是否原本存在
+; 用 GetFileAttributesW 判（只看属性，不列内容），RMDir 不带 /r，非空绝不删。
+; 在 LEAVE 里 Abort = 留在本页让用户重选，不是中止安装。
+Function DirectoryLeave
+  StrCpy $R6 0
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR") i .R5'
+  ${IfThen} $R5 = -1 ${|} StrCpy $R6 1 ${|}
+  ClearErrors
+  CreateDirectory "$INSTDIR"
+  IfErrors dir_not_writable
+  FileOpen $R7 "$INSTDIR\.tavotto-write-probe" w
+  IfErrors dir_not_writable
+  FileClose $R7
+  Delete "$INSTDIR\.tavotto-write-probe"
+  Return
+  dir_not_writable:
+  ${IfThen} $R6 = 1 ${|} RMDir "$INSTDIR" ${|}
+  MessageBox MB_OK|MB_ICONEXCLAMATION "$(installDirNotWritable)"
+  Abort
+FunctionEnd
+
 Function un.SkipIfPassive
   ${IfThen} $PassiveMode = 1  ${|} Abort ${|}
 FunctionEnd
