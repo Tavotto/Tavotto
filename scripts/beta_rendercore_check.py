@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import socket
 import subprocess
 import sys
@@ -45,12 +46,15 @@ def main() -> int:
     args = ap.parse_args()
 
     work = Path(tempfile.mkdtemp(prefix="beta-rc-"))
+    # 导出默认落在项目目录里：拷一份示例图库再跑，别往仓库的 examples/ 里写东西
+    figures = work / "figures"
+    shutil.copytree(args.figures, figures)
     port = _free_port()
     log = work / "sidecar.log"
     env = {"TAVOTTO_DATA_DIR": str(work / "data"), "PATH": "/usr/bin:/bin", "HOME": str(Path.home())}
     with log.open("w") as fh:
         proc = subprocess.Popen(
-            [args.exe, "--figures", args.figures, "--no-browser", "--insecure-no-auth", "--port", str(port)],
+            [args.exe, "--figures", str(figures), "--no-browser", "--insecure-no-auth", "--port", str(port)],
             stdout=fh,
             stderr=subprocess.STDOUT,
             env=env,
