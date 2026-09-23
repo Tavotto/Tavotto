@@ -9,6 +9,21 @@
   **密钥与个人路径必须先脱敏再交出去**（用户会把它贴进 issue 或发到群里）。
   `recent_projects` / `projects` **只留条数**：那是用户所有课题的名字与路径，
   排障一次都用不到（当前项目在 report.json 的 project 段里）。
+- **项目在哪、叫什么不出门**（2026-09-23 beta 诊断包实测：云盘目录名带邮箱、课题目录带人名，
+  以前只把主目录换成 `~`，其余原样进 report.json / app.log / 复制诊断）：
+  * `project_roots(project)`：当前项目 + 最近项目的根（原样、realpath、正斜杠三种写法，长的在前）
+    在**所有**文本里换成 `<project:sha1 前 10 位>`，**先于主目录替换**（先换主目录项目根就认不出了）；
+    同一个项目在 report / app.log / config.json 里是同一个记号。`build_report` / `build_bundle` 的每一处
+    `_redact_text` / `_redact_obj` 都带上它，新加一处漏了就是新的泄漏口。
+  * 兜底两条不依赖登记：`CloudStorage/<服务商>-<账号>` 的账号段换成 `acct:<哈希>`（服务商名留着），
+    邮箱一律 `<email>`——没登记成项目的路径、日志里随口的一句也不带出账号。
+  * `_project_section`：去掉 `name`；`figures_dir` 只剩记号，另给 `location`
+    （`cloud_storage` / `non_ascii` / `has_space`——真实故障来自这三样，不来自名字）；导出 / 备份 / 文档
+    目录与项目设置里的路径走 `_path_fact`：记号 / `~` 之后只有 `_KNOWN_SEGMENTS`（Tavotto 自己起的目录名、
+    解释器布局、系统通用目录）原样，其余 `seg:<哈希>`——导出目录能被改到 `~/Desktop/<论文题目>/`。
+  * `render.worker_logs` 取会话仍按**未脱敏**的 `figures_dir` 算 `cache_digest`（脱敏只在出口）。
+  * 看护：`tests/test_diagnostics_bundle.py` 的「项目路径」一节——真打开一个云盘里的项目、真导出，
+    对包里每个文件与复制诊断文本全文搜索，并反证记号与 `location` 确实写出来了。
 - **诊断包 schema 2（ADR 0016，改前先读）**：老三件
   （report.json / app.log / config.json）名字与语义一个字节没动，新增
   `frontend-state.json` / `interaction-trace.jsonl` / `manifest.json`。

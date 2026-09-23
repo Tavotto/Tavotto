@@ -83,14 +83,66 @@ def _install_id() -> str:
         return ""
 
 
-def _redact_text(text: str) -> str:
-    """文本脱敏：先抹密钥再抹个人路径。顺序无所谓，但三步都不能省。"""
+#: 云盘挂载点的目录名里带着账号：`~/Library/CloudStorage/坚果云-<邮箱>`、`GoogleDrive-<邮箱>`、
+#: `OneDrive-<机构名>`。服务商名留着（「项目在云盘里」对排障有用：同步冲突、占位文件），账号哈希
+_CLOUD_ACCOUNT = re.compile(r"(CloudStorage[/\\])([^/\\\s\"'-]+)-([^/\\\"']+)")
+#: 邮箱出现在哪里都不该出门（云盘目录名、Git 配置、日志里的账号提示）
+_EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+
+
+def _root_variants(path: str) -> list[str]:
+    """一条项目根在文本里可能的写法：原样、realpath（macOS 的 /tmp → /private/tmp、软链接）、
+    Windows 的正斜杠写法。去掉末尾分隔符，免得 `…/paper` 与 `…/paper/` 各算一条。"""
+    out: list[str] = []
+    for cand in (path, os.path.realpath(path)):
+        cand = cand.rstrip("/\\")
+        if not cand:
+            continue
+        out.append(cand)
+        if "\\" in cand:
+            out.append(cand.replace("\\", "/"))
+    return list(dict.fromkeys(out))
+
+
+def project_roots(project: dict | None = None) -> list[tuple[str, str]]:
+    """诊断包里要整体换掉的项目根：(文本里的写法, `<project:哈希>`)，长的在前。
+
+    **项目路径是用户最私人的那段**：云盘目录名带邮箱、课题目录带人名和论文题目，而
+    `_redact_text` 原本只把主目录换成 `~`，`~/Library/CloudStorage/坚果云-<邮箱>/…/<人名>/…`
+    原样出门（2026-09-23 beta 诊断包实测）。当前项目 + 最近打开过的项目都换成同一个哈希记号：
+    读包的人仍能对上「这几行说的是同一个项目」，项目叫什么、在哪一个字都不知道。
+    """
+    paths: list[str] = []
+    if project and isinstance(project.get("figures_dir"), str):
+        paths.append(project["figures_dir"])
+    try:
+        paths += [e["path"] for e in config.load().get("recent_projects", [])]
+    except Exception:  # noqa: BLE001 — 配置读不出来不该拖垮诊断
+        pass
+    out: list[tuple[str, str]] = []
+    for path in dict.fromkeys(p for p in paths if p and os.path.isabs(p)):
+        token = f"<project:{_digest(os.path.normcase(os.path.realpath(path)))}>"
+        out += [(v, token) for v in _root_variants(path)]
+    return sorted(out, key=lambda pair: len(pair[0]), reverse=True)
+
+
+def _redact_text(text: str, roots: list[tuple[str, str]] | None = None) -> str:
+    """文本脱敏：密钥 → 假名标识 → 项目根 → 主目录 → 用户名 → 云盘账号 → 邮箱。
+
+    **项目根必须在主目录之前换**：先换主目录的话，项目根的原文就不在文本里了，
+    `~/…/<人名>/paper` 再也认不出来。"""
     text = _SECRET_VALUE.sub("***", text)
     # 按**值**再抹一次假名标识：按键名那道只挡得住结构化的
     # `"install_id": "..."`，挡不住它偶然出现在别的字符串里。
     ident = _install_id()
     if ident:
         text = text.replace(ident, "***")
+    for raw, token in roots or ():
+        text = text.replace(raw, token)
     home = os.path.expanduser("~")
     if home and home != os.sep:
         text = text.replace(home, "~")
@@ -99,7 +151,10 @@ def _redact_text(text: str) -> str:
     user = os.environ.get("USER") or os.environ.get("USERNAME") or ""
     if len(user) >= 3:  # 太短的用户名replace 会误伤正常词
         text = re.sub(rf"\b{re.escape(user)}\b", "<user>", text)
-    return text
+    text = _CLOUD_ACCOUNT.sub(
+        lambda m: f"{m.group(1)}{m.group(2)}-acct:{_digest(m.group(3))}", text
+    )
+    return _EMAIL.sub("<email>", text)
 
 
 def redact_text(text: str) -> str:
@@ -112,8 +167,8 @@ def redact_text(text: str) -> str:
     return _redact_text(text)
 
 
-def _redact_obj(obj):
-    """结构化数据脱敏：按键名判定的敏感字段整体换掉，其余走文本规则。"""
+def _redact_obj(obj, roots: list[tuple[str, str]] | None = None):
+    """结构化数据脱敏：按键名判定的敏感字段整体换掉，其余走文本规则（`roots` 同 `_redact_text`）。"""
     if isinstance(obj, dict):
         out = {}
         for k, v in obj.items():
@@ -126,13 +181,112 @@ def _redact_obj(obj):
                 # 的 project 段已经有了）。只留条数，清单本身不出门。
                 out[k] = {"count": len(v)} if isinstance(v, (list, dict)) else v
             else:
-                out[k] = _redact_obj(v)
+                out[k] = _redact_obj(v, roots)
         return out
     if isinstance(obj, list):
-        return [_redact_obj(v) for v in obj]
+        return [_redact_obj(v, roots) for v in obj]
     if isinstance(obj, str):
-        return _redact_text(obj)
+        return _redact_text(obj, roots)
     return obj
+
+
+#: 路径出门时原样保留的段：Tavotto 自己起的目录名、解释器布局、系统的通用目录。其余一律 `seg:<哈希>`
+_KNOWN_SEGMENTS = frozenset(
+    {
+        config.PROJECT_STORE_DIRNAME,
+        "export",
+        "exports",
+        "canvases",
+        "layouts",
+        "original_backups",
+        "cache",
+        "tavotto",
+        ".venv",
+        "venv",
+        "env",
+        "bin",
+        "Scripts",
+        "lib",
+        "site-packages",
+        "python",
+        "python3",
+        "python.exe",
+        "Users",
+        "home",
+        "Volumes",
+        "Library",
+        "CloudStorage",
+        "Mobile Documents",
+        "Documents",
+        "Desktop",
+        "Downloads",
+        "tmp",
+        "private",
+        "var",
+        "opt",
+        "Applications",
+    }
+)
+#: 「项目在云盘同步目录里」：同步冲突 / 按需下载的占位文件是一类常见故障，值得留一个布尔
+_CLOUD_HINT = re.compile(
+    r"CloudStorage|Mobile Documents|OneDrive|Dropbox|Google Drive|Nutstore|坚果云|iCloud", re.I
+)
+
+
+def _path_fact(value: str, roots: list[tuple[str, str]]) -> str:
+    """一条路径出门的样子：项目根 → `<project:…>`、主目录 → `~`，之后的每一段只有 `_KNOWN_SEGMENTS`
+    里的名字原样，其余 `seg:<sha1 前 10 位>`——导出目录可以被用户改到 `~/Desktop/<论文题目>/`，只换主目录
+    挡不住题目。"""
+    text = _redact_text(value, roots)
+    out: list[str] = []
+    for seg in re.split(r"[/\\]", text):
+        keep = (
+            seg in ("", "~", "<user>")
+            or seg in _KNOWN_SEGMENTS
+            or seg.startswith(("<project:", "seg:"))
+            or "-acct:" in seg
+            or re.fullmatch(r"[A-Za-z]:", seg) is not None
+        )
+        out.append(seg if keep else f"seg:{_digest(seg)}")
+    return "/".join(out)
+
+
+def _paths_in(obj, roots: list[tuple[str, str]]):
+    """结构里凡是长得像绝对路径（或 `~` 开头）的字符串都走 `_path_fact`；其余原样交给后面的 `_redact_obj`。"""
+    if isinstance(obj, dict):
+        return {k: _paths_in(v, roots) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_paths_in(v, roots) for v in obj]
+    if isinstance(obj, str) and (os.path.isabs(obj) or obj.startswith("~")):
+        return _path_fact(obj, roots)
+    return obj
+
+
+def _project_section(project: dict | None, roots: list[tuple[str, str]]) -> dict:
+    """report.json 的 project 段：**项目在哪、叫什么不出门**，对排障有用的事实留下。
+
+    * `name`（项目目录名，常常就是论文题目 / 人名）去掉；
+    * `figures_dir` 只剩 `<project:哈希>`，另给 `location`：在不在云盘同步目录、有没有非 ASCII
+      字符、有没有空格——这三样是真实故障的来源（同步占位文件、编码、命令行引号），名字本身不是；
+    * 导出 / 备份 / 文档目录与项目设置里的路径走 `_path_fact`。
+    """
+    if not project or not project.get("open"):
+        return project or {"open": False}
+    out = dict(project)
+    out.pop("name", None)
+    fig = out.get("figures_dir")
+    if isinstance(fig, str):
+        out["location"] = {
+            "cloud_storage": bool(_CLOUD_HINT.search(fig)),
+            "non_ascii": not fig.isascii(),
+            "has_space": " " in fig,
+        }
+    for key in ("figures_dir", "export_dir", "backup_dir", "document_dir"):
+        if isinstance(out.get(key), str):
+            out[key] = _path_fact(out[key], roots)
+    if isinstance(out.get("settings"), dict):
+        out["settings"] = _paths_in(out["settings"], roots)
+    return out
 
 
 def _log_path() -> Path:
@@ -717,6 +871,7 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
         worker_error = str(exc)
 
     mpl = bootstrap.matplotlib_version(worker_python) if worker_python else None
+    roots = project_roots(project)
     caps = ai_bridge.capabilities()
     lines = _log_tail()
     errors = recent_errors(lines)
@@ -796,10 +951,10 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             "enabled": telemetry.enabled(),
             "hard_disabled": telemetry.hard_disabled(),
         },
-        "project": project or {"open": False},
+        "project": _project_section(project, roots),
         "recent_errors": errors,
     }
-    return _redact_obj(report)
+    return _redact_obj(report, roots)
 
 
 def render_text(report: dict) -> str:
@@ -845,13 +1000,16 @@ def build_bundle(
     老的 GET 端点不带，出的包就是 schema 2 但只有老三件 + manifest。
     """
     report = build_report(project, port)
+    roots = project_roots(project)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("report.json", json.dumps(report, ensure_ascii=False, indent=1))
-        z.writestr("app.log", _redact_text("\n".join(_log_tail())))
+        z.writestr("app.log", _redact_text("\n".join(_log_tail()), roots))
         try:
             cfg = json.loads(config.config_path().read_text(encoding="utf-8"))
-            z.writestr("config.json", json.dumps(_redact_obj(cfg), ensure_ascii=False, indent=1))
+            z.writestr(
+                "config.json", json.dumps(_redact_obj(cfg, roots), ensure_ascii=False, indent=1)
+            )
         except (OSError, ValueError):
             pass
 
@@ -954,6 +1112,7 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- SVG / PDF / PNG 图像内容\n"
         "- API 密钥、令牌\n"
         "- 完整的本地文件路径、用户名、主目录\n"
+        "- 项目名称与项目所在位置（统一换成 <project:哈希>）、邮箱、云盘账号\n"
         "\n"
         "- text drawn inside your figures (titles, axis labels, legends, annotations)\n"
         "- Python source code or scripts\n"
@@ -961,6 +1120,8 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- SVG / PDF / PNG image content\n"
         "- API keys or tokens\n"
         "- full local file paths, usernames, or home directories\n"
+        "- project names and where they live (replaced by <project:hash>), email addresses,\n"
+        "  cloud-storage account names\n"
         "\n"
         "仍会包含 / Still included: 当前打开的项目**文件夹名**（report.json 的\n"
         "project 段，排障需要它判断目录权限与注册表冲突）。其余项目的清单不出门。\n"

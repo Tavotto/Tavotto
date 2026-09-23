@@ -702,3 +702,99 @@ def test_recent_project_inventory_is_reduced_to_a_count(client, tmp_path, monkey
     assert SECRET_TITLE not in raw
     assert "另一个课题" not in raw
     assert "paper-a" not in raw
+
+
+# ---------------------------------------------------------------------------
+# 项目路径（2026-09-23 beta 诊断包实测）：云盘目录名带邮箱、课题目录带人名，
+# 以前只把主目录换成 `~`，其余原样进 report.json / app.log / 复制诊断
+# ---------------------------------------------------------------------------
+
+PERSON = "PRIVATE_PERSON_NAME"
+PAPER = "SECRET_PAPER_DIR"
+EMAIL = "private.person@example.com"
+OTHER_EMAIL = "other.person@example.org"
+OTHER_TITLE = "OTHER_RECENT_TITLE"
+EXPORT_TITLE = "SECRET_EXPORT_TITLE"
+
+
+def test_project_paths_names_and_cloud_accounts_never_leave_the_machine(
+    client, tmp_path, monkeypatch
+):
+    """当前项目在云盘里（目录名带邮箱与人名）、另有一个最近项目、导出目录被改到桌面上的题目目录、
+    日志里提到这些路径——包里**每个文件**与「复制诊断」的文本里一个都不许出现；同时反证包里确实
+    说了「项目在云盘里、路径有非 ASCII」，并且日志与 report 用的是同一个项目记号。"""
+    from tavotto.engine import config as engine_config
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    cloud = home / "Library" / "CloudStorage" / f"坚果云-{EMAIL}"
+    project = cloud / "论文" / PERSON / PAPER
+    project.mkdir(parents=True)
+    other = home / "Library" / "CloudStorage" / f"GoogleDrive-{OTHER_EMAIL}" / OTHER_TITLE
+    export_dir = home / "Desktop" / EXPORT_TITLE
+
+    cfg = tmp_path / "config.json"
+    cfg.write_text(
+        json.dumps(
+            {"recent_projects": [{"path": str(other), "name": OTHER_TITLE, "last_opened": 1}]}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(engine_config, "config_path", lambda: cfg)
+    log = tmp_path / "app.log"
+    log.write_text(
+        f"2026-09-23 INFO tavotto: 项目已打开: {project}（0 个脚本）\n"
+        f"2026-09-23 ERROR tavotto: 打开失败: {other}/fig.py\n"
+        f"2026-09-23 INFO tavotto: 同步账号 {EMAIL}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(engine_diagnostics, "_log_path", lambda: log)
+
+    assert client.post("/api/projects/open", json={"path": str(project)}).status_code == 200
+    engine_config.set_project_settings(str(project), {"export_dir": str(export_dir)})
+
+    res = client.get("/api/diagnostics/bundle")
+    assert res.status_code == 200
+    z = open_bundle(res.data)
+    texts = {n: z.read(n).decode("utf-8", errors="replace") for n in z.namelist()}
+    texts["<复制诊断>"] = client.get("/api/diagnostics/summary").get_data(as_text=True)
+    for name, body in texts.items():
+        for secret in (
+            PERSON,
+            PAPER,
+            EMAIL,
+            OTHER_EMAIL,
+            OTHER_TITLE,
+            EXPORT_TITLE,
+            "坚果云-private",
+        ):
+            assert secret not in body, f"{secret} 出现在 {name} 里"
+
+    # 反证：这次确实打开了项目、确实把有用的事实留下了，不是因为什么都没写才搜不到
+    report = json.loads(texts["report.json"])
+    proj = report["project"]
+    assert proj["open"] is True and "name" not in proj
+    token = proj["figures_dir"]
+    assert re.fullmatch(r"<project:[0-9a-f]{10}>", token), token
+    assert proj["location"] == {"cloud_storage": True, "non_ascii": True, "has_space": False}
+    assert proj["document_dir"] == f"{token}/tavottofile"
+    assert re.fullmatch(r"~/Desktop/seg:[0-9a-f]{10}", proj["export_dir"]), proj["export_dir"]
+    assert token in texts["app.log"], "日志里那一行要与 report 用同一个项目记号"
+    assert "坚果云-acct:" in texts["app.log"] or token in texts["app.log"]
+    assert "<email>" in texts["app.log"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expect"),
+    [
+        (f"/x/Library/CloudStorage/GoogleDrive-{EMAIL}/a.pdf", "CloudStorage/GoogleDrive-acct:"),
+        ("C:\\Users\\x\\CloudStorage\\OneDrive-Contoso Ltd\\a.pdf", "CloudStorage\\OneDrive-acct:"),
+        (f"git config user.email {EMAIL}", "<email>"),
+    ],
+)
+def test_cloud_accounts_and_emails_are_redacted_even_outside_known_projects(raw, expect):
+    """没登记成项目的路径（别的目录、日志里的随口一句）也不许带出云盘账号与邮箱。"""
+    out = engine_diagnostics._redact_text(raw)
+    assert expect in out, out
+    assert EMAIL not in out and "Contoso" not in out
