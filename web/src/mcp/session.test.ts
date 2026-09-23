@@ -321,6 +321,23 @@ describe('unwrap', () => {
     expect(() => unwrap({ structuredContent: { ok: false, error: '炸了' } })).toThrow('炸了')
   })
 
+  it('宿主在 server 之前拦下、回不带 isError 的纯文字（WorkBuddy 5.6.2 出口审查）：算失败，原话照搬', () => {
+    const hostText = 'Sensitive MCP egress review is unavailable.'
+    let caught: unknown
+    try {
+      unwrap({ content: [{ type: 'text', text: hostText }] })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(EngineError)
+    expect((caught as EngineError).message).toBe(hostText)
+    expect((caught as EngineError).code).toBe('host_unstructured_result')
+  })
+
+  it('有结构化内容但没有 ok:true 也不算成功', () => {
+    expect(() => unwrap({ structuredContent: { session_id: 's-1' } })).toThrowError(EngineError)
+  })
+
   it('成功时原样交出结构化负载', () => {
     expect(unwrap({ structuredContent: { ok: true, session_id: 's-1' } })).toEqual({
       ok: true,

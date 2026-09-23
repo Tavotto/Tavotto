@@ -188,11 +188,24 @@ export function sessionIdFor(fileId: string): string | null {
   return sessionOf.get(fileId) ?? null
 }
 
-/** 工具结果 → 结构化负载；`isError` 一律转成带原因的异常，绝不静默当成成功。 */
+/**
+ * 工具结果 → 结构化负载；`isError` 一律转成带原因的异常，绝不静默当成成功。
+ *
+ * 成功的判据是**正面的** `ok === true`（Tavotto 每个工具的成功结果都带它）。宿主可能在
+ * server 之前就把调用拦下、回一段不带 `isError` 的纯文字——WorkBuddy 5.6.2 的出口审查
+ * 就是这样回的（`Sensitive MCP egress review is unavailable.`）。只认 `isError` /
+ * `ok === false` 的话，那段文字会被当成一次成功的 apply，空结果顶掉画布上的图。
+ * 没有结构化内容的失败带 `host_unstructured_result`，宿主原话作为诊断材料原样显示。
+ */
 export function unwrap(res: ToolCallResult): Record<string, unknown> {
   const body = (res.structuredContent ?? {}) as Record<string, unknown>
-  if (res.isError || body.ok === false) {
-    const code = typeof body.code === 'string' ? body.code : ''
+  if (res.isError || body.ok !== true) {
+    const code =
+      typeof body.code === 'string'
+        ? body.code
+        : res.structuredContent == null && !res.isError
+          ? 'host_unstructured_result'
+          : ''
     const message =
       (typeof body.error === 'string' && body.error) ||
       res.content?.map((c) => c.text).join('\n') ||
