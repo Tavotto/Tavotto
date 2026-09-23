@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { perfCount } from '@/perf/core'
 import {
   Copy,
   Eye,
@@ -89,6 +90,7 @@ export function Inspector({
   /** 开合动效由 App 的 usePresence 驱动：收起时先播完退场再卸载 */
   state?: PresenceState
 }) {
+  perfCount('render.Inspector')
   const { t } = useTranslation('inspector')
   const tab = useUiStore((s) => s.rightTab)
   const setTab = useUiStore((s) => s.setRightTab)

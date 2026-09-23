@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { perfCount } from '@/perf/core'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { mmToPx, mmToViewX, mmToViewY, useViewportStore, type ViewTransform } from '@/store/viewportStore'
@@ -150,6 +151,7 @@ function useRuler(axis: 'x' | 'y', lengthPx: number, pageMm: number) {
 
 /** 顶部 + 左侧 mm 刻度；从标尺往画布里拖可拉出参考线 */
 export function Rulers({ viewW, viewH }: { viewW: number; viewH: number }) {
+  perfCount('render.Rulers')
   const page = useDocumentStore((s) => s.doc.page)
   const topRef = useRuler('x', viewW, page.w)
   const leftRef = useRuler('y', viewH, page.h)

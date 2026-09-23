@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
 import * as history from '@/lib/history'
 import { deleteAutosave, fetchAutosave, fetchAutosaveSummary, putAutosave } from '@/lib/api'
@@ -325,9 +326,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // 丢掉一帧拖动画面是无害的；绕过历史改文档是数据损坏。
       return
     }
-    const [next, patches, inverse] = produceWithPatches(state.doc, recipe)
-    if (!patches.length) return
-    set({ doc: next, txn: history.accumulate(state.txn, patches, inverse) })
+    const txn = state.txn
+    // 性能探针（ADR 0075）：拖动中每个 pointermove 一次，是热路径上最可疑的一段
+    perfSpan('doc.txn_update', () => {
+      const [next, patches, inverse] = produceWithPatches(state.doc, recipe)
+      if (!patches.length) return
+      set({ doc: next, txn: history.accumulate(txn, patches, inverse) })
+    })
   },
 
   endTxn: (opts) => {

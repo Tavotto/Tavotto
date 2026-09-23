@@ -14,6 +14,19 @@ release.yml 的「拼 release body」当场红（scripts/check_pending_release_n
 
 ## Added
 
+**Settings → Diagnostics → Performance records where drag stutter comes from.**
+Trigger: dragging figure sub-elements or canvas objects feels choppy on a
+particular Mac. Before: there was no way to show *where* the time went on that
+machine — the developer's Mac could not reproduce it. Now "Start" opens a small
+probe panel on the canvas: drag as usual, optionally run the auto test (two
+synthetic 3-second drags on an object you click, always cancelled, so the
+document and undo history are untouched), then "Finish and save". The report
+is a numbers-only JSON (frame times split into input handling / rendering /
+unattributed, render counts, SVG size, Mac model, power and thermal state — no
+file names, figure text or paths), saved to `perf-reports/` in the Tavotto data
+folder and shown in Finder. Nothing is uploaded. Developers read it with
+`python scripts/perf_report.py report.json --html out.html`. (ADR 0075)
+
 **Export jobs carry a bounded phase trace that names the failing step.**
 Trigger: any export (`POST /api/export`, or `tavotto_export` over MCP)
 whose status you read back. Symptom before: a `partial` or `failed` job

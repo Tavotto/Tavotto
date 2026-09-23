@@ -973,7 +973,10 @@
       "refetch": "重新获取",
       "reportTitle": "诊断报告",
       "summaryFailing": "{{count}} 项异常",
-      "summaryOk": "运行环境检查通过"
+      "summaryOk": "运行环境检查通过",
+      "perfRow": "记录拖动性能",
+      "perfStart": "开始",
+      "perfTitle": "性能分析"
     },
     "export": {
       "defaultFormats": "默认格式",
@@ -1514,5 +1517,23 @@
         }
       }
     }
+  },
+  "perfProbe": {
+    "back": "返回",
+    "close": "关闭",
+    "discard": "放弃",
+    "dragCount": "已记录拖动：{{count}}",
+    "finish": "完成并保存",
+    "noData": "没有记录到拖动，未生成报告。",
+    "notDraggable": "这个位置没有可拖动的对象，换一处再试。",
+    "pickTarget": "点一下要测试的对象。测试期间请不要移动鼠标。",
+    "recording": "正在记录。照常拖动你觉得卡的对象即可。",
+    "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
+    "runTest": "自动测试",
+    "running": "自动测试中（{{pass}}/{{total}}），请不要移动鼠标",
+    "saved": "报告已保存。只含数字，不含文件名、图内文字或路径，可直接发给开发者。",
+    "stop": "停止",
+    "summary": "平均 {{fps}} 帧/秒，{{jank}}% 的帧超时",
+    "title": "性能分析"
   }
 }

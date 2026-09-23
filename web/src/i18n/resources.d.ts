@@ -646,6 +646,24 @@ export default interface Resources {
         "selection": "当前选区"
       }
     },
+    "perfProbe": {
+      "back": "返回",
+      "close": "关闭",
+      "discard": "放弃",
+      "dragCount": "已记录拖动：{{count}}",
+      "finish": "完成并保存",
+      "noData": "没有记录到拖动，未生成报告。",
+      "notDraggable": "这个位置没有可拖动的对象，换一处再试。",
+      "pickTarget": "点一下要测试的对象。测试期间请不要移动鼠标。",
+      "recording": "正在记录。照常拖动你觉得卡的对象即可。",
+      "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
+      "runTest": "自动测试",
+      "running": "自动测试中（{{pass}}/{{total}}），请不要移动鼠标",
+      "saved": "报告已保存。只含数字，不含文件名、图内文字或路径，可直接发给开发者。",
+      "stop": "停止",
+      "summary": "平均 {{fps}} 帧/秒，{{jank}}% 的帧超时",
+      "title": "性能分析"
+    },
     "playground": {
       "backHome": "Tavotto 官网",
       "bootDownloadDesktop": "下载桌面版 {{product}}",
@@ -1268,6 +1286,9 @@ export default interface Resources {
           "project_writable": "「写回原始文件」需要这个目录可写。调整权限后，回来点「重新获取」。"
         },
         "okDetails": "各项检查结果",
+        "perfRow": "记录拖动性能",
+        "perfStart": "开始",
+        "perfTitle": "性能分析",
         "prepareFailed": "无法生成诊断报告。请重试。",
         "preparing": "正在生成…",
         "previewNote": "以下是将要复制的内容，密钥与个人路径已脱敏。确认后再复制。",

@@ -79,6 +79,7 @@ from .engine import (
     nativesession as engine_nativesession,
     originalspec as engine_originalspec,
     patchspec as engine_patchspec,
+    perfprobe as engine_perfprobe,
     pool as engine_pool,
     preparation as engine_preparation,
     probe as engine_probe,
@@ -2348,6 +2349,39 @@ def _read_frontend_payload() -> tuple[dict | None, bool]:
     if not isinstance(body, dict):
         return None, True
     return body, False
+
+
+@app.get("/api/perf/system")
+def api_perf_system():
+    """性能探针的机器事实（ADR 0075）：机型 / CPU / 内存 / 电源 / 降频 / Rosetta。
+
+    只回硬件与电源状态，不回主机名、用户名、路径。报告由前端组装、用户自己
+    保存；这个端点本身不写盘、不上传。
+    """
+    resp = jsonify(engine_perfprobe.system_facts())
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/perf/report")
+def api_perf_report():
+    """保存一份性能探针报告（ADR 0075），回 ``{dir, name}`` 供桌面壳在访达里显示。
+
+    桌面壳的 WKWebView 会取消 ``<a download>``，所以报告不能走浏览器下载。
+    文件名由后端生成；请求体只校验形状（schema 字面量 + 片段列表 + 大小上限），
+    不参与拼路径。不上传、不进遥测。
+    """
+    # 上限卡在读取本身（chunked 请求没有 Content-Length，理由同诊断包的
+    # `_read_frontend_payload`）：多读一个字节就是「超了」的判据
+    raw = request.stream.read(engine_perfprobe.MAX_REPORT_BYTES + 1)
+    try:
+        dest = engine_perfprobe.save_report(raw)
+    except engine_perfprobe.ReportRejected as exc:
+        return jsonify({"error": "perf_report_rejected", "reason": str(exc)}), 400
+    except OSError:
+        app.logger.exception("性能报告写入失败")
+        return jsonify({"error": "perf_report_write_failed"}), 500
+    return jsonify({"dir": str(dest.parent), "name": dest.name})
 
 
 @app.get("/api/diagnostics/summary")

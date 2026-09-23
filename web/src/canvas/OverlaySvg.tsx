@@ -1,4 +1,5 @@
 import { Fragment } from 'react'
+import { perfCount } from '@/perf/core'
 import type { ElementGeometry, ManifestElement } from '@/lib/api'
 import type { Rect4 } from '@/lib/axesLayout'
 import { geomPathD, translateGeom } from '@/lib/pathGeom'
@@ -92,6 +93,7 @@ function cursorFor(dir: ResizeDir, deg: number): string {
  * 与世界层分离，保证任何缩放下线宽恒为 1px。
  */
 export function OverlaySvg() {
+  perfCount('render.OverlaySvg')
   const zoom = useViewportStore((s) => s.zoom)
   const panX = useViewportStore((s) => s.panX)
   const panY = useViewportStore((s) => s.panY)

@@ -24,6 +24,7 @@
  *    连着拖两个元素时，第二次 begin 不能把第一次的预览位移当成 base
  *    （那会双倍位移，而且第一个元素的预览会在权威渲染回来之前弹回去）。
  */
+import { perfSpan } from '@/perf/core'
 import {
   adapterFor,
   applyStyleEdit,
@@ -335,10 +336,12 @@ export function flushPreviewFrame(): void {
   if (!pending.size) return
   const ops = [...pending.values()]
   pending.clear()
-  for (const op of ops) {
-    if (op.kind === 'transform') writeTransform(op)
-    else writeStyle(op)
-  }
+  perfSpan('raf.preview_write', () => {
+    for (const op of ops) {
+      if (op.kind === 'transform') writeTransform(op)
+      else writeStyle(op)
+    }
+  })
   if (session) traceFrame(session.timing)
 }
 

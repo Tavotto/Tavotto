@@ -23,6 +23,7 @@ import { VersionDrawer } from '@/components/VersionDialog'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
 import { CanvasHud, NotificationRail } from '@/components/StatusBar'
+import { PerfProbeHud } from '@/components/PerfProbeHud'
 import { TopBar } from '@/components/TopBar'
 import { UpdateBanner } from '@/components/UpdateBanner'
 import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
@@ -226,6 +227,7 @@ function Workspace() {
             <CanvasHud />
             <NativeSessionCards />
             <NotificationRail />
+            <PerfProbeHud />
           </div>
           {right.mounted && <Inspector overlay={overlay} state={right.state} />}
           {scrim.mounted && (
