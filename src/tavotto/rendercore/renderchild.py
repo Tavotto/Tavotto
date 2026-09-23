@@ -204,22 +204,25 @@ def _render(pdfium, req: dict, default_max_pixels: int) -> dict:
                     bitmap, page, 0, 0, width_px, height_px, 0, raw.FPDF_REVERSE_BYTE_ORDER
                 )
                 stride = bitmap.stride
-                samples = bytes(bitmap.buffer)  # 复制：native 位图关掉之后这份仍然有效
+                # 像素在关位图**之前**直接从 native 缓冲写进文件，不再先复制成一份 bytes——600 ppi A4 的 RGB 就是
+                # 104 MB，child 峰值因此少一整份（ADR 0077 P1）。父进程读回的是文件里它自己的字节：RasterBuffer 仍
+                # 不共享 native 句柄（RC-050）
+                tmp = out_path.with_name(out_path.name + ".part")
+                with open(tmp, "wb") as fh:
+                    nbytes = fh.write(memoryview(bitmap.buffer).cast("B"))
             finally:
                 bitmap.close()
         finally:
             page.close()
     finally:
         doc.close()
-    tmp = out_path.with_name(out_path.name + ".part")
-    tmp.write_bytes(samples)
     os.replace(tmp, out_path)
     return {
         "width": width_px,
         "height": height_px,
         "stride": stride,
         "channels": channels,
-        "bytes": len(samples),
+        "bytes": nbytes,
         "ms": round((time.perf_counter() - t0) * 1000, 1),
     }
 
