@@ -85,6 +85,16 @@ def test_same_name_packages_still_need_explicit_registration(tmp_path):
     assert depresolve.resolve(tmp_path, "astropy").distribution == "astropy"
 
 
+@pytest.mark.parametrize("import_name", ["pypdf", "PyPDF2"])
+def test_pdf_stitching_imports_resolve_as_installable(tmp_path, import_name):
+    """拼图脚本 `import pypdf` / `import PyPDF2`：登记前落在「未知」，只能报缺包、没有一键装。"""
+    req = depresolve.resolve(tmp_path, import_name)
+    assert req is not None, f"{import_name} 应该解析得出来"
+    assert req.distribution == import_name
+    assert req.resolution_source == depresolve.SOURCE_CURATED
+    assert req.installable
+
+
 def test_an_unknown_import_is_never_installable(tmp_path):
     """**负向反证 #3**：未知 import 不许按同名装。
 
