@@ -35,9 +35,7 @@ LAUNCHER = HERE.parents[1] / "codex-plugin" / "mcp" / "server.py"
 SECRET_MARKERS = ("TOKEN", "KEY", "SECRET", "PASS", "AUTH", "COOKIE", "SESSION", "CREDENTIAL")
 FULL_METHODS = {"initialize", "roots/list", "elicitation/create", "resources/read"}
 
-out_dir = Path(os.environ.get("WB_RECORD_DIR") or Path.home() / "tavotto-workbuddy-record")
-out_dir.mkdir(parents=True, exist_ok=True)
-log_path = out_dir / f"record-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.jsonl"
+log_path: Path | None = None  # main() 里才定：被 import 时不往任何地方写
 _lock = threading.Lock()
 _t0 = time.monotonic()
 _pending: dict[tuple[str, object], str] = {}  # (方向, id) → method：用来认出响应属于哪个请求
@@ -45,6 +43,7 @@ _pending: dict[tuple[str, object], str] = {}  # (方向, id) → method：用来
 
 def log(entry: dict) -> None:
     entry["t"] = round(time.monotonic() - _t0, 3)
+    assert log_path is not None
     with _lock, log_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
@@ -125,6 +124,10 @@ def pump(src, dst, direction: str) -> None:
 
 
 def main() -> int:
+    global log_path
+    out_dir = Path(os.environ.get("WB_RECORD_DIR") or Path.home() / "tavotto-workbuddy-record")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = out_dir / f"record-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.jsonl"
     log(
         {
             "start": True,
