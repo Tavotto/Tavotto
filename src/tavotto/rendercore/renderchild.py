@@ -17,7 +17,8 @@ stdin / stdout 上的**行分隔 JSON**（一行一条）。请求 `{"id", "op",
 ## 四条纪律（RC-050）
 
 * **native 对象显式释放**：每个请求 `doc` / `page` / `bitmap` 在 `finally` 里 `close()`，像素在关之前
-  **复制**成 `bytes`——`RasterBuffer` 拿到的是自己的字节，不共享已关闭的 handle。
+  **直接从 native 缓冲写进文件**（ADR 0077 P1，不再先复制成一份 `bytes`）——父进程读回的是它自己的字节，
+  `RasterBuffer` 不共享已关闭的 handle。
 * **像素预算两侧都判**：父进程按 probe 的尺寸先拒；child 打开页面后按真实尺寸再判一次（父侧被绕过时仍挡）。
 * **内存上限**：POSIX 上 `RLIMIT_AS`（Linux 生效；macOS 内核不强制、Windows 没有 resource 模块——
   ADR 0055 §2.3 实测，像素预算是那两处唯一有效的护栏）。
