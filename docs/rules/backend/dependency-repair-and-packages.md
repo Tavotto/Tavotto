@@ -24,6 +24,19 @@
   不合格的（包有、Python 版本不支持 / 没 matplotlib / 起不来）单列
   `system_rejected`，界面要说出原因。offer 在渲染失败的响应路径上**不起任何
   解释器**——结论只读接手那一步的体检表。
+- **跑前的门先找用户自己的环境（ADR 0079）**：联合计划 `ready` 时，`deprepair.user_environment_offer()`
+  拿 `engine/userenvs.discover()`（项目线索 / 登录 shell / Conda 全部环境 / pyenv 全部版本，只读磁盘记录）
+  + 老链条系统解释器，逐个 `probe_environment(python, modules=缺的 import)`——**装齐按 import 判**，
+  「环境健康」与「装没装齐」分开报；正缺包的解释器不体检。装齐的里按 `userenvs.rank()` 挑最好的
+  （来源档位 → verified → Python 新），**此刻的解释器是机器替用户挑的**就 `remember(automatic=True,
+  trigger=user_environment)` 并放行、发 SSE `engine.environment_adopted`；显式全局选择 / 为本项目挑过的 /
+  明确选回默认 / 项目 venv / 干净机器一个都不碰（判据唯一出处 `deprepair._auto_adopt_allowed`）。
+  公开载荷与 SSE **不带路径**（ADR 0053 §二），只带 `userenvs.env_id()`；采用走 `PATCH
+  /api/engine/environment {scope: project, user_environment: id, script}`，后端用自己的发现结果换回路径，
+  找不到报 `user_environment_gone`。发现 / 体检缓存挂在 `projectenv.RESET_HOOKS` 上随 `reset_cache()` 一起清
+  （`projectenv` 不 import `userenvs`：它要 import 本模块的体检）。`TAVOTTO_USER_ENV_DISCOVERY=0` 整个关掉，
+  **测试进程默认关**（`tests/conftest.py`，否则用例结果随 CI 机器上碰巧装了什么而变）；`script` 可来自请求体，
+  `discover()` 先过 `projectenv.contained_path()`，下游只用净化器回的值（CodeQL `py/path-injection`）。
 - **体检的启动条件与 worker 对齐**：`probe_environment` 不带 `-I`、env 原样继承
   （`execspec.worker_argv` 起用户解释器就是这样），cwd 换成空临时目录挡住
   父进程 cwd 进 `sys.path[0]`。以前的 `-I` 关掉了用户 site 与 `PYTHONPATH`，

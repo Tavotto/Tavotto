@@ -17,6 +17,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   cancelJointDependencies: vi.fn(),
   skipDependencyPreparation: vi.fn(),
   fetchEngineEnvironment: vi.fn(),
+  setProjectUserEnvironment: vi.fn(),
 }))
 
 import {
@@ -24,8 +25,10 @@ import {
   DEPENDENCY_PREPARATION_CODE,
   prepareJointDependencies,
   fetchEngineEnvironment,
+  setProjectUserEnvironment,
   skipDependencyPreparation,
   type DependencyPreparationOffer,
+  type UserEnvironment,
   type JointDependencyPlan,
 } from '@/lib/api'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
@@ -46,6 +49,7 @@ const planMock = vi.mocked(createJointDependencyPlan)
 const prepareMock = vi.mocked(prepareJointDependencies)
 const envMock = vi.mocked(fetchEngineEnvironment)
 const skipMock = vi.mocked(skipDependencyPreparation)
+const adoptMock = vi.mocked(setProjectUserEnvironment)
 const en = (key: string, values?: Record<string, unknown>) => t(`engine.${key}`, { ns: 'errors', ...values })
 
 const joint = (over: Partial<JointDependencyPlan> = {}): JointDependencyPlan => ({
@@ -118,6 +122,7 @@ beforeEach(() => {
   prepareMock.mockReset()
   envMock.mockReset()
   skipMock.mockReset()
+  adoptMock.mockReset()
   useEnvStore.setState({ dependencyPreparation: null })
   envMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
   setCurrentProjectId('p1')
@@ -373,5 +378,108 @@ describe('DependencyPrepareDialog', () => {
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer(), 'p1'))
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer({ script: 'other.py' }), 'p1'))
     expect(useEnvStore.getState().dependencyPreparation?.script).toBe('figure.py')
+  })
+})
+
+// ------------------------------------------------------------------ 用户自己的环境（ADR 0079）
+
+const userEnv = (over: Partial<UserEnvironment> = {}): UserEnvironment => ({
+  id: 'e1',
+  source: 'conda',
+  label: 'lab',
+  ok: true,
+  code: '',
+  support: 'verified',
+  python_version: '3.12.4',
+  matplotlib_version: '3.10.0',
+  missing: [],
+  satisfies: true,
+  ...over,
+})
+const envRadio = (source: string) =>
+  document.querySelector(`[data-user-env="${source}"] input[type="radio"]`) as HTMLInputElement | null
+
+describe('DependencyPrepareDialog：用户自己的环境', () => {
+  it('装齐的环境排在安装目标前面并预选；「改用这个环境」只交 id 与脚本，成功后关框、重排「先准备」的面板', async () => {
+    adoptMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
+    useRenderStore.setState({
+      byKey: {
+        k: {
+          ...(useRenderStore.getState().byKey.k ?? ({} as never)),
+          fileId: 'figure.pdf', status: 'error', code: DEPENDENCY_PREPARATION_CODE,
+          lastPatches: '[]', wantPatches: '[]', stale: false,
+        } as never,
+      },
+      tracked: {},
+    })
+    await render(<DependencyPrepareDialog />)
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        offer({
+          user_environments: [
+            userEnv({ id: 'best', source: 'login_shell', label: '' }),
+            userEnv({ id: 'second', source: 'conda', label: 'lab' }),
+            userEnv({ id: 'part', source: 'pyenv', label: '3.11.9', missing: ['six'], satisfies: false }),
+          ],
+        }),
+      ),
+    )
+    expect(envRadio('login_shell')!.checked, '后端排第一的预选').toBe(true)
+    expect(text(), '说明换成「这台电脑上已有装好的环境」').toContain(en('userEnvBody', { script: 'figure.py' }))
+    expect(text()).not.toContain(en('dependencyPrepareBody', { script: 'figure.py' }))
+    expect(envRadio('conda')!.checked).toBe(false)
+    expect(radio('tavotto_managed')!.checked).toBe(false)
+    expect(text()).toContain(en('userEnvSource_login_shell'))
+    expect(text()).toContain(en('userEnvSource_conda', { label: 'lab' }))
+    expect(text()).toContain(en('userEnvMissing', { packages: 'six' }))
+    // 选了用户环境：主按钮是「改用这个环境」，联网那句不说（不装东西）
+    expect(button(en('dependencyPrepareRun'))).toBeUndefined()
+    expect(text()).not.toContain(en('dependencyPrepareNetwork'))
+    await act(async () => envRadio('conda')!.click())
+    await act(async () => button(en('userEnvUse'))!.click())
+    await act(async () => {})
+    expect(adoptMock).toHaveBeenCalledWith('second', 'figure.py')
+    expect(planMock).not.toHaveBeenCalled()
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
+    expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true)
+  })
+
+  it('一个都没装齐：说出口、安装目标预选；没装齐的收在折叠里只说还缺什么（不可选）', async () => {
+    await render(<DependencyPrepareDialog />)
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        offer({ user_environments: [userEnv({ missing: ['tabulate', 'six'], satisfies: false })] }),
+      ),
+    )
+    expect(text()).toContain(en('userEnvNone'))
+    expect(text()).toContain(en('dependencyPrepareBody', { script: 'figure.py' }))
+    expect(radio('tavotto_managed')!.checked).toBe(true)
+    expect(envRadio('conda')).toBeNull()
+    const partial = document.querySelector('[data-user-env-partial]')!
+    expect(partial.textContent).toContain(en('userEnvMissing', { packages: 'tabulate, six' }))
+    expect(button(en('dependencyPrepareRun'))).toBeDefined()
+  })
+
+  it('老后端（载荷里没有 user_environments）：不多说一句「没找到」', async () => {
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    expect(document.querySelector('[data-user-env-none]')).toBeNull()
+    expect(document.querySelector('[data-user-env]')).toBeNull()
+  })
+
+  it('采用失败：框不关，后端原文留在框里', async () => {
+    adoptMock.mockRejectedValue(
+      Object.assign(new Error('这个 Python 环境已经找不到了，请重新检查'), {
+        body: { code: 'user_environment_gone', error: '这个 Python 环境已经找不到了，请重新检查' },
+      }),
+    )
+    await render(<DependencyPrepareDialog />)
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(offer({ user_environments: [userEnv()] })),
+    )
+    await act(async () => button(en('userEnvUse'))!.click())
+    await act(async () => {})
+    expect(useEnvStore.getState().dependencyPreparation).not.toBeNull()
+    expect(text()).toContain('这个 Python 环境已经找不到了')
   })
 })

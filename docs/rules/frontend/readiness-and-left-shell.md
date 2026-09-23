@@ -67,9 +67,17 @@
   `DependencyPrepareButton` 能再打开；同一时刻只开一份；换了项目的旧载荷不弹。**目标与状态的文案键写成
   字面量**（`TARGET_LABEL` / `STATE_TEXT` / `BLOCKED_TEXT` 表）。MCP 那一面是同一份决定：
   `tavotto_open_figure(prepare_dependencies=…)`。
+  **用户自己的环境（ADR 0079）**：载荷的 `user_environments` 里装齐的排在安装目标前面、同一组单选，
+  后端排第一的预选；「改用这个环境」= `depRepairStore.adoptUserEnvironment(id, script)`（只交 id，不认路径），
+  成功关框 + `retryEnvironmentFailures`；没装齐的收在 `ui/Details` 里只说还缺什么（不可选）；一个都没装齐
+  才说「没有装齐的环境」（老后端没有这个字段时不说）。环境名只有一份实现 `lib/userEnvironmentText.ts`
+  （来源 → 文案键的字面量表）。后端在门里**已经自动改用**时不弹框，SSE `engine.environment_adopted`
+  进 `envStore.adoptedEnvironment`，通知轨（与「刚为编辑加入本文档」同一档）说一句并给「改回」=
+  `revertAdoptedEnvironment()`（`setProjectPython(null)` → 后端 `remember_default`，所有在用的面板
+  `markStale`，不只是失败的）。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
-  `components/DependencyPrepareDialog.test.tsx`、
+  `components/DependencyPrepareDialog.test.tsx`、`components/notificationRail.test.tsx`（「已改用你的环境」）、
   `components/ProjectReadinessBanner.test.tsx`、
   `components/left/AssetBrowser.readiness.test.tsx`、
   `canvas/panelReadinessEntry.test.tsx`、`components/inspector/panelCapabilityNote.test.tsx`、

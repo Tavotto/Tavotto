@@ -4,8 +4,10 @@ import { cn } from '@/lib/utils'
 import { isRepairRunning, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { Button } from './ui/Button'
+import { Details, Summary } from './ui/Details'
 import { Dialog } from './ui/Dialog'
 import { Radio } from './ui/Radio'
+import { userEnvironmentName } from '@/lib/userEnvironmentText'
 
 /**
  * 跑前的那一次授权（U04，ADR 0061 §六）：后端起第一个 worker 之前看一眼脚本开跑要的第三方包
@@ -18,8 +20,15 @@ import { Radio } from './ui/Radio'
  * 作废旧会话、前端重排失败的渲染；「稍后」只关框（这道门一直问到有答案，错误块里还能再开）；
  * 「不准备，直接运行」是明确的 skip（`POST /api/engine/dependencies/skip`）——之后缺包会以
  * `missing_dependency` 回来，走运行后那条修复路。
+ *
+ * **用户自己的环境**（ADR 0079）排在安装目标前面、同一组单选里：后端在这台电脑上找到的 Python
+ * 里，装齐了的列出来（按后端的挑选顺序，第一个预选），点「改用这个环境」只交 id；没装齐的收在
+ * 折叠里只说还缺什么。装齐的只有在后端**没有**自动改用时才会出现在这里（用户改回过 / 显式选过
+ * 别的环境）——自动改用的那条走通知轨，不弹框。
  */
 type Target = 'project_venv' | 'tavotto_managed'
+/** 单选的值：安装目标，或 `env:<id>`（用户环境） */
+type Choice = Target | `env:${string}`
 
 //: 文案键写成字面量：i18n 的死键门禁按「源码里出现过这个串」判活
 const TARGET_LABEL: Record<Target, string> = {
@@ -56,12 +65,18 @@ export function DependencyPrepareDialog() {
   const prepare = useDepRepairStore((s) => s.prepare)
   const cancel = useDepRepairStore((s) => s.cancelPreparation)
   const skip = useDepRepairStore((s) => s.skipPreparation)
-  const [target, setTarget] = useState<Target>('tavotto_managed')
+  const adoptEnv = useDepRepairStore((s) => s.adoptUserEnvironment)
+  const [choice, setChoice] = useState<Choice>('tavotto_managed')
   useEffect(() => {
-    // 每一份新载荷从后端算出来的目标起步（项目 venv 是此刻选中的解释器时就是它）
-    setTarget(offer?.target_kind ?? 'tavotto_managed')
+    // 每一份新载荷：有装齐的用户环境就预选后端排在第一的那个，否则从后端算出来的安装目标起步
+    const first = offer?.user_environments?.find((e) => e.satisfies)
+    setChoice(first ? `env:${first.id}` : (offer?.target_kind ?? 'tavotto_managed'))
   }, [offer])
   if (!offer) return null
+  const complete = (offer.user_environments ?? []).filter((e) => e.satisfies)
+  const partial = (offer.user_environments ?? []).filter((e) => e.ok && !e.satisfies)
+  const envChosen = choice.startsWith('env:') ? choice.slice(4) : null
+  const target = (envChosen ? offer.target_kind : choice) as Target
   const en = (key: string, values?: Record<string, unknown>) => t(key, values)
   const plan = offer.plan
   const running = isRepairRunning(progress) && progress?.flow === 'joint'
@@ -80,7 +95,11 @@ export function DependencyPrepareDialog() {
         if (!v && !busy && !running) dismiss()
       }}
       title={en('engine.dependencyPrepareTitle', { count: plan.requirements.length })}
-      description={en('engine.dependencyPrepareBody', { script: offer.script })}
+      description={
+        complete.length
+          ? en('engine.userEnvBody', { script: offer.script })
+          : en('engine.dependencyPrepareBody', { script: offer.script })
+      }
       size="sm"
       busy={busy || running}
       anchor="dependency-prepare"
@@ -99,14 +118,25 @@ export function DependencyPrepareDialog() {
             <Button variant="secondary" size="md" disabled={busy} onClick={() => void skip()}>
               {en('engine.dependencyPrepareSkip')}
             </Button>
-            <Button
-              variant="primary"
-              size="md"
-              disabled={busy || !chosen || chosen.available === false}
-              onClick={() => void prepare(target)}
-            >
-              {failed || code ? en('engine.dependencyPrepareRetry') : en('engine.dependencyPrepareRun')}
-            </Button>
+            {envChosen ? (
+              <Button
+                variant="primary"
+                size="md"
+                disabled={busy}
+                onClick={() => void adoptEnv(envChosen, offer.script)}
+              >
+                {en('engine.userEnvUse')}
+              </Button>
+            ) : (
+              <Button
+                variant="primary"
+                size="md"
+                disabled={busy || !chosen || chosen.available === false}
+                onClick={() => void prepare(target)}
+              >
+                {failed || code ? en('engine.dependencyPrepareRetry') : en('engine.dependencyPrepareRun')}
+              </Button>
+            )}
           </>
         )
       }
@@ -127,11 +157,49 @@ export function DependencyPrepareDialog() {
           {en('engine.dependencyPrepareUnknown', { modules: plan.unknown.join(', ') })}
         </p>
       )}
+      {offer.user_environments && complete.length === 0 && (
+        <p className="mt-2 text-xs leading-relaxed text-ink-3" data-user-env-none>
+          {en('engine.userEnvNone')}
+        </p>
+      )}
       <fieldset className="mt-2 flex flex-col gap-1" data-dependency-target>
-        <legend className="sr-only">{en('engine.dependencyPrepareTargetLegend')}</legend>
+        <legend className="sr-only">
+          {en(complete.length ? 'engine.userEnvLegend' : 'engine.dependencyPrepareTargetLegend')}
+        </legend>
+        {complete.map((env) => {
+          const value: Choice = `env:${env.id}`
+          const selected = choice === value
+          return (
+            <label
+              key={env.id}
+              className={cn(
+                'flex cursor-pointer items-start gap-2 rounded-sm px-2 py-1.5',
+                selected ? 'bg-selected' : 'hover:bg-surface-hover',
+              )}
+              data-user-env={env.source}
+            >
+              <Radio
+                name="dependency-target"
+                className="mt-0.5"
+                checked={selected}
+                disabled={busy || running}
+                onChange={() => setChoice(value)}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm text-ink first-letter:uppercase">
+                  {userEnvironmentName(env)}
+                </span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-ink-3">
+                  {en('engine.userEnvVersion', { version: env.python_version })} ·{' '}
+                  {en('engine.userEnvComplete')}
+                </span>
+              </span>
+            </label>
+          )
+        })}
         {targets.map((opt) => {
           const kind = opt.kind as Target
-          const selected = target === kind
+          const selected = choice === kind
           return (
             <label
               key={kind}
@@ -147,7 +215,7 @@ export function DependencyPrepareDialog() {
                 className="mt-0.5"
                 checked={selected}
                 disabled={busy || running || opt.available === false}
-                onChange={() => setTarget(kind)}
+                onChange={() => setChoice(kind)}
               />
               <span className="min-w-0 flex-1">
                 <span className="block text-sm text-ink">{en(TARGET_LABEL[kind])}</span>
@@ -180,7 +248,23 @@ export function DependencyPrepareDialog() {
           )
         })}
       </fieldset>
-      <p className="mt-2 text-xs leading-relaxed text-ink-3">{en('engine.dependencyPrepareNetwork')}</p>
+      {partial.length > 0 && (
+        <Details className="mt-2 text-xs text-ink-3" data-user-env-partial>
+          <Summary className="cursor-pointer">{en('engine.userEnvPartial')}</Summary>
+          <ul className="mt-1 flex flex-col gap-0.5 pl-3">
+            {partial.map((env) => (
+              <li key={env.id}>
+                <span className="text-ink-2 first-letter:uppercase">{userEnvironmentName(env)}</span>
+                {' · '}
+                {en('engine.userEnvMissing', { packages: env.missing.join(', ') })}
+              </li>
+            ))}
+          </ul>
+        </Details>
+      )}
+      {!envChosen && (
+        <p className="mt-2 text-xs leading-relaxed text-ink-3">{en('engine.dependencyPrepareNetwork')}</p>
+      )}
       {running && progress && (
         <p className="mt-2 text-xs text-ink-2" data-dependency-state={progress.state}>
           {en(STATE_TEXT[progress.state] ?? 'engine.dependencyPrepareState_preparing')}

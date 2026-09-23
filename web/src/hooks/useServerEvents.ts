@@ -65,6 +65,16 @@ export function handleServerEvent(ev: ServerEvent) {
       useDepRepairStore.getState().onProgress(ev)
       break
 
+    case 'engine.environment_adopted':
+      // 跑前的门自动改用了用户自己的环境（ADR 0079）：通知轨上说一句并给「改回」。带 pj，
+      // 上面那道判别已经挡掉别的项目的
+      useEnvStore.getState().noteEnvironmentAdopted({
+        source: ev.source,
+        label: ev.label,
+        python_version: ev.python_version,
+      })
+      break
+
     case 'engine.package':
       // 包管理作业的进度（ADR 0038）。同样按 job_id 走，作业绑定项目。
       usePackageStore.getState().onProgress(ev)

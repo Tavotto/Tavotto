@@ -2265,6 +2265,14 @@ export type ServerEvent =
     } & ProjectScoped)
   | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
   | ({ kind: 'engine.dependency' } & DependencyProgress)
+  /** 跑前的门自动改用了用户自己的环境（ADR 0079）；不带路径 */
+  | ({
+      kind: 'engine.environment_adopted'
+      id: string
+      source: UserEnvironmentSource
+      label: string
+      python_version: string
+    } & ProjectScoped)
   | ({ kind: 'engine.package' } & PackageProgress)
   /** 导出作业的进度与终局。载荷 = `ExportJob` 的全部字段（不是增量，是快照） */
   | ({ kind: 'export.progress' } & ExportJob)
@@ -2308,6 +2316,7 @@ const EVENT_KINDS = [
   'native.session',
   'engine.bootstrap',
   'engine.dependency',
+  'engine.environment_adopted',
   'engine.package',
   'export.progress',
   'ai.delta',
@@ -2801,6 +2810,17 @@ export const setProjectEnvironment = (python: string | null, module?: string) =>
     body: JSON.stringify(module ? { scope: 'project', python, module } : { scope: 'project', python }),
   })
 
+/**
+ * 为当前项目改用依赖弹窗里列出的用户环境（ADR 0079）：只交 id，路径由后端自己的发现结果换回，
+ * 之后与手填路径走同一次体检。`script` 让后端按同一份发现（含项目线索）找这个 id。
+ */
+export const setProjectUserEnvironment = (id: string, script: string) =>
+  jsonFetch<{ ok: boolean; project: ProjectEnvironment }>('/api/engine/environment', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope: 'project', user_environment: id, script }),
+  })
+
 /** 只为**当前项目**切 safe worker 的工作目录模式（ADR 0047）。改了后端会关掉该项目的会话。 */
 export const setProjectWorkdir = (mode: WorkdirMode) =>
   jsonFetch<{ ok: boolean; workdir: WorkdirState; project: ProjectEnvironment }>(
@@ -3037,6 +3057,40 @@ export interface DependencyPreparationOffer {
   clean_machine?: boolean
   /** 干净机器上私有 Python 的来源：要先下载（required=true、字节数）或已就位（required=false、不联网）（U05） */
   private_python?: PrivatePythonOffer | null
+  /**
+   * 这台电脑上用户自己的 Python 环境（ADR 0079）：装齐的排前面、按后端的挑选顺序。**不带路径**
+   * （ADR 0053 §二），采用时把 `id` 交回 `setProjectUserEnvironment`。老后端没有这个字段
+   */
+  user_environments?: UserEnvironment[]
+}
+
+/** 用户环境从哪发现的（`engine/userenvs.py` 的来源闭集） */
+export type UserEnvironmentSource =
+  | 'vscode'
+  | 'python_version_file'
+  | 'environment_yml'
+  | 'shebang'
+  | 'login_shell'
+  | 'conda'
+  | 'pyenv'
+  | 'system'
+
+export interface UserEnvironment {
+  /** 不透明身份；后端用自己的发现结果换回路径 */
+  id: string
+  source: UserEnvironmentSource
+  /** Conda 环境名 / pyenv 版本名；其余来源为空 */
+  label: string
+  /** 环境本身健康（Python 版本受支持、matplotlib 与 worker 起得来） */
+  ok: boolean
+  code: string
+  support: string
+  python_version: string
+  matplotlib_version: string
+  /** 还缺的包（distribution 名；映射不到的按 import 名） */
+  missing: string[]
+  /** 健康且什么都不缺 */
+  satisfies: boolean
 }
 
 /** 绑定好的联合计划（`plan_id` 是这次授权的凭据，一次性、有有效期） */

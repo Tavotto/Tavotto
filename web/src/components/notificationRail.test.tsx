@@ -9,8 +9,16 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  setProjectEnvironment: vi.fn(),
+}))
+
 import { NotificationRail } from '@/components/StatusBar'
-import { literal } from '@/i18n'
+import { literal, t } from '@/i18n'
+import { setProjectEnvironment } from '@/lib/api'
+import { ADOPTED_NOTICE_MS, useEnvStore } from '@/store/envStore'
+import { useRenderStore } from '@/store/renderStore'
 import { HINT_AUTO_DISMISS_MS, showHint, useHintStore } from '@/lib/onboarding/hints'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { STATUS_AUTO_DISMISS_MS, useUiStore } from '@/store/uiStore'
@@ -41,6 +49,7 @@ beforeEach(() => {
   useOnboardingStore.getState().resetHints()
   useHintStore.setState({ current: null, token: 0 })
   useUiStore.setState({ status: null, statusTone: 'info' })
+  useEnvStore.getState().dismissAdoptedEnvironment()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -135,5 +144,52 @@ describe('操作提示的自动收起', () => {
     pointer(hintToast()!, 'pointerout')
     tick(HINT_AUTO_DISMISS_MS)
     expect(useHintStore.getState().current).toBeNull()
+  })
+})
+
+// ------------------------------------------------------------------ 已改用你的环境（ADR 0079）
+
+const adoptedToast = () => container.querySelector<HTMLElement>('[data-environment-adopted]')
+const adopt = () =>
+  act(() =>
+    useEnvStore.getState().noteEnvironmentAdopted({ source: 'conda', label: 'lab', python_version: '3.12.4' }),
+  )
+
+describe('「已改用你的环境」', () => {
+  it('说出改用了哪个；到时自己走，指针停在上面不走表', () => {
+    adopt()
+    const name = t('engine.userEnvSource_conda', { ns: 'errors', label: 'lab' })
+    expect(adoptedToast()!.textContent).toContain(
+      t('engine.userEnvAdopted', { ns: 'errors', name, version: '3.12.4' }),
+    )
+    pointer(adoptedToast()!, 'pointerover')
+    tick(ADOPTED_NOTICE_MS * 3)
+    expect(useEnvStore.getState().adoptedEnvironment).not.toBeNull()
+    pointer(adoptedToast()!, 'pointerout')
+    tick(ADOPTED_NOTICE_MS)
+    expect(useEnvStore.getState().adoptedEnvironment).toBeNull()
+  })
+
+  it('「改回」= 本项目明确选回默认（PATCH python=null），每个在用的面板按原来的环境重建', async () => {
+    vi.mocked(setProjectEnvironment).mockResolvedValue({ ok: true, project: { open: true } } as never)
+    useEnvStore.setState({ env: { ok: true, project: { open: true } } as never })
+    useRenderStore.setState({
+      byKey: {
+        a: { fileId: 'a.pdf', status: 'ready', stale: false, lastPatches: '[]', wantPatches: '[]' } as never,
+        b: { fileId: 'b.pdf', status: 'ready', stale: false, lastPatches: '[]', wantPatches: '[]' } as never,
+      },
+      tracked: {},
+    })
+    adopt()
+    const revert = [...adoptedToast()!.querySelectorAll('button')].find(
+      (b) => b.textContent === t('engine.userEnvRevert', { ns: 'errors' }),
+    )!
+    await act(async () => revert.click())
+    await act(async () => {})
+    expect(setProjectEnvironment).toHaveBeenCalledWith(null, undefined)
+    expect(useEnvStore.getState().adoptedEnvironment).toBeNull()
+    const byKey = useRenderStore.getState().byKey
+    expect(byKey.a.stale && byKey.b.stale, '所有在用的面板都要重建，不只是失败的').toBe(true)
+    expect(status()?.key).toBe('engine.userEnvReverted')
   })
 })

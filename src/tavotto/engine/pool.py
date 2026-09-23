@@ -1554,7 +1554,7 @@ class EngineWorker:
         if mod:
             exc = WorkerError(
                 f"脚本用到的 {mod} 在当前渲染环境里没有。"
-                f"可以在设置 →「渲染环境」里改用你自己那套装了 {mod} 的 "
+                f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
                 f"Python / Conda 环境。",
                 tb,
                 code="missing_dependency",
@@ -1903,7 +1903,7 @@ def _worker_error(
     if mod:
         return WorkerError(
             f"脚本用到的 {mod} 在当前渲染环境里没有。"
-            f"可以在设置 →「渲染环境」里改用你自己那套装了 {mod} 的 "
+            f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
             f"Python / Conda 环境。",
             traceback_text,
             code="missing_dependency",

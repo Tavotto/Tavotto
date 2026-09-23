@@ -7,7 +7,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { SwapText } from '@/components/ui/SwapText'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
-import { t as translate, type UiMessage } from '@/i18n'
+import { literal, msg, t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import type { DismissTimer } from '@/lib/dismissTimer'
 import { DURATION, usePresence } from '@/lib/motion'
@@ -16,7 +16,9 @@ import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { adoptedDismissTimer, useEnvStore, type AdoptedEnvironment } from '@/store/envStore'
 import { statusDismissTimer, useUiStore } from '@/store/uiStore'
+import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { useWorkspaceStore } from '@/store/workspace'
 import { boundsOf } from '@/lib/geometry'
 
@@ -255,7 +257,36 @@ export function NotificationRail() {
    * 记录，没被看见的那条下次还会出），少说一次不丢信息。让位只是不渲染，不调 `dismiss`：
    * 状态那条走完之后提示自己就回来了。
    */
-  const hintHasSlot = !(justAdded && !!status)
+  // 「已改用你的环境」（ADR 0079）：与加入说明同一档——它带着「改回」这个一次性出口。
+  // 退场那 90ms 里载荷已经清掉了，留最后一份播完（同 status 那条）
+  const adopted = useEnvStore((s) => s.adoptedEnvironment)
+  const lastAdopted = useRef<AdoptedEnvironment | null>(null)
+  if (adopted) lastAdopted.current = adopted
+  const adoptedHasSlot = !(justAdded && !!status)
+  const adoptedPresence = usePresence(!!adopted && adoptedHasSlot, DURATION.exit)
+  const adoptedShown = adopted ?? lastAdopted.current
+  const adoptedText = adoptedShown
+    ? translate('engine.userEnvAdopted', {
+        ns: 'errors',
+        name: userEnvironmentName(adoptedShown),
+        version: adoptedShown.python_version,
+      })
+    : ''
+  const revertAdopted = () => {
+    void useEnvStore
+      .getState()
+      .revertAdoptedEnvironment()
+      .then((error) =>
+        useUiStore
+          .getState()
+          .setStatus(
+            error ? literal(error) : msg('engine.userEnvReverted', undefined, 'errors'),
+            error ? 'error' : 'info',
+          ),
+      )
+  }
+
+  const hintHasSlot = [justAdded, !!adopted, !!status].filter(Boolean).length < 2
   const hintPresence = usePresence(!!hint && hintHasSlot, DURATION.exit)
 
   return (
@@ -274,6 +305,9 @@ export function NotificationRail() {
       <div aria-live="polite" className="sr-only">
         {hintText}
       </div>
+      <div aria-live="polite" className="sr-only">
+        {adopted ? adoptedText : ''}
+      </div>
       {/* 顺序 = 出现的先后：加入说明最早、提示其次、刚说的状态最靠近底边 */}
       {addedPresence.mounted && (
         <Toast
@@ -283,6 +317,20 @@ export function NotificationRail() {
           icon={<Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
           text={t('fastEdit.addedForEdit')}
           action={canRemoveAdded ? { label: t('fastEdit.removeAdded'), onClick: () => runUndoRedo(false) } : undefined}
+        />
+      )}
+      {adoptedPresence.mounted && adoptedShown && (
+        <Toast
+          key={adoptedShown.token}
+          tone="info"
+          state={adoptedPresence.state}
+          data-environment-adopted={adoptedShown.source}
+          timer={adoptedDismissTimer}
+          icon={<Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
+          text={adoptedText}
+          action={{ label: translate('engine.userEnvRevert', { ns: 'errors' }), onClick: revertAdopted }}
+          onClose={() => useEnvStore.getState().dismissAdoptedEnvironment()}
+          closeLabel={translate('actions.close')}
         />
       )}
       {hintPresence.mounted && hint && (

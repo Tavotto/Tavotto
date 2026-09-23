@@ -633,3 +633,15 @@ describe('assets.changed → runtime 素材清单', () => {
     expect(mockRuntime).not.toHaveBeenCalled()
   })
 })
+
+describe('engine.environment_adopted', () => {
+  it('本项目的：记下改用了哪个（通知轨据此说一句）；别的项目的不认', async () => {
+    const { useEnvStore } = await import('@/store/envStore')
+    useEnvStore.getState().dismissAdoptedEnvironment()
+    handleServerEvent({ kind: 'engine.environment_adopted', pj: 'other', id: 'x', source: 'conda', label: 'lab', python_version: '3.12.4' })
+    expect(useEnvStore.getState().adoptedEnvironment).toBeNull()
+    handleServerEvent({ kind: 'engine.environment_adopted', pj: 'p1', id: 'x', source: 'conda', label: 'lab', python_version: '3.12.4' })
+    expect(useEnvStore.getState().adoptedEnvironment).toMatchObject({ source: 'conda', label: 'lab', python_version: '3.12.4' })
+    useEnvStore.getState().dismissAdoptedEnvironment()
+  })
+})

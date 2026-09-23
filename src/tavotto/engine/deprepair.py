@@ -57,6 +57,7 @@ from . import (
     projectenv,
     runcodes,
     runtime,
+    userenvs,
 )
 
 LOG = logging.getLogger("tavotto.deprepair")
@@ -3367,7 +3368,123 @@ def joint_targets(project: str | Path, target_kind: str, python: str) -> list[di
     return out
 
 
+# --------------------------------------------------------------- 用户自己的环境（ADR 0079）
+#
+# 内置 / 受管环境缺包时，先看用户自己平时跑脚本的那个 Python 是不是早就装齐了：装齐的里挑最好的
+# **直接改用**（记成本项目的自动决策，可撤销），一个都没有才走授权安装那条路。这推翻了 ADR 0044 §二
+# 「系统解释器只列候选、采用要用户点一次」——用户的原话是「智能识别哪个环境最好，自动选用」；挑选的
+# 判据写死在 `userenvs.rank()`，撤销（界面上的「改回」= `remember_default`）之后不再自动挑。
+TRIGGER_USER_ENVIRONMENT = "user_environment"
+_adoption_listeners: list = []
+
+
+def on_user_environment_adopted(listener) -> None:
+    """自动改用了用户的环境时回调 `listener(project, entry)`（app 据此发 SSE，界面给一条可撤销的提示；
+    `entry` 是 `userenvs.public()` 的形状，不带路径）。"""
+    if listener not in _adoption_listeners:
+        _adoption_listeners.append(listener)
+
+
+def user_environment_candidates(
+    project: str | Path, script: str, *, exclude: str = ""
+) -> list[dict]:
+    """发现到的用户环境 + 老链条里的系统解释器（同一张表，去重、保序），去掉 `exclude`（正缺包的那个）。"""
+    root = str(Path(project))
+    out = list(userenvs.discover(root, script))
+    out += [
+        {"python": py, "source": userenvs.SOURCE_SYSTEM, "label": ""}
+        for py, _src in pool.system_python_candidates()
+    ]
+    seen: set = set()
+    uniq: list[dict] = []
+    skip = userenvs._key(exclude) if exclude else None
+    for c in out:
+        key = userenvs._key(c["python"])
+        if key in seen or key == skip:
+            continue
+        seen.add(key)
+        uniq.append(c)
+    return uniq
+
+
+def user_environment_path(project: str | Path, script: str, env_id: str) -> str | None:
+    """界面交回的 id → 解释器路径（只在本机自己的发现结果里找；找不到回 None）。"""
+    for cand in user_environment_candidates(project, script):
+        if userenvs.env_id(cand["python"]) == env_id:
+            return cand["python"]
+    return None
+
+
+def user_environment_offer(project: str | Path, script: str, plan: dict, python: str) -> list[dict]:
+    """对一份 `ready` 的联合计划：每个用户环境装没装齐（`userenvs.evaluate` 的结果表，按挑选顺序排）。"""
+    if os.environ.get("TAVOTTO_USER_ENV_DISCOVERY", "").strip() == "0":
+        # 关掉：不发现、不体检、不自动改用（用户的逃生口；测试进程默认关，见 tests/conftest.py）
+        return []
+    root = str(Path(project))
+    needed = [
+        {"import_name": m.get("import_name", ""), "distribution": m.get("distribution", "")}
+        for m in plan.get("missing") or []
+    ]
+    unknown = list(plan.get("unknown") or [])
+    if not needed and not unknown:
+        return []
+    entries = userenvs.evaluate(
+        user_environment_candidates(root, script, exclude=python), needed, unknown
+    )
+    name = Path(root).name
+    return sorted(entries, key=lambda e: (not e["satisfies"], userenvs.rank(e, name)))
+
+
+def _auto_adopt_allowed(project: str, offer: dict) -> bool:
+    """只有「此刻的解释器是机器替用户挑的」时才自动换：用户显式选过的（环境变量 / 设置 / 为本项目挑的 /
+    明确选回默认链条）一个都不碰；项目自己的 venv 也不碰——那本来就是用户的环境，缺包该装进它。"""
+    if offer.get("target_kind") == TARGET_PROJECT_VENV or offer.get("clean_machine"):
+        return False
+    if pool.explicit_worker_python():
+        return False
+    configured = _config_worker_python()
+    if configured and pool._configured_source(configured) != pool.SOURCE_MANAGED:
+        return False
+    record = projectenv.remembered_record(project)
+    if record is not None and (
+        record.get("mode") == projectenv.MODE_DEFAULT_CHAIN or not record.get("automatic", False)
+    ):
+        return False
+    return True
+
+
+def _config_worker_python() -> str:
+    from . import config
+
+    return config.worker_python() or ""
+
+
+def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None:
+    entry = userenvs.best(user_envs, Path(project).name)
+    if entry is None or not _auto_adopt_allowed(project, offer):
+        return None
+    projectenv.remember(
+        project, entry["python"], automatic=True, trigger=TRIGGER_USER_ENVIRONMENT, health=entry
+    )
+    # **不调 `pool.reset_worker_python()`**：门跑在 `pool.get()` 持有 `pool._lock`（不可重入）的
+    # `_new_worker()` 里，那里再拿锁就是死锁（2026-09-23 真机端到端抓到，单测直接调 gate 看不见）。
+    # 也不需要：`remember()` 已经更新了项目级解析缓存，全局链条的缓存与项目决策无关。
+    LOG.info("缺包：自动改用用户环境 %s（%s）", entry["python"], entry.get("source"))
+    for listener in list(_adoption_listeners):
+        try:
+            listener(project, userenvs.public(entry))
+        except Exception:  # noqa: BLE001 — 通知失败不能挡住渲染
+            LOG.exception("用户环境改用通知失败")
+    return entry
+
+
 def preparation_offer(project: str | Path, script: str) -> dict | None:
+    """公开的那一份（HTTP / MCP / 渲染错误载荷都是它）：用户环境只带不透明 id，不带路径。"""
+    got = _preparation_offer(project, script)
+    return got[0] if got is not None else None
+
+
+def _preparation_offer(project: str | Path, script: str) -> tuple[dict, list[dict]] | None:
     """跑前 / 准备计划要看的东西（**只读，不装**）：联合计划 + 可选目标 + 轮次。
 
     解释器解析不出来（显式选择失效 / 一个 Python 都没有）回 None：那是另一条错误，让原路径
@@ -3386,17 +3503,25 @@ def preparation_offer(project: str | Path, script: str) -> dict | None:
     private = None
     if clean:
         private = privatepython.offer_payload() or privatepython.present_payload()
-    return {
+    plan_payload = joint.to_payload()
+    user_envs: list[dict] = []
+    if joint.status == depplan.STATUS_READY and not clean:
+        user_envs = user_environment_offer(root, script, plan_payload, python)
+    offer = {
         "code": ERROR_PREPARATION_REQUIRED,
         "script": script,
-        "plan": joint.to_payload(),
+        "plan": plan_payload,
         "target_kind": target_kind,
         "targets": joint_targets(root, target_kind, python),
         "rounds_remaining": rounds_remaining(root, script),
         "skipped": preparation_skipped(root, script),
         "clean_machine": clean,
         "private_python": private,
+        # 用户自己的环境（ADR 0079）：装齐的排前面、按挑选顺序；界面据此列「改用这个环境」。
+        # 只带 id 不带路径（ADR 0053 §二）；采用时 `PATCH /api/engine/environment` 交回 id
+        "user_environments": [userenvs.public(e) for e in user_envs],
     }
+    return offer, user_envs
 
 
 def gate(project: str | Path, script: str) -> dict | None:
@@ -3405,10 +3530,14 @@ def gate(project: str | Path, script: str) -> dict | None:
     root = str(Path(project))
     if rounds_remaining(root, script) <= 0 or preparation_skipped(root, script):
         return None
-    offer = preparation_offer(root, script)
-    if offer is None:
+    got = _preparation_offer(root, script)
+    if got is None:
         return None
+    offer, user_envs = got
     if offer["plan"]["status"] == depplan.STATUS_READY:
+        if _auto_adopt(root, offer, user_envs) is not None:
+            # 已改用装齐了的用户环境：放行，紧接着起的 worker 自己解析到它（`resolve_worker_python` 第 3 条）
+            return None
         return offer
     # 干净机器：什么都不缺也没有解释器可跑——环境（含私有 Python）本身就是要授权的东西。判据是
     # `clean_machine`，不是有没有下载载荷：私有 Python 被别的项目供应过之后本项目照样一个解释器都没有、

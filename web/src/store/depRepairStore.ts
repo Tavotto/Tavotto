@@ -7,6 +7,7 @@ import {
   installDependencyPlan,
   prepareJointDependencies,
   rebuildManagedEnvironment,
+  setProjectUserEnvironment,
   skipDependencyPreparation,
   type DependencyProgress,
   type DependencyRepairPlan,
@@ -55,6 +56,11 @@ interface DepRepairState {
    * 渲染重新排上——与装完包之后那半边同一件事。
    */
   adoptSystemPython: (python: string, module: string) => Promise<void>
+  /**
+   * 依赖弹窗里点「改用这个环境」（ADR 0079）：交 id 给后端体检并记成本项目的选择；成功就关框、
+   * 把卡在这道门上的面板重排。失败把原文留在框里。
+   */
+  adoptUserEnvironment: (id: string, script: string) => Promise<void>
   cancel: () => Promise<void>
   rebuildManaged: () => Promise<void>
   onProgress: (p: DependencyProgress) => void
@@ -172,6 +178,24 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     } catch (e) {
       const { code, text, pinned } = failure(e)
       set({ busy: false, progress: null, errorCode: code, errorText: text, pinned })
+    }
+  },
+
+  adoptUserEnvironment: async (id, script) => {
+    if (get().busy) return
+    set({ busy: true, errorCode: '', errorText: '' })
+    try {
+      const res = await setProjectUserEnvironment(id, script)
+      const envStore = useEnvStore.getState()
+      const env = envStore.env
+      if (env) useEnvStore.setState({ env: { ...env, project: res.project } })
+      else await envStore.refresh()
+      set({ busy: false })
+      envStore.dismissDependencyPreparation()
+      useRenderStore.getState().retryEnvironmentFailures()
+    } catch (e) {
+      const { code, text } = failure(e)
+      set({ busy: false, errorCode: code, errorText: text })
     }
   },
 

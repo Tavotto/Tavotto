@@ -94,6 +94,11 @@ uv venv。它们的共同点是**目录里就有一个真正的解释器**，判
 CLI 才知道环境在哪（`conda env list` 可能几秒），而且环境往往在项目之外——
 那是另一个安全模型。等真实用户数据表明有需要再加。
 
+> 2026-09-23 修订（[ADR 0079](0079-user-environment-discovery-and-auto-adoption.md)）：Conda / pyenv / 项目线索
+> 的发现做了，但**一个 CLI 都不问**——只读它们落在磁盘上的记录（`~/.conda/environments.txt`、`versions/*`），
+> 外加问一次登录 shell 里的 `command -v python3`。发生在跑前的依赖门里，本节「范围锁在项目根内」只约束
+> 项目 venv 的自动接手。
+
 > 2026-09-06 补：数据来了（一个没有任何 venv、靠系统 Python 加用户 site 跑的目录）。
 > ADR 0044 加了第二层：venv 这一层没接手成之后，把 `pool` 老链条本来就枚举的系统
 > 解释器逐个体检，**列成候选交给用户点，不无感切换**。Conda 等的推迟原话仍成立。
