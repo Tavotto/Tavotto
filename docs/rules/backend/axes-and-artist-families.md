@@ -108,5 +108,22 @@
   * 开发工具 `scripts/dev/matplotlib_artist_census.py`（`--api --with-seaborn`）
     普查任意脚本或代表性 API 的 artist 图与 Tavotto 覆盖度。**只用于开发/审计，
     产品路径不依赖它**——`instrument()` 的语义化遍历才是权威。
+- **画不画只有一个判据（2026-09-24，用户的 PRB 双联图：两张 `set_axis_off()` 的 imshow
+  位图，点左图右缘选中的是右图看不见的「Y 刻度文字」）**：`axestraversal.axis_drawn(ax,
+  which)` 与 `frame_drawn(ax)`，与 `Axes.draw` 同一个合取式——`axison`（3D 轴**只看**
+  `_axis3don`：`Axes3D` 自己把 `axison` 置 False）× `Axis.get_visible()`，边框 / 背景再乘
+  `get_frame_on()`。轴不画时它的刻度组、单条刻度、轴标签在 build 里以 `not_drawn` 丢掉
+  （正常缺席，不报进 dropped 诊断），`spine_geometry` 整侧不出，`_axes_fields` 经
+  `_axes_prop_drawn` 收掉按了不生效的刻度线 / 网格 / 边框 / 背景色旋钮；只关边框时四侧
+  命中区仍在（刻度控得了）、`visible` 如实报 False。轴标签 Text 的 `.axes` 是 None，宿主
+  取登记时挂的 `_mm_drag` / `_mm_axis`。
+- **面状色图集合与位图同一个几何代理（2026-09-24，同一用户的三联图 (b)(c)：pcolormesh 铺满
+  子图，子图拖不动）**：`manifest._is_area_field`——QuadMesh / TriMesh / PolyCollection（含
+  pcolor、hexbin、tripcolor）/ 填充的 ContourSet，且 `color_mapping_is_live`——与 imshow 一样
+  发 `resizable` + `geom_gid = 宿主 axes`；不填充的等值线、散点、线组不算（子图里有空白可点）。
+  宿主 `position_locked`（插图 / 寄生轴）时**位图与网格都不宣称**，与色条代理同一判据。
+  代理元素的 bbox 与 `clip_bbox` 求交（前端拿它出吸附参考线、当键盘轮换探针），别的角色
+  仍是数据范围口径。看护 `tests/test_figure_recognition.py`、
+  `test_manifest_geometry.py::test_quadmesh_outline_is_clipped_to_what_is_drawn`。
 - 面板翻转（flip_h/flip_v，先翻转后旋转）：导出按 dpi 位图嵌入
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。

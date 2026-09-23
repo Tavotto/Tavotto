@@ -15,7 +15,7 @@
   折线（理由在 `src/tavotto/AGENTS.md` 散点几何那段）。**柱形系列也一样**
   （2026-09-13）：引擎给每根柱一条闭合子路径，柱间空白不再命中这组、框选按柱相交、
   选中描的是每根柱。**色条元素的几何代理到它的轴**（`resizable` + `geom_gid = axes_i`，
-  与位图 → 宿主子图同一套 `geomTarget`）：点色条就有八个手柄、拖动写的是色条轴的
+  与位图 → 宿主子图同一套 `geomTarget`；2026-09-24 起铺满子图的面状色图集合——pcolormesh / contourf 等——也走这一套，引擎侧判据 `manifest._is_area_field`）：点色条就有八个手柄、拖动写的是色条轴的
   `position`，前端一个字没改——看护 `elementPathSelection.test.tsx` 的柱形与色条两组。
 - **文字 / 图例 / 子图 / 组选择继续用矩形**——它们本来就是矩形语义，别为了统一
   硬转路径。画布**原生**形状同理：`lib/shapeGeometry.ts` 的 `shapeOutline` 是

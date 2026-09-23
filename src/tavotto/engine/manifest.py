@@ -19,8 +19,16 @@ import matplotlib as mpl
 from matplotlib import colors as mcolors, font_manager
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
-from matplotlib.collections import Collection, LineCollection, PathCollection, PolyCollection
+from matplotlib.collections import (
+    Collection,
+    LineCollection,
+    PathCollection,
+    PolyCollection,
+    QuadMesh,
+    TriMesh,
+)
 from matplotlib.container import BarContainer, ErrorbarContainer, StemContainer
+from matplotlib.contour import ContourSet
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
 from matplotlib.patches import FancyArrowPatch, Patch
@@ -28,16 +36,19 @@ from matplotlib.path import Path
 from matplotlib.text import Text
 
 import pathgeom
-from axestraversal import ordered_axes
+from axestraversal import axis_drawn, frame_drawn, ordered_axes
 from colorbarmodel import (
     _CB_EXTENDS,
     ColorbarProxy,
     _cb_axis,
     _cb_tick_color,
     _cb_tick_fontsize,
+    adopt_equal_scales,
+    bind_raster_fields,
     coincident_shared_axes_pairs,
     colorbar_host_count,
     colorbar_maps,
+    field_image_of,
     follow_map,
     scale_gids,
     scale_siblings,
@@ -448,6 +459,12 @@ def instrument(state: FigState) -> None:
     # 色条的内部件（`cb.solids` / `cb.dividers`）会被当成用户图元登记，而它们
     # 每次 `_draw_all()` 都被删掉重建。遍历的权威只有 `axestraversal.ordered_axes` 一处。
     _all_axes_for_cbar, _, _ = ordered_axes(fig)
+    cbar_of_ax, host_of_cbax = colorbar_maps(fig, _all_axes_for_cbar)
+    # 独立 mappable 的色条 ↔ 它画的那张已成色位图（`RasterField`）。绑上之后色条
+    # 才有宿主（`cax=` 建的独立色条两条宿主判据都落空），所以绑完重查一遍——
+    # `colorbar_maps` 的宿主回退认这份绑定，方向翻转后的重算也就认得出同一个宿主。
+    adopt_equal_scales(cbar_of_ax, _all_axes_for_cbar)
+    bind_raster_fields(cbar_of_ax, _all_axes_for_cbar)
     cbar_of_ax, host_of_cbax = colorbar_maps(fig, _all_axes_for_cbar)
     state.colorbar_axes = set(cbar_of_ax)
     state.axes_follow = follow_map(fig, cbar_of_ax, host_of_cbax, _all_axes_for_cbar)
@@ -3178,8 +3195,9 @@ def spine_geometry(ax, W: float, H: float) -> dict | None:
         return None
     out: dict[str, dict] = {}
     for side, (which, line) in _SPINE_AXIS.items():
-        axis = getattr(ax, f"{which}axis", None)
-        if axis is None or not axis.get_visible():
+        # 这一侧的轴不画（`set_axis_off()` / 轴不可见）时刻度控不了、边框也不画：
+        # 整侧不出，判据只有 `axis_drawn` 一处
+        if not axis_drawn(ax, which):
             continue
         sp = ax.spines[side]
         try:
@@ -3195,7 +3213,9 @@ def spine_geometry(ax, W: float, H: float) -> dict | None:
         if math.hypot(x1 - x0, y1 - y0) < 0.5:
             continue
         out[side] = {
-            "visible": bool(sp.get_visible()),
+            # 边框线真的画出来才算可见：`set_frame_on(False)` 时 Spine 自己的
+            # visible 仍是 True，而 `Axes.draw` 早把它摘掉了
+            "visible": bool(sp.get_visible()) and frame_drawn(ax),
             "ticks": bool(tick_side_visible(ax, which, line)),
             "from": [round(float(x0 / W), 5), round(float(1.0 - y0 / H), 5)],
             "to": [round(float(x1 / W), 5), round(float(1.0 - y1 / H), 5)],
@@ -3230,7 +3250,7 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
     x0, x1 = ax.get_xlim()
     y0, y1 = ax.get_ylim()
     aspect = ax.get_aspect()
-    return [
+    fields = [
         *(
             []
             if flags.get("position_locked")
@@ -3432,6 +3452,36 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
             "group": "网格与边框",
         },
     ]
+    return [f for f in fields if _axes_prop_drawn(ax, f["prop"])]
+
+
+#: 画不画由哪条轴决定的 axes 字段（其余的刻度 / 网格字段两条轴有一条在画就给）
+_AXIS_OF_PROP = {
+    "ticks_bottom": "x",
+    "ticks_top": "x",
+    "grid_x": "x",
+    "ticks_left": "y",
+    "ticks_right": "y",
+    "grid_y": "y",
+}
+
+
+def _axes_prop_drawn(ax, prop: str) -> bool:
+    """这个 axes 字段改了之后**画面上看得见吗**。
+
+    「宁可少开放，不可开放了却不生效」：`set_axis_off()` 的子图（整张 imshow
+    位图铺满、常见于拼图）上刻度线、网格、边框、背景色全都不画，旋钮摆出来
+    按了也一个像素不动；`set_frame_on(False)` 只摘边框与背景、刻度照画。
+    判据只问 `axestraversal.axis_drawn` / `frame_drawn`，与 `spine_geometry`
+    同源。"""
+    which = _AXIS_OF_PROP.get(prop)
+    if which is not None:
+        return axis_drawn(ax, which)
+    if prop.startswith("grid_"):
+        return axis_drawn(ax, "x") or axis_drawn(ax, "y")
+    if prop.startswith("spine_") or prop == "facecolor":
+        return frame_drawn(ax)
+    return True
 
 
 def _axes3d_fields(ax) -> list[dict]:
@@ -4028,6 +4078,58 @@ def _layout_undrawn_legends(state: FigState, fig) -> None:
         el["artist"]._legend_box.draw(scratch)  # noqa: SLF001
 
 
+def _intersect_frac(a: list[float], b: list[float]) -> list[float] | None:
+    """两个 `[x, y, w, h]`（figure 分数）的交；不相交回 None。"""
+    x0, y0 = max(a[0], b[0]), max(a[1], b[1])
+    x1, y1 = min(a[0] + a[2], b[0] + b[2]), min(a[1] + a[3], b[1] + b[3])
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return [x0, y0, x1 - x0, y1 - y0]
+
+
+def _is_area_field(artist) -> bool:
+    """面状的色图集合：`pcolormesh` / `pcolor` / `tripcolor` / `hexbin` / `contourf`。
+
+    它们和 imshow 位图是同一种东西——一整块按色图上色的面，通常铺满宿主子图，
+    点子图里任何一处都命中它。所以几何编辑同样代理给宿主（见 build 里 image 那一支）。
+    散点（PathCollection）与线组不算：它们是数据系列，子图里有空白可点；
+    不填充的等值线（`contour`）不算：它只有线。判据要求色图**此刻在给面上色**
+    （`color_mapping_is_live`），写死颜色的多边形集合不是色图场。
+    """
+    if isinstance(artist, ContourSet):
+        if not getattr(artist, "filled", False):
+            return False
+    elif not isinstance(artist, (QuadMesh, TriMesh, PolyCollection)):
+        return False
+    return color_mapping_is_live(artist)
+
+
+def _owner_axis_drawn(el: dict) -> bool:
+    """刻度组 / 单条刻度 / 轴标签：它们归属的那条轴此刻画不画。
+
+    三者都由 `Axis.draw` 画，轴被摘掉（`set_axis_off()`、`xaxis.set_visible(False)`）
+    时它们各自的 visible 仍是 True、几何也照算——不在这里拦，就会在图外与相邻面板上
+    摆出看不见的命中框。其余角色不归轴管，一律 True。判据唯一出处
+    `axestraversal.axis_drawn`。
+    """
+    role = el["role"]
+    if role in ("ticks", "ticklabel"):
+        art = el["artist"]
+        return axis_drawn(art.ax, art.which)
+    if role == "axis_label":
+        t = el["artist"]
+        # 轴标签 Text 的 `.axes` 是 None（它挂在 Axis 上，不经 `Axes.add_artist`）：
+        # 宿主取登记时记下的那一份——2D 是 `_mm_drag`，3D 是 `_mm_axis`
+        ax = (getattr(t, "_mm_drag", None) or (None, None))[1] or getattr(
+            getattr(t, "_mm_axis", None), "axes", None
+        )
+        which = el["gid"].rsplit(".", 1)[-1][:1]  # axes_i.xlabel → "x"
+        if ax is None or which not in ("x", "y", "z"):
+            return True
+        return axis_drawn(ax, which)
+    return True
+
+
 def build_manifest(state: FigState, stem: str) -> dict:
     """一份 manifest。**刻度记忆表只在这里开**（`overrides.ticklabel_memo`）。
 
@@ -4065,7 +4167,9 @@ def _build_manifest(state: FigState, stem: str) -> dict:
     _DROP_CHURN_ROLES = ("ticks", "ticklabel")
 
     def _drop(el, why: str):
-        if el["role"] in _DROP_CHURN_ROLES or why in ("empty_text", "gone"):
+        # `not_drawn`：所在的轴不画（`set_axis_off()`），元素好好地登记着、只是这一刻
+        # 画面上没有它——与空文字同类，是正常的缺席，不是静默消失
+        if el["role"] in _DROP_CHURN_ROLES or why in ("empty_text", "gone", "not_drawn"):
             return
         cls = type(el["artist"])
         key = (f"{cls.__module__}.{cls.__qualname__}", el["gid"].split(".", 1)[0], why)
@@ -4092,6 +4196,9 @@ def _build_manifest(state: FigState, stem: str) -> dict:
 
     for el in state.elements:
         artist = el["artist"]
+        if not _owner_axis_drawn(el):
+            _drop(el, "not_drawn")
+            continue
         entry = {
             "gid": el["gid"],
             "role": el["role"],
@@ -4145,11 +4252,18 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             follow = state.axes_follow.get(el["gid"])
             if follow:
                 entry["follow_gids"] = follow
-        elif el["role"] == "image":
+        elif el["role"] == "image" or _is_area_field(artist):
             # imshow 位图铺满宿主 axes，会在命中测试里盖住它——把几何编辑
-            # 代理回宿主 axes（前端对 geom_gid 发 position override）
-            entry["resizable"] = True
-            entry["geom_gid"] = el["gid"].rsplit(".images_", 1)[0]
+            # 代理回宿主 axes（前端对 geom_gid 发 position override）。
+            # **面状的色图集合同理**（2026-09-24，用户的 PRB 三联图 (b)(c)：
+            # `pcolormesh` 铺满子图，点哪儿都选中网格，而网格既不可拖也不可缩——
+            # 整张子图拖不动）。宿主落位不归 Tavotto 管（插图 / 寄生轴：
+            # `position_locked`）时不宣称，与色条代理同一条判据。
+            host_gid = gid_by_artist_id.get(id(getattr(artist, "axes", None)))
+            host = next((e for e in state.elements if e["gid"] == host_gid), None)
+            if host is not None and not host.get("position_locked", False):
+                entry["resizable"] = True
+                entry["geom_gid"] = host_gid
         if el["role"] == "figure":
             entry["bbox"] = [0.0, 0.0, 1.0, 1.0]
         elif el["role"] == "ticklabel":
@@ -4232,6 +4346,11 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             # 这条色条给哪个元素上色。可选字段：mappable 没登记成元素（脚本
             # 自己造的 ScalarMappable）时就不发，界面不摆一个指向空处的链接
             mappable_gid = gid_by_artist_id.get(id(artist.cb.mappable))
+            if not mappable_gid:
+                # 独立 mappable 画不出任何东西；它若绑了一张反解位图（`RasterField`），
+                # 色条上色的对象就是那张位图——换色图时它跟着重着色
+                field = field_image_of(artist.cb, ordered_axes(fig)[0])
+                mappable_gid = gid_by_artist_id.get(id(field)) if field is not None else None
             if mappable_gid:
                 entry["mappable_gid"] = mappable_gid
             # 这条色条**还给谁上色**：与 mappable 共用同一份 norm 对象的其它元素
@@ -4362,6 +4481,14 @@ def _build_manifest(state: FigState, stem: str) -> dict:
         clip = _clip_bbox(artist, W, H)
         if clip is not None:
             entry["clip_bbox"] = clip
+            # 代理给宿主子图的面状元素（位图 / 色图网格）：bbox 收到**画出来的那块**。
+            # `pcolormesh(shading="nearest")` 的数据范围比 ylim 宽时，未裁剪的 bbox
+            # 能从下一排面板一直伸进上一排（2026-09-24 用户的 PRB 三联图：(b) 的网格
+            # bbox 盖到了 (a) 的下半截）——而前端拿 bbox 中心出吸附参考线、拿它当
+            # 键盘轮换的探针，这两处都假定 bbox 就是那块面。别的角色保持数据范围
+            # 口径不动（扁平线垫出来的可点宽度不能被子图框削掉）。
+            if entry.get("geom_gid") and el["role"] != "colorbar":
+                entry["bbox"] = _intersect_frac(entry["bbox"], clip) or entry["bbox"]
         # ---- 几何总闸：非有限值一个都不许出去 ----
         # 逐个分支补 `isfinite` 是补不完的（分支还会再长），而漏一个的后果
         # **取决于走哪条控制面**：Python 的 `json.dumps` 照写 `NaN` /
