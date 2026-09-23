@@ -778,3 +778,26 @@ def test_a_mac_artifact_of_unknown_arch_fails_instead_of_being_skipped(base):
     """认不出架构的 dmg / 更新包必须失败——落进 `*) continue` 就是静默少一个安装包。"""
     code, _ = _classify(base)
     assert code != 0, base
+
+
+def test_mac_updater_names_in_the_workflow_come_from_the_brand_constant():
+    """更新包名在 workflow 里只经 `${APP_NAME}` 出现（取自 brand.PRODUCT_NAME）。
+
+    上面那组行为用例在「字面量恰好等于当前品牌名」时照样绿——写死与引用在今天
+    不可区分，要到改名那天才分叉。所以这里直接看源：产出更新包的那一行与 case
+    里两条更新包模式都得引用 APP_NAME，且 APP_NAME 由读 brand 的那一步写入。
+    """
+    src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
+    assert "from tavotto.engine import brand; print(brand.PRODUCT_NAME)" in src
+    assert 'echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"' in src
+    assert re.search(r'(?m)^\s*PKG="out/\$\{APP_NAME\}\$\{MAC_SUFFIX\}\.app\.tar\.gz"$', src), (
+        "产出更新包的那一行没有经 APP_NAME 取名"
+    )
+    updater_arms = [
+        ln.strip()
+        for ln in _role_case_block().splitlines()
+        if ".app.tar.gz)" in ln and "role=" in ln
+    ]
+    assert len(updater_arms) == 2, updater_arms
+    for arm in updater_arms:
+        assert arm.startswith('"${APP_NAME}'), f"更新包模式写死了名字：{arm}"
