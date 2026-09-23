@@ -1,0 +1,48 @@
+# 一次性探针（勿合）：回答一个问题——Actions 的 GITHUB_TOKEN 现在建得了 Release 吗？
+#
+# 背景见 issue #503：发 v0.16.0 时 github_release 连续三次 403
+# "Resource not accessible by integration"，而同一时刻管理员 PAT 调同一个 API 成功。
+#
+# 这里建的是 **草稿** Release：草稿不会真的创建 git tag，且建完立刻删掉，
+# 所以既不碰 v0.16.0 那个真 Release，也不会在 refs/tags 下留任何东西。
+name: probe-release-token
+
+on:
+  pull_request:
+    paths: ['.github/workflows/probe-release-token.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: GITHUB_TOKEN 建得了 Release 吗
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="probe-token-${{ github.run_id }}"
+          echo "::group::POST /releases (draft=true, tag=$tag)"
+          code=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+            -X POST "https://api.github.com/repos/${{ github.repository }}/releases" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -d "{\"tag_name\":\"$tag\",\"name\":\"$tag\",\"draft\":true,\"body\":\"probe, deleted immediately\"}")
+          echo "HTTP $code"
+          cat /tmp/resp.json
+          echo "::endgroup::"
+
+          if [ "$code" = "201" ]; then
+            id=$(python3 -c "import json;print(json.load(open('/tmp/resp.json'))['id'])")
+            echo "结论：GITHUB_TOKEN **建得了** Release（草稿 id=$id），正在删除"
+            curl -sS -X DELETE "https://api.github.com/repos/${{ github.repository }}/releases/$id" \
+              -H "Authorization: Bearer $GH_TOKEN" -w '  DELETE HTTP %{http_code}\n'
+            echo "VERDICT=OK" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "结论：GITHUB_TOKEN **仍然建不了** Release（HTTP $code）"
+            echo "VERDICT=BLOCKED HTTP $code" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # 探针不该把 PR 打红，结论看日志
+          exit 0
