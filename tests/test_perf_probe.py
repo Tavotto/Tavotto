@@ -243,12 +243,48 @@ def test_synthetic_m1_vs_m3_gap_points_at_coalescing():
 
 
 def test_release_hitch_is_graded_by_length():
-    short = [_row(16.7) for _ in range(10)] + [_row(55.0, render=1.0)]
-    long = [_row(16.7) for _ in range(10)] + [_row(150.0, render=1.0)]
+    short = [_row(55.0, render=1.0)] + [_row(16.7) for _ in range(10)]
+    long = [_row(150.0, render=1.0)] + [_row(16.7) for _ in range(10)]
     a = PR.analyze_report(_report([_seg(_smooth(), tail=short)]))
-    assert _find(a, "松手之后卡一下").level == "提示"
+    assert _find(a, "松手那一刻顿一下").level == "提示"
     b = PR.analyze_report(_report([_seg(_smooth(), tail=long)]))
-    assert _find(b, "松手之后卡一下").level == "问题"
+    assert _find(b, "松手那一刻顿一下").level == "问题"
+
+
+def test_release_moment_and_later_swap_are_two_findings():
+    # M2 Pro 第四份报告的形状：松手那一帧 107ms，约 466ms 后换新图又一帧 90ms
+    tail = [_row(107.0, render=0.0, handler=0.0, flush=0.0)] + [_row(16.7) for _ in range(21)]
+    tail += [_row(90.0, render=2.0)] + [_row(16.7) for _ in range(5)]
+    spans = {
+        "input.release": {"count": 1, "total": 12.0, "max": 12.0, "samples": []},
+        "input.release_flush": {"count": 1, "total": 70.0, "max": 70.0, "samples": []},
+    }
+    seg = _seg(_smooth(), kind="element", tail=tail)
+    seg["tailSpans"] = spans
+    a = PR.analyze_report(_report([seg]))
+    first = _find(a, "松手那一刻顿一下")
+    assert first.level == "问题"
+    assert any("React 同步重渲染 70.0ms" in e for e in first.evidence)
+    later = _find(a, "松手后又顿一下")
+    assert any("松手后约 458ms 那一帧 90ms" in e for e in later.evidence)
+    assert "PanelView.tsx" in " ".join(later.where)
+
+
+def test_synthetic_runs_are_the_control_group_for_the_release_hitch():
+    user = _seg(_smooth(), kind="element", tail=[_row(107.0)] + _smooth(10))
+    syn = _seg(_smooth(), kind="element", source="synthetic", label="m1", tail=_smooth(10))
+    a = PR.analyze_report(_report([user, syn]))
+    f = _find(a, "松手那一刻顿一下")
+    assert any(e.startswith("对照：自动测试") for e in f.evidence)
+    # 没有自动测试时不编造对照
+    b = PR.analyze_report(_report([user]))
+    assert not any(e.startswith("对照") for e in _find(b, "松手那一刻顿一下").evidence)
+    # 自动测试松手后自己也顿：对照不成立，不能说「顿挫出在提交上」
+    syn_hitch = _seg(
+        _smooth(), kind="element", source="synthetic", label="m1", tail=[_row(107.0)] + _smooth(10)
+    )
+    c = PR.analyze_report(_report([user, syn_hitch]))
+    assert not any(e.startswith("对照") for e in _find(c, "松手那一刻顿一下").evidence)
 
 
 def test_start_hitch_subtracts_probe_overhead():
@@ -422,6 +458,20 @@ def test_release_chain_without_server_ms_says_so():
     assert any("没报 server_ms" in e for e in f.evidence)
 
 
+def test_clicks_do_not_claim_a_release_chain():
+    # 单击（按下又松开）后一秒，别处发起了一次渲染：它不是这次「松手」的定稿渲染
+    click = _seg([_row(16.7, moves=0)], kind="element", context={"doc_split": True})
+    click["end"] = 1000
+    drag = _committed(5000)
+    drag["context"]["doc_split"] = True
+    drag["tailCounts"] = {"store.document.doc": 1}
+    rep = _report([click, drag])
+    rep["renders"] = [_render(1800, server=460.0), _render(5005, server=460.0)]
+    f = _find(PR.analyze_report(rep), "松手 → 图落定")
+    assert f.evidence[0].startswith("1 次提交修改的松手")
+    assert "调度" not in f.title
+
+
 def test_synthetic_segments_do_not_claim_a_release_chain():
     # 自动测试以取消收尾，不提交：它后面的渲染与它无关
     seg = _committed(1000)
@@ -438,9 +488,9 @@ def test_old_reports_fall_back_to_the_undivided_total():
 
 
 def test_same_issue_in_many_segments_is_one_finding():
-    tail = [_row(16.7) for _ in range(5)] + [_row(60.0, render=1.0)]
+    tail = [_row(60.0, render=1.0)] + [_row(16.7) for _ in range(5)]
     a = PR.analyze_report(_report([_seg(_smooth(), tail=tail) for _ in range(3)]))
-    hits = [f for f in a["findings"] if f.title == "松手之后卡一下"]
+    hits = [f for f in a["findings"] if f.title == "松手那一刻顿一下（同步提交）"]
     assert len(hits) == 1
     assert hits[0].evidence[0].startswith("出现在 3 段")
 

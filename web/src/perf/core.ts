@@ -36,6 +36,10 @@ export type PerfSpan =
   | 'snap.compute'
   /** 预览平面在 rAF 里把攒下的位移 / 样式写进 SVG DOM */
   | 'raf.preview_write'
+  /** 松手那一下：trackPointer 的 onEnd 整段（写 override、commit、调度定稿渲染） */
+  | 'input.release'
+  /** onEnd 返回后的微任务：提交引起的 React 同步重渲染 */
+  | 'input.release_flush'
   /**
    * 自动保存的同步那一段（buildProject + JSON.stringify + 写本机副本）。
    * 它在最后一次编辑 1 秒后触发——常常正好落在下一次拖动中间
@@ -48,6 +52,8 @@ export const PERF_SPANS: readonly PerfSpan[] = [
   'doc.txn_update',
   'snap.compute',
   'raf.preview_write',
+  'input.release',
+  'input.release_flush',
   'autosave.flush',
 ]
 
@@ -186,8 +192,9 @@ function target(r: Recording): { seg: Segment; tail: boolean } | null {
 function addSpan(name: PerfSpan, ms: number): void {
   const r = rec
   if (!r) return
-  if (name === 'input.handler') r.acc.handler += ms
-  else if (name === 'input.react_flush') r.acc.flush += ms
+  // 松手那一下也算进这一帧的「输入处理」列：否则尾巴上那一帧只会显示成「未归因」
+  if (name === 'input.handler' || name === 'input.release') r.acc.handler += ms
+  else if (name === 'input.react_flush' || name === 'input.release_flush') r.acc.flush += ms
   else if (name === 'raf.preview_write') r.acc.raf += ms
   const at = target(r)
   if (!at) return
@@ -228,6 +235,25 @@ export function perfInput(fn: () => void): void {
     const t1 = perfNow()
     addSpan('input.handler', t1 - t0)
     queueMicrotask(() => addSpan('input.react_flush', perfNow() - t1))
+  }
+}
+
+/**
+ * 松手处理专用（trackPointer 的 onEnd）：与 `perfInput` 同一个手法，量它自己 +
+ * 紧随其后微任务里的 React 同步重渲染。片段在 onEnd 里就结束了，所以两段都记进尾巴
+ */
+export function perfRelease(fn: () => void): void {
+  if (!rec) {
+    fn()
+    return
+  }
+  const t0 = perfNow()
+  try {
+    fn()
+  } finally {
+    const t1 = perfNow()
+    addSpan('input.release', t1 - t0)
+    queueMicrotask(() => addSpan('input.release_flush', perfNow() - t1))
   }
 }
 

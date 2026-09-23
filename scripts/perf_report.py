@@ -274,6 +274,13 @@ class SegStats:
     tail_max: float | None = None
     tail_late: int = 0
     tail_worst: Parts | None = None
+    #: 松手那一刻（尾巴前两帧）最长一帧与它的拆分：同步提交 + React 重渲染落在这里
+    release_dt: float | None = None
+    release_parts: Parts | None = None
+    #: 之后（第三帧起）最长一帧、它离松手多久：定稿渲染回来、新图换上去多半在这里
+    later_dt: float | None = None
+    later_at: float | None = None
+    tail_spans: dict = field(default_factory=dict)
     renders_per_move: dict = field(default_factory=dict)
     stores_per_move: dict = field(default_factory=dict)
     tail_renders: dict = field(default_factory=dict)
@@ -375,6 +382,17 @@ def seg_stats(seg: dict, idx: int, refresh: float) -> SegStats | None:
         s.tail_max = max(r[DT] for r in tail)
         s.tail_late = sum(1 for r in tail if r[DT] > s.late_limit)
         s.tail_worst = parts_of(max(tail, key=lambda r: r[DT]))
+        head, rest = tail[:2], tail[2:]
+        if head:
+            w = max(head, key=lambda r: r[DT])
+            s.release_dt, s.release_parts = w[DT], parts_of(w)
+        if rest:
+            off, best = sum(r[DT] for r in head), None
+            for r in rest:
+                if best is None or r[DT] > best[1]:
+                    best = (off, r[DT])
+                off += r[DT]
+            s.later_at, s.later_dt = best
     counts = seg.get("counts") or {}
     s.counts_mixed = "tailCounts" not in seg
     seg_moves = seg.get("moves") or s.moves
@@ -387,6 +405,7 @@ def seg_stats(seg: dict, idx: int, refresh: float) -> SegStats | None:
         k[7:]: v for k, v in (seg.get("tailCounts") or {}).items() if k.startswith("render.")
     }
     s.spans = seg.get("spans") or {}
+    s.tail_spans = seg.get("tailSpans") or {}
     s.context = ctx
     # 最慢的五帧：什么时候、各段多少
     order = sorted(range(len(rows)), key=lambda i: -rows[i][DT])[:5]
@@ -721,35 +740,68 @@ def analyze_segment(s: SegStats) -> list[Finding]:
             )
         )
 
-    # ---- 9. 松手
-    if s.tail_max is not None:
-        lvl = level_by(s.tail_max / B, 2.8, 6, 15)
+    # ---- 9. 松手：按「什么时候」拆成两件事——松手那一刻（同步提交）与之后（换新图）
+    if s.release_dt is not None:
+        lvl = level_by(s.release_dt / B, 2.8, 6, 15)
         if lvl:
-            tw = s.tail_worst
-            ev = [f"松手后 0.6 秒内最长一帧 {s.tail_max:.0f}ms（超时 {s.tail_late} 帧）"]
-            if tw:
+            rp = s.release_parts
+            ev = [f"松手那一刻的一帧 {s.release_dt:.0f}ms（尾巴前两帧里最长的）"]
+            if rp:
                 ev.append(
-                    f"那一帧：输入 {tw.input:.1f} / 渲染 {tw.render:.1f} / 未归因 {tw.other:.1f}"
+                    f"那一帧：输入处理 {rp.input:.1f} / 渲染 {rp.render:.1f} / 未归因 {rp.other:.1f}"
                 )
-            top = sorted(s.tail_renders.items(), key=lambda kv: -kv[1])[:4]
+            rel = s.tail_spans.get("input.release")
+            relf = s.tail_spans.get("input.release_flush")
+            if rel and rel.get("count"):
+                ev.append(
+                    f"松手处理（写 override / commit / 调度定稿渲染）{rel['total'] / rel['count']:.1f}ms"
+                    + (
+                        f"，随后 React 同步重渲染 {relf['total'] / relf['count']:.1f}ms"
+                        if relf and relf.get("count")
+                        else ""
+                    )
+                )
+            top = sorted(s.tail_renders.items(), key=lambda kv: -kv[1])[:5]
             if top:
                 ev.append("松手后组件渲染：" + "，".join(f"{k} {v} 次" for k, v in top))
             out.append(
                 Finding(
                     lvl,
                     "松手",
-                    "松手之后卡一下",
+                    "松手那一刻顿一下（同步提交）",
                     ev,
                     [
-                        "web/src/store/documentStore.ts endTxn",
-                        "web/src/store/svgPreviewStore.ts reattachPreview",
+                        "web/src/canvas/interactions.ts（startXDrag 的 onEnd：setOverride + commitElementPreview）",
+                        "web/src/store/documentStore.ts commit / endTxn",
+                        "订阅了 documentStore.doc 的组件（属性页、面板）",
                     ],
                     [
-                        "松手时的同步工作（endTxn 压缩补丁、自动保存、换上权威 SVG 后的整张重解析与重排）"
-                        "拆到下一帧 / 空闲时做；换 SVG 时复用未变的节点而不是整棵替换。",
+                        "松手时只做必须同步的那一步（记下 override），commit 引起的整页重渲染推迟到下一帧；"
+                        "属性页等订阅整份 doc 的组件改成只取自己那一片，别因为一个 override 全部重画。",
                     ],
                     s.name,
-                    min(s.tail_max / B, 10) / 2,
+                    min(s.release_dt / B, 10) / 2,
+                )
+            )
+    if s.later_dt is not None:
+        lvl = level_by(s.later_dt / B, 2.8, 6, 15)
+        if lvl:
+            out.append(
+                Finding(
+                    lvl,
+                    "松手",
+                    "松手后又顿一下（多半是新图换上来）",
+                    [
+                        f"松手后约 {s.later_at:.0f}ms 那一帧 {s.later_dt:.0f}ms——时间上对得上定稿渲染回来、新 SVG 换进 DOM",
+                        "（「松手链路」一条里有这次换图的逐段耗时）",
+                    ],
+                    [
+                        "web/src/canvas/PanelView.tsx（内联 SVG 整棵替换）",
+                        "web/src/store/svgPreviewStore.ts reattachPreview",
+                    ],
+                    ["换 SVG 时复用没变的节点、只替换变了的 <g>；或先在离屏容器里解析好再挂上去。"],
+                    s.name,
+                    min(s.later_dt / B, 10) / 2,
                 )
             )
     return out
@@ -960,6 +1012,15 @@ def release_chain(report: dict) -> list[dict]:
     for seg in report.get("segments") or []:
         if seg.get("source") != "user" or seg.get("end") is None:
             continue
+        # 只认**真的提交了**的那次松手：单击（按下又松开、没有移动）也是一个片段、也有 end，
+        # 配上一秒后别处发起的渲染，会把「调度」读成 800ms（2026-09-23 M2 Pro 第四份报告实测）。
+        # 新版探针看松手后文档本体有没有变；旧版没有这个计数，退而要求它是一次真拖动
+        tail_doc = (seg.get("tailCounts") or {}).get("store.document.doc", 0)
+        if (seg.get("context") or {}).get("doc_split"):
+            if tail_doc < 1:
+                continue
+        elif len(seg.get("frames") or []) < MIN_FRAMES or (seg.get("moves") or 0) < MIN_MOVES:
+            continue
         end = float(seg["end"])
         cand = [
             r
@@ -1029,7 +1090,7 @@ def chain_finding(chain: list[dict]) -> Finding:
     top_k, top_v = ranked[0]
     lvl = level_by(med_total, 150, 500, 1500) or "提示"
     ev = [
-        f"{len(chain)} 次松手，松手 → 新图进 DOM 中位 {med_total:.0f}ms；其中最大的一段是"
+        f"{len(chain)} 次提交修改的松手，松手 → 新图进 DOM 中位 {med_total:.0f}ms；其中最大的一段是"
         f"「{CHAIN_STAGES[top_k][0]}」{top_v:.0f}ms（{100 * top_v / max(med_total, 1):.0f}%）",
         "各段中位：" + "；".join(f"{CHAIN_STAGES[k][0]} {v:.0f}ms" for k, v in ranked if v >= 1),
     ]
@@ -1040,7 +1101,7 @@ def chain_finding(chain: list[dict]) -> Finding:
         )
     swaps = [c["swap_max_dt"] for c in chain if c["swap_max_dt"] is not None]
     if swaps:
-        ev.append(f"换图后那两帧最长 {max(swaps):.0f}ms（就是「松手之后卡一下」那一帧的来源之一）")
+        ev.append(f"换图后那两帧最长 {max(swaps):.0f}ms（即「松手后又顿一下」那一帧）")
     if not all(c["has_server"] for c in chain):
         ev.append("后端没报 server_ms（老后端）：传输与 Flask 开销分不开，合在「传输 + 解析」里")
     where = list(dict.fromkeys(CHAIN_STAGES[k][1] for k, v in ranked[:3] if v >= 0.15 * med_total))
@@ -1294,6 +1355,16 @@ def analyze_report(report: dict) -> dict:
                 weight=0.4,
             )
         )
+    # 对照组：自动测试以取消收尾、不提交。它们松手后要是没有这一顿，顿挫就出在「提交」上
+    syn_tail = [s.release_dt for s in stats if s.source == "synthetic" and s.release_dt is not None]
+    if syn_tail:
+        note = (
+            f"对照：自动测试（取消收尾、不提交）松手那一刻最长只有 {max(syn_tail):.0f}ms——"
+            "顿挫出在提交修改上，不在停止拖动本身"
+        )
+        for f in findings:
+            if f.title == "松手那一刻顿一下（同步提交）" and max(syn_tail) < 2 * refresh:
+                f.evidence.append(note)
     findings = merge_findings(findings)
     findings.sort(key=lambda f: -f.severity)
     grades = grade(stats, findings, refresh, headroom, idle_late, auth)

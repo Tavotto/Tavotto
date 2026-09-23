@@ -17,6 +17,7 @@ import {
   perfRenderBegin,
   perfRenderPainted,
   perfRenderResponse,
+  perfRelease,
   perfSegmentBegin,
   perfSegmentEnd,
   perfSpan,
@@ -104,6 +105,27 @@ describe('录制中', () => {
     expect(seg.tailCounts).toEqual({ 'render.Rulers': 2 })
     expect(seg.spans['doc.txn_update']?.count).toBe(1)
     expect(seg.tailSpans['doc.txn_update']?.count).toBe(1)
+  })
+
+  it('perfRelease 记进尾巴，并计入那一帧的输入列', async () => {
+    perfStart()
+    frame(16)
+    perfSegmentBegin('element')
+    frame(16.7)
+    perfRelease(() => {
+      perfSegmentEnd() // 与 trackPointer 一致：片段在 onEnd 里结束
+      const t = performance.now()
+      while (performance.now() - t < 3) {
+        /* 忙等 3ms：同步提交 */
+      }
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    frame(40)
+    const seg = perfStop()!.segments[0]
+    expect(seg.tailSpans['input.release']?.count).toBe(1)
+    expect(seg.tailSpans['input.release_flush']?.count).toBe(1)
+    expect(seg.tail[0][2]).toBeGreaterThanOrEqual(2.5) // handler 列
   })
 
   it('perfInput 记 handler，并在紧随其后的微任务里记 react_flush', async () => {

@@ -1,5 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { perfInput, perfSpan } from '@/perf/core'
+import { perfInput, perfRelease, perfSpan } from '@/perf/core'
 import { msg, t, type UiMessage } from '@/i18n'
 // 元素名的措辞只有这一份（元素树 / 属性页 / 快速编辑都用它）：轮换的 toast
 // 要说「子图 2（右轴）」，不能在画布层再拼一套。
@@ -147,7 +147,8 @@ export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 
     window.removeEventListener('pointerup', up)
     window.removeEventListener('pointercancel', cancel)
     window.removeEventListener('lostpointercapture', cancel)
-    onEnd(moved, ev as PointerEvent, { cancelled })
+    // 性能探针（ADR 0075）：松手那一下的同步提交与随后的 React 重渲染
+    perfRelease(() => onEnd(moved, ev as PointerEvent, { cancelled }))
   }
   const up = finish(false)
   const cancel = finish(true)
