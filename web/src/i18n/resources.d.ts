@@ -1811,6 +1811,8 @@ export default interface Resources {
       "package_file_missing": "缺少上传文件",
       "package_invalid": "不是有效的项目包：{{reason}}",
       "package_schema_unsupported": "项目包里的文档既不是 schema 2 也不是 schema 3",
+      "perf_report_rejected": "性能报告格式不对，没有保存（{{reason}}）",
+      "perf_report_write_failed": "性能报告没能写进数据目录",
       "permission_denied": "无权限读取：{{path}}",
       "ppi_out_of_range": "分辨率 {{value}} 超出范围，应在 {{min}} 到 {{max}} 之间。",
       "preparation_not_found": "没有这个准备任务（或它属于别的项目）：{{id}}",
