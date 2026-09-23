@@ -85,6 +85,23 @@ describe('录制中', () => {
     expect(seg.end).not.toBeNull()
   })
 
+  it('松手后的计数与 span 记进尾巴，不混进拖动中的分子', () => {
+    perfStart()
+    perfSegmentBegin('element')
+    perfCount('render.Rulers')
+    perfSpan('doc.txn_update', () => undefined)
+    perfSegmentEnd()
+    // 松手后 600ms 内：悬停、commit、权威 SVG 换上来引起的渲染
+    perfCount('render.Rulers')
+    perfCount('render.Rulers')
+    perfSpan('doc.txn_update', () => undefined)
+    const seg = perfStop()!.segments[0]
+    expect(seg.counts).toEqual({ 'render.Rulers': 1 })
+    expect(seg.tailCounts).toEqual({ 'render.Rulers': 2 })
+    expect(seg.spans['doc.txn_update']?.count).toBe(1)
+    expect(seg.tailSpans['doc.txn_update']?.count).toBe(1)
+  })
+
   it('perfInput 记 handler，并在紧随其后的微任务里记 react_flush', async () => {
     perfStart()
     perfSegmentBegin('element')

@@ -71,6 +71,13 @@ export interface Segment {
   moves: number
   spans: Partial<Record<PerfSpan, SpanStat>>
   counts: Record<string, number>
+  /**
+   * 松手之后那 600ms 里的计数与 span，**与拖动中分开记**：松手后的悬停
+   * pointermove、commit、权威 SVG 换上来都会让组件重渲染，混进 `counts`
+   * 会让「每个 pointermove 引起几次渲染」的分子多出一截、分母却没变
+   */
+  tailSpans: Partial<Record<PerfSpan, SpanStat>>
+  tailCounts: Record<string, number>
   /** 片段开始 / 结束那一刻由 session 填的上下文（DOM 规模、文档规模……） */
   context: Record<string, unknown>
 }
@@ -130,11 +137,12 @@ function newAcc(): FrameAcc {
   return { handler: 0, flush: 0, raf: 0, moves: 0, firstMoveTs: null }
 }
 
-function target(r: Recording): Segment | null {
+/** 这一刻的记录落到哪：拖动中的片段，或者刚结束那段的尾巴 */
+function target(r: Recording): { seg: Segment; tail: boolean } | null {
   const s = r.current
-  if (s) return s
+  if (s) return { seg: s, tail: false }
   const last = r.segments.at(-1)
-  if (last?.tailUntil != null && perfNow() - r.t0 <= last.tailUntil) return last
+  if (last?.tailUntil != null && perfNow() - r.t0 <= last.tailUntil) return { seg: last, tail: true }
   return null
 }
 
@@ -144,9 +152,10 @@ function addSpan(name: PerfSpan, ms: number): void {
   if (name === 'input.handler') r.acc.handler += ms
   else if (name === 'input.react_flush') r.acc.flush += ms
   else if (name === 'raf.preview_write') r.acc.raf += ms
-  const seg = target(r)
-  if (!seg) return
-  const st = (seg.spans[name] ??= { count: 0, total: 0, max: 0, samples: [] })
+  const at = target(r)
+  if (!at) return
+  const bag = at.tail ? at.seg.tailSpans : at.seg.spans
+  const st = (bag[name] ??= { count: 0, total: 0, max: 0, samples: [] })
   st.count++
   st.total += ms
   if (ms > st.max) st.max = ms
@@ -189,8 +198,10 @@ export function perfInput(fn: () => void): void {
 export function perfCount(name: string): void {
   const r = rec
   if (!r) return
-  const seg = target(r)
-  if (seg) seg.counts[name] = (seg.counts[name] ?? 0) + 1
+  const at = target(r)
+  if (!at) return
+  const bag = at.tail ? at.seg.tailCounts : at.seg.counts
+  bag[name] = (bag[name] ?? 0) + 1
 }
 
 /* ----------------------------------------------------------------- 片段 */
@@ -221,6 +232,8 @@ export function perfSegmentBegin(kind: string): void {
     moves: 0,
     spans: {},
     counts: {},
+    tailSpans: {},
+    tailCounts: {},
     context: {},
   }
   r.current = seg

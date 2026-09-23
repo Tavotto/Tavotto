@@ -27,6 +27,7 @@ WKWebView 里**，而 WKWebView 的样式 / 布局 / 绘制代价与 Chromium �
 | 隐私 | 报告只有数字与枚举；面板 id、文件名、图内文字一律不进。留在本机，用户自己决定发给谁，Tavotto 不上传、不进遥测 | `perf/session.ts` 头注释；e2e 断言报告不含文件名 |
 | 报告落在哪 | `POST /api/perf/report` 写进 `data_dir()/perf-reports/`（文件名由后端生成、请求体不参与拼路径、读取处封顶 16MB），桌面版随即用既有的 `reveal_export` 在访达里选中它；浏览器模式另给一份下载。**不走 `<a download>`**：桌面壳没有注册下载处理器，wry 的 WKWebView 导航代理会把下载动作直接取消 | `engine/perfprobe.save_report`；`tests/test_perf_probe.py` 保存三条；e2e 断言数据目录里那份与下载的逐字节相同 |
 | 结论在哪判 | **不在产品里**。报告是原始数字（`tavotto-perf-probe/1`）；「卡在哪、改哪行、怎么改」由 `scripts/perf_report.py` 判（标准库，单份 / 多台机器对照 / HTML / JSON）。判据随代码演进，改一条规则不必发一个版本；产品界面只给一句帧率与超时比例 | `scripts/perf_report.py`；`tests/test_perf_probe.py` 分析器用例 |
+| 分析器怎么评 | 体检表八维（流畅度 / 响应 / 余量 / 松手 / 稳定性 / 渲染放大 / 机器 / 覆盖，A–D，没数据写「—」）+ 三档结论（严重 / 问题 / 提示），同一现象跨片段合并。**判不出就不判**：旧版报告（松手后计数没分开）不判渲染放大；小数值上的比值（WebKit 1ms 量化）不算趋势；起拖顿挫扣掉探针自己的开销 | `scripts/perf_report.py` 头注释；`tests/test_perf_probe.py` 分析器 20 条（含反向：流畅 / 量化噪声 / 旧版计数 / 点击不算拖动），9 条变异全红 |
 
 ## 1. 为什么拆成三份（输入 / 渲染 / 未归因）而不是只报帧率
 

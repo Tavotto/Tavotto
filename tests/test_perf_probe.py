@@ -95,14 +95,29 @@ def test_thermal_distinguishes_not_recorded_from_unknown():
 
 
 # ---------------------------------------------------------------- 分析器
+#
+# 每条用例给一份**卡点已知**的人工报告，断言分析器点名的是那一个卡点、级别对、
+# 指得出代码位置；同时有「不该报」的反向用例（流畅 / 量化噪声 / 旧版计数），
+# 否则一个什么都报的分析器也能全绿。
 
 
 def _row(dt, render=4.0, handler=0.5, flush=0.3, raf=0.2, moves=1, latency=20.0):
     return [dt, render, handler, flush, raf, moves, latency]
 
 
-def _seg(rows, kind="move", source="user", label=None, spans=None, counts=None, context=None):
-    return {
+def _seg(
+    rows,
+    kind="move",
+    source="user",
+    label=None,
+    spans=None,
+    counts=None,
+    context=None,
+    tail=None,
+    tail_counts=None,
+    legacy=False,
+):
+    seg = {
         "kind": kind,
         "source": source,
         "label": label,
@@ -110,36 +125,63 @@ def _seg(rows, kind="move", source="user", label=None, spans=None, counts=None, 
         "end": 1000,
         "tailUntil": 1600,
         "frames": rows,
-        "tail": [],
+        "tail": tail or [],
         "moves": sum(r[5] for r in rows),
         "spans": spans or {},
         "counts": counts or {},
-        "context": context or {},
+        "tailSpans": {},
+        "tailCounts": tail_counts or {},
+        "context": {"largest_svg_nodes": 5000, "probe_overhead_ms": 0, **(context or {})},
     }
+    if legacy:  # 旧版探针：没有把松手后的计数分开
+        del seg["tailCounts"], seg["tailSpans"]
+    return seg
 
 
-def _report(segments, idle=None, system=None):
+def _report(segments, idle=None, system=None, authority=None):
     return {
         "schema": PR.SCHEMA,
         "created_at": "2026-09-23T00:00:00Z",
         "started_at": "2026-09-23T00:00:00Z",
         "duration_ms": 10000,
-        "client": {"dpr": 2},
+        "client": {"dpr": 2, "viewport": {"w": 1280, "h": 800}},
         "system": system or {"model": "MacBookAir10,1", "cpu": "Apple M1", "memory_gb": 8.0},
         "idle_frame_ms": idle if idle is not None else [16.7] * 60,
         "segments": segments,
-        "authority": [],
+        "authority": authority or [],
     }
 
 
-def test_smooth_report_has_no_findings():
-    rows = [_row(16.7) for _ in range(120)]
-    a = PR.analyze_report(_report([_seg(rows)]))
+def _smooth(n=120, **kw):
+    return [_row(16.7, **kw) for _ in range(n)]
+
+
+def _titles(a, levels=PR.LEVELS):
+    return [f.title for f in a["findings"] if f.level in levels]
+
+
+def _find(a, prefix):
+    hits = [f for f in a["findings"] if f.title.startswith(prefix)]
+    assert hits, f"没有以「{prefix}」开头的结论：{_titles(a)}"
+    return hits[0]
+
+
+def _grade(a, dim):
+    return next(g for d, g, _ in a["grades"] if d == dim)
+
+
+def test_smooth_light_drag_has_no_problem_and_grades_a():
+    rows = _smooth(render=2.0, handler=0.3, flush=0.2)
+    a = PR.analyze_report(_report([_seg(rows, tail=_smooth(30))]))
     assert len(a["stats"]) == 1
-    assert a["findings"] == []
+    assert _titles(a, ("严重", "问题")) == []
+    assert _grade(a, "流畅度") == "A"
+    assert _grade(a, "余量") == "A"  # 每帧忙 2.5ms，刷新周期 16.7 → 6 倍以上
+    assert _grade(a, "松手") == "A"
+    assert _grade(a, "稳定性") == "A"
 
 
-def test_input_bound_drag_is_ranked_first_with_code_pointer():
+def test_input_bound_drag_points_at_txn_update_and_coalescing():
     # 每帧 2 个 pointermove、每个 12ms 的业务处理 → 帧间隔被输入处理撑到 ~33ms
     rows = [_row(33.4, render=4.0, handler=24.0, flush=3.0, moves=2) for _ in range(120)]
     spans = {
@@ -147,40 +189,42 @@ def test_input_bound_drag_is_ranked_first_with_code_pointer():
         "input.handler": {"count": 240, "total": 240 * 12.0, "max": 15, "samples": []},
         "input.react_flush": {"count": 240, "total": 240 * 1.5, "max": 3, "samples": []},
     }
-    counts = {"render.Inspector": 240, "render.PanelView": 240, "render.Rulers": 10}
-    a = PR.analyze_report(_report([_seg(rows, spans=spans, counts=counts)]))
-    top = a["findings"][0]
-    assert top.title == "拖动时输入处理太重"
-    joined = " ".join(top.where)
-    assert "documentStore.ts txnUpdate" in joined
-    # 渲染次数只列每个 pointermove 至少 0.3 次的组件：Rulers 不该出现
-    ev = " ".join(top.evidence)
-    assert "Inspector" in ev and "Rulers" not in ev
-    assert any("rAF 里调一次 onMove" in f for f in top.fix)
+    a = PR.analyze_report(_report([_seg(rows, spans=spans)]))
+    f = _find(a, "拖动时输入处理太重")
+    assert f.level == "严重"
+    assert "documentStore.ts txnUpdate" in " ".join(f.where)
+    assert any("rAF 里调一次 onMove" in x for x in f.fix)
+    assert any("produceWithPatches" in x for x in f.fix)
+    # 归因不能同时甩给渲染
+    assert not [t for t in _titles(a) if t.startswith("拖动时浏览器渲染")]
+    assert _grade(a, "流畅度") == "D"
 
 
-def test_render_bound_drag_names_svg_size():
+def test_render_bound_drag_names_svg_size_and_not_input():
     rows = [_row(40.0, render=34.0, handler=0.5, flush=0.2) for _ in range(120)]
-    ctx = {
-        "svg_nodes": 60000,
-        "largest_svg_nodes": 52000,
-        "dom_nodes": 70000,
-        "preview_modes": {"vector": 1},
-    }
+    ctx = {"svg_nodes": 60000, "largest_svg_nodes": 52000, "dom_nodes": 70000}
     a = PR.analyze_report(_report([_seg(rows, kind="element", context=ctx)]))
-    top = a["findings"][0]
-    assert top.title.startswith("拖动时浏览器渲染")
-    assert any("52000" in f for f in top.fix)
+    f = _find(a, "拖动时浏览器渲染")
+    assert f.level == "严重"
+    assert any("52000" in x for x in f.fix)
+    assert "拖动时输入处理太重" not in _titles(a)
 
 
-def test_growing_per_move_cost_is_reported():
+def test_growing_per_move_cost_is_reported_with_patch_count():
     rows = [_row(16.7 + i * 0.4, handler=0.2 + i * 0.12, flush=0.1) for i in range(150)]
-    ctx = {"txn_patches_at_end": 4200}
-    a = PR.analyze_report(_report([_seg(rows, context=ctx)]))
-    titles = [f.title for f in a["findings"]]
-    assert "越拖越慢：每次移动的成本随拖动时长增长" in titles
-    f = next(f for f in a["findings"] if f.title.startswith("越拖越慢"))
+    a = PR.analyze_report(_report([_seg(rows, context={"txn_patches_at_end": 4200})]))
+    f = _find(a, "越拖越慢")
     assert any("4200" in e for e in f.evidence)
+    assert _grade(a, "稳定性") in ("C", "D")
+
+
+def test_quantized_tiny_costs_are_not_a_trend():
+    # WebKit 1ms 分辨率：前段每帧 0.06ms、后段 0.13ms——比值 2 倍，绝对值是噪声
+    rows = [_row(16.7, handler=(0.0 if i % 16 else 1.0), flush=0.0) for i in range(100)]
+    rows += [_row(16.7, handler=(0.0 if i % 8 else 1.0), flush=0.0) for i in range(50)]
+    a = PR.analyze_report(_report([_seg(rows)]))
+    assert not [t for t in _titles(a) if t.startswith("越拖越慢")]
+    assert _grade(a, "稳定性") == "A"
 
 
 def test_synthetic_m1_vs_m3_gap_points_at_coalescing():
@@ -194,27 +238,110 @@ def test_synthetic_m1_vs_m3_gap_points_at_coalescing():
             ]
         )
     )
-    assert any(f.title == "输入频率越高越卡：每帧多个 pointermove 没有合并" for f in a["findings"])
+    f = _find(a, "输入频率越高越卡")
+    assert f.level == "问题"
+
+
+def test_release_hitch_is_graded_by_length():
+    short = [_row(16.7) for _ in range(10)] + [_row(55.0, render=1.0)]
+    long = [_row(16.7) for _ in range(10)] + [_row(150.0, render=1.0)]
+    a = PR.analyze_report(_report([_seg(_smooth(), tail=short)]))
+    assert _find(a, "松手之后卡一下").level == "提示"
+    b = PR.analyze_report(_report([_seg(_smooth(), tail=long)]))
+    assert _find(b, "松手之后卡一下").level == "问题"
+
+
+def test_start_hitch_subtracts_probe_overhead():
+    rows = [_row(70.0)] + _smooth()
+    # 第一帧 70ms 里 60ms 是探针自己采上下文：扣掉后只剩 10ms，不该报
+    a = PR.analyze_report(_report([_seg(rows, context={"probe_overhead_ms": 60})]))
+    assert "起拖那一下顿住" not in _titles(a)
+    b = PR.analyze_report(_report([_seg(rows, context={"probe_overhead_ms": 0})]))
+    assert _find(b, "起拖那一下顿住").level == "提示"
+
+
+def test_components_that_should_not_render_during_drag_are_named():
+    rows = _smooth()
+    counts = {"render.Inspector": 120, "render.CanvasHud": 120, "render.OverlaySvg": 120}
+    a = PR.analyze_report(_report([_seg(rows, counts=counts)]))
+    f = _find(a, "拖动中不该动的组件在跟着重渲染")
+    assert f.level == "问题"
+    assert "Inspector" in " ".join(f.evidence)
+    # 跟手的读数 / 选框每帧一次是预期，不点名
+    assert "CanvasHud" not in " ".join(f.evidence)
+    assert "Inspector.tsx" in " ".join(f.where)
+
+
+def test_legacy_report_does_not_judge_render_amplification():
+    counts = {"render.Inspector": 120, "store.document": 120}
+    a = PR.analyze_report(_report([_seg(_smooth(), kind="element", counts=counts, legacy=True)]))
+    assert "拖动中不该动的组件在跟着重渲染" not in _titles(a)
+    assert "图内元素拖动途中在写文档" not in _titles(a)
+    assert _find(a, "旧版探针录的报告")
+    assert _grade(a, "渲染放大") == "—"
+
+
+def test_same_issue_in_many_segments_is_one_finding():
+    tail = [_row(16.7) for _ in range(5)] + [_row(60.0, render=1.0)]
+    a = PR.analyze_report(_report([_seg(_smooth(), tail=tail) for _ in range(3)]))
+    hits = [f for f in a["findings"] if f.title == "松手之后卡一下"]
+    assert len(hits) == 1
+    assert hits[0].evidence[0].startswith("出现在 3 段")
+
+
+def test_saturated_main_thread_is_called_out_before_it_drops_frames():
+    # 帧间隔还在 1.5 倍以内（不算超时），但主线程每帧忙 17ms：已经没有余量
+    rows = [_row(20.0, render=14.0, handler=2.0, flush=1.0) for _ in range(120)]
+    a = PR.analyze_report(_report([_seg(rows)]))
+    f = _find(a, "主线程已经满载")
+    assert f.level == "问题"
+    assert _grade(a, "余量") == "D"
+
+
+def test_latency_without_jank_gets_the_right_advice():
+    rows = [_row(16.7, latency=70.0) for _ in range(120)]
+    a = PR.analyze_report(_report([_seg(rows)]))
+    f = _find(a, "拖动跟手性差")
+    assert any("帧率正常而延迟高" in x for x in f.fix)
+
+
+def test_scene_complexity_correlates_with_render_cost():
+    segs = [
+        _seg([_row(16.7, render=r) for _ in range(60)], context={"largest_svg_nodes": n})
+        for n, r in ((300, 1.0), (3000, 3.0), (9000, 7.0), (20000, 12.0))
+    ]
+    a = PR.analyze_report(_report(segs))
+    f = _find(a, "图越复杂，拖动时渲染越慢")
+    assert any("r=+" in e for e in f.evidence)
 
 
 def test_clicks_are_not_drags():
     # 一次点击：几帧、没有 pointermove。它不是拖动，不进统计
     a = PR.analyze_report(_report([_seg([_row(16.7, moves=0) for _ in range(4)])]))
     assert a["stats"] == []
+    assert "这份报告能下的结论有限" in _titles(a)
+
+
+def test_coverage_asks_for_auto_test_and_a_complex_figure():
+    a = PR.analyze_report(_report([_seg(_smooth(), context={"largest_svg_nodes": 300})]))
+    ev = " ".join(_find(a, "这份报告能下的结论有限").evidence)
+    assert "自动测试" in ev and "300" in ev
 
 
 def test_machine_state_is_called_out():
-    rows = [_row(16.7) for _ in range(60)]
     sysf = {
         "model": "MacBookAir10,1",
         "low_power_mode": True,
         "power_source": "battery",
         "rosetta": True,
     }
-    a = PR.analyze_report(_report([_seg(rows)], system=sysf))
-    f = next(f for f in a["findings"] if f.title.startswith("机器状态"))
+    a = PR.analyze_report(_report([_seg(_smooth(60))], system=sysf))
+    f = _find(a, "机器状态")
     ev = " ".join(f.evidence)
     assert "低电量" in ev and "电池" in ev and "Rosetta" in ev
+    # 改法只列与出现的状态对应的那几条
+    assert not any("活动监视器" in x for x in f.fix)
+    assert _grade(a, "机器") == "C"
 
 
 def test_cli_writes_html_and_json(tmp_path):
@@ -223,10 +350,15 @@ def test_cli_writes_html_and_json(tmp_path):
     p.write_text(json.dumps(_report([_seg(rows)])), encoding="utf-8")
     out_html = tmp_path / "r.html"
     out_json = tmp_path / "f.json"
-    assert PR.main([str(p), "--html", str(out_html), "--json", str(out_json)]) == 0
-    assert "<svg" in out_html.read_text(encoding="utf-8")
+    assert PR.main([str(p), str(p), "--html", str(out_html), "--json", str(out_json)]) == 0
+    page = out_html.read_text(encoding="utf-8")
+    assert "<svg" in page and "机器对照" in page and "评分" in page
     payload = json.loads(out_json.read_text(encoding="utf-8"))
-    assert payload[0]["findings"][0]["title"] == "拖动时输入处理太重"
+    titles = [f["title"] for f in payload[0]["findings"]]
+    assert "拖动时输入处理太重" in titles
+    # 每一维都在（没有数据的写「—」）：多份报告对照时列才对得上
+    dims = [g["dimension"] for g in payload[0]["grades"]]
+    assert dims == ["流畅度", "响应", "余量", "松手", "稳定性", "渲染放大", "机器", "覆盖"]
 
 
 def test_rejects_foreign_json(tmp_path):
