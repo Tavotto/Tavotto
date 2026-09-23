@@ -128,9 +128,10 @@ L3 原始证据（已脱敏：主目录换成 `~`、会话元数据打码）在
 
 1. **全新机器装不上（Q6-C）。** MCP server 只随 Codex 插件分发；WorkBuddy 托管 Python 运行时能装 PyPI 包，
    但 PyPI 上的 `tavotto` 不含 MCP server 与画布。
-2. **Tavotto 的编辑会话只活在 server 进程内存里。** 在 Codex 里一直成立（一个任务一个长连接进程），在
-   WorkBuddy 里被 P0-2 打破。即使 WorkBuddy 修好路由，进程回收仍会让会话丢失——需要「按 `session_id`
-   在新进程里恢复」的能力（见推荐方案）。
+2. ~~**Tavotto 的编辑会话只活在 server 进程内存里。**~~ **已处理（ADR 0078）**：会话在提交点落盘，
+   新进程收到未知 `session_id` 时先过当前连接的 `RootAuthority` 再按记录重建（真 stdio 两进程接力用例
+   看护）。它修的是「调用到了、但到的是另一个进程」这一半；P0-1 / P0-2 里「调用到不了」的那一半仍只有
+   WorkBuddy 能修。
 3. **反向调用 UI 型工具会再开一张画布卡片。** L3：画布自己调 `tavotto_apply_overrides` 后，WorkBuddy
    `openHostApp` 又为这次调用建了一个新实例（`toolCallId=(none)`）。反向调用通了之后，每次拖动可能多出
    一张卡片，待验。
@@ -183,8 +184,7 @@ Tavotto Engine + Canvas
   patches（override 语义），所以「在新进程里按 `session_id` 重建会话」只需要把会话描述（项目、stem、
   规范、已提交的 patches 与合同）落在 `engine/config.data_dir()` 下，新进程收到未知会话时先过
   `RootAuthority` 再重开渲染。这把 Tavotto 从「依赖一个长连接进程」改成「进程可替换」，对 Codex
-  同样有益（Codex 改配置也会重启 server，见 codex-desktop-canvas.md 末节）。它是架构改动，需要 ADR，
-  不在本 spike 内做。
+  同样有益（Codex 改配置也会重启 server，见 codex-desktop-canvas.md 末节）。**已按 ADR 0078 实现**。
 * **Buddy App：没有证据**，按任务书也不该验证。
 
 **但无论 Tavotto 怎么改，P0-1（出口审查拦截）只有 WorkBuddy 能修；** P0-2 的路由（反向调用落到新的
