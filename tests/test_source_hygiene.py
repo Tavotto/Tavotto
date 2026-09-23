@@ -435,9 +435,7 @@ def _pnpm_action_versions(text: str) -> list[tuple[int, str]]:
 _PNPM_USES = [
     (wf, ln, ver)
     for wf in _WORKFLOWS
-    for ln, ver in _pnpm_action_versions(
-        (_WORKFLOW_DIR / wf).read_text(encoding="utf-8")
-    )
+    for ln, ver in _pnpm_action_versions((_WORKFLOW_DIR / wf).read_text(encoding="utf-8"))
 ]
 
 
@@ -474,9 +472,11 @@ def test_pnpm_action_setup_is_pinned_to_an_exact_version():
     这里只管"钉没钉死"和"是不是同一个值"，不管钉的是哪个版本：版本由人按
     实测选，判据只负责挡住"又写回大版本"和"只改了一半"。
     """
-    loose = [f"{wf}:{ln} → {ver or '(没找到 version)'}"
-             for wf, ln, ver in _PNPM_USES
-             if not re.fullmatch(r"\d+\.\d+\.\d+", ver)]
+    loose = [
+        f"{wf}:{ln} → {ver or '(没找到 version)'}"
+        for wf, ln, ver in _PNPM_USES
+        if not re.fullmatch(r"\d+\.\d+\.\d+", ver)
+    ]
     assert loose == [], (
         "这些 pnpm/action-setup 没有钉到确切的补丁版本:\n  "
         + "\n  ".join(loose)
@@ -492,7 +492,6 @@ def test_every_pnpm_pin_is_the_same_version():
     而两边的 diff 看起来都"改对了"。
     """
     versions = {ver for _, _, ver in _PNPM_USES}
-    assert len(versions) == 1, (
-        f"仓库里同时存在多个 pnpm 版本: {sorted(versions)}\n"
-        + "\n".join(f"  {wf}:{ln} → {ver}" for wf, ln, ver in _PNPM_USES)
+    assert len(versions) == 1, f"仓库里同时存在多个 pnpm 版本: {sorted(versions)}\n" + "\n".join(
+        f"  {wf}:{ln} → {ver}" for wf, ln, ver in _PNPM_USES
     )
