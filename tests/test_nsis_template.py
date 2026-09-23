@@ -53,9 +53,7 @@ BRAND_STRINGS = (
 )
 
 
-def _pre_function_for(
-    macro: str, lines: list[str] | None = None, hook: str = "PRE"
-) -> str | None:
+def _pre_function_for(macro: str, lines: list[str] | None = None, hook: str = "PRE") -> str | None:
     """返回某个页面宏生效的 MUI_PAGE_CUSTOMFUNCTION_<hook>（PRE/SHOW/LEAVE）。
 
     MUI2 在每次插入页面后会 unset 这个 define，所以「生效的那一个」就是
@@ -101,9 +99,9 @@ def test_directory_page_only_on_first_interactive_install():
     assert _pre_function_for("MUI_PAGE_DIRECTORY") == "SkipDirectoryIfInstalled"
     body = _function_body("SkipDirectoryIfInstalled")
     for cond in ("$PassiveMode = 1", "$UpdateMode = 1", '$ExistingInstall != ""'):
-        assert re.search(
-            rf"\$\{{IfThen\}} {re.escape(cond)} \$\{{\|\}} Abort \$\{{\|\}}", body
-        ), f"目录页缺少跳过条件 {cond}"
+        assert re.search(rf"\$\{{IfThen\}} {re.escape(cond)} \$\{{\|\}} Abort \$\{{\|\}}", body), (
+            f"目录页缺少跳过条件 {cond}"
+        )
     # 不能无条件 Abort——那就退回了「恒不可见」
     assert not re.search(r"^\s*Abort\s*$", body, re.M)
 
