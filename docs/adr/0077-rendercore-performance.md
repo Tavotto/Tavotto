@@ -100,7 +100,8 @@ render child 的单张预算是 64 M 像素（`renderchild.DEFAULT_MAX_PIXELS`�
 | 问题 | 裁决 | 落点 / 证据 |
 |---|---|---|
 | 什么时候切带 | 整页像素**超过** `RenderHost.max_pixels` 才切（`banded.needs_bands`）；预算以内一律整页渲染一次、与从前逐字节相同——PDFium 按带渲染与整页**不逐字节相同**（抗锯齿随位图原点 / 尺寸差 1–5 级），这条边界因此是合同的一部分 | `test_within_the_budget_nothing_changes`、`test_an_export_within_the_budget_still_renders_the_whole_page_once`（页比一带大、仍只渲染一次） |
-| 带怎么切 | 带高 = `band_rows_for(宽)` = `BAND_PIXELS`（16 M）÷ 宽——**只由宽度定**，同一输入永远同一份像素 | `test_the_band_layout_is_fixed_so_the_same_input_gives_the_same_files` |
+| 带怎么切 | 带高 = min(`band_rows_for(宽)` = `BAND_PIXELS`（16 M）÷ 宽, host 单张预算 ÷ 宽 − 上下重叠)——默认预算（64 M）下**只由宽度定**，同一输入永远同一份像素；预算配得比带目标小时按预算切，连一行都放不下就在任何一带之前拒（Codex #513 P2） | `test_the_band_layout_is_fixed_so_the_same_input_gives_the_same_files`、`test_band_height_adapts_to_a_host_budget_smaller_than_the_band_target` |
+| 整页尺寸核对 | 每一带都核 child 回报的整页宽高 == 父进程按页面尺寸 × dpi 独立算出的；不等就是 `render_child_protocol`——否则 child 算页盒 / UserUnit 出偏差时，按计划高度拼出的是一张被悄悄裁掉的图（Codex #513 P2） | `test_a_band_from_a_page_whose_full_size_disagrees_with_the_plan_is_refused` |
 | 接缝 | 每带上下各多渲 `BAND_OVERLAP`（4）行、只交出中间：笔画跨过带界时 PDFium 在位图边缘算覆盖率与整页不同，**u06 @ 150 ppi 接缝那一行差到 88 级**；多渲 1 行就回到抗锯齿噪声（≤ 5 级），4 行给更宽的效果留余量 | `test_banded_pixels_match_a_whole_page_render_within_antialiasing_noise`（与整页比：≤ 8 级、≤ 1% 字节） |
 | child 协议 | `render` 多三个可选字段 `band_y0` / `band_rows` / `band_overlap`：整页尺寸照旧算，位图只接住这一带（整数像素平移 `start_y = -(y0 - 上重叠)`）；预算按**这一带（含重叠）**判、整页另有 `max_total_pixels`（512 M：A3 @ 1200 的 278 M 在内，RGBA 最坏 2 GB 原始像素仍在经典 TIFF 的 4 GiB 偏移之内）。两侧都判；越界的带 `bad_request`。父进程核回来的就是要的那一带，不是就 `render_child_protocol`（锁内 reap） | `test_the_child_checks_band_bounds_and_both_budgets_itself`、`test_a_child_that_answers_a_band_request_with_something_else_is_reaped` |
 | 一次栅格、两个容器 | 要了 PNG 与 TIFF 时每一带只渲染一次、同时喂给两个写入器（RC-052 / 053 在条带下照样成立）；作业里 child 被叫的次数 = 带数 + 1（算键的 ping） | `test_an_export_job_over_the_budget_writes_both_formats_from_one_banded_pass` |
@@ -120,9 +121,9 @@ render child 的单张预算是 64 M 像素（`renderchild.DEFAULT_MAX_PIXELS`�
 PNG 体积比旧后端大（CAD 1.4 → 2.3 MB、海报 34 → 39 MB）：RenderCore 的 PNG 编码器从 U07 起就是「每行滤波 0」，旧后端（MuPDF）
 做行滤波。这不是本 ADR 引入的差异，另立题目。
 
-反证 16/16：child 不留上下重叠 / 平移不算上重叠 / 不裁重叠行 / 不按带判单张预算 / 不判整页上限 / 不判带越界、host 不核回来的带、
+反证 19/19：child 不留上下重叠 / 平移不算上重叠 / 不裁重叠行 / 不按带判单张预算 / 不判整页上限 / 不判带越界、host 不核回来的带、
 banded 不先判整页上限、预算内也切带、PNG / TIFF 各渲一遍、带高随预算变、PNG 按带切块、TIFF 按带切 strip、流不提前交出、abort 不收
-线程、PNG 写入器不核行数——各自红在上表的用例上。途中两条漏网：「banded 不先判整页上限」被 host 的父侧判据兜住、请求数不变，
+线程、PNG 写入器不核行数、带高不看 host 预算、放不下一行也不先拒、不核整页尺寸——各自红在上表的用例上。途中两条漏网：「banded 不先判整页上限」被 host 的父侧判据兜住、请求数不变，
 而它真正的作用是**不在用户路径上留空文件**——判据补上「文件不存在」；「预算内也切带」在一带装得下整页的小页上是等价变异，
 判据改用比一带大、仍在预算内的页（A4 @ 600 ppi 正是这种）。
 
