@@ -69,6 +69,9 @@
   结论与前后对照都写进 `docs/perf-baseline.md`——**改性能前先在那儿指出一个
   数字**。它**默认不隔离 HOME**（重置 HOME 会让每次冷启动多出 9 秒字体缓存
   重建；要量首次体验用 `--fresh-home`）。
+- **拖动性能（前端，用户机器上）**：性能探针（ADR 0075）在用户自己的 Tavotto 里录拖动，
+  报告用 `python scripts/perf_report.py <报告>.json --html out.html` 分析；用法见
+  `docs/perf-probe-guide.md`。后端基线量不到拖动（拖动途中后端一次都不被惊动）。
 - 后端冒烟（示例项目）：`tavotto --figures examples/figures --no-browser
   --insecure-no-auth` 后 `curl -X POST /api/engine/render
   -d '{"id":"Fig1_kinetics.pdf","patches":[]}'`（不带 `--insecure-no-auth` 时

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { Images } from '@/components/ui/icons'
@@ -26,6 +27,7 @@ import { Rulers, RULER_SIZE } from './Rulers'
 import { startDraw, startMarquee, startPan } from './interactions'
 
 export function CanvasStage() {
+  perfCount('render.CanvasStage')
   const outerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<HTMLDivElement>(null)
   const [outer, setOuter] = useState({ w: 0, h: 0 })

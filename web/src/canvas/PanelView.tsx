@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { perfCount, perfRenderPainted } from '@/perf/core'
 import { t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { enginePreviewPng, panelSrc, type ManifestElement } from '@/lib/api'
@@ -72,6 +73,7 @@ import { openQuickEdit } from './quickEditStore'
 const badge = (key: string) => translate(`panelBadge.${key}`, { ns: 'workspace' })
 
 export function PanelView({ obj }: { obj: PanelObject }) {
+  perfCount('render.PanelView')
   const zoom = useViewportStore((s) => s.zoom)
   // 「写回原始文件」后 mtime 变化 → URL 变化 → 画布上已放置的同源面板自动重取
   const mtime = useAssetStore((s) => s.byId[obj.fileId]?.mtime)
@@ -148,6 +150,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     const st = useRenderStore.getState()
     const cur = st.byKey[renderKeyOf(obj)]?.svg ? renderKeyOf(obj) : (st.latest[obj.fileId] ?? '')
     reattachPreview(panelId, cur)
+    // 性能探针（ADR 0075）：这一版 SVG 已经进了 DOM
+    perfRenderPainted(cur)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [svgHtml, panelId])
 
@@ -494,6 +498,7 @@ function ElementHitLayer({
   layout: Layout
   rot: PanelRotation
 }) {
+  perfCount('render.ElementHitLayer')
   const manifest = useExactPanelManifest(obj)
   const setHoverGid = useInteractionStore((s) => s.setHoverGid)
   const zoom = useViewportStore((s) => s.zoom)

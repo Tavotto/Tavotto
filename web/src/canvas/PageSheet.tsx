@@ -1,3 +1,4 @@
+import { perfCount } from '@/perf/core'
 import { mmToWorld } from '@/store/viewportStore'
 
 interface PageSheetProps {
@@ -28,6 +29,7 @@ export function PageSheet({
   margin = 0,
   showSafeArea,
 }: PageSheetProps) {
+  perfCount('render.PageSheet')
   const wPx = mmToWorld(w)
   const hPx = mmToWorld(h)
   const cell = mmToWorld(Math.max(gridSize, 0.5))

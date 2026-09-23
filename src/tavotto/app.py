@@ -79,6 +79,7 @@ from .engine import (
     nativesession as engine_nativesession,
     originalspec as engine_originalspec,
     patchspec as engine_patchspec,
+    perfprobe as engine_perfprobe,
     pool as engine_pool,
     preparation as engine_preparation,
     probe as engine_probe,
@@ -2350,6 +2351,45 @@ def _read_frontend_payload() -> tuple[dict | None, bool]:
     return body, False
 
 
+@app.get("/api/perf/system")
+def api_perf_system():
+    """性能探针的机器事实（ADR 0075）：机型 / CPU / 内存 / 电源 / 降频 / Rosetta。
+
+    只回硬件与电源状态，不回主机名、用户名、路径。报告由前端组装、用户自己
+    保存；这个端点本身不写盘、不上传。
+    """
+    resp = jsonify(engine_perfprobe.system_facts())
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/perf/report")
+def api_perf_report():
+    """保存一份性能探针报告（ADR 0075），回 ``{dir, name}`` 供桌面壳在访达里显示。
+
+    桌面壳的 WKWebView 会取消 ``<a download>``，所以报告不能走浏览器下载。
+    文件名由后端生成；请求体只校验形状（schema 字面量 + 片段列表 + 大小上限），
+    不参与拼路径。不上传、不进遥测。
+    """
+    # 上限卡在读取本身（chunked 请求没有 Content-Length，理由同诊断包的
+    # `_read_frontend_payload`）：多读一个字节就是「超了」的判据
+    raw = request.stream.read(engine_perfprobe.MAX_REPORT_BYTES + 1)
+    try:
+        dest = engine_perfprobe.save_report(raw)
+    except engine_perfprobe.ReportRejected as exc:
+        return jsonify(
+            {
+                "error": f"不是性能探针报告（{exc}）",
+                "code": "perf_report_rejected",
+                "params": {"reason": str(exc)},
+            }
+        ), 400
+    except OSError:
+        app.logger.exception("性能报告写入失败")
+        return jsonify({"error": "性能报告写入失败", "code": "perf_report_write_failed"}), 500
+    return jsonify({"dir": str(dest.parent), "name": dest.name})
+
+
 @app.get("/api/diagnostics/summary")
 def api_diagnostics_summary():
     """给「复制诊断」用的**纯文本**报告（已脱敏）。
@@ -3660,6 +3700,10 @@ def api_engine_render():
     # 控制面的 queue_wait/total。日志里一行结构化（可 grep 可喂脚本），响应里
     # 原样交给前端——「慢」这件事必须能指到具体某一段上，不能靠猜。
     timings = {**(resp.get("timings") or {}), "worker_get_ms": get_ms}
+    # 服务端在这次请求上花的总时间（取会话起、到组装响应前）。前端拿「请求往返 − 它」
+    # 就是传输 + JSON 解析——没有它，松手到落定的那 0.5 秒分不清是后端慢还是搬运慢
+    # （2026-09-23 一份 M2 Pro 报告里 commit→权威 500ms，而 worker 各段加起来说不清）
+    timings["server_ms"] = round((time.perf_counter() - t_get) * 1000, 3)
     LOG.info(
         "引擎渲染: %s %.0fms%s timings=%s",
         stem,

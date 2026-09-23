@@ -6,6 +6,8 @@ import { formatDateTime } from '@/i18n/format'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { apiUrl, withProject } from '@/lib/session'
 import { cn } from '@/lib/utils'
+import { usePerfProbeStore } from '@/perf/probeStore'
+import { useUiStore } from '@/store/uiStore'
 import { useEnvStore } from '@/store/envStore'
 import { EngineEnvironmentCard } from '../EngineEnvironmentCard'
 import { RefreshCw } from '@/components/ui/icons'
@@ -151,6 +153,8 @@ export function DiagnosticsSettings() {
 
       <DiagnosticsReportSection />
 
+      <PerfProbeSection />
+
       {/* 技术详情：来源 / 版本 / 完整路径 / 换解释器。默认折叠 */}
       <DiagnosticDisclosure title={st('techDetails')}>
         {env?.ok && (
@@ -264,6 +268,26 @@ function CheckLine({ check: c, repairCard }: { check: Check; repairCard: boolean
  * 只有一种读法——名字在左、控件贴右。名字不重复：分区标题已经叫「诊断报告」，
  * 不在下面再摆一行叫「诊断包」的标签。
  */
+/**
+ * 性能分析（ADR 0075）：点「开始」关掉设置、在画布上挂出探针面板。报告只含
+ * 数字，由用户自己保存、自己决定发给谁。
+ */
+function PerfProbeSection() {
+  useTranslation('dialogs')
+  const start = () => {
+    if (usePerfProbeStore.getState().start()) useUiStore.getState().setSettingsOpen(false)
+  }
+  return (
+    <SettingSection title={st('diagnostics.perfTitle')}>
+      <SettingRow label={st('diagnostics.perfRow')}>
+        <Button variant="secondary" size="sm" onClick={start} data-perf-probe-start>
+          {st('diagnostics.perfStart')}
+        </Button>
+      </SettingRow>
+    </SettingSection>
+  )
+}
+
 function DiagnosticsReportSection() {
   useTranslation('dialogs')
   const [phase, setPhase] = useState<'idle' | 'busy' | 'ready' | 'error'>('idle')

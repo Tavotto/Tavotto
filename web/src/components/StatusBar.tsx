@@ -1,4 +1,5 @@
 import { useEffect, useRef, type FocusEvent, type ReactNode } from 'react'
+import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { Check, CircleAlert, Info, Lightbulb, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
@@ -44,6 +45,7 @@ const HUD_BOX =
   'inline-flex min-h-7 max-w-full flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-md bg-surface px-2.5 py-1.25 text-sm shadow-pop'
 
 export function CanvasHud() {
+  perfCount('render.CanvasHud')
   const { t } = useTranslation('workspace')
   const kind = useInteractionStore((s) => s.kind)
   const cursor = useInteractionStore((s) => s.cursor)

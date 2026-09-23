@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { perfCount } from '@/perf/core'
 import { Pin } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
@@ -27,6 +28,7 @@ export function LeftPanel({
   /** 开合动效由 App 的 usePresence 驱动：收起时先播完退场再卸载 */
   state?: PresenceState
 }) {
+  perfCount('render.LeftPanel')
   const { t } = useTranslation('workspace')
   const tab = useUiStore((s) => s.leftTab)
   const width = useUiStore((s) => s.leftWidth)

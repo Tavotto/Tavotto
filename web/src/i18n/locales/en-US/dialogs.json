@@ -981,7 +981,10 @@
       "refetch": "Fetch again",
       "reportTitle": "Diagnostic report",
       "summaryFailing": "{{count}} problem(s)",
-      "summaryOk": "Runtime environment checks passed"
+      "summaryOk": "Runtime environment checks passed",
+      "perfRow": "Record drag performance",
+      "perfStart": "Start",
+      "perfTitle": "Performance"
     },
     "export": {
       "defaultFormats": "Default formats",
@@ -1533,5 +1536,23 @@
         }
       }
     }
+  },
+  "perfProbe": {
+    "back": "Back",
+    "close": "Close",
+    "discard": "Discard",
+    "dragCount": "Drags recorded: {{count}}",
+    "finish": "Finish and save",
+    "noData": "No drags were recorded, so no report was saved.",
+    "notDraggable": "Nothing draggable there. Try another spot.",
+    "pickTarget": "Click the object to test. Keep the mouse still while the test runs.",
+    "recording": "Recording. Drag whatever feels slow, as you normally would.",
+    "revealFailed": "Couldn't show the file in the file manager. It's at: {{path}}",
+    "runTest": "Auto test",
+    "running": "Auto test running ({{pass}}/{{total}}). Keep the mouse still.",
+    "saved": "Report saved. It contains numbers only (no file names, figure text, or paths), so you can send it to the developers as is.",
+    "stop": "Stop",
+    "summary": "{{fps}} fps on average, {{jank}}% of frames late",
+    "title": "Performance probe"
   }
 }

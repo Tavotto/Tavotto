@@ -1,4 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
+import { perfInput, perfRelease, perfSpan } from '@/perf/core'
 import { msg, t, type UiMessage } from '@/i18n'
 // 元素名的措辞只有这一份（元素树 / 属性页 / 快速编辑都用它）：轮换的 toast
 // 要说「子图 2（右轴）」，不能在画布层再拼一套。
@@ -136,7 +137,8 @@ export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 
     const dy = ev.clientY - startY
     if (!moved && Math.abs(dx) + Math.abs(dy) < threshold) return
     moved = true
-    onMove(ev, dx, dy)
+    // 性能探针（ADR 0075）：量业务处理 + 紧随其后的 React 同步重渲染；没录制时直接调用
+    perfInput(() => onMove(ev, dx, dy))
   }
   const finish = (cancelled: boolean) => (ev: Event) => {
     if (done) return
@@ -145,7 +147,8 @@ export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 
     window.removeEventListener('pointerup', up)
     window.removeEventListener('pointercancel', cancel)
     window.removeEventListener('lostpointercapture', cancel)
-    onEnd(moved, ev as PointerEvent, { cancelled })
+    // 性能探针（ADR 0075）：松手那一下的同步提交与随后的 React 重渲染
+    perfRelease(() => onEnd(moved, ev as PointerEvent, { cancelled }))
   }
   const up = finish(false)
   const cancel = finish(true)
@@ -264,7 +267,7 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
           w: primary.w,
           h: primary.h,
         }
-        const snap = snapMove(moving, cands, snapTolMm(t))
+        const snap = perfSpan('snap.compute', () => snapMove(moving, cands, snapTolMm(t)))
         dx += snap.dx
         dy += snap.dy
         snapX = snap.guideXs

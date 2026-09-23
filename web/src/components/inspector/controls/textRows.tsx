@@ -1,5 +1,6 @@
 import { memo, useCallback, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { perfCount } from '@/perf/core'
 import { RotateCcw, TextAlignCenter, TextAlignEnd, TextAlignStart } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
@@ -142,6 +143,8 @@ function FontFamilyRowView({
    */
   unavailable?: readonly string[]
 }) {
+  // 性能探针（ADR 0075）：它下面挂着本机字体并表的几百个选项，重画一次很贵
+  perfCount('render.FontFamilyRow')
   const label = tc('font')
   const missing = new Set(unavailable)
   return (

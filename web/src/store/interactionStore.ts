@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { perfSegmentBegin, perfSegmentEnd } from '@/perf/core'
 import type { Rect4 } from '@/lib/axesLayout'
 import type { Rect } from '@/lib/geometry'
 
@@ -70,8 +71,13 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   cursor: null,
   pendingGuide: null,
 
-  begin: (kind) => set({ kind }),
-  end: () =>
+  // 一次拖动 = 性能探针的一个片段（ADR 0075）；没在录制时两个调用都是空转
+  begin: (kind) => {
+    perfSegmentBegin(kind)
+    set({ kind })
+  },
+  end: () => {
+    perfSegmentEnd()
     set({
       kind: 'none',
       marquee: null,
@@ -82,7 +88,8 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       gidDrag: null,
       arrowPreview: null,
       elementPreview: null,
-    }),
+    })
+  },
   setMarquee: (marquee) => set({ marquee }),
   setDraft: (draft) => set({ draft }),
   setSnap: (snapXs, snapYs) =>

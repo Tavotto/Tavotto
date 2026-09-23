@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { perfCount } from '@/perf/core'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { beginCrop, enterElementEdit, groupMates } from '@/store/actions'
@@ -16,6 +17,7 @@ import { TextView } from './TextView'
 
 /** 世界层里的单个对象：只负责定位与命中，选择框/手柄交给屏幕层的 OverlaySvg */
 export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject }) {
+  perfCount('render.ObjectView')
   const editing = useUiStore((s) => s.editingTextId === obj.id)
   const cropping = useUiStore((s) => s.cropTargetId === obj.id)
   // 绘制工具 / 空格平移时世界层整体 pointer-events:none，靠继承让对象一起失去命中

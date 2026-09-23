@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { perfRenderApplied, perfRenderBegin, perfRenderResponse } from '@/perf/core'
 import { msg, type UiMessage } from '@/i18n'
 import { create } from 'zustand'
 import {
@@ -521,6 +522,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           policy: policy ?? 'immediate',
           preview_dpi: dpi ?? null,
         })
+        let perfHandle = -1
         const ctrl = new AbortController()
         const timeoutMs = watchdogMs(fileId)
         let timedOut = false
@@ -536,9 +538,12 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 这里以下的逻辑一行都不分叉
           const opts = { signal: ctrl.signal, previewDpi: dpi }
           const transport = engineTransport()
+          // 性能探针（ADR 0075）：松手 → 图落定那段时间的第一个时刻
+          perfHandle = perfRenderBegin(key, current.length)
           const res = transport
             ? await transport.render(fileId, current, opts)
             : await engineRender(fileId, current, opts)
+          perfRenderResponse(perfHandle, true, res.timings, res.svg?.length)
           if (res.environment_switched) {
             // 内置环境缺包，Tavotto 自己找到并换用了项目的 .venv（ADR 0018）。
             // 一条轻量 toast 就够——**不弹阻断式对话框**：用户点的是「渲染」，
@@ -615,6 +620,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 最新那一版是 latest，本来就该 pin；但**晚到的旧变体**不是——它
           // 既不在画布上也不是 latest，却同样被自己的 busy 挡住。收尾那一趟
           // （外层 finally）才是让它收敛的那一次。
+          perfRenderApplied(perfHandle)
           get().evictSvgBudget()
           recordDiagnosticEvent({
             type: 'render.success',
@@ -628,6 +634,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             rev: res.rev,
           })
         } catch (err) {
+          perfRenderResponse(perfHandle, false)
           // 诊断先记，**再**分「被新请求顶掉」还是「终态失败」——被顶掉的那次
           // 同样是一次真实的失败尝试，不记的话 trace 里就是一条有去无回的
           // render.request，读起来像卡死
