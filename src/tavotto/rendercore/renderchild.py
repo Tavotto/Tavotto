@@ -41,6 +41,21 @@ from pathlib import Path
 
 #: 默认像素预算：约 8000×8000 RGBA = 256 MiB。超过的请求父进程直接拒绝，child 再判一次。
 DEFAULT_MAX_PIXELS = 64_000_000
+#: 条带栅格（ADR 0077 P2）：整页像素超过 `max_pixels` 时按行带分几次渲染，**每一带**仍受 `max_pixels` 约束；
+#: 整页的上限是这个数（A3 @ 1200 ppi ≈ 278 M；RGBA 最坏 2 GB 原始像素，仍在经典 TIFF 的 4 GiB 偏移之内）。
+DEFAULT_MAX_TOTAL_PIXELS = 512_000_000
+#: 每一带的目标像素数。行带高度 = `band_rows_for(宽)`——**只由宽度定**：PDFium 按带渲染与整页渲染不逐字节相同
+#: （抗锯齿随位图原点 / 尺寸差 1–5 级，ADR 0077 实测），所以带的切法必须固定，同一输入才同一份像素。
+BAND_PIXELS = 16_000_000
+#: 每一带上下各多渲染这么多行、只交出中间那几行：笔画跨过带界时，PDFium 在位图边缘算覆盖率与整页不同（u06 @ 150 ppi
+#: 实测接缝那一行差到 88 级）；多渲 1 行就回到抗锯齿噪声，取 4 行给比细线更宽的效果（软遮罩 / 渐变）留余量。
+BAND_OVERLAP = 4
+
+
+def band_rows_for(width_px: int) -> int:
+    return max(1, BAND_PIXELS // max(1, int(width_px)))
+
+
 #: child 地址空间上限（字节）；只在支持 RLIMIT_AS 的 POSIX 内核上生效。
 DEFAULT_MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 
@@ -179,10 +194,40 @@ def _render(pdfium, req: dict, default_max_pixels: int) -> dict:
                 height_px = max(1, int(round(h_pt * uu * dpi / 72.0)))
             if width_px <= 0 or height_px <= 0:
                 raise RenderChildError("bad_request", "尺寸必须为正")
-            if width_px * height_px > max_pixels:
-                raise RenderChildError(
-                    "pixel_budget_exceeded", f"{width_px}×{height_px} > {max_pixels}"
-                )
+            # 条带（ADR 0077 P2）：整页尺寸照上面算，位图只有 [band_y0, band_y0 + band_rows) 这几行；预算按**这一带**判，
+            # 整页另有 `max_total_pixels`。不带条带参数的请求与从前一字不差（整页 ≤ max_pixels）
+            band_y0, band_rows = req.get("band_y0"), req.get("band_rows")
+            full_height = height_px
+            top = 0  # 条带的上重叠行数（位图从 band_y0 - top 开始）
+            if band_rows is None:
+                band_y0 = 0
+                if width_px * height_px > max_pixels:
+                    raise RenderChildError(
+                        "pixel_budget_exceeded", f"{width_px}×{height_px} > {max_pixels}"
+                    )
+            else:
+                band_y0, band_rows = int(band_y0), int(band_rows)
+                if band_y0 < 0 or band_rows <= 0 or band_y0 + band_rows > height_px:
+                    raise RenderChildError(
+                        "bad_request",
+                        f"行带 [{band_y0}, {band_y0 + band_rows}) 不在 0..{height_px} 内",
+                    )
+                max_total = int(req.get("max_total_pixels", DEFAULT_MAX_TOTAL_PIXELS))
+                if width_px * height_px > max_total:
+                    raise RenderChildError(
+                        "pixel_budget_exceeded", f"整页 {width_px}×{height_px} > {max_total}"
+                    )
+                overlap = max(0, int(req.get("band_overlap", BAND_OVERLAP)))
+                top = min(overlap, band_y0)
+                bottom = min(overlap, full_height - band_y0 - band_rows)
+                if width_px * (band_rows + top + bottom) > max_pixels:
+                    raise RenderChildError(
+                        "pixel_budget_exceeded",
+                        f"行带 {width_px}×{band_rows + top + bottom}（含上下重叠）> {max_pixels}",
+                    )
+                height_px = (
+                    band_rows + top + bottom
+                )  # 位图带上下重叠；交出去的只有中间 band_rows 行
             t0 = time.perf_counter()
             raw = pdfium.raw
             # 透明底 → BGRA（REVERSE_BYTE_ORDER 之后是 RGBA，straight alpha，不请求 Premul 格式）；
@@ -200,17 +245,29 @@ def _render(pdfium, req: dict, default_max_pixels: int) -> dict:
                     width_px,
                     height_px,
                 )
-                # 不画注释（导出 / 预览不认注释）；REVERSE_BYTE_ORDER 让缓冲成 RGBA
+                # 不画注释（导出 / 预览不认注释）；REVERSE_BYTE_ORDER 让缓冲成 RGBA。条带：页按**整页**尺寸铺开、
+                # 向上挪 band_y0 - top 行，位图接住这一带连同上下重叠（整数像素平移，PDFium 在位图边界外裁掉）
                 raw.FPDF_RenderPageBitmap(
-                    bitmap, page, 0, 0, width_px, height_px, 0, raw.FPDF_REVERSE_BYTE_ORDER
+                    bitmap,
+                    page,
+                    0,
+                    -(band_y0 - top),
+                    width_px,
+                    full_height,
+                    0,
+                    raw.FPDF_REVERSE_BYTE_ORDER,
                 )
                 stride = bitmap.stride
                 # 像素在关位图**之前**直接从 native 缓冲写进文件，不再先复制成一份 bytes——600 ppi A4 的 RGB 就是
                 # 104 MB，child 峰值因此少一整份（ADR 0077 P1）。父进程读回的是文件里它自己的字节：RasterBuffer 仍
                 # 不共享 native 句柄（RC-050）
                 tmp = out_path.with_name(out_path.name + ".part")
+                pixels = memoryview(bitmap.buffer).cast("B")
+                if band_rows is not None:  # 条带：只交出中间那几行，上下重叠丢掉
+                    pixels = pixels[top * stride : (top + band_rows) * stride]
+                    height_px = band_rows
                 with open(tmp, "wb") as fh:
-                    nbytes = fh.write(memoryview(bitmap.buffer).cast("B"))
+                    nbytes = fh.write(pixels)
             finally:
                 bitmap.close()
         finally:
@@ -221,6 +278,8 @@ def _render(pdfium, req: dict, default_max_pixels: int) -> dict:
     return {
         "width": width_px,
         "height": height_px,
+        "full_height": full_height,
+        "band_y0": band_y0,
         "stride": stride,
         "channels": channels,
         "bytes": nbytes,

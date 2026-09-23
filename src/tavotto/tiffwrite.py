@@ -33,6 +33,7 @@ A3 也只有 ~600 MB 原始像素）。
 from __future__ import annotations
 
 import struct
+import zlib
 from pathlib import Path
 
 from . import deflate
@@ -98,6 +99,86 @@ def _strips(samples, height: int, row_bytes: int, stride: int, rows_per_strip: i
             yield b"".join(view[y * stride : y * stride + row_bytes] for y in range(y0, y1))
 
 
+def _entries(
+    width: int, height: int, channels: int, rows_per_strip: int, byte_counts: list[int], dpi
+) -> list[tuple[int, int, int, bytes]]:
+    """IFD 条目（tag, type, count, payload），标签升序；StripOffsets 的 payload 留空，排版时填。"""
+    n_strips = len(byte_counts)
+    software = (brand.PRODUCT_NAME + "\x00").encode("ascii")
+    entries: list[tuple[int, int, int, bytes]] = [
+        (_IMAGE_WIDTH, _LONG, 1, struct.pack("<I", width)),
+        (_IMAGE_LENGTH, _LONG, 1, struct.pack("<I", height)),
+        (_BITS_PER_SAMPLE, _SHORT, channels, struct.pack(f"<{channels}H", *([8] * channels))),
+        (_COMPRESSION, _SHORT, 1, struct.pack("<H", COMPRESSION_DEFLATE)),
+        (_PHOTOMETRIC, _SHORT, 1, struct.pack("<H", PHOTOMETRIC_RGB)),
+        (_STRIP_OFFSETS, _LONG, n_strips, b""),  # 排版时回填
+        (_SAMPLES_PER_PIXEL, _SHORT, 1, struct.pack("<H", channels)),
+        (_ROWS_PER_STRIP, _LONG, 1, struct.pack("<I", rows_per_strip)),
+        (_STRIP_BYTE_COUNTS, _LONG, n_strips, struct.pack(f"<{n_strips}I", *byte_counts)),
+    ]
+    known_dpi = dpi is not None and float(dpi) > 0
+    entries += [
+        (_X_RESOLUTION, _RATIONAL, 1, _rational(dpi if known_dpi else 1)),
+        (_Y_RESOLUTION, _RATIONAL, 1, _rational(dpi if known_dpi else 1)),
+        (_PLANAR_CONFIG, _SHORT, 1, struct.pack("<H", 1)),
+        (
+            _RESOLUTION_UNIT,
+            _SHORT,
+            1,
+            struct.pack("<H", RESUNIT_INCH if known_dpi else RESUNIT_NONE),
+        ),
+        (_SOFTWARE, _ASCII, len(software), software),
+    ]
+    if channels == 4:
+        entries.append(
+            (_EXTRA_SAMPLES, _SHORT, 1, struct.pack("<H", EXTRASAMPLE_UNASSOCIATED_ALPHA))
+        )
+    entries.sort(key=lambda e: e[0])  # TIFF 要求标签升序
+    return entries
+
+
+def _payload_size(tag: int, payload: bytes, n_strips: int) -> int:
+    return 4 * n_strips if tag == _STRIP_OFFSETS else len(payload)
+
+
+def _ifd_size(entries, n_strips: int) -> int:
+    """IFD 本体 + 紧随其后的溢出值（>4 字节的 payload，按字对齐）的总字节数——与取值无关。"""
+    size = 2 + 12 * len(entries) + 4
+    for tag, _typ, _count, payload in entries:
+        n = _payload_size(tag, payload, n_strips)
+        if n > 4:
+            size += n + (n % 2)
+    return size
+
+
+def _ifd_bytes(entries, ifd_offset: int, strip_offsets: list[int]) -> bytes:
+    """IFD 落在 `ifd_offset`、溢出值紧随其后；StripOffsets 用 `strip_offsets` 填。IFD 在前（整幅）与在后（流式）
+    两种布局共用这一份。"""
+    n_strips = len(strip_offsets)
+    entries = [
+        (tag, typ, count, struct.pack(f"<{n_strips}I", *strip_offsets))
+        if tag == _STRIP_OFFSETS
+        else (tag, typ, count, payload)
+        for tag, typ, count, payload in entries
+    ]
+    cursor = ifd_offset + 2 + 12 * len(entries) + 4
+    slot_of: dict[int, int] = {}
+    for tag, _typ, _count, payload in entries:
+        if len(payload) > 4:
+            slot_of[tag] = cursor
+            cursor += len(payload) + (len(payload) % 2)
+    out = bytearray(struct.pack("<H", len(entries)))
+    for tag, typ, count, payload in entries:
+        out += struct.pack("<HHI", tag, typ, count)
+        out += struct.pack("<I", slot_of[tag]) if tag in slot_of else payload.ljust(4, b"\x00")
+    out += struct.pack("<I", 0)  # 没有下一个 IFD
+    for tag, _typ, _count, payload in entries:
+        if tag in slot_of:
+            assert ifd_offset + len(out) == slot_of[tag], (tag, len(out), slot_of[tag])
+            out += payload + (b"\x00" if len(payload) % 2 else b"")
+    return bytes(out)
+
+
 def write_tiff(
     path: Path | str,
     width: int,
@@ -139,79 +220,26 @@ def write_tiff(
         )
     )
     n_strips = len(strips)
-
-    software = (brand.PRODUCT_NAME + "\x00").encode("ascii")
-
-    # ---- IFD 条目（tag, type, count, payload）。payload 不到 4 字节的内联 ----
-    entries: list[tuple[int, int, int, bytes]] = [
-        (_IMAGE_WIDTH, _LONG, 1, struct.pack("<I", width)),
-        (_IMAGE_LENGTH, _LONG, 1, struct.pack("<I", height)),
-        (_BITS_PER_SAMPLE, _SHORT, channels, struct.pack(f"<{channels}H", *([8] * channels))),
-        (_COMPRESSION, _SHORT, 1, struct.pack("<H", COMPRESSION_DEFLATE)),
-        (_PHOTOMETRIC, _SHORT, 1, struct.pack("<H", PHOTOMETRIC_RGB)),
-        (_STRIP_OFFSETS, _LONG, n_strips, b""),  # 稍后回填
-        (_SAMPLES_PER_PIXEL, _SHORT, 1, struct.pack("<H", channels)),
-        (_ROWS_PER_STRIP, _LONG, 1, struct.pack("<I", rows_per_strip)),
-        (_STRIP_BYTE_COUNTS, _LONG, n_strips, struct.pack(f"<{n_strips}I", *map(len, strips))),
-    ]
+    entries = _entries(width, height, channels, rows_per_strip, [len(x) for x in strips], dpi)
     known_dpi = dpi is not None and float(dpi) > 0
-    entries += [
-        (_X_RESOLUTION, _RATIONAL, 1, _rational(dpi if known_dpi else 1)),
-        (_Y_RESOLUTION, _RATIONAL, 1, _rational(dpi if known_dpi else 1)),
-        (_PLANAR_CONFIG, _SHORT, 1, struct.pack("<H", 1)),
-        (
-            _RESOLUTION_UNIT,
-            _SHORT,
-            1,
-            struct.pack("<H", RESUNIT_INCH if known_dpi else RESUNIT_NONE),
-        ),
-        (_SOFTWARE, _ASCII, len(software), software),
-    ]
-    if channels == 4:
-        entries.append(
-            (_EXTRA_SAMPLES, _SHORT, 1, struct.pack("<H", EXTRASAMPLE_UNASSOCIATED_ALPHA))
-        )
-    entries.sort(key=lambda e: e[0])  # TIFF 要求标签升序
 
     # ---- 布局：头(8) → IFD → 内联放不下的值 → strip 数据 ----
     # 溢出值的**大小**与它们的取值无关（StripOffsets 恒是 4 × n_strips 字节），
     # 所以先按大小排版、算出 strip 的落点，再回过头填 StripOffsets 的真实值。
     ifd_offset = 8
-    ifd_size = 2 + 12 * len(entries) + 4
-    cursor = ifd_offset + ifd_size
-    slot_of: dict[int, int] = {}  # 溢出值各自的偏移
-    for tag, _typ, _count, payload in entries:
-        size = 4 * n_strips if tag == _STRIP_OFFSETS else len(payload)
-        if size > 4:
-            slot_of[tag] = cursor
-            cursor += size + (size % 2)  # 字偏移对齐
-    data_offset = cursor
+    data_offset = ifd_offset + _ifd_size(entries, n_strips)
     strip_offsets: list[int] = []
     pos = data_offset
-    for s in strips:
+    for x in strips:
         strip_offsets.append(pos)
-        pos += len(s) + (len(s) % 2)
-    entries = [
-        (tag, typ, count, struct.pack(f"<{n_strips}I", *strip_offsets))
-        if tag == _STRIP_OFFSETS
-        else (tag, typ, count, payload)
-        for tag, typ, count, payload in entries
-    ]
+        pos += len(x) + (len(x) % 2)
 
     out = bytearray()
     out += MAGIC_LE + struct.pack("<I", ifd_offset)
-    out += struct.pack("<H", len(entries))
-    for tag, typ, count, payload in entries:
-        out += struct.pack("<HHI", tag, typ, count)
-        out += struct.pack("<I", slot_of[tag]) if tag in slot_of else payload.ljust(4, b"\x00")
-    out += struct.pack("<I", 0)  # 没有下一个 IFD
-    for tag, _typ, _count, payload in entries:
-        if tag in slot_of:
-            assert len(out) == slot_of[tag], (tag, len(out), slot_of[tag])
-            out += payload + (b"\x00" if len(payload) % 2 else b"")
+    out += _ifd_bytes(entries, ifd_offset, strip_offsets)
     assert len(out) == data_offset, (len(out), data_offset)
-    for s in strips:
-        out += s + (b"\x00" if len(s) % 2 else b"")
+    for x in strips:
+        out += x + (b"\x00" if len(x) % 2 else b"")
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -224,3 +252,95 @@ def write_tiff(
         "compression": "deflate",
         "dpi": float(dpi) if known_dpi else None,
     }
+
+
+class TiffStreamWriter:
+    """条带栅格（ADR 0077 P2）的 TIFF 写入器：按行带逐次 `feed(samples, rows, stride)`，凑满一条 strip 就交给
+    `deflate.OrderedPool` 并行压、按顺序**边收边写**进文件——整幅像素与整份压缩结果都不在内存里。布局与
+    `write_tiff` 不同的只有一处：strip 数据在前、IFD 在**末尾**（写完才知道各条大小；TIFF 6.0 允许 IFD 在任何
+    字对齐的位置，头里的偏移最后回填）。每条 strip 仍是这几行紧凑像素的 `zlib.compress(…, DEFLATE_LEVEL)`，
+    行数切分与 `write_tiff` 同一条规则。经典 TIFF 的偏移是 32 位：写过 4 GiB 就结构化拒绝，不写坏文件。"""
+
+    _LIMIT = 0xFFFF_FFFF
+
+    def __init__(self, path, width: int, height: int, channels: int, *, dpi=None) -> None:
+        width, height, channels = int(width), int(height), int(channels)
+        if width <= 0 or height <= 0:
+            raise TiffWriteError(f"尺寸必须为正：{width}×{height}")
+        if channels not in (3, 4):
+            raise TiffWriteError(f"只写 RGB / RGBA（3 或 4 通道），收到 {channels}")
+        self.width, self.height, self.channels, self.dpi = width, height, channels, dpi
+        self._rb = width * channels
+        self._rows_per_strip = max(1, STRIP_TARGET_BYTES // self._rb)
+        self._pending: list = []
+        self._pending_rows = 0
+        self._rows = 0
+        self._offsets: list[int] = []
+        self._counts: list[int] = []
+        self._pool = deflate.OrderedPool(lambda c: zlib.compress(c, DEFLATE_LEVEL))
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = open(path, "w+b")  # noqa: SIM115 —— close()/abort() 关
+        self._fh.write(MAGIC_LE + struct.pack("<I", 0))  # IFD 偏移最后回填
+
+    def _write_strips(self, compressed: list[bytes]) -> None:
+        for x in compressed:
+            pos = self._fh.tell()
+            if pos + len(x) + 1 > self._LIMIT:
+                raise TiffWriteError("超过经典 TIFF 的 4 GiB 偏移上限")
+            self._offsets.append(pos)
+            self._counts.append(len(x))
+            self._fh.write(x + (b"\x00" if len(x) % 2 else b""))
+
+    def _flush(self) -> None:
+        strip = b"".join(self._pending)
+        self._pending, self._pending_rows = [], 0
+        self._write_strips(self._pool.put(strip))
+
+    def feed(self, samples, rows: int, stride: int | None = None) -> None:
+        stride = self._rb if stride is None else int(stride)
+        if stride < self._rb or len(samples) < stride * (rows - 1) + self._rb:
+            raise TiffWriteError(
+                f"行带 {rows} 行 × stride {stride} 装不下 {self.width}×{self.channels}"
+            )
+        if self._rows + rows > self.height:
+            raise TiffWriteError(f"行数超出：{self._rows} + {rows} > {self.height}")
+        view, rb = memoryview(samples), self._rb
+        for y in range(rows):
+            self._pending.append(view[y * stride : y * stride + rb])
+            self._pending_rows += 1
+            if self._pending_rows == self._rows_per_strip:
+                self._flush()
+        self._rows += rows
+
+    def close(self) -> dict:
+        try:
+            if self._rows != self.height:
+                raise TiffWriteError(f"TIFF 只收到 {self._rows} / {self.height} 行")
+            if self._pending:
+                self._flush()
+            self._write_strips(self._pool.finish())
+            entries = _entries(
+                self.width, self.height, self.channels, self._rows_per_strip, self._counts, self.dpi
+            )
+            ifd_offset = self._fh.tell()  # strip 都按字对齐写，这里一定是偶数
+            self._fh.write(_ifd_bytes(entries, ifd_offset, self._offsets))
+            self._fh.seek(4)
+            self._fh.write(struct.pack("<I", ifd_offset))
+        except BaseException:
+            self.abort()
+            raise
+        self._fh.close()
+        known_dpi = self.dpi is not None and float(self.dpi) > 0
+        return {
+            "px_w": self.width,
+            "px_h": self.height,
+            "channels": self.channels,
+            "strips": len(self._offsets),
+            "compression": "deflate",
+            "dpi": float(self.dpi) if known_dpi else None,
+        }
+
+    def abort(self) -> None:
+        self._pool.abort()
+        self._fh.close()

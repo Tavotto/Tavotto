@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Callable
 
 from .. import pixelmetrics
-from . import BACKEND_NAME, BACKEND_VERSION, ir, plan, raster, rasterio, typography
+from . import BACKEND_NAME, BACKEND_VERSION, banded, ir, plan, raster, rasterio, typography
 from .hbshaper import HbFaceProvider
 from .ir import hex2rgb, mm2pt
 from .preview import PreviewCache
@@ -437,10 +437,37 @@ class Canvas:
             self._buffers[key] = buf
         return buf
 
+    def _banded(
+        self, dpi: int, *, png: Path | None = None, tiff: Path | None = None
+    ) -> dict | None:
+        """整页像素超过 child 的单张预算时按行带渲染、直接写文件（ADR 0077 P2）；预算以内回 None，走整页一次。
+        条带下 `save_png` 与 `save_tiff` 各走一遍带（同一份 Canonical PDF、固定的带切法 → 同一份像素）。"""
+        page = self._compile().page
+        size = (
+            max(1, int(round(page.width_pt * dpi / 72.0))),
+            max(1, int(round(page.height_pt * dpi / 72.0))),
+        )
+        if not banded.needs_bands(host(), size):
+            return None
+        return banded.write_banded(
+            host(),
+            self._canonical_pdf(),
+            dpi=float(dpi),
+            size_px=size,
+            page_size_pt=(page.width_pt, page.height_pt),
+            transparent=self._transparent,
+            png=png,
+            tiff=tiff,
+        )
+
     def save_png(self, path: Path, dpi: int) -> None:
-        Path(path).write_bytes(raster.encode_png(self._raster(dpi)))
+        if self._banded(dpi, png=Path(path)) is None:
+            Path(path).write_bytes(raster.encode_png(self._raster(dpi)))
 
     def save_tiff(self, path: Path, dpi: int) -> dict:
+        facts = self._banded(dpi, tiff=Path(path))
+        if facts is not None:
+            return facts["tiff"]
         return raster.write_tiff(self._raster(dpi), Path(path))
 
     @property
@@ -544,6 +571,31 @@ def original_pdf(src: Path, out: Path, page_pt: tuple[float, float] | None = Non
     }
 
 
+def _original_banded(
+    src: Path, ppi: int, transparent: bool, *, png: Path | None = None, tiff: Path | None = None
+) -> dict | None:
+    """矢量源按原图栅格：整页像素超过单张预算时按行带写（ADR 0077 P2），回 `{px_w, px_h}`；否则回 None。
+    整页像素按 child 同一约定算：`size` 的尺寸已含 /UserUnit，× ppi / 72 再 `round()`。"""
+    s = host().size(src)
+    size = (
+        max(1, int(round(float(s["width_pt"]) * ppi / 72.0))),
+        max(1, int(round(float(s["height_pt"]) * ppi / 72.0))),
+    )
+    if not banded.needs_bands(host(), size):
+        return None
+    facts = banded.write_banded(
+        host(),
+        src,
+        dpi=float(ppi),
+        size_px=size,
+        page_size_pt=(float(s["width_pt"]), float(s["height_pt"])),
+        transparent=bool(transparent),
+        png=png,
+        tiff=tiff,
+    )
+    return {"px_w": facts["px"][0], "px_h": facts["px"][1]}
+
+
 def original_png(src: Path, out: Path, ppi: int | None, transparent: bool = False) -> dict:
     """矢量源按 `ppi` 栅格（child）；PNG 源**逐字节复制**；其它位图转码不重采样（像素网格不变）。"""
     src, out = Path(src), Path(out)
@@ -551,6 +603,9 @@ def original_png(src: Path, out: Path, ppi: int | None, transparent: bool = Fals
     if src.suffix.lower() == ".pdf":
         if not ppi:
             raise ValueError("矢量源栅格化必须给 ppi")
+        facts = _original_banded(src, ppi, transparent, png=out)
+        if facts is not None:
+            return {**facts, "resampled": False, "transcoded": True}
         buf = host().render(src, dpi=float(ppi), transparent=bool(transparent))
         out.write_bytes(raster.encode_png(buf))
         return {"px_w": buf.width, "px_h": buf.height, "resampled": False, "transcoded": True}
@@ -585,6 +640,9 @@ def original_tiff(
     if src.suffix.lower() == ".pdf":
         if not ppi:
             raise ValueError("矢量源栅格化必须给 ppi")
+        facts = _original_banded(src, ppi, transparent, tiff=out)
+        if facts is not None:
+            return {**facts, "resampled": False, "transcoded": True}
         buf = host().render(src, dpi=float(ppi), transparent=bool(transparent))
         raster.write_tiff(buf, out)
         return {"px_w": buf.width, "px_h": buf.height, "resampled": False, "transcoded": True}

@@ -190,6 +190,10 @@ def test_a_child_failure_under_the_candidate_is_partial_and_leaves_nothing_behin
     _project(tmp_path)
 
     class DeadHost:
+        # 条带栅格（ADR 0077 P2）起 host 的接口多了两个预算：作业按 max_pixels 决定整页还是分带
+        max_pixels = renderhost.DEFAULT_MAX_PIXELS
+        max_total_pixels = renderhost.DEFAULT_MAX_TOTAL_PIXELS
+
         def render(self, *a, **kw):
             raise renderhost.RenderChildError("render_child_died", "注入：child 没了")
 
