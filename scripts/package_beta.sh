@@ -43,6 +43,10 @@ codesign --verify --deep --strict "$SMOKE/Tavotto Beta.app"
   --figures "$ROOT/examples/runtime_check" --workdir "$WORK/冒烟 数据" \
   --expect-source bundled --expect-runtime --expect-control-plane workerd \
   --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+# RenderCore 在冻结产物里第一次跑：后端确实是它、预览 PNG、PDF + PNG + TIFF 导出各过一遍
+"$PY" "$ROOT/scripts/beta_rendercore_check.py" \
+  --exe "$SMOKE/Tavotto Beta.app/Contents/Resources/sidecar/Tavotto/Tavotto" \
+  --figures "$ROOT/examples/figures"
 
 ln -s /Applications "$WORK/stage/Applications"
 cp "$ROOT/docs/beta/README-性能测试版.md" "$WORK/stage/先看我-安装说明.md"
