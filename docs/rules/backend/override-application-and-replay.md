@@ -42,7 +42,7 @@
   test_frac_anchored_props_survive_geometry_moves 看护）。新增 figure 锚定
   prop 时记得加进 `_FRAC_ANCHORED`。aspect="equal" 的子图只有 draw 才
   apply_aspect，几何组应用完必须 `draw_without_rendering()` 刷新布局再应用
-  其余 prop。事故期间保存的旧文档用 `scripts/recover_frac_positions.py`
+  其余 prop（套 `image_pixels_skipped`：这次 draw 只为布局，图片不重采样）。事故期间保存的旧文档用 `scripts/recover_frac_positions.py`
   修复（从写回 PDF 的文字层反推真实位置，输出另存 + POST 成布局版本）。
 - **持久 tight 布局下的子图位置（ADR 0042，issue #162）**：
   `layout="tight"` / `tight_layout=True` 会挂一个每次绘制都重算落位的

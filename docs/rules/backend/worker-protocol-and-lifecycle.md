@@ -23,7 +23,9 @@
   `docs/perf-baseline.md`，重测走 `python scripts/bench_render.py`。
   **先测量后优化**：那份文档里被数据否掉的两条（挪 SVG 顺序省 draw = 图例 bbox
   错 0.18–0.32 分数，写回自检必报 divergence；`draw_without_rendering` 只省 8%）
-  别再重试。
+  别再重试。**「只为布局」的 draw 不重采样图片**（2026-09-24）：manifest 开头的 `fig.canvas.draw()` 与几何组
+  之后的 `draw_without_rendering()` 都套 `overrides.image_pixels_skipped(fig)`——含大图的图热态 448 → 266ms，
+  预览 / 导出不走这里。新加一处「只为量布局」的 draw 也要套上；要像素的 draw 绝不能套（`tests/test_manifest_image_pixels.py`）。
 - 前端渲染态分键与假实时预览（渲染平面 / 历史平面）的规则在
   `web/AGENTS.md`——引擎侧只需知道：render 请求带 `inline_svg` 时 SVG 与
   manifest 必须同一次响应返回；SSE 的 render.started/done 只带 fileId。

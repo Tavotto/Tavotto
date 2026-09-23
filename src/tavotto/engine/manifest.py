@@ -78,6 +78,7 @@ from overrides import (
     colorbar_mapping_is_live,
     font_installed,
     gradient_base_hex,
+    image_pixels_skipped,
     is_linecoll_family,
     legend_handle_props,
     remember_axis_directions,
@@ -3988,7 +3989,9 @@ def _ensure_agg_canvas(fig):
         from matplotlib.backends.backend_agg import FigureCanvasAgg
 
         FigureCanvasAgg(fig)  # 构造即绑定到 fig.canvas
-    fig.canvas.draw()
+    # 这次 draw 只为布局与包围盒：图片元素不重采样（`overrides.image_pixels_skipped`）
+    with image_pixels_skipped(fig):
+        fig.canvas.draw()
     return fig.canvas.get_renderer()
 
 

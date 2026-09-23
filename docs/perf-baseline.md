@@ -175,6 +175,37 @@ worker（`build`/`render`/`export` 的 v1 响应）→ pool（`queue_wait_ms` /
   `constrained_layout not applied because axes sizes collapsed to zero` 警告。
   收益不够，噪音是真的，不做。
 
+### 做了：「只为布局」的 draw 不重采样图片（2026-09-24，一张用户图）
+
+上面那两条否决都是在 `examples/figures`（纯矢量、25–68 个元素）上量的。2026-09-23 beta 用户的一张
+PRB 三联图（(a) 面板是一张 2340×1920 的 PNG 以 lanczos 显示，(b)(c) 是 rasterized `pcolormesh`）
+把「画两遍」的真实代价量出来了——**贵的不是「画」，是那张图的重采样**：
+
+| 本机（M 系 / Python 池 / 热态 7 次中位） | canvas.draw（Agg） | `draw_without_rendering()` | 其中那一个 `AxesImage.draw` | 逐元素 `get_window_extent` ×284 | `savefig(svg, dpi=200)` |
+|---|---|---|---|---|---|
+| 修前 | 204.0 | 195.7 | 185.1 | 8.4 | 215.8 |
+
+`draw_without_rendering()` 照样重采样，所以它在这里也只省 8ms——当年的否决在这张图上同样成立。
+manifest 与几何 override 之后那次布局刷新要的只是布局与包围盒，图片元素的包围盒由 extent 决定、
+与像素无关；于是这两次 draw 套上 `overrides.image_pixels_skipped`（这张 figure 里图片的 `draw` /
+`make_image` 在实例上换成空操作，出来即删），预览 SVG 与导出不走这里、像素一个不少：
+
+| `scripts/bench_render.py`，同一张图、同一台机器 | 热 wall | canvas_draw | manifest | 冷 build 往返 |
+|---|---|---|---|---|
+| 修前（825cd041） | 448.5 | 216.3 | 224.7 | 1139.9 |
+| 修后 | **266.0（−41%）** | 217.5 | **38.7** | 941.6 |
+
+拖动松手（真几何 patch，同一张图）：拖子图 443 → 259ms、拖文字 453 → 260ms。用户的 M2 Pro 上
+同一段是 manifest 236 + 绘图 202ms，比例一致——**这张图本身重，不是那台机器慢**。
+
+正确性：示例图库 + CompatBench 全部语料 + 专挑的图片边角（imshow+色条 / figimage / AnnotationBbox
+里的 OffsetImage / constrained layout）共 87 张，跳过与不跳过的 manifest 逐字段相同；唯一的浮点差异
+在 constrained layout 上（2.2e-16），与「不跳过连着 build 两次」本身的差异同量级。看护：
+`tests/test_manifest_image_pixels.py`（数 `matplotlib.image._resample` 的调用次数，不跳过时 ≥1 证明尺子是活的）。
+
+剩下的 217ms 是预览 SVG 那一遍（它真要像素）。热态里图片没变时重采样结果是可以复用的，但缓存键要覆盖
+数据 / cmap / norm / alpha / 插值 / 变换 / dpi，另开一条做。
+
 ### 没做：队列（E3-3）
 
 `queue_wait` 恒为 0.0ms（观察 2），没有任何数据支撑去动它。workerd 已经有合并
