@@ -43,9 +43,16 @@ _pending: dict[tuple[str, object], str] = {}  # (方向, id) → method：用来
 
 def log(entry: dict) -> None:
     entry["t"] = round(time.monotonic() - _t0, 3)
-    assert log_path is not None
-    with _lock, log_path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    global log_path
+    if log_path is None:
+        return
+    try:
+        with _lock, log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        # 写不了日志（宿主沙箱挡了这个目录）不许拖垮协议：停录、说一声、照常转发
+        sys.stderr.write(f"record_proxy: 日志写不了，停止录制：{exc}\n")
+        log_path = None
 
 
 def _env_snapshot() -> dict:
@@ -126,7 +133,10 @@ def pump(src, dst, direction: str) -> None:
 def main() -> int:
     global log_path
     out_dir = Path(os.environ.get("WB_RECORD_DIR") or Path.home() / "tavotto-workbuddy-record")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        sys.stderr.write(f"record_proxy: 建不了日志目录 {out_dir}：{exc}\n")
     log_path = out_dir / f"record-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.jsonl"
     log(
         {
