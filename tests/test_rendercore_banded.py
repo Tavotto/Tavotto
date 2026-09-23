@@ -152,6 +152,9 @@ def test_the_page_total_cap_refuses_before_any_band_is_rendered(host, tmp_path, 
             png=tmp_path / "x.png",
         )
     assert exc.value.code == "pixel_budget_exceeded" and host.requests == before
+    assert not (tmp_path / "x.png").exists(), (
+        "整页超上限要在打开输出文件之前就拒——原图导出写的是用户看得见的路径"
+    )
 
 
 def test_the_child_checks_band_bounds_and_both_budgets_itself(host, tmp_path):
@@ -261,8 +264,11 @@ def test_an_export_job_over_the_budget_writes_both_formats_from_one_banded_pass(
     assert bands >= 3 and rendered == bands + 1, (rendered, bands)  # +1 = 首次算键的 ping
 
 
-def test_an_export_within_the_budget_still_renders_the_whole_page_once(tmp_path):
-    """预算以内的导出不许走条带（条带像素与整页不逐字节相同）：child 只被叫两次——算键的 ping + 整页一次。"""
+def test_an_export_within_the_budget_still_renders_the_whole_page_once(tmp_path, monkeypatch):
+    """预算以内的导出不许走条带（条带像素与整页不逐字节相同）：child 只被叫两次——算键的 ping + 整页一次。
+    判据的前提：这一页要**比一带大**（否则一带就是整页，切不切看不出来）——A4 @ 600 ppi（35 M）在 64 M 预算内、却是
+    16 M 一带的三带，正是这种情形。这里把带压到 100 行来复现。"""
+    monkeypatch.setattr(renderchild, "BAND_PIXELS", 1417 * 100)
     import shutil
 
     from tavotto.engine import exportjob
@@ -320,6 +326,7 @@ def test_an_export_within_the_budget_still_renders_the_whole_page_once(tmp_path)
         h.close()
         exportjob.reset_for_tests()
     assert payload["status"] == "done", payload
+    assert renderchild.band_rows_for(1417) < 709, "判据的前提：这一页比一带大"
     assert rendered == 2, rendered
 
 
