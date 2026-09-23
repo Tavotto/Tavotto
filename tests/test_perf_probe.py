@@ -281,6 +281,39 @@ def test_legacy_report_does_not_judge_render_amplification():
     assert _grade(a, "渲染放大") == "—"
 
 
+def test_doc_write_is_judged_only_on_document_body_changes():
+    # 自动保存改保存状态（document.save）不是写文档；只有文档本体（document.doc）才算
+    save_only = {"store.document": 60, "store.document.save": 60}
+    a = PR.analyze_report(
+        _report([_seg(_smooth(), kind="element", counts=save_only, context={"doc_split": True})])
+    )
+    assert "图内元素拖动途中在写文档" not in _titles(a)
+    body = {"store.document": 60, "store.document.doc": 60}
+    b = PR.analyze_report(
+        _report([_seg(_smooth(), kind="element", counts=body, context={"doc_split": True})])
+    )
+    assert "图内元素拖动途中在写文档" in _titles(b)
+
+
+def test_unsplit_document_notifications_are_not_judged_but_disclosed():
+    counts = {"store.document": 60}
+    a = PR.analyze_report(_report([_seg(_smooth(), kind="element", counts=counts)]))
+    assert "图内元素拖动途中在写文档" not in _titles(a)
+    ev = " ".join(_find(a, "这份报告能下的结论有限").evidence)
+    assert "分不清是改了文档还是自动保存" in ev
+
+
+def test_autosave_during_drag_is_reported_with_its_cost():
+    light = {"autosave.flush": {"count": 1, "total": 4.0, "max": 4.0, "samples": [4.0]}}
+    a = PR.analyze_report(_report([_seg(_smooth(), spans=light)]))
+    f = _find(a, "上一次松手的自动保存落在了这次拖动途中")
+    assert f.level == "提示"
+    assert "flushAutosave" in " ".join(f.where)
+    heavy = {"autosave.flush": {"count": 1, "total": 40.0, "max": 40.0, "samples": [40.0]}}
+    b = PR.analyze_report(_report([_seg(_smooth(), spans=heavy)]))
+    assert _find(b, "上一次松手的自动保存落在了这次拖动途中").level == "问题"
+
+
 def test_same_issue_in_many_segments_is_one_finding():
     tail = [_row(16.7) for _ in range(5)] + [_row(60.0, render=1.0)]
     a = PR.analyze_report(_report([_seg(_smooth(), tail=tail) for _ in range(3)]))

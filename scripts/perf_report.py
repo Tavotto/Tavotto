@@ -84,6 +84,7 @@ CODE = {
     "snap.compute": "web/src/canvas/interactions.ts startMoveDrag 的 snapMove",
     "input.react_flush": "订阅了拖动中会变的 store 的组件（见组件渲染次数）",
     "raf.preview_write": "web/src/store/svgPreviewStore.ts flushPreviewFrame",
+    "autosave.flush": "web/src/store/documentStore.ts flushAutosave（最后一次编辑后 DEBOUNCE_MS = 1000 触发）",
 }
 
 #: 组件 → 文件。「拖动中该不该每帧重渲染」：跟手的读数 / 选框是合理的，属性页和左栏不是
@@ -689,7 +690,32 @@ def analyze_segment(s: SegStats) -> list[Finding]:
     if not s.counts_mixed:
         out += render_amplification(s)
 
-    # ---- 8. 松手
+    # ---- 8. 自动保存落在拖动途中（松手 1 秒后触发，常常赶上下一次拖动）
+    af = s.spans.get("autosave.flush")
+    if af and af.get("count"):
+        mx = float(af.get("max") or 0)
+        avg = af["total"] / af["count"]
+        out.append(
+            Finding(
+                "问题" if mx >= B else "提示",
+                "松手",
+                "上一次松手的自动保存落在了这次拖动途中",
+                [
+                    f"拖动途中跑了 {af['count']} 次自动保存的同步段（整份文档 buildProject + JSON.stringify"
+                    f" + 写本机副本），平均 {avg:.1f}ms，最长 {mx:.1f}ms（刷新周期 {B:.1f}ms）",
+                    "文档越大（对象 / override 越多）这一段越长；快机器上不显，慢机器上就是拖到一半顿一下",
+                ],
+                [CODE["autosave.flush"]],
+                [
+                    "拖动进行中推迟自动保存（interaction.kind != none 时顺延到松手后），"
+                    "或把序列化放进 requestIdleCallback / Worker，别和下一次拖动抢主线程。",
+                ],
+                s.name,
+                max(1.0, mx / B),
+            )
+        )
+
+    # ---- 9. 松手
     if s.tail_max is not None:
         lvl = level_by(s.tail_max / B, 2.8, 6, 15)
         if lvl:
@@ -779,7 +805,10 @@ def render_amplification(s: SegStats) -> list[Finding]:
                 1.0,
             )
         )
-    doc_per_move = s.stores_per_move.get("document", 0)
+    # 只认「文档本体变了」这一类：documentStore 里还住着保存状态，上一次松手 1 秒后的
+    # 自动保存会在下一段拖动途中改它——那不是写文档（见「自动保存落在拖动途中」）。
+    # 旧版报告根本没有 document.doc 这个计数，这里自然读成 0、不判；它们在「覆盖」里披露
+    doc_per_move = s.stores_per_move.get("document.doc", 0)
     if s.kind == "element" and doc_per_move >= 0.3:
         out.append(
             Finding(
@@ -787,7 +816,7 @@ def render_amplification(s: SegStats) -> list[Finding]:
                 "渲染放大",
                 "图内元素拖动途中在写文档",
                 [
-                    f"documentStore 每个 pointermove 通知 {doc_per_move:.1f} 次——预览平面按设计不该碰文档"
+                    f"documentStore 的文档本体每个 pointermove 变 {doc_per_move:.1f} 次——预览平面按设计不该碰文档"
                 ],
                 [
                     "web/src/canvas/interactions.ts startElementDrag",
@@ -991,6 +1020,18 @@ def analyze_report(report: dict) -> dict:
     big = max((float(s.context.get("largest_svg_nodes") or 0) for s in stats), default=0)
     if stats and big < 1000:
         coverage.append(f"拖的图都很简单（最大 SVG 只有 {int(big)} 个节点），代表性有限")
+    unsplit = [
+        s
+        for s in stats
+        if s.kind == "element"
+        and not s.context.get("doc_split")
+        and s.stores_per_move.get("document", 0) > 0
+    ]
+    if unsplit:
+        coverage.append(
+            f"{len(unsplit)} 段图内拖动途中有 documentStore 通知，这版探针分不清是改了文档还是自动保存在改保存状态"
+            "（新版分开记，重录即可判）"
+        )
     if len(report.get("idle_frame_ms") or []) < 20:
         coverage.append("空转基线太短（开始后马上就拖了），刷新周期是估的")
     if coverage:

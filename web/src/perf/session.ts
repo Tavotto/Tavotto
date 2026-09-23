@@ -42,7 +42,6 @@ let live: Live | null = null
 
 /** 订阅这些 store 的通知次数：拖动期间谁在被频繁写，一眼就能看出来 */
 const STORES = {
-  document: useDocumentStore,
   interaction: useInteractionStore,
   selection: useSelectionStore,
   render: useRenderStore,
@@ -60,6 +59,16 @@ export function startProbe(): boolean {
   if (!perfStart()) return false
   const unsubs = Object.entries(STORES).map(([name, store]) =>
     store.subscribe(() => perfCount(`store.${name}`)),
+  )
+  // documentStore 分三类记：同一个 store 里既有文档本体也有保存状态，只数通知
+  // 分不清「拖动途中改了文档」与「上一次松手 1 秒后的自动保存在改 saveState」
+  unsubs.push(
+    useDocumentStore.subscribe((s, prev) => {
+      perfCount('store.document')
+      if (s.doc !== prev.doc) perfCount('store.document.doc')
+      else if (s.saveState !== prev.saveState || s.dirty !== prev.dirty) perfCount('store.document.save')
+      else perfCount('store.document.other')
+    }),
   )
   setSegmentHook(onSegment)
   live = {
@@ -137,6 +146,8 @@ function onSegment(seg: Segment, phase: 'begin' | 'end'): void {
       workspace_mode: useWorkspaceStore.getState().mode,
       zoom: round3(useViewportStore.getState().zoom),
       selected: useSelectionStore.getState().ids.length,
+      // 分析器据此知道 store.document.* 三类计数是分开记的（旧版报告没有）
+      doc_split: true,
     }
     // 采上下文本身要遍历 DOM：记下它花了多久，分析端把它从第一帧里扣掉
     seg.context.probe_overhead_ms = round1(perfNow() - t0)

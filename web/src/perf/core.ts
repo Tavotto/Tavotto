@@ -36,6 +36,11 @@ export type PerfSpan =
   | 'snap.compute'
   /** 预览平面在 rAF 里把攒下的位移 / 样式写进 SVG DOM */
   | 'raf.preview_write'
+  /**
+   * 自动保存的同步那一段（buildProject + JSON.stringify + 写本机副本）。
+   * 它在最后一次编辑 1 秒后触发——常常正好落在下一次拖动中间
+   */
+  | 'autosave.flush'
 
 export const PERF_SPANS: readonly PerfSpan[] = [
   'input.handler',
@@ -43,6 +48,7 @@ export const PERF_SPANS: readonly PerfSpan[] = [
   'doc.txn_update',
   'snap.compute',
   'raf.preview_write',
+  'autosave.flush',
 ]
 
 /** 每帧一行：[间隔, 主线程渲染, handler, react_flush, rAF 脚本, pointermove 数, 输入延迟] */

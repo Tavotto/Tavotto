@@ -897,6 +897,11 @@ const disk = createDiskWriter({
 
 /** 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。 */
 export function flushAutosave(): FlushResult {
+  // 性能探针（ADR 0075）：同步那一段在主线程上，落在拖动途中就是一次卡顿
+  return perfSpan('autosave.flush', flushAutosaveNow)
+}
+
+function flushAutosaveNow(): FlushResult {
   const state = useDocumentStore.getState()
   // 挂起中的文档一个字节都不写（见 `suspendAutosaveFor`）：内存里的编辑还在，
   // 换文档时它们随旧文档一起被放弃——这正是「重新开始」要的
