@@ -246,6 +246,10 @@ class RenderHost:
         """`{pages, width_pt, height_pt (含 /UserUnit、已按 /Rotate 转), rotation, user_unit, media_box, crop_box}`。"""
         return self.request("probe", timeout=timeout, pdf=str(pdf), page=int(page))
 
+    def size(self, pdf: Path, *, page: int = 0, timeout: float | None = None) -> dict:
+        """`{pages, width_pt, height_pt}`——与 `probe` 同一个可见尺寸，但不加载页（不解析内容流）。"""
+        return self.request("size", timeout=timeout, pdf=str(pdf), page=int(page))
+
     def inspect(self, pdf: Path, *, page: int = 0, timeout: float | None = None) -> dict:
         return self.request("inspect", timeout=timeout, pdf=str(pdf), page=int(page))
 

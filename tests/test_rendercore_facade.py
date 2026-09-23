@@ -119,6 +119,66 @@ def test_warm_loads_the_selected_backend_up_front_and_refuses_an_unknown_one(mon
         pdfbackend.warm()
 
 
+def test_warm_hands_the_selected_implementation_its_background_prewarm(monkeypatch):
+    """`warm()` 仍然先把实现装载好（装不上就在启动时抛）；实现若有 `prewarm()`，在这里交给它——候选靠它把
+    child / 字体注册表 / CJK 脸三件冷启动挪出用户的第一次操作。没有 `prewarm` 的实现（旧后端）照旧。"""
+    import types
+
+    calls = []
+    monkeypatch.delenv(pdfbackend.BACKEND_ENV, raising=False)
+    monkeypatch.setitem(
+        pdfbackend._IMPLS, "pymupdf", types.SimpleNamespace(prewarm=lambda: calls.append(1))
+    )
+    assert pdfbackend.warm() == "pymupdf" and calls == [1]
+    monkeypatch.setitem(pdfbackend._IMPLS, "pymupdf", types.SimpleNamespace())
+    assert pdfbackend.warm() == "pymupdf" and calls == [1]
+
+
+def test_the_candidate_prewarm_starts_the_child_and_loads_the_faces(candidate, fonts_ready):
+    from tavotto.rendercore import facade
+
+    facade.reset_for_tests()
+    facade.prewarm().join(timeout=60)
+    assert facade.host().pid is not None, "预热之后 render child 应当已经在跑"
+    assert facade._PROVIDER is not None, "预热之后字体注册表应当已经建好"
+
+
+def test_probe_asset_reuses_its_answer_until_the_file_changes(candidate, monkeypatch, tmp_path):
+    """素材库每次 `/api/panels` 都把每个素材探一遍（`app.scan_panels`，没有别的缓存）：文件没动就不再问 child
+    （`host.requests` 不涨）；换成另一份文件（inode 变了）就重新探；调用方改了回来的 dict 也不污染下一次。
+    位图那一档同样（`header_info` 不再读文件）。"""
+    if not HAS_CANDIDATE:
+        pytest.skip("候选包未装（not_run）")
+    from tavotto.rendercore import facade, sources
+
+    monkeypatch.setattr(sources, "RACY_WINDOW_NS", 0)
+    facade.reset_for_tests()
+    src = tmp_path / "fig.pdf"
+    shutil.copy(FIXTURE / "page.pdf", src)
+    h = facade.host()
+    first = pdfbackend.probe_asset(src, "pdf")
+    n = h.requests
+    again = pdfbackend.probe_asset(src, "pdf")
+    assert again == first and h.requests == n
+    again["w_pt"] = -1.0
+    assert pdfbackend.probe_asset(src, "pdf") == first
+    other = tmp_path / "other.pdf"
+    shutil.copy(ROOT / "docs/implementation/tavotto-foundation/evidence/u06/u06.pdf", other)
+    other.replace(src)
+    changed = pdfbackend.probe_asset(src, "pdf")
+    assert changed != first and h.requests == n + 1
+
+    png = tmp_path / "fig.png"
+    shutil.copy(FIXTURE / "original.png", png)
+    reads = []
+    real = facade.rasterio.header_info
+    monkeypatch.setattr(
+        facade.rasterio, "header_info", lambda *a, **k: reads.append(1) or real(*a, **k)
+    )
+    assert pdfbackend.probe_asset(png, "raster") == pdfbackend.probe_asset(png, "raster")
+    assert reads == [1]
+
+
 def test_the_candidate_never_falls_back_to_pymupdf_when_its_fonts_are_missing(
     monkeypatch, tmp_path, candidate
 ):

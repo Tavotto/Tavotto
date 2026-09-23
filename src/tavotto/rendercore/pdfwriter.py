@@ -333,9 +333,10 @@ class PdfWriter:
                 {"figure": res.source_id, "object_id": node.object_id, "why": "page_index"},
             )
         try:
-            form = self.pdf.copy_foreign(
-                src.pages[node.page_index].as_form_xobject(handle_transformations=True)
-            )
+            src_page = src.pages[node.page_index]
+            src_form = src_page.as_form_xobject(handle_transformations=True)
+            _keep_source_encoding(src_page, src_form)
+            form = self.pdf.copy_foreign(src_form)
         except (pikepdf.PdfError, ValueError, RuntimeError) as exc:
             raise WriterError(
                 "source_unreadable",
@@ -862,10 +863,14 @@ class PdfWriter:
         )
         self.pdf.pages.append(pikepdf.Page(page))
         out = Path(out)
+        _compress_unfiltered(self.pdf)
+        # compress_streams=False：qpdf 的 compress_streams 会把源里带 predictor 的 Flate 图片流解码再重压
+        # （与 stream_decode_level 无关，qpdf 12.3.2 实测：29 张图的海报 76 ms、体积不变）。要压的只有
+        # 确实没过滤的流，上一行已经压过；其余流原样照搬源的编码。
         self.pdf.save(
             str(out),
             object_stream_mode=pikepdf.ObjectStreamMode.disable,
-            compress_streams=True,
+            compress_streams=False,
             deterministic_id=True,
             min_version="1.5",
         )
@@ -879,6 +884,57 @@ class PdfWriter:
 
         self.facts.versions = versions()
         return self.facts
+
+
+#: 小于这个字节数的未过滤流不压（Flate 头 + adler32 就占掉收益）。
+_COMPRESS_MIN_BYTES = 64
+
+
+def _keep_source_encoding(src_page, form) -> None:
+    """qpdf 的 `as_form_xobject` 把页的内容流**解码成明文**放进新 Form（海报 399 KB → 2.7 MB），save 时再整段重压。
+    源页只有一段带过滤器的内容流、且解出来与 Form 的明文逐字节相同时，Form 直接用源的已编码字节 + 同一组
+    /Filter /DecodeParms——解码后是同一份内容流，一个操作符都不变（渲染与文字层逐字节相同）。多段内容流
+    （段界只保证落在词法边界上，压缩流不能首尾相接）、没有过滤器、或解不出来的，原样留给 `_compress_unfiltered`。
+    改的是**源文档里**的这个 Form，`copy_foreign` 之前做，不牵扯跨文档对象。"""
+    import pikepdf
+
+    contents = src_page.obj.get("/Contents")
+    if isinstance(contents, pikepdf.Array):
+        if len(contents) != 1:
+            return
+        contents = contents[0]
+    if not isinstance(contents, pikepdf.Stream) or contents.get("/Filter") is None:
+        return
+    try:
+        if contents.read_bytes() != form.read_bytes():
+            return
+        form.write(
+            contents.read_raw_bytes(),
+            filter=contents.get("/Filter"),
+            decode_parms=contents.get("/DecodeParms"),
+        )
+    except pikepdf.PdfError:
+        return  # 过滤器 qpdf 解不开：留明文，照常由 `_compress_unfiltered` 压
+
+
+def _compress_unfiltered(pdf) -> None:
+    """文档里没有过滤器的流（本模块写的内容流 / 字体程序 / 外来页 Form 的明文）逐个 Flate 压，大流在
+    `raster.zlib_compress` 的线程池里分块并行；压了不变小的不动；XMP /Metadata 保持明文（阅读器与归档工具
+    按明文读它）。已经有过滤器的流（源的图片、源的内容流）一个字节不碰——那正是不交给 qpdf 的
+    `compress_streams` 的原因。按 `pdf.objects` 的顺序处理：同一输入同一份输出。"""
+    import pikepdf
+
+    for obj in pdf.objects:
+        if not isinstance(obj, pikepdf.Stream) or obj.get("/Filter") is not None:
+            continue
+        if obj.get("/Type") == pikepdf.Name.Metadata:
+            continue
+        data = obj.read_raw_bytes()
+        if len(data) < _COMPRESS_MIN_BYTES:
+            continue
+        packed = raster.zlib_compress(data)
+        if len(packed) < len(data):
+            obj.write(packed, filter=pikepdf.Name.FlateDecode)
 
 
 def _path_segments(segments: tuple) -> str:

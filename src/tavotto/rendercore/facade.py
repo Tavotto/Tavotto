@@ -44,7 +44,7 @@ from .hbshaper import HbFaceProvider
 from .ir import hex2rgb, mm2pt
 from .preview import PreviewCache
 from .renderhost import RenderHost
-from .sources import FrozenSource, SourceError
+from .sources import FingerprintMemo, FrozenSource, SourceError
 from .typography import CANVAS_TEXT_FAMILIES, COVERAGE_MAX_CP
 
 __all__ = [
@@ -65,6 +65,7 @@ __all__ = [
     "original_png",
     "original_tiff",
     "pdf_fonts",
+    "prewarm",
     "preview_cache",
     "probe_asset",
     "provider",
@@ -84,6 +85,9 @@ FONT_SCAN_MAX_FORMS = 256
 _PROVIDER: HbFaceProvider | None = None
 _PREVIEW: PreviewCache | None = None
 _LOCK = threading.Lock()
+#: `probe_asset` 的派生值表：素材库每次 `/api/panels` 都把每个素材探一遍（`app.scan_panels`），文件没动就不再
+#: 问 child——判「没动」的只有 `sources.file_fingerprint`，身份仍是字节 hash（这里不产身份）。
+_PROBES = FingerprintMemo()
 
 
 def provider() -> HbFaceProvider:
@@ -127,12 +131,32 @@ def preview_cache(cache_dir: Path | None = None, *, max_bytes: int | None = None
         return _PREVIEW
 
 
+def prewarm() -> threading.Thread:
+    """冷启动三件（起 render child ~70 ms、字体注册表 ~90 ms、第一次排版载 CJK 脸 ~60 ms）放到后台线程里先做掉，
+    用户的第一次预览 / 导出不再替它们付账。由 `pdfbackend.warm()` 在服务启动时调。失败只记日志：同一个错误
+    会在第一次真用到时原样抛出（无静默回退——这里不替谁选别的后端，也不吞掉那一次）。"""
+
+    def run() -> None:
+        try:
+            host().ping()
+            typography.text_width("图 Aa", 10.0, _faces("serif", False, False))
+        except Exception as exc:  # noqa: BLE001 —— 预热不是权威路径，真用到时同一个错误会再抛
+            import logging
+
+            logging.getLogger("tavotto").warning("RenderCore 预热未完成：%s", exc)
+
+    t = threading.Thread(target=run, name="rendercore-prewarm", daemon=True)
+    t.start()
+    return t
+
+
 def reset_for_tests() -> None:
     """丢掉进程级共享实例（字体注册表 / 预览缓存）；render child 由 `renderhost.shutdown_shared()` 收。"""
     global _PROVIDER, _PREVIEW
     with _LOCK:
         _PROVIDER = None
         _PREVIEW = None
+    _PROBES.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -199,18 +223,27 @@ def _kind_of(path: Path) -> str:
 
 
 def probe_asset(path: Path, kind: str) -> dict:
-    """同旧后端的返回结构。PDF 的尺寸经 render child（PDFium 可见框，含 /Rotate，**乘 /UserUnit**）。"""
+    """同旧后端的返回结构。PDF 的尺寸经 render child 的 `size`（PDFium 可见框，含 /Rotate，**乘 /UserUnit**；
+    不加载页）。文件没动（`sources.file_fingerprint` 相同）就复用上一次的结果，每次回一份新 dict。"""
     path = Path(path)
     if kind == "pdf":
-        r = host().probe(path)
-        return {"kind": "pdf", "w_pt": float(r["width_pt"]), "h_pt": float(r["height_pt"])}
-    info = rasterio.header_info(path.read_bytes(), _kind_of(path))
-    return {
-        "kind": "raster",
-        "px_w": int(info["width"]),
-        "px_h": int(info["height"]),
-        "alpha": bool(info["alpha"]),
-    }
+
+        def measure() -> dict:
+            r = host().size(path)
+            return {"kind": "pdf", "w_pt": float(r["width_pt"]), "h_pt": float(r["height_pt"])}
+
+    else:
+
+        def measure() -> dict:
+            info = rasterio.header_info(path.read_bytes(), _kind_of(path))
+            return {
+                "kind": "raster",
+                "px_w": int(info["width"]),
+                "px_h": int(info["height"]),
+                "alpha": bool(info["alpha"]),
+            }
+
+    return dict(_PROBES.get_or_compute(path, measure, key=kind))
 
 
 def _strip_subset(base: str) -> str:
@@ -464,7 +497,7 @@ def original_pdf(src: Path, out: Path, page_pt: tuple[float, float] | None = Non
     src, out = Path(src), Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     if src.suffix.lower() == ".pdf":
-        probe = host().probe(src)
+        probe = host().size(src)
         with pikepdf.open(str(src)) as doc:
             pages = len(doc.pages)
             dest = pikepdf.new()
@@ -586,7 +619,7 @@ def annotate_asset(
     from . import pdfwriter
 
     pdf_path = Path(pdf_path)
-    probe = host().probe(pdf_path)
+    probe = host().size(pdf_path)
     w_pt, h_pt = float(probe["width_pt"]), float(probe["height_pt"])
     # 面板 / 不认识的类型不许静默跳过：面板由 `_NoPanels` 拒（source_kind_unsupported），别的类型由
     # `compile_page` 拒（bad_object）——两条都在动原件之前抛出，原件零改动
