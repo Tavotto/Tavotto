@@ -29,13 +29,23 @@ from pathlib import Path
 from typing import Callable
 
 from .raster import RasterBuffer, RasterError
-from .renderchild import DEFAULT_MAX_PIXELS, ERROR_CODES, RenderChildError, child_argv
+from .renderchild import (
+    BAND_OVERLAP,
+    DEFAULT_MAX_PIXELS,
+    DEFAULT_MAX_TOTAL_PIXELS,
+    ERROR_CODES,
+    RenderChildError,
+    band_rows_for,
+    child_argv,
+)
 
 __all__ = [
     "DEFAULT_MAX_PIXELS",
+    "DEFAULT_MAX_TOTAL_PIXELS",
     "ERROR_CODES",
     "RenderChildError",
     "RenderHost",
+    "band_rows_for",
     "shared",
     "shutdown_shared",
 ]
@@ -49,6 +59,7 @@ class RenderHost:
         command: list[str] | None = None,
         *,
         max_pixels: int = DEFAULT_MAX_PIXELS,
+        max_total_pixels: int = DEFAULT_MAX_TOTAL_PIXELS,
         default_timeout: float = 60.0,
         max_waiting: int = 32,
         env: dict[str, str] | None = None,
@@ -56,6 +67,8 @@ class RenderHost:
     ) -> None:
         self.command = list(command) if command else child_argv()
         self.max_pixels = int(max_pixels)
+        #: 条带栅格（ADR 0077 P2）的整页上限；每一带仍受 `max_pixels` 约束
+        self.max_total_pixels = int(max_total_pixels)
         self.default_timeout = float(default_timeout)
         self.max_waiting = int(max_waiting)
         self.env = env
@@ -269,6 +282,7 @@ class RenderHost:
         transparent: bool = False,
         page_size_pt: tuple[float, float] | None = None,
         timeout: float | None = None,
+        band: tuple[int, int] | None = None,
     ) -> RasterBuffer:
         """页 → `RasterBuffer`（RGBA，straight alpha，父进程自己的字节）。
 
@@ -296,9 +310,24 @@ class RenderHost:
                 raise RenderChildError("bad_request", "dpi must be positive")
             if page_size_pt:
                 w_pt, h_pt = page_size_pt
-                self._budget(
-                    max(1, int(round(w_pt * dpi / 72.0))), max(1, int(round(h_pt * dpi / 72.0)))
+                full = (
+                    max(1, int(round(w_pt * dpi / 72.0))),
+                    max(1, int(round(h_pt * dpi / 72.0))),
                 )
+                if band is None:
+                    self._budget(*full)
+                else:
+                    # 条带：这一带受 max_pixels，整页受 max_total_pixels（父侧先判，child 打开页面后再判一次）
+                    if full[0] * full[1] > self.max_total_pixels:
+                        raise RenderChildError(
+                            "pixel_budget_exceeded",
+                            f"整页 {full[0]}×{full[1]} > {self.max_total_pixels}",
+                        )
+                    self._budget(full[0], int(band[1]) + 2 * BAND_OVERLAP)  # 含上下重叠
+        if band is not None and width_px is not None:
+            raise RenderChildError("bad_request", "条带只给按 dpi 的导出，不给按宽的预览")
+        # 条带：父进程独立算出的整页尺寸（有 page_size_pt 才算得出），用来核 child 回报的整页
+        band_full = full if band is not None and dpi is not None and page_size_pt else None
         fd, name = tempfile.mkstemp(prefix="render-", suffix=".rgba", dir=self.scratch_dir)
         os.close(fd)
         out = Path(name)
@@ -329,6 +358,30 @@ class RenderHost:
                     "render_child_protocol",
                     f"像素文件 {len(samples)} 字节与响应说的 {declared} 不符",
                 )
+            if band is not None and (resp.get("band_y0"), resp.get("height")) != (
+                int(band[0]),
+                int(band[1]),
+            ):
+                raise RenderChildError(
+                    "render_child_protocol",
+                    f"要的行带 {tuple(band)}，child 给的是 ({resp.get('band_y0')}, {resp.get('height')})",
+                )
+            if (
+                band is not None
+                and band_full is not None
+                and (
+                    resp.get("width"),
+                    resp.get("full_height"),
+                )
+                != band_full
+            ):
+                # 整页尺寸由父进程按页面尺寸 × dpi 独立算出；child 算出的整页若不同（页盒 / UserUnit 的处理出了偏差），
+                # 按计划高度拼出来的是一张被悄悄裁掉或错位的图——协议失败（Codex #513 P2）
+                raise RenderChildError(
+                    "render_child_protocol",
+                    f"child 的整页是 {resp.get('width')}×{resp.get('full_height')}，父进程算的是 "
+                    f"{band_full[0]}×{band_full[1]}",
+                )
             try:
                 got["buf"] = RasterBuffer(
                     width=int(resp["width"]),
@@ -355,6 +408,16 @@ class RenderHost:
                 dpi=dpi,
                 transparent=bool(transparent),
                 max_pixels=self.max_pixels,
+                **(
+                    {
+                        "band_y0": int(band[0]),
+                        "band_rows": int(band[1]),
+                        "band_overlap": BAND_OVERLAP,
+                        "max_total_pixels": self.max_total_pixels,
+                    }
+                    if band is not None
+                    else {}
+                ),
             )
             buf = got["buf"]
         finally:

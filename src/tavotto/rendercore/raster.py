@@ -139,11 +139,27 @@ def _png_chunk(tag: bytes, data: bytes) -> bytes:
     )
 
 
+def _png_rows_per_block(row_bytes: int) -> int:
+    """扫描线凑块的唯一规则（整幅编码与条带编码共用）：块边界只由行宽定，输出因此确定。"""
+    return max(1, deflate.BLOCK // (row_bytes + 1))
+
+
+def _png_head(width: int, height: int, channels: int, dpi: float | None) -> bytes:
+    color_type = 6 if channels == 4 else 2
+    head = PNG_SIGNATURE + _png_chunk(
+        b"IHDR", struct.pack(">IIBBBBB", width, height, 8, color_type, 0, 0, 0)
+    )
+    if dpi is not None and dpi > 0:
+        ppm = int(round(dpi / 0.0254))
+        head += _png_chunk(b"pHYs", struct.pack(">IIB", ppm, ppm, 1))
+    return head
+
+
 def _png_scanline_blocks(buf: RasterBuffer) -> Iterator[bytes]:
-    """PNG 的滤波后扫描线（每行前一个滤波字节 0 + 紧凑的行），按行数凑成约 `deflate.BLOCK` 的块——**块边界只由
-    行宽定**，输出因此确定；任何时刻只有在飞的那几块被复制，整幅扫描线从不整份拼出来（旧做法多一份整图）。"""
+    """PNG 的滤波后扫描线（每行前一个滤波字节 0 + 紧凑的行），按 `_png_rows_per_block` 凑块；任何时刻只有在飞的
+    那几块被复制，整幅扫描线从不整份拼出来（旧做法多一份整图）。"""
     rb, st = buf.row_bytes, buf.stride
-    rows = max(1, deflate.BLOCK // (rb + 1))
+    rows = _png_rows_per_block(rb)
     view = memoryview(buf.samples)
     zero = b"\x00"
     for y0 in range(0, buf.height, rows):
@@ -158,19 +174,73 @@ def encode_png(buf: RasterBuffer) -> bytes:
     IDAT 是**一条** zlib 流，由 `deflate.zlib_stream` 按扫描线块并行压（ADR 0077 P1）：解出来与逐行串行压的
     是同一份扫描线（像素逐个相同）；压缩流的字节与单线程 `zlib.compress` 不同（块边界处 `Z_SYNC_FLUSH`），但同一输入
     永远同一份输出、与线程数无关。一块以内（小图）逐字节等于从前。"""
-    color_type = 6 if buf.channels == 4 else 2
-    parts = [
-        PNG_SIGNATURE,
-        _png_chunk(b"IHDR", struct.pack(">IIBBBBB", buf.width, buf.height, 8, color_type, 0, 0, 0)),
-    ]
-    if buf.dpi is not None and buf.dpi > 0:
-        ppm = int(round(buf.dpi / 0.0254))
-        parts.append(_png_chunk(b"pHYs", struct.pack(">IIB", ppm, ppm, 1)))
-    parts.append(
-        _png_chunk(b"IDAT", deflate.zlib_stream(_png_scanline_blocks(buf), PNG_DEFLATE_LEVEL))
+    idat = deflate.zlib_stream(_png_scanline_blocks(buf), PNG_DEFLATE_LEVEL)
+    return b"".join(
+        (
+            _png_head(buf.width, buf.height, buf.channels, buf.dpi),
+            _png_chunk(b"IDAT", idat),
+            _png_chunk(b"IEND", b""),
+        )
     )
-    parts.append(_png_chunk(b"IEND", b""))
-    return b"".join(parts)
+
+
+class PngStreamWriter:
+    """条带栅格（ADR 0077 P2）的 PNG 写入器：按行带逐次 `feed(RasterBuffer)`，扫描线按 `_png_rows_per_block` 凑块
+    （与 `encode_png` 同一条规则），压好的片段**边收边写**成连续的 IDAT 块——整幅扫描线与整条压缩流都不在内存里。
+    PNG 允许 IDAT 分成多块（解码器按顺序拼接）；把各块 IDAT 的数据拼起来，就是 `encode_png(同一幅像素)` 那条
+    zlib 流，逐字节相同。`close()` 核行数；出错用 `abort()` 收线程、关文件（半截文件由调用方的临时目录收）。"""
+
+    def __init__(self, path, width: int, height: int, channels: int, dpi: float | None) -> None:
+        if channels not in (3, 4) or width <= 0 or height <= 0:
+            raise RasterError(f"PNG 写入器不收 {width}×{height}×{channels}")
+        self.width, self.height, self.channels = int(width), int(height), int(channels)
+        self._rb = self.width * self.channels
+        self._per_block = _png_rows_per_block(self._rb)
+        self._pending: list = []
+        self._pending_rows = 0
+        self._rows = 0
+        self._z = deflate.ZlibStreamer(PNG_DEFLATE_LEVEL)
+        self._fh = open(path, "wb")  # noqa: SIM115 —— close()/abort() 关
+        self._fh.write(_png_head(self.width, self.height, self.channels, dpi))
+
+    def _idat(self, data: bytes) -> None:
+        if data:
+            self._fh.write(_png_chunk(b"IDAT", data))
+
+    def _flush(self) -> None:
+        block = b"".join(self._pending)
+        self._pending, self._pending_rows = [], 0
+        self._idat(self._z.feed(block))
+
+    def feed(self, band: RasterBuffer) -> None:
+        if (band.width, band.channels) != (self.width, self.channels):
+            raise RasterError(
+                f"行带 {band.width}×{band.channels} 与 PNG {self.width}×{self.channels} 不符"
+            )
+        if self._rows + band.height > self.height:
+            raise RasterError(f"行数超出：{self._rows} + {band.height} > {self.height}")
+        view, st, rb = memoryview(band.samples), band.stride, self._rb
+        for y in range(band.height):
+            self._pending += (b"\x00", view[y * st : y * st + rb])
+            self._pending_rows += 1
+            if self._pending_rows == self._per_block:
+                self._flush()
+        self._rows += band.height
+
+    def close(self) -> dict:
+        if self._rows != self.height:
+            self.abort()
+            raise RasterError(f"PNG 只收到 {self._rows} / {self.height} 行")
+        if self._pending:
+            self._flush()
+        self._idat(self._z.close())
+        self._fh.write(_png_chunk(b"IEND", b""))
+        self._fh.close()
+        return {"px_w": self.width, "px_h": self.height, "channels": self.channels}
+
+    def abort(self) -> None:
+        self._z.abort()
+        self._fh.close()
 
 
 def write_tiff(buf: RasterBuffer, path) -> dict:

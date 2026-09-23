@@ -199,3 +199,112 @@ def test_tiff_strips_are_exactly_serial_zlib_of_the_compact_rows(
         tmp_path / "b.tiff", 53, 90, buf.samples, channels, stride=buf.stride, dpi=300
     )
     assert (tmp_path / "b.tiff").read_bytes() == data
+
+
+# ---------------------------------------------------------------- 流式写入（条带栅格，ADR 0077 P2）
+
+
+def test_the_streamer_gives_the_same_bytes_as_the_batch_stream_and_hands_them_out_early(
+    monkeypatch,
+):
+    """`ZlibStreamer` 是 `zlib_stream` 的增量版：拼起来是同一份字节；在飞件数有上限时，**关之前**就已经交出了一部分
+    （否则整条流还是在内存里攒着，条带就白切了）。"""
+    monkeypatch.setattr(deflate, "workers", lambda: 1)  # 在飞上限 2
+    blocks = [_payload(deflate.BLOCK // 4 + i) for i in range(6)]
+    s = deflate.ZlibStreamer(6)
+    early = [s.feed(b) for b in blocks]
+    tail = s.close()
+    assert b"".join(early) + tail == deflate.zlib_stream(blocks)
+    assert sum(map(len, early)) > 2, "关之前一个字节都没交出来：流并没有在流"
+
+
+def test_an_aborted_streamer_leaves_no_thread_behind():
+    import threading
+
+    s = deflate.ZlibStreamer(6)
+    s.feed(_payload(deflate.BLOCK + 10))
+    s.feed(_payload(10))
+    s.abort()
+    assert not [t for t in threading.enumerate() if t.name.startswith("deflate")]
+
+
+@pytest.mark.parametrize("band", [1, 7, 64, 211])
+def test_the_png_stream_writer_fed_in_bands_writes_the_same_zlib_stream_as_encode_png(
+    band, tmp_path, monkeypatch
+):
+    """条带 PNG 与整幅 `encode_png` 用同一条凑块规则：把各块 IDAT 的数据拼起来，就是整幅那一条 zlib 流，逐字节相同
+    ——像素因此也相同；带多高都一样。"""
+    monkeypatch.setattr(deflate, "BLOCK", 4096)
+    buf = _buffer(97, 211, 3, pad=3)
+    rows = list(buf.rows())
+    w = raster.PngStreamWriter(tmp_path / "s.png", 97, 211, 3, 300.0)
+    for y in range(0, 211, band):
+        part = b"".join(r + b"\xee" * 3 for r in rows[y : y + band])
+        w.feed(raster.RasterBuffer(97, len(rows[y : y + band]), 3, part, 97 * 3 + 3, dpi=300.0))
+    w.close()
+    streamed = (tmp_path / "s.png").read_bytes()
+
+    def idat(png: bytes) -> bytes:
+        pos, out = 8, b""
+        while pos < len(png):
+            (n,) = struct.unpack(">I", png[pos : pos + 4])
+            if png[pos + 4 : pos + 8] == b"IDAT":
+                out += png[pos + 8 : pos + 8 + n]
+            pos += 12 + n
+        return out
+
+    whole = raster.encode_png(buf)
+    assert idat(streamed) == idat(whole) and streamed[:33] == whole[:33]  # 签名 + IHDR 同
+    assert pdfread.decode_png_any(streamed)[3] == buf.packed()
+
+
+def test_the_png_stream_writer_refuses_a_short_or_mismatched_image(tmp_path):
+    w = raster.PngStreamWriter(tmp_path / "a.png", 4, 3, 3, None)
+    w.feed(raster.RasterBuffer(4, 2, 3, b"\x00" * 24, 12))
+    with pytest.raises(raster.RasterError):
+        w.close()  # 只收到 2 / 3 行
+    w = raster.PngStreamWriter(tmp_path / "b.png", 4, 3, 3, None)
+    with pytest.raises(raster.RasterError):
+        w.feed(raster.RasterBuffer(5, 1, 3, b"\x00" * 15, 15))  # 宽不符
+    w.abort()
+
+
+@pytest.mark.parametrize("channels,band", [(3, 1), (3, 13), (4, 90)])
+def test_the_tiff_stream_writer_fed_in_bands_writes_the_same_strips_with_the_ifd_last(
+    channels, band, tmp_path, monkeypatch
+):
+    """条带 TIFF：每条 strip 与整幅 `write_tiff` 的**同一条**逐字节相同（同一条切分规则、同一个 zlib 级别），只有 IFD
+    挪到了文件末尾（头里的偏移回填）；产品的检查器读得懂它。"""
+    from tavotto.rendercore import inspector
+
+    monkeypatch.setattr(tiffwrite, "STRIP_TARGET_BYTES", 500)
+    buf = _buffer(53, 90, channels, pad=1)
+    tiffwrite.write_tiff(
+        tmp_path / "whole.tiff", 53, 90, buf.samples, channels, stride=buf.stride, dpi=300
+    )
+    w = tiffwrite.TiffStreamWriter(tmp_path / "s.tiff", 53, 90, channels, dpi=300)
+    for y in range(0, 90, band):
+        n = min(band, 90 - y)
+        w.feed(buf.samples[y * buf.stride : (y + n) * buf.stride], n, buf.stride)
+    facts = w.close()
+    whole, streamed = (tmp_path / "whole.tiff").read_bytes(), (tmp_path / "s.tiff").read_bytes()
+    assert _tiff_strips(streamed) == _tiff_strips(whole) and facts["strips"] == len(
+        _tiff_strips(whole)
+    )
+    (ifd,) = struct.unpack_from("<I", streamed, 4)
+    strips_end = max(streamed.index(x) + len(x) for x in _tiff_strips(streamed))
+    assert ifd % 2 == 0 and ifd >= strips_end, "IFD 应当在全部 strip 数据之后（流式布局）"
+    (whole_ifd,) = struct.unpack_from("<I", whole, 4)
+    assert whole_ifd == 8, "整幅布局不变：IFD 紧跟文件头"
+    obs = inspector.observe_tiff(tmp_path / "s.tiff")
+    assert obs["integrity"] == "verified" and obs["px"] == [53, 90] and obs["dpi"] == 300.0
+
+
+def test_the_tiff_stream_writer_refuses_a_short_image_and_releases_its_threads(tmp_path):
+    import threading
+
+    w = tiffwrite.TiffStreamWriter(tmp_path / "a.tiff", 4, 3, 3)
+    w.feed(b"\x00" * 24, 2)
+    with pytest.raises(tiffwrite.TiffWriteError):
+        w.close()
+    assert not [t for t in threading.enumerate() if t.name.startswith("deflate")]

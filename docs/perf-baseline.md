@@ -1018,3 +1018,14 @@ PyMuPDF 1.28.2 ｜ 复现：`<rc-venv>/bin/python scripts/dev/bench_rendercore.p
 同批源上旧后端：海报 → PDF + PNG300 323 ms、扫描件原图 → TIFF300 154 ms、A4 600 ppi 单进程峰值 257 MB。前两项 P1 已更快；
 第三项仍高（像素在 child 与父进程各一份，进程边界的代价），超预算的大图交给 P2。测法的教训：macOS 自带的 bash 3.2 没有关联数组，
 `${T[$t]}` 展开成空串、`startswith("")` 恒真——三棵树全跑成了 main，数字「一模一样」。守卫要先拒绝空的期望路径。
+
+### P2：超出单张预算的大尺寸（旧后端 / main / P2，每项 2 轮交错）
+
+| 导出 | 旧后端（PyMuPDF） | main（RenderCore） | P2 |
+|---|---|---|---|
+| A4 论文页 @ 1200 ppi → PNG（139 M 像素） | 1844 ms，峰值 857 MB | 拒绝（`pixel_budget_exceeded`） | 653 ms，173 + 88 MB |
+| A3 CAD @ 600 ppi → PNG + TIFF（70 M） | 1466 ms，459 MB | 拒绝 | 691 ms，159 + 89 MB |
+| A3 海报 @ 1200 ppi → PNG（278 M） | 5199 ms，1622 MB | 拒绝 | 2325 ms，166 + 149 MB |
+
+条带的内存只和一带（16 M 像素）一样大，与页面尺寸无关。PNG 体积比旧后端大（CAD 1.4 → 2.3 MB）：RenderCore 的 PNG 从 U07 起不做
+行滤波，旧后端做——不是 P2 的差异，另立题目。

@@ -29,7 +29,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..engine import exportjob, exportreq
-from . import BACKEND_NAME, identity, ir, pdfwriter, plan, raster
+from . import BACKEND_NAME, banded, identity, ir, pdfwriter, plan, raster
 from .hbshaper import HbFaceProvider
 from .renderhost import RenderChildError, RenderHost
 from .sources import SourceError, SourceResolver, read_frozen
@@ -139,6 +139,8 @@ def produce(
     # ---- 栅格：要了 PNG / TIFF 就把 Canonical PDF 交给 render child 栅格一次 --------------
     wants_raster = any(f in exportreq.RASTER_FORMATS for f in req.formats)
     buf: raster.RasterBuffer | None = None
+    #: 条带栅格（ADR 0077 P2）时位图已经直接写进了这些临时文件（每一带渲染一次、同时喂给要的容器）
+    banded_files: dict[str, Path] | None = None
     raster_error: Exception | None = None
     raster_facts: dict = {}
     if wants_raster and pdf_facts is not None and not _raster_gaps(rp):
@@ -154,18 +156,43 @@ def produce(
         ]
         h = host if host is not None else _shared_host()
         try:
-            buf = h.render(
-                pdf_tmp,
-                dpi=float(dpi),
-                transparent=rp.page.background is None,
-                page_size_pt=(rp.page.width_pt, rp.page.height_pt),
-            )
-            raster_facts = {
-                "renderer": "pdfium",
-                "px": [buf.width, buf.height],
-                "channels": buf.channels,
-                "dpi": buf.dpi,
-            }
+            if banded.needs_bands(h, planned_px):
+                # 超出单张预算：按行带渲染、边收边写（ADR 0077 P2）；预算以内的照旧整页一次（逐字节同从前）
+                banded_files = {
+                    fmt: tmp_dir / f"out.{fmt}"
+                    for fmt in req.formats
+                    if fmt in exportreq.RASTER_FORMATS and not rp.unsupported.get(fmt)
+                }
+                facts = banded.write_banded(
+                    h,
+                    pdf_tmp,
+                    dpi=float(dpi),
+                    size_px=(planned_px[0], planned_px[1]),
+                    page_size_pt=(rp.page.width_pt, rp.page.height_pt),
+                    transparent=rp.page.background is None,
+                    png=banded_files.get(exportreq.FORMAT_PNG),
+                    tiff=banded_files.get(exportreq.FORMAT_TIFF),
+                )
+                raster_facts = {
+                    "renderer": "pdfium",
+                    "px": facts["px"],
+                    "channels": facts["channels"],
+                    "dpi": float(dpi),
+                    "bands": facts["bands"],
+                }
+            else:
+                buf = h.render(
+                    pdf_tmp,
+                    dpi=float(dpi),
+                    transparent=rp.page.background is None,
+                    page_size_pt=(rp.page.width_pt, rp.page.height_pt),
+                )
+                raster_facts = {
+                    "renderer": "pdfium",
+                    "px": [buf.width, buf.height],
+                    "channels": buf.channels,
+                    "dpi": buf.dpi,
+                }
             raster_render_identity = identity.render_identity(
                 rp.plan_identity,
                 renderer="pdfium",
@@ -178,6 +205,12 @@ def produce(
         except RenderChildError as exc:
             raster_error = exc
             job.trace.fail("raster", getattr(exc, "code", "") or "render_child_error")
+        except (
+            OSError,
+            ValueError,
+        ) as exc:  # 条带写入器落盘失败（卷满 / TIFF 超 4 GiB）：两个位图格式一起失败
+            raster_error = exc
+            job.trace.fail("raster", type(exc).__name__)
 
     for fmt in req.formats:
         job.check_cancelled()
@@ -221,22 +254,27 @@ def produce(
             elif raster_error is not None:
                 failed(fmt, str(raster_error), raster_code=getattr(raster_error, "code", ""))
             else:
-                assert buf is not None
                 tmp = tmp_dir / f"out.{fmt}"
-                try:
-                    if fmt == exportreq.FORMAT_TIFF:
-                        raster.write_tiff(buf, tmp)
-                    else:
-                        tmp.write_bytes(raster.encode_png(buf))
-                except (OSError, ValueError) as exc:  # noqa: PERF203 —— 一个格式挂了不牵连另一个
-                    failed(fmt, f"{type(exc).__name__}: {exc}")
-                    continue
+                if banded_files is not None:
+                    tmp = banded_files[fmt]  # 条带：这一格式已经写好
+                    px_w, px_h = raster_facts["px"]
+                else:
+                    assert buf is not None
+                    try:
+                        if fmt == exportreq.FORMAT_TIFF:
+                            raster.write_tiff(buf, tmp)
+                        else:
+                            tmp.write_bytes(raster.encode_png(buf))
+                    except (OSError, ValueError) as exc:  # noqa: PERF203 —— 一个格式挂了不牵连另一个
+                        failed(fmt, f"{type(exc).__name__}: {exc}")
+                        continue
+                    px_w, px_h = buf.width, buf.height
                 produced.append(
                     exportjob.Produced(
                         format=fmt,
                         tmp_path=tmp,
-                        width_px=buf.width,
-                        height_px=buf.height,
+                        width_px=px_w,
+                        height_px=px_h,
                         width_mm=width_mm,
                         height_mm=height_mm,
                         vector=False,

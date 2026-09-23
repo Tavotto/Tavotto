@@ -26,6 +26,11 @@ import pytest
 
 from tavotto.rendercore import renderchild as rc, renderhost as rh
 
+SUPPORT = Path(__file__).resolve().parent / "support"
+if str(SUPPORT) not in sys.path:
+    sys.path.insert(0, str(SUPPORT))
+import procprobe  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "foundation" / "pdf_png_assets"
 U06_PDF = ROOT / "docs" / "implementation" / "tavotto-foundation" / "evidence" / "u06" / "u06.pdf"
@@ -106,15 +111,33 @@ def fake_host(tmp_path):
     host.close()
 
 
+#: 每个 child 起来那一刻的创建时间（Windows），按 pid 记：`_assert_not_alive` 的主语是**我们起的那个进程**，不是
+#: 「这个 pid 此刻有没有进程」——Windows 回收 pid 很快，`os.kill(pid, 0)` 在那里还是 TerminateProcess（见 procprobe）。
+_BORN: dict[int, int] = {}
+
+
+@pytest.fixture(autouse=True)
+def _record_child_birth(monkeypatch):
+    if os.name != "nt":
+        yield
+        return
+    real_start = rh.RenderHost._start
+
+    def start(self):
+        real_start(self)
+        if self._proc is not None:
+            born = procprobe.started(self._proc.pid)
+            if born is not None:
+                _BORN[self._proc.pid] = born
+
+    monkeypatch.setattr(rh.RenderHost, "_start", start)
+    yield
+    _BORN.clear()
+
+
 def _assert_not_alive(pid: int) -> None:
-    for _ in range(50):
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            return
-        # 已 reap 的 pid 在 POSIX 上 kill(pid, 0) 会 ESRCH；Windows 上 OpenProcess 失败同样抛
-        time.sleep(0.05)
-    raise AssertionError(f"pid {pid} 仍然活着（没 kill 或没 reap）")
+    if not procprobe.wait_gone(pid, _BORN.get(pid)):
+        raise AssertionError(f"pid {pid} 仍然活着（没 kill 或没 reap）")
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +539,16 @@ def test_pixel_validation_runs_inside_the_request_lock(fake_host, tmp_path):
         fake_host.render(pdf, width_px=2)
     assert ei.value.code == "render_child_protocol"
     assert reaped_at_release == [True], reaped_at_release
+
+
+def test_a_child_that_answers_a_band_request_with_something_else_is_reaped(fake_host, tmp_path):
+    """条带（ADR 0077 P2）：要的是 [y0, y0 + rows) 这一带，child 回的若不是这一带（假 child 不认条带、照旧回整张），
+    就是协议失败——拼进 PNG / TIFF 的会是错位的行。锁内判、kill + reap。"""
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF")
+    with pytest.raises(rh.RenderChildError) as exc:
+        fake_host.render(pdf, dpi=72.0, band=(0, 1))
+    assert exc.value.code == "render_child_protocol" and fake_host.pid is None
 
 
 def test_error_codes_are_a_closed_set():

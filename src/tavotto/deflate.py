@@ -36,21 +36,53 @@ def workers() -> int:
     return max(1, min(8, os.cpu_count() or 1))
 
 
+class OrderedPool:
+    """增量版的有界并行：`put(item)` 交一件，回**此刻已经按顺序可取**的结果（在飞件数到 `inflight` 才等最老的那件）；
+    `finish()` 等完剩下的、按顺序回、关掉线程池。出错时用 `abort()`（或 with 语句）收掉线程——不留常驻线程。"""
+
+    def __init__(self, fn: Callable[[T], R], *, inflight: int | None = None) -> None:
+        n = workers()
+        self._fn = fn
+        self._limit = max(1, inflight or 2 * n)
+        self._pool = ThreadPoolExecutor(max_workers=n, thread_name_prefix="deflate")
+        self._pending: deque = deque()
+
+    def put(self, item: T) -> list[R]:
+        self._pending.append(self._pool.submit(self._fn, item))
+        out = []
+        while len(self._pending) >= self._limit:
+            out.append(self._pending.popleft().result())
+        return out
+
+    def finish(self) -> list[R]:
+        try:
+            return [f.result() for f in self._pending]
+        finally:
+            self._pending.clear()
+            self._pool.shutdown(wait=True)
+
+    def abort(self) -> None:
+        for f in self._pending:
+            f.cancel()
+        self._pending.clear()
+        self._pool.shutdown(wait=True)
+
+    def __enter__(self) -> OrderedPool:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.abort()
+
+
 def ordered_map(
     fn: Callable[[T], R], items: Iterable[T], *, inflight: int | None = None
 ) -> Iterator[R]:
     """线程池里跑 `fn`，**按输入顺序**产出结果；任何时刻最多 `inflight` 件在飞（默认 2 × 线程数）——
     输入是惰性生成的大块时，内存只和窗口一样大。"""
-    n = workers()
-    limit = max(1, inflight or 2 * n)
-    with ThreadPoolExecutor(max_workers=n, thread_name_prefix="deflate") as pool:
-        pending: deque = deque()
+    with OrderedPool(fn, inflight=inflight) as pool:
         for item in items:
-            pending.append(pool.submit(fn, item))
-            if len(pending) >= limit:
-                yield pending.popleft().result()
-        while pending:
-            yield pending.popleft().result()
+            yield from pool.put(item)
+        yield from pool.finish()
 
 
 def compress_each(chunks: Iterable[bytes], level: int) -> Iterator[bytes]:
@@ -75,28 +107,58 @@ def _deflate(task: tuple[bytes, bytes | None, bool, int]) -> bytes:
     return c.compress(data) + c.flush(zlib.Z_FINISH if last else zlib.Z_SYNC_FLUSH)
 
 
+class ZlibStreamer:
+    """增量版 `zlib_stream`：`feed(块)` 陆续回**已经压好的**字节片段（第一段带 zlib 头），`close()` 回末块与 adler32。
+    同一串块经它与经 `zlib_stream` 得到的是**同一份字节**（后者就是它的批量写法）；在飞的块数有上限，调用方边收边
+    写出去，整条流从不在内存里（条带栅格的大图用它，ADR 0077 P2）。出错时 `abort()` 收线程。"""
+
+    def __init__(self, level: int = 6, *, inflight: int | None = None) -> None:
+        self.level = level
+        self._pool: OrderedPool = OrderedPool(_deflate, inflight=inflight)
+        self._held: bytes | None = None
+        self._prev_tail: bytes | None = None
+        self._adler = 1
+        self._started = False
+
+    def _emit(self, pieces: list[bytes]) -> bytes:
+        body = b"".join(pieces)
+        if not self._started:
+            self._started = True
+            return _header(self.level) + body
+        return body
+
+    def feed(self, block) -> bytes:
+        block = bytes(block)
+        if not block:
+            return self._emit([])
+        pieces: list[bytes] = []
+        if self._held is not None:
+            pieces = self._pool.put((self._held, self._prev_tail, False, self.level))
+            self._prev_tail = self._held[-_WINDOW:]
+        self._adler = zlib.adler32(block, self._adler)
+        self._held = block
+        return self._emit(pieces)
+
+    def close(self) -> bytes:
+        last = (self._held if self._held is not None else b"", self._prev_tail, True, self.level)
+        pieces = self._pool.put(last) + self._pool.finish()
+        return self._emit(pieces) + struct.pack(">I", self._adler & 0xFFFFFFFF)
+
+    def abort(self) -> None:
+        self._pool.abort()
+
+
 def zlib_stream(blocks: Iterable[bytes], level: int = 6) -> bytes:
     """一串明文块 → **一条** zlib 流（任何解码器解出的就是这些块首尾相接）。块边界由调用方决定、必须确定；
-    空块跳过。只有一块时逐字节等于 `zlib.compress(块, level)`。"""
-    adler = 1
-
-    def tasks() -> Iterator[tuple[bytes, bytes | None, bool, int]]:
-        nonlocal adler
-        prev_tail: bytes | None = None
-        held: bytes | None = None
-        for block in blocks:
-            block = bytes(block)
-            if not block:
-                continue
-            if held is not None:
-                yield (held, prev_tail, False, level)
-                prev_tail = held[-_WINDOW:]
-            adler = zlib.adler32(block, adler)
-            held = block
-        yield (held if held is not None else b"", prev_tail, True, level)
-
-    body = b"".join(ordered_map(_deflate, tasks()))
-    return _header(level) + body + struct.pack(">I", adler & 0xFFFFFFFF)
+    空块跳过。只有一块时逐字节等于 `zlib.compress(块, level)`。`ZlibStreamer` 的批量写法。"""
+    s = ZlibStreamer(level)
+    try:
+        parts = [s.feed(b) for b in blocks]
+        parts.append(s.close())
+    except BaseException:
+        s.abort()
+        raise
+    return b"".join(parts)
 
 
 def zlib_compress(data, level: int = 6) -> bytes:

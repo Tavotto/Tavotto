@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import subprocess
 import sys
 import time
@@ -28,6 +27,7 @@ SUPPORT = Path(__file__).resolve().parent / "support"
 if str(SUPPORT) not in sys.path:
     sys.path.insert(0, str(SUPPORT))
 import pdfread  # noqa: E402
+import procprobe  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "foundation" / "pdf_png_assets"
@@ -190,6 +190,10 @@ def test_a_child_failure_under_the_candidate_is_partial_and_leaves_nothing_behin
     _project(tmp_path)
 
     class DeadHost:
+        # 条带栅格（ADR 0077 P2）起 host 的接口多了两个预算：作业按 max_pixels 决定整页还是分带
+        max_pixels = renderhost.DEFAULT_MAX_PIXELS
+        max_total_pixels = renderhost.DEFAULT_MAX_TOTAL_PIXELS
+
         def render(self, *a, **kw):
             raise renderhost.RenderChildError("render_child_died", "注入：child 没了")
 
@@ -313,11 +317,12 @@ def test_reset_projects_reaps_the_render_child(client, tmp_path):
     host = renderhost.shared()
     pid = host.pid
     assert pid is not None
+    born = procprobe.started(pid)  # Windows：记下它的创建时间，事后不把复用了 pid 的别人当成它
     m.reset_projects(wait=True)
     assert renderhost._SHARED is None
     assert host.last_exit is not None  # 被 wait() 回收过
-    with pytest.raises(OSError):
-        os.kill(pid, 0)
+    # 不用 os.kill(pid, 0)：Windows 上那是 TerminateProcess，pid 一旦被复用就「成功」（见 tests/support/procprobe）
+    assert procprobe.wait_gone(pid, born)
 
 
 # ---------------------------------------------------------------------------

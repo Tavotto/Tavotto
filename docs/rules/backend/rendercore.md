@@ -77,7 +77,7 @@
 - **native（PDFium）调用只在 render child 里，父进程一把锁串行**（ADR 0066，`renderchild.py` / `renderhost.py`）：probe / size /
   render / inspect 四种 op 都经 `RenderHost`（只要可见尺寸的调用走 `size`：`FPDF_GetPageSizeByIndexF` 不加载页、不解析内容流，
   与 `probe` 的尺寸逐项相同）（一个进程一个 child，`renderhost.shared()`；有界等待队列 `max_waiting`，
-  满了立刻 `render_queue_full`——背压不堆积）；像素预算**父子两侧都判**；每请求一个 deadline 管到底（等锁超时不打断正在忙的 child），收响应到点 kill → `wait()` reap →
+  满了立刻 `render_queue_full`——背压不堆积）；像素预算**父子两侧都判**（整页超过单张预算时按行带渲染：`banded.py`，带高只由宽度定、上下各多渲 `BAND_OVERLAP` 行只交中间、每带受单张预算、整页另有 `max_total_pixels`，预算以内一律整页一次、逐字节同从前，ADR 0077 P2）；每请求一个 deadline 管到底（等锁超时不打断正在忙的 child），收响应到点 kill → `wait()` reap →
   本次 `render_child_timeout` → 下一次自动重启；child 崩溃 / 外杀 → `render_child_died` → 下一次重启；起不来（exe 不在 / 冻结产物命令写错）→ `Popen` 的
   OSError 翻译成 `render_child_spawn_failed`（结构化，job 落到该格式的 `format_failed`）；像素文件的长度核对与
   整个 `RasterBuffer` 的构造都在 `request()` 的**锁内**做（`verify` 回调），bytes 对得上而尺寸不成一张图同样是
