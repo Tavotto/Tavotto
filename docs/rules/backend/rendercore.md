@@ -99,7 +99,7 @@
   锁表封顶，淘汰只看登记使用者数——拿到手还没 acquire 的也算在用）；临时文件（.png 后缀）+ `os.replace`、Windows 撞读者句柄退让、零字节重建；`prune()` 只删成品 `<sha1>.png`（在飞的
   `.part.png` / `stage.*.src.part` 不碰；任何线程的 `get()` 正要交出去的那张从算出键到 return 都钉着、谁的 prune 都不删，pruner 串行）；hash 与渲染绑在同一份字节上——源先一次读成缓存目录里
   的不可变副本（边抄边算 sha256，`.src.part`，用完即删），child 渲染的是副本，算键与渲染之间源被换掉哪怕又换回去都影响
-  不到这张预览；身份分块算不整个读进内存；**命中快路**（ADR 0077）：文件指纹（`sources.file_fingerprint`）与上次抄副本时相同**且**成品在，
+  不到这张预览；**位图素材（PNG / JPEG / TIFF）不交给 PDFium**（它不认，`Data format error`）：副本没有扩展名，类型从源路径取（`rasterio.kind_of`），在父进程经 `rasterio.preview()` 解码（解码前按 `SOURCE_MAX_PIXELS` 记账）缩放、白底合成，只有 PDF 进 child；身份分块算不整个读进内存；**命中快路**（ADR 0077）：文件指纹（`sources.file_fingerprint`）与上次抄副本时相同**且**成品在，
   就用那次副本上算出的 sha256 算键、直接交出成品——不抄、不读源；快路**从不渲染**，其余一切走副本路；**异常抛出**，不返回空白图 / 旧图。U07 不接 `app.py`；U08 把候选下的 `/api/render` 接到这里（ADR 0067），`source_sha1` 的 (mtime, size) memo 留在 PyMuPDF 路——这里的身份从副本上算；指纹快路复用的是副本上算出的那个 sha256，不是 memo 出来的身份。
 - **派生值按文件指纹复用，身份仍是字节 hash**（ADR 0077，`sources.FingerprintMemo`）：`file_fingerprint` = (设备, inode, 字节数,
   mtime_ns, ctime_ns)，**Windows 上不复用**（`st_ctime` 是创建时间，看不见改写；指纹恒为 None），只决定「能不能复用已经算出来的派生值」（`probe_asset` 的尺寸、预览键里的内容 sha256），从不进身份——冻结 / 写入 /

@@ -11,7 +11,8 @@ native 适配层：**Pillow 只在这里 import，且在函数里按需 import**
 * 输出恒是 8 bit sRGB 的 RGB / RGBA（`RasterBuffer`）：灰度 / 调色板 / 16 bit / CMYK 都在这里归一
   （16 bit 取高 8 位；调色板的 tRNS 变成 alpha；CMYK 交给 Pillow 转 RGB）。alpha straight。
 * 像素网格不变：不重采样、不按 DPI 缩放（RC-055 那句「native pixel grid」在画布放置上同样成立：
-  缩放发生在 `cm` 矩阵里，不在像素上）。
+  缩放发生在 `cm` 矩阵里，不在像素上）。唯一的例外是 `preview()`：它只喂 `/api/render` 的预览缓存，
+  从不进 PDF。
 * 密度只从文件自己声明过的信息取（PNG pHYs / JPEG JFIF / TIFF 分辨率标签，Pillow 的 `info["dpi"]`），
   没有就是 `None`——不编一个数（与 `engine/originalspec` 同一口径）。
 * **JPEG 直通**（`jpeg_passthrough()`）：8 bit RGB / 灰度的 JPEG 可以不解码、原字节以 `/DCTDecode`
@@ -40,6 +41,14 @@ _FORMAT_OF_KIND = {
     "tif": "TIFF",
     "tiff": "TIFF",
 }
+
+
+def kind_of(path) -> str:
+    """素材类型 = 扩展名（小写，jpeg 归 jpg）。预览缓存的副本没有扩展名，类型一律从**源路径**取。"""
+    from pathlib import Path
+
+    kind = Path(path).suffix.lstrip(".").lower()
+    return "jpg" if kind == "jpeg" else kind
 
 
 class RasterDecodeError(ValueError):
@@ -147,6 +156,43 @@ def decode(data: bytes, kind: str, *, max_pixels: int | None = None) -> RasterBu
         samples=bytes(samples),
         stride=rgb.width * channels,
         dpi=dpi,
+    )
+
+
+def preview(
+    data: bytes,
+    kind: str,
+    width_px: int,
+    *,
+    transparent: bool = False,
+    max_pixels: int | None = None,
+) -> RasterBuffer:
+    """位图素材的预览：解码（同 `decode()` 的预算与模式处理）→ 等比缩放到 `width_px` 宽 → 白底 RGB
+    （`transparent=True` 时保留 alpha）。
+
+    与 PDF 预览（render child 里 PDFium 画的白底页）同一个出口形状：`/api/render` 对 PNG / JPEG / TIFF
+    素材也要回一张给定宽度的白底 PNG。旧后端（PyMuPDF）能直接打开位图，候选后端以前把它们也交给
+    PDFium，于是素材库里所有位图的缩略图都是 500（2026-09-23 beta 实测，`PDFium: Data format error`）。
+    """
+    from PIL import Image
+
+    buf = decode(data, kind, max_pixels=max_pixels)
+    mode = "RGBA" if buf.channels == 4 else "RGB"
+    im = Image.frombytes(mode, (buf.width, buf.height), buf.samples, "raw", mode, buf.stride)
+    w = max(1, int(width_px))
+    h = max(1, round(buf.height * w / buf.width))
+    if (w, h) != im.size:
+        im = im.resize((w, h), Image.Resampling.LANCZOS)
+    if mode == "RGBA" and transparent:
+        return RasterBuffer(
+            width=im.width, height=im.height, channels=4, samples=im.tobytes(), stride=im.width * 4
+        )
+    if mode == "RGBA":
+        bg = Image.new("RGB", im.size, (255, 255, 255))
+        bg.paste(im, mask=im.getchannel("A"))
+        im = bg
+    return RasterBuffer(
+        width=im.width, height=im.height, channels=3, samples=im.tobytes(), stride=im.width * 3
     )
 
 

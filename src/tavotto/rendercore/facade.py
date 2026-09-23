@@ -217,9 +217,7 @@ def coverage_ranges() -> dict:
 # ---------------------------------------------------------------------------
 # 探测 / 预览 / 比较
 # ---------------------------------------------------------------------------
-def _kind_of(path: Path) -> str:
-    kind = Path(path).suffix.lstrip(".").lower()
-    return "jpg" if kind == "jpeg" else kind
+_kind_of = rasterio.kind_of
 
 
 def probe_asset(path: Path, kind: str) -> dict:
@@ -292,8 +290,21 @@ def pdf_fonts(path: Path) -> list[str]:
 
 
 def render_preview_png(path: Path, width_px: int, out: Path) -> None:
-    """矢量面板首页 → 指定像素宽度的 PNG（白底）。缓存归 `preview_cache()`；这里只是那一次栅格。"""
-    buf = host().render(Path(path), width_px=int(width_px), transparent=False)
+    """面板 → 指定像素宽度的 PNG（白底）。缓存归 `preview_cache()`；这里只是那一次栅格。
+
+    PDF 首页交给 render child 里的 PDFium；**位图素材在本进程解码缩放**（`rasterio.preview`）——
+    PDFium 不认 PNG / JPEG / TIFF，交过去就是 `Data format error`。"""
+    kind = _kind_of(path)
+    if kind != "pdf":
+        buf = rasterio.preview(
+            Path(path).read_bytes(),
+            kind,
+            int(width_px),
+            transparent=False,
+            max_pixels=raster.SOURCE_MAX_PIXELS,
+        )
+    else:
+        buf = host().render(Path(path), width_px=int(width_px), transparent=False)
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(raster.encode_png(buf))
