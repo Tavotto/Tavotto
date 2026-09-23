@@ -21,7 +21,7 @@
 | architecture | arm64 |
 | WorkBuddy version | **5.6.2**（`com.tencent.workbuddy.mac`；Electron 37.10.3；Agent CLI = 随包的 `codebuddy-lite-wb.mjs`） |
 | Tavotto version | engine / plugin 0.16.0 |
-| 待验树 | `origin/main` = `a9aa23a0`；spike 分支 `spike/workbuddy-p0`（产品代码只动了 `web/src/mcp/session.ts` 的一处判据，见 Blockers 下的「已修」） |
+| 待验树 | `origin/main` = `a9aa23a0`；spike 分支 `spike/workbuddy-p0`（产品改动两处：`web/src/mcp/session.ts` 的一处判据，见 Blockers 下的「已修」；会话跨进程恢复，ADR 0078） |
 | 画布产物 | `codex-plugin/mcp/widget/canvas.html`，1,354,834 B（修复前 `7be2fa2094a9e6fa` / 修复后 `0b3aa58340f208f2`），`build_mcp_widget.py --check` 通过 |
 | MCP server 解释器 | 仓库 `.venv`（Python 3.13.11，经 `TAVOTTO_MCP_PYTHON`） |
 | 渲染 worker | Homebrew Python 3.13.11，matplotlib 3.10.8 |
@@ -99,7 +99,7 @@ L3 原始证据（已脱敏：主目录换成 `~`、会话元数据打码）在
 | --- | --- | --- |
 | Tavotto Engine | **Reusable unchanged** | L1/L2/L3 零改动 |
 | MCP bridge（`tavotto_mcp/bridge.py`） | **Reusable unchanged** | 同上 |
-| MCP server（`tavotto_mcp/server.py` + 启动器） | **Reusable with adapter** | 协议、体积预算、降级模式与宿主无关；写死「Codex」的用户可见文案要改（`roots.py` 10 行、`server.py` 13 行、`bridge.py` 23 行、启动器 19 行提到 Codex，部分是注释）；若要扛住 P0-2，会话需能跨进程恢复（见推荐方案） |
+| MCP server（`tavotto_mcp/server.py` + 启动器） | **Reusable with adapter** | 协议、体积预算、降级模式与宿主无关；写死「Codex」的用户可见文案要改（`roots.py` 10 行、`server.py` 13 行、`bridge.py` 23 行、启动器 19 行提到 Codex，部分是注释）；会话跨进程恢复已按 ADR 0078 实现（`tavotto_mcp/sessionjournal.py`） |
 | roots（`RootAuthority`） | **Reusable unchanged** | L3：`cwd` 来源即可；可选地把 `CODEBUDDY_PROJECT_DIR` 加进 `WORKSPACE_ENVS` 作更明确的信号 |
 | widget metadata（`widget.py`） | **Reusable unchanged** | WorkBuddy 读 `_meta.ui.resourceUri` / `csp` / `visibility`，OpenAI 别名被忽略 |
 | appsBridge（`web/src/mcp/appsBridge.ts`） | **Reusable unchanged** | 在 WorkBuddy 的 `sandbox-proxy.html` 里握手、收 tool-result、发 tools/call 都正常 |
