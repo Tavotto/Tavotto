@@ -77,7 +77,7 @@ def is_frozen() -> bool:
 def ships_bundled_runtime() -> bool:
     """这个安装形态**本该**带内置 runtime 吗。
 
-    两个桌面安装包都带（见 packaging/tavotto.spec）：
+    每个桌面安装包都带（见 packaging/tavotto.spec）：
       * Windows NSIS —— runtime 落在 sidecar 的 `_internal\\runtime`
       * macOS .app   —— runtime 落在 `Contents/Resources/sidecar/Tavotto/_internal/runtime`
 

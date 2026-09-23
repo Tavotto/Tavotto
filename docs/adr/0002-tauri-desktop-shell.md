@@ -214,8 +214,8 @@ Tauri bundler）。
 - ~~桌面壳的 Tauri updater 本轮只留了位置~~ ——**2026-08-18 已接**：
   `tauri-plugin-updater` + `tauri-plugin-process`，界面在「设置 → 检查更新」
   （桌面模式整段换成壳的更新器，Python updater 仍然停用）。清单
-  `latest.json` 由 `scripts/make_updater_manifest.py` 在两条 matrix 腿都跑完
-  之后合成。要点见下节。
+  `latest.json` 由 `scripts/make_updater_manifest.py` 在全部 matrix 腿
+  （Windows / macOS arm64 / macOS x86_64，ADR 0076）都跑完之后合成。要点见下节。
 - 画布级 ⌘C/⌘V 在桌面菜单预定义角色下的行为需人工回归一轮（文本框内已保证）；
   发现异常的回退方案是把剪贴板项换成自定义转发（同撤销/重做路径）。
 - 双击 .tavotto 项目包 / 文件关联未做。
@@ -253,7 +253,7 @@ Tauri bundler）。
 - **macOS 两个架构各一个更新包**（ADR 0076）：`Tavotto.app.tar.gz` → `darwin-aarch64`，
   `Tavotto-Intel.app.tar.gz` → `darwin-x86_64`，按**精确名**匹配——宽模式会让一个包同时
   认下两个平台，把装不上的更新推给另一个架构的用户，比「查不到更新」糟糕得多。
-- **清单是单独一个 job**：两条 matrix 腿各只知道自己那一半，`latest.json`
-  必须等两条都跑完才拼得出来。拼接逻辑在 `scripts/make_updater_manifest.py`
+- **清单是单独一个 job**：每条 matrix 腿只知道自己那一份，`latest.json`
+  必须等三条都跑完才拼得出来（`--require` 三个平台，缺一个即失败）。拼接逻辑在 `scripts/make_updater_manifest.py`
   （有包没签名、一个包都没有，都是硬错误——宁可不发清单，也不发一份装到
   一半才发现对不上的），看护 `tests/test_updater_manifest.py`。

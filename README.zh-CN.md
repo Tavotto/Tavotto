@@ -318,9 +318,9 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 `.exe`（x64；Windows ARM 没有构建、也没有验证过）。
 装完双击即用——Tavotto 在自己的窗口里打开，之后的升级也都在软件内完成。
 
-**你不需要自己装 Python。** 两个安装包都自带一套 Tavotto 专用的 Python 运行环境，
+**你不需要自己装 Python。** 每个安装包都自带一套 Tavotto 专用的 Python 运行环境，
 常用科学栈已经装好——numpy、matplotlib、pandas、scipy、seaborn、Pillow，
-两个平台锁的是同一组版本，同一个脚本在两边画出同一张图。装完立刻就能渲染：
+每个安装包锁的都是同一组版本，同一个脚本在哪台机器上都画出同一张图。装完立刻就能渲染：
 不联网、不需要 Homebrew / Conda / Xcode，也不碰你已有的任何 Python。
 
 这套内置环境也是安装包偏大的原因：**macOS 下载约 195 MB（Apple Silicon 版实测），

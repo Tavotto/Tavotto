@@ -24,7 +24,7 @@
 
 ## 内置渲染 runtime（Windows 2026-08-17；macOS 2026-08-18）
 
-**两个桌面安装包都自带一套 Tavotto 私有的 Python 渲染环境**，用户不需要先装
+**每个桌面安装包都自带一套 Tavotto 私有的 Python 渲染环境**，用户不需要先装
 Python，首次渲染也不联网：
 
     Windows: Tavotto.exe → _internal\runtime\python.exe    → engine/worker.py → 用户的脚本
@@ -116,7 +116,7 @@ Python，首次渲染也不联网：
   **全部平台无关**）+ `tests/test_runtime_build.py`（锁文件分层、布局、
   `._pth`、构建判据、打包卫生，另有几条只在本机构建过 runtime 时才跑的
   **真 import + 真绘图**用例）+ CI 的 `windows-exe-smoke` 与 desktop-tauri 的
-  两条腿（见 `.github/AGENTS.md`）。
+  三条腿（Windows / macOS arm64 / macOS x86_64，见 `.github/AGENTS.md`）。
 - **别把「借一个解释器」加回冒烟**：macOS 这条腿一度现建 worker-env 再设
   `TAVOTTO_WORKER_PYTHON`，于是「runtime 根本没打进去」全程绿灯——空转的门禁比
   没有门禁更坏（`test_macos_ci_no_longer_fakes_a_worker_env` 看护）。

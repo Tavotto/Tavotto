@@ -382,9 +382,9 @@ a `.dmg` for macOS — `-macOS.dmg` for Apple Silicon, `-macOS-Intel.dmg` for In
 or an `.exe` for Windows (x64; Windows on ARM is neither built nor verified). Install it, double-click, done — Tavotto opens in its own window and
 updates itself from then on.
 
-**You do not need to install Python.** Both installers carry a private Python runtime
+**You do not need to install Python.** Every installer carries a private Python runtime
 with the usual scientific stack already in it — numpy, matplotlib, pandas, scipy,
-seaborn, Pillow — pinned to the same versions on both platforms, so the same script
+seaborn, Pillow — pinned to the same versions in every installer, so the same script
 draws the same figure. Rendering works the moment the installer finishes: offline,
 without Homebrew, Conda or Xcode, and without touching a Python you already have.
 
