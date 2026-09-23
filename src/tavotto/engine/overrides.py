@@ -10,6 +10,7 @@ worker 在此转换为各 artist 自己的坐标系。
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import weakref
@@ -41,6 +42,47 @@ import tickmodel
 from axestraversal import ordered_axes
 from colorbarmodel import ColorbarProxy
 from tickmodel import TickLabel, TickSet
+
+
+def _layout_only_image_draw(self, renderer, *args, **kwargs):  # noqa: ANN001, ARG001
+    self.stale = False
+
+
+def _layout_only_make_image(self, renderer, magnification=1.0, unsampled=False):  # noqa: ANN001, ARG001
+    # 合成路径（`_draw_list_compositing_images` / `composite_images`）直接调 make_image：
+    # 回 None = 「这张图什么都不画」，matplotlib 本来就这么处理空图
+    return None, 0, 0, None
+
+
+@contextlib.contextmanager
+def image_pixels_skipped(fig):
+    """「只为布局」的那几次 draw 期间，**这张 figure 里**的图片元素不做像素重采样。
+
+    manifest 进来先 `fig.canvas.draw()`、几何 override 应用完 `draw_without_rendering()`——
+    两次 draw 要的都只是布局（apply_aspect、刻度、图例偏移、文字包围盒），图片元素的包围盒
+    由 extent 决定，与像素无关；而 `_ImageBase.draw` 每次都把源数组重采样到目标分辨率
+    （2340×1920 的 PNG 按 lanczos 一次 185ms，2026-09-23 实测一张用户图：热态 448ms 里它占
+    三遍中的两遍，`draw_without_rendering()` 照样重采样，省不掉）。预览 SVG / 导出不走这里，
+    像素一个不少。
+
+    换的是**实例**属性，不是类：同一进程里别的线程正在导出的 figure 不受影响；出来时删掉实例
+    属性，回到类上的实现。实例上已经被别人换过 `draw` 的（用户自定义）不叠加。
+    """
+    from matplotlib.image import _ImageBase
+
+    patched = []
+    try:
+        for im in fig.findobj(match=_ImageBase):
+            if "draw" in vars(im) or "make_image" in vars(im):
+                continue
+            im.draw = _layout_only_image_draw.__get__(im)
+            im.make_image = _layout_only_make_image.__get__(im)
+            patched.append(im)
+        yield
+    finally:
+        for im in patched:
+            vars(im).pop("draw", None)
+            vars(im).pop("make_image", None)
 
 
 class FigState:
@@ -3377,7 +3419,8 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
             if geometry_moved and not drawn_after_geometry and not _is_geometry_key(prop, artist):
                 drawn_after_geometry = True
                 try:
-                    state.fig.draw_without_rendering()
+                    with image_pixels_skipped(state.fig):
+                        state.fig.draw_without_rendering()
                 except Exception:  # noqa: BLE001 — 布局刷新失败不拦渲染
                     pass
             # **判据是「上次应用过 **且** 值没变」，不是 `.get(key) == value`**：
