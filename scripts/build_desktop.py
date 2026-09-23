@@ -64,7 +64,17 @@ def read_version() -> str:
     return m.group(1)
 
 
+def semver_of(version: str) -> str:
+    """beta 分支专用：PEP 440 的 `0.16.1b1` → semver 的 `0.16.1-beta.1`（Cargo / Tauri 只认后者）。"""
+    return re.sub(r"b(\d+)$", r"-beta.\1", version)
+
+
+#: beta 分支专用（不合进 main）：与正式版并排安装、互不覆盖——独立的应用名与 bundle id
+BETA_OVERLAY = {"productName": "Tavotto Beta", "identifier": "com.tavotto.tavotto.beta"}
+
+
 def sync_version(version: str) -> None:
+    version = semver_of(version)
     conf_path = ROOT / "src-tauri" / "tauri.conf.json"
     conf = json.loads(conf_path.read_text(encoding="utf-8"))
     if conf.get("version") != version:
@@ -318,6 +328,8 @@ def main() -> None:
     if arch_config:
         print(f"* macOS x86_64：叠 {INTEL_TAURI_CONFIG.name}（最低系统 15.0）")
     cmd += arch_config
+    cmd += ["--config", json.dumps(BETA_OVERLAY)]
+    print(f"* beta 包：{BETA_OVERLAY}")
     run(cmd)
     out = ROOT / "src-tauri" / "target" / "release" / "bundle"
     print(f"* 产物目录: {out}")
