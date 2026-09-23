@@ -12,7 +12,8 @@ stdin / stdout 上的**行分隔 JSON**（一行一条）。请求 `{"id", "op",
 （`size` 只回可见尺寸、不加载页，ADR 0077）。
 像素**不走管道**：`render` 把 RGB（白底）/ RGBA（透明底，straight alpha；都经 `FPDF_REVERSE_BYTE_ORDER`）原样
 写进父进程指定的文件，响应里只带 `width / height / stride / channels`；父进程读完就删
-（`renderhost.RenderHost.render`）。
+（`renderhost.RenderHost.render`）。条带请求（`band_y0 / band_rows / band_overlap`，ADR 0077 P2）只交出那一带，
+响应另带 `full_height / band_y0`。
 
 ## 四条纪律（RC-050）
 
