@@ -25,6 +25,7 @@ import {
   perfStop,
   setSegmentHook,
   type PerfRaw,
+  type RenderRecord,
   type Segment,
 } from './core'
 
@@ -98,6 +99,8 @@ export interface PerfReport {
   idle_frame_ms: number[]
   segments: Segment[]
   authority: { frames: number; moves: number; first_frame_ms: number | null; commit_to_authority_ms: number | null }[]
+  /** 每次引擎渲染的时间线（ADR 0075「松手链路」）；只有数字 */
+  renders: RenderRecord[]
 }
 
 export async function finishProbe(): Promise<PerfReport | null> {
@@ -117,6 +120,7 @@ export async function finishProbe(): Promise<PerfReport | null> {
     system,
     idle_frame_ms: raw.idle_frame_ms,
     segments: raw.segments,
+    renders: raw.renders,
     // 图内元素拖动的「松手 → 权威 SVG 换上画布」：用户眼里的第二种卡。
     // 计时环里有面板 id，这里只取数字
     authority: ring.slice(Math.min(l.previewRingStart, ring.length)).map((t) => ({

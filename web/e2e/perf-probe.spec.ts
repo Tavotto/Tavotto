@@ -52,6 +52,29 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
   })
   expect(target, '图里应当至少有一个可拖的文字元素').not.toBeNull()
 
+  // 一次真实拖动并松手：会写 override、发一次定稿渲染——松手链路（ADR 0075）要量的就是它
+  await page.mouse.move(target!.x, target!.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 20; i++) await page.mouse.move(target!.x + i, target!.y + i * 0.5)
+  await page.mouse.up()
+  await expect.poll(() => renders.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1)
+  // 等新 SVG 换进 DOM、再过两帧（swap_frames 要两帧才记满）
+  await page.waitForTimeout(1500)
+  const moved = await page.evaluate(() => {
+    const svg = document.querySelector('[data-element-svg] svg')
+    for (const id of ['axes_0.title', 'axes_0.xlabel', 'axes_0.ylabel']) {
+      const n = svg?.querySelector(`[id="${id}"]`)
+      if (!n) continue
+      const r = (n as SVGGraphicsElement).getBoundingClientRect()
+      if (r.width > 2 && r.height > 2) return { x: r.x + r.width / 2, y: r.y + r.height / 2, transform: n.getAttribute('transform') }
+    }
+    return null
+  })
+  // 挪过之后的位置与 transform 才是自动测试的起点
+  target!.x = moved!.x
+  target!.y = moved!.y
+  target!.transform = moved!.transform
+
   // 自动测试：选点 → 两轮合成拖动 → 回到录制态
   renders.length = 0
   await hud.locator('[data-perf-action="runTest"]').click()
@@ -94,6 +117,14 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
     expect(withRender / s.frames.length).toBeGreaterThan(0.8)
     expect(s.spans['raf.preview_write']?.count ?? 0).toBeGreaterThan(0)
   }
+  // 松手链路：真实拖动松手后的那次渲染，四个时刻、后端的 server_ms、换图后两帧都在
+  const r0 = report.renders.find((r: { ok: boolean | null; painted: number | null }) => r.ok && r.painted != null)
+  expect(r0, '松手后的定稿渲染应当有完整时间线').toBeTruthy()
+  expect(r0.request).toBeLessThan(r0.response)
+  expect(r0.response).toBeLessThanOrEqual(r0.applied)
+  expect(r0.applied).toBeLessThanOrEqual(r0.painted)
+  expect(r0.timings.server_ms, '后端应当报 server_ms').toBeGreaterThan(0)
+  expect(r0.swap_frames).toHaveLength(2)
   const m3 = synth.find((s: { label: string }) => s.label === 'm3')
   const mpf = m3.moves / m3.frames.length
   expect(mpf, 'm3 每帧应当约有 3 个 pointermove').toBeGreaterThan(2)

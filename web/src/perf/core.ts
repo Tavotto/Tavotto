@@ -88,6 +88,33 @@ export interface Segment {
   context: Record<string, unknown>
 }
 
+/**
+ * 一次引擎渲染的时间线（相对录制开始，毫秒）。松手 → 图落定那段时间在这里拆开：
+ * 请求发出 → 响应到手（其中后端自己报 `server_ms` 与各段）→ 写进 store → 新 SVG
+ * 换进 DOM（React commit 之后）→ 换完那两帧的间隔与主线程渲染。
+ * **渲染键只活在内存里**（它含文件名），报告里只有数字。
+ */
+export interface RenderRecord {
+  request: number
+  response: number | null
+  applied: number | null
+  painted: number | null
+  ok: boolean | null
+  patches: number
+  svg_kb: number | null
+  /** 后端响应里的阶段计时（worker / 控制面 / server_ms），原样照抄数字 */
+  timings: Record<string, number>
+  /** 新 SVG 换进 DOM 之后的两帧：[间隔, 主线程渲染]（第二帧里是浏览器排版这张新图） */
+  swap_frames: [number, number | null][]
+}
+
+interface RenderLive {
+  rec: RenderRecord
+  key: string
+}
+
+const MAX_RENDERS = 400
+
 interface FrameAcc {
   handler: number
   flush: number
@@ -120,6 +147,10 @@ interface Recording {
   listeners: Set<() => void>
   source: 'user' | 'synthetic'
   label: string | null
+  renders: RenderRecord[]
+  live: RenderLive[]
+  /** 刚换上新 SVG 的那次渲染：接下来两帧记进它的 swap_frames */
+  swap: RenderRecord | null
 }
 
 const TAIL_MS = 600
@@ -300,6 +331,11 @@ function onRaf(ts: number): void {
         r.lastRow = row
       } else if (r.idle.length < MAX_IDLE && r.segments.length === 0) r.idle.push(round1(dt))
     }
+    // 换图常在松手 0.6 秒之后（片段与尾巴都已结束）：直接取这一帧的数，不靠片段的行
+    if (r.swap) {
+      r.swap.swap_frames.push([row[0], row[1]])
+      if (r.swap.swap_frames.length >= 2) r.swap = null
+    }
   }
   r.lastRaf = ts
   r.pendingRender = null
@@ -343,6 +379,9 @@ export function perfStart(): boolean {
     listeners: new Set(),
     source: 'user',
     label: null,
+    renders: [],
+    live: [],
+    swap: null,
     onMoveCapture: (ev: PointerEvent) => {
       const cur = rec
       if (!cur) return
@@ -363,6 +402,7 @@ export interface PerfRaw {
   duration_ms: number
   idle_frame_ms: number[]
   segments: Segment[]
+  renders: RenderRecord[]
 }
 
 /** 停止录制并交出原始数据；没在录制返回 null */
@@ -377,7 +417,12 @@ export function perfStop(): PerfRaw | null {
     r.channel.port1.close()
   }
   rec = null
-  const out = { duration_ms: round1(perfNow() - r.t0), idle_frame_ms: r.idle, segments: r.segments }
+  const out = {
+    duration_ms: round1(perfNow() - r.t0),
+    idle_frame_ms: r.idle,
+    segments: r.segments,
+    renders: r.renders,
+  }
   for (const l of r.listeners) l()
   return out
 }
@@ -413,4 +458,66 @@ export function perfSegmentCount(): number {
 
 export function perfCurrentSegment(): Segment | null {
   return rec?.current ?? null
+}
+
+/* ----------------------------------------------------------------- 渲染时间线 */
+
+/** renderStore 发请求前调；回的句柄交给后面几步。没在录制回 -1 */
+export function perfRenderBegin(key: string, patches: number): number {
+  const r = rec
+  if (!r || r.renders.length >= MAX_RENDERS) return -1
+  const record: RenderRecord = {
+    request: round1(perfNow() - r.t0),
+    response: null,
+    applied: null,
+    painted: null,
+    ok: null,
+    patches,
+    svg_kb: null,
+    timings: {},
+    swap_frames: [],
+  }
+  r.renders.push(record)
+  r.live.push({ rec: record, key })
+  if (r.live.length > 16) r.live.shift()
+  return r.renders.length - 1
+}
+
+export function perfRenderResponse(
+  h: number,
+  ok: boolean,
+  timings?: Record<string, unknown>,
+  svgChars?: number,
+): void {
+  const record = rec?.renders[h]
+  if (!rec || !record) return
+  record.response = round1(perfNow() - rec.t0)
+  record.ok = ok
+  if (svgChars != null) record.svg_kb = Math.round(svgChars / 1024)
+  for (const [k, v] of Object.entries(timings ?? {})) {
+    if (typeof v === 'number' && Number.isFinite(v)) record.timings[k] = round1(v)
+  }
+}
+
+export function perfRenderApplied(h: number): void {
+  const record = rec?.renders[h]
+  if (!rec || !record) return
+  record.applied = round1(perfNow() - rec.t0)
+}
+
+/**
+ * PanelView 把这个渲染键的 SVG 换进 DOM 之后调（useEffect：React 已 commit）。
+ * 认最近一次已写进 store、还没上屏的同键渲染
+ */
+export function perfRenderPainted(key: string): void {
+  const r = rec
+  if (!r) return
+  for (let i = r.live.length - 1; i >= 0; i--) {
+    const l = r.live[i]
+    if (l.key === key && l.rec.applied != null && l.rec.painted == null) {
+      l.rec.painted = round1(perfNow() - r.t0)
+      r.swap = l.rec
+      return
+    }
+  }
 }

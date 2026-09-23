@@ -13,6 +13,10 @@ import {
   perfActive,
   perfCount,
   perfInput,
+  perfRenderApplied,
+  perfRenderBegin,
+  perfRenderPainted,
+  perfRenderResponse,
   perfSegmentBegin,
   perfSegmentEnd,
   perfSpan,
@@ -170,6 +174,45 @@ describe('录制中', () => {
     perfSegmentEnd()
     const raw = perfStop()!
     expect(raw.idle_frame_ms).toEqual([16.7, 16.7])
+  })
+
+  it('渲染时间线：按渲染键认上屏，片段结束后也记换图那两帧，报告里没有键', async () => {
+    perfStart()
+    frame(16)
+    perfSegmentBegin('element')
+    frame(16.7)
+    perfSegmentEnd()
+    const h = perfRenderBegin('Fig1_secret.pdf|abc', 3)
+    perfRenderResponse(h, true, { server_ms: 30, total_ms: 28, note: 'x' as unknown as number }, 4096)
+    perfRenderApplied(h)
+    // 另一张图的渲染排在后面：「取最近一条」会错认成它，必须按键认
+    const other = perfRenderBegin('another.pdf|zzz', 1)
+    perfRenderResponse(other, true, {})
+    perfRenderApplied(other)
+    perfRenderPainted('Fig1_secret.pdf|abc')
+    // 尾巴（松手后 600ms，按真实时间算）过完才换图：那两帧不在任何片段 / 尾巴里，照样要记
+    await new Promise((r) => setTimeout(r, 650))
+    clock += 5000
+    frame(40)
+    frame(16.7)
+    frame(16.7)
+    const raw = perfStop()!
+    const r = raw.renders[0]
+    expect(r.patches).toBe(3)
+    expect(r.svg_kb).toBe(4)
+    expect(r.timings).toEqual({ server_ms: 30, total_ms: 28 }) // 非数字的键不照抄
+    expect(r.painted).not.toBeNull()
+    expect(raw.renders[1].painted).toBeNull()
+    expect(r.swap_frames.map((f) => f[0])).toEqual([5040, 16.7])
+    expect(JSON.stringify(raw)).not.toContain('secret')
+  })
+
+  it('没在录制时渲染时间线的入口全是空转', () => {
+    expect(perfRenderBegin('k', 1)).toBe(-1)
+    perfRenderResponse(-1, true, {})
+    perfRenderApplied(-1)
+    perfRenderPainted('k')
+    expect(perfStop()).toBeNull()
   })
 
   it('perfStop 之后回到直通', () => {

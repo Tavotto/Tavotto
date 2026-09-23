@@ -352,6 +352,91 @@ def test_budget_and_latency_are_measured_against_60hz_when_capped():
     assert _find(a, "拖动跟手性差")
 
 
+def _render(
+    request,
+    rt=520.0,
+    server=None,
+    patch=380.0,
+    draw=40.0,
+    manifest=30.0,
+    dom=20.0,
+    swap=(60.0, 45.0),
+):
+    t = {
+        "worker_get_ms": 1.0,
+        "queue_wait_ms": 0.0,
+        "patch_apply_ms": patch,
+        "canvas_draw_ms": draw,
+        "manifest_ms": manifest,
+        "total_ms": patch + draw + manifest + 5.0,
+    }
+    if server is not None:
+        t["server_ms"] = server
+    resp = request + rt
+    return {
+        "request": request,
+        "response": resp,
+        "applied": resp + 1.0,
+        "painted": resp + 1.0 + dom,
+        "ok": True,
+        "patches": 39,
+        "svg_kb": 60,
+        "timings": t,
+        "swap_frames": [[swap[0], swap[1]], [16.7, 1.0]],
+    }
+
+
+def _committed(end, **kw):
+    seg = _seg(_smooth(30), kind="element", context={"overrides": 39}, **kw)
+    seg["end"] = end
+    return seg
+
+
+def test_release_chain_names_the_slowest_stage():
+    # 重放 39 条 override 占了 380ms：它必须被点名，并指到 overrides
+    segs = [_committed(1000), _committed(3000)]
+    rep = _report(segs)
+    rep["renders"] = [_render(1002, server=460.0), _render(3003, server=462.0)]
+    a = PR.analyze_report(rep)
+    f = _find(a, "松手 → 图落定")
+    assert "重放全部 override" in f.title
+    assert f.level == "问题"  # 中位 ~540ms
+    assert any("overrides" in w for w in f.where)
+    ev = " ".join(f.evidence)
+    assert "传输 + 解析" in ev and "换进 DOM" in ev
+    # 拆开之后不再报那条笼统的
+    assert "松手后要等后端重画一遍才落定" not in _titles(a)
+
+
+def test_release_chain_blames_transfer_when_backend_is_fast():
+    rep = _report([_committed(1000)])
+    rep["renders"] = [_render(1002, rt=600.0, server=60.0, patch=5.0, draw=30.0, manifest=20.0)]
+    f = _find(PR.analyze_report(rep), "松手 → 图落定")
+    assert "传输 + 解析" in f.title
+
+
+def test_release_chain_without_server_ms_says_so():
+    rep = _report([_committed(1000)])
+    rep["renders"] = [_render(1002)]
+    f = _find(PR.analyze_report(rep), "松手 → 图落定")
+    assert any("没报 server_ms" in e for e in f.evidence)
+
+
+def test_synthetic_segments_do_not_claim_a_release_chain():
+    # 自动测试以取消收尾，不提交：它后面的渲染与它无关
+    seg = _committed(1000)
+    seg["source"] = "synthetic"
+    rep = _report([seg])
+    rep["renders"] = [_render(1002, server=460.0)]
+    assert not [t for t in _titles(PR.analyze_report(rep)) if t.startswith("松手 → 图落定")]
+
+
+def test_old_reports_fall_back_to_the_undivided_total():
+    rep = _report([_seg(_smooth())], authority=[{"commit_to_authority_ms": 514.0}] * 3)
+    f = _find(PR.analyze_report(rep), "松手后要等后端重画一遍才落定")
+    assert any("拆不开" in e for e in f.evidence)
+
+
 def test_same_issue_in_many_segments_is_one_finding():
     tail = [_row(16.7) for _ in range(5)] + [_row(60.0, render=1.0)]
     a = PR.analyze_report(_report([_seg(_smooth(), tail=tail) for _ in range(3)]))

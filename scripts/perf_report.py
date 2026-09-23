@@ -881,6 +881,210 @@ def machine_notes(report: dict, refresh: float) -> tuple[list[str], list[str], f
     return notes, fixes, idle_late
 
 
+#: 松手链路的各段：键 → （名字、改哪、怎么改）
+CHAIN_STAGES = {
+    "schedule": (
+        "松手 → 请求发出（前端调度）",
+        "web/src/store/renderScheduler.ts（手势结束后的定稿调度）",
+        "手势结束时直接发定稿渲染，不再走防抖计时器。",
+    ),
+    "worker_get": (
+        "后端：取 / 起渲染会话",
+        "src/tavotto/app.py _engine_worker → engine/pool.py",
+        "会话被回收了才会在这里花时间：检查空闲回收时长，常用的图保持热会话。",
+    ),
+    "build": (
+        "后端：重跑脚本（冷启动）",
+        "engine/worker.py build（script_build_ms）",
+        "松手不该触发重跑脚本：查为什么这次会话是冷的（被作废 / 被回收 / 换了变体）。",
+    ),
+    "queue_wait": (
+        "后端：排队（前一个渲染还没完）",
+        "engine/pool.py / workerd 的请求队列",
+        "拖动途中不该有渲染在跑；查松手前是谁发了渲染（预取 / 别的面板），或让定稿渲染插队。",
+    ),
+    "patch_apply": (
+        "后端：重放全部 override",
+        "src/tavotto/engine/overrides（worker.override）",
+        "每次都从头重放全部 override：只应用变化的那一条（增量），或缓存上一版的 artist 状态。",
+    ),
+    "canvas_draw": (
+        "后端：matplotlib 绘图 + 出 SVG",
+        "engine/worker.py（savefig svg）",
+        "图越复杂越慢：只重画变了的 axes，或拖动定稿先回低清 / 位图再补矢量（docs/perf-baseline.md「值得做的优化」）。",
+    ),
+    "manifest": (
+        "后端：重建 manifest（逐元素量框）",
+        "engine/manifest.py（get_window_extent）",
+        "一次 render 画了两遍图（manifest 一遍、savefig 一遍）：合成一遍，或只重量变了的元素。",
+    ),
+    "protocol": (
+        "后端：协议 / 管道开销（worker 往返减去各阶段）",
+        "engine/pool.py / workerd 的 IPC",
+        "看 SVG 有多大：大 payload 在管道上拷贝多次。",
+    ),
+    "flask": (
+        "后端：Flask 请求处理的其余部分",
+        "src/tavotto/app.py /api/engine/render",
+        "server_ms 减去 worker 往返与取会话：多半是 JSON 序列化大 SVG。",
+    ),
+    "transfer": (
+        "传输 + 解析（请求往返减去 server_ms）",
+        "web/src/lib/api.ts engineRender（res.json()）",
+        "SVG 随 JSON 整份回来：payload 大时考虑压缩、或只回变了的部分。",
+    ),
+    "apply": (
+        "写进 store（prepareSvg + set）",
+        "web/src/store/renderStore.ts",
+        "prepareSvg 与 set 里的整份拷贝：大 SVG 时换成不复制的写法。",
+    ),
+    "dom": (
+        "换进 DOM（React 重渲染 + innerHTML 解析）",
+        "web/src/canvas/PanelView.tsx（内联 SVG）",
+        "整棵 SVG 用 innerHTML 替换：复用没变的节点，或只替换变了的 <g>。",
+    ),
+    "layout": (
+        "换图后浏览器排版 / 绘制新 SVG",
+        "web/src/canvas/PanelView.tsx",
+        "新 SVG 整张重排：节点多时先挂在离屏容器里，或让面板进独立合成层。",
+    ),
+}
+
+
+def release_chain(report: dict) -> list[dict]:
+    """每次提交修改的拖动（用户片段）→ 松手后发出的第一个渲染 → 拆段。"""
+    renders = report.get("renders")
+    if not isinstance(renders, list) or not renders:
+        return []
+    out: list[dict] = []
+    for seg in report.get("segments") or []:
+        if seg.get("source") != "user" or seg.get("end") is None:
+            continue
+        end = float(seg["end"])
+        cand = [
+            r
+            for r in renders
+            if r.get("ok")
+            and r.get("response") is not None
+            and end - 5 <= r["request"] <= end + 2000
+        ]
+        if not cand:
+            continue
+        r = min(cand, key=lambda x: x["request"])
+        t = r.get("timings") or {}
+        rt = r["response"] - r["request"]
+        server = t.get("server_ms")
+        worker_total = t.get("total_ms")
+        build = t.get("build_total_ms") or t.get("script_build_ms") or 0.0
+        st: dict[str, float | None] = {
+            "schedule": max(0.0, r["request"] - end),
+            "worker_get": t.get("worker_get_ms"),
+            "build": build or None,
+            "queue_wait": t.get("queue_wait_ms"),
+            "patch_apply": t.get("patch_apply_ms"),
+            "canvas_draw": t.get("canvas_draw_ms"),
+            "manifest": t.get("manifest_ms"),
+        }
+        if worker_total is not None:
+            inner = sum(
+                v or 0.0
+                for k, v in st.items()
+                if k in ("queue_wait", "patch_apply", "canvas_draw", "manifest", "build")
+            )
+            st["protocol"] = max(0.0, worker_total - inner)
+        if server is not None:
+            st["flask"] = max(0.0, server - (worker_total or 0.0) - (t.get("worker_get_ms") or 0.0))
+            st["transfer"] = max(0.0, rt - server)
+        else:
+            # 老后端没有 server_ms：往返里后端与传输分不开，整段记成「传输 + 解析」前先扣掉 worker 那部分
+            st["transfer"] = max(0.0, rt - (worker_total or 0.0) - (t.get("worker_get_ms") or 0.0))
+        if r.get("applied") is not None:
+            st["apply"] = r["applied"] - r["response"]
+            if r.get("painted") is not None:
+                st["dom"] = r["painted"] - r["applied"]
+        frames = r.get("swap_frames") or []
+        if frames:
+            st["layout"] = max((f[1] or 0.0) for f in frames)
+        settled = r.get("painted") if r.get("painted") is not None else r.get("applied")
+        out.append(
+            {
+                "stages": {k: v for k, v in st.items() if v is not None},
+                "total": (settled - end) if settled is not None else None,
+                "svg_kb": r.get("svg_kb"),
+                "patches": r.get("patches"),
+                "has_server": server is not None,
+                "swap_max_dt": max((f[0] for f in frames), default=None),
+                "overrides": (seg.get("context") or {}).get("overrides"),
+            }
+        )
+    return out
+
+
+def chain_finding(chain: list[dict]) -> Finding:
+    totals = [c["total"] for c in chain if c["total"] is not None]
+    med_total = statistics.median(totals) if totals else 0.0
+    keys = [k for k in CHAIN_STAGES if any(k in c["stages"] for c in chain)]
+    med = {k: statistics.median([c["stages"][k] for c in chain if k in c["stages"]]) for k in keys}
+    ranked = sorted(med.items(), key=lambda kv: -kv[1])
+    top_k, top_v = ranked[0]
+    lvl = level_by(med_total, 150, 500, 1500) or "提示"
+    ev = [
+        f"{len(chain)} 次松手，松手 → 新图进 DOM 中位 {med_total:.0f}ms；其中最大的一段是"
+        f"「{CHAIN_STAGES[top_k][0]}」{top_v:.0f}ms（{100 * top_v / max(med_total, 1):.0f}%）",
+        "各段中位：" + "；".join(f"{CHAIN_STAGES[k][0]} {v:.0f}ms" for k, v in ranked if v >= 1),
+    ]
+    kb = [c["svg_kb"] for c in chain if c["svg_kb"] is not None]
+    if kb:
+        ev.append(
+            f"每次回来的 SVG 约 {statistics.median(kb):.0f}KB；文档里 override {chain[-1].get('overrides')} 条"
+        )
+    swaps = [c["swap_max_dt"] for c in chain if c["swap_max_dt"] is not None]
+    if swaps:
+        ev.append(f"换图后那两帧最长 {max(swaps):.0f}ms（就是「松手之后卡一下」那一帧的来源之一）")
+    if not all(c["has_server"] for c in chain):
+        ev.append("后端没报 server_ms（老后端）：传输与 Flask 开销分不开，合在「传输 + 解析」里")
+    where = list(dict.fromkeys(CHAIN_STAGES[k][1] for k, v in ranked[:3] if v >= 0.15 * med_total))
+    fix = [CHAIN_STAGES[k][2] for k, v in ranked[:3] if v >= 0.15 * med_total]
+    return Finding(
+        lvl,
+        "松手",
+        f"松手 → 图落定 {med_total:.0f}ms，最慢的是「{CHAIN_STAGES[top_k][0]}」",
+        ev,
+        where or [CHAIN_STAGES[top_k][1]],
+        fix or [CHAIN_STAGES[top_k][2]],
+        weight=min(med_total / 150, 10) / 2,
+    )
+
+
+def authority_only(report: dict) -> list[Finding]:
+    """旧版报告只有 commit → 权威的总数，拆不开。"""
+    auth = [a.get("commit_to_authority_ms") for a in report.get("authority") or []]
+    auth = [a for a in auth if isinstance(a, (int, float))]
+    if not auth:
+        return []
+    p50 = pct(auth, 0.5) or 0
+    lvl = level_by(p50, 150, 500, 1500)
+    if not lvl:
+        return []
+    return [
+        Finding(
+            lvl,
+            "松手",
+            "松手后要等后端重画一遍才落定",
+            [
+                f"图内元素松手 → 权威 SVG 换上画布：中位 {p50:.0f}ms，P95 {pct(auth, 0.95):.0f}ms（{len(auth)} 次）",
+                "这版探针没有逐段时间线，拆不开是后端、传输还是换图慢（新版探针的报告会拆开）",
+            ],
+            [
+                "后端 /api/engine/render（docs/perf-baseline.md 的口径）",
+                "web/src/store/svgPreviewStore.ts reattachPreview",
+            ],
+            ["用新版探针重录一份：报告会把这段时间拆成调度 / 后端各阶段 / 传输 / 换图。"],
+            weight=min(p50 / 150, 10) / 2,
+        )
+    ]
+
+
 def cap_finding(report: dict, refresh: float, stats: list[SegStats]) -> Finding | None:
     idle = report.get("idle_frame_ms") or []
     if len(idle) < 10 or refresh < CAPPED_FRAME_MS:
@@ -1030,31 +1234,15 @@ def analyze_report(report: dict) -> dict:
             )
         )
 
-    # ---- 图内元素 commit → 权威 SVG（后端往返 + 换图）
-    auth = [a.get("commit_to_authority_ms") for a in report.get("authority") or []]
-    auth = [a for a in auth if isinstance(a, (int, float))]
-    if auth:
-        p50 = pct(auth, 0.5) or 0
-        lvl = level_by(p50, 150, 500, 1500)
-        if lvl:
-            findings.append(
-                Finding(
-                    lvl,
-                    "松手",
-                    "松手后要等后端重画一遍才落定",
-                    [
-                        f"图内元素松手 → 权威 SVG 换上画布：中位 {p50:.0f}ms，P95 {pct(auth, 0.95):.0f}ms（{len(auth)} 次）"
-                    ],
-                    [
-                        "后端 /api/engine/render（docs/perf-baseline.md 的口径）",
-                        "web/src/store/svgPreviewStore.ts reattachPreview",
-                    ],
-                    [
-                        "这段时间画面停在预览上不算卡；若用户觉得「松手后跳一下」，看后端 timings 与换图时的整张重解析。"
-                    ],
-                    weight=min(p50 / 150, 10) / 2,
-                )
-            )
+    # ---- 松手链路：松手 → 图落定拆成几段（新版探针才有 renders）
+    chain = release_chain(report)
+    if chain:
+        findings.append(chain_finding(chain))
+        auth = [c["total"] for c in chain if c["total"] is not None]
+    else:
+        findings += authority_only(report)
+        auth = [a.get("commit_to_authority_ms") for a in report.get("authority") or []]
+        auth = [a for a in auth if isinstance(a, (int, float))]
 
     # ---- 覆盖：这份报告够不够下结论
     coverage: list[str] = []
@@ -1225,7 +1413,7 @@ def grade(
                     "松手",
                     _g(m / B, 2.8, 6, 15),
                     f"松手后最长一帧 {m:.0f}ms"
-                    + (f"，commit→权威中位 {pct(auth, 0.5):.0f}ms" if auth else ""),
+                    + (f"，松手→图落定中位 {pct(auth, 0.5):.0f}ms" if auth else ""),
                 )
             )
         else:

@@ -3694,6 +3694,10 @@ def api_engine_render():
     # 控制面的 queue_wait/total。日志里一行结构化（可 grep 可喂脚本），响应里
     # 原样交给前端——「慢」这件事必须能指到具体某一段上，不能靠猜。
     timings = {**(resp.get("timings") or {}), "worker_get_ms": get_ms}
+    # 服务端在这次请求上花的总时间（取会话起、到组装响应前）。前端拿「请求往返 − 它」
+    # 就是传输 + JSON 解析——没有它，松手到落定的那 0.5 秒分不清是后端慢还是搬运慢
+    # （2026-09-23 一份 M2 Pro 报告里 commit→权威 500ms，而 worker 各段加起来说不清）
+    timings["server_ms"] = round((time.perf_counter() - t_get) * 1000, 3)
     LOG.info(
         "引擎渲染: %s %.0fms%s timings=%s",
         stem,

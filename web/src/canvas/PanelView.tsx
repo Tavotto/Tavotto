@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { perfCount } from '@/perf/core'
+import { perfCount, perfRenderPainted } from '@/perf/core'
 import { t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { enginePreviewPng, panelSrc, type ManifestElement } from '@/lib/api'
@@ -150,6 +150,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     const st = useRenderStore.getState()
     const cur = st.byKey[renderKeyOf(obj)]?.svg ? renderKeyOf(obj) : (st.latest[obj.fileId] ?? '')
     reattachPreview(panelId, cur)
+    // 性能探针（ADR 0075）：这一版 SVG 已经进了 DOM
+    perfRenderPainted(cur)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [svgHtml, panelId])
 

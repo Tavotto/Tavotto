@@ -29,6 +29,10 @@
   `doc_split: true`）：同一个 store 里住着文档本体与保存状态，只数通知会把「上一次松手 1 秒后
   的自动保存改 saveState」读成「拖动途中写文档」。`flushAutosave` 外面的 `autosave.flush` span
   量它落在拖动途中时花了多久。看护：`perf/session.test.ts`。
+- **松手链路**：`renderStore` 发请求前 `perfRenderBegin(key)`、拿到响应 `perfRenderResponse`（照抄
+  后端 timings 里的数字，含 `/api/engine/render` 的 `server_ms`）、写进 store 后 `perfRenderApplied`；
+  `PanelView` 把那一版 SVG 换进 DOM 后 `perfRenderPainted(key)`，随后两帧记进 `swap_frames`（不依赖
+  片段——换图常在尾巴之后）。**渲染键只活在内存里**（它含文件名），报告里只有数字。
 - **判断不在产品里**：产品只给帧率与超时比例一句话；「卡在哪、怎么改」在
   `scripts/perf_report.py`，判据随代码改，不为改一条规则发版本。
 - **探针面板拖动中不重渲染**：片段数只在片段结束时通知（`perfSegmentBegin` 不通知），
