@@ -387,6 +387,72 @@ def test_reopening_a_session_replays_to_the_same_place(client, project):
     assert bridge.manifest_hash(a["manifest"]) == bridge.manifest_hash(b["manifest"])
 
 
+def _second_client(tmp_path) -> "Client":
+    """同一个工作区根、同一个数据目录的**另一个** server 进程——WorkBuddy 回收了 CLI、
+    Codex 改配置重启了 server，都是这个形状（ADR 0078）。"""
+    c = Client(str(tmp_path), str(tmp_path / "data"))
+    c.call(
+        "initialize",
+        {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "pytest-second", "version": "1"},
+        },
+    )
+    return c
+
+
+def test_a_new_server_process_resumes_the_session(client, project, tmp_path):
+    """进程 A 开图、改一轮后**退出**；进程 B 拿同一个 session_id 接着改——
+    B 里的结果与「一直在 A 里改」逐元素一致，且 B 如实说自己是恢复出来的。"""
+    opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
+    sid = opened["session_id"]
+    patches = patches_for(opened["manifest"])
+    first, more = patches[:4], patches
+    client.tool("tavotto_apply_overrides", {"session_id": sid, "patches": first})
+    hot = client.tool("tavotto_apply_overrides", {"session_id": sid, "patches": more})
+    client.close()  # 进程 A 退出：内存里的会话没了
+
+    b = _second_client(tmp_path)
+    try:
+        state = b.tool("tavotto_session_state", {"session_id": sid})
+        assert state["restored"] is True
+        assert state["patches"] == more
+        assert state["patch_hash"] == hot["patch_hash"]
+
+        from tavotto_mcp import bridge
+
+        diffs, compared = bridge.compare_manifests(hot["manifest"], state["manifest"])
+        assert not diffs, json.dumps(diffs[:8], ensure_ascii=False)
+        assert compared > 10
+
+        # 接着改：画布发的是全量列表
+        again = b.tool("tavotto_apply_overrides", {"session_id": sid, "patches": first})
+        assert again["restored"] is False
+        assert again["patch_hash"] != hot["patch_hash"]
+        replay = b.tool("tavotto_verify_replay", {"session_id": sid})
+        assert replay["ok"] and not replay["divergence"]
+    finally:
+        b.close()
+
+
+def test_a_closed_session_does_not_come_back_in_a_new_process(client, project, tmp_path):
+    opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
+    sid = opened["session_id"]
+    client.tool("tavotto_close_session", {"session_id": sid})
+    client.close()
+
+    b = _second_client(tmp_path)
+    try:
+        raw = b.call(
+            "tools/call", {"name": "tavotto_session_state", "arguments": {"session_id": sid}}
+        )
+        assert raw["result"].get("isError")
+        assert raw["result"]["structuredContent"]["code"] == "unknown_session"
+    finally:
+        b.close()
+
+
 def test_opening_a_blocking_figure_says_so_without_crashing(client, blocking_project):
     """有阻断项时打开必须**照常成功**，并在文字里说清楚。
 

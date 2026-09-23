@@ -750,6 +750,8 @@ def _call_session_state(args: dict) -> dict:
         f"hash {out['patch_hash'][:19]}…",
         _brief_manifest(out.get("manifest")),
     ]
+    if out.get("restored"):
+        lines.append(RESTORED_NOTE)
     return {"content": _text(*lines), "structuredContent": out}
 
 
@@ -886,6 +888,11 @@ def _shrink_content_to_fit(result: dict, budget: int) -> None:
     result["content"] = _text(CONTENT_TRUNCATED_MARKER)
 
 
+#: 会话是从落盘记录在这个 server 进程里重建的（ADR 0078）——如实说一句，别让它看起来
+#: 像一直开着：渲染修订号从头计、上一进程里没提交的东西（没有）不会回来。
+RESTORED_NOTE = "会话已在新的 server 进程里按落盘记录恢复（上一进程已退出），已提交的修改都在。"
+
+
 def _call_apply(args: dict) -> dict:
     out = bridge.apply_overrides(
         str(args.get("session_id") or ""),
@@ -897,6 +904,8 @@ def _call_apply(args: dict) -> dict:
         f"已应用 {out['applied']} 条 override（hash {out['patch_hash'][:19]}…）",
         _brief_manifest(out.get("manifest")),
     ]
+    if out.get("restored"):
+        lines.append(RESTORED_NOTE)
     if out.get("contract_released"):
         lines.append("规范化约定已按用户明确要求解除：之前的验收报告作废，导出时会如实说明。")
     if out["rejected"]:
