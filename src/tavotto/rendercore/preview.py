@@ -47,7 +47,8 @@ from pathlib import Path
 
 from . import BACKEND_NAME, BACKEND_VERSION
 from .identity import fonts_policy_version as _fonts_policy_version
-from .raster import encode_png
+from .raster import SOURCE_MAX_PIXELS, encode_png
+from .rasterio import RasterDecodeError, kind_of, preview as raster_preview
 from .renderhost import RenderChildError, RenderHost
 from .sources import FingerprintMemo
 
@@ -284,7 +285,14 @@ class PreviewCache:
                     if self._usable(cached):
                         return cached
                     cached.unlink(missing_ok=True)  # 零字节 = 上一次写到一半就断电 / 被杀
-                    self._write(staged, width_px, cached, transparent=transparent, page=page)
+                    self._write(
+                        staged,
+                        width_px,
+                        cached,
+                        transparent=transparent,
+                        page=page,
+                        kind=kind_of(path),
+                    )
                     self.prune()
                 return cached
             finally:
@@ -305,19 +313,40 @@ class PreviewCache:
                 self._pins.pop(cached, None)
 
     def _write(
-        self, staged: Path, width_px: int, cached: Path, *, transparent: bool, page: int
+        self,
+        staged: Path,
+        width_px: int,
+        cached: Path,
+        *,
+        transparent: bool,
+        page: int,
+        kind: str = "pdf",
     ) -> None:
         """`staged` 是 `_stage()` 抄出来的不可变副本：child 渲染的就是键里 hash 过的那份字节，源文件此后怎么改
         都影响不到这张预览。"""
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         tmp = cached.with_name(f"{cached.stem}.{os.getpid()}-{threading.get_ident():x}.part.png")
         try:
-            try:
-                buf = self.host.render(
-                    staged, width_px=width_px, page=page, transparent=transparent
-                )
-            except RenderChildError as exc:
-                raise PreviewError(exc.code, exc.message) from exc
+            if kind != "pdf":
+                # 位图素材（PNG / JPEG / TIFF）：PDFium 不认，本进程解码缩放（解码前按源像素预算记账）。
+                # 副本没有扩展名，类型从源路径来
+                try:
+                    buf = raster_preview(
+                        staged.read_bytes(),
+                        kind,
+                        width_px,
+                        transparent=transparent,
+                        max_pixels=SOURCE_MAX_PIXELS,
+                    )
+                except RasterDecodeError as exc:
+                    raise PreviewError(exc.code, str(exc)) from exc
+            else:
+                try:
+                    buf = self.host.render(
+                        staged, width_px=width_px, page=page, transparent=transparent
+                    )
+                except RenderChildError as exc:
+                    raise PreviewError(exc.code, exc.message) from exc
             tmp.write_bytes(encode_png(buf))
             self.renders += 1
             self._publish(tmp, cached)
