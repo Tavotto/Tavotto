@@ -452,7 +452,8 @@ sidecar → Tauri bundler）。CI 门禁打的是最终产物：sidecar 真二�
 
 | 平台 | 产物 | 说明 |
 |---|---|---|
-| macOS | `Tavotto-X.Y.Z-macOS.dmg` | Tauri .app（内嵌 sidecar）；**含内置渲染 runtime**；**仅 arm64**；签名 + 公证复用下述同一套 secret 与流程 |
+| macOS（Apple Silicon） | `Tavotto-X.Y.Z-macOS.dmg` | Tauri .app（内嵌 sidecar）；**含内置渲染 runtime**；arm64，`macos-latest` 上构建；签名 + 公证复用下述同一套 secret 与流程 |
+| macOS（Intel） | `Tavotto-X.Y.Z-macOS-Intel.dmg` | 同上，x86_64，**只在原生 Intel runner `macos-26-intel` 上构建与冒烟**（ADR 0076） |
 | Windows | `Tavotto-X.Y.Z-Windows-Setup.exe` | NSIS（收集时改成与 wheel/dmg 一致的命名），装到用户目录；**含内置渲染 runtime**；SignPath 启用后由 SignPath Foundation 证书签名 |
 
 macOS 签名注意：sidecar 是 `.app` 里 `Resources/sidecar/` 下的 PyInstaller
@@ -500,13 +501,14 @@ macOS:   Tavotto.app → …/_internal/runtime/bin/python3.13 → engine/worker.
 保证同一个脚本在 Windows 和 macOS 上画出同一张图（`tests/test_runtime_build.py`
 里有一条用例盯着）。哪天解析结果真的分叉了，不要硬凑——如实记下来并在发布说明里讲清楚。
 
-**架构范围（如实记录，别扩大）**：目前只发 **macOS arm64**。`macos-x86_64`
-在锁文件里标着 `shipped: false`——版本锁着是为了「要发时不用临时定版本」，但
-CI 的 macOS runner 只有 Apple Silicon 一档，因此那个目标**既没构建过也没冒烟过**。
-真要发 Intel 版，先有 Intel runner（或带 Rosetta 的机器）跑完整的 import +
-真实绘图冒烟，把 `shipped` 改成 true，再改 README——**在那之前 README 里不许
-出现「支持 Intel」**。同理，目前**不产出 universal2**：科学栈的 wheel 是分架构
+**架构范围（如实记录，别扩大）**：macOS **按架构各发一个 dmg**（ADR 0076）。
+`macos-arm64` 与 `macos-x86_64` 都 `shipped: true`；Intel 那条腿**只在原生 Intel
+runner 上**构建和冒烟——交叉构建或 Rosetta 都证明不了内置 runtime 能在 Intel 上
+import + 画图。GitHub 的 Intel 镜像有退役日期，退役前要换成自备 Intel 机器，
+否则这一档降回 unsupported。目前**不产出 universal2**：科学栈的 wheel 是分架构
 发布的，把两份 .so 硬拼成 universal2 没有验证过，不能凭「应该可以」就发。
+**Intel 腿不在合并队列里**：发版前的 `release.yml` 演练（`publish=false`）是它
+每个版本的第一次执行，别跳过。
 
 发行流水线里这条链路是这样护住的（**两个平台同一套**）：
 
@@ -620,7 +622,8 @@ Windows 代码签名都是两回事）：公钥写死在 `src-tauri/tauri.conf.j
    对不上就别发——按那份配置发出去的更新，用户下载完校验失败、装不上。
 
 发出去之后自查：Release 资产里应当有 `latest.json`、`Tavotto.app.tar.gz(.sig)`、
-`Tavotto_<ver>_x64-setup.nsis.zip(.sig)`。少了 `latest.json`，壳那边的表现是
+`Tavotto-Intel.app.tar.gz(.sig)`、`Tavotto_<ver>_x64-setup.nsis.zip(.sig)`，
+`latest.json` 里有 `darwin-aarch64` / `darwin-x86_64` / `windows-x86_64` 三个平台。少了 `latest.json`，壳那边的表现是
 **一直显示「已是最新版本」**——用户停在旧版本上而 CI 全绿，这条要盯。
 
 ### macOS 签名与公证的一次性设置

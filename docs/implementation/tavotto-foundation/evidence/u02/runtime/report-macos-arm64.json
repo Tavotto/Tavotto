@@ -48,7 +48,7 @@
  ],
  "lock_file": {
   "path": "packaging/runtime-lock.json",
-  "sha256_lf": "56064178cb95ceeded48f6ba841f869621090172ec93c3cdd1ada7ab53c6764c"
+  "sha256_lf": "c39c82ee1e173d562dc2050097a17deeb4761d88e239c05af00c98dd4b42a9d2"
  },
  "steps": [
   {
@@ -63,8 +63,8 @@
     "triple": "aarch64-apple-darwin",
     "python_rel": "bin/python3"
    },
-   "data_dir": "/tmp/u02-rt-KvS1/data",
-   "via": "--data-dir"
+   "data_dir": "/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data",
+   "via": "engine.config.data_dir()"
   },
   {
    "step": "provisioner.uv_from_pinned_wheel",
@@ -81,7 +81,7 @@
   {
    "step": "python.provisioned_atomically",
    "ok": true,
-   "python": "/tmp/u02-rt-KvS1/data/runtimes/cpython-3.13.15-7d50bb42813a/bin/python3",
+   "python": "/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/runtimes/cpython-3.13.15-7d50bb42813a/bin/python3",
    "active": {
     "active": "cpython-3.13.15-7d50bb42813a",
     "sha256": "7d50bb42813a5644db7c40d3ad79361d0b724bb29d25a91fab1048c2c5c6a8c5",
@@ -91,7 +91,7 @@
   {
    "step": "wheelhouse.downloaded_with_pinned_hashes",
    "ok": true,
-   "dir": "/tmp/u02-rt-KvS1/data/wheelhouse",
+   "dir": "/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/wheelhouse",
    "wheels": [
     "six-1.17.0-py2.py3-none-any.whl",
     "tabulate-0.9.0-py3-none-any.whl",
@@ -101,41 +101,41 @@
   {
    "step": "venv.created_from_private_python",
    "ok": true,
-   "venv": "/tmp/u02-rt-KvS1/data/envs/spike-venv",
+   "venv": "/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/envs/spike-venv",
    "stderr": ""
   },
   {
    "step": "install.offline_from_wheelhouse_with_dead_proxy",
    "ok": true,
    "seconds": 0.06,
-   "stderr": "Using Python 3.13.15 environment at: /tmp/u02-rt-KvS1/data/envs/spike-venv\nResolved 3 packages in 2ms\nPrepared 3 packages in 3ms\nInstalled 3 packages in 1ms\n + six==1.17.0\n + sortedcontainers==2.4.0\n + tabulate==0.9.0\n"
+   "stderr": "Using Python 3.13.15 environment at: /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/envs/spike-venv\nResolved 3 packages in 1ms\nPrepared 3 packages in 3ms\nInstalled 3 packages in 2ms\n + six==1.17.0\n + sortedcontainers==2.4.0\n + tabulate==0.9.0\n"
   },
   {
    "step": "install.negative_empty_wheelhouse_fails",
    "ok": true,
    "returncode": 1,
-   "stderr": "Using Python 3.13.15 environment at: /tmp/u02-rt-KvS1/data/envs/spike-venv-empty\nerror: No solution found when resolving dependencies\n  cause: Because six was not found in the provided package locations and you require six==1.17.0, we can conclude that your requirements are unsatisfiable.\n"
+   "stderr": "Using Python 3.13.15 environment at: /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/envs/spike-venv-empty\nerror: No solution found when resolving dependencies\n  cause: Because six was not found in the provided package locations and you require six==1.17.0, we can conclude that your requirements are unsatisfiable.\n"
   },
   {
    "step": "install.network_blocked_control",
    "ok": true,
    "returncode": 2,
-   "seconds": 7.93,
-   "stderr": "nment at: /tmp/u02-rt-KvS1/data/envs/spike-venv-empty\nerror: Request failed after 3 retries in 7.8s\n  cause: Failed to fetch: `https://pypi.org/simple/requests/`\n  cause: error sending request for url (https://pypi.org/simple/requests/)\n  cause: client error (Connect)\n  cause: tunnel error: failed to create underlying connection\n  cause: tcp connect error\n  cause: Connection refused (os error 61)\n"
+   "seconds": 8.88,
+   "stderr": "0gn/T/u02-runtime-egxxacbx/data/envs/spike-venv-empty\nerror: Request failed after 3 retries in 8.7s\n  cause: Failed to fetch: `https://pypi.org/simple/requests/`\n  cause: error sending request for url (https://pypi.org/simple/requests/)\n  cause: client error (Connect)\n  cause: tunnel error: failed to create underlying connection\n  cause: tcp connect error\n  cause: Connection refused (os error 61)\n"
   },
   {
    "step": "verify.imports_and_everything_under_private_dir",
    "ok": true,
    "info": {
-    "prefix": "/tmp/u02-rt-KvS1/data/envs/spike-venv",
-    "base_prefix": "/private/tmp/u02-rt-KvS1/data/runtimes/cpython-3.13.15-7d50bb42813a",
-    "executable": "/tmp/u02-rt-KvS1/data/envs/spike-venv/bin/python",
+    "prefix": "/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/envs/spike-venv",
+    "base_prefix": "/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/runtimes/cpython-3.13.15-7d50bb42813a",
+    "executable": "/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/envs/spike-venv/bin/python",
     "path": [
      "",
-     "/private/tmp/u02-rt-KvS1/data/runtimes/cpython-3.13.15-7d50bb42813a/lib/python313.zip",
-     "/private/tmp/u02-rt-KvS1/data/runtimes/cpython-3.13.15-7d50bb42813a/lib/python3.13",
-     "/tmp/u02-rt-KvS1/data/runtimes/cpython-3.13.15-7d50bb42813a/lib/python3.13/lib-dynload",
-     "/tmp/u02-rt-KvS1/data/envs/spike-venv/lib/python3.13/site-packages"
+     "/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/runtimes/cpython-3.13.15-7d50bb42813a/lib/python313.zip",
+     "/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/runtimes/cpython-3.13.15-7d50bb42813a/lib/python3.13",
+     "/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/runtimes/cpython-3.13.15-7d50bb42813a/lib/python3.13/lib-dynload",
+     "/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/envs/spike-venv/lib/python3.13/site-packages"
     ],
     "six": "1.17.0",
     "tabulate": "0.9.0",
@@ -147,13 +147,13 @@
   {
    "step": "verify.base_prefix_is_the_private_runtime",
    "ok": true,
-   "base_prefix": "/private/tmp/u02-rt-KvS1/data/runtimes/cpython-3.13.15-7d50bb42813a",
-   "private_python": "/tmp/u02-rt-KvS1/data/runtimes/cpython-3.13.15-7d50bb42813a/bin/python3"
+   "base_prefix": "/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/runtimes/cpython-3.13.15-7d50bb42813a",
+   "private_python": "/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/runtimes/cpython-3.13.15-7d50bb42813a/bin/python3"
   },
   {
    "step": "negative.tampered_archive_refused_before_any_execution",
    "ok": true,
-   "error": "SHA-256 不符：/tmp/u02-rt-KvS1/data/downloads/tampered.tar.gz",
+   "error": "SHA-256 不符：/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/downloads/tampered.tar.gz",
    "interpreter_executions_before": 1,
    "interpreter_executions_after": 1,
    "runtimes_dir_unchanged": true
@@ -161,7 +161,7 @@
   {
    "step": "negative.wrong_expected_hash_refused_before_any_execution",
    "ok": true,
-   "error": "SHA-256 不符：/tmp/u02-rt-KvS1/data/downloads/cpython-3.13.15+20260814-aarch64-apple-darwin-install_only.tar.gz",
+   "error": "SHA-256 不符：/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u02-runtime-egxxacbx/data/downloads/cpython-3.13.15+20260814-aarch64-apple-darwin-install_only.tar.gz",
    "interpreter_executions_before": 1,
    "interpreter_executions_after": 1,
    "runtimes_dir_unchanged": true

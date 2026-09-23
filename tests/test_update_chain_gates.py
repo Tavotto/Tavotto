@@ -27,8 +27,12 @@ from __future__ import annotations
 
 import itertools
 import re
+import shlex
+import shutil
+import subprocess
 import sys
 import tarfile
+import textwrap
 from fnmatch import fnmatchcase
 from pathlib import Path
 
@@ -723,3 +727,50 @@ def test_every_pattern_download_is_followed_by_a_roll_call_that_mirrors_the_uplo
             f'{where}: 点名的结论没有进退出码（少了 exit "$missing"）——红了也不红'
         )
         assert "::error::" in run and "$name" in run, f"{where}: 报文没点到是哪个 artifact 没下到"
+
+
+# ---------------------------------------------------------------------------
+# 桌面产物的「文件名 → 角色 / 平台」映射（ADR 0076）。两个 macOS 架构的名字只差
+# 一个 `-Intel`，这张表写在 desktop-tauri.yml 的 shell `case` 里——判据直接把那段
+# case 抠出来交给 bash 跑，不在测试里另抄一份（抄的那份永远和自己一致）。
+# ---------------------------------------------------------------------------
+def _role_case_block() -> str:
+    src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
+    m = re.search(r'(?ms)^(\s*)case "\$base" in\n.*?^\1esac\n', src)
+    assert m, "desktop-tauri.yml 里找不到产物清单那段 case——读取器失明了"
+    return textwrap.dedent(m.group(0))
+
+
+def _classify(base: str) -> tuple[int, str]:
+    script = (
+        f'base={shlex.quote(base)}\nfor _ in 1; do\n{_role_case_block()}echo "$role $plat"\ndone\n'
+    )
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    return proc.returncode, proc.stdout.strip()
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="需要 bash")
+@pytest.mark.parametrize(
+    ("base", "want"),
+    [
+        ("Tavotto-0.17.0-macOS.dmg", "macos-installer darwin-aarch64"),
+        ("Tavotto-0.17.0-macOS-Intel.dmg", "macos-intel-installer darwin-x86_64"),
+        ("Tavotto.app.tar.gz", "macos-updater darwin-aarch64"),
+        ("Tavotto-Intel.app.tar.gz", "macos-intel-updater darwin-x86_64"),
+        ("Tavotto-0.17.0-Windows-Setup.exe", "windows-installer windows-x86_64"),
+        ("Tavotto_0.17.0_x64-setup.nsis.zip", "windows-updater windows-x86_64"),
+        ("Tavotto.app.tar.gz.sig", ""),
+    ],
+)
+def test_desktop_artifact_names_map_to_exactly_one_role_and_arch(base, want):
+    code, out = _classify(base)
+    assert code == 0, (base, out)
+    assert out == want, (base, out)
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="需要 bash")
+@pytest.mark.parametrize("base", ["Tavotto-0.17.0-macOS-universal.dmg", "Tavotto-x.app.tar.gz"])
+def test_a_mac_artifact_of_unknown_arch_fails_instead_of_being_skipped(base):
+    """认不出架构的 dmg / 更新包必须失败——落进 `*) continue` 就是静默少一个安装包。"""
+    code, _ = _classify(base)
+    assert code != 0, base

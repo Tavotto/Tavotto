@@ -74,7 +74,9 @@ def test_every_shipped_macos_target_has_a_native_desktop_leg(lock):
     那条腿当场拦下，发行链红在构建机上。
     """
     wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
-    legs = re.findall(r"\{ os: (macos-[\w-]+),\s+bundles: app,\s+artifact: [\w-]+,\s+arch: (\w+) \}", wf)
+    legs = re.findall(
+        r"\{ os: (macos-[\w-]+),\s+bundles: app,\s+artifact: [\w-]+,\s+arch: (\w+) \}", wf
+    )
     assert legs, "desktop-tauri.yml 里一条 macOS 构建腿都没解析到——读取器失明了，别信下面的绿"
     leg_arches = {arch for _, arch in legs}
     shipped = {

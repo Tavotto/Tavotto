@@ -45,10 +45,10 @@ Python，首次渲染也不联网：
   更新锁文件时才跑的那一档）。**别手写闭包**——漏掉的传递依赖会在用户机器上以
   ModuleNotFoundError 出现。产物在仓库根的 `runtime/`，进 .gitignore，并在
   pyproject 里显式 exclude（wheel/sdist 绝不能被它污染）。
-- **架构范围如实记录**：目前只发 **macOS arm64**；`macos-x86_64` 标着
-  `shipped: false`（锁着版本但**没构建过也没冒烟过**，CI 没有 Intel runner）。
-  不产出 universal2——科学栈 wheel 分架构发布，硬拼没验证过。
-  改这条之前不许在 README 里写「支持 Intel」。
+- **架构范围如实记录**（ADR 0076）：macOS **按架构各发一个 dmg**——arm64 与
+  x86_64 都 `shipped: true`，Intel 那份只在原生 Intel runner（`macos-26-intel`）上
+  构建与冒烟。不产出 universal2——科学栈 wheel 分架构发布，硬拼没验证过。
+  shipped 的 macOS 目标 == 发行矩阵里的 macOS 腿架构（`test_every_shipped_macos_target_has_a_native_desktop_leg`）。
 - **`engine/runtime.py` 是路径判断的唯一出处**（frozen 的 `_MEIPASS` / exe 同级 /
   源码树 / `TAVOTTO_RUNTIME_DIR` 覆盖）。这一段**全程 os.path 拼字符串，一个
   pathlib 都不用**：`Path()` 按 `os.name` 分派，在别的平台上构造另一半直接抛

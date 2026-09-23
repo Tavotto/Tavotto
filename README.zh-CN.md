@@ -51,10 +51,9 @@
 （[验收记录](docs/acceptance/codex-desktop-canvas.md)）；当前发行版没有重做，
 而「把图交接到桌面窗口」不算这块画布。不读取本机插件的宿主永远看不到这些工具。
 
-**在桌面版里。** macOS（Apple Silicon）与 Windows（x64）的应用自带 Python：打开
-图库、点选、拖拽、排版、检查、导出。Codex 或任何终端都能把一张图交接到已经开着的
-窗口里。Linux 没有安装包（beta，走 PyPI 在浏览器里用）；Intel Mac 不支持（PyPI
-那条路能跑，但不作承诺）——什么算支持，唯一出处是
+**在桌面版里。** macOS（Apple Silicon 与 Intel）和 Windows（x64）的应用自带 Python：
+打开图库、点选、拖拽、排版、检查、导出。Codex 或任何终端都能把一张图交接到已经开着的
+窗口里。Linux 没有安装包（beta，走 PyPI 在浏览器里用）——什么算支持，唯一出处是
 [`docs/support-matrix.json`](docs/support-matrix.json)。
 
 两条路的安装都在[上手](#上手)；Codex 那条是
@@ -315,7 +314,8 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 ### 桌面版
 
 到[最新发行版](https://github.com/Tavotto/Tavotto/releases/latest)下载 macOS 的
-`.dmg`（Apple Silicon）或 Windows 的 `.exe`（x64；Windows ARM 没有构建、也没有验证过）。
+`.dmg`（Apple Silicon 选 `-macOS.dmg`，Intel 选 `-macOS-Intel.dmg`）或 Windows 的
+`.exe`（x64；Windows ARM 没有构建、也没有验证过）。
 装完双击即用——Tavotto 在自己的窗口里打开，之后的升级也都在软件内完成。
 
 **你不需要自己装 Python。** 两个安装包都自带一套 Tavotto 专用的 Python 运行环境，
@@ -323,11 +323,12 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 两个平台锁的是同一组版本，同一个脚本在两边画出同一张图。装完立刻就能渲染：
 不联网、不需要 Homebrew / Conda / Xcode，也不碰你已有的任何 Python。
 
-这套内置环境也是安装包偏大的原因：**macOS 下载约 195 MB，Windows 约 89 MB，
-装完约半个 GB**。只付一次，而且完全离线。
+这套内置环境也是安装包偏大的原因：**macOS 下载约 195 MB（Apple Silicon 版实测），
+Windows 约 89 MB，装完约半个 GB**。只付一次，而且完全离线。
 
-> macOS 版**只发 Apple Silicon（arm64）**。Intel Mac 没有构建、也没有验证过，
-> 请走下面的 PyPI 安装。没有 Linux 安装包；Linux 走 PyPI（浏览器模式，beta）。
+> macOS 版**按架构各发一个 `.dmg`**，各自在对应架构的机器上原生构建和冒烟；
+> 按你的 Mac 选（Apple 菜单 →「关于本机」：写「芯片」的是 Apple Silicon，写「处理器 … Intel」的是
+> Intel）。没有 Linux 安装包；Linux 走 PyPI（浏览器模式，beta）。
 > Windows 安装包是否经过代码签名，以各版 Release 页的说明为准；未签名的安装包
 > 首次运行会弹 **SmartScreen** 提示（点「更多信息 → 仍要运行」，或先对照
 > Release 页的 `SHA256SUMS.txt` 核验下载）。支持 / beta / 不支持的唯一权威

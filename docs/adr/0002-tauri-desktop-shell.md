@@ -194,8 +194,8 @@ Tauri bundler）。
     下次启动报「应用已损坏」——worker 一律带 `-B` 起，字节码与 Matplotlib
     字体缓存改道到数据目录（`engine/runtime.child_args/child_env`）。
 
-  仍然只发 **arm64**；Intel 目标在锁文件里标着 `shipped: false`，
-  **没有构建过也没有冒烟过**，不得对外称「支持 Intel」。详见 docs/RELEASING.md。
+  自 ADR 0076 起按架构各发一个 dmg（arm64 / x86_64，各自原生构建与冒烟，
+  不做 universal2）。详见 docs/RELEASING.md。
 - **Windows**：NSIS 安装包（替代 Inno Setup 的候选，旧链路暂不删）。内置
   CPython runtime（`packaging/runtime-lock.json` 那套）继续作为独立资源目录
   随包分发（在另一条在途改动里，见「与主工作树的边界」）。
@@ -250,9 +250,9 @@ Tauri bundler）。
   `.app.tar.gz` 里装的是**还没签名**的 .app，更新器换上去之后 Gatekeeper 当场
   拦下，用户拿到一个打不开的应用。发行链里那一份是签完 + `stapler staple`
   之后重新 tar、重新 `tauri signer sign` 的。
-- **macOS 只发 arm64**（sidecar 由 arm64 runner 上的 PyInstaller 打出来）。
-  清单里因此**没有** `darwin-x86_64`——给 Intel 挂上同一个包，等于把一个装不上
-  的更新推给他们，比「查不到更新」糟糕得多。
+- **macOS 两个架构各一个更新包**（ADR 0076）：`Tavotto.app.tar.gz` → `darwin-aarch64`，
+  `Tavotto-Intel.app.tar.gz` → `darwin-x86_64`，按**精确名**匹配——宽模式会让一个包同时
+  认下两个平台，把装不上的更新推给另一个架构的用户，比「查不到更新」糟糕得多。
 - **清单是单独一个 job**：两条 matrix 腿各只知道自己那一半，`latest.json`
   必须等两条都跑完才拼得出来。拼接逻辑在 `scripts/make_updater_manifest.py`
   （有包没签名、一个包都没有，都是硬错误——宁可不发清单，也不发一份装到
