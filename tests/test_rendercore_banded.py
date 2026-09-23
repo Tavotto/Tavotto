@@ -261,6 +261,68 @@ def test_an_export_job_over_the_budget_writes_both_formats_from_one_banded_pass(
     assert bands >= 3 and rendered == bands + 1, (rendered, bands)  # +1 = 首次算键的 ping
 
 
+def test_an_export_within_the_budget_still_renders_the_whole_page_once(tmp_path):
+    """预算以内的导出不许走条带（条带像素与整页不逐字节相同）：child 只被叫两次——算键的 ping + 整页一次。"""
+    import shutil
+
+    from tavotto.engine import exportjob
+    from tavotto.rendercore import fonts, job as rcjob, sources
+    from tavotto.rendercore.hbshaper import HbFaceProvider
+
+    reg = fonts.FontRegistry.discover()
+    if reg.missing:
+        pytest.skip(f"批准字体不全（not_run）：缺 {reg.missing}")
+    project = tmp_path / "proj"
+    (project / "figs").mkdir(parents=True)
+    shutil.copy(FIXTURE / "page.pdf", project / "figs" / "Fig1.pdf")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([str(ROOT / "src"), env.get("PYTHONPATH", "")])
+    h = renderhost.RenderHost(env=env, default_timeout=60, scratch_dir=tmp_path)
+    try:
+        exportjob.reset_for_tests()
+        job = exportjob.prepare(
+            {
+                "scope": "canvas",
+                "formats": ["png", "tiff"],
+                "filename": "Small",
+                "overwrite": "replace",
+                "ppi": 300,
+                "canvas": {
+                    "page_w_mm": 120,
+                    "page_h_mm": 60,
+                    "objects": [
+                        {
+                            "type": "panel",
+                            "id": "figs/Fig1.pdf",
+                            "x_mm": 5,
+                            "y_mm": 5,
+                            "w_mm": 110,
+                            "h_mm": 50,
+                        }
+                    ],
+                },
+            },
+            tmp_path / "out",
+        )
+        before = h.requests
+        payload = exportjob.run(
+            job,
+            lambda j, d: rcjob.produce(
+                j,
+                d,
+                sources=sources.StaticSourceResolver(project),
+                provider=HbFaceProvider(reg),
+                host=h,
+            ),
+        )
+        rendered = h.requests - before
+    finally:
+        h.close()
+        exportjob.reset_for_tests()
+    assert payload["status"] == "done", payload
+    assert rendered == 2, rendered
+
+
 def test_original_png_of_an_oversized_source_is_banded(tmp_path, monkeypatch):
     """按原图导出（`facade.original_png`）同样：超预算走条带、尺寸按 `size`（含 /UserUnit）× ppi 算。"""
     from tavotto.rendercore import facade

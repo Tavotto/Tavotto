@@ -518,6 +518,16 @@ def test_pixel_validation_runs_inside_the_request_lock(fake_host, tmp_path):
     assert reaped_at_release == [True], reaped_at_release
 
 
+def test_a_child_that_answers_a_band_request_with_something_else_is_reaped(fake_host, tmp_path):
+    """条带（ADR 0077 P2）：要的是 [y0, y0 + rows) 这一带，child 回的若不是这一带（假 child 不认条带、照旧回整张），
+    就是协议失败——拼进 PNG / TIFF 的会是错位的行。锁内判、kill + reap。"""
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF")
+    with pytest.raises(rh.RenderChildError) as exc:
+        fake_host.render(pdf, dpi=72.0, band=(0, 1))
+    assert exc.value.code == "render_child_protocol" and fake_host.pid is None
+
+
 def test_error_codes_are_a_closed_set():
     assert set(rc.ERROR_CODES) == {
         "render_child_timeout",
