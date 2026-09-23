@@ -8,7 +8,11 @@
 # 「已损坏，无法打开」且不给「仍要打开」。自内向外逐个 adhoc 重签之后签名是
 # 完整有效的，Gatekeeper 只剩「未公证」这一条，测试者能在系统设置里放行。
 #
-# 用法：scripts/package_beta.sh   （先跑过 .venv-build/bin/python scripts/build_desktop.py）
+# 用法：
+#   .venv-build/bin/python scripts/build_desktop.py --bundles app   # 只出 .app，dmg 由本脚本打
+#   scripts/package_beta.sh
+# 别让 Tauri 打 dmg：它按卷名「Tavotto Beta」挂载，本机已经开着一个同名卷
+# （测试时双击过的 beta dmg）就会 bundle_dmg.sh 失败。本脚本挂载用临时目录，不撞名。
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
