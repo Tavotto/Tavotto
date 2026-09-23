@@ -26,6 +26,7 @@ import base64
 import hashlib
 import json
 import os
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -55,6 +56,7 @@ from tavotto.engine import (
     workdir as engine_workdir,
 )
 
+from . import sessionjournal
 from .roots import (
     CODE_AMBIGUOUS_ROOT,
     CODE_NO_WORKSPACE_ROOT,
@@ -270,6 +272,9 @@ class Session:
     #: 与规范的纯函数，键对得上就没有第二个答案。每次 `_render` 都把它清掉：
     #: manifest 换了一份，键没变也不算数。
     preflight_cache: dict | None = None
+    #: 这个会话是不是**这一次调用里**从落盘记录重建的（ADR 0078）。调用方读一次就清掉，
+    #: 让 apply / session_state 的结果如实带一句 `restored: true`，而不是假装它一直开着。
+    restored: bool = False
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -439,8 +444,113 @@ def sessions() -> dict[str, Session]:
     return _SESSIONS
 
 
+def _journal_dir() -> Path:
+    return Path(engine_config.data_dir()) / sessionjournal.DIRNAME
+
+
+def _persist(session: Session) -> None:
+    """把会话**已提交**的状态落盘（ADR 0078）。只在提交点调：open / apply / 规范化收尾。
+
+    落盘失败不让这次工具调用失败——图已经改好了；但要说出来（stderr 归日志，stdout
+    归协议），因为后果是「server 进程换了之后这个会话恢复不了」。
+    """
+    record = {
+        "id": session.id,
+        "project": session.project,
+        "stem": session.stem,
+        "profile": session.profile,
+        "patches": list(session.patches),
+        "contract": session.contract,
+        "normalized": session.normalized,
+        "cost": session.cost,
+        "created": session.created,
+    }
+    try:
+        sessionjournal.save(_journal_dir(), record)
+    except (OSError, ValueError, TypeError) as exc:
+        sys.stderr.write(f"tavotto-mcp: 会话 {session.id} 落盘失败，进程换了之后恢复不了：{exc}\n")
+
+
+def _forget(session_id: str) -> None:
+    """明确释放（关闭 / 淘汰）的会话连记录一起删：它们不该在别的进程里复活。"""
+    sessionjournal.delete(_journal_dir(), session_id)
+
+
+def _restore_session(session_id: str) -> Session | None:
+    """内存里没有这个会话时，按落盘记录在**本进程**重建它（ADR 0078）。
+
+    记录只提供「是哪张图、改到了哪一步」，**不提供任何权限**：
+
+    * 项目路径重新规范化，必须落在**当前连接**的允许根之内——根不对就按
+      `workspace_root_changed` 拒，**不渲染、不执行脚本**；
+    * 脚本 / 入口从项目注册表重新读（记录里根本不存它们），stem 不在了就拒；
+    * 渲染走 `_render` 全量列表语义，与画布 / open 同一条路。
+
+    没有记录（从没开过 / 已关闭 / 已淘汰 / 过期 / 坏的）返回 None，调用方照旧报
+    `unknown_session`。
+    """
+    record = sessionjournal.load(_journal_dir(), session_id)
+    if record is None:
+        return None
+    roots = allowed_roots()
+    try:
+        project = canonical_path(record["project"])
+    except (OSError, ValueError):
+        project = None
+    if (
+        not roots
+        or project is None
+        or not os.path.isdir(project)
+        or not any(_within(project, root) for root in roots)
+    ):
+        raise BridgeError(
+            f"会话 {session_id} 的项目不在当前工作区根内，不能在这里恢复，请重新打开。",
+            code="workspace_root_changed",
+            roots=roots,
+            project=record["project"],
+            resolved_project=project,
+        )
+    try:
+        registry = engine_registry.open_registry(project)
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise BridgeError(
+            f"会话 {session_id} 恢复失败：项目的脚本注册表读不了（{exc}），请重新打开。",
+            code="session_restore_failed",
+            reason="registry",
+        ) from exc
+    info = registry.for_stem(record["stem"])
+    if info is None:
+        _forget(session_id)
+        raise BridgeError(
+            f"会话 {session_id} 恢复失败：注册表里已经没有 {record['stem']}，请重新打开。",
+            code="session_restore_failed",
+            reason="stem_gone",
+        )
+    session = Session(
+        id=session_id,
+        project=project,
+        stem=record["stem"],
+        script=info["script"],
+        entry=info["entry"],
+        profile=record["profile"],
+        cost=str(info.get("cost", "") or ""),
+        contract=record.get("contract"),
+        normalized=record.get("normalized"),
+    )
+    if isinstance(record.get("created"), (int, float)):
+        session.created = float(record["created"])
+    # 先渲染成功，再登记（与 open 同一条纪律）；渲染失败时记录留着，下次还能再试
+    _render(session, list(record["patches"]), preview_dpi=None)
+    session.restored = True
+    _SESSIONS[session.id] = session
+    _evict_if_needed()
+    return session
+
+
 def get_session(session_id: str) -> Session:
     s = _SESSIONS.get(session_id)
+    if s is None:
+        s = _restore_session(session_id)
     if s is None:
         known = ", ".join(sorted(_SESSIONS)) or "（没有打开的会话）"
         raise BridgeError(
@@ -479,6 +589,8 @@ def get_session(session_id: str) -> Session:
 
 def close_session(session_id: str) -> dict:
     s = _SESSIONS.pop(session_id, None)
+    # 关闭是明确的释放：落盘记录一起删，别的进程里也不能再把它恢复出来
+    _forget(session_id)
     if s is None:
         return {
             "ok": True,
@@ -506,6 +618,8 @@ def _evict_if_needed() -> list[str]:
     while len(_SESSIONS) > MAX_SESSIONS:
         oldest = min(_SESSIONS.values(), key=lambda s: s.last_used)
         _SESSIONS.pop(oldest.id, None)
+        # 淘汰也是明确的释放（open 的文字里会点名）：不许在下一次调用里悄悄复活
+        _forget(oldest.id)
         evicted.append(oldest.id)
     return evicted
 
@@ -708,6 +822,7 @@ def open_figure(
         render = _render(session, [], preview_dpi=None)
         _SESSIONS[session.id] = session
         evicted = _evict_if_needed()
+    _persist(session)
     out = {
         "ok": True,
         "session_id": session.id,
@@ -1274,11 +1389,13 @@ def apply_overrides(
         and session.normalized.get("patch_hash") != session.patch_hash()
     ):
         session.normalized["stale"] = True
+    _persist(session)
     out.update(
         {
             "ok": True,
             "session_id": session.id,
             "stem": session.stem,
+            "restored": _take_restored(session),
             "applied": len(clean),
             "rejected": dropped,
             "canonical_patch_count": len(canonical),
@@ -1286,6 +1403,12 @@ def apply_overrides(
         }
     )
     return out
+
+
+def _take_restored(session: Session) -> bool:
+    """这次调用里会话是不是刚从落盘记录重建的；读一次就清掉。"""
+    was, session.restored = session.restored, False
+    return was
 
 
 def _contract_diff(session: Session, patches: list) -> list[dict]:
@@ -1344,6 +1467,7 @@ def session_state(session_id: str) -> dict:
         "manifest": session.manifest,
         "svg": session.svg,
         "warnings": list(session.warnings),
+        "restored": _take_restored(session),
     }
     if session.preview is not None:
         out["preview"] = session.preview
@@ -2010,7 +2134,18 @@ def _better(new: dict, old: dict) -> bool:
     return len(new["blocking"]) < len(old["blocking"])
 
 
-def normalize_figure(
+def normalize_figure(session_id: str, **kwargs) -> dict:
+    """`_normalize_figure` 的提交点：无论提交、回退还是异常回退，事务收尾后会话
+    **此刻**的状态（patches + 合同）落盘一次（ADR 0078）。事务中途的候选状态不落盘。"""
+    try:
+        return _normalize_figure(session_id, **kwargs)
+    finally:
+        session = _SESSIONS.get(session_id)
+        if session is not None:
+            _persist(session)
+
+
+def _normalize_figure(
     session_id: str,
     *,
     targets: dict,
