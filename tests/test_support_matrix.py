@@ -2,7 +2,7 @@
 
 承诺与事实分叉的方式从来不是有人撒谎，而是两处各写一份、改了一处忘了另一处。
 所以矩阵里能机器核对的每一条都在这里与权威来源对拍：Python 范围对 pyproject、
-macOS Intel 的不支持状态对 runtime-lock 的 shipped 标记、README 的引用对文件
+macOS Intel 的支持状态对 runtime-lock 的 shipped 标记、README 的引用对文件
 本身。改任何一侧，这里会先红。
 """
 

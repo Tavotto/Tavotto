@@ -18,8 +18,9 @@
     "换版本时用 python scripts/build_worker_runtime.py --resolve --target <目标>",
     "重新生成：它会下载、算 sha256、并用 pip 真实解析出闭包。",
     "",
-    "shipped=false 的目标是**锁住了但没在发**：CI 里没有对应的 runner，因此既没构建过",
-    "也没冒烟过。别把它当成「支持」——见 README 的架构支持范围一节。"
+    "shipped=false 的目标是**锁住了但没在发**：没有在该架构上真构建 + 真冒烟过，",
+    "不得进发行包（build_worker_runtime.check_runtime_dir 那道闸）。眼下三个目标都是",
+    "shipped=true；macos-x86_64 自 ADR 0076 起在原生 Intel runner 上发行。"
   ],
   "top_level": [
     "numpy",

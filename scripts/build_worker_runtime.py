@@ -299,10 +299,12 @@ def check_runtime_dir(
             "在能执行该架构的机器上重新构建。"
         )
     # 锁文件把某个目标标成 shipped=false，意思是「版本锁着，但**没构建过也
-    # 没冒烟过**，不许发」（当前的 macos-x86_64 就是这一格）。构建脚本里那句
-    # 只是一条 warning，构建照常继续——发行链上没有任何一道闸拦它，于是
-    # `macos-latest` 这种浮动 runner 哪天换成 Intel，我们就会把一个文档里
-    # 明写着「不支持」的目标发出去，而且全程绿灯。
+    # 没冒烟过**，不许发」。构建脚本里那句只是一条 warning，构建照常继续——
+    # 这道闸就是发行链上唯一拦它的地方：没有它，浮动 runner 哪天换了架构，
+    # 我们就会把一个文档里明写着「不支持」的目标发出去，而且全程绿灯。
+    # （macos-x86_64 在 ADR 0076 之前就是这一格；眼下锁文件里没有 shipped=false 的
+    # 目标，test_check_runtime_dir_rejects_an_unshipped_target_in_release_builds
+    # 就地造一个来钉住这道闸。）
     if require_smoke and not (info.get("build") or {}).get("shipped"):
         plat = info.get("platform") or {}
         raise BuildError(
