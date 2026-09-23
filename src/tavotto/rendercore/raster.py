@@ -32,6 +32,8 @@ import zlib
 from dataclasses import dataclass
 from typing import Iterator
 
+from .. import deflate
+
 #: 一块像素的预算（约 8000×8000）：位图**源**解码前按头里的尺寸判（`rasterio.decode(max_pixels=…)`），
 #: render child 栅格前父子两侧各判一次（ADR 0066）。超过的不是「解慢一点」，是结构化拒绝——
 #: 一张压缩得很小的高分辨率 PNG 解开是几百 MB，导出进程会被它挤死而不是报错（Codex #463 P2）。
@@ -44,69 +46,6 @@ DOCUMENT_MAX_PIXELS = 160_000_000
 
 class RasterError(ValueError):
     """缓冲区不成形（尺寸 / 通道 / stride / 字节数对不上）。"""
-
-
-# ---------------------------------------------------------------------------
-# 并行 zlib（pigz 的做法）：Canonical PDF 的大流、PNG 的 IDAT 共用这一份
-# ---------------------------------------------------------------------------
-#: 一块的未压缩字节数。块边界只由它与输入长度决定、与线程数无关——同一输入永远同一份输出。
-DEFLATE_BLOCK = 1 << 20
-#: 每块用前一块末尾这么多字节当预置字典（deflate 的窗口就是 32 KiB）：跨块的回溯引用照样合法（解码器
-#: 的窗口里本来就是前一块的明文），压缩率与单线程几乎相同。
-_DEFLATE_WINDOW = 32 * 1024
-
-
-def _workers() -> int:
-    """并行压缩的线程数（每次调用临时起、用完 join：不留常驻线程）。"""
-    import os
-
-    return max(1, min(8, os.cpu_count() or 1))
-
-
-def _zlib_header(level: int) -> bytes:
-    flevel = 0 if level < 2 else 1 if level < 6 else 2 if level == 6 else 3
-    flg = flevel << 6
-    flg += (31 - (0x78 * 256 + flg) % 31) % 31
-    return bytes((0x78, flg))
-
-
-def _deflate_block(data, zdict, last: bool, level: int) -> bytes:
-    c = (
-        zlib.compressobj(level, zlib.DEFLATED, -15, zdict=zdict)
-        if zdict
-        else zlib.compressobj(level, zlib.DEFLATED, -15)
-    )
-    return c.compress(data) + c.flush(zlib.Z_FINISH if last else zlib.Z_SYNC_FLUSH)
-
-
-def zlib_compress(data, level: int = 6) -> bytes:
-    """与 `zlib.compress(data, level)` 同一种**合法 zlib 流**（任何解码器解出同一份明文），大输入按
-    `DEFLATE_BLOCK` 切块在线程池里并行压（zlib 在 C 里放 GIL）；非末块 `Z_SYNC_FLUSH` 收在字节边界上，
-    拼接后补 zlib 头与整段的 adler32。一块以内**逐字节等于** `zlib.compress`。"""
-    view = memoryview(data).cast("B")
-    n = len(view)
-    if n <= DEFLATE_BLOCK:
-        return zlib.compress(view, level)
-    from concurrent.futures import ThreadPoolExecutor
-
-    starts = range(0, n, DEFLATE_BLOCK)
-    last = starts[-1]
-    with ThreadPoolExecutor(
-        max_workers=min(_workers(), len(starts)), thread_name_prefix="deflate"
-    ) as pool:
-        futures = [
-            pool.submit(
-                _deflate_block,
-                view[s : s + DEFLATE_BLOCK],
-                bytes(view[max(0, s - _DEFLATE_WINDOW) : s]) if s else None,
-                s == last,
-                level,
-            )
-            for s in starts
-        ]
-        adler = zlib.adler32(view)
-        body = b"".join(f.result() for f in futures)
-    return _zlib_header(level) + body + struct.pack(">I", adler & 0xFFFFFFFF)
 
 
 @dataclass(frozen=True)
@@ -200,21 +139,38 @@ def _png_chunk(tag: bytes, data: bytes) -> bytes:
     )
 
 
+def _png_scanline_blocks(buf: RasterBuffer) -> Iterator[bytes]:
+    """PNG 的滤波后扫描线（每行前一个滤波字节 0 + 紧凑的行），按行数凑成约 `deflate.BLOCK` 的块——**块边界只由
+    行宽定**，输出因此确定；任何时刻只有在飞的那几块被复制，整幅扫描线从不整份拼出来（旧做法多一份整图）。"""
+    rb, st = buf.row_bytes, buf.stride
+    rows = max(1, deflate.BLOCK // (rb + 1))
+    view = memoryview(buf.samples)
+    zero = b"\x00"
+    for y0 in range(0, buf.height, rows):
+        y1 = min(buf.height, y0 + rows)
+        yield b"".join(part for y in range(y0, y1) for part in (zero, view[y * st : y * st + rb]))
+
+
 def encode_png(buf: RasterBuffer) -> bytes:
     """RasterBuffer → PNG 字节：8 bit、色型 2（RGB）或 6（RGBA，straight alpha）、每行滤波 0、非交错；
-    `dpi` 已知时写 `pHYs`（像素 / 米，单位 1），未知不写——不编一个数。行尾填充在这里剥掉。"""
+    `dpi` 已知时写 `pHYs`（像素 / 米，单位 1），未知不写——不编一个数。行尾填充在这里剥掉。
+
+    IDAT 是**一条** zlib 流，由 `deflate.zlib_stream` 按扫描线块并行压（ADR 0077 P1）：解出来与逐行串行压的
+    是同一份扫描线（像素逐个相同）；压缩流的字节与单线程 `zlib.compress` 不同（块边界处 `Z_SYNC_FLUSH`），但同一输入
+    永远同一份输出、与线程数无关。一块以内（小图）逐字节等于从前。"""
     color_type = 6 if buf.channels == 4 else 2
-    raw = b"".join(b"\x00" + row for row in buf.rows())
-    out = bytearray(PNG_SIGNATURE)
-    out += _png_chunk(
-        b"IHDR", struct.pack(">IIBBBBB", buf.width, buf.height, 8, color_type, 0, 0, 0)
-    )
+    parts = [
+        PNG_SIGNATURE,
+        _png_chunk(b"IHDR", struct.pack(">IIBBBBB", buf.width, buf.height, 8, color_type, 0, 0, 0)),
+    ]
     if buf.dpi is not None and buf.dpi > 0:
         ppm = int(round(buf.dpi / 0.0254))
-        out += _png_chunk(b"pHYs", struct.pack(">IIB", ppm, ppm, 1))
-    out += _png_chunk(b"IDAT", zlib.compress(raw, PNG_DEFLATE_LEVEL))
-    out += _png_chunk(b"IEND", b"")
-    return bytes(out)
+        parts.append(_png_chunk(b"pHYs", struct.pack(">IIB", ppm, ppm, 1)))
+    parts.append(
+        _png_chunk(b"IDAT", deflate.zlib_stream(_png_scanline_blocks(buf), PNG_DEFLATE_LEVEL))
+    )
+    parts.append(_png_chunk(b"IEND", b""))
+    return b"".join(parts)
 
 
 def write_tiff(buf: RasterBuffer, path) -> dict:

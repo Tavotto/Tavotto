@@ -59,6 +59,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from .. import deflate
 from . import ir, placement, raster, rasterio
 from .hbshaper import HbFace, HbFaceProvider, require
 
@@ -919,7 +920,7 @@ def _keep_source_encoding(src_page, form) -> None:
 
 def _compress_unfiltered(pdf) -> None:
     """文档里没有过滤器的流（本模块写的内容流 / 字体程序 / 外来页 Form 的明文）逐个 Flate 压，大流在
-    `raster.zlib_compress` 的线程池里分块并行；压了不变小的不动；XMP /Metadata 保持明文（阅读器与归档工具
+    `deflate.zlib_compress` 的线程池里分块并行；压了不变小的不动；XMP /Metadata 保持明文（阅读器与归档工具
     按明文读它）。已经有过滤器的流（源的图片、源的内容流）一个字节不碰——那正是不交给 qpdf 的
     `compress_streams` 的原因。按 `pdf.objects` 的顺序处理：同一输入同一份输出。"""
     import pikepdf
@@ -932,7 +933,7 @@ def _compress_unfiltered(pdf) -> None:
         data = obj.read_raw_bytes()
         if len(data) < _COMPRESS_MIN_BYTES:
             continue
-        packed = raster.zlib_compress(data)
+        packed = deflate.zlib_compress(data)
         if len(packed) < len(data):
             obj.write(packed, filter=pikepdf.Name.FlateDecode)
 

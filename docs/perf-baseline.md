@@ -1003,3 +1003,18 @@ PyMuPDF 1.28.2 ｜ 复现：`<rc-venv>/bin/python scripts/dev/bench_rendercore.p
 * 首次扫描（14.7 ms / 13 个）仍比 PyMuPDF（4.3 ms）慢：PDFium 没有读 `/UserUnit` 的公开接口，每份仍要 pikepdf 打开一次
   （~0.4 ms）；常态（复用）远快于它，而 `/api/panels` 绝大多数时候是常态。
 * 海报 PDF + PNG300 剩下的差距在 PNG 编码（单线程 zlib）——那是 P1 的事，不在这张表里。
+
+### P1 之后（main / P0 / P1，每项 18 次独立进程交错，中位数；峰值 = 父进程 + render child）
+
+| 场景 | main | P0 | P1 | 峰值 MB main → P1 |
+|---|---|---|---|---|
+| A4 整页 → PNG600 + TIFF600 | 775 ms | 777 ms | 199 ms | 624 → 334 |
+| CAD 画布 → PNG600 | 243 ms | 220 ms | 96 ms | 345 → 213 |
+| figure7 → PNG600 | 217 ms | 139 ms | 90 ms | 224 → 172 |
+| 扫描件原图 → TIFF300 | 176 ms | 172 ms | 85 ms | 224 → 234 |
+| CAD 原图 → PNG300 | 307 ms | 300 ms | 110 ms | 465 → 243 |
+| 海报 → PDF + PNG300 | 438 ms | 349 ms | 315 ms | 209 → 193 |
+
+同批源上旧后端：海报 → PDF + PNG300 323 ms、扫描件原图 → TIFF300 154 ms、A4 600 ppi 单进程峰值 257 MB。前两项 P1 已更快；
+第三项仍高（像素在 child 与父进程各一份，进程边界的代价），超预算的大图交给 P2。测法的教训：macOS 自带的 bash 3.2 没有关联数组，
+`${T[$t]}` 展开成空串、`startswith("")` 恒真——三棵树全跑成了 main，数字「一模一样」。守卫要先拒绝空的期望路径。

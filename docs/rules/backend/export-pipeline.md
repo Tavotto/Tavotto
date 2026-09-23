@@ -34,7 +34,7 @@
   * **EPS 与 TIFF（ADR 0046，2026-09-06）**：`FORMATS = (pdf, png, eps, tiff)`，
     新格式追加在后。TIFF 与 PNG 出自**同一次栅格化**（`Canvas.save_tiff` /
     `pdfbackend.original_tiff`），编码器是纯标准库的 `tavotto/tiffwrite.py`
-    （Deflate 无损；父进程没有 Pillow，**别为它引进 Pillow**）；位图源的分辨率
+    （Deflate 无损；父进程没有 Pillow，**别为它引进 Pillow**；条带经 `tavotto/deflate.py` 并行压、产物逐字节同串行，ADR 0077）；位图源的分辨率
     标签只写源文件自己声明过的密度。EPS **只有 worker 的 matplotlib 写得出**
     （PyMuPDF 没有 PostScript 写入器）：`scope=canvas` 逐项报 `eps_not_for_canvas`，
     没有脚本的图报 `eps_needs_script`，其余格式照常交付；要了 EPS 时 PDF/PNG/TIFF

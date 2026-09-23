@@ -17,7 +17,8 @@ stdin / stdout 上的**行分隔 JSON**（一行一条）。请求 `{"id", "op",
 ## 四条纪律（RC-050）
 
 * **native 对象显式释放**：每个请求 `doc` / `page` / `bitmap` 在 `finally` 里 `close()`，像素在关之前
-  **复制**成 `bytes`——`RasterBuffer` 拿到的是自己的字节，不共享已关闭的 handle。
+  **直接从 native 缓冲写进文件**（ADR 0077 P1，不再先复制成一份 `bytes`）——父进程读回的是它自己的字节，
+  `RasterBuffer` 不共享已关闭的 handle。
 * **像素预算两侧都判**：父进程按 probe 的尺寸先拒；child 打开页面后按真实尺寸再判一次（父侧被绕过时仍挡）。
 * **内存上限**：POSIX 上 `RLIMIT_AS`（Linux 生效；macOS 内核不强制、Windows 没有 resource 模块——
   ADR 0055 §2.3 实测，像素预算是那两处唯一有效的护栏）。
@@ -204,22 +205,25 @@ def _render(pdfium, req: dict, default_max_pixels: int) -> dict:
                     bitmap, page, 0, 0, width_px, height_px, 0, raw.FPDF_REVERSE_BYTE_ORDER
                 )
                 stride = bitmap.stride
-                samples = bytes(bitmap.buffer)  # 复制：native 位图关掉之后这份仍然有效
+                # 像素在关位图**之前**直接从 native 缓冲写进文件，不再先复制成一份 bytes——600 ppi A4 的 RGB 就是
+                # 104 MB，child 峰值因此少一整份（ADR 0077 P1）。父进程读回的是文件里它自己的字节：RasterBuffer 仍
+                # 不共享 native 句柄（RC-050）
+                tmp = out_path.with_name(out_path.name + ".part")
+                with open(tmp, "wb") as fh:
+                    nbytes = fh.write(memoryview(bitmap.buffer).cast("B"))
             finally:
                 bitmap.close()
         finally:
             page.close()
     finally:
         doc.close()
-    tmp = out_path.with_name(out_path.name + ".part")
-    tmp.write_bytes(samples)
     os.replace(tmp, out_path)
     return {
         "width": width_px,
         "height": height_px,
         "stride": stride,
         "channels": channels,
-        "bytes": len(samples),
+        "bytes": nbytes,
         "ms": round((time.perf_counter() - t0) * 1000, 1),
     }
 

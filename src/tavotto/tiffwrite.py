@@ -33,9 +33,9 @@ A3 也只有 ~600 MB 原始像素）。
 from __future__ import annotations
 
 import struct
-import zlib
 from pathlib import Path
 
+from . import deflate
 from .engine import brand
 
 #: TIFF 头：小端 + 魔数 42。读取端认的第一样东西。
@@ -86,16 +86,16 @@ def _rational(value: float) -> bytes:
     return struct.pack("<II", int(round(float(value) * 1000)), 1000)
 
 
-def _rows(samples: bytes, width: int, height: int, channels: int, stride: int) -> bytes:
-    """把可能带行填充的缓冲区整理成紧凑的 `height × (width × channels)`。"""
-    row_bytes = width * channels
-    if stride == row_bytes:
-        return samples[: row_bytes * height]
-    out = bytearray(row_bytes * height)
-    for y in range(height):
-        start = y * stride
-        out[y * row_bytes : (y + 1) * row_bytes] = samples[start : start + row_bytes]
-    return bytes(out)
+def _strips(samples, height: int, row_bytes: int, stride: int, rows_per_strip: int):
+    """逐条产出**紧凑**的条带明文（行尾填充剥掉）。只复制当前这一条（~1 MiB）——整幅紧凑像素从不整份拼出来
+    （PDFium 的 BGR 行按 4 字节对齐，宽不是 4 的倍数时 stride 就有填充，旧做法那时多一份整图）。"""
+    view = memoryview(samples)
+    for y0 in range(0, height, rows_per_strip):
+        y1 = min(height, y0 + rows_per_strip)
+        if stride == row_bytes:
+            yield bytes(view[y0 * row_bytes : y1 * row_bytes])
+        else:
+            yield b"".join(view[y * stride : y * stride + row_bytes] for y in range(y0, y1))
 
 
 def write_tiff(
@@ -131,12 +131,13 @@ def write_tiff(
             f"像素缓冲区只有 {len(samples)} 字节，装不下 {width}×{height}×{channels}"
         )
 
-    pixels = _rows(samples, width, height, channels, stride)
     rows_per_strip = max(1, STRIP_TARGET_BYTES // row_bytes)
-    strips: list[bytes] = []
-    for y0 in range(0, height, rows_per_strip):
-        y1 = min(height, y0 + rows_per_strip)
-        strips.append(zlib.compress(pixels[y0 * row_bytes : y1 * row_bytes], DEFLATE_LEVEL))
+    # 条带各自独立 `zlib.compress`：线程池并行、按顺序收，逐字节等于串行（ADR 0077 P1）；在飞的条带数有上限
+    strips: list[bytes] = list(
+        deflate.compress_each(
+            _strips(samples, height, row_bytes, stride, rows_per_strip), DEFLATE_LEVEL
+        )
+    )
     n_strips = len(strips)
 
     software = (brand.PRODUCT_NAME + "\x00").encode("ascii")
@@ -214,7 +215,7 @@ def write_tiff(
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(bytes(out))
+    path.write_bytes(out)
     return {
         "px_w": width,
         "px_h": height,
