@@ -375,7 +375,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in desktop-tauri-dmg desktop-tauri-nsis; do
+          for name in desktop-tauri-dmg desktop-tauri-dmg-intel desktop-tauri-nsis; do
             if ! test -n "$(ls -A "desktop/$name" 2>/dev/null)"; then
               echo "::error::artifact $name 没下到（download-artifact 报了 success）"
               missing=1
@@ -389,14 +389,14 @@ jobs:
           pattern: artifact-manifest-*
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ github.token }}
-      # 同上。三份清单：本文件 build job 的 artifact-manifest-python，
+      # 同上。四份清单：本文件 build job 的 artifact-manifest-python，
       # 加桌面矩阵每条腿的 artifact-manifest-<artifact>。
       - name: 点名下载到的产物清单（download-artifact 少下一个也报 success）
         shell: bash
         run: |
           set -euo pipefail
           missing=0
-          for name in artifact-manifest-python artifact-manifest-dmg artifact-manifest-nsis; do
+          for name in artifact-manifest-python artifact-manifest-dmg artifact-manifest-dmg-intel artifact-manifest-nsis; do
             if ! test -n "$(ls -A "manifests/$name" 2>/dev/null)"; then
               echo "::error::artifact $name 没下到（download-artifact 报了 success）"
               missing=1
@@ -438,7 +438,7 @@ jobs:
           python3 scripts/ci/artifact_manifest.py merge \
             manifests/*/artifact-manifest-*.json --out artifact-manifest.json
           python3 scripts/ci/artifact_manifest.py verify artifact-manifest.json \
-            --require wheel,sdist,windows-installer,macos-installer,codex-plugin,codex-plugin-manifest,codex-plugin-build \
+            --require wheel,sdist,windows-installer,macos-installer,macos-intel-installer,codex-plugin,codex-plugin-manifest,codex-plugin-build \
             --version "$VER" --source-sha "$SOURCE_SHA"
 
       - name: 完整插件：成对验证（zip 内容 + 版本清单 + 随包清单互相对得上）
@@ -666,7 +666,7 @@ jobs:
           python3 scripts/ci/artifact_manifest.py verify \
             assets/dist/artifact-manifest.json \
             --base assets \
-            --require wheel,sdist,windows-installer,macos-installer \
+            --require wheel,sdist,windows-installer,macos-installer,macos-intel-installer \
             --version "$VER" --source-sha "$SOURCE_SHA"
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2

@@ -61,8 +61,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TAURI_CONF = REPO_ROOT / "src-tauri" / "tauri.conf.json"
 
 # 与 make_updater_manifest 的 --require 同一份硬要求：少一个平台 = 那个平台的
-# 用户永远收不到更新，而且全绿。
-REQUIRED_PLATFORMS = ("darwin-aarch64", "windows-x86_64")
+# 用户永远收不到更新，而且全绿。darwin-x86_64 自 ADR 0076 起加入——**刻意不按
+# 版本号开关**：在第一个带 Intel 包的版本发出去之前，线上 latest.json 缺它，
+# nightly 的这一格是预期红（与 #101 那次同形状），发版即转绿。
+REQUIRED_PLATFORMS = ("darwin-aarch64", "darwin-x86_64", "windows-x86_64")
 
 EXIT_OK = 0
 EXIT_ASSERTION = 1

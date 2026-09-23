@@ -67,15 +67,43 @@ def test_installer_and_dmg_are_not_mistaken_for_update_packages(tmp_path):
         mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "Tavotto", "Tavotto", "")
 
 
-def test_intel_mac_gets_no_entry(tmp_path):
-    """macOS 只发 arm64（sidecar 就是 arm64 打的）。
+def test_each_mac_arch_gets_exactly_its_own_package(tmp_path):
+    """两个 macOS 包各进各的平台，谁也不认下对方的（ADR 0076）。
 
-    给 darwin-x86_64 挂上同一个包 = 把一个装不上的更新推给 Intel 用户，
-    比「查不到更新」糟糕得多。
+    判据的主语是**每个平台条目的 url 指向哪个文件**：宽模式（`\\.app\\.tar\\.gz$`）
+    会同时认下两个包，靠先后顺序决定谁赢——把一个装不上的更新推给另一个架构的
+    用户，比「查不到更新」糟糕得多。所以两条都是精确名，互换目录顺序也不影响。
     """
-    _artifact(tmp_path, "Tavotto.app.tar.gz")
+    _artifact(tmp_path / "desktop-tauri-dmg-intel", "Tavotto-Intel.app.tar.gz", "INTEL-SIG\n")
+    _artifact(tmp_path / "desktop-tauri-dmg", "Tavotto.app.tar.gz", "ARM-SIG\n")
     man = mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "Tavotto", "Tavotto", "")
-    assert "darwin-x86_64" not in man["platforms"]
+    assert man["platforms"]["darwin-aarch64"]["url"].endswith("/Tavotto.app.tar.gz")
+    assert man["platforms"]["darwin-aarch64"]["signature"] == "ARM-SIG"
+    assert man["platforms"]["darwin-x86_64"]["url"].endswith("/Tavotto-Intel.app.tar.gz")
+    assert man["platforms"]["darwin-x86_64"]["signature"] == "INTEL-SIG"
+
+
+def test_an_unknown_mac_package_name_is_not_claimed_by_either_arch(tmp_path):
+    """名字对不上精确名的 .app.tar.gz 不进清单——不猜它是哪个架构。"""
+    _artifact(tmp_path, "Tavotto-universal.app.tar.gz")
+    with pytest.raises(SystemExit, match="一个更新包都没找到"):
+        mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "Tavotto", "Tavotto", "")
+
+
+def test_intel_is_required_alongside_the_other_two(tmp_path):
+    """--require 三平台时缺 Intel 那份要报出名字，不是只查「有没有 mac」。"""
+    _artifact(tmp_path / "desktop-tauri-dmg", "Tavotto.app.tar.gz")
+    _artifact(tmp_path / "desktop-tauri-nsis", "Tavotto_0.7.0_x64-setup.nsis.zip")
+    with pytest.raises(SystemExit, match="清单缺平台：darwin-x86_64"):
+        mod.build_manifest(
+            tmp_path,
+            "0.7.0",
+            "v0.7.0",
+            "Tavotto",
+            "Tavotto",
+            "",
+            ["darwin-aarch64", "darwin-x86_64", "windows-x86_64"],
+        )
 
 
 def test_cli_writes_the_file(tmp_path):

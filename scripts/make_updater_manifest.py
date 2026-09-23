@@ -29,11 +29,13 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
-# 文件名 → Tauri 的平台标识。macOS 只发 arm64（sidecar 由 arm64 runner 上的
-# PyInstaller 打出来，本来就跑不了 Intel），所以不给 darwin-x86_64 ——
-# 给了等于把一个装不上的包推给 Intel 用户。
+# 文件名 → Tauri 的平台标识。macOS 按架构各一个包（ADR 0076）：Intel 那份在
+# Intel runner 上原生构建、名字带 `-Intel`；Apple Silicon 沿用历史名字。
+# **两条都写成精确名**，不靠先后顺序：`\.app\.tar\.gz$` 这种宽模式会同时认下
+# Intel 的包，谁排前面谁赢——把一个装不上的包推给另一个架构的用户，且清单全绿。
 PLATFORM_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("darwin-aarch64", re.compile(r"\.app\.tar\.gz$")),
+    ("darwin-aarch64", re.compile(r"^Tavotto\.app\.tar\.gz$")),
+    ("darwin-x86_64", re.compile(r"^Tavotto-Intel\.app\.tar\.gz$")),
     ("windows-x86_64", re.compile(r"(?:x64|x86_64)[-_].*setup\.nsis\.zip$|setup\.nsis\.zip$")),
 ]
 

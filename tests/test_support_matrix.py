@@ -148,7 +148,7 @@ def test_tested_pythons_match_classifiers():
 def test_macos_intel_stays_honest_with_runtime_lock():
     lock = json.loads((ROOT / "packaging" / "runtime-lock.json").read_text(encoding="utf-8"))
     shipped = bool(lock["targets"]["macos-x86_64"].get("shipped"))
-    status = _targets()["macos-x86_64"]["status"]
+    status = _targets()["macos-x86_64-desktop"]["status"]
     if shipped:
         assert status != "unsupported", "runtime-lock 说 Intel 已构建发行，矩阵还标着 unsupported"
     else:
@@ -159,8 +159,8 @@ def test_macos_intel_stays_honest_with_runtime_lock():
 
 def test_supported_targets_are_exactly_the_shipping_desktops():
     supported = {tid for tid, t in _targets().items() if t["status"] == "supported"}
-    assert supported == {"windows-x64-desktop", "macos-arm64-desktop"}, (
-        "supported 档只留真有安装包 + 真产物门禁的两个桌面目标；要扩就先把产物与验收建起来"
+    assert supported == {"windows-x64-desktop", "macos-arm64-desktop", "macos-x86_64-desktop"}, (
+        "supported 档只留真有安装包 + 真产物门禁的三个桌面目标；要扩就先把产物与验收建起来"
     )
 
 

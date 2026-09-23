@@ -54,8 +54,13 @@ ROLES = {
     "sdist": {"unique": True},
     "windows-installer": {"unique": True},
     "macos-installer": {"unique": True},
+    # Intel 是**另一个角色**，不是 macos-installer 放宽成两个（ADR 0076）：「恰好一个」
+    # 保住的是「官网按钮 / 更新清单指向的就是验过的那份」，按架构拆角色之后每个
+    # 角色仍然恰好一个。Apple Silicon 沿用原角色名——官网 sync-release 认它。
+    "macos-intel-installer": {"unique": True},
     "windows-updater": {"unique": True},
     "macos-updater": {"unique": True},
+    "macos-intel-updater": {"unique": True},
     "updater-manifest": {"unique": True},
     "sbom": {"unique": False},
     "checksums": {"unique": True},
