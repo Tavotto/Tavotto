@@ -1,6 +1,6 @@
 # ADR 0077：RenderCore 性能——派生值按文件指纹复用、源编码原样照搬、启动预热
 
-日期：2026-09-23 · 状态：**Accepted（P0；P1 编码 / 内存、P2 条带栅格在后续 PR 里续写本 ADR）**
+日期：2026-09-23 · 状态：**Accepted（P0 尺寸 / 写入 / 预览命中 / 预热；P1 编码与内存；P2 条带栅格在后续 PR 里续写本 ADR）**
 相关：[0065 合成](0065-imported-page-composition.md)、[0066 render child 与 RasterBuffer](0066-render-child-and-raster-buffer.md)、
 [0067 facade 切换开关](0067-render-backend-switch-and-execution-sources.md)；细则 `docs/rules/backend/rendercore.md`。
 
@@ -27,7 +27,7 @@
 | 预览缓存命中 | 修订 RC-061 的做法（不改键）：**指纹快路**只在「指纹与上次抄副本时相同**且**成品在」时直接交出成品——不抄、不读源；其余一切（第一次、指纹变了、成品被 prune）照旧走副本路：边抄边算 hash、键与渲染绑在副本上。快路**从不渲染**，A→B→A 的保护原样在渲染那一侧 | `PreviewCache.get`；`test_a_hit_on_an_unchanged_file_skips_the_staged_copy`、`test_a_changed_or_pruned_file_always_goes_back_through_the_staged_copy`、`test_a_just_written_file_is_not_trusted_by_its_fingerprint`；原有 A→B→A 用例不变 |
 | 外来页内容流 | 源页**只有一段**带过滤器的内容流、且解出来与 Form 明文逐字节相同 → Form 直接用源的**已编码字节** + 同一组 /Filter /DecodeParms（在源文档里、`copy_foreign` 之前改，不牵扯跨文档对象）；多段（段界只保证落在词法边界，压缩流不能首尾相接）/ 无过滤器 / qpdf 解不开的，留明文给下一条 | `pdfwriter._keep_source_encoding`；`test_a_single_segment_source_keeps_its_encoded_content_bytes` |
 | 保存时的压缩 | `save(compress_streams=False)`；保存前 `_compress_unfiltered` 只压**没有过滤器**的流（本模块写的内容流 / 字体程序 / 多段外来页的明文），压了不变小的不动，XMP /Metadata 保持明文；源的已编码流（图片、单段内容流）一个字节不碰 | `test_a_multi_segment_source_is_joined_then_compressed_by_the_writer`、`test_source_image_streams_are_copied_without_being_re_encoded` |
-| 大流的压缩 | `raster.zlib_compress`：pigz 的做法——按 `DEFLATE_BLOCK`（1 MiB）切块、每块以前一块末尾 32 KiB 为预置字典、raw deflate 并行压（每次调用临时起线程池、用完 join，不留常驻线程）、非末块 `Z_SYNC_FLUSH`、补 zlib 头与整段 adler32。块边界只由输入长度定：**线程数不同输出相同**；一块以内逐字节等于 `zlib.compress` | `test_zlib_compress_*` |
+| 大流的压缩 | `deflate.zlib_compress`（P1 起在 `tavotto/deflate.py`，P0 时在 `raster`）：pigz 的做法——按 `DEFLATE_BLOCK`（1 MiB）切块、每块以前一块末尾 32 KiB 为预置字典、raw deflate 并行压（每次调用临时起线程池、用完 join，不留常驻线程）、非末块 `Z_SYNC_FLUSH`、补 zlib 头与整段 adler32。块边界只由输入长度定：**线程数不同输出相同**；一块以内逐字节等于 `zlib.compress` | `test_zlib_compress_*` |
 | 冷启动 | `pdfbackend.warm()` 装载实现之后，实现若有 `prewarm()` 就交给它；候选在**后台线程**里起 child、建字体注册表、载 CJK 脸。失败只记日志——同一个错误在第一次真用到时原样抛出（无静默回退，不替谁选后端） | `facade.prewarm`；`test_warm_hands_the_selected_implementation_its_background_prewarm`、`test_the_candidate_prewarm_starts_the_child_and_loads_the_faces` |
 
 ## 效果（P0 vs main a9aa23a0，同机 ABBA 交错 4 轮，中位数）
@@ -56,6 +56,40 @@ size 忘乘 UserUnit、probe_asset 绕过复用表、交出表里那份 dict、�
 两条中途被抓出来的**假绿**（修掉之后才算上面的计数）：「算值前后指纹相同」这条判据**不可观测**——算的过程中被改写的，指纹
 已经前进（ctime 只增），挂在旧指纹上的值再也查不到，于是删掉；两条用例把 mtime **往前**拨 1 秒，落进「刚改过 / 来自未来」的
 窗口，快路根本没被走到而断言照样绿——改成往回拨，并断言指纹确实命中。
+
+## P1：PNG / TIFF 编码与内存
+
+P0 之后，PNG / TIFF 出图的剩余时间几乎全在**单线程 zlib**上（扫描件 300 ppi：child 渲染 74 ms、`write_tiff` 101 ms；A4 600 ppi 的
+`encode_png` 418 ms），内存则被同一幅像素的反复复制吃掉（A4 600 ppi 的 104 MB RGB：child 里 `bytes(bitmap.buffer)` 一份、父进程
+`read_bytes` 一份、`encode_png` 再拼一份整幅扫描线 + 压缩结果 + `bytes(out)`——合计 616 MB，旧后端 257 MB）。
+
+| 问题 | 裁决 | 落点 / 证据 |
+|---|---|---|
+| 并行压缩放哪 | 新的纯标准库模块 **`tavotto/deflate.py`**（Flask 侧的 `tiffwrite` 与 RenderCore 的 `raster` / `pdfwriter` 共用，不 import 任何产品模块）：`ordered_map`（线程池、按输入顺序产出、**在飞件数封顶**，输入是惰性生成的大块时内存只和窗口一样大）、`zlib_stream`（一串块 → 一条 zlib 流，P0 的 pigz 做法）、`compress_each`（每件独立 `zlib.compress`）。线程池每次调用临时起、用完 join | `tests/test_deflate.py` |
+| PNG | `encode_png`：扫描线按行数凑成约 1 MiB 的块、**惰性生成**，IDAT 由 `zlib_stream` 并行压；不再拼整幅扫描线。**像素不变**（解码后逐个等于缓冲，行尾填充剥掉）；压缩流字节与单线程 `zlib.compress` 不同（块界 `Z_SYNC_FLUSH`），同一输入永远同一份、与线程数无关；**一块以内（小图）逐字节同旧** | `test_a_multi_block_png_decodes_to_exactly_the_buffer_pixels`（含带填充的 stride）、`test_a_png_within_one_block_is_byte_identical_to_the_old_encoder` |
+| 跨块字典值不值 | 值：真实页面的扫描线上，去掉「前块末尾 32 KiB 当字典」CAD / figure7 体积 +1.2%；带上比单线程还小 0.1–0.3%。判据判**机制**（非首块字典恰是前块末尾 32 KiB），不判合成数据上的压缩率——合成数据两种做法只差 0.2%，阈值会漂 | `test_each_block_is_primed_with_the_previous_blocks_last_32k` |
+| TIFF | `tiffwrite`：条带逐条生成（带填充的 stride 也不再整幅紧凑复制一份——PDFium 的 BGR 行按 4 字节对齐），`compress_each` 并行压；**产物逐字节不变**（每条 = 这几行紧凑像素的 `zlib.compress(…, 6)`，本文件自己按 IFD 读条带核） | `test_tiff_strips_are_exactly_serial_zlib_of_the_compact_rows` |
+| child 的那份复制 | 关位图**之前**直接把 native 缓冲写进 `.part`，不再先 `bytes(bitmap.buffer)`；父进程读回的是文件里它自己的字节——RC-050（RasterBuffer 不共享 native 句柄）不变 | `renderchild._render`；真 child 的尺寸 / 像素用例 |
+| 不做的 | 父进程 mmap 读像素：`RasterBuffer.samples` 的合同是 bytes，且 Windows 上删不掉仍被映射的文件；读回那一份留着，省在编码器里 | — |
+
+### P1 效果（同机，main / P0 / P1 各 18 次独立进程交错，中位数）
+
+| 场景 | main | P0 | P1 | 峰值 MB（父 + child） main → P1 |
+|---|---|---|---|---|
+| A4 整页 → PNG600 + TIFF600 | 775 ms | 777 | 199 | 382 + 242 → 191 + 143 |
+| CAD 画布 → PNG600 | 243 | 220 | 96 | 203 + 142 → 120 + 93 |
+| figure7 → PNG600 | 217 | 139 | 90 | 121 + 103 → 92 + 80 |
+| 扫描件原图 → TIFF300 | 176 | 172 | 85 | 56 + 168 → 71 + 163 |
+| CAD 原图 → PNG300 | 307 | 300 | 110 | 272 + 193 → 125 + 118 |
+| 海报 → PDF + PNG300 | 438 | 349 | 315 | 79 + 130 → 70 + 123 |
+
+对照旧后端（PyMuPDF，同一批源）：海报 323 ms、扫描件 TIFF 154 ms——两处原先更慢的现在都更快。A4 600 ppi 的合计峰值 334 MB
+仍高于旧后端的 257 MB：像素在 child（PDFium 位图）与父进程（读回的那份）各有一份，是进程边界（ADR 0066）的代价；超出像素
+预算的大图由 P2 的条带栅格把两边都压到条带大小。扫描件 TIFF 的父进程多了 ~15 MB：并行时在飞的条带（上限 2 × 线程数，各 ~1 MiB）。
+
+反证 10/10：ordered_map 不限在飞、compress_each 换级别、非末块不 SYNC_FLUSH、不带前块字典、adler32 漏最后一块、PNG 漏滤波字节、
+PNG 忽略 stride、PNG 小图换级别、TIFF 条带忽略 stride、child 只写半幅像素——各自红在上表的用例上。途中「不带前块字典」
+第一次漏网（判据是压缩率阈值、数据是合成的），改判机制后才红。
 
 ## 跨平台字节
 

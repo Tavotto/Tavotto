@@ -82,13 +82,14 @@
   OSError 翻译成 `render_child_spawn_failed`（结构化，job 落到该格式的 `format_failed`）；像素文件的长度核对与
   整个 `RasterBuffer` 的构造都在 `request()` 的**锁内**做（`verify` 回调），bytes 对得上而尺寸不成一张图同样是
   `render_child_protocol`，说谎的 child 在释放锁之前就被 kill + reap；`close()` 之后一定 reap。
-  dpi 是**物理**密度：位图尺寸 = PDFium 尺寸 × `/UserUnit` × dpi / 72（与 probe 同一次乘）。child 里 doc / page / bitmap 在 `finally` 关，像素在关之前复制成 `bytes`——`RasterBuffer` 不共享 native
-  句柄。`RLIMIT_AS` 只在 Linux 生效（macOS 内核不强制、Windows 无 resource），像素预算是那两处唯一护栏——不假装。
+  dpi 是**物理**密度：位图尺寸 = PDFium 尺寸 × `/UserUnit` × dpi / 72（与 probe 同一次乘）。child 里 doc / page / bitmap 在 `finally` 关，像素在关之前**直接从 native 缓冲写进文件**（ADR 0077 P1，不再先复制成
+  `bytes`）——父进程读回的是它自己的字节，`RasterBuffer` 不共享 native 句柄。`RLIMIT_AS` 只在 Linux 生效（macOS 内核不强制、Windows 无 resource），像素预算是那两处唯一护栏——不假装。
   child 是应用运行时的一部分，绝不装进用户的科学环境；冻结产物里同一个 exe 以 `--render-child` 再起自己
   （`renderchild.child_argv()`；配方 `scripts/dev/u07_freeze_child.py`，产品打包 / 签名归 U10 / U11）。
 - **PNG 与 TIFF 从同一个 `RasterBuffer` 编码，RasterBuffer 只从 Canonical PDF 来**（RC-052 / RC-053）：`job.produce`
   一定把 PDF 写进作业临时目录（要没要都写），要了 PNG / TIFF 就把它交给 child 按 `ppi` 栅格**一次**，`raster.encode_png`
-  与 `raster.write_tiff`（复用 ADR 0046 的纯标准库 `tiffwrite.py`）吃同一份 `samples`；白底 RGB、透明底 RGBA
+  与 `raster.write_tiff`（复用 ADR 0046 的纯标准库 `tiffwrite.py`）吃同一份 `samples`；两个编码器都经 `tavotto/deflate.py`
+  并行、有界地压（ADR 0077 P1）：TIFF 逐字节不变，PNG 像素不变、压缩流字节确定且与线程数无关（一块以内同旧）；白底 RGB、透明底 RGBA
   （straight alpha，PNG 色型 6 / TIFF `ExtraSamples = 2` 同义）；尺寸 = `round(pt·ppi/72)`，报出去的就是 buffer 的尺寸；
   dpi 未知不写（不编一个数）。同一 buffer 的两个文件规范解码后像素**必须逐个相同**（精确，03 §6）；跨 renderer 只比
   几何再比固定读取器的图像，按 case 记阈值、不自动位移对齐（`tests/test_rendercore_calibration.py`）。child 起不来 /
