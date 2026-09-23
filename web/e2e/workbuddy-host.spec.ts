@@ -183,9 +183,15 @@ async function onGuestToolCall(msg) {
     const d = decide()
     W.__PROMPTS__.push(tool)
     if (d === 'always') W.__ALWAYS__.add(key)
+    if (d === 'egress') {
+      // WorkBuddy 5.6.2 实测：CLI 的出口审查在没有会话对象时直接拦下，回的是**不带 isError** 的纯文字
+      W.__DENIED__.push(tool)
+      post({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: 'Sensitive MCP egress review is unavailable.' }] } })
+      return
+    }
     if (d === 'deny') {
       W.__DENIED__.push(tool)
-      post({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: '用户拒绝了本次工具调用' }] } })
+      post({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: 'User denied UI tool call: ' + tool }] } })
       return
     }
   }
@@ -542,6 +548,27 @@ test('拒绝反向 tools/call：guest 拿到 isError，server 零调用、图不
     // 不把拒绝当成功：画布显示渲染失败，并给出重试
     await expect(frame.getByText('已同步')).toHaveCount(0, { timeout: 30_000 })
     await shot(page, 'deny-apply')
+  } finally {
+    server.close()
+    rmSync(path.dirname(project), { recursive: true, force: true })
+  }
+})
+
+test('宿主在 server 之前拦下、回不带 isError 的纯文字（WorkBuddy 5.6.2 出口审查）：图不被抹掉，原话摆出来', async ({
+  page,
+}) => {
+  const project = workspace(CORPUS)
+  const { server, frame, open } = await boot(page, { project, stem: 'c01_line', decisions: ['egress'] })
+  try {
+    await expect(frame.getByText('已同步')).toBeVisible({ timeout: 60_000 })
+    await dragElement(page, frame, legendBBox(open), -60, 40)
+    await expect.poll(() => w<string[]>(page, '__DENIED__'), { timeout: 30_000 }).toEqual(['tavotto_apply_overrides'])
+    expect(await serverPatches(server, open.session_id as string)).toEqual([])
+    await expect(frame.getByText('Sensitive MCP egress review is unavailable.')).toBeVisible({ timeout: 30_000 })
+    await expect(frame.getByText('已同步')).toHaveCount(0)
+    // 上一版图像还在：SVG 没被一份空结果顶掉
+    await expect(frame.locator('[data-element-svg] svg').first()).toBeVisible()
+    await shot(page, 'egress-blocked')
   } finally {
     server.close()
     rmSync(path.dirname(project), { recursive: true, force: true })
