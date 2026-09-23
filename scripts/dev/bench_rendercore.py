@@ -21,6 +21,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ONE_ROUND = r"""
 import json, os, statistics, sys, tempfile, time
 from pathlib import Path
