@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 from . import atomicio, config, updater
+from .runtime import CREATE_NO_WINDOW
 
 #: 与 web/src/perf/session.ts 的 REPORT_SCHEMA 同一个字面量
 REPORT_SCHEMA = "tavotto-perf-probe/1"
@@ -43,6 +44,7 @@ def _run(argv: list[str]) -> str | None:
             errors="replace",
             timeout=_TIMEOUT,
             stdin=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):

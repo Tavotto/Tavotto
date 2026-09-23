@@ -2377,10 +2377,16 @@ def api_perf_report():
     try:
         dest = engine_perfprobe.save_report(raw)
     except engine_perfprobe.ReportRejected as exc:
-        return jsonify({"error": "perf_report_rejected", "reason": str(exc)}), 400
+        return jsonify(
+            {
+                "error": f"不是性能探针报告（{exc}）",
+                "code": "perf_report_rejected",
+                "params": {"reason": str(exc)},
+            }
+        ), 400
     except OSError:
         app.logger.exception("性能报告写入失败")
-        return jsonify({"error": "perf_report_write_failed"}), 500
+        return jsonify({"error": "性能报告写入失败", "code": "perf_report_write_failed"}), 500
     return jsonify({"dir": str(dest.parent), "name": dest.name})
 
 

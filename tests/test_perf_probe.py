@@ -628,7 +628,7 @@ def test_save_report_rejects_foreign_payloads(client, tmp_path, monkeypatch, pay
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path))
     res = client.post("/api/perf/report", data=payload, content_type="application/json")
     assert res.status_code == 400
-    assert res.get_json()["error"] == "perf_report_rejected"
+    assert res.get_json()["code"] == "perf_report_rejected"
     assert not (tmp_path / "perf-reports").exists()
 
 
@@ -639,7 +639,7 @@ def test_save_report_rejects_oversized_body_without_writing(client, tmp_path, mo
     body["pad"] = "x" * 200
     res = client.post("/api/perf/report", data=json.dumps(body), content_type="application/json")
     assert res.status_code == 400
-    assert res.get_json()["reason"] == "too_large"
+    assert res.get_json()["params"] == {"reason": "too_large"}
     assert not (tmp_path / "perf-reports").exists()
 
 

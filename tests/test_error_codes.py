@@ -128,6 +128,9 @@ USER_VISIBLE_CODES = {
     "package_invalid": {"reason"},
     "package_schema_unsupported": set(),
     "scan_failed": {"reason"},
+    # ADR 0075 性能探针：报告形状不对 / 太大（reason = too_large / malformed / schema），落盘失败
+    "perf_report_rejected": {"reason"},
+    "perf_report_write_failed": set(),
     # --- Compatibility Bridge Session 3：试运行路径校验的三种拒绝 ---
     "script_not_found": {"script"},
     "script_path_outside_project": {"script"},

@@ -53,6 +53,12 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Windows 上被捕获 / 重定向时 stdout / stderr 是本地代码页（cp1252 / cp936），第一句中文就
+# UnicodeEncodeError。写法与 build_frontend.py 同源。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 SCHEMA = "tavotto-perf-probe/1"
 
 # 帧行的列（web/src/perf/core.ts 的 FrameRow）

@@ -137,6 +137,8 @@
     "runtime_cache_missing": "No preview for this runtime figure yet. It’s created when the script runs.",
     "runtime_source_writeback_unsupported": "Writing edits back into the script source isn’t supported. Edits on runtime figures live in the document only.",
     "scan_failed": "Scan failed: {{reason}}",
+    "perf_report_rejected": "Not a performance report; nothing was saved ({{reason}})",
+    "perf_report_write_failed": "Couldn't write the performance report to the data folder",
     "script_changed": "Write-back blocked: the script changed during this session. Re-render and try again.",
     "script_error": "The script failed while building the figure: {{error}}",
     "script_exited": "The script ended early by calling sys.exit() ({{error}}). Tavotto needs the figures the script leaves in memory when it finishes: remove that exit, or exit only on error.",
