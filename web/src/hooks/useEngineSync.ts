@@ -109,12 +109,28 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
 /**
  * 引擎渲染的唯一驱动点：只要「文档里的 overrides」与「已渲染的 patches」不一致
  * 就重渲染。撤销/重做、AI 改脚本、文件变更全部经由同一条路径，无需各自触发。
+ *
+ * 由两半组成：文档一侧（`useEngineDocumentSync`）与渲染态一侧（`EngineRenderSync`）。
+ * 主应用把两半挂在不同的地方（见 `useEngineDocumentSync` 的注释）；嵌入式画布 /
+ * playground 没有那棵大树，用这个合起来的版本。
  */
 export function useEngineSync() {
+  useEngineDocumentSync()
+  useEngineRenderSync()
+}
+
+/**
+ * 同步器的**文档一侧**：文档 / 编辑态 / 素材事实变了 → 同步一轮。
+ *
+ * 渲染态那一侧必须挂在一个不画任何东西的叶子组件里（`EngineRenderSync`），不能跟
+ * 这一侧一起挂在 Workspace 上：宿主订阅了什么，它下面整棵树（顶栏 / 左栏 / 属性栏）
+ * 就跟着重画什么，而渲染态在每次新图到达时要变两三回（响应入库、`prune` 清掉掉出
+ * 近期档的旧变体、`wantPatches` 占位）——挂在 Workspace 上，新图到达就会出现第二次
+ * 同样重的整树提交（2026-09-24 剖析：58 个元素的图上每次 App 约 7ms）。
+ */
+export function useEngineDocumentSync() {
   const objects = useDocumentStore((s) => s.doc.objects)
   const editingId = useUiStore((s) => s.elementPanelId)
-  const byKey = useRenderStore((s) => s.byKey)
-  const tracked = useRenderStore((s) => s.tracked)
   // renderTargets 的判据里有 isJustBakedBaselineOf，喂给它的是素材表（baked_overrides /
   // baked_current）。素材表变了（写回完成、SSE 报文件被外部改写后 load()）
   // 判据结论可能翻转——不订阅的话，「磁盘产物被外部刷回脚本原值」那一刻
@@ -123,9 +139,27 @@ export function useEngineSync() {
 
   useEffect(() => {
     syncEngine(objects, editingId)
-    // byKey / tracked / assets 进依赖表是为了「渲染回来了 / 素材事实变了 →
-    // 再看一眼还有没有要发的」，判断本身在 syncEngine 里读的是最新 state
-  }, [objects, editingId, byKey, tracked, assets])
+  }, [objects, editingId, assets])
+}
+
+/** 同步器的渲染态一侧，挂成不画任何东西的叶子（理由见 `useEngineDocumentSync`）。 */
+export function EngineRenderSync(): null {
+  useEngineRenderSync()
+  return null
+}
+
+/**
+ * 渲染回来了 / 跟踪位变了 → 再看一眼还有没有要发的。判断本身在 syncEngine 里读的是
+ * 最新 state，文档与编辑态也在那一刻现取（这一侧不订阅编辑态）。
+ */
+function useEngineRenderSync() {
+  const objects = useDocumentStore((s) => s.doc.objects)
+  const byKey = useRenderStore((s) => s.byKey)
+  const tracked = useRenderStore((s) => s.tracked)
+
+  useEffect(() => {
+    syncEngine(useDocumentStore.getState().doc.objects, useUiStore.getState().elementPanelId)
+  }, [byKey, tracked])
 
   // 渲染回来的图幅尺寸变了（改了 size_mm）→ 同步面板原生尺寸并按新纵横比调高度。
   // 按**面板自己那份变体**取尺寸：size_mm 本身就是可以被 override 的，

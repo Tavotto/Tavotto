@@ -30,7 +30,7 @@ import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { useEngineSync } from '@/hooks/useEngineSync'
+import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
 import { useBuildVersion } from '@/hooks/useBuildVersion'
 import { runUndoRedo, useKeyboard } from '@/hooks/useKeyboard'
 import { useWorkspaceLayout } from '@/hooks/useWorkspaceLayout'
@@ -109,7 +109,9 @@ function Workspace() {
   const { t } = useTranslation('workspace')
   useKeyboard()
   useServerEvents()
-  useEngineSync()
+  // 同步器的渲染态一侧挂在树尾的叶子 <EngineRenderSync /> 上：新图到达时渲染态要变
+  // 两三回，挂在这里的话每一回都把整个工作区重画一遍（见 useEngineDocumentSync）
+  useEngineDocumentSync()
   useSelectionRouting()
   const outdated = useBuildVersion()
 
@@ -268,6 +270,7 @@ function Workspace() {
         <CloseGuardDialog />
         {/* 新手教程的 coachmark 层：没有遮罩，只在教程进行中出现 */}
         <OnboardingLayer />
+        <EngineRenderSync />
       </div>
     </TooltipProvider>
   )

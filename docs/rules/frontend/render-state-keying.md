@@ -38,3 +38,19 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
 `web/src/lib/bakedBaseline.test.ts`、`web/src/store/renderScheduler.test.ts`、
 `web/src/hooks/useEngineSync.test.ts`、`web/src/canvas/panelPreviewMode.test.tsx`、
 `tests/test_engine_variants.py`、`tests/test_paths_and_baked.py`。
+
+**同步器的两半挂在不同的地方（2026-09-24，松手卡顿剖析）**：`useEngineSync` 由文档一侧
+（`useEngineDocumentSync`：文档 / 编辑态 / 素材事实）与渲染态一侧（`byKey` / `tracked`
+变了再看一眼、图幅同步）组成。主应用里文档一侧挂在 `App` 的 Workspace 上，**渲染态一侧
+只挂在树尾不画任何东西的叶子 `<EngineRenderSync />` 上——Workspace 自己不订阅渲染态**
+（不调 `useEngineSync`，不调 `useRenderStore`）。宿主订阅了什么，它下面整棵树（顶栏 /
+左栏 / 属性栏）就跟着重画什么；而渲染态在每次新图到达时要变两三回（响应入库、
+`prune` 在同步 effect 里清掉掉出近期档的旧变体、`wantPatches` 占位），挂在 Workspace
+上时新图到达会出现第二次同样重的整树提交（58 个元素的图上 App 每次约 7 ms、CPU
+慢 4 倍时约 30 ms）。改法是收窄订阅，**不是**把显示往后拖（不许用计时器推迟新图上屏）。
+消费渲染态的组件各自用 `usePanelRender` 一族的 selector 订阅自己那一条，别指望父级
+带着重画。嵌入式画布 / playground 没有那棵大树，照旧用合起来的 `useEngineSync()`。
+看护：`web/src/components/left/elementTreeRerender.test.tsx` 的 A4（Workspace 同构替身
+上新图到达 + SSE `render.done` + prune 真清掉一条 → 元素树只提交一次）与「A4 的前提」
+（按 AST 钉 Workspace：调 `useEngineDocumentSync`、挂 `<EngineRenderSync />`、不调
+`useEngineSync` / `useRenderStore`）。

@@ -75,6 +75,19 @@
   进 `envStore.adoptedEnvironment`，通知轨（与「刚为编辑加入本文档」同一档）说一句并给「改回」=
   `revertAdoptedEnvironment()`（`setProjectPython(null)` → 后端 `remember_default`，所有在用的面板
   `markStale`，不只是失败的）。
+- **元素树的行只在自己显示的东西变了时重画（2026-09-24，松手卡顿剖析）**：
+  `ElementTree` 的 `ElementRow` / `ClusterRow` 是 `React.memo`，props 全是这一行显示与
+  交互实际用到的值（`gid` / `label` / `role` / 行名 `name` / `canHide` / `readonly` /
+  `hidden` / `locked` / `depth` / `selected` / `tabbable` / `expanded`、面板 id）加上树级
+  稳定回调（`useCallback`，行调用时带上自己的 key / gid / 当前展开态）。**不收整个
+  `panel`**（每次 commit 都是新引用，拖一下松手 58 行全重画）、**也不收 `el`**（新图到达时
+  manifest 每个元素都是新对象）；隐藏的判据照旧是「该 gid 有 `visible=false` 的 override
+  或 `isElementHidden(el)`」，在树里按 gid 查表算好再传。比较用 React 默认的逐 prop 浅比较、
+  不写自定义比较函数：行里要用到 el 上的新东西就只能先加成一个 prop，「漏比一个字段 =
+  改了不刷新」在结构上不会发生。行内文案跟着语言走，每行各自 `useTranslation`。看护：
+  `components/left/elementTreeRerender.test.tsx`（A1 无关提交零重画 / A2 新 manifest 零重画、
+  单行 label 或行名变只重画那一行 / A3 selected·tabbable·hidden·locked·expanded 各自只重画
+  那一行并显示新状态；观测点是 `<li>` 上 React 记的 props 对象，读不到直接抛）。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
   `components/DependencyPrepareDialog.test.tsx`、`components/notificationRail.test.tsx`（「已改用你的环境」）、
