@@ -1136,18 +1136,20 @@ class TestGate:
         project.mkdir()
         for status, expect in (("ready", True), ("blocked", False), ("nothing_needed", False)):
             monkeypatch.setattr(
-                deprepair, "preparation_offer", lambda p, s, _st=status: self._offer(_st)
+                deprepair, "_preparation_offer", lambda p, s, _st=status: (self._offer(_st), [])
             )
             got = deprepair.gate(project, "figure.py")
             assert (got is not None) is expect, status
         # 解释器解析不出来（offer None）→ 放行
-        monkeypatch.setattr(deprepair, "preparation_offer", lambda p, s: None)
+        monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: None)
         assert deprepair.gate(project, "figure.py") is None
 
     def test_skip_is_an_answer_and_a_successful_prepare_clears_it(self, tmp_path, monkeypatch):
         project = tmp_path / "paper"
         project.mkdir()
-        monkeypatch.setattr(deprepair, "preparation_offer", lambda p, s: self._offer("ready"))
+        monkeypatch.setattr(
+            deprepair, "_preparation_offer", lambda p, s: (self._offer("ready"), [])
+        )
         assert deprepair.gate(project, "figure.py") is not None
         assert deprepair.gate(project, "figure.py") is not None, "门一直问到有答案，不是只问一次"
         deprepair.skip_preparation(project, "figure.py")
@@ -1166,13 +1168,17 @@ class TestGate:
         assert deprepair._spawn_gate in engine_pool.SPAWN_GATES
         project = tmp_path / "paper"
         project.mkdir()
-        monkeypatch.setattr(deprepair, "preparation_offer", lambda p, s: self._offer("ready"))
+        monkeypatch.setattr(
+            deprepair, "_preparation_offer", lambda p, s: (self._offer("ready"), [])
+        )
         with pytest.raises(engine_pool.WorkerError) as err:
             deprepair._spawn_gate(str(project), "figure.py")
         assert err.value.code == deprepair.ERROR_PREPARATION_REQUIRED
         assert err.value.dependency_preparation["plan"]["requirements"] == ["six"]
         assert err.value.script_name == "figure.py"
-        monkeypatch.setattr(deprepair, "preparation_offer", lambda p, s: self._offer("blocked"))
+        monkeypatch.setattr(
+            deprepair, "_preparation_offer", lambda p, s: (self._offer("blocked"), [])
+        )
         deprepair._spawn_gate(str(project), "figure.py")  # 放行：不抛
 
     def test_probe_and_preparation_project_the_door_as_needs_input(self, tmp_path, monkeypatch):

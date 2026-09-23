@@ -30,6 +30,11 @@ os.environ.setdefault("TAVOTTO_DATA_DIR", _DATA_DIR)
 # tests/test_workerd_pool.py 的 workerd_enabled fixture）。
 os.environ.setdefault("TAVOTTO_WORKERD", "0")
 
+# 跑前的门里「找用户自己的 Python 并自动改用」（ADR 0079）**默认关**：开着的话每条走到真门的用例
+# 都会去问这台机器的登录 shell、体检它的系统 Python，而某台 CI 机器上的 Python 碰巧装了用例要的包，
+# 门就会自动改用——用例结果随机器而变。测这件事的用例自己打开（tests/test_user_environments.py）。
+os.environ.setdefault("TAVOTTO_USER_ENV_DISCOVERY", "0")
+
 # 匿名遥测在测试里**硬关**。用 setdefault 之外还要真的钉住：这不是「默认值」
 # 那一类偏好，而是「测试进程绝不产生真实的 PostHog 事件」这条硬约束——
 # 开发机上的用户配置里很可能已经同意过遥测（那是同一个 config.json），

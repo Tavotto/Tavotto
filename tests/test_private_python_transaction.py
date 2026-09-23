@@ -738,14 +738,14 @@ class TestCleanMachine:
         }
         monkeypatch.setattr(
             deprepair,
-            "preparation_offer",
-            lambda root, script: {**base, "clean_machine": True, "private_python": None},
+            "_preparation_offer",
+            lambda root, script: ({**base, "clean_machine": True, "private_python": None}, []),
         )
         assert deprepair.gate(project, "figure.py") is not None
         monkeypatch.setattr(
             deprepair,
-            "preparation_offer",
-            lambda root, script: {**base, "clean_machine": False, "private_python": None},
+            "_preparation_offer",
+            lambda root, script: ({**base, "clean_machine": False, "private_python": None}, []),
         )
         assert deprepair.gate(project, "figure.py") is None  # 有解释器且什么都不缺：放行
 

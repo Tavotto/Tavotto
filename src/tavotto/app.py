@@ -1860,6 +1860,31 @@ def api_events():
     )
 
 
+def _publish_user_environment_adopted(project: str, entry: dict) -> None:
+    """跑前的门自动改用了用户自己的环境（ADR 0079）：告诉界面换成了哪个，好给一条可撤销的提示。"""
+    try:
+        target = Path(project).resolve()
+    except OSError:
+        target = Path(project)
+    # 不拿 `_PROJECT_LOCK`：这里跑在起 worker 的门里，调用链上游可能正持有它。快照一份字典就够
+    pids = [pid for pid, ctx in dict(PROJECTS).items() if Path(ctx.path).resolve() == target]
+    for pid in pids or [""]:
+        sse_publish(
+            "engine.environment_adopted",
+            {
+                "pj": pid,
+                # 不带路径（ADR 0053 §二）：界面只说「改用了哪一类、叫什么、哪个版本」
+                "id": entry.get("id", ""),
+                "source": entry.get("source", ""),
+                "label": entry.get("label", ""),
+                "python_version": entry.get("python_version", ""),
+            },
+        )
+
+
+engine_deprepair.on_user_environment_adopted(_publish_user_environment_adopted)
+
+
 # ------------------------- 项目（Project）管理 -------------------------------
 # 对象层级见 docs/adr/0001-project-canvas-tab-object.md：Project = 图库路径 +
 # 素材根 + 导出/备份位置 + 设置。用户级配置（最近项目等）存 engine_config。
@@ -5016,7 +5041,12 @@ def api_engine_environment_set():
     body = request.get_json(force=True)
     raw = str(body.get("python") or "").strip()
     if str(body.get("scope") or "global") == "project":
-        return _set_project_environment(raw, module=str(body.get("module") or "").strip())
+        return _set_project_environment(
+            raw,
+            module=str(body.get("module") or "").strip(),
+            user_environment=str(body.get("user_environment") or "").strip(),
+            script=str(body.get("script") or "").strip(),
+        )
     if raw:
         # 绝对化但**不 resolve**：`.venv/bin/python` 是指向基解释器的软链接，落到真身
         # 就丢了 venv；相对路径不绝对化则 `is_file()` 按 Flask 的 cwd 判得过、体检在空的
@@ -5095,12 +5125,17 @@ def api_engine_environment_set():
     return jsonify(st)
 
 
-def _set_project_environment(raw: str, *, module: str = ""):
+def _set_project_environment(
+    raw: str, *, module: str = "", user_environment: str = "", script: str = ""
+):
     """设定/清除**当前项目**的渲染解释器。
 
     路径为空 = 回到默认链条（内置 runtime 优先）。给了路径就先真体检一遍：
     「选了但用不了」比「没选」更难查——用户以为设好了，实际每次打开都在报
     另一个错。体检不过一律 400 + 稳定 code，绝不先存下来再说。
+
+    `user_environment` 是依赖弹窗里点的「改用这个环境」（ADR 0079）：载荷只带 id，这里用本机自己的
+    发现结果换回路径，换不回来报 `user_environment_gone`；之后与手填路径走同一次体检。
 
     `module` 是用户从依赖修复面板采用系统解释器时带过来的「缺的那个包」
     （ADR 0044）：体检连它一起验——面板列出候选与用户点下去之间那个环境可能
@@ -5111,6 +5146,17 @@ def _set_project_environment(raw: str, *, module: str = ""):
     root = str(require_project())
     if module and not engine_projectenv.valid_module_name(module):
         module = ""
+    if user_environment:
+        # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回
+        found = engine_deprepair.user_environment_path(root, script, user_environment)
+        if not found:
+            return jsonify(
+                {
+                    "error": "这个 Python 环境已经找不到了，请重新检查",
+                    "code": "user_environment_gone",
+                }
+            ), 400
+        raw = found
     if not raw:
         # 清掉 = 用户明确选回默认链条（U03，FO-013）：记成一条决定，而不是「忘了」——
         # 忘了的话下一次首开又会把项目 venv 发现出来、盖掉这次的选择。
@@ -5158,7 +5204,13 @@ def _set_project_environment(raw: str, *, module: str = ""):
         root,
         str(candidate),
         automatic=False,
-        trigger="missing_dependency" if module else "user_selected",
+        trigger=(
+            engine_deprepair.TRIGGER_USER_ENVIRONMENT
+            if user_environment
+            else "missing_dependency"
+            if module
+            else "user_selected"
+        ),
         module=module,
         health=health,
     )

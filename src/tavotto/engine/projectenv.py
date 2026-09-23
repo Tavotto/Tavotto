@@ -317,9 +317,10 @@ out = {"executable": sys.executable, "prefix": sys.prefix,
        "version_info": list(sys.version_info[:3]),
        "arch": platform.machine(), "matplotlib_version": None,
        "tavotto_worker_ok": False, "requested_module": None,
-       "requested_module_ok": None, "error": None}
+       "requested_module_ok": None, "modules_ok": {}, "error": None}
 engine_dir = sys.argv[1]
 module = sys.argv[2] if len(sys.argv) > 2 else ""
+extra = [m for m in (sys.argv[3] if len(sys.argv) > 3 else "").split(",") if m]
 try:
     import matplotlib
     matplotlib.use("Agg")
@@ -353,6 +354,12 @@ if module:
         out["requested_module_ok"] = True
     except Exception:
         out["requested_module_ok"] = False
+for name in extra:
+    try:
+        __import__(name)
+        out["modules_ok"][name] = True
+    except Exception:
+        out["modules_ok"][name] = False
 sys.stdout.write(json.dumps(out))
 """
 
@@ -371,7 +378,9 @@ def _probe_scratch_dir() -> str:
         return tempfile.mkdtemp(prefix="tavotto-probe-")
 
 
-def probe_environment(python: str, module: str | None = None) -> dict:
+def probe_environment(
+    python: str, module: str | None = None, *, modules: tuple[str, ...] = ()
+) -> dict:
     """在候选解释器里跑一次体检，回机器可读结构。
 
     只 import、不执行用户脚本、不装任何东西。`module` 给了就顺带确认那个包
@@ -380,7 +389,11 @@ def probe_environment(python: str, module: str | None = None) -> dict:
 
     失败一律返回 `ok=False` + `code`，绝不抛异常：调用方在渲染主路径上，
     体检失败只该退回原来的错误，不该让整个请求 500。
+
+    `modules`（ADR 0079）：再顺带 import 这一组，结果进 `modules_ok`（{名字: bool}），**不影响**
+    `ok` / `code`——「环境健康」与「装没装齐这个脚本要的包」是两件事，调用方分开判。
     """
+    modules = tuple(m for m in modules if valid_module_name(m))
     if module and not valid_module_name(module):
         # 不合形状的名字连体检都不做（注入面），当作「没法确认」。
         module = None
@@ -392,9 +405,9 @@ def probe_environment(python: str, module: str | None = None) -> dict:
     # import 得到：体检量的是另一个对象。`-I` 真正想挡的只是 cwd 被塞进
     # `sys.path[0]`（Flask 进程的 cwd 是任意的，里面一个 `matplotlib.py`
     # 就能把体检骗过去），这件事改由把 cwd 换成一个**空的临时目录**来做。
-    argv = [python, "-c", _PROBE_SRC, engine_dir]
-    if module:
-        argv.append(module)
+    argv = [python, "-c", _PROBE_SRC, engine_dir, module or ""]
+    if modules:
+        argv.append(",".join(modules))
     scratch = ""
     try:
         # 空目录放在数据目录下（运行时可写数据一律走 `config.data_dir()`），
@@ -778,6 +791,10 @@ def forget(figures_dir: str | Path) -> None:
         pass
 
 
+#: `reset_cache()` 顺带调用的清理函数（别的模块的、与「重新判断环境」同生共死的缓存）
+RESET_HOOKS: list = []
+
+
 def reset_cache(figures_dir: str | Path | None = None) -> None:
     """丢弃进程内解析缓存（改了设置、装完环境、测试之间）。"""
     key = _key(figures_dir) if figures_dir is not None else None
@@ -785,6 +802,11 @@ def reset_cache(figures_dir: str | Path | None = None) -> None:
         # 系统解释器的体检结果不分项目（同一台机器同一个解释器），任何一次
         # 重置都清：用户点「重试」多半是刚装了什么，旧结论正是他要推翻的。
         _system_probe_cache.clear()
+    # 用户环境的发现与体检（ADR 0079）同理：终端配置、装过的包都可能刚变。`userenvs` 在 import 时
+    # 把自己登记进来（本模块不 import 它：它要 import 本模块的体检）
+    for hook in list(RESET_HOOKS):
+        hook()
+    with _lock:
         if key is None:
             _resolved.clear()
             _attempted.clear()

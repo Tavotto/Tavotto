@@ -9,9 +9,11 @@ import {
   setProjectEnvironment,
   setProjectWorkdir,
   type EngineEnvironment,
+  type UserEnvironmentSource,
   type WorkdirConfirmation,
   type WorkdirMode,
 } from '@/lib/api'
+import { createDismissTimer } from '@/lib/dismissTimer'
 import { currentProjectId } from '@/lib/session'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import { msg } from '@/i18n'
@@ -67,6 +69,18 @@ interface EnvState {
   requestDependencyPreparation: (offer: DependencyPreparationOffer, projectId?: string | null) => void
   dismissDependencyPreparation: () => void
   /**
+   * 跑前的门刚刚**自动改用**了用户自己的环境（ADR 0079，SSE `engine.environment_adopted`）：
+   * 通知轨上说一句「改用了哪个」并给「改回」。只是说出口，不是一次授权——改用已经发生了。
+   */
+  adoptedEnvironment: AdoptedEnvironment | null
+  noteEnvironmentAdopted: (env: Omit<AdoptedEnvironment, 'token'>) => void
+  dismissAdoptedEnvironment: () => void
+  /**
+   * 「改回」：本项目明确选回默认链条（后端 `remember_default`，之后不再自动挑），所有面板按原来的
+   * 环境重渲——缺的包于是又会走依赖弹窗。回 null 或一句失败原文。
+   */
+  revertAdoptedEnvironment: () => Promise<string | null>
+  /**
    * 换项目：`env.project`（项目环境 / 工作目录模式）属于旧项目，立刻清掉再按
    * 新项目重取。不清的话在请求回来之前，开关与错误块的建议说的都是上一个
    * 项目的模式（Codex 评审 P1）。
@@ -76,8 +90,21 @@ interface EnvState {
   onProgress: (p: { state: string; log: string; error: string | null }) => void
 }
 
+/** 「已改用你的环境」那条提示多久自己走（指针 / 焦点停在上面不走表，见 `NotificationRail`） */
+export const ADOPTED_NOTICE_MS = 12_000
+export const adoptedDismissTimer = createDismissTimer()
+
+export interface AdoptedEnvironment {
+  source: UserEnvironmentSource
+  label: string
+  python_version: string
+  /** 每次改用自增：同一条提示重复出现时 key 换掉，走表重新开始 */
+  token: number
+}
+
 export const useEnvStore = create<EnvState>((set, get) => ({
   env: null,
+  adoptedEnvironment: null,
   log: '',
   installing: false,
   workdirConfirmation: null,
@@ -95,6 +122,25 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     set({ dependencyPreparation: offer })
   },
   dismissDependencyPreparation: () => set({ dependencyPreparation: null }),
+  noteEnvironmentAdopted: (env) => {
+    set((s) => ({ adoptedEnvironment: { ...env, token: (s.adoptedEnvironment?.token ?? 0) + 1 } }))
+    adoptedDismissTimer.start(ADOPTED_NOTICE_MS, () => get().dismissAdoptedEnvironment())
+  },
+  dismissAdoptedEnvironment: () => {
+    adoptedDismissTimer.cancel()
+    set({ adoptedEnvironment: null })
+  },
+  revertAdoptedEnvironment: async () => {
+    const error = await get().setProjectPython(null)
+    if (error) return error
+    get().dismissAdoptedEnvironment()
+    // 后端已关掉本项目的会话；每个在用的面板都要按原来的环境重建（不只是失败的那些）
+    const { useRenderStore } = await import('@/store/renderStore')
+    const render = useRenderStore.getState()
+    const ids = [...new Set(Object.values(render.byKey).map((v) => v.fileId))]
+    if (ids.length) render.markStale(ids)
+    return null
+  },
 
   refresh: async () => {
     try {
@@ -197,8 +243,9 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         env: { ...env, project: { open: false } },
         workdirConfirmation: null,
         dependencyPreparation: null,
+        adoptedEnvironment: null,
       })
-    else set({ workdirConfirmation: null, dependencyPreparation: null })
+    else set({ workdirConfirmation: null, dependencyPreparation: null, adoptedEnvironment: null })
     void get().refresh()
   },
 
