@@ -1,20 +1,20 @@
 {
   "schema": 1,
   "plugin": "tavotto",
-  "plugin_version": "0.15.0",
-  "min_tavotto_version": "0.15.0",
-  "source_sha": "eb1404942ad60a776403fd4a9d3c85459bc5a8b0",
-  "build_inputs_fingerprint": "29dffc9266212fb3",
+  "plugin_version": "0.16.0",
+  "min_tavotto_version": "0.16.0",
+  "source_sha": "4bf86c1fe1b209ce0c964ec81ecf81f0aff715fb",
+  "build_inputs_fingerprint": "0854c8b1e1b40c77",
   "lockfile_sha256": "8d9bcafda72b989c7a423565898486f7e8a78173efd5e4c7413b58d36d7580b2",
   "toolchain": {
     "python": "3.13.15",
     "node": "22.23.2",
-    "pnpm": "11.27.0"
+    "pnpm": "11.27.1"
   },
   "files": [
     {
       "path": ".codex-plugin/plugin.json",
-      "sha256": "3c179738f0c5904a8aa3ccb5a2b212dcfe948c6af5e206057417a75d94295028",
+      "sha256": "90b03b4bf7decc76ddf294419908faba7ca35642b31e321e70c39273237004fa",
       "size": 1929,
       "mode": "100644"
     },
@@ -26,8 +26,8 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "bbaf5f92dc86edf88056e58edd483e8ac61f5a4e88418b8f12d5cb030d19899b",
-      "size": 20808,
+      "sha256": "b6607ee6f249ce6d4b9aa06d0a72a7b1d4d0554a3c530d624d7fa64a8c2eb52a",
+      "size": 28486,
       "mode": "100644"
     },
     {
@@ -38,8 +38,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "07129b5dcbd5c6bdd2850854dd91b6c7dfb6854ece565826afe5bd61cc6ebefb",
-      "size": 25368,
+      "sha256": "c89628ada62e3511e95f27826d45baedfe6e3d9e68224dab33c588bc1a1eb7b5",
+      "size": 26614,
       "mode": "100644"
     },
     {
@@ -50,8 +50,8 @@
     },
     {
       "path": "mcp/server.py",
-      "sha256": "24294659580c4dea0f470b4b4115691cf10b82bab3384f2b575be4ceb43f4eb9",
-      "size": 41968,
+      "sha256": "51753d9d55f16da8f35bd7c0e8f27fda0915759fd0606d6f441988c4519fb446",
+      "size": 52881,
       "mode": "100644"
     },
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": "mcp/tavotto_mcp/bridge.py",
-      "sha256": "08ea0d608ee392780477a3134f6231aa261122b8314277003fea23355dc2baa8",
-      "size": 96311,
+      "sha256": "15925d3ff3a72f7a969dcc801c034ae2d935c0595964e17c0d65f73c60be3df1",
+      "size": 112428,
       "mode": "100644"
     },
     {
@@ -86,8 +86,8 @@
     },
     {
       "path": "mcp/tavotto_mcp/server.py",
-      "sha256": "698d0fc098ed27d6970d80205118920cd0873b5d41f2a38bb4abdcfbe304be14",
-      "size": 65602,
+      "sha256": "af82b2b6caed376a5909ed952069c1974207b37bb006f97442d1f89499086407",
+      "size": 80434,
       "mode": "100644"
     },
     {
@@ -98,14 +98,14 @@
     },
     {
       "path": "mcp/widget/canvas.html",
-      "sha256": "2fa1ce827858153fd26369a2094866a4eb36b5e52407362243e3686724d06c08",
-      "size": 1320834,
+      "sha256": "f056ac576e541ff654d6814d9d36211c56693c6ddef185e1d1949a159be933a2",
+      "size": 1354834,
       "mode": "100644"
     },
     {
       "path": "skills/tavotto-figure/SKILL.md",
-      "sha256": "7b6bbc32f9a19e41501db317ed368f48a5897c436291c5d74ca9159168e2f722",
-      "size": 15260,
+      "sha256": "17fb81471aaabda341d7d23e605384b756cd6e2e586a47ed65929f52a6388f1e",
+      "size": 15496,
       "mode": "100644"
     },
     {
@@ -116,8 +116,8 @@
     },
     {
       "path": "skills/tavotto-figure/references/compatibility.md",
-      "sha256": "2df762f10234977048eb3fe4eaccf50a340143c9d27a3cf9dbafce046f231a9b",
-      "size": 10181,
+      "sha256": "5ada033a41b5b7954fae0786862cfffe2e8214bcaf35a2710fc0a17fb27e0139",
+      "size": 11663,
       "mode": "100644"
     },
     {
@@ -134,8 +134,8 @@
     },
     {
       "path": "skills/tavotto-figure/references/first-run-and-recovery.md",
-      "sha256": "1acf6482a18e59c5b04691a54f7a55d9c2498bf6dc2c531abae8ca3de44fdfe6",
-      "size": 6732,
+      "sha256": "f26aec2bbf1541c3a54053c5b4a8cb1c0498fe39485d78203f73bc5a945bb55f",
+      "size": 7169,
       "mode": "100644"
     },
     {
@@ -183,10 +183,10 @@
       ]
     }
   },
-  "content_digest": "de88352e1e76a1c80150a79d443189d2055f5573d01a38125716658bce6b08d8",
+  "content_digest": "51c7de8797d8f779cdc117d733607b4fce6712f127e8929435097b9e8b75e851",
   "audit": {
     "workflow": "release",
-    "run_id": "35400707899",
-    "tag": "v0.15.0"
+    "run_id": "35738284913",
+    "tag": "v0.16.0"
   }
 }

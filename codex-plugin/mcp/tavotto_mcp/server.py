@@ -46,6 +46,65 @@ ROOTS_REQUEST_TIMEOUT_S = 2.0
 # 工作区授权需要真人看清路径再点选，不能沿用 roots 探针的 2 秒预算。
 ELICITATION_REQUEST_TIMEOUT_S = 300.0
 
+#: Codex 把每个 MCP 工具结果的**事件副本**——送给桌面 UI 去喂 iframe、写进 rollout
+#: 的那一份——封顶在 1 MiB（codex-rs `core/src/mcp_tool_call.rs` 的
+#: `MCP_TOOL_CALL_EVENT_RESULT_MAX_BYTES = DEFAULT_OUTPUT_BYTES_CAP`，PR #20260，
+#: 2026-04-30）：序列化后超过它，那份副本的 `structuredContent` 与 `_meta` 整个置
+#: 空、`content` 换成一段截断的文本预览。给模型的那份不受此影响，画布自己发的
+#: `tools/call` 也不受（宿主直接代理，`codex_thread.call_mcp_tool` 原样返回），所以
+#: 症状是**分裂的**：模型看到完整结果、后续工具都好使，iframe 却永远停在「等待
+#: tavotto_open_figure」（issue #457，422 个元素的图实测 1.3 MB）。
+#: 量的对象是 `CallToolResult` 整体（content + structuredContent + _meta），按
+#: serde_json 的紧凑 UTF-8 算。
+HOST_EVENT_RESULT_CAP_BYTES = 1024 * 1024
+#: 单图 open 的结果自己守的预算。留 1/4 的余量：宿主再序列化时的字段顺序 / 转义
+#: 与这里不逐字节相同，贴着 1 MiB 量的是序列化差异而不是负载。超预算时按
+#: `INLINE_ELISION_STEPS` 的顺序省略字段，画布改经 `tavotto_session_state` 取。
+CANVAS_INLINE_BUDGET_BYTES = 768 * 1024
+#: 超预算时省略的顺序：先省对模型没用的（SVG 它读不了），再省画布反正要另取的
+#: （manifest / 位图），最后才是预检的逐条清单（计数与阻断布尔永远留着）。
+#: 每省一步量一次，够了就停——能留给模型的尽量留。
+INLINE_ELISION_STEPS = (
+    ("svg",),
+    ("manifest",),
+    ("preview_png_base64",),
+    ("preflight.warnings", "preflight.suggestions", "preflight.not_verifiable"),
+    ("preflight.errors",),
+)
+#: 省完之后还要写 `elided` 说明与一行文字：逐步省时给它们留这么多，免得「刚好卡进
+#: 预算」被说明本身推出去。
+INLINE_ELISION_RESERVE_BYTES = 2 * 1024
+#: 结构化字段都省到底了还超，剩下能占体积的只有 `content` 文本（`preflight=true` 把整份
+#: 预检报告放在那里）：截到能装下为止，尾巴加这一句。**不能不截**——宿主量的是整个
+#: 结果，文字把它顶过上限的话，structuredContent 一样被清空（Codex 评审 P2）。
+CONTENT_TRUNCATED_MARKER = (
+    "…（文字已截断：结果超过宿主体积上限；完整预检报告用 tavotto_preflight 取）"
+)
+#: 最后一道：省略表与文字都到底了还超（没列进表的字段自己就很大——几千个 stem 的
+#: `registry.stems`、成堆的 worker `warnings`），就把 structuredContent 退到**只剩把手**：
+#: 画布认会话、模型认结局所需的那几个键。这些键都是定长小字段，把手永远装得下。
+HANDLE_ONLY_KEYS = frozenset(
+    {
+        "ok",
+        "session_id",
+        "reused",
+        "evicted_sessions",
+        "project",
+        "stem",
+        "script",
+        "entry",
+        "cost",
+        "profile",
+        "patch_hash",
+        "render_revision",
+        "canvas_ui",
+        "elided",
+        "preflight",  # 只留计数与布尔（见 fit_inline_budget），清单早在省略表那几步没了
+    }
+)
+#: 把手里 `preflight` 保留的键：都是定长小字段。
+HANDLE_PREFLIGHT_KEYS = ("counts", "blocking", "needs_confirm", "detailed_text", "code", "error")
+
 
 def _version() -> str:
     try:
@@ -147,6 +206,29 @@ def _tools() -> list[dict]:
                         "description": (
                             "回完整的出版规范预检明细（默认否：只回计数。"
                             "想看逐条建议就调 tavotto_preflight）"
+                        ),
+                    },
+                    "workdir": {
+                        "type": "string",
+                        "enum": ["sandbox", "project", "project_root"],
+                        "description": (
+                            "脚本的运行目录（首开的那一次回答）。上一次 open 以 "
+                            "workdir_confirmation_required 回来时，按它 structuredContent 里的 "
+                            "confirmation.options 请用户选一档再传进来：sandbox（Tavotto 沙盒）/ "
+                            "project（脚本所在目录）/ project_root（项目根目录）。这个决定按项目"
+                            "记住，只问一次；不传就按已记住的决定走。"
+                        ),
+                    },
+                    "prepare_dependencies": {
+                        "type": "string",
+                        "enum": ["tavotto_managed", "project_venv", "skip"],
+                        "description": (
+                            "对跑前那一次「需要先准备依赖」的回答。上一次 open 以 "
+                            "dependency_preparation_required 回来时，按它 structuredContent 里的 "
+                            "dependency_preparation.plan（装什么）与 targets（装到哪）请用户授权，"
+                            "再传目标进来：tavotto_managed（Tavotto 自己的隔离环境，不改用户环境）/ "
+                            "project_venv（项目自己的 venv，会修改它）/ skip（用户明确不准备、直接运行）。"
+                            "安装是同步的（要联网、几十秒到几分钟），装完接着开图。不传 = 这道门继续问。"
                         ),
                     },
                 },
@@ -377,6 +459,22 @@ def _tools() -> list[dict]:
             },
         },
         {
+            "name": "tavotto_session_state",
+            "title": "会话当前快照（不重渲染）",
+            "description": (
+                "取回一个已打开会话此刻的完整状态：manifest、SVG（raster 档是位图）、"
+                "当前 patches、patch_hash、预检结果。只读，不重跑脚本、不重渲染。"
+                "内嵌画布用它拉取负载；模型只在 tavotto_open_figure 的返回里标了 "
+                "`elided`（图太大，manifest 没随结果返回）而又确实需要逐元素 gid 时才调它。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"session_id": {"type": "string"}},
+                "required": ["session_id"],
+                "additionalProperties": False,
+            },
+        },
+        {
             "name": "tavotto_close_session",
             "title": "关闭会话",
             "description": "释放引擎会话。用户的项目数据一个字节都不动。",
@@ -451,7 +549,7 @@ def _sum_counts(into: dict, counts: dict) -> None:
         into[key] = into.get(key, 0) + int(value or 0)
 
 
-def _call_open_batch(target: str, args: dict, plan: dict) -> dict:
+def _call_open_batch(target: str, args: dict, plan: dict, *, workdir: str | None = None) -> dict:
     """一次调用打开 N 张图。**预检按 #102 第 4 条走：默认只回汇总与阻断项。**
 
     单图那一路每开一张已经只回一行计数了；批量再逐张展开就是把同一个噪声乘以
@@ -464,6 +562,7 @@ def _call_open_batch(target: str, args: dict, plan: dict) -> dict:
         discover=plan["discover"],
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        workdir=workdir,
     )
     detailed = bool(args.get("preflight"))
     total: dict = {}
@@ -557,15 +656,31 @@ def _call_open(args: dict) -> dict:
     target = args.get("project_path") or args.get("script_path")
     if not target:
         raise RpcError(INVALID_PARAMS, "要给 project_path 或 script_path 其中之一")
+    # `workdir` 在分派批量 / 单张**之前**校验：它是项目级的回答，两条路都要认（Codex #456 P2）
+    workdir = args.get("workdir")
+    if workdir is not None and not isinstance(workdir, str):
+        raise RpcError(INVALID_PARAMS, "workdir 必须是字符串（sandbox / project / project_root）")
+    prepare = args.get("prepare_dependencies")
+    if prepare is not None and not isinstance(prepare, str):
+        raise RpcError(
+            INVALID_PARAMS,
+            "prepare_dependencies 必须是字符串（tavotto_managed / project_venv / skip）",
+        )
     plan = _batch_request(args)
     if plan is not None:
-        return _call_open_batch(str(target), args, plan)
+        if prepare is not None:
+            raise RpcError(
+                INVALID_PARAMS, "prepare_dependencies 只对单张图有效：按脚本准备，一次一张"
+            )
+        return _call_open_batch(str(target), args, plan, workdir=workdir)
     out = bridge.open_figure(
         str(target),
         stem=args.get("stem"),
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
         include_png=bool(args.get("include_png")),
+        workdir=workdir,
+        prepare_dependencies=prepare,
     )
     # **打开与预检分离**（issue #102）：噪声在**给 agent 读的那段文字**里——
     # 每开一张图糊一屏重复的规范建议，还挤掉了 manifest 摘要那几行真正有用的东西。
@@ -578,24 +693,9 @@ def _call_open(args: dict) -> dict:
     # （BridgeError，有稳定 code）与「意料之外的异常」（畸形 manifest 几何抛的
     # IndexError/ValueError 那一类）是两档，都不等于「体检通过」——但两档都不该
     # 让调用方连 session_id 都拿不到：那时用户手上是一个开着、却关不掉的会话。
-    checks = _safe_preflight(out["session_id"])
+    checks = _preflight_checks(out["session_id"])
     detailed = bool(args.get("preflight"))
-    if checks is None or "counts" not in checks:
-        out["preflight"] = {"detailed_text": detailed, **(checks or {})}
-    else:
-        out["preflight"] = {
-            k: checks[k]
-            for k in (
-                "counts",
-                "blocking",
-                "needs_confirm",
-                "errors",
-                "warnings",
-                "not_verifiable",
-                "suggestions",
-            )
-        }
-        out["preflight"]["detailed_text"] = detailed
+    out["preflight"] = _preflight_block(checks, detailed=detailed)
     if "counts" not in out["preflight"]:
         return {
             "content": _text(
@@ -640,6 +740,150 @@ def _call_open(args: dict) -> dict:
     if out.get("warnings"):
         lines.append("worker 警告: " + "; ".join(out["warnings"][:5]))
     return {"content": _text(*lines), "structuredContent": out}
+
+
+def _call_session_state(args: dict) -> dict:
+    out = bridge.session_state(str(args.get("session_id") or ""))
+    out["preflight"] = _preflight_block(_preflight_checks(out["session_id"]), detailed=False)
+    lines = [
+        f"会话 {out['session_id']}（{out['stem']}）当前快照：{len(out['patches'])} 条 patch，"
+        f"hash {out['patch_hash'][:19]}…",
+        _brief_manifest(out.get("manifest")),
+    ]
+    return {"content": _text(*lines), "structuredContent": out}
+
+
+def _preflight_checks(session_id: str) -> dict | None:
+    """这个会话的默认预检——先看会话上缓存的那份（open 刚算过、patch_hash 与规范
+    都没变时直接复用，大图的预检是十秒级），没有就现算。算不出结论的两档
+    （BridgeError / 没人诊断过的异常）照 `_safe_preflight` 分开，都不等于「通过」。
+    """
+    try:
+        session = bridge.get_session(session_id)
+    except bridge.BridgeError as exc:
+        return {"code": exc.code or "preflight_failed", "error": str(exc)}
+    return bridge.cached_preflight(session) or _safe_preflight(session_id)
+
+
+def _preflight_block(checks: dict | None, *, detailed: bool) -> dict:
+    """open / session_state 结果里的 `preflight` 字段——**同一个形状，同一个出处**。"""
+    if checks is None or "counts" not in checks:
+        return {"detailed_text": detailed, **(checks or {})}
+    block = {
+        k: checks[k]
+        for k in (
+            "counts",
+            "blocking",
+            "needs_confirm",
+            "errors",
+            "warnings",
+            "not_verifiable",
+            "suggestions",
+        )
+    }
+    block["detailed_text"] = detailed
+    return block
+
+
+def _serialized_bytes(obj: object) -> int:
+    """按宿主的口径量：serde_json 紧凑输出、UTF-8、非 ASCII 不转义。"""
+    return len(json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _elide(container: dict, dotted: str) -> bool:
+    head, _, tail = dotted.partition(".")
+    if tail:
+        inner = container.get(head)
+        return isinstance(inner, dict) and _elide(inner, tail)
+    if head in container:
+        del container[head]
+        return True
+    return False
+
+
+def fit_inline_budget(result: dict, budget: int = CANVAS_INLINE_BUDGET_BYTES) -> dict:
+    """把单图 open 的结果压进宿主事件上限之内。**原地改，返回同一个对象。**
+
+    量的是整个 `CallToolResult`（content + structuredContent + _meta），与宿主
+    `truncate_mcp_tool_result_for_event` 量的是同一个东西。超预算就按
+    `INLINE_ELISION_STEPS` 一步步省，每步再量一次；省过东西就在
+    `structuredContent.elided` 里说清省了什么、为什么、去哪儿取，并在文字里提一句。
+    没超预算的结果**一个字段都不动**——小图走的还是原来那条路。
+    """
+    body = result.get("structuredContent")
+    if not isinstance(body, dict):
+        return result
+    before = _serialized_bytes(result)
+    if before <= budget:
+        return result
+    elided: list[str] = []
+    for step in INLINE_ELISION_STEPS:
+        for dotted in step:
+            if _elide(body, dotted):
+                elided.append(dotted)
+        if _serialized_bytes(result) <= budget - INLINE_ELISION_RESERVE_BYTES:
+            break
+    body["elided"] = {
+        "fields": elided,
+        "reason": "inline_budget",
+        "inline_bytes": before,
+        "budget_bytes": budget,
+        "host_cap_bytes": HOST_EVENT_RESULT_CAP_BYTES,
+        "fetch_with": "tavotto_session_state",
+        # 先占位再量：这个数字自己也在被量的对象里。占 budget 是因为最终值不会比它
+        # 大，位数只会少不会多——量出来的只会偏大，不会漏。
+        "final_bytes": budget,
+    }
+    note = (
+        f"! 结果 {before / 1024:.0f} KiB 超过宿主对工具结果的体积上限（{budget // 1024} KiB），"
+        f"已省略 {'、'.join(elided) or '（无可省字段）'}；内嵌画布会自己经 tavotto_session_state "
+        "取全量，模型要逐元素 gid 时也调它。"
+    )
+    content = result.get("content") or []
+    if content and content[0].get("type") == "text":
+        content[0]["text"] += "\n" + note
+    else:
+        result["content"] = _text(note)
+    # 说明加完再量一次：省略表到底了还超，先退到只剩把手（省略表之外的字段也可能
+    # 很大），再截文字——两步都做完仍超的只剩把手 + 一行标记，那已经是下限。
+    if _serialized_bytes(result) > budget:
+        dropped = sorted(k for k in body if k not in HANDLE_ONLY_KEYS)
+        for key in dropped:
+            del body[key]
+        preflight = body.get("preflight")
+        if isinstance(preflight, dict):
+            body["preflight"] = {k: v for k, v in preflight.items() if k in HANDLE_PREFLIGHT_KEYS}
+        body["elided"]["fields"].extend(dropped)
+        body["elided"]["handle_only"] = True
+    if _serialized_bytes(result) > budget:
+        body["elided"]["content_truncated"] = True  # 先写再截：这个键也占字节
+        _shrink_content_to_fit(result, budget)
+    # 把最终体积写进去：位数变少会让结果再小一点，收敛到自洽为止。
+    for _ in range(4):
+        final = _serialized_bytes(result)
+        if body["elided"]["final_bytes"] == final:
+            break
+        body["elided"]["final_bytes"] = final
+    return result
+
+
+def _shrink_content_to_fit(result: dict, budget: int) -> None:
+    """把 `content` 的文字截到整个结果装得进预算为止，尾巴加 `CONTENT_TRUNCATED_MARKER`。
+
+    按超出的字节数截、再量、再截：JSON 转义会让文字的字节数与序列化后的不一致，
+    一次算不准，收敛几轮就够。按 UTF-8 字节切、解码时丢掉被切断的半个字。
+    """
+    text = "\n".join(
+        str(c.get("text", "")) for c in result.get("content") or [] if c.get("type") == "text"
+    )
+    for _ in range(8):
+        result["content"] = _text(text, CONTENT_TRUNCATED_MARKER)
+        over = _serialized_bytes(result) - budget
+        if over <= 0 or not text:
+            return
+        keep = max(0, len(text.encode("utf-8")) - over)
+        text = text.encode("utf-8")[:keep].decode("utf-8", errors="ignore")
+    result["content"] = _text(CONTENT_TRUNCATED_MARKER)
 
 
 def _call_apply(args: dict) -> dict:
@@ -694,6 +938,10 @@ def _call_export(args: dict) -> dict:
     ok = [f for f in out["files"] if f["status"] == "done"]
     failed = [f for f in out["files"] if f["status"] != "done"]
     lines = ["已导出：" + "、".join(f["path"] for f in ok)] if ok else []
+    if ok:
+        # 产物检查（ADR 0068）逐文件说清楚：`unknown` 不是 `verified`——模型转述
+        # 「已核验」之前，这一行就是它唯一的依据
+        lines.append("产物核验：" + "；".join(_inspection_summary(f) for f in ok))
     for f in failed:
         code = (f.get("error") or {}).get("code") or "export_failed"
         lines.append(f"未出成：{f['format']}（{code}）——这次导出是部分完成的。")
@@ -713,6 +961,21 @@ def _call_export(args: dict) -> dict:
     if out["warnings"]:
         lines.append("worker 警告: " + "; ".join(out["warnings"][:5]))
     return {"content": _text(*lines), "structuredContent": out}
+
+
+def _inspection_summary(entry: dict) -> str:
+    """一个已发布文件的核验一句话：三组各自点名（未通过 / 已核验 / 未核验），一组都不省——
+    「已核验 integrity, size」旁边站着「未核验 text_layer」，模型才不会把整份文件说成通过；
+    没有 manifest = 整份未核验。"""
+    checks = (entry.get("manifest") or {}).get("checks") or {}
+    groups = (
+        ("未通过", [k for k, v in checks.items() if v == "failed"]),
+        ("已核验", [k for k, v in checks.items() if v == "verified"]),
+        ("未核验", [k for k, v in checks.items() if v == "unknown"]),
+    )
+    name = entry.get("path") or entry.get("format") or "?"
+    parts = [f"{label} {', '.join(keys)}" for label, keys in groups if keys]
+    return f"{name}：{'，'.join(parts)}" if parts else f"{name}：未核验"
 
 
 def _call_normalize(args: dict) -> dict:
@@ -973,6 +1236,7 @@ HANDLERS = {
     "tavotto_export": _call_export,
     "tavotto_verify_replay": _call_verify,
     "tavotto_refresh_project": _call_refresh,
+    "tavotto_session_state": _call_session_state,
     "tavotto_close_session": _call_close,
 }
 
@@ -1034,11 +1298,19 @@ def call_tool(name: str, args: dict) -> dict:
                 "单独 tavotto_open_figure 那个 stem。"
             )
         elif widget.available():
-            meta = dict(widget.resource_meta())
-            # widgetData 是 host 递给 iframe 的初始负载（ChatGPT 侧的约定）；
-            # MCP Apps 标准路径下 iframe 从 ui/notifications/tool-result 拿同一份。
-            meta["widgetData"] = result["structuredContent"]
-            result["_meta"] = meta
+            # 只挂资源元数据。**不再把 structuredContent 复制一份进 `_meta.widgetData`**：
+            # MCP Apps 标准路径下 iframe 从 `ui/notifications/tool-result` 拿的就是这份
+            # `CallToolResult`（`structuredContent` 在里头），ChatGPT 侧则读
+            # `window.openai.toolOutput`（= structuredContent）——两条路都用不着第二份，
+            # 而它让结果体积翻倍，正是把 422 个元素的图推过宿主 1 MiB 上限的那一半
+            # （issue #457）。
+            result["_meta"] = dict(widget.resource_meta())
+            if name == "tavotto_open_figure":
+                # 只对**带出 iframe 的那次调用**守预算：apply 的结果要原样回给画布自己
+                # 发的 tools/call（那条路不截断，而画布靠它拿新 manifest / SVG）；批量
+                # 与画布缺失的结果没有 iframe，也没有一个能取件的会话，进了 fitter 只会
+                # 被指去一个错误的地方。
+                fit_inline_budget(result)
         else:
             # 画布产物缺失：工具照常干活（manifest/SVG 都在），但**必须把
             # 「这次没有内嵌画布、为什么」说出口**——静默少一块 UI，用户看到

@@ -27,7 +27,7 @@ Codex 内嵌画布、Tavotto 桌面窗口——背后是同一个引擎、同一
 | 画布层 | 多图拼版、加文字/箭头/形状标注、(a)(b) 编号、对齐分布、导出 PDF/PNG |
 
 改完可以「写回原始文件」——Tavotto 会把这些 override 烙进磁盘上的 PDF/PNG，
-**你的脚本一个字都不会被动**（写回只在桌面窗口里有，MCP 那边不提供）。
+**你的脚本一个字都不改**（写回只在桌面窗口里有，MCP 那边不提供）。
 
 ## override 的两条语义（发 patch 前必读）
 
@@ -129,4 +129,7 @@ SVG 尺寸与 viewBox、PNG 像素与 pHYs dpi（TIFF 像素；EPS BoundingBox�
 | `stem_not_parameterizable` | 这张图没有对应脚本 | 把 `.py` 放到产物同目录，产物名写成字面量 |
 | `preflight_blocked` | 预检有阻断项 | **先修**；用户明确要求才带 `explicit_confirm: true` |
 | `missing_dependency` | 渲染解释器缺包 | 告诉用户装哪个包，或换一个带科学栈的解释器 |
+| `workdir_confirmation_required` | 首开要先选脚本的运行目录（数据只在项目根找得到 / 两处同名数据不同）——不是失败，是缺一个决定 | 按 `structuredContent.confirmation.options` 把三档（`project_root` / `project` / `sandbox`）与各自找得到的文件念给用户选，`recommended` 有值时说明推荐；**不替用户猜**。再调一次 `tavotto_open_figure` 带 `workdir=<所选>`；这个决定按项目记住，只问一次 |
+| `dependency_preparation_required` | 脚本开跑就需要的包目标环境里没有、能一次装全——不是失败，是缺一次授权 | 按 `structuredContent.dependency_preparation.plan.requirements`（装什么）、`plan.unknown`（认不出、不会装的 import）与 `targets`（装到哪：`tavotto_managed` 不改用户环境 / `project_venv` 会改项目自己的 venv）念给用户；用户授权后再调一次 `tavotto_open_figure` 带 `prepare_dependencies=<目标>`（同步安装、要联网、几十秒到几分钟）；用户不想装就带 `skip`（直接运行，缺包会以 `missing_dependency` 回来）。**不替用户授权** |
+| `explicit_python_unusable` / `project_python_unusable` | 用户显式指定的渲染解释器用不了（不在了 / 没有 matplotlib）；Tavotto 不会自动换成别的环境 | 把 `structuredContent.explicit.source` / `reason` 说给用户听，让用户在设置里重新指定或清除那条设置；不要自己去换解释器 |
 | `tavotto_missing` | 机器上没装 Tavotto | `pipx install "tavotto[worker]"` 或装桌面版，然后重开会话 |

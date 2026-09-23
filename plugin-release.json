@@ -4,42 +4,43 @@
   "branch": "plugin-stable",
   "plugin": "tavotto",
   "kind": "promote",
-  "version": "0.15.0",
-  "content_digest": "de88352e1e76a1c80150a79d443189d2055f5573d01a38125716658bce6b08d8",
-  "source_sha": "eb1404942ad60a776403fd4a9d3c85459bc5a8b0",
-  "release_tag": "v0.15.0",
+  "version": "0.16.0",
+  "content_digest": "51c7de8797d8f779cdc117d733607b4fce6712f127e8929435097b9e8b75e851",
+  "source_sha": "4bf86c1fe1b209ce0c964ec81ecf81f0aff715fb",
+  "release_tag": "v0.16.0",
   "plugin_build": {
-    "build_inputs_fingerprint": "29dffc9266212fb3",
+    "build_inputs_fingerprint": "0854c8b1e1b40c77",
     "lockfile_sha256": "8d9bcafda72b989c7a423565898486f7e8a78173efd5e4c7413b58d36d7580b2",
     "toolchain": {
       "python": "3.13.15",
       "node": "22.23.2",
-      "pnpm": "11.27.0"
+      "pnpm": "11.27.1"
     },
-    "min_tavotto_version": "0.15.0"
+    "min_tavotto_version": "0.16.0"
   },
   "legacy_bootstrap": null,
   "engine_check": {
     "checks": {
       "github-release": {
-        "url": "https://api.github.com/repos/Tavotto/Tavotto/releases/tags/v0.15.0",
+        "url": "https://api.github.com/repos/Tavotto/Tavotto/releases/tags/v0.16.0",
         "ok": true,
         "detail": "HTTP 200"
       },
       "pypi": {
-        "url": "https://pypi.org/pypi/tavotto/0.15.0/json",
+        "url": "https://pypi.org/pypi/tavotto/0.16.0/json",
         "ok": true,
         "detail": "HTTP 200"
       }
     },
     "skipped_reason": null
   },
-  "previous": "dd5a32acbce1ee667454498f2f00040d088ca7ee",
+  "previous": "53a8f2fbf220806539f6fbe49f399836c672a180",
   "restores": null,
   "authorization": null,
-  "published_at": "2026-09-19T00:20:06Z",
+  "published_at": "2026-09-23T01:49:28Z",
   "audit": {
-    "run_id": "35408691883",
-    "workflow": "release"
+    "workflow": "plugin-stable",
+    "run_id": "35807859180",
+    "actor": "erwanjun"
   }
 }

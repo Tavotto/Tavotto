@@ -34,6 +34,7 @@ from urllib.parse import quote
 
 from tavotto.engine import (
     artifactcheck as engine_artifactcheck,
+    artifactinspect as engine_artifactinspect,
     config as engine_config,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
@@ -51,6 +52,7 @@ from tavotto.engine import (
     readiness as engine_readiness,
     registry as engine_registry,
     telemetry as engine_telemetry,
+    workdir as engine_workdir,
 )
 
 from .roots import (
@@ -254,6 +256,20 @@ class Session:
     #: 最近一次通过验收的规范化结果（裁决 + 产物验收 + 那一版的 patch_hash）。
     #: `patch_hash` 与会话当前不一致时它就是过期的——导出必须如实说出来。
     normalized: dict | None = None
+    #: 注册表里这张图的开销档位（画布的渲染看门狗按它分级）。
+    cost: str = ""
+    #: 最近一次渲染的 worker 警告；与 manifest / svg 同一次响应。
+    warnings: list = field(default_factory=list)
+    #: raster 档下最近一次渲染**同一次响应**里带回的受控尺寸位图（base64）。
+    #: 非 raster 档恒为 None。留着它是为了 `session_state()` 不必再画一遍：
+    #: 位图与 manifest 的配对纪律（ADR 0022）要求它来自同一次渲染。
+    preview_png_base64: str | None = None
+    #: 最近一次**默认参数**的预检结果（`run_preflight` 不带 profile / journal /
+    #: 导出参数那一档），连同它算出时的 `patch_hash` 与 profile 印章。
+    #: `session_state()` 只在两者都还对得上时复用；否则重算——预检是 manifest
+    #: 与规范的纯函数，键对得上就没有第二个答案。每次 `_render` 都把它清掉：
+    #: manifest 换了一份，键没变也不算数。
+    preflight_cache: dict | None = None
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -271,9 +287,149 @@ class Session:
         try:
             return engine_pool.get(self.script, self.project, self.entry)
         except engine_pool.WorkerError as exc:
-            raise BridgeError(
-                str(exc), code=exc.code or "worker_error", traceback=exc.traceback_text
-            ) from exc
+            raise _bridge_error_from_worker(exc) from exc
+
+
+def _answer_workdir(project: str, mode: str) -> None:
+    """`tavotto_open_figure(workdir=…)`：记住这个项目的运行目录决定（三档闭集）。"""
+    if mode not in engine_workdir.MODES:
+        raise BridgeError(
+            f"不认识的工作目录模式: {mode!r}（可选 {' / '.join(engine_workdir.MODES)}）",
+            code=engine_workdir.ERROR_MODE_INVALID,
+        )
+    before = engine_workdir.mode_for(project)
+    engine_workdir.set_mode(project, mode)
+    if before != mode:
+        # cwd 是 spawn 时定下的：活着的会话还端着旧目录（与 app 的端点同一条纪律）
+        engine_pool.shutdown_all(project)
+
+
+def _answer_prepare_dependencies(project: str, script: str, target: str) -> dict:
+    """`tavotto_open_figure(prepare_dependencies=…)`：对跑前那一次「需要先准备依赖」的回答
+    （U04，ADR 0061）——绑定联合计划 + **同步**执行到终态（几十秒到几分钟：要联网装包），
+    再由调用方接着开图。与桌面授权框 / HTTP 端点是同一份决定、同一个事务。
+
+    `deprepair` 延后 import：它是 U04 才有的能力，桥的最低引擎版本不为它抬（老引擎上
+    `create_joint_plan` 不存在 → `engine_too_old`，不静默）。
+    """
+    from tavotto.engine import deprepair as engine_deprepair  # noqa: PLC0415
+
+    if target not in ("tavotto_managed", "project_venv", "skip"):
+        raise BridgeError(
+            f"不认识的依赖准备目标: {target!r}（可选 tavotto_managed / project_venv / skip）",
+            code="dependency_target_invalid",
+        )
+    create = getattr(engine_deprepair, "create_joint_plan", None)
+    skip = getattr(engine_deprepair, "skip_preparation", None)
+    if create is None or skip is None:
+        raise BridgeError(
+            "本机 Tavotto 版本不支持联合依赖准备，请升级 Tavotto", code="engine_too_old"
+        )
+    if target == "skip":
+        # 用户明确不准备、直接运行：这道门从此放行（缺包会以 missing_dependency 回来）
+        skip(project, script)
+        return {"target_kind": "skip", "generation": "", "installed": {}, "requirements": []}
+    try:
+        plan = create(project, script, target_kind=target)
+        outcome = engine_deprepair.prepare(plan.plan_id)
+    except engine_deprepair.RepairError as exc:
+        joint = (exc.extra or {}).get("joint")
+        raise BridgeError(str(exc), code=exc.code, **({"joint": joint} if joint else {})) from exc
+    if not outcome.get("ok"):
+        code = str(outcome.get("code") or "dependency_install_failed")
+        raise BridgeError(f"依赖准备没有完成: {code}", code=code, result=outcome)
+    return {
+        "target_kind": outcome.get("target_kind", target),
+        "generation": outcome.get("generation", ""),
+        "installed": outcome.get("installed", {}),
+        "requirements": list(plan.requirements),
+    }
+
+
+def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
+    """worker 错误 → 带稳定 code 的 BridgeError；U03 的两种结构化载荷原样带出去。
+
+    * `workdir_confirmation_required`：首开要先选运行目录——这是「需要输入」，不是失败。
+      `confirmation` 进 `structuredContent`（选项 / 证据），`recovery` 告诉 Codex 怎么答：
+      再调一次 `tavotto_open_figure` 并带 `workdir=`（与桌面确认框、HTTP 的
+      `PATCH /api/engine/workdir` 是同一份决定）；
+    * `explicit_python_unusable` / `project_python_unusable`：显式选择失效，不静默换环境——
+      `explicit` 说清是哪一条、为什么。
+    """
+    extra: dict = {"traceback": exc.traceback_text}
+    confirmation = getattr(exc, "confirmation", None)
+    if isinstance(confirmation, dict):
+        extra["confirmation"] = confirmation
+        recommended = confirmation.get("recommended")
+        modes = " / ".join(o.get("mode", "") for o in confirmation.get("options") or [])
+        extra["recovery"] = (
+            "先选脚本的运行目录：再调一次 tavotto_open_figure 并带 workdir 参数"
+            f"（可选 {modes}"
+            + (
+                f"；证据推荐 {recommended}"
+                if recommended
+                else "；两处同名数据内容不同，需要用户决定"
+            )
+            + "）。这个决定按项目记住，只问这一次。"
+        )
+    explicit = getattr(exc, "explicit", None)
+    if isinstance(explicit, dict):
+        extra["explicit"] = {
+            k: explicit.get(k, "") for k in ("source", "reason", "trigger") if k in explicit
+        }
+        extra["recovery"] = (
+            "Tavotto 不会自动换成别的环境：请用户在设置里重新指定渲染环境，或清除那条设置回到自动选择。"
+        )
+    # `dependency_preparation_required`（U04，ADR 0061）：脚本开跑要的包目标环境里没有、能一次
+    # 装全——这是「需要输入」，不是失败。整份联合计划进 `structuredContent`，`recovery` 告诉
+    # Codex 怎么答：再调一次 `tavotto_open_figure` 并带 `prepare_dependencies=`（与桌面授权框、
+    # HTTP 的 `/api/engine/dependencies/plan` + `/prepare` 是同一份决定）。
+    dependency = getattr(exc, "dependency_preparation", None)
+    if isinstance(dependency, dict):
+        extra["dependency_preparation"] = dependency
+        plan = dependency.get("plan") or {}
+        reqs = ", ".join(plan.get("requirements") or [])
+        kinds = " / ".join(t.get("kind", "") for t in dependency.get("targets") or [])
+        unknown = ", ".join(plan.get("unknown") or [])
+        # 先下载 Tavotto 自己的 Python（U05，ADR 0063）——体积必须说出口（与桌面授权框同一句话）。两种形状：
+        # 顶层 `private_python` = 这台机器没有可用的 Python（干净机器，哪个目标都得先下）；只挂在受管目标
+        # `targets[].private_python` 上 = 有渲染解释器（比如桌面壳自带的那份）但没有能建受管环境的基础解释器
+        # ——选 tavotto_managed 才会下（Codex #475 P2）
+        private = dependency.get("private_python") or {}
+        managed_private = next(
+            (
+                t.get("private_python") or {}
+                for t in dependency.get("targets") or []
+                if t.get("kind") == "tavotto_managed"
+            ),
+            {},
+        )
+        # 载荷在就说（`required=False` 的是「已就位、不联网」那句——来源照样要说出口）
+        if private:
+            lead = " 这台电脑没有可用的 Python：授权后会先"
+        elif managed_private:
+            lead, private = " 选择 tavotto_managed 时会先", managed_private
+        else:
+            lead = ""
+        if lead:
+            mb = max(1, round(int(private.get("download_bytes") or 0) / 1048576))
+            private_note = (
+                f"{lead}使用已下载并校验过的 Tavotto 自己的 Python {private.get('version', '')}（不联网）。"
+                if private.get("cached")
+                else f"{lead}下载 Tavotto 自己的 Python {private.get('version', '')}（约 {mb} MB）"
+                "到 Tavotto 的数据目录，不改动系统与 PATH。"
+            )
+        else:
+            private_note = ""
+        extra["recovery"] = (
+            f"脚本开跑就需要的包目标环境里没有：{reqs}。请用户授权一次联合安装：再调一次 "
+            f"tavotto_open_figure 并带 prepare_dependencies=<目标>（可选 {kinds}；"
+            "tavotto_managed 是 Tavotto 自己的隔离环境、不改用户环境，project_venv 会修改项目自己的 "
+            "venv；skip = 不准备、直接运行）。安装需要联网、只装预编译 wheel；这道门一直问到有答案。"
+            + (f" 认不出对应包名、不会安装的 import：{unknown}。" if unknown else "")
+            + private_note
+        )
+    return BridgeError(str(exc), code=exc.code or "worker_error", **extra)
 
 
 _SESSIONS: dict[str, Session] = {}
@@ -479,15 +635,32 @@ def open_figure(
     profile_id: str | None = None,
     journal: dict | None = None,
     include_png: bool = False,
+    workdir: str | None = None,
+    prepare_dependencies: str | None = None,
 ) -> dict:
-    """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。"""
+    """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。
+
+    `workdir` 是对首开那一次「需要输入」的回答（U03，ADR 0057）：与桌面确认框、HTTP 的
+    `PATCH /api/engine/workdir` 同一份决定——记进项目设置、关掉这个项目的旧会话，再开。
+    没给就按后端自己的决定走（决定过的直接用；没决定过而证据要问的，这次 open 以
+    `workdir_confirmation_required` 回来）。
+
+    `prepare_dependencies` 是对跑前那一次「需要先准备依赖」的回答（U04，ADR 0061）：目标
+    `tavotto_managed` / `project_venv`，先同步把联合安装做完再开图；返回里多一段 `prepared`。
+    没给而脚本开跑要的包目标里没有时，这次 open 以 `dependency_preparation_required` 回来。
+    """
     ctx = _resolve_project(target, stem)
     project, reg_info, registry = ctx.project, ctx.reg_info, ctx.registry
+    if workdir is not None:
+        _answer_workdir(project, workdir)
 
     want = stem or ctx.target_stem
     chosen = _pick_stem(project, want, registry)
     info = registry.for_stem(chosen)
     assert info is not None
+    prepared = None
+    if prepare_dependencies is not None:
+        prepared = _answer_prepare_dependencies(project, info["script"], prepare_dependencies)
 
     # 目录级交接时 `ensure_registered` 还不知道要哪个 stem，`parameterizable`
     # 会是 None。stem 定下来之后必须补判——留着 None 等于把「这张图能不能进
@@ -514,6 +687,10 @@ def open_figure(
         # 把上一次的快照直接回给画布等于让它显示一个可能已经过期的画面，
         # raster 档下更是连位图都没有。
         session.profile = profile
+        # 开销档位跟着**这次**读到的注册表走：刷新过项目、light 变 heavy 之后沿用旧值，
+        # 画布经 `session_state` 拿到的就是旧档，渲染看门狗会按 2 分钟而不是 15 分钟
+        # 掐掉一次合法的重渲染（Codex 评审）。
+        session.cost = str(info.get("cost", "") or "")
         render = _render(session, list(session.patches), preview_dpi=None)
     else:
         session = Session(
@@ -523,6 +700,7 @@ def open_figure(
             script=info["script"],
             entry=info["entry"],
             profile=profile,
+            cost=str(info.get("cost", "") or ""),
         )
         # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
         # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
@@ -551,6 +729,8 @@ def open_figure(
         "profile": engine_profiles.stamp(profile),
         **render,
     }
+    if prepared is not None:
+        out["prepared"] = prepared
     if include_png:
         # 位图是**顺带产物**，不是这次 open 的成败判据。
         #
@@ -631,6 +811,7 @@ def open_figures(
     discover: bool = False,
     profile_id: str | None = None,
     journal: dict | None = None,
+    workdir: str | None = None,
 ) -> dict:
     """一次调用打开 N 张独立的图，拿回 N 个**各自可编辑**的会话。
 
@@ -643,6 +824,10 @@ def open_figures(
     区别。失败那张带着稳定 code 与它自己的 stem 名回来。
     """
     ctx = _resolve_project(target, None)
+    if workdir is not None:
+        # 首开那一次回答是**项目级**的：批量与单张同一处记账，在开任何一张之前落地
+        # （Codex #456 P2：批量重试带 workdir 时不能静默忽略）
+        _answer_workdir(ctx.project, workdir)
     if discover:
         wanted = discover_stems(ctx.project, ctx.registry)
         source = "discover"
@@ -991,6 +1176,12 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     session.manifest = resp["manifest"]
     session.svg = resp.get("svg")
     session.preview = resp.get("preview")
+    session.warnings = list(resp.get("warnings", []) or [])
+    # 上一版的位图属于上一组 patches；这一次不是 raster 档就没有位图可配对。
+    session.preview_png_base64 = None
+    # 预检是 manifest 的函数，而 manifest 刚换了一份——哪怕 patches 没变（脚本改了、
+    # worker 重建、重开沿用会话），键对得上也不代表结论还对。缓存只活在两次渲染之间。
+    session.preflight_cache = None
     session.rev = getattr(worker, "rev", session.rev + 1)
     session.last_used = time.time()
     out = {
@@ -999,7 +1190,7 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
         "patch_hash": session.patch_hash(),
         "worker_generation": getattr(worker, "generation", None),
         "render_revision": session.rev,
-        "warnings": resp.get("warnings", []),
+        "warnings": session.warnings,
         "timings": resp.get("timings", {}),
     }
     if session.preview is not None:
@@ -1019,6 +1210,7 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
             out["preview_png_base64"] = preview_png(
                 session, list(patches), previewbudget.RASTER_PREVIEW_WIDTH_PX
             )
+            session.preview_png_base64 = out["preview_png_base64"]
         except BridgeError as exc:
             # 位图失败不该把这次**成功的渲染**变成一条错误：manifest 是对的、
             # 编辑语义是完整的，缺的只是画面。如实回一个 code，别静默。
@@ -1117,6 +1309,47 @@ def _contract_diff(session: Session, patches: list) -> list[dict]:
                 }
             )
     return diff
+
+
+def session_state(session_id: str) -> dict:
+    """会话**此刻**的完整快照——manifest / SVG / 位图 / patches——**不重渲染**。
+
+    这是内嵌画布的取件通道（issue #457）：`tavotto_open_figure` 的工具结果会进
+    宿主的模型上下文、rollout 与 UI 事件三条路，Codex 把最后那条封顶在 1 MiB，
+    超过就把 `structuredContent` 整个置空（`server.HOST_EVENT_RESULT_CAP_BYTES`）。
+    画布自己发的 `tools/call` 走的是宿主直接代理的那条路，不进模型上下文也不
+    截断，所以大图的负载从这里取，open 的结果里只留一个够画布认出会话的把手。
+
+    全部字段都来自会话对象上最近一次 `_render` 留下的东西：manifest 与 svg /
+    位图**同一次响应**（ADR 0022 不变量 5）；`patches` 是它们对应的那一组——
+    画布必须用它来 seed 账本，否则下一次编辑会把模型已经应用的修改静默还原。
+    """
+    session = get_session(session_id)
+    if session.manifest is None:
+        raise BridgeError(
+            "会话还没有 manifest（先 apply 一次 override 或重新 open）", code="no_manifest"
+        )
+    out = {
+        "ok": True,
+        "session_id": session.id,
+        "project": session.project,
+        "stem": session.stem,
+        "script": session.script,
+        "entry": session.entry,
+        "cost": session.cost,
+        "profile": engine_profiles.stamp(session.profile),
+        "patches": list(session.patches),
+        "patch_hash": session.patch_hash(),
+        "render_revision": session.rev,
+        "manifest": session.manifest,
+        "svg": session.svg,
+        "warnings": list(session.warnings),
+    }
+    if session.preview is not None:
+        out["preview"] = session.preview
+    if session.preview_png_base64 is not None:
+        out["preview_png_base64"] = session.preview_png_base64
+    return out
 
 
 def preview_png(session: Session, patches: list, width_px: int) -> str:
@@ -1232,7 +1465,7 @@ def run_preflight(
             "passed": not counts.get("error", 0) and not counts.get("warn", 0),
         },
     )
-    return {
+    out = {
         "ok": True,
         "session_id": session.id,
         "stem": session.stem,
@@ -1252,6 +1485,24 @@ def run_preflight(
         "needs_confirm": bool(summary["blocking"] or summary["not_verifiable"]),
         "report": format_preflight(session, profile, issues, summary),
     }
+    if profile_id is None and journal is None and not export_formats and export_dpi is None:
+        # 默认参数那一档缓存到会话上：open 刚算过一遍，画布随后经
+        # `session_state()` 取快照时不必再等一次（大图的预检是十秒级）。
+        # 键 = patch_hash + profile 印章，两者任一变了就作废（见 Session 注释）。
+        session.preflight_cache = out
+    return out
+
+
+def cached_preflight(session: Session) -> dict | None:
+    """会话上还**对得上**的默认预检结果；对不上或没有就 None。"""
+    cached = session.preflight_cache
+    if not cached:
+        return None
+    if cached.get("patch_hash") != session.patch_hash():
+        return None
+    if cached.get("profile") != engine_profiles.stamp(session.profile):
+        return None
+    return cached
 
 
 def format_preflight(session: Session, profile: dict, issues: list[dict], summary: dict) -> str:
@@ -1317,6 +1568,14 @@ def export(
     `warnings` / `patch_hash` / `profile` / `preflight` / `forced` /
     `acknowledged`。新增的只有诚实所需的两项——作业终局 `status`，以及失败
     那一项自己带的 `error`。
+
+    **有限产物验证**（ADR 0068）：每个封口的临时文件在提交点之前重新打开量
+    事实（`engine/artifactinspect.py`——与 HTTP 导出**同一份**接线，不是第二份
+    检查器），`files[].manifest` 原样带出 `verdict / checks / notes / sha256`；
+    四值判据里 `unknown` 不是 `verified`，模型读回执时不得把「未核验」转述成
+    「已通过」。这条入口只有 standard 政策（必需 = 完整性 + 核心尺寸，不合格的
+    那一项以 `artifact_rejected` 进 `partial`、不发布）；严格政策走 HTTP 导出
+    的 `inspection` 段。
 
     `acceptance`（ADR 0051）：规范化事务给的**最终产物验收参数**
     `{"expect_mm": [w, h], "font_family": str|None, "contract_id": str}`。给了它，
@@ -1457,17 +1716,30 @@ def export(
                         )
                     )
                     continue
+            raster = fmt in engine_exportreq.RASTER_FORMATS and size_mm[0] and size_mm[1]
             produced.append(
                 engine_exportjob.Produced(
                     format=fmt,
                     tmp_path=tmp,
                     width_mm=size_mm[0],
                     height_mm=size_mm[1],
+                    # 位图的期望像素 = 图幅 × dpi（与 artifactcheck 同一换算）：产物检查按它核
+                    # 文件里的像素数，不给的话 `size` 那一维只能 unknown
+                    width_px=int(round(size_mm[0] / 25.4 * dpi)) if raster else None,
+                    height_px=int(round(size_mm[1] / 25.4 * dpi)) if raster else None,
                     # PDF/SVG/EPS 是 matplotlib 直接序列化的真矢量；PNG/TIFF 才吃 dpi
                     vector=fmt in engine_exportreq.VECTOR_FORMATS,
                 )
             )
         return produced
+
+    def _inspect(job, produced: list) -> list:
+        # 与 `app.py` 的 HTTP 导出同一份接线：`backend` 只是计划半张里「谁写的」；
+        # 没有 pikepdf 时 PDF 经契约层 probe 做基本观测，所以按需 import、不进桥的
+        # 常驻 import 闭包
+        return engine_artifactinspect.inspect_produced(
+            job, produced, backend="worker", probe=_probe_asset
+        )
 
     def _report(job, outputs: list) -> bytes:
         return _proof_bytes(
@@ -1485,7 +1757,7 @@ def export(
             normalize=_normalize_proof_section(session, acceptance, checks_by_fmt),
         )
 
-    engine_exportjob.run(job, _produce, report=_report if proof else None)
+    engine_exportjob.run(job, _produce, report=_report if proof else None, inspect=_inspect)
 
     if job.status == engine_exportjob.STATUS_CONFLICT:
         raise BridgeError(
@@ -1515,6 +1787,8 @@ def export(
         }
         if o.error_code:
             entry["error"] = {"code": o.error_code, "params": o.error_params}
+        if o.manifest is not None:
+            entry["manifest"] = o.manifest
         files.append(entry)
 
     result = {
@@ -1560,6 +1834,13 @@ def export(
                 "params": job.report.error_params,
             }
     return result
+
+
+def _probe_asset(path: Path, kind: str) -> dict:
+    """契约层的 `probe_asset`，按需 import：产物检查在没有 pikepdf 的机器上用它做 PDF 基本观测。"""
+    from tavotto import pdfbackend
+
+    return pdfbackend.probe_asset(path, kind)
 
 
 def _normalized_status(session: Session) -> dict | None:

@@ -3,7 +3,8 @@
 仓库级路由与不变量在根 `AGENTS.md`。完整版 ADR：
 `docs/adr/0005-external-handoff-and-codex-plugin.md`、
 `docs/adr/0006-codex-mcp-app-and-publication-profile.md`、
-`docs/adr/0009-codex-workspace-root-authority.md`。改动前先读。
+`docs/adr/0009-codex-workspace-root-authority.md`、
+`docs/adr/0069-canvas-payload-under-host-event-cap.md`。改动前先读。
 交接的引擎侧（`engine/locate.py` / `engine/handoff.py` / `engine/cli.py`）在
 `docs/rules/backend/external-handoff.md`。
 
@@ -52,7 +53,7 @@
 
 - **Codex 插件在 `codex-plugin/`**，市场清单在仓库根 `.agents/plugins/marketplace.json`
   （仓库即市场根）。**已不再是 skills-only**：2026-08-18 起同时带一个本地 stdio
-  MCP server 与内嵌画布（2026-09-02 起七个工具，含 `tavotto_refresh_project`；2026-09-13 起八个，加 `tavotto_normalize_figure`）；交接这条路一字未改。**仍不做 `.app.json`**（需要
+  MCP server 与内嵌画布（2026-09-02 起七个工具，含 `tavotto_refresh_project`；2026-09-13 起八个，加 `tavotto_normalize_figure`；2026-09-21 起加 `tavotto_session_state`，画布的取件通道）；交接这条路一字未改。**仍不做 `.app.json`**（需要
   OpenAI 侧注册的托管 App id）。pyproject 的 `exclude` 显式挡住 `codex-plugin/`
   进 wheel/sdist。插件版本 == `tavotto.__version__`（`tests/test_codex_plugin.py` 看护）。
 - **插件里那份路径规则是 `engine/locate.py` 的镜像**（插件 import 不到 tavotto，
@@ -123,6 +124,46 @@
   真 stdio server 的工具级集成——**不是**经 Codex 宿主的端到端）、`tests/test_codex_plugin.py`
   末节（技能文字：路由、禁止的绕路、按退出码说话）。
 
+## 工具结果的体积预算与画布取件（2026-09-21，ADR 0069，issue #457）
+
+- **Codex 把 MCP 工具结果送给桌面 UI 的事件副本封顶在 1 MiB**，超过就把 `structuredContent`
+  / `_meta` 置空——模型那份与画布自己发的 `tools/call` 不受影响，症状是「模型正常、画布永远
+  等待」（422 元素 ≈ 1.3 MB）。**顺带**：`structuredContent` 非空时 codex 只把它给模型，
+  `content` 文本整段丢弃。全文在 ADR 0069。
+- **只有单图 open 守预算**（`CANVAS_INLINE_BUDGET_BYTES` 768 KiB，量整个 `CallToolResult`
+  的紧凑 UTF-8 字节，别用默认 ensure_ascii），按 `INLINE_ELISION_STEPS` 省 svg → manifest →
+  位图 → 预检清单，写 `structuredContent.elided`；说明加完再量一次，还超先退到只剩把手
+  （`HANDLE_ONLY_KEYS`）再截 `content` 文字；只在单图 + 有画布时跑（批量 / 无画布没有
+  iframe）；**apply 不守**（画布靠它拿新 manifest）；`_meta` 不再复制 `widgetData`。
+- **`tavotto_session_state` 是画布的取件通道**：只读、不重渲染，全部来自 `Session` 上最近一次
+  `_render` 留下的字段（加字段先加到 `Session`），预检复用 `Session.preflight_cache`（`_render` 必清）。降级
+  `NORMAL_TOOLS` 由 `test_degraded_normal_tool_names_mirror_the_real_server` 钉成镜像。
+- **画布启动三路**（`web/src/mcp/boot.ts`）：完整结果直接种（`elided` 在就不算完整，只省 svg
+  会种出空画布；矢量图必须带 svg 字符串）；只有把手就取件、回来的
+  `patches` 原样种进账本；空壳当场报形状（`data-boot-state` / `data-boot-detail`），30 秒没
+  结果也说出口但继续收。都不自己发起 open。真宿主验收加大图一条（acceptance 文档 D 节）。
+- 看护：`tests/test_mcp_server.py` 末节、`tests/test_mcp_resolver.py`、`web/src/mcp/boot.test.ts`、
+  `web/e2e/mcp-canvas.spec.ts`。**跑变异一律 `-B` 并清 `__pycache__`**：等长改动一秒内还原，
+  pyc 头不变，跑的是变异版。
+
+## 导出产物核验（2026-09-21，统一实施包 U08，ADR 0068）
+
+- **`bridge.export` 与 HTTP 导出接的是同一份检查器接线** `engine/artifactinspect.inspect_produced`
+  （`engine_exportjob.run(..., inspect=_inspect)`，`backend="worker"`）：每个封口的临时文件在提交点之前
+  重新打开量事实，不合格的那一项以 `artifact_rejected` 进 `partial`、**不发布**；合格的 `files[].manifest`
+  原样带出（`verdict / checks 四值 / notes / sha256 / px / size_pt…`）。旧键（`path / bytes / vector / dpi /
+  status / error`）一个不动。位图 `Produced` 带期望像素（图幅 × dpi，与 `artifactcheck` 同一换算），
+  `size` 那一维才量得到。契约层 `probe_asset` 按需 import（`_probe_asset`），不进桥的常驻 import 闭包。
+- **给模型看的文字里「未核验」永远不是「已核验」**：`server._inspection_summary` 三组各自点名
+  （未通过 / 已核验 / 未核验），一组都不省；没有 manifest = 整份未核验。这条入口只有 standard 政策
+  （必需 = 完整性 + 核心尺寸）；严格政策走 HTTP 的 `inspection` 段。
+- 桥新增 import `artifactinspect` → **三处同源**一起改：`scripts/make_plugin_manifest.BRIDGE_IMPORTS_AT_MIN`、
+  `codex-plugin/mcp/server.py` 的 `_BRIDGE_IMPORT` 探测串（resolver 用它判老引擎够不够用，漏了它 = 交棒后桥
+  ImportError 崩死；`test_mcp_resolver.py::test_bridge_import_probe_matches_the_bridge` 对拍）、桥本身；它晚于
+  v0.15.0，所以 `MIN_TAVOTTO_VERSION` 在 v0.16.0 发版时抬到 0.16.0（发那一版的 PR 里才能写这个号）。
+- 替身 worker 写出的文件也要过得了检查：`tests/support/artifactbytes.py`（stdlib 最小合法 PDF / PNG）。
+  看护：`tests/test_mcp_export_inspection.py`（独立读取器 + 坏文件负例 + unknown 不说已核验 + 同一份接线）。
+
 ## MCP server 与内嵌画布（2026-08-18）
 
 ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推翻**
@@ -167,6 +208,18 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   `canvas_ui: {available: false, code: "widget_missing"}` 并在文字里说出口，
   `resources/read` 对缺失产物报「缺失 + 修法」而不是回空 HTML。
   看护 `tests/test_mcp_resolver.py` + `tests/test_mcp_stdio.py`。
+- **`--provision` 建 venv 之前先验基础解释器的版本**（2026-09-20）：启动器允许在很老的
+  `python3` 上跑（纯标准库），但 venv 继承它的版本——macOS 上 `python3` 常是 Xcode CLT
+  的 3.9，而引擎的 `requires-python` 是 `>=3.10,<3.15`，区间外的解释器上 pip 只会说一句
+  "No matching distribution found"（3.9 自带的 pip 21 连被 Requires-Python 忽略的版本都
+  不列），Codex 把它读成「这一版还没发」。`find_venv_base()` 按 当前解释器 → PATH 上的
+  `python3.14…3.10` → Homebrew / python.org / `py` 启动器的常见位置 → 裸 `python3` 的顺序
+  **真的跑一遍**每个候选问版本（判据是执行不是文件名），第一个在区间内的当 base；上次
+  在区间外建出来的 venv 用 `venv --clear` 重建；一个都没有就以 `no_supported_python`
+  失败并逐个说出版本，**不在区间外的解释器上起 pip**；`--python` 显式指定时只认那一个——
+  先验它、已有的 venv 也换到它上面（已有环境在区间内不是跳过它的理由，#453 评审 P2）。
+  区间常量 `PYTHON_MIN` / `PYTHON_MAX_EXCLUSIVE` 是 `engine/projectenv.py` 的镜像
+  （`test_provision_python_range_mirrors_the_engine` 对拍），改 `requires-python` 要一起改。
   **装完插件/引擎必须新开 Codex 会话**——已开的会话不重载工具，
   `codex plugin list` 的 enabled 不代表 server 健康（README 里写明了）。
 - **导出先预检**：有 error **或 `not_verifiable`** 且没有 `explicit_confirm` 时
@@ -174,6 +227,25 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   error）。PNG 的 dpi 与 profile 的 `min_raster_dpi` 比一次，复用同一个
   `raster-dpi` id 与同一张 severity 表。默认格式取**这次调用**的 profile，
   默认导出目录也要过 `check_scope`。强制导出与确认项都记进 proof。
+- **首开的「需要输入」与它的回答（U03，ADR 0057）**：`session.acquire()` 走的 `pool.get()` 在起第一个
+  worker 之前可能抛 `workdir_confirmation_required`（数据只在项目根找得到 / 两处同名数据不同）——
+  `_bridge_error_from_worker` 把结构化 `confirmation`（三档选项 + 各档找得到的文件 + `recommended`）
+  放进 `structuredContent`，`recovery` 告诉 Codex 再调一次 `tavotto_open_figure` 并带 `workdir=`
+  （`sandbox` / `project` / `project_root`，与桌面确认框、HTTP 的 `PATCH /api/engine/workdir` 是
+  **同一份**决定：`engine/workdir.set_mode`，按项目记住、只问一次）。**不替用户猜**——`recommended`
+  为空时必须由用户选。显式解释器失效（`explicit_python_unusable` / `project_python_unusable`）同样
+  结构化投影（`explicit` 只带 source / reason，不带路径）。`workdir` 也在 `_BRIDGE_IMPORT`
+  与 `BRIDGE_IMPORTS_AT_MIN` 里（v0.14.0 起就有的模块，桥只用那时就有的名字，最低版本不抬）。
+- **跑前的「需要先准备依赖」与它的回答（U04，ADR 0061）**：同一处门还可能抛 `dependency_preparation_required`
+  （脚本开跑要的第三方包目标环境里没有、且能一次装全）——`_bridge_error_from_worker` 把整份联合计划
+  （`dependency_preparation.plan`：装什么 / 约束什么 / 认不出的 import；`targets`：装到哪）放进
+  `structuredContent`，`recovery` 告诉 Codex 再调一次 `tavotto_open_figure` 并带 `prepare_dependencies=`
+  （`tavotto_managed` / `project_venv` / `skip`；与桌面授权框、HTTP 的 `/api/engine/dependencies/plan` +
+  `/prepare` 是**同一份**决定：`deprepair.create_joint_plan` + `prepare`，同步执行、装完接着开图；
+  `skip` = 用户明确不准备直接跑，这道门一直问到有答案）。**不替用户授权**；批量 open 不接受这个参数。
+  `deprepair` 进 `_BRIDGE_IMPORT` 与 `BRIDGE_IMPORTS_AT_MIN`（v0.9.x 起就有的模块；`create_joint_plan` 是
+  新名字，`getattr` 守着、缺就 `engine_too_old`，最低版本不抬）。
+  看护 `tests/test_mcp_server.py` 的四条 U03 用例。
 - **批量打开（issue #174）**：`tavotto_open_figure` 的 `stems` / `discover_stems`
   一次开 N 张独立图，每张仍走 `open_figure` 那条路（`_resolve_project` 是单图与
   批量共用的那一段解析，范围校验顺序只有一份）。四条不许破坏：**一张失败不回滚

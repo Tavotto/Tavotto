@@ -28,7 +28,8 @@ shebang、旁边没有 python——交接（`tavotto open`）用它绰绰有余�
 插件专属 venv（`mcp-runtime/venv`），装**钉在插件版本上的** tavotto——
 不碰系统 Python / Conda / 用户任何全局环境，删掉目录即卸载，重跑即重建
 （可复现）。装完 resolver 自动优先用它。这是「桌面版用户零手工配置」的
-路：跑一条命令，不用自己建 venv、不用改 PATH。
+路：跑一条命令，不用自己建 venv、不用改 PATH。**建 venv 的基础解释器先验
+版本**（`find_venv_base()`）：跑本文件的 `python3` 可以很老，venv 不能。
 
 ## 体检（`--health`）
 
@@ -79,9 +80,9 @@ DESKTOP_ONLY_HINT = (
 #: 两侧由 tests/test_mcp_resolver.py::test_bridge_import_probe_matches_the_bridge
 #: 对拍，改 bridge 的 import 必须同步这里。
 _BRIDGE_IMPORT = (
-    "from tavotto.engine import artifactcheck, config, exportjob, exportreq, figcapture, "
-    "handoff, interference, normalize, patchspec, pool, preflight, previewbudget, "
-    "profiles, profilestore, project_refresh, readiness, registry, telemetry"
+    "from tavotto.engine import artifactcheck, artifactinspect, config, deprepair, exportjob, exportreq, "
+    "figcapture, handoff, interference, normalize, patchspec, pool, preflight, previewbudget, "
+    "profiles, profilestore, project_refresh, readiness, registry, telemetry, workdir"
 )
 
 
@@ -248,6 +249,130 @@ def managed_python() -> str:
     if os.name == "nt":
         return os.path.join(venv, "Scripts", "python.exe")
     return os.path.join(venv, "bin", "python3")
+
+
+#: 引擎的 Python 支持区间——`engine/projectenv.PYTHON_MIN` / `PYTHON_MAX_EXCLUSIVE`
+#: 的镜像（插件 import 不到 tavotto，与定位器一样是无法避免的那份重复）。两侧由
+#: tests/test_mcp_resolver.py::test_provision_python_range_mirrors_the_engine 对拍，
+#: projectenv 那侧又被 test_support_matrix 钉在 pyproject 的 requires-python 上。
+#:
+#: 它在这里只有一个用途：**建 venv 之前先判基础解释器**。启动本文件的 `python3`
+#: 允许很老（本文件只用标准库，3.8 就能跑），但 venv 继承它的版本，而区间外的
+#: 解释器上 pip 对 `tavotto==x.y.z` 只会说 "No matching distribution found"
+#: （3.9 自带的 pip 21 连「哪些版本因 Requires-Python 被忽略」都不打印）——
+#: 2026-09-20 一位 macOS 用户在 Xcode CLT 的 `/usr/bin/python3`（3.9.6）上撞到，
+#: Codex 把它读成「0.15.0 还没发」。
+PYTHON_MIN = (3, 10)
+PYTHON_MAX_EXCLUSIVE = (3, 15)
+assert PYTHON_MIN[0] == PYTHON_MAX_EXCLUSIVE[0] == 3, (
+    "候选名字按 3.x 枚举，跨大版本要改 _SUPPORTED_MINORS"
+)
+#: 支持区间里的小版本号，**新的在前**：都能用时挑最新的（wheel 齐全，也是桌面版
+#: runtime 所在的那一带）。
+_SUPPORTED_MINORS = tuple(range(PYTHON_MAX_EXCLUSIVE[1] - 1, PYTHON_MIN[1] - 1, -1))
+_PROBE_VERSION = "import sys; print(sys.version_info[0], sys.version_info[1], sys.executable)"
+
+
+def python_range_text() -> str:
+    """给人看的区间：`3.10–3.14`。"""
+    return (
+        f"{PYTHON_MIN[0]}.{PYTHON_MIN[1]}–{PYTHON_MAX_EXCLUSIVE[0]}.{PYTHON_MAX_EXCLUSIVE[1] - 1}"
+    )
+
+
+def _python_supported(version: "tuple[int, int] | None") -> bool:
+    return version is not None and PYTHON_MIN <= tuple(version) < PYTHON_MAX_EXCLUSIVE
+
+
+def _probe_python(argv: "list[str]", timeout: float = 15.0) -> "dict | None":
+    """真的跑一遍 argv 指向的解释器，回 `{"python": 它自报的路径, "version": (major, minor)}`。
+
+    判据是执行，不是文件名：Windows 商店的 App Execution Alias 叫 `python3.exe`，
+    退出码 9009、零输出；pyenv 的 shim 可能指向一个没装的版本；`py -3.13` 这种
+    启动器命令要它自己说出 `sys.executable` 才知道解释器在哪。起不来 / 不是
+    Python / 超时一律回 None。
+    """
+    try:
+        proc = subprocess.run(
+            [*argv, "-c", _PROBE_VERSION], capture_output=True, text=True, timeout=timeout
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    parts = (proc.stdout or "").strip().split(" ", 2)
+    try:
+        version = (int(parts[0]), int(parts[1]))
+    except (IndexError, ValueError):
+        return None
+    reported = parts[2].strip() if len(parts) == 3 else ""
+    python = reported if reported and os.path.isfile(reported) else argv[0]
+    return {"python": python, "version": version}
+
+
+def _venv_base_candidates(explicit: "str | None" = None) -> "list[list[str]]":
+    """建自管 venv 的基础解释器候选（argv 形式，按优先级，只列磁盘上存在的）。
+
+    显式 `--python` 只认它一个——指错了如实报错，不悄悄换（与 `TAVOTTO_MCP_PYTHON`
+    同一条纪律）。否则：当前解释器 → PATH 上带版本号的名字（新的在前）→ 常见安装
+    位置（Codex 桌面壳起的进程 PATH 往往只有 `/usr/bin:/bin`，Homebrew / python.org
+    装的解释器根本不在里面，而 `/usr/bin/python3` 正是那个太老的）→ Windows 的
+    `py` 启动器（它知道 python.org 装的每个版本在哪）→ PATH 上的裸 `python3` / `python`。
+    """
+    if explicit:
+        return [[explicit]]
+    out: "list[list[str]]" = [[sys.executable]]
+    for minor in _SUPPORTED_MINORS:
+        which = shutil.which(f"python3.{minor}")
+        if which:
+            out.append([which])
+    if os.name == "nt":
+        # python.org 的安装器默认带 `py` 启动器，它知道每个装过的版本在哪——不在这里
+        # 抄 Windows 的安装路径规则（路径规则归定位器，tests/test_codex_plugin.py 看着）
+        py = shutil.which("py")
+        if py:
+            out.extend([py, f"-3.{minor}"] for minor in _SUPPORTED_MINORS)
+    else:
+        for minor in _SUPPORTED_MINORS:
+            out.append([f"/opt/homebrew/bin/python3.{minor}"])
+            out.append([f"/usr/local/bin/python3.{minor}"])
+            out.append(
+                [f"/Library/Frameworks/Python.framework/Versions/3.{minor}/bin/python3.{minor}"]
+            )
+    for name in ("python3", "python"):
+        which = shutil.which(name)
+        if which:
+            out.append([which])
+    seen, uniq = set(), []
+    for argv in out:
+        if len(argv) == 1 and not os.path.isfile(argv[0]):
+            continue
+        key = " ".join(_interp_key(argv[0]) if i == 0 else a for i, a in enumerate(argv))
+        if key not in seen:
+            seen.add(key)
+            uniq.append(argv)
+    return uniq
+
+
+def find_venv_base(explicit: "str | None" = None) -> "tuple[str | None, list[dict]]":
+    """挑第一个在支持区间内的基础解释器；回 (它的路径或 None, 逐个试过的记录)。
+
+    记录里每条都带它自报的版本——失败时用户要看到的是「`/usr/bin/python3` 是 3.9」，
+    而不是一句「没找到」。
+    """
+    tried: "list[dict]" = []
+    for argv in _venv_base_candidates(explicit):
+        info = _probe_python(argv)
+        version = info["version"] if info else None
+        entry = {
+            "python": " ".join(argv),
+            "version": f"{version[0]}.{version[1]}" if version else None,
+            "supported": _python_supported(version),
+        }
+        tried.append(entry)
+        if entry["supported"]:
+            return info["python"], tried
+    return None, tried
 
 
 def _configured_worker_python() -> "str | None":
@@ -446,7 +571,7 @@ def engine_too_old_hint(have: str, required: str, plugin: "str | None" = None) -
     who = f"插件 {plugin} 需要" if plugin else "这个插件需要"
     return (
         f"这台机器上的 Tavotto 是 {have}，而{who} {required} 或更新的引擎："
-        f"桥要 import 的那组引擎模块在 {have} 里还没有，所以 Codex 里的内嵌画布与七个"
+        f"桥要 import 的那组引擎模块在 {have} 里还没有，所以 Codex 里的内嵌画布与整组"
         "工具都起不来（交接——把图交给 Tavotto 窗口打开——不受影响，那条路只要求 CLI "
         "能执行）。恢复：**升级引擎**（`pipx upgrade tavotto`，或 `pip install -U "
         "tavotto`；桌面版用户升级桌面版），或者反过来把插件退回与这台引擎匹配的那一版。"
@@ -510,9 +635,9 @@ def diagnose_resolved(found: dict, resolution: dict) -> "tuple[str, str]":
 
 
 # ------------------------------- 降级 server --------------------------------
-#: 正常模式下的七个工具名。降级模式**不把它们列进 tools/list**（列了就是
-#: 伪装成可用），但对着旧会话里模型记住的名字调用时，回结构化错误而不是
-#: method_not_found——错误里说清缺什么、怎么修。
+#: 正常模式下 `tavotto_health` 之外的全部工具名。降级模式**不把它们列进
+#: tools/list**（列了就是伪装成可用），但对着旧会话里模型记住的名字调用时，
+#: 回结构化错误而不是 method_not_found——错误里说清缺什么、怎么修。
 NORMAL_TOOLS = (
     "tavotto_open_figure",
     "tavotto_apply_overrides",
@@ -521,6 +646,7 @@ NORMAL_TOOLS = (
     "tavotto_export",
     "tavotto_verify_replay",
     "tavotto_refresh_project",
+    "tavotto_session_state",
     "tavotto_close_session",
 )
 
@@ -778,6 +904,22 @@ def health() -> "tuple[dict, int]":
         else:
             code, hint = diagnose_resolved(found, resolution)
             report.update(code=code, error=hint, recovery=_recovery_steps(code))
+            # 恢复步骤第一条是 --provision：先替它把「拿什么建 venv」探一遍，让读体检
+            # 的人（多半是模型）看得到「启动器是 3.9、但机器上有 3.13 可用」这一行，
+            # 而不是等 pip 的那句 "No matching distribution found" 再来猜。
+            base, tried = find_venv_base()
+            report["provision"] = {
+                "launcher_python": sys.executable,
+                "launcher_version": f"{sys.version_info[0]}.{sys.version_info[1]}",
+                "python_range": python_range_text(),
+                "base": base,
+                "tried": tried,
+            }
+            if base is None:
+                report["notes"].append(
+                    f"这台机器上没有 Python {python_range_text()} 的解释器，--provision 会以"
+                    " no_supported_python 失败：先装一个（或走 pipx）。"
+                )
     report["timings"] = {"health_ms": int((time.monotonic() - t0) * 1000)}
     return report, (0 if report["ok"] else 3)
 
@@ -793,11 +935,18 @@ def _plugin_version() -> "str | None":
     return version if isinstance(version, str) and version.strip() else None
 
 
-def provision(spec: "str | None" = None) -> "tuple[dict, int]":
+def provision(spec: "str | None" = None, python_base: "str | None" = None) -> "tuple[dict, int]":
     """`--provision`：建插件自管 venv 并装引擎（钉在插件版本上，可复现）。
 
     * 只写 Tavotto 配置目录下的 `mcp-runtime/`——**绝不动**系统 Python、
       Conda、用户 site-packages、shell 配置；
+    * **基础解释器先验版本再建 venv**（`find_venv_base()`）：启动本文件的
+      `python3` 不一定在引擎的支持区间里（macOS 上它常是 Xcode CLT 的 3.9），
+      venv 会原样继承它的版本，然后 pip 只会说一句 "No matching distribution
+      found"。区间外就换一个候选；一个都没有就以 `no_supported_python` 失败并把
+      每个候选的版本说出口——**不在区间外的解释器上起 pip**。上一次在区间外
+      解释器上建出来的 venv 也照此重建（`venv --clear`）。`--python` 显式指定
+      时只认它一个：先验它，已有的 venv 也换到它上面，指错了如实报错；
     * 默认装 `tavotto[worker]==<插件版本>`（版本与插件同步发版；`[worker]`
       带上 matplotlib/numpy——pip 形态的引擎发现不了桌面 App 里的内置
       runtime，自管环境不自带渲染栈的话，没有科学栈的机器上 open 第一步
@@ -833,24 +982,71 @@ def provision(spec: "str | None" = None) -> "tuple[dict, int]":
         return proc.returncode == 0
 
     os.makedirs(root, exist_ok=True)
-    if not os.path.isfile(python):
-        if not _run([sys.executable, "-m", "venv", venv_dir], "venv"):
+    # 已有的 venv 也要验：它继承了当年那个基础解释器的版本。区间外 / 已坏就重建，
+    # 否则用户删目录之前每次重跑都撞同一堵墙。
+    existing = _probe_python([python]) if os.path.isfile(python) else None
+    venv_version = existing["version"] if existing else None
+    # 显式 --python 就是「用这个建」：已有的 venv 在不在区间内都不算数，先验它、再换到它
+    # 上面——否则指错了也会静默沿用旧环境报成功（#453 评审 P2）
+    if python_base or not _python_supported(venv_version):
+        base, tried = find_venv_base(python_base)
+        steps.append({"step": "base", "ok": base is not None, "python": base, "tried": tried})
+        if base is None:
+            listed = "；".join(
+                f"{t['python']} 是 {t['version']}" if t["version"] else f"{t['python']} 起不来"
+                for t in tried
+            )
+            return (
+                {
+                    "ok": False,
+                    "code": "no_supported_python",
+                    "steps": steps,
+                    "tried": tried,
+                    "error": (
+                        f"这台机器上找不到 Python {python_range_text()} 的解释器来建自管环境"
+                        f"（{listed}），而 {spec} 只装得进这个区间。"
+                    ),
+                    "recovery": [
+                        f"装一个 Python {python_range_text()}（python.org 安装包、"
+                        "`brew install python@3.13`、`winget install Python.Python.3.13`），"
+                        "然后重跑同一条 --provision（它会自己找到新装的那个）",
+                        "或者用 --python <解释器路径> 明确指一个",
+                        '或者 pipx install "tavotto[worker]"（pipx 自己管解释器）',
+                    ],
+                },
+                1,
+            )
+        argv = [base, "-m", "venv"]
+        if os.path.isdir(venv_dir):
+            argv.append("--clear")  # 上一次在区间外解释器上建的：整个换掉，不在旧壳上叠
+        argv.append(venv_dir)
+        if not _run(argv, "venv"):
             return (
                 {
                     "ok": False,
                     "code": "provision_failed",
                     "steps": steps,
-                    "error": f"建不出 venv（基础解释器 {sys.executable}）",
+                    "error": f"建不出 venv（基础解释器 {base}）",
                 },
                 1,
             )
+        # venv 继承基础解释器的版本；它能不能用由下面的 `_importable` 验，不再探一次
+        venv_version = tuple(int(x) for x in tried[-1]["version"].split("."))
     if not _run([python, "-m", "pip", "install", "--upgrade", spec], "pip"):
+        # 走到这里基础解释器已经验过在区间内，所以剩下的多半是索引侧：离线、或 pip
+        # 镜像还没同步这一版（新版发出当天在国内镜像上常见）。
+        version_text = f"{venv_version[0]}.{venv_version[1]}" if venv_version else "?"
         return (
             {
                 "ok": False,
                 "code": "provision_failed",
                 "steps": steps,
-                "error": f"pip install {spec} 失败（离线？给 --from 指一个本地 wheel 或源码目录）",
+                "error": (
+                    f"pip install {spec} 失败。基础解释器是 Python {version_text}，在支持"
+                    "区间内，所以不是版本问题——多半是离线，或 pip 镜像还没同步这一版："
+                    "设 PIP_INDEX_URL=https://pypi.org/simple 后重跑，"
+                    "或给 --from 指一个本地 wheel / 源码目录"
+                ),
             },
             1,
         )
@@ -865,9 +1061,11 @@ def provision(spec: "str | None" = None) -> "tuple[dict, int]":
             },
             1,
         )
+    python_version = f"{venv_version[0]}.{venv_version[1]}" if venv_version else None
     marker = {
         "spec": spec,
         "python": python,
+        "python_version": python_version,
         "provisioned_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     try:
@@ -879,6 +1077,7 @@ def provision(spec: "str | None" = None) -> "tuple[dict, int]":
         {
             "ok": True,
             "python": python,
+            "python_version": python_version,
             "spec": spec,
             "steps": steps,
             "ms": int((time.monotonic() - t0) * 1000),
@@ -896,23 +1095,21 @@ def main() -> int:
         print(json.dumps(report, ensure_ascii=False))
         return rc
     if "--provision" in argv:
-        spec = None
-        if "--from" in argv:
-            at = argv.index("--from")
-            spec = argv[at + 1] if at + 1 < len(argv) else None
-            if spec is None:
-                print(
-                    json.dumps(
-                        {
-                            "ok": False,
-                            "code": "bad_args",
-                            "error": "--from 后面要跟 wheel/源码目录/requirement",
-                        },
-                        ensure_ascii=False,
+        values = {}
+        for flag, what in (("--from", "wheel/源码目录/requirement"), ("--python", "解释器路径")):
+            values[flag] = None
+            if flag in argv:
+                at = argv.index(flag)
+                values[flag] = argv[at + 1] if at + 1 < len(argv) else None
+                if values[flag] is None:
+                    print(
+                        json.dumps(
+                            {"ok": False, "code": "bad_args", "error": f"{flag} 后面要跟{what}"},
+                            ensure_ascii=False,
+                        )
                     )
-                )
-                return 2
-        report, rc = provision(spec)
+                    return 2
+        report, rc = provision(values["--from"], python_base=values["--python"])
         print(json.dumps(report, ensure_ascii=False))
         return rc
 
