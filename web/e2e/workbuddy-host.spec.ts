@@ -644,12 +644,10 @@ test("hostContext：英文宿主 → 英文画布；host-context-changed 切回�
       colorScheme: getComputedStyle(el).colorScheme,
       bodyBg: getComputedStyle(document.body).backgroundColor,
     }));
-    test
-      .info()
-      .annotations.push({
-        type: "theme-dark-host",
-        description: JSON.stringify(themeFacts),
-      });
+    test.info().annotations.push({
+      type: "theme-dark-host",
+      description: JSON.stringify(themeFacts),
+    });
     // 会话中途切语言：WorkBuddy 文档说 locale「不变」，这里只记录事实不判——
     // 2026-09-23 实测属性页 / 预检列表切过去了，顶栏（McpApp 的 mc() 文案）没有重渲染
     await page.evaluate(() =>
