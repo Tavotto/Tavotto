@@ -2572,7 +2572,11 @@ class TestCacheSeed:
         for job_id in TestBuildReuseAndCaches.PNPM_CACHED - {self.SEED}:
             consumer_oses |= _job_oses(job_id)
         seed_oses = {leg["os"] for leg in self._legs() if leg["pnpm"] == "true"}
-        assert consumer_oses == seed_oses == _HOSTED_RUNNERS, (consumer_oses, seed_oses)
+        # 三个 OS 各一档（不是 _HOSTED_RUNNERS：Intel 镜像只在发行链上用，ci.yml 里没有它）
+        assert consumer_oses == seed_oses == set(_RUNNER_OS_LABEL.values()), (
+            consumer_oses,
+            seed_oses,
+        )
         seed_steps = _steps(_job(CI, self.SEED))
         gated = [st for st in seed_steps if re.search(r"(?m)^\s*if: matrix\.pnpm == true$", st)]
         assert len(gated) == 3, [_step_name(s) or s.splitlines()[0] for s in gated]
@@ -2613,8 +2617,9 @@ class TestCacheSeed:
 # ============================================================ runner 信任区（CI04）
 #: GitHub 托管 runner 的名字——**枚举**，不是「不含 self-hosted 就算托管」的否定式。
 #: 加一类托管 runner（比如 `ubuntu-24.04-arm`）要回到这里登记一次，顺便被问一句
-#: 「它是托管的吗」。
-_HOSTED_RUNNERS = frozenset({"ubuntu-latest", "macos-latest", "windows-latest"})
+#: 「它是托管的吗」。`macos-26-intel` 是 GitHub 托管的 Intel 镜像（ADR 0076，只有
+#: desktop-tauri.yml 的发行构建用它；那条 workflow 不监听 PR 事件）。
+_HOSTED_RUNNERS = frozenset({"ubuntu-latest", "macos-latest", "windows-latest", "macos-26-intel"})
 
 #: 注册 self-hosted runner 时 GitHub 自动打上的标签（`self-hosted` + OS + 架构）。
 #: actionlint 认得它们，所以它们不用出现在 `.github/actionlint.yaml` 里；

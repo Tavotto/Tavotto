@@ -64,15 +64,30 @@ def test_lock_declares_the_targets_we_actually_ship(lock):
     assert "macos-arm64" in shipped
 
 
-def test_intel_mac_is_locked_but_honestly_marked_unshipped(lock):
-    """Intel 的目标锁着是为了「要发时不用临时定版本」，但**没构建过也没冒烟过**
-    （CI 只有 Apple Silicon 一档 runner）。
+def test_every_shipped_macos_target_has_a_native_desktop_leg(lock):
+    """shipped=true 的 macOS 目标，发行链里必须有一条**该架构的**原生构建腿（ADR 0076）。
 
-    标成 shipped=true 而没有对应的构建/冒烟，就是「空转的门禁还在报平安」。
-    真要发 Intel 版，先有 runner 与真实绘图冒烟，再改这个标记和 README。
+    判据的主语：desktop-tauri.yml build 矩阵里 `arch:` 的取值集合（macOS 腿），
+    与锁文件里 shipped 的 macOS 目标的 arch 集合**相等**。
+    shipped 而没有那条腿 = 锁文件说在发、实际没人构建也没人冒烟（从前的 Intel 就是
+    反过来的那一半：锁着没发）；有腿而没 shipped = spec 的 REQUIRE_RUNTIME 闸会把
+    那条腿当场拦下，发行链红在构建机上。
     """
-    t = lock["targets"]["macos-x86_64"]
-    assert t.get("shipped") is False, "要把 Intel 改成 shipped，得先有 Intel runner 上的真实冒烟"
+    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
+    legs = re.findall(
+        r"\{ os: (macos-[\w-]+),\s+bundles: app,\s+artifact: [\w-]+,\s+arch: (\w+) \}", wf
+    )
+    assert legs, "desktop-tauri.yml 里一条 macOS 构建腿都没解析到——读取器失明了，别信下面的绿"
+    leg_arches = {arch for _, arch in legs}
+    shipped = {
+        t["arch"] for t in lock["targets"].values() if t["os"] == "macos" and t.get("shipped")
+    }
+    assert leg_arches == shipped, (leg_arches, shipped)
+    intel = [os for os, arch in legs if arch == "x86_64"]
+    assert intel and all(os.endswith("-intel") for os in intel), (
+        f"x86_64 的 macOS 腿必须跑在原生 Intel runner（*-intel）上：{intel}"
+        "——Rosetta 或交叉构建都证明不了内置 runtime 能在 Intel 上 import + 画图"
+    )
 
 
 @pytest.mark.parametrize("name", ALL_TARGETS)
@@ -459,9 +474,13 @@ def test_check_runtime_dir_rejects_an_unshipped_target_in_release_builds(tmp_pat
     """`shipped=false` = 「锁着版本，但没构建过也没冒烟过，不许发」。
 
     构建脚本里那句只是 warning，构建照常继续；发行链上以前没有任何一道闸
-    拦它。`macos-latest` 这种浮动 runner 哪天换成 Intel，我们就会把一个
-    文档里明写着「不支持 Intel」的目标发出去，而且全程绿灯。
+    拦它。浮动 runner 哪天换了架构，我们就会把一个文档里明写着「不支持」的
+    目标发出去，而且全程绿灯。
+
+    Intel 自 ADR 0076 起 shipped=true，锁文件里眼下没有 shipped=false 的目标——
+    这里把它**就地改回** false 来造样例，闸本身的判据不变。
     """
+    lock["targets"]["macos-x86_64"]["shipped"] = False
     path = _write_manifest(tmp_path, lock, "macos-x86_64")
     with pytest.raises(brt.BuildError, match="shipped=false"):
         brt.check_runtime_dir(path, require_smoke=True, host=("macos", "x86_64"))

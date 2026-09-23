@@ -26,13 +26,14 @@
       "gates": "macos-app-smoke + 签完名的 .app 从中文+空格路径冒烟"
     },
     {
-      "id": "macos-x86_64",
-      "label": "macOS Intel",
-      "label_en": "macOS Intel",
-      "status": "unsupported",
-      "channel": "pip / pipx（浏览器模式）",
-      "en": "No desktop build (never built or smoke-tested on Intel hardware). Use the PyPI browser mode instead: `pipx install \"tavotto[worker]\"`.",
-      "note": "桌面产物没构建过也没冒烟过（runtime-lock 里 shipped=false，CI 无 Intel runner）。宣传物料不得写「支持 Intel」。"
+      "id": "macos-x86_64-desktop",
+      "label": "macOS Intel 桌面版",
+      "label_en": "macOS Intel desktop",
+      "status": "supported",
+      "channel": "独立的 Intel dmg（签名 + 公证；含 x86_64 内置渲染 runtime）",
+      "en": "A separate signed and notarized `-Intel.dmg` with an x86_64 bundled rendering runtime — download the `-macOS-Intel.dmg` below.",
+      "gates": "desktop-tauri 的 macos-26-intel 腿：与 Apple Silicon 同一套真产物冒烟 + 签完名的 .app 从中文+空格路径冒烟",
+      "note": "ADR 0076：按架构各发一个 dmg，不做 universal2。Intel 在原生 Intel runner 上构建与冒烟；GitHub 的 Intel runner 有退役日期，退役前要换成自备 Intel 机器，否则这一档要降级。"
     },
     {
       "id": "windows-arm64",

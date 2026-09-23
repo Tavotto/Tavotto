@@ -5,7 +5,8 @@
 
 - **runner 信任区的静态守卫（CI04，2026-09-16）**：`tests/test_merge_queue_workflows.py::TestRunnerTrustZones` 四条——
   监听 `pull_request` / `pull_request_target` / `merge_group` 的每个 workflow，全部 job 的 `runs-on`（矩阵展开、经本仓库可复用
-  workflow 递归）⊆ `{ubuntu-latest, macos-latest, windows-latest}`；`tavotto-lab` 只在 `_lab-qualification.yml`（只可
+  workflow 递归）⊆ 托管 runner 枚举 `{ubuntu-latest, macos-latest, windows-latest, macos-26-intel}`（`macos-26-intel` 是 GitHub
+  托管的 Intel 镜像，2026-09-23 为 ADR 0076 登记；只有不监听 PR 事件的 desktop-tauri.yml 用它）；`tavotto-lab` 只在 `_lab-qualification.yml`（只可
   `workflow_call`），调用方只有 `lab-ci.yml` / `release.yml`、事件 ⊆ `{push, schedule, workflow_dispatch}`；每个 workflow 的事件
   ⊆ 闭集 `{push, pull_request, merge_group, schedule, workflow_dispatch, workflow_call}`（`pull_request_target` 不在里面，加任何新事件
   先来登记）；`.github/actionlint.yaml` 的自定义标签集合 **==** 实际用到的自托管标签集合——**未部署的池不进配置**，预留一个标签也红，

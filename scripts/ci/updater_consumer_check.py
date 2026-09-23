@@ -4,7 +4,7 @@
 回答的问题：**已经发出去的那些字节**，更新器插件真的消费得了吗？
 
 发布链上每一条既有绿灯量的都是生产者侧的替身指标——zip 存在、.sig 存在、
-文件名匹配、清单两平台齐全。没有任何一步以真实消费者（tauri-plugin-updater）
+文件名匹配、清单各平台齐全。没有任何一步以真实消费者（tauri-plugin-updater）
 的身份去消费产物，于是「签名后重打 zip 用了 deflate、插件只解得开 STORED」
 这个 bug 让 Windows 应用内更新从 v0.7.0 起坏了四个版本，而整条链全绿。
 
@@ -61,8 +61,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TAURI_CONF = REPO_ROOT / "src-tauri" / "tauri.conf.json"
 
 # 与 make_updater_manifest 的 --require 同一份硬要求：少一个平台 = 那个平台的
-# 用户永远收不到更新，而且全绿。
-REQUIRED_PLATFORMS = ("darwin-aarch64", "windows-x86_64")
+# 用户永远收不到更新，而且全绿。darwin-x86_64 自 ADR 0076 起加入——**刻意不按
+# 版本号开关**：在第一个带 Intel 包的版本发出去之前，线上 latest.json 缺它，
+# nightly 的这一格是预期红（与 #101 那次同形状），发版即转绿。
+REQUIRED_PLATFORMS = ("darwin-aarch64", "darwin-x86_64", "windows-x86_64")
 
 EXIT_OK = 0
 EXIT_ASSERTION = 1
@@ -283,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         _summary(f"### ❌ 线上更新链消费不了\n\n```\n{e}\n```\n")
         return EXIT_ASSERTION
     _summary(f"### ✅ 线上更新链消费者保真检查通过（version {version}）\n")
-    print(f"✓ 线上 version {version}：两平台验签 + 消费者解包全部通过")
+    print(f"✓ 线上 version {version}：{len(REQUIRED_PLATFORMS)} 个平台验签 + 消费者解包全部通过")
     return EXIT_OK
 
 

@@ -24,7 +24,7 @@
 
 ## 内置渲染 runtime（Windows 2026-08-17；macOS 2026-08-18）
 
-**两个桌面安装包都自带一套 Tavotto 私有的 Python 渲染环境**，用户不需要先装
+**每个桌面安装包都自带一套 Tavotto 私有的 Python 渲染环境**，用户不需要先装
 Python，首次渲染也不联网：
 
     Windows: Tavotto.exe → _internal\runtime\python.exe    → engine/worker.py → 用户的脚本
@@ -45,10 +45,10 @@ Python，首次渲染也不联网：
   更新锁文件时才跑的那一档）。**别手写闭包**——漏掉的传递依赖会在用户机器上以
   ModuleNotFoundError 出现。产物在仓库根的 `runtime/`，进 .gitignore，并在
   pyproject 里显式 exclude（wheel/sdist 绝不能被它污染）。
-- **架构范围如实记录**：目前只发 **macOS arm64**；`macos-x86_64` 标着
-  `shipped: false`（锁着版本但**没构建过也没冒烟过**，CI 没有 Intel runner）。
-  不产出 universal2——科学栈 wheel 分架构发布，硬拼没验证过。
-  改这条之前不许在 README 里写「支持 Intel」。
+- **架构范围如实记录**（ADR 0076）：macOS **按架构各发一个 dmg**——arm64 与
+  x86_64 都 `shipped: true`，Intel 那份只在原生 Intel runner（`macos-26-intel`）上
+  构建与冒烟。不产出 universal2——科学栈 wheel 分架构发布，硬拼没验证过。
+  shipped 的 macOS 目标 == 发行矩阵里的 macOS 腿架构（`test_every_shipped_macos_target_has_a_native_desktop_leg`）。
 - **`engine/runtime.py` 是路径判断的唯一出处**（frozen 的 `_MEIPASS` / exe 同级 /
   源码树 / `TAVOTTO_RUNTIME_DIR` 覆盖）。这一段**全程 os.path 拼字符串，一个
   pathlib 都不用**：`Path()` 按 `os.name` 分派，在别的平台上构造另一半直接抛
@@ -116,7 +116,7 @@ Python，首次渲染也不联网：
   **全部平台无关**）+ `tests/test_runtime_build.py`（锁文件分层、布局、
   `._pth`、构建判据、打包卫生，另有几条只在本机构建过 runtime 时才跑的
   **真 import + 真绘图**用例）+ CI 的 `windows-exe-smoke` 与 desktop-tauri 的
-  两条腿（见 `.github/AGENTS.md`）。
+  三条腿（Windows / macOS arm64 / macOS x86_64，见 `.github/AGENTS.md`）。
 - **别把「借一个解释器」加回冒烟**：macOS 这条腿一度现建 worker-env 再设
   `TAVOTTO_WORKER_PYTHON`，于是「runtime 根本没打进去」全程绿灯——空转的门禁比
   没有门禁更坏（`test_macos_ci_no_longer_fakes_a_worker_env` 看护）。

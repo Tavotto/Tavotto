@@ -68,6 +68,11 @@ def _by_name(name: str, events):
         ("Tavotto-0.8.0-Windows-Setup.exe", "installer", "windows"),
         ("Tavotto.app.tar.gz", "updater", "macos"),
         ("Tavotto.app.tar.gz.sig", "checksum", "macos"),
+        # Intel 包（ADR 0076）：平台仍是 macos——统计不按架构拆，名字多一个 `-Intel`
+        # 不能让它掉进 sdist（`*.tar.gz`）或 other
+        ("Tavotto-0.17.0-macOS-Intel.dmg", "installer", "macos"),
+        ("Tavotto-Intel.app.tar.gz", "updater", "macos"),
+        ("Tavotto-Intel.app.tar.gz.sig", "checksum", "macos"),
         ("Tavotto_0.8.0_x64-setup.nsis.zip", "updater", "windows"),
         ("Tavotto_0.8.0_x64-setup.nsis.zip.sig", "checksum", "windows"),
         ("latest.json", "update_check", "any"),

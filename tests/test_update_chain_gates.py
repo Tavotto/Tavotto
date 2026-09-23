@@ -27,8 +27,12 @@ from __future__ import annotations
 
 import itertools
 import re
+import shlex
+import shutil
+import subprocess
 import sys
 import tarfile
+import textwrap
 from fnmatch import fnmatchcase
 from pathlib import Path
 
@@ -41,6 +45,7 @@ CI_DIR = ROOT / "scripts" / "ci"
 sys.path.insert(0, str(CI_DIR))
 
 import updater_consumer_check as UCC  # noqa: E402
+from tavotto.engine import brand  # noqa: E402
 
 # ============================================================ 探针 = 插件能力面
 
@@ -723,3 +728,86 @@ def test_every_pattern_download_is_followed_by_a_roll_call_that_mirrors_the_uplo
             f'{where}: 点名的结论没有进退出码（少了 exit "$missing"）——红了也不红'
         )
         assert "::error::" in run and "$name" in run, f"{where}: 报文没点到是哪个 artifact 没下到"
+
+
+# ---------------------------------------------------------------------------
+# 桌面产物的「文件名 → 角色 / 平台」映射（ADR 0076）。两个 macOS 架构的名字只差
+# 一个 `-Intel`，这张表写在 desktop-tauri.yml 的 shell `case` 里——判据直接把那段
+# case 抠出来交给 bash 跑，不在测试里另抄一份（抄的那份永远和自己一致）。
+# ---------------------------------------------------------------------------
+#: Windows 上 PATH 里的 `bash` 通常是 `C:\Windows\System32\bash.exe`——WSL 的启动器，没装发行版
+#: 时它只打印「Windows Subsystem for Linux has no installed distributions」然后退出 1（windows-latest
+#: 实测，PR #505）。那样「映射对不对」全红（假红），「认不出就失败」全绿（**假绿**：bash 根本没跑）。
+#: 这段 case 是纯字符串匹配、没有平台分支，ubuntu / macOS 腿上是真 bash 真执行，Windows 上不跑。
+_NEEDS_REAL_BASH = pytest.mark.skipif(
+    sys.platform == "win32" or shutil.which("bash") is None,
+    reason="需要真 bash（Windows 上 PATH 里的 bash 是 WSL 启动器；这段 case 在 POSIX 腿上执行）",
+)
+
+
+def _role_case_block() -> str:
+    src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
+    m = re.search(r'(?ms)^(\s*)case "\$base" in\n.*?^\1esac\n', src)
+    assert m, "desktop-tauri.yml 里找不到产物清单那段 case——读取器失明了"
+    return textwrap.dedent(m.group(0))
+
+
+def _classify(base: str) -> tuple[int, str]:
+    # APP_NAME 在 workflow 里由「产品名」那一步从 brand 常量写进 GITHUB_ENV；这里同源取
+    script = (
+        f"APP_NAME={shlex.quote(brand.PRODUCT_NAME)}\n"
+        f"base={shlex.quote(base)}\nfor _ in 1; do\n{_role_case_block()}"
+        'echo "$role $plat"\ndone\n'
+    )
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8")
+    return proc.returncode, proc.stdout.strip()
+
+
+@_NEEDS_REAL_BASH
+@pytest.mark.parametrize(
+    ("base", "want"),
+    [
+        ("Tavotto-0.17.0-macOS.dmg", "macos-installer darwin-aarch64"),
+        ("Tavotto-0.17.0-macOS-Intel.dmg", "macos-intel-installer darwin-x86_64"),
+        (f"{brand.PRODUCT_NAME}.app.tar.gz", "macos-updater darwin-aarch64"),
+        (f"{brand.PRODUCT_NAME}-Intel.app.tar.gz", "macos-intel-updater darwin-x86_64"),
+        ("Tavotto-0.17.0-Windows-Setup.exe", "windows-installer windows-x86_64"),
+        ("Tavotto_0.17.0_x64-setup.nsis.zip", "windows-updater windows-x86_64"),
+        ("Tavotto.app.tar.gz.sig", ""),
+    ],
+)
+def test_desktop_artifact_names_map_to_exactly_one_role_and_arch(base, want):
+    code, out = _classify(base)
+    assert code == 0, (base, out)
+    assert out == want, (base, out)
+
+
+@_NEEDS_REAL_BASH
+@pytest.mark.parametrize("base", ["Tavotto-0.17.0-macOS-universal.dmg", "Tavotto-x.app.tar.gz"])
+def test_a_mac_artifact_of_unknown_arch_fails_instead_of_being_skipped(base):
+    """认不出架构的 dmg / 更新包必须失败——落进 `*) continue` 就是静默少一个安装包。"""
+    code, _ = _classify(base)
+    assert code != 0, base
+
+
+def test_mac_updater_names_in_the_workflow_come_from_the_brand_constant():
+    """更新包名在 workflow 里只经 `${APP_NAME}` 出现（取自 brand.PRODUCT_NAME）。
+
+    上面那组行为用例在「字面量恰好等于当前品牌名」时照样绿——写死与引用在今天
+    不可区分，要到改名那天才分叉。所以这里直接看源：产出更新包的那一行与 case
+    里两条更新包模式都得引用 APP_NAME，且 APP_NAME 由读 brand 的那一步写入。
+    """
+    src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
+    assert "from tavotto.engine import brand; print(brand.PRODUCT_NAME)" in src
+    assert 'echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"' in src
+    assert re.search(r'(?m)^\s*PKG="out/\$\{APP_NAME\}\$\{MAC_SUFFIX\}\.app\.tar\.gz"$', src), (
+        "产出更新包的那一行没有经 APP_NAME 取名"
+    )
+    updater_arms = [
+        ln.strip()
+        for ln in _role_case_block().splitlines()
+        if ".app.tar.gz" in ln and "role=" in ln
+    ]
+    assert len(updater_arms) == 2, updater_arms
+    for arm in updater_arms:
+        assert arm.startswith('"${APP_NAME}'), f"更新包模式写死了名字：{arm}"

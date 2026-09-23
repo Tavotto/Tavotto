@@ -50,7 +50,7 @@
       "size": 25053138,
       "python_rel": "bin/python3",
       "enabled": false,
-      "qualification": "none: 没有 Intel runner，锁住版本但从没构建 / 启动过（与 runtime-lock.json 的 shipped=false 同一口径）"
+      "qualification": "none: 私有 Python 在 Intel 上从没做过目标资格（ADR 0064）。渲染 runtime 已按 ADR 0076 在 macos-26-intel 上发行，那是另一份锁、另一件事"
     },
     "linux-x86_64": {
       "os": "linux",

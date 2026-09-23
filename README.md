@@ -55,12 +55,11 @@ accepted once, on 2026-08-24 with engine and plugin 0.9.2 and Codex Desktop
 re-run for the current release, and a figure handed over to the desktop window is
 not that canvas. Hosts that do not load local plugins never show the tools at all.
 
-**On the desktop.** The app for macOS (Apple Silicon) and Windows (x64) carries its
-own Python: open a figure library, click, drag, lay the page out, check it, export.
-Codex, or any terminal, can hand a figure to the window that is already open. There
-is no installer for Linux (beta, from PyPI in a browser tab) or for Intel Macs (not
-supported; the PyPI route runs there without a promise) — the one place that decides
-what is supported is [`docs/support-matrix.json`](docs/support-matrix.json).
+**On the desktop.** The app for macOS (Apple Silicon and Intel) and Windows (x64)
+carries its own Python: open a figure library, click, drag, lay the page out, check it,
+export. Codex, or any terminal, can hand a figure to the window that is already open.
+There is no installer for Linux (beta, from PyPI in a browser tab) — the one place that
+decides what is supported is [`docs/support-matrix.json`](docs/support-matrix.json).
 
 Both routes are in [Get started](#get-started); the Codex one is
 [Using Tavotto with Codex for the first time](#using-tavotto-with-codex-for-the-first-time).
@@ -379,21 +378,23 @@ Send Codex this message, in full:
 ### Desktop
 
 Download from the [latest release](https://github.com/Tavotto/Tavotto/releases/latest):
-a `.dmg` for macOS (Apple Silicon) or an `.exe` for Windows (x64; Windows on ARM is neither
-built nor verified). Install it, double-click, done — Tavotto opens in its own window and
+a `.dmg` for macOS — `-macOS.dmg` for Apple Silicon, `-macOS-Intel.dmg` for Intel Macs —
+or an `.exe` for Windows (x64; Windows on ARM is neither built nor verified). Install it, double-click, done — Tavotto opens in its own window and
 updates itself from then on.
 
-**You do not need to install Python.** Both installers carry a private Python runtime
+**You do not need to install Python.** Every installer carries a private Python runtime
 with the usual scientific stack already in it — numpy, matplotlib, pandas, scipy,
-seaborn, Pillow — pinned to the same versions on both platforms, so the same script
+seaborn, Pillow — pinned to the same versions in every installer, so the same script
 draws the same figure. Rendering works the moment the installer finishes: offline,
 without Homebrew, Conda or Xcode, and without touching a Python you already have.
 
-That runtime is also why the installers are large: **195 MB to download on macOS,
-89 MB on Windows, around half a gigabyte once installed.** Paid once, and offline.
+That runtime is also why the installers are large: **195 MB to download on macOS
+(measured on the Apple Silicon build), 89 MB on Windows, around half a gigabyte once
+installed.** Paid once, and offline.
 
-> macOS builds are **Apple Silicon (arm64) only**. Intel Macs are neither built nor
-> tested — use the PyPI install below. There is no Linux installer; Linux runs from
+> macOS ships **one `.dmg` per architecture**, each built and smoke-tested natively on
+> that architecture; pick the one that matches your Mac (Apple menu → About This Mac: *Chip*
+> means Apple Silicon, *Processor … Intel* means Intel). There is no Linux installer; Linux runs from
 > PyPI (browser mode, beta). On Windows, each release page states whether its
 > installer is code signed; an unsigned installer makes Windows show a
 > **SmartScreen** prompt on first run (choose *More info → Run anyway*, or verify

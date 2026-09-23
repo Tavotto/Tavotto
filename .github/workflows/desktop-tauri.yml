@@ -11,8 +11,10 @@ name: Desktop apps (Tauri)
 #   Windows: 官方 embeddable          → runtime\python.exe
 #   macOS:   python-build-standalone  → runtime/bin/python3.13（可重定位，逐个可签名；
 #            python/python3 两个别名在构建时剪掉，Tauri 会把符号链接拍平成真副本）
-# macOS 目前**只发 arm64**（runner 只有 Apple Silicon 一档）；Intel 的目标在
-# packaging/runtime-lock.json 里标着 shipped=false，没构建过也没冒烟过。
+# macOS **按架构各发一个 dmg**（ADR 0076）：Apple Silicon 在 macos-latest 上构建，
+# Intel 在 macos-26-intel 上**原生**构建（不交叉、不 universal2——科学栈 wheel 分架构
+# 发布，内置 runtime 必须在它要跑的那个架构上 import + 画真图才算数）。
+# 两条 macOS 腿走完全相同的步骤；架构由 matrix.arch 写死，不从 runner 推断。
 #
 # 验收原则：门禁打的是**最终用户启动的产物**——
 # 1. sidecar 冒烟（scripts/smoke_desktop.py）对 PyInstaller 真二进制走完整链路：
@@ -186,9 +188,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `arch` 是这条腿**应当**产出的架构，架构核对与签名验收拿它当期望值。
+        # 从前那里写的是 `platform.machine()`——问的是「runner 是什么」，于是
+        # `macos-latest` 哪天换了架构，核对照样绿（主语错了）。
         include:
-          - { os: macos-latest,   bundles: app,  artifact: dmg }
-          - { os: windows-latest, bundles: nsis, artifact: nsis }
+          - { os: macos-latest,   bundles: app,  artifact: dmg,       arch: arm64 }
+          - { os: macos-26-intel, bundles: app,  artifact: dmg-intel, arch: x86_64 }
+          - { os: windows-latest, bundles: nsis, artifact: nsis,      arch: x86_64 }
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ${{ matrix.os }}
     permissions:
@@ -203,6 +209,11 @@ jobs:
     env:
       # tag 触发时 inputs 为空，一律经这个变量取目标 tag
       RELEASE_TAG: ${{ inputs.tag || format('v{0}', inputs.version) }}
+      # macOS 产物文件名里的架构后缀（ADR 0076）。Apple Silicon 沿用历史文件名
+      # `Tavotto-<ver>-macOS.dmg` / `Tavotto.app.tar.gz`——官网链接、下载量统计与
+      # 已装用户的更新清单都认它；Intel 带 `-Intel`。
+      # （job 级 env 里没有 runner 上下文，按 matrix.artifact 判——只有 Intel 那条腿是 dmg-intel。）
+      MAC_SUFFIX: ${{ matrix.artifact == 'dmg-intel' && '-Intel' || '' }}
       # 发行构建 = 产物会挂上 Release。签名门禁按它分岔：发行构建缺任一
       # 签名/公证凭据必须**失败**而不是 warning（1.0 审计 P1-07）；
       # 非发行的 dispatch 构建（attach=false）保留降级路径，便于试构建。
@@ -241,7 +252,7 @@ jobs:
         # **Windows 的 Authenticode 是唯一的例外，而且是自觉的**（2026-08-22，
         # v0.9.0 第一次真正触发这道门禁时定的）：SignPath Foundation 的开源订阅
         # 要外部审批，拿不到之前这条硬失败挡掉的不是「未签名的安装包」，而是
-        # **整个 Windows 桌面版**——连带 updater-manifest 的两平台硬要求一起
+        # **整个 Windows 桌面版**——连带 updater-manifest 的多平台硬要求一起
         # 落空，于是 macOS 用户也收不到更新（latest.json 根本不合成）。
         # 「Windows 用户没有安装包、macOS 用户没有更新」比「Windows 安装包未签名」
         # 坏得多，而后者正是 0.8.0 及更早一直在发的形态，不是本次新增的风险。
@@ -287,6 +298,19 @@ jobs:
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.13" }
+
+      - name: 产品名（brand 常量是唯一出处）
+        # 更新包名 = `<产品名>[-Intel].app.tar.gz`，下面产出它的那一步、登记角色的
+        # case、以及 make_updater_manifest.py 认它的精确模式，三处都从这里取——
+        # 品牌改了而某一处还写着旧名，包照样造得出来、清单却认不出，发行链缺平台。
+        # brand.py 是纯常量模块，不需要装任何依赖。
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_NAME="$(PYTHONPATH=src python -c 'from tavotto.engine import brand; print(brand.PRODUCT_NAME)')"
+          test -n "$APP_NAME" || { echo "::error::读不到 brand.PRODUCT_NAME"; exit 1; }
+          echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
+
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with: { version: 11 }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -337,11 +361,11 @@ jobs:
         run: python scripts/build_desktop.py --skip-tauri
 
       - name: 壳的单测（交接契约 --open/--stem）
-        # **只在 macOS 这条腿跑一份**：解析的是纯字符串 argv，没有平台分支，
-        # 两边各跑一遍只是多花一次 debug 编译。放在 sidecar 构建之后是因为
+        # **只在 Apple Silicon 这条腿跑一份**：解析的是纯字符串 argv，没有平台 /
+        # 架构分支，各腿各跑一遍只是多花一次 debug 编译。放在 sidecar 构建之后是因为
         # build.rs 要 ../dist/Tavotto 这个资源存在才肯生成清单。
         # 契约的另一半在 Python 侧（tests/test_handoff.py::test_desktop_argv_contract）。
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.arch == 'arm64'
         working-directory: src-tauri
         run: cargo test
 
@@ -445,12 +469,13 @@ jobs:
         # 能过、公证也可能过，症状要等到用户 import 那个包时才出现
         # （"incompatible architecture"）。放在签名前是因为这一步不需要签名，
         # 而且没证书的构建（fork / 本地）也该被它挡住。
+        # 期望值取 matrix.arch（这条腿**该**产出什么），不取 runner 自报的架构。
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
           APP=src-tauri/target/release/bundle/macos/Tavotto.app
           python scripts/codesign_macos.py scan --app "$APP" --quiet \
-            --expect-arch "$(python -c 'import platform;print(platform.machine())')"
+            --expect-arch "${{ matrix.arch }}"
 
       - name: 签名 .app（含嵌套 sidecar 与内置渲染 runtime）
         if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY != ''
@@ -471,7 +496,7 @@ jobs:
         run: |
           set -euo pipefail
           APP=src-tauri/target/release/bundle/macos/Tavotto.app
-          ARCH=$(python -c "import platform;print(platform.machine())")
+          ARCH="${{ matrix.arch }}"
           # `--verify --deep` 验不出「Resources 里躺着一个没签名的 .so」——
           # 那种文件是被当作*资源*封进签名的，封条本身合法。所以必须逐个验。
           python scripts/codesign_macos.py verify --app "$APP" \
@@ -520,14 +545,14 @@ jobs:
           set -euo pipefail
           mkdir -p out
           VER="$RELEASE_TAG"; VER="${VER#v}"
-          scripts/make_dmg.sh src-tauri/target/release/bundle/macos "out/Tavotto-$VER-macOS.dmg"
+          scripts/make_dmg.sh src-tauri/target/release/bundle/macos "out/Tavotto-$VER-macOS${MAC_SUFFIX}.dmg"
 
       - name: 公证 .dmg
         if: runner.os == 'macOS' && env.APPLE_ID != ''
         run: |
           set -euo pipefail
           VER="$RELEASE_TAG"; VER="${VER#v}"
-          DMG="out/Tavotto-$VER-macOS.dmg"
+          DMG="out/Tavotto-$VER-macOS${MAC_SUFFIX}.dmg"
           codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
           CREDS="--apple-id $APPLE_ID --password $APPLE_APP_PASSWORD --team-id $APPLE_TEAM_ID"
           # shellcheck disable=SC2086
@@ -564,10 +589,13 @@ jobs:
           # 没公证（本地/无证书构建）时 stapler 会失败，那不该拦住整条链。
           xcrun stapler staple "$APP" || echo "::warning::.app 未公证，更新包不带票据"
           mkdir -p out
-          tar -czf out/Tavotto.app.tar.gz -C "$(dirname "$APP")" "$(basename "$APP")"
-          pnpm dlx @tauri-apps/cli@2.11.4 signer sign out/Tavotto.app.tar.gz
-          test -f out/Tavotto.app.tar.gz.sig || { echo "::error::签名文件没生成"; exit 1; }
-          ls -l out/Tavotto.app.tar.gz*
+          # 包名 = 产品名（APP_NAME，取自 brand）+ 架构后缀（Intel 带 `-Intel`），包里
+          # 仍是 .app 本体：更新器解开后按 .app 名替换，与文件名无关。
+          PKG="out/${APP_NAME}${MAC_SUFFIX}.app.tar.gz"
+          tar -czf "$PKG" -C "$(dirname "$APP")" "$(basename "$APP")"
+          pnpm dlx @tauri-apps/cli@2.11.4 signer sign "$PKG"
+          test -f "$PKG.sig" || { echo "::error::签名文件没生成"; exit 1; }
+          ls -l "$PKG"*
 
       - name: 未签名提示（缺证书时如实标注，不冒充可发行）
         if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY == ''
@@ -692,7 +720,7 @@ jobs:
           if (!(Test-Path "$zip.sig")) { throw "更新包签名没生成" }
           Get-ChildItem out | Format-Table Name, Length
 
-      # **两条腿都要传**：updater-manifest 只看 desktop-tauri-* 这些 artifact，
+      # **每条腿都要传**：updater-manifest 只看 desktop-tauri-* 这些 artifact，
       # 「挂到 Release」那步喂不到它。这里曾经写着 runner.os == 'Windows'，
       # 于是 macOS 的 Tavotto.app.tar.gz(.sig) 只上了 Release、从没进过清单，
       # latest.json 里一直只有 windows-x86_64——dmg 装的那批用户永远查不到
@@ -734,11 +762,19 @@ jobs:
           ARGS=()
           while IFS= read -r f; do
             base="$(basename "$f")"
+            # 两个 macOS 架构的名字只差一个 `-Intel`：**先写窄的、宽的写成精确名**，
+            # 任何认不出架构的 dmg / 更新包直接失败——落进 `*) continue` 的话，它会
+            # 静默地不进清单，Release 上少一个安装包而全链路绿灯。
             case "$base" in
-              *-Windows-Setup.exe)  role=windows-installer; plat=windows-x86_64 ;;
-              *.dmg)                role=macos-installer;   plat=darwin-aarch64 ;;
-              *-setup.nsis.zip)     role=windows-updater;   plat=windows-x86_64 ;;
-              *.app.tar.gz)         role=macos-updater;     plat=darwin-aarch64 ;;
+              *-Windows-Setup.exe)        role=windows-installer;     plat=windows-x86_64 ;;
+              *-macOS-Intel.dmg)          role=macos-intel-installer; plat=darwin-x86_64 ;;
+              *-macOS.dmg)                role=macos-installer;       plat=darwin-aarch64 ;;
+              *-setup.nsis.zip)           role=windows-updater;       plat=windows-x86_64 ;;
+              "${APP_NAME}-Intel.app.tar.gz") role=macos-intel-updater; plat=darwin-x86_64 ;;
+              "${APP_NAME}.app.tar.gz")       role=macos-updater;       plat=darwin-aarch64 ;;
+              *.dmg|*.app.tar.gz)
+                echo "::error::认不出架构的 macOS 产物：$base"
+                exit 1 ;;
               *) continue ;;          # .sig 等随包文件不单独登记角色
             esac
             ARGS+=(--add "${role}:${f}:${plat}")
@@ -760,7 +796,7 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 更新清单：两条腿都跑完才拼得出来（每条腿只知道自己那一半）
+  # 更新清单：三条腿都跑完才拼得出来（每条腿只知道自己那一份）
   # ---------------------------------------------------------------------------
   # 桌面版「软件内直接更新」的最后一环。壳按 tauri.conf.json 里的 endpoint
   # 拉 latest.json → 比版本 → 下载对应平台的包 → 用内置公钥校验签名 → 安装。
@@ -798,7 +834,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in desktop-tauri-dmg desktop-tauri-nsis; do
+          for name in desktop-tauri-dmg desktop-tauri-dmg-intel desktop-tauri-nsis; do
             if ! test -n "$(ls -A "artifacts/$name" 2>/dev/null)"; then
               echo "::error::artifact $name 没下到（download-artifact 报了 success）"
               missing=1
@@ -834,10 +870,10 @@ jobs:
           if [ -f "docs/release-notes/${RELEASE_TAG}.md" ]; then
             NOTES="$(cat "docs/release-notes/${RELEASE_TAG}.md")"
           fi
-          # 少一个平台 = 那个平台的用户永远收不到更新，而且全绿。硬要求两个都在。
+          # 少一个平台 = 那个平台的用户永远收不到更新，而且全绿。硬要求三个都在。
           python scripts/make_updater_manifest.py \
             --artifacts artifacts --tag "$RELEASE_TAG" \
-            --require darwin-aarch64,windows-x86_64 \
+            --require darwin-aarch64,darwin-x86_64,windows-x86_64 \
             --notes "$NOTES" --out out/latest.json
           cat out/latest.json
 

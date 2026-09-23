@@ -1567,7 +1567,7 @@ jobs:
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [frontend]
-    runs-on: macos-latest        # 目前只有 Apple Silicon 一档；Intel 未构建未验证
+    runs-on: macos-latest        # 只有 Apple Silicon 一档；Intel 在发行链的 desktop-tauri 上构建（ADR 0076）
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
