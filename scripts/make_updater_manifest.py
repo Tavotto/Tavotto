@@ -29,13 +29,22 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+# 产品名的唯一出处是 brand 常量（AGENTS.md：别处不得手写）。更新包的名字是
+# `<.app 名>.app.tar.gz`，而 .app 名就是产品名——品牌改了而这里还写着旧名，
+# 构建会产出名字正确的包、collect() 却静默认不出它们，清单缺平台。
+from tavotto.engine import brand  # noqa: E402
+
+_APP = re.escape(brand.PRODUCT_NAME)
+
 # 文件名 → Tauri 的平台标识。macOS 按架构各一个包（ADR 0076）：Intel 那份在
 # Intel runner 上原生构建、名字带 `-Intel`；Apple Silicon 沿用历史名字。
 # **两条都写成精确名**，不靠先后顺序：`\.app\.tar\.gz$` 这种宽模式会同时认下
 # Intel 的包，谁排前面谁赢——把一个装不上的包推给另一个架构的用户，且清单全绿。
 PLATFORM_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("darwin-aarch64", re.compile(r"^Tavotto\.app\.tar\.gz$")),
-    ("darwin-x86_64", re.compile(r"^Tavotto-Intel\.app\.tar\.gz$")),
+    ("darwin-aarch64", re.compile(rf"^{_APP}\.app\.tar\.gz$")),
+    ("darwin-x86_64", re.compile(rf"^{_APP}-Intel\.app\.tar\.gz$")),
     ("windows-x86_64", re.compile(r"(?:x64|x86_64)[-_].*setup\.nsis\.zip$|setup\.nsis\.zip$")),
 ]
 
