@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .. import tiffwrite
 from . import raster
-from .renderchild import RenderChildError, band_rows_for
+from .renderchild import BAND_OVERLAP, RenderChildError, band_rows_for
 from .renderhost import RenderHost
 
 __all__ = ["needs_bands", "write_banded"]
@@ -48,7 +48,15 @@ def write_banded(
             "pixel_budget_exceeded", f"整页 {width}×{height} > {host.max_total_pixels}"
         )
     channels = 4 if transparent else 3
-    rows = band_rows_for(width)
+    # 带高：按宽度的目标行数，但不许超过这个 host 的单张预算扣掉上下重叠后放得下的行数（Codex #513 P2：预算配得比
+    # BAND_PIXELS 小时，按目标切出的每一带都会被拒）。默认预算（64 M）远大于 16 M 的目标，带高只由宽度定
+    fit = host.max_pixels // width - 2 * BAND_OVERLAP
+    if fit < 1:
+        raise RenderChildError(
+            "pixel_budget_exceeded",
+            f"单张预算 {host.max_pixels} 连一行宽 {width} 的带（含上下各 {BAND_OVERLAP} 行重叠）都放不下",
+        )
+    rows = min(band_rows_for(width), fit)
     writers: list[tuple[str, object]] = []
     bands = 0
     try:

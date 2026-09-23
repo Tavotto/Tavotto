@@ -326,6 +326,8 @@ class RenderHost:
                     self._budget(full[0], int(band[1]) + 2 * BAND_OVERLAP)  # 含上下重叠
         if band is not None and width_px is not None:
             raise RenderChildError("bad_request", "条带只给按 dpi 的导出，不给按宽的预览")
+        # 条带：父进程独立算出的整页尺寸（有 page_size_pt 才算得出），用来核 child 回报的整页
+        band_full = full if band is not None and dpi is not None and page_size_pt else None
         fd, name = tempfile.mkstemp(prefix="render-", suffix=".rgba", dir=self.scratch_dir)
         os.close(fd)
         out = Path(name)
@@ -363,6 +365,22 @@ class RenderHost:
                 raise RenderChildError(
                     "render_child_protocol",
                     f"要的行带 {tuple(band)}，child 给的是 ({resp.get('band_y0')}, {resp.get('height')})",
+                )
+            if (
+                band is not None
+                and band_full is not None
+                and (
+                    resp.get("width"),
+                    resp.get("full_height"),
+                )
+                != band_full
+            ):
+                # 整页尺寸由父进程按页面尺寸 × dpi 独立算出；child 算出的整页若不同（页盒 / UserUnit 的处理出了偏差），
+                # 按计划高度拼出来的是一张被悄悄裁掉或错位的图——协议失败（Codex #513 P2）
+                raise RenderChildError(
+                    "render_child_protocol",
+                    f"child 的整页是 {resp.get('width')}×{resp.get('full_height')}，父进程算的是 "
+                    f"{band_full[0]}×{band_full[1]}",
                 )
             try:
                 got["buf"] = RasterBuffer(

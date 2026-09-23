@@ -341,3 +341,47 @@ def test_original_png_of_an_oversized_source_is_banded(tmp_path, monkeypatch):
     facts = facade.original_png(U06_PDF, tmp_path / "o.png", int(DPI))
     w, hgt, _ch, _px = pdfread.decode_png_any((tmp_path / "o.png").read_bytes())
     assert (facts["px_w"], facts["px_h"]) == (w, hgt) == size
+
+
+def test_band_height_adapts_to_a_host_budget_smaller_than_the_band_target(host, tmp_path):
+    """Codex #513 P2：host 的单张预算小于 `BAND_PIXELS` 时，带高按预算扣掉上下重叠来切——每一带都在预算内，不会整页
+    被逐带拒绝；预算连一行（含重叠）都放不下时，在任何一带之前结构化拒绝。"""
+    size, page_pt = _size(U06_PDF, host)
+    w, h = size
+    host.max_pixels = w * 60  # 远小于 16 M 的带目标
+    facts = banded.write_banded(
+        host,
+        U06_PDF,
+        dpi=DPI,
+        size_px=size,
+        page_size_pt=page_pt,
+        transparent=False,
+        png=tmp_path / "a.png",
+    )
+    assert facts["band_rows"] == 60 - 2 * renderchild.BAND_OVERLAP and facts["bands"] == -(
+        -h // facts["band_rows"]
+    )
+    host.max_pixels = w * (2 * renderchild.BAND_OVERLAP)  # 放不下一行
+    before = host.requests
+    with pytest.raises(renderchild.RenderChildError) as exc:
+        banded.write_banded(
+            host,
+            U06_PDF,
+            dpi=DPI,
+            size_px=size,
+            page_size_pt=page_pt,
+            transparent=False,
+            png=tmp_path / "b.png",
+        )
+    assert exc.value.code == "pixel_budget_exceeded" and host.requests == before
+    assert not (tmp_path / "b.png").exists()
+
+
+def test_a_band_from_a_page_whose_full_size_disagrees_with_the_plan_is_refused(host):
+    """Codex #513 P2：父进程按页面尺寸 × dpi 独立算整页；child 算出的整页若不同（页盒 / UserUnit 处理出偏差），按计划
+    高度拼出来的是一张被悄悄裁掉的图——每一带都核整页尺寸，不同就是协议失败。"""
+    size, (w_pt, h_pt) = _size(U06_PDF, host)
+    assert host.render(U06_PDF, dpi=DPI, band=(0, 4), page_size_pt=(w_pt, h_pt)).height == 4
+    with pytest.raises(renderchild.RenderChildError) as exc:
+        host.render(U06_PDF, dpi=DPI, band=(0, 4), page_size_pt=(w_pt, h_pt * 2))
+    assert exc.value.code == "render_child_protocol"
