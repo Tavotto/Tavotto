@@ -961,3 +961,45 @@ A = `c12c229c`（回归前）、M = `d7c36a21`（当时的 main，含 #228 与 #
 把回归**之前**就存在的两次重复也去掉了，所以 D 比 A 还快。看护
 `tests/test_manifest_ticklabel_cost.py`（判的是 `_update_ticks` 的**调用次数与刻度条数无关**，
 不是 wall time——性能数字写进用例就是偶发红）。
+
+## RenderCore 候选后端：真实 PDF 上的基线与 P0（ADR 0077）
+
+日期：2026-09-23 ｜ 机器：Apple M4 Pro（12 核）/ macOS 26 / Python 3.13.11 / pikepdf 10.13.0.post1（qpdf 12.3.2）/ pypdfium2 5.13.0 /
+PyMuPDF 1.28.2 ｜ 复现：`<rc-venv>/bin/python scripts/dev/bench_rendercore.py --src <装着 PDF 的目录> --tree main=<main 的 src> --tree new=<分支的 src>`
+
+输入是作者本机的 18 份真实 PDF（matplotlib 子图、CAD 施工图 85 种字体、OCR 扫描件、2551×3401 pt 海报、中英文论文、
+/Rotate 90 + CropBox 的导出图），**不入库**；脚本对任意目录都能跑。每棵树每轮一个全新进程、ABBA 交错、各项取中位数。
+方法上的两条教训：两棵树要在进程里核对 `tavotto.__file__`（zsh 不拆词的 `for t in $o` 让两轮都跑在同一棵树上，
+数字「很漂亮」）；合规的 before / after 是**交错**的两组样本，不是先后两次。
+
+### 基线：默认后端 vs 候选后端（契约层函数，6 轮 ABBA）
+
+| 场景 | PyMuPDF | RenderCore（main a9aa23a0） |
+|---|---|---|
+| 六子图拼版 → PDF | 135 ms | 58 ms |
+| 8 格旋转 / 翻转 / 半透明 → PDF + PNG300 | 249 ms | 149 ms |
+| 16 张 1600 px 预览、16 线程并发 | 554 ms | 182 ms |
+| **尺寸探测 × 13** | **4.3 ms** | **126 ms** |
+| **海报（29 张内嵌图）→ PDF + PNG300** | **323 ms** | **436 ms** |
+| 冷启动到第一次导出完成 | 349 ms | 405 ms |
+
+加粗的两行是候选后端**更慢**的地方，根因与修法见 ADR 0077。
+
+### P0 之后（main a9aa23a0 vs P0，4 轮 ABBA）
+
+| 场景 | main | P0 |
+|---|---|---|
+| 素材库扫描 13 个 PDF（首次） | 155 ms | 14.7 ms |
+| 同上（之后每次，`/api/panels` 的常态） | 133 ms | 0.25 ms |
+| 海报画布 → PDF | 132 ms | 35 ms |
+| 海报画布 → PDF + PNG300 | 446 ms | 350 ms |
+| figure7 画布 → PDF | 89 ms | 14.6 ms |
+| 预览缓存命中（40 MB 源） | 27 ms | 0.03 ms |
+| 启动 0.5 s 后第一次导出 | 240 ms | 134 ms |
+
+### 这几个数字**不**是什么
+
+* 不是 HTTP 端到端：量的是契约层函数（`pdfbackend.*`），不含 Flask 与前端。
+* 首次扫描（14.7 ms / 13 个）仍比 PyMuPDF（4.3 ms）慢：PDFium 没有读 `/UserUnit` 的公开接口，每份仍要 pikepdf 打开一次
+  （~0.4 ms）；常态（复用）远快于它，而 `/api/panels` 绝大多数时候是常态。
+* 海报 PDF + PNG300 剩下的差距在 PNG 编码（单线程 zlib）——那是 P1 的事，不在这张表里。
