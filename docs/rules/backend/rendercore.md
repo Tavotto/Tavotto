@@ -101,7 +101,7 @@
   不到这张预览；身份分块算不整个读进内存；**命中快路**（ADR 0077）：文件指纹（`sources.file_fingerprint`）与上次抄副本时相同**且**成品在，
   就用那次副本上算出的 sha256 算键、直接交出成品——不抄、不读源；快路**从不渲染**，其余一切走副本路；**异常抛出**，不返回空白图 / 旧图。U07 不接 `app.py`；U08 把候选下的 `/api/render` 接到这里（ADR 0067），`source_sha1` 的 (mtime, size) memo 留在 PyMuPDF 路——这里的身份从副本上算；指纹快路复用的是副本上算出的那个 sha256，不是 memo 出来的身份。
 - **派生值按文件指纹复用，身份仍是字节 hash**（ADR 0077，`sources.FingerprintMemo`）：`file_fingerprint` = (设备, inode, 字节数,
-  mtime_ns, ctime_ns)，只决定「能不能复用已经算出来的派生值」（`probe_asset` 的尺寸、预览键里的内容 sha256），从不进身份——冻结 / 写入 /
+  mtime_ns, ctime_ns)，**Windows 上不复用**（`st_ctime` 是创建时间，看不见改写；指纹恒为 None），只决定「能不能复用已经算出来的派生值」（`probe_asset` 的尺寸、预览键里的内容 sha256），从不进身份——冻结 / 写入 /
   渲染一律按 sha256 核。**最后一次改动离现在不到 `RACY_WINDOW_NS`（2 s）的不记**：时间戳按 tick 走（Linux ~ms、Windows ~16 ms、FAT 2 s），
   同一 tick 里的等长改写指纹相同（git 的 racy clean）；失败不记；`probe_asset` 每次回新 dict。用例里要量复用的，把 mtime **往回**拨
   （往前拨会落进「刚改过 / 来自未来」，快路根本走不到——这条假绿抓到过一次）。

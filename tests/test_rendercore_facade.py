@@ -152,6 +152,7 @@ def test_probe_asset_reuses_its_answer_until_the_file_changes(candidate, monkeyp
     from tavotto.rendercore import facade, sources
 
     monkeypatch.setattr(sources, "RACY_WINDOW_NS", 0)
+    monkeypatch.setattr(sources, "FINGERPRINT_TRUSTED", True)
     facade.reset_for_tests()
     src = tmp_path / "fig.pdf"
     shutil.copy(FIXTURE / "page.pdf", src)

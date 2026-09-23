@@ -132,6 +132,9 @@ def test_native_receipts_record_argv_count_not_values_and_do_not_guess_the_revis
 def settled(monkeypatch):
     """用例里的文件都是刚写出来的：把「刚改过不记」的窗口关掉，量指纹本身；窗口另有一条用例。"""
     monkeypatch.setattr(sources, "RACY_WINDOW_NS", 0)
+    monkeypatch.setattr(
+        sources, "FINGERPRINT_TRUSTED", True
+    )  # 量的是复用机制本身；平台开关另有一条用例
 
 
 def _bump_mtime(p: Path) -> None:
@@ -216,6 +219,7 @@ def test_a_file_changed_within_the_timestamp_granularity_window_is_not_remembere
     得到同一个指纹。最后一次改动离现在不到 `RACY_WINDOW_NS` 的，一律不记；过了窗口才记。"""
     import types
 
+    monkeypatch.setattr(sources, "FINGERPRINT_TRUSTED", True)
     p = tmp_path / "a.bin"
     p.write_bytes(b"aaaa")
     memo = sources.FingerprintMemo()
@@ -229,3 +233,18 @@ def test_a_file_changed_within_the_timestamp_granularity_window_is_not_remembere
     memo.get_or_compute(p, lambda: calls.append(1) or "v")
     memo.get_or_compute(p, lambda: calls.append(1) or "v")
     assert len(calls) == 3, "过了窗口：第一次算完就记下，第二次复用"
+
+
+def test_where_stat_cannot_see_rewrites_nothing_is_reused(tmp_path, monkeypatch):
+    """Windows 的 `st_ctime` 是创建时间：同长原地改写 + 工具把 mtime 设回原值，五元组一个字段都不变（Codex #506 P2）。
+    那里不复用——指纹恒为 None、每次都重算；开关按平台定，不是配置项。"""
+    assert sources.FINGERPRINT_TRUSTED == (os.name != "nt")
+    monkeypatch.setattr(sources, "RACY_WINDOW_NS", 0)
+    monkeypatch.setattr(sources, "FINGERPRINT_TRUSTED", False)
+    p = tmp_path / "a.bin"
+    p.write_bytes(b"aaaa")
+    memo = sources.FingerprintMemo()
+    calls = []
+    memo.get_or_compute(p, lambda: calls.append(1) or "v")
+    memo.get_or_compute(p, lambda: calls.append(1) or "v")
+    assert sources.file_fingerprint(p) is None and len(calls) == 2

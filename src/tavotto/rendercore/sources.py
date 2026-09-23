@@ -78,13 +78,22 @@ class SourceResolver(Protocol):
 READ_CHUNK = 1 << 20
 
 
+#: 这个平台的 stat 能不能看见「文件被改写过」。POSIX 的 ctime 由内核在任何写入 / 改元数据时推进、用户工具设不
+#: 回去；**Windows 的 `st_ctime` 是创建时间**（Python 3.12 起明说），NTFS 的 ChangeTime `os.stat` 不给——同长原地
+#: 改写、再由工具把 mtime 设回原值，五元组一个字段都不变（Codex #506 P2）。看不见就不复用：那里指纹恒为 None，
+#: `FingerprintMemo` 每次都重算，行为与没有这层复用时相同。
+FINGERPRINT_TRUSTED = os.name != "nt"
+
+
 def file_fingerprint(path: Path) -> tuple[int, int, int, int, int] | None:
-    """「这个文件自上次看过之后动过没有」的判据：(设备, inode, 字节数, mtime_ns, ctime_ns)；stat 不了回 None。
+    """「这个文件自上次看过之后动过没有」的判据：(设备, inode, 字节数, mtime_ns, ctime_ns)；stat 不了、或这个平台
+    的元数据看不见改写（`FINGERPRINT_TRUSTED` 为假，Windows）时回 None——None 的意思是「别复用」。
 
     **只用来决定能不能复用一个派生值**（尺寸探测 / 预览缓存键），从不当身份：身份永远是字节 hash，
-    冻结与渲染仍按 hash 核（`read_frozen` / `PreviewCache._stage`）。ctime 由内核在任何写入 / 改元数据时
-    推进、用户工具设不回去，所以「换了内容又把 mtime 与大小都改回原样」也躲不过（Windows 上 ctime 是创建
-    时间，那里靠 mtime_ns）；时间戳粒度内的等长改写由 `FingerprintMemo` 的「刚改过不记」挡住。"""
+    冻结与渲染仍按 hash 核（`read_frozen` / `PreviewCache._stage`）。「换了内容又把 mtime 与大小都改回原样」
+    躲不过 ctime；时间戳粒度内的等长改写由 `FingerprintMemo` 的「刚改过不记」挡住。"""
+    if not FINGERPRINT_TRUSTED:
+        return None
     try:
         st = Path(path).stat()
     except OSError:

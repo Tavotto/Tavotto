@@ -189,6 +189,9 @@ def settled(monkeypatch):
     from tavotto.rendercore import sources
 
     monkeypatch.setattr(sources, "RACY_WINDOW_NS", 0)
+    monkeypatch.setattr(
+        sources, "FINGERPRINT_TRUSTED", True
+    )  # 量的是复用机制本身；平台开关另有一条用例
 
 
 def _count_stages(c, monkeypatch) -> list:
