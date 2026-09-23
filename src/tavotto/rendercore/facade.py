@@ -9,7 +9,7 @@ import 旧后端（D03；`tests/test_rendercore_model.py` 钉着）。
 | `BACKEND_NAME` / `BACKEND_VERSION` | `rendercore` / `rendercore.BACKEND_VERSION` | 名字不同 → `/api/render` 旧缓存键天然失效 |
 | `CANVAS_TEXT_FAMILIES` / `COVERAGE_MAX_CP` / `mm2pt` / `hex2rgb` | `typography` / `ir` 同名 | 无 |
 | `text_width` / `text_plan` / `missing_glyphs` / `coverage_ranges` | `typography` 同名函数，脸来自批准字体注册表 | `fallback` 层恒空（ADR 0060 §1：没有隐式回退脸） |
-| `probe_asset(kind="pdf")` | `RenderHost.probe()`（PDFium 可见框 + /Rotate，**乘 /UserUnit**） | 无（实测 PyMuPDF 1.28.2 的 `page.rect` 同样乘 /UserUnit；忽略它的只是 PDFium 的 `get_size()`，child 已补上那一次） |
+| `probe_asset(kind="pdf")` | `RenderHost.size()`（PDFium 可见框 + /Rotate，**乘 /UserUnit**；不加载页，按文件指纹复用，ADR 0077） | 无（实测 PyMuPDF 1.28.2 的 `page.rect` 同样乘 /UserUnit；忽略它的只是 PDFium 的 `get_size()`，child 已补上那一次） |
 | `probe_asset(kind="raster")` | `rasterio.header_info()`（不解码） | 无（`alpha` 含调色板 tRNS） |
 | `pdf_fonts` | pikepdf 读首页 /Font，递归进 Form XObject（有预算） | 无 |
 | `render_preview_png` | `RenderHost.render(width_px=…)` + `raster.encode_png` | 栅格器换成 PDFium（像素按平台分基线） |

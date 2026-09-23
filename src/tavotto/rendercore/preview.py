@@ -5,7 +5,8 @@
 出（`renderhost.RenderHost.render(width_px=…)`），编码是本包的 PNG 编码器（`raster.encode_png`）。
 U08 起 `app.py` 的 `/api/render` 在候选后端被选中时走本模块（`rendercore.facade.preview_cache()`，ADR 0067）：
 `app.py` 那三段（键 / 写 / 发布）在候选路上由这里替掉；`source_sha1` 的 (mtime, size) memo **不收编**——这里的键
-与渲染绑在同一份抄出来的字节上（见下），身份本来就要读一遍；`render_queue_full` 由端点翻成 503。默认后端那条路一字不变。
+与渲染绑在同一份抄出来的字节上（见下）；`render_queue_full` 由端点翻成 503。默认后端那条路一字不变。
+ADR 0077 加了**命中快路**：文件指纹与上次抄副本时相同且成品在，就用那次副本上算出的 sha256 直接交出成品（不抄、不读源、从不渲染）。
 
 ## 键（RC-061：内容身份，不是 mtime）
 
