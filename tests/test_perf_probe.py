@@ -270,6 +270,21 @@ def test_release_moment_and_later_swap_are_two_findings():
     assert "PanelView.tsx" in " ".join(later.where)
 
 
+def test_font_dropdown_rerender_on_release_is_named():
+    seg = _seg(
+        _smooth(),
+        kind="element",
+        tail=[_row(107.0)] + _smooth(10),
+        tail_counts={"render.FontFamilyRow": 2, "render.Inspector": 2},
+    )
+    f = _find(PR.analyze_report(_report([seg])), "松手那一刻顿一下")
+    assert any("字体下拉在松手后重画了 2 次" in e for e in f.evidence)
+    # 没重画就不提
+    quiet = _seg(_smooth(), kind="element", tail=[_row(107.0)] + _smooth(10))
+    g = _find(PR.analyze_report(_report([quiet])), "松手那一刻顿一下")
+    assert not any("字体下拉" in e for e in g.evidence)
+
+
 def test_synthetic_runs_are_the_control_group_for_the_release_hitch():
     user = _seg(_smooth(), kind="element", tail=[_row(107.0)] + _smooth(10))
     syn = _seg(_smooth(), kind="element", source="synthetic", label="m1", tail=_smooth(10))

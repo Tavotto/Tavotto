@@ -106,6 +106,10 @@ COMPONENTS = {
     "PageSheet": ("web/src/canvas/PageSheet.tsx", "页面底板，拖动中不该重渲染"),
     "Inspector": ("web/src/components/inspector/Inspector.tsx", "属性页，拖动中不该重渲染"),
     "LeftPanel": ("web/src/components/left/LeftPanel.tsx", "左栏，拖动中不该重渲染"),
+    "FontFamilyRow": (
+        "web/src/components/inspector/controls/textRows.tsx",
+        "字体下拉（本机字体并表几百项，Radix 收起时也全部重建）：没改字体就不该重画",
+    ),
 }
 #: 拖动中每帧跟着变是合理的组件（只要不是一个 pointermove 好几次）
 EXPECTED_FOLLOWERS = {"OverlaySvg", "CanvasHud", "ObjectView", "Rulers"}
@@ -764,6 +768,11 @@ def analyze_segment(s: SegStats) -> list[Finding]:
             top = sorted(s.tail_renders.items(), key=lambda kv: -kv[1])[:5]
             if top:
                 ev.append("松手后组件渲染：" + "，".join(f"{k} {v} 次" for k, v in top))
+            ff = s.tail_renders.get("FontFamilyRow", 0)
+            if ff:
+                ev.append(
+                    f"字体下拉在松手后重画了 {ff} 次——它下面是本机字体并表的几百个选项（#518 修的就是这个）"
+                )
             out.append(
                 Finding(
                     lvl,
