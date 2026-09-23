@@ -3,9 +3,11 @@
 `src-tauri/windows/installer.nsi` 是按钉住的 @tauri-apps/cli 版本 vendored 的
 上游模板 + 品牌补丁：模板与打包器必须同源。这里看护三类事——
 
-1. **首次 GUI 安装只剩两页**：真实安装进度（MUI_PAGE_INSTFILES）→ 完成页
-   （MUI_PAGE_FINISH）。欢迎页/目录页/开始菜单页/许可证页一律不可见。
-2. **精简没有顺手删掉安装能力**：currentUser 安装、固定安装路径与升级时
+1. **首次 GUI 安装是三页**：选安装位置（MUI_PAGE_DIRECTORY）→ 真实安装
+   进度（MUI_PAGE_INSTFILES）→ 完成页（MUI_PAGE_FINISH）。目录页只在「首次、
+   交互式」安装时出现——覆盖安装 / /UPDATE / /P 仍然只有后两页。
+   欢迎页/开始菜单页/许可证页一律不可见。
+2. **精简没有顺手删掉安装能力**：currentUser 安装、默认安装路径与升级时
    恢复历史路径、WebView2、快捷方式、卸载注册表、命令行开关、降级保护、
    WiX 迁移——每一条都还在。
 3. 四处 CLI 版本同源、配置引用的品牌资产真实存在且是 NSIS 吃得下的形态。
@@ -32,12 +34,13 @@ TEXT = TEMPLATE.read_text(encoding="utf-8")
 LINES = TEXT.splitlines()
 CONFIG = json.loads(CONF.read_text(encoding="utf-8"))
 NSIS_CONF = CONFIG["bundle"]["windows"]["nsis"]
-FLAT = re.sub(r"[ \t]+", " ", TEXT)
 # 整行注释剥掉后的代码。断言「某个 define 不存在」必须打在这上面——
 # 补丁注释里正写着那些符号名，打在原文上会被自己的说明骗过去。
 CODE = "\n".join(ln for ln in LINES if not ln.lstrip().startswith(";"))
+# 同理，「某条 LangString 存在」也只认代码：注释掉的一行在原文里照样搜得到
+FLAT = re.sub(r"[ \t]+", " ", CODE)
 
-# 补丁新增的 LangString。安装器只剩两页，这几条就是用户会读到的全部文案。
+# 补丁新增的 LangString。安装器页面极少，这几条就是用户会读到的全部文案。
 BRAND_STRINGS = (
     "preparingTavotto",
     "installingTavotto",
@@ -45,17 +48,21 @@ BRAND_STRINGS = (
     "finishText",
     "openTavotto",
     "registeringTavotto",
+    "installDirText",
+    "installDirNotWritable",
 )
 
 
-def _pre_function_for(macro: str, lines: list[str] | None = None) -> str | None:
-    """返回某个页面宏生效的 MUI_PAGE_CUSTOMFUNCTION_PRE。
+def _pre_function_for(
+    macro: str, lines: list[str] | None = None, hook: str = "PRE"
+) -> str | None:
+    """返回某个页面宏生效的 MUI_PAGE_CUSTOMFUNCTION_<hook>（PRE/SHOW/LEAVE）。
 
     MUI2 在每次插入页面后会 unset 这个 define，所以「生效的那一个」就是
-    紧邻其上、上一次页面插入之后最后一条 PRE 定义。
+    紧邻其上、上一次页面插入之后最后一条定义。
     """
     target = re.compile(rf"^\s*!insertmacro\s+{re.escape(macro)}\b")
-    pre = re.compile(r"^\s*!define\s+MUI_PAGE_CUSTOMFUNCTION_PRE\s+(\S+)")
+    pre = re.compile(rf"^\s*!define\s+MUI_PAGE_CUSTOMFUNCTION_{hook}\s+(\S+)")
     any_page = re.compile(r"^\s*!insertmacro\s+(MUI_PAGE_\w+|MULTIUSER_PAGE_\w+)\b")
     current = None
     for line in lines if lines is not None else LINES:
@@ -79,13 +86,68 @@ def test_no_welcome_page():
     assert "MUI_WELCOMEPAGE_TITLE" not in CODE
 
 
-def test_directory_page_is_never_visible():
-    """目录页恒被 Abort：安装位置由 .onInit 决定，不问用户。
+def _function_body(name: str) -> str:
+    return TEXT.split(f"Function {name}\n")[1].split("FunctionEnd")[0]
 
-    注意判据是 `Skip` 而不是 `SkipIfPassive`——后者只在 /P 静默时跳过，
-    普通双击安装照样会弹出「你要装到哪儿」。
+
+def test_directory_page_only_on_first_interactive_install():
+    """目录页只在「首次、交互式」安装时出现（2026-09-23 推翻 730bfcee）。
+
+    三个跳过条件缺一不可：
+    - 已经装着一份：覆盖安装时换位置，老目录会留下一份没人管的副本；
+    - /UPDATE：应用内更新全程不许有交互，否则更新会卡在这一屏；
+    - /P：被动模式同理。
     """
-    assert _pre_function_for("MUI_PAGE_DIRECTORY") == "Skip"
+    assert _pre_function_for("MUI_PAGE_DIRECTORY") == "SkipDirectoryIfInstalled"
+    body = _function_body("SkipDirectoryIfInstalled")
+    for cond in ("$PassiveMode = 1", "$UpdateMode = 1", '$ExistingInstall != ""'):
+        assert re.search(
+            rf"\$\{{IfThen\}} {re.escape(cond)} \$\{{\|\}} Abort \$\{{\|\}}", body
+        ), f"目录页缺少跳过条件 {cond}"
+    # 不能无条件 Abort——那就退回了「恒不可见」
+    assert not re.search(r"^\s*Abort\s*$", body, re.M)
+
+
+def test_existing_install_is_recorded_in_oninit_from_the_uninstall_key():
+    """「现在装着没有」要在 .onInit 里、按卸载项判。
+
+    - 在目录页 PRE 里再读就晚了：重装页可能已先卸掉旧版，注册表是空的；
+    - MANUPRODUCTKEY 不行：普通卸载后它还留着（只有勾了删除数据才清），
+      拿它判会让「卸载后重装」永远看不到目录页。
+    """
+    oninit = _function_body(".onInit")
+    read = 'ReadRegStr $ExistingInstall SHCTX "${UNINSTKEY}" "UninstallString"'
+    assert read in oninit
+    # 在 SetContext 之后读，SHCTX 才指向正确的根
+    assert oninit.index("!insertmacro SetContext") < oninit.index(read)
+    # 只有这一处写它：别处再赋值会把「现在装着」悄悄改掉
+    writes = re.findall(r"^\s*(?:ReadRegStr|StrCpy)\s+\$ExistingInstall\b", CODE, re.M)
+    assert len(writes) == 1, writes
+
+
+def test_directory_page_rejects_unwritable_folders_on_the_page():
+    """currentUser + asInvoker：选到 Program Files 要在这一屏拦下，不是解压到一半失败。"""
+    assert _pre_function_for("MUI_PAGE_DIRECTORY", hook="LEAVE") == "DirectoryLeave"
+    body = _function_body("DirectoryLeave")
+    assert "${GetParent}" in body  # 目标不存在时往上找第一个存在的祖先
+    assert re.search(r'FileOpen \S+ "\$R9\\[^"]+" w', body)
+    assert "IfErrors dir_not_writable" in body
+    assert 'MessageBox MB_OK|MB_ICONEXCLAMATION "$(installDirNotWritable)"' in body
+    # LEAVE 里 Abort = 留在本页重选
+    assert re.search(r"dir_not_writable:\s*\n\s*MessageBox[^\n]*\n\s*Abort", body)
+    # 不先建目录：用户点了取消会留下一串空目录
+    assert "CreateDirectory" not in body
+    # 探针用完即删
+    assert re.search(r'Delete "\$R9\\[^"]+"', body)
+
+
+def test_directory_page_button_says_install():
+    """静态页序下这一屏会写「下一步」，点了却直接开始装——SHOW 里改成「安装」。"""
+    assert _pre_function_for("MUI_PAGE_DIRECTORY", hook="SHOW") == "DirectoryShow"
+    body = _function_body("DirectoryShow")
+    assert "GetDlgItem $0 $HWNDPARENT 1" in body
+    assert "STR:$(^InstallBtn)" in body
+    assert '!define MUI_DIRECTORYPAGE_TEXT_TOP "$(installDirText)"' in TEXT
 
 
 def test_start_menu_page_is_never_visible():
@@ -98,7 +160,7 @@ def test_start_menu_page_is_never_visible():
 
 
 def test_skip_really_aborts():
-    """`Skip` 必须是无条件 Abort——上面两条测试全靠它。"""
+    """`Skip` 必须是无条件 Abort——开始菜单页不可见全靠它。"""
     body = TEXT.split("Function Skip\n")[1].split("FunctionEnd")[0]
     assert body.strip() == "Abort"
 
@@ -111,7 +173,7 @@ def test_license_page_not_introduced():
 
 
 def test_progress_and_finish_pages_survive():
-    """真实进度页与完成页是仅剩的两页，一个都不能少。"""
+    """真实进度页与完成页一个都不能少（覆盖安装时它们就是全部页面）。"""
     assert "!insertmacro MUI_PAGE_INSTFILES" in TEXT
     assert "!insertmacro MUI_PAGE_FINISH" in TEXT
     # 进度条必须仍由 NSIS 的真实安装过程驱动：没有自定义页顶替它
@@ -196,7 +258,7 @@ def test_current_user_install_without_admin():
 
 
 def test_install_dir_is_localappdata_and_upgrades_keep_old_path():
-    """新装固定 %LOCALAPPDATA%\\Tavotto；已有安装沿用注册表里的老路径。"""
+    """新装的默认值是 %LOCALAPPDATA%\\Tavotto；已有安装沿用注册表里的老路径。"""
     assert 'InstallDir "${PLACEHOLDER_INSTALL_DIR}"' in TEXT
     assert '${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"' in TEXT
     assert 'StrCpy $INSTDIR "$LOCALAPPDATA\\${PRODUCTNAME}"' in TEXT
@@ -398,7 +460,7 @@ def _generated_script() -> Path | None:
     return hits[0] if hits else None
 
 
-def test_generated_script_has_the_same_two_pages():
+def test_generated_script_has_the_same_pages():
     gen = _generated_script()
     if gen is None:
         pytest.skip("没有 tauri 渲染出来的中间脚本（Windows 打包之后才有）")
@@ -409,11 +471,12 @@ def test_generated_script_has_the_same_two_pages():
     # 占位符真的展开了（否则下面几条断言只是在重测模板）
     assert "{{" not in code, "中间脚本里还留着未展开的 handlebars 占位符"
 
-    # 首次安装只剩这两页
+    # 首次安装：目录页（有条件）→ 进度 → 完成
     assert "!insertmacro MUI_PAGE_INSTFILES" in code
     assert "!insertmacro MUI_PAGE_FINISH" in code
     assert "!insertmacro MUI_PAGE_WELCOME" not in code
-    assert _pre_function_for("MUI_PAGE_DIRECTORY", lines) == "Skip"
+    assert _pre_function_for("MUI_PAGE_DIRECTORY", lines) == "SkipDirectoryIfInstalled"
+    assert _pre_function_for("MUI_PAGE_DIRECTORY", lines, hook="LEAVE") == "DirectoryLeave"
     assert _pre_function_for("MUI_PAGE_STARTMENU", lines) == "Skip"
 
     # 这三条决定了另外三页存不存在，且只有打包器说了算

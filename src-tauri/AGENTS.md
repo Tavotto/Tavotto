@@ -68,6 +68,12 @@
   Windows NSIS 用 vendored 模板 `src-tauri/windows/installer.nsi`
   （上游 tauri-cli v2.11.4 + `TAVOTTO PATCH` 标注的最小补丁：去欢迎页 /
   极简进度 / 品牌配色；头图侧栏图走 tauri.conf.json 的 nsis.* 配置）。
+  **首次安装是三页：选安装位置 → 进度 → 完成**（2026-09-23 起；此前目录页
+  恒被跳过）。目录页只在「首次、交互式」安装出现——卸载项里已有安装、
+  `/UPDATE`（应用内更新）、`/P` 一律跳过：覆盖安装换位置会在老目录留一份
+  没人管的副本。默认值 `%LOCALAPPDATA%\Tavotto`（以前装过就预填老路径）；
+  离开页面时先验写权限（currentUser + asInvoker，选 Program Files 当场拦下）。
+  自选路径靠安装清单 + HKCU `InstallLocation` 被外部程序发现，不在惯例位置里。
   **@tauri-apps/cli 钉死在 2.11.4**——模板与打包器必须同源，升级 CLI 时
   取新模板重打补丁并同步 build_desktop.py / desktop-tauri.yml / nightly.yml
   （tests/test_nsis_template.py 看护四处版本一致与 BMP 形态）。

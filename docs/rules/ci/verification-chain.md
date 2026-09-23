@@ -59,8 +59,9 @@
   它们验的是解释器优先级与中文路径。「无 Python」那档还会现打一个 NSIS
   安装器，走**装一遍再冒烟**：静默安装 → 断言安装目录里有 sidecar + 内置
   runtime + workerd → 起真壳确认它能拉起 sidecar 且退出不留孤儿 → 对装出来的
-  sidecar 冒烟 → 覆盖安装（升级）再冒一次 → 静默卸载。这条链路只有真装一遍
-  才知道，而且必须挂在**在发的那个发行形态**上。
+  sidecar 冒烟 → 覆盖安装（升级）再冒一次 → 静默卸载；随后**真 GUI** 各装一遍
+  默认位置与中文 + 空格的自选目录（点目录页、读注册表落点、自选那遍还跑装出来的
+  CLI）。这条链路只有真装一遍才知道，而且必须挂在**在发的那个发行形态**上。
 - **黄金路径 E2E**：`cd web && pnpm e2e`（Playwright，`TAVOTTO_EXE` 指打包产物、
   缺省用 `python -m tavotto`）。跑之前先 `python scripts/build_frontend.py`——
   包内 `src/tavotto/web/` 优先于 `web/dist`，只跑 `pnpm build` 测的还是旧界面。
