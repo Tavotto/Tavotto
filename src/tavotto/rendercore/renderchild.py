@@ -8,7 +8,8 @@ probe（探尺寸）、render（栅格成 `RasterBuffer`）、inspect（对象�
 ## 协议
 
 stdin / stdout 上的**行分隔 JSON**（一行一条）。请求 `{"id", "op", ...}`，响应 `{"id", "ok", "seq", ...}` 或
-`{"id", "ok": false, "seq", "error": {"code", "message"}}`。op 闭集 `ping / probe / render / inspect / close`。
+`{"id", "ok": false, "seq", "error": {"code", "message"}}`。op 闭集 `ping / probe / size / render / inspect / close`
+（`size` 只回可见尺寸、不加载页，ADR 0077）。
 像素**不走管道**：`render` 把 RGB（白底）/ RGBA（透明底，straight alpha；都经 `FPDF_REVERSE_BYTE_ORDER`）原样
 写进父进程指定的文件，响应里只带 `width / height / stride / channels`；父进程读完就删
 （`renderhost.RenderHost.render`）。
