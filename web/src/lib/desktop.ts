@@ -446,7 +446,13 @@ let pendingUpdate: UpdateHandle | null = null
  * 查有没有新版。没有新版返回 null；**浏览器模式也返回 null**——那条路由
  * Python updater 负责（/api/update/*），两条不能同时插手。
  */
+/** beta 分支专用开关（不合进 main） */
+const TAVOTTO_BETA = true as boolean
+
 export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
+  // beta 分支专用：Tavotto Beta 不查更新——否则正式版一发，它会把自己「更新」成
+  // 正式版的内容，却还装在 Tavotto Beta.app 这个路径下
+  if (TAVOTTO_BETA) return null
   if (!isDesktop()) return null
   const { check } = await import('@tauri-apps/plugin-updater')
   const update = await check()
