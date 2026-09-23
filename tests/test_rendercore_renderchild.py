@@ -610,6 +610,23 @@ def test_real_child_probe_reports_the_visible_size_with_rotation_and_userunit(re
     assert (p["raw_width_pt"], p["raw_height_pt"]) == (160.0, 270.0)
 
 
+@real
+def test_real_child_size_is_the_probe_size_without_loading_the_page(real_host, tmp_path):
+    """`size` 走 `FPDF_GetPageSizeByIndexF`（不加载页、不解析内容流）：可见尺寸必须与 `probe` 逐项相同——CropBox、
+    /Rotate、/UserUnit 三种情形各一；页号越界同样是 `render_failed`、child 不死。"""
+    for pdf in (FIXTURE / "page.pdf", _rotated_userunit_pdf(tmp_path), U06_PDF):
+        p, s = real_host.probe(pdf), real_host.size(pdf)
+        assert (s["pages"], s["width_pt"], s["height_pt"]) == (
+            p["pages"],
+            p["width_pt"],
+            p["height_pt"],
+        ), pdf.name
+    assert (s["width_pt"], s["height_pt"]) != (0, 0)
+    with pytest.raises(rc.RenderChildError) as exc:
+        real_host.size(FIXTURE / "page.pdf", page=5)
+    assert exc.value.code == "render_failed" and real_host.pid is not None
+
+
 def _rotated_userunit_pdf(tmp_path) -> Path:
     """MediaBox 300×200、CropBox [15 10 285 170]、/Rotate 90、/UserUnit 2：PDFium 说 160 × 270，物理 320 × 540 pt。"""
     import pikepdf

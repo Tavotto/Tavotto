@@ -1,4 +1,4 @@
-# RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成、栅格、facade 接线与有限产物验证（统一实施包 U06 / U07 / U08，ADR 0059 / 0060 / 0065 / 0066 / 0067 / 0068）
+# RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成、栅格、facade 接线与有限产物验证（统一实施包 U06 / U07 / U08，ADR 0059 / 0060 / 0065 / 0066 / 0067 / 0068 / 0077）
 
 > 2026-09-20 随 U06 新增，2026-09-21 随 U07 加合成与栅格两节、随 U08 加 facade 接线与产物验证两节；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
 > 表里（`rendercore/` 那一行）。这里是这一主题规则的**唯一全文**；速查表只留一行。
@@ -65,14 +65,18 @@
   ——**不再自己转、自己乘**（RC-039：恰好一次）；资源随 form 各自一份，同名 /F1 / /X1 互不相干（RC-043），同一 (资源 key, 页)
   只搬一次（按字节身份去重，绝不按名字）。面板 opacity < 1 是**透明组**（组内 alpha 从 1 起算，RC-041），镜像是 `cm` 里的
   负缩放（RC-040）——两者都仍是矢量、文字层在；`opacity: 0` 是取值不是缺席（RC-042）。注释 / 动作 / JavaScript 不进产物，
-  加密 / 坏文件 / 缺页以 `source_unreadable` 拒绝（RC-046），不画空框。
+  加密 / 坏文件 / 缺页以 `source_unreadable` 拒绝（RC-046），不画空框。**源的编码原样照搬**（ADR 0077）：单段带过滤器的内容流
+  直接用源的已编码字节（`_keep_source_encoding`，解码后与 Form 明文逐字节相同才换）；保存**不交给** qpdf 的 `compress_streams`
+  （它会把带 predictor 的 Flate 图片流解码重压），只压确实没有过滤器的流（`_compress_unfiltered` → `raster.zlib_compress`，
+  XMP /Metadata 保持明文）。
 - **位图源经 `rasterio.decode()`（Pillow，U07 起是 `rendercore` extra 的直接依赖）成 `RasterBuffer`**：8 bit RGB / RGBA、
   紧凑 stride、**alpha 一律 straight**（Pillow 报 `RGBa` / `La` 的预乘图先反预乘，不许静默丢 alpha）；写成 DeviceRGB Image XObject + /SMask；8 bit RGB / 灰度 JPEG 原字节直通 `/DCTDecode`。
   像素网格不变，缩放只在 `cm` 里。`raster.RasterBuffer` 是本包里一块像素的唯一形状（栅格输出也用它，ADR 0066）。
 - **写入器再核一次字节身份**：`files`（`job` 里是 `sources.read_frozen()` 核过 hash 的那一份）交进来的每份字节按 sha256
   与 `FileResource.sha256` 比，不符 `source_identity`、没交 `source_bytes_missing`——与 `read_frozen()` 是有意的两道（RC-014）。
-- **native（PDFium）调用只在 render child 里，父进程一把锁串行**（ADR 0066，`renderchild.py` / `renderhost.py`）：probe /
-  render / inspect 三种 op 都经 `RenderHost`（一个进程一个 child，`renderhost.shared()`；有界等待队列 `max_waiting`，
+- **native（PDFium）调用只在 render child 里，父进程一把锁串行**（ADR 0066，`renderchild.py` / `renderhost.py`）：probe / size /
+  render / inspect 四种 op 都经 `RenderHost`（只要可见尺寸的调用走 `size`：`FPDF_GetPageSizeByIndexF` 不加载页、不解析内容流，
+  与 `probe` 的尺寸逐项相同）（一个进程一个 child，`renderhost.shared()`；有界等待队列 `max_waiting`，
   满了立刻 `render_queue_full`——背压不堆积）；像素预算**父子两侧都判**；每请求一个 deadline 管到底（等锁超时不打断正在忙的 child），收响应到点 kill → `wait()` reap →
   本次 `render_child_timeout` → 下一次自动重启；child 崩溃 / 外杀 → `render_child_died` → 下一次重启；起不来（exe 不在 / 冻结产物命令写错）→ `Popen` 的
   OSError 翻译成 `render_child_spawn_failed`（结构化，job 落到该格式的 `format_failed`）；像素文件的长度核对与
@@ -94,7 +98,15 @@
   锁表封顶，淘汰只看登记使用者数——拿到手还没 acquire 的也算在用）；临时文件（.png 后缀）+ `os.replace`、Windows 撞读者句柄退让、零字节重建；`prune()` 只删成品 `<sha1>.png`（在飞的
   `.part.png` / `stage.*.src.part` 不碰；任何线程的 `get()` 正要交出去的那张从算出键到 return 都钉着、谁的 prune 都不删，pruner 串行）；hash 与渲染绑在同一份字节上——源先一次读成缓存目录里
   的不可变副本（边抄边算 sha256，`.src.part`，用完即删），child 渲染的是副本，算键与渲染之间源被换掉哪怕又换回去都影响
-  不到这张预览；身份分块算不整个读进内存；**异常抛出**，不返回空白图 / 旧图。U07 不接 `app.py`；U08 把候选下的 `/api/render` 接到这里（ADR 0067），`source_sha1` 的 (mtime, size) memo 留在 PyMuPDF 路——这里的身份从副本上算，不从 memo 注入。
+  不到这张预览；身份分块算不整个读进内存；**命中快路**（ADR 0077）：文件指纹（`sources.file_fingerprint`）与上次抄副本时相同**且**成品在，
+  就用那次副本上算出的 sha256 算键、直接交出成品——不抄、不读源；快路**从不渲染**，其余一切走副本路；**异常抛出**，不返回空白图 / 旧图。U07 不接 `app.py`；U08 把候选下的 `/api/render` 接到这里（ADR 0067），`source_sha1` 的 (mtime, size) memo 留在 PyMuPDF 路——这里的身份从副本上算；指纹快路复用的是副本上算出的那个 sha256，不是 memo 出来的身份。
+- **派生值按文件指纹复用，身份仍是字节 hash**（ADR 0077，`sources.FingerprintMemo`）：`file_fingerprint` = (设备, inode, 字节数,
+  mtime_ns, ctime_ns)，**Windows 上不复用**（`st_ctime` 是创建时间，看不见改写；指纹恒为 None），只决定「能不能复用已经算出来的派生值」（`probe_asset` 的尺寸、预览键里的内容 sha256），从不进身份——冻结 / 写入 /
+  渲染一律按 sha256 核。**最后一次改动离现在不到 `RACY_WINDOW_NS`（2 s）的不记**：时间戳按 tick 走（Linux ~ms、Windows ~16 ms、FAT 2 s），
+  同一 tick 里的等长改写指纹相同（git 的 racy clean）；失败不记；`probe_asset` 每次回新 dict。用例里要量复用的，把 mtime **往回**拨
+  （往前拨会落进「刚改过 / 来自未来」，快路根本走不到——这条假绿抓到过一次）。
+- **冷启动预热**（ADR 0077）：`pdfbackend.warm()` 装载实现之后，实现若有 `prewarm()` 就交给它；候选在后台线程里起 child、建字体注册表、
+  载 CJK 脸。失败只记日志，同一个错误在第一次真用到时原样抛出（不静默回退）。
 - **PDFium 的 PNG 跨平台像素不同、同平台可复现**（ADR 0055 §7）：`evidence/u07/u07_pdfium.png` 是 macOS arm64 基线，
   `foundation-u06-rendercore.yml` 三平台只记各自的 sha256、**不判相等**；判的是 `u07.pdf` 逐字节相同与 truth 里的像素
   采样点；pdftotext 一律显式 `-enc UTF-8`（U06 的教训）。

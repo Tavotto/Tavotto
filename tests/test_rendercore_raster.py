@@ -74,3 +74,48 @@ def test_alpha_semantics_are_declared_straight_and_immutable():
     assert buf.has_alpha and buf.premultiplied is False and buf.bit_depth == 8
     with pytest.raises(AttributeError):
         buf.premultiplied = True  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------- 并行 zlib（pigz 式）
+
+
+def _payload(n: int) -> bytes:
+    """像真内容流 / 位图行一样有重复、也有变化（纯常数会让压缩器走捷径，看不出跨块引用）。"""
+    import hashlib
+
+    out = bytearray()
+    i = 0
+    while len(out) < n:
+        out += b"q 1 0 0 rg %d %d 80 40 re f Q\n" % (i % 997, i % 13)
+        if i % 50 == 0:
+            out += hashlib.sha256(str(i).encode()).digest()
+        i += 1
+    return bytes(out[:n])
+
+
+def test_zlib_compress_within_one_block_is_byte_identical_to_zlib():
+    import zlib
+
+    from tavotto.rendercore import raster
+
+    for data in (b"", b"x", _payload(raster.DEFLATE_BLOCK)):
+        assert raster.zlib_compress(data) == zlib.compress(data, 6)
+
+
+@pytest.mark.parametrize("level", [1, 6, 9])
+def test_zlib_compress_of_many_blocks_is_one_valid_stream_independent_of_the_thread_count(
+    level, monkeypatch
+):
+    """主语：拼出来的**整段**是一条合法 zlib 流（`zlib.decompress` 核头的 FCHECK 与尾的 adler32），解出的就是
+    原文；块边界只由输入长度定——线程池 1 个线程与 8 个线程给出同一份字节（确定性不依赖调度）。"""
+    import zlib
+
+    from tavotto.rendercore import raster
+
+    data = _payload(3 * raster.DEFLATE_BLOCK + 12345)
+    many = raster.zlib_compress(data, level)
+    assert zlib.decompress(many) == data
+    monkeypatch.setattr(raster, "_workers", lambda: 1)
+    assert raster.zlib_compress(data, level) == many
+    # 压缩率与单线程同档（每块带前一块的 32 KiB 当字典）：不许因为切块明显变大
+    assert len(many) <= len(zlib.compress(data, level)) * 1.02 + 64

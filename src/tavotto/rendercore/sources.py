@@ -27,6 +27,10 @@ RenderPlan；写入器读字节之前再核一次 hash（`read_frozen()`），�
 from __future__ import annotations
 
 import hashlib
+import os
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
@@ -72,6 +76,103 @@ class SourceResolver(Protocol):
 
 #: `read_frozen()` 的分块大小；有界读的粒度，不是性能旋钮。
 READ_CHUNK = 1 << 20
+
+
+#: 这个平台的 stat 能不能看见「文件被改写过」。POSIX 的 ctime 由内核在任何写入 / 改元数据时推进、用户工具设不
+#: 回去；**Windows 的 `st_ctime` 是创建时间**（Python 3.12 起明说），NTFS 的 ChangeTime `os.stat` 不给——同长原地
+#: 改写、再由工具把 mtime 设回原值，五元组一个字段都不变（Codex #506 P2）。看不见就不复用：那里指纹恒为 None，
+#: `FingerprintMemo` 每次都重算，行为与没有这层复用时相同。
+FINGERPRINT_TRUSTED = os.name != "nt"
+
+
+def file_fingerprint(path: Path) -> tuple[int, int, int, int, int] | None:
+    """「这个文件自上次看过之后动过没有」的判据：(设备, inode, 字节数, mtime_ns, ctime_ns)；stat 不了、或这个平台
+    的元数据看不见改写（`FINGERPRINT_TRUSTED` 为假，Windows）时回 None——None 的意思是「别复用」。
+
+    **只用来决定能不能复用一个派生值**（尺寸探测 / 预览缓存键），从不当身份：身份永远是字节 hash，
+    冻结与渲染仍按 hash 核（`read_frozen` / `PreviewCache._stage`）。「换了内容又把 mtime 与大小都改回原样」
+    躲不过 ctime；时间戳粒度内的等长改写由 `FingerprintMemo` 的「刚改过不记」挡住。"""
+    if not FINGERPRINT_TRUSTED:
+        return None
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+#: 「刚改过」的窗口：文件最后一次改动离记录时刻不到这么久，指纹不可信，不记。文件系统的时间戳是**粗粒度**的
+#: （Linux 按内核 tick ~1–4 ms、Windows ~16 ms、FAT 2 s）——窗口之内两次等长改写可以得到同一个指纹（git 的
+#: 「racy clean」）。代价只是刚写出的文件前 2 秒不走复用。
+RACY_WINDOW_NS = 2_000_000_000
+
+
+def _is_racy(fp: tuple) -> bool:
+    return time.time_ns() - max(fp[3], fp[4]) < RACY_WINDOW_NS
+
+
+class FingerprintMemo:
+    """按 `file_fingerprint` 复用派生值的有界表（线程安全，满了丢最久没用的）。
+
+    * `lookup(path, key=)` → `(此刻的指纹, 值或 None)`：指纹与表里那次相同才回值。
+    * `store(path, before, value, key=)`：把值挂在 `before`（算值**之前**取的指纹）上；文件最后一次改动离现在不到
+      `RACY_WINDOW_NS` 的不记——时间戳粒度还分辨不出下一次等长改写。算的过程中被改写的，指纹已经前进，挂在旧
+      指纹上的这一条自然查不到，下一次重算。
+    * `get_or_compute(path, compute, key=)`：上面两步的组合；`compute` 抛的异常原样上抛、什么都不记。
+
+    值不能是 None（None 就是「表里没有」）。"""
+
+    def __init__(self, maxsize: int = 4096) -> None:
+        self.maxsize = int(maxsize)
+        self._table: OrderedDict[tuple[str, object], tuple[tuple, object]] = OrderedDict()
+        self._lock = threading.Lock()
+        self.hits = 0
+        self.misses = 0
+
+    @staticmethod
+    def _slot(path: Path, key: object) -> tuple[str, object]:
+        return (os.path.realpath(path), key)
+
+    def lookup(self, path: Path, *, key: object = None) -> tuple[tuple | None, object]:
+        now = file_fingerprint(path)
+        if now is not None:
+            slot = self._slot(path, key)
+            with self._lock:
+                entry = self._table.get(slot)
+                if entry is not None and entry[0] == now:
+                    self._table.move_to_end(slot)
+                    self.hits += 1
+                    return now, entry[1]
+        with self._lock:
+            self.misses += 1
+        return now, None
+
+    def store(self, path: Path, before: tuple | None, value: object, *, key: object = None) -> None:
+        if value is None:
+            raise ValueError("FingerprintMemo 的值不能是 None（None 表示表里没有）")
+        slot = self._slot(path, key)
+        with self._lock:
+            # 算值的过程中文件若被改写，指纹已前进（ctime 只增不减），挂在 `before` 上的这一条再也不会被查到——
+            # 不必另判「前后相同」；要挡的只有时间戳粒度分辨不出的那一种（刚改过不记）
+            if before is not None and not _is_racy(before):
+                self._table[slot] = (before, value)
+                self._table.move_to_end(slot)
+                while len(self._table) > self.maxsize:
+                    self._table.popitem(last=False)
+            else:
+                self._table.pop(slot, None)
+
+    def get_or_compute(self, path: Path, compute: Callable[[], object], *, key: object = None):
+        before, value = self.lookup(path, key=key)
+        if value is not None:
+            return value
+        value = compute()
+        self.store(path, before, value, key=key)
+        return value
+
+    def clear(self) -> None:
+        with self._lock:
+            self._table.clear()
 
 
 def read_frozen(fs: FrozenSource) -> bytes:

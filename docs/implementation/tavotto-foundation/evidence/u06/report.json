@@ -32,7 +32,7 @@
  },
  "outputs": {
   "u06.pdf": {
-   "sha256": "cb303505e879dd31326d07b18fe0fa1481cfb3e2673daafadcaff7433ad1774c",
+   "sha256": "7edac93bde4f9f48d6d632457fbb18d9a79518a3576da8374a33c4a8b4aaf8c3",
    "bytes": 14041
   },
   "u06_pdfium.png": {
@@ -214,7 +214,9 @@
   "transparency_groups": 0,
   "actualtext_spans": 3,
   "notdef_codes": 0,
-  "sha256": "cb303505e879dd31326d07b18fe0fa1481cfb3e2673daafadcaff7433ad1774c",
+  "imported_pages": [],
+  "images": [],
+  "sha256": "7edac93bde4f9f48d6d632457fbb18d9a79518a3576da8374a33c4a8b4aaf8c3",
   "bytes": 14041,
   "versions": {
    "uharfbuzz": "0.56.1",

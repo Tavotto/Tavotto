@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 from pathlib import Path
 
@@ -122,3 +123,128 @@ def test_native_receipts_record_argv_count_not_values_and_do_not_guess_the_revis
         rcpt, FIXTURE / "page.pdf", source_id="runtime:fig1.py#Fig1", patch_hash="sha1:x"
     )
     assert art.origin == "execution" and art.receipt_identity == public
+
+
+# ================================================================ FingerprintMemo（派生值按文件指纹复用）
+
+
+@pytest.fixture
+def settled(monkeypatch):
+    """用例里的文件都是刚写出来的：把「刚改过不记」的窗口关掉，量指纹本身；窗口另有一条用例。"""
+    monkeypatch.setattr(sources, "RACY_WINDOW_NS", 0)
+    monkeypatch.setattr(
+        sources, "FINGERPRINT_TRUSTED", True
+    )  # 量的是复用机制本身；平台开关另有一条用例
+
+
+def _bump_mtime(p: Path) -> None:
+    """同长改写之后把 mtime 显式**往回**拨 1 秒：不让用例依赖「两次写入恰好落在不同的时间戳 tick」（Linux 按 tick）；
+    往前拨会落进「刚改过 / 来自未来」的窗口，值就不会被记下，量不到复用。"""
+    st = p.stat()
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns - 1_000_000_000))
+
+
+def test_the_memo_reuses_a_value_while_the_file_is_untouched_and_recomputes_after_a_change(
+    tmp_path, settled
+):
+    p = tmp_path / "a.bin"
+    p.write_bytes(b"aaaa")
+    memo = sources.FingerprintMemo()
+    calls = []
+
+    def compute():
+        calls.append(1)
+        return p.read_bytes()
+
+    assert memo.get_or_compute(p, compute) == b"aaaa"
+    assert memo.get_or_compute(p, compute) == b"aaaa" and len(calls) == 1 and memo.hits == 1
+    p.write_bytes(b"bbbb")  # 同长改写
+    _bump_mtime(p)
+    assert memo.get_or_compute(p, compute) == b"bbbb" and len(calls) == 2
+    assert (
+        memo.get_or_compute(p, compute) == b"bbbb" and len(calls) == 2
+    )  # 改写之后的新值同样被记下
+    p.write_bytes(b"cc")  # 长度变了（mtime 不必变）
+    assert memo.get_or_compute(p, compute) == b"cc" and len(calls) == 3
+    q = tmp_path / "q.bin"
+    q.write_bytes(b"dd")
+    os.replace(q, p)  # 换成另一个文件（inode 变了）
+    assert memo.get_or_compute(p, compute) == b"dd" and len(calls) == 4
+
+
+def test_the_memo_keys_values_by_kind_and_bounds_its_table(tmp_path, settled):
+    files = [tmp_path / f"{i}.bin" for i in range(3)]
+    for f in files:
+        f.write_bytes(f.name.encode())
+    memo = sources.FingerprintMemo(maxsize=2)
+    assert memo.get_or_compute(files[0], lambda: "pdf", key="pdf") == "pdf"
+    assert memo.get_or_compute(files[0], lambda: "raster", key="raster") == "raster"
+    assert memo.get_or_compute(files[0], lambda: "x", key="pdf") == "pdf"  # 同文件不同 key 互不串
+    memo.get_or_compute(files[1], lambda: 1)
+    memo.get_or_compute(files[2], lambda: 2)  # 表满：丢最久没用的
+    assert len(memo._table) == 2
+
+
+def test_a_value_computed_while_the_file_changed_or_a_failure_is_not_remembered(tmp_path, settled):
+    p = tmp_path / "a.bin"
+    p.write_bytes(b"aaaa")
+    memo = sources.FingerprintMemo()
+
+    def compute_while_rewriting():
+        value = p.read_bytes()
+        p.write_bytes(b"bbbbbb")  # 算的过程中被改写：旧值不许挂到新指纹上
+        return value
+
+    assert memo.get_or_compute(p, compute_while_rewriting) == b"aaaa"
+    assert memo.get_or_compute(p, lambda: p.read_bytes()) == b"bbbbbb"
+
+    def boom():
+        raise OSError("读不了")
+
+    q = tmp_path / "q.bin"
+    q.write_bytes(b"q")
+    with pytest.raises(OSError):
+        memo.get_or_compute(q, boom)
+    assert memo.get_or_compute(q, lambda: "ok") == "ok"  # 失败不缓存
+    assert (
+        memo.get_or_compute(tmp_path / "missing.bin", lambda: "m") == "m"
+    )  # stat 不了：照算、不记
+    assert memo.get_or_compute(tmp_path / "missing.bin", lambda: "n") == "n"
+
+
+def test_a_file_changed_within_the_timestamp_granularity_window_is_not_remembered(
+    tmp_path, monkeypatch
+):
+    """git 的「racy clean」：时间戳是粗粒度的（Linux 按 tick、Windows ~16 ms），刚写完的文件再被等长改写可以
+    得到同一个指纹。最后一次改动离现在不到 `RACY_WINDOW_NS` 的，一律不记；过了窗口才记。"""
+    import types
+
+    monkeypatch.setattr(sources, "FINGERPRINT_TRUSTED", True)
+    p = tmp_path / "a.bin"
+    p.write_bytes(b"aaaa")
+    memo = sources.FingerprintMemo()
+    calls = []
+    memo.get_or_compute(p, lambda: calls.append(1) or "v")
+    memo.get_or_compute(p, lambda: calls.append(1) or "v")
+    assert len(calls) == 2, "刚写出的文件不许被复用"
+    real = sources.time.time_ns
+    later = types.SimpleNamespace(time_ns=lambda: real() + sources.RACY_WINDOW_NS + 1)
+    monkeypatch.setattr(sources, "time", later)
+    memo.get_or_compute(p, lambda: calls.append(1) or "v")
+    memo.get_or_compute(p, lambda: calls.append(1) or "v")
+    assert len(calls) == 3, "过了窗口：第一次算完就记下，第二次复用"
+
+
+def test_where_stat_cannot_see_rewrites_nothing_is_reused(tmp_path, monkeypatch):
+    """Windows 的 `st_ctime` 是创建时间：同长原地改写 + 工具把 mtime 设回原值，五元组一个字段都不变（Codex #506 P2）。
+    那里不复用——指纹恒为 None、每次都重算；开关按平台定，不是配置项。"""
+    assert sources.FINGERPRINT_TRUSTED == (os.name != "nt")
+    monkeypatch.setattr(sources, "RACY_WINDOW_NS", 0)
+    monkeypatch.setattr(sources, "FINGERPRINT_TRUSTED", False)
+    p = tmp_path / "a.bin"
+    p.write_bytes(b"aaaa")
+    memo = sources.FingerprintMemo()
+    calls = []
+    memo.get_or_compute(p, lambda: calls.append(1) or "v")
+    memo.get_or_compute(p, lambda: calls.append(1) or "v")
+    assert sources.file_fingerprint(p) is None and len(calls) == 2

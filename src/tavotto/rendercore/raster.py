@@ -46,6 +46,69 @@ class RasterError(ValueError):
     """缓冲区不成形（尺寸 / 通道 / stride / 字节数对不上）。"""
 
 
+# ---------------------------------------------------------------------------
+# 并行 zlib（pigz 的做法）：Canonical PDF 的大流、PNG 的 IDAT 共用这一份
+# ---------------------------------------------------------------------------
+#: 一块的未压缩字节数。块边界只由它与输入长度决定、与线程数无关——同一输入永远同一份输出。
+DEFLATE_BLOCK = 1 << 20
+#: 每块用前一块末尾这么多字节当预置字典（deflate 的窗口就是 32 KiB）：跨块的回溯引用照样合法（解码器
+#: 的窗口里本来就是前一块的明文），压缩率与单线程几乎相同。
+_DEFLATE_WINDOW = 32 * 1024
+
+
+def _workers() -> int:
+    """并行压缩的线程数（每次调用临时起、用完 join：不留常驻线程）。"""
+    import os
+
+    return max(1, min(8, os.cpu_count() or 1))
+
+
+def _zlib_header(level: int) -> bytes:
+    flevel = 0 if level < 2 else 1 if level < 6 else 2 if level == 6 else 3
+    flg = flevel << 6
+    flg += (31 - (0x78 * 256 + flg) % 31) % 31
+    return bytes((0x78, flg))
+
+
+def _deflate_block(data, zdict, last: bool, level: int) -> bytes:
+    c = (
+        zlib.compressobj(level, zlib.DEFLATED, -15, zdict=zdict)
+        if zdict
+        else zlib.compressobj(level, zlib.DEFLATED, -15)
+    )
+    return c.compress(data) + c.flush(zlib.Z_FINISH if last else zlib.Z_SYNC_FLUSH)
+
+
+def zlib_compress(data, level: int = 6) -> bytes:
+    """与 `zlib.compress(data, level)` 同一种**合法 zlib 流**（任何解码器解出同一份明文），大输入按
+    `DEFLATE_BLOCK` 切块在线程池里并行压（zlib 在 C 里放 GIL）；非末块 `Z_SYNC_FLUSH` 收在字节边界上，
+    拼接后补 zlib 头与整段的 adler32。一块以内**逐字节等于** `zlib.compress`。"""
+    view = memoryview(data).cast("B")
+    n = len(view)
+    if n <= DEFLATE_BLOCK:
+        return zlib.compress(view, level)
+    from concurrent.futures import ThreadPoolExecutor
+
+    starts = range(0, n, DEFLATE_BLOCK)
+    last = starts[-1]
+    with ThreadPoolExecutor(
+        max_workers=min(_workers(), len(starts)), thread_name_prefix="deflate"
+    ) as pool:
+        futures = [
+            pool.submit(
+                _deflate_block,
+                view[s : s + DEFLATE_BLOCK],
+                bytes(view[max(0, s - _DEFLATE_WINDOW) : s]) if s else None,
+                s == last,
+                level,
+            )
+            for s in starts
+        ]
+        adler = zlib.adler32(view)
+        body = b"".join(f.result() for f in futures)
+    return _zlib_header(level) + body + struct.pack(">I", adler & 0xFFFFFFFF)
+
+
 @dataclass(frozen=True)
 class RasterBuffer:
     width: int

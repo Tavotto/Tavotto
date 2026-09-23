@@ -115,8 +115,14 @@ def warm() -> str:
     `main()` 起服务前调一次，第一次请求的延迟回到从前；顺带让「选了一个装不上的后端」在
     启动时就报出来（`BackendSelectionError` / 候选缺包），而不是在用户第一次打开文件时。
     不静默回退：装不上就抛。与 `selected()` 一样是选择器层的工具，**不在** `__all__`（那是 19 项契约名的闭集）。
+
+    实现模块若有 `prewarm()`（候选有：render child / 字体注册表 / CJK 脸三件冷启动 ~220 ms），在这里交给它
+    **后台**去做——不挡服务启动，也不改变「装不上就在这里抛」：import 已经在上一行成功了。
     """
-    _impl()
+    impl = _impl()
+    prewarm = getattr(impl, "prewarm", None)
+    if callable(prewarm):
+        prewarm()
     return selected()
 
 

@@ -8,7 +8,8 @@ probe（探尺寸）、render（栅格成 `RasterBuffer`）、inspect（对象�
 ## 协议
 
 stdin / stdout 上的**行分隔 JSON**（一行一条）。请求 `{"id", "op", ...}`，响应 `{"id", "ok", "seq", ...}` 或
-`{"id", "ok": false, "seq", "error": {"code", "message"}}`。op 闭集 `ping / probe / render / inspect / close`。
+`{"id", "ok": false, "seq", "error": {"code", "message"}}`。op 闭集 `ping / probe / size / render / inspect / close`
+（`size` 只回可见尺寸、不加载页，ADR 0077）。
 像素**不走管道**：`render` 把 RGB（白底）/ RGBA（透明底，straight alpha；都经 `FPDF_REVERSE_BYTE_ORDER`）原样
 写进父进程指定的文件，响应里只带 `width / height / stride / channels`；父进程读完就删
 （`renderhost.RenderHost.render`）。
@@ -54,7 +55,7 @@ ERROR_CODES = (
     "bad_request",  # 请求形状不对 / 未知 op
 )
 
-OPS = ("ping", "probe", "render", "inspect", "close")
+OPS = ("ping", "probe", "size", "render", "inspect", "close")
 
 
 class RenderChildError(Exception):
@@ -128,6 +129,25 @@ def _probe(pdfium, req: dict) -> dict:
         "media_box": list(media),
         "crop_box": list(crop),
     }
+
+
+def _size(pdfium, req: dict) -> dict:
+    """只要可见尺寸（`probe_asset` / 原图导出 / 标注用的就只有这一维）：`FPDF_GetPageSizeByIndexF` **不加载页**。
+    `doc[i]` 走的 `FPDF_LoadPage` 会解析整页内容流——CAD 图纸 8 ms、海报 23 ms，而尺寸只取决于页盒与 /Rotate；
+    这里 0.06–1 ms。两条路读的是同一个页字典的页盒与 /Rotate（解析内容流是 LoadPage 另外做的事），
+    `/UserUnit` 与 `_probe` 同一次乘；要页盒 / 旋转细节的调用方仍用 `probe`。"""
+    pdf_path = Path(req["pdf"])
+    page_index = int(req.get("page", 0))
+    doc = pdfium.PdfDocument(str(pdf_path))
+    try:
+        n = len(doc)
+        if page_index >= n:
+            raise RenderChildError("render_failed", f"只有 {n} 页，没有第 {page_index} 页")
+        w_pt, h_pt = doc.get_page_size(page_index)
+    finally:
+        doc.close()
+    uu = _user_unit(pdf_path, page_index)
+    return {"pages": n, "page": page_index, "width_pt": w_pt * uu, "height_pt": h_pt * uu}
 
 
 def _render(pdfium, req: dict, default_max_pixels: int) -> dict:
@@ -284,6 +304,8 @@ def child_main(argv: list[str] | None = None) -> int:
                 return 0
             elif op == "probe":
                 body = _probe(pdfium, req)
+            elif op == "size":
+                body = _size(pdfium, req)
             elif op == "render":
                 body = _render(pdfium, req, args.max_pixels)
             elif op == "inspect":

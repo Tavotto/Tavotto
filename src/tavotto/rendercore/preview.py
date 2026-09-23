@@ -5,7 +5,8 @@
 出（`renderhost.RenderHost.render(width_px=…)`），编码是本包的 PNG 编码器（`raster.encode_png`）。
 U08 起 `app.py` 的 `/api/render` 在候选后端被选中时走本模块（`rendercore.facade.preview_cache()`，ADR 0067）：
 `app.py` 那三段（键 / 写 / 发布）在候选路上由这里替掉；`source_sha1` 的 (mtime, size) memo **不收编**——这里的键
-与渲染绑在同一份抄出来的字节上（见下），身份本来就要读一遍；`render_queue_full` 由端点翻成 503。默认后端那条路一字不变。
+与渲染绑在同一份抄出来的字节上（见下）；`render_queue_full` 由端点翻成 503。默认后端那条路一字不变。
+ADR 0077 加了**命中快路**：文件指纹与上次抄副本时相同且成品在，就用那次副本上算出的 sha256 直接交出成品（不抄、不读源、从不渲染）。
 
 ## 键（RC-061：内容身份，不是 mtime）
 
@@ -48,6 +49,7 @@ from . import BACKEND_NAME, BACKEND_VERSION
 from .identity import fonts_policy_version as _fonts_policy_version
 from .raster import encode_png
 from .renderhost import RenderChildError, RenderHost
+from .sources import FingerprintMemo
 
 __all__ = ["PreviewCache", "PreviewError", "cache_key", "fonts_policy_version"]
 
@@ -124,6 +126,10 @@ class PreviewCache:
         self._renderer_version: str | None = None
         self._fonts_version: str | None = None
         self.renders = 0  # 真渲染的次数（同键去重的判据用）
+        # 命中快路：文件指纹没变就沿用上次（从抄出的副本上）算出的内容 sha256，不再整份抄一遍——40 MB 的源每次
+        # 命中 25 ms + 40 MB 写盘。只决定「能不能直接交出已有的成品」；要渲染的一律走副本那条路（见 get）
+        self._identities = FingerprintMemo(maxsize=2048)
+        self.fast_hits = 0
 
     # -- 身份 -------------------------------------------------------------
     def renderer_version(self) -> str:
@@ -228,16 +234,21 @@ class PreviewCache:
         transparent: bool = False,
         page: int = 0,
     ) -> Path:
-        """命中就回缓存文件；否则渲染、临时发布、回最终文件。任何失败抛 `PreviewError`。"""
-        staged, content = self._stage(path)
-        try:
+        """命中就回缓存文件；否则渲染、临时发布、回最终文件。任何失败抛 `PreviewError`。
+
+        两条路：**指纹快路**——文件的 `sources.file_fingerprint` 与上次抄副本时相同，就用那次副本上算出的内容
+        sha256 算键，成品在就直接交出（不抄、不读源）；**副本路**——其余一切（指纹变了 / 第一次见 / 成品不在），
+        照旧先抄副本边抄边算 hash、键与渲染绑在副本上。快路只交出已有的成品，从不渲染，所以 A→B→A 的换回
+        在渲染那一侧仍由副本挡住；快路能错的只剩「指纹五元组全等而内容变了」，那时交出的是上一版内容的预览。"""
+
+        def key_of(content: str) -> Path:
             try:
                 renderer, fonts = self.renderer_version(), self.fonts_version()
             except RenderChildError as exc:
                 # 第一次算键要 ping child 问 PDFium 版本：child 起不来 / 队列满在这里就会炸——同样翻成
                 # PreviewError，调用方（/api/render）才能按稳定 code 回 503 / 500（Codex #476 P2）
                 raise PreviewError(exc.code, exc.message) from exc
-            cached = self.path_for(
+            return self.path_for(
                 cache_key(
                     source_id,
                     content,
@@ -248,6 +259,23 @@ class PreviewCache:
                     page=page,
                 )
             )
+
+        before, known = self._identities.lookup(path)
+        if known is not None:
+            cached = key_of(str(known))
+            self._pin(cached)
+            try:
+                if self._usable(cached):
+                    self.fast_hits += 1
+                    return cached
+            finally:
+                self._unpin(cached)
+
+        staged, content = self._stage(path)
+        try:
+            # 副本的 hash 就是这份文件此刻的内容身份——抄的过程中文件没动（指纹前后相同）才记下
+            self._identities.store(path, before, content)
+            cached = key_of(content)
             self._pin(cached)
             try:
                 if self._usable(cached):

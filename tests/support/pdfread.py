@@ -38,6 +38,20 @@ def objects(pdf: bytes) -> dict[int, tuple[bytes, bytes | None]]:
     return out
 
 
+def objects_raw(pdf: bytes) -> dict[int, tuple[bytes, bytes | None]]:
+    """{obj 号: (字典文本, **未解码**的流字节 或 None)}——判「这段流原样照搬、没被重新编码」用。"""
+    out: dict[int, tuple[bytes, bytes | None]] = {}
+    for m in _OBJ.finditer(pdf):
+        num, body = int(m.group(1)), m.group(2)
+        if b"stream" in body:
+            head, _, rest = body.partition(b"stream")
+            length = int(re.search(rb"/Length (\d+)", head).group(1))
+            out[num] = (head, rest.lstrip(b"\r\n")[:length])
+        else:
+            out[num] = (body, None)
+    return out
+
+
 def ref(head: bytes, key: bytes) -> int:
     m = re.search(rb"/" + key + rb"\s+(\d+) 0 R", head)
     if not m:

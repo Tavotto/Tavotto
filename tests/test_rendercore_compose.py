@@ -1107,3 +1107,128 @@ def test_page_size_and_matrix_facts_are_finite_and_invertible(provider, tmp_path
     m = facts.imported_pages[0]["matrix"]
     assert all(math.isfinite(v) for v in m) and abs(m[0] * m[3] - m[1] * m[2]) > 1e-9
     assert facts.page == (PAGE_W, PAGE_H)
+
+
+# ================================================================ 源的编码原样照搬（性能 P0）
+
+
+def _encoded_source(*, segments: int = 1, image: bool = False) -> tuple[bytes, list[bytes], bytes]:
+    """测试侧用 pikepdf 拼一个**已编码**的源：内容流按 zlib level 1 手压（qpdf 若重压会用它自己的级别，字节必变）；
+    `segments=2` 时 /Contents 是两段；`image=True` 时带一张 PNG predictor 的 Flate 图片 + 一段明文 XMP /Metadata。
+    回 (PDF 字节, 各段内容流的已编码字节, 图片流的已编码字节或 b"")。"""
+    import zlib
+
+    import pikepdf
+
+    pdf = pikepdf.new()
+    # 每段重复几十遍：够长才压得小（写入器只压「压了变小」的流），画出来仍是同一块颜色
+    parts = [b"q 1 0 0 rg 10 10 80 40 re f Q\n" * 40, b"q 0 0 1 rg 100 10 60 40 re f Q\n" * 40]
+    parts = parts[:segments]
+    if image:
+        parts.append(b"q 40 0 0 20 20 60 cm /Im1 Do Q\n")
+    encoded = [zlib.compress(p, 1) for p in parts]
+    streams = []
+    for raw in encoded:
+        s = pdf.make_stream(b"")
+        s.write(raw, filter=pikepdf.Name.FlateDecode)
+        streams.append(s)
+    res = pikepdf.Dictionary()
+    img_raw = b""
+    if image:
+        rows = b"".join(b"\x00" + bytes([200, 30, 30] * 4) for _ in range(2))  # predictor 行首 0
+        img_raw = zlib.compress(rows, 1)
+        img = pdf.make_stream(b"")
+        img.write(
+            img_raw,
+            filter=pikepdf.Name.FlateDecode,
+            decode_parms=pikepdf.Dictionary(Predictor=15, Colors=3, BitsPerComponent=8, Columns=4),
+        )
+        img["/Type"], img["/Subtype"] = pikepdf.Name.XObject, pikepdf.Name.Image
+        img["/Width"], img["/Height"], img["/BitsPerComponent"] = 4, 2, 8
+        img["/ColorSpace"] = pikepdf.Name.DeviceRGB
+        meta = pdf.make_stream(
+            b"<x:xmpmeta xmlns:x='adobe:ns:meta/'>" + b" " * 256 + b"</x:xmpmeta>"
+        )
+        meta["/Type"], meta["/Subtype"] = pikepdf.Name.Metadata, pikepdf.Name.XML
+        img["/Metadata"] = meta
+        res["/XObject"] = pikepdf.Dictionary(Im1=img)
+    contents = streams[0] if len(streams) == 1 else pikepdf.Array(streams)
+    page = pikepdf.Dictionary(
+        Type=pikepdf.Name.Page, MediaBox=[0, 0, 200, 100], Contents=contents, Resources=res
+    )
+    pdf.pages.append(pikepdf.Page(page))
+    out = io.BytesIO()
+    pdf.save(out, compress_streams=False, deterministic_id=True)
+    return out.getvalue(), encoded, img_raw
+
+
+def _imported_forms(out: Path) -> list[tuple[bytes, bytes]]:
+    """产物里外来页的 Form（没有 /Group 的那些：透明组 / 写入器自己的 form 带 /Group）→ (字典, 未解码流)。"""
+    return [
+        (h, raw)
+        for h, raw in pdfread.objects_raw(out.read_bytes()).values()
+        if raw is not None and b"/Subtype /Form" in h and b"/Group" not in h
+    ]
+
+
+def test_a_single_segment_source_keeps_its_encoded_content_bytes(provider, pdfium, tmp_path):
+    """qpdf 的 `as_form_xobject` 把内容流解码成明文放进 Form，save 时再整段重压（海报 399 KB 的内容流 → 2.7 MB
+    明文 → 100 ms 重压）。单段且带过滤器的源：Form 的流就是源那段**已编码字节**原样照搬（level 1 手压的字节
+    经 level 6 重压必变），过滤器同一个；画出来的仍是那两块颜色。"""
+    data, encoded, _ = _encoded_source()
+    out, _ = _write(
+        tmp_path,
+        provider,
+        [ir.ImportedPage("s", (0, 0, 200, 100))],
+        {"s": _res("s.pdf", "pdf", data)},
+        {"s": data},
+    )
+    forms = _imported_forms(out)
+    assert len(forms) == 1, forms
+    head, raw = forms[0]
+    assert b"/FlateDecode" in head and raw == encoded[0]
+    img = _raster(pdfium, out)
+    assert _close(_px(img, 30, 30), (255, 0, 0))
+
+
+def test_a_multi_segment_source_is_joined_then_compressed_by_the_writer(provider, pdfium, tmp_path):
+    """两段 /Contents 不能首尾相接地复用压缩字节（段界只保证落在词法边界上）：Form 里是两段明文拼起来，
+    再由写入器自己压成一段 Flate——不留明文进产物。"""
+    import zlib
+
+    data, encoded, _ = _encoded_source(segments=2)
+    out, _ = _write(
+        tmp_path,
+        provider,
+        [ir.ImportedPage("s", (0, 0, 200, 100))],
+        {"s": _res("s.pdf", "pdf", data)},
+        {"s": data},
+    )
+    ((head, raw),) = _imported_forms(out)
+    assert b"/FlateDecode" in head
+    body = zlib.decompress(raw)
+    assert all(zlib.decompress(e).strip() in body for e in encoded)
+    img = _raster(pdfium, out)
+    assert _close(_px(img, 30, 30), (255, 0, 0)) and _close(_px(img, 120, 30), (0, 0, 255))
+
+
+def test_source_image_streams_are_copied_without_being_re_encoded(provider, pdfium, tmp_path):
+    """qpdf 的 `compress_streams=True` 会把带 PNG predictor 的 Flate 图片流解码再重压（与 stream_decode_level 无关，
+    qpdf 12.3.2 实测）——29 张图的海报每次导出白付 76 ms。写入器只压没有过滤器的流：源图片的已编码字节原样进产物；
+    明文 XMP /Metadata 保持明文（阅读器与归档工具按明文读它）。"""
+    data, _, img_raw = _encoded_source(image=True)
+    out, _ = _write(
+        tmp_path,
+        provider,
+        [ir.ImportedPage("s", (0, 0, 200, 100))],
+        {"s": _res("s.pdf", "pdf", data)},
+        {"s": data},
+    )
+    objs = pdfread.objects_raw(out.read_bytes())
+    images = [raw for h, raw in objs.values() if raw is not None and b"/Subtype /Image" in h]
+    assert images == [img_raw]
+    metas = [(h, raw) for h, raw in objs.values() if raw is not None and b"/Type /Metadata" in h]
+    assert (
+        len(metas) == 1 and b"/Filter" not in metas[0][0] and metas[0][1].startswith(b"<x:xmpmeta")
+    )
+    assert _close(_px(_raster(pdfium, out), 30, 70), (200, 30, 30))

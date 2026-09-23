@@ -183,6 +183,76 @@ def test_the_child_renders_the_hashed_bytes_even_if_the_source_is_swapped_and_re
     assert p2 != p and p2.exists() and host.renders == 2
 
 
+@pytest.fixture
+def settled(monkeypatch):
+    """关掉「刚改过不记」的窗口（用例里的源都是刚写的）；窗口本身见最后一条。"""
+    from tavotto.rendercore import sources
+
+    monkeypatch.setattr(sources, "RACY_WINDOW_NS", 0)
+    monkeypatch.setattr(
+        sources, "FINGERPRINT_TRUSTED", True
+    )  # 量的是复用机制本身；平台开关另有一条用例
+
+
+def _count_stages(c, monkeypatch) -> list:
+    calls = []
+    real = c._stage
+
+    def spy(path):
+        calls.append(path)
+        return real(path)
+
+    monkeypatch.setattr(c, "_stage", spy)
+    return calls
+
+
+def test_a_hit_on_an_unchanged_file_skips_the_staged_copy(cache, tmp_path, monkeypatch, settled):
+    """命中快路：文件指纹没变就用上次副本算出的内容 sha256 算键，成品在就直接交出——不再为了算键整份抄一遍
+    （40 MB 的源每次命中 25 ms + 40 MB 写盘）。第一次仍走副本。"""
+    c, host = cache
+    src = _pdf(tmp_path)
+    stages = _count_stages(c, monkeypatch)
+    a = c.get("figs/a.pdf", src, 400)
+    assert len(stages) == 1 and host.renders == 1
+    assert c.get("figs/a.pdf", src, 400) == a and c.get("figs/a.pdf", src, 800) != a
+    assert len(stages) == 2, "同一文件第二次命中不抄副本；换宽度是新键、成品不在 → 走副本渲染"
+    assert c.fast_hits == 1 and host.renders == 2
+
+
+def test_a_changed_or_pruned_file_always_goes_back_through_the_staged_copy(
+    cache, tmp_path, monkeypatch, settled
+):
+    """快路只交出**已有**的成品：指纹变了（同长改写 + mtime 推进）→ 副本路、新键、再渲；成品被 prune 掉了 →
+    副本路、同键重渲。渲染永远读副本，A→B→A 的保护不因快路打折。"""
+    c, host = cache
+    src = _pdf(tmp_path, body=b"%PDF-1.4 A")
+    stages = _count_stages(c, monkeypatch)
+    a = c.get("figs/a.pdf", src, 400)
+    src.write_bytes(b"%PDF-1.4 B")
+    st = src.stat()
+    # 同长改写之后把 mtime **往回**拨 1 秒：不依赖两次写入恰好落在不同的时间戳 tick 里；往前拨会落进
+    # 「刚改过 / 来自未来」的窗口，快路就根本不会被走到
+    os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns - 1_000_000_000))
+    b = c.get("figs/a.pdf", src, 400)
+    assert b != a and host.renders == 2 and len(stages) == 2
+    b.unlink()
+    looked = c._identities.hits
+    assert c.get("figs/a.pdf", src, 400) == b and b.exists()
+    assert c._identities.hits == looked + 1, "判据的前提：这一次确实走到了快路（指纹命中）"
+    assert host.renders == 3 and len(stages) == 3 and c.fast_hits == 0
+
+
+def test_a_just_written_file_is_not_trusted_by_its_fingerprint(cache, tmp_path, monkeypatch):
+    """时间戳粒度窗口之内（默认 2 s）刚写出的源：指纹不可信，每次都走副本——窗口挡的是「两次等长改写落在
+    同一个时间戳 tick 里」。"""
+    c, host = cache
+    src = _pdf(tmp_path)
+    stages = _count_stages(c, monkeypatch)
+    a = c.get("figs/a.pdf", src, 400)
+    assert c.get("figs/a.pdf", src, 400) == a
+    assert len(stages) == 2 and c.fast_hits == 0 and host.renders == 1
+
+
 def test_source_identity_hashes_in_chunks_without_read_bytes(cache, tmp_path, monkeypatch):
     """Codex #471 P2：几百 MB 的源不该为了算身份整个读进内存——`Path.read_bytes` 一次都不许叫。"""
     import pathlib
