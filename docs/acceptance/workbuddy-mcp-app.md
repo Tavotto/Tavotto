@@ -30,10 +30,10 @@
 | 接入方式 | `~/.workbuddy/mcp.json`（WorkBuddy「用户 MCP」的配置文件）登记一条 stdio server，命令是录制代理；**未设** `TAVOTTO_MCP_ROOTS`、未设 `cwd` |
 | 文档依据 | 腾讯云「MCP Apps 接入指南 - WorkBuddy Enterprise」（1831/137044，页面标注 2026-08-26）；`open.workbuddy.cn/docs/connector` |
 
-L3 原始证据（已脱敏：主目录换成 `~`、会话元数据打码）在
-[`workbuddy-l3-2026-09-23/`](./workbuddy-l3-2026-09-23/)：每个 Tavotto 进程一份录制
-（`record-*.jsonl`），WorkBuddy 的 MCP Apps 诊断日志摘录（`mcp-apps-diag.excerpt.log`）与 Agent CLI
-的 mcpUi / 进程退出摘录（`cli-mcpui.excerpt.log`）。
+L3 原始证据**不进仓库**：每个 Tavotto 进程一份 stdio 录制、WorkBuddy 的 MCP Apps 诊断日志摘录、
+Agent CLI 的 mcpUi / 进程退出摘录——里面有 WorkBuddy 的内部日志与对话标识，在腾讯回复缺陷报告
+之前不公开。它们已脱敏（主目录换成 `~`、会话元数据打码），随缺陷报告单独提供给 WorkBuddy。
+下文引用的日志行与时间点都出自这批材料；复现方法见文末「L3 复现步骤」。
 
 ## Results
 
@@ -197,11 +197,11 @@ Tavotto Engine + Canvas
 
 1. **`handleMcpUiCallTool` 调 MCP 工具时没有传会话**，出口审查因此对所有 MCP App 反向调用回
    `Sensitive MCP egress review is unavailable.`；而且这个拒绝不带 `isError`，与文档「拒绝时 widget 拿到
-   `{isError: true}`」不一致。（附 `mcp-apps-diag.excerpt.log` 09:28:06 / 09:37:22 两段。）
+   `{isError: true}`」不一致。（证据：MCP Apps 诊断日志 17:28:06 / 17:37:22 两段，UTC+8。）
 2. **一轮结束后对话 CLI 被 SIGTERM，之后的 `mcpUiCallTool` 被投递到预热池的新 CLI**，新 CLI 不知道对话的
    权限模式、把审批排进一个界面上不显示的队列，30 s 后超时；它还会为本地 stdio server 新起一个进程，
    有状态的 server 因此丢失会话。回收的触发条件是什么？有没有「MCP App 活着时保持会话 CLI」的机制？
-   （附 `cli-mcpui.excerpt.log` 17:47–17:50 段。）
+   （证据：Agent CLI 日志 17:47–17:50 段，UTC+8。）
 3. 画布自己调带 `_meta.ui` 的工具时为什么再开一个 app 实例？`_meta.ui.visibility` 设 `["app"]` 或别的
    声明能否避免？
 4. 反向调用的「始终允许」能否由连接器为只读工具预先声明？
