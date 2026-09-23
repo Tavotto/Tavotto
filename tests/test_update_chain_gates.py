@@ -735,6 +735,16 @@ def test_every_pattern_download_is_followed_by_a_roll_call_that_mirrors_the_uplo
 # 一个 `-Intel`，这张表写在 desktop-tauri.yml 的 shell `case` 里——判据直接把那段
 # case 抠出来交给 bash 跑，不在测试里另抄一份（抄的那份永远和自己一致）。
 # ---------------------------------------------------------------------------
+#: Windows 上 PATH 里的 `bash` 通常是 `C:\Windows\System32\bash.exe`——WSL 的启动器，没装发行版
+#: 时它只打印「Windows Subsystem for Linux has no installed distributions」然后退出 1（windows-latest
+#: 实测，PR #505）。那样「映射对不对」全红（假红），「认不出就失败」全绿（**假绿**：bash 根本没跑）。
+#: 这段 case 是纯字符串匹配、没有平台分支，ubuntu / macOS 腿上是真 bash 真执行，Windows 上不跑。
+_NEEDS_REAL_BASH = pytest.mark.skipif(
+    sys.platform == "win32" or shutil.which("bash") is None,
+    reason="需要真 bash（Windows 上 PATH 里的 bash 是 WSL 启动器；这段 case 在 POSIX 腿上执行）",
+)
+
+
 def _role_case_block() -> str:
     src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
     m = re.search(r'(?ms)^(\s*)case "\$base" in\n.*?^\1esac\n', src)
@@ -753,7 +763,7 @@ def _classify(base: str) -> tuple[int, str]:
     return proc.returncode, proc.stdout.strip()
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="需要 bash")
+@_NEEDS_REAL_BASH
 @pytest.mark.parametrize(
     ("base", "want"),
     [
@@ -772,7 +782,7 @@ def test_desktop_artifact_names_map_to_exactly_one_role_and_arch(base, want):
     assert out == want, (base, out)
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="需要 bash")
+@_NEEDS_REAL_BASH
 @pytest.mark.parametrize("base", ["Tavotto-0.17.0-macOS-universal.dmg", "Tavotto-x.app.tar.gz"])
 def test_a_mac_artifact_of_unknown_arch_fails_instead_of_being_skipped(base):
     """认不出架构的 dmg / 更新包必须失败——落进 `*) continue` 就是静默少一个安装包。"""
