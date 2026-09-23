@@ -1098,28 +1098,30 @@ Function DirectoryShow
   SendMessage $0 ${WM_SETTEXT} 0 "STR:$(^InstallBtn)"
 FunctionEnd
 
-; TAVOTTO PATCH: 目录页的 LEAVE。在这一屏就验写权限，而不是等解压失败。
-; 目标目录可能还不存在：往上找到第一个存在的祖先，在那里试写一个探针
-; 文件——能在它下面写文件，就能在它下面建出 $INSTDIR。**不先
-; CreateDirectory**：用户随后点「取消」会留下一串空目录。
+; TAVOTTO PATCH: 目录页的 LEAVE。在这一屏就验「装得进去」，而不是等解压失败。
+; 判据就是安装本身要做的两件事：建出 $INSTDIR、在里面写文件。**不**去问
+; 「最近的祖先目录能不能写」——那需要先判断哪一层存在，而一层目录只要列不出
+; 内容（ACL 拒了 SYNCHRONIZE / FILE_LIST_DIRECTORY），IfFileExists 就当它不存在，
+; 往上找到的可写祖先会替目标目录作证。2026-09-24 真机实测：对 Deny 写的目录
+; 选它下面的子目录，旧写法放行了，装到解压 Tavotto.exe 才报错。
+; 离开本页即开始安装（后面只有恒被跳过的开始菜单页与进度页），所以先建目录
+; 不会在「取消」时留下空目录。被拒时只收拾本函数刚建的那一层：是否原本存在
+; 用 GetFileAttributesW 判（只看属性，不列内容），RMDir 不带 /r，非空绝不删。
 ; 在 LEAVE 里 Abort = 留在本页让用户重选，不是中止安装。
 Function DirectoryLeave
-  StrCpy $R9 $INSTDIR
-  dir_probe_up:
-    IfFileExists "$R9\*.*" dir_probe_found
-    ${GetParent} $R9 $R8
-    StrCmp $R8 "" dir_not_writable
-    StrCmp $R8 $R9 dir_not_writable
-    StrCpy $R9 $R8
-    Goto dir_probe_up
-  dir_probe_found:
+  StrCpy $R6 0
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR") i .R5'
+  ${IfThen} $R5 = -1 ${|} StrCpy $R6 1 ${|}
   ClearErrors
-  FileOpen $R7 "$R9\.tavotto-write-probe" w
+  CreateDirectory "$INSTDIR"
+  IfErrors dir_not_writable
+  FileOpen $R7 "$INSTDIR\.tavotto-write-probe" w
   IfErrors dir_not_writable
   FileClose $R7
-  Delete "$R9\.tavotto-write-probe"
+  Delete "$INSTDIR\.tavotto-write-probe"
   Return
   dir_not_writable:
+  ${IfThen} $R6 = 1 ${|} RMDir "$INSTDIR" ${|}
   MessageBox MB_OK|MB_ICONEXCLAMATION "$(installDirNotWritable)"
   Abort
 FunctionEnd

@@ -124,19 +124,31 @@ def test_existing_install_is_recorded_in_oninit_from_the_uninstall_key():
 
 
 def test_directory_page_rejects_unwritable_folders_on_the_page():
-    """currentUser + asInvoker：选到 Program Files 要在这一屏拦下，不是解压到一半失败。"""
+    """currentUser + asInvoker：选到 Program Files 要在这一屏拦下，不是解压到一半失败。
+
+    判据的主语必须是 $INSTDIR 本身：建出它、在它里面写探针。旧写法往上找
+    「第一个存在的祖先」去试写——列不出内容的目录会被 IfFileExists 当成不存在，
+    于是由更上层的可写目录作证，2026-09-24 真机上 Deny 写的目录被放行了。
+    """
     assert _pre_function_for("MUI_PAGE_DIRECTORY", hook="LEAVE") == "DirectoryLeave"
     body = _function_body("DirectoryLeave")
-    assert "${GetParent}" in body  # 目标不存在时往上找第一个存在的祖先
-    assert re.search(r'FileOpen \S+ "\$R9\\[^"]+" w', body)
-    assert "IfErrors dir_not_writable" in body
-    assert 'MessageBox MB_OK|MB_ICONEXCLAMATION "$(installDirNotWritable)"' in body
-    # LEAVE 里 Abort = 留在本页重选
-    assert re.search(r"dir_not_writable:\s*\n\s*MessageBox[^\n]*\n\s*Abort", body)
-    # 不先建目录：用户点了取消会留下一串空目录
-    assert "CreateDirectory" not in body
+    # 主语是 $INSTDIR：先建，建不出来就拒
+    assert re.search(r'CreateDirectory "\$INSTDIR"\s*\n\s*IfErrors dir_not_writable', body)
+    # 探针必须直接落在 $INSTDIR 里：[^"\\]+ 挡住 `$INSTDIR\..\probe` 这类越级
+    assert re.search(r'FileOpen \S+ "\$INSTDIR\\[^"\\]+" w\s*\n\s*IfErrors dir_not_writable', body)
+    # 不许再按「存在的祖先」替它作证
+    assert "${GetParent}" not in body
+    assert "IfFileExists" not in body
     # 探针用完即删
-    assert re.search(r'Delete "\$R9\\[^"]+"', body)
+    assert re.search(r'Delete "\$INSTDIR\\[^"\\]+"', body)
+    # 被拒时只收拾本函数刚建的那一层：非递归，且有「原本不存在」的前提
+    assert "RMDir /r" not in body
+    assert re.search(r"\$\{IfThen\} \$R6 = 1 \$\{\|\} RMDir \"\$INSTDIR\" \$\{\|\}", body)
+    assert re.search(r"kernel32::GetFileAttributesW\(w \"\$INSTDIR\"\) i \.R5", body)
+    assert body.index("GetFileAttributesW") < body.index("CreateDirectory")
+    # LEAVE 里 Abort = 留在本页重选
+    assert 'MessageBox MB_OK|MB_ICONEXCLAMATION "$(installDirNotWritable)"' in body
+    assert re.search(r"MessageBox[^\n]*\n\s*Abort", body)
 
 
 def test_directory_page_button_says_install():
