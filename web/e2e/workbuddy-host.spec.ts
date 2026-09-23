@@ -1,9 +1,9 @@
-import { test, expect, type FrameLocator, type Page } from "@playwright/test";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { createInterface } from "node:readline";
+import { test, expect, type FrameLocator, type Page } from '@playwright/test'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { createInterface } from 'node:readline'
 
 /**
  * WorkBuddy P0 spike：**按 WorkBuddy 公开文档形状**的假宿主 × **真** Tavotto MCP server。
@@ -30,137 +30,126 @@ import { createInterface } from "node:readline";
  * 找不到就整组 skip 并在报告里说出口——**skip 不是绿**。
  */
 
-const REPO = path.resolve(import.meta.dirname, "..", "..");
-const PLUGIN = path.join(REPO, "codex-plugin");
-const CORPUS = path.join(REPO, "tests", "acceptance", "corpus");
-const LARGE = path.join(REPO, "tests", "workbuddy", "fixtures", "large");
-const PYTHON =
-  process.env.WB_SPIKE_PYTHON || path.join(REPO, ".venv", "bin", "python");
-const HOST = "http://workbuddy-host.test";
-const SANDBOX = "http://workbuddy-sandbox.test";
-const LAZY_THRESHOLD = 256 * 1024;
+const REPO = path.resolve(import.meta.dirname, '..', '..')
+const PLUGIN = path.join(REPO, 'codex-plugin')
+const CORPUS = path.join(REPO, 'tests', 'acceptance', 'corpus')
+const LARGE = path.join(REPO, 'tests', 'workbuddy', 'fixtures', 'large')
+const PYTHON = process.env.WB_SPIKE_PYTHON || path.join(REPO, '.venv', 'bin', 'python')
+const HOST = 'http://workbuddy-host.test'
+const SANDBOX = 'http://workbuddy-sandbox.test'
+const LAZY_THRESHOLD = 256 * 1024
 
+test.skip(!existsSync(PYTHON), `没有装了 tavotto 的解释器（WB_SPIKE_PYTHON=${PYTHON}）——本组未执行`)
 test.skip(
-  !existsSync(PYTHON),
-  `没有装了 tavotto 的解释器（WB_SPIKE_PYTHON=${PYTHON}）——本组未执行`,
-);
-test.skip(
-  !existsSync(path.join(PLUGIN, "mcp", "widget", "canvas.html")),
-  "画布产物不在：先 python scripts/build_mcp_widget.py",
-);
+  !existsSync(path.join(PLUGIN, 'mcp', 'widget', 'canvas.html')),
+  '画布产物不在：先 python scripts/build_mcp_widget.py',
+)
 
 // ---------------------------------------------------------------- 真 stdio server
-type Json = Record<string, unknown>;
+type Json = Record<string, unknown>
 
 class RealServer {
-  private proc: ChildProcessWithoutNullStreams;
-  private id = 0;
-  private waiters = new Map<number, (m: Json) => void>();
-  readonly serverRequests: string[] = [];
-  stderr = "";
+  private proc: ChildProcessWithoutNullStreams
+  private id = 0
+  private waiters = new Map<number, (m: Json) => void>()
+  readonly serverRequests: string[] = []
+  stderr = ''
 
-  constructor(private elicitation: "accept" | "decline") {
+  private elicitation: 'accept' | 'decline'
+
+  constructor(elicitation: 'accept' | 'decline') {
+    this.elicitation = elicitation
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       TAVOTTO_MCP_PYTHON: PYTHON,
-    };
-    for (const k of Object.keys(env)) {
-      if (
-        k.startsWith("CODEX_") ||
-        (k.startsWith("TAVOTTO_MCP_") && k !== "TAVOTTO_MCP_PYTHON")
-      )
-        delete env[k];
     }
-    delete env.PYTHONPATH; // 见 tests/workbuddy/probe.py：它会让启动器自己的解释器被选成引擎
+    for (const k of Object.keys(env)) {
+      if (k.startsWith('CODEX_') || (k.startsWith('TAVOTTO_MCP_') && k !== 'TAVOTTO_MCP_PYTHON'))
+        delete env[k]
+    }
+    delete env.PYTHONPATH // 见 tests/workbuddy/probe.py：它会让启动器自己的解释器被选成引擎
     // WorkBuddy 连接器 mcp.json 写 `"cwd": "."` = 连接器目录
-    this.proc = spawn("python3", [path.join(PLUGIN, "mcp", "server.py")], {
+    this.proc = spawn('python3', [path.join(PLUGIN, 'mcp', 'server.py')], {
       cwd: PLUGIN,
       env,
-    });
-    this.proc.stderr.on("data", (b: Buffer) => {
-      this.stderr = (this.stderr + b.toString()).slice(-8000);
-    });
-    createInterface({ input: this.proc.stdout }).on("line", (line) => {
-      if (!line.trim()) return;
-      const msg = JSON.parse(line) as Json;
-      if (typeof msg.method === "string" && msg.id != null)
-        return this.answer(msg);
-      const w = this.waiters.get(msg.id as number);
+    })
+    this.proc.stderr.on('data', (b: Buffer) => {
+      this.stderr = (this.stderr + b.toString()).slice(-8000)
+    })
+    createInterface({ input: this.proc.stdout }).on('line', (line) => {
+      if (!line.trim()) return
+      const msg = JSON.parse(line) as Json
+      if (typeof msg.method === 'string' && msg.id != null) return this.answer(msg)
+      const w = this.waiters.get(msg.id as number)
       if (w) {
-        this.waiters.delete(msg.id as number);
-        w(msg);
+        this.waiters.delete(msg.id as number)
+        w(msg)
       }
-    });
+    })
   }
 
   private write(msg: Json) {
-    this.proc.stdin.write(JSON.stringify(msg) + "\n");
+    this.proc.stdin.write(JSON.stringify(msg) + '\n')
   }
 
   private answer(msg: Json) {
-    this.serverRequests.push(msg.method as string);
-    if (msg.method === "elicitation/create") {
+    this.serverRequests.push(msg.method as string)
+    if (msg.method === 'elicitation/create') {
       const result =
-        this.elicitation === "accept"
-          ? { action: "accept", content: { approve: true } }
-          : { action: "decline" };
-      return this.write({ jsonrpc: "2.0", id: msg.id, result });
+        this.elicitation === 'accept'
+          ? { action: 'accept', content: { approve: true } }
+          : { action: 'decline' }
+      return this.write({ jsonrpc: '2.0', id: msg.id, result })
     }
     this.write({
-      jsonrpc: "2.0",
+      jsonrpc: '2.0',
       id: msg.id,
-      error: { code: -32601, message: "unsupported" },
-    });
+      error: { code: -32601, message: 'unsupported' },
+    })
   }
 
   rpc(method: string, params?: Json, timeoutMs = 600_000): Promise<Json> {
-    const id = ++this.id;
+    const id = ++this.id
     return new Promise((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error(`${method} 超时\n${this.stderr}`)),
-        timeoutMs,
-      );
+      const t = setTimeout(() => reject(new Error(`${method} 超时\n${this.stderr}`)), timeoutMs)
       this.waiters.set(id, (m) => {
-        clearTimeout(t);
-        resolve(m);
-      });
-      this.write({ jsonrpc: "2.0", id, method, ...(params ? { params } : {}) });
-    });
+        clearTimeout(t)
+        resolve(m)
+      })
+      this.write({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) })
+    })
   }
 
   async init(caps: Json = { elicitation: {} }) {
-    const r = await this.rpc("initialize", {
-      protocolVersion: "2025-06-18",
+    const r = await this.rpc('initialize', {
+      protocolVersion: '2025-06-18',
       capabilities: caps,
-      clientInfo: { name: "workbuddy-spike-fake-host", version: "0" },
-    });
-    this.write({ jsonrpc: "2.0", method: "notifications/initialized" });
-    return r;
+      clientInfo: { name: 'workbuddy-spike-fake-host', version: '0' },
+    })
+    this.write({ jsonrpc: '2.0', method: 'notifications/initialized' })
+    return r
   }
 
   async call(name: string, args: Json): Promise<Json> {
-    const r = await this.rpc("tools/call", { name, arguments: args });
-    return r.result as Json;
+    const r = await this.rpc('tools/call', { name, arguments: args })
+    return r.result as Json
   }
 
   close() {
-    this.proc.stdin.end();
-    setTimeout(() => this.proc.kill(), 5_000).unref();
+    this.proc.stdin.end()
+    setTimeout(() => this.proc.kill(), 5_000).unref()
   }
 }
 
-const sc = (r: Json) => (r.structuredContent ?? {}) as Json;
+const sc = (r: Json) => (r.structuredContent ?? {}) as Json
 
 function workspace(src: string): string {
-  const dir = path.join(
-    mkdtempSync(path.join(tmpdir(), "wb-e2e-")),
-    path.basename(src),
-  );
+  const dir = path.join(mkdtempSync(path.join(tmpdir(), 'wb-e2e-')), path.basename(src))
   cpSync(src, dir, {
     recursive: true,
     filter: (p) => !/__pycache__|\.(pdf|png|svg)$/.test(p),
-  });
-  return dir;
+  })
+  return dir
 }
 
 // ---------------------------------------------------------------- 假宿主页面
@@ -253,7 +242,7 @@ W.__setContext = (patch) => {
   hostContext = { ...hostContext, ...patch }
   post({ jsonrpc: '2.0', method: 'ui/notifications/host-context-changed', params: patch })
 }
-</script></body></html>`;
+</script></body></html>`
 
 /** host 自供的 sandbox proxy（异源）：收 HTML 或 resourceUri，建 guest，双向转发。 */
 const PROXY_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -286,73 +275,68 @@ window.addEventListener('message', (ev) => {
   if (guest && ev.source === guest.contentWindow) host.postMessage(m, '*')
 })
 host.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/sandbox-proxy-ready', params: {} }, '*')
-</script></body></html>`;
+</script></body></html>`
 
 /** 从 `_meta.ui.csp` 生成的 CSP（WorkBuddy 的原文未公开：这里取最严的一种写法）。 */
 function cspFrom(meta: Json | undefined): string {
   const csp = (meta?.csp ?? {}) as {
-    connectDomains?: string[];
-    resourceDomains?: string[];
-  };
-  const connect = csp.connectDomains?.length
-    ? csp.connectDomains.join(" ")
-    : "'none'";
-  const res = (csp.resourceDomains ?? []).join(" ");
+    connectDomains?: string[]
+    resourceDomains?: string[]
+  }
+  const connect = csp.connectDomains?.length ? csp.connectDomains.join(' ') : "'none'"
+  const res = (csp.resourceDomains ?? []).join(' ')
   return [
     "default-src 'none'",
     `script-src 'unsafe-inline' ${res}`.trim(),
     `style-src 'unsafe-inline' ${res}`.trim(),
     `img-src data: blob: ${res}`.trim(),
     `font-src data: ${res}`.trim(),
-    "media-src data: blob:",
+    'media-src data: blob:',
     `connect-src ${connect}`,
-  ].join("; ");
+  ].join('; ')
 }
 
 interface Boot {
-  server: RealServer;
-  frame: FrameLocator;
-  open: Json;
-  project: string;
+  server: RealServer
+  frame: FrameLocator
+  open: Json
+  project: string
 }
 
 async function boot(
   page: Page,
   opts: {
-    project: string;
-    stem: string;
-    decisions: string[];
-    hostContext?: Json;
-    lazy?: boolean;
-    elicitation?: "accept" | "decline";
+    project: string
+    stem: string
+    decisions: string[]
+    hostContext?: Json
+    lazy?: boolean
+    elicitation?: 'accept' | 'decline'
   },
 ): Promise<Boot> {
-  const server = new RealServer(opts.elicitation ?? "accept");
-  await server.init();
+  const server = new RealServer(opts.elicitation ?? 'accept')
+  await server.init()
   // 模型那一侧的调用：WorkBuddy 的 agent 调 open，host 拿到结果再挂 UI
-  const openResult = await server.call("tavotto_open_figure", {
+  const openResult = await server.call('tavotto_open_figure', {
     project_path: opts.project,
     stem: opts.stem,
-  });
-  const open = sc(openResult);
-  expect(open.session_id, JSON.stringify(open).slice(0, 400)).toBeTruthy();
-  const meta = (openResult._meta ?? {}) as Json;
-  const resourceUri = (meta.ui as Json | undefined)?.resourceUri as string;
-  expect(resourceUri).toBe("ui://tavotto/canvas/v1.html");
-  const list = await server.rpc("resources/list");
-  const desc = ((list.result as Json).resources as Json[])[0];
-  const read = await server.rpc("resources/read", { uri: resourceUri });
-  const html =
-    (((read.result as Json).contents as Json[])[0].text as string) ?? "";
-  const lazy = opts.lazy ?? html.length > LAZY_THRESHOLD;
+  })
+  const open = sc(openResult)
+  expect(open.session_id, JSON.stringify(open).slice(0, 400)).toBeTruthy()
+  const meta = (openResult._meta ?? {}) as Json
+  const resourceUri = (meta.ui as Json | undefined)?.resourceUri as string
+  expect(resourceUri).toBe('ui://tavotto/canvas/v1.html')
+  const list = await server.rpc('resources/list')
+  const desc = ((list.result as Json).resources as Json[])[0]
+  const read = await server.rpc('resources/read', { uri: resourceUri })
+  const html = (((read.result as Json).contents as Json[])[0].text as string) ?? ''
+  const lazy = opts.lazy ?? html.length > LAZY_THRESHOLD
 
-  await page.exposeFunction("__mcp", (method: string, params: Json) =>
-    server.rpc(method, params),
-  );
+  await page.exposeFunction('__mcp', (method: string, params: Json) => server.rpc(method, params))
   await page.addInitScript(
     (cfg) => {
-      (window as unknown as Json).__CFG__ = cfg;
-      (window as unknown as Json).__DECISIONS__ = cfg.decisions;
+      ;(window as unknown as Json).__CFG__ = cfg
+      ;(window as unknown as Json).__DECISIONS__ = cfg.decisions
     },
     {
       resourceUri,
@@ -363,360 +347,310 @@ async function boot(
       toolResult: openResult,
       decisions: opts.decisions,
       hostContext: {
-        theme: "light",
-        displayMode: "inline",
-        availableDisplayModes: ["inline", "fullscreen", "pip"],
-        locale: "zh-CN",
+        theme: 'light',
+        displayMode: 'inline',
+        availableDisplayModes: ['inline', 'fullscreen', 'pip'],
+        locale: 'zh-CN',
         containerDimensions: { width: 1100, height: 760 },
         safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
         ...opts.hostContext,
       },
     },
-  );
+  )
   await page.route(`${HOST}/**`, (r) =>
-    r.fulfill({ contentType: "text/html; charset=utf-8", body: HOST_HTML }),
-  );
+    r.fulfill({ contentType: 'text/html; charset=utf-8', body: HOST_HTML }),
+  )
   await page.route(`${SANDBOX}/**`, (r) =>
-    r.fulfill({ contentType: "text/html; charset=utf-8", body: PROXY_HTML }),
-  );
-  await page.setViewportSize({ width: 1100, height: 760 });
-  await page.goto(`${HOST}/host.html`);
-  const frame = page.frameLocator("#sandbox").frameLocator("#guest");
-  return { server, frame, open, project: opts.project };
+    r.fulfill({ contentType: 'text/html; charset=utf-8', body: PROXY_HTML }),
+  )
+  await page.setViewportSize({ width: 1100, height: 760 })
+  await page.goto(`${HOST}/host.html`)
+  const frame = page.frameLocator('#sandbox').frameLocator('#guest')
+  return { server, frame, open, project: opts.project }
 }
 
 const w = <T>(page: Page, key: string) =>
-  page.evaluate(
-    (k) => (window as unknown as Record<string, unknown>)[k],
-    key,
-  ) as Promise<T>;
+  page.evaluate((k) => (window as unknown as Record<string, unknown>)[k], key) as Promise<T>
 
 /** 在画布上拖 manifest 里某个元素的 bbox 中心（bbox 是 figure 分数、左上原点）。 */
-async function dragElement(
-  page: Page,
-  frame: FrameLocator,
-  bbox: number[],
-  dx: number,
-  dy: number,
-) {
-  const svg = frame.locator("[data-element-svg]").first();
-  const box = (await svg.boundingBox())!;
-  const x = box.x + box.width * (bbox[0] + bbox[2] / 2);
-  const y = box.y + box.height * (bbox[1] + bbox[3] / 2);
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  for (let i = 1; i <= 8; i++)
-    await page.mouse.move(x + (dx * i) / 8, y + (dy * i) / 8);
-  await page.mouse.up();
+async function dragElement(page: Page, frame: FrameLocator, bbox: number[], dx: number, dy: number) {
+  const svg = frame.locator('[data-element-svg]').first()
+  const box = (await svg.boundingBox())!
+  const x = box.x + box.width * (bbox[0] + bbox[2] / 2)
+  const y = box.y + box.height * (bbox[1] + bbox[3] / 2)
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) await page.mouse.move(x + (dx * i) / 8, y + (dy * i) / 8)
+  await page.mouse.up()
 }
 
 async function serverPatches(server: RealServer, sid: string) {
-  return sc(await server.call("tavotto_session_state", { session_id: sid }))
-    .patches as Json[];
+  return sc(await server.call('tavotto_session_state', { session_id: sid })).patches as Json[]
 }
 
-async function currentLegend(
-  server: RealServer,
-  sid: string,
-): Promise<number[]> {
-  const st = sc(
-    await server.call("tavotto_session_state", { session_id: sid }),
-  );
-  return legendBBox(st);
+async function currentLegend(server: RealServer, sid: string): Promise<number[]> {
+  const st = sc(await server.call('tavotto_session_state', { session_id: sid }))
+  return legendBBox(st)
 }
 
 /** 证据截图：设了 WB_EVIDENCE_DIR 才存（报告引用的就是这些文件）。 */
 async function shot(page: Page, name: string) {
-  const dir = process.env.WB_EVIDENCE_DIR;
-  if (dir) await page.screenshot({ path: path.join(dir, `${name}.png`) });
+  const dir = process.env.WB_EVIDENCE_DIR
+  if (dir) await page.screenshot({ path: path.join(dir, `${name}.png`) })
 }
 
 function legendBBox(open: Json): number[] {
-  const els = ((open.manifest as Json).elements as Json[]) ?? [];
-  return els.find((e) => e.role === "legend" && e.draggable)!.bbox as number[];
+  const els = ((open.manifest as Json).elements as Json[]) ?? []
+  return els.find((e) => e.role === 'legend' && e.draggable)!.bbox as number[]
 }
 
 // ------------------------------------------------------------------------ 用例
 
-test("c01 真引擎：1.35 MB 画布经 guest 回拉进 ready；拖动 → 权限（始终允许）→ 真 apply；/clear 后重新要授权；预检与导出", async ({
+test('c01 真引擎：1.35 MB 画布经 guest 回拉进 ready；拖动 → 权限（始终允许）→ 真 apply；/clear 后重新要授权；预检与导出', async ({
   page,
 }) => {
-  const project = workspace(CORPUS);
+  const project = workspace(CORPUS)
   const { server, frame, open } = await boot(page, {
     project,
-    stem: "c01_line",
+    stem: 'c01_line',
     // 第 1 次拖动：始终允许；/clear 后第 1 次：仅本次；预检：始终允许；导出：始终允许
-    decisions: ["always", "once", "always", "always"],
-  });
-  const sid = open.session_id as string;
+    decisions: ['always', 'once', 'always', 'always'],
+  })
+  const sid = open.session_id as string
   try {
     // ① 大资源延迟加载：host 没预取，guest 一侧回拉了完整 HTML
     await expect
-      .poll(() => w<Json | undefined>(page, "__LAZY_READ__"), {
+      .poll(() => w<Json | undefined>(page, '__LAZY_READ__'), {
         timeout: 30_000,
       })
-      .toBeTruthy();
-    const lazyRead = (await w<Json>(page, "__LAZY_READ__"))!;
-    expect(lazyRead.uri).toBe("ui://tavotto/canvas/v1.html");
-    expect(lazyRead.bytes as number).toBeGreaterThan(LAZY_THRESHOLD);
+      .toBeTruthy()
+    const lazyRead = (await w<Json>(page, '__LAZY_READ__'))!
+    expect(lazyRead.uri).toBe('ui://tavotto/canvas/v1.html')
+    expect(lazyRead.bytes as number).toBeGreaterThan(LAZY_THRESHOLD)
 
     // ② 画布进 ready：真 SVG 在、stem 在、「已同步」在
-    await expect(frame.locator("[data-element-svg] svg").first()).toBeVisible({
+    await expect(frame.locator('[data-element-svg] svg').first()).toBeVisible({
       timeout: 60_000,
-    });
-    await expect(frame.getByText("c01_line").first()).toBeVisible();
-    await expect(frame.getByText("已同步")).toBeVisible();
+    })
+    await expect(frame.getByText('c01_line').first()).toBeVisible()
+    await expect(frame.getByText('已同步')).toBeVisible()
     // 画布一握手就要全屏
-    await expect
-      .poll(() => w<string[]>(page, "__DISPLAY__"))
-      .toContain("fullscreen");
+    await expect.poll(() => w<string[]>(page, '__DISPLAY__')).toContain('fullscreen')
     // 没有授权过的反向调用：启动阶段一次都没发（小图是完整结果，不用取件）
-    expect(await w<string[]>(page, "__PROMPTS__")).toEqual([]);
+    expect(await w<string[]>(page, '__PROMPTS__')).toEqual([])
 
     // ③ 第一次拖图例：弹一次权限框、选「始终允许」、真 server 收到全量 patches
-    const bbox = legendBBox(open);
-    await dragElement(page, frame, bbox, -60, 40);
+    const bbox = legendBBox(open)
+    await dragElement(page, frame, bbox, -60, 40)
     await expect
       .poll(async () => (await serverPatches(server, sid)).length, {
         timeout: 60_000,
       })
-      .toBe(1);
-    const first = (await serverPatches(server, sid))[0];
-    expect(first.gid).toBe("axes_0.legend");
-    expect(await w<string[]>(page, "__PROMPTS__")).toEqual([
-      "tavotto_apply_overrides",
-    ]);
-    await expect(frame.getByText("已同步")).toBeVisible({ timeout: 60_000 });
+      .toBe(1)
+    const first = (await serverPatches(server, sid))[0]
+    expect(first.gid).toBe('axes_0.legend')
+    expect(await w<string[]>(page, '__PROMPTS__')).toEqual(['tavotto_apply_overrides'])
+    await expect(frame.getByText('已同步')).toBeVisible({ timeout: 60_000 })
 
     // ④ 再拖两次：不再弹框（session 级始终允许），server 的值跟着变
-    await shot(page, "c01-after-first-drag");
+    await shot(page, 'c01-after-first-drag')
     for (const [dx, dy] of [
       [30, -20],
       [-20, 15],
     ]) {
-      const before = JSON.stringify(
-        (await serverPatches(server, sid))[0].value,
-      );
-      await dragElement(page, frame, await currentLegend(server, sid), dx, dy);
+      const before = JSON.stringify((await serverPatches(server, sid))[0].value)
+      await dragElement(page, frame, await currentLegend(server, sid), dx, dy)
       await expect
-        .poll(
-          async () =>
-            JSON.stringify((await serverPatches(server, sid))[0]?.value),
-          { timeout: 60_000 },
-        )
-        .not.toBe(before);
-      await expect(frame.getByText("已同步")).toBeVisible({ timeout: 60_000 });
+        .poll(async () => JSON.stringify((await serverPatches(server, sid))[0]?.value), { timeout: 60_000 })
+        .not.toBe(before)
+      await expect(frame.getByText('已同步')).toBeVisible({ timeout: 60_000 })
     }
-    expect(await w<string[]>(page, "__PROMPTS__")).toEqual([
-      "tavotto_apply_overrides",
-    ]);
-    const applies = (await w<Json[]>(page, "__FORWARDED__")).filter(
-      (c) => c.name === "tavotto_apply_overrides",
-    );
-    expect(applies.length).toBe(3);
+    expect(await w<string[]>(page, '__PROMPTS__')).toEqual(['tavotto_apply_overrides'])
+    const applies = (await w<Json[]>(page, '__FORWARDED__')).filter(
+      (c) => c.name === 'tavotto_apply_overrides',
+    )
+    expect(applies.length).toBe(3)
 
     // ⑤ /clear：始终允许失效，下一次拖动重新弹框
-    await page.evaluate(() =>
-      (window as unknown as { __clear: () => void }).__clear(),
-    );
-    const moved3 = JSON.stringify((await serverPatches(server, sid))[0].value);
-    await dragElement(page, frame, await currentLegend(server, sid), -15, 15);
+    await page.evaluate(() => (window as unknown as { __clear: () => void }).__clear())
+    const moved3 = JSON.stringify((await serverPatches(server, sid))[0].value)
+    await dragElement(page, frame, await currentLegend(server, sid), -15, 15)
     await expect
-      .poll(
-        async () =>
-          JSON.stringify((await serverPatches(server, sid))[0]?.value),
-        { timeout: 60_000 },
-      )
-      .not.toBe(moved3);
-    expect(await w<string[]>(page, "__PROMPTS__")).toEqual([
-      "tavotto_apply_overrides",
-      "tavotto_apply_overrides",
-    ]);
-    await expect(frame.getByText("已同步")).toBeVisible({ timeout: 60_000 });
+      .poll(async () => JSON.stringify((await serverPatches(server, sid))[0]?.value), { timeout: 60_000 })
+      .not.toBe(moved3)
+    expect(await w<string[]>(page, '__PROMPTS__')).toEqual([
+      'tavotto_apply_overrides',
+      'tavotto_apply_overrides',
+    ])
+    await expect(frame.getByText('已同步')).toBeVisible({ timeout: 60_000 })
 
     // ⑥ 预检（另一个工具 = 另一次授权）
     // 编辑之后这颗按钮写的是「预检已过期」，编辑前写计数——两种都含「预检」或「阻断」
-    await frame.getByRole("button", { name: /预检|阻断/ }).click();
-    await expect
-      .poll(() => w<string[]>(page, "__PROMPTS__"))
-      .toContain("tavotto_preflight");
-    await expect(frame.getByText(/仍要导出/)).toBeVisible({ timeout: 60_000 });
+    await frame.getByRole('button', { name: /预检|阻断/ }).click()
+    await expect.poll(() => w<string[]>(page, '__PROMPTS__')).toContain('tavotto_preflight')
+    await expect(frame.getByText(/仍要导出/)).toBeVisible({ timeout: 60_000 })
 
     // ⑦ 导出：c01_line 在课题组规范下有阻断项，先按界面要求显式确认再导出
-    await frame.getByText(/仍要导出/).click();
-    await frame.getByRole("button", { name: /导出 PDF\+PNG/ }).click();
+    await frame.getByText(/仍要导出/).click()
+    await frame.getByRole('button', { name: /导出 PDF\+PNG/ }).click()
     // 判据是「已导出」那条提示——面包屑里本来就写着 c01_line.pdf，按 .pdf 找会提前成立
     await expect(frame.getByText(/已导出/).first()).toBeVisible({
       timeout: 120_000,
-    });
-    await shot(page, "c01-exported");
-    const exportDir = path.join(project, "tavottofile", "export");
-    const pdfs = readdirSync(exportDir).filter((f) => f.endsWith(".pdf"));
-    expect(pdfs.length).toBeGreaterThan(0);
-    expect(await w<string[]>(page, "__PROMPTS__")).toEqual([
-      "tavotto_apply_overrides",
-      "tavotto_apply_overrides",
-      "tavotto_preflight",
-      "tavotto_export",
-    ]);
+    })
+    await shot(page, 'c01-exported')
+    const exportDir = path.join(project, 'tavottofile', 'export')
+    const pdfs = readdirSync(exportDir).filter((f) => f.endsWith('.pdf'))
+    expect(pdfs.length).toBeGreaterThan(0)
+    expect(await w<string[]>(page, '__PROMPTS__')).toEqual([
+      'tavotto_apply_overrides',
+      'tavotto_apply_overrides',
+      'tavotto_preflight',
+      'tavotto_export',
+    ])
     test.info().annotations.push({
-      type: "evidence",
+      type: 'evidence',
       description: JSON.stringify({
-        prompts: await w<string[]>(page, "__PROMPTS__"),
-        forwarded: (await w<Json[]>(page, "__FORWARDED__")).map((c) => c.name),
-        display: await w<string[]>(page, "__DISPLAY__"),
-        sizes: (await w<Json[]>(page, "__SIZES__")).length,
+        prompts: await w<string[]>(page, '__PROMPTS__'),
+        forwarded: (await w<Json[]>(page, '__FORWARDED__')).map((c) => c.name),
+        display: await w<string[]>(page, '__DISPLAY__'),
+        sizes: (await w<Json[]>(page, '__SIZES__')).length,
         lazyRead,
         pdfs,
       }),
-    });
+    })
   } finally {
-    server.close();
-    rmSync(path.dirname(project), { recursive: true, force: true });
+    server.close()
+    rmSync(path.dirname(project), { recursive: true, force: true })
   }
-});
+})
 
-test("拒绝反向 tools/call：guest 拿到 isError，server 零调用、图不变，画布如实报错", async ({
-  page,
-}) => {
-  const project = workspace(CORPUS);
+test('拒绝反向 tools/call：guest 拿到 isError，server 零调用、图不变，画布如实报错', async ({ page }) => {
+  const project = workspace(CORPUS)
   const { server, frame, open } = await boot(page, {
     project,
-    stem: "c01_line",
-    decisions: ["deny"],
-  });
+    stem: 'c01_line',
+    decisions: ['deny'],
+  })
   try {
-    await expect(frame.getByText("已同步")).toBeVisible({ timeout: 60_000 });
-    await dragElement(page, frame, legendBBox(open), -60, 40);
+    await expect(frame.getByText('已同步')).toBeVisible({ timeout: 60_000 })
+    await dragElement(page, frame, legendBBox(open), -60, 40)
     await expect
-      .poll(() => w<string[]>(page, "__DENIED__"), { timeout: 30_000 })
-      .toEqual(["tavotto_apply_overrides"]);
-    expect(await w<Json[]>(page, "__FORWARDED__")).toEqual([]);
-    expect(await serverPatches(server, open.session_id as string)).toEqual([]);
+      .poll(() => w<string[]>(page, '__DENIED__'), { timeout: 30_000 })
+      .toEqual(['tavotto_apply_overrides'])
+    expect(await w<Json[]>(page, '__FORWARDED__')).toEqual([])
+    expect(await serverPatches(server, open.session_id as string)).toEqual([])
     // 不把拒绝当成功：画布显示渲染失败，并给出重试
-    await expect(frame.getByText("已同步")).toHaveCount(0, { timeout: 30_000 });
-    await shot(page, "deny-apply");
+    await expect(frame.getByText('已同步')).toHaveCount(0, { timeout: 30_000 })
+    await shot(page, 'deny-apply')
   } finally {
-    server.close();
-    rmSync(path.dirname(project), { recursive: true, force: true });
+    server.close()
+    rmSync(path.dirname(project), { recursive: true, force: true })
   }
-});
+})
 
-test("工作区授权被拒：open 不建会话、不带 UI", async () => {
-  const project = workspace(CORPUS);
-  const server = new RealServer("decline");
+test('工作区授权被拒：open 不建会话、不带 UI', async () => {
+  const project = workspace(CORPUS)
+  const server = new RealServer('decline')
   try {
-    await server.init();
-    const r = await server.call("tavotto_open_figure", {
+    await server.init()
+    const r = await server.call('tavotto_open_figure', {
       project_path: project,
-      stem: "c01_line",
-    });
-    expect(sc(r).code).toBe("workspace_confirmation_declined");
-    expect(sc(r).session_id ?? null).toBeNull();
-    expect(server.serverRequests).toEqual(["elicitation/create"]);
-    const h = sc(await server.call("tavotto_health", {}));
-    expect(h.sessions).toEqual([]);
+      stem: 'c01_line',
+    })
+    expect(sc(r).code).toBe('workspace_confirmation_declined')
+    expect(sc(r).session_id ?? null).toBeNull()
+    expect(server.serverRequests).toEqual(['elicitation/create'])
+    const h = sc(await server.call('tavotto_health', {}))
+    expect(h.sessions).toEqual([])
   } finally {
-    server.close();
-    rmSync(path.dirname(project), { recursive: true, force: true });
+    server.close()
+    rmSync(path.dirname(project), { recursive: true, force: true })
   }
-});
+})
 
-test("hostContext：英文宿主 → 英文画布；host-context-changed 切回中文；主题读不读如实记录", async ({
+test('hostContext：英文宿主 → 英文画布；host-context-changed 切回中文；主题读不读如实记录', async ({
   page,
 }) => {
-  const project = workspace(CORPUS);
+  const project = workspace(CORPUS)
   const { server, frame } = await boot(page, {
     project,
-    stem: "c01_line",
+    stem: 'c01_line',
     decisions: [],
-    hostContext: { locale: "en-US", theme: "dark" },
-  });
+    hostContext: { locale: 'en-US', theme: 'dark' },
+  })
   try {
-    await expect(frame.getByText("In sync")).toBeVisible({ timeout: 60_000 });
-    await shot(page, "hostctx-en-dark");
-    await expect(
-      frame.getByRole("button", { name: /Export PDF\+PNG/ }),
-    ).toBeVisible();
+    await expect(frame.getByText('In sync')).toBeVisible({ timeout: 60_000 })
+    await shot(page, 'hostctx-en-dark')
+    await expect(frame.getByRole('button', { name: /Export PDF\+PNG/ })).toBeVisible()
     // 主题：宿主说 dark，画布是否跟随——记录事实，不在 spike 里判红
-    const themeFacts = await frame.locator("html").evaluate((el) => ({
-      dataTheme: el.getAttribute("data-theme"),
+    const themeFacts = await frame.locator('html').evaluate((el) => ({
+      dataTheme: el.getAttribute('data-theme'),
       colorScheme: getComputedStyle(el).colorScheme,
       bodyBg: getComputedStyle(document.body).backgroundColor,
-    }));
+    }))
     test.info().annotations.push({
-      type: "theme-dark-host",
+      type: 'theme-dark-host',
       description: JSON.stringify(themeFacts),
-    });
+    })
     // 会话中途切语言：WorkBuddy 文档说 locale「不变」，这里只记录事实不判——
     // 2026-09-23 实测属性页 / 预检列表切过去了，顶栏（McpApp 的 mc() 文案）没有重渲染
     await page.evaluate(() =>
-      (
-        window as unknown as { __setContext: (p: unknown) => void }
-      ).__setContext({ locale: "zh-CN" }),
-    );
-    await expect(frame.getByText("整张图")).toBeVisible({ timeout: 30_000 });
-    await shot(page, "hostctx-after-zh-switch");
+      (window as unknown as { __setContext: (p: unknown) => void }).__setContext({ locale: 'zh-CN' }),
+    )
+    await expect(frame.getByText('整张图')).toBeVisible({ timeout: 30_000 })
+    await shot(page, 'hostctx-after-zh-switch')
     test.info().annotations.push({
-      type: "midsession-locale-switch",
+      type: 'midsession-locale-switch',
       description: JSON.stringify({
-        header_synced_zh: await frame.getByText("已同步").count(),
-        header_synced_en: await frame.getByText("In sync").count(),
+        header_synced_zh: await frame.getByText('已同步').count(),
+        header_synced_en: await frame.getByText('In sync').count(),
       }),
-    });
+    })
   } finally {
-    server.close();
-    rmSync(path.dirname(project), { recursive: true, force: true });
+    server.close()
+    rmSync(path.dirname(project), { recursive: true, force: true })
   }
-});
+})
 
-test("大图（448 元素）：open 结果省略 manifest，画布经 tavotto_session_state 取件进 ready——取件本身也要过权限闸", async ({
+test('大图（448 元素）：open 结果省略 manifest，画布经 tavotto_session_state 取件进 ready——取件本身也要过权限闸', async ({
   page,
 }) => {
-  const project = workspace(LARGE);
+  const project = workspace(LARGE)
   const { server, frame, open } = await boot(page, {
     project,
-    stem: "big_fig",
-    decisions: ["always", "always"],
-  });
+    stem: 'big_fig',
+    decisions: ['always', 'always'],
+  })
   try {
-    expect((open.elided as Json | undefined)?.fields).toContain("manifest");
-    await expect(frame.locator("[data-element-svg] svg").first()).toBeVisible({
+    expect((open.elided as Json | undefined)?.fields).toContain('manifest')
+    await expect(frame.locator('[data-element-svg] svg').first()).toBeVisible({
       timeout: 120_000,
-    });
-    await expect(frame.getByText("已同步")).toBeVisible({ timeout: 60_000 });
-    await shot(page, "large-ready");
-    const forwarded = (await w<Json[]>(page, "__FORWARDED__")).map(
-      (c) => c.name,
-    );
-    expect(forwarded).toEqual(["tavotto_session_state"]);
-    expect(forwarded).not.toContain("tavotto_open_figure");
+    })
+    await expect(frame.getByText('已同步')).toBeVisible({ timeout: 60_000 })
+    await shot(page, 'large-ready')
+    const forwarded = (await w<Json[]>(page, '__FORWARDED__')).map((c) => c.name)
+    expect(forwarded).toEqual(['tavotto_session_state'])
+    expect(forwarded).not.toContain('tavotto_open_figure')
     // WorkBuddy 的权限模型下，大图在**显示之前**就要用户点一次授权
-    expect(await w<string[]>(page, "__PROMPTS__")).toEqual([
-      "tavotto_session_state",
-    ]);
+    expect(await w<string[]>(page, '__PROMPTS__')).toEqual(['tavotto_session_state'])
     const title = (
       (
-        await server.call("tavotto_session_state", {
+        await server.call('tavotto_session_state', {
           session_id: open.session_id as string,
         })
       ).structuredContent as Json
-    ).manifest as Json;
-    const t = (title.elements as Json[]).find((e) => e.gid === "axes_0.title")!;
-    await dragElement(page, frame, t.bbox as number[], 40, 10);
+    ).manifest as Json
+    const t = (title.elements as Json[]).find((e) => e.gid === 'axes_0.title')!
+    await dragElement(page, frame, t.bbox as number[], 40, 10)
     await expect
-      .poll(
-        async () =>
-          (await serverPatches(server, open.session_id as string)).length,
-        { timeout: 120_000 },
-      )
-      .toBe(1);
-    expect(await w<string[]>(page, "__PROMPTS__")).toEqual([
-      "tavotto_session_state",
-      "tavotto_apply_overrides",
-    ]);
+      .poll(async () => (await serverPatches(server, open.session_id as string)).length, { timeout: 120_000 })
+      .toBe(1)
+    expect(await w<string[]>(page, '__PROMPTS__')).toEqual([
+      'tavotto_session_state',
+      'tavotto_apply_overrides',
+    ])
   } finally {
-    server.close();
-    rmSync(path.dirname(project), { recursive: true, force: true });
+    server.close()
+    rmSync(path.dirname(project), { recursive: true, force: true })
   }
-});
+})
