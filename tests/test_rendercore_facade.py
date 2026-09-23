@@ -160,13 +160,14 @@ def test_probe_asset_reuses_its_answer_until_the_file_changes(candidate, monkeyp
     n = h.requests
     again = pdfbackend.probe_asset(src, "pdf")
     assert again == first and h.requests == n
-    again["w_pt"] = -1.0
-    assert pdfbackend.probe_asset(src, "pdf") == first
+    snapshot = dict(first)
+    again["w_pt"] = first["w_pt"] = -1.0  # 调用方改了自己手里的 dict
+    assert pdfbackend.probe_asset(src, "pdf") == snapshot
     other = tmp_path / "other.pdf"
     shutil.copy(ROOT / "docs/implementation/tavotto-foundation/evidence/u06/u06.pdf", other)
     other.replace(src)
     changed = pdfbackend.probe_asset(src, "pdf")
-    assert changed != first and h.requests == n + 1
+    assert changed != snapshot and h.requests == n + 1
 
     png = tmp_path / "fig.png"
     shutil.copy(FIXTURE / "original.png", png)

@@ -135,9 +135,10 @@ def settled(monkeypatch):
 
 
 def _bump_mtime(p: Path) -> None:
-    """同长改写之后把 mtime 显式推进 1 秒：时间戳粒度（Linux 按 tick）不许让用例依赖「两次写入恰好不同纳秒」。"""
+    """同长改写之后把 mtime 显式**往回**拨 1 秒：不让用例依赖「两次写入恰好落在不同的时间戳 tick」（Linux 按 tick）；
+    往前拨会落进「刚改过 / 来自未来」的窗口，值就不会被记下，量不到复用。"""
     st = p.stat()
-    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns - 1_000_000_000))
 
 
 def test_the_memo_reuses_a_value_while_the_file_is_untouched_and_recomputes_after_a_change(
@@ -157,6 +158,9 @@ def test_the_memo_reuses_a_value_while_the_file_is_untouched_and_recomputes_afte
     p.write_bytes(b"bbbb")  # 同长改写
     _bump_mtime(p)
     assert memo.get_or_compute(p, compute) == b"bbbb" and len(calls) == 2
+    assert (
+        memo.get_or_compute(p, compute) == b"bbbb" and len(calls) == 2
+    )  # 改写之后的新值同样被记下
     p.write_bytes(b"cc")  # 长度变了（mtime 不必变）
     assert memo.get_or_compute(p, compute) == b"cc" and len(calls) == 3
     q = tmp_path / "q.bin"

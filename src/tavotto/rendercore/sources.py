@@ -106,9 +106,9 @@ class FingerprintMemo:
     """按 `file_fingerprint` 复用派生值的有界表（线程安全，满了丢最久没用的）。
 
     * `lookup(path, key=)` → `(此刻的指纹, 值或 None)`：指纹与表里那次相同才回值。
-    * `store(path, before, value, key=)`：只有文件的指纹**此刻仍等于** `before`（算值之前取的那个）、且文件最后一次
-      改动已在 `RACY_WINDOW_NS` 之外才记下——算的过程中被改写、或时间戳粒度还分辨不出下一次改写时，都不把值
-      挂到这个指纹上，下一次重算。
+    * `store(path, before, value, key=)`：把值挂在 `before`（算值**之前**取的指纹）上；文件最后一次改动离现在不到
+      `RACY_WINDOW_NS` 的不记——时间戳粒度还分辨不出下一次等长改写。算的过程中被改写的，指纹已经前进，挂在旧
+      指纹上的这一条自然查不到，下一次重算。
     * `get_or_compute(path, compute, key=)`：上面两步的组合；`compute` 抛的异常原样上抛、什么都不记。
 
     值不能是 None（None 就是「表里没有」）。"""
@@ -142,9 +142,10 @@ class FingerprintMemo:
         if value is None:
             raise ValueError("FingerprintMemo 的值不能是 None（None 表示表里没有）")
         slot = self._slot(path, key)
-        after = file_fingerprint(path)
         with self._lock:
-            if before is not None and after == before and not _is_racy(before):
+            # 算值的过程中文件若被改写，指纹已前进（ctime 只增不减），挂在 `before` 上的这一条再也不会被查到——
+            # 不必另判「前后相同」；要挡的只有时间戳粒度分辨不出的那一种（刚改过不记）
+            if before is not None and not _is_racy(before):
                 self._table[slot] = (before, value)
                 self._table.move_to_end(slot)
                 while len(self._table) > self.maxsize:

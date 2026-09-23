@@ -227,11 +227,15 @@ def test_a_changed_or_pruned_file_always_goes_back_through_the_staged_copy(
     a = c.get("figs/a.pdf", src, 400)
     src.write_bytes(b"%PDF-1.4 B")
     st = src.stat()
-    os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    # 同长改写之后把 mtime **往回**拨 1 秒：不依赖两次写入恰好落在不同的时间戳 tick 里；往前拨会落进
+    # 「刚改过 / 来自未来」的窗口，快路就根本不会被走到
+    os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns - 1_000_000_000))
     b = c.get("figs/a.pdf", src, 400)
     assert b != a and host.renders == 2 and len(stages) == 2
     b.unlink()
+    looked = c._identities.hits
     assert c.get("figs/a.pdf", src, 400) == b and b.exists()
+    assert c._identities.hits == looked + 1, "判据的前提：这一次确实走到了快路（指纹命中）"
     assert host.renders == 3 and len(stages) == 3 and c.fast_hits == 0
 
 
