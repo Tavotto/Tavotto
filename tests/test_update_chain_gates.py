@@ -745,7 +745,7 @@ def _classify(base: str) -> tuple[int, str]:
     script = (
         f'base={shlex.quote(base)}\nfor _ in 1; do\n{_role_case_block()}echo "$role $plat"\ndone\n'
     )
-    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8")
     return proc.returncode, proc.stdout.strip()
 
 
