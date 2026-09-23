@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { enginePreviewPng, panelSrc, type ManifestElement } from '@/lib/api'
+import { useHtmlMarkup } from '@/lib/useHtmlMarkup'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { engineTransport } from '@/lib/engineTransport'
 import { alignEntries, geomGid, geomTarget, segIntersectsRect } from '@/lib/elementGeom'
@@ -226,6 +227,9 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const inlineSvg =
     svgHtml ?? engineSvgStandby ?? (src || bitmapOnly ? null : (render?.svg ?? null))
   const showSvg = inlineSvg != null
+  // 同一份字符串 = 同一个 `{__html}` 对象：否则每次重渲都会原样重写 innerHTML，把挂在节点上的
+  // 拖动预览抹掉（松手弹回原位，见 `lib/useHtmlMarkup`）。hook 必须在任何提前 return 之前调用
+  const svgMarkup = useHtmlMarkup(inlineSvg)
   // 面板需要引擎产物（有图内修改 / 脚本领先 / runtime），画布上挂的却是磁盘
   // 原图——这一格必须与「近似预览」同级地诚实说出来（web/AGENTS.md：不许无
   // 提示地拿磁盘原图冒充当前视觉状态）。渲染中 / 失败由既有角标压过本条；
@@ -267,7 +271,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
             data-element-svg={obj.id}
             className="absolute"
             style={{ ...layout, maxWidth: 'none' }}
-            dangerouslySetInnerHTML={{ __html: inlineSvg }}
+            dangerouslySetInnerHTML={svgMarkup}
           />
         ) : src ? (
           <CrossfadeImage

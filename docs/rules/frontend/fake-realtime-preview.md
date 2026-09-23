@@ -21,6 +21,12 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
 * **`reattachPreview` 只在 DOM 真的被换过时才重放**（`domIntact` 比节点引用）：
   每写一条 override PanelView 都会重跑，此时重新采 base 采到的是「已经挪过的
   位置」——位移翻倍且再也还原不回去。
+* **挂 SVG 的 `dangerouslySetInnerHTML` 必须按字符串复用同一个 `{__html}` 对象**（`lib/useHtmlMarkup`）：
+  React 19 按 `===` 比这个对象，每次渲染现写一个就每次原样重写 innerHTML——松手提交 override 让
+  PanelView 重渲，写在节点上的预览位移随旧节点一起消失，元素**先弹回原位、等权威 SVG 到了才跳到新
+  位置**（2026-09-24 用户实测，慢图上停顿半秒）；而字符串没变，`reattachPreview` 的 effect 也不跑。
+  看护：`canvas/dragReleaseSnapback.test.tsx`（**真渲染 PanelView**；`fakeRealtimeDrag.test` 手写
+  innerHTML 摆 SVG，看不见这一层）。
 * **局部样式预览是白名单**（`lib/svgStyle.ts` 的 `STYLE_ADAPTERS`），默认不支持。
   通用规则是「只改本来就声明了该属性、且值不是 `none` 的叶子」，因此
   `fill: none` 的线不会被 facecolor 填实、箭头杆与箭头帽各得其所。文字是唯一

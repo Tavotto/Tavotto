@@ -66,6 +66,7 @@ import {
 } from "@/lib/api";
 import { msg, t as translate } from "@/i18n";
 import { emitActivity } from "@/lib/activity";
+import { useHtmlMarkup } from "@/lib/useHtmlMarkup";
 import { engineTransport } from "@/lib/engineTransport";
 import { readExportDefaults, writeExportDefaults } from "@/lib/exportDefaults";
 import { inspectionState } from "@/lib/artifactInspection";
@@ -1340,6 +1341,8 @@ function FigureThumb({ figure }: { figure: ExportableFigure }) {
       tracked ||
       figure.kind === "runtime");
   const svg = needsEngine ? (render?.svg ?? null) : null;
+  // 同一份字符串复用同一个 `{__html}`：缩略格随对话框重渲时不必把整张 SVG 重新解析一遍
+  const svgMarkup = useHtmlMarkup(svg);
   const transport = engineTransport();
   const src =
     figure.kind === "unknown" || (figure.kind === "runtime" && !figure.cached)
@@ -1364,7 +1367,7 @@ function FigureThumb({ figure }: { figure: ExportableFigure }) {
             maxWidth: "100%",
             maxHeight: "100%",
           }}
-          dangerouslySetInnerHTML={{ __html: svg }}
+          dangerouslySetInnerHTML={svgMarkup}
         />
       ) : src ? (
         <RetryImg
