@@ -298,6 +298,19 @@ jobs:
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.13" }
+
+      - name: 产品名（brand 常量是唯一出处）
+        # 更新包名 = `<产品名>[-Intel].app.tar.gz`，下面产出它的那一步、登记角色的
+        # case、以及 make_updater_manifest.py 认它的精确模式，三处都从这里取——
+        # 品牌改了而某一处还写着旧名，包照样造得出来、清单却认不出，发行链缺平台。
+        # brand.py 是纯常量模块，不需要装任何依赖。
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_NAME="$(PYTHONPATH=src python -c 'from tavotto.engine import brand; print(brand.PRODUCT_NAME)')"
+          test -n "$APP_NAME" || { echo "::error::读不到 brand.PRODUCT_NAME"; exit 1; }
+          echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
+
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with: { version: 11 }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -576,9 +589,9 @@ jobs:
           # 没公证（本地/无证书构建）时 stapler 会失败，那不该拦住整条链。
           xcrun stapler staple "$APP" || echo "::warning::.app 未公证，更新包不带票据"
           mkdir -p out
-          # 包名带架构后缀（Intel = Tavotto-Intel.app.tar.gz），包里仍是 Tavotto.app：
-          # 更新器解开后按 .app 名替换，与文件名无关。
-          PKG="out/Tavotto${MAC_SUFFIX}.app.tar.gz"
+          # 包名 = 产品名（APP_NAME，取自 brand）+ 架构后缀（Intel 带 `-Intel`），包里
+          # 仍是 .app 本体：更新器解开后按 .app 名替换，与文件名无关。
+          PKG="out/${APP_NAME}${MAC_SUFFIX}.app.tar.gz"
           tar -czf "$PKG" -C "$(dirname "$APP")" "$(basename "$APP")"
           pnpm dlx @tauri-apps/cli@2.11.4 signer sign "$PKG"
           test -f "$PKG.sig" || { echo "::error::签名文件没生成"; exit 1; }
@@ -757,8 +770,8 @@ jobs:
               *-macOS-Intel.dmg)          role=macos-intel-installer; plat=darwin-x86_64 ;;
               *-macOS.dmg)                role=macos-installer;       plat=darwin-aarch64 ;;
               *-setup.nsis.zip)           role=windows-updater;       plat=windows-x86_64 ;;
-              Tavotto-Intel.app.tar.gz)   role=macos-intel-updater;   plat=darwin-x86_64 ;;
-              Tavotto.app.tar.gz)         role=macos-updater;         plat=darwin-aarch64 ;;
+              "${APP_NAME}-Intel.app.tar.gz") role=macos-intel-updater; plat=darwin-x86_64 ;;
+              "${APP_NAME}.app.tar.gz")       role=macos-updater;       plat=darwin-aarch64 ;;
               *.dmg|*.app.tar.gz)
                 echo "::error::认不出架构的 macOS 产物：$base"
                 exit 1 ;;

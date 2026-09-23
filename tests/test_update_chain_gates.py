@@ -45,6 +45,7 @@ CI_DIR = ROOT / "scripts" / "ci"
 sys.path.insert(0, str(CI_DIR))
 
 import updater_consumer_check as UCC  # noqa: E402
+from tavotto.engine import brand  # noqa: E402
 
 # ============================================================ 探针 = 插件能力面
 
@@ -742,8 +743,11 @@ def _role_case_block() -> str:
 
 
 def _classify(base: str) -> tuple[int, str]:
+    # APP_NAME 在 workflow 里由「产品名」那一步从 brand 常量写进 GITHUB_ENV；这里同源取
     script = (
-        f'base={shlex.quote(base)}\nfor _ in 1; do\n{_role_case_block()}echo "$role $plat"\ndone\n'
+        f"APP_NAME={shlex.quote(brand.PRODUCT_NAME)}\n"
+        f"base={shlex.quote(base)}\nfor _ in 1; do\n{_role_case_block()}"
+        'echo "$role $plat"\ndone\n'
     )
     proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8")
     return proc.returncode, proc.stdout.strip()
@@ -755,8 +759,8 @@ def _classify(base: str) -> tuple[int, str]:
     [
         ("Tavotto-0.17.0-macOS.dmg", "macos-installer darwin-aarch64"),
         ("Tavotto-0.17.0-macOS-Intel.dmg", "macos-intel-installer darwin-x86_64"),
-        ("Tavotto.app.tar.gz", "macos-updater darwin-aarch64"),
-        ("Tavotto-Intel.app.tar.gz", "macos-intel-updater darwin-x86_64"),
+        (f"{brand.PRODUCT_NAME}.app.tar.gz", "macos-updater darwin-aarch64"),
+        (f"{brand.PRODUCT_NAME}-Intel.app.tar.gz", "macos-intel-updater darwin-x86_64"),
         ("Tavotto-0.17.0-Windows-Setup.exe", "windows-installer windows-x86_64"),
         ("Tavotto_0.17.0_x64-setup.nsis.zip", "windows-updater windows-x86_64"),
         ("Tavotto.app.tar.gz.sig", ""),
