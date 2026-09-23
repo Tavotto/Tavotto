@@ -128,7 +128,9 @@ def system_facts() -> dict:
         facts["os_version"] = platform.release()
         return facts
 
-    facts["os_version"] = platform.mac_ver()[0] or None
+    # 冻结构建里 platform.mac_ver() 在个别机器上回空串（2026-09-23 一份 M2 Pro 报告实测）：
+    # 再问一次 sw_vers，仍拿不到才是「不知道」
+    facts["os_version"] = platform.mac_ver()[0] or _run(["/usr/bin/sw_vers", "-productVersion"])
     facts["model"] = _sysctl("hw.model")
     facts["cpu"] = _sysctl("machdep.cpu.brand_string")
     # Apple Silicon 的性能核 / 能效核分开报（Intel 上没有这两个键 → None）

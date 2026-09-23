@@ -64,6 +64,10 @@ MIN_FRAMES = 10
 MIN_MOVES = 5
 #: WebKit 的计时分辨率（ms）：小于它的 p95 按它算，余量只说「至少」
 TIMER_RES = 1.0
+#: 余量按「至少 60Hz」算：界面被系统封顶在 30 帧时，拿 33ms 当预算会把余量虚报一倍
+TARGET_FRAME_MS = 1000 / 60
+#: 空转帧中位数超过它 = 界面帧率被封顶（≤ 40Hz）。没有哪块 Mac 屏幕原生刷新率这么低
+CAPPED_FRAME_MS = 25.0
 
 KIND_LABEL = {
     "move": "画布对象移动",
@@ -642,8 +646,10 @@ def analyze_segment(s: SegStats) -> list[Finding]:
         )
 
     # ---- 6. 响应
+    # 延迟按至少 60Hz 的帧来量：界面被封顶到 30 帧时，拿 33ms 当一帧会把 37ms 读成「正常」
+    T = min(B, TARGET_FRAME_MS)
     if s.latency_p95 is not None:
-        lvl = level_by(s.latency_p95 / B, 2.5, 3.5, 6)
+        lvl = level_by(s.latency_p95 / T, 2.5, 3.5, 6)
         if lvl:
             out.append(
                 Finding(
@@ -652,7 +658,7 @@ def analyze_segment(s: SegStats) -> list[Finding]:
                     "拖动跟手性差：鼠标动了，画面晚几帧才跟上",
                     [
                         f"输入 → 画面延迟中位 {fmt(s.latency_p50, 'ms', 0)}，P95 {s.latency_p95:.0f}ms"
-                        f"（{s.latency_p95 / B:.1f} 个刷新周期；1.5–2 个是正常下限）",
+                        f"（{s.latency_p95 / T:.1f} 个刷新周期；1.5–2 个是正常下限）",
                     ],
                     [CODE["input.handler"], CODE["raf.preview_write"]],
                     [
@@ -661,7 +667,7 @@ def analyze_segment(s: SegStats) -> list[Finding]:
                         else "帧率正常而延迟高：每次处理跨了一帧——把 DOM 写入集中到同一个 rAF，别在 move 里触发布局读。"
                     ],
                     s.name,
-                    min(s.latency_p95 / B, 10) / 2,
+                    min(s.latency_p95 / T, 10) / 2,
                 )
             )
     if s.start_max is not None:
@@ -848,7 +854,7 @@ def machine_notes(report: dict, refresh: float) -> tuple[list[str], list[str], f
             notes.append(f"什么都不做时也有 {idle_late:.0f}% 的帧超时——机器此刻整体很忙")
             fixes.append("关掉其他占用 CPU 的程序（活动监视器按 CPU 排序看一眼）后重录一份对照。")
     if sysf.get("low_power_mode"):
-        notes.append("低电量模式开着（CPU / GPU 降频）")
+        notes.append("低电量模式开着（CPU / GPU 降频，WebKit 把绘制限到 30 帧）")
         fixes.append("关掉低电量模式后重录一份对照。")
     if sysf.get("power_source") == "battery":
         notes.append("用电池供电")
@@ -875,6 +881,38 @@ def machine_notes(report: dict, refresh: float) -> tuple[list[str], list[str], f
     return notes, fixes, idle_late
 
 
+def cap_finding(report: dict, refresh: float, stats: list[SegStats]) -> Finding | None:
+    idle = report.get("idle_frame_ms") or []
+    if len(idle) < 10 or refresh < CAPPED_FRAME_MS:
+        return None
+    sysf = report.get("system") or {}
+    hz = 1000 / refresh
+    drag_fps = [s.fps for s in stats]
+    ev = [
+        f"什么都不做时界面每 {refresh:.0f}ms 才画一帧（约 {hz:.0f} 帧/秒）"
+        + (f"；拖动时 {min(drag_fps):.0f}–{max(drag_fps):.0f} 帧/秒" if drag_fps else ""),
+        "这是整个界面的帧率上限，不是哪一段代码慢：分析器按这个周期判「超时」时每一帧都算准时，"
+        "但在 60 / 120Hz 的屏幕上看就是一卡一卡",
+    ]
+    where = ["（WebKit 渲染节流：桌面壳的 WKWebView）"]
+    if sysf.get("low_power_mode"):
+        ev.append(
+            "低电量模式开着：WebKit 在低电量模式下把页面绘制限到 30 帧（Safari 同一引擎、同一行为）；"
+            "macOS 默认「仅在使用电池时」开启低电量模式"
+            + ("，而这台机器正用电池" if sysf.get("power_source") == "battery" else "")
+        )
+        fix = [
+            "测试者：系统设置 → 电池 → 低电量模式改成「永不」（或插上电源）后重录一份，确认帧率回到 60 / 120。",
+            "产品：WKWebView 没有公开的开关关掉这层节流（旧的 RenderingUpdateThrottlingEnabled 偏好已删）；"
+            "能做的是检测到低电量模式时在界面上说一句「低电量模式下画面限 30 帧」，别让用户以为是 Tavotto 卡。"
+            "要不要试私有设置得单独做可行性验证。",
+        ]
+    else:
+        ev.append("低电量模式没开：可能是外接屏 / 显示器刷新率设成了低档，或别的节流原因")
+        fix = ["记下显示器型号与「系统设置 → 显示器 → 刷新率」，在内置屏上再录一份对照。"]
+    return Finding("严重", "流畅度", f"整个界面被限在约 {hz:.0f} 帧/秒", ev, where, fix, weight=5.0)
+
+
 def analyze_report(report: dict) -> dict:
     refresh = refresh_of(report)
     stats: list[SegStats] = []
@@ -886,12 +924,18 @@ def analyze_report(report: dict) -> dict:
     for st in stats:
         findings += analyze_segment(st)
 
+    # ---- 界面帧率被封顶：空转时 rAF 就只有 ≤40Hz。按实测刷新周期判「超时」时它是
+    # 看不见的（每帧都「准时」），而用户看到的就是一卡一卡——必须单独说出来
+    capped = cap_finding(report, refresh, stats)
+    if capped:
+        findings.append(capped)
+
     # ---- 余量：主线程每帧实际忙多久 → 慢几倍会开始掉帧
     headroom = None
     busy = [s.busy_p95 for s in stats]
     if busy:
         worst_busy = max(max(busy), TIMER_RES)
-        headroom = refresh / worst_busy
+        headroom = min(refresh, TARGET_FRAME_MS) / worst_busy
         if headroom < 2:
             saturated = headroom < 1
             findings.append(
@@ -902,7 +946,8 @@ def analyze_report(report: dict) -> dict:
                     if saturated
                     else "帧预算快用完了：稍慢一点的机器就会掉帧",
                     [
-                        f"有 move 的帧里主线程忙碌（输入处理 + 渲染）P95 {worst_busy:.1f}ms，刷新周期 {refresh:.1f}ms",
+                        f"有 move 的帧里主线程忙碌（输入处理 + 渲染）P95 {worst_busy:.1f}ms，"
+                        f"预算 {min(refresh, TARGET_FRAME_MS):.1f}ms（至少按 60Hz 算）",
                         "这台机器上已经没有余量"
                         if saturated
                         else f"估计 CPU 慢 {headroom:.1f} 倍的机器上开始掉帧",
@@ -1128,6 +1173,7 @@ def grade(
     stats: list[SegStats], findings: list[Finding], refresh: float, headroom, idle_late, auth
 ) -> list[tuple[str, str, str]]:
     B = refresh
+    T = min(B, TARGET_FRAME_MS)
     rows: list[tuple[str, str, str]] = []
     if not stats:
         rows += [
@@ -1136,11 +1182,16 @@ def grade(
         ]
     if stats:
         worst = max(stats, key=lambda s: s.late_pct)
+        slowest = min(s.fps for s in stats)
+        # 两把尺取较差的：超时比例量「相对自己的刷新周期准不准时」，绝对帧率量「用户看到的顺不顺」
+        g_late = _g(worst.late_pct, 2, 5, 15)
+        g_fps = _g(slowest, 55, 45, 28, higher_is_better=True)
         rows.append(
             (
                 "流畅度",
-                _g(worst.late_pct, 2, 5, 15),
-                f"最差一段 {worst.late_pct:.0f}% 超时、最长连续 {worst.streak} 帧（{worst.name}）",
+                max(g_late, g_fps),
+                f"最差一段 {worst.late_pct:.0f}% 超时、最长连续 {worst.streak} 帧（{worst.name}）；"
+                f"最慢一段 {slowest:.0f} 帧/秒",
             )
         )
         lat = [s.latency_p95 for s in stats if s.latency_p95 is not None]
@@ -1149,8 +1200,8 @@ def grade(
             rows.append(
                 (
                     "响应",
-                    _g(m / B, 1.8, 2.5, 4),
-                    f"输入 → 画面延迟 P95 最差 {m:.0f}ms（{m / B:.1f} 个刷新周期）",
+                    _g(m / T, 1.8, 2.5, 4),
+                    f"输入 → 画面延迟 P95 最差 {m:.0f}ms（{m / T:.1f} 个 60Hz 帧）",
                 )
             )
         else:
@@ -1234,7 +1285,7 @@ def machine_line(a: dict) -> str:
         f"macOS {s['os_version']}" if s.get("os_version") else "",
         f"Tavotto {s['tavotto_version']}" if s.get("tavotto_version") else "",
         f"DPR {client.get('dpr')}" if client.get("dpr") else "",
-        f"刷新 {1000 / a['refresh']:.0f}Hz",
+        f"界面帧率 {1000 / a['refresh']:.0f}Hz",
         "电池" if s.get("power_source") == "battery" else "",
         "低电量模式" if s.get("low_power_mode") else "",
     ]

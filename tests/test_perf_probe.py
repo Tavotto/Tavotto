@@ -314,6 +314,44 @@ def test_autosave_during_drag_is_reported_with_its_cost():
     assert _find(b, "上一次松手的自动保存落在了这次拖动途中").level == "问题"
 
 
+def _capped(n=120, **kw):
+    return [_row(33.3, **kw) for _ in range(n)]
+
+
+def test_capped_30hz_ui_is_the_top_finding_even_though_no_frame_is_late():
+    # 2026-09-23 一份 M2 Pro 报告：低电量 + 电池，空转与拖动都是 33ms 一帧。按实测周期判
+    # 每一帧都「准时」，旧分析器给了流畅度 A——而用户看到的正是一卡一卡
+    sysf = {"model": "Mac14,9", "low_power_mode": True, "power_source": "battery"}
+    a = PR.analyze_report(_report([_seg(_capped())], idle=[33.3] * 60, system=sysf))
+    top = a["findings"][0]
+    assert top.title == "整个界面被限在约 30 帧/秒"
+    assert top.level == "严重"
+    ev = " ".join(top.evidence)
+    assert "低电量模式" in ev and "用电池" in ev
+    assert _grade(a, "流畅度") == "C"
+
+
+def test_capped_ui_without_low_power_mode_points_elsewhere():
+    a = PR.analyze_report(_report([_seg(_capped())], idle=[33.3] * 60))
+    f = _find(a, "整个界面被限在约 30 帧/秒")
+    assert "低电量模式没开" in " ".join(f.evidence)
+
+
+def test_60hz_and_120hz_are_not_capped():
+    for dt in (16.7, 8.3):
+        a = PR.analyze_report(_report([_seg([_row(dt) for _ in range(120)])], idle=[dt] * 60))
+        assert not [t for t in _titles(a) if t.startswith("整个界面被限在")], dt
+
+
+def test_budget_and_latency_are_measured_against_60hz_when_capped():
+    # 30Hz 下每帧忙 10ms：按 33ms 算有 3.3 倍余量，按 60Hz 算只有 1.7 倍
+    rows = _capped(render=8.0, handler=1.0, flush=1.0, latency=50.0)
+    a = PR.analyze_report(_report([_seg(rows)], idle=[33.3] * 60))
+    assert 1.5 < a["headroom"] < 1.8
+    # 50ms 延迟 = 3 个 60Hz 帧（按 33ms 算只有 1.5 个，会被放过）
+    assert _find(a, "拖动跟手性差")
+
+
 def test_same_issue_in_many_segments_is_one_finding():
     tail = [_row(16.7) for _ in range(5)] + [_row(60.0, render=1.0)]
     a = PR.analyze_report(_report([_seg(_smooth(), tail=tail) for _ in range(3)]))
@@ -453,3 +491,19 @@ def test_save_report_rejects_oversized_body_without_writing(client, tmp_path, mo
     assert res.status_code == 400
     assert res.get_json()["reason"] == "too_large"
     assert not (tmp_path / "perf-reports").exists()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="只在 macOS 上问 sw_vers")
+def test_os_version_falls_back_to_sw_vers_when_mac_ver_is_empty(monkeypatch):
+    # 冻结构建里 mac_ver() 在个别机器上回空串（2026-09-23 一份 M2 Pro 报告）
+    monkeypatch.setattr(perfprobe.platform, "mac_ver", lambda: ("", ("", "", ""), ""))
+    calls = []
+    real = perfprobe._run
+
+    def spy(argv):
+        calls.append(argv[0])
+        return "15.6.1" if argv[0] == "/usr/bin/sw_vers" else real(argv)
+
+    monkeypatch.setattr(perfprobe, "_run", spy)
+    assert perfprobe.system_facts()["os_version"] == "15.6.1"
+    assert "/usr/bin/sw_vers" in calls
