@@ -796,7 +796,7 @@ def test_mac_updater_names_in_the_workflow_come_from_the_brand_constant():
     updater_arms = [
         ln.strip()
         for ln in _role_case_block().splitlines()
-        if ".app.tar.gz)" in ln and "role=" in ln
+        if ".app.tar.gz" in ln and "role=" in ln
     ]
     assert len(updater_arms) == 2, updater_arms
     for arm in updater_arms:
