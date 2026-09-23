@@ -669,7 +669,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 11
+          version: 11.27.1
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -770,7 +770,7 @@ jobs:
       # 核心验收要真跑一次 vite（见下面最后一步），所以这个 job 也装 Node
       - uses: pnpm/action-setup@v4
         with:
-          version: 11
+          version: 11.27.1
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -1031,7 +1031,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "${{ matrix.python }}" }
       - uses: pnpm/action-setup@v4
-        with: { version: 11 }
+        with: { version: 11.27.1 }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - name: 构建前端进包
@@ -1199,7 +1199,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.13" }
       - uses: pnpm/action-setup@v4
-        with: { version: 11 }
+        with: { version: 11.27.1 }
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -1574,7 +1574,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.13" }
       - uses: pnpm/action-setup@v4
-        with: { version: 11 }
+        with: { version: 11.27.1 }
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -1736,7 +1736,7 @@ jobs:
         id: py
         with: { python-version: "3.13" }
       - uses: pnpm/action-setup@v4
-        with: { version: 11 }
+        with: { version: 11.27.1 }
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -2047,7 +2047,7 @@ jobs:
       #    os / arch / web/pnpm-lock.yaml 的 hash 生成。install 真跑一次 store 里才有东西可存。
       - uses: pnpm/action-setup@v4
         if: matrix.pnpm == true
-        with: { version: 11 }
+        with: { version: 11.27.1 }
       - uses: actions/setup-node@v4
         if: matrix.pnpm == true
         with:

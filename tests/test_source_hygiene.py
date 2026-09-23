@@ -404,3 +404,94 @@ def test_every_ci_job_has_a_time_limit(wf):
         f"{wf} 里这些 job 没有 timeout-minutes: {bad}\n"
         "没有上限的 job 挂死时会堵住合并队列，而且取不到日志。"
     )
+
+
+def _pnpm_action_versions(text: str) -> list[tuple[int, str]]:
+    """每一处 `pnpm/action-setup` 跟的 version 值，带行号。
+
+    两种写法都要认：同一个仓库里 `with: { version: X }` 和块式的
+    `with:` / `  version: X` 并存。只认第一种就会漏掉另一种——而"漏掉的那一半"
+    正是这类判据的经典失效方式。
+
+    `(?<![-\\w])` 是必需的：紧邻的 `actions/setup-node` 带着 `node-version:`，
+    不排掉它就会把 node 的版本号当成 pnpm 的读出来（量错对象）。
+    """
+    out: list[tuple[int, str]] = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if "pnpm/action-setup" not in line:
+            continue
+        for offset, probe in enumerate(lines[i : i + 6]):
+            m = re.search(r"(?<![-\w])version:\s*['\"]?([^'\"}\s]+)", probe)
+            if m:
+                out.append((i + offset + 1, m.group(1)))
+                break
+        else:
+            # 找不到 version 也要记一笔：让判据去红，而不是安静地跳过
+            out.append((i + 1, ""))
+    return out
+
+
+_PNPM_USES = [
+    (wf, ln, ver)
+    for wf in _WORKFLOWS
+    for ln, ver in _pnpm_action_versions((_WORKFLOW_DIR / wf).read_text(encoding="utf-8"))
+]
+
+
+def test_the_pnpm_pin_guard_sees_some_uses():
+    """**先证明观测有效，再解释零值。**
+
+    下面那条判据遍历的是 `_PNPM_USES`。如果哪天 action 换了名字、或者提取
+    逻辑失配，这个列表会变成**空的**，而"零个用例全过"在报告里和"全部合规"
+    一模一样——一条什么都没扫的判据会安静地绿下去。
+    """
+    assert _PNPM_USES, (
+        "一处 pnpm/action-setup 都没扫到？要么 action 换了名字，要么 "
+        "_pnpm_action_versions 的提取逻辑失配了——先修判据，别改期望值。"
+    )
+
+
+def test_pnpm_action_setup_is_pinned_to_an_exact_version():
+    """**pnpm 必须钉到补丁版本，不能只写大版本。**
+
+    `version: 11` 的意思是"给我 11 的任意版本"，GitHub 每次跑都去 npm 现查一次
+    最新补丁版。于是**同一个提交，今天和明天用的工具链可能不一样**——没有人
+    改过一行代码，CI 却开始红，而 diff 里什么都看不到。
+
+    2026-09-23 官网仓库（Tavotto_website）就是这么炸的：这一行从 11.27.0 漂到
+    11.27.1，`webServer` 起的进程树（`pnpm preview` → `sh` → `node astro.js`）
+    不再随父进程一起死，Playwright 等它退出就永远等下去。**229 条用例其实 4 分钟
+    就全跑完了**，卡的是跑完之后进程不退出，连 `142 passed` 汇总行都没打出来。
+    四个 run 分别跑了 20 / 20.2 / 47.5 / 64.7 分钟，全靠手动取消才停。
+    单变量实验：其他一律不动，只把 pnpm 钉回 11.27.0 → 6.1 分钟 success。
+
+    产品仓库当时没被咬到，是因为 `web/playwright.config.ts` 不共用 webServer、
+    每个用例自起后端——**那是运气，不是设计**。写法上的暴露面完全相同。
+
+    这里只管"钉没钉死"和"是不是同一个值"，不管钉的是哪个版本：版本由人按
+    实测选，判据只负责挡住"又写回大版本"和"只改了一半"。
+    """
+    loose = [
+        f"{wf}:{ln} → {ver or '(没找到 version)'}"
+        for wf, ln, ver in _PNPM_USES
+        if not re.fullmatch(r"\d+\.\d+\.\d+", ver)
+    ]
+    assert loose == [], (
+        "这些 pnpm/action-setup 没有钉到确切的补丁版本:\n  "
+        + "\n  ".join(loose)
+        + "\n只写大版本 = 工具链每天都可能变，而 diff 里看不出来。"
+    )
+
+
+def test_every_pnpm_pin_is_the_same_version():
+    """**十处要一起动。**
+
+    钉死解决了"工具链自己会变"，但换来一个新问题：升级时要改十处。只改一半
+    比全旧更糟——两个 job 用不同的 pnpm，撞出来的毛病只在其中一条腿上发作，
+    而两边的 diff 看起来都"改对了"。
+    """
+    versions = {ver for _, _, ver in _PNPM_USES}
+    assert len(versions) == 1, f"仓库里同时存在多个 pnpm 版本: {sorted(versions)}\n" + "\n".join(
+        f"  {wf}:{ln} → {ver}" for wf, ln, ver in _PNPM_USES
+    )
