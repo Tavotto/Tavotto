@@ -67,7 +67,7 @@
   负缩放（RC-040）——两者都仍是矢量、文字层在；`opacity: 0` 是取值不是缺席（RC-042）。注释 / 动作 / JavaScript 不进产物，
   加密 / 坏文件 / 缺页以 `source_unreadable` 拒绝（RC-046），不画空框。**源的编码原样照搬**（ADR 0077）：单段带过滤器的内容流
   直接用源的已编码字节（`_keep_source_encoding`，解码后与 Form 明文逐字节相同才换）；保存**不交给** qpdf 的 `compress_streams`
-  （它会把带 predictor 的 Flate 图片流解码重压），只压确实没有过滤器的流（`_compress_unfiltered` → `raster.zlib_compress`，
+  （它会把带 predictor 的 Flate 图片流解码重压），只压确实没有过滤器的流（`_compress_unfiltered` → `deflate.zlib_compress`，
   XMP /Metadata 保持明文）。
 - **位图源经 `rasterio.decode()`（Pillow，U07 起是 `rendercore` extra 的直接依赖）成 `RasterBuffer`**：8 bit RGB / RGBA、
   紧凑 stride、**alpha 一律 straight**（Pillow 报 `RGBa` / `La` 的预乘图先反预乘，不许静默丢 alpha）；写成 DeviceRGB Image XObject + /SMask；8 bit RGB / 灰度 JPEG 原字节直通 `/DCTDecode`。
