@@ -162,6 +162,9 @@ SAME_NAME: frozenset[str] = frozenset(
         "openpyxl",
         "xlrd",
         "tabulate",
+        # 拼图脚本常用来合并 / 裁切导出的 PDF；PyPDF2 是它改名前的旧名（同一上游 py-pdf，已冻结）
+        "pypdf",
+        "PyPDF2",
         "pint",
         "sympy",
         "requests",
