@@ -111,7 +111,13 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
   expect(labels).toEqual(expect.arrayContaining(['m1', 'm3']))
   for (const s of synth) {
     expect(s.kind).toBe('element')
-    expect(s.frames.length, `${s.label} 应当跑满约 3 秒的帧`).toBeGreaterThan(60)
+    // 判的是「这一段真的跑满了约 3 秒」：合成拖动按**时间**跑（synthetic.ts 的 durationMs），不按帧数。
+    // 以前判帧数 > 60，等于判「这台机器每秒至少 20 帧」——CI 的 Windows WebKit 只有 17–20 fps，
+    // 2026-09-24 在合并队列里以 58 / 50 帧连红两次（同一代码在 PR head 上 ≥ 61 帧过），量的是调度抖动
+    const durMs = s.frames.reduce((sum: number, f: (number | null)[]) => sum + (f[0] ?? 0), 0)
+    console.log(`[e2e 探针] ${s.label}: ${s.frames.length} 帧 / ${Math.round(durMs)}ms`)
+    expect(durMs, `${s.label} 应当跑满约 3 秒`).toBeGreaterThan(2500)
+    expect(s.frames.length, `${s.label} 至少要采到帧`).toBeGreaterThan(10)
     // 主线程渲染列：真浏览器里 MessageChannel 在渲染之后到达，绝大多数帧有值
     const withRender = s.frames.filter((f: (number | null)[]) => typeof f[1] === 'number').length
     expect(withRender / s.frames.length).toBeGreaterThan(0.8)
