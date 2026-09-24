@@ -570,3 +570,48 @@ def test_an_offset_positioned_cell_follows_a_changed_layout(tmp_path_factory):
     finally:
         pool.discard(r)
     assert got == expected
+
+
+#: 两条线颜色自带的 alpha 不同（0.3 / 0.9），但都显式设了 artist alpha=0.6：Matplotlib 画的时候
+#: 用 0.6 **替换**颜色自带的那个，两条画出来一模一样——是同一种颜色（#544 评审）。
+ALPHA_OVERRIDE_SCRIPT = "fig_legend_alpha_override.py"
+ALPHA_OVERRIDE_STEM = "AlphaOverride"
+ALPHA_OVERRIDE_LIBRARY = """\
+import matplotlib.pyplot as plt
+from matplotlib.legend_handler import HandlerBase
+from matplotlib.lines import Line2D
+
+
+class Key:
+    pass
+
+
+class HandlerTwoLines(HandlerBase):
+    def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height,
+                       fontsize, trans):
+        return [
+            Line2D([xdescent, xdescent + width], [ydescent + height * f] * 2, transform=trans,
+                   color=(0.12, 0.47, 0.71, a), alpha=0.6, linewidth=2.0)
+            for f, a in ((0.3, 0.3), (0.7, 0.9))
+        ]
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    ax.plot([0, 1], [0, 1], color="0.5")
+    ax.legend([Key()], ["Two"], loc="upper left", handlelength=3.0,
+              handler_map={Key: HandlerTwoLines()})
+    fig.savefig("AlphaOverride.pdf")
+"""
+
+
+def test_an_explicit_artist_alpha_replaces_the_colour_alpha(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("legend-alpha-override")
+    (figs / ALPHA_OVERRIDE_SCRIPT).write_text(ALPHA_OVERRIDE_LIBRARY, encoding="utf-8")
+    w = pool.one_shot(ALPHA_OVERRIDE_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        fields = _fields(w.override(ALPHA_OVERRIDE_STEM, [])["manifest"], f"{LEG}.texts_0")
+    finally:
+        pool.discard(w)
+    assert "handle_color" in fields

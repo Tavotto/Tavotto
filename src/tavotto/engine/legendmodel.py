@@ -1125,16 +1125,20 @@ def _recolor_cell_artist(a, v) -> None:
 def _visible_colors(a) -> set:
     """一个 artist 画出来看得见的颜色（完全透明的不算）；认不出的类型回 None 当「不一致」。
 
-    **透明度算在颜色里**（颜色自带的 alpha × artist 的 alpha）：同一色相、透明度不同的一格（渐隐）
+    **透明度算在颜色里**（画出来的那个：artist 显式设了 alpha 就用它，否则用颜色自带的）：同一色相、透明度不同的一格（渐隐）
     不是「同一种颜色」——当成同色的话改色把每一段都变成不透明，撤销也还原不回各段的透明度（#544 评审）。"""
     out: set = set()
     art_alpha = a.get_alpha()
-    scale = 1.0 if art_alpha is None else float(art_alpha)
 
     def add(c) -> None:
+        # 画出来的透明度按 Matplotlib 的规则算：artist 显式设了 alpha 就**替换**颜色自带的那个
+        # （`to_rgba(color, alpha)`），不是相乘——相乘会凭空造出透明度差异（#544 评审）
         rgba = _rgba(c)
-        if isinstance(rgba, tuple) and rgba[3] > 0:
-            out.add((*rgba[:3], round(rgba[3] * scale, 4)))
+        if not isinstance(rgba, tuple):
+            return
+        alpha = rgba[3] if art_alpha is None else float(art_alpha)
+        if alpha > 0:
+            out.add((*rgba[:3], round(alpha, 4)))
 
     if isinstance(a, Line2D):
         add(a.get_color())
