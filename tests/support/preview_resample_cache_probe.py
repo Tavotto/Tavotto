@@ -492,6 +492,30 @@ def _input_side():
     }
 
 
+def _entry_cap():
+    """条目数有上界（Codex #530）：连续写入远多于上限的小输出，缓存里的条目数不超过上限；
+    活的尺子：写入过程中条目数确实涨到了上限（不是根本没存进去）。"""
+    saved = dict(ph._resample_cache)
+    saved_bytes = ph._resample_cache_bytes
+    peak = 0
+    try:
+        for i in range(ph._RESAMPLE_CACHE_MAX_ENTRIES * 3):
+            ph._resample_store(("tiny", i), np.zeros((2, 2), dtype=np.float32))
+            peak = max(peak, len(ph._resample_cache))
+        final = len(ph._resample_cache)
+        newest_kept = ("tiny", ph._RESAMPLE_CACHE_MAX_ENTRIES * 3 - 1) in ph._resample_cache
+    finally:
+        ph._resample_cache.clear()
+        ph._resample_cache.update(saved)
+        ph._resample_cache_bytes = saved_bytes
+    return {
+        "cap": ph._RESAMPLE_CACHE_MAX_ENTRIES,
+        "peak": peak,
+        "final": final,
+        "newest_kept": newest_kept,
+    }
+
+
 def main():
     # 先装一次（第一次进 `preview_resample_cache` 时装），再测
     _svg(plt.figure(), cached=True)
@@ -504,6 +528,7 @@ def main():
         "gate": _gate(),
         "store_gate": _store_gate(),
         "input_side": _input_side(),
+        "entry_cap": _entry_cap(),
     }
     print(json.dumps(out))
 

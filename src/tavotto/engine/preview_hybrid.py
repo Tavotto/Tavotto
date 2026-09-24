@@ -204,6 +204,9 @@ _RESAMPLE_KNOWN_NAMES = frozenset(
 # 小图重采样本来就不要钱，不值得付哈希与拷贝
 _RESAMPLE_CACHE_MIN_ELEMENTS = 1 << 18
 _RESAMPLE_CACHE_MAX_BYTES = 64 << 20
+# 条目数上限：只按字节淘汰的话，大图反复画成很小的输出（内容 / 变换一直在变）会攒下无数个只占几字节的
+# 条目——每个都带着键与字典开销，数量没有上界（Codex #530）。一张图一次预览最多几次重采样，32 足够热态复用
+_RESAMPLE_CACHE_MAX_ENTRIES = 32
 # 输入这一侧的上限：命中也得把输入整份哈希一遍才知道是不是同一张，超过它就直通（Codex #530）
 _RESAMPLE_CACHE_MAX_INPUT_BYTES = 256 << 20
 # `_resample` 在这两个边界之外会 warn 并降采样；命中缓存会吞掉那条 warning，不缓存
@@ -361,6 +364,9 @@ def _resample_store(key, out):
             _resample_cache_bytes -= old.nbytes
         _resample_cache[key] = out
         _resample_cache_bytes += out.nbytes
-        while _resample_cache_bytes > _RESAMPLE_CACHE_MAX_BYTES:
+        while (
+            _resample_cache_bytes > _RESAMPLE_CACHE_MAX_BYTES
+            or len(_resample_cache) > _RESAMPLE_CACHE_MAX_ENTRIES
+        ):
             _, evicted = _resample_cache.popitem(last=False)
             _resample_cache_bytes -= evicted.nbytes

@@ -159,3 +159,10 @@ def test_input_side_is_bounded_and_layout_independent(probe):
     # 超上限的 MaskedArray 连 mask 都不碰；活的尺子：上限之内那次确实取了 mask
     assert g["in_cap_masked_key_made"] and g["mask_touched_in_cap"] >= 1, g
     assert g["over_cap_masked_passthrough"] and g["mask_touched_over_cap"] == 0, g
+
+
+def test_entry_count_is_bounded(probe):
+    """Codex #530：只按字节淘汰时，大量几字节的小输出能让条目数无上界地涨。"""
+    g = probe["entry_cap"]
+    assert g["peak"] == g["cap"], g  # 活的尺子：确实涨到了上限
+    assert g["final"] <= g["cap"] and g["newest_kept"], g
