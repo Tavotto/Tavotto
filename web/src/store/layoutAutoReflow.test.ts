@@ -370,6 +370,43 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
     expect([s().past.length, s().future.length]).toEqual([depth + 1, 0])
   })
 
+  it('被作废的那条之后又有过新编辑：重做它时不补排（补一条会清掉还能重做的新编辑）', async () => {
+    const project = emptyProject()
+    const first = project.canvases[0]
+    first.objects = [panel('pa', 'Fig1.pdf', 0), panel('pb', 'Fig2.pdf', 44)]
+    first.layoutGroups = [structuredClone(ROW)]
+    const second = structuredClone(first)
+    second.id = 'c_other'
+    second.name = 'other'
+    second.objects = []
+    second.layoutGroups = []
+    project.canvases.push(second)
+    await mount('d_reflow_cancelled_then_edit', project)
+    // 缩放后防抖没到就切走画布：待发的重排被作废（切画布不是撤销，那条缩放还在 past 里）
+    await act(async () => {
+      s().commit(literal('缩放'), (d) => {
+        const o = d.objects.find((x) => x.id === 'pa') as PanelObject
+        o.w = 30
+        o.h = 22.5
+      })
+      s().switchCanvas('c_other')
+    })
+    await settle()
+    await act(async () => {
+      s().switchCanvas(first.id)
+    })
+    await settle()
+    await commit('别的编辑', (d) => {
+      d.name = 'renamed'
+    })
+    await undo()
+    await undo()
+    await redo() // 重做缩放：future 里还有「别的编辑」
+    expect(s().future.length).toBe(1)
+    await redo()
+    expect(s().doc.name).toBe('renamed')
+  })
+
   it('撤销 / 重做之后的第一次用户编辑：照常重排', async () => {
     await mount('d_reflow_edit_after_derived')
     await commit('改图幅', (d) => {
