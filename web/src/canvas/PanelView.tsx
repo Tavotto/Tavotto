@@ -290,7 +290,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
           <CrossfadeImage
             src={retry.src}
             onError={retry.onError}
-            onLoad={pngPaintKey != null ? () => perfRenderPainted(pngPaintKey) : undefined}
+            onLoad={pngPaintKey != null ? () => perfRenderPainted(pngPaintKey, 'png') : undefined}
             alt={obj.name ?? obj.fileId}
             className="absolute select-none"
             style={{ ...layout, maxWidth: 'none' }}

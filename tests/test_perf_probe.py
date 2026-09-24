@@ -459,6 +459,19 @@ def test_release_chain_names_the_slowest_stage():
     assert "松手后要等后端重画一遍才落定" not in _titles(a)
 
 
+def test_release_chain_on_raster_preview_names_the_bitmap_fetch_not_innerhtml():
+    # 位图预览：applied → painted 那段是再取一次位图 + 解码（#504 评审 P1 之后才量得到）。
+    # 反证：分析器不认 painted_via、照旧记成「换进 DOM」→ 本条红
+    rep = _report([_committed(1000)])
+    r = _render(1002, rt=80.0, server=60.0, patch=5.0, draw=20.0, manifest=10.0, dom=900.0)
+    r["painted_via"] = "png"
+    rep["renders"] = [r]
+    f = _find(PR.analyze_report(rep), "松手 → 图落定")
+    assert "取位图 + 解码" in f.title
+    assert any("preview_png" in w for w in f.where)
+    assert "换进 DOM" not in " ".join(f.evidence)
+
+
 def test_release_chain_blames_transfer_when_backend_is_fast():
     rep = _report([_committed(1000)])
     rep["renders"] = [_render(1002, rt=600.0, server=60.0, patch=5.0, draw=30.0, manifest=20.0)]

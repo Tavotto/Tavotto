@@ -581,6 +581,8 @@ describe('性能探针：位图这一格的「图落定」', () => {
     const r = perfStop()!.renders[0]
     expect(r.painted).not.toBeNull()
     expect(r.painted!).toBeGreaterThanOrEqual(r.applied!)
+    // 分析器靠它把这段说成「取位图 + 解码」，而不是 innerHTML
+    expect(r.painted_via).toBe('png')
   })
 
   it('上一变体的位图（新图还在路上时的替身）加载完，不算这一版落定', async () => {
