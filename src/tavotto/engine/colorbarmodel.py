@@ -757,12 +757,53 @@ def _field_fit(arr, cmap) -> float:
     return float(on.sum()) / float(opaque.sum())
 
 
+def _declared_parents(cb):
+    """色条自己声明的宿主（`fig.colorbar(..., ax=...)` 记在 `_colorbar_info["parents"]`）；
+    `cax=` 建的没有这份记录，回 None。"""
+    info = getattr(getattr(cb, "ax", None), "_colorbar_info", None)
+    parents = info.get("parents") if isinstance(info, dict) else None
+    return list(parents) if parents else None
+
+
+def _orphan_scopes(cbar_of_ax: dict, axes) -> list[tuple]:
+    """独立 mappable 色条 → 它可以认领的那几个子图，**声明了宿主的排在前面**。
+
+    `ax=` 建的色条已经说了自己描述谁：只在它的 parents 里找（#527 评审 P1：多面板图上
+    `ax=ax0` 的色条曾认领 ax1 上一张恰好同色阶的无关图像；两条各挂一边的色条，先处理的
+    那条把两张都拿走）。`cax=` 建的没说，才在全图里找——排在后面，只拿声明过宿主的
+    色条挑剩下的，于是「一条色条 + 一格共用色条的多张图」照旧整组认领。
+    """
+    free = [ax for ax in axes if ax not in cbar_of_ax]
+    out = []
+    for cb in cbar_of_ax.values():
+        if not _orphan_mappable(getattr(cb, "mappable", None)):
+            continue
+        parents = _declared_parents(cb)
+        scope = [ax for ax in free if ax in parents] if parents else free
+        out.append((parents is None, cb, scope))
+    out.sort(key=lambda t: t[0])  # 稳定排序：有宿主的在前，各组内保持原序
+    return [(cb, scope) for _, cb, scope in out]
+
+
+def _unique_colours_ok(arr) -> bool:
+    """全分辨率下唯一颜色数不超 `_FIELD_MAX_UNIQUE`——`_decode` 要的正是这一条。
+    配对时的吻合度只看抽样（≤ `_FIELD_SAMPLE` 像素），抽样里的唯一颜色永远到不了上限，
+    于是一张嵌着照片的大图会先报「已绑定」、第一次重着色才在反解里失败、默默画原件
+    （#527 评审 P2）。配对的最后一步用同一个判据量全图。"""
+    import numpy as np
+
+    rgb = _rgb8(arr).reshape(-1, 3)
+    packed = (rgb[:, 0].astype(np.uint32) << 16) | (rgb[:, 1].astype(np.uint32) << 8) | rgb[:, 2]
+    return len(np.unique(packed)) <= _FIELD_MAX_UNIQUE
+
+
 def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
     """给每条**独立 mappable** 的色条找它画的那张 RGB(A) 位图，找到就绑成 `RasterField`。
 
     只在两边都没有别的解释时才配对：色条的 mappable 不画在任何地方、也没有已画出的
     图元与它共用 norm（那是色阶兄弟，`scale_siblings` 管）；位图是已经成色的三 / 四
-    通道数组。一张位图只认一条色条，取吻合度最高、且过 `_FIELD_MIN_ON` 的那张。
+    通道数组。一张位图只认一条色条，取吻合度最高、且过 `_FIELD_MIN_ON`、全图唯一颜色
+    不超上限的那张；只在色条声明的宿主里找（`_orphan_scopes`）。
     可重入：已经绑过的位图（`_mm_field`）不再动。
     """
     drawn = [
@@ -771,17 +812,20 @@ def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
         if ax not in cbar_of_ax
         for a in [*getattr(ax, "images", []), *getattr(ax, "collections", [])]
     ]
-    images = [
-        im
-        for ax in axes
-        if ax not in cbar_of_ax
-        for im in getattr(ax, "images", [])
-        if getattr(getattr(im, "get_array", lambda: None)(), "ndim", 0) == 3
-    ]
+
+    def _rasters(scope):
+        return [
+            im
+            for ax in scope
+            for im in getattr(ax, "images", [])
+            if getattr(getattr(im, "get_array", lambda: None)(), "ndim", 0) == 3
+        ]
+
+    images = _rasters([ax for ax in axes if ax not in cbar_of_ax])
     taken = {id(im) for im in images if getattr(im, "_mm_field", None) is not None}
-    for cb in cbar_of_ax.values():
-        m = getattr(cb, "mappable", None)
-        if not _orphan_mappable(m) or getattr(m.norm, "vmin", None) is None:
+    for cb, scope in _orphan_scopes(cbar_of_ax, axes):
+        m = cb.mappable
+        if getattr(m.norm, "vmin", None) is None:
             continue
         try:
             m.norm.inverse(0.5)  # BoundaryNorm 这类不可逆：反解不出数值，不配对
@@ -793,19 +837,22 @@ def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
             continue
         if any(getattr(a, "norm", None) is m.norm for a in drawn):
             continue
-        best, score = None, _FIELD_MIN_ON
-        for im in images:
+        fits = []
+        for im in _rasters(scope):
             if id(im) in taken:
                 continue
             try:
                 fit = _field_fit(im.get_array(), m.get_cmap())
             except Exception:  # noqa: BLE001 — 量不了就当不吻合
                 fit = 0.0
-            if fit >= score:
-                best, score = im, fit
-        if best is not None:
-            RasterField(best, cb)
-            taken.add(id(best))
+            if fit >= _FIELD_MIN_ON:
+                fits.append((fit, im))
+        fits.sort(key=lambda t: -t[0])
+        for _, im in fits:
+            if _unique_colours_ok(im.get_array()):
+                RasterField(im, cb)
+                taken.add(id(im))
+                break
 
 
 def _norm_signature(norm):
@@ -847,25 +894,27 @@ def adopt_equal_scales(cbar_of_ax: dict, axes) -> None:
     「数值相同」提升成「同一个对象」：色条的 mappable 不画在任何地方（它存在的唯一
     意义就是描述别的图元），图元没有自己的色条，色图相同，norm 签名逐项相同。
     换上的 norm 与原来的数值一样，画面一个像素不变；换完之后兄弟、别名组、
-    `scale_gids` 全走原有那一套。
+    `scale_gids` 全走原有那一套。只在色条声明的宿主里认领（`_orphan_scopes`），一个图元
+    只归一条色条。
     """
-    drawn = [
-        a
-        for ax in axes
-        if ax not in cbar_of_ax
-        for a in [*getattr(ax, "images", []), *getattr(ax, "collections", [])]
-        if hasattr(a, "norm")
-        and hasattr(a, "get_cmap")
-        and getattr(a, "get_array", lambda: None)() is not None
-    ]
-    for cb in cbar_of_ax.values():
-        m = getattr(cb, "mappable", None)
-        if not _orphan_mappable(m):
-            continue
+
+    def _mapped(scope):
+        return [
+            a
+            for ax in scope
+            for a in [*getattr(ax, "images", []), *getattr(ax, "collections", [])]
+            if hasattr(a, "norm")
+            and hasattr(a, "get_cmap")
+            and getattr(a, "get_array", lambda: None)() is not None
+        ]
+
+    drawn = _mapped([ax for ax in axes if ax not in cbar_of_ax])
+    for cb, scope in _orphan_scopes(cbar_of_ax, axes):
+        m = cb.mappable
         sig = _norm_signature(m.norm)
         if sig is None or any(a.norm is m.norm for a in drawn):
             continue
-        for a in drawn:
+        for a in _mapped(scope):
             if getattr(a, "colorbar", None) is not None or getattr(a, "_mm_adopted", False):
                 continue
             if getattr(getattr(a, "get_array", lambda: None)(), "ndim", 0) == 3:

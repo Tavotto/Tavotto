@@ -94,6 +94,10 @@
   （最近格 + 容差）并重着色，叠加物原样、抗锯齿边缘按「离底色距离 / 邻域线芯距离（下限
   0.6）」带过底色变化。钩在 `make_image` 而不是 `draw`（多图合成时 `Axes.draw` 绕过 draw）。
   宿主回退：`colorbar_maps._host_of` 在 `mappable.axes` 与 `parents` 之后认绑定位图 / 共用
-  norm 的图元所在的子图——`host_gid`、`axes_follow`、方向翻转的落位参照都有了。manifest
+  norm 的图元所在的子图——`host_gid`、`axes_follow`、方向翻转的落位参照都有了。
+  **认领范围（#527 评审 P1）**：①② 都只在色条声明的宿主（`_colorbar_info["parents"]`）
+  里找，`cax=` 建的没有声明才在全图找、且排在声明过宿主的色条之后（`_orphan_scopes`）；
+  一个图元只归一条色条。**配对的最后一步量全图唯一颜色（P2）**：吻合度只看抽样，抽样里的
+  唯一颜色到不了反解上限，不量全图就会先报已绑定、第一次重着色时才默默失败。manifest
   的 `mappable_gid` 在反查不到时回退到绑定的位图。看护 `tests/test_figure_recognition.py`
   （含热会话 == 全量重放逐字节、噪声 / BoundaryNorm / 贴端点的平图三个反例）。

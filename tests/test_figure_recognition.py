@@ -177,6 +177,43 @@ def test_standalone_colorbar_adopts_an_identical_scale(facts):
     assert es["own_colorbar_image_cmap_after"] == "viridis"
 
 
+def _bars(summary: dict) -> dict:
+    return {g: e for g, e in summary.items() if e["role"] == "colorbar"}
+
+
+def test_declared_host_limits_what_a_standalone_colorbar_adopts(facts):
+    """#527 评审 P1：`ax=ax0` 的独立色条只认领 ax0 上的图，ax1 上恰好同色阶的无关图像
+    不归它；两条各挂一边的色条各认各的，先处理的那条不再把两张都拿走。"""
+    (one,) = _bars(facts["orphan_scopes"]["one_bar"]).values()
+    assert one["scale_gids"] == ["axes_0.images_0"] and one["host_gid"] == "axes_0"
+    two = sorted(
+        (e["host_gid"], e["scale_gids"]) for e in _bars(facts["orphan_scopes"]["two_bars"]).values()
+    )
+    assert two == [("axes_0", ["axes_0.images_0"]), ("axes_1", ["axes_1.images_0"])]
+
+
+def test_cax_colorbar_still_covers_every_panel_it_describes(facts):
+    """对照：`cax=` 建的色条没有声明宿主，一条色条共用给一格图是常见写法——整组认领照旧。"""
+    (bar,) = _bars(facts["orphan_scopes"]["shared_cax"]).values()
+    assert sorted(bar["scale_gids"]) == ["axes_0.images_0", "axes_1.images_0"]
+
+
+def test_declared_host_claims_before_the_generic_colorbar(facts):
+    """`cax=` 的通用色条即使先建（排在前面），也只拿有宿主的色条挑剩下的：`ax=a1` 的那条
+    认领 a1，通用那条只剩 a0。"""
+    got = sorted(
+        (e["host_gid"], e["scale_gids"]) for e in _bars(facts["orphan_scopes"]["mixed"]).values()
+    )
+    assert got == [("axes_0", ["axes_0.images_0"]), ("axes_1", ["axes_1.images_0"])]
+
+
+def test_binding_measures_unique_colours_at_full_resolution(facts):
+    """#527 评审 P2：嵌着照片的大图抽样过得了吻合度，全图唯一颜色却超过反解上限——
+    从前先报已绑定、第一次换色图才在反解里失败并默默画原件。现在不配对。"""
+    (bar,) = _bars(facts["orphan_scopes"]["photo"]).values()
+    assert bar["mappable_gid"] is None
+
+
 # ============================================================ 热会话 == 全量重放
 SCRIPT = "fig_recognition.py"
 LIBRARY = """\

@@ -225,12 +225,61 @@ def equal_scales() -> dict:
     }
 
 
+def orphan_scopes() -> dict:
+    """#527 评审：独立色条只在自己声明的宿主里认领；配对前量全图唯一颜色。"""
+    z = np.random.RandomState(4).rand(8, 8)
+
+    def _two(n_bars):
+        fig, (a0, a1) = plt.subplots(1, 2, figsize=(6.0, 3.0))
+        a0.imshow(z, cmap="viridis", vmin=0, vmax=1)
+        a1.imshow(z, cmap="viridis", vmin=0, vmax=1)
+        for ax in (a0, a1)[:n_bars]:
+            fig.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), ax=ax)
+        return _summary(_state(fig))
+
+    # 对照：`cax=` 的一条色条共用给一格图——没有声明宿主，整组认领照旧
+    fig, axs = plt.subplots(1, 2, figsize=(6.0, 3.0))
+    for ax in axs:
+        ax.imshow(z, cmap="viridis", vmin=0, vmax=1)
+    cax = fig.add_axes([0.92, 0.1, 0.02, 0.8])
+    fig.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), cax=cax)
+    shared = _summary(_state(fig))
+
+    # 先建 `cax=` 的通用色条、再建 `ax=a1` 的：通用那条排在前面也不能把 a1 的图先拿走
+    fig_m, (m0, m1) = plt.subplots(1, 2, figsize=(6.0, 3.0))
+    for ax in (m0, m1):
+        ax.imshow(z, cmap="viridis", vmin=0, vmax=1)
+    cax_m = fig_m.add_axes([0.92, 0.1, 0.02, 0.8])
+    fig_m.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), cax=cax_m)
+    fig_m.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), ax=m1)
+    mixed = _summary(_state(fig_m))
+
+    # 一张 65% 色图热图 + 35% 照片的大图：抽样过得了吻合度，全图唯一颜色远超上限
+    h, w = 900, 900
+    yy, xx = np.mgrid[0:h, 0:w]
+    v = (np.sin(xx / 37.0) * np.cos(yy / 53.0) + 1) / 2
+    rgb = matplotlib.colormaps["viridis"](v)[..., :3].astype(np.float32)
+    rgb[:, : int(w * 0.35)] = np.random.RandomState(5).rand(h, int(w * 0.35), 3)
+    fig_p = plt.figure(figsize=(5.0, 4.0))
+    fig_p.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(rgb)
+    cax_p = fig_p.add_axes([0.8, 0.1, 0.03, 0.8])
+    fig_p.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), cax=cax_p)
+    return {
+        "one_bar": _two(1),
+        "two_bars": _two(2),
+        "shared_cax": shared,
+        "mixed": mixed,
+        "photo": _summary(_state(fig_p)),
+    }
+
+
 def main() -> None:
     report = {
         "axis_visibility": axis_visibility(),
         "area_fields": area_fields(),
         "raster_fields": raster_fields(),
         "equal_scales": equal_scales(),
+        "orphan_scopes": orphan_scopes(),
     }
     print(json.dumps(report, ensure_ascii=False))
 
