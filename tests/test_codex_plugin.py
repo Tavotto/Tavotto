@@ -1319,6 +1319,31 @@ def test_launcher_reads_the_pipx_polyglot_wrapper_under_a_path_with_spaces(tmp_p
     assert launcher._shebang_interpreter(str(plain)) is None
 
 
+def test_launcher_reads_the_unquoted_polyglot_wrapper_of_an_overlong_path(tmp_path):
+    """路径不带空格、只是超过 shebang 长度上限时，distlib 的第二行目标**不加引号**。
+
+    distlib `ScriptMaker._build_shebang`：`b' ' not in executable` 且长度 ≤ 上限
+    （Linux 127 / macOS 512）才写 `#!<python>`，否则 `'''exec' ` + executable 原样拼上
+    ——引号只在路径含空格时由 enquote_executable 加。深层 pipx 目录会走到这一格。
+    """
+    sys.path.insert(0, str(PLUGIN / "mcp"))
+    import importlib
+
+    launcher = importlib.import_module("server")
+
+    venv_bin = tmp_path / ("d" * 120) / "pipx" / "venvs" / "tavotto" / "bin"
+    venv_bin.mkdir(parents=True)
+    python = venv_bin / "python"
+    python.write_bytes(b"")
+    assert " " not in str(python) and len(str(python)) + 3 > 127  # 样本真在那一格
+    wrapper = venv_bin / "tavotto"
+    wrapper.write_text(
+        f"#!/bin/sh\n'''exec' {python} \"$0\" \"$@\"\n' '''\nimport sys\n",
+        encoding="utf-8",
+    )
+    assert launcher._shebang_interpreter(str(wrapper)) == str(python)
+
+
 def test_the_plugin_is_not_shipped_in_the_wheel():
     """插件随 Codex 市场分发，不属于 pip 包（pyproject 的 exclude 看着）。"""
     if tomllib is None:

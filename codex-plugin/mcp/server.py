@@ -165,8 +165,12 @@ def _polyglot_exec_target(line: str) -> "str | None":
     """
     prefix = "'''exec' "
     rest = line[len(prefix) :] if line.startswith(prefix) else ""
-    if not rest or rest[0] not in "'\"":
+    if not rest or rest[0].isspace():
         return None
+    if rest[0] not in "'\"":
+        # 路径不带空格、只是太长（超过 shebang 长度上限：Linux 127 / macOS 512）
+        # 时 distlib 同样写多语言头，但目标**不加引号**：取到下一个空白为止
+        return rest.split(None, 1)[0]
     end = rest.find(rest[0], 1)
     return rest[1:end] or None if end > 0 else None
 
