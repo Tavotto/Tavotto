@@ -74,31 +74,48 @@ def test_save_leaves_no_temp_files(monkeypatch):
     assert engine_config.config_path().read_text(encoding="utf-8") == before
 
 
+def _dotted(node: ast.AST) -> str | None:
+    """`a.b.c` → "a.b.c"；不是纯名字 / 属性链就回 None。"""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
 def _direct_save_calls(tree: ast.AST) -> list[int]:
-    """`<config 模块>.save(...)` 的调用行号：`config.save` / `engine_config.save` /
-    `from .config import save` 之后的裸 `save(...)`。"""
-    aliases = {"config", "engine_config"}
-    bare: set[str] = set()
+    """对 config 模块 `save` 的直接调用的行号。认得出的写法：
+
+    * `from X import config [as 任意名]` 之后 `<名>.save(...)`（Codex #550：起初只认预置的
+      `config` / `engine_config` 两个名字，`as cfg` 就漏了）；
+    * `import X.config [as 名]` 之后 `<名>.save(...)` 或完整点号 `X.config.save(...)`；
+    * `from X.config import save [as 名]` 之后裸 `<名>(...)`。
+    """
+    aliases: set[str] = set()  # 指向 config 模块的名字 / 点号路径
+    bare: set[str] = set()  # 指向 config.save 本身的名字
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("config"):
+        if isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
             for a in node.names:
-                if a.name == "save":
+                if mod.endswith("config") and a.name == "save":
                     bare.add(a.asname or a.name)
-        if isinstance(node, ast.Import):
+                elif a.name == "config":
+                    aliases.add(a.asname or a.name)
+        elif isinstance(node, ast.Import):
             for a in node.names:
-                if a.name.endswith(".config") or a.name == "config":
-                    aliases.add(a.asname or a.name.rsplit(".", 1)[-1])
+                if a.name == "config" or a.name.endswith(".config"):
+                    aliases.add(a.asname or a.name)
     lines = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         f = node.func
-        if (
-            isinstance(f, ast.Attribute)
-            and f.attr == "save"
-            and isinstance(f.value, ast.Name)
-            and f.value.id in aliases
-        ) or (isinstance(f, ast.Name) and f.id in bare):
+        if isinstance(f, ast.Attribute) and f.attr == "save" and _dotted(f.value) in aliases:
+            lines.append(node.lineno)
+        elif isinstance(f, ast.Name) and f.id in bare:
             lines.append(node.lineno)
     return lines
 
@@ -118,10 +135,21 @@ def test_no_module_outside_config_calls_save_directly():
 
 
 def test_the_gate_sees_a_direct_save():
-    """反证判据自己：三种写法都认得出来（判据不会因为换个 import 方式就恒绿）。"""
+    """反证判据自己：各种 import / 别名写法都认得出来（换个写法不会让它恒绿），别的
+    对象的 `.save` 不误报。"""
     for src in (
         "from tavotto.engine import config\nconfig.save({})",
         "from . import config as engine_config\nengine_config.save({})",
+        "from tavotto.engine import config as cfg\ncfg.save({})",
         "from .config import save\nsave({})",
+        "from .config import save as persist\npersist({})",
+        "import tavotto.engine.config\ntavotto.engine.config.save({})",
+        "import tavotto.engine.config as tc\ntc.save({})",
     ):
         assert _direct_save_calls(ast.parse(src)) == [2], src
+    # 不认错：别的对象的 save（pymupdf 文档、PIL 图像……）不算
+    for src in (
+        "import pymupdf\ndoc = pymupdf.open()\ndoc.save('x.pdf')",
+        "from tavotto.engine import config\nimg.save('a.png')",
+    ):
+        assert _direct_save_calls(ast.parse(src)) == [], src
