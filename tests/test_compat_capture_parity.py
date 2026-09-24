@@ -401,6 +401,7 @@ fig.savefig("nreader.pdf")
         assert list(built["stems"]) == ["nreader"]
         # numpy 读到的项目文件要进执行回执（数据身份）：改指过来的那份与按绝对路径读的那份都算。
         # numpy 的打开器在它载入时就绑了原来的 io.open，三处 open 包装都看不见它（Codex #545 P1）
+        assert built["runtime"]["inputs"]["channels"] == ["python_open", "numpy_datasource"]
         seen = {f["path"]: f["sha256"] for f in built["runtime"]["inputs"]["files"]}
         assert seen == {
             "xy.txt": hashlib.sha256((figs / "xy.txt").read_bytes()).hexdigest(),

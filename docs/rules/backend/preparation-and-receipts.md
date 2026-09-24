@@ -52,7 +52,9 @@
   `runtime_rejected ∈ {not_a_build_report, pid_mismatch}`、`completeness=partial`；控制面起的是 launcher（Windows 上 venv 的
   `python.exe`）而解释器是它的子进程时按自报的 `ppid` 认、`pid_check=ok_via_launcher`；不知道 pid 就 `pid_check=unavailable`，
   不冒充核过。拿预检结果冒充回执是 must_fail。
-- **输入观察永远是 partial（D13 / FO-061）**：`figcapture.InputObserver` 只包 Python 的三处 `open`（先于只读回退装，
+- **输入观察永远是 partial（D13 / FO-061）**：`figcapture.InputObserver` 只包 Python 的三处 `open` 与 numpy 的 `DataSource.open`（2026-09-24，#545：
+  `np.loadtxt` / `np.genfromtxt` 的打开器在 numpy 载入时就绑了原来的 `io.open`，前三处看不见；按返回文件对象的 `.name` 记；
+  `inputs.channels` 如实列出装上了的通道 `python_open` / `numpy_datasource`）（先于只读回退装，
   记实际打开的那条路径；源码文件剔掉、去重、有界），h5py / `os.open` / 网络 / 子进程看不见——`inputs.observation=partial`
   + `unobserved` 如实列出；观察到的文件身份（相对路径 + sha256）**进公开语义身份**，机器路径不进；`local_modules` 是
   `sys.modules` 里落在项目根内的模块。build 那一刻定格，之后进程里再读什么都不是它的输入。

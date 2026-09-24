@@ -33,7 +33,8 @@
   自己起的那个子进程（`worker.child_pid`；控制面不知道 pid 时那一维不核、如实记 `pid_check=unavailable`）。
   体检（`projectenv.probe_environment`）/ 探针 / 控制面自己拼的字典**一律拒收**：`runtime=None`、
   `runtime_rejected=<原因>`、`completeness=partial`——拿预检结果冒充本次事实是 FO-059 的 must_fail。
-* **已观察的输入**（`runtime["inputs"]`，`figcapture.InputObserver.report()`）：脚本经 Python `open` 只读打开的
+* **已观察的输入**（`runtime["inputs"]`，`figcapture.InputObserver.report()`）：脚本经 Python `open`（三处）与 numpy 的
+  `DataSource.open`（`np.loadtxt` / `np.genfromtxt`，2026-09-24）只读打开的
   项目内文件（相对路径 + sha256）与 import 到的本地模块；`observation=partial` 永远如实——原生 I/O / 网络 /
   子进程看不见（D13 / FO-061）。观察到的文件身份**进公开语义身份**（数据换了就是另一次执行），机器路径不进。
 * **数据绑定**（`binding`，控制面给）：准备计划在预检那一刻按静态证据记下的「打算读哪些文件、内容是什么」

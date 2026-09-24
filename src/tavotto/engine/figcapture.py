@@ -613,7 +613,7 @@ def collect_pyplot_figures(
     return stems, dropped
 
 
-#: 输入观察（统一实施包 U09，ADR 0070）：脚本经 Python 的 `open` 读到的项目内文件最多记这么多条；
+#: 输入观察（统一实施包 U09，ADR 0070）：脚本经 Python 的 `open`（与 numpy 的 `DataSource.open`）读到的项目内文件最多记这么多条；
 #: 超过就 `truncated=True`——回执有界，不是全系统审计。
 INPUT_OBSERVER_MAX_FILES = 256
 #: 每个观察到的文件最多为它算 hash 的字节数；再大只记大小，`sha256` 为 None（大文件的 hash 归数据绑定
@@ -657,6 +657,8 @@ class InputObserver:
         self._seen: dict[str, str] = {}  # realpath → 项目相对 POSIX 路径
         self.truncated = False
         self._uninstall = None
+        #: 实际装上了的观察通道（`report()` 的 `channels`）：numpy 没载入时就没有 `numpy_datasource`
+        self._channels: list[str] = []
 
     # ---- 记账 ----
     def _note(self, file) -> None:
@@ -720,8 +722,10 @@ class InputObserver:
                 observer._note(getattr(fh, "name", None))
             return fh
 
+        self._channels = ["python_open"]
         if real_ds_open is not None:
             datasource.open = observed_datasource_open
+            self._channels.append("numpy_datasource")
 
         def uninstall() -> None:
             builtins.open = real_open
@@ -758,7 +762,7 @@ class InputObserver:
             files.append(entry)
         return {
             "observation": OBSERVATION_PARTIAL,
-            "channels": ["python_open"],
+            "channels": list(self._channels) or ["python_open"],
             "unobserved": list(INPUT_OBSERVER_UNOBSERVED),
             "truncated": bool(self.truncated),
             "files": files,
