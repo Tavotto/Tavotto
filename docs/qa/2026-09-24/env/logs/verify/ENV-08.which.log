@@ -2,9 +2,9 @@
 # cmd: which conda mamba micromamba pyenv; ls -d ~/miniconda3 ~/anaconda3 ~/miniforge3 ~/.pyenv
 # head: 1f9f29099abe7d0448c44039e150ac9020cc6077
 # start(UTC): 2026-09-24T19:20:27Z
-ls: /Users/jiaqi/.pyenv: No such file or directory
-ls: /Users/jiaqi/anaconda3: No such file or directory
-ls: /Users/jiaqi/miniconda3: No such file or directory
-ls: /Users/jiaqi/miniforge3: No such file or directory
+ls: ~/.pyenv: No such file or directory
+ls: ~/anaconda3: No such file or directory
+ls: ~/miniconda3: No such file or directory
+ls: ~/miniforge3: No such file or directory
 # end(UTC): 2026-09-24T19:20:27Z
 # exit_code: 1

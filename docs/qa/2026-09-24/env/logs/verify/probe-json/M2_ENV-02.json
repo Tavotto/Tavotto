@@ -287,7 +287,7 @@
     },
     "server_env_PATH_head": [
       "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/envB/.venv/bin",
-      "/Users/jiaqi/.claude_env/bin"
+      "~/.claude_env/bin"
     ],
     "environment_before_prepare": {
       "automatic": false,

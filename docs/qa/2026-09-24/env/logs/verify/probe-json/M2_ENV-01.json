@@ -281,7 +281,7 @@
       }
     },
     "server_env_PATH_head": [
-      "/Users/jiaqi/.claude_env/bin",
+      "~/.claude_env/bin",
       "/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/otty-shell-16579/bin"
     ],
     "environment_before_prepare": {
