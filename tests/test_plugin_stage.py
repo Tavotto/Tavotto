@@ -701,3 +701,32 @@ def test_the_dev_marketplace_never_ships(tmp_path):
     d = tmp_path / "s"
     kit.synthetic_staging(d)
     assert not (d / ".agents").exists()
+
+
+@pytest.mark.parametrize("fs_observable", [False, True])
+def test_a_manifest_written_without_modes_verifies_its_own_launcher(
+    tmp_path, monkeypatch, fs_observable
+):
+    """#548 Codex 评审 P2：`write_build_manifest(modes={})` 放行了启动器，就必须把放行它的
+    那个模式写进清单——否则清单记 100644，紧接着的 verify_dir 照清单把同一个启动器拒掉。
+    Windows（量不出执行位）与 POSIX（文件系统有执行位）两种都要前后一致。"""
+    if fs_observable and os.name == "nt":
+        pytest.skip("POSIX 执行位语义")
+    plugin = tmp_path / "codex-plugin"
+    shutil.copytree(ROOT / "codex-plugin", plugin)
+    launch = plugin / pluginmanifest.BUNDLED_LAUNCHER
+    launch.chmod(0o755 if fs_observable else 0o644)
+    monkeypatch.setattr(pluginmanifest, "_fs_exec_bit_observable", lambda: fs_observable)
+    manifest = pluginmanifest.write_build_manifest(
+        plugin,
+        modes={},
+        source_sha="0" * 40,
+        fingerprint="f" * 16,
+        lockfile_sha256=None,
+        toolchain={},
+        min_tavotto_version="0.13.0",
+    )
+    (entry,) = [e for e in manifest["files"] if e["path"] == pluginmanifest.BUNDLED_LAUNCHER]
+    assert entry["mode"] == "100755", entry
+    problems = pluginmanifest.verify_dir(plugin)
+    assert not any("只许裸名字" in p for p in problems), problems

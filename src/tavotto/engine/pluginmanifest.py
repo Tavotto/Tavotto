@@ -259,6 +259,10 @@ def describe(plugin_dir: Path, modes: dict[str, str]) -> tuple[list[dict], dict[
             continue
         data = p.read_bytes()
         mode = modes.get(path, "100644")
+        if path == BUNDLED_LAUNCHER and path not in modes:
+            # 与下面放行它的判据同一个来源：否则这里记 100644、verify_dir 照清单又把
+            # 刚放行的启动器拒掉（#548 Codex 评审 P2）
+            mode = _launcher_mode(plugin_dir, modes)
         entries.append(
             {"path": path, "sha256": sha256_bytes(data), "size": len(data), "mode": mode}
         )
