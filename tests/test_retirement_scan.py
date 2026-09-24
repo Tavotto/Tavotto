@@ -45,7 +45,7 @@ def test_selftest_positive_and_negative_examples_all_hold():
     report = rs.selftest(Path(sys.executable))
     failed = [c["check"] for c in report["checks"] if not c["ok"]]
     assert not failed, failed
-    assert len(report["checks"]) == 7
+    assert len(report["checks"]) == 9
 
 
 def test_the_source_ruler_sees_dynamic_imports_and_ignores_strings(tmp_path):
@@ -70,8 +70,8 @@ def test_the_wheel_ruler_ignores_extras_but_not_runtime_requires(tmp_path):
             "Name: t\nRequires-Dist: pymupdf>=1.24; extra == 'legacy-pymupdf'\nRequires-Dist: PyMuPDF (>=1.24)\n",
         )
         zf.writestr("tavotto/pdfbackend/canvas_coverage.json", "{}")
-        for i in range(rs._fonts_expected()):
-            zf.writestr(f"tavotto/resources/fonts/f{i}.ttf", "x")
+        for rel in sorted(rs._fonts_allowed()):
+            zf.writestr(f"tavotto/resources/fonts/{rel}", "x")
     r = rs.scan_wheel(whl)
     assert r["retired"] == ["PyMuPDF (>=1.24)"] and not r["ok"]
     with zipfile.ZipFile(whl, "w") as zf:
@@ -80,8 +80,8 @@ def test_the_wheel_ruler_ignores_extras_but_not_runtime_requires(tmp_path):
             "Name: t\nRequires-Dist: pymupdf>=1.24; extra == 'legacy-pymupdf'\nRequires-Dist: pikepdf>=10\n",
         )
         zf.writestr("tavotto/pdfbackend/canvas_coverage.json", "{}")
-        for i in range(rs._fonts_expected()):
-            zf.writestr(f"tavotto/resources/fonts/f{i}.ttf", "x")
+        for rel in sorted(rs._fonts_allowed()):
+            zf.writestr(f"tavotto/resources/fonts/{rel}", "x")
     assert rs.scan_wheel(whl)["ok"]
 
 
@@ -94,7 +94,7 @@ def test_the_cli_exit_code_follows_the_selftest():
         timeout=300,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert proc.stdout.count("PASS ") == 7
+    assert proc.stdout.count("PASS ") == 9
 
 
 # ---------------------------------------------------------------- 2. 这个仓库 / 这个环境

@@ -380,13 +380,49 @@ def scan_block(python: Path) -> dict:
 # ---------------------------------------------------------------------------
 # native：产物目录 / wheel
 # ---------------------------------------------------------------------------
-def _fonts_expected() -> int:
+#: 批准字体在包里的落点（`tavotto/resources/fonts/`）。**只看这一个目录**：冻结产物里别的叫 `fonts` 的目录
+#: （内置 runtime 里 matplotlib 的 `mpl-data/fonts/ttf` 有几十张）不是我们的批准字体，按「路径里有 fonts」
+#: 去数，两条打包腿都会被它打红（Codex #539）。
+_FONTS_DIR_PARTS = ("tavotto", "resources", "fonts")
+
+
+def _fonts_allowed() -> set[str]:
+    """白名单里的字体文件，相对批准字体目录（`liberation/LiberationSerif-Regular.ttf` …）。"""
     allow = json.loads(
         (ROOT / "src" / "tavotto" / "rendercore" / "fonts_allowlist.json").read_text(
             encoding="utf-8"
         )
     )
-    return len(allow["faces"])
+    return {face["file"] for face in allow["faces"].values()}
+
+
+def _fonts_expected() -> int:
+    return len(_fonts_allowed())
+
+
+def _approved_fonts(paths: list[tuple[str, ...]]) -> set[str]:
+    """一组路径（按段切开）里、落在批准字体目录下的 .ttf / .otf，回相对那个目录的路径。"""
+    n = len(_FONTS_DIR_PARTS)
+    out = set()
+    for parts in paths:
+        if not parts or not parts[-1].lower().endswith((".ttf", ".otf")):
+            continue
+        for i in range(len(parts) - n):
+            if tuple(parts[i : i + n]) == _FONTS_DIR_PARTS:
+                out.add("/".join(parts[i + n :]))
+                break
+    return out
+
+
+def _font_verdict(found: set[str]) -> dict:
+    allowed = _fonts_allowed()
+    return {
+        "fonts_found": len(found),
+        "fonts_expected": len(allowed),
+        "fonts_missing": sorted(allowed - found),
+        "fonts_unexpected": sorted(found - allowed),
+        "fonts_ok": found == allowed,
+    }
 
 
 def scan_dist(dist: Path) -> dict:
@@ -399,19 +435,15 @@ def scan_dist(dist: Path) -> dict:
     required_missing = [
         tok for tok in NATIVE_REQUIRED if not any(tok in n.lower() for n in natives)
     ]
-    fonts = [
-        p
-        for p in dist.rglob("*")
-        if p.is_file() and p.suffix.lower() in (".ttf", ".otf") and "fonts" in p.parts
-    ]
-    expected = _fonts_expected()
+    fonts = _font_verdict(
+        _approved_fonts([p.relative_to(dist).parts for p in dist.rglob("*") if p.is_file()])
+    )
     return {
-        "ok": not forbidden and not required_missing and len(fonts) == expected,
+        "ok": not forbidden and not required_missing and fonts["fonts_ok"],
         "native_files": len(natives),
         "forbidden": forbidden,
         "required_missing": required_missing,
-        "fonts_found": len(fonts),
-        "fonts_expected": expected,
+        **fonts,
         "sample": [n for n in natives if any(tok in n.lower() for tok in NATIVE_REQUIRED)][:8],
     }
 
@@ -439,20 +471,14 @@ def scan_wheel(wheel: Path) -> dict:
     runtime = [r for r in reqs if "extra ==" not in r]
     retired = [r for r in runtime if _req_name(r) in RETIRED_DISTS]
     natives = [n for n in names if n.lower().endswith(NATIVE_SUFFIXES)]
-    fonts = [
-        n
-        for n in names
-        if n.startswith("tavotto/resources/fonts/") and n.lower().endswith((".ttf", ".otf"))
-    ]
-    expected = _fonts_expected()
+    fonts = _font_verdict(_approved_fonts([tuple(n.split("/")) for n in names]))
     coverage = "tavotto/pdfbackend/canvas_coverage.json" in names
     return {
-        "ok": not retired and not natives and len(fonts) == expected and coverage,
+        "ok": not retired and not natives and fonts["fonts_ok"] and coverage,
         "requires_dist_runtime": runtime,
         "retired": retired,
         "native_files": natives,
-        "fonts_found": len(fonts),
-        "fonts_expected": expected,
+        **fonts,
         "canvas_coverage": coverage,
     }
 
@@ -565,14 +591,38 @@ def selftest(python: Path) -> dict:
                 "ok": (not r["ok"]) and r["retired"] == ["pymupdf>=1.24,<2"],
             }
         )
-        # 负例 4：产物目录里有 libmupdf → 必须红；正例：有 pdfium + qpdf + 13 张脸 → 绿
+        # 负例 4：产物目录里有 libmupdf → 必须红；正例：有 pdfium + qpdf + 白名单那 13 张脸 → 绿，
+        # 内置 runtime 里 matplotlib 自己的字体目录不算批准字体、不影响判定（Codex #539）
         dist = root / "dist"
-        (dist / "_internal" / "tavotto" / "resources" / "fonts").mkdir(parents=True)
-        for i in range(_fonts_expected()):
-            (dist / "_internal" / "tavotto" / "resources" / "fonts" / f"f{i}.ttf").write_bytes(b"x")
+        approved = dist / "_internal" / "tavotto" / "resources" / "fonts"
+        for rel in sorted(_fonts_allowed()):
+            (approved / rel).parent.mkdir(parents=True, exist_ok=True)
+            (approved / rel).write_bytes(b"x")
+        mpl_fonts = dist / "runtime" / "lib" / "matplotlib" / "mpl-data" / "fonts" / "ttf"
+        mpl_fonts.mkdir(parents=True)
+        for i in range(3):
+            (mpl_fonts / f"DejaVuSans{i}.ttf").write_bytes(b"x")
         (dist / "_internal" / "libpdfium.dylib").write_bytes(b"x")
         (dist / "_internal" / "libqpdf.30.dylib").write_bytes(b"x")
         r_good = scan_dist(dist)
+        checks.append(
+            {
+                "check": "fonts under other 'fonts' dirs (matplotlib mpl-data) are not counted",
+                "ok": r_good["fonts_ok"] and r_good["fonts_unexpected"] == [],
+            }
+        )
+        stray = approved / "extra" / "NotApproved.ttf"
+        stray.parent.mkdir(parents=True)
+        stray.write_bytes(b"x")
+        r_stray = scan_dist(dist)
+        stray.unlink()
+        checks.append(
+            {
+                "check": "an unapproved face in the approved font dir is flagged by name",
+                "ok": (not r_stray["ok"])
+                and r_stray["fonts_unexpected"] == ["extra/NotApproved.ttf"],
+            }
+        )
         (dist / "_internal" / "libmupdf.so").write_bytes(b"x")
         r_bad = scan_dist(dist)
         checks.append(
