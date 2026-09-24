@@ -439,11 +439,20 @@ def orphan_scopes() -> dict:
     finally:
         C._FIELD_TUBE_CHUNK = saved
     same_keys = np.array_equal(chunked.keys, single.keys)
+    # 第九轮：两格颜色几乎相同、在调色板里隔得很远（分在不同段）——盖住同一个 8 位颜色，
+    # 真实距离 0.501 对 0.499，后面那格更近
+    near_cols = np.random.RandomState(3).rand(2048, 3)
+    near_cols[5] = [100.499 / 255, 0.2, 0.2]
+    near_cols[2000] = [100.501 / 255, 0.2, 0.2]
+    near_tube = C._ColourTube(mcolors.ListedColormap(near_cols))
+    near_key = (101 << 16) | (51 << 8) | 51
+    near_entry = int(near_tube.entry[np.searchsorted(near_tube.keys, near_key)])
     listed = {
         "summary": listed_sum,
         "max_err": float(np.abs(got_l.astype(float) - want_l).max()) / 255,
         "tube_keys_equal": bool(same_keys),
-        "tube_entry_agree": float((chunked.entry == single.entry).mean()) if same_keys else 0.0,
+        "tube_entry_mismatches": int((chunked.entry != single.entry).sum()) if same_keys else -1,
+        "near_entry": near_entry,
     }
     # 连续色图前半段几乎不变色：好几格圆整成同一个
     # 8 位颜色，同色一组要取位置的平均值（平台中点），取第一次出现的位置会系统性偏低

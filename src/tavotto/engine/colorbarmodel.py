@@ -735,12 +735,15 @@ class _ColourTube:
         if n <= _FIELD_TUBE_CHUNK:
             keys, _, entry = _nearest(0)
         else:
-            # 距离 ≤ 4.5，量化到 1/50 存 uint8（16 MiB，float32 要 64 MiB）；分辨「谁更近」够用
-            best_d = np.full(1 << 24, 255, np.uint8)
+            # 段间比较用**原样的 float32 距离**（64 MiB，只在超过一段的色图上建表时占用）。量化
+            # 会让相差不到一个量化步的两格打平、先到的那格赢——隔得很远的两格颜色几乎相同时，
+            # 选中的是位置错得很远的那格（#538 评审第九轮：100.499 与 100.501 都盖住 101，
+            # 真实距离 0.501 对 0.499；随机 2048 色调色板与一次排序的结果有 23 处不同）。
+            # 与一次排序同一个规则：距离更小者赢，完全相等时先到者赢。
+            best_d = np.full(1 << 24, np.inf, np.float32)
             best_e = np.full(1 << 24, _OFF_MAP, np.uint16)
             for e0 in range(0, n, _FIELD_TUBE_CHUNK):
                 k, d, e = _nearest(e0)
-                d = np.rint(d * 50.0).astype(np.uint8)
                 closer = d < best_d[k]  # 段内已去重，花式赋值没有重复下标
                 best_d[k[closer]] = d[closer]
                 best_e[k[closer]] = e[closer]

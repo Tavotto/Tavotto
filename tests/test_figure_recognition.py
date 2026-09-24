@@ -291,7 +291,10 @@ def test_discrete_palettes_keep_every_colour(facts):
     assert bar["mappable_gid"] == "axes_0.images_0"
     assert lst["max_err"] <= 1 / 255 + 1e-6, lst["max_err"]
     assert lst["tube_keys_equal"] is True
-    assert lst["tube_entry_agree"] > 0.999, lst["tube_entry_agree"]
+    # 逐项相同（第九轮：段间比较量化距离时随机调色板有 23 处不同）；隔得很远的两格几乎同色，
+    # 选真正更近的那格
+    assert lst["tube_entry_mismatches"] == 0, lst["tube_entry_mismatches"]
+    assert lst["near_entry"] == 2000, lst["near_entry"]
     (many,) = _bars(lst["too_many"]).values()
     assert many["mappable_gid"] is None
     # 去重时同色一组取平台中点（实测 0.007）；取第一次出现的位置偏低（0.013）
