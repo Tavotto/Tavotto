@@ -66,6 +66,7 @@ beforeEach(() => {
   useAssetStore.setState({
     panels: [],
     byId: {},
+    unsupported: [],
     figuresDir: '',
     loading: false,
     loaded: false,
@@ -323,5 +324,18 @@ describe('refresh()', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1)
     g.settle()
     expect(await viaRefresh).toBe(await viaLoad)
+  })
+})
+
+describe('用不了的素材（issue #534）', () => {
+  it('`unsupported` 随清单一起落地；老后端不发这个字段时是空表，不是上一次的残留', async () => {
+    const bad = { id: 'x.tif', name: 'x.tif', folder: '.', code: 'tiff_color_space' }
+    mockFetch.mockResolvedValueOnce({ ...resp(['a.pdf']), unsupported: [bad] })
+    await s().load()
+    expect(s().unsupported).toEqual([bad])
+
+    mockFetch.mockResolvedValueOnce(resp(['a.pdf']))
+    await s().load()
+    expect(s().unsupported).toEqual([])
   })
 })
