@@ -1204,10 +1204,18 @@ def test_the_dual_launcher_keeps_its_platform_contract():
         "批处理段出现了 goto / call :label"
     )
     assert b'exec python3 "$@"' in posix.splitlines()
+    # 候选要按**版本**判，不只是「跑得起来」：Python 2 也能 `import sys`，却解析不了
+    # server.py——选中它等于又回到零工具（#548 Codex 评审 P2）
+    probe = re.search(r'set "TAVOTTO_LAUNCH_PROBE=([^"]+)"', head.decode("ascii"))
+    assert probe and "sys.version_info" in probe.group(1), "探测没有判版本"
+    executed = [ln for ln in code_lines if " -c " in ln]
+    assert executed and all("%tavotto_launch_probe%" in ln for ln in executed), executed
     mode = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files", "-s", "codex-plugin/mcp/launch.cmd"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     ).stdout.split()
     if mode:  # 源码树不是 git 检出（sdist 解包）时无从判
         assert mode[0] == "100755"
@@ -1275,6 +1283,39 @@ def test_codex_style_spawn_of_the_launcher_completes_the_mcp_handshake():
         assert noise == [], noise
 
 
+@pytest.mark.skipif(os.name != "nt", reason="cmd.exe 那半边只在 Windows 上存在")
+def test_windows_launcher_skips_a_python_too_old_for_the_server(tmp_path):
+    """PATH 上最先摸到的 `python` 是个太老的解释器（Python 2：`import sys` 照样成功，
+    却解析不了 server.py）。启动器要按版本拒掉它，用下一个够新的。
+
+    替身的行为照 Python 2 的可观测形状造：任何 `-c` 都成功，唯独问版本的那句失败。"""
+    old_dir = tmp_path / "OldPython"
+    old_dir.mkdir()
+    (old_dir / "python.bat").write_text(
+        '@echo %* | findstr /c:"version_info" >nul && exit /b 1\r\n@exit /b 0\r\n',
+        encoding="ascii",
+    )
+    (old_dir / "py.bat").write_text("@exit /b 9009\r\n", encoding="ascii")
+    real_dir = Path(sys.executable).parent
+    env = {k: v for k, v in os.environ.items() if not k.startswith("TAVOTTO_MCP")}
+    env["PATH"] = os.pathsep.join([str(old_dir), str(real_dir), env.get("PATH", "")])
+    proc = subprocess.run(
+        [str(LAUNCH_CMD), "-c", "import sys; print('RAN', sys.executable)"],
+        cwd=PLUGIN,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        timeout=120,
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    ran = [ln for ln in proc.stdout.splitlines() if ln.startswith("RAN ")]
+    assert ran and os.path.normcase(ran[0].split(" ", 1)[1]).startswith(
+        os.path.normcase(str(real_dir))
+    ), proc.stdout
+
+
 @pytest.mark.skipif(os.name != "nt", reason="商店别名与 cmd.exe 只在 Windows 上存在")
 def test_windows_launcher_skips_a_python_that_does_not_run(tmp_path):
     """#266 的现场：PATH 上最先摸到的 `python` / `python3` 是个起不来的东西（商店别名：
@@ -1293,6 +1334,8 @@ def test_windows_launcher_skips_a_python_that_does_not_run(tmp_path):
         cwd=PLUGIN,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
         timeout=120,
     )

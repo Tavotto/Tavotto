@@ -38,7 +38,7 @@
   都起不来）。所以 command 是一份 **sh / cmd 双语**启动器：POSIX 上就是
   `exec python3 "$@"`（与改动前逐字同义），Windows 上按 显式 `TAVOTTO_MCP_PYTHON` →
   插件自管环境 → `py -3` → PATH 上 `python`/`python3` → `%LOCALAPPDATA%\Programs\Python`
-  的顺序**真跑** `-c "import sys"`，第一个跑得起来的接过全部参数；引擎定位仍只归
+  的顺序**真跑**一句判版本的探测（≥ 3.8；Python 2 也能 `import sys`，却解析不了 server.py），第一个过得了的接过全部参数；引擎定位仍只归
   `server.py` 的 resolver。**形态约束**（`test_the_dual_launcher_keeps_its_platform_contract`
   看护）：第一行 shebang（Rust 起不认无 shebang 的脚本，实测 Exec format error）、git 模式
   100755（Codex 缓存副本保留执行位，0.156.1 实测）、全文 LF、批处理段纯 ASCII、不用
@@ -254,7 +254,8 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   这一格单独报 `managed_runtime_stale`（不是 `tavotto_missing`——恢复步骤不许把人支去
   另装 pipx），并且 `main()` 在降级前 **spawn 一个脱离本进程的 `--provision`**（不在
   启动路径上同步跑 pip：`startup_timeout_sec` 只有 30 s）。锁 `mcp-runtime/provision.lock`
-  防每次开会话都起一个 pip，超过 20 分钟视为上一次已死；`--provision` 结束时删锁；
+  用 `O_CREAT|O_EXCL` **原子地**拿（几个会话同时起只有一个赢家），超过 20 分钟视为上一次已死；
+  后台 `--provision` 凭环境里的令牌只删**自己那把**锁（手动跑的不删）；
   `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 关掉。本次会话仍是降级、payload 带 `auto_provision`，
   文案说「后台在装、装完新开会话」。**只管「在、却 import 不过」**：能 import 但版本旧的
   自管环境不在这里重装（它此刻正被本会话用着）。看护 `tests/test_mcp_resolver.py` 末节。

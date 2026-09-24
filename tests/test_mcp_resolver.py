@@ -761,12 +761,49 @@ def test_startup_with_a_stale_managed_env_kicks_the_upgrade_and_says_so(
     assert len(fake_popen) == 1
 
 
-def test_provision_clears_the_background_lock(tmp_path, monkeypatch, capsys):
-    """后台那次 `--provision` 结束（成败都算）就删锁：下一次落后时还能再起。"""
+def test_provision_releases_only_the_lock_it_was_given(tmp_path, monkeypatch, capsys):
+    """后台那次 `--provision` 结束（成败都算）凭令牌删**自己的**锁；手动跑的
+    `--provision`（没有令牌）或令牌对不上的，不许删别人正持有的锁。"""
     lock = Path(launcher._provision_lock_path())
     lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("1", encoding="utf-8")
     monkeypatch.setattr(launcher, "provision", lambda spec, python_base=None: ({"ok": False}, 1))
     monkeypatch.setattr(sys, "argv", ["server.py", "--provision"])
+
+    lock.write_text("owner-token", encoding="utf-8")
+    monkeypatch.delenv(launcher._PROVISION_LOCK_TOKEN_ENV, raising=False)
+    assert launcher.main() == 1
+    assert lock.exists(), "手动 --provision 删掉了后台那一次的锁"
+
+    monkeypatch.setenv(launcher._PROVISION_LOCK_TOKEN_ENV, "someone-else")
+    assert launcher.main() == 1
+    assert lock.exists(), "令牌对不上也删了锁"
+
+    monkeypatch.setenv(launcher._PROVISION_LOCK_TOKEN_ENV, "owner-token")
     assert launcher.main() == 1
     assert not lock.exists()
+
+
+def test_concurrent_startups_spawn_exactly_one_provision(tmp_path, fake_popen):
+    """插件升级后几个会话同时起（#548 评审 P2）：锁必须是原子的，只有一个 pip。
+
+    主语是**起了几个 pip**。八个线程在同一道栅栏后同时抢；「先看再写」的锁在这里会
+    放进不止一个。"""
+    import threading
+
+    gate = threading.Barrier(8)
+    results = []
+
+    def worker():
+        gate.wait()
+        results.append(launcher.kick_background_provision())
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sum(r["started"] for r in results) == 1, results
+    assert len(fake_popen) == 1
+    assert {r["reason"] for r in results if not r["started"]} == {"already_running"}
+    token = fake_popen[0]["env"][launcher._PROVISION_LOCK_TOKEN_ENV]
+    assert Path(launcher._provision_lock_path()).read_text(encoding="utf-8") == token

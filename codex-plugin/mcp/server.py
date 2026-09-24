@@ -690,17 +690,11 @@ def kick_background_provision() -> dict:
     log = os.path.join(root, "provision.log")
     if os.environ.get(NO_AUTO_PROVISION_ENV) == "1":
         return {"started": False, "reason": "disabled", "log": log}
-    lock = _provision_lock_path()
-    try:
-        age = time.time() - os.path.getmtime(lock)
-    except OSError:
-        age = None
-    if age is not None and age < _PROVISION_LOCK_MAX_AGE:
-        return {"started": False, "reason": "already_running", "log": log}
     try:
         os.makedirs(root, exist_ok=True)
-        with open(lock, "w", encoding="utf-8") as fh:
-            fh.write(str(os.getpid()))
+        token = _acquire_provision_lock()
+        if token is None:
+            return {"started": False, "reason": "already_running", "log": log}
         out = open(log, "w", encoding="utf-8")
     except OSError as exc:
         return {"started": False, "reason": f"cannot_write: {exc}", "log": log}
@@ -713,23 +707,67 @@ def kick_background_provision() -> dict:
         kwargs["start_new_session"] = True  # host 关掉本 server 时不连带杀掉 pip
     env = dict(os.environ)
     env.pop(_EXECED_ENV, None)
+    env[_PROVISION_LOCK_TOKEN_ENV] = token  # 子进程凭它认领并释放这把锁
     try:
         subprocess.Popen(
             [sys.executable, os.path.abspath(__file__), "--provision"], env=env, **kwargs
         )
     except OSError as exc:
-        _clear_provision_lock()
+        _release_provision_lock(token)
         return {"started": False, "reason": f"spawn_failed: {exc}", "log": log}
     finally:
         out.close()
     return {"started": True, "reason": "stale_managed_runtime", "log": log}
 
 
-def _clear_provision_lock() -> None:
+#: 后台 `--provision` 从环境里拿到的锁令牌：只有持令牌的那一次才删锁。
+_PROVISION_LOCK_TOKEN_ENV = "TAVOTTO_MCP_PROVISION_LOCK"
+
+
+def _acquire_provision_lock() -> "str | None":
+    """**原子地**拿锁（`O_CREAT | O_EXCL`），拿到回令牌，已被别人持有回 None。
+
+    插件升级后同时开的几个会话会几乎同时走到这里；「先看在不在、再 open 写」两步之间
+    两个进程都能看到「不在」，然后各起一个 pip 改同一个 venv——并发 pip 能把环境改坏，
+    正好造出这条路要修的零工具状态（#548 Codex 评审 P2）。独占创建只有一个赢家。
+    过期锁（上一次死掉的）先删再抢一次：删之前重新量一次岁数，别把刚被别人抢到的
+    新锁当成旧锁删掉；第二次抢仍是独占创建，最多一个赢家。
+    """
+    lock = _provision_lock_path()
+    token = f"{os.getpid()}-{os.urandom(8).hex()}"
+    for _attempt in range(2):
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock) < _PROVISION_LOCK_MAX_AGE:
+                    return None
+                os.remove(lock)
+            except OSError:
+                pass  # 刚被持有者删掉 / 别人先删了：再抢一次
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(token)
+        return token
+    return None
+
+
+def _release_provision_lock(token: "str | None") -> None:
+    """只删**自己那把**锁：内容是这个令牌才删。手动跑的 `--provision` 没有令牌，
+    不许把后台那一次正持有的锁删掉。"""
+    if not token:
+        return
+    lock = _provision_lock_path()
     try:
-        os.remove(_provision_lock_path())
+        with open(lock, "r", encoding="utf-8") as fh:
+            held = fh.read().strip()
     except OSError:
-        pass
+        return
+    if held == token:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
 
 
 # ------------------------------- 降级 server --------------------------------
@@ -1223,7 +1261,8 @@ def main() -> int:
         try:
             report, rc = provision(values["--from"], python_base=values["--python"])
         finally:
-            _clear_provision_lock()  # 后台那一次起的锁；手动跑时没有锁，删不到也无妨
+            # 后台那一次起的锁：凭令牌只删自己的；手动跑时没有令牌，什么都不删
+            _release_provision_lock(os.environ.get(_PROVISION_LOCK_TOKEN_ENV))
         print(json.dumps(report, ensure_ascii=False))
         return rc
 
