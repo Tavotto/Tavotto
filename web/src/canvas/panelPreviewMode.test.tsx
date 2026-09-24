@@ -536,7 +536,8 @@ describe('角标优先级：相邻两档同时成立时谁说了算', () => {
  *
  * 主语：探针那条渲染记录的 `painted`（真 `perf/core`，不 mock），按渲染键认。
  * 反证：把 PanelView 里 `onLoad={… perfRenderPainted …}` 拿掉 → 「加载完」那条红；
- * 把 `pngBlob.variant === variantNow` 那一项拿掉 → 「上一变体」那条红（提交前手工跑过）。
+ * 把 `pngBlob.variant === variantNow` 那一项拿掉 → 「上一变体」那条红；把 `pngBlob.rev === renderRev`
+ * 那一项拿掉 → 「上一 rev」那条红（提交前手工跑过）。
  */
 describe('性能探针：位图这一格的「图落定」', () => {
   afterEach(() => {
@@ -591,10 +592,11 @@ describe('性能探针：位图这一格的「图落定」', () => {
     // 用户改了一下：新变体的渲染已写进 store，它的位图永不落地
     const next = { ...PANEL, overrides: [{ gid: 'title', prop: 'fontsize', value: 12 }] } as PanelObject
     previewPngImpl = () => new Promise<Blob>(() => {})
+    // rev 刻意不变：只让「变体」这一项把它挡下（rev 那一项另有一条）
     useRenderStore.getState().patch(renderKeyOf(next), {
       fileId: next.fileId,
       manifest: MANIFEST,
-      rev: 4,
+      rev: 3,
       status: 'ready',
       lastPatches: JSON.stringify(next.overrides),
       preview: RASTER,
@@ -605,6 +607,23 @@ describe('性能探针：位图这一格的「图落定」', () => {
       root.render(<PanelView obj={next} />)
     })
     // 画布上仍暂挂着上一变体那张：它此刻加载完，也不是新变体上屏
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
+    await fireLoad(container.querySelector('img')!)
+    expect(perfStop()!.renders[0].painted).toBeNull()
+  })
+
+  it('同一变体的上一 rev 那张（新一版渲染后重取还在路上）加载完，不算这一版落定', async () => {
+    seed({ svg: null, preview: RASTER })
+    await mount() // rev 3 的位图已经挂上
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
+
+    // 同一变体重新渲染了一版（rev 4，比如脚本改了）：按 rev 重取的位图永不落地
+    previewPngImpl = () => new Promise<Blob>(() => {})
+    expect(perfStart()).toBe(true)
+    await act(async () => {
+      seed({ svg: null, preview: RASTER, rev: 4 })
+      recordApplied(PANEL)
+    })
     expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
     await fireLoad(container.querySelector('img')!)
     expect(perfStop()!.renders[0].painted).toBeNull()
