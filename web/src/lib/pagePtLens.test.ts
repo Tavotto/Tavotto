@@ -17,7 +17,7 @@ import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import type { EditableField } from './api'
 import { panelScale } from './preflight'
-import { PAGE_PT_PROPS, pageField, pagePtLens, PT_DECIMALS } from './stylePresets'
+import { PAGE_PT_PROPS, pageField, pagePtLens, PT_DECIMALS, styleLens } from './stylePresets'
 import type { PanelObject } from '@/types/document'
 
 /** 原生 80 mm 宽、页面上 `80 × k` mm 宽的面板 */
@@ -121,6 +121,13 @@ describe('上下界与取整', () => {
     const area: EditableField = { prop: 'size', type: 'number', value: 36, unit: 'pt²' }
     expect(lens.field(area)).toBe(area)
     expect(PAGE_PT_PROPS.has('size')).toBe(false)
+  })
+
+  it('应用样式用同一个透镜：pt_basis=page 的样式按缩放比换算，旧样式（没有标记）原样写', () => {
+    const panel = panelAt(0.6)
+    expect(styleLens({ pt_basis: 'page' }, panel).toScript('fontsize', 9)).toBe(15)
+    expect(styleLens({}, panel).toScript('fontsize', 9)).toBe(9)
+    expect(styleLens({}, panel).toPage('fontsize', 15)).toBe(15)
   })
 
   it('三维轴箭头的箭头大小（arrow_head，引擎里就是 mutation_scale）与相邻的箭头线宽同一种单位', () => {

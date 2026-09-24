@@ -237,6 +237,24 @@ function pageBound(prop: string, value: number, scale: number): number {
   return value * scale
 }
 
+/** 什么都不换算的透镜：缩放比 1（缩放比为 1 时 `pagePtLens` 本来就原样进出） */
+const IDENTITY_LENS: PagePtLens = {
+  scale: 1,
+  toPage: (_prop, value) => value,
+  toScript: (_prop, value) => value,
+  field: (f) => f,
+  bound: (_prop, value) => value,
+}
+
+/**
+ * 应用一份样式到一张面板时用的透镜：样式的数字按 `pt_basis` 读——`'page'` 过这张面板的
+ * `pagePtLens`，缺席（旧版存下的样式，数字就是当年的脚本值）原样写。换算仍然只有
+ * `pagePtLens` 这一份；这里只决定「这份数字要不要过它」。
+ */
+export function styleLens(style: Pick<StyleProfileData, 'pt_basis'>, panel: PanelObject): PagePtLens {
+  return style.pt_basis === 'page' ? pagePtLens(panel) : IDENTITY_LENS
+}
+
 /** manifest 字段 → 页面上的字段（当前值两位小数；上下界见 `pageBound`） */
 export function pageField<F extends EditableField | undefined>(field: F, scale: number): F {
   if (!field || !PAGE_PT_PROPS.has(field.prop) || field.type !== 'number') return field
@@ -391,9 +409,9 @@ export function planStyle(
     }
     const patches: PanelOverride[] = []
     const unmappable: string[] = []
-    // 样式里的 pt 是页面上的 pt：按这张面板的缩放比换回脚本坐标系再写。
-    // 不带 `pt_basis` 的旧样式存的是脚本值，原样写（缩放比当 1）
-    const scale = preset.pt_basis === 'page' ? panelScale(panel) : 1
+    // 样式里的 pt 是页面上的 pt：按这张面板的缩放比换回脚本坐标系再写（与属性页同一个透镜）。
+    // 不带 `pt_basis` 的旧样式存的是脚本值，原样写
+    const lens = styleLens(preset, panel)
     for (const [role, props] of Object.entries(preset.element)) {
       const els = manifest.elements.filter((e) => e.role === role)
       for (const el of els) {
@@ -405,7 +423,7 @@ export function planStyle(
             )
             continue
           }
-          patches.push({ gid: el.gid, prop, value: toScriptValue(prop, value, scale) })
+          patches.push({ gid: el.gid, prop, value: lens.toScript(prop, value) })
         }
       }
     }
