@@ -937,11 +937,29 @@ def install_relative_read_fallback(
     datasource = getattr(sys.modules.get("numpy.lib._datasource"), "DataSource", None)
     real_ds_open = getattr(datasource, "open", None)
 
+    def _datasource_candidates(ds, path) -> list:
+        """numpy 自己会试的那串名字：原名，再依次加 `.gz` / `.bz2` / `.xz` …（`_possible_names`）。
+        `np.loadtxt("values")` 而旁边只有 `values.gz` 时 numpy 照样读得到——回退得按同一串名字找。"""
+        if not isinstance(path, (str, os.PathLike)):
+            return [path]
+        name = os.fspath(path)
+        possible = getattr(ds, "_possible_names", None)
+        try:
+            names = list(possible(name)) if possible is not None else [name]
+        except Exception:  # noqa: BLE001 —— numpy 内部接口变了就只认原名
+            names = [name]
+        return names or [name]
+
     def guarded_datasource_open(self, path, mode="r", *args, **kwargs):
         if _readonly(mode) and _is_cwd(getattr(self, "_destpath", None)):
-            alt = _fallback_path(path)
-            if alt is not None:
-                return real_ds_open(self, alt, mode, *args, **kwargs)
+            names = _datasource_candidates(self, path)
+            # 这串名字里只要有一个在 cwd（沙盒）下存在，numpy 自己就会读到它——不改道
+            # （`_fallback_path` 对单个名字已经是这条判据，这里把它扩到整串）
+            if not any(isinstance(n, str) and os.path.exists(n) for n in names):
+                for n in names:
+                    alt = _fallback_path(n)
+                    if alt is not None:
+                        return real_ds_open(self, alt, mode, *args, **kwargs)
         return real_ds_open(self, path, mode, *args, **kwargs)
 
     if real_ds_open is not None:

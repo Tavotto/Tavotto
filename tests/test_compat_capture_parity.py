@@ -408,6 +408,54 @@ fig.savefig("nreader.pdf")
             "abs.txt": hashlib.sha256((figs / "abs.txt").read_bytes()).hexdigest(),
         }
 
+    def test_numpy_finds_a_compressed_sibling_like_it_does_on_its_own(self, tmp_path):
+        """`np.loadtxt("vals")` 而旁边只有 `vals.gz`：numpy 自己会依次试 `.gz` / `.bz2` / `.xz`，
+        在脚本目录里跑是读得到的——回退要按同一串名字找（#545 评审）。回执记的是真正打开的那个。"""
+        import gzip
+
+        figs = tmp_path / "figs"
+        write(
+            figs,
+            "ngz.py",
+            """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+ys = np.loadtxt("vals")
+assert ys.tolist() == [3.0, 1.0, 2.0], ys
+fig, ax = plt.subplots()
+ax.plot(ys)
+fig.savefig("ngz.pdf")
+""",
+        )
+        with gzip.open(figs / "vals.gz", "wt", encoding="utf-8") as fh:
+            fh.write("3\n1\n2\n")
+        built = desktop_build(figs, "ngz.py")
+        assert list(built["stems"]) == ["ngz"]
+        assert [f["path"] for f in built["runtime"]["inputs"]["files"]] == ["vals.gz"]
+
+    def test_a_compressed_copy_in_the_sandbox_wins_over_the_project(self, tmp_path):
+        """沙盒里有脚本自己写出来的 `vals.gz`、项目里有未压缩的 `vals`：numpy 在 cwd 里先找到
+        `vals.gz`，回退不能抢先把 `vals` 改道到项目里那份。"""
+        figs = tmp_path / "figs"
+        write(
+            figs,
+            "ngzshadow.py",
+            """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+np.savetxt("vals.gz", [9.0, 9.0])
+ys = np.loadtxt("vals")
+assert ys.tolist() == [9.0, 9.0], f"读到的是图库里那一份: {ys}"
+fig, ax = plt.subplots()
+ax.plot(ys)
+fig.savefig("ngzshadow.pdf")
+""",
+        )
+        (figs / "vals").write_text("1\n2\n", encoding="utf-8")
+        assert list(desktop_build(figs, "ngzshadow.py")["stems"]) == ["ngzshadow"]
+
     def test_numpy_reads_the_scripts_own_sandbox_copy_first(self, tmp_path):
         """脚本自己 `np.savetxt` 出来的那一份优先——回退不能把它换成图库里的同名文件。"""
         figs = tmp_path / "figs"
