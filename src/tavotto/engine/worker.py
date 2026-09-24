@@ -389,6 +389,17 @@ class Worker(wireproto.V1Handler):
         # 解析参数（评审 #443）。
         sys.argv = [str(self.script)]
 
+        # 脚本 import 了却从未用到、又没装的包不挡图（ADR 0061 §二 2026-09-24 修订）：判据与
+        # 父进程的联合计划同一份（`figcapture.unused_imports`）——计划没要求装它，这里就得让
+        # 那一行 import 过得去。读不了 / 解析不了就不装：脚本随后会以它自己的错误结束。
+        try:
+            import ast  # noqa: PLC0415
+
+            unused = figcapture.unused_imports(ast.parse(self.script.read_bytes()))
+        except (OSError, SyntaxError, ValueError):
+            unused = frozenset()
+        figcapture.install_unused_import_placeholders(str(self.script), unused)
+
         t_script = time.perf_counter()
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
         # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环

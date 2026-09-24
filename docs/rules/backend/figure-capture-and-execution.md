@@ -105,6 +105,11 @@
   自己要参数同一个答案 `script_needs_arguments`，会话还活着；以前它在保护之外、argv 之前，
   worker 随之退出、上层报 session_dead（`test_paper_style_sees_the_scripts_own_argv` /
   `test_an_exit_raised_while_importing_paper_style_is_the_scripts_own` 看护）。
+- **未使用的缺失 import 给占位（ADR 0061 §二 2026-09-24 修订）**：worker 在 `sys.argv` 换好之后、脚本开跑之前按
+  `figcapture.unused_imports`（与联合计划同一份判据）装 `install_unused_import_placeholders`：只有脚本自己的
+  `import X as Y`、真缺的正是 X 本身时才回占位；占位不进 `sys.modules`、读属性抛逐字相同的 `No module named 'X'`；
+  装了就不卸（脚本的函数在渲染期仍可能 import）。native 会话不装——那是用户自己的 `python script.py`
+  （`tests/test_unused_missing_import.py` 看护）。
 - worker 里 **`sys.argv` 必须换成脚本自己的**。不换的话按参数命名输出的脚本
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。

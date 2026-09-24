@@ -19,7 +19,9 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
 * `savefig_stem()` —— `savefig(路径)` 里那个 stem 怎么取；
 * `collect_pyplot_figures()` —— 脚本跑完之后还活着的 pyplot Figure 怎么补进
   捕获表（去重、命名、保序）；
-* `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）。
+* `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
+* `unused_imports()` / `install_unused_import_placeholders()` —— 脚本 import 了却从未用到、
+  又没装的包不挡图（ADR 0061 §二 2026-09-24 修订；判据父进程与 worker 各调一次）。
 
 ## fallback stem 的稳定性
 
@@ -135,6 +137,8 @@ __all__ = [
     "collect_pyplot_figures",
     "fallback_stems",
     "install_relative_read_fallback",
+    "unused_imports",
+    "install_unused_import_placeholders",
     "InputObserver",
     "observed_local_modules",
     "INPUT_OBSERVER_MAX_FILES",
@@ -895,3 +899,159 @@ def install_relative_read_fallback(
         pathlib.Path.open = real_path_open
 
     return uninstall
+
+
+# ---------------------------------------------------------------- 未使用的缺失 import
+
+#: 出现任何一个就判不清「名字有没有被读」：`globals()["smp"]` / `vars()` / `eval("smp")` /
+#: `exec(...)` / `__import__` / `compile` / `m.__dict__` 都能不经 Name 节点读到绑定。
+_OPAQUE_NAMES = frozenset(
+    {"globals", "vars", "locals", "eval", "exec", "compile", "__import__", "__dict__"}
+)
+
+
+def unused_imports(tree) -> frozenset[str]:
+    """脚本里**被 import 了、但绑定的名字从未被读取**的顶级模块名——判不清的一律不算。
+
+    「未使用的缺失 import 不挡图」（ADR 0061 §二 2026-09-24 修订）的唯一判据：父进程
+    （`importscan` → 联合计划不把它算进 needed）与 worker（`install_unused_import_placeholders`
+    的名单）各调一次。只认 AST 能证明的形状，任一条不成立就不收：
+
+    * 这个模块在脚本里出现的**每一处**都是 `import X as Y`，X 不带点（`import X.sub` 要真装载
+      子模块；`from X import …` 本身就是在用它）。**裸 `import X` 一律不收**：没读过的裸 import
+      常常是为了副作用（`import scienceplots` 之后 `plt.style.use("science")`、`import cmocean` 注册
+      色图）——占位会把「请装 scienceplots」换成一句看不懂的「样式不存在」。起了别名 = 写的人
+      打算用那个名字，一次没用才是遗留；
+    * 这些 import 都不在 `try` / `with` 里（`try: import X; HAVE_X = True` 的分支走向
+      取决于它 import 得到与否——占位会把「没装」变成「装了」）；
+    * 绑定的名字（Y 或 X）在别处**一次都不出现**：Name（读 / 写 / 删）、形参、
+      global / nonlocal、函数 / 类名、except 名、match 捕获、别的 import 的绑定、属性名、
+      关键字参数名，一律算出现（宁可多判「用到了」）；
+    * X 与绑定名都不作为字符串常量出现（`sys.modules["X"]` / `importlib.import_module("X")` /
+      `getattr(mod, "Y")` / `__all__`）；
+    * 脚本里没有 `_OPAQUE_NAMES` 里的任何一个（出现就整份放弃：判不清）。
+
+    判据只看脚本自己这一份文件：本地模块里的 import 不在这里判（它们照旧按 needed 走）。
+    """
+    import ast  # noqa: PLC0415 — 只有这里用，worker 与 Flask 侧都是标准库
+
+    guarded: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Try, ast.With, ast.AsyncWith)) or type(node).__name__ == "TryStar":
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Import):
+                    guarded.add(id(inner))
+
+    candidates: dict[str, set[str]] = {}  # 顶级模块名 → 绑定名
+    rejected: set[str] = set()
+    own_aliases: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".", 1)[0]
+                if alias.asname is None or "." in alias.name or id(node) in guarded:
+                    rejected.add(top)
+                    continue
+                candidates.setdefault(top, set()).add(alias.asname or alias.name)
+                own_aliases.add(id(alias))
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            rejected.add(node.module.split(".", 1)[0])
+
+    seen: set[str] = set()
+    strings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            seen.add(node.id)
+        elif isinstance(node, ast.arg):
+            seen.add(node.arg)
+        elif isinstance(node, ast.Attribute):
+            seen.add(node.attr)
+        elif isinstance(node, ast.keyword) and node.arg:
+            seen.add(node.arg)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            seen.update(node.names)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            seen.add(node.name)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            seen.add(node.name)
+        elif isinstance(node, ast.alias) and id(node) not in own_aliases:
+            seen.add(node.asname or node.name.split(".", 1)[0])
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            strings.add(node.value)
+        else:
+            for attr in ("name", "rest"):  # match 的捕获（MatchAs / MatchStar / MatchMapping）
+                value = (
+                    getattr(node, attr, None) if type(node).__name__.startswith("Match") else None
+                )
+                if isinstance(value, str):
+                    seen.add(value)
+    if seen & _OPAQUE_NAMES:
+        return frozenset()
+
+    def _mentioned(text: str) -> bool:
+        return any(s == text or s.startswith(text + ".") for s in strings)
+
+    out = set()
+    for top, bound in candidates.items():
+        if top in rejected or _mentioned(top):
+            continue
+        if any(name in seen or _mentioned(name) for name in bound):
+            continue
+        out.add(top)
+    return frozenset(out)
+
+
+def install_unused_import_placeholders(script: str, names) -> None:
+    """让脚本里**被证明未使用**（`unused_imports`）又确实装不上的那几条 `import X` 成功。
+
+    只在四条同时成立时换成占位模块，其余一律原样交给真正的 `__import__`：
+
+    * 发起 import 的是脚本自己（调用方 globals 的 `__file__` 就是这个脚本）——库里的
+      `try: import X except ImportError` 永远看不到占位；
+    * `level == 0`、没有 fromlist、名字在名单里；
+    * 真的 import 抛了 `ModuleNotFoundError` 且缺的就是 X 本身（X 装了但它的依赖坏了照常报）。
+
+    占位**不进 `sys.modules`**（别处再 import X 仍然是真实的失败）；读它的任何非 dunder
+    属性抛 `ModuleNotFoundError("No module named 'X'")`——判据若错了，失败形状与原来逐字
+    相同，运行后的缺包修复照旧接手。装了就不卸：脚本定义的函数在渲染期仍可能执行 import。
+    """
+    import sys  # noqa: PLC0415
+    import types  # noqa: PLC0415
+
+    names = frozenset(names or ())
+    if not names:
+        return
+    real_import = builtins.__import__
+    target = os.path.normcase(os.path.realpath(script))
+    verdict: dict[str, bool] = {}
+
+    def _from_script(globals_) -> bool:
+        file = globals_.get("__file__") if isinstance(globals_, dict) else None
+        if not isinstance(file, str):
+            return False
+        if file not in verdict:
+            verdict[file] = os.path.normcase(os.path.realpath(file)) == target
+        return verdict[file]
+
+    class _Unused(types.ModuleType):
+        def __getattr__(self, attr):
+            if attr.startswith("__") and attr.endswith("__"):
+                raise AttributeError(attr)
+            raise ModuleNotFoundError(f"No module named '{self.__name__}'", name=self.__name__)
+
+    def _import(name, globals=None, locals=None, fromlist=(), level=0):
+        if level or fromlist or name not in names or not _from_script(globals):
+            return real_import(name, globals, locals, fromlist, level)
+        try:
+            return real_import(name, globals, locals, fromlist, level)
+        except ModuleNotFoundError as exc:
+            if exc.name != name:
+                raise
+            print(
+                f"[deps] {name} 没有安装；脚本 import 了它但没有用到，已用占位代替"
+                f"（真用到时会报 No module named '{name}'）",
+                file=sys.stderr,
+            )
+            return _Unused(name)
+
+    builtins.__import__ = _import

@@ -95,6 +95,29 @@ ADR 0019 §十「不做静态扫描后批量安装」据此修订为：**不做�
 不变），轮次上限 `MAX_DEPENDENCY_REPAIR_ROUNDS` 不变。「打开项目不联网」（§十一）不变：跑前的判断只读本机
 （目标解释器里 `importlib.metadata`），联网的只有安装、只由点击触发。
 
+**2026-09-24 修订：import 了、却从未用到的缺包不挡图。** 用户实测：脚本第 2 行 `import sympy as smp`、全文件一次没读
+`smp`，内置 runtime 没有 sympy——门要求先装 sympy，不装就在 import 那一行 `ModuleNotFoundError`，一个根本没用到的包
+挡住了整张图。永远不改用户脚本，所以从产品侧解决，两半用**同一份**判据 `figcapture.unused_imports`（纯标准库，
+Flask 父进程与 worker 都已加载它）：
+
+* **判据只收 AST 能证明的**：这个模块在脚本里出现的每一处都是**起了别名**、不带点的 `import X as Y`、都不在
+  `try` / `with` 里（**裸 `import X` 一律不收**：没读过的裸 import 常常是为了副作用——`import scienceplots` 之后
+  `plt.style.use("science")`、`import cmocean` 注册色图；占位会把「请装 scienceplots」换成看不懂的「样式不存在」。
+  起了别名 = 写的人打算用那个名字，一次没用才是遗留）；绑定名在别处**一次都不出现**（Name 的读写删、形参、global、函数 / 类 / except / match 捕获名、
+  别的 import 的绑定、属性名、关键字名——宁可多判「用到了」）；X 与绑定名都不以字符串常量出现（`sys.modules["X"]`、
+  `import_module("X")`、`getattr(m, "Y")`、`__all__`）；脚本里出现 `globals` / `vars` / `locals` / `eval` / `exec` /
+  `compile` / `__import__` / `__dict__` 任一个就整份放弃（读不清）。只看脚本自己：本地模块也 import 了它时照旧按上下文判。
+* **计划**：`importscan` 给这类名字标 `unused`，`needed` 不含它（因而不进 `missing` / `unknown`、门不问、ADR 0079 的
+  用户环境发现也不为它起），`JointPlan.unused` 列出来（诊断可见，不装）。
+* **执行**：safe worker 在脚本开跑前按同一份判据装 `figcapture.install_unused_import_placeholders`——包一层
+  `builtins.__import__`，只在「发起者是脚本自己（globals 的 `__file__`）+ `level == 0` 无 fromlist + 名字在名单里 +
+  真 import 抛的 `ModuleNotFoundError` 缺的正是 X 本身」时回一个占位模块；占位**不进 `sys.modules`**（库里的
+  `try: import X except ImportError` 照旧看到失败），读它任何非 dunder 属性抛与原来逐字相同的
+  `ModuleNotFoundError: No module named 'X'`——判据若错，失败形状不变，运行后的缺包修复照旧接手。装了的包照常 import。
+* **native 会话不做**：`tavotto run` 跑在用户自己的解释器里、语义就是 `python script.py`（CLI 拥有用户的 Python），
+  门也只在 `pool._new_worker` 上；那条路上缺包照旧由用户自己的环境决定。
+* 看护：`tests/test_unused_missing_import.py`（判据的每一条「不收」、计划、真子进程里的占位、真 worker 出图与反向用例）。
+
 ### 三、联合计划：要装的、约束的、adapter 的，与四种明确停下
 
 `engine/depplan.py` 把三个权威合成一份 `JointPlan`（不装任何东西）：

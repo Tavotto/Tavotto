@@ -34,7 +34,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import depresolve, projectenv
+from . import depresolve, figcapture, projectenv
 
 BUCKET_STDLIB = "stdlib"
 BUCKET_LOCAL = "local"
@@ -101,11 +101,18 @@ class ImportClass:
     local_path: str = ""  # 本地模块相对项目根的路径（bucket=local）
     lines: tuple[int, ...] = ()
     via: tuple[str, ...] = ()
+    #: 脚本 import 了它、绑定的名字却从未被读（`figcapture.unused_imports`，只看脚本本身、
+    #: 本地模块没有经由它）——跑前不准备；缺的话 worker 给那一行占位（ADR 0061 §二修订）。
+    unused: bool = False
 
     @property
     def needed(self) -> bool:
-        """脚本一开跑就要它、且它是第三方（不管映射得到没有）。"""
-        return self.bucket == BUCKET_THIRD_PARTY and self.context == CONTEXT_UNCONDITIONAL
+        """脚本一开跑就要它、且它是第三方（不管映射得到没有），而且脚本确实用到了它。"""
+        return (
+            self.bucket == BUCKET_THIRD_PARTY
+            and self.context == CONTEXT_UNCONDITIONAL
+            and not self.unused
+        )
 
     def to_payload(self) -> dict:
         return {
@@ -117,6 +124,7 @@ class ImportClass:
             "local_path": self.local_path,
             "lines": list(self.lines),
             "via": list(self.via),
+            "unused": self.unused,
             "needed": self.needed,
         }
 
@@ -422,11 +430,13 @@ def scan(
         tree, problem = _parse(text, script_p) if text else (None, None)
         if problem is not None:
             problems.append(problem)
+    unused: frozenset[str] = frozenset()
     if tree is not None:
         v = _Visitor("")
         v.visit(tree)
         uses += v.uses
         dynamic += v.dynamic
+        unused = figcapture.unused_imports(tree)
 
     # 本地模块有界跟进：每发现一个本地模块就扫它的文件，它 import 的东西再排队判本地。
     local_paths: dict[str, Path] = {}
@@ -513,6 +523,8 @@ def scan(
                 resolution_source=source,
                 lines=lines,
                 via=via,
+                # 本地模块也 import 了它 = 它的绑定在那边可能被读：照旧按上下文判
+                unused=name in unused and not via,
             )
         )
     return ScanResult(
