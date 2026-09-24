@@ -87,7 +87,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       pendingGuide: null,
       gidDrag: null,
       arrowPreview: null,
-          elementPreview: null,
+      elementPreview: null,
     })
   },
   setMarquee: (marquee) => set({ marquee }),
