@@ -68,6 +68,9 @@ export type FixOutcome =
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
   msg(`history.${key}`, values, 'workspace')
 
+/** 比较用的规范化：同一份输入 = 同一个字符串（对象身份在 immer 下不可靠，内容才可靠）。 */
+const same = (v: unknown): string => JSON.stringify(v ?? null)
+
 /** 同一时刻只跑一轮修复：两轮交错时，后一轮的基准是前一轮还没提交的旧文档。 */
 let inflight = false
 
@@ -217,26 +220,35 @@ async function runLocked(
     }
   }
 
-  // ---- 回来之后：文档还是出发时那一份才写 ----
+  // ---- 回来之后：这次用到的每一样输入都还是出发时那一份，才写 ----
+  // 不只比 override 列表（Codex #549 P1）：面板的尺寸 / 裁剪 / 旋转决定了发出去的
+  // `panelScale()`，文档绑定的规范决定了后端按哪套判；画布层计划写的是标注字号与页宽，
+  // 用户在这几秒里改了它们，旧结果就会盖掉新改动。所以整个对象比、页面比、规范绑定比
   const now = useDocumentStore.getState()
-  const moved = now.loadSeq !== loadSeq || now.activeCanvasId !== canvasId
-  for (const [id, item] of [...next]) {
+  const moved =
+    now.loadSeq !== loadSeq ||
+    now.activeCanvasId !== canvasId ||
+    same(now.doc.profile) !== same(docAtStart.profile)
+  const unchanged = (id: string): boolean => {
     const before = docAtStart.objects.find((o) => o.id === id)
     const after = now.doc.objects.find((o) => o.id === id)
-    const same =
-      !moved &&
-      before?.type === 'panel' &&
-      after?.type === 'panel' &&
-      JSON.stringify(before.overrides) === JSON.stringify(after.overrides)
-    if (!same) {
+    return !!before && !!after && same(before) === same(after)
+  }
+  for (const [id, item] of [...next]) {
+    if (moved || !unchanged(id)) {
       addFailure(failed, 'stale', item.applied)
       next.delete(id)
     }
   }
-  if (moved && plans.length) {
-    addFailure(failed, 'stale', plans.length)
-    plans = []
-  }
+  const fresh = plans.filter((plan) =>
+    moved
+      ? false
+      : plan.kind === 'pageWidth'
+        ? same(now.doc.page) === same(docAtStart.page)
+        : unchanged(plan.objectId),
+  )
+  if (fresh.length < plans.length) addFailure(failed, 'stale', plans.length - fresh.length)
+  plans = fresh
 
   const applied = plans.length + [...next.values()].reduce((n, x) => n + x.applied, 0)
   if (!applied) return { ok: false, reason: failed[0]?.reason ?? 'no_plan', failed }

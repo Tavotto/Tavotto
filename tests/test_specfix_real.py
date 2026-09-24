@@ -375,3 +375,81 @@ def test_clipping_that_cannot_fit_is_reported_and_the_rest_still_lands(clipped):
         (s["rule"], s["reason"]) for s in res["skipped"]
     }
     assert any(p["prop"] == "frameon" for p in res["patches"])
+
+
+#: 同一张图里混着两种字体：标题是替代品名单里的 DejaVu Sans（要修），其余文字是
+#: 规范**也接受**的 DejaVu Sans Mono（不该动，也不该被拿去和目标字体比脸）。
+MIXED_FONTS = """\
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+OUT = Path(__file__).resolve().parent
+
+
+def main():
+    plt.rcParams["font.family"] = "DejaVu Sans Mono"
+    x = np.linspace(0, 10, 20)
+    fig, ax = plt.subplots(figsize=(80 / 25.4, 60 / 25.4))
+    ax.plot(x, x ** 0.5, lw=1.0)
+    ax.set_xlabel("Time (s)", fontsize=9)
+    ax.set_ylabel("Signal (a.u.)", fontsize=9)
+    ax.set_title("Kinetics", fontsize=9, fontfamily="DejaVu Sans")
+    ax.tick_params(labelsize=8.5, direction="in")
+    fig.tight_layout(pad=0.8)
+    fig.savefig(OUT / "Mixed.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+@pytest.fixture
+def mixed(tmp_path):
+    proc, fn = _spawn_render(tmp_path, MIXED_FONTS, "Mixed")
+    yield fn
+    if proc.poll() is None:
+        proc.kill()
+    proc.wait(timeout=10)
+
+
+def test_font_verification_covers_only_the_elements_it_changed(mixed):
+    """Codex #549 P1：没动过的、本来就合规的另一种字体不许拿去和目标字体比脸。
+
+    修复前：允许集合按 prop 放行全图，`compare()` 于是把每个带 fontfamily 的元素都按
+    目标字体核验，DejaVu Sans Mono 的刻度被报成「没落成 DejaVu Serif」，事务退掉字体
+    那几条，并告诉用户「字体没装」——而标题其实已经换好了。
+    """
+    profile = _profile()
+    profile["font_family"]["latin_accepted"] = [AVAILABLE_FONT, "DejaVu Sans Mono"]
+    res = m._specfix_transaction(mixed, [], 1.0, profile, None)
+    assert res["ok"], res
+    assert not any(s["reason"] == "font_unavailable" for s in res["skipped"]), res["skipped"]
+    fam = {(p["gid"], p["value"]) for p in res["patches"] if p["prop"] == "fontfamily"}
+    assert fam == {("axes_0.title", AVAILABLE_FONT)}
+
+
+@pytest.mark.parametrize("clipped", [4], indirect=True)
+def test_margin_repair_round_with_warnings_is_not_accepted(clipped):
+    """Codex #549 P1：外边距重排那一轮的渲染带 warning（有 override 没写进去）时不收这一轮。"""
+    profile = _profile()
+
+    def render(patches):
+        resp = clipped(patches)
+        if any(p["prop"] == "position" for p in patches):
+            resp = {**resp, "warnings": ["position 没写进去（模拟）"]}
+        return resp
+
+    res = m._specfix_transaction(render, [], 1.0, profile, None)
+    assert not any(p["prop"] == "position" for p in res["patches"]), res["patches"]
+    # 这一轮没收，出界如实记成放不下；图例边框那条照修
+    assert ("element-outside-figure", "no_fit") in {
+        (s["rule"], s["reason"]) for s in res["skipped"]
+    }
+    assert any(p["prop"] == "frameon" for p in res["patches"])
+    # worker 最后停在没有 warning 的那一版上
+    assert not any(p["prop"] == "position" for p in clipped.calls[-1])

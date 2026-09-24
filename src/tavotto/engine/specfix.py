@@ -444,6 +444,7 @@ def verdict(
     v = normalize.compare(
         contract, manifest, profile_issues=after, profile=profile, patches=patches
     )
+    _scope_font_verification(v, contract, manifest, patches)
     # 比 normalize 更严的一条：修复**引入**的规范问题，warn 级也挡。
     # 规范化事务里用户点名的目标可能与规范天然冲突，所以那边只挡 error；而这里
     # 的每一个改动都是我们替用户挑的，「修一条、冒一条」就是用户说的「越修越乱」
@@ -465,6 +466,42 @@ def verdict(
         v["ok"] = False
         v["exit"] = EXIT_NOT_RESOLVED
     return v
+
+
+def _scope_font_verification(v: dict, contract: dict, manifest: dict, patches: list[dict]) -> None:
+    """「字体真的落成了那张脸」只对**这次改了字体的元素**成立（Codex #549 P1）。
+
+    允许集合按 prop 放行全图（刻度组 / 图例的字体会落到子元素上，见 `build_contract`），
+    `normalize.compare()` 于是把每个带 fontfamily 的元素都按目标字体核验——图里本来就是
+    另一种**合规**字体、这次一个属性都没动的元素，也会被报成「没落成」，事务退掉字体那
+    几条并告诉用户「字体没装」，而点名的那个其实已经换好了。
+
+    核验范围 = 列表里写了 fontfamily 的 gid ∪ fontfamily 取值相对 B0 变了的 gid（连带落到
+    子元素上的那些）。范围外的不算；因此清空后若只剩字体这一条理由，按其余判据重新定档。
+    """
+    written = {str(p["gid"]) for p in patches if p.get("prop") == "fontfamily"}
+    snap0 = contract["baseline"]["snapshot"]
+    changed = set()
+    for gid, s1 in normalize.protected_snapshot(manifest).items():
+        s0 = snap0.get(gid)
+        if s0 is not None and s0["props"].get("fontfamily") != s1["props"].get("fontfamily"):
+            changed.add(gid)
+    scope = written | changed
+    kept = [f for f in v["font_unresolved"] if f.get("gid") in scope]
+    if len(kept) == len(v["font_unresolved"]):
+        return
+    v["font_unresolved"] = kept
+    if kept or v["exit"] != normalize.EXIT_FONT_UNAVAILABLE:
+        return
+    # compare() 的退出码顺序：受保护 / 结构 → 字体 → 目标 → 预算 → 阻断。前两档在字体之前，
+    # 能走到字体这一档说明它们都过了；specfix 不点名尺寸 / 字号目标，剩下预算与阻断
+    if v["budget"]["over"]:
+        v["exit"] = normalize.EXIT_BUDGET_EXCEEDED
+    elif v["blocking"]:
+        v["exit"] = normalize.EXIT_CONSTRAINT_CONFLICT
+    else:
+        v["exit"] = normalize.EXIT_DONE
+    v["ok"] = v["exit"] == normalize.EXIT_DONE
 
 
 def progressed(new: dict, old: dict) -> bool:

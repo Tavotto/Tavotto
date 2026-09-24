@@ -3858,7 +3858,13 @@ def _specfix_transaction(render, base: list, scale: float, profile: dict, only) 
         trial = engine_normalize.merge_patches(candidate, cand["patches"])
         if engine_normalize.authorize(contract, trial):
             break  # 局部修复越出了约定：不收（按 normalize 的纪律这不该发生）
-        m2 = render(trial)["manifest"]
+        resp2 = render(trial)
+        if resp2.get("warnings"):
+            # 这一轮有 override 没写进去（重放不完整）：与首轮候选同一条纪律，不收。
+            # 退回到上一版已验过、没有 warning 的候选，而不是带着它往下验
+            render(candidate)
+            break
+        m2 = resp2["manifest"]
         v2 = judge(m2, trial)
         if not engine_specfix.progressed(v2, v):
             render(candidate)

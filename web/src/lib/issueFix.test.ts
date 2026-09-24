@@ -306,6 +306,70 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     expect(overridesOf()).toEqual(mine)
   })
 
+  it('等待期间用户缩放了这张图（override 没变）：缩放比已不是发出去的那个，丢弃', async () => {
+    await seed()
+    let release: (v: SpecFixResponse) => void = () => {}
+    engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
+    const pending = applyIssueFix(floorIssue(), profile)
+    useDocumentStore.getState().commit(literal('缩放'), (d) => {
+      const p = d.objects[0] as PanelObject
+      p.w = 40
+      p.h = 30
+    })
+    release(passed())
+    expect(await pending).toMatchObject({ ok: false, reason: 'stale' })
+    expect(overridesOf()).toEqual([])
+  })
+
+  it('等待期间换了这份文档的规范：按旧规范验出来的结果丢弃', async () => {
+    await seed()
+    let release: (v: SpecFixResponse) => void = () => {}
+    engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
+    const pending = applyIssueFix(floorIssue(), profile)
+    useDocumentStore.getState().commit(literal('换规范'), (d) => {
+      d.profile = { id: 'free-form-v1' } as never
+    })
+    release(passed())
+    expect(await pending).toMatchObject({ ok: false, reason: 'stale' })
+    expect(overridesOf()).toEqual([])
+  })
+
+  it('混合批量等后端时改了标注字号：那条画布层计划丢弃，面板那张照写', async () => {
+    await seed()
+    useDocumentStore.getState().commit(literal('加标注'), (d) => {
+      d.objects.push({
+        id: 't1',
+        type: 'text',
+        text: '图注',
+        sizePt: 5,
+        bold: false,
+        color: '#000000',
+        align: 'left',
+        x: 1,
+        y: 1,
+        w: 20,
+        h: 6,
+      } as never)
+    })
+    let release: (v: SpecFixResponse) => void = () => {}
+    engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
+    const all = issuesNow()
+    const text = all.find((i) => i.objectRef.objectId === 't1')!
+    const pending = applyIssueFixes([text, floorIssue()], profile)
+    useDocumentStore.getState().commit(literal('用户改字号'), (d) => {
+      ;(d.objects.find((o) => o.id === 't1') as { sizePt: number }).sizePt = 12
+    })
+    release(passed())
+    const res = await pending
+    expect(res.ok).toBe(true)
+    expect(res.failed).toEqual([{ reason: 'stale', count: 1 }])
+    const t = useDocumentStore.getState().doc.objects.find((o) => o.id === 't1') as {
+      sizePt: number
+    }
+    expect(t.sizePt).toBe(12)
+    expect(overridesOf()).toEqual(FIXED)
+  })
+
   it('上一轮还没回来时再点一次：busy，不叠第二轮', async () => {
     await seed()
     let release: (v: SpecFixResponse) => void = () => {}
