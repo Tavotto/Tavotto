@@ -373,12 +373,12 @@ export interface CarriedItem {
   shift: (dfx: number, dfy: number) => PanelOverride
 }
 
-/** 元素**此刻**的墨迹框：锚点被 override 挪过而渲染没回来时，框跟着挪同样的量 */
-function currentBox(panel: PanelObject, el: ManifestElement): Rect4 {
-  const a = anchorOf(panel, el)
-  if (!a || !el.anchor) return [el.bbox[0], el.bbox[1], el.bbox[2], el.bbox[3]]
-  return [el.bbox[0] + a[0] - el.anchor[0], el.bbox[1] + a[1] - el.anchor[1], el.bbox[2], el.bbox[3]]
-}
+/**
+ * 元素的墨迹框，直接取 manifest。调用方给的必须是**几何权威**那一份
+ * （`exactPanelManifest`：lastPatches 与文档 overrides 逐字一致），所以不存在
+ * 「override 已写、几何还没回来」要补位移的状态——渲染挂起时拖动根本起不了手。
+ */
+const boxOf = (el: ManifestElement): Rect4 => [el.bbox[0], el.bbox[1], el.bbox[2], el.bbox[3]]
 
 /**
  * 拖动形状（`role === 'patch'`）时装在它里面、该跟着走的内容（2026-09-24，用户的流程图：
@@ -403,7 +403,7 @@ export function patchContents(
   const containers = containerGids
     .map((g) => byGid.get(g))
     .filter((e): e is ManifestElement => !!e && e.role === 'patch')
-    .map((e) => ({ gid: e.gid, box: currentBox(panel, e) }))
+    .map((e) => ({ gid: e.gid, box: boxOf(e) }))
   if (!containers.length) return []
   const locked = new Set(panel.lockedGids ?? [])
   const [wMm, hMm] = manifest.size_mm
@@ -448,7 +448,7 @@ export function patchContents(
     if (el.role !== 'text' && el.role !== 'patch') continue
     const anchor = anchorOf(panel, el)
     if (!anchor || !el.drag_prop) continue
-    const box = currentBox(panel, el)
+    const box = boxOf(el)
     const inside = containers.some(
       (c) =>
         area(box) < area(c.box) &&

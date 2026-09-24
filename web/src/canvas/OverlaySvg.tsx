@@ -9,6 +9,7 @@ import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib
 import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
+import { usePreviewLines } from '@/store/svgPreviewStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import {
@@ -681,7 +682,8 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)
   const arrowPreview = useInteractionStore((s) => s.arrowPreview)
-  const carriedArrows = useInteractionStore((s) => s.carriedArrows)
+  // 拖形状时单端跟随的箭头的虚线：预览平面的一部分，松手后留到权威渲染换上来
+  const previewLines = usePreviewLines(panel.id)
   const selectedGids = useUiStore((s) => s.selectedGids)
   const selectedGid = selectedGids.at(-1) ?? null
   if (!manifest) return null
@@ -843,10 +845,10 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
 
         {/* 拖形状时只有一端跟着走的箭头：形状变了，SVG 平移会骗人，沿预览端点画虚线
             （与拖单个端点时的 arrowPreview 同款） */}
-        {carriedArrows?.map((c) => (
+        {[...previewLines].map(([gid, c]) => (
           <line
-            key={`carried-${c.gid}`}
-            data-carried-arrow={c.gid}
+            key={`carried-${gid}`}
+            data-carried-arrow={gid}
             x1={toPoint(c.a).x}
             y1={toPoint(c.a).y}
             x2={toPoint(c.b).x}

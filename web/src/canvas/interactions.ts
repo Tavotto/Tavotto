@@ -54,7 +54,7 @@ import {
   useViewportStore,
 } from '@/store/viewportStore'
 import { setOverride, setOverrides } from '@/store/actions'
-import { previewTransform } from '@/store/svgPreviewStore'
+import { previewLine, previewTransform } from '@/store/svgPreviewStore'
 import {
   beginElementPreview,
   cancelElementPreview,
@@ -1249,20 +1249,18 @@ function watchCarryKeys(
 
 /**
  * 被带着走的内容的乐观预览：整体平移的（文字、形状、两端都在框里的箭头）平移 SVG 组；
- * 只有一端跟随的箭头形状变了，交给覆盖层画虚线。`on=false`（按住了 ⌘）时全部归位。
+ * 只有一端跟随的箭头形状变了，交给覆盖层画虚线（`previewLine`，预览平面的一部分：
+ * 松手后留到权威渲染换上来）。`on=false`（按住了 ⌘）时全部归位。
  */
 function previewCarried(items: CarriedItem[], dfx: number, dfy: number, on: boolean): void {
-  const dashed: { gid: string; a: [number, number]; b: [number, number] }[] = []
   for (const it of items) {
     const whole = !it.ends || (it.ends[0] && it.ends[1])
     if (whole) previewTransform(it.gid, on ? dfx : 0, on ? dfy : 0)
     else if (on) {
       const [a, b] = it.endpointsAt(dfx, dfy)!
-      dashed.push({ gid: it.gid, a, b })
-    }
+      previewLine(it.gid, { a, b })
+    } else previewLine(it.gid, null)
   }
-  const store = interaction()
-  if (dashed.length || store.carriedArrows) store.setCarriedArrows(dashed.length ? dashed : null)
 }
 
 export function startElementDrag(

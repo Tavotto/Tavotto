@@ -24,6 +24,7 @@
  *    连着拖两个元素时，第二次 begin 不能把第一次的预览位移当成 base
  *    （那会双倍位移，而且第一个元素的预览会在权威渲染回来之前弹回去）。
  */
+import { useSyncExternalStore } from 'react'
 import { perfSpan } from '@/perf/core'
 import {
   adapterFor,
@@ -87,6 +88,13 @@ interface PanelPreview {
   edits: StyleEdit[]
   /** `gid|prop` → 当前预览值，供重新挂载时重放 */
   styles: Map<string, PreviewPatch & { role: string }>
+  /**
+   * gid → 覆盖层上的预览线（figure 分数、y 向下）：拖形状时只有一端跟随的箭头
+   * 形状变了、SVG 平移会骗人，改画一条虚线。它是**预览平面的一部分**，与这一版
+   * SVG 同生共死——松手后留着，直到权威渲染换上来（或取消 / 被顶掉时还原）才消失；
+   * 挂在交互状态上的话 `end()` 一收它就没了，慢图上旧箭头会先露出来。
+   */
+  lines: Map<string, { a: [number, number]; b: [number, number] }>
   sizeMm: readonly number[] | undefined
 }
 
@@ -200,8 +208,10 @@ function panelStateFor(
     transforms: new Map(),
     edits: [],
     styles: new Map(),
+    lines: new Map(),
     sizeMm,
   }
+  if (cur?.lines.size) bumpLines()
   panels.set(panelId, next)
   return next
 }
@@ -273,10 +283,67 @@ export function previewTransformOf(panelId: string, gid: string): [number, numbe
   return panels.get(panelId)?.transforms.get(gid) ?? null
 }
 
+/* ---- 覆盖层预览线（订阅式：OverlaySvg 要跟着重画）---- */
+let linesVersion = 0
+const lineListeners = new Set<() => void>()
+
+function bumpLines(): void {
+  linesVersion++
+  for (const fn of lineListeners) fn()
+}
+
+/** 面板的预览账本整份作废（还原 / 权威换上来 / 版本换了）：连同预览线一起 */
+function dropPanel(panelId: string): void {
+  const had = !!panels.get(panelId)?.lines.size
+  panels.delete(panelId)
+  if (had) bumpLines()
+}
+
+const NO_LINES: ReadonlyMap<string, { a: [number, number]; b: [number, number] }> = new Map()
+
+/** 某个面板当前挂着的预览线（没有就是一个共享的空表） */
+export function previewLinesOf(
+  panelId: string,
+): ReadonlyMap<string, { a: [number, number]; b: [number, number] }> {
+  return panels.get(panelId)?.lines ?? NO_LINES
+}
+
+/** 覆盖层订阅：预览线一变（含整份作废）就重画 */
+export function usePreviewLines(
+  panelId: string,
+): ReadonlyMap<string, { a: [number, number]; b: [number, number] }> {
+  useSyncExternalStore(
+    (fn) => {
+      lineListeners.add(fn)
+      return () => lineListeners.delete(fn)
+    },
+    () => linesVersion,
+  )
+  return previewLinesOf(panelId)
+}
+
+/**
+ * 设 / 清一条预览线（`ends = null` 清掉）；无 session 时是 no-op。
+ * 与 `previewTransform` 同一个账本，所以同一套收尾：提交后留到权威渲染换上来。
+ */
+export function previewLine(
+  gid: string,
+  ends: { a: [number, number]; b: [number, number] } | null,
+): void {
+  if (!session || session.settled) return
+  const p = panels.get(session.panelId)
+  if (!p) return
+  if (ends) p.lines.set(gid, ends)
+  else if (!p.lines.delete(gid)) return
+  bumpLines()
+}
+
 /** 测试与切项目用：清干净，不碰 DOM（DOM 由 React 自己收） */
 export function resetPreview(): void {
   session = null
+  const hadLines = [...panels.values()].some((p) => p.lines.size)
   panels.clear()
+  if (hadLines) bumpLines()
   pending.clear()
   if (rafId != null) cancelRaf(rafId)
   rafId = null
@@ -297,7 +364,7 @@ function restorePanel(panelId: string): void {
     else node.setAttribute('transform', base)
   }
   restoreStyleEdits(p.edits)
-  panels.delete(panelId)
+  dropPanel(panelId)
 }
 
 /* -------------------------------------------------------------------------- */
@@ -454,14 +521,14 @@ export function reattachPreview(panelId: string, renderKey: string): void {
       reason: 'committed',
       duration_ms: Math.max(0, Math.round((performance?.now?.() ?? Date.now()) - s.startedAt)),
     })
-    panels.delete(panelId)
+    dropPanel(panelId)
     session = null
     return
   }
   if (!p) return
   if (p.renderKey !== renderKey) {
     // 已经不是预览挂靠的那一版：DOM 节点全换了，账本里的引用都是野的
-    panels.delete(panelId)
+    dropPanel(panelId)
     if (s) session = null
     return
   }

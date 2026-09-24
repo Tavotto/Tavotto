@@ -7,8 +7,9 @@
  *      ——一条撤销、一次权威渲染；
  *   4. 按住 ⌘ / Ctrl = 只拖它自己；提交认**松手那个 pointerup 上的修饰键**（停住不动时
  *      按下 / 松开再立刻松手，中间没有 pointermove），预览随按键即时切换；
- *   5. 预览：整体平移的内容 SVG 跟手，只有一端跟随的箭头画虚线；取消一条都不落；
- *   6. 锁定的、隐藏的不动；文字若已被挪过而渲染没回来，基准取文档里那条 override；
+ *   5. 预览：整体平移的内容 SVG 跟手，只有一端跟随的箭头画虚线——虚线是预览平面的
+ *      一部分，松手后留到权威渲染换上来（慢图上旧箭头不先露出来）；取消一条都不落；
+ *   6. 锁定的、隐藏的不动；
  *   7. 多选整组拖动时选区里的形状同样带着内容走。
  */
 import { literal } from '@/i18n'
@@ -23,7 +24,13 @@ import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
-import { flushPreviewFrame, resetPreview } from '@/store/svgPreviewStore'
+import {
+  flushPreviewFrame,
+  previewLinesOf,
+  reattachPreview,
+  resetPreview,
+} from '@/store/svgPreviewStore'
+import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { startElementDrag, startElementGroupMove } from './interactions'
 
@@ -175,9 +182,38 @@ const dfyOf = (px: number) => px / layout.height
 
 /* -------------------------------- 环境搭建 -------------------------------- */
 
+/**
+ * 与这组 override **相符**的 manifest：真实渲染回来时锚点、包围盒、箭头端点都已是
+ * 新位置（`exactPanelRender` 只在 lastPatches == 文档 overrides 时给权威，渲染挂起
+ * 时拿不到几何，所以「override 已写、manifest 还是旧的」这种状态在拖动起手时不可达）。
+ */
+function manifestFor(overrides: PanelObject['overrides']): Manifest {
+  const elements = manifest.elements.map((e) => {
+    const ov = overrides.find((o) => o.gid === e.gid)
+    if (!ov) return e
+    const v = ov.value as number[]
+    if (ov.prop === 'pos_frac' && e.anchor) {
+      const [dx, dy] = [v[0] - e.anchor[0], v[1] - e.anchor[1]]
+      return {
+        ...e,
+        anchor: [v[0], v[1]] as [number, number],
+        bbox: [e.bbox[0] + dx, e.bbox[1] + dy, e.bbox[2], e.bbox[3]] as ManifestElement['bbox'],
+      }
+    }
+    if (ov.prop === 'endpoints_frac') {
+      const a: [number, number] = [v[0], v[1]]
+      const b: [number, number] = [v[2], v[3]]
+      return { ...arrow(e.gid, a, b), editable: e.editable }
+    }
+    throw new Error(`manifestFor 不认识 ${ov.prop}`)
+  })
+  return { ...manifest, elements }
+}
+
 async function setup(overrides: PanelObject['overrides'] = []) {
+  const rendered = manifestFor(overrides)
   engineRender.mockReset()
-  engineRender.mockResolvedValue({ rev: 2, manifest, svg: MATPLOTLIB_SVG, warnings: [] })
+  engineRender.mockResolvedValue({ rev: 2, manifest: rendered, svg: MATPLOTLIB_SVG, warnings: [] })
   resetPreview()
   localStorage.clear()
   useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0, viewW: 900, viewH: 700 })
@@ -188,15 +224,7 @@ async function setup(overrides: PanelObject['overrides'] = []) {
   useDocumentStore.getState().commit(literal('加面板'), (d) => {
     d.objects.push(panelOf(overrides))
   })
-  useRenderStore.getState().patch(renderKeyOf(livePanel()), {
-    fileId: 'Flow.pdf',
-    manifest,
-    svg: MATPLOTLIB_SVG,
-    rev: 1,
-    status: 'ready',
-    lastPatches: JSON.stringify(overrides),
-  })
-  useRenderStore.setState({ latest: { 'Flow.pdf': renderKeyOf(livePanel()) } })
+  seedExactRender(livePanel(), rendered, { svg: MATPLOTLIB_SVG })
   document.body.innerHTML = `<div data-element-svg="p1">${MATPLOTLIB_SVG}</div>`
   // 预览平移要的只是带 gid 的 <g>；必须补进面板容器里的那棵 svg
   const root = document.querySelector('[data-element-svg="p1"] svg')!
@@ -269,17 +297,6 @@ describe('拖框：装在里面的内容跟着走', () => {
     fire('pointerup', 40, 20)
     expect(overrideOf(lockedText.gid, 'pos_frac')).toBeUndefined()
     expect(overrideOf(hiddenText.gid, 'pos_frac')).toBeUndefined()
-  })
-
-  it('字已被挪过而渲染没回来：基准取文档里那条 override，不退回 manifest 的旧锚点', async () => {
-    const moved: [number, number] = [label.anchor![0] + 0.01, label.anchor![1] + 0.01]
-    await setup([{ gid: label.gid, prop: 'pos_frac', value: moved }])
-    startElementDrag(down(0, 0), livePanel(), boxP, layout)
-    dragTo(40, 0)
-    fire('pointerup', 40, 0)
-    const v = overrideOf(label.gid, 'pos_frac')!
-    expect(v[0]).toBeCloseTo(moved[0] + dfxOf(40), 4)
-    expect(v[1]).toBeCloseTo(moved[1], 4)
   })
 
   it('拖的是字不是框：什么都不带', async () => {
@@ -356,27 +373,30 @@ describe('修饰键以松手那一下为准（停住不动时按键，中间没�
     startElementDrag(down(0, 0), livePanel(), boxP, layout)
     dragTo(40, 20)
     expect(tf(label.gid)).not.toBe('translate(0,0)')
-    expect(useInteractionStore.getState().carriedArrows).not.toBeNull()
+    expect(previewLinesOf('p1').size).toBeGreaterThan(0)
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Meta', metaKey: true }))
     flushPreviewFrame()
     expect(tf(label.gid)).toBe('translate(0,0)')
-    expect(useInteractionStore.getState().carriedArrows).toBeNull()
+    expect(previewLinesOf('p1').size).toBe(0)
     window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta', metaKey: false }))
     flushPreviewFrame()
     expect(tf(label.gid)).not.toBe('translate(0,0)')
-    expect(useInteractionStore.getState().carriedArrows).not.toBeNull()
+    expect(previewLinesOf('p1').size).toBeGreaterThan(0)
     fire('pointerup', 40, 20)
   })
 
-  it('收尾后按键监听已解绑：再松一次 ⌘ 不会把虚线预览画回来', async () => {
+  it('收尾后按键监听已解绑：再按一次 ⌘ 不会改动留着的预览', async () => {
     await setup()
     startElementDrag(down(0, 0), livePanel(), boxP, layout)
     dragTo(40, 20)
     fire('pointerup', 40, 20)
-    // 监听若还挂着，「松开 ⌘」= 带内容 → 重新写出单端箭头的虚线
-    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta', metaKey: false }))
+    const before = previewLinesOf('p1').size
+    expect(before).toBeGreaterThan(0)
+    // 监听若还挂着，「按下 ⌘」= 只拖自己 → 把留着等权威渲染的虚线清掉、字的预览归位
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Meta', metaKey: true }))
     flushPreviewFrame()
-    expect(useInteractionStore.getState().carriedArrows).toBeNull()
+    expect(previewLinesOf('p1').size).toBe(before)
+    expect(tf(label.gid)).not.toBe('translate(0,0)')
   })
 })
 
@@ -393,13 +413,46 @@ describe('预览、取消与历史', () => {
     expect(tf(farText.gid)).toBeNull()
     // 单端跟随的箭头不平移 SVG（形状变了），交给覆盖层的虚线
     expect(tf(oneEnd.gid)).toBeNull()
-    const dashed = useInteractionStore.getState().carriedArrows ?? []
-    expect(dashed.map((d) => d.gid).sort()).toEqual([nearEdge.gid, oneEnd.gid].sort())
-    const d = dashed.find((x) => x.gid === oneEnd.gid)!
+    const dashed = previewLinesOf('p1')
+    expect([...dashed.keys()].sort()).toEqual([nearEdge.gid, oneEnd.gid].sort())
+    const d = dashed.get(oneEnd.gid)!
     expect(d.a[0]).toBeCloseTo(0.5 + dfxOf(40), 4)
     expect(d.b).toEqual([0.7, 0.3])
     fire('pointerup', 40, 20)
-    expect(useInteractionStore.getState().carriedArrows).toBeNull()
+  })
+
+  it('松手后虚线留着，直到这次提交的权威渲染换上来才消失（慢图不露旧箭头）', async () => {
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), boxP, layout)
+    dragTo(40, 20)
+    fire('pointerup', 40, 20)
+    expect(useInteractionStore.getState().kind).toBe('none')
+    // 交互状态已收尾，虚线仍在（它挂在预览平面上，不挂在交互状态上）
+    expect(previewLinesOf('p1').has(oneEnd.gid)).toBe(true)
+    // PanelView 在提交后重跑、画布上仍是旧那一版 SVG（新渲染没回来）：原封不动
+    reattachPreview('p1', renderKeyOf(panelOf()))
+    expect(previewLinesOf('p1').has(oneEnd.gid)).toBe(true)
+  })
+
+  it('等到自己那一版权威渲染：虚线收掉', async () => {
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), boxP, layout)
+    dragTo(40, 20)
+    fire('pointerup', 40, 20)
+    expect(previewLinesOf('p1').has(oneEnd.gid)).toBe(true)
+    reattachPreview('p1', renderKeyOf(livePanel()))
+    expect(previewLinesOf('p1').size).toBe(0)
+  })
+
+  it('整组拖动同样：松手后虚线留到权威渲染', async () => {
+    await setup()
+    const entries = alignEntries(livePanel(), manifest, [boxP.gid, card.gid])
+    startElementGroupMove(down(0, 0), livePanel(), entries, layout)
+    dragTo(40, 20)
+    fire('pointerup', 40, 20)
+    expect(previewLinesOf('p1').has(oneEnd.gid)).toBe(true)
+    reattachPreview('p1', renderKeyOf(livePanel()))
+    expect(previewLinesOf('p1').size).toBe(0)
   })
 
   it('取消：一条都不落，虚线收掉', async () => {
@@ -410,7 +463,7 @@ describe('预览、取消与历史', () => {
     expect(livePanel().overrides).toHaveLength(0)
     expect(useDocumentStore.getState().past).toHaveLength(0)
     expect(engineRender).not.toHaveBeenCalled()
-    expect(useInteractionStore.getState().carriedArrows).toBeNull()
+    expect(previewLinesOf('p1').size).toBe(0)
   })
 
   it('一次拖动 = 一条撤销 = 一次权威渲染', async () => {
