@@ -27,20 +27,30 @@ Figure」只有一个答案，且那个答案自带 `finally`。
 同一件事的两次实现。抄一份过去的代价不是多几行重复代码，而是**同一张图在
 两个入口里预览表示法不一样**——而这类分叉只会在大图上、在用户那边发作。
 
-自身只用标准库，但经 `preview_complexity` 传递依赖 matplotlib——所以它属于
-`bridge_runner._PHASE2`（屏障之后才装），不是 `_PHASE1`。与 `worker.py` 同一条
-sys.path 纪律，平铺 import。
+## 第二件事：预览那一遍的重采样缓存
+
+`preview_resample_cache()` 让 `savefig` 那一瞬里大图的 `matplotlib.image._resample`
+按实参内容复用上一次的结果（键与版本闸见下面那一节的注释）。它与 rasterize 同属
+「只改变这一次预览怎么画」：只在 `_save_with` 里生效，导出与 manifest 一律直通。
+
+模块层只用标准库；numpy / matplotlib 在函数里现取，且经 `preview_complexity` 本来就
+传递依赖 matplotlib——所以它属于 `bridge_runner._PHASE2`（屏障之后才装），不是
+`_PHASE1`。与 `worker.py` 同一条 sys.path 纪律，平铺 import。
 """
 
 from __future__ import annotations
 
+import collections
 import contextlib
+import contextvars
+import hashlib
+import threading
 import time
 
 import preview_complexity
 import previewbudget
 
-__all__ = ["RestoreFailed", "preview_rasterization", "save_preview_svg"]
+__all__ = ["RestoreFailed", "preview_rasterization", "preview_resample_cache", "save_preview_svg"]
 
 
 class RestoreFailed(RuntimeError):
@@ -142,5 +152,221 @@ class _Clock:
 
 def _save_with(plan, save, clock):
     # `set_rasterized` 那两下算进 draw：它们是「画这一版」的成本，不是分析的
-    with clock.draw(), preview_rasterization(plan.rasterized_artists):
+    with clock.draw(), preview_rasterization(plan.rasterized_artists), preview_resample_cache():
         return save(plan)
+
+
+# ---------------------------------------------------------------------------
+# 预览 SVG 那一遍的图片重采样缓存
+#
+# 用户图里一张大位图（2026-09-24 实测：1005×1753 lanczos，2D + RGBA 两次）每次预览
+# `savefig(svg)` 都要重采样一遍，约 170ms，而图没变时输入逐字节相同。缓存放在
+# `matplotlib.image._resample` 这一层，而不是 artist 那一层：它是**纯函数**——
+# norm / cmap / alpha 数组 / interpolation_stage 在进来之前已经算进 `data` 了，
+# 键只需要它的实参加上它自己读的那几个 getter，不用去枚举 artist 的一堆属性
+# （漏一个 = 预览显示旧图，比慢更糟）。
+#
+# 「它自己读了什么」随 matplotlib 版本变（3.11 多读了 `image_obj.origin`），所以
+# 装之前核对 `_resample` 引用的名字：出现 `_RESAMPLE_KNOWN_NAMES` 之外的一律不装，
+# 退回原路径——宁慢不旧。只在 `preview_resample_cache()` 里查缓存（contextvar，
+# 别的线程的导出、manifest 那几次布局 draw 一律直通）。
+
+# 三档（3.8.4 / 3.10.8 / 3.11.1）`_resample.__code__.co_names` 的并集。
+_RESAMPLE_KNOWN_NAMES = frozenset(
+    {
+        "Affine2D",
+        "_image",
+        "_interpd_",
+        "abs",
+        "array",
+        "ceil",
+        "diff",
+        "dtype",
+        "flip",
+        "format",
+        "get_filternorm",
+        "get_filterrad",
+        "get_interpolation",
+        "get_resample",
+        "int",
+        "np",
+        "origin",
+        "resample",
+        "scale",
+        "shape",
+        "transform",
+        "translate",
+        "warn",
+        "warnings",
+        "zeros",
+    }
+)
+# 小图重采样本来就不要钱，不值得付哈希与拷贝
+_RESAMPLE_CACHE_MIN_ELEMENTS = 1 << 18
+_RESAMPLE_CACHE_MAX_BYTES = 64 << 20
+# 条目数上限：只按字节淘汰的话，大图反复画成很小的输出（内容 / 变换一直在变）会攒下无数个只占几字节的
+# 条目——每个都带着键与字典开销，数量没有上界（Codex #530）。一张图一次预览最多几次重采样，32 足够热态复用
+_RESAMPLE_CACHE_MAX_ENTRIES = 32
+# 输入这一侧的上限：命中也得把输入整份哈希一遍才知道是不是同一张，超过它就直通（Codex #530）
+_RESAMPLE_CACHE_MAX_INPUT_BYTES = 256 << 20
+# `_resample` 在这两个边界之外会 warn 并降采样；命中缓存会吞掉那条 warning，不缓存
+_RESAMPLE_MAX_ROWS = 1 << 24
+_RESAMPLE_MAX_COLS = 1 << 23
+
+_resample_cache_on: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "tavotto_preview_resample_cache", default=False
+)
+_resample_cache: collections.OrderedDict = collections.OrderedDict()
+_resample_cache_bytes = 0
+_resample_lock = threading.Lock()
+# None = 还没试过装；True / False = 装上了 / 这一版 matplotlib 不认、不装
+_resample_installed: bool | None = None
+
+
+@contextlib.contextmanager
+def preview_resample_cache():
+    """在这个 `with` 里（本线程 / 本上下文），大图的 `_resample` 按实参内容查缓存。"""
+    _install_resample_cache()
+    token = _resample_cache_on.set(True)
+    try:
+        yield
+    finally:
+        _resample_cache_on.reset(token)
+
+
+def _install_resample_cache():
+    global _resample_installed
+    if _resample_installed is not None:
+        return
+    with _resample_lock:
+        if _resample_installed is not None:
+            return
+        import matplotlib.image as mimage
+
+        wrapped = _wrap_resample(getattr(mimage, "_resample", None))
+        if wrapped is not None:
+            mimage._resample = wrapped
+        _resample_installed = wrapped is not None
+
+
+def _wrap_resample(original):
+    """给 `original` 套上缓存；它引用了认不出的名字（新版本多读了什么）就回 None。"""
+    code = getattr(original, "__code__", None)
+    if code is None or not set(code.co_names) <= _RESAMPLE_KNOWN_NAMES:
+        return None
+
+    def _cached_resample(image_obj, data, out_shape, transform, *args, **kwargs):
+        key = _resample_key(image_obj, data, out_shape, transform, args, kwargs)
+        if key is None:
+            return original(image_obj, data, out_shape, transform, *args, **kwargs)
+        hit = _resample_lookup(key)
+        if hit is not None:
+            # 调用方会就地改返回值（`out_alpha *= …`），给副本
+            return hit.copy()
+        out = original(image_obj, data, out_shape, transform, *args, **kwargs)
+        # 存的是副本（调用方会就地改 `out`）；拷贝在 `_resample_store` 里、过了大小闸之后才做
+        _resample_store(key, out)
+        return out
+
+    _cached_resample.__wrapped__ = original
+    return _cached_resample
+
+
+def _resample_key(image_obj, data, out_shape, transform, args, kwargs):
+    """这次调用的完整键；有任何一样说不清就回 None（直通，不缓存）。"""
+    if not _resample_cache_on.get() or args:
+        return None
+    import numpy as np
+
+    # data 阶段（标量图）传进来的是 MaskedArray：数据与 mask 都进键——C 那边看不看
+    # mask 都不会让键漏掉它。mask 放到所有便宜的检查之后才取，且用不分配内存的 `getmask`：
+    # `getmaskarray` 对 `nomask` 会先造一整份布尔数组，超上限的输入明明要直通，也得先付这一份（Codex #530）
+    if type(data) is np.ma.MaskedArray:
+        masked = data
+        data = data.data
+    elif type(data) is np.ndarray:
+        masked = None
+    else:
+        return None
+    if data.dtype.hasobject or data.size < _RESAMPLE_CACHE_MIN_ELEMENTS:
+        return None
+    if data.nbytes > _RESAMPLE_CACHE_MAX_INPUT_BYTES:
+        return None
+    if data.ndim < 2 or data.shape[0] > _RESAMPLE_MAX_ROWS or data.shape[1] > _RESAMPLE_MAX_COLS:
+        return None
+    if set(kwargs) - {"resample", "alpha"}:
+        return None
+    alpha = kwargs.get("alpha", 1)
+    if not isinstance(alpha, (int, float, np.integer, np.floating)) or isinstance(alpha, bool):
+        return None
+    if not getattr(transform, "is_affine", False):
+        return None
+    resample = kwargs.get("resample")
+    if resample is None:
+        resample = image_obj.get_resample()
+    digest = hashlib.sha256()
+    digest.update(f"{data.dtype.str}|{data.shape}".encode())
+    _hash_array(digest, data)
+    if masked is not None:
+        mask = np.ma.getmask(masked)
+        if mask is np.ma.nomask:
+            digest.update(b"|nomask|")
+        else:
+            digest.update(b"|mask|")
+            _hash_array(digest, mask)
+    matrix = np.asarray(transform.get_matrix(), dtype=float)
+    return (
+        digest.digest(),
+        tuple(int(n) for n in out_shape),
+        matrix.tobytes(),
+        float(alpha),
+        bool(resample),
+        str(image_obj.get_interpolation()),
+        bool(image_obj.get_filternorm()),
+        float(image_obj.get_filterrad()),
+        str(getattr(image_obj, "origin", None)),
+    )
+
+
+def _hash_array(digest, arr) -> None:
+    """按 C 顺序把数组内容喂给哈希，**不整份拷贝**：连续的直接喂内存；不连续的（切片 / 转置出来的视图）
+    逐行拷一行再喂——同样的内容不论内存布局都得到同一个摘要，额外内存只有一行（Codex #530：
+    `np.ascontiguousarray` 在每次调用、包括命中时都整份拷一遍源数组）。"""
+    import numpy as np
+
+    if arr.flags.c_contiguous:
+        digest.update(arr.view(np.uint8).data if arr.ndim else arr.tobytes())
+        return
+    for row in arr:
+        if row.ndim > 1:
+            _hash_array(digest, row)
+        else:
+            digest.update(np.ascontiguousarray(row).tobytes())
+
+
+def _resample_lookup(key):
+    with _resample_lock:
+        out = _resample_cache.get(key)
+        if out is not None:
+            _resample_cache.move_to_end(key)
+        return out
+
+
+def _resample_store(key, out):
+    global _resample_cache_bytes
+    # 先判大小再拷：超过上限的数组本来就不存，先拷一份等于白白多分配一份任意大的内存
+    if out.nbytes > _RESAMPLE_CACHE_MAX_BYTES:
+        return
+    out = out.copy()
+    with _resample_lock:
+        old = _resample_cache.pop(key, None)
+        if old is not None:
+            _resample_cache_bytes -= old.nbytes
+        _resample_cache[key] = out
+        _resample_cache_bytes += out.nbytes
+        while (
+            _resample_cache_bytes > _RESAMPLE_CACHE_MAX_BYTES
+            or len(_resample_cache) > _RESAMPLE_CACHE_MAX_ENTRIES
+        ):
+            _, evicted = _resample_cache.popitem(last=False)
+            _resample_cache_bytes -= evicted.nbytes
