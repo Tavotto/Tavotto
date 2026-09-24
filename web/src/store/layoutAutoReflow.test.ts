@@ -345,6 +345,33 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
     expect([s().past.length, s().future.length]).toEqual([depth + 2, 0])
   })
 
+  it('防抖窗口里又来一次不改尺寸的编辑、两次都撤销：只重做前一次时不补排，重做到最新一格才补（#558 评审）', async () => {
+    await mount('d_reflow_redo_cancelled_newer')
+    const depth = s().past.length
+    await act(async () => {
+      s().commit(literal('缩放'), (d) => {
+        const o = d.objects.find((x) => x.id === 'pa') as PanelObject
+        o.w = 30
+        o.h = 22.5
+      })
+      // 不改尺寸的编辑，落在同一个防抖窗口里
+      s().commit(literal('别的编辑'), (d) => {
+        d.name = 'renamed'
+      })
+      s().undo()
+      s().undo()
+    })
+    await settle()
+    expect([s().past.length, s().future.length]).toEqual([depth, 2])
+    await redo() // 只重做缩放：「别的编辑」还在 future 里，补排会把它冲掉
+    expect([s().past.length, s().future.length]).toEqual([depth + 1, 1])
+    await redo() // 重做到最新一格：被作废的那次重排补上
+    expect(s().doc.name).toBe('renamed')
+    expect(obj('pb').x).toBeCloseTo(34, 6)
+    expect(lastLabel()).toBe('history.autoReflow')
+    expect([s().past.length, s().future.length]).toEqual([depth + 3, 0])
+  })
+
   it('改图幅 override 后防抖还没到就撤销、再重做：同步器补图幅之后照样重排', async () => {
     await mount('d_reflow_redo_cancelled_override')
     await seed(obj('pa'), [40, 30])
