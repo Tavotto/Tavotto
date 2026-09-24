@@ -16,7 +16,10 @@
     同一个项目在 report / app.log / config.json 里是同一个记号。`build_report` / `build_bundle` 的每一处
     `_redact_text` / `_redact_obj` 都带上它，新加一处漏了就是新的泄漏口。
   * 兜底两条不依赖登记：`CloudStorage/<服务商>-<账号>` 的账号段换成 `acct:<哈希>`（服务商名留着），
-    邮箱一律 `<email>`——没登记成项目的路径、日志里随口的一句也不带出账号。
+    邮箱一律 `<email>`——没登记成项目的路径、日志里随口的一句也不带出账号。邮箱**不只认 ASCII**
+    （`_redact_emails`，#524 评审）：从每个 `@` / `＠` 按 Unicode 类别往两边扩，国际化地址
+    `用户@例子.公司`、punycode 顶级域 `…xn--p1ai`、JSON `\uXXXX` 转义都整段换掉；顶级域必须是
+    ≥2 个字母或 `xn--…`、域名至少两段，所以 `matplotlib@3.10`、装饰器、`a@b` 不动。
   * `_project_section`：去掉 `name`；`figures_dir` 只剩记号，另给 `location`
     （`cloud_storage` / `non_ascii` / `has_space`——真实故障来自这三样，不来自名字）；导出 / 备份 / 文档
     目录与项目设置里的路径走 `_path_fact`：记号 / `~` 之后只有 `_KNOWN_SEGMENTS`（Tavotto 自己起的目录名、
@@ -24,7 +27,11 @@
   * `render.worker_logs` 取会话仍按**未脱敏**的 `figures_dir` 算 `cache_digest`（脱敏只在出口）。
   * 看护：`tests/test_diagnostics_bundle.py` 的「项目路径」一节——真打开一个云盘里的项目、真导出，
     对包里每个文件与复制诊断文本全文搜索，并反证记号与 `location` 确实写出来了。
-- **诊断包 schema 2（ADR 0016，改前先读）**：老三件
+  * 这次换形让 report.json 与 schema 2 的读法不兼容，所以 **bundle schema 升到 3**。以后 report.json
+    再改字段的形状或语义（删字段、把路径换成记号），同样要升号——读包的人靠 manifest 分辨格式，
+    不靠 Tavotto 版本号猜。后端 `BUNDLE_SCHEMA_VERSION` ↔ `web/src/diagnostics/types.ts` 同名常量
+    是严格同源对（`test_bundle_schema_is_one_number_on_both_sides`）。
+- **诊断包 schema 2（ADR 0016，改前先读；schema 3 只改了 report.json 的 project 段，见上）**：老三件
   （report.json / app.log / config.json）名字与语义一个字节没动，新增
   `frontend-state.json` / `interaction-trace.jsonl` / `manifest.json`。
   `manifest.json` 自报三个 schema 版本——**读包的人不该靠 Tavotto 版本号猜格式**。

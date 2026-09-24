@@ -150,12 +150,25 @@ def test_get_bundle_still_works_and_keeps_the_old_three_files(client):
 def test_manifest_declares_its_own_schema(client):
     z = open_bundle(client.get("/api/diagnostics/bundle").data)
     manifest = json.loads(z.read("manifest.json"))
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
     assert manifest["frontend_snapshot_schema"] == 1
     assert manifest["trace_schema"] == 1
     assert manifest["privacy_mode"] == "safe-default"
     # created_at 是带时区的 ISO 串——读包的人要能判断这是什么时候的
     assert re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$", manifest["created_at"])
+
+
+def test_bundle_schema_is_one_number_on_both_sides():
+    """`diagnostics.BUNDLE_SCHEMA_VERSION` ↔ `web/src/diagnostics/types.ts` 的同名常量。
+
+    report.json 换形就得升这个号（#524 评审）；只升一侧的话，前端自报的与包里 manifest 写的
+    就不是同一个格式。"""
+    src = Path(__file__).resolve().parents[1] / "web" / "src" / "diagnostics" / "types.ts"
+    match = re.search(
+        r"export const BUNDLE_SCHEMA_VERSION = (\d+)", src.read_text(encoding="utf-8")
+    )
+    assert match, "web/src/diagnostics/types.ts 里找不到 BUNDLE_SCHEMA_VERSION"
+    assert int(match.group(1)) == engine_diagnostics.BUNDLE_SCHEMA_VERSION
 
 
 def test_report_and_config_still_redact_home_and_secrets(client, tmp_path, monkeypatch):
@@ -791,6 +804,16 @@ def test_project_paths_names_and_cloud_accounts_never_leave_the_machine(
     assert "坚果云-acct:" in texts["app.log"] or token in texts["app.log"]
     assert "<email>" in texts["app.log"]
     assert "联系人 <<email>>、<email>" in texts["app.log"], "国际化与 punycode 地址整段换掉"
+
+
+def test_readme_describes_the_project_section_it_actually_ships(client):
+    """README 说「不含项目名」，就不能几行后又说「文件夹名仍会带上」（#524 评审）：读包的人是照
+    README 决定发不发的。它对 project 段的描述要与 `_project_section` 实际写出的一致。"""
+    readme = open_bundle(client.get("/api/diagnostics/bundle").data).read("README.txt").decode()
+    assert "只剩 <project:哈希> 记号与三个是 / 否" in readme
+    assert "only as <project:hash> plus\nthree yes/no facts" in readme
+    for stale in ("文件夹名", "folder name"):
+        assert stale not in readme, stale
 
 
 @pytest.mark.parametrize(

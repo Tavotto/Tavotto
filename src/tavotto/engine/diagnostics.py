@@ -52,8 +52,11 @@ WORKER_LOG_SCAN_BYTES = 4 * 1024 * 1024
 
 #: 诊断包整体格式的版本。**读包的人不该靠 Tavotto 版本号去猜 schema**
 #: ——manifest.json 自报这个数。1 = 只有 report/app.log/config 的那一版；
-#: 2 = 增加了 frontend-state.json / interaction-trace.jsonl / manifest.json。
-BUNDLE_SCHEMA_VERSION = 2
+#: 2 = 增加了 frontend-state.json / interaction-trace.jsonl / manifest.json；
+#: 3 = report.json 的 project 段换形（#524）：去掉 `name`，`figures_dir` 只剩 `<project:哈希>`，
+#: 新增 `location`，导出 / 备份 / 文档目录按段哈希——schema 2 的读法认不出这些，必须升号（#524 评审）。
+#: 与 `web/src/diagnostics/types.ts` 的同名常量是严格同源对。
+BUNDLE_SCHEMA_VERSION = 3
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -1196,10 +1199,11 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- project names and where they live (replaced by <project:hash>), email addresses,\n"
         "  cloud-storage account names\n"
         "\n"
-        "仍会包含 / Still included: 当前打开的项目**文件夹名**（report.json 的\n"
-        "project 段，排障需要它判断目录权限与注册表冲突）。其余项目的清单不出门。\n"
-        "The folder name of the currently open project is included; the list of\n"
-        "your other projects is not.\n"
+        "当前打开的项目在 report.json 的 project 段只剩 <project:哈希> 记号与三个是 / 否：\n"
+        "在不在云盘同步目录里、路径有没有非 ASCII 字符、有没有空格。其余项目只留条数。\n"
+        "The currently open project appears in report.json only as <project:hash> plus\n"
+        "three yes/no facts: whether it is in a cloud-sync folder, whether its path has\n"
+        "non-ASCII characters, and whether it has spaces. Other projects are only counted.\n"
         "\n"
         "文件名、路径与图内文字在诊断包里一律换成不可逆的短哈希（doc:… / "
         "panel:… / file:… / var:…），\n"

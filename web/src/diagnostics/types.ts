@@ -17,8 +17,11 @@
  * 就多一个「新字段忘了登记」的地方）。
  */
 
-/** 诊断包整体的 schema（老三件 + 新三件那一版是 2） */
-export const BUNDLE_SCHEMA_VERSION = 2
+/**
+ * 诊断包整体的 schema（老三件 + 新三件那一版是 2；3 = report.json 的 project 段换形，#524）。
+ * 与 `engine/diagnostics.py` 的同名常量是严格同源对。
+ */
+export const BUNDLE_SCHEMA_VERSION = 3
 /**
  * frontend-state.json 的 schema。
  *
