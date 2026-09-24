@@ -623,3 +623,21 @@ def test_engine_python_with_a_different_python_is_an_argument_error(unpacked, pr
     )
     assert proc.returncode == 2, proc.stderr
     assert "bad_args" in proc.stderr
+
+
+def test_the_windows_hand_off_keeps_paths_with_spaces_whole(unpacked, monkeypatch):
+    """Windows 上 `os.execv` 不给参数加引号，带空格的包路径会被拆开（#559 Windows CI：
+    引擎解释器去打开 `…\\发行`、零协议帧）。那里必须改用子进程、参数按列表传。"""
+    launcher = _load(unpacked / "mcp" / "server.py", name="_tavotto_launcher_handoff")
+    calls: list = []
+    monkeypatch.setattr(launcher, "_IS_WINDOWS", True)
+    monkeypatch.setattr(launcher.subprocess, "call", lambda args: calls.append(args) or 7)
+
+    def _no_execv(*_a):
+        raise AssertionError("Windows 上不许用 os.execv 交棒")
+
+    monkeypatch.setattr(launcher.os, "execv", _no_execv)
+    rc = launcher._hand_off(r"C:\Py 3\python.exe", ["--x"])
+    assert rc == 7  # 子进程的退出码原样带回
+    assert calls == [[r"C:\Py 3\python.exe", str(unpacked / "mcp" / "server.py"), "--x"]]
+    assert " " in calls[0][1]  # 路径里确实有空格，而它仍是一个完整的参数
