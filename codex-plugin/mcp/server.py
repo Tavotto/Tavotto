@@ -730,8 +730,7 @@ def _acquire_provision_lock() -> "str | None":
     插件升级后同时开的几个会话会几乎同时走到这里；「先看在不在、再 open 写」两步之间
     两个进程都能看到「不在」，然后各起一个 pip 改同一个 venv——并发 pip 能把环境改坏，
     正好造出这条路要修的零工具状态（#548 Codex 评审 P2）。独占创建只有一个赢家。
-    过期锁（上一次死掉的）的接管见 `_take_over_stale_lock`：不能「量完岁数再按路径删」，
-    两步之间别的会话可能已经接管并建了新锁，按路径删会删掉**它的**新锁。
+    过期锁（上一次死掉的）走 `_take_over_stale_lock`，锁路径全程不空。
     """
     lock = _provision_lock_path()
     token = f"{os.getpid()}-{os.urandom(8).hex()}"
@@ -739,9 +738,12 @@ def _acquire_provision_lock() -> "str | None":
         try:
             fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
-            if not _take_over_stale_lock(lock, token):
+            seen = _read_lock(lock)
+            if seen is None:
+                continue  # 刚被持有者释放：再独占创建一次
+            if time.time() - seen[1] < _PROVISION_LOCK_MAX_AGE:
                 return None
-            continue
+            return _take_over_stale_lock(lock, seen, token)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(token)
         return token
@@ -757,50 +759,56 @@ def _read_lock(path: str) -> "tuple[str, float] | None":
         return None
 
 
-def _take_over_stale_lock(lock: str, token: str) -> bool:
-    """锁在但可能过期：True = 过期锁已清掉（或已不在），可以再独占创建一次。
+def _take_over_stale_lock(lock: str, seen: "tuple[str, float]", token: str) -> "str | None":
+    """接管**这一把**过期锁，成功回令牌；别人已在接管 / 锁已换代回 None。
 
-    所有权安全（#548 Codex 评审 P2）：先记下看到的旧锁（内容 + mtime），过期才动手；
-    动手是把锁**原子改名**成只属于自己的私有名，再核对拿到手的还是不是刚才量过的那把
-    （内容相同且仍过期）。是 → 删掉它，回去独占创建；不是 → 两步之间别人已接管并建了
-    新锁，被我们改名拿走的是**它的**新锁：原样挂回去（`os.link` 不覆盖），放弃这一轮。
+    所有权安全（#548 Codex 评审 P2，两轮）：不能「量完岁数按路径删」（会删掉别人刚建的
+    新锁），也不能先把锁挪走再核对（挪走的那一刻路径是空的，第三个会话能独占创建成功）。
+    这里锁路径**全程被占着**：
+    1. 用 `O_EXCL` 建一个**绑定到这把旧锁**（内容 + mtime）的一次性标记——同一把旧锁
+       只有一个接管者；标记留着不删，迟到的会话量到的还是这把旧锁时也建不成。
+    2. 再读一次锁，确认还是量过的那把（期间换代了就放弃）。
+    3. `os.replace` 原子地把自己的令牌换上去：路径从旧锁直接变成新锁，中间没有空档。
     """
-    seen = _read_lock(lock)
-    if seen is None:
-        return True  # 刚被持有者释放：再抢一次
-    if time.time() - seen[1] < _PROVISION_LOCK_MAX_AGE:
-        return False
-    private = f"{lock}.stale-{token}"
+    directory = os.path.dirname(lock)
+    _sweep_takeover_markers(directory)
+    ident = "".join(c for c in seen[0] if c.isalnum() or c == "-")[:64]
+    marker = f"{lock}.takeover-{ident}-{int(seen[1])}"
     try:
-        os.rename(lock, private)
-    except FileNotFoundError:
-        return True  # 别人先接管了旧锁：独占创建会裁出唯一赢家
+        os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644))
     except OSError:
-        return False
-    got = _read_lock(private)
-    if got is not None and got[0] == seen[0] and time.time() - got[1] >= _PROVISION_LOCK_MAX_AGE:
+        return None  # 这把旧锁已有人在接管
+    if _read_lock(lock) != seen:
+        return None
+    staged = f"{lock}.new-{token}"
+    try:
+        with open(staged, "w", encoding="utf-8") as fh:
+            fh.write(token)
+        os.replace(staged, lock)
+    except OSError:
         try:
-            os.remove(private)
+            os.remove(staged)
         except OSError:
             pass
-        return True
+        return None
+    return token
+
+
+def _sweep_takeover_markers(directory: str) -> None:
+    """接管标记只需活过「量到旧锁 → 建标记」那一瞬；远超锁寿命的才清，尽力而为。"""
     try:
-        os.link(private, lock)  # 挂回别人的新锁；路径上已有锁就不覆盖
-    except FileExistsError:
-        pass  # 空窗里又有人建了锁：锁仍在，放弃即可
+        names = os.listdir(directory)
     except OSError:
-        # 文件系统不支持硬链接：退回改名挂回（空窗外再核一次路径是空的）
-        try:
-            if not os.path.exists(lock):
-                os.rename(private, lock)
-                return False
-        except OSError:
-            pass
-    try:
-        os.remove(private)
-    except OSError:
-        pass
-    return False
+        return
+    cutoff = time.time() - 2 * _PROVISION_LOCK_MAX_AGE
+    for name in names:
+        if name.startswith("provision.lock.takeover-"):
+            path = os.path.join(directory, name)
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+            except OSError:
+                pass
 
 
 def _release_provision_lock(token: "str | None") -> None:

@@ -818,33 +818,56 @@ def _stale_lock(content: str = "dead-token") -> Path:
     return lock
 
 
-def test_stale_takeover_never_deletes_a_lock_someone_else_just_took(
+def test_stale_takeover_never_replaces_a_lock_someone_else_just_took(
     tmp_path, fake_popen, monkeypatch
 ):
     """#548 评审 P2：量完「过期」到动手之间，另一个会话已接管并建了**新锁**。
 
-    主语是**那把新锁还在不在、起了几个 pip**：按路径删会把它的新锁删掉，然后我们
-    也起一个 pip——两个 pip 改同一个 venv。这里在我们动手的前一刻把锁换成新鲜的。"""
+    主语是**那把新锁还在不在、起了几个 pip**：按路径删 / 盲目覆盖都会把它的新锁弄没，
+    然后我们也起一个 pip。这里在我们核对前一刻把锁换成新鲜的。"""
     lock = _stale_lock()
-    real_rename = os.rename
-    swapped = []
+    real_read = launcher._read_lock
+    calls = []
 
-    def racing_rename(src, dst):
-        if not swapped and os.fspath(src) == str(lock):
-            swapped.append(True)
-            os.remove(lock)  # 别的会话接管了旧锁……
-            lock.write_text("winner-token", encoding="utf-8")  # ……并建了自己的新锁
-        return real_rename(src, dst)
+    def racing_read(path):
+        calls.append(path)
+        if len(calls) == 2:  # 第二次读 = 接管前的核对：此刻别人已换上新锁
+            lock.write_text("winner-token", encoding="utf-8")
+        return real_read(path)
 
-    monkeypatch.setattr(launcher.os, "rename", racing_rename)
+    monkeypatch.setattr(launcher, "_read_lock", racing_read)
     out = launcher.kick_background_provision()
-    assert swapped, "竞态没被模拟出来"
+    assert len(calls) >= 2, "竞态没被模拟出来"
     assert out["started"] is False and out["reason"] == "already_running"
     assert fake_popen == []
     assert lock.read_text(encoding="utf-8") == "winner-token", "别人刚建的新锁被删/换掉了"
-    assert sorted(p.name for p in lock.parent.iterdir() if "provision.lock" in p.name) == [
-        lock.name
-    ], "私有改名文件没清掉"
+    assert not [p for p in lock.parent.iterdir() if ".new-" in p.name], "暂存文件没清掉"
+
+
+def test_two_sessions_verifying_the_same_stale_lock_start_only_one_pip(
+    tmp_path, fake_popen, monkeypatch
+):
+    """#548 评审 P2（第二轮）：两个会话都量到同一把过期锁、都核对通过，然后先后换锁——
+    没有「一把旧锁只许一个接管者」的裁决，两个都会起 pip；第三个会话此时也不许
+    趁锁路径空着抢到（路径全程不空）。这里在第一个会话换锁前一刻插进另一个完整的接管。"""
+    lock = _stale_lock()
+    real_replace = os.replace
+    nested = []
+
+    def racing_replace(src, dst):
+        if not nested and os.fspath(dst) == str(lock):
+            nested.append(launcher.kick_background_provision())  # 同时接管的另一个会话
+            assert lock.exists(), "接管途中锁路径空了：第三个会话能独占创建成功"
+            nested.append(launcher.kick_background_provision())  # 第三个会话
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(launcher.os, "replace", racing_replace)
+    first = launcher.kick_background_provision()
+    assert len(nested) == 2, "竞态没被模拟出来"
+    assert sum(r["started"] for r in [first, *nested]) == 1, [first, *nested]
+    assert len(fake_popen) == 1
+    token = fake_popen[0]["env"][launcher._PROVISION_LOCK_TOKEN_ENV]
+    assert lock.read_text(encoding="utf-8") == token
 
 
 def test_concurrent_startups_over_a_stale_lock_spawn_exactly_one_provision(tmp_path, fake_popen):

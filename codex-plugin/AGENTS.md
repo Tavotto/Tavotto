@@ -255,8 +255,9 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   另装 pipx），并且 `main()` 在降级前 **spawn 一个脱离本进程的 `--provision`**（不在
   启动路径上同步跑 pip：`startup_timeout_sec` 只有 30 s）。锁 `mcp-runtime/provision.lock`
   用 `O_CREAT|O_EXCL` **原子地**拿（几个会话同时起只有一个赢家），超过 20 分钟视为上一次已死；
-  接管过期锁**不许按路径删**（量完岁数到删之间别人可能已建了新锁）：原子改名成私有名，
-  核对还是量过的那把才删，否则用 `os.link` 原样挂回；
+  接管过期锁时锁路径**全程不空**：不许按路径删（会删掉别人刚建的新锁），也不许先挪走
+  再核对（空档里第三个会话能独占创建）——先 `O_EXCL` 建绑定这把旧锁的一次性标记
+  （同一把旧锁只一个接管者），再核对，再 `os.replace` 原子换上自己的令牌；
   后台 `--provision` 凭环境里的令牌只删**自己那把**锁（手动跑的不删）；
   `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 关掉。本次会话仍是降级、payload 带 `auto_provision`，
   文案说「后台在装、装完新开会话」。**只管「在、却 import 不过」**：能 import 但版本旧的
