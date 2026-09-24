@@ -22,9 +22,17 @@ matplotlib 只把第一个 artist 放进 `legend_handles`，条目模型的「�
 本进程不 import matplotlib：worker 经 `pool.one_shot()` 起在科学栈解释器里。
 """
 
+import sys
+from pathlib import Path
+
 import pytest
 
 from tavotto.engine import pool
+
+SUPPORT = Path(__file__).resolve().parent / "support"
+if str(SUPPORT) not in sys.path:
+    sys.path.insert(0, str(SUPPORT))
+import pdfread  # noqa: E402
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -270,3 +278,53 @@ def test_detaching_a_following_multi_artist_entry_keeps_the_whole_cell(tmp_path_
         assert detached == original
     finally:
         pool.discard(w)
+
+
+def _legend_pixels(worker, stem, patches, tag):
+    """预览 PNG 里图例框那一块的像素（按 manifest 的图例 bbox：图幅分数、y 向下）。"""
+    man = worker.override(stem, list(patches))["manifest"]
+    x, y, bw, bh = next(e for e in man["elements"] if e["gid"] == LEG)["bbox"]
+    w, h, n, px = pdfread.decode_png_any(
+        worker.preview_png(stem, list(patches), 380, tag).read_bytes()
+    )
+    x0, y0, x1, y1 = int(x * w), int(y * h), int((x + bw) * w), int((y + bh) * h)
+    return b"".join(px[(r * w + x0) * n : (r * w + x1) * n] for r in range(y0, y1))
+
+
+def test_detaching_after_recolouring_the_source_recolours_the_whole_cell(tmp_path_factory):
+    """先经源改色、再断开（前端把此刻的颜色写成 handle_color）：图例那一格**整格**是新颜色，
+    与脚本一开始就画成这个颜色时的那一格逐像素相同。只改第一个 artist 的话，横杠与中线退回
+    脚本原色（#544 评审）。断开后仍给颜色控件（整格同一种颜色，改色有意义）。
+
+    期望值取「脚本原本就是红色」而不是「跟随时的样子」：误差棒的 `color` 不改横杠（横杠是
+    marker，颜色在 marker 边色上）——跟随时图例如实照抄了这一点，那是另一个缺陷，不是本条的主语。"""
+    figs = tmp_path_factory.mktemp("legend-errorbar-recolour")
+    (figs / ERR_SCRIPT).write_text(ERR_LIBRARY, encoding="utf-8")
+    red_script = "fig_legend_errorbar_red.py"
+    (figs / red_script).write_text(
+        ERR_LIBRARY.replace("#1f77b4", "#d62728").replace("ErrDetach.pdf", "ErrRed.pdf"),
+        encoding="utf-8",
+    )
+    entry = f"{LEG}.texts_0"
+    w = pool.one_shot(ERR_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        src = _entry(w.override(ERR_STEM, [])["manifest"], entry)["source_gid"]
+        detach = [
+            {"gid": src, "prop": "color", "value": "#d62728"},
+            {"gid": entry, "prop": "binding", "value": "custom"},
+            {"gid": entry, "prop": "handle_color", "value": "#d62728"},
+        ]
+        resp = w.override(ERR_STEM, detach)
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        assert "handle_color" in _fields(resp["manifest"], entry)
+        detached = _legend_pixels(w, ERR_STEM, detach, "err-detached")
+    finally:
+        pool.discard(w)
+    r = pool.one_shot(red_script, str(figs), ENTRY)
+    r.ensure_built()
+    try:
+        red = _legend_pixels(r, "ErrRed", [], "err-red")
+    finally:
+        pool.discard(r)
+    assert detached == red

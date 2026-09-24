@@ -2873,8 +2873,12 @@ def _legend_entry_fields(t, state: FigState, gid: str) -> list[dict]:
                 "group": "图例项",
             }
         )
-    # 脚本自定义 handler 画的整格（色带等）原样定格：一格里没有「那一条」示意线的样式可改
-    props = () if model.is_frozen(j) else legend_handle_props(h)
+    # 定格的整格（色带、断开的误差棒…）没有「那一条」示意线的样式可改；整格同一种颜色的
+    # （误差棒）仍给颜色，改色落到整格每个 artist 上（legendmodel._entry_handle_write）
+    if model.is_frozen(j):
+        props = ("handle_color",) if model.frozen_color_uniform(j) else ()
+    else:
+        props = legend_handle_props(h)
     if "handle_color" in props:
         fields.append(
             {

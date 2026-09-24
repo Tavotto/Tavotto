@@ -374,6 +374,20 @@ class LegendEntries:
         跟随中的项从源派生，照旧（有源的误差棒就是这样）。"""
         return self.frozen[j] is not None and self.effective_binding(j) != "follow_source"
 
+    def frozen_color_uniform(self, j: int) -> bool:
+        """定格的整格在脚本原样里是不是**同一种颜色**（误差棒是，色带不是）。是的话「示意线
+        颜色」有意义：改色落到整格每个 artist 上。判据取脚本原样，不取此刻（此刻可能已改过色）。"""
+        f = self.frozen[j]
+        if f is None:
+            return False
+        colors: set = set()
+        for a in f.artists:
+            c = _visible_colors(a)
+            if c is None:
+                return False
+            colors |= c
+        return len(colors) == 1
+
     def base_of(self, j: int):
         """重建 / 同步时这一项该从谁派生：跟随的从源，定格的原样复刻，其余从脚本原样快照。"""
         if self.effective_binding(j) == "follow_source":
@@ -989,7 +1003,65 @@ def _entry_handle_write(t: Text, prop: str, v) -> None:
         # 第一条 handle_* override 落下的这一刻它脱开跟随。`applied` 要到
         # setter 返回后才登记，所以这里还看得见「它刚才还在跟随」
         _detach_entry(model, j)
+    if prop == "handle_color" and model.frozen_color_uniform(j):
+        # 整格的（误差棒：竖线组 + 横杠 + 中线）：颜色落到这一格的每一个 artist 上，
+        # 只改第一个的话其余几条退回脚本原色（#544 评审：先随源改色再断开）
+        k = model.display_index(j)
+        boxes = _entry_boxes(model.leg) if k is not None else []
+        if k is not None and k < len(boxes):
+            for a in boxes[k][0].get_children():
+                _recolor_cell_artist(a, v)
+            return
     _handle_write(model.handle_of(j), prop, v)
+
+
+def _recolor_cell_artist(a, v) -> None:
+    """整格改色里的一个 artist：线 / 线组改线色（marker 边色跟着走，实心 marker 的面色也是），
+    面片改看得见的那一面。"""
+    if isinstance(a, Line2D):
+        a.set_color(v)
+        a.set_markeredgecolor(v)
+        if str(a.get_markerfacecolor()).lower() != "none":
+            a.set_markerfacecolor(v)
+    elif isinstance(a, LineCollection):
+        a.set_color(v)
+    elif isinstance(a, Patch):
+        if a.get_fill():
+            a.set_facecolor(v)
+        if a.get_edgecolor()[3] > 0:
+            a.set_edgecolor(v)
+    elif isinstance(a, Collection):
+        a.set_facecolor(v)
+
+
+def _visible_colors(a) -> set:
+    """一个 artist 画出来看得见的颜色（完全透明的不算）；认不出的类型回 None 当「不一致」。"""
+    out: set = set()
+
+    def add(c) -> None:
+        rgba = _rgba(c)
+        if isinstance(rgba, tuple) and rgba[3] > 0:
+            out.add(rgba[:3])
+
+    if isinstance(a, Line2D):
+        add(a.get_color())
+        if a.get_marker() not in (None, "None", "", " "):
+            add(a.get_markeredgecolor())
+            if str(a.get_markerfacecolor()).lower() != "none":
+                add(a.get_markerfacecolor())
+    elif isinstance(a, LineCollection):
+        for c in a.get_colors():
+            add(c)
+    elif isinstance(a, Patch):
+        if a.get_fill():
+            add(a.get_facecolor())
+        add(a.get_edgecolor())
+    elif isinstance(a, Collection):
+        for c in list(a.get_facecolor()) + list(a.get_edgecolor()):
+            add(c)
+    else:
+        return None
+    return out
 
 
 def _mk_entry_handle_handler(prop: str) -> tuple:
