@@ -5,7 +5,8 @@
  *   2. 箭头按端点判：落在框里的那一端跟着走，两端都在则整根平移；容差外的不动；
  *   3. 每件内容写它自己的 override（pos_frac / endpoints_frac），全部进同一次 commit
  *      ——一条撤销、一次权威渲染；
- *   4. 按住 ⌘ / Ctrl = 只拖它自己（拖动途中按下也算，以最后一帧为准）；
+ *   4. 按住 ⌘ / Ctrl = 只拖它自己；提交认**松手那个 pointerup 上的修饰键**（停住不动时
+ *      按下 / 松开再立刻松手，中间没有 pointermove），预览随按键即时切换；
  *   5. 预览：整体平移的内容 SVG 跟手，只有一端跟随的箭头画虚线；取消一条都不落；
  *   6. 锁定的、隐藏的不动；文字若已被挪过而渲染没回来，基准取文档里那条 override；
  *   7. 多选整组拖动时选区里的形状同样带着内容走。
@@ -301,7 +302,7 @@ describe('按住 ⌘ / Ctrl = 只拖它自己', () => {
     expect(livePanel().overrides.map((o) => o.gid)).toEqual([boxP.gid])
   })
 
-  it('Ctrl 同义；途中松开以最后一帧为准（又带上了）', async () => {
+  it('Ctrl 同义；途中松开又带上了', async () => {
     await setup()
     startElementDrag(down(0, 0), livePanel(), boxP, layout)
     dragTo(40, 20, { ctrlKey: true })
@@ -311,6 +312,71 @@ describe('按住 ⌘ / Ctrl = 只拖它自己', () => {
     flushPreviewFrame()
     fire('pointerup', 41, 20)
     expect(overrideOf(label.gid, 'pos_frac')![0]).toBeCloseTo(label.anchor![0] + dfxOf(41), 4)
+  })
+})
+
+describe('修饰键以松手那一下为准（停住不动时按键，中间没有 pointermove）', () => {
+  it('拖着不按 → 停住按下 ⌘ → 立刻松手：只写框自己', async () => {
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), boxP, layout)
+    dragTo(40, 20)
+    fire('pointerup', 40, 20, { metaKey: true })
+    expect(livePanel().overrides.map((o) => o.gid)).toEqual([boxP.gid])
+  })
+
+  it('按着 ⌘ 拖 → 停住松开 ⌘ → 立刻松手：带上内容', async () => {
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), boxP, layout)
+    dragTo(40, 20, { metaKey: true })
+    fire('pointerup', 40, 20)
+    expect(overrideOf(label.gid, 'pos_frac')![0]).toBeCloseTo(label.anchor![0] + dfxOf(40), 4)
+    expect(overrideOf(oneEnd.gid, 'endpoints_frac')).toBeDefined()
+  })
+
+  it('整组拖动同样认松手那一下：Ctrl 松手 = 只动选区', async () => {
+    await setup()
+    const entries = alignEntries(livePanel(), manifest, [boxP.gid, boxR.gid])
+    startElementGroupMove(down(0, 0), livePanel(), entries, layout)
+    dragTo(40, 20)
+    fire('pointerup', 40, 20, { ctrlKey: true })
+    expect(livePanel().overrides.map((o) => o.gid).sort()).toEqual([boxP.gid, boxR.gid].sort())
+  })
+
+  it('整组拖动：按着 ⌘ 拖、松手时已松开 = 带上内容', async () => {
+    await setup()
+    const entries = alignEntries(livePanel(), manifest, [boxP.gid, boxR.gid])
+    startElementGroupMove(down(0, 0), livePanel(), entries, layout)
+    dragTo(40, 20, { metaKey: true })
+    fire('pointerup', 40, 20)
+    expect(overrideOf(label.gid, 'pos_frac')).toBeDefined()
+  })
+
+  it('停住按下 / 松开 ⌘：预览即时切换（与松手提交的一致）', async () => {
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), boxP, layout)
+    dragTo(40, 20)
+    expect(tf(label.gid)).not.toBe('translate(0,0)')
+    expect(useInteractionStore.getState().carriedArrows).not.toBeNull()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Meta', metaKey: true }))
+    flushPreviewFrame()
+    expect(tf(label.gid)).toBe('translate(0,0)')
+    expect(useInteractionStore.getState().carriedArrows).toBeNull()
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta', metaKey: false }))
+    flushPreviewFrame()
+    expect(tf(label.gid)).not.toBe('translate(0,0)')
+    expect(useInteractionStore.getState().carriedArrows).not.toBeNull()
+    fire('pointerup', 40, 20)
+  })
+
+  it('收尾后按键监听已解绑：再松一次 ⌘ 不会把虚线预览画回来', async () => {
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), boxP, layout)
+    dragTo(40, 20)
+    fire('pointerup', 40, 20)
+    // 监听若还挂着，「松开 ⌘」= 带内容 → 重新写出单端箭头的虚线
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta', metaKey: false }))
+    flushPreviewFrame()
+    expect(useInteractionStore.getState().carriedArrows).toBeNull()
   })
 })
 

@@ -1218,9 +1218,34 @@ function noteDragCommit(
 /**
  * 拖形状时「带着内容走」的开关：**按住 ⌘ / Ctrl = 只拖它自己**。与拖动时临时关吸附
  * 是同一个修饰键、同一种语义（按住时关掉那个聪明的默认行为），⇧ 锁向与 ⌥ 轮换各有
- * 所属；拖动途中随时按下 / 松开都生效，松手时以最后一帧为准。
+ * 所属；拖动途中随时按下 / 松开都生效。**提交按松手那个 pointerup 上的修饰键**
+ * （#553 评审）：停住不动时按下 / 松开 ⌘ 然后立刻松手，中间不一定有 pointermove，
+ * 拿最后一帧 move 的状态就会提交错的跟随集合。
  */
 const carriesContents = (ev: { metaKey: boolean; ctrlKey: boolean }) => !ev.metaKey && !ev.ctrlKey
+
+/**
+ * 停住不动时按下 / 松开 ⌘ / Ctrl：没有 pointermove，预览也得跟着换——否则画面上是
+ * 「带着走」、松手提交的却是「只拖自己」（提交认的是 pointerup 上的修饰键）。
+ * 回一个解绑函数，收尾时调用。
+ */
+function watchCarryKeys(
+  items: CarriedItem[],
+  delta: () => [number, number],
+): () => void {
+  if (!items.length) return () => {}
+  const onKey = (ev: KeyboardEvent) => {
+    if (ev.key !== 'Meta' && ev.key !== 'Control') return
+    const [dfx, dfy] = delta()
+    previewCarried(items, dfx, dfy, carriesContents(ev))
+  }
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKey)
+  return () => {
+    window.removeEventListener('keydown', onKey)
+    window.removeEventListener('keyup', onKey)
+  }
+}
 
 /**
  * 被带着走的内容的乐观预览：整体平移的（文字、形状、两端都在框里的箭头）平移 SVG 组；
@@ -1271,19 +1296,19 @@ export function startElementDrag(
   // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove，若重读松手坐标，
   // shift 先于抬指松开时落点会与预览差一口气
   let last: [number, number] = [0, 0]
-  let carry = true
+  const unwatchKeys = watchCarryKeys(carried, () => last)
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       let [dfx, dfy] = toContent(dxPx, dyPx)
       if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
       last = [dfx, dfy]
-      carry = carriesContents(ev)
       previewTransform(element.gid, dfx, dfy)
-      if (carried.length) previewCarried(carried, dfx, dfy, carry)
+      if (carried.length) previewCarried(carried, dfx, dfy, carriesContents(ev))
       interaction().setGidDrag({ gid: element.gid, dfx, dfy })
     },
-    onEnd: (moved, _ev, end) => {
+    onEnd: (moved, ev, end) => {
+      unwatchKeys()
       interaction().end()
       if (!moved || end.cancelled) {
         cancelElementPreview()
@@ -1297,7 +1322,8 @@ export function startElementDrag(
       }
       const [dfx, dfy] = last
       const own = { gid: element.gid, prop: dragProp, value: [anchor[0] + dfx, anchor[1] + dfy] }
-      const followers = carry ? carried.map((c) => c.shift(dfx, dfy)) : []
+      // 跟随集合按松手那一下的修饰键定（见 carriesContents）
+      const followers = carriesContents(ev) ? carried.map((c) => c.shift(dfx, dfy)) : []
       // 带着内容走时一次 setOverrides = 一条撤销 = 一次权威渲染
       if (followers.length)
         setOverrides(panel.id, hist('moveElement', { label: element.label }), [own, ...followers], true)
@@ -1581,23 +1607,23 @@ export function startElementGroupMove(
 
   // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove（见 startArrowDrag）
   let last: [number, number] = [0, 0]
-  let carry = true
+  const unwatchKeys = watchCarryKeys(carried, () => last)
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       let [dfx, dfy] = toContent(dxPx, dyPx)
       if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
       last = [dfx, dfy]
-      carry = carriesContents(ev)
       const boxes = shifted(dfx, dfy)
       interaction().setElementPreview({
         boxes: Object.fromEntries(entries.map((en, i) => [en.key, boxes[i]])),
         group: unionBox(boxes) ?? undefined,
       })
       for (const en of entries) previewTransform(en.key, dfx, dfy)
-      if (carried.length) previewCarried(carried, dfx, dfy, carry)
+      if (carried.length) previewCarried(carried, dfx, dfy, carriesContents(ev))
     },
-    onEnd: (moved, _ev, end) => {
+    onEnd: (moved, ev, end) => {
+      unwatchKeys()
       interaction().end()
       if (!moved || end.cancelled) {
         cancelElementPreview()
@@ -1606,7 +1632,7 @@ export function startElementGroupMove(
       const boxes = shifted(last[0], last[1])
       setOverrides(panel.id, hist('moveElements', { count: entries.length }), [
         ...entries.map((en, i) => en.write(boxes[i])),
-        ...(carry ? carried.map((c) => c.shift(last[0], last[1])) : []),
+        ...(carriesContents(ev) ? carried.map((c) => c.shift(last[0], last[1])) : []),
       ])
       commitElementPreview(panel.id)
     },
