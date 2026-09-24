@@ -1,0 +1,25 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh PATH-07 tests/test_first_open_paths_d1.py::test_path07_symlinks_inside_are_read_and_escaping_ones_are_not_followed_by_the_fallback tests/test_databinding.py::test_a_symlink_inside_the_project_pointing_outside_is_outside tests/test_compat_capture_parity.py::TestRelativeFileIO::test_reads_outside_the_project_are_not_redirected tests/test_input_observer_paths.py -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path07_symlinks_inside_are_read_and_escaping_ones_are_not_followed_by_the_fallback tests/test_databinding.py::test_a_symlink_inside_the_project_pointing_outside_is_outside tests/test_compat_capture_parity.py::TestRelativeFileIO::test_reads_outside_the_project_are_not_redirected tests/test_input_observer_paths.py -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-PATH-07
+# time: 2026-09-24T19:11:05Z
+# sha: 8b69647c607b766d78f107b77af9e72f9dbb2b0f  (worktree dirty files: 1)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-4
+configfile: pytest.ini
+collecting ... collected 12 items
+
+tests/test_first_open_paths_d1.py::test_path07_symlinks_inside_are_read_and_escaping_ones_are_not_followed_by_the_fallback PASSED [  8%]
+tests/test_databinding.py::test_a_symlink_inside_the_project_pointing_outside_is_outside PASSED [ 16%]
+tests/test_compat_capture_parity.py::TestRelativeFileIO::test_reads_outside_the_project_are_not_redirected PASSED [ 25%]
+tests/test_input_observer_paths.py::test_within_on_windows_layouts[C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-0\\proj\\labhelp.py-C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-0\\proj-True] PASSED [ 33%]
+tests/test_input_observer_paths.py::test_within_on_windows_layouts[C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-0\\proj-C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-0\\proj-True] PASSED [ 41%]
+tests/test_input_observer_paths.py::test_within_on_windows_layouts[C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-0\\proj\\labhelp.py-D:\\a\\Tavotto\\Tavotto\\src\\tavotto\\engine-False] PASSED [ 50%]
+tests/test_input_observer_paths.py::test_within_on_windows_layouts[c:\\users\\RUNNERADMIN\\AppData\\Local\\Temp\\pytest-0\\proj\\x.py-C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-0\\proj-True] PASSED [ 58%]
+tests/test_input_observer_paths.py::test_within_on_windows_layouts[C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-0\\proj-evil\\x.py-C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-0\\proj-False] PASSED [ 66%]
+tests/test_input_observer_paths.py::test_within_on_windows_layouts[C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-0\\proj\\sub\\y.py-C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-0\\proj\\-True] PASSED [ 75%]
+tests/test_input_observer_paths.py::test_within_on_posix_layouts PASSED  [ 83%]
+tests/test_input_observer_paths.py::test_local_modules_survive_an_exclude_dir_on_another_drive PASSED [ 91%]
+tests/test_input_observer_paths.py::test_observer_notes_a_file_inside_the_root_without_commonpath PASSED [100%]
+
+============================= 12 passed in 17.98s ==============================
+# exit_code: 0

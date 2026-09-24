@@ -1,0 +1,30 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh PATH-02 tests/test_first_open_paths_d1.py::test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart tests/test_foundation_first_open.py::test_fo02_scripts_and_data_split_asks_once_then_runs_at_the_project_root tests/test_first_open_workdir.py tests/test_databinding.py::test_project_root_when_only_the_root_has_the_data -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart tests/test_foundation_first_open.py::test_fo02_scripts_and_data_split_asks_once_then_runs_at_the_project_root tests/test_first_open_workdir.py tests/test_databinding.py::test_project_root_when_only_the_root_has_the_data -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-PATH-02
+# time: 2026-09-24T19:02:58Z
+# sha: 8b69647c607b766d78f107b77af9e72f9dbb2b0f  (worktree dirty files: 0)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-4
+configfile: pytest.ini
+collecting ... collected 17 items
+
+tests/test_first_open_paths_d1.py::test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart PASSED [  5%]
+tests/test_foundation_first_open.py::test_fo02_scripts_and_data_split_asks_once_then_runs_at_the_project_root PASSED [ 11%]
+tests/test_first_open_workdir.py::test_undecided_root_only_evidence_asks_with_a_recommendation PASSED [ 17%]
+tests/test_first_open_workdir.py::test_undecided_ambiguous_evidence_asks_without_a_recommendation PASSED [ 23%]
+tests/test_first_open_workdir.py::test_undecided_but_default_suffices_or_evidence_is_silent_does_not_ask[import matplotlib.pyplot as plt\nopen('x.csv').read()\nfig, ax = plt.subplots()\nax.plot([1])\nfig.savefig('fig.pdf')\n-files0] PASSED [ 29%]
+tests/test_first_open_workdir.py::test_undecided_but_default_suffices_or_evidence_is_silent_does_not_ask[import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1])\nfig.savefig('fig.pdf')\n-files1] PASSED [ 35%]
+tests/test_first_open_workdir.py::test_undecided_but_default_suffices_or_evidence_is_silent_does_not_ask[import matplotlib.pyplot as plt\nopen('data/x.csv').read()\nfig, ax = plt.subplots()\nax.plot([1])\nfig.savefig('fig.pdf')\n-files2] PASSED [ 41%]
+tests/test_first_open_workdir.py::test_a_decided_project_is_never_asked_again_whatever_the_evidence[sandbox] PASSED [ 47%]
+tests/test_first_open_workdir.py::test_a_decided_project_is_never_asked_again_whatever_the_evidence[project] PASSED [ 52%]
+tests/test_first_open_workdir.py::test_a_decided_project_is_never_asked_again_whatever_the_evidence[project_root] PASSED [ 58%]
+tests/test_first_open_workdir.py::test_forgetting_the_decision_reopens_the_question PASSED [ 64%]
+tests/test_first_open_workdir.py::test_the_decision_is_project_scoped PASSED [ 70%]
+tests/test_first_open_workdir.py::test_pool_raises_the_structured_confirmation_before_spawning_anything PASSED [ 76%]
+tests/test_first_open_workdir.py::test_project_root_mode_is_a_third_cwd_mode_and_project_keeps_its_meaning PASSED [ 82%]
+tests/test_first_open_workdir.py::test_the_workdir_endpoint_accepts_the_third_mode PASSED [ 88%]
+tests/test_first_open_workdir.py::test_project_root_mode_really_runs_at_the_project_root_with_cjk_and_spaces PASSED [ 94%]
+tests/test_databinding.py::test_project_root_when_only_the_root_has_the_data PASSED [100%]
+
+============================= 17 passed in 32.64s ==============================
+# exit_code: 0

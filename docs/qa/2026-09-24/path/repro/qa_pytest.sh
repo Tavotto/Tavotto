@@ -17,7 +17,7 @@ export TAVOTTO_NO_TELEMETRY=1
 SCRATCH="${QA_SCRATCH:-/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path}"
 BT=()
 if [ "$LOG" != "-" ]; then BT=(--basetemp="$SCRATCH/pytest-$LOG"); fi
-CMD=("$PY" -m pytest "$@" -p no:cacheprovider -rs "${BT[@]}")
+CMD=("$PY" -m pytest "$@" -p no:cacheprovider -rs ${BT[@]+"${BT[@]}"})
 if [ "$LOG" = "-" ]; then
   "${CMD[@]}"
   exit $?
@@ -26,7 +26,7 @@ OUT="$ROOT/docs/qa/2026-09-24/path/logs/$LOG.log"
 TMP="$(mktemp)"
 {
   echo "# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh $LOG $*"
-  echo "# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=$WPY $PY -m pytest $* -p no:cacheprovider -rs ${BT[*]}"
+  echo "# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=$WPY $PY -m pytest $* -p no:cacheprovider -rs ${BT[*]+${BT[*]}}"
   echo "# time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "# sha: $(git rev-parse HEAD)  (worktree dirty files: $(git status --porcelain | wc -l | tr -d ' '))"
 } > "$TMP"

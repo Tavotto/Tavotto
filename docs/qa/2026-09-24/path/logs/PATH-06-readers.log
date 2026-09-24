@@ -1,0 +1,147 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_repro.sh PATH-06-readers docs/qa/2026-09-24/path/repro/repro_path06_readers.py
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TMPDIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/ /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/path/repro/repro_path06_readers.py /opt/homebrew/opt/python@3.13/libexec/bin/python3
+# time: 2026-09-24T19:07:47Z
+# sha: 8b69647c607b766d78f107b77af9e72f9dbb2b0f
+{
+ "project_venv_versions": {
+  "python": "3.13.11",
+  "matplotlib": "3.11.2",
+  "numpy": "2.5.3",
+  "pandas": "3.0.6",
+  "h5py": "3.16.0",
+  "hdf5": "2.0.0"
+ },
+ "environment_source": "current_process",
+ "sandbox_default:rd_pandas": {
+  "prepare": "ready",
+  "error": null,
+  "verdict": "default_ok",
+  "inputs_non_venv": [
+   "analysis/points.csv"
+  ],
+  "inputs_venv_count": 42,
+  "inputs_truncated": true,
+  "plotted_y": [
+   -0.0,
+   9.0,
+   2.0,
+   10.0
+  ],
+  "title": "D1",
+  "matches_truth": true
+ },
+ "sandbox_default:rd_numpy": {
+  "prepare": "ready",
+  "error": null,
+  "verdict": "default_ok",
+  "inputs_non_venv": [
+   "analysis/points.csv"
+  ],
+  "inputs_venv_count": 41,
+  "inputs_truncated": true,
+  "plotted_y": [
+   -0.0,
+   9.0,
+   2.0,
+   10.0
+  ],
+  "title": "D1",
+  "matches_truth": true
+ },
+ "sandbox_default:rd_h5py": {
+  "prepare": "error",
+  "error": {
+   "code": "script_error",
+   "message": "脚本执行失败: [Errno 2] Unable to synchronously open file (unable to open file: name = 'points.h5', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0)"
+  },
+  "verdict": "default_ok",
+  "inputs_non_venv": [],
+  "inputs_venv_count": 0,
+  "inputs_truncated": null,
+  "render_code": "script_error",
+  "render_error": "脚本执行失败: [Errno 2] Unable to synchronously open file (unable to open file: name = 'points.h5', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0)",
+  "traceback_tail": "\"h5py/_objects.pyx\", line 55, in h5py._objects.with_phil.wrapper\n  File \"h5py/h5f.pyx\", line 106, in h5py.h5f.open\nFileNotFoundError: [Errno 2] Unable to synchronously open file (unable to open file: name = 'points.h5', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0)\n"
+ },
+ "sandbox_default:probe_all": {
+  "prepare": "ready",
+  "error": null,
+  "verdict": "default_ok",
+  "inputs_non_venv": [],
+  "inputs_venv_count": 64,
+  "inputs_truncated": true,
+  "render_code": "no_figures_captured",
+  "render_error": "analysis/probe_all.py 跑完了，但没有产生任何图：既没有 savefig，也没有留下 pyplot Figure。展开下面的输出看它自己说了什么——多半是数据文件没找到，或分析在画图之前就结束了。",
+  "traceback_tail": "probe exists=False glob=0 listdir=[]"
+ },
+ "project:rd_pandas": {
+  "prepare": "ready",
+  "error": null,
+  "verdict": null,
+  "inputs_non_venv": [
+   "analysis/points.csv"
+  ],
+  "inputs_venv_count": 42,
+  "inputs_truncated": true,
+  "plotted_y": [
+   -0.0,
+   9.0,
+   2.0,
+   10.0
+  ],
+  "title": "D1",
+  "matches_truth": true
+ },
+ "project:rd_numpy": {
+  "prepare": "ready",
+  "error": null,
+  "verdict": null,
+  "inputs_non_venv": [
+   "analysis/points.csv"
+  ],
+  "inputs_venv_count": 41,
+  "inputs_truncated": true,
+  "plotted_y": [
+   -0.0,
+   9.0,
+   2.0,
+   10.0
+  ],
+  "title": "D1",
+  "matches_truth": true
+ },
+ "project:rd_h5py": {
+  "prepare": "ready",
+  "error": null,
+  "verdict": null,
+  "inputs_non_venv": [],
+  "inputs_venv_count": 66,
+  "inputs_truncated": true,
+  "plotted_y": [
+   -0.0,
+   9.0,
+   2.0,
+   10.0
+  ],
+  "title": "D1",
+  "matches_truth": true
+ },
+ "project:probe_all": {
+  "prepare": "ready",
+  "error": null,
+  "verdict": null,
+  "inputs_non_venv": [
+   "analysis/points.csv"
+  ],
+  "inputs_venv_count": 67,
+  "inputs_truncated": true,
+  "plotted_y": [
+   -0.0,
+   9.0,
+   2.0,
+   10.0
+  ],
+  "title": "same=True glob=2",
+  "matches_truth": true
+ }
+}
+# exit_code: 0
