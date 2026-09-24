@@ -139,6 +139,48 @@ def main() -> None:
     with O.image_pixels_skipped(fa):
         report["other_figure_untouched"] = "make_image" not in vars(imb) and "draw" not in vars(imb)
 
+    # 自定义图片（Codex #526）：子类在**类上**重写 draw / make_image 的不许被换掉——它的 draw 可能更新几何；
+    # 什么都没重写的普通子类照样跳过（证明判据没有把优化整个关掉）
+    from matplotlib.image import AxesImage
+
+    class _GeomImage(AxesImage):
+        draws = 0
+
+        def draw(self, renderer, *a, **k):
+            _GeomImage.draws += 1
+            self.set_extent((0, 10 + _GeomImage.draws, 0, 5))  # 在 draw 里更新几何
+            return super().draw(renderer, *a, **k)
+
+    class _MakeImage(AxesImage):
+        def make_image(self, renderer, magnification=1.0, unsampled=False):
+            return super().make_image(renderer, magnification, unsampled)
+
+    class _Plain(AxesImage):
+        pass
+
+    fc, axc = plt.subplots()
+    custom = {}
+    for key, cls in (
+        ("class_draw", _GeomImage),
+        ("class_make_image", _MakeImage),
+        ("plain", _Plain),
+    ):
+        im = cls(axc)
+        im.set_data(np.random.default_rng(2).random((50, 50)))
+        axc.add_image(im)
+        custom[key] = im
+    with O.image_pixels_skipped(fc):
+        seen = {k: ("draw" in vars(im)) for k, im in custom.items()}
+        before = _GeomImage.draws
+        fc.canvas.draw()
+        custom_draws = _GeomImage.draws - before
+    report["custom_images"] = {
+        "patched": seen,
+        "class_draw_ran_in_layout_draw": custom_draws,
+        "extent_after_layout_draw": list(custom["class_draw"].get_extent()),
+        "expected_extent": [0, 10 + _GeomImage.draws, 0, 5],
+    }
+
     # 几何 override 之后那次布局刷新（`overrides.apply` 里的 draw_without_rendering）也不重采样
     f, ax = plt.subplots()
     ax.imshow(np.random.default_rng(1).random((200, 200)))

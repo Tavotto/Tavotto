@@ -66,7 +66,9 @@ def image_pixels_skipped(fig):
     像素一个不少。
 
     换的是**实例**属性，不是类：同一进程里别的线程正在导出的 figure 不受影响；出来时删掉实例
-    属性，回到类上的实现。实例上已经被别人换过 `draw` 的（用户自定义）不叠加。
+    属性，回到类上的实现。**只换 matplotlib 自己的实现**：实例上被换过 `draw` / `make_image` 的，
+    或者子类在**类上**重写了它们的（自定义 artist 的正常写法，可能在 draw 里更新 extent 之类的几何），
+    一律原样跑——跳过它的 draw，manifest 报的就是旧几何，而随后的 SVG / 导出跑的是真实现（Codex #526）。
     """
     from matplotlib.image import _ImageBase
 
@@ -74,6 +76,11 @@ def image_pixels_skipped(fig):
     try:
         for im in fig.findobj(match=_ImageBase):
             if "draw" in vars(im) or "make_image" in vars(im):
+                continue
+            if not all(
+                getattr(getattr(type(im), name, None), "__module__", None) == "matplotlib.image"
+                for name in ("draw", "make_image")
+            ):
                 continue
             im.draw = _layout_only_image_draw.__get__(im)
             im.make_image = _layout_only_make_image.__get__(im)
