@@ -36,7 +36,9 @@
   公开载荷与 SSE **不带路径**（ADR 0053 §二），只带 `userenvs.env_id()`；采用走 `PATCH
   /api/engine/environment {scope: project, user_environment: id, script}`，后端用自己的发现结果换回路径，
   找不到报 `user_environment_gone`；换回来之后按此刻的计划重新量装没装齐（`deprepair.recheck_user_environment`，
-  不读体检缓存），缺就 `user_environment_incomplete`、不记（Codex #522 P2）。发现 / 体检缓存挂在 `projectenv.RESET_HOOKS` 上随 `reset_cache()` 一起清
+  不读也不写体检缓存；量的是 `missing` + `satisfied` 全部，不是此刻解释器的差集），缺就 `user_environment_incomplete`、
+  计划算不出来就 `user_environment_unverifiable`，都不记（Codex #522 / #562 P2）。`pool.acquire()` 锁外窥视说能复用、
+  锁内却要重建时出锁补上决定再来一遍，锁内起会话前再查一次租约。发现 / 体检缓存挂在 `projectenv.RESET_HOOKS` 上随 `reset_cache()` 一起清
   （`projectenv` 不 import `userenvs`：它要 import 本模块的体检）。`TAVOTTO_USER_ENV_DISCOVERY=0` 整个关掉，
   **测试进程默认关**（`tests/conftest.py`，否则用例结果随 CI 机器上碰巧装了什么而变）；`script` 可来自请求体，
   `discover()` 先过 `projectenv.contained_path()`，下游只用净化器回的值（CodeQL `py/path-injection`）。

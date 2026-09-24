@@ -49,7 +49,8 @@
 
 每个候选一次子进程（`projectenv.probe_environment(python, modules=…)`，最多 12 个、4 个并行、按
 （环境, 模块组）缓存）：环境本身健康（Python 版本在矩阵内、matplotlib 与 worker 启动链起得来），再逐个
-import 联合计划里缺的那些与映射不到包名的 import。**装齐 = 全部 import 得到**——worker 跑脚本认的就是
+import 脚本开跑要的第三方包（联合计划的 `missing` + `satisfied`——不只是此刻解释器缺的差集：内置 runtime 有 numpy
+缺 openpyxl 时，只装了 openpyxl 的环境按差集量也「装齐」，2026-09-24 修订）与映射不到包名的 import。**装齐 = 全部 import 得到**——worker 跑脚本认的就是
 import（Conda 装的、`--user` 的、`PYTHONPATH` 上的都算），这是同一个判据。「环境健康」与「装没装齐」
 分开报：不健康的不算装齐，也不说它缺什么。正缺包的那个解释器不体检。
 
@@ -92,7 +93,8 @@ import（Conda 装的、`--user` 的、`PYTHONPATH` 上的都算），这是同�
 `preparation_offer()` 的 `user_environments` 每条只带不透明 `id`（(目录, 真实文件) 的 sha1 前 16 位）、来源、
 Conda / pyenv 名、版本、还缺什么；SSE 同样不带路径。弹窗里点「改用这个环境」交回 `id` + 脚本名，后端用
 **自己的发现结果**换回路径，找不到报 `user_environment_gone`；换回来之后按此刻的联合计划**重新**量一次装没装齐
-（`deprepair.recheck_user_environment`，与弹窗列出时同一个判据，不读体检缓存）——弹窗开着期间环境可能变了，
+（`deprepair.recheck_user_environment`，与弹窗列出时同一个判据，不读也不写体检缓存；计划算不出来报
+`user_environment_unverifiable`，不拿空的需求集合下结论）——弹窗开着期间环境可能变了，
 调用方也可能交回一个界面上不可选的未装齐候选（Codex #522 P2）：缺就 `user_environment_incomplete` + 缺什么，
 不健康与手填路径同一组 code，都不记；装齐才 `remember(automatic=False)`。路径只来自本机的枚举，不接受调用方
 给——ADR 0044 的安全口径不变。
