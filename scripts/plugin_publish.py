@@ -401,6 +401,21 @@ def build_commit(
         return proc.stdout.strip()
 
     run("add", "-A", "--", ".")
+    # 执行位写进 index，不信文件系统：Windows 上没有执行位（chmod / os.access 都是空操作），
+    # `git add` 一律记成 100644，插件自带的可执行启动器（mcp/launch.cmd，#266）就丢了 100755
+    # ——推上去的树 content_digest 对不上 staging，发布在 Windows 上整条红。模式以清单为准
+    # （plugin_stage.write_zip 同一个出处），没有清单的 legacy 件才退回文件系统。
+    manifest = plugin_stage.read_manifest(plugin_dir)
+    if manifest:
+        executable = [e["path"] for e in manifest.get("files", []) if e.get("mode") == "100755"]
+    else:
+        executable = [
+            plugin_stage._rel(plugin_dir, p)
+            for p in plugin_stage._walk(plugin_dir)
+            if os.name != "nt" and os.access(p, os.X_OK)
+        ]
+    for rel in executable:
+        run("update-index", "--chmod=+x", "--", f"{plugin_stage.PLUGIN_SUBDIR}/{rel}")
     tree = run("write-tree")
     args = ["commit-tree", tree, "-m", message]
     if parent:
