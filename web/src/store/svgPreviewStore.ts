@@ -308,18 +308,30 @@ export function previewLinesOf(
   return panels.get(panelId)?.lines ?? NO_LINES
 }
 
+const subscribeLines = (fn: () => void) => {
+  lineListeners.add(fn)
+  return () => {
+    lineListeners.delete(fn)
+  }
+}
+
 /** 覆盖层订阅：预览线一变（含整份作废）就重画 */
 export function usePreviewLines(
   panelId: string,
 ): ReadonlyMap<string, { a: [number, number]; b: [number, number] }> {
-  useSyncExternalStore(
-    (fn) => {
-      lineListeners.add(fn)
-      return () => lineListeners.delete(fn)
-    },
-    () => linesVersion,
-  )
+  useSyncExternalStore(subscribeLines, () => linesVersion)
   return previewLinesOf(panelId)
+}
+
+/**
+ * 此刻挂着预览线的面板（按预览账本，不按「图内编辑态是哪块面板」）。松手后、权威渲染
+ * 回来之前用户点了别的对象，`elementPanelId` 被清掉，而这块面板上的预览账本还在——
+ * 覆盖层必须照这张表画，不能跟着编辑态走。
+ */
+export function usePreviewLinePanels(): string[] {
+  const v = useSyncExternalStore(subscribeLines, () => linesVersion)
+  void v
+  return [...panels].filter(([, p]) => p.lines.size).map(([id]) => id)
 }
 
 /**

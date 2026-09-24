@@ -9,7 +9,7 @@ import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib
 import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { usePreviewLines } from '@/store/svgPreviewStore'
+import { usePreviewLinePanels, usePreviewLines } from '@/store/svgPreviewStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import {
@@ -119,6 +119,8 @@ export function OverlaySvg() {
   const editingTextId = useUiStore((s) => s.editingTextId)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const issueHighlight = useUiStore((s) => s.issueHighlight)
+  // 预览线按「持有预览账本的面板」画，不按图内编辑态（见 PreviewLines）
+  const linePanelIds = usePreviewLinePanels()
 
   const selected = objects.filter((o) => selectedIds.includes(o.id) && !o.hidden)
   // 主选 = 选区末位（对齐 / 等宽等高的「主选」参照）。多选时它的轮廓略粗——
@@ -328,7 +330,10 @@ export function OverlaySvg() {
       {cropTarget && cropTarget.type === 'panel' && <CropFrame obj={cropTarget} t={t} />}
 
       {elementPanel?.type === 'panel' && <ElementBoxes panel={elementPanel} t={t} />}
-      {elementPanel?.type === 'panel' && <PreviewLines panel={elementPanel} t={t} />}
+      {linePanelIds.map((id) => {
+        const p = objects.find((o) => o.id === id)
+        return p?.type === 'panel' ? <PreviewLines key={id} panel={p} t={t} /> : null
+      })}
     </svg>
   )
 }
@@ -683,6 +688,8 @@ function GeometryOutline({
  * 所以**不挂在几何权威的闸门后面**：松手提交后 overrides 已变、新渲染没回来的那段
  * 时间 `useExactPanelManifest` 是 null，ElementBoxes 整个不画——虚线若在里面，慢图上
  * 旧箭头就先露出来（#553 评审）。换算只用面板与视口，不读 manifest。
+ * 同理**也不挂在图内编辑态上**：那段时间里点一下别的对象，`elementPanelId` 就清掉了，
+ * 而预览账本还在；哪块面板要画，按 `usePreviewLinePanels` 的账本定。
  */
 function PreviewLines({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const lines = usePreviewLines(panel.id)

@@ -545,4 +545,34 @@ describe('覆盖层：松手后、新渲染回来之前（几何权威缺席）�
       host.remove()
     }
   })
+
+  it('松手后点了别的对象（退出图内编辑态）：虚线仍在，权威渲染回来才消失', async () => {
+    await setup()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    try {
+      act(() => root.render(<OverlaySvg />))
+      const dashed = () => host.querySelectorAll(`line[data-carried-arrow="${oneEnd.gid}"]`)
+
+      startElementDrag(down(0, 0), livePanel(), boxP, layout)
+      act(() => dragTo(40, 20))
+      act(() => fire('pointerup', 40, 20))
+      expect(dashed()).toHaveLength(1)
+
+      // 点画布上别的对象：ObjectView 的 pointerdown 就是这一句（编辑态退出）
+      act(() => useUiStore.getState().setElementPanel(null))
+      expect(useUiStore.getState().elementPanelId).toBeNull()
+      expect(dashed(), '退出编辑态不该带走还挂在预览账本上的虚线').toHaveLength(1)
+
+      act(() => {
+        seedExactRender(livePanel(), manifestFor(livePanel().overrides), { svg: MATPLOTLIB_SVG })
+        reattachPreview('p1', renderKeyOf(livePanel()))
+      })
+      expect(dashed()).toHaveLength(0)
+    } finally {
+      act(() => root.unmount())
+      host.remove()
+    }
+  })
 })
