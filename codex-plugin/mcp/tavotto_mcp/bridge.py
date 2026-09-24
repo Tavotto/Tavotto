@@ -2125,13 +2125,8 @@ def _script_sha256(session: Session) -> str | None:
 
 
 def _better(new: dict, old: dict) -> bool:
-    """一个修复候选比上一版更好：不越权、不超预算、阻断项**严格更少**。"""
-    if new["protected_changes"] or new["budget"]["over"]:
-        return False
-    st = new["structure"]
-    if st["missing"] or st["extra"] or st["role_changed"] or st["legend_entries_changed"]:
-        return False
-    return len(new["blocking"]) < len(old["blocking"])
+    """一个修复候选比上一版更好（判据唯一出处 `normalize.better_candidate`）。"""
+    return engine_normalize.better_candidate(new, old)
 
 
 def normalize_figure(session_id: str, **kwargs) -> dict:

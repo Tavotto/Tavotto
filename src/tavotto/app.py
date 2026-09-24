@@ -77,6 +77,7 @@ from .engine import (
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
+    normalize as engine_normalize,
     originalspec as engine_originalspec,
     patchspec as engine_patchspec,
     perfprobe as engine_perfprobe,
@@ -94,6 +95,7 @@ from .engine import (
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
     session_client as engine_session_client,
+    specfix as engine_specfix,
     telemetry as engine_telemetry,
     tutorial as engine_tutorial,
     updater as engine_updater,
@@ -3680,6 +3682,183 @@ def api_engine_render():
         # 同上：加字段不改老形状。只在**真的发生了自动切换**的那一次响应里出现。
         out["environment_switched"] = switched
     return jsonify(out)
+
+
+@app.post("/api/engine/specfix")
+def api_engine_specfix():
+    """按出版规范修一张图（桌面「问题」面板的修复，ADR 0080 / 0051）。
+
+    请求：`{id, patches, scale, profile, only?}`——`patches` 是这张图**此刻**的全量
+    override 列表（B0），`scale` 是它在页面上的缩放比（摆放宽度 / 原生宽度），
+    `profile` 是这份文档生效的那份规范全文（快照 + 期刊覆盖合并后的，与前端预检
+    用的是同一份），`only` 是逐条修复时点名的 `[{rule, gid}]`；不给 = 全部处理
+    （建议档不在内）。
+
+    流程：B0 渲染 → `specfix.plan()` → 候选渲染 → `specfix.verdict()`
+    →（新增 / 加重了裁切或文字压进别的子图时）外边距局部修复，最多
+    `normalize.MAX_REPAIR_ROUNDS` 轮 → 通过则回 `ok: true` 与**最终的全量列表**，
+    由前端一次 commit 写进文档（一条历史、⌘Z 一次撤回）；不通过则 worker 回到
+    B0、回 `ok: false` 与理由，**文档一个字不改**。请求的字体这台机器上没有时，
+    字体那几条单独退出（`font_unavailable`），其余照常修。
+
+    这个端点**只算不写**：不碰文档、不落盘、不写回源文件；worker 的热态在事务
+    结束时要么是 B0，要么正是回给前端的那份列表（前端 commit 后照常重渲染一次）。
+    """
+    body = request.get_json(force=True) or {}
+    rel_id = body.get("id", "")
+    base = body.get("patches")
+    if not isinstance(base, list):
+        return jsonify({"error": "patches 必须是列表", "code": "invalid_patches"}), 400
+    raw_scale = body.get("scale")
+    try:
+        scale = float(raw_scale)
+    except (TypeError, ValueError):
+        scale = float("nan")
+    if not (scale > 0 and scale != float("inf")):
+        return jsonify(
+            {
+                "error": f"scale 必须为正数: {raw_scale!r}",
+                "code": "invalid_scale",
+                "params": {"value": repr(raw_scale)},
+            }
+        ), 400
+    profile = body.get("profile")
+    if not isinstance(profile, dict) or not isinstance(profile.get("severity"), dict):
+        return jsonify({"error": "profile 必须是一份完整的规范", "code": "invalid_profile"}), 400
+    only = body.get("only")
+    if only is not None and not (
+        isinstance(only, list) and all(isinstance(o, dict) and o.get("rule") for o in only)
+    ):
+        return jsonify({"error": "only 必须是 [{rule, gid}] 列表", "code": "invalid_only"}), 400
+
+    worker, stem = _engine_worker(rel_id)
+    state = {"worker": worker, "stem": stem}
+
+    def render(patches: list) -> dict:
+        wk, st, resp = _engine_attempt(
+            rel_id, state["worker"], state["stem"], lambda w, s: w.override(s, patches, None)
+        )
+        state["worker"], state["stem"] = wk, st
+        return resp
+
+    try:
+        return jsonify(_specfix_transaction(render, base, scale, profile, only))
+    except engine_pool.WorkerError as exc:
+        LOG.error("按规范修图失败: %s: %s", stem, exc)
+        # 渲染半路死了：worker 的热态未知，下一次 render 会按全量列表重放，不在这里补
+        return jsonify(_worker_error_payload(exc)), 500
+
+
+def _specfix_transaction(render, base: list, scale: float, profile: dict, only) -> dict:
+    """`/api/engine/specfix` 的事务本体（拆出来是为了让测试能注入假的渲染）。"""
+    b0 = render(base)["manifest"]
+    issues = engine_specfix.profile_issues(b0, profile, scale)
+    targets = engine_specfix.select(issues, only)
+    out: dict = {
+        "ok": False,
+        "patches": list(base),
+        "changes": [],
+        "skipped": [],
+        "adjustments": [],
+        "unresolved": [],
+        "blocking": [],
+    }
+    if not targets:
+        out.update({"ok": True, "exit": engine_specfix.EXIT_NOTHING_TO_DO})
+        return out
+
+    font_off: list[tuple[str, str]] = []
+    for _attempt in range(2):
+        live = [t for t in targets if t not in font_off]
+        plan = engine_specfix.plan(b0, profile, scale=scale, targets=live)
+        skipped = plan["skipped"] + [
+            {"rule": r, "gid": g, "reason": "font_unavailable"} for r, g in font_off
+        ]
+        if not plan["patches"]:
+            render(base)
+            out.update({"exit": engine_specfix.EXIT_NOTHING_TO_DO, "skipped": skipped})
+            out["ok"] = not skipped
+            return out
+        contract = engine_specfix.build_contract(
+            b0, profile, scale=scale, base_patches=base, planned=plan["patches"]
+        )
+        # 真正要修的是计划落了 patch 的那些；算不出目标值的已经进了 skipped
+        planned_targets = [
+            t for t in live if not any(s["rule"] == t[0] and s["gid"] == t[1] for s in plan["skipped"])
+        ]
+        candidate = engine_normalize.merge_patches(base, plan["patches"])
+        resp = render(candidate)
+        if resp.get("warnings"):
+            # 有一条 override 没写进去 = 修复没有真的落地。不带着 warning 往下验
+            render(base)
+            out.update(
+                {
+                    "exit": engine_normalize.EXIT_UNSUPPORTED,
+                    "warnings": list(resp["warnings"]),
+                    "skipped": skipped,
+                }
+            )
+            return out
+
+        def judge(manifest: dict, patches: list) -> dict:
+            return engine_specfix.verdict(
+                contract, manifest, profile, scale=scale, targets=planned_targets, patches=patches
+            )
+
+        manifest = resp["manifest"]
+        v = judge(manifest, candidate)
+        if v["exit"] == engine_normalize.EXIT_FONT_UNAVAILABLE and not font_off:
+            # 规范要的字体这台机器上没有：字体那几条单独退出，其余再来一遍
+            font_off = [t for t in targets if t[0] == "font-family-substituted"]
+            continue
+        break
+
+    adjustments: list[dict] = []
+    rounds = 0
+    while (
+        not v["ok"]
+        and v["exit"] == engine_normalize.EXIT_CONSTRAINT_CONFLICT
+        and any(b["repair"] == "margins" for b in v["repairable"])
+        and rounds < engine_normalize.MAX_REPAIR_ROUNDS
+    ):
+        rounds += 1
+        dirs = engine_normalize.repair_directions(
+            [b for b in v["repairable"] if b["repair"] == "margins"]
+        )
+        cand = engine_normalize.adapt_margins(contract, manifest, directions=dirs or None)
+        if "conflict" in cand or not cand["patches"]:
+            break
+        trial = engine_normalize.merge_patches(candidate, cand["patches"])
+        if engine_normalize.authorize(contract, trial):
+            break  # 局部修复越出了约定：不收（按 normalize 的纪律这不该发生）
+        m2 = render(trial)["manifest"]
+        v2 = judge(m2, trial)
+        if not engine_normalize.better_candidate(v2, v):
+            render(candidate)
+            break
+        candidate, manifest, v = trial, m2, v2
+        adjustments.extend(cand["changed"])
+
+    out.update(
+        {
+            "exit": v["exit"],
+            "changes": plan["changes"],
+            "skipped": skipped,
+            "adjustments": adjustments,
+            "unresolved": v["unresolved"],
+            "blocking": [
+                {"id": b.get("id"), "gids": b.get("gids") or [], "bucket": b.get("bucket")}
+                for b in v["blocking"]
+            ],
+            "protected_changes": v["protected_changes"],
+            "font_unresolved": v["font_unresolved"],
+        }
+    )
+    if not v["ok"]:
+        render(base)
+        return out
+    out.update({"ok": True, "patches": candidate})
+    return out
 
 
 @app.post("/api/engine/invalidate")

@@ -1,0 +1,280 @@
+"""按规范修图（`/api/engine/specfix`，ADR 0080）的**真链路**：真 matplotlib、真 worker。
+
+`tests/test_specfix.py` 在合成 manifest 上盯计划与裁决的逻辑；这里盯的是用户点
+「全部处理」那一刻真正会发生的事：
+
+* 修完**真的**过了——对修改后的真实渲染再跑一遍预检，点名的问题一条不剩；
+* 没有「越修越乱」：字号层级不倒挂、轴标题不被顺手加粗（建议档不进批量）、
+  没有新增 / 加重的问题；
+* 规范要的字体这台机器上没有时，字体那几条如实退出，其余照修，不假装换了；
+* 裁决不过时 worker 回到 B0，回给前端的仍是原来那份列表（文档零改动）。
+
+事务本体 `app._specfix_transaction()` 接一个 `render(patches) -> 响应` 的回调，
+这里把它接到一个直连的 worker 子进程上——与端点里 `worker.override()` 同一条
+协议命令。缺带科学栈的解释器就跳过（.venv 里没有 matplotlib 是常态）。
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import threading
+
+import pytest
+
+from tavotto import app as m
+from tavotto.engine import pool as engine_pool, preflight, profiles, specfix
+
+
+def _worker_python():
+    try:
+        return engine_pool.find_worker_python()
+    except engine_pool.WorkerError:
+        return None
+
+
+WORKER_PY = _worker_python()
+pytestmark = pytest.mark.skipif(WORKER_PY is None, reason="没有带科学栈的解释器，跳过真链路用例")
+
+#: matplotlib 自带的字体：「装了的」那一个，任何机器上都有
+AVAILABLE_FONT = "DejaVu Serif"
+MISSING_FONT = "Tavotto Nonexistent Serif 9x"
+
+#: 故意不合规的图：刻度 / 图例 7 pt（低于 8 pt 绝对下限）、轴标题 8.2 pt（**合规**，
+#: 所以不会被点名——刻度被抬到 8.5 之后它比刻度还小，只有「按层级补齐」能把它
+#: 带上来）、标题 9 pt；曲线 1.2 pt、边框 0.6 pt 不在档位上；刻度朝外、
+#: 缺上右两边、图例带框；字体是 DejaVu Sans（规范的替代品名单里）。
+SCRIPT = """\
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+OUT = Path(__file__).resolve().parent
+
+
+def main():
+    plt.rcParams["font.family"] = "DejaVu Sans"
+    x = np.linspace(0, 60, 30)
+    fig, ax = plt.subplots(figsize=(80 / 25.4, 60 / 25.4))
+    for k in (8, 20):
+        ax.plot(x, 1 - np.exp(-x / k), lw=1.2, label=f"k = {k}")
+    ax.set_xlabel("Time (min)", fontsize=8.2)
+    ax.set_ylabel("Conversion (-)", fontsize=8.2)
+    ax.set_title("Kinetics", fontsize=9)
+    ax.tick_params(labelsize=7, direction="out")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    for s in ax.spines.values():
+        s.set_linewidth(0.6)
+    ax.legend(fontsize=7, frameon=True)
+    fig.tight_layout(pad=0.6)
+    fig.savefig(OUT / "Kin.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def _rpc(proc, obj, timeout=180):
+    proc.stdin.write(json.dumps(obj) + "\n")
+    proc.stdin.flush()
+    box: list = []
+    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()), daemon=True)
+    reader.start()
+    reader.join(timeout)
+    assert not reader.is_alive(), f"worker 超时: {obj.get('cmd')}"
+    line = box[0] if box else ""
+    assert line, f"worker 无响应: {obj.get('cmd')}\n{proc.stderr.read()}"
+    resp = json.loads(line)
+    assert resp.get("ok"), f"{resp.get('error', resp)}\n{resp.get('traceback', '')}"
+    return resp
+
+
+@pytest.fixture
+def render(tmp_path):
+    """直连 worker 的 `render(patches)`，外加一本调用账（最后一次渲染的是哪份列表）。"""
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "kin.py").write_text(SCRIPT, encoding="utf-8")
+    proc = subprocess.Popen(
+        [
+            WORKER_PY,
+            str(engine_pool.WORKER_PY),
+            "--script",
+            str(figs / "kin.py"),
+            "--figures-dir",
+            str(figs),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--sandbox",
+            str(tmp_path / "sandbox"),
+            "--entry",
+            "main",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        encoding="utf-8",
+        errors="replace",
+    )
+    _rpc(proc, {"cmd": "build"})
+    calls: list[list] = []
+
+    def _render(patches: list) -> dict:
+        calls.append(list(patches))
+        return _rpc(proc, {"cmd": "override", "stem": "Kin", "patches": patches})
+
+    _render.calls = calls  # type: ignore[attr-defined]
+    yield _render
+    if proc.poll() is None:
+        proc.kill()
+    proc.wait(timeout=10)
+
+
+def _profile(latin: str = AVAILABLE_FONT) -> dict:
+    p = profiles.load()
+    fam = dict(p["font_family"])
+    fam["latin"] = latin
+    fam["latin_accepted"] = [latin]
+    p["font_family"] = fam
+    return p
+
+
+def _ids(manifest: dict, profile: dict, scale: float) -> set[str]:
+    spec = preflight.spec_from_manifest(manifest, scale=scale)
+    return {i["id"] for i in preflight.run(spec, profile)}
+
+
+def _eff(manifest: dict, role: str, scale: float) -> list[float]:
+    out = []
+    for el in manifest["elements"]:
+        if el.get("role") != role:
+            continue
+        for f in el.get("editable") or []:
+            if f.get("prop") == "fontsize" and isinstance(f.get("value"), (int, float)):
+                out.append(f["value"] * scale)
+    return out
+
+
+def _weight(manifest: dict, role: str) -> set:
+    return {
+        f.get("value")
+        for el in manifest["elements"]
+        if el.get("role") == role
+        for f in el.get("editable") or []
+        if f.get("prop") == "weight"
+    }
+
+
+@pytest.mark.parametrize("scale", [1.0, 0.6])
+def test_fix_all_really_passes_and_keeps_the_hierarchy(render, scale):
+    profile = _profile()
+    before = render([])["manifest"]
+    assert {"font-below-absolute-floor", "legend-frame", "tick-direction"} <= _ids(
+        before, profile, scale
+    )
+    res = m._specfix_transaction(render, [], scale, profile, None)
+    assert res["ok"], res
+    after = render(res["patches"])["manifest"]
+    left = _ids(after, profile, scale)
+    fixable_non_suggestion = {
+        r for r in specfix.FIXABLE_RULES if profiles.severity_of(profile, r) != "suggestion"
+    }
+    assert not (left & fixable_non_suggestion), left
+    # 层级：刻度 ≤ 轴标题 ≤ 标题（页面上量到的 pt）
+    ticks, labels, titles = (_eff(after, r, scale) for r in ("ticks", "axis_label", "title"))
+    assert ticks and labels and titles
+    assert max(ticks) <= min(labels) + 1e-6 <= min(titles) + 2e-6
+    assert min(ticks) > profile["absolute_min_font_size_pt"]
+    # 建议档不进「全部处理」：轴标题没被顺手加粗
+    assert _weight(after, "axis_label") == {"normal"}
+    # 字体真的换了（刻度也换了，不止标题）
+    fams = {
+        f.get("value")
+        for el in after["elements"]
+        for f in el.get("editable") or []
+        if f.get("prop") == "fontfamily"
+    }
+    assert fams == {AVAILABLE_FONT}
+
+
+def test_missing_font_is_reported_and_the_rest_still_fixed(render):
+    profile = _profile(MISSING_FONT)
+    res = m._specfix_transaction(render, [], 1.0, profile, None)
+    assert res["ok"], res
+    assert any(s["reason"] == "font_unavailable" for s in res["skipped"])
+    assert not any(p["prop"] == "fontfamily" for p in res["patches"])
+    after = render(res["patches"])["manifest"]
+    assert "legend-frame" not in _ids(after, profile, 1.0)
+
+
+def test_only_fixes_the_named_issue(render):
+    profile = _profile()
+    before = render([])["manifest"]
+    legend = next(el["gid"] for el in before["elements"] if el.get("role") == "legend")
+    res = m._specfix_transaction(
+        render, [], 1.0, profile, [{"rule": "legend-frame", "gid": legend}]
+    )
+    assert res["ok"], res
+    assert res["patches"] == [{"gid": legend, "prop": "frameon", "value": False}]
+
+
+def test_suggestion_is_fixable_when_named(render):
+    profile = _profile()
+    res = m._specfix_transaction(
+        render, [], 1.0, profile, [{"rule": "text-weight-policy", "gid": ""}]
+    )
+    assert res["ok"], res
+    after = render(res["patches"])["manifest"]
+    assert _weight(after, "axis_label") == {"bold"}
+
+
+def test_rejected_fix_restores_b0_and_returns_the_original_list(render, monkeypatch):
+    """计划被裁决挡住：回给前端的是原列表，worker 最后一次渲染的也是原列表。"""
+    profile = _profile()
+    base = [{"gid": "figure", "prop": "facecolor", "value": "#ffffff"}]
+    real_plan = specfix.plan
+
+    def bad_plan(manifest, prof, *, scale, targets):
+        out = real_plan(manifest, prof, scale=scale, targets=targets)
+        # 把刻度字号「修」到 40 pt：字号偏大是新增的 warn——越修越乱，必须挡
+        ticks = [el["gid"] for el in manifest["elements"] if el.get("role") == "ticks"]
+        out["patches"] = [p for p in out["patches"] if p["prop"] != "fontsize"] + [
+            {"gid": g, "prop": "fontsize", "value": 40} for g in ticks
+        ]
+        return out
+
+    monkeypatch.setattr(specfix, "plan", bad_plan)
+    res = m._specfix_transaction(render, base, 1.0, profile, None)
+    assert not res["ok"]
+    assert res["patches"] == base
+    assert render.calls[-1] == base
+    assert any(b["id"] == "font-too-large" for b in res["blocking"])
+
+
+def test_nothing_to_do_on_a_compliant_figure(render):
+    profile = _profile()
+    first = m._specfix_transaction(render, [], 1.0, profile, None)
+    assert first["ok"]
+    again = m._specfix_transaction(render, first["patches"], 1.0, profile, None)
+    assert again["ok"]
+    assert again["exit"] == specfix.EXIT_NOTHING_TO_DO
+    assert again["patches"] == first["patches"]
+
+
+def test_endpoint_validates_input():
+    m.app.config["TESTING"] = True
+    client = m.app.test_client()
+    bad = client.post("/api/engine/specfix", json={"id": "x.pdf", "patches": [], "scale": 0})
+    assert bad.status_code == 400 and bad.get_json()["code"] == "invalid_scale"
+    bad = client.post("/api/engine/specfix", json={"id": "x.pdf", "patches": [], "scale": 1})
+    assert bad.status_code == 400 and bad.get_json()["code"] == "invalid_profile"
+    bad = client.post("/api/engine/specfix", json={"id": "x.pdf", "patches": {}, "scale": 1})
+    assert bad.get_json()["code"] == "invalid_patches"
+
