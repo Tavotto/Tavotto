@@ -173,7 +173,8 @@
     "worker_timeout": "The render timed out and the worker was restarted. Try again; if it keeps timing out, check whether the script itself completes.",
     "write_back_disabled": "This project is read-only, so original files can’t be written back. Re-enable write-back in project settings.",
     "write_back_warnings": "Can’t write back. The engine reported warnings during replay.",
-    "write_failed": "Couldn’t write to disk. Your local copy is still here — try again: {{reason}}"
+    "write_failed": "Couldn’t write to disk. Your local copy is still here — try again: {{reason}}",
+    "pinned_full": "You can bookmark up to {{max}} projects. Remove a bookmark first."
   },
   "engine": {
     "apply": "Apply",

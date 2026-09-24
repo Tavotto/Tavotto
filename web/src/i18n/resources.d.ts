@@ -1820,6 +1820,7 @@ export default interface Resources {
       "perf_report_rejected": "性能报告格式不对，没有保存（{{reason}}）",
       "perf_report_write_failed": "性能报告没能写进数据目录",
       "permission_denied": "无权限读取：{{path}}",
+      "pinned_full": "收藏最多 {{max}} 个。先取消收藏几个再加。",
       "ppi_out_of_range": "分辨率 {{value}} 超出范围，应在 {{min}} 到 {{max}} 之间。",
       "preparation_not_found": "没有这个准备任务（或它属于别的项目）：{{id}}",
       "preparation_plan_stale": "工作目录的授权在计划之后变了，这份准备计划已作废；请重新准备。",

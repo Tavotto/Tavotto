@@ -129,6 +129,25 @@ def test_pinned_moves_resolve_by_path_at_execution(tmp_path):
     assert _pins() == [d, c, a]
 
 
+def test_pinned_full_says_so(client, tmp_path, monkeypatch):
+    """满了还要加：409 + `pinned_full`（带上限），配置不变——不回 200 假装加上了。"""
+    monkeypatch.setattr(engine_config, "PINNED_KEEP", 2)
+    for n in ("a", "b"):
+        engine_config.edit_pinned("add", str(tmp_path / n))
+    resp = client.post("/api/projects/pinned", json={"op": "add", "path": str(tmp_path / "c")})
+    assert resp.status_code == 409
+    body = resp.get_json()
+    assert body["code"] == "pinned_full" and body["params"] == {"max": 2}
+    assert _pins() == [str(tmp_path / "a"), str(tmp_path / "b")]
+    # 已在列表里的再 add 仍然是「什么都不做」，不因为满了就报错
+    assert (
+        client.post(
+            "/api/projects/pinned", json={"op": "add", "path": str(tmp_path / "a")}
+        ).status_code
+        == 200
+    )
+
+
 def test_pinned_survives_other_config_writes(tmp_path):
     """load() 是白名单：漏收 `pinned_projects` 的话，下一次任何 save() 都会把收藏抹掉。"""
     a = tmp_path / "a"

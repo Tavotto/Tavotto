@@ -120,6 +120,8 @@ USER_VISIBLE_CODES = {
     "open_project_failed": {"reason"},
     "invalid_path": set(),
     "dir_missing": {"path"},
+    # 左栏工作区抽屉：收藏满 PINNED_KEEP 条还要 add（Codex #550 之后的自查）
+    "pinned_full": {"max"},
     "permission_denied": {"path"},
     "read_failed": {"reason"},
     # --- 2026-08-21 全量补 code 的那批 ---

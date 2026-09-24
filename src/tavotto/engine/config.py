@@ -233,6 +233,10 @@ def pinned_projects() -> list[dict]:
 PINNED_OPS = ("add", "remove", "move")
 
 
+class PinnedFullError(Exception):
+    """收藏已满 `PINNED_KEEP` 条还要 add：说出来，而不是回 200 假装加上了。"""
+
+
 def edit_pinned(
     op: str, path: str, *, delta: int | None = None, to_path: str | None = None
 ) -> list[dict]:
@@ -243,7 +247,7 @@ def edit_pinned(
     排序按下标排队也会移错项（Codex #550）。这里一律按**路径**认对象、执行时才查
     当前位置，所以操作可以交错、可以重放：
 
-    * `add`：不在就追加到末尾（已在 = 什么都不做；满 `PINNED_KEEP` 条也不加）；
+    * `add`：不在就追加到末尾（已在 = 什么都不做；满 `PINNED_KEEP` 条抛 `PinnedFullError`）；
     * `remove`：在就删（不在 = 什么都不做）；
     * `move`：`delta` 相对挪（±N，夹在两端），或 `to_path` 挪到那一条此刻的位置；
       任一方不在列表里 = 什么都不做。
@@ -259,8 +263,10 @@ def edit_pinned(
         items = list(cfg["pinned_projects"])
         paths = [e["path"] for e in items]
         if op == "add":
-            if path in paths or len(items) >= PINNED_KEEP:
+            if path in paths:
                 return items
+            if len(items) >= PINNED_KEEP:
+                raise PinnedFullError(PINNED_KEEP)
             known = {
                 e["path"]: e.get("name")
                 for e in cfg["recent_projects"] + items

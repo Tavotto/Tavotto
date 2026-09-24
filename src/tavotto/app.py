@@ -2388,7 +2388,16 @@ def api_projects_pinned():
     # 先解析请求的项目（失效的 pj 在这里就 409），**再**写配置：反过来的话配置已经
     # 改了、响应却说失败，界面按失败保留旧列表，重开后又冒出来（Codex #550 P2）
     current = _request_ctx()
-    stored = engine_config.edit_pinned(op, path, delta=delta, to_path=to_path)
+    try:
+        stored = engine_config.edit_pinned(op, path, delta=delta, to_path=to_path)
+    except engine_config.PinnedFullError:
+        return jsonify(
+            {
+                "error": f"收藏最多 {engine_config.PINNED_KEEP} 个",
+                "code": "pinned_full",
+                "params": {"max": engine_config.PINNED_KEEP},
+            }
+        ), 409
     return jsonify({"pinned": _project_list_entries(stored, current)})
 
 
