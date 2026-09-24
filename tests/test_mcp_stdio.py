@@ -335,6 +335,8 @@ def test_degraded_mode_over_real_stdio(degraded_client):
         # 少一个取值的清单会在它第一次出现时把用例判成「没见过的 code」。
         # 权威是 server.diagnose() 的 docstring（四态互斥）。
         "engine_too_old",
+        # 自管 venv 在、却 import 不过这一版插件要的引擎（#487）：插件升级后最常见。
+        "managed_runtime_stale",
     )
     assert body["canvas"]["available"] is False
     assert body["recovery"]

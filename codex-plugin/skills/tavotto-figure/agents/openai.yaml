@@ -12,7 +12,7 @@ dependencies:
     - type: mcp
       value: tavotto
       transport: stdio
-      command: python3
+      command: ./mcp/launch.cmd
       description: "Tavotto 本地 MCP server（本插件 .mcp.json 自带；画布、预检、导出都靠它）"
 policy:
   allow_implicit_invocation: true

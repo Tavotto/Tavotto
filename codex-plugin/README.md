@@ -431,12 +431,16 @@ cwd 正是插件目录，拿它当边界会把每张用户图判成越界。一�
 
 ## 已知限制
 
-**Windows 上 `.mcp.json` 里的 `command: python3` 可能不存在。** 官方安装器
-装出来的是 `python.exe`，`python3.exe` 只是 Microsoft Store 的执行别名存根
-（而 macOS 12.3 起没有 `python`，两边没有一个通用的名字）。清单的字段形状取自
-Codex 官方插件装出来的那份，里面没有按平台分支的写法，我们**不猜**——猜错的
-下场是清单不合法、插件整个装不上。症状是「插件装上了，但一个工具都看不见」；
-对策是把 `.mcp.json` 的 `command` 改成你那个解释器的绝对路径。
+**启动命令是插件自带的 `./mcp/launch.cmd`（#266）。** Codex 的 `.mcp.json` 只有一个
+`command` 字符串、没有按平台分支，而 Windows 上 `python3.exe` 常常只是 Microsoft Store
+的执行别名存根（macOS 12.3 起又没有 `python`，两边没有通用的名字）。所以插件自带一个
+sh / cmd 双语启动器：POSIX 上它就是 `exec python3 "$@"`；Windows 上它依次**真跑**
+`TAVOTTO_MCP_PYTHON`、插件自管环境、`py -3`、PATH 上的 `python` / `python3`、
+`%LOCALAPPDATA%\Programs\Python\Python3*`，跳过起不来的（商店别名），再把参数原样
+交给第一个能跑的。仍然「插件装上了，但一个工具都看不见」时（这台 Windows 上一个能跑
+的 Python 都没有），跑 `tavotto codex install` 把命令钉到一个验证过的解释器。
+Windows 上 cmd 会把启动器第一行（shebang）回显进 stdout 一次：Codex 用的 rmcp 3.2+
+跳过非 JSON 行，2.x 回一条 parse error 后照常继续。
 
 （`pipx install tavotto` 那条已经好了：启动器会去读 Windows console script
 `.exe` 里嵌着的 shebang，找到 pipx venv 的解释器。）

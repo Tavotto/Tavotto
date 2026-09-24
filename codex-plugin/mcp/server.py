@@ -663,7 +663,186 @@ def diagnose_resolved(found: dict, resolution: dict) -> "tuple[str, str]":
             "装引擎可用 `python3 <插件目录>/mcp/server.py --provision`。"
             "改完新开一次 Codex 会话。",
         )
+    if managed_runtime_stale(resolution):
+        return "managed_runtime_stale", MANAGED_STALE_HINT
     return diagnose(found)
+
+
+#: 自管环境在、却 import 不过这一版插件要的引擎——插件升级之后最常见的形状：
+#: `codex plugin marketplace upgrade` 换掉了插件目录，而 `mcp-runtime/venv` 在
+#: 配置目录里原样留着上一版引擎（#487：0.14.0 的环境撞上 0.15.0 的桥）。
+MANAGED_STALE_HINT = (
+    "插件自管环境里的引擎跟当前插件对不上（多半是插件升级后环境还是旧版）。"
+    "把它重装到插件对应的版本即可：python3 <插件目录>/mcp/server.py --provision，"
+    "装完**新开一次 Codex 会话**。"
+)
+#: 启动器真的在后台起了重装时，降级模式对用户说的那句（只有 main() 起了才用它）。
+MANAGED_STALE_KICKED_HINT = (
+    "插件自管环境里的引擎跟当前插件对不上（多半是插件升级后环境还是旧版）。"
+    "启动器已在后台把它重装到插件对应的版本，通常一两分钟；装完**新开一次 Codex 会话**"
+    "即可使用。后台没装成时手动跑：python3 <插件目录>/mcp/server.py --provision"
+)
+
+
+def managed_runtime_stale(resolution: dict) -> bool:
+    """自管 venv 的解释器**在**、却 import 不过 `_BRIDGE_IMPORT`。
+
+    只认 resolver 真的探过的那一条（`source == "managed"` 且 exists），不按文件名猜：
+    环境不存在是 `tavotto_missing` / `desktop_only` 那几格的事，不是「旧了」。
+    """
+    return any(
+        t["source"] == "managed" and t["exists"] and not t["importable"]
+        for t in resolution.get("tried", [])
+    )
+
+
+#: 关掉启动时的后台自动重装（测试、或不想让启动器联网的用户）。
+NO_AUTO_PROVISION_ENV = "TAVOTTO_MCP_NO_AUTO_PROVISION"
+
+
+def _provision_lock_path() -> str:
+    return os.path.join(managed_runtime_dir(), "provision.lock")
+
+
+def _try_lock_fd(fd: int) -> bool:
+    """在 fd 上非阻塞地拿**内核**排他锁：拿到 True，别人持有 False。
+
+    用操作系统的文件锁而不是「锁文件 + mtime + 令牌」（#548 Codex 评审，多轮）：
+    持有者无论正常结束、崩溃还是被杀，内核都在它退出时释放锁——没有「过期锁」，
+    也就不需要接管、心跳、令牌，那一整套「核对所有权再改」在纯文件语义下永远
+    不是原子的。POSIX 用 `flock`（按打开的文件描述，同进程两个 fd 也互斥），
+    Windows 用 `msvcrt.locking` 锁第 0 字节（文件为空也能锁）。
+    只有**被占用**才回 False；锁子系统自己的错（ENOLCK、EIO、文件系统不支持锁……）
+    照常抛 OSError——当成「别人在装」会让手动与自动修复永远原地等一个不存在的持有者
+    （#548 评审 P2）。"""
+    import errno
+
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError as exc:
+            # 被别的句柄锁着时 CRT 报 EACCES（部分版本 EDEADLOCK）
+            if exc.errno in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)):
+                return False
+            raise
+    import fcntl
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError as exc:
+        # flock 的约定里「被占用」可以是 EWOULDBLOCK / EAGAIN，也可以是 EACCES
+        # （部分实现 / fcntl 模拟的 flock）——只认这几个，ENOLCK、EIO 等照常抛
+        if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES):
+            return False
+        raise
+
+
+def _acquire_provision_lock() -> "int | None":
+    """拿重装锁：拿到回持锁的 fd（关掉它 / 进程退出即释放），别人持有回 None。
+    打不开锁文件（EMFILE、只读盘……）照常抛 OSError，由调用方报出来。"""
+    os.makedirs(managed_runtime_dir(), exist_ok=True)
+    fd = os.open(_provision_lock_path(), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        held = _try_lock_fd(fd)
+    except OSError:
+        os.close(fd)
+        raise
+    if held:
+        return fd
+    os.close(fd)
+    return None
+
+
+def _running_executable_is_locked() -> bool:
+    """正在跑的解释器文件删不掉（Windows）；POSIX 上 unlink 正在跑的文件没问题。"""
+    return os.name == "nt"
+
+
+def _running_from_managed_venv() -> bool:
+    venv = os.path.normcase(os.path.abspath(os.path.join(managed_runtime_dir(), "venv")))
+    exe = os.path.normcase(os.path.abspath(sys.executable or ""))
+    return exe.startswith(venv + os.sep)
+
+
+def _release_provision_lock(fd: "int | None") -> None:
+    if fd is None:
+        return
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+    try:
+        os.close(fd)  # POSIX 上关 fd 即释放 flock
+    except OSError:
+        pass
+
+
+def kick_background_provision() -> dict:
+    """在后台起一次 `--provision`，把自管环境重装到插件版本（#487）。
+
+    **不在启动路径上同步跑 pip**：Codex 给 MCP server 的启动预算是
+    `startup_timeout_sec`（30 s），联网装一遍科学栈可能远超它——同步跑的结果是
+    host 判启动失败、连降级 server 都没有。所以这里只 spawn 一个脱离本进程的
+    子进程，本次会话照常以降级模式回话、把「正在后台升级」说出口；装完下一次
+    新会话就是正常模式。
+
+    这里只**探一下**锁（拿到立刻放）来省掉明显多余的 spawn；真正的互斥在子进程
+    `--provision` 里——它改环境之前自己拿内核锁，拿不到就不动环境。所以几个会话
+    同时起、各自探到空闲而各起一个子进程也无妨：只有一个会真的跑 pip。
+    返回 `{"started": bool, "reason": str, "log": path}`，进 health 与降级 payload。
+    """
+    root = managed_runtime_dir()
+    log = os.path.join(root, "provision.log")
+    if os.environ.get(NO_AUTO_PROVISION_ENV) == "1":
+        return {"started": False, "reason": "disabled", "log": log}
+    if (
+        _running_executable_is_locked()
+        and _running_from_managed_venv()
+        and not _python_supported(tuple(sys.version_info[:2]))
+    ):
+        # 本 server 正跑在这个自管 venv 的 python.exe 上，而它的版本在区间外——
+        # --provision 要 `venv --clear` 整个重建，Windows 删不掉正在跑的 python.exe，
+        # 每次启动都会失败一遍（#548 评审 P2）。不起，明确说要退出 Codex 后手动重建。
+        # launch.cmd 只在区间内才优先用自管 venv，所以只有机器上别无 Python 时才走到这。
+        return {"started": False, "reason": "venv_in_use", "log": log}
+    try:
+        probe = _acquire_provision_lock()
+    except OSError as exc:
+        return {"started": False, "reason": f"lock_failed: {exc}", "log": log}
+    if probe is None:
+        return {"started": False, "reason": "already_running", "log": log}
+    _release_provision_lock(probe)
+    try:
+        out = open(log, "a", encoding="utf-8")
+    except OSError as exc:
+        return {"started": False, "reason": f"cannot_write: {exc}", "log": log}
+    kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": out, "stderr": out}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
+    else:
+        kwargs["start_new_session"] = True  # host 关掉本 server 时不连带杀掉 pip
+    env = dict(os.environ)
+    env.pop(_EXECED_ENV, None)
+    try:
+        subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__), "--provision"], env=env, **kwargs
+        )
+    except OSError as exc:
+        return {"started": False, "reason": f"spawn_failed: {exc}", "log": log}
+    finally:
+        out.close()
+    return {"started": True, "reason": "stale_managed_runtime", "log": log}
 
 
 # ------------------------------- 降级 server --------------------------------
@@ -695,6 +874,14 @@ def _recovery_steps(code: str) -> "list[str]":
             "桌面版用户升级桌面版到匹配的版本"
         )
         steps.append("或者反过来：把插件退回与这台机器上的引擎匹配的那一版")
+    elif code == "managed_runtime_stale":
+        # 缺的不是「一个环境」，是**这个**环境跟插件对不上：启动时 main() 会在后台
+        # 重装它，用户要做的只有等它装完、新开会话。手动那条留作兜底（离线 / 后台失败）。
+        steps.append(
+            "Codex 启动本插件时，启动器会在后台把自管环境重装到插件对应的版本（日志："
+            "<Tavotto 配置目录>/mcp-runtime/provision.log），通常一两分钟"
+        )
+        steps.append("没装成（离线等）或想立刻修好：python3 <插件目录>/mcp/server.py --provision")
     elif code in (
         "desktop_only",
         "engine_unavailable",
@@ -729,6 +916,11 @@ def _degraded_payload(code: str, hint: str, resolution: "dict | None") -> dict:
         "unavailable_tools": list(NORMAL_TOOLS),
         "recovery": _recovery_steps(code),
         "tried": (resolution or {}).get("tried", []),
+        **(
+            {"auto_provision": resolution["auto_provision"]}
+            if resolution and "auto_provision" in resolution
+            else {}
+        ),
     }
 
 
@@ -1141,7 +1333,28 @@ def main() -> int:
                         )
                     )
                     return 2
-        report, rc = provision(values["--from"], python_base=values["--python"])
+        # 改环境之前先拿内核锁：后台那次与手动 / `tavotto codex install` 跑的这次
+        # 同一时间只许一个动 venv（#548 评审 P2）；拿不到就不动，明确报出来。
+        try:
+            lock = _acquire_provision_lock()
+        except OSError as exc:
+            lock, busy = None, str(exc)
+        else:
+            busy = None if lock is not None else "running"
+        if lock is None:
+            report = {
+                "ok": False,
+                "code": "provision_in_progress" if busy == "running" else "provision_lock_failed",
+                "error": "另一次重装正在进行（后台自动修复或另一条 --provision），等它结束后再试"
+                if busy == "running"
+                else f"拿不到重装锁：{busy}",
+            }
+            print(json.dumps(report, ensure_ascii=False))
+            return 3
+        try:
+            report, rc = provision(values["--from"], python_base=values["--python"])
+        finally:
+            _release_provision_lock(lock)
         print(json.dumps(report, ensure_ascii=False))
         return rc
 
@@ -1172,6 +1385,25 @@ def main() -> int:
     else:
         resolution = {"python": None, "source": None, "tried": []}
     code, hint = diagnose_resolved(found, resolution)
+    if code == "managed_runtime_stale":
+        auto = kick_background_provision()
+        resolution = {**resolution, "auto_provision": auto}
+        if auto["started"] or auto["reason"] == "already_running":
+            hint = MANAGED_STALE_KICKED_HINT
+        elif auto["reason"] == "venv_in_use":
+            hint = (
+                "插件自管环境要整个重建（它的 Python 版本不在 "
+                + python_range_text()
+                + "），可本会话正跑在它里面的 python.exe 上，Windows 删不掉正在运行的文件。"
+                "请先装一个 Python " + python_range_text() + "，退出 Codex，在终端运行："
+                "py -3 <插件目录>/mcp/server.py --provision，然后重新打开 Codex。"
+            )
+        else:
+            hint = (
+                "插件自管环境里的引擎跟当前插件对不上（多半是插件升级后环境还是旧版），"
+                "后台自动重装没有启动（" + auto["reason"] + "）。请手动跑："
+                "python3 <插件目录>/mcp/server.py --provision，然后新开一次 Codex 会话。"
+            )
     print(
         f"tavotto-mcp: 没找到能 import tavotto.engine 的解释器（{code}），进入降级模式。" + hint,
         file=sys.stderr,

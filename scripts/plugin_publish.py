@@ -401,6 +401,21 @@ def build_commit(
         return proc.stdout.strip()
 
     run("add", "-A", "--", ".")
+    # 执行位写进 index，不信文件系统：Windows 上没有执行位（chmod / os.access 都是空操作），
+    # `git add` 一律记成 100644，插件自带的可执行启动器（mcp/launch.cmd，#266）就丢了 100755
+    # ——推上去的树 content_digest 对不上 staging，发布在 Windows 上整条红。模式以清单为准
+    # （plugin_stage.write_zip 同一个出处），没有清单的 legacy 件才退回文件系统。
+    manifest = plugin_stage.read_manifest(plugin_dir)
+    if manifest:
+        executable = [e["path"] for e in manifest.get("files", []) if e.get("mode") == "100755"]
+    else:
+        executable = [
+            plugin_stage._rel(plugin_dir, p)
+            for p in plugin_stage._walk(plugin_dir)
+            if os.name != "nt" and os.access(p, os.X_OK)
+        ]
+    for rel in executable:
+        run("update-index", "--chmod=+x", "--", f"{plugin_stage.PLUGIN_SUBDIR}/{rel}")
     tree = run("write-tree")
     args = ["commit-tree", tree, "-m", message]
     if parent:
@@ -686,19 +701,22 @@ def run_publish(args, *, fetch=None) -> int:
             # 把旧提交的插件目录检出到临时目录当作 staging
             restore_dir = tmp / "restore"
             restore_dir.mkdir()
+            # 带上模式一起读：插件里有可执行的启动器（mcp/launch.cmd，#266），只写字节
+            # 会把 100755 丢成 100644——重建出来的树 content_digest 就对不上它的收据
             listing = git(
                 repo,
                 "ls-tree",
                 "-r",
                 "-z",
-                "--name-only",
                 args.to,
                 "--",
                 plugin_stage.PLUGIN_SUBDIR,
             ).stdout
-            for path in listing.split("\0"):
-                if not path:
+            for rec in listing.split("\0"):
+                if not rec:
                     continue
+                meta, _tab, path = rec.partition("\t")
+                file_mode = meta.split()[0]
                 rel = path[len(plugin_stage.PLUGIN_SUBDIR) + 1 :]
                 out = restore_dir / rel
                 out.parent.mkdir(parents=True, exist_ok=True)
@@ -710,6 +728,8 @@ def run_publish(args, *, fetch=None) -> int:
                         env=_git_env(),
                     ).stdout
                 )
+                if file_mode == "100755" and os.name != "nt":
+                    out.chmod(0o755)
             identity = {
                 "version": old_receipt["version"],
                 "content_digest": old_digest,
