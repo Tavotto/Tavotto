@@ -1288,6 +1288,37 @@ def test_launcher_only_takes_interpreters_it_can_actually_use():
         assert launcher._shebang_interpreter(shim) == sys.executable
 
 
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_launcher_reads_the_pipx_polyglot_wrapper_under_a_path_with_spaces(tmp_path, quote):
+    """venv 路径带空格时 pipx 写的是 `#!/bin/sh` + `'''exec' '<python>'` 多语言头（#486）。
+
+    样本按真实平台形态造：venv 在一个**带空格**的目录里（macOS pipx 默认的
+    `~/Library/Application Support/pipx`），解释器文件真的存在。旧实现读到
+    第一行的 `/bin/sh` 就停，返回 `/bin/sh`（或 None）而不是那个 python。
+    """
+    sys.path.insert(0, str(PLUGIN / "mcp"))
+    import importlib
+
+    launcher = importlib.import_module("server")
+
+    venv_bin = tmp_path / "Application Support" / "pipx" / "venvs" / "tavotto" / "bin"
+    venv_bin.mkdir(parents=True)
+    python = venv_bin / "python"
+    python.write_bytes(b"")
+    wrapper = venv_bin / "tavotto"
+    wrapper.write_text(
+        f"#!/bin/sh\n'''exec' {quote}{python}{quote} \"$0\" \"$@\"\n' '''\n"
+        "import sys\nfrom tavotto.cli import main\n",
+        encoding="utf-8",
+    )
+    assert launcher._shebang_interpreter(str(wrapper)) == str(python)
+
+    # 真正的 sh 脚本（没有 exec 那一行）给不出解释器，不许把 /bin/sh 当成它
+    plain = tmp_path / "plain-sh"
+    plain.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    assert launcher._shebang_interpreter(str(plain)) is None
+
+
 def test_the_plugin_is_not_shipped_in_the_wheel():
     """插件随 Codex 市场分发，不属于 pip 包（pyproject 的 exclude 看着）。"""
     if tomllib is None:

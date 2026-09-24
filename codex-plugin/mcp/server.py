@@ -138,6 +138,7 @@ def _shebang_interpreter(script: str) -> "str | None":
     try:
         with open(script, "rb") as f:
             first = f.readline(512)
+            second = f.readline(1024)
     except OSError:
         return None
     if not first.startswith(b"#!"):
@@ -146,7 +147,28 @@ def _shebang_interpreter(script: str) -> "str | None":
     # `#!/usr/bin/env python3` 给不出具体环境，直接放弃
     if not parts or parts[0].endswith("env"):
         return None
+    if os.path.basename(parts[0]) == "sh":
+        # venv 路径含空格时（macOS 上 pipx 默认的 `~/Library/Application
+        # Support/pipx` 就是），pip / pipx 写不了 `#!<带空格的路径>`，改写成
+        # sh/python 多语言头：第一行 `#!/bin/sh`，第二行
+        # `'''exec' '<python>' "$0" "$@"`——真正的解释器在第二行（#486）。
+        cand = _polyglot_exec_target(second.decode("utf-8", "replace"))
+        return cand if cand and os.path.isfile(cand) else None
     return parts[0] if os.path.isfile(parts[0]) else None
+
+
+def _polyglot_exec_target(line: str) -> "str | None":
+    """pip / pipx（distlib）多语言 wrapper 第二行里被 exec 的解释器路径。
+
+    引号单双都认（distlib 版本之间变过）；不是这个形状就给 None。启动器只许用
+    标准库里已登记的那几个模块，这里用字符串切而不引入 `re`。
+    """
+    prefix = "'''exec' "
+    rest = line[len(prefix) :] if line.startswith(prefix) else ""
+    if not rest or rest[0] not in "'\"":
+        return None
+    end = rest.find(rest[0], 1)
+    return rest[1:end] or None if end > 0 else None
 
 
 #: 扫 Windows 启动器里那行 shebang 时的体积上限。distlib 的 launcher 约
