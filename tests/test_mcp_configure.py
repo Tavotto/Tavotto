@@ -229,7 +229,7 @@ def test_the_generator_is_stdlib_only():
 def test_help_lists_every_flag_the_docs_use(unpacked, tmp_path):
     proc = _run_configure(unpacked, ["--help"], tmp_path)
     assert proc.returncode == 0
-    for flag in ("--host", "--project-root", "--python", "--engine-python", "--diagnose", "--emit"):
+    for flag in ("--host", "--project-root", "--python", "--engine-python", "--diagnose"):
         assert flag in proc.stdout, flag
 
 
@@ -532,3 +532,89 @@ def test_health_json_survives_a_non_utf8_locale_and_chinese_paths(unpacked, tmp_
     assert proc.returncode in (0, 3), proc.stderr.decode("utf-8", "replace")[-800:]
     report = json.loads(proc.stdout.decode("utf-8").strip().splitlines()[-1])
     assert "发行 包" in report["widget"]["path"]
+
+
+# ======================================================== #559 第二轮评审
+
+
+def _copy_package(unpacked: Path, tmp_path: Path) -> Path:
+    import shutil
+
+    dest = tmp_path / "副本 包" / "codex-plugin"
+    shutil.copytree(unpacked, dest, ignore=shutil.ignore_patterns("__pycache__"))
+    return dest
+
+
+def test_a_partially_extracted_package_is_refused(unpacked, project, tmp_path):
+    """启动器在、`tavotto_mcp` 缺一块：`--health` 照样回 JSON（它不 import 那个包），
+    但宿主一起就 ImportError——必须在打印配置之前就拒绝（Codex 在 #559 上指出）。"""
+    pkg = _copy_package(unpacked, tmp_path)
+    (pkg / "mcp" / "tavotto_mcp" / "bridge.py").unlink()
+    proc = _run_configure(
+        pkg,
+        ["--host", "vscode", "--project-root", str(project), "--python", sys.executable],
+        tmp_path,
+    )
+    assert proc.returncode == 3, proc.stderr
+    assert proc.stdout == ""
+    assert "package_incomplete" in proc.stderr and "bridge.py" in proc.stderr
+
+
+def test_a_server_that_cannot_handshake_is_refused(unpacked, project, tmp_path):
+    """文件都在，但真 server 起不来（这里把 bridge 换成 import 即失败）：体检照样说引擎
+    可用，只有按启动描述真起一次 initialize 才看得出来。"""
+    pkg = _copy_package(unpacked, tmp_path)
+    (pkg / "mcp" / "tavotto_mcp" / "bridge.py").write_text(
+        'raise ImportError("broken on purpose")\n', encoding="utf-8"
+    )
+    proc = _run_configure(
+        pkg,
+        ["--host", "vscode", "--project-root", str(project), "--python", sys.executable],
+        tmp_path,
+    )
+    assert proc.returncode == 3, proc.stderr
+    assert proc.stdout == ""
+    assert "server_unstartable" in proc.stderr
+
+
+def test_an_explicit_engine_python_is_the_launch_command(unpacked, project, tmp_path):
+    """`--engine-python` 直接当启动命令：只塞进 TAVOTTO_MCP_PYTHON 的话，启动器解释器自己
+    装着引擎时它会被静默忽略（Codex 在 #559 上指出）。"""
+    mod = _load(unpacked / "integrations" / "configure.py")
+    # 引擎要是**另一个**解释器路径，否则「被忽略、落回默认解释器」与「被采用」看起来一样
+    here = Path(sys.executable)
+    alt = next(
+        (
+            here.with_name(n)
+            for n in ("python3", "python", f"python3.{sys.version_info[1]}")
+            if here.with_name(n).is_file() and here.with_name(n) != here
+        ),
+        None,
+    )
+    if alt is None:
+        pytest.skip("这个环境里没有与当前解释器同 venv 的另一个解释器路径")
+    result = mod.build("cursor", str(project), None, str(alt))
+    entry = result["config"]["mcpServers"]["tavotto"]
+    assert entry["command"] == os.path.abspath(str(alt))
+    assert "TAVOTTO_MCP_PYTHON" not in entry["env"]
+    assert result["engine"]["source"] == "current"
+
+
+def test_engine_python_with_a_different_python_is_an_argument_error(unpacked, project, tmp_path):
+    bare = _bare_python(tmp_path)
+    proc = _run_configure(
+        unpacked,
+        [
+            "--host",
+            "vscode",
+            "--project-root",
+            str(project),
+            "--python",
+            bare,
+            "--engine-python",
+            sys.executable,
+        ],
+        tmp_path,
+    )
+    assert proc.returncode == 2, proc.stderr
+    assert "bad_args" in proc.stderr
