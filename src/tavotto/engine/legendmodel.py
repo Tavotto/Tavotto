@@ -374,6 +374,14 @@ class LegendEntries:
         跟随中的项从源派生，照旧（有源的误差棒就是这样）。"""
         return self.frozen[j] is not None and self.effective_binding(j) != "follow_source"
 
+    def is_script_drawn(self, j: int) -> bool:
+        """定格的这一格是**脚本自己画的**（自定义 handler：色带等；默认就不跟随源）。与之相对的是
+        「本来跟随源派生、被断开了」的格子（有源的误差棒）：那种格子原本就有按示意线类型给的控件，
+        断开后照旧给——改完控件消失是「宣称了却改不动」（不变式 capability truthfulness）。"""
+        return self.is_frozen(j) and not (
+            self.sources[j] is not None and self.default_binding[j] == "follow_source"
+        )
+
     def frozen_color_uniform(self, j: int) -> bool:
         """定格的整格在脚本原样里是不是**同一种颜色**（误差棒是，色带不是）。是的话「示意线
         颜色」有意义：改色落到整格每个 artist 上。判据取脚本原样，不取此刻（此刻可能已改过色）。"""

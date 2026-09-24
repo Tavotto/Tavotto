@@ -2873,9 +2873,10 @@ def _legend_entry_fields(t, state: FigState, gid: str) -> list[dict]:
                 "group": "图例项",
             }
         )
-    # 定格的整格（色带、断开的误差棒…）没有「那一条」示意线的样式可改；整格同一种颜色的
-    # （误差棒）仍给颜色，改色落到整格每个 artist 上（legendmodel._entry_handle_write）
-    if model.is_frozen(j):
+    # 脚本自己画的整格（色带等）没有「那一条」示意线的样式可改；整格同一种颜色的仍给颜色，
+    # 改色落到整格每个 artist 上（legendmodel._entry_handle_write）。本来跟随源、被断开的格子
+    # （误差棒）照旧按示意线类型给——改之前给了，改完不能消失
+    if model.is_script_drawn(j):
         props = ("handle_color",) if model.frozen_color_uniform(j) else ()
     else:
         props = legend_handle_props(h)
