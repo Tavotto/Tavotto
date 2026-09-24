@@ -61,6 +61,12 @@ clip / 整体 opacity 的矢量透明组 / 中英 Greek 上下标可检索文字
 
 ## runtime_spike 的结论（通过 → 可推进 U05；Windows / Linux 运行时证据待 dispatch）
 
+> **退役记录（2026-09-22）**：runtime 半边（`scripts/dev/u02_spikes/runtime_spike.py` / `hashcheck.py` / `__init__.py`、
+> `tests/test_foundation_u02_runtime.py`、证据 workflow `foundation-u02-spikes.yml`）已由 U05 收编进产品
+> （`engine/privatepython.py`，PR #475，main 3147bd76）并随 `chore/retire-u02-runtime-spike` 删除——render 半边此前已由
+> U06 / U07 收编；`evidence/u02/` 与 ADR 0055 / 0056 保留作记录，`scripts/dev/u02_spikes/requirements.txt` 只剩 render
+> 报告的版本钉（`test_foundation_u02_render.py` 读它对拍），不再是任何 venv 的安装清单。
+
 | 命令 | 目标平台 / 环境 / 产物 | 退出码 | 结果与必要证据 |
 |---|---|---|---|
 | `python -m dev.u02_spikes.runtime_spike --out evidence/u02/runtime --keep`（主仓库 `.venv` 解释器，纯标准库；首轮 `TAVOTTO_DATA_DIR` 指临时目录，进 git 的那份是评审处置后用 `--data-dir` 复用 hash 校验过的下载缓存重跑的） | macOS arm64；`report-macos-arm64.json` | 0 | **15/15**：uv 0.12.17 从钉死的 wheel 取出并 `--version`；pbs CPython 3.13.15（来源 = 锁文件）staging → 真起 → 原子改名到按内容命名的目录 `cpython-3.13.15-<sha12>` → 原子切 `active.json`；三个 wheel 按 hash 下到 wheelhouse；`uv venv --python <私有>`；死代理 + `--offline --no-index --require-hashes` 安装成功 0.09 s；空 wheelhouse 失败；不带 offline 的联网被代理拒（os error 61）；venv 里 `six/tabulate/sortedcontainers` 版本对、prefix / base_prefix / executable / 全部 sys.path 在 data_dir 下；篡改归档与错期望值各拒一次且执行计数 / 目录不变；embeddable 静态检查（有 `._pth`，无 venv / ensurepip / tkinter）；HOME 零新文件、PATH 不变；顶层目录全在 data_dir |

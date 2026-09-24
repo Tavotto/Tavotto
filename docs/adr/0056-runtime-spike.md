@@ -1,6 +1,6 @@
 # ADR 0056：U02 runtime_spike——uv + python-build-standalone 的私有 Python 准备路径技术证明
 
-日期：2026-09-20 · 状态：**Accepted（技术证明；不启用任何能力）**
+日期：2026-09-20 · 状态：**Accepted（技术证明；不启用任何能力）**；2026-09-22 起 spike 代码**已退役**——结论由 [0063 私有 Python 供应](0063-private-python-provisioning.md) 接进产品（`engine/privatepython.py`，PR #475），`scripts/dev/u02_spikes/` 的 runtime 半边、`tests/test_foundation_u02_runtime.py` 与证据 workflow `foundation-u02-spikes.yml` 随 `chore/retire-u02-runtime-spike` 删除；`evidence/u02/runtime/` 保留，本文所述的文件路径是历史记录
 相关：[0019 受控依赖修复](0019-controlled-dependency-repair.md)、[0044 系统解释器候选](0044-system-interpreter-as-repair-candidate.md)、
 [0053 U01 合同](0053-foundation-contracts-and-preparation.md)、[0055 render_spike](0055-render-spike.md)；
 `packaging/runtime-lock.json`（schema 2）、`packaging/AGENTS.md`「内置渲染 runtime」；实施包 D05（U05 不造第二套安装器）、

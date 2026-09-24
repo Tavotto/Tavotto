@@ -702,7 +702,7 @@ class TestPullRequestBaseFilter:
     """
 
     #: 常驻的三个 PR 级 workflow——**判据的主语的下界**，不是闭集：叠栈轨道的证据 workflow
-    #: （`foundation-u02-spikes.yml` 等）也监听 `pull_request`，它们进出 main 不需要来这里改名单，
+    #: （`private-python-targets.yml` 等）也监听 `pull_request`，它们进出 main 不需要来这里改名单，
     #: 只要带着同一条过滤。
     ALWAYS_LISTENING = frozenset({"ci.yml", "codeql.yml", "pr-conflict-domains.yml"})
 
@@ -719,8 +719,8 @@ class TestPullRequestBaseFilter:
         """主语是算出来的：目录里每个监听 `pull_request` 的文件都在集合里，`.yaml` 也算。"""
         listening = self._listening()
         assert self.ALWAYS_LISTENING <= set(listening)
-        assert "foundation-u02-spikes.yml" in listening, (
-            "U02 的证据 workflow（#455）监听 pull_request 却不在集合里——集合是怎么算的？"
+        assert "private-python-targets.yml" in listening, (
+            "U05 的目标验证 workflow（#475）监听 pull_request 却不在集合里——集合是怎么算的？"
         )
 
     def test_every_pull_request_workflow_only_triggers_on_a_main_base(self):

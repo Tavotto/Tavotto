@@ -1,5 +1,7 @@
-# U02 spike venv 的候选包（钉死版本；只装进独立 venv，绝不进主仓库 .venv 或 pyproject 的运行时闭包）。
-#   python -m venv <scratch>/spike-venv && <scratch>/spike-venv/bin/python -m pip install -r scripts/dev/u02_spikes/requirements.txt
+# U02 render_spike 报告（docs/implementation/tavotto-foundation/evidence/u02/render/report.json）记的候选包版本——
+# **只是证据记录**：tests/test_foundation_u02_render.py 读它对拍报告里的版本号。spike 代码已退役
+# （render 半边由 U06 / U07 收编，runtime 半边由 U05 收编、随 chore/retire-u02-runtime-spike 删除），
+# 这里不再是任何 venv 的安装清单；ADR 0055 / 0056 与 evidence/u02/ 留作记录。
 # 写入侧
 pikepdf==10.13.0.post1
 fonttools==4.65.0
@@ -8,7 +10,3 @@ uharfbuzz==0.56.1
 pypdfium2==5.13.0
 pdfminer.six==20251107
 pypdf==6.16.1
-# 最小候选 freeze
-pyinstaller==6.19.0
-# 在 spike venv 里跑 tests/test_foundation_u02_*.py
-pytest==8.4.2
