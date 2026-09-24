@@ -74,8 +74,8 @@ _IMPL_MODULES = {
     BACKEND_RENDERCORE: "tavotto.rendercore.facade",
 }
 
-#: 用户可见的稳定 code（`app.py` 的漏斗把 `BackendSelectionError` / 实现的 `CandidatePackagesMissing` /
-#: `FontsUnavailable` 转成 JSON；两种语言的文案在 `web/src/i18n/locales/*/errors.json`，
+#: 用户可见的稳定 code（`app.py` 的漏斗把 `BackendSelectionError` 与 `is_backend_unavailable()` 认出来的、实现自己
+#: 声明的「不可用」异常（RenderCore：`CandidatePackagesMissing` / `FontsUnavailable`）转成 JSON；两种语言的文案在 `web/src/i18n/locales/*/errors.json`，
 #: `tests/test_error_codes.py` 读这个元组）。`backend_unavailable` = 依赖 / 字体不在：安装闭包不完整，明确失败不换库。
 ERROR_CODES = ("backend_retired", "backend_unknown", "backend_unavailable")
 
@@ -97,6 +97,21 @@ class BackendSelectionError(RuntimeError):
             super().__init__(f"{BACKEND_ENV}={value!r} 不认识（可选 {BACKENDS}）")
             self.code = "backend_unknown"
         self.value = value
+
+
+def is_backend_unavailable(exc: BaseException) -> bool:
+    """`exc` 是不是某个**已装载**实现声明的「此刻不可用」（依赖包 / 批准字体不在，`backend_unavailable`）。
+
+    每个实现模块自己声明 `UNAVAILABLE_ERRORS`；调用方（`app.py` 的漏斗）只问这一句，不 import 任何实现的
+    异常类——否则换 / 加一个后端时，它的不可用错误就绕过这条路成了 `internal_error`（Codex #539）。只看已经
+    装载的实现：判错误时不为了判而装载实现（那本身可能就是抛出这个错误的那一步）。与 `selected()` 一样是
+    选择器层的工具，不在 `__all__`（19 项契约名的闭集）。
+    """
+    for mod in list(_IMPLS.values()):
+        errors = getattr(mod, "UNAVAILABLE_ERRORS", ())
+        if errors and isinstance(exc, errors):
+            return True
+    return False
 
 
 def selected() -> str:

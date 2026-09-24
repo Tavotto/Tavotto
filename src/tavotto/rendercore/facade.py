@@ -42,12 +42,17 @@ from typing import Callable
 
 from .. import pixelmetrics
 from . import BACKEND_NAME, BACKEND_VERSION, banded, ir, plan, raster, rasterio, typography
-from .hbshaper import HbFaceProvider
+from .fonts import FontsUnavailable
+from .hbshaper import CandidatePackagesMissing, HbFaceProvider
 from .ir import hex2rgb, mm2pt
 from .preview import PreviewCache
 from .renderhost import RenderHost
 from .sources import FingerprintMemo, FrozenSource, SourceError
 from .typography import CANVAS_TEXT_FAMILIES, COVERAGE_MAX_CP
+
+#: 「这个实现此刻不可用」的异常（依赖包 / 批准字体不在）。契约层 `pdfbackend.is_backend_unavailable()`
+#: 按它判，HTTP 层因此不必认识任何实现的异常类（Codex #539）；换实现 / 加实现时各自声明自己的这一组。
+UNAVAILABLE_ERRORS: tuple[type[BaseException], ...] = (CandidatePackagesMissing, FontsUnavailable)
 
 __all__ = [
     "BACKEND_NAME",

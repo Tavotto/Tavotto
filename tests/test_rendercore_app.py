@@ -677,3 +677,42 @@ def test_writeback_with_annotations_fails_closed_when_the_staged_pdf_is_unusable
     assert (figs / "Fig1.pdf").read_bytes() == before_pdf
     assert (figs / "Fig1.png").read_bytes() == before_png
     assert not [p for p in figs.iterdir() if p.name.endswith(".updating")]
+
+
+def test_backend_unavailability_is_judged_by_the_contract_layer_not_by_app_imports(monkeypatch):
+    """Codex #539：HTTP 层不认识任何实现的异常类。「此刻不可用」由契约层 `pdfbackend.is_backend_unavailable`
+    按**已装载**实现自己声明的 `UNAVAILABLE_ERRORS` 判——换 / 加一个后端时，它的不可用错误照样走
+    `backend_unavailable` 这条路，而不是落成 `internal_error`。"""
+    import ast
+    import types
+
+    class OtherBackendDown(RuntimeError):
+        pass
+
+    exc = OtherBackendDown("另一个实现的依赖不在")
+    # 活的尺子：这个实现没装载时，同一个异常就是 internal_error
+    with m.app.test_request_context("/api/render"):
+        resp, status = m._unhandled(exc)
+    assert status == 500 and resp.get_json()["code"] == "internal_error"
+
+    fake = types.SimpleNamespace(UNAVAILABLE_ERRORS=(OtherBackendDown,))
+    monkeypatch.setitem(pdfbackend._IMPLS, "other", fake)
+    with m.app.test_request_context("/api/render"):
+        resp, status = m._unhandled(exc)
+    assert status == 500 and resp.get_json()["code"] == "backend_unavailable"
+
+    # RenderCore 自己声明的那一组确实就是它会抛的两个
+    from tavotto.rendercore import facade, fonts, hbshaper
+
+    assert set(facade.UNAVAILABLE_ERRORS) == {
+        fonts.FontsUnavailable,
+        hbshaper.CandidatePackagesMissing,
+    }
+
+    # app.py 不许再 import 实现的异常模块
+    tree = ast.parse((Path(m.__file__)).read_text(encoding="utf-8"))
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and "rendercore" in node.module:
+            imported |= {f"{node.module}.{a.name}" for a in node.names}
+    assert not {n for n in imported if n.endswith((".fonts", ".hbshaper"))}, imported

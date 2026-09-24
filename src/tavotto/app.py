@@ -99,7 +99,6 @@ from .engine import (
     updater as engine_updater,
     workdir as engine_workdir,
 )
-from .rendercore import fonts as rc_fonts, hbshaper as rc_hbshaper
 
 PKG_ROOT = Path(__file__).resolve().parent  # 只读：包自带资源（前端构建产物）
 DATA_ROOT = engine_config.data_dir()  # 可写：运行时产物（装成包后 site-packages 不可写）
@@ -650,8 +649,6 @@ def _backend_selection(exc):
     return jsonify({"error": str(exc), "code": exc.code, "params": {"value": exc.value}}), 500
 
 
-@app.errorhandler(rc_hbshaper.CandidatePackagesMissing)
-@app.errorhandler(rc_fonts.FontsUnavailable)
 def _backend_unavailable(exc):
     """渲染后端的运行时依赖 / 批准字体不在（安装闭包不完整：pip 装漏了 extra 时代的包、冻结产物没收字体、
     `TAVOTTO_FONTS_DIR` 指错）：**明确失败**（`backend_unavailable`），绝不换别的库画（06 §1 / ADR 0072）。"""
@@ -667,6 +664,9 @@ def _unhandled(exc):
     abort() 的 HTTPException 原样放行，不动 403/404 语义。"""
     if isinstance(exc, HTTPException):
         return exc
+    # 渲染后端「此刻不可用」由契约层判（实现各自声明 UNAVAILABLE_ERRORS），HTTP 层不认识实现的异常类
+    if pdfbackend.is_backend_unavailable(exc):
+        return _backend_unavailable(exc)
     LOG.exception("未处理异常: %s %s", request.method, request.path)
     return jsonify(
         {
