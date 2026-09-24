@@ -268,6 +268,18 @@ describe('键盘', () => {
     expect((document.activeElement as HTMLElement).dataset.el).toBe('axes_0.yticks.label_3')
   })
 
+  it('没有选中时 Tab 停在第一行，不是第一个聚类行', async () => {
+    await mount()
+    const tabbable = [...host.querySelectorAll('[data-el]')].filter(
+      (n) => (n as HTMLElement).tabIndex === 0,
+    ) as HTMLElement[]
+    // 反证：这棵树里真有聚类行，而且它不是第一行——否则两种实现停在同一处
+    const first = rowGids()[0]!
+    expect(rowGids().some((g) => g!.includes('#'))).toBe(true)
+    expect(first.includes('#')).toBe(false)
+    expect(tabbable.map((n) => n.dataset.el)).toEqual([first])
+  })
+
   it('语义聚类那一行也走同一套键：← 收起、→ 展开', async () => {
     await mount()
     // 聚类行的 key 是「父 key#聚类名」，不是 gid。聚类默认是**展开**的（审计 B44：
