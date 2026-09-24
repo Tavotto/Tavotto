@@ -592,24 +592,116 @@ def _linestyle_name(a) -> str:
     return "-"  # (offset, seq) 自定义虚线：显示成实线占位，用户改了才覆盖
 
 
+#: annotate 锚点坐标系里「拖完能逆算回去」的那几种：与 renderer 无关、变换可逆。
+#: 其余写法（Artist / 可调用对象 / Transform / Bbox / 'polar'）一律不出端点——
+#: 判不出能不能写回，就不宣称这项能力。'offset …' 只对文字那一端（textcoords）成立。
+_ANN_COORD_BASES = ("figure", "subfigure", "axes")
+_ANN_COORD_UNITS = ("points", "pixels", "fraction", "fontsize")
+
+
+def _ann_coords_invertible(coords, *, text_end: bool) -> bool:
+    if isinstance(coords, tuple):
+        return len(coords) == 2 and all(
+            _ann_coords_invertible(c, text_end=text_end) for c in coords
+        )
+    if not isinstance(coords, str):
+        return False
+    if coords == "data":
+        return True
+    parts = coords.split()
+    if len(parts) != 2 or parts[1] not in _ANN_COORD_UNITS:
+        return False
+    return parts[0] in _ANN_COORD_BASES or (text_end and parts[0] == "offset")
+
+
+def annotation_arrow_owner(a):
+    """这支箭头若是**纯箭头注释**（`annotate("", xy=…, xytext=…, arrowprops=…)`）
+    且两端坐标系都可逆，回它的 Annotation；否则 None。
+
+    只收空文字：有字的注释，箭尾从文字框算（`_arrow_relpos`），拖尾巴等于拖字——
+    字自己已经能拖（`pos_frac`），两条 override 写同一个 `xyann` 只会互相盖写。
+    """
+    ann = getattr(a, "_mm_annotation", None)
+    if ann is None or ann.get_text() != "" or ann.axes is None:
+        return None
+    if not _ann_coords_invertible(ann.xycoords, text_end=False):
+        return None
+    if not _ann_coords_invertible(ann.anncoords, text_end=True):
+        return None
+    return ann
+
+
+def _ann_point_display(ann, xy, coords):
+    """注释的一个锚点 → display 像素。与 `Annotation._get_xy` 同一算法（'data'
+    分量先过单位换算），只用于可逆坐标系（见 `_ann_coords_invertible`），
+    所以 renderer 传 None。"""
+    x, y = xy
+    xc, yc = coords if isinstance(coords, tuple) else (coords, coords)
+    if xc == "data":
+        x = float(ann.convert_xunits(x))
+    if yc == "data":
+        y = float(ann.convert_yunits(y))
+    return ann._get_xy_transform(None, coords).transform((x, y))  # noqa: SLF001
+
+
+def annotation_arrow_display(ann):
+    """纯箭头注释的 (箭尾, 箭头) display 坐标：箭尾 = `xyann`（空文字的文字框
+    退化成一个点，`update_positions` 的 arrow_begin 就是它），箭头 = `xy`。
+    与独立箭头的 `_posA_posB` 同口径：未扣 shrinkA / shrinkB。"""
+    head = _ann_point_display(ann, ann.xy, ann.xycoords)
+    tail = _ann_point_display(ann, ann.xyann, ann.anncoords)
+    return tail, head
+
+
+class _AnnAnchors(tuple):
+    """纯箭头注释的原样：(xy, xyann, annotation_clip)。与独立箭头的端点对区分开，
+    还原时认得出该写回哪一边。只活在 originals 里，不过 JSON。"""
+
+
+def _set_annotation_arrow(ann, da, db) -> None:
+    """把纯箭头注释的两端挪到 display 点 da（尾）/ db（头）：改的是**注释本身**
+    的 `xy` / `xyann`——箭头 patch 每次 draw 都按这两个锚点重定位，直接改 patch
+    下一帧就弹回。先写 xy：'offset …' 的 textcoords 以 xy 为原点。"""
+    head = ann._get_xy_transform(None, ann.xycoords).inverted().transform(db)  # noqa: SLF001
+    ann.xy = (float(head[0]), float(head[1]))
+    tail = ann._get_xy_transform(None, ann.anncoords).inverted().transform(da)  # noqa: SLF001
+    ann.xyann = (float(tail[0]), float(tail[1]))
+    # 'data' 锚点落到子图范围外时 matplotlib 默认整条注释不画（`_check_xy`）。端点
+    # 是 figure 锚定的：拖到哪就画在哪，不因为离开了数据范围凭空消失
+    ann.set_annotation_clip(False)
+
+
 def _set_arrow_endpoints(a, value) -> None:
-    """拖动图内独立箭头。值为 figure 分数（top-origin）的 [ax, ay, bx, by]，
-    换算回箭头自己的 transform 坐标后 set_positions——数据坐标里落点跟着
-    数据范围走，figure 分数才是「屏幕上挪到哪就是哪」。annotate 的箭头每次
-    draw 会被注释机制重定位，manifest 不给它出端点，这里只会收到独立箭头。"""
-    fig = a.get_figure()
+    """拖动图内箭头。值为 figure 分数（top-origin）的 [ax, ay, bx, by]（A = 尾、
+    B = 头），换算回箭头自己的坐标后落位——数据坐标里落点跟着数据范围走，figure
+    分数才是「屏幕上挪到哪就是哪」。独立箭头（add_patch）`set_positions`；纯箭头
+    注释改注释的两个锚点（`_set_annotation_arrow`）。有字的注释 manifest 不出端点，
+    前端不会发。"""
+    ann = getattr(a, "_mm_annotation", None)
+    fig = a.get_figure() if ann is None else ann.get_figure()
     da = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
     db = pathgeom.frac_to_display(fig, float(value[2]), float(value[3]))
+    if ann is not None:
+        _set_annotation_arrow(ann, da, db)
+        return
     inv = a.get_transform().inverted()
     a.set_positions(tuple(inv.transform(da)), tuple(inv.transform(db)))
 
 
 def _get_arrow_endpoints(a):
+    ann = getattr(a, "_mm_annotation", None)
+    if ann is not None:
+        return _AnnAnchors((ann.xy, ann.xyann, ann.get_annotation_clip()))
     pts = getattr(a, "_posA_posB", None)
     return None if pts is None else (tuple(pts[0]), tuple(pts[1]))
 
 
 def _restore_arrow_endpoints(a, orig) -> None:
+    if isinstance(orig, _AnnAnchors):
+        ann = a._mm_annotation  # noqa: SLF001
+        ann.xy, ann.xyann = orig[0], orig[1]
+        ann.set_annotation_clip(orig[2])
+        return
     if orig is not None:
         a.set_positions(orig[0], orig[1])
 
@@ -2535,8 +2627,9 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda a: float(a.get_zorder()),
         lambda a, v: a.set_zorder(float(v)),
     ),
-    # 端点与样式：位置只对独立箭头开放（manifest 侧把关），样式两类都能改。
-    # 原生值分别是 transform 坐标的端点对 / ArrowStyle 对象 / linestyle 原值，
+    # 端点与样式：位置对独立箭头与纯箭头注释开放（manifest 侧把关：有字的注释、
+    # 坐标系逆算不回去的注释不出端点），样式两类都能改。原生值分别是 transform
+    # 坐标的端点对（注释是 `_AnnAnchors`）/ ArrowStyle 对象 / linestyle 原值，
     # 恢复走 _RESTORE 里的专用函数
     ("arrowpatch", "endpoints_frac"): (_get_arrow_endpoints, _set_arrow_endpoints),
     # 独立形状的拖动：figure 分数（top-origin）的包围盒左下角；平移叠在 artist 级

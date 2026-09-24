@@ -39,10 +39,29 @@
   `arrow_endpoints`（figure 分数、y 向下），可整体拖动 / 拖单个端点
   （override `endpoints_frac`=[ax,ay,bx,by]，setter 经箭头自身 transform 逆变换
   后 `set_positions`）；arrowstyle / linestyle 两类箭头都可改
-  （识别不出的自定义样式报 "custom"，选它=不动）。**annotate 的 arrow_patch
-  端点由注释机制每次 draw 重定位，绝不出端点**——出了用户拖完下一帧就弹回
-  （test_arrowpatch_endpoints_and_style_roundtrip 看护）。前端交互语义见
-  `web/AGENTS.md`。
+  （识别不出的自定义样式报 "custom"，选它=不动）。前端交互语义见
+  `docs/rules/frontend/hit-and-selection-geometry.md`「图内箭头交互」。
+  * **纯箭头注释同样可拖（2026-09-24，用户的流程图：10 根箭头全是
+    `ax.annotate("", xy=…, xytext=…)`，一根都拖不动）**。annotate 的 arrow_patch 每次
+    draw 由 `update_positions` 按注释的 `xy` / `xyann` 重定位——**改 patch 下一帧就弹回**，
+    这条事实不变；变的是 setter 改的对象：`endpoints_frac` 落到**注释本身的两个锚点**
+    （`overrides._set_annotation_arrow`：头经 `xycoords`、尾经 `textcoords` 的变换逆算，
+    先写 `xy`——'offset …' 的尾以头为原点），`[尾, 头] = [xytext, xy]`，与独立箭头的
+    posA / posB 同口径（未扣 shrink）。manifest 的端点**从注释算**（`annotation_arrow_display`），
+    不读 patch 上一帧留下的像素缓存。拖过的注释 `annotation_clip=False`：'data' 锚点离开
+    数据范围时 matplotlib 默认整条不画，而端点是 figure 锚定的。原样是 `_AnnAnchors`
+    （xy / xyann / clip 三样），只活在 originals 里。
+  * **只对「逆算得回去」的开放**（`annotation_arrow_owner`，判不出就不宣称）：文字为空、
+    两端坐标系都是 renderer 无关的可逆写法——'data'、'{figure,subfigure,axes}
+    {points,pixels,fraction,fontsize}'、尾端另加 'offset …'，以及它们的二元组。Artist /
+    可调用对象 / Transform / Bbox / 'polar' 不出端点。**有字的注释不出端点**：箭尾从文字框
+    算，拖尾巴就是拖字，字自己已能拖（`pos_frac`），两条 override 写同一个 `xyann` 只会互相
+    盖写。
+  * 看护：`test_arrowpatch_endpoints_and_style_roundtrip`（独立箭头）、
+    `test_pure_arrow_annotation_drags_via_its_anchors`（出 / 不出端点的判据、拖完不弹回、
+    导出 PDF 在新位置、还原逐位）、`test_pure_arrow_annotation_head_dragged_out_of_axes_stays_drawn`、
+    等价矩阵 `s3-pure-arrow-annotation`（含写回后重开）与
+    `test_text_annotation_arrow_never_exposes_endpoints`。
 - **独立形状（Patch family）可拖动（2026-09-21，用户的流程图脚本：框拖不动）**：
   `ax.patches` 里登记成 `patch` 的形状 `draggable=True`，manifest 的 `anchor` 是
   **包围盒左下角**（figure 分数、y 向下，`Patch.get_window_extent()` 不需要
