@@ -92,30 +92,25 @@ def _install_id() -> str:
 _CLOUD_ACCOUNT = re.compile(r"(CloudStorage[/\\])([^/\\\s\"'-]+)-([^/\\\"']+)")
 #: 邮箱出现在哪里都不该出门（云盘目录名、Git 配置、日志里的账号提示）。
 #:
-#: **判据是「多抹少放」，不是「认得出才抹」**（#536 评审连续三轮）：先后漏过只认 ASCII 的
-#: `用户@例子.公司`、punycode 的 `--p1ai` 尾巴、JSON 转义的 `＠` 与代理对、IDNA 上下文
-#: 字符 `l·l`——每一轮都是正面白名单（「地址由这些字符组成」）又缺了一类。所以反过来写：
+#: **不在 token 内部找地址的边界**（#536 评审连续五轮）：先后漏过只认 ASCII 的 `用户@例子.公司`、
+#: punycode 的 `--p1ai` 尾巴、转义的 `＠` 与代理对、IDNA 的 `l·l`，以及在「分隔符」处切开
+#: 的 `o'connor@…`、`user@[192.0.2.1]`——每一轮都是在 token 里判断「地址从哪到哪」时漏一类。
+#: 所以不再判：
 #:
-#: * 起点：`@`、全角 `＠`、JSON 转义 `@` / `＠`、URL 编码 `%40`；
-#: * 从起点往两边扩，**只在明确的分隔符处停**（`_email_stop`：空白、控制字符、引号、各种括号、
-#:   `<>`、`,;:` 与全角 `，；：、`、`/\|`、URL 的 `?&=#`），其余字符——不论 Unicode 类别——
-#:   一律算地址的一部分；JSON 的 `\uXXXX` 转义按解出来的字符判，解出分隔符也停；
-#: * 宁可把紧挨着的无关字符一起抹掉（中文不分词，`请写信给用户@例子.公司` 整段抹），也不漏地址；
-#: * 只放行一张**负面清单**（`_not_an_email`），每条都是结构上确定不是地址的已知格式。
-#:
-#: 两边的扩展步数按 RFC 5321 的上限封顶（本地部分 64、域名 255）：几 MB 的日志里一个 `@`
-#: 不该扫全文，而真的地址不会比这更长。
+#: * token = 连续的非空白字符。一行整个是 JSON（`{` / `[` / `"` 开头且解析得了）时，只在 JSON
+#:   字符串字面量的内容里按空白切，引号与 `{}[],:` 结构原样留下；其余文本只按空白切；
+#: * token 里只要有 `@`（`＠`、转义 `@` / `＠`、URL 编码 `%40` 都算），**整个 token**
+#:   换成 `<email>`——`(user@x.com),` 连括号逗号一起抹，不猜边界；
+#: * 引号括起来的本地部分（`"quoted local"@x.com`）里会有空白：`@` 前的引号数是奇数时，
+#:   把 token 往左并到同一行上一个 `"` 所在的 token；
+#: * 只放行负面清单（`_not_an_email`），三条都是结构上确定不是地址的格式。
 _EMAIL_AT = re.compile(r"[@＠]|\\u(?:0040|[Ff][Ff]20)|%40")
 _EMAIL_DOTS = ".。．｡"
-_EMAIL_STOPS = frozenset("\"'`<>,;:，；：、/\\|?&=#")
-#: 分隔符里按 Unicode 类别整类算的：控制字符、开 / 闭括号、开 / 闭引号（`「」《》“”` 都在里面）
-_EMAIL_STOP_CATEGORIES = frozenset(("Cc", "Ps", "Pe", "Pi", "Pf"))
-_JSON_ESCAPE = re.compile(r"\\u([0-9A-Fa-f]{4})")
 #: 放行：`pkg@1.2.3` / `matplotlib@3.10` / `pkg@2.0.0-beta`——域名一侧是版本号（数字段 + 可选的
 #: 预发布 / 构建后缀），不是域名。只认 ASCII 数字：`\d` 会认全角与其他文字的数字。
 _VERSION_AFTER_AT = re.compile(r"v?[0-9]+(?:\.[0-9]+)*(?:[-+][0-9A-Za-z.+-]*)?")
-_EMAIL_LOCAL_MAX = 64
-_EMAIL_DOMAIN_MAX = 255
+_JSON_STRING = re.compile(r'"(?:[^"\\\n]|\\.)*"')
+_JSON_ESCAPE = re.compile(r"\\u([0-9A-Fa-f]{4})")
 
 
 def _digest(text: str) -> str:
@@ -158,74 +153,92 @@ def project_roots(project: dict | None = None) -> list[tuple[str, str]]:
     return sorted(out, key=lambda pair: len(pair[0]), reverse=True)
 
 
-def _email_stop(ch: str) -> bool:
-    """地址在这个字符处结束（判据见 `_EMAIL_AT` 上方）。"""
-    return ch.isspace() or ch in _EMAIL_STOPS or unicodedata.category(ch) in _EMAIL_STOP_CATEGORIES
-
-
-def _email_unit(text: str, i: int, backward: bool) -> tuple[str, int] | None:
-    """i 处（backward 时是 i 之前）的一个字符单位，是分隔符就 None。`\\uXXXX` 转义算一个单位、
-    按解出来的字符判——`json.dumps` 写出的地址每个字都是转义。"""
-    if backward:
-        m = _JSON_ESCAPE.fullmatch(text, i - 6, i) if i >= 6 else None
-    else:
-        m = _JSON_ESCAPE.match(text, i)
-    if m is not None:
-        ch, width = chr(int(m.group(1), 16)), 6
-    else:
-        ch, width = (text[i - 1] if backward else text[i]), 1
-    return None if _email_stop(ch) else (ch, width)
+def _only_openers(text: str) -> bool:
+    """全由开括号 / 开引号组成（含空串）：`@` 前只有这些时，`@` 前没有账号。"""
+    return all(c in "\"'`" or unicodedata.category(c) in ("Ps", "Pi") for c in text)
 
 
 def _not_an_email(local: str, domain: str) -> bool:
-    """负面清单：结构上确定不是地址的已知格式。每条的理由：
+    """负面清单：结构上确定不是地址的已知格式。`local` / `domain` 是这个 `@` 两侧、到 token 边界
+    （或同一 token 里相邻的 `@`）为止的全部字符。每条的理由：
 
-    * 本地部分为空——`@app.route`、`@dataclass`、`@某人`：装饰器与提及，`@` 前没有账号；
+    * `@` 前没有账号——`@app.route`、`@dataclass`、`(@某人`：装饰器与提及；
     * 域名不到两段——`user@localhost`、`HEAD@{0}`、`a@b`、`x@例子`：邮件地址的域名至少两段；
-    * 域名是版本号——`numpy@1.26.4`、`pkg@2.0.0-beta`：包管理器的「包@版本」写法。
+    * 域名是版本号——`numpy@1.26.4`、`pkg@2.0.0-beta`、`jsdom@30.0.1/lib/x.js`：包管理器的
+      「包@版本」写法（只看第一个 `/` 之前、去掉句读之后是不是版本号，只认 ASCII 数字）。
 
-    URL 里的 userinfo（`ssh://git@github.com/…`）不在清单上：它照样按地址抹，与 #524 之前一致。
+    URL 里的 userinfo（`ssh://git@github.com/…`）不在清单上：整个 token 照样抹。
+    判断前先解开 `\\uXXXX`（`json.dumps` 把全角句点写成 `\\u3002`，不解开就数不出两段）。
     """
-    if not local:
+    local, domain = (
+        _JSON_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), x) for x in (local, domain)
+    )
+    if _only_openers(local):
         return True
-    labels = re.split(f"[{_EMAIL_DOTS}]", domain)
+    labels = re.split(f"[{_EMAIL_DOTS}]", domain.rstrip(_EMAIL_DOTS))
     if len(labels) < 2 or not all(labels):
         return True
-    return _VERSION_AFTER_AT.fullmatch(domain) is not None
+    core = re.split(r"[/\\]", domain, maxsplit=1)[0].rstrip(_EMAIL_DOTS + ",;:)]}>\"'")
+    return _VERSION_AFTER_AT.fullmatch(core) is not None
 
 
-def _redact_emails(text: str) -> str:
-    """每个 `@` 往两边扩到分隔符为止，不在负面清单上的整段换成 `<email>`（判据见 `_EMAIL_AT` 上方）。"""
+def _redact_email_tokens(text: str) -> str:
+    """含 `@` 的 token 整个换成 `<email>`（判据见 `_EMAIL_AT` 上方）。token 按空白切。"""
     out: list[str] = []
-    done = 0  # 已经交出去的位置：往左扩不越过上一个替换的结尾
+    done = 0  # 已经交出去的位置
     for at in _EMAIL_AT.finditer(text):
         if at.start() < done:
             continue
-        local: list[tuple[str, int]] = []
         start = at.start()
-        while start > done and len(local) < _EMAIL_LOCAL_MAX:
-            unit = _email_unit(text, start, backward=True)
-            if unit is None or start - unit[1] < done:
-                break
-            local.append(unit)
-            start -= unit[1]
-        while local and local[-1][0] in _EMAIL_DOTS:  # 句中的点号不算本地部分的开头
-            start += local.pop()[1]
-        domain: list[tuple[str, int]] = []
+        while start > done and not text[start - 1].isspace():
+            start -= 1
         end = at.end()
-        while end < len(text) and len(domain) < _EMAIL_DOMAIN_MAX:
-            unit = _email_unit(text, end, backward=False)
-            if unit is None:
-                break
-            domain.append(unit)
-            end += unit[1]
-        while domain and domain[-1][0] in _EMAIL_DOTS:  # 句末的句号不算域名
-            end -= domain.pop()[1]
-        if _not_an_email("".join(c for c, _ in reversed(local)), "".join(c for c, _ in domain)):
+        while end < len(text) and not text[end].isspace():
+            end += 1
+        # 引号括起来的本地部分里有空白：`@` 前引号是奇数个，就并到同一行上一个引号所在的 token
+        if text.count('"', start, at.start()) % 2 == 1:
+            quote = text.rfind('"', done, start)
+            if quote >= 0 and "\n" not in text[quote:start]:
+                start = quote
+                while start > done and not text[start - 1].isspace():
+                    start -= 1
+        token = text[start:end]
+        ats = [m.span() for m in _EMAIL_AT.finditer(token)]
+        edges = [0] + [e for _, e in ats[:-1]]
+        nexts = [s for s, _ in ats[1:]] + [len(token)]
+        if all(
+            _not_an_email(token[lo:s], token[e:hi])
+            for (s, e), lo, hi in zip(ats, edges, nexts, strict=True)
+        ):
             continue
         out += [text[done:start], "<email>"]
         done = end
     out.append(text[done:])
+    return "".join(out)
+
+
+def _redact_json_line(line: str) -> str | None:
+    """一行整个是 JSON 时：只在字符串字面量的内容里抹，结构原样。不是 JSON 就 None。"""
+    head = line.lstrip()[:1]
+    if head not in ("{", "[", '"'):
+        return None
+    try:
+        json.loads(line)
+    except ValueError:
+        return None
+    return _JSON_STRING.sub(lambda m: f'"{_redact_email_tokens(m.group()[1:-1])}"', line)
+
+
+def _redact_emails(text: str) -> str:
+    if not _EMAIL_AT.search(text):
+        return text
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        redacted = _redact_json_line(body)
+        if redacted is None:
+            redacted = _redact_email_tokens(body)
+        out.append(redacted + line[len(body) :])
     return "".join(out)
 
 

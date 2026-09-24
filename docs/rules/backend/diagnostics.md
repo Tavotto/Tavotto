@@ -16,13 +16,14 @@
     同一个项目在 report / app.log / config.json 里是同一个记号。`build_report` / `build_bundle` 的每一处
     `_redact_text` / `_redact_obj` 都带上它，新加一处漏了就是新的泄漏口。
   * 兜底两条不依赖登记：`CloudStorage/<服务商>-<账号>` 的账号段换成 `acct:<哈希>`（服务商名留着），
-    邮箱一律 `<email>`——没登记成项目的路径、日志里随口的一句也不带出账号。邮箱的判据是**多抹少放**
-    （`_redact_emails`，#524 / #536 评审连续三轮各漏一类 Unicode 之后改的）：起点是 `@`、`＠`、
-    `\u0040` / `\uff20`、`%40`，往两边扩时**只在分隔符处停**（空白、控制字符、引号、括号、`<>`、
-    `,;:` 与全角 `，；：、`、`/\|?&=#`），其余字符不论类别都算地址——**不许再写「地址由哪些字符组成」
-    的正面白名单**。只放行负面清单 `_not_an_email`：`@` 前为空（装饰器 / 提及）、域名不到两段
-    （`localhost`、`HEAD@{0}`）、域名是版本号（`numpy@1.26.4`）。看护含一条跨 20 个 Unicode 类别的
-    随机抽样性质用例（`test_any_unicode_inside_an_address_is_redacted_whole`）。
+    邮箱一律 `<email>`——没登记成项目的路径、日志里随口的一句也不带出账号。邮箱的判据是**含 @ 的 token 整个抹**
+    （`_redact_emails`，#524 / #536 评审连续五轮，每轮都是在 token 里判断地址边界时漏一类）：token =
+    连续的非空白字符；一行整个是 JSON 时只在字符串字面量内容里按空白切、结构原样；`@` / `＠` /
+    `\u0040` / `\uff20` / `%40` 都算 @；`"quoted local"@x` 这种 @ 前引号为奇数的并到上一个引号。
+    `(user@x.com),` 连括号逗号一起抹——**不许再在 token 内部判断地址从哪到哪**。只放行负面清单
+    `_not_an_email`：@ 前只有开括号 / 引号（装饰器 / 提及）、域名不到两段（`localhost`、`HEAD@{0}`）、
+    域名是 ASCII 版本号（`numpy@1.26.4`、`jsdom@30.0.1/lib/…`）。看护含跨 24 个 Unicode 类别（含 ASCII
+    标点）的随机抽样性质用例（`test_any_unicode_inside_an_address_is_redacted_whole`）。
   * `_project_section`：去掉 `name`；`figures_dir` 只剩记号，另给 `location`
     （`cloud_storage` / `non_ascii` / `has_space`——真实故障来自这三样，不来自名字）；导出 / 备份 / 文档
     目录与项目设置里的路径走 `_path_fact`：记号 / `~` 之后只有 `_KNOWN_SEGMENTS`（Tavotto 自己起的目录名、
