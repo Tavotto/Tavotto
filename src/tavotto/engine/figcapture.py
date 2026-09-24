@@ -19,7 +19,9 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
 * `savefig_stem()` —— `savefig(路径)` 里那个 stem 怎么取；
 * `collect_pyplot_figures()` —— 脚本跑完之后还活着的 pyplot Figure 怎么补进
   捕获表（去重、命名、保序）；
-* `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）。
+* `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
+* `unused_imports()` / `install_unused_import_placeholders()` —— 脚本 import 了却从未用到、
+  又没装的包不挡图（ADR 0061 §二 2026-09-24 修订；判据父进程与 worker 各调一次）。
 
 ## fallback stem 的稳定性
 
@@ -147,6 +149,10 @@ __all__ = [
     "collect_pyplot_figures",
     "fallback_stems",
     "install_relative_read_fallback",
+    "unused_imports",
+    "reaches_main",
+    "install_unused_import_placeholders",
+    "SIDE_EFFECT_FREE_IMPORTS",
     "InputObserver",
     "observed_local_modules",
     "INPUT_OBSERVER_MAX_FILES",
@@ -973,3 +979,248 @@ def install_relative_read_fallback(
             datasource.open = real_ds_open
 
     return uninstall
+
+
+# ---------------------------------------------------------------- 未使用的缺失 import
+
+#: 只有这些顶级模块会被判「未使用」（评审 #555 两条 P1）：绑定没被读**证明不了** import 没用——
+#: 别名同样可以只为副作用而写：`import cmocean as cm` 注册色图、`import scienceplots as _sp` 注册样式、
+#: `import requests as _r` 改 warnings 过滤器并装 logging handler。占位不执行这些，之后的行为就悄悄
+#: 变了（或报一句误导的错），而不是「请装它」。
+#: 判据是一份**进程级副作用快照**（唯一出处 `tests/support/import_side_effects.py`）：全新解释器
+#: `-I` 里 import 前后比 matplotlib 是否进 `sys.modules`、`os.environ`、warnings 过滤器、logging、
+#: `sys.path` / `meta_path` / `path_hooks`、信号处理器、各 excepthook / displayhook、atexit、builtins、
+#: codec 注册与 locale……**任何一项变了就不进**。实测（Python 3.13 / matplotlib 3.11.2，2026-09-24）
+#: 16 个候选只剩下面 6 个：requests / astropy / sklearn 装 logger handler，numba / joblib / h5py /
+#: xarray / netCDF4 / openpyxl / numexpr 改 warnings 过滤器、atexit、环境变量或 meta_path；cmocean /
+#: scienceplots / colorcet / cmasher / seaborn / lmfit 还会装 matplotlib。sympy 唯一的变化是给它
+#: **自己的** `SymPyDeprecationWarning` 加的过滤器（包不在，这个类就不存在）——快照里唯一的豁免。
+#: 表外的名字一律照旧准备——宁可多问一次，不猜；扩名单要用同一份快照实测。
+#: `tests/test_unused_missing_import.py` 在 worker 解释器里对装了的那些现量一遍。
+SIDE_EFFECT_FREE_IMPORTS = frozenset(
+    {"sympy", "tqdm", "statsmodels", "networkx", "tabulate", "yaml"}
+)
+
+#: 出现任何一个就判不清「名字有没有被读」：`globals()["smp"]` / `vars()` / `eval("smp")` /
+#: `exec(...)` / `__import__` / `compile` / `m.__dict__` 都能不经 Name 节点读到绑定。
+_OPAQUE_NAMES = frozenset(
+    {"globals", "vars", "locals", "eval", "exec", "compile", "__import__", "__dict__"}
+)
+
+
+def unused_imports(tree) -> frozenset[str]:
+    """脚本里**被 import 了、但绑定的名字从未被读取**的顶级模块名——判不清的一律不算。
+
+    「未使用的缺失 import 不挡图」（ADR 0061 §二 2026-09-24 修订）的唯一判据：父进程
+    （`importscan` → 联合计划不把它算进 needed）与 worker（`install_unused_import_placeholders`
+    的名单）各调一次。只认 AST 能证明的形状，任一条不成立就不收：
+
+    * 这个模块在脚本里出现的**每一处**都是 `import X as Y`，X 不带点（`import X.sub` 要真装载
+      子模块；`from X import …` 本身就是在用它）。**裸 `import X` 一律不收**：没读过的裸 import
+      常常是为了副作用（`import scienceplots` 之后 `plt.style.use("science")`、`import cmocean` 注册
+      色图）——占位会把「请装 scienceplots」换成一句看不懂的「样式不存在」。起了别名 = 写的人
+      打算用那个名字，一次没用才是遗留；
+    * X 在 `SIDE_EFFECT_FREE_IMPORTS` 里——别名同样可以只为副作用而起（`import cmocean as cm`），
+      所以「绑定没读」之外还要「import 它本身什么都不改」，这一条只能靠实测过的名单；
+    * 这些 import 都不在 `try` / `with` 里（`try: import X; HAVE_X = True` 的分支走向
+      取决于它 import 得到与否——占位会把「没装」变成「装了」）；
+    * 绑定的名字（Y 或 X）在别处**一次都不出现**：Name（读 / 写 / 删）、形参、
+      global / nonlocal、函数 / 类名、except 名、match 捕获、别的 import 的绑定、属性名、
+      关键字参数名，一律算出现（宁可多判「用到了」）；
+    * X 与绑定名都不作为字符串常量出现（`sys.modules["X"]` / `importlib.import_module("X")` /
+      `getattr(mod, "Y")` / `__all__`）；
+    * 脚本里没有 `_OPAQUE_NAMES` 里的任何一个（出现就整份放弃：判不清）。
+
+    判据只看脚本自己这一份文件：本地模块里的 import 不在这里判（它们照旧按 needed 走）。
+    """
+    import ast  # noqa: PLC0415 — 只有这里用，worker 与 Flask 侧都是标准库
+
+    guarded: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Try, ast.With, ast.AsyncWith)) or type(node).__name__ == "TryStar":
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Import):
+                    guarded.add(id(inner))
+
+    candidates: dict[str, set[str]] = {}  # 顶级模块名 → 绑定名
+    rejected: set[str] = set()
+    own_aliases: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".", 1)[0]
+                if alias.asname is None or "." in alias.name or id(node) in guarded:
+                    rejected.add(top)
+                    continue
+                candidates.setdefault(top, set()).add(alias.asname or alias.name)
+                own_aliases.add(id(alias))
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            rejected.add(node.module.split(".", 1)[0])
+
+    seen: set[str] = set()
+    strings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            seen.add(node.id)
+        elif isinstance(node, ast.arg):
+            seen.add(node.arg)
+        elif isinstance(node, ast.Attribute):
+            seen.add(node.attr)
+        elif isinstance(node, ast.keyword) and node.arg:
+            seen.add(node.arg)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            seen.update(node.names)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            seen.add(node.name)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            seen.add(node.name)
+        elif isinstance(node, ast.alias) and id(node) not in own_aliases:
+            seen.add(node.asname or node.name.split(".", 1)[0])
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            strings.add(node.value)
+        else:
+            for attr in ("name", "rest"):  # match 的捕获（MatchAs / MatchStar / MatchMapping）
+                value = (
+                    getattr(node, attr, None) if type(node).__name__.startswith("Match") else None
+                )
+                if isinstance(value, str):
+                    seen.add(value)
+    if seen & _OPAQUE_NAMES:
+        return frozenset()
+
+    def _mentioned(text: str) -> bool:
+        return any(s == text or s.startswith(text + ".") for s in strings)
+
+    out = set()
+    for top, bound in candidates.items():
+        if top not in SIDE_EFFECT_FREE_IMPORTS or top in rejected or _mentioned(top):
+            continue
+        if any(name in seen or _mentioned(name) for name in bound):
+            continue
+        out.add(top)
+    return frozenset(out)
+
+
+#: 本地模块里出现这些名字（Name 或属性）就可能借到脚本的全局：`sys._getframe(1).f_globals["smp"]`、
+#: `inspect.currentframe().f_back.f_globals`、`inspect.stack()`。
+#: `stack` 单列：`np.stack` 太常见，只认 `inspect.stack` 与 `from inspect import stack`。
+_FRAME_NAMES = frozenset({"_getframe", "currentframe", "f_globals", "f_locals", "f_back"})
+
+
+def reaches_main(tree, script_stem: str) -> bool:
+    """一个被跟进的**本地模块**能不能够到脚本自己的命名空间（评审 #555 P2）——能就说明脚本的别名可能
+    被它借走（`from __main__ import smp` 之后 `smp.Symbol(...)`），「脚本里没读」不再证明没用到。
+
+    `importscan` 对每个跟进到的本地模块调一次；任何一个为真，脚本的全部 `unused` 一律作废（按整份脚本、
+    不按名字：`from __main__ import *`、`getattr(__main__, 变量)`、经栈帧取 globals 都给不出名字，按名字
+    精确保留在静态上做不完备）。认的形状：
+
+    * `import __main__` / `from __main__ import …`；以及 import 脚本自己的模块名（`entry` 不是 `__main__`
+      时脚本是按 stem 作为模块 import 的，`from plot import smp` 同样借得到）；
+    * 字符串常量 `"__main__"` 或脚本的 stem（`sys.modules["__main__"]`、`import_module("__main__")`）——
+      **`__name__ == "__main__"` 那种入口守卫里的不算**，否则带入口守卫的本地模块全都会被误判；
+    * 经栈帧取调用方的全局（`_FRAME_NAMES`）。
+    """
+    import ast  # noqa: PLC0415
+
+    targets = {"__main__", script_stem}
+    guard_constants: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            sides = [node.left, *node.comparators]
+            if any(isinstance(x, ast.Name) and x.id == "__name__" for x in sides):
+                guard_constants.update(id(x) for x in sides if isinstance(x, ast.Constant))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name.split(".", 1)[0] in targets for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if not node.level and (node.module or "").split(".", 1)[0] in targets:
+                return True
+            if node.module == "inspect" and any(a.name == "stack" for a in node.names):
+                return True
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value in targets and id(node) not in guard_constants:
+                return True
+        elif isinstance(node, ast.Name) and node.id in _FRAME_NAMES | {"__main__"}:
+            return True
+        elif isinstance(node, ast.Attribute) and (
+            node.attr in _FRAME_NAMES
+            or (
+                node.attr == "stack"
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "inspect"
+            )
+        ):
+            return True
+    return False
+
+
+def install_unused_import_placeholders(script: str, names) -> None:
+    """让脚本里**被证明未使用**（`unused_imports`）又确实装不上的那几条 `import X` 成功。
+
+    只在四条同时成立时换成占位模块，其余一律原样交给真正的 `__import__`：
+
+    * 发起 import 的是脚本自己（调用方 globals 的 `__file__` 就是这个脚本）——库里的
+      `try: import X except ImportError` 永远看不到占位；
+    * `level == 0`、没有 fromlist、名字在名单里；
+    * 真的 import 抛了 `ModuleNotFoundError` 且缺的就是 X 本身（这一条只是短路：X 装了、它的依赖坏了时
+      异常名是那个依赖，不必再问 `find_spec`——真正挡住这种情形的是下一条，X 找得到）；
+    * **而且 import 系统确实找不到它**：`importlib.util.find_spec(X) is None`（评审 #555 P2）。`exc.name == X`
+      只说明异常这么写着——一个找得到的同名模块（项目里的 `sympy.py`）初始化到一半自己抛
+      `ModuleNotFoundError(name="sympy")`，它已经执行过的副作用不会因为占位而撤销，失败必须照常抛出。
+      顶层名的 `find_spec` 只问 finder、不执行模块代码；它自己抛任何异常都按「判不清」处理，照常抛出。
+
+    占位**不进 `sys.modules`**（别处再 import X 仍然是真实的失败）；读它的任何非 dunder
+    属性抛 `ModuleNotFoundError("No module named 'X'")`——判据若错了，失败形状与原来逐字
+    相同，运行后的缺包修复照旧接手。装了就不卸：脚本定义的函数在渲染期仍可能执行 import。
+    """
+    import importlib.util  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+    import types  # noqa: PLC0415
+
+    names = frozenset(names or ())
+    if not names:
+        return
+    real_import = builtins.__import__
+    target = os.path.normcase(os.path.realpath(script))
+    verdict: dict[str, bool] = {}
+
+    def _from_script(globals_) -> bool:
+        file = globals_.get("__file__") if isinstance(globals_, dict) else None
+        if not isinstance(file, str):
+            return False
+        if file not in verdict:
+            verdict[file] = os.path.normcase(os.path.realpath(file)) == target
+        return verdict[file]
+
+    class _Unused(types.ModuleType):
+        def __getattr__(self, attr):
+            if attr.startswith("__") and attr.endswith("__"):
+                raise AttributeError(attr)
+            raise ModuleNotFoundError(f"No module named '{self.__name__}'", name=self.__name__)
+
+    def _not_findable(name: str) -> bool:
+        """区分「import 系统没找到」与「找到了、loader 执行时自己抛了同名的错」：只有前者给占位。"""
+        try:
+            return importlib.util.find_spec(name) is None
+        except Exception:  # noqa: BLE001 — 判不清就不给占位
+            return False
+
+    def _import(name, globals=None, locals=None, fromlist=(), level=0):
+        if level or fromlist or name not in names or not _from_script(globals):
+            return real_import(name, globals, locals, fromlist, level)
+        try:
+            return real_import(name, globals, locals, fromlist, level)
+        except ModuleNotFoundError as exc:
+            # `exc.name != name` 只是省一次 find_spec 的短路；判据是「import 系统找不到 X」
+            if exc.name != name or not _not_findable(name):
+                raise
+            print(
+                f"[deps] {name} 没有安装；脚本 import 了它但没有用到，已用占位代替"
+                f"（真用到时会报 No module named '{name}'）",
+                file=sys.stderr,
+            )
+            return _Unused(name)
+
+    builtins.__import__ = _import

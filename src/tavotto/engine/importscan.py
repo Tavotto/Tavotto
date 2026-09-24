@@ -34,7 +34,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import depresolve, projectenv
+from . import depresolve, figcapture, projectenv
 
 BUCKET_STDLIB = "stdlib"
 BUCKET_LOCAL = "local"
@@ -63,6 +63,9 @@ CONTEXTS = (
 MAX_LOCAL_MODULES = 24
 MAX_DEPTH = 3
 MAX_SOURCE_BYTES = 1024 * 1024
+#: 「脚本的别名会不会被本地模块借走」那一遍（`figcapture.reaches_main`）最多再扫多少个包内文件；
+#: 超了按看不全处理（`unused` 作废）。它只为这一个判断扫，不改 needed 的集合。
+MAX_MAIN_SCAN_FILES = 256
 
 #: 本模块认的扩展模块后缀（本地编译扩展：`fastcalc.cpython-313-darwin.so`）。
 _EXT_SUFFIXES = (".so", ".pyd", ".dylib")
@@ -101,11 +104,18 @@ class ImportClass:
     local_path: str = ""  # 本地模块相对项目根的路径（bucket=local）
     lines: tuple[int, ...] = ()
     via: tuple[str, ...] = ()
+    #: 脚本 import 了它、绑定的名字却从未被读（`figcapture.unused_imports`，只看脚本本身、
+    #: 本地模块没有经由它）——跑前不准备；缺的话 worker 给那一行占位（ADR 0061 §二修订）。
+    unused: bool = False
 
     @property
     def needed(self) -> bool:
-        """脚本一开跑就要它、且它是第三方（不管映射得到没有）。"""
-        return self.bucket == BUCKET_THIRD_PARTY and self.context == CONTEXT_UNCONDITIONAL
+        """脚本一开跑就要它、且它是第三方（不管映射得到没有），而且脚本确实用到了它。"""
+        return (
+            self.bucket == BUCKET_THIRD_PARTY
+            and self.context == CONTEXT_UNCONDITIONAL
+            and not self.unused
+        )
 
     def to_payload(self) -> dict:
         return {
@@ -117,6 +127,7 @@ class ImportClass:
             "local_path": self.local_path,
             "lines": list(self.lines),
             "via": list(self.via),
+            "unused": self.unused,
             "needed": self.needed,
         }
 
@@ -422,14 +433,29 @@ def scan(
         tree, problem = _parse(text, script_p) if text else (None, None)
         if problem is not None:
             problems.append(problem)
+    unused: frozenset[str] = frozenset()
     if tree is not None:
         v = _Visitor("")
         v.visit(tree)
         uses += v.uses
         dynamic += v.dynamic
+        unused = figcapture.unused_imports(tree)
 
     # 本地模块有界跟进：每发现一个本地模块就扫它的文件，它 import 的东西再排队判本地。
     local_paths: dict[str, Path] = {}
+    #: 某个跟进到的本地模块能够到脚本的命名空间、或有本地模块读不了 / 是编译扩展——脚本的别名可能被
+    #: 借走，`unused` 一律作废（评审 #555 P2，判据 `figcapture.reaches_main`）
+    main_reachable = False
+    #: 还要交给 `reaches_main` 看的文件（评审 #555 P2 第二条）：跟进到的**包**里的全部 .py——`__init__.py`
+    #: 里 `from . import inner`、脚本里 `import helper.inner` 都会执行 `_module_files` 看不到的子模块——
+    #: 以及每个扫过的文件里相对导入解析到的目标。
+    main_queue: list[Path] = []
+    if tree is not None:
+        targets = _relative_targets(tree, script_p, root_p)
+        if targets is None:
+            main_reachable = True
+        else:
+            main_queue += targets
     depth_of: dict[str, int] = {"": 0}  # via → 深度
     scanned: set[str] = set()
     read_files: list[str] = [Path(script).as_posix()]
@@ -450,6 +476,14 @@ def scan(
             continue
         via = _rel(root_p, path)
         depth_of[via] = depth
+        if path.is_file() and path.suffix != ".py":
+            main_reachable = True  # 编译扩展没有源码可扫：判不清它碰不碰 __main__
+        package_dir = path.parent if path.name == "__init__.py" else path if path.is_dir() else None
+        if package_dir is not None:
+            try:
+                main_queue += sorted(p for p in package_dir.rglob("*.py") if p.is_file())
+            except OSError:
+                main_reachable = True
         for f in _module_files(path):
             key = os.path.normcase(str(f))
             if key in scanned:
@@ -467,6 +501,13 @@ def scan(
             if problem is not None:
                 problems.append(problem)
                 continue
+            if figcapture.reaches_main(sub, script_p.stem):
+                main_reachable = True
+            targets = _relative_targets(sub, f, root_p)
+            if targets is None:
+                main_reachable = True
+            else:
+                main_queue += targets
             sv = _Visitor(via)
             sv.visit(sub)
             for su in sv.uses:
@@ -477,6 +518,35 @@ def scan(
                 uses.append(su2)
                 pending.append(su2)
             dynamic += [ImportUse("", d.full, CONTEXT_DYNAMIC, d.lineno, via) for d in sv.dynamic]
+
+    # 包内文件与相对导入的目标：只为 `reaches_main` 再看一遍（不进 needed——那是既有的跟进规则）。
+    # 相对导入解析不到、越出项目根、指到编译扩展，或文件太多，都按看不全处理。
+    main_scanned = set(scanned)
+    while main_queue and unused and not main_reachable:
+        f = main_queue.pop(0)
+        key = os.path.normcase(str(f))
+        if key in main_scanned:
+            continue
+        if len(main_scanned) >= MAX_MAIN_SCAN_FILES or not projectenv.within(root_p, f):
+            main_reachable = True
+            break
+        main_scanned.add(key)
+        read_files.append(_rel(root_p, f))
+        text, problem = _read(f)
+        sub, problem2 = _parse(text, f) if problem is None else (None, problem)
+        if sub is None:
+            problems.append(problem or problem2)
+            break
+        targets = _relative_targets(sub, f, root_p)
+        if targets is None or figcapture.reaches_main(sub, script_p.stem):
+            main_reachable = True
+            break
+        main_queue += targets
+
+    if main_reachable or truncated or problems or dynamic:
+        # 看不全 = 判不清：跟进被截断、有本地模块读不了、有非字面量的动态 import（可能装进一个没扫过、
+        # 借用 __main__ 的本地模块）——都不再承认「脚本的别名没被用到」
+        unused = frozenset()
 
     by_name: dict[str, list[ImportUse]] = {}
     for u in uses:
@@ -513,6 +583,8 @@ def scan(
                 resolution_source=source,
                 lines=lines,
                 via=via,
+                # 本地模块也 import 了它 = 它的绑定在那边可能被读：照旧按上下文判
+                unused=name in unused and not via,
             )
         )
     return ScanResult(
@@ -523,6 +595,47 @@ def scan(
         truncated=truncated,
         files=tuple(sorted(set(read_files))),
     )
+
+
+def _as_module(target: Path) -> list[Path] | None:
+    """一个点分路径在磁盘上对应的源码：`x.py`、`x/__init__.py` 或命名空间目录里的 .py；找不到 / 只有编译
+    扩展（没有源码可扫）回 None。"""
+    try:
+        py = target.with_name(target.name + ".py")
+        if py.is_file():
+            return [py]
+        init = target / "__init__.py"
+        if init.is_file():
+            return [init]
+        if target.is_dir():
+            return sorted(p for p in target.glob("*.py") if p.is_file())
+    except OSError:
+        return None
+    return None
+
+
+def _relative_targets(tree: ast.AST, file: Path, root: Path) -> list[Path] | None:
+    """`file` 里每条相对导入（`from . import x` / `from .x import y` / `from .. import z`）解析到的源码文件；
+    有一条解析不到、越出项目根、或只能落到编译扩展，就回 None（看不全）。`from . import name` 里的
+    name 不是子模块时是包 `__init__.py` 里的属性，包本身找得到就算解析到了。"""
+    out: list[Path] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.ImportFrom) and node.level):
+            continue
+        base = file.parent
+        for _ in range(node.level - 1):
+            base = base.parent
+        if not projectenv.within(root, base):
+            return None
+        target = base.joinpath(*node.module.split(".")) if node.module else base
+        found = _as_module(target)
+        if found is None:
+            return None
+        out += found
+        for alias in node.names:
+            if alias.name != "*":
+                out += _as_module(target / alias.name) or []
+    return out
 
 
 def _module_files(path: Path) -> list[Path]:
