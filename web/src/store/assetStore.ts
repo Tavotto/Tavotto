@@ -1,5 +1,10 @@
 import { create } from 'zustand'
-import { fetchPanels, type PanelInfo, type PanelsResponse } from '@/lib/api'
+import {
+  fetchPanels,
+  type PanelInfo,
+  type PanelsResponse,
+  type UnsupportedAsset,
+} from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { t } from '@/i18n'
 
@@ -66,6 +71,8 @@ let inflight: {
 interface AssetState {
   panels: PanelInfo[]
   byId: Record<string, PanelInfo>
+  /** 是素材、但用不了的文件（范围之外的 TIFF）：不进 `panels`，素材库如实列出 */
+  unsupported: UnsupportedAsset[]
   figuresDir: string
   loading: boolean
   /** 至少成功加载过一次；用来区分「首次加载」与「刷新」两种 loading */
@@ -88,6 +95,7 @@ interface AssetState {
 export const useAssetStore = create<AssetState>((set, get) => ({
   panels: [],
   byId: {},
+  unsupported: [],
   figuresDir: '',
   loading: false,
   loaded: false,
@@ -120,6 +128,7 @@ export const useAssetStore = create<AssetState>((set, get) => ({
         set({
           panels: data.panels,
           byId: Object.fromEntries(data.panels.map((p) => [p.id, p])),
+          unsupported: data.unsupported ?? [],
           figuresDir: data.figures_dir,
           loaded: true,
           error: null,

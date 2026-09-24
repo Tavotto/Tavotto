@@ -64,6 +64,7 @@
     "typeRaster": "Images",
     "typeRuntime": "Runtime figure",
     "typeScript": "Editable",
+    "unsupportedTitle": "These files can’t be used",
     "usedChip": "Used",
     "usedOnly": "Used",
     "usedOnlyAria": "Show only assets used in this document",

@@ -63,6 +63,13 @@
   从 assetStore + runtimeAssetStore 现算（磁盘图走 addPanel、runtime 走
   描述符），没跑出预览的条目不渲染假按钮。看护
   `openRequest.test.ts` / `FigurePickerDialog.test.tsx`。
+- **TIFF 素材（issue #534）**：`/api/file` 回原字节，Chromium / WebView2 画不出 TIFF——`panelSrc`
+  的位图分支按**浏览器能力的允许清单**（`BROWSER_RASTER_EXTS` = png / jpg / jpeg）判，清单之外一律走
+  `/api/render` 分档渲染（后端转 PNG）；新加一种素材格式时默认落在这条安全的路上。这张表不是素材清单，
+  不与 `project_refresh.IMG_EXT` 成对。卡片格式名按扩展名说实话（`formatOf`：JPEG / TIFF 不再叫 PNG）。
+  范围之外的 TIFF（`/api/panels` 的 `unsupported`）不给卡片、也不静默消失：图区末尾逐个一行
+  （`UnsupportedAssets`，`data-asset-unsupported`），跟着同一组搜索 / 来源 / 类型筛选走，文案取
+  `errors:backend.<code>`。看护 `lib/panelSrc.test.ts`、`AssetBrowser.tiff.test.tsx`。
 - 看护：`scriptRunStore.test.ts` / `ScriptLibrary.test.tsx` /
   `AssetBrowser.runtime.test.tsx` / `runtimeSourceSection.test.tsx` +
   `e2e/asset-library.spec.ts`（show-only 项目真实后端黄金路径 + 窄视口 +

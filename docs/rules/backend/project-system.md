@@ -94,6 +94,28 @@
     所以「离最近整数 < 0.02 就还原成整数」是去掉编码损失，不是四舍五入。
   * 没测量的维度一律 `None`：矢量不编像素数与 dpi，位图不编 viewBox，
     PDF 的透明度是 `None` 而不是 `False`。
+- **TIFF 素材（issue #534，2026-09-24）**：`project_refresh.IMG_EXT` 含 `TIFF_EXT`（`.tif` /
+  `.tiff`），「哪些文件算素材」仍只有 `iter_assets()` 一把按后缀的尺（watcher / inventory 不读文件头）。
+  **列进来不等于用得了**：支持范围的唯一判据是 `tavotto/tiffprobe.py`（纯标准库、只读头与第一个 IFD），
+  两条渲染路都不各判一遍——`scan_panels` 与 `safe_resolve` 在后端之前把范围之外的 TIFF 拦下；候选后端的
+  画布合成走 `rc_sources.StaticSourceResolver`、**不经 `safe_resolve`**，`_export_produce_rendercore`
+  的 `_StaticInProject.resolve` 在解析器把路径核进项目根之后补同一道闸（漏了它，候选后端会把浮点 TIFF
+  画成全黑交付——第一版就漏在这里，用例抓到）。
+  * **范围**：经典 TIFF（`II` / `MM`、条带或瓦片、样本交错），**只取首页**（与多页 PDF 同一条规则）；
+    灰度（可带 alpha、`WhiteIsZero` / `BlackIsZero`）/ RGB（可带 alpha）/ 8 位调色板 / JPEG 压缩的
+    YCbCr；8 位与 16 位无符号整数（16 位取高 8 位、不做自动对比度），1 位只在灰度；压缩：无 / LZW /
+    Deflate（8、32946）/ PackBits / JPEG / CCITT G3、G4。
+  * **范围之外一律拒绝、不出错图**，七个 code 闭集 `tiffprobe.ERROR_CODES`（浮点 / 有符号、CMYK / Lab、
+    32 位等位深、ZSTD 等压缩、BigTIFF、平面存放、读不出头）——每一条都是实测两个后端各出一张不同的错图
+    或一个读得开一个读不开。同一个 code 出现在三处：`/api/panels` 的 `unsupported: [{id, name, folder,
+    code}]`（不进 `panels`，也不静默消失）、按 id 取文件的 422（`_unsupported_tiff`）、导出作业的失败
+    （`_export_tiff_error` → `ExportRequestError`）。文案在 `errors:backend.<code>`，params 只有 `file`。
+  * **密度**：`originalspec.raster_dpi` 按签名认 TIFF，读 `XResolution` / `YResolution` + 单位（英寸 /
+    厘米；单位 1 只是纵横比 = 没写），解析只在 `tiffprobe.density`；读不到按「其余 300」假定并报 `assumed`。
+  * **写回只重写同名 .pdf / .png**（`WRITE_BACK_EXT`）：画布上这张是 JPEG / TIFF 时它自己一个字节都不会
+    变，`/api/engine/update_source` 在起 worker 之前报 `write_back_format_unsupported`（以前 JPEG 会报成功
+    并记下基线）。
+  * 看护 `tests/test_tiff_assets.py`（判据逐格 + 两条后端经真端点端到端 + 范围之外三处同一个 code）。
 - **离线教程项目（ADR 0039，2026-09-02）**：资源在包内
   `tavotto/resources/tutorial_project/`（经 `engine/tutorial.resource_root()`，
   `importlib.resources` → 源码树兜底，与 `profiles_path()` 同一条纪律），**绝不在
