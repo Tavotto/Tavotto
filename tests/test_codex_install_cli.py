@@ -153,7 +153,6 @@ def _complete_fake_plugin(plugin_dir: Path) -> None:
         "mcp/tavotto_mcp/widget.py",
         "skills/tavotto-figure/SKILL.md",
         "skills/tavotto-figure/scripts/handoff.py",
-        "integrations/configure.py",
         "assets/tavotto.svg",
     ):
         p = plugin_dir / rel

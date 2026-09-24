@@ -143,12 +143,51 @@ def _serve(command: str, args: list[str], env: dict, cwd: Path, calls: list[dict
 # ======================================================== 包内入口与发行接线
 
 
-def test_the_generator_is_a_required_file_of_the_complete_package():
-    """它进了完整插件的必需清单——漏打包会让 staging 自检直接失败，而不是发出去才发现。"""
+def test_the_generator_is_required_for_new_stagings_only():
+    """新组装的 staging 必须有它（漏打包当场失败）；但**已装的旧版**插件的体检清单
+    `REQUIRED` 不含它——否则一份完好的旧 Codex 插件会被报成损坏（Codex 在 #559 上指出）。"""
+    import ast
+
     pm = kit.load_script("plugin_stage")
-    assert "integrations/configure.py" in pm.REQUIRED
+    assert "integrations/configure.py" in pm.STAGE_REQUIRED
+    assert "integrations/configure.py" not in pm.REQUIRED
+    assert set(pm.REQUIRED) <= set(pm.STAGE_REQUIRED)
     tracked = {rel for rel, _mode in pm.tracked_plugin_files(ROOT)}
     assert "integrations/configure.py" in tracked
+    # stage() 组装完逐条核对的是 STAGE_REQUIRED（判源码结构用 AST，不用子串）
+    tree = ast.parse((ROOT / "scripts" / "plugin_stage.py").read_text(encoding="utf-8"))
+    stage_fn = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "stage"
+    )
+    loops = [
+        n.iter.id
+        for n in ast.walk(stage_fn)
+        if isinstance(n, ast.For) and isinstance(n.iter, ast.Name)
+    ]
+    assert "STAGE_REQUIRED" in loops, loops
+
+
+def test_an_installed_older_bundle_without_the_generator_still_verifies(tmp_path):
+    """用户机器上装着的旧版插件（清单里本来就没有 integrations/）：体检照样通过。"""
+    stage = kit.load_script("plugin_stage")
+    d = tmp_path / "old"
+    kit.synthetic_staging(d)
+    (d / "integrations" / "configure.py").unlink()
+    (d / "integrations").rmdir()
+    manifest = stage.read_manifest(d)
+    modes = {
+        e["path"]: e["mode"] for e in manifest["files"] if e["path"] != "integrations/configure.py"
+    }
+    stage.pm.write_build_manifest(
+        d,
+        modes=modes,
+        source_sha=manifest["source_sha"],
+        fingerprint=manifest["build_inputs_fingerprint"],
+        lockfile_sha256="0" * 64,
+        toolchain={"python": "3.13.0", "node": "22.0.0", "pnpm": "11.0.0"},
+        min_tavotto_version="0.13.0",
+    )
+    assert stage.verify_dir(d, installed=True) == []
 
 
 def test_a_staging_without_the_generator_fails_verification(tmp_path):
@@ -256,7 +295,7 @@ def test_the_generator_writes_nothing(unpacked, project, tmp_path):
         out = {}
         for d in dirs:
             for p in sorted(d.rglob("*")):
-                if p.is_file() and "__pycache__" not in p.parts:
+                if p.is_file():  # 包括 __pycache__：探针不许在包里落 .pyc（#559）
                     out[str(p)] = p.read_bytes()
         return out
 
@@ -433,3 +472,37 @@ def test_two_generated_configs_do_not_widen_each_other(unpacked, tmp_path):
         assert proc.returncode == 0, proc.stderr
         outs.append(proc.stdout)
     assert str(b) not in outs[0] and str(a) not in outs[1]
+
+
+def test_a_root_containing_the_path_separator_is_refused(unpacked, tmp_path):
+    """`/tmp/a:/etc` 这样的目录名进 TAVOTTO_MCP_ROOTS 会被拆成两个根（Codex 在 #559 上指出）。"""
+    if os.name == "nt":
+        pytest.skip("Windows 目录名里不能有 ';' 以外的分隔符形状，这里只验 POSIX 的 ':'")
+    tricky = tmp_path / "proj:etc"
+    tricky.mkdir()
+    proc = _run_configure(unpacked, ["--host", "vscode", "--project-root", str(tricky)], tmp_path)
+    assert proc.returncode == 2, proc.stderr
+    assert proc.stdout == ""
+    assert "bad_project_root" in proc.stderr
+
+
+def test_home_is_found_without_env_vars_and_ancestors_are_refused(unpacked, tmp_path, monkeypatch):
+    """HOME / USERPROFILE 都不在（env -i、服务启动器）也认得出主目录；主目录的上级也不行。"""
+    mod = _load(unpacked / "integrations" / "configure.py")
+    if os.name != "nt":
+        import pwd
+
+        real_home = pwd.getpwuid(os.getuid()).pw_dir
+        monkeypatch.delenv("HOME", raising=False)
+        monkeypatch.delenv("USERPROFILE", raising=False)
+        with pytest.raises(mod.ConfigureError) as exc:
+            mod.validate_project_root(real_home)
+        assert exc.value.code == "bad_project_root"
+    parent = tmp_path / "users"
+    home = parent / "someone"
+    (home / "figures").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    with pytest.raises(mod.ConfigureError):
+        mod.validate_project_root(str(parent))  # 上级目录把整个主目录都包进来了
+    assert mod.validate_project_root(str(home / "figures")) == os.path.realpath(home / "figures")

@@ -95,6 +95,9 @@ PROBE_ENV_KEEP = (
 #: GUI 宿主常见的最小 PATH（macOS launchd 的默认值就是这一串）
 MINIMAL_POSIX_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 PROBE_TIMEOUT = 180
+#: 探针里禁写 .pyc：`--health` 会 import 包里的 handoff.py，默认会在包目录里落
+#: `__pycache__`——一个声称「不写任何文件」的工具不许改动包（Codex 在 #559 上指出）
+NO_BYTECODE_ENV = "PYTHONDONTWRITEBYTECODE"
 
 
 class ConfigureError(Exception):
@@ -313,6 +316,29 @@ def _is_fs_root(path: str) -> bool:
     return os.path.normcase(os.path.dirname(path)) == os.path.normcase(path)
 
 
+def _home_dirs() -> "list[str]":
+    """当前账户的主目录（规范路径）。**不只信环境变量**：`env -i` 或服务启动器下
+    HOME / USERPROFILE 可能不在，那样就一个都查不到、整个主目录被放行（Codex 在 #559 上
+    指出）。所以再问操作系统的账户数据库（POSIX 的 pwd），几处都收。"""
+    found: "list[str]" = []
+    cands = [os.environ.get("HOME"), os.environ.get("USERPROFILE")]
+    try:
+        import pwd  # noqa: PLC0415 — Windows 上没有
+
+        cands.append(pwd.getpwuid(os.getuid()).pw_dir)
+    except (ImportError, KeyError, AttributeError):
+        pass
+    expanded = os.path.expanduser("~")
+    if expanded != "~":
+        cands.append(expanded)
+    for cand in cands:
+        if cand and os.path.isdir(cand):
+            real = os.path.realpath(cand)
+            if real not in found:
+                found.append(real)
+    return found
+
+
 def validate_project_root(raw: str) -> str:
     """用户选的项目目录 → 规范绝对路径；不成立就抛 `ConfigureError`。
 
@@ -331,18 +357,28 @@ def validate_project_root(raw: str) -> str:
     real = os.path.realpath(raw)
     if not os.path.isdir(real):
         raise ConfigureError("bad_project_root", f"--project-root 不存在或不是目录：{raw}")
+    if os.pathsep in real:
+        # TAVOTTO_MCP_ROOTS 按 os.pathsep 切成多个根：`/tmp/a:/etc` 这样的目录名会被读成
+        # 两个根，把用户没选的目录也放进来（Codex 在 #559 上指出）。没有无歧义的写法，只能拒绝。
+        raise ConfigureError(
+            "bad_project_root",
+            f"项目目录的路径里含有 {os.pathsep!r}，它在 {ROOTS_ENV} 里是多个目录的分隔符，"
+            "会被拆成别的目录——请换一个路径里没有这个字符的目录",
+        )
     if _is_fs_root(real):
         raise ConfigureError("bad_project_root", "不接受文件系统根目录作为授权范围")
-    for home_var in ("HOME", "USERPROFILE"):
-        home = os.environ.get(home_var)
-        if (
-            home
-            and os.path.isdir(home)
-            and os.path.normcase(os.path.realpath(home)) == os.path.normcase(real)
-        ):
+    homes = _home_dirs()
+    if not homes and os.name != "nt":
+        raise ConfigureError(
+            "home_unknown",
+            "查不到当前账户的主目录，没法确认所选目录没有把整个主目录放进来——请在正常的登录环境里运行",
+        )
+    for home in homes:
+        if _within(home, real):
             raise ConfigureError(
                 "bad_project_root",
-                "不接受整个用户主目录作为授权范围——请选具体的项目目录（例如 ~/论文/figures 的绝对路径）",
+                "不接受用户主目录（或包含它的上级目录）作为授权范围——请选具体的项目目录"
+                "（例如 ~/论文/figures 的绝对路径）",
             )
     if _within(real, os.path.realpath(PACKAGE_DIR)):
         raise ConfigureError("bad_project_root", "项目目录不能在 Tavotto 完整包里面")
@@ -377,6 +413,7 @@ def probe_env(project_root: str, engine_python: "str | None") -> "dict[str, str]
     else:
         env["PATH"] = MINIMAL_POSIX_PATH
     env[ROOTS_ENV] = project_root
+    env[NO_BYTECODE_ENV] = "1"
     if engine_python:
         env[ENGINE_ENV] = engine_python
     return env
@@ -630,6 +667,7 @@ def build(host: str, project_root: str, python: "str | None", engine_python: "st
         # 靠 PYTHONPATH 才 import 得到的（来源 current）钉了也没用，宿主没有那个变量。
         full = dict(os.environ)
         full[ROOTS_ENV] = root
+        full[NO_BYTECODE_ENV] = "1"
         found = _engine_summary(probe_launcher(launcher_python, root, env=full)["health"])
         if found["ok"] and found.get("source") in ENV_DEPENDENT_SOURCES:
             candidate = found.get("python")
