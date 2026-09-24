@@ -44,13 +44,21 @@ describe('writtenPageDims：按补丁里实际存在的路径认「写了哪几�
     expect(plain(writtenPageDims(d0, patches))).toEqual({ a: { w: true, h: true } })
   })
 
-  it('同一批里前面插了对象：后面的下标按挪过的序列认对象', () => {
+  it('同一批里前面删 / 插过对象：后面按下标写的 w / h 落在挪过之后的那个对象上', () => {
+    // immer 自己生成的数组补丁会把挪位的元素整个 replace（整对象写入本来就算写了 w / h），
+    // 所以这里手写 applyPatches 同样接受的最小形状，量的是下标跟着挪这一件事
     const d0 = doc(panel('a'), panel('b'))
-    const [, patches] = produceWithPatches(d0, (d) => {
-      d.objects.unshift(panel('c'))
-      ;(d.objects[2] as PanelObject).w = 5
-    })
-    expect(writtenPageDims(d0, patches).get('b')?.w).toBe(true)
+    const removed = writtenPageDims(d0, [
+      { op: 'remove', path: ['objects', 0] },
+      { op: 'replace', path: ['objects', 0, 'w'], value: 5 },
+    ])
+    expect(plain(removed)).toEqual({ b: { w: true, h: false } })
+    const added = writtenPageDims(d0, [
+      { op: 'add', path: ['objects', 0], value: panel('c') },
+      { op: 'replace', path: ['objects', 2, 'h'], value: 5 },
+    ])
+    expect(added.get('b')).toEqual({ w: false, h: true })
+    expect(added.get('a')).toBeUndefined()
   })
 
   it('不碰 objects 的补丁不认任何对象', () => {
