@@ -548,4 +548,80 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
     })
     container.remove()
   })
+
+  describe('几何事务进行中收到改了图幅的渲染：同步并入这个事务', () => {
+    /** 摆一个 100% 的面板、挂上同步器、开缩放事务并拖到 75%，返回卸载函数。 */
+    async function resizeInFlight(docId: string) {
+      globalThis.IS_REACT_ACT_ENVIRONMENT = true
+      const p = { ...panel('pt', 'Fig1.pdf', 0), w: 40, h: 30, script: null } as PanelObject
+      await useDocumentStore.getState().switchDocument(emptyProject(), docId)
+      useDocumentStore.getState().commit(literal('准备'), (d) => {
+        d.objects = [p]
+      })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+      const Probe = () => {
+        useEngineSync()
+        return null
+      }
+      await act(async () => {
+        root.render(createElement(Probe))
+      })
+      await act(async () => {
+        useDocumentStore.getState().beginTxn(literal('缩放'))
+        useDocumentStore.getState().txnUpdate((d) => {
+          const o = d.objects[0] as PanelObject
+          o.w = 30
+          o.h = 22.5
+        })
+      })
+      // 手势还没松开，改了图幅的渲染先回来了（40×30 → 50×30）
+      await act(async () => {
+        seedExactRender(p, { stem: 'Fig1', size_mm: [50, 30], elements: [] })
+      })
+      return async () => {
+        await act(async () => {
+          root.unmount()
+        })
+        container.remove()
+      }
+    }
+    const current = () => useDocumentStore.getState().doc.objects[0] as PanelObject
+    const dims = (o: PanelObject) => [o.w, o.h, o.nativeW, o.nativeH]
+
+    it('松手 → 撤销 → 重做：重做回到松手那一刻，缩放比不变', async () => {
+      const unmount = await resizeInFlight('d_size_txn_redo')
+      await act(async () => {
+        useDocumentStore.getState().endTxn()
+      })
+      const done = current()
+      expect(dims(done)).toEqual([37.5, 22.5, 50, 30])
+      expect(panelScale(done)).toBeCloseTo(0.75, 6)
+      await act(async () => {
+        useDocumentStore.getState().undo()
+      })
+      // 撤到缩放之前：原生图幅与页面尺寸一起回去，缩放比仍自洽（100%）
+      expect(panelScale(current())).toBeCloseTo(1, 6)
+      await act(async () => {
+        useDocumentStore.getState().redo()
+      })
+      // 以前同步走 silent、不进事务：重做只重放 w=30，nativeW 却停在 50，
+      // 缩放比从 0.75 变成 0.6
+      expect(dims(current())).toEqual(dims(done))
+      expect(panelScale(current())).toBeCloseTo(0.75, 6)
+      await unmount()
+    })
+
+    it('手势取消（丢弃事务）：回到事务之前，缩放比不变', async () => {
+      const unmount = await resizeInFlight('d_size_txn_discard')
+      await act(async () => {
+        useDocumentStore.getState().endTxn({ discard: true })
+      })
+      // 回滚只还原事务记下的东西：以前 w 回到 40、nativeW 停在 50 → 0.8
+      expect(panelScale(current())).toBeCloseTo(1, 6)
+      expect([current().nativeW, current().nativeH]).toEqual([50, 30])
+      await unmount()
+    })
+  })
 })

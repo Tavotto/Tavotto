@@ -175,7 +175,14 @@ function useEngineRenderSync() {
       fixes.push({ id: o.id, wMm, hMm })
     }
     if (!fixes.length) return
-    useDocumentStore.getState().silent((d) => {
+    // 平时是由渲染反推的派生值，不进历史（silent）。但**几何事务开着**（缩放 /
+    // 裁剪拖到一半渲染先回来了）时必须并入这个事务——与 `commit` 在事务中并入同理：
+    // 事务只记得自己改过的 w/h，silent 改的 nativeW 不在里面，撤销 / 重做 / 取消
+    // 会把 w 还原成同步前的值而 nativeW 停在新图幅上，缩放比从此是错的。
+    // 并入之后撤销整体回到事务前（旧图幅），同步器再对那个状态 silent 补一次
+    const store = useDocumentStore.getState()
+    const write = store.txn ? store.txnUpdate : store.silent
+    write((d) => {
       for (const fix of fixes) {
         const o = d.objects.find((x) => x.id === fix.id)
         if (o?.type !== 'panel') continue
