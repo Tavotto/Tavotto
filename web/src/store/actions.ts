@@ -1407,29 +1407,76 @@ export function toggleLayoutPinned(ids: string[]) {
 }
 
 /**
+ * 一次 documentStore 变化在**历史平面**上是什么（自动重排按它决定跟不跟）。
+ *
+ * - `edit`：落了一条新历史——`commit`，或事务松手（`endTxn` 不换 doc 的引用，
+ *   只能从栈上认）；
+ * - `step`：撤销 / 重做（条目在 past 与 future 之间挪了一格，按**条目身份**认），
+ *   以及栈变了却没有新条目的其它情形（撤销时丢弃坏条目）；
+ * - `swap`：整体换了一份文档或画布（载入 / 切画布）；
+ * - `off`：栈没动、doc 变了——`silent`（渲染同步补图幅、文字自适应高度）、
+ *   `applyDerivedUpdate`、事务进行中的 `txnUpdate`；
+ * - `none`：doc 与栈都没动（dirty / saveState 之类）。
+ *
+ * 以前只比 past / future 的**长度**：撤销过之后的新 commit（past +1、future 清零）
+ * 被认成重做、不重排；`endTxn` 不换 doc 被早退整个漏掉；载入被当成编辑。
+ */
+type HistoryMove = 'edit' | 'step' | 'swap' | 'off' | 'none'
+
+function historyMove(
+  state: ReturnType<typeof useDocumentStore.getState>,
+  prev: ReturnType<typeof useDocumentStore.getState>,
+): HistoryMove {
+  if (state.loadSeq !== prev.loadSeq || state.activeCanvasId !== prev.activeCanvasId) return 'swap'
+  if (state.past === prev.past && state.future === prev.future) {
+    return state.doc === prev.doc ? 'none' : 'off'
+  }
+  const last = state.past.at(-1)
+  if (last && last === prev.future[0]) return 'step' // 重做：future 首位挪进 past
+  if (last && !prev.past.includes(last)) return 'edit' // 新条目（commit / endTxn）
+  return 'step' // 撤销：past 末位挪进 future；或丢弃坏条目
+}
+
+/**
  * 自动重排：订阅文档，成员**尺寸**变化（替换素材、改面板比例、等效缩放）后
- * 自动归位。位置变化不触发——手动拖动是用户显式意图；撤销/重做也不触发，
- * 否则一撤销就被排回去，undo 形同虚设。
+ * 自动归位。位置变化不触发——手动拖动是用户显式意图。
+ *
+ * 只有**用户编辑**引起的尺寸变化触发，以及紧跟在用户编辑之后、由它引起的派生
+ * 同步（改了图幅 override → 渲染回来 → `useEngineSync` silent 补图幅）。文档停在
+ * 历史的某一格上时（撤销 / 重做 / 载入 / 切画布之后，下一次用户编辑之前）一律
+ * 只记下尺寸、不重排：
+ * - 撤销 / 重做本身触发的话，一撤销就被排回去，undo 形同虚设；
+ * - 撤销 / 重做之后同步器 silent 补的那次图幅也不能触发——重排是一条 commit，
+ *   它会清空 future，用户撤销一步之后重做就按不动了。那次尺寸变化的重排如果是
+ *   用户做过的，它本来就在历史里（重做会把它原样放回来）；
+ * - 载入 / 切画布之后重排会让打开一份文档就变脏、多一条用户没做过的历史，
+ *   还会把用户手动拖开的成员排回去。
+ * 代价：图幅在历史之外变过（#543 那种事务里并入的图幅同步被撤掉，同步器再补回
+ * 新图幅）时，撤到的那一格组内排布可能不齐——那是历史之外的变化，要用户的
+ * 「重新排列」来落一条历史，不由这里替用户往撤销栈里塞条目。
  */
 export function startLayoutAutoReflow(): () => void {
   let timer: number | undefined
   const store = useDocumentStore
-  let prevDoc = store.getState().doc
   const signatures = new Map<string, string>()
   const snapshot = (d: FigureDocument) => {
     signatures.clear()
     for (const g of d.layoutGroups ?? []) signatures.set(g.id, sizeSignature(d, g))
   }
-  snapshot(prevDoc)
+  snapshot(store.getState().doc)
+  // 文档停在历史的某一格上（不是用户刚编辑出来的状态）：订阅开始时是空白 / 载入态
+  let resting = true
 
   const unsub = store.subscribe((state, prev) => {
-    if (state.doc === prevDoc) return
-    const undoRedo =
-      state.future.length > prev.future.length || // undo
-      (state.past.length > prev.past.length && state.future.length < prev.future.length) // redo
-    prevDoc = state.doc
+    const move = historyMove(state, prev)
+    if (move === 'none') return
+    // 事务进行中不记尺寸：松手那一下（edit）要拿事务前的尺寸比
     if (state.txn) return
-    if (undoRedo) {
+    if (move === 'edit') resting = false
+    else if (move === 'step' || move === 'swap') resting = true
+    if (resting) {
+      // 待发的那次重排是为撤掉 / 换走之前的状态算的，作废
+      window.clearTimeout(timer)
       snapshot(state.doc)
       return
     }
