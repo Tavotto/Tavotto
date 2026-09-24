@@ -229,7 +229,7 @@ def test_the_generator_is_stdlib_only():
 def test_help_lists_every_flag_the_docs_use(unpacked, tmp_path):
     proc = _run_configure(unpacked, ["--help"], tmp_path)
     assert proc.returncode == 0
-    for flag in ("--host", "--project-root", "--python", "--engine-python", "--diagnose"):
+    for flag in ("--host", "--project-root", "--python", "--engine-python", "--diagnose", "--emit"):
         assert flag in proc.stdout, flag
 
 

@@ -3,6 +3,7 @@
 
     python3 <完整包>/integrations/configure.py --host vscode --project-root /abs/project
     python3 <完整包>/integrations/configure.py --host claude-desktop --project-root D:\\论文\\figs
+    python3 <完整包>/integrations/configure.py --host trae --project-root ... --emit instructions
     python3 <完整包>/integrations/configure.py --host cursor --project-root ... --diagnose
 
 `<完整包>` 是 GitHub Release 上的 `codex-plugin-<版本>.zip` 解出来的那个目录（名字
@@ -128,7 +129,8 @@ class ConfigureError(Exception):
 # ------------------------------------------------------------------ 宿主表
 #: 每个宿主**只保存真正不同的那部分**：配置顶层 key、server 条目额外的字段、
 #: 格式、落点、确认加载的办法、Skill 入口。启动描述（command / args / env）只有
-#: 一份，由 `launch_descriptor()` 给出。文档证明不了的字段一个都不加。
+#: 一份，由 `launch_descriptor()` 给出。字段依据见 docs/implementation/multi-host-mcp/
+#: hosts.md（逐条带官方文档链接与查证日期）；文档证明不了的字段一个都不加。
 HOSTS: "dict[str, dict]" = {
     "cursor": {
         "label": "Cursor（本地 Agent）",
@@ -609,6 +611,32 @@ def render(host: str, config) -> str:
     return json.dumps(config, ensure_ascii=False, indent=2) + "\n"
 
 
+# ------------------------------------------------------------------ Skill 投影
+def skill_instructions() -> str:
+    """没有原生 Skill 入口的宿主用的等价说明（`instruction_fallback`）。
+
+    **不是第二份手写规则**：就是这份包里的 SKILL.md 正文（去掉 frontmatter），把
+    `references/…` 与 `scripts/…` 的相对引用改写成包内绝对路径——宿主的规则 /
+    提示词里没有「技能目录」这个概念，相对路径会悬空。
+    """
+    path = os.path.join(SKILL_DIR, "SKILL.md")
+    with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            text = text[end + 4 :].lstrip("\n")
+    for sub in ("references", "scripts"):
+        abs_dir = os.path.join(SKILL_DIR, sub)
+        text = text.replace(f"`{sub}/", f"`{abs_dir}{os.sep}")
+        text = text.replace(f" {sub}/", f" {abs_dir}{os.sep}")
+    header = (
+        "<!-- 由 Tavotto 完整包 integrations/configure.py 从 skills/tavotto-figure/SKILL.md 生成；"
+        "包升级后请重新生成。skill_mode: instruction_fallback -->\n"
+    )
+    return header + text
+
+
 # ------------------------------------------------------------------ 主流程
 def _engine_summary(health: "dict | None") -> dict:
     if not health:
@@ -838,8 +866,8 @@ def _notes(result: dict) -> "list[str]":
         )
     else:
         lines.append(
-            "# Skill：这个宿主没有经核实的原生 Skill 入口（instruction_fallback）；"
-            f"技能正文在 {skill['source']}，本版本不自动生成等价说明"
+            "# Skill：这个宿主没有经核实的原生 Skill 入口——用 `--emit instructions` 生成等价说明，"
+            "放进它的规则 / 自定义智能体提示词（instruction_fallback）"
         )
     return lines
 
@@ -861,11 +889,23 @@ def main(argv: "list[str] | None" = None) -> int:
         "--engine-python",
         help="显式指定能 import tavotto 的引擎解释器（配置直接用它启动；与 --python 二选一）",
     )
-    ap.add_argument(
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument(
         "--diagnose", action="store_true", help="改为输出一份机器可读的诊断 JSON（不输出配置）"
+    )
+    mode.add_argument(
+        "--emit",
+        choices=("config", "instructions"),
+        default="config",
+        help="config = 宿主配置片段（默认）；instructions = 由 SKILL.md 生成的等价说明",
     )
     args = ap.parse_args(argv)
     try:
+        if args.emit == "instructions":
+            # 说明不依赖解释器探针，但仍然只为认识的宿主、合法的项目目录生成
+            validate_project_root(args.project_root)
+            sys.stdout.write(skill_instructions())
+            return 0
         result = build(args.host, args.project_root, args.python, args.engine_python)
     except ConfigureError as exc:
         if args.diagnose:
