@@ -632,10 +632,13 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
     /** 屏幕像素指针桩（zoom=1、pan=0：1 mm = mmToWorld(1) px） */
     const down = () =>
       ({ clientX: 0, clientY: 0, button: 0, stopPropagation() {} }) as unknown as React.PointerEvent
-    const fire = (type: 'pointermove' | 'pointerup', mm: number) =>
-      window.dispatchEvent(new MouseEvent(type, { clientX: mmToWorld(mm), clientY: 0, bubbles: true }))
+    const fire = (type: 'pointermove' | 'pointerup', [dx, dy]: readonly [number, number]) =>
+      window.dispatchEvent(
+        new MouseEvent(type, { clientX: mmToWorld(dx), clientY: mmToWorld(dy), bubbles: true }),
+      )
     const current = () => useDocumentStore.getState().doc.objects[0] as PanelObject
     const dims = (o: PanelObject) => [o.w, o.h, o.nativeW, o.nativeH]
+    const box = (o: PanelObject) => [o.x, o.y, o.w, o.h]
     /** 横纵两个方向各自的缩放比（未旋转）：页面尺寸 ÷ 取景比例 ÷ 原生图幅 */
     const scales = (o: PanelObject) => {
       const c = o.crop ?? { x: 0, y: 0, w: 1, h: 1 }
@@ -643,10 +646,16 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
     }
 
     /**
-     * 40×30 的 100% 面板拖 e 手柄左移 10 mm → 渲染回来 40×30 变 50×30 → 再拖一帧到
-     * 左移 8 mm → 松手。返回卸载函数。
+     * (0,0) 处 40×30 的 100% 面板：拖一帧到 `first` → 渲染回来改了图幅（默认 50×30）→
+     * 再拖一帧到 `second` → 松手。默认是 e 手柄左移 10 再到左移 8。返回卸载函数。
      */
-    async function dragAcrossRender(docId: string, start: () => void) {
+    async function dragAcrossRender(
+      docId: string,
+      start: () => void,
+      first: readonly [number, number] = [-10, 0],
+      second: readonly [number, number] = [-8, 0],
+      size: [number, number] = [50, 30],
+    ) {
       globalThis.IS_REACT_ACT_ENVIRONMENT = true
       useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0, viewW: 900, viewH: 700 })
       useUiStore.setState({ snapEnabled: false })
@@ -667,17 +676,17 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       })
       await act(async () => {
         start()
-        fire('pointermove', -10)
+        fire('pointermove', first)
       })
       await act(async () => {
-        seedExactRender(p, { stem: 'Fig1', size_mm: [50, 30], elements: [] })
+        seedExactRender(p, { stem: 'Fig1', size_mm: size, elements: [] })
       })
       // 渲染回来之后用户还在拖：这一帧按按下时抓的 40×30 写绝对尺寸
       await act(async () => {
-        fire('pointermove', -8)
+        fire('pointermove', second)
       })
       await act(async () => {
-        fire('pointerup', -8)
+        fire('pointerup', second)
       })
       return async () => {
         await act(async () => {
@@ -698,6 +707,7 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
         useDocumentStore.getState().redo()
       })
       expect(dims(current())).toEqual(dims(done))
+      expect(box(current())).toEqual(box(done))
       expect(current().crop).toEqual(done.crop)
     }
 
@@ -728,6 +738,42 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       await unmount()
     })
 
+    it('缩放拖西边：对边（东边 x=40）在松手时不动，撤销 / 重做回到松手那一刻', async () => {
+      const unmount = await dragAcrossRender(
+        'd_size_drag_west',
+        () => startResizeDrag(down(), 'pg', 'w'),
+        [10, 0],
+        [8, 0],
+      )
+      // 以前按左上角伸缩：x=8、w=40，东边跑到 48
+      const o = current()
+      expect(o.x + o.w).toBeCloseTo(40, 6)
+      expect(o.y).toBeCloseTo(0, 6)
+      expect(scales(o)[0]).toBeCloseTo(0.8, 6)
+      expect(scales(o)[1]).toBeCloseTo(1, 6)
+      await undoRedoKeepsEnd()
+      expect(current().x + current().w).toBeCloseTo(40, 6)
+      await unmount()
+    })
+
+    it('缩放拖北边：对边（南边 y=30）在松手时不动，撤销 / 重做回到松手那一刻', async () => {
+      const unmount = await dragAcrossRender(
+        'd_size_drag_north',
+        () => startResizeDrag(down(), 'pg', 'n'),
+        [0, 10],
+        [0, 8],
+        [40, 40],
+      )
+      const o = current()
+      expect(o.y + o.h).toBeCloseTo(30, 6)
+      expect(o.x).toBeCloseTo(0, 6)
+      expect(scales(o)[0]).toBeCloseTo(1, 6)
+      expect(scales(o)[1]).toBeCloseTo(22 / 30, 6)
+      await undoRedoKeepsEnd()
+      expect(current().y + current().h).toBeCloseTo(30, 6)
+      await unmount()
+    })
+
     it('裁剪：松手后仍是 100%，撤销 / 重做回到松手那一刻', async () => {
       const unmount = await dragAcrossRender('d_size_drag_crop', () =>
         startCropDrag(down(), 'pg', 'e'),
@@ -739,7 +785,17 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       expect(o.nativeW).toBe(50)
       expect(scales(o)[0]).toBeCloseTo(1, 6)
       expect(scales(o)[1]).toBeCloseTo(1, 6)
+      // 整图锚点不动：未裁剪整图的中心仍在按下时的 (20, 15)——以前按左上角伸缩，
+      // 整图中心跟着漂到 (25, 15)
+      const fullCenter = (q: PanelObject) => {
+        const c = q.crop ?? { x: 0, y: 0, w: 1, h: 1 }
+        const [fw, fh] = [q.w / c.w, q.h / c.h]
+        return [q.x - c.x * fw + fw / 2, q.y - c.y * fh + fh / 2]
+      }
+      expect(fullCenter(o)[0]).toBeCloseTo(20, 6)
+      expect(fullCenter(o)[1]).toBeCloseTo(15, 6)
       await undoRedoKeepsEnd()
+      expect(fullCenter(current())[0]).toBeCloseTo(20, 6)
       await unmount()
     })
   })

@@ -39,7 +39,7 @@ import {
   geomInkAreaFrac,
 } from '@/lib/pathGeom'
 import { clamp } from '@/lib/units'
-import { useDocumentStore } from '@/store/documentStore'
+import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -320,6 +320,13 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
 
   interaction().begin('resize')
   store.beginTxn(hist('resizeObjects'))
+  // 被拖手柄的对边：图幅在手势中途变了时，收尾换算绕这一点伸缩（面板恒无任意角旋转）
+  if (target.type === 'panel') {
+    setTxnAnchor(objectId, {
+      x: dir.includes('w') ? orig.x + orig.w : orig.x,
+      y: dir.includes('n') ? orig.y + orig.h : orig.y,
+    })
+  }
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
@@ -812,6 +819,8 @@ export function startCropDrag(
 
   interaction().begin('crop')
   store.beginTxn(hist('adjustCrop'))
+  // 整图锚点：图幅在手势中途变了时，收尾换算绕它伸缩，整图在画布上仍然不动
+  setTxnAnchor(objectId, { x: anchorX, y: anchorY })
 
   trackPointer(e, {
     onMove: (_ev, dxPx, dyPx) => {

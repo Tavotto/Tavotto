@@ -7,7 +7,12 @@
 import { useEffect } from 'react'
 import { isJustBakedBaselineOf, type BakedBaselineFacts } from '@/lib/bakedBaseline'
 import { useAssetStore } from '@/store/assetStore'
-import { registerTxnFinalizer, useDocumentStore } from '@/store/documentStore'
+import {
+  registerTxnFinalizer,
+  txnAnchorOf,
+  useDocumentStore,
+  type TxnAnchor,
+} from '@/store/documentStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { requestRender } from '@/store/renderScheduler'
 import { sampleDisplayState } from '@/diagnostics'
@@ -180,13 +185,26 @@ function useEngineRenderSync() {
   useEffect(
     () =>
       registerTxnFinalizer((d) =>
-        applyNativeSizeFixes(d, nativeSizeFixes(d.objects, useRenderStore.getState().byKey)),
+        applyNativeSizeFixes(
+          d,
+          nativeSizeFixes(d.objects, useRenderStore.getState().byKey).map((f) => ({
+            ...f,
+            // 手势刻意钉住的那一点（缩放的对边 / 裁剪的整图锚点）
+            anchor: txnAnchorOf(f.id),
+          })),
+        ),
       ),
     [],
   )
 }
 
-type NativeSizeFix = { id: string; wMm: number; hMm: number }
+type NativeSizeFix = {
+  id: string
+  wMm: number
+  hMm: number
+  /** 换算时在页面上不动的点；不给 = 包围盒左上角（x/y 不变） */
+  anchor?: TxnAnchor
+}
 
 /**
  * 按**面板自己那份变体**取渲染回来的尺寸：size_mm 本身就是可以被 override 的，
@@ -214,6 +232,7 @@ function applyNativeSizeFixes(d: FigureDocument, fixes: readonly NativeSizeFix[]
     if (o?.type !== 'panel') continue
     // x/y/w/h 是旋转后的页面包围盒：90/270 时内容的长宽是互换的
     const swaps = rotationSwaps(panelRotation(o))
+    const [w0, h0] = [o.w, o.h]
     if (o.nativeW > 0 && o.nativeH > 0) {
       // **缩放比不变**：页面上的尺寸跟着原生图幅按同一比例走。只调高、
       // 不调宽的话，磁盘 PDF（`bbox_inches="tight"` 裁过，73.3 mm）换成
@@ -227,6 +246,12 @@ function applyNativeSizeFixes(d: FigureDocument, fixes: readonly NativeSizeFix[]
       o.h *= swaps ? kx : ky
     } else if (swaps) o.w = o.h * (fix.hMm / fix.wMm)
     else o.h = o.w * (fix.hMm / fix.wMm)
+    // 位置按锚点反推：包围盒绕锚点按同一对比例伸缩，锚点在页面上不动。
+    // 默认锚点是左上角——x/y 原样；只有这一处写 x/y
+    if (fix.anchor) {
+      if (w0 > 0) o.x = fix.anchor.x + (o.x - fix.anchor.x) * (o.w / w0)
+      if (h0 > 0) o.y = fix.anchor.y + (o.y - fix.anchor.y) * (o.h / h0)
+    }
     o.nativeW = fix.wMm
     o.nativeH = fix.hMm
   }

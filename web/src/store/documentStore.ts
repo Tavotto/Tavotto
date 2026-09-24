@@ -91,6 +91,26 @@ export function registerTxnFinalizer(fn: Recipe): () => void {
   }
 }
 
+/** 页面坐标里的一个点（mm）。 */
+export type TxnAnchor = { x: number; y: number }
+
+/**
+ * 进行中手势登记的**锚点**：收尾修正改对象尺寸时，按它反推 x/y，让手势刻意
+ * 固定住的那一点在页面上不动（缩放 = 被拖手柄的对边，裁剪 = 整图锚点）。
+ * 由手势在开事务之后登记，只在这一个事务里有效：开新事务、事务结束（含丢弃）都清空。
+ * 没登记的对象，收尾修正按默认锚点（包围盒左上角）换算。
+ */
+const txnAnchors = new Map<string, TxnAnchor>()
+
+export function setTxnAnchor(objectId: string, anchor: TxnAnchor): void {
+  if (useDocumentStore.getState().txn) txnAnchors.set(objectId, anchor)
+}
+
+/** 收尾修正读：当前事务里这个对象登记的锚点（没有 = undefined）。 */
+export function txnAnchorOf(objectId: string): TxnAnchor | undefined {
+  return txnAnchors.get(objectId)
+}
+
 interface DocumentState {
   /** 当前激活画布的活跃编辑态（schema 2 形状；画布编辑代码只认它） */
   doc: FigureDocument
@@ -324,6 +344,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // 它正是「撤销一次回退了两件事」那一类现象的成因
     const replaced = get().txn != null
     if (replaced) get().endTxn()
+    txnAnchors.clear()
     set({ txn: { label, patches: [], inverse: [] } })
     recordDiagnosticEvent({
       type: 'transaction.begin',
@@ -365,6 +386,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         state = get()
       }
     }
+    txnAnchors.clear()
     if (opts?.discard || !txn.patches.length) {
       // 丢弃：把反向补丁打回去，恢复到事务开始前
       set({ doc: history.rollback(state.doc, txn), txn: null })
