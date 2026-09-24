@@ -11,7 +11,7 @@
  * 这里是那条换算的**唯一出处**：渲染回来时的同步（`useEngineSync`）与撤销 / 重做
  * 时的换基（`documentStore`）都调它，两处各写一遍就会有一处哪天把旋转写漏。
  */
-import { produce } from 'immer'
+import { produce, type Patch } from 'immer'
 import { panelRotation, rotationSwaps, type FigureDocument, type PanelObject } from '@/types/document'
 
 /** 页面坐标里的一个点（mm），与 `documentStore` 的 `TxnAnchor` 同形。 */
@@ -85,7 +85,8 @@ export interface SizeBasis {
   /** 两侧的页面包围盒 w/h（条目「拥有」的那几维按它打回，见 `dims`） */
   box: { readonly before: readonly [number, number]; readonly after: readonly [number, number] }
   /**
-   * 这条历史**打回**页面包围盒的哪几维：值变了的那一维；外加旋转改变了宽高与原生轴的
+   * 这条历史**打回**页面包围盒的哪几维：补丁里实际写了的那一维（`writtenPageDims`，
+   * 前后值相等但压缩后仍留着的 replace 也算）；外加旋转改变了宽高与原生轴的
    * 对应（0↔90）时两维都算——正方形面板转 90° 的 w/h 数值不变、补丁里没有它们，
    * 可它们对应的原生轴已经互换，撤销时必须按条目那一侧重新摆（Codex #551 P2）。
    * 没打回的那一维从没离开此刻的单位，不换算（Codex #551 P1）。
@@ -93,8 +94,70 @@ export interface SizeBasis {
   dims: PageDims
 }
 
-/** 比较一条历史前后的文档，找出页面尺寸被改过、两侧都在的面板，记下原生图幅。 */
-export function sizeBasisOf(before: FigureDocument, after: FigureDocument): SizeBasis[] {
+/**
+ * 一组正向补丁**实际写了**哪些对象的 w / h（按对象 id）。
+ *
+ * 判据是补丁里有没有这条路径，不是前后值是否相等：几何事务压缩之后同一路径只留一条，
+ * 可一个中途动过、松手时回到原值的 h 仍在两侧留着 `replace h`（前后值相等），撤销 /
+ * 重做照样把它打回按当时图幅量的绝对值。路径里的是**数组下标**，补丁按顺序落在
+ * 逐步变化的文档上，所以从条目之前的 id 序列起步、按 `objects` 这一层的增删替换
+ * 跟着挪；整个对象被写进去（add / replace 一个元素、替换整个数组）也算写了 w / h。
+ */
+export function writtenPageDims(before: FigureDocument, patches: readonly Patch[]): Map<string, { w: boolean; h: boolean }> {
+  const ids: (string | undefined)[] = before.objects.map((o) => o.id)
+  const out = new Map<string, { w: boolean; h: boolean }>()
+  const mark = (id: string | undefined, w: boolean, h: boolean) => {
+    if (id == null) return
+    const cur = out.get(id) ?? { w: false, h: false }
+    out.set(id, { w: cur.w || w, h: cur.h || h })
+  }
+  const idOf = (v: unknown) =>
+    v != null && typeof v === 'object' && typeof (v as { id?: unknown }).id === 'string'
+      ? (v as { id: string }).id
+      : undefined
+  for (const p of patches) {
+    if (p.path[0] !== 'objects') continue
+    if (p.path.length === 1) {
+      // 整个数组被替换
+      const list = Array.isArray(p.value) ? (p.value as unknown[]) : []
+      ids.splice(0, ids.length, ...list.map(idOf))
+      for (const id of ids) mark(id, true, true)
+      continue
+    }
+    const key = p.path[1]
+    if (p.path.length === 2) {
+      if (key === 'length') {
+        ids.length = Number(p.value)
+        continue
+      }
+      const i = Number(key)
+      if (p.op === 'remove') ids.splice(i, 1)
+      else {
+        const id = idOf(p.value)
+        if (p.op === 'add') ids.splice(i, 0, id)
+        else ids[i] = id
+        mark(id, true, true)
+      }
+      continue
+    }
+    const prop = p.path[2]
+    if (p.path.length === 3 && (prop === 'w' || prop === 'h')) {
+      mark(ids[Number(key)], prop === 'w', prop === 'h')
+    }
+  }
+  return out
+}
+
+/**
+ * 比较一条历史前后的文档，找出页面尺寸被这条历史写过、两侧都在的面板，记下原生图幅。
+ * `patches` 是这条历史**落进栈的**正向补丁（事务压缩之后的那组）。
+ */
+export function sizeBasisOf(
+  before: FigureDocument,
+  after: FigureDocument,
+  patches: readonly Patch[],
+): SizeBasis[] {
+  const written = writtenPageDims(before, patches)
   const prev = new Map<string, PanelObject>()
   for (const o of before.objects) if (o.type === 'panel') prev.set(o.id, o)
   const out: SizeBasis[] = []
@@ -104,7 +167,11 @@ export function sizeBasisOf(before: FigureDocument, after: FigureDocument): Size
     // 新加 / 删掉的面板：补丁里带着整个对象（w/h 与 nativeW/H 同一份），自洽
     if (!p) continue
     const axesSwapped = rotationSwaps(panelRotation(p)) !== rotationSwaps(panelRotation(o))
-    const dims = { w: axesSwapped || p.w !== o.w, h: axesSwapped || p.h !== o.h }
+    const wrote = written.get(o.id)
+    const dims = {
+      w: axesSwapped || !!wrote?.w || p.w !== o.w,
+      h: axesSwapped || !!wrote?.h || p.h !== o.h,
+    }
     if (!dims.w && !dims.h) continue
     out.push({
       id: o.id,

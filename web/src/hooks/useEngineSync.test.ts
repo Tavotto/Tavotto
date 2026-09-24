@@ -1203,6 +1203,34 @@ describe('事务之外改了图幅：撤销 / 重做回到用户设定的缩放�
     expect(nativeOf(current())).toEqual([160, 120])
   })
 
+  it('角柄缩放中途改过高、松手时高回到原值（压缩后补丁里仍有 h）→ 图幅变化 → 撤销 / 重做', async () => {
+    // 取消宽高比锁定的角柄：h 在中途动过又回到 30，前后值相等；`history.compress`
+    // 仍在两侧留着 `replace h = 30`，撤销 / 重做会把 h 打回 30（按旧图幅量的值）。
+    // 按前后值是否相等判「打回了哪几维」会漏掉 h（Codex #551 线程 4095444146）
+    const p = await mount('d_size_undo_noop_h')
+    await act(async () => {
+      const s = useDocumentStore.getState()
+      s.beginTxn(literal('缩放'))
+      for (const [w, h] of [[30, 20], [25, 15], [20, 30]]) {
+        s.txnUpdate((d) => {
+          const o = d.objects[0] as PanelObject
+          o.w = w
+          o.h = h
+        })
+      }
+      useDocumentStore.getState().endTxn()
+    })
+    expect([current().w, current().h]).toEqual([20, 30])
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [80, 60], elements: [] })
+    })
+    expect([current().w, current().h]).toEqual([40, 60])
+    await undo()
+    expect([current().w, current().h]).toEqual([80, 60])
+    await redo()
+    expect([current().w, current().h]).toEqual([40, 60])
+  })
+
   it('两次缩放 → 图幅变化 → 连撤两步再连重做两步', async () => {
     const p = await mount('d_size_undo_deep')
     await resizeTo(0.75)

@@ -342,7 +342,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       noteCommit(label, state, next, patches, true)
       return
     }
-    const sizeBasis = sizeBasisOf(state.doc, next)
+    const sizeBasis = sizeBasisOf(state.doc, next, patches)
     set({
       doc: next,
       ...pushHistory(state, { label, patches, inverse, ...(sizeBasis.length ? { sizeBasis } : {}) }),
@@ -420,7 +420,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // 是为了不依赖这个巧合。事务开始前的文档只在这里现算一次（松手时一次，
     // 不在 pointermove 的热路径上）
     const before = history.rollback(doc, { label: txn.label, patches, inverse })
-    const sizeBasis = sizeBasisOf(before, doc)
+    const sizeBasis = sizeBasisOf(before, doc, patches)
     // 基准与收尾修正、事务结束、压入历史同一次 set 落地
     set({
       doc,
