@@ -369,6 +369,25 @@ def _plan_fonts(
             if target > cur + 1e-9:
                 new[key] = (target, new[key][1] if key in new else "keep-hierarchy")
 
+    # 反方向同理（Codex #549 第四轮）：上层被**降**下来之后，比它还大的下层跟着降到同一档，
+    # 否则「标题 20 → 12、轴标题 14 不动」修出来就是倒挂。自上而下一层一层压；下层受自己
+    # 的下限约束，压不到就停在下限（那时它本来就不会比上限更小）
+    top = max(rank_of.values(), default=1)
+    for level in sorted({r for r in rank_of.values() if r < top}, reverse=True):
+        lowered = [t for k, (t, _) in new.items() if rank_of[k] > level and t < eff[k] - 1e-9]
+        if not lowered:
+            continue
+        cap = min(lowered)
+        for e in entries:
+            key = (e["gid"], e["prop"])
+            if rank_of[key] != level:
+                continue
+            cur = new[key][0] if key in new else eff[key]
+            lo, _ = _font_bounds(e, profile)
+            target = max(cap, lo)
+            if target < cur - 1e-9:
+                new[key] = (target, new[key][1] if key in new else "keep-hierarchy")
+
     by_key = {(e["gid"], e["prop"]): e for e in entries}
     for key, (target, rule) in new.items():
         e = by_key[key]

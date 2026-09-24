@@ -26,12 +26,13 @@ import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 
 const engineSpecfix = vi.fn()
+// 修完 / 丢弃时会触发重渲染；挂起就好，但要记下发了什么
+const engineRender = vi.fn((..._args: unknown[]) => new Promise(() => {}))
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   engineSpecfix: (...args: unknown[]) => engineSpecfix(...args),
-  // 修完会触发一次重渲染；这里不关心它，挂起就好
-  engineRender: () => new Promise(() => {}),
+  engineRender: (...args: unknown[]) => engineRender(...args),
 }))
 
 const profile = loadProfile()
@@ -133,6 +134,7 @@ const floorIssue = () => issuesNow().find((i) => i.ruleCode === 'font-below-abso
 
 beforeEach(() => {
   engineSpecfix.mockReset()
+  engineRender.mockClear()
 })
 
 afterEach(() => {
@@ -305,6 +307,28 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     const res = await pending
     expect(res).toMatchObject({ ok: false, reason: 'stale' })
     expect(overridesOf()).toEqual(mine)
+  })
+
+  it('丢弃一份后端已通过的结果时，把 worker 按这张图此刻的列表重放一遍', async () => {
+    await seed()
+    let release: (v: SpecFixResponse) => void = () => {}
+    engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
+    const pending = applyIssueFix(floorIssue())
+    // 取一份别的用例没用过的列表：挂起的渲染按「文件 + 列表」占着槽位，同一个键会排队
+    const mine = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 13.25 }]
+    useDocumentStore.getState().commit(literal('用户改了'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides = mine
+    })
+    engineRender.mockClear()
+    release(passed())
+    expect(await pending).toMatchObject({ ok: false, reason: 'stale' })
+    // 重放的是此刻的列表，不是后端回的候选
+    expect(engineRender.mock.calls.some((c) => JSON.stringify(c[1]) === JSON.stringify(mine))).toBe(
+      true,
+    )
+    expect(engineRender.mock.calls.some((c) => JSON.stringify(c[1]) === JSON.stringify(FIXED))).toBe(
+      false,
+    )
   })
 
   it('等待期间用户缩放了这张图（override 没变）：缩放比已不是发出去的那个，丢弃', async () => {

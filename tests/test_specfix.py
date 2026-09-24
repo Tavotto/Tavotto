@@ -123,3 +123,21 @@ def test_fixable_rules_are_the_same_closed_set_on_both_sides():
     assert tuple(exported_string_array(ts.read_text(encoding="utf-8"), "ENGINE_FIX_RULES")) == (
         specfix.FIXABLE_RULES
     )
+
+
+def test_lowering_a_heading_lowers_bigger_lower_ranked_text_with_it():
+    """Codex #549 第四轮：只修 20 pt 标题的「字号偏大」时，14 pt 的轴标题也高于新标题，
+    不许修成「标题 12 / 轴标题 14」的倒挂——下层跟着降到同一档。"""
+    p = profiles.load()
+    p["max_font_size_pt"] = 12.0
+    m = _manifest(
+        _el("a.title", "title", fontsize=20.0),
+        _el("a.xlabel", "axis_label", fontsize=14.0),
+        _el("a.xticks", "ticks", fontsize=9.0),
+    )
+    plan = specfix.plan(m, p, scale=1.0, targets=[("font-too-large", "a.title")])
+    assert _value(plan, "a.title", "fontsize") == 12.0
+    assert _value(plan, "a.xlabel", "fontsize") == 12.0
+    assert _change(plan, "a.xlabel", "fontsize")["rule"] == "keep-hierarchy"
+    # 本来就更小的下层一个字不动
+    assert not any(c["gid"] == "a.xticks" for c in plan["changes"])

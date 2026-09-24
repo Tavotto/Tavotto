@@ -257,6 +257,12 @@ async function runLocked(
     if (moved || !unchanged(id)) {
       addFailure(failed, 'stale', item.applied)
       next.delete(id)
+      // 后端说通过时，共享 worker 与它写的 SVG 停在**候选**列表上（Codex #549 第四轮）。
+      // 丢弃结果只撤掉了文档那一侧；不把 worker 按这张图此刻的列表重放一遍，
+      // `/api/engine/svg` 与下一次命中的就是一份没提交的候选
+      const panel =
+        now.doc.objects.find((o) => o.id === id) ?? docAtStart.objects.find((o) => o.id === id)
+      if (panel?.type === 'panel') requestRender(panel, true)
     }
   }
   const fresh = plans.filter((plan) =>
