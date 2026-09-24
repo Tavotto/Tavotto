@@ -70,6 +70,27 @@ def test_a_value_it_cannot_read_exactly_is_a_red_not_a_guess():
         exported_string_array("export const E = ['a', ...OTHER] as const\n", "E")
 
 
+def test_a_readonly_set_of_string_literals_reads():
+    """`new Set([...])` 形状的闭集（`PAGE_PT_PROPS`）：数组里的纪律与普通数组相同。"""
+    src = "export const S: ReadonlySet<string> = new Set([\n  'a',\n  // 注释\n  'b',\n])\n"
+    assert exported_string_array(src, "S") == ["a", "b"]
+
+
+def test_a_spread_inside_a_set_is_a_red_not_a_silent_gap():
+    """#557 评审 P1：正则读法会静默漏掉展开进来的条目，而条数下限照样过。"""
+    with pytest.raises(AssertionError, match="别的东西"):
+        exported_string_array("export const S = new Set(['a', ...EXTRA])\n", "S")
+
+
+def test_a_set_built_from_something_else_is_a_red():
+    with pytest.raises(AssertionError, match="找到 0 处"):
+        exported_string_array("export const S = new Set(EXTRA)\n", "S")
+    with pytest.raises(AssertionError, match="不是紧跟着"):
+        exported_string_array("export const S = new Set(['a'], EXTRA)\n", "S")
+    with pytest.raises(AssertionError, match="找到 0 处"):
+        exported_string_array("export const S = Object.freeze(['a'])\n", "S")
+
+
 def test_type_annotated_declaration_still_reads():
     src = "export const E: readonly string[] = ['a', 'b'] as const\n"
     assert exported_string_array(src, "E") == ["a", "b"]

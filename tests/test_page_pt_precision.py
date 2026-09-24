@@ -6,7 +6,7 @@
 （#557 评审：`mutation_scale` / `labelpad` / `arrow_head` 原来就是一位）。
 
 判的是 AST：引擎里每个 `{"prop": <表里的名字>, "value": …}` 字典字面量，`value` 必须是
-`round(…, 2)`。表从 TS 源码里读（那一份是唯一出处），读不到或一条都没匹配上就红——空门禁比
+`round(…, 2)`。表从 TS 源码里结构化地读（那一份是唯一出处），读不出确切取值就红——空门禁比
 没有门禁更坏。字段表不是字典字面量写出来的（比如由别的模块的 getter 表拼出来）的那几条不在
 这把尺子的视野里；用例同时要求表里的每一条都至少被看见一次，漏了就得先把尺子接上。
 """
@@ -14,8 +14,9 @@
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
+
+from tests.support.tsconst import exported_string_array
 
 ROOT = Path(__file__).resolve().parents[1]
 TS = ROOT / "web" / "src" / "lib" / "stylePresets.ts"
@@ -23,12 +24,14 @@ ENGINE = ROOT / "src" / "tavotto" / "engine"
 
 
 def page_pt_props() -> set[str]:
-    src = TS.read_text(encoding="utf-8")
-    m = re.search(r"PAGE_PT_PROPS: ReadonlySet<string> = new Set\(\[(.*?)\]\)", src, re.S)
-    assert m, "stylePresets.ts 里找不到 PAGE_PT_PROPS 的定义"
-    names = set(re.findall(r"^\s*'([a-z_]+)',", m.group(1), re.M))
-    assert len(names) >= 20, names
-    return names
+    """表从 TS 源码里读：结构化解析（`tests/support/tsconst.exported_string_array`），不用正则。
+
+    正则只捡得到它认得的那种行，展开（`...EXTRA`）、标识符进来的条目会被静默漏掉，而
+    条数下限照样过（#557 评审 P1）。解析器对读不出确切取值的写法直接报错。
+    """
+    names = exported_string_array(TS.read_text(encoding="utf-8"), "PAGE_PT_PROPS")
+    assert len(names) == len(set(names)), "PAGE_PT_PROPS 里有重复条目"
+    return set(names)
 
 
 def _prop_names(node: ast.expr) -> list[str]:

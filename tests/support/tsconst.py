@@ -125,19 +125,28 @@ def blank_comments_and_strings(src: str) -> tuple[str, list[tuple[int, int]]]:
 
 
 def exported_string_array(src: str, name: str) -> list[str]:
-    """`export const <name> = [ '…', '…' ]` 里那几个字符串，按源码顺序。"""
+    """`export const <name> = [ '…', '…' ]` 里那几个字符串，按源码顺序。
+
+    也认 `export const <name> = new Set([ '…', '…' ])`（`ReadonlySet<string>` 形状的闭集）：
+    包装只认这一种，而且 `]` 之后必须紧跟 `)`（中间只许一个尾逗号与空白）——`new Set([...a],
+    b)`、`new Set(OTHER)` 这类读不出确切取值的写法一律红，数组本身的纪律（只许字符串字面量）
+    照旧。其余包装（`Object.freeze(...)`、函数调用）不认：声明找不到，按「零处」报红。
+    """
     code, spans = blank_comments_and_strings(src)
     decl = re.compile(
-        # 允许写类型标注（`: readonly string[]`）——只要它不含 `=`，
+        # 允许写类型标注（`: readonly string[]` / `: ReadonlySet<string>`）——只要它不含 `=`，
         # 非贪婪就停在紧跟着的那个赋值号上
-        r"\bexport\s+const\s+" + re.escape(name) + r"\b\s*(?::[^=]*?)?=\s*\[",
+        r"\bexport\s+const\s+"
+        + re.escape(name)
+        + r"\b\s*(?::[^=]*?)?=\s*(?P<set>new\s+Set\s*\(\s*)?\[",
     )
     hits = list(decl.finditer(code))
     if len(hits) != 1:
         raise AssertionError(
-            f"源码里找到 {len(hits)} 处 `export const {name} = [`——"
+            f"源码里找到 {len(hits)} 处 `export const {name} = [`（或 `= new Set([`）——"
             "判据只认恰好一处活声明（零处 = 名字改了或没导出；两处 = 漂移的温床）"
         )
+    wrapped = hits[0].group("set") is not None
 
     open_at = hits[0].end() - 1
     depth = 0
@@ -152,6 +161,12 @@ def exported_string_array(src: str, name: str) -> list[str]:
                 break
     if close_at < 0:
         raise AssertionError(f"{name} 的数组没有收尾方括号")
+
+    if wrapped and not re.match(r"\s*,?\s*\)", code[close_at + 1 :]):
+        raise AssertionError(
+            f"{name} 是 `new Set([...])`，但 `]` 之后不是紧跟着 `)`——Set 的实参不止这一个数组，"
+            f"判据读不出确切取值：{src[hits[0].start() : close_at + 40]!r}"
+        )
 
     inner = code[open_at + 1 : close_at]
     if not re.fullmatch(r"[\s,]*", inner):
