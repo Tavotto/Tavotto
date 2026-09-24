@@ -332,19 +332,23 @@ def test_detaching_after_recolouring_the_source_recolours_the_whole_cell(tmp_pat
 
 def test_undoing_a_colour_on_a_detached_errorbar_restores_it(tmp_path_factory):
     """撤销 handle_color：存下的原样是 LineCollection 的 N×4 数组，还原要能落到整格里的 Line2D
-    上（#544 评审：原来这里报 warning、撤销不回去）。撤销到底与脚本原样逐像素相同。"""
+    上（#544 评审：原来这里报 warning、撤销不回去）。撤掉之后与「从没改过颜色」逐像素相同。"""
     figs = tmp_path_factory.mktemp("legend-errorbar-undo")
     (figs / ERR_SCRIPT).write_text(ERR_LIBRARY, encoding="utf-8")
     entry = f"{LEG}.texts_0"
     w = pool.one_shot(ERR_SCRIPT, str(figs), ENTRY)
     w.ensure_built()
     try:
-        original = w.preview_png(ERR_STEM, [], 380, "u-orig").read_bytes()
-        resp = w.override(ERR_STEM, [{"gid": entry, "prop": "handle_color", "value": "#d62728"}])
+        # 留一条别的 override，只撤 handle_color：那样才走逐条还原（全部撤空走的是另一条路）
+        keep = [{"gid": LEG, "prop": "frame_linewidth", "value": 2.0}]
+        expected = w.preview_png(ERR_STEM, keep, 380, "u-keep").read_bytes()
+        resp = w.override(
+            ERR_STEM, keep + [{"gid": entry, "prop": "handle_color", "value": "#d62728"}]
+        )
         assert not (resp.get("warnings") or []), resp["warnings"]
-        resp = w.override(ERR_STEM, [])
+        resp = w.override(ERR_STEM, keep)
         assert not (resp.get("warnings") or []), resp["warnings"]
-        assert w.preview_png(ERR_STEM, [], 380, "u-undone").read_bytes() == original
+        assert w.preview_png(ERR_STEM, keep, 380, "u-undone").read_bytes() == expected
     finally:
         pool.discard(w)
 
