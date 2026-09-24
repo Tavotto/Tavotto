@@ -326,6 +326,48 @@ class TestPlaceholder:
         )
         assert pool._MISSING_RE.search(proc.stderr).group(1) == ABSENT
 
+    def test_a_findable_module_raising_its_own_name_is_not_swallowed(self, tmp_path):
+        """评审 #555 P2：`exc.name == X` 只说明异常这么写着。项目里的 `sympy.py` 先做了一件事（写一个
+        标记文件），再自己抛 `ModuleNotFoundError(name="sympy")`——import 系统找得到它，失败照常抛出，
+        不给占位，脚本不继续。"""
+        res = _run_placeholder(
+            tmp_path,
+            "import sympy as smp\nRESULT = 'continued'\n",
+            **{
+                "sympy.py": """\
+                open("side_effect.txt", "w").write("ran")
+                raise ModuleNotFoundError("No module named 'sympy'", name="sympy")
+                """
+            },
+        )
+        assert res["names"] == ["sympy"]  # 判据照样收它（绑定没读）；拦它的是 find_spec
+        assert res["ran"] is False, res
+        assert res["error"] == "ModuleNotFoundError: No module named 'sympy'"
+        assert (tmp_path / "p" / "side_effect.txt").read_text(encoding="utf-8") == "ran"
+
+    def test_a_finder_that_errors_is_not_read_as_absent(self, tmp_path):
+        """`find_spec` 自己抛错 = 判不清，不是「没找到」：照常抛出，不给占位。"""
+        res = _run_placeholder(
+            tmp_path,
+            "import blocker\nimport sympy as smp\nRESULT = 'continued'\n",
+            **{
+                "blocker.py": """\
+                import sys
+
+                class _Finder:
+                    def find_spec(self, name, path=None, target=None):
+                        if name == "sympy":
+                            raise ModuleNotFoundError("No module named 'sympy'", name="sympy")
+                        return None
+
+                sys.meta_path.insert(0, _Finder())
+                """
+            },
+        )
+        assert res["names"] == ["sympy"]
+        assert res["ran"] is False, res
+        assert res["error"] == "ModuleNotFoundError: No module named 'sympy'"
+
     def test_installed_package_with_a_broken_dependency_is_not_hidden(self, tmp_path):
         """X 装了、但它 import 的依赖缺：缺的不是 X 本身，照常报。"""
         res = _run_placeholder(
@@ -350,17 +392,33 @@ _needs_worker = pytest.mark.skipif(
 )
 
 
-#: 模拟「sympy 没装」：PYTHONPATH 最前放一个 import 时抛 `ModuleNotFoundError(name="sympy")` 的影子包，
-#: 与真缺时 import 系统抛的形状相同（worker 解释器上可能真装着 sympy）。
-_NO_SYMPY = "raise ModuleNotFoundError(\"No module named 'sympy'\", name='sympy')\n"
+def _missing_listed_module() -> str | None:
+    """名单里在 worker 解释器上**真的找不到**的一个名字（`find_spec` 为 None）；全装着就 None。
+
+    不用「import 时抛 `ModuleNotFoundError(name=X)` 的影子包」来模拟缺包：那正是评审 #555 P2 要求
+    占位**不能**相信的形状（找得到的同名模块自己抛了错），修复之后它理应照常失败。"""
+    code = (
+        "import importlib.util, sys\n"
+        "print(next((n for n in sys.argv[1:] if importlib.util.find_spec(n) is None), ''))\n"
+    )
+    out = subprocess.run(
+        [WORKER_PY, "-c", code, *sorted(figcapture.SIDE_EFFECT_FREE_IMPORTS)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    ).stdout.strip()
+    return out or None
 
 
 def _build(tmp_path: Path, script: str) -> dict:
-    shadow = tmp_path / "shadow" / "sympy"
-    shadow.mkdir(parents=True)
-    (shadow / "__init__.py").write_text(_NO_SYMPY, encoding="utf-8")
     figs = tmp_path / "figures"
     figs.mkdir()
+    return _build_in(figs, tmp_path, script)
+
+
+def _build_in(figs: Path, tmp_path: Path, script: str) -> dict:
     s = figs / "fig_unused.py"
     s.write_text(textwrap.dedent(script), encoding="utf-8")
     proc = subprocess.Popen(
@@ -384,13 +442,7 @@ def _build(tmp_path: Path, script: str) -> dict:
         text=True,
         encoding="utf-8",
         errors="replace",
-        env={
-            **os.environ,
-            "TAVOTTO_NO_TELEMETRY": "1",
-            "PYTHONPATH": os.pathsep.join(
-                p for p in (str(tmp_path / "shadow"), os.environ.get("PYTHONPATH", "")) if p
-            ),
-        },
+        env={**os.environ, "TAVOTTO_NO_TELEMETRY": "1"},
     )
     try:
         out, _err = proc.communicate(json.dumps({"cmd": "build"}) + "\n", timeout=120)
@@ -412,14 +464,34 @@ fig.savefig("l2_error_convergence.png")
 
 @_needs_worker
 def test_worker_renders_a_script_whose_missing_import_is_unused(tmp_path):
-    resp = _build(tmp_path, "import sympy as smp\n" + _PLOT)
+    missing = _missing_listed_module()
+    if missing is None:
+        pytest.skip("名单上的包在 worker 解释器里全装着，造不出「真缺」")
+    resp = _build(tmp_path, f"import {missing} as unused_alias\n" + _PLOT)
     assert resp.get("ok", True) is not False, resp
     assert "l2_error_convergence" in resp["stems"], resp
 
 
 @_needs_worker
 def test_worker_still_fails_when_the_missing_import_is_used(tmp_path):
-    resp = _build(tmp_path, "import sympy as smp\nsmp.symbols('x')\n" + _PLOT)
+    missing = _missing_listed_module()
+    if missing is None:
+        pytest.skip("名单上的包在 worker 解释器里全装着，造不出「真缺」")
+    resp = _build(tmp_path, f"import {missing} as used_alias\nused_alias.anything\n" + _PLOT)
+    assert "stems" not in resp, resp
+    assert f"No module named '{missing}'" in json.dumps(resp, ensure_ascii=False), resp
+
+
+@_needs_worker
+def test_worker_does_not_swallow_a_findable_module_that_raises_its_own_name(tmp_path):
+    """评审 #555 P2：项目里的同名 `sympy.py` 执行到一半自己抛 `ModuleNotFoundError(name="sympy")`——
+    import 系统找得到它，不是「没装」；失败照常报，脚本不能拿着占位继续。"""
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "sympy.py").write_text(
+        "raise ModuleNotFoundError(\"No module named 'sympy'\", name='sympy')\n", encoding="utf-8"
+    )
+    resp = _build_in(figs, tmp_path, "import sympy as smp\n" + _PLOT)
     assert "stems" not in resp, resp
     assert "No module named 'sympy'" in json.dumps(resp, ensure_ascii=False), resp
 

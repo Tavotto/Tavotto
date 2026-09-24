@@ -113,7 +113,10 @@ Flask 父进程与 worker 都已加载它）：
   用户环境发现也不为它起），`JointPlan.unused` 列出来（诊断可见，不装）。
 * **执行**：safe worker 在脚本开跑前按同一份判据装 `figcapture.install_unused_import_placeholders`——包一层
   `builtins.__import__`，只在「发起者是脚本自己（globals 的 `__file__`）+ `level == 0` 无 fromlist + 名字在名单里 +
-  真 import 抛的 `ModuleNotFoundError` 缺的正是 X 本身」时回一个占位模块；占位**不进 `sys.modules`**（库里的
+  真 import 抛的 `ModuleNotFoundError` 缺的正是 X 本身 + **import 系统确实找不到它**（`importlib.util.find_spec(X) is None`，
+  评审 #555 P2：`exc.name == X` 只说明异常这么写着——项目里的同名 `sympy.py` 执行到一半自己抛
+  `ModuleNotFoundError(name="sympy")` 时它找得到，已经执行的副作用不会因占位撤销；`find_spec` 自己抛错按判不清处理）」
+  时回一个占位模块；占位**不进 `sys.modules`**（库里的
   `try: import X except ImportError` 照旧看到失败），读它任何非 dunder 属性抛与原来逐字相同的
   `ModuleNotFoundError: No module named 'X'`——判据若错，失败形状不变，运行后的缺包修复照旧接手。装了的包照常 import。
 * **native 会话不做**：`tavotto run` 跑在用户自己的解释器里、语义就是 `python script.py`（CLI 拥有用户的 Python），

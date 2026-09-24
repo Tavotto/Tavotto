@@ -1030,12 +1030,18 @@ def install_unused_import_placeholders(script: str, names) -> None:
     * 发起 import 的是脚本自己（调用方 globals 的 `__file__` 就是这个脚本）——库里的
       `try: import X except ImportError` 永远看不到占位；
     * `level == 0`、没有 fromlist、名字在名单里；
-    * 真的 import 抛了 `ModuleNotFoundError` 且缺的就是 X 本身（X 装了但它的依赖坏了照常报）。
+    * 真的 import 抛了 `ModuleNotFoundError` 且缺的就是 X 本身（这一条只是短路：X 装了、它的依赖坏了时
+      异常名是那个依赖，不必再问 `find_spec`——真正挡住这种情形的是下一条，X 找得到）；
+    * **而且 import 系统确实找不到它**：`importlib.util.find_spec(X) is None`（评审 #555 P2）。`exc.name == X`
+      只说明异常这么写着——一个找得到的同名模块（项目里的 `sympy.py`）初始化到一半自己抛
+      `ModuleNotFoundError(name="sympy")`，它已经执行过的副作用不会因为占位而撤销，失败必须照常抛出。
+      顶层名的 `find_spec` 只问 finder、不执行模块代码；它自己抛任何异常都按「判不清」处理，照常抛出。
 
     占位**不进 `sys.modules`**（别处再 import X 仍然是真实的失败）；读它的任何非 dunder
     属性抛 `ModuleNotFoundError("No module named 'X'")`——判据若错了，失败形状与原来逐字
     相同，运行后的缺包修复照旧接手。装了就不卸：脚本定义的函数在渲染期仍可能执行 import。
     """
+    import importlib.util  # noqa: PLC0415
     import sys  # noqa: PLC0415
     import types  # noqa: PLC0415
 
@@ -1060,13 +1066,21 @@ def install_unused_import_placeholders(script: str, names) -> None:
                 raise AttributeError(attr)
             raise ModuleNotFoundError(f"No module named '{self.__name__}'", name=self.__name__)
 
+    def _not_findable(name: str) -> bool:
+        """区分「import 系统没找到」与「找到了、loader 执行时自己抛了同名的错」：只有前者给占位。"""
+        try:
+            return importlib.util.find_spec(name) is None
+        except Exception:  # noqa: BLE001 — 判不清就不给占位
+            return False
+
     def _import(name, globals=None, locals=None, fromlist=(), level=0):
         if level or fromlist or name not in names or not _from_script(globals):
             return real_import(name, globals, locals, fromlist, level)
         try:
             return real_import(name, globals, locals, fromlist, level)
         except ModuleNotFoundError as exc:
-            if exc.name != name:
+            # `exc.name != name` 只是省一次 find_spec 的短路；判据是「import 系统找不到 X」
+            if exc.name != name or not _not_findable(name):
                 raise
             print(
                 f"[deps] {name} 没有安装；脚本 import 了它但没有用到，已用占位代替"
