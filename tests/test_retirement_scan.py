@@ -45,7 +45,7 @@ def test_selftest_positive_and_negative_examples_all_hold():
     report = rs.selftest(Path(sys.executable))
     failed = [c["check"] for c in report["checks"] if not c["ok"]]
     assert not failed, failed
-    assert len(report["checks"]) == 9
+    assert len(report["checks"]) == 11
 
 
 def test_the_source_ruler_sees_dynamic_imports_and_ignores_strings(tmp_path):
@@ -94,7 +94,7 @@ def test_the_cli_exit_code_follows_the_selftest():
         timeout=300,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert proc.stdout.count("PASS ") == 9
+    assert proc.stdout.count("PASS ") == 11
 
 
 # ---------------------------------------------------------------- 2. 这个仓库 / 这个环境

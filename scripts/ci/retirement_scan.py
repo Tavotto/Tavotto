@@ -11,7 +11,7 @@
 | `block` | 干净新进程（`-I`）装上 meta_path 阻断器之后的主要路径：`import tavotto.app`、契约层的 probe / 文字 / 合成（PDF + PNG + TIFF）/ 预览 / 原图三格式 / 标注写回 / 字体清单 / 像素比较、`doctor --json`、MCP bridge | 每条路径跑通，且 `sys.modules` 里没有被阻断的名字；阻断器先在一个标准库模块上证明自己会咬（自检） |
 | `native` | 产物（`--dist` PyInstaller 目录 / `--wheel`）里的 `.so / .dylib / .pyd / .dll` 与 wheel 的 METADATA | 没有 mupdf / fitz；PDFium 与 qpdf 的库**在**（正例：新闭包真的进了产物）；批准字体 13 张脸随包 |
 | `sbom` | `--sbom` SPDX JSON 的 packages | 没有 pymupdf / mupdf。没给就记 `not_run`（不是绿） |
-| `run` | `--smoke`：`scripts/smoke_app.py --python` 全路径，父进程经 `sitecustomize` 带阻断器 | 冒烟退出 0，且 marker 文件证明阻断器在父进程里装上了；worker 子进程不带（`child_env` 摘 PYTHONPATH——那是用户的科学环境，不是主语） |
+| `run` | `--smoke`：`scripts/smoke_app.py --python` 全路径，父进程经 `sitecustomize` 带阻断器 | 冒烟退出 0，且目标解释器以 `-m tavotto` 起的那个进程自己记下了「阻断器已装上」（外层包装器的记录不算）；worker 子进程不带（`child_env` 摘 PYTHONPATH——那是用户的科学环境，不是主语） |
 
 例外按**类别**写明（不是藏在路径 glob 里）：`tests/**` 是测试的独立读取器；`scripts/dev/**` 是隔离的历史差分工具；
 `scripts/build_brand_assets.py` 那几份是维护者资产脚本（产出进 git 的位图，不随发行物执行）；用户科学脚本自己的
@@ -497,15 +497,35 @@ def scan_sbom(sbom: Path) -> dict:
 # ---------------------------------------------------------------------------
 # run：冒烟全路径，父进程带阻断器
 # ---------------------------------------------------------------------------
+def _blocker_proved(records: list[dict], python: Path) -> bool:
+    """阻断器是否在**被测的那个进程**里装上了：得有一条记录出自目标解释器（realpath 相同）、且命令行是
+    `-m tavotto`。外层包装器（`sys.executable` 跑的 smoke_app.py）自己也会加载 sitecustomize，它写的记录
+    不算——第一版只看「marker 文件在不在」，目标解释器即便无视 PYTHONPATH / sitecustomize，外层写的那份
+    照样让闸通过（Codex #539：空门禁）。"""
+    want = os.path.realpath(str(python))
+    for rec in records:
+        argv = rec.get("argv") or []
+        launched_tavotto = any(
+            a == "-m" and i + 1 < len(argv) and argv[i + 1] == "tavotto" for i, a in enumerate(argv)
+        )
+        if os.path.realpath(str(rec.get("executable", ""))) == want and launched_tavotto:
+            return True
+    return False
+
+
 def scan_smoke(python: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="retire-smoke-") as tmp:
         tmpp = Path(tmp)
         site = tmpp / "site"
         site.mkdir()
-        marker = tmpp / "blocker-active"
+        marker = tmpp / "blocker-active.jsonl"
+        # 每个加载了阻断器的进程各追加一行「我是谁」：判定只认目标解释器以 `-m tavotto` 起的那一行
         (site / "sitecustomize.py").write_text(
             blocker_code()
-            + f"\nimport pathlib\npathlib.Path({str(marker)!r}).write_text('active', encoding='utf-8')\n",
+            + "\nimport json as _j, os as _o, sys as _s\n"
+            + f"with open({str(marker)!r}, 'a', encoding='utf-8') as _f:\n"
+            + "    _f.write(_j.dumps({'pid': _o.getpid(), 'executable': _s.executable,"
+            + " 'argv': list(getattr(_s, 'orig_argv', _s.argv))}) + '\\n')\n",
             encoding="utf-8",
         )
         env = {**os.environ, "PYTHONPATH": str(site), "TAVOTTO_NO_TELEMETRY": "1"}
@@ -526,12 +546,18 @@ def scan_smoke(python: Path) -> dict:
             timeout=1800,
             cwd=str(ROOT),
         )
-        active = marker.is_file()
+        records = (
+            [json.loads(line) for line in marker.read_text(encoding="utf-8").splitlines() if line]
+            if marker.is_file()
+            else []
+        )
+        active = _blocker_proved(records, python)
         tail = (proc.stdout + proc.stderr).strip().splitlines()[-20:]
     return {
         "ok": proc.returncode == 0 and active,
         "returncode": proc.returncode,
-        "blocker_active_in_parent": active,
+        "blocker_active_in_target": active,
+        "blocker_records": [{k: r.get(k) for k in ("pid", "executable")} for r in records][:8],
         "tail": tail,
     }
 
@@ -631,6 +657,30 @@ def selftest(python: Path) -> dict:
                 "ok": r_good["ok"]
                 and not r_bad["ok"]
                 and r_bad["forbidden"] == ["_internal/libmupdf.so"],
+            }
+        )
+        # 负例 6：阻断器的证据只出自外层包装器 → 不算；出自目标解释器的 `-m tavotto` → 算（Codex #539）
+        target = Path(python)
+        outer_only = [
+            {"pid": 1, "executable": sys.executable, "argv": [sys.executable, "smoke_app.py"]}
+        ]
+        checks.append(
+            {
+                "check": "blocker proof from the outer wrapper alone does not count",
+                "ok": not _blocker_proved(outer_only, target),
+            }
+        )
+        in_target = outer_only + [
+            {
+                "pid": 2,
+                "executable": str(target),
+                "argv": [str(target), "-m", "tavotto", "--port", "0"],
+            }
+        ]
+        checks.append(
+            {
+                "check": "blocker proof from the target interpreter's -m tavotto counts",
+                "ok": _blocker_proved(in_target, target),
             }
         )
         # 负例 5：SBOM 里有 PyMuPDF → 红
