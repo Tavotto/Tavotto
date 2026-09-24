@@ -124,3 +124,65 @@ def test_recoloured_equals_drawn_in_that_colour(hot, tmp_path_factory):
     ).read_bytes()
     hot.override(STEM, [])
     assert recoloured == expected
+
+
+#: 蓝线配显式红边 marker：「跟不跟着线色」必须按脚本原样判一次、之后沿用。现判的话改成红之后
+#: 边色恰好等于线色，撤销或再改色时会被误判成「跟着」（#556 评审）。
+EXPLICIT_SCRIPT = "fig_errorbar_explicit_edge.py"
+EXPLICIT_STEM = "EbEdge"
+EXPLICIT_LIBRARY = """\
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(3.0, 2.2))
+    ax.errorbar([0, 1, 2], [1, 2, 1], yerr=0.3, fmt="o", ms=9, mew=2, mec="red",
+                capsize=6, color="#1f77b4")
+    ax.set_title("t")
+    ax.set_axis_off()
+    fig.savefig("EbEdge.pdf")
+"""
+
+
+@pytest.fixture(scope="module")
+def explicit(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("errorbar-explicit-edge")
+    (figs / EXPLICIT_SCRIPT).write_text(EXPLICIT_LIBRARY, encoding="utf-8")
+    return figs
+
+
+def test_an_explicit_marker_edge_survives_recolour_and_undo(explicit):
+    w = pool.one_shot(EXPLICIT_SCRIPT, str(explicit), "main")
+    w.ensure_built()
+    try:
+        keep = [{"gid": "axes_0.title", "prop": "text", "value": "t2"}]
+        expected = w.preview_png(EXPLICIT_STEM, keep, 380, "e-keep").read_bytes()
+        resp = w.override(
+            EXPLICIT_STEM, keep + [{"gid": "axes_0.errorbar_0", "prop": "color", "value": "red"}]
+        )
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        # 只撤掉改色（留一条别的 override，走逐条还原）：红边仍是红的，线回到蓝
+        resp = w.override(EXPLICIT_STEM, keep)
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        assert w.preview_png(EXPLICIT_STEM, keep, 380, "e-undone").read_bytes() == expected
+    finally:
+        pool.discard(w)
+
+
+def test_recolouring_twice_equals_a_fresh_replay_of_the_last_colour(explicit):
+    """红 → 绿的热态 == 全新 worker 直接改绿（写回的前提：热态 == 全量重放）。"""
+    green = [{"gid": "axes_0.errorbar_0", "prop": "color", "value": "#2ca02c"}]
+    w = pool.one_shot(EXPLICIT_SCRIPT, str(explicit), "main")
+    w.ensure_built()
+    try:
+        w.override(EXPLICIT_STEM, [{"gid": "axes_0.errorbar_0", "prop": "color", "value": "red"}])
+        hot = w.preview_png(EXPLICIT_STEM, green, 380, "e-hot").read_bytes()
+    finally:
+        pool.discard(w)
+    f = pool.one_shot(EXPLICIT_SCRIPT, str(explicit), "main")
+    f.ensure_built()
+    try:
+        fresh = f.preview_png(EXPLICIT_STEM, green, 380, "e-fresh").read_bytes()
+    finally:
+        pool.discard(f)
+    assert hot == fresh

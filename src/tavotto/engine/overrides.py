@@ -1441,17 +1441,26 @@ def _eb_color_get(a):
 
 def _eb_color_set(a, v) -> None:
     """误差棒一个成员改色。横杠是 Line2D 的 marker（`_` / `|`），颜色在 **marker 边色**上：只
-    `set_color` 的话横杠留在原色。marker 的边色 / 面色原本**跟着线色**（等于改之前的线色）的一起改；
-    脚本显式设成别的颜色的（`mec='k'` 黑边、`mfc='none'` 空心）不动。撤销走同一个 setter，
-    「跟着线色」的判据对称成立，getter 仍只取线色。"""
+    `set_color` 的话横杠留在原色。marker 的边色 / 面色在脚本原样里**跟着线色**（等于线色）的一起改；
+    脚本显式设成别的颜色的（`mec='k'` 黑边、`mfc='none'` 空心）不动。
+
+    「跟不跟着线色」在**第一次改色那一刻**按脚本原样判一次，记在 artist 上（`_mm_eb_follow`），
+    之后的改色与撤销都沿用它——拿此刻的颜色现判的话，蓝线配 `mec='red'`，改成红再撤销，边色
+    此刻恰好等于线色，会被误判成「跟着」一起改回蓝（#556 评审）。全量重放从脚本原样起步，
+    第一次改色时判出的是同一个结论，热态 == 重放。"""
     if isinstance(a, Line2D):
-        old = _rgba_or_none(a.get_color())
-        follows_edge = old is not None and _rgba_or_none(a.get_markeredgecolor()) == old
-        follows_face = old is not None and _rgba_or_none(a.get_markerfacecolor()) == old
+        follow = getattr(a, "_mm_eb_follow", None)
+        if follow is None:
+            old = _rgba_or_none(a.get_color())
+            follow = (
+                old is not None and _rgba_or_none(a.get_markeredgecolor()) == old,
+                old is not None and _rgba_or_none(a.get_markerfacecolor()) == old,
+            )
+            a._mm_eb_follow = follow  # noqa: SLF001
         a.set_color(v)
-        if follows_edge:
+        if follow[0]:
             a.set_markeredgecolor(v)
-        if follows_face:
+        if follow[1]:
             a.set_markerfacecolor(v)
         return
     a.set_color(v)
