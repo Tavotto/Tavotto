@@ -506,3 +506,21 @@ def test_home_is_found_without_env_vars_and_ancestors_are_refused(unpacked, tmp_
     with pytest.raises(mod.ConfigureError):
         mod.validate_project_root(str(parent))  # 上级目录把整个主目录都包进来了
     assert mod.validate_project_root(str(home / "figures")) == os.path.realpath(home / "figures")
+
+
+def test_health_json_survives_a_non_utf8_locale_and_chinese_paths(unpacked, tmp_path):
+    """Windows 上管道的默认编码是 ANSI 代码页：中文路径一进体检报告，启动器就
+    UnicodeEncodeError、零 JSON，configure 与 `tavotto codex install` 都会把它误判成
+    「启动器起不来」（#559 的 Windows CI）。这里用 PYTHONIOENCODING=cp1252 在任何平台上
+    复现同一形状；解包目录本身带中文与空格。"""
+    env = _clean_env(tmp_path, PYTHONIOENCODING="cp1252", PYTHONDONTWRITEBYTECODE="1")
+    proc = subprocess.run(
+        [sys.executable, str(unpacked / "mcp" / "server.py"), "--health"],
+        capture_output=True,
+        cwd=str(tmp_path),
+        env=env,
+        timeout=300,
+    )
+    assert proc.returncode in (0, 3), proc.stderr.decode("utf-8", "replace")[-800:]
+    report = json.loads(proc.stdout.decode("utf-8").strip().splitlines()[-1])
+    assert "发行 包" in report["widget"]["path"]

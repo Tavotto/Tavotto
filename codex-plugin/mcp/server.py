@@ -1106,8 +1106,23 @@ def provision(spec: "str | None" = None, python_base: "str | None" = None) -> "t
 
 
 # --------------------------------- 主入口 -----------------------------------
+def _utf8_stdio() -> None:
+    """体检 / provision 的那一行 JSON 固定按 UTF-8 写（读它的一侧——`tavotto codex install`、
+    `integrations/configure.py`——都按 UTF-8 解）。Windows 上 stdout 是管道时默认是 ANSI 代码页，
+    报告里一出现中文路径就 UnicodeEncodeError、退出码 1、零 JSON，调用方只能把它读成
+    「启动器起不来」（#559 的 Windows CI 撞到；与降级 server 的 reconfigure 同一做法）。"""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
+
 def main() -> int:
     argv = sys.argv[1:]
+    if "--health" in argv or "--provision" in argv:
+        _utf8_stdio()
     if "--health" in argv:
         report, rc = health()
         print(json.dumps(report, ensure_ascii=False))
