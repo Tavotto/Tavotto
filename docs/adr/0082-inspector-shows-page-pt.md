@@ -35,7 +35,14 @@
 - 通用单选行 / 批量行（`ElementInspector` 的 `FieldRow` / `BatchFieldRow`）；
 - 右键快捷编辑（`QuickEdit`）。
 
-样式面板原来自己做换算，现在删掉了，和属性页走同一个写入器。界面代码不许 import `panelScale` / `toPageValue` / `toScriptValue` / `pageField`，由 `lib/pagePtLens.test.ts` 用 AST 看护。
+样式面板原来自己做换算，现在删掉了，和属性页走同一个写入器。应用样式也过同一个透镜：`styleLens(style, panel)` 按样式的 `pt_basis`（#547）决定。`'page'` 用这张面板的
+`pagePtLens`；缺席的是旧版存下的样式，数字是当年的脚本值，原样写。
+
+透镜的精度前提是引擎把 `PAGE_PT_PROPS` 里的每一条都按两位小数回报。`mutation_scale`、`labelpad`、
+`arrow_head` 原来只报一位：缩放比 0.6 时输入 8.5，存 14.17，回报 14.2，回显 8.52。现在已改成两位，
+由 `tests/test_page_pt_precision.py` 用 AST 看护（表从 TS 源码里读）。
+
+界面代码不许 import `panelScale` / `toPageValue` / `toScriptValue` / `pageField`，由 `lib/pagePtLens.test.ts` 用 AST 看护。
 
 `PAGE_PT_PROPS` 补进了属性页上与样式属性并排摆着的那几条 pt 量：
 
@@ -43,7 +50,7 @@
 - `bbox_linewidth`、`stroke_width`；
 - `handle_markersize`；
 - `axline_width`、`arrow_width`；
-- `mutation_scale`、`labelpad`。
+- `mutation_scale`、`arrow_head`（三维轴箭头，引擎里也是 `set_mutation_scale`）、`labelpad`。
 
 理由是边框卡：「全部」是 `spine_linewidth`、逐边是 `spine_<side>_linewidth`，同一张卡里不能一个是页面值、一个是脚本值。散点面积 `size`（pt²）按缩放比的平方走，**不在表里**。
 
