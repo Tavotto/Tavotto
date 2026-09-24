@@ -155,7 +155,6 @@ export interface PreflightPanelSpec {
   stale: boolean
   render_error: string | null
   unapplied_overrides: number
-  bitmap_embed: boolean
   hidden: boolean
 }
 
@@ -375,11 +374,6 @@ function checkPanelState(panel: PreflightPanelSpec, sink: Sink): void {
       objectIds: [pid],
       detail: { count: n },
       worse: n,
-    })
-  }
-  if (panel.bitmap_embed) {
-    sink.add('bitmap-embed', pf('bitmapEmbed'), {
-      objectIds: [pid],
     })
   }
 }
@@ -1038,7 +1032,7 @@ export function buildSpec(
    * 对象在页面上**真正占的**轴对齐包围盒。
    *
    * `x/y/w/h` 是**未旋转**的框；文字/箭头/形状可以带任意角度 `rotationDeg`
-   * （绕包围盒中心，与导出时 `pymupdf.Matrix(deg)` 的 morph 同一约定）。
+   * （绕包围盒中心，与导出时 RenderCore `Group.transform` 的旋转同一约定）。
    * 直接拿未旋转的框去判出血、页边距与重叠，一条细长标注贴着页边旋转 45°
    * 时会「通过」预检，导出的几何却已经被裁掉；重叠也会同时出现漏报与误报。
    * 面板不带 `rotationDeg`（它用的是 90° 档的 `rotation`，w/h 已经互换过），
@@ -1080,7 +1074,6 @@ export function buildSpec(
           o.overrides.length > 0 && r?.lastPatches !== JSON.stringify(o.overrides)
             ? o.overrides.length
             : 0,
-        bitmap_embed: !!(o.flipH || o.flipV || (o.opacity != null && o.opacity < 1)),
         hidden: !!o.hidden,
       }
     })

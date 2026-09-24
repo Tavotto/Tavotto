@@ -568,7 +568,7 @@ def validate_tutorial_resources(root: Path | None = None) -> list[str]:
             problems.append(f"缺少 {rel}")
             continue
         try:
-            from .. import pdfbackend  # 契约层；PyMuPDF 只在它背后
+            from .. import pdfbackend  # 契约层；RenderCore 只在它背后
 
             probe = pdfbackend.probe_asset(files[rel], "pdf")
             if not (probe.get("w_pt", 0) > 0 and probe.get("h_pt", 0) > 0):

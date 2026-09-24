@@ -4,14 +4,15 @@
 字形回退很容易滑向「把一个覆盖全的字体塞进包里就都解决了」。那条路的代价是
 许可证：字体是独立作品，AGPL 的仓库照样不能随手带一份别人的 .ttf 出门。所以
 本仓库的每一张脸都必须来自
-* PyMuPDF 自带的 base-14 / CJK / 隐式回退（随 PyMuPDF 的许可证走），或
 * matplotlib 自带的 DejaVu（随 matplotlib 走），或
 * 用户自己机器上装的字体，或
-* **第四档（2026-09-21，统一实施包 U06 / ADR 0060）**：`src/tavotto/rendercore/fonts_allowlist.json`
-  里 sha256 钉住的 OFL 1.1 字体（Liberation 2.1.5 + Noto Sans SC），由 `scripts/fetch_fonts.py`
-  取到 `src/tavotto/resources/fonts/`（.gitignore 挡住，随 wheel / 桌面包分发，许可证全文同行）。
-  这一档的判据：目录里出现的每个字体文件都在 allowlist 里（`test_packaged_fonts_are_exactly_the_allowlist`），
-  不在的一律被注册表拒绝——放一份 Times New Roman 进去不会让它变成可用字体（RC-022）。
+* **allowlist 那一档（2026-09-21，统一实施包 U06 / ADR 0060；U10 起是画布文字的唯一来源，ADR 0072）**：
+  `src/tavotto/rendercore/fonts_allowlist.json` 里 sha256 钉住的 OFL 1.1 字体（Liberation 2.1.5 + Noto Sans SC），
+  由 `scripts/fetch_fonts.py` 取到 `src/tavotto/resources/fonts/`（.gitignore 挡住，随 wheel / 桌面包分发，
+  许可证全文同行）。这一档的判据：目录里出现的每个字体文件都在 allowlist 里
+  （`test_packaged_fonts_are_exactly_the_allowlist`），不在的一律被注册表拒绝——放一份 Times New Roman 进去
+  不会让它变成可用字体（RC-022）。
+* （历史）PyMuPDF 自带的 base-14 / CJK / 隐式回退——随 PyMuPDF 退役（U10）不再是来源。
 
 这几条不是靠记性维持——**下面每一条都可以被一次提交破坏，所以每一条都要有
 判据**。
@@ -106,18 +107,30 @@ def test_a_foreign_font_dropped_into_the_fonts_dir_is_refused(tmp_path):
     assert reg.faces == {} and reg.rejected[0]["reason"] == "not_in_allowlist"
 
 
-def test_canvas_faces_all_come_from_the_backend_builtins():
-    """画布文字的每一张脸都是 PyMuPDF 的内建名字，没有一个来自文件。
+def test_canvas_faces_all_come_from_the_allowlist_registry():
+    """画布文字的每一张脸都经批准字体注册表（`FontRegistry`）取得，没有一个来自别处的文件。
 
-    `pymupdf.Font(fontfile=…)` / `fontbuffer=…` 是「用一份我们自己带的字体」
-    的入口——它一旦出现在后端里，上面那条「仓库里没有字体文件」就会被绕过去
-    （字体可以从别处下载再喂进来）。
-    """
-    source = (ROOT / "src" / "tavotto" / "pdfbackend" / "pymupdf_backend.py").read_text(
-        encoding="utf-8"
-    )
-    assert "fontfile" not in source
-    assert "fontbuffer" not in source
+    `rendercore` 里若出现 `TTFont(<别的路径>)` / 直接 `open(*.ttf)` / 摸系统字体目录，上面那条
+    「仓库里没有字体文件」就会被绕过去（字体可以从别处下载再喂进来）。判据按 AST：native 适配层
+    里打开字体字节的调用只许出现在 `fonts.py`（它按 allowlist 的 sha256 收）。"""
+    import ast
+
+    pkg = ROOT / "src" / "tavotto" / "rendercore"
+    offenders = []
+    for path in sorted(pkg.glob("*.py")):
+        if path.name == "fonts.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                low = node.value.lower()
+                if (
+                    low.endswith((".ttf", ".otf", ".ttc"))
+                    or "/library/fonts" in low
+                    or "c:\\windows\\fonts" in low
+                ):
+                    offenders.append(f"{path.name}:{node.lineno} {node.value!r}")
+    assert not offenders, offenders
 
 
 def test_declared_dependencies_bring_no_font_package():
@@ -135,7 +148,7 @@ def test_every_offered_family_can_actually_be_drawn(family):
     没有变。这条用最平凡的一串 ASCII 量它——族解析不出来时 `latin_font`
     会抛，或者悄悄回默认族，两种都会让这里红。
     """
-    from tavotto.pdfbackend import pymupdf_backend as backend
+    from tavotto.rendercore import typography
 
-    assert backend.latin_family(family) == family
+    assert typography.latin_family(family) == family
     assert pdfbackend.text_plan("Sample", family=family) == [("Sample", "primary")]

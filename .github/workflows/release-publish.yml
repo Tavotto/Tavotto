@@ -515,6 +515,17 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
+      - name: 退役扫描：发行 SBOM 与 wheel 里没有 PyMuPDF / MuPDF（ADR 0072）
+        # SBOM 尺子只有在这里才有输入：CI 上从来不产 SBOM，不接在这里它就永远是 not_run（Codex #539）。
+        # 同一份 wheel 顺带过 wheel 尺子（Requires-Dist / 批准字体 / 零原生文件）。这个 job 没装应用，
+        # source / deps / block 三把尺子由 ci.yml 的 package 腿负责，这里跳过（not_run，不是绿）。
+        run: |
+          set -euo pipefail
+          python scripts/ci/retirement_scan.py --skip source,deps,block \
+            --sbom out/tavotto-sbom.spdx.json \
+            --wheel "${{ steps.paths.outputs.wheel }}" \
+            --out out/retirement-scan.json
+
       - name: SHA-256 校验清单
         run: |
           set -euo pipefail

@@ -1,12 +1,12 @@
-"""候选后端接进 `app.py` 的真实入口（统一实施包 U08，ADR 0067）：HTTP 导出（同步 / 异步 + SSE）、`/api/render`、
-关停、带 override 的面板经 worker + 回执。
+"""RenderCore 接进 `app.py` 的真实入口（统一实施包 U08 候选、U10 起默认，ADR 0067 / 0072）：HTTP 导出（同步 /
+异步 + SSE）、`/api/render`、关停、带 override 的面板经 worker + 回执。
 
 主语是**真的 Flask 端点交回来的东西与磁盘上的文件**——独立读取器（`tests/support/pdfread.py` / PDFium）
 检查产物而不只信返回 JSON（05 §5）。这里每一条都是旧契约用例在候选后端下的替代证据（ledger
 `candidate_parity.deselected` 里点名的那几条），或候选独有的入口合同（503 背压、关停 reap、回执随源）。
 
-rc-venv（候选包 + 批准字体）里真跑；主仓库 `.venv` skip 并写明理由。带 override 的那条还要一个装了
-matplotlib 的解释器（与 `test_mcp_normalize.py` 同一判据）。
+需要 RenderCore 依赖 + 批准字体（U10 起是运行时闭包）；不在的机器 skip 并写明理由。带 override 的那条还要
+一个装了 matplotlib 的解释器（与 `test_mcp_normalize.py` 同一判据）。
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ HAS_CANDIDATE = all(
     importlib.util.find_spec(mod) is not None
     for mod in ("pypdfium2", "pikepdf", "uharfbuzz", "PIL")
 )
-pytestmark = pytest.mark.skipif(not HAS_CANDIDATE, reason="候选包未装（not_run，不是绿）")
+pytestmark = pytest.mark.skipif(not HAS_CANDIDATE, reason="RenderCore 依赖未装（not_run，不是绿）")
 
 
 def _worker_python():
@@ -58,7 +58,7 @@ def _fonts_and_child():
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv(pdfbackend.BACKEND_ENV, pdfbackend.BACKEND_RENDERCORE)
+    monkeypatch.delenv(pdfbackend.BACKEND_ENV, raising=False)  # 默认就是 rendercore（U10）
     m.app.config["TESTING"] = True
     m.reset_projects()
     monkeypatch.setattr(m, "CACHE_DIR", tmp_path / "_cache")
@@ -298,14 +298,210 @@ def test_api_render_under_the_candidate_reports_backpressure_as_503_and_other_fa
     importlib.util.find_spec("pymupdf") is None, reason="要两个后端同在（rc-venv）；not_run"
 )
 def test_switching_the_backend_changes_the_preview_cache_key(client, tmp_path, monkeypatch):
-    """ledger `BACKEND_NAME`：同一 PDF 换后端名后 `/api/render` 必须重画（键含后端身份）。"""
+    """ledger `BACKEND_NAME`：同一 PDF 换后端身份后 `/api/render` 必须重画（键含后端名 + build）。
+    U10 之前这里真的在 pymupdf 与 rendercore 之间切；旧后端删掉之后（ADR 0072）把「另一个后端」换成
+    另一个 build 串——键里那一维的主语没变。旧后端时代留下的 `<sha1>.png` 缓存文件同理不会被命中，
+    只占预算、按 mtime 淘汰。"""
+    from tavotto.rendercore import facade, preview as rc_preview
+
     _project(tmp_path)
-    monkeypatch.setenv(pdfbackend.BACKEND_ENV, pdfbackend.BACKEND_PYMUPDF)
     assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200
-    monkeypatch.setenv(pdfbackend.BACKEND_ENV, pdfbackend.BACKEND_RENDERCORE)
+    monkeypatch.setattr(rc_preview, "BACKEND_VERSION", "99.9.9")
+    facade.reset_for_tests()
     assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200
     files = [p for p in (tmp_path / "_cache").glob("*.png") if not p.name.endswith(".part.png")]
     assert len(files) == 2, files
+
+
+def test_the_retired_backend_name_is_refused_at_the_real_entry_not_swapped(
+    client, tmp_path, monkeypatch
+):
+    """负例（06 §1 / ADR 0072）：环境里还写着 `TAVOTTO_RENDER_BACKEND=pymupdf` 的机器，`/api/render` 与导出
+    要明确失败（`backend_retired`），不是悄悄用 rendercore 画——「静默换实现」是退役扫描要挡的那种形状。"""
+    _project(tmp_path)
+    monkeypatch.setenv(pdfbackend.BACKEND_ENV, "pymupdf")
+    resp = client.get("/api/render?id=p1.pdf&w=200")
+    assert resp.status_code == 500
+    body = resp.get_json()
+    assert body["code"] == "backend_retired" and body["params"]["value"] == "pymupdf"
+    assert "ADR 0072" in body["error"]
+    assert not list((tmp_path / "_cache").glob("*.png"))
+    # 导出两个入口都在**进作业之前**问后端：不许被作业的兜底收成笼统的 export_failed（Codex #539）
+    resp = client.post("/api/export", json=_canvas(formats=["pdf"]))
+    assert resp.status_code == 500 and resp.get_json()["code"] == "backend_retired", resp.get_json()
+    assert "退役" in json.dumps(resp.get_json(), ensure_ascii=False)
+    resp = client.post("/api/export/start", json=_canvas(formats=["pdf"]))
+    assert resp.status_code == 500 and resp.get_json()["code"] == "backend_retired", resp.get_json()
+
+
+def test_a_missing_dependency_during_export_keeps_its_stable_code(client, tmp_path, monkeypatch):
+    """导出作业里才冒出来的「后端不可用」（依赖 / 字体不在）同样是 `backend_unavailable`，不是 `export_failed`：
+    作业的兜底先问 `classify_error`（判据归契约层），Codex #539。"""
+    import importlib.util
+
+    from tavotto.rendercore import facade, renderhost
+
+    _project(tmp_path)
+    real = importlib.util.find_spec
+
+    def hidden(name, *a, **k):
+        return None if name == "pypdfium2" else real(name, *a, **k)
+
+    renderhost.shutdown_shared()
+    facade.reset_for_tests()
+    monkeypatch.setattr(importlib.util, "find_spec", hidden)
+    resp = client.post("/api/export", json=_canvas(filename="Missing Dep", formats=["pdf", "png"]))
+    body = resp.get_json()
+    assert resp.status_code == 500, body
+    code = body.get("code") or (body.get("error") or {}).get("code")
+    assert code == "backend_unavailable", body
+    assert "pypdfium2" in json.dumps(body, ensure_ascii=False)
+    monkeypatch.undo()
+    facade.reset_for_tests()
+
+
+def test_a_missing_runtime_dependency_is_backend_unavailable_not_a_fallback(
+    client, tmp_path, monkeypatch
+):
+    """负例（06 §1 / ADR 0072）：闭包不完整（pypdfium2 没装：pip 装漏 / 冻结产物没收）时 `/api/render` 报
+    `backend_unavailable` 并点名缺的包——不是 `render_child_died`（把安装问题伪装成崩溃），更不是换个库画。
+    把 pypdfium2 藏起来的办法是让 `find_spec` 回 None：主语是「起 child 之前的检查」，不真卸包。"""
+    import importlib.util
+
+    from tavotto.rendercore import facade, renderhost
+
+    _project(tmp_path)
+    real = importlib.util.find_spec
+
+    def hidden(name, *a, **k):
+        return None if name == "pypdfium2" else real(name, *a, **k)
+
+    renderhost.shutdown_shared()
+    facade.reset_for_tests()
+    monkeypatch.setattr(importlib.util, "find_spec", hidden)
+    resp = client.get("/api/render?id=p1.pdf&w=200")
+    assert resp.status_code == 500
+    body = resp.get_json()
+    assert body["code"] == "backend_unavailable" and "pypdfium2" in body["params"]["reason"]
+    assert not list((tmp_path / "_cache").glob("*.png"))
+    monkeypatch.undo()
+    facade.reset_for_tests()
+    assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200  # 包回来了就正常
+
+
+def test_backend_unavailable_holds_without_main_warming_the_implementation(
+    client, tmp_path, monkeypatch
+):
+    """Codex #539：WSGI / test client 直接用 `app`、不经 `main()` 时没人调过 `warm()`，`_IMPLS` 是空的——
+    `/api/render` 直接用 facade 的 PreviewCache，缺包的错误照样得是 `backend_unavailable`，不能因为「一个实现
+    都没装载」就落成 `internal_error`。清空 `_IMPLS` 排除「前面的用例恰好装载过」这种顺序依赖。"""
+    import importlib.util
+
+    from tavotto.rendercore import facade, renderhost
+
+    _project(tmp_path)
+    real = importlib.util.find_spec
+
+    def hidden(name, *a, **k):
+        return None if name == "pypdfium2" else real(name, *a, **k)
+
+    renderhost.shutdown_shared()
+    facade.reset_for_tests()
+    monkeypatch.setattr(pdfbackend, "_IMPLS", {})
+    monkeypatch.setattr(importlib.util, "find_spec", hidden)
+    resp = client.get("/api/render?id=p1.pdf&w=200")
+    assert resp.status_code == 500
+    assert resp.get_json()["code"] == "backend_unavailable", resp.get_json()
+    monkeypatch.undo()
+    facade.reset_for_tests()
+
+    # 正方向：同样不经 main()、_IMPLS 为空、后端可用时，直接用 app 渲染一次要成功（真走实现的初始化：
+    # 批准字体 / allowlist / render child），不是只有「不可用」那条路被量到
+    monkeypatch.setattr(pdfbackend, "_IMPLS", {})
+    renderhost.shutdown_shared()
+    facade.reset_for_tests()
+    ok = client.get("/api/render?id=p1.pdf&w=200")
+    assert ok.status_code == 200, ok.get_json() if ok.is_json else ok.status
+    png = ok.get_data()
+    assert png[:8] == b"\x89PNG\r\n\x1a\n" and int.from_bytes(png[16:20], "big") == 200
+    # 预览只走 render child、不碰字体注册表：再导出一张带文字的画布，量到批准字体 / allowlist 那一段初始化
+    monkeypatch.setattr(pdfbackend, "_IMPLS", {})
+    facade.reset_for_tests()
+    body = client.post("/api/export", json=_canvas(filename="Fig WSGI")).get_json()
+    assert body["status"] == "done", body
+    assert "LiberationSerif" in _out(body, "pdf")["manifest"]["fonts_used"]
+    monkeypatch.undo()
+
+    # 判据本身：实现一个都没装载时，也认得出选中实现声明的「不可用」
+    monkeypatch.setattr(pdfbackend, "_IMPLS", {})
+    assert pdfbackend.is_backend_unavailable(facade.UNAVAILABLE_ERRORS[0]("x"))
+    assert not pdfbackend.is_backend_unavailable(RuntimeError("别的错"))
+
+
+def test_render_survives_a_concurrent_prune_before_send_file_opens_it(
+    client, tmp_path, monkeypatch
+):
+    """Codex #539：从 `PreviewCache.get()` 返回到 `send_file` 打开文件之间，别的请求发布新预览触发的 prune 可以删掉
+    它——那次请求就 404 / 500。端点用 `hold=True` 把文件钉到响应关闭。这里在 send_file 打开之前用 1 字节预算
+    prune 一次（模拟那个空窗里的并发清理），请求照样 200 + 一张 PNG。"""
+    from tavotto.rendercore import facade
+
+    _project(tmp_path)
+    real_send_file = m.send_file
+
+    def prune_then_send(path, *a, **k):
+        cache = facade.preview_cache(m.CACHE_DIR, max_bytes=m.RENDER_CACHE_MAX_BYTES)
+        old = cache.max_bytes
+        cache.max_bytes = 1
+        try:
+            cache.prune()
+        finally:
+            cache.max_bytes = old
+        return real_send_file(path, *a, **k)
+
+    monkeypatch.setattr(m, "send_file", prune_then_send)
+    resp = client.get("/api/render?id=p1.pdf&w=200")
+    assert resp.status_code == 200, resp.status_code
+    assert resp.get_data()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_render_leaks_no_pin_when_the_server_never_closes_the_response(client, tmp_path):
+    """Codex #539：生产 WSGI 对 send_file 走 direct passthrough，服务器关的是文件包装、不调 `Response.close()`——
+    挂在 `call_on_close` 上的放钉永远不跑，钉就漏了（被钉住的成品 prune 永远删不掉）。这里直接调 `wsgi_app`、
+    把响应体读完、**不调 close**：之后缓存里一个钉都不能剩。"""
+    from werkzeug.test import EnvironBuilder
+
+    from tavotto.rendercore import facade
+
+    _project(tmp_path)
+    assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200  # 暖缓存：下一次走命中路
+    cache = facade.preview_cache(m.CACHE_DIR, max_bytes=m.RENDER_CACHE_MAX_BYTES)
+    # 这个 client 带着会话认证的 cookie / 头：沿用它发请求用的那套 environ
+    env = EnvironBuilder(path="/api/render", query_string="id=p1.pdf&w=200").get_environ()
+    env.update({k: v for k, v in client.environ_base.items() if k not in env})
+    status = {}
+
+    def start_response(s, headers, exc_info=None):
+        status["s"] = s
+
+    body_iter = m.app.wsgi_app(env, start_response)
+    body = b"".join(body_iter)  # 读完，但**不** close()
+    assert status["s"].startswith("200"), status
+    assert body[:8] == b"\x89PNG\r\n\x1a\n"
+    assert not cache._pins, f"响应没被 close，钉就留下了：{cache._pins}"
+    if hasattr(body_iter, "close"):
+        body_iter.close()
+
+
+def test_render_still_answers_conditional_requests(client, tmp_path):
+    """交给 send_file 的是打开的文件对象而不是路径：ETag / 304 照样要成立（前端靠它每次验证、不重下）。"""
+    _project(tmp_path)
+    first = client.get("/api/render?id=p1.pdf&w=200")
+    assert first.status_code == 200 and first.headers.get("ETag")
+    again = client.get(
+        "/api/render?id=p1.pdf&w=200", headers={"If-None-Match": first.headers["ETag"]}
+    )
+    assert again.status_code == 304
 
 
 def test_reset_projects_reaps_the_render_child(client, tmp_path):
@@ -622,3 +818,42 @@ def test_writeback_with_annotations_fails_closed_when_the_staged_pdf_is_unusable
     assert (figs / "Fig1.pdf").read_bytes() == before_pdf
     assert (figs / "Fig1.png").read_bytes() == before_png
     assert not [p for p in figs.iterdir() if p.name.endswith(".updating")]
+
+
+def test_backend_unavailability_is_judged_by_the_contract_layer_not_by_app_imports(monkeypatch):
+    """Codex #539：HTTP 层不认识任何实现的异常类。「此刻不可用」由契约层 `pdfbackend.is_backend_unavailable`
+    按**已装载**实现自己声明的 `UNAVAILABLE_ERRORS` 判——换 / 加一个后端时，它的不可用错误照样走
+    `backend_unavailable` 这条路，而不是落成 `internal_error`。"""
+    import ast
+    import types
+
+    class OtherBackendDown(RuntimeError):
+        pass
+
+    exc = OtherBackendDown("另一个实现的依赖不在")
+    # 活的尺子：这个实现没装载时，同一个异常就是 internal_error
+    with m.app.test_request_context("/api/render"):
+        resp, status = m._unhandled(exc)
+    assert status == 500 and resp.get_json()["code"] == "internal_error"
+
+    fake = types.SimpleNamespace(UNAVAILABLE_ERRORS=(OtherBackendDown,))
+    monkeypatch.setitem(pdfbackend._IMPLS, "other", fake)
+    with m.app.test_request_context("/api/render"):
+        resp, status = m._unhandled(exc)
+    assert status == 500 and resp.get_json()["code"] == "backend_unavailable"
+
+    # RenderCore 自己声明的那一组确实就是它会抛的两个
+    from tavotto.rendercore import facade, fonts, hbshaper
+
+    assert set(facade.UNAVAILABLE_ERRORS) == {
+        fonts.FontsUnavailable,
+        hbshaper.CandidatePackagesMissing,
+    }
+
+    # app.py 不许再 import 实现的异常模块
+    tree = ast.parse((Path(m.__file__)).read_text(encoding="utf-8"))
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and "rendercore" in node.module:
+            imported |= {f"{node.module}.{a.name}" for a in node.names}
+    assert not {n for n in imported if n.endswith((".fonts", ".hbshaper"))}, imported

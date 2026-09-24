@@ -2,7 +2,7 @@
 
 这是 native 适配层：`uharfbuzz`（shaping：glyph / cluster / advance / offset）与 `fontTools`
 （hmtx / glyph order / CFF 的 CID 判定 / 子集）**只在这里 import，且在类里按需 import**——
-`tavotto[rendercore]` 没装的机器上 `import tavotto.rendercore.hbshaper` 仍成功，只有构造 `HbFace`
+RenderCore 的运行时依赖没装的机器上 `import tavotto.rendercore.hbshaper` 仍成功，只有构造 `HbFace`
 时才报 `CandidatePackagesMissing`。纯模型（`typography` / `plan`）只认协议，不认这个模块。
 
 ## 三条纪律
@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,7 +27,8 @@ from .ir import FontResource, Glyph
 
 
 class CandidatePackagesMissing(RuntimeError):
-    """`tavotto[rendercore]` 的候选包没装（uharfbuzz / fontTools / pikepdf）。"""
+    """RenderCore 的运行时依赖没装（uharfbuzz / fontTools / pikepdf）。名字沿用 U06 的（那时它们是候选 extra），
+    U10 起它们是 `dependencies`（ADR 0072）：抛出来意味着安装闭包不完整，不是「候选未启用」。"""
 
 
 def require(*names: str) -> None:
@@ -41,7 +43,8 @@ def require(*names: str) -> None:
             missing.append(name)
     if missing:
         raise CandidatePackagesMissing(
-            f"缺候选包 {missing}：pip install 'tavotto[rendercore]'（或 requirements-rendercore.txt）"
+            f"缺 RenderCore 的运行时依赖 {missing}：pip install -r requirements.txt（U10 起是运行时依赖，不是 extra；"
+            "闭包不完整的安装物不该发出去——ADR 0072）"
         )
 
 
@@ -203,6 +206,10 @@ class HbFace:
             "meta",
             "FFTM",  # FontForge 时间戳表：fontTools 不会子集它，留着只会打一行 warning
         ]
+        # fontTools 的子集器每张表打一行 INFO（"glyf pruned" / "name pruned" …）：一次导出十几行，
+        # 全进 app.log。它不是产品的日志（产品的进度在 job.trace），压到 WARNING——真出问题的
+        # 那些（缺表、坏 cmap）仍是 warning / error，留得住。只动 fontTools.subset 这个 logger。
+        logging.getLogger("fontTools.subset").setLevel(logging.WARNING)
         fresh = TTFont(str(self.path), recalcTimestamp=False)
         s = ftsubset.Subsetter(opts)
         s.populate(gids=want)

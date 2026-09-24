@@ -8,9 +8,10 @@
 | native 适配 | `hbshaper`（uharfbuzz + fontTools）、`pdfwriter`（pikepdf + fontTools） | 候选包只在这里 import，且都在函数 / 类内按需 import：装了 `tavotto[rendercore]` 才有 |
 | 入口 | `job`（接 `engine.exportjob` 的 `produce` 形状） | 纯模型 + native 适配 |
 
-**新核心零 `import pymupdf`**（D03：先限制新核心不借旧库，`tests/test_rendercore_model.py`
-钉着）；PyMuPDF 仍是默认后端，本包在 U06 不接任何用户可见入口——它由测试驱动跑通
-「录制（IR）→ 编译（RenderPlan）→ 写入（可检索 PDF）→ 独立读回」这一条切片。
+**本包零 `import pymupdf`**（D03：U06 时先限制新核心不借旧库，`tests/test_rendercore_model.py`
+钉着；U10 起整个应用闭包都是，PyMuPDF 退役、本包是唯一渲染后端，ADR 0072）。U06 时它不接任何用户
+可见入口——由测试驱动跑通「录制（IR）→ 编译（RenderPlan）→ 写入（可检索 PDF）→ 独立读回」这一条切片；
+U08 经 `facade` 接上 `pdfbackend` 契约层，U10 切成默认。
 
 本文件不 import 任何子模块：`import tavotto.rendercore` 不该把候选包拉起来。
 """

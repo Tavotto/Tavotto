@@ -63,15 +63,48 @@ def _redirect_streams() -> None:
         sys.stderr = target
 
 
+def _reopen_child_pipes() -> None:
+    """render child 的 stdin / stdout 是它与父进程的协议通道，**不许是 None**。
+
+    Windows 上 `console=False` 的 `Tavotto.exe` 里，PyInstaller 的 bootloader 把 `sys.stdin` / `sys.stdout` /
+    `sys.stderr` 设成 None——哪怕父进程（`renderhost`）明明给了管道。桌面版的 sidecar 就是这个 exe，于是
+    它以 `--render-child` 自起的 PDFium 子进程一碰 `sys.stdout.buffer` 就 AttributeError，预览与导出报
+    `render_child_died`（Codex #539）。`subprocess` 以 `STARTF_USESTDHANDLES` 把管道交给子进程，C 运行时的
+    fd 0 / 1 / 2 是好的，在这里按 fd 重新包成流；打不开的（真没有那个句柄）退回 devnull，别让 None 活下去。
+    有真终端 / 流本来就在的，一个都不动。
+    """
+    for fd, name, mode in ((0, "stdin", "r"), (1, "stdout", "w"), (2, "stderr", "w")):
+        if getattr(sys, name) is not None:
+            continue
+        try:
+            stream = open(fd, mode, encoding="utf-8", errors="replace", closefd=False)  # noqa: SIM115
+        except OSError:
+            stream = open(os.devnull, mode, encoding="utf-8")  # noqa: SIM115
+        setattr(sys, name, stream)
+
+
+#: render child 的自起标志（`tavotto.rendercore.renderchild.child_argv()` 在冻结产物里给的形状，ADR 0066 / 0072）。
+RENDER_CHILD_FLAG = "--render-child"
+
+
 def main() -> None:
-    _redirect_streams()
-    _ensure_ca_bundle()
     # 冻结应用里 sys.path 上没有源码树；datas 把包放在了 _MEIPASS 下
     base = getattr(sys, "_MEIPASS", None)
     if base and base not in sys.path:
         sys.path.insert(0, base)
+    # **render child 最先分派**（U10，ADR 0072）：父进程用同一个 exe 加 `--render-child` 起 PDFium 子进程
+    # （冻结产物里没有 `-m`），它在 stdin / stdout 上说行分隔 JSON——**不能**先走 `_redirect_streams`
+    # （那会把 GUI exe 的管道改道进 app.log，父进程永远收不到响应），也不能进 Flask。
+    if sys.argv[1:2] == [RENDER_CHILD_FLAG]:
+        _reopen_child_pipes()
+        from tavotto.rendercore import renderchild
+
+        sys.exit(renderchild.child_main(sys.argv[2:]))
+    _redirect_streams()
+    # HTTPS 之前把 OpenSSL 指到系统证书（#541）；render child 不发网络请求，所以放在它的分派之后
+    _ensure_ca_bundle()
     # 子命令（open / doctor）只用纯标准库那点逻辑，**在这里就分派掉**：
-    # 走 app.main() 会 import Flask + pymupdf + 整个 app.py，而一次交接
+    # 走 app.main() 会 import Flask + RenderCore + 整个 app.py，而一次交接
     # 一个 HTTP 端点都用不上——那份冷启动全是白付的。
     from tavotto.engine import cli as engine_cli
 

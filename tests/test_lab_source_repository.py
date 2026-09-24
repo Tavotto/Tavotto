@@ -55,6 +55,9 @@ EXPECTED_SCRIPTS = {
     "scripts/ci/cleanup.py",
     "scripts/ci/runtime_pins.py",
     "scripts/build_frontend.py",
+    # 非预建分支打 wheel 之前取批准字体（ADR 0072 / Codex #539）。纯标准库、不读 GITHUB_* 这一族：
+    # allowlist 取自 checkout 出来的被验代码，正是该用的那一份
+    "scripts/fetch_fonts.py",
     "scripts/ci/lab_acceptance.py",
     "scripts/ci/upgrade_acceptance.py",
     "scripts/ci/visual_regression.py",

@@ -4,7 +4,7 @@
   "source_sha": "319a506dff5a003d85f02ad7ac55504ec3a9d1f9",
   "generated_on": "2026-09-20",
   "facade_module": "src/tavotto/pdfbackend/__init__.py",
-  "implementation_module": "src/tavotto/pdfbackend/pymupdf_backend.py",
+  "implementation_module": "src/tavotto/rendercore/facade.py",
   "note": "一个真值：本文件。`U00_FACADE_LEDGER.md` 由 `tools/generate_facade_ledger.py` 派生，手改无效。callers 里的 file:line 按 source_sha 采样；`tests/test_foundation_facade_ledger.py` 逐条核对那一行仍含该名字、`__all__` 的每一项都在这里、这里没有重复项。产品调用方只列 src/ scripts/ codex-plugin/（tests 单独列并分「用户合同 / 实现特定」）。 调用点 / 用例按 `symbol`（AST 限定名，模块级 `<module>`）锚定，`line` 只作信息。",
   "categories": {
     "probe": "素材探测（尺寸 / alpha / 字体名），只读",
@@ -29,13 +29,13 @@
       "name": "BACKEND_NAME",
       "kind": "constant",
       "category": "identity",
-      "value_now": "pymupdf",
+      "value_now": "rendercore",
       "callers": [
         {
-          "file": "src/tavotto/app.py",
-          "symbol": "api_render",
-          "line": 872,
-          "role": "/api/render 磁盘缓存键 sha1(id|内容|宽|后端-版本)"
+          "file": "src/tavotto/rendercore/preview.py",
+          "symbol": "cache_key",
+          "line": 87,
+          "role": "/api/render 预览缓存键（U10 起唯一一条路）：后端名-版本那一维"
         },
         {
           "file": "scripts/gen_canvas_coverage.py",
@@ -50,11 +50,15 @@
       "migration_evidence": [
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_facade.py::test_the_default_backend_is_pymupdf_and_the_contract_names_follow_the_selection"
+          "test": "tests/test_rendercore_facade.py::test_the_default_backend_is_rendercore_and_the_contract_names_follow_the_selection"
         },
         {
           "stage": "U08",
           "test": "tests/test_rendercore_app.py::test_switching_the_backend_changes_the_preview_cache_key"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -62,13 +66,13 @@
       "name": "BACKEND_VERSION",
       "kind": "constant",
       "category": "identity",
-      "value_now": "pymupdf.__version__（1.28.2）",
+      "value_now": "0.1",
       "callers": [
         {
-          "file": "src/tavotto/app.py",
-          "symbol": "api_render",
-          "line": 872,
-          "role": "缓存键"
+          "file": "src/tavotto/rendercore/preview.py",
+          "symbol": "cache_key",
+          "line": 87,
+          "role": "/api/render 预览缓存键：后端名-版本那一维"
         },
         {
           "file": "scripts/gen_canvas_coverage.py",
@@ -93,7 +97,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_coverage_table_matches_the_live_fonts",
-          "line": 187,
+          "line": 217,
           "contains": "BACKEND_VERSION",
           "class": "implementation_specific",
           "note": "覆盖表 header 的 backend_version == 当前后端版本（表随后端换）"
@@ -104,11 +108,15 @@
       "migration_evidence": [
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_facade.py::test_the_default_backend_is_pymupdf_and_the_contract_names_follow_the_selection"
+          "test": "tests/test_rendercore_facade.py::test_the_default_backend_is_rendercore_and_the_contract_names_follow_the_selection"
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_glyph_vectors.py::test_the_candidate_generators_check_clean_against_the_live_fonts"
+          "test": "tests/test_rendercore_glyph_vectors.py::test_the_generators_check_clean_against_the_live_fonts"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -129,7 +137,7 @@
         {
           "file": "tests/test_typography_families.py",
           "symbol": "test_the_family_set_is_one_closed_set_on_both_sides",
-          "line": 28,
+          "line": 45,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "严格同源对：前端 typography.ts 的闭集 == 后端闭集（顺序也比）"
@@ -137,7 +145,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_plan_matches_the_faces_the_pdf_actually_uses",
-          "line": 130,
+          "line": 173,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "三个族的 plan 覆盖一致"
@@ -145,7 +153,7 @@
         {
           "file": "tests/test_font_provenance.py",
           "symbol": "test_every_offered_family_can_actually_be_drawn",
-          "line": 131,
+          "line": 144,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "本仓库不分发字体；每个族的 Sample 全在 primary 层"
@@ -173,11 +181,15 @@
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_old_backend_within_the_approved_migration"
+          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_retired_backend_within_the_approved_migration"
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_glyph_vectors.py::test_the_candidate_primary_layer_is_the_intersection_of_all_twelve_faces"
+          "test": "tests/test_rendercore_glyph_vectors.py::test_the_primary_layer_is_the_intersection_of_all_twelve_faces"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -204,7 +216,11 @@
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_old_backend_within_the_approved_migration"
+          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_retired_backend_within_the_approved_migration"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -217,7 +233,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_write_source_files",
-          "line": 4314,
+          "line": 4138,
           "role": "写回 verify 阶段：把画布标注画进 staging 的 PDF，再由同一份 PDF 栅格化 PNG（incremental save）"
         }
       ],
@@ -237,6 +253,14 @@
           "contains": "annotate_asset",
           "class": "implementation_specific",
           "note": "用 pymupdf.open + get_drawings() 读回几何（读取器换成独立读取栈即可，断言意图保留）"
+        },
+        {
+          "file": "tests/test_retirement_scan.py",
+          "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "line": 125,
+          "class": "user_contract",
+          "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
         }
       ],
       "status": "public_contract",
@@ -260,6 +284,10 @@
         {
           "stage": "U08",
           "test": "tests/test_rendercore_app.py::test_writeback_with_annotations_fails_closed_when_the_staged_pdf_is_unusable"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -272,7 +300,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_replay_pixel_diff",
-          "line": 4163,
+          "line": 3987,
           "role": "写回像素门（ADR 0049，issue #81）：热态 vs 一次性 worker 重放的 render_png 逐 RGBA 比，阈值 app.REPLAY_PIXEL_TOL"
         }
       ],
@@ -297,9 +325,9 @@
           "file": "tests/test_pixel_compare.py",
           "symbol": "test_backend_comparator_matches_the_ci_implementation",
           "line": 192,
-          "contains": "pymupdf_backend",
+          "contains": "pixelmetrics.PNG_NOISE_FLOOR",
           "class": "implementation_specific",
-          "note": "读 pymupdf_backend.PNG_NOISE_FLOOR 常量"
+          "note": "读 pymupdf_backend.PNG_NOISE_FLOOR 常量 U10：底噪常量搬到 pixelmetrics（两个后端共用的尺子）。"
         },
         {
           "file": "tests/test_mcp_normalize.py",
@@ -308,6 +336,14 @@
           "contains": "compare_png",
           "class": "user_contract",
           "note": "规范化前后预览像素差用它量"
+        },
+        {
+          "file": "tests/test_retirement_scan.py",
+          "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "line": 125,
+          "class": "user_contract",
+          "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
         }
       ],
       "status": "public_contract",
@@ -318,7 +354,11 @@
       "migration_evidence": [
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_facade.py::test_compare_png_gives_the_same_metrics_as_the_old_backend"
+          "test": "tests/test_rendercore_facade.py::test_compare_png_is_the_shared_pixelmetrics_ruler_over_the_decoded_buffers"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -327,19 +367,12 @@
       "kind": "function",
       "category": "compose",
       "signature": "compose(page_w_mm, page_h_mm, transparent=False) -> Canvas",
-      "callers": [
-        {
-          "file": "src/tavotto/app.py",
-          "symbol": "_export_produce_canvas",
-          "line": 1157,
-          "role": "scope=canvas：建一页画布，逐对象 place，再 save_pdf / save_png / save_tiff；EPS 逐项报 eps_not_for_canvas"
-        }
-      ],
+      "callers": [],
       "tests": [
         {
           "file": "tests/test_typography_families.py",
           "symbol": "test_the_family_reaches_the_pdf_font_resources",
-          "line": 96,
+          "line": 128,
           "contains": "compose",
           "class": "user_contract",
           "note": "三个族各画一段文字，PDF 里嵌的字体族不同"
@@ -347,26 +380,10 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "_place",
-          "line": 49,
+          "line": 89,
           "contains": "compose",
           "class": "user_contract",
           "note": "文字落笔与 text_plan 同一份计划（x 推进 == text_width）"
-        },
-        {
-          "file": "tests/test_export_endpoint.py",
-          "symbol": "test_failed_export_captures_nothing",
-          "line": 297,
-          "contains": "compose",
-          "class": "user_contract",
-          "note": "monkeypatch compose 记录调用形状（端点 → 后端的契约）"
-        },
-        {
-          "file": "tests/test_export_pipeline.py",
-          "symbol": "test_nothing_is_left_behind_when_a_format_fails",
-          "line": 243,
-          "contains": "compose",
-          "class": "user_contract",
-          "note": "同上（作业管线）"
         },
         {
           "file": "tests/test_export_pipeline.py",
@@ -375,9 +392,17 @@
           "contains": "def test_canvas_tiff_with_transparent_background_carries_alpha",
           "class": "user_contract",
           "note": "透明画布 TIFF 带 alpha"
+        },
+        {
+          "file": "tests/test_retirement_scan.py",
+          "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "line": 125,
+          "class": "user_contract",
+          "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
         }
       ],
-      "status": "public_contract",
+      "status": "contract_kept_no_product_caller_after_u10",
       "migration_criterion": "U07：RenderPlan → IR → 新合成器实现同一个 Canvas 面（见 canvas_methods）；PDF 真矢量、PNG/TIFF 出自同一次栅格化；透明背景 = 不画白底 + PNG 带 alpha。",
       "migration_evidence": [
         {
@@ -439,6 +464,10 @@
         {
           "stage": "U08",
           "test": "tests/test_rendercore_app.py::test_strict_export_under_the_candidate_accepts_clean_text_and_rejects_low_ppi_panels"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -459,10 +488,18 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_coverage_table_matches_the_live_fonts",
-          "line": 188,
+          "line": 218,
           "contains": "coverage_ranges",
           "class": "user_contract",
           "note": "磁盘上的覆盖表 == 当前后端现算的区间表（漂移即红）"
+        },
+        {
+          "file": "tests/test_retirement_scan.py",
+          "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "line": 125,
+          "class": "user_contract",
+          "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
         }
       ],
       "status": "public_contract",
@@ -478,15 +515,19 @@
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_glyph_vectors.py::test_the_candidate_generators_check_clean_against_the_live_fonts"
+          "test": "tests/test_rendercore_glyph_vectors.py::test_the_generators_check_clean_against_the_live_fonts"
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_glyph_vectors.py::test_the_candidate_primary_layer_is_the_intersection_of_all_twelve_faces"
+          "test": "tests/test_rendercore_glyph_vectors.py::test_the_primary_layer_is_the_intersection_of_all_twelve_faces"
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_glyph_vectors.py::test_candidate_vectors_differ_from_the_default_only_in_the_approved_ways"
+          "test": "tests/test_rendercore_glyph_vectors.py::test_vectors_differ_from_the_retired_backend_only_in_the_approved_ways"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -500,7 +541,7 @@
         {
           "file": "tests/test_paths_and_baked.py",
           "symbol": "test_hex2rgb",
-          "line": 320,
+          "line": 325,
           "contains": "hex2rgb",
           "class": "user_contract",
           "note": "#rgb / #rrggbb / 垃圾 / None 四种输入的取值"
@@ -517,6 +558,10 @@
         {
           "stage": "U08",
           "test": "tests/test_rendercore_facade.py::test_the_contract_names_in_all_are_the_ledger_nineteen"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -537,7 +582,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_golden_vectors_match_python_side",
-          "line": 63,
+          "line": 102,
           "contains": "missing_glyphs",
           "class": "user_contract",
           "note": "golden 向量：哪些字符画不出来"
@@ -545,7 +590,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_unrenderable_character_is_missing_not_silently_dropped",
-          "line": 115,
+          "line": 161,
           "contains": "missing_glyphs",
           "class": "user_contract",
           "note": "阿拉伯问号 ؟ 是 missing"
@@ -573,11 +618,15 @@
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_old_backend_within_the_approved_migration"
+          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_retired_backend_within_the_approved_migration"
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_glyph_vectors.py::test_candidate_vectors_differ_from_the_default_only_in_the_approved_ways"
+          "test": "tests/test_rendercore_glyph_vectors.py::test_vectors_differ_from_the_retired_backend_only_in_the_approved_ways"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -590,13 +639,13 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1338,
+          "line": 1111,
           "role": "请求里已解析的物理尺寸 → 页面 pt"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1338,
+          "line": 1111,
           "role": "originalspec 现算的逻辑尺寸 → 页面 pt"
         }
       ],
@@ -612,7 +661,7 @@
         {
           "file": "tests/test_compose_text.py",
           "symbol": "test_mixed_script_single_line_advances",
-          "line": 81,
+          "line": 120,
           "contains": "mm2pt",
           "class": "implementation_specific",
           "note": "文字基线位置用 base-14 的 asc/desc 反算期望（钉 PyMuPDF 度量）"
@@ -640,6 +689,10 @@
         {
           "stage": "U08",
           "test": "tests/test_rendercore_facade.py::test_the_canvas_face_saves_png_and_tiff_from_one_canonical_pdf"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -652,7 +705,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_export_produce_original",
-          "line": 1241,
+          "line": 1013,
           "role": "scope=original 的 PDF：矢量源 insert_pdf 整页搬运（只搬第一页）；位图源装进 page_pt 大小的页面，vector=False"
         }
       ],
@@ -696,6 +749,14 @@
           "contains": "def test_original_scope_has_no_layout_fields_at_all",
           "class": "user_contract",
           "note": "original 段结构上没有 x/y/w/h"
+        },
+        {
+          "file": "tests/test_retirement_scan.py",
+          "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "line": 125,
+          "class": "user_contract",
+          "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
         }
       ],
       "status": "public_contract",
@@ -709,6 +770,10 @@
         {
           "stage": "U08",
           "test": "tests/test_rendercore_facade.py::test_original_pdf_of_a_raster_source_fills_the_given_page_and_is_not_vector"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -721,7 +786,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_export_produce_original",
-          "line": 1268,
+          "line": 1040,
           "role": "scope=original 的 PNG：PNG 源逐字节复制；JPEG 换容器不换像素；矢量源按 ppi 栅格化（transparent 带 alpha）"
         }
       ],
@@ -745,7 +810,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_a_png_source_is_copied_byte_for_byte",
-          "line": 937,
+          "line": 927,
           "contains": "def test_a_png_source_is_copied_byte_for_byte",
           "class": "user_contract",
           "note": "PNG 源逐字节复制（03 §6 必须精确）"
@@ -757,6 +822,14 @@
           "contains": "def test_a_jpeg_source_is_transcoded_not_copied_into_a_png_name",
           "class": "user_contract",
           "note": "JPEG 源换容器不换像素"
+        },
+        {
+          "file": "tests/test_retirement_scan.py",
+          "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "line": 125,
+          "class": "user_contract",
+          "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
         }
       ],
       "status": "public_contract",
@@ -769,6 +842,10 @@
         {
           "stage": "U08",
           "test": "tests/test_rendercore_app.py::test_export_original_under_the_candidate_copies_the_png_byte_for_byte"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -781,7 +858,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_export_produce_original",
-          "line": 1260,
+          "line": 1032,
           "role": "scope=original 的 TIFF（ADR 0046）：位图源保源像素网格、分辨率标签只写 originalspec 读到的声明密度（_declared_density）；矢量源按 ppi 栅格化"
         }
       ],
@@ -789,7 +866,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_original_tiff_of_a_vector_source_rasterizes_at_the_requested_ppi",
-          "line": 1351,
+          "line": 1341,
           "contains": "def test_original_tiff_of_a_vector_source_rasterizes_at_the_requested_ppi",
           "class": "user_contract",
           "note": "矢量源按 ppi 栅格化"
@@ -809,6 +886,14 @@
           "contains": "def test_canvas_tiff_is_the_same_page_as_png_pixel_for_pixel",
           "class": "user_contract",
           "note": "画布 TIFF 与 PNG 逐像素相同（Canvas.save_tiff）"
+        },
+        {
+          "file": "tests/test_retirement_scan.py",
+          "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "line": 125,
+          "class": "user_contract",
+          "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
         }
       ],
       "status": "public_contract",
@@ -818,6 +903,10 @@
         {
           "stage": "U08",
           "test": "tests/test_rendercore_facade.py::test_original_tiff_writes_only_the_declared_density_and_keeps_the_pixel_grid"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -842,6 +931,14 @@
           "contains": "pdf_fonts",
           "class": "user_contract",
           "note": "规范化导出的 PDF 首页字体 == [\"DejaVuSerif\"]（worker 写的 PDF，读取器换即可）"
+        },
+        {
+          "file": "tests/test_retirement_scan.py",
+          "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "line": 125,
+          "class": "user_contract",
+          "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
         }
       ],
       "status": "public_contract",
@@ -849,11 +946,15 @@
       "migration_evidence": [
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_facade.py::test_pdf_fonts_matches_the_old_backend_including_fonts_inside_form_xobjects"
+          "test": "tests/test_rendercore_facade.py::test_pdf_fonts_matches_the_retired_backend_including_fonts_inside_form_xobjects"
         },
         {
           "stage": "U08",
           "test": "tests/test_rendercore_facade.py::test_pdf_fonts_has_a_budget_for_self_referencing_forms"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -866,25 +967,25 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "scan_panels",
-          "line": 553,
+          "line": 414,
           "role": "/api/panels：素材原始尺寸 → originalspec.asset_spec（native_*_mm 与 original_spec 同一次计算）"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1339,
+          "line": 1112,
           "role": "老客户端 / MCP 没带尺寸时现算位图页面"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_declared_density",
-          "line": 1355,
+          "line": 1128,
           "role": "TIFF 分辨率标签的来源判据（只认 dpi_source == metadata）"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_post_check_size",
-          "line": 4429,
+          "line": 4221,
           "role": "写回 commit 后自检：PDF 页面尺寸 vs 重放 manifest 的 size_mm（容差 0.5mm，不回滚）"
         },
         {
@@ -939,10 +1040,18 @@
         {
           "file": "tests/test_mcp_normalize.py",
           "symbol": "test_zero_edit_roundtrip_keeps_page_size_and_pixels",
-          "line": 282,
+          "line": 293,
           "contains": "probe_asset",
           "class": "user_contract",
           "note": "规范化前后页面尺寸对比"
+        },
+        {
+          "file": "tests/test_retirement_scan.py",
+          "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "line": 125,
+          "class": "user_contract",
+          "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
         }
       ],
       "status": "public_contract",
@@ -955,11 +1064,15 @@
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_facade.py::test_probe_asset_returns_the_same_structure_and_values_on_the_fixtures"
+          "test": "tests/test_rendercore_facade.py::test_probe_asset_returns_the_same_structure_and_values_as_the_retired_backend"
         },
         {
           "stage": "U08",
           "test": "tests/test_rendercore_facade.py::test_probe_pdf_applies_userunit_exactly_once_like_the_old_backend"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -968,23 +1081,8 @@
       "kind": "function",
       "category": "preview_cache",
       "signature": "render_preview_png(path, width_px, out) -> None",
-      "callers": [
-        {
-          "file": "src/tavotto/app.py",
-          "symbol": "_write_render_cache",
-          "line": 321,
-          "role": "/api/render：矢量面板首页 → 指定像素宽的 PNG，临时文件 + os.replace 落进磁盘缓存（键含后端身份；Windows 撞读者退让）"
-        }
-      ],
+      "callers": [],
       "tests": [
-        {
-          "file": "tests/test_render_cache.py",
-          "symbol": "test_concurrent_requests_never_serve_a_torn_png",
-          "line": 196,
-          "contains": "render_preview_png",
-          "class": "user_contract",
-          "note": "缓存键 / 原子落盘 / 零字节重建（monkeypatch 记录调用）"
-        },
         {
           "file": "tests/test_mcp_normalize.py",
           "symbol": "test_zero_edit_roundtrip_keeps_page_size_and_pixels",
@@ -992,9 +1090,17 @@
           "contains": "render_preview_png",
           "class": "user_contract",
           "note": "规范化前后预览像素差"
+        },
+        {
+          "file": "tests/test_retirement_scan.py",
+          "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "line": 125,
+          "class": "user_contract",
+          "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
         }
       ],
-      "status": "public_contract",
+      "status": "contract_kept_no_product_caller_after_u10",
       "known_issues": [],
       "migration_criterion": "U07/U08：新栅格运行时（PDFium 候选）按同一宽度出 PNG；缓存层不动；跨 renderer 的抗锯齿差异按 03 §6「需要校准」记录阈值，不全局放大。",
       "migration_evidence": [
@@ -1029,6 +1135,10 @@
         {
           "stage": "U08",
           "test": "tests/test_rendercore_app.py::test_api_render_under_the_candidate_reports_backpressure_as_503_and_other_failures_as_500"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -1049,15 +1159,15 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_golden_vectors_match_python_side",
-          "line": 61,
+          "line": 104,
           "contains": "text_plan",
           "class": "user_contract",
           "note": "golden 向量：分段与层"
         },
         {
           "file": "tests/test_glyph_plan.py",
-          "symbol": "test_subscript_two_stays_on_the_fallback_layer",
-          "line": 91,
+          "symbol": "test_subscript_two_is_primary_and_the_layers_have_no_fallback",
+          "line": 131,
           "contains": "text_plan",
           "class": "implementation_specific",
           "note": "₂ 落在 fallback 层（PyMuPDF 隐式回退到 Noto Serif 的事实）"
@@ -1065,7 +1175,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_box_drawing_is_rescued_by_the_fourth_step",
-          "line": 97,
+          "line": 142,
           "contains": "text_plan",
           "class": "implementation_specific",
           "note": "━ 落在 cjk 层（Droid Sans Fallback 有它）"
@@ -1073,7 +1183,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_unrenderable_character_is_missing_not_silently_dropped",
-          "line": 114,
+          "line": 160,
           "contains": "text_plan",
           "class": "user_contract",
           "note": "؟ 是 missing 层"
@@ -1081,7 +1191,7 @@
         {
           "file": "tests/test_font_provenance.py",
           "symbol": "test_every_offered_family_can_actually_be_drawn",
-          "line": 141,
+          "line": 154,
           "contains": "text_plan",
           "class": "user_contract",
           "note": "Sample 全在 primary"
@@ -1101,11 +1211,15 @@
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_old_backend_within_the_approved_migration"
+          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_retired_backend_within_the_approved_migration"
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_glyph_vectors.py::test_candidate_vectors_differ_from_the_default_only_in_the_approved_ways"
+          "test": "tests/test_rendercore_glyph_vectors.py::test_vectors_differ_from_the_retired_backend_only_in_the_approved_ways"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     },
@@ -1119,18 +1233,18 @@
         {
           "file": "tests/test_typography_families.py",
           "symbol": "test_measuring_uses_the_same_family_as_writing",
-          "line": 115,
+          "line": 147,
           "contains": "text_width",
           "class": "user_contract",
           "note": "等宽 > 衬线 ≠ 无衬线；认不出的族按默认（衬线）量"
         },
         {
-          "file": "tests/test_glyph_plan.py",
-          "symbol": "test_measured_width_equals_the_advance_actually_written",
-          "line": 179,
-          "contains": "text_width",
+          "file": "tests/test_retirement_scan.py",
+          "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "line": 125,
           "class": "user_contract",
-          "note": "量宽 == 落笔推进（同一份计划）"
+          "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
+          "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
         }
       ],
       "status": "exported_without_product_caller",
@@ -1147,7 +1261,11 @@
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_old_backend_within_the_approved_migration"
+          "test": "tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_retired_backend_within_the_approved_migration"
+        },
+        {
+          "stage": "U10",
+          "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
       ]
     }
@@ -1158,77 +1276,41 @@
       {
         "name": "place",
         "signature": "place(o, dpi, resolve_panel) -> None",
-        "callers": [
-          {
-            "file": "src/tavotto/app.py",
-            "symbol": "_export_produce_canvas",
-            "line": 1170
-          }
-        ],
+        "callers": [],
         "role": "按对象类型落一个元素：panel（PDF 真矢量 show_pdf_page；位图带 crop/rotation 经 convert_to_pdf；opacity<1 或 flip 时按 dpi 位图嵌入）/ text / arrow / shape",
         "migration_note_u07": "U07（ADR 0065）：panel 由 plan._panel_node → ImportedPage / Image，落位顺序只在 rendercore/placement.py；PDF 真矢量 Form XObject，opacity 透明组、flip 负缩放（不再退位图）；text / arrow / shape 由 U06 的 typography / geometry 编译"
       },
       {
         "name": "size_pt",
         "signature": "size_pt -> (w_pt, h_pt)",
-        "callers": [
-          {
-            "file": "src/tavotto/app.py",
-            "symbol": "_export_produce_canvas",
-            "line": 1178
-          }
-        ],
+        "callers": [],
         "role": "样式检查报告里的页面尺寸",
         "migration_note_u07": "U07：`ir.Page.width_pt / height_pt`（plan.compile_page 换算一次）"
       },
       {
         "name": "save_pdf",
         "signature": "save_pdf(path) -> None",
-        "callers": [
-          {
-            "file": "src/tavotto/app.py",
-            "symbol": "_export_produce_canvas",
-            "line": 1163
-          }
-        ],
+        "callers": [],
         "role": "真矢量 PDF（deflate）"
       },
       {
         "name": "save_tiff",
         "signature": "save_tiff(path, dpi) -> dict",
-        "callers": [
-          {
-            "file": "src/tavotto/app.py",
-            "symbol": "_export_produce_canvas",
-            "line": 1175
-          }
-        ],
+        "callers": [],
         "role": "与 save_png 同一页同一次栅格化参数（ADR 0046）；编码器 tiffwrite.py",
         "migration_note_u07": "U07（ADR 0066）：`rendercore/job.py` 把 Canonical PDF 交给 render child 栅格一次得到 RasterBuffer，PNG（raster.encode_png）与 TIFF（tiffwrite）从同一份字节编码；透明背景 = 页面不画底 + child 从全 0 起算，straight alpha"
       },
       {
         "name": "save_png",
         "signature": "save_png(path, dpi) -> None",
-        "callers": [
-          {
-            "file": "src/tavotto/app.py",
-            "symbol": "_export_produce_canvas",
-            "line": 1177
-          }
-        ],
+        "callers": [],
         "role": "同一页渲染",
         "migration_note_u07": "U07（ADR 0066）：`rendercore/job.py` 把 Canonical PDF 交给 render child 栅格一次得到 RasterBuffer，PNG（raster.encode_png）与 TIFF（tiffwrite）从同一份字节编码；透明背景 = 页面不画底 + child 从全 0 起算，straight alpha"
       },
       {
         "name": "close",
         "signature": "close() -> None",
-        "callers": [
-          {
-            "file": "src/tavotto/app.py",
-            "symbol": "_export_produce_canvas",
-            "line": 1199
-          }
-        ],
+        "callers": [],
         "role": "finally 里关文档",
         "migration_note_u07": "U07：写入器不持有跨调用的 native 句柄（外来 Pdf 在 save() 之后关；render child 的 doc / page / bitmap 每请求 finally 关）——没有对应的 close 面"
       },
@@ -1239,12 +1321,12 @@
           {
             "file": "tests/test_typography_families.py",
             "symbol": "test_the_family_reaches_the_pdf_font_resources",
-            "line": 96
+            "line": 117
           },
           {
             "file": "tests/test_glyph_plan.py",
             "symbol": "_place",
-            "line": 49
+            "line": 73
           }
         ],
         "role": "测试里的 with 形态；app.py 用显式 close()",
@@ -1252,12 +1334,7 @@
       }
     ],
     "migration_criterion": "U07：同实例多格式保存、重复关闭 / 错误后关闭的用例（RC-002 verification）；save_png 不许重新解析另一份来源（must_fail_example）。",
-    "migration_evidence": [
-      {
-        "stage": "U08",
-        "test": "tests/test_rendercore_facade.py::test_the_canvas_face_saves_png_and_tiff_from_one_canonical_pdf"
-      }
-    ]
+    "u10_note": "产品导出路（app.py）自 U08 起不经 Canvas 面（`rendercore.job.produce`）；U10 删掉旧 `_export_produce_canvas` 后 Canvas 面只剩用例 / 退役扫描调用——它仍是 RC-002 的合同适配器，19 项契约之一，不删。"
   },
   "bypasses": {
     "note": "这些路径**不经 facade**，替换 PyMuPDF 时它们不变——但它们是 facade 边界之外「谁还碰 PDF/位图」的完整名单，U10 的退役扫描主语要把它们分清。",
@@ -1334,7 +1411,8 @@
       "tests/test_pixel_compare.py"
     ],
     "test_files_importing_pymupdf_directly": 37,
-    "pymupdf_in_tests_role": "绝大多数只把 pymupdf 当**读取器**（打开产物读页面尺寸 / 文本 / get_drawings）——U01 选定独立读取栈后可整体替换；少数（test_compose_*）读 base-14 字体度量反算期望，属 D07 要批准迁移的实现特定断言。"
+    "pymupdf_in_tests_role": "绝大多数只把 pymupdf 当**读取器**（打开产物读页面尺寸 / 文本 / get_drawings）——U01 选定独立读取栈后可整体替换；少数（test_compose_*）读 base-14 字体度量反算期望，属 D07 要批准迁移的实现特定断言。",
+    "u10_resolution": "全部处置（ADR 0072）：私有名 _crop_clip → placement.place().clip、_mixed_width / _draw_text → 契约层 compose + PDFium 字符级读取（tests/support/pdftext.py）、_draw_arrow → 契约层 compose + 内容流读取；latin_font / latin_family / cjk_font / get_font → rendercore.typography / facade.provider()；PNG_NOISE_FLOOR → pixelmetrics。直接 import pymupdf 的用例文件仍把它当独立读取器（legacy-pymupdf extra，D15）。"
   },
   "promised_only_in_comments": [
     {
@@ -1396,7 +1474,9 @@
         "reason": "经 monkeypatch `pdfbackend.compose` 注错；候选路不经 compose（job.produce）。用户合同（partial + 临时目录清掉）由替代用例经真实端点注 child 失败覆盖。",
         "replacement": [
           "tests/test_rendercore_app.py::test_a_child_failure_under_the_candidate_is_partial_and_leaves_nothing_behind"
-        ]
+        ],
+        "u10_disposition": "migrated",
+        "u10_note": "注错点从 compose().save_png 改成 rendercore.job 的 raster.encode_png；合同（partial + 目录干净）一字未变"
       },
       {
         "test": "tests/test_export_endpoint.py::test_failed_export_captures_nothing",
@@ -1404,7 +1484,9 @@
         "reason": "同上（monkeypatch compose.save_pdf 抛 OSError）；候选侧改成写入器炸。",
         "replacement": [
           "tests/test_rendercore_app.py::test_a_writer_failure_under_the_candidate_is_a_500_and_captures_no_telemetry"
-        ]
+        ],
+        "u10_disposition": "migrated",
+        "u10_note": "注错点从 compose().save_pdf 改成 pdfwriter.write_pdf；合同（500 + 零遥测）一字未变"
       },
       {
         "test": "tests/test_render_cache.py::test_backend_version_is_part_of_the_key",
@@ -1413,7 +1495,9 @@
         "replacement": [
           "tests/test_rendercore_preview.py::test_the_key_carries_width_background_renderer_build_and_fonts_policy",
           "tests/test_rendercore_app.py::test_switching_the_backend_changes_the_preview_cache_key"
-        ]
+        ],
+        "u10_disposition": "migrated",
+        "u10_note": "改名 test_the_backend_build_is_part_of_the_key：monkeypatch rendercore.preview.BACKEND_VERSION；合同（换 build 换键）一字未变"
       },
       {
         "test": "tests/test_render_cache.py::test_same_key_renders_once_under_concurrency",
@@ -1422,7 +1506,9 @@
         "replacement": [
           "tests/test_rendercore_preview.py::test_concurrent_requests_for_the_same_key_render_exactly_once",
           "tests/test_rendercore_app.py::test_api_render_under_the_candidate_serves_a_png_of_the_bucket_width_from_the_cache"
-        ]
+        ],
+        "u10_disposition": "migrated",
+        "u10_note": "并进 test_concurrent_requests_never_serve_a_torn_png_and_render_once：拖慢 PreviewCache._write 数调用；合同一字未变"
       },
       {
         "test": "tests/test_typography_families.py::test_the_family_reaches_the_pdf_font_resources",
@@ -1430,24 +1516,30 @@
         "reason": "断言 base-14 名字（Times-Roman / Helvetica / Courier）——D07：默认新合法字体仍必须叫 Times-Roman 是实现细节。用户合同（三个族各到产物里各自的脸）由候选侧用例覆盖。",
         "replacement": [
           "tests/test_rendercore_facade.py::test_three_families_reach_three_different_embedded_faces"
-        ]
+        ],
+        "u10_disposition": "migrated",
+        "u10_note": "D07：base-14 名 → Liberation PostScript 名，独立读取器 pdfread 直接读字体对象"
       },
       {
         "test": "tests/test_glyph_plan.py::test_golden_vectors_match_python_side",
         "class": "implementation_specific",
         "reason": "默认 golden 向量是旧字体 oracle 的产物（fallback 层）；候选有自己的一份向量，与默认的差异钉成闭集。",
         "replacement": [
-          "tests/test_rendercore_glyph_vectors.py::test_candidate_vectors_differ_from_the_default_only_in_the_approved_ways",
-          "tests/test_rendercore_glyph_vectors.py::test_the_candidate_generators_check_clean_against_the_live_fonts"
-        ]
+          "tests/test_rendercore_glyph_vectors.py::test_vectors_differ_from_the_retired_backend_only_in_the_approved_ways",
+          "tests/test_rendercore_glyph_vectors.py::test_the_generators_check_clean_against_the_live_fonts"
+        ],
+        "u10_disposition": "kept",
+        "u10_note": "默认向量现在就是新集合的向量（gen_glyph_plan_vectors.py 单一落点）"
       },
       {
         "test": "tests/test_glyph_plan.py::test_generator_is_up_to_date",
         "class": "implementation_specific",
         "reason": "同上：默认生成物对默认后端；候选生成物由候选的 --check 看护。",
         "replacement": [
-          "tests/test_rendercore_glyph_vectors.py::test_the_candidate_generators_check_clean_against_the_live_fonts"
-        ]
+          "tests/test_rendercore_glyph_vectors.py::test_the_generators_check_clean_against_the_live_fonts"
+        ],
+        "u10_disposition": "kept",
+        "u10_note": "生成器只剩一个落点"
       },
       {
         "test": "tests/test_glyph_plan.py::test_subscript_two_stays_on_the_fallback_layer",
@@ -1455,8 +1547,10 @@
         "reason": "钉的是旧 oracle 的 fallback 层；候选没有 fallback 层（ADR 0060 §1），₂ 是 Liberation 自带的 primary。",
         "replacement": [
           "tests/test_rendercore_typography.py::test_layers_are_primary_cjk_missing_and_never_fallback",
-          "tests/test_rendercore_glyph_vectors.py::test_candidate_vectors_differ_from_the_default_only_in_the_approved_ways"
-        ]
+          "tests/test_rendercore_glyph_vectors.py::test_vectors_differ_from_the_retired_backend_only_in_the_approved_ways"
+        ],
+        "u10_disposition": "migrated",
+        "u10_note": "改名 test_subscript_two_is_primary_and_the_layers_have_no_fallback：₂ 是 primary（D07），fallback 恒空"
       },
       {
         "test": "tests/test_glyph_plan.py::test_plan_matches_the_faces_the_pdf_actually_uses",
@@ -1465,7 +1559,9 @@
         "replacement": [
           "tests/test_rendercore_writer.py::test_fonts_are_embedded_subsets_of_both_program_kinds_with_tounicode",
           "tests/test_rendercore_writer.py::test_pdfium_object_census_counts_real_text_objects_not_outlines"
-        ]
+        ],
+        "u10_disposition": "migrated",
+        "u10_note": "×10⁵ 的层集合 {primary,fallback} → {primary}；字体表由 pdfread 读；多一条 cjk+primary 样例"
       },
       {
         "test": "tests/test_glyph_plan.py::test_fallback_face_is_the_same_regardless_of_family_and_weight",
@@ -1474,7 +1570,9 @@
         "replacement": [
           "tests/test_rendercore_typography.py::test_without_a_cjk_face_han_is_missing_not_substituted",
           "tests/test_rendercore_writer.py::test_a_missing_glyph_is_written_as_notdef_and_reported_not_substituted"
-        ]
+        ],
+        "u10_disposition": "deleted",
+        "u10_note": "没有回退脸；替代用例 test_no_fallback_face_is_ever_used_and_missing_stays_on_the_primary_face（同文件）+ 原替代证据"
       },
       {
         "test": "tests/test_glyph_plan.py::test_measured_width_equals_the_advance_actually_written",
@@ -1483,15 +1581,19 @@
         "replacement": [
           "tests/test_rendercore_writer.py::test_pen_position_between_runs_equals_the_shaped_advance",
           "tests/test_rendercore_typography.py::test_width_is_the_sum_of_shaped_advances_of_the_same_plan"
-        ]
+        ],
+        "u10_disposition": "deleted",
+        "u10_note": "直接用 PyMuPDF TextWriter 落笔；替代证据在写入器 / typography 用例（原 replacement）"
       },
       {
         "test": "tests/test_glyph_plan.py::test_coverage_table_matches_the_live_fonts",
         "class": "implementation_specific",
         "reason": "读的是默认表 `glyphplan.coverage_table_path()`；候选表在 rendercore/canvas_coverage.json，由候选生成器 --check 看护。",
         "replacement": [
-          "tests/test_rendercore_glyph_vectors.py::test_the_candidate_generators_check_clean_against_the_live_fonts"
-        ]
+          "tests/test_rendercore_glyph_vectors.py::test_the_generators_check_clean_against_the_live_fonts"
+        ],
+        "u10_disposition": "kept",
+        "u10_note": "默认表现在就是新集合的表"
       },
       {
         "test": "tests/test_glyph_plan.py::test_scientific_mode_draws_everything_with_one_face",
@@ -1500,7 +1602,9 @@
         "replacement": [
           "tests/test_rendercore_typography.py::test_scientific_mode_composes_a_superscript_the_primary_face_lacks",
           "tests/test_rendercore_writer.py::test_composed_superscript_and_multi_glyph_cluster_get_actualtext_spans"
-        ]
+        ],
+        "u10_disposition": "migrated",
+        "u10_note": "used == {LiberationSans}；scientific 档只合成主脸没有的上下标（⁵/₂ 是 primary，不合成；⁻ 合成 + ActualText 还原）"
       },
       {
         "test": "tests/test_mcp_normalize.py::test_zero_edit_roundtrip_keeps_page_size_and_pixels",
@@ -1508,8 +1612,23 @@
         "reason": "阈值（changed_pixel_ratio < 2%）按 MuPDF 栅格器校准；PDFium 对 Type 3 vs Type 42 字形的抗锯齿差异在 Two 样例上是 3.3%（03 §6「需要校准」：跨 renderer 按 case 记阈值，不全局放大）。页面尺寸那一半两边都过；像素那一半归校准用例。",
         "replacement": [
           "tests/test_rendercore_calibration.py::test_old_and_new_backends_agree_within_the_case_thresholds"
-        ]
+        ],
+        "u10_disposition": "migrated",
+        "u10_note": "阈值按 case 记（Two：4% / mean 1.6，实测 3.28% / 1.33；另外两个 case 不动）"
       }
-    ]
+    ],
+    "status": "retired_u10",
+    "u10_note": "U10（ADR 0072）切默认后普通测试就是「在新实现上跑」，对拍运行器 scripts/dev/u08_parity.py 与 foundation-u06-rendercore.yml 删除；最后一次对拍（U09 tip，654 通过 / 0 失败 / 13 skip / 14 deselect）记在 evidence/u10/pre_cutover/parity_u09_tip.json。14 条 deselect 逐条处置在 u10_disposition：deleted = 用例随旧实现删除（替代证据仍在）；migrated = 断言按 D07 改成新实现的独立判据（用例名可能变）；kept = 一字未改、在新默认下照跑。"
+  },
+  "retired_implementation_module": "src/tavotto/pdfbackend/pymupdf_backend.py（U10 删除，ADR 0072；退役前的返回值冻结在 tests/fixtures/legacy_pymupdf/）",
+  "u10_terminal_state": {
+    "default_backend": "rendercore（pdfbackend.BACKEND_DEFAULT；TAVOTTO_RENDER_BACKEND=pymupdf → BackendSelectionError(backend_retired)）",
+    "old_implementation": "删除；契约层 19 项一个不少、同签名；产品调用点（app.py / artifactcheck / tutorial / MCP bridge / 两个生成脚本）一行未改",
+    "product_callers_dropped": {
+      "compose / Canvas 面": "app.py 的旧 `_export_produce_canvas` 删除——产品导出路是 `rendercore.job.produce`（U08 起）；`compose()` 仍是契约（RC-002 的 Canvas 面适配器），用例 / 排版几何用例 / 退役扫描经它跑",
+      "render_preview_png": "app.py 的旧 `_write_render_cache` 删除——`/api/render` 是 `rendercore.preview.PreviewCache`（U08 起）；契约保留，用例（test_mcp_normalize）与退役扫描经它跑",
+      "BACKEND_NAME / BACKEND_VERSION": "`/api/render` 的键改由 `rendercore/preview.py::cache_key` 组（同一份常量经 `rendercore.BACKEND_*`）；生成脚本仍经契约层读"
+    },
+    "gate": "scripts/ci/retirement_scan.py（五把尺子）+ tests/test_retirement_scan.py；tests/test_rendercore_facade.py 的对拍改对 legacy_pymupdf/oracle.json"
   }
 }

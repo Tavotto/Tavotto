@@ -27,14 +27,15 @@
 - **画布标签常驻图层**：每个打开的标签一个图层，非激活的用 canvases 快照渲染
   并 display:none——docToCanvas/canvasToDoc 共享同一 objects 数组引用 +
   ObjectView memo，切换标签 = 纯 CSS 显隐，不重建 DOM / 不重新解码图片。
-- **标注**：任意角度 `rotationDeg`（面板除外；导出走 PyMuPDF morph，
-  CSS 顺时针 = **Matrix(-deg)**——morph 矩阵作用在 PDF y 向上空间、正角是
-  逆时针，实测结论见 `_obj_morph` 注释与旋转方向看护用例）；形状
+- **标注**：任意角度 `rotationDeg`（面板除外；导出经 RenderCore 的 `Group.transform`
+  绕中心旋转，CSS 顺时针在 PDF y 向上空间里是负角——`rendercore/plan.py` 的换算与
+  旋转方向看护用例）；形状
   triangle/diamond/polygon/brace + 圆角/
   虚线/填充透明度；箭头 headStart/headEnd（triangle/open/bar，旧 head 字段
   兼容推导）；文字下划线/行距/内边距/背景/描边。**前后端几何公式同源**
-  （shapeGeometry.ts ↔ pdfbackend/pymupdf_backend.py `_polygon_points`/`_dash_pattern`
-  同名注释），改一边必须同步另一边，pytest 用 get_drawings() 做几何级看护。
+  （shapeGeometry.ts ↔ `rendercore/geometry.py` `polygon_points`/`dash_pattern`，共享向量
+  `tests/golden/shape_geometry_vectors.json` 两侧各跑一遍），改一边必须同步另一边，
+  pytest 从合成的 PDF 内容流抽坐标做几何级看护（`tests/test_compose_arrow.py`）。
   科研预设在 `lib/presets.ts`（纯既有对象组合）。
 - **画布标注的类型切换（2026-09-07，cap-shape-switch）**：矩形 ↔ 椭圆 ↔ 其它形状、
   直线 ↔ 箭头。「能不能切 / 能切成什么 / 切完长什么样」的唯一出处是

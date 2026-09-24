@@ -1,6 +1,6 @@
 """字体政策（统一实施包 U06，ADR 0060）：allowlist 的形状、注册表只认 allowlist 里的字节（RC-022）、
 身份是 sha256 不是族名（RC-023）、集合外明示限制（RC-037）、纯标准库的 sfnt 读取与 fontTools 对拍、
-依赖 extra 与 requirements 镜像一致。
+运行时依赖与 requirements 镜像一致、PyMuPDF 只剩 legacy extra（U10，ADR 0072）。
 
 分两档：不需要字体文件也能跑的（allowlist / 拒绝 / 依赖表）永远跑；要真字体的在没跑过
 `scripts/fetch_fonts.py` 的机器上 skip 并说明理由（skip 不是绿）。
@@ -124,32 +124,96 @@ def test_font_kind_rejects_the_formats_the_writer_cannot_embed():
 needs_tomllib = pytest.mark.skipif(tomllib is None, reason="需要 tomllib（Python ≥ 3.11）")
 
 
-def _extra_names() -> list[str]:
-    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    extra = cfg["project"]["optional-dependencies"]["rendercore"]
-    return [re.split(r"[<>=!~\[ ]", spec, maxsplit=1)[0].lower() for spec in extra]
+RENDERCORE_PACKAGES = ("pikepdf", "fonttools", "uharfbuzz", "pypdfium2", "pillow")
+
+
+def _dep_names(specs: list[str]) -> list[str]:
+    return [re.split(r"[<>=!~\[ ;]", spec, maxsplit=1)[0].lower() for spec in specs]
 
 
 @needs_tomllib
-def test_requirements_rendercore_mirrors_the_extra_and_is_pinned():
-    text = (ROOT / "requirements-rendercore.txt").read_text(encoding="utf-8")
+def test_requirements_txt_mirrors_the_runtime_dependencies_and_is_pinned():
+    """U10 起 RenderCore 的五个包是运行时依赖（ADR 0072）：pyproject `dependencies` 与 `requirements.txt`
+    同名同序、后者钉死版本。两边各改一处会让「装 -e . 的人」与「装 requirements 的人」拿到不同闭包。"""
+    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    deps = _dep_names(cfg["project"]["dependencies"])
+    text = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     pins = [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
     names = [ln.split("==")[0].lower() for ln in pins]
-    assert names == _extra_names()
+    assert names == deps
     for ln in pins:
-        assert "==" in ln, f"requirements-rendercore.txt 必须钉死版本: {ln}"
-    assert "候选" in text and "未默认启用" in text
+        assert "==" in ln, f"requirements.txt 必须钉死版本: {ln}"
+    for name in RENDERCORE_PACKAGES:
+        assert name in deps, f"{name} 应当是运行时依赖（切默认后不再是 extra）"
+
+
+def test_every_source_setup_path_fetches_the_approved_fonts():
+    """U10 起 RenderCore 是默认后端，批准字体又不进 git：新克隆照文档 / `run.sh` 装好之后，只要没跑
+    `scripts/fetch_fonts.py`，文字与导出就是 `FontsUnavailable`（Codex #539）。`run.sh` 要先核再取、取不到就停；
+    文档里每段 `pip install -e` 的源码安装，紧接着几行内要有取字体那一步。"""
+    run_sh = (ROOT / "run.sh").read_text(encoding="utf-8")
+    assert re.search(r"fetch_fonts\.py --check .*\|\| .*fetch_fonts\.py \|\| exit 1", run_sh), (
+        "run.sh 要先 --check、缺了才取、取不到就停"
+    )
+    assert run_sh.index("fetch_fonts.py") < run_sh.index("exec .venv/bin/tavotto")
+    blocks = 0
+    for doc in ("README.md", "README.zh-CN.md", "CONTRIBUTING.md"):
+        lines = (ROOT / doc).read_text(encoding="utf-8").splitlines()
+        for i, line in enumerate(lines):
+            if re.search(r"\bpip install -e\b", line) and ".venv" in line:
+                blocks += 1
+                window = "\n".join(lines[i : i + 4])
+                assert "fetch_fonts.py" in window, f"{doc}:{i + 1} 的源码安装段没有取批准字体"
+    assert blocks >= 3, "一段源码安装说明都没找到——判据量在空集合上"
 
 
 @needs_tomllib
-def test_the_extra_is_not_a_default_dependency():
+def test_runtime_lock_versions_satisfy_the_app_dependency_ranges():
+    """内置渲染 runtime 的锁（为像素基线钉死）与应用的依赖区间必须相容：两者被装进同一个解释器时（CI 的
+    invariants 腿按 runtime-lock 装科学栈、pip 用户装 `tavotto[worker]`），后装的钉版本会覆盖前者，pip 报
+    依赖冲突、产品的依赖一致性检查判 `dependency_consistency_failed`（#539 的 invariants 腿实红过：
+    fonttools>=4.65 对 runtime-lock 的 4.63.0）。改任何一边都要让另一边仍然满足。"""
+    from packaging.requirements import Requirement
+
     cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    deps = " ".join(cfg["project"]["dependencies"]).lower()
-    for name in _extra_names():
-        assert name not in deps, f"{name} 不该进默认依赖（候选栈未默认启用）"
-    base = (ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
-    for name in _extra_names():
-        assert name not in base
+    ranges = {
+        (req := Requirement(d)).name.lower(): req.specifier for d in cfg["project"]["dependencies"]
+    }
+    lock = json.loads((ROOT / "packaging" / "runtime-lock.json").read_text(encoding="utf-8"))
+    checked = 0
+    for target, spec in lock["targets"].items():
+        for name, version in spec["packages"].items():
+            if name.lower() in ranges:
+                checked += 1
+                assert ranges[name.lower()].contains(version, prereleases=True), (
+                    f"runtime-lock {target} 钉 {name}=={version}，不满足应用依赖 {name}{ranges[name.lower()]}"
+                )
+    assert checked >= 3, "一个共有的包都没核到——判据量在空集合上"
+
+
+@needs_tomllib
+def test_pymupdf_is_only_the_legacy_extra_never_a_runtime_dependency():
+    """退役的 PyMuPDF 只许经 `legacy-pymupdf` extra 进测试 / 维护者环境（D15）；`dependencies` /
+    `requirements.txt` / 别的 extra 里出现它就是退役闭包被撕开。`rendercore` extra 也不该再存在
+    （空别名会让 `pip install '.[rendercore]'` 看起来有效、其实什么都没装）。"""
+    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "pymupdf" not in _dep_names(cfg["project"]["dependencies"])
+    pins = [
+        ln.split("==")[0].lower()
+        for ln in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if ln and not ln.startswith("#")
+    ]
+    assert "pymupdf" not in pins  # 主语是钉住的包名，注释里提到它不算
+    extras = cfg["project"]["optional-dependencies"]
+    assert "rendercore" not in extras
+    assert _dep_names(extras["legacy-pymupdf"]) == ["pymupdf"]
+    for name, specs in extras.items():
+        if name == "legacy-pymupdf":
+            continue
+        assert "pymupdf" not in _dep_names(specs), name
+    # dev 经自引用 extra 拿到读取器，不另抄一份版本范围
+    assert "tavotto[legacy-pymupdf]" in extras["dev"]
+    assert not (ROOT / "requirements-rendercore.txt").exists()
 
 
 @needs_tomllib
@@ -297,3 +361,30 @@ def test_license_texts_travel_with_the_fonts(registry):
     for rel in ALLOWLIST.license_files:
         text = (registry.root / rel).read_text(encoding="utf-8", errors="replace")
         assert "SIL OPEN FONT LICENSE" in text.upper(), rel
+
+
+_BUILD_STEP = re.compile(r"(-m build\b|^\s*pyinstaller\b|\bpyinstaller packaging/)")
+
+
+def test_every_workflow_package_build_fetches_the_approved_fonts_first():
+    """批准字体不进 git、随 wheel / 冻结产物走（ADR 0072）：CI 上从干净 checkout 打包的每一步，**同一个 job
+    里之前**都得先 `fetch_fonts.py --check`（或整步走 `build_desktop.py`——它自己先取再核）。第一版漏了
+    release.yml 与 lab-qualification 的非预建分支：发出去的 wheel 没有字体，RenderCore 装上即不可用（Codex #539）。
+    判据按文本切 job（仓库里不用 PyYAML 读 workflow，同 test_merge_queue_workflows 的纪律）。"""
+    wf_dir = ROOT / ".github" / "workflows"
+    checked, missing = 0, []
+    for wf in sorted(wf_dir.glob("*.yml")):
+        lines = wf.read_text(encoding="utf-8").splitlines()
+        job_start = 0
+        for i, line in enumerate(lines):
+            if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):
+                job_start = i
+            code = line.split("#", 1)[0]
+            if not _BUILD_STEP.search(code) or "pip install" in code:
+                continue
+            checked += 1
+            before = "\n".join(ln.split("#", 1)[0] for ln in lines[job_start:i])
+            if "fetch_fonts.py --check" not in before and "build_desktop.py" not in before:
+                missing.append(f"{wf.name}:{i + 1} {line.strip()}")
+    assert checked >= 5, "一个打包步骤都没扫到——判据量在空集合上"
+    assert not missing, "这些打包步骤之前没有取批准字体：\n" + "\n".join(missing)

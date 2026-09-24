@@ -62,6 +62,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.preparation",
     # U04（ADR 0061）：跑前的依赖门——常量式 code，落到确认框与 MCP 的 recovery 上
     "tavotto.engine.deprepair",
+    # U10（ADR 0072）：`TAVOTTO_RENDER_BACKEND` 指着退役 / 不认识的后端——`BackendSelectionError.code`
+    "tavotto.pdfbackend",
 )
 
 
@@ -122,6 +124,10 @@ USER_VISIBLE_CODES = {
     "read_failed": {"reason"},
     # --- 2026-08-21 全量补 code 的那批 ---
     "internal_error": {"reason"},
+    # U10（ADR 0072）：退役 / 不认识的渲染后端名，params 带原始取值
+    "backend_retired": {"value"},
+    "backend_unknown": {"value"},
+    "backend_unavailable": {"reason"},
     "export_render_failed": {"id", "reason"},
     "invalid_document": set(),
     "package_file_missing": set(),

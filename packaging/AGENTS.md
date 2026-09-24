@@ -8,10 +8,10 @@
 - 代码在 `src/tavotto/`，`pyproject.toml`（hatchling）声明依赖与
   `tavotto = "tavotto.cli_entry:main"` 入口（**纯标准库的轻量入口**：
   `open`/`doctor` 要在 import Flask 之前分派掉，见 `src/tavotto/AGENTS.md`
-  的「外部交接」）。`run.sh` = 自建 `.venv` + `pip install -e .` +
+  的「外部交接」）。`run.sh` = 自建 `.venv` + `pip install -e .` + 批准字体（`fetch_fonts.py --check`，缺了才取，取不到就停）+
   `exec .venv/bin/tavotto`；**不要再写 `python app.py`**，
   根目录已无该文件（旧进程内存里的老路径正是「worker 进程崩溃（无响应）」的成因）。
-- extras：`worker`（matplotlib/numpy，装了就用同解释器渲染）、`dev`（pytest/build）。
+- extras：`worker`（matplotlib/numpy，装了就用同解释器渲染）、`dev`（pytest/build + 经自引用 extra 带进测试读取器）、`legacy-pymupdf`（退役的 PyMuPDF，只给测试读取器与维护者资产脚本，绝不进 dependencies，ADR 0072）。
 - 前端产物 `src/tavotto/web/` 由 `scripts/build_frontend.py` 从 `web/dist` 拷入，
   进 .gitignore；hatchling 默认跳过 VCS 忽略的文件，**必须靠 pyproject 的
   `[tool.hatch.build] artifacts` 收回**，否则 wheel 里没有界面（首页 404）。
@@ -131,12 +131,12 @@ Python，首次渲染也不联网：
 - **浏览器 playground 的运行时锁**：`packaging/playground-runtime.json`
   钉死 Pyodide 版本与包白名单（前端 JSON import + 构建脚本共读），
   细节见 `docs/rules/frontend/browser-playground.md`。
-- **按名字装载的模块要显式进 PyInstaller 的 hiddenimports**（2026-09-22，U08 / ADR 0067）：
+- **按名字装载的模块要显式进 PyInstaller 的 hiddenimports**（2026-09-22，U08 / ADR 0067；U10 / ADR 0072）：
   `pdfbackend/__init__.py` 用 `importlib` 按 `TAVOTTO_RENDER_BACKEND` 装载实现，静态分析看不见这条
-  边——冻结产物里没有 `pymupdf_backend`，`probe_asset` 一调就 ModuleNotFoundError、「一个面板都没扫到」，
+  边——冻结产物里没有那个模块，`probe_asset` 一调就 ModuleNotFoundError、「一个面板都没扫到」，
   而源码模式一切正常（#476 三条冒烟腿）。`tavotto.spec` 从契约层 `_IMPL_MODULES` 取清单铺进
-  hiddenimports，**不手写模块名**（U10 删旧后端时自动跟着变）；
-  `tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select` 看护。
+  hiddenimports，**不手写模块名**（U10 起闭集只剩 `rendercore/facade.py`，退役模块的 hidden import
+  随模块一起消失）；`tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select` 看护。
 - **包内数据文件要显式进 PyInstaller 的 datas**（2026-09-02，ADR 0039）：
   `Analysis` 只把 .py 编进 PYZ，`tavotto/profiles/publication.json` 与
   `tavotto/resources/tutorial_project/` 这类数据在冻结产物里**本来是没有的**
@@ -153,7 +153,18 @@ Python，首次渲染也不联网：
   （`.gitignore` 挡、`tests/test_font_provenance.py` 看护）。wheel 靠 pyproject 的
   `[tool.hatch.build] artifacts` 收回（与 `src/tavotto/web/**` 同一条理由），PyInstaller 靠上面那条
   `resources/` datas 整棵带走——**构建机先跑一次 `fetch_fonts.py`**，否则冻结产物里没有字体、
-  RenderCore 报 `fonts_dir_missing`（候选栈未默认启用，U06 不影响现有安装包；切默认前把这一步
-  接进 `build_desktop.py` / package job 与 lab_acceptance 的结构检查）。运行时定位
+  RenderCore 报 `fonts_dir_missing`。U10 切默认后（ADR 0072）这一步已接进 `build_desktop.py`
+  （PyInstaller 之前）、ci.yml 的每条装项目 / 打 wheel / PyInstaller 的腿（`tests/test_merge_queue_workflows.py::
+  TestApprovedFontsAndRetirementScan` 钉着闭集）、`tavotto.spec`（缺字体拒绝打包，判据与 `fetch_fonts.py --check`
+  同源）与 `lab_acceptance.py` 的结构检查（13 张脸 + 覆盖表 + 依赖闭包零 pymupdf）。运行时定位
   `TAVOTTO_FONTS_DIR` 排他覆盖 → 包内 `tavotto/resources/fonts`；下载缓存在 `build/fonts-cache/`，
   不在字体目录里（字体目录整棵进包）。
+- **RenderCore 的原生闭包随冻结产物走（U10，ADR 0072）**：PDFium 的共享库住在 `pypdfium2_raw` 的包目录里、
+  pikepdf 的 qpdf 库同理——PyInstaller 的依赖分析看不见，`tavotto.spec` 显式 `collect_dynamic_libs("pypdfium2_raw")`
+  + `collect_all("pikepdf")`（配方与 `scripts/dev/u07_freeze_child.py` 同源，四平台验过 child 自起 / 真渲染）；
+  `PIL` 从 excludes 拿掉（Pillow 是 `rasterio` 的直接依赖），退役的 `pymupdf` / `fitz` 反过来进 excludes。
+  冻结入口 `packaging/entry.py` **最先**分派 `--render-child`（父进程用同一个 exe 起 PDFium 子进程，
+  在 stdin / stdout 上说 JSON，不能先经 `_redirect_streams`）。打包依赖装的是 `requirements.txt` 那份钉死的
+  运行时闭包（不再手写 `flask + pymupdf`）；产物出来之后 `scripts/ci/retirement_scan.py --dist dist/Tavotto`
+  扫原生库名单（零 mupdf、PDFium / qpdf 在、字体 13 张）。看护 `tests/test_runtime_build.py::
+  test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fonts`。

@@ -22,7 +22,7 @@
       {"cmd":"build"}                                → 导入脚本、跑入口、捕获全部 Figure
       {"cmd":"override","stem":s,"patches":[...]}    → 应用全量 override，重导出预览 SVG
       {"cmd":"export","stem":s,"patches":[...],
-       "path":p,"format":"pdf","dpi":600}            → 全质量导出（供 PyMuPDF 合成）
+       "path":p,"format":"pdf","dpi":600}            → 全质量导出（供画布合成）
       {"cmd":"ping"} / {"cmd":"shutdown"}
 
 安全措施：

@@ -298,7 +298,7 @@ FONT_FALLBACK_TAIL = ("DejaVu Sans",)
 #: 不是承诺：进链的只有 `findfont(fallback_to_default=False)` 真解析得到的那些，
 #: 所以链上每一环都画得出来，不会产生 matplotlib 的 "Font family not found"。
 #: 本平台那组排最前，其它平台的名字跟在后面——Noto / 思源这类跨平台字体装在
-#: 哪台机器上都该认。**本仓库不分发任何字体**：名字全是系统自带或用户自装的。
+#: 哪台机器上都该认。**不给 matplotlib 分发任何字体**（批准字体只给画布文字的 RenderCore 用，ADR 0072）：名字全是系统自带或用户自装的。
 #:
 #: 组内顺序的理由：无衬线优先（与 matplotlib 默认的 DejaVu Sans 一致），
 #: 简体优先，操作系统自带的排在需要另装的前面。

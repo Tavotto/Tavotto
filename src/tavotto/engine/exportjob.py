@@ -76,6 +76,8 @@ ERROR_CODES = (
     # 有限产物验证（U08，ADR 0068）：封口的 staging 文件在**提交点之前**重新打开检查，必需项失败
     # （严格规范下 unknown 也算）就不发布这一项——不合格的文件不出现在用户的导出目录里（RC-073）
     "artifact_rejected",
+    # 渲染后端此刻不可用（依赖包 / 批准字体不在）：由调用方的 `classify_error` 认出来（ADR 0072）
+    "backend_unavailable",
 )
 
 #: 作业保留多久（秒）。界面拿 job_id 补拉状态要在这个窗口内。
@@ -537,11 +539,12 @@ def run(
     publish: Callable[[dict], None] | None = None,
     report: Callable[[ExportJob, list[Output]], bytes | None] | None = None,
     inspect: Callable[[ExportJob, list[Produced]], list[Produced]] | None = None,
+    classify_error: Callable[[BaseException], tuple[str, dict] | None] | None = None,
 ) -> dict:
     """执行一个作业。同步；`run_async` 是它的线程包装。
 
     `produce(job, tmp_dir)` 由调用方给（合成与渲染的知识留在 `app.py`，这个
-    模块不认识 PyMuPDF、也不认识 worker）。它必须：把每个格式写进 `tmp_dir`
+    模块不认识 RenderCore、也不认识 worker）。它必须：把每个格式写进 `tmp_dir`
     里的一个文件，返回 `Produced` 列表；在每个可中断的点上调
     `job.check_cancelled()`。
 
@@ -552,6 +555,10 @@ def run(
     `inspect(job, produced)`（U08，ADR 0068）在 `produce` 之后、**提交点之前**跑：重新打开每个封口的临时
     文件量事实、按政策裁决，把不合格的 `Produced` 换成 `artifact_rejected`（带 manifest），合格的附上
     manifest。它拿到的是临时文件，发布只是 `os.replace`——发布后的字节就是它核过的字节。
+
+    `classify_error(exc)`：作业里冒出的未分类异常先问它，回 `(code, params)` 就用那个稳定码代替
+    `export_failed`（比如渲染后端此刻不可用 → `backend_unavailable`，Codex #539）；回 None 照旧。
+    这个模块不认识渲染后端，判据由调用方给。
     """
     req = job.request
     job.status = STATUS_RUNNING
@@ -734,9 +741,16 @@ def run(
         job.trace.fail(_last_phase(job), exc.code)
     except Exception as exc:  # noqa: BLE001 —— 作业失败不能把 HTTP 线程带走
         terminal = STATUS_FAILED
-        job.error_code = "export_failed"
-        job.error_params = {"error": str(exc)[:400]}
-        job.trace.fail(_last_phase(job), "export_failed")
+        classified = None
+        if classify_error is not None:
+            try:
+                classified = classify_error(exc)
+            except Exception:  # noqa: BLE001 —— 分类器自己出错不许盖住原来的失败
+                classified = None
+        code, params = classified or ("export_failed", {"error": str(exc)[:400]})
+        job.error_code = code
+        job.error_params = params
+        job.trace.fail(_last_phase(job), code)
     finally:
         _drop_tmp(job)
         _release(reserved, job.id)
@@ -834,12 +848,18 @@ def run_async(
     publish: Callable[[dict], None] | None = None,
     report: Callable[[ExportJob, list[Output]], bytes | None] | None = None,
     inspect: Callable[[ExportJob, list[Produced]], list[Produced]] | None = None,
+    classify_error: Callable[[BaseException], tuple[str, dict] | None] | None = None,
 ) -> None:
     """在后台线程里跑。**关掉对话框不取消它**——那是 §九 明写的行为。"""
     t = threading.Thread(
         target=run,
         args=(job, produce),
-        kwargs={"publish": publish, "report": report, "inspect": inspect},
+        kwargs={
+            "publish": publish,
+            "report": report,
+            "inspect": inspect,
+            "classify_error": classify_error,
+        },
         name=f"export-{job.id}",
         daemon=True,
     )

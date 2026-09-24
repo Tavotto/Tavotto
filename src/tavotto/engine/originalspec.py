@@ -18,9 +18,9 @@
   面板尺寸一个都不变；区别只是现在它**说出来**自己是假定的，界面据此提示。
 
 「不知道」是独立一档，不许合并进相邻取值：`dpi=None` 与 `dpi=96.0` 是两个
-不同的答案。MuPDF 的 `Pixmap.xres` 在这一点上不可用——**没有 pHYs 的 PNG 和
-真的写着 96 dpi 的 PNG，它一律回 96**（实测，PyMuPDF 1.28.2）。所以密度由
-本模块自己按格式解析，只用标准库。
+不同的答案。旧后端 MuPDF 的 `Pixmap.xres` 在这一点上不可用——**没有 pHYs 的 PNG 和
+真的写着 96 dpi 的 PNG，它一律回 96**（实测，PyMuPDF 1.28.2）；`rendercore/rasterio.header_info()`
+也只报尺寸与 alpha。所以密度由本模块自己按格式解析，只用标准库。
 
 纯标准库 + `pdfbackend` 的 probe 结果：Flask 父进程 import 它，不碰 worker。
 """

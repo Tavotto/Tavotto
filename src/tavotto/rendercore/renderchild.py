@@ -70,6 +70,9 @@ ERROR_CODES = (
     "pixel_budget_exceeded",  # 超像素预算（父侧或 child 侧）
     "render_failed",  # PDFium 打不开 / 渲染失败（child 继续活）
     "bad_request",  # 请求形状不对 / 未知 op
+    # child 启动时原生依赖装载失败（pypdfium2 / pikepdf 找得到但原生库起不来，或根本不在）：host 收掉 child
+    # 后翻成 `CandidatePackagesMissing`，用户看到的是 backend_unavailable（Codex #539），不是 render_child_died
+    "render_child_unavailable",
 )
 
 OPS = ("ping", "probe", "size", "render", "inspect", "close")
@@ -333,9 +336,30 @@ def child_main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     mem = _apply_memory_limit(args.memory_limit)
 
-    import pypdfium2 as pdfium
-
     out = sys.stdout.buffer
+    # 原生依赖在启动时**真装载**：模块找得到 ≠ 原生库起得来（缺 libpdfium / libqpdf、架构不对、被安全软件拦）。
+    # 失败就报一行 startup_error 再退出——父进程据此报 backend_unavailable，而不是只看到「stdout 关了」；
+    # pikepdf 也在这里装（`_user_unit` 要它，缺了不许静默算成 1.0，Codex #539）。
+    try:
+        import pypdfium2 as pdfium
+
+        pdfium_version = pdfium.PDFIUM_INFO.version  # 触发原生库装载
+        import pikepdf
+
+        _ = pikepdf.__libqpdf_version__
+    except Exception as exc:  # noqa: BLE001 —— 任何装载失败都要报回去，不能只死
+        out.write(
+            (
+                json.dumps(
+                    {"id": None, "startup_error": f"{type(exc).__name__}: {exc}"[:500]},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        out.flush()
+        return 3
+    del pdfium_version
     seq = 0
 
     def reply(obj: dict) -> None:

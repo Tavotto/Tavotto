@@ -311,7 +311,7 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         "setup",
         re.compile(
             r"^Run (actions/setup-python@|actions/setup-node@|pnpm/action-setup@|"
-            r"dtolnay/rust-toolchain@|Swatinem/rust-cache@|actions/cache@)|^缓存 CPython"
+            r"dtolnay/rust-toolchain@|Swatinem/rust-cache@|actions/cache@)|^缓存 CPython|^缓存字体"
         ),
     ),
     (
@@ -325,7 +325,7 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         "install",
         re.compile(
             r"^Run pnpm install|^安装|^装 |^装打包依赖|^装进干净环境|^准备渲染环境|^装 Tauri|"
-            r"^种 pnpm store"
+            r"^种 pnpm store|^批准字体"
         ),
     ),
     (
@@ -343,7 +343,9 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"^依赖真实插件|^核心验收|^解包并验证候选|^发行生成物|^大图预览|^架构核对|"
             r"^起服务并请求首页|^取默认分支|^收集这个 PR|^落地信息|^workflow YAML|^CI 结构契约|"
             # U01（ADR 0053）：预期集合 + enforced 用例、闭集校验——都是判定；证据上传在 artifact 那条
-            r"^首开 / 输出 harness"
+            r"^首开 / 输出 harness|"
+            # U10（ADR 0072）：退役扫描是对产物的判定
+            r"^退役扫描"
         ),
     ),
 )

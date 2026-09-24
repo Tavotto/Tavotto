@@ -1,0 +1,231 @@
+{
+ "schema": 1,
+ "kind": "u10_retirement_scan",
+ "python": "<scratch>/u10/rc-venv/bin/python",
+ "out_of_scope": {
+  "tests/**": "测试的独立读取器（D15）：读产物、造夹具；不进任何发行闭包",
+  "scripts/dev/**": "隔离的历史差分工具（06 §3）：需要旧后端时只经可选 extra legacy-pymupdf",
+  "scripts/build_brand_assets.py / build_dmg_background.py / build_installer_assets.py / recover_frac_positions.py / bench_render.py / scripts/ci/compat_matrix.py": "维护者 / 实验室脚本：产出进 git 的位图或只读产物；不随发行物执行（U00 ledger bypasses 已登记）",
+  "用户科学脚本": "worker 侧、用户自己的环境；`import fitz` 是用户的事，不是应用残留",
+  "git 历史 / 文档 / 注释": "AST 与 METADATA 都看不到；按 06 §3 保留、分类清楚"
+ },
+ "rulers": {
+  "source": {
+   "status": "not_run",
+   "why": "--skip"
+  },
+  "deps": {
+   "status": "not_run",
+   "why": "--skip"
+  },
+  "block": {
+   "ok": true,
+   "selftest": {
+    "ok": true,
+    "bit": true,
+    "message": "retirement_scan: import 'colorsys' 被阻断——PyMuPDF 已退役（ADR 0072）"
+   },
+   "steps": [
+    {
+     "step": "import tavotto.app",
+     "ok": true,
+     "info": {
+      "routes": 131
+     }
+    },
+    {
+     "step": "pdfbackend.selected",
+     "ok": true,
+     "info": {
+      "selected": "rendercore",
+      "name": "rendercore",
+      "version": "0.1"
+     }
+    },
+    {
+     "step": "probe_asset pdf",
+     "ok": true,
+     "info": {
+      "kind": "pdf",
+      "w_pt": 270.0,
+      "h_pt": 160.0
+     }
+    },
+    {
+     "step": "probe_asset raster",
+     "ok": true,
+     "info": {
+      "kind": "raster",
+      "px_w": 64,
+      "px_h": 48,
+      "alpha": true
+     }
+    },
+    {
+     "step": "text_width / text_plan / missing_glyphs",
+     "ok": true,
+     "info": {
+      "width": 65.771484375,
+      "plan": [
+       [
+        "Hello ",
+        "primary"
+       ],
+       [
+        "你好",
+        "cjk"
+       ]
+      ],
+      "missing": [
+       "𝔸"
+      ]
+     }
+    },
+    {
+     "step": "coverage_ranges",
+     "ok": true,
+     "info": {
+      "primary": 129,
+      "cjk": 446,
+      "fallback": 0
+     }
+    },
+    {
+     "step": "compose → save_pdf / save_png / save_tiff",
+     "ok": true,
+     "info": {
+      "pdf_bytes": 4911,
+      "png_bytes": 8284,
+      "tiff": {
+       "px_w": 709,
+       "px_h": 354,
+       "channels": 3,
+       "strips": 1,
+       "compression": "deflate",
+       "dpi": 150.0
+      },
+      "size_pt": [
+       340.15748031496065,
+       170.07874015748033
+      ]
+     }
+    },
+    {
+     "step": "pdf_fonts",
+     "ok": true,
+     "info": {
+      "fonts": [
+       "LiberationSerif",
+       "NotoSansSC-Regular",
+       "Helvetica"
+      ]
+     }
+    },
+    {
+     "step": "compare_png",
+     "ok": true,
+     "info": {
+      "ok": true,
+      "changed_pixel_ratio": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_abs_diff": 0,
+      "changed_pixels": 0,
+      "total_pixels": 250986,
+      "raw_mean_abs_diff": 0.0
+     }
+    },
+    {
+     "step": "render_preview_png",
+     "ok": true,
+     "info": {
+      "bytes": 2809
+     }
+    },
+    {
+     "step": "original_pdf",
+     "ok": true,
+     "info": {
+      "w_pt": 270.0,
+      "h_pt": 160.0,
+      "px_w": null,
+      "px_h": null,
+      "vector": true,
+      "pages": 1
+     }
+    },
+    {
+     "step": "original_png",
+     "ok": true,
+     "info": {
+      "px_w": 64,
+      "px_h": 48,
+      "resampled": false,
+      "transcoded": false
+     }
+    },
+    {
+     "step": "original_tiff",
+     "ok": true,
+     "info": {
+      "px_w": 64,
+      "px_h": 48,
+      "resampled": false,
+      "transcoded": true
+     }
+    },
+    {
+     "step": "annotate_asset",
+     "ok": true,
+     "info": {
+      "png": 41975,
+      "pdf": 3287
+     }
+    },
+    {
+     "step": "engine.cli doctor --json",
+     "ok": true,
+     "info": {
+      "rc": 0
+     }
+    },
+    {
+     "step": "MCP bridge / server import",
+     "ok": true,
+     "info": {
+      "bridge": "tavotto_mcp.bridge"
+     }
+    },
+    {
+     "step": "render child reaped",
+     "ok": true,
+     "info": {}
+    }
+   ],
+   "leaked_modules": [],
+   "all_ok": true
+  },
+  "native": {
+   "status": "not_run",
+   "why": "没给 --dist / --wheel（产物在别的 job 里）"
+  },
+  "sbom": {
+   "status": "not_run",
+   "why": "没给 --sbom（只有发布链产 SBOM）"
+  },
+  "run": {
+   "status": "not_run",
+   "why": "没给 --smoke"
+  }
+ },
+ "ran": [
+  "block"
+ ],
+ "not_run": [
+  "deps",
+  "native",
+  "run",
+  "sbom",
+  "source"
+ ],
+ "all_ok": true
+}

@@ -1,0 +1,62 @@
+{
+ "schema": 1,
+ "kind": "u10_retirement_scan",
+ "python": "<scratch>/u10/rc-venv/bin/python",
+ "out_of_scope": {
+  "tests/**": "测试的独立读取器（D15）：读产物、造夹具；不进任何发行闭包",
+  "scripts/dev/**": "隔离的历史差分工具（06 §3）：需要旧后端时只经可选 extra legacy-pymupdf",
+  "scripts/build_brand_assets.py / build_dmg_background.py / build_installer_assets.py / recover_frac_positions.py / bench_render.py / scripts/ci/compat_matrix.py": "维护者 / 实验室脚本：产出进 git 的位图或只读产物；不随发行物执行（U00 ledger bypasses 已登记）",
+  "用户科学脚本": "worker 侧、用户自己的环境；`import fitz` 是用户的事，不是应用残留",
+  "git 历史 / 文档 / 注释": "AST 与 METADATA 都看不到；按 06 §3 保留、分类清楚"
+ },
+ "rulers": {
+  "source": {
+   "status": "not_run",
+   "why": "--skip"
+  },
+  "deps": {
+   "status": "not_run",
+   "why": "--skip"
+  },
+  "block": {
+   "status": "not_run",
+   "why": "--skip"
+  },
+  "wheel:tavotto-0.15.0-py3-none-any.whl": {
+   "ok": true,
+   "requires_dist_runtime": [
+    "flask<4,>=3.1",
+    "fonttools<5,>=4.65",
+    "packaging<27,>=24",
+    "pikepdf<11,>=10.13",
+    "pillow<13,>=10",
+    "pypdfium2<6,>=5.13",
+    "uharfbuzz<1,>=0.56"
+   ],
+   "retired": [],
+   "native_files": [],
+   "fonts_found": 13,
+   "fonts_expected": 13,
+   "canvas_coverage": true
+  },
+  "sbom": {
+   "status": "not_run",
+   "why": "没给 --sbom（只有发布链产 SBOM）"
+  },
+  "run": {
+   "status": "not_run",
+   "why": "没给 --smoke"
+  }
+ },
+ "ran": [
+  "wheel:tavotto-0.15.0-py3-none-any.whl"
+ ],
+ "not_run": [
+  "block",
+  "deps",
+  "run",
+  "sbom",
+  "source"
+ ],
+ "all_ok": true
+}

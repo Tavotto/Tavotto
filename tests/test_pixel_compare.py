@@ -189,6 +189,6 @@ def test_backend_comparator_matches_the_ci_implementation(tmp_path):
     # 底噪常量也不许漂：这里断言的是数值本身（import 不到那份模块时也要看住）
     src = (CI_DIR / "pixelcompare.py").read_text(encoding="utf-8")
     assert "NOISE_FLOOR = 3" in src
-    from tavotto.pdfbackend import pymupdf_backend
+    from tavotto import pixelmetrics
 
-    assert pymupdf_backend.PNG_NOISE_FLOOR == 3
+    assert pixelmetrics.PNG_NOISE_FLOOR == 3  # 两个后端共用的那一把尺子（U08 起搬到 pixelmetrics）

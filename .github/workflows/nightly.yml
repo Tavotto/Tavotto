@@ -257,11 +257,15 @@ jobs:
         run: python scripts/build_worker_runtime.py --clean
 
       - name: 打包（内置 runtime 必须进包）
+        # 装 requirements.txt 那份钉死的运行时闭包（U10 起含 RenderCore 的五个包，ADR 0072）；批准字体在
+        # PyInstaller 之前按 allowlist 取到包内目录（tavotto.spec 缺了就拒绝打包）
         env:
           TAVOTTO_REQUIRE_RUNTIME: "1"
         run: |
           python -m pip install --upgrade pip pyinstaller
-          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+          python -m pip install -r requirements.txt
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
           pyinstaller packaging/tavotto.spec --noconfirm
 
       - name: 准备「用户的 Python」— conda
