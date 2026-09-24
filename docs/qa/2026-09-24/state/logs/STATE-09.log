@@ -1,0 +1,63 @@
+### $ docs/qa/2026-09-24/state/repro/run.sh pytest tests/test_ai_refresh.py tests/test_ai_revert_atomic.py tests/test_ai_history.py
+### time=2026-09-24T19:07:43Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0
+........................................                                 [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+40 passed, 5 warnings in 1.68s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/hooks/useServerEvents.test.ts src/store/aiStore.test.ts
+### time=2026-09-24T19:07:45Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/web
+
+
+ Test Files  2 passed (2)
+      Tests  51 passed (51)
+   Start at  03:07:46
+   Duration  1.09s (transform 557ms, setup 359ms, import 403ms, tests 20ms, environment 951ms)
+
+
+### $ docs/qa/2026-09-24/state/repro/run.sh pytest docs/qa/2026-09-24/state/repro/test_state09_ai_revert_stale.py
+### time=2026-09-24T19:07:47Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=1
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+______ test_revert_after_a_later_human_edit_must_not_silently_discard_it _______
+
+ai_session = ('s1', PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4910/test_revert_after_a_later_huma0/project/fig1.py'))
+
+    def test_revert_after_a_later_human_edit_must_not_silently_discard_it(ai_session):
+        sid, script = ai_session
+        script.write_bytes(HUMAN_LATER)  # AI 之后人工又改了一版
+    
+        try:
+            result = ai_bridge.revert(sid)
+        except Exception as exc:  # 明确拒绝（冲突）是可接受的合同
+            assert script.read_bytes() == HUMAN_LATER, f"拒绝了却改了文件：{exc}"
+            return
+        # 没拒绝：那就必须没有把人工那一版覆盖掉
+>       assert script.read_bytes() == HUMAN_LATER, (
+            f"revert 返回 {result}，人工在 AI 之后的改动被快照静默覆盖"
+        )
+E       AssertionError: revert 返回 {'ok': True, 'script': 'fig1.py'}，人工在 AI 之后的改动被快照静默覆盖
+E       assert b'import matp...2], [3, 4])\n' == b"import matp...tle('mine')\n"
+E         
+E         At index 55 diff: b')' != b','
+E         Use -v to get more diff
+
+docs/qa/2026-09-24/state/repro/test_state09_ai_revert_stale.py:64: AssertionError
+=========================== short test summary info ============================
+FAILED docs/qa/2026-09-24/state/repro/test_state09_ai_revert_stale.py::test_revert_after_a_later_human_edit_must_not_silently_discard_it
+1 failed, 1 passed in 0.03s
+

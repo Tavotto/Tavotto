@@ -15,9 +15,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { syncEngine } from '@/hooks/useEngineSync'
+import { runUndoRedo } from '@/hooks/useKeyboard'
+import { setOverride } from '@/store/actions'
+import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import {
+  exactPanelManifest,
+  panelDisplayView,
+  renderKeyOf,
+  useRenderStore,
+} from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
@@ -464,5 +472,159 @@ describe('权威渲染失败', () => {
     // 撤销仍然能把它退回去
     useDocumentStore.getState().undo()
     expect(overrideOf('axes_0.title', 'pos_frac')).toBeUndefined()
+  })
+})
+
+/* ======================= 7. lostpointercapture（QA STATE-02） ======================= */
+
+/**
+ * `trackPointer` 把 `lostpointercapture` 与 `pointercancel` 接到同一条取消路径上
+ * （指针捕获被别处抢走 = 后续 pointerup 再也到不了我们手里）。上面第 3 节只量了
+ * pointercancel，这里补上另一半，并把「取消」量到事务层：拖动开的 interaction
+ * 必须收回 `none`、文档不能留开着的 txn，迟到的 move / up 不能让它复活。
+ * （2026-09-24 QA 规范 §2 STATE-02；反证：删掉 `lostpointercapture` 的监听即红）
+ */
+describe('lostpointercapture 与 pointercancel 同一条取消路径', () => {
+  const fireLost = () => window.dispatchEvent(new Event('lostpointercapture'))
+
+  it('图内文字：不写 override、不进历史、不渲染、DOM 逐字节还原、无悬空事务', () => {
+    const svgBefore = document.querySelector('svg')!.outerHTML
+    startElementDrag(down(0, 0), livePanel(), textEl, layout)
+    dragTo(150, 80, 50)
+    expect(tf('axes_0.title')).toMatch(/^translate\(/)
+    expect(useInteractionStore.getState().kind).toBe('element')
+
+    fireLost()
+
+    expect(overrideOf('axes_0.title', 'pos_frac')).toBeUndefined()
+    expect(useDocumentStore.getState().past).toHaveLength(0)
+    expect(engineRender).not.toHaveBeenCalled()
+    expect(tf('axes_0.title')).toBeNull()
+    expect(document.querySelector('svg')!.outerHTML).toBe(svgBefore)
+    expect(previewSession()).toBeNull()
+    expect(useInteractionStore.getState().kind).toBe('none')
+    expect(useDocumentStore.getState().txn).toBeNull()
+
+    // 取消之后那一轮的监听已经卸掉：迟到的 move 不再跟指针，迟到的 up 不再提交
+    fire('pointermove', 300, 0)
+    flushPreviewFrame()
+    fire('pointerup', 300, 0)
+    expect(tf('axes_0.title')).toBeNull()
+    expect(useDocumentStore.getState().past).toHaveLength(0)
+    expect(engineRender).not.toHaveBeenCalled()
+  })
+
+  it('子图整体拖动与箭头整体拖动：同样干净', () => {
+    const svgBefore = document.querySelector('svg')!.outerHTML
+    startAxesDrag(down(0, 0), livePanel(), axesEl, layout, 'move')
+    dragTo(60, 30, 40)
+    fireLost()
+    expect(overrideOf('axes_0', 'position')).toBeUndefined()
+    expect(useInteractionStore.getState().kind).toBe('none')
+
+    startArrowDrag(down(0, 0), livePanel(), arrowEl, layout, 'both')
+    dragTo(60, 30, 40)
+    fireLost()
+    expect(overrideOf('axes_0.arrows_3', 'endpoints_frac')).toBeUndefined()
+    expect(useInteractionStore.getState().kind).toBe('none')
+
+    expect(useDocumentStore.getState().past).toHaveLength(0)
+    expect(engineRender).not.toHaveBeenCalled()
+    expect(document.querySelector('svg')!.outerHTML).toBe(svgBefore)
+  })
+
+  it('被夺走捕获之后立刻正常拖一次：一条历史、一次渲染、落点从原锚点起算', () => {
+    startElementDrag(down(0, 0), livePanel(), textEl, layout)
+    dragTo(300, 0, 20)
+    fireLost()
+
+    startElementDrag(down(0, 0), livePanel(), textEl, layout)
+    dragTo(100, 0, 20)
+    fire('pointerup', 100, 0)
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+    expect(engineRender).toHaveBeenCalledTimes(1)
+    const value = overrideOf('axes_0.title', 'pos_frac') as number[]
+    expect(value[0]).toBeCloseTo(textEl.anchor![0] + 100 / layout.width, 6)
+    expect(value[1]).toBeCloseTo(textEl.anchor![1], 6)
+  })
+})
+
+/* ================= 8. 松手后权威在途（QA STATE-04 / STATE-05） ================= */
+
+/**
+ * 松手写下 override 之后，新变体的权威渲染还在路上（慢请求）。这段窗口里：
+ *   * 几何权威必须为空（旧 manifest 只能看不能写）——读 bbox 的写动作明确拒绝，
+ *     选区与文档一个字节不动；
+ *   * 纯样式修改不依赖 bbox，照常进历史；
+ *   * 撤销立刻回到缓存里那份精确旧变体，晚到的那次回包只入库，既不改文档，
+ *     也不改当前面板的几何权威与显示来源。
+ * （2026-09-24 QA 规范 §2 STATE-04 / STATE-05；反证：对齐改读 `panelRender` 即红）
+ */
+describe('松手后权威在途：旧 manifest 不得作为几何写的输入', () => {
+  let resolveRender: (v: unknown) => void = () => {}
+  beforeEach(() => {
+    engineRender.mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolveRender = r
+        }),
+    )
+  })
+
+  const dragTitle = () => {
+    startElementDrag(down(0, 0), livePanel(), textEl, layout)
+    dragTo(120, 0, 20)
+    fire('pointerup', 120, 0)
+  }
+
+  it('在途期间：权威为空、对齐被拒且选区与文档不动；纯样式修改照常进历史', async () => {
+    dragTitle()
+    expect(engineRender).toHaveBeenCalledTimes(1)
+    expect(exactPanelManifest(useRenderStore.getState(), livePanel())).toBeNull()
+
+    useUiStore.setState({ selectedGids: ['axes_0.title', 'axes_0.arrows_3'] })
+    const overridesBefore = structuredClone(livePanel().overrides)
+    const res = alignSelectedPanelElements('p1', 'left')
+    expect(res).toEqual({ ok: false, reason: 'syncing' })
+    expect(livePanel().overrides).toEqual(overridesBefore)
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.title', 'axes_0.arrows_3'])
+
+    // 颜色不读 bbox：不受权威闸影响
+    setOverride('p1', 'axes_0.title', 'color', '#ff0000', 'none')
+    expect(overrideOf('axes_0.title', 'color')).toBe('#ff0000')
+    expect(useDocumentStore.getState().past).toHaveLength(2)
+
+    // 拖动那一版回来了；它已经不是文档当前的变体（又加了颜色），仍然不是权威
+    resolveRender({ rev: 3, manifest, svg: MATPLOTLIB_SVG, warnings: [] })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(exactPanelManifest(useRenderStore.getState(), livePanel())).toBeNull()
+  })
+
+  it('在途期间撤销：立刻回到精确旧变体；晚到的回包不改文档、不改当前权威与显示来源', async () => {
+    const lateManifest: Manifest = { ...manifest, stem: 'Fig1-late' }
+    dragTitle()
+    expect(overrideOf('axes_0.title', 'pos_frac')).toBeDefined()
+
+    runUndoRedo(false)
+    expect(livePanel().overrides).toEqual([])
+    expect(exactPanelManifest(useRenderStore.getState(), livePanel())?.stem).toBe('Fig1')
+
+    resolveRender({ rev: 9, manifest: lateManifest, svg: MATPLOTLIB_SVG, warnings: [] })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const after = useRenderStore.getState()
+    expect(livePanel().overrides).toEqual([])
+    // 晚到的那一版照样入库（重做的落点、另一个副本都可能要它），挂在拖动那一版的键上
+    const lateEntry = Object.values(after.byKey).find((v) => v.manifest?.stem === 'Fig1-late')
+    expect(lateEntry).toBeDefined()
+    expect(JSON.parse(lateEntry!.lastPatches!)[0]).toMatchObject({ gid: 'axes_0.title', prop: 'pos_frac' })
+    // 但当前面板的几何权威与显示来源仍然是撤销之后那一版
+    expect(exactPanelManifest(after, livePanel())?.stem).toBe('Fig1')
+    const view = panelDisplayView(after, livePanel())
+    expect(view?.kind).toBe('exact')
+    expect(view && 'sourceKey' in view ? view.sourceKey : null).toBe(renderKeyOf(livePanel()))
   })
 })

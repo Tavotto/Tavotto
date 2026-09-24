@@ -83,7 +83,7 @@ const livePanel = (): PanelObject => {
 }
 const down = (clientX = 0, clientY = 0) =>
   ({ clientX, clientY, button: 0, stopPropagation() {} }) as unknown as React.PointerEvent
-const fire = (type: 'pointermove' | 'pointerup', clientX: number, clientY: number) =>
+const fire = (type: 'pointermove' | 'pointerup' | 'pointercancel', clientX: number, clientY: number) =>
   window.dispatchEvent(new MouseEvent(type, { clientX, clientY, bubbles: true }))
 const titleNode = () => container.querySelector('[data-element-svg="p1"] [id="axes_0.title"]')
 const tf = () => titleNode()?.getAttribute('transform') ?? null
@@ -156,5 +156,67 @@ describe('松手之后、新图到达之前', () => {
     await act(async () => useUiStore.setState({ selectedGids: ['axes_0.title'] }))
     await show()
     expect(titleNode()).toBe(before)
+  })
+})
+
+/**
+ * 拖动**进行中**，同一变体的 SVG 被真的换掉（字符串变了、渲染键没变——脚本 markStale 后
+ * 重建、字节预算驱逐后重取都会这样）。PanelView 重新插 innerHTML，节点全换新的：
+ *   * 预览按账本**只重附一次**（不是 0 次 = 弹回原位，也不是 2 次 = 位移叠加）；
+ *   * 继续拖动时位移从新节点的 base 现算，与没被替换过一样；
+ *   * 与 SVG 无关的重渲（节点没换）什么都不做；
+ *   * 取消照样把新节点还原到 matplotlib 的原样，0 历史、0 渲染。
+ * （2026-09-24 QA 规范 §2 STATE-03；fixture 里标题没有自带 transform，预览 = 纯 translate）
+ */
+describe('拖动中 SVG 被真替换', () => {
+  const translateOf = (s: string | null): [number, number] => {
+    const m = /^translate\(([-\d.e]+),([-\d.e]+)\)$/.exec(s ?? '')
+    if (!m) throw new Error(`不是单一 translate：${s}`)
+    return [Number(m[1]), Number(m[2])]
+  }
+  // 独立的期望：屏幕位移 / 内容宽高 × viewBox（zoom=1、面板未旋转），不调生产换算函数
+  const expected = (dx: number, dy: number): [number, number] => [
+    (dx / layout.width) * 288,
+    (dy / layout.height) * 216,
+  ]
+
+  it('节点换了：预览只重附一次、不叠加；继续拖从 base 现算；取消还原', async () => {
+    await show()
+    const before = titleNode()
+    const pastBefore = useDocumentStore.getState().past.length // 「加面板」那一条
+    startElementDrag(down(0, 0), livePanel(), textEl, layout)
+    for (let i = 1; i <= 10; i++) {
+      fire('pointermove', i * 10, i * 5)
+      flushPreviewFrame()
+    }
+    const applied = tf()
+    const [ax, ay] = translateOf(applied)
+    expect(ax).toBeCloseTo(expected(100, 50)[0], 6)
+    expect(ay).toBeCloseTo(expected(100, 50)[1], 6)
+
+    await act(async () =>
+      useRenderStore.getState().patch(renderKeyOf(livePanel()), {
+        svg: `${MATPLOTLIB_SVG}<!-- rebuilt -->`,
+        rev: 2,
+      }),
+    )
+    expect(titleNode(), 'SVG 应当被真的重新插入（这条用例量的就是节点换掉的情形）').not.toBe(before)
+    expect(tf(), '新节点上应当恰好重附一次预览').toBe(applied)
+
+    fire('pointermove', 200, 100)
+    flushPreviewFrame()
+    const [bx, by] = translateOf(tf())
+    expect(bx).toBeCloseTo(expected(200, 100)[0], 6)
+    expect(by).toBeCloseTo(expected(200, 100)[1], 6)
+
+    const moved = tf()
+    await show()
+    expect(tf(), '节点没换的重渲不许重采 base').toBe(moved)
+
+    fire('pointercancel', 200, 100)
+    expect(tf()).toBeNull()
+    expect(useDocumentStore.getState().past).toHaveLength(pastBefore)
+    expect(livePanel().overrides).toEqual([])
+    expect(engineRender).not.toHaveBeenCalled()
   })
 })
