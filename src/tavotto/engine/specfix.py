@@ -476,10 +476,23 @@ def _scope_font_verification(v: dict, contract: dict, manifest: dict, patches: l
     另一种**合规**字体、这次一个属性都没动的元素，也会被报成「没落成」，事务退掉字体那
     几条并告诉用户「字体没装」，而点名的那个其实已经换好了。
 
-    核验范围 = 列表里写了 fontfamily 的 gid ∪ fontfamily 取值相对 B0 变了的 gid（连带落到
-    子元素上的那些）。范围外的不算；因此清空后若只剩字体这一条理由，按其余判据重新定档。
+    核验范围 = 这次相对 B0 新写 / 改写了 fontfamily 的 gid ∪ fontfamily 取值相对 B0 变了的
+    gid（连带落到子元素上的那些）。范围外的不算；因此清空后若只剩字体这一条理由，按其余判据重新定档。
     """
-    written = {str(p["gid"]) for p in patches if p.get("prop") == "fontfamily"}
+    # 「这次写的」= 相对 B0 的列表新增 / 改了值的那几条（Codex #549 第二轮）：`patches` 是
+    # 合并后的全量列表，B0 里用户原本就有的 fontfamily override（例如另一种合规字体）原样
+    # 带着，它不是这次事务的改动，不该拿去和目标字体比脸
+    base = {
+        str(p["gid"]): p.get("value")
+        for p in contract["baseline"]["patches"]
+        if p.get("prop") == "fontfamily"
+    }
+    written = {
+        str(p["gid"])
+        for p in patches
+        if p.get("prop") == "fontfamily"
+        and (str(p["gid"]) not in base or base[str(p["gid"])] != p.get("value"))
+    }
     snap0 = contract["baseline"]["snapshot"]
     changed = set()
     for gid, s1 in normalize.protected_snapshot(manifest).items():

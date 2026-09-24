@@ -453,3 +453,17 @@ def test_margin_repair_round_with_warnings_is_not_accepted(clipped):
     assert any(p["prop"] == "frameon" for p in res["patches"])
     # worker 最后停在没有 warning 的那一版上
     assert not any(p["prop"] == "position" for p in clipped.calls[-1])
+
+
+def test_preexisting_font_override_is_not_verified_against_the_target(mixed):
+    """Codex #549 第二轮：B0 里用户自己加的 fontfamily override（另一种合规字体）原样
+    带着，不算这次的改动，不许拿去和目标字体比脸、误报「字体没装」。"""
+    profile = _profile()
+    profile["font_family"]["latin_accepted"] = [AVAILABLE_FONT, "DejaVu Sans Mono"]
+    base = [{"gid": "axes_0.xlabel", "prop": "fontfamily", "value": "DejaVu Sans Mono"}]
+    res = m._specfix_transaction(mixed, base, 1.0, profile, None)
+    assert res["ok"], res
+    assert not any(s["reason"] == "font_unavailable" for s in res["skipped"]), res["skipped"]
+    assert {"gid": "axes_0.xlabel", "prop": "fontfamily", "value": "DejaVu Sans Mono"} in res[
+        "patches"
+    ]

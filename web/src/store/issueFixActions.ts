@@ -19,11 +19,13 @@ import { engineTransport } from '@/lib/engineTransport'
 import { fixOptions, fixRoute, planFix, type FixChoice, type FixPlan } from '@/lib/issueFix'
 import { panelScale } from '@/lib/preflight'
 import type { PublicationProfile } from '@/lib/profile'
+import { resolveDocumentSpec } from '@/lib/specBinding'
 import type { ValidationIssue } from '@/lib/validation'
 import { requestRender } from '@/store/renderScheduler'
 import type { PanelObject, PanelOverride } from '@/types/document'
 import { activateCanvas } from './canvasSession'
 import { useDocumentStore } from './documentStore'
+import { useProfileStore } from './profileStore'
 
 /**
  * 一条没修成的原因（闭集，文案在 `errors:problems.fixFailed.*`）。
@@ -70,6 +72,16 @@ const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
 
 /** 比较用的规范化：同一份输入 = 同一个字符串（对象身份在 immer 下不可靠，内容才可靠）。 */
 const same = (v: unknown): string => JSON.stringify(v ?? null)
+
+/**
+ * 这份文档**此刻生效的**规范全文（绑定 + 库里那条的内容 / 快照）。等后端期间要比的是
+ * 它，不只是 `doc.profile` 这个绑定：在设置里改了绑定着的那套规范，绑定一个字没变，
+ * 规则却换了（Codex #549 第二轮）。判据唯一出处仍是 `lib/specBinding`。
+ */
+function resolvedSpec(): string {
+  const doc = useDocumentStore.getState().doc
+  return same(resolveDocumentSpec(doc.profile, useProfileStore.getState().catalog()).profile)
+}
 
 /** 同一时刻只跑一轮修复：两轮交错时，后一轮的基准是前一轮还没提交的旧文档。 */
 let inflight = false
@@ -162,6 +174,7 @@ async function runLocked(
   const docAtStart = start.doc
   const loadSeq = start.loadSeq
   const canvasId = start.activeCanvasId
+  const specAtStart = resolvedSpec()
   const failed: FixFailure[] = []
 
   // ---- 画布层：同步算完 ----
@@ -228,7 +241,8 @@ async function runLocked(
   const moved =
     now.loadSeq !== loadSeq ||
     now.activeCanvasId !== canvasId ||
-    same(now.doc.profile) !== same(docAtStart.profile)
+    same(now.doc.profile) !== same(docAtStart.profile) ||
+    resolvedSpec() !== specAtStart
   const unchanged = (id: string): boolean => {
     const before = docAtStart.objects.find((o) => o.id === id)
     const after = now.doc.objects.find((o) => o.id === id)

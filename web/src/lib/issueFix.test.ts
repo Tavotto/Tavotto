@@ -19,6 +19,7 @@ import { fixOptions, fixRoute, planFix } from './issueFix'
 import { validateCanvas, type ValidationIssue } from './validation'
 import { applyIssueFix, applyIssueFixes, batchable } from '@/store/issueFixActions'
 import { useAssetStore } from '@/store/assetStore'
+import { useProfileStore } from '@/store/profileStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
 import { seedExactRender } from '@/test/renderFixtures'
@@ -332,6 +333,37 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     release(passed())
     expect(await pending).toMatchObject({ ok: false, reason: 'stale' })
     expect(overridesOf()).toEqual([])
+  })
+
+  it('等待期间在设置里改了绑定着的那套规范（绑定没变、规则变了）：丢弃', async () => {
+    await seed()
+    // 自建规范 + 跟随全局：库里那条一改，这份文档的规则就跟着变，而 doc.profile 一个字不动
+    const base = useProfileStore.getState().specs
+    const builtin = base[0]
+    const custom = {
+      ...builtin,
+      id: 'spec_custom',
+      built_in: false,
+      read_only: false,
+      display_name: '我的规范',
+      data: { ...builtin.data, profile_id: 'spec_custom' },
+    }
+    useProfileStore.setState({ specs: [...base, custom] })
+    useDocumentStore.getState().commit(literal('绑规范'), (d) => {
+      d.profile = { id: 'spec_custom', follow: true } as never
+    })
+    let release: (v: SpecFixResponse) => void = () => {}
+    engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
+    const pending = applyIssueFix(floorIssue(), profile)
+    const before = JSON.stringify(useDocumentStore.getState().doc.profile)
+    useProfileStore.setState({
+      specs: [...base, { ...custom, data: { ...custom.data, absolute_min_font_size_pt: 9 } }],
+    })
+    release(passed())
+    expect(await pending).toMatchObject({ ok: false, reason: 'stale' })
+    expect(JSON.stringify(useDocumentStore.getState().doc.profile)).toBe(before)
+    expect(overridesOf()).toEqual([])
+    useProfileStore.setState({ specs: base })
   })
 
   it('混合批量等后端时改了标注字号：那条画布层计划丢弃，面板那张照写', async () => {
