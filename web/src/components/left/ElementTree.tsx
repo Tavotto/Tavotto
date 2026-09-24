@@ -395,7 +395,10 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
   )
   const lockedGids = useMemo(() => new Set(panel.lockedGids ?? []), [panel.lockedGids])
 
-  const focusKey = rows.find((r) => r.node.el?.gid === primaryGid)?.key ?? rows[0]?.key
+  // 没有选中时 primaryGid 是 undefined，而聚类行的 `el` 也是 undefined——直接比会停在第一个聚类行
+  const focusKey =
+    (primaryGid !== undefined ? rows.find((r) => r.node.el?.gid === primaryGid)?.key : undefined) ??
+    rows[0]?.key
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
