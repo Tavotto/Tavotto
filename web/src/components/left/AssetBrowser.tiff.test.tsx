@@ -121,9 +121,24 @@ describe('范围之外的 TIFF', () => {
     expect(el!.querySelector('li')!.getAttribute('title')).toBe('raw/scan.tif')
   })
 
-  it('没有素材卡时也照样说出来（整个项目只有一张用不了的 TIFF）', async () => {
+  it('整个项目只有一张用不了的 TIFF：说出它，但不说「项目里还没有图」', async () => {
     await mount([], [bad])
     expect(note()!.textContent).toContain('scan.tif')
+    expect(host.textContent).not.toContain('项目里还没有图')
+  })
+
+  it('搜索只中了用不了的那张：列出它，不说「没有匹配的图」', async () => {
+    await mount([panel('ok.tif')], [bad])
+    await act(async () => useAssetBrowseStore.getState().setQuery('scan'))
+    expect(note()!.textContent).toContain('scan.tif')
+    expect(host.textContent).not.toContain('没有匹配的图')
+  })
+
+  it('搜索谁都没中：照常说「没有匹配的图」（空态只是让位，没被删掉）', async () => {
+    await mount([panel('ok.tif')], [bad])
+    await act(async () => useAssetBrowseStore.getState().setQuery('nothing-like-it'))
+    expect(note()).toBeNull()
+    expect(host.textContent).toContain('没有匹配的图')
   })
 
   it('跟着同一组筛选走：只看 PDF / 只看已使用 / 搜不到它时不出现', async () => {

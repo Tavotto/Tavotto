@@ -415,7 +415,9 @@ export function AssetBrowser() {
 
           {!loaded && !error && <GridSkeleton columns={columns} />}
 
-          {loaded && !error && items.length === 0 && (
+          {/* 用不了的文件也是「有东西可说」：只有一张范围之外的 TIFF 的项目不是「还没有图」，
+              只搜中了它也不是「没有匹配」——空态与下面那张清单不同时出现 */}
+          {loaded && !error && items.length === 0 && unsupportedShown.length === 0 && (
             query || chips.length ? (
               <EmptyState icon={SearchX} title={ab('noMatch')} />
             ) : (

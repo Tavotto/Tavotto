@@ -69,7 +69,7 @@
   不与 `project_refresh.IMG_EXT` 成对。卡片格式名按扩展名说实话（`formatOf`：JPEG / TIFF 不再叫 PNG）。
   范围之外的 TIFF（`/api/panels` 的 `unsupported`）不给卡片、也不静默消失：图区末尾逐个一行
   （`UnsupportedAssets`，`data-asset-unsupported`），跟着同一组搜索 / 来源 / 类型筛选走，文案取
-  `errors:backend.<code>`。看护 `lib/panelSrc.test.ts`、`AssetBrowser.tiff.test.tsx`。
+  `errors:backend.<code>`；它非空时不出空态 / 「没有匹配」（空态与清单不同时出现）。看护 `lib/panelSrc.test.ts`、`AssetBrowser.tiff.test.tsx`。
 - 看护：`scriptRunStore.test.ts` / `ScriptLibrary.test.tsx` /
   `AssetBrowser.runtime.test.tsx` / `runtimeSourceSection.test.tsx` +
   `e2e/asset-library.spec.ts`（show-only 项目真实后端黄金路径 + 窄视口 +
