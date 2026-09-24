@@ -398,6 +398,12 @@ def test_backend_unavailable_holds_without_main_warming_the_implementation(
     assert ok.status_code == 200, ok.get_json() if ok.is_json else ok.status
     png = ok.get_data()
     assert png[:8] == b"\x89PNG\r\n\x1a\n" and int.from_bytes(png[16:20], "big") == 200
+    # 预览只走 render child、不碰字体注册表：再导出一张带文字的画布，量到批准字体 / allowlist 那一段初始化
+    monkeypatch.setattr(pdfbackend, "_IMPLS", {})
+    facade.reset_for_tests()
+    body = client.post("/api/export", json=_canvas(filename="Fig WSGI")).get_json()
+    assert body["status"] == "done", body
+    assert "LiberationSerif" in _out(body, "pdf")["manifest"]["fonts_used"]
     monkeypatch.undo()
 
     # 判据本身：实现一个都没装载时，也认得出选中实现声明的「不可用」
