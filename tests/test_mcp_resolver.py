@@ -873,3 +873,48 @@ def test_the_lock_is_not_left_behind_when_no_descriptor_can_be_opened(
     assert out["started"] is False and out["reason"].startswith("cannot_write")
     monkeypatch.delattr(launcher, "open")
     assert launcher.kick_background_provision()["started"] is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="模拟的是 POSIX flock 的错误码")
+def test_a_broken_lock_subsystem_is_not_mistaken_for_a_running_provision(
+    tmp_path, fake_popen, monkeypatch, capsys
+):
+    """#548 评审 P2：ENOLCK / EIO / 文件系统不支持锁，不是「别人在装」——报成
+    provision_in_progress 会让人永远等一个不存在的持有者。只有 EWOULDBLOCK 才算被占用。"""
+    import errno
+    import fcntl
+
+    def broken(fd, op):
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(fcntl, "flock", broken)
+    with pytest.raises(OSError):
+        launcher._acquire_provision_lock()
+    out = launcher.kick_background_provision()
+    assert out["started"] is False and out["reason"].startswith("lock_failed"), out
+
+    ran = []
+    rc = _run_provision_main(monkeypatch, lambda spec, python_base=None: ran.append(1))
+    report = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert rc != 0 and report["code"] == "provision_lock_failed", report
+    assert ran == []
+
+
+def test_no_rebuild_is_started_from_inside_the_venv_it_must_clear(
+    tmp_path, fake_popen, monkeypatch
+):
+    """#548 评审 P2：本 server 跑在自管 venv 的 python.exe 上、且它的版本在区间外时，
+    --provision 要 `venv --clear` 重建——Windows 删不掉正在跑的 python.exe，每次启动都
+    白失败一遍。不起，说清楚；区间内（只需 pip 升级、不重建）照常起。"""
+    monkeypatch.setattr(launcher, "_running_executable_is_locked", lambda: True)
+    monkeypatch.setattr(launcher.sys, "executable", launcher.managed_python())
+    in_range = (launcher.PYTHON_MIN, launcher.PYTHON_MAX_EXCLUSIVE)
+    monkeypatch.setattr(launcher, "PYTHON_MIN", (3, 99))
+    monkeypatch.setattr(launcher, "PYTHON_MAX_EXCLUSIVE", (3, 100))
+    out = launcher.kick_background_provision()
+    assert out["started"] is False and out["reason"] == "venv_in_use", out
+    assert fake_popen == []
+
+    monkeypatch.setattr(launcher, "PYTHON_MIN", in_range[0])
+    monkeypatch.setattr(launcher, "PYTHON_MAX_EXCLUSIVE", in_range[1])
+    assert launcher.kick_background_provision()["started"] is True

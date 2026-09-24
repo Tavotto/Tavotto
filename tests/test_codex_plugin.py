@@ -1209,7 +1209,27 @@ def test_the_dual_launcher_keeps_its_platform_contract():
     probe = re.search(r'set "TAVOTTO_LAUNCH_PROBE=([^"]+)"', head.decode("ascii"))
     assert probe and "sys.version_info" in probe.group(1), "探测没有判版本"
     executed = [ln for ln in code_lines if " -c " in ln]
-    assert executed and all("%tavotto_launch_probe%" in ln for ln in executed), executed
+    assert executed and all(
+        "%tavotto_launch_probe%" in ln or "%tavotto_launch_probe_managed%" in ln for ln in executed
+    ), executed
+    # 自管 venv 只在引擎区间内才优先（区间外 --provision 要重建它，Windows 上删不掉正在跑的
+    # python.exe——#548 评审 P2）；区间与 server.py 的 PYTHON_MIN / PYTHON_MAX_EXCLUSIVE 同源
+    from importlib import util as _util
+
+    spec = _util.spec_from_file_location("_launcher_range", PLUGIN / "mcp" / "server.py")
+    srv = _util.module_from_spec(spec)
+    spec.loader.exec_module(srv)
+    managed = re.search(r'set "TAVOTTO_LAUNCH_PROBE_MANAGED=([^"]+)"', head.decode("ascii"))
+    assert managed, "自管 venv 没有按引擎区间单独探测"
+    assert str(srv.PYTHON_MIN) in managed.group(1), (srv.PYTHON_MIN, managed.group(1))
+    assert str(srv.PYTHON_MAX_EXCLUSIVE) in managed.group(1), managed.group(1)
+    venv_lines = [i for i, ln in enumerate(executed) if "mcp-runtime\\venv" in ln]
+    assert len(venv_lines) == 2, "自管 venv 应出现两次：区间内优先、区间外垫底"
+    first, last = venv_lines
+    # 显式 TAVOTTO_MCP_PYTHON 之后紧接着是区间内的自管 venv；区间外的它垫在所有外部 Python 之后
+    assert "%tavotto_mcp_python%" in executed[0] and first == 1, executed
+    assert "%tavotto_launch_probe_managed%" in executed[first], executed
+    assert last == len(executed) - 1 and "%tavotto_launch_probe%" in executed[last], executed
     mode = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files", "-s", "codex-plugin/mcp/launch.cmd"],
         capture_output=True,
@@ -1374,6 +1394,7 @@ def test_launcher_is_stdlib_only_and_parses():
         "subprocess",
         "sys",
         "time",
+        "errno",
         # 重装锁用内核文件锁（进程退出即释放）：POSIX / Windows 各一个标准库
         "fcntl",
         "msvcrt",

@@ -37,8 +37,11 @@
   Windows（`python3` 在 Windows 上常是商店别名：命令存在、9009、零输出，连降级 server
   都起不来）。所以 command 是一份 **sh / cmd 双语**启动器：POSIX 上就是
   `exec python3 "$@"`（与改动前逐字同义），Windows 上按 显式 `TAVOTTO_MCP_PYTHON` →
-  插件自管环境 → `py -3` → PATH 上 `python`/`python3` → `%LOCALAPPDATA%\Programs\Python`
-  的顺序**真跑**一句判版本的探测（≥ 3.8；Python 2 也能 `import sys`，却解析不了 server.py），第一个过得了的接过全部参数；引擎定位仍只归
+  插件自管环境（**仅当它在引擎区间内**，区间与 server.py 的 `PYTHON_MIN`/`PYTHON_MAX_EXCLUSIVE`
+  同源；区间外的自管 venv 要被 `--provision` 重建，Windows 删不掉正在跑的 python.exe，
+  所以它只垫底）→ `py -3` → PATH 上 `python`/`python3` → `%LOCALAPPDATA%\Programs\Python`
+  → 区间外的自管环境 的顺序**真跑**一句判版本的探测（≥ 3.8；Python 2 也能 `import sys`，
+  却解析不了 server.py），第一个过得了的接过全部参数；引擎定位仍只归
   `server.py` 的 resolver。**形态约束**（`test_the_dual_launcher_keeps_its_platform_contract`
   看护）：第一行 shebang（Rust 起不认无 shebang 的脚本，实测 Exec format error）、git 模式
   100755（Codex 缓存副本保留执行位，0.156.1 实测）、全文 LF、批处理段纯 ASCII、不用
@@ -48,7 +51,7 @@
   判（按**插件根**解析相对 command，不按本进程 cwd），起不来才把**已装副本**的 command
   钉成解释器绝对路径，**`.mcp.json` 与 `openai.yaml` 两侧一起换**（stdio 依赖按 command
   匹配）。发行件里只许裸名字或这种 `./` 相对、真在插件里的启动器
-  （`pluginmanifest._is_plugin_relative`），机器相关的绝对路径只属于已装副本。插件升级会把
+  （`pluginmanifest._is_bundled_launcher`，且须 100755），机器相关的绝对路径只属于已装副本。插件升级会把
   钉过的绝对路径换回启动器——它自己找 Python，多数机器上不用再做什么。
   真 Windows + Codex Desktop 上的一次实跑是 #266 的关闭条件，CI 的 windows 腿只替它跑了
   cmd.exe 那半边（`test_windows_launcher_skips_a_python_that_does_not_run`）。

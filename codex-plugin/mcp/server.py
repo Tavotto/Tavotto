@@ -679,22 +679,30 @@ def _try_lock_fd(fd: int) -> bool:
     持有者无论正常结束、崩溃还是被杀，内核都在它退出时释放锁——没有「过期锁」，
     也就不需要接管、心跳、令牌，那一整套「核对所有权再改」在纯文件语义下永远
     不是原子的。POSIX 用 `flock`（按打开的文件描述，同进程两个 fd 也互斥），
-    Windows 用 `msvcrt.locking` 锁第 0 字节（文件为空也能锁）。"""
+    Windows 用 `msvcrt.locking` 锁第 0 字节（文件为空也能锁）。
+    只有**被占用**才回 False；锁子系统自己的错（ENOLCK、EIO、文件系统不支持锁……）
+    照常抛 OSError——当成「别人在装」会让手动与自动修复永远原地等一个不存在的持有者
+    （#548 评审 P2）。"""
+    import errno
+
     if os.name == "nt":
         import msvcrt
 
+        os.lseek(fd, 0, os.SEEK_SET)
         try:
-            os.lseek(fd, 0, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             return True
-        except OSError:
-            return False
+        except OSError as exc:
+            # 被别的句柄锁着时 CRT 报 EACCES（部分版本 EDEADLOCK）
+            if exc.errno in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)):
+                return False
+            raise
     import fcntl
 
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return True
-    except OSError:
+    except BlockingIOError:  # EWOULDBLOCK / EAGAIN：被占用
         return False
 
 
@@ -703,10 +711,26 @@ def _acquire_provision_lock() -> "int | None":
     打不开锁文件（EMFILE、只读盘……）照常抛 OSError，由调用方报出来。"""
     os.makedirs(managed_runtime_dir(), exist_ok=True)
     fd = os.open(_provision_lock_path(), os.O_RDWR | os.O_CREAT, 0o644)
-    if _try_lock_fd(fd):
+    try:
+        held = _try_lock_fd(fd)
+    except OSError:
+        os.close(fd)
+        raise
+    if held:
         return fd
     os.close(fd)
     return None
+
+
+def _running_executable_is_locked() -> bool:
+    """正在跑的解释器文件删不掉（Windows）；POSIX 上 unlink 正在跑的文件没问题。"""
+    return os.name == "nt"
+
+
+def _running_from_managed_venv() -> bool:
+    venv = os.path.normcase(os.path.abspath(os.path.join(managed_runtime_dir(), "venv")))
+    exe = os.path.normcase(os.path.abspath(sys.executable or ""))
+    return exe.startswith(venv + os.sep)
 
 
 def _release_provision_lock(fd: "int | None") -> None:
@@ -744,10 +768,20 @@ def kick_background_provision() -> dict:
     log = os.path.join(root, "provision.log")
     if os.environ.get(NO_AUTO_PROVISION_ENV) == "1":
         return {"started": False, "reason": "disabled", "log": log}
+    if (
+        _running_executable_is_locked()
+        and _running_from_managed_venv()
+        and not _python_supported(tuple(sys.version_info[:2]))
+    ):
+        # 本 server 正跑在这个自管 venv 的 python.exe 上，而它的版本在区间外——
+        # --provision 要 `venv --clear` 整个重建，Windows 删不掉正在跑的 python.exe，
+        # 每次启动都会失败一遍（#548 评审 P2）。不起，明确说要退出 Codex 后手动重建。
+        # launch.cmd 只在区间内才优先用自管 venv，所以只有机器上别无 Python 时才走到这。
+        return {"started": False, "reason": "venv_in_use", "log": log}
     try:
         probe = _acquire_provision_lock()
     except OSError as exc:
-        return {"started": False, "reason": f"cannot_write: {exc}", "log": log}
+        return {"started": False, "reason": f"lock_failed: {exc}", "log": log}
     if probe is None:
         return {"started": False, "reason": "already_running", "log": log}
     _release_provision_lock(probe)
@@ -1320,6 +1354,14 @@ def main() -> int:
         resolution = {**resolution, "auto_provision": auto}
         if auto["started"] or auto["reason"] == "already_running":
             hint = MANAGED_STALE_KICKED_HINT
+        elif auto["reason"] == "venv_in_use":
+            hint = (
+                "插件自管环境要整个重建（它的 Python 版本不在 "
+                + python_range_text()
+                + "），可本会话正跑在它里面的 python.exe 上，Windows 删不掉正在运行的文件。"
+                "请先装一个 Python " + python_range_text() + "，退出 Codex，在终端运行："
+                "py -3 <插件目录>/mcp/server.py --provision，然后重新打开 Codex。"
+            )
         else:
             hint = (
                 "插件自管环境里的引擎跟当前插件对不上（多半是插件升级后环境还是旧版），"
