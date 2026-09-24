@@ -619,34 +619,69 @@ def test_actions_annotations_and_javascript_of_the_source_are_not_imported(
     assert _close(_px(img, 70, 50), (0, 0, 255))
 
 
-def _owner_only_encrypted_pdf() -> bytes:
-    """只有 owner 密码、user 密码为空：pikepdf.open 不抛就打开了——仍是加密文件。"""
+def _owner_only(data: bytes, **encryption) -> bytes:
+    """同一份源存成「只有 owner 密码」：user 密码为空，任何阅读器无密码打开，只限制权限。"""
     import pikepdf
 
-    pdf = pikepdf.new()
-    pdf.add_blank_page(page_size=(100, 100))
     out = io.BytesIO()
-    pdf.save(out, encryption=pikepdf.Encryption(owner="o", user="", R=6))
+    with pikepdf.open(io.BytesIO(data)) as pdf:
+        pdf.save(
+            out,
+            compress_streams=True,  # 内容流带 /Filter：走 `_keep_source_encoding` 的照搬路（读的是 raw 字节）
+            encryption=pikepdf.Encryption(
+                owner="o", user="", allow=pikepdf.Permissions(extract=False), **encryption
+            ),
+        )
     return out.getvalue()
 
 
-def test_an_owner_password_only_pdf_is_still_refused_as_encrypted(provider, tmp_path):
-    """Codex #463 第四轮 P2：user 密码为空的加密 PDF 打得开、不抛 PasswordError——`is_encrypted` 仍为真，照样拒。"""
+@pytest.mark.parametrize(
+    "encryption",
+    [{"R": 6}, {"R": 4, "aes": True}, {"R": 3, "aes": False, "metadata": False}],
+    ids=["aes256", "aes128", "rc4"],
+)
+def test_an_owner_password_only_pdf_is_imported_like_a_plain_one(
+    provider, pdfium, tmp_path, encryption
+):
+    """#516 裁决 B：只有 owner 密码的源按普通 PDF 导入——像素与文字层同未加密的原件，产物本身不加密。
+    （推翻 Codex #463 第四轮 P2 的「打开后 `is_encrypted` 也拒」；要 user 密码的见下一条。）"""
     import pikepdf
 
-    data = _owner_only_encrypted_pdf()
-    with pikepdf.open(io.BytesIO(data)) as src:  # 前提：它真的能无密码打开、且真的是加密的
-        assert src.is_encrypted
-    with pytest.raises(pdfwriter.WriterError) as ei:
-        _write(
+    resources = lambda pdf: pikepdf.Dictionary(  # noqa: E731
+        Font=pikepdf.Dictionary(
+            F1=pikepdf.Dictionary(
+                Type=pikepdf.Name.Font, Subtype=pikepdf.Name.Type1, BaseFont=pikepdf.Name.Helvetica
+            )
+        )
+    )
+    plain = _pdf(
+        b"0 0 1 rg 20 20 100 60 re f BT /F1 20 Tf 20 40 Td (ownerok) Tj ET", resources=resources
+    )
+    data = _owner_only(plain, **encryption)
+    with pikepdf.open(
+        io.BytesIO(data)
+    ) as src:  # 前提：它真的无密码可开、真的加密、内容流真的带过滤器
+        assert src.is_encrypted and src.pages[0].obj.Contents.get("/Filter") is not None
+
+    def export(name, source):
+        out, _ = _write(
             tmp_path,
             provider,
-            [ir.ImportedPage("pg", (0, 0, 100, 100))],
-            {"pg": _res("owner.pdf", "pdf", data)},
-            {"pg": data},
+            [ir.ImportedPage("pg", (0, 0, 200, 100))],
+            {"pg": _res(name, "pdf", source)},
+            {"pg": source},
+            name=name,
         )
-    assert ei.value.code == "source_unreadable" and ei.value.params["why"] == "encrypted"
-    assert not (tmp_path / "out.pdf").exists()
+        return out
+
+    base, owner = export("plain.pdf", plain), export("owner.pdf", data)
+    with pikepdf.open(owner) as produced:
+        assert not produced.is_encrypted and "/Encrypt" not in produced.trailer
+    assert _raster(pdfium, owner).tobytes() == _raster(pdfium, base).tobytes()
+    assert _close(
+        _px(_raster(pdfium, owner), 110, 70), (0, 0, 255)
+    )  # 判据的前提：画出来的不是一张白纸
+    assert "ownerok" in pdfium.PdfDocument(str(owner))[0].get_textpage().get_text_range()
 
 
 def test_an_encrypted_source_is_refused_structurally(provider, tmp_path):
