@@ -13,6 +13,8 @@
  *   7. 多选整组拖动时选区里的形状同样带着内容走。
  */
 import { literal } from '@/i18n'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
@@ -20,7 +22,7 @@ import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { alignEntries, PATCH_CARRY_TOL_PT } from '@/lib/elementGeom'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { exactPanelManifest, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
@@ -32,6 +34,7 @@ import {
 } from '@/store/svgPreviewStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { OverlaySvg } from './OverlaySvg'
 import { startElementDrag, startElementGroupMove } from './interactions'
 
 const engineRender = vi.fn()
@@ -505,5 +508,41 @@ describe('多选整组拖动', () => {
     dragTo(40, 20, { metaKey: true })
     fire('pointerup', 40, 20, { metaKey: true })
     expect(livePanel().overrides.map((o) => o.gid).sort()).toEqual([boxP.gid, boxR.gid].sort())
+  })
+})
+
+/* ======================= 覆盖层：虚线不挂在权威闸门后面 ======================= */
+
+describe('覆盖层：松手后、新渲染回来之前（几何权威缺席）虚线照样画着', () => {
+  it('override 已写、exact manifest 为 null 的那段时间：虚线仍在画面上；渲染回来才消失', async () => {
+    await setup()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    try {
+      act(() => root.render(<OverlaySvg />))
+      const dashed = () => host.querySelectorAll(`line[data-carried-arrow="${oneEnd.gid}"]`)
+
+      startElementDrag(down(0, 0), livePanel(), boxP, layout)
+      act(() => dragTo(40, 20))
+      expect(dashed()).toHaveLength(1)
+
+      act(() => fire('pointerup', 40, 20))
+      // 真实可达状态：文档 overrides 已是新值，新渲染没回来 → 没有几何权威
+      expect(livePanel().overrides.length).toBeGreaterThan(1)
+      expect(exactPanelManifest(useRenderStore.getState(), livePanel())).toBeNull()
+      expect(dashed(), '权威缺席时虚线不能跟着选区框一起消失').toHaveLength(1)
+
+      // 这次提交的权威渲染回来：几何就位、预览收工、虚线消失
+      act(() => {
+        seedExactRender(livePanel(), manifestFor(livePanel().overrides), { svg: MATPLOTLIB_SVG })
+        reattachPreview('p1', renderKeyOf(livePanel()))
+      })
+      expect(exactPanelManifest(useRenderStore.getState(), livePanel())).not.toBeNull()
+      expect(dashed()).toHaveLength(0)
+    } finally {
+      act(() => root.unmount())
+      host.remove()
+    }
   })
 })

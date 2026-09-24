@@ -328,6 +328,7 @@ export function OverlaySvg() {
       {cropTarget && cropTarget.type === 'panel' && <CropFrame obj={cropTarget} t={t} />}
 
       {elementPanel?.type === 'panel' && <ElementBoxes panel={elementPanel} t={t} />}
+      {elementPanel?.type === 'panel' && <PreviewLines panel={elementPanel} t={t} />}
     </svg>
   )
 }
@@ -676,14 +677,51 @@ function GeometryOutline({
  * ——用户看到的是「框和图对不上、框还能拖」。权威没就位就一个框都不画，
  * selectedGids 照旧留着，等精确 manifest 回来框自己复位。
  */
+/**
+ * 拖形状时只有一端跟着走的箭头的虚线（形状变了，SVG 平移会骗人）。它是**预览平面**
+ * 的一部分（`svgPreviewStore.previewLine`），与 SVG 平移预览同层、同一套收尾，
+ * 所以**不挂在几何权威的闸门后面**：松手提交后 overrides 已变、新渲染没回来的那段
+ * 时间 `useExactPanelManifest` 是 null，ElementBoxes 整个不画——虚线若在里面，慢图上
+ * 旧箭头就先露出来（#553 评审）。换算只用面板与视口，不读 manifest。
+ */
+function PreviewLines({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
+  const lines = usePreviewLines(panel.id)
+  if (!lines.size) return null
+  const full = panelFullRect(panel)
+  const panelBox = toScreen(panel, t)
+  const rot = panelRotation(panel)
+  const spin = rot
+    ? `rotate(${rot} ${panelBox.x + panelBox.w / 2} ${panelBox.y + panelBox.h / 2})`
+    : undefined
+  const toPoint = (p: [number, number]) => {
+    const b = toScreen({ x: full.x + p[0] * full.w, y: full.y + p[1] * full.h, w: 0, h: 0 }, t)
+    return { x: b.x, y: b.y }
+  }
+  return (
+    <g transform={spin}>
+      {[...lines].map(([gid, c]) => (
+        <line
+          key={gid}
+          data-carried-arrow={gid}
+          x1={toPoint(c.a).x}
+          y1={toPoint(c.a).y}
+          x2={toPoint(c.b).x}
+          y2={toPoint(c.b).y}
+          stroke="var(--color-sel)"
+          strokeWidth={1}
+          strokeDasharray="4 3"
+        />
+      ))}
+    </g>
+  )
+}
+
 function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const manifest = useExactPanelManifest(panel)
   const hoverGid = useInteractionStore((s) => s.hoverGid)
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)
   const arrowPreview = useInteractionStore((s) => s.arrowPreview)
-  // 拖形状时单端跟随的箭头的虚线：预览平面的一部分，松手后留到权威渲染换上来
-  const previewLines = usePreviewLines(panel.id)
   const selectedGids = useUiStore((s) => s.selectedGids)
   const selectedGid = selectedGids.at(-1) ?? null
   if (!manifest) return null
@@ -842,22 +880,6 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               onPointerDown={(e) => startAxesDrag(e, panel, primary.target, layout, dir)}
             />
           ))}
-
-        {/* 拖形状时只有一端跟着走的箭头：形状变了，SVG 平移会骗人，沿预览端点画虚线
-            （与拖单个端点时的 arrowPreview 同款） */}
-        {[...previewLines].map(([gid, c]) => (
-          <line
-            key={`carried-${gid}`}
-            data-carried-arrow={gid}
-            x1={toPoint(c.a).x}
-            y1={toPoint(c.a).y}
-            x2={toPoint(c.b).x}
-            y2={toPoint(c.b).y}
-            stroke="var(--color-sel)"
-            strokeWidth={1}
-            strokeDasharray="4 3"
-          />
-        ))}
 
         {arrowEl && arrowPts && (
           <>
