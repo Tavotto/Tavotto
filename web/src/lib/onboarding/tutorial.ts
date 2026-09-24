@@ -184,9 +184,14 @@ export type TutorialEntrySource = 'picker' | 'help' | 'settings' | 'palette' | '
  * 发 `GET /api/tutorial` 探资源，用户紧接着点「用示例了解 Tavotto」——探测还在飞就把点击判成
  * 「打不开」，用户看到的是一条无中生有的红字（U08 把后端第一次 probe 变慢了 100 ms，e2e 就撞上）。
  */
+/**
+ * 教程自己在开 / 重置，或者**项目正在切换**：这时不再发起第二次。教程也是一次切项目
+ * （`adoptOpenedProject`），切换中再点只会排上一次用户没想要的完整换代（Codex #550）。
+ * 所有入口（画布空态、命令面板、帮助菜单、设置、Picker）都经这里，拦一处就够。
+ */
 function mutating(): boolean {
   const b = useTutorialStore.getState().busy
-  return b === 'open' || b === 'reset'
+  return b === 'open' || b === 'reset' || useProjectStore.getState().switching
 }
 
 export async function startTutorial(source?: TutorialEntrySource): Promise<TutorialOutcome> {

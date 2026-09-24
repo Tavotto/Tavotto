@@ -63,6 +63,8 @@ export function ProjectPicker() {
   const removeMany = useProjectStore((s) => s.removeMany)
   // 从设置「切换项目」进来时后端仍有打开的项目——允许原路返回
   const currentOpen = useProjectStore((s) => s.project?.open === true)
+  // 切项目是串行的；切换期间这一屏所有「打开 / 新建 / 返回」一起置灰（Codex #550）
+  const switching = useProjectStore((s) => s.switching)
   const [error, setError] = useState<string | null>(null)
   const [busyPath, setBusyPath] = useState<string | null>(null)
   const [typed, setTyped] = useState('')
@@ -105,6 +107,7 @@ export function ProjectPicker() {
             <Button
               variant="primary"
               size="md"
+              disabled={switching}
               onClick={entry.startCreate}
             >
               <FolderPlus size={ICON_SIZE.md} />
@@ -113,6 +116,7 @@ export function ProjectPicker() {
             <Button
               variant="secondary"
               size="md"
+              disabled={switching}
               onClick={entry.startOpen}
             >
               <FolderOpen size={ICON_SIZE.md} />
@@ -122,7 +126,8 @@ export function ProjectPicker() {
               <Button
                 size="md"
                 className="ml-auto text-ink-2"
-                onClick={() => useProjectStore.setState({ phase: 'open' })}
+                disabled={switching}
+                onClick={() => useProjectStore.getState().returnToCurrent()}
               >
                 {t('picker.backToCurrent')}
               </Button>
@@ -136,7 +141,7 @@ export function ProjectPicker() {
             className="mt-3 flex gap-2"
             onSubmit={(e) => {
               e.preventDefault()
-              if (!target) return
+              if (!target || switching) return
               void openPath(target.kind === 'path' ? target.path : target.entry.path)
             }}
           >
@@ -152,7 +157,7 @@ export function ProjectPicker() {
               type="submit"
               variant="secondary"
               size="md"
-              disabled={!target}
+              disabled={!target || switching}
               aria-label={
                 target?.kind === 'recent' ? t('picker.openMatch', { name: target.entry.name }) : undefined
               }
@@ -193,6 +198,7 @@ export function ProjectPicker() {
                     entry={r}
                     hint={hints.get(r.path)}
                     busy={busyPath === r.path}
+                    disabled={switching}
                     onOpen={() => void openPath(r.path)}
                     onRemove={() => void remove(r.path)}
                   />
@@ -293,6 +299,8 @@ function TutorialEntry() {
   const busy = useTutorialStore((s) => s.busy)
   const failure = useTutorialStore((s) => s.failure)
   const entry = useOnboardingStore((s) => tutorialEntry(s.status))
+  // 教程也是一次切项目（adoptOpenedProject）：切换进行中不再排第二次
+  const switching = useProjectStore((s) => s.switching)
 
   useEffect(() => {
     void loadTutorialStatus()
@@ -309,7 +317,7 @@ function TutorialEntry() {
           variant="ghost"
           size="md"
           className="-ml-2.5 text-ink-2"
-          disabled={unavailable || busy === 'open'}
+          disabled={unavailable || busy === 'open' || switching}
           loading={busy === 'open'}
           loadingLabel={t('picker.tutorialOpening')}
           data-onboarding-anchor="tutorial-entry"
@@ -398,6 +406,7 @@ function RecentRow({
   entry,
   hint,
   busy,
+  disabled = false,
   onOpen,
   onRemove,
 }: {
@@ -405,6 +414,8 @@ function RecentRow({
   /** 同名项目的辨认后缀（`lib/recentProjects.disambiguateRecent`） */
   hint?: string
   busy: boolean
+  /** 有一次切换正在进行：打开不了（移除仍可以） */
+  disabled?: boolean
   onOpen: () => void
   onRemove: () => void
 }) {
@@ -414,7 +425,7 @@ function RecentRow({
       <Folder size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
       <button
         onClick={onOpen}
-        disabled={busy || !entry.exists}
+        disabled={busy || disabled || !entry.exists}
         className={cn(
           'min-w-0 flex-1 text-left outline-none focus-visible:focus-ring',
           entry.exists ? 'cursor-pointer' : 'cursor-default',

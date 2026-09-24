@@ -113,6 +113,17 @@ interface ProjectState {
   dismissLastDocumentIssue: () => void
   /** 后端不认本标签页的项目了（409 no_project）：退回 Project Picker */
   dropProject: () => void
+  /**
+   * 去 Project Picker（设置「切换项目」、桌面菜单「打开项目」、教程收尾「打开自己的项目」）。
+   * **切换进行中什么都不做**：换代完成时 `adoptNow` 会把 phase 写回 open，用户这一下
+   * 会被悄悄吞掉；而 Picker 里的入口在切换期间本来就全灰（Codex #550）。
+   */
+  showPicker: () => void
+  /**
+   * Picker 的「返回当前项目」。切换进行中**什么都不做**：`adoptNow` 已经把全局 pj 换成
+   * 新项目、`project` 还没发布的那一刻回去，看到的是旧项目的界面、请求却发往新项目。
+   */
+  returnToCurrent: () => void
 }
 
 /**
@@ -401,6 +412,16 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   },
 
   dismissLastDocumentIssue: () => set({ lastDocumentIssue: null }),
+
+  showPicker: () => {
+    if (get().switching) return
+    set({ phase: 'none' })
+  },
+
+  returnToCurrent: () => {
+    if (get().switching || get().project?.open !== true) return
+    set({ phase: 'open' })
+  },
 
   /**
    * 后端不认本标签页记着的 pj 了（进程重启 / 项目被别处关掉）：忘掉这个 id，

@@ -12,6 +12,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RecentProject } from '@/lib/api'
+import { startTutorial } from '@/lib/onboarding/tutorial'
 import { setCurrentProjectId } from '@/lib/session'
 import { useProjectStore } from './projectStore'
 
@@ -26,11 +27,14 @@ let pending: Pending[] = []
 /** 还没放行的全部请求（`take` 取走但断言失败没来得及放行的也在这里） */
 const unreleased = new Set<Pending>()
 const opened: string[] = []
+/** 发出过的请求 URL（判「某个请求根本没发」用） */
+const sent: string[] = []
 /** 只有「刷新与收藏赛跑」那条用例要把 GET recent 也挂起 */
 let holdRecent = false
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = String(url)
+  sent.push(u)
   const hold =
     u.includes('/api/projects/open') ||
     (u.includes('/api/projects/pinned') && init?.method === 'POST') ||
@@ -77,6 +81,7 @@ beforeEach(() => {
   localStorage.clear()
   pending = []
   opened.length = 0
+  sent.length = 0
   holdRecent = false
   useProjectStore.setState({
     phase: 'open',
@@ -232,5 +237,44 @@ describe('列表刷新只认最新那一次', () => {
     take('/api/projects/recent').release(200, { recent: [{ ...entry('/figs/A'), current: true }], pinned: [] })
     await refresh
     expect(useProjectStore.getState().recent.map((r) => r.path)).not.toContain('/figs/A')
+  })
+})
+
+describe('切换进行中的「去 Picker / 返回当前」', () => {
+  it('切换未完成时两者都不动 phase；完成后照常', async () => {
+    const store = useProjectStore.getState()
+    const sw = store.open('/figs/A')
+    await settle()
+    expect(useProjectStore.getState().switching).toBe(true)
+    useProjectStore.getState().showPicker()
+    expect(useProjectStore.getState().phase).toBe('open') // 被拦下
+    useProjectStore.setState({ phase: 'none' }) // 假设用户此刻在 Picker 上
+    useProjectStore.getState().returnToCurrent()
+    expect(useProjectStore.getState().phase).toBe('none') // 被拦下：旧界面 + 新 pj 的那一刻
+
+    take('/api/projects/open').release(200, { open: true, id: 'pA', name: 'A', figures_dir: '/figs/A' })
+    await sw
+    expect(useProjectStore.getState().switching).toBe(false)
+    useProjectStore.getState().showPicker()
+    expect(useProjectStore.getState().phase).toBe('none')
+    useProjectStore.getState().returnToCurrent()
+    expect(useProjectStore.getState().phase).toBe('open')
+  })
+})
+
+describe('切换进行中点教程', () => {
+  it('不发 /api/tutorial/open、不排第二次切换；切换结束后照常可开', async () => {
+    const sw = useProjectStore.getState().open('/figs/A')
+    await settle()
+    const out = await startTutorial('help')
+    expect(out.ok).toBe(false)
+    expect(sent.some((u) => u.includes('/api/tutorial/open'))).toBe(false)
+    take('/api/projects/open').release(200, { open: true, id: 'pA', name: 'A', figures_dir: '/figs/A' })
+    await sw
+    expect(useProjectStore.getState().switching).toBe(false)
+    // 反证落点：不在切换中时它确实会去开（请求发得出去即可，结果不在本条的主语里）
+    // mock 回的是空形状，后面的认领会失败——不关心，只等它跑完别漏到下一条用例里
+    await startTutorial('help').catch(() => undefined)
+    expect(sent.some((u) => u.includes('/api/tutorial/open'))).toBe(true)
   })
 })
