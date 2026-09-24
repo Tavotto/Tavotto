@@ -19,6 +19,32 @@
 import os
 import sys
 
+#: macOS 自带、随系统更新维护的 CA 证书包（`security` 钥匙串里的根证书导出）。
+MACOS_CA_BUNDLE = "/etc/ssl/cert.pem"
+
+
+def _ensure_ca_bundle(environ=os.environ, *, platform=sys.platform, exists=os.path.isfile):
+    """macOS 冻结父进程找不到任何 CA 时，把 OpenSSL 指到系统证书包（#439）。
+
+    PyInstaller 带走的 libcrypto 里 OPENSSLDIR 是**构建机**上 python.org 框架的
+    绝对路径，用户机器上不存在；CPython 在 macOS 上又不读系统钥匙串，于是
+    `load_default_certs()` 一张 CA 都装不进来，所有公网 HTTPS 都
+    CERTIFICATE_VERIFY_FAILED——遥测按设计静默丢弃，平台指标里整个 macOS 桌面
+    版是零。OpenSSL 在**建上下文时**读 `SSL_CERT_FILE`，所以必须在任何 HTTPS
+    之前设好；用户自己设了 `SSL_CERT_FILE` / `SSL_CERT_DIR` 的一律不碰。
+    Windows 由 CPython 从系统证书库补 CA，不受影响；Linux 没有桌面版。
+    修在打包入口而不是 `engine/telemetry.py`：引擎保持纯标准库、不为冻结态引依赖。
+    返回设上的路径（没动就是 None），供测试与日志用。
+    """
+    if platform != "darwin":
+        return None
+    if environ.get("SSL_CERT_FILE") or environ.get("SSL_CERT_DIR"):
+        return None
+    if not exists(MACOS_CA_BUNDLE):
+        return None
+    environ["SSL_CERT_FILE"] = MACOS_CA_BUNDLE
+    return MACOS_CA_BUNDLE
+
 
 def _redirect_streams() -> None:
     if sys.stdout is not None and sys.stderr is not None:
@@ -39,6 +65,7 @@ def _redirect_streams() -> None:
 
 def main() -> None:
     _redirect_streams()
+    _ensure_ca_bundle()
     # 冻结应用里 sys.path 上没有源码树；datas 把包放在了 _MEIPASS 下
     base = getattr(sys, "_MEIPASS", None)
     if base and base not in sys.path:
