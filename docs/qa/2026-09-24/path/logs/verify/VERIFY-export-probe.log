@@ -1,0 +1,17 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh verify/VERIFY-export-probe tests/test_zz_verify_export_probe.py -vv -s
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_zz_verify_export_probe.py -vv -s -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vpath-scratch/pytest-verify/VERIFY-export-probe
+# time: 2026-09-24T19:35:22Z
+# sha: 93dd9f4b86bea7fd5ccde339f57735b85a6cdf36  (worktree dirty files: 1)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-path
+configfile: pytest.ini
+collecting ... collected 2 items
+
+tests/test_zz_verify_export_probe.py::test_verify_path04_export_follows_the_choice_only_when_rerun root_edit [0.0, 0.8999999999999999, 0.19999999999999998, 1.0] proj_static [0.0, 0.8999999999999999, 0.19999999999999998, 1.0] proj_edit [0.0, 0.19999999999999998, 0.8999999999999999, 1.0]
+PASSED
+tests/test_zz_verify_export_probe.py::test_verify_path01_export_with_an_edit_reads_the_same_directory_csv edit [0.0, 0.19999999999999998, 0.8999999999999999, 1.0] static [0.0, 0.8999999999999999, 0.19999999999999998, 1.0]
+PASSED
+
+============================== 2 passed in 29.66s ==============================
+# exit_code: 0

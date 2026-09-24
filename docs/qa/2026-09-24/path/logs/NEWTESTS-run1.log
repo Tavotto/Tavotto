@@ -1,0 +1,23 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh NEWTESTS-run1 tests/test_first_open_paths_d1.py -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-NEWTESTS-run1
+# time: 2026-09-24T19:13:21Z
+# sha: 718838a02d06c05332ea1d825a13481a2032c8ee  (worktree dirty files: 0)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-4
+configfile: pytest.ini
+collecting ... collected 10 items
+
+tests/test_first_open_paths_d1.py::test_the_decoy_is_indistinguishable_by_extrema_mean_and_ylim PASSED [ 10%]
+tests/test_first_open_paths_d1.py::test_path01_same_directory_csv_from_a_foreign_cwd_first_open_replay_and_export PASSED [ 20%]
+tests/test_first_open_paths_d1.py::test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart PASSED [ 30%]
+tests/test_first_open_paths_d1.py::test_path03_file_relative_and_absolute_outside_are_kept_and_a_stale_absolute_path_fails PASSED [ 40%]
+tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file PASSED [ 50%]
+tests/test_first_open_paths_d1.py::test_path05_cjk_space_quotes_long_path_and_no_env_secret_in_public_responses PASSED [ 60%]
+tests/test_first_open_paths_d1.py::test_path06_probe_then_read_is_a_guided_stop_in_the_sandbox_and_correct_in_project_mode PASSED [ 70%]
+tests/test_first_open_paths_d1.py::test_path07_symlinks_inside_are_read_and_escaping_ones_are_not_followed_by_the_fallback PASSED [ 80%]
+tests/test_first_open_paths_d1.py::test_path08_deleted_or_unreadable_data_fails_explicitly_and_never_falls_back_to_the_decoy PASSED [ 90%]
+tests/test_first_open_paths_d1.py::test_path09_relative_writes_land_only_where_the_current_grant_allows PASSED [100%]
+
+======================== 10 passed in 149.37s (0:02:29) ========================
+# exit_code: 0

@@ -1,0 +1,14 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh verify/VMUT-M1-restored tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vpath-scratch/pytest-verify/VMUT-M1-restored
+# time: 2026-09-24T19:37:04Z
+# sha: 93dd9f4b86bea7fd5ccde339f57735b85a6cdf36  (worktree dirty files: 1)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-path
+configfile: pytest.ini
+collecting ... collected 1 item
+
+tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file PASSED [100%]
+
+============================== 1 passed in 15.05s ==============================
+# exit_code: 0

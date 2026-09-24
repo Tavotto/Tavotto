@@ -1,0 +1,83 @@
+"""复核探针（不入库到 tests/，副本存 docs/qa/2026-09-24/path/logs/verify/）：
+执行者 PATH-01/04 的导出断言用的是「不带 override 的 original 导出」——按 FO-065 那是磁盘原件，
+脚本不跑。这里量两件事：
+  (a) 对照：选了脚本目录（干扰）之后，不带 override 的导出仍是真值 → 原断言对「选择」不敏感；
+  (b) 带一次 override 的导出（当次 worker 现画）跟着选择走：项目根 → 真值，脚本目录 → 干扰。
+"""
+
+from __future__ import annotations
+
+from support import foundation_app as fa
+
+from test_first_open_paths_d1 import (
+    DECOY_Y,
+    TRUE_Y,
+    _approx_seq,
+    _csv,
+    _d1,
+    _export_pdf,
+    _exported_series,
+    _native,
+    _normalized,
+    _panel,
+    _plot_script,
+    _plotted_y,
+    needs_worker,
+)
+
+
+def _title_patch(app, panel_id, text):
+    render = app.render(panel_id)
+    title = next(e for e in render["manifest"]["elements"] if e["role"] == "title")
+    return {"gid": title["gid"], "prop": "text", "value": text}
+
+
+@needs_worker
+def test_verify_path04_export_follows_the_choice_only_when_rerun(tmp_path):
+    paper, _truth = _d1(tmp_path, decoy=True)
+    _native(paper, "scripts/entry.py", tmp_path)
+    with fa.running_app(paper, tmp_path / "work") as app:
+        panel = _panel(app, "entry.pdf")
+        app.call("/api/engine/workdir", {"mode": "project_root"}, method="PATCH")
+        assert app.prepare(panel["id"])["result"]["status"] == "ready"
+        patch = _title_patch(app, panel["id"], "verify root")
+        pdf, _ = _export_pdf(app, panel["id"], "v04-root-edit", [patch])
+        root_edit = _exported_series(pdf.read_bytes())
+        app.call("/api/engine/workdir", {"mode": "project"}, method="PATCH")
+        assert app.prepare(panel["id"])["result"]["status"] == "ready"
+        assert _plotted_y(app.render(panel["id"])) == _approx_seq(DECOY_Y)
+        pdf, _ = _export_pdf(app, panel["id"], "v04-proj-static")
+        proj_static = _exported_series(pdf.read_bytes())
+        patch = _title_patch(app, panel["id"], "verify proj")
+        pdf, _ = _export_pdf(app, panel["id"], "v04-proj-edit", [patch])
+        proj_edit = _exported_series(pdf.read_bytes())
+    print("root_edit", root_edit, "proj_static", proj_static, "proj_edit", proj_edit)
+    assert root_edit == _approx_seq(_normalized(TRUE_Y))
+    # 对照：静态导出不随选择变化（= 原执行者断言对选择不敏感）
+    assert proj_static == _approx_seq(_normalized(TRUE_Y))
+    assert proj_edit == _approx_seq(_normalized(DECOY_Y))
+
+
+@needs_worker
+def test_verify_path01_export_with_an_edit_reads_the_same_directory_csv(tmp_path):
+    paper, _truth = _d1(tmp_path)
+    (paper / "analysis").mkdir()
+    (paper / "analysis" / "points.csv").write_bytes(_csv(TRUE_Y))
+    (paper / "analysis" / "same.py").write_text(
+        _plot_script("_read_csv('points.csv')", "same.pdf"), encoding="utf-8"
+    )
+    _native(paper, "same.py", tmp_path, cwd=paper / "analysis")
+    # 让磁盘原件与当次执行可区分：原件之后把数据换成干扰那份，静态导出仍给原件
+    (paper / "analysis" / "points.csv").write_bytes(_csv(DECOY_Y))
+    with fa.running_app(paper, tmp_path / "work") as app:
+        panel = _panel(app, "analysis/same.pdf")
+        assert app.prepare(panel["id"])["result"]["status"] == "ready"
+        patch = _title_patch(app, panel["id"], "verify 01")
+        pdf, _ = _export_pdf(app, panel["id"], "v01-edit", [patch])
+        edit = _exported_series(pdf.read_bytes())
+        pdf, _ = _export_pdf(app, panel["id"], "v01-static")
+        static = _exported_series(pdf.read_bytes())
+    print("edit", edit, "static", static)
+    # 当次执行读的是现在磁盘上的数据（干扰形状），静态导出是原件（真值形状）
+    assert edit == _approx_seq(_normalized(DECOY_Y))
+    assert static == _approx_seq(_normalized(TRUE_Y))
