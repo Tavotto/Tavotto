@@ -74,6 +74,43 @@ export interface CanvasSession {
 
 type Recipe = (draft: FigureDocument) => void
 
+/**
+ * 事务收尾前的派生修正：`endTxn` 在压缩成一条历史**之前**依次跑一遍，改动并进这条
+ * 事务。给「手势进行中不许写、手势结束时必须和手势一起进历史」的派生值用——
+ * 典型是渲染回来的原生图幅（`useEngineSync`）：手势中途写进去，缩放 / 裁剪的下一帧
+ * 按按下时抓的旧几何写绝对尺寸，会把它盖掉；手势结束后再 silent 写，又不在这条
+ * 历史里，撤销 / 重做就不自洽。丢弃的事务不跑（回滚后由派生方自己 silent 补）。
+ */
+const txnFinalizers = new Set<Recipe>()
+
+/** 登记一个事务收尾修正，返回注销函数。 */
+export function registerTxnFinalizer(fn: Recipe): () => void {
+  txnFinalizers.add(fn)
+  return () => {
+    txnFinalizers.delete(fn)
+  }
+}
+
+/** 页面坐标里的一个点（mm）。 */
+export type TxnAnchor = { x: number; y: number }
+
+/**
+ * 进行中手势登记的**锚点**：收尾修正改对象尺寸时，按它反推 x/y，让手势刻意
+ * 固定住的那一点在页面上不动（缩放 = 被拖手柄的对边，裁剪 = 整图锚点）。
+ * 由手势在开事务之后登记，只在这一个事务里有效：开新事务、事务结束（含丢弃）都清空。
+ * 没登记的对象，收尾修正按默认锚点（包围盒左上角）换算。
+ */
+const txnAnchors = new Map<string, TxnAnchor>()
+
+export function setTxnAnchor(objectId: string, anchor: TxnAnchor): void {
+  if (useDocumentStore.getState().txn) txnAnchors.set(objectId, anchor)
+}
+
+/** 收尾修正读：当前事务里这个对象登记的锚点（没有 = undefined）。 */
+export function txnAnchorOf(objectId: string): TxnAnchor | undefined {
+  return txnAnchors.get(objectId)
+}
+
 interface DocumentState {
   /** 当前激活画布的活跃编辑态（schema 2 形状；画布编辑代码只认它） */
   doc: FigureDocument
@@ -307,6 +344,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // 它正是「撤销一次回退了两件事」那一类现象的成因
     const replaced = get().txn != null
     if (replaced) get().endTxn()
+    txnAnchors.clear()
     set({ txn: { label, patches: [], inverse: [] } })
     recordDiagnosticEvent({
       type: 'transaction.begin',
@@ -337,11 +375,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   endTxn: (opts) => {
     const state = get()
-    const txn = state.txn
+    let txn = state.txn
     if (!txn) return
+    // 收尾修正算在本地，与「事务结束」**同一次** set 落地：订阅者看到的是一次
+    // 「事务已关、文档变了」的更新（事务之后的变化）。若先在事务还开着时 set 文档、
+    // 再单独 set `txn: null`，只在事务外看文档的订阅者（布局组自动重排）会在前一次
+    // 因事务开着跳过、后一次因文档引用没变跳过，这次尺寸变化就永远漏掉
+    let doc = state.doc
+    if (!opts?.discard && txn.patches.length && txnFinalizers.size) {
+      for (const fn of txnFinalizers) {
+        const [next, patches, inverse] = produceWithPatches(doc, fn)
+        if (!patches.length) continue
+        txn = history.accumulate(txn, patches, inverse)
+        doc = next
+      }
+    }
+    txnAnchors.clear()
     if (opts?.discard || !txn.patches.length) {
       // 丢弃：把反向补丁打回去，恢复到事务开始前
-      set({ doc: history.rollback(state.doc, txn), txn: null })
+      set({ doc: history.rollback(doc, txn), txn: null })
       recordDiagnosticEvent({
         type: 'transaction.cancel',
         label_key: txn.label.key,
@@ -350,7 +402,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       return
     }
     const [patches, inverse] = history.compress(txn.patches, txn.inverse)
-    set({ txn: null, ...pushHistory(state, { label: txn.label, patches, inverse }) })
+    set({ doc, txn: null, ...pushHistory(state, { label: txn.label, patches, inverse }) })
     recordDiagnosticEvent({
       type: 'transaction.end',
       label_key: txn.label.key,
