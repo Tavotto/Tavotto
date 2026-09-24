@@ -1,0 +1,27 @@
+### M-guard: 去掉 ⌘1/⌘- 两行
+ web/e2e/multi-select-geometry.spec.ts | 2 --
+ 1 file changed, 2 deletions(-)
+2026-09-25 06:09:48,347 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 06:09:48,351 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 06:09:48,351 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 06:09:48,522 INFO tavotto.engine: worker 启动: fig_geo.py（entry=main，解释器来源=env_override）
+    Error: axes_1.title 的点选位置应当落在画布舞台上，而不是被别的界面挡住
+    Expected: true
+    Received: false
+    test-results/multi-select-geometry-图内混合多选整组拖动：锚点-独立模型，撤销-重做回到对应位置-chromium/test-failed-1.png
+### M2: 多选漏一人
+ web/src/canvas/interactions.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+build=0
+2026-09-25 06:10:17,033 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 06:10:17,046 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 06:10:17,047 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 06:10:17,192 INFO tavotto.engine: worker 启动: fig_geo.py（entry=main，解释器来源=env_override）
+    Error: axes_0.title x 锚点（px 误差 -30.000000000000014）
+    Expected: <= 0.0011461862093961111
+    Received:    0.06277117256376669
+    > 202 |     expect(Math.abs(got[0] - want[0]), `${m} x 锚点（px 误差 ${(got[0] - want[0]) * R.w}）`).toBeLessThanOrEqual(tol.x)
+?? docs/qa/2026-09-24/summary.json
+rebuild=0
+### restored
+  1 passed (20.7s)
