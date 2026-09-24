@@ -259,7 +259,8 @@ def _wrap_resample(original):
             # 调用方会就地改返回值（`out_alpha *= …`），给副本
             return hit.copy()
         out = original(image_obj, data, out_shape, transform, *args, **kwargs)
-        _resample_store(key, out.copy())
+        # 存的是副本（调用方会就地改 `out`）；拷贝在 `_resample_store` 里、过了大小闸之后才做
+        _resample_store(key, out)
         return out
 
     _cached_resample.__wrapped__ = original
@@ -325,8 +326,10 @@ def _resample_lookup(key):
 
 def _resample_store(key, out):
     global _resample_cache_bytes
+    # 先判大小再拷：超过上限的数组本来就不存，先拷一份等于白白多分配一份任意大的内存
     if out.nbytes > _RESAMPLE_CACHE_MAX_BYTES:
         return
+    out = out.copy()
     with _resample_lock:
         old = _resample_cache.pop(key, None)
         if old is not None:

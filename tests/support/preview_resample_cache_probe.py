@@ -358,6 +358,61 @@ def _gate():
     }
 
 
+def _store_gate():
+    """超过上限的输出不进缓存，**也不先拷一份**（Codex #530：先拷再判 = 多分配一份任意大的内存）。
+
+    走完整的包装路径（未命中 → 原函数 → 写缓存）：拷贝发生在哪一层是实现细节，判据只问「这次调用拷了几份」。
+    数的是 `copy()` 的调用次数——tracemalloc 看不见 numpy 的数据缓冲区（第一版拿它量，两边峰值都是几百字节）。
+    """
+    from matplotlib.transforms import Affine2D
+
+    class _Spy(np.ndarray):
+        copies = 0
+
+        def copy(self, *a, **k):
+            _Spy.copies += 1
+            return super().copy(*a, **k)
+
+    real = mimage._resample.__wrapped__
+
+    def spying_resample(image_obj, data, out_shape, transform, *, resample=None, alpha=1):
+        return real(image_obj, data, out_shape, transform, resample=resample, alpha=alpha).view(
+            _Spy
+        )
+
+    f, ax = plt.subplots()
+    im = ax.imshow(np.zeros((2, 2)), interpolation="lanczos")
+    # 独有的一份数据：同一份数据与尺寸在 `_direct()` 里已经进过缓存，命中了就走不到写入那一步
+    data = np.random.default_rng(530).random((610, 700)).astype(np.float32)
+    old_names, old_max = ph._RESAMPLE_KNOWN_NAMES, ph._RESAMPLE_CACHE_MAX_BYTES
+    ph._RESAMPLE_KNOWN_NAMES = old_names | set(spying_resample.__code__.co_names)
+    try:
+        wrapped = ph._wrap_resample(spying_resample)
+
+        def call(out_shape):
+            _Spy.copies = 0
+            with ph.preview_resample_cache():
+                wrapped(
+                    im, data, out_shape, Affine2D().scale(out_shape[1] / 700, out_shape[0] / 600)
+                )
+            return _Spy.copies
+
+        ph._RESAMPLE_CACHE_MAX_BYTES = 1  # 什么都放不下
+        before = len(ph._resample_cache)
+        copies_oversized = call((200, 230))
+        stored_oversized = len(ph._resample_cache) != before
+        ph._RESAMPLE_CACHE_MAX_BYTES = old_max
+        copies_fits = call((201, 230))  # 活的尺子：放得下的那次确实拷了一份
+    finally:
+        ph._RESAMPLE_KNOWN_NAMES, ph._RESAMPLE_CACHE_MAX_BYTES = old_names, old_max
+        plt.close(f)
+    return {
+        "copies_oversized": copies_oversized,
+        "copies_fits": copies_fits,
+        "stored_oversized": stored_oversized,
+    }
+
+
 def main():
     # 先装一次（第一次进 `preview_resample_cache` 时装），再测
     _svg(plt.figure(), cached=True)
@@ -368,6 +423,7 @@ def main():
         "direct": _direct(),
         "reads_origin": "origin" in mimage._resample.__wrapped__.__code__.co_names,
         "gate": _gate(),
+        "store_gate": _store_gate(),
     }
     print(json.dumps(out))
 

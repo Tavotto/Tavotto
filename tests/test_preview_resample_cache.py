@@ -138,3 +138,10 @@ def test_version_gate(probe):
     assert g["installed"]
     assert g["unknown_read_rejected"]
     assert g["not_a_function_rejected"]
+
+
+def test_oversized_output_is_neither_stored_nor_copied(probe):
+    g = probe["store_gate"]
+    assert g["copies_fits"] == 1, g  # 活的尺子：放得下的那次确实拷了
+    assert not g["stored_oversized"], g
+    assert g["copies_oversized"] == 0, g
