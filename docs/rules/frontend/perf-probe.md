@@ -38,8 +38,9 @@
   `PanelView` 把那一版 SVG 换进 DOM 后 `perfRenderPainted(key)`，随后两帧记进 `swap_frames`（不依赖
   片段——换图常在尾巴之后）。**位图这一格（raster / evicted / 非编辑态的引擎位图）没有 SVG**：
   落定是**这一版自己的**位图 `<img>` 的 onLoad（变体与 rev 都对得上；暂挂的上一张不算），
-  否则分析器退回拿 `applied` 当落定，取图、解码、换图整段漏掉。看护：
-  `canvas/panelPreviewMode.test.tsx`「性能探针」一组。**渲染键只活在内存里**（它含文件名），报告里只有数字。
+  否则分析器退回拿 `applied` 当落定，取图、解码、换图整段漏掉。记录上 `painted_via` 分
+  `svg` / `png`，分析器把位图那段说成「取位图 + 解码」而不是 innerHTML。看护：
+  `canvas/panelPreviewMode.test.tsx`「性能探针」一组、`tests/test_perf_probe.py` 的位图松手链路。**渲染键只活在内存里**（它含文件名），报告里只有数字。
 - **判断不在产品里**：产品只给帧率与超时比例一句话；「卡在哪、怎么改」在
   `scripts/perf_report.py`，判据随代码改，不为改一条规则发版本。
 - **探针面板拖动中不重渲染**：片段数只在片段结束时通知（`perfSegmentBegin` 不通知），
