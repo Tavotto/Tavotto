@@ -1175,6 +1175,34 @@ describe('事务之外改了图幅：撤销 / 重做回到用户设定的缩放�
     expect(panelScale(current())).toBeCloseTo(1, 6)
   })
 
+  it('只改了宽的拖动，收尾修正把两轴图幅并进来 → 事务外再变 → 重做连 h 一起换', async () => {
+    // 手势本身只动了 w，h 是收尾修正改的：条目打回哪几维要按收尾之后的文档算，
+    // 按手势那一刻算会漏掉 h，重做后 h 停在松手时的单位上
+    const p = await mount('d_size_undo_finalizer_dims')
+    await act(async () => {
+      useDocumentStore.getState().beginTxn(literal('改宽'))
+      useDocumentStore.getState().txnUpdate((d) => {
+        ;(d.objects[0] as PanelObject).w = 20
+      })
+    })
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [80, 60], elements: [] })
+    })
+    await act(async () => {
+      useDocumentStore.getState().endTxn()
+    })
+    expect([current().w, current().h]).toEqual([40, 60])
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [160, 120], elements: [] })
+    })
+    expect([current().w, current().h]).toEqual([80, 120])
+    await undo()
+    expect([current().w, current().h]).toEqual([160, 120])
+    await redo()
+    expect([current().w, current().h]).toEqual([80, 120])
+    expect(nativeOf(current())).toEqual([160, 120])
+  })
+
   it('两次缩放 → 图幅变化 → 连撤两步再连重做两步', async () => {
     const p = await mount('d_size_undo_deep')
     await resizeTo(0.75)
