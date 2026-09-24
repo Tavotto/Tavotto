@@ -62,6 +62,7 @@ import {
 import { readAxesTickModel, type SidePlan } from '@/lib/tickSides'
 import { useDocumentStore } from '@/store/documentStore'
 import { previewStyle } from '@/store/svgPreviewStore'
+import { pagePtLens } from '@/lib/stylePresets'
 import { canPreviewStyle } from '@/lib/svgStyle'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
@@ -829,8 +830,9 @@ function PairRow({
           prefix={prefix}
           ariaLabel={label}
           value={Number(w.read(field.prop) ?? 0)}
-          min={field.min}
-          max={field.max}
+          // 界随读数一起过写入器（页面 pt 的量换到页面上；成对的色阶上下限原样）
+          min={w.fieldOf(field.prop)?.min ?? field.min}
+          max={w.fieldOf(field.prop)?.max ?? field.max}
           step={field.step ?? 1}
           precision={2}
           unit={field.unit}
@@ -1605,12 +1607,16 @@ function BatchFieldRow({
   elements: ManifestElement[]
   field: EditableField
 }) {
+  // 页面 pt 的量显示 / 输入都在页面上（`pagePtLens`，与单选、样式面板同一个换算）。
+  // 「多个值」在**脚本值**上判：换算后碰巧相等的两个不同值仍然是多个值，不压扁
+  const lens = pagePtLens(panel)
+  const pageField = lens.field(field)
   const values = elements.map((el) => {
     const own = el.editable.find((f) => f.prop === field.prop) ?? field
     return currentValue(panel, el.gid, own)
   })
-  const first = values[0]
-  const mixed = values.some((v) => JSON.stringify(v) !== JSON.stringify(first))
+  const mixed = values.some((v) => JSON.stringify(v) !== JSON.stringify(values[0]))
+  const first = lens.toPage(field.prop, values[0])
   const label = propLabel(field.prop, elements[0].role)
   const labelNode = (
     <span className="block truncate" title={label}>
@@ -1624,7 +1630,8 @@ function BatchFieldRow({
   // 抢先显示，刻度组安静地等后端——**不能因为有一个不支持就整批放弃**
   const previewables = elements.filter((el) => canPreviewStyle(el.role, field.prop))
 
-  const write = (v: unknown, immediate = false) => {
+  const write = (pageValue: unknown, immediate = false) => {
+    const v = lens.toScript(field.prop, pageValue)
     if (previewables.length && !gesture.isOpen()) gesture.start()
     let previewed = previewables.length === elements.length
     for (const el of previewables) {
@@ -1672,8 +1679,8 @@ function BatchFieldRow({
           <NumberField
             value={mixed ? 0 : Number(first ?? 0)}
             mixed={mixed}
-            min={field.min}
-            max={field.max}
+            min={pageField.min}
+            max={pageField.max}
             step={field.step ?? 1}
             precision={2}
             unit={field.unit}
@@ -1879,7 +1886,11 @@ function FieldRow({
   element: ManifestElement
   field: EditableField
 }) {
-  const value = currentValue(panel, element.gid, field)
+  // 以 pt 计的量显示、钳位、输入都在页面上（`pagePtLens`，与样式面板 / 问题面板同一个
+  // 换算）；写 override 与局部预览之前在 `write` 里换回脚本值。表外的字段原样进出
+  const lens = pagePtLens(panel)
+  const pageField = lens.field(field)
+  const value = lens.toPage(field.prop, currentValue(panel, element.gid, field))
   /** 同一个元素上另一条字段此刻的值（override 优先）：色条预览要看色图与方向 */
   const siblingValue = (prop: string) => {
     const other = element.editable.find((x) => x.prop === prop)
@@ -1974,7 +1985,8 @@ function FieldRow({
    * 预览没生效（不在能力表里 / gid 在 SVG 里查不到 / 值类型不对）就原路走
    * 后端——immediate 参数照旧生效，行为与改动前一字不差。
    */
-  const write = (v: unknown, immediate = false) => {
+  const write = (pageValue: unknown, immediate = false) => {
+    const v = lens.toScript(field.prop, pageValue)
     if (previewable && !gesture.isOpen()) gesture.start()
     const previewed = previewable && previewStyle(element.gid, element.role, field.prop, v)
     setOverride(panel.id, element.gid, field.prop, v, previewed ? 'none' : immediate)
@@ -2256,8 +2268,8 @@ function FieldRow({
         <>
           <NumberField
             value={Number(value ?? 0)}
-            min={field.min}
-            max={field.max}
+            min={pageField.min}
+            max={pageField.max}
             step={field.step ?? 1}
             precision={2}
             unit={field.unit}

@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import type { EditableField, ManifestElement } from '@/lib/api'
 import { msg, t as translate, type UiMessage } from '@/i18n'
+import { pageValueOf } from '@/lib/stylePanelModel'
+import { pageField, pagePtLens } from '@/lib/stylePresets'
 import { canPreviewStyle } from '@/lib/svgStyle'
 import { clearOverride, clearOverrides, setOverride, setOverrides } from '@/store/actions'
 import { previewStyle } from '@/store/svgPreviewStore'
@@ -23,6 +25,9 @@ import {
  * **单选与多选走同一个实现**（`useTextStyleAdapter` 接的就是一个数组），
  * 所以「多选了第二个对象，B/I 就退化成枚举下拉」这类分叉在结构上不可能
  * 再出现——控件那边根本看不到「这是一个还是三个」。
+ *
+ * **以 pt 计的量（`stylePresets.PAGE_PT_PROPS`）进出都是页面上的值**：`fieldOf` / `valueOf`
+ * 给的、`write` 收的都是读者量到的 pt，换回脚本值只在写 override 之前那一处。
  */
 export interface TextStyleAdapter {
   /** 目标数量；> 1 时控件用批量文案（历史标题、恢复按钮措辞） */
@@ -60,6 +65,16 @@ export function useTextStyleAdapter(
   const gesture = useFieldGesture(panel, defaultLabel(elements.length))
   const fields = useMemo(() => commonTextFields(elements, props), [elements, props])
   const count = elements.length
+  // 以 pt 计的量**进出都是页面上的值**（`stylePresets.pagePtLens`）：控件看到的、校验的、
+  // 用户敲进去的都是读者量到的那个数；只有落进 override 与局部预览之前换回脚本值
+  // ——预览贴在按脚本坐标系画的 SVG 上，它与 override 必须是同一个数
+  const lens = pagePtLens(panel)
+  const scale = lens.scale
+  const pageFields = useMemo(() => {
+    const out = new Map<string, EditableField>()
+    for (const [prop, f] of fields) out.set(prop, pageField(f, scale))
+    return out
+  }, [fields, scale])
 
   const historyLabel = (prop: string): UiMessage => {
     const label = propLabel(prop, elements[0]?.role ?? '')
@@ -68,8 +83,9 @@ export function useTextStyleAdapter(
       : msg('element.editProp', { label }, 'inspector')
   }
 
-  const write = (prop: string, value: unknown, immediate = false) => {
+  const write = (prop: string, pageValue: unknown, immediate = false) => {
     if (!fields.has(prop) || !count) return
+    const value = lens.toScript(prop, pageValue)
     const previewables = elements.filter((e) => canPreviewStyle(e.role, prop))
     if (previewables.length && !gesture.isOpen()) {
       gesture.start(
@@ -100,8 +116,9 @@ export function useTextStyleAdapter(
 
   return {
     count,
-    fieldOf: (prop) => fields.get(prop),
-    valueOf: (prop) => readAcross(panel, elements, prop, fields),
+    fieldOf: (prop) => pageFields.get(prop),
+    // 四档照旧在脚本值上判（mixed 不因换算后碰巧相等而被压扁），只有 uniform 的那个数换到页面上
+    valueOf: (prop) => pageValueOf(readAcross(panel, elements, prop, fields), prop, scale),
     write,
     writeOnce: (prop, value) => {
       write(prop, value, true)

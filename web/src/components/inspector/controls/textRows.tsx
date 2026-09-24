@@ -1,6 +1,7 @@
 import { memo, useCallback, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
+import { PT_DECIMALS } from '@/lib/stylePresets'
 import { RotateCcw, TextAlignCenter, TextAlignEnd, TextAlignStart } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
@@ -272,7 +273,7 @@ export function FontSizeRow({
         min={min}
         max={max}
         step={step}
-        precision={1}
+        precision={PT_DECIMALS}
         unit={suffix}
         onChange={onChange}
         onScrubStart={onScrubStart}

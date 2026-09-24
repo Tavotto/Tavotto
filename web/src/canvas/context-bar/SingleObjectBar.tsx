@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { Bold, CircleQuestionMark, Crop, Italic, Minimize2, Pencil } from '@/components/ui/icons'
+import { PT_DECIMALS } from '@/lib/stylePresets'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { UiMessage } from '@/i18n'
@@ -94,7 +95,7 @@ function TextObjectActions({ obj, compact }: { obj: TextObject; compact: boolean
           min={size.min}
           max={size.max}
           step={size.step ?? 0.5}
-          precision={1}
+          precision={PT_DECIMALS}
           unit={size.unit}
           title={translate('textControls.size', { ns: 'inspector' })}
           onChange={(v) => a.write('sizePt', v)}

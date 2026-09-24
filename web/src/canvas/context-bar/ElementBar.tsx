@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { Bold, Italic } from '@/components/ui/icons'
+import { PT_DECIMALS } from '@/lib/stylePresets'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { ManifestElement } from '@/lib/api'
@@ -73,9 +74,10 @@ function ElementQuickInner({
           <NumberField
             fill
             className="w-[76px] shrink-0"
+            // 读数、界、收进来的值都是页面上的 pt（写入器过 `pagePtLens`，与属性页同一个换算）
             value={Number(w.read('linewidth') ?? 1)}
-            min={0.1}
-            max={12}
+            min={w.pageBound('linewidth', 0.1)}
+            max={w.pageBound('linewidth', 12)}
             step={0.1}
             precision={2}
             unit="pt"
@@ -159,7 +161,7 @@ function ElementQuickInner({
             min={size.min}
             max={size.max}
             step={size.step ?? 0.5}
-            precision={1}
+            precision={PT_DECIMALS}
             unit={size.unit}
             title={propLabel('fontsize', role)}
             onChange={(v) => w.write('fontsize', v)}
@@ -226,7 +228,7 @@ function TextElementActions({
           min={size.min}
           max={size.max}
           step={size.step ?? 0.5}
-          precision={1}
+          precision={PT_DECIMALS}
           unit={size.unit}
           title={translate('textControls.size', { ns: 'inspector' })}
           onChange={(v) => a.write('sizePt', v)}

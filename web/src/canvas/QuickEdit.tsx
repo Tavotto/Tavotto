@@ -9,6 +9,7 @@ import { round4, scaleGroupAbout } from '@/lib/axesLayout'
 import { geomTarget, positionOf } from '@/lib/elementGeom'
 import type { EditableField, ManifestElement } from '@/lib/api'
 import { LEGEND_ANCHOR_PROP, legendAnchorRange, toLegendAnchor } from '@/lib/legendModel'
+import { pagePtLens, PT_DECIMALS } from '@/lib/stylePresets'
 import { cn } from '@/lib/utils'
 import {
   clearOverrides,
@@ -216,16 +217,17 @@ function ElementQuick({
   }, [panel, el, close])
   if (!panel || !el || !manifest) return null
 
+  // 以 pt 计的量进出都是页面上的值（`pagePtLens`，与属性页、样式面板同一个换算）
+  const lens = pagePtLens(panel)
   /** 当前值：用户改过的 override 优先于渲染时的初值 */
   const read = (prop: string, from: ManifestElement = el) => {
     const ov = effectiveOverride(panel.overrides, from.gid, prop)
-    if (ov) return ov.value
-    return from.editable.find((f) => f.prop === prop)?.value
+    return lens.toPage(prop, ov ? ov.value : from.editable.find((f) => f.prop === prop)?.value)
   }
   const field = (prop: string, from: ManifestElement = el): EditableField | undefined =>
-    from.editable.find((f) => f.prop === prop)
+    lens.field(from.editable.find((f) => f.prop === prop))
   const write = (prop: string, value: unknown, immediate = true) =>
-    setOverride(panel.id, el.gid, prop, value, immediate)
+    setOverride(panel.id, el.gid, prop, lens.toScript(prop, value), immediate)
 
   const openInPanel = () => {
     useUiStore.getState().setSelectedGid(el.gid)
@@ -438,7 +440,7 @@ function LegendControls({
             step={size.step ?? 0.5}
             min={size.min ?? 1}
             max={size.max ?? 96}
-            precision={1}
+            precision={PT_DECIMALS}
             onChange={(v) => write('fontsize', v, false)}
           />
         </Line>
