@@ -17,7 +17,8 @@ doctor` 体检已装副本）都消费它。前两者按路径 import（scripts/
 会把已装副本 `.mcp.json` 与 `openai.yaml` 的启动 `command` 一起钉成本机解释器的
 绝对路径。`installed=True` 按**具体字段**验：两份 command 相等，且要么等于发行原值、
 要么是本机一个真实存在的绝对路径；这两份文件其余内容（换行归一后）与发行时一致；
-其它任何文件都不许改。发行件本身不许含任何路径形态的 command。
+其它任何文件都不许改。发行件本身不许含机器相关的路径形态 command——唯一例外是
+插件自带、按 `./` 相对插件根给出的启动器（`./mcp/launch.cmd`，#266）。
 
 **纯标准库，不 import 本包的任何其它模块**——脚本按路径加载它时没有包上下文。
 """
@@ -105,6 +106,21 @@ def rel(plugin_dir: Path, p: Path) -> str:
 
 def _is_path_like(command: str) -> bool:
     return os.path.isabs(command) or "\\" in command or "/" in command
+
+
+def _is_plugin_relative(command: str, plugin_dir: Path) -> bool:
+    """`./mcp/launch.cmd` 这一种：插件**自带**的启动器，按 `.mcp.json` 的 `cwd`（插件根）解析。
+
+    发行件里允许它（#266：跨平台只能靠插件自带一个 sh/cmd 双语启动器），但只认
+    `./` 开头、不含 `..`、不是绝对路径、且真的指向插件目录里一个文件——机器相关的
+    绝对路径仍然只许出现在**已装副本**里（`tavotto codex install` 钉的那种）。
+    """
+    if os.path.isabs(command) or "\\" in command or not command.startswith("./"):
+        return False
+    parts = command[2:].split("/")
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        return False
+    return (plugin_dir.joinpath(*parts)).is_file()
 
 
 # ------------------------------------------------------------------ 画布
@@ -226,10 +242,10 @@ def describe(plugin_dir: Path, modes: dict[str, str]) -> tuple[list[dict], dict[
         if is_pinnable(path):
             canon, commands = canonical(path, data)
             for cmd in commands:
-                if _is_path_like(cmd):
+                if _is_path_like(cmd) and not _is_plugin_relative(cmd, plugin_dir):
                     raise PluginManifestError(
-                        f"{path} 里的 command 是一条路径（{cmd}）——发行件里只许是裸名字，"
-                        f"绝对路径只属于装它的那台机器"
+                        f"{path} 里的 command 是一条路径（{cmd}）——发行件里只许是裸名字"
+                        f"或插件自带的 ./ 相对启动器，绝对路径只属于装它的那台机器"
                     )
             pinnable[path] = {"canonical_sha256": sha256_bytes(canon), "commands": commands}
     return sorted(entries, key=lambda e: e["path"]), pinnable
@@ -380,13 +396,18 @@ def verify_dir(
             seen_commands[path] = commands
             if not installed:
                 for cmd in commands:
-                    if _is_path_like(cmd):
+                    if _is_path_like(cmd) and not _is_plugin_relative(cmd, plugin_dir):
                         problems.append(
                             f"{path} 里的 command 是一条路径（{cmd}），发行件里只许裸名字"
+                            "或插件自带的 ./ 相对启动器"
                         )
             else:
                 for cmd in commands:
-                    if _is_path_like(cmd) and not Path(cmd).is_file():
+                    if (
+                        _is_path_like(cmd)
+                        and not _is_plugin_relative(cmd, plugin_dir)
+                        and not Path(cmd).is_file()
+                    ):
                         problems.append(f"{path} 的 command 指向不存在的解释器 {cmd}")
     if installed:
         # 严格同源对：不管有没有清单，两份的 command 都必须一致

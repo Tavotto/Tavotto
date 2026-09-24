@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -1177,3 +1178,31 @@ def test_unknown_state_names_the_missing_node_and_says_it_is_not_absent():
     assert "PATH" in codexinstall._unknown_hint(
         "'node' is not recognized as an internal or external command", "登记"
     )
+
+
+def test_the_bundled_relative_launcher_is_run_from_the_plugin_root_not_replaced(
+    fake_codex, tmp_path
+):
+    """发行件的 command 是插件自带的 `./mcp/launch.cmd`（#266）。interpreter 步必须按
+    **插件根**解析它（Codex 就是按 `.mcp.json` 的 cwd 解析的）：按本进程 cwd 解析会把一个
+    好好的启动器判成「起不来」，再把它换成绝对路径——等于亲手把 #266 的修复撤掉。"""
+    plugin = fake_codex["plugin"]
+    launch = plugin / "mcp" / "launch.cmd"
+    launch.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT / "codex-plugin" / "mcp" / "launch.cmd", launch)
+    launch.chmod(0o755)
+    for name in (".mcp.json", "skills/tavotto-figure/agents/openai.yaml"):
+        path = plugin / name
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("python3", "./mcp/launch.cmd"),
+            encoding="utf-8",
+        )
+    (plugin / "mcp" / "server.py").write_text(
+        "import json,sys\nprint(json.dumps({'ok': True, 'mode': 'engine'}))\n", encoding="utf-8"
+    )
+    assert _mcp_command(plugin) == "./mcp/launch.cmd"
+
+    rc, out, _err = _run(["codex", "install", "--json"])
+    assert rc == 0, out
+    assert _mcp_command(plugin) == "./mcp/launch.cmd", "一个起得来的自带启动器被换掉了"
+    assert _yaml_command(plugin) == "./mcp/launch.cmd"

@@ -251,16 +251,15 @@ pipx install "tavotto[worker]"
 然后**关闭当前 Codex 会话并新开一个会话**。插件的 skill 与 MCP 工具不会在已经
 打开的会话里热重载。
 
-**Windows 上还要再跑一条**（macOS / Linux 不需要）：
+**Windows 上若「插件已启用，工具一个都没有」**（升级插件后又出现也一样），再跑一条：
 
 ```sh
 tavotto codex install
 ```
 
-**升级插件之后要再跑一次。** 插件钉的启动命令是 `python3`，Windows 上这个名字
-常常是微软商店的别名——命令在、却起不来，表现是「插件已启用，工具一个都没有」。
-这条命令会真的跑一遍看启动器起不起得来，起不来就把已装副本的启动命令换成一个
-验证过的解释器（`tavotto codex doctor` 只诊断不改）。成因与症状见
+插件用自带的启动器起 MCP server：它会找一个真能跑的 Python，并跳过微软商店的
+`python3` 别名；一个都找不到时，这条命令把已装副本的启动命令钉到一个验证过的
+解释器（`tavotto codex doctor` 只诊断不改）。成因与症状见
 [`codex-plugin/README.md`](codex-plugin/README.md)。
 
 新会话里可以直接说：

@@ -87,7 +87,9 @@ def test_the_candidate_does_not_depend_on_the_source_tree(plugin):
         assert not p.is_symlink()
     mcp = json.loads((plugin / ".mcp.json").read_text(encoding="utf-8"))
     for entry in mcp["mcpServers"].values():
-        assert not os.path.isabs(entry["command"]), "发行件里 command 只许裸名字"
+        assert not os.path.isabs(entry["command"]), "发行件里 command 只许裸名字或自带启动器"
+        if entry["command"].startswith("./"):
+            assert (plugin / entry["command"]).is_file(), entry["command"]
         for arg in entry.get("args", []):
             assert not os.path.isabs(arg)
             assert (plugin / arg).is_file() if arg.startswith("./") else True, arg

@@ -1152,14 +1152,16 @@ def test_mcp_json_shape_matches_what_codex_reads():
     entry = servers["tavotto"]
     # 本地 stdio：command + args + cwd。远程 HTTP 那套字段这里一个都不该有。
     #
-    # **`python3` 是引导默认值，不是「哪儿都能跑」的保证**（issue #172）：Codex 的
-    # `.mcp.json` 里没有按平台分支的字段、没有候选链，`command` 也不过 shell（形状取自
-    # codex-rs 的 RawMcpServerConfig 与官方插件装出来的清单），一个字符串覆盖不了
-    # POSIX 与 Windows——POSIX 上只有 `python3` 靠得住，Windows 上它往往是微软商店的
-    # App Execution Alias。所以别把它改成 `python`（macOS 上多半没有这个名字），
-    # 也别把某台机器上的绝对路径提交回来：Windows 那一格由 `tavotto codex install`
-    # 的 interpreter 步在**已装副本**上解决（engine/codexinstall.py）。
-    assert entry["command"] == "python3"
+    # Codex 的 `.mcp.json` 里没有按平台分支的字段、没有候选链，`command` 也不过 shell
+    # （形状取自 codex-rs 的 RawMcpServerConfig 与官方插件装出来的清单），一个裸名字
+    # 覆盖不了 POSIX 与 Windows——`python3` 在 Windows 上往往是微软商店的 App Execution
+    # Alias（#172 / #266）。所以 command 是插件**自带**的 sh/cmd 双语启动器
+    # `./mcp/launch.cmd`，按 `cwd`（插件根）解析：POSIX 上它就是 `exec python3 "$@"`，
+    # Windows 上它按候选逐个真跑、跳过商店别名。args 不变——启动器只负责「找一个真能跑
+    # 的 Python 并把参数原样交给它」，`tavotto codex install` 把 command 钉成绝对路径
+    # 之后 `<python> ./mcp/server.py` 仍然成立。别把某台机器上的绝对路径提交回来。
+    assert entry["command"] == "./mcp/launch.cmd"
+    assert (PLUGIN / "mcp" / "launch.cmd").is_file()
     assert entry["args"] == ["./mcp/server.py"]
     # 钉命令只换 command：启动器仍按 cwd 解析，两者一起变才叫改配置
     assert entry["cwd"] == "."
@@ -1169,6 +1171,137 @@ def test_mcp_json_shape_matches_what_codex_reads():
     for name in ("TAVOTTO_CLI", "TAVOTTO_MCP_ROOTS", "PATH"):
         assert name in entry["env_vars"], f"{name} 没进 env_vars，server 那边读不到"
     assert (PLUGIN / "mcp" / "server.py").is_file()
+
+
+LAUNCH_CMD = PLUGIN / "mcp" / "launch.cmd"
+
+
+def test_the_dual_launcher_keeps_its_platform_contract():
+    """`mcp/launch.cmd` 一份文件两个平台（#266）：每一条都是某个平台上「起不来」的原因。
+
+    * 第一行 shebang——Rust 起子进程不认无 shebang 的脚本（实测 Exec format error）；
+    * git 里是 100755——POSIX 上 Codex 直接执行它，没有执行位就是 EACCES；
+    * 全文 LF、没有 CR——sh 读到 `\r` 会把 `python3\r` 当命令名；
+    * 批处理段纯 ASCII——cmd 按本机代码页读批处理，UTF-8 多字节会被拆成别的字符；
+    * 批处理段不用 goto / call :label——LF 文件里 cmd 找标签有已知缺陷；
+    * sh 那半边就是改动前的 `python3`——POSIX 用户的行为一个字节都不许变。
+    """
+    raw = LAUNCH_CMD.read_bytes()
+    assert raw.startswith(b"#!/bin/sh\n")
+    assert b"\r" not in raw
+    head, sep, posix = raw.partition(b"\n::TAVOTTO_WINDOWS\n")
+    assert sep, "heredoc 终止行没找到：sh 会把整段批处理当成 heredoc 吞到文件尾"
+    assert head.splitlines()[1] == b":<<'::TAVOTTO_WINDOWS'"
+    assert all(b < 128 for b in head), "批处理段混进了非 ASCII 字节"
+    # 只看会执行的行：`rem` 注释里说「别用 goto」本身不该让判据红（否定断言被解释它
+    # 的那句话咬到——docs/rules/repo/predicate-subject.md）
+    code_lines = [
+        ln.strip().lower()
+        for ln in head.decode("ascii").splitlines()
+        if not ln.strip().lower().startswith("rem ")
+    ]
+    assert not any(re.search(r"\bgoto\b|\bcall\s+:", ln) for ln in code_lines), (
+        "批处理段出现了 goto / call :label"
+    )
+    assert b'exec python3 "$@"' in posix.splitlines()
+    mode = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-s", "codex-plugin/mcp/launch.cmd"],
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    if mode:  # 源码树不是 git 检出（sdist 解包）时无从判
+        assert mode[0] == "100755"
+
+
+def _spawn_launcher_like_codex(*requests) -> "list[str]":
+    """按 Codex 起 MCP server 的那一跳起它：`command` 是 `./mcp/launch.cmd`、`args` 原样、
+    `cwd` 是插件根，没有 shell。Windows 上 CreateProcess 对 .cmd 走 cmd.exe——与 Rust 的
+    `Command` 起批处理是同一条路。回 stdout 的每一行。"""
+    entry = json.loads(MCP_JSON.read_text(encoding="utf-8"))["mcpServers"]["tavotto"]
+    env = {k: v for k, v in os.environ.items() if not k.startswith("TAVOTTO_MCP")}
+    env["TAVOTTO_NO_TELEMETRY"] = "1"
+    with tempfile.TemporaryDirectory() as tmp:
+        env["TAVOTTO_CONFIG_DIR"] = os.path.join(tmp, "config")
+        env["TAVOTTO_DATA_DIR"] = os.path.join(tmp, "data")
+        env["TAVOTTO_MCP_ROOTS"] = tmp
+        command = entry["command"]
+        if os.name == "nt":  # 本进程 cwd 不是插件根；Codex 按 cwd 解析，这里同样
+            command = str(PLUGIN / command[2:])
+        proc = subprocess.run(
+            [command, *entry["args"]],
+            cwd=PLUGIN,
+            input="".join(json.dumps(r) + "\n" for r in requests),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=180,
+        )
+    return proc.stdout.splitlines()
+
+
+def test_codex_style_spawn_of_the_launcher_completes_the_mcp_handshake():
+    """真起 `.mcp.json` 里那条命令、走一次 initialize：拿到 serverInfo 才算「起得来」。
+
+    stdout 里除了 JSON-RPC 只允许 cmd 回显的那一行 shebang（仅 Windows）：rmcp 3.2+
+    跳过非 JSON 行、2.x 回一条 parse error，都不断连；再多一行就是新的噪声源。
+    """
+    lines = _spawn_launcher_like_codex(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "launch-test", "version": "1"},
+            },
+        }
+    )
+    replies, noise = [], []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            replies.append(json.loads(line))
+        except ValueError:
+            noise.append(line)
+    assert any(r.get("id") == 1 and "serverInfo" in r.get("result", {}) for r in replies), lines
+    if os.name == "nt":
+        assert all(n.rstrip().endswith("#!/bin/sh") for n in noise), noise
+        assert len(noise) <= 1, noise
+    else:
+        assert noise == [], noise
+
+
+@pytest.mark.skipif(os.name != "nt", reason="商店别名与 cmd.exe 只在 Windows 上存在")
+def test_windows_launcher_skips_a_python_that_does_not_run(tmp_path):
+    """#266 的现场：PATH 上最先摸到的 `python` / `python3` 是个起不来的东西（商店别名：
+    命令存在、零输出、9009）。启动器要跳过它、用下一个真能跑的，而不是把它交给 Codex。"""
+    alias_dir = tmp_path / "WindowsApps"
+    alias_dir.mkdir()
+    # `py` 也遮住：CI 的 Windows runner 装了 py 启动器，不遮的话启动器在 PATH 那一步
+    # 之前就用 `py -3` 起来了，被测的「跳过起不来的候选」一行都没执行
+    for name in ("py.bat", "python.bat", "python3.bat"):
+        (alias_dir / name).write_text("@exit /b 9009\r\n", encoding="ascii")
+    real_dir = Path(sys.executable).parent
+    env = {k: v for k, v in os.environ.items() if not k.startswith("TAVOTTO_MCP")}
+    env["PATH"] = os.pathsep.join([str(alias_dir), str(real_dir), env.get("PATH", "")])
+    proc = subprocess.run(
+        [str(LAUNCH_CMD), "-c", "import sys; print('RAN', sys.executable)"],
+        cwd=PLUGIN,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    ran = [ln for ln in proc.stdout.splitlines() if ln.startswith("RAN ")]
+    assert ran and "WindowsApps" not in ran[0], proc.stdout
+    assert os.path.normcase(ran[0].split(" ", 1)[1]).startswith(os.path.normcase(str(real_dir))), (
+        proc.stdout
+    )
 
 
 def test_launcher_is_stdlib_only_and_parses():
