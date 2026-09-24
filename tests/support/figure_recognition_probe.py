@@ -170,6 +170,15 @@ def raster_fields() -> dict:
         [round(float(c), 4) for c in vir(pnorm(values[r, c]))[:3]] for r, c in (field_pt, edge_pt)
     ]
     out["overlay"] = [round(float(c), 4) for c in OVERLAY]
+    # 整张场图（去掉流线那两行）换色后与「同一数值在新色图下的颜色」的逐像素误差
+    field_rows = np.ones(values.shape[0], bool)
+    field_rows[[20, 21]] = False
+    got_all = np.asarray(im.get_array())[field_rows, :, :3].astype(float)
+    got_all /= 255.0 if np.asarray(im.get_array()).dtype.kind in "ui" else 1.0
+    want_all = vir(pnorm(values[field_rows]))[..., :3]
+    err = np.abs(got_all - want_all).max(-1)
+    out["field_err_mean"] = float(err.mean())
+    out["field_err_p999"] = float(np.quantile(err, 0.999))
     out["antialiased"] = _pixels(im, [aa_pt])[0]
     new_bg = np.asarray(vir(pnorm(values[aa_pt]))[:3])
     out["antialiased_expected"] = [
@@ -387,7 +396,16 @@ def orphan_scopes() -> dict:
         "end_expected": [round(float(c), 4) for c in matplotlib.colormaps["viridis"](1.0)[:3]],
     }
     windows = {}
-    for h, w in [(3000, 3000), (1, 2000), (4, 3_000_000), (1005, 1753), (100_000, 3), (64, 64)]:
+    for h, w in [
+        (3000, 3000),
+        (1, 2000),
+        (4, 3_000_000),
+        (1005, 1753),
+        (100_000, 3),
+        (64, 64),
+        (100, 10_000),
+        (10_000, 100),
+    ]:
         ws = list(C._sample_windows(h, w))
         windows[f"{h}x{w}"] = {
             "pixels": sum((y1 - y0) * (x1 - x0) for y0, y1, x0, x1 in ws),
@@ -398,7 +416,64 @@ def orphan_scopes() -> dict:
             "h": h,
             "w": w,
         }
+    # 离散调色板（#538 评审第四轮）：2048 种随机颜色的 ListedColormap 画出的色带——每一种
+    # 调色板颜色都要认得出；多段建表（> _FIELD_TUBE_CHUNK 格）与一次排序建表结果相同
+    pal = mcolors.ListedColormap(np.random.RandomState(7).rand(2048, 3), name="pal2048")
+    pramp = pal(np.linspace(0, 1, 2048))[None, :, :3].repeat(40, 0).astype(np.float32)
+    fl = plt.figure(figsize=(4.0, 3.0))
+    fl.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(pramp, aspect="auto")
+    cxl = fl.add_axes([0.8, 0.1, 0.03, 0.8])
+    fl.colorbar(ScalarMappable(mcolors.Normalize(0, 1), pal), cax=cxl)
+    st_l = _state(fl)
+    listed_sum = _summary(st_l)
+    l_gid = next(g for g, e in listed_sum.items() if e["role"] == "colorbar")
+    O.apply(st_l, [{"gid": l_gid, "prop": "cmap", "value": "viridis"}])
+    fl.canvas.draw()
+    got_l = np.asarray(fl.axes[0].images[0].get_array())[0, :, :3]
+    want_l = np.rint(matplotlib.colormaps["viridis"](np.linspace(0, 1, 2048))[:, :3] * 255)
+    chunked = C._ColourTube(pal)
+    saved = C._FIELD_TUBE_CHUNK
+    C._FIELD_TUBE_CHUNK = 10**9
+    try:
+        single = C._ColourTube(pal)
+    finally:
+        C._FIELD_TUBE_CHUNK = saved
+    same_keys = np.array_equal(chunked.keys, single.keys)
+    listed = {
+        "summary": listed_sum,
+        "max_err": float(np.abs(got_l.astype(float) - want_l).max()) / 255,
+        "tube_keys_equal": bool(same_keys),
+        "tube_entry_agree": float((chunked.entry == single.entry).mean()) if same_keys else 0.0,
+    }
+    # 连续色图前半段几乎不变色：好几格圆整成同一个
+    # 8 位颜色，同色一组要取位置的平均值（平台中点），取第一次出现的位置会系统性偏低
+    pale = mcolors.LinearSegmentedColormap.from_list(
+        "pale", [(0, "#ffffff"), (0.5, "#fffaf6"), (1, "#202020")], N=4096
+    )
+    tp = np.linspace(0, 1, 3000)
+    pramp2 = pale(tp)[None, :, :3].repeat(20, 0).astype(np.float32)
+    fp2 = plt.figure(figsize=(4.0, 3.0))
+    fp2.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(pramp2, aspect="auto")
+    cxp = fp2.add_axes([0.8, 0.1, 0.03, 0.8])
+    fp2.colorbar(ScalarMappable(mcolors.Normalize(0, 1), pale), cax=cxp)
+    st_p2 = _state(fp2)
+    p_gid = next(g for g, e in _summary(st_p2).items() if e["role"] == "colorbar")
+    O.apply(st_p2, [{"gid": p_gid, "prop": "cmap", "value": "viridis"}])
+    fp2.canvas.draw()
+    got_p = np.asarray(fp2.axes[0].images[0].get_array())[0, :, :3].astype(float) / 255
+    want_p = matplotlib.colormaps["viridis"](tp)[:, :3]
+    listed["plateau_mean_err"] = float(np.abs(got_p - want_p).max(-1).mean())
+
+    # 上万种不同颜色的调色板不是色阶：如实不配对
+    many = mcolors.ListedColormap(np.random.RandomState(8).rand(C._FIELD_MAX_COLOURS + 500, 3))
+    mramp = many(np.linspace(0, 1, 4000))[None, :, :3].repeat(40, 0).astype(np.float32)
+    fm = plt.figure(figsize=(4.0, 3.0))
+    fm.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(mramp, aspect="auto")
+    cxm = fm.add_axes([0.8, 0.1, 0.03, 0.8])
+    fm.colorbar(ScalarMappable(mcolors.Normalize(0, 1), many), cax=cxm)
+    listed["too_many"] = _summary(_state(fm))
     return {
+        "listed": listed,
         "windows": windows,
         "sample_limit": C._FIELD_SAMPLE,
         "window": C._FIELD_WINDOW,

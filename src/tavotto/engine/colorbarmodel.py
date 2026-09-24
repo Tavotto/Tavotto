@@ -537,8 +537,13 @@ _FIELD_CORE_FLOOR = 0.6
 #: 这一条，它们会被当成底色，把四周的照片像素按边缘规则一起染色（实测一张嵌着照片的
 #: 热图，照片部分 20% 的像素变了色）。
 _FIELD_MIN_NEIGHBOURS = 3
-#: 查色表最多按这么多格建（见 `_cmap_lut8`）。
-_FIELD_MAX_ENTRIES = 1024
+#: 建查色表时一次处理这么多个色图格（每格 729 个候选颜色）。只有一段时直接排序去重；
+#: 多段时逐段排序、再对一张 2²⁴ 的直查表取「更近者」——总耗时与颜色数成正比（每段都对
+#: 累计结果重排是平方级：3 万色的调色板实测 25 s）。
+_FIELD_TUBE_CHUNK = 1024
+#: 去重后的颜色数上限。连续色图 8 位下只有几百上千种；上万种不同颜色的离散调色板已经
+#: 不是一条色阶，不配对——如实不认，manifest 不报绑定（查色表会随颜色数线性变大）。
+_FIELD_MAX_COLOURS = 16384
 #: 配对抽样用的连续窗口边长：连片判据（`_field_mask`）要真实相邻的像素，隔点抽样量不了。
 _FIELD_WINDOW = 64
 #: 查色表里「不在色图上」的记号（格号是 uint16，色图最多 65535 格）。
@@ -578,14 +583,34 @@ def _pack(rgb8):
     )
 
 
-def _cmap_lut8(cmap):
-    """色图的查表颜色（0–255 float32），**最多 `_FIELD_MAX_ENTRIES` 格**：再细的色图在 8 位
-    颜色里也大多是重复色，格数只决定反解出的数值分辨率（1024 格 ≈ 0.1%）；不封顶的话
-    自定义的几万格色图建 `_ColourTube` 要 N×729 个候选（6 万格实测 1.3 GB，#538 评审第三轮）。"""
+def _cmap_entries(cmap):
+    """色图的**真实颜色**：(颜色 0–255 float32, 各自在色图上的位置 t ∈ [0, 1])。
+
+    按色图自己的 N 格取样，所有真实存在的颜色都在——按固定格数重新取样会跳过离散调色板
+    （`ListedColormap`）里真实存在的颜色，那些像素就认不出来了（#538 评审第四轮：2048 色
+    调色板丢一半、配对失败）。
+
+    按 8 位颜色去重，同色一组取位置的**平均值**：连续色图常有好几格圆整成同一个 8 位颜色
+    （像素本身也只有 8 位，分不出是其中哪一格），取第一次出现的位置会让数值系统性偏低
+    （宽平台的色图实测平均误差 0.013 → 取中点 0.007）。逐格保留、按浮点距离挑最近格的写法
+    实测精度相同（场像素平均误差 0.0020 对 0.0022），多一条分支不值。6 万格的
+    LinearSegmented 去重后不到 800 种。去重后超过 `_FIELD_MAX_COLOURS` 种时抛错，调用方
+    不配对。
+    """
     import numpy as np
 
-    n = min(max(int(getattr(cmap, "N", 256)), 2), _FIELD_MAX_ENTRIES)
-    return (np.asarray(cmap(np.linspace(0.0, 1.0, n)))[:, :3] * 255.0).astype(np.float32)
+    n = max(int(getattr(cmap, "N", 256)), 2)
+    t = np.linspace(0.0, 1.0, n)
+    colours = np.asarray(cmap(t))[:, :3] * 255.0
+    _, first, group = np.unique(
+        np.rint(colours).astype(np.int16), axis=0, return_index=True, return_inverse=True
+    )
+    group = np.asarray(group).ravel()
+    if len(first) > _FIELD_MAX_COLOURS:
+        raise ValueError("colormap has too many distinct colours")
+    mean_t = np.bincount(group, weights=t) / np.bincount(group)
+    order = np.argsort(first)  # 按第一次出现的顺序排，格号沿色图单调
+    return colours[first[order]].astype(np.float32), mean_t[order]
 
 
 def _opaque(arr):
@@ -654,25 +679,47 @@ class _ColourTube:
     def __init__(self, cmap):
         import numpy as np
 
-        lut = _cmap_lut8(cmap)
+        lut, t = _cmap_entries(cmap)
         n = len(lut)
-        if n >= _OFF_MAP:
-            raise ValueError("colormap has too many entries")
         r = int(np.ceil(_FIELD_TOL))
         g = np.arange(-r, r + 1, dtype=np.int16)
         off = np.stack(np.meshgrid(g, g, g, indexing="ij"), -1).reshape(-1, 3)
-        cand = np.rint(lut).astype(np.int16)[:, None, :] + off[None]
-        dist = np.abs(cand - lut[:, None, :]).max(-1)
-        ok = ((cand >= 0) & (cand <= 255)).all(-1) & (dist <= _FIELD_TOL)
-        entry = np.broadcast_to(np.arange(n, dtype=np.uint16)[:, None], ok.shape)[ok]
-        keys = _pack(cand[ok].astype(np.uint8))
-        order = np.lexsort((dist[ok], keys))  # 先按颜色、同色再按距离：每种颜色取最近那格
-        keys, entry = keys[order], entry[order]
-        first = np.ones(len(keys), bool)
-        first[1:] = keys[1:] != keys[:-1]
-        self.keys = keys[first]
-        self.entry = entry[first]
+
+        def _nearest(e0):
+            """这一段色图格的候选颜色，段内每种颜色只留最近的那格：(颜色码, 距离, 格号)。"""
+            part = lut[e0 : e0 + _FIELD_TUBE_CHUNK]
+            cand = np.rint(part).astype(np.int16)[:, None, :] + off[None]
+            d = np.abs(cand - part[:, None, :]).max(-1)
+            ok = ((cand >= 0) & (cand <= 255)).all(-1) & (d <= _FIELD_TOL)
+            ids = np.arange(e0, e0 + len(part), dtype=np.uint16)
+            keys = _pack(cand[ok].astype(np.uint8))
+            dist = d[ok].astype(np.float32)
+            entry = np.broadcast_to(ids[:, None], ok.shape)[ok]
+            order = np.lexsort((dist, keys))  # 先按颜色、同色再按距离：每种颜色取最近那格
+            keys, dist, entry = keys[order], dist[order], entry[order]
+            first = np.ones(len(keys), bool)
+            first[1:] = keys[1:] != keys[:-1]
+            return keys[first], dist[first], entry[first]
+
+        if n <= _FIELD_TUBE_CHUNK:
+            keys, _, entry = _nearest(0)
+        else:
+            # 距离 ≤ 4.5，量化到 1/50 存 uint8（16 MiB，float32 要 64 MiB）；分辨「谁更近」够用
+            best_d = np.full(1 << 24, 255, np.uint8)
+            best_e = np.full(1 << 24, _OFF_MAP, np.uint16)
+            for e0 in range(0, n, _FIELD_TUBE_CHUNK):
+                k, d, e = _nearest(e0)
+                d = np.rint(d * 50.0).astype(np.uint8)
+                closer = d < best_d[k]  # 段内已去重，花式赋值没有重复下标
+                best_d[k[closer]] = d[closer]
+                best_e[k[closer]] = e[closer]
+            del best_d
+            keys = np.flatnonzero(best_e != _OFF_MAP).astype(np.uint32)
+            entry = best_e[keys]
+        self.keys = keys
+        self.entry = entry
         self.lut = lut
+        self.t = t
 
     def lookup(self, packed):
         """颜色码 → 格号（不在色图上的记 `_OFF_MAP`）。二分查找，给抽样这类小数组用。"""
@@ -843,9 +890,8 @@ class RasterField:
 
         m = self.cb.mappable
         lut = self.tube.lut
-        n = len(lut)
-        # 格号 → 新颜色：只有 N 项。格 i 的数值是 norm0 的反函数在 i/(N-1) 处
-        values = np.asarray(self.norm0.inverse(np.linspace(0.0, 1.0, n)), dtype=np.float64)
+        # 格号 → 新颜色：只有 N 项。格 i 的数值是 norm0 的反函数在它的色图位置 t_i 处
+        values = np.asarray(self.norm0.inverse(self.tube.t), dtype=np.float64)
         new = np.clip(np.rint(np.asarray(m.to_rgba(values))[:, :3] * 255.0), 0, 255)
         new = new.astype(np.uint8)
         a = np.asarray(self.original)
@@ -898,7 +944,15 @@ def _sample_windows(h: int, w: int):
     ny, nx = math.ceil(h / sh), math.ceil(w / sw)
     n = max(1, _FIELD_SAMPLE // (sh * sw))
     gy = max(1, min(ny, n, round(math.sqrt(n * ny / nx))))
+    # 某一向不止一格时至少取头尾两格：按长宽比算出 1 的话只取得到第 0 格，另一端永远看不到
+    # （#538 评审第四轮：100×10000 只抽到最上面 64 行）
+    if ny > 1:
+        gy = max(gy, 2)
     gx = max(1, min(nx, n // gy))
+    if nx > 1:
+        gx = max(gx, 2)
+    # 强制两端之后按总数把另一向收回来（n ≥ 48，2 × 2 总放得下）
+    gy = max(min(gy, n // gx), 2 if ny > 1 else 1)
     rows = sorted({round(i * (ny - 1) / max(1, gy - 1)) for i in range(gy)})
     cols = sorted({round(j * (nx - 1) / max(1, gx - 1)) for j in range(gx)})
     for r in rows:
@@ -931,8 +985,8 @@ def _field_fit(arr, tube: "_ColourTube") -> float:
     got = np.concatenate(fields) if fields else np.empty(0, np.uint16)
     if not n_opaque or not len(got):
         return 0.0
-    lo, hi = np.percentile(got, [2, 98])
-    if (hi - lo) / (len(tube.lut) - 1) < _FIELD_MIN_SPREAD:
+    lo, hi = np.percentile(tube.t[got], [2, 98])
+    if hi - lo < _FIELD_MIN_SPREAD:
         return 0.0
     return float(len(got)) / float(n_opaque)
 

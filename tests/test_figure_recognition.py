@@ -150,6 +150,9 @@ def test_raster_follows_the_colorbar_and_keeps_its_overlays(facts):
     assert edge == pytest.approx(r["expected"][1], abs=2e-2)
     # 重着色写进的是 uint8 缓冲：原样保留的像素只差 8 位量化（≤ 1/255）
     assert line == pytest.approx(r["overlay"], abs=1 / 255 + 1e-6)
+    # 整张场图逐像素：与「同一数值在新色图下的颜色」的误差（实测平均 0.002、p99.9 约 0.01）
+    assert r["field_err_mean"] < 0.005, r["field_err_mean"]
+    assert r["field_err_p999"] < 0.03, r["field_err_p999"]
     # 流线的抗锯齿边缘：底色的变化按覆盖率带过去，不留一圈旧色图的光晕
     assert r["antialiased"] == pytest.approx(r["antialiased_expected"], abs=2e-2)
     assert r["vmax_pixel"] == pytest.approx(r["vmax_expected"], abs=2e-2)
@@ -277,6 +280,22 @@ def test_fit_sampling_spans_the_whole_image_within_budget(facts):
         assert f["pixels"] <= limit, shape
         assert f["first_row"] == 0 and f["first_col"] == 0, shape
         assert f["last_row"] > f["h"] - win and f["last_col"] > f["w"] - win, shape
+
+
+def test_discrete_palettes_keep_every_colour(facts):
+    """#538 评审第四轮：按固定格数重取样会跳过 `ListedColormap` 里真实存在的颜色（2048 色的
+    调色板丢一半、配对失败）。查色表按去重后的真实颜色建：色带绑定、每个像素换成新色图下
+    它那一格的颜色；多段建表与一次排序建表的结果相同。"""
+    lst = facts["orphan_scopes"]["listed"]
+    (bar,) = _bars(lst["summary"]).values()
+    assert bar["mappable_gid"] == "axes_0.images_0"
+    assert lst["max_err"] <= 1 / 255 + 1e-6, lst["max_err"]
+    assert lst["tube_keys_equal"] is True
+    assert lst["tube_entry_agree"] > 0.999, lst["tube_entry_agree"]
+    (many,) = _bars(lst["too_many"]).values()
+    assert many["mappable_gid"] is None
+    # 去重时同色一组取平台中点（实测 0.007）；取第一次出现的位置偏低（0.013）
+    assert lst["plateau_mean_err"] < 0.01, lst["plateau_mean_err"]
 
 
 # ============================================================ 热会话 == 全量重放
