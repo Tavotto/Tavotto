@@ -51,9 +51,20 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   主语取 manifest 的 `label`（过 `engineLabel()`），精确名词只在每行收起的
   「技术详情」里。
 * **`safe_auto` 的三条判据**：目标值唯一、**修完真的能过**（绝对下限不含等号，
-  所以"提到正好 8 pt"不算修好）、不动科研数据（字体 / 色图 / 裁剪一律不自动）。
+  所以"提到正好 8 pt"不算修好）、不动科研数据（色图 / 裁剪 / 重排一律不自动）。
   落地经 `store/issueFixActions.ts` → `documentStore.commit`，一个修复一个事务、
   一批一个批事务；**批量只在当前画布**（撤销栈按画布换入换出）。
+* **修复按「修的是谁」分两路，一类对象只有一个计划器（ADR 0080）**：
+  **面板内部**（`lib/issueFix.fixRoute() === 'engine'`）的计划、真实渲染与裁决全在
+  后端 `/api/engine/specfix`（`engine/specfix.py`）——前端**不算面板的计划**，只把
+  此刻的全量列表 + `panelScale()` + 这份规范 + 点名的 `(规则, gid)` 发过去，后端
+  回 `ok: true` 才把它回的**整张列表**一次 commit；不通过 / 出错 / 等待期间文档
+  被改过（override 列表或 `loadSeq` 对不上）一律**文档零改动**，原因走闭集
+  `FixFailureReason`。**画布层**（标注字号、页宽）仍在 `lib/issueFix.planFix()`。
+  可修规则集 `ENGINE_FIX_RULES` ↔ `specfix.FIXABLE_RULES` 是严格同源对。
+  「全部处理」的集合唯一出处 `batchable()`（**不含建议档**；组头的「全部修复」
+  是点名那一组，带 `includeSuggestions`）；计数与执行是同一个集合。修复在跑时
+  `uiStore.fixing` 把所有修复入口置灰（同一时刻只跑一轮，第二轮回 `busy`）。
 * **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
 * **面板的呈现层在 `lib/problemList.ts`（2026-09-06，审计 T09）**，纯函数，
   不跑第二遍求值器：① 范围「当前图 / 整个文档」——当前图 = 快速编辑的

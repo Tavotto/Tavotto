@@ -27,6 +27,16 @@
   判据，`_check_panel_clipping` 与 B0 对比共用它——改判据只改这一处。三条干涉检查的
   severity 登记在 `publication.json`（warn），文案 key 在 `errors.json` 的 `preflight.*`
   与 `problems.title.*`（`test_i18n_dead_keys` 扫 `src/tavotto` 与插件目录）。
+- **桌面的按规范修图（ADR 0080，`engine/specfix.py`，纯标准库）**是同一套事务的
+  第二个入口（`/api/engine/specfix`）：**哪里违规只认 `preflight.run()` 的 gid**（逐 gid
+  展开后按 `(规则, gid)` 配对，`element-outside-figure` 交给逐元素的几何清单），
+  改成多少由 `plan()` 按**页面 pt** 算再按面板缩放换回（字号按角色层级抬升：抬了
+  下层就把上层补齐，不倒挂），裁决 = `normalize.compare()` + 点名的问题真的不见了
+  + **修复引入的 warn 级规范问题也挡**（`STRICT_SEVERITIES`；规范化那边只挡 error）。
+  允许集合按 prop 放行全图（刻度组 / 图例的字号字体会落到子元素上），外加
+  `COUPLED_PROPS` 登记的实测连带（`spine_linewidth` → 四边线宽、`linewidth` → 跟随源
+  的图例示意线）；新增一类修复前先在真实渲染里看它连带改了什么再登记。「收不收这
+  一轮局部修复」只有 `normalize.better_candidate()` 一处（bridge 与桌面共用）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
   `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处）：
   图幅 size_mm → 色条方向 → 色条 extend → 子图 position → 刻度类型

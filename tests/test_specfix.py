@@ -6,7 +6,11 @@ from tavotto.engine import profiles, specfix
 
 
 def _el(gid: str, role: str, **props) -> dict:
-    return {"gid": gid, "role": role, "editable": [{"prop": k, "value": v} for k, v in props.items()]}
+    return {
+        "gid": gid,
+        "role": role,
+        "editable": [{"prop": k, "value": v} for k, v in props.items()],
+    }
 
 
 def _manifest(*els) -> dict:
