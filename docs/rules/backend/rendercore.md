@@ -118,10 +118,10 @@
 - **接 ExportJob 只给 `produce`**（`rendercore/job.py`）：作业生命周期一字不改；给不出的格式逐项 `format_failed`
   且 `error.params.unsupported` 带操作与理由，写入器的 `WriterError` 与 child 的 `RenderChildError` 也落到这一档；
   编译期事实（缺字 / cjk 脸 / hidden）进 `job.warnings`；冻结源在写入前 `read_frozen()`。U06 / U07 里 `app.py` 不 import 它。
-- **候选后端接 facade（U08，ADR 0067）**：`rendercore/facade.py` 是 pdfbackend 契约的候选实现（19 项同签名 +
+- **facade 接线（U08 接入、U10 起是唯一实现即默认，ADR 0067 / 0072）**：`rendercore/facade.py` 是 pdfbackend 契约的实现（19 项同签名 +
   Canvas 面适配器；对拍表在模块头），由契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 选中；
   进程级共享三样：字体注册表 `facade.provider()`、render child `facade.host()`（= `renderhost.shared()`）、
-  预览缓存 `facade.preview_cache()`。产品导出路（`app._export_produce`）在候选下 `scope=canvas` 走
+  预览缓存 `facade.preview_cache()`。产品导出路（`app._export_produce`）的 `scope=canvas` 走
   `job.produce` + `sources.ExecutionSourceResolver`（带 override / runtime 素材由当次 worker 现画并附回执：
   `receipt.from_worker` / `from_native_session` → `receipt.source_artifact_for`，`origin=execution` 必核；
   磁盘原件不跑脚本），`scope=original` 经契约层的 `original_*`；EPS 报旧路同一个稳定码 `eps_not_for_canvas`；
