@@ -787,6 +787,12 @@ def main():
                 arrowprops=dict(arrowstyle="->"))
     ax.annotate("", xy=(200, 150), xycoords="figure pixels", xytext=(10, 10),
                 arrowprops=dict(arrowstyle="->"))
+    # 字号单位：锚点随注释字号缩放，改字号就漂，不出端点                 texts_7 / 8
+    ax.annotate("", xy=(80, 80), xytext=(-3, -2), textcoords="offset fontsize",
+                arrowprops=dict(arrowstyle="->"))
+    ax.annotate("", xy=(0.2, 0.2), xycoords="axes fraction",
+                xytext=(2, 3), textcoords="axes fontsize",
+                arrowprops=dict(arrowstyle="->"))
     fig.savefig("PureArrow.pdf")
 """
 
@@ -816,7 +822,8 @@ def test_pure_arrow_annotation_drags_via_its_anchors(tmp_path):
     就弹回。现在 `endpoints_frac` 写的是**注释本身的两个锚点**（经各自坐标系逆算）：
 
     - 可逆坐标系（data / offset points / axes fraction）出端点，[尾, 头] = [xytext, xy]；
-      有字的注释、Artist 坐标系、像素单位（换 dpi 就漂）不出（不伪造能力）；
+      有字的注释、Artist 坐标系、像素单位（换 dpi 就漂）、字号单位（改字号就漂）不出
+      （不伪造能力）；
     - 拖完：端点落在目标、**画出来的箭头**（patch 的 bbox）跟着平移、再渲染一次不弹回、
       导出的 PDF 里箭头在新位置；
     - 空列表还原：端点与 bbox 逐位回到脚本原样。
@@ -838,6 +845,8 @@ def test_pure_arrow_annotation_drags_via_its_anchors(tmp_path):
             "axes_0.texts_4.arrow",
             "axes_0.texts_5.arrow",
             "axes_0.texts_6.arrow",
+            "axes_0.texts_7.arrow",
+            "axes_0.texts_8.arrow",
         ):
             assert "arrow_endpoints" not in el[gid], gid
         # 用户的那根：数据坐标 (20,60) → (40,60)，水平向右；尾在左

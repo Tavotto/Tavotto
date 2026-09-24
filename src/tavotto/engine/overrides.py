@@ -598,10 +598,14 @@ def _linestyle_name(a) -> str:
 #: （textcoords）成立。
 #: **没有 'pixels'**（#552 评审）：像素单位的锚点是按应用那一刻的 figure dpi 逆算出来
 #: 的原始像素值，导出 / 预览换一个 dpi（`savefig(dpi=600)`）像素值不变、图幅变了，
-#: 箭头落到别处——热态 manifest ≠ 导出件。points / fontsize / fraction 都是物理量或
-#: 比例，换 dpi 不动。
+#: 箭头落到别处——热态 manifest ≠ 导出件。
+#: **也没有 'fontsize'**（#552 第三轮评审）：这类变换按注释**当前字号**缩放，而字号是
+#: 另一条 override——端点先落、字号后改时锚点跟着字号漂离请求的位置，`_must_replay`
+#: 只在几何档变化时重放端点，字号不在其中。纯箭头注释的字号用户看不见也极少去改，
+#: 为它把字号拉进「几何」档、牵动全部 figure 锚定 prop 的重放不值得。
+#: 剩下 points / fraction：物理量或比例，与 dpi、字号都无关。
 _ANN_COORD_BASES = ("figure", "subfigure", "axes")
-_ANN_COORD_UNITS = ("points", "fraction", "fontsize")
+_ANN_COORD_UNITS = ("points", "fraction")
 
 
 def _ann_coords_invertible(coords, *, text_end: bool) -> bool:

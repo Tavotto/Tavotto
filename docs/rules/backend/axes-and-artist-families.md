@@ -53,9 +53,11 @@
     （xy / xyann / clip 三样），只活在 originals 里。
   * **只对「逆算得回去」的开放**（`annotation_arrow_owner`，判不出就不宣称）：文字为空、
     两端坐标系都是 renderer 无关的可逆写法——'data'、'{figure,subfigure,axes}
-    {points,fraction,fontsize}'、尾端另加 'offset …'，以及它们的二元组。**'pixels' 不算**
+    {points,fraction}'、尾端另加 'offset …'，以及它们的二元组。**'pixels' 不算**
     （#552 评审）：逆算出的是应用那一刻 dpi 下的原始像素值，导出换 dpi 后像素值不变、图幅
-    变了，箭头落到别处（热态 ≠ 导出）；points / fontsize / fraction 与 dpi 无关。Artist /
+    变了，箭头落到别处（热态 ≠ 导出）。**'fontsize' 也不算**：变换按注释当前字号缩放，
+    端点先落、字号后改时锚点跟着字号漂，而 `_must_replay` 不因字号变化重放端点——为一条
+    看不见的空注释的字号把它拉进几何档不值得。points / fraction 与 dpi、字号都无关。Artist /
     可调用对象 / Transform / Bbox / 'polar' 不出端点。**有字的注释不出端点**：箭尾从文字框
     算，拖尾巴就是拖字，字自己已能拖（`pos_frac`），两条 override 写同一个 `xyann` 只会互相
     盖写。
