@@ -87,6 +87,15 @@ def mod():
     return _mod()
 
 
+@pytest.fixture(autouse=True)
+def _no_carried_env(mod, monkeypatch):
+    """这里判的是**各宿主的 schema**，不是「用户设了哪些位置变量」：把会被原样带进配置的
+    CARRIED_ENV（遥测开关、配置 / 数据目录）清掉，期望才能逐字写死。带不带它们另有
+    tests/test_mcp_configure.py 的用例。"""
+    for name in mod.CARRIED_ENV:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture()
 def project(tmp_path) -> Path:
     p = tmp_path / "论文 项目" / "figures"
