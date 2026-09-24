@@ -465,6 +465,45 @@ def test_render_survives_a_concurrent_prune_before_send_file_opens_it(
     assert resp.get_data()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def test_render_leaks_no_pin_when_the_server_never_closes_the_response(client, tmp_path):
+    """Codex #539：生产 WSGI 对 send_file 走 direct passthrough，服务器关的是文件包装、不调 `Response.close()`——
+    挂在 `call_on_close` 上的放钉永远不跑，钉就漏了（被钉住的成品 prune 永远删不掉）。这里直接调 `wsgi_app`、
+    把响应体读完、**不调 close**：之后缓存里一个钉都不能剩。"""
+    from werkzeug.test import EnvironBuilder
+
+    from tavotto.rendercore import facade
+
+    _project(tmp_path)
+    assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200  # 暖缓存：下一次走命中路
+    cache = facade.preview_cache(m.CACHE_DIR, max_bytes=m.RENDER_CACHE_MAX_BYTES)
+    # 这个 client 带着会话认证的 cookie / 头：沿用它发请求用的那套 environ
+    env = EnvironBuilder(path="/api/render", query_string="id=p1.pdf&w=200").get_environ()
+    env.update({k: v for k, v in client.environ_base.items() if k not in env})
+    status = {}
+
+    def start_response(s, headers, exc_info=None):
+        status["s"] = s
+
+    body_iter = m.app.wsgi_app(env, start_response)
+    body = b"".join(body_iter)  # 读完，但**不** close()
+    assert status["s"].startswith("200"), status
+    assert body[:8] == b"\x89PNG\r\n\x1a\n"
+    assert not cache._pins, f"响应没被 close，钉就留下了：{cache._pins}"
+    if hasattr(body_iter, "close"):
+        body_iter.close()
+
+
+def test_render_still_answers_conditional_requests(client, tmp_path):
+    """交给 send_file 的是打开的文件对象而不是路径：ETag / 304 照样要成立（前端靠它每次验证、不重下）。"""
+    _project(tmp_path)
+    first = client.get("/api/render?id=p1.pdf&w=200")
+    assert first.status_code == 200 and first.headers.get("ETag")
+    again = client.get(
+        "/api/render?id=p1.pdf&w=200", headers={"If-None-Match": first.headers["ETag"]}
+    )
+    assert again.status_code == 304
+
+
 def test_reset_projects_reaps_the_render_child(client, tmp_path):
     """render child 是应用运行时的一部分：关项目 / 关应用时一并收掉并 reap（ADR 0066）。"""
     from tavotto.rendercore import renderhost

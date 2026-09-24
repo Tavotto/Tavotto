@@ -782,12 +782,21 @@ def api_render():
         return jsonify({"error": str(exc), "code": exc.code}), 500
     # no-cache = 每次向服务器验证（304 极快）；内容一变（身份进键）立即失效。
     # 不用长 max-age——「更新原图」后旧 URL 也不能再吃浏览器缓存。
+    # 钉着的时候就把文件打开，拿到句柄立刻放钉：之后别人的 prune 删掉路径也不影响这个句柄。不把放钉挂在
+    # `call_on_close` 上——生产 WSGI 走 direct passthrough，服务器关的是文件包装、不调 Response.close()，
+    # 挂在那里的钉永远放不掉（Codex #539）
     try:
-        resp = send_file(cached, mimetype="image/png", conditional=True)
-    except BaseException:
+        fh = open(cached, "rb")  # noqa: SIM115 —— 交给 send_file，由它 / WSGI 服务器关
+        st = os.fstat(fh.fileno())
+    finally:
         cache.release(cached)
-        raise
-    resp.call_on_close(lambda: cache.release(cached))
+    resp = send_file(
+        fh,
+        mimetype="image/png",
+        conditional=True,
+        etag=cached.stem,
+        last_modified=st.st_mtime,
+    )
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
