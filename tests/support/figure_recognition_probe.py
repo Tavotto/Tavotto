@@ -577,7 +577,45 @@ def orphan_scopes() -> dict:
     fs3.colorbar(mixed_sm, ax=u0)
     fs3.colorbar(mixed_sm, ax=u1)
     shared_mixed = _summary(_state(fs3))
+    # 同一个 ScalarMappable：`ax=w0` 一条 + `cax=` 通用一条（第八轮）；对照：脚本自己把 norm
+    # 交给了 c0 的图，通用色条不再按数值认领 c1
+    fs4, (w0, w1) = plt.subplots(1, 2, figsize=(6.0, 3.0))
+    w0.imshow(zz, cmap="viridis", vmin=0, vmax=1)
+    w1.imshow(zz, cmap="viridis", vmin=0, vmax=1)
+    gen_sm = ScalarMappable(mcolors.Normalize(0, 1), "viridis")
+    fs4.colorbar(gen_sm, ax=w0)
+    fs4.colorbar(gen_sm, cax=fs4.add_axes([0.93, 0.1, 0.02, 0.8]))
+    _state(fs4)
+    fs5, (c0, c1) = plt.subplots(1, 2, figsize=(6.0, 3.0))
+    ctl_sm = ScalarMappable(mcolors.Normalize(0, 1), "viridis")
+    c0.imshow(zz, cmap="viridis", norm=ctl_sm.norm)
+    c1.imshow(zz, cmap="viridis", vmin=0, vmax=1)
+    fs5.colorbar(ctl_sm, cax=fs5.add_axes([0.93, 0.1, 0.02, 0.8]))
+    _state(fs5)
+    # 脚本把 norm 交给了 d0 的图，同一个 ScalarMappable 又用 `ax=d1` 建了一条色条：那条色条
+    # 声明描述的是 d1，d0 的脚本共用者在它的作用域之外，不该挡住它认领 d1
+    fs6, (d0, d1) = plt.subplots(1, 2, figsize=(6.0, 3.0))
+    own_sm = ScalarMappable(mcolors.Normalize(0, 1), "viridis")
+    d0.imshow(zz, cmap="viridis", norm=own_sm.norm)
+    d1.imshow(zz, cmap="viridis", vmin=0, vmax=1)
+    fs6.colorbar(own_sm, ax=d1)
+    _state(fs6)
+    # 位图版：脚本把 norm 交给了 e0 的图，`ax=e1` 那条色条仍要把 e1 的 RGB 场图绑上
+    fs7, (e0, e1) = plt.subplots(1, 2, figsize=(6.0, 3.0))
+    ras_sm = ScalarMappable(mcolors.Normalize(0, 1), "viridis")
+    e0.imshow(zz, cmap="viridis", norm=ras_sm.norm)
+    e1.imshow(matplotlib.colormaps["viridis"](np.linspace(0, 1, 64)[None].repeat(32, 0))[..., :3])
+    fs7.colorbar(ras_sm, ax=e1)
+    _state(fs7)
+    generic_after_scoped = {
+        "scoped_raster_e1": getattr(e1.images[0], "_mm_field", None) is not None,
+        "scoped_d1": d1.images[0].norm is own_sm.norm,
+        "w0": w0.images[0].norm is gen_sm.norm,
+        "w1": w1.images[0].norm is gen_sm.norm,
+        "control_c1": c1.images[0].norm is ctl_sm.norm,
+    }
     return {
+        "generic_after_scoped": generic_after_scoped,
         "shared_two": shared_two,
         "shared_mixed": shared_mixed,
         "hatch": hatch,

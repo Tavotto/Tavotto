@@ -337,6 +337,19 @@ def test_one_standalone_mappable_behind_two_colorbars(facts):
     assert all(e["scale_gids"] == ["axes_0.images_0"] for e in mixed.values()), mixed
 
 
+def test_generic_colorbar_still_adopts_what_the_scoped_one_left(facts):
+    """#538 评审第八轮：同一个 ScalarMappable 挂一条 `ax=w0` 的和一条 `cax=` 的通用色条。有宿主
+    的先认领 w0；「作用域里已有共用者」若把认领来的也算上，通用那条整条跳过、w1 没人认。
+    只算脚本自己交的 norm：w1 照样被认领；对照——脚本把 norm 交给了 c0，通用色条不再按数值
+    认领 c1（色条的描述对象由脚本声明了）。"""
+    g = facts["orphan_scopes"]["generic_after_scoped"]
+    assert g["w0"] is True and g["w1"] is True, g
+    assert g["control_c1"] is False, g
+    # 「脚本共用者」只在本作用域里算：d0 的共用者不挡 `ax=d1` 那条色条认领 d1
+    assert g["scoped_d1"] is True, g
+    assert g["scoped_raster_e1"] is True, g  # 位图配对同一个判据
+
+
 # ============================================================ 热会话 == 全量重放
 SCRIPT = "fig_recognition.py"
 LIBRARY = """\
