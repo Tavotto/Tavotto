@@ -58,6 +58,11 @@ interface ProjectState {
   recent: RecentProject[]
   /** 收藏的项目，按用户排的顺序（左栏「工作区」抽屉）；与最近列表互相独立 */
   pinned: RecentProject[]
+  /**
+   * 正在切项目（`open` / `adoptOpenedProject` 在跑）。切换是串行的，界面据此把所有
+   * 「打开项目」的入口置灰——并发的两次换代会让 A 的请求落进 B（Codex #550 P1）。
+   */
+  switching: boolean
   /** 后端进程里打开着的全部项目（快速切换菜单用） */
   opened: ProjectStatus[]
   /** 启动时探测一次；SSE 断线重连后也可复查 */
@@ -190,11 +195,91 @@ async function resetForNewProject() {
   void useProjectReadinessStore.getState().load()
 }
 
-export const useProjectStore = create<ProjectState>((set, get) => ({
+/**
+ * 一条串行队列：`run(fn)` 等前面排着的都结束（成功或失败）再跑 fn。
+ *
+ * 切项目与改收藏各用一条：
+ *  - 切项目：`adoptOpenedProject` 先改全局 pj 再 await 换代，两次交错就会让 A 的
+ *    换代请求带着 B 的 pj 发出去、最后一次完成的把 `project` 写回 A（Codex #550 P1）；
+ *  - 改收藏：每次都是整张替换，payload 必须在**轮到自己时**从最新列表算，否则两次
+ *    快速收藏都从同一份旧列表出发，后到的那张把先到的盖掉（Codex #550 P2）。
+ */
+function serialQueue() {
+  let tail: Promise<unknown> = Promise.resolve()
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = tail.then(fn)
+    tail = run.catch(() => {})
+    return run
+  }
+}
+const switchQueue = serialQueue()
+const pinQueue = serialQueue()
+
+export const useProjectStore = create<ProjectState>((set, get) => {
+  /** 切项目的前端换代本体；对外的两个入口都经 `switchQueue` 串行地调它 */
+  const adoptNow: ProjectState['adoptOpenedProject'] = async (status, opts) => {
+    // 先认领项目，再做任何会发请求的事：素材/渲染都必须落到新项目上
+    if (status.id) setCurrentProjectId(status.id)
+    // 「最近文档」要在条目上标出所属项目（审计 T04）；名字的权威在这里，
+    // documentStore 只读那份投影（否则两个 store 互相 import 成环）
+    setCurrentProjectLabel(status.name)
+    // 手里又有项目了：这一个再失效时仍要能把用户送回选择器
+    armNoProjectRecovery()
+    // 「这个项目上次开着哪份」要在换代**之前**读：换代会先换上一份空白文档，
+    // 而那一档记的是「最近一份有内容的文档」，空白不会盖掉它——但读在前面
+    // 才不依赖这条细节。
+    const last = status.id ? readProjectDocument(status.id) : null
+    await resetForNewProject()
+    // 空白文档已经就位、`currentDoc` 已经指向它；要换成别的文档就在这里换，
+    // 必须赶在 `phase: 'open'` 之前（见接口注释）
+    let issue: ProjectDocumentRef | null = null
+    if (opts?.prepareDocument) await opts.prepareDocument()
+    else if (last && !(await restoreProjectDocument(last))) issue = last
+    // 文档就位了就按它的页面适配视口。从 Project Picker 进来时舞台还没挂载
+    // （量不到视口），`fit` 会把这次适配记成待办、舞台一量到尺寸就应用——
+    // 改造前新项目沿用上一个项目留下的 175%（审计 T03）。
+    {
+      const page = useDocumentStore.getState().doc.page
+      useViewportStore.getState().fit(page.w, page.h)
+    }
+    set({ project: status, phase: 'open', lastDocumentIssue: issue })
+    void get().refreshRecent()
+    emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })
+    return status
+  }
+
+  /** 排进切换队列；排队 + 执行期间 `switching` 一直亮着 */
+  let inFlight = 0
+  const runSwitch = <T,>(fn: () => Promise<T>): Promise<T> => {
+    inFlight += 1
+    set({ switching: true })
+    return switchQueue(fn).finally(() => {
+      inFlight -= 1
+      if (inFlight === 0) set({ switching: false })
+    })
+  }
+
+  /**
+   * 改收藏：排进收藏队列，**轮到自己时**才从最新的 `pinned` 算出整张新列表
+   * （`next` 回 null = 这次什么都不发）。失败时列表不动、状态栏说一句。
+   */
+  const updatePinned = (next: (paths: string[]) => string[] | null): Promise<void> =>
+    pinQueue(async () => {
+      const paths = next(get().pinned.map((p) => p.path))
+      if (!paths) return
+      try {
+        set({ pinned: await putPinnedProjects(paths) })
+      } catch (e) {
+        useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
+      }
+    })
+
+  return {
   phase: 'loading',
   project: null,
   recent: [],
   pinned: [],
+  switching: false,
   opened: [],
   lastDocumentIssue: null,
 
@@ -238,64 +323,28 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  open: async (path, create = false) => {
-    const status = await openProjectApi(path, create)
-    return get().adoptOpenedProject(status)
-  },
+  open: (path, create = false) =>
+    runSwitch(async () => adoptNow(await openProjectApi(path, create))),
 
-  adoptOpenedProject: async (status, opts) => {
-    // 先认领项目，再做任何会发请求的事：素材/渲染都必须落到新项目上
-    if (status.id) setCurrentProjectId(status.id)
-    // 「最近文档」要在条目上标出所属项目（审计 T04）；名字的权威在这里，
-    // documentStore 只读那份投影（否则两个 store 互相 import 成环）
-    setCurrentProjectLabel(status.name)
-    // 手里又有项目了：这一个再失效时仍要能把用户送回选择器
-    armNoProjectRecovery()
-    // 「这个项目上次开着哪份」要在换代**之前**读：换代会先换上一份空白文档，
-    // 而那一档记的是「最近一份有内容的文档」，空白不会盖掉它——但读在前面
-    // 才不依赖这条细节。
-    const last = status.id ? readProjectDocument(status.id) : null
-    await resetForNewProject()
-    // 空白文档已经就位、`currentDoc` 已经指向它；要换成别的文档就在这里换，
-    // 必须赶在 `phase: 'open'` 之前（见接口注释）
-    let issue: ProjectDocumentRef | null = null
-    if (opts?.prepareDocument) await opts.prepareDocument()
-    else if (last && !(await restoreProjectDocument(last))) issue = last
-    // 文档就位了就按它的页面适配视口。从 Project Picker 进来时舞台还没挂载
-    // （量不到视口），`fit` 会把这次适配记成待办、舞台一量到尺寸就应用——
-    // 改造前新项目沿用上一个项目留下的 175%（审计 T03）。
-    {
-      const page = useDocumentStore.getState().doc.page
-      useViewportStore.getState().fit(page.w, page.h)
-    }
-    set({ project: status, phase: 'open', lastDocumentIssue: issue })
-    void get().refreshRecent()
-    emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })
-    return status
-  },
+  adoptOpenedProject: (status, opts) => runSwitch(() => adoptNow(status, opts)),
 
-  setPinned: async (paths) => {
-    try {
-      set({ pinned: await putPinnedProjects(paths) })
-    } catch (e) {
-      useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
-    }
-  },
+  setPinned: (paths) => updatePinned(() => paths),
 
-  togglePin: async (path) => {
-    const paths = get().pinned.map((p) => p.path)
-    await get().setPinned(
+  togglePin: (path) =>
+    updatePinned((paths) =>
       paths.includes(path) ? paths.filter((p) => p !== path) : [...paths, path],
-    )
-  },
+    ),
 
-  movePinned: async (from, to) => {
-    const paths = get().pinned.map((p) => p.path)
-    if (from === to || from < 0 || to < 0 || from >= paths.length || to >= paths.length) return
-    const [moved] = paths.splice(from, 1)
-    paths.splice(to, 0, moved)
-    await get().setPinned(paths)
-  },
+  movePinned: (from, to) =>
+    updatePinned((paths) => {
+      if (from === to || from < 0 || to < 0 || from >= paths.length || to >= paths.length) {
+        return null
+      }
+      const next = [...paths]
+      const [moved] = next.splice(from, 1)
+      next.splice(to, 0, moved)
+      return next
+    }),
 
   remove: async (path) => {
     await removeRecentProject(path)
@@ -339,7 +388,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     // 选择器要用「最近 / 已打开」两份列表；这两个端点与项目无关，不会再 409
     void get().refreshRecent()
   },
-}))
+  }
+})
 
 // 任何一个请求撞上 409 no_project 都会走到这里（检测在 lib/api.ts 的请求出口）
 setNoProjectHandler(() => useProjectStore.getState().dropProject())

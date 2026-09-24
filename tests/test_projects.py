@@ -117,6 +117,19 @@ def test_pinned_endpoint_roundtrip(client, tmp_path):
     assert len(engine_config.pinned_projects()) == 2  # 坏请求不改配置
 
 
+def test_pinned_put_with_stale_project_changes_nothing(client, tmp_path):
+    """标签页的 pj 失效（项目已关 / 后端重启）：409，而且配置**一个字都没改**——
+    先写后校验的话，界面按失败保留旧列表，重开后那次「失败」的收藏又冒出来。"""
+    engine_config.set_pinned([str(tmp_path / "keep")])
+    resp = client.put(
+        "/api/projects/pinned",
+        json={"paths": [str(tmp_path / "other")]},
+        headers={"X-Tavotto-Project": "no-such-project"},
+    )
+    assert resp.status_code == 409
+    assert [e["path"] for e in engine_config.pinned_projects()] == [str(tmp_path / "keep")]
+
+
 def test_project_settings_roundtrip(tmp_path):
     p = str(tmp_path / "proj")
     assert engine_config.project_settings(p) == {}

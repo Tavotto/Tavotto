@@ -169,6 +169,20 @@ describe('WorkspaceList', () => {
   })
 })
 
+describe('切换中', () => {
+  it('有一次切换在进行时，所有「打开」入口都置灰，不只是正在打开的那一行', async () => {
+    useProjectStore.setState({ switching: true })
+    await mount()
+    const opens = [...host.querySelectorAll<HTMLButtonElement>('[data-workspace-row] button[title]')]
+    expect(opens.length).toBeGreaterThan(3)
+    expect(opens.every((b) => b.disabled)).toBe(true)
+    const footer = [...host.querySelectorAll<HTMLButtonElement>('[data-workspace-list] > div:last-of-type button')]
+    expect(footer).toHaveLength(2)
+    expect(footer.every((b) => b.disabled)).toBe(true)
+    useProjectStore.setState({ switching: false })
+  })
+})
+
 describe('projectStore 收藏排序', () => {
   it('movePinned 发重排后的整张列表；越界什么都不发', async () => {
     await useProjectStore.getState().movePinned(0, 1)

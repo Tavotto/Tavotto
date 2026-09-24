@@ -48,6 +48,9 @@ export function WorkspaceList() {
   const project = useProjectStore((s) => s.project)
   const recent = useProjectStore((s) => s.recent)
   const pinned = useProjectStore((s) => s.pinned)
+  // 切项目是串行的（projectStore 的切换队列）；切换期间所有「打开」入口一起置灰，
+  // 不只是正在打开的那一行
+  const switching = useProjectStore((s) => s.switching)
   const [query, setQuery] = useState('')
   const [busyPath, setBusyPath] = useState<string | null>(null)
   const dragFrom = useRef<number | null>(null)
@@ -107,6 +110,7 @@ export function WorkspaceList() {
                   entry={e}
                   hint={hints.get(e.path)}
                   busy={busyPath === e.path}
+                  switching={switching}
                   pinned
                   onOpen={() => void go(e.path)}
                   // 筛选中索引对不上真实顺序：拖动与上移 / 下移都停用（同画布列表）
@@ -134,6 +138,7 @@ export function WorkspaceList() {
                 entry={e}
                 hint={hints.get(e.path)}
                 busy={busyPath === e.path}
+                switching={switching}
                 pinned={false}
                 onOpen={() => void go(e.path)}
                 onRemove={() => void useProjectStore.getState().remove(e.path)}
@@ -166,11 +171,23 @@ export function WorkspaceList() {
       {/* 两个入口平级，都不是这一屏的主动作：不给填色（宪法：每个上下文最多一个填色主动作，
           而左栏这一格没有「那一个」） */}
       <div className="flex shrink-0 gap-1.5 border-t border-border px-3 py-2">
-        <Button size="md" variant="secondary" className="flex-1" onClick={entry.startOpen}>
+        <Button
+          size="md"
+          variant="secondary"
+          className="flex-1"
+          disabled={switching}
+          onClick={entry.startOpen}
+        >
           <FolderOpen size={ICON_SIZE.sm} />
           {ws('openFolder')}
         </Button>
-        <Button size="md" variant="secondary" className="flex-1" onClick={entry.startCreate}>
+        <Button
+          size="md"
+          variant="secondary"
+          className="flex-1"
+          disabled={switching}
+          onClick={entry.startCreate}
+        >
           <FolderPlus size={ICON_SIZE.sm} />
           {ws('newProject')}
         </Button>
@@ -256,6 +273,7 @@ function ProjectRow({
   entry,
   hint,
   busy,
+  switching,
   pinned,
   onOpen,
   onRemove,
@@ -265,6 +283,8 @@ function ProjectRow({
   /** 同名项目的辨认后缀（`lib/recentProjects.disambiguateRecent`） */
   hint?: string
   busy: boolean
+  /** 有一次切换正在进行：这一行也不能点（切换串行，见 projectStore） */
+  switching: boolean
   pinned: boolean
   onOpen: () => void
   /** 只有最近区的行能「从列表移除」；收藏区的行取消收藏即可 */
@@ -278,7 +298,7 @@ function ProjectRow({
   }
 }) {
   useTranslation('project')
-  const openable = entry.exists && !entry.current && !busy
+  const openable = entry.exists && !entry.current && !busy && !switching
   // 当前项目的行是选中底：ink-3 在上面过不了 4.5:1，元数据升一档（同顶上的当前卡片）
   const meta = entry.current ? 'text-ink-2' : 'text-ink-3'
   const togglePin = () => void useProjectStore.getState().togglePin(entry.path)

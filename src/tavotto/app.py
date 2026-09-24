@@ -2326,10 +2326,13 @@ def api_projects_open_list():
     return resp
 
 
-def _project_list_entries(stored: list[dict]) -> list[dict]:
-    """最近 / 收藏两份列表的同一种条目：配置里记的 + 此刻的状态（在不在、开没开）。"""
+def _project_list_entries(stored: list[dict], current: "ProjectCtx | None") -> list[dict]:
+    """最近 / 收藏两份列表的同一种条目：配置里记的 + 此刻的状态（在不在、开没开）。
+
+    `current` 由调用方先解析好传进来：写配置的端点必须在**改动之前**就知道 pj
+    有没有失效，否则会出现「配置已经改了、响应却是 409」。
+    """
     open_paths = {str(c.path): c.id for c in PROJECTS.values()}
-    current = _request_ctx()
     entries = []
     for e in stored:
         p = Path(e["path"])
@@ -2350,10 +2353,11 @@ def _project_list_entries(stored: list[dict]) -> list[dict]:
 
 @app.get("/api/projects/recent")
 def api_projects_recent():
+    current = _request_ctx()
     resp = jsonify(
         {
-            "recent": _project_list_entries(engine_config.recent_projects()),
-            "pinned": _project_list_entries(engine_config.pinned_projects()),
+            "recent": _project_list_entries(engine_config.recent_projects(), current),
+            "pinned": _project_list_entries(engine_config.pinned_projects(), current),
         }
     )
     resp.headers["Cache-Control"] = "no-store"
@@ -2369,8 +2373,11 @@ def api_projects_pinned():
         return jsonify(
             {"error": "paths 必须是非空字符串的列表", "code": "bad_request", "params": {}}
         ), 400
+    # 先解析请求的项目（失效的 pj 在这里就 409），**再**写配置：反过来的话配置已经
+    # 改了、响应却说失败，界面按失败保留旧列表，重开后又冒出来（Codex #550 P2）
+    current = _request_ctx()
     stored = engine_config.set_pinned(paths)
-    return jsonify({"pinned": _project_list_entries(stored)})
+    return jsonify({"pinned": _project_list_entries(stored, current)})
 
 
 def _unsafe_new_project_part(p: Path, leaf: str) -> str | None:
