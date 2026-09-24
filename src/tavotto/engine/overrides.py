@@ -1435,6 +1435,35 @@ def _eb_caps(grp):
     return grp.artists["caps"]
 
 
+def _eb_color_get(a):
+    return a.get_color()
+
+
+def _eb_color_set(a, v) -> None:
+    """误差棒一个成员改色。横杠是 Line2D 的 marker（`_` / `|`），颜色在 **marker 边色**上：只
+    `set_color` 的话横杠留在原色。marker 的边色 / 面色原本**跟着线色**（等于改之前的线色）的一起改；
+    脚本显式设成别的颜色的（`mec='k'` 黑边、`mfc='none'` 空心）不动。撤销走同一个 setter，
+    「跟着线色」的判据对称成立，getter 仍只取线色。"""
+    if isinstance(a, Line2D):
+        old = _rgba_or_none(a.get_color())
+        follows_edge = old is not None and _rgba_or_none(a.get_markeredgecolor()) == old
+        follows_face = old is not None and _rgba_or_none(a.get_markerfacecolor()) == old
+        a.set_color(v)
+        if follows_edge:
+            a.set_markeredgecolor(v)
+        if follows_face:
+            a.set_markerfacecolor(v)
+        return
+    a.set_color(v)
+
+
+def _rgba_or_none(c):
+    try:
+        return tuple(round(float(x), 4) for x in mcolors.to_rgba(c))
+    except (ValueError, TypeError):
+        return None
+
+
 def _eb_linewidth_members(grp):
     line = grp.artists.get("line")
     return ([line] if line is not None else []) + grp.artists["bars"]
@@ -2743,7 +2772,7 @@ HANDLERS[("bar_series", "label")] = (
 )
 
 for _prop, _pair in [
-    ("color", _eb_handler(lambda a: a.get_color(), lambda a, v: a.set_color(v))),
+    ("color", _eb_handler(_eb_color_get, _eb_color_set)),
     (
         "linewidth",
         _eb_handler(
