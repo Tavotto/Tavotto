@@ -326,12 +326,38 @@ def test_the_retired_backend_name_is_refused_at_the_real_entry_not_swapped(
     assert body["code"] == "backend_retired" and body["params"]["value"] == "pymupdf"
     assert "ADR 0072" in body["error"]
     assert not list((tmp_path / "_cache").glob("*.png"))
+    # 导出两个入口都在**进作业之前**问后端：不许被作业的兜底收成笼统的 export_failed（Codex #539）
     resp = client.post("/api/export", json=_canvas(formats=["pdf"]))
-    assert resp.status_code == 500 and resp.get_json()["code"] in (
-        "backend_retired",
-        "export_failed",
-    )
+    assert resp.status_code == 500 and resp.get_json()["code"] == "backend_retired", resp.get_json()
     assert "退役" in json.dumps(resp.get_json(), ensure_ascii=False)
+    resp = client.post("/api/export/start", json=_canvas(formats=["pdf"]))
+    assert resp.status_code == 500 and resp.get_json()["code"] == "backend_retired", resp.get_json()
+
+
+def test_a_missing_dependency_during_export_keeps_its_stable_code(client, tmp_path, monkeypatch):
+    """导出作业里才冒出来的「后端不可用」（依赖 / 字体不在）同样是 `backend_unavailable`，不是 `export_failed`：
+    作业的兜底先问 `classify_error`（判据归契约层），Codex #539。"""
+    import importlib.util
+
+    from tavotto.rendercore import facade, renderhost
+
+    _project(tmp_path)
+    real = importlib.util.find_spec
+
+    def hidden(name, *a, **k):
+        return None if name == "pypdfium2" else real(name, *a, **k)
+
+    renderhost.shutdown_shared()
+    facade.reset_for_tests()
+    monkeypatch.setattr(importlib.util, "find_spec", hidden)
+    resp = client.post("/api/export", json=_canvas(filename="Missing Dep", formats=["pdf", "png"]))
+    body = resp.get_json()
+    assert resp.status_code == 500, body
+    code = body.get("code") or (body.get("error") or {}).get("code")
+    assert code == "backend_unavailable", body
+    assert "pypdfium2" in json.dumps(body, ensure_ascii=False)
+    monkeypatch.undo()
+    facade.reset_for_tests()
 
 
 def test_a_missing_runtime_dependency_is_backend_unavailable_not_a_fallback(

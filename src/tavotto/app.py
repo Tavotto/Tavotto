@@ -1298,8 +1298,22 @@ def _legacy_export_response(job) -> tuple:
     return jsonify({**payload, "files": files, "warnings": job.warnings}), 200
 
 
+def _classify_export_error(exc: BaseException):
+    """导出作业里冒出的「渲染后端此刻不可用」→ 稳定码 `backend_unavailable`，不再笼统地记 `export_failed`
+    （Codex #539）。判据归契约层（`pdfbackend.is_backend_unavailable`），这里只翻译。"""
+    if pdfbackend.is_backend_unavailable(exc):
+        return "backend_unavailable", {"reason": str(exc)[:300]}
+    return None
+
+
 def _prepare_export_job(spec: dict):
-    """请求 → 作业。请求不合法时回 (None, 响应)。"""
+    """请求 → 作业。请求不合法时回 (None, 响应)。
+
+    后端选择在**进作业之前**问：退役 / 写错的 `TAVOTTO_RENDER_BACKEND` 当场抛 `BackendSelectionError`，由
+    Flask 的漏斗回 500 + `backend_retired` / `backend_unknown`——放进作业里的话会被作业的兜底收成
+    `export_failed`，用户只看到「导出失败」（Codex #539）。
+    """
+    pdfbackend.selected()
     out_dir = project_export_dir()
     try:
         job = engine_exportjob.prepare(spec, out_dir)
@@ -1331,7 +1345,11 @@ def api_export():
         return err
     t0 = time.time()
     engine_exportjob.run(
-        job, _export_produce, report=_style_check_report(spec), inspect=_export_inspect
+        job,
+        _export_produce,
+        report=_style_check_report(spec),
+        inspect=_export_inspect,
+        classify_error=_classify_export_error,
     )
     LOG.info(
         "导出[%s]: %s（scope=%s, %s, %.0fms）%s",
@@ -1384,7 +1402,14 @@ def api_export_start():
         with bound_project(ctx):
             return _export_inspect(j, produced)
 
-    engine_exportjob.run_async(job, produce, publish=publish, report=report, inspect=inspect)
+    engine_exportjob.run_async(
+        job,
+        produce,
+        publish=publish,
+        report=report,
+        inspect=inspect,
+        classify_error=_classify_export_error,
+    )
     return jsonify(job.to_payload())
 
 
