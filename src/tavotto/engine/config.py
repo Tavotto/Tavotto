@@ -25,6 +25,8 @@ import time
 from pathlib import Path
 
 RECENT_KEEP = 20
+#: 收藏的项目上限：收藏是用户手工挑的，远少于这个数；封顶只为挡住坏请求把配置撑大
+PINNED_KEEP = 50
 
 _LOCK = threading.Lock()
 
@@ -133,6 +135,7 @@ def data_path(*parts: str) -> Path:
 def _defaults() -> dict:
     return {
         "recent_projects": [],
+        "pinned_projects": [],
         "projects": {},
         "ai": {},
         "updates": {},
@@ -154,6 +157,14 @@ def load() -> dict:
         out["recent_projects"] = [
             e
             for e in data["recent_projects"]
+            if isinstance(e, dict) and isinstance(e.get("path"), str)
+        ]
+    # 收藏（左栏「工作区」抽屉）：与最近列表同形状、同一道过滤。**必须在这里显式
+    # 收下**，理由同下面的 telemetry：漏掉它，任何一次 save() 都会把收藏抹掉。
+    if isinstance(data.get("pinned_projects"), list):
+        out["pinned_projects"] = [
+            e
+            for e in data["pinned_projects"]
             if isinstance(e, dict) and isinstance(e.get("path"), str)
         ]
     if isinstance(data.get("projects"), dict):
@@ -212,6 +223,38 @@ def remove_recent(path: str) -> bool:
 
 def recent_projects() -> list[dict]:
     return load()["recent_projects"]
+
+
+def pinned_projects() -> list[dict]:
+    """收藏的项目，按用户排的顺序。与最近列表互相独立：从最近列表移除不取消收藏。"""
+    return load()["pinned_projects"]
+
+
+def set_pinned(paths: list[str]) -> list[dict]:
+    """整张替换收藏列表（收藏 / 取消 / 排序都是这一个动作）。
+
+    名字沿用已有的记录（收藏里的 → 最近列表里的 → 目录名）：用户看到的名字不因
+    收藏这一下而改变。重复路径只留第一次出现的位置。不动磁盘上的项目内容，也不
+    检查目录在不在——失效的收藏照样留着，由界面标出来、让用户自己取消。
+    """
+    with _LOCK:
+        cfg = load()
+        known = {
+            e["path"]: e.get("name")
+            for e in cfg["recent_projects"] + cfg["pinned_projects"]
+            if isinstance(e.get("name"), str)
+        }
+        out: list[dict] = []
+        seen: set[str] = set()
+        for raw in paths:
+            path = str(Path(raw))
+            if path in seen:
+                continue
+            seen.add(path)
+            out.append({"path": path, "name": known.get(path) or Path(path).name})
+        cfg["pinned_projects"] = out[:PINNED_KEEP]
+        save(cfg)
+        return cfg["pinned_projects"]
 
 
 def last_project() -> str | None:

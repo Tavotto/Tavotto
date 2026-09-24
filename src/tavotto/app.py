@@ -2326,12 +2326,12 @@ def api_projects_open_list():
     return resp
 
 
-@app.get("/api/projects/recent")
-def api_projects_recent():
+def _project_list_entries(stored: list[dict]) -> list[dict]:
+    """最近 / 收藏两份列表的同一种条目：配置里记的 + 此刻的状态（在不在、开没开）。"""
     open_paths = {str(c.path): c.id for c in PROJECTS.values()}
     current = _request_ctx()
     entries = []
-    for e in engine_config.recent_projects():
+    for e in stored:
         p = Path(e["path"])
         entries.append(
             {
@@ -2345,9 +2345,32 @@ def api_projects_recent():
                 "tutorial": engine_tutorial.is_tutorial_path(p),
             }
         )
-    resp = jsonify({"recent": entries})
+    return entries
+
+
+@app.get("/api/projects/recent")
+def api_projects_recent():
+    resp = jsonify(
+        {
+            "recent": _project_list_entries(engine_config.recent_projects()),
+            "pinned": _project_list_entries(engine_config.pinned_projects()),
+        }
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@app.put("/api/projects/pinned")
+def api_projects_pinned():
+    """整张替换收藏列表（收藏 / 取消收藏 / 排序）；只改配置，不打开、不碰磁盘内容。"""
+    body = request.get_json(force=True, silent=True)
+    paths = body.get("paths") if isinstance(body, dict) else None
+    if not isinstance(paths, list) or not all(isinstance(x, str) and x.strip() for x in paths):
+        return jsonify(
+            {"error": "paths 必须是非空字符串的列表", "code": "bad_request", "params": {}}
+        ), 400
+    stored = engine_config.set_pinned(paths)
+    return jsonify({"pinned": _project_list_entries(stored)})
 
 
 def _unsafe_new_project_part(p: Path, leaf: str) -> str | None:

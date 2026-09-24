@@ -54,6 +54,7 @@ def _fake_ctx(path):
 def test_config_defaults_when_missing():
     assert engine_config.load() == {
         "recent_projects": [],
+        "pinned_projects": [],
         "projects": {},
         "ai": {},
         "updates": {},
@@ -78,6 +79,42 @@ def test_recent_ordering_and_remove(tmp_path):
     assert engine_config.remove_recent(str(b)) is True
     assert engine_config.remove_recent(str(b)) is False
     assert [e["path"] for e in engine_config.recent_projects()] == [str(a)]
+
+
+def test_pinned_order_dedupe_and_names(tmp_path):
+    """收藏按给定顺序存、重复只留第一次；名字沿用最近列表里的，没有就用目录名。"""
+    a, b = tmp_path / "a", tmp_path / "b"
+    engine_config.touch_recent(str(a), name="Paper A")
+    stored = engine_config.set_pinned([str(b), str(a), str(b)])
+    assert [(e["path"], e["name"]) for e in stored] == [(str(b), "b"), (str(a), "Paper A")]
+    assert engine_config.set_pinned([str(a), str(b)])[0]["path"] == str(a)  # 排序就是整张替换
+
+
+def test_pinned_survives_other_config_writes(tmp_path):
+    """load() 是白名单：漏收 `pinned_projects` 的话，下一次任何 save() 都会把收藏抹掉。"""
+    a = tmp_path / "a"
+    engine_config.set_pinned([str(a)])
+    engine_config.touch_recent(str(tmp_path / "other"))
+    engine_config.remove_recent(str(a))  # 从最近列表移除 ≠ 取消收藏
+    assert [e["path"] for e in engine_config.pinned_projects()] == [str(a)]
+
+
+def test_pinned_endpoint_roundtrip(client, tmp_path):
+    figs = _make_figs(tmp_path)
+    gone = tmp_path / "gone"
+    resp = client.put("/api/projects/pinned", json={"paths": [str(gone), str(figs)]})
+    assert resp.status_code == 200
+    assert [e["path"] for e in resp.get_json()["pinned"]] == [str(gone), str(figs)]
+    listed = client.get("/api/projects/recent").get_json()
+    assert [(e["path"], e["exists"]) for e in listed["pinned"]] == [
+        (str(gone), False),
+        (str(figs), True),
+    ]
+    assert not gone.exists()  # 收藏不创建目录
+    for bad in ({}, {"paths": "x"}, {"paths": [1]}, {"paths": [" "]}):
+        r = client.put("/api/projects/pinned", json=bad)
+        assert r.status_code == 400 and r.get_json()["code"] == "bad_request", bad
+    assert len(engine_config.pinned_projects()) == 2  # 坏请求不改配置
 
 
 def test_project_settings_roundtrip(tmp_path):
