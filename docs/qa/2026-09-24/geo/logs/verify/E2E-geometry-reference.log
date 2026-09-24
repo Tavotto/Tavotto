@@ -1,0 +1,22 @@
+# verify: E2E-geometry-reference
+# time: 2026-09-25T03:25:08 (+103s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/../src npx playwright test e2e/geometry-reference.spec.ts --project=chromium
+
+Running 5 tests using 1 worker
+
+[GEO-01 e2e] zoom=102% Δbox=(37.000, 22.999) 误差=(-0.000,-0.001) 尺寸变化=(0.000, 0.000)
+  ✓  1 [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：默认（适应画布） 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） (17.0s)
+[GEO-01 e2e] zoom=118% Δbox=(37.000, 22.999) 误差=(-0.000,-0.001) 尺寸变化=(0.000, 0.000)
+  ✓  2 [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：放大一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） (17.6s)
+[GEO-01 e2e] zoom=72% Δbox=(37.000, 22.999) 误差=(-0.000,-0.001) 尺寸变化=(0.000, 0.000)
+  ✓  3 [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：缩小一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） (17.8s)
+[GEO-01 e2e] DPR=2 误差=(0.000,-0.002)
+  ✓  4 [chromium] › e2e/geometry-reference.spec.ts:109:3 › DPR 2 › GEO-01 单选：高 DPI 下拖标题，墨迹框平移 = Δs（DPR 不进 CSS 像素位移） (26.9s)
+[GEO-02 e2e] 误差 {"title":[0.0128173828125,0.0056304931640625],"ylabel":[-0.1754150390625,-0.004608154296875]} legend Δ=(0.000, 0.000)
+  ✓  5 [chromium] › e2e/geometry-reference.spec.ts:124:1 › GEO-02 多选：标题 + y 轴标签一起拖，两者各平移 Δs 一次，未选中的图例不动 (22.6s)
+
+  5 passed (1.7m)
+[exit=0]
+

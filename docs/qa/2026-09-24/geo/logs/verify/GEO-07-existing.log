@@ -1,0 +1,16 @@
+# verify: GEO-07-existing
+# time: 2026-09-25T03:22:32 (+2s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/alignAction.test.ts src/canvas/fakeRealtimeDrag.test.tsx src/canvas/hitTest.test.tsx
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-geo/web
+
+
+ Test Files  3 passed (3)
+      Tests  50 passed (50)
+   Start at  03:22:32
+   Duration  1.31s (transform 899ms, setup 483ms, import 861ms, tests 534ms, environment 958ms)
+
+[exit=0]
+

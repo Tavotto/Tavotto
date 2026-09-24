@@ -1,0 +1,78 @@
+# verify: GEO-07-repro
+# time: 2026-09-25T03:22:31 (+1s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cp docs/qa/2026-09-24/geo/repro/geoNoopDragBack.repro.test.ts web/src/canvas/ && (cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoNoopDragBack.repro.test.ts); rc=$?; rm web/src/canvas/geoNoopDragBack.repro.test.ts; exit $rc
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-geo/web
+
+stdout | src/canvas/geoNoopDragBack.repro.test.ts > A. 拖出去 30px 再拖回原点松手：不应写 override、不应进历史、不应渲染
+[GEO-07 probe A] overrides = [{"gid":"axes_0.title_left","prop":"pos_frac","value":[0.14,0.11395833333333338]}] past = 1 engineRender = 1
+
+stdout | src/canvas/geoNoopDragBack.repro.test.ts > B. 给已有 override 写新值：应当原地改值，数组顺序不变
+[GEO-07 probe B] order after same-value write = ["color","pos_frac"] key changed = true
+
+ ❯ src/canvas/geoNoopDragBack.repro.test.ts (2 tests | 2 failed) 52ms
+   × A. 拖出去 30px 再拖回原点松手：不应写 override、不应进历史、不应渲染 38ms
+   × B. 给已有 override 写新值：应当原地改值，数组顺序不变 14ms
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  03:22:31
+   Duration  790ms (transform 291ms, setup 118ms, import 263ms, tests 52ms, environment 274ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geoNoopDragBack.repro.test.ts > A. 拖出去 30px 再拖回原点松手：不应写 override、不应进历史、不应渲染
+AssertionError: expected [ { gid: 'axes_0.title_left', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "gid": "axes_0.title_left",
++     "prop": "pos_frac",
++     "value": [
++       0.14,
++       0.11395833333333338,
++     ],
++   },
++ ]
+
+ ❯ src/canvas/geoNoopDragBack.repro.test.ts:81:28
+     79|   fire('pointerup', 100, 100)
+     80|   console.log('[GEO-07 probe A] overrides =', JSON.stringify(live().ov…
+     81|   expect(live().overrides).toEqual([])
+       |                            ^
+     82|   expect(useDocumentStore.getState().past).toHaveLength(0)
+     83|   expect(engineRender).not.toHaveBeenCalled()
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/canvas/geoNoopDragBack.repro.test.ts > B. 给已有 override 写新值：应当原地改值，数组顺序不变
+AssertionError: expected [ 'color', 'pos_frac' ] to deeply equal [ 'pos_frac', 'color' ]
+
+- Expected
++ Received
+
+  [
+-   "pos_frac",
+    "color",
++   "pos_frac",
+  ]
+
+ ❯ src/canvas/geoNoopDragBack.repro.test.ts:95:17
+     93|   const order = live().overrides.map((o) => o.prop)
+     94|   console.log('[GEO-07 probe B] order after same-value write =', JSON.…
+     95|   expect(order).toEqual(['pos_frac', 'color'])
+       |                 ^
+     96|   expect(renderKeyOf(live())).toBe(keyBefore)
+     97| })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+[exit=1]
+
