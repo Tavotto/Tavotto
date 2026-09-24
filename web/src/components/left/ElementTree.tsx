@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
@@ -292,7 +292,6 @@ export function ElementTree() {
 function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest }) {
   useTranslation('workspace')
   const selectedGids = useUiStore((s) => s.selectedGids)
-  const editing = useUiStore((s) => s.elementPanelId === panel.id)
   const [query, setQuery] = useState('')
   const [isolated, setIsolated] = useState<string | null>(null)
   const [open, setOpen] = useState<Record<string, boolean>>({})
@@ -350,19 +349,51 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
   const focusRow = (key: string) =>
     listRef.current?.querySelector<HTMLElement>(`[data-el="${CSS.escape(key)}"]`)?.focus()
 
-  const moveFocus = (from: string, delta: number) => {
-    const i = rows.findIndex((r) => r.key === from)
-    const next = rows[i + delta]
-    if (next) focusRow(next.key)
-  }
+  /*
+   * 行是 memo 的（见 ElementRow 的注释），交给行的回调必须在整棵树的生命期里是
+   * 同一个引用——每次渲染新建一个箭头函数，memo 就形同虚设。行调用时带上自己的
+   * key / gid / 当前展开态，树级回调不必按行闭包。
+   */
+  const rowsRef = useRef(rows)
+  useLayoutEffect(() => {
+    rowsRef.current = rows
+  }, [rows])
+  const moveFocus = useCallback((from: string, delta: number) => {
+    const rs = rowsRef.current
+    const next = rs[rs.findIndex((r) => r.key === from) + delta]
+    if (next)
+      listRef.current?.querySelector<HTMLElement>(`[data-el="${CSS.escape(next.key)}"]`)?.focus()
+  }, [])
+  // 行上的 expanded 就是 isOpen(node, key) 的结果：翻转它即可，不必再按行求一次
+  const toggle = useCallback(
+    (key: string, expanded: boolean) => setOpen((s) => ({ ...s, [key]: !expanded })),
+    [],
+  )
 
   /** 点树选中元素：未在编辑态则先进入（选中与画布/属性页共用同一条通路） */
-  const selectGid = (gid: string, additive: boolean) => {
-    if (!editing) enterElementEdit(panel.id)
-    const ui = useUiStore.getState()
-    if (additive && gid !== 'figure') ui.toggleSelectedGid(gid)
-    else ui.setSelectedGid(gid)
-  }
+  const panelId = panel.id
+  const selectGid = useCallback(
+    (gid: string, additive: boolean) => {
+      const ui = useUiStore.getState()
+      if (ui.elementPanelId !== panelId) enterElementEdit(panelId)
+      if (additive && gid !== 'figure') ui.toggleSelectedGid(gid)
+      else ui.setSelectedGid(gid)
+    },
+    [panelId],
+  )
+
+  // 行上的「隐藏 / 锁定」按 gid 查这两张表。override 未渲染回来前也要即时反馈，
+  // 所以隐藏同时认 visible=false 的 override 与 manifest 自己报的不可见
+  const hiddenGids = useMemo(
+    () =>
+      new Set(
+        panel.overrides
+          .filter((o) => o.prop === 'visible' && o.value === false)
+          .map((o) => o.gid),
+      ),
+    [panel.overrides],
+  )
+  const lockedGids = useMemo(() => new Set(panel.lockedGids ?? []), [panel.lockedGids])
 
   const focusKey = rows.find((r) => r.node.el?.gid === primaryGid)?.key ?? rows[0]?.key
 
@@ -412,44 +443,66 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
             <EmptyState icon={SearchX} title={et('noMatch')} />
           </li>
         )}
-        {rows.map(({ node, depth, key }) =>
-          node.cluster ? (
-            <ClusterRow
-              key={key}
-              rowKey={key}
-              label={et(node.cluster.labelKey)}
-              icon={clusterIcon(node.cluster.key)}
-              count={node.children.length}
-              depth={depth}
-              expanded={isOpen(node, key)}
-              tabbable={focusKey === key}
-              onToggle={() => setOpen((s) => ({ ...s, [key]: !isOpen(node, key) }))}
-              onMoveFocus={(d) => moveFocus(key, d)}
-            />
-          ) : (
+        {rows.map(({ node, depth, key }) => {
+          if (node.cluster) {
+            return (
+              <ClusterRow
+                key={key}
+                rowKey={key}
+                label={et(node.cluster.labelKey)}
+                icon={clusterIcon(node.cluster.key)}
+                count={node.children.length}
+                depth={depth}
+                expanded={isOpen(node, key)}
+                tabbable={focusKey === key}
+                onToggle={toggle}
+                onMoveFocus={moveFocus}
+              />
+            )
+          }
+          const el = node.el!
+          return (
             <ElementRow
               key={key}
               rowKey={key}
-              panel={panel}
-              el={node.el!}
+              panelId={panelId}
+              gid={el.gid}
+              label={el.label}
+              role={el.role}
+              name={rowLabel(el)}
+              canHide={canHide(el)}
+              readonly={el.editable.length === 0}
+              hidden={hiddenGids.has(el.gid) || isElementHidden(el)}
+              locked={lockedGids.has(el.gid)}
               depth={depth}
-              selected={selectedGids.includes(node.el!.gid)}
+              selected={selectedGids.includes(el.gid)}
               tabbable={focusKey === key}
               expanded={node.children.length ? isOpen(node, key) : undefined}
-              onToggle={() => setOpen((s) => ({ ...s, [key]: !isOpen(node, key) }))}
-              onSelect={(additive) => selectGid(node.el!.gid, additive)}
-              onIsolate={() => setIsolated(node.el!.gid)}
-              onMoveFocus={(d) => moveFocus(key, d)}
+              onToggle={toggle}
+              onSelect={selectGid}
+              onIsolate={setIsolated}
+              onMoveFocus={moveFocus}
             />
-          ),
-        )}
+          )
+        })}
       </ul>
     </div>
   )
 }
 
+
+/*
+ * 两种行都是 memo 的，props 全是**这一行显示与交互实际用到的值**（字符串 / 布尔 /
+ * 数字）加上树级稳定回调——不收整个 `panel`（每次 commit 都是新引用），也不收 `el`
+ * （新图到达时 manifest 的每个元素都是新对象，而绝大多数行显示的东西一个字没变）。
+ * 于是比较函数就是 React 默认的逐个 prop 浅比较：行里要用到 el 上的新东西，就只能
+ * 先加成一个 prop，漏比某个字段这件事在结构上不会发生。
+ * 行内的文案（可达名、菜单、「只读」）跟着语言走：每行各自 `useTranslation`，
+ * 切语言时 memo 挡不住它。
+ */
+
 /** 聚类标题行：只组织层级，不可选中 */
-function ClusterRow({
+const ClusterRow = memo(function ClusterRow({
   rowKey,
   label,
   icon,
@@ -467,9 +520,10 @@ function ClusterRow({
   depth: number
   expanded: boolean
   tabbable: boolean
-  onToggle: () => void
-  onMoveFocus: (delta: number) => void
+  onToggle: (key: string, expanded: boolean) => void
+  onMoveFocus: (from: string, delta: number) => void
 }) {
+  useTranslation('workspace')
   return (
     <li
       role="treeitem"
@@ -483,15 +537,15 @@ function ClusterRow({
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault()
           e.stopPropagation()
-          onMoveFocus(e.key === 'ArrowDown' ? 1 : -1)
+          onMoveFocus(rowKey, e.key === 'ArrowDown' ? 1 : -1)
         } else if ((e.key === 'ArrowRight' && !expanded) || (e.key === 'ArrowLeft' && expanded) || e.key === 'Enter') {
           e.preventDefault()
           e.stopPropagation()
-          onToggle()
+          onToggle(rowKey, expanded)
         }
       }}
       onPointerDown={(e) => {
-        if (e.button === 0) onToggle()
+        if (e.button === 0) onToggle(rowKey, expanded)
       }}
       className={cn(listRowClass({ muted: true }), 'pr-2')}
     >
@@ -501,12 +555,19 @@ function ClusterRow({
       <TreeCount>{count}</TreeCount>
     </li>
   )
-}
+})
 
-function ElementRow({
+const ElementRow = memo(function ElementRow({
   rowKey,
-  panel,
-  el,
+  panelId,
+  gid,
+  label,
+  role,
+  name,
+  canHide,
+  readonly,
+  hidden,
+  locked,
   depth,
   selected,
   tabbable,
@@ -517,26 +578,30 @@ function ElementRow({
   onMoveFocus,
 }: {
   rowKey: string
-  panel: PanelObject
-  el: ManifestElement
+  panelId: string
+  gid: string
+  /** 引擎原名（未翻译）：动作的撤销文案用它，显示前过 `engineLabel` */
+  label: string
+  role: string
+  /** 行上显示的名字，`rowLabel(el)` 的结果 */
+  name: string
+  canHide: boolean
+  readonly: boolean
+  hidden: boolean
+  locked: boolean
   depth: number
   selected: boolean
   tabbable: boolean
   /** undefined = 叶子节点，无展开箭头 */
   expanded?: boolean
-  onToggle: () => void
-  onSelect: (additive: boolean) => void
-  onIsolate: () => void
-  onMoveFocus: (delta: number) => void
+  onToggle: (key: string, expanded: boolean) => void
+  onSelect: (gid: string, additive: boolean) => void
+  onIsolate: (gid: string) => void
+  onMoveFocus: (from: string, delta: number) => void
 }) {
-  // override 未渲染回来前也要即时反馈，所以两处都查
-  const hidden =
-    panel.overrides.some(
-      (o) => o.gid === el.gid && o.prop === 'visible' && o.value === false,
-    ) || isElementHidden(el)
-  const locked = panel.lockedGids?.includes(el.gid) ?? false
-  const unsupported = unsupportedOf(el.role)
-  const readonly = el.editable.length === 0
+  useTranslation('workspace')
+  const unsupported = unsupportedOf(role)
+  const shown = engineLabel(label)
 
   return (
     <li
@@ -544,7 +609,7 @@ function ElementRow({
       aria-selected={selected}
       aria-expanded={expanded}
       aria-label={
-        et('rowAria', { label: engineLabel(el.label), role: roleName(el.role) }) +
+        et('rowAria', { label: shown, role: roleName(role) }) +
         (hidden ? et('rowAriaHidden') : '') +
         (locked ? et('rowAriaLocked') : '')
       }
@@ -554,30 +619,30 @@ function ElementRow({
       onFocus={(e) => {
         if (e.target !== e.currentTarget || selected) return
         // 焦点漫游即选中，与图层树一致
-        onSelect(false)
+        onSelect(gid, false)
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault()
           e.stopPropagation()
-          onMoveFocus(e.key === 'ArrowDown' ? 1 : -1)
+          onMoveFocus(rowKey, e.key === 'ArrowDown' ? 1 : -1)
         } else if (e.key === 'ArrowRight' && expanded === false) {
           e.preventDefault()
           e.stopPropagation()
-          onToggle()
+          onToggle(rowKey, expanded)
         } else if (e.key === 'ArrowLeft' && expanded === true) {
           e.preventDefault()
           e.stopPropagation()
-          onToggle()
+          onToggle(rowKey, expanded)
         } else if (e.key === 'Enter') {
           e.preventDefault()
           e.stopPropagation()
-          onSelect(e.shiftKey)
+          onSelect(gid, e.shiftKey)
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
           e.preventDefault()
           e.stopPropagation()
-          if (canHide(el) && !hidden) hideElement(panel.id, el.gid, el.label)
+          if (canHide && !hidden) hideElement(panelId, gid, label)
         } else if (e.key === 'Escape') {
           e.preventDefault()
           e.stopPropagation()
@@ -587,22 +652,19 @@ function ElementRow({
       }}
       onPointerDown={(e) => {
         if (e.button !== 0) return
-        onSelect(e.shiftKey)
+        onSelect(gid, e.shiftKey)
       }}
       className={cn(listRowClass({ selected, hidden }), 'pr-0.5')}
     >
       <TreeChevron
         expanded={expanded}
-        onToggle={expanded === undefined ? undefined : onToggle}
+        onToggle={expanded === undefined ? undefined : () => onToggle(rowKey, expanded)}
         label={expanded === undefined ? undefined : et(expanded ? 'collapse' : 'expand')}
       />
-      <TreeIcon icon={roleIcon(el.role)} selected={selected} />
+      <TreeIcon icon={roleIcon(role)} selected={selected} />
 
-      <span
-        className="min-w-0 flex-1 truncate"
-        title={`${engineLabel(el.label)} · ${roleName(el.role)} · ${el.gid}`}
-      >
-        {rowLabel(el)}
+      <span className="min-w-0 flex-1 truncate" title={`${shown} · ${roleName(role)} · ${gid}`}>
+        {name}
       </span>
 
       {unsupported && (
@@ -633,29 +695,24 @@ function ElementRow({
               iconSize="sm"
               tabIndex={-1}
               onPointerDown={(e) => e.stopPropagation()}
-              label={et('rowActions', { label: engineLabel(el.label) })}
+              label={et('rowActions', { label: shown })}
             >
               <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
             </IconButton>
           }
         >
-          <MenuItem icon={Crosshair} onSelect={onIsolate}>
+          <MenuItem icon={Crosshair} onSelect={() => onIsolate(gid)}>
             {et('isolateBranch')}
           </MenuItem>
-          {el.gid !== 'figure' && (
-            <MenuItem
-              icon={locked ? LockOpen : Lock}
-              onSelect={() => toggleElementLocked(panel.id, el.gid, el.label)}
-            >
+          {gid !== 'figure' && (
+            <MenuItem icon={locked ? LockOpen : Lock} onSelect={() => toggleElementLocked(panelId, gid, label)}>
               {et(locked ? 'unlock' : 'lock')}
             </MenuItem>
           )}
-          {canHide(el) && (
+          {canHide && (
             <MenuItem
               icon={hidden ? Eye : EyeOff}
-              onSelect={() =>
-                hidden ? unhideElement(panel.id, el.gid) : hideElement(panel.id, el.gid, el.label)
-              }
+              onSelect={() => (hidden ? unhideElement(panelId, gid) : hideElement(panelId, gid, label))}
             >
               {et(hidden ? 'unhide' : 'hide')}
             </MenuItem>
@@ -664,4 +721,4 @@ function ElementRow({
       </span>
     </li>
   )
-}
+})
