@@ -25,6 +25,7 @@
 `tests/test_browser_session.py` 同一条纪律）。
 """
 
+import hashlib
 import json
 import os
 import subprocess
@@ -380,19 +381,31 @@ fig.savefig("escape.pdf")
             figs,
             "nreader.py",
             """\
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 
 a = np.loadtxt("xy.txt")
 b = np.genfromtxt("xy.txt")
 assert a.tolist() == b.tolist() == [[1.0, 2.0], [2.0, 4.0]], a
+c = np.loadtxt(os.path.join(os.path.dirname(os.path.abspath(__file__)), "abs.txt"))
 fig, ax = plt.subplots()
-ax.plot(a[:, 0], a[:, 1])
+ax.plot(a[:, 0], a[:, 1] + c.sum())
 fig.savefig("nreader.pdf")
 """,
         )
         (figs / "xy.txt").write_text("1 2\n2 4\n", encoding="utf-8")
-        assert list(desktop_build(figs, "nreader.py")["stems"]) == ["nreader"]
+        (figs / "abs.txt").write_text("0\n", encoding="utf-8")
+        built = desktop_build(figs, "nreader.py")
+        assert list(built["stems"]) == ["nreader"]
+        # numpy 读到的项目文件要进执行回执（数据身份）：改指过来的那份与按绝对路径读的那份都算。
+        # numpy 的打开器在它载入时就绑了原来的 io.open，三处 open 包装都看不见它（Codex #545 P1）
+        seen = {f["path"]: f["sha256"] for f in built["runtime"]["inputs"]["files"]}
+        assert seen == {
+            "xy.txt": hashlib.sha256((figs / "xy.txt").read_bytes()).hexdigest(),
+            "abs.txt": hashlib.sha256((figs / "abs.txt").read_bytes()).hexdigest(),
+        }
 
     def test_numpy_reads_the_scripts_own_sandbox_copy_first(self, tmp_path):
         """脚本自己 `np.savetxt` 出来的那一份优先——回退不能把它换成图库里的同名文件。"""

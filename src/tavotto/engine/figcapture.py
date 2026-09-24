@@ -639,7 +639,7 @@ def _within(real: str, root: str, *, pathmod=os.path) -> bool:
 
 
 class InputObserver:
-    """记下脚本执行期间经 `builtins.open` / `io.open` / `Path.open` **以只读模式成功打开**的、落在项目根之内的
+    """记下脚本执行期间经 `builtins.open` / `io.open` / `Path.open` / numpy 的 `DataSource.open` **以只读模式成功打开**的、落在项目根之内的
     文件（ExecutionReceipt 的「已观察的数据身份」，ADR 0070）。
 
     观察到的就是观察到的：h5py / netCDF / 自家 C 扩展直接调 `H5Fopen` / `fopen`，`np.memmap` 走 `os.open`，
@@ -682,7 +682,7 @@ class InputObserver:
             return
 
     def install(self):
-        """装上三处 open 的观察包装；返回卸载函数。"""
+        """装上 open 的观察包装（三处 Python open + numpy 的 `DataSource.open`）；返回卸载函数。"""
         real_open = builtins.open
         real_io_open = io.open
         real_path_open = pathlib.Path.open
@@ -707,10 +707,28 @@ class InputObserver:
         io.open = _wrap(real_io_open)
         pathlib.Path.open = observed_path_open
 
+        # numpy 的 `DataSource.open`（`np.loadtxt` / `np.genfromtxt`）：它的文件打开器在 numpy
+        # 载入时就绑好了**原来的** `io.open`，上面三处包装都看不见它读了什么。记的是它**实际
+        # 打开的那个文件**（文件对象的 `.name`，gzip / bz2 也有）——相对路径由它按自己的
+        # destpath 解，拿请求里的字符串去猜会记错文件。只包已载入的 numpy，不替脚本 import。
+        datasource = getattr(sys.modules.get("numpy.lib._datasource"), "DataSource", None)
+        real_ds_open = getattr(datasource, "open", None)
+
+        def observed_datasource_open(self_ds, path, mode="r", *args, **kwargs):
+            fh = real_ds_open(self_ds, path, mode, *args, **kwargs)
+            if _readonly_mode(mode):
+                observer._note(getattr(fh, "name", None))
+            return fh
+
+        if real_ds_open is not None:
+            datasource.open = observed_datasource_open
+
         def uninstall() -> None:
             builtins.open = real_open
             io.open = real_io_open
             pathlib.Path.open = real_path_open
+            if real_ds_open is not None:
+                datasource.open = real_ds_open
 
         self._uninstall = uninstall
         return uninstall
