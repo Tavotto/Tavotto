@@ -2885,7 +2885,10 @@ def _legend_entry_fields(t, state: FigState, gid: str) -> list[dict]:
             {
                 "prop": "handle_color",
                 "type": "color",
-                "value": to_hex(_handle_color_of(h)),
+                # 整格同色的定格项取整格唯一的可见颜色（第一个 artist 可能只有描边、面是透明的）
+                "value": to_hex(
+                    model.cell_color(j) if model.cell_color(j) is not None else _handle_color_of(h)
+                ),
                 "group": "图例项",
             }
         )

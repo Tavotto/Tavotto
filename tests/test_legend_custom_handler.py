@@ -464,3 +464,30 @@ def test_a_same_hue_opacity_ramp_is_not_one_colour(tmp_path_factory):
     finally:
         pool.discard(w)
     assert not [p for p in fields if p.startswith("handle_")]
+
+
+def test_an_outline_first_cell_shows_and_restores_its_visible_colour(tmp_path_factory):
+    """整格同色、但第一个 artist 只有描边：检查器显示的是描边那一种颜色（不是透明的面 `none`），
+    撤销时存下的原样也是它——否则撤销把 `none` 写回整格、所有描边都被抹掉（#544 评审）。"""
+    figs = tmp_path_factory.mktemp("legend-outline-undo")
+    (figs / OUTLINE_SCRIPT).write_text(OUTLINE_LIBRARY, encoding="utf-8")
+    entry = f"{LEG}.texts_0"
+    w = pool.one_shot(OUTLINE_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        assert (
+            _fields(w.override(OUTLINE_STEM, [])["manifest"], entry)["handle_color"]["value"]
+            == "#1f77b4"
+        )
+        keep = [{"gid": LEG, "prop": "frame_linewidth", "value": 2.0}]
+        expected = w.preview_png(OUTLINE_STEM, keep, 380, "ou-keep").read_bytes()
+        resp = w.override(
+            OUTLINE_STEM, keep + [{"gid": entry, "prop": "handle_color", "value": "#d62728"}]
+        )
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        assert _fields(resp["manifest"], entry)["handle_color"]["value"] == "#d62728"
+        resp = w.override(OUTLINE_STEM, keep)
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        assert w.preview_png(OUTLINE_STEM, keep, 380, "ou-undone").read_bytes() == expected
+    finally:
+        pool.discard(w)

@@ -396,6 +396,24 @@ class LegendEntries:
             colors |= c
         return len(colors) == 1
 
+    def cell_color(self, j: int):
+        """整格同色的定格项此刻那**唯一的可见颜色**（RGBA）；不是这种格子、或此刻不止一种颜色回 None。
+
+        检查器显示的值与撤销存下的原样都取它，不取第一个 artist：第一个是只描边的形状时，它的
+        面色是透明的——显示成 `none`，撤销时再把 `none` 写回整格就把所有描边抹掉了（#544 评审）。"""
+        if not self.frozen_color_uniform(j):
+            return None
+        k = self.display_index(j)
+        boxes = _entry_boxes(self.leg) if k is not None else []
+        artists = boxes[k][0].get_children() if k is not None and k < len(boxes) else []
+        colors: set = set()
+        for a in artists or self.frozen[j].artists:
+            c = _visible_colors(a)
+            if c is None:
+                return None
+            colors |= c
+        return next(iter(colors)) if len(colors) == 1 else None
+
     def base_of(self, j: int):
         """重建 / 同步时这一项该从谁派生：跟随的从源，定格的原样复刻，其余从脚本原样快照。"""
         if self.effective_binding(j) == "follow_source":
@@ -1104,9 +1122,18 @@ def _visible_colors(a) -> set:
 
 def _mk_entry_handle_handler(prop: str) -> tuple:
     return (
-        lambda t: _handle_read(_entry_handle(t), prop),
+        lambda t: _entry_handle_read(t, prop),
         lambda t, v: _entry_handle_write(t, prop, v),
     )
+
+
+def _entry_handle_read(t: Text, prop: str):
+    model, j = _entry_of(t)
+    if prop == "handle_color":
+        c = model.cell_color(j)
+        if c is not None:
+            return c
+    return _handle_read(model.handle_of(j), prop)
 
 
 def _reindex_legend_children(leg: Legend, state: RebuildState) -> None:
