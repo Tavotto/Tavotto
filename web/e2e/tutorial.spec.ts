@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import { lowContrastNodes } from './contrast'
-import { expect, test } from './fixtures'
+import { expect, openWorkspace, switchProjectVia, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -250,13 +250,12 @@ test('重置教程项目：画布恢复原样、onboarding 从头；最近列表
   await page.keyboard.press('Escape')
   await expect(page.locator('[data-exit-element-edit]')).toHaveCount(0)
 
-  // 项目选择器里教程副本显示「教程项目」而不是数据目录路径
-  await page.getByRole('button', { name: /当前项目 Tutorial/ }).click()
-  await page.getByRole('menuitem', { name: '全部项目…' }).click()
-  const row = page.getByRole('button', { name: '打开项目 Tutorial' })
-  await expect(row).toBeVisible()
-  await expect(row).toContainText('教程项目')
-  await expect(row).not.toContainText(a.dataDir)
+  // 工作区抽屉里教程副本显示「教程项目」而不是数据目录路径（它此刻是当前项目）
+  await openWorkspace(page)
+  const current = page.locator('[data-workspace-section="current"]')
+  await expect(current).toContainText('Tutorial')
+  await expect(current).toContainText('教程项目')
+  await expect(current).not.toContainText(a.dataDir)
 })
 
 test('切到别的项目自动暂停，切回来自动继续', async ({ app, page }) => {
@@ -273,12 +272,10 @@ test('切到别的项目自动暂停，切回来自动继续', async ({ app, pag
   await expect(coachmark(page)).toContainText('打开一张图')
 
   // 切回原来的项目 → coachmark 消失（系统暂停）
-  await page.getByRole('button', { name: /当前项目 Tutorial/ }).click()
-  await page.getByRole('menuitem', { name: 'figures' }).click()
+  await switchProjectVia(page, 'figures')
   await expect(page.getByRole('button', { name: /当前项目 figures/ })).toBeVisible({ timeout: 30_000 })
   await expect(coachmark(page)).toHaveCount(0)
   // 再切回教程 → 自动继续
-  await page.getByRole('button', { name: /当前项目 figures/ }).click()
-  await page.getByRole('menuitem', { name: 'Tutorial' }).click()
+  await switchProjectVia(page, 'Tutorial')
   await expect(coachmark(page)).toContainText('打开一张图', { timeout: 60_000 })
 })

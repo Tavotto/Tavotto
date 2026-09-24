@@ -1,4 +1,4 @@
-import { test as base, expect } from '@playwright/test'
+import { test as base, expect, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { copyFileSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
@@ -227,10 +227,27 @@ export { expect }
  * 关闭（CI #453 的 900s 挂死，两轮同形状）。按 `aria-expanded` 判态，
  * 不在才点，点完等状态坐实。
  */
-export async function openElementsTab(page: import('@playwright/test').Page): Promise<void> {
+export async function openElementsTab(page: Page): Promise<void> {
   const nav = page
     .getByRole('navigation')
     .getByRole('button', { name: '图内元素' })
   if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
   await expect(nav).toHaveAttribute('aria-expanded', 'true')
+}
+
+/**
+ * 打开左栏「工作区」抽屉（切项目、项目级动作都在这里）。顶栏项目名是开关：
+ * 抽屉已经开着时再点会把它收起，所以先看 `aria-expanded`，没开才点。
+ */
+export async function openWorkspace(page: Page) {
+  const trigger = page.locator('[data-project-switcher]')
+  await expect(trigger).toBeVisible()
+  if ((await trigger.getAttribute('aria-expanded')) !== 'true') await trigger.click()
+  await expect(page.locator('[data-workspace-list]')).toBeVisible()
+}
+
+/** 在工作区抽屉里点开一个项目（按可达名找行：收藏区与最近区都算） */
+export async function switchProjectVia(page: Page, name: string) {
+  await openWorkspace(page)
+  await page.locator('[data-workspace-list]').getByRole('button', { name: `打开项目 ${name}` }).click()
 }

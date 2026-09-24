@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, test, writeRuntimeNamedProject } from './fixtures'
+import { expect, openWorkspace, test, writeRuntimeNamedProject } from './fixtures'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
 
@@ -102,7 +102,9 @@ test('还没连上源脚本时，界面给得出「重新扫描 / 试运行」�
   const a = await app({ figures: dir })
   await page.goto(a.baseURL)
 
-  await page.getByRole('button', { name: /当前项目/ }).click()
+  // 项目级动作在工作区抽屉顶上「当前」卡片的「…」里（顶栏项目名只开抽屉）
+  await openWorkspace(page)
+  await page.locator('[data-workspace-section="current"] button[aria-haspopup]').click()
   await page.getByRole('menuitem', { name: '项目接入状态…' }).click()
 
   // 断言收在对话框里：素材库脚本区现在也合法列出 render_map.py（Session 5），
