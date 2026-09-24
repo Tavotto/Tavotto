@@ -274,6 +274,10 @@ jobs:
       - name: 打 wheel 与 sdist
         run: |
           python -m pip install --upgrade pip build twine
+          # 批准字体不进 git，随 wheel 走（ADR 0072）：干净 checkout 上不取就打出一个没有字体的 wheel，
+          # RenderCore 默认后端装上即 FontsUnavailable（Codex #539）
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
           python -m build
 
       - name: 核对包版本与 trust 解析出的一致

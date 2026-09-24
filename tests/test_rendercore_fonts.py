@@ -361,3 +361,30 @@ def test_license_texts_travel_with_the_fonts(registry):
     for rel in ALLOWLIST.license_files:
         text = (registry.root / rel).read_text(encoding="utf-8", errors="replace")
         assert "SIL OPEN FONT LICENSE" in text.upper(), rel
+
+
+_BUILD_STEP = re.compile(r"(-m build\b|^\s*pyinstaller\b|\bpyinstaller packaging/)")
+
+
+def test_every_workflow_package_build_fetches_the_approved_fonts_first():
+    """批准字体不进 git、随 wheel / 冻结产物走（ADR 0072）：CI 上从干净 checkout 打包的每一步，**同一个 job
+    里之前**都得先 `fetch_fonts.py --check`（或整步走 `build_desktop.py`——它自己先取再核）。第一版漏了
+    release.yml 与 lab-qualification 的非预建分支：发出去的 wheel 没有字体，RenderCore 装上即不可用（Codex #539）。
+    判据按文本切 job（仓库里不用 PyYAML 读 workflow，同 test_merge_queue_workflows 的纪律）。"""
+    wf_dir = ROOT / ".github" / "workflows"
+    checked, missing = 0, []
+    for wf in sorted(wf_dir.glob("*.yml")):
+        lines = wf.read_text(encoding="utf-8").splitlines()
+        job_start = 0
+        for i, line in enumerate(lines):
+            if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):
+                job_start = i
+            code = line.split("#", 1)[0]
+            if not _BUILD_STEP.search(code) or "pip install" in code:
+                continue
+            checked += 1
+            before = "\n".join(ln.split("#", 1)[0] for ln in lines[job_start:i])
+            if "fetch_fonts.py --check" not in before and "build_desktop.py" not in before:
+                missing.append(f"{wf.name}:{i + 1} {line.strip()}")
+    assert checked >= 5, "一个打包步骤都没扫到——判据量在空集合上"
+    assert not missing, "这些打包步骤之前没有取批准字体：\n" + "\n".join(missing)
