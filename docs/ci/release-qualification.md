@@ -219,7 +219,7 @@ corpus 在 `tests/acceptance/corpus/`，13 个 stem，每个都对应一类真�
 |---|---|---|
 | `c01_lines_scatter_bars.py` | line / scatter / bar / errorbar | 最常见形态；散点刻意不给 geometry；bar/errorbar 是 manifest 伪元素 |
 | `c02_axes_and_scales.py` | subplots / twinx / loglog / constrained | 子图几何、`set_[xy]scale` 换 locator、色条就地改造 |
-| `c03_text_legend_images.py` | legend / annotations / scinotation / image / cjk | 图例重建、annotate 不出端点、位图 alpha、mathtext |
+| `c03_text_legend_images.py` | legend / annotations / scinotation / image / cjk | 图例重建、有字的 annotate 不出端点、位图 alpha、mathtext |
 
 corpus 脚本有两条与普通示例不同的纪律：**一切数值写死**（不用随机数，
 免得 numpy 换代时整片变红）、**不 import `paper_style`**（那是图库方言，
