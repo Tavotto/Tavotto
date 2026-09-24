@@ -298,6 +298,16 @@ def test_discrete_palettes_keep_every_colour(facts):
     assert lst["plateau_mean_err"] < 0.01, lst["plateau_mean_err"]
 
 
+def test_colormap_sampling_is_bounded_whatever_its_length(facts):
+    """#538 评审第五轮：一次按全长取样，名义 500 万格的色图峰值 375 MB，要拒绝的那种还得先
+    全部算完。分段取样、边取边去重：平滑的照常得到它的真实颜色，峰值只跟段长有关；颜色
+    太多的在第一段就停；格数超过 8 位颜色空间的只看 N 就不配对。"""
+    h = facts["orphan_scopes"]["huge_n"]
+    assert h["smooth"]["distinct"] is not None and h["smooth"]["peak"] < 32 * 2**20, h["smooth"]
+    assert h["noisy"]["distinct"] is None and h["noisy"]["peak"] < 32 * 2**20, h["noisy"]
+    assert h["over_n"]["distinct"] is None and h["over_n"]["peak"] < 2**20, h["over_n"]
+
+
 # ============================================================ 热会话 == 全量重放
 SCRIPT = "fig_recognition.py"
 LIBRARY = """\

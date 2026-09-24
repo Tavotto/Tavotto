@@ -544,6 +544,9 @@ _FIELD_TUBE_CHUNK = 1024
 #: 去重后的颜色数上限。连续色图 8 位下只有几百上千种；上万种不同颜色的离散调色板已经
 #: 不是一条色阶，不配对——如实不认，manifest 不报绑定（查色表会随颜色数线性变大）。
 _FIELD_MAX_COLOURS = 16384
+#: 取样色图时一段多少格；超过 `_FIELD_MAX_N` 格（比 8 位颜色空间还多）的色图直接不配对。
+_FIELD_SAMPLE_CHUNK = 65536
+_FIELD_MAX_N = 1 << 24
 #: 配对抽样用的连续窗口边长：连片判据（`_field_mask`）要真实相邻的像素，隔点抽样量不了。
 _FIELD_WINDOW = 64
 #: 查色表里「不在色图上」的记号（格号是 uint16，色图最多 65535 格）。
@@ -596,21 +599,48 @@ def _cmap_entries(cmap):
     实测精度相同（场像素平均误差 0.0020 对 0.0022），多一条分支不值。6 万格的
     LinearSegmented 去重后不到 800 种。去重后超过 `_FIELD_MAX_COLOURS` 种时抛错，调用方
     不配对。
+
+    **分段取样、边取边去重**（#538 评审第五轮）：一次按全长取样要分配 N 长的位置、颜色与
+    去重临时量（名义 500 万格的色图实测峰值 375 MB），而要拒绝的那种还得先全部算完。每段
+    `_FIELD_SAMPLE_CHUNK` 格，去重结果并进累计表，累计超过上限立刻停；格数超过
+    `_FIELD_MAX_N` 的只看 N 就不配对。峰值只跟段长与上限有关。
     """
     import numpy as np
 
     n = max(int(getattr(cmap, "N", 256)), 2)
-    t = np.linspace(0.0, 1.0, n)
-    colours = np.asarray(cmap(t))[:, :3] * 255.0
-    _, first, group = np.unique(
-        np.rint(colours).astype(np.int16), axis=0, return_index=True, return_inverse=True
-    )
-    group = np.asarray(group).ravel()
-    if len(first) > _FIELD_MAX_COLOURS:
-        raise ValueError("colormap has too many distinct colours")
-    mean_t = np.bincount(group, weights=t) / np.bincount(group)
+    if n > _FIELD_MAX_N:
+        raise ValueError("colormap has too many entries")
+    keys = np.empty(0, np.uint32)  # 累计：颜色码、首次出现的格号、该格的浮点颜色、t 之和、格数
+    first = np.empty(0, np.int64)
+    colour = np.empty((0, 3), np.float64)
+    tsum = np.empty(0, np.float64)
+    count = np.empty(0, np.float64)
+    for i0 in range(0, n, _FIELD_SAMPLE_CHUNK):
+        idx = np.arange(i0, min(n, i0 + _FIELD_SAMPLE_CHUNK))
+        t = idx / (n - 1)
+        col = np.asarray(cmap(t))[:, :3] * 255.0
+        packed = _pack(np.clip(np.rint(col), 0, 255).astype(np.uint8))
+        k, pos, inv = np.unique(packed, return_index=True, return_inverse=True)
+        inv = np.asarray(inv).ravel()
+        keys = np.concatenate([keys, k])
+        first = np.concatenate([first, idx[pos]])
+        colour = np.concatenate([colour, col[pos]])
+        tsum = np.concatenate([tsum, np.bincount(inv, weights=t)])
+        count = np.concatenate([count, np.bincount(inv).astype(np.float64)])
+        # 并表：同一颜色码的各段合成一条——t 之和、格数相加，首次出现取最早那段
+        order = np.lexsort((first, keys))
+        keys, first, colour = keys[order], first[order], colour[order]
+        tsum, count = tsum[order], count[order]
+        head = np.ones(len(keys), bool)
+        head[1:] = keys[1:] != keys[:-1]
+        grp = np.cumsum(head) - 1
+        tsum = np.bincount(grp, weights=tsum)
+        count = np.bincount(grp, weights=count)
+        keys, first, colour = keys[head], first[head], colour[head]
+        if len(keys) > _FIELD_MAX_COLOURS:
+            raise ValueError("colormap has too many distinct colours")
     order = np.argsort(first)  # 按第一次出现的顺序排，格号沿色图单调
-    return colours[first[order]].astype(np.float32), mean_t[order]
+    return colour[order].astype(np.float32), (tsum / count)[order]
 
 
 def _opaque(arr):

@@ -472,7 +472,40 @@ def orphan_scopes() -> dict:
     cxm = fm.add_axes([0.8, 0.1, 0.03, 0.8])
     fm.colorbar(ScalarMappable(mcolors.Normalize(0, 1), many), cax=cxm)
     listed["too_many"] = _summary(_state(fm))
+
+    # 名义格数极大的色图（#538 评审第五轮）：分段取样、边取边去重、超上限立刻停
+    class _Procedural(mcolors.Colormap):
+        """不建 LUT、颜色按 t 现算的色图（N 只是名义格数）。"""
+
+        def __init__(self, n, noisy=False):
+            super().__init__("procedural", N=n)
+            self.noisy = noisy
+
+        def __call__(self, X, alpha=None, bytes=False):
+            tt = np.asarray(X, float)
+            if self.noisy:
+                rgb = np.stack([(tt * 7919.0) % 1, (tt * 104729.0) % 1, (tt * 1299709.0) % 1], -1)
+            else:
+                rgb = np.stack([tt, tt**2, 1.0 - tt], -1)
+            return np.concatenate([rgb, np.ones(tt.shape + (1,))], -1)
+
+    def _entries_cost(cm):
+        tracemalloc.start()
+        try:
+            got = len(C._cmap_entries(cm)[0])
+        except ValueError:
+            got = None
+        peak = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+        return {"distinct": got, "peak": peak}
+
+    huge_n = {
+        "smooth": _entries_cost(_Procedural(5_000_000)),
+        "noisy": _entries_cost(_Procedural(5_000_000, noisy=True)),
+        "over_n": _entries_cost(_Procedural(C._FIELD_MAX_N + 1)),
+    }
     return {
+        "huge_n": huge_n,
         "listed": listed,
         "windows": windows,
         "sample_limit": C._FIELD_SAMPLE,
