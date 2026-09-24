@@ -324,6 +324,52 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
     expect(obj('pb').x).toBe(44)
   })
 
+  it('防抖还没到就撤销、再重做：被作废的那次重排在重做之后补上（#558 评审）', async () => {
+    await mount('d_reflow_redo_cancelled')
+    const depth = s().past.length
+    await act(async () => {
+      s().commit(literal('缩放'), (d) => {
+        const o = d.objects.find((x) => x.id === 'pa') as PanelObject
+        o.w = 30
+        o.h = 22.5
+      })
+      s().undo()
+    })
+    await settle()
+    expect([s().past.length, s().future.length]).toEqual([depth, 1])
+    expect(obj('pb').x).toBe(44)
+    await redo()
+    // 重做回到的是用户刚做完、重排还没来得及落的那一格：重排补上，且进历史
+    expect(obj('pb').x).toBeCloseTo(34, 6)
+    expect(lastLabel()).toBe('history.autoReflow')
+    expect([s().past.length, s().future.length]).toEqual([depth + 2, 0])
+  })
+
+  it('改图幅 override 后防抖还没到就撤销、再重做：同步器补图幅之后照样重排', async () => {
+    await mount('d_reflow_redo_cancelled_override')
+    await seed(obj('pa'), [40, 30])
+    await commit('改图幅', (d) => {
+      const o = d.objects.find((x) => x.id === 'pa') as PanelObject
+      o.overrides = [{ gid: 'fig', prop: 'size_mm', value: [50, 30] }]
+    })
+    const depth = s().past.length
+    // 渲染回来（silent 补图幅，排上重排），防抖没到就撤销
+    await act(async () => {
+      seedExactRender(obj('pa'), { stem: 'Fig1.pdf', size_mm: [50, 30], elements: [] })
+    })
+    await act(async () => {
+      s().undo()
+    })
+    await settle()
+    expect(obj('pa').w).toBeCloseTo(40, 6)
+    expect([s().past.length, s().future.length]).toEqual([depth - 1, 1])
+    await redo()
+    expect(obj('pa').w).toBeCloseTo(50, 6)
+    expect(obj('pb').x).toBeCloseTo(54, 6)
+    expect(lastLabel()).toBe('history.autoReflow')
+    expect([s().past.length, s().future.length]).toEqual([depth + 1, 0])
+  })
+
   it('撤销 / 重做之后的第一次用户编辑：照常重排', async () => {
     await mount('d_reflow_edit_after_derived')
     await commit('改图幅', (d) => {
