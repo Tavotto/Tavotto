@@ -109,6 +109,16 @@ Flask 父进程与 worker 都已加载它）：
   别的 import 的绑定、属性名、关键字名——宁可多判「用到了」）；X 与绑定名都不以字符串常量出现（`sys.modules["X"]`、
   `import_module("X")`、`getattr(m, "Y")`、`__all__`）；脚本里出现 `globals` / `vars` / `locals` / `eval` / `exec` /
   `compile` / `__import__` / `__dict__` 任一个就整份放弃（读不清）。只看脚本自己：本地模块也 import 了它时照旧按上下文判。
+* **本地模块可以借走脚本的绑定**（评审 #555 P2）：`helper.py` 里 `from __main__ import smp` 之后 `smp.Symbol(...)`——
+  脚本自己没读，别名照样被用到。`importscan` 对每个跟进到的本地模块调 `figcapture.reaches_main`：`import __main__` /
+  `from __main__ import …`、import 脚本自己的 stem（`entry` 不是 `__main__` 时脚本按 stem 作为模块 import）、字符串
+  `"__main__"` 或 stem（`sys.modules["__main__"]`；`__name__ == "__main__"` 入口守卫里的不算）、经栈帧取 globals
+  （`sys._getframe` / `inspect.currentframe` / `f_globals` / `f_back` / `inspect.stack`）——任一命中，脚本的全部 `unused`
+  作废。**按整份脚本、不按名字**：`from __main__ import *`、`getattr(__main__, 变量)`、栈帧都给不出名字，按名字精确
+  保留在静态上做不完备。看不全也作废：跟进被截断、有本地模块读不了、有本地编译扩展、有非字面量的动态 import。
+  盲区：第三方包在 import 时自己去读 `__main__`（没有扫描它们）；把 `__main__` 拼成字符串等动态写法。
+  worker 只看脚本、不跟进本地模块，所以用户明确「不准备，直接运行」时借用的那个名字仍会拿到占位；本地模块一读它
+  就抛与原来逐字相同的 `No module named 'X'`，走运行后的缺包修复（端到端实测如此）。
 * **计划**：`importscan` 给这类名字标 `unused`，`needed` 不含它（因而不进 `missing` / `unknown`、门不问、ADR 0079 的
   用户环境发现也不为它起），`JointPlan.unused` 列出来（诊断可见，不装）。
 * **执行**：safe worker 在脚本开跑前按同一份判据装 `figcapture.install_unused_import_placeholders`——包一层

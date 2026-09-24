@@ -196,6 +196,65 @@ class TestPlan:
         assert [m["distribution"] for m in plan.missing] == ["sympy"]
 
 
+class TestBorrowedThroughMain:
+    """评审 #555 P2：本地模块可以借走脚本的绑定——`from __main__ import smp` 之后 `smp.Symbol(...)`。
+    脚本自己没读 ≠ 没用到；任何被跟进的本地模块能够到脚本命名空间，脚本的 `unused` 一律作废。"""
+
+    @pytest.mark.parametrize(
+        "helper",
+        [
+            "from __main__ import smp\nX = smp.Symbol('x')\n",  # 评审原例
+            "import __main__\nX = __main__.smp.Symbol('x')\n",  # import __main__ 后访问属性
+            "import __main__ as m\nX = getattr(m, 'smp')\n",
+            "import sys\nX = sys.modules['__main__'].smp\n",
+            "import sys\nX = sys._getframe(1).f_globals['smp']\n",
+            "import inspect\nX = inspect.stack()[1].frame.f_globals\n",
+            "from plot import smp\n",  # entry 不是 __main__ 时脚本按 stem 作为模块被 import
+            # 同一条路，不经 import：只有「字符串里点名脚本的 stem」看得见（`from plot import …` 另有
+            # 「跟进到 plot.py、sympy 有 via」那条兜着）
+            "import sys\nX = sys.modules['plot'].smp\n",
+        ],
+    )
+    def test_a_local_module_that_can_borrow_the_alias_keeps_it_needed(self, tmp_path, helper):
+        proj = _project(tmp_path, "import sympy as smp\nimport helper\n", **{"helper.py": helper})
+        plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        assert plan.status == depplan.STATUS_READY, plan.to_payload()
+        assert [m["distribution"] for m in plan.missing] == ["sympy"]
+        assert plan.unused == ()
+
+    @pytest.mark.parametrize(
+        "helper",
+        [
+            # 入口守卫里的 "__main__" 不算够到脚本——否则带入口守卫的本地模块全都会误判
+            "def f():\n    return 1\nif __name__ == '__main__':\n    f()\n",
+            "import numpy as np\nX = np.stack([np.zeros(1)])\n",  # np.stack 不是 inspect.stack
+        ],
+    )
+    def test_ordinary_local_modules_do_not_void_the_verdict(self, tmp_path, helper):
+        proj = _project(tmp_path, "import sympy as smp\nimport helper\n", **{"helper.py": helper})
+        plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        assert plan.unused == ("sympy",)
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED
+
+    @pytest.mark.parametrize(
+        "script, files",
+        [
+            # 本地模块读不了（语法错）：看不见它借没借
+            ("import sympy as smp\nimport helper\n", {"helper.py": "def (:\n"}),
+            # 非字面量的动态 import：可能装进一个没扫过、借用 __main__ 的本地模块
+            (
+                "import sympy as smp\nimport importlib\nname = 'hel' + 'per'\nimportlib.import_module(name)\n",
+                {},
+            ),
+        ],
+    )
+    def test_what_cannot_be_seen_voids_the_verdict(self, tmp_path, script, files):
+        proj = _project(tmp_path, script, **files)
+        plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        assert plan.unused == ()
+        assert [m["distribution"] for m in plan.missing] == ["sympy"]
+
+
 # ---------------------------------------------------------------- 占位（真子进程）
 
 _PLACEHOLDER_DRIVER = """\

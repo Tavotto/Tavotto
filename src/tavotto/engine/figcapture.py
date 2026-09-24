@@ -138,6 +138,7 @@ __all__ = [
     "fallback_stems",
     "install_relative_read_fallback",
     "unused_imports",
+    "reaches_main",
     "install_unused_import_placeholders",
     "SIDE_EFFECT_FREE_IMPORTS",
     "InputObserver",
@@ -1020,6 +1021,61 @@ def unused_imports(tree) -> frozenset[str]:
             continue
         out.add(top)
     return frozenset(out)
+
+
+#: 本地模块里出现这些名字（Name 或属性）就可能借到脚本的全局：`sys._getframe(1).f_globals["smp"]`、
+#: `inspect.currentframe().f_back.f_globals`、`inspect.stack()`。
+#: `stack` 单列：`np.stack` 太常见，只认 `inspect.stack` 与 `from inspect import stack`。
+_FRAME_NAMES = frozenset({"_getframe", "currentframe", "f_globals", "f_locals", "f_back"})
+
+
+def reaches_main(tree, script_stem: str) -> bool:
+    """一个被跟进的**本地模块**能不能够到脚本自己的命名空间（评审 #555 P2）——能就说明脚本的别名可能
+    被它借走（`from __main__ import smp` 之后 `smp.Symbol(...)`），「脚本里没读」不再证明没用到。
+
+    `importscan` 对每个跟进到的本地模块调一次；任何一个为真，脚本的全部 `unused` 一律作废（按整份脚本、
+    不按名字：`from __main__ import *`、`getattr(__main__, 变量)`、经栈帧取 globals 都给不出名字，按名字
+    精确保留在静态上做不完备）。认的形状：
+
+    * `import __main__` / `from __main__ import …`；以及 import 脚本自己的模块名（`entry` 不是 `__main__`
+      时脚本是按 stem 作为模块 import 的，`from plot import smp` 同样借得到）；
+    * 字符串常量 `"__main__"` 或脚本的 stem（`sys.modules["__main__"]`、`import_module("__main__")`）——
+      **`__name__ == "__main__"` 那种入口守卫里的不算**，否则带入口守卫的本地模块全都会被误判；
+    * 经栈帧取调用方的全局（`_FRAME_NAMES`）。
+    """
+    import ast  # noqa: PLC0415
+
+    targets = {"__main__", script_stem}
+    guard_constants: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            sides = [node.left, *node.comparators]
+            if any(isinstance(x, ast.Name) and x.id == "__name__" for x in sides):
+                guard_constants.update(id(x) for x in sides if isinstance(x, ast.Constant))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name.split(".", 1)[0] in targets for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if not node.level and (node.module or "").split(".", 1)[0] in targets:
+                return True
+            if node.module == "inspect" and any(a.name == "stack" for a in node.names):
+                return True
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value in targets and id(node) not in guard_constants:
+                return True
+        elif isinstance(node, ast.Name) and node.id in _FRAME_NAMES | {"__main__"}:
+            return True
+        elif isinstance(node, ast.Attribute) and (
+            node.attr in _FRAME_NAMES
+            or (
+                node.attr == "stack"
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "inspect"
+            )
+        ):
+            return True
+    return False
 
 
 def install_unused_import_placeholders(script: str, names) -> None:

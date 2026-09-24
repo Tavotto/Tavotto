@@ -440,6 +440,9 @@ def scan(
 
     # 本地模块有界跟进：每发现一个本地模块就扫它的文件，它 import 的东西再排队判本地。
     local_paths: dict[str, Path] = {}
+    #: 某个跟进到的本地模块能够到脚本的命名空间、或有本地模块读不了 / 是编译扩展——脚本的别名可能被
+    #: 借走，`unused` 一律作废（评审 #555 P2，判据 `figcapture.reaches_main`）
+    main_reachable = False
     depth_of: dict[str, int] = {"": 0}  # via → 深度
     scanned: set[str] = set()
     read_files: list[str] = [Path(script).as_posix()]
@@ -460,6 +463,8 @@ def scan(
             continue
         via = _rel(root_p, path)
         depth_of[via] = depth
+        if path.is_file() and path.suffix != ".py":
+            main_reachable = True  # 编译扩展没有源码可扫：判不清它碰不碰 __main__
         for f in _module_files(path):
             key = os.path.normcase(str(f))
             if key in scanned:
@@ -477,6 +482,8 @@ def scan(
             if problem is not None:
                 problems.append(problem)
                 continue
+            if figcapture.reaches_main(sub, script_p.stem):
+                main_reachable = True
             sv = _Visitor(via)
             sv.visit(sub)
             for su in sv.uses:
@@ -487,6 +494,11 @@ def scan(
                 uses.append(su2)
                 pending.append(su2)
             dynamic += [ImportUse("", d.full, CONTEXT_DYNAMIC, d.lineno, via) for d in sv.dynamic]
+
+    if main_reachable or truncated or problems or dynamic:
+        # 看不全 = 判不清：跟进被截断、有本地模块读不了、有非字面量的动态 import（可能装进一个没扫过、
+        # 借用 __main__ 的本地模块）——都不再承认「脚本的别名没被用到」
+        unused = frozenset()
 
     by_name: dict[str, list[ImportUse]] = {}
     for u in uses:
