@@ -699,6 +699,18 @@ def test_recovery_commands_survive_shell_metacharacters(unpacked, tmp_path):
     launcher = _load(odd / "mcp" / "server.py", name="_tavotto_launcher_quote")
     cmd = launcher._self_command()
     if os.name == "nt":
-        assert cmd == f'"{sys.executable}" "{odd / "mcp" / "server.py"}"'
+        # 真的粘进 PowerShell 跑一次：只比文本证明不了它可执行（Codex 在 #559 上指出）
+        server = str(odd / "mcp" / "server.py")
+        assert cmd == f"& '{sys.executable}' '{server}'"
+        ps = shutil.which("pwsh") or shutil.which("powershell")
+        assert ps, "Windows runner 上应有 PowerShell"
+        proc = subprocess.run(
+            [ps, "-NoProfile", "-NonInteractive", "-Command", cmd + " --health"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=180,
+        )
+        assert "source" in json.loads(proc.stdout.strip().splitlines()[-1]), proc.stderr
     else:
         assert shlex.split(cmd) == [sys.executable, str(odd / "mcp" / "server.py")]
