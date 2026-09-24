@@ -1,0 +1,132 @@
+# verify: mutation-V2-group-drops-last
+# time: 2026-09-25T03:29:04 (+2s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-02'
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-geo/web
+
+ ❯ src/canvas/geometryReference.test.ts (32 tests | 4 failed | 28 skipped) 130ms
+     × G2big：2 个文字同一屏幕位移 43ms
+     × G2big：10 个文字同一屏幕位移 13ms
+     × G2big：100 个文字同一屏幕位移 26ms
+     × G2 混合类型（文字 + 图例 + 形状 + 另一面板的标题），跨两个 Axes 48ms
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 28 skipped (32)
+   Start at  03:29:04
+   Duration  1.09s (transform 320ms, setup 137ms, import 287ms, tests 130ms, environment 438ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：2 个文字同一屏幕位移
+AssertionError: expected [ { gid: 'axes_0.texts_0', …(2) } ] to have a length of 2 but got 1
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ src/canvas/geometryReference.test.ts:316:18
+    314|       const ov = overridesNow()
+    315|       // 恰好一次：每个成员一条，不多不少
+    316|       expect(ov).toHaveLength(count)
+       |                  ^
+    317|       expect(new Set(ov.map((o) => o.gid)).size).toBe(count)
+    318|       for (const gid of picked) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：10 个文字同一屏幕位移
+AssertionError: expected [ …(9) ] to have a length of 10 but got 9
+
+- Expected
++ Received
+
+- 10
++ 9
+
+ ❯ src/canvas/geometryReference.test.ts:316:18
+    314|       const ov = overridesNow()
+    315|       // 恰好一次：每个成员一条，不多不少
+    316|       expect(ov).toHaveLength(count)
+       |                  ^
+    317|       expect(new Set(ov.map((o) => o.gid)).size).toBe(count)
+    318|       for (const gid of picked) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：100 个文字同一屏幕位移
+AssertionError: expected [ …(99) ] to have a length of 100 but got 99
+
+- Expected
++ Received
+
+- 100
++ 99
+
+ ❯ src/canvas/geometryReference.test.ts:316:18
+    314|       const ov = overridesNow()
+    315|       // 恰好一次：每个成员一条，不多不少
+    316|       expect(ov).toHaveLength(count)
+       |                  ^
+    317|       expect(new Set(ov.map((o) => o.gid)).size).toBe(count)
+    318|       for (const gid of picked) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2 混合类型（文字 + 图例 + 形状 + 另一面板的标题），跨两个 Axes
+AssertionError: expected [ …(4) ] to have a length of 5 but got 4
+
+- Expected
++ Received
+
+- 5
++ 4
+
+ ❯ src/canvas/geometryReference.test.ts:361:28
+    359|     }
+    360|     fire('pointerup', 400 + ds[0], 300 + ds[1])
+    361|     expect(overridesNow()).toHaveLength(picked.length)
+       |                            ^
+    362|     for (const gid of picked) {
+    363|       const e = el('G2', gid)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+[exit=1]
+
+# verify: mutation-V2-group-drops-last
+# time: 2026-09-25T03:29:05 (+2s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/alignAction.test.ts src/store/alignSelectedTo.test.ts src/canvas/alignUndoConvergence.test.tsx src/canvas/fakeRealtimeDrag.test.tsx src/canvas/groupLockDrag.test.ts src/canvas/context-bar/multiSelectionBar.test.tsx
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-geo/web
+
+
+ Test Files  6 passed (6)
+      Tests  114 passed (114)
+   Start at  03:29:06
+   Duration  2.05s (transform 2.00s, setup 955ms, import 2.06s, tests 1.34s, environment 2.69s)
+
+[exit=0]
+
+# verify: mutation-V2-group-drops-last
+# time: 2026-09-25T03:29:08 (+1s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-02'
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-geo/web
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed | 28 skipped (32)
+   Start at  03:29:08
+   Duration  831ms (transform 283ms, setup 111ms, import 257ms, tests 120ms, environment 265ms)
+
+[exit=0]
+

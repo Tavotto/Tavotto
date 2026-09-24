@@ -1,0 +1,12 @@
+# verify: GEO-08-pytest-legend
+# time: 2026-09-25T03:23:10 (+1s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_legend_anchor.py -k "unsupported"
+..                                                                       [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_legend_anchor.py::test_an_anchor_shape_this_model_cannot_express_is_declared_unsupported
+PASSED tests/test_legend_anchor.py::test_an_anchor_pinned_to_another_coordinate_system_is_declared_unsupported
+[exit=0]
+

@@ -1,0 +1,11 @@
+# verify: xcheck-bug2-bbox
+# time: 2026-09-25T03:30:13 (+1s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ TAVOTTO_DATA_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vgeo/s/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/logs/verify/xcheck_bug2_bbox.py /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vgeo/s $PWD/src
+TNone keys ['canonical_patch_hash', 'manifest', 'ok', 'preview', 'protocol_version', 'render_revision', 'request_id', 'timings', 'warnings', 'worker_generation'] ['anchor', 'bbox', 'drag_prop', 'draggable', 'editable', 'face', 'gid', 'label', 'role']
+TNone bbox0 [0.421125, 0.05020833333333319, 0.18275, 0.05625] bbox1 [0.37112500000000004, 0.09024999999999994, 0.18274999999999994, 0.05625]
+TConstrained keys ['canonical_patch_hash', 'manifest', 'ok', 'preview', 'protocol_version', 'render_revision', 'request_id', 'timings', 'warnings', 'worker_generation'] ['anchor', 'bbox', 'drag_prop', 'draggable', 'editable', 'face', 'gid', 'label', 'role']
+TConstrained bbox0 [0.38447222222222216, 0.013021875000000072, 0.2945, 0.05625] bbox1 [0.3343527727144236, 0.013140257745958173, 0.2945, 0.05625]
+[exit=0]
+

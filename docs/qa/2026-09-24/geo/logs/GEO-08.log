@@ -1,0 +1,65 @@
+# case: GEO-08
+# time: 2026-09-25T03:13:25
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_geometry_reference.py -p no:cacheprovider -q -rA -k "special"
+...                                                                      [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_geometry_reference.py::test_special_coordinates_drag_is_scale_independent[axes_0.texts_0]
+PASSED tests/test_geometry_reference.py::test_special_coordinates_drag_is_scale_independent[axes_2.texts_0]
+PASSED tests/test_geometry_reference.py::test_special_coordinates_drag_is_scale_independent[fig.texts_0]
+[exit=0]
+
+# case: GEO-08
+# time: 2026-09-25T03:13:28
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/twinAxesPick.test.tsx
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+   Start at  03:13:29
+   Duration  1.30s (transform 457ms, setup 203ms, import 420ms, tests 149ms, environment 390ms)
+
+[exit=0]
+
+# case: GEO-08
+# time: 2026-09-25T03:13:30
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_legend_anchor.py -p no:cacheprovider -q -rA -k "unsupported"
+..                                                                       [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_legend_anchor.py::test_an_anchor_shape_this_model_cannot_express_is_declared_unsupported
+PASSED tests/test_legend_anchor.py::test_an_anchor_pinned_to_another_coordinate_system_is_declared_unsupported
+[exit=0]
+
+# case: GEO-08
+# time: 2026-09-25T03:13:31
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ TAVOTTO_DATA_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/geo/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/geo
+OK  {"stem": "TNone", "gid": "axes_0.title", "extra": [], "label": "标题 “title TNone”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4625, 0.134], "anchor_after": [0.4625000000000001, 0.134], "err": [5.551115123125783e-17, 0.0]}
+OK  {"stem": "TNone", "gid": "axes_0.title", "extra": ["size_mm"], "label": "标题 “title TNone”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4625, 0.134], "anchor_after": [0.4625000000000001, 0.13400000000000012], "err": [5.551115123125783e-17, 1.1102230246251565e-16]}
+OK  {"stem": "TNone", "gid": "axes_0.xlabel", "extra": [], "label": "X 轴 “x”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4625, 1.0215], "anchor_after": [0.4625000000000001, 1.0215], "err": [5.551115123125783e-17, 0.0]}
+OK  {"stem": "TNone", "gid": "axes_0.xlabel", "extra": ["size_mm"], "label": "X 轴 “x”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4625, 1.0215], "anchor_after": [0.4625000000000001, 1.0215], "err": [5.551115123125783e-17, 0.0]}
+BAD {"stem": "TConstrained", "gid": "axes_0.title", "extra": [], "label": "标题 “title TConstrained”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4817, 0.0968], "anchor_after": [0.48160277271442364, 0.05689025774595824], "err": [-9.722728557637339e-05, -0.03990974225404176]}
+BAD {"stem": "TConstrained", "gid": "axes_0.title", "extra": ["size_mm"], "label": "标题 “title TConstrained”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4817, 0.0968], "anchor_after": [0.4817, 0.06597525843106788], "err": [0.0, -0.030824741568932112]}
+BAD {"stem": "TConstrained", "gid": "axes_0.xlabel", "extra": [], "label": "X 轴 “x”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4817, 0.9832], "anchor_after": [0.48160277271442364, 0.9444270174821475], "err": [-9.722728557637339e-05, -0.03877298251785244]}
+BAD {"stem": "TConstrained", "gid": "axes_0.xlabel", "extra": ["size_mm"], "label": "X 轴 “x”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4817, 0.9832], "anchor_after": [0.4817, 0.9362942281817409], "err": [0.0, -0.04690577181825906]}
+BAD {"stem": "TTight", "gid": "axes_0.title", "extra": [], "label": "标题 “title TTight”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4817, 0.1306], "anchor_after": [0.48160230033974205, 0.09289742290735103], "err": [-9.769966025796606e-05, -0.03770257709264896]}
+BAD {"stem": "TTight", "gid": "axes_0.title", "extra": ["size_mm"], "label": "标题 “title TTight”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4817, 0.1306], "anchor_after": [0.4816999999999999, 0.1062142408189356], "err": [-1.1102230246251565e-16, -0.024385759181064393]}
+BAD {"stem": "TTight", "gid": "axes_0.xlabel", "extra": [], "label": "X 轴 “x”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4817, 0.9494], "anchor_after": [0.48160230033974205, 0.9013921358250127], "err": [-9.769966025796606e-05, -0.04800786417498737]}
+BAD {"stem": "TTight", "gid": "axes_0.xlabel", "extra": ["size_mm"], "label": "X 轴 “x”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.4817, 0.9494], "anchor_after": [0.4816999999999999, 0.8813152095237863], "err": [-1.1102230246251565e-16, -0.06808479047621374]}
+OK  {"stem": "Ann", "gid": "axes_0.texts_0", "extra": [], "label": "文字 “plain text”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.2159, 0.335], "anchor_after": [0.2159, 0.33499999999999985], "err": [0.0, -1.6653345369377348e-16]}
+OK  {"stem": "Ann", "gid": "axes_0.texts_1", "extra": [], "label": "文字 “ann data”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.6386, 0.475], "anchor_after": [0.6386, 0.47499999999999987], "err": [0.0, -1.1102230246251565e-16]}
+BAD {"stem": "Ann", "gid": "axes_0.texts_2", "extra": [], "label": "文字 “ann axfrac”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.23, 0.699], "anchor_after": [0.3194444444444445, 0.5819444444444443], "err": [0.08944444444444447, -0.11705555555555569]}
+BAD {"stem": "Ann", "gid": "axes_0.texts_3", "extra": [], "label": "文字 “ann offset”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.3419, 0.7116], "anchor_after": [0.47486111111111107, 0.5994444444444444], "err": [0.13296111111111109, -0.11215555555555556]}
+BAD {"stem": "Ann", "gid": "axes_0.texts_4", "extra": [], "label": "文字 “ann figfrac”", "draggable": true, "drag_prop": "pos_frac", "unsupported_props": null, "warnings": [], "target": [0.65, 0.14], "anchor_after": [0.9027777777777778, -0.19444444444444442], "err": [0.25277777777777777, -0.33444444444444443]}
+[exit=1]
+

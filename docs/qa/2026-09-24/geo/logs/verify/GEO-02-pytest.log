@@ -1,0 +1,13 @@
+# verify: GEO-02-pytest
+# time: 2026-09-25T03:23:03 (+2s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_geometry_reference.py -k "group_move"
+...                                                                      [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[2]
+PASSED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[10]
+PASSED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[100]
+[exit=0]
+
