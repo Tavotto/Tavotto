@@ -36,6 +36,19 @@ MUTATIONS = {
             f"{VITEST} src/canvas/fakeRealtimeDrag.test.tsx src/canvas/axesCompanionDrag.test.tsx",
         ],
     ),
+    # GEO-01 浏览器腿：漏 zoom（要先重建前端产物，否则测的是旧界面）
+    "M1e-missing-zoom-browser": (
+        "web/src/canvas/interactions.ts",
+        "return [dx / (layout.width * zoom), dy / (layout.height * zoom)]",
+        "return [dx / layout.width, dy / layout.height]",
+        [
+            f"PYTHONPATH={ROOT}/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py"
+            " > /dev/null && cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python "
+            "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 "
+            f"PYTHONPATH={ROOT}/src npx playwright test e2e/geometry-reference.spec.ts "
+            "--project=chromium -g '放大一档|缩小一档'",
+        ],
+    ),
     # GEO-01：Axes 的 Y 轴方向反了
     "M2-y-flip": (
         "web/src/canvas/interactions.ts",
