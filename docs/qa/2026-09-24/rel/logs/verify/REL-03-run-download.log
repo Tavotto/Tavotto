@@ -1,0 +1,34 @@
+# cmd: rm -rf /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/run2; gh run download 35738284913 -R Tavotto/Tavotto -n dist -D /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/run2 && shasum -a 256 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/run2/*; gh run view 35739931388 -R Tavotto/ci-infra --log | grep -E 'source_run_id|sha256: ' | head -10; gh release download v0.16.0 -R Tavotto/Tavotto -p SHA256SUMS* -D /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/sums --clobber && cat /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/sums/*
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:12:52Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+1ab9dc613c5e5ca3ac5a7d7a72df30bfeae1406204bfde936c3134aa1fba371a  /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/run2/artifact-manifest-python.json
+9326efe2e0e953e33a9bb0a60dc2d75fba6b4022ddb86d329e4c922067e805bf  /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/run2/codex-plugin-0.16.0.zip
+ca8d0709be24deda0432a23de165008b3006be05dc738ebe436fd614d7b8ce79  /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/run2/codex-plugin-build.json
+a439bb12fd611fd1df809ef65f95bcbd530b7369dc24cb7ba22bb3944c4a2cb7  /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/run2/codex-plugin.json
+6bd64b3318a3cb39e7581c8a3f5f89fc517a76acc91781ae75b5bc35273619b7  /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/run2/tavotto-0.16.0-py3-none-any.whl
+d04db295eb7dc5245321008f85693147e943aeecbc2c3bff70c2ff0d59522928  /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/run2/tavotto-0.16.0.tar.gz
+qualify / qualify	UNKNOWN STEP	2026-09-22T14:35:04.5193301Z   source_run_id: 35738284913
+qualify / qualify	UNKNOWN STEP	2026-09-22T15:01:31.8618214Z sha256: 6bd64b3318a3cb39e7581c8a3f5f89fc517a76acc91781ae75b5bc35273619b7
+report	UNKNOWN STEP	2026-09-22T15:15:38.1283218Z ^[[36;1m  echo "| source_run_id | \`${IN_SOURCE_RUN:-（空）}\` |"^[[0m
+report	UNKNOWN STEP	2026-09-22T15:15:38.1292568Z ^[[36;1m  --arg source_run_id "$IN_SOURCE_RUN" --arg publish "$IN_PUBLISH" --arg ack "$IN_ACK" \^[[0m
+report	UNKNOWN STEP	2026-09-22T15:15:38.1295438Z ^[[36;1m    run_id: $run_id, run_url: $run_url, source_run_id: $source_run_id,^[[0m
+report	UNKNOWN STEP	2026-09-22T15:15:39.1385549Z ^[[36;1m  echo "::error::mode=release 却没有 source_run_id——发行档必须带第一段的 run id，第二段要按它取产物。"^[[0m
+report	UNKNOWN STEP	2026-09-22T15:15:39.1386945Z ^[[36;1m  echo "::error::派发方（Tavotto/Tavotto release.yml::dispatch_lab）应传 -f source_run_id=<它自己的 run id>。"^[[0m
+report	UNKNOWN STEP	2026-09-22T15:15:39.1393708Z ^[[36;1m    -f source_run_id="$IN_SOURCE_RUN" \^[[0m
+report	UNKNOWN STEP	2026-09-22T15:15:39.1398441Z ^[[36;1m  echo "✅ 已派发第二段：sha=$SHA source_run_id=$IN_SOURCE_RUN lab_run_id=$GITHUB_RUN_ID publish=$IN_PUBLISH pypi_target=$IN_PYPI_TARGET ack=${IN_ACK:-<空>}"^[[0m
+report	UNKNOWN STEP	2026-09-22T15:15:41.3028923Z ✅ 已派发第二段：sha=4bf86c1fe1b209ce0c964ec81ecf81f0aff715fb source_run_id=35738284913 lab_run_id=35739931388 publish=true pypi_target=pypi ack=31,35,38
+31229608772fa94e01f7a3ef688e5dc6a102da7ede21239235245c0b9784b10d  Tavotto-0.16.0-Windows-Setup.exe
+e097922d6229ddd7677fd7a97505484ffe6e1e77a5e60f6003068f95a102f5d0  Tavotto-0.16.0-macOS.dmg
+af900af2b703cc044e72192a66934bb069cb6eba28baca29f4c620f1858ab712  Tavotto.app.tar.gz
+a9002b99a739b1e0a3789c0560cc143da10e910597b3ebc40cdec9726a72e615  Tavotto.app.tar.gz.sig
+3ba79feb0396c33659bd22aa5a73fffaca1c9a303d4f591267f3e6b24ae533d6  Tavotto_0.16.0_x64-setup.nsis.zip
+83fc3efdacd64e5157ddf53ca74637e14c79e3498ecb5fc0ccac2445b3d6d3e2  Tavotto_0.16.0_x64-setup.nsis.zip.sig
+1ab9dc613c5e5ca3ac5a7d7a72df30bfeae1406204bfde936c3134aa1fba371a  artifact-manifest-python.json
+bce6b1980eb3c4251d17fda935300ed56d26c7c275bbd27a6cf91888215d044f  artifact-manifest.json
+9326efe2e0e953e33a9bb0a60dc2d75fba6b4022ddb86d329e4c922067e805bf  codex-plugin-0.16.0.zip
+ca8d0709be24deda0432a23de165008b3006be05dc738ebe436fd614d7b8ce79  codex-plugin-build.json
+a439bb12fd611fd1df809ef65f95bcbd530b7369dc24cb7ba22bb3944c4a2cb7  codex-plugin.json
+6bd64b3318a3cb39e7581c8a3f5f89fc517a76acc91781ae75b5bc35273619b7  tavotto-0.16.0-py3-none-any.whl
+d04db295eb7dc5245321008f85693147e943aeecbc2c3bff70c2ff0d59522928  tavotto-0.16.0.tar.gz
+# exit: 0

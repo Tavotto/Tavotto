@@ -1,0 +1,14 @@
+# cmd: codesign --verify --deep --strict /Applications/Tavotto.app; echo codesign_rc=$?; spctl -a -vv /Applications/Tavotto.app; echo spctl_rc=$?; /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' /Applications/Tavotto.app/Contents/Info.plist; find /Applications/Tavotto.app -path '*tavotto/engine/__pycache__*' -name '*.pyc' | wc -l; diff <(find /Applications/Tavotto.app -path '*engine/__pycache__*' -name '*.pyc' -exec basename {} \; | sort) <(find /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/pyc-repro/Fake-system.app -name '*.pyc' -exec basename {} \; | sort); echo set_diff_rc=$?
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:05:57Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+/Applications/Tavotto.app: a sealed resource is missing or invalid
+codesign_rc=1
+/Applications/Tavotto.app: a sealed resource is missing or invalid
+spctl_rc=1
+0.16.0
+      17
+17d16
+< worker.cpython-313.pyc
+set_diff_rc=1
+# exit: 0

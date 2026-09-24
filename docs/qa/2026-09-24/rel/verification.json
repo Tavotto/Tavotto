@@ -1,0 +1,111 @@
+{
+  "section": "REL（§8 发行、平台、输入与隐私）",
+  "executor_branch": "qa/2026-09-24-rel",
+  "executor_commit": "e7bc6e779266e39fcaefd03e3ee7615d1694a407",
+  "baseline": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+  "verified_at_utc": "2026-09-24T19:54:04+00:00",
+  "environment": {
+    "host": "macOS (Darwin 27.0.0) arm64 Mac mini",
+    "worktree": "scratchpad/qa/verify-rel（detached 于 e7bc6e77，提交后快进分支）",
+    "python": "/Volumes/Projects/Tavotto/.venv/bin/python + PYTHONPATH=<worktree>/src + PYTHONDONTWRITEBYTECODE=1",
+    "worker_python": "/opt/homebrew/opt/python@3.13/libexec/bin/python3",
+    "fonts": "TAVOTTO_FONTS_DIR 指主仓库批准字体；打 wheel 前拷入 gitignore 的 src/tavotto/resources/fonts 并 fetch_fonts.py --check 13 张脸一致",
+    "port": "probe 5408；E2E 用 fixtures 空闲端口；未碰 5089",
+    "apps": "/Applications 下只读检查，未启动、未写入"
+  },
+  "ledger_check": {
+    "case_ids_present": [
+      "REL-01",
+      "REL-02",
+      "REL-03",
+      "REL-04",
+      "REL-05"
+    ],
+    "fields_complete": true,
+    "evidence_hashes": "所有 evidence（5 份日志 + REL-05 probe 报告）存在且 sha256 与台账一致；fixtures/artifacts 里部分条目是描述性字符串或 scratch 临时路径（已被清理的 dist/、每次运行都变的 bundle_get.zip），不是可校验证据，不影响结论"
+  },
+  "mutations_redone": [
+    "REL-01 pool.py 修复型变异（REPRODUCED→NOT_REPRODUCED→还原 REPRODUCED）",
+    "REL-04 inEditableTarget 标签正则变异（27 条中 21 红 6 绿）",
+    "REL-05 telemetry.hard_disabled 恒 False（4 红）"
+  ],
+  "cases": [
+    {
+      "case_id": "REL-01",
+      "rerun": true,
+      "matches": true,
+      "original_verdict": "fail",
+      "audited_verdict": "fail",
+      "note": "逐字重跑全部一致：Chromium 4 文件 14/14（带批准字体）、WebKit project 24/24、WebKit 临时几何流 5/5；/Applications/Tavotto.app 0.16.0 codesign --verify --deep --strict 与 spctl 均 exit 1（a sealed resource is missing or invalid），engine/__pycache__ 下 17 个 .pyc，重新下载发布资产 Tavotto.app.tar.gz（sha256 af900af2…，与 release digest 一致）逐文件比对：主程序 7c730f1b… 两边相同、公共文件零内容差异、原样解包的那份 codesign 通过、已安装版恰好多出 17 个 engine/__pycache__/*.pyc 且无缺失文件。P1 复现脚本 exit 0（system 组 16 个 .pyc、bundled 组 0）；亲自复做修复型变异（pool.py 三处 `child_args() if bundled else []`→`child_args()`）后 NOT_REPRODUCED，git checkout 还原后再次 REPRODUCED，git status 干净。修正一处表述：执行者称 17 个 .pyc『根因已复现』，但复现只产出 16 个——已安装 app 多出 worker.cpython-313.pyc，说明 worker 模块曾被 import（而复现路径是把 worker.py 当脚本跑，不会写它的 .pyc），至少还有一个写入者/入口未定位（可能是 native bridge 或其它以模块方式 import engine.worker 的路径）。缺陷本身（非内置解释器 worker 不带 -B → 写进安装目录 → 封印失效）成立，fail 维持；但『17 个全由这一行造成』应改为『16/17 由它解释，worker.pyc 来源未定』。桌面真壳交互与 Windows 未执行的理由成立（本机无 Windows；真壳交互需 GUI 自动化，执行者只做只读检查符合『不碰用户数据』约束）。"
+    },
+    {
+      "case_id": "REL-02",
+      "rerun": true,
+      "matches": true,
+      "original_verdict": "partial",
+      "audited_verdict": "partial",
+      "note": "重跑 upgrade_acceptance（候选 = 本次在 e7bc6e77 重建的 HEAD wheel，sha256 d82ca781… 与执行者的 HEAD wheel 字节相同）27 ✅ / 0 ❌，exit 0，项目路径为『升级 测试 项目』（中文+空格）；nightly 35921334300 各 job 结论一致（Windows 三档 success、updater-consumer-fidelity failure，错误原文『latest.json（version=0.16.0）缺平台 [darwin-x86_64]』）。修正：执行者把它表述为『支持矩阵把 Intel 版列为 supported 而 v0.16.0 没有 Intel 产物』——但 v0.16.0（4bf86c1f）的 docs/support-matrix.json 根本没有 macos-x86_64-desktop 条目，它是 36a3025b（#539，2026-09-24，发布之后）才加的。所以这是『HEAD 的承诺/判据套在已发布的旧产物上』（与执行者自己在 REL-03 指出的 lab_acceptance 误报同形），不是 v0.16.0 的发布缺陷；它是下一次发版必须满足的门禁（Intel dmg + latest.json darwin-x86_64），应作为发布前置项而非现有缺陷记录。verdict 不变（partial：桌面安装包装/升/卸未执行，本机无法无副作用地装卸 /Applications 下的 app，理由成立）。"
+    },
+    {
+      "case_id": "REL-03",
+      "rerun": true,
+      "matches": true,
+      "original_verdict": "partial",
+      "audited_verdict": "partial",
+      "note": "重跑一致：构建 run 35738284913 的 dist 下载后 wheel 6bd64b33… / sdist d04db295…；GitHub release digest、SHA256SUMS.txt、PyPI 三处同值；ci-infra lab run 35739931388 日志 qualify 段 sha256: 6bd64b33…、source_run_id=35738284913；release run 35754630426 的 github_release job = failure（pypi success）。HEAD 两次本地构建 wheel d82ca781… / sdist f2f248fc… 两次相同，且与执行者前一轮的 HEAD wheel hash 相同（跨时刻可复现）。验收：4bf86c1f 自带 lab_acceptance 对发布 wheel exit 0；HEAD 的 lab_acceptance 对发布 wheel exit 1（红项为批准字体 0/13 与 Requires-Dist 仍含 pymupdf——都是 U10 之后的新判据）；HEAD 脚本对 HEAD wheel exit 0。dmg/NSIS 未经 lab 验收、GitHub Release 在自动链外创建，partial 成立。manifest 那一处本次没有单独下载核对（沿用 SHA256SUMS/digest 的交叉），不影响结论。"
+    },
+    {
+      "case_id": "REL-04",
+      "rerun": true,
+      "matches": true,
+      "original_verdict": "partial",
+      "audited_verdict": "partial",
+      "note": "vitest 4 文件 40/40；亲自复做变异（useKeyboard.ts inEditableTarget 标签正则→/^(NOPE)$/）后新测试 21 failed / 6 passed，还原后 git status 干净。新测试断言主语对：焦点在字段内时同时断言文档历史/面板坐标/选区/工具/平移态不变且 defaultPrevented=false，对照组在 window 上断言快捷键生效（防『什么都不触发』的恒真）。DPR 配置 15 passed / 2 failed / 2 skipped（红：webkit-dpr2-en inspector-overflow、chromium-en-longlabels 缺包用例；2 个 skip 是 error-recovery-en 里依赖特殊环境的两条，本结论不依赖它们），isolate 配置 1 passed / 2 failed（webkit-dpr1-en/zh），去掉 TAVOTTO_WORKER_PYTHON 后缺包用例 1 passed——全部与执行者一致。补充观察：WebKit 红项的溢出元素是 INPUT.type-number（sw=48 cw=43），WebKit 的 number 输入框内部 spin button 常导致 scrollWidth>clientWidth，确实未证明用户可见截断，维持『未定性』。系统缩放/跨屏拖动未执行的理由成立（浏览器 DPR 模拟不能代替）。"
+    },
+    {
+      "case_id": "REL-05",
+      "rerun": true,
+      "matches": true,
+      "original_verdict": "fail",
+      "audited_verdict": "fail",
+      "note": "pytest 7 文件 311 passed / 0 failed / 0 skipped（junit 计数）；亲自复做硬开关变异（telemetry.hard_disabled 恒 False）→ 4 个用例红，还原后干净。privacy probe 在端口 5408 重跑 exit 1：control 组 sink_hits=3、硬开关组 0；未认证 401；../ 越界 engine/render 403、preview 403；canary_hits 与执行者完全相同（error_message ×5：report.json×2、app.log×2、summary；outside_dir ×2：app.log）。最小复现 repro_diag_error_message_leak.py exit 0。解包核对 app.log 第 14 行『ERROR tavotto: 引擎渲染失败: boom: 脚本执行失败: ERRMSGCANARY_patient_0931』、第 10 行『worker 启动: fig_priv.py』，与包内 README『文件名、路径与图内文字…一律换成不可逆的短哈希』及 docs/rules/backend/diagnostics.md『message 不出门』矛盾，P2/P3 成立。E2E『诊断包不含主目录』空判据也独立证实：golden-paths.spec.ts:185 在 resp.body() 的 latin1 串上找明文，而包内 5 个条目全是 DEFLATE(8)；同一个包里 app.log 解压后含 ERRMSGCANARY，原始 zip 字节里找不到——该判据对任何明文都恒绿。"
+    }
+  ],
+  "corrections": [
+    "REL-01：已安装 app 的 17 个 .pyc 中复现只解释 16 个，worker.cpython-313.pyc 需要另一条以模块方式 import engine.worker 的路径，写入者未完全定位",
+    "REL-02：latest.json 缺 darwin-x86_64 不是 v0.16.0 的发布缺陷——v0.16.0 的支持矩阵没有 Intel 条目，是 #539（发布后）加的；应作为下次发版前置项"
+  ],
+  "logs": {
+    "REL-01-build-frontend.log": "004348f640eefc70a5cbcccc1df2298fd6d854d388754930bcd1a3b744f5f822",
+    "REL-01-chromium.log": "9747b5f1f7fa28446a57fca3b0c9bfa826d5f11d3ab98b44524b5c29fd1c11d1",
+    "REL-01-desktop-codesign.log": "36d4fa2896568a252f1dda3920c44ae63dfa7e0e524b70057f484497c1a4d2da",
+    "REL-01-desktop-identity.log": "47bfa81c6cfc0c3c1b2c1ae5946494dc45467a757239dd77e727ff87e9d0573a",
+    "REL-01-desktop-inspect.log": "e93ad25c6e4ee7e7c484b9346c601d3fe4712ff610da51bdecdee85b6bd0706f",
+    "REL-01-pyc-repro-mutated.log": "24b967d4c4f6fcf4fc7988cb0ca15b1b3d9757aa9f98b5426e769cdec2b1a105",
+    "REL-01-pyc-repro-restored.log": "72e0e60a4dd6b1aa148837c11d9c47cc7af74349e657fa69c7d4950defed8ebf",
+    "REL-01-pyc-repro.log": "ac4912782401fc5f98b74d49ac90c4126e9c9ca77e6dfe9248e2a59198660f51",
+    "REL-01-webkit-geometry.log": "2d0722929fdb216bd8b889fcf71bf0812357bda75f0bcea51578b0e78adfd56e",
+    "REL-01-webkit.log": "6a999dc63c8cb594af9aa3520232470a2ebedce8176c7cbb7e197fd475562006",
+    "REL-02-latest-json.log": "a71f4744fde165d17eb9237533dad38d044c7c7d80adb620de9a2c6526629e2d",
+    "REL-02-nightly.log": "36cc6499968c648ec092ffc484a7389171b2ecb4b094e13d79f65bde2b82347e",
+    "REL-02-upgrade.log": "60829efa31fda4a01d9aef13d950546483afa6dab3449b3aa1fc911ef92aa7a7",
+    "REL-03-accept-4bf-on-released.log": "e335ac0adbc9fce5ddbe50a96517d79805e7d52f36e46d85b6660cb1e032eb1e",
+    "REL-03-accept-HEAD-on-HEAD.log": "90325f75fd8dadbac9ebcd983c736f82c177034c9c8b0611790fee150c12555c",
+    "REL-03-accept-HEAD-on-released.log": "ba4055a21619d55d9b1a635cde35c1eac1d6f77d44a41022d607744a54652a0b",
+    "REL-03-build-dist.log": "582f6fb5cdb14e159de64f2d58217a2b961cc88d0b8ff4f9d961189219c0905e",
+    "REL-03-build-dist2.log": "cb036eace465544a1ec9ffddb299be3c7bcc69fe066c1cfe1c0a36533ae69594",
+    "REL-03-fonts.log": "d1f8e2166a9b2e425da268fd60fb6abff9ef63a62f5abf523d8befcd54061068",
+    "REL-03-gh-release-pypi.log": "8fdae62db3903582dc789e27ecd091c7567159de33032e959bc085a8695a55af",
+    "REL-03-run-download.log": "76f510c804a85e5a93e7a11eedca2366d0f400cf59085e650146b28cacc81c54",
+    "REL-04-dpr.log": "d72a9088bd0cdcdd8fd3bb06c4494c129e0e9c19c0bcf1ce5de29fd017f29d3f",
+    "REL-04-isolate.log": "73b769d3345f5252c0538114e54354f635f8957d8db17cc82db84523517c8c78",
+    "REL-04-missing-dep.log": "9629497c859616da7bfde2ac4e646fcec11bab53286f33e3b622ecc726f54579",
+    "REL-04-vitest-mut.log": "cf769517f7bd43d567f1dbb65bdf3219ec9206d0a03f54860d58aa214bddfb7e",
+    "REL-04-vitest.log": "a9061843cd3bd3a6a9df86a22c52595f179da7fb0773d5ba137972c7493e919c",
+    "REL-05-e2e-vacuous-check.log": "796f44eb1eff75211bfbd1bec655f6fbc734c0d2ea8ab5f99557909fcf668b96",
+    "REL-05-leak-repro.log": "0f51b825f68a7f06b0f941fef28805093581d1a338d96565fb6db49361bf1f49",
+    "REL-05-probe.log": "22dd684135801bbdefc752b43b0dddbd50537d5ee6e0ed3c098533a9a053e8cd",
+    "REL-05-pytest-mut-hardswitch.log": "f78af2bc9769070ed14560756a84ad5007161441790014bd6f13b8f3f7558d2b",
+    "REL-05-pytest.log": "05cbd830b7c10e0919b5948caf53dd1f447f67642ae66184aa21ef83af88d4fb"
+  }
+}

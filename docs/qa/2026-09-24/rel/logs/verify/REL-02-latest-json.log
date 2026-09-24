@@ -1,0 +1,18 @@
+# cmd: gh release view v0.16.0 -R Tavotto/Tavotto --json assets --jq '.assets[].name' | grep -i json; gh release download v0.16.0 -R Tavotto/Tavotto -p latest.json -O - 2>&1 | python3 -c 'import json,sys;print(sorted(json.load(sys.stdin)["platforms"]))'; grep -rn 'x86_64' docs/*support* docs/**/support* 2>/dev/null | head -3; gh run view 35921334300 -R Tavotto/Tavotto --log-failed 2>/dev/null | grep -iE 'darwin-x86_64|x86_64' | head -3 | cut -c1-300
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:29:12Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+artifact-manifest-python.json
+artifact-manifest.json
+codex-plugin-build.json
+codex-plugin.json
+latest.json
+tavotto-sbom.spdx.json
+['darwin-aarch64', 'windows-x86_64']
+docs/support-matrix.json:3:  "note": "支持矩阵的唯一权威文件（1.0 审计 P1-06）。桌面目标的 min_os 是最低操作系统版本（macOS 两档由打进去的原生库决定，见 macos-x86_64-desktop 的 note）。README、发布页、官网、应用内文案都以这里为准；tests/test_support_matrix.py 逐条与 pyproject / runtime-lock 对拍，防止承诺与事实分叉。status 语义：supported = 有安装包 + CI 门禁 + 真产物冒烟；beta = 可用但验收面没到 supported；unsupported = 不构建不承诺（能跑也别写进宣传）。label_en / en 是发布页用的英文成文（scripts/make_release_support_section.py 渲染进每个 Release body）——状态词由 status 派生，en 只写渠道与出路，不写支持等级。",
+docs/support-matrix.json:36:      "id": "macos-x86_64-desktop",
+docs/support-matrix.json:40:      "channel": "独立的 Intel dmg（签名 + 公证；含 x86_64 内置渲染 runtime）",
+updater-consumer-fidelity	UNKNOWN STEP	2026-09-23T21:15:59.3970822Z info: syncing channel updates for stable-x86_64-unknown-linux-gnu
+updater-consumer-fidelity	UNKNOWN STEP	2026-09-23T21:15:59.7496176Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.98.1 (48a229cea 2026-09-01)
+updater-consumer-fidelity	UNKNOWN STEP	2026-09-23T21:15:59.7677872Z info: using existing install for stable-x86_64-unknown-linux-gnu
+# exit: 0

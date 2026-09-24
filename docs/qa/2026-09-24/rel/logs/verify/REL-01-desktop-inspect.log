@@ -1,0 +1,114 @@
+# cmd: bash docs/qa/2026-09-24/rel/repro/inspect_desktop_apps.sh
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:53:44Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+################ /Applications/Tavotto.app
+CFBundleIdentifier = com.tavotto.tavotto
+CFBundleShortVersionString = 0.16.0
+CFBundleVersion = 0.16.0
+LSMinimumSystemVersion = 11.0
+CFBundleExecutable = Tavotto
+-- Contents/MacOS:
+total 23440
+-rwxr-xr-x  1 jiaqi  staff  11998432 Sep 22 22:16 Tavotto
+-- sha256 of Contents/MacOS/* (main + sidecars):
+7c730f1b19450a3a185248574a5530745b694202efd0a0cccefb25043d2d4164  /Applications/Tavotto.app/Contents/MacOS/Tavotto
+-- lipo archs of main exe:
+arm64
+-- codesign -dv:
+Identifier=com.tavotto.tavotto
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20500 size=23711 flags=0x10000(runtime) hashes=730+7 location=embedded
+Signature size=8969
+Authority=Developer ID Application: Jiaqi Wan (RC3QCYTVLK)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+Timestamp=22 Sep 2026 at 10:16:59 PM
+Notarization Ticket=stapled
+Info.plist entries=15
+TeamIdentifier=RC3QCYTVLK
+Runtime Version=26.5.0
+Sealed Resources version=2 rules=13 files=7039
+Internal requirements count=1 size=180
+Total signatures=1
+Chosen signature=1
+-- codesign --verify --deep --strict:
+/Applications/Tavotto.app: a sealed resource is missing or invalid
+verify_exit=1
+-- spctl --assess --type execute:
+/Applications/Tavotto.app: a sealed resource is missing or invalid
+spctl_exit=1
+-- entitlements (get-task-allow = debug build marker):
+{
+  "com.apple.security.cs.allow-jit" => true
+  "com.apple.security.cs.allow-unsigned-executable-memory" => true
+  "com.apple.security.cs.disable-library-validation" => true
+}
+-- debug/test-build markers in main exe (strings, counts):
+  TAVOTTO_TEST_: 0
+  __tavotto_test: 0
+  devtools: 3
+  open_devtools: 0
+  tauri-plugin-devtools: 0
+  localhost:5173: 0
+  http://localhost:1420: 0
+  debug_assertions: 0
+  RUST_BACKTRACE: 3
+-- tauri.conf / resources listing (top):
+icon.icns
+LICENSE
+sidecar
+-- bundled runtime present:
+################ /Applications/Tavotto Beta.app
+CFBundleIdentifier = com.tavotto.tavotto.beta
+CFBundleShortVersionString = 0.16.1-beta.2
+CFBundleVersion = 0.16.1-beta.2
+LSMinimumSystemVersion = 14.0
+CFBundleExecutable = Tavotto
+-- Contents/MacOS:
+total 23600
+-rwxr-xr-x@ 1 jiaqi  admin  12080016 Sep 24 20:31 Tavotto
+-- sha256 of Contents/MacOS/* (main + sidecars):
+a065bda91d813e4a308f814e7ee7786bd1d12ff8313ec1da9ac36c766db43500  /Applications/Tavotto Beta.app/Contents/MacOS/Tavotto
+-- lipo archs of main exe:
+arm64
+-- codesign -dv:
+Identifier=com.tavotto.tavotto.beta
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20500 size=23897 flags=0x10002(adhoc,runtime) hashes=736+7 location=embedded
+Signature=adhoc
+Info.plist entries=15
+TeamIdentifier=not set
+Runtime Version=27.0.0
+Sealed Resources version=2 rules=13 files=6998
+Internal requirements count=0 size=12
+Total signatures=1
+Chosen signature=1
+-- codesign --verify --deep --strict:
+/Applications/Tavotto Beta.app: a sealed resource is missing or invalid
+verify_exit=1
+-- spctl --assess --type execute:
+/Applications/Tavotto Beta.app: a sealed resource is missing or invalid
+spctl_exit=1
+-- entitlements (get-task-allow = debug build marker):
+{
+  "com.apple.security.cs.allow-jit" => true
+  "com.apple.security.cs.allow-unsigned-executable-memory" => true
+  "com.apple.security.cs.disable-library-validation" => true
+}
+-- debug/test-build markers in main exe (strings, counts):
+  TAVOTTO_TEST_: 0
+  __tavotto_test: 0
+  devtools: 3
+  open_devtools: 0
+  tauri-plugin-devtools: 0
+  localhost:5173: 0
+  http://localhost:1420: 0
+  debug_assertions: 0
+  RUST_BACKTRACE: 3
+-- tauri.conf / resources listing (top):
+icon.icns
+LICENSE
+sidecar
+-- bundled runtime present:
+# exit: 0

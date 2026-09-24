@@ -1,0 +1,23 @@
+# cmd: uvx --from 'build[uv]' pyproject-build --installer uv --outdir /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/dist2 . && shasum -a 256 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/dist2/*
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:24:57Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+* Creating isolated environment: venv+uv...
+* Installing packages in isolated environment:
+  - hatchling
+* Getting build dependencies for sdist...
+* Installed build dependency versions:
+  - hatchling==1.32.4
+* Building sdist...
+* Building wheel from sdist
+* Creating isolated environment: venv+uv...
+* Installing packages in isolated environment:
+  - hatchling
+* Getting build dependencies for wheel...
+* Installed build dependency versions:
+  - hatchling==1.32.4
+* Building wheel...
+Successfully built tavotto-0.16.0.tar.gz and tavotto-0.16.0-py3-none-any.whl
+d82ca78111864f72833891563cbcf0f5209c2d658c510344cd2e959a4a11d307  /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/dist2/tavotto-0.16.0-py3-none-any.whl
+f2f248fcdd750ffe0610ecd3a187f4c77057fa251ea3522f6deb807c5aa0b84e  /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/dist2/tavotto-0.16.0.tar.gz
+# exit: 0

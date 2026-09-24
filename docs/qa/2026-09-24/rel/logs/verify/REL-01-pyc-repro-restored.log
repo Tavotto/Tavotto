@@ -1,0 +1,10 @@
+# cmd: git diff --stat; PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/../verify-rel/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/rel/repro/repro_nonbundled_worker_writes_pyc_into_install_dir.py --worker-python /opt/homebrew/opt/python@3.13/libexec/bin/python3 --scratch /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/pyc-repro-rest | grep -E 'pyc_written|REPRODUCED|argv_has'
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:06:21Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+    "argv_has_-B": false,
+    "pyc_written_into_install_dir": 16,
+    "argv_has_-B": true,
+    "pyc_written_into_install_dir": 0,
+REPRODUCED
+# exit: 0

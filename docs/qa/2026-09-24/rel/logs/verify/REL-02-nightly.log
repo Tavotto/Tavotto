@@ -1,0 +1,13 @@
+# cmd: gh run view 35921334300 -R Tavotto/Tavotto --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv'
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:29:02Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+Windows · Conda	success
+compat-version-matrix (minimum, 3.10)	success
+compat-version-matrix (bundled, 3.13)	success
+compat-version-matrix (browser, 3.13)	success
+Windows · 官方 Python	success
+Windows · 无 Python	success
+updater-consumer-fidelity	failure
+foundation-observing	success
+# exit: 0

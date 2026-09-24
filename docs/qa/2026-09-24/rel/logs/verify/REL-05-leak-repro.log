@@ -1,0 +1,10 @@
+# cmd: PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/rel/repro/repro_diag_error_message_leak.py
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:04:24Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+ERROR 行 → ['2026-09-25 02:46:03,688 ERROR tavotto: 引擎渲染失败: boom: 脚本执行失败: patient_0931_BloodGlucose=7318.0931']
+traceback → ['Traceback (most recent call last): → ValueError: …']
+leaked_via_error_line = True
+redacted_via_traceback = True
+REPRODUCED
+# exit: 0
