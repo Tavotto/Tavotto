@@ -3,9 +3,9 @@
  *
  * 自动重排订阅文档，成员尺寸变了就发一条 `autoReflow` commit——commit 会清空 future。
  * 撤销 / 重做本身它认得出来、不触发；但撤销 / 重做之后渲染回来，`useEngineSync` 的图幅
- * 同步器会再 `silent` 补一次图幅（撤掉改图幅的 override、或撤掉 #543 那种并进事务的
- * 图幅同步），这次尺寸变化以前被当成用户编辑：发一条 autoReflow commit，future 被清空，
- * 用户看到的是「撤销了一步，然后重做按不动了」。
+ * 同步器会再 `silent` 补一次图幅（撤掉改图幅的 override、或撤掉 #543 那种由事务
+ * 收尾修正并进缩放条目的图幅同步），这次尺寸变化以前被当成用户编辑：发一条 autoReflow
+ * commit，future 被清空，用户看到的是「撤销了一步，然后重做按不动了」。
  *
  * 每条用例都把撤销 / 重做之后的渲染同步与 120 ms 的重排防抖跑完（`settle`）再断言。
  */
@@ -240,8 +240,9 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
     expect(s().doc).toEqual(edited)
   })
 
-  it('撤掉 #543 那种并进事务的图幅同步 → 同步器再补一次 → 重做两步回到撤销前', async () => {
+  it('撤掉 #543 那种收尾修正并进缩放的图幅同步 → 同步器再补一次 → 重做两步回到撤销前', async () => {
     await mount('d_reflow_undo_txn')
+    const depth0 = s().past.length
     await act(async () => {
       s().beginTxn(literal('缩放'))
       s().txnUpdate((d) => {
@@ -250,7 +251,8 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
         o.h = 22.5
       })
     })
-    // 手势还没松开，改了图幅的渲染先回来了（同一个变体键，40×30 → 50×30）：并入事务
+    // 手势还没松开，改了图幅的渲染先回来了（同一个变体键，40×30 → 50×30）：事务中不写，
+    // 松手时由收尾修正（registerTxnFinalizer）并进这条缩放历史
     await seed(obj('pa'), [50, 30])
     await act(async () => {
       s().endTxn()
@@ -259,6 +261,8 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
     expect(obj('pa').w).toBeCloseTo(37.5, 6)
     expect(obj('pb').x).toBeCloseTo(41.5, 6)
     expect(lastLabel()).toBe('history.autoReflow')
+    // 收尾修正是这次手势的一部分：一条缩放 + 一条重排，没有第三条
+    expect(s().past.length).toBe(depth0 + 2)
     const edited = snap()
     const depth = s().past.length
 
