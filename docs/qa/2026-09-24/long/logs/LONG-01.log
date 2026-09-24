@@ -1,0 +1,217 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/long_probe.py --mode long01 --minutes 16 --fixtures /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/long/fx --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/long/run-long01 --keep-going
+# start: 2026-09-24T18:40:18Z
+# sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# cwd: worktree root
+{
+ "mode": "long01",
+ "seed": 0,
+ "minutes_budget": 16.0,
+ "wall_s": 962.9,
+ "iterations": 1349,
+ "counts": {
+  "render_ok": 21584,
+  "render_checked": 21584,
+  "revisits_equal": 21576,
+  "exports_ok": 675,
+  "undo": 7530,
+  "redo": 3262,
+  "kills": 0,
+  "faults": 0,
+  "recovered": 0,
+  "visible_errors": 0,
+  "project_cycles": 0
+ },
+ "first_failure": null,
+ "probe_error": null,
+ "stop": {
+  "clean_exit": true,
+  "leftover": []
+ },
+ "user_files_unchanged": true,
+ "samples": 452,
+ "trend": {
+  "rss_kib": {
+   "first_after_warm": 245632,
+   "last": 174928,
+   "min": 128656,
+   "max": 245632
+  },
+  "rss_server_kib": {
+   "first_after_warm": 102000,
+   "last": 58304,
+   "min": 44768,
+   "max": 102000
+  },
+  "threads": {
+   "first_after_warm": 6,
+   "last": 6,
+   "min": 6,
+   "max": 7
+  },
+  "fds": {
+   "first_after_warm": 163,
+   "last": 163,
+   "min": 163,
+   "max": 163
+  },
+  "processes": {
+   "first_after_warm": 3,
+   "last": 3,
+   "min": 3,
+   "max": 3
+  },
+  "tmp_files": {
+   "first_after_warm": 0,
+   "last": 0,
+   "min": 0,
+   "max": 0
+  },
+  "cache_bytes": {
+   "first_after_warm": 84086,
+   "last": 3325679,
+   "min": 84086,
+   "max": 4075146
+  },
+  "export_bytes": {
+   "first_after_warm": 33560,
+   "last": 22425012,
+   "min": 33560,
+   "max": 22425012
+  }
+ },
+ "states_seen": 8
+}
+# end: 2026-09-24T18:56:21Z
+# exit: 0
+
+# ===== 附录：LONG-01-trend.json =====
+{
+ "run": "run-long01",
+ "samples_total": 452,
+ "samples_used": 447,
+ "metrics": {
+  "rss_kib": {
+   "first": 212928.0,
+   "last": 174928.0,
+   "min": 128656.0,
+   "max": 212928.0,
+   "slope_per_hour": 64065.57,
+   "growth_over_span": 16706.9,
+   "median_first_third": 163152.0,
+   "median_last_third": 171424.0
+  },
+  "rss_server_kib": {
+   "first": 81552.0,
+   "last": 58304.0,
+   "min": 44768.0,
+   "max": 81552.0,
+   "slope_per_hour": 37501.21,
+   "growth_over_span": 9779.5,
+   "median_first_third": 50864.0,
+   "median_last_third": 55504.0
+  },
+  "fds": {
+   "first": 163.0,
+   "last": 163.0,
+   "min": 163.0,
+   "max": 163.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 163.0,
+   "median_last_third": 163.0
+  },
+  "fds_server": {
+   "first": 58.0,
+   "last": 58.0,
+   "min": 58.0,
+   "max": 58.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 58.0,
+   "median_last_third": 58.0
+  },
+  "threads": {
+   "first": 6.0,
+   "last": 6.0,
+   "min": 6.0,
+   "max": 7.0,
+   "slope_per_hour": -0.13,
+   "growth_over_span": -0.0,
+   "median_first_third": 6.0,
+   "median_last_third": 6.0
+  },
+  "threads_server": {
+   "first": 3.0,
+   "last": 3.0,
+   "min": 3.0,
+   "max": 3.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 3.0,
+   "median_last_third": 3.0
+  },
+  "processes": {
+   "first": 3.0,
+   "last": 3.0,
+   "min": 3.0,
+   "max": 3.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 3.0,
+   "median_last_third": 3.0
+  },
+  "workers": {
+   "first": 1.0,
+   "last": 1.0,
+   "min": 1.0,
+   "max": 1.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 1.0,
+   "median_last_third": 1.0
+  },
+  "tmp_files": {
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 0.0,
+   "median_last_third": 0.0
+  },
+  "cache_bytes": {
+   "first": 151142.0,
+   "last": 3325679.0,
+   "min": 151142.0,
+   "max": 4075146.0,
+   "slope_per_hour": 12127375.15,
+   "growth_over_span": 3162549.9,
+   "median_first_third": 1508972.0,
+   "median_last_third": 3618255.0
+  },
+  "export_bytes": {
+   "first": 198973.0,
+   "last": 22425012.0,
+   "min": 198973.0,
+   "max": 22425012.0,
+   "slope_per_hour": 85144918.06,
+   "growth_over_span": 22203902.5,
+   "median_first_third": 3886839.0,
+   "median_last_third": 18737390.0
+  }
+ },
+ "span_hours": 0.261,
+ "verdicts": {
+  "rss_kib": "stable",
+  "rss_server_kib": "stable",
+  "fds": "stable",
+  "fds_server": "stable",
+  "threads": "stable",
+  "threads_server": "stable",
+  "processes": "stable",
+  "workers": "stable",
+  "tmp_files": "stable"
+ },
+ "verdict": "stable"
+}

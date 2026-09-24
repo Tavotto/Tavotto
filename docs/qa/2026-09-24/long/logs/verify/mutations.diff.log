@@ -1,0 +1,27 @@
+# 复核变异 diff（均在 scratch 源码副本上，worktree 产品源码未动；前端 latest 变异在 worktree 上做完已 git checkout 还原）
+## mut1
+3024c3024
+<         return isinstance(artist, Figure)
+---
+>         return False  # QA VERIFY MUTATION M1
+3027,3028c3027,3028
+<         return True
+<     return prop in ("position", "xscale", "yscale", "zscale") and isinstance(artist, Axes)
+---
+>         return False  # QA VERIFY MUTATION M1
+>     return False  # QA VERIFY MUTATION M1
+## mut2
+227c227
+<     disp = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
+---
+>     disp = pathgeom.frac_to_display(fig, float(value[0]) + 0.01, float(value[1]))  # QA VERIFY MUTATION M2
+## mut3
+648c648
+<     tx, ty = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
+---
+>     tx, ty = pathgeom.frac_to_display(fig, float(value[0]) + 0.01, float(value[1]))  # QA VERIFY MUTATION M3
+## mut4
+1834c1834
+<     engine_pool.shutdown_all(str(ctx.path), wait=wait)
+---
+>     pass  # QA VERIFY MUTATION M4: engine_pool.shutdown_all(str(ctx.path), wait=wait)

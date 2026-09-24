@@ -1,0 +1,46 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/rand_history_calibration.py
+# start: 2026-09-24T20:00:32Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+{
+ "seeds": 16,
+ "steps": 12,
+ "per_stem": {
+  "InvMix": {
+   "actions": {
+    "resize": 25,
+    "style": 33,
+    "move_axes": 29,
+    "undo": 41,
+    "redo": 11,
+    "drag": 53
+   },
+   "steps_total": 192,
+   "list_changed_steps": 192,
+   "history_revisits": 52,
+   "rejected_steps": 0,
+   "anchor_checks": 250,
+   "max_anchor_residual_no_geometry": 1.1102230246251565e-16,
+   "max_anchor_residual_with_move_or_resize_active": 2.220446049250313e-16
+  },
+  "InvCont": {
+   "actions": {
+    "drag": 49,
+    "move_axes": 18,
+    "style": 46,
+    "undo": 41,
+    "redo": 12,
+    "resize": 26
+   },
+   "steps_total": 192,
+   "list_changed_steps": 192,
+   "history_revisits": 53,
+   "rejected_steps": 0,
+   "anchor_checks": 150,
+   "max_anchor_residual_no_geometry": 1.6653345369377348e-16,
+   "max_anchor_residual_with_move_or_resize_active": 2.7755575615628914e-16
+  }
+ }
+}
+# end: 2026-09-24T20:00:48Z
+# exit: 0

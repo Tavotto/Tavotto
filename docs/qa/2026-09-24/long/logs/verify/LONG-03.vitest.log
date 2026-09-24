@@ -1,0 +1,15 @@
+# cmd: pnpm vitest run src/store/geometryAuthority.test.ts src/store/svgMemoryBudget.test.ts src/canvas/alignUndoConvergence.test.tsx src/store/renderStore.test.ts src/store/documentStore.sequences.test.ts
+# start: 2026-09-24T20:17:14Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+
+ RUN  v4.1.11 <scratch>/qa/verify-long/web
+
+
+ Test Files  5 passed (5)
+      Tests  57 passed (57)
+   Start at  04:17:16
+   Duration  1.29s (transform 1.14s, setup 722ms, import 966ms, tests 349ms, environment 2.98s)
+
+# end: 2026-09-24T20:17:17Z
+# exit: 0

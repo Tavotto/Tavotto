@@ -1,0 +1,8 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_override_history_sequences.py tests/test_override_sequences.py -o pythonpath=<scratch>/qa/vlong/mut2 -p no:cacheprovider -rfE
+# start: 2026-09-24T20:04:37Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+............................s.....                                       [100%]
+33 passed, 1 skipped in 122.43s (0:02:02)
+# end: 2026-09-24T20:06:40Z
+# exit: 0

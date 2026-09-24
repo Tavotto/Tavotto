@@ -1,0 +1,44 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_override_history_sequences.py -p no:cacheprovider -rA
+# start: 2026-09-24T19:57:49Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+..................................                                       [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_override_history_sequences.py::test_generator_really_exercises_history_and_geometry[InvMix]
+PASSED tests/test_override_history_sequences.py::test_generator_really_exercises_history_and_geometry[InvCont]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-0]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-1]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-2]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-3]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-4]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-5]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-6]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-7]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-8]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-9]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-10]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-11]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-12]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-13]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-14]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-15]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-0]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-1]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-2]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-3]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-4]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-5]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-6]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-7]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-8]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-9]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-10]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-11]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-12]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-13]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-14]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-15]
+34 passed in 163.07s (0:02:43)
+# end: 2026-09-24T20:00:32Z
+# exit: 0

@@ -1,0 +1,10 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/worker_death_classification.py
+# start: 2026-09-24T20:17:06Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+[A] 控制面: tavotto.engine.pool.EngineWorker
+[B] 控制面: tavotto.engine.pool.EngineWorker
+窗口 A: WorkerError(code='', msg='worker 进程已退出')  期望 session_dead → 不一致
+窗口 B: BrokenPipeError（不是 WorkerError）  期望 session_dead → 不一致
+# end: 2026-09-24T20:17:07Z
+# exit: 1
