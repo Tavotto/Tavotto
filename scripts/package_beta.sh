@@ -32,6 +32,10 @@ ditto "$SRC" "$APP"
 "$PY" "$ROOT/scripts/codesign_macos.py" sign --app "$APP" --identity - \
   --entitlements "$ROOT/packaging/entitlements.plist"
 "$PY" "$ROOT/scripts/codesign_macos.py" verify --app "$APP" --expect-arch arm64
+# 每个 Mach-O 的 minos 都不能高于声明的最低系统：用 Homebrew 的 Python 建的构建环境会把
+# macOS 26 的 Python.framework 打进 sidecar，14 上起不来（0.16.1b1 就是这样）
+MIN_OS="$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist")"
+"$PY" "$ROOT/scripts/codesign_macos.py" scan --app "$APP" --expect-arch arm64 --expect-min-os "$MIN_OS" --quiet
 
 # 与 CI 的「最终 .app 冒烟」同一条：中文 + 空格路径、ditto 拷过去再验签名再跑
 SMOKE="$WORK/我的 应用 目录"
