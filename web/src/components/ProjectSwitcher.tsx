@@ -1,150 +1,41 @@
-import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ExternalLink, Folder } from '@/components/ui/icons'
+import { ExternalLink, Folder } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { backendErrorMsg } from '@/lib/api'
-import { disambiguateRecent } from '@/lib/recentProjects'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from './ui/Button'
-import { DirBrowser } from './ProjectPicker'
-import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
 import { Tip } from './ui/Tooltip'
 
-/** 最近项目在菜单里最多列这些条，再多就去 Picker 看完整列表 */
-const RECENT_IN_MENU = 6
-
 /**
- * 顶栏左上角的项目切换器。
+ * 顶栏左上角的项目名：点一下开 / 关左栏的「工作区」抽屉（`left/WorkspaceList.tsx`）。
  *
- * 切图库以前只有一条路：设置 → 项目与路径 → 切换项目 → Picker，四步。用户
- * 手里同时开着「正文图」和「补充材料」两个图库时，这四步一天要走十几趟。
- * 这里把它压成一次点击，并额外给出「在新标签页打开」——项目是绑在标签页
- * 上的（lib/session.ts），所以两个图库可以真正同时开着，互不干扰。
+ * 以前这里自己弹一份菜单（当前 · 已打开 · 最近六条 · 浏览 / 新建……）。抽屉做出来
+ * 之后那就成了同一份列表的第二个入口、而且是截断的那一份——两处各显示一遍，
+ * 用户要记两个地方、我们要维护两套判据。所以这里只剩「去那一处」。
+ * 开合语义与左轨那颗钮完全相同（`railClick`：开着再点就收起）。
  */
 export function ProjectSwitcher() {
   const { t } = useTranslation('project')
   const project = useProjectStore((s) => s.project)
-  const recent = useProjectStore((s) => s.recent)
-  const opened = useProjectStore((s) => s.opened)
-  const open = useProjectStore((s) => s.open)
-  const [browse, setBrowse] = useState<null | 'open' | 'create'>(null)
-  // 同名项目的辨认后缀与 Picker 同一份判据（`lib/recentProjects.ts`）——
-  // 按**整份**最近列表算而不是按截断后的六条：菜单里只剩一个 figs 时，
-  // 它仍然是「六个里的那一个」，去掉后缀它就又认不出来了
-  const hints = useMemo(() => disambiguateRecent(recent), [recent])
+  const expanded = useUiStore((s) => s.leftOpen && s.leftTab === 'workspace')
 
   if (!project?.open) return null
 
-  const go = (path: string, create = false) => {
-    void open(path, create).catch((e: unknown) =>
-      // 存**描述符**而不是翻好的字符串：错误 toast 一直挂到用户手动关掉，
-      // 中途切语言时它会重渲染，冻成字符串的那句再也换不回来。
-      // 后端没给 code 时 backendErrorMsg 内部会 literal() 原样透出。
-      useUiStore.getState().setStatus(backendErrorMsg(e), 'error'),
-    )
-  }
-
-  // 「在新标签页打开」直接开一个带 pj 的地址：新标签页自己的 sessionStorage
-  // 会认下这个项目，与本标签页各走各的
-  const openInNewTab = (id?: string | null) => {
-    const url = id ? `${location.pathname}?pj=${encodeURIComponent(id)}` : location.pathname
-    window.open(url, '_blank', 'noopener')
-  }
-
-  const others = opened.filter((p) => p.id !== project.id)
-  const recentRest = recent
-    .filter((r) => r.path !== project.figures_dir && !opened.some((o) => o.figures_dir === r.path))
-    .slice(0, RECENT_IN_MENU)
-
   return (
-    <>
-      <Menu
-        width={280}
-        trigger={
-          /* 面包屑的两颗钮是同一件事，只能有一副壳（2026-09-15 打磨 T1）：此前项目这颗是
-             手写 button（圆角 10、px 6、11px 字），旁边的文档钮是 `Button size="md"`（圆角 6、
-             px 10、12px 字）——同一条面包屑两种圆角、两种内边距、两种字号 */
-          <Button
-            size="md"
-            className="min-w-0 max-w-56 shrink text-ink-2"
-            aria-label={t('switcher.trigger', { name: project.name })}
-          >
-            <Folder size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
-            <span className="truncate">{project.name}</span>
-            <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
-          </Button>
-        }
-      >
-        <MenuLabel>{t('switcher.current')}</MenuLabel>
-        {/* 宽度必须钉死：图库路径动辄上百字符，不封顶会把整个浮层撑成一条 */}
-        <div className="w-[264px] px-2 pb-1">
-          <div className="truncate font-mono text-xs text-ink-2" title={project.figures_dir}>
-            {project.figures_dir}
-          </div>
-          <div className="mt-0.5 text-xs text-ink-3">
-            {t('switcher.scriptCount', { count: project.scripts ?? 0 })}
-            {project.settings?.allow_write_back === false && t('switcher.readOnlySuffix')}
-          </div>
-        </div>
-
-        {others.length > 0 && (
-          <>
-            <MenuSeparator />
-            <MenuLabel>{t('switcher.opened')}</MenuLabel>
-            {others.map((p) => (
-              <MenuItem key={p.id} onSelect={() => go(p.figures_dir!)}>
-                {p.name}
-              </MenuItem>
-            ))}
-          </>
-        )}
-
-        {recentRest.length > 0 && (
-          <>
-            <MenuSeparator />
-            <MenuLabel>{t('switcher.recent')}</MenuLabel>
-            {recentRest.map((r) => (
-              <MenuItem
-                key={r.path}
-                disabled={!r.exists}
-                reason={r.exists ? undefined : t('picker.missingDir')}
-                hint={hints.get(r.path)}
-                onSelect={() => go(r.path)}
-              >
-                {r.name}
-              </MenuItem>
-            ))}
-          </>
-        )}
-
-        <MenuSeparator />
-        <MenuItem onSelect={() => useUiStore.getState().setRegistryOpen(true)}>
-          {t('switcher.registry')}
-        </MenuItem>
-        <MenuItem onSelect={() => setBrowse('open')}>{t('switcher.browse')}</MenuItem>
-        <MenuItem onSelect={() => setBrowse('create')}>{t('switcher.create')}</MenuItem>
-        <MenuItem onSelect={() => openInNewTab(project.id)}>
-          {t('switcher.openInNewTab')}
-        </MenuItem>
-        <MenuItem onSelect={() => useProjectStore.setState({ phase: 'none' })}>
-          {t('switcher.allProjects')}
-        </MenuItem>
-      </Menu>
-
-      {browse && (
-        <DirBrowser
-          mode={browse}
-          initialPath={project.figures_dir}
-          onClose={() => setBrowse(null)}
-          onPick={(path, create) => {
-            setBrowse(null)
-            go(path, create)
-          }}
-        />
-      )}
-    </>
+    /* 面包屑的两颗钮是同一件事，只能有一副壳（2026-09-15 打磨 T1）：与旁边的文档钮
+       同为 `Button size="md"` */
+    <Button
+      size="md"
+      className="min-w-0 max-w-56 shrink text-ink-2"
+      aria-label={t('switcher.trigger', { name: project.name })}
+      aria-expanded={expanded}
+      data-project-switcher
+      onClick={() => useUiStore.getState().railClick('workspace')}
+    >
+      <Folder size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
+      <span className="truncate">{project.name}</span>
+    </Button>
   )
 }
 

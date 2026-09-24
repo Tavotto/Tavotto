@@ -2326,12 +2326,19 @@ def api_projects_open_list():
     return resp
 
 
-@app.get("/api/projects/recent")
-def api_projects_recent():
-    open_paths = {str(c.path): c.id for c in PROJECTS.values()}
-    current = _request_ctx()
+def _project_list_entries(stored: list[dict], current: "ProjectCtx | None") -> list[dict]:
+    """最近 / 收藏两份列表的同一种条目：配置里记的 + 此刻的状态（在不在、开没开）。
+
+    `current` 由调用方先解析好传进来：写配置的端点必须在**改动之前**就知道 pj
+    有没有失效，否则会出现「配置已经改了、响应却是 409」。
+    """
+    # 快照在项目锁里取：别的标签页同时开 / 关项目会改 PROJECTS，不持锁的遍历会抛
+    # 「dictionary changed size during iteration」——而收藏端点走到这里时配置已经写了，
+    # 500 会让界面按失败保留旧列表（Codex #550；同文件另两处遍历本来就持锁）
+    with _PROJECT_LOCK:
+        open_paths = {str(c.path): c.id for c in PROJECTS.values()}
     entries = []
-    for e in engine_config.recent_projects():
+    for e in stored:
         p = Path(e["path"])
         entries.append(
             {
@@ -2345,9 +2352,57 @@ def api_projects_recent():
                 "tutorial": engine_tutorial.is_tutorial_path(p),
             }
         )
-    resp = jsonify({"recent": entries})
+    return entries
+
+
+@app.get("/api/projects/recent")
+def api_projects_recent():
+    current = _request_ctx()
+    resp = jsonify(
+        {
+            "recent": _project_list_entries(engine_config.recent_projects(), current),
+            "pinned": _project_list_entries(engine_config.pinned_projects(), current),
+        }
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@app.post("/api/projects/pinned")
+def api_projects_pinned():
+    """对收藏列表做一个操作（add / remove / move），回新列表；只改配置，不碰磁盘内容。
+
+    按路径认对象、在后端对照最新的那份执行（`config.edit_pinned`）：多个标签页、
+    排着队的多次操作互相不会盖掉。
+    """
+    body = request.get_json(force=True, silent=True)
+    body = body if isinstance(body, dict) else {}
+    op, path = body.get("op"), body.get("path")
+    delta, to_path = body.get("delta"), body.get("to_path")
+    ok = op in engine_config.PINNED_OPS and isinstance(path, str) and path.strip()
+    if ok and op == "move":
+        # 两种挪法恰好给一种：相对位移（非零整数，bool 不算）或目标路径
+        by_delta = type(delta) is int and delta != 0 and to_path is None
+        by_target = delta is None and isinstance(to_path, str) and to_path.strip()
+        ok = by_delta or by_target
+    elif ok:
+        ok = delta is None and to_path is None
+    if not ok:
+        return jsonify({"error": "收藏操作的参数不合法", "code": "bad_request", "params": {}}), 400
+    # 先解析请求的项目（失效的 pj 在这里就 409），**再**写配置：反过来的话配置已经
+    # 改了、响应却说失败，界面按失败保留旧列表，重开后又冒出来（Codex #550 P2）
+    current = _request_ctx()
+    try:
+        stored = engine_config.edit_pinned(op, path, delta=delta, to_path=to_path)
+    except engine_config.PinnedFullError:
+        return jsonify(
+            {
+                "error": f"收藏最多 {engine_config.PINNED_KEEP} 个",
+                "code": "pinned_full",
+                "params": {"max": engine_config.PINNED_KEEP},
+            }
+        ), 409
+    return jsonify({"pinned": _project_list_entries(stored, current)})
 
 
 def _unsafe_new_project_part(p: Path, leaf: str) -> str | None:

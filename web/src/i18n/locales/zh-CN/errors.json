@@ -173,7 +173,8 @@
     "worker_timeout": "渲染超时，工作进程已重启，请重试。若反复超时，请检查脚本本身能否运行完毕。",
     "write_back_disabled": "项目是只读的：无法写回原始文件。可在项目设置里恢复可写。",
     "write_back_warnings": "无法写回：重放时出现了警告。",
-    "write_failed": "无法写入磁盘。本机副本仍在，可重试：{{reason}}"
+    "write_failed": "无法写入磁盘。本机副本仍在，可重试：{{reason}}",
+    "pinned_full": "收藏最多 {{max}} 个。先取消收藏几个再加。"
   },
   "engine": {
     "apply": "应用",

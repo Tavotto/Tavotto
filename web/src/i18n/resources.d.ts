@@ -1820,6 +1820,7 @@ export default interface Resources {
       "perf_report_rejected": "性能报告格式不对，没有保存（{{reason}}）",
       "perf_report_write_failed": "性能报告没能写进数据目录",
       "permission_denied": "无权限读取：{{path}}",
+      "pinned_full": "收藏最多 {{max}} 个。先取消收藏几个再加。",
       "ppi_out_of_range": "分辨率 {{value}} 超出范围，应在 {{min}} 到 {{max}} 之间。",
       "preparation_not_found": "没有这个准备任务（或它属于别的项目）：{{id}}",
       "preparation_plan_stale": "工作目录的授权在计划之后变了，这份准备计划已作废；请重新准备。",
@@ -3575,19 +3576,36 @@ export default interface Resources {
       "tutorialUnavailable": "教程资源不完整。请重新安装 Tavotto。"
     },
     "switcher": {
-      "allProjects": "全部项目…",
-      "browse": "浏览目录…",
-      "create": "新建项目…",
-      "current": "当前项目",
       "newTabLabel": "在新标签页打开",
       "newTabTip": "在新标签页打开，可切到另一个项目",
-      "openInNewTab": "在新标签页打开本项目",
-      "opened": "已打开",
+      "trigger": "当前项目 {{name}}，点击切换"
+    },
+    "workspace": {
+      "current": "当前",
+      "currentActions": "当前项目的更多操作",
+      "emptyRecent": "打开过的项目会出现在这里",
+      "filter": "按名称或路径筛选",
+      "filterLabel": "筛选项目",
+      "listLabel": "{{section}}项目",
+      "moveDown": "下移",
+      "moveUp": "上移",
+      "newProject": "新建项目…",
+      "noMatch": "没有匹配的项目",
+      "openFolder": "打开文件夹…",
+      "openInNewTab": "在新标签页打开",
+      "openedElsewhere": "已打开",
+      "pin": "收藏",
+      "pinLabel": "收藏 {{name}}",
+      "pinned": "收藏",
       "readOnlySuffix": " · 只读",
       "recent": "最近",
       "registry": "项目接入状态…",
+      "removeFromList": "从最近列表移除",
+      "removeMissing_other": "移除 {{count}} 个已不存在的",
+      "rowActions": "{{name}} 的更多操作",
       "scriptCount_other": "{{count}} 个已关联脚本",
-      "trigger": "当前项目 {{name}}，点击切换"
+      "unpin": "取消收藏",
+      "unpinLabel": "取消收藏 {{name}}"
     }
   },
   "shortcuts": {
@@ -4086,7 +4104,8 @@ export default interface Resources {
       "problems": "问题",
       "problemsCount_other": "问题 · {{count}}",
       "readiness": "项目接入状态",
-      "settings": "设置"
+      "settings": "设置",
+      "workspace": "工作区"
     },
     "readiness": {
       "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅排版。",

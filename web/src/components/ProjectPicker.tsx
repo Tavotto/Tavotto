@@ -63,9 +63,8 @@ export function ProjectPicker() {
   const removeMany = useProjectStore((s) => s.removeMany)
   // 从设置「切换项目」进来时后端仍有打开的项目——允许原路返回
   const currentOpen = useProjectStore((s) => s.project?.open === true)
-  const [browse, setBrowse] = useState<null | 'open' | 'create'>(null)
-  /** 桌面壳：系统选择器选好的上级目录，等用户起个名字（审计 T03） */
-  const [createIn, setCreateIn] = useState<string | null>(null)
+  // 切项目是串行的；切换期间这一屏所有「打开 / 新建 / 返回」一起置灰（Codex #550）
+  const switching = useProjectStore((s) => s.switching)
   const [error, setError] = useState<string | null>(null)
   const [busyPath, setBusyPath] = useState<string | null>(null)
   const [typed, setTyped] = useState('')
@@ -86,6 +85,7 @@ export function ProjectPicker() {
       setBusyPath(null)
     }
   }
+  const entry = useProjectEntry((path, create) => void openPath(path, create))
 
   return (
     <div className="flex h-full justify-center bg-bg">
@@ -107,15 +107,8 @@ export function ProjectPicker() {
             <Button
               variant="primary"
               size="md"
-              onClick={() => {
-                // 桌面壳：先用系统目录选择器挑上级目录（与「浏览目录」同一种体验），
-                // 再只问一个名字；浏览器模式仍是服务器端目录浏览器
-                if (isDesktop()) {
-                  void pickDirectory(t('picker.nativeCreateTitle')).then((dir) => {
-                    if (dir) setCreateIn(dir)
-                  })
-                } else setBrowse('create')
-              }}
+              disabled={switching}
+              onClick={entry.startCreate}
             >
               <FolderPlus size={ICON_SIZE.md} />
               {t('picker.create')}
@@ -123,15 +116,8 @@ export function ProjectPicker() {
             <Button
               variant="secondary"
               size="md"
-              onClick={() => {
-                // 桌面壳里用原生目录选择器；取消不是错误，什么都不发生。
-                // 浏览器模式回退到服务器端目录浏览器（本地单用户应用，浏览的就是本机磁盘）。
-                if (isDesktop()) {
-                  void pickDirectory(t('picker.nativePickerTitle')).then((dir) => {
-                    if (dir) void openPath(dir)
-                  })
-                } else setBrowse('open')
-              }}
+              disabled={switching}
+              onClick={entry.startOpen}
             >
               <FolderOpen size={ICON_SIZE.md} />
               {t('picker.browse')}
@@ -140,7 +126,8 @@ export function ProjectPicker() {
               <Button
                 size="md"
                 className="ml-auto text-ink-2"
-                onClick={() => useProjectStore.setState({ phase: 'open' })}
+                disabled={switching}
+                onClick={() => useProjectStore.getState().returnToCurrent()}
               >
                 {t('picker.backToCurrent')}
               </Button>
@@ -154,7 +141,7 @@ export function ProjectPicker() {
             className="mt-3 flex gap-2"
             onSubmit={(e) => {
               e.preventDefault()
-              if (!target) return
+              if (!target || switching) return
               void openPath(target.kind === 'path' ? target.path : target.entry.path)
             }}
           >
@@ -170,7 +157,7 @@ export function ProjectPicker() {
               type="submit"
               variant="secondary"
               size="md"
-              disabled={!target}
+              disabled={!target || switching}
               aria-label={
                 target?.kind === 'recent' ? t('picker.openMatch', { name: target.entry.name }) : undefined
               }
@@ -211,6 +198,7 @@ export function ProjectPicker() {
                     entry={r}
                     hint={hints.get(r.path)}
                     busy={busyPath === r.path}
+                    disabled={switching}
                     onOpen={() => void openPath(r.path)}
                     onRemove={() => void remove(r.path)}
                   />
@@ -231,29 +219,70 @@ export function ProjectPicker() {
           </section>
         )}
 
-        {browse && (
-          <DirBrowser
-            mode={browse}
-            onClose={() => setBrowse(null)}
-            onPick={(path, create) => {
-              setBrowse(null)
-              void openPath(path, create)
-            }}
-          />
-        )}
-        {createIn && (
-          <NewProjectNameDialog
-            parent={createIn}
-            onClose={() => setCreateIn(null)}
-            onCreate={(name) => {
-              setCreateIn(null)
-              void openPath(`${createIn}/${name}`, true)
-            }}
-          />
-        )}
+        {entry.dialogs}
       </main>
     </div>
   )
+}
+
+/**
+ * 「打开文件夹」「新建项目」两个入口的共同流程——Project Picker 与左栏「工作区」
+ * 抽屉共用这一份，别再各写一遍。
+ *
+ * 桌面壳：系统目录选择器（取消不是错误，什么都不发生）；新建时选的是上级目录，
+ * 再只问一个名字（审计 T03）。浏览器模式回退到服务器端目录浏览器（浏览的是
+ * 后端所在机器的磁盘）。调用方把 `dialogs` 摆进自己的树里。
+ */
+export function useProjectEntry(
+  openPath: (path: string, create?: boolean) => void,
+  initialPath?: string,
+) {
+  const { t } = useTranslation('project')
+  const [browse, setBrowse] = useState<null | 'open' | 'create'>(null)
+  /** 桌面壳：系统选择器选好的上级目录，等用户起个名字 */
+  const [createIn, setCreateIn] = useState<string | null>(null)
+
+  const startOpen = () => {
+    if (isDesktop()) {
+      void pickDirectory(t('picker.nativePickerTitle')).then((dir) => {
+        if (dir) openPath(dir)
+      })
+    } else setBrowse('open')
+  }
+  const startCreate = () => {
+    if (isDesktop()) {
+      void pickDirectory(t('picker.nativeCreateTitle')).then((dir) => {
+        if (dir) setCreateIn(dir)
+      })
+    } else setBrowse('create')
+  }
+
+  const dialogs = (
+    <>
+      {browse && (
+        <DirBrowser
+          mode={browse}
+          initialPath={initialPath}
+          onClose={() => setBrowse(null)}
+          onPick={(path, create) => {
+            setBrowse(null)
+            openPath(path, create)
+          }}
+        />
+      )}
+      {createIn && (
+        <NewProjectNameDialog
+          parent={createIn}
+          onClose={() => setCreateIn(null)}
+          onCreate={(name) => {
+            setCreateIn(null)
+            openPath(`${createIn}/${name}`, true)
+          }}
+        />
+      )}
+    </>
+  )
+  return { startOpen, startCreate, dialogs }
 }
 
 /**
@@ -270,6 +299,8 @@ function TutorialEntry() {
   const busy = useTutorialStore((s) => s.busy)
   const failure = useTutorialStore((s) => s.failure)
   const entry = useOnboardingStore((s) => tutorialEntry(s.status))
+  // 教程也是一次切项目（adoptOpenedProject）：切换进行中不再排第二次
+  const switching = useProjectStore((s) => s.switching)
 
   useEffect(() => {
     void loadTutorialStatus()
@@ -286,7 +317,7 @@ function TutorialEntry() {
           variant="ghost"
           size="md"
           className="-ml-2.5 text-ink-2"
-          disabled={unavailable || busy === 'open'}
+          disabled={unavailable || busy === 'open' || switching}
           loading={busy === 'open'}
           loadingLabel={t('picker.tutorialOpening')}
           data-onboarding-anchor="tutorial-entry"
@@ -375,6 +406,7 @@ function RecentRow({
   entry,
   hint,
   busy,
+  disabled = false,
   onOpen,
   onRemove,
 }: {
@@ -382,6 +414,8 @@ function RecentRow({
   /** 同名项目的辨认后缀（`lib/recentProjects.disambiguateRecent`） */
   hint?: string
   busy: boolean
+  /** 有一次切换正在进行：打开不了（移除仍可以） */
+  disabled?: boolean
   onOpen: () => void
   onRemove: () => void
 }) {
@@ -391,7 +425,7 @@ function RecentRow({
       <Folder size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
       <button
         onClick={onOpen}
-        disabled={busy || !entry.exists}
+        disabled={busy || disabled || !entry.exists}
         className={cn(
           'min-w-0 flex-1 text-left outline-none focus-visible:focus-ring',
           entry.exists ? 'cursor-pointer' : 'cursor-default',
@@ -450,9 +484,9 @@ const nameErrorText = (reason: ProjectNameProblem) =>
  * 默认的省略号却切掉的正是尾部。`dir="rtl"` 让溢出从左边裁；两端的 U+200E
  * 把路径钉在从左到右，免得末尾的 `/` 或 `.` 被双向算法搬到另一头。
  */
-function TailPath({ path }: { path: string }) {
+export function TailPath({ path, className }: { path: string; className?: string }) {
   return (
-    <span dir="rtl" className="block truncate text-left font-mono text-xs text-ink-3">
+    <span dir="rtl" className={cn('block truncate text-left font-mono text-xs text-ink-3', className)}>
       {'\u200E' + path + '\u200E'}
     </span>
   )

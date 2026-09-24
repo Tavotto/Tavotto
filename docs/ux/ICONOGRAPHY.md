@@ -18,7 +18,7 @@
 - 尺寸只有四档 `ICON_SIZE = { xs: 12, sm: 14, md: 16, lg: 20 }`，默认 **sm**；描边
   `ICON_STROKE.regular = 2`，`emphasis = 2.5` 只给复选框的勾；三个 React 根都套
   `IconProvider`，图标集自己的默认就是阶梯，Provider 只是「默认档在哪改」的唯一答案。
-- 选中 / 激活态用实心孪生：`<Layers filled />`。只有 28 个真正用作开关的图标有孪生，
+- 选中 / 激活态用实心孪生：`<Layers filled />`。只有 29 个真正用作开关的图标有孪生，
   其余忽略 `filled`（第五节）。
 
 ## 二、精致感从哪来——量出来的六条
@@ -33,7 +33,7 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 | 端点 / 拐角 | 圆头；闭合外形多数 r=2 | 三角外角 r≈4、方框 r≈3.5、六角 r≈3；内角 r=1 | 外角 ≥ 2.5、内角 ≥ 1 |
 | 标点 | 长 0.01 的线段，直径 = 线宽 | 实心圆，直径 2.3～2.5 | 实心圆，直径 2.5 |
 | 元素数 | 不限（齿轮 8 齿、剪贴板 6 段） | ≤ 3（设置 = 六角 + 环） | ≤ 3，净空 ≥ 2 |
-| 选中态 | 只靠底色 | 43 对 outline / filled | 28 个实心孪生 |
+| 选中态 | 只靠底色 | 43 对 outline / filled | 29 个实心孪生 |
 
 1. **标点得是点。** 叹号的点是长 0.01 的线段时，16px 上只剩 1.2px——警告图标「缺了
    点什么」就是它。状态家族（警告 / 错误 / 说明 / 帮助 / 问题）共用同一套点与竖条。
@@ -131,14 +131,14 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 三个在第二版换了隐喻的（其余 138 个都是同一隐喻的重画）：设置（8 齿齿轮 → 六角 + 环）、
 图层（三层菱 → 一层实心 + 两道）、项目接入状态（六段剪贴板 → 剪贴板 + 勾）。
 
-## 五、有实心孪生的 28 个（`filled`）
+## 五、有实心孪生的 29 个（`filled`）
 
-左轨：`LayoutGrid` `Images` `Layers` `SquareMousePointer` `TriangleAlert` `Settings`
+左轨：`Folder`（工作区，2026-09-24 补）`LayoutGrid` `Images` `Layers` `SquareMousePointer` `TriangleAlert` `Settings`
 `ClipboardList`；状态：`CircleAlert` `Info` `CircleCheck` `CircleX` `CircleQuestionMark`
 `CircleMinus` `ShieldAlert` `ShieldCheck` `ShieldQuestionMark` `Lightbulb` `Zap`；开关：
 `Sparkles` `Pin` `Eye` `Lock` `Bookmark` `Square` `Circle` `Tags` `Diamond` `Bot`。
 
-接在已有状态上的地方：左轨五个上下文（`aria-expanded`）、右栏助手钮（`aria-pressed`）、
+接在已有状态上的地方：左轨六个上下文（`aria-expanded`）、右栏助手钮（`aria-pressed`）、
 三处图钉、顶栏当前标注工具、图层树的锁。元素树的类型图标**不做**实心态。
 
 ## 六、第一版的盘点（2026-09-06，历史）

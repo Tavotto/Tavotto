@@ -209,3 +209,30 @@ describe('输入框：路径打开 / 名字筛选', () => {
     expect(open).toHaveBeenCalledWith('/Users/jiaqi/elsewhere/figs', false)
   })
 })
+
+describe('切换进行中（Codex #550）', () => {
+  it('打开 / 新建 / 返回 / 回车提交 / 最近项目行一起置灰；移除仍可用', async () => {
+    await act(async () => {
+      useProjectStore.setState({
+        project: { open: true, id: 'p_cur', name: 'cur', figures_dir: '/cur' },
+        switching: true,
+      })
+    })
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('header button')]
+    const byText = (t: string) => buttons.find((b) => b.textContent?.includes(t))!
+    expect(byText('新建项目').disabled).toBe(true)
+    expect(byText('浏览目录').disabled).toBe(true)
+    expect(byText('返回').disabled).toBe(true)
+    expect(submitButton().disabled).toBe(true)
+    expect(openButtons().length).toBeGreaterThan(20)
+    expect(openButtons().every((b) => b.disabled)).toBe(true)
+    // 移除只动列表，不是切换：不跟着灰
+    const removes = [...host.querySelectorAll<HTMLButtonElement>('button[aria-label^="从列表移除"]')]
+    expect(removes.length).toBeGreaterThan(0)
+    expect(removes.some((b) => !b.disabled)).toBe(true)
+
+    await act(async () => useProjectStore.setState({ switching: false }))
+    expect(byText('返回').disabled).toBe(false)
+    expect(openButtons().some((b) => !b.disabled)).toBe(true)
+  })
+})

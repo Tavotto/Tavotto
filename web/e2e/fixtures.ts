@@ -1,6 +1,6 @@
-import { test as base, expect } from '@playwright/test'
+import { test as base, expect, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { copyFileSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -227,10 +227,67 @@ export { expect }
  * 关闭（CI #453 的 900s 挂死，两轮同形状）。按 `aria-expanded` 判态，
  * 不在才点，点完等状态坐实。
  */
-export async function openElementsTab(page: import('@playwright/test').Page): Promise<void> {
+export async function openElementsTab(page: Page): Promise<void> {
   const nav = page
     .getByRole('navigation')
     .getByRole('button', { name: '图内元素' })
   if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
   await expect(nav).toHaveAttribute('aria-expanded', 'true')
+}
+
+/**
+ * 打开左栏「工作区」抽屉（切项目、项目级动作都在这里）。顶栏项目名是开关：
+ * 抽屉已经开着时再点会把它收起，所以先看 `aria-expanded`，没开才点。
+ */
+export async function openWorkspace(page: Page) {
+  const trigger = page.locator('[data-project-switcher]')
+  await expect(trigger).toBeVisible()
+  if ((await trigger.getAttribute('aria-expanded')) !== 'true') await trigger.click()
+  await expect(page.locator('[data-workspace-list]')).toBeVisible()
+}
+
+/**
+ * 两条路径是不是同一个目录：按**文件系统身份**比，不比字符串。
+ *
+ * Windows runner 的临时目录是 8.3 短名（`C:\\Users\\RUNNER~1\\…`），后端记的可能是展开后的
+ * 长名、大小写也可能不同；macOS 的 `/var` ↔ `/private/var` 同理。`realpathSync.native`
+ * 在 Windows 上走 GetFinalPathNameByHandle，会展开短名；Windows 上再不分大小写。
+ * （Codex #550 之后 windows-exe-smoke 实测：拼两种写法进 CSS 选择器，一行都对不上。）
+ */
+function sameDir(a: string, b: string): boolean {
+  const norm = (p: string) => {
+    let r = p
+    try {
+      r = realpathSync.native(p)
+    } catch {
+      /* 目录不在了：按原样比 */
+    }
+    return process.platform === 'win32' ? r.toLowerCase() : r
+  }
+  return norm(a) === norm(b)
+}
+
+/**
+ * 在工作区抽屉里点开一个项目，按**路径身份**（`data-project-path` + `sameDir`）或教程标记
+ * 找行——不按可达名（会重名、会随语言变），也不把路径拼进 CSS 选择器（转义与写法差异
+ * 都会让它对不上）。行是抽屉打开时刷新出来的，等到出现为止。
+ */
+export async function switchProjectVia(page: Page, target: { path: string } | { tutorial: true }) {
+  await openWorkspace(page)
+  const list = page.locator('[data-workspace-list]')
+  let row
+  if ('tutorial' in target) {
+    row = list.locator('[data-workspace-row][data-project-tutorial]')
+  } else {
+    const rows = list.locator('[data-workspace-row][data-project-path]')
+    const indexOf = async () => {
+      const paths = await rows.evaluateAll((els) =>
+        els.map((e) => e.getAttribute('data-project-path') ?? ''),
+      )
+      return paths.findIndex((p) => sameDir(p, target.path))
+    }
+    await expect.poll(indexOf, { message: `工作区抽屉里找不到 ${target.path}` }).toBeGreaterThanOrEqual(0)
+    row = rows.nth(await indexOf())
+  }
+  await row.locator('[data-workspace-open]').click()
 }
