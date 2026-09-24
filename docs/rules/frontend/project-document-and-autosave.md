@@ -15,7 +15,13 @@
 - 文档模型可选字段（schema 仍为 2，旧文档兼容）：
   `PanelObject.lockedGids / flipH / flipV`、`ObjectBase.layoutPinned`、
   `FigureDocument.layoutGroups`（行/列/网格约束，id 即 groupId，
-  尺寸变化自动重排、undo/redo 不触发）。
+  尺寸变化自动重排）。**自动重排只跟用户编辑**（`startLayoutAutoReflow`，按
+  `historyMove` 在栈上认：新条目 = 编辑，条目在 past / future 间挪格 = 撤销 / 重做，
+  `loadSeq` / 画布换了 = 换文档）：撤销 / 重做 / 载入 / 切画布之后、下一次用户编辑
+  之前，文档停在历史的某一格上，这期间不进历史的写入（渲染同步 silent 补图幅、文字
+  自适应高度）只记尺寸不重排——重排是一条 commit，会清空 future、给打开的文档添
+  一条用户没做过的历史。紧跟在用户编辑之后的派生同步（改图幅 override → 渲染回来
+  → 补图幅）照常重排。事务松手（`endTxn` 不换 doc 引用）从栈上认，不看 doc。
 - **撤销防线（2026-08-17，数据损坏级）**：`txnUpdate` 在无事务时**丢弃更新**
   ——绝不静默直写 doc（拖动中事务被外部 endTxn/undo 结束后，pointermove 落进
   静默分支 = 位移绕过历史、撤销永远找不回，真实用户撞见过）。一切撤销入口

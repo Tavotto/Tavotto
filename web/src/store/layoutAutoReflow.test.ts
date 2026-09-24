@@ -161,6 +161,30 @@ describe('用户编辑引起的尺寸变化照常自动重排、照常进历史'
     expect(lastLabel()).toBe('history.autoReflow')
   })
 
+  it('拖手柄缩放（事务，松手落历史）：松手之后重排', async () => {
+    // endTxn 不换 doc 的引用，只在栈上落一条——以前订阅在「doc 没变」处早退，整个漏掉
+    await mount('d_reflow_drag')
+    await act(async () => {
+      s().beginTxn(literal('缩放'))
+      for (const k of [0.9, 0.8, 0.75]) {
+        s().txnUpdate((d) => {
+          const o = d.objects.find((x) => x.id === 'pa') as PanelObject
+          o.w = 40 * k
+          o.h = 30 * k
+        })
+      }
+    })
+    await settle()
+    // 手势进行中不重排
+    expect(obj('pb').x).toBe(44)
+    await act(async () => {
+      s().endTxn()
+    })
+    await settle()
+    expect(obj('pb').x).toBeCloseTo(34, 6)
+    expect(lastLabel()).toBe('history.autoReflow')
+  })
+
   it('改图幅的 override → 渲染回来 → 同步器补图幅 → 自动重排', async () => {
     await mount('d_reflow_override')
     await commit('改图幅', (d) => {
@@ -250,6 +274,52 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
     expect(s().doc).toEqual(edited)
   })
 
+  it('撤销缩放：撤销本身不重排，连撤两步再重做两步回到撤销前', async () => {
+    await mount('d_reflow_undo_resize')
+    await commit('缩放', (d) => {
+      const o = d.objects.find((x) => x.id === 'pa') as PanelObject
+      o.w = 30
+      o.h = 22.5
+    })
+    expect(lastLabel()).toBe('history.autoReflow')
+    const edited = snap()
+    const depth = s().past.length
+    await undo() // 撤重排：B 回 44，A 仍是 30 宽——这一格就是用户当时缩放完的样子
+    expect(obj('pb').x).toBe(44)
+    expect([s().past.length, s().future.length]).toEqual([depth - 1, 1])
+    await undo()
+    expect(obj('pa').w).toBe(40)
+    expect([s().past.length, s().future.length]).toEqual([depth - 2, 2])
+    await redo()
+    await redo()
+    expect([s().past.length, s().future.length]).toEqual([depth, 0])
+    expect(s().doc).toEqual(edited)
+  })
+
+  it('编辑之后 120 ms 防抖还没到就连撤两步：待发的重排作废', async () => {
+    await mount('d_reflow_undo_in_debounce')
+    await commit('缩放', (d) => {
+      const o = d.objects.find((x) => x.id === 'pa') as PanelObject
+      o.w = 30
+      o.h = 22.5
+    })
+    expect(lastLabel()).toBe('history.autoReflow')
+    const depth = s().past.length
+    // 再缩一次，防抖还没到就连撤两步：落在「A 30 宽、B 还在 44」那一格（第一次缩放、重排之前）
+    await act(async () => {
+      s().commit(literal('缩放'), (d) => {
+        const o = d.objects.find((x) => x.id === 'pa') as PanelObject
+        o.w = 20
+        o.h = 15
+      })
+      s().undo()
+      s().undo()
+    })
+    await settle()
+    expect([s().past.length, s().future.length]).toEqual([depth - 1, 2])
+    expect(obj('pb').x).toBe(44)
+  })
+
   it('撤销 / 重做之后的第一次用户编辑：照常重排', async () => {
     await mount('d_reflow_edit_after_derived')
     await commit('改图幅', (d) => {
@@ -271,7 +341,7 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
   })
 })
 
-describe('打开文档', () => {
+describe('打开文档 / 切画布', () => {
   it('载入一份组内排布没对齐的文档：不重排、不进历史、不变脏', async () => {
     const project = emptyProject()
     const canvas = project.canvases[0]
@@ -282,5 +352,29 @@ describe('打开文档', () => {
     expect(obj('pb').x).toBe(60)
     expect(s().past.length).toBe(0)
     expect(s().dirty).toBe(false)
+  })
+
+  it('切到另一张组内排布没对齐的画布：不重排、不进那张画布的历史', async () => {
+    const project = emptyProject()
+    const first = project.canvases[0]
+    first.objects = [panel('pa', 'Fig1.pdf', 0), panel('pb', 'Fig2.pdf', 44)]
+    first.layoutGroups = [structuredClone(ROW)]
+    const second = structuredClone(first)
+    second.id = 'c_second'
+    second.name = 'second'
+    // 另一张画布自己的组（id 不同）；B 被用户拖开过
+    second.objects = [panel('pa', 'Fig1.pdf', 0), panel('pb', 'Fig2.pdf', 60)].map((o) => ({
+      ...o,
+      groupId: 'lg2',
+    }))
+    second.layoutGroups = [{ ...structuredClone(ROW), id: 'lg2' }]
+    project.canvases.push(second)
+    await mount('d_reflow_switch_canvas', project)
+    await act(async () => {
+      s().switchCanvas('c_second')
+    })
+    await settle()
+    expect(obj('pb').x).toBe(60)
+    expect([s().past.length, s().future.length]).toEqual([0, 0])
   })
 })
