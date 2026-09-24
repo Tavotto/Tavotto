@@ -1435,42 +1435,51 @@ def _eb_caps(grp):
     return grp.artists["caps"]
 
 
-def _eb_color_get(a):
-    return a.get_color()
+def _eb_color_handler():
+    """误差棒整个系列改色。三类成员各按自己的颜色模型改，**不按此刻的颜色现判**：
 
+    * 数据线（`fmt='o'` 那条）：只 `set_color`。它的 marker 边色 / 面色若是 `auto` 会自己跟着走；
+      脚本显式设的（`mec='red'`、`mfc='none'`，哪怕恰好等于线色）是脚本的样式，不动——按渲染出的
+      颜色相等去判「跟不跟」会把显式同色的边当成跟随（#556 评审）。原始模式因此从不被改写。
+    * 横杠：画出来的颜色在 **marker 边色**上，而那是 errorbar 自己显式设成 ecolor 的（与竖线组同属
+      「误差」那一部分）——系列改色时一起改；只 `set_color` 的话横杠留在原色。
+    * 竖线组：`set_color`。
 
-def _eb_color_set(a, v) -> None:
-    """误差棒一个成员改色。横杠是 Line2D 的 marker（`_` / `|`），颜色在 **marker 边色**上：只
-    `set_color` 的话横杠留在原色。marker 的边色 / 面色在脚本原样里**跟着线色**（等于线色）的一起改；
-    脚本显式设成别的颜色的（`mec='k'` 黑边、`mfc='none'` 空心）不动。
+    还原按快照逐项放回，横杠存的是**原始**边色值（`_markeredgecolor`，可能是 `auto`），不是解析后的
+    颜色。没有任何按会话缓存的判据，native 会话换基线后照样成立。"""
 
-    「跟不跟着线色」在**第一次改色那一刻**按脚本原样判一次，记在 artist 上（`_mm_eb_follow`），
-    之后的改色与撤销都沿用它——拿此刻的颜色现判的话，蓝线配 `mec='red'`，改成红再撤销，边色
-    此刻恰好等于线色，会被误判成「跟着」一起改回蓝（#556 评审）。全量重放从脚本原样起步，
-    第一次改色时判出的是同一个结论，热态 == 重放。"""
-    if isinstance(a, Line2D):
-        follow = getattr(a, "_mm_eb_follow", None)
-        if follow is None:
-            old = _rgba_or_none(a.get_color())
-            follow = (
-                old is not None and _rgba_or_none(a.get_markeredgecolor()) == old,
-                old is not None and _rgba_or_none(a.get_markerfacecolor()) == old,
-            )
-            a._mm_eb_follow = follow  # noqa: SLF001
-        a.set_color(v)
-        if follow[0]:
-            a.set_markeredgecolor(v)
-        if follow[1]:
-            a.set_markerfacecolor(v)
-        return
-    a.set_color(v)
+    def g(grp):
+        line = grp.artists.get("line")
+        return {
+            "line": None if line is None else line.get_color(),
+            "caps": [
+                (c.get_color(), getattr(c, "_markeredgecolor", c.get_markeredgecolor()))
+                for c in grp.artists["caps"]
+            ],
+            "bars": [b.get_color() for b in grp.artists["bars"]],
+        }
 
+    def s(grp, v):
+        line = grp.artists.get("line")
+        if line is not None:
+            line.set_color(v)
+        for c in grp.artists["caps"]:
+            c.set_color(v)
+            c.set_markeredgecolor(v)
+        for b in grp.artists["bars"]:
+            b.set_color(v)
 
-def _rgba_or_none(c):
-    try:
-        return tuple(round(float(x), 4) for x in mcolors.to_rgba(c))
-    except (ValueError, TypeError):
-        return None
+    def r(grp, orig):
+        line = grp.artists.get("line")
+        if line is not None and orig.get("line") is not None:
+            line.set_color(orig["line"])
+        for c, (color, edge) in zip(grp.artists["caps"], orig.get("caps", [])):
+            c.set_color(color)
+            c.set_markeredgecolor(edge)
+        for b, color in zip(grp.artists["bars"], orig.get("bars", [])):
+            b.set_color(color)
+
+    return (g, s), r
 
 
 def _eb_linewidth_members(grp):
@@ -2781,7 +2790,7 @@ HANDLERS[("bar_series", "label")] = (
 )
 
 for _prop, _pair in [
-    ("color", _eb_handler(_eb_color_get, _eb_color_set)),
+    ("color", _eb_color_handler()),
     (
         "linewidth",
         _eb_handler(

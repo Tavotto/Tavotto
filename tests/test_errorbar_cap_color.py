@@ -186,3 +186,32 @@ def test_recolouring_twice_equals_a_fresh_replay_of_the_last_colour(explicit):
     finally:
         pool.discard(f)
     assert hot == fresh
+
+
+def test_an_explicit_edge_equal_to_the_line_colour_is_still_explicit(tmp_path_factory):
+    """脚本显式写了 `mec='#1f77b4'`，恰好等于线色：它仍是脚本的样式，系列改红后保持蓝边。按渲染出的
+    颜色相等去判「跟不跟着线色」会把它当成跟随、一起涂红（#556 评审）。期望值 = 脚本原本就是红线蓝边。"""
+    src = EXPLICIT_LIBRARY.replace('mec="red"', 'mec="#1f77b4"')
+    assert 'mec="#1f77b4"' in src, "前提：替换真的落在了脚本上"
+    figs = tmp_path_factory.mktemp("errorbar-explicit-same")
+    (figs / EXPLICIT_SCRIPT).write_text(src, encoding="utf-8")
+    red = "fig_errorbar_explicit_same_red.py"
+    (figs / red).write_text(
+        src.replace('color="#1f77b4"', 'color="red"').replace("EbEdge.pdf", "EbEdgeRed.pdf"),
+        encoding="utf-8",
+    )
+    w = pool.one_shot(EXPLICIT_SCRIPT, str(figs), "main")
+    w.ensure_built()
+    try:
+        got = w.preview_png(
+            EXPLICIT_STEM, [{"gid": "axes_0.errorbar_0", "prop": "color", "value": "red"}], 380, "s"
+        ).read_bytes()
+    finally:
+        pool.discard(w)
+    r = pool.one_shot(red, str(figs), "main")
+    r.ensure_built()
+    try:
+        expected = r.preview_png("EbEdgeRed", [], 380, "s-exp").read_bytes()
+    finally:
+        pool.discard(r)
+    assert got == expected
