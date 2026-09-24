@@ -61,12 +61,20 @@ def project(tmp_path) -> Path:
     return p
 
 
+def _minimal_path() -> str:
+    """GUI 宿主那种最短的 PATH。**Windows 上也不能沿用 os.environ 的 PATH**：CI runner 的 PATH
+    里就有装着 tavotto 的 hostedtoolcache python，「哪儿都没有引擎」的前提在那儿不成立，
+    configure 的完整环境回退会（正确地）找到并钉住它（#559 的 Windows CI）。"""
+    if os.name == "nt":
+        windir = os.environ.get("SystemRoot") or os.environ.get("SYSTEMROOT") or r"C:\Windows"
+        return os.pathsep.join([os.path.join(windir, "System32"), windir])
+    return os.pathsep.join(["/usr/bin", "/bin"])
+
+
 def _clean_env(tmp_path: Path, **extra: str) -> dict:
     """宿主会给的那种最小环境：没有 PYTHONPATH、没有仓库、PATH 最短。"""
     env = {
-        "PATH": os.pathsep.join(["/usr/bin", "/bin"])
-        if os.name != "nt"
-        else os.environ.get("PATH", ""),
+        "PATH": _minimal_path(),
         "HOME": str(tmp_path / "home"),
         "TAVOTTO_CONFIG_DIR": os.environ["TAVOTTO_CONFIG_DIR"],
         "TAVOTTO_DATA_DIR": os.environ["TAVOTTO_DATA_DIR"],
