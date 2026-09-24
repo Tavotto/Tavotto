@@ -774,6 +774,43 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       await unmount()
     })
 
+    it('缩放拖西边、两轴图幅同时变（40×30 → 50×40）：东手柄的中点 (40, 15) 不动', async () => {
+      const unmount = await dragAcrossRender(
+        'd_size_drag_west_2d',
+        () => startResizeDrag(down(), 'pg', 'w'),
+        [10, 0],
+        [8, 0],
+        [50, 40],
+      )
+      // 以前锚点落在东边的上角 (40, 0)：东手柄中心从 y=15 挪到 y=20
+      const eastMid = (q: PanelObject) => [q.x + q.w, q.y + q.h / 2]
+      expect(eastMid(current())[0]).toBeCloseTo(40, 6)
+      expect(eastMid(current())[1]).toBeCloseTo(15, 6)
+      expect(scales(current())[0]).toBeCloseTo(0.8, 6)
+      expect(scales(current())[1]).toBeCloseTo(1, 6)
+      await undoRedoKeepsEnd()
+      expect(eastMid(current())[1]).toBeCloseTo(15, 6)
+      await unmount()
+    })
+
+    it('缩放拖北边、两轴图幅同时变（40×30 → 50×40）：南手柄的中点 (20, 30) 不动', async () => {
+      const unmount = await dragAcrossRender(
+        'd_size_drag_north_2d',
+        () => startResizeDrag(down(), 'pg', 'n'),
+        [0, 10],
+        [0, 8],
+        [50, 40],
+      )
+      const southMid = (q: PanelObject) => [q.x + q.w / 2, q.y + q.h]
+      expect(southMid(current())[0]).toBeCloseTo(20, 6)
+      expect(southMid(current())[1]).toBeCloseTo(30, 6)
+      expect(scales(current())[0]).toBeCloseTo(1, 6)
+      expect(scales(current())[1]).toBeCloseTo(22 / 30, 6)
+      await undoRedoKeepsEnd()
+      expect(southMid(current())[0]).toBeCloseTo(20, 6)
+      await unmount()
+    })
+
     it('裁剪：松手后仍是 100%，撤销 / 重做回到松手那一刻', async () => {
       const unmount = await dragAcrossRender('d_size_drag_crop', () =>
         startCropDrag(down(), 'pg', 'e'),

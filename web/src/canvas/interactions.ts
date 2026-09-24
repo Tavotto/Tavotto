@@ -320,11 +320,13 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
 
   interaction().begin('resize')
   store.beginTxn(hist('resizeObjects'))
-  // 被拖手柄的对边：图幅在手势中途变了时，收尾换算绕这一点伸缩（面板恒无任意角旋转）
+  // 被拖手柄的对侧手柄：图幅在手势中途变了时，收尾换算绕这一点伸缩（面板恒无任意角
+  // 旋转）。角柄 = 对角；边柄只提到一个轴，另一轴取中点（对边手柄的中心）——取
+  // orig.x / orig.y 会把锚点落在对边的一个角上，两轴图幅同时变时对边手柄会上下 / 左右漂
   if (target.type === 'panel') {
     setTxnAnchor(objectId, {
-      x: dir.includes('w') ? orig.x + orig.w : orig.x,
-      y: dir.includes('n') ? orig.y + orig.h : orig.y,
+      x: dir.includes('w') ? orig.x + orig.w : dir.includes('e') ? orig.x : orig.x + orig.w / 2,
+      y: dir.includes('n') ? orig.y + orig.h : dir.includes('s') ? orig.y : orig.y + orig.h / 2,
     })
   }
 
