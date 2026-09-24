@@ -730,8 +730,8 @@ def _acquire_provision_lock() -> "str | None":
     插件升级后同时开的几个会话会几乎同时走到这里；「先看在不在、再 open 写」两步之间
     两个进程都能看到「不在」，然后各起一个 pip 改同一个 venv——并发 pip 能把环境改坏，
     正好造出这条路要修的零工具状态（#548 Codex 评审 P2）。独占创建只有一个赢家。
-    过期锁（上一次死掉的）先删再抢一次：删之前重新量一次岁数，别把刚被别人抢到的
-    新锁当成旧锁删掉；第二次抢仍是独占创建，最多一个赢家。
+    过期锁（上一次死掉的）的接管见 `_take_over_stale_lock`：不能「量完岁数再按路径删」，
+    两步之间别的会话可能已经接管并建了新锁，按路径删会删掉**它的**新锁。
     """
     lock = _provision_lock_path()
     token = f"{os.getpid()}-{os.urandom(8).hex()}"
@@ -739,17 +739,68 @@ def _acquire_provision_lock() -> "str | None":
         try:
             fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
-            try:
-                if time.time() - os.path.getmtime(lock) < _PROVISION_LOCK_MAX_AGE:
-                    return None
-                os.remove(lock)
-            except OSError:
-                pass  # 刚被持有者删掉 / 别人先删了：再抢一次
+            if not _take_over_stale_lock(lock, token):
+                return None
             continue
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(token)
         return token
     return None
+
+
+def _read_lock(path: str) -> "tuple[str, float] | None":
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            held = fh.read().strip()
+        return held, os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+def _take_over_stale_lock(lock: str, token: str) -> bool:
+    """锁在但可能过期：True = 过期锁已清掉（或已不在），可以再独占创建一次。
+
+    所有权安全（#548 Codex 评审 P2）：先记下看到的旧锁（内容 + mtime），过期才动手；
+    动手是把锁**原子改名**成只属于自己的私有名，再核对拿到手的还是不是刚才量过的那把
+    （内容相同且仍过期）。是 → 删掉它，回去独占创建；不是 → 两步之间别人已接管并建了
+    新锁，被我们改名拿走的是**它的**新锁：原样挂回去（`os.link` 不覆盖），放弃这一轮。
+    """
+    seen = _read_lock(lock)
+    if seen is None:
+        return True  # 刚被持有者释放：再抢一次
+    if time.time() - seen[1] < _PROVISION_LOCK_MAX_AGE:
+        return False
+    private = f"{lock}.stale-{token}"
+    try:
+        os.rename(lock, private)
+    except FileNotFoundError:
+        return True  # 别人先接管了旧锁：独占创建会裁出唯一赢家
+    except OSError:
+        return False
+    got = _read_lock(private)
+    if got is not None and got[0] == seen[0] and time.time() - got[1] >= _PROVISION_LOCK_MAX_AGE:
+        try:
+            os.remove(private)
+        except OSError:
+            pass
+        return True
+    try:
+        os.link(private, lock)  # 挂回别人的新锁；路径上已有锁就不覆盖
+    except FileExistsError:
+        pass  # 空窗里又有人建了锁：锁仍在，放弃即可
+    except OSError:
+        # 文件系统不支持硬链接：退回改名挂回（空窗外再核一次路径是空的）
+        try:
+            if not os.path.exists(lock):
+                os.rename(private, lock)
+                return False
+        except OSError:
+            pass
+    try:
+        os.remove(private)
+    except OSError:
+        pass
+    return False
 
 
 def _release_provision_lock(token: "str | None") -> None:

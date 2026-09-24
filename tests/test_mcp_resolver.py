@@ -807,3 +807,64 @@ def test_concurrent_startups_spawn_exactly_one_provision(tmp_path, fake_popen):
     assert {r["reason"] for r in results if not r["started"]} == {"already_running"}
     token = fake_popen[0]["env"][launcher._PROVISION_LOCK_TOKEN_ENV]
     assert Path(launcher._provision_lock_path()).read_text(encoding="utf-8") == token
+
+
+def _stale_lock(content: str = "dead-token") -> Path:
+    lock = Path(launcher._provision_lock_path())
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(content, encoding="utf-8")
+    old = lock.stat().st_mtime - launcher._PROVISION_LOCK_MAX_AGE - 5
+    os.utime(lock, (old, old))
+    return lock
+
+
+def test_stale_takeover_never_deletes_a_lock_someone_else_just_took(
+    tmp_path, fake_popen, monkeypatch
+):
+    """#548 评审 P2：量完「过期」到动手之间，另一个会话已接管并建了**新锁**。
+
+    主语是**那把新锁还在不在、起了几个 pip**：按路径删会把它的新锁删掉，然后我们
+    也起一个 pip——两个 pip 改同一个 venv。这里在我们动手的前一刻把锁换成新鲜的。"""
+    lock = _stale_lock()
+    real_rename = os.rename
+    swapped = []
+
+    def racing_rename(src, dst):
+        if not swapped and os.fspath(src) == str(lock):
+            swapped.append(True)
+            os.remove(lock)  # 别的会话接管了旧锁……
+            lock.write_text("winner-token", encoding="utf-8")  # ……并建了自己的新锁
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(launcher.os, "rename", racing_rename)
+    out = launcher.kick_background_provision()
+    assert swapped, "竞态没被模拟出来"
+    assert out["started"] is False and out["reason"] == "already_running"
+    assert fake_popen == []
+    assert lock.read_text(encoding="utf-8") == "winner-token", "别人刚建的新锁被删/换掉了"
+    assert sorted(p.name for p in lock.parent.iterdir() if "provision.lock" in p.name) == [
+        lock.name
+    ], "私有改名文件没清掉"
+
+
+def test_concurrent_startups_over_a_stale_lock_spawn_exactly_one_provision(tmp_path, fake_popen):
+    """同一把过期锁前八个会话同时起：接管也只能有一个赢家。"""
+    import threading
+
+    lock = _stale_lock()
+    gate = threading.Barrier(8)
+    results = []
+
+    def worker():
+        gate.wait()
+        results.append(launcher.kick_background_provision())
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sum(r["started"] for r in results) == 1, results
+    assert len(fake_popen) == 1
+    token = fake_popen[0]["env"][launcher._PROVISION_LOCK_TOKEN_ENV]
+    assert lock.read_text(encoding="utf-8") == token
