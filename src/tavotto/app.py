@@ -769,7 +769,9 @@ def api_render():
     path = safe_resolve(rel_id)
     cache = rc_facade.preview_cache(CACHE_DIR, max_bytes=RENDER_CACHE_MAX_BYTES)
     try:
-        cached = cache.get(rel_id, path, w)
+        # hold：交出来的文件一直钉到响应关闭——从 get() 返回到 send_file 打开它之间，别的请求发布新预览触发的
+        # prune() 不许把它删掉（Codex #539：否则那次请求 404 / 500）
+        cached = cache.get(rel_id, path, w, hold=True)
     except rc_preview.PreviewError as exc:
         if exc.code == "render_queue_full":
             resp = jsonify({"error": str(exc), "code": exc.code})
@@ -780,7 +782,12 @@ def api_render():
         return jsonify({"error": str(exc), "code": exc.code}), 500
     # no-cache = 每次向服务器验证（304 极快）；内容一变（身份进键）立即失效。
     # 不用长 max-age——「更新原图」后旧 URL 也不能再吃浏览器缓存。
-    resp = send_file(cached, mimetype="image/png", conditional=True)
+    try:
+        resp = send_file(cached, mimetype="image/png", conditional=True)
+    except BaseException:
+        cache.release(cached)
+        raise
+    resp.call_on_close(lambda: cache.release(cached))
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 

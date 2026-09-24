@@ -412,6 +412,33 @@ def test_backend_unavailable_holds_without_main_warming_the_implementation(
     assert not pdfbackend.is_backend_unavailable(RuntimeError("别的错"))
 
 
+def test_render_survives_a_concurrent_prune_before_send_file_opens_it(
+    client, tmp_path, monkeypatch
+):
+    """Codex #539：从 `PreviewCache.get()` 返回到 `send_file` 打开文件之间，别的请求发布新预览触发的 prune 可以删掉
+    它——那次请求就 404 / 500。端点用 `hold=True` 把文件钉到响应关闭。这里在 send_file 打开之前用 1 字节预算
+    prune 一次（模拟那个空窗里的并发清理），请求照样 200 + 一张 PNG。"""
+    from tavotto.rendercore import facade
+
+    _project(tmp_path)
+    real_send_file = m.send_file
+
+    def prune_then_send(path, *a, **k):
+        cache = facade.preview_cache(m.CACHE_DIR, max_bytes=m.RENDER_CACHE_MAX_BYTES)
+        old = cache.max_bytes
+        cache.max_bytes = 1
+        try:
+            cache.prune()
+        finally:
+            cache.max_bytes = old
+        return real_send_file(path, *a, **k)
+
+    monkeypatch.setattr(m, "send_file", prune_then_send)
+    resp = client.get("/api/render?id=p1.pdf&w=200")
+    assert resp.status_code == 200, resp.status_code
+    assert resp.get_data()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 def test_reset_projects_reaps_the_render_child(client, tmp_path):
     """render child 是应用运行时的一部分：关项目 / 关应用时一并收掉并 reap（ADR 0066）。"""
     from tavotto.rendercore import renderhost

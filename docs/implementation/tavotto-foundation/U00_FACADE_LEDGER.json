@@ -979,7 +979,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_declared_density",
-          "line": 1110,
+          "line": 1119,
           "role": "TIFF 分辨率标签的来源判据（只认 dpi_source == metadata）"
         },
         {
