@@ -1,0 +1,32 @@
+# case: GEO-04
+# time: 2026-09-25T03:13:10
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t "GEO-04"
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed | 24 skipped (32)
+   Start at  03:13:11
+   Duration  1.13s (transform 335ms, setup 130ms, import 320ms, tests 137ms, environment 458ms)
+
+[exit=0]
+
+# case: GEO-04
+# time: 2026-09-25T03:13:12
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/rotatedObjects.test.tsx src/canvas/shiftConstraints.test.tsx
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  2 passed (2)
+      Tests  28 passed (28)
+   Start at  03:13:12
+   Duration  950ms (transform 693ms, setup 298ms, import 670ms, tests 101ms, environment 607ms)
+
+[exit=0]
+

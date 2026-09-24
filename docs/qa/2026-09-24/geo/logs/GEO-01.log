@@ -1,0 +1,142 @@
+# case: GEO-01
+# time: 2026-09-25T03:05:46
+# HEAD: 6f19b8b0f6a7cb3947edb2c033dbe23c04450f51
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t "GEO-01"
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  6 passed | 26 skipped (32)
+   Start at  03:05:47
+   Duration  2.47s (transform 327ms, setup 158ms, import 279ms, tests 1.43s, environment 512ms)
+
+[exit=0]
+
+# case: GEO-01
+# time: 2026-09-25T03:05:49
+# HEAD: 6f19b8b0f6a7cb3947edb2c033dbe23c04450f51
+# cwd: <worktree root>
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_geometry_reference.py -p no:cacheprovider -q -rA -k "fixture or single_drag"
+.......                                                                  [100%]
+==================================== PASSES ====================================
+________ test_single_drag_lands_on_the_independent_ruler[axes_0.legend] ________
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.legend worst |anchor - target| = 1.110e-16, worst bbox shift error = 1.527e-16 (budget x=6.944e-04, y=1.085e-03)
+______ test_single_drag_lands_on_the_independent_ruler[axes_0.patches_0] _______
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.patches_0 worst |anchor - target| = 1.110e-16, worst bbox shift error = 9.714e-17 (budget x=6.944e-04, y=1.085e-03)
+_______ test_single_drag_lands_on_the_independent_ruler[axes_0.texts_0] ________
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.texts_0 worst |anchor - target| = 1.110e-16, worst bbox shift error = 1.665e-16 (budget x=6.944e-04, y=1.085e-03)
+______ test_single_drag_lands_on_the_independent_ruler[axes_0.title_left] ______
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.title_left worst |anchor - target| = 1.388e-16, worst bbox shift error = 1.527e-16 (budget x=6.944e-04, y=1.085e-03)
+________ test_single_drag_lands_on_the_independent_ruler[axes_0.xlabel] ________
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.xlabel worst |anchor - target| = 5.551e-17, worst bbox shift error = 9.714e-17 (budget x=6.944e-04, y=1.085e-03)
+________ test_single_drag_lands_on_the_independent_ruler[axes_0.ylabel] ________
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.ylabel worst |anchor - target| = 1.110e-16, worst bbox shift error = 1.665e-16 (budget x=6.944e-04, y=1.085e-03)
+=========================== short test summary info ============================
+PASSED tests/test_geometry_reference.py::test_g1_fixture_is_what_the_ledger_declares
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.legend]
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.patches_0]
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.texts_0]
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.title_left]
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.xlabel]
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.ylabel]
+[exit=0]
+
+# case: GEO-01
+# time: 2026-09-25T03:05:55
+# HEAD: 6f19b8b0f6a7cb3947edb2c033dbe23c04450f51
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/fakeRealtimeDrag.test.tsx src/canvas/dragReleaseSnapback.test.tsx
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  2 passed (2)
+      Tests  22 passed (22)
+   Start at  03:05:55
+   Duration  1.26s (transform 582ms, setup 290ms, import 500ms, tests 546ms, environment 644ms)
+
+[exit=0]
+
+# case: GEO-01
+# time: 2026-09-25T03:13:58
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ TAVOTTO_DATA_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/geo/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/probe_legend_svg_vs_manifest.py /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/geo fig1
+{"stem": "Fig1_kinetics", "requested": [-0.1013, 0.0], "manifest_bbox_d": [-0.10127444884406184, -1.5432098765533198e-06], "svg_content_d": [-0.10584444121045215, -1.5434027735551093e-06], "svg_minus_manifest_frac": [-0.004569992366390316, -1.9289700178954642e-10], "svg_minus_manifest_pt": [-1.036344727693706, -3.149537196930202e-08]}
+{"stem": "Fig1_kinetics", "requested": [-0.05, 0.0], "manifest_bbox_d": [-0.049974448844061825, -1.5432098765533198e-06], "svg_content_d": [-0.054544444959598, -1.5434027735551093e-06], "svg_minus_manifest_frac": [-0.004569996115536178, -1.9289700178954642e-10], "svg_minus_manifest_pt": [-1.036345577893714, -3.149537196930202e-08]}
+{"stem": "Fig1_kinetics", "requested": [0.03, 0.0], "manifest_bbox_d": [0.03002555115593819, -1.5432098765533198e-06], "svg_content_d": [0.02545555803901311, -1.5434027735551093e-06], "svg_minus_manifest_frac": [-0.004569993116925082, -1.9289700178954642e-10], "svg_minus_manifest_pt": [-1.0363448978937164, -3.149537196930202e-08]}
+{"stem": "Fig1_kinetics", "requested": [0.0, 0.05], "manifest_bbox_d": [2.5551155938219328e-05, 0.04999845679012338], "svg_content_d": [-0.00454444363668134, 0.04999845322868868], "svg_minus_manifest_frac": [-0.004569994792619559, -3.5614347027035365e-09], "svg_minus_manifest_pt": [-1.0363452778937245, -5.81495354978756e-07]}
+{"stem": "Fig1_kinetics", "requested": [-0.1013, 0.0583], "manifest_bbox_d": [-0.10127444884406184, 0.058298456790123354], "svg_content_d": [-0.10584444121045215, 0.058298456870996725], "svg_minus_manifest_frac": [-0.004569992366390316, 8.087337050044496e-11], "svg_minus_manifest_pt": [-1.036344727693706, 1.3204646265307929e-08]}
+[exit=0]
+
+# case: GEO-01
+# time: 2026-09-25T03:13:59
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cp docs/qa/2026-09-24/geo/repro/legend-jump.repro.spec.ts web/e2e/ && cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/../src npx playwright test e2e/legend-jump.repro.spec.ts --project=chromium; rc=$?; rm -f e2e/legend-jump.repro.spec.ts; exit $rc
+[已滤掉 31 行 werkzeug 逐请求日志]
+
+Running 1 test using 1 worker
+
+[GEO legend repro] 误差 (-1.386,-0.001) CSS px
+[e2e] app-0 进程输出（尾部）:
+2026-09-25 03:14:01,223 INFO pikepdf._core: pikepdf C++ to Python logger bridge initialized
+2026-09-25 03:14:01,242 WARNING tavotto: RenderCore 预热未完成：批准字体不全：缺 ['LiberationMono-Bold', 'LiberationMono-BoldItalic', 'LiberationMono-Italic', 'LiberationMono-Regular', 'LiberationSans-Bold', 'LiberationSans-BoldItalic', 'LiberationSans-Italic', 'LiberationSans-Regular', 'LiberationSerif-Bold', 'LiberationSerif-BoldItalic', 'LiberationSerif-Italic', 'LiberationSerif-Regular', 'NotoSansSC-Regular']（先跑 scripts/fetch_fonts.py）
+2026-09-25 03:14:01,550 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-Qc61cc/figures → 3 个素材
+2026-09-25 03:14:01,700 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:14:01,778 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:14:01,785 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:14:01,790 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-Qc61cc/figures → 3 个素材
+2026-09-25 03:14:01,956 INFO tavotto.engine: worker 启动: fig1_kinetics.py（entry=main，解释器来源=env_override）
+2026-09-25 03:14:14,996 INFO tavotto: 引擎渲染: Fig1_kinetics 13188ms（冷启动） timings={"build_total_ms": 12996.183, "canvas_draw_ms": 18.915, "manifest_ms": 19.173, "patch_apply_ms": 0.342, "preview_plan_ms": 0.045, "queue_wait_ms": 0.001, "script_build_ms": 211.281, "script_exec_ms": 22.799, "server_ms": 13188.16, "total_ms": 41.276, "worker_get_ms": 150.48}
+2026-09-25 03:14:17,654 INFO tavotto: 引擎渲染: Fig1_kinetics 37ms timings={"canvas_draw_ms": 14.212, "manifest_ms": 19.121, "patch_apply_ms": 0.473, "preview_plan_ms": 0.032, "queue_wait_ms": 0.002, "server_ms": 36.731, "total_ms": 36.024, "worker_get_ms": 0.534}
+
+  ✘  1 [chromium] › e2e/legend-jump.repro.spec.ts:76:1 › 图例整组 / 单独平移：权威重渲染后图例墨迹框应平移 Δs（已知缺陷：多走约 1 pt） (18.4s)
+
+
+  1) [chromium] › e2e/legend-jump.repro.spec.ts:76:1 › 图例整组 / 单独平移：权威重渲染后图例墨迹框应平移 Δs（已知缺陷：多走约 1 pt） 
+
+    Error: expect(received).toBeLessThanOrEqual(expected)
+
+    Expected: <= 0.5
+    Received:    1.3857421875
+
+      85 |   const err = [l1.x - l0.x - ds[0], l1.y - l0.y - ds[1]]
+      86 |   console.log(`[GEO legend repro] 误差 (${err.map((v) => v.toFixed(3))}) CSS px`)
+    > 87 |   expect(Math.abs(err[0])).toBeLessThanOrEqual(BUDGET_PX)
+         |                            ^
+      88 |   expect(Math.abs(err[1])).toBeLessThanOrEqual(BUDGET_PX)
+      89 | })
+      90 |
+        at /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web/e2e/legend-jump.repro.spec.ts:87:28
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/legend-jump.repro-图例整组-单独平移：权威重渲染后图例墨迹框应平移-Δs（已知缺陷：多走约-1-pt）-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/legend-jump.repro-图例整组-单独平移：权威重渲染后图例墨迹框应平移-Δs（已知缺陷：多走约-1-pt）-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/legend-jump.repro-图例整组-单独平移：权威重渲染后图例墨迹框应平移-Δs（已知缺陷：多走约-1-pt）-chromium/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/legend-jump.repro-图例整组-单独平移：权威重渲染后图例墨迹框应平移-Δs（已知缺陷：多走约-1-pt）-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/legend-jump.repro-图例整组-单独平移：权威重渲染后图例墨迹框应平移-Δs（已知缺陷：多走约-1-pt）-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › e2e/legend-jump.repro.spec.ts:76:1 › 图例整组 / 单独平移：权威重渲染后图例墨迹框应平移 Δs（已知缺陷：多走约 1 pt） ─
+[exit=1]
+

@@ -1,0 +1,1453 @@
+
+===== mutation M1-missing-zoom · 2026-09-25T02:39:32.718129 · HEAD 8342950a3e5c4be83491a9ba84a9e7eb63f39dee
+target: web/src/canvas/interactions.ts
+- 'return [dx / (layout.width * zoom), dy / (layout.height * zoom)]'
++ 'return [dx / layout.width, dy / layout.height]'
+target string occurrences: 1
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+ ❯ src/canvas/geometryReference.test.ts (27 tests | 8 failed) 869ms
+     × zoom=0.75：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标 24ms
+     × zoom=1.5：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标 12ms
+     × zoom=1.37：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标 10ms
+     × Axes 整体移动（position 是 bottom-origin）：八个方向，y 分量方向正确 9ms
+     × G2big：2 个文字同一屏幕位移 5ms
+     × G2big：10 个文字同一屏幕位移 5ms
+     × G2big：100 个文字同一屏幕位移 20ms
+     × G2 混合类型（文字 + 图例 + 形状 + 另一面板的标题），跨两个 Axes 41ms
+
+ Test Files  1 failed (1)
+      Tests  8 failed | 19 passed (27)
+   Start at  02:39:33
+   Duration  1.88s (transform 329ms, setup 147ms, import 296ms, tests 869ms, environment 477ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > zoom=0.75：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标
+AssertionError: axes_0.title_left zoom=0.75 dir=(1,0): expected 9.249999999999996 to be less than 1e-9
+ ❯ src/canvas/geometryReference.test.ts:244:54
+    242|           const t = translateOf(gid)
+    243|           expect(t, where).not.toBeNull()
+    244|           expect(Math.abs(t![0] - dfx * vbW), where).toBeLessThan(1e-9)
+       |                                                      ^
+    245|           expect(Math.abs(t![1] - dfy * vbH), where).toBeLessThan(1e-9)
+    246|           expect(svgNode(gid)!.innerHTML, `${where} 原始子节点/transform 不得…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > zoom=1.5：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标
+AssertionError: axes_0.title_left zoom=1.5 dir=(1,0): expected 9.25 to be less than 1e-9
+ ❯ src/canvas/geometryReference.test.ts:244:54
+    242|           const t = translateOf(gid)
+    243|           expect(t, where).not.toBeNull()
+    244|           expect(Math.abs(t![0] - dfx * vbW), where).toBeLessThan(1e-9)
+       |                                                      ^
+    245|           expect(Math.abs(t![1] - dfy * vbH), where).toBeLessThan(1e-9)
+    246|           expect(svgNode(gid)!.innerHTML, `${where} 原始子节点/transform 不得…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > zoom=1.37：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标
+AssertionError: axes_0.title_left zoom=1.37 dir=(1,0): expected 7.494525547445257 to be less than 1e-9
+ ❯ src/canvas/geometryReference.test.ts:244:54
+    242|           const t = translateOf(gid)
+    243|           expect(t, where).not.toBeNull()
+    244|           expect(Math.abs(t![0] - dfx * vbW), where).toBeLessThan(1e-9)
+       |                                                      ^
+    245|           expect(Math.abs(t![1] - dfy * vbH), where).toBeLessThan(1e-9)
+    246|           expect(svgNode(gid)!.innerHTML, `${where} 原始子节点/transform 不得…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > Axes 整体移动（position 是 bottom-origin）：八个方向，y 分量方向正确
+AssertionError: axes_0 zoom=0.75 dir=(1,0): expected 0.007655555555555582 to be less than 0.000050000001000000005
+ ❯ src/canvas/geometryReference.test.ts:279:57
+    277|         fire('pointerup', 300 + ds[0], 200 + ds[1])
+    278|         const v = valueOf('axes_0', 'position')!
+    279|         expect(Math.abs(v[0] - (pos0[0] + dfx)), where).toBeLessThan(Q)
+       |                                                         ^
+    280|         expect(Math.abs(v[1] - (pos0[1] - dfy)), where).toBeLessThan(Q…
+    281|         expect(v[2], where).toBe(r4(pos0[2]))
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：2 个文字同一屏幕位移
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：10 个文字同一屏幕位移
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：100 个文字同一屏幕位移
+AssertionError: axes_0.texts_0: expected 0.013329629629629636 to be less than 0.000050000001000000005
+ ❯ src/canvas/geometryReference.test.ts:317:52
+    315|         const a = el('G2big', gid).anchor!
+    316|         const v = valueOf(gid, 'pos_frac')!
+    317|         expect(Math.abs(v[0] - (a[0] + dfx)), gid).toBeLessThan(Q)
+       |                                                    ^
+    318|         expect(Math.abs(v[1] - (a[1] + dfy)), gid).toBeLessThan(Q)
+    319|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2 混合类型（文字 + 图例 + 形状 + 另一面板的标题），跨两个 Axes
+AssertionError: axes_0.texts_0: expected 4.749999999999998 to be less than 1e-9
+ ❯ src/canvas/geometryReference.test.ts:353:48
+    351|       const t = translateOf(gid)
+    352|       expect(t, gid).not.toBeNull()
+    353|       expect(Math.abs(t![0] - dfx * vbW), gid).toBeLessThan(1e-9)
+       |                                                ^
+    354|       expect(Math.abs(t![1] - dfy * vbH), gid).toBeLessThan(1e-9)
+    355|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯
+
+[exit=1]
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/fakeRealtimeDrag.test.tsx src/canvas/axesCompanionDrag.test.tsx
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  2 passed (2)
+      Tests  30 passed (30)
+   Start at  02:39:35
+   Duration  1.27s (transform 611ms, setup 305ms, import 532ms, tests 689ms, environment 565ms)
+
+[exit=0]
+
+-- restored web/src/canvas/interactions.ts (git checkout --) --
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  27 passed (27)
+   Start at  02:39:37
+   Duration  2.60s (transform 298ms, setup 119ms, import 273ms, tests 1.86s, environment 272ms)
+
+[exit=0]
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/fakeRealtimeDrag.test.tsx src/canvas/axesCompanionDrag.test.tsx
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  2 passed (2)
+      Tests  30 passed (30)
+   Start at  02:39:40
+   Duration  1.25s (transform 565ms, setup 256ms, import 517ms, tests 694ms, environment 570ms)
+
+[exit=0]
+
+SUMMARY M1-missing-zoom: mutated_exit=[1, 0] restored_exit=[0, 0]
+
+===== mutation M2-y-flip · 2026-09-25T02:40:00.272505 · HEAD 8342950a3e5c4be83491a9ba84a9e7eb63f39dee
+target: web/src/canvas/interactions.ts
+- 'y = clamp(y - dfy, 0, 1 - h) // 屏幕向下'
++ 'y = clamp(y + dfy, 0, 1 - h) // 屏幕向下'
+target string occurrences: 1
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'bottom-origin'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+ ❯ src/canvas/geometryReference.test.ts (27 tests | 1 failed | 26 skipped) 65ms
+     × Axes 整体移动（position 是 bottom-origin）：八个方向，y 分量方向正确 65ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 26 skipped (27)
+   Start at  02:40:00
+   Duration  1.13s (transform 360ms, setup 161ms, import 325ms, tests 65ms, environment 481ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > Axes 整体移动（position 是 bottom-origin）：八个方向，y 分量方向正确
+AssertionError: axes_0 zoom=0.75 dir=(1,1): expected 0.09544305555555554 to be less than 0.000050000001000000005
+ ❯ src/canvas/geometryReference.test.ts:280:57
+    278|         const v = valueOf('axes_0', 'position')!
+    279|         expect(Math.abs(v[0] - (pos0[0] + dfx)), where).toBeLessThan(Q)
+    280|         expect(Math.abs(v[1] - (pos0[1] - dfy)), where).toBeLessThan(Q…
+       |                                                         ^
+    281|         expect(v[2], where).toBe(r4(pos0[2]))
+    282|         expect(v[3], where).toBe(r4(pos0[3]))
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+[exit=1]
+
+-- restored web/src/canvas/interactions.ts (git checkout --) --
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'bottom-origin'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 26 skipped (27)
+   Start at  02:40:02
+   Duration  988ms (transform 361ms, setup 144ms, import 335ms, tests 130ms, environment 295ms)
+
+[exit=0]
+
+SUMMARY M2-y-flip: mutated_exit=[1] restored_exit=[0]
+
+===== mutation M3-group-drops-one · 2026-09-25T02:40:03.625096 · HEAD 8342950a3e5c4be83491a9ba84a9e7eb63f39dee
+target: web/src/canvas/interactions.ts
+- 'entries.map((en, i) => en.write(boxes[i])),'
++ 'entries.map((en, i) => en.write(boxes[i])).slice(1),'
+target string occurrences: 1
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-02'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+ ❯ src/canvas/geometryReference.test.ts (27 tests | 4 failed | 23 skipped) 127ms
+     × G2big：2 个文字同一屏幕位移 39ms
+     × G2big：10 个文字同一屏幕位移 13ms
+     × G2big：100 个文字同一屏幕位移 27ms
+     × G2 混合类型（文字 + 图例 + 形状 + 另一面板的标题），跨两个 Axes 48ms
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 23 skipped (27)
+   Start at  02:40:03
+   Duration  892ms (transform 316ms, setup 143ms, import 270ms, tests 127ms, environment 269ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：2 个文字同一屏幕位移
+AssertionError: expected [ { gid: 'axes_0.texts_50', …(2) } ] to have a length of 2 but got 1
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ src/canvas/geometryReference.test.ts:312:18
+    310|       const ov = overridesNow()
+    311|       // 恰好一次：每个成员一条，不多不少
+    312|       expect(ov).toHaveLength(count)
+       |                  ^
+    313|       expect(new Set(ov.map((o) => o.gid)).size).toBe(count)
+    314|       for (const gid of picked) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：10 个文字同一屏幕位移
+AssertionError: expected [ …(9) ] to have a length of 10 but got 9
+
+- Expected
++ Received
+
+- 10
++ 9
+
+ ❯ src/canvas/geometryReference.test.ts:312:18
+    310|       const ov = overridesNow()
+    311|       // 恰好一次：每个成员一条，不多不少
+    312|       expect(ov).toHaveLength(count)
+       |                  ^
+    313|       expect(new Set(ov.map((o) => o.gid)).size).toBe(count)
+    314|       for (const gid of picked) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：100 个文字同一屏幕位移
+AssertionError: expected [ …(99) ] to have a length of 100 but got 99
+
+- Expected
++ Received
+
+- 100
++ 99
+
+ ❯ src/canvas/geometryReference.test.ts:312:18
+    310|       const ov = overridesNow()
+    311|       // 恰好一次：每个成员一条，不多不少
+    312|       expect(ov).toHaveLength(count)
+       |                  ^
+    313|       expect(new Set(ov.map((o) => o.gid)).size).toBe(count)
+    314|       for (const gid of picked) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2 混合类型（文字 + 图例 + 形状 + 另一面板的标题），跨两个 Axes
+AssertionError: expected [ Array(4) ] to have a length of 5 but got 4
+
+- Expected
++ Received
+
+- 5
++ 4
+
+ ❯ src/canvas/geometryReference.test.ts:357:28
+    355|     }
+    356|     fire('pointerup', 400 + ds[0], 300 + ds[1])
+    357|     expect(overridesNow()).toHaveLength(picked.length)
+       |                            ^
+    358|     for (const gid of picked) {
+    359|       const e = el('G2', gid)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+[exit=1]
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/alignAction.test.ts src/store/alignSelectedTo.test.ts src/canvas/alignUndoConvergence.test.tsx src/canvas/fakeRealtimeDrag.test.tsx
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  4 passed (4)
+      Tests  54 passed (54)
+   Start at  02:40:05
+   Duration  1.49s (transform 1.18s, setup 563ms, import 1.21s, tests 585ms, environment 1.72s)
+
+[exit=0]
+
+-- restored web/src/canvas/interactions.ts (git checkout --) --
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-02'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed | 23 skipped (27)
+   Start at  02:40:07
+   Duration  1.04s (transform 368ms, setup 170ms, import 305ms, tests 131ms, environment 359ms)
+
+[exit=0]
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/alignAction.test.ts src/store/alignSelectedTo.test.ts src/canvas/alignUndoConvergence.test.tsx src/canvas/fakeRealtimeDrag.test.tsx
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  4 passed (4)
+      Tests  54 passed (54)
+   Start at  02:40:08
+   Duration  1.51s (transform 1.44s, setup 764ms, import 1.37s, tests 585ms, environment 1.57s)
+
+[exit=0]
+
+SUMMARY M3-group-drops-one: mutated_exit=[1, 0] restored_exit=[0, 0]
+
+===== mutation M4-no-threshold · 2026-09-25T02:40:10.263896 · HEAD 8342950a3e5c4be83491a9ba84a9e7eb63f39dee
+target: web/src/canvas/interactions.ts
+- 'export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 2 }'
++ 'export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 0 }'
+target string occurrences: 1
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-07'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+ ❯ src/canvas/geometryReference.test.ts (27 tests | 1 failed | 23 skipped) 93ms
+     × 只 pointerdown / up（含 1px 抖动，低于 2px 阈值）：单拖 / 整组 / Axes 移动 / Axes 缩放 / 成组缩放全是 no-op 40ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 passed | 23 skipped (27)
+   Start at  02:40:10
+   Duration  849ms (transform 303ms, setup 124ms, import 270ms, tests 93ms, environment 278ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-07 边界与 no-op：没有位移就什么都不产生；缩到最小不出 0 / NaN > 只 pointerdown / up（含 1px 抖动，低于 2px 阈值）：单拖 / 整组 / Axes 移动 / Axes 缩放 / 成组缩放全是 no-op
+AssertionError: expected [ { gid: 'axes_0.texts_0', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "gid": "axes_0.texts_0",
++     "prop": "pos_frac",
++     "value": [
++       0.2348843176288432,
++       0.28427272727272734,
++     ],
++   },
++ ]
+
+ ❯ noop src/canvas/geometryReference.test.ts:526:28
+    524| describe('GEO-07 边界与 no-op：没有位移就什么都不产生；缩到最小不出 0 / NaN', () => {
+    525|   const noop = () => {
+    526|     expect(overridesNow()).toEqual([])
+       |                            ^
+    527|     expect(useDocumentStore.getState().past).toHaveLength(0)
+    528|     expect(engineRender).not.toHaveBeenCalled()
+ ❯ src/canvas/geometryReference.test.ts:539:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+[exit=1]
+
+-- restored web/src/canvas/interactions.ts (git checkout --) --
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-07'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed | 23 skipped (27)
+   Start at  02:40:11
+   Duration  834ms (transform 292ms, setup 117ms, import 263ms, tests 106ms, environment 270ms)
+
+[exit=0]
+
+SUMMARY M4-no-threshold: mutated_exit=[1] restored_exit=[0]
+
+===== mutation M5-stale-anchor · 2026-09-25T02:40:12.842069 · HEAD 8342950a3e5c4be83491a9ba84a9e7eb63f39dee
+target: web/src/lib/elementGeom.ts
+- '  if (ov && Array.isArray(ov.value)) {\n    const v = ov.value as number[]\n    return [v[0], v[1]]'
++ '  if (ov && Array.isArray(ov.value) && false) {\n    const v = ov.value as number[]\n    return [v[0], v[1]]'
+target string occurrences: 1
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-06'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+ ❯ src/canvas/geometryReference.test.ts (27 tests | 2 failed | 23 skipped) 151ms
+     × 一次长拖 vs 分三段拖：落点在量化预算内一致（整组平移同样） 29ms
+     × 反向拖回：单元素回到原锚点；整组 20 次往返不随次数漂移 18ms
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed | 23 skipped (27)
+   Start at  02:40:13
+   Duration  893ms (transform 287ms, setup 122ms, import 260ms, tests 151ms, environment 277ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-06 事件密度与往返：同起终点同结果，反操作回到量化范围内 > 一次长拖 vs 分三段拖：落点在量化预算内一致（整组平移同样）
+AssertionError: expected 0.10416666666666669 to be less than 0.000050000001000000005
+ ❯ src/canvas/geometryReference.test.ts:449:44
+    447|     }
+    448|     const multi = valueOf('axes_0.texts_0', 'pos_frac')!
+    449|     expect(Math.abs(multi[0] - single[0])).toBeLessThan(Q)
+       |                                            ^
+    450|     expect(Math.abs(multi[1] - single[1])).toBeLessThan(Q)
+    451|     expect(useDocumentStore.getState().past).toHaveLength(3) // 三段 = 三…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-06 事件密度与往返：同起终点同结果，反操作回到量化范围内 > 反向拖回：单元素回到原锚点；整组 20 次往返不随次数漂移
+AssertionError: expected 0.1583333333333333 to be less than 0.000050000001000000005
+ ❯ src/canvas/geometryReference.test.ts:484:38
+    482|     fire('pointerup', -57, -33)
+    483|     const back = valueOf('axes_0.texts_0', 'pos_frac')!
+    484|     expect(Math.abs(back[0] - a[0])).toBeLessThan(Q)
+       |                                      ^
+    485|     expect(Math.abs(back[1] - a[1])).toBeLessThan(Q)
+    486|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+[exit=1]
+
+-- restored web/src/lib/elementGeom.ts (git checkout --) --
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-06'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed | 23 skipped (27)
+   Start at  02:40:14
+   Duration  1.01s (transform 301ms, setup 124ms, import 267ms, tests 273ms, environment 267ms)
+
+[exit=0]
+
+SUMMARY M5-stale-anchor: mutated_exit=[1] restored_exit=[0]
+
+===== mutation M6-group-resize-anchor · 2026-09-25T02:40:15.653660 · HEAD 8342950a3e5c4be83491a9ba84a9e7eb63f39dee
+target: web/src/lib/axesLayout.ts
+- 'west ? gx + gw - gw * sx : gx,'
++ 'gx,'
+target string occurrences: 1
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-04'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+ ❯ src/canvas/geometryReference.test.ts (27 tests | 3 failed | 19 skipped) 128ms
+     × 手柄 w 13ms
+     × 手柄 nw 8ms
+     × 手柄 sw 11ms
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 5 passed | 19 skipped (27)
+   Start at  02:40:15
+   Duration  933ms (transform 349ms, setup 143ms, import 312ms, tests 128ms, environment 269ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-04 成组缩放八手柄：固定边 / 基点守恒，成员按 pᵢ′ = c + S(pᵢ − c) 重映射 > 手柄 w
+AssertionError: w axes_0[0]: expected 0.03906250000000003 to be less than 0.00010000000200000001
+ ❯ src/canvas/geometryReference.test.ts:409:72
+    407|         const got = [v[0], 1 - v[1] - v[3], v[2], v[3]]
+    408|         for (let k = 0; k < 4; k++) {
+    409|           expect(Math.abs(got[k] - want[k]), `${dir} ${en.key}[${k}]`)…
+       |                                                                        ^
+    410|         }
+    411|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-04 成组缩放八手柄：固定边 / 基点守恒，成员按 pᵢ′ = c + S(pᵢ − c) 重映射 > 手柄 nw
+AssertionError: nw axes_0[0]: expected 0.061553030303030304 to be less than 0.00010000000200000001
+ ❯ src/canvas/geometryReference.test.ts:409:72
+    407|         const got = [v[0], 1 - v[1] - v[3], v[2], v[3]]
+    408|         for (let k = 0; k < 4; k++) {
+    409|           expect(Math.abs(got[k] - want[k]), `${dir} ${en.key}[${k}]`)…
+       |                                                                        ^
+    410|         }
+    411|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-04 成组缩放八手柄：固定边 / 基点守恒，成员按 pᵢ′ = c + S(pᵢ − c) 重映射 > 手柄 sw
+AssertionError: sw axes_0[0]: expected 0.061553030303030304 to be less than 0.00010000000200000001
+ ❯ src/canvas/geometryReference.test.ts:409:72
+    407|         const got = [v[0], 1 - v[1] - v[3], v[2], v[3]]
+    408|         for (let k = 0; k < 4; k++) {
+    409|           expect(Math.abs(got[k] - want[k]), `${dir} ${en.key}[${k}]`)…
+       |                                                                        ^
+    410|         }
+    411|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+[exit=1]
+
+-- restored web/src/lib/axesLayout.ts (git checkout --) --
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-04'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed | 19 skipped (27)
+   Start at  02:40:17
+   Duration  1.13s (transform 475ms, setup 126ms, import 480ms, tests 167ms, environment 275ms)
+
+[exit=0]
+
+SUMMARY M6-group-resize-anchor: mutated_exit=[1] restored_exit=[0]
+
+===== mutation M7-engine-text-offset · 2026-09-25T02:40:18.774764 · HEAD 8342950a3e5c4be83491a9ba84a9e7eb63f39dee
+target: src/tavotto/engine/overrides.py
+- '    disp = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))\n    kind, ax = getattr(t, "_mm_drag", (None, None))'
++ '    disp = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]) + 0.01)\n    kind, ax = getattr(t, "_mm_drag", (None, None))'
+target string occurrences: 1
+
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q tests/test_geometry_reference.py
+...FFFFFFFF                                                              [100%]
+=================================== FAILURES ===================================
+_______ test_single_drag_lands_on_the_independent_ruler[axes_0.texts_0] ________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x103e96a50>
+gid = 'axes_0.texts_0'
+
+    @pytest.mark.parametrize("gid", sorted(G1_DRAGGABLE))
+    def test_single_drag_lands_on_the_independent_ruler(hot, gid):
+        """GEO-01：8 个方向 × 3 档 zoom，锚点落在 T⁻¹(T(p)+Δs)，只有目标动了。"""
+        base = _by_gid(_man(hot, "G1"))
+        el0 = base[gid]
+        prop = G1_DRAGGABLE[gid]
+        tol_x, tol_y = budget("G1")
+        worst = worst_box = 0.0
+        for zoom in ZOOMS:
+            for ux, uy in DIRECTIONS:
+                dfx, dfy = frac_delta("G1", zoom, (ux * STEP_PX, uy * STEP_PX))
+                target = [el0["anchor"][0] + dfx, el0["anchor"][1] + dfy]
+                man = _by_gid(_man(hot, "G1", [{"gid": gid, "prop": prop, "value": target}]))
+                el = man[gid]
+                where = f"{gid} zoom={zoom} dir=({ux},{uy})"
+                # 1. 锚点
+                assert el["anchor"][0] == pytest.approx(target[0], abs=tol_x), where
+>               assert el["anchor"][1] == pytest.approx(target[1], abs=tol_y), where
+E               AssertionError: axes_0.texts_0 zoom=0.75 dir=(-1,-1)
+E               assert 0.13368244949494967 == 0.12368244949...8 ± 0.00108507
+E                 
+E                 comparison failed
+E                 Obtained: 0.13368244949494967
+E                 Expected: 0.12368244949494958 ± 0.00108507
+
+tests/test_geometry_reference.py:170: AssertionError
+______ test_single_drag_lands_on_the_independent_ruler[axes_0.title_left] ______
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x103e96a50>
+gid = 'axes_0.title_left'
+
+    @pytest.mark.parametrize("gid", sorted(G1_DRAGGABLE))
+    def test_single_drag_lands_on_the_independent_ruler(hot, gid):
+... [截断 101 行] ...
+        dfx, dfy = frac_delta("G2big", 1.5, (23.0, -41.0))
+        # 前端整组平移写的是 round4 之后的值（elementGeom.alignEntries.write），这里同样
+        patches = [
+            {
+                "gid": g,
+                "prop": "pos_frac",
+                "value": [round(base[g]["anchor"][0] + dfx, 4), round(base[g]["anchor"][1] + dfy, 4)],
+            }
+            for g in picked
+        ]
+        man = _by_gid(_man(hot, "G2big", patches))
+        tol_x, tol_y = budget("G2big")
+        for g in picked:
+            assert man[g]["anchor"][0] - base[g]["anchor"][0] == pytest.approx(dfx, abs=tol_x), g
+>           assert man[g]["anchor"][1] - base[g]["anchor"][1] == pytest.approx(dfy, abs=tol_y), g
+E           AssertionError: axes_0.texts_0
+E           assert -0.03749999999999998 == -0.0474537037...3706 ± 5.8e-04
+E             
+E             comparison failed
+E             Obtained: -0.03749999999999998
+E             Expected: -0.047453703703703706 ± 5.8e-04
+
+tests/test_geometry_reference.py:240: AssertionError
+_____________ test_group_move_moves_every_member_exactly_once[10] ______________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x103e96a50>, count = 10
+
+    @pytest.mark.parametrize("count", [2, 10, 100])
+    def test_group_move_moves_every_member_exactly_once(hot, count):
+        """GEO-02：2 / 10 / 100 个成员同一屏幕位移——每个成员一次、间距不变、其余不动。"""
+        base = _by_gid(_man(hot, "G2big"))
+        texts = sorted(
+            (g for g, e in base.items() if e["role"] == "text" and e.get("drag_prop") == "pos_frac"),
+            key=lambda g: int(g.rsplit("_", 1)[1]),
+        )
+        assert len(texts) == 100, f"G2big 夹具应当有 100 个可拖文字，实际 {len(texts)}"
+        # 均匀取样而不是取前 count 个：选中的散布在整张图上
+        picked = texts[:: 100 // count][:count]
+        dfx, dfy = frac_delta("G2big", 1.5, (23.0, -41.0))
+        # 前端整组平移写的是 round4 之后的值（elementGeom.alignEntries.write），这里同样
+        patches = [
+            {
+                "gid": g,
+                "prop": "pos_frac",
+                "value": [round(base[g]["anchor"][0] + dfx, 4), round(base[g]["anchor"][1] + dfy, 4)],
+            }
+            for g in picked
+        ]
+        man = _by_gid(_man(hot, "G2big", patches))
+        tol_x, tol_y = budget("G2big")
+        for g in picked:
+            assert man[g]["anchor"][0] - base[g]["anchor"][0] == pytest.approx(dfx, abs=tol_x), g
+>           assert man[g]["anchor"][1] - base[g]["anchor"][1] == pytest.approx(dfy, abs=tol_y), g
+E           AssertionError: axes_0.texts_0
+E           assert -0.03749999999999998 == -0.0474537037...3706 ± 5.8e-04
+E             
+E             comparison failed
+E             Obtained: -0.03749999999999998
+E             Expected: -0.047453703703703706 ± 5.8e-04
+
+tests/test_geometry_reference.py:240: AssertionError
+_____________ test_group_move_moves_every_member_exactly_once[100] _____________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x103e96a50>, count = 100
+
+    @pytest.mark.parametrize("count", [2, 10, 100])
+    def test_group_move_moves_every_member_exactly_once(hot, count):
+        """GEO-02：2 / 10 / 100 个成员同一屏幕位移——每个成员一次、间距不变、其余不动。"""
+        base = _by_gid(_man(hot, "G2big"))
+        texts = sorted(
+            (g for g, e in base.items() if e["role"] == "text" and e.get("drag_prop") == "pos_frac"),
+            key=lambda g: int(g.rsplit("_", 1)[1]),
+        )
+        assert len(texts) == 100, f"G2big 夹具应当有 100 个可拖文字，实际 {len(texts)}"
+        # 均匀取样而不是取前 count 个：选中的散布在整张图上
+        picked = texts[:: 100 // count][:count]
+        dfx, dfy = frac_delta("G2big", 1.5, (23.0, -41.0))
+        # 前端整组平移写的是 round4 之后的值（elementGeom.alignEntries.write），这里同样
+        patches = [
+            {
+                "gid": g,
+                "prop": "pos_frac",
+                "value": [round(base[g]["anchor"][0] + dfx, 4), round(base[g]["anchor"][1] + dfy, 4)],
+            }
+            for g in picked
+        ]
+        man = _by_gid(_man(hot, "G2big", patches))
+        tol_x, tol_y = budget("G2big")
+        for g in picked:
+            assert man[g]["anchor"][0] - base[g]["anchor"][0] == pytest.approx(dfx, abs=tol_x), g
+>           assert man[g]["anchor"][1] - base[g]["anchor"][1] == pytest.approx(dfy, abs=tol_y), g
+E           AssertionError: axes_0.texts_0
+E           assert -0.03749999999999998 == -0.0474537037...3706 ± 5.8e-04
+E             
+E             comparison failed
+E             Obtained: -0.03749999999999998
+E             Expected: -0.047453703703703706 ± 5.8e-04
+
+tests/test_geometry_reference.py:240: AssertionError
+________ test_axes_and_its_own_title_moved_together_move_the_title_once ________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x103e96a50>
+
+    def test_axes_and_its_own_title_moved_together_move_the_title_once(hot):
+        """GEO-03 后端半：Axes 与它的标题同时平移——标题在权威 manifest 里只走一次 Δ。
+    
+        两种写法都要成立：
+        * 只挪 Axes（标题没被单独摆过）：标题作为孩子随 Axes 走 Δ；
+        * Axes 写 position + 标题写 anchor+Δ（图内整组平移的实际写法）：标题仍只走 Δ，不是 2Δ。
+        """
+        base = _by_gid(_man(hot, "G1"))
+        axes0 = next(f["value"] for f in base["axes_0"]["editable"] if f["prop"] == "position")
+        title0 = base["axes_0.title_left"]
+        dfx, dfy = frac_delta("G1", 1.0, (29.0, 17.0))
+        tol_x, tol_y = budget("G1")
+        # position 是 bottom-origin：屏幕往下 = y 变小
+        moved = [round(axes0[0] + dfx, 4), round(axes0[1] - dfy, 4), axes0[2], axes0[3]]
+        moved_axes = {"gid": "axes_0", "prop": "position", "value": moved}
+        # 实际写进去的位移（round4 之后）
+        rdx = moved[0] - axes0[0]
+        rdy = axes0[1] - moved[1]
+    
+        t = _by_gid(_man(hot, "G1", [moved_axes]))["axes_0.title_left"]
+        assert t["anchor"][0] - title0["anchor"][0] == pytest.approx(rdx, abs=tol_x)
+        assert t["anchor"][1] - title0["anchor"][1] == pytest.approx(rdy, abs=tol_y)
+    
+        title_patch = {
+            "gid": "axes_0.title_left",
+            "prop": "pos_frac",
+            "value": [round(title0["anchor"][0] + dfx, 4), round(title0["anchor"][1] + dfy, 4)],
+        }
+        t2 = _by_gid(_man(hot, "G1", [moved_axes, title_patch]))["axes_0.title_left"]
+        assert t2["anchor"][0] - title0["anchor"][0] == pytest.approx(dfx, abs=tol_x)
+>       assert t2["anchor"][1] - title0["anchor"][1] == pytest.approx(dfy, abs=tol_y)
+E       assert 0.06534166666666652 == 0.05533854166...6 ± 0.00108507
+E         
+E         comparison failed
+E         Obtained: 0.06534166666666652
+E         Expected: 0.05533854166666666 ± 0.00108507
+
+tests/test_geometry_reference.py:286: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.texts_0]
+FAILED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.title_left]
+FAILED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.xlabel]
+FAILED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.ylabel]
+FAILED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[2]
+FAILED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[10]
+FAILED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[100]
+FAILED tests/test_geometry_reference.py::test_axes_and_its_own_title_moved_together_move_the_title_once
+[exit=1]
+
+-- restored src/tavotto/engine/overrides.py (git checkout --) --
+
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q tests/test_geometry_reference.py
+...........                                                              [100%]
+[exit=0]
+
+SUMMARY M7-engine-text-offset: mutated_exit=[1] restored_exit=[0]
+
+===== mutation M8-engine-pins-unmoved-label · 2026-09-25T03:03:52.967669 · HEAD 6f19b8b0f6a7cb3947edb2c033dbe23c04450f51
+target: src/tavotto/engine/overrides.py
+- '        fx, fy = ax.transAxes.inverted().transform(disp)\n        axis.set_label_coords(float(fx), float(fy))\n        return\n    if kind == "title":'
++ '        fx, fy = ax.transAxes.inverted().transform(disp)\n        axis.set_label_coords(float(fx), float(fy))\n        ax.xaxis.set_label_coords(0.5, -0.12) if kind == "ylabel" else None\n        return\n    if kind == "title":'
+target string occurrences: 1
+
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q tests/test_geometry_reference.py -k 'moved_label or single_drag'
+.....FF                                                                  [100%]
+=================================== FAILURES ===================================
+________ test_single_drag_lands_on_the_independent_ruler[axes_0.ylabel] ________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x101f2ea50>
+gid = 'axes_0.ylabel'
+
+    @pytest.mark.parametrize("gid", sorted(G1_DRAGGABLE))
+    def test_single_drag_lands_on_the_independent_ruler(hot, gid):
+        """GEO-01：8 个方向 × 3 档 zoom，锚点落在 T⁻¹(T(p)+Δs)，只有目标动了。"""
+        base = _by_gid(_man(hot, "G1"))
+        el0 = base[gid]
+        prop = G1_DRAGGABLE[gid]
+        tol_x, tol_y = budget("G1")
+        worst = worst_box = 0.0
+        for zoom in ZOOMS:
+            for ux, uy in DIRECTIONS:
+                dfx, dfy = frac_delta("G1", zoom, (ux * STEP_PX, uy * STEP_PX))
+                target = [el0["anchor"][0] + dfx, el0["anchor"][1] + dfy]
+                man = _by_gid(_man(hot, "G1", [{"gid": gid, "prop": prop, "value": target}]))
+                el = man[gid]
+                where = f"{gid} zoom={zoom} dir=({ux},{uy})"
+                # 1. 锚点
+                assert el["anchor"][0] == pytest.approx(target[0], abs=tol_x), where
+                assert el["anchor"][1] == pytest.approx(target[1], abs=tol_y), where
+                worst = max(worst, abs(el["anchor"][0] - target[0]), abs(el["anchor"][1] - target[1]))
+                worst_box = max(
+                    worst_box,
+                    abs(el["bbox"][0] - el0["bbox"][0] - dfx),
+                    abs(el["bbox"][1] - el0["bbox"][1] - dfy),
+                )
+                # 2. 墨迹框整体平移、尺寸不变
+                assert el["bbox"][0] - el0["bbox"][0] == pytest.approx(dfx, abs=tol_x), where
+                assert el["bbox"][1] - el0["bbox"][1] == pytest.approx(dfy, abs=tol_y), where
+                assert el["bbox"][2:] == pytest.approx(el0["bbox"][2:], abs=1e-6), where
+                # 4. 目标除位置外的属性原样
+                assert _non_position_fields(el) == _non_position_fields(el0), where
+                # 3. 非目标：锚点 / 墨迹框 / 曲线点序列都不动
+                for other_gid, other0 in base.items():
+                    if other_gid == gid or other_gid in ("figure", "axes_0"):
+                        continue
+                    other = man[other_gid]
+                    if other_gid.startswith(gid + "."):
+                        # 后代（图例条目文字）随父走：同一个位移，恰好一次（不是零次、也不是两次）
+                        assert other["bbox"][0] - other0["bbox"][0] == pytest.approx(dfx, abs=tol_x), (
+                            f"{where} 后代 {other_gid} 没跟上 / 走了两次"
+                        )
+                        assert other["bbox"][1] - other0["bbox"][1] == pytest.approx(dfy, abs=tol_y), (
+                            f"{where} 后代 {other_gid} 没跟上 / 走了两次"
+                        )
+                        continue
+>                   assert other.get("anchor") == other0.get("anchor"), f"{where} 连带动了 {other_gid}"
+E                   AssertionError: axes_0.ylabel zoom=0.75 dir=(-1,-1) 连带动了 axes_0.xlabel
+E                   assert [0.535, 0.9128] == [0.535, 0.9214930555555555]
+E                     
+E                     At index 1 diff: 0.9128 != 0.9214930555555555
+E                     Use -v to get more diff
+
+tests/test_geometry_reference.py:224: AssertionError
+______ test_moved_label_keeps_its_anchor_and_unmoved_text_keeps_reflowing ______
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x101f2ea50>
+
+    def test_moved_label_keeps_its_anchor_and_unmoved_text_keeps_reflowing(hot):
+        """GEO-10：改图幅与字号——拖过的 y 轴标签守住自己的 figure 分数锚点，没拖过的 x 轴标签
+        照常跟着排版走（与「没拖过任何东西」的对照组逐位相同）。
+    
+        只覆盖**无布局引擎**的图：constrained / tight 布局下拖标题 / 轴标签的 y 分量不生效
+        （QA 2026-09-24 product bug，复现 `docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py`），
+        修好之后把 G10 换回 constrained。
+        """
+        base = _by_gid(_man(hot, "G10"))
+        ylabel0 = base["axes_0.ylabel"]
+        xlabel0 = base["axes_0.xlabel"]
+        reflow = [
+            {"gid": "figure", "prop": "size_mm", "value": [150.0, 70.0]},
+            {"gid": "axes_0.xlabel", "prop": "fontsize", "value": 16.0},
+            {"gid": "axes_0.ylabel", "prop": "fontsize", "value": 14.0},
+        ]
+        target = [round(ylabel0["anchor"][0] + 0.03, 4), round(ylabel0["anchor"][1] - 0.1, 4)]
+        moved = {"gid": "axes_0.ylabel", "prop": "pos_frac", "value": target}
+    
+        control = _by_gid(_man(hot, "G10", reflow))
+        treated = _by_gid(_man(hot, "G10", [moved, *reflow]))
+        tol_x, tol_y = budget("G10")
+        # 拖过的：锚点仍是写下的那个 figure 分数
+        assert treated["axes_0.ylabel"]["anchor"][0] == pytest.approx(target[0], abs=tol_x)
+        assert treated["axes_0.ylabel"]["anchor"][1] == pytest.approx(target[1], abs=tol_y)
+        # 没拖过的：确实被重排了（改图幅 / 字号之后不在原处）……
+        assert control["axes_0.xlabel"]["anchor"] != pytest.approx(xlabel0["anchor"], abs=1e-3)
+        # ……而且拖 y 轴标签这件事没有把它锁住：与对照组逐位相同
+>       assert treated["axes_0.xlabel"]["anchor"] == pytest.approx(
+            control["axes_0.xlabel"]["anchor"], abs=1e-9
+        )
+E       assert [0.5125000000000001, 0.9824] == approx([0.512...08 ± 1.0e-09])
+E         
+E         comparison failed. Mismatched elements: 1 / 2:
+E         Max absolute difference: 0.013836507936507925
+E         Max relative difference: 0.014084393257846014
+E         Index | Obtained | Expected                   
+E         1     | 0.9824   | 0.996236507936508 ± 1.0e-09
+
+tests/test_geometry_reference.py:379: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.ylabel]
+FAILED tests/test_geometry_reference.py::test_moved_label_keeps_its_anchor_and_unmoved_text_keeps_reflowing
+[exit=1]
+
+-- restored src/tavotto/engine/overrides.py (git checkout --) --
+
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q tests/test_geometry_reference.py -k 'moved_label or single_drag'
+.......                                                                  [100%]
+[exit=0]
+
+SUMMARY M8-engine-pins-unmoved-label: mutated_exit=[1] restored_exit=[0]
+
+===== mutation M9-drag-two-history-entries · 2026-09-25T03:04:03.528211 · HEAD 6f19b8b0f6a7cb3947edb2c033dbe23c04450f51
+target: web/src/canvas/interactions.ts
+- '      setOverride(panel.id, element.gid, dragProp, [anchor[0] + dfx, anchor[1] + dfy], true)'
++ "      setOverride(panel.id, element.gid, dragProp, [anchor[0], anchor[1] + 1e-3], 'none')\n      setOverride(panel.id, element.gid, dragProp, [anchor[0] + dfx, anchor[1] + dfy], true)"
+target string occurrences: 1
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-09'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+ ❯ src/canvas/geometryReference.test.ts (32 tests | 1 failed | 30 skipped) 82ms
+     × 图内对象：四步四条历史，undo 逐步回到每一步之前，redo 回到终态 62ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed | 30 skipped (32)
+   Start at  03:04:04
+   Duration  1.23s (transform 355ms, setup 160ms, import 313ms, tests 82ms, environment 578ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-09 拖动 → 缩放 → 对齐 → 分布，逐项撤销 / 重做：每个离散动作恰好一条历史 > 图内对象：四步四条历史，undo 逐步回到每一步之前，redo 回到终态
+AssertionError: expected [ { label: { …(3) }, …(2) }, …(4) ] to have a length of 4 but got 5
+
+- Expected
++ Received
+
+- 4
++ 5
+
+ ❯ src/canvas/geometryReference.test.ts:701:46
+    699|     // 每一步都真的改了文档，且恰好一条历史
+    700|     for (let i = 1; i < states.length; i++) expect(states[i], `第 ${i} …
+    701|     expect(useDocumentStore.getState().past).toHaveLength(4)
+       |                                              ^
+    702|     // 逐项撤销：每撤一次回到上一步的精确状态
+    703|     for (let i = states.length - 2; i >= 0; i--) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+[exit=1]
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-01'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+ ❯ src/canvas/geometryReference.test.ts (32 tests | 4 failed | 26 skipped) 196ms
+     × zoom=0.75：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标 29ms
+     × zoom=1：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标 16ms
+     × zoom=1.5：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标 17ms
+     × zoom=1.37：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标 13ms
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 2 passed | 26 skipped (32)
+   Start at  03:04:05
+   Duration  1.16s (transform 406ms, setup 165ms, import 374ms, tests 196ms, environment 337ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > zoom=0.75：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标
+AssertionError: axes_0.title_left zoom=0.75 dir=(1,0): expected [ { label: { …(3) }, …(2) }, …(1) ] to have a length of 1 but got 2
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ src/canvas/geometryReference.test.ts:260:59
+    258|           // 只写了这一条，一条历史，一次定稿渲染
+    259|           expect(overridesNow(), where).toHaveLength(1)
+    260|           expect(useDocumentStore.getState().past, where).toHaveLength…
+       |                                                           ^
+    261|           expect(engineRender, where).toHaveBeenCalledTimes(1)
+    262|           engineRender.mockClear()
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > zoom=1：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标
+AssertionError: axes_0.title_left zoom=1 dir=(1,0): expected [ { label: { …(3) }, …(2) }, …(1) ] to have a length of 1 but got 2
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ src/canvas/geometryReference.test.ts:260:59
+    258|           // 只写了这一条，一条历史，一次定稿渲染
+    259|           expect(overridesNow(), where).toHaveLength(1)
+    260|           expect(useDocumentStore.getState().past, where).toHaveLength…
+       |                                                           ^
+    261|           expect(engineRender, where).toHaveBeenCalledTimes(1)
+    262|           engineRender.mockClear()
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > zoom=1.5：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标
+AssertionError: axes_0.title_left zoom=1.5 dir=(1,0): expected [ { label: { …(3) }, …(2) }, …(1) ] to have a length of 1 but got 2
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ src/canvas/geometryReference.test.ts:260:59
+    258|           // 只写了这一条，一条历史，一次定稿渲染
+    259|           expect(overridesNow(), where).toHaveLength(1)
+    260|           expect(useDocumentStore.getState().past, where).toHaveLength…
+       |                                                           ^
+    261|           expect(engineRender, where).toHaveBeenCalledTimes(1)
+    262|           engineRender.mockClear()
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > zoom=1.37：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标
+AssertionError: axes_0.title_left zoom=1.37 dir=(1,0): expected [ { label: { …(3) }, …(2) }, …(1) ] to have a length of 1 but got 2
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ src/canvas/geometryReference.test.ts:260:59
+    258|           // 只写了这一条，一条历史，一次定稿渲染
+    259|           expect(overridesNow(), where).toHaveLength(1)
+    260|           expect(useDocumentStore.getState().past, where).toHaveLength…
+       |                                                           ^
+    261|           expect(engineRender, where).toHaveBeenCalledTimes(1)
+    262|           engineRender.mockClear()
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+[exit=1]
+
+-- restored web/src/canvas/interactions.ts (git checkout --) --
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-09'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 30 skipped (32)
+   Start at  03:04:07
+   Duration  860ms (transform 329ms, setup 136ms, import 292ms, tests 69ms, environment 281ms)
+
+[exit=0]
+
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t 'GEO-01'
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  6 passed | 26 skipped (32)
+   Start at  03:04:08
+   Duration  2.21s (transform 337ms, setup 131ms, import 303ms, tests 1.42s, environment 272ms)
+
+[exit=0]
+
+SUMMARY M9-drag-two-history-entries: mutated_exit=[1, 1] restored_exit=[0, 0]
+
+===== mutation M7-engine-text-offset · 2026-09-25T03:04:11.002465 · HEAD 6f19b8b0f6a7cb3947edb2c033dbe23c04450f51
+target: src/tavotto/engine/overrides.py
+- '    disp = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))\n    kind, ax = getattr(t, "_mm_drag", (None, None))'
++ '    disp = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]) + 0.01)\n    kind, ax = getattr(t, "_mm_drag", (None, None))'
+target string occurrences: 1
+
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q tests/test_geometry_reference.py
+...FFFFFFFFFFFF                                                          [100%]
+=================================== FAILURES ===================================
+_______ test_single_drag_lands_on_the_independent_ruler[axes_0.texts_0] ________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x102bf2a50>
+gid = 'axes_0.texts_0'
+
+    @pytest.mark.parametrize("gid", sorted(G1_DRAGGABLE))
+    def test_single_drag_lands_on_the_independent_ruler(hot, gid):
+        """GEO-01：8 个方向 × 3 档 zoom，锚点落在 T⁻¹(T(p)+Δs)，只有目标动了。"""
+        base = _by_gid(_man(hot, "G1"))
+        el0 = base[gid]
+        prop = G1_DRAGGABLE[gid]
+        tol_x, tol_y = budget("G1")
+        worst = worst_box = 0.0
+        for zoom in ZOOMS:
+            for ux, uy in DIRECTIONS:
+                dfx, dfy = frac_delta("G1", zoom, (ux * STEP_PX, uy * STEP_PX))
+                target = [el0["anchor"][0] + dfx, el0["anchor"][1] + dfy]
+                man = _by_gid(_man(hot, "G1", [{"gid": gid, "prop": prop, "value": target}]))
+                el = man[gid]
+                where = f"{gid} zoom={zoom} dir=({ux},{uy})"
+                # 1. 锚点
+                assert el["anchor"][0] == pytest.approx(target[0], abs=tol_x), where
+>               assert el["anchor"][1] == pytest.approx(target[1], abs=tol_y), where
+E               AssertionError: axes_0.texts_0 zoom=0.75 dir=(-1,-1)
+E               assert 0.13368244949494967 == 0.12368244949...8 ± 0.00108507
+E                 
+E                 comparison failed
+E                 Obtained: 0.13368244949494967
+E                 Expected: 0.12368244949494958 ± 0.00108507
+
+tests/test_geometry_reference.py:197: AssertionError
+______ test_single_drag_lands_on_the_independent_ruler[axes_0.title_left] ______
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x102bf2a50>
+gid = 'axes_0.title_left'
+
+    @pytest.mark.parametrize("gid", sorted(G1_DRAGGABLE))
+    def test_single_drag_lands_on_the_independent_ruler(hot, gid):
+... [截断 231 行] ...
+        }
+        t2 = _by_gid(_man(hot, "G1", [moved_axes, title_patch]))["axes_0.title_left"]
+        assert t2["anchor"][0] - title0["anchor"][0] == pytest.approx(dfx, abs=tol_x)
+>       assert t2["anchor"][1] - title0["anchor"][1] == pytest.approx(dfy, abs=tol_y)
+E       assert 0.06534166666666652 == 0.05533854166...6 ± 0.00108507
+E         
+E         comparison failed
+E         Obtained: 0.06534166666666652
+E         Expected: 0.05533854166666666 ± 0.00108507
+
+tests/test_geometry_reference.py:313: AssertionError
+______ test_special_coordinates_drag_is_scale_independent[axes_0.texts_0] ______
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x102bf2a50>
+gid = 'axes_0.texts_0'
+
+    @pytest.mark.parametrize("gid", G8_TEXTS)
+    def test_special_coordinates_drag_is_scale_independent(hot, gid):
+        """GEO-08：对数 x + 反转 y 上的文字、twinx 上的文字、figure 级文字——拖动写的是 figure
+        分数锚点，落点不套数据坐标公式；数据曲线、轴属性（对数刻度、反转）一样不变。"""
+        base = _by_gid(_man(hot, "G8"))
+        e0 = base[gid]
+        assert e0["draggable"] is True and e0["drag_prop"] == "pos_frac", e0
+        lines0 = {g: e.get("geometry") for g, e in base.items() if e["role"] == "line"}
+        ax_fields0 = {g: _non_position_fields(e) for g, e in base.items() if e["role"] == "axes"}
+        tol_x, tol_y = budget("G8")
+        for ux, uy in DIRECTIONS:
+            dfx, dfy = frac_delta("G8", 1.37, (ux * STEP_PX, uy * STEP_PX))
+            target = [e0["anchor"][0] + dfx, e0["anchor"][1] + dfy]
+            man = _by_gid(_man(hot, "G8", [{"gid": gid, "prop": "pos_frac", "value": target}]))
+            where = f"{gid} dir=({ux},{uy})"
+            assert man[gid]["anchor"][0] == pytest.approx(target[0], abs=tol_x), where
+>           assert man[gid]["anchor"][1] == pytest.approx(target[1], abs=tol_y), where
+E           AssertionError: axes_0.texts_0 dir=(-1,-1)
+E           assert 0.5962246553122466 == 0.58622465531...5 ± 0.00115741
+E             
+E             comparison failed
+E             Obtained: 0.5962246553122466
+E             Expected: 0.5862246553122465 ± 0.00115741
+
+tests/test_geometry_reference.py:343: AssertionError
+______ test_special_coordinates_drag_is_scale_independent[axes_2.texts_0] ______
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x102bf2a50>
+gid = 'axes_2.texts_0'
+
+    @pytest.mark.parametrize("gid", G8_TEXTS)
+    def test_special_coordinates_drag_is_scale_independent(hot, gid):
+        """GEO-08：对数 x + 反转 y 上的文字、twinx 上的文字、figure 级文字——拖动写的是 figure
+        分数锚点，落点不套数据坐标公式；数据曲线、轴属性（对数刻度、反转）一样不变。"""
+        base = _by_gid(_man(hot, "G8"))
+        e0 = base[gid]
+        assert e0["draggable"] is True and e0["drag_prop"] == "pos_frac", e0
+        lines0 = {g: e.get("geometry") for g, e in base.items() if e["role"] == "line"}
+        ax_fields0 = {g: _non_position_fields(e) for g, e in base.items() if e["role"] == "axes"}
+        tol_x, tol_y = budget("G8")
+        for ux, uy in DIRECTIONS:
+            dfx, dfy = frac_delta("G8", 1.37, (ux * STEP_PX, uy * STEP_PX))
+            target = [e0["anchor"][0] + dfx, e0["anchor"][1] + dfy]
+            man = _by_gid(_man(hot, "G8", [{"gid": gid, "prop": "pos_frac", "value": target}]))
+            where = f"{gid} dir=({ux},{uy})"
+            assert man[gid]["anchor"][0] == pytest.approx(target[0], abs=tol_x), where
+>           assert man[gid]["anchor"][1] == pytest.approx(target[1], abs=tol_y), where
+E           AssertionError: axes_2.texts_0 dir=(-1,-1)
+E           assert 0.21122465531224643 == 0.20122465531...6 ± 0.00115741
+E             
+E             comparison failed
+E             Obtained: 0.21122465531224643
+E             Expected: 0.2012246553122466 ± 0.00115741
+
+tests/test_geometry_reference.py:343: AssertionError
+_______ test_special_coordinates_drag_is_scale_independent[fig.texts_0] ________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x102bf2a50>
+gid = 'fig.texts_0'
+
+    @pytest.mark.parametrize("gid", G8_TEXTS)
+    def test_special_coordinates_drag_is_scale_independent(hot, gid):
+        """GEO-08：对数 x + 反转 y 上的文字、twinx 上的文字、figure 级文字——拖动写的是 figure
+        分数锚点，落点不套数据坐标公式；数据曲线、轴属性（对数刻度、反转）一样不变。"""
+        base = _by_gid(_man(hot, "G8"))
+        e0 = base[gid]
+        assert e0["draggable"] is True and e0["drag_prop"] == "pos_frac", e0
+        lines0 = {g: e.get("geometry") for g, e in base.items() if e["role"] == "line"}
+        ax_fields0 = {g: _non_position_fields(e) for g, e in base.items() if e["role"] == "axes"}
+        tol_x, tol_y = budget("G8")
+        for ux, uy in DIRECTIONS:
+            dfx, dfy = frac_delta("G8", 1.37, (ux * STEP_PX, uy * STEP_PX))
+            target = [e0["anchor"][0] + dfx, e0["anchor"][1] + dfy]
+            man = _by_gid(_man(hot, "G8", [{"gid": gid, "prop": "pos_frac", "value": target}]))
+            where = f"{gid} dir=({ux},{uy})"
+            assert man[gid]["anchor"][0] == pytest.approx(target[0], abs=tol_x), where
+>           assert man[gid]["anchor"][1] == pytest.approx(target[1], abs=tol_y), where
+E           AssertionError: fig.texts_0 dir=(-1,-1)
+E           assert 0.8962246553122466 == 0.88622465531...6 ± 0.00115741
+E             
+E             comparison failed
+E             Obtained: 0.8962246553122466
+E             Expected: 0.8862246553122466 ± 0.00115741
+
+tests/test_geometry_reference.py:343: AssertionError
+______ test_moved_label_keeps_its_anchor_and_unmoved_text_keeps_reflowing ______
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x102bf2a50>
+
+    def test_moved_label_keeps_its_anchor_and_unmoved_text_keeps_reflowing(hot):
+        """GEO-10：改图幅与字号——拖过的 y 轴标签守住自己的 figure 分数锚点，没拖过的 x 轴标签
+        照常跟着排版走（与「没拖过任何东西」的对照组逐位相同）。
+    
+        只覆盖**无布局引擎**的图：constrained / tight 布局下拖标题 / 轴标签的 y 分量不生效
+        （QA 2026-09-24 product bug，复现 `docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py`），
+        修好之后把 G10 换回 constrained。
+        """
+        base = _by_gid(_man(hot, "G10"))
+        ylabel0 = base["axes_0.ylabel"]
+        xlabel0 = base["axes_0.xlabel"]
+        reflow = [
+            {"gid": "figure", "prop": "size_mm", "value": [150.0, 70.0]},
+            {"gid": "axes_0.xlabel", "prop": "fontsize", "value": 16.0},
+            {"gid": "axes_0.ylabel", "prop": "fontsize", "value": 14.0},
+        ]
+        target = [round(ylabel0["anchor"][0] + 0.03, 4), round(ylabel0["anchor"][1] - 0.1, 4)]
+        moved = {"gid": "axes_0.ylabel", "prop": "pos_frac", "value": target}
+    
+        control = _by_gid(_man(hot, "G10", reflow))
+        treated = _by_gid(_man(hot, "G10", [moved, *reflow]))
+        tol_x, tol_y = budget("G10")
+        # 拖过的：锚点仍是写下的那个 figure 分数
+        assert treated["axes_0.ylabel"]["anchor"][0] == pytest.approx(target[0], abs=tol_x)
+>       assert treated["axes_0.ylabel"]["anchor"][1] == pytest.approx(target[1], abs=tol_y)
+E       assert 0.41500000000000004 == 0.405 ± 0.00108507
+E         
+E         comparison failed
+E         Obtained: 0.41500000000000004
+E         Expected: 0.405 ± 0.00108507
+
+tests/test_geometry_reference.py:375: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.texts_0]
+FAILED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.title_left]
+FAILED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.xlabel]
+FAILED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.ylabel]
+FAILED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[2]
+FAILED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[10]
+FAILED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[100]
+FAILED tests/test_geometry_reference.py::test_axes_and_its_own_title_moved_together_move_the_title_once
+FAILED tests/test_geometry_reference.py::test_special_coordinates_drag_is_scale_independent[axes_0.texts_0]
+FAILED tests/test_geometry_reference.py::test_special_coordinates_drag_is_scale_independent[axes_2.texts_0]
+FAILED tests/test_geometry_reference.py::test_special_coordinates_drag_is_scale_independent[fig.texts_0]
+FAILED tests/test_geometry_reference.py::test_moved_label_keeps_its_anchor_and_unmoved_text_keeps_reflowing
+[exit=1]
+
+-- restored src/tavotto/engine/overrides.py (git checkout --) --
+
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q tests/test_geometry_reference.py
+...............                                                          [100%]
+[exit=0]
+
+SUMMARY M7-engine-text-offset: mutated_exit=[1] restored_exit=[0]
+
+===== mutation M1e-missing-zoom-browser · 2026-09-25T03:07:50.238175 · HEAD f0ed2e4b7bef40ad5e0c3a0f053e8638a406d488
+target: web/src/canvas/interactions.ts
+- 'return [dx / (layout.width * zoom), dy / (layout.height * zoom)]'
++ 'return [dx / layout.width, dy / layout.height]'
+target string occurrences: 1
+
+$ PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py > /dev/null && cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src npx playwright test e2e/geometry-reference.spec.ts --project=chromium -g '放大一档|缩小一档'
+$ i18next-cli types --ci && node scripts/i18n-check.mjs && i18next-cli lint
+[32m✔[39m No issues found.
+$ tsc -b && vite build && node scripts/tailwind-scan-check.mjs
+Traceback (most recent call last):
+  File "/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/scripts/build_frontend.py", line 74, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/scripts/build_frontend.py", line 46, in main
+    run([pnpm, "build"])
+    ~~~^^^^^^^^^^^^^^^^^
+  File "/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/scripts/build_frontend.py", line 31, in run
+    subprocess.run(cmd, cwd=WEB_SRC, check=True)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 577, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/opt/homebrew/bin/pnpm', 'build']' returned non-zero exit status 2.
+[exit=1]
+
+-- restored web/src/canvas/interactions.ts (git checkout --) --
+
+$ PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py > /dev/null && cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src npx playwright test e2e/geometry-reference.spec.ts --project=chromium -g '放大一档|缩小一档'
+
+Running 2 tests using 1 worker
+
+[GEO-01 e2e] zoom=112% Δbox=(37.000, 22.999) 误差=(-0.000,-0.001) 尺寸变化=(0.000, 0.000)
+  ✓  1 [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：放大一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） (17.9s)
+[GEO-01 e2e] zoom=70% Δbox=(37.000, 22.999) 误差=(-0.000,-0.001) 尺寸变化=(0.000, 0.000)
+  ✓  2 [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：缩小一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） (27.5s)
+
+  2 passed (51.4s)
+$ i18next-cli types --ci && node scripts/i18n-check.mjs && i18next-cli lint
+[32m✔[39m No issues found.
+$ tsc -b && vite build && node scripts/tailwind-scan-check.mjs
+[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0msrc/store/renderStore.ts is dynamically imported by src/store/envStore.ts but also statically imported by src/canvas/OverlaySvg.tsx, src/canvas/PanelView.tsx, src/canvas/QuickEdit.tsx, src/canvas/WorkspaceContextBar.tsx, src/canvas/context-bar/ContextBar.tsx, ..., dynamic import will not move module into another chunk.
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[exit=0]
+
+SUMMARY M1e-missing-zoom-browser: mutated_exit=[1] restored_exit=[0]
+
+===== mutation M1e-missing-zoom-browser · 2026-09-25T03:10:23.495911 · HEAD 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+target: web/src/canvas/interactions.ts
+- 'return [dx / (layout.width * zoom), dy / (layout.height * zoom)]'
++ 'return [dx / (layout.width * zoom ** 0), dy / (layout.height * zoom ** 0)]'
+target string occurrences: 1
+
+$ PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py > /dev/null && cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src npx playwright test e2e/geometry-reference.spec.ts --project=chromium -g '放大一档|缩小一档'
+
+Running 2 tests using 1 worker
+
+[GEO-01 e2e] zoom=108% Δbox=(39.891, 24.796) 误差=(2.891,1.796) 尺寸变化=(-0.000, 0.000)
+[e2e] app-0 进程输出（尾部）:
+2026-09-25 03:10:34,999 WARNING tavotto: RenderCore 预热未完成：批准字体不全：缺 ['LiberationMono-Bold', 'LiberationMono-BoldItalic', 'LiberationMono-Italic', 'LiberationMono-Regular', 'LiberationSans-Bold', 'LiberationSans-BoldItalic', 'LiberationSans-Italic', 'LiberationSans-Regular', 'LiberationSerif-Bold', 'LiberationSerif-BoldItalic', 'LiberationSerif-Italic', 'LiberationSerif-Regular', 'NotoSansSC-Regular']（先跑 scripts/fetch_fonts.py）
+2026-09-25 03:10:35,458 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-YM95vD/figures → 3 个素材
+2026-09-25 03:10:35,488 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-YM95vD/figures → 3 个素材
+2026-09-25 03:10:35,630 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:10:35,679 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:10:35,684 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:10:35,754 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:10:35,887 INFO tavotto.engine: worker 启动: fig1_kinetics.py（entry=main，解释器来源=env_override）
+2026-09-25 03:10:49,309 INFO tavotto: 引擎渲染: Fig1_kinetics 13727ms（冷启动） timings={"build_total_ms": 13384.283, "canvas_draw_ms": 14.699, "manifest_ms": 16.665, "patch_apply_ms": 0.298, "preview_plan_ms": 0.051, "queue_wait_ms": 0.001, "script_build_ms": 169.029, "script_exec_ms": 18.155, "server_ms": 13727.297, "total_ms": 34.377, "worker_get_ms": 308.288}
+2026-09-25 03:10:52,085 INFO tavotto: 引擎渲染: Fig1_kinetics 36ms timings={"canvas_draw_ms": 14.43, "manifest_ms": 18.252, "patch_apply_ms": 0.566, "preview_plan_ms": 0.037, "queue_wait_ms": 0.0, "server_ms": 36.224, "total_ms": 35.604, "worker_get_ms": 0.501}
+
+  ✘  1 [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：放大一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） (18.9s)
+[GEO-01 e2e] zoom=75% Δbox=(27.846, 17.309) 误差=(-9.154,-5.691) 尺寸变化=(0.000, 0.000)
+[e2e] app-0 进程输出（尾部）:
+2026-09-25 03:10:54,321 INFO pikepdf._core: pikepdf C++ to Python logger bridge initialized
+2026-09-25 03:10:54,339 WARNING tavotto: RenderCore 预热未完成：批准字体不全：缺 ['LiberationMono-Bold', 'LiberationMono-BoldItalic', 'LiberationMono-Italic', 'LiberationMono-Regular', 'LiberationSans-Bold', 'LiberationSans-BoldItalic', 'LiberationSans-Italic', 'LiberationSans-Regular', 'LiberationSerif-Bold', 'LiberationSerif-BoldItalic', 'LiberationSerif-Italic', 'LiberationSerif-Regular', 'NotoSansSC-Regular']（先跑 scripts/fetch_fonts.py）
+2026-09-25 03:10:54,783 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-C7o9HC/figures → 3 个素材
+2026-09-25 03:10:54,803 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-C7o9HC/figures → 3 个素材
+2026-09-25 03:10:54,873 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:10:54,951 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:10:54,954 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:10:55,036 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:10:55,193 INFO tavotto.engine: worker 启动: fig1_kinetics.py（entry=main，解释器来源=env_override）
+2026-09-25 03:11:07,879 INFO tavotto: 引擎渲染: Fig1_kinetics 13010ms（冷启动） timings={"build_total_ms": 12645.511, "canvas_draw_ms": 15.165, "manifest_ms": 17.148, "patch_apply_ms": 0.726, "preview_plan_ms": 0.037, "queue_wait_ms": 0.001, "script_build_ms": 192.956, "script_exec_ms": 25.808, "server_ms": 13009.437, "total_ms": 35.434, "worker_get_ms": 328.265}
+2026-09-25 03:11:10,900 INFO tavotto: 引擎渲染: Fig1_kinetics 35ms timings={"canvas_draw_ms": 13.059, "manifest_ms": 18.223, "patch_apply_ms": 0.544, "preview_plan_ms": 0.034, "queue_wait_ms": 0.0, "server_ms": 34.821, "total_ms": 34.076, "worker_get_ms": 0.585}
+
+  ✘  2 [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：缩小一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） (18.5s)
+
+
+  1) [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：放大一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） 
+
+    Error: expect(received).toBeLessThanOrEqual(expected)
+
+    Expected: <= 0.5
+    Received:    2.8912353515625
+
+      93 |     const err = [b1.x - b0!.x - ds[0], b1.y - b0!.y - ds[1]]
+      94 |     console.log(`[GEO-01 e2e] zoom=${zoom}% Δbox=(${(b1.x - b0!.x).toFixed(3)}, ${(b1.y - b0!.y).toFixed(3)}) 误差=(${err.map((v) => v.toFixed(3))}) 尺寸变化=(${(b1.w - b0!.w).toFixed(3)}, ${(b1.h - b0!.h).toFixed(3)})`)
+    > 95 |     expect(Math.abs(err[0])).toBeLessThanOrEqual(BUDGET_PX)
+         |                              ^
+      96 |     expect(Math.abs(err[1])).toBeLessThanOrEqual(BUDGET_PX)
+      97 |     // 尺寸不变（锚点平移，不是被重排）
+      98 |     expect(Math.abs(b1.w - b0!.w)).toBeLessThanOrEqual(BUDGET_PX)
+        at /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web/e2e/geometry-reference.spec.ts:95:30
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/geometry-reference-GEO-01--9871e-威重渲染后墨迹框平移-Δs（≤-0-5-CSS-px）-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/geometry-reference-GEO-01--9871e-威重渲染后墨迹框平移-Δs（≤-0-5-CSS-px）-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/geometry-reference-GEO-01--9871e-威重渲染后墨迹框平移-Δs（≤-0-5-CSS-px）-chromium/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/geometry-reference-GEO-01--9871e-威重渲染后墨迹框平移-Δs（≤-0-5-CSS-px）-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/geometry-reference-GEO-01--9871e-威重渲染后墨迹框平移-Δs（≤-0-5-CSS-px）-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：缩小一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） 
+
+    Error: expect(received).toBeLessThanOrEqual(expected)
+
+    Expected: <= 0.5
+    Received:    9.1544189453125
+
+      93 |     const err = [b1.x - b0!.x - ds[0], b1.y - b0!.y - ds[1]]
+      94 |     console.log(`[GEO-01 e2e] zoom=${zoom}% Δbox=(${(b1.x - b0!.x).toFixed(3)}, ${(b1.y - b0!.y).toFixed(3)}) 误差=(${err.map((v) => v.toFixed(3))}) 尺寸变化=(${(b1.w - b0!.w).toFixed(3)}, ${(b1.h - b0!.h).toFixed(3)})`)
+    > 95 |     expect(Math.abs(err[0])).toBeLessThanOrEqual(BUDGET_PX)
+         |                              ^
+      96 |     expect(Math.abs(err[1])).toBeLessThanOrEqual(BUDGET_PX)
+      97 |     // 尺寸不变（锚点平移，不是被重排）
+      98 |     expect(Math.abs(b1.w - b0!.w)).toBeLessThanOrEqual(BUDGET_PX)
+        at /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web/e2e/geometry-reference.spec.ts:95:30
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/geometry-reference-GEO-01--2a83b-威重渲染后墨迹框平移-Δs（≤-0-5-CSS-px）-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/geometry-reference-GEO-01--2a83b-威重渲染后墨迹框平移-Δs（≤-0-5-CSS-px）-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/geometry-reference-GEO-01--2a83b-威重渲染后墨迹框平移-Δs（≤-0-5-CSS-px）-chromium/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/geometry-reference-GEO-01--2a83b-威重渲染后墨迹框平移-Δs（≤-0-5-CSS-px）-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/geometry-reference-GEO-01--2a83b-威重渲染后墨迹框平移-Δs（≤-0-5-CSS-px）-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2 failed
+    [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：放大一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） 
+    [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：缩小一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） 
+$ i18next-cli types --ci && node scripts/i18n-check.mjs && i18next-cli lint
+[32m✔[39m No issues found.
+$ tsc -b && vite build && node scripts/tailwind-scan-check.mjs
+[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0msrc/store/renderStore.ts is dynamically imported by src/store/envStore.ts but also statically imported by src/canvas/OverlaySvg.tsx, src/canvas/PanelView.tsx, src/canvas/QuickEdit.tsx, src/canvas/WorkspaceContextBar.tsx, src/canvas/context-bar/ContextBar.tsx, ..., dynamic import will not move module into another chunk.
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[exit=1]
+
+-- restored web/src/canvas/interactions.ts (git checkout --) --
+
+$ PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py > /dev/null && cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/src npx playwright test e2e/geometry-reference.spec.ts --project=chromium -g '放大一档|缩小一档'
+
+Running 2 tests using 1 worker
+
+[GEO-01 e2e] zoom=112% Δbox=(37.000, 22.999) 误差=(-0.000,-0.001) 尺寸变化=(0.000, 0.000)
+  ✓  1 [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：放大一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） (19.3s)
+[GEO-01 e2e] zoom=70% Δbox=(37.000, 22.999) 误差=(-0.000,-0.001) 尺寸变化=(0.000, -0.000)
+  ✓  2 [chromium] › e2e/geometry-reference.spec.ts:79:3 › GEO-01 单选：缩小一档 下拖标题，权威重渲染后墨迹框平移 = Δs（≤ 0.5 CSS px） (18.7s)
+
+  2 passed (38.3s)
+$ i18next-cli types --ci && node scripts/i18n-check.mjs && i18next-cli lint
+[32m✔[39m No issues found.
+$ tsc -b && vite build && node scripts/tailwind-scan-check.mjs
+[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0msrc/store/renderStore.ts is dynamically imported by src/store/envStore.ts but also statically imported by src/canvas/OverlaySvg.tsx, src/canvas/PanelView.tsx, src/canvas/QuickEdit.tsx, src/canvas/WorkspaceContextBar.tsx, src/canvas/context-bar/ContextBar.tsx, ..., dynamic import will not move module into another chunk.
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[exit=0]
+
+SUMMARY M1e-missing-zoom-browser: mutated_exit=[1] restored_exit=[0]
