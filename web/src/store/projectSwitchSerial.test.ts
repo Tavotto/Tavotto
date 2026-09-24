@@ -11,9 +11,9 @@
  * 后端的响应由用例手动放行（deferred），时序完全由用例决定，不靠睡眠碰运气。
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { RecentProject } from '@/lib/api'
+import { armNoProjectRecovery, type RecentProject } from '@/lib/api'
 import { startTutorial } from '@/lib/onboarding/tutorial'
-import { setCurrentProjectId } from '@/lib/session'
+import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { useProjectStore } from './projectStore'
 
 interface Pending {
@@ -276,5 +276,29 @@ describe('切换进行中点教程', () => {
     // mock 回的是空形状，后面的认领会失败——不关心，只等它跑完别漏到下一条用例里
     await startTutorial('help').catch(() => undefined)
     expect(sent.some((u) => u.includes('/api/tutorial/open'))).toBe(true)
+  })
+})
+
+describe('失效会话里排着的收藏操作', () => {
+  it('前一个撞上 409 no_project（pj 被清）：后面排着的作废、一个请求都不发', async () => {
+    armNoProjectRecovery()
+    const store = useProjectStore.getState()
+    const a = store.togglePin('/A')
+    const b = store.togglePin('/B')
+    await settle()
+    take('/api/projects/pinned').release(409, { error: '尚未打开项目', code: 'no_project' })
+    await a
+    await b
+    await settle()
+    expect(currentProjectId()).toBeNull() // 恢复出口确实跑了
+    expect(sent.filter((u) => u.includes('/api/projects/pinned'))).toHaveLength(1)
+  })
+
+  it('入队后换了项目：同样作废', async () => {
+    const op = useProjectStore.getState().togglePin('/A')
+    // 同步地换 pj（排队的函数还没轮到）
+    setCurrentProjectId('p-other')
+    await op
+    expect(sent.filter((u) => u.includes('/api/projects/pinned'))).toHaveLength(0)
   })
 })

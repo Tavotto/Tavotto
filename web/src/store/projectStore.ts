@@ -296,8 +296,13 @@ export const useProjectStore = create<ProjectState>((set, get) => {
    * 改收藏：排进收藏队列，一次一个操作，界面以回包为准。队列保证回包按发出顺序落地
    * （不会有旧回包盖新回包）；操作本身按路径描述，所以与别的标签页交错也不会互相盖。
    */
-  const applyPinned = (op: PinnedOp | (() => PinnedOp)): Promise<void> =>
-    pinQueue(async () => {
+  const applyPinned = (op: PinnedOp | (() => PinnedOp)): Promise<void> => {
+    // 入队那一刻的 pj：轮到执行时它变了（前一个操作撞上 409 no_project、pj 被清掉；或
+    // 换了项目），这个操作就作废、一个请求都不发——不然 pj 为空的请求会落到后端的默认
+    // 项目上，把一个来自失效会话的操作写进配置（Codex #550）
+    const pj = currentProjectId()
+    return pinQueue(async () => {
+      if (currentProjectId() !== pj) return
       try {
         // 函数形式 = 轮到自己时才定操作（收藏开关：连点两下是开了又关，不是两次「开」）
         const pinned = await postPinnedOp(typeof op === 'function' ? op() : op)
@@ -307,6 +312,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
       }
     })
+  }
 
   return {
   phase: 'loading',
