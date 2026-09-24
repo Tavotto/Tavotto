@@ -137,9 +137,7 @@ def select(issues: list[dict], only: list[dict] | None) -> list[tuple[str, str]]
             if (i["id"], i["gids"][0]) in want or i["id"] in rules_any_gid
         ]
     return [
-        (i["id"], i["gids"][0])
-        for i in fixable
-        if i.get("severity") not in BATCH_SKIP_SEVERITIES
+        (i["id"], i["gids"][0]) for i in fixable if i.get("severity") not in BATCH_SKIP_SEVERITIES
     ]
 
 
@@ -186,7 +184,14 @@ def plan(manifest: dict, profile: dict, *, scale: float, targets: list[tuple[str
             if "reason" in item:
                 skipped.append(item)
             else:
-                put(item["rule"], item["gid"], item["prop"], item["value"], item["before"], item["after"])
+                put(
+                    item["rule"],
+                    item["gid"],
+                    item["prop"],
+                    item["value"],
+                    item["before"],
+                    item["after"],
+                )
 
     return {
         "patches": [{"gid": g, "prop": p, "value": v} for (g, p), v in patches.items()],
@@ -264,7 +269,12 @@ def _font_entries(manifest: dict) -> list[dict]:
             v = _num(_field(el, prop)) if _has(el, prop) else None
             if v is not None and v > 0:
                 out.append(
-                    {"gid": str(el.get("gid", "")), "prop": prop, "role": str(el.get("role", "")), "size": v}
+                    {
+                        "gid": str(el.get("gid", "")),
+                        "prop": prop,
+                        "role": str(el.get("role", "")),
+                        "size": v,
+                    }
                 )
     return out
 
@@ -442,4 +452,3 @@ def verdict(
         v["ok"] = False
         v["exit"] = EXIT_NOT_RESOLVED
     return v
-

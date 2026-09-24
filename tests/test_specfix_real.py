@@ -277,4 +277,3 @@ def test_endpoint_validates_input():
     assert bad.status_code == 400 and bad.get_json()["code"] == "invalid_profile"
     bad = client.post("/api/engine/specfix", json={"id": "x.pdf", "patches": {}, "scale": 1})
     assert bad.get_json()["code"] == "invalid_patches"
-

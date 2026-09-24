@@ -3784,7 +3784,9 @@ def _specfix_transaction(render, base: list, scale: float, profile: dict, only) 
         )
         # 真正要修的是计划落了 patch 的那些；算不出目标值的已经进了 skipped
         planned_targets = [
-            t for t in live if not any(s["rule"] == t[0] and s["gid"] == t[1] for s in plan["skipped"])
+            t
+            for t in live
+            if not any(s["rule"] == t[0] and s["gid"] == t[1] for s in plan["skipped"])
         ]
         candidate = engine_normalize.merge_patches(base, plan["patches"])
         resp = render(candidate)
