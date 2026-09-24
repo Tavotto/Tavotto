@@ -128,6 +128,13 @@ test('图内混合多选整组拖动：锚点 = 独立模型，撤销 / 重做�
   // 选区证据要读元素树：幂等地打开左栏「图内元素」（toggle 按钮，见 fixtures.openElementsTab）
   await openElementsTab(page)
   await page.waitForTimeout(500)
+  // 这张 7 in 宽的图比默认 150 mm 页面宽：进入图内编辑后第二个子图可能伸进右侧属性栏底下，
+  // 点它的标题会点到属性栏上。先适应页面（⌘1），再缩小一档（⌘-），让整张图都落在画布可见区内；
+  // 每次点选前还要核对落点确实在画布舞台上（见 onStage），布局再变时红在这里而不是静默点偏。
+  await page.keyboard.press('ControlOrMeta+1')
+  await page.waitForTimeout(600)
+  await page.keyboard.press('ControlOrMeta+Minus')
+  await page.waitForTimeout(600)
   const before = rendered.at(-1)!.manifest
   const g = Object.fromEntries(before.elements.map((e) => [e.gid, e]))
   const R = await svgRect(page)
@@ -150,6 +157,11 @@ test('图内混合多选整组拖动：锚点 = 独立模型，撤销 / 重做�
   }
   for (const [i, m] of members.entries()) {
     const p = at(...clickAt[m])
+    const onStage = await page.evaluate(({ x, y }) => {
+      const hit = document.elementFromPoint(x, y)
+      return !!hit?.closest('[data-canvas-stage]') && !hit.closest('aside')
+    }, p)
+    expect(onStage, `${m} 的点选位置应当落在画布舞台上，而不是被别的界面挡住`).toBe(true)
     if (i) await page.keyboard.down('Shift')
     await page.mouse.click(p.x, p.y)
     if (i) await page.keyboard.up('Shift')
