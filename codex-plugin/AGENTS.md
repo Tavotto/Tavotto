@@ -241,6 +241,15 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   （`test_provision_python_range_mirrors_the_engine` 对拍），改 `requires-python` 要一起改。
   **装完插件/引擎必须新开 Codex 会话**——已开的会话不重载工具，
   `codex plugin list` 的 enabled 不代表 server 健康（README 里写明了）。
+- **自管环境落后于插件时启动器自己重装**（#487，2026-09-24）：插件升级会换掉插件目录，
+  配置目录里的 `mcp-runtime/venv` 却原样留着上一版引擎，import 不过新桥就落到降级。
+  这一格单独报 `managed_runtime_stale`（不是 `tavotto_missing`——恢复步骤不许把人支去
+  另装 pipx），并且 `main()` 在降级前 **spawn 一个脱离本进程的 `--provision`**（不在
+  启动路径上同步跑 pip：`startup_timeout_sec` 只有 30 s）。锁 `mcp-runtime/provision.lock`
+  防每次开会话都起一个 pip，超过 20 分钟视为上一次已死；`--provision` 结束时删锁；
+  `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 关掉。本次会话仍是降级、payload 带 `auto_provision`，
+  文案说「后台在装、装完新开会话」。**只管「在、却 import 不过」**：能 import 但版本旧的
+  自管环境不在这里重装（它此刻正被本会话用着）。看护 `tests/test_mcp_resolver.py` 末节。
 - **导出先预检**：有 error **或 `not_verifiable`** 且没有 `explicit_confirm` 时
   一张图都不出（`needs_confirm`，与导出对话框同一判据；`blocking` 仍只表示
   error）。PNG 的 dpi 与 profile 的 `min_raster_dpi` 比一次，复用同一个

@@ -608,3 +608,165 @@ def test_degraded_health_reports_what_provision_would_build_on(tmp_path, monkeyp
     assert report["provision"]["base"] is None
     assert report["provision"]["tried"] == tried
     assert any("no_supported_python" in n for n in report["notes"])
+
+
+# ------------------------- 自管环境落后于插件（#487） -------------------------
+def _stale_resolution(tmp_path) -> dict:
+    """自管 venv 的解释器在、却 import 不过——插件升级后环境还是上一版引擎的形状。"""
+    managed = _touch_exe(Path(launcher.managed_python()))
+    return {
+        "python": None,
+        "source": None,
+        "tried": [
+            {"python": managed, "source": "managed", "exists": True, "importable": False, "ms": 1}
+        ],
+    }
+
+
+class _FakePopen:
+    calls: "list[dict]" = []
+
+    def __init__(self, argv, **kwargs):
+        _FakePopen.calls.append({"argv": argv, **kwargs})
+
+
+@pytest.fixture()
+def fake_popen(monkeypatch):
+    _FakePopen.calls = []
+    monkeypatch.setattr(launcher.subprocess, "Popen", _FakePopen)
+    monkeypatch.delenv(launcher.NO_AUTO_PROVISION_ENV, raising=False)
+    return _FakePopen.calls
+
+
+def test_a_managed_env_that_exists_but_does_not_import_is_its_own_code(tmp_path):
+    """#487：它不是「没装」也不是「桌面版」——那两格的恢复步骤会让用户去装 pipx 或桌面版，
+    而他缺的只是把**已有的**自管环境重装到插件的版本。"""
+    code, hint = launcher.diagnose_resolved(
+        {"cmd": None, "desktop": None}, _stale_resolution(tmp_path)
+    )
+    assert code == "managed_runtime_stale"
+    assert "--provision" in hint
+    steps = launcher._recovery_steps(code)
+    assert any("--provision" in s for s in steps) and any("新开" in s for s in steps)
+    assert not any("pipx install" in s for s in steps), "旧了不是没装：不许把人支去另装一份"
+
+
+def test_a_missing_managed_env_is_not_called_stale(tmp_path):
+    """自管环境根本不存在时不是「旧了」：仍走原来的三/四态。"""
+    resolution = {
+        "python": None,
+        "source": None,
+        "tried": [
+            {
+                "python": launcher.managed_python(),
+                "source": "managed",
+                "exists": False,
+                "importable": False,
+                "ms": 0,
+            }
+        ],
+    }
+    code, _ = launcher.diagnose_resolved({"cmd": None, "desktop": None}, resolution)
+    assert code == "tavotto_missing"
+
+
+def test_an_explicit_override_still_wins_over_a_stale_managed_env(tmp_path):
+    """用户显式指的解释器坏了，要先指名道姓报它——不能被「自管环境旧了」盖住。"""
+    resolution = _stale_resolution(tmp_path)
+    bad = _touch_exe(tmp_path / "bad" / "python3")
+    resolution["tried"].insert(
+        0, {"python": bad, "source": "mcp_env", "exists": True, "importable": False, "ms": 1}
+    )
+    code, _ = launcher.diagnose_resolved({"cmd": None, "desktop": None}, resolution)
+    assert code == "engine_unavailable"
+
+
+def test_background_provision_spawns_once_detached_and_respects_the_lock(tmp_path, fake_popen):
+    """主语是**起了几个 pip**：每开一次会话都会走到这里，锁挡住第二个；进程要脱离本 server
+    （host 关掉 server 不连带杀掉装了一半的 pip），命令就是本文件的 `--provision`。"""
+    first = launcher.kick_background_provision()
+    assert first["started"] is True
+    assert len(fake_popen) == 1
+    call = fake_popen[0]
+    assert call["argv"][1:] == [os.path.abspath(launcher.__file__), "--provision"]
+    if os.name == "nt":
+        assert call["creationflags"]
+    else:
+        assert call["start_new_session"] is True
+    assert launcher._EXECED_ENV not in call["env"], "交棒标记传下去会让 --provision 以外的路径走偏"
+    assert os.path.isfile(launcher._provision_lock_path())
+
+    second = launcher.kick_background_provision()
+    assert second == {**second, "started": False, "reason": "already_running"}
+    assert len(fake_popen) == 1
+
+
+def test_a_stale_lock_does_not_block_forever(tmp_path, fake_popen):
+    """上一次后台重装死掉留下的锁：过了岁数就当它不存在，否则用户永远卡在降级。"""
+    lock = Path(launcher._provision_lock_path())
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("1", encoding="utf-8")
+    old = lock.stat().st_mtime - launcher._PROVISION_LOCK_MAX_AGE - 5
+    os.utime(lock, (old, old))
+    assert launcher.kick_background_provision()["started"] is True
+    assert len(fake_popen) == 1
+
+
+def test_background_provision_can_be_switched_off(tmp_path, fake_popen, monkeypatch):
+    monkeypatch.setenv(launcher.NO_AUTO_PROVISION_ENV, "1")
+    out = launcher.kick_background_provision()
+    assert out["started"] is False and out["reason"] == "disabled"
+    assert fake_popen == []
+
+
+def _run_main_degraded(monkeypatch, resolution, stdin_lines) -> "list[dict]":
+    monkeypatch.setattr(launcher, "_current_engine_ok", lambda: False)
+    monkeypatch.setattr(launcher, "resolve", lambda found: resolution)
+    monkeypatch.setattr(
+        launcher._plugin_locator(), "find_tavotto", lambda: {"cmd": None, "desktop": None}
+    )
+    monkeypatch.delenv(launcher._EXECED_ENV, raising=False)
+    monkeypatch.setattr(sys, "argv", ["server.py"])
+    monkeypatch.setattr(
+        sys, "stdin", io.StringIO("".join(json.dumps(r) + "\n" for r in stdin_lines))
+    )
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    launcher.main()
+    return [json.loads(ln) for ln in out.getvalue().strip().splitlines()]
+
+
+def test_startup_with_a_stale_managed_env_kicks_the_upgrade_and_says_so(
+    tmp_path, fake_popen, monkeypatch
+):
+    """端到端（启动器 main）：自管环境旧了 → 本次会话降级、**后台已起重装**、并对用户
+    说「新开会话」——而不是 #487 里 Codex 那句「当前会话未提供 tavotto_open_figure」。"""
+    resolution = _stale_resolution(tmp_path)
+    (res,) = _run_main_degraded(
+        monkeypatch,
+        resolution,
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "tavotto_open_figure", "arguments": {}},
+            }
+        ],
+    )
+    body = res["result"]["structuredContent"]
+    assert body["code"] == "managed_runtime_stale"
+    assert body["auto_provision"]["started"] is True
+    assert "已在后台" in body["error"] and "新开" in body["error"]
+    assert len(fake_popen) == 1
+
+
+def test_provision_clears_the_background_lock(tmp_path, monkeypatch, capsys):
+    """后台那次 `--provision` 结束（成败都算）就删锁：下一次落后时还能再起。"""
+    lock = Path(launcher._provision_lock_path())
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("1", encoding="utf-8")
+    monkeypatch.setattr(launcher, "provision", lambda spec, python_base=None: ({"ok": False}, 1))
+    monkeypatch.setattr(sys, "argv", ["server.py", "--provision"])
+    assert launcher.main() == 1
+    assert not lock.exists()

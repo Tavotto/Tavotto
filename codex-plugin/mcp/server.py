@@ -631,7 +631,105 @@ def diagnose_resolved(found: dict, resolution: dict) -> "tuple[str, str]":
             "装引擎可用 `python3 <插件目录>/mcp/server.py --provision`。"
             "改完新开一次 Codex 会话。",
         )
+    if managed_runtime_stale(resolution):
+        return "managed_runtime_stale", MANAGED_STALE_HINT
     return diagnose(found)
+
+
+#: 自管环境在、却 import 不过这一版插件要的引擎——插件升级之后最常见的形状：
+#: `codex plugin marketplace upgrade` 换掉了插件目录，而 `mcp-runtime/venv` 在
+#: 配置目录里原样留着上一版引擎（#487：0.14.0 的环境撞上 0.15.0 的桥）。
+MANAGED_STALE_HINT = (
+    "插件自管环境里的引擎跟当前插件对不上（多半是插件升级后环境还是旧版）。"
+    "把它重装到插件对应的版本即可：python3 <插件目录>/mcp/server.py --provision，"
+    "装完**新开一次 Codex 会话**。"
+)
+#: 启动器真的在后台起了重装时，降级模式对用户说的那句（只有 main() 起了才用它）。
+MANAGED_STALE_KICKED_HINT = (
+    "插件自管环境里的引擎跟当前插件对不上（多半是插件升级后环境还是旧版）。"
+    "启动器已在后台把它重装到插件对应的版本，通常一两分钟；装完**新开一次 Codex 会话**"
+    "即可使用。后台没装成时手动跑：python3 <插件目录>/mcp/server.py --provision"
+)
+
+
+def managed_runtime_stale(resolution: dict) -> bool:
+    """自管 venv 的解释器**在**、却 import 不过 `_BRIDGE_IMPORT`。
+
+    只认 resolver 真的探过的那一条（`source == "managed"` 且 exists），不按文件名猜：
+    环境不存在是 `tavotto_missing` / `desktop_only` 那几格的事，不是「旧了」。
+    """
+    return any(
+        t["source"] == "managed" and t["exists"] and not t["importable"]
+        for t in resolution.get("tried", [])
+    )
+
+
+#: 关掉启动时的后台自动重装（测试、或不想让启动器联网的用户）。
+NO_AUTO_PROVISION_ENV = "TAVOTTO_MCP_NO_AUTO_PROVISION"
+#: 后台重装的锁：同一时间只跑一个 pip；锁超过这个岁数视为上一次已经死掉。
+_PROVISION_LOCK_MAX_AGE = 20 * 60
+
+
+def _provision_lock_path() -> str:
+    return os.path.join(managed_runtime_dir(), "provision.lock")
+
+
+def kick_background_provision() -> dict:
+    """在后台起一次 `--provision`，把自管环境重装到插件版本（#487）。
+
+    **不在启动路径上同步跑 pip**：Codex 给 MCP server 的启动预算是
+    `startup_timeout_sec`（30 s），联网装一遍科学栈可能远超它——同步跑的结果是
+    host 判启动失败、连降级 server 都没有。所以这里只 spawn 一个脱离本进程的
+    子进程，本次会话照常以降级模式回话、把「正在后台升级」说出口；装完下一次
+    新会话就是正常模式。
+
+    锁文件防并发（每开一次会话都会走到这里）；`--provision` 结束时删锁。
+    返回 `{"started": bool, "reason": str, "log": path}`，进 health 与降级 payload。
+    """
+    root = managed_runtime_dir()
+    log = os.path.join(root, "provision.log")
+    if os.environ.get(NO_AUTO_PROVISION_ENV) == "1":
+        return {"started": False, "reason": "disabled", "log": log}
+    lock = _provision_lock_path()
+    try:
+        age = time.time() - os.path.getmtime(lock)
+    except OSError:
+        age = None
+    if age is not None and age < _PROVISION_LOCK_MAX_AGE:
+        return {"started": False, "reason": "already_running", "log": log}
+    try:
+        os.makedirs(root, exist_ok=True)
+        with open(lock, "w", encoding="utf-8") as fh:
+            fh.write(str(os.getpid()))
+        out = open(log, "w", encoding="utf-8")
+    except OSError as exc:
+        return {"started": False, "reason": f"cannot_write: {exc}", "log": log}
+    kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": out, "stderr": out}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
+    else:
+        kwargs["start_new_session"] = True  # host 关掉本 server 时不连带杀掉 pip
+    env = dict(os.environ)
+    env.pop(_EXECED_ENV, None)
+    try:
+        subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__), "--provision"], env=env, **kwargs
+        )
+    except OSError as exc:
+        _clear_provision_lock()
+        return {"started": False, "reason": f"spawn_failed: {exc}", "log": log}
+    finally:
+        out.close()
+    return {"started": True, "reason": "stale_managed_runtime", "log": log}
+
+
+def _clear_provision_lock() -> None:
+    try:
+        os.remove(_provision_lock_path())
+    except OSError:
+        pass
 
 
 # ------------------------------- 降级 server --------------------------------
@@ -663,6 +761,14 @@ def _recovery_steps(code: str) -> "list[str]":
             "桌面版用户升级桌面版到匹配的版本"
         )
         steps.append("或者反过来：把插件退回与这台机器上的引擎匹配的那一版")
+    elif code == "managed_runtime_stale":
+        # 缺的不是「一个环境」，是**这个**环境跟插件对不上：启动时 main() 会在后台
+        # 重装它，用户要做的只有等它装完、新开会话。手动那条留作兜底（离线 / 后台失败）。
+        steps.append(
+            "Codex 启动本插件时，启动器会在后台把自管环境重装到插件对应的版本（日志："
+            "<Tavotto 配置目录>/mcp-runtime/provision.log），通常一两分钟"
+        )
+        steps.append("没装成（离线等）或想立刻修好：python3 <插件目录>/mcp/server.py --provision")
     elif code in (
         "desktop_only",
         "engine_unavailable",
@@ -697,6 +803,11 @@ def _degraded_payload(code: str, hint: str, resolution: "dict | None") -> dict:
         "unavailable_tools": list(NORMAL_TOOLS),
         "recovery": _recovery_steps(code),
         "tried": (resolution or {}).get("tried", []),
+        **(
+            {"auto_provision": resolution["auto_provision"]}
+            if resolution and "auto_provision" in resolution
+            else {}
+        ),
     }
 
 
@@ -1109,7 +1220,10 @@ def main() -> int:
                         )
                     )
                     return 2
-        report, rc = provision(values["--from"], python_base=values["--python"])
+        try:
+            report, rc = provision(values["--from"], python_base=values["--python"])
+        finally:
+            _clear_provision_lock()  # 后台那一次起的锁；手动跑时没有锁，删不到也无妨
         print(json.dumps(report, ensure_ascii=False))
         return rc
 
@@ -1140,6 +1254,17 @@ def main() -> int:
     else:
         resolution = {"python": None, "source": None, "tried": []}
     code, hint = diagnose_resolved(found, resolution)
+    if code == "managed_runtime_stale":
+        auto = kick_background_provision()
+        resolution = {**resolution, "auto_provision": auto}
+        if auto["started"] or auto["reason"] == "already_running":
+            hint = MANAGED_STALE_KICKED_HINT
+        else:
+            hint = (
+                "插件自管环境里的引擎跟当前插件对不上（多半是插件升级后环境还是旧版），"
+                "后台自动重装没有启动（" + auto["reason"] + "）。请手动跑："
+                "python3 <插件目录>/mcp/server.py --provision，然后新开一次 Codex 会话。"
+            )
     print(
         f"tavotto-mcp: 没找到能 import tavotto.engine 的解释器（{code}），进入降级模式。" + hint,
         file=sys.stderr,

@@ -59,6 +59,12 @@ tavotto codex install     # 修：把已装副本的启动命令钉到一个验�
 * `tavotto_missing` —— 机器上确实没有 Tavotto。按用户的需求引导：只要桌面收尾
   就装桌面版（<https://github.com/Tavotto/Tavotto/releases>），要 Codex 内嵌
   工具就 `pipx install "tavotto[worker]"`。
+* `managed_runtime_stale` —— 插件自管环境还是旧版引擎（插件升级后最常见）。
+  启动器**已经在后台**把它重装到插件对应的版本（`auto_provision.started`；日志在
+  `auto_provision.log`），告诉用户等一两分钟后**新开会话**即可，不要让他重装插件或
+  装 pipx。`auto_provision.started` 为 false 且原因不是 `already_running` 时（离线、
+  被 `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 关掉），才给手动那条
+  `python3 <插件目录>/mcp/server.py --provision`。
 * `engine_unavailable`（`TAVOTTO_MCP_PYTHON` 指错了）—— 指名道姓地把它报给
   用户，让用户改环境变量或去掉；不要悄悄换别的解释器。
 * 其它 code —— 把 `code` + health 输出里的 `recovery` 步骤原样转达。
