@@ -1288,6 +1288,103 @@ def test_launcher_only_takes_interpreters_it_can_actually_use():
         assert launcher._shebang_interpreter(shim) == sys.executable
 
 
+#: distlib 只在 POSIX 上写 `#!/bin/sh` 多语言 wrapper（`_build_shebang`：`os.name != "posix"`
+#: 时恒为 simple shebang），Windows 上这种文件不存在，长路径样本也会撞 MAX_PATH。
+_POSIX_ONLY = pytest.mark.skipif(os.name != "posix", reason="多语言 wrapper 只在 POSIX 上生成")
+
+
+@_POSIX_ONLY
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_launcher_reads_the_pipx_polyglot_wrapper_under_a_path_with_spaces(tmp_path, quote):
+    """venv 路径带空格时 pipx 写的是 `#!/bin/sh` + `'''exec' '<python>'` 多语言头（#486）。
+
+    样本按真实平台形态造：venv 在一个**带空格**的目录里（macOS pipx 默认的
+    `~/Library/Application Support/pipx`），解释器文件真的存在。旧实现读到
+    第一行的 `/bin/sh` 就停，返回 `/bin/sh`（或 None）而不是那个 python。
+    """
+    sys.path.insert(0, str(PLUGIN / "mcp"))
+    import importlib
+
+    launcher = importlib.import_module("server")
+
+    venv_bin = tmp_path / "Application Support" / "pipx" / "venvs" / "tavotto" / "bin"
+    venv_bin.mkdir(parents=True)
+    python = venv_bin / "python"
+    python.write_bytes(b"")
+    wrapper = venv_bin / "tavotto"
+    wrapper.write_text(
+        f"#!/bin/sh\n'''exec' {quote}{python}{quote} \"$0\" \"$@\"\n' '''\n"
+        "import sys\nfrom tavotto.cli import main\n",
+        encoding="utf-8",
+    )
+    assert launcher._shebang_interpreter(str(wrapper)) == str(python)
+
+    # 真正的 sh 脚本（没有 exec 那一行）给不出解释器，不许把 /bin/sh 当成它
+    plain = tmp_path / "plain-sh"
+    plain.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    assert launcher._shebang_interpreter(str(plain)) is None
+
+
+@_POSIX_ONLY
+def test_launcher_reads_the_unquoted_polyglot_wrapper_of_an_overlong_path(tmp_path):
+    """路径不带空格、只是超过 shebang 长度上限时，distlib 的第二行目标**不加引号**。
+
+    distlib `ScriptMaker._build_shebang`：`b' ' not in executable` 且长度 ≤ 上限
+    （Linux 127 / macOS 512）才写 `#!<python>`，否则 `'''exec' ` + executable 原样拼上
+    ——引号只在路径含空格时由 enquote_executable 加。深层 pipx 目录会走到这一格。
+    """
+    sys.path.insert(0, str(PLUGIN / "mcp"))
+    import importlib
+
+    launcher = importlib.import_module("server")
+
+    venv_bin = tmp_path / ("d" * 120) / "pipx" / "venvs" / "tavotto" / "bin"
+    venv_bin.mkdir(parents=True)
+    python = venv_bin / "python"
+    python.write_bytes(b"")
+    assert " " not in str(python) and len(str(python)) + 3 > 127  # 样本真在那一格
+    wrapper = venv_bin / "tavotto"
+    wrapper.write_text(
+        f"#!/bin/sh\n'''exec' {python} \"$0\" \"$@\"\n' '''\nimport sys\n",
+        encoding="utf-8",
+    )
+    assert launcher._shebang_interpreter(str(wrapper)) == str(python)
+
+
+@_POSIX_ONLY
+def test_launcher_reads_a_polyglot_exec_line_longer_than_one_kib(tmp_path):
+    """解释器路径超过 1 KiB（Linux PATH_MAX 是 4096）时第二行不能被截断。
+
+    旧实现 `readline(1024)` 只读到半截路径，`isfile` 判否，装好的 tavotto 被漏掉。
+    样本是真实存在的深层目录（每段 < 255 字节的文件名上限），总长过 1 KiB。
+    """
+    sys.path.insert(0, str(PLUGIN / "mcp"))
+    import importlib
+
+    launcher = importlib.import_module("server")
+
+    # 前提：本平台允许 > 1 KiB 的路径。macOS 的 PATH_MAX 是 1024、Windows 默认
+    # MAX_PATH 260——那里这种 wrapper 根本造不出来，缺陷也不会发生，判不出就别判。
+    try:
+        path_max = os.pathconf(tmp_path, "PC_PATH_MAX")
+    except (AttributeError, OSError, ValueError):
+        path_max = 0
+    if path_max < 2048:
+        pytest.skip(f"本平台 PATH_MAX={path_max}，放不下 > 1 KiB 的解释器路径（缺陷在此不成立）")
+
+    venv_bin = tmp_path.joinpath(*(["e" * 200] * 6), "venvs", "tavotto", "bin")
+    venv_bin.mkdir(parents=True)
+    python = venv_bin / "python"
+    python.write_bytes(b"")
+    assert len(str(python)) > 1100  # 样本真在那一格
+    wrapper = venv_bin / "tavotto"
+    wrapper.write_text(
+        f"#!/bin/sh\n'''exec' {python} \"$0\" \"$@\"\n' '''\nimport sys\n",
+        encoding="utf-8",
+    )
+    assert launcher._shebang_interpreter(str(wrapper)) == str(python)
+
+
 def test_the_plugin_is_not_shipped_in_the_wheel():
     """插件随 Codex 市场分发，不属于 pip 包（pyproject 的 exclude 看着）。"""
     if tomllib is None:

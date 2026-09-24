@@ -3721,6 +3721,14 @@ def api_engine_render():
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         return jsonify(_worker_error_payload(exc)), 500
+    except Exception as exc:
+        # 事件契约是「render.started 之后必有 done 或 failed」，与异常类型无关：
+        # 前端文件级 building 表只由这两个事件清（#478）。重试路上的
+        # `_engine_worker` 会 abort(404)、没被翻成 WorkerError 的 OSError 也会
+        # 落到这里——照样补发 failed，响应仍交给 Flask 原样处理（404 还是 404）。
+        LOG.exception("引擎渲染异常: %s", stem)
+        sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
+        raise
     # 阶段计时：worker 的 script_build/patch_apply/manifest/canvas_draw +
     # 控制面的 queue_wait/total。日志里一行结构化（可 grep 可喂脚本），响应里
     # 原样交给前端——「慢」这件事必须能指到具体某一段上，不能靠猜。

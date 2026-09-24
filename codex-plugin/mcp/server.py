@@ -128,6 +128,10 @@ def _plugin_locator():
     return handoff
 
 
+#: 读多语言头第二行的字节上限（见 `_shebang_interpreter`）。
+_POLYGLOT_LINE_MAX = 8192
+
+
 def _shebang_interpreter(script: str) -> "str | None":
     """console script 的 shebang → 装着 tavotto 的那个解释器。
 
@@ -138,6 +142,9 @@ def _shebang_interpreter(script: str) -> "str | None":
     try:
         with open(script, "rb") as f:
             first = f.readline(512)
+            # 多语言头第二行装着完整解释器路径：上限按路径上限给（Linux PATH_MAX
+            # 4096，另留引号与 `"$0" "$@"` 的余量），不能按 1 KiB 截断
+            second = f.readline(_POLYGLOT_LINE_MAX)
     except OSError:
         return None
     if not first.startswith(b"#!"):
@@ -146,7 +153,32 @@ def _shebang_interpreter(script: str) -> "str | None":
     # `#!/usr/bin/env python3` 给不出具体环境，直接放弃
     if not parts or parts[0].endswith("env"):
         return None
+    if os.path.basename(parts[0]) == "sh":
+        # venv 路径含空格时（macOS 上 pipx 默认的 `~/Library/Application
+        # Support/pipx` 就是），pip / pipx 写不了 `#!<带空格的路径>`，改写成
+        # sh/python 多语言头：第一行 `#!/bin/sh`，第二行
+        # `'''exec' '<python>' "$0" "$@"`——真正的解释器在第二行（#486）。
+        cand = _polyglot_exec_target(second.decode("utf-8", "replace"))
+        return cand if cand and os.path.isfile(cand) else None
     return parts[0] if os.path.isfile(parts[0]) else None
+
+
+def _polyglot_exec_target(line: str) -> "str | None":
+    """pip / pipx（distlib）多语言 wrapper 第二行里被 exec 的解释器路径。
+
+    引号单双都认（distlib 版本之间变过）；不是这个形状就给 None。启动器只许用
+    标准库里已登记的那几个模块，这里用字符串切而不引入 `re`。
+    """
+    prefix = "'''exec' "
+    rest = line[len(prefix) :] if line.startswith(prefix) else ""
+    if not rest or rest[0].isspace():
+        return None
+    if rest[0] not in "'\"":
+        # 路径不带空格、只是太长（超过 shebang 长度上限：Linux 127 / macOS 512）
+        # 时 distlib 同样写多语言头，但目标**不加引号**：取到下一个空白为止
+        return rest.split(None, 1)[0]
+    end = rest.find(rest[0], 1)
+    return rest[1:end] or None if end > 0 else None
 
 
 #: 扫 Windows 启动器里那行 shebang 时的体积上限。distlib 的 launcher 约

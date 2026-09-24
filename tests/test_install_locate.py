@@ -888,3 +888,65 @@ def test_subcommands_run_without_flask_or_pymupdf(tmp_path, argv):
     )
     assert "不该 import" not in proc.stderr, proc.stderr
     assert proc.returncode == 0, proc.stderr
+
+
+def _frozen_entry():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_frozen_entry", ROOT / "packaging" / "entry.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_frozen_entry_points_macos_openssl_at_the_system_ca_bundle():
+    """macOS 冻结父进程的 OpenSSL 没有 CA：入口在任何 HTTPS 之前指到系统证书包（#439）。
+
+    主语是**冻结父进程自己的环境**（它 import 的 ssl 在建上下文时读
+    SSL_CERT_FILE）。四格：macOS 默认 → 设上；用户已设 SSL_CERT_FILE / SSL_CERT_DIR
+    → 不碰；系统包不存在 → 不设（指到空处比不设更坏）；Windows → 不碰。
+    """
+    entry = _frozen_entry()
+    bundle = entry.MACOS_CA_BUNDLE
+
+    env: dict[str, str] = {}
+    assert entry._ensure_ca_bundle(env, platform="darwin", exists=lambda p: p == bundle) == bundle
+    assert env == {"SSL_CERT_FILE": bundle}
+
+    for key in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+        env = {key: "/Users/me/corp-ca.pem"}
+        assert entry._ensure_ca_bundle(env, platform="darwin", exists=lambda p: True) is None
+        assert env == {key: "/Users/me/corp-ca.pem"}
+
+    env = {}
+    assert entry._ensure_ca_bundle(env, platform="darwin", exists=lambda p: False) is None
+    assert env == {}
+
+    env = {}
+    assert entry._ensure_ca_bundle(env, platform="win32", exists=lambda p: True) is None
+    assert env == {}
+
+
+def test_frozen_entry_sets_the_ca_bundle_before_anything_else_runs():
+    """必须在分派子命令、import app（遥测 / 更新检查）之前设好：之后才设，已建的上下文不会重读。
+
+    按 AST 量 `main()` 里语句的先后，不按子串（注释里提到名字不算数）。
+    """
+    import ast
+
+    tree = ast.parse((ROOT / "packaging" / "entry.py").read_text(encoding="utf-8"))
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+    def first(pred):
+        return next(i for i, stmt in enumerate(main.body) if any(pred(n) for n in ast.walk(stmt)))
+
+    ca = first(
+        lambda n: (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "_ensure_ca_bundle"
+        )
+    )
+    dispatch = first(lambda n: isinstance(n, ast.Attribute) and n.attr == "dispatch")
+    app_import = first(lambda n: isinstance(n, ast.ImportFrom) and n.module == "tavotto.app")
+    assert ca < dispatch < app_import

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pymupdf
 import pytest
+from werkzeug.exceptions import NotFound
 
 from tavotto import app as m
 from tavotto.engine import (
@@ -589,6 +590,37 @@ def test_render_failed_event_carries_pj(client, tmp_path, monkeypatch, sse_spy):
     sent = dict(sse_spy)
     assert sent["render.started"]["pj"] == pid
     assert sent["render.failed"]["pj"] == pid
+    assert "render.done" not in sent
+
+
+@pytest.mark.parametrize(
+    ("exc", "status"),
+    [
+        (RuntimeError("不是 WorkerError 的异常"), 500),
+        (OSError("磁盘炸了"), 500),
+        # 重试路上 `_engine_worker` 在注册表变了时 abort(404)：状态码原样保留
+        (NotFound("面板不在注册表里"), 404),
+    ],
+)
+def test_render_failed_is_published_for_any_exception_after_started(
+    client, tmp_path, monkeypatch, sse_spy, exc, status
+):
+    """render.started 之后必有 done 或 failed，与异常类型无关（#478）。
+
+    前端文件级 building 表只由这两个事件清；以前只有 WorkerError 发 failed，
+    其它异常 500 之后右栏「正在构建图表…」一直挂到刷新。按生产形态关掉
+    异常外抛（TESTING 默认会把异常直接抛给测试客户端），量的是真实响应码。
+    """
+    figs = _make_figs(tmp_path, "sse_any_exc")
+    pid = client.post("/api/projects/open", json={"path": str(figs)}).get_json()["id"]
+    _stub_engine(monkeypatch, _FakeWorker(exc))
+    monkeypatch.setitem(m.app.config, "PROPAGATE_EXCEPTIONS", False)
+
+    resp = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
+    assert resp.status_code == status
+    sent = dict(sse_spy)
+    assert sent["render.started"]["pj"] == pid
+    assert sent["render.failed"] == {"pj": pid, "id": "p1.pdf", "error": str(exc)}
     assert "render.done" not in sent
 
 
