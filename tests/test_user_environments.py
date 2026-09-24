@@ -619,6 +619,51 @@ def test_adopting_an_environment_that_changed_while_the_dialog_was_open_is_refus
     assert projectenv.remembered_record(project) is None
 
 
+def test_the_uncached_recheck_never_accepts_a_result_slipped_into_the_cache(monkeypatch):
+    """Codex #562 P2 的交错，确定性地复现：复核（`use_cache=False`）量的必须是此刻的环境。旧实现先把缓存那条
+    删掉、放锁，再走 `_probe()` 重新读缓存——两步之间并发的一次更早开始的体检可以把旧结论（「装齐」）塞回去，
+    复核就收下了它。这里用缓存的替身把那一刻钉死：每次被删之后立刻有人塞回一条过期的「装齐」，不用 sleep。
+    判据：复核回的是真体检的结论（缺 openpyxl），不是塞进来的那条；真体检确实跑了（尺子是活的）。"""
+    stale = {
+        "ok": True,
+        "support": "verified",
+        "python_version": "3.12.1",
+        "modules_ok": {"openpyxl": True},
+    }
+    imports = ("openpyxl",)
+    key = (userenvs._key("/lab/python"), imports)
+
+    class Racy(dict):
+        def pop(self, k, *default):
+            got = super().pop(k, *default)
+            self[k] = dict(stale)  # 另一个线程的旧体检恰好在这一刻写回
+            return got
+
+    monkeypatch.setattr(userenvs, "_probe_cache", Racy({key: dict(stale)}))
+    probed = []
+
+    def fresh(python, module=None, *, modules=()):
+        probed.append((python, tuple(modules)))
+        return {**stale, "modules_ok": {"openpyxl": False}}
+
+    monkeypatch.setattr(projectenv, "probe_environment", fresh)
+    got = userenvs.evaluate(
+        [{"python": "/lab/python", "source": userenvs.SOURCE_CONDA, "label": "lab"}],
+        [{"import_name": "openpyxl", "distribution": "openpyxl"}],
+        [],
+        use_cache=False,
+    )[0]
+    assert probed == [("/lab/python", imports)], "复核真起了一次体检"
+    assert got["satisfies"] is False and got["missing"] == ["openpyxl"], got
+    # 走缓存的那条路（弹窗列表）照旧读缓存：同一个替身下它回的是缓存里的那条
+    cached = userenvs.evaluate(
+        [{"python": "/lab/python", "source": userenvs.SOURCE_CONDA, "label": "lab"}],
+        [{"import_name": "openpyxl", "distribution": "openpyxl"}],
+        [],
+    )[0]
+    assert cached["satisfies"] is True and len(probed) == 1
+
+
 def test_adopting_a_complete_environment_is_remembered_as_the_users_choice(adopt_api):
     """对照组：装齐的照常采用，记成用户的选择（`automatic=False`）。"""
     project, env = adopt_api["project"], adopt_api["env"]
