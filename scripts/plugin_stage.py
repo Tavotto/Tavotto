@@ -70,6 +70,7 @@ BUILD_MANIFEST = pm.BUILD_MANIFEST
 PLUGIN_SUBDIR = pm.PLUGIN_SUBDIR
 GENERATED = pm.GENERATED
 REQUIRED = pm.REQUIRED
+STAGE_REQUIRED = pm.STAGE_REQUIRED
 WIDGET_MIN_BYTES = pm.WIDGET_MIN_BYTES
 StageError = pm.PluginManifestError
 sha256_bytes = pm.sha256_bytes
@@ -289,7 +290,7 @@ def stage(
             put(rel, src.read_bytes(), mode)
         put(GENERATED[0], widget.read_bytes(), "100644")
         put("LICENSE", license_path.read_bytes(), license_mode)
-        for rel in REQUIRED:
+        for rel in STAGE_REQUIRED:
             if not (tmp / rel).is_file():
                 raise StageError(f"组装结果缺 {rel}")
 

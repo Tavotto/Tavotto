@@ -1216,6 +1216,21 @@ def _call_health(args: dict) -> dict:
     }
     if not widget.available():
         out["canvas"]["reason"] = widget.missing_reason()
+    out["server"] = _package_identity()
+    # 分层结论：**服务器只能回答它自己知道的那几层**。宿主 UI 有没有真的把画布显示出来、
+    # 当前智能体有没有启用这些工具，server 无从得知——如实写 unknown_to_server，
+    # 不从「资源在」推断「画布已显示」。
+    out["checks"] = {
+        "package": {
+            "ok": out["server"]["plugin_version"] is not None,
+            "release_build": out["server"]["release_build"],
+        },
+        "engine": {"ok": True},
+        "tools_listed": {"ok": True, "count": len(_tools())},
+        "workspace_authorized": {"ok": bool(out["roots"]), "source": root_info["source"]},
+        "canvas_resource": {"ok": out["canvas"]["available"]},
+        "host_ui_rendered": {"status": "unknown_to_server"},
+    }
     if args.get("probe_worker"):
         try:
             from tavotto.engine import pool as _pool
@@ -1234,6 +1249,27 @@ def _call_health(args: dict) -> dict:
         "根来源: " + root_info["source"],
     ]
     return {"content": _text(*lines), "structuredContent": out}
+
+
+def _package_identity() -> dict:
+    """这个 server 进程**实际**从哪份包起来的（同名 tavotto 被多处登记时靠它分辨）。"""
+    plugin_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    version = None
+    try:
+        with open(
+            os.path.join(plugin_dir, ".codex-plugin", "plugin.json"), "r", encoding="utf-8"
+        ) as fh:
+            data = json.load(fh)
+        v = data.get("version") if isinstance(data, dict) else None
+        version = v if isinstance(v, str) and v.strip() else None
+    except (OSError, ValueError):
+        pass
+    return {
+        "package_dir": plugin_dir,
+        "plugin_version": version,
+        "release_build": os.path.isfile(os.path.join(plugin_dir, "plugin-build.json")),
+        "python": sys.executable,
+    }
 
 
 HANDLERS = {
@@ -1557,6 +1593,9 @@ class Server:
                 "tavotto_preflight 体检 → tavotto_export 出图。"
                 "数据本身、坐标范围、加删曲线/子图、colorbar 方向这些必须回代码改；"
                 "改完 .py 之后调 tavotto_refresh_project（不是重跑脚本），Tavotto 界面会自己更新。"
+                "第一次用先调 tavotto_health（健康就不要安装任何东西）；项目路径必须在允许的根内，"
+                "模型传的路径不是授权。结果带 elided 时用 tavotto_session_state 取件，别猜 gid。"
+                "宿主没有内嵌画布时，同一组工具照样能走完打开→修改→预检→导出。"
             ),
         }
 

@@ -56,6 +56,14 @@ REQUIRED = (
     "assets/tavotto.svg",
     "LICENSE",
 )
+#: **新组装**的 staging 还必须有的文件。不并进 `REQUIRED`：那份清单也用来体检用户机器上
+#: **已装的旧版**插件（`tavotto codex doctor` / `verify --installed`），旧包里本来就没有这些，
+#: 把它们算进去会把一份完好的旧 Codex 插件报成损坏并让人重装（Codex 在 #559 上指出）。
+#: 新包里它们照样被核对：清单逐文件记着，缺了就是「与清单不符」。
+STAGE_REQUIRED = REQUIRED + (
+    # 非 Codex 宿主的接入入口：同一份包、同一个启动器（docs/implementation/multi-host-mcp/）
+    "integrations/configure.py",
+)
 #: 已装副本里允许被 `tavotto codex install` 改动 command 的两份清单（严格同源对）
 PINNABLE_MCP = ".mcp.json"
 PINNABLE_YAML_GLOB = re.compile(r"^skills/[^/]+/agents/openai\.yaml$")
