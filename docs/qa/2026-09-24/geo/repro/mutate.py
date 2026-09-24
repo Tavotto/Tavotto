@@ -93,7 +93,9 @@ def run(cmd: str, log) -> int:
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     p = subprocess.run(cmd, shell=True, cwd=ROOT, env=env, capture_output=True, text=True)
     out = (p.stdout + p.stderr).splitlines()
-    keep = out if len(out) <= 190 else out[:40] + [f"... [截断 {len(out) - 190} 行] ..."] + out[-150:]
+    keep = (
+        out if len(out) <= 190 else out[:40] + [f"... [截断 {len(out) - 190} 行] ..."] + out[-150:]
+    )
     log.write("\n".join(keep) + f"\n[exit={p.returncode}]\n")
     log.flush()
     return p.returncode
@@ -102,7 +104,9 @@ def run(cmd: str, log) -> int:
 def main() -> int:
     mid, log_path = sys.argv[1], sys.argv[2]
     path, old, new, cmds = MUTATIONS[mid]
-    sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
     with open(log_path, "a", encoding="utf-8") as log:
         log.write(f"\n===== mutation {mid} · {datetime.datetime.now().isoformat()} · HEAD {sha}\n")
         log.write(f"target: {path}\n- {old!r}\n+ {new!r}\n")
