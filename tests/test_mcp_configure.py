@@ -1,0 +1,435 @@
+"""非 Codex 宿主的接入入口 `codex-plugin/integrations/configure.py`（PR 1：宿主无关的基础）。
+
+判据的主语：
+
+* **一份解包到源码树之外的完整包**——不是源码 checkout。configure 从它自己的位置
+  找启动器；生成的配置在随机 cwd、剥掉 PYTHONPATH 的环境里真的能起 server、握手、
+  列工具、调 `tavotto_health`，而且 health 报的包目录就是那份解包目录（旁边刚好有
+  源码也掩盖不了漏打包）。
+* **生成器只打印**：stdout 只有配置（可解析），说明只在 stderr；不写任何文件。
+* **授权只来自用户选的目录**：文件系统根 / HOME / 包目录 / 相对路径 / `~` 一律拒绝。
+* **三个解释器分开**：启动器起不来是硬失败；引擎只在当前 shell 环境里找得到时钉进
+  `TAVOTTO_MCP_PYTHON`，且钉住后在最小环境里再验；引擎哪儿都没有时照样出配置
+  （降级 server 会在宿主里说缺什么），stderr 给的恢复命令是真实绝对路径。
+
+各宿主 schema 的逐家对拍在 tests/test_mcp_host_profiles.py。
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import venv
+from pathlib import Path
+
+import pytest
+
+from tests.support import pluginkit as kit
+
+ROOT = kit.ROOT
+SOURCE_CONFIGURE = ROOT / "codex-plugin" / "integrations" / "configure.py"
+PROTOCOL = "2025-11-25"
+
+
+def _load(path: Path, name: str = "_tavotto_configure_under_test"):
+    spec = importlib.util.spec_from_file_location(f"{name}_{abs(hash(str(path)))}", path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture(scope="module")
+def unpacked(tmp_path_factory) -> Path:
+    """合成 staging → 确定性 zip → 解包到一个带空格与中文、与仓库无关的目录。"""
+    stage = kit.load_script("plugin_stage")
+    base = tmp_path_factory.mktemp("发行 包")
+    kit.synthetic_staging(base / "stage")
+    archive = stage.write_zip(base / "stage", base / "codex-plugin-test.zip")
+    plugin = stage.unpack_zip(archive, base / "解包 目录")
+    assert not str(plugin).startswith(str(ROOT))
+    return plugin
+
+
+@pytest.fixture()
+def project(tmp_path) -> Path:
+    p = tmp_path / "我的 论文" / "figures"
+    p.mkdir(parents=True)
+    return p
+
+
+def _clean_env(tmp_path: Path, **extra: str) -> dict:
+    """宿主会给的那种最小环境：没有 PYTHONPATH、没有仓库、PATH 最短。"""
+    env = {
+        "PATH": os.pathsep.join(["/usr/bin", "/bin"])
+        if os.name != "nt"
+        else os.environ.get("PATH", ""),
+        "HOME": str(tmp_path / "home"),
+        "TAVOTTO_CONFIG_DIR": os.environ["TAVOTTO_CONFIG_DIR"],
+        "TAVOTTO_DATA_DIR": os.environ["TAVOTTO_DATA_DIR"],
+        "TAVOTTO_NO_TELEMETRY": "1",
+    }
+    for name in ("SYSTEMROOT", "SystemRoot", "APPDATA", "LOCALAPPDATA", "USERPROFILE", "TEMP"):
+        if name in os.environ:
+            env[name] = os.environ[name]
+    (tmp_path / "home").mkdir(exist_ok=True)
+    env.update(extra)
+    return env
+
+
+def _run_configure(plugin: Path, args: list[str], tmp_path: Path, **env_extra: str):
+    cwd = tmp_path / "随机 cwd"
+    cwd.mkdir(exist_ok=True)
+    return subprocess.run(
+        [sys.executable, str(plugin / "integrations" / "configure.py"), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(cwd),
+        env=_clean_env(tmp_path, **env_extra),
+        timeout=600,
+    )
+
+
+def _bare_python(tmp_path: Path) -> str:
+    """一个**没有** tavotto 的解释器：不带 pip 的新 venv（不继承系统 site-packages）。"""
+    d = tmp_path / "bare venv"
+    venv.EnvBuilder(with_pip=False, system_site_packages=False).create(d)
+    py = d / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    assert subprocess.run([str(py), "-c", "import tavotto"], capture_output=True).returncode != 0
+    return str(py)
+
+
+def _serve(command: str, args: list[str], env: dict, cwd: Path, calls: list[dict]) -> dict:
+    """按配置原样起 server（不过 shell），走 stdio 握手 + 列工具 + 逐个调用。"""
+    msgs = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": PROTOCOL,
+                "capabilities": {},
+                "clientInfo": {"name": "configure-test", "version": "1"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    for i, call in enumerate(calls):
+        msgs.append({"jsonrpc": "2.0", "id": 10 + i, "method": "tools/call", "params": call})
+    proc = subprocess.run(
+        [command, *args],
+        input="".join(json.dumps(m) + "\n" for m in msgs),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        cwd=str(cwd),
+        timeout=300,
+    )
+    replies = {}
+    for line in proc.stdout.splitlines():
+        msg = json.loads(line)  # stdout 只许有协议帧：解析失败就是污染
+        if "id" in msg:
+            replies[msg["id"]] = msg
+    assert 1 in replies, proc.stderr[-2000:]
+    return replies
+
+
+# ======================================================== 包内入口与发行接线
+
+
+def test_the_generator_is_a_required_file_of_the_complete_package():
+    """它进了完整插件的必需清单——漏打包会让 staging 自检直接失败，而不是发出去才发现。"""
+    pm = kit.load_script("plugin_stage")
+    assert "integrations/configure.py" in pm.REQUIRED
+    tracked = {rel for rel, _mode in pm.tracked_plugin_files(ROOT)}
+    assert "integrations/configure.py" in tracked
+
+
+def test_a_staging_without_the_generator_fails_verification(tmp_path):
+    stage = kit.load_script("plugin_stage")
+    d = tmp_path / "stage"
+    kit.synthetic_staging(d)
+    assert stage.verify_dir(d) == []
+    (d / "integrations" / "configure.py").unlink()
+    problems = stage.verify_dir(d)
+    assert any("integrations/configure.py" in p for p in problems), problems
+
+
+def test_the_generator_is_stdlib_only():
+    """它跑在用户随便哪个 python3 上（引擎还没装时也要能跑）：只许 import 标准库。"""
+    import ast
+
+    tree = ast.parse(SOURCE_CONFIGURE.read_text(encoding="utf-8"))
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names |= {a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            names.add((node.module or "").split(".")[0])
+    names.discard("__future__")
+    assert names <= set(sys.stdlib_module_names), names - set(sys.stdlib_module_names)
+
+
+# ======================================================== CLI 契约
+
+
+def test_help_lists_every_flag_the_docs_use(unpacked, tmp_path):
+    proc = _run_configure(unpacked, ["--help"], tmp_path)
+    assert proc.returncode == 0
+    for flag in ("--host", "--project-root", "--python", "--engine-python", "--diagnose", "--emit"):
+        assert flag in proc.stdout, flag
+
+
+def test_stdout_is_only_the_config_and_notes_go_to_stderr(unpacked, project, tmp_path):
+    proc = _run_configure(
+        unpacked,
+        ["--host", "vscode", "--project-root", str(project), "--python", sys.executable],
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads(proc.stdout)  # 整个 stdout 就是一个 JSON 对象
+    assert list(data) == ["servers"]
+    assert "只合并 tavotto 这一项" in proc.stderr
+    assert "{" not in proc.stderr.splitlines()[0]
+
+
+def test_diagnose_is_a_separate_machine_readable_mode(unpacked, project, tmp_path):
+    proc = _run_configure(
+        unpacked,
+        [
+            "--host",
+            "cursor",
+            "--project-root",
+            str(project),
+            "--python",
+            sys.executable,
+            "--diagnose",
+        ],
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    report = json.loads(proc.stdout)
+    assert report["ok"] is True
+    assert "config" not in report  # 诊断与配置不混成一个对象
+    assert report["package"]["dir"] == str(unpacked)
+    assert report["package"]["release_build"] is True
+    assert report["launcher"]["starts"] is True
+    assert report["engine"]["ok"] is True
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["relative/figures", "~/figures", "/", "__HOME__", "__PACKAGE__", "__MISSING__"],
+)
+def test_project_roots_that_would_over_authorize_are_refused(unpacked, tmp_path, bad):
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    value = {
+        "__HOME__": str(home),
+        "__PACKAGE__": str(unpacked / "mcp"),
+        "__MISSING__": str(tmp_path / "does-not-exist"),
+    }.get(bad, bad)
+    if bad == "/" and os.name == "nt":
+        value = os.path.splitdrive(str(tmp_path))[0] + "\\"
+    proc = _run_configure(unpacked, ["--host", "claude-desktop", "--project-root", value], tmp_path)
+    assert proc.returncode == 2, (bad, proc.stdout, proc.stderr)
+    assert proc.stdout == ""  # 失败时 stdout 不出半份配置
+    assert "bad_project_root" in proc.stderr
+
+
+def test_an_unknown_host_is_an_argument_error(unpacked, project, tmp_path):
+    proc = _run_configure(unpacked, ["--host", "tare", "--project-root", str(project)], tmp_path)
+    assert proc.returncode == 2
+    assert proc.stdout == ""
+
+
+def test_the_generator_writes_nothing(unpacked, project, tmp_path):
+    """默认不写：HOME、配置目录、项目目录、包目录前后一字节不差。"""
+
+    def snapshot(*dirs: Path) -> dict:
+        out = {}
+        for d in dirs:
+            for p in sorted(d.rglob("*")):
+                if p.is_file() and "__pycache__" not in p.parts:
+                    out[str(p)] = p.read_bytes()
+        return out
+
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    cfg = Path(os.environ["TAVOTTO_CONFIG_DIR"])
+    cfg.mkdir(parents=True, exist_ok=True)
+    before = snapshot(home, cfg, project, unpacked)
+    for host in ("claude-code", "vscode", "claude-desktop", "trae"):
+        proc = _run_configure(
+            unpacked,
+            ["--host", host, "--project-root", str(project), "--python", sys.executable],
+            tmp_path,
+        )
+        assert proc.returncode == 0, proc.stderr
+    assert snapshot(home, cfg, project, unpacked) == before
+
+
+# ======================================================== 启动器探针与解释器
+
+
+def test_an_interpreter_that_cannot_start_the_launcher_is_a_hard_failure(
+    unpacked, project, tmp_path
+):
+    """「命令存在、零输出、非零退出」——商店别名的可观测形状。判据是执行，不是 which。"""
+    if os.name == "nt":
+        fake = tmp_path / "python.cmd"
+        fake.write_text("@exit /b 9009\r\n", encoding="utf-8")
+    else:
+        fake = tmp_path / "python3"
+        fake.write_text("#!/bin/sh\nexit 9009\n", encoding="utf-8")
+        fake.chmod(0o755)
+    proc = _run_configure(
+        unpacked,
+        ["--host", "vscode", "--project-root", str(project), "--python", str(fake)],
+        tmp_path,
+    )
+    assert proc.returncode == 3, proc.stderr
+    assert proc.stdout == ""
+    assert "launcher_unstartable" in proc.stderr
+
+
+def test_a_missing_interpreter_is_named(unpacked, project, tmp_path):
+    proc = _run_configure(
+        unpacked,
+        ["--host", "vscode", "--project-root", str(project), "--python", str(tmp_path / "nope")],
+        tmp_path,
+    )
+    assert proc.returncode == 2
+    assert "python_not_found" in proc.stderr
+
+
+def test_engine_found_only_through_the_shell_env_is_pinned(
+    unpacked, project, tmp_path, monkeypatch
+):
+    """启动器解释器没有引擎、引擎只能靠当前 shell 的变量找到：钉进 TAVOTTO_MCP_PYTHON，
+    且钉住后在最小环境里再验过（来源变成 mcp_env）。"""
+    mod = _load(unpacked / "integrations" / "configure.py")
+    bare = _bare_python(tmp_path)
+    for name in ("TAVOTTO_MCP_PYTHON", "TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PATH", os.pathsep.join(["/usr/bin", "/bin"]))
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", sys.executable)  # 只在「shell」里有
+    result = mod.build("claude-desktop", str(project), bare, None)
+    assert result["engine_pinned"] == sys.executable
+    assert result["engine"]["ok"] is True
+    assert result["engine"]["source"] == "mcp_env"
+    env = result["config"]["mcpServers"]["tavotto"]["env"]
+    assert env["TAVOTTO_MCP_PYTHON"] == sys.executable
+    assert result["config"]["mcpServers"]["tavotto"]["command"] == bare
+
+
+def test_launcher_python_with_the_engine_is_not_pinned(unpacked, project, tmp_path):
+    mod = _load(unpacked / "integrations" / "configure.py")
+    result = mod.build("cursor", str(project), sys.executable, None)
+    assert result["engine"]["source"] == "current"
+    assert result["engine_pinned"] is None
+    assert set(result["config"]["mcpServers"]["tavotto"]["env"]) == {"TAVOTTO_MCP_ROOTS"}
+
+
+def test_no_engine_anywhere_still_yields_a_config_with_real_recovery_steps(
+    unpacked, project, tmp_path
+):
+    """引擎哪儿都没有：配置照出（降级 server 有 tavotto_health），stderr 的恢复命令是
+    这份包里启动器的真实绝对路径，不是 `<插件目录>` 占位。"""
+    bare = _bare_python(tmp_path)
+    proc = _run_configure(
+        unpacked,
+        ["--host", "trae", "--project-root", str(project), "--python", bare],
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    config = json.loads(proc.stdout)
+    assert "TAVOTTO_MCP_PYTHON" not in config["mcpServers"]["tavotto"]["env"]
+    assert "引擎未就绪" in proc.stderr
+    assert str(unpacked / "mcp" / "server.py") in proc.stderr
+    assert "--provision" in proc.stderr
+    assert "<插件目录>" not in proc.stderr
+
+
+def test_an_explicit_engine_python_that_cannot_import_the_engine_is_refused(
+    unpacked, project, tmp_path
+):
+    bare = _bare_python(tmp_path)
+    proc = _run_configure(
+        unpacked,
+        [
+            "--host",
+            "vscode",
+            "--project-root",
+            str(project),
+            "--python",
+            bare,
+            "--engine-python",
+            bare,
+        ],
+        tmp_path,
+    )
+    assert proc.returncode == 3, proc.stderr
+    assert "engine_python_unusable" in proc.stderr
+
+
+# ======================================================== 脱离源码树真起 server
+
+
+@pytest.mark.parametrize("host", ["vscode", "claude-code", "claude-desktop"])
+def test_the_generated_config_starts_the_unpacked_server(unpacked, project, tmp_path, host):
+    """按生成的 command / args / env 原样起 server：握手、真 server（不是降级）、
+    工具齐、health 报的包目录 == 解包目录、授权根 == 用户选的那一个。"""
+    proc = _run_configure(
+        unpacked,
+        ["--host", host, "--project-root", str(project), "--python", sys.executable],
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads(proc.stdout)
+    entry = next(iter(next(iter(data.values())).values()))
+    cwd = tmp_path / "宿主 cwd"
+    cwd.mkdir()
+    env = _clean_env(tmp_path, **entry["env"])
+    replies = _serve(
+        entry["command"],
+        entry["args"],
+        env,
+        cwd,
+        [{"name": "tavotto_health", "arguments": {}}],
+    )
+    info = replies[1]["result"]["serverInfo"]
+    assert info["version"] not in (None, "0"), "降级 server：引擎没找到"
+    names = {t["name"] for t in replies[2]["result"]["tools"]}
+    assert {"tavotto_health", "tavotto_open_figure", "tavotto_export"} <= names
+    health = replies[10]["result"]["structuredContent"]
+    assert health["server"]["package_dir"] == str(unpacked)
+    assert health["server"]["release_build"] is True
+    assert health["roots"] == [os.path.realpath(project)]
+    assert health["root_authority"]["source"] == "explicit_env"
+    assert health["checks"]["workspace_authorized"]["ok"] is True
+    assert health["checks"]["host_ui_rendered"]["status"] == "unknown_to_server"
+
+
+def test_two_generated_configs_do_not_widen_each_other(unpacked, tmp_path):
+    """给 A 宿主授权 A 目录、给 B 宿主授权 B 目录：互不带出对方（生成器无状态）。"""
+    a = tmp_path / "项目A"
+    b = tmp_path / "项目B"
+    a.mkdir()
+    b.mkdir()
+    outs = []
+    for host, root in (("claude-code", a), ("vscode", b)):
+        proc = _run_configure(
+            unpacked,
+            ["--host", host, "--project-root", str(root), "--python", sys.executable],
+            tmp_path,
+        )
+        assert proc.returncode == 0, proc.stderr
+        outs.append(proc.stdout)
+    assert str(b) not in outs[0] and str(a) not in outs[1]

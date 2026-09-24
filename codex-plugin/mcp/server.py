@@ -60,15 +60,35 @@ WORKER_PYTHON_ENVS = ("TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON")
 #: 不许再交第二次——那是无限 exec 循环。
 _EXECED_ENV = "TAVOTTO_MCP_EXECED"
 
+
+def _self_command() -> str:
+    """恢复步骤里「再跑一次本启动器」的真实命令行：当前解释器 + 本文件的绝对路径。
+
+    不写 `python3 <插件目录>/...` 这种占位：非 Codex 宿主的用户不知道「插件目录」
+    在哪，Windows 上 `python3` 还可能是商店别名。含空格的路径加引号。
+    """
+    parts = [sys.executable, os.path.abspath(__file__)]
+    return " ".join(f'"{p}"' if " " in p else p for p in parts)
+
+
+#: 装好 / 升级之后宿主要做的那一步。**不是只有 Codex**：同一个启动器被 Codex 插件与
+#: `integrations/configure.py` 生成的其他宿主配置共用，各家「让已开的会话重新拿到工具」
+#: 的动作不同，这里只说共性，具体按键在宿主的接入说明里。
+RELOAD_HINT = (
+    "装完要让宿主重新加载 MCP 服务：Codex 新开一次会话；其他宿主重启 tavotto 这个 MCP 服务"
+    "或重开对话——已开的会话不会自己重新加载工具"
+)
+
+
 #: 只装了桌面版时的那一格。**不能说「没装 Tavotto」**——他明明装了。
 DESKTOP_ONLY_HINT = (
     "这台机器上装的是 Tavotto 桌面版。交接（把图交给 Tavotto 窗口打开）照常能用，"
-    "但 Codex 里的内嵌画布与六个工具需要一个能 import tavotto 的 Python 环境——"
+    "但宿主里的内嵌画布与 MCP 工具需要一个能 import tavotto 的 Python 环境——"
     "桌面版带的 tavotto-cli 是打包成单文件的可执行程序，给不出解释器。"
     "两条恢复路（可共存）：① 一条命令建插件自管环境："
-    "`python3 <插件目录>/mcp/server.py --provision`；"
+    f"`{_self_command()} --provision`；"
     "② `pipx install tavotto`（或 `pip install tavotto`）。"
-    "装完**新开一次 Codex 会话**——已开的会话不会重新加载工具。"
+    "（" + RELOAD_HINT + "。）"
 )
 
 
@@ -571,11 +591,11 @@ def engine_too_old_hint(have: str, required: str, plugin: "str | None" = None) -
     who = f"插件 {plugin} 需要" if plugin else "这个插件需要"
     return (
         f"这台机器上的 Tavotto 是 {have}，而{who} {required} 或更新的引擎："
-        f"桥要 import 的那组引擎模块在 {have} 里还没有，所以 Codex 里的内嵌画布与整组"
+        f"桥要 import 的那组引擎模块在 {have} 里还没有，所以宿主里的内嵌画布与整组"
         "工具都起不来（交接——把图交给 Tavotto 窗口打开——不受影响，那条路只要求 CLI "
         "能执行）。恢复：**升级引擎**（`pipx upgrade tavotto`，或 `pip install -U "
         "tavotto`；桌面版用户升级桌面版），或者反过来把插件退回与这台引擎匹配的那一版。"
-        "升完**新开一次 Codex 会话**——已开的会话不会重新加载工具。"
+        "（" + RELOAD_HINT + "。）"
     )
 
 
@@ -628,8 +648,8 @@ def diagnose_resolved(found: dict, resolution: dict) -> "tuple[str, str]":
             "engine_unavailable",
             f"{MCP_PYTHON_ENV} 指定的解释器用不了：{override['python']}"
             f"（{why}）。修正它，或者去掉这个变量让 resolver 自己找；"
-            "装引擎可用 `python3 <插件目录>/mcp/server.py --provision`。"
-            "改完新开一次 Codex 会话。",
+            f"装引擎可用 `{_self_command()} --provision`。"
+            "（" + RELOAD_HINT + "。）",
         )
     return diagnose(found)
 
@@ -670,16 +690,15 @@ def _recovery_steps(code: str) -> "list[str]":
         "desktop_found_cli_missing",
     ):
         steps.append(
-            "方式一（推荐，零配置）：python3 <插件目录>/mcp/server.py"
-            " --provision  （在 Tavotto 配置目录下建插件自管环境，"
-            "不碰系统 Python）"
+            f"方式一（推荐，零配置）：{_self_command()} --provision"
+            "  （在 Tavotto 配置目录下建插件自管环境，不碰系统 Python）"
         )
         steps.append(
             "方式二：pipx install tavotto（或 pip install tavotto），"
             "或把 TAVOTTO_MCP_PYTHON 指到一个装了 tavotto 的解释器"
         )
-    steps.append("装好后**新开一次 Codex 会话**——已开的会话不会重新加载 MCP 工具（这一步最容易漏）")
-    steps.append("自检：python3 <插件目录>/mcp/server.py --health")
+    steps.append(RELOAD_HINT + "（这一步最容易漏）")
+    steps.append(f"自检：{_self_command()} --health")
     return steps
 
 
@@ -852,9 +871,8 @@ def health() -> "tuple[dict, int]":
             "present": os.path.isfile(managed_python()),
         },
         "notes": [
-            "engine 可用但 Codex 里还是没有工具？新开一次会话——已开的会话"
-            "不会重新加载 MCP 工具，`codex plugin list` 的 enabled 也不代表"
-            " server 健康。",
+            "engine 可用但宿主里还是没有工具？" + RELOAD_HINT + "。Codex 的"
+            " `codex plugin list` 里 enabled、其他宿主里「已登记」都不代表 server 健康。",
         ],
     }
     if current_ok:
@@ -1081,7 +1099,7 @@ def provision(spec: "str | None" = None, python_base: "str | None" = None) -> "t
             "spec": spec,
             "steps": steps,
             "ms": int((time.monotonic() - t0) * 1000),
-            "next": "新开一次 Codex 会话即可在 Codex 内使用 Tavotto 画布",
+            "next": RELOAD_HINT,
         },
         0,
     )

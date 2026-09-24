@@ -52,6 +52,8 @@ REQUIRED = (
     "skills/tavotto-figure/SKILL.md",
     "skills/tavotto-figure/agents/openai.yaml",
     "skills/tavotto-figure/scripts/handoff.py",
+    # 非 Codex 宿主的接入入口：同一份包、同一个启动器（docs/implementation/multi-host-mcp/）
+    "integrations/configure.py",
     "assets/tavotto.svg",
     "LICENSE",
 )

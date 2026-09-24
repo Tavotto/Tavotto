@@ -155,3 +155,67 @@ def test_an_isolated_install_from_a_local_stable_branch(plugin, tmp_path):
     got = dest / "codex-plugin"
     assert stage.verify_dir(got, expect_content_digest=manifest["content_digest"]) == []
     assert stage.serve_check(got, sys.executable) == []
+
+
+def test_other_hosts_reach_the_real_canvas_through_the_generated_config(plugin, tmp_path):
+    """非 Codex 宿主那条路（`integrations/configure.py`）用的是**同一份候选**：从源码树
+    之外、剥掉 PYTHONPATH、随机 cwd，按生成的 VS Code 配置原样起 server，读到的画布
+    与磁盘上那份逐字相同——不是「降级后工具能跑」掩盖画布损坏。"""
+    project = tmp_path / "项目 目录"
+    project.mkdir()
+    cwd = tmp_path / "随机 cwd"
+    cwd.mkdir()
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(plugin / "integrations" / "configure.py"),
+            "--host",
+            "vscode",
+            "--project-root",
+            str(project),
+            "--python",
+            sys.executable,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(cwd),
+        env=env,
+        timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr
+    entry = json.loads(proc.stdout)["servers"]["tavotto"]
+    assert entry["args"] == [str(plugin / "mcp" / "server.py")]
+    msgs = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "candidate-vscode-profile", "version": "1"},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "resources/read",
+            "params": {"uri": "ui://tavotto/canvas/v1.html"},
+        },
+    ]
+    served = subprocess.run(
+        [entry["command"], *entry["args"]],
+        input="".join(json.dumps(m) + "\n" for m in msgs),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(cwd),
+        env={**env, **entry["env"]},
+        timeout=300,
+    )
+    replies = {m["id"]: m for m in map(json.loads, served.stdout.splitlines()) if "id" in m}
+    assert replies[1]["result"]["serverInfo"]["version"] == tavotto.__version__
+    text = replies[2]["result"]["contents"][0]["text"]
+    assert text == (plugin / "mcp" / "widget" / "canvas.html").read_text(encoding="utf-8")
