@@ -613,8 +613,10 @@ class FrozenLegendHandle:
     副本存在这里，`_FrozenHandler` 按新格子的尺寸把它们等比铺进去。
     """
 
-    def __init__(self, artists: list, box) -> None:
+    def __init__(self, artists: list, box, modes: list) -> None:
         self.artists = [copy.copy(a) for a in artists]
+        #: 每个 artist 挂在这一格坐标上的是哪一个变换（`_cell_transform_mode`）：复刻时替换那一个
+        self.modes = list(modes)
         self.x0, self.y0 = -float(box.xdescent), -float(box.ydescent)
         self.width, self.height = float(box.width), float(box.height)
 
@@ -633,9 +635,13 @@ class _FrozenHandler(HandlerBase):
             .translate(-handlebox.xdescent, -handlebox.ydescent)
         )
         out = []
-        for a in f.artists:
+        for a, mode in zip(f.artists, f.modes):
             c = copy.copy(a)
-            c.set_transform(place + handlebox.get_transform())
+            cell = place + handlebox.get_transform()
+            if mode in ("main", "both"):
+                c.set_transform(cell)
+            if mode in ("offset", "both"):
+                c.set_offset_transform(cell)
             handlebox.add_artist(c)
             out.append(c)
         return out[0]
@@ -663,10 +669,41 @@ def _freeze_entry(leg: Legend, h, box):
         pass
     if len(probe.get_children()) >= len(kids):
         return None
-    base = box.get_transform()
-    if not all(Artist.get_transform(a) == base for a in kids):
+    modes = [_cell_transform_mode(a, box) for a in kids]
+    if any(m is None for m in modes):
         return None
-    return FrozenLegendHandle(kids, box)
+    return FrozenLegendHandle(kids, box, modes)
+
+
+def _is_cell_transform(t, box) -> bool:
+    """`t` 就是这一格的变换：`DrawingArea.get_transform()` 每次现拼 `dpi_transform + offset_transform`，
+    按**对象身份**认这两个成员，不按数值比——定格判定跑在还没排版的图例上，那时格子变换在数值上
+    恰好是单位阵，按值比会把 Collection 自带的 IdentityTransform 也认成「挂在格子上」（散点式示意
+    的主变换被换掉，点被放大到格子外）。"""
+    return (
+        getattr(t, "_a", None) is box.dpi_transform
+        and getattr(t, "_b", None) is box.offset_transform
+    )
+
+
+def _cell_transform_mode(a, box):
+    """artist 靠哪一个变换画在这一格的坐标里：主变换（`main`）；Collection 也可以只靠**偏移**变换
+    （`offset_transform=trans` 定位、marker 尺寸按点——散点式的示意）；两者都是（`both`）。都不是
+    回 None：没法按新格子等比铺，这一格不定格（#544 评审：只认主变换会把用偏移定位的自定义
+    handler 整格拒掉，重建时又塌成第一个 artist）。"""
+    main = _is_cell_transform(Artist.get_transform(a), box)
+    offset = False
+    if isinstance(a, Collection):
+        # 读**原始**属性，不调 `get_offset_transform()`：那个 getter 在属性为 None 时会顺手写进一个
+        # IdentityTransform——判定跑在活的图例对象上，一读就改了原样（误差棒的竖线组当场画偏）
+        offset = _is_cell_transform(getattr(a, "_offset_transform", None), box)
+    if main and offset:
+        return "both"
+    if main:
+        return "main"
+    if offset:
+        return "offset"
+    return None
 
 
 def _legend_replace_handle(leg: Legend, k: int, orig, copy_of=None) -> bool:

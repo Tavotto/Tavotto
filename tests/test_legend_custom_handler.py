@@ -491,3 +491,82 @@ def test_an_outline_first_cell_shows_and_restores_its_visible_colour(tmp_path_fa
         assert w.preview_png(OUTLINE_STEM, keep, 380, "ou-undone").read_bytes() == expected
     finally:
         pool.discard(w)
+
+
+#: 一格里：描边矩形（主变换在格子坐标里）+ 散点式圆点（CircleCollection，只靠 **offset_transform**
+#: 定位在格子里、尺寸按点）。只认主变换的话整格不定格，重建时圆点丢掉（#544 评审）。
+OFFSET_SCRIPT = "fig_legend_offset_cell.py"
+OFFSET_STEM = "OffsetCell"
+OFFSET_LIBRARY = """\
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib.collections import CircleCollection
+from matplotlib.legend_handler import HandlerBase
+
+
+class Key:
+    pass
+
+
+class HandlerDots(HandlerBase):
+    def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height,
+                       fontsize, trans):
+        cy = ydescent + height / 2.0
+        return [
+            mpl.patches.Rectangle((xdescent, ydescent), width, height, transform=trans,
+                                  facecolor="none", edgecolor="0.4", linewidth=1.0),
+            CircleCollection([40, 40, 40],
+                             offsets=[(xdescent + width * f, cy) for f in (0.2, 0.5, 0.8)],
+                             offset_transform=trans, facecolor=["#d62728", "#2ca02c", "#1f77b4"]),
+        ]
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    ax.plot([0, 1], [0, 1], color="0.5")
+    ax.legend([Key()], ["Dots"], loc="upper left", handlelength=3.0,
+              handler_map={Key: HandlerDots()})
+    fig.savefig("OffsetCell.pdf")
+"""
+
+
+def test_a_cell_positioned_by_offset_transform_survives_a_rebuild(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("legend-offset-cell")
+    (figs / OFFSET_SCRIPT).write_text(OFFSET_LIBRARY, encoding="utf-8")
+    w = pool.one_shot(OFFSET_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        man = w.override(OFFSET_STEM, [])["manifest"]
+        same = [{"gid": LEG, "prop": "borderpad", "value": _legend_value(man, "borderpad")}]
+        original = w.preview_png(OFFSET_STEM, [], 380, "off-orig").read_bytes()
+        rebuilt = w.preview_png(OFFSET_STEM, same, 380, "off-rebuilt").read_bytes()
+    finally:
+        pool.discard(w)
+    assert rebuilt == original
+
+
+def test_an_offset_positioned_cell_follows_a_changed_layout(tmp_path_factory):
+    """布局真的变了（内边距改成 1.5）：格子挪了位置，靠偏移变换定位的圆点必须跟着新格子走——
+    副本若还挂着旧格子的偏移变换，就留在原处。期望值 = 脚本原本就写了 `borderpad=1.5`。"""
+    src = OFFSET_LIBRARY.replace('loc="upper left",', 'loc="upper left", borderpad=1.5,').replace(
+        "OffsetCell.pdf", "OffsetCellPad.pdf"
+    )
+    assert "borderpad=1.5" in src, "前提：替换真的落在了脚本上"
+    figs = tmp_path_factory.mktemp("legend-offset-layout")
+    (figs / OFFSET_SCRIPT).write_text(OFFSET_LIBRARY, encoding="utf-8")
+    padded = "fig_legend_offset_cell_pad.py"
+    (figs / padded).write_text(src, encoding="utf-8")
+    pad = [{"gid": LEG, "prop": "borderpad", "value": 1.5}]
+    w = pool.one_shot(OFFSET_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        got = w.preview_png(OFFSET_STEM, pad, 380, "off-pad").read_bytes()
+    finally:
+        pool.discard(w)
+    r = pool.one_shot(padded, str(figs), ENTRY)
+    r.ensure_built()
+    try:
+        expected = r.preview_png("OffsetCellPad", [], 380, "off-pad-exp").read_bytes()
+    finally:
+        pool.discard(r)
+    assert got == expected
