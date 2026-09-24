@@ -134,9 +134,9 @@ const RULES: Record<string, { context: IssueContext; fix: FixKind }> = {
   // 而换哪一个只有用户说得出（自动挑一个会让同一份文档在两台机器上不一样）。
   'glyph-missing': { context: 'document', fix: 'none' },
   'glyph-substituted': { context: 'document', fix: 'none' },
-  // 能修的动作是「把元素挪回图内 / 放大图幅 / 让脚本用 tight_layout」，
-  // 哪一种对只有用户说得出；自动挪一条轴标题等于替用户改版式。
-  'element-outside-figure': { context: 'document', fix: 'none' },
+  // 修法是外边距重排（ADR 0051 的 `adapt_margins`）：挪子图、不挪那条文字，有位移预算，
+  // 改完真实渲染裁决；放不下就如实说「放不下」、一个字不改（ADR 0080）
+  'element-outside-figure': { context: 'document', fix: 'safe_auto' },
   'text-weight-policy': { context: 'document', fix: 'safe_auto' },
   'legend-frame': { context: 'document', fix: 'safe_auto' },
   'legend-font-size': { context: 'document', fix: 'safe_auto' },

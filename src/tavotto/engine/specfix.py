@@ -39,7 +39,12 @@ FIXABLE_RULES = (
     "legend-frame",
     "spines-not-enclosed",
     "text-weight-policy",
+    "element-outside-figure",
 )
+
+#: 不在 `plan()` 里算、由外边距重排（ADR 0051 的 `adapt_margins`，有预算、有真实渲染
+#: 裁决）来修的规则。挪的是子图的位置，不是那条文字——文字本身一个属性都不动
+LAYOUT_RULES = ("element-outside-figure",)
 
 #: 「全部处理」不碰的等级：建议档是口味（轴标题加不加粗），只在用户逐条点它时才改。
 BATCH_SKIP_SEVERITIES = ("suggestion",)
@@ -125,6 +130,11 @@ def profile_issues(manifest: dict, profile: dict, scale: float) -> list[dict]:
     return out
 
 
+def all_issues(manifest: dict, profile: dict, scale: float) -> list[dict]:
+    """选修复对象用的完整清单：规范问题（逐 gid）+ 逐元素的裁切（带毫米数与边）。"""
+    return profile_issues(manifest, profile, scale) + normalize.per_element_clipping(manifest)
+
+
 def select(issues: list[dict], only: list[dict] | None) -> list[tuple[str, str]]:
     """要修哪些 `(规则, gid)`。`only` 为空 = 「全部处理」：可修规则里去掉建议档。"""
     fixable = [i for i in issues if i.get("id") in FIXABLE_RULES and i.get("gids")]
@@ -172,6 +182,8 @@ def plan(manifest: dict, profile: dict, *, scale: float, targets: list[tuple[str
         if rule in FONT_RULES:
             font_targets.setdefault(gid, []).append(rule)
             continue
+        if rule in LAYOUT_RULES:
+            continue  # 由调用方的外边距重排修（见 LAYOUT_RULES）
         step = _plan_one(rule, el, profile, scale)
         if step is None:
             skipped.append({"rule": rule, "gid": gid, "reason": "no_safe_value"})
@@ -445,6 +457,7 @@ def verdict(
     if v["ok"] and v["blocking"]:
         v["ok"] = False
         v["exit"] = normalize.EXIT_CONSTRAINT_CONFLICT
+    after = after + normalize.per_element_clipping(manifest)
     still = {(i["id"], i["gids"][0]) for i in after if i.get("gids")}
     unresolved = [{"rule": r, "gid": g} for r, g in targets if (r, g) in still]
     v["unresolved"] = unresolved
@@ -452,3 +465,22 @@ def verdict(
         v["ok"] = False
         v["exit"] = EXIT_NOT_RESOLVED
     return v
+
+
+def progressed(new: dict, old: dict) -> bool:
+    """一轮外边距重排收不收：阻断项严格更少（`normalize.better_candidate`），或者
+    阻断项不增、干净（不越权、不超预算、结构没变），而点名没修好的**严格更少**。
+
+    第二条是给「修复前就已经出界」的那种情况：它不是新增 / 加重，进不了阻断清单，
+    只能按「点名的问题少了几条」来量。
+    """
+    if normalize.better_candidate(new, old):
+        return True
+    if new["protected_changes"] or new["budget"]["over"]:
+        return False
+    st = new["structure"]
+    if st["missing"] or st["extra"] or st["role_changed"] or st["legend_entries_changed"]:
+        return False
+    return len(new["blocking"]) <= len(old["blocking"]) and len(new["unresolved"]) < len(
+        old["unresolved"]
+    )

@@ -501,6 +501,7 @@
       "engine_failed": "Rendering failed while fixing. The figure was not changed.",
       "font_unavailable": "The required font \"{{font}}\" isn't installed on this computer, so the font was not changed.",
       "needs_choice": "Pick how to fix this one first",
+      "no_fit": "The clipped text still doesn't fit after adjusting the margins, so it was left unchanged. Try a smaller font or a larger figure.",
       "no_plan": "No safe automatic fix is available for this problem; adjust it manually.",
       "not_resolved": "The result still didn't meet the spec, so the fix was dropped. The figure was not changed.",
       "object_missing": "The object to fix is gone — refresh the list",

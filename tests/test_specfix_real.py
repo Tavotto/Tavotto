@@ -94,18 +94,17 @@ def _rpc(proc, obj, timeout=180):
     return resp
 
 
-@pytest.fixture
-def render(tmp_path):
+def _spawn_render(tmp_path, script: str, stem: str):
     """直连 worker 的 `render(patches)`，外加一本调用账（最后一次渲染的是哪份列表）。"""
     figs = tmp_path / "figures"
     figs.mkdir()
-    (figs / "kin.py").write_text(SCRIPT, encoding="utf-8")
+    (figs / "fig.py").write_text(script, encoding="utf-8")
     proc = subprocess.Popen(
         [
             WORKER_PY,
             str(engine_pool.WORKER_PY),
             "--script",
-            str(figs / "kin.py"),
+            str(figs / "fig.py"),
             "--figures-dir",
             str(figs),
             "--out-dir",
@@ -128,10 +127,16 @@ def render(tmp_path):
 
     def _render(patches: list) -> dict:
         calls.append(list(patches))
-        return _rpc(proc, {"cmd": "override", "stem": "Kin", "patches": patches})
+        return _rpc(proc, {"cmd": "override", "stem": stem, "patches": patches})
 
     _render.calls = calls  # type: ignore[attr-defined]
-    yield _render
+    return proc, _render
+
+
+@pytest.fixture
+def render(tmp_path):
+    proc, fn = _spawn_render(tmp_path, SCRIPT, "Kin")
+    yield fn
     if proc.poll() is None:
         proc.kill()
     proc.wait(timeout=10)
@@ -298,3 +303,75 @@ def test_named_but_not_fixable_is_reported_not_counted_as_fixed(render):
         ("legend-frame", "not_found"),
     }
     assert res["patches"] == []
+
+
+#: 修复前就已经出界的图：底边距压得太窄，x 轴标题探出图幅底边；另外图例带框。
+CLIPPED = """\
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+OUT = Path(__file__).resolve().parent
+
+
+def main():
+    plt.rcParams["font.family"] = "DejaVu Serif"
+    x = np.linspace(0, 10, 20)
+    fig, ax = plt.subplots(figsize=(80 / 25.4, 60 / 25.4))
+    ax.plot(x, x ** 0.5, lw=1.0, label="a")
+    ax.set_xlabel("Time (s)", fontsize=9, labelpad=LABELPAD)
+    ax.set_ylabel("Signal (a.u.)", fontsize=9)
+    ax.tick_params(labelsize=8.5, direction="in")
+    ax.legend(fontsize=8.5, frameon=True)
+    fig.subplots_adjust(left=0.2, right=0.95, top=0.95, bottom=0.08)
+    fig.savefig(OUT / "Clip.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+@pytest.fixture
+def clipped(tmp_path, request):
+    proc, fn = _spawn_render(tmp_path, CLIPPED.replace("LABELPAD", str(request.param)), "Clip")
+    yield fn
+    if proc.poll() is None:
+        proc.kill()
+    proc.wait(timeout=10)
+
+
+def _clip_gids(manifest: dict) -> set[str]:
+    from tavotto.engine import normalize
+
+    return {c["gids"][0] for c in normalize.per_element_clipping(manifest)}
+
+
+@pytest.mark.parametrize("clipped", [4], indirect=True)
+def test_preexisting_clipping_is_fixed_by_moving_the_axes_not_the_text(clipped):
+    """修复前就出界的轴标题：外边距重排把子图挪上来，文字本身一个属性不动。"""
+    profile = _profile()
+    before = clipped([])["manifest"]
+    assert "axes_0.xlabel" in _clip_gids(before)
+    res = m._specfix_transaction(clipped, [], 1.0, profile, None)
+    assert res["ok"], res
+    assert res["adjustments"], res
+    assert {p["prop"] for p in res["patches"]} <= {"position", "frameon"}
+    after = clipped(res["patches"])["manifest"]
+    assert not _clip_gids(after)
+
+
+@pytest.mark.parametrize("clipped", [70], indirect=True)
+def test_clipping_that_cannot_fit_is_reported_and_the_rest_still_lands(clipped):
+    """labelpad 70 pt 的轴标题在 60 mm 高的图里怎么挪都放不下：如实报 no_fit，
+    图例边框照修，不因为这一条把整批都退回去。"""
+    profile = _profile()
+    res = m._specfix_transaction(clipped, [], 1.0, profile, None)
+    assert res["ok"], res
+    assert ("element-outside-figure", "no_fit") in {
+        (s["rule"], s["reason"]) for s in res["skipped"]
+    }
+    assert any(p["prop"] == "frameon" for p in res["patches"])

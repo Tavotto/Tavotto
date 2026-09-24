@@ -42,6 +42,8 @@ export type FixFailureReason =
   | 'would_worsen'
   /** 改完真实渲染出来仍不合规：整张图没改 */
   | 'not_resolved'
+  /** 出界的文字靠调整边距放不下（已到位移预算）：这一条没改，同批别的照修 */
+  | 'no_fit'
   /** 修复期间这张图被改过：结果丢弃 */
   | 'stale'
   /** 渲染 / 后端出错：整张图没改 */
@@ -251,19 +253,23 @@ function settle(
   res: SpecFixResponse,
   list: ValidationIssue[],
 ): { applied: number; failed: FixFailure[] } {
-  if (!res.ok) {
-    return { applied: 0, failed: [{ reason: failureOf(res.exit), count: list.length }] }
-  }
   const failed: FixFailure[] = []
   let applied = 0
   for (const i of list) {
     const gid = i.objectRef.gid ?? ''
     const skip = res.skipped.find((s) => s.rule === i.ruleCode && s.gid === gid)
-    if (skip) {
-      addFailure(failed, skip.reason === 'font_unavailable' ? 'font_unavailable' : 'no_plan', 1)
-    } else applied += 1
+    // 逐条的原因优先（字体没装 / 放不下）；没有逐条原因的，整张图没提交就按退出码说
+    if (skip) addFailure(failed, skipReason(skip.reason), 1)
+    else if (!res.ok) addFailure(failed, failureOf(res.exit), 1)
+    else applied += 1
   }
   return { applied, failed }
+}
+
+function skipReason(reason: string): FixFailureReason {
+  if (reason === 'font_unavailable') return 'font_unavailable'
+  if (reason === 'no_fit') return 'no_fit'
+  return 'no_plan'
 }
 
 /** 后端退出码 → 用户要知道的那一档。没登记的一律「渲染出错」，绝不当成修好了。 */

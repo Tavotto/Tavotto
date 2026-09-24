@@ -2223,6 +2223,7 @@ export default interface Resources {
         "engine_failed": "修复时渲染出错，图没有改动。",
         "font_unavailable": "规范要求的字体「{{font}}」在这台电脑上没有安装，字体没有改。",
         "needs_choice": "这条问题要先选一种修法。",
+        "no_fit": "出界的文字靠调整边距放不下，这一条没有改。可以缩小字号或加大图幅后再试。",
         "no_plan": "此问题没有安全的自动修复方式，请手动调整。",
         "not_resolved": "改完仍不合规范，已放弃，图没有改动。",
         "object_missing": "要修的对象已经不在了，请刷新问题列表",

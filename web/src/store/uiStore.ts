@@ -222,6 +222,12 @@ interface UiState extends Persisted {
   /** 当前 toast 的描述符；null = 没有 toast。切语言时 toast 跟着换 */
   status: UiMessage | null
   statusTone: 'info' | 'error'
+  /**
+   * 这条 toast 是不是**被动通知**（后台渲染完成 / 正在构建）。被动通知不许顶掉一条
+   * 还挂着的非被动 toast：「已修复 8 项，可撤销」是用户点完按钮要读的那句，而修复
+   * 一提交就触发重渲染，几十毫秒后回来的「渲染完成」会把它盖掉——用户什么都没看到。
+   */
+  statusPassive: boolean
   /** 正在双击编辑的文字对象 */
   editingTextId: string | null
   /** 进入裁剪模式的面板 */
@@ -325,7 +331,7 @@ interface UiState extends Persisted {
   setCanvasPref: (patch: Partial<Persisted>) => void
   setShowRulers: (v: boolean) => void
   setShowGrid: (v: boolean) => void
-  setStatus: (msg: UiMessage | null, tone?: 'info' | 'error') => void
+  setStatus: (msg: UiMessage | null, tone?: 'info' | 'error', opts?: { passive?: boolean }) => void
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
   setProblemFilter: (v: Severity[] | null) => void
@@ -410,6 +416,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   ...readPersisted(),
   status: null,
   statusTone: 'info',
+  statusPassive: false,
   editingTextId: null,
   cropTargetId: null,
   cropBaseline: null,
@@ -551,13 +558,15 @@ export const useUiStore = create<UiState>((set, get) => ({
     persist(get())
   },
 
-  setStatus: (status, statusTone = 'info') => {
-    set({ status, statusTone })
+  setStatus: (status, statusTone = 'info', opts) => {
+    const passive = !!opts?.passive
+    if (passive && get().status && !get().statusPassive) return
+    set({ status, statusTone, statusPassive: passive })
     statusDismissTimer.cancel()
     // 普通状态短暂即逝；错误保留到用户处理（toast 上有关闭键）
     if (status && statusTone !== 'error') {
       statusDismissTimer.start(STATUS_AUTO_DISMISS_MS, () =>
-        set({ status: null, statusTone: 'info' }),
+        set({ status: null, statusTone: 'info', statusPassive: false }),
       )
     }
   },

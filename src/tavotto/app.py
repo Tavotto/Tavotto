@@ -3752,8 +3752,9 @@ def api_engine_specfix():
 def _specfix_transaction(render, base: list, scale: float, profile: dict, only) -> dict:
     """`/api/engine/specfix` 的事务本体（拆出来是为了让测试能注入假的渲染）。"""
     b0 = render(base)["manifest"]
-    issues = engine_specfix.profile_issues(b0, profile, scale)
+    issues = engine_specfix.all_issues(b0, profile, scale)
     targets = engine_specfix.select(issues, only)
+    layout = [t for t in targets if t[0] in engine_specfix.LAYOUT_RULES]
     # 点了名、这里却不会去修的（规则不在可修清单里，或 B0 上根本没这条）：逐条说出口。
     # 不报的话前端会把它当成「修好了」——那是最坏的一种回答
     missed = [
@@ -3785,7 +3786,7 @@ def _specfix_transaction(render, base: list, scale: float, profile: dict, only) 
             + plan["skipped"]
             + [{"rule": r, "gid": g, "reason": "font_unavailable"} for r, g in font_off]
         )
-        if not plan["patches"]:
+        if not plan["patches"] and not layout:
             render(base)
             out.update({"exit": engine_specfix.EXIT_NOTHING_TO_DO, "skipped": skipped})
             out["ok"] = not skipped
@@ -3826,18 +3827,31 @@ def _specfix_transaction(render, base: list, scale: float, profile: dict, only) 
             continue
         break
 
+    def margin_needs(v: dict, manifest: dict) -> list[dict]:
+        """这一版还需要外边距重排来解决的：新增 / 加重的裁切与压图，加上点名要修、
+        还探在图幅外的那几条（修复前就已经出界的，不在阻断清单里）。"""
+        need = [b for b in v["repairable"] if b["repair"] == "margins"]
+        left = {(u["rule"], u["gid"]) for u in v["unresolved"]}
+        need += [
+            c
+            for c in engine_normalize.per_element_clipping(manifest)
+            if (c["id"], c["gids"][0]) in left
+        ]
+        return need
+
     adjustments: list[dict] = []
     rounds = 0
     while (
         not v["ok"]
-        and v["exit"] == engine_normalize.EXIT_CONSTRAINT_CONFLICT
-        and any(b["repair"] == "margins" for b in v["repairable"])
+        and v["exit"]
+        in (engine_normalize.EXIT_CONSTRAINT_CONFLICT, engine_specfix.EXIT_NOT_RESOLVED)
         and rounds < engine_normalize.MAX_REPAIR_ROUNDS
     ):
+        need = margin_needs(v, manifest)
+        if not need:
+            break
         rounds += 1
-        dirs = engine_normalize.repair_directions(
-            [b for b in v["repairable"] if b["repair"] == "margins"]
-        )
+        dirs = engine_normalize.repair_directions(need)
         cand = engine_normalize.adapt_margins(contract, manifest, directions=dirs or None)
         if "conflict" in cand or not cand["patches"]:
             break
@@ -3846,11 +3860,29 @@ def _specfix_transaction(render, base: list, scale: float, profile: dict, only) 
             break  # 局部修复越出了约定：不收（按 normalize 的纪律这不该发生）
         m2 = render(trial)["manifest"]
         v2 = judge(m2, trial)
-        if not engine_normalize.better_candidate(v2, v):
+        if not engine_specfix.progressed(v2, v):
             render(candidate)
             break
         candidate, manifest, v = trial, m2, v2
         adjustments.extend(cand["changed"])
+
+    # 装不下的出界（外边距重排已经到预算 / 冲突）：如实记成「放不下」，**不连累同一批
+    # 里别的修复**——前提是除了它们之外裁决全过（没有变差、没有越权）
+    stuck = [u for u in v["unresolved"] if u["rule"] in engine_specfix.LAYOUT_RULES]
+    if (
+        stuck
+        and v["exit"] == engine_specfix.EXIT_NOT_RESOLVED
+        and len(stuck) == len(v["unresolved"])
+    ):
+        skipped = skipped + [{**u, "reason": "no_fit"} for u in stuck]
+        v["unresolved"] = []
+        v["ok"] = True
+        v["exit"] = engine_normalize.EXIT_DONE
+        if candidate == list(base):
+            # 什么都没改成：这一轮只有放不下的出界
+            render(base)
+            out.update({"exit": engine_specfix.EXIT_NOTHING_TO_DO, "skipped": skipped})
+            return out
 
     out.update(
         {

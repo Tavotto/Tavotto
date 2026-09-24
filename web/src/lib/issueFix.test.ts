@@ -267,6 +267,30 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     expect(overridesOf()).toEqual(FIXED)
   })
 
+  it('出界放不下（no_fit）只算这一条没修，同一批别的照写', async () => {
+    await seed()
+    engineSpecfix.mockResolvedValue(
+      passed(FIXED, {
+        skipped: [{ rule: 'tick-direction', gid: 'axes_0.xticks', reason: 'no_fit' }],
+      }),
+    )
+    const res = await applyIssueFixes(issuesNow(), profile)
+    expect(res.ok).toBe(true)
+    expect(res.failed).toEqual([{ reason: 'no_fit', count: 1 }])
+    expect(overridesOf()).toEqual(FIXED)
+  })
+
+  it('整张图没提交时，有逐条原因的按逐条说，其余按退出码说', async () => {
+    await seed()
+    engineSpecfix.mockResolvedValue({
+      ...refused('nothing_to_do'),
+      skipped: [{ rule: 'font-below-absolute-floor', gid: 'axes_0.xticks', reason: 'no_fit' }],
+    })
+    const res = await applyIssueFix(floorIssue(), profile)
+    expect(res).toMatchObject({ ok: false, reason: 'no_fit' })
+    expect(overridesOf()).toEqual([])
+  })
+
   it('等待期间用户改了这张图：结果丢弃，用户的改动原样留着', async () => {
     await seed()
     let release: (v: SpecFixResponse) => void = () => {}

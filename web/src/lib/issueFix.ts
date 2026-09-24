@@ -72,6 +72,7 @@ export const ENGINE_FIX_RULES: readonly string[] = [
   'legend-frame',
   'spines-not-enclosed',
   'text-weight-policy',
+  'element-outside-figure',
 ]
 
 export function fixRoute(issue: ValidationIssue, doc: FigureDocument): FixRoute | null {
