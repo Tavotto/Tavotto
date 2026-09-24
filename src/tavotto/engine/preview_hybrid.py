@@ -27,9 +27,15 @@ Figure」只有一个答案，且那个答案自带 `finally`。
 同一件事的两次实现。抄一份过去的代价不是多几行重复代码，而是**同一张图在
 两个入口里预览表示法不一样**——而这类分叉只会在大图上、在用户那边发作。
 
-自身只用标准库，但经 `preview_complexity` 传递依赖 matplotlib——所以它属于
-`bridge_runner._PHASE2`（屏障之后才装），不是 `_PHASE1`。与 `worker.py` 同一条
-sys.path 纪律，平铺 import。
+## 第二件事：预览那一遍的重采样缓存
+
+`preview_resample_cache()` 让 `savefig` 那一瞬里大图的 `matplotlib.image._resample`
+按实参内容复用上一次的结果（键与版本闸见下面那一节的注释）。它与 rasterize 同属
+「只改变这一次预览怎么画」：只在 `_save_with` 里生效，导出与 manifest 一律直通。
+
+模块层只用标准库；numpy / matplotlib 在函数里现取，且经 `preview_complexity` 本来就
+传递依赖 matplotlib——所以它属于 `bridge_runner._PHASE2`（屏障之后才装），不是
+`_PHASE1`。与 `worker.py` 同一条 sys.path 纪律，平铺 import。
 """
 
 from __future__ import annotations
