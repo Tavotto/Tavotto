@@ -107,7 +107,16 @@ def is_backend_unavailable(exc: BaseException) -> bool:
     装载的实现：判错误时不为了判而装载实现（那本身可能就是抛出这个错误的那一步）。与 `selected()` 一样是
     选择器层的工具，不在 `__all__`（19 项契约名的闭集）。
     """
-    for mod in list(_IMPLS.values()):
+    mods = list(_IMPLS.values())
+    if not mods:
+        # WSGI / test client 直接用 `app` 而不经 `main()` 时没人调过 `warm()`，一个实现都没装载——这时认
+        # 选中的那个（Codex #539）。实现模块只在函数里 import 原生包，装载它本身不会因为缺包失败；万一装载
+        # 失败就照实回 False，不拿一个新错误盖住原来那个。
+        try:
+            mods = [_impl()]
+        except Exception:  # noqa: BLE001 - 判错误的路上不许再抛
+            return False
+    for mod in mods:
         errors = getattr(mod, "UNAVAILABLE_ERRORS", ())
         if errors and isinstance(exc, errors):
             return True

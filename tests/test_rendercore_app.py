@@ -363,6 +363,38 @@ def test_a_missing_runtime_dependency_is_backend_unavailable_not_a_fallback(
     assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200  # 包回来了就正常
 
 
+def test_backend_unavailable_holds_without_main_warming_the_implementation(
+    client, tmp_path, monkeypatch
+):
+    """Codex #539：WSGI / test client 直接用 `app`、不经 `main()` 时没人调过 `warm()`，`_IMPLS` 是空的——
+    `/api/render` 直接用 facade 的 PreviewCache，缺包的错误照样得是 `backend_unavailable`，不能因为「一个实现
+    都没装载」就落成 `internal_error`。清空 `_IMPLS` 排除「前面的用例恰好装载过」这种顺序依赖。"""
+    import importlib.util
+
+    from tavotto.rendercore import facade, renderhost
+
+    _project(tmp_path)
+    real = importlib.util.find_spec
+
+    def hidden(name, *a, **k):
+        return None if name == "pypdfium2" else real(name, *a, **k)
+
+    renderhost.shutdown_shared()
+    facade.reset_for_tests()
+    monkeypatch.setattr(pdfbackend, "_IMPLS", {})
+    monkeypatch.setattr(importlib.util, "find_spec", hidden)
+    resp = client.get("/api/render?id=p1.pdf&w=200")
+    assert resp.status_code == 500
+    assert resp.get_json()["code"] == "backend_unavailable", resp.get_json()
+    monkeypatch.undo()
+    facade.reset_for_tests()
+
+    # 判据本身：实现一个都没装载时，也认得出选中实现声明的「不可用」
+    monkeypatch.setattr(pdfbackend, "_IMPLS", {})
+    assert pdfbackend.is_backend_unavailable(facade.UNAVAILABLE_ERRORS[0]("x"))
+    assert not pdfbackend.is_backend_unavailable(RuntimeError("别的错"))
+
+
 def test_reset_projects_reaps_the_render_child(client, tmp_path):
     """render child 是应用运行时的一部分：关项目 / 关应用时一并收掉并 reap（ADR 0066）。"""
     from tavotto.rendercore import renderhost
