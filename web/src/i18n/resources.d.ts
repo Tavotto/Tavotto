@@ -2218,17 +2218,26 @@ export default interface Resources {
       "fixAuto": "全部处理",
       "fixChoose": "修复…",
       "fixFailed": {
+        "busy": "上一次修复还在进行，稍后再试。",
         "canvas_missing": "找不到这条问题所在的画布，请刷新问题列表。",
+        "engine_failed": "修复时渲染出错，图没有改动。",
+        "font_unavailable": "规范要求的字体「{{font}}」在这台电脑上没有安装，字体没有改。",
         "needs_choice": "这条问题要先选一种修法。",
         "no_plan": "此问题没有安全的自动修复方式，请手动调整。",
-        "object_missing": "要修的对象已经不在了，请刷新问题列表"
+        "not_resolved": "改完仍不合规范，已放弃，图没有改动。",
+        "object_missing": "要修的对象已经不在了，请刷新问题列表",
+        "stale": "修复期间图被改过，这次结果已放弃，图没有改动。请再试一次。",
+        "unavailable": "这里不能自动修复图内元素，请在 Tavotto 桌面端处理。",
+        "would_worsen": "这样修会让别处变差（例如文字被挤出图幅），已放弃，图没有改动。"
       },
       "fixOption": {
         "double": "改成双栏宽 {{mm}} mm",
         "single": "改成单栏宽 {{mm}} mm"
       },
       "fixableHere_other": "{{count}} 项可自动处理",
+      "fixedPartial_other": "已修复 {{count}} 项，可撤销。另有 {{failed}} 项没改：{{why}}",
       "fixed_other": "已修复 {{count}} 项，可撤销。",
+      "fixing": "正在修复…",
       "focusFailed": {
         "canvas_missing": "这条问题所在的画布已经不在项目里了",
         "document_not_loaded": "文档还没载入完，稍后再试。",

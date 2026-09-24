@@ -31,7 +31,7 @@
 import { formatMessage, msg, type UiMessage } from '@/i18n'
 import type { PanelInfo } from './api'
 import type { PanelRender } from '@/store/renderStore'
-import { fixOptions, planFix } from './issueFix'
+import { fixOptions, fixRoute, planFix } from './issueFix'
 import { severityOf, type PublicationProfile, type Severity } from './profile'
 import {
   buildSpec,
@@ -126,7 +126,9 @@ const RULES: Record<string, { context: IssueContext; fix: FixKind }> = {
   'font-below-absolute-floor': { context: 'document', fix: 'safe_auto' },
   'font-too-small': { context: 'document', fix: 'safe_auto' },
   'font-too-large': { context: 'document', fix: 'safe_auto' },
-  'font-family-substituted': { context: 'document', fix: 'none' },
+  // 改成规范的拉丁字体是确定的；「装没装」由后端对真实渲染里画字的那张脸核验
+  // （没装就如实退出，ADR 0080），所以它进了 safe_auto
+  'font-family-substituted': { context: 'document', fix: 'safe_auto' },
   'cjk-fallback-missing': { context: 'document', fix: 'none' },
   // 两条都 `fix: 'none'`：能修的动作是「换一个画得出这些字的字体」，
   // 而换哪一个只有用户说得出（自动挑一个会让同一份文档在两台机器上不一样）。
@@ -286,7 +288,13 @@ function buildIssue(
   // 一颗按了没反应的「修复」按钮比没有按钮更坏
   // `user_choice` 的计划要等用户挑完才算得出来（`planFix` 拿不到 choice 会
   // 回 null），所以那一档只看目录有没有给出选项
-  if (entry.fix === 'safe_auto') base.fixKind = planFix(base, profile, doc) ? 'safe_auto' : 'none'
+  // 面板内部那一路（`fixRoute === 'engine'`）的计划在后端，这里算不出也不该算：
+  // 能不能真的修好由后端对真实渲染裁决，修不好会如实说原因、图一个字不改
+  if (entry.fix === 'safe_auto') {
+    const route = fixRoute(base, doc)
+    const ok = route === 'engine' || (route === 'canvas' && planFix(base, profile, doc) != null)
+    base.fixKind = ok ? 'safe_auto' : 'none'
+  }
   else if (entry.fix === 'user_choice') {
     base.fixKind = fixOptions(base, profile).length ? 'user_choice' : 'none'
   }

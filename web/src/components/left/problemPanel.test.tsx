@@ -5,7 +5,7 @@
  * **是两个答案**、修复**可撤销**。外加筛选、空态、键盘与轨道角标。
  */
 import { act } from 'react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { literal, setLocale } from '@/i18n'
 import { PREVIEW_ROWS, ProblemPanel } from './ProblemPanel'
@@ -20,6 +20,33 @@ import { useWorkspaceStore } from '@/store/workspace'
 import { runValidation, useValidationStore } from '@/store/validationStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
+
+/**
+ * 面板内部的修复走后端事务（`/api/engine/specfix`）。这里替它回一份「通过」：
+ * 原列表 + 每条点名的问题一条 patch——面板这一侧只关心「通过就一次 commit」，
+ * 后端怎么算、怎么裁决在 `tests/test_specfix_real.py` 里对真实渲染验。
+ */
+const engineSpecfix = vi.fn(
+  async (_id: string, patches: unknown[], _scale: number, _p: unknown, only?: { gid: string }[]) => ({
+    ok: true,
+    exit: 'done',
+    patches: [
+      ...(patches as object[]),
+      ...(only ?? []).map((o) => ({ gid: o.gid, prop: 'fontsize', value: 8.5 })),
+    ],
+    changes: [],
+    skipped: [],
+    unresolved: [],
+    blocking: [],
+    adjustments: [],
+  }),
+)
+
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  engineSpecfix: (...args: Parameters<typeof engineSpecfix>) => engineSpecfix(...args),
+  engineRender: () => new Promise(() => {}),
+}))
 
 declare global {
   // eslint-disable-next-line no-var
@@ -262,6 +289,36 @@ describe('安全修复', () => {
     expect(useDocumentStore.getState().past.length).toBe(past + 1)
     useDocumentStore.getState().undo()
     expect((useDocumentStore.getState().doc.objects[0] as PanelObject).overrides).toEqual([])
+  })
+
+  it('修复在跑的那几秒：按钮置灰、说「正在修复…」，回来之后恢复', async () => {
+    await seed()
+    await mount(<ProblemPanel />)
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    engineSpecfix.mockImplementationOnce(async (_id, patches) => {
+      await gate
+      return {
+        ok: true,
+        exit: 'done',
+        patches: patches as never[],
+        changes: [],
+        skipped: [],
+        unresolved: [],
+        blocking: [],
+        adjustments: [],
+      }
+    })
+    const all = container.querySelector<HTMLButtonElement>('[data-problem-autofix] button')!
+    await click(all)
+    expect(all.disabled).toBe(true)
+    expect(all.textContent).toBe('正在修复…')
+    expect(byText('修复')?.hasAttribute('disabled')).toBe(true)
+    await act(async () => {
+      release()
+      await gate
+    })
+    expect(all.disabled).toBe(false)
   })
 
   it('不能安全自动修的那些没有「修复」按钮', async () => {

@@ -1,123 +1,319 @@
 /**
- * 安全自动修复的**落地**（ADR 0030）。计划怎么算在 `lib/issueFix.ts`（纯计算）。
+ * 安全自动修复的**落地**（ADR 0030 / 0080）。画布层的计划在 `lib/issueFix.ts`，
+ * 面板内部的计划、真实渲染与裁决在后端（`/api/engine/specfix`）。
  *
- * 三条纪律：
+ * 四条纪律：
  *
- * * **一个修复一个事务，一批修复一个批事务**——⌘Z 一次撤回，不是撤五次。
- * * **跨画布先切过去**：`commit()` 只写激活画布，不切的话「修复」要么什么都
- *   不做，要么改到另一张画布的同名对象上。
+ * * **修完真的过了才提交**：面板那一路由后端对真实渲染裁决——点名的问题一条不剩、
+ *   没有新增 / 加重的问题、受保护的属性一个没变、字体真的落成了那张脸。不过就
+ *   **整张图一个字不改**，并说出原因（闭集 `FixFailureReason`）。
+ * * **一次修复一条历史**：所有面板的事务都回来之后才 commit，而且只 commit 一次
+ *   ——⌘Z 一次全部撤回，不是撤五次。
+ * * **等待期间文档被改过就丢弃结果**：事务开始时记下每张图的 override 列表与文档
+ *   代次，回来时对不上就不写（不拿旧基准上的结果覆盖用户刚做的改动）。
  * * **只走 documentStore**：dirty、undo、autosave 全部照常，与用户手改一模一样。
  */
 import { msg, type UiMessage } from '@/i18n'
-import { requestRender } from '@/store/renderScheduler'
-import { fixOptions, planFix, type FixChoice, type FixPlan } from '@/lib/issueFix'
+import { engineSpecfix, type SpecFixResponse } from '@/lib/api'
+import { engineTransport } from '@/lib/engineTransport'
+import { fixOptions, fixRoute, planFix, type FixChoice, type FixPlan } from '@/lib/issueFix'
+import { panelScale } from '@/lib/preflight'
 import type { PublicationProfile } from '@/lib/profile'
 import type { ValidationIssue } from '@/lib/validation'
+import { requestRender } from '@/store/renderScheduler'
+import type { PanelObject, PanelOverride } from '@/types/document'
 import { activateCanvas } from './canvasSession'
 import { useDocumentStore } from './documentStore'
 
+/**
+ * 一条没修成的原因（闭集，文案在 `errors:problems.fixFailed.*`）。
+ *
+ * 后端的退出码在 `failureOf()` 里收成这几档：用户要知道的是「为什么没改」与
+ * 「图动没动」（永远没动），不是事务内部走到了哪一步。
+ */
+export type FixFailureReason =
+  | 'no_plan'
+  | 'canvas_missing'
+  | 'object_missing'
+  | 'needs_choice'
+  /** 规范要的字体这台机器上没装：字体那几条没改，其余照修 */
+  | 'font_unavailable'
+  /** 这样修会让别处变差（文字被挤出图幅、压进别的子图、冒出新问题……）：整张图没改 */
+  | 'would_worsen'
+  /** 改完真实渲染出来仍不合规：整张图没改 */
+  | 'not_resolved'
+  /** 修复期间这张图被改过：结果丢弃 */
+  | 'stale'
+  /** 渲染 / 后端出错：整张图没改 */
+  | 'engine_failed'
+  /** 上一次修复还没结束 */
+  | 'busy'
+  /** 这个宿主里没有后端事务（内嵌画布 / playground） */
+  | 'unavailable'
+
+export interface FixFailure {
+  reason: FixFailureReason
+  /** 没修成的条数 */
+  count: number
+  /** `font_unavailable` 时：规范要的那个字体 */
+  font?: string
+}
+
 export type FixOutcome =
-  | {
-      ok: true
-      applied: number
-      /** 同一个属性上互相矛盾、整组没修的条数（`applied` 里**不含**它们） */
-      skipped?: number
-    }
-  | { ok: false; reason: 'no_plan' | 'canvas_missing' | 'object_missing' | 'needs_choice' }
+  | { ok: true; applied: number; failed: FixFailure[] }
+  | { ok: false; reason: FixFailureReason; failed: FixFailure[] }
 
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
   msg(`history.${key}`, values, 'workspace')
 
+/** 同一时刻只跑一轮修复：两轮交错时，后一轮的基准是前一轮还没提交的旧文档。 */
+let inflight = false
+
 /**
  * 修一条。跨画布时**先切过去**——问题面板列的是整个项目的问题，而
  * `commit()` 只写激活画布；不切的话「修复」会静默改到另一张画布的同名对象上，
- * 或者什么都不做。
+ * 或者什么都不做。逐条点的修复连建议档也修（那是用户点名要的）。
  */
-export function applyIssueFix(
+export async function applyIssueFix(
   issue: ValidationIssue,
   profile: PublicationProfile,
   choice?: FixChoice,
-): FixOutcome {
-  if (!ensureCanvas(issue)) return { ok: false, reason: 'canvas_missing' }
+): Promise<FixOutcome> {
+  if (inflight) return fail('busy', 1)
+  if (!ensureCanvas(issue)) return fail('canvas_missing', 1)
   const doc = useDocumentStore.getState().doc
   if (issue.objectRef.objectId && !doc.objects.some((o) => o.id === issue.objectRef.objectId)) {
-    return { ok: false, reason: 'object_missing' }
+    return fail('object_missing', 1)
   }
-  const entry = fixOptions(issue, profile)
-  if (entry.length && !choice) return { ok: false, reason: 'needs_choice' }
-  const plan = planFix(issue, profile, doc, choice)
-  if (!plan) return { ok: false, reason: 'no_plan' }
-  applyFixPlans([plan], hist('fixIssue'))
-  return { ok: true, applied: 1 }
+  if (fixOptions(issue, profile).length && !choice) return fail('needs_choice', 1)
+  return run([issue], profile, choice, hist('fixIssue'))
 }
 
 /**
- * 批量修。**一个批事务**——⌘Z 一次全部撤回。
+ * 批量修（「全部处理」）。**一个批事务**——⌘Z 一次全部撤回。
  *
  * 只处理**当前激活画布**上的问题：撤销栈是按画布换入换出的
- * （`documentStore.switchCanvas`），跨画布的一次 commit 在这套模型里不存在，
- * 硬拼出来的结果是「撤销要按三次，而且顺序不定」。界面据此只在本画布上给
- * 「全部修复」，别的画布上的那几条仍然一条一条修（每条各自一个事务）。
+ * （`documentStore.switchCanvas`），跨画布的一次 commit 在这套模型里不存在。
+ * **建议档不进批量**：轴标题加不加粗是口味，只在用户逐条点它时才改。
  */
-export function applyIssueFixes(
+export async function applyIssueFixes(
   issues: ValidationIssue[],
   profile: PublicationProfile,
-): FixOutcome {
+  opts: BatchOptions = {},
+): Promise<FixOutcome> {
   const s = useDocumentStore.getState()
-  const doc = s.doc
-  const here = issues.filter(
-    (i) => i.objectRef.canvasId === s.activeCanvasId && i.fixKind === 'safe_auto',
+  return run(batchable(issues, s.activeCanvasId, opts), profile, undefined, null)
+}
+
+export interface BatchOptions {
+  /**
+   * 连建议档一起修。只给**用户点名的那一组**用（组头的「全部修复」：那一组
+   * 就是建议档，点它就是要修它）；「全部处理」永远不带。
+   */
+  includeSuggestions?: boolean
+}
+
+/** 批量会处理哪些——面板上的计数与真正执行的必须是同一个集合。 */
+export function batchable(
+  issues: ValidationIssue[],
+  activeCanvasId: string,
+  opts: BatchOptions = {},
+): ValidationIssue[] {
+  return issues.filter(
+    (i) =>
+      i.objectRef.canvasId === activeCanvasId &&
+      i.fixKind === 'safe_auto' &&
+      (opts.includeSuggestions || i.severity !== 'suggestion'),
   )
-  const raw: FixPlan[] = []
-  for (const i of here) {
-    const plan = planFix(i, profile, doc)
-    if (plan) raw.push(plan)
+}
+
+function fail(reason: FixFailureReason, count: number): FixOutcome {
+  return { ok: false, reason, failed: [{ reason, count }] }
+}
+
+async function run(
+  issues: ValidationIssue[],
+  profile: PublicationProfile,
+  choice: FixChoice | undefined,
+  label: UiMessage | null,
+): Promise<FixOutcome> {
+  if (!issues.length) return fail('no_plan', 0)
+  if (inflight) return fail('busy', issues.length)
+  inflight = true
+  try {
+    return await runLocked(issues, profile, choice, label)
+  } finally {
+    inflight = false
   }
-  const { plans, skipped } = mergePlans(raw)
-  if (!plans.length) return { ok: false, reason: 'no_plan' }
-  applyFixPlans(plans, hist('fixIssues', { count: plans.length }))
-  return { ok: true, applied: plans.length, skipped: skipped || undefined }
+}
+
+async function runLocked(
+  issues: ValidationIssue[],
+  profile: PublicationProfile,
+  choice: FixChoice | undefined,
+  label: UiMessage | null,
+): Promise<FixOutcome> {
+  const start = useDocumentStore.getState()
+  const docAtStart = start.doc
+  const loadSeq = start.loadSeq
+  const canvasId = start.activeCanvasId
+  const failed: FixFailure[] = []
+
+  // ---- 画布层：同步算完 ----
+  const raw: FixPlan[] = []
+  const byPanel = new Map<string, ValidationIssue[]>()
+  for (const i of issues) {
+    const route = fixRoute(i, docAtStart)
+    if (route === 'canvas') {
+      const plan = planFix(i, profile, docAtStart, choice)
+      if (plan) raw.push(plan)
+      else addFailure(failed, 'no_plan', 1)
+    } else if (route === 'engine') {
+      const id = i.objectRef.objectId!
+      const list = byPanel.get(id)
+      if (list) list.push(i)
+      else byPanel.set(id, [i])
+    } else addFailure(failed, 'no_plan', 1)
+  }
+  const merged = mergePlans(raw)
+  let plans = merged.plans
+  if (merged.skipped) addFailure(failed, 'no_plan', merged.skipped)
+
+  // ---- 面板：一张一张地跑后端事务 ----
+  // 串行而不是并发：同一个脚本的几张图共用一个 worker，交错的事务会让它的热态
+  // 在别人的候选与基准之间来回跳（每条响应本身仍然正确，但没有必要去赌）
+  const next = new Map<string, { overrides: PanelOverride[]; applied: number }>()
+  if (byPanel.size && engineTransport()) {
+    for (const list of byPanel.values()) addFailure(failed, 'unavailable', list.length)
+    byPanel.clear()
+  }
+  for (const [id, list] of byPanel) {
+    const panel = docAtStart.objects.find(
+      (o): o is PanelObject => o.id === id && o.type === 'panel',
+    )
+    if (!panel) {
+      addFailure(failed, 'object_missing', list.length)
+      continue
+    }
+    let res: SpecFixResponse
+    try {
+      res = await engineSpecfix(
+        panel.fileId,
+        panel.overrides,
+        panelScale(panel),
+        profile,
+        list.map((i) => ({ rule: i.ruleCode, gid: i.objectRef.gid ?? '' })),
+      )
+    } catch {
+      addFailure(failed, 'engine_failed', list.length)
+      continue
+    }
+    const out = settle(res, list)
+    for (const f of out.failed) addFailure(failed, f.reason, f.count, fontOf(profile))
+    if (res.ok && out.applied > 0) {
+      next.set(id, { overrides: res.patches.map((p) => ({ ...p })), applied: out.applied })
+    }
+  }
+
+  // ---- 回来之后：文档还是出发时那一份才写 ----
+  const now = useDocumentStore.getState()
+  const moved = now.loadSeq !== loadSeq || now.activeCanvasId !== canvasId
+  for (const [id, item] of [...next]) {
+    const before = docAtStart.objects.find((o) => o.id === id)
+    const after = now.doc.objects.find((o) => o.id === id)
+    const same =
+      !moved &&
+      before?.type === 'panel' &&
+      after?.type === 'panel' &&
+      JSON.stringify(before.overrides) === JSON.stringify(after.overrides)
+    if (!same) {
+      addFailure(failed, 'stale', item.applied)
+      next.delete(id)
+    }
+  }
+  if (moved && plans.length) {
+    addFailure(failed, 'stale', plans.length)
+    plans = []
+  }
+
+  const applied = plans.length + [...next.values()].reduce((n, x) => n + x.applied, 0)
+  if (!applied) return { ok: false, reason: failed[0]?.reason ?? 'no_plan', failed }
+  commitFixes(
+    plans,
+    new Map([...next].map(([id, x]) => [id, x.overrides])),
+    label ?? hist('fixIssues', { count: applied }),
+  )
+  return { ok: true, applied, failed }
+}
+
+/** 后端的一份裁决 → 这几条问题里修成了几条、没修成的为什么。 */
+function settle(
+  res: SpecFixResponse,
+  list: ValidationIssue[],
+): { applied: number; failed: FixFailure[] } {
+  if (!res.ok) {
+    return { applied: 0, failed: [{ reason: failureOf(res.exit), count: list.length }] }
+  }
+  const failed: FixFailure[] = []
+  let applied = 0
+  for (const i of list) {
+    const gid = i.objectRef.gid ?? ''
+    const skip = res.skipped.find((s) => s.rule === i.ruleCode && s.gid === gid)
+    if (skip) {
+      addFailure(failed, skip.reason === 'font_unavailable' ? 'font_unavailable' : 'no_plan', 1)
+    } else applied += 1
+  }
+  return { applied, failed }
+}
+
+/** 后端退出码 → 用户要知道的那一档。没登记的一律「渲染出错」，绝不当成修好了。 */
+function failureOf(exit: string): FixFailureReason {
+  switch (exit) {
+    case 'font_unavailable':
+      return 'font_unavailable'
+    case 'not_resolved':
+      return 'not_resolved'
+    case 'constraint_conflict':
+    case 'protected_changed':
+    case 'budget_exceeded':
+      return 'would_worsen'
+    case 'nothing_to_do':
+    case 'unsupported':
+      return 'no_plan'
+    default:
+      return 'engine_failed'
+  }
+}
+
+function fontOf(profile: PublicationProfile): string | undefined {
+  return profile.font_family?.latin || undefined
+}
+
+function addFailure(
+  list: FixFailure[],
+  reason: FixFailureReason,
+  count: number,
+  font?: string,
+): void {
+  if (count <= 0) return
+  const hit = list.find((f) => f.reason === reason)
+  if (hit) hit.count += count
+  else list.push(reason === 'font_unavailable' && font ? { reason, count, font } : { reason, count })
 }
 
 /** 一条计划写的是哪个属性。同一个键上有两条 = 后写的会盖掉先写的。 */
 function targetKey(plan: FixPlan): string | null {
-  if (plan.kind === 'textSize') return `${plan.objectId}|textSize`
-  if (plan.kind === 'override' && plan.patches.length === 1) {
-    const p = plan.patches[0]
-    return `${plan.objectId}|${p.gid}|${p.prop}`
-  }
-  return null
-}
-
-function planValue(plan: FixPlan): number | null {
-  if (plan.kind === 'textSize') return plan.sizePt
-  if (plan.kind === 'override' && plan.patches.length === 1) {
-    const v = plan.patches[0].value
-    return typeof v === 'number' ? v : null
-  }
-  return null
-}
-
-function withValue(plan: FixPlan, value: number): FixPlan {
-  if (plan.kind === 'textSize') return { ...plan, sizePt: value }
-  if (plan.kind === 'override') {
-    return { ...plan, patches: [{ ...plan.patches[0], value }] }
-  }
-  return plan
+  return plan.kind === 'textSize' ? `${plan.objectId}|textSize` : null
 }
 
 /**
  * **同一个属性上的多条计划要合并成一条，不能挨个写。**
  *
  * 一条计划算出的目标值只是"对我这条规则最省事的那个数"。两条规则各写一遍时
- * 后写的赢，而它可能违反前一条：默认规范上一条 6pt 图例文字同时命中
- * `font-below-absolute-floor`（算出 8.5）与 `legend-font-size`（算出 8.0），
- * 8.0 后写、把 8.5 盖掉，而 8.0 仍然过不了绝对下限（判据是 `eff <= floor`）
- * ——「全部修复」报了两条修好，问题面板里那条 error 还在（PR #214 第三轮评审）。
- *
- * 合并办法：取各条**可接受区间的交集**，再把提议值夹进去。由构造保证结果同时
- * 满足每一条规则。给不出区间、或者交集为空（两条规则互相矛盾）时**整组不修**
- * ——报一个修不了，比报"修好了"而它没好要诚实。
+ * 后写的赢，而它可能违反前一条（PR #214 第三轮评审）。合并办法：取各条**可接受
+ * 区间的交集**，再把提议值夹进去；给不出区间、或者交集为空时**整组不修**——报
+ * 一个修不了，比报"修好了"而它没好要诚实。面板内部的同类合并在后端
+ * （`engine/specfix._plan_fonts` 按元素取区间）。
  */
 export function mergePlans(raw: FixPlan[]): { plans: FixPlan[]; skipped: number } {
   const groups = new Map<string, FixPlan[]>()
@@ -143,23 +339,20 @@ export function mergePlans(raw: FixPlan[]): { plans: FixPlan[]; skipped: number 
     let usable = true
     let best = Number.NEGATIVE_INFINITY
     for (const plan of list) {
-      const bound = plan.kind === 'pageWidth' ? undefined : plan.bound
-      const value = planValue(plan)
-      if (!bound || value == null) {
+      if (plan.kind !== 'textSize' || !plan.bound) {
         usable = false
         break
       }
-      if (bound.min != null) lo = Math.max(lo, bound.min)
-      if (bound.max != null) hi = Math.min(hi, bound.max)
-      best = Math.max(best, value)
+      if (plan.bound.min != null) lo = Math.max(lo, plan.bound.min)
+      if (plan.bound.max != null) hi = Math.min(hi, plan.bound.max)
+      best = Math.max(best, plan.sizePt)
     }
     if (!usable || lo > hi) {
       skipped += list.length
       continue
     }
-    const merged = Math.min(Math.max(best, lo), hi)
-    out.push(withValue(list[0], merged))
-    // 合并掉的那几条**不算白干**：它们与留下的这一条一起被这个值满足了
+    const first = list[0] as Extract<FixPlan, { kind: 'textSize' }>
+    out.push({ ...first, sizePt: Math.min(Math.max(best, lo), hi) })
   }
   return { plans: out, skipped }
 }
@@ -175,11 +368,17 @@ function ensureCanvas(issue: ValidationIssue): boolean {
 }
 
 /**
- * 一批计划 → **一条历史**。写完统一触发重渲染（预检要按新的 manifest 再算
- * 一遍，那一步由 validation store 的订阅负责，这里不自己调）。
+ * 画布层的计划 + 各面板**最终的全量 override 列表** → **一条历史**。
+ *
+ * 面板那一份是后端裁决过的整张列表（「热态 == 文件 == 重放」的那一份），
+ * 直接整张换上，不在前端再合并一次。写完触发重渲染（预检按新 manifest 再算
+ * 一遍，那一步由 validation store 的订阅负责）。
  */
-export function applyFixPlans(plans: FixPlan[], label: UiMessage): void {
-  const touched = new Set<string>()
+function commitFixes(
+  plans: FixPlan[],
+  panels: Map<string, PanelOverride[]>,
+  label: UiMessage,
+): void {
   useDocumentStore.getState().commit(label, (d) => {
     for (const plan of plans) {
       if (plan.kind === 'pageWidth') {
@@ -187,20 +386,14 @@ export function applyFixPlans(plans: FixPlan[], label: UiMessage): void {
         continue
       }
       const obj = d.objects.find((o) => o.id === plan.objectId)
-      if (!obj) continue
-      if (plan.kind === 'textSize') {
-        if (obj.type === 'text') obj.sizePt = plan.sizePt
-        continue
-      }
-      if (obj.type !== 'panel') continue
-      for (const p of plan.patches) {
-        obj.overrides = obj.overrides.filter((x) => !(x.gid === p.gid && x.prop === p.prop))
-        obj.overrides.push({ gid: p.gid, prop: p.prop, value: p.value })
-      }
-      touched.add(obj.id)
+      if (obj?.type === 'text') obj.sizePt = plan.sizePt
+    }
+    for (const [id, overrides] of panels) {
+      const obj = d.objects.find((o) => o.id === id)
+      if (obj?.type === 'panel') obj.overrides = overrides
     }
   })
-  for (const id of touched) {
+  for (const id of panels.keys()) {
     const next = useDocumentStore.getState().doc.objects.find((o) => o.id === id)
     if (next?.type === 'panel') requestRender(next, true)
   }

@@ -261,6 +261,11 @@ interface UiState extends Persisted {
    * 标记，底部给「下一项」——连续处理五条同类问题不必五次重开清单。会话状态。
    */
   problemCursor: ProblemCursor | null
+  /**
+   * 修复正在跑（后端事务要真实渲染，几秒钟）。问题面板据此把「全部处理」与每行的
+   * 「修复」都置灰，免得第二轮拿着第一轮还没提交的旧文档当基准。会话状态。
+   */
+  fixing: boolean
   /** 当前绘制工具，画完自动回到 select */
   tool: Tool
   exportOpen: boolean
@@ -328,6 +333,7 @@ interface UiState extends Persisted {
   /** 命令面板跑完一条命令就记一笔（去重、最近在前、封顶） */
   pushRecentCommand: (id: string) => void
   setProblemCursor: (v: ProblemCursor | null) => void
+  setFixing: (v: boolean) => void
   setCropTarget: (id: string | null, baseline?: CropBaseline | null) => void
   setElementPanel: (id: string | null) => void
   setSelectedGid: (gid: string | null) => void
@@ -413,6 +419,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   problemFilter: null,
   problemScope: null,
   problemCursor: null,
+  fixing: false,
   tool: 'select',
   exportOpen: false,
   layoutOpen: false,
@@ -568,6 +575,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     persist(get())
   },
   setProblemCursor: (problemCursor) => set({ problemCursor }),
+  setFixing: (fixing) => set({ fixing }),
   setEditingText: (editingTextId) => set({ editingTextId }),
   setCropTarget: (cropTargetId, cropBaseline = null) => set({ cropTargetId, cropBaseline }),
   setElementPanel: (elementPanelId) =>

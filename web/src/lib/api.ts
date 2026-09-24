@@ -1777,6 +1777,54 @@ export async function engineRender(
 }
 
 /**
+ * 按出版规范修一张图（ADR 0080）：后端算计划、真实渲染、对着修改前逐项裁决。
+ *
+ * **只算不写**：通过时回 `ok: true` 与这张图**最终的全量 override 列表**，由调用方
+ * 一次 commit 写进文档；不通过时 `ok: false`、`patches` 原样是发上去的那份，
+ * 调用方一个字不改。`only` 点名要修的 `(规则, gid)`；不给 = 全部（建议档不在内）。
+ */
+export interface SpecFixResponse {
+  ok: boolean
+  /** `done` / `nothing_to_do` / `font_unavailable` / `constraint_conflict` / `protected_changed` / `not_resolved` / `unsupported` / `budget_exceeded` */
+  exit: string
+  patches: { gid: string; prop: string; value: unknown }[]
+  changes: { rule: string; gid: string; prop: string; before: unknown; after: unknown }[]
+  skipped: { rule: string; gid: string; reason: string }[]
+  unresolved: { rule: string; gid: string }[]
+  blocking: { id: string; gids: string[]; bucket: string }[]
+  adjustments: unknown[]
+}
+
+export async function engineSpecfix(
+  id: string,
+  patches: unknown[],
+  scale: number,
+  profile: unknown,
+  only?: { rule: string; gid: string }[],
+): Promise<SpecFixResponse> {
+  const res = await fetch(apiUrl('/api/engine/specfix'), withProject({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, patches, scale, profile, ...(only ? { only } : {}) }),
+  }))
+  const body = await res.json().catch(() => ({}) as Record<string, unknown>)
+  if (!res.ok) {
+    noteProjectGone(res.status, body)
+    throw new EngineError(
+      (body.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
+      (body.traceback as string) || '',
+      (body.code as string) || '',
+      (body.module as string) || '',
+    )
+  }
+  // 形状不对 = 没拿到（代理页、别的服务占了端口），不是「修好了」
+  if (typeof body.ok !== 'boolean' || !Array.isArray(body.patches)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: res.status }), '', 'bad_shape', '')
+  }
+  return body as unknown as SpecFixResponse
+}
+
+/**
  * 作废这张图的热会话（QuickEdit「重新构建」）：下一次 `engineRender` 从头跑
  * 脚本。后端只让会话过期——不起 worker、不动源脚本、不写回、不清 override。
  * `invalidated: false` 是诚实的降级（native 会话是用户自己终端里的进程，不杀），

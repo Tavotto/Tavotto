@@ -496,10 +496,17 @@
     "fixAuto": "Fix all automatically",
     "fixChoose": "Fix…",
     "fixFailed": {
+      "busy": "The previous fix is still running. Try again in a moment.",
       "canvas_missing": "The canvas this problem lives on couldn’t be found — refresh the list",
+      "engine_failed": "Rendering failed while fixing. The figure was not changed.",
+      "font_unavailable": "The required font \"{{font}}\" isn't installed on this computer, so the font was not changed.",
       "needs_choice": "Pick how to fix this one first",
       "no_plan": "No safe automatic fix is available for this problem; adjust it manually.",
-      "object_missing": "The object to fix is gone — refresh the list"
+      "not_resolved": "The result still didn't meet the spec, so the fix was dropped. The figure was not changed.",
+      "object_missing": "The object to fix is gone — refresh the list",
+      "stale": "The figure was edited while fixing, so the result was dropped. The figure was not changed. Try again.",
+      "unavailable": "Elements inside figures can't be fixed automatically here. Use the Tavotto desktop app.",
+      "would_worsen": "This fix would make something else worse (for example, push text off the figure), so it was dropped. The figure was not changed."
     },
     "fixOption": {
       "double": "Set to double-column width {{mm}} mm",
@@ -507,8 +514,11 @@
     },
     "fixableHere_one": "{{count}} can be fixed automatically",
     "fixableHere_other": "{{count}} can be fixed automatically",
+    "fixing": "Fixing…",
     "fixed_one": "Fixed {{count}} problem (undoable)",
     "fixed_other": "Fixed {{count}} problems — undoable",
+    "fixedPartial_one": "Fixed {{count}} problem — undoable. {{failed}} more left unchanged: {{why}}",
+    "fixedPartial_other": "Fixed {{count}} problems — undoable. {{failed}} more left unchanged: {{why}}",
     "focusFailed": {
       "canvas_missing": "The canvas this problem lives on is no longer in the project",
       "document_not_loaded": "The document is still loading — try again in a moment",
