@@ -536,3 +536,110 @@ def test_write_source_files_is_the_choke_point(client, tmp_path, monkeypatch):
     with pytest.raises(m.WriteBackFormatError) as info:
         m._write_source_files(figs / "Fig1.tif", [], object())
     assert info.value.format == "TIF"
+
+
+# ---------------------------------------------------------------------------
+# 5. 坏头：文件里读出来的数不许驱动巨大的分配 / 读长度（Codex #561）
+# ---------------------------------------------------------------------------
+def _raw(path: Path, entries: list[tuple[int, int, int, bytes]], *, count=None, tail=b"") -> Path:
+    """手写一个 IFD：`entries` 是 `(tag, type, count, 4 字节值域)`；`count` 可以谎报条目数。"""
+    body = b"".join(struct.pack("<HHI", t, ty, n) + v.ljust(4, b"\x00") for t, ty, n, v in entries)
+    n = len(entries) if count is None else count
+    path.write_bytes(
+        b"II*\x00" + struct.pack("<I", 8) + struct.pack("<H", n) + body + b"\x00" * 4 + tail
+    )
+    return path
+
+
+def _base(over: dict | None = None) -> list[tuple[int, int, int, bytes]]:
+    tags = {
+        256: (3, 1, struct.pack("<H", W)),
+        257: (3, 1, struct.pack("<H", H)),
+        258: (3, 1, struct.pack("<H", 8)),
+        262: (3, 1, struct.pack("<H", 1)),
+        277: (3, 1, struct.pack("<H", 1)),
+    }
+    tags.update(over or {})
+    return [(t, *v) for t, v in sorted(tags.items())]
+
+
+def _bounded(path: Path, code: str | None = "tiff_unreadable", *, cap: int = 1 << 20) -> None:
+    """判据给出 `code`，且整个过程的 Python 分配峰值在 `cap` 字节以内。"""
+    import tracemalloc
+
+    tracemalloc.start()
+    try:
+        if code is None:
+            tiffprobe.check(path)
+        else:
+            with pytest.raises(tiffprobe.UnsupportedTiff) as info:
+                tiffprobe.check(path)
+            assert info.value.code == code
+    finally:
+        _cur, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+    assert peak < cap, f"分配峰值 {peak} 字节"
+
+
+def test_samples_per_pixel_bomb_is_refused_before_any_allocation(tmp_path):
+    """`SamplesPerPixel` = 5000 万（LONG）：没有闸就先建 5000 万个元素的默认元组（~400 MB）。"""
+    _bounded(_raw(tmp_path / "spp.tif", _base({277: (4, 1, struct.pack("<I", 50_000_000))})))
+
+
+def test_samples_per_pixel_0xffffffff_is_unreadable(tmp_path):
+    """Codex 的原例：LONG 0xffffffff。"""
+    _bounded(_raw(tmp_path / "spp.tif", _base({277: (4, 1, struct.pack("<I", 0xFFFFFFFF))})))
+
+
+@pytest.mark.parametrize(
+    ("value", "code"),
+    [
+        ((3, 1, struct.pack("<H", 0)), "tiff_unreadable"),  # 0 个样本
+        ((3, 1, struct.pack("<H", 17)), "tiff_unreadable"),  # 超过解析上限
+        ((2, 4, b"abc\x00"), "tiff_unreadable"),  # 类型不是整数
+        ((3, 1, struct.pack("<H", 5)), "tiff_color_space"),  # 读得懂，但不在支持范围
+    ],
+)
+def test_samples_per_pixel_outside_the_parse_range(tmp_path, value, code):
+    _bounded(_raw(tmp_path / "spp.tif", _base({277: value})), code)
+
+
+def test_ifd_entry_count_that_does_not_fit_the_file_is_unreadable(tmp_path):
+    """条目数谎报成 65535：`2 + 12 × 65535` 字节不在文件里，先核再读（不核的话先分配 768 KiB 的读缓冲）。"""
+    _bounded(_raw(tmp_path / "n.tif", _base(), count=0xFFFF), cap=256 << 10)
+
+
+def test_ifd_offset_past_the_end_is_unreadable(tmp_path):
+    p = tmp_path / "off.tif"
+    p.write_bytes(b"II*\x00" + struct.pack("<I", 0x7FFFFFFF))
+    _bounded(p)
+
+
+@pytest.mark.parametrize(
+    ("tag", "typ"),
+    [(273, 4), (279, 4), (324, 4), (325, 4), (320, 3), (258, 3)],
+    ids=[
+        "StripOffsets",
+        "StripByteCounts",
+        "TileOffsets",
+        "TileByteCounts",
+        "ColorMap",
+        "BitsPerSample",
+    ],
+)
+def test_a_value_area_past_the_end_is_unreadable(tmp_path, tag, typ):
+    """个数写成 2^30 的条带 / 瓦片表、ColorMap、BitsPerSample：值区越过文件尾，在本模块拦下，
+    不留给解码器去分配。"""
+    _bounded(_raw(tmp_path / "v.tif", _base({tag: (typ, 1 << 30, struct.pack("<I", 64))})))
+
+
+def test_a_bomb_in_the_project_is_listed_not_fatal(client, tmp_path):
+    """扫项目的那一刻：坏头进 `unsupported`（tiff_unreadable），好图照列，服务不倒。"""
+    _project(
+        tmp_path,
+        ok__tif=_rgb,
+        bomb__tif=lambda p: _raw(p, _base({277: (4, 1, struct.pack("<I", 0xFFFFFFFF))})),
+    )
+    body = client.get("/api/panels").get_json()
+    assert [p["id"] for p in body["panels"]] == ["ok.tif"]
+    assert [(u["id"], u["code"]) for u in body["unsupported"]] == [("bomb.tif", "tiff_unreadable")]

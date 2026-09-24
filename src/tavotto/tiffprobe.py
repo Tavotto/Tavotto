@@ -31,6 +31,19 @@ import 它，渲染后端（RenderCore）**不**另判一遍：素材清单（`a
 | `tiff_planar` | 多通道按平面分开存（`PlanarConfiguration = 2`） | 同上 |
 | `tiff_unreadable` | 头部不成形 / 截断 | —— |
 
+### 资源上界（坏头只换来 `tiff_unreadable`，换不来一次巨大的分配）
+
+文件里读出来的每个数在驱动分配 / 读长度 / 循环 / seek 之前都有上界（Codex #561，逐个看护在
+`tests/test_tiff_assets.py` 的「坏头」一组）：
+
+* IFD 偏移：seek 本身不分配，越过文件尾时读到的不足 2 字节 → `tiff_unreadable`；
+* IFD 条目数：u16 天然 ≤ 65535，且 `2 + 12 × 条目数` 必须整段落在文件里，0 条目算坏头；
+* 每个条目声明的值区（`类型字节数 × 个数`，放不进 4 字节时）必须整段落在文件里——条带 / 瓦片的偏移与
+  字节数表、ColorMap 本模块都不读，但个数写成 0xffffffff 的就在这里拦下；
+* 读得到的标签值最多取 16 个（`values()`）；
+* `SamplesPerPixel`：必须是整数类型、1–16（`_MAX_SAMPLES`），核过之后才按它建默认元组；
+* 不沿「下一个 IFD」链往后走（只看首页），没有页循环。
+
 这些 code 同时是用户可见的后端错误码（`ERROR_CODES`，`tests/test_error_codes.py` 看护两种语言的文案）。
 """
 
@@ -71,6 +84,11 @@ _WIDTH, _HEIGHT, _BITS, _COMPRESSION, _PHOTOMETRIC = 256, 257, 258, 259, 262
 _SAMPLES, _XRES, _YRES, _PLANAR, _RESUNIT, _SAMPLE_FORMAT = 277, 282, 283, 284, 296, 339
 _WANTED = (_WIDTH, _HEIGHT, _BITS, _COMPRESSION, _PHOTOMETRIC, _SAMPLES, _XRES, _YRES, _RESUNIT)
 _WANTED += (_PLANAR, _SAMPLE_FORMAT)
+
+#: 每像素样本数的解析上限。支持范围最多 4（RGBA），5–16 还能判成 `tiff_color_space`；再往上不是
+#: 一张图，是一个坏头——按它去建默认元组会分配几十亿个元素（Codex #561：`SamplesPerPixel` 写成
+#: LONG 0xffffffff，扫一遍项目就能把服务 OOM 掉）。
+_MAX_SAMPLES = 16
 
 
 class UnsupportedTiff(ValueError):
@@ -126,20 +144,30 @@ def _read(fh, name: str) -> TiffHeader:
         raise UnsupportedTiff("tiff_unreadable", f"{name}: 不是 TIFF 文件", name)
     end = "<" if head[:2] == b"II" else ">"
     (ifd,) = struct.unpack(end + "I", head[4:8])
+    # 文件里读出来的每一个数（偏移 / 个数）在驱动 seek、读长度、循环或分配之前，都先对文件大小
+    # 核一遍：坏头只能得到 `tiff_unreadable`，不能换来一次巨大的分配（Codex #561）
+    size_of_file = fh.seek(0, 2)
 
     def entries(offset: int) -> dict[int, tuple[int, int, int, bytes]]:
-        fh.seek(offset)
-        raw = fh.read(2)
-        if len(raw) != 2:
-            raise ValueError(f"IFD 越过文件尾（{offset}）")
-        (count,) = struct.unpack(end + "H", raw)
+        fh.seek(offset)  # 越过文件尾时下一行读到的不足 2 字节，struct 报错 → tiff_unreadable
+        (count,) = struct.unpack(end + "H", fh.read(2))
+        # 条目数是 u16（≤ 65535，读长度 ≤ 768 KiB），另外必须整段落在文件里
+        if count == 0 or offset + 2 + count * 12 > size_of_file:
+            raise ValueError(f"IFD 条目数 {count} 与文件大小不符")
         body = fh.read(count * 12)
-        if len(body) != count * 12:
-            raise ValueError("IFD 被截断")
         out = {}
         for i in range(count):
             tag, typ, n = struct.unpack_from(end + "HHI", body, i * 12)
-            out[tag] = (typ, n, i, body[i * 12 + 8 : i * 12 + 12])
+            inline = body[i * 12 + 8 : i * 12 + 12]
+            size = _TYPE_SIZE.get(typ)
+            if size is not None and size * n > 4:
+                # 值放在别处的标签（条带 / 瓦片偏移与字节数、ColorMap……）：本模块多半不读它们，
+                # 但声明的值区必须整段落在文件里——个数写成 0xffffffff 的条带表就在这里拦下，
+                # 不留给解码器去分配
+                (voff,) = struct.unpack(end + "I", inline)
+                if voff + size * n > size_of_file:
+                    raise ValueError(f"标签 {tag} 的值区（{n} 个）越过文件尾")
+            out[tag] = (typ, n, i, inline)
         return out
 
     def values(entry: tuple[int, int, int, bytes]) -> list:
@@ -177,7 +205,12 @@ def _read(fh, name: str) -> TiffHeader:
     width, height = one(_WIDTH, None), one(_HEIGHT, None)
     if not width or not height:
         raise ValueError("缺宽高")
-    samples = one(_SAMPLES, 1) or 1
+    if _SAMPLES in first and first[_SAMPLES][0] not in (3, 4):
+        raise ValueError("SamplesPerPixel 的类型不是整数")
+    samples = one(_SAMPLES, 1)
+    if samples is None or not 1 <= samples <= _MAX_SAMPLES:
+        # 在任何按样本数分配（下面的默认元组）之前拦下
+        raise ValueError(f"SamplesPerPixel = {samples}")
     bits = tuple(int(b) for b in got.get(_BITS) or [1] * samples)
     fmt = tuple(int(f) for f in got.get(_SAMPLE_FORMAT) or [1] * samples)
     resolution = None
