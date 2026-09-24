@@ -2364,19 +2364,31 @@ def api_projects_recent():
     return resp
 
 
-@app.put("/api/projects/pinned")
+@app.post("/api/projects/pinned")
 def api_projects_pinned():
-    """整张替换收藏列表（收藏 / 取消收藏 / 排序）；只改配置，不打开、不碰磁盘内容。"""
+    """对收藏列表做一个操作（add / remove / move），回新列表；只改配置，不碰磁盘内容。
+
+    按路径认对象、在后端对照最新的那份执行（`config.edit_pinned`）：多个标签页、
+    排着队的多次操作互相不会盖掉。
+    """
     body = request.get_json(force=True, silent=True)
-    paths = body.get("paths") if isinstance(body, dict) else None
-    if not isinstance(paths, list) or not all(isinstance(x, str) and x.strip() for x in paths):
-        return jsonify(
-            {"error": "paths 必须是非空字符串的列表", "code": "bad_request", "params": {}}
-        ), 400
+    body = body if isinstance(body, dict) else {}
+    op, path = body.get("op"), body.get("path")
+    delta, to_path = body.get("delta"), body.get("to_path")
+    ok = op in engine_config.PINNED_OPS and isinstance(path, str) and path.strip()
+    if ok and op == "move":
+        # 两种挪法恰好给一种：相对位移（非零整数，bool 不算）或目标路径
+        by_delta = type(delta) is int and delta != 0 and to_path is None
+        by_target = delta is None and isinstance(to_path, str) and to_path.strip()
+        ok = by_delta or by_target
+    elif ok:
+        ok = delta is None and to_path is None
+    if not ok:
+        return jsonify({"error": "收藏操作的参数不合法", "code": "bad_request", "params": {}}), 400
     # 先解析请求的项目（失效的 pj 在这里就 409），**再**写配置：反过来的话配置已经
     # 改了、响应却说失败，界面按失败保留旧列表，重开后又冒出来（Codex #550 P2）
     current = _request_ctx()
-    stored = engine_config.set_pinned(paths)
+    stored = engine_config.edit_pinned(op, path, delta=delta, to_path=to_path)
     return jsonify({"pinned": _project_list_entries(stored, current)})
 
 

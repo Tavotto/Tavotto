@@ -408,12 +408,21 @@ export const fetchProjectLists = () =>
     (r) => ({ recent: r.recent, pinned: r.pinned ?? [] }),
   )
 
-/** 整张替换收藏列表：收藏、取消收藏、排序都是这一个动作；回来的是新列表 */
-export const putPinnedProjects = (paths: string[]) =>
+/**
+ * 对收藏列表做**一个操作**，回新列表。按路径认对象、由后端对照最新那份执行
+ * （`config.edit_pinned`）——不发整张列表：两个标签页各自从旧列表算出的整张列表
+ * 会互相盖掉，按下标排队的挪动也会移错项。
+ */
+export type PinnedOp =
+  | { op: 'add' | 'remove'; path: string }
+  | { op: 'move'; path: string; delta: number }
+  | { op: 'move'; path: string; to_path: string }
+
+export const postPinnedOp = (op: PinnedOp) =>
   jsonFetch<{ pinned: RecentProject[] }>('/api/projects/pinned', {
-    method: 'PUT',
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ paths }),
+    body: JSON.stringify(op),
   }).then((r) => r.pinned)
 
 export const removeRecentProject = (path: string) =>

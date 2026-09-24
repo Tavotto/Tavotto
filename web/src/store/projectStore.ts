@@ -8,9 +8,10 @@ import {
   fetchProject,
   fetchProjectLists,
   openProjectApi,
-  putPinnedProjects,
+  postPinnedOp,
   removeRecentProject,
   setNoProjectHandler,
+  type PinnedOp,
   type ProjectStatus,
   type RecentProject,
 } from '@/lib/api'
@@ -87,13 +88,17 @@ interface ProjectState {
     },
   ) => Promise<ProjectStatus>
   /**
-   * 整张替换收藏列表（收藏 / 取消 / 排序共用）。失败时列表不动、状态栏说一句；
-   * 成功以后端回来的那份为准（名字、在不在都是后端算的）。
+   * 收藏 / 取消收藏：**轮到执行时**按最新的 `pinned` 决定 add 还是 remove——前一次
+   * 还没回来时连点第二下，界面还显示「没收藏」，点击那一刻定的话两下都是 add。
+   * 后端按路径执行，重复执行无害。失败时列表不动、状态栏说一句。
    */
-  setPinned: (paths: string[]) => Promise<void>
   togglePin: (path: string) => Promise<void>
-  /** 收藏列表里把第 from 条挪到第 to 条（拖动与「上移 / 下移」共用） */
-  movePinned: (from: number, to: number) => Promise<void>
+  /**
+   * 挪一条收藏：`{ delta }` 相对挪（上移 -1 / 下移 +1），`{ toPath }` 挪到那一条此刻
+   * 的位置（拖动）。按**路径**描述、执行时才由后端查下标——排着队的两次挪动、前面
+   * 排着的删除都不会让它移错项。
+   */
+  movePinned: (path: string, by: { delta: number } | { toPath: string }) => Promise<void>
   remove: (path: string) => Promise<void>
   /** 一次从最近列表移除多条（失效项分组的「全部移除」）；同样不删磁盘内容 */
   removeMany: (paths: string[]) => Promise<void>
@@ -268,15 +273,14 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   }
 
   /**
-   * 改收藏：排进收藏队列，**轮到自己时**才从最新的 `pinned` 算出整张新列表
-   * （`next` 回 null = 这次什么都不发）。失败时列表不动、状态栏说一句。
+   * 改收藏：排进收藏队列，一次一个操作，界面以回包为准。队列保证回包按发出顺序落地
+   * （不会有旧回包盖新回包）；操作本身按路径描述，所以与别的标签页交错也不会互相盖。
    */
-  const updatePinned = (next: (paths: string[]) => string[] | null): Promise<void> =>
+  const applyPinned = (op: PinnedOp | (() => PinnedOp)): Promise<void> =>
     pinQueue(async () => {
-      const paths = next(get().pinned.map((p) => p.path))
-      if (!paths) return
       try {
-        const pinned = await putPinnedProjects(paths)
+        // 函数形式 = 轮到自己时才定操作（收藏开关：连点两下是开了又关，不是两次「开」）
+        const pinned = await postPinnedOp(typeof op === 'function' ? op() : op)
         pinnedRev += 1
         set({ pinned })
       } catch (e) {
@@ -346,23 +350,18 @@ export const useProjectStore = create<ProjectState>((set, get) => {
 
   adoptOpenedProject: (status, opts) => runSwitch(() => adoptNow(status, opts)),
 
-  setPinned: (paths) => updatePinned(() => paths),
-
   togglePin: (path) =>
-    updatePinned((paths) =>
-      paths.includes(path) ? paths.filter((p) => p !== path) : [...paths, path],
-    ),
+    applyPinned(() => ({
+      op: get().pinned.some((p) => p.path === path) ? 'remove' : 'add',
+      path,
+    })),
 
-  movePinned: (from, to) =>
-    updatePinned((paths) => {
-      if (from === to || from < 0 || to < 0 || from >= paths.length || to >= paths.length) {
-        return null
-      }
-      const next = [...paths]
-      const [moved] = next.splice(from, 1)
-      next.splice(to, 0, moved)
-      return next
-    }),
+  movePinned: (path, by) =>
+    applyPinned(
+      'delta' in by
+        ? { op: 'move', path, delta: by.delta }
+        : { op: 'move', path, to_path: by.toPath },
+    ),
 
   remove: async (path) => {
     await removeRecentProject(path)

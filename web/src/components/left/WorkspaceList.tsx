@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
@@ -53,7 +53,14 @@ export function WorkspaceList() {
   const switching = useProjectStore((s) => s.switching)
   const [query, setQuery] = useState('')
   const [busyPath, setBusyPath] = useState<string | null>(null)
-  const dragFrom = useRef<number | null>(null)
+  /** 拖动起点记**路径**：落下时按路径发 move，由后端查此刻的位置 */
+  const dragFrom = useRef<string | null>(null)
+
+  // 每次打开抽屉取一次最新的两份列表：别的标签页改过收藏、别处打开过项目，这里
+  // 不会收到事件（收藏的改动按路径执行，旧列表点下去也不会盖掉别人的，但看到的该是新的）
+  useEffect(() => {
+    void useProjectStore.getState().refreshRecent()
+  }, [])
 
   const go = async (path: string, create = false) => {
     setBusyPath(path)
@@ -114,16 +121,7 @@ export function WorkspaceList() {
                   pinned
                   onOpen={() => void go(e.path)}
                   // 筛选中索引对不上真实顺序：拖动与上移 / 下移都停用（同画布列表）
-                  order={
-                    filtered
-                      ? undefined
-                      : {
-                          index,
-                          count: pinned.length,
-                          dragFrom,
-                          move: (to) => void useProjectStore.getState().movePinned(index, to),
-                        }
-                  }
+                  order={filtered ? undefined : { index, count: pinned.length, dragFrom }}
                 />
               )
             })}
@@ -289,12 +287,11 @@ function ProjectRow({
   onOpen: () => void
   /** 只有最近区的行能「从列表移除」；收藏区的行取消收藏即可 */
   onRemove?: () => void
-  /** 收藏区、且没在筛选：可拖动、可上移 / 下移 */
+  /** 收藏区、且没在筛选：可拖动、可上移 / 下移（index / count 只用来决定按钮禁不禁用） */
   order?: {
     index: number
     count: number
-    dragFrom: React.RefObject<number | null>
-    move: (to: number) => void
+    dragFrom: React.RefObject<string | null>
   }
 }) {
   useTranslation('project')
@@ -302,6 +299,8 @@ function ProjectRow({
   // 当前项目的行是选中底：ink-3 在上面过不了 4.5:1，元数据升一档（同顶上的当前卡片）
   const meta = entry.current ? 'text-ink-2' : 'text-ink-3'
   const togglePin = () => void useProjectStore.getState().togglePin(entry.path)
+  const moveBy = (delta: number) =>
+    void useProjectStore.getState().movePinned(entry.path, { delta })
   const canNewTab = !!entry.id && !entry.current
   // 菜单里一项都没有时不摆「…」（筛选中的收藏行、且项目没开着）
   const hasMenu = !!order || canNewTab || !!onRemove
@@ -311,13 +310,13 @@ function ProjectRow({
       data-workspace-row
       draggable={!!order}
       onDragStart={() => {
-        if (order) order.dragFrom.current = order.index
+        if (order) order.dragFrom.current = entry.path
       }}
       onDragOver={order ? (e) => e.preventDefault() : undefined}
       onDrop={() => {
         const from = order?.dragFrom.current
-        if (order && from != null && from !== order.index) {
-          void useProjectStore.getState().movePinned(from, order.index)
+        if (order && from != null && from !== entry.path) {
+          void useProjectStore.getState().movePinned(from, { toPath: entry.path })
         }
         if (order) order.dragFrom.current = null
       }}
@@ -395,7 +394,7 @@ function ProjectRow({
         {/* 拖动只有鼠标能用：菜单里给键盘一条同样的路 */}
         {order && (
           <>
-            <MenuItem disabled={order.index === 0} onSelect={() => order.move(order.index - 1)}>
+            <MenuItem disabled={order.index === 0} onSelect={() => moveBy(-1)}>
               <span className="flex items-center gap-2">
                 <ArrowUp size={ICON_SIZE.sm} className="text-ink-3" />
                 {ws('moveUp')}
@@ -403,7 +402,7 @@ function ProjectRow({
             </MenuItem>
             <MenuItem
               disabled={order.index >= order.count - 1}
-              onSelect={() => order.move(order.index + 1)}
+              onSelect={() => moveBy(1)}
             >
               <span className="flex items-center gap-2">
                 <ArrowDown size={ICON_SIZE.sm} className="text-ink-3" />

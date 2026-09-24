@@ -44,13 +44,35 @@ const current: ProjectStatus = {
   scripts: 12,
 } as ProjectStatus
 
-/** PUT 的请求体按顺序记下来；回包 = 按请求体里的路径现造的条目 */
-let puts: string[][] = []
+/**
+ * 收藏操作按顺序记下来；mock 自己维护一份「服务端收藏」，按操作执行后回整张新列表
+ * （与 `config.edit_pinned` 同语义：按路径认对象、执行时才查位置）。
+ */
+let ops: Record<string, unknown>[] = []
+let failPinned = false
+let server: string[] = []
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-  if (url.includes('/api/projects/pinned') && init?.method === 'PUT') {
-    const { paths } = JSON.parse(String(init.body)) as { paths: string[] }
-    puts.push(paths)
-    return new Response(JSON.stringify({ pinned: paths.map((p) => entryOf(p)) }), { status: 200 })
+  if (url.includes('/api/projects/pinned') && init?.method === 'POST') {
+    if (failPinned) {
+      return new Response(JSON.stringify({ error: 'x', code: 'bad_request', params: {} }), { status: 400 })
+    }
+    const op = JSON.parse(String(init.body)) as { op: string; path: string; delta?: number; to_path?: string }
+    ops.push(op)
+    if (op.op === 'add' && !server.includes(op.path)) server = [...server, op.path]
+    if (op.op === 'remove') server = server.filter((p) => p !== op.path)
+    if (op.op === 'move' && server.includes(op.path)) {
+      const from = server.indexOf(op.path)
+      const to =
+        op.to_path !== undefined
+          ? server.indexOf(op.to_path)
+          : Math.max(0, Math.min(server.length - 1, from + (op.delta ?? 0)))
+      if (to >= 0) {
+        const next = server.filter((p) => p !== op.path)
+        next.splice(to, 0, op.path)
+        server = next
+      }
+    }
+    return new Response(JSON.stringify({ pinned: server.map((p) => entryOf(p)) }), { status: 200 })
   }
   return new Response('{}', { status: 404 })
 })
@@ -79,7 +101,9 @@ const pinButton = (path: string) =>
     .querySelector<HTMLButtonElement>('[data-workspace-pin]')!
 
 beforeEach(() => {
-  puts = []
+  ops = []
+  failPinned = false
+  server = ['/a/Supplementary', '/b/Rebuttal']
   open.mockClear()
   useProjectStore.setState({
     project: current,
@@ -111,6 +135,13 @@ describe('WorkspaceList', () => {
     expect(recent).not.toContain(CURRENT)
   })
 
+  it('打开抽屉就取一次最新列表（别的标签页改过收藏不会有事件）', async () => {
+    fetchMock.mockClear()
+    await mount()
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(urls.filter((u) => u.includes('/api/projects/recent'))).toHaveLength(1)
+  })
+
   it('点最近区的行就打开那个项目', async () => {
     await mount()
     const btn = section('recent')!.querySelector<HTMLButtonElement>('button[title="/work/p-3"]')!
@@ -118,22 +149,21 @@ describe('WorkspaceList', () => {
     expect(open).toHaveBeenCalledWith('/work/p-3', false)
   })
 
-  it('收藏开关发整张列表，界面以回来的那份为准', async () => {
+  it('收藏开关按路径发一个操作，界面以回来的那份为准', async () => {
     await mount()
     await act(async () => pinButton('/work/p-0').click())
-    expect(puts).toEqual([['/a/Supplementary', '/b/Rebuttal', '/work/p-0']])
+    expect(ops).toEqual([{ op: 'add', path: '/work/p-0' }])
     expect(rowNames('pinned')).toEqual(['/a/Supplementary', '/b/Rebuttal', '/work/p-0'])
     expect(rowNames('recent')).not.toContain('/work/p-0')
 
     await act(async () => pinButton('/a/Supplementary').click())
-    expect(puts[1]).toEqual(['/b/Rebuttal', '/work/p-0'])
+    expect(ops[1]).toEqual({ op: 'remove', path: '/a/Supplementary' })
     expect(pinButton('/b/Rebuttal').getAttribute('aria-pressed')).toBe('true')
   })
 
-  it('PUT 失败时收藏不动、状态栏说一句', async () => {
-    fetchMock.mockImplementationOnce(async () =>
-      new Response(JSON.stringify({ error: 'x', code: 'bad_request', params: {} }), { status: 400 }),
-    )
+  it('操作失败时收藏不动、状态栏说一句', async () => {
+    // 只让收藏操作失败：抽屉挂载时还会发一次刷新，用 Once 会被它先吃掉
+    failPinned = true
     await mount()
     const before = useProjectStore.getState().pinned
     await act(async () => pinButton('/work/p-1').click())
@@ -184,11 +214,17 @@ describe('切换中', () => {
 })
 
 describe('projectStore 收藏排序', () => {
-  it('movePinned 发重排后的整张列表；越界什么都不发', async () => {
-    await useProjectStore.getState().movePinned(0, 1)
-    expect(puts).toEqual([['/b/Rebuttal', '/a/Supplementary']])
-    await useProjectStore.getState().movePinned(0, 5)
-    expect(puts).toHaveLength(1)
+  it('movePinned 按路径发 move（相对 / 拖到某一条），不发下标', async () => {
+    await useProjectStore.getState().movePinned('/a/Supplementary', { delta: 1 })
+    await useProjectStore.getState().movePinned('/a/Supplementary', { toPath: '/b/Rebuttal' })
+    expect(ops).toEqual([
+      { op: 'move', path: '/a/Supplementary', delta: 1 },
+      { op: 'move', path: '/a/Supplementary', to_path: '/b/Rebuttal' },
+    ])
+    expect(useProjectStore.getState().pinned.map((p) => p.path)).toEqual([
+      '/a/Supplementary',
+      '/b/Rebuttal',
+    ])
   })
 })
 

@@ -81,29 +81,69 @@ def test_recent_ordering_and_remove(tmp_path):
     assert [e["path"] for e in engine_config.recent_projects()] == [str(a)]
 
 
-def test_pinned_order_dedupe_and_names(tmp_path):
-    """收藏按给定顺序存、重复只留第一次；名字沿用最近列表里的，没有就用目录名。"""
+def _pins():
+    return [e["path"] for e in engine_config.pinned_projects()]
+
+
+def test_pinned_ops_by_identity_and_names(tmp_path):
+    """add 追加、重复 add 不变；名字沿用最近列表里的，没有就用目录名；remove 幂等。"""
     a, b = tmp_path / "a", tmp_path / "b"
     engine_config.touch_recent(str(a), name="Paper A")
-    stored = engine_config.set_pinned([str(b), str(a), str(b)])
+    engine_config.edit_pinned("add", str(b))
+    stored = engine_config.edit_pinned("add", str(a))
+    engine_config.edit_pinned("add", str(b))
     assert [(e["path"], e["name"]) for e in stored] == [(str(b), "b"), (str(a), "Paper A")]
-    assert engine_config.set_pinned([str(a), str(b)])[0]["path"] == str(a)  # 排序就是整张替换
+    assert _pins() == [str(b), str(a)]
+    engine_config.edit_pinned("remove", str(tmp_path / "never"))
+    engine_config.edit_pinned("remove", str(b))
+    assert _pins() == [str(a)]
+
+
+def test_pinned_two_stale_writers_both_land(tmp_path):
+    """两个标签页各自只见过旧列表：A 加 X、B 加 Y——都按操作落在最新那份上，谁也不盖谁
+    （整张替换时 B 的 [old, Y] 会把 X 抹掉；Codex #550）。"""
+    old, x, y = (str(tmp_path / n) for n in ("old", "x", "y"))
+    engine_config.edit_pinned("add", old)
+    engine_config.edit_pinned("add", x)  # 标签页 A
+    engine_config.edit_pinned("add", y)  # 标签页 B（它的界面还是 [old]）
+    assert _pins() == [old, x, y]
+
+
+def test_pinned_moves_resolve_by_path_at_execution(tmp_path):
+    """连点两次「A 下移」：按路径执行 → A 走到末尾；按下标排队的话第二次会把 B 挪回去。
+    前面排着的 remove 挪动了下标，后面的 move 仍然作用在它点名的那一条上。"""
+    a, b, c, d = (str(tmp_path / n) for n in "abcd")
+    for p in (a, b, c):
+        engine_config.edit_pinned("add", p)
+    engine_config.edit_pinned("move", a, delta=1)
+    engine_config.edit_pinned("move", a, delta=1)
+    assert _pins() == [b, c, a]
+    engine_config.edit_pinned("move", a, delta=5)  # 夹在末尾
+    assert _pins() == [b, c, a]
+    engine_config.edit_pinned("add", d)
+    engine_config.edit_pinned("remove", b)
+    engine_config.edit_pinned("move", d, to_path=c)  # 拖到 c 此刻的位置
+    assert _pins() == [d, c, a]
+    engine_config.edit_pinned("move", str(tmp_path / "gone"), delta=-1)  # 不在列表里 = 不动
+    engine_config.edit_pinned("move", a, to_path=str(tmp_path / "gone"))
+    assert _pins() == [d, c, a]
 
 
 def test_pinned_survives_other_config_writes(tmp_path):
     """load() 是白名单：漏收 `pinned_projects` 的话，下一次任何 save() 都会把收藏抹掉。"""
     a = tmp_path / "a"
-    engine_config.set_pinned([str(a)])
+    engine_config.edit_pinned("add", str(a))
     engine_config.touch_recent(str(tmp_path / "other"))
     engine_config.remove_recent(str(a))  # 从最近列表移除 ≠ 取消收藏
-    assert [e["path"] for e in engine_config.pinned_projects()] == [str(a)]
+    assert _pins() == [str(a)]
 
 
 def test_pinned_endpoint_roundtrip(client, tmp_path):
     figs = _make_figs(tmp_path)
     gone = tmp_path / "gone"
-    resp = client.put("/api/projects/pinned", json={"paths": [str(gone), str(figs)]})
-    assert resp.status_code == 200
+    for p in (gone, figs):
+        resp = client.post("/api/projects/pinned", json={"op": "add", "path": str(p)})
+        assert resp.status_code == 200
     assert [e["path"] for e in resp.get_json()["pinned"]] == [str(gone), str(figs)]
     listed = client.get("/api/projects/recent").get_json()
     assert [(e["path"], e["exists"]) for e in listed["pinned"]] == [
@@ -111,23 +151,35 @@ def test_pinned_endpoint_roundtrip(client, tmp_path):
         (str(figs), True),
     ]
     assert not gone.exists()  # 收藏不创建目录
-    for bad in ({}, {"paths": "x"}, {"paths": [1]}, {"paths": [" "]}):
-        r = client.put("/api/projects/pinned", json=bad)
+    resp = client.post("/api/projects/pinned", json={"op": "move", "path": str(figs), "delta": -1})
+    assert [e["path"] for e in resp.get_json()["pinned"]] == [str(figs), str(gone)]
+    for bad in (
+        {},
+        {"op": "replace", "path": "x"},
+        {"op": "add", "path": " "},
+        {"op": "add", "path": "x", "delta": 1},
+        {"op": "move", "path": "x"},
+        {"op": "move", "path": "x", "delta": 0},
+        {"op": "move", "path": "x", "delta": True},
+        {"op": "move", "path": "x", "delta": 1, "to_path": "y"},
+        {"paths": [str(figs)]},  # 老的整张替换形状：不再接受
+    ):
+        r = client.post("/api/projects/pinned", json=bad)
         assert r.status_code == 400 and r.get_json()["code"] == "bad_request", bad
-    assert len(engine_config.pinned_projects()) == 2  # 坏请求不改配置
+    assert _pins() == [str(figs), str(gone)]  # 坏请求不改配置
 
 
-def test_pinned_put_with_stale_project_changes_nothing(client, tmp_path):
+def test_pinned_op_with_stale_project_changes_nothing(client, tmp_path):
     """标签页的 pj 失效（项目已关 / 后端重启）：409，而且配置**一个字都没改**——
     先写后校验的话，界面按失败保留旧列表，重开后那次「失败」的收藏又冒出来。"""
-    engine_config.set_pinned([str(tmp_path / "keep")])
-    resp = client.put(
+    engine_config.edit_pinned("add", str(tmp_path / "keep"))
+    resp = client.post(
         "/api/projects/pinned",
-        json={"paths": [str(tmp_path / "other")]},
+        json={"op": "add", "path": str(tmp_path / "other")},
         headers={"X-Tavotto-Project": "no-such-project"},
     )
     assert resp.status_code == 409
-    assert [e["path"] for e in engine_config.pinned_projects()] == [str(tmp_path / "keep")]
+    assert _pins() == [str(tmp_path / "keep")]
 
 
 def test_project_settings_roundtrip(tmp_path):

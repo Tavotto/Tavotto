@@ -230,31 +230,65 @@ def pinned_projects() -> list[dict]:
     return load()["pinned_projects"]
 
 
-def set_pinned(paths: list[str]) -> list[dict]:
-    """整张替换收藏列表（收藏 / 取消 / 排序都是这一个动作）。
+PINNED_OPS = ("add", "remove", "move")
 
-    名字沿用已有的记录（收藏里的 → 最近列表里的 → 目录名）：用户看到的名字不因
-    收藏这一下而改变。重复路径只留第一次出现的位置。不动磁盘上的项目内容，也不
-    检查目录在不在——失效的收藏照样留着，由界面标出来、让用户自己取消。
+
+def edit_pinned(
+    op: str, path: str, *, delta: int | None = None, to_path: str | None = None
+) -> list[dict]:
+    """对收藏列表做**一个操作**，在锁里对照此刻存着的那份执行，回新列表。
+
+    不收整张列表：整张替换的 payload 是客户端从它看到的那份算出来的，两个标签页
+    （或一个标签页里排着队的两次操作）各自从旧列表出发，后到的就把先到的盖掉；
+    排序按下标排队也会移错项（Codex #550）。这里一律按**路径**认对象、执行时才查
+    当前位置，所以操作可以交错、可以重放：
+
+    * `add`：不在就追加到末尾（已在 = 什么都不做；满 `PINNED_KEEP` 条也不加）；
+    * `remove`：在就删（不在 = 什么都不做）；
+    * `move`：`delta` 相对挪（±N，夹在两端），或 `to_path` 挪到那一条此刻的位置；
+      任一方不在列表里 = 什么都不做。
+
+    名字沿用已有的记录（收藏里的 → 最近列表里的 → 目录名）。不动磁盘上的项目内容，
+    也不检查目录在不在——失效的收藏照样留着，由界面标出来、让用户自己取消。
     """
+    if op not in PINNED_OPS:
+        raise ValueError(op)
+    path = str(Path(path))
     with _LOCK:
         cfg = load()
-        known = {
-            e["path"]: e.get("name")
-            for e in cfg["recent_projects"] + cfg["pinned_projects"]
-            if isinstance(e.get("name"), str)
-        }
-        out: list[dict] = []
-        seen: set[str] = set()
-        for raw in paths:
-            path = str(Path(raw))
-            if path in seen:
-                continue
-            seen.add(path)
-            out.append({"path": path, "name": known.get(path) or Path(path).name})
-        cfg["pinned_projects"] = out[:PINNED_KEEP]
+        items = list(cfg["pinned_projects"])
+        paths = [e["path"] for e in items]
+        if op == "add":
+            if path in paths or len(items) >= PINNED_KEEP:
+                return items
+            known = {
+                e["path"]: e.get("name")
+                for e in cfg["recent_projects"] + items
+                if isinstance(e.get("name"), str)
+            }
+            items.append({"path": path, "name": known.get(path) or Path(path).name})
+        elif op == "remove":
+            if path not in paths:
+                return items
+            items = [e for e in items if e["path"] != path]
+        else:
+            if path not in paths:
+                return items
+            src = paths.index(path)
+            if to_path is not None:
+                target = str(Path(to_path))
+                if target not in paths:
+                    return items
+                dst = paths.index(target)
+            else:
+                dst = max(0, min(len(items) - 1, src + (delta or 0)))
+            if dst == src:
+                return items
+            moved = items.pop(src)
+            items.insert(dst, moved)
+        cfg["pinned_projects"] = items
         save(cfg)
-        return cfg["pinned_projects"]
+        return items
 
 
 def last_project() -> str | None:

@@ -5,8 +5,8 @@
  *    请求会带着 B 的 pj 发出去、最后完成的那次把 `project` 写回 A。判据：连点 A、B 时，
  *    B 的 `/api/projects/open` 要等 A **整个换代完**才发；最终停在 B；`switching` 在
  *    排队期间一直亮着、全部结束才熄。
- *  - 改收藏：每次是整张替换。判据：第一次 PUT 还没回来时再收藏一个，第二次 PUT 的
- *    列表里**含第一次的结果**（不是两次都从同一份旧列表出发）。
+ *  - 改收藏：一次一个按路径描述的操作（后端对照最新列表执行）。判据：第一次还没回来
+ *    时再收藏一个，第二次排队等第一次落地；回包按发出顺序落地，旧回包不盖新回包。
  *
  * 后端的响应由用例手动放行（deferred），时序完全由用例决定，不靠睡眠碰运气。
  */
@@ -21,8 +21,10 @@ interface Pending {
   release: (status: number, body: unknown) => void
 }
 
-/** `/api/projects/open` 与 PUT pinned 挂起等用例放行；其余立刻答一个合法的空形状 */
+/** `/api/projects/open` 与收藏操作（POST pinned）挂起等用例放行；其余立刻答一个合法的空形状 */
 let pending: Pending[] = []
+/** 还没放行的全部请求（`take` 取走但断言失败没来得及放行的也在这里） */
+const unreleased = new Set<Pending>()
 const opened: string[] = []
 /** 只有「刷新与收藏赛跑」那条用例要把 GET recent 也挂起 */
 let holdRecent = false
@@ -31,16 +33,21 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = String(url)
   const hold =
     u.includes('/api/projects/open') ||
-    (u.includes('/api/projects/pinned') && init?.method === 'PUT') ||
+    (u.includes('/api/projects/pinned') && init?.method === 'POST') ||
     (holdRecent && u.includes('/api/projects/recent'))
   if (hold) {
     if (u.includes('/api/projects/open')) opened.push(JSON.parse(String(init?.body)).path)
     return new Promise<Response>((resolve) => {
-      pending.push({
+      const item: Pending = {
         url: u,
         body: String(init?.body ?? ''),
-        release: (status, body) => resolve(new Response(JSON.stringify(body), { status })),
-      })
+        release: (status, body) => {
+          unreleased.delete(item)
+          resolve(new Response(JSON.stringify(body), { status }))
+        },
+      }
+      pending.push(item)
+      unreleased.add(item)
     })
   }
   if (u.includes('/api/projects/recent')) return new Response('{"recent":[]}', { status: 200 })
@@ -80,7 +87,18 @@ beforeEach(() => {
   setCurrentProjectId('p0')
 })
 
-afterEach(() => setCurrentProjectId(null))
+afterEach(async () => {
+  // 队列是模块级的、跨用例共享：一条用例中途断言失败时，它挂着没放行的请求（包括
+  // `take` 已经取走、断言失败没来得及放行的）会让后面
+  // 所有用例排在一个永远不结束的 promise 后面，一条红变成一片红。这里一律以失败放行、
+  // 把两条队列排空（反复几轮：放行一个，队列里下一个才发出来）
+  for (let i = 0; i < 10 && unreleased.size; i++) {
+    for (const p of [...unreleased]) p.release(599, { error: 'drain', code: 'internal', params: {} })
+    await settle()
+  }
+  pending = []
+  setCurrentProjectId(null)
+})
 
 describe('切项目串行', () => {
   it('连点 A、B：B 的打开请求等 A 换代完才发；最终停在 B；switching 全程亮着', async () => {
@@ -120,24 +138,43 @@ describe('切项目串行', () => {
 })
 
 describe('改收藏串行', () => {
-  it('第一次 PUT 未回时再收藏一个：第二次 PUT 的列表含第一次的结果', async () => {
+  it('第一次操作未回时再收藏一个：第二次排队等第一次回来；两次各发自己的那个操作', async () => {
     const store = useProjectStore.getState()
     const first = store.togglePin('/A')
     const second = store.togglePin('/B')
     await settle()
     expect(pending.filter((p) => p.url.includes('pinned'))).toHaveLength(1) // 第二次还在排队
 
-    const put1 = take('/api/projects/pinned')
-    expect(JSON.parse(put1.body).paths).toEqual(['/old', '/A'])
-    put1.release(200, { pinned: ['/old', '/A'].map(entry) })
+    const op1 = take('/api/projects/pinned')
+    expect(JSON.parse(op1.body)).toEqual({ op: 'add', path: '/A' })
+    op1.release(200, { pinned: ['/old', '/A'].map(entry) })
     await first
     await settle()
 
-    const put2 = take('/api/projects/pinned')
-    expect(JSON.parse(put2.body).paths).toEqual(['/old', '/A', '/B'])
-    put2.release(200, { pinned: ['/old', '/A', '/B'].map(entry) })
+    const op2 = take('/api/projects/pinned')
+    expect(JSON.parse(op2.body)).toEqual({ op: 'add', path: '/B' })
+    op2.release(200, { pinned: ['/old', '/A', '/B'].map(entry) })
     await second
     expect(useProjectStore.getState().pinned.map((p) => p.path)).toEqual(['/old', '/A', '/B'])
+  })
+})
+
+describe('收藏开关连点', () => {
+  it('第一次未回时再点同一颗：第二次在轮到时按最新状态定为 remove（开了又关）', async () => {
+    const store = useProjectStore.getState()
+    const on = store.togglePin('/A')
+    const off = store.togglePin('/A') // 此刻界面还显示「没收藏」
+    await settle()
+    const op1 = take('/api/projects/pinned')
+    expect(JSON.parse(op1.body)).toEqual({ op: 'add', path: '/A' })
+    op1.release(200, { pinned: ['/old', '/A'].map(entry) })
+    await on
+    await settle()
+    const op2 = take('/api/projects/pinned')
+    expect(JSON.parse(op2.body)).toEqual({ op: 'remove', path: '/A' })
+    op2.release(200, { pinned: ['/old'].map(entry) })
+    await off
+    expect(useProjectStore.getState().pinned.map((p) => p.path)).toEqual(['/old'])
   })
 })
 
