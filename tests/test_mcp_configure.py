@@ -381,7 +381,9 @@ def test_launcher_python_with_the_engine_is_not_pinned(unpacked, project, tmp_pa
     result = mod.build("cursor", str(project), sys.executable, None)
     assert result["engine"]["source"] == "current"
     assert result["engine_pinned"] is None
-    assert set(result["config"]["mcpServers"]["tavotto"]["env"]) == {"TAVOTTO_MCP_ROOTS"}
+    env = result["config"]["mcpServers"]["tavotto"]["env"]
+    assert "TAVOTTO_MCP_PYTHON" not in env
+    assert set(env) <= {"TAVOTTO_MCP_ROOTS", *mod.CARRIED_ENV}
 
 
 def test_no_engine_anywhere_still_yields_a_config_with_real_recovery_steps(
@@ -641,3 +643,62 @@ def test_the_windows_hand_off_keeps_paths_with_spaces_whole(unpacked, monkeypatc
     assert rc == 7  # 子进程的退出码原样带回
     assert calls == [[r"C:\Py 3\python.exe", str(unpacked / "mcp" / "server.py"), "--x"]]
     assert " " in calls[0][1]  # 路径里确实有空格，而它仍是一个完整的参数
+
+
+# ======================================================== #559 第三轮评审
+
+
+def test_the_user_telemetry_and_location_settings_are_carried_into_the_host(
+    unpacked, project, monkeypatch
+):
+    """GUI 宿主不继承 shell 环境：遥测硬开关与配置 / 数据目录必须写进配置，否则宿主里
+    遥测可能又能发、引擎去了另一处找（Codex 在 #559 上指出）。没设的一个都不带。"""
+    mod = _load(unpacked / "integrations" / "configure.py")
+    for name in mod.CARRIED_ENV:
+        monkeypatch.delenv(name, raising=False)
+    bare = mod.launch_descriptor("/py", str(project))
+    assert set(bare["env"]) == {"TAVOTTO_MCP_ROOTS"}
+    monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", "/cfg/place")
+    env = mod.launch_descriptor("/py", str(project))["env"]
+    assert env["TAVOTTO_NO_TELEMETRY"] == "1"
+    assert env["TAVOTTO_CONFIG_DIR"] == "/cfg/place"
+    assert set(mod.CARRIED_ENV) <= set(mod.PROBE_ENV_KEEP)  # 探针验的就是这几处
+
+
+def test_no_home_found_is_refused_on_every_platform(unpacked, tmp_path, monkeypatch):
+    """查不到主目录时两个平台都 fail closed（原先对 Windows 的豁免会放行整个用户目录）。"""
+    mod = _load(unpacked / "integrations" / "configure.py")
+    monkeypatch.setattr(mod, "_home_dirs", lambda: [])
+    target = tmp_path / "anything"
+    target.mkdir()
+    with pytest.raises(mod.ConfigureError) as exc:
+        mod.validate_project_root(str(target))
+    assert exc.value.code == "home_unknown"
+
+
+def test_homedrive_homepath_counts_as_a_home(unpacked, tmp_path, monkeypatch):
+    mod = _load(unpacked / "integrations" / "configure.py")
+    home = tmp_path / "profile"
+    home.mkdir()
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    text = str(home)
+    monkeypatch.setenv("HOMEDRIVE", text[:2] if os.name == "nt" else text[:1])
+    monkeypatch.setenv("HOMEPATH", text[2:] if os.name == "nt" else text[1:])
+    assert os.path.realpath(home) in mod._home_dirs()
+
+
+def test_recovery_commands_survive_shell_metacharacters(unpacked, tmp_path):
+    """恢复命令是给人复制进终端的：路径里有 `;` / `&` 也必须原样是一个参数。"""
+    import shlex
+    import shutil
+
+    odd = tmp_path / ("Tavotto&old" if os.name == "nt" else "Tavotto;old") / "codex-plugin"
+    shutil.copytree(unpacked, odd, ignore=shutil.ignore_patterns("__pycache__"))
+    launcher = _load(odd / "mcp" / "server.py", name="_tavotto_launcher_quote")
+    cmd = launcher._self_command()
+    if os.name == "nt":
+        assert cmd == f'"{sys.executable}" "{odd / "mcp" / "server.py"}"'
+    else:
+        assert shlex.split(cmd) == [sys.executable, str(odd / "mcp" / "server.py")]

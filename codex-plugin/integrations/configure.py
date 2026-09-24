@@ -107,6 +107,16 @@ PROBE_ENV_KEEP = (
     "LANG",
     "LC_ALL",
 )
+#: 探针里保留、生成的配置里也要带上的那几个（用户设了才带）。探针在它们决定的配置 /
+#: 数据目录里验过引擎，配置里不带，宿主就会去另一处找；`TAVOTTO_NO_TELEMETRY` 是遥测
+#: 硬开关，丢了等于在用户明确关掉之后又可能发出去（Codex 在 #559 上指出）。
+CARRIED_ENV = (
+    "TAVOTTO_NO_TELEMETRY",
+    "TAVOTTO_CONFIG_DIR",
+    "TAVOTTO_DATA_DIR",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+)
 #: GUI 宿主常见的最小 PATH（macOS launchd 的默认值就是这一串）
 MINIMAL_POSIX_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 PROBE_TIMEOUT = 180
@@ -340,6 +350,9 @@ def _home_dirs() -> "list[str]":
     指出）。所以再问操作系统的账户数据库（POSIX 的 pwd），几处都收。"""
     found: "list[str]" = []
     cands = [os.environ.get("HOME"), os.environ.get("USERPROFILE")]
+    drive, path = os.environ.get("HOMEDRIVE"), os.environ.get("HOMEPATH")
+    if drive and path:
+        cands.append(drive + path)
     try:
         import pwd  # noqa: PLC0415 — Windows 上没有
 
@@ -386,7 +399,10 @@ def validate_project_root(raw: str) -> str:
     if _is_fs_root(real):
         raise ConfigureError("bad_project_root", "不接受文件系统根目录作为授权范围")
     homes = _home_dirs()
-    if not homes and os.name != "nt":
+    if not homes:
+        # 两个平台都 fail closed：查不到主目录就没法证明所选目录不是它（Windows 上把
+        # HOME / USERPROFILE / HOMEDRIVE+HOMEPATH 都去掉时 expanduser 也解不出来，Codex 在
+        # #559 上指出原先对 Windows 的豁免会把整个 C:\Users\<名字> 放进来）
         raise ConfigureError(
             "home_unknown",
             "查不到当前账户的主目录，没法确认所选目录没有把整个主目录放进来——请在正常的登录环境里运行",
@@ -502,11 +518,17 @@ def launch_descriptor(python: str, project_root: str, engine_python: "str | None
     """所有宿主共用的那一份启动描述。**宿主差异不在这里**。
 
     * `command` / `args` 都是绝对路径：宿主不过 shell、不展开 ~、cwd 不确定；
-    * `env` 只放 Tavotto 需要的：授权根，以及（必要时）引擎解释器。
+    * `env` 只放 Tavotto 需要的：授权根、（必要时）引擎解释器，以及生成这一刻**用户自己
+      设了的** `CARRIED_ENV`——宿主（尤其 GUI）不继承你的 shell 环境，这几个不带过去就会
+      变样：遥测硬开关失效、配置 / 数据目录换了一处（探针在那一处找到的引擎，宿主里找不到）。
     """
     env = {ROOTS_ENV: project_root}
     if engine_python:
         env[ENGINE_ENV] = engine_python
+    for name in CARRIED_ENV:
+        value = os.environ.get(name)
+        if value:
+            env[name] = value
     return {"name": SERVER_NAME, "command": python, "args": [SERVER], "env": env}
 
 

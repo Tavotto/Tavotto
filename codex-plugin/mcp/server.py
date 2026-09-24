@@ -65,10 +65,18 @@ def _self_command() -> str:
     """恢复步骤里「再跑一次本启动器」的真实命令行：当前解释器 + 本文件的绝对路径。
 
     不写 `python3 <插件目录>/...` 这种占位：非 Codex 宿主的用户不知道「插件目录」
-    在哪，Windows 上 `python3` 还可能是商店别名。含空格的路径加引号。
+    在哪，Windows 上 `python3` 还可能是商店别名。每个参数都按本平台 shell 的规则转义
+    （不只是含空格的：`/tmp/Tavotto;old`、`C:\\Tavotto&old` 照原样粘进终端会被拆开或
+    多跑一条命令，Codex 在 #559 上指出）。
     """
     parts = [sys.executable, os.path.abspath(__file__)]
-    return " ".join(f'"{p}"' if " " in p else p for p in parts)
+    if os.name == "nt":
+        # Windows 路径里不可能有 `"`，每段都包一层双引号就挡住了 cmd 的 `&` `|` `^` 与空格
+        # （list2cmdline 只给含空格的加引号，`&` 照样会被 cmd 当成命令分隔符）
+        return " ".join(f'"{p}"' for p in parts)
+    # POSIX：每段都用单引号包住，内部的 ' 写成 '\''（与 shlex.quote 同一规则；不为这一行
+    # 多 import 一个模块——启动器的 import 表是受看护的最小集）
+    return " ".join("'" + p.replace("'", "'\\''") + "'" for p in parts)
 
 
 #: 装好 / 升级之后宿主要做的那一步。**不是只有 Codex**：同一个启动器被 Codex 插件与
