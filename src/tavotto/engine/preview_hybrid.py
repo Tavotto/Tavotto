@@ -204,6 +204,8 @@ _RESAMPLE_KNOWN_NAMES = frozenset(
 # 小图重采样本来就不要钱，不值得付哈希与拷贝
 _RESAMPLE_CACHE_MIN_ELEMENTS = 1 << 18
 _RESAMPLE_CACHE_MAX_BYTES = 64 << 20
+# 输入这一侧的上限：命中也得把输入整份哈希一遍才知道是不是同一张，超过它就直通（Codex #530）
+_RESAMPLE_CACHE_MAX_INPUT_BYTES = 256 << 20
 # `_resample` 在这两个边界之外会 warn 并降采样；命中缓存会吞掉那条 warning，不缓存
 _RESAMPLE_MAX_ROWS = 1 << 24
 _RESAMPLE_MAX_COLS = 1 << 23
@@ -284,6 +286,8 @@ def _resample_key(image_obj, data, out_shape, transform, args, kwargs):
         return None
     if data.dtype.hasobject or data.size < _RESAMPLE_CACHE_MIN_ELEMENTS:
         return None
+    if data.nbytes > _RESAMPLE_CACHE_MAX_INPUT_BYTES:
+        return None
     if data.ndim < 2 or data.shape[0] > _RESAMPLE_MAX_ROWS or data.shape[1] > _RESAMPLE_MAX_COLS:
         return None
     if set(kwargs) - {"resample", "alpha"}:
@@ -298,10 +302,10 @@ def _resample_key(image_obj, data, out_shape, transform, args, kwargs):
         resample = image_obj.get_resample()
     digest = hashlib.sha256()
     digest.update(f"{data.dtype.str}|{data.shape}".encode())
-    digest.update(np.ascontiguousarray(data).view(np.uint8).data)
+    _hash_array(digest, data)
     if mask is not None:
         digest.update(b"|mask|")
-        digest.update(np.ascontiguousarray(mask).view(np.uint8).data)
+        _hash_array(digest, mask)
     matrix = np.asarray(transform.get_matrix(), dtype=float)
     return (
         digest.digest(),
@@ -314,6 +318,22 @@ def _resample_key(image_obj, data, out_shape, transform, args, kwargs):
         float(image_obj.get_filterrad()),
         str(getattr(image_obj, "origin", None)),
     )
+
+
+def _hash_array(digest, arr) -> None:
+    """按 C 顺序把数组内容喂给哈希，**不整份拷贝**：连续的直接喂内存；不连续的（切片 / 转置出来的视图）
+    逐行拷一行再喂——同样的内容不论内存布局都得到同一个摘要，额外内存只有一行（Codex #530：
+    `np.ascontiguousarray` 在每次调用、包括命中时都整份拷一遍源数组）。"""
+    import numpy as np
+
+    if arr.flags.c_contiguous:
+        digest.update(arr.view(np.uint8).data if arr.ndim else arr.tobytes())
+        return
+    for row in arr:
+        if row.ndim > 1:
+            _hash_array(digest, row)
+        else:
+            digest.update(np.ascontiguousarray(row).tobytes())
 
 
 def _resample_lookup(key):

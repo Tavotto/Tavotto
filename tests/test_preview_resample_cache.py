@@ -145,3 +145,14 @@ def test_oversized_output_is_neither_stored_nor_copied(probe):
     assert g["copies_fits"] == 1, g  # 活的尺子：放得下的那次确实拷了
     assert not g["stored_oversized"], g
     assert g["copies_oversized"] == 0, g
+
+
+def test_input_side_is_bounded_and_layout_independent(probe):
+    """Codex #530 第二轮：非连续输入算键时额外内存只有一行（不整份拷贝）；同样的内容换一种内存布局仍命中；
+    超过输入上限直通、不缓存。"""
+    g = probe["input_side"]
+    assert g["key_made"], g  # 活的尺子：这份输入确实走到了算键那一步
+    assert g["biggest_copy"] <= g["row_bytes"], g
+    assert g["biggest_copy"] < g["input_bytes"] // 100, g
+    assert g["hits_across_layouts"], g
+    assert g["over_cap_passthrough"], g

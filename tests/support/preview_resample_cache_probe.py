@@ -413,6 +413,55 @@ def _store_gate():
     }
 
 
+def _input_side():
+    """输入这一侧（Codex #530 第二轮）：非连续输入算键时不整份拷贝；同样的内容换一种内存布局照样命中；
+    超过输入上限的直通不缓存。"""
+    from matplotlib.transforms import Affine2D
+
+    f, ax = plt.subplots()
+    im = ax.imshow(np.zeros((2, 2)), interpolation="lanczos")
+    base = np.random.default_rng(7).random((1200, 900, 4)).astype(np.float32)
+    strided = base[:, ::2]  # 不连续的视图，600×450 的逻辑大小
+    t = Affine2D().scale(0.3)
+    biggest = {"n": 0}
+    real = np.ascontiguousarray
+
+    def spy(a, *args, **kw):
+        out = real(a, *args, **kw)
+        biggest["n"] = max(biggest["n"], out.nbytes)
+        return out
+
+    token = ph._resample_cache_on.set(True)
+    np.ascontiguousarray = spy
+    try:
+        key = ph._resample_key(im, strided, (300, 200), t, (), {})
+    finally:
+        np.ascontiguousarray = real
+        ph._resample_cache_on.reset(token)
+    wrapped = mimage._resample
+    with ph.preview_resample_cache():
+        COUNTER.calls = 0
+        wrapped(im, strided, (300, 200), t)
+        wrapped(im, real(strided), (300, 200), t)  # 同样的内容、连续布局
+        hits_across_layouts = COUNTER.calls == 1
+        old = ph._RESAMPLE_CACHE_MAX_INPUT_BYTES
+        ph._RESAMPLE_CACHE_MAX_INPUT_BYTES = strided.nbytes - 1
+        try:
+            over_cap_key = ph._resample_key(im, strided, (300, 200), t, (), {})
+        finally:
+            ph._RESAMPLE_CACHE_MAX_INPUT_BYTES = old
+    plt.close(f)
+    row_bytes = strided[0].nbytes
+    return {
+        "key_made": key is not None,
+        "biggest_copy": biggest["n"],
+        "row_bytes": row_bytes,
+        "input_bytes": strided.nbytes,
+        "hits_across_layouts": hits_across_layouts,
+        "over_cap_passthrough": over_cap_key is None,
+    }
+
+
 def main():
     # 先装一次（第一次进 `preview_resample_cache` 时装），再测
     _svg(plt.figure(), cached=True)
@@ -424,6 +473,7 @@ def main():
         "reads_origin": "origin" in mimage._resample.__wrapped__.__code__.co_names,
         "gate": _gate(),
         "store_gate": _store_gate(),
+        "input_side": _input_side(),
     }
     print(json.dumps(out))
 
