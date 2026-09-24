@@ -561,6 +561,7 @@ def test_error_codes_are_a_closed_set():
         "pixel_budget_exceeded",
         "render_failed",
         "bad_request",
+        "render_child_unavailable",
     }
     with pytest.raises(AssertionError):
         rc.RenderChildError("not_a_code", "x")
@@ -808,3 +809,37 @@ def test_shared_host_is_one_per_process_and_can_be_shut_down():
     _assert_not_alive(pid)
     assert rh.shared() is not a
     rh.shutdown_shared()
+
+
+@pytest.mark.skipif(not HAS_PDFIUM, reason="pypdfium2 未装（not_run）")
+@pytest.mark.parametrize("broken", ["pikepdf", "pypdfium2"])
+def test_a_native_dependency_that_fails_to_load_in_the_child_is_backend_unavailable(
+    broken, tmp_path
+):
+    """Codex #539：父进程的预检只看「模块找不找得到」。模块在、原生库起不来（或 pikepdf 根本缺）时，child 以前在
+    import 那一行死掉，父进程只看到 render_child_died；pikepdf 缺了 `_user_unit` 还会算错。现在 child 启动时真装载
+    两者，失败就报一行 startup_error 再退出，host 收掉并 reap 它、翻成 `CandidatePackagesMissing`（契约层据此报
+    backend_unavailable）。用真 child_main，只把那个模块在 child 里弄成 import 失败。"""
+    from tavotto.rendercore.hbshaper import CandidatePackagesMissing
+
+    boot = (
+        "import sys; sys.modules[%r] = None\n"
+        "from tavotto.rendercore.renderchild import child_main\n"
+        "sys.exit(child_main(sys.argv[1:]))\n"
+    ) % broken
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            filter(None, [str(ROOT / "src"), os.environ.get("PYTHONPATH")])
+        ),
+    }
+    host = rh.RenderHost(
+        [sys.executable, "-c", boot], env=env, default_timeout=60, scratch_dir=tmp_path
+    )
+    try:
+        with pytest.raises(CandidatePackagesMissing) as exc:
+            host.ping()
+        assert broken in str(exc.value), exc.value
+        assert host.last_exit is not None, "child 报完 startup_error 之后必须被 reap"
+    finally:
+        host.close()
