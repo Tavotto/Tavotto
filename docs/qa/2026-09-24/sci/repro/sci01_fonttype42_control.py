@@ -58,7 +58,9 @@ def main() -> int:
             for i in range(0, len(a), 3)
             if max(abs(a[i] - b[i]), abs(a[i + 1] - b[i + 1]), abs(a[i + 2] - b[i + 2])) > 16
         )
-        print(f"{stem}: changed_pixel_ratio vs native(fonttype42) = {changed / n:.6f}; text_equal = {ta == tb}")
+        print(
+            f"{stem}: changed_pixel_ratio vs native(fonttype42) = {changed / n:.6f}; text_equal = {ta == tb}"
+        )
         ok &= changed / n <= 0.004 and ta == tb
     print("fonttype42 control:", "差异归因于 fonttype 42" if ok else "仍有 fonttype 之外的差异")
     return 0 if ok else 1

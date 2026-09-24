@@ -1,0 +1,160 @@
+==================================================================
+## SCI-02 / invariants_engine_and_sequences
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_invariants_engine.py tests/test_override_sequences.py
+# start(UTC): 2026-09-24T18:42:42Z   end(UTC): 2026-09-24T18:48:36Z
+# source_sha: fa986838c4e81132deede30bf75910a77268f912  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 5   raw_sha256: a5b234779999d2443b41f56f37abdc18595804fcb4fed73600166c93ff4a8a48
+........................................................................ [ 66%]
+..............................s.....                                     [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_override_sequences.py:537: got empty parameter set for (case_id, issue, stem, steps)
+107 passed, 1 skipped in 353.95s (0:05:53)
+# exit_code: 0
+==================================================================
+## SCI-02 / mutation-linewidth-leaks-into-data
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_appearance_edits_keep_science.py
+# start(UTC): 2026-09-24T18:50:15Z   end(UTC): 2026-09-24T18:50:18Z
+# source_sha: 0bd3c54268ee4b834487ec06d14c08d2ee611d2b  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 1   raw_lines: 60   raw_sha256: a09cf6b6d03802536de44ec6710ce519fc8c01554c73f4c6ab38056b0fad1b90
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+_______ test_appearance_only_patches_keep_points_ticks_units_and_sources _______
+
+project = (<module 'tavotto.app' from '/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/src/tavotto/app.py'>, <Flas.../var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4850/test_appearance_only_patches_k0/figures'))
+
+    def test_appearance_only_patches_keep_points_ticks_units_and_sources(project):
+        m, client, figs = project
+        script_sha, data_sha = _sha(figs / "fig1.py"), _sha(figs / "points.csv")
+        base = _manifest(client, [])
+        _materialize(client)
+        line = _gid(base, "label", "signal")
+        title = _gid(base, "text", "Raw")
+        patches = [
+            {"gid": line, "prop": "color", "value": "#d62728"},
+            {"gid": line, "prop": "linewidth", "value": 3.0},
+            {"gid": title, "prop": "fontsize", "value": 15.0},
+            {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.55, 0.10]},
+            {"gid": "figure", "prop": "size_mm", "value": [120.0, 70.0]},
+        ]
+        hot = _manifest(client, patches)
+        assert hot["size_mm"] == pytest.approx([120.0, 70.0], abs=0.05), "前提：图幅 patch 真的落了"
+    
+        before = _science(_original_pdf(client, "Before", []), LINE0)
+        after = _science(_original_pdf(client, "After", patches), "#d62728")
+        assert after["axes_pt"] != pytest.approx(before["axes_pt"], abs=1.0), "前提：坐标区确实变了尺寸"
+>       _assert_same_points(before["points"], after["points"])
+
+tests/test_appearance_edits_keep_science.py:202: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+a = [(0.04545452610238791, 0.045454466395219106), (0.22727270146985054, 0.8636363332289304), (0.40909090048995017, 0.22727...9090995100498, 0.9545455336047809), (0.7727272985301494, 0.4090908665205026), (0.9545454975502491, 0.7272727333542139)]
+b = [(0.045454562931694316, 0.04545456663896733), (0.22727275057559243, 0.9454546365475596), (0.40909093821949055, 0.24545...9091258633886, 1.0454545666389674), (0.7727273135072867, 0.4454546365475595), (0.9545455011511849, 0.7954545666389673)]
+tol = 0.001
+
+    def _assert_same_points(a, b, tol=1e-3):
+        assert len(a) == len(b) == len(POINTS.split(",")), (len(a), len(b))
+        for i, (p, q) in enumerate(zip(a, b)):
+>           assert abs(p[0] - q[0]) <= tol and abs(p[1] - q[1]) <= tol, f"第 {i} 点：{p} → {q}"
+E           AssertionError: 第 1 点：(0.22727270146985054, 0.8636363332289304) → (0.22727275057559243, 0.9454546365475596)
+E           assert (4.910574188943251e-08 <= 0.001 and 0.08181830331862916 <= 0.001)
+E            +  where 4.910574188943251e-08 = abs((0.22727270146985054 - 0.22727275057559243))
+E            +  and   0.08181830331862916 = abs((0.8636363332289304 - 0.9454546365475596))
+
+tests/test_appearance_edits_keep_science.py:179: AssertionError
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 failed, 1 passed, 5 warnings in 2.95s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 1
+==================================================================
+## SCI-02 / mutation-linewidth-leaks-into-data-restored
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_appearance_edits_keep_science.py
+# start(UTC): 2026-09-24T18:50:18Z   end(UTC): 2026-09-24T18:50:22Z
+# source_sha: 0bd3c54268ee4b834487ec06d14c08d2ee611d2b  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 16   raw_sha256: b4627d0997112822ec0e5c4dc0d9544e879c7bfed4ffac835fc055222ecef494
+..                                                                       [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2 passed, 5 warnings in 3.76s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0
+==================================================================
+## SCI-02 / new_test_appearance
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_appearance_edits_keep_science.py
+# start(UTC): 2026-09-24T18:51:37Z   end(UTC): 2026-09-24T18:51:40Z
+# source_sha: 05ae1e3ef7f0da1227c76158bfc51c5b7821cfac  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 16   raw_sha256: 97b4896dbb478a7ee6db72936f9ba78f86cfd88fe772dc4eec7150cdfeb2c40d
+..                                                                       [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2 passed, 5 warnings in 3.67s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0
+==================================================================
+## SCI-02 / textlayer_probe
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh docs/qa/2026-09-24/sci/repro/sci02_textlayer_probe.py -s
+# start(UTC): 2026-09-24T18:51:40Z   end(UTC): 2026-09-24T18:51:43Z
+# source_sha: 05ae1e3ef7f0da1227c76158bfc51c5b7821cfac  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 28   raw_sha256: a200349f5fa492eed392e9d0e703361b2667df314aae3850fb654fb9e4b3989a
+[none] fonts=['BMQQDV+DejaVuSans/Type0']
+    text=0 | 2 | 4 | Time (s) | 0.0 | 2.5 | 5.0 | 7.5 | 10.0 | Voltage (mV) | Raw | signal | 
+[color] fonts=['BMQQDV+DejaVuSans/Type0']
+    text=0 | 2 | 4 | Time (s) | 0.0 | 2.5 | 5.0 | 7.5 | 10.0 | Voltage (mV) | Raw | signal | 
+[linewidth] fonts=['BMQQDV+DejaVuSans/Type0']
+    text=0 | 2 | 4 | Time (s) | 0.0 | 2.5 | 5.0 | 7.5 | 10.0 | Voltage (mV) | Raw | signal | 
+[title_fontsize] fonts=['BMQQDV+DejaVuSans/Type0']
+    text=0 | 2 | 4 | Time (s) | 0.0 | 2.5 | 5.0 | 7.5 | 10.0 | Voltage (mV) | Raw | signal | 
+[legend_loc] fonts=['BMQQDV+DejaVuSans/Type0']
+    text=0 | 2 | 4 | Time (s) | 0.0 | 2.5 | 5.0 | 7.5 | 10.0 | Voltage (mV) | Raw | signal | 
+[size_mm] fonts=['BMQQDV+DejaVuSans/Type0']
+    text=0 | 1 | 2 | 3 | 4 | 5 | Time (s) | 0 | 2 | 4 | 6 | 8 | 10 | Voltage (mV) | Raw | signal | 
+.
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 5 warnings in 2.07s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0

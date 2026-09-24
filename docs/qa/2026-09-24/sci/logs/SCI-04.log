@@ -1,0 +1,234 @@
+==================================================================
+## SCI-04 / equivalence_matrix
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_equivalence_matrix.py -q
+# start(UTC): 2026-09-24T18:27:31Z   end(UTC): 2026-09-24T18:29:59Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 21   raw_sha256: 250a4d9c19bb8d49b62cf491203e76f77b4993780f60a50d2b3212d611f61d9e
+...............................ssssss                                    [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [2] tests/test_equivalence_matrix.py:976: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_equivalence_matrix.py:995: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_equivalence_matrix.py:1020: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_equivalence_matrix.py:1029: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+SKIPPED [1] tests/test_equivalence_matrix.py:1057: 没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0
+==================================================================
+## SCI-04 / equivalence_matrix_workerd
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_equivalence_matrix.py -q -k workerd
+# start(UTC): 2026-09-24T18:32:14Z   end(UTC): 2026-09-24T18:32:31Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 15   raw_sha256: cab7fb692e94a881119e8774b4a9f4384ac5743591d10f85eeedf0424739b383
+......                                                                   [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0
+==================================================================
+## SCI-04 / mutation-commit-without-rollback
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_write_back_real_409.py
+# start(UTC): 2026-09-24T18:49:31Z   end(UTC): 2026-09-24T18:49:37Z
+# source_sha: 0bd3c54268ee4b834487ec06d14c08d2ee611d2b  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 1   raw_lines: 48   raw_sha256: e9848e0b722a26f931503a1c060f31e7155f0ea30a1011602b05ab90811569cd
+....F                                                                    [100%]
+=================================== FAILURES ===================================
+_ test_commit_lock_is_409_file_locked_and_the_other_target_is_rolled_back[second-target] _
+
+project = (<module 'tavotto.app' from '/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/src/tavotto/app.py'>, <Flas.../var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4841/test_commit_lock_is_409_file_l1/figures'))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x104627350>
+locked_index = 1
+
+    @pytest.mark.parametrize("locked_index", [0, 1], ids=["first-target", "second-target"])
+    def test_commit_lock_is_409_file_locked_and_the_other_target_is_rolled_back(
+        project, monkeypatch, locked_index
+    ):
+        m, client, figs = project
+        man = _render(client, [])
+        patches = [{"gid": _title_gid(man), "prop": "text", "value": "Edited"}]
+        _render(client, patches)
+        before = _snapshot(figs)
+    
+        real_replace = Path.replace
+        seen: list[str] = []
+    
+        def replace(self, target):
+            if str(self.name).endswith(".updating"):
+                seen.append(Path(target).name)
+                if len(seen) - 1 == locked_index:
+                    raise PermissionError(13, "locked by a PDF viewer", str(target))
+            return real_replace(self, target)
+    
+        monkeypatch.setattr(Path, "replace", replace)
+        r = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": patches})
+        monkeypatch.setattr(Path, "replace", real_replace)
+    
+        assert len(seen) == locked_index + 1, seen
+        assert r.status_code == 409, r.get_json()
+        body = r.get_json()
+        assert body["code"] == "file_locked"
+        assert body["updated"] == []
+        assert body["rollback_failed"] == []
+>       assert body["rolled_back"] == seen[:locked_index]
+E       AssertionError: assert [] == ['Fig1.pdf']
+E         
+E         Right contains one more item: 'Fig1.pdf'
+E         Use -v to get more diff
+
+tests/test_write_back_real_409.py:206: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  tavotto:app.py:4171 写回原图失败（文件被占用？）: Fig1.png: [Errno 13] locked by a PDF viewer: '/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4841/test_commit_lock_is_409_file_l1/figures/Fig1.png'
+1 failed, 4 passed in 5.94s
+# exit_code: 1
+==================================================================
+## SCI-04 / mutation-commit-without-rollback-restored
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_write_back_real_409.py
+# start(UTC): 2026-09-24T18:49:37Z   end(UTC): 2026-09-24T18:49:42Z
+# source_sha: 0bd3c54268ee4b834487ec06d14c08d2ee611d2b  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 2   raw_sha256: a345fb394968a05535f5ae317cfa20d214ad062fc892e6b26cda946209789912
+.....                                                                    [100%]
+5 passed in 5.39s
+# exit_code: 0
+==================================================================
+## SCI-04 / mutation-geometry-gate-disabled
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_write_back_real_409.py
+# start(UTC): 2026-09-24T18:49:50Z   end(UTC): 2026-09-24T18:49:55Z
+# source_sha: 0bd3c54268ee4b834487ec06d14c08d2ee611d2b  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 1   raw_lines: 34   raw_sha256: d45cd5925c8117d4a671ebf59e48eafad8158c4037508949ab7eb3e604c21689
+..F..                                                                    [100%]
+=================================== FAILURES ===================================
+____ test_verify_geometry_drift_in_the_hot_session_is_409_replay_divergence ____
+
+project = (<module 'tavotto.app' from '/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/src/tavotto/app.py'>, <Flas.../var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4845/test_verify_geometry_drift_in_0/figures'))
+
+    def test_verify_geometry_drift_in_the_hot_session_is_409_replay_divergence(project):
+        """热会话几何被绕过 pool 记账改过：账本以为热态是 `[]`，实际子图挪了。"""
+        m, client, figs = project
+        _render(client, [])
+        before = _snapshot(figs)
+        worker = pool.get("fig1.py", str(figs), "main")
+        resp = worker.request(
+            {
+                "cmd": "override",
+                "stem": "Fig1",
+                "patches": [{"gid": "axes_0", "prop": "position", "value": [0.30, 0.30, 0.40, 0.40]}],
+            }
+        )
+        assert resp.get("ok") and not resp.get("warnings"), resp
+    
+        r = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+        assert r.status_code == 409, r.get_json()
+        body = r.get_json()
+        assert body["code"] == "replay_divergence"
+        fields = {(d["gid"], d["field"]) for d in body["diffs"]}
+>       assert ("axes_0", "bbox") in fields, body["diffs"]
+E       AssertionError: [{'exceeded': {'changed_pixel_ratio': 0.102173, 'max_abs_diff': 255, 'mean_abs_diff': 16.7134}, 'field': 'pixels', 'fresh': '全量重放', 'gid': '', ...}]
+E       assert ('axes_0', 'bbox') in {('', 'pixels')}
+
+tests/test_write_back_real_409.py:172: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  tavotto:app.py:4004 写回像素门发现分歧: Fig1 {'ok': True, 'changed_pixel_ratio': 0.102173, 'mean_abs_diff': 16.7134, 'max_abs_diff': 255, 'changed_pixels': 76630, 'total_pixels': 750000, 'raw_mean_abs_diff': 16.7154}（阈值 {'changed_pixel_ratio': 0.001, 'mean_abs_diff': 0.5, 'max_abs_diff': 64}）
+1 failed, 4 passed in 5.55s
+# exit_code: 1
+==================================================================
+## SCI-04 / mutation-geometry-gate-disabled-restored
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_write_back_real_409.py
+# start(UTC): 2026-09-24T18:49:55Z   end(UTC): 2026-09-24T18:50:00Z
+# source_sha: 0bd3c54268ee4b834487ec06d14c08d2ee611d2b  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 2   raw_sha256: 0db7c614f36cea9d3c67106b90d303e614eacb9d16c3383ab751db9122f49b21
+.....                                                                    [100%]
+5 passed in 5.06s
+# exit_code: 0
+==================================================================
+## SCI-04 / new_test_real_409
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_write_back_real_409.py tests/test_write_back.py
+# start(UTC): 2026-09-24T18:51:43Z   end(UTC): 2026-09-24T18:51:49Z
+# source_sha: 05ae1e3ef7f0da1227c76158bfc51c5b7821cfac  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 16   raw_sha256: 88653616375401e873ef269399d208ede4bb81e1d7015845b845fd1792f29cfe
+...........................                                              [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+27 passed, 5 warnings in 5.92s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0
+==================================================================
+## SCI-04 / staging_failure_repro
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh docs/qa/2026-09-24/sci/repro/test_sci05_writeback_faults.py -s -k staging
+# start(UTC): 2026-09-24T18:51:49Z   end(UTC): 2026-09-24T18:51:51Z
+# source_sha: 05ae1e3ef7f0da1227c76158bfc51c5b7821cfac  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 1   raw_lines: 40   raw_sha256: 814e43b21e187fc06d21c5f19ce4ca241e0e297a6706e364920911488f74445c
+staging-export-failure status: 500 
+F
+=================================== FAILURES ===================================
+__________ test_staging_export_failure_keeps_bytes_and_reports_status __________
+
+project = (<module 'tavotto.app' from '/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/src/tavotto/app.py'>, <Flas.../var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4862/test_staging_export_failure_ke0/figures'))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x102a1c3e0>
+
+    def test_staging_export_failure_keeps_bytes_and_reports_status(project, monkeypatch):
+        """verify 阶段一次性 worker 导出 PNG 时崩溃：字节不变、无半成品；**状态码按合同应为 409**。"""
+        m, client, figs, patches = _prepared(project)
+        before = _snapshot(figs)
+        real_one_shot = pool.one_shot
+    
+        def one_shot(*a, **k):
+            w = real_one_shot(*a, **k)
+            real_export = w.export
+    
+            def export(stem, p, path, fmt="pdf", dpi=600):
+                if fmt == "png":
+                    Path(path).write_bytes(b"half")
+                    raise pool.WorkerError("injected: png export crashed", "")
+                return real_export(stem, p, path, fmt=fmt, dpi=dpi)
+    
+            w.export = export
+            return w
+    
+        monkeypatch.setattr(pool, "one_shot", one_shot)
+        r = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": patches})
+        for name, data in before.items():
+            assert (figs / name).read_bytes() == data
+        assert _leftovers(figs) == []
+        print("staging-export-failure status:", r.status_code, (r.get_json() or {}).get("code"))
+>       assert r.status_code == 409, f"合同要求 409，实际 {r.status_code}（{r.get_json()}）"
+E       AssertionError: 合同要求 409，实际 500（{'code': '', 'error': 'injected: png export crashed', 'traceback': ''}）
+E       assert 500 == 409
+E        +  where 500 = <WrapperTestResponse 66 bytes [500 INTERNAL SERVER ERROR]>.status_code
+
+docs/qa/2026-09-24/sci/repro/test_sci05_writeback_faults.py:67: AssertionError
+1 failed, 1 deselected in 1.70s
+# exit_code: 1

@@ -1,0 +1,310 @@
+==================================================================
+## SCI-01 / compat_smoke_fidelity
+# cmd: bash docs/qa/2026-09-24/sci/repro/sci01_compat_smoke.sh
+# start(UTC): 2026-09-24T18:27:01Z   end(UTC): 2026-09-24T18:28:44Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 95   raw_sha256: 97c00d5a1c507d57445b8ca235871d6be02c09722a8595398cdcd541e91054af
+CompatBench · smoke · target=current (当前环境)
+渲染解释器：/opt/homebrew/opt/python@3.13/libexec/bin/python3
+实际装的：matplotlib=3.10.8, numpy=2.4.3, pandas=3.0.1, pillow=12.1.0, scipy=1.17.1
+渲染解释器版本：Python 3.13.11
+case 24 个，分 22 组构建
+
+[1] shape_pyplot_show_only
+    ✅ shape_pyplot_show_only                 full_support
+[2] shape_oo_savefig
+    ✅ shape_oo_savefig                       full_support
+[3] shape_toplevel_imperative
+    ✅ shape_toplevel_imperative              full_support
+[4] shape_entry_main
+    ✅ shape_entry_main                       full_support
+[5] shape_same_figure_two_formats
+    ✅ shape_same_figure_two_formats          full_support
+[6] shape_noisy_stdout
+    ✅ shape_noisy_stdout                     full_support
+[7] shape_argv_isolation
+    ✅ shape_argv_isolation                   full_support
+[8] shape_no_savefig_multi
+    ✅ shape_no_savefig_multi                 full_support
+[9] shape_relative_csv
+    ✅ shape_relative_csv                     full_support
+[10] shape_relative_pathlib
+    ✅ shape_relative_pathlib                 full_support
+[11] shape_sandbox_write
+    ✅ shape_sandbox_write                    full_support
+[12] art_plot, art_stem
+    ✅ art_plot                               full_support
+    ✅ art_stem                               full_support
+[13] art_imshow
+    ✅ art_imshow                             full_support
+[14] art_text_annotate
+    ✅ art_text_annotate                      full_support
+[15] art_legend, art_colorbar
+    ✅ art_legend                             full_support
+    ✅ art_colorbar                           full_support
+[16] ax_subplots
+    ✅ ax_subplots                            full_support
+[17] ax_tight_layout
+    ✅ ax_tight_layout                        full_support
+[18] ax_log
+    ✅ ax_log                                 full_support
+[19] ax_custom_ticklabels
+    ✅ ax_custom_ticklabels                   full_support
+[20] sci_numpy
+    ✅ sci_numpy                              full_support
+[21] sci_mathtext
+    ✅ sci_mathtext                           full_support
+[22] mm_twoline_pyplot
+    ✅ mm_twoline_pyplot                      full_support
+
+注意：基线是在另一套科学栈上采的，分类差异未必来自产品改动：
+  · matplotlib: 基线 3.11.1 vs 现在 3.10.8
+  · numpy: 基线 2.5.2 vs 现在 2.4.3
+  · pandas: 基线 3.0.5 vs 现在 3.0.1
+  · scipy: 基线 1.18.0 vs 现在 1.17.1
+  · pillow: 基线 12.3.0 vs 现在 12.1.0
+  基线 target='bundled'，本次 target='current'
+
+## Matplotlib Compatibility · current · 24 cases
+
+| Stage | Pass | Total | Rate |
+|---|---:|---:|---:|
+| Discovery success | 24 | 24 | 100.0% |
+| Execution success | 24 | 24 | 100.0% |
+| Figure capture | 24 | 24 | 100.0% |
+| Opened in Tavotto | 24 | 24 | 100.0% |
+| Expected semantics recognized | 24 | 24 | 100.0% |
+| Editable targets successful | 24 | 24 | 100.0% |
+| Replay equivalent | 24 | 24 | 100.0% |
+| Export successful | 24 | 24 | 100.0% |
+| Zero-patch fidelity | 24 | 24 | 100.0% |
+
+| Classification | Cases |
+|---|---:|
+| full_support | 24 |
+
+**Product bugs: 0**
+
+
+### Product routes
+
+| Route | Pass | Fail | Other |
+|---|---:|---:|---|
+| browser_playground | 0 | 0 | not_run=3 |
+| cli_open | 3 | 0 | — |
+| desktop_project | 3 | 0 | — |
+| native_run | 4 | 0 | — |
+| safe_probe | 3 | 0 | — |
+
+
+报告：/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/sci/compat/compat-report.json
+CompatBench：通过（门禁 pr）
+# exit_code: 0
+==================================================================
+## SCI-01 / final_export_fidelity_probe
+# cmd: bash docs/qa/2026-09-24/sci/repro/runpy.sh docs/qa/2026-09-24/sci/repro/sci01_final_export_fidelity.py
+# start(UTC): 2026-09-24T18:45:42Z   end(UTC): 2026-09-24T18:45:51Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 1   raw_lines: 300   raw_sha256: 63d7068c92a926ed27be21552a8e8580d1648b3195cd49a5bfac75e4cf7fa8bf
+{
+ "art_plot": {
+  "A_worker_redraw": {
+   "ok": true,
+   "text_diff": [],
+   "box": [
+    [
+     259.2,
+     172.8
+    ],
+    [
+     259.2,
+     172.8
+    ]
+   ],
+   "text_equal": true,
+   "fonts": [
+    [
+     "DejaVuSans"
+    ],
+    [
+     "DejaVuSans"
+    ]
+   ],
+   "pixels": {
+    "changed_pixel_ratio": 0.00016975308641975308,
+    "mean_abs_diff": 0.0687962962962963
+   }
+  },
+  "B_rendercore_canvas": {
+   "ok": true,
+   "text_diff": [],
+   "box": [
+    [
+     259.2,
+     172.8
+    ],
+    [
+     259.2,
+     172.8
+# ... [截断：省略中间 110 行；完整输出在 raw 日志] ...
+     244.8,
+     201.6
+    ]
+   ],
+   "text_equal": true,
+   "fonts": [
+    [
+     "DejaVuSans"
+    ],
+    [
+     "DejaVuSans"
+    ]
+   ],
+   "pixels": {
+    "changed_pixel_ratio": 0.0,
+    "mean_abs_diff": 0.0
+   }
+  }
+ },
+ "ax_subplots": {
+  "A_worker_redraw": {
+   "ok": true,
+   "text_diff": [],
+   "box": [
+    [
+     331.2,
+     230.4
+    ],
+    [
+     331.2,
+     230.4
+    ]
+   ],
+   "text_equal": true,
+   "fonts": [
+    [
+     "DejaVuSans"
+    ],
+    [
+     "DejaVuSans"
+    ]
+   ],
+   "pixels": {
+    "changed_pixel_ratio": 0.00016606280193236716,
+    "mean_abs_diff": 0.0735114734299517
+   }
+  },
+  "B_rendercore_canvas": {
+   "ok": true,
+   "text_diff": [],
+   "box": [
+    [
+     331.2,
+     230.4
+    ],
+    [
+     331.2,
+     230.4
+    ]
+   ],
+   "text_equal": true,
+   "fonts": [
+    [
+     "DejaVuSans"
+    ],
+    [
+     "DejaVuSans"
+    ]
+   ],
+   "pixels": {
+    "changed_pixel_ratio": 0.0,
+    "mean_abs_diff": 0.0
+   }
+  }
+ },
+ "sci_mathtext": {
+  "A_worker_redraw": {
+   "ok": false,
+   "text_diff": [
+    "@@ -10,4 +10,3 @@",
+    "-3",
+    "-2 +",
+    "-Raman shift  / cm",
+    "-1",
+    "+α3",
+    "+2 + √β",
+    "+Raman shift ν / cm−1"
+   ],
+   "box": [
+    [
+     273.6,
+     172.8
+    ],
+    [
+     273.6,
+     172.8
+    ]
+   ],
+   "text_equal": false,
+   "fonts": [
+    [
+     "DejaVuSans",
+     "DejaVuSans-Oblique",
+     "STIXSizeOneSym-Regular"
+    ],
+    [
+     "DejaVuSans",
+     "DejaVuSans-Oblique",
+     "STIXSizeOneSym-Regular"
+    ]
+   ],
+   "pixels": {
+    "changed_pixel_ratio": 0.0012816764132553605,
+    "mean_abs_diff": 0.10655945419103313
+   }
+  },
+  "B_rendercore_canvas": {
+   "ok": true,
+   "text_diff": [],
+   "box": [
+    [
+     273.6,
+     172.8
+    ],
+    [
+     273.6,
+     172.8
+    ]
+   ],
+   "text_equal": true,
+   "fonts": [
+    [
+     "DejaVuSans",
+     "DejaVuSans-Oblique",
+     "STIXSizeOneSym-Regular"
+    ],
+    [
+     "DejaVuSans",
+     "DejaVuSans-Oblique",
+     "STIXSizeOneSym-Regular"
+    ]
+   ],
+   "pixels": {
+    "changed_pixel_ratio": 0.0,
+    "mean_abs_diff": 0.0
+   }
+  }
+ }
+}
+SCI-01 final-export fidelity VERDICT: FAIL
+# exit_code: 1
+==================================================================
+## SCI-01 / fonttype42_control
+# cmd: bash docs/qa/2026-09-24/sci/repro/runpy.sh docs/qa/2026-09-24/sci/repro/sci01_fonttype42_control.py /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/sci/sci01_keep
+# start(UTC): 2026-09-24T18:45:51Z   end(UTC): 2026-09-24T18:45:53Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 3   raw_sha256: f9851e6e0ddf68d457891884378e6c5b1170af2d57ca60d38e53dd34ab6677b1
+art_colorbar: changed_pixel_ratio vs native(fonttype42) = 0.003908; text_equal = True
+sci_mathtext: changed_pixel_ratio vs native(fonttype42) = 0.000000; text_equal = True
+fonttype42 control: 差异归因于 fonttype 42
+# exit_code: 0
