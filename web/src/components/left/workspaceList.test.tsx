@@ -199,6 +199,40 @@ describe('WorkspaceList', () => {
   })
 })
 
+describe('收藏拖动', () => {
+  const rows = () => [...section('pinned')!.querySelectorAll<HTMLElement>('[data-workspace-row]')]
+  const fire = (el: Element, type: string) => {
+    const e = new Event(type, { bubbles: true, cancelable: true })
+    act(() => {
+      el.dispatchEvent(e)
+    })
+    return e
+  }
+
+  it('内部拖动：落在另一条上按路径发 move', async () => {
+    await mount()
+    const [a, b] = rows()
+    fire(a, 'dragstart')
+    expect(fire(b, 'dragover').defaultPrevented).toBe(true)
+    await act(async () => {
+      b.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }))
+    })
+    expect(ops).toEqual([{ op: 'move', path: '/a/Supplementary', to_path: '/b/Rebuttal' }])
+  })
+
+  it('拖动取消后，外部拖进来的东西不接、不挪', async () => {
+    await mount()
+    const [a, b] = rows()
+    fire(a, 'dragstart')
+    fire(a, 'dragend') // 取消 / 松在列表外：没有 drop
+    expect(fire(b, 'dragover').defaultPrevented).toBe(false)
+    await act(async () => {
+      b.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }))
+    })
+    expect(ops).toEqual([])
+  })
+})
+
 describe('切换中', () => {
   it('有一次切换在进行时，所有「打开」入口都置灰，不只是正在打开的那一行', async () => {
     useProjectStore.setState({ switching: true })

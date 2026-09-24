@@ -312,7 +312,19 @@ function ProjectRow({
       onDragStart={() => {
         if (order) order.dragFrom.current = entry.path
       }}
-      onDragOver={order ? (e) => e.preventDefault() : undefined}
+      // 拖动取消 / 松在列表外时 onDrop 不会来：不清的话起点一直挂着，之后任何外部拖进来
+      // 落在收藏行上的东西都会被当成「挪那一条」（Codex #550）
+      onDragEnd={() => {
+        if (order) order.dragFrom.current = null
+      }}
+      // 只接本列表内部发起的重排：起点为空 = 外部拖进来的，不 preventDefault（不接收）
+      onDragOver={
+        order
+          ? (e) => {
+              if (order.dragFrom.current != null) e.preventDefault()
+            }
+          : undefined
+      }
       onDrop={() => {
         const from = order?.dragFrom.current
         if (order && from != null && from !== entry.path) {
