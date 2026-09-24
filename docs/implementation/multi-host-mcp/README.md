@@ -4,13 +4,8 @@
 > 启动器与 server、同一套引擎、同一份核心 Skill。宿主之间的差异只在配置 schema、
 > Skill 入口、说明与验收。Codex 插件那条路一字未改（回归基线）。
 
-本目录三份文件：
-
-| 文件 | 内容 |
-| --- | --- |
-| `README.md`（本文） | 实施基线、接口、用户路径、两组改动的边界、限制与回退 |
-| `hosts.md` | 每个宿主的官方依据（链接 + 查证日期 + 证据等级）、生成的配置形状、Skill 入口、确认加载的办法 |
-| `acceptance.md` | 分层验收矩阵（配置 / 工具流程 / Skill / 画布 / 交接），初值 `not_run`，逐行可追溯 |
+本文是实施基线、接口、用户路径、两组改动的边界、限制与回退。每个宿主的官方依据与分层验收
+矩阵随第二组改动（Tavotto/Tavotto#560）加进本目录，在它合并之前本目录只有这一份。
 
 ## 实施基线（2026-09-24，main@3b9bc66）
 
@@ -33,12 +28,13 @@
 
 修改（两组，可独立审查）：
 
-- **PR 1（宿主无关的基础）**：`integrations/configure.py`（进 `REQUIRED`）、启动器 / roots
+- **PR 1（宿主无关的基础）**：`integrations/configure.py`（进 `STAGE_REQUIRED`）、启动器 / roots
   恢复话术中立化且写真实路径、`tavotto_health` 的 `server` 身份与分层 `checks`、server
   instructions 补「先 health / 授权 / elided / 无 UI 也能走完」、树外启动测试与候选测试。
 - **PR 2（全部宿主的薄适配与 Skill）**：逐家核对后的 `HOSTS` 表字段与独立期望测试、
   Skill 的最小中立化（宿主无关的工具发现 / 安装说明 / 提问 / 偏好 / 脚本解释器）、
-  `references/other-hosts.md`、`hosts.md` / `acceptance.md`、README 中英入口、支持矩阵的宿主子表。
+  `references/other-hosts.md`、本目录的宿主依据与验收矩阵、README 中英入口、支持矩阵的宿主子表、
+  由（已中立化的）SKILL.md 生成的等价说明。
 
 主要风险：宿主文档变化快（字段以查证日期为准）；四个宿主（Cursor / ZCode / WorkBuddy /
 Trae）的官方站点在本次执行环境里只能拿到搜索摘要，证据等级标为 `search_snippet`；
@@ -49,7 +45,7 @@ Trae）的官方站点在本次执行环境里只能拿到搜索摘要，证据�
 ```text
 python3 <完整包>/integrations/configure.py --host <profile> --project-root <绝对路径>
         [--python <启动器解释器>] [--engine-python <引擎解释器>]
-        [--diagnose | --emit config|instructions]
+        [--diagnose]
 ```
 
 - `--host`：`cursor` `zcode` `dsh` `workbuddy` `claude-code` `claude-desktop` `trae` `vscode`。
@@ -57,10 +53,11 @@ python3 <完整包>/integrations/configure.py --host <profile> --project-root <�
 - stdout：那一家可合并的配置片段（DSH 是 Cordis YAML patch，其余 JSON）；stderr：合并到哪、
   授权目录、引擎状态与恢复步骤、怎样确认宿主真的加载了、Skill 怎么装。失败非零、stdout 为空。
 - `--diagnose`：改为输出一份机器可读 JSON（包 / 启动器探针 / 引擎 / 授权 / Skill），**不含配置**。
-- `--emit instructions`：没有经核实的原生 Skill 入口的宿主用的等价说明——就是包里
-  SKILL.md 的正文，相对引用改写成包内绝对路径（`instruction_fallback`，不是第二份手写规则）。
+- `--engine-python`：显式的引擎解释器**直接作为启动命令**（与 `--python` 二选一），并验证体检报的就是它。
 - 退出码：0 片段已打印（引擎没就绪也是 0，配置本身是对的）；2 参数错；3 启动器起不来 / 包不完整 /
-  显式引擎解释器不可用。
+  显式引擎解释器不可用 / 引擎可用但按这份配置起的 server 握手失败。
+- 引擎可用时，打印前会按生成的启动描述真起一次 server 做 `initialize`（`--health` 不 import
+  `tavotto_mcp`，只有握手才证明整条启动路径通）。
 - **不写任何文件**、不联网、不 provision、不改宿主设置。
 
 启动描述只有一份：`command` = 启动器解释器绝对路径，`args` = [包内 `mcp/server.py` 绝对路径]，
@@ -79,14 +76,14 @@ Claude Desktop 的 `APPDATA`）。不依赖 shell、`~` 展开、宿主变量语
    `--health` 随时自检。
 4. `python3 <包>/integrations/configure.py --host <宿主> --project-root <项目绝对路径>`，
    把 stdout 合并进 stderr 指明的那个文件 / 设置界面。
-5. Skill：原生入口的宿主把整个 `skills/tavotto-figure/` 目录复制到它的 Skill 目录；其余用
-   `--emit instructions` 放进规则 / 智能体提示词。
+5. Skill：原生入口的宿主把整个 `skills/tavotto-figure/` 目录复制到它的 Skill 目录（没有原生入口
+   的宿主的等价说明随 Tavotto/Tavotto#560 提供）。
 6. 按 stderr 的「确认加载」步骤核对，再在对话里调用 `tavotto_health`——它回报的
    `server.package_dir` 应是这份包（同名 tavotto 被多处登记时靠它分辨）。
 
 恢复分三种，不混：**只有桌面版**（`desktop_only`：交接能用，MCP 要一个 Python 环境 → provision
 或 pipx）；**引擎未就绪 / 太旧**（按 `tavotto_health` / `--health` 的 code 只修那一项）；**宿主没加载
-工具**（配置位置 / 宿主 MCP 列表 / 智能体未启用工具 / 组织策略——见 `hosts.md` 的失败分档）。
+工具**（配置位置 / 宿主 MCP 列表 / 智能体未启用工具 / 组织策略——configure 的 stderr 写明了每家怎样确认加载）。
 
 ## 已知限制、升级影响与回退
 

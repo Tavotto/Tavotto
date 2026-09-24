@@ -3,7 +3,6 @@
 
     python3 <完整包>/integrations/configure.py --host vscode --project-root /abs/project
     python3 <完整包>/integrations/configure.py --host claude-desktop --project-root D:\\论文\\figs
-    python3 <完整包>/integrations/configure.py --host trae --project-root ... --emit instructions
     python3 <完整包>/integrations/configure.py --host cursor --project-root ... --diagnose
 
 `<完整包>` 是 GitHub Release 上的 `codex-plugin-<版本>.zip` 解出来的那个目录（名字
@@ -62,6 +61,21 @@ PLUGIN_JSON = os.path.join(PACKAGE_DIR, ".codex-plugin", "plugin.json")
 CANVAS = os.path.join(PACKAGE_DIR, "mcp", "widget", "canvas.html")
 BUILD_MANIFEST = os.path.join(PACKAGE_DIR, "plugin-build.json")
 SKILL_DIR = os.path.join(PACKAGE_DIR, "skills", "tavotto-figure")
+#: 真 server 起来要 import 的包内模块（`mcp/server.py` 交棒后 `import tavotto_mcp.server`，
+#: 它再 import 其余几个）。`--health` 不 import 它们，所以只看启动器在不在不够：半截解包
+#: 会拿到一份「成功」的配置，宿主一起就 ImportError（Codex 在 #559 上指出）。
+RUNTIME_FILES = tuple(
+    os.path.join(PACKAGE_DIR, "mcp", "tavotto_mcp", name)
+    for name in (
+        "__init__.py",
+        "server.py",
+        "bridge.py",
+        "roots.py",
+        "rpc.py",
+        "widget.py",
+        "sessionjournal.py",
+    )
+)
 
 #: 配置里的 MCP server 名。与 Codex 的 `.mcp.json` 同一个 key。
 SERVER_NAME = "tavotto"
@@ -114,8 +128,7 @@ class ConfigureError(Exception):
 # ------------------------------------------------------------------ 宿主表
 #: 每个宿主**只保存真正不同的那部分**：配置顶层 key、server 条目额外的字段、
 #: 格式、落点、确认加载的办法、Skill 入口。启动描述（command / args / env）只有
-#: 一份，由 `launch_descriptor()` 给出。字段依据见 docs/implementation/multi-host-mcp/
-#: hosts.md（逐条带官方文档链接与查证日期）；文档证明不了的字段一个都不加。
+#: 一份，由 `launch_descriptor()` 给出。文档证明不了的字段一个都不加。
 HOSTS: "dict[str, dict]" = {
     "cursor": {
         "label": "Cursor（本地 Agent）",
@@ -299,6 +312,7 @@ def package_state() -> dict:
         "dir": PACKAGE_DIR,
         "version": version,
         "launcher": os.path.isfile(SERVER),
+        "missing_runtime": [p for p in RUNTIME_FILES if not os.path.isfile(p)],
         "skill": os.path.isfile(os.path.join(SKILL_DIR, "SKILL.md")),
         "canvas": os.path.isfile(CANVAS) and os.path.getsize(CANVAS) > 0,
         # 发行件（staging / zip 解包）才有构建清单；源码 checkout 没有，画布也没有
@@ -595,32 +609,6 @@ def render(host: str, config) -> str:
     return json.dumps(config, ensure_ascii=False, indent=2) + "\n"
 
 
-# ------------------------------------------------------------------ Skill 投影
-def skill_instructions() -> str:
-    """没有原生 Skill 入口的宿主用的等价说明（`instruction_fallback`）。
-
-    **不是第二份手写规则**：就是这份包里的 SKILL.md 正文（去掉 frontmatter），把
-    `references/…` 与 `scripts/…` 的相对引用改写成包内绝对路径——宿主的规则 /
-    提示词里没有「技能目录」这个概念，相对路径会悬空。
-    """
-    path = os.path.join(SKILL_DIR, "SKILL.md")
-    with open(path, "r", encoding="utf-8") as fh:
-        text = fh.read()
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            text = text[end + 4 :].lstrip("\n")
-    for sub in ("references", "scripts"):
-        abs_dir = os.path.join(SKILL_DIR, sub)
-        text = text.replace(f"`{sub}/", f"`{abs_dir}{os.sep}")
-        text = text.replace(f" {sub}/", f" {abs_dir}{os.sep}")
-    header = (
-        "<!-- 由 Tavotto 完整包 integrations/configure.py 从 skills/tavotto-figure/SKILL.md 生成；"
-        "包升级后请重新生成。skill_mode: instruction_fallback -->\n"
-    )
-    return header + text
-
-
 # ------------------------------------------------------------------ 主流程
 def _engine_summary(health: "dict | None") -> dict:
     if not health:
@@ -646,10 +634,26 @@ def build(host: str, project_root: str, python: "str | None", engine_python: "st
     pkg = package_state()
     if not pkg["launcher"]:
         raise ConfigureError("package_incomplete", f"包里没有启动器 {SERVER}", rc=3)
+    if pkg["missing_runtime"]:
+        raise ConfigureError(
+            "package_incomplete",
+            "包不完整（解压中断？）：缺 "
+            + "、".join(pkg["missing_runtime"])
+            + "——请重新解压完整包",
+            rc=3,
+        )
     root = validate_project_root(project_root)
+    if engine_python:
+        # 显式引擎解释器**直接当启动命令**：启动器先试「当前解释器」，只把它塞进
+        # TAVOTTO_MCP_PYTHON 的话，启动器解释器自己装着引擎时它会被静默忽略
+        # （Codex 在 #559 上指出）。它能跑纯标准库的启动器是当然的。
+        if python and resolve_python(python) != resolve_python(engine_python):
+            raise ConfigureError(
+                "bad_args", "--engine-python 会直接作为启动命令，不要再给另一个 --python"
+            )
+        return _build_with_engine(host, root, resolve_python(engine_python), pkg)
     launcher_python = resolve_python(python)
-    explicit_engine = resolve_python(engine_python) if engine_python else None
-    probe = probe_launcher(launcher_python, root, explicit_engine)
+    probe = probe_launcher(launcher_python, root)
     if not probe["starts"]:
         raise ConfigureError(
             "launcher_unstartable",
@@ -659,11 +663,11 @@ def build(host: str, project_root: str, python: "str | None", engine_python: "st
             rc=3,
         )
     engine = _engine_summary(probe["health"])
-    pinned = explicit_engine
+    pinned = None
     candidate = None
-    if pinned is None and engine["ok"] and engine.get("source") in ENV_DEPENDENT_SOURCES:
+    if engine["ok"] and engine.get("source") in ENV_DEPENDENT_SOURCES:
         candidate = engine.get("python")
-    elif pinned is None and not engine["ok"]:
+    elif not engine["ok"]:
         # 最小环境里找不到引擎，但你的 shell 里也许有（pipx 的 ~/.local/bin、conda
         # 激活的环境……）。用完整环境再问一次。只收「一个具体的解释器」这种结论：
         # 靠 PYTHONPATH 才 import 得到的（来源 current）钉了也没用，宿主没有那个变量。
@@ -679,14 +683,72 @@ def build(host: str, project_root: str, python: "str | None", engine_python: "st
         recheck = _engine_summary(probe_launcher(launcher_python, root, candidate)["health"])
         if recheck["ok"]:
             pinned, engine = candidate, recheck
-    elif pinned is not None and engine.get("source") not in ("mcp_env", "current"):
+    desc = launch_descriptor(launcher_python, root, pinned)
+    if engine["ok"]:
+        _require_server_starts(desc)
+    return _result(host, pkg, launcher_python, probe, engine, pinned, root, desc)
+
+
+def _build_with_engine(host: str, root: str, engine_python: str, pkg: dict) -> dict:
+    """`--engine-python`：用它直接启动，并验证体检报的就是它（来源 current）。"""
+    probe = probe_launcher(engine_python, root)
+    engine = _engine_summary(probe["health"])
+    same = engine.get("python") and os.path.normcase(
+        os.path.abspath(engine["python"])
+    ) == os.path.normcase(os.path.abspath(engine_python))
+    if not probe["starts"] or not engine["ok"] or engine.get("source") != "current" or not same:
         raise ConfigureError(
             "engine_python_unusable",
-            f"--engine-python {pinned} 没被启动器采用（体检来源 {engine.get('source')!r}）："
-            "它多半 import 不了 tavotto.engine",
+            f"--engine-python {engine_python} 不能直接跑出引擎（体检来源 "
+            f"{engine.get('source')!r}）：它多半 import 不了 tavotto.engine",
             rc=3,
         )
-    desc = launch_descriptor(launcher_python, root, pinned)
+    desc = launch_descriptor(engine_python, root, None)
+    _require_server_starts(desc)
+    return _result(host, pkg, engine_python, probe, engine, None, root, desc)
+
+
+def _require_server_starts(desc: dict) -> None:
+    """按这份启动描述真起一次 server 做 initialize：要回的是**真 server**（serverInfo.version
+    不是降级的 "0"）。`--health` 不 import `tavotto_mcp`，只有握手才证明整条启动路径通。"""
+    env = probe_env(desc["env"][ROOTS_ENV], desc["env"].get(ENGINE_ENV))
+    msg = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "tavotto-configure", "version": "1"},
+        },
+    }
+    with tempfile.TemporaryDirectory(prefix="tavotto-configure-") as cwd:
+        try:
+            proc = subprocess.run(
+                [desc["command"], *desc["args"]],
+                input=json.dumps(msg) + "\n",
+                cwd=cwd,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=PROBE_TIMEOUT,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ConfigureError("server_unstartable", f"MCP server 起不来：{exc}", rc=3) from None
+    reply = _last_json(proc.stdout) or {}
+    version = ((reply.get("result") or {}).get("serverInfo") or {}).get("version")
+    if version in (None, "0"):
+        tail = (proc.stderr or "").strip()[-300:] or "（没有输出）"
+        raise ConfigureError(
+            "server_unstartable",
+            f"体检说引擎可用，但按这份配置起的 MCP server 没有正常握手（退出码 {proc.returncode}）：{tail}",
+            rc=3,
+        )
+
+
+def _result(host, pkg, launcher_python, probe, engine, pinned, root, desc) -> dict:
     config = serialize(host, desc)
     return {
         "host": host,
@@ -776,8 +838,8 @@ def _notes(result: dict) -> "list[str]":
         )
     else:
         lines.append(
-            "# Skill：这个宿主没有经核实的原生 Skill 入口——用 `--emit instructions` 生成等价说明，"
-            "放进它的规则 / 自定义智能体提示词（instruction_fallback）"
+            "# Skill：这个宿主没有经核实的原生 Skill 入口（instruction_fallback）；"
+            f"技能正文在 {skill['source']}，本版本不自动生成等价说明"
         )
     return lines
 
@@ -796,25 +858,14 @@ def main(argv: "list[str] | None" = None) -> int:
     )
     ap.add_argument("--python", help="MCP 启动器解释器（绝对路径；默认 = 运行本工具的解释器）")
     ap.add_argument(
-        "--engine-python", help="显式指定能 import tavotto 的引擎解释器（写进 TAVOTTO_MCP_PYTHON）"
+        "--engine-python",
+        help="显式指定能 import tavotto 的引擎解释器（配置直接用它启动；与 --python 二选一）",
     )
-    mode = ap.add_mutually_exclusive_group()
-    mode.add_argument(
+    ap.add_argument(
         "--diagnose", action="store_true", help="改为输出一份机器可读的诊断 JSON（不输出配置）"
-    )
-    mode.add_argument(
-        "--emit",
-        choices=("config", "instructions"),
-        default="config",
-        help="config = 宿主配置片段（默认）；instructions = 由 SKILL.md 生成的等价说明",
     )
     args = ap.parse_args(argv)
     try:
-        if args.emit == "instructions" and not args.diagnose:
-            # 说明不依赖解释器探针，但仍然只为认识的宿主、合法的项目目录生成
-            validate_project_root(args.project_root)
-            sys.stdout.write(skill_instructions())
-            return 0
         result = build(args.host, args.project_root, args.python, args.engine_python)
     except ConfigureError as exc:
         if args.diagnose:
