@@ -98,6 +98,8 @@ PROBE_TIMEOUT = 180
 #: 探针里禁写 .pyc：`--health` 会 import 包里的 handoff.py，默认会在包目录里落
 #: `__pycache__`——一个声称「不写任何文件」的工具不许改动包（Codex 在 #559 上指出）
 NO_BYTECODE_ENV = "PYTHONDONTWRITEBYTECODE"
+#: 生成配置的这台机器是不是 Windows（序列化里只有 Windows 专属的 env 透传看它；测试可替换）
+IS_WINDOWS = os.name == "nt"
 
 
 class ConfigureError(Exception):
@@ -513,7 +515,7 @@ def _entry(host: str, desc: dict) -> dict:
     entry["command"] = desc["command"]
     entry["args"] = list(desc["args"])
     env = dict(desc["env"])
-    if os.name == "nt":
+    if IS_WINDOWS:
         for name in profile.get("windows_env", ()):
             value = os.environ.get(name)
             if value:
@@ -711,6 +713,27 @@ def build(host: str, project_root: str, python: "str | None", engine_python: "st
     }
 
 
+def _shell_join(argv: "list[str]") -> str:
+    """给人复制粘贴的一行命令（按本机 shell 的引号规则）。"""
+    if os.name == "nt":
+        return subprocess.list2cmdline(argv)
+    import shlex
+
+    return shlex.join(argv)
+
+
+def claude_cli_argv(config: dict) -> "list[str]":
+    """与 Claude Code `.mcp.json` **逐字段相同**的 CLI 登记：`claude mcp add-json`。
+
+    不用 `claude mcp add`：它没有按服务器设超时的选项，走那条路会丢掉 `timeout`，
+    长时间的渲染 / 导出就退回 Claude Code 的默认超时（Codex 在 #560 上指出）。
+    add-json 收的就是 `.mcp.json` 里那一条的 JSON，所以两条路是同一份条目。
+    """
+    ((name, entry),) = config["mcpServers"].items()
+    payload = json.dumps(entry, ensure_ascii=False, separators=(",", ":"))
+    return ["claude", "mcp", "add-json", "--scope", "project", name, payload]
+
+
 def _notes(result: dict) -> "list[str]":
     """给人看的说明（stderr）。"""
     pkg, engine = result["package"], result["engine"]
@@ -738,6 +761,9 @@ def _notes(result: dict) -> "list[str]":
         )
         for step in engine.get("recovery") or []:
             lines.append(f"#   - {step}")
+    if result["host"] == "claude-code":
+        lines.append("# 或者用 CLI 登记（与上面的 .mcp.json 二选一，本工具不替你执行）：")
+        lines.append("#   " + _shell_join(claude_cli_argv(result["config"])))
     lines.append("# 确认宿主真的加载了：")
     for step in result["verify"]:
         lines.append(f"#   - {step}")

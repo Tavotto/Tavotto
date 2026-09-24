@@ -311,6 +311,31 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 > install。只安装 Codex 插件和所需的 Tavotto 引擎，运行健康检查；需要新会话时
 > 明确告诉我并停止。
 
+### 在其他 AI 编辑器 / 客户端中使用（实验）
+
+Cursor、Claude Code、Claude Desktop（本地聊天）、VS Code（GitHub Copilot Agent）、Trae、
+DeepSeek Harness、WorkBuddy、ZCode 用的是**同一份** MCP 服务和技能，不需要装 Codex，也不需要 clone
+仓库或构建前端。目前的状态是**可接入（实验）**：配置生成已通过测试，除 DSH 外都做了协议级测试，真实客户端还没有逐家验收
+（口径见 `docs/support-matrix.json` 的 `mcp_hosts`，证据见
+`docs/implementation/multi-host-mcp/acceptance.md`）。
+
+1. 从 [Releases](https://github.com/Tavotto/Tavotto/releases) 下载 `codex-plugin-<版本>.zip`，解压到一个会长期保留的目录
+   （文件名带 codex 是历史原因，内容对所有宿主都一样）。
+2. 引擎：已经 `pipx install "tavotto[worker]"` 的可以跳过；只装了桌面版或什么都没装，就显式运行一次
+   `python3 <完整包>/mcp/server.py --provision`（在 Tavotto 配置目录下建一个独立环境，不改动系统 Python）。
+3. 生成配置（**只打印，不写任何文件**）：
+
+   ```sh
+   python3 <完整包>/integrations/configure.py --host vscode --project-root /绝对路径/你的项目
+   ```
+
+   `--host` 可选 `cursor` `zcode` `dsh` `workbuddy` `claude-code` `claude-desktop` `trae` `vscode`。stdout 是要合并的配置，
+   stderr 写明合并到哪个文件或界面、授权的是哪个目录、引擎是否就绪、如何确认宿主已经加载、技能怎么装。
+4. 在对话里调用 `tavotto_health`，确认它回报的 `server.package_dir` 就是刚解压的那份包。
+
+授权范围只有 `--project-root` 指定的目录，不接受整个主目录或磁盘根目录。升级时解压新版到新目录，然后重新生成配置；
+回退就是把配置改回指向旧目录。各宿主的依据与差异见 `docs/implementation/multi-host-mcp/hosts.md`。
+
 ### 桌面版
 
 到[最新发行版](https://github.com/Tavotto/Tavotto/releases/latest)下载 macOS 的

@@ -429,7 +429,12 @@ def test_an_explicit_engine_python_that_cannot_import_the_engine_is_refused(
 # ======================================================== 脱离源码树真起 server
 
 
-@pytest.mark.parametrize("host", ["vscode", "claude-code", "claude-desktop"])
+#: 输出 JSON 的全部 profile（DSH 是 Cordis YAML，没有独立的解析器消费它，不在此列——
+#: 验收矩阵里它的工具流程因此是 not_run，Codex 在 #560 上指出不能靠「同一份启动描述」推定）
+JSON_HOSTS = ["cursor", "zcode", "workbuddy", "claude-code", "claude-desktop", "trae", "vscode"]
+
+
+@pytest.mark.parametrize("host", JSON_HOSTS)
 def test_the_generated_config_starts_the_unpacked_server(unpacked, project, tmp_path, host):
     """按生成的 command / args / env 原样起 server：握手、真 server（不是降级）、
     工具齐、health 报的包目录 == 解包目录、授权根 == 用户选的那一个。"""
