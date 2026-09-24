@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
 import * as history from '@/lib/history'
+import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
 import { deleteAutosave, fetchAutosave, fetchAutosaveSummary, putAutosave } from '@/lib/api'
 import {
   blocksDiskWrite,
@@ -64,6 +65,12 @@ export interface HistoryEntry {
   label: UiMessage
   patches: Patch[]
   inverse: Patch[]
+  /**
+   * 这条改过哪些面板的 w/h、那时按哪个原生图幅量的（`lib/panelNativeSize`）。
+   * 原生图幅会在历史之外被渲染同步静默改掉；撤销 / 重做打回来的 w/h 要换算到
+   * 此刻的图幅上，否则缩放比错了。没改面板尺寸的条目不带。
+   */
+  sizeBasis?: SizeBasis[]
 }
 
 /** 非激活画布的撤销栈存放处（切换画布时换入换出） */
@@ -335,7 +342,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       noteCommit(label, state, next, patches, true)
       return
     }
-    set({ doc: next, ...pushHistory(state, { label, patches, inverse }) })
+    const sizeBasis = sizeBasisOf(state.doc, next)
+    set({
+      doc: next,
+      ...pushHistory(state, { label, patches, inverse, ...(sizeBasis.length ? { sizeBasis } : {}) }),
+    })
     noteCommit(label, state, next, patches, false)
   },
 
@@ -398,7 +409,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       return
     }
     const [patches, inverse] = history.compress(txn.patches, txn.inverse)
-    set({ txn: null, ...pushHistory(state, { label: txn.label, patches, inverse }) })
+    // 原生图幅基准的两侧：before = 事务开始前，after = **收尾修正跑完之后**的文档。
+    // 收尾把图幅换到新值并进了这条历史，所以 after 一侧记的是新图幅——重做打回
+    // 松手那一刻的 w/h 时它们正是按新图幅量的；在收尾之前取 after 会记成旧图幅，
+    // 重做再按「旧 → 新」多乘一遍。事务开始前的文档只在这里现算一次（松手时一次，
+    // 不在 pointermove 的热路径上）
+    const before = history.rollback(state.doc, { label: txn.label, patches, inverse })
+    const sizeBasis = sizeBasisOf(before, state.doc)
+    set({
+      txn: null,
+      ...pushHistory(state, {
+        label: txn.label,
+        patches,
+        inverse,
+        ...(sizeBasis.length ? { sizeBasis } : {}),
+      }),
+    })
     recordDiagnosticEvent({
       type: 'transaction.end',
       label_key: txn.label.key,
@@ -423,7 +449,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const step = history.undoStep(get().doc, get().past, get().future)
     if (!step.ok && step.entry) console.error('撤销补丁应用失败，该条历史已丢弃')
     // 栈空时什么都不写：空撤销不该换掉 past / future 的引用去惊动订阅者
-    if (step.ok || step.entry) set({ doc: step.doc, past: step.past, future: step.future })
+    // 打回来的 w/h 按条目之前的原生图幅量；图幅在历史之外变过的话换算到此刻的图幅
+    const doc = step.ok ? rebaseToCurrentNative(step.doc, step.entry?.sizeBasis, 'before') : step.doc
+    if (step.ok || step.entry) set({ doc, past: step.past, future: step.future })
     noteUndoRedo('undo.complete', step.ok, step.entry?.label ?? null, before, get())
     return step.ok && step.entry ? step.entry.label : null
   },
@@ -439,7 +467,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const before = documentDigest(state.doc)
     const step = history.redoStep(state.doc, state.past, state.future)
     if (!step.ok && step.entry) console.error('重做补丁应用失败，该条历史已丢弃')
-    if (step.ok || step.entry) set({ doc: step.doc, past: step.past, future: step.future })
+    const doc = step.ok ? rebaseToCurrentNative(step.doc, step.entry?.sizeBasis, 'after') : step.doc
+    if (step.ok || step.entry) set({ doc, past: step.past, future: step.future })
     noteUndoRedo('redo.complete', step.ok, step.entry?.label ?? null, before, get())
     return step.ok && step.entry ? step.entry.label : null
   },
