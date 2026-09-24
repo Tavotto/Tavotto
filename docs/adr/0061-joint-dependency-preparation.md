@@ -116,6 +116,12 @@ Flask 父进程与 worker 都已加载它）：
   （`sys._getframe` / `inspect.currentframe` / `f_globals` / `f_back` / `inspect.stack`）——任一命中，脚本的全部 `unused`
   作废。**按整份脚本、不按名字**：`from __main__ import *`、`getattr(__main__, 变量)`、栈帧都给不出名字，按名字精确
   保留在静态上做不完备。看不全也作废：跟进被截断、有本地模块读不了、有本地编译扩展、有非字面量的动态 import。
+  **包里的子模块同样要看**（评审 #555 P2 第二条：`helper/__init__.py` 里 `from . import inner`、`inner.py` 里
+  `from __main__ import smp`；既有跟进只给 `__init__.py`、相对导入被丢掉）：跟进到的包里**全部** .py 都交给
+  `reaches_main`（也盖住 `import helper.inner` 这类绝对的子模块 import），每个扫过的文件里的相对导入逐条解析
+  （`from . import x` / `from .x import y` / `from .. import z`），解析到的目标同样看；解析不到、越出项目根、只落到
+  编译扩展、或文件超过 `MAX_MAIN_SCAN_FILES`，都按看不全作废。这一遍**只为这个判断**——包内子模块里的第三方 import
+  仍按既有跟进规则进不进 needed（没扫到的缺包照旧由运行后的有界重计划接手），本修订不改 needed 的集合。
   盲区：第三方包在 import 时自己去读 `__main__`（没有扫描它们）；把 `__main__` 拼成字符串等动态写法。
   worker 只看脚本、不跟进本地模块，所以用户明确「不准备，直接运行」时借用的那个名字仍会拿到占位；本地模块一读它
   就抛与原来逐字相同的 `No module named 'X'`，走运行后的缺包修复（端到端实测如此）。

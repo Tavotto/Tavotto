@@ -130,6 +130,7 @@ def _project(tmp_path: Path, script: str, **files) -> Path:
     proj.mkdir()
     (proj / "plot.py").write_text(textwrap.dedent(script), encoding="utf-8")
     for rel, text in files.items():
+        (proj / rel).parent.mkdir(parents=True, exist_ok=True)
         (proj / rel).write_text(text, encoding="utf-8")
     return proj
 
@@ -253,6 +254,84 @@ class TestBorrowedThroughMain:
         plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
         assert plan.unused == ()
         assert [m["distribution"] for m in plan.missing] == ["sympy"]
+
+
+class TestBorrowedInsideAPackage:
+    """评审 #555 P2 第二条：借用可以藏在包的子模块里——`helper/__init__.py` 里 `from . import inner`，
+    `inner.py` 里 `from __main__ import smp`。`_module_files` 只给 `__init__.py`、`_Visitor` 丢掉相对导入，
+    `reaches_main` 看不到 inner.py。现在跟进到的包里全部 .py 都交给它看，相对导入逐条解析，解析不到就算看不全。"""
+
+    BORROW = "from __main__ import smp\nX = smp.Symbol('x')\n"
+
+    def _plan(self, tmp_path, script="import sympy as smp\nimport helper\n", **files):
+        proj = _project(tmp_path, script, **files)
+        return depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+
+    @pytest.mark.parametrize(
+        "script, files",
+        [
+            # 评审原例
+            (None, {"helper/__init__.py": "from . import inner\n", "helper/inner.py": BORROW}),
+            # from .inner import something
+            (None, {"helper/__init__.py": "from .inner import X\n", "helper/inner.py": BORROW}),
+            # from .. import：子包回到上一层
+            (
+                None,
+                {
+                    "helper/__init__.py": "from . import sub\n",
+                    "helper/sub/__init__.py": "from .. import inner\n",
+                    "helper/inner.py": BORROW,
+                },
+            ),
+            # 绝对的子模块 import：只有「扫整个包」看得见（相对导入解析帮不上）
+            (
+                "import sympy as smp\nimport helper.inner\n",
+                {"helper/__init__.py": "", "helper/inner.py": BORROW},
+            ),
+        ],
+    )
+    def test_a_borrow_inside_the_package_keeps_it_needed(self, tmp_path, script, files):
+        plan = self._plan(tmp_path, **({"script": script} if script else {}), **files)
+        assert plan.unused == ()
+        assert [m["distribution"] for m in plan.missing] == ["sympy"]
+
+    @pytest.mark.parametrize(
+        "files",
+        [
+            # 相对导入解析不到
+            {"helper/__init__.py": "from .missing import x\n"},
+            # 指到编译扩展：没有源码可扫（只有相对导入解析看得见，包扫描只认 .py）
+            {
+                "helper/__init__.py": "from ._fast import f\n",
+                "helper/_fast.cpython-313-darwin.so": "",
+            },
+            # 越出项目根
+            {"helper/__init__.py": "from ... import x\n"},
+            # 包扫描扫到、没被 import 的子模块里指向编译扩展（第二遍里的相对导入解析）
+            {
+                "helper/__init__.py": "",
+                "helper/inner.py": "from ._fast import f\n",
+                "helper/_fast.cpython-313-darwin.so": "",
+            },
+        ],
+    )
+    def test_what_the_package_hides_voids_the_verdict(self, tmp_path, files):
+        plan = self._plan(tmp_path, **files)
+        assert plan.unused == ()
+        assert [m["distribution"] for m in plan.missing] == ["sympy"]
+
+    def test_an_ordinary_package_with_relative_imports_keeps_the_verdict(self, tmp_path):
+        """对照：相对导入都解析得到、谁也没碰 __main__——仍判未使用，修复没有把包一律判成看不全。"""
+        plan = self._plan(
+            tmp_path,
+            **{
+                "helper/__init__.py": "from . import inner\nfrom .sub import y\n",
+                "helper/inner.py": "from .sub import y\nZ = y + 1\n",
+                "helper/sub/__init__.py": "from .. import inner as _i\ny = 1\n",
+            },
+        )
+        assert plan.unused == ("sympy",)
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED
 
 
 # ---------------------------------------------------------------- 占位（真子进程）
