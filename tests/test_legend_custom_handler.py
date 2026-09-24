@@ -421,3 +421,46 @@ def test_recolouring_a_uniform_cell_keeps_outlines_and_hollows(tmp_path_factory)
     finally:
         pool.discard(r)
     assert recoloured == expected
+
+
+#: 同一色相、透明度渐变的一格：看着是一种颜色，实际不是——透明度也是颜色的一部分。
+RAMP_SCRIPT = "fig_legend_alpha_ramp.py"
+RAMP_STEM = "AlphaRamp"
+RAMP_LIBRARY = (
+    OUTLINE_LIBRARY.replace("HandlerOutline", "HandlerRamp")
+    .replace(
+        """        r = height / 2.0
+        return [
+            mpl.patches.Rectangle((xdescent, ydescent), width, height, transform=trans,
+                                  facecolor="none", edgecolor="#1f77b4", linewidth=1.2),
+            PatchCollection([mpl.patches.Circle((xdescent + width * 0.3, ydescent + r), r * 0.6)],
+                            facecolor="#1f77b4", edgecolor="#1f77b4", linewidth=1.5,
+                            transform=trans),
+            PatchCollection([mpl.patches.Circle((xdescent + width * 0.7, ydescent + r), r * 0.6)],
+                            facecolor="none", edgecolor="#1f77b4", linewidth=1.5,
+                            transform=trans),
+        ]""",
+        """        return [
+            mpl.patches.Rectangle((xdescent + width * i / 4, ydescent), width / 4, height,
+                                  transform=trans, facecolor=(0.12, 0.47, 0.71, a),
+                                  edgecolor="none")
+            for i, a in enumerate((0.25, 0.5, 0.75, 1.0))
+        ]""",
+    )
+    .replace("OutlineCell.pdf", "AlphaRamp.pdf")
+    .replace('["Outline"]', '["Ramp"]')
+)
+
+
+def test_a_same_hue_opacity_ramp_is_not_one_colour(tmp_path_factory):
+    """透明度不同就不是同一种颜色：不给 handle_color（给了的话改色把每段变成不透明、撤销也回不去）。"""
+    assert "(0.12, 0.47, 0.71, a)" in RAMP_LIBRARY, "前提：替换真的落在了脚本上"
+    figs = tmp_path_factory.mktemp("legend-alpha-ramp")
+    (figs / RAMP_SCRIPT).write_text(RAMP_LIBRARY, encoding="utf-8")
+    w = pool.one_shot(RAMP_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        fields = _fields(w.override(RAMP_STEM, [])["manifest"], f"{LEG}.texts_0")
+    finally:
+        pool.discard(w)
+    assert not [p for p in fields if p.startswith("handle_")]
