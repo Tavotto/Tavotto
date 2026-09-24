@@ -70,15 +70,9 @@ export function FixButton({ issue, className }: { issue: ValidationIssue; classN
   )
 }
 
-/** 「这个项目按哪套规范检查」——只在 `lib/specBinding` 判，这里只是取一次 */
-export function currentProfile() {
-  const doc = useDocumentStore.getState().doc
-  return resolveDocumentSpec(doc.profile, useProfileStore.getState().catalog()).profile
-}
-
 /** 修一条；结果用问题面板同一套措辞报出来。 */
 export function runFix(issue: ValidationIssue, choice?: string): Promise<void> {
-  return withBusy(() => applyIssueFix(issue, currentProfile(), choice))
+  return withBusy(() => applyIssueFix(issue, choice))
 }
 
 /**
@@ -86,7 +80,7 @@ export function runFix(issue: ValidationIssue, choice?: string): Promise<void> {
  * （集合由 `batchable()` 定，与计数同一份）。
  */
 export function runBatchFix(issues: ValidationIssue[], opts?: BatchOptions): Promise<void> {
-  return withBusy(() => applyIssueFixes(issues, currentProfile(), opts))
+  return withBusy(() => applyIssueFixes(issues, opts))
 }
 
 async function withBusy(job: () => Promise<FixOutcome>): Promise<void> {

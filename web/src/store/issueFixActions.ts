@@ -74,13 +74,17 @@ const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
 const same = (v: unknown): string => JSON.stringify(v ?? null)
 
 /**
- * 这份文档**此刻生效的**规范全文（绑定 + 库里那条的内容 / 快照）。等后端期间要比的是
+ * 当前激活画布**此刻生效的**规范全文（绑定 + 库里那条的内容 / 快照）。等后端期间要比的是
  * 它，不只是 `doc.profile` 这个绑定：在设置里改了绑定着的那套规范，绑定一个字没变，
  * 规则却换了（Codex #549 第二轮）。判据唯一出处仍是 `lib/specBinding`。
  */
-function resolvedSpec(): string {
+export function currentSpec(): PublicationProfile {
   const doc = useDocumentStore.getState().doc
-  return same(resolveDocumentSpec(doc.profile, useProfileStore.getState().catalog()).profile)
+  return resolveDocumentSpec(doc.profile, useProfileStore.getState().catalog()).profile
+}
+
+function resolvedSpec(): string {
+  return same(currentSpec())
 }
 
 /** 同一时刻只跑一轮修复：两轮交错时，后一轮的基准是前一轮还没提交的旧文档。 */
@@ -93,11 +97,13 @@ let inflight = false
  */
 export async function applyIssueFix(
   issue: ValidationIssue,
-  profile: PublicationProfile,
   choice?: FixChoice,
 ): Promise<FixOutcome> {
   if (inflight) return fail('busy', 1)
   if (!ensureCanvas(issue)) return fail('canvas_missing', 1)
+  // 规范**在切到问题所在的画布之后**才解析（Codex #549 第三轮 P1）：每张画布有自己的规范
+  // 绑定，调用方在切画布之前算好的那份是上一张画布的规则。所以这里不收调用方给的规范
+  const profile = currentSpec()
   const doc = useDocumentStore.getState().doc
   if (issue.objectRef.objectId && !doc.objects.some((o) => o.id === issue.objectRef.objectId)) {
     return fail('object_missing', 1)
@@ -115,11 +121,10 @@ export async function applyIssueFix(
  */
 export async function applyIssueFixes(
   issues: ValidationIssue[],
-  profile: PublicationProfile,
   opts: BatchOptions = {},
 ): Promise<FixOutcome> {
   const s = useDocumentStore.getState()
-  return run(batchable(issues, s.activeCanvasId, opts), profile, undefined, null)
+  return run(batchable(issues, s.activeCanvasId, opts), currentSpec(), undefined, null)
 }
 
 export interface BatchOptions {

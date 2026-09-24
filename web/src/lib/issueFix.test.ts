@@ -177,14 +177,14 @@ describe('发给后端的是什么', () => {
     const base = [{ gid: 'axes_0.title', prop: 'text', value: '改过的标题' }]
     await seed([panel({ w: 40, h: 30, overrides: base })])
     engineSpecfix.mockResolvedValue(passed([...base, ...FIXED]))
-    await applyIssueFix(floorIssue(), profile)
+    await applyIssueFix(floorIssue())
     expect(engineSpecfix).toHaveBeenCalledTimes(1)
     const [id, patches, scale, prof, only] = engineSpecfix.mock.calls[0]
     expect(id).toBe('Fig1.pdf')
     expect(patches).toEqual(base)
     // 摆成 40 mm 宽（原生 80）= 缩到一半：后端要按读者量到的 pt 算
     expect(scale).toBeCloseTo(0.5, 9)
-    expect(prof).toBe(profile)
+    expect(prof).toEqual(profile)
     expect(only).toEqual([{ rule: 'font-below-absolute-floor', gid: 'axes_0.xticks' }])
   })
 })
@@ -194,7 +194,7 @@ describe('通过才写，而且只写一次', () => {
     await seed()
     engineSpecfix.mockResolvedValue(passed())
     const past = useDocumentStore.getState().past.length
-    const res = await applyIssueFix(floorIssue(), profile)
+    const res = await applyIssueFix(floorIssue())
     expect(res).toEqual({ ok: true, applied: 1, failed: [] })
     expect(overridesOf()).toEqual(FIXED)
     expect(useDocumentStore.getState().past.length).toBe(past + 1)
@@ -206,7 +206,7 @@ describe('通过才写，而且只写一次', () => {
     await seed()
     engineSpecfix.mockResolvedValue(passed())
     const commit = vi.spyOn(useDocumentStore.getState(), 'commit')
-    await applyIssueFix(floorIssue(), profile)
+    await applyIssueFix(floorIssue())
     expect(commit).toHaveBeenCalledTimes(1)
     expect(commit.mock.calls[0][0]).toMatchObject({ key: 'history.fixIssue' })
     commit.mockRestore()
@@ -216,7 +216,7 @@ describe('通过才写，而且只写一次', () => {
     await seed([panel(), panel({ id: 'p2' })])
     engineSpecfix.mockResolvedValue(passed())
     const past = useDocumentStore.getState().past.length
-    const res = await applyIssueFixes(issuesNow(), profile)
+    const res = await applyIssueFixes(issuesNow())
     expect(res.ok).toBe(true)
     expect(engineSpecfix).toHaveBeenCalledTimes(2)
     expect(useDocumentStore.getState().past.length).toBe(past + 1)
@@ -236,7 +236,7 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     await seed()
     engineSpecfix.mockResolvedValue(refused(exit))
     const past = useDocumentStore.getState().past.length
-    const res = await applyIssueFix(floorIssue(), profile)
+    const res = await applyIssueFix(floorIssue())
     expect(res.ok).toBe(false)
     expect(res.failed[0].reason).toBe(reason)
     expect(overridesOf()).toEqual([])
@@ -246,7 +246,7 @@ describe('不通过：文档一个字不改，并说出原因', () => {
   it('后端抛错（渲染失败 / 断线）= engine_failed，不改图', async () => {
     await seed()
     engineSpecfix.mockRejectedValue(new Error('boom'))
-    const res = await applyIssueFix(floorIssue(), profile)
+    const res = await applyIssueFix(floorIssue())
     expect(res).toMatchObject({ ok: false, reason: 'engine_failed' })
     expect(overridesOf()).toEqual([])
   })
@@ -260,7 +260,7 @@ describe('不通过：文档一个字不改，并说出原因', () => {
         ],
       }),
     )
-    const res = await applyIssueFixes(issuesNow(), profile)
+    const res = await applyIssueFixes(issuesNow())
     expect(res.ok).toBe(true)
     expect(res.failed).toEqual([
       { reason: 'font_unavailable', count: 1, font: profile.font_family.latin },
@@ -275,7 +275,7 @@ describe('不通过：文档一个字不改，并说出原因', () => {
         skipped: [{ rule: 'tick-direction', gid: 'axes_0.xticks', reason: 'no_fit' }],
       }),
     )
-    const res = await applyIssueFixes(issuesNow(), profile)
+    const res = await applyIssueFixes(issuesNow())
     expect(res.ok).toBe(true)
     expect(res.failed).toEqual([{ reason: 'no_fit', count: 1 }])
     expect(overridesOf()).toEqual(FIXED)
@@ -287,7 +287,7 @@ describe('不通过：文档一个字不改，并说出原因', () => {
       ...refused('nothing_to_do'),
       skipped: [{ rule: 'font-below-absolute-floor', gid: 'axes_0.xticks', reason: 'no_fit' }],
     })
-    const res = await applyIssueFix(floorIssue(), profile)
+    const res = await applyIssueFix(floorIssue())
     expect(res).toMatchObject({ ok: false, reason: 'no_fit' })
     expect(overridesOf()).toEqual([])
   })
@@ -296,7 +296,7 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     await seed()
     let release: (v: SpecFixResponse) => void = () => {}
     engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
-    const pending = applyIssueFix(floorIssue(), profile)
+    const pending = applyIssueFix(floorIssue())
     const mine = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 12 }]
     useDocumentStore.getState().commit(literal('用户改了'), (d) => {
       ;(d.objects[0] as PanelObject).overrides = mine
@@ -311,7 +311,7 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     await seed()
     let release: (v: SpecFixResponse) => void = () => {}
     engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
-    const pending = applyIssueFix(floorIssue(), profile)
+    const pending = applyIssueFix(floorIssue())
     useDocumentStore.getState().commit(literal('缩放'), (d) => {
       const p = d.objects[0] as PanelObject
       p.w = 40
@@ -326,7 +326,7 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     await seed()
     let release: (v: SpecFixResponse) => void = () => {}
     engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
-    const pending = applyIssueFix(floorIssue(), profile)
+    const pending = applyIssueFix(floorIssue())
     useDocumentStore.getState().commit(literal('换规范'), (d) => {
       d.profile = { id: 'free-form-v1' } as never
     })
@@ -354,7 +354,7 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     })
     let release: (v: SpecFixResponse) => void = () => {}
     engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
-    const pending = applyIssueFix(floorIssue(), profile)
+    const pending = applyIssueFix(floorIssue())
     const before = JSON.stringify(useDocumentStore.getState().doc.profile)
     useProfileStore.setState({
       specs: [...base, { ...custom, data: { ...custom.data, absolute_min_font_size_pt: 9 } }],
@@ -387,7 +387,7 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
     const all = issuesNow()
     const text = all.find((i) => i.objectRef.objectId === 't1')!
-    const pending = applyIssueFixes([text, floorIssue()], profile)
+    const pending = applyIssueFixes([text, floorIssue()])
     useDocumentStore.getState().commit(literal('用户改字号'), (d) => {
       ;(d.objects.find((o) => o.id === 't1') as { sizePt: number }).sizePt = 12
     })
@@ -407,8 +407,8 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     let release: (v: SpecFixResponse) => void = () => {}
     engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
     const issue = floorIssue()
-    const first = applyIssueFix(issue, profile)
-    expect(await applyIssueFix(issue, profile)).toMatchObject({ ok: false, reason: 'busy' })
+    const first = applyIssueFix(issue)
+    expect(await applyIssueFix(issue)).toMatchObject({ ok: false, reason: 'busy' })
     release(passed())
     expect((await first).ok).toBe(true)
     expect(engineSpecfix).toHaveBeenCalledTimes(1)
@@ -417,7 +417,7 @@ describe('不通过：文档一个字不改，并说出原因', () => {
   it('内嵌画布 / playground（装了替代传输）里没有后端事务：说清楚，不改图', async () => {
     await seed()
     setEngineTransport({ render: vi.fn() } as never)
-    const res = await applyIssueFix(floorIssue(), profile)
+    const res = await applyIssueFix(floorIssue())
     expect(res).toMatchObject({ ok: false, reason: 'unavailable' })
     expect(engineSpecfix).not.toHaveBeenCalled()
   })
@@ -433,7 +433,7 @@ describe('「全部处理」的集合', () => {
     const batch = batchable(all, useDocumentStore.getState().activeCanvasId)
     expect(batch.some((i) => i.ruleCode === 'text-weight-policy')).toBe(false)
     engineSpecfix.mockResolvedValue(passed())
-    await applyIssueFixes(all, profile)
+    await applyIssueFixes(all)
     const only = engineSpecfix.mock.calls[0][4] as { rule: string }[]
     expect(only.some((o) => o.rule === 'text-weight-policy')).toBe(false)
     expect(only.length).toBe(batch.length)
@@ -443,7 +443,7 @@ describe('「全部处理」的集合', () => {
     await seed()
     engineSpecfix.mockResolvedValue(passed())
     const weight = issuesNow().find((i) => i.ruleCode === 'text-weight-policy')!
-    await applyIssueFix(weight, profile)
+    await applyIssueFix(weight)
     expect(engineSpecfix.mock.calls[0][4]).toEqual([
       { rule: 'text-weight-policy', gid: 'axes_0.xlabel' },
     ])
@@ -453,7 +453,7 @@ describe('「全部处理」的集合', () => {
     await seed()
     const issue = issuesNow().find((i) => i.fixKind === 'safe_auto')!
     const elsewhere = { ...issue, objectRef: { ...issue.objectRef, canvasId: 'c_other' } }
-    expect(await applyIssueFixes([elsewhere], profile)).toMatchObject({
+    expect(await applyIssueFixes([elsewhere])).toMatchObject({
       ok: false,
       reason: 'no_plan',
     })
@@ -484,7 +484,7 @@ describe('画布层仍在前端', () => {
     })
     const issue = issuesNow().find((i) => i.objectRef.objectId === 't1')!
     expect(issue.fixKind).toBe('safe_auto')
-    await applyIssueFix(issue, profile)
+    await applyIssueFix(issue)
     const t = useDocumentStore.getState().doc.objects[0] as { sizePt: number }
     expect(t.sizePt).toBeGreaterThan(profile.absolute_min_font_size_pt)
     expect(engineSpecfix).not.toHaveBeenCalled()
@@ -500,11 +500,11 @@ describe('画布层仍在前端', () => {
     expect(fixOptions(issue, profile).map((o) => o.choice)).toEqual(['single', 'double'])
     // 纯计算这一层自己也要守住：没给 choice 就算不出计划
     expect(planFix(issue, profile, useDocumentStore.getState().doc)).toBeNull()
-    expect(await applyIssueFix(issue, profile)).toMatchObject({
+    expect(await applyIssueFix(issue)).toMatchObject({
       ok: false,
       reason: 'needs_choice',
     })
-    expect(await applyIssueFix(issue, profile, 'single')).toMatchObject({ ok: true, applied: 1 })
+    expect(await applyIssueFix(issue, 'single')).toMatchObject({ ok: true, applied: 1 })
     expect(useDocumentStore.getState().doc.page.w).toBe(profile.widths_mm.single)
   })
 })
@@ -517,8 +517,25 @@ describe('跨画布', () => {
     const issue = floorIssue()
     useDocumentStore.getState().addCanvas('画布 2')
     expect(useDocumentStore.getState().activeCanvasId).not.toBe(first)
-    expect((await applyIssueFix(issue, profile)).ok).toBe(true)
+    expect((await applyIssueFix(issue)).ok).toBe(true)
     expect(useDocumentStore.getState().activeCanvasId).toBe(first)
+  })
+
+  it('修另一张画布上的问题：按**那张画布**的规范修，不是切画布之前那张的', async () => {
+    await seed()
+    const target = useDocumentStore.getState().activeCanvasId
+    // 问题所在的画布绑 free-form-v1，另一张（切过去之前激活的那张）用默认规范
+    useDocumentStore.getState().commit(literal('绑规范'), (d) => {
+      d.profile = { id: 'free-form-v1' } as never
+    })
+    const issue = floorIssue()
+    useDocumentStore.getState().addCanvas('画布 2')
+    expect(useDocumentStore.getState().activeCanvasId).not.toBe(target)
+    engineSpecfix.mockResolvedValue(passed())
+    await applyIssueFix(issue)
+    expect(useDocumentStore.getState().activeCanvasId).toBe(target)
+    const sent = engineSpecfix.mock.calls[0][3] as { profile_id: string }
+    expect(sent.profile_id).toBe('free-form-v1')
   })
 
   it('对象已经不在了就如实回 object_missing', async () => {
@@ -527,7 +544,7 @@ describe('跨画布', () => {
     useDocumentStore.getState().commit(literal('删'), (d) => {
       d.objects = []
     })
-    expect(await applyIssueFix(issue, profile)).toMatchObject({
+    expect(await applyIssueFix(issue)).toMatchObject({
       ok: false,
       reason: 'object_missing',
     })
