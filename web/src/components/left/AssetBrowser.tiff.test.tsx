@@ -28,6 +28,9 @@ declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
+Element.prototype.scrollIntoView ??= () => {}
+Element.prototype.hasPointerCapture ??= () => false
+Element.prototype.releasePointerCapture ??= () => {}
 globalThis.ResizeObserver ??= class {
   observe() {}
   unobserve() {}
@@ -159,6 +162,34 @@ describe('范围之外的 TIFF', () => {
     expect(note()).toBeNull()
     await act(async () => useAssetBrowseStore.getState().setQuery('scan'))
     expect(note()).not.toBeNull()
+  })
+
+  it('刷新失败时保留的那份照样显示（与素材卡同一条规则）', async () => {
+    await mount([panel('ok.tif')], [bad])
+    await act(async () => useAssetStore.setState({ error: 'boom' }))
+    expect(cardOf('ok.tif')).not.toBeNull()
+    expect(note()!.textContent).toContain('scan.tif')
+  })
+
+  it('来源筛选里选得到只装着用不了的文件的子目录', async () => {
+    await mount([panel('ok.tif')], [bad])
+    const filterBtn = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.getAttribute('aria-label') === '筛选',
+    )!
+    await act(async () => filterBtn.click())
+    const trigger = document.querySelector<HTMLElement>('[aria-label="来源筛选"]')!
+    expect(trigger, '筛选弹层没打开').toBeTruthy()
+    await act(async () => {
+      trigger.focus()
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowDown' }))
+      await Promise.resolve()
+    })
+    // 素材卡本身也是 role=option（在 host 里）；下拉项被 Radix portal 到 body 上
+    const options = [...document.querySelectorAll('[role="option"]')]
+      .filter((o) => !host.contains(o))
+      .map((o) => o.textContent)
+    expect(options, '下拉没打开').toContain('全部来源')
+    expect(options).toContain('raw')
   })
 
   it('没有代码对应的文案时退回文件名，不显示 i18n 键', async () => {

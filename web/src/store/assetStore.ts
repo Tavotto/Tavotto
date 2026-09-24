@@ -181,6 +181,15 @@ export function resetAssetLoadBookkeeping(): void {
 }
 
 /**
+ * 素材库「来源」筛选的选项：素材卡的目录 **加上**「用不了的文件」所在的目录（去重、排序）。
+ * 一个子目录里只有范围之外的 TIFF 时它也得选得中——那张清单跟着同一组来源筛选走（Codex #561）。
+ */
+export const assetFolders = (
+  panels: readonly { folder: string }[],
+  unsupported: readonly { folder: string }[],
+): string[] => [...new Set([...panels, ...unsupported].map((p) => p.folder))].sort()
+
+/**
  * 约定俗成的几个目录有专属显示名；**其余目录一律原样显示**——那是用户自己
  * 起的文件夹名，翻译它只会让人对不上磁盘。
  */

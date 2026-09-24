@@ -39,7 +39,7 @@ import {
   type AssetSortKey,
   type AssetTypeFilter,
 } from '@/store/assetBrowseStore'
-import { folderLabel, useAssetStore } from '@/store/assetStore'
+import { assetFolders, folderLabel, useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
@@ -159,10 +159,9 @@ export function AssetBrowser() {
     return map
   }, [objects])
 
-  const folders = useMemo(
-    () => [...new Set(panels.map((p) => p.folder))].sort(),
-    [panels],
-  )
+  // 来源选项也收「用不了的文件」所在的目录：一个子目录里只有范围之外的 TIFF 时，它得选得中，
+  // 否则那张清单按来源筛不出来（Codex #561）
+  const folders = useMemo(() => assetFolders(panels, unsupported), [panels, unsupported])
 
   /** 用不了的文件跟着同一组搜索 / 来源 / 类型筛选走；「已使用」筛选下它们不可能出现 */
   const unsupportedShown = useMemo(() => {
@@ -470,7 +469,8 @@ export function AssetBrowser() {
             </ul>
           )}
 
-          {loaded && !error && unsupportedShown.length > 0 && (
+          {/* 与素材卡同一条规则：加载过就显示保留下来的那份——刷新失败时卡片还在，这张清单也在 */}
+          {loaded && unsupportedShown.length > 0 && (
             <UnsupportedAssets items={unsupportedShown} />
           )}
         </div>

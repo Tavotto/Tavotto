@@ -3826,17 +3826,9 @@ def api_engine_update_source():
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
         ), 404
-    if src.suffix.lower() not in WRITE_BACK_EXT:
-        # 写回只重写同名的 .pdf / .png（`_write_source_files` 的 targets）。画布上这张是
-        # JPEG / TIFF 时它自己一个字节都不会变，却会报成功、记下基线——这里如实拒绝
-        # （issue #534：TIFF 进素材库后这条路第一次对 TIFF 可达；JPEG 以前就是这样）
-        return jsonify(
-            {
-                "error": f"写回只支持 PDF / PNG 素材，这张是 {src.suffix.lstrip('.').upper()}",
-                "code": "write_back_format_unsupported",
-                "params": {"format": src.suffix.lstrip(".").upper()},
-            }
-        ), 400
+    if fmt_err := _write_back_format_error(src):
+        # 起 worker 之前就拒（判据与 `_write_source_files` 里那道是同一个函数）
+        return _write_back_error_response(fmt_err)
     worker = _safe_worker(info["script"], info["entry"], src.stem)
     try:
         result = _write_source_files(
@@ -3850,6 +3842,7 @@ def api_engine_update_source():
         ReplayDivergenceError,
         WriteBackVerifyError,
         FileLockedError,
+        WriteBackFormatError,
     ) as exc:
         return _write_back_error_response(exc)
     # 把这组修改追加为该图的版本历史，末位即当前基线：
@@ -3870,6 +3863,23 @@ def _write_back_forbidden():
             }
         ), 403
     return None
+
+
+class WriteBackFormatError(RuntimeError):
+    """画布上这张素材不是写回会重写的格式（JPEG / TIFF）：写回与版本恢复都一个字节写不进它。"""
+
+    def __init__(self, fmt: str) -> None:
+        super().__init__(f"写回只支持 PDF / PNG 素材，这张是 {fmt}")
+        self.format = fmt
+
+
+def _write_back_format_error(src: Path) -> WriteBackFormatError | None:
+    """写回的目标是 `src` 同名的 .pdf / .png（`WRITE_BACK_EXT`）。`src` 自己不在其中时，画布上这张
+    一个字节都不会变——以前会报成功、记下基线（JPEG 一直如此；#534 让 TIFF 也走到这里）。
+    **唯一判据**：update_source / history/restore 的早检与 `_write_source_files` 里的扼流点都问它。"""
+    if src.suffix.lower() in WRITE_BACK_EXT:
+        return None
+    return WriteBackFormatError(src.suffix.lstrip(".").upper())
 
 
 class FileLockedError(RuntimeError):
@@ -4225,6 +4235,9 @@ def _write_source_files(
     WorkerError 时，`.Fig1.pdf.updating` 就永久留在图库里了。
     """
     stem = src.stem
+    if fmt_err := _write_back_format_error(src):
+        # 唯一的扼流点：调用方忘了早检，也绝不「零个目标、报成功、记基线」
+        raise fmt_err
     _write_back_prepare(src, worker, expected_mtime)
 
     targets = [p for p in (src.with_suffix(ext) for ext in WRITE_BACK_EXT) if p.exists()]
@@ -4384,7 +4397,7 @@ def _write_back_response(result: dict, **extra) -> dict:
 
 
 def _write_back_error_response(exc):
-    """三种 prepare/verify 失败 → 409 + 专属 code；不认识的回 None。"""
+    """prepare/verify 失败 → 409 + 专属 code；格式不是写回目标 → 400；不认识的回 None。"""
     if isinstance(exc, SourceChangedError):
         return jsonify(
             {
@@ -4436,6 +4449,14 @@ def _write_back_error_response(exc):
                 "rollback_failed": exc.rollback_failed,
             }
         ), 409
+    if isinstance(exc, WriteBackFormatError):
+        return jsonify(
+            {
+                "error": str(exc),
+                "code": "write_back_format_unsupported",
+                "params": {"format": exc.format},
+            }
+        ), 400
     return None
 
 
@@ -4608,11 +4629,15 @@ def api_engine_history_restore():
                 "params": {"id": body.get("id", "")},
             }
         ), 400
+    src = safe_resolve(body.get("id", ""))
+    if fmt_err := _write_back_format_error(src):
+        # 历史版本可能来自这张图还是 PDF / PNG 的时候；现在它是 JPEG / TIFF，恢复同样一个字节
+        # 都写不进去——起 worker 之前拒，与 update_source 同一个 code（Codex #561）
+        return _write_back_error_response(fmt_err)
     worker, stem = _engine_worker(body.get("id", ""))
     n = int(body.get("n", -1))
     versions = load_baked().get(stem, {}).get("versions") or []
     patches = [] if n < 0 or n >= len(versions) else versions[n]["patches"]
-    src = safe_resolve(body.get("id", ""))
     try:
         result = _write_source_files(
             src, patches, worker, expected_mtime=body.get("expected_mtime")
@@ -4625,6 +4650,7 @@ def api_engine_history_restore():
         ReplayDivergenceError,
         WriteBackVerifyError,
         FileLockedError,
+        WriteBackFormatError,
     ) as exc:
         return _write_back_error_response(exc)
     append_baked(stem, patches, files=result["file_identity"])

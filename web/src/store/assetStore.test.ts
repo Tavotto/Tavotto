@@ -20,7 +20,7 @@ vi.mock('@/lib/session', async (importOriginal) => ({
 }))
 
 import { fetchPanels, type PanelInfo, type PanelsResponse } from '@/lib/api'
-import { resetAssetLoadBookkeeping, useAssetStore } from './assetStore'
+import { assetFolders, resetAssetLoadBookkeeping, useAssetStore } from './assetStore'
 
 const mockFetch = vi.mocked(fetchPanels)
 
@@ -337,5 +337,29 @@ describe('用不了的素材（issue #534）', () => {
     mockFetch.mockResolvedValueOnce(resp(['a.pdf']))
     await s().load()
     expect(s().unsupported).toEqual([])
+  })
+})
+
+describe('用不了的素材随刷新失败保留（Codex #561）', () => {
+  it('后台刷新失败：unsupported 与 panels 一样保留上一次的，不清空', async () => {
+    const bad = { id: 'x.tif', name: 'x.tif', folder: '.', code: 'tiff_color_space' }
+    mockFetch.mockResolvedValueOnce({ ...resp(['a.pdf']), unsupported: [bad] })
+    await s().load()
+    mockFetch.mockRejectedValueOnce(new Error('boom'))
+    await s().load()
+    expect(s().error).toBe('boom')
+    expect(s().panels.map((p) => p.id)).toEqual(['a.pdf'])
+    expect(s().unsupported).toEqual([bad])
+  })
+})
+
+describe('assetFolders', () => {
+  it('只有用不了的文件的子目录也进来源选项（去重、排序）', () => {
+    expect(
+      assetFolders(
+        [{ folder: 'main' }, { folder: '.' }],
+        [{ folder: 'raw' }, { folder: 'main' }],
+      ),
+    ).toEqual(['.', 'main', 'raw'])
   })
 })

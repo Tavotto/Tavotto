@@ -113,8 +113,10 @@
   * **密度**：`originalspec.raster_dpi` 按签名认 TIFF，读 `XResolution` / `YResolution` + 单位（英寸 /
     厘米；单位 1 只是纵横比 = 没写），解析只在 `tiffprobe.density`；读不到按「其余 300」假定并报 `assumed`。
   * **写回只重写同名 .pdf / .png**（`WRITE_BACK_EXT`）：画布上这张是 JPEG / TIFF 时它自己一个字节都不会
-    变，`/api/engine/update_source` 在起 worker 之前报 `write_back_format_unsupported`（以前 JPEG 会报成功
-    并记下基线）。
+    变。判据只有 `_write_back_format_error`；写文件的两条路（`/api/engine/update_source`、
+    `/api/engine/history/restore`）都在起 worker 之前问它，`_write_source_files` 在 prepare 之前再问一次
+    （扼流点：将来多一个调用方忘了早检也不会「零个目标、报成功、记基线」），统一经
+    `_write_back_error_response` 报 400 `write_back_format_unsupported`（以前 JPEG 会报成功并记下基线）。
   * 看护 `tests/test_tiff_assets.py`（判据逐格 + 两条后端经真端点端到端 + 范围之外三处同一个 code）。
 - **离线教程项目（ADR 0039，2026-09-02）**：资源在包内
   `tavotto/resources/tutorial_project/`（经 `engine/tutorial.resource_root()`，

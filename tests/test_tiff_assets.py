@@ -469,9 +469,8 @@ def test_exporting_an_out_of_range_tiff_fails_with_its_code(client, tmp_path, sc
     assert not list((tmp_path / "figs" / "tavottofile").rglob("orig*"))
 
 
-def test_write_back_refuses_a_panel_it_would_not_rewrite(client, tmp_path, monkeypatch):
-    """写回只重写同名 .pdf / .png。画布上这张是 TIFF 时它自己一个字节都不会变——以前会报成功、
-    记下基线；现在在起 worker 之前如实拒绝。"""
+def _scripted_tiff_project(tmp_path: Path) -> Path:
+    """一张 TIFF + 注册表里认领它 stem 的脚本（写回 / 版本恢复够得着它）。"""
     figs = _project(tmp_path, Fig1__tif=_rgb)
     (figs / "tavotto_registry.json").write_text(
         json.dumps(
@@ -487,14 +486,53 @@ def test_write_back_refuses_a_panel_it_would_not_rewrite(client, tmp_path, monke
     (figs / "fig1.py").write_text("def main():\n    pass\n", encoding="utf-8")
     m.reset_projects()
     m.open_project(str(figs))
+    return figs
+
+
+def _no_worker(*_a, **_k):
+    raise AssertionError("拒绝必须在起 worker 之前")
+
+
+def test_write_back_refuses_a_panel_it_would_not_rewrite(client, tmp_path, monkeypatch):
+    """写回只重写同名 .pdf / .png。画布上这张是 TIFF 时它自己一个字节都不会变——以前会报成功、
+    记下基线；现在在起 worker 之前如实拒绝。"""
+    figs = _scripted_tiff_project(tmp_path)
     before = (figs / "Fig1.tif").read_bytes()
-
-    def no_worker(*_a, **_k):
-        raise AssertionError("拒绝必须在起 worker 之前")
-
-    monkeypatch.setattr(m, "_safe_worker", no_worker)
+    monkeypatch.setattr(m, "_safe_worker", _no_worker)
     resp = client.post("/api/engine/update_source", json={"id": "Fig1.tif", "patches": []})
     assert resp.status_code == 400
     assert resp.get_json()["code"] == "write_back_format_unsupported"
     assert resp.get_json()["params"] == {"format": "TIF"}
     assert (figs / "Fig1.tif").read_bytes() == before
+
+
+def test_history_restore_refuses_a_panel_it_would_not_rewrite(client, tmp_path, monkeypatch):
+    """版本恢复是第二条写回路（Codex #561）：历史来自这张图还是 PDF / PNG 的时候，现在它是 TIFF。
+    以前会重放、建备份目录、回 `updated: []` 的成功，再追加一条基线——一个字节都没写。现在与
+    update_source 同一个 code，起 worker 之前拒，基线一条不加。"""
+    figs = _scripted_tiff_project(tmp_path)
+    m.append_baked("Fig1", [{"gid": "axes_0.title", "prop": "text", "value": "A"}])
+    versions_before = len(m.load_baked()["Fig1"]["versions"])
+    before = (figs / "Fig1.tif").read_bytes()
+    monkeypatch.setattr(m, "_engine_worker", _no_worker)
+    monkeypatch.setattr(m, "_safe_worker", _no_worker)
+    resp = client.post("/api/engine/history/restore", json={"id": "Fig1.tif", "n": 0})
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "write_back_format_unsupported"
+    assert resp.get_json()["params"] == {"format": "TIF"}
+    assert (figs / "Fig1.tif").read_bytes() == before
+    assert len(m.load_baked()["Fig1"]["versions"]) == versions_before
+
+
+def test_write_source_files_is_the_choke_point(client, tmp_path, monkeypatch):
+    """两条写回路的早检之外，事务本身也拒：将来多一个调用方忘了早检，也绝不「零个目标、报成功」。
+    拒绝发生在 prepare（校验 / 备份）之前。"""
+    figs = _scripted_tiff_project(tmp_path)
+
+    def no_prepare(*_a, **_k):
+        raise AssertionError("拒绝必须在 prepare 之前")
+
+    monkeypatch.setattr(m, "_write_back_prepare", no_prepare)
+    with pytest.raises(m.WriteBackFormatError) as info:
+        m._write_source_files(figs / "Fig1.tif", [], object())
+    assert info.value.format == "TIF"
