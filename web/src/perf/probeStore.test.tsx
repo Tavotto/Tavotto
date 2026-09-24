@@ -142,6 +142,19 @@ function deferReply(): { resolve: (r: Response) => void; reject: () => void } {
 }
 
 const ok = (name: string) => Response.json({ dir: '/data/perf-reports', name })
+/** 到目前为止发了几次 POST /api/perf/report */
+const reportCalls = () =>
+  vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/api/perf/report')).length
+
+/** 桌面版，录了一段，停在「录制中」 */
+function recordedOne() {
+  asDesktop()
+  const probe = usePerfProbeStore.getState
+  expect(probe().start()).toBe(true)
+  useInteractionStore.getState().begin('move')
+  useInteractionStore.getState().end()
+  return probe
+}
 
 /** 桌面版，录了一段、第一次保存失败，停在「没保存 + 重试」 */
 async function failedOnce() {
@@ -185,18 +198,83 @@ describe('探针面板：过时的保存结果不许落到界面', () => {
     expect(probe().unsaved).toBeNull()
   })
 
-  it('连点两次重试：先发的那次晚回来的失败，不许盖掉后发那次的成功', async () => {
+  it('连点两次重试：第二下是空操作，只发一次请求，落的是那一次的结果', async () => {
     const probe = await failedOnce()
-    const first = deferReply()
+    const before = reportCalls()
+    const req = deferReply()
     const p1 = probe().retrySave()
-    const second = deferReply()
-    const p2 = probe().retrySave()
-    second.resolve(ok('tavotto-perf-ok.json'))
-    await p2
-    first.reject()
+    expect(probe().phase).toBe('saving')
+    await probe().retrySave() // 保存在路上：立即返回，不换代、不另发请求
+    expect(probe().phase).toBe('saving')
+    req.resolve(ok('tavotto-perf-ok.json'))
     await p1
+    expect(reportCalls() - before).toBe(1)
     expect(probe().phase).toBe('done')
     expect(probe().notice).toBeNull()
     expect(probe().result?.file).toBe('tavotto-perf-ok.json')
+  })
+})
+
+/**
+ * 保存在路上（`saving`）时的各个入口（#537 第三轮评审）。设计：
+ * - 两个保存入口（完成并保存 / 重试保存）都是空操作：不换代、不改 phase、不另发请求；
+ * - 「开始」被拒（它会换代并清掉 unsaved）；
+ * - 「放弃」「关闭」照常生效：那是用户明确不要了，在路上的结果回来后丢掉（上一组已钉）。
+ * 反证：把 finish 的入口判断改回「只排除 off / done」（修复前）→ 前两条红。
+ */
+describe('探针面板：保存在路上时重复触发', () => {
+  it('连点两次「完成并保存」：只发一次请求，最后落在已保存', async () => {
+    const probe = recordedOne()
+    const before = reportCalls()
+    const req = deferReply()
+    const p1 = probe().finish()
+    expect(probe().phase).toBe('saving')
+    const p2 = probe().finish()
+    await p2
+    expect(probe().phase).toBe('saving') // 第二下没把它改成 no_data
+    req.resolve(ok('tavotto-perf-once.json'))
+    await p1
+    expect(reportCalls() - before).toBe(1)
+    expect(probe().phase).toBe('done')
+    expect(probe().notice).toBeNull()
+    expect(probe().result?.file).toBe('tavotto-perf-once.json')
+  })
+
+  it('「完成并保存」在路上时点「重试保存」或「开始」：都不生效，落的仍是那一次的结果', async () => {
+    const probe = recordedOne()
+    const before = reportCalls()
+    const req = deferReply()
+    const p1 = probe().finish()
+    await new Promise((r) => setTimeout(r, 0))
+    await probe().retrySave()
+    expect(probe().start()).toBe(false)
+    expect(probe().phase).toBe('saving')
+    req.reject() // 这一次失败了：界面说失败、留着报告
+    await p1
+    expect(reportCalls() - before).toBe(1)
+    expect(probe().phase).toBe('done')
+    expect(probe().notice).toBe('save_failed')
+    expect(probe().unsaved?.segments.length).toBe(1)
+  })
+
+  it('面板在保存途中：状态说正在保存，主动作禁用，「放弃」可用', async () => {
+    const probe = recordedOne()
+    const req = deferReply()
+    const p1 = probe().finish()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    await act(async () => root.render(<PerfProbeHud />))
+    expect(host.querySelector('[data-perf-probe]')?.getAttribute('data-phase')).toBe('saving')
+    expect(host.querySelector('[data-perf-status="saving"]')).not.toBeNull()
+    expect((host.querySelector('[data-perf-action="finish"]') as HTMLButtonElement).disabled).toBe(true)
+    expect((host.querySelector('[data-perf-action="discard"]') as HTMLButtonElement).disabled).toBe(false)
+    req.resolve(ok('tavotto-perf-z.json'))
+    await act(async () => {
+      await p1
+    })
+    expect(host.querySelector('[data-perf-probe]')?.getAttribute('data-phase')).toBe('done')
+    act(() => root.unmount())
+    host.remove()
   })
 })

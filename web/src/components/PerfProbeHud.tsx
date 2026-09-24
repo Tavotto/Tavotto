@@ -111,6 +111,23 @@ export function PerfProbeHud() {
         </>
       )}
 
+      {phase === 'saving' && (
+        <>
+          <p className="text-ink-2" role="status" data-perf-status="saving">
+            {t('perfProbe.saving')}
+          </p>
+          <div className="flex justify-end gap-1.5">
+            <Button variant="ghost" size="sm" onClick={() => probe().discard()} data-perf-action="discard">
+              {t('perfProbe.discard')}
+            </Button>
+            {/* 保存在路上：主动作禁用（store 里另有幂等判断，不只靠这里） */}
+            <Button variant="primary" size="sm" disabled data-perf-action="finish">
+              {t('perfProbe.finish')}
+            </Button>
+          </div>
+        </>
+      )}
+
       {phase === 'done' && (
         <>
           {result ? (
