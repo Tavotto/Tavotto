@@ -677,8 +677,32 @@ def test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fon
     # 冻结产物里 child 以同一个 exe 加 --render-child 自起（renderchild.child_argv）：入口要先分派它
     entry = (REPO / "packaging" / "entry.py").read_text(encoding="utf-8")
     assert 'RENDER_CHILD_FLAG = "--render-child"' in entry
-    assert entry.index("RENDER_CHILD_FLAG]:") < entry.index("_redirect_streams()\n    # 子命令"), (
-        "render child 的分派必须在 _redirect_streams 之前（child 在 stdout 上说 JSON）"
+    # 按 AST 判顺序（不靠相邻注释的文字）：main() 里判 RENDER_CHILD_FLAG 的那条 if 要在第一次
+    # _redirect_streams() 之前（child 在 stdout 上说 JSON），分支里先 _reopen_child_pipes()（Windows
+    # console=False 的 exe 里标准流是 None，Codex #539），CA 证书（#541）在改道之后
+    import ast
+
+    main_fn = next(
+        n for n in ast.parse(entry).body if isinstance(n, ast.FunctionDef) and n.name == "main"
+    )
+
+    def _calls(node):
+        return [
+            c.func.id
+            for c in ast.walk(node)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+        ]
+
+    order = []
+    for stmt in main_fn.body:
+        if isinstance(stmt, ast.If) and "RENDER_CHILD_FLAG" in ast.dump(stmt.test):
+            order.append("render_child_branch")
+            branch_calls = _calls(stmt)
+            assert branch_calls and branch_calls[0] == "_reopen_child_pipes", branch_calls
+        else:
+            order.extend(c for c in _calls(stmt) if c in ("_redirect_streams", "_ensure_ca_bundle"))
+    assert order[:3] == ["render_child_branch", "_redirect_streams", "_ensure_ca_bundle"], (
+        f"render child 的分派必须在 _redirect_streams 之前，CA 证书在改道之后：{order}"
     )
     from tavotto.rendercore import renderchild
 
