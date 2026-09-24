@@ -247,18 +247,30 @@ export async function openWorkspace(page: Page) {
 }
 
 /**
- * 把任意文本放进 CSS 双引号字符串：`\` 与 `"` 转义。Windows 路径满是反斜杠，直接插进
- * 属性选择器会被 CSS 当成转义符吃掉，`C:\Users\x` 变成 `C:Usersx`，一行都匹配不上
- * （Codex #550：windows-exe-smoke 那条腿上 switchProjectVia 会超时）。
+ * 两条路径是不是同一个目录：按**文件系统身份**比，不比字符串。
+ *
+ * Windows runner 的临时目录是 8.3 短名（`C:\\Users\\RUNNER~1\\…`），后端记的可能是展开后的
+ * 长名、大小写也可能不同；macOS 的 `/var` ↔ `/private/var` 同理。`realpathSync.native`
+ * 在 Windows 上走 GetFinalPathNameByHandle，会展开短名；Windows 上再不分大小写。
+ * （Codex #550 之后 windows-exe-smoke 实测：拼两种写法进 CSS 选择器，一行都对不上。）
  */
-export function cssString(text: string): string {
-  return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+function sameDir(a: string, b: string): boolean {
+  const norm = (p: string) => {
+    let r = p
+    try {
+      r = realpathSync.native(p)
+    } catch {
+      /* 目录不在了：按原样比 */
+    }
+    return process.platform === 'win32' ? r.toLowerCase() : r
+  }
+  return norm(a) === norm(b)
 }
 
 /**
- * 在工作区抽屉里点开一个项目，按**路径**（`data-project-path`）或教程标记找行——
- * 不按可达名：名字会重名、会随语言变（Codex #550）。macOS 的临时目录在 `/var`，
- * 后端可能记成解析后的 `/private/var`，两种写法都认。
+ * 在工作区抽屉里点开一个项目，按**路径身份**（`data-project-path` + `sameDir`）或教程标记
+ * 找行——不按可达名（会重名、会随语言变），也不把路径拼进 CSS 选择器（转义与写法差异
+ * 都会让它对不上）。行是抽屉打开时刷新出来的，等到出现为止。
  */
 export async function switchProjectVia(page: Page, target: { path: string } | { tutorial: true }) {
   await openWorkspace(page)
@@ -267,10 +279,15 @@ export async function switchProjectVia(page: Page, target: { path: string } | { 
   if ('tutorial' in target) {
     row = list.locator('[data-workspace-row][data-project-tutorial]')
   } else {
-    const spellings = [...new Set([target.path, realpathSync(target.path)])]
-    row = list.locator(
-      spellings.map((p) => `[data-workspace-row][data-project-path="${cssString(p)}"]`).join(', '),
-    )
+    const rows = list.locator('[data-workspace-row][data-project-path]')
+    const indexOf = async () => {
+      const paths = await rows.evaluateAll((els) =>
+        els.map((e) => e.getAttribute('data-project-path') ?? ''),
+      )
+      return paths.findIndex((p) => sameDir(p, target.path))
+    }
+    await expect.poll(indexOf, { message: `工作区抽屉里找不到 ${target.path}` }).toBeGreaterThanOrEqual(0)
+    row = rows.nth(await indexOf())
   }
   await row.locator('[data-workspace-open]').click()
 }
