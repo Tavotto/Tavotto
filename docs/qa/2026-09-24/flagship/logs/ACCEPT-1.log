@@ -1,0 +1,231 @@
+# ACCEPT-1（G2 混合多选连续编辑 → 撤销重做 → 权威重渲染 → 保存重开 → 导出）
+# source SHA: 62af729c2f84652bf3979c25b0c3117fcfa756a5（分支 qa/2026-09-24-flagship，产品代码未改）
+# 运行时间（UTC）: 2026-09-24T19:25:44Z – 19:27:35Z
+# 平台: macOS 27.0 (26A428) arm64 · 后端 Python 3.13.11（/Volumes/Projects/Tavotto/.venv，PYTHONPATH=worktree/src）
+# worker: 项目 venv（uv venv --system-site-packages，base = Homebrew Python 3.13.11）· matplotlib 3.10.8 · numpy 2.4.3
+# 浏览器: Playwright 1.62.1 Chromium 151.0.7922.34 · node v26.7.0 · 独立读取: pdfminer.six 20251230 + poppler pdftoppm 26.03.0
+# $SCRATCH = /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship
+# 入口: HTTP（python -m tavotto --no-browser，端口 5306，会话认证开）+ Playwright 真浏览器；非桌面壳
+
+## A. 旗舰驱动的 P5–P15（最终运行）
+$ QA_FONTS=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts node docs/qa/2026-09-24/flagship/repro/flagship_driver.cjs $SCRATCH/fixture $SCRATCH/final
+
+=== P5 single drag (suptitle)
+PASS [P5 single drag (suptitle)] zero render requests during drag :: 0
+PASS [P5 single drag (suptitle)] exactly one render after release :: 1
+PASS [P5 single drag (suptitle)] s1: target anchors match independent model (≤0.5px) :: [{"gid":"fig.texts_0","expected":[0.5511672529581069,0.05357987748796519],"got":[0.5511672529581069,0.05357850975375755],"err_px":[0,-0.0004887692189316026]}]
+PASS [P5 single drag (suptitle)] s1: non-target anchors unchanged :: []
+
+=== P5b calibration export Ecal (same RenderCore path, after first edit)
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: export job done with a PDF output :: {"status":"done","error":null,"outputs":[["pdf","done",null],["report","done",null]]}
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: page box == figure size 504×230.4 pt (±0.01) :: [504,230.4]
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: PDF (pdfminer) point series == [0,9,2,10]; no other candidate fits :: [{"uniform":false,"res":132.5377926421405,"b":4.623411371237459},{"uniform":false,"res":84.82418729096989,"b":2.9589832775919738},{"uniform":true,"res":1.4210854715202004e-14,"b":13.405091000000002},{"uniform":false,"res":84.82418729096989,"b":2.9589832775919738},{"uniform":false,"res":11.540705859531776,"b":0.40258276254180597},{"uniform":false,"res":34.62211700334449,"b":1.207748267558528},{"uni
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: PDF twin-axis series == env A signal
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: PDF text layer carries provenance "src c5de961e6faa env A" :: ["src c5de961e6faa env A"]
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: every manifest text element found once in PDF text layer :: []
+
+=== P6 mixed multi-select drag (G2)
+PASS [P6 mixed multi-select drag (G2)] element tree shows exactly the 5 intended members selected :: ["fig.texts_1","axes_0.title","axes_0.texts_0","axes_0.legend","axes_1.title"]
+PASS [P6 mixed multi-select drag (G2)] zero render requests during group drag :: 0
+PASS [P6 mixed multi-select drag (G2)] exactly one render after release :: 1
+PASS [P6 mixed multi-select drag (G2)] s2: target anchors match independent model (≤0.5px) :: [{"gid":"axes_0.title","expected":[0.2936121861600412,0.1035885171013855],"got":[0.2936,0.10359999999999991],"err_px":[-0.009526530612186307,0.0041034927367537555]},{"gid":"axes_1.title","expected":[0.8203468800375922,0.1035885171013855],"got":[0.8203,0.10359999999999991],"err_px":[-0.03664846938764216,0.0041034927367537555]},{"gid":"axes_0.legend","expected":[0.12190016801945167,0.229803794879163
+PASS [P6 mixed multi-select drag (G2)] s2: non-target anchors unchanged :: []
+PASS [P6 mixed multi-select drag (G2)] pairwise relative offsets preserved (≤1e-3 frac) :: 0.00008809847914510438
+PASS [P6 mixed multi-select drag (G2)] each moved member has exactly one position override :: {"axes_0.title":1,"axes_1.title":1,"axes_0.legend":1,"axes_0.texts_0":1,"fig.texts_1":1}
+
+=== P7 group scale of two Axes (se handle)
+PASS [P7 group scale of two Axes (se handle)] selection = {axes_0, axes_1} :: ["axes_0","axes_1"]
+PASS [P7 group scale of two Axes (se handle)] Axes boxes = c + s(box − c) about group top-left (≤0.5px) :: [{"gid":"axes_0","expected":[0.08,0.18000000000000005,0.3314986278015635,0.5840335375200578],"got":[0.08,0.18000000000000005,0.3315,0.584],"ok":true},{"gid":"axes_1","expected":[0.560673010312267,0.18000000000000005,0.3314986278015634,0.5840335375200578],"got":[0.5606,0.18000000000000005,0.3315,0.584],"ok":true}]
+PASS [P7 group scale of two Axes (se handle)] twin axes_2 follows axes_0 exactly once (same box) :: {"axes_2":[0.08,0.18000000000000005,0.3315,0.584],"axes_0":[0.08,0.18000000000000005,0.3315,0.584]}
+PASS [P7 group scale of two Axes (se handle)] explicitly placed texts keep their absolute anchors through Axes scale :: []
+
+=== P8 font size change (axes_0.xlabel → 14)
+PASS [P8 font size change (axes_0.xlabel → 14)] fontsize editable value 14 in authoritative manifest :: {"before":10,"after":14}
+PASS [P8 font size change (axes_0.xlabel → 14)] xlabel bbox grew (font really larger)
+PASS [P8 font size change (axes_0.xlabel → 14)] s4: target anchors match independent model (≤0.5px) :: []
+PASS [P8 font size change (axes_0.xlabel → 14)] s4: non-target anchors unchanged :: []
+
+=== P9 align bottom (xlabels + provenance text)
+PASS [P9 align bottom (xlabels + provenance text)] selection = 3 intended texts :: ["fig.texts_1","axes_0.xlabel","axes_1.xlabel"]
+PASS [P9 align bottom (xlabels + provenance text)] every member bottom == max bottom of selection (≤0.5px), x unchanged :: {"maxB":0.9389749999999999,"res":[{"gid":"axes_0.xlabel","bottom":0.938975,"dx":-0.00004999999999999449,"h":0},{"gid":"axes_1.xlabel","bottom":0.93895,"dx":0.00004999999999999449,"h":0},{"gid":"fig.texts_1","bottom":0.9389749999999999,"dx":0,"h":0}]}
+PASS [P9 align bottom (xlabels + provenance text)] s5 (non-members): target anchors match independent model (≤0.5px) :: []
+PASS [P9 align bottom (xlabels + provenance text)] s5 (non-members): non-target anchors unchanged :: []
+
+=== P10 distribute horizontally (titles + suptitle)
+PASS [P10 distribute horizontally (titles + suptitle)] selection = 3 intended texts :: ["fig.texts_0","axes_0.title","axes_1.title"]
+PASS [P10 distribute horizontally (titles + suptitle)] lefts follow equal-gap model, ends fixed, y unchanged (≤0.5px) :: [{"gid":"axes_0.title","expected_left":0.2572607142857143,"got_left":0.2572607142857143,"err_px":0,"dy_px":0},{"gid":"fig.texts_0","expected_left":0.4890035714285714,"got_left":0.48895357142857143,"err_px":-0.039087499999995695,"dy_px":0.007679687187628876},{"gid":"axes_1.title","expected_left":0.7839607142857143,"got_left":0.7839607142857143,"err_px":0,"dy_px":0}]
+PASS [P10 distribute horizontally (titles + suptitle)] s6 (non-members): target anchors match independent model (≤0.5px) :: []
+PASS [P10 distribute horizontally (titles + suptitle)] s6 (non-members): non-target anchors unchanged :: []
+
+=== P11 undo ×2 / redo ×2 with authoritative re-render
+PASS [P11 undo ×2 / redo ×2 with authoritative re-render] after 2 undos document overrides == s4 overrides (before align) :: {"got":9,"want":9}
+PASS [P11 undo ×2 / redo ×2 with authoritative re-render] after 2 undos: authoritative re-render geometry == s4 :: []
+PASS [P11 undo ×2 / redo ×2 with authoritative re-render] after 2 redos document overrides == s6 overrides (after distribute)
+PASS [P11 undo ×2 / redo ×2 with authoritative re-render] after 2 redos: authoritative re-render geometry == s6 :: []
+
+=== P12 save + quit app and worker
+PASS [P12 save + quit app and worker] last autosave PUT succeeded :: {"at":1790278012774,"status":200}
+PASS [P12 save + quit app and worker] on-disk autosave document carries the final overrides :: ["d_ho03hj7o.json"]
+
+=== P12b quit app and worker
+PASS [P12b quit app and worker] server exited cleanly after /api/shutdown :: {"code":0,"killed":false}
+PASS [P12b quit app and worker] no worker / server process left referencing the fixture :: []
+
+=== P13 reopen (same data/config dirs) + authoritative re-render
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] no workdir confirmation asked again (decision remembered)
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] reopened geometry == last committed (s8) for every element :: []
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] reopened render request patches == saved overrides :: {"req":11}
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: points line path present with 4 vertices :: [[47.914364,169.909527],[98.543455,59.820218],[149.172545,145.445236],[199.801636,47.588073]]
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: plotted y sequence == expected [0,9,2,10] (affine residual < 0.01pt, every other candidate > 1pt or wrong sign) :: {"svg_y":[169.909527,59.820218,145.445236,47.588073],"fit_expected":{"a":169.909526909699,"b":-12.232145411371237,"maxResidualPt":2.0735787131798133e-7},"fit_other":{"a":127.81294615384616,"b":-4.213749076923077,"maxResidualPt":59.56523},"fit_others":[{"a":127.81294615384616,"b":-4.213749076923077,"maxResidualPt":59.56523},{"a":188.56525706145254,"b":-15.785617821229051,"maxResidualPt":4.236832402
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: x spacing uniform (t = 0..3) :: [47.914364,98.543455,149.172545,199.801636]
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: twin-axis signal == env A sequence (not B) :: {"fitA":{"a":210.68334499999997,"b":-40.773818,"maxResidualPt":2.842170943040401e-14},"fitB":{"a":47.58807300000001,"b":24.464290799999993,"maxResidualPt":48.9285816}}
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: provenance text == src c5de961e6faa env A :: "src c5de961e6faa env A"
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: twin series label says env A :: "曲线 “sig A”"
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] after restart: still project venv A :: ".venv/bin/python"
+
+=== P14 re-edit after reopen (drag axes_1.xlabel)
+PASS [P14 re-edit after reopen (drag axes_1.xlabel)] s10: target anchors match independent model (≤0.5px) :: [{"gid":"axes_1.xlabel","expected":[0.7647940129336082,0.8784019346892847],"got":[0.7647940174953859,0.8784026173457686],"err_px":[0.0000035644445980871143,0.00024383396704431682]}]
+PASS [P14 re-edit after reopen (drag axes_1.xlabel)] s10: non-target anchors unchanged :: []
+
+=== P15 final export E1 (PDF) + independent reading
+PASS [P15 final export E1 (PDF) + independent reading] E1: export job done with a PDF output :: {"status":"done","error":null,"outputs":[["pdf","done",null],["report","done",null]]}
+PASS [P15 final export E1 (PDF) + independent reading] E1: page box == figure size 504×230.4 pt (±0.01) :: [504,230.4]
+PASS [P15 final export E1 (PDF) + independent reading] E1: PDF (pdfminer) point series == [0,9,2,10]; no other candidate fits :: [{"uniform":false,"res":132.5377926421405,"b":4.623411371237459},{"uniform":false,"res":77.40207090301004,"b":2.7000722408026756},{"uniform":true,"res":2.0735785710712662e-7,"b":12.232145411371237},{"uniform":false,"res":77.40207090301004,"b":2.7000722408026756},{"uniform":false,"res":10.530893859531766,"b":0.3673567625418059},{"uniform":false,"res":31.592682153846148,"b":1.1020703076923077},{"uni
+PASS [P15 final export E1 (PDF) + independent reading] E1: PDF twin-axis series == env A signal
+PASS [P15 final export E1 (PDF) + independent reading] E1: PDF text layer carries provenance "src c5de961e6faa env A" :: ["src c5de961e6faa env A"]
+PASS [P15 final export E1 (PDF) + independent reading] E1: every manifest text element found once in PDF text layer :: []
+FAIL [P15 final export E1 (PDF) + independent reading] E1 vs Ecal: PDF text displacement == manifest displacement for 9 texts (≤0.05 mm; candidate 0.01 mm reported) :: {"n":9,"max_err_mm":0.14397743056786255}
+
+
+## B. 新增 e2e：web/e2e/multi-select-geometry.spec.ts（+ 既有 fake-realtime.spec.ts），产品代码已还原后的运行
+$ cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/../src npx playwright test e2e/multi-select-geometry.spec.ts e2e/fake-realtime.spec.ts --project=chromium
+# exit=0
+
+Running 2 tests using 1 worker
+
+[e2e 假实时] 首帧 47.89999997615814ms · 40/40 帧（rAF 合并）· commit→权威 45.10000002384186ms
+  ✓  1 [chromium] › e2e/fake-realtime.spec.ts:14:1 › 拖图内元素：预览跟手、拖动期间零后端、松手一次定稿 (18.0s)
+  ✓  2 [chromium] › e2e/multi-select-geometry.spec.ts:104:1 › 图内混合多选整组拖动：锚点 = 独立模型，撤销 / 重做回到对应位置 (19.6s)
+
+  2 passed (38.0s)
+
+## C. 既有 vitest（接入点）
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/alignAction.test.ts src/canvas/alignUndoConvergence.test.tsx src/store/geometryAuthority.test.ts src/canvas/fakeRealtimeDrag.test.tsx src/canvas/dragReleaseSnapback.test.tsx src/components/WorkdirConfirmDialog.test.tsx src/store/documentStore.test.ts
+# exit=0
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-6/web
+
+
+ Test Files  7 passed (7)
+      Tests  93 passed (93)
+   Start at  03:25:58
+   Duration  3.30s (transform 4.93s, setup 3.10s, import 4.28s, tests 1.49s, environment 10.67s)
+
+## D. 变异反证 M2：web/src/canvas/interactions.ts startElementGroupMove 松手只写 entries.slice(1)（「多选漏一人」）
+$ sed -i '' 's|^        entries.map((en, i) => en.write(boxes\[i\])),$|        entries.slice(1).map((en, i) => en.write(boxes[i + 1])), // QA-MUTATION|' web/src/canvas/interactions.ts && PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py
+$ cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/../src npx playwright test e2e/multi-select-geometry.spec.ts --project=chromium
+# exit=1
+
+Running 1 test using 1 worker
+
+[e2e] app-0 进程输出（尾部）:
+2026-09-25 03:23:13,553 INFO werkzeug: Press CTRL+C to quit
+2026-09-25 03:23:13,630 INFO pikepdf._core: pikepdf C++ to Python logger bridge initialized
+2026-09-25 03:23:13,650 WARNING tavotto: RenderCore 预热未完成：批准字体不全：缺 ['LiberationMono-Bold', 'LiberationMono-BoldItalic', 'LiberationMono-Italic', 'LiberationMono-Regular', 'LiberationSans-Bold', 'LiberationSans-BoldItalic', 'LiberationSans-Italic', 'LiberationSans-Regular', 'LiberationSerif-Bold', 'LiberationSerif-BoldItalic', 'LiberationSerif-Italic', 'LiberationSerif-Regular', 'NotoSansSC-Regular']（先跑 scripts/fetch_fonts.py）
+2026-09-25 03:23:13,874 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:13] "GET /api/version HTTP/1.1" 200 -
+2026-09-25 03:23:13,885 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:13] "GET / HTTP/1.1" 200 -
+2026-09-25 03:23:13,892 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:13] "GET /assets/index-DZf9CSa8.js HTTP/1.1" 200 -
+2026-09-25 03:23:13,892 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:13] "GET /assets/index-7yGgmWmw.css HTTP/1.1" 200 -
+2026-09-25 03:23:13,959 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:13] "GET /api/session/ping HTTP/1.1" 200 -
+2026-09-25 03:23:13,988 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:13] "GET /api/telemetry/settings HTTP/1.1" 200 -
+2026-09-25 03:23:13,989 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:13] "GET /api/project HTTP/1.1" 200 -
+2026-09-25 03:23:14,005 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/projects/recent?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,006 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/projects?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,057 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/version?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,064 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/project/readiness?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,066 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-geo-tCXqJn/figures → 1 个素材
+2026-09-25 03:23:14,068 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/panels?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,077 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-geo-tCXqJn/figures&pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,079 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/events?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,186 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:23:14,253 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:23:14,254 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/registry?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,255 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/version?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,256 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:23:14,257 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/runtime/assets?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,257 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/project/readiness?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,258 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-geo-tCXqJn/figures&pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,260 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-geo-tCXqJn/figures → 1 个素材
+2026-09-25 03:23:14,261 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/panels?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,271 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/render?id=Fig_geo.pdf&w=400&m=1790277793&pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,280 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/update/check HTTP/1.1" 200 -
+2026-09-25 03:23:14,340 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/ai/capabilities?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:14,409 INFO tavotto.engine: worker 启动: fig_geo.py（entry=main，解释器来源=env_override）
+2026-09-25 03:23:14,414 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:14] "GET /api/engine/environment HTTP/1.1" 200 -
+2026-09-25 03:23:15,146 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:15] "GET /api/autosave/d_lfxr6w9i?pj=e16473854655 HTTP/1.1" 404 -
+2026-09-25 03:23:15,149 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:15] "PUT /api/autosave/d_lfxr6w9i?base_revision=absent&pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:26,960 INFO tavotto: 引擎渲染: Fig_geo 12699ms（冷启动） timings={"build_total_ms": 12498.369, "canvas_draw_ms": 15.023, "manifest_ms": 30.261, "patch_apply_ms": 0.198, "preview_plan_ms": 0.04, "queue_wait_ms": 0.001, "script_build_ms": 138.504, "script_exec_ms": 23.941, "server_ms": 12698.754, "total_ms": 49.636, "worker_get_ms": 150.508}
+2026-09-25 03:23:26,961 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:26] "POST /api/engine/render?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:27,976 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:27] "PUT /api/autosave/d_lfxr6w9i?base=1790277795144&base_revision=48734c06ba89e3b09992bb90a8d7e3f4&pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:30,884 INFO tavotto: 引擎渲染: Fig_geo 49ms timings={"canvas_draw_ms": 14.576, "manifest_ms": 30.836, "patch_apply_ms": 0.597, "preview_plan_ms": 0.044, "queue_wait_ms": 0.0, "server_ms": 49.379, "total_ms": 48.775, "worker_get_ms": 0.452}
+2026-09-25 03:23:30,885 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:30] "POST /api/engine/render?pj=e16473854655 HTTP/1.1" 200 -
+2026-09-25 03:23:31,839 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:23:31] "PUT /api/autosave/d_lfxr6w9i?base=1790277807973&base_revision=7d04dbda0367ab6e90f5c73d676d8022&pj=e16473854655 HTTP/1.1" 200 -
+
+  ✘  1 [chromium] › e2e/multi-select-geometry.spec.ts:104:1 › 图内混合多选整组拖动：锚点 = 独立模型，撤销 / 重做回到对应位置 (19.7s)
+
+
+  1) [chromium] › e2e/multi-select-geometry.spec.ts:104:1 › 图内混合多选整组拖动：锚点 = 独立模型，撤销 / 重做回到对应位置 ─────
+
+    Error: axes_0.title x 锚点（px 误差 -29.999999999999996）
+
+    expect(received).toBeLessThanOrEqual(expected)
+
+    Expected: <= 0.0020120896254666436
+    Received:    0.1147253775279986
+
+      188 |     const want = [g[m].anchor![0] + d.x / R.w, g[m].anchor![1] + d.y / R.h]
+      189 |     const got = A[m].anchor!
+    > 190 |     expect(Math.abs(got[0] - want[0]), `${m} x 锚点（px 误差 ${(got[0] - want[0]) * R.w}）`).toBeLessThanOrEqual(tol.x)
+          |                                                                                        ^
+      191 |     expect(Math.abs(got[1] - want[1]), `${m} y 锚点（px 误差 ${(got[1] - want[1]) * R.h}）`).toBeLessThanOrEqual(tol.y)
+      192 |   }
+      193 |   // 没选中的可拖元素一个都不动（含同一子图里的 xlabel、另一张子图的 xlabel、suptitle）
+        at /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-6/web/e2e/multi-select-geometry.spec.ts:190:88
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/multi-select-geometry-图内混合多选整组拖动：锚点-独立模型，撤销-重做回到对应位置-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/multi-select-geometry-图内混合多选整组拖动：锚点-独立模型，撤销-重做回到对应位置-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/multi-select-geometry-图内混合多选整组拖动：锚点-独立模型，撤销-重做回到对应位置-chromium/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/multi-select-geometry-图内混合多选整组拖动：锚点-独立模型，撤销-重做回到对应位置-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/multi-select-geometry-图内混合多选整组拖动：锚点-独立模型，撤销-重做回到对应位置-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › e2e/multi-select-geometry.spec.ts:104:1 › 图内混合多选整组拖动：锚点 = 独立模型，撤销 / 重做回到对应位置 ──────
+
+$ QA_STOP_AFTER='P6 mixed multi-select drag (G2)' QA_FONTS=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts node docs/qa/2026-09-24/flagship/repro/flagship_driver.cjs $SCRATCH/fixture $SCRATCH/mut2
+=== P0 fixture baseline
+=== P1 first launch (fresh config)
+=== P2 first open: workdir confirmation (D1 ambiguity)
+=== P3 environment identity (E1)
+=== P4 data identity (D1) + external file + local module
+=== P4b zero-edit export E0 (calibration baseline)
+=== P5 single drag (suptitle)
+=== P5b calibration export Ecal (same RenderCore path, after first edit)
+=== P6 mixed multi-select drag (G2)
+FAIL [P6 mixed multi-select drag (G2)] s2: target anchors match independent model (≤0.5px) :: [{"gid":"axes_0.title","expected":[0.29366981617043114,0.10349774305057996],"got":[0.26163265306122446,0.15395833333333342],"err_px":[-25,18]},{"gid":"axes_1.title","expected":[0.8204045100479821,0.10349774305057996],"got":[0.8203999999999999,0.10350000000000004],"err_px":[-0.003519387755099662,0.0008050855000651789]},{"gid":"axes_0.legend","expected":[0.1219577980298416,0.22971302082835782],"got"
+FAIL [P6 mixed multi-select drag (G2)] pairwise relative offsets preserved (≤1e-3 frac) :: 0.05980527637667825
+FAIL [P6 mixed multi-select drag (G2)] each moved member has exactly one position override :: {"axes_0.title":0,"axes_1.title":1,"axes_0.legend":1,"axes_0.texts_0":1,"fig.texts_1":1}
+
+$ git checkout -- web/src/canvas/interactions.ts && PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py
+# 还原后：上面 B 段 e2e 2 passed；最终驱动运行（A 段）P6 全 PASS
