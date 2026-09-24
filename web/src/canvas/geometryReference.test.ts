@@ -199,6 +199,9 @@ const translateOf = (gid: string): [number, number] | null => {
 
 beforeEach(() => setup('G1'))
 afterEach(() => {
+  // 断言在拖动中途失败时 trackPointer 的 window 监听器还挂着——不收掉的话下一条用例的
+  // 第一个指针事件会被它吃到，红灯就串到无关用例上（反证时实测过）。pointercancel 走取消路径。
+  fire('pointercancel', 0, 0)
   resetPreview()
   useInteractionStore.getState().end()
   document.body.innerHTML = ''
