@@ -1,0 +1,349 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/long_probe.py --mode long03 --minutes 10 --fixtures /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/long/fx --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/long/run-long03 --keep-going
+# start: 2026-09-24T19:06:25Z
+# sha: 12e4ea6022b60505ae8ab3e14c4c3bdc4fbf2a9f
+# cwd: worktree root
+{
+ "mode": "long03",
+ "seed": 0,
+ "minutes_budget": 10.0,
+ "wall_s": 603.5,
+ "iterations": 413,
+ "counts": {
+  "render_ok": 7080,
+  "render_checked": 7080,
+  "revisits_equal": 7072,
+  "exports_ok": 364,
+  "undo": 2277,
+  "redo": 1027,
+  "kills": 459,
+  "faults": 472,
+  "recovered": 472,
+  "visible_errors": 424,
+  "project_cycles": 0,
+  "between_codes": {
+   "'session_dead'": 149,
+   "200": 9
+  },
+  "during_codes": {
+   "session_dead": 118,
+   "None": 26,
+   "not_mid_request": 13
+  }
+ },
+ "first_failure": null,
+ "probe_error": null,
+ "stop": {
+  "clean_exit": true,
+  "leftover": []
+ },
+ "user_files_unchanged": true,
+ "samples": 140,
+ "trend": {
+  "rss_kib": {
+   "first_after_warm": 191728,
+   "last": 187296,
+   "min": 149632,
+   "max": 207280
+  },
+  "rss_server_kib": {
+   "first_after_warm": 60176,
+   "last": 56160,
+   "min": 43760,
+   "max": 75680
+  },
+  "threads": {
+   "first_after_warm": 6,
+   "last": 6,
+   "min": 6,
+   "max": 6
+  },
+  "fds": {
+   "first_after_warm": 163,
+   "last": 163,
+   "min": 157,
+   "max": 163
+  },
+  "processes": {
+   "first_after_warm": 3,
+   "last": 3,
+   "min": 3,
+   "max": 3
+  },
+  "tmp_files": {
+   "first_after_warm": 0,
+   "last": 0,
+   "min": 0,
+   "max": 0
+  },
+  "cache_bytes": {
+   "first_after_warm": 84055,
+   "last": 3181762,
+   "min": 84055,
+   "max": 3181762
+  },
+  "export_bytes": {
+   "first_after_warm": 32518,
+   "last": 12068592,
+   "min": 32518,
+   "max": 12068592
+  }
+ },
+ "states_seen": 8
+}
+# end: 2026-09-24T19:16:29Z
+# exit: 0
+
+# ===== 附录：LONG-03-trend.json =====
+{
+ "run": "run-long03",
+ "samples_total": 140,
+ "samples_used": 137,
+ "metrics": {
+  "rss_kib": {
+   "first": 173120.0,
+   "last": 187296.0,
+   "min": 149632.0,
+   "max": 207280.0,
+   "slope_per_hour": 834.3,
+   "growth_over_span": 134.0,
+   "median_first_third": 184208.0,
+   "median_last_third": 185616.0
+  },
+  "rss_server_kib": {
+   "first": 57072.0,
+   "last": 56160.0,
+   "min": 43760.0,
+   "max": 75680.0,
+   "slope_per_hour": 13560.15,
+   "growth_over_span": 2177.9,
+   "median_first_third": 53472.0,
+   "median_last_third": 55296.0
+  },
+  "fds": {
+   "first": 157.0,
+   "last": 163.0,
+   "min": 157.0,
+   "max": 163.0,
+   "slope_per_hour": 2.44,
+   "growth_over_span": 0.4,
+   "median_first_third": 163.0,
+   "median_last_third": 163.0
+  },
+  "fds_server": {
+   "first": 58.0,
+   "last": 58.0,
+   "min": 58.0,
+   "max": 58.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 58.0,
+   "median_last_third": 58.0
+  },
+  "threads": {
+   "first": 6.0,
+   "last": 6.0,
+   "min": 6.0,
+   "max": 6.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 6.0,
+   "median_last_third": 6.0
+  },
+  "threads_server": {
+   "first": 3.0,
+   "last": 3.0,
+   "min": 3.0,
+   "max": 3.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 3.0,
+   "median_last_third": 3.0
+  },
+  "processes": {
+   "first": 3.0,
+   "last": 3.0,
+   "min": 3.0,
+   "max": 3.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 3.0,
+   "median_last_third": 3.0
+  },
+  "workers": {
+   "first": 1.0,
+   "last": 1.0,
+   "min": 1.0,
+   "max": 1.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 1.0,
+   "median_last_third": 1.0
+  },
+  "tmp_files": {
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 0.0,
+   "median_last_third": 0.0
+  },
+  "cache_bytes": {
+   "first": 123558.0,
+   "last": 3181762.0,
+   "min": 123558.0,
+   "max": 3181762.0,
+   "slope_per_hour": 18773481.3,
+   "growth_over_span": 3015229.7,
+   "median_first_third": 626207.0,
+   "median_last_third": 2702254.0
+  },
+  "export_bytes": {
+   "first": 165113.0,
+   "last": 12068592.0,
+   "min": 165113.0,
+   "max": 12068592.0,
+   "slope_per_hour": 73229694.11,
+   "growth_over_span": 11761502.5,
+   "median_first_third": 2126770.0,
+   "median_last_third": 10213335.0
+  }
+ },
+ "span_hours": 0.161,
+ "verdicts": {
+  "rss_kib": "stable",
+  "rss_server_kib": "stable",
+  "fds": "drift",
+  "fds_server": "stable",
+  "threads": "stable",
+  "threads_server": "stable",
+  "processes": "stable",
+  "workers": "stable",
+  "tmp_files": "stable"
+ },
+ "verdict": "drift"
+}
+
+# ===== 附录：LONG-03-exports.json =====
+{
+ "checked": {
+  "pdf": 364,
+  "png": 364
+ },
+ "missing_files": 0,
+ "states_exported": 7,
+ "png_nondeterministic_states": {},
+ "problems": [],
+ "problem_count": 0
+}
+
+# ===== 附录：LONG-03-vitest.log =====
+# cmd: pnpm vitest run src/store/geometryAuthority.test.ts src/store/svgMemoryBudget.test.ts src/canvas/alignUndoConvergence.test.tsx src/store/renderStore.test.ts src/store/documentStore.sequences.test.ts
+# start: 2026-09-24T18:42:14Z
+# sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# cwd: web/（在 worktree 的 web 目录下运行；NODE_OPTIONS=--no-experimental-webstorage）
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-7/web
+
+
+ Test Files  5 passed (5)
+      Tests  57 passed (57)
+   Start at  02:42:16
+   Duration  2.00s (transform 1.70s, setup 1.16s, import 1.36s, tests 428ms, environment 4.48s)
+
+# end: 2026-09-24T18:42:18Z
+# exit: 0
+
+# ===== 附录：LONG-03-mutation-header.txt =====
+# 变异反证（前端乱序）。cmd（cwd web/）: 先把 src/store/renderStore.ts 的 `const fresher = seq >= (s.latestSeq[fileId] ?? 0)`
+#   改成 `const fresher = true || seq >= (…)`（grep -c 目标串 == 1 已确认），然后
+#   NODE_OPTIONS=--no-experimental-webstorage pnpm vitest run src/store/geometryAuthority.test.ts src/canvas/alignUndoConvergence.test.tsx
+#   随后 git checkout -- web/src/store/renderStore.ts 还原并重跑同一命令（下一个附录里的 restored-exit）
+# 时间: 约 2026-09-24T18:43Z；worktree HEAD 4dbc424d（WIP 提交，产品代码 == 62af729c）
+
+# ===== 附录：LONG-03-mutation-latest.log =====
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-7/web
+
+ ❯ src/store/geometryAuthority.test.ts (12 tests | 1 failed) 11ms
+     × 先发的 C 晚于后发的 A 返回时，latest 仍然停在 A 3ms
+ ❯ src/canvas/alignUndoConvergence.test.tsx (5 tests | 1 failed) 39ms
+     × 对齐的响应晚于撤销的响应回来，最终仍然停在 A 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/alignUndoConvergence.test.tsx > 对齐 → 撤销：文档、画面、权威、选择框收敛到同一版 > 对齐的响应晚于撤销的响应回来，最终仍然停在 A
+AssertionError: expected 'f1 [{"gid":"t2","prop":"pos_frac","va…' to be 'f1 []' // Object.is equality
+
+Expected: "f1 []"
+Received: "f1 [{"gid":"t2","prop":"pos_frac","value":[0.1,0.3]}]"
+
+ ❯ src/canvas/alignUndoConvergence.test.tsx:210:26
+    208|     expect(view.kind).toBe('exact')
+    209|     expect(view.svg).toContain('A2')
+    210|     expect(st.latest.f1).toBe(renderKey('f1', []))
+       |                          ^
+    211|     // C 的结果照旧留着（同文件的另一个副本可能还等着它）
+    212|     expect(st.byKey[renderKey('f1', cPatches)]?.manifest).toBe(MANIFES…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/store/geometryAuthority.test.ts > 乱序返回：晚到的旧变体不得把显示拽回去 > 先发的 C 晚于后发的 A 返回时，latest 仍然停在 A
+AssertionError: expected 'Fig1.pdf [{"gid":"g","prop":"x","valu…' to be 'Fig1.pdf [{"gid":"g","prop":"x","valu…' // Object.is equality
+
+Expected: "Fig1.pdf [{"gid":"g","prop":"x","value":1}]"
+Received: "Fig1.pdf [{"gid":"g","prop":"x","value":3}]"
+
+ ❯ src/store/geometryAuthority.test.ts:257:35
+    255|     const st = useRenderStore.getState()
+    256|     expect(st.byKey[renderKey('Fig1.pdf', C)]?.manifest?.stem).toBe('F…
+    257|     expect(st.latest['Fig1.pdf']).toBe(renderKey('Fig1.pdf', A))
+       |                                   ^
+    258|   })
+    259| })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 15 passed (17)
+   Start at  02:42:57
+   Duration  1.53s (transform 962ms, setup 600ms, import 750ms, tests 50ms, environment 1.20s)
+
+exit=1
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-7/web
+
+
+ Test Files  2 passed (2)
+      Tests  17 passed (17)
+   Start at  02:43:06
+   Duration  1.27s (transform 867ms, setup 478ms, import 726ms, tests 54ms, environment 837ms)
+
+restored-exit=0
+
+# ===== 附录：LONG-03-repro-classification.log =====
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/worker_death_classification.py
+# start: 2026-09-24T18:41:26Z
+# sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# cwd: worktree root
+[A] 控制面: tavotto.engine.pool.EngineWorker
+[B] 控制面: tavotto.engine.pool.EngineWorker
+窗口 A: WorkerError(code='', msg='worker 进程已退出')  期望 session_dead → 不一致
+窗口 B: BrokenPipeError（不是 WorkerError）  期望 session_dead → 不一致
+# end: 2026-09-24T18:41:27Z
+# exit: 1
+
+# ===== 附录：LONG-03-try03-excerpt.txt =====
+# try03：LONG-03 首轮冒烟（1.5 min，约 2026-09-24T18:34Z，源码 SHA 62af729c）。当时未设批准字体，导出为 backend_unavailable（安全停止）；正式跑已用 TAVOTTO_FONTS_DIR 修正。
+# 这里只摘与缺陷相关的证据：请求间 SIGKILL worker 之后，同一故障的三种错误分类
+## events.jsonl 中 code 不是 session_dead 的 render_error：
+{"kind": "render_error", "where": "it20-fault-kill_during-after", "status": 500, "code": "", "error": "worker 进程已退出", "t": 1790274908.28}
+{"kind": "render_error", "where": "it22-fault-kill_between-after", "status": 500, "code": "internal_error", "error": "BrokenPipeError: [Errno 32] Broken pipe", "t": 1790274909.93}
+## session_dead 的 render_error 次数：33
+## app.log 摘录：
+2026-09-25 02:35:08,281 ERROR tavotto: 引擎渲染失败: Fig1: worker 进程已退出
+BrokenPipeError: [Errno 32] Broken pipe
+2026-09-25 02:35:09,923 ERROR tavotto: 未处理异常: POST /api/engine/render
+BrokenPipeError: [Errno 32] Broken pipe
