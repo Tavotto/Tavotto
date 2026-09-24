@@ -639,13 +639,13 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1093,
+          "line": 1111,
           "role": "请求里已解析的物理尺寸 → 页面 pt"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1093,
+          "line": 1111,
           "role": "originalspec 现算的逻辑尺寸 → 页面 pt"
         }
       ],
@@ -973,13 +973,13 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1095,
+          "line": 1112,
           "role": "老客户端 / MCP 没带尺寸时现算位图页面"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_declared_density",
-          "line": 1119,
+          "line": 1128,
           "role": "TIFF 分辨率标签的来源判据（只认 dpi_source == metadata）"
         },
         {
