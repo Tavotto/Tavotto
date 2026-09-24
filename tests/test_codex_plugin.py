@@ -1212,6 +1212,9 @@ def test_the_dual_launcher_keeps_its_platform_contract():
     assert executed and all(
         "%tavotto_launch_probe%" in ln or "%tavotto_launch_probe_managed%" in ln for ln in executed
     ), executed
+    # 每条探测都经 `call`：候选本身可能是批处理（pyenv-win 的 shim 就是 python.bat），
+    # 不经 call 直接跑批处理**不会返回**——启动器会在第一条探测处就结束（#548 CI windows）
+    assert all(re.search(r"\bcall\s+(\"|py\b)", ln) for ln in executed), executed
     # 自管 venv 只在引擎区间内才优先（区间外 --provision 要重建它，Windows 上删不掉正在跑的
     # python.exe——#548 评审 P2）；区间与 server.py 的 PYTHON_MIN / PYTHON_MAX_EXCLUSIVE 同源
     from importlib import util as _util

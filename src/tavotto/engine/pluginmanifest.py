@@ -112,13 +112,24 @@ def _is_path_like(command: str) -> bool:
 BUNDLED_LAUNCHER = "mcp/launch.cmd"
 
 
+def _fs_exec_bit_observable() -> bool:
+    """文件系统能不能回答「可执行吗」：Windows 上没有执行位（`os.access(X_OK)` 对任何文件都真）。"""
+    return os.name != "nt"
+
+
 def _launcher_mode(plugin_dir: Path, modes: dict[str, str] | None) -> str:
-    """启动器的 git 模式：清单 / staging 给了就用它（Windows 上文件系统没有执行位），
-    没给才看文件系统。"""
+    """启动器的 git 模式：清单 / staging 给了就用它，没给才看文件系统。
+
+    Windows 上文件系统量不出执行位，又没有清单可查（旧发行件、没带模式的调用方）时，
+    **不在这里判死**：执行位的把关交给有模式来源的那一方——发行构建从 git index 取
+    100755 写进清单，清单在时这里照清单判（#548 CI windows：否则 Windows 上连自带的
+    启动器都被当成「路径形 command」拒掉）。"""
     if modes and BUNDLED_LAUNCHER in modes:
         return modes[BUNDLED_LAUNCHER]
+    if not _fs_exec_bit_observable():
+        return "100755"
     path = plugin_dir / BUNDLED_LAUNCHER
-    return "100755" if os.name != "nt" and os.access(path, os.X_OK) else "100644"
+    return "100755" if os.access(path, os.X_OK) else "100644"
 
 
 def _is_bundled_launcher(command: str, plugin_dir: Path, modes: dict[str, str] | None) -> bool:

@@ -241,6 +241,25 @@ def test_the_manifest_mode_of_the_launcher_wins_over_the_filesystem(tmp_path):
     assert not pluginmanifest._is_bundled_launcher(cmd, d, {"mcp/launch.cmd": "100644"})
 
 
+def test_without_a_mode_source_windows_does_not_reject_the_bundled_launcher(tmp_path, monkeypatch):
+    """#548 CI windows：文件系统量不出执行位、又没有清单时，不能把自带启动器判成
+    「路径形 command」——旧发行件体检、`write_build_manifest(modes={})` 都会在 Windows 上
+    误红。有清单时仍照清单判（清单说 100644 照样拒）。"""
+    d = tmp_path / "p"
+    launch = d / "mcp" / "launch.cmd"
+    launch.parent.mkdir(parents=True)
+    launch.write_text("x", encoding="utf-8")
+    launch.chmod(0o644)
+    cmd = "./mcp/launch.cmd"
+    monkeypatch.setattr(pluginmanifest, "_fs_exec_bit_observable", lambda: False)
+    assert pluginmanifest._is_bundled_launcher(cmd, d, {})
+    assert pluginmanifest._is_bundled_launcher(cmd, d, None)
+    assert not pluginmanifest._is_bundled_launcher(cmd, d, {"mcp/launch.cmd": "100644"})
+    if os.name != "nt":
+        monkeypatch.setattr(pluginmanifest, "_fs_exec_bit_observable", lambda: True)
+        assert not pluginmanifest._is_bundled_launcher(cmd, d, {}), "POSIX 上不可执行仍要拒"
+
+
 # ================================================================ 已装副本
 
 

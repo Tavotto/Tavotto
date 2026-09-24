@@ -44,8 +44,10 @@
   却解析不了 server.py），第一个过得了的接过全部参数；引擎定位仍只归
   `server.py` 的 resolver。**形态约束**（`test_the_dual_launcher_keeps_its_platform_contract`
   看护）：第一行 shebang（Rust 起不认无 shebang 的脚本，实测 Exec format error）、git 模式
-  100755（Codex 缓存副本保留执行位，0.156.1 实测）、全文 LF、批处理段纯 ASCII、不用
-  goto / call :label。cmd 会把第一行回显进 stdout **一次**：rmcp 3.2+ 跳过非 JSON 行，
+  100755（Codex 缓存副本保留执行位，0.156.1 实测）、全文 LF（`.gitattributes` 钉 `eol=lf`：
+  Windows 检出默认 autocrlf，CRLF 下 shebang 与 heredoc 终止行都失效）、批处理段纯 ASCII、不用
+  goto / call :label；**每条探测都经 `call`**（候选可能本身是批处理——pyenv-win 的 shim 是
+  python.bat——不经 call 跑批处理不会返回，启动器会停在第一条探测）。cmd 会把第一行回显进 stdout **一次**：rmcp 3.2+ 跳过非 JSON 行，
   2.x 回一条 parse error 后继续，≤1.x 会断连——`test_codex_style_spawn_…` 钉住「最多这一行」。
   `args` 仍是 `["./mcp/server.py"]`：`tavotto codex install` 的 interpreter 步照旧按执行
   判（按**插件根**解析相对 command，不按本进程 cwd），起不来才把**已装副本**的 command
