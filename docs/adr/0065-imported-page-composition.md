@@ -19,7 +19,7 @@ registry RC-038 ~ RC-046）。
 | opacity = 0 | 是取值不是缺席（RC-042 must_fail `or 1.0`）：像素全白、对象仍在（form + 文字层） | `test_opacity_zero_paints_nothing_but_the_vector_object_is_still_there`；`plan` 层 `test_panel_opacity_zero_is_a_value_not_an_absence` |
 | 镜像 | `cm` 里的负缩放，不退位图（RC-040 must_fail：flip 触发整页 Image XObject） | `test_a_mirrored_import_keeps_its_vector_and_text_layer`：墨从左半移到右半 + 对象普查无 image + 文字抽得到 |
 | 位图源 | `rasterio.decode()`（Pillow）→ `RasterBuffer` → 8 bit DeviceRGB Image XObject（Flate），alpha 单独成 /SMask（straight；预乘的 `RGBa` / `La` 先反预乘——漏掉会当成不透明 RGB、颜色带着预乘的暗）；8 bit RGB / 灰度 JPEG **原字节直通** `/DCTDecode`（与旧 `insert_image` 同一取舍，不重编码；直通前整张真解一遍，读取器解不开的不直通）；CMYK / 12 bit / 无损 JPEG 走解码路。像素预算两级都在解码**之前**按头里的尺寸判：单张 `raster.SOURCE_MAX_PIXELS`（64M，`why=raster_too_large`）、整份文档累计 `raster.DOCUMENT_MAX_PIXELS`（160M，去重后按资源记账，`why=raster_budget_exceeded`）。像素网格不变，缩放只在 `cm` 里 | `test_png_with_alpha_is_placed_with_an_smask…`、`test_an_rgb_jpeg_passes_through_as_dct_and_a_cmyk_one_is_decoded`、`test_image_crop_flip_and_rotation_use_the_same_contract_as_pages` |
-| 不可信源（RC-046） | 只有内容流与资源会被 `as_form_xobject` 收进 form：注释 / 页面动作 / /OpenAction / Names JavaScript **不进**产物；加密源 `source_unreadable(why=encrypted)` 拒绝（`PasswordError` 与打开后 `is_encrypted` 两道：只有 owner 密码的文件不抛就打开了）、坏文件 `why=broken`、页号越界 `why=page_index`——都不画一张空框。作业级还有冻结源字节总预算 `job.SOURCE_BYTES_BUDGET`（512 MiB，读之前按 `size_bytes` 判） | `test_actions_annotations_and_javascript_of_the_source_are_not_imported`、`test_an_encrypted_source_is_refused_structurally`、`test_a_broken_source_and_a_missing_page_are_refused_structurally` |
+| 不可信源（RC-046） | 只有内容流与资源会被 `as_form_xobject` 收进 form：注释 / 页面动作 / /OpenAction / Names JavaScript **不进**产物；要 user 密码的加密源 `source_unreadable(why=encrypted)` 拒绝（`PasswordError`）；**只有 owner 密码**（无密码可打开、只限制权限）的按普通 PDF 导入——qpdf 读时透明解密，产物不加密、不带权限位（#516 裁决，见 §6）、坏文件 `why=broken`、页号越界 `why=page_index`——都不画一张空框。作业级还有冻结源字节总预算 `job.SOURCE_BYTES_BUDGET`（512 MiB，读之前按 `size_bytes` 判） | `test_actions_annotations_and_javascript_of_the_source_are_not_imported`、`test_an_encrypted_source_is_refused_structurally`、`test_an_owner_password_only_pdf_is_imported_like_a_plain_one`、`test_a_broken_source_and_a_missing_page_are_refused_structurally` |
 | 字节身份 | 作业里 `sources.read_frozen()` 核过 hash 的那一份字节经 `files` 交给写入器，写入器**再核一次** sha256（`source_identity`）——两道是有意冗余（RC-014）；没交字节 `source_bytes_missing` | `test_source_bytes_must_match_the_resource_identity`、`test_rendercore_job.py::test_a_panel_canvas_exports_a_vector_pdf…` |
 | 实例隔离 | 每个 `PdfWriter` 自己一份 `pikepdf.Pdf`、自己的外来文档表、自己的 XObject 缓存；8 线程并发写各自文档互不串 | `test_concurrent_writers_do_not_share_any_state` |
 | 对象模型库 | **正式裁决 pikepdf**（见 §2） | `pyproject.toml` `rendercore` extra |
@@ -64,7 +64,7 @@ pypdf 路线的实测代价（不采用，但写明）：pypdf 6.7.5 没有「�
   阅读器按 PDF 语义合成——写入器**不解释、不改写**。这不是降级，是「源页内部是什么，IR 不知道也不假装
   知道」（RC-013 `internal = "unknown"`）。本轮**不**支持的：给面板加一个 Tavotto 自己的 blend 模式 /
   软遮罩（画布上没有这个能力，能力表里也没有这个操作）。
-* 位图源解不开（`raster_unreadable` / `raster_kind_mismatch`）、源 PDF 打不开 / 加密 / 缺页：`source_unreadable`
+* 位图源解不开（`raster_unreadable` / `raster_kind_mismatch`）、源 PDF 打不开 / 要密码 / 缺页：`source_unreadable`
   结构化拒绝，`job` 落到该格式的 `format_failed`，不画空框、不用旧文件冒充。
 * PNG / TIFF：render child 收编后全 `rasterized`（ADR 0066）。
 
@@ -79,6 +79,7 @@ pypdf 路线的实测代价（不采用，但写明）：pypdf 6.7.5 没有「�
 | `_crop_clip` 顶原点归一化 | `placement.place(crop=…)` 同一约定 |
 | `_obj_morph` 顺时针取负 | `rotate_ccw(-deg)` 同一约定 |
 | 探测 `probe_asset` 忽略 /UserUnit | render child 的 probe（ADR 0066）按 UserUnit 乘——**有意差异**，记进 U08 对拍表 |
+| `show_pdf_page` 照常导入只有 owner 密码的源 | 同样导入（#516 之前候选在导出时拒绝，预览 / 探测却正常——两后端不一致已消除）；要 user 密码的两边都失败。对拍证据：`tests/test_export_pipeline.py::test_an_owner_password_only_source_exports_like_a_plain_one`（在 `candidate_parity.suites` 里，两后端逐字各跑一次） |
 
 ## 5. 反证（每条变异一次就红，`scratchpad/u07/mutate_a.py` 16 条 + 评审处置 4 条）
 
@@ -101,7 +102,7 @@ pypdf 路线的实测代价（不采用，但写明）：pypdf 6.7.5 没有「�
 | JPEG 直通不整张真解（Codex #463 P2） | `test_a_jpeg_that_readers_cannot_decode_is_not_passed_through`（12 字节假头、截半的真 JPEG） |
 | 记账挪到 JPEG 真解之后（Codex #463 第三轮 P2） | 同一条用例：预算只剩 2000 时把 Pillow 的 `load` 换成必爆探针，拒绝必须发生在解码之前 |
 | 文档级位图像素预算不累计（Codex #463 第二轮 P2） | `test_the_document_wide_raster_budget_stops_many_small_images_from_adding_up`（预算缩到用例尺度：同一张不重复计费、第三张不同的位图超线即 `raster_budget_exceeded`，JPEG 直通路同样记账） |
-| 打开后不判 `is_encrypted`（只有 owner 密码的 PDF，Codex #463 第四轮 P2） | `test_an_owner_password_only_pdf_is_still_refused_as_encrypted` |
+| ~~打开后不判 `is_encrypted`~~（Codex #463 第四轮 P2；#516 改判放行，这条变异作废） | 反方向：owner-only 被拒 → `test_an_owner_password_only_pdf_is_imported_like_a_plain_one` 红 |
 | `job` 不判冻结源字节总预算（Codex #463 第四轮 P2） | `test_rendercore_job.py::test_the_aggregate_frozen_source_bytes_budget_fails_before_any_byte_is_read`（`read_frozen` 一次没被调） |
 | 退化页盒不拦（Codex #463 P2） | `test_a_source_page_with_a_degenerate_box_is_a_source_error_not_a_crash`（MediaBox 零宽 → `source_unreadable(why=degenerate_box)`，不是 ZeroDivisionError） |
 
@@ -109,6 +110,10 @@ pypdf 路线的实测代价（不采用，但写明）：pypdf 6.7.5 没有「�
 
 * 面板旋转非 90 倍数（画布语义本来就没有）；多页源只取 `page_index`（默认 0，与旧后端 `src[0]` 同）。
 * 源页自带的注释、表单、动作、附件、JavaScript 一律不进产物（RC-046 的政策是「不带」而不是「清洗」）。
+* **只有 owner 密码的源放行**（#516 裁决 B，2026-09-24；推翻 Codex #463 第四轮 P2 的「打开后 `is_encrypted` 也拒」）：
+  这类文件任何阅读器都无密码打开，期刊 / 出版社发的 PDF 常见；原先的结果是画布上看得见、摆得好，直到导出才被拒，
+  且旧后端一直照常导入。权限位（禁止复制 / 修改 / 打印）不带进产物——与「注释 / 动作不带」同一个政策：Form 只收内容流
+  与资源。实测 RC4-40 / RC4-128 / AES-128 / AES-256 四档与未加密原件逐像素相同、字节数相同。要 user 密码的照旧拒绝。
 * 源 PDF 的字体没有被子集 / 合并——form 原样搬运，字体对象照旧；两个源各带一份 Helvetica 是正确的，不做跨源合并。
 * PNG 的 gAMA / iCCP / sRGB 块不解释（与旧后端相同）；16 bit 取高 8 位；交错 PNG 交给 Pillow。
 * 栅格（PNG / TIFF）、预览缓存、render child：ADR 0066。

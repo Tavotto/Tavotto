@@ -371,7 +371,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_canvas_tiff_with_transparent_background_carries_alpha",
-          "line": 1296,
+          "line": 1338,
           "contains": "def test_canvas_tiff_with_transparent_background_carries_alpha",
           "class": "user_contract",
           "note": "透明画布 TIFF 带 alpha"
@@ -676,7 +676,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_raster_original_pdf_honours_the_resolved_physical_size",
-          "line": 716,
+          "line": 758,
           "contains": "def test_raster_original_pdf_honours_the_resolved_physical_size",
           "class": "user_contract",
           "note": "位图源页面尺寸来自 originalspec（pHYs / 假定两档必须不同）"
@@ -684,7 +684,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_transparent_background_reaches_the_original_vector_path",
-          "line": 906,
+          "line": 948,
           "contains": "def test_transparent_background_reaches_the_original_vector_path",
           "class": "user_contract",
           "note": "透明背景到达原图矢量路径"
@@ -745,7 +745,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_a_png_source_is_copied_byte_for_byte",
-          "line": 895,
+          "line": 937,
           "contains": "def test_a_png_source_is_copied_byte_for_byte",
           "class": "user_contract",
           "note": "PNG 源逐字节复制（03 §6 必须精确）"
@@ -753,7 +753,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_a_jpeg_source_is_transcoded_not_copied_into_a_png_name",
-          "line": 874,
+          "line": 916,
           "contains": "def test_a_jpeg_source_is_transcoded_not_copied_into_a_png_name",
           "class": "user_contract",
           "note": "JPEG 源换容器不换像素"
@@ -789,7 +789,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_original_tiff_of_a_vector_source_rasterizes_at_the_requested_ppi",
-          "line": 1309,
+          "line": 1351,
           "contains": "def test_original_tiff_of_a_vector_source_rasterizes_at_the_requested_ppi",
           "class": "user_contract",
           "note": "矢量源按 ppi 栅格化"
@@ -797,7 +797,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_original_tiff_of_a_raster_source_keeps_the_grid_and_only_declared_density",
-          "line": 1321,
+          "line": 1363,
           "contains": "def test_original_tiff_of_a_raster_source_keeps_the_grid_and_only_declared_density",
           "class": "user_contract",
           "note": "位图源保网格；分辨率标签只写声明过的密度"
@@ -805,7 +805,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_canvas_tiff_is_the_same_page_as_png_pixel_for_pixel",
-          "line": 1271,
+          "line": 1313,
           "contains": "def test_canvas_tiff_is_the_same_page_as_png_pixel_for_pixel",
           "class": "user_contract",
           "note": "画布 TIFF 与 PNG 逐像素相同（Canvas.save_tiff）"
@@ -931,7 +931,7 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_raster_page_size_follows_the_file_not_a_constant",
-          "line": 786,
+          "line": 828,
           "contains": "probe_asset",
           "class": "user_contract",
           "note": "位图源导出页面尺寸"

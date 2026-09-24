@@ -238,7 +238,8 @@ def test_a_changed_or_pruned_file_always_goes_back_through_the_staged_copy(
     b.unlink()
     looked = c._identities.hits
     assert c.get("figs/a.pdf", src, 400) == b and b.exists()
-    assert c._identities.hits == looked + 1, "判据的前提：这一次确实走到了快路（指纹命中）"
+    # 判据的前提：这一次确实走到了快路（指纹命中）——锁外一次、拿到 staging 锁后复查一次，成品都不在才抄副本
+    assert c._identities.hits == looked + 2
     assert host.renders == 3 and len(stages) == 3 and c.fast_hits == 0
 
 
@@ -354,6 +355,82 @@ def test_concurrent_requests_for_the_same_key_render_exactly_once(cache, tmp_pat
     for t in threads:
         t.join()
     assert not errors and len(set(results)) == 1 and host.renders == 1
+
+
+def _in_parallel(n: int, work) -> list:
+    """n 个线程在同一道栅栏后同时起跑；回各自的结果，任何一个抛了就原样抛。"""
+    gate = threading.Barrier(n)
+    results: list = [None] * n
+    errors: list[BaseException] = []
+
+    def run(i: int) -> None:
+        try:
+            gate.wait()
+            results[i] = work(i)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if errors:
+        raise errors[0]
+    return results
+
+
+def _track_staging(c, monkeypatch) -> dict:
+    """数 `_stage()` 的调用次数与**同一时刻**在抄的份数（抄完那一刻多停 50 ms，把并发窗口撑开）。"""
+    seen = {"calls": 0, "live": 0, "peak": 0}
+    guard = threading.Lock()
+    real = c._stage
+
+    def spy(path):
+        with guard:
+            seen["calls"] += 1
+            seen["live"] += 1
+            seen["peak"] = max(seen["peak"], seen["live"])
+        try:
+            out = real(path)
+            time.sleep(0.05)
+            return out
+        finally:
+            with guard:
+                seen["live"] -= 1
+
+    monkeypatch.setattr(c, "_stage", spy)
+    return seen
+
+
+def test_concurrent_requests_for_one_source_copy_it_once(cache, tmp_path, monkeypatch, settled):
+    """#489 第 4 条：同一份源同时来 N 个请求，每键锁管不到「先抄副本才算得出键」那一步——以前 N 个请求各抄一份
+    `.src.part`，去重生效之前缓存卷上已经躺着 N 份。现在同源的副本路串行，排在后面的走指纹快路直接拿成品。"""
+    c, host = cache
+    host.delay = 0.1
+    src = _pdf(tmp_path)
+    seen = _track_staging(c, monkeypatch)
+    out = _in_parallel(8, lambda _i: c.get("figs/a.pdf", src, 400))
+    assert len(set(out)) == 1 and host.renders == 1
+    assert seen["calls"] == 1, seen
+    assert c.fast_hits == 7
+
+
+def test_an_untrusted_fingerprint_still_never_holds_two_copies_of_one_source_at_once(
+    cache, tmp_path, monkeypatch
+):
+    """指纹不可信（刚写出的源）时后面的请求没法凭指纹跳过抄副本——各抄一次，但同一时刻只有一份；不同宽度各渲一次。
+    另一个源不受这把锁牵连：两份源并发时峰值是 2。"""
+    c, host = cache
+    a, b = _pdf(tmp_path), _pdf(tmp_path, "b.pdf", b"%PDF-1.4 b")
+    seen = _track_staging(c, monkeypatch)
+    widths = [400, 800, 400, 800, 1200, 400]
+    out = _in_parallel(len(widths), lambda i: c.get("figs/a.pdf", a, widths[i]))
+    assert len(set(out)) == 3 and host.renders == 3
+    assert seen["calls"] == len(widths) and seen["peak"] == 1, seen
+    seen.update(calls=0, peak=0)
+    _in_parallel(2, lambda i: c.get(f"figs/{'ab'[i]}.pdf", (a, b)[i], 1600))
+    assert seen["peak"] == 2, "staging 锁按源分，不同源之间不串行"
 
 
 def test_a_zero_byte_cache_file_is_rebuilt_not_served(cache, tmp_path):

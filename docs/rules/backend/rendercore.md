@@ -65,7 +65,7 @@
   ——**不再自己转、自己乘**（RC-039：恰好一次）；资源随 form 各自一份，同名 /F1 / /X1 互不相干（RC-043），同一 (资源 key, 页)
   只搬一次（按字节身份去重，绝不按名字）。面板 opacity < 1 是**透明组**（组内 alpha 从 1 起算，RC-041），镜像是 `cm` 里的
   负缩放（RC-040）——两者都仍是矢量、文字层在；`opacity: 0` 是取值不是缺席（RC-042）。注释 / 动作 / JavaScript 不进产物，
-  加密 / 坏文件 / 缺页以 `source_unreadable` 拒绝（RC-046），不画空框。**源的编码原样照搬**（ADR 0077）：单段带过滤器的内容流
+  要密码 / 坏文件 / 缺页以 `source_unreadable` 拒绝（RC-046；只有 owner 密码的按普通 PDF 导入，#516），不画空框。**源的编码原样照搬**（ADR 0077）：单段带过滤器的内容流
   直接用源的已编码字节（`_keep_source_encoding`，解码后与 Form 明文逐字节相同才换）；保存**不交给** qpdf 的 `compress_streams`
   （它会把带 predictor 的 Flate 图片流解码重压），只压确实没有过滤器的流（`_compress_unfiltered` → `deflate.zlib_compress`，
   XMP /Metadata 保持明文）。
@@ -100,7 +100,7 @@
   `.part.png` / `stage.*.src.part` 不碰；任何线程的 `get()` 正要交出去的那张从算出键到 return 都钉着、谁的 prune 都不删，pruner 串行）；hash 与渲染绑在同一份字节上——源先一次读成缓存目录里
   的不可变副本（边抄边算 sha256，`.src.part`，用完即删），child 渲染的是副本，算键与渲染之间源被换掉哪怕又换回去都影响
   不到这张预览；**位图素材（PNG / JPEG / TIFF）不交给 PDFium**（它不认，`Data format error`）：副本没有扩展名，类型从源路径取（`rasterio.kind_of`），在父进程经 `rasterio.preview()` 解码（解码前按 `SOURCE_MAX_PIXELS` 记账）缩放、白底合成，只有 PDF 进 child；身份分块算不整个读进内存；**命中快路**（ADR 0077）：文件指纹（`sources.file_fingerprint`）与上次抄副本时相同**且**成品在，
-  就用那次副本上算出的 sha256 算键、直接交出成品——不抄、不读源；快路**从不渲染**，其余一切走副本路；**异常抛出**，不返回空白图 / 旧图。U07 不接 `app.py`；U08 把候选下的 `/api/render` 接到这里（ADR 0067），`source_sha1` 的 (mtime, size) memo 留在 PyMuPDF 路——这里的身份从副本上算；指纹快路复用的是副本上算出的那个 sha256，不是 memo 出来的身份。
+  就用那次副本上算出的 sha256 算键、直接交出成品——不抄、不读源；快路**从不渲染**，其余一切走副本路；**同一个源的副本路串行**（每源一把 staging 锁、与每键锁同表，锁序 staging → 每键；#489 第 4 条）：拿到锁先复查快路，排在前面的刚渲完的直接交出，同一时刻一个源最多一份副本；**异常抛出**，不返回空白图 / 旧图。U07 不接 `app.py`；U08 把候选下的 `/api/render` 接到这里（ADR 0067），`source_sha1` 的 (mtime, size) memo 留在 PyMuPDF 路——这里的身份从副本上算；指纹快路复用的是副本上算出的那个 sha256，不是 memo 出来的身份。
 - **派生值按文件指纹复用，身份仍是字节 hash**（ADR 0077，`sources.FingerprintMemo`）：`file_fingerprint` = (设备, inode, 字节数,
   mtime_ns, ctime_ns)，**Windows 上不复用**（`st_ctime` 是创建时间，看不见改写；指纹恒为 None），只决定「能不能复用已经算出来的派生值」（`probe_asset` 的尺寸、预览键里的内容 sha256），从不进身份——冻结 / 写入 /
   渲染一律按 sha256 核。**最后一次改动离现在不到 `RACY_WINDOW_NS`（2 s）的不记**：时间戳按 tick 走（Linux ~ms、Windows ~16 ms、FAT 2 s），

@@ -14,7 +14,7 @@ U02 的受限 emitter 收编进产品：pikepdf（qpdf）做对象模型 / 序�
   /Matrix，本模块只看 BBox 经 /Matrix 映射后的**可见框**，于是恰好应用一次（RC-039）；可见框由
   qpdf 定（TrimBox → CropBox → MediaBox），非零原点的页盒因此天然正确（RC-038）。crop / 翻转 /
   旋转 / 填满目标框的顺序只在 `placement.place()` 一处。注释、动作、附件、JavaScript **不进** form
-  （只有内容流与资源会被 `as_form_xobject` 收进去），加密的源以 `source_unreadable` 拒绝（RC-046）。
+  （只有内容流与资源会被 `as_form_xobject` 收进去），要密码才能打开的源以 `source_unreadable` 拒绝（RC-046；只有 owner 密码的按普通 PDF 导入）。
   `opacity < 1` 时整页包成透明组再画——组内 alpha 从 1 起算，源页内部重叠不被二次压暗
   （RC-041），**仍是矢量、文字层随 form 保留**（RC-040）。
 * `Image`：位图经 `rasterio.decode()` 成 `RasterBuffer`，写成 8 bit DeviceRGB 的 Image XObject（Flate），
@@ -319,14 +319,9 @@ class PdfWriter:
                 {"figure": res.source_id, "object_id": node.object_id, "why": "broken"},
             ) from exc
         self._foreign_docs.append(src)
-        if src.is_encrypted:
-            # 只有 owner 密码（user 密码为空）的 PDF：pikepdf.open 不抛 PasswordError 就打开了——那仍是加密文件，
-            # 合同说加密源一律拒绝（RC-046），不许把它解密后写进产物（Codex #463 第四轮 P2）
-            raise WriterError(
-                "source_unreadable",
-                f"{res.source_id}: 源 PDF 加密（只有 owner 密码），本轮不打开加密文件（RC-046）",
-                {"figure": res.source_id, "object_id": node.object_id, "why": "encrypted"},
-            )
+        # 只有 owner 密码（user 密码为空）的 PDF 走到这里就是打开了，按普通 PDF 导入（#516 裁决 B，ADR 0065 RC-046）：
+        # 任何阅读器都无密码打开它，期刊 / 出版社发的 PDF 常见这种权限限制；qpdf 读时透明解密，搬进来的内容流与资源
+        # 同未加密的原件相同，产物不加密、不带权限位。要 user 密码的在上面的 PasswordError 就拒了
         if node.page_index >= len(src.pages):
             raise WriterError(
                 "source_unreadable",

@@ -598,6 +598,48 @@ def test_missing_source_is_a_structured_error(env):
     assert body["error"]["code"] in ("source_missing", "export_failed")
 
 
+def _reencrypt(figs: Path, name: str, *, user_pw: str) -> None:
+    with pymupdf.open(figs / "p1.pdf") as doc:
+        doc.save(
+            figs / name,
+            encryption=pymupdf.PDF_ENCRYPT_AES_256,
+            owner_pw="o",
+            user_pw=user_pw,
+            permissions=pymupdf.PDF_PERM_ACCESSIBILITY,  # 禁复制 / 修改 / 打印：期刊 PDF 常见的那种限制
+        )
+    with pymupdf.open(
+        figs / name
+    ) as doc:  # 前提：确实加密了；owner-only 无密码可开，要 user 密码的打不开
+        assert bool(doc.needs_pass) == bool(user_pw)
+        assert user_pw or doc.metadata["encryption"]
+
+
+def test_an_owner_password_only_source_exports_like_a_plain_one(env):
+    """#516 裁决 B：只有 owner 密码（无密码可打开、只限制权限）的源在画布上能摆，导出就得照常出——PDF 与 PNG
+    都 done，产物本身不加密、文字层还在。两个后端逐字跑这一条（`candidate_parity.suites`）。"""
+    client, figs = env
+    _reencrypt(figs, "owner.pdf", user_pw="")
+    obj = {"type": "panel", "id": "owner.pdf", "x_mm": 10, "y_mm": 10, "w_mm": 40, "h_mm": 30}
+    spec = _canvas(formats=["pdf", "png"])
+    spec["canvas"]["objects"] = [obj]
+    status, body = _post(client, spec)
+    assert status == 200 and body["status"] == "done", body
+    assert all(o["status"] == "done" for o in body["outputs"]), body["outputs"]
+    with pymupdf.open(_dir(body) / _out(body, "pdf")["name"]) as doc:
+        assert not doc.needs_pass and not doc.metadata.get("encryption")
+        assert "PanelText" in doc[0].get_text()
+
+
+def test_a_source_that_needs_a_user_password_still_fails(env):
+    client, figs = env
+    _reencrypt(figs, "locked.pdf", user_pw="u")
+    obj = {"type": "panel", "id": "locked.pdf", "x_mm": 10, "y_mm": 10, "w_mm": 40, "h_mm": 30}
+    spec = _canvas()
+    spec["canvas"]["objects"] = [obj]
+    _, body = _post(client, spec)
+    assert body["status"] == "failed", body
+
+
 # ---------------------------- 旧契约一个字节不变 -------------------------------
 def test_legacy_payload_keeps_the_timestamped_name_and_files_shape(env):
     """老标签页与 CI 脚本读的是 `files[]`，写的是 `<stem>_<时间戳>.<ext>`。"""

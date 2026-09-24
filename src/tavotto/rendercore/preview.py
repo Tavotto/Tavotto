@@ -25,6 +25,10 @@ ADR 0077 加了**命中快路**：文件指纹与上次抄副本时相同且成�
 
 * 同键并发只让一个线程真渲染（每键一把锁，锁表封顶、只丢**登记使用者为零**的——拿到手还没 acquire 的也算在用，
   `lock.locked()` 看不见那一刻）；锁内复查一次，看到成品直接用；
+* **同一个源的副本路串行**（每个源一把 staging 锁，与每键锁同一张表，#489 第 4 条）：副本要先抄完才算得出键，
+  每键锁管不到抄副本那一步——一份几百 MB 的 PDF 同时来 N 个请求，不串行就先在缓存卷上躺下 N 份副本。拿到
+  staging 锁先再走一次指纹快路：排在前面的那个抄完、渲完、记下了身份，后面的直接交出成品、一个字节都不抄；
+  指纹不可信（刚写出的源 / 平台开关关着）时后面的仍各抄一次，但**同一时刻只有一份**。锁序固定为 staging → 每键；
 * 渲染进临时文件（**后缀仍是 .png**，同一目录）再 `os.replace`：读者要么看到旧的（完整）要么看到新的（完整）；
 * **Windows 上 `os.replace` 盖不掉正被读的目标**（`PermissionError`）：目标已在且非空 → **退让**（同键字节
   必然相同）；目标不存在 / 零字节才重试，重试完仍不行如实抛出；
@@ -209,8 +213,7 @@ class PreviewCache:
             entry.users -= 1
 
     @contextlib.contextmanager
-    def _lock_for(self, cached: Path) -> Iterator[None]:
-        key = str(cached)
+    def _lock_for(self, key: str) -> Iterator[None]:
         entry = self._reserve(key)
         try:
             with entry.lock:
@@ -261,44 +264,56 @@ class PreviewCache:
                 )
             )
 
-        before, known = self._identities.lookup(path)
-        if known is not None:
-            cached = key_of(str(known))
-            self._pin(cached)
-            try:
-                if self._usable(cached):
-                    self.fast_hits += 1
-                    return cached
-            finally:
-                self._unpin(cached)
+        def fast_path() -> tuple[tuple | None, Path | None]:
+            """`(此刻的指纹, 可直接交出的成品或 None)`。"""
+            before, known = self._identities.lookup(path)
+            if known is not None:
+                cached = key_of(str(known))
+                self._pin(cached)
+                try:
+                    if self._usable(cached):
+                        self.fast_hits += 1
+                        return before, cached
+                finally:
+                    self._unpin(cached)
+            return before, None
 
-        staged, content = self._stage(path)
-        try:
-            # 副本的 hash 就是这份文件此刻的内容身份——抄的过程中文件没动（指纹前后相同）才记下
-            self._identities.store(path, before, content)
-            cached = key_of(content)
-            self._pin(cached)
+        _, hit = fast_path()
+        if hit is not None:
+            return hit
+
+        with self._lock_for(f"stage:{os.path.realpath(path)}"):
+            # 排在前面的同源请求刚抄完、渲完、记下了身份：这里就命中，不再抄第二份（#489 第 4 条）
+            before, hit = fast_path()
+            if hit is not None:
+                return hit
+            staged, content = self._stage(path)
             try:
-                if self._usable(cached):
-                    return cached
-                with self._lock_for(cached):
+                # 副本的 hash 就是这份文件此刻的内容身份——抄的过程中文件没动（指纹前后相同）才记下
+                self._identities.store(path, before, content)
+                cached = key_of(content)
+                self._pin(cached)
+                try:
                     if self._usable(cached):
                         return cached
-                    cached.unlink(missing_ok=True)  # 零字节 = 上一次写到一半就断电 / 被杀
-                    self._write(
-                        staged,
-                        width_px,
-                        cached,
-                        transparent=transparent,
-                        page=page,
-                        kind=kind_of(path),
-                    )
-                    self.prune()
-                return cached
+                    with self._lock_for(str(cached)):
+                        if self._usable(cached):
+                            return cached
+                        cached.unlink(missing_ok=True)  # 零字节 = 上一次写到一半就断电 / 被杀
+                        self._write(
+                            staged,
+                            width_px,
+                            cached,
+                            transparent=transparent,
+                            page=page,
+                            kind=kind_of(path),
+                        )
+                        self.prune()
+                    return cached
+                finally:
+                    self._unpin(cached)
             finally:
-                self._unpin(cached)
-        finally:
-            staged.unlink(missing_ok=True)
+                staged.unlink(missing_ok=True)
 
     def _pin(self, cached: Path) -> None:
         with self._pins_guard:
