@@ -228,6 +228,15 @@ const pinQueue = serialQueue()
  */
 let pinnedRev = 0
 
+/**
+ * 两份列表（最近 / 收藏 / 已打开）的请求序号：`init` 与 `refreshRecent` 每发一次 +1，
+ * 回来时只认**最新那一次**、且发请求那一刻的 pj 仍是此刻的 pj。条目里的 `current` /
+ * `id` / `opened` 是按发请求时的项目算的：连切 A → B 时 A 那次刷新晚到的话，会把
+ * A 标成「当前」、真正的当前 B 反而能点（Codex #550）。与 assetStore 等同一条纪律：
+ * 请求序号挡旧响应、发请求那一刻的 pj 挡串项目。
+ */
+let listSeq = 0
+
 export const useProjectStore = create<ProjectState>((set, get) => {
   /** 切项目的前端换代本体；对外的两个入口都经 `switchQueue` 串行地调它 */
   const adoptNow: ProjectState['adoptOpenedProject'] = async (status, opts) => {
@@ -315,16 +324,19 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       }
       setCurrentProjectLabel(project.open ? project.name : null)
       const rev = pinnedRev
+      const seq = ++listSeq
+      const pj = currentProjectId()
       const [{ recent, pinned }, opened] = await Promise.all([
         fetchProjectLists(),
         fetchOpenProjects().catch(() => []),
       ])
+      // 列表过期（期间又发过一次、或换了项目）时项目与阶段照常认，只是不写旧列表
+      const fresh = seq === listSeq && pj === currentProjectId()
       set({
         project,
-        recent,
-        opened,
         phase: project.open ? 'open' : 'none',
-        ...(rev === pinnedRev ? { pinned } : {}),
+        ...(fresh ? { recent, opened } : {}),
+        ...(fresh && rev === pinnedRev ? { pinned } : {}),
       })
     } catch {
       // 后端不可达时也进 Picker——它会在重试里继续探测
@@ -335,10 +347,13 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   refreshRecent: async () => {
     try {
       const rev = pinnedRev
+      const seq = ++listSeq
+      const pj = currentProjectId()
       const [{ recent, pinned }, opened] = await Promise.all([
         fetchProjectLists(),
         fetchOpenProjects().catch(() => []),
       ])
+      if (seq !== listSeq || pj !== currentProjectId()) return
       set({ recent, opened, ...(rev === pinnedRev ? { pinned } : {}) })
     } catch {
       /* 列表刷新失败不致命 */

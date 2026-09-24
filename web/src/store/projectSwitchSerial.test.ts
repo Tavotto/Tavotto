@@ -82,6 +82,7 @@ beforeEach(() => {
     phase: 'open',
     project: { open: true, id: 'p0', name: 'start', figures_dir: '/figs/start' },
     pinned: [entry('/old')],
+    recent: [], // 不重置的话上一条用例写进去的会让下一条的「不含 X」断言替它背锅
     switching: false,
   })
   setCurrentProjectId('p0')
@@ -204,5 +205,32 @@ describe('刷新不盖掉收藏', () => {
     take('/api/projects/recent').release(200, { recent: [], pinned: [entry('/srv')] })
     await refresh
     expect(useProjectStore.getState().pinned.map((p) => p.path)).toEqual(['/srv'])
+  })
+})
+
+describe('列表刷新只认最新那一次', () => {
+  it('先发的晚到：丢掉，不把旧项目标成当前', async () => {
+    holdRecent = true
+    const store = useProjectStore.getState()
+    const older = store.refreshRecent() // 在项目 A 下发出
+    const newer = store.refreshRecent()
+    await settle()
+    const [reqOld, reqNew] = pending.filter((p) => p.url.includes('/api/projects/recent'))
+    reqNew.release(200, { recent: [{ ...entry('/figs/B'), current: true }], pinned: [] })
+    await newer
+    reqOld.release(200, { recent: [{ ...entry('/figs/A'), current: true }], pinned: [] })
+    pending = pending.filter((p) => p !== reqOld && p !== reqNew)
+    await older
+    expect(useProjectStore.getState().recent.map((r) => r.path)).toEqual(['/figs/B'])
+  })
+
+  it('发出后换了项目：回来的那份属于旧项目，丢掉', async () => {
+    holdRecent = true
+    const refresh = useProjectStore.getState().refreshRecent()
+    await settle()
+    setCurrentProjectId('p-other') // 期间换了项目（换代本身会另发一次刷新）
+    take('/api/projects/recent').release(200, { recent: [{ ...entry('/figs/A'), current: true }], pinned: [] })
+    await refresh
+    expect(useProjectStore.getState().recent.map((r) => r.path)).not.toContain('/figs/A')
   })
 })

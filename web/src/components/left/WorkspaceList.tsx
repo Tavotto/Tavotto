@@ -118,6 +118,7 @@ export function WorkspaceList() {
                   hint={hints.get(e.path)}
                   busy={busyPath === e.path}
                   switching={switching}
+                  current={e.path === currentPath}
                   pinned
                   onOpen={() => void go(e.path)}
                   // 筛选中索引对不上真实顺序：拖动与上移 / 下移都停用（同画布列表）
@@ -137,6 +138,7 @@ export function WorkspaceList() {
                 hint={hints.get(e.path)}
                 busy={busyPath === e.path}
                 switching={switching}
+                current={e.path === currentPath}
                 pinned={false}
                 onOpen={() => void go(e.path)}
                 onRemove={() => void useProjectStore.getState().remove(e.path)}
@@ -272,6 +274,7 @@ function ProjectRow({
   hint,
   busy,
   switching,
+  current,
   pinned,
   onOpen,
   onRemove,
@@ -283,6 +286,12 @@ function ProjectRow({
   busy: boolean
   /** 有一次切换正在进行：这一行也不能点（切换串行，见 projectStore） */
   switching: boolean
+  /**
+   * 这一行是不是本标签页此刻的项目——由调用方按 `project.figures_dir` 算，**不读
+   * `entry.current`**：那是上一次刷新时按当时的 pj 算的，切换完成到刷新回来之间是旧的
+   * （旧项目被置灰、真正的当前项目反而能点）。「最近」区排除当前项目用的也是同一个判据。
+   */
+  current: boolean
   pinned: boolean
   onOpen: () => void
   /** 只有最近区的行能「从列表移除」；收藏区的行取消收藏即可 */
@@ -295,13 +304,13 @@ function ProjectRow({
   }
 }) {
   useTranslation('project')
-  const openable = entry.exists && !entry.current && !busy && !switching
+  const openable = entry.exists && !current && !busy && !switching
   // 当前项目的行是选中底：ink-3 在上面过不了 4.5:1，元数据升一档（同顶上的当前卡片）
-  const meta = entry.current ? 'text-ink-2' : 'text-ink-3'
+  const meta = current ? 'text-ink-2' : 'text-ink-3'
   const togglePin = () => void useProjectStore.getState().togglePin(entry.path)
   const moveBy = (delta: number) =>
     void useProjectStore.getState().movePinned(entry.path, { delta })
-  const canNewTab = !!entry.id && !entry.current
+  const canNewTab = !!entry.id && !current
   // 菜单里一项都没有时不摆「…」（筛选中的收藏行、且项目没开着）
   const hasMenu = !!order || canNewTab || !!onRemove
 
@@ -334,14 +343,14 @@ function ProjectRow({
       }}
       className={cn(
         // 失效行不整行压淡：那句红字要过 4.5:1，压到 45% 就过不了；只把名字降一档
-        listRowClass({ selected: entry.current }),
+        listRowClass({ selected: current }),
         'h-auto gap-2 px-2 py-1.5',
       )}
     >
       <button
         onClick={onOpen}
         disabled={!openable}
-        aria-current={entry.current || undefined}
+        aria-current={current || undefined}
         aria-label={translate('picker.openProject', { ns: 'project', name: entry.name })}
         title={entry.tutorial ? undefined : entry.path}
         className="min-w-0 flex-1 text-left outline-none focus-visible:focus-ring disabled:cursor-default"
@@ -350,7 +359,7 @@ function ProjectRow({
           <span className={cn('truncate text-sm', entry.exists ? 'text-ink' : 'text-ink-3')}>
             {entry.name}
           </span>
-          {entry.opened && !entry.current && (
+          {entry.opened && !current && (
             <span className={cn('shrink-0 text-xs font-normal', meta)}>{ws('openedElsewhere')}</span>
           )}
           {busy && (

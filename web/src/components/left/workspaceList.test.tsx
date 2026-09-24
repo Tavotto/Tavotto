@@ -199,6 +199,21 @@ describe('WorkspaceList', () => {
   })
 })
 
+describe('当前项目按本标签页的项目认', () => {
+  it('列表里的 current 还是上一次刷新的（旧项目），行的「当前」跟着 store 走', async () => {
+    useProjectStore.setState({
+      pinned: [entryOf('/a/Supplementary', { current: true }), entryOf(CURRENT)],
+    })
+    await mount()
+    const btn = (path: string) =>
+      section('pinned')!.querySelector<HTMLButtonElement>(`button[title="${path}"]`)!
+    expect(btn(CURRENT).disabled).toBe(true)
+    expect(btn(CURRENT).getAttribute('aria-current')).toBe('true')
+    expect(btn('/a/Supplementary').disabled).toBe(false)
+    expect(btn('/a/Supplementary').hasAttribute('aria-current')).toBe(false)
+  })
+})
+
 describe('收藏拖动', () => {
   const rows = () => [...section('pinned')!.querySelectorAll<HTMLElement>('[data-workspace-row]')]
   const fire = (el: Element, type: string) => {
