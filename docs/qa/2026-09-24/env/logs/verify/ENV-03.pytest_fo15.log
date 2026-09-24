@@ -1,0 +1,15 @@
+# verify rerun ENV-03/pytest_fo15
+# cmd: PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_foundation_first_open.py::test_fo15_explicit_interpreter_without_matplotlib_stops_with_a_reason -p no:cacheprovider -rs -v
+# head: 1f9f29099abe7d0448c44039e150ac9020cc6077
+# start(UTC): 2026-09-24T19:10:15Z
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env
+configfile: pytest.ini
+collected 1 item
+
+tests/test_foundation_first_open.py .                                    [100%]
+
+============================== 1 passed in 3.50s ===============================
+# end(UTC): 2026-09-24T19:10:19Z
+# exit_code: 0

@@ -1,0 +1,81 @@
+# case: ENV-01 项目 venv 首开
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# 各节开头是逐字命令与时间；<worktree> 是仓库根，<scratch> 是 QA scratch 目录
+
+===== 探针 ENV-01（已还原树）（原始日志 ENV-01.probe.log）=====
+$ cd <worktree> && TAVOTTO_FONTS_DIR=<scratch>/fonts PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/e1_http_probe.py ENV-01 --e1 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final
+# date: 2026-09-24T18:55:55Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  tree: clean-src
+[02:55:55] scenario=ENV-01 e1=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 port=5303
+[02:55:55] PASS 前提：Tavotto 自身 / 内置解释器里 import 不到 qa_probe_pkg :: /Volumes/Projects/Tavotto/.venv/bin/python
+[02:56:10] PASS prepare 终局 ready（无需输入）
+[02:56:10] PASS 计划选择来源 = project_venv :: project_venv
+[02:56:10] PASS 计划 trigger = first_open :: first_open
+[02:56:10] PASS 准备回执 python_source = project_venv、generation = 1、pid_check ok :: {'python_source': 'project_venv', 'generation': 1, 'pid_check': 'ok', 'completeness': 'complete'}
+[02:56:10] PASS 首次渲染: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[02:56:10] PASS 首次渲染: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[02:56:10] PASS 首次渲染: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/bin/python
+[02:56:10] PASS 首次渲染: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv
+[02:56:10] PASS 首次渲染: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[02:56:10] PASS 首次渲染: 包版本 :: 1.0.0
+[02:56:10] PASS 首次渲染: 图中完整点序列 :: [0, 9, 2, 10]
+[02:56:10] PASS 找到可编辑的曲线颜色 :: ['label', 'color', 'linewidth', 'linestyle', 'alpha', 'visible', 'marker', 'markersize', 'markerfacecolor', 'markeredgecolor', 'zorder']
+[02:56:10] PASS 编辑后渲染: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[02:56:10] PASS 编辑后渲染: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[02:56:10] PASS 编辑后渲染: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/bin/python
+[02:56:10] PASS 编辑后渲染: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv
+[02:56:10] PASS 编辑后渲染: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[02:56:10] PASS 编辑后渲染: 包版本 :: 1.0.0
+[02:56:10] PASS 编辑后渲染: 图中完整点序列 :: [0, 9, 2, 10]
+[02:56:10] PASS 导出 status == done :: done
+[02:56:10] PASS 导出 PDF 文字层含 A 的点序列 :: 0 1 2 3
+0
+2
+4
+6
+8
+10
+QA-E1 [0, 9, 2, 10]
+ID {"base_prefix": "/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13", "executable": "/private/tmp/claude-501/-Volumes-Projects-
+[02:56:10] PASS 导出 PDF 文字层不含 B 的点序列
+[02:56:10] PASS 导出 PDF 文字层含 A 的包路径
+[02:56:10] PASS 导出 manifest 回执 python_version 与 A 一致 :: 3.13.11
+[02:56:11] PASS 服务日志里没有 missing_dependency（没有先在内置环境跑错一次）
+[02:56:11] PASS 副作用：A 包清单不变 :: {'dists_added': [], 'dists_removed': [], 'files_added': [], 'files_removed': [], 'files_changed': []}
+[02:56:11] PASS 副作用：A 文件（白名单外）不变 :: {'dists_added': [], 'dists_removed': [], 'files_added': [], 'files_removed': [], 'files_changed': []}
+[02:56:11] PASS 副作用：B 包清单不变 :: {'dists_added': [], 'dists_removed': [], 'files_added': [], 'files_removed': [], 'files_changed': []}
+[02:56:11] PASS 副作用：B 文件（白名单外）不变 :: {'dists_added': [], 'dists_removed': [], 'files_added': [], 'files_removed': [], 'files_changed': []}
+[02:56:11] RESULT ENV-01: PASS (30/30 checks)
+# exit_code: 0
+
+===== pytest test_first_open_environment.py（原始日志 test_first_open_environment.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_environment.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:28:57Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 13 items
+
+tests/test_first_open_environment.py ...........ss                       [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_first_open_environment.py:350: not_run：TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON 没有指向「支持矩阵外」的真实解释器
+SKIPPED [1] tests/test_first_open_environment.py:434: not_run：TAVOTTO_FOUNDATION_ALT_PYTHON 没有指向「另一个 minor 且装了 matplotlib」的解释器
+======================== 11 passed, 2 skipped in 31.18s ========================
+# exit_code: 0
+
+===== pytest test_project_env.py（原始日志 test_project_env.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_project_env.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:30:59Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 49 items
+
+tests/test_project_env.py .............................................. [ 93%]
+...                                                                      [100%]
+
+======================== 49 passed in 81.19s (0:01:21) =========================
+# exit_code: 0
+

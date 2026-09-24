@@ -1,0 +1,290 @@
+{
+ "section": "env（规范 §3 ENV-01…ENV-08）",
+ "audited_branch": "qa/2026-09-24-env",
+ "audited_commit": "1f9f29099abe7d0448c44039e150ac9020cc6077",
+ "baseline": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+ "verified_at_utc": "2026-09-24T19:04Z–19:30Z",
+ "verifier_environment": {
+  "os": "macOS 27.0 arm64",
+  "app_python": "/Volumes/Projects/Tavotto/.venv/bin/python 3.13.11",
+  "e1": "make_e1.py 用 Homebrew python@3.13 与 uv（离线缓存）独立重建在复核 scratch；figure.py 与两个 wheel 的 sha256 与台账一致",
+  "fonts": "从主仓库 src/tavotto/resources/fonts 复制到 scratch，fetch_fonts.py --check 13 张全部一致，TAVOTTO_FONTS_DIR 指向它",
+  "worktree": "分支已被执行者的 worktree 占用，复核在同一提交的 detached worktree 里做，提交后再把分支快进到复核提交",
+  "ports": "逐字重跑的探针把端口写死为 5303（执行者已结束，运行前确认没有被占用）；复核自己补写的探针用 5403；没有碰 5089 和用户数据目录",
+  "product_code": "未改动；M2 变异已用 git checkout 还原，git status 确认干净"
+ },
+ "ledger_integrity": {
+  "all_case_ids_present": true,
+  "required_fields_present": "基本齐全",
+  "evidence_and_artifact_sha256_match": true,
+  "note": "8 条用例的 case_id 齐全。0.1 节的主要字段都在（case_id / expected_outcome / product_outcome / test_verdict / source_sha / environment / fixtures+sha256 / entry / artifacts+sha256 / first_failed_invariant），缺「权威渲染请求序号」和「项目/文档版本」，本节不涉及随机种子和发行物 SHA。每条 evidence.log、artifacts 里的 PDF、仓库内的 fixture（make_e1.py）sha256 都与记录一致。raw_log 指向执行者 scratch 里的原始日志，没有入库，无法按 hash 复核，复核用自己重跑的日志代替。",
+  "missing_fields": [
+   "权威渲染请求序号（0.1 节要求；台账没有这个字段，本节探针也没有记录）",
+   "项目/文档版本（台账没有单独字段）"
+  ]
+ },
+ "cases": [
+  {
+   "case_id": "ENV-01",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "rerun_results": {
+    "probe": "30/30 PASS, exit 0",
+    "test_first_open_environment.py": "11 passed 2 skipped, exit 0",
+    "test_project_env.py": "49 passed, exit 0"
+   },
+   "mutation_rechecked": "M2（pool.py:1072 `if discover:` → `if False:`）亲自复做：探针 ENV-01 27/30 红，红在「计划来源=project_venv」「trigger=first_open」「回执 generation=1」三条；已 git checkout 还原、git status 干净",
+   "note": "逐字重跑结果与原记录一致。判据主语核对：首次执行前选中项目解释器由 plan.environment.source/trigger 与回执 generation==1 判定（M2 下变红，证明它量到了「先在内置跑错一次再接手」）；身份/包 __file__/完整点序列 [0,9,2,10] 来自脚本在 worker 内自报，导出文字层由 pypdfium2 独立读取。M2 下身份与点序列判据仍绿（产品靠 missing_dependency 接手补救）——所以 pass 只能靠 generation/source 那三条，执行者已如实说明。保留的缺口（未降级理由：均已记在 gaps/coverage=部分覆盖）：只测 HTTP；编辑后渲染复用热会话，导出是否重新执行脚本未单独区分；共享 .venv 实装 matplotlib 3.11.2，故「内置环境」= Tavotto 自身解释器。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-01.probe.log",
+     "sha256": "2baf90fc68d4c461742af603bea4465ac6385010f8647f5e955c2cf023b7bddf"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-01.pytest_first_open_env.log",
+     "sha256": "4f5a7da57e09ffc12dbf567aa1d098a384f886897a10da0e489a1cacb53b54a2"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-01.pytest_project_env.log",
+     "sha256": "fed8336539d05fb8cdc8012c15e139fa909647d83dcab7ebb4a7a810c290db7b"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-01.M2_mutated_probe.log",
+     "sha256": "ee1a3b8937c2dbf0c3ad04d4f9d0da4e8cd6827b0d6d7962b39e871d1c58df5b"
+    }
+   ]
+  },
+  {
+   "case_id": "ENV-02",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "rerun_results": {
+    "probe": "31/31 PASS, exit 0（含前提：PATH 上第一个 python 是 B 且 import 得到 qa_probe_pkg）",
+    "test_first_open_same_name_package.py": "2 passed, exit 0"
+   },
+   "mutation_rechecked": "M2 亲自复做：新用例 1 failed 1 passed（`assert 'current_process' == 'project_venv'`，第 146 行），探针 ENV-02 28/31；还原后 2 passed",
+   "note": "与原记录一致。新用例读过：前提（两份都 import 得到、PATH 上 python 拿到 B）独立探针核对，判据比较完整点序列、包 __file__、sys.prefix 与回执 runtime.prefix，主语正确，未调用生产代码生成期望值。夹具确定性：重建的 figure.py 与两个 wheel sha256 与台账逐字一致。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-02.probe.log",
+     "sha256": "5100e078187e424ec4619006db4822c58c1c502d455848cab7e517bd92230e28"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-02.pytest_same_name.log",
+     "sha256": "6b104255897c3c8c959d87e1fd692507dfe8bfeeacf7052283468266b1b5eec3"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-02.M2_mutated_pytest.log",
+     "sha256": "dccb7087e079ec7cdd29c5619a8691ca78e1fc0b0964e03aef206addb694630b"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-02.M2_mutated_probe.log",
+     "sha256": "de75935186426efa59f27b8b774f2074cdbb07d304f9e9eab2790e400a370388"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-02.M2_restored_pytest.log",
+     "sha256": "5bf0a9fbce035e389cd5b826c64a9f96bc9bab208cc2485b20b5e6c9545c1769"
+    }
+   ]
+  },
+  {
+   "case_id": "ENV-03",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "rerun_results": {
+    "probe": "26/27 FAIL, exit 1（唯一红：(c) 回 internal_error/FileNotFoundError）",
+    "env03_configured_python_vanishes.py": "DEVIATION, exit 1",
+    "pytest test_first_open_environment + same_name": "13 passed 2 skipped, exit 0",
+    "FO15": "1 passed"
+   },
+   "mutation_rechecked": "未复做 M1/M3（选 M2 作为本节最关键的一条复做）",
+   "note": "缺陷 (c) 复现，结论成立。补充反证：执行者的 (d') 判据只看 prepare=ready，而 ready 的计划写 source=current_process（Tavotto 自身解释器，没有 qa_probe_pkg）。复核加跑 extra_d_render_after_clear：清掉失效的项目手选后渲染最终成功且在项目 .venv A 里跑（点序列 [0,9,2,10]），但环境状态变为 trigger=missing_dependency——即清除后没有重走首开发现，而是先在自身解释器里跑、缺包后才接手 A；准备计划对执行身份的说明与实际不符。这不改变 fail 判定，但「(d') 纠正后成功」的原判据偏弱，应记为观察（首跑前未选项目环境 / 计划来源与实际解释器不一致）。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-03.probe.log",
+     "sha256": "4df52bc293c26403ef2c27d8e0a49be843708b6c3d6ebad832d000e0ee7c1658"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-03.repro_vanish.log",
+     "sha256": "0b5f30ed5388a475c40a4964952957a7aa3ad2f63aad8da4b6b235e6a23f1d9c"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-03.pytest_foe_same_name.log",
+     "sha256": "fb42896a27ba0a4603ac4932ae795ea29a9dd846663771345330da12eb935e95"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-03.pytest_fo15.log",
+     "sha256": "b00bd32d8601b1054ea216852a39a6921e9d3560e86cffd0bf0919cdcb84e76a"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-03.extra_d_render_after_clear.log",
+     "sha256": "d6434a01be39ffb5a4fda478a493ba187137d9de5a2b8f4dfd283b0555050003"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/env03_d_render_after_clear.py",
+     "sha256": "b68a9c040965e429cb1ce9832081eee57866b59fd2dfa6a9763826611348567a"
+    }
+   ]
+  },
+  {
+   "case_id": "ENV-04",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "rerun_results": {
+    "probe": "36/37 FAIL, exit 1（红在同进程换 Python 后 prepare=session_dead、invalidated=None、discovery_ok=True）",
+    "env04_replaced_venv_stale_probe.py": "DEVIATION, exit 1"
+   },
+   "note": "复现一致。源码佐证：pool.py 1062–1066 行注释写明「每个进程每条解释器只做一次」复检（_project_python_ok 缓存），与规范「旧探测失效并重新验证」冲突，属于产品设计与合同不符。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-04.probe.log",
+     "sha256": "3c242a2786bfe8bb8e6644af785cf26655db46ddae6956bde5626f5c6e46d6eb"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-04.repro_stale_probe.log",
+     "sha256": "e5c0ba7d09faaaece08fe8ddff1b8f509049aef2a759d4adad332b70b01abad8"
+    }
+   ]
+  },
+  {
+   "case_id": "ENV-05",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "rerun_results": {
+    "probe": "12/13 FAIL, exit 1（红在已安装包内部缺子模块被归 missing_dependency）",
+    "env05_submodule_misclassified.py": "DEVIATION, exit 1",
+    "test_dependency_plan.py": "100 passed 1 skipped, exit 0"
+   },
+   "note": "复现一致。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-05.probe.log",
+     "sha256": "eb1f52e080871d2fbaa51df1f6206b70c358fbff7f0c29a3f2acfc916323bf83"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-05.repro_classifier.log",
+     "sha256": "4ae9ae629b856f25ed8f1412acb1a2884f57091e4dcb12d0f92b888e0a518708"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-05.pytest_dependency_plan.log",
+     "sha256": "1fcb3e82222f5035c54ef2df75529980100008d26abc8fca214eb62baa037b06"
+    }
+   ]
+  },
+  {
+   "case_id": "ENV-06",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "rerun_results": {
+    "probe": "11/11 PASS, exit 0",
+    "test_dependency_transaction.py": "44 passed",
+    "test_foundation_dependencies.py": "5 passed 2 skipped（联网用例 skip，不算绿）",
+    "test_dependency_repair_e2e.py (TAVOTTO_FONTS_DIR)": "10 passed"
+   },
+   "note": "一致。补充：探针里「服务日志没有 pip/uv 安装调用」是弱判据（产品未必把调用写进日志），有效判据是用户 venv 前后包清单/文件零差异；ENOSPC 中途与下载中途断网未注入，partial 合理。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-06.probe.log",
+     "sha256": "be418633be3be9f8e9477a1738a9c45aa51d2771c1ee33d459c0d635ba31bb96"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-06.pytest_transaction.log",
+     "sha256": "46b3fd218786f15c443e8407ace8d39d9a50292f4e6fe35cf10f0fbce763604f"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-06.pytest_foundation_deps.log",
+     "sha256": "b0a95d88ec09494ef9ecccea76e26c09ac3ba8be81a276f7ddf5f83d74bb050b"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-06.pytest_repair_e2e_fonts.log",
+     "sha256": "32535d8fd11fc0a23a31fc9a17dea13e8c3af2cfc714f51aaf9820915c80d2be"
+    }
+   ]
+  },
+  {
+   "case_id": "ENV-07",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "rerun_results": {
+    "probe": "18/18 PASS, exit 0（清掉的运行缓存：baked_overrides、cache）",
+    "FO31": "1 passed"
+   },
+   "note": "一致。复核在 src/、docs/adr、docs/rules 里搜索 config_generation / 配置代际 等，后端没有这类字段（只有前端 store 的项目代际、受管环境的 active_generation），回执里的 generation 是 worker 代数。规范要求的「回执含配置代际」按字面未满足；执行者记 partial 并要求产品侧澄清，可以接受，汇总时应标出这是验收项缺失而不是已证实通过。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-07.probe.log",
+     "sha256": "c5d228436e0fe40e3995dc360e44da0a06cde309322f7e6e976a70b18cca4b83"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-07.pytest_fo31.log",
+     "sha256": "cdb2f2a56e828d99ae8844915ec8b479f1235a36ce8dc2000125cb846f9c4235"
+    }
+   ]
+  },
+  {
+   "case_id": "ENV-08",
+   "rerun": true,
+   "matches": false,
+   "original_verdict": "not_run",
+   "audited_verdict": "partial",
+   "rerun_results": {
+    "which": "conda/mamba/micromamba/pyenv 均 not found，exit 1",
+    "test_user_environments.py": "17 passed",
+    "extra_conda_layout (v1)": "exit 1",
+    "extra_conda_layout_v2": "exit 0"
+   },
+   "note": "原因只部分成立。本机确实没有 conda/pyenv，但 ADR 0079 的发现只读磁盘记录、不调用 conda CLI，所以在隔离 HOME 里按 conda 布局摆放真实解释器（~/miniforge3 作 base，只装 matplotlib；~/miniforge3/envs/lab 装 matplotlib+qa_probe_pkg+openpyxl；项目 environment.yml name: lab；项目没有 .venv），就能在本机端到端验证。v2 结果：产品自动改用具名环境 lab（trigger=user_environment），脚本自报 prefix=envs/lab，点序列 [0,9,2,10]，没有用 base。结论：「不用 base 冒充具名环境」这条在本机已经可以执行，并且通过。仍未覆盖：真实 conda 环境（conda-meta、conda 装的二进制包）和 pyenv，所以判 partial。新发现（疑似缺陷，建议 P2，需要对照合同）：v1 中脚本唯一缺的 import 是映射不到 distribution 的私有包（unknown），联合计划不是 ready，preparation_offer 只在 STATUS_READY 时计算 user_environments（deprepair.py 3508 行），因此即使具名环境里装着这个包也不会发现/改用，渲染报 missing_dependency；而 userenvs.evaluate 的文档明确把 unknown 算进判据。另见观察：v2 自动改用发生在 prepare 期间，prepare 返回 preparation_plan_stale（要求重新准备）；环境状态标签是「系统 Python / Conda」而不是具名环境名。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-08.which.log",
+     "sha256": "bc1a4493259250fb2031a5b78f5935645c83b552fc72cec9adc4b2a9017f81af"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-08.pytest_user_envs.log",
+     "sha256": "bdb5981cf459ccdbe2b274db12b165f51e698c4a38f275b97fb9e61a669d2cb2"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-08.extra_conda_layout.log",
+     "sha256": "0481b44269a9d8f41b6d04368498646eddb3e94f9eb13485e9f1086f432aab4f"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/ENV-08.extra_conda_layout_v2.log",
+     "sha256": "43ad7b8251e414ddb1808c21987461f14bb1ab06e114a20eeab2c91483cf9cb9"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/env08_conda_layout_feasibility.py",
+     "sha256": "1aa5dd6db41447f19134ad6d2883b5d91c793130e9f06af96f6315af30443946"
+    },
+    {
+     "path": "docs/qa/2026-09-24/env/logs/verify/env08_conda_layout_feasibility_v2.py",
+     "sha256": "bd092e9c27ee5d942f7cf840c7e00decc5cc419b883abe40b03d406bdf084f55"
+    }
+   ]
+  }
+ ],
+ "summary": {
+  "matches": 7,
+  "changed": 1,
+  "changed_cases": {
+   "ENV-08": "not_run → partial"
+  },
+  "new_findings": [
+   "疑似缺陷（ENV-08）：只有 unknown（映射不到 distribution）的缺失 import 时，preparation_offer 不计算 user_environments，已装齐的具名 conda 环境不会被发现或改用",
+   "观察（ENV-03 d'）：清除失效的项目手选后，prepare 报 source=current_process，第一次执行在自身解释器里缺包，之后才以 trigger=missing_dependency 接手项目 .venv；原判据只看 prepare=ready，偏弱"
+  ]
+ }
+}
