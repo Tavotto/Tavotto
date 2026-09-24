@@ -374,22 +374,26 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   endTxn: (opts) => {
-    let state = get()
+    const state = get()
     let txn = state.txn
     if (!txn) return
+    // 收尾修正算在本地，与「事务结束」**同一次** set 落地：订阅者看到的是一次
+    // 「事务已关、文档变了」的更新（事务之后的变化）。若先在事务还开着时 set 文档、
+    // 再单独 set `txn: null`，只在事务外看文档的订阅者（布局组自动重排）会在前一次
+    // 因事务开着跳过、后一次因文档引用没变跳过，这次尺寸变化就永远漏掉
+    let doc = state.doc
     if (!opts?.discard && txn.patches.length && txnFinalizers.size) {
       for (const fn of txnFinalizers) {
-        const [next, patches, inverse] = produceWithPatches(state.doc, fn)
+        const [next, patches, inverse] = produceWithPatches(doc, fn)
         if (!patches.length) continue
         txn = history.accumulate(txn, patches, inverse)
-        set({ doc: next, txn })
-        state = get()
+        doc = next
       }
     }
     txnAnchors.clear()
     if (opts?.discard || !txn.patches.length) {
       // 丢弃：把反向补丁打回去，恢复到事务开始前
-      set({ doc: history.rollback(state.doc, txn), txn: null })
+      set({ doc: history.rollback(doc, txn), txn: null })
       recordDiagnosticEvent({
         type: 'transaction.cancel',
         label_key: txn.label.key,
@@ -398,7 +402,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       return
     }
     const [patches, inverse] = history.compress(txn.patches, txn.inverse)
-    set({ txn: null, ...pushHistory(state, { label: txn.label, patches, inverse }) })
+    set({ doc, txn: null, ...pushHistory(state, { label: txn.label, patches, inverse }) })
     recordDiagnosticEvent({
       type: 'transaction.end',
       label_key: txn.label.key,

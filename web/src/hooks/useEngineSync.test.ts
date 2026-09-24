@@ -8,10 +8,16 @@ import { seedExactRender } from '@/test/renderFixtures'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
+import {
+  emptyProject,
+  type CanvasObject,
+  type FigureDocument,
+  type PanelObject,
+} from '@/types/document'
 import type { Manifest, PanelInfo } from '@/lib/api'
 import { panelScale } from '@/lib/preflight'
 import { startCropDrag, startResizeDrag } from '@/canvas/interactions'
+import { startLayoutAutoReflow } from '@/store/actions'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -655,6 +661,8 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       first: readonly [number, number] = [-10, 0],
       second: readonly [number, number] = [-8, 0],
       size: [number, number] = [50, 30],
+      /** 摆面板之后在同一次提交里再摆点别的（布局组、相邻成员） */
+      setup?: (d: FigureDocument) => void,
     ) {
       globalThis.IS_REACT_ACT_ENVIRONMENT = true
       useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0, viewW: 900, viewH: 700 })
@@ -663,6 +671,7 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       await useDocumentStore.getState().switchDocument(emptyProject(), docId)
       useDocumentStore.getState().commit(literal('准备'), (d) => {
         d.objects = [p]
+        setup?.(d)
       })
       const container = document.createElement('div')
       document.body.appendChild(container)
@@ -808,6 +817,62 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       expect(scales(current())[1]).toBeCloseTo(22 / 30, 6)
       await undoRedoKeepsEnd()
       expect(southMid(current())[0]).toBeCloseTo(20, 6)
+      await unmount()
+    })
+
+    it('布局组（行）里的面板：手势中渲染回来变宽 → 松手 → 相邻成员按间距被推开，撤销 / 重做', async () => {
+      let stop = () => {}
+      /** 自动重排有 120 ms 防抖 */
+      const settle = () =>
+        act(async () => {
+          await new Promise((r) => setTimeout(r, 200))
+        })
+      // 行布局：pg (0,0) 40×30，nb (45,0) 20×30，间距 5
+      const unmount = await dragAcrossRender(
+        'd_size_drag_layout',
+        () => {
+          // 摆好布局组之后才挂自动重排：摆场景那次提交本身不该排出一次重排
+          stop = startLayoutAutoReflow()
+          startResizeDrag(down(), 'pg', 's')
+        },
+        [0, -6],
+        [0, -4],
+        [50, 30],
+        (d) => {
+          d.objects[0].groupId = 'row1'
+          d.objects.push({
+            ...panel('nb', 'Fig2.pdf', 0),
+            x: 45,
+            w: 20,
+            h: 30,
+            nativeW: 20,
+            nativeH: 30,
+            script: null,
+            groupId: 'row1',
+          } as PanelObject)
+          d.layoutGroups = [{ id: 'row1', kind: 'row', order: ['pg', 'nb'], gap: 5, align: 'start' }]
+        },
+      )
+      await settle()
+      const nb = () => useDocumentStore.getState().doc.objects.find((o) => o.id === 'nb')!
+      const gapAfter = () => nb().x - (current().x + current().w)
+      // 松手时宽 40 → 50（锚点是南边中点，x 到 -5）；nb 被推到右边 5 mm 处
+      expect(current().w).toBeCloseTo(50, 6)
+      // 以前：收尾修正与「事务结束」分两次落地，自动重排两次都跳过 → nb 停在 45，压在面板上
+      expect(gapAfter()).toBeCloseTo(5, 6)
+      const done = [box(current()), box(nb())]
+      await act(async () => {
+        useDocumentStore.getState().undo()
+      })
+      await settle()
+      // 撤掉自动重排：面板仍是松手后的样子
+      expect(box(current())).toEqual(done[0])
+      await act(async () => {
+        useDocumentStore.getState().redo()
+      })
+      await settle()
+      expect([box(current()), box(nb())]).toEqual(done)
+      stop()
       await unmount()
     })
 
