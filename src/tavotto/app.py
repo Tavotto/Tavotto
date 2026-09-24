@@ -3754,26 +3754,37 @@ def _specfix_transaction(render, base: list, scale: float, profile: dict, only) 
     b0 = render(base)["manifest"]
     issues = engine_specfix.profile_issues(b0, profile, scale)
     targets = engine_specfix.select(issues, only)
+    # 点了名、这里却不会去修的（规则不在可修清单里，或 B0 上根本没这条）：逐条说出口。
+    # 不报的话前端会把它当成「修好了」——那是最坏的一种回答
+    missed = [
+        {"rule": str(o.get("rule")), "gid": str(o.get("gid") or ""), "reason": "not_found"}
+        for o in (only or [])
+        if not any(
+            r == o.get("rule") and (g == o.get("gid") or not o.get("gid")) for r, g in targets
+        )
+    ]
     out: dict = {
         "ok": False,
         "patches": list(base),
         "changes": [],
-        "skipped": [],
+        "skipped": list(missed),
         "adjustments": [],
         "unresolved": [],
         "blocking": [],
     }
     if not targets:
-        out.update({"ok": True, "exit": engine_specfix.EXIT_NOTHING_TO_DO})
+        out.update({"ok": not missed, "exit": engine_specfix.EXIT_NOTHING_TO_DO})
         return out
 
     font_off: list[tuple[str, str]] = []
     for _attempt in range(2):
         live = [t for t in targets if t not in font_off]
         plan = engine_specfix.plan(b0, profile, scale=scale, targets=live)
-        skipped = plan["skipped"] + [
-            {"rule": r, "gid": g, "reason": "font_unavailable"} for r, g in font_off
-        ]
+        skipped = (
+            missed
+            + plan["skipped"]
+            + [{"rule": r, "gid": g, "reason": "font_unavailable"} for r, g in font_off]
+        )
         if not plan["patches"]:
             render(base)
             out.update({"exit": engine_specfix.EXIT_NOTHING_TO_DO, "skipped": skipped})

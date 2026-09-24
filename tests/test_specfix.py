@@ -102,3 +102,20 @@ def test_issues_are_exploded_per_gid():
     floor = [r for r in rows if r["id"] == "font-below-absolute-floor"]
     assert sorted(r["gids"][0] for r in floor) == ["a.xticks", "a.yticks"]
     assert all(len(r["gids"]) == 1 for r in rows if r.get("gids"))
+
+
+def test_fixable_rules_are_the_same_closed_set_on_both_sides():
+    """严格同源对：`specfix.FIXABLE_RULES` ↔ `web/src/lib/issueFix.ts` 的 `ENGINE_FIX_RULES`。
+
+    前端据它判「这条走后端修」并给出「修复」按钮；少一条 = 一颗后端不认的按钮
+    （后端会回 `not_found`，界面说「没修」，但按钮本不该出现），多一条 = 后端修得了
+    的问题界面上不给修。顺序也比（闭集的一种写法，不许两侧各排一套）。
+    """
+    from pathlib import Path
+
+    from tests.support.tsconst import exported_string_array
+
+    ts = Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "issueFix.ts"
+    assert tuple(exported_string_array(ts.read_text(encoding="utf-8"), "ENGINE_FIX_RULES")) == (
+        specfix.FIXABLE_RULES
+    )

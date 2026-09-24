@@ -277,3 +277,24 @@ def test_endpoint_validates_input():
     assert bad.status_code == 400 and bad.get_json()["code"] == "invalid_profile"
     bad = client.post("/api/engine/specfix", json={"id": "x.pdf", "patches": {}, "scale": 1})
     assert bad.get_json()["code"] == "invalid_patches"
+
+
+def test_named_but_not_fixable_is_reported_not_counted_as_fixed(render):
+    """点名了一条这里不修的规则 / B0 上不存在的问题：逐条回 skipped，不假装修好。"""
+    profile = _profile()
+    res = m._specfix_transaction(
+        render,
+        [],
+        1.0,
+        profile,
+        [
+            {"rule": "axis-label-format", "gid": "axes_0.xlabel"},
+            {"rule": "legend-frame", "gid": "axes_0.no_such_legend"},
+        ],
+    )
+    assert not res["ok"]
+    assert {(s["rule"], s["reason"]) for s in res["skipped"]} == {
+        ("axis-label-format", "not_found"),
+        ("legend-frame", "not_found"),
+    }
+    assert res["patches"] == []
