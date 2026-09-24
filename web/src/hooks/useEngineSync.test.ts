@@ -1079,6 +1079,41 @@ describe('事务之外改了图幅：撤销 / 重做回到用户设定的缩放�
     expect(nativeOf(current())).toEqual([50, 30])
   })
 
+  it('收尾修正把图幅并进了缩放这条历史 → 之后事务外图幅再变 → 撤销 → 重做', async () => {
+    // 这条历史两侧的原生图幅不同（40 → 50，收尾修正并进来的），而此刻又是第三个图幅
+    const p = await mount('d_size_undo_finalizer')
+    await act(async () => {
+      useDocumentStore.getState().beginTxn(literal('缩放'))
+      useDocumentStore.getState().txnUpdate((d) => {
+        const o = d.objects[0] as PanelObject
+        o.w = 30
+        o.h = 22.5
+      })
+    })
+    // 手势中途渲染回来（40×30 → 50×30）：事务开着不写，留给收尾
+    await renderNewSize(p)
+    expect(nativeOf(current())).toEqual([40, 30])
+    await act(async () => {
+      useDocumentStore.getState().endTxn()
+    })
+    expect(nativeOf(current())).toEqual([50, 30])
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    // 松手之后，事务之外又一次渲染把图幅改成 60×30
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [60, 30], elements: [] })
+    })
+    expect(nativeOf(current())).toEqual([60, 30])
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([60, 30])
+    await redo()
+    // 重做打回的是松手那一刻（按 50 量的 w/h），要换到此刻的 60，而不是按收尾之前的 40
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    expect(nativeOf(current())).toEqual([60, 30])
+  })
+
   it('两次缩放 → 图幅变化 → 连撤两步再连重做两步', async () => {
     const p = await mount('d_size_undo_deep')
     await resizeTo(0.75)
