@@ -308,6 +308,19 @@ def test_colormap_sampling_is_bounded_whatever_its_length(facts):
     assert h["over_n"]["distinct"] is None and h["over_n"]["peak"] < 2**20, h["over_n"]
 
 
+def test_dense_overlay_edges_do_not_become_a_per_pixel_table(facts):
+    """#538 评审第六轮：四行场两行阴影线的图三分之一像素是叠加物边缘，从前把它们全部存成
+    一份与图同长的常驻表再整体拼接（实测峰值斜率 21.9 B/像素）。现在边缘逐块现算、逐块
+    应用；缓存只在总量不超上限时留下——上限压小时整份放弃，常驻只剩输出本身（RGB 3 B/像素）；
+    缓存与逐块重算两条路的输出逐字节相同。"""
+    h = facts["orphan_scopes"]["hatch"]
+    assert h["peak_slope"] < 6, h["peak_slope"]
+    assert h["cached_is_list"] is True
+    assert h["capped_dropped"] is True and h["fresh_dropped"] is True
+    assert h["capped_retained_slope"] < 3.5, h["capped_retained_slope"]
+    assert h["paths_equal"] is True
+
+
 # ============================================================ 热会话 == 全量重放
 SCRIPT = "fig_recognition.py"
 LIBRARY = """\

@@ -551,8 +551,9 @@ _FIELD_MAX_N = 1 << 24
 _FIELD_WINDOW = 64
 #: 查色表里「不在色图上」的记号（格号是 uint16，色图最多 65535 格）。
 _OFF_MAP = 0xFFFF
-#: 边缘像素的修正一次处理这么多个（稀疏列表，分段只为给病态图设上界）。
-_FIELD_EDGE_CHUNK = 1_000_000
+#: 叠加物边缘的逐块结果最多缓存这么多字节（每个边缘像素 7 字节）；超了就不缓存、每次换色
+#: 逐块重算。用户 (a) 的流线边缘 4.3 万个像素约 0.3 MB。
+_FIELD_EDGE_CACHE = 16 * 2**20
 
 
 def _rgb8(arr):
@@ -784,7 +785,8 @@ class RasterField:
     **内存只跟输出走**（#538 评审之后重做）。新颜色只取决于像素落在色图的哪一格：
     `_ColourTube` 把「颜色 → 格号」列成与图大小无关的表，换色图时先算 N 项的「格号 →
     新颜色」，再按二维小块逐块查表写进一份 uint8 缓冲——每像素常驻 3–4 字节（就是画出来的
-    那张图本身）加稀疏的边缘，不存逐像素的数值、底色、权重，查表也不常驻。「在色图上」还要连成片（`_field_mask`），
+    那张图本身），不存逐像素的数值、底色、权重，查表也不常驻；叠加物的边缘逐块现算，
+    只在总量不大时缓存（`_recolor`）。「在色图上」还要连成片（`_field_mask`），
     照片里偶然落进容差带的孤点不算。不在色图上的（流线、球、文字）原样保留；
     只有它们的抗锯齿边缘需要看邻域，按「离底色距离 / 邻域线芯距离」把底色的变化量按比例
     带过去——这些像素是稀疏的，第一次重着色时逐块算出来，存成（扁平序号、底色格号、权重）
@@ -854,68 +856,64 @@ class RasterField:
         except Exception:  # noqa: BLE001 — 重着色失败就画原件，不拦渲染
             self._show(self.original)
 
-    def _edge_pixels(self, table):
-        """叠加物的抗锯齿边缘：(扁平序号, 底色格号, 权重×255)，逐块算、只存权重非零的。"""
+    @staticmethod
+    def _tile_edges(rgb8, on, idx, lut, inner):
+        """一块（带邻域那一圈）里叠加物的抗锯齿边缘：块内坐标 (行, 列, 底色格号, 权重×255)，
+        只收 `inner`（去掉邻域圈）里、权重非零的。整块是场或整块是叠加物时回 None。"""
         import numpy as np
 
-        if self._edges is not None:
-            return self._edges
-        a = np.asarray(self.original)
-        h, w = a.shape[:2]
-        lut = self.tube.lut
-        halo = _FIELD_BG_RADIUS + _FIELD_CORE_RADIUS + 1
-        flat_t = np.uint32 if h * w < 2**32 else np.int64
-        flats, bgs, wts = [], [], []
-        for y0, y1, x0, x1, hy0, hy1, hx0, hx1 in _tiles(h, w, halo):
-            sub = a[hy0:hy1, hx0:hx1]
-            rgb8 = _rgb8(sub)
-            idx = table[_pack(rgb8)]
-            on = _field_mask((idx != _OFF_MAP) & _opaque(sub))
-            if on.all() or not on.any():
-                continue  # 整块是场（没有边缘）或整块是叠加物（找不到底色）
-            # 从场里往外逐像素找最近的场值（4 邻域膨胀 _FIELD_BG_RADIUS 圈）
-            bg = np.where(on, idx.astype(np.int32), -1)
-            for _ in range(_FIELD_BG_RADIUS):
-                if not (bg < 0).any():
-                    break
-                grown = bg.copy()
-                for dst_sl, src_sl in (
-                    ((slice(1, None), slice(None)), (slice(None, -1), slice(None))),
-                    ((slice(None, -1), slice(None)), (slice(1, None), slice(None))),
-                    ((slice(None), slice(1, None)), (slice(None), slice(None, -1))),
-                    ((slice(None), slice(None, -1)), (slice(None), slice(1, None))),
-                ):
-                    src = bg[src_sl]
-                    dst = grown[dst_sl]
-                    take = (dst < 0) & (src >= 0)
-                    dst[take] = src[take]
-                bg = grown
-            edge = (~on) & (bg >= 0)
-            d = np.abs(rgb8.astype(np.float32) - lut[np.clip(bg, 0, None)]).max(-1) / 255.0
-            # 找不到底色的叠加像素（球心这类大块叠加物的内部）按「完全是叠加物」算
-            d_off = np.where(on, 0.0, np.where(bg >= 0, d, 1.0)).astype(np.float32)
-            r = _FIELD_CORE_RADIUS
-            core = d_off.copy()
-            ph, pw = core.shape
-            pad = np.pad(d_off, r)
-            for dy in range(2 * r + 1):
-                for dx in range(2 * r + 1):
-                    np.maximum(core, pad[dy : dy + ph, dx : dx + pw], out=core)
-            weight = np.clip(1.0 - d / np.maximum(core, _FIELD_CORE_FLOOR), 0.0, 1.0)
-            inner = (slice(y0 - hy0, y1 - hy0), slice(x0 - hx0, x1 - hx0))
-            wq = np.rint(weight[inner] * 255.0).astype(np.uint8)
-            keep = edge[inner] & (wq > 0)
-            ys, xs = np.nonzero(keep)
-            flats.append(((ys + y0).astype(np.int64) * w + (xs + x0)).astype(flat_t))
-            bgs.append(bg[inner][keep].astype(np.uint16))
-            wts.append(wq[keep])
-        if flats:
-            self._edges = (np.concatenate(flats), np.concatenate(bgs), np.concatenate(wts))
-        else:
-            self._edges = (np.empty(0, flat_t), np.empty(0, np.uint16), np.empty(0, np.uint8))
-        return self._edges
+        if on.all() or not on.any():
+            return None  # 整块是场（没有边缘）或整块是叠加物（找不到底色）
+        # 从场里往外逐像素找最近的场值（4 邻域膨胀 _FIELD_BG_RADIUS 圈）
+        bg = np.where(on, idx.astype(np.int32), -1)
+        for _ in range(_FIELD_BG_RADIUS):
+            if not (bg < 0).any():
+                break
+            grown = bg.copy()
+            for dst_sl, src_sl in (
+                ((slice(1, None), slice(None)), (slice(None, -1), slice(None))),
+                ((slice(None, -1), slice(None)), (slice(1, None), slice(None))),
+                ((slice(None), slice(1, None)), (slice(None), slice(None, -1))),
+                ((slice(None), slice(None, -1)), (slice(None), slice(1, None))),
+            ):
+                src = bg[src_sl]
+                dst = grown[dst_sl]
+                take = (dst < 0) & (src >= 0)
+                dst[take] = src[take]
+            bg = grown
+        edge = (~on) & (bg >= 0)
+        d = np.abs(rgb8.astype(np.float32) - lut[np.clip(bg, 0, None)]).max(-1) / 255.0
+        # 找不到底色的叠加像素（球心这类大块叠加物的内部）按「完全是叠加物」算
+        d_off = np.where(on, 0.0, np.where(bg >= 0, d, 1.0)).astype(np.float32)
+        r = _FIELD_CORE_RADIUS
+        core = d_off.copy()
+        ph, pw = core.shape
+        pad = np.pad(d_off, r)
+        for dy in range(2 * r + 1):
+            for dx in range(2 * r + 1):
+                np.maximum(core, pad[dy : dy + ph, dx : dx + pw], out=core)
+        weight = np.clip(1.0 - d / np.maximum(core, _FIELD_CORE_FLOOR), 0.0, 1.0)
+        wq = np.rint(weight[inner] * 255.0).astype(np.uint8)
+        keep = edge[inner] & (wq > 0)
+        if not keep.any():
+            return None
+        ys, xs = np.nonzero(keep)
+        return (
+            ys.astype(np.uint16),
+            xs.astype(np.uint16),
+            bg[inner][keep].astype(np.uint16),
+            wq[keep],
+        )
 
     def _recolor(self):
+        """一轮二维分块做完全部：查表写场像素、再给叠加物的抗锯齿边缘带上底色的变化量。
+
+        **边缘不再是一份与图同长的常驻表**（#538 评审第六轮）：密集的网格线 / 阴影线能让四成
+        像素都是边缘，按每个 7 字节常驻，再加一次整体拼接，内存就不再「只剩输出本身」（实测
+        峰值斜率 21.9 B/像素）。现在逐块现算、逐块应用；各块的结果只在累计不超过
+        `_FIELD_EDGE_CACHE` 时留作下次换色的缓存（普通场图的流线边缘远在其下），超了就整份
+        丢掉，此后每次换色逐块重算——慢一些，内存有界。
+        """
         import numpy as np
 
         m = self.cb.mappable
@@ -924,6 +922,7 @@ class RasterField:
         values = np.asarray(self.norm0.inverse(self.tube.t), dtype=np.float64)
         new = np.clip(np.rint(np.asarray(m.to_rgba(values))[:, :3] * 255.0), 0, 255)
         new = new.astype(np.uint8)
+        shift_tab = new.astype(np.float32) - lut  # 每一格的底色变化量
         a = np.asarray(self.original)
         h, w = a.shape[:2]
         c = 4 if a.shape[2] == 4 else 3
@@ -931,7 +930,12 @@ class RasterField:
             self._buf = np.empty((h, w, c), np.uint8)
         out = self._buf
         table = self.tube.dense()
-        for y0, y1, x0, x1, hy0, hy1, hx0, hx1 in _tiles(h, w, 1):
+        cache = self._edges  # None：还没算过；list：逐块缓存；False：太密，每次重算
+        building = cache is None
+        store: list = []
+        stored = 0
+        halo = _FIELD_BG_RADIUS + _FIELD_CORE_RADIUS + 1
+        for k, (y0, y1, x0, x1, hy0, hy1, hx0, hx1) in enumerate(_tiles(h, w, halo)):
             sub = a[hy0:hy1, hx0:hx1]
             rgb8 = _rgb8(sub)
             idx = table[_pack(rgb8)]
@@ -941,18 +945,27 @@ class RasterField:
             ob[..., :3] = rgb8[inner]
             if c == 4:
                 ob[..., 3] = _alpha8(sub[inner])
-            on = on[inner]
-            ob[on, :3] = new[idx[inner][on]]
-        flat, bg, wq = self._edge_pixels(table)
-        for s0 in range(0, len(flat), _FIELD_EDGE_CHUNK):
-            f = flat[s0 : s0 + _FIELD_EDGE_CHUNK].astype(np.int64)
-            ys, xs = np.divmod(f, w)
-            b = bg[s0 : s0 + _FIELD_EDGE_CHUNK]
-            k = wq[s0 : s0 + _FIELD_EDGE_CHUNK].astype(np.float32)[:, None] / 255.0
-            # 边缘像素不在色图上，上面那一步原样写进了缓冲：在原色上叠加底色的变化量
-            px = out[ys, xs, :3].astype(np.float32)
-            shift = (new[b].astype(np.float32) - lut[b]) * k
-            out[ys, xs, :3] = np.clip(np.rint(px + shift), 0, 255).astype(np.uint8)
+            on_i = on[inner]
+            ob[on_i, :3] = new[idx[inner][on_i]]
+            edges = (
+                cache[k] if isinstance(cache, list) else self._tile_edges(rgb8, on, idx, lut, inner)
+            )
+            if edges is not None:
+                ys, xs, b, wq = edges
+                # 边缘像素不在色图上，上面那一步原样写进了缓冲：在原色上叠加底色的变化量
+                px = ob[ys, xs, :3].astype(np.float32)
+                shift = shift_tab[b] * (wq.astype(np.float32)[:, None] / 255.0)
+                ob[ys, xs, :3] = np.clip(np.rint(px + shift), 0, 255).astype(np.uint8)
+            if building:
+                stored += 0 if edges is None else sum(x.nbytes for x in edges)
+                if stored > _FIELD_EDGE_CACHE:
+                    building = False  # 太密：不留缓存，此后每次逐块重算
+                    store = []
+                    self._edges = False
+                else:
+                    store.append(edges)
+        if building:
+            self._edges = store
         return out
 
 

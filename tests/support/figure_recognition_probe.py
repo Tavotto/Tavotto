@@ -504,7 +504,63 @@ def orphan_scopes() -> dict:
         "noisy": _entries_cost(_Procedural(5_000_000, noisy=True)),
         "over_n": _entries_cost(_Procedural(C._FIELD_MAX_N + 1)),
     }
+
+    # 密集阴影线（#538 评审第六轮）：四行场、两行叠加——三分之一的像素是边缘
+    def _hatch_image(side):
+        row = np.rint(matplotlib.colormaps["viridis"](np.linspace(0, 1, side))[:, :3] * 255)
+        img = np.empty((side, side, 3), np.uint8)
+        img[:] = row.astype(np.uint8)[None]
+        img[np.arange(side) % 6 >= 4] = (40, 40, 40)
+        f = plt.figure(figsize=(4.0, 3.0))
+        f.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(img)
+        cx = f.add_axes([0.8, 0.1, 0.03, 0.8])
+        f.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), cax=cx)
+        _state(f)
+        return f.axes[0].images[0]
+
+    def _hatch_cost(side):
+        field = _hatch_image(side)._mm_field
+        tracemalloc.start()
+        field.cb.mappable.set_cmap("magma")
+        field.sync()
+        cur, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        return cur, peak, field
+
+    saved_cache = C._FIELD_EDGE_CACHE
+    try:
+        c1, p1, _ = _hatch_cost(1024)
+        c2, p2, f2 = _hatch_cost(2048)
+        C._FIELD_EDGE_CACHE = 2**20  # 压小上限：两档都超，缓存整份放弃
+        d1, _, _ = _hatch_cost(1024)
+        d2, _, g2 = _hatch_cost(2048)
+        # 缓存与逐块重算两条路的输出逐字节相同（同一张 512² 的图各走一次）
+        C._FIELD_EDGE_CACHE = saved_cache
+        cached = _hatch_image(512)._mm_field
+        cached.cb.mappable.set_cmap("magma")
+        cached.sync()
+        C._FIELD_EDGE_CACHE = 0
+        fresh = _hatch_image(512)._mm_field
+        fresh.cb.mappable.set_cmap("magma")
+        fresh.sync()
+        # 第二次换色走缓存 / 重算
+        cached.cb.mappable.set_cmap("plasma")
+        cached.sync()
+        fresh.cb.mappable.set_cmap("plasma")
+        fresh.sync()
+    finally:
+        C._FIELD_EDGE_CACHE = saved_cache
+    dpx = 2048**2 - 1024**2
+    hatch = {
+        "peak_slope": (p2 - p1) / dpx,
+        "cached_is_list": isinstance(f2._edges, list),
+        "capped_dropped": g2._edges is False,
+        "capped_retained_slope": (d2 - d1) / dpx,
+        "paths_equal": bool(np.array_equal(np.asarray(cached._buf), np.asarray(fresh._buf))),
+        "fresh_dropped": fresh._edges is False,
+    }
     return {
+        "hatch": hatch,
         "huge_n": huge_n,
         "listed": listed,
         "windows": windows,
