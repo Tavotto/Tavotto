@@ -143,6 +143,7 @@
     "perf_report_rejected": "性能报告格式不对，没有保存（{{reason}}）",
     "perf_report_write_failed": "性能报告没能写进数据目录",
     "user_environment_gone": "这个 Python 环境已经找不到了，请重新检查",
+    "user_environment_incomplete": "这个 Python 环境里还缺 {{packages}}，请重新检查",
     "script_changed": "写回被阻止：脚本在会话期间被修改过，请重新渲染后再试",
     "script_error": "脚本执行失败：{{error}}",
     "script_exited": "脚本调用 sys.exit() 提前结束了（{{error}}）。Tavotto 要的是脚本跑完后留在内存里的图：去掉那句 exit，或只在出错时 exit。",

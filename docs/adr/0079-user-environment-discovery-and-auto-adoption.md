@@ -63,9 +63,17 @@ import（Conda 装的、`--user` 的、`PYTHONPATH` 上的都算），这是同�
 
 ### 四、跑前的门里直接改用（修订 ADR 0044 §二）
 
-`deprepair.gate()` 在联合计划 `ready`（缺包、能装）时先做上面三步。挑得出最好的，**且此刻的解释器是
-机器替用户挑的**，就把它记成本项目的自动决策（`projectenv.remember(automatic=True, trigger="user_environment")`）
-并放行——紧接着起的 worker 按 `resolve_worker_python` 第 3 条解析到它，不弹任何框。
+联合计划 `ready`（缺包、能装）时先做上面三步。挑得出最好的，**且此刻的解释器是机器替用户挑的**，就把它
+记成本项目的自动决策（`projectenv.remember(automatic=True, trigger="user_environment")`）——紧接着起的 worker
+按 `resolve_worker_python` 第 3 条解析到它，门按它算出来的计划是 `nothing_needed`、放行，不弹任何框。
+正被另一个作业改动的环境（`envlease`）不采用：它此刻的体检读的是装了一半的 site-packages。
+
+**决定的时刻（2026-09-24 修订，Codex #522 两条 P1）**：「换不换解释器」只在 `deprepair.decide_environment()`
+一处，且在**解析解释器之前**调——准备计划 `preparation.plan_for` 在拍快照（解释器 / LaunchContext / 环境事实）
+之前调它；`pool.acquire()` 要起新会话时经 `pool.ENVIRONMENT_DECIDERS` 在查租约（`is_mutating`）之前、锁外调它。
+`gate()` 只读，不换。初版把改用藏在 `gate()` 里，而门排在快照与租约检查之后：计划记着旧解释器、执行前的
+过期检查看到新决策，第一次准备必以 `preparation_plan_stale` 收场；`is_mutating` 查的是旧解释器、构造函数
+解析到的是新的，worker 可能起在正被装包的环境上。两条是同一个顺序错误。
 
 「机器替用户挑的」的反面，一个都不碰：环境变量 / 设置里的全局显式选择、用户为本项目挑过的解释器
 （`automatic=False`）、用户明确选回默认链条（`mode=default`）、项目自己的 venv（那本来就是用户的环境，
@@ -83,9 +91,11 @@ import（Conda 装的、`--user` 的、`PYTHONPATH` 上的都算），这是同�
 
 `preparation_offer()` 的 `user_environments` 每条只带不透明 `id`（(目录, 真实文件) 的 sha1 前 16 位）、来源、
 Conda / pyenv 名、版本、还缺什么；SSE 同样不带路径。弹窗里点「改用这个环境」交回 `id` + 脚本名，后端用
-**自己的发现结果**换回路径（`deprepair.user_environment_path`），找不到报 `user_environment_gone`；之后与手填
-路径走同一次体检、同一次 `remember(automatic=False)`。路径只来自本机的枚举，不接受调用方给——ADR 0044 的
-安全口径不变。
+**自己的发现结果**换回路径，找不到报 `user_environment_gone`；换回来之后按此刻的联合计划**重新**量一次装没装齐
+（`deprepair.recheck_user_environment`，与弹窗列出时同一个判据，不读体检缓存）——弹窗开着期间环境可能变了，
+调用方也可能交回一个界面上不可选的未装齐候选（Codex #522 P2）：缺就 `user_environment_incomplete` + 缺什么，
+不健康与手填路径同一组 code，都不记；装齐才 `remember(automatic=False)`。路径只来自本机的枚举，不接受调用方
+给——ADR 0044 的安全口径不变。
 
 ### 六、开关与测试隔离
 
@@ -106,7 +116,8 @@ Conda / pyenv 名、版本、还缺什么；SSE 同样不带路径。弹窗里�
 
 `tests/test_user_environments.py`：发现的顺序 / 来源 / 标签 / 去重（假 HOME 目录树）、线索不出项目
 （含脚本路径跳出项目）、`env` shebang 留给登录 shell、登录 shell 输出只认标记行（真起子进程）、
-「装齐」按 import 判、挑选排序三把尺子、门自动改用并放行 + 通知不带路径、五种用户决定一个都不碰、
+「装齐」按 import 判、挑选排序三把尺子、决定自动改用 + 门只读 + 通知不带路径、五种用户决定一个都不碰、
+决定先于租约检查（worker 不起在被占用的环境上）、正被改动的环境不采用、采用前按此刻计划复核、
 公开载荷不带路径、正缺包的解释器不体检、真解释器逐个模块回报。
 前端：`DependencyPrepareDialog.test.tsx`「用户自己的环境」、`notificationRail.test.tsx`「已改用你的环境」、
 `useServerEvents.test.ts` 的 `engine.environment_adopted`。

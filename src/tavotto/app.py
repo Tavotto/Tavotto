@@ -4944,7 +4944,9 @@ def _set_project_environment(
     另一个错。体检不过一律 400 + 稳定 code，绝不先存下来再说。
 
     `user_environment` 是依赖弹窗里点的「改用这个环境」（ADR 0079）：载荷只带 id，这里用本机自己的
-    发现结果换回路径，换不回来报 `user_environment_gone`；之后与手填路径走同一次体检。
+    发现结果换回路径，换不回来报 `user_environment_gone`；换回来之后按此刻的计划重新量一次装没装齐
+    （`deprepair.recheck_user_environment`，与弹窗列出时同一个判据），缺就 `user_environment_incomplete`，
+    不健康与手填路径同一组 code。
 
     `module` 是用户从依赖修复面板采用系统解释器时带过来的「缺的那个包」
     （ADR 0044）：体检连它一起验——面板列出候选与用户点下去之间那个环境可能
@@ -4955,17 +4957,30 @@ def _set_project_environment(
     root = str(require_project())
     if module and not engine_projectenv.valid_module_name(module):
         module = ""
+    health: dict | None = None
     if user_environment:
-        # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回
-        found = engine_deprepair.user_environment_path(root, script, user_environment)
-        if not found:
+        # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回，
+        # 并按此刻的计划**重新**量一次装没装齐——「还被发现得到」不等于「还装齐」（弹窗开着期间环境变了，
+        # 或交回的是界面上本就不可选的那种；Codex #522 P2）。这一次复核就是体检，下面不再起第二次
+        entry = engine_deprepair.recheck_user_environment(root, script, user_environment)
+        if entry is None:
             return jsonify(
                 {
                     "error": "这个 Python 环境已经找不到了，请重新检查",
                     "code": "user_environment_gone",
                 }
             ), 400
-        raw = found
+        if entry["ok"] and not entry["satisfies"]:
+            packages = ", ".join(entry["missing"])
+            return jsonify(
+                {
+                    "error": f"这个 Python 环境里还缺 {packages}，请重新检查",
+                    "code": "user_environment_incomplete",
+                    "params": {"packages": packages},
+                }
+            ), 400
+        raw = entry["python"]
+        health = entry
     if not raw:
         # 清掉 = 用户明确选回默认链条（U03，FO-013）：记成一条决定，而不是「忘了」——
         # 忘了的话下一次首开又会把项目 venv 发现出来、盖掉这次的选择。
@@ -4997,7 +5012,8 @@ def _set_project_environment(
                 "params": {"path": str(candidate)},
             }
         ), 400
-    health = engine_projectenv.probe_environment(str(candidate), module or None)
+    if health is None:
+        health = engine_projectenv.probe_environment(str(candidate), module or None)
     if not health.get("ok"):
         return jsonify(
             {

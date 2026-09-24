@@ -217,6 +217,11 @@ def plan_for(
     `error.explicit` 说明是哪一条、为什么。
     """
     root = str(project_root)
+    if script is not None:
+        # 「换不换解释器」先落地（ADR 0079 §四，`deprepair.decide_environment` 是唯一一处）：下面的
+        # 解释器、LaunchContext、环境事实都是快照，执行前 `_stale_reason` 拿它们与此刻比——快照在
+        # 决定之前拍，第一次准备就以 `preparation_plan_stale` 收场（Codex #522 P1）。
+        deprepair.decide_environment(root, script)
     try:
         python, source = pool.resolve_worker_python(root, script=script)
         env_error = None

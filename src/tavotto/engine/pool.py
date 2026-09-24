@@ -2281,6 +2281,18 @@ def register_spawn_gate(gate) -> None:
         SPAWN_GATES.append(gate)
 
 
+#: 要起新会话之前「换不换解释器」的决定：`(figures_dir, script_name) -> None`。今天只有一份——
+#: `deprepair.decide_environment`（缺包时自动改用装齐的用户环境，ADR 0079 §四），同样在 `deprepair`
+#: import 时登记。它与 `SPAWN_GATES` 分开、且排在 `acquire()` 解析解释器与查租约**之前**：门跑在
+#: `_new_worker()` 里，那时 `is_mutating` 已经查过了——在门里换解释器，查的是旧的、起的是新的（Codex #522 P1）。
+ENVIRONMENT_DECIDERS: list = []
+
+
+def register_environment_decider(decider) -> None:
+    if decider not in ENVIRONMENT_DECIDERS:
+        ENVIRONMENT_DECIDERS.append(decider)
+
+
 def _new_worker(script_name: str, figures_dir: str, entry: str):
     """按可用性挑控制面。**任何失败都回退 Python 池**——渲染不能因为一个
     可选的加速件起不来就整个不可用。
@@ -2586,6 +2598,13 @@ def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorke
     # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
     # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
     want_python = resolve_worker_python(figures_dir, script=script_name)[0]
+    if ENVIRONMENT_DECIDERS and not _reusable(key, entry, want_python):
+        # 要起新会话：先让「换不换解释器」的决定落地，再按决定之后的世界解析、查租约——
+        # 下面的 `is_mutating` 与 `_new_worker()` 里构造函数解析到的必须是同一个解释器。
+        # 也在锁外：决定可能要体检若干个候选解释器（子进程），不能占着整个池的锁。
+        for decide in ENVIRONMENT_DECIDERS:
+            decide(figures_dir, script_name)
+        want_python = resolve_worker_python(figures_dir, script=script_name)[0]
     if is_mutating(want_python):
         # 这个环境的 site-packages 正在被写。**不起新会话**——半装完的包
         # import 到一半是最难解释的一档失败（有时成功、有时缺一个子模块）。
@@ -2623,6 +2642,16 @@ def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorke
     if created:  # 出锁再清：prune 要遍历磁盘，不能占着 _lock
         _schedule_prune()
     return w, created
+
+
+def _reusable(key: tuple[str, str], entry: str, want_python: str) -> bool:
+    """池里这条会话此刻能不能直接复用（与 `acquire()` 锁内的重建判据同一组条件）。只是一次窥视：
+    复用的会话不需要重新决定环境；判错了（窥视之后它死了）锁内照样重建，只是那一次不换环境。"""
+    with _lock:
+        w = _workers.get(key)
+        return (
+            w is not None and w.alive() and w.entry == entry and same_python(w.python, want_python)
+        )
 
 
 #: 自动切换被重试上限挡下时的 code（不是失败，是「这一轮已经切过了」）。

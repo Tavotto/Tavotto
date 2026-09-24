@@ -422,8 +422,11 @@ def _probe(python: str, modules: tuple[str, ...]) -> dict:
     return health
 
 
-def evaluate(candidates: list[dict], needed: list[dict], unknown: list[str]) -> list[dict]:
-    """逐个体检候选，回同顺序的结果表。
+def evaluate(
+    candidates: list[dict], needed: list[dict], unknown: list[str], *, use_cache: bool = True
+) -> list[dict]:
+    """逐个体检候选，回同顺序的结果表。`use_cache=False` 真起一次（结果仍回写缓存）：采用前的复核
+    要的是此刻的环境，不是弹窗打开那一刻的体检。
 
     `needed` 是联合计划里缺的那些（`{"import_name", "distribution"}`），`unknown` 是映射不到
     distribution 的无条件 import。**判「装没装齐」看 import 得不得到**，不看包元数据：worker 跑脚本
@@ -435,6 +438,9 @@ def evaluate(candidates: list[dict], needed: list[dict], unknown: list[str]) -> 
     todo = candidates[:PROBE_LIMIT]
 
     def one(cand: dict) -> dict:
+        if not use_cache:
+            with _lock:
+                _probe_cache.pop((_key(cand["python"]), imports), None)
         health = _probe(cand["python"], imports)
         ok_map = health.get("modules_ok") or {}
         missing = sorted(
