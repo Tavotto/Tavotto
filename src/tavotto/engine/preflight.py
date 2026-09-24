@@ -39,7 +39,6 @@ figure spec（两侧同源的规范化输入）：
      "missing": bool, "stale": bool,
      "render_error": str|null,
      "unapplied_overrides": int,
-     "bitmap_embed": bool,           # 翻转/半透明 → PDF 里按位图嵌入
      "hidden": bool
   }],
   "texts":   [{"id": str, "text": str, "size_pt": float, "bold": bool,
@@ -286,13 +285,6 @@ def _check_panel_state(panel: dict, sink: _Sink) -> None:
             object_ids=[pid],
             detail={"count": n},
             worse=n,
-        )
-    if panel.get("bitmap_embed"):
-        sink.add(
-            "bitmap-embed",
-            "翻转或半透明的面板在 PDF 里按导出 DPI 位图嵌入，矢量文字不保留",
-            message=("bitmapEmbed", {}),
-            object_ids=[pid],
         )
 
 
@@ -1091,7 +1083,6 @@ def spec_from_manifest(
                 "stale": False,
                 "render_error": None,
                 "unapplied_overrides": 0,
-                "bitmap_embed": False,
                 "hidden": False,
             }
         ],

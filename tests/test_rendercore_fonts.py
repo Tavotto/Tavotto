@@ -1,6 +1,6 @@
 """字体政策（统一实施包 U06，ADR 0060）：allowlist 的形状、注册表只认 allowlist 里的字节（RC-022）、
 身份是 sha256 不是族名（RC-023）、集合外明示限制（RC-037）、纯标准库的 sfnt 读取与 fontTools 对拍、
-依赖 extra 与 requirements 镜像一致。
+运行时依赖与 requirements 镜像一致、PyMuPDF 只剩 legacy extra（U10，ADR 0072）。
 
 分两档：不需要字体文件也能跑的（allowlist / 拒绝 / 依赖表）永远跑；要真字体的在没跑过
 `scripts/fetch_fonts.py` 的机器上 skip 并说明理由（skip 不是绿）。
@@ -124,32 +124,52 @@ def test_font_kind_rejects_the_formats_the_writer_cannot_embed():
 needs_tomllib = pytest.mark.skipif(tomllib is None, reason="需要 tomllib（Python ≥ 3.11）")
 
 
-def _extra_names() -> list[str]:
-    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    extra = cfg["project"]["optional-dependencies"]["rendercore"]
-    return [re.split(r"[<>=!~\[ ]", spec, maxsplit=1)[0].lower() for spec in extra]
+RENDERCORE_PACKAGES = ("pikepdf", "fonttools", "uharfbuzz", "pypdfium2", "pillow")
+
+
+def _dep_names(specs: list[str]) -> list[str]:
+    return [re.split(r"[<>=!~\[ ;]", spec, maxsplit=1)[0].lower() for spec in specs]
 
 
 @needs_tomllib
-def test_requirements_rendercore_mirrors_the_extra_and_is_pinned():
-    text = (ROOT / "requirements-rendercore.txt").read_text(encoding="utf-8")
+def test_requirements_txt_mirrors_the_runtime_dependencies_and_is_pinned():
+    """U10 起 RenderCore 的五个包是运行时依赖（ADR 0072）：pyproject `dependencies` 与 `requirements.txt`
+    同名同序、后者钉死版本。两边各改一处会让「装 -e . 的人」与「装 requirements 的人」拿到不同闭包。"""
+    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    deps = _dep_names(cfg["project"]["dependencies"])
+    text = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     pins = [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
     names = [ln.split("==")[0].lower() for ln in pins]
-    assert names == _extra_names()
+    assert names == deps
     for ln in pins:
-        assert "==" in ln, f"requirements-rendercore.txt 必须钉死版本: {ln}"
-    assert "候选" in text and "未默认启用" in text
+        assert "==" in ln, f"requirements.txt 必须钉死版本: {ln}"
+    for name in RENDERCORE_PACKAGES:
+        assert name in deps, f"{name} 应当是运行时依赖（切默认后不再是 extra）"
 
 
 @needs_tomllib
-def test_the_extra_is_not_a_default_dependency():
+def test_pymupdf_is_only_the_legacy_extra_never_a_runtime_dependency():
+    """退役的 PyMuPDF 只许经 `legacy-pymupdf` extra 进测试 / 维护者环境（D15）；`dependencies` /
+    `requirements.txt` / 别的 extra 里出现它就是退役闭包被撕开。`rendercore` extra 也不该再存在
+    （空别名会让 `pip install '.[rendercore]'` 看起来有效、其实什么都没装）。"""
     cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    deps = " ".join(cfg["project"]["dependencies"]).lower()
-    for name in _extra_names():
-        assert name not in deps, f"{name} 不该进默认依赖（候选栈未默认启用）"
-    base = (ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
-    for name in _extra_names():
-        assert name not in base
+    assert "pymupdf" not in _dep_names(cfg["project"]["dependencies"])
+    pins = [
+        ln.split("==")[0].lower()
+        for ln in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if ln and not ln.startswith("#")
+    ]
+    assert "pymupdf" not in pins  # 主语是钉住的包名，注释里提到它不算
+    extras = cfg["project"]["optional-dependencies"]
+    assert "rendercore" not in extras
+    assert _dep_names(extras["legacy-pymupdf"]) == ["pymupdf"]
+    for name, specs in extras.items():
+        if name == "legacy-pymupdf":
+            continue
+        assert "pymupdf" not in _dep_names(specs), name
+    # dev 经自引用 extra 拿到读取器，不另抄一份版本范围
+    assert "tavotto[legacy-pymupdf]" in extras["dev"]
+    assert not (ROOT / "requirements-rendercore.txt").exists()
 
 
 @needs_tomllib

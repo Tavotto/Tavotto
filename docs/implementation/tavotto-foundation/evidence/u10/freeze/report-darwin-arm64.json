@@ -1,0 +1,86 @@
+{
+ "platform": {
+  "python": "3.13.11",
+  "system": "Darwin",
+  "machine": "arm64"
+ },
+ "pyinstaller": "6.22.3",
+ "build_seconds": 12.5,
+ "dist": {
+  "files": 243,
+  "bytes": 96741260,
+  "exe_sha256": "87f46890b66a98574b6297cc51a98a83f87a65ba2eb35a8b12e7aeaca01276ae"
+ },
+ "run": {
+  "returncode": 0,
+  "stdout": "{\"ok\": true, \"frozen\": true, \"executable\": \"/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u07-freeze-8zn6_xax/dist/Tavotto-u07-freeze/Tavotto-u07-freeze\", \"child_argv\": [\"/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u07-freeze-8zn6_xax/dist/Tavotto-u07-freeze/Tavotto-u07-freeze\", \"--render-child\"], \"resource_root\": \"/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u07-freeze-8zn6_xax/dist/Tavotto-u07-freeze/_internal\", \"fonts_found\": 13, \"fonts_missing\": [], \"native_libraries\": [\"libqpdf.30.3.2.dylib\", \"pikepdf/.dylibs/libjpeg.8.3.2.dylib\", \"pikepdf/.dylibs/libqpdf.30.3.2.dylib\", \"pikepdf/_core.cpython-313-darwin.so\", \"pypdfium2_raw/libpdfium.dylib\"], \"child_pid\": 38214, \"child_frozen\": true, \"child_memory_limit\": \"failed: current limit exceeds maximum limit\", \"pdfium\": \"153.0.7999.0\", \"probe\": {\"pages\": 1, \"width_pt\": 270.0, \"height_pt\": 160.0, \"user_unit\": 1.0}, \"render\": {\"width\": 400, \"height\": 237, \"channels\": 3}, \"png_sha256\": \"5637a739f0c0af4a046f0aa6a8e9ba5cb412a6c457cce82195564d3424f71211\", \"seconds\": 0.46}",
+  "stderr": ""
+ },
+ "result": {
+  "ok": true,
+  "frozen": true,
+  "executable": "/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u07-freeze-8zn6_xax/dist/Tavotto-u07-freeze/Tavotto-u07-freeze",
+  "child_argv": [
+   "/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u07-freeze-8zn6_xax/dist/Tavotto-u07-freeze/Tavotto-u07-freeze",
+   "--render-child"
+  ],
+  "resource_root": "/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/u07-freeze-8zn6_xax/dist/Tavotto-u07-freeze/_internal",
+  "fonts_found": 13,
+  "fonts_missing": [],
+  "native_libraries": [
+   "libqpdf.30.3.2.dylib",
+   "pikepdf/.dylibs/libjpeg.8.3.2.dylib",
+   "pikepdf/.dylibs/libqpdf.30.3.2.dylib",
+   "pikepdf/_core.cpython-313-darwin.so",
+   "pypdfium2_raw/libpdfium.dylib"
+  ],
+  "child_pid": 38214,
+  "child_frozen": true,
+  "child_memory_limit": "failed: current limit exceeds maximum limit",
+  "pdfium": "153.0.7999.0",
+  "probe": {
+   "pages": 1,
+   "width_pt": 270.0,
+   "height_pt": 160.0,
+   "user_unit": 1.0
+  },
+  "render": {
+   "width": 400,
+   "height": 237,
+   "channels": 3
+  },
+  "png_sha256": "5637a739f0c0af4a046f0aa6a8e9ba5cb412a6c457cce82195564d3424f71211",
+  "seconds": 0.46
+ },
+ "checks": [
+  {
+   "check": "frozen_exe_runs",
+   "ok": true
+  },
+  {
+   "check": "frozen_flag_set",
+   "ok": true
+  },
+  {
+   "check": "child_is_the_same_exe_with_render_child_flag",
+   "ok": true
+  },
+  {
+   "check": "pdfium_library_bundled",
+   "ok": true
+  },
+  {
+   "check": "fonts_bundled_13",
+   "ok": true
+  },
+  {
+   "check": "probe_reports_the_cropbox_size",
+   "ok": true
+  },
+  {
+   "check": "png_rendered",
+   "ok": true
+  }
+ ],
+ "all_ok": true
+}

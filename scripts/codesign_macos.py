@@ -33,6 +33,7 @@ import argparse
 import concurrent.futures
 import os
 import platform
+import plistlib
 import struct
 import subprocess
 import sys
@@ -164,6 +165,101 @@ def scan(app: Path) -> list[MachO]:
     # 深度降序 = 自内向外；同深度按路径稳定排序，便于比对两次构建的日志
     found.sort(key=lambda m: (-len(m.path.parts), str(m.path)))
     return found
+
+
+LC_VERSION_MIN_MACOSX = 0x24
+LC_BUILD_VERSION = 0x32
+PLATFORM_MACOS = 1
+
+
+def _version(packed: int) -> tuple[int, int]:
+    """Mach-O 的 `xxxx.yy.zz` 打包版本号 → (major, minor)。"""
+    return packed >> 16, (packed >> 8) & 0xFF
+
+
+def _thin_minos(fh, offset: int) -> tuple[int, int] | None:
+    """一个 thin Mach-O 声明的最低 macOS（LC_BUILD_VERSION 或旧的 LC_VERSION_MIN_MACOSX）；没有就 None。"""
+    fh.seek(offset)
+    head = fh.read(32)
+    endian = _THIN_MAGIC_BYTES.get(head[:4])
+    if endian is None:
+        return None
+    is64 = head[:4] in (b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe")
+    ncmds, sizeofcmds = struct.unpack(endian + "II", head[16:24])
+    fh.seek(offset + (32 if is64 else 28))
+    cmds = fh.read(sizeofcmds)
+    pos = 0
+    for _ in range(ncmds):
+        if pos + 8 > len(cmds):
+            break
+        cmd, size = struct.unpack(endian + "II", cmds[pos : pos + 8])
+        if cmd == LC_BUILD_VERSION and pos + 16 <= len(cmds):
+            plat, minos = struct.unpack(endian + "II", cmds[pos + 8 : pos + 16])
+            if plat == PLATFORM_MACOS:
+                return _version(minos)
+        elif cmd == LC_VERSION_MIN_MACOSX and pos + 12 <= len(cmds):
+            return _version(struct.unpack(endian + "I", cmds[pos + 8 : pos + 12])[0])
+        if size <= 0:
+            break
+        pos += size
+    return None
+
+
+def minos(path: Path, arch: str) -> tuple[int, int] | None:
+    """`path` 里 `arch` 那一片声明的最低 macOS；不是 Mach-O / 没有那一片 / 没写 就 None。"""
+    want = {v: k for k, v in _CPU_NAMES.items()}.get(_ARCH_ALIASES.get(arch.lower(), arch))
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(8)
+            if len(head) < 8:
+                return None
+            if struct.unpack(">I", head[:4])[0] in _FAT:
+                nfat = struct.unpack(">I", head[4:8])[0]
+                for i in range(min(nfat, 64)):
+                    fh.seek(8 + i * 20)
+                    cputype, _sub, off, _size, _align = struct.unpack(">IIIII", fh.read(20))
+                    if cputype == want:
+                        return _thin_minos(fh, off)
+                return None
+            return _thin_minos(fh, 0)
+    except (OSError, struct.error):
+        return None
+
+
+def check_min_os(
+    app: Path, items: list[MachO], expect_min_os: str | None, arch: str | None
+) -> None:
+    """声明的最低系统（Info.plist 的 `LSMinimumSystemVersion`）等于期望值，且**每个** Mach-O 要求的
+    最低 macOS 都不高于它。
+
+    后一条才是用户能不能打开的那件事：plist 写 11.0、里面的 pikepdf 却是按 14.0 编的，装得上、
+    点得开，渲染时才出事（ADR 0072 §2：RenderCore 的 wheel 把下限抬到 14.0 / 15.0，第一次就是这么漏的）。
+    """
+    if not expect_min_os:
+        return
+    want = tuple(int(x) for x in expect_min_os.split(".")[:2])
+    plist = app / "Contents" / "Info.plist"
+    declared = plistlib.loads(plist.read_bytes()).get("LSMinimumSystemVersion", "")
+    if tuple(int(x) for x in str(declared).split(".")[:2]) != want:
+        raise SignError(f"{plist} 的 LSMinimumSystemVersion = {declared!r}，期望 {expect_min_os}")
+    arch = arch or platform.machine()
+    seen, over = 0, []
+    for m in items:
+        got = minos(m.path, arch)
+        if got is None:
+            continue
+        seen += 1
+        if got > want:
+            over.append((m, got))
+    if not seen:
+        raise SignError("一个 Mach-O 的最低系统版本都没读到——解析坏了，这条核对不能算过")
+    if over:
+        over.sort(key=lambda x: x[1], reverse=True)
+        raise SignError(
+            f"这些 Mach-O 要求的 macOS 高于声明的 {expect_min_os}（共 {len(over)} 个，列前 10 个）：\n  "
+            + "\n  ".join(f"{m.path.relative_to(app)} → {a}.{b}" for m, (a, b) in over[:10])
+        )
+    print(f"✓ Info.plist 最低 macOS {expect_min_os}；{seen} 个 Mach-O 的 minos 都不高于它")
 
 
 def _codesign(args: list[str]) -> tuple[int, str]:
@@ -312,6 +408,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="断言每个 Mach-O 都含该架构（如 arm64）；不需要签名，因此可以在签名之前跑",
     )
+    p_scan.add_argument(
+        "--expect-min-os",
+        default=None,
+        help="断言 Info.plist 的 LSMinimumSystemVersion 等于它，且每个 Mach-O 的 minos 都不高于它（如 14.0）",
+    )
     p_scan.add_argument("--quiet", action="store_true", help="只报统计与核对结果，不逐个列出")
 
     args = ap.parse_args(argv)
@@ -345,6 +446,7 @@ def main(argv: list[str] | None = None) -> int:
             if not items:
                 raise SignError(f"{app} 里一个 Mach-O 都没扫到——路径给错了？")
             check_arch(app, items, args.expect_arch)
+            check_min_os(app, items, args.expect_min_os, args.expect_arch)
     except SignError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1

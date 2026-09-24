@@ -18,7 +18,8 @@
    都要**——没有它，用户得先自己装 Python，而这正是这条链要消灭的东西。
    已有一份且平台/锁文件都对得上时直接复用（重建一次要下 25 MiB + 装 300 MiB）。
 5. sidecar：PyInstaller onedir（packaging/tavotto.spec，刻意不含 matplotlib，
-   不用 onefile——科学场景的启动解压等不起）→ dist/Tavotto/。同一份 Analysis
+   不用 onefile——科学场景的启动解压等不起）→ dist/Tavotto/。之前先按 allowlist 取
+   批准字体（scripts/fetch_fonts.py，U10 起 RenderCore 是默认渲染后端，字体随包走）。同一份 Analysis
    里还出一个 console 版 `tavotto-cli`，那是外部程序（Codex 插件）唯一能当
    命令行调的入口——GUI 子系统的 exe 没有 stdout，交接的 JSON 会落进 app.log。
 6. Tauri：pnpm dlx @tauri-apps/cli build，把 dist/Tavotto 作为资源打进壳
@@ -194,6 +195,10 @@ def main() -> None:
     run([sys.executable, str(ROOT / "scripts" / "build_frontend.py")])
     build_workerd()
     build_runtime(args.skip_runtime, args.rebuild_runtime)
+    # 批准字体（U10，ADR 0060 / 0072）：不进 git，按 allowlist 的 sha256 取到 src/tavotto/resources/fonts/，
+    # tavotto.spec 的 `resources/` datas 整棵带走；spec 自己还会再核一遍，缺了拒绝打包。
+    run([sys.executable, str(ROOT / "scripts" / "fetch_fonts.py")])
+    run([sys.executable, str(ROOT / "scripts" / "fetch_fonts.py"), "--check"])
     run(
         [
             sys.executable,

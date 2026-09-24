@@ -12,6 +12,9 @@
     "ai_start_failed": "Couldn’t start the AI task: {{reason}}",
     "annotations_need_pdf": "This asset has no vector PDF. Annotations can’t be written back to the original yet.",
     "artifact_rejected": "The exported file didn’t pass the {{policy}} check ({{failed}}) and was not published.",
+    "backend_retired": "TAVOTTO_RENDER_BACKEND={{value}} points at the retired PyMuPDF renderer. Unset the variable to use the default renderer.",
+    "backend_unavailable": "The renderer is unavailable (missing dependency or fonts): {{reason}}. Reinstall to repair.",
+    "backend_unknown": "TAVOTTO_RENDER_BACKEND={{value}} is not a known renderer. Unset the variable to use the default renderer.",
     "bad_background": "Unknown background setting: {{value}}.",
     "bad_filename": "That file name can’t be used: {{reason}}. Try a different one.",
     "bad_formats": "Export formats must be a list.",
@@ -408,7 +411,6 @@
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",
     "barWithoutErrorbar": "The bar chart has no error bars. If the bars are means of repeated measurements, the profile expects the error shown.",
-    "bitmapEmbed": "Flipped or semi-transparent figures are embedded in the PDF as bitmaps at export DPI. Vector text isn't preserved.",
     "cjkFallbackMissing": "Text with CJK characters uses {{family}} with no CJK fallback declared. It exports as boxes in the PDF.",
     "cjkFallbackUnaccepted": "Text with CJK characters is drawn by {{face}} (body font {{family}}), not among the CJK fonts the profile accepts.",
     "discouragedColormap": "The colormap {{cmap}} isn't perceptually uniform; the profile recommends {{recommended}}.",
@@ -548,7 +550,6 @@
     "title": {
       "axis-label-format": "Axis label format off spec",
       "bar-without-errorbar": "Bars without error bars",
-      "bitmap-embed": "Will embed as bitmap",
       "cjk-fallback-missing": "CJK fallback missing",
       "discouraged-colormap": "Discouraged colormap",
       "element-outside-figure": "Element outside the figure",

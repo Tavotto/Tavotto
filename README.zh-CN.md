@@ -328,7 +328,8 @@ Windows 约 89 MB，装完约半个 GB**。只付一次，而且完全离线。
 
 > macOS 版**按架构各发一个 `.dmg`**，各自在对应架构的机器上原生构建和冒烟；
 > 按你的 Mac 选（Apple 菜单 →「关于本机」：写「芯片」的是 Apple Silicon，写「处理器 … Intel」的是
-> Intel）。没有 Linux 安装包；Linux 走 PyPI（浏览器模式，beta）。
+> Intel）。系统要求：**Apple Silicon 需 macOS 14 及以上，Intel 需 macOS 15 及以上**——这条下限来自
+> 渲染器自带的 PDF 库（pikepdf / PDFium）。没有 Linux 安装包；Linux 走 PyPI（浏览器模式，beta）。
 > Windows 安装包是否经过代码签名，以各版 Release 页的说明为准；未签名的安装包
 > 首次运行会弹 **SmartScreen** 提示（点「更多信息 → 仍要运行」，或先对照
 > Release 页的 `SHA256SUMS.txt` 核验下载）。支持 / beta / 不支持的唯一权威

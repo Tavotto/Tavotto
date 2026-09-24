@@ -541,7 +541,7 @@ def run(
     """执行一个作业。同步；`run_async` 是它的线程包装。
 
     `produce(job, tmp_dir)` 由调用方给（合成与渲染的知识留在 `app.py`，这个
-    模块不认识 PyMuPDF、也不认识 worker）。它必须：把每个格式写进 `tmp_dir`
+    模块不认识 RenderCore、也不认识 worker）。它必须：把每个格式写进 `tmp_dir`
     里的一个文件，返回 `Produced` 列表；在每个可中断的点上调
     `job.check_cancelled()`。
 

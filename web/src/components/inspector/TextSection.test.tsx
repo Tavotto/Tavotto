@@ -303,10 +303,12 @@ describe('科学文本与字形提示', () => {
     expect(container.textContent).toContain('؟')
   })
 
-  it('换脸画的字符另说一句，不与方框混成一句', () => {
+  it('主脸自己画得出的字符：既不说方框、也不说换脸', () => {
+    // U10（ADR 0072）起 `⁵` 是 Liberation 自带的 primary；批准字体集合没有隐式回退层
+    // （`fallback` 恒空，ADR 0060 §1），所以「另一种字体」那一句在活表上不会出现——
+    // 那个分支保留给将来 allowlist 加脸后的 fallback 层，它的判据在 glyphPlan 里
     setText('×10⁵')
-    const missing = container.textContent?.includes('导出后是方框')
-    expect(missing).toBe(false)
-    expect(container.textContent).toContain('另一种字体')
+    expect(container.textContent?.includes('导出后是方框')).toBe(false)
+    expect(container.textContent?.includes('另一种字体')).toBe(false)
   })
 })

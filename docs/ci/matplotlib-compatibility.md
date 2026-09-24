@@ -65,7 +65,7 @@ discover → execute → capture → open → semantic → edit → replay → e
 | semantic | 清单声明的角色与可编辑字段都在 | manifest |
 | edit | 应用 → manifest 反映 → 撤销 → 回到原值，全程无 warning | 真 worker |
 | replay | 热态 == 清空重放 == 全新 worker 重放 | `app._compare_manifests`（与写回同一把尺） |
-| export | PDF/PNG 真导出、体积合理、**解得开**、无 warning | 真 worker + PyMuPDF / Pillow |
+| export | PDF/PNG 真导出、体积合理、**解得开**、无 warning | 真 worker + pypdfium2 / Pillow（U10 起都在运行时闭包里，不再有「没装就跳过」那一档） |
 | fidelity | **原生 matplotlib** vs **Tavotto 零 override** | 见 §5 |
 
 **分母是「本该跑到这一级的 case 数」**，不是全部 case：execute 就崩了的 case

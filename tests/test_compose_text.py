@@ -1,41 +1,76 @@
-"""_draw_text 的排版几何测试——画布↔导出等价性的后端锚点。
+"""画布文字的排版几何——画布 ↔ 导出等价性的后端锚点（用户合同）。
 
-前端 TextView 与后端 _draw_text 是同一算法的两份实现（换行单元：CJK 逐字、
-拉丁按词；行高 1.25；CSS 行盒基线）。这里从真实 PDF 页面提取字形原点，
-把后端行为钉死；前端若要改排版算法，必须同步改这里的期望值。
+前端 TextView 与后端排版是同一算法的两份实现（换行单元：CJK 逐字、拉丁按词；行高 1.25；
+CSS 行盒基线；`^{…}` / `_{…}` 上下标；超宽单词逐字兜底）。这里经契约层 `pdfbackend.compose()`
+把一段文字合成进真实 PDF，再用**独立读取器**（PDFium 的字符级文字层，`tests/support/pdftext.py`）
+抽回每个字形的原点 / 字号 / 字体，把后端行为钉死；前端若要改排版算法，必须同步改这里的期望值。
+
+U10 之前这里直接调旧后端的私有 `_draw_text` 并用 PyMuPDF 读页面；PyMuPDF 退役后（ADR 0072）改走
+契约层 + PDFium 读取——**每条用例的合同一字未变**，变的只有「怎么画、怎么读」。基线那一条按 D07
+批准的度量走（Liberation Serif 的 OS/2 typo ascender / descender，ADR 0060 §4）。
+
+需要 RenderCore 依赖 + 批准字体（U10 起是运行时闭包）；不在的机器 skip 并写明。
 """
 
-import pymupdf
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
 import pytest
 
-from tavotto import app as m
-from tavotto.pdfbackend import pymupdf_backend as pb
+from tavotto import app as m, pdfbackend
+
+SUPPORT = Path(__file__).resolve().parent / "support"
+if str(SUPPORT) not in sys.path:
+    sys.path.insert(0, str(SUPPORT))
+import pdftext  # noqa: E402
+
+HAS = all(
+    importlib.util.find_spec(mod) is not None
+    for mod in ("pypdfium2", "pikepdf", "uharfbuzz", "PIL")
+)
+pytestmark = pytest.mark.skipif(not HAS, reason="RenderCore 依赖未装（not_run，不是绿）")
+
+#: 旧用例的页面是 400 × 300 pt；compose 收 mm
+PAGE_MM = (400 * 25.4 / 72, 300 * 25.4 / 72)
 
 
-def _draw(t: dict) -> pymupdf.Page:
-    doc = pymupdf.open()
-    page = doc.new_page(width=400, height=300)
-    pb._draw_text(page, t)
-    return page
+@pytest.fixture(scope="module", autouse=True)
+def _fonts_ready():
+    if not HAS:
+        pytest.skip("RenderCore 依赖未装（not_run）")
+    from tavotto.rendercore import fonts, renderhost
+
+    reg = fonts.FontRegistry.discover()
+    if reg.missing:
+        pytest.skip(f"批准字体不全（not_run）：缺 {reg.missing}；先跑 scripts/fetch_fonts.py")
+    yield
+    renderhost.shutdown_shared()
 
 
-def _chars(page) -> list[tuple[float, float, str]]:
-    """页面全部字形：[(origin_x, origin_y, char)]，按 (y, x) 排序。"""
-    out = []
-    for block in page.get_text("rawdict")["blocks"]:
-        for line in block.get("lines", []):
-            for span in line.get("spans", []):
-                for ch in span.get("chars", []):
-                    out.append((ch["origin"][0], ch["origin"][1], ch["c"]))
-    return sorted(out, key=lambda c: (round(c[1], 1), c[0]))
+def _draw(t: dict, tmp_path: Path | None = None) -> list[pdftext.Char]:
+    """把一个文字对象合成进一页，回它落笔的字符（顶原点 pt，与旧 rawdict 同一口径）。"""
+    import tempfile
+
+    out = Path(tempfile.mkdtemp(prefix="compose-text-")) / "t.pdf"
+    canvas = pdfbackend.compose(*PAGE_MM)
+    try:
+        canvas.place({"type": "text", "id": "t", **t}, 150, lambda o, d: None)
+        canvas.save_pdf(out)
+    finally:
+        canvas.close()
+    return pdftext.chars(out)
 
 
-def _rows(page) -> list[str]:
-    """按基线 y 分组重建的行文本（x 序拼接）。"""
-    rows: dict[float, list] = {}
-    for x, y, c in _chars(page):
-        rows.setdefault(round(y, 1), []).append((x, c))
-    return ["".join(c for _, c in sorted(v)) for _, v in sorted(rows.items())]
+def _chars(cs: list[pdftext.Char]) -> list[tuple[float, float, str]]:
+    """[(origin_x, origin_y, char)]，按 (y, x) 排序。"""
+    return [(ch.x, ch.y, ch.c) for ch in cs]
+
+
+def _rows(cs: list[pdftext.Char]) -> list[str]:
+    return pdftext.rows(cs)
 
 
 def _base(text: str, **kw) -> dict:
@@ -43,16 +78,20 @@ def _base(text: str, **kw) -> dict:
 
 
 SIZE = 9.0
-LATIN = pb.latin_font(False, False)
-CJK = pb.get_font("china-ss")
 
 
 def width(s: str) -> float:
-    return pb._mixed_width(s, LATIN, CJK, SIZE)
+    return pdfbackend.text_width(s, SIZE)
 
 
 def pt2mm(pt: float) -> float:
     return pt * m.MM_PER_PT
+
+
+def _serif_face():
+    from tavotto.rendercore import facade
+
+    return facade.provider().face_for("serif", False, False)
 
 
 def test_latin_wraps_by_word():
@@ -78,17 +117,19 @@ def test_mixed_script_single_line_advances():
     page = _draw(_base("abcd等离子"))
     chars = _chars(page)
     assert "".join(c for _, _, c in chars) == "abcd等离子"
-    x0 = pb.mm2pt(10)
+    x0 = pdfbackend.mm2pt(10)
     cjk_start = next(x for x, _, c in chars if c == "等")
-    assert cjk_start == pytest.approx(x0 + LATIN.text_length("abcd", SIZE), abs=0.2)
+    assert cjk_start == pytest.approx(x0 + width("abcd"), abs=0.2)
 
 
 def test_baseline_matches_css_line_box():
-    """基线 = y0 + size*((1.25-(asc-desc))/2 + asc)，与前端 line-height:1.25 对齐。"""
+    """基线 = y0 + size*((1.25-(asc-desc))/2 + asc)，与前端 line-height:1.25 对齐。asc / desc 是
+    主脸（Liberation Serif）的 OS/2 typo 值——D07 批准的度量（ADR 0060 §4），公式本身一字未变。"""
     page = _draw(_base("Mg"))
     _, y, _ = _chars(page)[0]
-    asc, desc = LATIN.ascender, LATIN.descender
-    expected = pb.mm2pt(10) + SIZE * ((1.25 - (asc - desc)) / 2 + asc)
+    face = _serif_face()
+    asc, desc = face.ascender, face.descender
+    expected = pdfbackend.mm2pt(10) + SIZE * ((1.25 - (asc - desc)) / 2 + asc)
     assert y == pytest.approx(expected, abs=0.2)
 
 
@@ -107,7 +148,7 @@ def test_alignment(align):
     text = "hello"
     box_w = width(text) * 3
     page = _draw(_base(text, w_mm=pt2mm(box_w), align=align))
-    x0 = pb.mm2pt(10)
+    x0 = pdfbackend.mm2pt(10)
     w = width(text)
     expected = {"left": x0, "center": x0 + (box_w - w) / 2, "right": x0 + box_w - w}[align]
     assert _chars(page)[0][0] == pytest.approx(expected, abs=0.2)
@@ -118,13 +159,8 @@ def test_empty_text_draws_nothing():
     assert _chars(page) == []
 
 
-def _fonts(page) -> set[str]:
-    return {
-        span["font"]
-        for block in page.get_text("rawdict")["blocks"]
-        for line in block.get("lines", [])
-        for span in line.get("spans", [])
-    }
+def _fonts(cs: list[pdftext.Char]) -> set[str]:
+    return pdftext.fonts(cs)
 
 
 def test_italic_and_bold_pick_matching_latin_fonts():
@@ -136,16 +172,9 @@ def test_italic_and_bold_pick_matching_latin_fonts():
 # ---------------- 行内标记：上标 ^{…} / 下标 _{…} ---------------------------
 
 
-def _spans(page):
+def _spans(cs: list[pdftext.Char]):
     """页面全部 span：[(size, origin_y, text)]。上下标靠字号与基线区分。"""
-    out = []
-    for block in page.get_text("rawdict")["blocks"]:
-        for line in block.get("lines", []):
-            for span in line.get("spans", []):
-                text = "".join(ch["c"] for ch in span.get("chars", []))
-                oy = span["chars"][0]["origin"][1] if span.get("chars") else 0
-                out.append((round(span["size"], 3), round(oy, 2), text))
-    return out
+    return pdftext.spans(cs)
 
 
 def test_superscript_is_smaller_and_raised():
@@ -189,15 +218,9 @@ def test_escaped_markers_render_literally():
 # ---------------- 超宽单词逐字兜底（前端 word-break:break-word 同源）---------
 
 
-def _max_x1(page) -> float:
+def _max_x1(cs: list[pdftext.Char]) -> float:
     """页面全部字形右边界的最大值——越界与否只能看 x1，看不了 origin。"""
-    return max(
-        ch["bbox"][2]
-        for block in page.get_text("rawdict")["blocks"]
-        for line in block.get("lines", [])
-        for span in line.get("spans", [])
-        for ch in span.get("chars", [])
-    )
+    return max(ch.x1 for ch in cs)
 
 
 def test_long_unbroken_word_breaks_inside_word_to_stay_in_box():
@@ -207,7 +230,7 @@ def test_long_unbroken_word_breaks_inside_word_to_stay_in_box():
     前端 TextView 是 word-break:break-word，浏览器里从来不越界。"""
     t = _base("ABCDEFGHIJKLMNOPQRSTUVWXYZ", x_mm=10, w_mm=20, h_mm=30, size_pt=12)
     page = _draw(t)
-    box_right = pb.mm2pt(t["x_mm"] + t["w_mm"])
+    box_right = pdfbackend.mm2pt(t["x_mm"] + t["w_mm"])
     assert _max_x1(page) <= box_right + 0.5
     # 断成了多行，且字符一个不丢、顺序不乱
     rows = _rows(page)
@@ -220,7 +243,7 @@ def test_long_word_gets_a_fresh_line_before_being_broken():
     前面那半行不该被卷进逐字断行里。"""
     t = _base("The ABCDEFGHIJKLMNOPQRSTUVWXYZ end", x_mm=10, w_mm=20, h_mm=30, size_pt=12)
     page = _draw(t)
-    assert _max_x1(page) <= pb.mm2pt(t["x_mm"] + t["w_mm"]) + 0.5
+    assert _max_x1(page) <= pdfbackend.mm2pt(t["x_mm"] + t["w_mm"]) + 0.5
     rows = _rows(page)
     assert rows[0] == "The" and rows[-1] == "end"
 
@@ -266,7 +289,7 @@ def test_force_break_keeps_script_marks_on_each_char():
 
     t = _base("Ca_{10}(PO_{4})_{6}(OH)_{2}", x_mm=10, w_mm=20, h_mm=30, size_pt=12)
     page = _draw(t)
-    assert _max_x1(page) <= pb.mm2pt(t["x_mm"] + t["w_mm"]) + 0.5
+    assert _max_x1(page) <= pdfbackend.mm2pt(t["x_mm"] + t["w_mm"]) + 0.5
     sizes = sorted({s[0] for s in _spans(page)})
     assert sizes == pytest.approx([12 * richtext.SCRIPT_SIZE, 12.0], abs=0.01)
     # 下标字形都落在各自那行正文基线下方 SUB_DROP×size 处
@@ -288,5 +311,5 @@ def test_script_width_uses_smaller_size_for_wrapping():
     marked = _draw(_base("^{mmmm}", w_mm=200))
     w_body = max(x for x, _, _ in _chars(body_only))
     w_sup = max(x for x, _, _ in _chars(marked))
-    x0 = pb.mm2pt(10)
+    x0 = pdfbackend.mm2pt(10)
     assert (w_sup - x0) < (w_body - x0) * (richtext.SCRIPT_SIZE + 0.1)

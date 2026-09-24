@@ -99,6 +99,7 @@ from .engine import (
     updater as engine_updater,
     workdir as engine_workdir,
 )
+from .rendercore import fonts as rc_fonts, hbshaper as rc_hbshaper
 
 PKG_ROOT = Path(__file__).resolve().parent  # 只读：包自带资源（前端构建产物）
 DATA_ROOT = engine_config.data_dir()  # 可写：运行时产物（装成包后 site-packages 不可写）
@@ -220,148 +221,6 @@ def prune_render_cache(max_bytes: int = RENDER_CACHE_MAX_BYTES) -> int:
     if removed:
         LOG.info("渲染缓存清理: 删除 %d 个文件（预算 %dMB）", removed, max_bytes // (1024 * 1024))
     return removed
-
-
-# ---- 渲染缓存的身份：内容哈希，不是 mtime ----------------------------------
-#: `{路径: (mtime, size, sha1)}` 的进程内 memo。**身份永远是内容 sha1**，
-#: mtime/size 只当「要不要重算」的信号：
-#:   * 内容没变而 mtime 变了（touch、从备份还原、同步工具、重跑脚本出同一张图）
-#:     → 重算一次哈希，值不变，**缓存照常命中**；
-#:   * 内容变了 → mtime/size 必然也变，memo 失效重算，键跟着变，缓存必然失效。
-#: 反过来拿 mtime 当身份就只有第二条成立，第一条会白丢一张 3200px 的预览。
-#:
-#: 第二条有一个例外，见 `source_sha1` 的「同 tick 改写」窗口。
-_SOURCE_SHA1: dict[str, tuple[float, int, str]] = {}
-_SOURCE_SHA1_LOCK = threading.Lock()
-#: memo 条目上限（素材数量由用户的图库决定，不设上限就是慢性泄漏）。
-#: 满了整表清掉：LRU 只为省几次哈希，不值得多维护一个数据结构。
-_SOURCE_SHA1_MAX = 4096
-#: mtime 粒度的保守上界（秒）。各文件系统差得很远——APFS/ext4 是纳秒、
-#: HFS+/NTFS 到秒、FAT 到两秒——运行时问不出确切值，就按最粗的算。
-#: 这个常量只决定「多久之内写过的文件不进 memo」，估大了只是少省几次哈希。
-_SOURCE_SHA1_TICK = 2.0
-
-
-def source_sha1(path: Path) -> str:
-    """素材文件内容的 sha1（按 (mtime, size) memo，命中就不读文件）。
-
-    **(mtime, size) 是「要不要重算」的信号，不是身份。** 它漏掉的是一种
-    改写：文件在**同一个 mtime tick 内被改写成同样大小**时两者一个比特都
-    不变，memo 会把上一版内容的摘要当成这一版交出去——而它正是渲染缓存的
-    键，用户看到的就是「脚本重跑了、文件变了，画布还是旧图」。粗粒度
-    文件系统（Windows/HFS+，一秒一跳）上这个窗口宽得能被日常操作撞到。
-
-    堵法用 git 判 "racily clean" 的同一招：**只有能证明「以后不会再有写入
-    落进同一个 tick」的条目才可信**。哈希算完时墙上时间已经越过
-    `mtime + _SOURCE_SHA1_TICK` → 之后任何写入都只能落进下一个 tick →
-    (mtime, size) 必然变 → 记 memo；还在窗口里就不记，下次老实重算。
-    刚写完的文件因此在两秒内每次都真算一遍哈希，**这正是需要它算的时候**。
-
-    时钟不一致（网络盘的 mtime 来自服务端）朝安全方向倒：服务端时钟偏快
-    → 窗口判定永远成立 → 退化成「不 memo」，只是慢，不会错。
-    """
-    st = path.stat()
-    key = str(path)
-    sig = (st.st_mtime, st.st_size)
-    with _SOURCE_SHA1_LOCK:
-        hit = _SOURCE_SHA1.get(key)
-    if hit is not None and hit[0] == sig[0] and hit[1] == sig[1]:
-        return hit[2]
-    digest = _sha1_of(path)
-    if time.time() < sig[0] + _SOURCE_SHA1_TICK:
-        # 还在同 tick 窗口里：这条 memo 不可信，不留。**旧条目也要一并清掉**
-        # ——签名对不上只是「此刻对不上」，留着它就是一颗休眠的地雷：日后备份
-        # 还原/同步工具把那个 mtime 连同另一份同尺寸内容一起写回来，它就又匹配
-        # 了，而它挂的是更早那一版的摘要。改这条判据之前，每一次签名不匹配都会
-        # 覆盖掉旧条目，这个形状不存在。
-        with _SOURCE_SHA1_LOCK:
-            _SOURCE_SHA1.pop(key, None)
-        return digest
-    with _SOURCE_SHA1_LOCK:
-        if len(_SOURCE_SHA1) >= _SOURCE_SHA1_MAX:
-            _SOURCE_SHA1.clear()
-        _SOURCE_SHA1[key] = (sig[0], sig[1], digest)
-    return digest
-
-
-#: 同键写者串行用的锁表。键随内容/宽度/后端版本变，**必须封顶**——与
-#: `_SOURCE_SHA1` 同一条纪律，不封顶就是慢性泄漏。
-_RENDER_CACHE_LOCKS: dict[str, threading.Lock] = {}
-_RENDER_CACHE_LOCKS_GUARD = threading.Lock()
-_RENDER_CACHE_LOCKS_MAX = 512
-
-
-def _cache_write_lock(cached: Path) -> threading.Lock:
-    """同一个缓存键共用一把写锁。"""
-    key = str(cached)
-    with _RENDER_CACHE_LOCKS_GUARD:
-        lock = _RENDER_CACHE_LOCKS.get(key)
-        if lock is None:
-            if len(_RENDER_CACHE_LOCKS) >= _RENDER_CACHE_LOCKS_MAX:
-                # 只丢没人拿着的那些：正被持有的锁一旦从表里消失，下一个线程
-                # 会为同一个键另建一把，互斥当场失效
-                for stale, held in list(_RENDER_CACHE_LOCKS.items()):
-                    if not held.locked():
-                        del _RENDER_CACHE_LOCKS[stale]
-            lock = threading.Lock()
-            _RENDER_CACHE_LOCKS[key] = lock
-        return lock
-
-
-def _write_render_cache(src: Path, width_px: int, cached: Path) -> None:
-    """渲染进临时文件再 `os.replace` 落盘（同键并发不会读到半个 PNG）。
-
-    直写最终路径的话，同一张图被两个面板/两个标签页同时请求时，后到的那个
-    `send_file` 出去的可能是只写了一半的文件——浏览器画半张图，而且**下次
-    还命中那个坏文件**。replace 是原子的：读者要么看到旧的（完整），要么看到
-    新的（完整）。
-    """
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    # **后缀必须仍是 .png**：后端按扩展名决定图片格式（`pix.save()` 见了 .tmp
-    # 直接抛 ValueError）。留在同一个目录里也是有意的——进程被杀留下的半成品
-    # 会被 `prune_render_cache()`（按 *.png 扫）当成最久未用的缓存正常回收，
-    # 不需要另写一套清理；它删的是最旧的，正在写的那个永远是最新的。
-    tmp = cached.with_name(f"{cached.stem}.{os.getpid()}-{threading.get_ident():x}.part.png")
-    try:
-        pdfbackend.render_preview_png(src, width_px, tmp)
-        _publish_render_cache(tmp, cached)
-    finally:
-        tmp.unlink(missing_ok=True)  # replace 成功后已经不在了，这里是 no-op
-
-
-#: 换名撞上 Windows 独占读句柄时的重试次数与间隔（总计 ~0.2s 的退让窗口）。
-_REPLACE_TRIES = 5
-_REPLACE_BACKOFF_S = 0.05
-
-
-def _publish_render_cache(tmp: Path, cached: Path) -> None:
-    """把临时文件换成最终缓存；目标正被人读着就**退让**，不是出错。
-
-    POSIX 的 rename 可以盖掉一个正被读的文件，**Windows 不行**：werkzeug 的
-    `send_file` 用 `open(path, "rb")` 拿着句柄（没带 `FILE_SHARE_DELETE`），
-    这一刻 `os.replace` 直接 `PermissionError`（WinError 5 / 32）。上面那句
-    「读者要么看到旧的、要么看到新的」在 Windows 上因此不成立——16 个并发
-    请求撞一次，用户拿到的是 500，而图其实好好地在磁盘上
-    （tests/test_windows_regressions.py 看护）。
-
-    退让是安全的：缓存键 = `sha1(id|内容 sha1|宽度|后端-版本)`，同键的字节
-    逐字节相同——目标已经在那儿且非空，就说明别人刚写完的正是同一张图。
-    只有目标不存在（或是零字节的半成品）时才重试，重试完仍不行就如实抛出：
-    那是真出了事，不该伪装成成功。
-    """
-    for attempt in range(_REPLACE_TRIES):
-        try:
-            os.replace(tmp, cached)
-            return
-        except PermissionError:
-            try:
-                if cached.stat().st_size > 0:
-                    return  # 别人写好的同一张图，让给它
-            except OSError:
-                pass
-            if attempt == _REPLACE_TRIES - 1:
-                raise
-            time.sleep(_REPLACE_BACKOFF_S)
 
 
 def prune_backups(root: Path, keep: int = BACKUP_KEEP) -> int:
@@ -783,6 +642,25 @@ def _run_error(exc):
     return _native_error(exc)
 
 
+@app.errorhandler(pdfbackend.BackendSelectionError)
+def _backend_selection(exc):
+    """`TAVOTTO_RENDER_BACKEND` 指着退役的 / 不认识的后端（ADR 0072）：**明确失败**，不悄悄换实现。
+    code 是 `pdfbackend.ERROR_CODES` 里的；params 带原始取值让用户知道该删哪个变量。"""
+    LOG.error("渲染后端选择失败: %s", exc)
+    return jsonify({"error": str(exc), "code": exc.code, "params": {"value": exc.value}}), 500
+
+
+@app.errorhandler(rc_hbshaper.CandidatePackagesMissing)
+@app.errorhandler(rc_fonts.FontsUnavailable)
+def _backend_unavailable(exc):
+    """渲染后端的运行时依赖 / 批准字体不在（安装闭包不完整：pip 装漏了 extra 时代的包、冻结产物没收字体、
+    `TAVOTTO_FONTS_DIR` 指错）：**明确失败**（`backend_unavailable`），绝不换别的库画（06 §1 / ADR 0072）。"""
+    LOG.error("渲染后端不可用: %s", exc)
+    return jsonify(
+        {"error": str(exc), "code": "backend_unavailable", "params": {"reason": str(exc)[:300]}}
+    ), 500
+
+
 @app.errorhandler(Exception)
 def _unhandled(exc):
     """未处理异常：记日志并回 JSON（前端各处都按 JSON 解析错误）。
@@ -868,62 +746,27 @@ def api_panels():
 
 @app.get("/api/render")
 def api_render():
-    """把面板渲染为指定像素宽度的 PNG（带磁盘缓存），用于画布显示与缩略图。"""
-    rel_id = request.args.get("id", "")
-    want_w = int(request.args.get("w", 400))
-    w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
+    """把面板渲染为指定像素宽度的 PNG（带磁盘缓存），用于画布显示与缩略图。
 
-    path = safe_resolve(rel_id)
-    if pdfbackend.selected() == pdfbackend.BACKEND_RENDERCORE:
-        return _api_render_rendercore(rel_id, path, w)
-    # 缓存身份 =（面板 id, **内容哈希**, 宽度, 渲染后端与版本）。曾经这里是
-    # `path.stat().st_mtime`：mtime 是「什么时候被碰过」，不是「里面是什么」，
-    # 拿它当身份两头都错——内容没变而 mtime 变了白丢缓存，换了渲染后端版本
-    # （出来的像素可能不一样）却照旧命中。
-    key = hashlib.sha1(
-        f"{rel_id}|{source_sha1(path)}|{w}|"
-        f"{pdfbackend.BACKEND_NAME}-{pdfbackend.BACKEND_VERSION}".encode()
-    ).hexdigest()
-    cached = CACHE_DIR / f"{key}.png"
-    try:
-        usable = cached.stat().st_size > 0
-    except OSError:
-        usable = False
-    if not usable:
-        # 同键并发只让一个线程真渲染：同一素材在画布里放几份、缩略图与主图同时
-        # 上，是常态。其余线程渲出来的字节完全一样（键含内容哈希），多渲一次
-        # 就是白烧一次 CPU。锁内复查一次，看到成品直接用。
-        # 这把锁**只保本进程**——杀毒软件、别的进程不听它的，所以失败点上的
-        # 退让（`_publish_render_cache`）仍然是必须的，两者不互相替代。
-        with _cache_write_lock(cached):
-            try:
-                usable = cached.stat().st_size > 0
-            except OSError:
-                usable = False
-            if not usable:
-                # 零字节 = 上一次写到一半就断电/被杀（旧的直写路径留下的产物）。
-                # 把空文件当缓存交出去，用户看到的是一个永远画不出来的面板。
-                cached.unlink(missing_ok=True)
-                _write_render_cache(path, w, cached)
-                prune_render_cache()
-    # no-cache = 每次向服务器验证（304 极快）；内容一变（sha1 进 key）立即失效。
-    # 不用长 max-age——「更新原图」后旧 URL 也不能再吃浏览器缓存。
-    resp = send_file(cached, mimetype="image/png", conditional=True)
-    resp.headers["Cache-Control"] = "no-cache"
-    return resp
-
-
-def _api_render_rendercore(rel_id: str, path: Path, w: int):
-    """候选后端下的 `/api/render`：`rendercore.preview.PreviewCache`（键 = 内容身份 + 后端 build +
-    PDFium 版本 + 字体政策 + 像素参数；键与渲染绑在同一份抄出来的字节上；同键去重；临时发布 + Windows 退让；
-    零字节重建；异常抛出）。上面那三段（键 / 写 / 发布）在这条路上由它替掉；`source_sha1` 的 memo 不收编
-    （身份本来就要读一遍字节）。
+    缓存是 `rendercore.preview.PreviewCache`（U08 接入、U10 起唯一一条路，ADR 0067 / 0072）：
+    键 = 内容身份 + 后端 build + PDFium 版本 + 字体政策 + 像素参数——**不是 mtime**（mtime 回答的是
+    「什么时候被碰过」，不是「里面是什么」）；身份从 PreviewCache 自己抄出来的那份源字节上算，键与
+    渲染绑同一份字节；同键并发只渲染一次；临时文件 + `os.replace`、Windows 撞读者句柄退让；零字节
+    重建；异常抛出而不是交一张空图。换 build / 换字体集合（U10 切默认就是一次）旧缓存自然不命中，
+    只占预算、按 mtime 淘汰，不需要手动清。
 
     render child 的有界队列满了是**背压**不是故障：回 503 + `Retry-After`，前端按既有的图片重试
     走；别的 child 错误（超时 / 崩溃 / 打不开）回 500 并带稳定 code。
     """
     from .rendercore import facade as rc_facade, preview as rc_preview
 
+    # 开关只有一处（ADR 0067 / 0072）：这里先问一句，让 `TAVOTTO_RENDER_BACKEND=pymupdf` 那类退役 / 写错的取值
+    # 在预览路上也当场 `BackendSelectionError`，而不是因为这条路直接走 PreviewCache 就绕过了它
+    pdfbackend.selected()
+    rel_id = request.args.get("id", "")
+    want_w = int(request.args.get("w", 400))
+    w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
+    path = safe_resolve(rel_id)
     cache = rc_facade.preview_cache(CACHE_DIR, max_bytes=RENDER_CACHE_MAX_BYTES)
     try:
         cached = cache.get(rel_id, path, w)
@@ -935,6 +778,8 @@ def _api_render_rendercore(rel_id: str, path: Path, w: int):
             return resp
         LOG.error("预览渲染失败 %s: %s", rel_id, exc)
         return jsonify({"error": str(exc), "code": exc.code}), 500
+    # no-cache = 每次向服务器验证（304 极快）；内容一变（身份进键）立即失效。
+    # 不用长 max-age——「更新原图」后旧 URL 也不能再吃浏览器缓存。
     resp = send_file(cached, mimetype="image/png", conditional=True)
     resp.headers["Cache-Control"] = "no-cache"
     return resp
@@ -1010,7 +855,7 @@ def _serialize_figure(
 
     这是「谁来渲染」那扇门（`_engine_worker` / `_safe_worker` →
     `enginesession.resolve()`）在导出路上的**唯一**调用点：画布合成与原图导出
-    重渲染中间 PDF 走它，EPS（ADR 0046：PyMuPDF 写不出 PostScript，EPS 只能
+    重渲染中间 PDF 走它，EPS（ADR 0046：父进程没有 PostScript 写入器，EPS 只能
     从这里出）也走它。这里曾经是两段各自 `pool.get()` 的复制品，于是同一张
     native 图「预览是 native 的、画布导出是 safe 的」——两张不一样的图。
 
@@ -1144,94 +989,6 @@ def _panel_render_target(worker, stem: str, out_dir: Path | None, fmt: str = "pd
 
 
 # --------------------------- 统一导出管线（ADR 0031）-------------------------
-def _export_produce_canvas(job, tmp_dir: Path) -> list:
-    """`scope=canvas`：按画布合成。**忠实于画布**——页面尺寸、布局、裁切照搬。
-
-    多格式共享**同一页**（`Canvas` 只建一次），所以 PDF 与 PNG 不可能出自两个
-    不同的语义状态：PNG 是那一页渲出来的，不是第二次合成。
-    """
-    req = job.request
-    src = req.canvas
-    transparent = req.background == engine_exportreq.BACKGROUND_TRANSPARENT
-    dpi = req.ppi or engine_exportreq.PPI_DEFAULT
-    canvas = pdfbackend.compose(src.page_w_mm, src.page_h_mm, transparent)
-
-    def resolve(obj: dict, out_dpi: int) -> Path:
-        # 中间那份重渲染 PDF 落进**这次作业自己的**临时目录
-        return _resolve_panel_source(obj, out_dpi, job.warnings, tmp_dir)
-
-    produced: list = []
-    try:
-        for o in src.objects:
-            job.check_cancelled()
-            if o.get("hidden"):
-                continue
-            try:
-                canvas.place(o, dpi, resolve)
-            except engine_pool.WorkerError as exc:
-                LOG.error("导出失败: %s 重渲染出错: %s", o.get("id", o.get("type")), exc)
-                raise engine_exportreq.ExportRequestError(
-                    "export_render_failed",
-                    f"{o.get('id', o.get('type'))} 重渲染失败: {exc}",
-                    {"id": str(o.get("id", o.get("type"))), "reason": str(exc)},
-                ) from exc
-        w_pt, h_pt = canvas.size_pt
-        for fmt in req.formats:
-            job.check_cancelled()
-            tmp = tmp_dir / f"out.{fmt}"
-            if fmt == engine_exportreq.FORMAT_EPS:
-                # 画布合成在 PyMuPDF 里，它写不出 PostScript；把这一页栅格化再裹一层
-                # PS 冒充矢量正是 §8 禁止的事。**如实报这一项给不出**，PDF/PNG/TIFF
-                # 照常交付（`partial`，ADR 0031 §4）。界面在勾选那一刻就禁用了它，
-                # 这里是老客户端 / 脚本直接 POST 时的兜底
-                produced.append(
-                    engine_exportjob.Produced(
-                        format=fmt, error_code="eps_not_for_canvas", error_params={}
-                    )
-                )
-                continue
-            try:
-                if fmt == engine_exportreq.FORMAT_PDF:
-                    canvas.save_pdf(tmp)
-                    produced.append(
-                        engine_exportjob.Produced(
-                            format=fmt,
-                            tmp_path=tmp,
-                            width_mm=round(src.page_w_mm, 3),
-                            height_mm=round(src.page_h_mm, 3),
-                            vector=True,
-                        )
-                    )
-                else:
-                    if fmt == engine_exportreq.FORMAT_TIFF:
-                        canvas.save_tiff(tmp, dpi)
-                    else:
-                        canvas.save_png(tmp, dpi)
-                    produced.append(
-                        engine_exportjob.Produced(
-                            format=fmt,
-                            tmp_path=tmp,
-                            width_px=round(w_pt / 72.0 * dpi),
-                            height_px=round(h_pt / 72.0 * dpi),
-                            width_mm=round(src.page_w_mm, 3),
-                            height_mm=round(src.page_h_mm, 3),
-                            vector=False,
-                        )
-                    )
-            except Exception as exc:  # noqa: BLE001 —— 一个格式挂了不牵连另一个
-                LOG.warning("导出 %s 失败: %s", fmt, exc)
-                produced.append(
-                    engine_exportjob.Produced(
-                        format=fmt,
-                        error_code="format_failed",
-                        error_params={"error": str(exc)[:200]},
-                    )
-                )
-    finally:
-        canvas.close()
-    return produced
-
-
 def _export_produce_original(job, tmp_dir: Path) -> list:
     """`scope=original`：这张图**按它自己的尺寸**出。
 
@@ -1387,7 +1144,11 @@ def _produce_original_eps(job, src, dpi: int, tmp_dir: Path):
 
 
 def _export_produce_rendercore(job, tmp_dir: Path) -> list:
-    """`scope=canvas` 在候选后端下的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08，ADR 0067）。
+    """`scope=canvas` 的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08 候选、U10 起默认，ADR 0067 / 0072）。
+
+    **忠实于画布**——页面尺寸、布局、裁切照搬；多格式出自同一份 Canonical PDF，所以 PDF 与 PNG 不可能
+    出自两个不同的语义状态。EPS 由 `job.produce` 报旧路同一个稳定码 `eps_not_for_canvas`（画布合成没有
+    PostScript 写入器；把这一页栅格化再裹一层 PS 冒充矢量正是 §8 禁止的事），PDF / PNG / TIFF 照常交付。
 
     作业生命周期一字不改（仍是 `exportjob.run`）；这里只把三样东西接进去：执行侧源解析器（带
     override / runtime 素材由当次 worker 现画并附回执，磁盘原件不跑脚本）、进程级字体注册表、
@@ -1422,11 +1183,10 @@ def _export_inspect(job, produced: list) -> list:
 
 
 def _export_produce(job, tmp_dir: Path) -> list:
+    pdfbackend.selected()  # 退役 / 写错的后端名在这里就报错（BackendSelectionError），不进作业再说
     if job.request.scope == engine_exportreq.SCOPE_ORIGINAL:
         return _export_produce_original(job, tmp_dir)
-    if pdfbackend.selected() == pdfbackend.BACKEND_RENDERCORE:
-        return _export_produce_rendercore(job, tmp_dir)
-    return _export_produce_canvas(job, tmp_dir)
+    return _export_produce_rendercore(job, tmp_dir)
 
 
 def _style_check_report(spec: dict):
@@ -7067,7 +6827,7 @@ def main():
         LOG.info("上次运行遗留的 %d 个 AI 会话已标记为中断", n)
     engine_ai_history.purge(keep_days=180)
     # 选中的 PDF 后端在起服务前装载好（契约层是惰性装载的）：第一次 probe 不再多付一次
-    # import 的延迟；选了装不上的后端在这里就报出来，不静默回退（ADR 0067）
+    # import 的延迟；选了装不上的后端在这里就报出来，不静默回退（ADR 0067 / 0072）
     LOG.info("PDF 后端: %s", pdfbackend.warm())
     if not args.desktop_sidecar:
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑

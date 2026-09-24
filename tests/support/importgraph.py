@@ -375,10 +375,8 @@ LAYERS: dict[str, tuple[str, ...]] = {
         "tavotto/engine/browser.py",
     ),
     "bridge": ("tavotto/engine/bridge_runner.py", "tavotto/engine/bridgeboot.py"),
-    # 旧后端**实现**（唯一 import pymupdf 的模块）先列：它与新核心两个方向都不许有边（D03）。
-    # `pdfbackend/__init__.py` 是契约层（U08 起按 `TAVOTTO_RENDER_BACKEND` 在两个实现之间选一个，
-    # ADR 0067），它是全仓库唯一同时认识两边的模块，落到下面那条目录前缀。
-    "pdfbackend_impl": ("tavotto/pdfbackend/pymupdf_backend.py",),
+    # `pdfbackend/__init__.py` 是契约层（U08 起按 `TAVOTTO_RENDER_BACKEND` 选实现，ADR 0067）；U10 把旧
+    # 实现 `pymupdf_backend.py` 删掉之后（ADR 0072）这一层只剩契约层自己，`pdfbackend_impl` 层随之消失。
     "pdfbackend": ("tavotto/pdfbackend/",),
     # RenderCore（统一实施包 U06，ADR 0059）：纯模型那几份先列（`layer_of` 按顺序首个命中），
     # 包里其余的（native 适配 / 入口）落到下面那条目录前缀。
@@ -401,20 +399,15 @@ LAYER_RULES: tuple[tuple[str, str], ...] = (
     ("*", "entry"),  # 入口层只被入口层 import：底层反向依赖 app.py 就是任务书点名要挡的
     ("worker", "entry"),
     ("bridge", "entry"),
-    # 新核心零 pymupdf（D03：先限制新核心不借旧库）——整包不许有边进 pdfbackend（契约层与实现都不许：
-    # 新核心不认识旧后端，契约层认识新核心是反方向）
-    ("rendercore_model", "pdfbackend_impl"),
-    ("rendercore_native", "pdfbackend_impl"),
+    # 新核心不许有边进 pdfbackend（契约层认识新核心是反方向；U10 之前这里还挡着旧实现 `pdfbackend_impl`，
+    # 那一层随 PyMuPDF 退役删除，ADR 0072；新核心零 pymupdf 由 scripts/ci/retirement_scan.py 看护）
     ("rendercore_model", "pdfbackend"),
     ("rendercore_native", "pdfbackend"),
     # 纯模型不许依赖 native 适配层（候选包只能从适配层进来），也不许碰 worker 侧（科学栈）
     ("rendercore_model", "rendercore_native"),
     ("rendercore_model", "worker"),
     ("rendercore_native", "worker"),
-    # 反方向：旧后端**实现** / worker 也不许反过来 import 新核心（默认通道一字不变）；契约层
-    # `pdfbackend/__init__.py` 是唯一例外——它按策略选实现（ADR 0067），两个实现互不认识
-    ("pdfbackend_impl", "rendercore_model"),
-    ("pdfbackend_impl", "rendercore_native"),
+    # 反方向：worker 侧（科学栈）不许 import 新核心；契约层 `pdfbackend/__init__.py` 按策略选实现（ADR 0067）
     ("worker", "rendercore_model"),
     ("worker", "rendercore_native"),
 )

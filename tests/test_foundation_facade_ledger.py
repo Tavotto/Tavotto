@@ -232,28 +232,47 @@ def test_markdown_view_is_derived_from_the_json():
 
 
 @pytest.mark.parametrize(
-    "path", ["src/tavotto/pdfbackend/__init__.py", "src/tavotto/pdfbackend/pymupdf_backend.py"]
+    "path", ["src/tavotto/pdfbackend/__init__.py", "src/tavotto/rendercore/facade.py"]
 )
 def test_ledger_points_at_files_that_exist(path):
     d = _ledger()
     assert (REPO / d["facade_module"]).is_file()
     assert (REPO / d["implementation_module"]).is_file()
     assert (REPO / path).is_file()
+    # 退役的实现真的不在了（U10，ADR 0072）——清单说它删了，仓库里就不能还有
+    assert not (REPO / "src" / "tavotto" / "pdfbackend" / "pymupdf_backend.py").exists()
 
 
-def test_candidate_parity_deselections_have_replacement_evidence():
-    """U08（ADR 0067）：候选对拍清单里每一条 deselect 都是实现特定断言、有理由、有**存在的**替代证据；
-    deselect 的用例本身也存在。运行器（`scripts/dev/u08_parity.py`）用的是同一份判据——这里再钉一次，
-    让清单腐烂时主 `.venv` 就红，不用等 rc-venv。"""
-    runner = _load_module("u08_parity", REPO / "scripts" / "dev" / "u08_parity.py")
+def _test_exists(node: str) -> bool:
+    file, _, func = node.partition("::")
+    path = REPO / file
+    if not path.is_file():
+        return False
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return func in {n.name for n in tree.body if isinstance(n, _DEFS)}
+
+
+def test_candidate_parity_deselections_were_each_dispositioned_at_cutover():
+    """U08（ADR 0067）的 14 条 deselect 在 U10 切默认时逐条处置（ADR 0072）：`u10_disposition` ∈
+    {deleted, migrated, kept}，每条带 `u10_note`；替代证据（`replacement`）仍必须存在——deleted 的用例
+    **不许**还在（那意味着它在新默认下要么假绿要么红着没人管），migrated / kept 的用例（按处置后的名字）
+    必须在。清单为空时判据恒真，所以先钉条数。"""
     plan = _ledger()["candidate_parity"]
-    assert plan["suites"] and plan["deselected"], "清单为空——判据量在空集合上恒真"
-    assert runner.check_plan(plan) == []
-    broken = json.loads(json.dumps(plan))
-    broken["deselected"][0]["replacement"] = [
-        "tests/test_rendercore_app.py::test_that_does_not_exist"
-    ]
-    assert runner.check_plan(broken), "指向不存在的替代证据必须被拒"
-    empty = json.loads(json.dumps(plan))
-    empty["deselected"][0]["replacement"] = []
-    assert runner.check_plan(empty), "没有替代证据必须被拒"
+    assert plan["status"] == "retired_u10" and len(plan["deselected"]) == 14
+    assert not (REPO / "scripts" / "dev" / "u08_parity.py").exists(), "对拍运行器随旧实现退役"
+    renamed = {
+        "tests/test_glyph_plan.py::test_subscript_two_stays_on_the_fallback_layer": "tests/test_glyph_plan.py::test_subscript_two_is_primary_and_the_layers_have_no_fallback",
+        "tests/test_render_cache.py::test_backend_version_is_part_of_the_key": "tests/test_render_cache.py::test_the_backend_build_is_part_of_the_key",
+        "tests/test_render_cache.py::test_same_key_renders_once_under_concurrency": "tests/test_render_cache.py::test_concurrent_requests_never_serve_a_torn_png_and_render_once",
+    }
+    for item in plan["deselected"]:
+        assert item["class"] == "implementation_specific", item["test"]
+        assert item["u10_disposition"] in {"deleted", "migrated", "kept"}, item["test"]
+        assert item["u10_note"].strip(), item["test"]
+        for node in item["replacement"]:
+            assert _test_exists(node), f"替代证据不存在: {node}（for {item['test']}）"
+        current = renamed.get(item["test"], item["test"])
+        if item["u10_disposition"] == "deleted":
+            assert not _test_exists(item["test"]), f"标了 deleted 的用例还在: {item['test']}"
+        else:
+            assert _test_exists(current), f"标了 {item['u10_disposition']} 的用例不在: {current}"

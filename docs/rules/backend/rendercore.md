@@ -1,6 +1,7 @@
-# RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成、栅格、facade 接线与有限产物验证（统一实施包 U06 / U07 / U08，ADR 0059 / 0060 / 0065 / 0066 / 0067 / 0068 / 0077）
+# RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成、栅格、facade 接线与有限产物验证（统一实施包 U06 / U07 / U08 / U10，ADR 0059 / 0060 / 0065 / 0066 / 0067 / 0068 / 0072 / 0077）
 
-> 2026-09-20 随 U06 新增，2026-09-21 随 U07 加合成与栅格两节、随 U08 加 facade 接线与产物验证两节；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
+> 2026-09-20 随 U06 新增，2026-09-21 随 U07 加合成与栅格两节、随 U08 加 facade 接线与产物验证两节，2026-09-22 随 U10 切默认
+> （RenderCore 是唯一渲染后端，PyMuPDF 退役）；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
 > 表里（`rendercore/` 那一行）。这里是这一主题规则的**唯一全文**；速查表只留一行。
 > 改规则改这里，并同步那一行。
 
@@ -9,9 +10,9 @@
   `typography` / `fonts` / `sources` / `plan` / `placement` / `raster`）**只许标准库**与仓库里
   同样纯标准库的模块；候选包（pikepdf / fontTools / uharfbuzz / pypdfium2 / Pillow）只在 native 适配层
   （`hbshaper` / `pdfwriter` / `rasterio`）的函数 / 类里 import，PDFium **只在 `renderchild.child_main()` 里**（父进程
-  import `renderchild` / `renderhost` / `preview` 不拉起任何候选包，`tests/test_rendercore_model.py` 钉着）；**整包零 `import pymupdf`**，也没有边进
-  `pdfbackend` / worker 侧，反方向同样不许（D03：新核心不借旧库，旧后端不认识新核心，U08 之前
-  两边不接）。往纯模型里加一个第三方 import 的正确做法是把那段挪进适配层，不是给守卫开口子。
+  import `renderchild` / `renderhost` / `preview` 不拉起任何候选包，`tests/test_rendercore_model.py` 钉着）；**整包零 `import pymupdf`**
+  （U10 起整个应用闭包都是，`scripts/ci/retirement_scan.py` 看护），也没有边进 `pdfbackend` / worker 侧，反方向同样不许
+  （契约层认识实现是反方向）。往纯模型里加一个第三方 import 的正确做法是把那段挪进适配层，不是给守卫开口子。
 - **IR 就是 PDF 空间**：pt、左下原点、y 向上；矩阵行向量与 `cm` 同形；`Group` 先 `transform`
   再 `clip` 再 children；paint order = 列表顺序、hidden 不进 IR、**绝不按 id 排序**。画布毫米 /
   顶原点 → IR 的换算**只在 `plan.compile_page()`**，写入器原样落笔、不再翻 y。测试里的几何期望
@@ -38,8 +39,9 @@
   （04 §3 三种身份不混）；`FileResource.semantic_identity` 是 `SourceArtifact.semantic_identity()`。
 - **Arrow / Shape 编译成 `Path`**（`geometry`，框空间 y 向下 + 一个 `Group.transform`）；
   `polygon_points` / `dash_pattern` 与 `web/src/lib/shapeGeometry.ts` 是严格同源对
-  （`docs/rules/repo/same-origin-pairs.md`），`tests/test_rendercore_geometry.py` 拿旧 facade 当 oracle
-  对拍，两边都改的时候先改前端。
+  （`docs/rules/repo/same-origin-pairs.md`），由共享向量 `tests/golden/shape_geometry_vectors.json` 接住
+  （退役前从旧 facade 记下；`tests/test_rendercore_geometry.py` 与 `web/src/lib/shapeGeometry.golden.test.ts`
+  各跑一遍），两边都改的时候一起改、重录那份向量。
 - **字体只认 allowlist 里的字节**（ADR 0060）：`rendercore/fonts_allowlist.json` 是唯一真值（13 张 OFL 脸：
   Liberation 2.1.5 × 12 + Noto Sans SC 子集），身份 = sha256 + face 序号，不是族名；注册表扫目录逐个算 hash，
   不在表里的进 `rejected`、绝不当字体用；找不到脸抛 `FontsUnavailable(code)`，**不摸系统字体、不用别的脸冒充**。
@@ -47,9 +49,11 @@
   `artifacts` 收回、PyInstaller `resources/` datas 带走、许可证全文同目录）；`TAVOTTO_FONTS_DIR` 是排他覆盖。
   加一张脸 = 改 allowlist + ADR 0060 §1 的限制表，`tests/test_rendercore_fonts.py` / `test_font_provenance.py`
   第四档看住。集合外的限制（没有 fallback 层、Hangul 不在、`⁻` 靠合成）写在 ADR 0060 §1，是能力边界不是缺陷。
-- **候选包只在函数里 import**：pikepdf / fontTools / uharfbuzz / pypdfium2 走 pyproject 的 `rendercore` extra
-  （候选，未默认启用；`requirements-rendercore.txt` 是钉死镜像），没装时 `import tavotto.rendercore.*` 仍成功，
-  `hbshaper.require()` 报 `CandidatePackagesMissing`；用例缺包 / 缺字体一律 skip 并写理由（skip 不是绿）。
+- **native 包只在函数里 import**：pikepdf / fontTools / uharfbuzz / pypdfium2 / Pillow 自 U10 起是 pyproject 的
+  `dependencies`（`requirements.txt` 是钉死镜像，`tests/test_rendercore_fonts.py` 看护两边同名同序；U06–U09 时是
+  可选 extra `rendercore`），仍只在 native 适配层的函数 / 类里 import——没装时 `import tavotto.rendercore.*` 仍成功，
+  `hbshaper.require()` 报 `CandidatePackagesMissing`（那意味着安装闭包不完整，不是「候选未启用」）；用例缺包 /
+  缺字体一律 skip 并写理由（skip 不是绿；CI 每条腿都取字体，所以 CI 里它们真跑）。
 - **可检索文字写入的三条纪律**（ADR 0060 §3，读取器实测）：一个 ActualText 段只放一个 `TJ`；`<</ActualText <…>>>`
   的分隔符按 spec 写全；缺字写 .notdef + ToUnicode 回原字 + `notdef_codes` 记数，不换脸。ToUnicode 按 cluster
   写（一个 code 记它第一次覆盖的原文），多字形 cluster / 同 code 不同原文 / 合成上下标三种情形包 ActualText。
@@ -122,12 +126,14 @@
   `receipt.from_worker` / `from_native_session` → `receipt.source_artifact_for`，`origin=execution` 必核；
   磁盘原件不跑脚本），`scope=original` 经契约层的 `original_*`；EPS 报旧路同一个稳定码 `eps_not_for_canvas`；
   作业生命周期 / 写回事务 / 命名预留 / 覆盖 / 取消提交点全是既有权威，一份不复制。`/api/render` 走 `PreviewCache`
-  （队列满 503）；`reset_projects(wait=True)` 收 child。**候选自己的生成物**：`rendercore/canvas_coverage.json`
-  （`gen_canvas_coverage.py --backend rendercore`，`primary` = 12 张 Liberation 脸的交集）与
-  `tests/golden/glyph_plan_vectors.rendercore.json`（`gen_glyph_plan_vectors.py --backend rendercore`），与默认表的
-  差异是闭集（`tests/test_rendercore_glyph_vectors.py`）。**对拍纪律**：旧契约用例在候选下逐字重跑
-  （`scripts/dev/u08_parity.py`，清单在 ledger `candidate_parity`），只许 deselect 实现特定断言且每条带存在的
-  替代证据，运行器与 `tests/test_foundation_facade_ledger.py` 都拒绝没有替代证据的 deselect；用户合同一条不删。
+  （队列满 503）；`reset_projects(wait=True)` 收 child。**生成物**（U10 起只有一套、落在默认位置）：
+  `pdfbackend/canvas_coverage.json`（`gen_canvas_coverage.py`，`primary` = 12 张 Liberation 脸的交集）与
+  `tests/golden/glyph_plan_vectors.json`（`gen_glyph_plan_vectors.py`）；与退役前旧表（批准资产
+  `docs/implementation/tavotto-foundation/evidence/u10/` 下的 `*.pymupdf.json`）的差异是闭集
+  （`tests/test_rendercore_glyph_vectors.py`：⁵ / ₂ 进 primary、⁻ / 😀 / 𝛼 变 missing、fallback 27 610 个码位 → 0）。
+  **对拍纪律**（U08）：旧契约用例在候选下逐字重跑，14 条实现特定断言各带替代证据；U10 切默认后普通测试就是
+  「在新实现上跑」，14 条逐条处置（ledger `candidate_parity.deselected[*].u10_disposition`，
+  `tests/test_foundation_facade_ledger.py` 钉着 deleted 的不许还在、migrated / kept 的必须在）；用户合同一条不删。
 - **有限产物验证（U08，ADR 0068）**：`rendercore/inspector.py` 重新打开**封口的** staging 文件量事实（PDF 页盒 / 旋转 /
   UserUnit → 可见尺寸、内容流普查、字体声明 vs 实际用到、抽回来的文字层、位图有效 ppi = 像素 ÷ 累计 CTM；PNG 逐块 CRC /
   IHDR / pHYs；TIFF IFD / 条带 / 分辨率标签），manifest 的 `plan`（生产者填，候选路 `job.plan_facts()`）/ `observed`（只来自字节）/
@@ -136,8 +142,8 @@
   阈值只从 `profilestore.resolve_spec` 的规范来。钩子在 `exportjob.run(inspect=)`：`produce` 之后、**提交点之前**，拒绝的换成
   `artifact_rejected` 不发布，合格的带 `Output.manifest` 发布（发布只是 `os.replace`，字节就是核过的）。内容流遍历有预算
   （深度 / Form 数 / 指令数），耗尽 → 全 unknown；客户端的样式检查报告从不进检查器；检查器自己炸 → `uninspected()` 全 unknown。
-  没有 pikepdf 的机器 PDF 走 `probe_asset` 基本观测（完整性 + 尺寸），其余 unknown 并写明。两个后端都接；默认后端下
-  `dpi_tag`（PyMuPDF PNG 的 pHYs 是 96）与 `fonts_embedded`（base-14）是可选项 failed——如实记，不改默认路径。
+  没有 pikepdf 的机器 PDF 走 `probe_asset` 基本观测（完整性 + 尺寸），其余 unknown 并写明。生产者没交计划半张
+  （MCP 直出路 / 别的生产者）时文字层是 unknown / not_applicable，不显示成绿。
 - **四身份、来源段与公开投影（U09，ADR 0070）**：`rendercore/identity.py`——`semantic` = `plan_identity`、`render` =
   semantic + 后端 build + 栅格器与版本 + 字体政策版本（`identity.fonts_policy_version()`，与预览缓存键同一份）+ 像素参数、
   `artifact` = 封口字节 sha256（**绝不**再写进文件）、`run` = 作业 id（不进前三个）；不知道的一维写 None 不省略键。
@@ -147,6 +153,9 @@
   Figure，`kind=figure`，semantic 对格式不变）。**可以离开本机的只有 `inspector.public_projection()`**：身份与结论，
   不带 notes / `plan.text` / 对象框 / `source_id` / 节点 id / 路径 / argv；本轮不写 XMP，将来 XMP / 报告 / 遥测要带产物身份
   只许带它。故障阶段：`job.produce` 在 `compile` / `compose` / `raster` 各自 `job.trace.mark / fail`（ADR 0071）。
-- **不切默认**：PyMuPDF 仍是默认后端（`pdfbackend.BACKEND_DEFAULT`）；候选只在显式选中时接管，前端不读候选
-  覆盖表，产品包不带候选包 / 字体（U10 / U11）；facade 19 项的迁移证据逐项记在
-  `docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.md`。
+- **默认就是它（U10，ADR 0072）**：`pdfbackend.BACKEND_DEFAULT = rendercore`、`BACKENDS` 闭集只有这一项；
+  旧实现模块 `pymupdf_backend`（`pdfbackend/` 下）已删除，`TAVOTTO_RENDER_BACKEND=pymupdf` 是 `backend_retired` 错误不是回退。
+  前端读的覆盖表就是这里的表；产品包（wheel artifacts / PyInstaller `resources/` datas + `collect_dynamic_libs("pypdfium2_raw")`
+  + `collect_all("pikepdf")`，冻结入口 `packaging/entry.py` 先分派 `--render-child`）带全部依赖与字体；facade 19 项
+  的终态记在 `docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.md`。旧默认字体（Times-Roman 等 base-14）
+  到 Liberation 的布局政策在 ADR 0073：位置 / 内容 / 框尺寸保持、advance 相同、基线按批准量变、旧项目不重排。

@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import queue
@@ -99,6 +100,18 @@ class RenderHost:
     def _start(self) -> None:
         self.starts += 1
         self._lines = queue.Queue()
+        # 闭包不完整（pypdfium2 没装：pip 装漏了 / 冻结产物没收）时 child 会在 import 那一行死掉，父进程只看到
+        # 「stdout 关了」（render_child_died）——那是把安装问题伪装成崩溃。起 child 之前先按 find_spec 问一句
+        # （**不 import**：PDFium 只在 child 里），缺就报 CandidatePackagesMissing，app 的漏斗转成 backend_unavailable
+        # （U10，ADR 0072）。源码树 / wheel 里 command 是本解释器 -m renderchild，所以本进程的 find_spec 就是 child 的；
+        # 冻结产物里 child 是同一个 exe，闭包也同一份。
+        if self.command == child_argv() and importlib.util.find_spec("pypdfium2") is None:
+            from .hbshaper import CandidatePackagesMissing
+
+            raise CandidatePackagesMissing(
+                "缺 RenderCore 的运行时依赖 ['pypdfium2']：pip install -r requirements.txt"
+                "（U10 起是运行时依赖，不是 extra；闭包不完整的安装物不该发出去——ADR 0072）"
+            )
         try:
             self._proc = subprocess.Popen(
                 self.command,

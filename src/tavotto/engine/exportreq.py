@@ -45,8 +45,8 @@ SCOPES = (SCOPE_ORIGINAL, SCOPE_CANVAS)
 #: **追加在后面**，不插进老的两个之间——老客户端只勾 pdf+png 时得到的顺序
 #: 一个字节不变。
 #:
-#: `eps`（ADR 0046）在这张表里，但它**不是每条路都给得出**：PyMuPDF 写不出
-#: PostScript，所以画布合成（`scope=canvas`）与没有脚本的图给不出 EPS，只有
+#: `eps`（ADR 0046）在这张表里，但它**不是每条路都给得出**：画布合成没有
+#: PostScript 写入器，所以画布合成（`scope=canvas`）与没有脚本的图给不出 EPS，只有
 #: 引擎能重新运行脚本的那张图（`scope=original` + 注册表里有它的脚本）才由
 #: matplotlib 直接序列化。**给不出的那一档如实报 `eps_not_for_canvas` /
 #: `eps_needs_script`**，不拿栅格化后的位图裹一层 PostScript 冒充矢量。
@@ -60,7 +60,7 @@ FORMATS = (FORMAT_PDF, FORMAT_PNG, FORMAT_EPS, FORMAT_TIFF)
 #: 引擎**直接序列化**那条路（codex-plugin 的 `tavotto_export`）额外认的格式。
 #:
 #: `svg` **不在 `FORMATS` 里**，理由不是"svg 不够矢量"——matplotlib 序列化出来的
-#: SVG 与它的 PDF 同源，是真矢量——而是画布合成走 PyMuPDF，那条路**给不出**
+#: SVG 与它的 PDF 同源，是真矢量——而是画布合成走 RenderCore（PDF / PNG / TIFF），那条路**给不出**
 #: SVG。把它放进全局枚举，导出面板就会摆出一个合成管线兑现不了的选项。
 #: 所以「这次认哪几种格式」是**消费点自己带的参数**
 #: （`normalize(allowed_formats=…)`），而规则（清洗、扩展名、去重、PPI 语义、

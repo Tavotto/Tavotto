@@ -23,9 +23,8 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from tavotto import app as m
+from tavotto import app as m, pdfbackend as pb
 from tavotto.engine import pool
-from tavotto.pdfbackend import pymupdf_backend as pb
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -153,10 +152,24 @@ def client(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("family", pb.CANVAS_TEXT_FAMILIES)
 def test_canvas_families_all_draw_the_matrix(family):
-    """画布文字：三个通用族对矩阵里每个字符都画得出（预检两侧共用的判据）。"""
+    """画布文字：三个通用族对矩阵里每个字符都画得出**且导出上零方框**（预检两侧共用的判据）。
+
+    判据量的是渲染表示（`glyphplan.text_diagnostics(…, "auto")`）：批准字体集合里 `⁻`（U+207B）哪张脸都没有
+    （ADR 0060 §1 量出来的唯一一个），`auto` 档把 `⁻²` 折成上标 `-2`、ActualText 还原原文——画面上零方框、
+    文本层里字还在。量原文的 `missing_glyphs` 会在这一个字符上红，而那不是用户看到的东西（U10 之前 PyMuPDF
+    的隐式回退脸画它，原文判据碰巧成立）。原文里仍不许有第二个缺字：`⁻` 之外一个都不许多。
+    """
+    from tavotto import glyphplan
+    from tavotto.rendercore import facade, typography
+
     for bold in (False, True):
         for italic in (False, True):
-            assert pb.missing_glyphs(ALL, family, bold, italic) == [], (family, bold, italic)
+            assert pb.missing_glyphs(ALL, family, bold, italic) == ["⁻"], (family, bold, italic)
+            faces = typography.faces_for(facade.provider(), family, bold, italic)
+            rendered_missing, _ = glyphplan.text_diagnostics(
+                ALL, typography.coverage(faces), "auto"
+            )
+            assert list(rendered_missing) == [], (family, bold, italic, rendered_missing)
 
 
 def test_canvas_pdf_and_png_carry_the_matrix(client, tmp_path):

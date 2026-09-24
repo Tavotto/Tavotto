@@ -37,15 +37,24 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: Editors :: Vector-Based",
 ]
 
-# Flask 父进程只要这三个：科学栈刻意不在这里——engine/registry.py、pool.py、
-# ai_bridge.py 必须保持纯标准库可 import，matplotlib 由 worker 解释器提供。
+# Flask 父进程的运行时闭包：flask + packaging + RenderCore 的五个包。科学栈刻意不在这里——
+# engine/registry.py、pool.py、ai_bridge.py 必须保持纯标准库可 import，matplotlib 由 worker 解释器提供。
 # `packaging` 是 PEP 508 / 440 的参考实现（pip / uv 认的就是它），纯 Python、零依赖、
 # Apache-2.0 OR BSD-2-Clause；U04（ADR 0061）起依赖声明的无损读法与 marker 求值靠它，
 # 只在 engine/depresolve.py 里延后 import。上界跟着实测走（26.x 验证过）。
+# **RenderCore 自 U10 起是默认后端**（ADR 0072；U06–U09 时它是可选 extra `rendercore`）：pikepdf（PDF 对象模型 /
+# 外来页搬运，MPL-2.0；硬依赖 Pillow + lxml）、fonttools（子集，MIT）、uharfbuzz（整形，Apache-2.0）、
+# pypdfium2（render child 的栅格器，Apache-2.0 / BSD-3）、pillow（位图素材解码，HPND；ADR 0066 起直接依赖）。
+# 上界跟着 U02 实测钉死的版本走（ADR 0055 §1）；`requirements.txt` 是钉死镜像（tests/test_rendercore_fonts.py
+# 看护两边名字一致）。PyMuPDF **不在这里**：退役扫描 scripts/ci/retirement_scan.py 看护「应用闭包零 pymupdf」。
 dependencies = [
     "flask>=3.1,<4",
-    "pymupdf>=1.24,<2",
     "packaging>=24,<27",
+    "pikepdf>=10.13,<11",
+    "fonttools>=4.65,<5",
+    "uharfbuzz>=0.56,<1",
+    "pypdfium2>=5.13,<6",
+    "pillow>=10,<13",
 ]
 
 [project.optional-dependencies]
@@ -58,25 +67,20 @@ worker = ["matplotlib>=3.8,<3.12", "numpy>=1.24,<3"]
 # minor 里把 preview 规则转正，于是**同一份代码、同一份配置**在升一个 minor 之后
 # 可能突然多出几十条诊断——那种红与本次改动无关，只会让人学会忽略 lint 门禁。
 # 换 minor 是一次要有人负责的决定（跑一遍全仓、看新规则值不值得开）。
-dev = ["pytest>=8", "build>=1.2", "twine>=5", "ruff>=0.16,<0.17"]
+# `tavotto[legacy-pymupdf]` 是自引用 extra（PEP 508，pip ≥ 21.2）：测试的独立读取器经这一个名字进 dev，
+# 而不是在两处各写一遍 pymupdf 的版本范围。
+dev = ["pytest>=8", "build>=1.2", "twine>=5", "ruff>=0.16,<0.17", "tavotto[legacy-pymupdf]"]
 # 实验室 CI（scripts/ci/）专用。**刻意不进 dev**：普通开发与 PR 上的
-# `pip install -e ".[dev]"` 不该被迫拖进图像库，而 Flask 父进程的依赖边界
-# （只有 flask + pymupdf，没有科学栈）更是一个字都不能松。
-# 视觉回归要解码 PNG 并做像素级比较，这是它唯一需要的两样东西。
+# `pip install -e ".[dev]"` 不该被迫拖进科学栈的 numpy，而 Flask 父进程的依赖边界
+# （没有科学栈）更是一个字都不能松。视觉回归要 numpy 做像素级比较；Pillow 自 U10 起本来就在
+# 运行时闭包里，这里保留是让 `.[ci]` 的意图（图像比较所需）自己说清楚。
 ci = ["numpy>=1.24", "Pillow>=10"]
-# RenderCore 候选栈（统一实施包 U06 / U07，ADR 0059 / 0060 / 0065 / 0066）。**候选，未默认启用**：
-# 默认后端仍是 PyMuPDF，装了它也不会切换；`src/tavotto/rendercore/` 的 native 适配层在函数里按需
-# import，没装时 `import tavotto.rendercore` 照样成功、写入器报 CandidatePackagesMissing。上界跟着
-# U02 实测钉死的版本走（ADR 0055 §1）。Pillow 自 U07 起是**直接依赖**（`rendercore/rasterio.py`
-# 解码位图素材；它本来就是 pikepdf 的硬依赖，进闭包不多一个字节），lxml 仍只是 pikepdf 的传递依赖。
-# `requirements-rendercore.txt` 是它的钉死镜像（tests/test_rendercore_fonts.py 看护两边名字一致）。
-rendercore = [
-    "pikepdf>=10.13,<11",
-    "fonttools>=4.65,<5",
-    "uharfbuzz>=0.56,<1",
-    "pypdfium2>=5.13,<6",
-    "pillow>=10,<13",
-]
+# **退役的 PyMuPDF，只给两类东西用（ADR 0072，D15）**：① 测试的独立读取器（33 个用例文件用它打开产物读
+# 页面尺寸 / 文字 / get_drawings、造夹具——与被测的 RenderCore 不同源，正是它当读取器的价值）；② scripts/dev/
+# 与几份维护者资产脚本（build_dmg_background.py 那类，产出进 git 的位图）。**绝不进 `dependencies`**、不进
+# wheel 的运行时 Requires-Dist、不进 PyInstaller 产物——scripts/ci/retirement_scan.py 的五把尺子看护这一点；
+# 用户的科学环境里自己装的 PyMuPDF 与本 extra 无关（那是用户的事，扫描主语不含它）。
+legacy-pymupdf = ["pymupdf>=1.24,<2"]
 
 [project.scripts]
 tavotto = "tavotto.cli_entry:main"

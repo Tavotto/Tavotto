@@ -83,7 +83,7 @@ export type HAlign = (typeof HALIGNS)[number]
  *
  * 理由是能力，不是偷懒：合成与写回跑在 Flask 进程里，那里**没有
  * matplotlib**（见 `src/tavotto/AGENTS.md` 的进程边界），画字只能用
- * PyMuPDF 自带的 base-14——它恰好就是这三个族。把「Times New Roman」摆进
+ * 批准字体集合里的 Liberation 三族（ADR 0060 / 0072）——恰好就是这三个通用族。把「Times New Roman」摆进
  * 这个下拉，得到的会是「界面上选得中、导出时悄悄换一个」，那正是本轮要
  * 消灭的那类静默替换。
  *

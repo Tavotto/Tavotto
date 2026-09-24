@@ -1,12 +1,12 @@
-"""候选后端接进 `app.py` 的真实入口（统一实施包 U08，ADR 0067）：HTTP 导出（同步 / 异步 + SSE）、`/api/render`、
-关停、带 override 的面板经 worker + 回执。
+"""RenderCore 接进 `app.py` 的真实入口（统一实施包 U08 候选、U10 起默认，ADR 0067 / 0072）：HTTP 导出（同步 /
+异步 + SSE）、`/api/render`、关停、带 override 的面板经 worker + 回执。
 
 主语是**真的 Flask 端点交回来的东西与磁盘上的文件**——独立读取器（`tests/support/pdfread.py` / PDFium）
 检查产物而不只信返回 JSON（05 §5）。这里每一条都是旧契约用例在候选后端下的替代证据（ledger
 `candidate_parity.deselected` 里点名的那几条），或候选独有的入口合同（503 背压、关停 reap、回执随源）。
 
-rc-venv（候选包 + 批准字体）里真跑；主仓库 `.venv` skip 并写明理由。带 override 的那条还要一个装了
-matplotlib 的解释器（与 `test_mcp_normalize.py` 同一判据）。
+需要 RenderCore 依赖 + 批准字体（U10 起是运行时闭包）；不在的机器 skip 并写明理由。带 override 的那条还要
+一个装了 matplotlib 的解释器（与 `test_mcp_normalize.py` 同一判据）。
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ HAS_CANDIDATE = all(
     importlib.util.find_spec(mod) is not None
     for mod in ("pypdfium2", "pikepdf", "uharfbuzz", "PIL")
 )
-pytestmark = pytest.mark.skipif(not HAS_CANDIDATE, reason="候选包未装（not_run，不是绿）")
+pytestmark = pytest.mark.skipif(not HAS_CANDIDATE, reason="RenderCore 依赖未装（not_run，不是绿）")
 
 
 def _worker_python():
@@ -58,7 +58,7 @@ def _fonts_and_child():
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv(pdfbackend.BACKEND_ENV, pdfbackend.BACKEND_RENDERCORE)
+    monkeypatch.delenv(pdfbackend.BACKEND_ENV, raising=False)  # 默认就是 rendercore（U10）
     m.app.config["TESTING"] = True
     m.reset_projects()
     monkeypatch.setattr(m, "CACHE_DIR", tmp_path / "_cache")
@@ -298,14 +298,69 @@ def test_api_render_under_the_candidate_reports_backpressure_as_503_and_other_fa
     importlib.util.find_spec("pymupdf") is None, reason="要两个后端同在（rc-venv）；not_run"
 )
 def test_switching_the_backend_changes_the_preview_cache_key(client, tmp_path, monkeypatch):
-    """ledger `BACKEND_NAME`：同一 PDF 换后端名后 `/api/render` 必须重画（键含后端身份）。"""
+    """ledger `BACKEND_NAME`：同一 PDF 换后端身份后 `/api/render` 必须重画（键含后端名 + build）。
+    U10 之前这里真的在 pymupdf 与 rendercore 之间切；旧后端删掉之后（ADR 0072）把「另一个后端」换成
+    另一个 build 串——键里那一维的主语没变。旧后端时代留下的 `<sha1>.png` 缓存文件同理不会被命中，
+    只占预算、按 mtime 淘汰。"""
+    from tavotto.rendercore import facade, preview as rc_preview
+
     _project(tmp_path)
-    monkeypatch.setenv(pdfbackend.BACKEND_ENV, pdfbackend.BACKEND_PYMUPDF)
     assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200
-    monkeypatch.setenv(pdfbackend.BACKEND_ENV, pdfbackend.BACKEND_RENDERCORE)
+    monkeypatch.setattr(rc_preview, "BACKEND_VERSION", "99.9.9")
+    facade.reset_for_tests()
     assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200
     files = [p for p in (tmp_path / "_cache").glob("*.png") if not p.name.endswith(".part.png")]
     assert len(files) == 2, files
+
+
+def test_the_retired_backend_name_is_refused_at_the_real_entry_not_swapped(
+    client, tmp_path, monkeypatch
+):
+    """负例（06 §1 / ADR 0072）：环境里还写着 `TAVOTTO_RENDER_BACKEND=pymupdf` 的机器，`/api/render` 与导出
+    要明确失败（`backend_retired`），不是悄悄用 rendercore 画——「静默换实现」是退役扫描要挡的那种形状。"""
+    _project(tmp_path)
+    monkeypatch.setenv(pdfbackend.BACKEND_ENV, "pymupdf")
+    resp = client.get("/api/render?id=p1.pdf&w=200")
+    assert resp.status_code == 500
+    body = resp.get_json()
+    assert body["code"] == "backend_retired" and body["params"]["value"] == "pymupdf"
+    assert "ADR 0072" in body["error"]
+    assert not list((tmp_path / "_cache").glob("*.png"))
+    resp = client.post("/api/export", json=_canvas(formats=["pdf"]))
+    assert resp.status_code == 500 and resp.get_json()["code"] in (
+        "backend_retired",
+        "export_failed",
+    )
+    assert "退役" in json.dumps(resp.get_json(), ensure_ascii=False)
+
+
+def test_a_missing_runtime_dependency_is_backend_unavailable_not_a_fallback(
+    client, tmp_path, monkeypatch
+):
+    """负例（06 §1 / ADR 0072）：闭包不完整（pypdfium2 没装：pip 装漏 / 冻结产物没收）时 `/api/render` 报
+    `backend_unavailable` 并点名缺的包——不是 `render_child_died`（把安装问题伪装成崩溃），更不是换个库画。
+    把 pypdfium2 藏起来的办法是让 `find_spec` 回 None：主语是「起 child 之前的检查」，不真卸包。"""
+    import importlib.util
+
+    from tavotto.rendercore import facade, renderhost
+
+    _project(tmp_path)
+    real = importlib.util.find_spec
+
+    def hidden(name, *a, **k):
+        return None if name == "pypdfium2" else real(name, *a, **k)
+
+    renderhost.shutdown_shared()
+    facade.reset_for_tests()
+    monkeypatch.setattr(importlib.util, "find_spec", hidden)
+    resp = client.get("/api/render?id=p1.pdf&w=200")
+    assert resp.status_code == 500
+    body = resp.get_json()
+    assert body["code"] == "backend_unavailable" and "pypdfium2" in body["params"]["reason"]
+    assert not list((tmp_path / "_cache").glob("*.png"))
+    monkeypatch.undo()
+    facade.reset_for_tests()
+    assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200  # 包回来了就正常
 
 
 def test_reset_projects_reaps_the_render_child(client, tmp_path):

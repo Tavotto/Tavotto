@@ -1,6 +1,6 @@
 {
   "scope": "all files except this self-manifest",
-  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07 PR A（2026-09-21）加交接与 ledger 迁移证据后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 叠到含 #456 的 main（U07 B 6472ea7c，清单 symbol 格式）后（2026-09-22）再算一次；U08 叠到 U07 B 240cb918（main 78724586）后（2026-09-22）再算一次；U08 叠到 U07 B 4425d5a9 后（2026-09-22）再算一次；U08 叠到 main 13886a0b（#471 已合入）后（2026-09-22）再算一次；U08 冒烟腿修法后（2026-09-22）再算一次；U02 runtime 半边退役（chore/retire-u02-runtime-spike）后再算一次。",
+  "note": "U00 入库（2026-09-20）后按仓库里的字节重算；U01（2026-09-20）加台账 / 交接 / 证据后再算一次；U02（2026-09-20）加 evidence/u02 与交接后再算一次。原包如收的 45 个文件哈希见 U00_BASELINE.md §6 的「如收记录」；U03（2026-09-20，PR A / PR B）加交接 / 证据 / 台账变更后各算一次；U04（2026-09-21，PR A / PR B）加交接 / 证据 / README / plan.json 后各算一次；U05（2026-09-21，PR A / C）加交接 / 证据 / README / plan.json / 台账后各算一次；U06（2026-09-21）加 evidence/u06 与交接后再算一次；U07（2026-09-21）加 evidence/u07、交接、ledger 迁移证据与 enrollment U07-R1 后再算一次；U08 PR A（2026-09-21）加 evidence/u08/parity.json、交接、ledger candidate_parity 与 enrollment U08-R1 后再算一次；U08 PR B（2026-09-21）加产物验证的交接 / ledger 证据后再算一次；U08 PR C（2026-09-21）加入口审计的交接 / parity 证据 / ledger 套件后再算一次；U09（2026-09-21）两条链第一次汇合（merge 4973a28f 进 foundation/u09-join）后按并集重算；U09（2026-09-21）加 evidence/u09 / 交接 / ADR 引用 / README / plan.json / 台账（FO30 enforced、FO32 observing）后再算一次；U10（2026-09-22）加 evidence/u10、交接、ADR 引用、ledger / enrollment / plan / registry 变更后再算一次；2026-09-22 用户拍板（Intel 矩阵改口 / 字体两默认）落到 ADR 与交接后再算一次；U09（2026-09-22）merge 链 1 新 tip acfecef1（--onto 后重放的 U06 / U07 / U08 + 评审处置）后重算；U10（2026-09-22）merge U09 8f00a12d（含链 1 tip acfecef1）后再算一次；U09（2026-09-22）merge 链 2 新 tip bf77e9b7（U03-B / U04-C / U05-B 叠到 main e68f0520，含 #465 / #466 / #469）后重算；U10（2026-09-22）merge U09 8379f95b（含链 2 tip bf77e9b7）后再算一次；U10（2026-09-22）merge U09 b06c1d93（含链 2 tip bf23b304）后再算一次；U10（2026-09-22）merge U09 ba32e954（main 78724586 + 链 1 tip 397a6105）后再算一次。U10 合入 main（2026-09-24，基于 af7c2cf4，最低 macOS 更正与 wheel 表重生成）后再算一次；U02 runtime 半边退役（chore/retire-u02-runtime-spike）后再算一次。",
   "files": [
     {
       "path": "00_MASTER_PROMPT.md",
@@ -44,13 +44,13 @@
     },
     {
       "path": "ALL_PROMPTS.md",
-      "bytes": 86917,
-      "sha256": "00763f1508c5d8712348fdeaa2e6abce9e2dfc1b6b39137458ab4e93cbda18f3"
+      "bytes": 88938,
+      "sha256": "04d2480cc647eaacb83bfde9750e62589856e1f42455d3fb86c0842aca71eb21"
     },
     {
       "path": "ENROLLMENT.md",
-      "bytes": 6839,
-      "sha256": "fa0c7ccee88411bd3ab1340ebc127319b02f6b709405bea416a987d5ba961957"
+      "bytes": 6635,
+      "sha256": "13577653a0a6401e4cca0bebb036f15815f4b82fc19d23e90fb387cd6bef4ec8"
     },
     {
       "path": "PACKAGE_CHECKS.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 14951,
-      "sha256": "5dde132d847a376487004d765d25b505c3ee6c00576833fcbc9e786a7730e62b"
+      "bytes": 16972,
+      "sha256": "5d96c7a1c0fa000382d1dcd3ea218003a47862d3a06b19b15cee207482253bfe"
     },
     {
       "path": "SOURCES.md",
@@ -79,13 +79,13 @@
     },
     {
       "path": "U00_FACADE_LEDGER.json",
-      "bytes": 68010,
-      "sha256": "9e1565497f997bb69109ff1dd119a7d72331e16707b8c8c9f4b0d0f749f8b165"
+      "bytes": 78673,
+      "sha256": "641cde4e768389b8ec1d96b86603ba15cab554547f57082a505c6feae087c276"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
-      "bytes": 37059,
-      "sha256": "85664a4f4387c3e43ddaa7a5ff8d23f61b2e5018c0ebf775d46613812934c39e"
+      "bytes": 39343,
+      "sha256": "493a1cd57ac329968a17e18d679ffca1ab21a048100c574245d37bd949c6712d"
     },
     {
       "path": "archive/README.md",
@@ -134,8 +134,8 @@
     },
     {
       "path": "enrollment.json",
-      "bytes": 35626,
-      "sha256": "47435d2f6a600c9ec12d9197fb5cbb43abcd939445653de1332214ad95a56bbd"
+      "bytes": 38606,
+      "sha256": "5600d58d141dea9ae0e5fd060051df2d68d4070fedc9a252522d62433110d072"
     },
     {
       "path": "evidence/u00/frontend_workerd_summary.txt",
@@ -378,6 +378,86 @@
       "sha256": "b4fb256b6cbcbb5b0e500d732f96464a16def762dae79cea4c95aea2bd0195e7"
     },
     {
+      "path": "evidence/u10/README.md",
+      "bytes": 3004,
+      "sha256": "e72f13a6af3fb3db22dd4aa14e02d3852cc07122bee4276f2f624e8668d04275"
+    },
+    {
+      "path": "evidence/u10/canvas_coverage.pymupdf.json",
+      "bytes": 14954,
+      "sha256": "cf1d693856911fee57594a8198c087945da57ab7cb1439465b15202218fd6ccc"
+    },
+    {
+      "path": "evidence/u10/freeze/frozen-render-darwin-arm64.png",
+      "bytes": 5118,
+      "sha256": "5637a739f0c0af4a046f0aa6a8e9ba5cb412a6c457cce82195564d3424f71211"
+    },
+    {
+      "path": "evidence/u10/freeze/report-darwin-arm64.json",
+      "bytes": 3097,
+      "sha256": "2781bc66d29845d8d8c9c9679f009dd84272fe2a9b8d0315cd7bae068ff13a5c"
+    },
+    {
+      "path": "evidence/u10/glyph_plan_vectors.pymupdf.json",
+      "bytes": 15730,
+      "sha256": "f0f85c0e3acdec499ec2bafabb11b3b5030202fa227046c1146b3b5052d81899"
+    },
+    {
+      "path": "evidence/u10/mutations.json",
+      "bytes": 6920,
+      "sha256": "4ae3bc4d33f121bdf1e96d709c637ff41947e6a204ab92037606ebdc3647805e"
+    },
+    {
+      "path": "evidence/u10/post_cutover/frozen_smoke_macos_arm64.txt",
+      "bytes": 771,
+      "sha256": "570bcedd9838e140938e9b482b4ff40b82e4c02017756cdc94b598403363586c"
+    },
+    {
+      "path": "evidence/u10/post_cutover/main_venv_contrast.txt",
+      "bytes": 940,
+      "sha256": "587a8ef5884f8650fa648ce82729ffe8dc20be4aa91813e812de0878d9db37ce"
+    },
+    {
+      "path": "evidence/u10/post_cutover/retirement_scan_frozen_dist.json",
+      "bytes": 1643,
+      "sha256": "21bb88cd29bb9ecfdb5e0a583896676dc867d51a939a7156bc619ef788d5e723"
+    },
+    {
+      "path": "evidence/u10/post_cutover/retirement_scan_source_deps_block_run.json",
+      "bytes": 8353,
+      "sha256": "27aa5ec67e25220ee8f89645dd0c067c6d27010a8427856cca8cbe3bc676196f"
+    },
+    {
+      "path": "evidence/u10/post_cutover/retirement_scan_wheel.json",
+      "bytes": 1741,
+      "sha256": "e8bd893fde83f2a581a7577bb151983ef0b49129080ac10b832aec899d8ed052"
+    },
+    {
+      "path": "evidence/u10/pre_cutover/parity_u09_tip.json",
+      "bytes": 4142,
+      "sha256": "6006d2ee35928ddb8401a04bc77b8cf774195241a06fa2f367808e315af3ee2d"
+    },
+    {
+      "path": "evidence/u10/pre_cutover/retirement_scan_candidate_block.json",
+      "bytes": 4604,
+      "sha256": "9030403c4e3e35a9eb3037dd2fb0ca05fe6e72c33ac6aefd32d339d62df217fa"
+    },
+    {
+      "path": "evidence/u10/pre_cutover/retirement_scan_candidate_smoke.json",
+      "bytes": 2998,
+      "sha256": "d35f27e8c369a998959c5d3d4737ea8a0f6bb43d3ec908cc9540278d41861067"
+    },
+    {
+      "path": "evidence/u10/pre_cutover/retirement_scan_old_closure.json",
+      "bytes": 24844,
+      "sha256": "386af59dcde2db0db815530479035dff28550058259a0a688eb17a30fcec8785"
+    },
+    {
+      "path": "evidence/u10/wheel_matrix.json",
+      "bytes": 48624,
+      "sha256": "d94541f9f399218e452c03844c90d5e625a4f6c0cac263d26ea9ffdaa3c41fba"
+    },
+    {
       "path": "extensions/X01_extended.md",
       "bytes": 1947,
       "sha256": "849187e63fb86404463de6f553375dc12fd2fb1b1f5b52a365ebdca6b2dff35e"
@@ -453,6 +533,11 @@
       "sha256": "d94d72324a2404d48a468b49c260b2b3503e43786ed0babcbeda4507832bfef3"
     },
     {
+      "path": "handoffs/U10_cutover.md",
+      "bytes": 30035,
+      "sha256": "9d3729fd96d83df26866d94099ed889a5a0dc8c2d8e8eb7bad3e5e60e9701f2f"
+    },
+    {
       "path": "phase_mapping.json",
       "bytes": 1204,
       "sha256": "1ce40f3ba10dc8713d899db402c33287d60883b103e1b6b290f524117b27ad25"
@@ -519,13 +604,13 @@
     },
     {
       "path": "plan.json",
-      "bytes": 7895,
-      "sha256": "2b914614b99b603afe8858266223819f7b19b17899141fbf89438e3bfa5546fd"
+      "bytes": 8791,
+      "sha256": "30077f427e06c46cd01751393efe38319eaa91eb0b582a074fa12932cb7c7e81"
     },
     {
       "path": "registry.json",
-      "bytes": 287825,
-      "sha256": "eef027b8c1d76bb3ce9ee9b20371b0951773c76c5c95332a320627128c894b06"
+      "bytes": 294850,
+      "sha256": "2cc6cfe88195684e7a1014b8a2e8841fd163664797df8363ffb34c6c194b4337"
     },
     {
       "path": "sources_manifest.json",

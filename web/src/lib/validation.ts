@@ -120,7 +120,6 @@ const RULES: Record<string, { context: IssueContext; fix: FixKind }> = {
   'render-error': { context: 'document', fix: 'none' },
   'stale-render': { context: 'document', fix: 'none' },
   'unapplied-override': { context: 'document', fix: 'none' },
-  'bitmap-embed': { context: 'document', fix: 'none' },
   'raster-dpi': { context: 'document', fix: 'none' },
   'raster-text-not-verifiable': { context: 'document', fix: 'none' },
   'panel-text-not-verifiable': { context: 'document', fix: 'none' },

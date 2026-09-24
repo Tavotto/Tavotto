@@ -126,10 +126,14 @@ copies together. Deployment steps live in
 These aren't style preferences — each one is a boundary that took a real bug to
 establish. `CLAUDE.md` has the full list with the reasoning.
 
-- **`import pymupdf` outside `src/tavotto/pdfbackend/`.** That package is the only
-  module allowed to touch the PDF library; everything above it goes through the
-  contract layer in `pdfbackend/__init__.py`. This is what makes the backend
-  replaceable, and it matters for licensing.
+- **Importing a PDF / font library (pikepdf, pypdfium2, uharfbuzz, fontTools) outside
+  `src/tavotto/rendercore/`.** Everything above the render core goes through the contract
+  layer in `pdfbackend/__init__.py`. This is what made the backend replaceable — PyMuPDF
+  was retired in favour of RenderCore this way (ADR 0072) — and it matters for licensing.
+  `import pymupdf` / `import fitz` must not appear anywhere in the application at all:
+  `scripts/ci/retirement_scan.py` scans the source, the declared dependency closure and the
+  built artifacts. Tests may still use PyMuPDF as an *independent reader* via the
+  `legacy-pymupdf` extra; that is a test dependency, never a runtime one.
 - **Anything imported by Flask that isn't pure standard library.** `engine/registry.py`,
   `pool.py`, `ai_bridge.py`, `config.py`, `updater.py` and `runtime.py` run in a
   virtualenv that deliberately has no matplotlib. The scientific stack exists only
@@ -140,7 +144,8 @@ establish. `CLAUDE.md` has the full list with the reasoning.
 - **Changing one side of a dual-source pair.** `engine/patchspec.py` ↔
   `workerd/src/patchspec.rs` (byte-identical, pinned by `tests/golden/patch_vectors.json`),
   `web/src/lib/richText.ts` ↔ `src/tavotto/richtext.py`, `web/src/lib/shapeGeometry.ts` ↔
-  the geometry in `pdfbackend/pymupdf_backend.py`. Change both, or neither.
+  the geometry in `rendercore/geometry.py` (shared vectors in `tests/golden/shape_geometry_vectors.json`).
+  Change both, or neither.
 - **Adding a Tauri command without updating all three places** — `build.rs`, the
   capability file, and `generate_handler`. Miss the first two and the call is
   **silently** rejected at runtime.

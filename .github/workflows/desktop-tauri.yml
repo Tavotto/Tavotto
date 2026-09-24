@@ -343,9 +343,11 @@ jobs:
         run: python scripts/build_worker_runtime.py --clean
 
       - name: 装打包依赖（Flask 父进程那点；科学栈刻意不装，免得进 sidecar）
+        # requirements.txt 是钉死的运行时闭包（U10 起含 RenderCore 的五个包，ADR 0072）；批准字体由
+        # build_desktop.py 在 PyInstaller 之前按 allowlist 取（tavotto.spec 缺了就拒绝打包）
         run: |
           python -m pip install --upgrade pip pyinstaller
-          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+          python -m pip install -r requirements.txt
 
       - name: 构建前端 + workerd + sidecar（PyInstaller onedir）
         # build_desktop.py 会先 cargo build --release 出 tavotto-workerd，
@@ -410,15 +412,24 @@ jobs:
         # createUpdaterArtifacts 打开时打包器要签名，没有私钥会直接失败。
         # 没配 secret 就地关掉它并打一条 warning——安装包照发，只是这一版
         # 不进「软件内直接更新」。**不许静默**：空转的更新链比没有更坏。
+        #
+        # 最低 macOS 按架构不同（ADR 0072 §2）：tauri.conf.json 写 Apple Silicon 的 14.0，
+        # Intel 腿叠 src-tauri/tauri.intel.conf.json 抬到 15.0——都是打进去的 pikepdf wheel 要求的下限
+        # （evidence/u10/wheel_matrix.json 的 macos_floor；tests/test_support_matrix.py 看护几处一致）。
+        # Windows 腿的 arch 也是 x86_64，所以条件带上 runner.os。
         shell: bash
         run: |
           set -euo pipefail
+          ARCH_CONFIG=()
+          if [ "${{ runner.os }}" = "macOS" ] && [ "${{ matrix.arch }}" = "x86_64" ]; then
+            ARCH_CONFIG=(--config src-tauri/tauri.intel.conf.json)
+          fi
           if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            pnpm dlx @tauri-apps/cli@2.11.4 build --bundles ${{ matrix.bundles }}
+            pnpm dlx @tauri-apps/cli@2.11.4 build --bundles ${{ matrix.bundles }} ${ARCH_CONFIG[@]+"${ARCH_CONFIG[@]}"}
           else
             echo "::warning::没有 TAURI_SIGNING_PRIVATE_KEY——本次不产出更新包，桌面版只能手动下载新版"
             pnpm dlx @tauri-apps/cli@2.11.4 build --bundles ${{ matrix.bundles }} \
-              --config '{"bundle":{"createUpdaterArtifacts":false}}'
+              --config '{"bundle":{"createUpdaterArtifacts":false}}' ${ARCH_CONFIG[@]+"${ARCH_CONFIG[@]}"}
           fi
 
       # 发行链上的安装界面门禁。判的是 Tauri 把 {{...}} 展开后**真正喂给
@@ -470,12 +481,17 @@ jobs:
         # （"incompatible architecture"）。放在签名前是因为这一步不需要签名，
         # 而且没证书的构建（fork / 本地）也该被它挡住。
         # 期望值取 matrix.arch（这条腿**该**产出什么），不取 runner 自报的架构。
+        # 同一步核最低系统：Info.plist 的 LSMinimumSystemVersion 等于这条腿的配置，且每个 Mach-O 的
+        # minos 都不高于它——哪个 wheel 升级抬了下限，这里当场红，而不是发出一个旧系统上打不开的包。
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
           APP=src-tauri/target/release/bundle/macos/Tavotto.app
+          CONF=src-tauri/tauri.conf.json
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then CONF=src-tauri/tauri.intel.conf.json; fi
+          MIN_OS=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['bundle']['macOS']['minimumSystemVersion'])" "$CONF")
           python scripts/codesign_macos.py scan --app "$APP" --quiet \
-            --expect-arch "${{ matrix.arch }}"
+            --expect-arch "${{ matrix.arch }}" --expect-min-os "$MIN_OS"
 
       - name: 签名 .app（含嵌套 sidecar 与内置渲染 runtime）
         if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY != ''

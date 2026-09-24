@@ -186,11 +186,12 @@ def test_the_pure_model_imports_and_compiles_with_every_heavy_package_blocked(tm
 
 
 def test_the_blocker_itself_works():
-    """反证的反证：同一个 meta_path 钩子对着一个真的 import pymupdf 的模块必须炸——否则上一条
-    用例的绿只说明钩子没起作用。主语是**实现模块** `pymupdf_backend`：契约层 `tavotto.pdfbackend`
-    自 U08 起按策略懒装载实现（ADR 0067），import 它本身不拉起任何后端。"""
+    """反证的反证：同一个 meta_path 钩子对着一个真的 import 被禁包的模块必须炸——否则上一条
+    用例的绿只说明钩子没起作用。主语是一个**真会在模块层 import flask 的产品模块**（`tavotto.app`）：
+    U10 之前这里拿旧实现 `pymupdf_backend` 当靶子，它随 PyMuPDF 退役删除（ADR 0072）；契约层
+    `tavotto.pdfbackend` 按策略懒装载实现（ADR 0067），import 它本身不拉起任何后端，当不了靶子。"""
     code = _BLOCKER.split("import tavotto.rendercore\n", 1)[0] % (sorted(FORBIDDEN_NAMES),)
-    code += "\nimport tavotto.pdfbackend.pymupdf_backend\n"
+    code += "\nimport tavotto.app\n"
     proc = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
@@ -200,4 +201,4 @@ def test_the_blocker_itself_works():
         timeout=60,
     )
     assert proc.returncode != 0
-    assert "纯模型不该 import pymupdf" in proc.stderr
+    assert "纯模型不该 import flask" in proc.stderr

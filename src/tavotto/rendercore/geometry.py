@@ -6,7 +6,7 @@ Arrow / Shape 不是 IR 里的节点：它们在编译期变成路径（`Path` �
 ## 坐标
 
 所有函数在**对象自己的框空间**里出几何：原点在框的左上角、**y 向下**、单位 pt、
-框是 `(0, 0) – (w, h)`。这与旧 facade（`pdfbackend/pymupdf_backend.py` 的 `_draw_shape`
+框是 `(0, 0) – (w, h)`。这与旧 facade（PyMuPDF 时代 `pymupdf_backend.py` 的 `_draw_shape`
 / `_draw_arrow`）以及前端 `web/src/lib/shapeGeometry.ts` 是**同一套公式、同一个空间**
 ——`_polygon_points` / `_dash_pattern` 那一对严格同源对（`docs/rules/repo/same-origin-pairs.md`）
 在这里只是换了个宿主，数字一个没动。把框空间放到页面（y 向上）上是 `plan.compile_page()`

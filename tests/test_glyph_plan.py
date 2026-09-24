@@ -5,28 +5,72 @@
 1. **计划与真正落笔的那张脸一致**——判据不是我们自己的表，是导出的 PDF 里
    实际用到了哪几个字体（两把独立的尺子，同源了就等于自己验自己）；
 2. **量宽与落笔同一份计划**——分段判据一旦有两份，换行位置就和画出来的字对
-   不上；
+   不上（U10 起由 `tests/test_rendercore_typography.py` / `test_rendercore_writer.py` 在写入器
+   侧看护：量宽 == 写进去的 advance）；
 3. **覆盖表还配得上真字体**——前端读的是那张生成的表，漂了就该在这里红；
 4. **raw text 一个字符都不改**——受控解释只生成渲染表示。
+
+U10（ADR 0072）起脸来自批准字体集合（ADR 0060）：没有隐式回退层（`fallback` 恒空），`₂` / `⁵` 是
+Liberation 自带的 primary——D07 批准的迁移；独立读取器换成 PDFium 的文字层与 `tests/support/pdfread.py`
+直接读字体对象。
 """
 
+from __future__ import annotations
+
+import importlib.util
 import json
 import re
+import sys
 import tempfile
 from pathlib import Path
 
-import pymupdf
 import pytest
 
 from tavotto import glyphplan, pdfbackend, richtext
-from tavotto.pdfbackend import pymupdf_backend as backend
+
+SUPPORT = Path(__file__).resolve().parent / "support"
+if str(SUPPORT) not in sys.path:
+    sys.path.insert(0, str(SUPPORT))
+import pdfread  # noqa: E402
+import pdftext  # noqa: E402
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 GOLDEN = Path(__file__).parent / "golden" / "glyph_plan_vectors.json"
 VECTORS = json.loads(GOLDEN.read_text(encoding="utf-8"))["vectors"]
+#: `_place` 的产物都落在这里；`TemporaryDirectory` 的 finalizer 在进程退出时删整棵树
+_TMP = tempfile.TemporaryDirectory(prefix="tavotto-glyphplan-")
+HAS = all(
+    importlib.util.find_spec(m) is not None for m in ("pypdfium2", "pikepdf", "uharfbuzz", "PIL")
+)
+pytestmark = pytest.mark.skipif(not HAS, reason="RenderCore 依赖未装（not_run，不是绿）")
 
 
-def _place(text: str, **kw) -> pymupdf.Document:
+@pytest.fixture(scope="module", autouse=True)
+def _fonts_ready():
+    if not HAS:
+        pytest.skip("RenderCore 依赖未装（not_run）")
+    from tavotto.rendercore import fonts, renderhost
+
+    reg = fonts.FontRegistry.discover()
+    if reg.missing:
+        pytest.skip(f"批准字体不全（not_run）：缺 {reg.missing}；先跑 scripts/fetch_fonts.py")
+    yield
+    renderhost.shutdown_shared()
+
+
+def _fonts_used(pdf: Path) -> set[str]:
+    """产物首页字体资源表里的脸（去子集前缀；独立读取器直接读对象，不问被测实现）。"""
+    objs = pdfread.objects(pdf.read_bytes())
+    head, _content = pdfread.page(objs)
+    return {f["base"] for f in pdfread.fonts(objs, head).values()}
+
+
+def _text_of(pdf: Path) -> str:
+    """PDFium 按内容顺序抽回的文字层（认 ActualText）。"""
+    return pdftext.text(pdf).strip()
+
+
+def _place(text: str, **kw) -> Path:
     """把一段文字走**真实导出路径**画出来，回那份 PDF。"""
     obj = {
         "type": "text",
@@ -42,15 +86,14 @@ def _place(text: str, **kw) -> pymupdf.Document:
         "align": "left",
     }
     obj.update(kw)
-    # 临时目录随 with 收掉，回给调用方的是从字节打开的 Document：之前 mkdtemp()
-    # 一去不回，每跑一次全量就往 $TMPDIR 漏几十个目录（2026-09-22 数到 1050 个）。
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "one.pdf"
-        with pdfbackend.compose(120, 30) as canvas:
-            canvas.place(obj, dpi=300, resolve_panel=lambda o, d: path)
-            canvas.save_pdf(path)
-        data = path.read_bytes()
-    return pymupdf.open(stream=data, filetype="pdf")
+    obj.setdefault("id", "t")
+    # 放进模块级临时目录、进程退出时一并删：之前 mkdtemp() 一去不回，每跑一次全量就往 $TMPDIR
+    # 漏几十个目录（2026-09-22 数到 1050 个）。调用方要按路径读（独立读取器 / PDFium），不能随 with 收掉
+    path = Path(tempfile.mkdtemp(dir=_TMP.name)) / "one.pdf"
+    with pdfbackend.compose(120, 30) as canvas:
+        canvas.place(obj, dpi=300, resolve_panel=lambda o, d: path)
+        canvas.save_pdf(path)
+    return path
 
 
 # --------------------------------------------------------------------------
@@ -82,18 +125,20 @@ def test_generator_is_up_to_date():
 # --------------------------------------------------------------------------
 # 2. 分层顺序：四步不可交换
 # --------------------------------------------------------------------------
-def test_subscript_two_stays_on_the_fallback_layer():
-    """`₂` 在中日韩脸里有，码位却在 CJK 段之外——第 2 步轮不到它。
+def test_subscript_two_is_primary_and_the_layers_have_no_fallback():
+    """`₂` 在中日韩脸里也有，码位却在 CJK 段之外——第 2 步轮不到它，落在第 1 步（Liberation 自带，
+    D07 批准的迁移：U10 之前它靠 PyMuPDF 的隐式回退脸）。
 
-    这一条钉的是覆盖表的裁剪条件：多减一个 `cjk` 会让前端把它判成 `cjk`、
-    后端仍判 `fallback`，一个**只在下标字符上发作**的两侧分歧。
+    这一条钉的是覆盖表的裁剪条件：多减一个 `cjk` 会让前端把它判成 `cjk`、后端仍判 `primary`，
+    一个**只在下标字符上发作**的两侧分歧。`fallback` 层恒空（ADR 0060 §1）。
     """
-    assert pdfbackend.text_plan("₂") == [("₂", "fallback")]
-    assert glyphplan.plan("₂", glyphplan.canvas_coverage())[0].layer == "fallback"
+    assert pdfbackend.text_plan("₂") == [("₂", "primary")]
+    assert glyphplan.plan("₂", glyphplan.canvas_coverage())[0].layer == "primary"
+    assert pdfbackend.coverage_ranges()["fallback"] == []
 
 
 def test_box_drawing_is_rescued_by_the_fourth_step():
-    """`━` 拉丁脸与隐式回退都没有、中日韩脸有：第 4 步就是为它存在的。"""
+    """`━` 拉丁脸没有、中日韩脸有：第 4 步就是为它存在的。"""
     assert pdfbackend.text_plan("━") == [("━", "cjk")]
 
 
@@ -107,7 +152,8 @@ def test_cjk_is_not_reported_as_a_substitution():
     cov = glyphplan.canvas_coverage()
     assert glyphplan.plan("样品", cov)[0].layer == "cjk"
     assert glyphplan.substituted_chars("样品 A", cov) == []
-    assert glyphplan.substituted_chars("样品 ×10⁵", cov) == ["⁵"]
+    # 没有回退层就没有「换了脸」的字符：`⁵` 是 primary 自己画的（U10 之前它是回退脸画的、在这张单子上）
+    assert glyphplan.substituted_chars("样品 ×10⁵", cov) == []
 
 
 def test_unrenderable_character_is_missing_not_silently_dropped():
@@ -123,7 +169,8 @@ def test_unrenderable_character_is_missing_not_silently_dropped():
     ("text", "want_layers"),
     [
         ("Sample A", {"primary"}),
-        ("×10⁵", {"primary", "fallback"}),
+        ("×10⁵", {"primary"}),  # U10 之前是 {primary, fallback}：⁵ 靠回退脸；Liberation 自带（D07）
+        ("样品 ×", {"cjk", "primary"}),
         ("样品", {"cjk"}),
     ],
 )
@@ -131,52 +178,35 @@ def test_plan_matches_the_faces_the_pdf_actually_uses(family, text, want_layers)
     layers = {layer for _, layer in pdfbackend.text_plan(text, family=family)}
     assert layers == want_layers
     # `interpretation="scientific"` 会把上标合成掉，这里要的是原样落笔
-    doc = _place(text, font_family=family, interpretation="auto")
-    used = {name for _, _, _, name, _, _ in doc[0].get_fonts()}
-    doc.close()
-    # 一层一张脸：primary 一张，fallback 会多出一张（PyMuPDF 自己挑的），
-    # cjk 也是另一张。层数与脸数必须对得上——对不上说明计划在撒谎。
+    used = _fonts_used(_place(text, font_family=family, interpretation="auto"))
+    # 一层一张脸：primary 一张、cjk 另一张；没有第三张（没有回退脸）。层数与脸数必须对得上
+    # ——对不上说明计划在撒谎。
     assert len(used) == len(want_layers), (used, want_layers)
 
 
-def test_fallback_face_is_the_same_regardless_of_family_and_weight():
-    """回退脸**与请求的族和字重无关**（实测 1.28.2 一律 Noto Serif Regular）。
-
-    这正是 `glyph-substituted` 必须报出来的理由：sans-serif 的粗体标签里
-    那个下标会是一个衬线常规的字形，而没有任何人被告知。
-    """
-    seen = set()
+def test_no_fallback_face_is_ever_used_and_missing_stays_on_the_primary_face():
+    """没有隐式回退脸（ADR 0060 §1）：任何族 × 字重的 `H₂O` 只用请求的那一张脸；画不出的 `𝔸`
+    也不换脸——写成 .notdef 留在主脸上、文本层里字还在（U10 之前这里量的是 PyMuPDF 自己挑的
+    Noto Serif 回退脸「与族和字重无关」）。"""
     for family in pdfbackend.CANVAS_TEXT_FAMILIES:
         for bold in (False, True):
-            doc = _place("H₂O", font_family=family, bold=bold, interpretation="auto")
-            fonts = {name for _, _, _, name, _, _ in doc[0].get_fonts()}
-            doc.close()
-            seen |= fonts - {
-                "Times-Roman",
-                "Times-Bold",
-                "Helvetica",
-                "Helvetica-Bold",
-                "Courier",
-                "Courier-Bold",
-            }
-    assert len(seen) == 1, seen
+            used = _fonts_used(_place("H₂O", font_family=family, bold=bold, interpretation="auto"))
+            assert len(used) == 1 and all(u.startswith("Liberation") for u in used), used
+    pdf = _place("A𝔸", interpretation="auto")
+    assert _fonts_used(pdf) == {"LiberationSerif"}
+    assert pdfbackend.missing_glyphs("A𝔸") == ["𝔸"]
+    objs = pdfread.objects(pdf.read_bytes())
+    head, _ = pdfread.page(objs)
+    [face] = pdfread.fonts(objs, head).values()
+    assert "𝔸" in pdfread.decode_tounicode(face["tounicode"]).values()
 
 
 # --------------------------------------------------------------------------
-# 4. 量宽与落笔同一份计划
+# 4. 量宽与落笔同一份计划 —— U10 起在写入器侧看护（tests/test_rendercore_writer.py::
+#    test_pen_position_between_runs_equals_the_shaped_advance、tests/test_rendercore_typography.py::
+#    test_width_is_the_sum_of_shaped_advances_of_the_same_plan）：旧用例直接用 PyMuPDF TextWriter 落笔，
+#    随旧后端退役（ADR 0072）。
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("text", ["×10⁵ A m⁻²", "H₂O", "样品 A", "━┃", "Sample"])
-def test_measured_width_equals_the_advance_actually_written(text):
-    page = pymupdf.open().new_page(width=600, height=200)
-    writer = pymupdf.TextWriter(page.rect)
-    latin = backend.latin_font(False, False, "serif")
-    cjk = backend.cjk_font()
-    x = 10.0
-    for seg, layer in pdfbackend.text_plan(text):
-        face = cjk if layer == "cjk" else latin
-        writer.append((x, 100), seg, font=face, fontsize=20)
-        x += face.text_length(seg, 20)
-    assert pdfbackend.text_width(text, 20.0) == pytest.approx(x - 10.0, abs=1e-6)
 
 
 # --------------------------------------------------------------------------
@@ -188,26 +218,24 @@ def test_coverage_table_matches_the_live_fonts():
     assert stored["layers"] == pdfbackend.coverage_ranges()
 
 
-def test_every_base14_face_shares_one_charset():
+def test_the_single_coverage_table_is_the_intersection_of_all_faces():
     """三个族 × 四个字形共用一张 `primary` 表——这条承诺要被量一次。
 
-    不成立的话，加粗的标签与常规的标签会在不同的字符上回退，而覆盖表只有
-    一份，前端给出的答案会对其中几张脸是错的。
+    旧后端的 base-14 各脸字符集相同，所以「一张表」是天然的；Liberation 的 12 张脸 cmap 差 16 个
+    码位，一张表只能是**交集**（ADR 0060 §1）——不成立的话加粗的标签会在常规标签画得出的字符上出方框，
+    而覆盖表只有一份，前端给出的答案会对其中几张脸是错的。完整判据在
+    `tests/test_rendercore_glyph_vectors.py::test_the_primary_layer_is_the_intersection_of_all_twelve_faces`；
+    这里只钉「表是一张、且它对每一张脸都不说谎」。
     """
-    faces = [
-        backend.latin_font(bold, italic, family)
-        for family in pdfbackend.CANVAS_TEXT_FAMILIES
-        for bold in (False, True)
-        for italic in (False, True)
-    ]
-    rng = range(0x20, 0x3000)
-    reference = {cp for cp in rng if faces[0].has_glyph(cp)}
-    # 隐式回退那一层也要比：分层缓存按**码位**记（键里没有字体），而
-    # `canvas_coverage.json` 也只有一张与族无关的表——两处都靠这条假设。
-    ref_fallback = {cp for cp in rng if faces[0].has_glyph(cp, fallback=True)}
-    for face in faces[1:]:
-        assert {cp for cp in rng if face.has_glyph(cp)} == reference
-        assert {cp for cp in rng if face.has_glyph(cp, fallback=True)} == ref_fallback
+    from tavotto.rendercore import facade
+
+    prov = facade.provider()
+    primary = {c for lo, hi in pdfbackend.coverage_ranges()["primary"] for c in range(lo, hi + 1)}
+    for family in pdfbackend.CANVAS_TEXT_FAMILIES:
+        for bold in (False, True):
+            for italic in (False, True):
+                face = prov.face_for(family, bold, italic)
+                assert all(face.covers(cp) for cp in primary if cp < 0x3000), (family, bold, italic)
 
 
 # --------------------------------------------------------------------------
@@ -267,27 +295,38 @@ def test_auto_mode_keeps_the_pdf_text_layer_verbatim():
     合成上下标会把文本层里的 `⁵` 变成 `5`（`10⁵` 复制出来是 `105`），
     那是语义损坏——所以它只能是用户明确选的那一档。
     """
-    doc = _place("×10⁵ H₂O")
-    assert doc[0].get_text().strip() == "×10⁵ H₂O"
-    doc.close()
+    assert _text_of(_place("×10⁵ H₂O")) == "×10⁵ H₂O"
 
 
 def test_scientific_mode_draws_everything_with_one_face():
-    doc = _place("×10⁵ H₂O", font_family="sans-serif", interpretation="scientific")
-    used = {name for _, _, _, name, _, _ in doc[0].get_fonts()}
-    text = doc[0].get_text().strip()
-    doc.close()
-    assert used == {"Helvetica"}
-    # 代价说清楚：文本层降级成基础字符。这条断言是那句话的凭据。
-    assert text == "×105 H2O"
+    """`scientific` 档：一张脸画完整段文字。合成只对**主脸画不出**的上下标发生（`richtext.interpret_runs`
+    的 `worth` 判据）：Liberation 自带 `⁵` / `₂`，所以 `×10⁵ H₂O` 在这一档也原样落笔、文本层不降级
+    ——U10 之前 Helvetica 没有它们，同一档会折成 `×105 H2O`（ADR 0072 的用户可见变化表）；哪张脸都没有的
+    `⁻` 仍被合成：ToUnicode 里是基础字符 `-`（不认 ActualText 的读取器复制出来是 `m-2`），认 ActualText
+    的 PDFium 还原用户原文 `m⁻²`（RC-036，ADR 0060 §3）。两句都是凭据。"""
+    pdf = _place("×10⁵ H₂O", font_family="sans-serif", interpretation="scientific")
+    assert _fonts_used(pdf) == {"LiberationSans"}
+    assert _text_of(pdf) == "×10⁵ H₂O"
+
+    pdf = _place("m⁻²", font_family="sans-serif", interpretation="scientific")
+    assert _fonts_used(pdf) == {"LiberationSans"}
+    objs = pdfread.objects(pdf.read_bytes())
+    head, _ = pdfread.page(objs)
+    [face] = pdfread.fonts(objs, head).values()
+    tounicode = set(pdfread.decode_tounicode(face["tounicode"]).values())
+    assert "-" in tounicode and "⁻" not in tounicode
+    assert _text_of(pdf) == "m⁻²"
 
 
 def test_designed_superscripts_are_never_synthesized():
-    """`m²` 的 `²` 是 base-14 自己画得出的设计字形，两档都不该动它。"""
+    """`m²` 的 `²` 是主脸自己画得出的设计字形，两档都不该动它。"""
     for mode in richtext.TEXT_INTERPRETATIONS:
-        doc = _place("m²", interpretation=mode)
-        assert doc[0].get_text().strip() == "m²"
-        doc.close()
+        pdf = _place("m²", interpretation=mode)
+        assert _text_of(pdf) == "m²"
+        objs = pdfread.objects(pdf.read_bytes())
+        head, _ = pdfread.page(objs)
+        [face] = pdfread.fonts(objs, head).values()
+        assert "²" in pdfread.decode_tounicode(face["tounicode"]).values()
 
 
 def test_interpretation_only_produces_a_render_representation():
@@ -336,8 +375,8 @@ def test_superscript_and_subscript_never_merge():
 def test_missing_glyph_is_folded_even_in_auto_mode():
     """auto 档的那句承诺：**只有「不然就是方框」的才合成**。
 
-    本后端的三张脸盖住了全部上下标字符，所以这条用注入的判据跑——它守的是
-    「换一个覆盖更窄的后端时 auto 仍然救得回方框」，而不是当前这一版的表现。
+    这条用注入的判据跑——它守的是「覆盖更窄时 auto 仍然救得回方框」，而不是当前这一版的表现
+    （当前集合里 `⁻` 正是这样被合成的，见 golden 的 unit-negative-exponent）。
     """
     ascii_only = richtext.interpret_runs(
         richtext.parse_runs("×10⁵"),

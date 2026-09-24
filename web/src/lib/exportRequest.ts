@@ -137,10 +137,10 @@ function sourceReachable(figureId: string): boolean {
 /**
  * EPS 为什么不可用。**闭集**，界面按它说一句人话（ADR 0046）。
  *
- * EPS 只有 worker 侧的 matplotlib 写得出（PyMuPDF 没有 PostScript 写入器），
+ * EPS 只有 worker 侧的 matplotlib 写得出（画布合成没有 PostScript 写入器），
  * 所以它只在「按原图导出一张**有脚本**的图」时存在：
  *
- * * `canvas_scope`：画布合成走 PyMuPDF，给不出 EPS；
+ * * `canvas_scope`：画布合成走 RenderCore（PDF / PNG / TIFF），给不出 EPS；
  * * `no_script`：这张图在注册表里没有脚本（runtime 素材天生有），引擎没法重画。
  *
  * 与后端 `_serialize_figure()` 的前提逐条对应：runtime id 放行，磁盘面板看
