@@ -137,3 +137,31 @@ def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed():
         "MCP bridge / server import",
     ):
         assert must in names
+
+
+def test_every_sbom_the_workflows_produce_is_scanned():
+    """SBOM 尺子只在发布链有输入：每个产出 SBOM 的 workflow 步骤，同一个 job 里后面都要有对同一个文件的
+    `retirement_scan.py --sbom`——否则那把尺子永远是 not_run，发行 SBOM 里混进 PyMuPDF 也没人拦（Codex #539）。
+    按文本切 job（不用 PyYAML，同 test_merge_queue_workflows 的纪律）。"""
+    import re
+
+    wf_dir = ROOT / ".github" / "workflows"
+    produced, unscanned = 0, []
+    for wf in sorted(wf_dir.glob("*.yml")):
+        lines = wf.read_text(encoding="utf-8").splitlines()
+        job_start = [i for i, ln in enumerate(lines) if re.match(r"^  [A-Za-z0-9_-]+:\s*$", ln)] + [
+            len(lines)
+        ]
+        for i, line in enumerate(lines):
+            m = re.match(r"^\s+output-file:\s*(\S+sbom\S*\.json)\s*$", line)
+            if not m:
+                continue
+            produced += 1
+            end = min(j for j in job_start if j > i)
+            after = "\n".join(lines[i + 1 : end])
+            if not re.search(
+                r"retirement_scan\.py[^\n]*(\n[^\n]*)*?--sbom\s+" + re.escape(m.group(1)), after
+            ):
+                unscanned.append(f"{wf.name}:{i + 1} {m.group(1)}")
+    assert produced >= 1, "一个 SBOM 产出步骤都没扫到——判据量在空集合上"
+    assert not unscanned, "这些 SBOM 产出之后没有退役扫描：\n" + "\n".join(unscanned)
