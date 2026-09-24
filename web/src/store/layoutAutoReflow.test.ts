@@ -342,19 +342,30 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
 })
 
 describe('打开文档 / 切画布', () => {
-  it('载入一份组内排布没对齐的文档：不重排、不进历史、不变脏', async () => {
+  // 两条都先做一次用户编辑再换：换之前的那一刻不是「停在历史上」，换本身得把它摆回去
+  it('编辑过之后载入一份组内排布没对齐的文档：不重排、不进历史、不变脏', async () => {
+    await mount('d_reflow_before_open')
+    await commit('别的编辑', (d) => {
+      d.name = 'renamed'
+    })
     const project = emptyProject()
     const canvas = project.canvases[0]
-    // B 被用户拖开过（位置变化不触发重排，这就是存下来的样子）
-    canvas.objects = [panel('pa', 'Fig1.pdf', 0), panel('pb', 'Fig2.pdf', 60)]
-    canvas.layoutGroups = [structuredClone(ROW)]
-    await mount('d_reflow_open', project)
+    // 另一份文档自己的组；B 被用户拖开过（位置变化不触发重排，这就是存下来的样子）
+    canvas.objects = [panel('pa', 'Fig1.pdf', 0), panel('pb', 'Fig2.pdf', 60)].map((o) => ({
+      ...o,
+      groupId: 'lg_open',
+    }))
+    canvas.layoutGroups = [{ ...structuredClone(ROW), id: 'lg_open' }]
+    await act(async () => {
+      await s().switchDocument(project, 'd_reflow_open')
+    })
+    await settle()
     expect(obj('pb').x).toBe(60)
     expect(s().past.length).toBe(0)
     expect(s().dirty).toBe(false)
   })
 
-  it('切到另一张组内排布没对齐的画布：不重排、不进那张画布的历史', async () => {
+  it('切到另一张组内排布没对齐、自己有历史的画布：不重排、那张画布的栈不动', async () => {
     const project = emptyProject()
     const first = project.canvases[0]
     first.objects = [panel('pa', 'Fig1.pdf', 0), panel('pb', 'Fig2.pdf', 44)]
@@ -370,11 +381,24 @@ describe('打开文档 / 切画布', () => {
     second.layoutGroups = [{ ...structuredClone(ROW), id: 'lg2' }]
     project.canvases.push(second)
     await mount('d_reflow_switch_canvas', project)
-    await act(async () => {
-      s().switchCanvas('c_second')
-    })
-    await settle()
+    const rename = (name: string) =>
+      commit('别的编辑', (d) => {
+        d.name = name
+      })
+    const switchTo = async (id: string) => {
+      await act(async () => {
+        s().switchCanvas(id)
+      })
+      await settle()
+    }
+    await rename('one')
+    await switchTo('c_second')
+    await rename('two') // 第二张画布有了自己的一条历史
+    await switchTo(first.id)
+    await rename('one again')
+    // 换回来时 past 末位是第二张画布那条（换进来的条目不是一次新编辑）
+    await switchTo('c_second')
     expect(obj('pb').x).toBe(60)
-    expect([s().past.length, s().future.length]).toEqual([0, 0])
+    expect([s().past.length, s().future.length]).toEqual([1, 0])
   })
 })
