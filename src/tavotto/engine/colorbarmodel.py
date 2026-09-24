@@ -505,6 +505,387 @@ _restore_cb_orientation._needs_state = True  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
+# 色图反解的位图：独立 mappable 的色条 ↔ 已经成色的 RGB(A) 位图
+# ---------------------------------------------------------------------------
+#: 一个像素离色图查表最近那格的最大通道差（0–255）在这之内，才算「这格颜色画的」。
+#: 8 位 PNG 的量化误差是 ±0.5，gouraud 着色在两格之间线性插值、偏离色图曲线也只有
+#: 一两个单位；4 留出余量，又远小于叠加物（流线、标注）与色图之间的差距。
+_FIELD_TOL = 4.0
+#: 至少这么大比例的不透明像素落在色图上，才认这张位图是这条色条画出来的。
+_FIELD_MIN_ON = 0.6
+#: 落在色图上的像素至少要铺开色图全长的这么一段：白底照片会整片贴在「从白色起步」
+#: 的色图端点上，on 比例很高，但它不是一张场图。
+_FIELD_MIN_SPREAD = 0.1
+#: 配对时抽样的像素上限（全分辨率反解只在第一次真要重着色时做）。
+_FIELD_SAMPLE = 200_000
+#: 唯一颜色多到这个数就不是色图渲染（照片、截图）：不配对，也不花时间反解。
+_FIELD_MAX_UNIQUE = 250_000
+#: 叠加物（流线、箭头）抗锯齿边缘向外找「底下的场」最多找几个像素。
+_FIELD_BG_RADIUS = 6
+#: 抗锯齿像素是叠加色 L 与底色 B 的线性混合 `a·L + (1-a)·B`，离底色的距离 `a·|L-B|`
+#: 与覆盖率成正比；`|L-B|` 取邻域（这么多像素半径）里离底色最远的那个叠加像素——
+#: 线芯。固定一个常数的话，深色细线与浅色粗线只能对上一种。
+_FIELD_CORE_RADIUS = 2
+#: `|L-B|` 的下限。两种情况会让邻域线芯低估它：半透明叠加物（用户 (a) 的流线
+#: `alpha=0.69`：线芯本身就混着 31% 的底色，它离底色只有 0.55，真正的叠加色更远），
+#: 以及只是略出容差的场像素（gouraud 插值、有损压缩）。按实测调的：深色不透明
+#: 细线离浅底 0.8，走邻域线芯；半透明灰线在这个下限上，线芯带过去 8% 的底色变化。
+_FIELD_CORE_FLOOR = 0.6
+
+
+def _rgb8(arr):
+    """位图数组 → (M, N, 3) uint8。float 位图按 0–1、整型按 0–255。"""
+    import numpy as np
+
+    a = np.asarray(arr)
+    rgb = a[..., :3]
+    if rgb.dtype.kind == "f":
+        rgb = np.clip(np.rint(rgb * 255.0), 0, 255)
+    return rgb.astype(np.uint8)
+
+
+def _cmap_lut8(cmap):
+    import numpy as np
+
+    n = max(int(getattr(cmap, "N", 256)), 2)
+    return (np.asarray(cmap(np.linspace(0.0, 1.0, n)))[:, :3] * 255.0).astype(np.float32)
+
+
+def _nearest_lut(rgb8, lut):
+    """每个像素离查表最近的那一格 (序号, 最大通道差)。先去重再比：色图渲染的
+    唯一颜色通常只有几万种，远少于像素数。唯一颜色过多时回 None。"""
+    import numpy as np
+
+    flat = rgb8.reshape(-1, 3)
+    packed = (flat[:, 0].astype(np.uint32) << 16) | (flat[:, 1].astype(np.uint32) << 8) | flat[:, 2]
+    uniq, inv = np.unique(packed, return_inverse=True)
+    if len(uniq) > _FIELD_MAX_UNIQUE:
+        return None
+    uc = np.stack([(uniq >> 16) & 255, (uniq >> 8) & 255, uniq & 255], 1).astype(np.float32)
+    best = np.empty(len(uniq), np.int32)
+    dist = np.empty(len(uniq), np.float32)
+    step = max(1, 4_000_000 // (len(lut) * 3))
+    for s in range(0, len(uniq), step):
+        d = np.abs(uc[s : s + step, None, :] - lut[None]).max(-1)
+        best[s : s + step] = d.argmin(1)
+        dist[s : s + step] = d.min(1)
+    shape = rgb8.shape[:2]
+    return best[inv].reshape(shape), dist[inv].reshape(shape)
+
+
+def _opaque(arr):
+    import numpy as np
+
+    a = np.asarray(arr)
+    if a.shape[-1] < 4:
+        return np.ones(a.shape[:2], bool)
+    alpha = a[..., 3]
+    return alpha > (0.5 if alpha.dtype.kind == "f" else 127)
+
+
+class RasterField:
+    """一张**已经成色**的位图（`imshow` 吃进去的 RGB(A)），经一条独立 mappable 色条的
+    色图反解回标量场——色条换色图 / 改上下限时，位图跟着重新着色。
+
+    2026-09-24 用户的 PRB 三联图 (a)：COMSOL 场图先离线渲染成 PNG，再 `imshow` 进
+    子图；旁边的色条由 `ScalarMappable(norm=PowerNorm(...), cmap=FIELD_YELLOW)` 单独
+    建出来——两者在 matplotlib 眼里毫无关系，从色条换色图，位图纹丝不动，色条与图
+    从此对不上。这类「位图 + 独立色条」是拼论文图的常见做法（离线渲染、别的软件导出）。
+
+    **原样是模式**：色条的色图与 norm 没被动过时画的就是脚本原件，一个像素不改；
+    只有真要重着色时才在第一次做全分辨率反解（`_decode`）。判断放在 `draw` 前
+    （`sync`），热会话、全量重放、导出走的是同一条路——只要 override 相同，画出来就
+    相同。落在色图上的像素换成新色图下的颜色；不在色图上的（流线、球、文字）原样
+    保留，其抗锯齿边缘按「离底色多近」把底色的变化量按比例带过去，免得流线四周
+    留一圈旧色图的光晕。
+    """
+
+    def __init__(self, image, cb):
+        import copy
+
+        self.image = image
+        self.cb = cb
+        m = cb.mappable
+        self.original = image.get_array()
+        self.cmap0 = m.get_cmap()
+        self.norm0 = copy.deepcopy(m.norm)
+        self.key0 = self._key()
+        self._applied = self.key0
+        self._decoded = None
+        self._cache: dict = {}
+        # 钩在 `make_image` 而不是 `draw` 上：一个子图里有多张位图、后端又合成位图
+        # （PDF / SVG 的 `image.composite_image`）时，`Axes.draw` 绕过每张图的 draw、
+        # 直接调 `make_image` 拼成一张——钩在 draw 上导出会漏掉重着色
+        base_make = image.make_image
+
+        def make_image(*args, **kwargs):
+            self.sync()
+            return base_make(*args, **kwargs)
+
+        image.make_image = make_image
+        image._mm_field = self  # noqa: SLF001 — colorbar_maps / manifest 反查
+
+    def _key(self):
+        m = self.cb.mappable
+        n = m.norm
+        return (
+            id(m.get_cmap()),
+            type(n).__name__,
+            getattr(n, "vmin", None),
+            getattr(n, "vmax", None),
+            getattr(n, "gamma", None),
+            bool(getattr(n, "clip", False)),
+        )
+
+    def sync(self) -> None:
+        key = self._key()
+        if key == self._applied:
+            return
+        self._applied = key
+        if key == self.key0:
+            self.image.set_data(self.original)
+            return
+        try:
+            self.image.set_data(self._recolor())
+        except Exception:  # noqa: BLE001 — 重着色失败就画原件，不拦渲染
+            self.image.set_data(self.original)
+
+    def _decode(self):
+        import numpy as np
+
+        if self._decoded is not None:
+            return self._decoded
+        arr = np.asarray(self.original)
+        rgb8 = _rgb8(arr)
+        lut = _cmap_lut8(self.cmap0)
+        near = _nearest_lut(rgb8, lut)
+        if near is None:
+            raise ValueError("too many colours")
+        idx, dist = near
+        on = (dist <= _FIELD_TOL) & _opaque(arr)
+        t = idx.astype(np.float64) / (len(lut) - 1)
+        values = np.asarray(self.norm0.inverse(t), dtype=np.float64)
+        # 叠加物边缘：从场里往外逐像素找最近的场值（4 邻域膨胀，找 _FIELD_BG_RADIUS 圈）
+        bg_idx = np.where(on, idx, -1)
+        for _ in range(_FIELD_BG_RADIUS):
+            miss = bg_idx < 0
+            if not miss.any():
+                break
+            grown = bg_idx.copy()
+            for sl_dst, sl_src in (
+                ((slice(1, None), slice(None)), (slice(None, -1), slice(None))),
+                ((slice(None, -1), slice(None)), (slice(1, None), slice(None))),
+                ((slice(None), slice(1, None)), (slice(None), slice(None, -1))),
+                ((slice(None), slice(None, -1)), (slice(None), slice(1, None))),
+            ):
+                src = bg_idx[sl_src]
+                dst = grown[sl_dst]
+                take = (dst < 0) & (src >= 0)
+                dst[take] = src[take]
+            bg_idx = grown
+        edge = (~on) & (bg_idx >= 0)
+        bg_old = lut[np.clip(bg_idx, 0, None)] / 255.0
+        d = np.abs(rgb8.astype(np.float32) / 255.0 - bg_old).max(-1)
+        # 找不到底色的叠加像素（球心这类大块叠加物的内部）按「完全是叠加物」算
+        d_off = np.where(on, 0.0, np.where(bg_idx >= 0, d, 1.0)).astype(np.float32)
+        core = d_off.copy()
+        r = _FIELD_CORE_RADIUS
+        h, w = core.shape
+        pad = np.pad(d_off, r)
+        for dy in range(2 * r + 1):
+            for dx in range(2 * r + 1):
+                np.maximum(core, pad[dy : dy + h, dx : dx + w], out=core)
+        span = np.maximum(core, _FIELD_CORE_FLOOR)
+        weight = np.where(edge, np.clip(1.0 - d / span, 0.0, 1.0), 0.0)
+        bg_t = np.clip(bg_idx, 0, None).astype(np.float64) / (len(lut) - 1)
+        bg_values = np.asarray(self.norm0.inverse(bg_t), dtype=np.float64)
+        self._decoded = (on, values, edge, weight, bg_values, bg_old)
+        return self._decoded
+
+    def _recolor(self):
+        import numpy as np
+
+        key = self._applied
+        hit = self._cache.get(key)
+        if hit is not None:
+            return hit
+        on, values, edge, weight, bg_values, bg_old = self._decode()
+        m = self.cb.mappable
+        arr = np.asarray(self.original)
+        out = arr.astype(np.float32, copy=True)
+        if arr.dtype.kind != "f":
+            out /= 255.0
+        out[on, :3] = np.asarray(m.to_rgba(values[on]), dtype=np.float32)[:, :3]
+        if edge.any():
+            new_bg = np.asarray(m.to_rgba(bg_values[edge]), dtype=np.float32)[:, :3]
+            shift = (new_bg - bg_old[edge]) * weight[edge][:, None]
+            out[edge, :3] = np.clip(out[edge, :3] + shift, 0.0, 1.0)
+        self._cache = {key: out}  # 只留最近一份：拖色阶滑块时不攒内存
+        return out
+
+
+def _orphan_mappable(m) -> bool:
+    """色条的 mappable 不画在任何地方（`ScalarMappable(norm, cmap)` 单独建出来的）。"""
+    from matplotlib.artist import Artist
+
+    return m is not None and not isinstance(m, Artist) and getattr(m, "axes", None) is None
+
+
+def _field_fit(arr, cmap) -> float:
+    """这张位图有多大比例的不透明像素是 `cmap` 画的（抽样）；铺不开色图全长回 0。"""
+    import numpy as np
+
+    a = np.asarray(arr)
+    if a.ndim != 3 or a.shape[-1] not in (3, 4) or a.size == 0:
+        return 0.0
+    stride = max(1, int(np.ceil(np.sqrt(a.shape[0] * a.shape[1] / _FIELD_SAMPLE))))
+    sub = a[::stride, ::stride]
+    lut = _cmap_lut8(cmap)
+    near = _nearest_lut(_rgb8(sub), lut)
+    if near is None:
+        return 0.0
+    idx, dist = near
+    opaque = _opaque(sub)
+    if not opaque.any():
+        return 0.0
+    on = (dist <= _FIELD_TOL) & opaque
+    if not on.any():
+        return 0.0
+    lo, hi = np.percentile(idx[on], [2, 98])
+    if (hi - lo) / (len(lut) - 1) < _FIELD_MIN_SPREAD:
+        return 0.0
+    return float(on.sum()) / float(opaque.sum())
+
+
+def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
+    """给每条**独立 mappable** 的色条找它画的那张 RGB(A) 位图，找到就绑成 `RasterField`。
+
+    只在两边都没有别的解释时才配对：色条的 mappable 不画在任何地方、也没有已画出的
+    图元与它共用 norm（那是色阶兄弟，`scale_siblings` 管）；位图是已经成色的三 / 四
+    通道数组。一张位图只认一条色条，取吻合度最高、且过 `_FIELD_MIN_ON` 的那张。
+    可重入：已经绑过的位图（`_mm_field`）不再动。
+    """
+    drawn = [
+        a
+        for ax in axes
+        if ax not in cbar_of_ax
+        for a in [*getattr(ax, "images", []), *getattr(ax, "collections", [])]
+    ]
+    images = [
+        im
+        for ax in axes
+        if ax not in cbar_of_ax
+        for im in getattr(ax, "images", [])
+        if getattr(getattr(im, "get_array", lambda: None)(), "ndim", 0) == 3
+    ]
+    taken = {id(im) for im in images if getattr(im, "_mm_field", None) is not None}
+    for cb in cbar_of_ax.values():
+        m = getattr(cb, "mappable", None)
+        if not _orphan_mappable(m) or getattr(m.norm, "vmin", None) is None:
+            continue
+        try:
+            m.norm.inverse(0.5)  # BoundaryNorm 这类不可逆：反解不出数值，不配对
+        except Exception:  # noqa: BLE001
+            continue
+        if any(
+            getattr(im, "_mm_field", None) is not None and im._mm_field.cb is cb for im in images
+        ):
+            continue
+        if any(getattr(a, "norm", None) is m.norm for a in drawn):
+            continue
+        best, score = None, _FIELD_MIN_ON
+        for im in images:
+            if id(im) in taken:
+                continue
+            try:
+                fit = _field_fit(im.get_array(), m.get_cmap())
+            except Exception:  # noqa: BLE001 — 量不了就当不吻合
+                fit = 0.0
+            if fit >= score:
+                best, score = im, fit
+        if best is not None:
+            RasterField(best, cb)
+            taken.add(id(best))
+
+
+def _norm_signature(norm):
+    """判「两个 norm 画出来一样」用的签名：类型 + 上下限 + 已知的形状参数。
+    认不全的 norm（自定义子类、带额外状态的）回 None——宁可不认，不可认错。"""
+    from matplotlib import colors as mcolors
+
+    known = (
+        mcolors.Normalize,
+        mcolors.LogNorm,
+        mcolors.PowerNorm,
+        mcolors.SymLogNorm,
+        mcolors.AsinhNorm,
+        mcolors.CenteredNorm,
+        mcolors.TwoSlopeNorm,
+    )
+    if type(norm) not in known or getattr(norm, "vmin", None) is None:
+        return None
+    extra = tuple(
+        getattr(norm, k, None)
+        for k in ("gamma", "linthresh", "linscale", "linear_width", "vcenter")
+    )
+    return (type(norm), float(norm.vmin), float(norm.vmax), bool(norm.clip), extra)
+
+
+def _same_cmap(a, b) -> bool:
+    return a is b or (
+        getattr(a, "name", None) is not None and a.name == getattr(b, "name", None) and a == b
+    )
+
+
+def adopt_equal_scales(cbar_of_ax: dict, axes) -> None:
+    """独立 mappable 的色条认领**画出来一模一样**的图元：让它们共用色条那份 norm。
+
+    `fig.colorbar(ScalarMappable(Normalize(0, 1), "viridis"), ax=ax)` 配
+    `imshow(z, cmap="viridis", vmin=0, vmax=1)` 是常见写法：色条与图像各拿一份 norm，
+    数值相同，matplotlib 眼里却毫无关系——从色条换色图、改上下限，图像都不动。
+    色阶兄弟的判据是 norm 的**对象身份**（`scale_siblings`），这里只在一种情况下把
+    「数值相同」提升成「同一个对象」：色条的 mappable 不画在任何地方（它存在的唯一
+    意义就是描述别的图元），图元没有自己的色条，色图相同，norm 签名逐项相同。
+    换上的 norm 与原来的数值一样，画面一个像素不变；换完之后兄弟、别名组、
+    `scale_gids` 全走原有那一套。
+    """
+    drawn = [
+        a
+        for ax in axes
+        if ax not in cbar_of_ax
+        for a in [*getattr(ax, "images", []), *getattr(ax, "collections", [])]
+        if hasattr(a, "norm")
+        and hasattr(a, "get_cmap")
+        and getattr(a, "get_array", lambda: None)() is not None
+    ]
+    for cb in cbar_of_ax.values():
+        m = getattr(cb, "mappable", None)
+        if not _orphan_mappable(m):
+            continue
+        sig = _norm_signature(m.norm)
+        if sig is None or any(a.norm is m.norm for a in drawn):
+            continue
+        for a in drawn:
+            if getattr(a, "colorbar", None) is not None or getattr(a, "_mm_adopted", False):
+                continue
+            if getattr(getattr(a, "get_array", lambda: None)(), "ndim", 0) == 3:
+                continue  # 已经成色的位图不走色图，归 `bind_raster_fields`
+            if _norm_signature(a.norm) == sig and _same_cmap(a.get_cmap(), m.get_cmap()):
+                a.norm = m.norm
+                a._mm_adopted = True  # noqa: SLF001 — 可重入：认领过的不再比
+
+
+def field_image_of(cb, axes):
+    """这条色条绑定的那张反解位图（`bind_raster_fields` 绑的）；没有回 None。"""
+    for ax in axes:
+        for im in getattr(ax, "images", []):
+            field = getattr(im, "_mm_field", None)
+            if field is not None and field.cb is cb:
+                return im
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 色条反查与「拖它时谁跟着走」（manifest.instrument 与色条方向事务共用）
 # ---------------------------------------------------------------------------
 def colorbar_host_count(cb) -> int:
@@ -596,7 +977,22 @@ def colorbar_maps(fig, axes) -> tuple[dict, dict]:
         # 独立 mappable（`ScalarMappable(...)` 不挂在任何 axes 上）走这条。
         info = getattr(cax, "_colorbar_info", None)
         parents = info.get("parents") if isinstance(info, dict) else None
-        return parents[0] if parents else None
+        if parents:
+            return parents[0]
+        # `cax=` 显式建的独立 mappable 色条两条都落空：它描述的对象所在的子图就是
+        # 宿主——绑定的反解位图（`bind_raster_fields`），或与它共用 norm 的图元
+        # （脚本传的同一个对象，或 `adopt_equal_scales` 认领的）
+        field = field_image_of(cb, axes)
+        if field is not None:
+            return field.axes
+        norm = getattr(getattr(cb, "mappable", None), "norm", None)
+        for other in axes:
+            if getattr(other, "_colorbar", None) is not None:
+                continue
+            for a in [*getattr(other, "images", []), *getattr(other, "collections", [])]:
+                if norm is not None and getattr(a, "norm", None) is norm:
+                    return other
+        return None
 
     for ax in axes:
         cb = getattr(ax, "_colorbar", None)

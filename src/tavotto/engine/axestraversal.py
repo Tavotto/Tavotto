@@ -22,6 +22,39 @@
 from __future__ import annotations
 
 
+def axis_drawn(ax, which: str) -> bool:
+    """这条轴（刻度线、刻度文字、网格线、轴标签）此刻**画不画**——唯一判据。
+
+    `Axis` 自己的 `get_visible()` 只是其中一半：`ax.set_axis_off()`（`axison =
+    False`）时 `Axes.draw` 把整条轴从待画列表里摘掉，而轴上每一个 Text / Line2D
+    的 visible 都还是 True、位置也还在算——按它们自己的 visible 判，就会在图外
+    （x 刻度文字落到 y>1）和相邻面板上（右边那张图的 y 刻度文字压在左图上）
+    摆出一整组看不见的命中框（2026-09-24，用户的 PRB 双联图：两张 imshow 位图
+    `set_axis_off()`，点左图右缘选中的是右图的「Y 刻度文字」）。3D 轴的开关是
+    另一个属性（`Axes3D.set_axis_off` 写 `_axis3don`），同一处分开问。
+    """
+    # 3D 轴**只看** `_axis3don`：`Axes3D.__init__` 自己把 `axison` 置成 False（它的
+    # 轴由 `axis3d` 在投影里画，不走 2D 那条），拿 axison 判会把每张 3D 图的刻度都丢掉
+    on = ax._axis3don if hasattr(ax, "_axis3don") else getattr(ax, "axison", True)
+    if not on:
+        return False
+    axis = getattr(ax, f"{which}axis", None)
+    return axis is not None and bool(axis.get_visible())
+
+
+def frame_drawn(ax) -> bool:
+    """边框（spines）与背景矩形（`ax.patch`）画不画。
+
+    `Axes.draw` 的条件是 `axison and _frameon`：`set_axis_off()` 与
+    `set_frame_on(False)` 都会把四条边框和背景一起摘掉，而 `Spine.get_visible()`
+    照旧是 True。判据与 matplotlib 同一个合取式，别拆成两处各判一半。
+    """
+    if not getattr(ax, "axison", True):
+        return False
+    get_frame_on = getattr(ax, "get_frame_on", None)
+    return bool(get_frame_on()) if callable(get_frame_on) else True
+
+
 def ordered_axes(fig) -> tuple[list, set, set]:
     """(全部 axes（含子 axes 与寄生轴）, 子 axes 的 id 集合, 寄生轴的 id 集合)。
 

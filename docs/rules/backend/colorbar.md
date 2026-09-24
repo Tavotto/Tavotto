@@ -80,3 +80,20 @@
   兄弟自己那条排在色条前面、先被还原并收走记录的，色条的 restore 不再碰它（记录不在 = 已在原样上）。看护 `tests/test_invariants_engine.py` 的 `H-shared-*`（含撤色条 /
   撤兄弟 / 全撤三种减法，像素 + 全量 manifest）、
   `test_worker_roundtrip.py::test_colorbar_colormap_reaches_every_mappable_sharing_its_norm`。
+- **独立 mappable 的色条认得出它描述的图（2026-09-24，用户的 PRB 三联图 (a)：离线渲染好的
+  COMSOL 场图 `imshow` 成 RGB，旁边的色条是 `ScalarMappable(PowerNorm, cmap)` 用 `cax=` 单独
+  建的——从色条换色图位图不动、拖 (a) 色条不跟）**。`instrument` 在第一次 `colorbar_maps`
+  之后按序做两件事、再重查一遍：
+  ① `adopt_equal_scales`：mappable 不画在任何地方时，把**色图相同、norm 签名逐项相同**
+  （`_norm_signature`：类型 + 上下限 + clip + 形状参数，认不全的 norm 不认）、自己没有色条
+  的已画图元的 norm 换成色条那一份——画面一个像素不变，此后走原有的色阶兄弟那一套。这是
+  「对象身份」判据唯一的放宽，只在 orphan mappable 上成立。
+  ② `bind_raster_fields`：剩下的 orphan 色条在三 / 四通道位图里找吻合的那张（抽样：落在
+  色图上的不透明像素 ≥ 60%、铺开色图全长 ≥ 10%、唯一颜色不超上限、norm 可逆），绑成
+  `RasterField`。**原样是模式**：色图 / norm 签名没变时画脚本原件；变了才全分辨率反解
+  （最近格 + 容差）并重着色，叠加物原样、抗锯齿边缘按「离底色距离 / 邻域线芯距离（下限
+  0.6）」带过底色变化。钩在 `make_image` 而不是 `draw`（多图合成时 `Axes.draw` 绕过 draw）。
+  宿主回退：`colorbar_maps._host_of` 在 `mappable.axes` 与 `parents` 之后认绑定位图 / 共用
+  norm 的图元所在的子图——`host_gid`、`axes_follow`、方向翻转的落位参照都有了。manifest
+  的 `mappable_gid` 在反查不到时回退到绑定的位图。看护 `tests/test_figure_recognition.py`
+  （含热会话 == 全量重放逐字节、噪声 / BoundaryNorm / 贴端点的平图三个反例）。
