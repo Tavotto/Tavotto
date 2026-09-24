@@ -55,7 +55,9 @@
     两端坐标系都是 renderer 无关的可逆写法——'data'、'{figure,subfigure,axes}
     {points,fraction}'、尾端另加 'offset …'，以及它们的二元组。**'pixels' 不算**
     （#552 评审）：逆算出的是应用那一刻 dpi 下的原始像素值，导出换 dpi 后像素值不变、图幅
-    变了，箭头落到别处（热态 ≠ 导出）。**'fontsize' 也不算**：变换按注释当前字号缩放，
+    变了，箭头落到别处（热态 ≠ 导出）。points 系的负值**不换参考角**：3.8.4 / 3.10.8 / 3.11.1
+    的 `_get_xy_transform` 都从左下角线性延伸，拖过参考边坐标变号照样落在请求处
+    （`test_points_anchors_dragged_across_their_reference_edge_stay_put` 钉住）。**'fontsize' 也不算**：变换按注释当前字号缩放，
     端点先落、字号后改时锚点跟着字号漂，而 `_must_replay` 不因字号变化重放端点——为一条
     看不见的空注释的字号把它拉进几何档不值得。points / fraction 与 dpi、字号都无关。Artist /
     可调用对象 / Transform / Bbox / 'polar' 不出端点。**有字的注释不出端点**：箭尾从文字框
@@ -68,7 +70,9 @@
     （`_must_replay` 比这一轮的裁决与上次落下的 `_mm_endpoints_live`），文字变了而端点值没变
     时也会被重新裁决。**不是每轮都重放**：constrained / tight 布局在锚点落下后会重排，热态每轮
     重算会追着布局走，与只算一次的全量重放分岔（等价矩阵写回腿像素门实测 409）。判据不看
-    列表序，热态与全量重放判出同一个结果。
+    列表序，热态与全量重放判出同一个结果。「失效」这个裁决**留在记号上**（`False`，只在端点
+    override 被撤掉时清）：清掉的话下一轮无变化的渲染把 None ≠ False 当成裁决变了、再撤一次
+    锚点，恢复文字后用户拖过的字被拽回去（#552 第五轮评审）。
   * 看护：`test_arrowpatch_endpoints_and_style_roundtrip`（独立箭头）、
     `test_annotation_endpoints_bind_to_empty_text_through_clear_drag_restore`、
     `test_pure_arrow_annotation_drags_via_its_anchors`（出 / 不出端点的判据、拖完不弹回、

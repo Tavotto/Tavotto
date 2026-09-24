@@ -722,12 +722,16 @@ def _set_arrow_endpoints(a, value, state=None) -> None:
     ann = getattr(a, "_mm_annotation", None)
     if ann is not None:
         live = _annotation_endpoints_live(a, state)
-        a._mm_endpoints_live = live  # noqa: SLF001
         if not live:
             orig = None if state is None else state.originals.get((a.get_gid(), "endpoints_frac"))
             if isinstance(orig, _AnnAnchors):
-                _restore_arrow_endpoints(a, orig)
+                _put_ann_anchors(ann, orig)
+            # 「失效」这个裁决要**留着**（#552 第五轮评审）：清掉它，下一轮无变化的渲染里
+            # `_must_replay` 会把 None ≠ False 当成裁决变了、再撤一次——而那时 xyann 已是
+            # 恢复文字后用户拖过的位置，字被拽回去、没变的 pos_frac 又被跳过
+            a._mm_endpoints_live = False  # noqa: SLF001
             return
+        a._mm_endpoints_live = True  # noqa: SLF001
     fig = a.get_figure() if ann is None else ann.get_figure()
     da = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
     db = pathgeom.frac_to_display(fig, float(value[2]), float(value[3]))
@@ -749,12 +753,16 @@ def _get_arrow_endpoints(a):
     return None if pts is None else (tuple(pts[0]), tuple(pts[1]))
 
 
+def _put_ann_anchors(ann, orig: _AnnAnchors) -> None:
+    ann.xy, ann.xyann = orig[0], orig[1]
+    ann.set_annotation_clip(orig[2])
+
+
 def _restore_arrow_endpoints(a, orig) -> None:
+    """端点 override 被撤掉（不在新列表里）：锚点回原样，裁决记号一并清掉。"""
     a.__dict__.pop("_mm_endpoints_live", None)
     if isinstance(orig, _AnnAnchors):
-        ann = a._mm_annotation  # noqa: SLF001
-        ann.xy, ann.xyann = orig[0], orig[1]
-        ann.set_annotation_clip(orig[2])
+        _put_ann_anchors(a._mm_annotation, orig)  # noqa: SLF001
         return
     if orig is not None:
         a.set_positions(orig[0], orig[1])

@@ -793,6 +793,11 @@ def main():
     ax.annotate("", xy=(0.2, 0.2), xycoords="axes fraction",
                 xytext=(2, 3), textcoords="axes fontsize",
                 arrowprops=dict(arrowstyle="->"))
+    # points 坐标：负值照样从左下角线性延伸（3.8.4 / 3.10.8 / 3.11.1 实测），拖过边界
+    # 不换参考角                                                         texts_9
+    ax.annotate("", xy=(40, 150), xycoords="figure points",
+                xytext=(20, 60), textcoords="axes points",
+                arrowprops=dict(arrowstyle="->"))
     fig.savefig("PureArrow.pdf")
 """
 
@@ -968,6 +973,96 @@ def test_annotation_endpoints_bind_to_empty_text_through_clear_drag_restore(tmp_
             if p.poll() is None:
                 p.kill()
             p.wait(timeout=10)
+
+
+def test_restored_text_can_be_dragged_after_its_arrow_endpoints_went_stale(tmp_path):
+    """清空文字 → 拖箭头 → 恢复文字 → **拖文字** → 再渲染一次：字停在拖过的位置（#552 第五轮）。
+
+    恢复文字后端点那条 override 失效；失效这个裁决若被清掉，下一次无变化的渲染会把
+    None ≠ False 当成「裁决变了」再撤一次锚点——xyann 被拽回原样，而没变的 pos_frac
+    被跳过，字弹回去。全新 worker 重放同一组 patch（两种列表序）必须与热态一致。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_pure_arrow.py").write_text(PURE_ARROW_SCRIPT, encoding="utf-8")
+    text_gid, arrow_gid = "axes_0.texts_3", "axes_0.texts_3.arrow"
+
+    def els(proc, patches):
+        resp = _rpc(proc, {"cmd": "override", "stem": "PureArrow", "patches": patches})
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        return {e["gid"]: e for e in resp["manifest"]["elements"]}
+
+    procs = []
+    try:
+        hot = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path)
+        procs.append(hot)
+        _rpc(hot, {"cmd": "build"})
+        base = els(hot, [])
+        clear = {"gid": text_gid, "prop": "text", "value": ""}
+        pts = els(hot, [clear])[arrow_gid]["arrow_endpoints"]
+        drag_arrow = {
+            "gid": arrow_gid,
+            "prop": "endpoints_frac",
+            "value": [round(pts[0][0] + 0.1, 4), round(pts[0][1] - 0.1, 4), pts[1][0], pts[1][1]],
+        }
+        els(hot, [clear, drag_arrow])
+        els(hot, [drag_arrow])  # 恢复文字：端点失效
+        a0 = base[text_gid]["anchor"]
+        want = [round(a0[0] - 0.12, 4), round(a0[1] + 0.05, 4)]
+        drag_text = {"gid": text_gid, "prop": "pos_frac", "value": want}
+        first = els(hot, [drag_arrow, drag_text])
+        again = els(hot, [drag_arrow, drag_text])  # 无变化的再渲染一次
+        for e in (first, again):
+            assert e[text_gid]["anchor"] == pytest.approx(want, abs=1e-3), e[text_gid]["anchor"]
+            assert "arrow_endpoints" not in e[arrow_gid]
+
+        fresh = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path / "fresh")
+        procs.append(fresh)
+        _rpc(fresh, {"cmd": "build"})
+        for order in ([drag_arrow, drag_text], [drag_text, drag_arrow]):
+            els(fresh, [])
+            e = els(fresh, order)
+            assert e[text_gid]["anchor"] == pytest.approx(again[text_gid]["anchor"], abs=1e-6)
+            assert e[arrow_gid]["bbox"] == pytest.approx(again[arrow_gid]["bbox"], abs=1e-6)
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                p.kill()
+            p.wait(timeout=10)
+
+
+def test_points_anchors_dragged_across_their_reference_edge_stay_put(tmp_path):
+    """points 坐标系的端点拖过参考边（坐标变号）：落在请求的图幅位置，再渲染一次也不跳。
+
+    #552 第五轮评审担心「正值从左下角、负值从右上角算」——实测 3.8.4 / 3.10.8 / 3.11.1
+    的 `_get_xy_transform` 都是从左下角线性延伸，负值不换参考角；这条用例把它钉住，
+    matplotlib 哪天改回按符号选角，这里先红。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_pure_arrow.py").write_text(PURE_ARROW_SCRIPT, encoding="utf-8")
+    gid = "axes_0.texts_9.arrow"
+    proc = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "PureArrow", "patches": []})["manifest"]
+        el = next(e for e in man["elements"] if e["gid"] == gid)
+        assert el.get("arrow_endpoints"), el
+        # 子图从 0.1 起：尾（axes points）拖到 0.03 = 越过子图左边、坐标变负；
+        # 头（figure points）拖到 -0.02 = 越过图幅左边、坐标变负
+        (_tx, ty), (_hx, hy) = el["arrow_endpoints"]
+        target = [0.03, ty, -0.02, hy]
+        patches = [{"gid": gid, "prop": "endpoints_frac", "value": target}]
+        for _ in range(2):
+            resp = _rpc(proc, {"cmd": "override", "stem": "PureArrow", "patches": patches})
+            assert resp.get("warnings") in (None, []), resp.get("warnings")
+            moved = next(e for e in resp["manifest"]["elements"] if e["gid"] == gid)
+            got = [v for p in moved["arrow_endpoints"] for v in p]
+            assert got == pytest.approx(target, abs=2e-4), got
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
 
 
 def test_pure_arrow_annotation_head_dragged_out_of_axes_stays_drawn(tmp_path):
