@@ -143,7 +143,7 @@ export function PerfProbeHud() {
               )}
             </>
           ) : notice === 'save_failed' ? (
-            <p className="text-xs text-danger" role="alert">
+            <p className="text-xs text-danger" role="alert" data-perf-notice="save-failed">
               {t('perfProbe.saveFailed')}
             </p>
           ) : (

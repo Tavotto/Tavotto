@@ -44,6 +44,12 @@ interface ProbeState {
 }
 
 let unsub: (() => void) | null = null
+/**
+ * 保存请求的代数。保存是异步的：在它回来之前用户可能已经关掉面板、放弃、重新开始，
+ * 或又点了一次「重试保存」。只有**最新一次、且期间面板没被关掉**的结果才许落到界面——
+ * 否则关掉的面板会被 `phase: 'done'` 重新打开，过时的失败也会盖掉后来的成功
+ */
+let saveGen = 0
 
 export const usePerfProbeStore = create<ProbeState>((set, get) => ({
   phase: 'off',
@@ -59,6 +65,7 @@ export const usePerfProbeStore = create<ProbeState>((set, get) => ({
     if (!startProbe()) return false
     unsub?.()
     unsub = perfSubscribe(() => set({ segments: perfSegmentCount() }))
+    saveGen++
     set({ phase: 'recording', segments: 0, pass: 0, notice: null, result: null, unsaved: null })
     return true
   },
@@ -82,17 +89,22 @@ export const usePerfProbeStore = create<ProbeState>((set, get) => ({
     if (phase === 'running') abortSynthetic()
     unsub?.()
     unsub = null
+    const gen = ++saveGen
     const report = await finishProbe()
+    if (gen !== saveGen) return
     if (!report || report.segments.length === 0) {
       set({ phase: 'done', notice: 'no_data', result: null })
       return
     }
-    landSaved(report, await saveReport(report))
+    const saved = await saveReport(report)
+    if (gen === saveGen) landSaved(report, saved)
   },
   retrySave: async () => {
     const report = get().unsaved
     if (!report || get().phase !== 'done') return
-    landSaved(report, await saveReport(report))
+    const gen = ++saveGen
+    const saved = await saveReport(report)
+    if (gen === saveGen) landSaved(report, saved)
   },
   reveal: () => {
     const r = get().result
@@ -103,14 +115,17 @@ export const usePerfProbeStore = create<ProbeState>((set, get) => ({
     })
   },
   discard: () => {
+    saveGen++
     abortSynthetic()
     unsub?.()
     unsub = null
     cancelProbe()
     set({ phase: 'off', segments: 0, pass: 0, notice: null, result: null, unsaved: null })
   },
-  close: () =>
-    set({ phase: 'off', notice: null, result: null, unsaved: null, revealFailedPath: null }),
+  close: () => {
+    saveGen++
+    set({ phase: 'off', notice: null, result: null, unsaved: null, revealFailedPath: null })
+  },
 }))
 
 /** 保存的结果落到界面：存上了给文件名与一句摘要；没存上说失败、留着报告 */

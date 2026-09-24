@@ -472,6 +472,48 @@ def test_release_chain_on_raster_preview_names_the_bitmap_fetch_not_innerhtml():
     assert "换进 DOM" not in " ".join(f.evidence)
 
 
+def test_release_chain_on_raster_preview_labels_the_post_load_frames_as_bitmap_work():
+    # 位图上屏之后那两帧画的是新位图：主导时不许说成「绘制新 SVG」、不许建议减 SVG 节点（#537 评审）。
+    # 反证：swap_frames 照旧一律记成 layout → 本条红
+    rep = _report([_committed(1000)])
+    r = _render(
+        1002,
+        rt=80.0,
+        server=60.0,
+        patch=5.0,
+        draw=20.0,
+        manifest=10.0,
+        dom=30.0,
+        swap=(400.0, 380.0),
+    )
+    r["painted_via"] = "png"
+    rep["renders"] = [r]
+    f = _find(PR.analyze_report(rep), "松手 → 图落定")
+    assert "绘制新位图" in f.title
+    assert "绘制新 SVG" not in " ".join(f.evidence)
+    assert any("img.decode()" in x for x in f.fix)
+    assert not any("SVG" in x for x in f.fix)
+
+
+def test_release_chain_on_vector_preview_still_calls_it_svg_layout():
+    # 对照组：同样的帧落在 SVG 面板上仍是「绘制新 SVG」
+    rep = _report([_committed(1000)])
+    rep["renders"] = [
+        _render(
+            1002,
+            rt=80.0,
+            server=60.0,
+            patch=5.0,
+            draw=20.0,
+            manifest=10.0,
+            dom=30.0,
+            swap=(400.0, 380.0),
+        )
+    ]
+    f = _find(PR.analyze_report(rep), "松手 → 图落定")
+    assert "绘制新 SVG" in f.title
+
+
 def test_release_chain_blames_transfer_when_backend_is_fast():
     rep = _report([_committed(1000)])
     rep["renders"] = [_render(1002, rt=600.0, server=60.0, patch=5.0, draw=30.0, manifest=20.0)]

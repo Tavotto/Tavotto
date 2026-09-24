@@ -6,12 +6,14 @@
  * 等于什么都没存——回一个文件名就是谎称「已保存」。
  *
  * 反证：把 `saveReport` 里 `if (isDesktop()) return null` 删掉（修复前的写法）→
- * 「桌面版后端失败」两条必红（提交前手工跑过）。
+ * 「桌面版后端失败」两条必红；删掉 HUD 上的 `data-perf-notice` → 面板那条红；
+ * 去掉 probeStore 的保存代数判断 → 「过时的结果」三条红（提交前手工跑过）。
  */
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PerfProbeHud } from '@/components/PerfProbeHud'
+import { t as translate } from '@/i18n'
 import { useInteractionStore } from '@/store/interactionStore'
 import { usePerfProbeStore } from './probeStore'
 import { cancelProbe, saveReport, type PerfReport } from './session'
@@ -98,8 +100,17 @@ describe('探针面板：桌面版保存失败', () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
     const root = createRoot(host)
+    // 页面上另有一个 alert（排在前面）：判据必须指向保存失败那一句，而不是「第一个 alert」
+    const decoy = document.createElement('p')
+    decoy.setAttribute('role', 'alert')
+    decoy.textContent = '别处的提示'
+    document.body.prepend(decoy)
     await act(async () => root.render(<PerfProbeHud />))
-    expect(host.querySelector('[role="alert"]')).not.toBeNull()
+    expect(document.querySelector('[role="alert"]')).toBe(decoy) // 按 role 找会找错——这正是要防的
+    const notice = document.querySelector('[data-perf-notice="save-failed"]')
+    expect(notice?.textContent).toBe(translate('perfProbe.saveFailed', { ns: 'dialogs' }))
+    expect(notice?.getAttribute('role')).toBe('alert')
+    decoy.remove()
     expect(host.querySelector('[data-perf-action="retry-save"]')).not.toBeNull()
     expect(host.querySelector('[data-perf-action="reveal"]')).toBeNull()
 
@@ -115,5 +126,77 @@ describe('探针面板：桌面版保存失败', () => {
     expect(host.querySelector('[data-perf-action="reveal"]')?.textContent).toBe('tavotto-perf-y.json')
     act(() => root.unmount())
     host.remove()
+  })
+})
+
+/** 手动放行的一次报告请求 */
+function deferReply(): { resolve: (r: Response) => void; reject: () => void } {
+  let resolve!: (r: Response) => void
+  let reject!: () => void
+  const p = new Promise<Response>((res, rej) => {
+    resolve = res
+    reject = () => rej(new TypeError('offline'))
+  })
+  reportReply = () => p
+  return { resolve, reject }
+}
+
+const ok = (name: string) => Response.json({ dir: '/data/perf-reports', name })
+
+/** 桌面版，录了一段、第一次保存失败，停在「没保存 + 重试」 */
+async function failedOnce() {
+  asDesktop()
+  const probe = usePerfProbeStore.getState
+  expect(probe().start()).toBe(true)
+  useInteractionStore.getState().begin('move')
+  useInteractionStore.getState().end()
+  await probe().finish()
+  expect(probe().notice).toBe('save_failed')
+  return probe
+}
+
+describe('探针面板：过时的保存结果不许落到界面', () => {
+  it('点了重试、请求还没回来就关掉面板：回来的结果不许把面板重新打开', async () => {
+    const probe = await failedOnce()
+    const req = deferReply()
+    const pending = probe().retrySave()
+    probe().close()
+    req.resolve(ok('tavotto-perf-late.json'))
+    await pending
+    expect(probe().phase).toBe('off')
+    expect(probe().result).toBeNull()
+  })
+
+  it('完成并保存还在路上就放弃：回来的失败不许把面板重新打开', async () => {
+    asDesktop()
+    const probe = usePerfProbeStore.getState
+    expect(probe().start()).toBe(true)
+    useInteractionStore.getState().begin('move')
+    useInteractionStore.getState().end()
+    const req = deferReply()
+    const pending = probe().finish()
+    // finishProbe 本身要等系统事实：放一拍让它走到保存请求上
+    await new Promise((r) => setTimeout(r, 0))
+    probe().discard()
+    req.reject()
+    await pending
+    expect(probe().phase).toBe('off')
+    expect(probe().notice).toBeNull()
+    expect(probe().unsaved).toBeNull()
+  })
+
+  it('连点两次重试：先发的那次晚回来的失败，不许盖掉后发那次的成功', async () => {
+    const probe = await failedOnce()
+    const first = deferReply()
+    const p1 = probe().retrySave()
+    const second = deferReply()
+    const p2 = probe().retrySave()
+    second.resolve(ok('tavotto-perf-ok.json'))
+    await p2
+    first.reject()
+    await p1
+    expect(probe().phase).toBe('done')
+    expect(probe().notice).toBeNull()
+    expect(probe().result?.file).toBe('tavotto-perf-ok.json')
   })
 })
