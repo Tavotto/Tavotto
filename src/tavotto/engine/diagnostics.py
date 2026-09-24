@@ -90,23 +90,30 @@ def _install_id() -> str:
 #: 云盘挂载点的目录名里带着账号：`~/Library/CloudStorage/坚果云-<邮箱>`、`GoogleDrive-<邮箱>`、
 #: `OneDrive-<机构名>`。服务商名留着（「项目在云盘里」对排障有用：同步冲突、占位文件），账号哈希
 _CLOUD_ACCOUNT = re.compile(r"(CloudStorage[/\\])([^/\\\s\"'-]+)-([^/\\\"']+)")
-#: 邮箱出现在哪里都不该出门（云盘目录名、Git 配置、日志里的账号提示）。**不能只认 ASCII**：
-#: `用户@例子.公司` 是合法的国际化地址（RFC 6531 / IDNA），`user@example.xn--p1ai` 的顶级域是
-#: punycode——只认 ASCII 的正则前者一个字不动、后者留下 `--p1ai` 尾巴（#524 评审）。所以不写成
-#: 一条字符类正则，而是从每个 `@`（含全角 `＠`）往两边按 Unicode 类别扩（`\w` 不含组合记号，天城文等会断）：
-#: 本地部分 = 字母 / 记号 / 数字 / `._%+-`，域名 = 字母 / 记号 / 数字 / `-` 加点号（含 IDNA 认的
-#: 全角 `。．｡`）。**宁可多抹**：中文里没有空格，`请联系用户@例子.公司` 的本地部分分不出从哪起，
-#: 整段抹掉。不抹的只有结构上不是地址的：顶级域必须是 ≥2 个字母或 `xn--…`（`matplotlib@3.10`、
-#: `numpy@1.26.4` 不动）、至少两段（`a@b`、`user@localhost` 不动）、`@` 前没有本地部分（装饰器）。
-#: JSON `ensure_ascii` 写出的 `\uXXXX` 按解码后的字符算（日志里会有 json.dumps 的原样输出）：
-#: `@` 本身也可能是转义（`json.dumps` 把 `＠` 写成 `\uff20`），非 BMP 字符是一对代理转义
-#: `\ud801\udc00`，要合成一个字符再判类别——拆开判是两个 `Cs`，扫描停在那里（#536 评审）。
-_EMAIL_AT = re.compile(r"[@＠]|\\u(?:0040|[Ff][Ff]20)")
+#: 邮箱出现在哪里都不该出门（云盘目录名、Git 配置、日志里的账号提示）。
+#:
+#: **判据是「多抹少放」，不是「认得出才抹」**（#536 评审连续三轮）：先后漏过只认 ASCII 的
+#: `用户@例子.公司`、punycode 的 `--p1ai` 尾巴、JSON 转义的 `＠` 与代理对、IDNA 上下文
+#: 字符 `l·l`——每一轮都是正面白名单（「地址由这些字符组成」）又缺了一类。所以反过来写：
+#:
+#: * 起点：`@`、全角 `＠`、JSON 转义 `@` / `＠`、URL 编码 `%40`；
+#: * 从起点往两边扩，**只在明确的分隔符处停**（`_email_stop`：空白、控制字符、引号、各种括号、
+#:   `<>`、`,;:` 与全角 `，；：、`、`/\|`、URL 的 `?&=#`），其余字符——不论 Unicode 类别——
+#:   一律算地址的一部分；JSON 的 `\uXXXX` 转义按解出来的字符判，解出分隔符也停；
+#: * 宁可把紧挨着的无关字符一起抹掉（中文不分词，`请写信给用户@例子.公司` 整段抹），也不漏地址；
+#: * 只放行一张**负面清单**（`_not_an_email`），每条都是结构上确定不是地址的已知格式。
+#:
+#: 两边的扩展步数按 RFC 5321 的上限封顶（本地部分 64、域名 255）：几 MB 的日志里一个 `@`
+#: 不该扫全文，而真的地址不会比这更长。
+_EMAIL_AT = re.compile(r"[@＠]|\\u(?:0040|[Ff][Ff]20)|%40")
 _EMAIL_DOTS = ".。．｡"
+_EMAIL_STOPS = frozenset("\"'`<>,;:，；：、/\\|?&=#")
+#: 分隔符里按 Unicode 类别整类算的：控制字符、开 / 闭括号、开 / 闭引号（`「」《》“”` 都在里面）
+_EMAIL_STOP_CATEGORIES = frozenset(("Cc", "Ps", "Pe", "Pi", "Pf"))
 _JSON_ESCAPE = re.compile(r"\\u([0-9A-Fa-f]{4})")
-_JSON_SURROGATE_PAIR = re.compile(r"\\u([Dd][89ABab][0-9A-Fa-f]{2})\\u([Dd][C-Fc-f][0-9A-Fa-f]{2})")
-_PUNYCODE_TLD = re.compile(r"xn--[a-z0-9-]+", re.I)
-#: RFC 5321 的上限：本地部分 64、域名 255。也是往两边扩的步数上限（几 MB 的日志里一个 `@` 不该扫全文）
+#: 放行：`pkg@1.2.3` / `matplotlib@3.10` / `pkg@2.0.0-beta`——域名一侧是版本号（数字段 + 可选的
+#: 预发布 / 构建后缀），不是域名。只认 ASCII 数字：`\d` 会认全角与其他文字的数字。
+_VERSION_AFTER_AT = re.compile(r"v?[0-9]+(?:\.[0-9]+)*(?:[-+][0-9A-Za-z.+-]*)?")
 _EMAIL_LOCAL_MAX = 64
 _EMAIL_DOMAIN_MAX = 255
 
@@ -151,44 +158,44 @@ def project_roots(project: dict | None = None) -> list[tuple[str, str]]:
     return sorted(out, key=lambda pair: len(pair[0]), reverse=True)
 
 
-def _email_unit(text: str, i: int, backward: bool, extra: str) -> tuple[str, int] | None:
-    """i 处（backward 时是 i 之前）属于地址的一个字符单位，不是就 None。
+def _email_stop(ch: str) -> bool:
+    """地址在这个字符处结束（判据见 `_EMAIL_AT` 上方）。"""
+    return ch.isspace() or ch in _EMAIL_STOPS or unicodedata.category(ch) in _EMAIL_STOP_CATEGORIES
 
-    `\\uXXXX` 转义算一个、按解码后的字符判；一对代理转义合成一个非 BMP 字符再判。转义解出来
-    不是地址字符（落单的代理、`\\\\u…` 其实是字面反斜杠）时退回按字面字符判——往回扫停在转义上
-    会把前面的本地部分整段放过去。"""
+
+def _email_unit(text: str, i: int, backward: bool) -> tuple[str, int] | None:
+    """i 处（backward 时是 i 之前）的一个字符单位，是分隔符就 None。`\\uXXXX` 转义算一个单位、
+    按解出来的字符判——`json.dumps` 写出的地址每个字都是转义。"""
     if backward:
-        pair = _JSON_SURROGATE_PAIR.fullmatch(text, i - 12, i) if i >= 12 else None
-        m = pair or (_JSON_ESCAPE.fullmatch(text, i - 6, i) if i >= 6 else None)
+        m = _JSON_ESCAPE.fullmatch(text, i - 6, i) if i >= 6 else None
     else:
-        m = _JSON_SURROGATE_PAIR.match(text, i) or _JSON_ESCAPE.match(text, i)
+        m = _JSON_ESCAPE.match(text, i)
     if m is not None:
-        if m.re is _JSON_SURROGATE_PAIR:
-            hi, lo = int(m.group(1), 16), int(m.group(2), 16)
-            ch, width = chr(0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00)), 12
-        else:
-            ch, width = chr(int(m.group(1), 16)), 6
-        if _email_char(ch, extra):
-            return ch, width
-    ch = text[i - 1] if backward else text[i]
-    return (ch, 1) if _email_char(ch, extra) else None
+        ch, width = chr(int(m.group(1), 16)), 6
+    else:
+        ch, width = (text[i - 1] if backward else text[i]), 1
+    return None if _email_stop(ch) else (ch, width)
 
 
-def _email_char(ch: str, extra: str) -> bool:
-    return unicodedata.category(ch)[0] in "LMN" or ch in extra
+def _not_an_email(local: str, domain: str) -> bool:
+    """负面清单：结构上确定不是地址的已知格式。每条的理由：
 
+    * 本地部分为空——`@app.route`、`@dataclass`、`@某人`：装饰器与提及，`@` 前没有账号；
+    * 域名不到两段——`user@localhost`、`HEAD@{0}`、`a@b`、`x@例子`：邮件地址的域名至少两段；
+    * 域名是版本号——`numpy@1.26.4`、`pkg@2.0.0-beta`：包管理器的「包@版本」写法。
 
-def _is_email_domain(labels: list[str]) -> bool:
-    if len(labels) < 2 or not all(labels):
-        return False
-    tld = labels[-1]
-    if _PUNYCODE_TLD.fullmatch(tld):
+    URL 里的 userinfo（`ssh://git@github.com/…`）不在清单上：它照样按地址抹，与 #524 之前一致。
+    """
+    if not local:
         return True
-    return len(tld) >= 2 and all(unicodedata.category(c)[0] in "LM" for c in tld)
+    labels = re.split(f"[{_EMAIL_DOTS}]", domain)
+    if len(labels) < 2 or not all(labels):
+        return True
+    return _VERSION_AFTER_AT.fullmatch(domain) is not None
 
 
 def _redact_emails(text: str) -> str:
-    """每个 `@` 往两边扩出本地部分与域名，结构上是地址的整段换成 `<email>`（判据见 `_EMAIL_AT` 上方）。"""
+    """每个 `@` 往两边扩到分隔符为止，不在负面清单上的整段换成 `<email>`（判据见 `_EMAIL_AT` 上方）。"""
     out: list[str] = []
     done = 0  # 已经交出去的位置：往左扩不越过上一个替换的结尾
     for at in _EMAIL_AT.finditer(text):
@@ -197,25 +204,24 @@ def _redact_emails(text: str) -> str:
         local: list[tuple[str, int]] = []
         start = at.start()
         while start > done and len(local) < _EMAIL_LOCAL_MAX:
-            unit = _email_unit(text, start, True, "._%+-")
+            unit = _email_unit(text, start, backward=True)
             if unit is None or start - unit[1] < done:
                 break
             local.append(unit)
             start -= unit[1]
-        while local and local[-1][0] == ".":  # 句中的点号不算本地部分的开头
+        while local and local[-1][0] in _EMAIL_DOTS:  # 句中的点号不算本地部分的开头
             start += local.pop()[1]
         domain: list[tuple[str, int]] = []
         end = at.end()
         while end < len(text) and len(domain) < _EMAIL_DOMAIN_MAX:
-            unit = _email_unit(text, end, False, "-" + _EMAIL_DOTS)
+            unit = _email_unit(text, end, backward=False)
             if unit is None:
                 break
             domain.append(unit)
             end += unit[1]
         while domain and domain[-1][0] in _EMAIL_DOTS:  # 句末的句号不算域名
             end -= domain.pop()[1]
-        labels = re.split(f"[{_EMAIL_DOTS}]", "".join(ch for ch, _ in domain))
-        if not local or not _is_email_domain(labels):
+        if _not_an_email("".join(c for c, _ in reversed(local)), "".join(c for c, _ in domain)):
             continue
         out += [text[done:start], "<email>"]
         done = end

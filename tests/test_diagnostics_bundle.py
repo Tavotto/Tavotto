@@ -871,8 +871,18 @@ EMAIL_VECTORS = [
     (json.dumps("𐐀@example.com"), '"<email>"'),
     (json.dumps("a@𐐀𐐀.com"), '"<email>"'),
     (json.dumps({"to": "𐐀用户＠例子。公司"}), '{"to": "<email>"}'),
-    # 落单的代理 / 其实是字面反斜杠的 `\\u…`：解不出地址字符就按字面字符判，不能在那里停下
-    (json.dumps("x\\ud801@a.com"), '"x\\\\<email>"'),
+    # 落单的代理 / 其实是字面反斜杠的 `\\u…`：落单的代理照样算地址的一部分，停在反斜杠这个分隔符上
+    (json.dumps("x\\ud801@a.com"), '"x\\<email>"'),
+    # 第三轮（#536）：判据换成「只在分隔符处停」之后，正面白名单漏掉的几类
+    ("user@l·l.cat", "<email>"),  # IDNA 上下文字符 U+00B7（Po）
+    ("a\u200db@x.com", "<email>"),  # ZWJ（Cf）在本地部分里，不许留下 `a\u200d` 残片
+    ("a@b\u2010c.com", "<email>"),  # U+2010 连字符（Pd）
+    ("a@b\u200cc.xn--p1ai", "<email>"),  # ZWNJ（Cf）在域名里
+    ("x^y@例子.公司", "<email>"),  # Sk
+    ("user%40example.com", "<email>"),  # URL 编码的 @
+    ("ssh://git@github.com/x", "ssh://<email>/x"),  # URL userinfo 照样抹，停在 `/` 上
+    ("「用户@例子.公司」", "「<email>」"),  # 全角引号是分隔符
+    ("C:\\Users\\a@b.com\\x", "C:\\Users\\<email>\\x"),
 ]
 NOT_EMAILS = [
     "matplotlib@3.10",
@@ -884,6 +894,8 @@ NOT_EMAILS = [
     "user@localhost",
     "HEAD@{0}",
     "x@例子",
+    "@某人 你好",
+    "pkg@v1.2.3+build.5",
 ]
 
 
@@ -895,3 +907,55 @@ def test_internationalized_and_punycode_emails_are_redacted_whole(raw, expect):
 @pytest.mark.parametrize("raw", NOT_EMAILS)
 def test_things_shaped_like_emails_but_not_addresses_are_left_alone(raw):
     assert engine_diagnostics._redact_text(raw) == raw
+
+
+# 性质用例（#536 第三轮）：地址里出现什么 Unicode 字符都不许让扫描提前停下。从下面每一类里抽字符
+# 拼进本地部分与域名，断言整段换成 `<email>`、@ 两侧一个字符都不剩；再 json.dumps 一遍走转义那条路。
+# 分隔符清单这里**独立写一份**（不 import 被测代码的）：它是规格，被测代码与它对拍。
+_SAMPLED_CATEGORIES = "Lu Ll Lt Lm Lo Mn Mc Me Nd Nl No Pc Pd Po Sm Sc Sk So Cf Co".split()
+_SEPARATORS = set("\"'`<>,;:，；：、/\\|?&=#")
+_SEPARATOR_CATEGORIES = {"Cc", "Ps", "Pe", "Pi", "Pf"}
+#: 起点（@ / ＠ / %40）与点号是地址的结构，不当成「任意字符」抽
+_STRUCTURAL = set("@＠%.。．｡")
+
+
+def _unicode_pools() -> dict[str, list[str]]:
+    import unicodedata
+
+    pools: dict[str, list[str]] = {c: [] for c in _SAMPLED_CATEGORIES}
+    for cp in range(0x110000):
+        ch = chr(cp)
+        cat = unicodedata.category(ch)
+        if cat not in pools or ch.isspace() or ch in _SEPARATORS or ch in _STRUCTURAL:
+            continue
+        pools[cat].append(ch)
+    return pools
+
+
+def test_any_unicode_inside_an_address_is_redacted_whole():
+    import random
+
+    pools = _unicode_pools()
+    assert all(pools.values()), "每一类都要抽得到字符，否则这条性质什么都没量"
+    rng = random.Random(536)
+    cats = _SAMPLED_CATEGORIES
+
+    def piece(forced: str) -> str:
+        chars = [rng.choice(pools[forced])]
+        chars += [rng.choice(pools[rng.choice(cats)]) for _ in range(rng.randint(0, 4))]
+        rng.shuffle(chars)
+        return "".join(chars)
+
+    for k in range(len(cats) * 20):
+        local = piece(cats[k % len(cats)])
+        label = piece(cats[(k * 7 + 3) % len(cats)])
+        # 负面清单只放行「域名是版本号」（ASCII 数字或 v 开头）；避开这个形状，性质才量得到
+        while label[0] in "0123456789v":
+            label = piece(cats[(k * 7 + 3) % len(cats)])
+        address = f"{local}@{label}.{piece(cats[(k * 5 + 1) % len(cats)])}"
+        text = f"前 {address} 后"
+        out = engine_diagnostics._redact_text(text)
+        assert out == "前 <email> 后", (address, [f"U+{ord(c):04X}" for c in address], out)
+        escaped = json.dumps(text)
+        expect = json.dumps("前 ")[:-1] + "<email>" + json.dumps(" 后")[1:]
+        assert engine_diagnostics._redact_text(escaped) == expect, (escaped, address)

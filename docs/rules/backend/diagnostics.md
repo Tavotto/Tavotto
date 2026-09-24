@@ -16,11 +16,13 @@
     同一个项目在 report / app.log / config.json 里是同一个记号。`build_report` / `build_bundle` 的每一处
     `_redact_text` / `_redact_obj` 都带上它，新加一处漏了就是新的泄漏口。
   * 兜底两条不依赖登记：`CloudStorage/<服务商>-<账号>` 的账号段换成 `acct:<哈希>`（服务商名留着），
-    邮箱一律 `<email>`——没登记成项目的路径、日志里随口的一句也不带出账号。邮箱**不只认 ASCII**
-    （`_redact_emails`，#524 评审）：从每个 `@` / `＠` 按 Unicode 类别往两边扩，国际化地址
-    `用户@例子.公司`、punycode 顶级域 `…xn--p1ai`、JSON `\uXXXX` 转义（含转义掉的 `＠` 本身、
-    代理对合成一个字符再判）都整段换掉；顶级域必须是
-    ≥2 个字母或 `xn--…`、域名至少两段，所以 `matplotlib@3.10`、装饰器、`a@b` 不动。
+    邮箱一律 `<email>`——没登记成项目的路径、日志里随口的一句也不带出账号。邮箱的判据是**多抹少放**
+    （`_redact_emails`，#524 / #536 评审连续三轮各漏一类 Unicode 之后改的）：起点是 `@`、`＠`、
+    `\u0040` / `\uff20`、`%40`，往两边扩时**只在分隔符处停**（空白、控制字符、引号、括号、`<>`、
+    `,;:` 与全角 `，；：、`、`/\|?&=#`），其余字符不论类别都算地址——**不许再写「地址由哪些字符组成」
+    的正面白名单**。只放行负面清单 `_not_an_email`：`@` 前为空（装饰器 / 提及）、域名不到两段
+    （`localhost`、`HEAD@{0}`）、域名是版本号（`numpy@1.26.4`）。看护含一条跨 20 个 Unicode 类别的
+    随机抽样性质用例（`test_any_unicode_inside_an_address_is_redacted_whole`）。
   * `_project_section`：去掉 `name`；`figures_dir` 只剩记号，另给 `location`
     （`cloud_storage` / `non_ascii` / `has_space`——真实故障来自这三样，不来自名字）；导出 / 备份 / 文档
     目录与项目设置里的路径走 `_path_fact`：记号 / `~` 之后只有 `_KNOWN_SEGMENTS`（Tavotto 自己起的目录名、
