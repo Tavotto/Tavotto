@@ -329,6 +329,41 @@ def test_instruction_fallback_is_generated_from_skill_md_and_resolves_in_the_pac
         assert Path(ref).is_file(), f"等价说明里的引用悬空：{ref}"
 
 
+def test_instruction_fallback_quotes_script_paths_for_a_package_dir_with_spaces(
+    mod, tmp_path, monkeypatch
+):
+    """验收流程要求解压到带空格的目录：命令示例里的脚本路径必须整体是一个参数。"""
+    import shlex
+
+    skill = tmp_path / "Tavotto Package" / "it's here" / "tavotto-figure"
+    shutil.copytree(SKILL, skill, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.setattr(mod, "SKILL_DIR", str(skill))
+    monkeypatch.setattr(mod, "IS_WINDOWS", False)
+    text = mod.skill_instructions()
+    commands = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip().startswith("python3 ") and ".py" in line
+    ]
+    scripts = {"prefs.py", "handoff.py"}
+    seen = set()
+    for line in commands:
+        argv = shlex.split(line)
+        name = Path(argv[1]).name
+        if name in scripts:
+            assert Path(argv[1]).is_file(), line
+            assert Path(argv[1]).parent == skill / "scripts", line
+            seen.add(name)
+    assert seen == scripts
+    # 行内代码里的引用只是路径，不加引号
+    assert f"`{skill / 'references'}{os.sep}" in text
+
+
+def test_shell_quote_on_windows_wraps_in_double_quotes(mod, monkeypatch):
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    assert mod._shell_quote(r"C:\Tavotto Package\x.py") == '"C:\\Tavotto Package\\x.py"'
+
+
 def test_every_reference_the_skill_names_ships_inside_the_skill_dir():
     """复制出去的技能目录自给自足：SKILL.md 与 references 里提到的 references/ scripts/ 都在。"""
     texts = [(SKILL / "SKILL.md").read_text(encoding="utf-8")]

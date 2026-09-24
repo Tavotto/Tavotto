@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -634,6 +635,13 @@ def render(host: str, config) -> str:
 
 
 # ------------------------------------------------------------------ Skill 投影
+def _shell_quote(path: str) -> str:
+    """给终端用的单个参数：Windows（cmd / PowerShell）用双引号，POSIX 用单引号。"""
+    if IS_WINDOWS:
+        return '"' + path + '"'
+    return "'" + path.replace("'", "'\\''") + "'"
+
+
 def skill_instructions() -> str:
     """没有原生 Skill 入口的宿主用的等价说明（`instruction_fallback`）。
 
@@ -648,6 +656,13 @@ def skill_instructions() -> str:
         end = text.find("\n---", 3)
         if end != -1:
             text = text[end + 4 :].lstrip("\n")
+    # 命令示例里的脚本（`python3 scripts/x.py …`）要能直接粘进终端：包目录可能带空格，
+    # 按本机 shell 的规矩加引号；行内代码里的引用只是指给人看的路径，不加。
+    text = re.sub(
+        r"(?<=\s)scripts/([\w.-]+\.py)",
+        lambda m: _shell_quote(os.path.join(SKILL_DIR, "scripts", m.group(1))),
+        text,
+    )
     for sub in ("references", "scripts"):
         abs_dir = os.path.join(SKILL_DIR, sub)
         text = text.replace(f"`{sub}/", f"`{abs_dir}{os.sep}")
