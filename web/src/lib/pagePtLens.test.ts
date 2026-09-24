@@ -159,7 +159,8 @@ describe('上下界与取整', () => {
 })
 
 /**
- * 换算只有一处：界面代码（`components/` / `canvas/`）**不许自己拿缩放比做乘除**——拿到
+ * 换算只有一处：界面与 store（`components/` / `canvas/` / `store/`——样式绑定 `styleBinding` 与设置页
+ * 都是 `withPageBasis` 的调用方，它们只打口径标记，不做乘除）**不许自己拿缩放比做乘除**——拿到
  * `panelScale` / `toPageValue` / `toScriptValue` 的界面文件就是第二份换算的起点（属性页以前
  * 正是没有这一步才与样式面板差出 0.6 倍）。界面一律过写入器，写入器过 `pagePtLens`。
  *
@@ -167,8 +168,8 @@ describe('上下界与取整', () => {
  * 豁免两条：样式对话框把 `panelScale` 交给 `extractFromManifest`（提取在 `stylePresets` 里
  * 换算，对话框自己不乘）；写入器 `useTextStyleAdapter` 按缩放比 memo 换好的字段表。
  */
-describe('界面代码不自己做页面 pt 换算', () => {
-  const SOURCES = import.meta.glob('/src/{components,canvas}/**/*.{ts,tsx}', {
+describe('界面代码与 store 不自己做页面 pt 换算', () => {
+  const SOURCES = import.meta.glob('/src/{components,canvas,store}/**/*.{ts,tsx}', {
     eager: true,
     query: '?raw',
     import: 'default',
