@@ -29,10 +29,13 @@ import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import {
   flushPreviewFrame,
   previewLinesOf,
+  previewPanelIds,
+  previewSession,
   reattachPreview,
   resetPreview,
 } from '@/store/svgPreviewStore'
 import { seedExactRender } from '@/test/renderFixtures'
+import { toggleHidden } from '@/store/actions'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { OverlaySvg } from './OverlaySvg'
 import { startElementDrag, startElementGroupMove } from './interactions'
@@ -570,6 +573,37 @@ describe('覆盖层：松手后、新渲染回来之前（几何权威缺席）�
         reattachPreview('p1', renderKeyOf(livePanel()))
       })
       expect(dashed()).toHaveLength(0)
+    } finally {
+      act(() => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('松手后隐藏面板：预览账本作废、虚线消失；再显示没有残留', async () => {
+    await setup()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    try {
+      act(() => root.render(<OverlaySvg />))
+      const dashed = () => host.querySelectorAll('line[data-carried-arrow]')
+
+      startElementDrag(down(0, 0), livePanel(), boxP, layout)
+      act(() => dragTo(40, 20))
+      act(() => fire('pointerup', 40, 20))
+      expect(dashed().length).toBeGreaterThan(0)
+
+      // 图层树 / 右键菜单的隐藏走的都是这一个动作
+      act(() => toggleHidden('p1'))
+      expect(livePanel().hidden).toBe(true)
+      expect(dashed(), '隐藏的面板上不该悬着虚线').toHaveLength(0)
+      expect(previewPanelIds()).not.toContain('p1')
+      expect(previewSession()).toBeNull()
+
+      act(() => toggleHidden('p1'))
+      expect(livePanel().hidden).toBeFalsy()
+      expect(dashed(), '再显示不该把旧虚线带回来').toHaveLength(0)
+      expect(previewLinesOf('p1').size).toBe(0)
     } finally {
       act(() => root.unmount())
       host.remove()

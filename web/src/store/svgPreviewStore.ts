@@ -350,6 +350,34 @@ export function previewLine(
   bumpLines()
 }
 
+/** 此刻有预览账本的面板（快照，不订阅） */
+export function previewPanelIds(): string[] {
+  return [...panels.keys()]
+}
+
+/**
+ * 面板被隐藏（或删掉）：它的预览账本整份作废，会话若挂在它上面一并收尾。
+ *
+ * 隐藏时 ObjectView 卸载 PanelView，`reattachPreview` 的 effect 再也不会为这版 SVG 跑——
+ * 松手后在等权威渲染的那份预览没人收，而覆盖层按账本画的预览线会悬在一块看不见的面板
+ * 上（#553 评审）。DOM 已随 PanelView 卸掉，这里只清账：再显示时从新 SVG 重来，没有残留。
+ * 不在账上的面板是 no-op。
+ */
+export function discardPanelPreview(panelId: string): void {
+  if (session?.panelId === panelId) {
+    recordDiagnosticEvent({
+      type: 'preview.retire',
+      session: previewHash(session.id),
+      panel: panelHash(panelId),
+      reason: 'reset',
+      duration_ms: Math.max(0, Math.round((performance?.now?.() ?? Date.now()) - session.startedAt)),
+    })
+    session.settled = true
+    session = null
+  }
+  if (panels.has(panelId)) restorePanel(panelId)
+}
+
 /** 测试与切项目用：清干净，不碰 DOM（DOM 由 React 自己收） */
 export function resetPreview(): void {
   session = null

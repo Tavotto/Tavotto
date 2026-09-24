@@ -1,4 +1,4 @@
-import { Fragment } from 'react'
+import { Fragment, useLayoutEffect } from 'react'
 import { perfCount } from '@/perf/core'
 import type { ElementGeometry, ManifestElement } from '@/lib/api'
 import type { Rect4 } from '@/lib/axesLayout'
@@ -9,7 +9,12 @@ import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib
 import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { usePreviewLinePanels, usePreviewLines } from '@/store/svgPreviewStore'
+import {
+  discardPanelPreview,
+  previewPanelIds,
+  usePreviewLinePanels,
+  usePreviewLines,
+} from '@/store/svgPreviewStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import {
@@ -121,6 +126,15 @@ export function OverlaySvg() {
   const issueHighlight = useUiStore((s) => s.issueHighlight)
   // 预览线按「持有预览账本的面板」画，不按图内编辑态（见 PreviewLines）
   const linePanelIds = usePreviewLinePanels()
+  // 被隐藏 / 删掉的面板：预览账本整份作废（它的 PanelView 已卸载，没人再来收）。
+  // 隐藏走哪条路都一样——图层树、右键菜单、撤销重做——所以按文档状态判，不挂在某个动作上。
+  // layout effect：在浏览器绘制之前作废，隐藏那一帧不会先闪一下悬空的虚线
+  useLayoutEffect(() => {
+    for (const id of previewPanelIds()) {
+      const p = objects.find((o) => o.id === id)
+      if (!p || p.type !== 'panel' || p.hidden) discardPanelPreview(id)
+    }
+  }, [objects, linePanelIds])
 
   const selected = objects.filter((o) => selectedIds.includes(o.id) && !o.hidden)
   // 主选 = 选区末位（对齐 / 等宽等高的「主选」参照）。多选时它的轮廓略粗——

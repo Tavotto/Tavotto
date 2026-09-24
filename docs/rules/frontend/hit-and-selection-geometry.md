@@ -87,7 +87,9 @@
   闸门之外**：松手提交后 overrides 已变、新渲染没回来时 `useExactPanelManifest` 是 null，
   `ElementBoxes` 整个不画，虚线若在里面照样会先消失；换算只用面板与视口，不读 manifest。
   也**不挂在图内编辑态上**：那段时间点一下别的对象 `elementPanelId` 就清掉了，而预览账本
-  还在——画哪块面板按 `usePreviewLinePanels`（持有预览线的面板）定。
+  还在——画哪块面板按 `usePreviewLinePanels`（持有预览线的面板）定。面板被**隐藏 / 删掉**时它的
+  PanelView 卸载、`reattachPreview` 再也收不到这份预览，所以 `OverlaySvg` 按文档状态（不挂在某个
+  动作上）在 layout effect 里 `discardPanelPreview`：账本整份作废、会话收尾，再显示时从新 SVG 重来。
   **出口是按住 ⌘ / Ctrl = 只拖它自己**——与拖动时临时关吸附同一个修饰键、同一种语义
   （关掉那个聪明的默认行为），⇧ 锁向、⌥ 轮换各有所属；拖动途中随时按下 / 松开都算，
   松手以最后一帧为准。它**推翻**了 #472 时「拖框不带字——要一起走用多选」的约定：
