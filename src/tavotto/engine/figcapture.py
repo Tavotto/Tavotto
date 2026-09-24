@@ -904,34 +904,22 @@ def install_relative_read_fallback(
 
 # ---------------------------------------------------------------- 未使用的缺失 import
 
-#: 只有这些顶级模块会被判「未使用」（评审 #555 P1）：绑定没被读**证明不了** import 没用——
-#: `import scienceplots as _sp` / `import cmocean as cm` 就是为了注册样式 / 色图，占位会让之后
-#: `plt.style.use("science")` / `cmap="cmo.thermal"` 报一句误导的错，而不是「请装它」。
-#: 判据：import 它**不会把 matplotlib 装进 `sys.modules`、也不动 `MPL*` 环境变量**——样式、色图、
-#: rcParams、单位转换器都住在 matplotlib 里，不碰它就没法注册或改动它们。逐个实测（全新解释器
-#: `-I`，Python 3.13 / matplotlib 3.11.2，2026-09-24）：下列都不装 matplotlib；cmocean / scienceplots /
-#: colorcet / cmasher / seaborn / lmfit 都装（mplcyberpunk 在 3.11 上 import 就抛），**不收**。
-#: 表外的名字一律照旧准备——宁可多问一次，不猜。`tests/test_unused_missing_import.py` 在 worker
-#: 解释器里对装了的那些现量一遍（版本变了、开始碰 matplotlib 的，那条用例会红）。
+#: 只有这些顶级模块会被判「未使用」（评审 #555 两条 P1）：绑定没被读**证明不了** import 没用——
+#: 别名同样可以只为副作用而写：`import cmocean as cm` 注册色图、`import scienceplots as _sp` 注册样式、
+#: `import requests as _r` 改 warnings 过滤器并装 logging handler。占位不执行这些，之后的行为就悄悄
+#: 变了（或报一句误导的错），而不是「请装它」。
+#: 判据是一份**进程级副作用快照**（唯一出处 `tests/support/import_side_effects.py`）：全新解释器
+#: `-I` 里 import 前后比 matplotlib 是否进 `sys.modules`、`os.environ`、warnings 过滤器、logging、
+#: `sys.path` / `meta_path` / `path_hooks`、信号处理器、各 excepthook / displayhook、atexit、builtins、
+#: codec 注册与 locale……**任何一项变了就不进**。实测（Python 3.13 / matplotlib 3.11.2，2026-09-24）
+#: 16 个候选只剩下面 6 个：requests / astropy / sklearn 装 logger handler，numba / joblib / h5py /
+#: xarray / netCDF4 / openpyxl / numexpr 改 warnings 过滤器、atexit、环境变量或 meta_path；cmocean /
+#: scienceplots / colorcet / cmasher / seaborn / lmfit 还会装 matplotlib。sympy 唯一的变化是给它
+#: **自己的** `SymPyDeprecationWarning` 加的过滤器（包不在，这个类就不存在）——快照里唯一的豁免。
+#: 表外的名字一律照旧准备——宁可多问一次，不猜；扩名单要用同一份快照实测。
+#: `tests/test_unused_missing_import.py` 在 worker 解释器里对装了的那些现量一遍。
 SIDE_EFFECT_FREE_IMPORTS = frozenset(
-    {
-        "sympy",
-        "tqdm",
-        "numba",
-        "sklearn",
-        "joblib",
-        "numexpr",
-        "statsmodels",
-        "networkx",
-        "h5py",
-        "xarray",
-        "netCDF4",
-        "openpyxl",
-        "astropy",
-        "tabulate",
-        "yaml",
-        "requests",
-    }
+    {"sympy", "tqdm", "statsmodels", "networkx", "tabulate", "yaml"}
 )
 
 #: 出现任何一个就判不清「名字有没有被读」：`globals()["smp"]` / `vars()` / `eval("smp")` /

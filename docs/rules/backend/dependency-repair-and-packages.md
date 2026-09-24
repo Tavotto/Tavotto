@@ -179,7 +179,7 @@
   **模块层无条件**的第三方 import 是 `needed`；本地模块永远不装、unknown 永远不猜；经本地模块的 import 取两处里较弱
   的上下文。stdlib 名字表按**目标解释器**的（`depplan.target_facts`），不按宿主。
 - **import 了却从未用到的不算「需要」（ADR 0061 §二 2026-09-24 修订）**：`importscan` 按 `figcapture.unused_imports`
-  （唯一判据，只收 AST 能证明的：起了别名、不带点的 `import X as Y`——裸 `import X` 可能是为了副作用，一律不收；X 还必须在实测过的无副作用名单 `figcapture.SIDE_EFFECT_FREE_IMPORTS` 里（import 时不装 matplotlib、不动 `MPL*`；别名也可能只为副作用，评审 #555 P1），扩名单要附实测；不在 `try` / `with` 里、绑定名与 X 在别处一次都不出现、
+  （唯一判据，只收 AST 能证明的：起了别名、不带点的 `import X as Y`——裸 `import X` 可能是为了副作用，一律不收；X 还必须在无副作用名单 `figcapture.SIDE_EFFECT_FREE_IMPORTS` 里（别名也可能只为副作用，评审 #555 两条 P1）——判据是进程级副作用快照 `tests/support/import_side_effects.py`（matplotlib / 环境变量 / warnings / logging / 导入钩子 / 信号 / excepthook / atexit / builtins / codec 与 locale……任何一项变了就不进），扩名单要用它实测；不在 `try` / `with` 里、绑定名与 X 在别处一次都不出现、
   没有 `globals` / `eval` / `__dict__` 这类读不清的用法）标 `unused`，`needed` / `unknown` 不含它，`JointPlan.unused`
   只列不装；本地模块也 import 了它照旧按上下文判。缺的那一行由 worker 给占位（`figure-capture-and-execution.md`）。
 - **marker 按目标解释器求值**（`target_facts` 在目标里量 PEP 508 环境；启动条件与 `probe_environment` 对齐：不带

@@ -78,6 +78,7 @@ class TestPredicate:
             "import cmocean as cm\nimport matplotlib.pyplot as plt\nplt.imshow([[1]], cmap='cmo.thermal')\n",
             "import scienceplots as _sp\nimport matplotlib.pyplot as plt\nplt.style.use('science')\n",
             "import lmfit as lm\n",  # import 时就装 matplotlib（实测），不收
+            "import requests as _requests\n",  # 改 warnings 过滤器、装 logging handler（实测），不收
             f"import {ABSENT} as a\n",  # 不认识的名字
         ],
     )
@@ -152,11 +153,14 @@ class TestPlan:
         assert [m["distribution"] for m in plan.missing] == ["sympy"]
         assert plan.unused == ()
 
-    def test_unused_unknown_import_is_not_reported_as_unknown(self, tmp_path):
-        # numexpr 在名单里、却映射不到 distribution（不在 curated 表）：落在 unknown 桶
-        proj = _project(tmp_path, "import numexpr as ne\n")
+    def test_unused_unknown_import_is_not_reported_as_unknown(self, tmp_path, monkeypatch):
+        # 名单里现在全是 curated 表里的名字；用例临时加一个映射不到 distribution 的，落在 unknown 桶
+        monkeypatch.setattr(
+            figcapture, "SIDE_EFFECT_FREE_IMPORTS", figcapture.SIDE_EFFECT_FREE_IMPORTS | {ABSENT}
+        )
+        proj = _project(tmp_path, f"import {ABSENT} as a\n")
         plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
-        assert plan.unknown == () and plan.unused == ("numexpr",)
+        assert plan.unknown == () and plan.unused == (ABSENT,)
 
     def test_side_effect_import_with_an_alias_still_needs_preparation(self, tmp_path):
         """反向（评审 #555 P1）：`import cmocean as cm` 只为注册色图——缺了照旧要准备，
@@ -420,34 +424,96 @@ def test_worker_still_fails_when_the_missing_import_is_used(tmp_path):
     assert "No module named 'sympy'" in json.dumps(resp, ensure_ascii=False), resp
 
 
+SIDE_EFFECTS = ROOT / "tests" / "support" / "import_side_effects.py"
+
+
+def _measure(python: str, name: str, extra_path: Path | None = None) -> dict:
+    """在全新解释器（`-I`）里用那份快照量一个包——名单用例与实测脚本同一份判据。"""
+    code = (
+        "import json, sys\n"
+        f"sys.path.insert(0, {str(SIDE_EFFECTS.parent)!r})\n"
+        + (f"sys.path.insert(0, {str(extra_path)!r})\n" if extra_path else "")
+        + "import import_side_effects as m\n"
+        "print(json.dumps(m.measure(sys.argv[1])))\n"
+    )
+    out = subprocess.run(
+        [python, "-I", "-c", code, name],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+        cwd=str(ROOT.parent),
+    )
+    assert out.returncode == 0, out.stderr[-500:]
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.parametrize(
+    "body, expect",
+    [
+        ("import logging\nlogging.getLogger('zz').addHandler(logging.NullHandler())\n", "logging"),
+        ("import logging\nlogging.getLogger().setLevel(logging.ERROR)\n", "logging"),
+        (
+            "import warnings\nwarnings.simplefilter('ignore', DeprecationWarning)\n",
+            "warnings.filters",
+        ),
+        ("import atexit\natexit.register(print)\n", "atexit"),
+        ("import os\nos.environ['ZZ_TAVOTTO'] = '1'\n", "environ"),
+        ("import sys\nsys.meta_path.append(object())\n", "sys.meta_path"),
+        ("import sys\nsys.path.append('/zz')\n", "sys.path"),
+        ("import sys\nsys.excepthook = lambda *a: None\n", "sys.excepthook"),
+        ("import signal\nsignal.signal(signal.SIGTERM, lambda *a: None)\n", "signals"),
+        ("import builtins\nbuiltins.zz_tavotto = 1\n", "builtins"),
+        ("import codecs\ncodecs.register(lambda name: None)\n", "codecs.register"),
+        ("import matplotlib\n", "matplotlib"),
+        ("x = 1\n", None),  # 什么都不改：量出来必须是空的
+    ],
+)
+def test_the_side_effect_snapshot_sees_each_kind(tmp_path, body, expect):
+    """尺子是活的：每一类进程级副作用各造一个模块，快照都得看见；什么都不改的模块必须量出空。"""
+    if expect == "matplotlib" and WORKER_PY is None:
+        pytest.skip("没有装 matplotlib 的解释器")
+    (tmp_path / "zz_side_effect_mod.py").write_text(body, encoding="utf-8")
+    python = WORKER_PY if expect == "matplotlib" else sys.executable
+    changed = _measure(python, "zz_side_effect_mod", tmp_path)["changed"]
+    if expect is None:
+        assert changed == []
+    else:
+        assert any(c.startswith(expect) for c in changed), changed
+
+
+def test_a_filter_for_the_packages_own_warning_class_is_the_only_exemption(tmp_path):
+    """唯一的豁免（sympy 的形状）：新加的过滤器只管包**自己定义的**警告类——包不在，这个类就不存在。
+    同一个包再加一条管别人类别的过滤器，照样算变化。"""
+    pkg = tmp_path / "zz_own_warn"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(
+        "import warnings\nclass OwnWarning(DeprecationWarning):\n    pass\n"
+        "warnings.simplefilter('once', OwnWarning)\n",
+        encoding="utf-8",
+    )
+    assert _measure(sys.executable, "zz_own_warn", tmp_path)["changed"] == []
+    (pkg / "__init__.py").write_text(
+        (pkg / "__init__.py").read_text(encoding="utf-8")
+        + "warnings.simplefilter('ignore', UserWarning)\n",
+        encoding="utf-8",
+    )
+    assert _measure(sys.executable, "zz_own_warn", tmp_path)["changed"] == ["warnings.filters"]
+
+
 @_needs_worker
 def test_the_side_effect_free_list_still_holds_in_the_worker_interpreter():
-    """名单是实测出来的，版本会变：在 worker 解释器里对装了的那些现量一遍——全新解释器（`-I`）里
-    import 它之后 matplotlib 不在 `sys.modules`、`MPL*` 环境变量没动。尺子要是活的：至少量到一个。"""
-    probe = (
-        "import importlib, os, sys\n"
-        "before = {k: v for k, v in os.environ.items() if k.startswith('MPL')}\n"
-        "try:\n    importlib.import_module(sys.argv[1])\n"
-        "except ImportError:\n    print('absent'); raise SystemExit(0)\n"
-        "after = {k: v for k, v in os.environ.items() if k.startswith('MPL')}\n"
-        "print('matplotlib' in sys.modules or before != after)\n"
-    )
+    """名单是实测出来的，版本会变：在 worker 解释器里对装了的那些用同一份快照现量一遍，任何一项变了就红。
+    一个都没装就 skip（尺子本身是活的由上面两条钉着）。"""
     measured, touched = [], []
     for name in sorted(figcapture.SIDE_EFFECT_FREE_IMPORTS):
-        out = subprocess.run(
-            [WORKER_PY, "-I", "-c", probe, name],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=120,
-            cwd=str(ROOT.parent),
-        ).stdout.strip()
-        if out == "absent":
+        res = _measure(WORKER_PY, name)
+        if res.get("absent"):
             continue
         measured.append(name)
-        if out != "False":
-            touched.append(f"{name}: {out}")
+        if res["changed"]:
+            touched.append(f"{name}: {res['changed']}")
     if not measured:
         pytest.skip("worker 解释器里名单上的包一个都没装，量不了")
     assert not touched, touched

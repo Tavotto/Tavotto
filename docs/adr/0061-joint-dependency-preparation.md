@@ -118,17 +118,30 @@ Flask 父进程与 worker 都已加载它）：
   `ModuleNotFoundError: No module named 'X'`——判据若错，失败形状不变，运行后的缺包修复照旧接手。装了的包照常 import。
 * **native 会话不做**：`tavotto run` 跑在用户自己的解释器里、语义就是 `python script.py`（CLI 拥有用户的 Python），
   门也只在 `pool._new_worker` 上；那条路上缺包照旧由用户自己的环境决定。
-* **名单怎么来的、为什么不做「失败归因兜底」**：样式、色图、rcParams、单位转换器都住在 matplotlib 里——import 一个包
-  时不把 matplotlib 装进 `sys.modules`、也不动 `MPL*` 环境变量，它就没法注册或改动这些东西。逐个实测（全新解释器
-  `-I`，Python 3.13 / matplotlib 3.11.2，2026-09-24）：sympy / tqdm / numba / sklearn / joblib / numexpr / statsmodels /
-  networkx / h5py / xarray / netCDF4 / openpyxl / astropy / tabulate / yaml / requests 都不碰，进名单；cmocean /
-  scienceplots / colorcet / cmasher / seaborn / lmfit 都装 matplotlib（mplcyberpunk 在 3.11 上 import 即抛），不进。
-  表外的名字（含一切不认识的）照旧准备。评审提的另一条路是「发过占位的那次运行只要失败或零张图，就按缺包报」：它兜得住
-  样式 / 色图查不到的**响亮**失败，兜不住 import 时静默改 rcParams 的包（图照常出来、样子悄悄不同）；还要在两条控制面
-  的错误出口各加一层归因。名单是按构造就对的那一边，1.0 收敛期选它。代价：名单外、确实没用到的包仍会被要求安装
-  （和修订前一样，不会更差）；扩名单要附同样的实测。
-* **残余风险**：名单是**某个版本**上的实测——将来某一版若在 import 时开始碰 matplotlib，判据不会自己知道。看护用例在
-  worker 解释器里对名单上装了的那些现量一遍（装了多少量多少，一个都没装就 skip）；CI 的解释器上只装了其中几个。
+* **名单怎么来的**（评审 #555 两条 P1）：别名同样可以只为副作用而写——注册样式 / 色图（`import cmocean as cm`），
+  也可以是与 matplotlib 无关的进程级改动（`import requests as _r` 改 warnings 过滤器、装 logging handler）；占位不执行
+  这些，之后的行为就悄悄变了。所以进名单的判据是一份**进程级副作用快照**（唯一出处
+  `tests/support/import_side_effects.py`，名单现量用例与实测脚本共用）：全新解释器 `-I` 里 import 前后比——matplotlib
+  是否进 `sys.modules`、`os.environ` 整体、`warnings.filters`、logging（root 与已有 logger 的 handlers / level /
+  propagate / disabled，新出现且带 handler 的 logger，`NullHandler` 也算）、`sys.path` / `meta_path` / `path_hooks`、
+  全部信号处理器、`sys.excepthook` / `displayhook` / `threading.excepthook`、atexit 注册数、builtins 的名字与身份、
+  `codecs.register` / `locale.setlocale` 调用与当前 locale、递归上限 / 线程切换间隔 / 存活线程数 / gc / trace /
+  标准流身份 / cwd——**任何一项变了就不进**。唯一的豁免：新加的 warnings 过滤器只管这个包**自己定义的**警告类
+  （包不在，这个类就不存在，谁也发不出）。
+  实测（Python 3.13 / matplotlib 3.11.2，2026-09-24，16 个候选）：**只剩 sympy / tqdm / statsmodels / networkx /
+  tabulate / yaml 六个**（sympy 唯一的变化是给自己的 `SymPyDeprecationWarning` 加 `once`，落在豁免里）。剔掉的：
+  requests（warnings + logging handler + atexit）、astropy（warnings + logging handler）、sklearn（环境变量 + warnings +
+  logging handler + meta_path + atexit）、numba / h5py / openpyxl（warnings + atexit）、joblib / netCDF4（环境变量 +
+  warnings + atexit）、xarray（warnings + meta_path + atexit）、numexpr（warnings）；cmocean / scienceplots / colorcet /
+  cmasher / seaborn / lmfit 还会装 matplotlib。表外的名字（含一切不认识的）照旧准备；扩名单要用同一份快照实测。
+* **为什么不做「发过占位的运行失败就按缺包报」**：它兜得住样式 / 色图查不到的**响亮**失败，兜不住静默的（rcParams、
+  warnings、logging 悄悄不同，图照常出来）；还要在两条控制面的错误出口各加一层归因。名单是按构造就对的那一边，1.0
+  收敛期选它。代价：名单外、确实没用到的包仍会被要求安装（和修订前一样，不会更差）——名单只有六个，这个修订实际
+  覆盖的是「sympy 这类纯计算库的遗留别名 import」。
+* **残余风险**：快照看不见的副作用（改了别的第三方模块的全局、写磁盘、开网络连接、只在某个平台或某个版本上才有的
+  import 期动作）仍是盲区；名单是**某个版本、某个平台**上的实测，将来某一版开始在 import 时改动进程状态，判据不会自己
+  知道。看护用例在 worker 解释器里对名单上装了的那些用同一份快照现量一遍（装了多少量多少，一个都没装就 skip）；快照
+  自己是活的由合成模块逐类钉着（每一类副作用各造一个模块必须被看见、什么都不改的必须量出空、豁免只放行自己的警告类）。
 * 看护：`tests/test_unused_missing_import.py`（判据的每一条「不收」、计划、真子进程里的占位、真 worker 出图与反向用例、
   名单现量）。
 
