@@ -163,7 +163,7 @@
 ## 非 Codex 宿主（2026-09-24，全文 `docs/implementation/multi-host-mcp/README.md`）
 
 - **同一份完整包、同一个启动器、同一份 Skill**：`integrations/configure.py`（纯标准库，进
-  `pluginmanifest.REQUIRED`）从自己的位置找 `mcp/server.py`，按 `--host` 打印那一家的配置片段，
+  `pluginmanifest.STAGE_REQUIRED`——只卡新 staging；**不进** `REQUIRED`，否则体检会把没有它的旧版已装插件报成损坏）从自己的位置找 `mcp/server.py`，按 `--host` 打印那一家的配置片段，
   **不写任何文件**。宿主差异只在它的 `HOSTS` 表（顶层 key / 额外字段 / 超时单位 / 落点 / Skill 入口）；
   文档证明不了的字段不加。
 - 授权只来自 `--project-root`（写进 `TAVOTTO_MCP_ROOTS`）；根 / HOME / 包目录拒绝。启动器探针与

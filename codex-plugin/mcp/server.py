@@ -71,9 +71,11 @@ def _self_command() -> str:
     """
     parts = [sys.executable, os.path.abspath(__file__)]
     if os.name == "nt":
-        # Windows 路径里不可能有 `"`，每段都包一层双引号就挡住了 cmd 的 `&` `|` `^` 与空格
-        # （list2cmdline 只给含空格的加引号，`&` 照样会被 cmd 当成命令分隔符）
-        return " ".join(f'"{p}"' for p in parts)
+        # Windows 按 PowerShell 写（Windows Terminal / VS Code 终端的默认 shell）：开头一个带引号
+        # 的 token 在 PowerShell 里只是字符串，必须用调用运算符 `&` 才会执行。每段用单引号——
+        # PowerShell 的单引号里 `$`、反引号、`&` 都是字面量（双引号会展开 `$x`），内部的 '
+        # 写成 ''。Codex 在 #559 上指出只带双引号的形式粘进 PowerShell 跑不起来。
+        return "& " + " ".join("'" + p.replace("'", "''") + "'" for p in parts)
     # POSIX：每段都用单引号包住，内部的 ' 写成 '\''（与 shlex.quote 同一规则；不为这一行
     # 多 import 一个模块——启动器的 import 表是受看护的最小集）
     return " ".join("'" + p.replace("'", "'\\''") + "'" for p in parts)
