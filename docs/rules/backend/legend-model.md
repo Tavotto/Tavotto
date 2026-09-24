@@ -34,7 +34,7 @@
   handler 重派生」的数，多出来就把整格副本存成 `FrozenLegendHandle`（只收画在这一格自己
   坐标里的；否则不定格），重建时 `_FrozenHandler` 按新格尺寸等比铺回。**只对没有源的项**
   （`is_frozen`）：有源的照旧从源派生（误差棒）。定格项不发 handle_*（一格里没有「那一条」
-  线的样式可改），`sync_legends` 不碰它。示意线指纹带**未缩放的虚线节奏**（`_dash_key`）：
+  线的样式可改）。示意线指纹带**未缩放的虚线节奏**（`_dash_key`）：
   `get_linestyle()` 对任何虚线元组都回 `'--'`，脚本给代理示意线的短虚线曾被误判成跟随源、
   第一次 apply 就换回源的长虚线。看护 `tests/test_legend_custom_handler.py`。
 - **图例位置模型（2026-09-07，ADR 0034 修订）**：「图例摆在哪」的三条 prop

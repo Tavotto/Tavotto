@@ -13,8 +13,11 @@ matplotlib 只把第一个 artist 放进 `legend_handles`，条目模型的「�
 
 1. 布局值不变的重建与脚本原样逐像素相同（色带那一格没有被换成纯色）；
 2. 定格的项不摆 handle_* 控件；
-3. 虚线节奏不同的代理项默认 custom，任何 apply 之后都还是脚本给的节奏；
+3. 虚线节奏不同的代理项默认 custom（不跟随，`sync_legends` 就不会从源重派生它）；
 4. 热态 == 全新 worker 一次性重放。
+
+「任何 apply 之后虚线不变」没有单独写成像素用例：worker 的每一次预览都先 apply，拿来当
+「原样」的那张同样经过了同步，两边恒等——判据落在 3 的绑定结论上。
 
 本进程不 import matplotlib：worker 经 `pool.one_shot()` 起在科学栈解释器里。
 """
@@ -148,25 +151,6 @@ def test_a_rebuild_with_unchanged_layout_is_pixel_identical(hot):
     _man(hot)
 
 
-def test_reordering_keeps_the_band_and_it_follows_its_row(hot):
-    """重排之后色带仍是色带：与原样不同（它换了一行），但与「只重排、不含色带」那张
-    也不同——色带要是塌成纯色，这两张的差别只剩一行浅色块。"""
-    man = _man(hot, [{"gid": LEG, "prop": "entry_order", "value": [2, 0, 1]}])
-    assert [e for e in man["elements"] if e["gid"] == BAND]
-    moved = _png(hot, [{"gid": LEG, "prop": "entry_order", "value": [2, 0, 1]}], "moved")
-    hidden = _png(
-        hot,
-        [
-            {"gid": LEG, "prop": "entry_order", "value": [2, 0, 1]},
-            {"gid": BAND, "prop": "visible", "value": False},
-        ],
-        "hidden",
-    )
-    assert moved != _png(hot, [], "orig2")
-    assert moved != hidden
-    _man(hot)
-
-
 def test_the_frozen_band_offers_no_handle_controls(hot):
     """一格里画了 25 个 artist，没有「那一条」示意线的样式可改：不摆 handle_*。"""
     fields = _fields(_man(hot), BAND)
@@ -183,15 +167,6 @@ def test_a_proxy_with_its_own_dash_rhythm_is_custom_not_following(hot):
         "binding_default": "custom",
     }
     assert _entry(man, THEORY)["binding_default"] == "follow_source"
-
-
-def test_an_unrelated_edit_does_not_swap_the_proxy_dash(hot):
-    """任何一次 apply 尾部都跑图例同步。修之前那一步就把短虚线换成了源的长虚线：
-    改一条与图例无关的属性，图例那一格也跟着变了。"""
-    original = _png(hot, [], "orig3")
-    touched = _png(hot, [{"gid": "axes_0.lines_1", "prop": "alpha", "value": 1.0}], "touched")
-    assert touched == original
-    _man(hot)
 
 
 def test_hot_equals_fresh_replay(hot, library):

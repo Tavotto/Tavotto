@@ -679,9 +679,6 @@ def sync_legends(state: RebuildState) -> None:
             try:
                 if binding == "follow_source":
                     _legend_replace_handle(leg, k, model.sources[j])
-                elif model.is_frozen(j):
-                    # 定格的整格只由重建按原样复刻；这里没有「与原样不一致」可比
-                    continue
                 elif not model.has_style_override(j):
                     # custom 而没有 override：示意线该是脚本原样的样子（撤掉
                     # binding override 之后也退回脚本原样）。指纹相同就不动——
