@@ -29,6 +29,9 @@ import { runValidation, useValidationStore } from '@/store/validationStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { ElementQuickActions } from '@/canvas/context-bar/ElementBar'
+import { QuickEdit } from '@/canvas/QuickEdit'
+import { useQuickEdit } from '@/canvas/quickEditStore'
 import { ElementInspector } from './ElementInspector'
 
 /** 局部预览收到的值：必须与写进 override 的是同一个脚本值（预览贴在按脚本坐标系画的 SVG 上） */
@@ -88,17 +91,28 @@ const el = (gid: string, role: string, editable: EditableField[], label = gid) =
   editable,
 })
 
-const manifest = (o: { title?: number; ylabel?: number; tick?: number; spine?: number } = {}) => ({
+const manifest = (
+  o: { title?: number; ylabel?: number; tick?: number; spine?: number; legend?: boolean } = {},
+) => ({
   stem: 'Fig1',
   size_mm: [80, 60],
   elements: [
     el('axes_0', 'axes', [
+      ...['bottom', 'top', 'left', 'right'].map((side) => f(`ticks_${side}`, 'bool', side === 'bottom' || side === 'left')),
       f('spine_linewidth', 'number', o.spine ?? 1.25, { min: 0.1, max: 3, step: 0.1, unit: 'pt' }),
       ...['top', 'right', 'bottom', 'left'].flatMap((s) => [
         f(`spine_${s}_color`, 'color', '#000000'),
         f(`spine_${s}_linewidth`, 'number', o.spine ?? 1.25, { min: 0.1, max: 3, step: 0.1, unit: 'pt' }),
       ]),
     ]),
+    ...['x', 'y'].map((axis) =>
+      el(`axes_0.${axis}ticks`, 'ticks', [
+        size(10),
+        f('direction', 'enum', 'out', { options: ['out', 'in', 'inout'], group: '刻度线' }),
+        f('length', 'number', 5, { min: 0, max: 12, step: 0.5, unit: 'pt', group: '刻度线' }),
+        f('width', 'number', 1, { min: 0.1, max: 3, step: 0.1, unit: 'pt', group: '刻度线' }),
+      ]),
+    ),
     el('axes_0.title', 'title', text(o.title ?? 10), '标题'),
     el('axes_0.xlabel', 'axis_label', text(10, 'Time'), 'X 轴标题'),
     el('axes_0.ylabel', 'axis_label', text(o.ylabel ?? 10, 'Y'), 'Y 轴标题'),
@@ -113,6 +127,14 @@ const manifest = (o: { title?: number; ylabel?: number; tick?: number; spine?: n
     el('axes_0.colorbar_0', 'colorbar', [
       f('tick_fontsize', 'number', o.tick ?? 15, { min: 3, max: 36, step: 0.5, unit: 'pt' }),
     ]),
+    ...(o.legend
+      ? [
+          el('axes_0.legend', 'legend', [
+            f('loc', 'enum', 'best', { options: ['best', 'upper right', 'lower left'] }),
+            size(10),
+          ]),
+        ]
+      : []),
   ],
 })
 
@@ -339,6 +361,15 @@ describe('属性页的各个入口都按页面值进出', () => {
     expect(overrideOf('axes_0', 'spine_linewidth')).toBe(2)
   })
 
+  it('刻度卡（子图页）：刻度线长度显示 5 × 0.6 = 3，输入 4.5 写回 7.5', async () => {
+    await seed(0.6)
+    await mount(['axes_0'])
+    const len = () => region('inspector').querySelector<HTMLInputElement>('input[data-inspector-prop="length"]')!
+    expect(len().value).toBe('3')
+    await type(len(), '4.5')
+    expect(overrideOf('axes_0.xticks', 'length')).toBe(7.5)
+  })
+
   it('局部预览拿到的与写进 override 的是同一个脚本值（曲线线宽：页面 1.2 = 脚本 2）', async () => {
     await seed(0.6)
     await mount(['axes_0.lines_0'])
@@ -357,5 +388,46 @@ describe('属性页的各个入口都按页面值进出', () => {
     expect(inspectorSize().value).toBe('8.33')
     await type(inspectorSize(), '8.75')
     expect(overrideOf('axes_0.title', 'fontsize')).toBe(8.75)
+  })
+})
+
+describe('画布上的两个快捷入口也按页面值进出', () => {
+  async function mountAlone(node: React.ReactNode) {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(<TooltipProvider>{node}</TooltipProvider>)
+    })
+  }
+  /** 这几个入口里唯一的非取色数字框 */
+  const numberInput = () =>
+    [...document.querySelectorAll<HTMLInputElement>('input')].find((i) => i.type !== 'color')!
+
+  it('浮动工具条（曲线线宽）：显示 1.2，输入 0.9 → 1.5；写死的下界 0.1 也换到页面上', async () => {
+    await seed(0.6)
+    useUiStore.setState({ elementPanelId: 'p1', selectedGids: ['axes_0.lines_0'] })
+    function Bar() {
+      const panel = useDocumentStore((st) => st.doc.objects.find((o) => o.id === 'p1')) as PanelObject
+      return <ElementQuickActions panel={panel} gid="axes_0.lines_0" />
+    }
+    await mountAlone(<Bar />)
+    expect(numberInput().value).toBe('1.2')
+    await type(numberInput(), '0.9')
+    expect(overrideOf('axes_0.lines_0', 'linewidth')).toBe(1.5)
+    await type(numberInput(), '0.01')
+    expect(overrideOf('axes_0.lines_0', 'linewidth'), '钳到页面下界 0.06 = 脚本 0.1').toBe(0.1)
+  })
+
+  it('右键快捷编辑（图例字号）：显示 10 × 0.6 = 6，输入 7.5 → 12.5', async () => {
+    await seed(0.6, manifest({ legend: true }))
+    await mountAlone(<QuickEdit />)
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: 'axes_0.legend' }, 120, 80)
+    })
+    expect(numberInput().value).toBe('6')
+    await type(numberInput(), '7.5')
+    expect(overrideOf('axes_0.legend', 'fontsize')).toBe(12.5)
+    await act(async () => useQuickEdit.getState().close())
   })
 })
