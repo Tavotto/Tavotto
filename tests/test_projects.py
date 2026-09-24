@@ -188,6 +188,25 @@ def test_pinned_endpoint_roundtrip(client, tmp_path):
     assert _pins() == [str(figs), str(gone)]  # 坏请求不改配置
 
 
+def test_project_lists_read_open_projects_under_the_lock(client, tmp_path, monkeypatch):
+    """两份列表的条目要读「哪些项目开着」：必须在 `_PROJECT_LOCK` 里取快照。别的标签页同时
+    开 / 关项目会改 PROJECTS，不持锁的遍历会抛 RuntimeError；收藏端点走到那里时配置已经
+    写了，500 会让界面按失败保留旧列表。判据不靠线程赛跑：遍历时锁没被持有就当场红。"""
+
+    class GuardedProjects(dict):
+        def values(self):
+            assert m._PROJECT_LOCK.locked(), "遍历 PROJECTS 时没持 _PROJECT_LOCK"
+            return super().values()
+
+    figs = _make_figs(tmp_path)
+    m.open_project(str(figs))
+    monkeypatch.setattr(m, "PROJECTS", GuardedProjects(m.PROJECTS))
+    assert client.get("/api/projects/recent").status_code == 200
+    resp = client.post("/api/projects/pinned", json={"op": "add", "path": str(figs)})
+    assert resp.status_code == 200
+    assert resp.get_json()["pinned"][0]["opened"] is True  # 快照确实读到了开着的项目
+
+
 def test_pinned_op_with_stale_project_changes_nothing(client, tmp_path):
     """标签页的 pj 失效（项目已关 / 后端重启）：409，而且配置**一个字都没改**——
     先写后校验的话，界面按失败保留旧列表，重开后那次「失败」的收藏又冒出来。"""

@@ -2332,7 +2332,11 @@ def _project_list_entries(stored: list[dict], current: "ProjectCtx | None") -> l
     `current` 由调用方先解析好传进来：写配置的端点必须在**改动之前**就知道 pj
     有没有失效，否则会出现「配置已经改了、响应却是 409」。
     """
-    open_paths = {str(c.path): c.id for c in PROJECTS.values()}
+    # 快照在项目锁里取：别的标签页同时开 / 关项目会改 PROJECTS，不持锁的遍历会抛
+    # 「dictionary changed size during iteration」——而收藏端点走到这里时配置已经写了，
+    # 500 会让界面按失败保留旧列表（Codex #550；同文件另两处遍历本来就持锁）
+    with _PROJECT_LOCK:
+        open_paths = {str(c.path): c.id for c in PROJECTS.values()}
     entries = []
     for e in stored:
         p = Path(e["path"])
