@@ -158,11 +158,23 @@ def main() -> None:
     class _Plain(AxesImage):
         pass
 
+    import functools
+
+    class _Wrapped(AxesImage):
+        # functools.wraps 把 __module__ 抄成 matplotlib.image：按函数的模块判会把它认成原版（Codex #535）
+        @functools.wraps(AxesImage.draw)
+        def draw(self, renderer, *a, **k):
+            _Wrapped.draws += 1
+            return super().draw(renderer, *a, **k)
+
+        draws = 0
+
     fc, axc = plt.subplots()
     custom = {}
     for key, cls in (
         ("class_draw", _GeomImage),
         ("class_make_image", _MakeImage),
+        ("wrapped_draw", _Wrapped),
         ("plain", _Plain),
     ):
         im = cls(axc)
@@ -177,6 +189,8 @@ def main() -> None:
     report["custom_images"] = {
         "patched": seen,
         "class_draw_ran_in_layout_draw": custom_draws,
+        "wrapped_draw_module": _Wrapped.draw.__module__,
+        "wrapped_draw_ran": _Wrapped.draws,
         "extent_after_layout_draw": list(custom["class_draw"].get_extent()),
         "expected_extent": [0, 10 + _GeomImage.draws, 0, 5],
     }

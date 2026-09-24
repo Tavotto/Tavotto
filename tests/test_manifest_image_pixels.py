@@ -83,6 +83,14 @@ def test_class_level_custom_images_run_their_own_draw(probe):
     """Codex #526：子类在类上重写 draw / make_image 的，布局 draw 里照跑它自己的实现（它的 draw 可能更新几何）；
     什么都没重写的普通子类照样跳过——判据只放过自定义实现，不是把优化整个关掉。"""
     c = probe["custom_images"]
-    assert c["patched"] == {"class_draw": False, "class_make_image": False, "plain": True}, c
+    assert c["patched"] == {
+        "class_draw": False,
+        "class_make_image": False,
+        "wrapped_draw": False,
+        "plain": True,
+    }, c
+    # functools.wraps 确实把模块抄成了 matplotlib 的——否则这一条什么都没验
+    assert c["wrapped_draw_module"] == "matplotlib.image", c
+    assert c["wrapped_draw_ran"] >= 1, c
     assert c["class_draw_ran_in_layout_draw"] >= 1, c
     assert c["extent_after_layout_draw"] == c["expected_extent"], c

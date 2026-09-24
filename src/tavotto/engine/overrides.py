@@ -54,6 +54,15 @@ def _layout_only_make_image(self, renderer, magnification=1.0, unsampled=False):
     return None, 0, 0, None
 
 
+def _defining_module(cls, name):
+    """沿 MRO 找到**定义** `name` 的那个类，回它的模块。看类而不看函数：`functools.wraps(AxesImage.draw)`
+    会把函数的 `__module__` 抄成 matplotlib 的，按函数判就把用户的重写认成了原版（Codex #535）。"""
+    for klass in cls.__mro__:
+        if name in vars(klass):
+            return klass.__module__
+    return None
+
+
 @contextlib.contextmanager
 def image_pixels_skipped(fig):
     """「只为布局」的那几次 draw 期间，**这张 figure 里**的图片元素不做像素重采样。
@@ -78,7 +87,7 @@ def image_pixels_skipped(fig):
             if "draw" in vars(im) or "make_image" in vars(im):
                 continue
             if not all(
-                getattr(getattr(type(im), name, None), "__module__", None) == "matplotlib.image"
+                _defining_module(type(im), name) == "matplotlib.image"
                 for name in ("draw", "make_image")
             ):
                 continue
