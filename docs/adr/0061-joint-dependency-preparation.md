@@ -103,7 +103,9 @@ Flask 父进程与 worker 都已加载它）：
 * **判据只收 AST 能证明的**：这个模块在脚本里出现的每一处都是**起了别名**、不带点的 `import X as Y`、都不在
   `try` / `with` 里（**裸 `import X` 一律不收**：没读过的裸 import 常常是为了副作用——`import scienceplots` 之后
   `plt.style.use("science")`、`import cmocean` 注册色图；占位会把「请装 scienceplots」换成看不懂的「样式不存在」。
-  起了别名 = 写的人打算用那个名字，一次没用才是遗留）；绑定名在别处**一次都不出现**（Name 的读写删、形参、global、函数 / 类 / except / match 捕获名、
+  起了别名 = 写的人打算用那个名字，一次没用才是遗留）；**X 在实测过的无副作用名单 `figcapture.SIDE_EFFECT_FREE_IMPORTS`
+  里**（评审 #555 P1：别名同样可以只为副作用而起——`import scienceplots as _sp` / `import cmocean as cm`；「绑定没读」
+  证明不了「import 没用」）；绑定名在别处**一次都不出现**（Name 的读写删、形参、global、函数 / 类 / except / match 捕获名、
   别的 import 的绑定、属性名、关键字名——宁可多判「用到了」）；X 与绑定名都不以字符串常量出现（`sys.modules["X"]`、
   `import_module("X")`、`getattr(m, "Y")`、`__all__`）；脚本里出现 `globals` / `vars` / `locals` / `eval` / `exec` /
   `compile` / `__import__` / `__dict__` 任一个就整份放弃（读不清）。只看脚本自己：本地模块也 import 了它时照旧按上下文判。
@@ -116,7 +118,19 @@ Flask 父进程与 worker 都已加载它）：
   `ModuleNotFoundError: No module named 'X'`——判据若错，失败形状不变，运行后的缺包修复照旧接手。装了的包照常 import。
 * **native 会话不做**：`tavotto run` 跑在用户自己的解释器里、语义就是 `python script.py`（CLI 拥有用户的 Python），
   门也只在 `pool._new_worker` 上；那条路上缺包照旧由用户自己的环境决定。
-* 看护：`tests/test_unused_missing_import.py`（判据的每一条「不收」、计划、真子进程里的占位、真 worker 出图与反向用例）。
+* **名单怎么来的、为什么不做「失败归因兜底」**：样式、色图、rcParams、单位转换器都住在 matplotlib 里——import 一个包
+  时不把 matplotlib 装进 `sys.modules`、也不动 `MPL*` 环境变量，它就没法注册或改动这些东西。逐个实测（全新解释器
+  `-I`，Python 3.13 / matplotlib 3.11.2，2026-09-24）：sympy / tqdm / numba / sklearn / joblib / numexpr / statsmodels /
+  networkx / h5py / xarray / netCDF4 / openpyxl / astropy / tabulate / yaml / requests 都不碰，进名单；cmocean /
+  scienceplots / colorcet / cmasher / seaborn / lmfit 都装 matplotlib（mplcyberpunk 在 3.11 上 import 即抛），不进。
+  表外的名字（含一切不认识的）照旧准备。评审提的另一条路是「发过占位的那次运行只要失败或零张图，就按缺包报」：它兜得住
+  样式 / 色图查不到的**响亮**失败，兜不住 import 时静默改 rcParams 的包（图照常出来、样子悄悄不同）；还要在两条控制面
+  的错误出口各加一层归因。名单是按构造就对的那一边，1.0 收敛期选它。代价：名单外、确实没用到的包仍会被要求安装
+  （和修订前一样，不会更差）；扩名单要附同样的实测。
+* **残余风险**：名单是**某个版本**上的实测——将来某一版若在 import 时开始碰 matplotlib，判据不会自己知道。看护用例在
+  worker 解释器里对名单上装了的那些现量一遍（装了多少量多少，一个都没装就 skip）；CI 的解释器上只装了其中几个。
+* 看护：`tests/test_unused_missing_import.py`（判据的每一条「不收」、计划、真子进程里的占位、真 worker 出图与反向用例、
+  名单现量）。
 
 ### 三、联合计划：要装的、约束的、adapter 的，与四种明确停下
 

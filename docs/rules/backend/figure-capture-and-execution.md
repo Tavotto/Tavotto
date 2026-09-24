@@ -107,7 +107,7 @@
   `test_an_exit_raised_while_importing_paper_style_is_the_scripts_own` 看护）。
 - **未使用的缺失 import 给占位（ADR 0061 §二 2026-09-24 修订）**：worker 在 `sys.argv` 换好之后、脚本开跑之前按
   `figcapture.unused_imports`（与联合计划同一份判据）装 `install_unused_import_placeholders`：只有脚本自己的
-  `import X as Y`、真缺的正是 X 本身时才回占位；占位不进 `sys.modules`、读属性抛逐字相同的 `No module named 'X'`；
+  `import X as Y`（X 在无副作用名单里）、真缺的正是 X 本身时才回占位；占位不进 `sys.modules`、读属性抛逐字相同的 `No module named 'X'`；
   装了就不卸（脚本的函数在渲染期仍可能 import）。native 会话不装——那是用户自己的 `python script.py`
   （`tests/test_unused_missing_import.py` 看护）。
 - worker 里 **`sys.argv` 必须换成脚本自己的**。不换的话按参数命名输出的脚本

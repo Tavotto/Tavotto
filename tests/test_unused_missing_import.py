@@ -4,7 +4,8 @@
 sympy，不装就在 import 那一行 ModuleNotFoundError。判据唯一出处 `figcapture.unused_imports`，
 父进程（`importscan` → 联合计划）与 worker（占位）各调一次。四节：
 
-* 判据本身：能证明未使用的收，判不清的一律不收（每一条「不收」都钉着）；
+* 判据本身：能证明未使用、且模块在实测过的无副作用名单里才收，判不清的一律不收（每一条「不收」
+  都钉着；名单在 worker 解释器里现量一遍）；
 * 联合计划：未使用的不进 needed / missing / unknown，只列在 `unused`；用到了的照旧要准备；
 * 占位（真子进程，不污染 pytest 进程的 builtins）：只对脚本自己的 import、只在真缺时、
   不进 sys.modules、读属性的失败形状与原来逐字相同；
@@ -73,6 +74,11 @@ class TestPredicate:
             "import sympy as smp\nfrom other import smp\n",  # 别的 import 同名绑定
             "import sympy as smp\nobj.smp\n",  # 属性名同名（宁可多判用到）
             "import sympy as smp\nmatch 1:\n    case smp:\n        pass\n",  # match 捕获
+            # 评审 #555 P1：起了别名、从没读，也可能只为副作用——不在实测名单里的一律不收
+            "import cmocean as cm\nimport matplotlib.pyplot as plt\nplt.imshow([[1]], cmap='cmo.thermal')\n",
+            "import scienceplots as _sp\nimport matplotlib.pyplot as plt\nplt.style.use('science')\n",
+            "import lmfit as lm\n",  # import 时就装 matplotlib（实测），不收
+            f"import {ABSENT} as a\n",  # 不认识的名字
         ],
     )
     def test_anything_short_of_proof_is_not_collected(self, src):
@@ -147,9 +153,32 @@ class TestPlan:
         assert plan.unused == ()
 
     def test_unused_unknown_import_is_not_reported_as_unknown(self, tmp_path):
-        proj = _project(tmp_path, f"import {ABSENT} as a\n")
+        # numexpr 在名单里、却映射不到 distribution（不在 curated 表）：落在 unknown 桶
+        proj = _project(tmp_path, "import numexpr as ne\n")
         plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
-        assert plan.unknown == () and plan.unused == (ABSENT,)
+        assert plan.unknown == () and plan.unused == ("numexpr",)
+
+    def test_side_effect_import_with_an_alias_still_needs_preparation(self, tmp_path):
+        """反向（评审 #555 P1）：`import cmocean as cm` 只为注册色图——缺了照旧要准备，
+        不能让它变成之后一句「色图 cmo.thermal 不存在」。"""
+        proj = _project(
+            tmp_path,
+            "import cmocean as cm\nimport matplotlib.pyplot as plt\n"
+            "plt.imshow([[1]], cmap='cmo.thermal')\n",
+        )
+        plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        assert plan.status == depplan.STATUS_READY
+        assert [m["distribution"] for m in plan.missing] == ["cmocean"]
+        assert plan.unused == ()
+
+    def test_unmapped_side_effect_import_stays_unknown(self, tmp_path):
+        """scienceplots 不在 curated 表：照旧列在 unknown（让用户指定），不被当成「没用到」吞掉。"""
+        proj = _project(
+            tmp_path,
+            "import scienceplots as _sp\nimport matplotlib.pyplot as plt\nplt.style.use('science')\n",
+        )
+        plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
+        assert plan.unknown == ("scienceplots",) and plan.unused == ()
 
     def test_import_through_a_local_module_is_still_needed(self, tmp_path):
         """脚本自己没读，但本地模块也 import 了它：那边的绑定判不了，照旧按上下文判。"""
@@ -171,6 +200,11 @@ sys.path.insert(0, sys.argv[1])
 import figcapture
 script = sys.argv[2]
 sys.path.insert(0, os.path.dirname(script))  # 与 worker 一样：脚本目录在最前
+# 用例专用：把两个造出来的名字临时加进名单（真名单里的包在这台机器上可能装着，测不了「缺」）
+figcapture.SIDE_EFFECT_FREE_IMPORTS = figcapture.SIDE_EFFECT_FREE_IMPORTS | {
+    "zz_tavotto_absent_pkg",
+    "brokenpkg",
+}
 names = figcapture.unused_imports(ast.parse(open(script, encoding="utf-8").read()))
 figcapture.install_unused_import_placeholders(script, names)
 out = {"names": sorted(names)}
@@ -312,7 +346,15 @@ _needs_worker = pytest.mark.skipif(
 )
 
 
+#: 模拟「sympy 没装」：PYTHONPATH 最前放一个 import 时抛 `ModuleNotFoundError(name="sympy")` 的影子包，
+#: 与真缺时 import 系统抛的形状相同（worker 解释器上可能真装着 sympy）。
+_NO_SYMPY = "raise ModuleNotFoundError(\"No module named 'sympy'\", name='sympy')\n"
+
+
 def _build(tmp_path: Path, script: str) -> dict:
+    shadow = tmp_path / "shadow" / "sympy"
+    shadow.mkdir(parents=True)
+    (shadow / "__init__.py").write_text(_NO_SYMPY, encoding="utf-8")
     figs = tmp_path / "figures"
     figs.mkdir()
     s = figs / "fig_unused.py"
@@ -338,7 +380,13 @@ def _build(tmp_path: Path, script: str) -> dict:
         text=True,
         encoding="utf-8",
         errors="replace",
-        env={**os.environ, "TAVOTTO_NO_TELEMETRY": "1"},
+        env={
+            **os.environ,
+            "TAVOTTO_NO_TELEMETRY": "1",
+            "PYTHONPATH": os.pathsep.join(
+                p for p in (str(tmp_path / "shadow"), os.environ.get("PYTHONPATH", "")) if p
+            ),
+        },
     )
     try:
         out, _err = proc.communicate(json.dumps({"cmd": "build"}) + "\n", timeout=120)
@@ -360,13 +408,46 @@ fig.savefig("l2_error_convergence.png")
 
 @_needs_worker
 def test_worker_renders_a_script_whose_missing_import_is_unused(tmp_path):
-    resp = _build(tmp_path, f"import {ABSENT} as unused_alias\n" + _PLOT)
+    resp = _build(tmp_path, "import sympy as smp\n" + _PLOT)
     assert resp.get("ok", True) is not False, resp
     assert "l2_error_convergence" in resp["stems"], resp
 
 
 @_needs_worker
 def test_worker_still_fails_when_the_missing_import_is_used(tmp_path):
-    resp = _build(tmp_path, f"import {ABSENT} as used_alias\nused_alias.go()\n" + _PLOT)
+    resp = _build(tmp_path, "import sympy as smp\nsmp.symbols('x')\n" + _PLOT)
     assert "stems" not in resp, resp
-    assert f"No module named '{ABSENT}'" in json.dumps(resp, ensure_ascii=False), resp
+    assert "No module named 'sympy'" in json.dumps(resp, ensure_ascii=False), resp
+
+
+@_needs_worker
+def test_the_side_effect_free_list_still_holds_in_the_worker_interpreter():
+    """名单是实测出来的，版本会变：在 worker 解释器里对装了的那些现量一遍——全新解释器（`-I`）里
+    import 它之后 matplotlib 不在 `sys.modules`、`MPL*` 环境变量没动。尺子要是活的：至少量到一个。"""
+    probe = (
+        "import importlib, os, sys\n"
+        "before = {k: v for k, v in os.environ.items() if k.startswith('MPL')}\n"
+        "try:\n    importlib.import_module(sys.argv[1])\n"
+        "except ImportError:\n    print('absent'); raise SystemExit(0)\n"
+        "after = {k: v for k, v in os.environ.items() if k.startswith('MPL')}\n"
+        "print('matplotlib' in sys.modules or before != after)\n"
+    )
+    measured, touched = [], []
+    for name in sorted(figcapture.SIDE_EFFECT_FREE_IMPORTS):
+        out = subprocess.run(
+            [WORKER_PY, "-I", "-c", probe, name],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            cwd=str(ROOT.parent),
+        ).stdout.strip()
+        if out == "absent":
+            continue
+        measured.append(name)
+        if out != "False":
+            touched.append(f"{name}: {out}")
+    if not measured:
+        pytest.skip("worker 解释器里名单上的包一个都没装，量不了")
+    assert not touched, touched

@@ -139,6 +139,7 @@ __all__ = [
     "install_relative_read_fallback",
     "unused_imports",
     "install_unused_import_placeholders",
+    "SIDE_EFFECT_FREE_IMPORTS",
     "InputObserver",
     "observed_local_modules",
     "INPUT_OBSERVER_MAX_FILES",
@@ -903,6 +904,36 @@ def install_relative_read_fallback(
 
 # ---------------------------------------------------------------- 未使用的缺失 import
 
+#: 只有这些顶级模块会被判「未使用」（评审 #555 P1）：绑定没被读**证明不了** import 没用——
+#: `import scienceplots as _sp` / `import cmocean as cm` 就是为了注册样式 / 色图，占位会让之后
+#: `plt.style.use("science")` / `cmap="cmo.thermal"` 报一句误导的错，而不是「请装它」。
+#: 判据：import 它**不会把 matplotlib 装进 `sys.modules`、也不动 `MPL*` 环境变量**——样式、色图、
+#: rcParams、单位转换器都住在 matplotlib 里，不碰它就没法注册或改动它们。逐个实测（全新解释器
+#: `-I`，Python 3.13 / matplotlib 3.11.2，2026-09-24）：下列都不装 matplotlib；cmocean / scienceplots /
+#: colorcet / cmasher / seaborn / lmfit 都装（mplcyberpunk 在 3.11 上 import 就抛），**不收**。
+#: 表外的名字一律照旧准备——宁可多问一次，不猜。`tests/test_unused_missing_import.py` 在 worker
+#: 解释器里对装了的那些现量一遍（版本变了、开始碰 matplotlib 的，那条用例会红）。
+SIDE_EFFECT_FREE_IMPORTS = frozenset(
+    {
+        "sympy",
+        "tqdm",
+        "numba",
+        "sklearn",
+        "joblib",
+        "numexpr",
+        "statsmodels",
+        "networkx",
+        "h5py",
+        "xarray",
+        "netCDF4",
+        "openpyxl",
+        "astropy",
+        "tabulate",
+        "yaml",
+        "requests",
+    }
+)
+
 #: 出现任何一个就判不清「名字有没有被读」：`globals()["smp"]` / `vars()` / `eval("smp")` /
 #: `exec(...)` / `__import__` / `compile` / `m.__dict__` 都能不经 Name 节点读到绑定。
 _OPAQUE_NAMES = frozenset(
@@ -922,6 +953,8 @@ def unused_imports(tree) -> frozenset[str]:
       常常是为了副作用（`import scienceplots` 之后 `plt.style.use("science")`、`import cmocean` 注册
       色图）——占位会把「请装 scienceplots」换成一句看不懂的「样式不存在」。起了别名 = 写的人
       打算用那个名字，一次没用才是遗留；
+    * X 在 `SIDE_EFFECT_FREE_IMPORTS` 里——别名同样可以只为副作用而起（`import cmocean as cm`），
+      所以「绑定没读」之外还要「import 它本身什么都不改」，这一条只能靠实测过的名单；
     * 这些 import 都不在 `try` / `with` 里（`try: import X; HAVE_X = True` 的分支走向
       取决于它 import 得到与否——占位会把「没装」变成「装了」）；
     * 绑定的名字（Y 或 X）在别处**一次都不出现**：Name（读 / 写 / 删）、形参、
@@ -993,7 +1026,7 @@ def unused_imports(tree) -> frozenset[str]:
 
     out = set()
     for top, bound in candidates.items():
-        if top in rejected or _mentioned(top):
+        if top not in SIDE_EFFECT_FREE_IMPORTS or top in rejected or _mentioned(top):
             continue
         if any(name in seen or _mentioned(name) for name in bound):
             continue
