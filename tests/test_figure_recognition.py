@@ -148,7 +148,11 @@ def test_raster_follows_the_colorbar_and_keeps_its_overlays(facts):
     field, line, edge = r["recolored"]
     assert field == pytest.approx(r["expected"][0], abs=2e-2)
     assert edge == pytest.approx(r["expected"][1], abs=2e-2)
-    assert line == pytest.approx(r["overlay"], abs=1e-6)
+    # 重着色写进的是 uint8 缓冲：原样保留的像素只差 8 位量化（≤ 1/255）
+    assert line == pytest.approx(r["overlay"], abs=1 / 255 + 1e-6)
+    # 整张场图逐像素：与「同一数值在新色图下的颜色」的误差（实测平均 0.002、p99.9 约 0.01）
+    assert r["field_err_mean"] < 0.005, r["field_err_mean"]
+    assert r["field_err_p999"] < 0.03, r["field_err_p999"]
     # 流线的抗锯齿边缘：底色的变化按覆盖率带过去，不留一圈旧色图的光晕
     assert r["antialiased"] == pytest.approx(r["antialiased_expected"], abs=2e-2)
     assert r["vmax_pixel"] == pytest.approx(r["vmax_expected"], abs=2e-2)
@@ -175,6 +179,178 @@ def test_standalone_colorbar_adopts_an_identical_scale(facts):
     assert es["image_cmap_after"] == "magma"
     assert es["control_cmap_after"] == "viridis"
     assert es["own_colorbar_image_cmap_after"] == "viridis"
+
+
+def _bars(summary: dict) -> dict:
+    return {g: e for g, e in summary.items() if e["role"] == "colorbar"}
+
+
+def test_declared_host_limits_what_a_standalone_colorbar_adopts(facts):
+    """#527 评审 P1：`ax=ax0` 的独立色条只认领 ax0 上的图，ax1 上恰好同色阶的无关图像
+    不归它；两条各挂一边的色条各认各的，先处理的那条不再把两张都拿走。"""
+    (one,) = _bars(facts["orphan_scopes"]["one_bar"]).values()
+    assert one["scale_gids"] == ["axes_0.images_0"] and one["host_gid"] == "axes_0"
+    two = sorted(
+        (e["host_gid"], e["scale_gids"]) for e in _bars(facts["orphan_scopes"]["two_bars"]).values()
+    )
+    assert two == [("axes_0", ["axes_0.images_0"]), ("axes_1", ["axes_1.images_0"])]
+
+
+def test_cax_colorbar_still_covers_every_panel_it_describes(facts):
+    """对照：`cax=` 建的色条没有声明宿主，一条色条共用给一格图是常见写法——整组认领照旧。"""
+    (bar,) = _bars(facts["orphan_scopes"]["shared_cax"]).values()
+    assert sorted(bar["scale_gids"]) == ["axes_0.images_0", "axes_1.images_0"]
+
+
+def test_declared_host_claims_before_the_generic_colorbar(facts):
+    """`cax=` 的通用色条即使先建（排在前面），也只拿有宿主的色条挑剩下的：`ax=a1` 的那条
+    认领 a1，通用那条只剩 a0。"""
+    got = sorted(
+        (e["host_gid"], e["scale_gids"]) for e in _bars(facts["orphan_scopes"]["mixed"]).values()
+    )
+    assert got == [("axes_0", ["axes_0.images_0"]), ("axes_1", ["axes_1.images_0"])]
+
+
+def test_a_bound_raster_really_recolours_even_with_a_photo_inside(facts):
+    """#527 评审 P2 的根：从前按唯一颜色暴力反解，嵌着照片的大图要么先报已绑定、换色图时
+    默默失败，要么只能拒绝配对。颜色查表（`_ColourTube`）与图大小、唯一颜色数都无关——
+    配对了就真的重着色：热图部分换成新色图，照片部分原样（随机颜色落进色图容差带的
+    那一两成不计）。"""
+    ph = facts["orphan_scopes"]["photo"]
+    (bar,) = _bars(ph["summary"]).values()
+    assert bar["mappable_gid"] == "axes_0.images_0"
+    assert ph["heat_pixel"] == pytest.approx(ph["heat_expected"], abs=2e-2)
+    assert ph["photo_unchanged"] > 0.97, ph["photo_unchanged"]
+
+
+def test_large_rasters_bind_and_recolour(facts):
+    """没有像素数上限：900 万像素（旧上限 600 万之上）的场图照样绑定，换色图后像素是新色图的颜色。"""
+    big = facts["orphan_scopes"]["big"]
+    (bar,) = _bars(big["summary"]).values()
+    assert bar["mappable_gid"] == "axes_0.images_0"
+    assert big["pixel"] == pytest.approx(big["expected"], abs=2e-2)
+
+
+def test_recolour_memory_grows_only_by_the_output_itself(facts):
+    """重着色的内存随像素数的增长斜率 ≈ 输出缓冲本身（RGB uint8 = 3 B/像素）加稀疏的边缘；
+    旧实现是约 96 B/像素的临时量外加 float32 输出。常数项（32 MiB 直查表、分块临时量）在
+    两档相减里抵消。"""
+    bpp = facts["orphan_scopes"]["bytes_per_pixel"]
+    assert bpp < 6, bpp
+
+
+def test_extremely_wide_rasters_stay_within_a_tile(facts):
+    """#538 评审第二轮：`(4, 3_000_000)` 这种极宽的图，按行分块时一块就是整张图。二维分块后，
+    除了输出缓冲本身，额外的峰值只有块大小那一量级。"""
+    extra = facts["orphan_scopes"]["wide_extra_bytes"]
+    assert extra < 32 * 2**20, extra
+
+
+def test_single_row_rasters_bind_and_really_recolour(facts):
+    """#538 评审第三轮：单行色带每个像素最多两个邻居。连片判据按实际邻居数封顶、配对与
+    重着色问同一个判据——绑定了就真的换得了色（改动前：报已绑定，换色图后 0 个像素变）。"""
+    thin = facts["orphan_scopes"]["thin"]
+    (bar,) = _bars(thin["summary"]).values()
+    assert bar["mappable_gid"] == "axes_0.images_0"
+    assert thin["changed"] > 0.9, thin["changed"]
+    assert thin["end_pixel"] == pytest.approx(thin["end_expected"], abs=2e-2)
+    # 反例：67% 在色图上却连不成片——重着色换不了一个像素，配对问同一个判据，就不报已绑定
+    (speck,) = _bars(thin["speckled"]).values()
+    assert speck["mappable_gid"] is None
+
+
+def test_huge_colormaps_cost_nothing_without_a_raster(facts):
+    """#538 评审第三轮：6 万格的自定义色图，改动前 instrument 一张没有位图的图也要建 N×729
+    的候选（实测 4.3 s / 1.3 GB）。现在没有候选位图就不建；有位图时按 1024 格封顶建，照样
+    绑定、照样重着色。"""
+    hc = facts["orphan_scopes"]["huge_cmap"]
+    assert hc["no_raster_peak"] < 16 * 2**20, hc["no_raster_peak"]
+    assert hc["bind_peak"] < 64 * 2**20, hc["bind_peak"]
+    (bar,) = _bars(hc["summary"]).values()
+    assert bar["mappable_gid"] == "axes_0.images_0"
+    assert hc["end_pixel"] == pytest.approx(hc["end_expected"], abs=2e-2)
+
+
+def test_fit_sampling_spans_the_whole_image_within_budget(facts):
+    """配对抽样的连续窗口：任何形状下总像素不超抽样上限，行、列都覆盖到两端的那一格。
+    按扁平序号隔 k 格取时，k 恰是列数的倍数就全落在最左一列（3000² 实测色图只铺开 2%）。"""
+    o = facts["orphan_scopes"]
+    limit, win = o["sample_limit"], o["window"]
+    for shape, f in o["windows"].items():
+        assert f["pixels"] <= limit, shape
+        assert f["first_row"] == 0 and f["first_col"] == 0, shape
+        assert f["last_row"] > f["h"] - win and f["last_col"] > f["w"] - win, shape
+
+
+def test_discrete_palettes_keep_every_colour(facts):
+    """#538 评审第四轮：按固定格数重取样会跳过 `ListedColormap` 里真实存在的颜色（2048 色的
+    调色板丢一半、配对失败）。查色表按去重后的真实颜色建：色带绑定、每个像素换成新色图下
+    它那一格的颜色；多段建表与一次排序建表的结果相同。"""
+    lst = facts["orphan_scopes"]["listed"]
+    (bar,) = _bars(lst["summary"]).values()
+    assert bar["mappable_gid"] == "axes_0.images_0"
+    assert lst["max_err"] <= 1 / 255 + 1e-6, lst["max_err"]
+    assert lst["tube_keys_equal"] is True
+    # 逐项相同（第九轮：段间比较量化距离时随机调色板有 23 处不同）；隔得很远的两格几乎同色，
+    # 选真正更近的那格
+    assert lst["tube_entry_mismatches"] == 0, lst["tube_entry_mismatches"]
+    assert lst["near_entry"] == 2000, lst["near_entry"]
+    (many,) = _bars(lst["too_many"]).values()
+    assert many["mappable_gid"] is None
+    # 去重时同色一组取平台中点（实测 0.007）；取第一次出现的位置偏低（0.013）
+    assert lst["plateau_mean_err"] < 0.01, lst["plateau_mean_err"]
+
+
+def test_colormap_sampling_is_bounded_whatever_its_length(facts):
+    """#538 评审第五轮：一次按全长取样，名义 500 万格的色图峰值 375 MB，要拒绝的那种还得先
+    全部算完。分段取样、边取边去重：平滑的照常得到它的真实颜色，峰值只跟段长有关；颜色
+    太多的在第一段就停；格数超过 8 位颜色空间的只看 N 就不配对。"""
+    h = facts["orphan_scopes"]["huge_n"]
+    assert h["smooth"]["distinct"] is not None and h["smooth"]["peak"] < 32 * 2**20, h["smooth"]
+    assert h["noisy"]["distinct"] is None and h["noisy"]["peak"] < 32 * 2**20, h["noisy"]
+    assert h["over_n"]["distinct"] is None and h["over_n"]["peak"] < 2**20, h["over_n"]
+
+
+def test_dense_overlay_edges_do_not_become_a_per_pixel_table(facts):
+    """#538 评审第六轮：四行场两行阴影线的图三分之一像素是叠加物边缘，从前把它们全部存成
+    一份与图同长的常驻表再整体拼接（实测峰值斜率 21.9 B/像素）。现在边缘逐块现算、逐块
+    应用；缓存只在总量不超上限时留下——上限压小时整份放弃，常驻只剩输出本身（RGB 3 B/像素）；
+    缓存与逐块重算两条路的输出逐字节相同。"""
+    h = facts["orphan_scopes"]["hatch"]
+    assert h["peak_slope"] < 6, h["peak_slope"]
+    assert h["cached_is_list"] is True
+    assert h["capped_dropped"] is True and h["fresh_dropped"] is True
+    assert h["capped_retained_slope"] < 3.5, h["capped_retained_slope"]
+    assert h["paths_equal"] is True
+
+
+def test_one_standalone_mappable_behind_two_colorbars(facts):
+    """#538 评审第七轮：同一个 ScalarMappable 交给 `ax=a0`、`ax=a1` 各建一条色条。左边那条
+    认领了 a0 的图之后，「已有图元共用这个 norm」若按全图判，右边那条直接跳过、a1 的图没人认；
+    位图同理。按各自作用域判：两张图都认领 / 绑定，两条色条各认各的宿主（同一个 mappable，
+    两条色条都覆盖两张图——从哪条换色图，两边一起变）。"""
+    bars = sorted(
+        (e["host_gid"], e["scale_gids"])
+        for e in _bars(facts["orphan_scopes"]["shared_two"]).values()
+    )
+    both = ["axes_0.images_0", "axes_1.images_0"]
+    assert bars == [("axes_0", both), ("axes_1", both)], bars
+    mixed = _bars(facts["orphan_scopes"]["shared_mixed"])
+    assert any(e["mappable_gid"] == "axes_1.images_0" for e in mixed.values()), mixed
+    assert all(e["scale_gids"] == ["axes_0.images_0"] for e in mixed.values()), mixed
+
+
+def test_generic_colorbar_still_adopts_what_the_scoped_one_left(facts):
+    """#538 评审第八轮：同一个 ScalarMappable 挂一条 `ax=w0` 的和一条 `cax=` 的通用色条。有宿主
+    的先认领 w0；「作用域里已有共用者」若把认领来的也算上，通用那条整条跳过、w1 没人认。
+    只算脚本自己交的 norm：w1 照样被认领；对照——脚本把 norm 交给了 c0，通用色条不再按数值
+    认领 c1（色条的描述对象由脚本声明了）。"""
+    g = facts["orphan_scopes"]["generic_after_scoped"]
+    assert g["w0"] is True and g["w1"] is True, g
+    assert g["control_c1"] is False, g
+    # 「脚本共用者」只在本作用域里算：d0 的共用者不挡 `ax=d1` 那条色条认领 d1
+    assert g["scoped_d1"] is True, g
+    assert g["scoped_raster_e1"] is True, g  # 位图配对同一个判据
 
 
 # ============================================================ 热会话 == 全量重放

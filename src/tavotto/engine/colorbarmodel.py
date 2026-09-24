@@ -516,10 +516,11 @@ _FIELD_MIN_ON = 0.6
 #: 落在色图上的像素至少要铺开色图全长的这么一段：白底照片会整片贴在「从白色起步」
 #: 的色图端点上，on 比例很高，但它不是一张场图。
 _FIELD_MIN_SPREAD = 0.1
-#: 配对时抽样的像素上限（全分辨率反解只在第一次真要重着色时做）。
+#: 配对时抽样的像素上限（全分辨率的处理只在第一次真要重着色时做）。
 _FIELD_SAMPLE = 200_000
-#: 唯一颜色多到这个数就不是色图渲染（照片、截图）：不配对，也不花时间反解。
-_FIELD_MAX_UNIQUE = 250_000
+#: 逐像素的处理一律按**二维**小块走（边长这么多像素，外加邻域那一圈）。块的像素数与图的
+#: 大小、宽高比都无关——按行分块时一行就可能是整张图（#538 评审第二轮：`(5, 1_000_001, 3)`）。
+_FIELD_TILE = 512
 #: 叠加物（流线、箭头）抗锯齿边缘向外找「底下的场」最多找几个像素。
 _FIELD_BG_RADIUS = 6
 #: 抗锯齿像素是叠加色 L 与底色 B 的线性混合 `a·L + (1-a)·B`，离底色的距离 `a·|L-B|`
@@ -531,10 +532,32 @@ _FIELD_CORE_RADIUS = 2
 #: 以及只是略出容差的场像素（gouraud 插值、有损压缩）。按实测调的：深色不透明
 #: 细线离浅底 0.8，走邻域线芯；半透明灰线在这个下限上，线芯带过去 8% 的底色变化。
 _FIELD_CORE_FLOOR = 0.6
+#: 落在色图上的像素，八邻域里至少这么多个也落在色图上，才算「场」。真正的场是连成片的
+#: （贴着 1 像素宽流线的场像素也有 5 个），照片 / 噪声里偶然落进容差带的颜色是孤点——不设
+#: 这一条，它们会被当成底色，把四周的照片像素按边缘规则一起染色（实测一张嵌着照片的
+#: 热图，照片部分 20% 的像素变了色）。
+_FIELD_MIN_NEIGHBOURS = 3
+#: 建查色表时一次处理这么多个色图格（每格 729 个候选颜色）。只有一段时直接排序去重；
+#: 多段时逐段排序、再对一张 2²⁴ 的直查表取「更近者」——总耗时与颜色数成正比（每段都对
+#: 累计结果重排是平方级：3 万色的调色板实测 25 s）。
+_FIELD_TUBE_CHUNK = 1024
+#: 去重后的颜色数上限。连续色图 8 位下只有几百上千种；上万种不同颜色的离散调色板已经
+#: 不是一条色阶，不配对——如实不认，manifest 不报绑定（查色表会随颜色数线性变大）。
+_FIELD_MAX_COLOURS = 16384
+#: 取样色图时一段多少格；超过 `_FIELD_MAX_N` 格（比 8 位颜色空间还多）的色图直接不配对。
+_FIELD_SAMPLE_CHUNK = 65536
+_FIELD_MAX_N = 1 << 24
+#: 配对抽样用的连续窗口边长：连片判据（`_field_mask`）要真实相邻的像素，隔点抽样量不了。
+_FIELD_WINDOW = 64
+#: 查色表里「不在色图上」的记号（格号是 uint16，色图最多 65535 格）。
+_OFF_MAP = 0xFFFF
+#: 叠加物边缘的逐块结果最多缓存这么多字节（每个边缘像素 7 字节）；超了就不缓存、每次换色
+#: 逐块重算。用户 (a) 的流线边缘 4.3 万个像素约 0.3 MB。
+_FIELD_EDGE_CACHE = 16 * 2**20
 
 
 def _rgb8(arr):
-    """位图数组 → (M, N, 3) uint8。float 位图按 0–1、整型按 0–255。"""
+    """位图数组 → (..., 3) uint8。float 位图按 0–1、整型按 0–255。"""
     import numpy as np
 
     a = np.asarray(arr)
@@ -544,33 +567,81 @@ def _rgb8(arr):
     return rgb.astype(np.uint8)
 
 
-def _cmap_lut8(cmap):
+def _alpha8(arr):
+    import numpy as np
+
+    al = np.asarray(arr)[..., 3]
+    if al.dtype.kind == "f":
+        al = np.clip(np.rint(al * 255.0), 0, 255)
+    return al.astype(np.uint8)
+
+
+def _pack(rgb8):
+    """(..., 3) uint8 → 同形状的 24 位颜色码（uint32）。"""
+    import numpy as np
+
+    return (
+        (rgb8[..., 0].astype(np.uint32) << 16)
+        | (rgb8[..., 1].astype(np.uint32) << 8)
+        | rgb8[..., 2].astype(np.uint32)
+    )
+
+
+def _cmap_entries(cmap):
+    """色图的**真实颜色**：(颜色 0–255 float32, 各自在色图上的位置 t ∈ [0, 1])。
+
+    按色图自己的 N 格取样，所有真实存在的颜色都在——按固定格数重新取样会跳过离散调色板
+    （`ListedColormap`）里真实存在的颜色，那些像素就认不出来了（#538 评审第四轮：2048 色
+    调色板丢一半、配对失败）。
+
+    按 8 位颜色去重，同色一组取位置的**平均值**：连续色图常有好几格圆整成同一个 8 位颜色
+    （像素本身也只有 8 位，分不出是其中哪一格），取第一次出现的位置会让数值系统性偏低
+    （宽平台的色图实测平均误差 0.013 → 取中点 0.007）。逐格保留、按浮点距离挑最近格的写法
+    实测精度相同（场像素平均误差 0.0020 对 0.0022），多一条分支不值。6 万格的
+    LinearSegmented 去重后不到 800 种。去重后超过 `_FIELD_MAX_COLOURS` 种时抛错，调用方
+    不配对。
+
+    **分段取样、边取边去重**（#538 评审第五轮）：一次按全长取样要分配 N 长的位置、颜色与
+    去重临时量（名义 500 万格的色图实测峰值 375 MB），而要拒绝的那种还得先全部算完。每段
+    `_FIELD_SAMPLE_CHUNK` 格，去重结果并进累计表，累计超过上限立刻停；格数超过
+    `_FIELD_MAX_N` 的只看 N 就不配对。峰值只跟段长与上限有关。
+    """
     import numpy as np
 
     n = max(int(getattr(cmap, "N", 256)), 2)
-    return (np.asarray(cmap(np.linspace(0.0, 1.0, n)))[:, :3] * 255.0).astype(np.float32)
-
-
-def _nearest_lut(rgb8, lut):
-    """每个像素离查表最近的那一格 (序号, 最大通道差)。先去重再比：色图渲染的
-    唯一颜色通常只有几万种，远少于像素数。唯一颜色过多时回 None。"""
-    import numpy as np
-
-    flat = rgb8.reshape(-1, 3)
-    packed = (flat[:, 0].astype(np.uint32) << 16) | (flat[:, 1].astype(np.uint32) << 8) | flat[:, 2]
-    uniq, inv = np.unique(packed, return_inverse=True)
-    if len(uniq) > _FIELD_MAX_UNIQUE:
-        return None
-    uc = np.stack([(uniq >> 16) & 255, (uniq >> 8) & 255, uniq & 255], 1).astype(np.float32)
-    best = np.empty(len(uniq), np.int32)
-    dist = np.empty(len(uniq), np.float32)
-    step = max(1, 4_000_000 // (len(lut) * 3))
-    for s in range(0, len(uniq), step):
-        d = np.abs(uc[s : s + step, None, :] - lut[None]).max(-1)
-        best[s : s + step] = d.argmin(1)
-        dist[s : s + step] = d.min(1)
-    shape = rgb8.shape[:2]
-    return best[inv].reshape(shape), dist[inv].reshape(shape)
+    if n > _FIELD_MAX_N:
+        raise ValueError("colormap has too many entries")
+    keys = np.empty(0, np.uint32)  # 累计：颜色码、首次出现的格号、该格的浮点颜色、t 之和、格数
+    first = np.empty(0, np.int64)
+    colour = np.empty((0, 3), np.float64)
+    tsum = np.empty(0, np.float64)
+    count = np.empty(0, np.float64)
+    for i0 in range(0, n, _FIELD_SAMPLE_CHUNK):
+        idx = np.arange(i0, min(n, i0 + _FIELD_SAMPLE_CHUNK))
+        t = idx / (n - 1)
+        col = np.asarray(cmap(t))[:, :3] * 255.0
+        packed = _pack(np.clip(np.rint(col), 0, 255).astype(np.uint8))
+        k, pos, inv = np.unique(packed, return_index=True, return_inverse=True)
+        inv = np.asarray(inv).ravel()
+        keys = np.concatenate([keys, k])
+        first = np.concatenate([first, idx[pos]])
+        colour = np.concatenate([colour, col[pos]])
+        tsum = np.concatenate([tsum, np.bincount(inv, weights=t)])
+        count = np.concatenate([count, np.bincount(inv).astype(np.float64)])
+        # 并表：同一颜色码的各段合成一条——t 之和、格数相加，首次出现取最早那段
+        order = np.lexsort((first, keys))
+        keys, first, colour = keys[order], first[order], colour[order]
+        tsum, count = tsum[order], count[order]
+        head = np.ones(len(keys), bool)
+        head[1:] = keys[1:] != keys[:-1]
+        grp = np.cumsum(head) - 1
+        tsum = np.bincount(grp, weights=tsum)
+        count = np.bincount(grp, weights=count)
+        keys, first, colour = keys[head], first[head], colour[head]
+        if len(keys) > _FIELD_MAX_COLOURS:
+            raise ValueError("colormap has too many distinct colours")
+    order = np.argsort(first)  # 按第一次出现的顺序排，格号沿色图单调
+    return colour[order].astype(np.float32), (tsum / count)[order]
 
 
 def _opaque(arr):
@@ -578,9 +649,127 @@ def _opaque(arr):
 
     a = np.asarray(arr)
     if a.shape[-1] < 4:
-        return np.ones(a.shape[:2], bool)
+        return np.ones(a.shape[:-1], bool)
     alpha = a[..., 3]
     return alpha > (0.5 if alpha.dtype.kind == "f" else 127)
+
+
+def _field_mask(on):
+    """`on` 里连成片的那部分：八邻域里至少 `_FIELD_MIN_NEIGHBOURS` 个也在色图上——**封顶到
+    这个像素实际有几个邻居**（#538 评审第三轮：单行 / 单列的位图每个像素最多两个邻居，
+    不封顶的话整条色带没有一个像素算场，配对报了已绑定却一个像素都换不了色）。
+    「实际有几个邻居」按传进来的这块算：调用方的块带着邻域那一圈，只有贴着图边的块
+    才会在边上缺邻居，那正是图本身的边。配对的吻合度（`_field_fit`）问的是同一个函数。"""
+    import numpy as np
+
+    h, w = on.shape
+    pad = np.pad(on, 1).astype(np.uint8)
+    have = np.pad(np.ones((h, w), np.uint8), 1)
+    count = np.zeros((h, w), np.uint8)
+    avail = np.zeros((h, w), np.uint8)
+    for dy in (0, 1, 2):
+        for dx in (0, 1, 2):
+            if dy != 1 or dx != 1:
+                count += pad[dy : dy + h, dx : dx + w]
+                avail += have[dy : dy + h, dx : dx + w]
+    return on & (count >= np.minimum(avail, _FIELD_MIN_NEIGHBOURS))
+
+
+def _tiles(h: int, w: int, halo: int = 0):
+    """二维分块：`(y0, y1, x0, x1, hy0, hy1, hx0, hx1)`，后四个是外扩 `halo` 之后的范围。"""
+    t = _FIELD_TILE
+    for y0 in range(0, h, t):
+        y1 = min(h, y0 + t)
+        for x0 in range(0, w, t):
+            x1 = min(w, x0 + t)
+            yield (
+                y0,
+                y1,
+                x0,
+                x1,
+                max(0, y0 - halo),
+                min(h, y1 + halo),
+                max(0, x0 - halo),
+                min(w, x1 + halo),
+            )
+
+
+class _ColourTube:
+    """色图上每一格周围 `_FIELD_TOL` 以内的全部 8 位颜色 → 离它最近的那一格。
+
+    「这个像素是不是色图画的、是哪一格」只取决于像素的颜色，与它在图上的位置、与这张
+    图有多大都无关——所以把答案预先按颜色列成表：N 格 × 9³ 个邻居（viridis 256 格约 18 万
+    种颜色、用户 (a) 的 512 格约 37 万种），大小只跟色图有关。从前是对图里的每种唯一颜色
+    暴力求最近格，唯一颜色一多（嵌着照片的图）就只能拒绝配对，还得先把全图数一遍——
+    #527 / #538 两轮评审的 P2 都出在那里。有了这张表，全图反解不会失败，也不用先数。
+
+    与旧判据逐项等价：像素落在色图上 ⇔ 它离某一格的最大通道差 ≤ `_FIELD_TOL` ⇔ 它在表里；
+    表里记的是离它最近的那格（同一种颜色挨着好几格时按距离取最近）。
+    """
+
+    def __init__(self, cmap):
+        import numpy as np
+
+        lut, t = _cmap_entries(cmap)
+        n = len(lut)
+        r = int(np.ceil(_FIELD_TOL))
+        g = np.arange(-r, r + 1, dtype=np.int16)
+        off = np.stack(np.meshgrid(g, g, g, indexing="ij"), -1).reshape(-1, 3)
+
+        def _nearest(e0):
+            """这一段色图格的候选颜色，段内每种颜色只留最近的那格：(颜色码, 距离, 格号)。"""
+            part = lut[e0 : e0 + _FIELD_TUBE_CHUNK]
+            cand = np.rint(part).astype(np.int16)[:, None, :] + off[None]
+            d = np.abs(cand - part[:, None, :]).max(-1)
+            ok = ((cand >= 0) & (cand <= 255)).all(-1) & (d <= _FIELD_TOL)
+            ids = np.arange(e0, e0 + len(part), dtype=np.uint16)
+            keys = _pack(cand[ok].astype(np.uint8))
+            dist = d[ok].astype(np.float32)
+            entry = np.broadcast_to(ids[:, None], ok.shape)[ok]
+            order = np.lexsort((dist, keys))  # 先按颜色、同色再按距离：每种颜色取最近那格
+            keys, dist, entry = keys[order], dist[order], entry[order]
+            first = np.ones(len(keys), bool)
+            first[1:] = keys[1:] != keys[:-1]
+            return keys[first], dist[first], entry[first]
+
+        if n <= _FIELD_TUBE_CHUNK:
+            keys, _, entry = _nearest(0)
+        else:
+            # 段间比较用**原样的 float32 距离**（64 MiB，只在超过一段的色图上建表时占用）。量化
+            # 会让相差不到一个量化步的两格打平、先到的那格赢——隔得很远的两格颜色几乎相同时，
+            # 选中的是位置错得很远的那格（#538 评审第九轮：100.499 与 100.501 都盖住 101，
+            # 真实距离 0.501 对 0.499；随机 2048 色调色板与一次排序的结果有 23 处不同）。
+            # 与一次排序同一个规则：距离更小者赢，完全相等时先到者赢。
+            best_d = np.full(1 << 24, np.inf, np.float32)
+            best_e = np.full(1 << 24, _OFF_MAP, np.uint16)
+            for e0 in range(0, n, _FIELD_TUBE_CHUNK):
+                k, d, e = _nearest(e0)
+                closer = d < best_d[k]  # 段内已去重，花式赋值没有重复下标
+                best_d[k[closer]] = d[closer]
+                best_e[k[closer]] = e[closer]
+            del best_d
+            keys = np.flatnonzero(best_e != _OFF_MAP).astype(np.uint32)
+            entry = best_e[keys]
+        self.keys = keys
+        self.entry = entry
+        self.lut = lut
+        self.t = t
+
+    def lookup(self, packed):
+        """颜色码 → 格号（不在色图上的记 `_OFF_MAP`）。二分查找，给抽样这类小数组用。"""
+        import numpy as np
+
+        pos = np.minimum(np.searchsorted(self.keys, packed), len(self.keys) - 1)
+        return np.where(self.keys[pos] == packed, self.entry[pos], _OFF_MAP).astype(np.uint16)
+
+    def dense(self):
+        """2²⁴ 项的直查表（uint16，32 MiB，与图大小无关）：整图处理时每块一次花式索引。
+        **不缓存**：现建约 10 ms，常驻的话每张绑定的位图都背着 32 MiB。一次重着色里只建一次。"""
+        import numpy as np
+
+        table = np.full(1 << 24, _OFF_MAP, np.uint16)
+        table[self.keys] = self.entry
+        return table
 
 
 class RasterField:
@@ -592,15 +781,22 @@ class RasterField:
     建出来——两者在 matplotlib 眼里毫无关系，从色条换色图，位图纹丝不动，色条与图
     从此对不上。这类「位图 + 独立色条」是拼论文图的常见做法（离线渲染、别的软件导出）。
 
-    **原样是模式**：色条的色图与 norm 没被动过时画的就是脚本原件，一个像素不改；
-    只有真要重着色时才在第一次做全分辨率反解（`_decode`）。判断放在 `draw` 前
-    （`sync`），热会话、全量重放、导出走的是同一条路——只要 override 相同，画出来就
-    相同。落在色图上的像素换成新色图下的颜色；不在色图上的（流线、球、文字）原样
-    保留，其抗锯齿边缘按「离底色多近」把底色的变化量按比例带过去，免得流线四周
-    留一圈旧色图的光晕。
+    **原样是模式**：色条的色图与 norm 没被动过时画的就是脚本原件（同一个数组对象，
+    一个像素不改、不拷贝）。判断放在 `make_image` 前（`sync`），热会话、全量重放、导出走
+    的是同一条路——只要 override 相同，画出来就相同。
+
+    **内存只跟输出走**（#538 评审之后重做）。新颜色只取决于像素落在色图的哪一格：
+    `_ColourTube` 把「颜色 → 格号」列成与图大小无关的表，换色图时先算 N 项的「格号 →
+    新颜色」，再按二维小块逐块查表写进一份 uint8 缓冲——每像素常驻 3–4 字节（就是画出来的
+    那张图本身），不存逐像素的数值、底色、权重，查表也不常驻；叠加物的边缘逐块现算，
+    只在总量不大时缓存（`_recolor`）。「在色图上」还要连成片（`_field_mask`），
+    照片里偶然落进容差带的孤点不算。不在色图上的（流线、球、文字）原样保留；
+    只有它们的抗锯齿边缘需要看邻域，按「离底色距离 / 邻域线芯距离」把底色的变化量按比例
+    带过去——这些像素是稀疏的，第一次重着色时逐块算出来，存成（扁平序号、底色格号、权重）
+    三列。旧实现是约 96 B/像素的临时内存外加 float32 输出，只能给像素数设上限。
     """
 
-    def __init__(self, image, cb):
+    def __init__(self, image, cb, tube: "_ColourTube | None" = None):
         import copy
 
         self.image = image
@@ -609,10 +805,11 @@ class RasterField:
         self.original = image.get_array()
         self.cmap0 = m.get_cmap()
         self.norm0 = copy.deepcopy(m.norm)
+        self.tube = tube if tube is not None else _ColourTube(self.cmap0)
         self.key0 = self._key()
         self._applied = self.key0
-        self._decoded = None
-        self._cache: dict = {}
+        self._edges = None
+        self._buf = None
         # 钩在 `make_image` 而不是 `draw` 上：一个子图里有多张位图、后端又合成位图
         # （PDF / SVG 的 `image.composite_image`）时，`Axes.draw` 绕过每张图的 draw、
         # 直接调 `make_image` 拼成一张——钩在 draw 上导出会漏掉重着色
@@ -637,90 +834,141 @@ class RasterField:
             bool(getattr(n, "clip", False)),
         )
 
+    def _show(self, arr) -> None:
+        """把 `arr` 交给图像。**不走 `set_data`**：它每次整份拷贝（float 原件 16 B/像素），
+        色图来回切就是来回整份拷贝；这里只换引用、清掉重采样缓存。取不到这两个属性的
+        matplotlib 才退回 `set_data`。"""
+        im = self.image
+        if hasattr(im, "_A") and hasattr(im, "_imcache"):
+            im._A = arr  # noqa: SLF001
+            im._imcache = None  # noqa: SLF001
+            im.stale = True
+        else:
+            im.set_data(arr)
+
     def sync(self) -> None:
         key = self._key()
         if key == self._applied:
             return
         self._applied = key
         if key == self.key0:
-            self.image.set_data(self.original)
+            self._show(self.original)
             return
         try:
-            self.image.set_data(self._recolor())
+            self._show(self._recolor())
         except Exception:  # noqa: BLE001 — 重着色失败就画原件，不拦渲染
-            self.image.set_data(self.original)
+            self._show(self.original)
 
-    def _decode(self):
+    @staticmethod
+    def _tile_edges(rgb8, on, idx, lut, inner):
+        """一块（带邻域那一圈）里叠加物的抗锯齿边缘：块内坐标 (行, 列, 底色格号, 权重×255)，
+        只收 `inner`（去掉邻域圈）里、权重非零的。整块是场或整块是叠加物时回 None。"""
         import numpy as np
 
-        if self._decoded is not None:
-            return self._decoded
-        arr = np.asarray(self.original)
-        rgb8 = _rgb8(arr)
-        lut = _cmap_lut8(self.cmap0)
-        near = _nearest_lut(rgb8, lut)
-        if near is None:
-            raise ValueError("too many colours")
-        idx, dist = near
-        on = (dist <= _FIELD_TOL) & _opaque(arr)
-        t = idx.astype(np.float64) / (len(lut) - 1)
-        values = np.asarray(self.norm0.inverse(t), dtype=np.float64)
-        # 叠加物边缘：从场里往外逐像素找最近的场值（4 邻域膨胀，找 _FIELD_BG_RADIUS 圈）
-        bg_idx = np.where(on, idx, -1)
+        if on.all() or not on.any():
+            return None  # 整块是场（没有边缘）或整块是叠加物（找不到底色）
+        # 从场里往外逐像素找最近的场值（4 邻域膨胀 _FIELD_BG_RADIUS 圈）
+        bg = np.where(on, idx.astype(np.int32), -1)
         for _ in range(_FIELD_BG_RADIUS):
-            miss = bg_idx < 0
-            if not miss.any():
+            if not (bg < 0).any():
                 break
-            grown = bg_idx.copy()
-            for sl_dst, sl_src in (
+            grown = bg.copy()
+            for dst_sl, src_sl in (
                 ((slice(1, None), slice(None)), (slice(None, -1), slice(None))),
                 ((slice(None, -1), slice(None)), (slice(1, None), slice(None))),
                 ((slice(None), slice(1, None)), (slice(None), slice(None, -1))),
                 ((slice(None), slice(None, -1)), (slice(None), slice(1, None))),
             ):
-                src = bg_idx[sl_src]
-                dst = grown[sl_dst]
+                src = bg[src_sl]
+                dst = grown[dst_sl]
                 take = (dst < 0) & (src >= 0)
                 dst[take] = src[take]
-            bg_idx = grown
-        edge = (~on) & (bg_idx >= 0)
-        bg_old = lut[np.clip(bg_idx, 0, None)] / 255.0
-        d = np.abs(rgb8.astype(np.float32) / 255.0 - bg_old).max(-1)
+            bg = grown
+        edge = (~on) & (bg >= 0)
+        d = np.abs(rgb8.astype(np.float32) - lut[np.clip(bg, 0, None)]).max(-1) / 255.0
         # 找不到底色的叠加像素（球心这类大块叠加物的内部）按「完全是叠加物」算
-        d_off = np.where(on, 0.0, np.where(bg_idx >= 0, d, 1.0)).astype(np.float32)
-        core = d_off.copy()
+        d_off = np.where(on, 0.0, np.where(bg >= 0, d, 1.0)).astype(np.float32)
         r = _FIELD_CORE_RADIUS
-        h, w = core.shape
+        core = d_off.copy()
+        ph, pw = core.shape
         pad = np.pad(d_off, r)
         for dy in range(2 * r + 1):
             for dx in range(2 * r + 1):
-                np.maximum(core, pad[dy : dy + h, dx : dx + w], out=core)
-        span = np.maximum(core, _FIELD_CORE_FLOOR)
-        weight = np.where(edge, np.clip(1.0 - d / span, 0.0, 1.0), 0.0)
-        bg_t = np.clip(bg_idx, 0, None).astype(np.float64) / (len(lut) - 1)
-        bg_values = np.asarray(self.norm0.inverse(bg_t), dtype=np.float64)
-        self._decoded = (on, values, edge, weight, bg_values, bg_old)
-        return self._decoded
+                np.maximum(core, pad[dy : dy + ph, dx : dx + pw], out=core)
+        weight = np.clip(1.0 - d / np.maximum(core, _FIELD_CORE_FLOOR), 0.0, 1.0)
+        wq = np.rint(weight[inner] * 255.0).astype(np.uint8)
+        keep = edge[inner] & (wq > 0)
+        if not keep.any():
+            return None
+        ys, xs = np.nonzero(keep)
+        return (
+            ys.astype(np.uint16),
+            xs.astype(np.uint16),
+            bg[inner][keep].astype(np.uint16),
+            wq[keep],
+        )
 
     def _recolor(self):
+        """一轮二维分块做完全部：查表写场像素、再给叠加物的抗锯齿边缘带上底色的变化量。
+
+        **边缘不再是一份与图同长的常驻表**（#538 评审第六轮）：密集的网格线 / 阴影线能让四成
+        像素都是边缘，按每个 7 字节常驻，再加一次整体拼接，内存就不再「只剩输出本身」（实测
+        峰值斜率 21.9 B/像素）。现在逐块现算、逐块应用；各块的结果只在累计不超过
+        `_FIELD_EDGE_CACHE` 时留作下次换色的缓存（普通场图的流线边缘远在其下），超了就整份
+        丢掉，此后每次换色逐块重算——慢一些，内存有界。
+        """
         import numpy as np
 
-        key = self._applied
-        hit = self._cache.get(key)
-        if hit is not None:
-            return hit
-        on, values, edge, weight, bg_values, bg_old = self._decode()
         m = self.cb.mappable
-        arr = np.asarray(self.original)
-        out = arr.astype(np.float32, copy=True)
-        if arr.dtype.kind != "f":
-            out /= 255.0
-        out[on, :3] = np.asarray(m.to_rgba(values[on]), dtype=np.float32)[:, :3]
-        if edge.any():
-            new_bg = np.asarray(m.to_rgba(bg_values[edge]), dtype=np.float32)[:, :3]
-            shift = (new_bg - bg_old[edge]) * weight[edge][:, None]
-            out[edge, :3] = np.clip(out[edge, :3] + shift, 0.0, 1.0)
-        self._cache = {key: out}  # 只留最近一份：拖色阶滑块时不攒内存
+        lut = self.tube.lut
+        # 格号 → 新颜色：只有 N 项。格 i 的数值是 norm0 的反函数在它的色图位置 t_i 处
+        values = np.asarray(self.norm0.inverse(self.tube.t), dtype=np.float64)
+        new = np.clip(np.rint(np.asarray(m.to_rgba(values))[:, :3] * 255.0), 0, 255)
+        new = new.astype(np.uint8)
+        shift_tab = new.astype(np.float32) - lut  # 每一格的底色变化量
+        a = np.asarray(self.original)
+        h, w = a.shape[:2]
+        c = 4 if a.shape[2] == 4 else 3
+        if self._buf is None:
+            self._buf = np.empty((h, w, c), np.uint8)
+        out = self._buf
+        table = self.tube.dense()
+        cache = self._edges  # None：还没算过；list：逐块缓存；False：太密，每次重算
+        building = cache is None
+        store: list = []
+        stored = 0
+        halo = _FIELD_BG_RADIUS + _FIELD_CORE_RADIUS + 1
+        for k, (y0, y1, x0, x1, hy0, hy1, hx0, hx1) in enumerate(_tiles(h, w, halo)):
+            sub = a[hy0:hy1, hx0:hx1]
+            rgb8 = _rgb8(sub)
+            idx = table[_pack(rgb8)]
+            on = _field_mask((idx != _OFF_MAP) & _opaque(sub))
+            inner = (slice(y0 - hy0, y1 - hy0), slice(x0 - hx0, x1 - hx0))
+            ob = out[y0:y1, x0:x1]
+            ob[..., :3] = rgb8[inner]
+            if c == 4:
+                ob[..., 3] = _alpha8(sub[inner])
+            on_i = on[inner]
+            ob[on_i, :3] = new[idx[inner][on_i]]
+            edges = (
+                cache[k] if isinstance(cache, list) else self._tile_edges(rgb8, on, idx, lut, inner)
+            )
+            if edges is not None:
+                ys, xs, b, wq = edges
+                # 边缘像素不在色图上，上面那一步原样写进了缓冲：在原色上叠加底色的变化量
+                px = ob[ys, xs, :3].astype(np.float32)
+                shift = shift_tab[b] * (wq.astype(np.float32)[:, None] / 255.0)
+                ob[ys, xs, :3] = np.clip(np.rint(px + shift), 0, 255).astype(np.uint8)
+            if building:
+                stored += 0 if edges is None else sum(x.nbytes for x in edges)
+                if stored > _FIELD_EDGE_CACHE:
+                    building = False  # 太密：不留缓存，此后每次逐块重算
+                    store = []
+                    self._edges = False
+                else:
+                    store.append(edges)
+        if building:
+            self._edges = store
         return out
 
 
@@ -731,30 +979,90 @@ def _orphan_mappable(m) -> bool:
     return m is not None and not isinstance(m, Artist) and getattr(m, "axes", None) is None
 
 
-def _field_fit(arr, cmap) -> float:
-    """这张位图有多大比例的不透明像素是 `cmap` 画的（抽样）；铺不开色图全长回 0。"""
+def _sample_windows(h: int, w: int):
+    """配对抽样的窗口：把图切成 `_FIELD_WINDOW` 见方的格，**行、列各自均匀**取 gy × gx 格，
+    总像素不超 `_FIELD_SAMPLE`。窗口里的像素真实相邻，连片判据在窗口里与重着色时是同一个
+    判据。别按扁平序号隔 k 格取：k 是列数的倍数时全部落在同一列（3000² 的图实测只取到
+    最左一列，色图铺开 2%，配对失败）。"""
+    import math
+
+    sh, sw = min(h, _FIELD_WINDOW), min(w, _FIELD_WINDOW)
+    ny, nx = math.ceil(h / sh), math.ceil(w / sw)
+    n = max(1, _FIELD_SAMPLE // (sh * sw))
+    gy = max(1, min(ny, n, round(math.sqrt(n * ny / nx))))
+    # 某一向不止一格时至少取头尾两格：按长宽比算出 1 的话只取得到第 0 格，另一端永远看不到
+    # （#538 评审第四轮：100×10000 只抽到最上面 64 行）
+    if ny > 1:
+        gy = max(gy, 2)
+    gx = max(1, min(nx, n // gy))
+    if nx > 1:
+        gx = max(gx, 2)
+    # 强制两端之后按总数把另一向收回来（n ≥ 48，2 × 2 总放得下）
+    gy = max(min(gy, n // gx), 2 if ny > 1 else 1)
+    rows = sorted({round(i * (ny - 1) / max(1, gy - 1)) for i in range(gy)})
+    cols = sorted({round(j * (nx - 1) / max(1, gx - 1)) for j in range(gx)})
+    for r in rows:
+        for c in cols:
+            y0, x0 = r * sh, c * sw
+            yield y0, min(h, y0 + sh), x0, min(w, x0 + sw)
+
+
+def _field_fit(arr, tube: "_ColourTube") -> float:
+    """这张位图有多大比例的不透明像素是 `tube` 那条色图画的**场**（抽样）；铺不开色图全长回 0。
+
+    「是场」与重着色时同一个判据：在色图上且连成片（`_field_mask`）。从前这里只问在不在
+    色图上、重着色时却还要连成片，两侧判据不同源——单行的色带在这里算吻合、在那里一个
+    像素都不算场，于是报了已绑定却换不了色（#538 评审第三轮）。
+    """
     import numpy as np
 
     a = np.asarray(arr)
     if a.ndim != 3 or a.shape[-1] not in (3, 4) or a.size == 0:
         return 0.0
-    stride = max(1, int(np.ceil(np.sqrt(a.shape[0] * a.shape[1] / _FIELD_SAMPLE))))
-    sub = a[::stride, ::stride]
-    lut = _cmap_lut8(cmap)
-    near = _nearest_lut(_rgb8(sub), lut)
-    if near is None:
+    n_opaque = 0
+    fields = []
+    for y0, y1, x0, x1 in _sample_windows(a.shape[0], a.shape[1]):
+        sub = a[y0:y1, x0:x1]
+        opaque = _opaque(sub)
+        idx = tube.lookup(_pack(_rgb8(sub)))
+        field = _field_mask((idx != _OFF_MAP) & opaque)
+        n_opaque += int(opaque.sum())
+        fields.append(idx[field])
+    got = np.concatenate(fields) if fields else np.empty(0, np.uint16)
+    if not n_opaque or not len(got):
         return 0.0
-    idx, dist = near
-    opaque = _opaque(sub)
-    if not opaque.any():
+    lo, hi = np.percentile(tube.t[got], [2, 98])
+    if hi - lo < _FIELD_MIN_SPREAD:
         return 0.0
-    on = (dist <= _FIELD_TOL) & opaque
-    if not on.any():
-        return 0.0
-    lo, hi = np.percentile(idx[on], [2, 98])
-    if (hi - lo) / (len(lut) - 1) < _FIELD_MIN_SPREAD:
-        return 0.0
-    return float(on.sum()) / float(opaque.sum())
+    return float(len(got)) / float(n_opaque)
+
+
+def _declared_parents(cb):
+    """色条自己声明的宿主（`fig.colorbar(..., ax=...)` 记在 `_colorbar_info["parents"]`）；
+    `cax=` 建的没有这份记录，回 None。"""
+    info = getattr(getattr(cb, "ax", None), "_colorbar_info", None)
+    parents = info.get("parents") if isinstance(info, dict) else None
+    return list(parents) if parents else None
+
+
+def _orphan_scopes(cbar_of_ax: dict, axes) -> list[tuple]:
+    """独立 mappable 色条 → 它可以认领的那几个子图，**声明了宿主的排在前面**。
+
+    `ax=` 建的色条已经说了自己描述谁：只在它的 parents 里找（#527 评审 P1：多面板图上
+    `ax=ax0` 的色条曾认领 ax1 上一张恰好同色阶的无关图像；两条各挂一边的色条，先处理的
+    那条把两张都拿走）。`cax=` 建的没说，才在全图里找——排在后面，只拿声明过宿主的
+    色条挑剩下的，于是「一条色条 + 一格共用色条的多张图」照旧整组认领。
+    """
+    free = [ax for ax in axes if ax not in cbar_of_ax]
+    out = []
+    for cb in cbar_of_ax.values():
+        if not _orphan_mappable(getattr(cb, "mappable", None)):
+            continue
+        parents = _declared_parents(cb)
+        scope = [ax for ax in free if ax in parents] if parents else free
+        out.append((parents is None, cb, scope))
+    out.sort(key=lambda t: t[0])  # 稳定排序：有宿主的在前，各组内保持原序
+    return [(cb, scope) for _, cb, scope in out]
 
 
 def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
@@ -762,26 +1070,25 @@ def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
 
     只在两边都没有别的解释时才配对：色条的 mappable 不画在任何地方、也没有已画出的
     图元与它共用 norm（那是色阶兄弟，`scale_siblings` 管）；位图是已经成色的三 / 四
-    通道数组。一张位图只认一条色条，取吻合度最高、且过 `_FIELD_MIN_ON` 的那张。
+    通道数组。一张位图只认一条色条，取吻合度最高、且过 `_FIELD_MIN_ON` 的那张；只在色条
+    声明的宿主里找（`_orphan_scopes`）。不设像素数上限：全图处理按二维小块走，常驻内存
+    只有输出本身（`RasterField`），配对了就一定重着色得出来。
     可重入：已经绑过的位图（`_mm_field`）不再动。
     """
-    drawn = [
-        a
-        for ax in axes
-        if ax not in cbar_of_ax
-        for a in [*getattr(ax, "images", []), *getattr(ax, "collections", [])]
-    ]
-    images = [
-        im
-        for ax in axes
-        if ax not in cbar_of_ax
-        for im in getattr(ax, "images", [])
-        if getattr(getattr(im, "get_array", lambda: None)(), "ndim", 0) == 3
-    ]
+
+    def _rasters(scope):
+        return [
+            im
+            for ax in scope
+            for im in getattr(ax, "images", [])
+            if getattr(getattr(im, "get_array", lambda: None)(), "ndim", 0) == 3
+        ]
+
+    images = _rasters([ax for ax in axes if ax not in cbar_of_ax])
     taken = {id(im) for im in images if getattr(im, "_mm_field", None) is not None}
-    for cb in cbar_of_ax.values():
-        m = getattr(cb, "mappable", None)
-        if not _orphan_mappable(m) or getattr(m.norm, "vmin", None) is None:
+    for cb, scope in _orphan_scopes(cbar_of_ax, axes):
+        m = cb.mappable
+        if getattr(m.norm, "vmin", None) is None:
             continue
         try:
             m.norm.inverse(0.5)  # BoundaryNorm 这类不可逆：反解不出数值，不配对
@@ -791,20 +1098,28 @@ def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
             getattr(im, "_mm_field", None) is not None and im._mm_field.cb is cb for im in images
         ):
             continue
-        if any(getattr(a, "norm", None) is m.norm for a in drawn):
+        # 本色条作用域里有图元被**脚本**交了同一个 norm：色条描述的是那些图元，不另配位图。
+        # **只看本作用域**（同一个 ScalarMappable 交给左右两个子图各建一条色条时，左边的不该
+        # 挡住右边，#538 评审第七轮），**认领来的不算**（`_shares_norm_by_script`）
+        if _shares_norm_by_script(m, scope):
+            continue
+        candidates = [im for im in _rasters(scope) if id(im) not in taken]
+        if not candidates:
+            continue  # 没有候选位图就不建查色表（它跟色图格数成正比，不白花）
+        try:
+            tube = _ColourTube(m.get_cmap())
+        except Exception:  # noqa: BLE001 — 建不出查色表：不配对
             continue
         best, score = None, _FIELD_MIN_ON
-        for im in images:
-            if id(im) in taken:
-                continue
+        for im in candidates:
             try:
-                fit = _field_fit(im.get_array(), m.get_cmap())
+                fit = _field_fit(im.get_array(), tube)
             except Exception:  # noqa: BLE001 — 量不了就当不吻合
                 fit = 0.0
             if fit >= score:
                 best, score = im, fit
         if best is not None:
-            RasterField(best, cb)
+            RasterField(best, cb, tube)
             taken.add(id(best))
 
 
@@ -847,25 +1162,27 @@ def adopt_equal_scales(cbar_of_ax: dict, axes) -> None:
     「数值相同」提升成「同一个对象」：色条的 mappable 不画在任何地方（它存在的唯一
     意义就是描述别的图元），图元没有自己的色条，色图相同，norm 签名逐项相同。
     换上的 norm 与原来的数值一样，画面一个像素不变；换完之后兄弟、别名组、
-    `scale_gids` 全走原有那一套。
+    `scale_gids` 全走原有那一套。只在色条声明的宿主里认领（`_orphan_scopes`），一个图元
+    只归一条色条。
     """
-    drawn = [
-        a
-        for ax in axes
-        if ax not in cbar_of_ax
-        for a in [*getattr(ax, "images", []), *getattr(ax, "collections", [])]
-        if hasattr(a, "norm")
-        and hasattr(a, "get_cmap")
-        and getattr(a, "get_array", lambda: None)() is not None
-    ]
-    for cb in cbar_of_ax.values():
-        m = getattr(cb, "mappable", None)
-        if not _orphan_mappable(m):
-            continue
+
+    def _mapped(scope):
+        return [
+            a
+            for ax in scope
+            for a in [*getattr(ax, "images", []), *getattr(ax, "collections", [])]
+            if hasattr(a, "norm")
+            and hasattr(a, "get_cmap")
+            and getattr(a, "get_array", lambda: None)() is not None
+        ]
+
+    for cb, scope in _orphan_scopes(cbar_of_ax, axes):
+        m = cb.mappable
         sig = _norm_signature(m.norm)
-        if sig is None or any(a.norm is m.norm for a in drawn):
+        # 本作用域里有图元被脚本交了同一个 norm 就不再认领（`_shares_norm_by_script`）
+        if sig is None or _shares_norm_by_script(m, scope):
             continue
-        for a in drawn:
+        for a in _mapped(scope):
             if getattr(a, "colorbar", None) is not None or getattr(a, "_mm_adopted", False):
                 continue
             if getattr(getattr(a, "get_array", lambda: None)(), "ndim", 0) == 3:
@@ -873,6 +1190,23 @@ def adopt_equal_scales(cbar_of_ax: dict, axes) -> None:
             if _norm_signature(a.norm) == sig and _same_cmap(a.get_cmap(), m.get_cmap()):
                 a.norm = m.norm
                 a._mm_adopted = True  # noqa: SLF001 — 可重入：认领过的不再比
+
+
+def _shares_norm_by_script(m, scope) -> bool:
+    """`scope` 里有没有图元被**脚本**交了 `m` 的那个 norm 对象。
+
+    这道闸问的是「这条色条是不是已经有了脚本声明的描述对象」——有的话它们是色阶兄弟
+    （`scale_siblings`），不再按数值认领、也不另配位图。两个限定缺一不可：
+    **只看本作用域**——同一个 ScalarMappable 交给 `ax=a0` 与 `ax=a1` 各建一条色条时，左边的
+    共用者不该挡住右边（#538 评审第七轮）；**`adopt_equal_scales` 认领来的不算**——那是我们
+    换上的 norm，不是脚本的声明，算上的话同一个 ScalarMappable 再挂一条 `cax=` 的通用色条
+    时，有宿主的那条先认领了 a0，通用那条看到「已有共用者」整条跳过，a1 没人认（第八轮）。
+    """
+    return any(
+        getattr(a, "norm", None) is m.norm and not getattr(a, "_mm_adopted", False)
+        for ax in scope
+        for a in [*getattr(ax, "images", []), *getattr(ax, "collections", [])]
+    )
 
 
 def field_image_of(cb, axes):
