@@ -106,6 +106,10 @@ const manifest = (o: { title?: number; ylabel?: number; tick?: number; spine?: n
       f('color', 'color', '#1f77b4'),
       f('linewidth', 'number', 2, { min: 0.1, max: 5, step: 0.1, unit: 'pt' }),
     ]),
+    el('axes_0.lines_1', 'line', [
+      f('color', 'color', '#ff7f0e'),
+      f('linewidth', 'number', 2, { min: 0.1, max: 5, step: 0.1, unit: 'pt' }),
+    ]),
     el('axes_0.colorbar_0', 'colorbar', [
       f('tick_fontsize', 'number', o.tick ?? 15, { min: 3, max: 36, step: 0.5, unit: 'pt' }),
     ]),
@@ -312,6 +316,18 @@ describe('属性页的各个入口都按页面值进出', () => {
     await seed(0.6, manifest({ ylabel: 12 }))
     await mount(['axes_0.xlabel', 'axes_0.ylabel'])
     expect(inspectorSize().value, '「多个值」不拿第一个冒充全部').toBe('')
+  })
+
+  it('多选批量的通用行（两条曲线的线宽）：显示页面值，写回脚本值', async () => {
+    await seed(0.6)
+    await mount(['axes_0.lines_0', 'axes_0.lines_1'])
+    // 两条曲线的公共字段只有颜色与线宽：唯一一个非取色的输入框就是线宽
+    const lw = () =>
+      region('inspector').querySelector<HTMLInputElement>('input:not([type="color"])')!
+    expect(lw().value).toBe('1.2')
+    await type(lw(), '0.9')
+    expect(overrideOf('axes_0.lines_0', 'linewidth')).toBe(1.5)
+    expect(overrideOf('axes_0.lines_1', 'linewidth')).toBe(1.5)
   })
 
   it('边框卡：「全部」与逐边是同一种单位，四边一致时不报「多个值」，写回脚本值', async () => {
