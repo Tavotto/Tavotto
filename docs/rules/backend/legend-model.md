@@ -27,6 +27,16 @@
   消失。隐藏的项 Text 留在 index 里、manifest 报图例的框（否则「恢复显示」
   没入口）。前端投影 `web/src/lib/legendModel.ts`，两侧常量严格同源
   （`tests/test_legend_model_pairs.py`）。
+- **自定义 handler 画的整格定格复刻（2026-09-24，用户 Figure2）**：matplotlib 不保存
+  `legend(handles, …)` 收到的原始 handle，`legend_handles` 里只有 handler 回的**第一个**
+  artist——脚本 `handler_map` 一格画 24 段矩形的色带，快照只剩第一段，任何重建都把它画成
+  一块纯色。条目模型建时 `_freeze_entry` 比一格里的 artist 数与「从那一个示意线按默认
+  handler 重派生」的数，多出来就把整格副本存成 `FrozenLegendHandle`（只收画在这一格自己
+  坐标里的；否则不定格），重建时 `_FrozenHandler` 按新格尺寸等比铺回。**只对没有源的项**
+  （`is_frozen`）：有源的照旧从源派生（误差棒）。定格项不发 handle_*（一格里没有「那一条」
+  线的样式可改），`sync_legends` 不碰它。示意线指纹带**未缩放的虚线节奏**（`_dash_key`）：
+  `get_linestyle()` 对任何虚线元组都回 `'--'`，脚本给代理示意线的短虚线曾被误判成跟随源、
+  第一次 apply 就换回源的长虚线。看护 `tests/test_legend_custom_handler.py`。
 - **图例位置模型（2026-09-07，ADR 0034 修订）**：「图例摆在哪」的三条 prop
   （`loc` 预设 / `loc_frac` 画布拖动 / `loc_anchor` 外侧锚点）改的是同一件事，
   而且会互相盖写（`set_loc` 之前必须清锚框，设锚框又不能动 loc）——所以走边框 /

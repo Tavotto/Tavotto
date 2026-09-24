@@ -15,6 +15,7 @@ matplotlib + 基座 `pathgeom`（`frac_to_display`）：不 import `overrides`�
 
 from __future__ import annotations
 
+import copy
 import inspect
 import math
 import sys
@@ -26,9 +27,11 @@ from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.collections import Collection, LineCollection
 from matplotlib.legend import Legend
+from matplotlib.legend_handler import HandlerBase
 from matplotlib.lines import Line2D
 from matplotlib.patches import BoxStyle, Patch
 from matplotlib.text import Text
+from matplotlib.transforms import Affine2D
 
 import pathgeom
 from axestraversal import ordered_axes
@@ -318,6 +321,18 @@ class LegendEntries:
         # 快照只能造出 Line2D（HandlerLineCollection），拿快照比会永远对不上
         self.orig_fp: list[tuple] = [legend_handle_fingerprint(h) for h in handles[:n]]
         self.pristine: list = [self.snapshot(h) for h in handles[:n]]
+        # 脚本自定义 handler 一格画了好几个 artist（色带 = 24 段矩形 + 描边）时，`pristine`
+        # 只是其中第一个——重建只拿它就把整格画成一块纯色。这种格子原样定格一份（见
+        # `FrozenLegendHandle`）；造不出定格的项是 None，照旧走 `pristine`
+        boxes = _entry_boxes(leg)
+        self.frozen: list = [
+            _freeze_entry(leg, h, boxes[k][0]) if k < len(boxes) else None
+            for k, h in enumerate(handles[:n])
+        ]
+        if any(f is not None for f in self.frozen):
+            custom = dict(leg._custom_handler_map or {})  # noqa: SLF001
+            custom[FrozenLegendHandle] = _FROZEN_HANDLER
+            leg._custom_handler_map = custom  # noqa: SLF001
         self.orig_labels: list[str] = [t.get_text() for t in texts[:n]]
         self.texts: list = texts[:n]
         self.order: list[int] = list(range(n))
@@ -350,10 +365,18 @@ class LegendEntries:
         gid = self.gid_of(j)
         return any((gid, p) in self.state.applied for p in LEGEND_ENTRY_STYLE_PROPS)
 
+    def is_frozen(self, j: int) -> bool:
+        """这一项是脚本自定义 handler 画的、没有源的整格示意：重建时原样复刻，
+        不从单个示意线派生，也不摆 handle_* 控件（一格里没有「那一条」线的样式可改）。
+        有源的项不走这里——它们从源派生，照旧（误差棒就是这样）。"""
+        return self.frozen[j] is not None and self.sources[j] is None
+
     def base_of(self, j: int):
-        """重建 / 同步时这一项该从谁派生：跟随的从源，其余从脚本原样快照。"""
+        """重建 / 同步时这一项该从谁派生：跟随的从源，定格的原样复刻，其余从脚本原样快照。"""
         if self.effective_binding(j) == "follow_source":
             return self.sources[j]
+        if self.is_frozen(j):
+            return self.frozen[j]
         return self.pristine[j]
 
     # ---- 视图 ----
@@ -456,6 +479,20 @@ def _first(seq, default=None):
         return default
 
 
+def _dash_key(h: Line2D):
+    """虚线的**节奏**（未按线宽缩放的 offset + on/off 序列）。`get_linestyle()` 对任何自定义
+    虚线元组都只回 `'--'`：脚本特意给图例配的短虚线 `(0, (3, 2))` 与图中那条 `(0, (5, 3))`
+    指纹相同，被当成「跟随源」，第一次 apply 就换回了源的长虚线。"""
+    pattern = getattr(h, "_unscaled_dash_pattern", None)
+    if not pattern:
+        return None
+    offset, seq = pattern
+    return (
+        round(float(offset or 0.0), 3),
+        None if seq is None else tuple(round(float(x), 3) for x in seq),
+    )
+
+
 def legend_handle_fingerprint(h) -> tuple:
     """示意线的**样式指纹**：两份指纹相等 = 画出来一模一样。
 
@@ -468,6 +505,7 @@ def legend_handle_fingerprint(h) -> tuple:
             kind,
             _rgba(h.get_color()),
             str(h.get_linestyle()),
+            _dash_key(h),
             round(float(h.get_linewidth()), 3),
             str(h.get_marker()),
             round(float(h.get_markersize()), 3),
@@ -523,6 +561,71 @@ def _entry_boxes(leg: Legend) -> list[tuple]:
     return out
 
 
+class FrozenLegendHandle:
+    """脚本自定义 handler 画出来的一整格示意（多个 artist）的**定格副本**。
+
+    matplotlib 不保存 `legend(handles, …)` 收到的原始 handle，也不保存 handler 画了几个
+    artist——`legend_handles` 里只有 `legend_artist()` 回的第一个。所以重建（改内边距 /
+    列数 / 顺序 / 隐藏……）拿不回脚本的自定义画法，只能原样复刻它当初画出的那一格：
+    副本存在这里，`_FrozenHandler` 按新格子的尺寸把它们等比铺进去。
+    """
+
+    def __init__(self, artists: list, box) -> None:
+        self.artists = [copy.copy(a) for a in artists]
+        self.x0, self.y0 = -float(box.xdescent), -float(box.ydescent)
+        self.width, self.height = float(box.width), float(box.height)
+
+
+class _FrozenHandler(HandlerBase):
+    """把 `FrozenLegendHandle` 的副本铺进新的 handlebox（旧格 → 新格的仿射）。"""
+
+    def legend_artist(self, legend, orig_handle, fontsize, handlebox):  # noqa: ARG002
+        f = orig_handle
+        sx = handlebox.width / f.width if f.width else 1.0
+        sy = handlebox.height / f.height if f.height else 1.0
+        place = (
+            Affine2D()
+            .translate(-f.x0, -f.y0)
+            .scale(sx, sy)
+            .translate(-handlebox.xdescent, -handlebox.ydescent)
+        )
+        out = []
+        for a in f.artists:
+            c = copy.copy(a)
+            c.set_transform(place + handlebox.get_transform())
+            handlebox.add_artist(c)
+            out.append(c)
+        return out[0]
+
+
+_FROZEN_HANDLER = _FrozenHandler()
+
+
+def _freeze_entry(leg: Legend, h, box):
+    """这一格要不要定格：脚本画出的 artist 比「从 `h` 按 matplotlib 默认 handler 重派生」
+    多，就定格（重派生会丢东西）；一格只有一个 artist、或者某个 artist 不是画在这一格
+    自己的坐标里（没法按新格子等比铺），就不定格。"""
+    from matplotlib.offsetbox import DrawingArea  # 只在这里用，别污染模块层
+
+    kids = list(box.get_children())
+    if len(kids) <= 1:
+        return None
+    probe = DrawingArea(
+        width=box.width, height=box.height, xdescent=box.xdescent, ydescent=box.ydescent
+    )
+    probe.set_figure(_owning_figure(leg))
+    try:
+        legend_fresh_handle(leg, h, probe)
+    except Exception:  # noqa: BLE001 — 派生不出来就当它只能造出 0 个
+        pass
+    if len(probe.get_children()) >= len(kids):
+        return None
+    base = box.get_transform()
+    if not all(Artist.get_transform(a) == base for a in kids):
+        return None
+    return FrozenLegendHandle(kids, box)
+
+
 def _legend_replace_handle(leg: Legend, k: int, orig, copy_of=None) -> bool:
     """把显示位 k 的示意线换成从 `orig` 现派生的那份。
 
@@ -576,6 +679,9 @@ def sync_legends(state: RebuildState) -> None:
             try:
                 if binding == "follow_source":
                     _legend_replace_handle(leg, k, model.sources[j])
+                elif model.is_frozen(j):
+                    # 定格的整格只由重建按原样复刻；这里没有「与原样不一致」可比
+                    continue
                 elif not model.has_style_override(j):
                     # custom 而没有 override：示意线该是脚本原样的样子（撤掉
                     # binding override 之后也退回脚本原样）。指纹相同就不动——

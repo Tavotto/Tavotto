@@ -2873,7 +2873,8 @@ def _legend_entry_fields(t, state: FigState, gid: str) -> list[dict]:
                 "group": "图例项",
             }
         )
-    props = legend_handle_props(h)
+    # 脚本自定义 handler 画的整格（色带等）原样定格：一格里没有「那一条」示意线的样式可改
+    props = () if model.is_frozen(j) else legend_handle_props(h)
     if "handle_color" in props:
         fields.append(
             {
