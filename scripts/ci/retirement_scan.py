@@ -125,7 +125,7 @@ def scan_source(root: Path = ROOT, roots: tuple[str, ...] = SOURCE_ROOTS) -> dic
         except SyntaxError as exc:  # .spec 也是 Python；解析不了就是它自己坏了
             hits.append(
                 {
-                    "file": str(f.relative_to(root)),
+                    "file": f.relative_to(root).as_posix(),
                     "line": exc.lineno,
                     "what": f"SyntaxError: {exc.msg}",
                 }
@@ -133,7 +133,7 @@ def scan_source(root: Path = ROOT, roots: tuple[str, ...] = SOURCE_ROOTS) -> dic
             continue
         parsed += 1
         for line, what in _imports_in(tree):
-            hits.append({"file": str(f.relative_to(root)), "line": line, "what": what})
+            hits.append({"file": f.relative_to(root).as_posix(), "line": line, "what": what})
     return {"ok": not hits, "files": parsed, "hits": hits}
 
 
@@ -427,7 +427,7 @@ def _font_verdict(found: set[str]) -> dict:
 
 def scan_dist(dist: Path) -> dict:
     natives = sorted(
-        str(p.relative_to(dist))
+        p.relative_to(dist).as_posix()
         for p in dist.rglob("*")
         if p.is_file() and p.suffix.lower() in NATIVE_SUFFIXES
     )

@@ -1061,3 +1061,58 @@ def test_built_runtime_does_not_write_into_itself_while_rendering():
     after = {p for p in RUNTIME_DIR.rglob("*") if p.is_file()}
     created = after - before
     assert not created, f"渲染往安装目录里写了东西: {sorted(created)[:10]}"
+
+
+_CHILD_PIPE_PROBE = r"""
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("tavotto_entry", sys.argv[1])
+entry = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(entry)
+# 模拟 Windows 上 console=False 的 Tavotto.exe：bootloader 把三个标准流都设成 None
+sys.stdin = sys.stdout = sys.stderr = None
+if sys.argv[2] == "reopen":
+    entry._reopen_child_pipes()
+# render child 的用法：按字节读 stdin 的一行、按字节写 stdout
+line = sys.stdin.buffer.readline()
+sys.stdout.buffer.write(b"echo:" + line)
+sys.stdout.flush()
+"""
+
+
+@pytest.mark.parametrize("mode", ["reopen", "no-reopen"])
+def test_render_child_gets_real_pipes_even_when_the_gui_exe_has_none(mode):
+    """Codex #539：Windows 的 console=False 冻结 exe 里 sys.stdin / stdout 是 None，render child 以同一个 exe
+    自起时，入口必须按 fd 把父进程给的管道重新包成流——否则 child 一碰 `sys.stdout.buffer` 就崩，桌面版的预览
+    与导出全报 `render_child_died`。`no-reopen` 是活的尺子：不重新打开时这条路确实走不通。"""
+    import subprocess
+
+    proc = subprocess.run(
+        [sys.executable, "-c", _CHILD_PIPE_PROBE, str(REPO / "packaging" / "entry.py"), mode],
+        input=b'{"op":"ping"}\n',
+        capture_output=True,
+        timeout=60,
+    )
+    if mode == "reopen":
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout == b'echo:{"op":"ping"}\n'
+    else:
+        assert proc.returncode != 0 and proc.stdout == b""
+
+
+def test_reopen_child_pipes_leaves_existing_streams_alone(monkeypatch):
+    """有真终端 / 流本来就在的（源码模式、console=True 的 tavotto-cli），一个都不换。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("tavotto_entry", REPO / "packaging" / "entry.py")
+    entry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(entry)
+    before = (sys.stdin, sys.stdout, sys.stderr)
+    entry._reopen_child_pipes()
+    assert (sys.stdin, sys.stdout, sys.stderr) == before
+    assert (
+        "_reopen_child_pipes()"
+        in (REPO / "packaging" / "entry.py")
+        .read_text(encoding="utf-8")
+        .split("if sys.argv[1:2] == [RENDER_CHILD_FLAG]:", 1)[1]
+        .split("from tavotto.rendercore import renderchild", 1)[0]
+    ), "render child 分支里必须先重新打开管道"
