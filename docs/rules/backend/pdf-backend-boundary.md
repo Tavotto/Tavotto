@@ -44,8 +44,9 @@
   **换行单元**的判据，**不再当覆盖判据用**——它量的是码位，不是「这张脸画不
   画得出这个字」。浏览器没有字体引擎，读的是生成物
   `pdfbackend/canvas_coverage.json`（`scripts/gen_canvas_coverage.py --check`
-  看住它与真字体一致）。**本仓库不分发任何字体**，看护
-  `tests/test_font_provenance.py`。
+  看住它与真字体一致）。**git 里不含任何字体二进制**；发行物（wheel / 桌面包）只带 allowlist 按 sha256
+  钉住的 13 张 OFL 脸，构建时由 `scripts/fetch_fonts.py` 取进包里（ADR 0060 / 0072）。看护
+  `tests/test_font_provenance.py`（git 零字体 + 包内恰好是 allowlist）与 `tests/test_rendercore_fonts.py`（每条打包步骤之前取字体）。
 - **本机字体族随 manifest 下发（2026-09-13，用户反馈「支持的字体太少」）**：
   `manifest.installed_font_families()` 问的是 matplotlib 自己的 `fontManager.ttflist`
   （它认得的就是渲染时解析得到的，所以列出来的每一个都画得出来；AFM 不列，`.` 开头的
