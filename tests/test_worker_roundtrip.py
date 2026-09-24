@@ -1065,6 +1065,113 @@ def test_points_anchors_dragged_across_their_reference_edge_stay_put(tmp_path):
         proc.wait(timeout=10)
 
 
+CATEGORICAL_ARROW_SCRIPT = """\
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    groups = ["对照组", "处理 A", "处理 B"]
+    ax.bar(groups, [3.1, 5.4, 4.2])
+    ax.annotate("", xy=("处理 A", 5.6), xytext=("对照组", 3.3), arrowprops=dict(arrowstyle="->"))
+    fig.savefig("CatArrow.pdf")
+"""
+
+
+def test_pure_arrow_on_categorical_axis_is_draggable(tmp_path):
+    """坐标写成组名的纯箭头注释（分类轴）：出端点、拖动后落在请求处、预览与导出不抛。
+
+    「一元素数组转 float」那一维由下一条用例单独钉：它在 matplotlib 3.8 上才出现，
+    而 3.8 自己的 `Annotation._get_xy` 也是 `float(convert_xunits(x))`——把那条弃用当
+    错误时 matplotlib 自己的 draw 先炸，端到端在任何一档上都量不到我们这一行。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_cat.py").write_text(CATEGORICAL_ARROW_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_cat.py", figs, tmp_path)
+    gid = "axes_0.texts_0.arrow"
+    try:
+        built = _rpc(proc, {"cmd": "build"})
+        assert built.get("ok"), built
+        man = _rpc(proc, {"cmd": "override", "stem": "CatArrow", "patches": []})["manifest"]
+        el = next(e for e in man["elements"] if e["gid"] == gid)
+        pts = el.get("arrow_endpoints")
+        assert pts and len(pts) == 2, el
+        assert pts[0][0] < pts[1][0]  # 尾在「对照组」、头在「处理 A」
+        target = [round(pts[0][0] + 0.05, 4), pts[0][1], round(pts[1][0] + 0.05, 4), pts[1][1]]
+        patches = [{"gid": gid, "prop": "endpoints_frac", "value": target}]
+        resp = _rpc(proc, {"cmd": "override", "stem": "CatArrow", "patches": patches})
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        moved = next(e for e in resp["manifest"]["elements"] if e["gid"] == gid)
+        got = [v for p in moved["arrow_endpoints"] for v in p]
+        assert got == pytest.approx(target, abs=2e-4), got
+        png = _rpc(proc, {"cmd": "preview_png", "stem": "CatArrow", "patches": patches})
+        assert png.get("ok") is True, png
+        pdf = tmp_path / "cat.pdf"
+        exp = _rpc(
+            proc,
+            {
+                "cmd": "export",
+                "stem": "CatArrow",
+                "patches": patches,
+                "path": str(pdf),
+                "format": "pdf",
+                "dpi": 300,
+            },
+        )
+        assert exp.get("ok") is True, exp
+        assert pdf.exists() and pdf.stat().st_size > 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+_UNIT_SCALAR_DRIVER = r"""
+import sys, warnings
+sys.path.insert(0, sys.argv[1])
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import overrides
+
+fig, ax = plt.subplots()
+ax.bar(["对照组", "处理 A", "处理 B"], [3.1, 5.4, 4.2])
+ann = ax.annotate("", xy=("处理 A", 5.6), xytext=("对照组", 3.3), arrowprops=dict(arrowstyle="->"))
+ax.figure.canvas.draw()
+want = overrides.annotation_arrow_display(ann)
+
+# matplotlib 3.8 的分类换算回**一元素数组**（3.10 / 3.11 回标量）：按 3.8 的形状喂，
+# 与这台机器上装的是哪一档无关
+cx, cy = ann.convert_xunits, ann.convert_yunits
+ann.convert_xunits = lambda v: np.atleast_1d(np.asarray(cx(v), dtype=float))
+ann.convert_yunits = lambda v: np.atleast_1d(np.asarray(cy(v), dtype=float))
+with warnings.catch_warnings():
+    warnings.simplefilter("error", DeprecationWarning)
+    got = overrides.annotation_arrow_display(ann)
+assert np.allclose(np.asarray(got), np.asarray(want)), (got, want)
+print("OK")
+"""
+
+
+def test_annotation_anchor_conversion_takes_the_single_element_not_float_of_array():
+    """注释锚点的单位换算结果是一元素数组时（matplotlib 3.8 的分类轴），取出那个元素再
+    转数字，不对数组调 `float()`——后者在 NumPy ≥ 1.25 是 DeprecationWarning、将来报错，
+    到那时图里有一根组名坐标的纯箭头注释，manifest 就建不出来。这里把那条弃用当错误，
+    按 3.8 的返回形状喂换算函数：与装的是哪一档 matplotlib 无关，每档都量得到。"""
+    engine = Path(__file__).resolve().parent.parent / "src" / "tavotto" / "engine"
+    out = subprocess.run(
+        [WORKER_PY, "-c", _UNIT_SCALAR_DRIVER, str(engine)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert out.stdout.strip().endswith("OK"), out.stdout
+
+
 def test_pure_arrow_annotation_head_dragged_out_of_axes_stays_drawn(tmp_path):
     """头拖出子图范围也照画：'data' 锚点离开数据范围时 matplotlib 默认整条注释不画
     （`annotation_clip`）；端点是 figure 锚定的，拖到哪就画在哪。还原时 clip 一并还原。"""

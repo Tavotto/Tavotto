@@ -644,6 +644,13 @@ def annotation_arrow_owner(a, text: str | None = None):
     return ann
 
 
+def _unit_scalar(v) -> float:
+    """单位换算结果 → 一个 float。分类轴（坐标写成组名）的换算在 matplotlib 3.8 上回的是
+    **只有一个元素的数组**：直接 `float()` 在 NumPy ≥ 1.25 给 DeprecationWarning、将来报错
+    ——到那时图里只要有这样一根纯箭头注释，manifest 就建不出来。先取出唯一的元素。"""
+    return float(np.asarray(v, dtype=float).reshape(-1)[0])
+
+
 def _ann_point_display(ann, xy, coords):
     """注释的一个锚点 → display 像素。与 `Annotation._get_xy` 同一算法（'data'
     分量先过单位换算），只用于可逆坐标系（见 `_ann_coords_invertible`），
@@ -651,9 +658,9 @@ def _ann_point_display(ann, xy, coords):
     x, y = xy
     xc, yc = coords if isinstance(coords, tuple) else (coords, coords)
     if xc == "data":
-        x = float(ann.convert_xunits(x))
+        x = _unit_scalar(ann.convert_xunits(x))
     if yc == "data":
-        y = float(ann.convert_yunits(y))
+        y = _unit_scalar(ann.convert_yunits(y))
     return ann._get_xy_transform(None, coords).transform((x, y))  # noqa: SLF001
 
 
