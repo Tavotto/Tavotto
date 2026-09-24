@@ -522,7 +522,11 @@ def run(
     sid = uuid.uuid4().hex[:12]
     SNAP_DIR.mkdir(parents=True, exist_ok=True)
     _prune_snapshots()
-    snap = SNAP_DIR / f"{sid}__{script}"
+    # 快照名只取文件名：`script` 是相对项目根的登记路径，可以带子目录
+    # （`a/b/fig.py`），整串拼进来会在 SNAP_DIR 下隐式要求一串不存在的父目录，
+    # copy2 当场 FileNotFoundError（#502）。sid 已保证唯一；回滚只认 sidecar
+    # 里记的 `snapshot` 绝对路径，`_prune_snapshots` 按 `{sid}*` 收，都不依赖这里带路径。
+    snap = SNAP_DIR / f"{sid}__{script_path.name}"
     shutil.copy2(script_path, snap)
     # sidecar：进程重启后 revert 仍可从磁盘找回（SESSIONS 只在内存）
     (SNAP_DIR / f"{sid}.json").write_text(

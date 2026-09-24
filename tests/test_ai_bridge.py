@@ -213,3 +213,37 @@ def test_readiness_details_never_leak_account_info(client, monkeypatch):
     ai_bridge.invalidate_capabilities()
     blob = client.get("/api/ai/capabilities?refresh=1").get_data(as_text=True)
     assert "example.com" not in blob and "Someone" not in blob
+
+
+class _StopAfterSnapshot(Exception):
+    pass
+
+
+def test_run_snapshots_a_script_registered_under_subdirectories(tmp_path, monkeypatch):
+    """登记路径带子目录（`a/b/fig.py`）时快照照样建得出来（#502）。
+
+    主语是**快照文件本身**：它在 SNAP_DIR 里、字节等于原脚本，sidecar 记的
+    正是它。旧实现把整串 `a/b/fig.py` 拼进快照名，copy2 在 SNAP_DIR 下找
+    不到 `…__a/b/` 这个父目录，FileNotFoundError。起 Agent 之前停下来即可。
+    """
+    project = tmp_path / "project"
+    script = "DataSave/Figures/fig.py"
+    (project / "DataSave" / "Figures").mkdir(parents=True)
+    (project / script).write_bytes(b"print('fig')\r\n")
+    snap_dir = tmp_path / "snapshots"
+    monkeypatch.setattr(ai_bridge, "SNAP_DIR", snap_dir)
+    monkeypatch.setattr(ai_bridge, "require_usable", lambda agent: None)
+
+    def _stop(*a, **k):
+        raise _StopAfterSnapshot
+
+    monkeypatch.setattr(ai_bridge, "_build_prompt", _stop)
+    with pytest.raises(_StopAfterSnapshot):
+        ai_bridge.run("codex", script, "prompt", str(project))
+
+    (sidecar,) = snap_dir.glob("*.json")
+    meta = json.loads(sidecar.read_text(encoding="utf-8"))
+    snap = snap_dir / f"{meta['id']}__fig.py"
+    assert meta["snapshot"] == str(snap)
+    assert snap.read_bytes() == b"print('fig')\r\n"
+    assert meta["script"] == script
