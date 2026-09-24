@@ -3,10 +3,12 @@ import { emitActivity } from '@/lib/activity'
 import { newId } from '@/lib/id'
 import {
   armNoProjectRecovery,
+  backendErrorMsg,
   fetchOpenProjects,
   fetchProject,
-  fetchRecentProjects,
+  fetchProjectLists,
   openProjectApi,
+  putPinnedProjects,
   removeRecentProject,
   setNoProjectHandler,
   type ProjectStatus,
@@ -54,6 +56,8 @@ interface ProjectState {
   phase: 'loading' | 'open' | 'none'
   project: ProjectStatus | null
   recent: RecentProject[]
+  /** 收藏的项目，按用户排的顺序（左栏「工作区」抽屉）；与最近列表互相独立 */
+  pinned: RecentProject[]
   /** 后端进程里打开着的全部项目（快速切换菜单用） */
   opened: ProjectStatus[]
   /** 启动时探测一次；SSE 断线重连后也可复查 */
@@ -77,6 +81,14 @@ interface ProjectState {
       prepareDocument?: () => Promise<void>
     },
   ) => Promise<ProjectStatus>
+  /**
+   * 整张替换收藏列表（收藏 / 取消 / 排序共用）。失败时列表不动、状态栏说一句；
+   * 成功以后端回来的那份为准（名字、在不在都是后端算的）。
+   */
+  setPinned: (paths: string[]) => Promise<void>
+  togglePin: (path: string) => Promise<void>
+  /** 收藏列表里把第 from 条挪到第 to 条（拖动与「上移 / 下移」共用） */
+  movePinned: (from: number, to: number) => Promise<void>
   remove: (path: string) => Promise<void>
   /** 一次从最近列表移除多条（失效项分组的「全部移除」）；同样不删磁盘内容 */
   removeMany: (paths: string[]) => Promise<void>
@@ -182,6 +194,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   phase: 'loading',
   project: null,
   recent: [],
+  pinned: [],
   opened: [],
   lastDocumentIssue: null,
 
@@ -202,11 +215,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         armNoProjectRecovery()
       }
       setCurrentProjectLabel(project.open ? project.name : null)
-      const [recent, opened] = await Promise.all([
-        fetchRecentProjects(),
+      const [{ recent, pinned }, opened] = await Promise.all([
+        fetchProjectLists(),
         fetchOpenProjects().catch(() => []),
       ])
-      set({ project, recent, opened, phase: project.open ? 'open' : 'none' })
+      set({ project, recent, pinned, opened, phase: project.open ? 'open' : 'none' })
     } catch {
       // 后端不可达时也进 Picker——它会在重试里继续探测
       set({ phase: 'none' })
@@ -215,11 +228,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   refreshRecent: async () => {
     try {
-      const [recent, opened] = await Promise.all([
-        fetchRecentProjects(),
+      const [{ recent, pinned }, opened] = await Promise.all([
+        fetchProjectLists(),
         fetchOpenProjects().catch(() => []),
       ])
-      set({ recent, opened })
+      set({ recent, pinned, opened })
     } catch {
       /* 列表刷新失败不致命 */
     }
@@ -259,6 +272,29 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     void get().refreshRecent()
     emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })
     return status
+  },
+
+  setPinned: async (paths) => {
+    try {
+      set({ pinned: await putPinnedProjects(paths) })
+    } catch (e) {
+      useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
+    }
+  },
+
+  togglePin: async (path) => {
+    const paths = get().pinned.map((p) => p.path)
+    await get().setPinned(
+      paths.includes(path) ? paths.filter((p) => p !== path) : [...paths, path],
+    )
+  },
+
+  movePinned: async (from, to) => {
+    const paths = get().pinned.map((p) => p.path)
+    if (from === to || from < 0 || to < 0 || from >= paths.length || to >= paths.length) return
+    const [moved] = paths.splice(from, 1)
+    paths.splice(to, 0, moved)
+    await get().setPinned(paths)
   },
 
   remove: async (path) => {

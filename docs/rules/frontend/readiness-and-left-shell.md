@@ -88,6 +88,16 @@
   `components/left/elementTreeRerender.test.tsx`（A1 无关提交零重画 / A2 新 manifest 零重画、
   单行 label 或行名变只重画那一行 / A3 selected·tabbable·hidden·locked·expanded 各自只重画
   那一行并显示新状态；观测点是 `<li>` 上 React 记的 props 对象，读不到直接抛）。
+- **左栏「工作区」抽屉（2026-09-24）**：切项目的列表**只有一份**，住在
+  `components/left/WorkspaceList.tsx`（当前 · 收藏 · 最近，最近不截断）。顶栏项目名
+  （`ProjectSwitcher`）只做 `railClick('workspace')`，不再自己弹菜单——两处各列一遍
+  就是两套判据。同名区分 / 筛选 / 失效分组共用 `lib/recentProjects`；「打开文件夹 /
+  新建项目」与 Project Picker 共用 `useProjectEntry`（桌面走系统选择器）。收藏的事实
+  在后端 `config.pinned_projects`，**整张替换**（`PUT /api/projects/pinned`，收藏 /
+  取消 / 排序同一个动作），界面以回包为准、失败不动列表；与最近列表互相独立（从最近
+  移除不取消收藏）。收藏里是用户的项目路径：诊断包的条数化与路径记号两处都要带上它。
+  看护：`components/left/workspaceList.test.tsx`、`tests/test_projects.py` 的 pinned 三条、
+  `tests/test_diagnostics_bundle.py::test_pinned_projects_are_redacted_like_recent_ones`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
   `components/DependencyPrepareDialog.test.tsx`、`components/notificationRail.test.tsx`（「已改用你的环境」）、

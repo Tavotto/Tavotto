@@ -432,7 +432,8 @@
     "problems": "问题",
     "problemsCount_other": "问题 · {{count}}",
     "readiness": "项目接入状态",
-    "settings": "设置"
+    "settings": "设置",
+    "workspace": "工作区"
   },
   "readiness": {
     "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅排版。",
