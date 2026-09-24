@@ -110,14 +110,15 @@ with fa.running_app(paper, tmp / "work") as app:
             pid = t._panel(app, f"analysis/{name}.pdf")["id"]
             st = app.prepare(pid)
             r = st["result"]
+            obs = (r.get("receipt") or {}).get("inputs") or {}
+            files = [f["path"] for f in obs.get("files", [])]
             rec = {
                 "prepare": r["status"],
                 "error": r["error"],
                 "verdict": (st["plan"]["workdir_decision"].get("evidence") or {}).get("verdict"),
-                "inputs": [
-                    f["path"]
-                    for f in ((r.get("receipt") or {}).get("inputs") or {}).get("files", [])
-                ],
+                "inputs_non_venv": [f for f in files if not f.startswith(".venv/")],
+                "inputs_venv_count": sum(1 for f in files if f.startswith(".venv/")),
+                "inputs_truncated": obs.get("truncated"),
             }
             try:
                 rend = app.render(pid)
