@@ -10,6 +10,7 @@ import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 import type { Manifest, PanelInfo } from '@/lib/api'
+import { panelScale } from '@/lib/preflight'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -447,7 +448,67 @@ describe("render:'none'：手势期间不麻烦 matplotlib，收尾时定稿一�
 })
 
 describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是它', () => {
-  it('manifest size_mm 与文档不同：nativeW/H 跟着改，高度按新纵横比调，宽度不动', async () => {
+  /** 摆一个面板、挂上同步器、喂一次渲染回来的图幅，返回同步后的面板。 */
+  async function syncOnce(p: PanelObject, size: [number, number]): Promise<PanelObject> {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    await useDocumentStore.getState().switchDocument(emptyProject(), `d_size_${p.id}`)
+    useDocumentStore.getState().commit(literal('准备'), (d) => {
+      d.objects = [p]
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const Probe = () => {
+      useEngineSync()
+      return null
+    }
+    await act(async () => {
+      root.render(createElement(Probe))
+    })
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: size, elements: [] })
+    })
+    const o = useDocumentStore.getState().doc.objects[0] as PanelObject
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+    return o
+  }
+
+  it('用户缩到 50% 的面板：换了原生图幅之后仍是 50%，宽高各自按比例', async () => {
+    const p = {
+      ...panel('p50', 'Fig1.pdf', 0),
+      w: 37.63,
+      h: 29.34,
+      nativeW: 75.26,
+      nativeH: 58.68,
+      script: null,
+    } as PanelObject
+    const o = await syncOnce(p, [80, 57.6])
+    expect(panelScale(o)).toBeCloseTo(0.5, 6)
+    expect(o.w).toBeCloseTo(40, 6)
+    expect(o.h).toBeCloseTo(28.8, 6)
+  })
+
+  it('转了 90° 的面板：页面包围盒的宽跟内容的高走，缩放比不变', async () => {
+    const p = {
+      ...panel('p90', 'Fig1.pdf', 0),
+      // 包围盒是转过的：页面宽 = 内容高
+      w: 58.68,
+      h: 75.26,
+      nativeW: 75.26,
+      nativeH: 58.68,
+      rotation: 90,
+      script: null,
+    } as PanelObject
+    const o = await syncOnce(p, [80, 57.6])
+    expect(o.w).toBeCloseTo(57.6, 6)
+    expect(o.h).toBeCloseTo(80, 6)
+    expect(panelScale(o)).toBeCloseTo(1, 6)
+  })
+
+  it('manifest size_mm 与文档不同：nativeW/H 跟着改，页面尺寸按同一比例走、缩放比不变', async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     // 文档里是上一次同步到的图幅（磁盘 PDF 的页面），渲染回来的是脚本 figsize
     const p = {
@@ -477,9 +538,11 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
     })
     const o = useDocumentStore.getState().doc.objects[0] as PanelObject
     expect([o.nativeW, o.nativeH]).toEqual([80, 57.6])
-    expect(o.w).toBeCloseTo(75.26, 6)
-    // 舞台上的框按渲染回来的纵横比：高 = 宽 × 57.6 / 80
-    expect(o.h).toBeCloseTo((75.26 * 57.6) / 80, 6)
+    // 放进来是 100%，换成脚本 figsize 之后仍是 100%：宽不许停在磁盘 PDF 的
+    // 75.26（那样缩放比静默变成 0.94，预检把合规的字号报成偏小）
+    expect(o.w).toBeCloseTo(80, 6)
+    expect(o.h).toBeCloseTo(57.6, 6)
+    expect(panelScale(o)).toBeCloseTo(1, 6)
     await act(async () => {
       root.unmount()
     })

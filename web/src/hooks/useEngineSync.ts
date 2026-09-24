@@ -161,7 +161,7 @@ function useEngineRenderSync() {
     syncEngine(useDocumentStore.getState().doc.objects, useUiStore.getState().elementPanelId)
   }, [byKey, tracked])
 
-  // 渲染回来的图幅尺寸变了（改了 size_mm）→ 同步面板原生尺寸并按新纵横比调高度。
+  // 渲染回来的图幅尺寸变了（改了 size_mm）→ 同步面板原生尺寸，页面尺寸按同一比例跟着走。
   // 按**面板自己那份变体**取尺寸：size_mm 本身就是可以被 override 的，
   // 同文件的另一个副本改了图幅，不该把这个副本一起拽走。
   useEffect(() => {
@@ -179,12 +179,23 @@ function useEngineRenderSync() {
       for (const fix of fixes) {
         const o = d.objects.find((x) => x.id === fix.id)
         if (o?.type !== 'panel') continue
+        // x/y/w/h 是旋转后的页面包围盒：90/270 时内容的长宽是互换的
+        const swaps = rotationSwaps(panelRotation(o))
+        if (o.nativeW > 0 && o.nativeH > 0) {
+          // **缩放比不变**：页面上的尺寸跟着原生图幅按同一比例走。只调高、
+          // 不调宽的话，磁盘 PDF（`bbox_inches="tight"` 裁过，73.3 mm）换成
+          // 脚本 figsize（80 mm）之后缩放比静默变成 0.917——读者量到的每个
+          // 字号、线宽都凭空小了 8%，预检据此报出一串假问题，「全部处理」再
+          // 照着这个比例把本来合规的图改掉（`addPanel` 按 100% 放入的约定也
+          // 就此失效）。裁剪是比例，不用跟着动
+          const kx = fix.wMm / o.nativeW
+          const ky = fix.hMm / o.nativeH
+          o.w *= swaps ? ky : kx
+          o.h *= swaps ? kx : ky
+        } else if (swaps) o.w = o.h * (fix.hMm / fix.wMm)
+        else o.h = o.w * (fix.hMm / fix.wMm)
         o.nativeW = fix.wMm
         o.nativeH = fix.hMm
-        // x/y/w/h 是旋转后的页面包围盒：90/270 时内容的长宽是互换的，
-        // 直接按 hMm/wMm 调 o.h 会把旋转过的面板越调越偏
-        if (rotationSwaps(panelRotation(o))) o.w = o.h * (fix.hMm / fix.wMm)
-        else o.h = o.w * (fix.hMm / fix.wMm)
       }
     })
   }, [byKey, objects])
