@@ -700,7 +700,7 @@ def kick_background_provision() -> dict:
     try:
         out = open(log, "w", encoding="utf-8")
     except OSError as exc:
-        _release_provision_lock(token)  # 没起子进程：锁不放就白挡后面的会话 20 分钟
+        _drop_fresh_provision_lock()  # 没起子进程：锁不放就白挡后面的会话 20 分钟
         return {"started": False, "reason": f"cannot_write: {exc}", "log": log}
     kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": out, "stderr": out}
     if os.name == "nt":
@@ -717,7 +717,7 @@ def kick_background_provision() -> dict:
             [sys.executable, os.path.abspath(__file__), "--provision"], env=env, **kwargs
         )
     except OSError as exc:
-        _release_provision_lock(token)
+        _drop_fresh_provision_lock()
         return {"started": False, "reason": f"spawn_failed: {exc}", "log": log}
     finally:
         out.close()
@@ -821,7 +821,19 @@ _PROVISION_HEARTBEAT = 60
 _PROVISION_RELEASE_MARGIN = 5 * 60
 
 
-def _own_live_lock(token: "str | None") -> bool:
+def _drop_fresh_provision_lock() -> None:
+    """刚拿到、还没交给子进程的锁出错时直接删：**不读文件**核令牌（#548 评审 P2）。
+
+    日志打不开往往是进程级 EMFILE / ENFILE，这时再 open 锁文件核令牌同样失败，锁就
+    留下来白挡 20 分钟。这把锁是本进程几微秒前独占创建的，离可被接管（满 20 分钟）
+    还远，按路径删碰不到别人的锁；`os.remove` 也不占文件描述符。"""
+    try:
+        os.remove(_provision_lock_path())
+    except OSError:
+        pass
+
+
+def _own_live_lock(token: "str | None", margin: "float | None" = None) -> bool:
     """锁是**我这把**、且离过期还远：只有这时续锁 / 删锁才不会碰到接班者的新锁。
 
     接管只对岁数 ≥ `_PROVISION_LOCK_MAX_AGE` 的锁发生；持有者只在岁数 <
@@ -833,7 +845,9 @@ def _own_live_lock(token: "str | None") -> bool:
     seen = _read_lock(_provision_lock_path())
     if seen is None or seen[0] != token:
         return False
-    return time.time() - seen[1] < _PROVISION_LOCK_MAX_AGE - _PROVISION_RELEASE_MARGIN
+    if margin is None:
+        margin = _PROVISION_RELEASE_MARGIN
+    return time.time() - seen[1] < _PROVISION_LOCK_MAX_AGE - margin
 
 
 def _release_provision_lock(token: "str | None") -> None:
@@ -848,8 +862,13 @@ def _release_provision_lock(token: "str | None") -> None:
 
 
 def _heartbeat_provision_lock(token: "str | None") -> None:
-    """续锁：pip 联网装科学栈可能超过 20 分钟，不续就会被当成死锁接管、再起一个 pip。"""
-    if _own_live_lock(token):
+    """续锁：pip 联网装科学栈可能超过 20 分钟，不续就会被当成死锁接管、再起一个 pip。
+
+    续锁的门槛是**真正的过期线**，不是删锁用的安全线（#548 评审 P2）：进程 / 整机
+    暂停 15–20 分钟后醒来，锁仍是自己的、也还没到可被接管的岁数，必须接着续——
+    否则此后每次心跳都放弃，满 20 分钟就被接管、与仍活着的自己并发跑 pip。
+    接管只对岁数 ≥ 过期线的锁发生，续锁只对 < 过期线的锁发生，两者不重叠。"""
+    if _own_live_lock(token, margin=0):
         try:
             os.utime(_provision_lock_path(), None)
         except OSError:

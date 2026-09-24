@@ -924,8 +924,6 @@ def test_an_owner_never_deletes_its_lock_once_it_could_have_been_taken_over(tmp_
     os.utime(lock, (aged, aged))
     launcher._release_provision_lock("mine")
     assert lock.exists(), "临近过期的锁被持有者删了：可能删掉的是接班者的新锁"
-    launcher._heartbeat_provision_lock("mine")
-    assert lock.stat().st_mtime == pytest.approx(aged), "临近过期的锁不许续命"
 
     now = time.time()
     os.utime(lock, (now, now))
@@ -970,3 +968,39 @@ def test_a_long_background_provision_keeps_renewing_its_lock(tmp_path, monkeypat
     assert launcher.main() == 0
     assert beats and set(beats) == {"owner-token"}
     assert not lock.exists()
+
+
+def test_a_resumed_owner_keeps_renewing_until_the_real_stale_line(tmp_path):
+    """#548 评审 P2：暂停 15–20 分钟后醒来，锁仍是自己的、还没到可被接管的岁数——
+    心跳必须接着续（门槛是过期线，不是删锁的安全线）；已过过期线的就不再续
+    （那时它可能正被接管）。"""
+    lock = Path(launcher._provision_lock_path())
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("mine", encoding="utf-8")
+    in_band = (
+        time.time() - launcher._PROVISION_LOCK_MAX_AGE + launcher._PROVISION_RELEASE_MARGIN - 30
+    )
+    os.utime(lock, (in_band, in_band))
+    launcher._heartbeat_provision_lock("mine")
+    assert lock.stat().st_mtime > time.time() - 60, "醒来后的持有者放弃了续锁"
+
+    past = time.time() - launcher._PROVISION_LOCK_MAX_AGE - 1
+    os.utime(lock, (past, past))
+    launcher._heartbeat_provision_lock("mine")
+    assert lock.stat().st_mtime == pytest.approx(past), "已过过期线的锁不许续：它可能正被接管"
+
+
+def test_the_lock_is_dropped_even_when_no_descriptor_can_be_opened(
+    tmp_path, fake_popen, monkeypatch
+):
+    """#548 评审 P2：日志打不开往往是进程级 EMFILE——此刻**任何** open 都失败，
+    释放不能依赖再 open 锁文件核令牌。"""
+    import errno
+
+    def no_fds(*_a, **_kw):
+        raise OSError(errno.EMFILE, "Too many open files")
+
+    monkeypatch.setattr(launcher, "open", no_fds, raising=False)
+    out = launcher.kick_background_provision()
+    assert out["started"] is False and out["reason"].startswith("cannot_write")
+    assert not Path(launcher._provision_lock_path()).exists(), "fd 耗尽时锁被留下了"
