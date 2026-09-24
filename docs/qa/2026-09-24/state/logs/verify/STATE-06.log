@@ -1,0 +1,65 @@
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/renderStore.test.ts src/store/geometryAuthority.test.ts src/store/projectSwitchWorkspace.test.ts src/store/documentStore.test.ts
+### time=2026-09-24T19:15:23Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=0
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-state/web
+
+
+ Test Files  4 passed (4)
+      Tests  58 passed (58)
+   Start at  03:15:23
+   Duration  1.51s (transform 861ms, setup 586ms, import 731ms, tests 637ms, environment 1.98s)
+
+
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest-repro state06_cross_project_render.test.ts
+### time=2026-09-24T19:15:25Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=1
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-state/web
+
+ ❯ src/__qa_repro__/state06_cross_project_render.test.ts (2 tests | 2 failed) 6ms
+     × 切项目（clear）之后才回来的 A 响应：B 的渲染态里不应出现 A 的 manifest 3ms
+     × B 自己的同键渲染先回来、A 的旧回包后到：byKey 不应被 A 覆盖 2ms
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  03:15:25
+   Duration  625ms (transform 187ms, setup 122ms, import 132ms, tests 6ms, environment 282ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/__qa_repro__/state06_cross_project_render.test.ts > STATE-06：A 项目在途的渲染回包不得落进 B > 切项目（clear）之后才回来的 A 响应：B 的渲染态里不应出现 A 的 manifest
+AssertionError: A 的 manifest 落进了 B 的变体格: expected 'A-fig1' to be undefined
+
+- Expected:
+undefined
+
++ Received:
+"A-fig1"
+
+ ❯ src/__qa_repro__/state06_cross_project_render.test.ts:81:81
+     79|     const b = panelIn('pB')
+     80|     // 期望：B 里什么都没有（B 自己的渲染还没发/没回）
+     81|     expect(st.byKey[renderKeyOf(b)]?.manifest?.stem, 'A 的 manifest 落进了…
+       |                                                                                 ^
+     82|     expect(st.latest['fig1.pdf'], 'A 的回包推进了 B 的 latest 显示退路').toBeUnde…
+     83|     expect(exactPanelManifest(st, b), 'A 的 manifest 成了 B 的几何权威').toBeN…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/__qa_repro__/state06_cross_project_render.test.ts > STATE-06：A 项目在途的渲染回包不得落进 B > B 自己的同键渲染先回来、A 的旧回包后到：byKey 不应被 A 覆盖
+AssertionError: B 的几何权威被 A 的晚到回包覆盖: expected 'A-fig1' to be 'B-fig1' // Object.is equality
+
+Expected: "B-fig1"
+Received: "A-fig1"
+
+ ❯ src/__qa_repro__/state06_cross_project_render.test.ts:110:7
+    108|       exactPanelManifest(useRenderStore.getState(), panelIn('pB'))?.st…
+    109|       'B 的几何权威被 A 的晚到回包覆盖',
+    110|     ).toBe('B-fig1')
+       |       ^
+    111|   })
+    112| })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
