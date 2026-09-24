@@ -1,0 +1,93 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_project_venv_and_same_name_decoy_resolve_to_the_true_interpreter_and_file _
+
+tmp_path = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4983/test_project_venv_and_same_nam0')
+
+    @needs_worker
+    def test_project_venv_and_same_name_decoy_resolve_to_the_true_interpreter_and_file(tmp_path):
+        proj = tmp_path / "paper"
+        (proj / "scripts" / "data").mkdir(parents=True)
+        (proj / "data").mkdir()
+        external = tmp_path / "external" / "offsets.csv"
+        external.parent.mkdir()
+        external.write_text("t,offset\n0,0.5\n1,1.5\n2,2.5\n3,3.5\n", encoding="utf-8")
+        (proj / "data" / "points.csv").write_text(_csv(Y_TRUE), encoding="utf-8")
+        (proj / "scripts" / "data" / "points.csv").write_text(_csv(Y_DECOY), encoding="utf-8")
+        (proj / "scripts" / "entry.py").write_text(
+            ENTRY.format(external=str(external)), encoding="utf-8"
+        )
+        (proj / "scripts" / "labmod.py").write_text(
+            "def scale(values):\n    return [v * 2.0 for v in values]\n", encoding="utf-8"
+        )
+        true_sha = hashlib.sha256((proj / "data" / "points.csv").read_bytes()).hexdigest()
+        decoy_sha = hashlib.sha256((proj / "scripts" / "data" / "points.csv").read_bytes()).hexdigest()
+    
+        venv_a = venvfixture.make_project_venv(proj, ".venv", python=WORKER_PY)
+        signal_a = _install_signal(venv_a, "A", SIGNAL_A)
+        venv_b = venvfixture.make_project_venv(tmp_path / "elsewhere", "envB", python=WORKER_PY)
+        _install_signal(venv_b, "B", SIGNAL_B)
+        python_a = venvfixture.interpreter_of(venv_a)
+        # 用户在终端里站在项目根、用项目环境跑过一次：原件落在项目根（素材卡片）
+        subprocess.run(
+            [python_a, "scripts/entry.py"],
+            cwd=proj,
+            check=True,
+            capture_output=True,
+            timeout=300,
+            env={
+                **{k: v for k, v in os.environ.items() if k in ("SYSTEMROOT", "TEMP", "TMP")},
+                "PATH": os.environ.get("PATH", ""),
+                "MPLBACKEND": "Agg",
+                "MPLCONFIGDIR": str(tmp_path / "mpl"),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+        )
+        script_bytes = (proj / "scripts" / "entry.py").read_bytes()
+        site_before_a, site_before_b = _site_listing(venv_a), _site_listing(venv_b)
+        b_bin = Path(venvfixture.interpreter_of(venv_b)).parent
+        path_with_b_first = str(b_bin) + os.pathsep + os.environ.get("PATH", "")
+    
+        with fa.running_app(proj, tmp_path / "work", env_overrides={"PATH": path_with_b_first}) as app:
+            _, panels = app.call("/api/panels", timeout=30)
+            panel = next(p for p in panels["panels"] if p["id"].replace("\\", "/") == "Fig_qa.pdf")
+            assert panel["script"] == "scripts/entry.py"
+    
+            # ① 首开：同名数据两处各一份、内容不同 → 先问、不预选；选择前一张图都不发布
+            state = app.prepare(panel["id"])
+            result = state["result"]
+            assert result["status"] == "needs_input", result
+            need = result["required_input"]
+            assert need["reason"] == "ambiguous_data"
+            assert need["recommended"] is None
+            assert need["conflicts"] == ["data/points.csv"]
+            assert result["receipt"] is None
+            with pytest.raises(fa.HttpError) as blocked:
+                app.render(panel["id"])
+            assert blocked.value.body["code"] == "workdir_confirmation_required"
+    
+            # ② 用户选项目根（公开流程）
+            _, patched = app.call("/api/engine/workdir", {"mode": "project_root"}, method="PATCH")
+            assert patched["workdir"]["mode"] == "project_root"
+    
+            # ③ 准备：产品自己选的是项目 venv（A），不是 PATH 上更靠前的 B，也不是内置环境
+            state = app.prepare(panel["id"])
+            plan, result = state["plan"], state["result"]
+            assert result["status"] == "ready", result
+            assert plan["environment"]["source"] == "project_venv"
+            assert plan["dependency_intents"] == []  # 什么都不装
+            receipt = result["receipt"]
+            assert receipt["python_source"] == "project_venv"
+            assert receipt["launch_context"]["cwd_origin"] == "project.root"
+            inputs = receipt["runtime"]["inputs"]
+            mods = {m["name"]: m for m in inputs["local_modules"]}
+            # worker 自报的 import 来源：qa_signal 是 A 那份（逐字节同一个文件），labmod 是脚本目录的本地模块
+            assert (proj / mods["qa_signal"]["path"]).resolve() == signal_a.resolve()
+            assert mods["labmod"]["path"] == "scripts/labmod.py"
+            files = {f["path"]: f["sha256"] for f in inputs["files"]}
+>           assert files.get("data/points.csv") == true_sha != decoy_sha
+E           AssertionError: assert None == 'c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266'
+E            +  where None = <built-in method get of dict object at 0x104c00b40>('data/points.csv')
+E            +    where <built-in method get of dict object at 0x104c00b40> = {'scripts/data/points.csv': '1c8ade0c7fd2a2b7f8ed6b2ab588c51e99d2838da5afdc8d529f357a4841f9c7'}.get
+
+tests/test_qa_first_open_env_and_data.py:204: AssertionError

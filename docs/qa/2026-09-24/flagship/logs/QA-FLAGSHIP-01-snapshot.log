@@ -1,0 +1,27 @@
+# QA-FLAGSHIP-01-snapshot（继续快照分支 = 驱动 P16）
+# source SHA: 62af729c2f84652bf3979c25b0c3117fcfa756a5（分支 qa/2026-09-24-flagship，产品代码未改）
+# 运行时间（UTC）: 2026-09-24T19:25:44Z – 19:27:35Z
+# 平台: macOS 27.0 (26A428) arm64 · 后端 Python 3.13.11（/Volumes/Projects/Tavotto/.venv，PYTHONPATH=worktree/src）
+# worker: 项目 venv（uv venv --system-site-packages，base = Homebrew Python 3.13.11）· matplotlib 3.10.8 · numpy 2.4.3
+# 浏览器: Playwright 1.62.1 Chromium 151.0.7922.34 · node v26.7.0 · 独立读取: pdfminer.six 20251230 + poppler pdftoppm 26.03.0
+# $SCRATCH = /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship
+# 入口: HTTP（python -m tavotto --no-browser，端口 5306，会话认证开）+ Playwright 真浏览器；非桌面壳
+
+$ QA_FONTS=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts node docs/qa/2026-09-24/flagship/repro/flagship_driver.cjs $SCRATCH/fixture $SCRATCH/final
+# 摘录 P16 阶段；完整输出见 QA-FLAGSHIP-01.log，结构化结果见 evidence/report.json 的 snapshot_branch
+
+=== P16 branch: continue snapshot after on-disk data change
+PASS [P16 branch: continue snapshot after on-disk data change] s11: target anchors match independent model (≤0.5px) :: [{"gid":"axes_0.ylabel","expected":[0.022757628297069565,0.4720000000000001],"got":[0.022757627080595505,0.4720000000000001],"err_px":[-9.505185580440688e-7,0]}]
+PASS [P16 branch: continue snapshot after on-disk data change] s11: non-target anchors unchanged :: []
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): points line path present with 4 vertices :: [[47.914364,169.909527],[98.543455,59.820218],[149.172545,145.445236],[199.801636,47.588073]]
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): plotted y sequence == expected [0,9,2,10] (affine residual < 0.01pt, every other candidate > 1pt or wrong sign) :: {"svg_y":[169.909527,59.820218,145.445236,47.588073],"fit_expected":{"a":169.909526909699,"b":-12.232145411371237,"maxResidualPt":2.0735787131798133e-7},"fit_other":{"a":127.81294615384616,"b":-4.213749076923077,"maxResidualPt":59.56523},"fit_others":[{"a":127.81294615384616,"b":-4.213749076923077,"maxResidualPt":59.56523},{"a":188.56525706145254,"b":-15.785617821229051,"maxResidualPt":4.236832402
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): x spacing uniform (t = 0..3) :: [47.914364,98.543455,149.172545,199.801636]
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): twin-axis signal == env A sequence (not B) :: {"fitA":{"a":210.68334499999997,"b":-40.773818,"maxResidualPt":2.842170943040401e-14},"fitB":{"a":47.58807300000001,"b":24.464290799999993,"maxResidualPt":48.9285816}}
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): provenance text == src c5de961e6faa env A :: "src c5de961e6faa env A"
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): twin series label says env A :: "曲线 “sig A”"
+PASS [P16 branch: continue snapshot after on-disk data change] E2: export job done with a PDF output :: {"status":"done","error":null,"outputs":[["pdf","done",null],["report","done",null]]}
+PASS [P16 branch: continue snapshot after on-disk data change] E2: page box == figure size 504×230.4 pt (±0.01) :: [504,230.4]
+PASS [P16 branch: continue snapshot after on-disk data change] E2: PDF (pdfminer) point series == [0,9,2,10]; no other candidate fits :: [{"uniform":false,"res":132.5377926421405,"b":4.623411371237459},{"uniform":false,"res":77.40207090301004,"b":2.7000722408026756},{"uniform":true,"res":2.0735785710712662e-7,"b":12.232145411371237},{"uniform":false,"res":77.40207090301004,"b":2.7000722408026756},{"uniform":false,"res":10.530893859531766,"b":0.3673567625418059},{"uniform":false,"res":31.592682153846148,"b":1.1020703076923077},{"uni
+PASS [P16 branch: continue snapshot after on-disk data change] E2: PDF twin-axis series == env A signal
+PASS [P16 branch: continue snapshot after on-disk data change] E2: PDF text layer carries provenance "src c5de961e6faa env A" :: ["src c5de961e6faa env A"]
+PASS [P16 branch: continue snapshot after on-disk data change] E2: every manifest text element found once in PDF text layer :: []

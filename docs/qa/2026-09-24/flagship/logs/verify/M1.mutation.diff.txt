@@ -1,0 +1,13 @@
+diff --git a/src/tavotto/engine/execspec.py b/src/tavotto/engine/execspec.py
+index 1edf486f..917b7e9d 100644
+--- a/src/tavotto/engine/execspec.py
++++ b/src/tavotto/engine/execspec.py
+@@ -310,7 +310,7 @@ def safe_spec(
+     if cwd_mode == CWD_PROJECT:
+         cwd = str((Path(figures_dir) / figcapture.normalize_relative_script(script)).parent)
+     elif cwd_mode == CWD_PROJECT_ROOT:
+-        cwd = str(Path(figures_dir))
++        cwd = str((Path(figures_dir) / figcapture.normalize_relative_script(script)).parent)
+     else:
+         cwd = sandbox
+     return ExecutionSpec(

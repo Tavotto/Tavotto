@@ -1,0 +1,48 @@
+{
+ "schema": 3,
+ "project": {
+  "id": "p_iuv10kcz",
+  "name": "新文档"
+ },
+ "canvases": [
+  {
+   "id": "c_sbr0ynl3",
+   "name": "Figure 1",
+   "page": {
+    "w": 150,
+    "h": 100
+   },
+   "objects": [
+    {
+     "id": "p_1btfuqzi",
+     "type": "panel",
+     "fileId": "Fig_flagship.pdf",
+     "fileKind": "pdf",
+     "nativeW": 177.8,
+     "nativeH": 81.28,
+     "script": "scripts/entry.py",
+     "cost": "medium",
+     "overrides": [
+      {
+       "gid": "fig.texts_0",
+       "prop": "pos_frac",
+       "value": [
+        0.5511672529581069,
+        0.053578509753757504
+       ]
+      }
+     ],
+     "name": "Fig_flagship",
+     "x": -13.900000000000006,
+     "y": 9.36,
+     "w": 177.8,
+     "h": 81.28
+    }
+   ],
+   "guides": []
+  }
+ ],
+ "activeCanvasId": "c_sbr0ynl3",
+ "createdAt": 1790277945590,
+ "updatedAt": 1790277981320
+}

@@ -1,0 +1,175 @@
+
+=== P0 fixture baseline
+<string>:1: DeprecationWarning: Implicit None on return values is deprecated and will raise KeyErrors.
+<string>:1: DeprecationWarning: Implicit None on return values is deprecated and will raise KeyErrors.
+PASS [P0 fixture baseline] fixture files match generator hashes
+PASS [P0 fixture baseline] config dir starts empty (fresh user config)
+
+=== P1 first launch (fresh config)
+PASS [P1 first launch (fresh config)] unauthenticated API denied (401) :: 401
+PASS [P1 first launch (fresh config)] landing url carries one-time nonce
+
+=== P2 first open: workdir confirmation (D1 ambiguity)
+PASS [P2 first open: workdir confirmation (D1 ambiguity)] render blocked with workdir_confirmation_required before any run :: {"blocked":1,"ok":0}
+PASS [P2 first open: workdir confirmation (D1 ambiguity)] reason = ambiguous_data, conflicts = data/points.csv :: "ambiguous_data"
+PASS [P2 first open: workdir confirmation (D1 ambiguity)] no option preselected / no recommendation (machine does not decide) :: [["project_root",false],["project",false],["sandbox",false]]
+PASS [P2 first open: workdir confirmation (D1 ambiguity)] run button disabled until a choice is made
+PASS [P2 first open: workdir confirmation (D1 ambiguity)] T sanity: svg viewBox aspect == screen box aspect (±0.5%) :: {"vbAspect":2.1875,"screen":2.187588986630401}
+PASS [P2 first open: workdir confirmation (D1 ambiguity)] figure size_mm = 7×3.2 in :: [177.8,81.28]
+
+=== P3 environment identity (E1)
+PASS [P3 environment identity (E1)] environment endpoint: project python is paper/.venv (A), source project_venv :: {"python":".venv/bin/python","source":"project_venv"}
+PASS [P3 environment identity (E1)] preparation ready without new input (decision remembered) :: "ready"
+PASS [P3 environment identity (E1)] receipt python_source = project_venv :: "project_venv"
+PASS [P3 environment identity (E1)] worker pid (from receipt) was launched through paper/.venv/bin/python (ps -E __PYVENV_LAUNCHER__ or argv0) :: {"pid":37511,"command":"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-flagship/src/tavotto/engine/worker.py --script /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratc
+PASS [P3 environment identity (E1)] worker pid cwd == project root (lsof) :: "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vf-run/fixture/paper"
+PASS [P3 environment identity (E1)] receipt: qa_signal imported from paper/.venv (env A), not envB :: {"name":"qa_signal","path":".venv/lib/python3.13/site-packages/qa_signal/__init__.py","sha256":"2f6d9eb77db3b81c2b425d1cb589027a873b20fda1945761599df079af956db8"}
+PASS [P3 environment identity (E1)] receipt: labmod imported from scripts/labmod.py (local module, not a package) :: {"name":"labmod","path":"scripts/labmod.py","sha256":"b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385"}
+PASS [P3 environment identity (E1)] receipt: input data/points.csv sha256 == true file (not decoy) :: {"path":"data/points.csv","sha256":"c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266","size":21}
+PASS [P3 environment identity (E1)] receipt cwd origin = project.root :: "project.root"
+PASS [P3 environment identity (E1)] plan does not propose installing anything :: []
+PASS [P3 environment identity (E1)] no worker process runs envB python
+
+=== P4 data identity (D1) + external file + local module
+PASS [P4 data identity (D1) + external file + local module] s0: points line path present with 4 vertices :: [[48.642078,182.225455],[104.122597,61.579636],[159.603117,155.415273],[215.083636,48.174545]]
+PASS [P4 data identity (D1) + external file + local module] s0: plotted y sequence == expected [0,9,2,10] (affine residual < 0.01pt, every other candidate > 1pt or wrong sign) :: {"svg_y":[182.225455,61.579636,155.415273,48.174545],"fit_expected":{"a":182.225455,"b":-13.405091,"maxResidualPt":7.105427357601002e-15},"fit_other":{"a":136.0922154046823,"b":-4.617807267558528,"maxResidualPt":65.27696486956523},"fit_others":[{"a":136.0922154046823,"b":-4.617807267558528,"maxResidualPt":65.27696486956523},{"a":202.67009099441344,"b":-17.29930737988827,"maxResidualPt":4.643104145
+PASS [P4 data identity (D1) + external file + local module] s0: x spacing uniform (t = 0..3) :: [48.642078,104.122597,159.603117,215.083636]
+PASS [P4 data identity (D1) + external file + local module] s0: twin-axis signal == env A sequence (not B) :: {"fitA":{"a":226.9090915,"b":-44.6836366,"maxResidualPt":3.000000106112566e-7},"fitB":{"a":48.17454550000001,"b":26.8101818,"maxResidualPt":53.62036410000002}}
+PASS [P4 data identity (D1) + external file + local module] s0: provenance text == src c5de961e6faa env A :: "src c5de961e6faa env A"
+PASS [P4 data identity (D1) + external file + local module] s0: twin series label says env A :: "曲线 “sig A”"
+PASS [P4 data identity (D1) + external file + local module] bar heights ∝ external offsets × labmod.scale (1,3,5,7) :: {"bars":[0.08707482993197277,0.2612244897959183,0.4353741496598639,0.6095238095238094],"exp":[1,3,5,7]}
+
+=== P4b zero-edit export E0 (calibration baseline)
+PASS [P4b zero-edit export E0 (calibration baseline)] E0: export job done with a PDF output :: {"status":"done","error":null,"outputs":[["pdf","done",null],["report","done",null]]}
+PASS [P4b zero-edit export E0 (calibration baseline)] E0: page box == figure size 504×230.4 pt (±0.01) :: [504,230.4]
+PASS [P4b zero-edit export E0 (calibration baseline)] E0: PDF (pdfminer) point series == [0,9,2,10]; no other candidate fits :: [{"uniform":false,"res":132.5377926421405,"b":4.623411371237459},{"uniform":false,"res":84.82418729096989,"b":2.9589832775919738},{"uniform":true,"res":1.4210854715202004e-14,"b":13.405091000000002},{"uniform":false,"res":84.82418729096989,"b":2.9589832775919738},{"uniform":false,"res":11.540705859531776,"b":0.40258276254180597},{"uniform":false,"res":34.62211700334449,"b":1.207748267558528},{"uni
+PASS [P4b zero-edit export E0 (calibration baseline)] E0: PDF twin-axis series == env A signal
+PASS [P4b zero-edit export E0 (calibration baseline)] E0: PDF text layer carries provenance "src c5de961e6faa env A" :: ["src c5de961e6faa env A"]
+PASS [P4b zero-edit export E0 (calibration baseline)] E0: every manifest text element found once in PDF text layer :: []
+
+=== P5 single drag (suptitle)
+PASS [P5 single drag (suptitle)] zero render requests during drag :: 0
+PASS [P5 single drag (suptitle)] exactly one render after release :: 1
+PASS [P5 single drag (suptitle)] s1: target anchors match independent model (≤0.5px) :: [{"gid":"fig.texts_0","expected":[0.5509878903760357,0.053462164231440075],"got":[0.5509878903760357,0.053460803059273365],"err_px":[0,-0.00048813537246255836]}]
+PASS [P5 single drag (suptitle)] s1: non-target anchors unchanged :: []
+
+=== P5b calibration export Ecal (same RenderCore path, after first edit)
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: export job done with a PDF output :: {"status":"done","error":null,"outputs":[["pdf","done",null],["report","done",null]]}
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: page box == figure size 504×230.4 pt (±0.01) :: [504,230.4]
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: PDF (pdfminer) point series == [0,9,2,10]; no other candidate fits :: [{"uniform":false,"res":132.5377926421405,"b":4.623411371237459},{"uniform":false,"res":84.82418729096989,"b":2.9589832775919738},{"uniform":true,"res":1.4210854715202004e-14,"b":13.405091000000002},{"uniform":false,"res":84.82418729096989,"b":2.9589832775919738},{"uniform":false,"res":11.540705859531776,"b":0.40258276254180597},{"uniform":false,"res":34.62211700334449,"b":1.207748267558528},{"uni
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: PDF twin-axis series == env A signal
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: PDF text layer carries provenance "src c5de961e6faa env A" :: ["src c5de961e6faa env A"]
+PASS [P5b calibration export Ecal (same RenderCore path, after first edit)] Ecal: every manifest text element found once in PDF text layer :: []
+
+=== P6 mixed multi-select drag (G2)
+PASS [P6 mixed multi-select drag (G2)] element tree shows exactly the 5 intended members selected :: ["fig.texts_1","axes_0.title","axes_0.texts_0","axes_0.legend","axes_1.title"]
+PASS [P6 mixed multi-select drag (G2)] zero render requests during group drag :: 0
+PASS [P6 mixed multi-select drag (G2)] exactly one render after release :: 1
+PASS [P6 mixed multi-select drag (G2)] s2: target anchors match independent model (≤0.5px) :: [{"gid":"axes_0.title","expected":[0.29350008454624676,0.10376508698617316],"got":[0.2935,0.1038],"err_px":[-0.0000663265305999583,0.012520294952364126]},{"gid":"axes_1.title","expected":[0.8202347784237978,0.10376508698617316],"got":[0.8201999999999999,0.1038],"err_px":[-0.02728367346940802,0.012520294952364126]},{"gid":"axes_0.legend","expected":[0.12178806640565723,0.229980364763951],"got":[0.1
+PASS [P6 mixed multi-select drag (G2)] s2: non-target anchors unchanged :: []
+PASS [P6 mixed multi-select drag (G2)] pairwise relative offsets preserved (≤1e-3 frac) :: 0.00009864602879656476
+PASS [P6 mixed multi-select drag (G2)] each moved member has exactly one position override :: {"axes_0.title":1,"axes_1.title":1,"axes_0.legend":1,"axes_0.texts_0":1,"fig.texts_1":1}
+
+=== P7 group scale of two Axes (se handle)
+PASS [P7 group scale of two Axes (se handle)] selection = {axes_0, axes_1} :: ["axes_0","axes_1"]
+PASS [P7 group scale of two Axes (se handle)] Axes boxes = c + s(box − c) about group top-left (≤0.5px) :: [{"gid":"axes_0","expected":[0.08,0.18000000000000005,0.3316099849426214,0.584229726280933],"got":[0.08,0.17999999999999994,0.3316,0.5842],"ok":true},{"gid":"axes_1","expected":[0.5608344781668011,0.18000000000000005,0.33160998494262134,0.584229726280933],"got":[0.5608,0.17999999999999994,0.33159999999999995,0.5842],"ok":true}]
+PASS [P7 group scale of two Axes (se handle)] twin axes_2 follows axes_0 exactly once (same box) :: {"axes_2":[0.08,0.17999999999999994,0.3316,0.5842],"axes_0":[0.08,0.17999999999999994,0.3316,0.5842]}
+PASS [P7 group scale of two Axes (se handle)] explicitly placed texts keep their absolute anchors through Axes scale :: []
+
+=== P8 font size change (axes_0.xlabel → 14)
+PASS [P8 font size change (axes_0.xlabel → 14)] fontsize editable value 14 in authoritative manifest :: {"before":10,"after":14}
+PASS [P8 font size change (axes_0.xlabel → 14)] xlabel bbox grew (font really larger)
+PASS [P8 font size change (axes_0.xlabel → 14)] s4: target anchors match independent model (≤0.5px) :: []
+PASS [P8 font size change (axes_0.xlabel → 14)] s4: non-target anchors unchanged :: []
+
+=== P9 align bottom (xlabels + provenance text)
+PASS [P9 align bottom (xlabels + provenance text)] selection = 3 intended texts :: ["fig.texts_1","axes_0.xlabel","axes_1.xlabel"]
+PASS [P9 align bottom (xlabels + provenance text)] every member bottom == max bottom of selection (≤0.5px), x unchanged :: {"maxB":0.9391749999999999,"res":[{"gid":"axes_0.xlabel","bottom":0.939175,"dx":0,"h":0},{"gid":"axes_1.xlabel","bottom":0.9391499999999999,"dx":0,"h":0},{"gid":"fig.texts_1","bottom":0.9391749999999999,"dx":0,"h":0}]}
+PASS [P9 align bottom (xlabels + provenance text)] s5 (non-members): target anchors match independent model (≤0.5px) :: []
+PASS [P9 align bottom (xlabels + provenance text)] s5 (non-members): non-target anchors unchanged :: []
+
+=== P10 distribute horizontally (titles + suptitle)
+PASS [P10 distribute horizontally (titles + suptitle)] selection = 3 intended texts :: ["fig.texts_0","axes_0.title","axes_1.title"]
+PASS [P10 distribute horizontally (titles + suptitle)] lefts follow equal-gap model, ends fixed, y unchanged (≤0.5px) :: [{"gid":"axes_0.title","expected_left":0.25716071428571424,"got_left":0.25716071428571424,"err_px":0,"dy_px":0},{"gid":"fig.texts_0","expected_left":0.48890357142857144,"got_left":0.48885357142857144,"err_px":-0.03922499999999568,"dy_px":0.014056571041438527},{"gid":"axes_1.title","expected_left":0.7838607142857144,"got_left":0.7838607142857142,"err_px":-8.709699628184353e-14,"dy_px":0}]
+PASS [P10 distribute horizontally (titles + suptitle)] s6 (non-members): target anchors match independent model (≤0.5px) :: []
+PASS [P10 distribute horizontally (titles + suptitle)] s6 (non-members): non-target anchors unchanged :: []
+
+=== P11 undo ×2 / redo ×2 with authoritative re-render
+PASS [P11 undo ×2 / redo ×2 with authoritative re-render] after 2 undos document overrides == s4 overrides (before align) :: {"got":9,"want":9}
+PASS [P11 undo ×2 / redo ×2 with authoritative re-render] after 2 undos: authoritative re-render geometry == s4 :: []
+PASS [P11 undo ×2 / redo ×2 with authoritative re-render] after 2 redos document overrides == s6 overrides (after distribute)
+PASS [P11 undo ×2 / redo ×2 with authoritative re-render] after 2 redos: authoritative re-render geometry == s6 :: []
+
+=== P12 save + quit app and worker
+PASS [P12 save + quit app and worker] last autosave PUT succeeded :: {"at":1790279165898,"status":200}
+PASS [P12 save + quit app and worker] on-disk autosave document carries the final overrides :: ["d_e8rxejbh.json"]
+
+=== P12b quit app and worker
+PASS [P12b quit app and worker] server exited cleanly after /api/shutdown :: {"code":0,"killed":false}
+PASS [P12b quit app and worker] no worker / server process left referencing the fixture :: []
+
+=== P13 reopen (same data/config dirs) + authoritative re-render
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] no workdir confirmation asked again (decision remembered)
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] reopened geometry == last committed (s8) for every element :: []
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] reopened render request patches == saved overrides :: {"req":11}
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: points line path present with 4 vertices :: [[47.916655,169.953513],[98.561018,59.826502],[149.205382,145.480844],[199.849745,47.590167]]
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: plotted y sequence == expected [0,9,2,10] (affine residual < 0.01pt, every other candidate > 1pt or wrong sign) :: {"svg_y":[169.953513,59.826502,145.480844,47.590167],"fit_expected":{"a":169.953513090301,"b":-12.236334588628761,"maxResidualPt":2.0735786421255398e-7},"fit_other":{"a":127.84251551839463,"b":-4.215192193979932,"maxResidualPt":59.585629130434775},"fit_others":[{"a":127.84251551839463,"b":-4.215192193979932,"maxResidualPt":59.585629130434775},{"a":188.61563232402233,"b":-15.791023966480445,"maxRes
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: x spacing uniform (t = 0..3) :: [47.916655,98.561018,149.205382,199.849745]
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: twin-axis signal == env A sequence (not B) :: {"fitA":{"a":210.74129499999998,"b":-40.78778199999999,"maxResidualPt":7.105427357601002e-15},"fitB":{"a":47.59016700000001,"b":24.472669199999995,"maxResidualPt":48.945338400000004}}
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: provenance text == src c5de961e6faa env A :: "src c5de961e6faa env A"
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] s9: twin series label says env A :: "曲线 “sig A”"
+PASS [P13 reopen (same data/config dirs) + authoritative re-render] after restart: still project venv A :: ".venv/bin/python"
+
+=== P14 re-edit after reopen (drag axes_1.xlabel)
+PASS [P14 re-edit after reopen (drag axes_1.xlabel)] s10: target anchors match independent model (≤0.5px) :: [{"gid":"axes_1.xlabel","expected":[0.7649940129336081,0.8786019346892847],"got":[0.7649940174953859,0.8786026173457686],"err_px":[0.0000035644445980871143,0.00024383396704431682]}]
+PASS [P14 re-edit after reopen (drag axes_1.xlabel)] s10: non-target anchors unchanged :: []
+
+=== P15 final export E1 (PDF) + independent reading
+PASS [P15 final export E1 (PDF) + independent reading] E1: export job done with a PDF output :: {"status":"done","error":null,"outputs":[["pdf","done",null],["report","done",null]]}
+PASS [P15 final export E1 (PDF) + independent reading] E1: page box == figure size 504×230.4 pt (±0.01) :: [504,230.4]
+PASS [P15 final export E1 (PDF) + independent reading] E1: PDF (pdfminer) point series == [0,9,2,10]; no other candidate fits :: [{"uniform":false,"res":132.5377926421405,"b":4.623411371237459},{"uniform":false,"res":77.42857846153848,"b":2.700996923076923},{"uniform":true,"res":2.0735785710712662e-7,"b":12.236334588628763},{"uniform":false,"res":77.42857846153848,"b":2.700996923076923},{"uniform":false,"res":10.534500682274249,"b":0.3674825819397995},{"uniform":false,"res":31.60350147157191,"b":1.1024477257525085},{"unifor
+PASS [P15 final export E1 (PDF) + independent reading] E1: PDF twin-axis series == env A signal
+PASS [P15 final export E1 (PDF) + independent reading] E1: PDF text layer carries provenance "src c5de961e6faa env A" :: ["src c5de961e6faa env A"]
+PASS [P15 final export E1 (PDF) + independent reading] E1: every manifest text element found once in PDF text layer :: []
+FAIL [P15 final export E1 (PDF) + independent reading] E1 vs Ecal: PDF text displacement == manifest displacement for 9 texts (≤0.05 mm; candidate 0.01 mm reported) :: {"n":9,"max_err_mm":0.14397743056786255}
+
+=== P16 branch: continue snapshot after on-disk data change
+PASS [P16 branch: continue snapshot after on-disk data change] s11: target anchors match independent model (≤0.5px) :: [{"gid":"axes_0.ylabel","expected":[0.022757628297069565,0.47209999999999996],"got":[0.022757627080595515,0.47209999999999996],"err_px":[-9.505185499112845e-7,0]}]
+PASS [P16 branch: continue snapshot after on-disk data change] s11: non-target anchors unchanged :: []
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): points line path present with 4 vertices :: [[47.916655,169.953513],[98.561018,59.826502],[149.205382,145.480844],[199.849745,47.590167]]
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): plotted y sequence == expected [0,9,2,10] (affine residual < 0.01pt, every other candidate > 1pt or wrong sign) :: {"svg_y":[169.953513,59.826502,145.480844,47.590167],"fit_expected":{"a":169.953513090301,"b":-12.236334588628761,"maxResidualPt":2.0735786421255398e-7},"fit_other":{"a":127.84251551839463,"b":-4.215192193979932,"maxResidualPt":59.585629130434775},"fit_others":[{"a":127.84251551839463,"b":-4.215192193979932,"maxResidualPt":59.585629130434775},{"a":188.61563232402233,"b":-15.791023966480445,"maxRes
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): x spacing uniform (t = 0..3) :: [47.916655,98.561018,149.205382,199.849745]
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): twin-axis signal == env A sequence (not B) :: {"fitA":{"a":210.74129499999998,"b":-40.78778199999999,"maxResidualPt":7.105427357601002e-15},"fitB":{"a":47.59016700000001,"b":24.472669199999995,"maxResidualPt":48.945338400000004}}
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): provenance text == src c5de961e6faa env A :: "src c5de961e6faa env A"
+PASS [P16 branch: continue snapshot after on-disk data change] s11 (snapshot keeps old data): twin series label says env A :: "曲线 “sig A”"
+PASS [P16 branch: continue snapshot after on-disk data change] E2: export job done with a PDF output :: {"status":"done","error":null,"outputs":[["pdf","done",null],["report","done",null]]}
+PASS [P16 branch: continue snapshot after on-disk data change] E2: page box == figure size 504×230.4 pt (±0.01) :: [504,230.4]
+PASS [P16 branch: continue snapshot after on-disk data change] E2: PDF (pdfminer) point series == [0,9,2,10]; no other candidate fits :: [{"uniform":false,"res":132.5377926421405,"b":4.623411371237459},{"uniform":false,"res":77.42857846153848,"b":2.700996923076923},{"uniform":true,"res":2.0735785710712662e-7,"b":12.236334588628763},{"uniform":false,"res":77.42857846153848,"b":2.700996923076923},{"uniform":false,"res":10.534500682274249,"b":0.3674825819397995},{"uniform":false,"res":31.60350147157191,"b":1.1024477257525085},{"unifor
+PASS [P16 branch: continue snapshot after on-disk data change] E2: PDF twin-axis series == env A signal
+PASS [P16 branch: continue snapshot after on-disk data change] E2: PDF text layer carries provenance "src c5de961e6faa env A" :: ["src c5de961e6faa env A"]
+PASS [P16 branch: continue snapshot after on-disk data change] E2: every manifest text element found once in PDF text layer :: []
+
+=== P17 branch: explicit recompute (context menu → 重新构建)
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] UI announces the semantic switch: "已按源脚本重新构建" :: "已按源脚本重新构建"
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] s12 (recomputed on new data): points line path present with 4 vertices :: [[47.916655,169.953513],[98.561018,62.885585],[149.205382,139.362676],[199.849745,47.590167]]
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] s12 (recomputed on new data): plotted y sequence == expected [1,8,3,9] (affine residual < 0.01pt, every other candidate > 1pt or wrong sign) :: {"svg_y":[169.953513,62.885585,139.362676,47.590167],"fit_expected":{"a":185.24893101117317,"b":-15.295418240223462,"maxResidualPt":2.9050278271824936e-7},"fit_other":{"a":166.98650855518395,"b":-11.816861581939797,"maxResidualPt":3.990109391304344},"fit_others":[{"a":166.98650855518395,"b":-11.816861581939797,"maxResidualPt":3.990109391304344},{"a":129.3874036153846,"b":-4.6551273076923065,"maxRe
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] s12 (recomputed on new data): x spacing uniform (t = 0..3) :: [47.916655,98.561018,149.205382,199.849745]
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] s12 (recomputed on new data): twin-axis signal == env A sequence (not B) :: {"fitA":{"a":210.74129499999998,"b":-40.78778199999999,"maxResidualPt":7.105427357601002e-15},"fitB":{"a":47.59016700000001,"b":24.472669199999995,"maxResidualPt":48.945338400000004}}
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] s12 (recomputed on new data): provenance text == src 949efa9e08ad env A :: "src 949efa9e08ad env A"
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] s12 (recomputed on new data): twin series label says env A :: "曲线 “sig A”"
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] all position-overridden elements keep their anchors across recompute :: {"overridden":["fig.texts_0","axes_0.title","axes_1.title","axes_0.legend","axes_0.texts_0","fig.texts_1","axes_0.xlabel","axes_1.xlabel","axes_0.ylabel"],"drift":[]}
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] E3: export job done with a PDF output :: {"status":"done","error":null,"outputs":[["pdf","done",null],["report","done",null]]}
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] E3: page box == figure size 504×230.4 pt (±0.01) :: [504,230.4]
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] E3: PDF (pdfminer) point series == [1,8,3,9]; no other candidate fits :: [{"uniform":false,"res":136.43798882681563,"b":7.722905027932962},{"uniform":false,"res":79.70707307262569,"b":4.511721117318435},{"uniform":true,"res":2.905028111399588e-7,"b":15.295418240223466},{"uniform":false,"res":79.70707307262569,"b":4.511721117318435},{"uniform":false,"res":10.844499955307263,"b":0.6138396201117321},{"uniform":false,"res":32.53349927374301,"b":1.8415188268156428},{"unifor
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] E3: PDF twin-axis series == env A signal
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] E3: PDF text layer carries provenance "src 949efa9e08ad env A" :: ["src 949efa9e08ad env A"]
+PASS [P17 branch: explicit recompute (context menu → 重新构建)] E3: every manifest text element found once in PDF text layer :: []
+
+=== P18 side effects (no installs, no out-of-grant writes)
+PASS [P18 side effects (no installs, no out-of-grant writes)] project tree: nothing added/removed/changed beyond the whitelisted registry draft (data file restored) :: {"added":["tavotto_registry.json","tavottofile/export/qa_E0.pdf","tavottofile/export/qa_E0_style-check.json","tavottofile/export/qa_E1.pdf","tavottofile/export/qa_E1_style-check.json","tavottofile/export/qa_E2.pdf","tavottofile/export/qa_E2_style-check.json","tavottofile/export/qa_E3.pdf","tavottofile/export/qa_E3_style-check.json","tavottofile/export/qa_Ecal.pdf","tavottofile/export/qa_Ecal_style
+PASS [P18 side effects (no installs, no out-of-grant writes)] script bytes unchanged
+PASS [P18 side effects (no installs, no out-of-grant writes)] external data unchanged
+PASS [P18 side effects (no installs, no out-of-grant writes)] env A site-packages listing unchanged (no installs) :: []
+PASS [P18 side effects (no installs, no out-of-grant writes)] env B site-packages listing unchanged
+<string>:1: DeprecationWarning: Implicit None on return values is deprecated and will raise KeyErrors.
+PASS [P18 side effects (no installs, no out-of-grant writes)] env A distributions unchanged
