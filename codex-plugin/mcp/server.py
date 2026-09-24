@@ -7,8 +7,8 @@ Codex 用 `python3 ./mcp/server.py` 启动本文件（见 `.mcp.json`），而�
 
   1. 当前解释器 `import tavotto.engine` 成功 → 直接跑，不折腾；
   2. 否则按固定优先级找一个**验证过能 import 引擎**的解释器（见
-     `resolver_candidates()`），`os.execv` 交棒过去——同一个进程，stdio 原样
-     继承，host 那边察觉不到换过人。候选链里**用户显式指定的永远最先**，
+     `resolver_candidates()`），交棒过去（POSIX 用 `os.execv`——同一个进程，stdio
+     原样继承，host 那边察觉不到换过人；Windows 用子进程，见 `_hand_off()`）。候选链里**用户显式指定的永远最先**，
      插件自管 runtime 其次，从 CLI 反推的与 PATH 兜底最后；
   3. 找不到时起一个**只会说人话的降级 server**：initialize 照常握手，
      tools/list 只列一个 `tavotto_health`（诊断工具，真的可用），六个正常
@@ -1105,6 +1105,28 @@ def provision(spec: "str | None" = None, python_base: "str | None" = None) -> "t
     )
 
 
+#: 交棒方式看平台（测试可替换）。
+_IS_WINDOWS = os.name == "nt"
+
+
+def _hand_off(python: str, argv: "list[str]") -> int:
+    """把这个进程交给装着引擎的解释器。
+
+    * POSIX：`os.execv`——同一个进程，stdio 原样继承，host 察觉不到换过人（也不用管
+      转发与信号）。
+    * Windows：`os.execv` 是用 spawn 模拟的，而且**不给参数加引号**：路径里一有空格
+      （`C:\\Users\\John Smith\\…`、带空格的解压目录）就被拆开，引擎解释器去打开半截路径，
+      退出码 0、一个协议帧都没有（#559 的 Windows CI 由 configure 的握手探针撞出来）。
+      所以改为子进程：参数按列表传（subprocess 负责逐个加引号），stdio 继承，等它结束并
+      原样带回退出码——父进程一直活着，host 看到的管道也就一直在。
+    """
+    args = [python, os.path.abspath(__file__), *argv]
+    if _IS_WINDOWS:
+        return subprocess.call(args)
+    os.execv(python, args)
+    return 0  # 走不到：execv 成功就不返回，失败抛 OSError
+
+
 # --------------------------------- 主入口 -----------------------------------
 def _utf8_stdio() -> None:
     """体检 / provision 的那一行 JSON 固定按 UTF-8 写（读它的一侧——`tavotto codex install`、
@@ -1167,9 +1189,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             os.environ[_EXECED_ENV] = "1"
-            # execv 而不是 subprocess：同一个进程 = stdio 原样继承，
-            # host 那边不会看到管道换了一层（也不用管转发与信号）
-            os.execv(resolution["python"], [resolution["python"], os.path.abspath(__file__), *argv])
+            return _hand_off(resolution["python"], argv)
     else:
         resolution = {"python": None, "source": None, "tried": []}
     code, hint = diagnose_resolved(found, resolution)
