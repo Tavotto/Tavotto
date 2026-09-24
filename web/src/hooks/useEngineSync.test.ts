@@ -1114,6 +1114,67 @@ describe('事务之外改了图幅：撤销 / 重做回到用户设定的缩放�
     expect(nativeOf(current())).toEqual([60, 30])
   })
 
+  it('只改了宽（取消宽高比锁定）→ 两轴图幅都变 → 撤销 / 重做只换算条目打回的那一维', async () => {
+    // 条目只记了 w；h 从没离开过当前单位（silent 同步已经把它换到新图幅），
+    // 撤销时再乘一遍的话 h 会翻倍两次（Codex #551 P1）
+    const p = await mount('d_size_undo_one_dim')
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('改宽'), (d) => {
+        ;(d.objects[0] as PanelObject).w = 20
+      })
+    })
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [80, 60], elements: [] })
+    })
+    expect([current().w, current().h]).toEqual([40, 60])
+    await undo()
+    expect([current().w, current().h]).toEqual([80, 60])
+    expect(nativeOf(current())).toEqual([80, 60])
+    await redo()
+    expect([current().w, current().h]).toEqual([40, 60])
+  })
+
+  it('撤销 / 重做换基的锚点是左上角：打回来的 x/y 原样，重做与撤销前逐位相同', async () => {
+    // 与事务外的 silent 同步同一个默认锚点：重做那一侧正是 silent 同步换算过的
+    // 状态，锚点不同的话重做会把面板挪走
+    const p = await mount('d_size_undo_anchor', { x: 10, y: 5 })
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('拖西边'), (d) => {
+        const o = d.objects[0] as PanelObject
+        o.x = 30
+        o.w = 20
+      })
+    })
+    await renderNewSize(p)
+    const box = (o: PanelObject) => [o.x, o.y, o.w, o.h, o.nativeW, o.nativeH]
+    const synced = box(current())
+    await undo()
+    expect(box(current())).toEqual([10, 5, 50, 30, 50, 30])
+    await redo()
+    expect(box(current())).toEqual(synced)
+  })
+
+  it('正方形面板转 90°（w/h 数值不变）→ 图幅变化 → 撤销回到未转的方向', async () => {
+    // 条目里没有 w/h 的补丁，但宽高对应的原生轴互换了（Codex #551 P2）
+    const p = await mount('d_size_undo_square_rot', { w: 40, h: 40, nativeW: 40, nativeH: 40 })
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('旋转'), (d) => {
+        ;(d.objects[0] as PanelObject).rotation = 90
+      })
+    })
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [80, 40], elements: [] })
+    })
+    // 转过的包围盒：页面宽 = 内容高
+    expect([current().w, current().h]).toEqual([40, 80])
+    await undo()
+    expect([current().w, current().h]).toEqual([80, 40])
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    await redo()
+    expect([current().w, current().h]).toEqual([40, 80])
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+  })
+
   it('两次缩放 → 图幅变化 → 连撤两步再连重做两步', async () => {
     const p = await mount('d_size_undo_deep')
     await resizeTo(0.75)

@@ -17,19 +17,27 @@ import { panelRotation, rotationSwaps, type FigureDocument, type PanelObject } f
 /** 页面坐标里的一个点（mm），与 `documentStore` 的 `TxnAnchor` 同形。 */
 export type PagePoint = { x: number; y: number }
 
+/** 页面包围盒的两维各自要不要换算。 */
+export type PageDims = { readonly w: boolean; readonly h: boolean }
+const BOTH: PageDims = { w: true, h: true }
+
 /**
  * 把面板的原生图幅改成 `wMm × hMm`，页面尺寸按同一比例跟着走、缩放比不变。
  * 传入的是 immer 草稿（或可变对象）。
  *
  * `anchor`：换算时在页面上不动的那一点（手势刻意钉住的对边 / 整图锚点，见
  * `setTxnAnchor`）。不给 = 包围盒左上角，x/y 不动。**只有这一处写 x/y**。
+ *
+ * `dims`：只换算页面包围盒的哪几维（撤销 / 重做换基用：条目没打回的那一维本来就在
+ * 此刻的单位上，再乘一遍就错了）。不给 = 两维都换。
  */
 export function syncPanelNativeSize(
   o: PanelObject,
   wMm: number,
   hMm: number,
-  opts: { anchor?: PagePoint } = {},
+  opts: { anchor?: PagePoint; dims?: PageDims } = {},
 ): void {
+  const dims = opts.dims ?? BOTH
   // x/y/w/h 是旋转后的页面包围盒：90/270 时内容的长宽是互换的
   const swaps = rotationSwaps(panelRotation(o))
   const [w0, h0] = [o.w, o.h]
@@ -42,8 +50,8 @@ export function syncPanelNativeSize(
     // 就此失效）。裁剪是比例，不用跟着动
     const kx = wMm / o.nativeW
     const ky = hMm / o.nativeH
-    o.w *= swaps ? ky : kx
-    o.h *= swaps ? kx : ky
+    if (dims.w) o.w *= swaps ? ky : kx
+    if (dims.h) o.h *= swaps ? kx : ky
   } else if (swaps) o.w = o.h * (hMm / wMm)
   else o.h = o.w * (hMm / wMm)
   // 位置按锚点反推：包围盒绕锚点按同一对比例伸缩，锚点在页面上不动
@@ -71,8 +79,18 @@ export function syncPanelNativeSize(
  */
 export interface SizeBasis {
   id: string
+  /** 两侧的原生图幅 */
   before: readonly [number, number]
   after: readonly [number, number]
+  /** 两侧的页面包围盒 w/h（条目「拥有」的那几维按它打回，见 `dims`） */
+  box: { readonly before: readonly [number, number]; readonly after: readonly [number, number] }
+  /**
+   * 这条历史**打回**页面包围盒的哪几维：值变了的那一维；外加旋转改变了宽高与原生轴的
+   * 对应（0↔90）时两维都算——正方形面板转 90° 的 w/h 数值不变、补丁里没有它们，
+   * 可它们对应的原生轴已经互换，撤销时必须按条目那一侧重新摆（Codex #551 P2）。
+   * 没打回的那一维从没离开此刻的单位，不换算（Codex #551 P1）。
+   */
+  dims: PageDims
 }
 
 /** 比较一条历史前后的文档，找出页面尺寸被改过、两侧都在的面板，记下原生图幅。 */
@@ -84,8 +102,17 @@ export function sizeBasisOf(before: FigureDocument, after: FigureDocument): Size
     if (o.type !== 'panel') continue
     const p = prev.get(o.id)
     // 新加 / 删掉的面板：补丁里带着整个对象（w/h 与 nativeW/H 同一份），自洽
-    if (!p || (p.w === o.w && p.h === o.h)) continue
-    out.push({ id: o.id, before: [p.nativeW, p.nativeH], after: [o.nativeW, o.nativeH] })
+    if (!p) continue
+    const axesSwapped = rotationSwaps(panelRotation(p)) !== rotationSwaps(panelRotation(o))
+    const dims = { w: axesSwapped || p.w !== o.w, h: axesSwapped || p.h !== o.h }
+    if (!dims.w && !dims.h) continue
+    out.push({
+      id: o.id,
+      before: [p.nativeW, p.nativeH],
+      after: [o.nativeW, o.nativeH],
+      box: { before: [p.w, p.h], after: [o.w, o.h] },
+      dims,
+    })
   }
   return out
 }
@@ -121,10 +148,15 @@ export function rebaseToCurrentNative(
       const o = d.objects.find((x) => x.id === b.id)
       if (o?.type !== 'panel') continue
       const now: [number, number] = [o.nativeW, o.nativeH]
-      // 先让面板「回到」它被记下时的基准，再走与渲染同步同一条换算
+      // 先让面板「回到」它被记下时的那一侧：条目拥有的那几维按记下的值摆好（补丁
+      // 已经打回的就是这个值；正方形转 90° 那种补丁里没有的也在这里补上），原生图幅
+      // 取那一侧的基准；再走与渲染同步同一条换算，只换这几维。锚点取默认的左上角：
+      // 与事务外的 silent 同步同一个锚点，重做那一侧正是它换算过的状态，逐位回得去
+      if (b.dims.w) o.w = b.box[side][0]
+      if (b.dims.h) o.h = b.box[side][1]
       o.nativeW = b[side][0]
       o.nativeH = b[side][1]
-      syncPanelNativeSize(o, now[0], now[1])
+      syncPanelNativeSize(o, now[0], now[1], { dims: b.dims })
     }
   })
 }
