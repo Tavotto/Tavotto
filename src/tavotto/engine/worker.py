@@ -366,7 +366,7 @@ class Worker(wireproto.V1Handler):
         # 写法在 `python figure.py` 下是天经地义的。只读、只在沙盒里确实没有
         # 这个文件时、且换算后仍落在图库内才生效——写/删/改一个字节都不经过
         # 它，沙盒作为**写入**边界完全没有松动（语义与理由见 figcapture）。
-        # 输入观察（U09，ADR 0070）：脚本经 Python `open` 只读打开的项目内文件记进回执（数据身份）。
+        # 输入观察（U09，ADR 0070）：脚本经 Python `open` / numpy `DataSource.open` 只读打开的项目内文件记进回执（数据身份）。
         # **先于**只读回退装——回退换出来的那条路径经它记下，正是脚本实际读到的那份。装了就不卸：
         # 卸会把叠在外层的回退一起摘掉；观察器只记不改，留着也只是多几条项目外的忽略。
         self._input_observer = figcapture.InputObserver(str(self.figures_dir))

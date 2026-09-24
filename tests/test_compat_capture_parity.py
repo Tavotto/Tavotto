@@ -25,6 +25,7 @@
 `tests/test_browser_session.py` 同一条纪律）。
 """
 
+import hashlib
 import json
 import os
 import subprocess
@@ -370,6 +371,144 @@ fig.savefig("escape.pdf")
 """,
         )
         assert list(desktop_build(figs, "escape.py")["stems"]) == ["escape"]
+
+    def test_numpy_text_readers_resolve_next_to_the_script(self, tmp_path):
+        """`np.loadtxt` / `np.genfromtxt` 经 numpy 自己的 `DataSource.open`：它先 `exists`
+        再 open，走不到三个 open 入口。数据就在脚本旁边时 `databinding` 判 `default_ok`、
+        不问用户——这一行必须在沙盒里读得到，否则那个判定的前提就是假的。"""
+        figs = tmp_path / "figs"
+        write(
+            figs,
+            "nreader.py",
+            """\
+import os
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+a = np.loadtxt("xy.txt")
+b = np.genfromtxt("xy.txt")
+assert a.tolist() == b.tolist() == [[1.0, 2.0], [2.0, 4.0]], a
+c = np.loadtxt(os.path.join(os.path.dirname(os.path.abspath(__file__)), "abs.txt"))
+fig, ax = plt.subplots()
+ax.plot(a[:, 0], a[:, 1] + c.sum())
+fig.savefig("nreader.pdf")
+""",
+        )
+        (figs / "xy.txt").write_text("1 2\n2 4\n", encoding="utf-8")
+        (figs / "abs.txt").write_text("0\n", encoding="utf-8")
+        built = desktop_build(figs, "nreader.py")
+        assert list(built["stems"]) == ["nreader"]
+        # numpy 读到的项目文件要进执行回执（数据身份）：改指过来的那份与按绝对路径读的那份都算。
+        # numpy 的打开器在它载入时就绑了原来的 io.open，三处 open 包装都看不见它（Codex #545 P1）
+        assert built["runtime"]["inputs"]["channels"] == ["python_open", "numpy_datasource"]
+        seen = {f["path"]: f["sha256"] for f in built["runtime"]["inputs"]["files"]}
+        assert seen == {
+            "xy.txt": hashlib.sha256((figs / "xy.txt").read_bytes()).hexdigest(),
+            "abs.txt": hashlib.sha256((figs / "abs.txt").read_bytes()).hexdigest(),
+        }
+
+    def test_numpy_finds_a_compressed_sibling_like_it_does_on_its_own(self, tmp_path):
+        """`np.loadtxt("vals")` 而旁边只有 `vals.gz`：numpy 自己会依次试 `.gz` / `.bz2` / `.xz`，
+        在脚本目录里跑是读得到的——回退要按同一串名字找（#545 评审）。回执记的是真正打开的那个。"""
+        import gzip
+
+        figs = tmp_path / "figs"
+        write(
+            figs,
+            "ngz.py",
+            """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+ys = np.loadtxt("vals")
+assert ys.tolist() == [3.0, 1.0, 2.0], ys
+fig, ax = plt.subplots()
+ax.plot(ys)
+fig.savefig("ngz.pdf")
+""",
+        )
+        with gzip.open(figs / "vals.gz", "wt", encoding="utf-8") as fh:
+            fh.write("3\n1\n2\n")
+        built = desktop_build(figs, "ngz.py")
+        assert list(built["stems"]) == ["ngz"]
+        assert [f["path"] for f in built["runtime"]["inputs"]["files"]] == ["vals.gz"]
+
+    def test_a_compressed_copy_in_the_sandbox_wins_over_the_project(self, tmp_path):
+        """沙盒里有脚本自己写出来的 `vals.gz`、项目里有未压缩的 `vals`：numpy 在 cwd 里先找到
+        `vals.gz`，回退不能抢先把 `vals` 改道到项目里那份。"""
+        figs = tmp_path / "figs"
+        write(
+            figs,
+            "ngzshadow.py",
+            """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+np.savetxt("vals.gz", [9.0, 9.0])
+ys = np.loadtxt("vals")
+assert ys.tolist() == [9.0, 9.0], f"读到的是图库里那一份: {ys}"
+fig, ax = plt.subplots()
+ax.plot(ys)
+fig.savefig("ngzshadow.pdf")
+""",
+        )
+        (figs / "vals").write_text("1\n2\n", encoding="utf-8")
+        assert list(desktop_build(figs, "ngzshadow.py")["stems"]) == ["ngzshadow"]
+
+    def test_numpy_reads_the_scripts_own_sandbox_copy_first(self, tmp_path):
+        """脚本自己 `np.savetxt` 出来的那一份优先——回退不能把它换成图库里的同名文件。"""
+        figs = tmp_path / "figs"
+        write(
+            figs,
+            "nshadow.py",
+            """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+np.savetxt("vals.txt", [9.0, 9.0])
+ys = np.loadtxt("vals.txt")
+assert ys.tolist() == [9.0, 9.0], f"读到的是图库里那一份: {ys}"
+fig, ax = plt.subplots()
+ax.plot(ys)
+fig.savefig("nshadow.pdf")
+""",
+        )
+        (figs / "vals.txt").write_text("1\n2\n", encoding="utf-8")
+        assert list(desktop_build(figs, "nshadow.py")["stems"]) == ["nshadow"]
+        assert (figs / "vals.txt").read_text(encoding="utf-8") == "1\n2\n"
+
+    def test_numpy_reads_outside_the_project_or_another_destpath_are_not_redirected(self, tmp_path):
+        """越界的读、以及脚本自建 `DataSource(destpath=别处)` 的读，都原样交给 numpy 报错。"""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("7\n", encoding="utf-8")
+        figs = tmp_path / "figs"
+        write(
+            figs,
+            "nescape.py",
+            """\
+import numpy as np
+from numpy.lib import _datasource
+import matplotlib.pyplot as plt
+
+for attempt in (
+    lambda: np.loadtxt("../outside/secret.txt"),
+    lambda: _datasource.DataSource(DEST).open("local.txt"),
+):
+    try:
+        attempt()
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("回退把不该改指的读送进来了")
+fig, ax = plt.subplots()
+ax.plot([1, 2, 3])
+fig.savefig("nescape.pdf")
+""".replace("DEST", repr(str(outside))),
+        )
+        (figs / "local.txt").write_text("1\n", encoding="utf-8")
+        assert list(desktop_build(figs, "nescape.py")["stems"]) == ["nescape"]
 
 
 # ===========================================================================

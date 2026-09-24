@@ -59,7 +59,7 @@ CLI    tavotto run -- <python> <script> ─▶ runcli._run() ─▶ execspec.nat
 | 模式 | `MODES = (sandbox, project)` `workdir.py:32`；`mode_for()` `:41`、`set_mode()` `:50`、`state()` `:61` | 项目级设置 `project_settings["workdir"]`，不写全局；不认识的值当默认（沙盒） |
 | 生效点 | 三条 spawn 路径从 `mode_for()` 取（Python 池 / `_spawn_spec` / `one_shot`）；`worker.py:160 os.chdir(self.workdir or self.sandbox)` | 默认模式 argv 逐字节不变，project 模式只多 `--cwd`；写回重放与热态同一个 cwd |
 | HTTP | `PATCH /api/engine/workdir` `app.py:4590` | 改了就 `shutdown_all(root)` |
-| 相对路径只读回退（沙盒模式） | `figcapture.py`（`builtins.open` / `io.open` / 3.10 `Path.open` 三处 patch；四条同时成立才改指） | `exists` / `glob` / C++ 读取器在盲区 → `no_figures_captured`（`pool._explain_empty_capture` `pool.py:417`） |
+| 相对路径只读回退（沙盒模式） | `figcapture.py`（`builtins.open` / `io.open` / 3.10 `Path.open` 三处 patch + numpy `DataSource.open`（2026-09-24，#545，按 numpy 自己的候选名找压缩兄弟）；四条同时成立才改指） | `exists` / `glob` / C++ 读取器在盲区 → `no_figures_captured`（`pool._explain_empty_capture` `pool.py:417`） |
 | 差距（→ U03） | | FO-041 三分（见 §1）；FO-045「歧义数据需确认」——今天沙盒模式下同名文件只读回退到脚本目录，**没有「歧义 → 请求选择」这一步**（夹具 `same_name_data` 就是给这条用的）；FO-047 grant 只在前端 |
 
 ## 5. 环境占用：`engine/envlease.py`

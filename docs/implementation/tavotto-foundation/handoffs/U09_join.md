@@ -45,7 +45,7 @@ D09 / D13）、03 §8、04 §1–§3、05 §3 / §7、07、`phases/U09_join.md`�
 | 层 | 变更 |
 |---|---|
 | `engine/figsession.py` | `runtime_report(origin=, inputs=)`：加 `report_origin=build` / `pid` / `inputs`（加字段，`RUNTIME_REPORT_VERSION` 不升） |
-| `engine/figcapture.py` | `InputObserver`（三处 `open` 的只读观察包装：记实际打开的项目内文件，去重、有界 256、源码后缀剔掉、`observation=partial` + `unobserved`）、`observed_local_modules()`；常量 `INPUT_OBSERVER_*` / `CODE_SUFFIXES` / `OBSERVATION_PARTIAL` |
+| `engine/figcapture.py` | `InputObserver`（三处 `open` 的只读观察包装——交接当时如此，2026-09-24 起另包 numpy 的 `DataSource.open`（#545）：记实际打开的项目内文件，去重、有界 256、源码后缀剔掉、`observation=partial` + `unobserved`）、`observed_local_modules()`；常量 `INPUT_OBSERVER_*` / `CODE_SUFFIXES` / `OBSERVATION_PARTIAL` |
 | `engine/worker.py` | build 时**先**装观察器再装只读回退（回退换出来的路径经观察器记下），脚本跑完那一刻定格 `_inputs_report`，build 响应的 `runtime` 带它 |
 | `engine/pool.py` / `nativesession.py` | `EngineWorker.child_pid`（= `proc.pid`）、`WorkerdWorker.child_pid`（`open_session` 响应的 `pid`）、`NativeSession.child_pid`（握手帧 `process_pid`） |
 | `engine/receipt.py` | `accept_runtime()`（origin + pid 核对 → `runtime_rejected ∈ {not_a_build_report, pid_mismatch}` / `pid_check ∈ {ok, unavailable}`）；字段 `runtime_rejected` / `pid_check` / `binding`；`inputs` / `observed_files()` / `binding_check()` / `public_facts()`；公开语义身份含观察到的数据身份；`from_worker(..., binding=)`；`worker_pid()`；native 同样核 |

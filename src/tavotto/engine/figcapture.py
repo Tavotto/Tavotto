@@ -98,7 +98,18 @@ pyproject 的 `requires-python` 下界正是 3.10，所以这不是理论问题�
 `self.open(...)` 的实例方法查找，打在类上对每个版本都成立，也不必知道
 `_accessor` 存不存在。
 
-这三个之外不再扩大：pandas 的 `get_handle`、`numpy.load`、`PIL.Image.open`、
+**第四个入口是 numpy 自己的 `DataSource.open`**（2026-09-24）。`np.loadtxt` /
+`np.genfromtxt` 不直接调 open：`DataSource.open` 先用 `os.path.exists` 在 cwd 与它的
+`destpath` 下找文件，找不到当场 FileNotFoundError（"d.txt not found."），根本走不到
+上面三个。而 `databinding.evidence` 对「数据就在脚本旁边」判 `default_ok`、不问用户
+——它的前提正是「沙盒 + 只读回退读得到」，对科学脚本里最常见的这两个读取器前提不成立，
+脚本旁边的 `data.txt` 一行 `np.loadtxt("data.txt")` 就读不到。包在它上面**不是**把回退
+扩到 `exists`：判据与三个 open 入口逐条相同（同一个 `_fallback_path`），外加一条——
+只在 DataSource 的 `destpath` 就是此刻的 cwd 时改指（相对路径那时才与真正的 open 解到
+同一处；自建 `DataSource(destpath=…)` 的不碰）。只包已经 import 过的 numpy：本模块
+纯标准库，不替脚本 import 它（worker 在装回退之前已经经 matplotlib 载入了 numpy）。
+
+这四个之外不再扩大：pandas 的 `get_handle`、`numpy.load`、`PIL.Image.open`、
 `json.load(open(...))` 全部经过它们。`os.open` / `os.stat` 这类底层调用不管
 ——覆盖它们要维护一张平台相关的语义表，收益却只是极少数直接玩 fd 的脚本。
 覆盖不到的那些由 CompatBench 如实记账，不靠猜。
@@ -129,6 +140,7 @@ import json
 import os
 import pathlib
 import re
+import sys
 
 __all__ = [
     "savefig_stem",
@@ -601,7 +613,7 @@ def collect_pyplot_figures(
     return stems, dropped
 
 
-#: 输入观察（统一实施包 U09，ADR 0070）：脚本经 Python 的 `open` 读到的项目内文件最多记这么多条；
+#: 输入观察（统一实施包 U09，ADR 0070）：脚本经 Python 的 `open`（与 numpy 的 `DataSource.open`）读到的项目内文件最多记这么多条；
 #: 超过就 `truncated=True`——回执有界，不是全系统审计。
 INPUT_OBSERVER_MAX_FILES = 256
 #: 每个观察到的文件最多为它算 hash 的字节数；再大只记大小，`sha256` 为 None（大文件的 hash 归数据绑定
@@ -627,7 +639,7 @@ def _within(real: str, root: str, *, pathmod=os.path) -> bool:
 
 
 class InputObserver:
-    """记下脚本执行期间经 `builtins.open` / `io.open` / `Path.open` **以只读模式成功打开**的、落在项目根之内的
+    """记下脚本执行期间经 `builtins.open` / `io.open` / `Path.open` / numpy 的 `DataSource.open` **以只读模式成功打开**的、落在项目根之内的
     文件（ExecutionReceipt 的「已观察的数据身份」，ADR 0070）。
 
     观察到的就是观察到的：h5py / netCDF / 自家 C 扩展直接调 `H5Fopen` / `fopen`，`np.memmap` 走 `os.open`，
@@ -645,6 +657,8 @@ class InputObserver:
         self._seen: dict[str, str] = {}  # realpath → 项目相对 POSIX 路径
         self.truncated = False
         self._uninstall = None
+        #: 实际装上了的观察通道（`report()` 的 `channels`）：numpy 没载入时就没有 `numpy_datasource`
+        self._channels: list[str] = []
 
     # ---- 记账 ----
     def _note(self, file) -> None:
@@ -670,7 +684,7 @@ class InputObserver:
             return
 
     def install(self):
-        """装上三处 open 的观察包装；返回卸载函数。"""
+        """装上 open 的观察包装（三处 Python open + numpy 的 `DataSource.open`）；返回卸载函数。"""
         real_open = builtins.open
         real_io_open = io.open
         real_path_open = pathlib.Path.open
@@ -695,10 +709,30 @@ class InputObserver:
         io.open = _wrap(real_io_open)
         pathlib.Path.open = observed_path_open
 
+        # numpy 的 `DataSource.open`（`np.loadtxt` / `np.genfromtxt`）：它的文件打开器在 numpy
+        # 载入时就绑好了**原来的** `io.open`，上面三处包装都看不见它读了什么。记的是它**实际
+        # 打开的那个文件**（文件对象的 `.name`，gzip / bz2 也有）——相对路径由它按自己的
+        # destpath 解，拿请求里的字符串去猜会记错文件。只包已载入的 numpy，不替脚本 import。
+        datasource = getattr(sys.modules.get("numpy.lib._datasource"), "DataSource", None)
+        real_ds_open = getattr(datasource, "open", None)
+
+        def observed_datasource_open(self_ds, path, mode="r", *args, **kwargs):
+            fh = real_ds_open(self_ds, path, mode, *args, **kwargs)
+            if _readonly_mode(mode):
+                observer._note(getattr(fh, "name", None))
+            return fh
+
+        self._channels = ["python_open"]
+        if real_ds_open is not None:
+            datasource.open = observed_datasource_open
+            self._channels.append("numpy_datasource")
+
         def uninstall() -> None:
             builtins.open = real_open
             io.open = real_io_open
             pathlib.Path.open = real_path_open
+            if real_ds_open is not None:
+                datasource.open = real_ds_open
 
         self._uninstall = uninstall
         return uninstall
@@ -728,7 +762,7 @@ class InputObserver:
             files.append(entry)
         return {
             "observation": OBSERVATION_PARTIAL,
-            "channels": ["python_open"],
+            "channels": list(self._channels) or ["python_open"],
             "unobserved": list(INPUT_OBSERVER_UNOBSERVED),
             "truncated": bool(self.truncated),
             "files": files,
@@ -856,6 +890,15 @@ def install_relative_read_fallback(
             return None
         return cand
 
+    def _is_cwd(destpath) -> bool:
+        """DataSource 的 destpath 就是此刻的 cwd：相对路径在它那里与在真正的 open 里是同一处。"""
+        if not isinstance(destpath, str) or not destpath:
+            return False
+        try:
+            return os.path.realpath(destpath) == os.path.realpath(os.getcwd())
+        except OSError:
+            return False
+
     def _readonly(mode) -> bool:
         if not isinstance(mode, str):
             return False
@@ -889,9 +932,44 @@ def install_relative_read_fallback(
     # 3.10 的 pathlib 两个都不走，只好直接包它自己。
     pathlib.Path.open = guarded_path_open
 
+    # 第四个：numpy 的 `DataSource.open`（`loadtxt` / `genfromtxt` 经它读，先 exists 再 open，
+    # 见模块头）。只包已经载入的 numpy，不替脚本 import。
+    datasource = getattr(sys.modules.get("numpy.lib._datasource"), "DataSource", None)
+    real_ds_open = getattr(datasource, "open", None)
+
+    def _datasource_candidates(ds, path) -> list:
+        """numpy 自己会试的那串名字：原名，再依次加 `.gz` / `.bz2` / `.xz` …（`_possible_names`）。
+        `np.loadtxt("values")` 而旁边只有 `values.gz` 时 numpy 照样读得到——回退得按同一串名字找。"""
+        if not isinstance(path, (str, os.PathLike)):
+            return [path]
+        name = os.fspath(path)
+        possible = getattr(ds, "_possible_names", None)
+        try:
+            names = list(possible(name)) if possible is not None else [name]
+        except Exception:  # noqa: BLE001 —— numpy 内部接口变了就只认原名
+            names = [name]
+        return names or [name]
+
+    def guarded_datasource_open(self, path, mode="r", *args, **kwargs):
+        if _readonly(mode) and _is_cwd(getattr(self, "_destpath", None)):
+            names = _datasource_candidates(self, path)
+            # 这串名字里只要有一个在 cwd（沙盒）下存在，numpy 自己就会读到它——不改道
+            # （`_fallback_path` 对单个名字已经是这条判据，这里把它扩到整串）
+            if not any(isinstance(n, str) and os.path.exists(n) for n in names):
+                for n in names:
+                    alt = _fallback_path(n)
+                    if alt is not None:
+                        return real_ds_open(self, alt, mode, *args, **kwargs)
+        return real_ds_open(self, path, mode, *args, **kwargs)
+
+    if real_ds_open is not None:
+        datasource.open = guarded_datasource_open
+
     def uninstall() -> None:
         builtins.open = real_open
         io.open = real_io_open
         pathlib.Path.open = real_path_open
+        if real_ds_open is not None:
+            datasource.open = real_ds_open
 
     return uninstall
