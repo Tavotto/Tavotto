@@ -702,8 +702,12 @@ def _try_lock_fd(fd: int) -> bool:
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return True
-    except BlockingIOError:  # EWOULDBLOCK / EAGAIN：被占用
-        return False
+    except OSError as exc:
+        # flock 的约定里「被占用」可以是 EWOULDBLOCK / EAGAIN，也可以是 EACCES
+        # （部分实现 / fcntl 模拟的 flock）——只认这几个，ENOLCK、EIO 等照常抛
+        if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES):
+            return False
+        raise
 
 
 def _acquire_provision_lock() -> "int | None":

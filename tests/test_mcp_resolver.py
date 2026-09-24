@@ -918,3 +918,22 @@ def test_no_rebuild_is_started_from_inside_the_venv_it_must_clear(
     monkeypatch.setattr(launcher, "PYTHON_MIN", in_range[0])
     monkeypatch.setattr(launcher, "PYTHON_MAX_EXCLUSIVE", in_range[1])
     assert launcher.kick_background_provision()["started"] is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="模拟的是 POSIX flock 的错误码")
+@pytest.mark.parametrize("name", ["EAGAIN", "EWOULDBLOCK", "EACCES"])
+def test_every_documented_contention_errno_means_someone_holds_the_lock(
+    tmp_path, monkeypatch, name
+):
+    """#548 评审 P2：flock 报「被占用」可以是 EAGAIN / EWOULDBLOCK，也可以是 EACCES
+    （PermissionError 而不是 BlockingIOError）——都要判成「有人在装」，不是锁坏了。"""
+    import errno
+    import fcntl
+
+    code = getattr(errno, name)
+
+    def busy(fd, op):
+        raise OSError(code, os.strerror(code))
+
+    monkeypatch.setattr(fcntl, "flock", busy)
+    assert launcher._acquire_provision_lock() is None
