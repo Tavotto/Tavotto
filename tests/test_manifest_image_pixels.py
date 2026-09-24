@@ -77,3 +77,20 @@ def test_other_figures_are_not_touched(probe):
 def test_layout_refresh_after_a_geometry_override_does_not_resample(probe):
     assert probe["geometry_apply_resample_unskipped"] >= 1, "尺子是死的：不跳过时这条路径也没重采样"
     assert probe["geometry_apply_resample_calls"] == 0
+
+
+def test_class_level_custom_images_run_their_own_draw(probe):
+    """Codex #526：子类在类上重写 draw / make_image 的，布局 draw 里照跑它自己的实现（它的 draw 可能更新几何）；
+    什么都没重写的普通子类照样跳过——判据只放过自定义实现，不是把优化整个关掉。"""
+    c = probe["custom_images"]
+    assert c["patched"] == {
+        "class_draw": False,
+        "class_make_image": False,
+        "wrapped_draw": False,
+        "plain": True,
+    }, c
+    # functools.wraps 确实把模块抄成了 matplotlib 的——否则这一条什么都没验
+    assert c["wrapped_draw_module"] == "matplotlib.image", c
+    assert c["wrapped_draw_ran"] >= 1, c
+    assert c["class_draw_ran_in_layout_draw"] >= 1, c
+    assert c["extent_after_layout_draw"] == c["expected_extent"], c

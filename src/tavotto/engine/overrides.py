@@ -54,6 +54,15 @@ def _layout_only_make_image(self, renderer, magnification=1.0, unsampled=False):
     return None, 0, 0, None
 
 
+def _defining_module(cls, name):
+    """沿 MRO 找到**定义** `name` 的那个类，回它的模块。看类而不看函数：`functools.wraps(AxesImage.draw)`
+    会把函数的 `__module__` 抄成 matplotlib 的，按函数判就把用户的重写认成了原版（Codex #535）。"""
+    for klass in cls.__mro__:
+        if name in vars(klass):
+            return klass.__module__
+    return None
+
+
 @contextlib.contextmanager
 def image_pixels_skipped(fig):
     """「只为布局」的那几次 draw 期间，**这张 figure 里**的图片元素不做像素重采样。
@@ -66,7 +75,9 @@ def image_pixels_skipped(fig):
     像素一个不少。
 
     换的是**实例**属性，不是类：同一进程里别的线程正在导出的 figure 不受影响；出来时删掉实例
-    属性，回到类上的实现。实例上已经被别人换过 `draw` 的（用户自定义）不叠加。
+    属性，回到类上的实现。**只换 matplotlib 自己的实现**：实例上被换过 `draw` / `make_image` 的，
+    或者子类在**类上**重写了它们的（自定义 artist 的正常写法，可能在 draw 里更新 extent 之类的几何），
+    一律原样跑——跳过它的 draw，manifest 报的就是旧几何，而随后的 SVG / 导出跑的是真实现（Codex #526）。
     """
     from matplotlib.image import _ImageBase
 
@@ -74,6 +85,11 @@ def image_pixels_skipped(fig):
     try:
         for im in fig.findobj(match=_ImageBase):
             if "draw" in vars(im) or "make_image" in vars(im):
+                continue
+            if not all(
+                _defining_module(type(im), name) == "matplotlib.image"
+                for name in ("draw", "make_image")
+            ):
                 continue
             im.draw = _layout_only_image_draw.__get__(im)
             im.make_image = _layout_only_make_image.__get__(im)
