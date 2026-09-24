@@ -14,7 +14,7 @@
   逐字相等、没被 markStale 标记）。
 * **凡是读 `bbox` / `anchor` / `position` / `geometry` / `arrow_endpoints` /
   `follow_gids` / `geom_gid` / `size_mm` 之后要写文档的，一律走权威**：图内
-  对齐分布、等宽等高、多选整组拖动、单文字拖动、axes 移动与缩放、成组缩放、
+  对齐分布、等宽等高、多选整组拖动、单文字拖动、拖形状带内容、axes 移动与缩放、成组缩放、
   命中测试、框选、选择框、吸附候选、orphan override 判定与清理。
   列元素 / 认 role / 画角标这类只读的继续用显示那份。
 * `panelDisplayView` 是**判别联合**：`fallback` / `empty` 分支在类型上就没有

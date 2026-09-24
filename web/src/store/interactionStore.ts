@@ -34,6 +34,11 @@ interface InteractionState {
   /** 图内独立箭头端点拖动中的预览端点（figure 分数、top-origin） */
   arrowPreview: { gid: string; a: [number, number]; b: [number, number] } | null
   /**
+   * 拖形状时被带着走、**只有一端跟随**的箭头（形状变了，平移 SVG 会骗人）：覆盖层
+   * 沿预览端点画虚线。整根平移的箭头不在这里，它们走 SVG 预览（figure 分数、top-origin）。
+   */
+  carriedArrows: { gid: string; a: [number, number]; b: [number, number] }[] | null
+  /**
    * 子图拖动 / 缩放的预览框（figure 分数、top-origin），按 gid 索引。
    * 成组缩放时同时给出组框，单个子图拖动时只有 boxes 里的一项。
    */
@@ -52,6 +57,7 @@ interface InteractionState {
   setHoverGid: (gid: string | null) => void
   setGidDrag: (d: { gid: string; dfx: number; dfy: number } | null) => void
   setArrowPreview: (p: { gid: string; a: [number, number]; b: [number, number] } | null) => void
+  setCarriedArrows: (p: { gid: string; a: [number, number]; b: [number, number] }[] | null) => void
   setElementPreview: (p: { boxes: Record<string, Rect4>; group?: Rect4 } | null) => void
   setCursor: (c: { x: number; y: number } | null) => void
   setPendingGuide: (g: { axis: 'x' | 'y'; pos: number } | null) => void
@@ -67,6 +73,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   hoverGid: null,
   gidDrag: null,
   arrowPreview: null,
+  carriedArrows: null,
   elementPreview: null,
   cursor: null,
   pendingGuide: null,
@@ -87,6 +94,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       pendingGuide: null,
       gidDrag: null,
       arrowPreview: null,
+      carriedArrows: null,
       elementPreview: null,
     })
   },
@@ -105,6 +113,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   setHoverGid: (hoverGid) => set((s) => (s.hoverGid === hoverGid ? s : { hoverGid })),
   setGidDrag: (gidDrag) => set({ gidDrag }),
   setArrowPreview: (arrowPreview) => set({ arrowPreview }),
+  setCarriedArrows: (carriedArrows) => set({ carriedArrows }),
   setElementPreview: (elementPreview) => set({ elementPreview }),
   setCursor: (cursor) => set({ cursor }),
   setPendingGuide: (pendingGuide) => set({ pendingGuide }),

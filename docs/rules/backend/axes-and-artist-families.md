@@ -89,7 +89,10 @@
   一份实现盖住整族与用户子类；基准 transform 记在 `_mm_pos_base`，每次应用先回到
   基准再量，重放 / 二次拖动才幂等；原样 = 基准 transform，还原即放回。`pos_frac`
   已在 `_FRAC_ANCHORED`，图幅 / 子图落位一变照样重放。**柱不拖**：它们进了柱形
-  系列（skip_ids），位置是数据。框里的文字是独立 Text，拖框不带字——要一起走用多选。
+  系列（skip_ids），位置是数据。框里的文字是独立 Text，引擎侧拖框只挪框；「拖框带着框里的字
+  与连着框的箭头」是**前端**按几何判的（2026-09-24，`lib/elementGeom.patchContents`，全文见
+  `docs/rules/frontend/hit-and-selection-geometry.md`）——每件内容写自己的 `pos_frac` /
+  `endpoints_frac`，引擎这边没有新机制。
   看护：`test_patch_shapes_are_draggable_via_pos_frac`、等价矩阵 `s7-patch-drag`
   （含写回后重开）。
 - 散点 marker 可整体替换（set_paths，首改前缓存原始路径，"original" 还原）；

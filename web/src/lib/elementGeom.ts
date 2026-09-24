@@ -352,6 +352,125 @@ export function axesCompanions(
   return out
 }
 
+/**
+ * 「装在形状里」判据的容差（pt）。要盖住的是两处量出来的缝：annotate 箭头的端点
+ * 是**未扣 shrinkA / shrinkB**（默认 2pt）的锚点，而脚本常把锚点写在框的名义边上、
+ * 画出来的圆角框又多出一圈 pad；框里的字偶尔探出边框一点点也还是「框里的字」。
+ */
+export const PATCH_CARRY_TOL_PT = 3
+
+/** 拖动形状时跟着走的一件内容 */
+export interface CarriedItem {
+  gid: string
+  /**
+   * 箭头的哪几端跟着走（[尾, 头]）；文字 / 形状是整体平移，为 null。
+   * 两端都在 = 整根平移（预览照样平移 SVG）；只有一端 = 形状变了，预览画虚线。
+   */
+  ends: [boolean, boolean] | null
+  /** 位移后的箭头端点（figure 分数、y 向下）；非箭头为 null */
+  endpointsAt: (dfx: number, dfy: number) => [[number, number], [number, number]] | null
+  /** dfx/dfy 是内容分数位移，**y 向下**（与 contentDelta 的输出同一套） */
+  shift: (dfx: number, dfy: number) => PanelOverride
+}
+
+/** 元素**此刻**的墨迹框：锚点被 override 挪过而渲染没回来时，框跟着挪同样的量 */
+function currentBox(panel: PanelObject, el: ManifestElement): Rect4 {
+  const a = anchorOf(panel, el)
+  if (!a || !el.anchor) return [el.bbox[0], el.bbox[1], el.bbox[2], el.bbox[3]]
+  return [el.bbox[0] + a[0] - el.anchor[0], el.bbox[1] + a[1] - el.anchor[1], el.bbox[2], el.bbox[3]]
+}
+
+/**
+ * 拖动形状（`role === 'patch'`）时装在它里面、该跟着走的内容（2026-09-24，用户的流程图：
+ * 拖框时框里的字与连着框的箭头留在原地）。判据纯几何，只看 manifest 与文档：
+ *
+ * - **文字与形状**：包围盒（带容差）完全落在某个容器的包围盒里、且面积比那个容器小
+ *   ——整体平移。嵌套的框因此带着自己的字一起走，拖外层虚线框 = 搬整个模块；
+ * - **箭头**（有 `arrow_endpoints` 的）：端点落在某个容器包围盒里（带容差）的那一端
+ *   跟着走，两端都在则整根平移——连着两个框的箭头拖其中一个框时被拉长，而不是被扯走。
+ *
+ * 每件内容写**它自己的**那条 override（pos_frac / endpoints_frac，值 = 当前值 + 位移），
+ * 文档里仍是普通 override：重放与写回不需要新机制（与 `axesCompanions` 同一个办法）。
+ * `exclude` 是已经在拖的（多选里的成员），锁定的元素不动（`lockedGids`）。
+ */
+export function patchContents(
+  panel: PanelObject,
+  manifest: Manifest,
+  containerGids: readonly string[],
+  exclude: ReadonlySet<string> = new Set(),
+): CarriedItem[] {
+  const byGid = new Map(manifest.elements.map((e) => [e.gid, e]))
+  const containers = containerGids
+    .map((g) => byGid.get(g))
+    .filter((e): e is ManifestElement => !!e && e.role === 'patch')
+    .map((e) => ({ gid: e.gid, box: currentBox(panel, e) }))
+  if (!containers.length) return []
+  const locked = new Set(panel.lockedGids ?? [])
+  const [wMm, hMm] = manifest.size_mm
+  const tolPtMm = (PATCH_CARRY_TOL_PT * 25.4) / 72
+  const tx = wMm > 0 ? tolPtMm / wMm : 0
+  const ty = hMm > 0 ? tolPtMm / hMm : 0
+  const within = (p: [number, number], c: Rect4) =>
+    p[0] >= c[0] - tx && p[0] <= c[0] + c[2] + tx && p[1] >= c[1] - ty && p[1] <= c[1] + c[3] + ty
+  const area = (r: Rect4) => r[2] * r[3]
+
+  const out: CarriedItem[] = []
+  for (const el of manifest.elements) {
+    if (exclude.has(el.gid) || locked.has(el.gid) || isElementHidden(el)) continue
+    if (containers.some((c) => c.gid === el.gid)) continue
+
+    if (el.arrow_endpoints) {
+      const pts = arrowEndpointsOf(panel, el)
+      if (!pts || pts.length < 2) continue
+      const tail: [number, number] = [pts[0][0], pts[0][1]]
+      const head: [number, number] = [pts[1][0], pts[1][1]]
+      const ends: [boolean, boolean] = [
+        containers.some((c) => within(tail, c.box)),
+        containers.some((c) => within(head, c.box)),
+      ]
+      if (!ends[0] && !ends[1]) continue
+      const at = (dfx: number, dfy: number): [[number, number], [number, number]] => [
+        ends[0] ? [tail[0] + dfx, tail[1] + dfy] : tail,
+        ends[1] ? [head[0] + dfx, head[1] + dfy] : head,
+      ]
+      out.push({
+        gid: el.gid,
+        ends,
+        endpointsAt: at,
+        shift: (dfx, dfy) => {
+          const [a, b] = at(dfx, dfy)
+          return { gid: el.gid, prop: 'endpoints_frac', value: [a[0], a[1], b[0], b[1]].map(round4) }
+        },
+      })
+      continue
+    }
+
+    if (el.role !== 'text' && el.role !== 'patch') continue
+    const anchor = anchorOf(panel, el)
+    if (!anchor || !el.drag_prop) continue
+    const box = currentBox(panel, el)
+    const inside = containers.some(
+      (c) =>
+        area(box) < area(c.box) &&
+        within([box[0], box[1]], c.box) &&
+        within([box[0] + box[2], box[1] + box[3]], c.box),
+    )
+    if (!inside) continue
+    const prop = el.drag_prop
+    out.push({
+      gid: el.gid,
+      ends: null,
+      endpointsAt: () => null,
+      shift: (dfx, dfy) => ({
+        gid: el.gid,
+        prop,
+        value: [round4(anchor[0] + dfx), round4(anchor[1] + dfy)],
+      }),
+    })
+  }
+  return out
+}
+
 export interface AnnotationEntry extends AlignItem {
   label: string
   /** 画布标注对象 id；有它 = 这一条改的是画布对象的 x/y，不是 override */

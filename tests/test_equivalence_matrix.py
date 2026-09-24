@@ -179,6 +179,10 @@ def main():
     # 位置是排版不是数据，拖动走 pos_frac                        # patches_0
     gx1.add_patch(FancyBboxPatch((4.0, 0.2), 2.0, 0.5, boxstyle="round,pad=0.1",
                                  facecolor="#E8F2FA", edgecolor="#8BB7DA"))
+    gx1.text(5.0, 0.45, "box", ha="center", va="center")     # texts_0：框里的字
+    # 从框右缘出发的纯箭头注释：拖框时尾巴跟着走、头不动          # texts_1
+    gx1.annotate("", xy=(8.5, 0.45), xytext=(6.1, 0.45),
+                 arrowprops=dict(arrowstyle="-|>", shrinkA=2, shrinkB=2))
     gx1.set_xlim(0, 10)
     gx1.set_ylim(-0.4, 2.6)
     gx1.set_title("Families")
@@ -553,6 +557,37 @@ def _g_patch_drag(getbase):
     )
 
 
+def _g_patch_drag_carries(getbase):
+    """拖框带着内容走（前端 `patchContents` 写出来的那组 override）→ 再改图幅。
+
+    框 pos_frac、框里的字 pos_frac、箭头 endpoints_frac（只挪尾）同一个位移、同一次
+    提交——引擎侧没有新机制，钉的是这组普通 override 放在一起仍然三路 / 四路一致。
+    """
+    base = getbase()
+    box = _el(base, "axes_0.patches_0")["anchor"]
+    text = _el(base, "axes_0.texts_0")["anchor"]
+    (tx, ty), (hx, hy) = _el(base, "axes_0.texts_1.arrow")["arrow_endpoints"]
+    dx, dy = 0.06, -0.08
+    drag = [  # 一次拖动 = 一次提交：三条一起落
+        {
+            "gid": "axes_0.patches_0",
+            "prop": "pos_frac",
+            "value": [round(box[0] + dx, 4), round(box[1] + dy, 4)],
+        },
+        {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [round(text[0] + dx, 4), round(text[1] + dy, 4)],
+        },
+        {
+            "gid": "axes_0.texts_1.arrow",
+            "prop": "endpoints_frac",
+            "value": [round(tx + dx, 4), round(ty + dy, 4), hx, hy],
+        },
+    ]
+    return [drag, [*drag, {"gid": "figure", "prop": "size_mm", "value": [148.0, 66.0]}]]
+
+
 def _g_axes_range_scale_and_ticks(_getbase):
     """坐标轴范围 / 缩放类型 / spine + 刻度定位模型（Locator + Formatter）。
 
@@ -744,6 +779,7 @@ GROUPS = [
     ("s7-collection-family", "EqvFam", _g_collection_family),
     ("s7-patch-and-stem", "EqvFam", _g_patch_family_and_stem),
     ("s7-patch-drag", "EqvFam", _g_patch_drag),
+    ("s7-patch-drag-carries", "EqvFam", _g_patch_drag_carries),
     # 色条的 `tick_*` 与色条轴刻度组**刻意不在这里**：它俩覆盖的是同一批
     # 标签（不是「整组 vs 其中一个」），后应用的必然盖掉前一个，manifest 也
     # 只报得出一个值——`_assert_effect` 表达不了「两个都落地」。它的还原语义
@@ -881,6 +917,8 @@ WRITE_BACK_GROUPS = [
     # 拖过的形状：平移是叠在 transform 上的，写回的 PDF 与重开后的重放要落在
     # 同一处（图幅还变过一次）
     ("s7-patch-drag", "EqvFam", _g_patch_drag, ("Families",)),
+    # 拖框带内容：框 / 字 / 箭头尾各写各的 override，写回后重开仍落在一起
+    ("s7-patch-drag-carries", "EqvFam", _g_patch_drag_carries, ("Families", "box")),
     # 纯箭头注释：拖动写的是注释的锚点（不是箭头 patch），写回的 PDF 与重开后的
     # 重放要落在同一处；constrained_layout + 图幅变过一次
     ("s3-pure-arrow-annotation", "EqvAnnot", _g_pure_arrow_annotation, ("Constrained",)),

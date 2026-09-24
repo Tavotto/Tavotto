@@ -681,6 +681,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)
   const arrowPreview = useInteractionStore((s) => s.arrowPreview)
+  const carriedArrows = useInteractionStore((s) => s.carriedArrows)
   const selectedGids = useUiStore((s) => s.selectedGids)
   const selectedGid = selectedGids.at(-1) ?? null
   if (!manifest) return null
@@ -839,6 +840,22 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               onPointerDown={(e) => startAxesDrag(e, panel, primary.target, layout, dir)}
             />
           ))}
+
+        {/* 拖形状时只有一端跟着走的箭头：形状变了，SVG 平移会骗人，沿预览端点画虚线
+            （与拖单个端点时的 arrowPreview 同款） */}
+        {carriedArrows?.map((c) => (
+          <line
+            key={`carried-${c.gid}`}
+            data-carried-arrow={c.gid}
+            x1={toPoint(c.a).x}
+            y1={toPoint(c.a).y}
+            x2={toPoint(c.b).x}
+            y2={toPoint(c.b).y}
+            stroke="var(--color-sel)"
+            strokeWidth={1}
+            strokeDasharray="4 3"
+          />
+        ))}
 
         {arrowEl && arrowPts && (
           <>
