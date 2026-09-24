@@ -1,0 +1,83 @@
+{
+  "sink": "127.0.0.1:<ephemeral>/v1/events",
+  "control": {
+    "telemetry_settings": {
+      "consent": "enabled",
+      "consent_version": 2,
+      "enabled": true,
+      "hard_disabled": false,
+      "needs_reconsent": false,
+      "saved_consent_version": 2
+    },
+    "render_ok": true,
+    "boom_status": 500,
+    "export_status": 200,
+    "export_files": [
+      "qa_rel05_0925_025430.pdf"
+    ],
+    "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05/home/qa_private_user_zz/Documents/QAPRIV_Alice 论文 项目/tavottofile/export",
+    "frontend_event_status": 200,
+    "sink_hits": 3
+  },
+  "nohard": {
+    "unauth_status": 401,
+    "telemetry_settings": {
+      "consent": "enabled",
+      "consent_version": 2,
+      "enabled": false,
+      "hard_disabled": true,
+      "needs_reconsent": false,
+      "saved_consent_version": 2
+    },
+    "render_ok": true,
+    "boom_status": 500,
+    "export_status": 200,
+    "export_files": [
+      "qa_rel05_0925_025438.pdf"
+    ],
+    "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05/home/qa_private_user_zz/Documents/QAPRIV_Alice 论文 项目/tavottofile/export",
+    "frontend_event_status": 200,
+    "traversal_engine_render_status": 403,
+    "traversal_preview_status": 403,
+    "traversal_preview_is_png": false,
+    "bundle_status": [
+      200,
+      200,
+      200
+    ],
+    "sink_hits": 0,
+    "bundle_files": [
+      "GET:README.txt",
+      "GET:app.log",
+      "GET:config.json",
+      "GET:manifest.json",
+      "GET:report.json",
+      "POST:README.txt",
+      "POST:app.log",
+      "POST:config.json",
+      "POST:frontend-state.json",
+      "POST:manifest.json",
+      "POST:report.json",
+      "summary"
+    ],
+    "canary_hits": [
+      "error_message in GET:report.json",
+      "error_message in GET:app.log",
+      "outside_dir in GET:app.log",
+      "error_message in POST:report.json",
+      "error_message in POST:app.log",
+      "outside_dir in POST:app.log",
+      "error_message in summary"
+    ],
+    "report_project_token": "<project:f1e30c1dc6>",
+    "app_log_bytes": 4515,
+    "worker_logs_present": true,
+    "raw_worker_log_has_err_canary": false,
+    "raw_app_log_has_err_canary": true,
+    "raw_app_log_has_project_path": true
+  },
+  "bundle_sha256_get": "76289ba6baa0f62a7efc56b081cf3f9103a6df07f6e34279b05f9ce7cedcf70e",
+  "failures": [
+    "诊断包泄漏: ['error_message in GET:report.json', 'error_message in GET:app.log', 'outside_dir in GET:app.log', 'error_message in POST:report.json', 'error_message in POST:app.log', 'outside_dir in POST:app.log', 'error_message in summary']"
+  ]
+}

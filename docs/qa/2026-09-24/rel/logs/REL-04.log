@@ -1,0 +1,635 @@
+########## part: REL-04-dpr.log ##########
+# command: npx playwright test --config=playwright.qa-dpr.config.ts --reporter=list
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web
+# started_utc: 2026-09-24T18:39:48+00:00
+# ended_utc: 2026-09-24T18:44:42+00:00
+# head_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# exit_code: 1
+
+
+Running 19 tests using 1 worker
+
+  ✓   1 [chromium-dpr2] › e2e/element-path-selection.spec.ts:208:1 › 图内曲线：沿真实路径选中，bbox 空白角不误命中 (17.2s)
+  ✓   2 [chromium-dpr2] › e2e/element-path-selection.spec.ts:302:1 › 图内散点：描每颗 marker 的轮廓，两颗之间的空白不误命中 (17.5s)
+
+  ✓   3 [chromium-dpr2] › e2e/element-path-selection.spec.ts:404:1 › 图内只有 marker 的曲线：也描每颗 marker 的轮廓，不描那条不存在的折线 (17.3s)
+[e2e 假实时] 首帧 58.199999928474426ms · 40/40 帧（rAF 合并）· commit→权威 49.10000002384186ms
+  ✓   4 [chromium-dpr2] › e2e/fake-realtime.spec.ts:14:1 › 拖图内元素：预览跟手、拖动期间零后端、松手一次定稿 (18.0s)
+  ✓   5 [chromium-dpr2] › e2e/keyboard-golden-path.spec.ts:193:1 › 纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo → 导出 (21.3s)
+  ✓   6 [chromium-dpr2] › e2e/keyboard-golden-path.spec.ts:364:1 › 键盘错误恢复：路径打不开报错，改对路径后继续 (2.0s)
+  ✓   7 [chromium-dpr2] › e2e/keyboard-golden-path.spec.ts:388:1 › 快捷键不吞按钮的 Enter：焦点在「导出」按钮上按 Enter 打开的是对话框 (12.5s)
+  ✓   8 [chromium-dpr2] › e2e/twin-axes-pick.spec.ts:74:1 › twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了谁 (19.1s)
+  ✓   9 [chromium-dpr2] › e2e/twin-axes-pick.spec.ts:163:1 › 键盘轮换：bbox 中心不在曲线身上时也走得回来 (19.4s)
+[e2e] app-0 进程输出（尾部）:
+2026-09-25 02:42:15,555 INFO werkzeug: Press CTRL+C to quit
+2026-09-25 02:42:15,616 INFO pikepdf._core: pikepdf C++ to Python logger bridge initialized
+2026-09-25 02:42:15,843 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:15] "GET /api/version HTTP/1.1" 200 -
+2026-09-25 02:42:15,869 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:15] "GET / HTTP/1.1" 200 -
+2026-09-25 02:42:15,894 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:15] "GET /assets/index-7yGgmWmw.css HTTP/1.1" 200 -
+2026-09-25 02:42:15,894 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:15] "GET /assets/index-qj9xX_eu.js HTTP/1.1" 200 -
+2026-09-25 02:42:15,987 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:15] "GET /api/session/ping HTTP/1.1" 200 -
+2026-09-25 02:42:16,004 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/telemetry/settings HTTP/1.1" 200 -
+2026-09-25 02:42:16,011 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/project HTTP/1.1" 200 -
+2026-09-25 02:42:16,019 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/projects/recent?pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,021 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/projects?pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,127 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/version?pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,139 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-PD7ktt/figures → 3 个素材
+2026-09-25 02:42:16,143 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/project/readiness?pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,147 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/panels?pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,151 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-PD7ktt/figures&pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,174 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/events?pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,189 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/version?pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,196 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-PD7ktt/figures&pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,201 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/project/readiness?pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,209 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-PD7ktt/figures → 3 个素材
+2026-09-25 02:42:16,225 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/panels?pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,249 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/render?id=Fig1_kinetics.pdf&w=400&m=1790275335&pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,301 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/render?id=Fig2_correlation.pdf&w=400&m=1790275335&pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:16,325 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:16] "GET /api/render?id=Fig2_yield.pdf&w=400&m=1790275335&pj=3145c08e9f92 HTTP/1.1" 200 -
+... [截断：原输出 201 行，保留头 40 行 + 尾 150 行] ...
+2026-09-25 02:42:17,386 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:17] "GET /api/autosave/d_92i0ev5x?pj=3145c08e9f92 HTTP/1.1" 404 -
+2026-09-25 02:42:17,392 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:17] "PUT /api/autosave/d_92i0ev5x?base_revision=absent&pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:30,220 INFO tavotto: 引擎渲染: Fig1_kinetics 13812ms（冷启动） timings={"build_total_ms": 13122.254, "canvas_draw_ms": 15.643, "manifest_ms": 23.332, "patch_apply_ms": 0.397, "preview_plan_ms": 0.041, "queue_wait_ms": 0.001, "script_build_ms": 184.608, "script_exec_ms": 19.76, "server_ms": 13811.82, "total_ms": 42.453, "worker_get_ms": 646.512}
+2026-09-25 02:42:30,221 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:30] "POST /api/engine/render?pj=3145c08e9f92 HTTP/1.1" 200 -
+2026-09-25 02:42:31,242 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:31] "PUT /api/autosave/d_92i0ev5x?base=1790275337382&base_revision=4854b8031c3de382007cd384cd35b7f7&pj=3145c08e9f92 HTTP/1.1" 200 -
+
+  ✘  10 [webkit-dpr2-en] › e2e/inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出 (20.4s)
+  -  11 [chromium-en-longlabels] › e2e/error-recovery-en.spec.ts:64:1 › 无可用渲染环境：英文的环境缺件卡片 + 可点的修复出口
+[e2e] app-0 进程输出（尾部）:
+2026-09-25 02:42:37,788 INFO werkzeug: WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on http://127.0.0.1:52784
+2026-09-25 02:42:37,788 INFO werkzeug: Press CTRL+C to quit
+2026-09-25 02:42:37,851 INFO pikepdf._core: pikepdf C++ to Python logger bridge initialized
+2026-09-25 02:42:38,096 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/version HTTP/1.1" 200 -
+2026-09-25 02:42:38,103 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET / HTTP/1.1" 200 -
+2026-09-25 02:42:38,108 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /assets/index-7yGgmWmw.css HTTP/1.1" 200 -
+2026-09-25 02:42:38,109 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /assets/index-qj9xX_eu.js HTTP/1.1" 200 -
+2026-09-25 02:42:38,176 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/session/ping HTTP/1.1" 200 -
+2026-09-25 02:42:38,207 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/telemetry/settings HTTP/1.1" 200 -
+2026-09-25 02:42:38,207 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/project HTTP/1.1" 200 -
+2026-09-25 02:42:38,224 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/projects/recent?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,224 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/projects?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,259 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/version?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,270 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/project/readiness?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,274 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-en-misspkg-1790275357586 → 3 个素材
+2026-09-25 02:42:38,290 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/panels?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,292 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-en-misspkg-1790275357586&pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,293 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/events?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,411 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 02:42:38,450 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/ai/capabilities?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,452 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/version?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,455 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/project/readiness?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,457 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-en-misspkg-1790275357586&pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,458 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 02:42:38,458 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/runtime/assets?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,461 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-en-misspkg-1790275357586 → 3 个素材
+2026-09-25 02:42:38,471 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 02:42:38,472 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/registry?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,476 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/panels?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,481 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/render?id=Fig2_correlation.pdf&w=400&m=1790275357&pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,488 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/render?id=Fig1_kinetics.pdf&w=400&m=1790275357&pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,490 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/render?id=Fig2_yield.pdf&w=400&m=1790275357&pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:38,503 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/update/check HTTP/1.1" 200 -
+2026-09-25 02:42:38,687 INFO tavotto.engine: worker 启动: fig1_kinetics.py（entry=main，解释器来源=env_override）
+2026-09-25 02:42:38,692 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:38] "GET /api/engine/environment HTTP/1.1" 200 -
+2026-09-25 02:42:39,364 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:39] "GET /api/autosave/d_600a400z?pj=ae19ab6761c5 HTTP/1.1" 404 -
+2026-09-25 02:42:39,367 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:39] "PUT /api/autosave/d_600a400z?base_revision=absent&pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:42:53,366 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:42:53] "POST /api/versions/d_600a400z?pj=ae19ab6761c5 HTTP/1.1" 200 -
+2026-09-25 02:43:08,710 INFO tavotto.engine: 项目环境自动接手失败（project_env_not_found）: fig1_kinetics.py（体检了 3 个系统解释器）
+2026-09-25 02:43:08,710 ERROR tavotto: 引擎渲染失败: Fig1_kinetics: 脚本用到的 tavotto_e2e_nonexistent_pkg 在当前渲染环境里没有。可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 tavotto_e2e_nonexistent_pkg 的 Python / Conda 环境。
+2026-09-25 02:43:08,712 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:43:08] "POST /api/engine/render?pj=ae19ab6761c5 HTTP/1.1" 500 -
+
+  ✘  12 [chromium-en-longlabels] › e2e/error-recovery-en.spec.ts:96:1 › 脚本缺包（missing_dependency）：英文缺包卡片，指名包与修复路径 (48.0s)
+  ✓  13 [chromium-en-longlabels] › e2e/error-recovery-en.spec.ts:126:1 › render 失败（脚本抛异常）：英文报错 + 重试按钮，画布不丢 (35.6s)
+  ✓  14 [chromium-en-longlabels] › e2e/error-recovery-en.spec.ts:148:1 › 项目目录不可读：ProjectPicker 英文报错，改对路径可继续 (2.1s)
+  ✓  15 [chromium-en-longlabels] › e2e/error-recovery-en.spec.ts:177:1 › 导出目录不可写：导出失败给英文报错，且不丢项目 (12.4s)
+  ✓  16 [chromium-en-longlabels] › e2e/error-recovery-en.spec.ts:229:1 › AI CLI 不可用：设置里英文说明找过哪些位置 (2.6s)
+  -  17 [chromium-en-longlabels] › e2e/error-recovery-en.spec.ts:275:1 › 原图被独占占用（file_locked）：英文报错说清该关掉谁，改动不丢
+  ✓  18 [chromium-en-longlabels] › e2e/error-recovery-en.spec.ts:346:1 › updater 离线：检查更新失败给英文报错，界面可继续 (2.2s)
+  ✓  19 [chromium-en-longlabels] › e2e/inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出 (20.6s)
+
+
+  1) [webkit-dpr2-en] › e2e/inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出 
+
+    Error: 子图 @320
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 4
+
+    - Array []
+    + Array [
+    +   "INPUT.type-number h-full min-w-0 bg-transparent text-ink outline-n sw=48 cw=43",
+    +   "INPUT.type-number h-full min-w-0 bg-transparent text-ink outline-n sw=48 cw=43",
+    + ]
+
+      81 |   for (const [name, group, item, heading] of screens) {
+      82 |     await select(group, item, heading)
+    > 83 |     expect(await horizontalOffenders(page, PANEL), `${name} @320`).toEqual([])
+         |                                                                    ^
+      84 |   }
+      85 | })
+      86 |
+        at /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web/e2e/inspector-overflow.spec.ts:83:68
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr2-en/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr2-en/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr2-en/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr2-en/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr2-en/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) [chromium-en-longlabels] › e2e/error-recovery-en.spec.ts:96:1 › 脚本缺包（missing_dependency）：英文缺包卡片，指名包与修复路径 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByLabel('Right panel', { exact: true }).getByLabel(/rendering interpreter path/i).first()
+    Expected: visible
+    Timeout: 15000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 15000ms
+      - waiting for getByLabel('Right panel', { exact: true }).getByLabel(/rendering interpreter path/i).first()
+
+
+      119 |   // 这条断言当时红在措辞上，而真问题是新卡片一度**没有**换环境的出口）。
+      120 |   // 无障碍名是契约的一部分，比措辞稳。
+    > 121 |   await expect(panel.getByLabel(/rendering interpreter path/i).first()).toBeVisible()
+          |                                                                         ^
+      122 |   // 未知包（curated 与项目声明都解析不出）时**不给一键安装**，只给手动指名
+      123 |   await expect(panel.getByLabel(/package to install/i).first()).toBeVisible()
+      124 | })
+        at /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web/e2e/error-recovery-en.spec.ts:121:73
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/error-recovery-en-脚本缺包（missing-dependency）：英文缺包卡片，指名包与修复路径-chromium-en-longlabels/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/error-recovery-en-脚本缺包（missing-dependency）：英文缺包卡片，指名包与修复路径-chromium-en-longlabels/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/error-recovery-en-脚本缺包（missing-dependency）：英文缺包卡片，指名包与修复路径-chromium-en-longlabels/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/error-recovery-en-脚本缺包（missing-dependency）：英文缺包卡片，指名包与修复路径-chromium-en-longlabels/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/error-recovery-en-脚本缺包（missing-dependency）：英文缺包卡片，指名包与修复路径-chromium-en-longlabels/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2 failed
+    [webkit-dpr2-en] › e2e/inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出 ─
+    [chromium-en-longlabels] › e2e/error-recovery-en.spec.ts:96:1 › 脚本缺包（missing_dependency）：英文缺包卡片，指名包与修复路径 
+  2 skipped
+  15 passed (4.9m)
+
+# exit_code: 1
+
+########## part: REL-04-isolate.log ##########
+# command: npx playwright test --config=playwright.qa-isolate.config.ts --reporter=list
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web
+# started_utc: 2026-09-24T18:45:25+00:00
+# ended_utc: 2026-09-24T18:46:30+00:00
+# head_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# exit_code: 1
+
+
+Running 3 tests using 1 worker
+
+[e2e] app-0 进程输出（尾部）:
+2026-09-25 02:45:28,094 INFO werkzeug: WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on http://127.0.0.1:57931
+2026-09-25 02:45:28,094 INFO werkzeug: Press CTRL+C to quit
+2026-09-25 02:45:28,175 INFO pikepdf._core: pikepdf C++ to Python logger bridge initialized
+2026-09-25 02:45:28,391 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/version HTTP/1.1" 200 -
+2026-09-25 02:45:28,417 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET / HTTP/1.1" 200 -
+2026-09-25 02:45:28,455 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /assets/index-qj9xX_eu.js HTTP/1.1" 200 -
+2026-09-25 02:45:28,455 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /assets/index-7yGgmWmw.css HTTP/1.1" 200 -
+2026-09-25 02:45:28,543 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/session/ping HTTP/1.1" 200 -
+2026-09-25 02:45:28,561 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/telemetry/settings HTTP/1.1" 200 -
+2026-09-25 02:45:28,562 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/project HTTP/1.1" 200 -
+2026-09-25 02:45:28,569 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/projects?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,569 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/projects/recent?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,651 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/version?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,659 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-dRKLbk/figures → 3 个素材
+2026-09-25 02:45:28,661 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/project/readiness?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,677 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/panels?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,679 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-dRKLbk/figures&pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,683 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/events?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,703 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/version?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,708 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-dRKLbk/figures&pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,718 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/project/readiness?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,723 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-dRKLbk/figures → 3 个素材
+2026-09-25 02:45:28,725 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/panels?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,768 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/render?id=Fig1_kinetics.pdf&w=400&m=1790275527&pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,786 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 02:45:28,797 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/render?id=Fig2_correlation.pdf&w=400&m=1790275527&pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,806 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/render?id=Fig2_yield.pdf&w=400&m=1790275527&pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:28,896 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/update/check HTTP/1.1" 200 -
+2026-09-25 02:45:28,964 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 02:45:28,967 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:28] "GET /api/runtime/assets?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:29,016 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:29] "GET /api/ai/capabilities?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:29,021 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 02:45:29,023 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:29] "GET /api/registry?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:29,120 INFO tavotto.engine: worker 启动: fig1_kinetics.py（entry=main，解释器来源=env_override）
+2026-09-25 02:45:29,126 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:29] "GET /api/engine/environment HTTP/1.1" 200 -
+2026-09-25 02:45:29,868 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:29] "GET /api/autosave/d_096oytef?pj=670d6587e067 HTTP/1.1" 404 -
+2026-09-25 02:45:29,872 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:29] "PUT /api/autosave/d_096oytef?base_revision=absent&pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:41,935 INFO tavotto: 引擎渲染: Fig1_kinetics 13034ms（冷启动） timings={"build_total_ms": 12775.696, "canvas_draw_ms": 16.484, "manifest_ms": 16.554, "patch_apply_ms": 0.296, "preview_plan_ms": 0.036, "queue_wait_ms": 0.001, "script_build_ms": 185.643, "script_exec_ms": 19.976, "server_ms": 13034.031, "total_ms": 36.063, "worker_get_ms": 222.076}
+2026-09-25 02:45:41,936 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:41] "POST /api/engine/render?pj=670d6587e067 HTTP/1.1" 200 -
+2026-09-25 02:45:42,957 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:42] "PUT /api/autosave/d_096oytef?base=1790275529865&base_revision=5d6f468fd0adfaf872faed13ef9e65f7&pj=670d6587e067 HTTP/1.1" 200 -
+
+  ✘  1 [webkit-dpr1-en] › e2e/inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出 (19.6s)
+[e2e] app-0 进程输出（尾部）:
+2026-09-25 02:45:48,230 INFO werkzeug: WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on http://127.0.0.1:58600
+2026-09-25 02:45:48,230 INFO werkzeug: Press CTRL+C to quit
+2026-09-25 02:45:48,319 INFO pikepdf._core: pikepdf C++ to Python logger bridge initialized
+2026-09-25 02:45:48,526 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/version HTTP/1.1" 200 -
+2026-09-25 02:45:48,548 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET / HTTP/1.1" 200 -
+2026-09-25 02:45:48,575 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /assets/index-qj9xX_eu.js HTTP/1.1" 200 -
+2026-09-25 02:45:48,577 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /assets/index-7yGgmWmw.css HTTP/1.1" 200 -
+2026-09-25 02:45:48,646 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/session/ping HTTP/1.1" 200 -
+2026-09-25 02:45:48,675 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/project HTTP/1.1" 200 -
+2026-09-25 02:45:48,679 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/telemetry/settings HTTP/1.1" 200 -
+2026-09-25 02:45:48,692 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/projects/recent?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,697 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/projects?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,772 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/version?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,788 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/project/readiness?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,790 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-GFS9yH/figures → 3 个素材
+2026-09-25 02:45:48,798 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/panels?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,800 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-GFS9yH/figures&pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,806 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/events?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,829 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/version?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,832 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-GFS9yH/figures&pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,837 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/project/readiness?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,843 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-GFS9yH/figures → 3 个素材
+2026-09-25 02:45:48,847 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/panels?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,924 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/render?id=Fig1_kinetics.pdf&w=400&m=1790275548&pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:48,984 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:48] "GET /api/render?id=Fig2_correlation.pdf&w=400&m=1790275548&pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:49,012 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:49] "GET /api/render?id=Fig2_yield.pdf&w=400&m=1790275548&pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:49,088 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 02:45:49,089 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:49] "GET /api/runtime/assets?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:49,114 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:49] "GET /api/update/check HTTP/1.1" 200 -
+2026-09-25 02:45:49,122 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 02:45:49,167 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 02:45:49,171 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:49] "GET /api/registry?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:49,171 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:49] "GET /api/ai/capabilities?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:45:49,281 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 02:45:49,482 INFO tavotto.engine: worker 启动: fig1_kinetics.py（entry=main，解释器来源=env_override）
+2026-09-25 02:45:49,492 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:49] "GET /api/engine/environment HTTP/1.1" 200 -
+2026-09-25 02:45:50,021 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:50] "GET /api/autosave/d_c73n2o10?pj=24e671525bf1 HTTP/1.1" 404 -
+2026-09-25 02:45:50,040 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:45:50] "PUT /api/autosave/d_c73n2o10?base_revision=absent&pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:46:04,018 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:46:04] "POST /api/versions/d_c73n2o10?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:46:05,434 INFO tavotto: 引擎渲染: Fig1_kinetics 16403ms（冷启动） timings={"build_total_ms": 15909.38, "canvas_draw_ms": 15.224, "manifest_ms": 17.48, "patch_apply_ms": 0.336, "preview_plan_ms": 0.049, "queue_wait_ms": 0.002, "script_build_ms": 201.189, "script_exec_ms": 37.752, "server_ms": 16402.787, "total_ms": 35.915, "worker_get_ms": 457.019}
+2026-09-25 02:46:05,435 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:46:05] "POST /api/engine/render?pj=24e671525bf1 HTTP/1.1" 200 -
+2026-09-25 02:46:06,454 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 02:46:06] "PUT /api/autosave/d_c73n2o10?base=1790275550011&base_revision=9cadc2491a922ea99767a54486171adc&pj=24e671525bf1 HTTP/1.1" 200 -
+
+  ✘  2 [webkit-dpr1-zh] › e2e/inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出 (22.4s)
+  ✓  3 [chromium-dpr2-en] › e2e/inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出 (19.4s)
+
+
+  1) [webkit-dpr1-en] › e2e/inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出 
+
+    Error: 子图 @320
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 4
+
+    - Array []
+    + Array [
+    +   "INPUT.type-number h-full min-w-0 bg-transparent text-ink outline-n sw=48 cw=43",
+    +   "INPUT.type-number h-full min-w-0 bg-transparent text-ink outline-n sw=48 cw=43",
+    + ]
+
+      81 |   for (const [name, group, item, heading] of screens) {
+      82 |     await select(group, item, heading)
+    > 83 |     expect(await horizontalOffenders(page, PANEL), `${name} @320`).toEqual([])
+         |                                                                    ^
+      84 |   }
+      85 | })
+      86 |
+        at /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web/e2e/inspector-overflow.spec.ts:83:68
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr1-en/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr1-en/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr1-en/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr1-en/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr1-en/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) [webkit-dpr1-zh] › e2e/inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出 
+
+    Error: 子图 @320
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 4
+
+    - Array []
+    + Array [
+    +   "INPUT.type-number h-full min-w-0 bg-transparent text-ink outline-n sw=48 cw=43",
+    +   "INPUT.type-number h-full min-w-0 bg-transparent text-ink outline-n sw=48 cw=43",
+    + ]
+
+      81 |   for (const [name, group, item, heading] of screens) {
+      82 |     await select(group, item, heading)
+    > 83 |     expect(await horizontalOffenders(page, PANEL), `${name} @320`).toEqual([])
+         |                                                                    ^
+      84 |   }
+      85 | })
+      86 |
+        at /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web/e2e/inspector-overflow.spec.ts:83:68
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr1-zh/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr1-zh/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr1-zh/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr1-zh/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/inspector-overflow-标题-刻度-子图三屏在-360-与-320-两档宽度下都不横向溢出-webkit-dpr1-zh/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2 failed
+    [webkit-dpr1-en] › e2e/inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出 ─
+    [webkit-dpr1-zh] › e2e/inspector-overflow.spec.ts:19:1 › 标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出 ─
+  1 passed (1.1m)
+
+# exit_code: 1
+
+########## part: REL-04-missingdep-noenv.log ##########
+# command: npx playwright test e2e/error-recovery-en.spec.ts --project=chromium-en -g missing_dependency --reporter=list
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web
+# started_utc: 2026-09-24T18:47:26+00:00
+# ended_utc: 2026-09-24T18:47:56+00:00
+# head_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# exit_code: 0
+
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-en] › e2e/error-recovery-en.spec.ts:96:1 › 脚本缺包（missing_dependency）：英文缺包卡片，指名包与修复路径 (28.9s)
+
+  1 passed (29.2s)
+
+# exit_code: 0
+
+########## part: REL-04-mutation-red.log ##########
+# command: npx vitest run src/hooks/useKeyboardTextFocus.test.tsx
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web
+# started_utc: 2026-09-24T18:50:45+00:00
+# ended_utc: 2026-09-24T18:50:47+00:00
+# head_sha: cb6296804ac28586fe46c8c36f7e54e3eefb0c88
+# exit_code: 1
+
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx (27 tests | 21 failed) 55ms
+     × Backspace 删的是字符，不是画布上选中的面板 20ms
+     × Delete 删的是字符，不是画布上选中的面板 3ms
+     × ⌘Z / Ctrl+Z / ⌘⇧Z 不动文档历史（让给原生文本撤销） 5ms
+     × 方向键移的是光标，不是面板 2ms
+     × 工具字母是在打字，不切工具 1ms
+     × 空格是空格，不进平移态 1ms
+     × ⌘A 全选文字，不全选画布；⌘D 不复制面板 3ms
+     × Backspace 删的是字符，不是画布上选中的面板 1ms
+     × Delete 删的是字符，不是画布上选中的面板 1ms
+     × ⌘Z / Ctrl+Z / ⌘⇧Z 不动文档历史（让给原生文本撤销） 2ms
+     × 方向键移的是光标，不是面板 1ms
+     × 工具字母是在打字，不切工具 1ms
+     × 空格是空格，不进平移态 1ms
+     × ⌘A 全选文字，不全选画布；⌘D 不复制面板 1ms
+     × Backspace 删的是字符，不是画布上选中的面板 1ms
+     × Delete 删的是字符，不是画布上选中的面板 1ms
+     × ⌘Z / Ctrl+Z / ⌘⇧Z 不动文档历史（让给原生文本撤销） 1ms
+     × 方向键移的是光标，不是面板 1ms
+     × 工具字母是在打字，不切工具 1ms
+     × 空格是空格，不进平移态 1ms
+     × ⌘A 全选文字，不全选画布；⌘D 不复制面板 1ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 21 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > Backspace 删的是字符，不是画布上选中的面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > Delete 删的是字符，不是画布上选中的面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > Backspace 删的是字符，不是画布上选中的面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > Delete 删的是字符，不是画布上选中的面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > Backspace 删的是字符，不是画布上选中的面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > Delete 删的是字符，不是画布上选中的面板
+AssertionError: expected undefined to be defined
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:126:21
+    124|   it.each(['Backspace', 'Delete'])('%s 删的是字符，不是画布上选中的面板', (key) => {
+    125|     const ev = press(field(sel), { key })
+    126|     expect(panel()).toBeDefined()
+       |                     ^
+... [截断：原输出 198 行，保留头 40 行 + 尾 150 行] ...
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:145:55
+    143|     expect(panel()!.x).toBe(99)
+    144|     expect(doc().past).toHaveLength(1)
+    145|     expect([a, b, c].some((e) => e.defaultPrevented)).toBe(false)
+       |                                                       ^
+    146|   })
+    147|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > 方向键移的是光标，不是面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > 方向键移的是光标，不是面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > 方向键移的是光标，不是面板
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:151:51
+    149|     const el = field(sel)
+    150|     for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDow…
+    151|       expect(press(el, { key }).defaultPrevented).toBe(false)
+       |                                                   ^
+    152|       press(el, { key, shiftKey: true })
+    153|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > 工具字母是在打字，不切工具
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > 工具字母是在打字，不切工具
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > 工具字母是在打字，不切工具
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:160:51
+    158|     const el = field(sel)
+    159|     for (const key of ['t', 'a', 'r', 'o', 'l', 'R']) {
+    160|       expect(press(el, { key }).defaultPrevented).toBe(false)
+       |                                                   ^
+    161|     }
+    162|     expect(useUiStore.getState().tool).toBe('select')
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > 空格是空格，不进平移态
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > 空格是空格，不进平移态
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > 空格是空格，不进平移态
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:167:51
+    165|   it('空格是空格，不进平移态', () => {
+    166|     const ev = press(field(sel), { key: ' ', code: 'Space' })
+    167|     expect(useViewportStore.getState().spaceDown).toBe(false)
+       |                                                   ^
+    168|     expect(ev.defaultPrevented).toBe(false)
+    169|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > ⌘A 全选文字，不全选画布；⌘D 不复制面板
+AssertionError: expected [ 'p_t8hcu1cz' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "p_t8hcu1cz",
++ ]
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:176:46
+    174|     const a = press(el, { key: 'a', metaKey: true })
+    175|     const d = press(el, { key: 'd', metaKey: true })
+    176|     expect(useSelectionStore.getState().ids).toEqual([])
+       |                                              ^
+    177|     expect(doc().doc.objects).toHaveLength(1)
+    178|     expect(a.defaultPrevented || d.defaultPrevented).toBe(false)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > ⌘A 全选文字，不全选画布；⌘D 不复制面板
+AssertionError: expected [ 'p_vqzroj5l' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "p_vqzroj5l",
++ ]
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:176:46
+    174|     const a = press(el, { key: 'a', metaKey: true })
+    175|     const d = press(el, { key: 'd', metaKey: true })
+    176|     expect(useSelectionStore.getState().ids).toEqual([])
+       |                                              ^
+    177|     expect(doc().doc.objects).toHaveLength(1)
+    178|     expect(a.defaultPrevented || d.defaultPrevented).toBe(false)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > ⌘A 全选文字，不全选画布；⌘D 不复制面板
+AssertionError: expected [ 'p_6tuyyzvl' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "p_6tuyyzvl",
++ ]
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:176:46
+    174|     const a = press(el, { key: 'a', metaKey: true })
+    175|     const d = press(el, { key: 'd', metaKey: true })
+    176|     expect(useSelectionStore.getState().ids).toEqual([])
+       |                                              ^
+    177|     expect(doc().doc.objects).toHaveLength(1)
+    178|     expect(a.defaultPrevented || d.defaultPrevented).toBe(false)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/21]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  21 failed | 6 passed (27)
+   Start at  02:50:45
+   Duration  1.25s (transform 429ms, setup 150ms, import 427ms, tests 55ms, environment 515ms)
+
+
+# exit_code: 1
+
+########## part: REL-04-mutation-restored.log ##########
+# command: npx vitest run src/hooks/useKeyboardTextFocus.test.tsx src/hooks/useKeyboard.test.ts src/hooks/useKeyboardSave.test.tsx src/hooks/useKeyboardFastEdit.test.tsx
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web
+# started_utc: 2026-09-24T18:50:56+00:00
+# ended_utc: 2026-09-24T18:50:58+00:00
+# head_sha: cb6296804ac28586fe46c8c36f7e54e3eefb0c88
+# exit_code: 0
+
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web
+
+
+ Test Files  4 passed (4)
+      Tests  40 passed (40)
+   Start at  02:50:56
+   Duration  1.22s (transform 1.56s, setup 653ms, import 1.56s, tests 110ms, environment 2.12s)
+
+
+# exit_code: 0

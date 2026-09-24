@@ -1,0 +1,509 @@
+[
+  {
+    "case_id": "REL-01",
+    "title": "浏览器（Chromium / WebKit）几何关键流 + macOS 真壳（只读）身份与发布卫生",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "web/e2e/fake-realtime.spec.ts::拖图内元素：预览跟手、拖动期间零后端、松手一次定稿（断言预览 transform 形如 translate(…) <原 transform>、拖动中 0 次 /api/engine/render、松手恰 1 次定稿；不核最终锚点坐标）",
+      "web/e2e/twin-axes-pick.spec.ts::twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了谁",
+      "web/e2e/twin-axes-pick.spec.ts::键盘轮换：bbox 中心不在曲线身上时也走得回来",
+      "web/e2e/keyboard-golden-path.spec.ts::纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo → 导出",
+      "web/e2e/golden-paths.spec.ts::打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复",
+      "web/e2e/golden-paths.spec.ts::导出 PDF 后文件真的落盘",
+      "web/e2e/element-path-selection.spec.ts::图内曲线 / 图内散点 / 只有 marker 的曲线（三条）",
+      "web/e2e/quick-menu.spec.ts::右键菜单：Esc 不清空选区 / 越界翻转 / 重新构建真跑脚本 / 多选对齐",
+      "tests/test_bundled_runtime.py（-B 只对 bundled 断言；非 bundled 解释器起 worker 时不写安装目录这一维没有用例）"
+    ],
+    "expected_outcome": "Chromium 与 WebKit 上几何关键流全部通过（无意外 skip / 重试）；已安装桌面包与发布资产字节一致、签名封印完整（codesign --verify --deep --strict 与 spctl 通过）、无调试入口（无 get-task-allow、无 devtools 插件 / dev server 地址）；Windows 腿记未执行。",
+    "product_outcome": "功能失败",
+    "test_verdict": "fail",
+    "verdict_reason": "浏览器侧：Chromium 14/14（第二遍）、WebKit 配置项目 24/24、WebKit 临时加跑几何流 5/5 全绿，0 skip，未重试。Chromium 第一遍 13/14：「导出 PDF 后文件真的落盘」500——worktree 没有批准字体（fonts 不入 git），RenderCore 明确失败；补 TAVOTTO_FONTS_DIR 后整组**重跑**（不是只重试那一条）14/14，归环境，非产品缺陷，但记为「靠补环境后才绿」。桌面侧：已安装 Tavotto.app 0.16.0 主程序 sha256 与发布资产 Tavotto.app.tar.gz（af900af2…，SHA256SUMS 内）解出的完全一致、原样解包的那份 codesign 严格校验通过；但**已安装那份** codesign --verify --deep --strict 与 spctl 均失败（a sealed resource is missing or invalid）：安装后多出 17 个 tavotto/engine/__pycache__/*.pyc（2026-09-23 13:01 写入）。根因复现：pool._spawn_spec / EngineWorker 只对 bundled 解释器加 -B，项目 .venv / 系统 / 用户配置 / TAVOTTO_WORKER_PYTHON 起 worker 时直接 import .app 内的 engine/*.py 并写 __pycache__——违反根 AGENTS.md「不往安装目录写任何东西（写 .app 会当场破坏代码签名）」。Beta.app（本地 ad-hoc 构建）同样封印失效（内置 runtime 标准库多出 70 个 .pyc，成因未定位，不计为已证实缺陷）。调试标记：无 get-task-allow；strings 里 devtools=3 / RUST_BACKTRACE=3 为 Tauri/Rust 通用串，未见 dev server 地址或测试钩子。桌面真壳的打开/文件对话框/拖动/保存/导出/退出未执行（规则禁止用已安装 app 打开用户数据目录，且无隔离的第二台机）；Windows 未执行。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，PYTHONPATH=worktree/src；无 matplotlib）",
+      "worker_python": "Homebrew 3.13.11（/opt/homebrew/opt/python@3.13），matplotlib 3.10.8，numpy 2.4.3",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "playwright": "1.62.1（chromium build 1234 / webkit build 2336，headless）",
+      "fonts": "TAVOTTO_FONTS_DIR=主仓库 src/tavotto/resources/fonts（fetch_fonts.py --check 13 张脸 sha256 一致）",
+      "desktop_apps_inspected": "/Applications/Tavotto.app 0.16.0；/Applications/Tavotto Beta.app 0.16.1-beta.2（只读）"
+    },
+    "fixtures": [
+      {
+        "path": "examples/figures（E2E fixtures.ts 每条用例拷一份到临时目录）",
+        "sha256": "（仓库内容，随 source_sha）"
+      },
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/pyc-repro/figs-system/fig.py",
+        "sha256": "a7e3956e5a68764553884d6f23a0d1a6a6bc86d4af6a3f0776449073c59b1767"
+      }
+    ],
+    "entry": "playwright（chromium / webkit）+ 桌面（只读：PlistBuddy / codesign / spctl / shasum）+ Python 复现脚本",
+    "commands": [
+      "PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py",
+      "cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts PYTHONPATH=$PWD/../src npx playwright test e2e/fake-realtime.spec.ts e2e/twin-axes-pick.spec.ts e2e/keyboard-golden-path.spec.ts e2e/golden-paths.spec.ts --project=chromium --reporter=list",
+      "cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts PYTHONPATH=$PWD/../src npx playwright test --project=webkit --reporter=list",
+      "cp docs/qa/2026-09-24/rel/repro/playwright.qa-webkit.config.ts web/ && (cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts PYTHONPATH=$PWD/../src npx playwright test --config=playwright.qa-webkit.config.ts --reporter=list); rm web/playwright.qa-webkit.config.ts",
+      "bash docs/qa/2026-09-24/rel/repro/inspect_desktop_apps.sh",
+      "gh release download v0.16.0 -R Tavotto/Tavotto -p Tavotto.app.tar.gz -D /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/rel-assets --clobber && bash docs/qa/2026-09-24/rel/repro/compare_installed_app_to_release.sh /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/rel-assets/Tavotto.app.tar.gz /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/app-extract",
+      "PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/rel/repro/repro_nonbundled_worker_writes_pyc_into_install_dir.py --worker-python /opt/homebrew/opt/python@3.13/libexec/bin/python3 --scratch /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/pyc-repro"
+    ],
+    "exit_codes": {
+      "chromium_run1": 1,
+      "chromium_run2_with_fonts": 0,
+      "webkit_project": 0,
+      "webkit_qa_geometry": 0,
+      "inspect_desktop_apps": 0,
+      "compare_installed_app_to_release": 0,
+      "pyc_repro(0=复现)": 0,
+      "pyc_repro_under_fix_mutation": 1,
+      "pyc_repro_restored": 0
+    },
+    "evidence": {
+      "log": {
+        "path": "docs/qa/2026-09-24/rel/logs/REL-01.log",
+        "sha256": "0d250c429c4c3b99f5b48bd3ca7b36cd865695a44810c9b5cfd803de602f02ed"
+      },
+      "summary": {
+        "chromium_run1": "13 passed / 1 failed / 0 skipped（缺批准字体）",
+        "chromium_run2": "14 passed / 0 failed / 0 skipped",
+        "webkit_project": "24 passed / 0 failed / 0 skipped",
+        "webkit_qa_geometry": "5 passed / 0 failed / 0 skipped（WebKit 假实时预览 16/40 帧，Chromium 40/40——观察，非判据）",
+        "desktop_Tavotto.app": "0.16.0 arm64，Developer ID + notarization stapled；安装后 codesign/spctl 失败；主程序 sha256 7c730f1b… == 发布 tarball 内同名文件；多出 17 个 engine/__pycache__/*.pyc",
+        "desktop_Tavotto_Beta.app": "0.16.1-beta.2 arm64，adhoc 签名；codesign/spctl 失败，多出 70 个 runtime 标准库 .pyc",
+        "pyc_repro": "非内置解释器组：argv 无 -B，模拟安装目录新增 16 个 .pyc；bundled 对照组：-B，0 个"
+      }
+    },
+    "artifacts": [
+      {
+        "path": "v0.16.0 Tavotto.app.tar.gz（发布资产）",
+        "sha256": "af900af2b703cc044e72192a66934bb069cb6eba28baca29f4c620f1858ab712"
+      },
+      {
+        "path": "/Applications/Tavotto.app/Contents/MacOS/Tavotto",
+        "sha256": "7c730f1b19450a3a185248574a5530745b694202efd0a0cccefb25043d2d4164"
+      },
+      {
+        "path": "/Applications/Tavotto Beta.app/Contents/MacOS/Tavotto",
+        "sha256": "a065bda91d813e4a308f814e7ee7786bd1d12ff8313ec1da9ac36c766db43500"
+      }
+    ],
+    "first_failed_invariant": "安装目录只读：运行时不得往 .app 内写任何文件（codesign 封印完整）",
+    "mutation_check": {
+      "target_file": "src/tavotto/engine/pool.py（_spawn_spec）",
+      "mutation": "`args = runtime.child_args() if bundled else []` → `args = runtime.child_args()`（模拟修复：所有解释器都带 -B）",
+      "expected_red_case": "repro_nonbundled_worker_writes_pyc_into_install_dir.py 应从 REPRODUCED(0) 变 NOT_REPRODUCED(1)，证明复现脚本的判据落在这一行",
+      "observed": "red",
+      "restored_green": true,
+      "note": "对复现脚本而言「red」= 不再复现（exit 1）；还原后再次 REPRODUCED(exit 0)。E2E 用例本身未做变异（本节未新增 E2E 断言）。"
+    },
+    "new_tests": [],
+    "product_bugs": [
+      {
+        "summary": "非内置解释器起 worker 时不带 -B，Python 把 __pycache__ 写进安装目录（macOS 即 .app 内），破坏代码签名封印",
+        "repro": "docs/qa/2026-09-24/rel/repro/repro_nonbundled_worker_writes_pyc_into_install_dir.py（exit 0 = 复现）；实机证据 compare_installed_app_to_release.sh",
+        "severity": "P1（违反根 AGENTS.md 不变量；spctl 评估失败，更新器 / 复制 / 重新分发会被判为「已损坏」）",
+        "code": "src/tavotto/engine/pool.py:1310（EngineWorker.__init__）与 :1867（_spawn_spec）`args = runtime.child_args() if bundled else []`"
+      }
+    ],
+    "gaps": [
+      "桌面真壳的打开 / 文件对话框 / 拖动 / 保存 / 导出 / 退出未执行（不得用已安装 app 碰用户数据；无隔离的干净机器）",
+      "Windows 桌面腿未执行（本机 macOS）",
+      "fake-realtime E2E 只量「预览形态 + 请求计数」，不量最终锚点对独立几何模型的坐标（spec §0.2）",
+      "WebKit 项目默认不含 fake-realtime / element-path-selection / quick-menu，本次用临时配置补跑；CI 上 WebKit 腿没有几何拖动流",
+      "Beta.app 标准库 .pyc 的写入者未定位（本地 ad-hoc 构建，可能来自开发者手动运行）",
+      "Intel macOS 腿（macos-x86_64-desktop，supported）无真机，未执行"
+    ]
+  },
+  {
+    "case_id": "REL-02",
+    "title": "干净安装与升级（桌面安装包 / pip 渠道）",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "scripts/ci/upgrade_acceptance.py（lab：N-1 → 候选，中文+空格项目路径，逐条核对项目/布局/自动保存/导出/配置/孤儿 worker）",
+      "nightly.yml：Windows 无 Python / 官方 Python / Conda 三档 × 中文用户名 + NSIS 装→冒烟→覆盖安装→卸载（CI，非本机）",
+      "tests/test_nsis_template.py、tests/test_migrate.py、tests/test_install_locate.py（静态/单元，未在本节执行）"
+    ],
+    "expected_outcome": "pip 渠道：v0.16.0 写出的用户状态被 HEAD 候选 wheel 原样接管（项目、布局、自动保存、导出、配置不被重置、无孤儿 worker），两次启动均通过；桌面安装包的干净安装/升级/卸载在本机不可执行，记未执行并引用 CI 证据。",
+    "product_outcome": "自动成功",
+    "test_verdict": "partial",
+    "verdict_reason": "本机执行了 pip/浏览器渠道的 N-1 → 候选升级验收（v0.16.0 → 62af729c 本地构建 wheel d82ca781…）：27/27 项通过、两次启动、项目路径含中文与空格。桌面安装包（无系统 Python、中文用户名、中文+空格安装目录、卸载、supervisor）未在本机执行；CI 证据：nightly 35921334300（f480ae3c，非本基线）Windows 三档全部 success，但同 run 的 updater-consumer-fidelity 失败——线上 latest.json（0.16.0）只有 darwin-aarch64 / windows-x86_64，缺 darwin-x86_64，而 support-matrix 把 macos-x86_64-desktop 列为 supported：Intel 用户收不到更新。注意：候选与基线版本号都是 0.16.0（HEAD 未升号），升级验收实际验的是「同号不同构建」。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，PYTHONPATH=worktree/src；无 matplotlib）",
+      "worker_python": "Homebrew 3.13.11（/opt/homebrew/opt/python@3.13），matplotlib 3.10.8，numpy 2.4.3",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "playwright": "1.62.1（chromium build 1234 / webkit build 2336，headless）",
+      "fonts": "TAVOTTO_FONTS_DIR=主仓库 src/tavotto/resources/fonts（fetch_fonts.py --check 13 张脸 sha256 一致）",
+      "desktop_apps_inspected": "/Applications/Tavotto.app 0.16.0；/Applications/Tavotto Beta.app 0.16.1-beta.2（只读）"
+    },
+    "fixtures": [
+      {
+        "path": "scripts/ci/upgrade_acceptance.py 自带语料（corpus 13 个产物）",
+        "sha256": "（仓库内容，随 source_sha）"
+      },
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/dist/tavotto-0.16.0-py3-none-any.whl（HEAD 本地构建候选）",
+        "sha256": "d82ca78111864f72833891563cbcf0f5209c2d658c510344cd2e959a4a11d307"
+      },
+      {
+        "path": "v0.16.0 tavotto-0.16.0-py3-none-any.whl（基线，由脚本经 API 下载）",
+        "sha256": "6bd64b3318a3cb39e7581c8a3f5f89fc517a76acc91781ae75b5bc35273619b7"
+      }
+    ],
+    "entry": "HTTP（upgrade_acceptance 起两代真实后端，走 smoke_app 同一套用户路径）",
+    "commands": [
+      "TAVOTTO_CI_STATE_ROOT=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/ci-state TAVOTTO_NO_TELEMETRY=1 TAVOTTO_NO_UPDATE_CHECK=1 /opt/homebrew/opt/python@3.13/libexec/bin/python3 scripts/ci/upgrade_acceptance.py --candidate /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/dist/tavotto-0.16.0-py3-none-any.whl --baseline-tag v0.16.0",
+      "gh run view 35921334300 -R Tavotto/Tavotto --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv'"
+    ],
+    "exit_codes": {
+      "upgrade_acceptance": 0
+    },
+    "evidence": {
+      "log": {
+        "path": "docs/qa/2026-09-24/rel/logs/REL-02.log",
+        "sha256": "8b70f4d9aa8d9d5f17b0b6c77ed94add4faa72115eeafba9079ebb83d79d860e"
+      },
+      "summary": {
+        "upgrade_acceptance": "27 ✅ / 0 ❌（阶段一 N-1 写状态 + 候选两次启动）",
+        "nightly_35921334300": "Windows·无 Python / 官方 Python / Conda success；updater-consumer-fidelity failure（latest.json 缺 darwin-x86_64）"
+      }
+    },
+    "artifacts": [],
+    "first_failed_invariant": null,
+    "mutation_check": null,
+    "mutation_check_reason": "本节未新增断言；升级验收脚本是现成门禁，未在本次变异。",
+    "new_tests": [],
+    "product_bugs": [],
+    "gaps": [
+      "桌面安装包的干净安装 / 升级 / 卸载 / 中文用户名 / 无系统 Python：未在本机执行（macOS 上没有可隔离的干净用户；Windows 不可用）",
+      "Linux beta（pip/pipx 浏览器模式）未在 Linux 上执行；本次 pip 渠道在 macOS 上执行",
+      "发行/支持口径缺口：support-matrix 声明 macos-x86_64-desktop supported，但 v0.16.0 发布与线上 latest.json 均无 Intel 产物（nightly updater-consumer-fidelity 连红，2026-09-23 两次）",
+      "N-1 与候选同号 0.16.0：迁移路径实际上没跨版本号"
+    ]
+  },
+  {
+    "case_id": "REL-03",
+    "title": "精确产物：CI 构建 → lab 验收 → 发布 → PyPI 的字节身份，及本地重建",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "scripts/ci/lab_acceptance.py（lab 装 build job 的同一份 wheel，打 sha256，结构断言 + smoke_app）",
+      "release-publish.yml::validate_artifacts（第二段按 source_run_id 取产物）",
+      "tests/test_release_workflow_contract.py、tests/test_retirement_scan.py（静态合同，未在本节执行）"
+    ],
+    "expected_outcome": "v0.16.0：release.yml 构建 run 的 dist 与 lab 验收的 wheel sha256、GitHub 资产、SHA256SUMS、artifact-manifest、PyPI 逐一相等；下载的发布 wheel 在干净 venv 安装后按其**同版本**验收脚本通过；HEAD 本地两次构建字节一致，且 HEAD 验收脚本通过。",
+    "product_outcome": "自动成功",
+    "test_verdict": "partial",
+    "verdict_reason": "字节链全部相等：release.yml run 35738284913 的 dist（wheel 6bd64b33…、sdist d04db295…、codex-plugin 9326efe2…）== ci-infra lab run 35739931388 日志里「候选 wheel sha256 6bd64b33…」（source_run_id=35738284913）== GitHub 资产 digest == SHA256SUMS.txt == artifact-manifest.json == PyPI JSON digest。桌面：dmg e097922d… / app.tar.gz af900af2… / NSIS 31229608… 与该 run 的 artifact-manifest-dmg/nsis 一致。更早的 run 35729348684（同 source_sha）产出不同的 codex-plugin / dmg / NSIS 字节，未被发布——说明「重建即新字节」，发布方确实用了被 lab 验收的那一次。下载的发布 wheel：用 HEAD 的 lab_acceptance 验收**失败**（缺批准字体、Requires-Dist 含 pymupdf）——那是 U10（#539）之后才有的判据套在 U10 之前的产物上，属验收脚本与产物版本错配；改用 4bf86c1f（发布源码）自己的 lab_acceptance 验收：全部通过（含 smoke_app）。HEAD 本地构建两次 sha256 相同（d82ca781… / sdist 30123b3a…），HEAD 验收全部通过。判 partial 的理由：① GitHub Release 不是由 release-publish 的 github_release job 建的（35754630426 / 35807964676 两次 403 Resource not accessible by integration，Release 于 17:25 在链外创建）——字节碰巧一致，但「发布经过身份核对的那一步」没执行；② lab 只验 wheel，dmg/NSIS 不经 lab 验收。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，PYTHONPATH=worktree/src；无 matplotlib）",
+      "worker_python": "Homebrew 3.13.11（/opt/homebrew/opt/python@3.13），matplotlib 3.10.8，numpy 2.4.3",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "playwright": "1.62.1（chromium build 1234 / webkit build 2336，headless）",
+      "fonts": "TAVOTTO_FONTS_DIR=主仓库 src/tavotto/resources/fonts（fetch_fonts.py --check 13 张脸 sha256 一致）",
+      "desktop_apps_inspected": "/Applications/Tavotto.app 0.16.0；/Applications/Tavotto Beta.app 0.16.1-beta.2（只读）"
+    },
+    "fixtures": [
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/released-wheel/tavotto-0.16.0-py3-none-any.whl",
+        "sha256": "6bd64b3318a3cb39e7581c8a3f5f89fc517a76acc91781ae75b5bc35273619b7"
+      },
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/dist/tavotto-0.16.0-py3-none-any.whl（HEAD 构建 #1）",
+        "sha256": "d82ca78111864f72833891563cbcf0f5209c2d658c510344cd2e959a4a11d307"
+      },
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/dist2/tavotto-0.16.0-py3-none-any.whl（HEAD 构建 #2）",
+        "sha256": "d82ca78111864f72833891563cbcf0f5209c2d658c510344cd2e959a4a11d307"
+      },
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/dist/tavotto-0.16.0.tar.gz（HEAD sdist，两次相同）",
+        "sha256": "30123b3ab19e2b083246cb70615137e33a709aff9f83a4d100bfbc7fb080511b"
+      }
+    ],
+    "entry": "构建（pyproject-build）+ gh API（只读）+ HTTP（lab_acceptance → smoke_app）",
+    "commands": [
+      "cp -R /Volumes/Projects/Tavotto/src/tavotto/resources/fonts/ src/tavotto/resources/fonts/ && /Volumes/Projects/Tavotto/.venv/bin/python scripts/fetch_fonts.py --check",
+      "uvx --from 'build[uv]' pyproject-build --installer uv --outdir /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/dist . && shasum -a 256 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/dist/*",
+      "uvx --from 'build[uv]' pyproject-build --installer uv --outdir /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/dist2 . && shasum -a 256 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/dist2/*",
+      "gh release view v0.16.0 -R Tavotto/Tavotto --json assets --jq '[.assets[]|{name,digest}]'",
+      "curl -s https://pypi.org/pypi/tavotto/0.16.0/json | python3 -c \"import json,sys; [print(u['filename'], u['digests']['sha256']) for u in json.load(sys.stdin)['urls']]\"",
+      "gh run download 35738284913 -R Tavotto/Tavotto -n dist -n artifact-manifest-dmg -n artifact-manifest-nsis -D /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/run2 && shasum -a 256 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/run2/dist/*",
+      "gh run view 35739931388 -R Tavotto/ci-infra --log | grep -E 'source_run_id|sha256: '",
+      "gh run view 35754630426 -R Tavotto/Tavotto --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv'",
+      "git archive --format=tar -o /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/src-4bf86c1f.tar 4bf86c1fe1b209ce0c964ec81ecf81f0aff715fb scripts examples && mkdir -p /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/src-4bf86c1f && tar -xf /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/src-4bf86c1f.tar -C /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/src-4bf86c1f",
+      "(cd /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/src-4bf86c1f && TAVOTTO_CI_STATE_ROOT=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/ci-state TAVOTTO_NO_TELEMETRY=1 TAVOTTO_NO_UPDATE_CHECK=1 /opt/homebrew/opt/python@3.13/libexec/bin/python3 scripts/ci/lab_acceptance.py --dist /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/released-wheel)",
+      "TAVOTTO_CI_STATE_ROOT=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel03/ci-state TAVOTTO_NO_TELEMETRY=1 TAVOTTO_NO_UPDATE_CHECK=1 /opt/homebrew/opt/python@3.13/libexec/bin/python3 scripts/ci/lab_acceptance.py --dist /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/dist"
+    ],
+    "exit_codes": {
+      "build_1": 0,
+      "build_2": 0,
+      "lab_acceptance_HEAD_script_on_released_wheel": 1,
+      "lab_acceptance_4bf86c1f_script_on_released_wheel": 0,
+      "lab_acceptance_HEAD_script_on_HEAD_wheel": 0
+    },
+    "evidence": {
+      "log": {
+        "path": "docs/qa/2026-09-24/rel/logs/REL-03.log",
+        "sha256": "9eedd592595334dc8733204048abf24294b33c005bad6cec1bb4473d4e9169b4"
+      },
+      "summary": {
+        "released_wheel_identity": "6bd64b33… 在 run2 dist / lab 日志 / GitHub digest / SHA256SUMS / manifest / PyPI 六处相等",
+        "HEAD_rebuild_deterministic": "两次构建 wheel 与 sdist 字节相同",
+        "acceptance_released_versioned": "结构 9 ✅ + smoke ✅",
+        "acceptance_HEAD": "结构 12 ✅ + smoke ✅"
+      }
+    },
+    "artifacts": [
+      {
+        "path": "v0.16.0 tavotto-0.16.0-py3-none-any.whl",
+        "sha256": "6bd64b3318a3cb39e7581c8a3f5f89fc517a76acc91781ae75b5bc35273619b7"
+      },
+      {
+        "path": "v0.16.0 tavotto-0.16.0.tar.gz",
+        "sha256": "d04db295eb7dc5245321008f85693147e943aeecbc2c3bff70c2ff0d59522928"
+      },
+      {
+        "path": "v0.16.0 Tavotto-0.16.0-macOS.dmg",
+        "sha256": "e097922d6229ddd7677fd7a97505484ffe6e1e77a5e60f6003068f95a102f5d0"
+      },
+      {
+        "path": "v0.16.0 Tavotto-0.16.0-Windows-Setup.exe",
+        "sha256": "31229608772fa94e01f7a3ef688e5dc6a102da7ede21239235245c0b9784b10d"
+      },
+      {
+        "path": "HEAD 62af729c 本地 wheel",
+        "sha256": "d82ca78111864f72833891563cbcf0f5209c2d658c510344cd2e959a4a11d307"
+      }
+    ],
+    "first_failed_invariant": "发布那一步应由经过身份核对的 release-publish::github_release 完成（本次 403，Release 在链外创建）",
+    "mutation_check": null,
+    "mutation_check_reason": "本节是对已存在产物的只读核对，无新增断言可变异；「验收脚本错配」本身就是一次天然反证：HEAD 判据对 U10 前产物确实会红。",
+    "new_tests": [],
+    "product_bugs": [],
+    "gaps": [
+      "release-publish 的 github_release job 在 v0.16.0 两次 403（Resource not accessible by integration）；Release 由链外创建——应列为发布链缺陷（非产品代码）",
+      "lab 只验收 wheel；dmg / NSIS 的「同一字节」只靠 artifact-manifest 对上，未经 lab 装机验收",
+      "HEAD 62af729c 没有 CI 构建的候选（未发版），本地构建不能替代「CI 同一构建」",
+      "HEAD 的 lab_acceptance 对旧版本产物会假红——跨版本复核时必须用产物源码那一版的验收脚本"
+    ]
+  },
+  {
+    "case_id": "REL-04",
+    "title": "输入与可访问性：键盘、修饰键、输入框焦点、中英长标签、DPR",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "web/e2e/keyboard-golden-path.spec.ts::纯键盘走完核心闭环 / 键盘错误恢复 / 快捷键不吞按钮的 Enter",
+      "web/e2e/twin-axes-pick.spec.ts::twinx：⌥ 点击轮换（修饰键到达命中层，chromium + webkit）",
+      "web/e2e/inspector-overflow.spec.ts::标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向溢出（只在 chromium-en）",
+      "web/e2e/a11y.spec.ts（10 条，chromium + webkit）",
+      "web/src/hooks/useKeyboardSave.test.tsx::焦点在输入框里也照存（反方向：⌘S 在输入框里**要**拦）",
+      "web/src/hooks/useKeyboardFastEdit.test.tsx、web/src/hooks/useKeyboard.test.ts（拖动中 ⌘Z）"
+    ],
+    "expected_outcome": "画布快捷键（Backspace/Delete、⌘Z/Ctrl+Z/⌘⇧Z、方向键、工具字母、空格、⌘A、⌘D）在 INPUT/TEXTAREA/SELECT 里一律让位（文档/选区/工具不变且不 preventDefault），同样的键在 window 上照常生效；DPR 2 下几何与键盘关键流通过；英文长标签在 320/360 宽度下无横向溢出（Chromium 与 WebKit）。",
+    "product_outcome": "自动成功",
+    "test_verdict": "partial",
+    "verdict_reason": "新增 vitest useKeyboardTextFocus.test.tsx 27/27 绿（21 条字段内 + 6 条 window 对照）；变异 inEditableTarget 后 21 红 / 6 绿，还原后 4 个 hook 测试文件 40/40 绿。DPR 2（Chromium HiDPI）：fake-realtime / twin-axes-pick / keyboard-golden-path / element-path-selection 9/9 绿。inspector-overflow：Chromium（en，DPR1 与 DPR2）绿；**WebKit 下红**（en/zh、DPR1/DPR2 都红，子图屏 @320：两个 INPUT.type-number sw=48 > cw=43）——与语言和 DPR 无关、WebKit 独有；截图目测数值未见明显截断，可能是 WebKit 对 <input type=number> 的 scrollWidth 口径，未定性，不计入 product_bugs；但 WebKit 是 macOS 桌面壳引擎，这条在 CI 上从未跑过 WebKit。error-recovery-en「脚本缺包」在设了 TAVOTTO_WORKER_PYTHON 的环境下红（缺「rendering interpreter path」字段），不设则绿——用例对执行环境敏感（环境覆盖时界面不给换解释器入口，推测为设计），归环境。2 条 skip 为用例自带的有条件 skip（本机有可用科学栈解释器 / 非 Windows），非意外。未执行：真实系统缩放、跨显示器拖动（浏览器 DPR 模拟不能替代，spec STATE-07）。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，PYTHONPATH=worktree/src；无 matplotlib）",
+      "worker_python": "Homebrew 3.13.11（/opt/homebrew/opt/python@3.13），matplotlib 3.10.8，numpy 2.4.3",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "playwright": "1.62.1（chromium build 1234 / webkit build 2336，headless）",
+      "fonts": "TAVOTTO_FONTS_DIR=主仓库 src/tavotto/resources/fonts（fetch_fonts.py --check 13 张脸 sha256 一致）",
+      "desktop_apps_inspected": "/Applications/Tavotto.app 0.16.0；/Applications/Tavotto Beta.app 0.16.1-beta.2（只读）"
+    },
+    "fixtures": [
+      {
+        "path": "examples/figures（E2E 每条用例拷一份）",
+        "sha256": "（仓库内容，随 source_sha）"
+      }
+    ],
+    "entry": "vitest（jsdom）+ playwright（chromium HiDPI / webkit / chromium-en）",
+    "commands": [
+      "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/hooks/useKeyboardTextFocus.test.tsx src/hooks/useKeyboard.test.ts src/hooks/useKeyboardSave.test.tsx src/hooks/useKeyboardFastEdit.test.tsx",
+      "cp docs/qa/2026-09-24/rel/repro/playwright.qa-dpr.config.ts web/ && (cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts PYTHONPATH=$PWD/../src npx playwright test --config=playwright.qa-dpr.config.ts --reporter=list); rm web/playwright.qa-dpr.config.ts",
+      "cp docs/qa/2026-09-24/rel/repro/playwright.qa-isolate.config.ts web/ && (cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts PYTHONPATH=$PWD/../src npx playwright test --config=playwright.qa-isolate.config.ts --reporter=list); rm web/playwright.qa-isolate.config.ts",
+      "cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts PYTHONPATH=$PWD/../src npx playwright test e2e/error-recovery-en.spec.ts --project=chromium-en -g missing_dependency --reporter=list"
+    ],
+    "exit_codes": {
+      "vitest_new_test": 0,
+      "vitest_under_mutation": 1,
+      "vitest_restored_4_files": 0,
+      "dpr_config": 1,
+      "isolate_config": 1,
+      "missing_dependency_without_worker_override": 0
+    },
+    "evidence": {
+      "log": {
+        "path": "docs/qa/2026-09-24/rel/logs/REL-04.log",
+        "sha256": "6bf91101121e75a9467864f79ec0910f6d5e0ebb2421d2365cce0ea2d1a5539a"
+      },
+      "summary": {
+        "vitest": "27 passed；变异下 21 failed / 6 passed；还原后 40 passed（4 文件）",
+        "dpr_config": "15 passed / 2 failed / 2 skipped（红：webkit-dpr2-en inspector-overflow；chromium-en error-recovery 缺包——环境敏感）",
+        "isolate_config": "1 passed / 2 failed（webkit-dpr1-en、webkit-dpr1-zh 红；chromium-dpr2-en 绿）",
+        "missing_dependency_rerun": "1 passed（去掉 TAVOTTO_WORKER_PYTHON）"
+      }
+    },
+    "artifacts": [],
+    "first_failed_invariant": "（未定性）WebKit 下 inspector 子图屏 @320 两个数字输入框 scrollWidth > clientWidth",
+    "mutation_check": {
+      "target_file": "web/src/hooks/useKeyboard.ts（inEditableTarget）",
+      "mutation": "`/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)` → `/^(NOPE)$/.test(el.tagName)`",
+      "expected_red_case": "web/src/hooks/useKeyboardTextFocus.test.tsx 的 21 条字段内用例（对照组 6 条保持绿）",
+      "observed": "red",
+      "restored_green": true
+    },
+    "new_tests": [
+      "web/src/hooks/useKeyboardTextFocus.test.tsx"
+    ],
+    "product_bugs": [],
+    "gaps": [
+      "jsdom 不实现 isContentEditable：contentEditable 富文本框那一支未被新用例覆盖",
+      "inspector-overflow 不在 WebKit project 里；WebKit 下的红未定性（需真 WKWebView 截图确认是否可见截断）",
+      "真实系统缩放、跨显示器拖动未执行（需真机两块屏）",
+      "Windows 键位（Ctrl 系列在 Windows 真壳里）未执行",
+      "error-recovery-en 缺包用例未对 TAVOTTO_WORKER_PYTHON 做 skip/分支，环境敏感"
+    ]
+  },
+  {
+    "case_id": "REL-05",
+    "title": "隐私：TAVOTTO_NO_TELEMETRY=1 零外发、诊断包脱敏、越界访问",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "tests/test_telemetry.py::test_hard_env_switch_beats_saved_consent（已保存同意 + 硬开关 → capture False、_post 未被调用、public_settings.hard_disabled）",
+      "tests/test_telemetry.py::test_hard_switch_still_wins_over_a_stale_consent",
+      "tests/test_telemetry_api.py::test_settings_reports_hard_disable",
+      "tests/test_telemetry_invariants.py::test_no_consent_means_zero_network / test_import_time_makes_no_network_request",
+      "tests/test_diagnostics_bundle.py::test_no_secret_string_appears_anywhere_in_the_bundle（解包后逐文件全文搜索 + 反证非空）",
+      "tests/test_diagnostics_bundle.py::test_project_paths_names_and_cloud_accounts_never_leave_the_machine",
+      "tests/test_diagnostics_worker_evidence.py（worker.log 证据块只留类型名）",
+      "web/e2e/golden-paths.spec.ts::导出诊断包：能下载，且不含密钥与主目录（**空判据**：在 DEFLATE 压缩后的字节上找明文，见 gaps）"
+    ],
+    "expected_outcome": "已保存同意=enabled 且 TAVOTTO_NO_TELEMETRY=1 时，真实后端在渲染/导出/前端事件/报错全程向（重定向到本地的）遥测端点 0 次请求，对照组（无硬开关）≥1 次；诊断包（GET/POST）与复制诊断不含脚本源码、CSV 数值、图内文字、合成密钥、用户名、项目原始路径、用户报错文字；未认证 401、`../` 越界面板 id 被拒。",
+    "product_outcome": "功能失败",
+    "test_verdict": "fail",
+    "verdict_reason": "现有 7 个测试文件 311 passed / 0 skipped；变异 hard_disabled() 恒 False → 4 条按预期不变量变红，还原回绿。真后端探针（端口 5308，三次运行结果一致）：对照组接收器 3 次、硬开关组 0 次；设置接口 hard_disabled=true 且已保存 consent 仍为 enabled；未认证 401；`../` 面板 id 引擎渲染与预览均 403。诊断包未见脚本源码、CSV 独有数值、图内文字、合成密钥、用户名、项目原始路径（项目记为 <project:f1e30c1dc6>）。**失败**：用户脚本 raise 的异常文字 ERRMSGCANARY_patient_0931 出现在 report.json.recent_errors、包内 app.log 与 /api/diagnostics/summary（复制诊断）——链路 app.py:3522 `LOG.error(\"引擎渲染失败: %s: %s\", stem, exc)` → diagnostics.recent_errors 对 ERROR 行只做路径缩写；diagnostics.md 明确「能保证的只有 message 不出门」，traceback 形状的同一 message 会被抹成 `ValueError: …`。次要：包内 app.log 带用户脚本文件名（`worker 启动: fig_priv.py`）与 4xx 访问行的原始查询串（`GET /api/render?id=../../../outside_secret/outside.pdf`），README 称「文件名、路径…一律换成不可逆的短哈希」。另：E2E「导出诊断包…不含主目录」在关闭主目录脱敏的变异下仍绿（pytest 对照同一变异变红）——该 E2E 是空判据。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，PYTHONPATH=worktree/src；无 matplotlib）",
+      "worker_python": "Homebrew 3.13.11（/opt/homebrew/opt/python@3.13），matplotlib 3.10.8，numpy 2.4.3",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "playwright": "1.62.1（chromium build 1234 / webkit build 2336，headless）",
+      "fonts": "TAVOTTO_FONTS_DIR=主仓库 src/tavotto/resources/fonts（fetch_fonts.py --check 13 张脸 sha256 一致）",
+      "desktop_apps_inspected": "/Applications/Tavotto.app 0.16.0；/Applications/Tavotto Beta.app 0.16.1-beta.2（只读）"
+    },
+    "fixtures": [
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05/home/qa_private_user_zz/Documents/QAPRIV_Alice 论文 项目/fig_priv.py",
+        "sha256": "9c6cb568c980a1b3249fefc06106424e5c1885e04a838ad51f2fadd0251905b4"
+      },
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05/home/qa_private_user_zz/Documents/QAPRIV_Alice 论文 项目/boom.py",
+        "sha256": "38ba1d0b389cafaff405ea2c7d3dc8b70beba260cca115e11872636296b796b9"
+      },
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05/home/qa_private_user_zz/Documents/QAPRIV_Alice 论文 项目/data_priv.csv",
+        "sha256": "3abd0c69230a630d64ba929154ddbf0bb53446ef7e62fdcbc672952008d541de"
+      },
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05/home/qa_private_user_zz/Documents/QAPRIV_Alice 论文 项目/tavotto_registry.json",
+        "sha256": "026d49dc746b701dd2d6f4504b29774db5e79befc86e11983ff6c4dac775a0f1"
+      }
+    ],
+    "entry": "pytest + HTTP（自起后端 127.0.0.1:5308，本地遥测接收器）+ playwright（空判据反证）",
+    "commands": [
+      "PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_telemetry.py tests/test_telemetry_api.py tests/test_telemetry_invariants.py tests/test_telemetry_disclosure.py tests/test_telemetry_integrations.py tests/test_diagnostics_bundle.py tests/test_diagnostics_worker_evidence.py -p no:cacheprovider -rs -W ignore::DeprecationWarning",
+      "PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/rel/repro/rel05_privacy_probe.py --scratch /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05 --worker-python /opt/homebrew/opt/python@3.13/libexec/bin/python3 --fonts-dir /Volumes/Projects/Tavotto/src/tavotto/resources/fonts",
+      "PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/rel/repro/repro_diag_error_message_leak.py"
+    ],
+    "exit_codes": {
+      "pytest_7_files": 0,
+      "privacy_probe(1=有判据不成立)": 1,
+      "leak_repro(0=复现)": 0,
+      "pytest_under_hard_switch_mutation": 1,
+      "pytest_restored": 0,
+      "pytest_under_home_redaction_mutation": 1,
+      "e2e_diag_under_home_redaction_mutation": 0,
+      "pytest_home_restored": 0
+    },
+    "evidence": {
+      "log": {
+        "path": "docs/qa/2026-09-24/rel/logs/REL-05.log",
+        "sha256": "6a2f3de78494cfb0a6e23e8a2c05594ff86358410e5911315a2bc65d8aaf11ee"
+      },
+      "probe_report": {
+        "path": "docs/qa/2026-09-24/rel/artifacts/REL-05-probe-report.json",
+        "sha256": "6af28d49d9bd9b21812e469d0e78a001b376d7c501af79c893e557e1a078cbe2"
+      },
+      "summary": {
+        "pytest": "311 passed / 0 failed / 0 skipped",
+        "probe": "control sink_hits=3；nohard sink_hits=0；unauth 401；traversal 403/403；canary_hits=error_message×5、outside_dir×2（app.log 访问行）",
+        "mutation_hard_switch": "4 failed / 114 passed → 还原 118 passed",
+        "mutation_home_redaction": "pytest 1 failed（test_report_and_config_still_redact_home_and_secrets）；E2E 导出诊断包 1 passed（空判据）；还原 2 passed"
+      }
+    },
+    "artifacts": [
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05/bundle_get.zip（每次运行 hash 不同：含时间戳）",
+        "sha256": "76289ba6baa0f62a7efc56b081cf3f9103a6df07f6e34279b05f9ce7cedcf70e"
+      },
+      {
+        "path": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05/bundle_post.zip",
+        "sha256": "c13abbf67dc6aea749dd56416e844fc9790850e927dd165a846c6ac5153ff016"
+      }
+    ],
+    "first_failed_invariant": "诊断包不含用户报错文字（diagnostics.md：message 不出门）",
+    "mutation_check": {
+      "target_file": "src/tavotto/engine/telemetry.py（hard_disabled）",
+      "mutation": "`return raw not in (\"\", \"0\", \"false\", \"no\")` → `return False`",
+      "expected_red_case": "tests/test_telemetry.py::test_hard_env_switch_beats_saved_consent 等（失败断言 `assert telemetry.hard_disabled() is True`）",
+      "observed": "red",
+      "restored_green": true,
+      "second_mutation": {
+        "target_file": "src/tavotto/engine/diagnostics.py（_redact_text 主目录替换）",
+        "mutation": "`if home and home != os.sep:` → `if False:`",
+        "expected_red_case": "tests/test_diagnostics_bundle.py::test_report_and_config_still_redact_home_and_secrets（红）；web/e2e/golden-paths.spec.ts::导出诊断包（本应红）",
+        "observed": "pytest red；E2E green（存活变异 → 空判据）",
+        "restored_green": true
+      }
+    },
+    "new_tests": [],
+    "product_bugs": [
+      {
+        "summary": "用户脚本异常的 message 经 app.py 的 ERROR 日志行原样进入诊断包（report.json.recent_errors、app.log）与复制诊断文本",
+        "repro": "docs/qa/2026-09-24/rel/repro/repro_diag_error_message_leak.py（exit 0 = 复现）；端到端：rel05_privacy_probe.py 的 canary_hits",
+        "severity": "P2（隐私：异常文字常含数据值 / 受试者编号，诊断包会被贴进公开 issue）",
+        "code": "src/tavotto/app.py:3522；src/tavotto/engine/diagnostics.py recent_errors 对 ' ERROR ' 行只 shorten_paths"
+      },
+      {
+        "summary": "诊断包 app.log 保留用户脚本文件名与 4xx 访问行的原始查询串（面板 id / 请求路径），与 README「文件名、路径…一律换成不可逆的短哈希」不符",
+        "repro": "rel05_privacy_probe.py 运行后解包 bundle_get.zip，grep 'worker 启动: fig_priv.py' 与 'GET /api/render?id=' ",
+        "severity": "P3（文件名可能含课题/受试者信息；或改 README 口径）",
+        "code": "src/tavotto/engine/pool.py LOG.info(\"worker 启动: %s…\")；werkzeug 访问日志；diagnostics._redact_text"
+      }
+    ],
+    "gaps": [
+      "web/e2e/golden-paths.spec.ts「导出诊断包…不含主目录」在 DEFLATE 压缩字节上找明文，关闭脱敏的变异下仍绿——应解包后逐文件搜（pytest 已覆盖，E2E 是空判据）",
+      "网络抓包用的是 TAVOTTO_TELEMETRY_ENDPOINT 重定向到本地接收器 + 对照组，未做系统级抓包（其它外连如更新检查已用 TAVOTTO_NO_UPDATE_CHECK=1 关闭，未单独审计）",
+      "「解释器操作遵守授权边界」只测了未认证与 ../ 越界读，未测写目录越界与解释器替换",
+      "桌面壳（Tauri）侧的遥测开关与前端 captureTelemetry 在真壳里未验"
+    ]
+  }
+]
