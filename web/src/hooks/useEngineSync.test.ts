@@ -961,3 +961,200 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
     })
   })
 })
+
+describe('事务之外改了图幅：撤销 / 重做回到用户设定的缩放比', () => {
+  /*
+   * 撤销栈按 **immer 补丁**记账，不是整份快照：一次缩放 commit 记下的是
+   * `replace objects[i].w/h`（绝对值），里面没有 nativeW/H——缩放没改它们。
+   * 事务之外的图幅同步走 `silent`：nativeW/H 与 w/h 一起改了，**历史里什么都没留**
+   * （不加条目，也不改已有条目）。于是撤销那次缩放时 w/h 回到按**旧图幅**量的值，
+   * nativeW 却停在新图幅上；同一个 manifest、同一个变体键，同步器看 nativeW 已经
+   * 等于 size_mm，不会再补——缩放比就一直错着。
+   */
+  let unmount: (() => Promise<void>) | null = null
+  afterEach(async () => {
+    await unmount?.()
+    unmount = null
+  })
+
+  /** 摆一个 100% 的面板（40×30 mm、原生 40×30）、挂上同步器。 */
+  async function mount(docId: string, extra: Partial<PanelObject> = {}): Promise<PanelObject> {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    const p = { ...panel('pu', 'Fig1.pdf', 0), script: null, ...extra } as PanelObject
+    await useDocumentStore.getState().switchDocument(emptyProject(), docId)
+    useDocumentStore.getState().commit(literal('准备'), (d) => {
+      d.objects = [p]
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const Probe = () => {
+      useEngineSync()
+      return null
+    }
+    await act(async () => {
+      root.render(createElement(Probe))
+    })
+    unmount = async () => {
+      await act(async () => {
+        root.unmount()
+      })
+      container.remove()
+    }
+    return p
+  }
+  const current = () => useDocumentStore.getState().doc.objects[0] as PanelObject
+  const nativeOf = (o: PanelObject) => [o.nativeW, o.nativeH]
+  /** 用户明确地把面板缩到原生图幅的 `s` 倍（一次 commit，与松手后的缩放同形） */
+  const resizeTo = async (s: number) => {
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('缩放'), (d) => {
+        const o = d.objects[0] as PanelObject
+        o.w = o.nativeW * s
+        o.h = o.nativeH * s
+      })
+    })
+  }
+  const undo = async () => {
+    await act(async () => {
+      useDocumentStore.getState().undo()
+    })
+  }
+  const redo = async () => {
+    await act(async () => {
+      useDocumentStore.getState().redo()
+    })
+  }
+  /** 事务之外，一次渲染（脚本被改过、同一个变体键）把图幅改成 50×30 */
+  const renderNewSize = async (p: PanelObject) => {
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [50, 30], elements: [] })
+    })
+  }
+
+  it('缩放 commit → 图幅变化 → 撤销 → 重做：每一步都是用户设定的那个比例', async () => {
+    const p = await mount('d_size_undo_basic')
+    await resizeTo(0.75)
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    const depth = useDocumentStore.getState().past.length
+
+    await renderNewSize(p)
+    // 静默同步：比例不变、原生图幅跟 manifest 走，历史一条都没多
+    expect(nativeOf(current())).toEqual([50, 30])
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    expect(useDocumentStore.getState().past.length).toBe(depth)
+    expect(useDocumentStore.getState().future.length).toBe(0)
+
+    await undo()
+    // 撤销的是「缩到 75%」这件事：回到缩放之前的 100%，原生图幅仍是这个变体的 manifest
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+  })
+
+  it('拖手柄缩放（事务，松手落历史）→ 图幅变化 → 撤销 → 重做', async () => {
+    const p = await mount('d_size_undo_txn')
+    await act(async () => {
+      const s = useDocumentStore.getState()
+      s.beginTxn(literal('缩放'))
+      for (const k of [0.9, 0.8, 0.75]) {
+        s.txnUpdate((d) => {
+          const o = d.objects[0] as PanelObject
+          o.w = 40 * k
+          o.h = 30 * k
+        })
+      }
+      useDocumentStore.getState().endTxn()
+    })
+    await renderNewSize(p)
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+  })
+
+  it('两次缩放 → 图幅变化 → 连撤两步再连重做两步', async () => {
+    const p = await mount('d_size_undo_deep')
+    await resizeTo(0.75)
+    await resizeTo(0.5)
+    await renderNewSize(p)
+    expect(panelScale(current())).toBeCloseTo(0.5, 6)
+
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.5, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+  })
+
+  it('转了 90° 的面板：撤销后页面包围盒的宽仍跟内容的高走', async () => {
+    // 包围盒是转过的：页面宽 = 内容高
+    const p = await mount('d_size_undo_rot', { w: 30, h: 40, rotation: 90 })
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('缩放'), (d) => {
+        const o = d.objects[0] as PanelObject
+        o.w = 22.5
+        o.h = 30
+      })
+    })
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await renderNewSize(p)
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    // 内容 50×30 转 90° → 页面 30 宽 × 50 高
+    expect([current().w, current().h]).toEqual([30, 50])
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+  })
+
+  it('图幅变化在缩放之前：撤销到更早不受影响（条目记下的就是新图幅）', async () => {
+    const p = await mount('d_size_undo_before')
+    await renderNewSize(p)
+    expect(nativeOf(current())).toEqual([50, 30])
+    await resizeTo(0.5)
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.5, 6)
+  })
+
+  it('图幅是 override 改的：撤掉那条 override 回到旧变体，再撤到缩放之前', async () => {
+    // 这条是对照组：变体键会变回去，旧变体的 manifest 还在，同步器自己就能对齐
+    const p = await mount('d_size_undo_override')
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [40, 30], elements: [] })
+    })
+    await resizeTo(0.75)
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('改图幅'), (d) => {
+        const o = d.objects[0] as PanelObject
+        o.overrides = [{ gid: 'fig', prop: 'size_mm', value: [50, 30] }]
+      })
+    })
+    await act(async () => {
+      seedExactRender(current(), { stem: 'Fig1', size_mm: [50, 30], elements: [] })
+    })
+    expect(nativeOf(current())).toEqual([50, 30])
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await undo()
+    expect(nativeOf(current())).toEqual([40, 30])
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([40, 30])
+  })
+})

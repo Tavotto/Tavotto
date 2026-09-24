@@ -17,13 +17,8 @@ import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { requestRender } from '@/store/renderScheduler'
 import { sampleDisplayState } from '@/diagnostics'
 import { useUiStore } from '@/store/uiStore'
-import {
-  panelRotation,
-  rotationSwaps,
-  type CanvasObject,
-  type FigureDocument,
-  type PanelObject,
-} from '@/types/document'
+import { syncPanelNativeSize } from '@/lib/panelNativeSize'
+import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 
 /**
  * 需要引擎渲染的面板，**按 (fileId, overrides) 去重**。
@@ -176,6 +171,8 @@ function useEngineRenderSync() {
   // 横纵缩放比就此不一致。留到事务收尾（`registerTxnFinalizer`）在压缩前并进同一条
   // 历史：撤销整体回到事务前的旧图幅（同步器随即 silent 补一次），重做回到松手那一刻。
   // 丢弃的事务不跑收尾，回滚后由这里 silent 补（txnOpen 在依赖里：空事务回滚不换 doc）
+  // 已经落进历史的条目不在这里修：它们各自记着 w/h 是按哪个原生图幅量的（`sizeBasis`），
+  // 撤销 / 重做落地时由 `documentStore` 换算到此刻的图幅
   useEffect(() => {
     if (txnOpen) return
     const fixes = nativeSizeFixes(objects, byKey)
@@ -229,30 +226,8 @@ function nativeSizeFixes(
 function applyNativeSizeFixes(d: FigureDocument, fixes: readonly NativeSizeFix[]) {
   for (const fix of fixes) {
     const o = d.objects.find((x) => x.id === fix.id)
-    if (o?.type !== 'panel') continue
-    // x/y/w/h 是旋转后的页面包围盒：90/270 时内容的长宽是互换的
-    const swaps = rotationSwaps(panelRotation(o))
-    const [w0, h0] = [o.w, o.h]
-    if (o.nativeW > 0 && o.nativeH > 0) {
-      // **缩放比不变**：页面上的尺寸跟着原生图幅按同一比例走。只调高、
-      // 不调宽的话，磁盘 PDF（`bbox_inches="tight"` 裁过，73.3 mm）换成
-      // 脚本 figsize（80 mm）之后缩放比静默变成 0.917——读者量到的每个
-      // 字号、线宽都凭空小了 8%，预检据此报出一串假问题，「全部处理」再
-      // 照着这个比例把本来合规的图改掉（`addPanel` 按 100% 放入的约定也
-      // 就此失效）。裁剪是比例，不用跟着动
-      const kx = fix.wMm / o.nativeW
-      const ky = fix.hMm / o.nativeH
-      o.w *= swaps ? ky : kx
-      o.h *= swaps ? kx : ky
-    } else if (swaps) o.w = o.h * (fix.hMm / fix.wMm)
-    else o.h = o.w * (fix.hMm / fix.wMm)
-    // 位置按锚点反推：包围盒绕锚点按同一对比例伸缩，锚点在页面上不动。
-    // 默认锚点是左上角——x/y 原样；只有这一处写 x/y
-    if (fix.anchor) {
-      if (w0 > 0) o.x = fix.anchor.x + (o.x - fix.anchor.x) * (o.w / w0)
-      if (h0 > 0) o.y = fix.anchor.y + (o.y - fix.anchor.y) * (o.h / h0)
-    }
-    o.nativeW = fix.wMm
-    o.nativeH = fix.hMm
+    // 换算（缩放比不变、旋转时宽高互换、按锚点反推 x/y）只在 `lib/panelNativeSize`
+    // 一处：撤销 / 重做落地时的换基走的也是它
+    if (o?.type === 'panel') syncPanelNativeSize(o, fix.wMm, fix.hMm, { anchor: fix.anchor })
   }
 }
