@@ -1,0 +1,19 @@
+# verify rerun ENV-06/probe
+# cmd: TAVOTTO_FONTS_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/fonts PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/e1_http_probe_more.py ENV-06 --e1 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1 --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final
+# head: 1f9f29099abe7d0448c44039e150ac9020cc6077
+# start(UTC): 2026-09-24T19:13:12Z
+[03:13:12] scenario=ENV-06 e1=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1 port=5303
+[03:13:27] PASS 断网：prepare ready（已齐依赖无需网络）
+[03:13:27] PASS 断网: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[03:13:27] PASS 断网: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[03:13:27] PASS 断网: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/bin/python
+[03:13:27] PASS 断网: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv
+[03:13:27] PASS 断网: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[03:13:27] PASS 断网: 包版本 :: 1.0.0
+[03:13:27] PASS 断网: 图中完整点序列 :: [0, 9, 2, 10]
+[03:13:27] PASS 断网：导出 done :: done
+[03:13:27] PASS 服务日志里没有 pip / uv 安装调用
+[03:13:28] PASS 断网：用户 venv 未被安装 / 升级 / 删除 :: {'dists_added': [], 'dists_removed': [], 'files_added': [], 'files_removed': [], 'files_changed': []}
+[03:13:28] RESULT ENV-06: PASS (11/11 checks)
+# end(UTC): 2026-09-24T19:13:28Z
+# exit_code: 0

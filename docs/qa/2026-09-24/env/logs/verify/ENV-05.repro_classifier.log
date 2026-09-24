@@ -1,0 +1,10 @@
+# verify rerun ENV-05/repro_classifier
+# cmd: PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/env05_submodule_misclassified.py
+# head: 1f9f29099abe7d0448c44039e150ac9020cc6077
+# start(UTC): 2026-09-24T19:14:07Z
+"ModuleNotFoundError: No module named 'rdkit'"                                   -> missing_module='rdkit' (合同期望 'rdkit')
+"ModuleNotFoundError: No module named 'numpy.core._multiarray_umath'"            -> missing_module='numpy' (合同期望 '')
+"ModuleNotFoundError: No module named 'qa_subbroken_pkg._missing_sub'"           -> missing_module='qa_subbroken_pkg' (合同期望 '')
+DEVIATION: 2 条已安装包的内部子模块缺失被归为缺包
+# end(UTC): 2026-09-24T19:14:08Z
+# exit_code: 1

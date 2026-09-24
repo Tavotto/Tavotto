@@ -1,0 +1,15 @@
+# verify rerun ENV-02/M2_restored_pytest
+# cmd: PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_same_name_package.py -p no:cacheprovider -rs -v
+# head: 1f9f29099abe7d0448c44039e150ac9020cc6077
+# start(UTC): 2026-09-24T19:22:53Z
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env
+configfile: pytest.ini
+collected 2 items
+
+tests/test_first_open_same_name_package.py ..                            [100%]
+
+============================== 2 passed in 10.39s ==============================
+# end(UTC): 2026-09-24T19:23:03Z
+# exit_code: 0

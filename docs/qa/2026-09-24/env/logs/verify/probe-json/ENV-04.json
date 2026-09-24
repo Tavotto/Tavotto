@@ -1,0 +1,462 @@
+{
+  "scenario": "ENV-04",
+  "ok": false,
+  "crashed": null,
+  "checks": [
+    {
+      "check": "打开第二个项目 pB 得到项目 id",
+      "ok": true,
+      "detail": "53c3b8fcc3d0"
+    },
+    {
+      "check": "pA / pB 准备都 ready",
+      "ok": true,
+      "detail": [
+        "ready",
+        "ready"
+      ]
+    },
+    {
+      "check": "pA 第一次: 回执 runtime.python_version == 期望解释器版本",
+      "ok": true,
+      "detail": "3.13.11"
+    },
+    {
+      "check": "pA 第一次: 回执 runtime.packages.matplotlib == 期望环境的",
+      "ok": true,
+      "detail": "3.10.8"
+    },
+    {
+      "check": "pA 第一次: 图内身份 sys.executable == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/bin/python"
+    },
+    {
+      "check": "pA 第一次: 图内身份 sys.prefix == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv"
+    },
+    {
+      "check": "pA 第一次: 包 __file__ 在期望环境里",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py"
+    },
+    {
+      "check": "pA 第一次: 包版本",
+      "ok": true,
+      "detail": "1.0.0"
+    },
+    {
+      "check": "pA 第一次: 图中完整点序列",
+      "ok": true,
+      "detail": [
+        0,
+        9,
+        2,
+        10
+      ]
+    },
+    {
+      "check": "pB（夹在两次 pA 之间）: 回执 runtime.python_version == 期望解释器版本",
+      "ok": true,
+      "detail": "3.13.11"
+    },
+    {
+      "check": "pB（夹在两次 pA 之间）: 回执 runtime.packages.matplotlib == 期望环境的",
+      "ok": true,
+      "detail": "3.10.8"
+    },
+    {
+      "check": "pB（夹在两次 pA 之间）: 图内身份 sys.executable == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv/bin/python"
+    },
+    {
+      "check": "pB（夹在两次 pA 之间）: 图内身份 sys.prefix == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv"
+    },
+    {
+      "check": "pB（夹在两次 pA 之间）: 包 __file__ 在期望环境里",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py"
+    },
+    {
+      "check": "pB（夹在两次 pA 之间）: 包版本",
+      "ok": true,
+      "detail": "2.0.0"
+    },
+    {
+      "check": "pB（夹在两次 pA 之间）: 图中完整点序列",
+      "ok": true,
+      "detail": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "check": "pA 第二次（pB 之后）: 图内身份 sys.executable == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/bin/python"
+    },
+    {
+      "check": "pA 第二次（pB 之后）: 图内身份 sys.prefix == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv"
+    },
+    {
+      "check": "pA 第二次（pB 之后）: 包 __file__ 在期望环境里",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py"
+    },
+    {
+      "check": "pA 第二次（pB 之后）: 包版本",
+      "ok": true,
+      "detail": "1.0.0"
+    },
+    {
+      "check": "pA 第二次（pB 之后）: 图中完整点序列",
+      "ok": true,
+      "detail": [
+        0,
+        9,
+        2,
+        10
+      ]
+    },
+    {
+      "check": "两个项目的环境状态各指自己项目内的 .venv",
+      "ok": true,
+      "detail": {
+        "pA": ".venv/bin/python",
+        "pB": ".venv/bin/python"
+      }
+    },
+    {
+      "check": "前提：pA 的 .venv 里现在是 1.1.0 / [3, 1, 4, 1]",
+      "ok": true,
+      "detail": [
+        3,
+        1,
+        4,
+        1
+      ]
+    },
+    {
+      "check": "用户点「重新构建」：invalidated",
+      "ok": true,
+      "detail": {
+        "invalidated": true
+      }
+    },
+    {
+      "check": "换依赖 + 重新构建后: 图内身份 sys.executable == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/bin/python"
+    },
+    {
+      "check": "换依赖 + 重新构建后: 图内身份 sys.prefix == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv"
+    },
+    {
+      "check": "换依赖 + 重新构建后: 包 __file__ 在期望环境里",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py"
+    },
+    {
+      "check": "换依赖 + 重新构建后: 包版本",
+      "ok": true,
+      "detail": "1.1.0"
+    },
+    {
+      "check": "换依赖 + 重新构建后: 图中完整点序列",
+      "ok": true,
+      "detail": [
+        3,
+        1,
+        4,
+        1
+      ]
+    },
+    {
+      "check": "pB 不受 pA 换依赖影响: 图内身份 sys.executable == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv/bin/python"
+    },
+    {
+      "check": "pB 不受 pA 换依赖影响: 图内身份 sys.prefix == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv"
+    },
+    {
+      "check": "pB 不受 pA 换依赖影响: 包 __file__ 在期望环境里",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py"
+    },
+    {
+      "check": "pB 不受 pA 换依赖影响: 包版本",
+      "ok": true,
+      "detail": "2.0.0"
+    },
+    {
+      "check": "pB 不受 pA 换依赖影响: 图中完整点序列",
+      "ok": true,
+      "detail": [
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "check": "换 Python 后：没有沿用旧模块（没有画出旧值）",
+      "ok": true,
+      "detail": {
+        "ok": false,
+        "status": 500,
+        "code": "session_dead",
+        "message": "渲染进程退出了：退出码 1：Python 层的致命错误，或进程被外部终止；原因看下面的输出。会话已作废，下一次操作会重建。 它最后的输出在下面（完整日志：/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/work/data/cache/engine/99a051b3-figure.py/worker.log）。",
+        "module": null,
+        "project_env": null
+      }
+    },
+    {
+      "check": "换 Python 后（同一进程）：重新体检——计划写出 invalidated / discovery 拒绝原因，而不是旧的「健康」结论",
+      "ok": false,
+      "detail": {
+        "prepare": "session_dead",
+        "invalidated": null,
+        "discovery_ok": true
+      }
+    },
+    {
+      "check": "重启后：重新体检、作废自动决定并说明原因（不静默换、不 crash）",
+      "ok": true,
+      "detail": {
+        "invalidated": {
+          "python": null,
+          "reason": "no_matplotlib",
+          "trigger": "first_open"
+        },
+        "discovery": {
+          "candidates": [
+            ".venv"
+          ],
+          "code": "project_env_no_matplotlib",
+          "ok": false,
+          "rejected": [
+            {
+              "code": "project_env_no_matplotlib",
+              "matplotlib_version": "",
+              "python_version": "3.13.11",
+              "support": "",
+              "venv": ".venv"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "evidence": {
+    "ident": {
+      "pA": {
+        "executable": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/bin/python",
+        "prefix": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv",
+        "base_prefix": "/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13",
+        "python_version": "3.13.11",
+        "pkg_file": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py",
+        "pkg_version": "1.0.0",
+        "value": [
+          0,
+          9,
+          2,
+          10
+        ],
+        "matplotlib": "3.10.8"
+      },
+      "pB": {
+        "executable": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv/bin/python",
+        "prefix": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv",
+        "base_prefix": "/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13",
+        "python_version": "3.13.11",
+        "pkg_file": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py",
+        "pkg_version": "2.0.0",
+        "value": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "matplotlib": "3.10.8"
+      }
+    },
+    "open_pB": {
+      "id": "53c3b8fcc3d0",
+      "name": "pB"
+    },
+    "env_state": {
+      "pA": {
+        "automatic": true,
+        "can_use_project_venv": [
+          ".venv"
+        ],
+        "managed": {
+          "active_generation": "",
+          "created_at": 0,
+          "exists": false,
+          "generations": [],
+          "installed": [],
+          "python_version": "",
+          "state": ""
+        },
+        "module": "",
+        "open": true,
+        "python": ".venv/bin/python",
+        "resolution_error": null,
+        "source": "project_venv",
+        "source_label": "项目自带的虚拟环境",
+        "trigger": "first_open",
+        "workdir": {
+          "decided": false,
+          "grant": {
+            "cwd_write": {
+              "granted": false,
+              "granted_at": null,
+              "mode": null
+            },
+            "decided": false
+          },
+          "mode": "sandbox",
+          "modes": [
+            "sandbox",
+            "project",
+            "project_root"
+          ]
+        }
+      },
+      "pB": {
+        "automatic": true,
+        "can_use_project_venv": [
+          ".venv"
+        ],
+        "managed": {
+          "active_generation": "",
+          "created_at": 0,
+          "exists": false,
+          "generations": [],
+          "installed": [],
+          "python_version": "",
+          "state": ""
+        },
+        "module": "",
+        "open": true,
+        "python": ".venv/bin/python",
+        "resolution_error": null,
+        "source": "project_venv",
+        "source_label": "项目自带的虚拟环境",
+        "trigger": "first_open",
+        "workdir": {
+          "decided": false,
+          "grant": {
+            "cwd_write": {
+              "granted": false,
+              "granted_at": null,
+              "mode": null
+            },
+            "decided": false
+          },
+          "mode": "sandbox",
+          "modes": [
+            "sandbox",
+            "project",
+            "project_root"
+          ]
+        }
+      }
+    },
+    "after_dep_change_plain_render": {
+      "values": [
+        0,
+        9,
+        2,
+        10
+      ],
+      "pkg_version": "1.0.0"
+    },
+    "after_dep_change_prepare": {
+      "status": "ready",
+      "receipt_generation": 1
+    },
+    "after_python_replaced_render": {
+      "ok": false,
+      "status": 500,
+      "code": "session_dead",
+      "message": "渲染进程退出了：退出码 1：Python 层的致命错误，或进程被外部终止；原因看下面的输出。会话已作废，下一次操作会重建。 它最后的输出在下面（完整日志：/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/work/data/cache/engine/99a051b3-figure.py/worker.log）。",
+      "module": null,
+      "project_env": null
+    },
+    "after_python_replaced_prepare": {
+      "status": "error",
+      "error": {
+        "code": "session_dead",
+        "message": "渲染进程退出了：退出码 1：Python 层的致命错误，或进程被外部终止；原因看下面的输出。会话已作废，下一次操作会重建。 它最后的输出在下面（完整日志：/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/work/data/cache/engine/99a051b3-figure.py/worker.log）。"
+      },
+      "plan_env": {
+        "source": "project_venv",
+        "trigger": "first_open",
+        "invalidated": null,
+        "error": null,
+        "discovery": {
+          "candidates": [
+            ".venv"
+          ],
+          "code": "",
+          "ok": true,
+          "rejected": []
+        }
+      }
+    },
+    "after_python_replaced_restart_prepare": {
+      "status": "error",
+      "error": {
+        "code": "missing_dependency",
+        "message": "脚本用到的 qa_probe_pkg 在当前渲染环境里没有。可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 qa_probe_pkg 的 Python / Conda 环境。",
+        "module": "qa_probe_pkg",
+        "project_env": {
+          "code": "project_env_no_matplotlib",
+          "module": "qa_probe_pkg",
+          "ok": false
+        }
+      },
+      "plan_env": {
+        "source": "current_process",
+        "trigger": "",
+        "invalidated": {
+          "python": null,
+          "reason": "no_matplotlib",
+          "trigger": "first_open"
+        },
+        "error": null,
+        "discovery": {
+          "candidates": [
+            ".venv"
+          ],
+          "code": "project_env_no_matplotlib",
+          "ok": false,
+          "rejected": [
+            {
+              "code": "project_env_no_matplotlib",
+              "matplotlib_version": "",
+              "python_version": "3.13.11",
+              "support": "",
+              "venv": ".venv"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
