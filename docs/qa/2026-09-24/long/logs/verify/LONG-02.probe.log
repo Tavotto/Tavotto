@@ -1,0 +1,85 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/long_probe.py --mode long02 --minutes 10 --port 5407 --fixtures <scratch>/qa/vlong/fx --out <scratch>/qa/vlong/run-long02 --keep-going
+# start: 2026-09-24T19:56:58Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+{
+ "mode": "long02",
+ "seed": 0,
+ "minutes_budget": 10.0,
+ "wall_s": 603.8,
+ "iterations": 236,
+ "counts": {
+  "render_ok": 2832,
+  "render_checked": 2832,
+  "revisits_equal": 2822,
+  "exports_ok": 472,
+  "undo": 472,
+  "redo": 0,
+  "kills": 0,
+  "faults": 0,
+  "recovered": 0,
+  "visible_errors": 0,
+  "project_cycles": 236
+ },
+ "first_failure": null,
+ "probe_error": null,
+ "stop": {
+  "clean_exit": true,
+  "leftover": []
+ },
+ "user_files_unchanged": true,
+ "samples": 120,
+ "trend": {
+  "rss_kib": {
+   "first_after_warm": 140128,
+   "last": 89056,
+   "min": 81792,
+   "max": 143536
+  },
+  "rss_server_kib": {
+   "first_after_warm": 101968,
+   "last": 60256,
+   "min": 54064,
+   "max": 104864
+  },
+  "threads": {
+   "first_after_warm": 4,
+   "last": 4,
+   "min": 4,
+   "max": 4
+  },
+  "fds": {
+   "first_after_warm": 87,
+   "last": 87,
+   "min": 87,
+   "max": 87
+  },
+  "processes": {
+   "first_after_warm": 2,
+   "last": 2,
+   "min": 2,
+   "max": 2
+  },
+  "tmp_files": {
+   "first_after_warm": 0,
+   "last": 0,
+   "min": 0,
+   "max": 0
+  },
+  "cache_bytes": {
+   "first_after_warm": 145407,
+   "last": 1704567,
+   "min": 145407,
+   "max": 1704567
+  },
+  "export_bytes": {
+   "first_after_warm": 62257,
+   "last": 14692652,
+   "min": 62257,
+   "max": 14692652
+  }
+ },
+ "states_seen": 10
+}
+# end: 2026-09-24T20:07:02Z
+# exit: 0

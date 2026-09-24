@@ -1,0 +1,15 @@
+# cmd: pnpm vitest run src/store/geometryAuthority.test.ts src/canvas/alignUndoConvergence.test.tsx
+# start: 2026-09-24T20:17:34Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+
+ RUN  v4.1.11 <scratch>/qa/verify-long/web
+
+
+ Test Files  2 passed (2)
+      Tests  17 passed (17)
+   Start at  04:17:34
+   Duration  708ms (transform 413ms, setup 222ms, import 366ms, tests 36ms, environment 538ms)
+
+# end: 2026-09-24T20:17:35Z
+# exit: 0
