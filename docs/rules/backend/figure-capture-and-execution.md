@@ -38,6 +38,8 @@
     读不到，而 `databinding` 对这种脚本判 `default_ok`（不问），前提是假的。包它的判据与
     三个 open 入口逐条相同（同一个 `_fallback_path`），外加「DataSource 的 `destpath` 就是
     此刻的 cwd」；只包已载入的 numpy（worker 经 matplotlib 已载入），不替脚本 import。
+    候选名按 numpy 自己的那串找（`_possible_names`：原名、`.gz` / `.bz2` / `.xz` …）；整串里有一个在
+    cwd 下存在就不改道（numpy 自己会读到它）。
     这**不是**把回退扩到 `exists`：脚本自己问 `exists()` 仍然得到沙盒里的真话。
     **输入观察器（`InputObserver`）同样包它**：numpy 的打开器在载入时就绑了原来的
     `io.open`，三处 open 包装看不见它读了什么；按返回文件对象的 `.name` 记实际打开的
