@@ -276,12 +276,13 @@ def _resample_key(image_obj, data, out_shape, transform, args, kwargs):
     import numpy as np
 
     # data 阶段（标量图）传进来的是 MaskedArray：数据与 mask 都进键——C 那边看不看
-    # mask 都不会让键漏掉它
+    # mask 都不会让键漏掉它。mask 放到所有便宜的检查之后才取，且用不分配内存的 `getmask`：
+    # `getmaskarray` 对 `nomask` 会先造一整份布尔数组，超上限的输入明明要直通，也得先付这一份（Codex #530）
     if type(data) is np.ma.MaskedArray:
-        mask = np.ma.getmaskarray(data)
+        masked = data
         data = data.data
     elif type(data) is np.ndarray:
-        mask = None
+        masked = None
     else:
         return None
     if data.dtype.hasobject or data.size < _RESAMPLE_CACHE_MIN_ELEMENTS:
@@ -303,9 +304,13 @@ def _resample_key(image_obj, data, out_shape, transform, args, kwargs):
     digest = hashlib.sha256()
     digest.update(f"{data.dtype.str}|{data.shape}".encode())
     _hash_array(digest, data)
-    if mask is not None:
-        digest.update(b"|mask|")
-        _hash_array(digest, mask)
+    if masked is not None:
+        mask = np.ma.getmask(masked)
+        if mask is np.ma.nomask:
+            digest.update(b"|nomask|")
+        else:
+            digest.update(b"|mask|")
+            _hash_array(digest, mask)
     matrix = np.asarray(transform.get_matrix(), dtype=float)
     return (
         digest.digest(),

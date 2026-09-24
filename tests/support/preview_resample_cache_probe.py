@@ -450,6 +450,32 @@ def _input_side():
             over_cap_key = ph._resample_key(im, strided, (300, 200), t, (), {})
         finally:
             ph._RESAMPLE_CACHE_MAX_INPUT_BYTES = old
+    # 超上限的 MaskedArray：算键时连 mask 都不许碰（Codex #530 第三轮：先造 mask 再判上限）
+    touched = {"n": 0}
+    real_getmask, real_getmaskarray = np.ma.getmask, np.ma.getmaskarray
+
+    def touch(fn):
+        def inner(*a, **k):
+            touched["n"] += 1
+            return fn(*a, **k)
+
+        return inner
+
+    big_masked = np.ma.masked_array(np.zeros((700, 500), dtype=np.float32))  # mask 是 nomask
+    token = ph._resample_cache_on.set(True)
+    old = ph._RESAMPLE_CACHE_MAX_INPUT_BYTES
+    np.ma.getmask, np.ma.getmaskarray = touch(real_getmask), touch(real_getmaskarray)
+    try:
+        ph._RESAMPLE_CACHE_MAX_INPUT_BYTES = big_masked.data.nbytes - 1
+        over_cap_masked_key = ph._resample_key(im, big_masked, (300, 200), t, (), {})
+        mask_touched_over_cap = touched["n"]
+        ph._RESAMPLE_CACHE_MAX_INPUT_BYTES = old
+        in_cap_masked_key = ph._resample_key(im, big_masked, (300, 200), t, (), {})
+        mask_touched_in_cap = touched["n"] - mask_touched_over_cap
+    finally:
+        np.ma.getmask, np.ma.getmaskarray = real_getmask, real_getmaskarray
+        ph._RESAMPLE_CACHE_MAX_INPUT_BYTES = old
+        ph._resample_cache_on.reset(token)
     plt.close(f)
     row_bytes = strided[0].nbytes
     return {
@@ -459,6 +485,10 @@ def _input_side():
         "input_bytes": strided.nbytes,
         "hits_across_layouts": hits_across_layouts,
         "over_cap_passthrough": over_cap_key is None,
+        "over_cap_masked_passthrough": over_cap_masked_key is None,
+        "mask_touched_over_cap": mask_touched_over_cap,
+        "in_cap_masked_key_made": in_cap_masked_key is not None,
+        "mask_touched_in_cap": mask_touched_in_cap,
     }
 
 

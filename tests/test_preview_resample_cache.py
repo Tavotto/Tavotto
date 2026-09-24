@@ -156,3 +156,6 @@ def test_input_side_is_bounded_and_layout_independent(probe):
     assert g["biggest_copy"] < g["input_bytes"] // 100, g
     assert g["hits_across_layouts"], g
     assert g["over_cap_passthrough"], g
+    # 超上限的 MaskedArray 连 mask 都不碰；活的尺子：上限之内那次确实取了 mask
+    assert g["in_cap_masked_key_made"] and g["mask_touched_in_cap"] >= 1, g
+    assert g["over_cap_masked_passthrough"] and g["mask_touched_over_cap"] == 0, g
