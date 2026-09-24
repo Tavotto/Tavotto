@@ -174,7 +174,13 @@ export function toPageValue(prop: string, value: unknown, scale: number): unknow
  */
 export const PT_DECIMALS = 2
 
-const roundPt = (v: number) => Math.round(v * 10 ** PT_DECIMALS) / 10 ** PT_DECIMALS
+/**
+ * 两位小数就近，**用 `toFixed`**：问题面板的「当前 X pt」是预检的 `eff.toFixed(2)`（Python 侧
+ * `%.2f`，同一种按真实二进制值的就近），数字框显示也是 `toFixed`。`Math.round(v * 100)` 在
+ * 正好「半格」的值上会先乘出一个进位——缩放比 1.33 时脚本值 6.5 × 1.33 = 8.645（二进制里是
+ * 8.64499…），问题面板说 8.64，`Math.round` 却给 8.65：同一个字又是两个数。
+ */
+const roundPt = (v: number) => Number(v.toFixed(PT_DECIMALS))
 
 /**
  * 一张面板的「页面 pt 透镜」：属性页、样式面板、浮动工具条读写图内以 pt 计的量时**都过它**
@@ -188,7 +194,8 @@ const roundPt = (v: number) => Math.round(v * 10 ** PT_DECIMALS) / 10 ** PT_DECI
  *   （`min × scale`），与样式面板的 `PtField` 同一个口径；不另造一套页面上的界。
  * * **取整**：显示两位小数就近，写入两位小数就近（`toScriptValue` 的理由）。缩放比 ≤ 1 时
  *   任何两位小数的页面值写进去再读回来都是原数；> 1 时页面上能表示的值间隔是 0.01 × 缩放比
- *   （manifest 按两位小数回报脚本值），读回来的是最近的那个可表示值，偏差 ≤ 0.005 × 缩放比。
+ *   （manifest 按两位小数回报脚本值），不可表示的输入真实渲染出来离它 ≤ 0.005 × 缩放比，显示出来差
+ *   一格（例：缩放比 1.33 时输入 8 回显 8.01，真实 8.0066 pt）。要消掉它得提高 manifest 的精度。
  *   三处读的是同一个脚本值、同一个换算，所以无论哪种情况三处显示同一个数。
  * * **缩放比算不出来**（`nativeW` 缺失；文档模型里它是必填，迁移时补成摆放宽度，渲染回来
  *   按 manifest 的 `size_mm` 校正）：`scale = 1`，显示的就是脚本值。**不另外标「原始值」**：
