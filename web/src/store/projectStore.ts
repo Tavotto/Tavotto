@@ -215,6 +215,14 @@ function serialQueue() {
 const switchQueue = serialQueue()
 const pinQueue = serialQueue()
 
+/**
+ * 收藏列表的修订号：每次 PUT 成功 +1。`pinned` 还有两个写入方（`init` 与
+ * `refreshRecent`，读的是 GET 的快照）不在收藏队列里——它们发请求前记下修订号，
+ * 回来时若已经变了，说明期间有更新的 PUT 回包，**这份快照比界面旧**，只更新最近
+ * 列表、不碰收藏（Codex #550：切换后的刷新把刚收藏的项目盖回旧快照）。
+ */
+let pinnedRev = 0
+
 export const useProjectStore = create<ProjectState>((set, get) => {
   /** 切项目的前端换代本体；对外的两个入口都经 `switchQueue` 串行地调它 */
   const adoptNow: ProjectState['adoptOpenedProject'] = async (status, opts) => {
@@ -268,7 +276,9 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       const paths = next(get().pinned.map((p) => p.path))
       if (!paths) return
       try {
-        set({ pinned: await putPinnedProjects(paths) })
+        const pinned = await putPinnedProjects(paths)
+        pinnedRev += 1
+        set({ pinned })
       } catch (e) {
         useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
       }
@@ -300,11 +310,18 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         armNoProjectRecovery()
       }
       setCurrentProjectLabel(project.open ? project.name : null)
+      const rev = pinnedRev
       const [{ recent, pinned }, opened] = await Promise.all([
         fetchProjectLists(),
         fetchOpenProjects().catch(() => []),
       ])
-      set({ project, recent, pinned, opened, phase: project.open ? 'open' : 'none' })
+      set({
+        project,
+        recent,
+        opened,
+        phase: project.open ? 'open' : 'none',
+        ...(rev === pinnedRev ? { pinned } : {}),
+      })
     } catch {
       // 后端不可达时也进 Picker——它会在重试里继续探测
       set({ phase: 'none' })
@@ -313,11 +330,12 @@ export const useProjectStore = create<ProjectState>((set, get) => {
 
   refreshRecent: async () => {
     try {
+      const rev = pinnedRev
       const [{ recent, pinned }, opened] = await Promise.all([
         fetchProjectLists(),
         fetchOpenProjects().catch(() => []),
       ])
-      set({ recent, pinned, opened })
+      set({ recent, opened, ...(rev === pinnedRev ? { pinned } : {}) })
     } catch {
       /* 列表刷新失败不致命 */
     }

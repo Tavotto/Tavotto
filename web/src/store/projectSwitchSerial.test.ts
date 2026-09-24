@@ -24,10 +24,15 @@ interface Pending {
 /** `/api/projects/open` 与 PUT pinned 挂起等用例放行；其余立刻答一个合法的空形状 */
 let pending: Pending[] = []
 const opened: string[] = []
+/** 只有「刷新与收藏赛跑」那条用例要把 GET recent 也挂起 */
+let holdRecent = false
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = String(url)
-  const hold = u.includes('/api/projects/open') || (u.includes('/api/projects/pinned') && init?.method === 'PUT')
+  const hold =
+    u.includes('/api/projects/open') ||
+    (u.includes('/api/projects/pinned') && init?.method === 'PUT') ||
+    (holdRecent && u.includes('/api/projects/recent'))
   if (hold) {
     if (u.includes('/api/projects/open')) opened.push(JSON.parse(String(init?.body)).path)
     return new Promise<Response>((resolve) => {
@@ -65,6 +70,7 @@ beforeEach(() => {
   localStorage.clear()
   pending = []
   opened.length = 0
+  holdRecent = false
   useProjectStore.setState({
     phase: 'open',
     project: { open: true, id: 'p0', name: 'start', figures_dir: '/figs/start' },
@@ -132,5 +138,34 @@ describe('改收藏串行', () => {
     put2.release(200, { pinned: ['/old', '/A', '/B'].map(entry) })
     await second
     expect(useProjectStore.getState().pinned.map((p) => p.path)).toEqual(['/old', '/A', '/B'])
+  })
+})
+
+describe('刷新不盖掉收藏', () => {
+  it('收藏回包之后才回来的旧快照：只更新最近列表，收藏保持新的', async () => {
+    holdRecent = true
+    const store = useProjectStore.getState()
+    const refresh = store.refreshRecent() // 发出时服务端还只有 /old
+    const pin = store.togglePin('/A')
+    await settle()
+
+    take('/api/projects/pinned').release(200, { pinned: ['/old', '/A'].map(entry) })
+    await pin
+    expect(useProjectStore.getState().pinned.map((p) => p.path)).toEqual(['/old', '/A'])
+
+    // 旧快照这时才回来
+    take('/api/projects/recent').release(200, { recent: [entry('/r1')], pinned: [entry('/old')] })
+    await refresh
+    expect(useProjectStore.getState().pinned.map((p) => p.path)).toEqual(['/old', '/A'])
+    expect(useProjectStore.getState().recent.map((p) => p.path)).toEqual(['/r1']) // 最近照常更新
+  })
+
+  it('期间没有收藏变化的刷新照常更新收藏', async () => {
+    holdRecent = true
+    const refresh = useProjectStore.getState().refreshRecent()
+    await settle()
+    take('/api/projects/recent').release(200, { recent: [], pinned: [entry('/srv')] })
+    await refresh
+    expect(useProjectStore.getState().pinned.map((p) => p.path)).toEqual(['/srv'])
   })
 })
