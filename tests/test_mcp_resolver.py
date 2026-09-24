@@ -16,6 +16,7 @@ import io
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -891,3 +892,81 @@ def test_concurrent_startups_over_a_stale_lock_spawn_exactly_one_provision(tmp_p
     assert len(fake_popen) == 1
     token = fake_popen[0]["env"][launcher._PROVISION_LOCK_TOKEN_ENV]
     assert lock.read_text(encoding="utf-8") == token
+
+
+def test_a_log_that_cannot_be_opened_does_not_leave_the_lock_behind(
+    tmp_path, fake_popen, monkeypatch
+):
+    """#548 评审 P2：拿到锁、日志却打不开（共享冲突 / fd 用尽）时没起子进程——锁不放，
+    后面 20 分钟的会话都会被「already_running」挡住，没人去修。"""
+    real_open = open
+
+    def flaky_open(path, *a, **kw):
+        if os.fspath(path).endswith("provision.log"):
+            raise PermissionError("sharing violation")
+        return real_open(path, *a, **kw)
+
+    monkeypatch.setattr(launcher, "open", flaky_open, raising=False)
+    out = launcher.kick_background_provision()
+    assert out["started"] is False and out["reason"].startswith("cannot_write")
+    assert not Path(launcher._provision_lock_path()).exists(), "没起子进程却把锁留下了"
+    monkeypatch.delattr(launcher, "open")
+    assert launcher.kick_background_provision()["started"] is True
+
+
+def test_an_owner_never_deletes_its_lock_once_it_could_have_been_taken_over(tmp_path):
+    """#548 评审 P2：持有者跑过了接管线（整机睡眠后醒来等），读到自己的令牌之后、删之前，
+    接班者可能已换上新锁——所以离过期不远的自己的锁**不删**，留给接管。"""
+    lock = Path(launcher._provision_lock_path())
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("mine", encoding="utf-8")
+    aged = time.time() - launcher._PROVISION_LOCK_MAX_AGE + launcher._PROVISION_RELEASE_MARGIN - 1
+    os.utime(lock, (aged, aged))
+    launcher._release_provision_lock("mine")
+    assert lock.exists(), "临近过期的锁被持有者删了：可能删掉的是接班者的新锁"
+    launcher._heartbeat_provision_lock("mine")
+    assert lock.stat().st_mtime == pytest.approx(aged), "临近过期的锁不许续命"
+
+    now = time.time()
+    os.utime(lock, (now, now))
+    launcher._release_provision_lock("mine")
+    assert not lock.exists()
+
+
+def test_the_heartbeat_keeps_only_my_lock_fresh(tmp_path):
+    lock = Path(launcher._provision_lock_path())
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("mine", encoding="utf-8")
+    old = time.time() - 120
+    os.utime(lock, (old, old))
+    launcher._heartbeat_provision_lock("theirs")
+    assert lock.stat().st_mtime == pytest.approx(old)
+    launcher._heartbeat_provision_lock("mine")
+    assert lock.stat().st_mtime > old + 60
+
+
+def test_a_long_background_provision_keeps_renewing_its_lock(tmp_path, monkeypatch, capsys):
+    """#548 评审 P2：pip 联网装可能超过 20 分钟——`--provision` 活着时必须一直续锁，
+    否则会被当成死锁接管、再起一个 pip。"""
+    lock = Path(launcher._provision_lock_path())
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("owner-token", encoding="utf-8")
+    beats = []
+    real_beat = launcher._heartbeat_provision_lock
+    monkeypatch.setattr(launcher, "_PROVISION_HEARTBEAT", 0.01)
+    monkeypatch.setattr(
+        launcher, "_heartbeat_provision_lock", lambda tok: (beats.append(tok), real_beat(tok))
+    )
+
+    def slow_provision(spec, python_base=None):
+        deadline = time.time() + 5
+        while not beats and time.time() < deadline:
+            time.sleep(0.01)
+        return {"ok": True}, 0
+
+    monkeypatch.setattr(launcher, "provision", slow_provision)
+    monkeypatch.setattr(sys, "argv", ["server.py", "--provision"])
+    monkeypatch.setenv(launcher._PROVISION_LOCK_TOKEN_ENV, "owner-token")
+    assert launcher.main() == 0
+    assert beats and set(beats) == {"owner-token"}
+    assert not lock.exists()

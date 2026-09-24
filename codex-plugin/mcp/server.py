@@ -695,8 +695,12 @@ def kick_background_provision() -> dict:
         token = _acquire_provision_lock()
         if token is None:
             return {"started": False, "reason": "already_running", "log": log}
+    except OSError as exc:
+        return {"started": False, "reason": f"cannot_write: {exc}", "log": log}
+    try:
         out = open(log, "w", encoding="utf-8")
     except OSError as exc:
+        _release_provision_lock(token)  # 没起子进程：锁不放就白挡后面的会话 20 分钟
         return {"started": False, "reason": f"cannot_write: {exc}", "log": log}
     kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": out, "stderr": out}
     if os.name == "nt":
@@ -811,22 +815,61 @@ def _sweep_takeover_markers(directory: str) -> None:
                 pass
 
 
-def _release_provision_lock(token: "str | None") -> None:
-    """只删**自己那把**锁：内容是这个令牌才删。手动跑的 `--provision` 没有令牌，
-    不许把后台那一次正持有的锁删掉。"""
+#: 后台 `--provision` 活着时多久续一次锁的 mtime；远小于 `_PROVISION_LOCK_MAX_AGE`。
+_PROVISION_HEARTBEAT = 60
+#: 持有者只在锁离「可被接管」还差这么远时才续 / 删；过了这条线就不碰，交给接管。
+_PROVISION_RELEASE_MARGIN = 5 * 60
+
+
+def _own_live_lock(token: "str | None") -> bool:
+    """锁是**我这把**、且离过期还远：只有这时续锁 / 删锁才不会碰到接班者的新锁。
+
+    接管只对岁数 ≥ `_PROVISION_LOCK_MAX_AGE` 的锁发生；持有者只在岁数 <
+    `MAX_AGE - MARGIN` 时动手，两者之间隔着几分钟，而「读 → 删」只隔一次系统调用
+    （#548 Codex 评审 P2）。活着的持有者靠心跳让锁永远离过期很远，所以接管只落在
+    真死掉的持有者身上。"""
     if not token:
-        return
-    lock = _provision_lock_path()
-    try:
-        with open(lock, "r", encoding="utf-8") as fh:
-            held = fh.read().strip()
-    except OSError:
-        return
-    if held == token:
+        return False
+    seen = _read_lock(_provision_lock_path())
+    if seen is None or seen[0] != token:
+        return False
+    return time.time() - seen[1] < _PROVISION_LOCK_MAX_AGE - _PROVISION_RELEASE_MARGIN
+
+
+def _release_provision_lock(token: "str | None") -> None:
+    """只删**自己那把、仍新鲜的**锁。手动跑的 `--provision` 没有令牌，不许把后台那一次
+    正持有的锁删掉；自己的锁已老到可能被接管（例如整机睡眠后醒来），也不删——
+    留给下一个会话按过期锁接管，而不是冒险删掉接班者刚换上的新锁。"""
+    if _own_live_lock(token):
         try:
-            os.remove(lock)
+            os.remove(_provision_lock_path())
         except OSError:
             pass
+
+
+def _heartbeat_provision_lock(token: "str | None") -> None:
+    """续锁：pip 联网装科学栈可能超过 20 分钟，不续就会被当成死锁接管、再起一个 pip。"""
+    if _own_live_lock(token):
+        try:
+            os.utime(_provision_lock_path(), None)
+        except OSError:
+            pass
+
+
+def _start_provision_heartbeat(token: "str | None"):
+    """后台线程每 `_PROVISION_HEARTBEAT` 秒续一次锁；返回停止用的 Event（没令牌回 None）。"""
+    if not token:
+        return None
+    import threading
+
+    stop = threading.Event()
+
+    def beat():
+        while not stop.wait(_PROVISION_HEARTBEAT):
+            _heartbeat_provision_lock(token)
+
+    threading.Thread(target=beat, name="tavotto-provision-heartbeat", daemon=True).start()
+    return stop
 
 
 # ------------------------------- 降级 server --------------------------------
@@ -1317,11 +1360,15 @@ def main() -> int:
                         )
                     )
                     return 2
+        lock_token = os.environ.get(_PROVISION_LOCK_TOKEN_ENV)
+        heartbeat = _start_provision_heartbeat(lock_token)
         try:
             report, rc = provision(values["--from"], python_base=values["--python"])
         finally:
+            if heartbeat is not None:
+                heartbeat.set()
             # 后台那一次起的锁：凭令牌只删自己的；手动跑时没有令牌，什么都不删
-            _release_provision_lock(os.environ.get(_PROVISION_LOCK_TOKEN_ENV))
+            _release_provision_lock(lock_token)
         print(json.dumps(report, ensure_ascii=False))
         return rc
 

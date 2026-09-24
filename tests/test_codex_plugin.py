@@ -1373,6 +1373,7 @@ def test_launcher_is_stdlib_only_and_parses():
         "shutil",
         "subprocess",
         "sys",
+        "threading",
         "time",
         "__future__",
         "tavotto",
