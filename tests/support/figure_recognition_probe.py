@@ -559,7 +559,27 @@ def orphan_scopes() -> dict:
         "paths_equal": bool(np.array_equal(np.asarray(cached._buf), np.asarray(fresh._buf))),
         "fresh_dropped": fresh._edges is False,
     }
+    # 同一个独立 ScalarMappable 交给左右两个子图各建一条色条（#538 评审第七轮）
+    zz = np.random.RandomState(9).rand(8, 8)
+    fs2, (s0, s1) = plt.subplots(1, 2, figsize=(6.0, 3.0))
+    s0.imshow(zz, cmap="viridis", vmin=0, vmax=1)
+    s1.imshow(zz, cmap="viridis", vmin=0, vmax=1)
+    shared_sm = ScalarMappable(mcolors.Normalize(0, 1), "viridis")
+    fs2.colorbar(shared_sm, ax=s0)
+    fs2.colorbar(shared_sm, ax=s1)
+    shared_two = _summary(_state(fs2))
+    # 同一个 ScalarMappable：左边是色图图像（认领），右边是已成色的 RGB 位图（绑定）
+    fs3, (u0, u1) = plt.subplots(1, 2, figsize=(6.0, 3.0))
+    u0.imshow(zz, cmap="viridis", vmin=0, vmax=1)
+    vv = np.linspace(0, 1, 64)[None].repeat(32, 0)
+    u1.imshow(matplotlib.colormaps["viridis"](vv)[..., :3])
+    mixed_sm = ScalarMappable(mcolors.Normalize(0, 1), "viridis")
+    fs3.colorbar(mixed_sm, ax=u0)
+    fs3.colorbar(mixed_sm, ax=u1)
+    shared_mixed = _summary(_state(fs3))
     return {
+        "shared_two": shared_two,
+        "shared_mixed": shared_mixed,
         "hatch": hatch,
         "huge_n": huge_n,
         "listed": listed,

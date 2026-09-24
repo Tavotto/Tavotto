@@ -321,6 +321,22 @@ def test_dense_overlay_edges_do_not_become_a_per_pixel_table(facts):
     assert h["paths_equal"] is True
 
 
+def test_one_standalone_mappable_behind_two_colorbars(facts):
+    """#538 评审第七轮：同一个 ScalarMappable 交给 `ax=a0`、`ax=a1` 各建一条色条。左边那条
+    认领了 a0 的图之后，「已有图元共用这个 norm」若按全图判，右边那条直接跳过、a1 的图没人认；
+    位图同理。按各自作用域判：两张图都认领 / 绑定，两条色条各认各的宿主（同一个 mappable，
+    两条色条都覆盖两张图——从哪条换色图，两边一起变）。"""
+    bars = sorted(
+        (e["host_gid"], e["scale_gids"])
+        for e in _bars(facts["orphan_scopes"]["shared_two"]).values()
+    )
+    both = ["axes_0.images_0", "axes_1.images_0"]
+    assert bars == [("axes_0", both), ("axes_1", both)], bars
+    mixed = _bars(facts["orphan_scopes"]["shared_mixed"])
+    assert any(e["mappable_gid"] == "axes_1.images_0" for e in mixed.values()), mixed
+    assert all(e["scale_gids"] == ["axes_0.images_0"] for e in mixed.values()), mixed
+
+
 # ============================================================ 热会话 == 全量重放
 SCRIPT = "fig_recognition.py"
 LIBRARY = """\

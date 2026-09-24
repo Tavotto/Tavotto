@@ -1072,12 +1072,6 @@ def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
     只有输出本身（`RasterField`），配对了就一定重着色得出来。
     可重入：已经绑过的位图（`_mm_field`）不再动。
     """
-    drawn = [
-        a
-        for ax in axes
-        if ax not in cbar_of_ax
-        for a in [*getattr(ax, "images", []), *getattr(ax, "collections", [])]
-    ]
 
     def _rasters(scope):
         return [
@@ -1101,7 +1095,14 @@ def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
             getattr(im, "_mm_field", None) is not None and im._mm_field.cb is cb for im in images
         ):
             continue
-        if any(getattr(a, "norm", None) is m.norm for a in drawn):
+        # 本色条作用域里已有图元与它共用 norm（脚本传的同一个对象，或 `adopt_equal_scales` 刚
+        # 认领的）：色条描述的是那些图元，不另配位图。**只看本作用域**——同一个 ScalarMappable
+        # 交给左右两个子图各建一条色条时，左边认领过的图元不该挡住右边（#538 评审第七轮）
+        if any(
+            getattr(a, "norm", None) is m.norm
+            for ax in scope
+            for a in [*getattr(ax, "images", []), *getattr(ax, "collections", [])]
+        ):
             continue
         candidates = [im for im in _rasters(scope) if id(im) not in taken]
         if not candidates:
@@ -1176,13 +1177,16 @@ def adopt_equal_scales(cbar_of_ax: dict, axes) -> None:
             and getattr(a, "get_array", lambda: None)() is not None
         ]
 
-    drawn = _mapped([ax for ax in axes if ax not in cbar_of_ax])
     for cb, scope in _orphan_scopes(cbar_of_ax, axes):
         m = cb.mappable
         sig = _norm_signature(m.norm)
-        if sig is None or any(a.norm is m.norm for a in drawn):
+        mapped = _mapped(scope)
+        # 本作用域里已有图元共用这个 norm 就不再认领。**只看本作用域**：同一个
+        # ScalarMappable 交给 `ax=a0` 与 `ax=a1` 各建一条色条时，第一条认领了 a0 的图，
+        # 全局判的话第二条看到「已有共用者」直接跳过，a1 的图从此没人认（#538 评审第七轮）
+        if sig is None or any(a.norm is m.norm for a in mapped):
             continue
-        for a in _mapped(scope):
+        for a in mapped:
             if getattr(a, "colorbar", None) is not None or getattr(a, "_mm_adopted", False):
                 continue
             if getattr(getattr(a, "get_array", lambda: None)(), "ndim", 0) == 3:
