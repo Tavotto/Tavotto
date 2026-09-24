@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from support import frontend_schema
+from support.tsconst import exported_number
 from tavotto import app as m
 from tavotto.engine import diagnostics as engine_diagnostics, diagnostics_frontend as dfe
 
@@ -163,12 +164,10 @@ def test_bundle_schema_is_one_number_on_both_sides():
 
     report.json 换形就得升这个号（#524 评审）；只升一侧的话，前端自报的与包里 manifest 写的
     就不是同一个格式。"""
+    # 结构性地读（`tests/support/tsconst.py`）：注释掉的 `// export const … = 3` 不算数（#536 评审）
     src = Path(__file__).resolve().parents[1] / "web" / "src" / "diagnostics" / "types.ts"
-    match = re.search(
-        r"export const BUNDLE_SCHEMA_VERSION = (\d+)", src.read_text(encoding="utf-8")
-    )
-    assert match, "web/src/diagnostics/types.ts 里找不到 BUNDLE_SCHEMA_VERSION"
-    assert int(match.group(1)) == engine_diagnostics.BUNDLE_SCHEMA_VERSION
+    ts = exported_number(src.read_text(encoding="utf-8"), "BUNDLE_SCHEMA_VERSION")
+    assert ts == engine_diagnostics.BUNDLE_SCHEMA_VERSION
 
 
 def test_report_and_config_still_redact_home_and_secrets(client, tmp_path, monkeypatch):
@@ -804,16 +803,29 @@ def test_project_paths_names_and_cloud_accounts_never_leave_the_machine(
     assert "坚果云-acct:" in texts["app.log"] or token in texts["app.log"]
     assert "<email>" in texts["app.log"]
     assert "联系人 <<email>>、<email>" in texts["app.log"], "国际化与 punycode 地址整段换掉"
+    # README 列的 project 字段就是这一份 report 实际写出的键（打开项目时远不止记号与 location）
+    fields = _readme_project_fields(texts["README.txt"])
+    assert fields == list(proj), (fields, list(proj))
+    assert {"id", "exists", "scripts", "settings", "location"} <= set(fields)
+
+
+def _readme_project_fields(readme: str) -> list[str]:
+    head = "Fields in this report's project section:\n"
+    assert head in readme, "README 没有列 project 段的字段"
+    return readme.split(head, 1)[1].splitlines()[0].strip().split(", ")
 
 
 def test_readme_describes_the_project_section_it_actually_ships(client):
-    """README 说「不含项目名」，就不能几行后又说「文件夹名仍会带上」（#524 评审）：读包的人是照
-    README 决定发不发的。它对 project 段的描述要与 `_project_section` 实际写出的一致。"""
-    readme = open_bundle(client.get("/api/diagnostics/bundle").data).read("README.txt").decode()
-    assert "只剩 <project:哈希> 记号与三个是 / 否" in readme
-    assert "only as <project:hash> plus\nthree yes/no facts" in readme
-    for stale in ("文件夹名", "folder name"):
+    """README 说「不含项目名」，就不能几行后又说「文件夹名仍会带上」（#524 评审）；也不能说
+    project 段「只剩」记号和三个布尔而漏掉 id / exists / scripts / settings……（#536 评审）。
+    字段清单从这一份 report 生成，这里与 report.json 实际的键逐个对拍。没打开项目时只有 open。"""
+    z = open_bundle(client.get("/api/diagnostics/bundle").data)
+    readme = z.read("README.txt").decode()
+    assert "只以 <project:哈希> 记号和 location 的" in readme
+    for stale in ("文件夹名", "folder name", "只剩"):
         assert stale not in readme, stale
+    project = json.loads(z.read("report.json"))["project"]
+    assert _readme_project_fields(readme) == list(project) == ["open"]
 
 
 @pytest.mark.parametrize(
@@ -853,6 +865,14 @@ EMAIL_VECTORS = [
     ("写信给 a@b.com。", "写信给 <email>。"),
     ("请写信给用户@例子.公司，谢谢", "<email>，谢谢"),  # 中文不分词，本地部分从哪起分不出：宁可多抹
     ("a@b.com c@例子.中国", "<email> <email>"),
+    # json.dumps（ensure_ascii）写出的：全角 ＠ 自己也被转义成 \uff20；非 BMP 字符是一对代理转义，
+    # 要合成一个字符再判类别（#536 评审）
+    (json.dumps("用户＠例子。公司"), '"<email>"'),
+    (json.dumps("𐐀@example.com"), '"<email>"'),
+    (json.dumps("a@𐐀𐐀.com"), '"<email>"'),
+    (json.dumps({"to": "𐐀用户＠例子。公司"}), '{"to": "<email>"}'),
+    # 落单的代理 / 其实是字面反斜杠的 `\\u…`：解不出地址字符就按字面字符判，不能在那里停下
+    (json.dumps("x\\ud801@a.com"), '"x\\\\<email>"'),
 ]
 NOT_EMAILS = [
     "matplotlib@3.10",

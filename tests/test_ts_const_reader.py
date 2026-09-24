@@ -13,6 +13,7 @@ import pytest
 
 from tests.support.tsconst import (
     blank_comments_and_strings,
+    exported_number,
     exported_string,
     exported_string_array,
 )
@@ -97,3 +98,44 @@ def test_single_string_const_reads_the_live_one():
 def test_single_string_const_with_two_live_declarations_is_a_red():
     with pytest.raises(AssertionError, match="找到 2 处"):
         exported_string("export const D = 'a'\nexport const D = 'b'\n", "D")
+
+
+# ---- 整数常量（诊断包 bundle schema 那一对，#536 评审）----
+
+
+def test_number_const_reads_the_live_one():
+    src = "/** 说明 */\nexport const V = 3\nexport const W = 4;\n"
+    assert exported_number(src, "V") == 3
+    assert exported_number(src, "W") == 4
+
+
+def test_number_const_with_only_a_commented_out_declaration_is_a_red():
+    """#536 评审的原话：真的那行改掉 / 删掉、只剩注释里的 `= 3`，裸正则照样读出 3。"""
+    for src in (
+        "// export const V = 3\nexport const V2 = 9\n",
+        "/* export const V = 3 */\n",
+        "const doc = 'export const V = 3'\n",
+    ):
+        with pytest.raises(AssertionError):
+            exported_number(src, "V")
+
+
+def test_number_const_ignores_a_stale_comment_next_to_the_live_one():
+    src = "// export const V = 2\nexport const V = 3\n"
+    assert exported_number(src, "V") == 3
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "const V = 3\n",  # 没导出
+        "export const V = 3\nexport const V = 4\n",  # 两份
+        "export const V = 3 + 1\n",
+        "export const V = OTHER\n",
+        "export const V = 3\n  + 1\n",  # 换行续写
+        "export const V = '3'\n",
+    ],
+)
+def test_number_const_it_cannot_read_exactly_is_a_red(src):
+    with pytest.raises(AssertionError):
+        exported_number(src, "V")

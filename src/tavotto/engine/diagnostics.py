@@ -98,10 +98,13 @@ _CLOUD_ACCOUNT = re.compile(r"(CloudStorage[/\\])([^/\\\s\"'-]+)-([^/\\\"']+)")
 #: 全角 `。．｡`）。**宁可多抹**：中文里没有空格，`请联系用户@例子.公司` 的本地部分分不出从哪起，
 #: 整段抹掉。不抹的只有结构上不是地址的：顶级域必须是 ≥2 个字母或 `xn--…`（`matplotlib@3.10`、
 #: `numpy@1.26.4` 不动）、至少两段（`a@b`、`user@localhost` 不动）、`@` 前没有本地部分（装饰器）。
-#: JSON `ensure_ascii` 写出的 `\uXXXX` 按解码后的字符算（日志里会有 json.dumps 的原样输出）。
-_EMAIL_AT = re.compile("[@＠]")
+#: JSON `ensure_ascii` 写出的 `\uXXXX` 按解码后的字符算（日志里会有 json.dumps 的原样输出）：
+#: `@` 本身也可能是转义（`json.dumps` 把 `＠` 写成 `\uff20`），非 BMP 字符是一对代理转义
+#: `\ud801\udc00`，要合成一个字符再判类别——拆开判是两个 `Cs`，扫描停在那里（#536 评审）。
+_EMAIL_AT = re.compile(r"[@＠]|\\u(?:0040|[Ff][Ff]20)")
 _EMAIL_DOTS = ".。．｡"
 _JSON_ESCAPE = re.compile(r"\\u([0-9A-Fa-f]{4})")
+_JSON_SURROGATE_PAIR = re.compile(r"\\u([Dd][89ABab][0-9A-Fa-f]{2})\\u([Dd][C-Fc-f][0-9A-Fa-f]{2})")
 _PUNYCODE_TLD = re.compile(r"xn--[a-z0-9-]+", re.I)
 #: RFC 5321 的上限：本地部分 64、域名 255。也是往两边扩的步数上限（几 MB 的日志里一个 `@` 不该扫全文）
 _EMAIL_LOCAL_MAX = 64
@@ -148,13 +151,27 @@ def project_roots(project: dict | None = None) -> list[tuple[str, str]]:
     return sorted(out, key=lambda pair: len(pair[0]), reverse=True)
 
 
-def _email_unit(text: str, i: int, backward: bool) -> tuple[str, int]:
-    """i 处（backward 时是 i 之前）的一个字符单位：`\\uXXXX` 转义算一个、按解码后的字符判。"""
+def _email_unit(text: str, i: int, backward: bool, extra: str) -> tuple[str, int] | None:
+    """i 处（backward 时是 i 之前）属于地址的一个字符单位，不是就 None。
+
+    `\\uXXXX` 转义算一个、按解码后的字符判；一对代理转义合成一个非 BMP 字符再判。转义解出来
+    不是地址字符（落单的代理、`\\\\u…` 其实是字面反斜杠）时退回按字面字符判——往回扫停在转义上
+    会把前面的本地部分整段放过去。"""
     if backward:
-        m = _JSON_ESCAPE.fullmatch(text, i - 6, i) if i >= 6 else None
-        return (chr(int(m.group(1), 16)), 6) if m else (text[i - 1], 1)
-    m = _JSON_ESCAPE.match(text, i)
-    return (chr(int(m.group(1), 16)), 6) if m else (text[i], 1)
+        pair = _JSON_SURROGATE_PAIR.fullmatch(text, i - 12, i) if i >= 12 else None
+        m = pair or (_JSON_ESCAPE.fullmatch(text, i - 6, i) if i >= 6 else None)
+    else:
+        m = _JSON_SURROGATE_PAIR.match(text, i) or _JSON_ESCAPE.match(text, i)
+    if m is not None:
+        if m.re is _JSON_SURROGATE_PAIR:
+            hi, lo = int(m.group(1), 16), int(m.group(2), 16)
+            ch, width = chr(0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00)), 12
+        else:
+            ch, width = chr(int(m.group(1), 16)), 6
+        if _email_char(ch, extra):
+            return ch, width
+    ch = text[i - 1] if backward else text[i]
+    return (ch, 1) if _email_char(ch, extra) else None
 
 
 def _email_char(ch: str, extra: str) -> bool:
@@ -180,21 +197,21 @@ def _redact_emails(text: str) -> str:
         local: list[tuple[str, int]] = []
         start = at.start()
         while start > done and len(local) < _EMAIL_LOCAL_MAX:
-            ch, width = _email_unit(text, start, backward=True)
-            if not _email_char(ch, "._%+-"):
+            unit = _email_unit(text, start, True, "._%+-")
+            if unit is None or start - unit[1] < done:
                 break
-            local.append((ch, width))
-            start -= width
+            local.append(unit)
+            start -= unit[1]
         while local and local[-1][0] == ".":  # 句中的点号不算本地部分的开头
             start += local.pop()[1]
         domain: list[tuple[str, int]] = []
         end = at.end()
         while end < len(text) and len(domain) < _EMAIL_DOMAIN_MAX:
-            ch, width = _email_unit(text, end, backward=False)
-            if not _email_char(ch, "-" + _EMAIL_DOTS):
+            unit = _email_unit(text, end, False, "-" + _EMAIL_DOTS)
+            if unit is None:
                 break
-            domain.append((ch, width))
-            end += width
+            domain.append(unit)
+            end += unit[1]
         while domain and domain[-1][0] in _EMAIL_DOTS:  # 句末的句号不算域名
             end -= domain.pop()[1]
         labels = re.split(f"[{_EMAIL_DOTS}]", "".join(ch for ch, _ in domain))
@@ -1118,7 +1135,10 @@ def build_bundle(
                 indent=1,
             ),
         )
-        z.writestr("README.txt", _readme(snapshot is not None, bool(trace)))
+        z.writestr(
+            "README.txt",
+            _readme(snapshot is not None, bool(trace), list(report.get("project") or {})),
+        )
     return buf.getvalue()
 
 
@@ -1144,12 +1164,16 @@ def _frontend_sections(frontend: dict | None) -> tuple[dict | None, list[dict], 
     return snapshot, trace, truncated
 
 
-def _readme(has_state: bool, has_trace: bool) -> str:
+def _readme(has_state: bool, has_trace: bool, project_keys: list[str] | None = None) -> str:
     """包里有什么、**没有什么**。双语——用户得看得懂自己在往 issue 上贴什么。
 
     「不含」那一段是承诺，不是免责声明：它对应的是代码里的字段 allowlist
     与服务端校验（ADR 0016 §4 / §8），不是「我们尽量不放」。
+
+    project 段带了哪些字段**不手写**：`project_keys` 是这一份 report.json 里实际写出的键，
+    手写的清单在 `project_status` / `_diagnostics_project_status` 加字段那天就漂了（#536 评审）。
     """
+    keys = ", ".join(project_keys or ["open"])
     extra_zh, extra_en = "", ""
     if has_state:
         extra_zh += "- frontend-state.json：导出那一刻的前端状态摘要（匿名）\n"
@@ -1199,11 +1223,14 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- project names and where they live (replaced by <project:hash>), email addresses,\n"
         "  cloud-storage account names\n"
         "\n"
-        "当前打开的项目在 report.json 的 project 段只剩 <project:哈希> 记号与三个是 / 否：\n"
-        "在不在云盘同步目录里、路径有没有非 ASCII 字符、有没有空格。其余项目只留条数。\n"
-        "The currently open project appears in report.json only as <project:hash> plus\n"
-        "three yes/no facts: whether it is in a cloud-sync folder, whether its path has\n"
-        "non-ASCII characters, and whether it has spaces. Other projects are only counted.\n"
+        "当前打开的项目叫什么、在哪，在 report.json 里只以 <project:哈希> 记号和 location 的\n"
+        "三个是 / 否（在不在云盘同步目录、路径有没有非 ASCII 字符、有没有空格）出现；\n"
+        "其余目录按段换成哈希，其余项目只留条数。\n"
+        "The open project's name and location appear in report.json only as <project:hash>\n"
+        "and three yes/no facts under location (cloud-sync folder, non-ASCII path, spaces);\n"
+        "other directories are hashed segment by segment, other projects are only counted.\n"
+        "这一份 report.json 的 project 段含这些字段 / Fields in this report's project section:\n"
+        f"  {keys}\n"
         "\n"
         "文件名、路径与图内文字在诊断包里一律换成不可逆的短哈希（doc:… / "
         "panel:… / file:… / var:…），\n"

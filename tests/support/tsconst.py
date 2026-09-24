@@ -30,7 +30,12 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["blank_comments_and_strings", "exported_string", "exported_string_array"]
+__all__ = [
+    "blank_comments_and_strings",
+    "exported_number",
+    "exported_string",
+    "exported_string_array",
+]
 
 
 def blank_comments_and_strings(src: str) -> tuple[str, list[tuple[int, int]]]:
@@ -151,3 +156,27 @@ def exported_string(src: str, name: str) -> str:
             return src[content_start:content_end]
         break
     raise AssertionError(f"{name} 的取值不是一个字符串字面量——判据读不出确切取值")
+
+
+def exported_number(src: str, name: str) -> int:
+    """`export const <name> = <整数字面量>` 的值（同源对里的 schema 版本号这类常量）。
+
+    与上面两个同一条纪律：先抹注释与字符串，只认恰好一处 `export const`；赋值号之后
+    必须是**单个**整数字面量、然后语句结束（`;`，或换行后下一行不以运算符续写）——
+    `= 3 + 1`、`= OTHER`、`= 3\n  + 1` 一律报错，不猜（#536 评审：裸正则会认注释掉的那行）。
+    """
+    code, _ = blank_comments_and_strings(src)
+    decl = re.compile(
+        r"\bexport\s+const\s+" + re.escape(name) + r"\b\s*(?::[^=]*?)?=(?!=)",
+    )
+    hits = list(decl.finditer(code))
+    if len(hits) != 1:
+        raise AssertionError(
+            f"源码里找到 {len(hits)} 处 `export const {name} =`——判据只认恰好一处活声明"
+        )
+    m = re.compile(r"\s*(\d[\d_]*)\b(?P<tail>[ \t]*(?:;|\n\s*(?P<next>\S)?|$))").match(
+        code, hits[0].end()
+    )
+    if m is None or (m.group("next") or "") in set("+-*/%&|^?.,([<>=!"):
+        raise AssertionError(f"{name} 的取值不是单个整数字面量——判据读不出确切取值")
+    return int(m.group(1).replace("_", ""))
