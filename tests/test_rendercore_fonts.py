@@ -148,6 +148,30 @@ def test_requirements_txt_mirrors_the_runtime_dependencies_and_is_pinned():
 
 
 @needs_tomllib
+def test_runtime_lock_versions_satisfy_the_app_dependency_ranges():
+    """内置渲染 runtime 的锁（为像素基线钉死）与应用的依赖区间必须相容：两者被装进同一个解释器时（CI 的
+    invariants 腿按 runtime-lock 装科学栈、pip 用户装 `tavotto[worker]`），后装的钉版本会覆盖前者，pip 报
+    依赖冲突、产品的依赖一致性检查判 `dependency_consistency_failed`（#539 的 invariants 腿实红过：
+    fonttools>=4.65 对 runtime-lock 的 4.63.0）。改任何一边都要让另一边仍然满足。"""
+    from packaging.requirements import Requirement
+
+    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    ranges = {
+        (req := Requirement(d)).name.lower(): req.specifier for d in cfg["project"]["dependencies"]
+    }
+    lock = json.loads((ROOT / "packaging" / "runtime-lock.json").read_text(encoding="utf-8"))
+    checked = 0
+    for target, spec in lock["targets"].items():
+        for name, version in spec["packages"].items():
+            if name.lower() in ranges:
+                checked += 1
+                assert ranges[name.lower()].contains(version, prereleases=True), (
+                    f"runtime-lock {target} 钉 {name}=={version}，不满足应用依赖 {name}{ranges[name.lower()]}"
+                )
+    assert checked >= 3, "一个共有的包都没核到——判据量在空集合上"
+
+
+@needs_tomllib
 def test_pymupdf_is_only_the_legacy_extra_never_a_runtime_dependency():
     """退役的 PyMuPDF 只许经 `legacy-pymupdf` extra 进测试 / 维护者环境（D15）；`dependencies` /
     `requirements.txt` / 别的 extra 里出现它就是退役闭包被撕开。`rendercore` extra 也不该再存在

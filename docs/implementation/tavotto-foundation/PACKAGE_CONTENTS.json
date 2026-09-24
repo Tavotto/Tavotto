@@ -80,12 +80,12 @@
     {
       "path": "U00_FACADE_LEDGER.json",
       "bytes": 78673,
-      "sha256": "641cde4e768389b8ec1d96b86603ba15cab554547f57082a505c6feae087c276"
+      "sha256": "1db002ccb76b042203a823331e5b8a706b32b25f10c15e301231512ec0761e5f"
     },
     {
       "path": "U00_FACADE_LEDGER.md",
       "bytes": 39343,
-      "sha256": "493a1cd57ac329968a17e18d679ffca1ab21a048100c574245d37bd949c6712d"
+      "sha256": "d9ebc22291872a2897fe4f32f2bb985a8592e8273285916e84286fd76d31949a"
     },
     {
       "path": "archive/README.md",
@@ -350,7 +350,7 @@
     {
       "path": "evidence/u08/parity.json",
       "bytes": 4142,
-      "sha256": "4e5859f27cbd24fb1dc4a269759176235c3d99770935650ca823ab7fccade123"
+      "sha256": "b30fe8872bf2b0d611f1cab1203f68bbaf3977a5a8bc48d458d55864a3f0f4e6"
     },
     {
       "path": "evidence/u09/fo30-result-local-macos-arm64.json",

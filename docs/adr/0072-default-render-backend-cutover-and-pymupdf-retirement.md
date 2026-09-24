@@ -47,6 +47,13 @@ registry R13 / R14 / R15 / CP08 / CP08-E）；`docs/legal/COMMERCIALIZATION_DEPE
   列到当前最新系统、每格记 `macos_min`、按目标汇总 `macos_floor`。`docs/support-matrix.json` 的 `min_os`、
   `src-tauri/tauri.conf.json`（14.0）/ `tauri.intel.conf.json`（15.0）与这张表三处一致由 `tests/test_support_matrix.py`
   看护；真 `.app` 上逐个 Mach-O 的 minos 由 `desktop-tauri.yml` 的架构核对步（`codesign_macos.py scan --expect-min-os`）核。
+* **fonttools 的下限是 4.63，不是 U06 spike 实测的 4.65**（合入 main 时，2026-09-24）：内置渲染 runtime 的锁
+  （`packaging/runtime-lock.json`）为像素基线钉着 matplotlib 用的 fonttools 4.63.0；两者被装进同一个解释器时（CI 的
+  invariants 腿、pip 用户的 `[worker]`）后装的会覆盖前者，`>=4.65` 让依赖一致性检查判 `dependency_consistency_failed`
+  （#539 的 invariants 腿实红）。4.65 只是 spike 装到的版本（ADR 0055 的表），RenderCore 只用 `ttLib.TTFont` 与
+  `subset`；在 4.63.0 上把 RenderCore / 排版 / 导出相关的全部用例（约 716 条，含逐字节的字形向量与排版金标准）跑过，
+  全过。桌面版的 RenderCore 跑在应用自己的包里（`requirements.txt` 钉 4.65.0），不在内置 runtime 里（RC-102 隔离），
+  所以「产品用哪个版本」不因下限而变。看护：`tests/test_rendercore_fonts.py::test_runtime_lock_versions_satisfy_the_app_dependency_ranges`。
 * **许可与 NOTICE**（D15 主语是应用 / 发行闭包）：pikepdf MPL-2.0（qpdf Apache-2.0；传递 lxml BSD-3 / Pillow HPND）
   / fontTools MIT / uharfbuzz Apache-2.0（HarfBuzz MIT-old）/ pypdfium2 Apache-2.0 + BSD-3（PDFium）/ Liberation 与
   Noto Sans SC OFL 1.1。义务：MPL §3.2 告知源码获取方式（与既有 5 个 MPL crate 同一类，#182 的 NOTICE 链）；

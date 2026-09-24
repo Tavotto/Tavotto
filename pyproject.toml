@@ -51,7 +51,10 @@ dependencies = [
     "flask>=3.1,<4",
     "packaging>=24,<27",
     "pikepdf>=10.13,<11",
-    "fonttools>=4.65,<5",
+    # 下限 4.63 而不是 U06 spike 实测的 4.65：内置渲染 runtime（packaging/runtime-lock.json）为像素基线钉着
+    # matplotlib 的 fonttools 4.63.0，两者装进同一个解释器（CI 的 invariants 腿、pip 用户的 [worker]）时必须相容。
+    # RenderCore 只用 ttLib.TTFont 与 subset；4.63.0 上全部 RenderCore 用例已跑过（ADR 0072 §1）。
+    "fonttools>=4.63,<5",
     "uharfbuzz>=0.56,<1",
     "pypdfium2>=5.13,<6",
     "pillow>=10,<13",
