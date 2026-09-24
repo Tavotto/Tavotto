@@ -10,12 +10,15 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[4]
+#: 默认跑 pytest.sh；探针脚本用 MUTATE_RUNNER=runpy.sh
+RUNNER = os.environ.get("MUTATE_RUNNER", "pytest.sh")
 
 
 def main() -> int:
@@ -41,14 +44,14 @@ def main() -> int:
     path.write_text(src.replace(old, new), encoding="utf-8")
     try:
         red = subprocess.run(
-            [*runner, f"mutation-{label}", "--", "bash", str(HERE / "pytest.sh"), *pytest_args],
+            [*runner, f"mutation-{label}", "--", "bash", str(HERE / RUNNER), *pytest_args],
             cwd=ROOT,
         ).returncode
     finally:
         subprocess.run(["git", "checkout", "--", target], cwd=ROOT, check=True)
     assert path.read_text(encoding="utf-8") == src, "还原失败"
     green = subprocess.run(
-        [*runner, f"mutation-{label}-restored", "--", "bash", str(HERE / "pytest.sh"), *pytest_args],
+        [*runner, f"mutation-{label}-restored", "--", "bash", str(HERE / RUNNER), *pytest_args],
         cwd=ROOT,
     ).returncode
     print(
