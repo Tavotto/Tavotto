@@ -22,6 +22,7 @@ numbers is what we can actually work with.
 ```sh
 git clone https://github.com/Tavotto/Tavotto.git && cd Tavotto
 python -m venv .venv && .venv/bin/pip install -e ".[worker,dev]"
+.venv/bin/python scripts/fetch_fonts.py   # approved fonts (not in git)
 python scripts/build_frontend.py     # needs node + pnpm
 .venv/bin/tavotto
 ```

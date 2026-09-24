@@ -8,7 +8,7 @@
 - 代码在 `src/tavotto/`，`pyproject.toml`（hatchling）声明依赖与
   `tavotto = "tavotto.cli_entry:main"` 入口（**纯标准库的轻量入口**：
   `open`/`doctor` 要在 import Flask 之前分派掉，见 `src/tavotto/AGENTS.md`
-  的「外部交接」）。`run.sh` = 自建 `.venv` + `pip install -e .` +
+  的「外部交接」）。`run.sh` = 自建 `.venv` + `pip install -e .` + 批准字体（`fetch_fonts.py --check`，缺了才取，取不到就停）+
   `exec .venv/bin/tavotto`；**不要再写 `python app.py`**，
   根目录已无该文件（旧进程内存里的老路径正是「worker 进程崩溃（无响应）」的成因）。
 - extras：`worker`（matplotlib/numpy，装了就用同解释器渲染）、`dev`（pytest/build + 经自引用 extra 带进测试读取器）、`legacy-pymupdf`（退役的 PyMuPDF，只给测试读取器与维护者资产脚本，绝不进 dependencies，ADR 0072）。

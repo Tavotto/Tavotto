@@ -147,6 +147,26 @@ def test_requirements_txt_mirrors_the_runtime_dependencies_and_is_pinned():
         assert name in deps, f"{name} 应当是运行时依赖（切默认后不再是 extra）"
 
 
+def test_every_source_setup_path_fetches_the_approved_fonts():
+    """U10 起 RenderCore 是默认后端，批准字体又不进 git：新克隆照文档 / `run.sh` 装好之后，只要没跑
+    `scripts/fetch_fonts.py`，文字与导出就是 `FontsUnavailable`（Codex #539）。`run.sh` 要先核再取、取不到就停；
+    文档里每段 `pip install -e` 的源码安装，紧接着几行内要有取字体那一步。"""
+    run_sh = (ROOT / "run.sh").read_text(encoding="utf-8")
+    assert re.search(r"fetch_fonts\.py --check .*\|\| .*fetch_fonts\.py \|\| exit 1", run_sh), (
+        "run.sh 要先 --check、缺了才取、取不到就停"
+    )
+    assert run_sh.index("fetch_fonts.py") < run_sh.index("exec .venv/bin/tavotto")
+    blocks = 0
+    for doc in ("README.md", "README.zh-CN.md", "CONTRIBUTING.md"):
+        lines = (ROOT / doc).read_text(encoding="utf-8").splitlines()
+        for i, line in enumerate(lines):
+            if re.search(r"\bpip install -e\b", line) and ".venv" in line:
+                blocks += 1
+                window = "\n".join(lines[i : i + 4])
+                assert "fetch_fonts.py" in window, f"{doc}:{i + 1} 的源码安装段没有取批准字体"
+    assert blocks >= 3, "一段源码安装说明都没找到——判据量在空集合上"
+
+
 @needs_tomllib
 def test_runtime_lock_versions_satisfy_the_app_dependency_ranges():
     """内置渲染 runtime 的锁（为像素基线钉死）与应用的依赖区间必须相容：两者被装进同一个解释器时（CI 的
