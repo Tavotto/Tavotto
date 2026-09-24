@@ -713,6 +713,8 @@ PERSON = "PRIVATE_PERSON_NAME"
 PAPER = "SECRET_PAPER_DIR"
 EMAIL = "private.person@example.com"
 OTHER_EMAIL = "other.person@example.org"
+IDN_EMAIL = "张三丰@例子.公司"
+PUNY_EMAIL = "zhang.san@mail.example.xn--p1ai"
 OTHER_TITLE = "OTHER_RECENT_TITLE"
 EXPORT_TITLE = "SECRET_EXPORT_TITLE"
 
@@ -746,7 +748,8 @@ def test_project_paths_names_and_cloud_accounts_never_leave_the_machine(
     log.write_text(
         f"2026-09-23 INFO tavotto: 项目已打开: {project}（0 个脚本）\n"
         f"2026-09-23 ERROR tavotto: 打开失败: {other}/fig.py\n"
-        f"2026-09-23 INFO tavotto: 同步账号 {EMAIL}\n",
+        f"2026-09-23 INFO tavotto: 同步账号 {EMAIL}\n"
+        f"2026-09-23 INFO tavotto: 联系人 <{IDN_EMAIL}>、{PUNY_EMAIL}\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(engine_diagnostics, "_log_path", lambda: log)
@@ -765,6 +768,10 @@ def test_project_paths_names_and_cloud_accounts_never_leave_the_machine(
             PAPER,
             EMAIL,
             OTHER_EMAIL,
+            IDN_EMAIL,
+            "张三丰",
+            PUNY_EMAIL,
+            "p1ai",
             OTHER_TITLE,
             EXPORT_TITLE,
             "坚果云-private",
@@ -783,6 +790,7 @@ def test_project_paths_names_and_cloud_accounts_never_leave_the_machine(
     assert token in texts["app.log"], "日志里那一行要与 report 用同一个项目记号"
     assert "坚果云-acct:" in texts["app.log"] or token in texts["app.log"]
     assert "<email>" in texts["app.log"]
+    assert "联系人 <<email>>、<email>" in texts["app.log"], "国际化与 punycode 地址整段换掉"
 
 
 @pytest.mark.parametrize(
@@ -798,3 +806,49 @@ def test_cloud_accounts_and_emails_are_redacted_even_outside_known_projects(raw,
     out = engine_diagnostics._redact_text(raw)
     assert expect in out, out
     assert EMAIL not in out and "Contoso" not in out
+
+
+# 邮箱：不只认 ASCII（#524 评审 P1）。国际化地址（RFC 6531 / IDNA）一个字都不许剩，punycode 顶级域
+# 不许留下 `--p1ai` 尾巴；期望值写死整行——只断言「秘密不在」挡不住把两边的引号、括号一起吃掉。
+EMAIL_VECTORS = [
+    ("用户@例子.公司", "<email>"),
+    ("müller@bücher.de", "<email>"),
+    ("उपयोगकर्ता@उदाहरण.कॉम", "<email>"),  # 天城文带组合记号，\w 认不全
+    ("123456@qq.com", "<email>"),
+    ("user@example.xn--p1ai", "<email>"),
+    ("a.b@mail.dept.xn--fiqs8s", "<email>"),
+    ("x@xn--80ak6aa92e.xn--p1ai", "<email>"),
+    ("张三@mail.cs.例子.中国", "<email>"),
+    ("用户＠例子。公司", "<email>"),  # 全角 ＠ 与 IDNA 认的全角句点
+    ('{"email": "用户@例子.公司", "n": 1}', '{"email": "<email>", "n": 1}'),
+    ('"\\u7528\\u6237@\\u4f8b\\u5b50.\\u516c\\u53f8"', '"<email>"'),  # json.dumps 的转义
+    ("联系人 <张三@例子.公司>", "联系人 <<email>>"),
+    ("'user@example.xn--p1ai'", "'<email>'"),
+    ("(用户@例子.公司)", "(<email>)"),
+    ("https://h.example/?to=用户@例子.公司&x=1", "https://h.example/?to=<email>&x=1"),
+    ("mailto:张三@例子.公司", "mailto:<email>"),
+    ("写信给 a@b.com。", "写信给 <email>。"),
+    ("请写信给用户@例子.公司，谢谢", "<email>，谢谢"),  # 中文不分词，本地部分从哪起分不出：宁可多抹
+    ("a@b.com c@例子.中国", "<email> <email>"),
+]
+NOT_EMAILS = [
+    "matplotlib@3.10",
+    "numpy@1.26.4 scipy@1.14",
+    "pkg@2.0.0-beta",
+    "@app.route('/x')",
+    "  @dataclass",
+    "a@b",
+    "user@localhost",
+    "HEAD@{0}",
+    "x@例子",
+]
+
+
+@pytest.mark.parametrize(("raw", "expect"), EMAIL_VECTORS)
+def test_internationalized_and_punycode_emails_are_redacted_whole(raw, expect):
+    assert engine_diagnostics._redact_text(raw) == expect
+
+
+@pytest.mark.parametrize("raw", NOT_EMAILS)
+def test_things_shaped_like_emails_but_not_addresses_are_left_alone(raw):
+    assert engine_diagnostics._redact_text(raw) == raw

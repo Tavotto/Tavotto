@@ -28,6 +28,7 @@ import platform
 import re
 import sys
 import time
+import unicodedata
 import zipfile
 from pathlib import Path
 
@@ -86,8 +87,22 @@ def _install_id() -> str:
 #: 云盘挂载点的目录名里带着账号：`~/Library/CloudStorage/坚果云-<邮箱>`、`GoogleDrive-<邮箱>`、
 #: `OneDrive-<机构名>`。服务商名留着（「项目在云盘里」对排障有用：同步冲突、占位文件），账号哈希
 _CLOUD_ACCOUNT = re.compile(r"(CloudStorage[/\\])([^/\\\s\"'-]+)-([^/\\\"']+)")
-#: 邮箱出现在哪里都不该出门（云盘目录名、Git 配置、日志里的账号提示）
-_EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
+#: 邮箱出现在哪里都不该出门（云盘目录名、Git 配置、日志里的账号提示）。**不能只认 ASCII**：
+#: `用户@例子.公司` 是合法的国际化地址（RFC 6531 / IDNA），`user@example.xn--p1ai` 的顶级域是
+#: punycode——只认 ASCII 的正则前者一个字不动、后者留下 `--p1ai` 尾巴（#524 评审）。所以不写成
+#: 一条字符类正则，而是从每个 `@`（含全角 `＠`）往两边按 Unicode 类别扩（`\w` 不含组合记号，天城文等会断）：
+#: 本地部分 = 字母 / 记号 / 数字 / `._%+-`，域名 = 字母 / 记号 / 数字 / `-` 加点号（含 IDNA 认的
+#: 全角 `。．｡`）。**宁可多抹**：中文里没有空格，`请联系用户@例子.公司` 的本地部分分不出从哪起，
+#: 整段抹掉。不抹的只有结构上不是地址的：顶级域必须是 ≥2 个字母或 `xn--…`（`matplotlib@3.10`、
+#: `numpy@1.26.4` 不动）、至少两段（`a@b`、`user@localhost` 不动）、`@` 前没有本地部分（装饰器）。
+#: JSON `ensure_ascii` 写出的 `\uXXXX` 按解码后的字符算（日志里会有 json.dumps 的原样输出）。
+_EMAIL_AT = re.compile("[@＠]")
+_EMAIL_DOTS = ".。．｡"
+_JSON_ESCAPE = re.compile(r"\\u([0-9A-Fa-f]{4})")
+_PUNYCODE_TLD = re.compile(r"xn--[a-z0-9-]+", re.I)
+#: RFC 5321 的上限：本地部分 64、域名 255。也是往两边扩的步数上限（几 MB 的日志里一个 `@` 不该扫全文）
+_EMAIL_LOCAL_MAX = 64
+_EMAIL_DOMAIN_MAX = 255
 
 
 def _digest(text: str) -> str:
@@ -130,6 +145,64 @@ def project_roots(project: dict | None = None) -> list[tuple[str, str]]:
     return sorted(out, key=lambda pair: len(pair[0]), reverse=True)
 
 
+def _email_unit(text: str, i: int, backward: bool) -> tuple[str, int]:
+    """i 处（backward 时是 i 之前）的一个字符单位：`\\uXXXX` 转义算一个、按解码后的字符判。"""
+    if backward:
+        m = _JSON_ESCAPE.fullmatch(text, i - 6, i) if i >= 6 else None
+        return (chr(int(m.group(1), 16)), 6) if m else (text[i - 1], 1)
+    m = _JSON_ESCAPE.match(text, i)
+    return (chr(int(m.group(1), 16)), 6) if m else (text[i], 1)
+
+
+def _email_char(ch: str, extra: str) -> bool:
+    return unicodedata.category(ch)[0] in "LMN" or ch in extra
+
+
+def _is_email_domain(labels: list[str]) -> bool:
+    if len(labels) < 2 or not all(labels):
+        return False
+    tld = labels[-1]
+    if _PUNYCODE_TLD.fullmatch(tld):
+        return True
+    return len(tld) >= 2 and all(unicodedata.category(c)[0] in "LM" for c in tld)
+
+
+def _redact_emails(text: str) -> str:
+    """每个 `@` 往两边扩出本地部分与域名，结构上是地址的整段换成 `<email>`（判据见 `_EMAIL_AT` 上方）。"""
+    out: list[str] = []
+    done = 0  # 已经交出去的位置：往左扩不越过上一个替换的结尾
+    for at in _EMAIL_AT.finditer(text):
+        if at.start() < done:
+            continue
+        local: list[tuple[str, int]] = []
+        start = at.start()
+        while start > done and len(local) < _EMAIL_LOCAL_MAX:
+            ch, width = _email_unit(text, start, backward=True)
+            if not _email_char(ch, "._%+-"):
+                break
+            local.append((ch, width))
+            start -= width
+        while local and local[-1][0] == ".":  # 句中的点号不算本地部分的开头
+            start += local.pop()[1]
+        domain: list[tuple[str, int]] = []
+        end = at.end()
+        while end < len(text) and len(domain) < _EMAIL_DOMAIN_MAX:
+            ch, width = _email_unit(text, end, backward=False)
+            if not _email_char(ch, "-" + _EMAIL_DOTS):
+                break
+            domain.append((ch, width))
+            end += width
+        while domain and domain[-1][0] in _EMAIL_DOTS:  # 句末的句号不算域名
+            end -= domain.pop()[1]
+        labels = re.split(f"[{_EMAIL_DOTS}]", "".join(ch for ch, _ in domain))
+        if not local or not _is_email_domain(labels):
+            continue
+        out += [text[done:start], "<email>"]
+        done = end
+    out.append(text[done:])
+    return "".join(out)
+
+
 def _redact_text(text: str, roots: list[tuple[str, str]] | None = None) -> str:
     """文本脱敏：密钥 → 假名标识 → 项目根 → 主目录 → 用户名 → 云盘账号 → 邮箱。
 
@@ -154,7 +227,7 @@ def _redact_text(text: str, roots: list[tuple[str, str]] | None = None) -> str:
     text = _CLOUD_ACCOUNT.sub(
         lambda m: f"{m.group(1)}{m.group(2)}-acct:{_digest(m.group(3))}", text
     )
-    return _EMAIL.sub("<email>", text)
+    return _redact_emails(text)
 
 
 def redact_text(text: str) -> str:
