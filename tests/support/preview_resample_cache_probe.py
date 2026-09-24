@@ -171,7 +171,10 @@ MUTATIONS = {
     "alpha_scalar": lambda f, im: im.set_alpha(0.4),
     "alpha_array": lambda f, im: im.set_alpha(np.linspace(1, 0.1, im.get_array().size).reshape(im.get_array().shape)),
     "interpolation": lambda f, im: im.set_interpolation("bicubic"),
-    "interpolation_stage": lambda f, im: im.set_interpolation_stage("data"),
+    # 3.8 默认就是 data、3.10 起默认 auto（缩小时落到 rgba）：换成与当前不同的那一个
+    "interpolation_stage": lambda f, im: im.set_interpolation_stage(
+        "rgba" if getattr(im, "get_interpolation_stage", lambda: im._interpolation_stage)() == "data" else "data"
+    ),
     "resample": lambda f, im: im.set_resample(False),
     "filternorm": lambda f, im: im.set_filternorm(False),
     "filterrad": lambda f, im: im.set_filterrad(1.0),
@@ -271,6 +274,11 @@ def _direct():
         "resample_getter": (lambda: im.set_resample(False), lambda: im.set_resample(None)),
         "origin": (lambda: setattr(im, "origin", "lower"), lambda: setattr(im, "origin", "upper")),
     }
+    # 3.11 起 `_resample` 只在 nearest 时按 origin 翻数据，且只在输出像素正好落在两个输入像素的
+    # 分界上时结果才不同：整 2 倍缩小让每个输出像素都落在分界上
+    nearest = {
+        "origin_nearest": (lambda: setattr(im, "origin", "lower"), lambda: setattr(im, "origin", "upper")),
+    }
 
     def run(fn, c):
         return fn(im, c["data"], c["out_shape"], c["transform"], **c["kwargs"])
@@ -296,6 +304,17 @@ def _direct():
             truth = run(original, start_case)
             reset()
             out[f"{start}:{name}"] = {"same": same(cached, truth), "changed": not same(truth, before)}
+        im.set_interpolation("nearest")
+        on_edges = {**start_case, "out_shape": (300, 350), "transform": Affine2D().scale(0.5)}
+        for name, (set_, reset) in nearest.items():
+            with ph.preview_resample_cache():
+                before = run(wrapped, on_edges)
+                set_()
+                cached = run(wrapped, on_edges)
+            truth = run(original, on_edges)
+            reset()
+            out[f"{start}:{name}"] = {"same": same(cached, truth), "changed": not same(truth, before)}
+        im.set_interpolation("lanczos")
     plt.close(f)
     return out
 

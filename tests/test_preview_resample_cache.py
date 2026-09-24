@@ -12,8 +12,9 @@
   filterrad / origin / extent / 轴位置 / 亚像素平移 / 原地改数据 / mask），rgba 与 data 两个阶段的底图上
   都与不开缓存相同，且**改动真的改变了画面**（否则「相同」恒等成立）；
 * 直接调 `_resample`，实参逐维扰动（含 matplotlib 自己从不传的 `alpha=`）：开缓存与原函数逐元素相同。
-  两维在这一版上**本来就不影响输出**，只要求相同、不要求变化：mask（C 那一层读的是 `.data`，mask 进键
-  是不押注「C 看不看 mask」的保险）与 origin（只有 3.11 起 `_resample` 自己读它）；
+  有的维度**本来就不影响输出**，只要求相同、不要求变化：mask（C 那一层读的是 `.data`，mask 进键
+  是不押注「C 看不看 mask」的保险）；origin 只有 3.11 起 `_resample` 自己读、且只在 nearest 落在像素
+  分界上时起作用——那一条（`origin_nearest`）在 3.11 上必须真的改变输出；
 * 命中时 C 那一层的 `_image.resample` 一次都不调（活的尺子：不开缓存时 ≥ 1）；
 * 版本闸：`_resample` 引用了认不出的名字（新版本多读了一个属性）就不装。
 """
@@ -114,13 +115,14 @@ def test_changes_are_never_served_stale(probe, mutation):
         assert m["same_as_uncached"], f"{mutation} 之后预览仍是旧图（底图 {base}）"
 
 
-#: 这一版上本来就不影响输出的维度（见模块文档）；其余每一维扰动了必须真的改变输出
-_INERT = {"mask"}
+#: 本来就不影响输出的维度（见模块文档）；其余每一维扰动了必须真的改变输出。origin 只在 nearest
+#: 且输出像素落在输入像素分界上时才有作用（`origin_nearest`），lanczos 那条在哪一版都不变
+_INERT = {"mask", "origin"}
 
 
 def test_direct_calls_cover_every_argument(probe):
     direct = probe["direct"]
-    inert = _INERT | (set() if probe["reads_origin"] else {"origin"})
+    inert = _INERT | (set() if probe["reads_origin"] else {"origin_nearest"})
     assert len(direct) >= 20, direct
     for name, r in direct.items():
         assert r["same"], f"{name}：开缓存与原函数不同（缓存键漏了这一维）"
