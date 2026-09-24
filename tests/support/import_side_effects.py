@@ -160,6 +160,11 @@ def measure(name: str) -> dict:
 
 
 if __name__ == "__main__":
+    # 被 spawn 时 stdout 是管道，Windows 上会退回系统区域编码——钉 UTF-8（只在作为入口时，
+    # 被 import 来调 `measure()` 的进程不动它的流）
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
     # 一个名字一个全新进程：同一进程里前一个包的副作用会污染后一个的「之前」
     import subprocess
 
