@@ -2873,13 +2873,22 @@ def _legend_entry_fields(t, state: FigState, gid: str) -> list[dict]:
                 "group": "图例项",
             }
         )
-    props = legend_handle_props(h)
+    # 脚本自己画的整格（色带等）没有「那一条」示意线的样式可改；整格同一种颜色的仍给颜色，
+    # 改色落到整格每个 artist 上（legendmodel._entry_handle_write）。本来跟随源、被断开的格子
+    # （误差棒）照旧按示意线类型给——改之前给了，改完不能消失
+    if model.is_script_drawn(j):
+        props = ("handle_color",) if model.frozen_color_uniform(j) else ()
+    else:
+        props = legend_handle_props(h)
     if "handle_color" in props:
         fields.append(
             {
                 "prop": "handle_color",
                 "type": "color",
-                "value": to_hex(_handle_color_of(h)),
+                # 整格同色的定格项取整格唯一的可见颜色（第一个 artist 可能只有描边、面是透明的）
+                "value": to_hex(
+                    model.cell_color(j) if model.cell_color(j) is not None else _handle_color_of(h)
+                ),
                 "group": "图例项",
             }
         )
