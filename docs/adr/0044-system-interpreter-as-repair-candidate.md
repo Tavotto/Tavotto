@@ -102,7 +102,7 @@ venv 的用例形态不变（venv 自己关了用户 site）；系统解释器�
 ## 顺便记录：这一层救不了那个目录
 
 那九个脚本用 `os.path.exists("1/etch_5-5.lammpstrj")` 和 `glob.glob("./**/…")` 找
-数据，而 worker 的 cwd 是沙盒；相对路径只读回退只覆盖 `open` 三个入口
+数据，而 worker 的 cwd 是沙盒；相对路径只读回退只覆盖 `open` 三个入口（这是本 ADR 当时的状况；2026-09-24 起另有第四个入口 numpy 的 `DataSource.open`——`np.loadtxt` / `np.genfromtxt` 经它读——见 `figcapture` 模块头与 `docs/rules/backend/figure-capture-and-execution.md`）
 （`src/tavotto/AGENTS.md` 的「相对路径只读回退」），`os.path.exists` / `glob` /
 ovito 的 C++ 读取器都在盲区。就算接手到了正确的解释器，脚本仍然零张图、报
 `stem 不存在`。两件事正交，本 ADR 只解决前一件；后一件（回退覆盖面、错误里带上
