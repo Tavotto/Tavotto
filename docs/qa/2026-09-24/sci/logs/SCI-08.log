@@ -1,0 +1,103 @@
+==================================================================
+## SCI-08 / mutation-export-silently-reruns-script
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_export_version_snapshot.py -k data_change
+# start(UTC): 2026-09-24T18:50:43Z   end(UTC): 2026-09-24T18:50:48Z
+# source_sha: 0bd3c54268ee4b834487ec06d14c08d2ee611d2b  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 1   raw_lines: 50   raw_sha256: 91f76184e629f782e935bd1bf9d262e2fbdbc0ffe5223f4df8fddd51e16cc71d
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____ test_data_change_exports_the_explicit_snapshot_until_the_user_rebuilds ____
+
+project = (<module 'tavotto.app' from '/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/src/tavotto/app.py'>, <Flas.../var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4855/test_data_change_exports_the_e0/figures'))
+
+    def test_data_change_exports_the_explicit_snapshot_until_the_user_rebuilds(project):
+        m, client, figs = project
+        base = _render(client, [])
+        a = _title_patch(base, "Version A")
+        _render(client, a)
+    
+        (figs / "data.csv").write_text(NEW_DATA, encoding="utf-8")
+        time.sleep(2.6)  # 越过 watcher 一个轮询周期：数据文件不是脚本，不该让会话失效
+    
+        snap = client.post("/api/export", json=_spec("Snapshot", a, "rev-snap")).get_json()
+        text = _text_of(snap)
+        assert "Version A" in text, "快照导出丢了编辑"
+>       assert f"DATA {OLD_DATA.replace(',', '_')}" in text, f"快照导出擅自用了新数据：{text}"
+E       AssertionError: 快照导出擅自用了新数据：0
+E         1
+E         2
+E         3
+E         0
+E         2
+E         4
+E         6
+E         8
+E         10
+E         DATA 0_2_9_10
+E         Version A
+E         
+E       assert 'DATA 0_9_2_10' in '0\n1\n2\n3\n0\n2\n4\n6\n8\n10\nDATA 0_2_9_10\nVersion A\n'
+
+tests/test_export_version_snapshot.py:229: AssertionError
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 failed, 2 deselected, 5 warnings in 4.30s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 1
+==================================================================
+## SCI-08 / mutation-export-silently-reruns-script-restored
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_export_version_snapshot.py -k data_change
+# start(UTC): 2026-09-24T18:50:48Z   end(UTC): 2026-09-24T18:50:53Z
+# source_sha: 0bd3c54268ee4b834487ec06d14c08d2ee611d2b  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 16   raw_sha256: ac8a3c8b834a2e4540d968b3ab37601e726bf0eeb703a8e870f0dc70362c6d2a
+.                                                                        [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 2 deselected, 5 warnings in 4.57s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0
+==================================================================
+## SCI-08 / new_test_snapshot
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_export_version_snapshot.py -k data_change
+# start(UTC): 2026-09-24T18:51:54Z   end(UTC): 2026-09-24T18:51:58Z
+# source_sha: 05ae1e3ef7f0da1227c76158bfc51c5b7821cfac  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 16   raw_sha256: eced2d1eae0b363ab9870634c53fa8f04d6616740a031405312decb016dba283
+.                                                                        [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 2 deselected, 5 warnings in 4.31s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0

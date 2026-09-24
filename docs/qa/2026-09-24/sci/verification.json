@@ -1,0 +1,162 @@
+{
+ "section": "sci",
+ "verifier": "独立复核（证伪导向）",
+ "verified_commit": "5637578098c65ad925b37c870c97df06df379669",
+ "baseline": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+ "verified_at_utc": "2026-09-24T18:58Z—19:16Z",
+ "environment": {
+  "os": "macOS 27.0 (26A428) arm64",
+  "parent_python": "3.13.11 /Volumes/Projects/Tavotto/.venv，PYTHONPATH=<verify worktree>/src，PYTHONDONTWRITEBYTECODE=1",
+  "worker_python": "/opt/homebrew/opt/python@3.13/libexec/bin/python3（matplotlib 3.10.8 / numpy 2.4.3）",
+  "node": "v26.7.0，pnpm install --frozen-lockfile --prefer-offline",
+  "workerd": "verify worktree 内 cargo build --offline（debug）",
+  "worktree": "独立 worktree（分支 qa/2026-09-24-sci 已被执行者 worktree 占用，故在临时分支 qa/verify-sci-tmp 上工作、提交后快进回 qa/2026-09-24-sci）",
+  "scratch": "SCI_SCRATCH 覆盖为复核者自己的 scratch（qa/vsci-scratch），不复用执行者产物；字体从主工作区拷入（gitignored）",
+  "tools": "docs/qa/2026-09-24/sci/logs/verify/tools/vrun.sh（重跑包装，日志写 logs/verify/<CASE>.<label>.log）、docs/qa/2026-09-24/sci/logs/verify/tools/vmutate.py（变异→跑→git checkout 还原→再跑→确认 git status 干净）"
+ },
+ "ledger_check": {
+  "all_case_ids_present": true,
+  "case_ids": [
+   "SCI-01",
+   "SCI-02",
+   "SCI-03",
+   "SCI-04",
+   "SCI-05",
+   "SCI-06",
+   "SCI-07",
+   "SCI-08"
+  ],
+  "evidence_sha256_match": "8/8 日志 sha256 与台账一致；SCI-01 fixtures 7 个 sha256 全部一致",
+  "field_gaps": [
+   "SCI-02/04/05/06/07/08 缺 mutation_check_reason 字段（这些条目有 mutation_check，理由字段只在未做变异时必需，判为形式缺口、不影响结论）",
+   "执行者自述 SUMMARY.md 未生成（不在本复核范围，由汇总方处理）"
+  ]
+ },
+ "cases": [
+  {
+   "case_id": "SCI-01",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "partial",
+   "rerun_logs": [
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-01.compat_smoke.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-01.fidelity_probe.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-01.fonttype42_control.log"
+   ],
+   "note": "退出码 0/1/0 与台账一致；smoke 24 case 全 full_support、Product bugs 0；探针逐图数值复现（art_colorbar A 腿 0.004337、对照后 0.003908；sci_mathtext 对照后 0）。降级理由：① B 腿（RenderCore 画布）摆放的面板就是项目里的原生 PDF 拷贝、零 override，RenderCore 直接嵌入磁盘原件——5/5 零像素差是构造上必然的，证明的是『合成不失真』，不是『Tavotto 零 override 重绘保真』；② 唯一真正走重绘的 A 腿里 art_colorbar 剔除 fonttype42 后仍有 0.39% 变化像素、未归因，只以 0.0001 的余量落在阈值内（阈值本是 CompatBench Agg-vs-Agg 的，被挪来量最终 PDF 栅格）；规范要求差异『按九阶段及明示支持范围归类』，这条没有被归类；③ 仅 5 张图、只比 PDF。CompatBench fidelity 两侧同为 Agg（执行者已在 gaps 自认）。"
+  },
+  {
+   "case_id": "SCI-02",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "partial",
+   "rerun_logs": [
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-02.new_test.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-02.invariants.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-02.textlayer.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-02.mutation-exec-linewidth-leaks-into-data.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-02.mutation-verifier-scale-data-and-autoscale.log"
+   ],
+   "note": "重跑：新测 2 passed、不变式+序列 107 passed 1 skipped（skip 是空参数集，非本条判据）、文字层探针 1 passed，均与台账一致。复做执行者变异（linewidth setter 顺带 ydata×1.1）→ 红，还原绿，git status 干净。判据主语缺陷：尺子把曲线顶点归一化成 axes 分数坐标，只对『数据相对坐标范围的位置』敏感，不对数据绝对值敏感；刻度数值被明确放弃（只比单位字符串），文件头 docstring 与用例名却宣称 keep_points_ticks。复核者变异：同一 setter 把 ydata×1.1 并 relim()+autoscale_view() → 新测仍 2 passed（exit 0，日志 SCI-02.mutation-verifier-scale-data-and-autoscale.log），即外观 patch 把全部数据放大 10% 而测试全绿。规范要求『原始/最终数组』与『计算结果』无意外改变，本条只证了相对位置、单位、源文件 sha256，故降为 partial。"
+  },
+  {
+   "case_id": "SCI-03",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "rerun_logs": [
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-03.probe.log"
+   ],
+   "note": "探针 exit 1、VERDICT FAIL 复现。试图证伪『有别处的对账机制』：前端 OrphanOverrides（ElementInspector.tsx:513）同样按 gid 是否存在判孤儿，删 A 后 beta 顶替 axes_0.lines_0，gid 仍在，不会报；useServerEvents.ts:143 只给出『脚本已变』通用状态提示，不指出 override 落错对象；RuntimePanelSource.fingerprint 只是恢复线索。未找到能拦住的机制，fail 成立。"
+  },
+  {
+   "case_id": "SCI-04",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "rerun_logs": [
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-04.equivalence_matrix.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-04.equivalence_matrix_workerd.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-04.new_test_real_409.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-04.staging_failure_repro.log"
+   ],
+   "note": "31 passed + 6 skipped（无 workerd 产物）→ 本地 cargo build 后 -k workerd 6 passed（真跑，非 skip）；real_409 + test_write_back 27 passed；staging 崩溃复现 status 500、字节不变、无残留。writeback-transaction.md:11 与 AGENTS.md:44 均写『任一环不过一律 409』，而 test_write_back.py:241 断言 500——文档与既有测试互相矛盾，需要负责人裁定哪一方为准；在裁定前维持 partial 合理（字节不变这一半成立）。未复做本条变异（其判据形状与 SCI-07/06 的已复做变异同类，且 409 用例前提在用例内自断言）。"
+  },
+  {
+   "case_id": "SCI-05",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "rerun_logs": [
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-05.autosave_crash_probe.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-05.writeback_faults_repro.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-05.backend_existing.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-05.vitest_diskWriter.log"
+   ],
+   "note": "autosave 探针 PASS（exit 0，含 orphan_tmp 字段）、写回故障复现 2 failed（exit 1；backup-ENOSPC status 500, changed ['Fig1.pdf'], leftovers ['.Fig1.png.updating']）、既有后端 102 passed、vitest 17 passed，全部一致。读 app.py:4164-4175 确认 shutil.copy2 备份在 try 之外，ENOSPC 直接逃出 commit 循环，既不清 .updating 也不 _rollback(done)——缺陷为真。注入按『全局第 2 次 copy2』计数而非按目标名，但结果（PDF 已换、PNG 未换、残留 .Fig1.png.updating）与『第二个目标备份失败』完全吻合。"
+  },
+  {
+   "case_id": "SCI-06",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "rerun_logs": [
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-06.backend_existing.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-06.vitest.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-06.new_test.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-06.mutation-exec-panel-y-not-flipped.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-06.mutation-verifier-panel-content-mirrored-vertically.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-06.mutation-verifier-panel-content-mirrored-vertically-existing-suite.log"
+   ],
+   "note": "153 passed / vitest 8 passed / 新测 4 passed 一致；几何期望值为测试侧独立 mm→px 换算（未调生产坐标函数），读取器 PyMuPDF/Pillow/pdfread 与写入器不同源。复做执行者变异（面板 y 不翻转）→ 3 failed，还原 4 passed，树干净。发现新测盲区：夹具方块在源页 y 方向居中（20–80 / 100pt），crop 为左半时 x 方向也居中——复核者变异 plan.py 把 flip_v 取反（面板内容上下镜像）→ 新测仍 4 passed。但同一变异下本条命令里的 tests/test_export_endpoint.py（及 rendercore_plan/calibration/rasterize）红 6 条，说明本条用例集整体能拦住，case 级 pass 维持；建议把夹具方块移出对称位置。另：『严核失败不得显示 verified』『字体/文本参数』只由既有测试覆盖，新测未碰。"
+  },
+  {
+   "case_id": "SCI-07",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "rerun_logs": [
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-07.new_test.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-07.stability_x5.log",
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-07.mutation-exec-export-uses-pre-edit-version.log"
+   ],
+   "note": "2 passed、连跑 5 轮 rc=0 一致。复做执行者变异（_execution_source overrides=[]）→ 3 failed，还原 3 passed，树干净。慢作业的闸放在 _serialize_figure_with_worker 入口，作业 A 真正执行时热会话已是 B，用例证明的是『导出按请求携带的 overrides 重放、不取热会话当前态』，主语对。局限（已在 coverage=部分覆盖 内）：只比标题/数据文字，未比数值位置；『旧缓存返回』『过期图被当最新』只由 document_revision 回显间接覆盖；闸在 worker 锁之外，未制造 worker 内部交错。"
+  },
+  {
+   "case_id": "SCI-08",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "rerun_logs": [
+    "docs/qa/2026-09-24/sci/logs/verify/SCI-08.new_test.log"
+   ],
+   "note": "1 passed 一致。判据主语是产物文字层里脚本写出的 DATA 序列（独立真值）+ 回执 binding.matched，两个方向（快照保旧数据 / invalidate 后用新数据且编辑重放）都有断言，执行者变异（导出前 invalidate）落在要害上。未复做本条变异（时间原因，形状与已复做的 SCI-07 变异同文件同类）。『显示』语义切换（UI 层）未测，已在部分覆盖内。"
+  }
+ ],
+ "summary": {
+  "pass": 3,
+  "partial": 3,
+  "fail": 2,
+  "changed": [
+   "SCI-01 pass→partial",
+   "SCI-02 pass→partial"
+  ],
+  "mutations_reproduced": [
+   "SCI-02 linewidth-leaks-into-data",
+   "SCI-06 panel-y-not-flipped",
+   "SCI-07 export-uses-pre-edit-version"
+  ],
+  "new_verifier_mutations": [
+   "SCI-02 scale-data-and-autoscale（新测存活）",
+   "SCI-06 panel-content-mirrored-vertically（新测存活，本条既有套件红 6）"
+  ]
+ }
+}
