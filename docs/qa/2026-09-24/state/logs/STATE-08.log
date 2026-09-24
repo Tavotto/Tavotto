@@ -1,0 +1,21 @@
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/documentStore.test.ts src/lib/autosave/diskWriter.test.ts
+### time=2026-09-24T19:06:33Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/web
+
+
+ Test Files  2 passed (2)
+      Tests  48 passed (48)
+   Start at  03:06:34
+   Duration  1.67s (transform 509ms, setup 403ms, import 283ms, tests 642ms, environment 1.03s)
+
+
+### $ docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-08
+### time=2026-09-24T19:06:35Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium] › e2e/fake-realtime.spec.ts:390:1 › STATE-08 保存重开：提交→撤销→重做→自动保存→整个后端（含 worker）退出→同端口同数据目录重开，文档与画面都是最后提交那一版 (1.1m)
+
+  1 passed (1.1m)
+

@@ -1,0 +1,21 @@
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/geometryAuthority.test.ts src/store/renderStore.test.ts src/canvas/alignUndoConvergence.test.tsx src/canvas/fakeRealtimeDrag.test.tsx -t '乱序|晚到|晚于|SVG 与 manifest|在途期间撤销'
+### time=2026-09-24T19:14:59Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=0
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-state/web
+
+
+ Test Files  4 passed (4)
+      Tests  6 passed | 49 skipped (55)
+   Start at  03:14:59
+   Duration  1.40s (transform 1.33s, setup 747ms, import 1.20s, tests 70ms, environment 2.41s)
+
+
+### $ docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-05
+### time=2026-09-24T19:15:01Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=0
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium] › e2e/fake-realtime.spec.ts:339:1 › STATE-05 乱序回包：旧变体晚于新变体返回，不把画布拽回旧版 (21.3s)
+
+  1 passed (21.7s)
+
