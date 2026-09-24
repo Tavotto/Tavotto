@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from support import frontend_schema
+from support.tsconst import exported_number
 from tavotto import app as m
 from tavotto.engine import diagnostics as engine_diagnostics, diagnostics_frontend as dfe
 
@@ -150,12 +151,23 @@ def test_get_bundle_still_works_and_keeps_the_old_three_files(client):
 def test_manifest_declares_its_own_schema(client):
     z = open_bundle(client.get("/api/diagnostics/bundle").data)
     manifest = json.loads(z.read("manifest.json"))
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
     assert manifest["frontend_snapshot_schema"] == 1
     assert manifest["trace_schema"] == 1
     assert manifest["privacy_mode"] == "safe-default"
     # created_at 是带时区的 ISO 串——读包的人要能判断这是什么时候的
     assert re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$", manifest["created_at"])
+
+
+def test_bundle_schema_is_one_number_on_both_sides():
+    """`diagnostics.BUNDLE_SCHEMA_VERSION` ↔ `web/src/diagnostics/types.ts` 的同名常量。
+
+    report.json 换形就得升这个号（#524 评审）；只升一侧的话，前端自报的与包里 manifest 写的
+    就不是同一个格式。"""
+    # 结构性地读（`tests/support/tsconst.py`）：注释掉的 `// export const … = 3` 不算数（#536 评审）
+    src = Path(__file__).resolve().parents[1] / "web" / "src" / "diagnostics" / "types.ts"
+    ts = exported_number(src.read_text(encoding="utf-8"), "BUNDLE_SCHEMA_VERSION")
+    assert ts == engine_diagnostics.BUNDLE_SCHEMA_VERSION
 
 
 def test_report_and_config_still_redact_home_and_secrets(client, tmp_path, monkeypatch):
@@ -713,6 +725,8 @@ PERSON = "PRIVATE_PERSON_NAME"
 PAPER = "SECRET_PAPER_DIR"
 EMAIL = "private.person@example.com"
 OTHER_EMAIL = "other.person@example.org"
+IDN_EMAIL = "张三丰@例子.公司"
+PUNY_EMAIL = "zhang.san@mail.example.xn--p1ai"
 OTHER_TITLE = "OTHER_RECENT_TITLE"
 EXPORT_TITLE = "SECRET_EXPORT_TITLE"
 
@@ -746,7 +760,8 @@ def test_project_paths_names_and_cloud_accounts_never_leave_the_machine(
     log.write_text(
         f"2026-09-23 INFO tavotto: 项目已打开: {project}（0 个脚本）\n"
         f"2026-09-23 ERROR tavotto: 打开失败: {other}/fig.py\n"
-        f"2026-09-23 INFO tavotto: 同步账号 {EMAIL}\n",
+        f"2026-09-23 INFO tavotto: 同步账号 {EMAIL}\n"
+        f"2026-09-23 INFO tavotto: 联系人 <{IDN_EMAIL}>、{PUNY_EMAIL}\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(engine_diagnostics, "_log_path", lambda: log)
@@ -765,6 +780,10 @@ def test_project_paths_names_and_cloud_accounts_never_leave_the_machine(
             PAPER,
             EMAIL,
             OTHER_EMAIL,
+            IDN_EMAIL,
+            "张三丰",
+            PUNY_EMAIL,
+            "p1ai",
             OTHER_TITLE,
             EXPORT_TITLE,
             "坚果云-private",
@@ -783,6 +802,32 @@ def test_project_paths_names_and_cloud_accounts_never_leave_the_machine(
     assert token in texts["app.log"], "日志里那一行要与 report 用同一个项目记号"
     assert "坚果云-acct:" in texts["app.log"] or token in texts["app.log"]
     assert "<email>" in texts["app.log"]
+    assert texts["app.log"].rstrip().endswith("联系人 <email>"), (
+        "国际化与 punycode 地址所在的 token 整个换掉"
+    )
+    # README 列的 project 字段就是这一份 report 实际写出的键（打开项目时远不止记号与 location）
+    fields = _readme_project_fields(texts["README.txt"])
+    assert fields == list(proj), (fields, list(proj))
+    assert {"id", "exists", "scripts", "settings", "location"} <= set(fields)
+
+
+def _readme_project_fields(readme: str) -> list[str]:
+    head = "Fields in this report's project section:\n"
+    assert head in readme, "README 没有列 project 段的字段"
+    return readme.split(head, 1)[1].splitlines()[0].strip().split(", ")
+
+
+def test_readme_describes_the_project_section_it_actually_ships(client):
+    """README 说「不含项目名」，就不能几行后又说「文件夹名仍会带上」（#524 评审）；也不能说
+    project 段「只剩」记号和三个布尔而漏掉 id / exists / scripts / settings……（#536 评审）。
+    字段清单从这一份 report 生成，这里与 report.json 实际的键逐个对拍。没打开项目时只有 open。"""
+    z = open_bundle(client.get("/api/diagnostics/bundle").data)
+    readme = z.read("README.txt").decode()
+    assert "只以 <project:哈希> 记号和 location 的" in readme
+    for stale in ("文件夹名", "folder name", "只剩"):
+        assert stale not in readme, stale
+    project = json.loads(z.read("report.json"))["project"]
+    assert _readme_project_fields(readme) == list(project) == ["open"]
 
 
 @pytest.mark.parametrize(
@@ -798,3 +843,158 @@ def test_cloud_accounts_and_emails_are_redacted_even_outside_known_projects(raw,
     out = engine_diagnostics._redact_text(raw)
     assert expect in out, out
     assert EMAIL not in out and "Contoso" not in out
+
+
+# 邮箱：不只认 ASCII（#524 评审 P1）。国际化地址（RFC 6531 / IDNA）一个字都不许剩，punycode 顶级域
+# 不许留下 `--p1ai` 尾巴；期望值写死整行——只断言「秘密不在」挡不住把两边的引号、括号一起吃掉。
+EMAIL_VECTORS = [
+    ("用户@例子.公司", "<email>"),
+    ("müller@bücher.de", "<email>"),
+    ("उपयोगकर्ता@उदाहरण.कॉम", "<email>"),  # 天城文带组合记号，\w 认不全
+    ("123456@qq.com", "<email>"),
+    ("user@example.xn--p1ai", "<email>"),
+    ("a.b@mail.dept.xn--fiqs8s", "<email>"),
+    ("x@xn--80ak6aa92e.xn--p1ai", "<email>"),
+    ("张三@mail.cs.例子.中国", "<email>"),
+    ("用户＠例子。公司", "<email>"),  # 全角 ＠ 与 IDNA 认的全角句点
+    ('{"email": "用户@例子.公司", "n": 1}', '{"email": "<email>", "n": 1}'),
+    ('"\\u7528\\u6237@\\u4f8b\\u5b50.\\u516c\\u53f8"', '"<email>"'),  # json.dumps 的转义
+    ("联系人 <张三@例子.公司>", "联系人 <email>"),
+    ("'user@example.xn--p1ai'", "<email>"),
+    ("(用户@例子.公司)", "<email>"),
+    ("https://h.example/?to=用户@例子.公司&x=1", "<email>"),
+    ("mailto:张三@例子.公司", "<email>"),
+    ("写信给 a@b.com。", "写信给 <email>"),
+    ("请写信给用户@例子.公司，谢谢", "<email>"),  # 中文不分词，本地部分从哪起分不出：宁可多抹
+    ("a@b.com c@例子.中国", "<email> <email>"),
+    # json.dumps（ensure_ascii）写出的：全角 ＠ 自己也被转义成 \uff20；非 BMP 字符是一对代理转义，
+    # 要合成一个字符再判类别（#536 评审）
+    (json.dumps("用户＠例子。公司"), '"<email>"'),
+    (json.dumps("𐐀@example.com"), '"<email>"'),
+    (json.dumps("a@𐐀𐐀.com"), '"<email>"'),
+    (json.dumps({"to": "𐐀用户＠例子。公司"}), '{"to": "<email>"}'),
+    # 落单的代理 / 其实是字面反斜杠的 `\\u…`：落单的代理照样算地址的一部分，停在反斜杠这个分隔符上
+    (json.dumps("x\\ud801@a.com"), '"<email>"'),
+    # 第三轮（#536）：判据换成「只在分隔符处停」之后，正面白名单漏掉的几类
+    ("user@l·l.cat", "<email>"),  # IDNA 上下文字符 U+00B7（Po）
+    ("a\u200db@x.com", "<email>"),  # ZWJ（Cf）在本地部分里，不许留下 `a\u200d` 残片
+    ("a@b\u2010c.com", "<email>"),  # U+2010 连字符（Pd）
+    ("a@b\u200cc.xn--p1ai", "<email>"),  # ZWNJ（Cf）在域名里
+    ("x^y@例子.公司", "<email>"),  # Sk
+    ("user%40example.com", "<email>"),  # URL 编码的 @
+    ("ssh://git@github.com/x", "<email>"),  # URL userinfo 照样抹，停在 `/` 上
+    ("「用户@例子.公司」", "<email>"),  # 直角引号（Ps / Pe）是分隔符
+    ("“用户@例子.公司”", "<email>"),  # 弯引号（Pi / Pf）也是
+    ("«a@b.com»", "<email>"),
+    ("C:\\Users\\a@b.com\\x", "<email>"),
+    # 第五轮（#536）：不在 token 里找边界，含 @ 的 token 整个抹
+    ("o'connor@example.com", "<email>"),
+    ("user@[192.0.2.1]", "<email>"),
+    ('寄给 "quoted local"@x.com 吧', "寄给 <email> 吧"),  # 引号里的空白：并到上一个引号
+    ("a@b.c(comment)", "<email>"),
+    ("(user@x.com), ok", "<email> ok"),
+    ("a@b.com,c@例子.中国", "<email>"),
+    (json.dumps({"k": 'x "quoted local"@x.com'}), '{"k": "x <email>"}'),  # JSON 行：结构原样
+]
+NOT_EMAILS = [
+    "matplotlib@3.10",
+    "numpy@1.26.4 scipy@1.14",
+    "pkg@2.0.0-beta",
+    "@app.route('/x')",
+    "  @dataclass",
+    "a@b",
+    "user@localhost",
+    "HEAD@{0}",
+    "x@例子",
+    "@某人 你好",
+    "pkg@v1.2.3+build.5",
+    "matplotlib@3.10,",
+    "/x/.pnpm/jsdom@30.0.1/node_modules/jsdom/lib/api.js",
+    "(@某人)",
+    "(@app.route)",  # 只有「@ 前只有开括号」这一条放行它：域名两段、不是版本号
+    json.dumps({"dep": "numpy@1.26.4"}),
+]
+
+
+def _assert_no_fragment_left(raw: str, out: str) -> None:
+    """含 @ 的 token 在输出里一个非空白字符都不剩：输出里不含 `<email>` 的每个 token，都得是原文里
+    某个**不含** @ 的 token（JSON 行按字符串内容切，这里把引号与 `{}[],:` 也当成分隔再比）。"""
+    split = re.compile(r'[\s{}\[\],:"]+')
+    at = re.compile(r"[@＠]|\\u(?:0040|[Ff][Ff]20)|%40")
+    clean = {t for t in split.split(raw) if t and not at.search(t)}
+    for tok in split.split(out.replace("<email>", " ")):
+        assert not tok or tok in clean, (tok, out)
+
+
+@pytest.mark.parametrize(("raw", "expect"), EMAIL_VECTORS)
+def test_internationalized_and_punycode_emails_are_redacted_whole(raw, expect):
+    out = engine_diagnostics._redact_text(raw)
+    _assert_no_fragment_left(raw, out)
+    assert out == expect
+
+
+@pytest.mark.parametrize("raw", NOT_EMAILS)
+def test_things_shaped_like_emails_but_not_addresses_are_left_alone(raw):
+    assert engine_diagnostics._redact_text(raw) == raw
+
+
+# 性质用例（#536 第三 / 五轮）：地址里出现什么字符都不许让它漏出一截。从下面每一类里抽字符（含 ASCII
+# 标点：引号、括号、`,;:/\\|?&=#` 都在 Po / Ps / Pe / Sm 里）拼进本地部分与两段域名，断言那个 token
+# 整个换成 `<email>`、一个非空白字符都不剩；再 json.dumps 一遍走 JSON 行与转义那条路。
+_SAMPLED_CATEGORIES = (
+    "Lu Ll Lt Lm Lo Mn Mc Me Nd Nl No Pc Pd Ps Pe Pi Pf Po Sm Sc Sk So Cf Co".split()
+)
+#: 起点（@ / ＠ / %40）与点号是地址的结构，不当成「任意字符」抽；空白是 token 的边界
+_STRUCTURAL = set("@＠%.。．｡")
+
+
+def _unicode_pools() -> dict[str, list[str]]:
+    import unicodedata
+
+    pools: dict[str, list[str]] = {c: [] for c in _SAMPLED_CATEGORIES}
+    for cp in range(0x110000):
+        ch = chr(cp)
+        cat = unicodedata.category(ch)
+        if cat not in pools or ch.isspace() or ch in _STRUCTURAL:
+            continue
+        pools[cat].append(ch)
+    return pools
+
+
+def test_any_unicode_inside_an_address_is_redacted_whole():
+    import random
+    import unicodedata
+
+    pools = _unicode_pools()
+    assert all(pools.values()), "每一类都要抽得到字符，否则这条性质什么都没量"
+    assert {"'", '"', "(", ")", "[", "]", ",", ";", ":", "/", "\\"} <= {
+        c for cat in ("Po", "Ps", "Pe") for c in pools[cat]
+    }, "ASCII 标点要在抽样池里"
+    rng = random.Random(536)
+    cats = _SAMPLED_CATEGORIES
+
+    def piece(forced: str) -> str:
+        chars = [rng.choice(pools[forced])]
+        chars += [rng.choice(pools[rng.choice(cats)]) for _ in range(rng.randint(0, 4))]
+        rng.shuffle(chars)
+        return "".join(chars)
+
+    def only_openers(t: str) -> bool:
+        return all(c in "\"'`" or unicodedata.category(c) in ("Ps", "Pi") for c in t)
+
+    for k in range(len(cats) * 20):
+        # 负面清单的两种形状要避开，性质才量得到：本地部分只有开括号 / 开引号（= 「@ 前没有账号」）、
+        # 域名以 ASCII 数字或 v 开头（可能是版本号）
+        local = piece(cats[k % len(cats)])
+        while only_openers(local):
+            local = piece(cats[k % len(cats)])
+        label = piece(cats[(k * 7 + 3) % len(cats)])
+        while label[0] in "0123456789v":
+            label = piece(cats[(k * 7 + 3) % len(cats)])
+        address = f"{local}@{label}.{piece(cats[(k * 5 + 1) % len(cats)])}"
+        text = f"前 {address} 后"
+        out = engine_diagnostics._redact_text(text)
+        assert out == "前 <email> 后", (address, [f"U+{ord(c):04X}" for c in address], out)
+        escaped = json.dumps(text)
+        expect = json.dumps("前 ")[:-1] + "<email>" + json.dumps(" 后")[1:]
+        assert engine_diagnostics._redact_text(escaped) == expect, (escaped, address)

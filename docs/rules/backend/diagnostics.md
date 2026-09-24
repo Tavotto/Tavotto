@@ -16,7 +16,14 @@
     同一个项目在 report / app.log / config.json 里是同一个记号。`build_report` / `build_bundle` 的每一处
     `_redact_text` / `_redact_obj` 都带上它，新加一处漏了就是新的泄漏口。
   * 兜底两条不依赖登记：`CloudStorage/<服务商>-<账号>` 的账号段换成 `acct:<哈希>`（服务商名留着），
-    邮箱一律 `<email>`——没登记成项目的路径、日志里随口的一句也不带出账号。
+    邮箱一律 `<email>`——没登记成项目的路径、日志里随口的一句也不带出账号。邮箱的判据是**含 @ 的 token 整个抹**
+    （`_redact_emails`，#524 / #536 评审连续五轮，每轮都是在 token 里判断地址边界时漏一类）：token =
+    连续的非空白字符；一行整个是 JSON 时只在字符串字面量内容里按空白切、结构原样；`@` / `＠` /
+    `\u0040` / `\uff20` / `%40` 都算 @；`"quoted local"@x` 这种 @ 前引号为奇数的并到上一个引号。
+    `(user@x.com),` 连括号逗号一起抹——**不许再在 token 内部判断地址从哪到哪**。只放行负面清单
+    `_not_an_email`：@ 前只有开括号 / 引号（装饰器 / 提及）、域名不到两段（`localhost`、`HEAD@{0}`）、
+    域名是 ASCII 版本号（`numpy@1.26.4`、`jsdom@30.0.1/lib/…`）。看护含跨 24 个 Unicode 类别（含 ASCII
+    标点）的随机抽样性质用例（`test_any_unicode_inside_an_address_is_redacted_whole`）。
   * `_project_section`：去掉 `name`；`figures_dir` 只剩记号，另给 `location`
     （`cloud_storage` / `non_ascii` / `has_space`——真实故障来自这三样，不来自名字）；导出 / 备份 / 文档
     目录与项目设置里的路径走 `_path_fact`：记号 / `~` 之后只有 `_KNOWN_SEGMENTS`（Tavotto 自己起的目录名、
@@ -24,7 +31,13 @@
   * `render.worker_logs` 取会话仍按**未脱敏**的 `figures_dir` 算 `cache_digest`（脱敏只在出口）。
   * 看护：`tests/test_diagnostics_bundle.py` 的「项目路径」一节——真打开一个云盘里的项目、真导出，
     对包里每个文件与复制诊断文本全文搜索，并反证记号与 `location` 确实写出来了。
-- **诊断包 schema 2（ADR 0016，改前先读）**：老三件
+  * README 里 project 段的字段清单**从这一份 report 的键生成**（`_readme(project_keys=…)`），不手写——
+    手写的那份在 #536 评审时已经漏了一半。
+  * 这次换形让 report.json 与 schema 2 的读法不兼容，所以 **bundle schema 升到 3**。以后 report.json
+    再改字段的形状或语义（删字段、把路径换成记号），同样要升号——读包的人靠 manifest 分辨格式，
+    不靠 Tavotto 版本号猜。后端 `BUNDLE_SCHEMA_VERSION` ↔ `web/src/diagnostics/types.ts` 同名常量
+    是严格同源对（`test_bundle_schema_is_one_number_on_both_sides`）。
+- **诊断包 schema 2（ADR 0016，改前先读；schema 3 只改了 report.json 的 project 段，见上）**：老三件
   （report.json / app.log / config.json）名字与语义一个字节没动，新增
   `frontend-state.json` / `interaction-trace.jsonl` / `manifest.json`。
   `manifest.json` 自报三个 schema 版本——**读包的人不该靠 Tavotto 版本号猜格式**。

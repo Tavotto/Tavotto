@@ -28,6 +28,7 @@ import platform
 import re
 import sys
 import time
+import unicodedata
 import zipfile
 from pathlib import Path
 
@@ -51,8 +52,11 @@ WORKER_LOG_SCAN_BYTES = 4 * 1024 * 1024
 
 #: 诊断包整体格式的版本。**读包的人不该靠 Tavotto 版本号去猜 schema**
 #: ——manifest.json 自报这个数。1 = 只有 report/app.log/config 的那一版；
-#: 2 = 增加了 frontend-state.json / interaction-trace.jsonl / manifest.json。
-BUNDLE_SCHEMA_VERSION = 2
+#: 2 = 增加了 frontend-state.json / interaction-trace.jsonl / manifest.json；
+#: 3 = report.json 的 project 段换形（#524）：去掉 `name`，`figures_dir` 只剩 `<project:哈希>`，
+#: 新增 `location`，导出 / 备份 / 文档目录按段哈希——schema 2 的读法认不出这些，必须升号（#524 评审）。
+#: 与 `web/src/diagnostics/types.ts` 的同名常量是严格同源对。
+BUNDLE_SCHEMA_VERSION = 3
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -86,8 +90,27 @@ def _install_id() -> str:
 #: 云盘挂载点的目录名里带着账号：`~/Library/CloudStorage/坚果云-<邮箱>`、`GoogleDrive-<邮箱>`、
 #: `OneDrive-<机构名>`。服务商名留着（「项目在云盘里」对排障有用：同步冲突、占位文件），账号哈希
 _CLOUD_ACCOUNT = re.compile(r"(CloudStorage[/\\])([^/\\\s\"'-]+)-([^/\\\"']+)")
-#: 邮箱出现在哪里都不该出门（云盘目录名、Git 配置、日志里的账号提示）
-_EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
+#: 邮箱出现在哪里都不该出门（云盘目录名、Git 配置、日志里的账号提示）。
+#:
+#: **不在 token 内部找地址的边界**（#536 评审连续五轮）：先后漏过只认 ASCII 的 `用户@例子.公司`、
+#: punycode 的 `--p1ai` 尾巴、转义的 `＠` 与代理对、IDNA 的 `l·l`，以及在「分隔符」处切开
+#: 的 `o'connor@…`、`user@[192.0.2.1]`——每一轮都是在 token 里判断「地址从哪到哪」时漏一类。
+#: 所以不再判：
+#:
+#: * token = 连续的非空白字符。一行整个是 JSON（`{` / `[` / `"` 开头且解析得了）时，只在 JSON
+#:   字符串字面量的内容里按空白切，引号与 `{}[],:` 结构原样留下；其余文本只按空白切；
+#: * token 里只要有 `@`（`＠`、转义 `@` / `＠`、URL 编码 `%40` 都算），**整个 token**
+#:   换成 `<email>`——`(user@x.com),` 连括号逗号一起抹，不猜边界；
+#: * 引号括起来的本地部分（`"quoted local"@x.com`）里会有空白：`@` 前的引号数是奇数时，
+#:   把 token 往左并到同一行上一个 `"` 所在的 token；
+#: * 只放行负面清单（`_not_an_email`），三条都是结构上确定不是地址的格式。
+_EMAIL_AT = re.compile(r"[@＠]|\\u(?:0040|[Ff][Ff]20)|%40")
+_EMAIL_DOTS = ".。．｡"
+#: 放行：`pkg@1.2.3` / `matplotlib@3.10` / `pkg@2.0.0-beta`——域名一侧是版本号（数字段 + 可选的
+#: 预发布 / 构建后缀），不是域名。只认 ASCII 数字：`\d` 会认全角与其他文字的数字。
+_VERSION_AFTER_AT = re.compile(r"v?[0-9]+(?:\.[0-9]+)*(?:[-+][0-9A-Za-z.+-]*)?")
+_JSON_STRING = re.compile(r'"(?:[^"\\\n]|\\.)*"')
+_JSON_ESCAPE = re.compile(r"\\u([0-9A-Fa-f]{4})")
 
 
 def _digest(text: str) -> str:
@@ -130,6 +153,95 @@ def project_roots(project: dict | None = None) -> list[tuple[str, str]]:
     return sorted(out, key=lambda pair: len(pair[0]), reverse=True)
 
 
+def _only_openers(text: str) -> bool:
+    """全由开括号 / 开引号组成（含空串）：`@` 前只有这些时，`@` 前没有账号。"""
+    return all(c in "\"'`" or unicodedata.category(c) in ("Ps", "Pi") for c in text)
+
+
+def _not_an_email(local: str, domain: str) -> bool:
+    """负面清单：结构上确定不是地址的已知格式。`local` / `domain` 是这个 `@` 两侧、到 token 边界
+    （或同一 token 里相邻的 `@`）为止的全部字符。每条的理由：
+
+    * `@` 前没有账号——`@app.route`、`@dataclass`、`(@某人`：装饰器与提及；
+    * 域名不到两段——`user@localhost`、`HEAD@{0}`、`a@b`、`x@例子`：邮件地址的域名至少两段；
+    * 域名是版本号——`numpy@1.26.4`、`pkg@2.0.0-beta`、`jsdom@30.0.1/lib/x.js`：包管理器的
+      「包@版本」写法（只看第一个 `/` 之前、去掉句读之后是不是版本号，只认 ASCII 数字）。
+
+    URL 里的 userinfo（`ssh://git@github.com/…`）不在清单上：整个 token 照样抹。
+    判断前先解开 `\\uXXXX`（`json.dumps` 把全角句点写成 `\\u3002`，不解开就数不出两段）。
+    """
+    local, domain = (
+        _JSON_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), x) for x in (local, domain)
+    )
+    if _only_openers(local):
+        return True
+    labels = re.split(f"[{_EMAIL_DOTS}]", domain.rstrip(_EMAIL_DOTS))
+    if len(labels) < 2 or not all(labels):
+        return True
+    core = re.split(r"[/\\]", domain, maxsplit=1)[0].rstrip(_EMAIL_DOTS + ",;:)]}>\"'")
+    return _VERSION_AFTER_AT.fullmatch(core) is not None
+
+
+def _redact_email_tokens(text: str) -> str:
+    """含 `@` 的 token 整个换成 `<email>`（判据见 `_EMAIL_AT` 上方）。token 按空白切。"""
+    out: list[str] = []
+    done = 0  # 已经交出去的位置
+    for at in _EMAIL_AT.finditer(text):
+        if at.start() < done:
+            continue
+        start = at.start()
+        while start > done and not text[start - 1].isspace():
+            start -= 1
+        end = at.end()
+        while end < len(text) and not text[end].isspace():
+            end += 1
+        # 引号括起来的本地部分里有空白：`@` 前引号是奇数个，就并到同一行上一个引号所在的 token
+        if text.count('"', start, at.start()) % 2 == 1:
+            quote = text.rfind('"', done, start)
+            if quote >= 0 and "\n" not in text[quote:start]:
+                start = quote
+                while start > done and not text[start - 1].isspace():
+                    start -= 1
+        token = text[start:end]
+        ats = [m.span() for m in _EMAIL_AT.finditer(token)]
+        edges = [0] + [e for _, e in ats[:-1]]
+        nexts = [s for s, _ in ats[1:]] + [len(token)]
+        if all(
+            _not_an_email(token[lo:s], token[e:hi])
+            for (s, e), lo, hi in zip(ats, edges, nexts, strict=True)
+        ):
+            continue
+        out += [text[done:start], "<email>"]
+        done = end
+    out.append(text[done:])
+    return "".join(out)
+
+
+def _redact_json_line(line: str) -> str | None:
+    """一行整个是 JSON 时：只在字符串字面量的内容里抹，结构原样。不是 JSON 就 None。"""
+    head = line.lstrip()[:1]
+    if head not in ("{", "[", '"'):
+        return None
+    try:
+        json.loads(line)
+    except ValueError:
+        return None
+    return _JSON_STRING.sub(lambda m: f'"{_redact_email_tokens(m.group()[1:-1])}"', line)
+
+
+def _redact_emails(text: str) -> str:
+    if not _EMAIL_AT.search(text):
+        return text
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        redacted = _redact_json_line(body)
+        if redacted is None:
+            redacted = _redact_email_tokens(body)
+        out.append(redacted + line[len(body) :])
+    return "".join(out)
+
+
 def _redact_text(text: str, roots: list[tuple[str, str]] | None = None) -> str:
     """文本脱敏：密钥 → 假名标识 → 项目根 → 主目录 → 用户名 → 云盘账号 → 邮箱。
 
@@ -154,7 +266,7 @@ def _redact_text(text: str, roots: list[tuple[str, str]] | None = None) -> str:
     text = _CLOUD_ACCOUNT.sub(
         lambda m: f"{m.group(1)}{m.group(2)}-acct:{_digest(m.group(3))}", text
     )
-    return _EMAIL.sub("<email>", text)
+    return _redact_emails(text)
 
 
 def redact_text(text: str) -> str:
@@ -1042,7 +1154,10 @@ def build_bundle(
                 indent=1,
             ),
         )
-        z.writestr("README.txt", _readme(snapshot is not None, bool(trace)))
+        z.writestr(
+            "README.txt",
+            _readme(snapshot is not None, bool(trace), list(report.get("project") or {})),
+        )
     return buf.getvalue()
 
 
@@ -1068,12 +1183,16 @@ def _frontend_sections(frontend: dict | None) -> tuple[dict | None, list[dict], 
     return snapshot, trace, truncated
 
 
-def _readme(has_state: bool, has_trace: bool) -> str:
+def _readme(has_state: bool, has_trace: bool, project_keys: list[str] | None = None) -> str:
     """包里有什么、**没有什么**。双语——用户得看得懂自己在往 issue 上贴什么。
 
     「不含」那一段是承诺，不是免责声明：它对应的是代码里的字段 allowlist
     与服务端校验（ADR 0016 §4 / §8），不是「我们尽量不放」。
+
+    project 段带了哪些字段**不手写**：`project_keys` 是这一份 report.json 里实际写出的键，
+    手写的清单在 `project_status` / `_diagnostics_project_status` 加字段那天就漂了（#536 评审）。
     """
+    keys = ", ".join(project_keys or ["open"])
     extra_zh, extra_en = "", ""
     if has_state:
         extra_zh += "- frontend-state.json：导出那一刻的前端状态摘要（匿名）\n"
@@ -1123,10 +1242,14 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- project names and where they live (replaced by <project:hash>), email addresses,\n"
         "  cloud-storage account names\n"
         "\n"
-        "仍会包含 / Still included: 当前打开的项目**文件夹名**（report.json 的\n"
-        "project 段，排障需要它判断目录权限与注册表冲突）。其余项目的清单不出门。\n"
-        "The folder name of the currently open project is included; the list of\n"
-        "your other projects is not.\n"
+        "当前打开的项目叫什么、在哪，在 report.json 里只以 <project:哈希> 记号和 location 的\n"
+        "三个是 / 否（在不在云盘同步目录、路径有没有非 ASCII 字符、有没有空格）出现；\n"
+        "其余目录按段换成哈希，其余项目只留条数。\n"
+        "The open project's name and location appear in report.json only as <project:hash>\n"
+        "and three yes/no facts under location (cloud-sync folder, non-ASCII path, spaces);\n"
+        "other directories are hashed segment by segment, other projects are only counted.\n"
+        "这一份 report.json 的 project 段含这些字段 / Fields in this report's project section:\n"
+        f"  {keys}\n"
         "\n"
         "文件名、路径与图内文字在诊断包里一律换成不可逆的短哈希（doc:… / "
         "panel:… / file:… / var:…），\n"

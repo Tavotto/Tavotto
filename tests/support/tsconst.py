@@ -30,7 +30,12 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["blank_comments_and_strings", "exported_string", "exported_string_array"]
+__all__ = [
+    "blank_comments_and_strings",
+    "exported_number",
+    "exported_string",
+    "exported_string_array",
+]
 
 
 def blank_comments_and_strings(src: str) -> tuple[str, list[tuple[int, int]]]:
@@ -151,3 +156,62 @@ def exported_string(src: str, name: str) -> str:
             return src[content_start:content_end]
         break
     raise AssertionError(f"{name} 的取值不是一个字符串字面量——判据读不出确切取值")
+
+
+#: 字面量之后换行时，下一个 token 只认这些**声明关键字**（或文件结束）：它们都不是二元运算符 /
+#: 成员访问 / 调用的开头，TS 的自动分号插入必然在换行处断句。闭集，宁可拒绝也不猜——
+#: `in` / `instanceof` / `as` / `satisfies` 这类单词形式的运算符会把表达式续下去（#536 第四轮：
+#: `= 3\n  in {3: true}` 运行时是布尔，旧判据只防了符号运算符，读成了 3）。
+_STATEMENT_STARTERS = frozenset(
+    ("export", "const", "let", "var", "function", "class", "interface", "type", "enum", "import")
+)
+#: 十进制整数字面量（允许数字分隔符 `1_000`；不认 `0x3` / `3n` / `3.0` / `3e0` / 前导零的 `03`）
+_DECIMAL_INT = re.compile(r"(?:0|[1-9](?:_?[0-9])*)(?![\w$.])")
+
+
+def exported_number(src: str, name: str) -> int:
+    """`export const <name> = <十进制整数字面量>` 的值（同源对里的 schema 版本号这类常量）。
+
+    与上面两个同一条纪律：先抹注释与字符串，只认恰好一处 `export const`。初始化式必须**恰好是
+    一个**十进制整数字面量，之后只许：同一行的 `;`，或者换行后下一个 token 是
+    `_STATEMENT_STARTERS` 里的声明关键字 / 文件结束（中间只隔空白与注释，不许隔着字符串——
+    `= 3\n`x`` 是带标签的模板）。其余一律报错并说清原因，不猜。
+    """
+    code, spans = blank_comments_and_strings(src)
+    decl = re.compile(
+        r"\bexport\s+const\s+" + re.escape(name) + r"\b\s*(?::[^=]*?)?=(?!=)",
+    )
+    hits = list(decl.finditer(code))
+    if len(hits) != 1:
+        raise AssertionError(
+            f"源码里找到 {len(hits)} 处 `export const {name} =`——判据只认恰好一处活声明"
+        )
+    at = hits[0].end()
+    at += len(code[at:]) - len(code[at:].lstrip())
+    lit = _DECIMAL_INT.match(code, at)
+    if lit is None:
+        raise AssertionError(
+            f"{name} 的初始化式不是十进制整数字面量：{src[at : at + 20]!r}（`0x3` / `3n` / 小数 / 负号 / 标识符都不认）"
+        )
+    tail = re.compile(r"[ \t]*(?:(;)|\n\s*(?:(?P<word>[A-Za-z_$][\w$]*)|(?P<other>\S))?|\Z)").match(
+        code, lit.end()
+    )
+    if tail is None:
+        raise AssertionError(
+            f"{name} 的字面量之后同一行还有东西：{src[lit.end() : lit.end() + 20]!r}"
+            "（`as` / `satisfies` / 运算符都会改变取值或类型）"
+        )
+    if tail.group(1) is None:
+        nxt = tail.start("word") if tail.group("word") else tail.start("other")
+        gap_end = nxt if nxt >= 0 else len(code)
+        if any(lit.end() <= a - 1 < gap_end for a, _ in spans):
+            raise AssertionError(f"{name} 的字面量之后隔着一个字符串 / 模板字面量，可能是续写")
+        if tail.group("other") is not None or (
+            tail.group("word") is not None and tail.group("word") not in _STATEMENT_STARTERS
+        ):
+            nxt_tok = tail.group("word") or tail.group("other")
+            raise AssertionError(
+                f"{name} 的字面量换行后接着 {nxt_tok!r}——不是声明关键字，表达式可能续写"
+                f"（只认 `;` 或换行后接 {sorted(_STATEMENT_STARTERS)}）"
+            )
+    return int(lit.group().replace("_", ""))
