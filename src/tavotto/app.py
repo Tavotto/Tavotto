@@ -3751,7 +3751,23 @@ def api_engine_specfix():
 
 def _specfix_transaction(render, base: list, scale: float, profile: dict, only) -> dict:
     """`/api/engine/specfix` 的事务本体（拆出来是为了让测试能注入假的渲染）。"""
-    b0 = render(base)["manifest"]
+    b0_resp = render(base)
+    if b0_resp.get("warnings"):
+        # 基准自己就没能完整重放（热 worker 里上一份 override 恢复不回来，Codex #549 第三轮 P1）：
+        # overrides.apply() 会把失败的那个键从记账里摘掉，于是之后的候选渲染看起来都没有
+        # warning，却是对着一份被污染的 B0 验的。基准不干净就不开始，文档一个字不改
+        return {
+            "ok": False,
+            "exit": engine_normalize.EXIT_UNSUPPORTED,
+            "warnings": list(b0_resp["warnings"]),
+            "patches": list(base),
+            "changes": [],
+            "skipped": [],
+            "adjustments": [],
+            "unresolved": [],
+            "blocking": [],
+        }
+    b0 = b0_resp["manifest"]
     issues = engine_specfix.all_issues(b0, profile, scale)
     targets = engine_specfix.select(issues, only)
     layout = [t for t in targets if t[0] in engine_specfix.LAYOUT_RULES]

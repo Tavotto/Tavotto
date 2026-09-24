@@ -467,3 +467,24 @@ def test_preexisting_font_override_is_not_verified_against_the_target(mixed):
     assert {"gid": "axes_0.xlabel", "prop": "fontfamily", "value": "DejaVu Sans Mono"} in res[
         "patches"
     ]
+
+
+def test_baseline_replay_with_warnings_aborts_before_any_candidate(render):
+    """Codex #549 第三轮 P1：B0 那一遍重放带 warning（基准本身没重放完整）时直接退出，
+    不拿被污染的基准去验候选；回给前端的是原列表，后面一次候选渲染都不发。"""
+    profile = _profile()
+    base = [{"gid": "figure", "prop": "facecolor", "value": "#ffffff"}]
+    calls = []
+
+    def warn_on_base(patches):
+        calls.append(list(patches))
+        resp = render(patches)
+        if patches == base:
+            resp = {**resp, "warnings": ["上一份 override 恢复不回来（模拟）"]}
+        return resp
+
+    res = m._specfix_transaction(warn_on_base, base, 1.0, profile, None)
+    assert not res["ok"]
+    assert res["exit"] == "unsupported"
+    assert res["patches"] == base
+    assert calls == [base]
