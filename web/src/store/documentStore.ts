@@ -409,10 +409,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       return
     }
     const [patches, inverse] = history.compress(txn.patches, txn.inverse)
-    // 原生图幅基准的两侧：before = 事务开始前，after = **收尾修正跑完之后**的文档。
-    // 收尾把图幅换到新值并进了这条历史，所以 after 一侧记的是新图幅——重做打回
-    // 松手那一刻的 w/h 时它们正是按新图幅量的；在收尾之前取 after 会记成旧图幅，
-    // 重做再按「旧 → 新」多乘一遍。事务开始前的文档只在这里现算一次（松手时一次，
+    // 原生图幅基准的两侧：before = 事务开始前，after = **收尾修正跑完之后**的文档——
+    // 条目记下的就是它真正打回的那个状态（包围盒值、原生图幅、维度集合同一时刻）。
+    // 注：在收尾之前取 after 目前是等价的（收尾修正本身就是一次保持比例的换基，
+    // 条目又连图幅一起打回，同步器随后补齐），变异反证里它不红；按「同一时刻」取
+    // 是为了不依赖这个巧合。事务开始前的文档只在这里现算一次（松手时一次，
     // 不在 pointermove 的热路径上）
     const before = history.rollback(state.doc, { label: txn.label, patches, inverse })
     const sizeBasis = sizeBasisOf(before, state.doc)
