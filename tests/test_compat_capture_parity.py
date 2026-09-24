@@ -371,6 +371,83 @@ fig.savefig("escape.pdf")
         )
         assert list(desktop_build(figs, "escape.py")["stems"]) == ["escape"]
 
+    def test_numpy_text_readers_resolve_next_to_the_script(self, tmp_path):
+        """`np.loadtxt` / `np.genfromtxt` 经 numpy 自己的 `DataSource.open`：它先 `exists`
+        再 open，走不到三个 open 入口。数据就在脚本旁边时 `databinding` 判 `default_ok`、
+        不问用户——这一行必须在沙盒里读得到，否则那个判定的前提就是假的。"""
+        figs = tmp_path / "figs"
+        write(
+            figs,
+            "nreader.py",
+            """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+a = np.loadtxt("xy.txt")
+b = np.genfromtxt("xy.txt")
+assert a.tolist() == b.tolist() == [[1.0, 2.0], [2.0, 4.0]], a
+fig, ax = plt.subplots()
+ax.plot(a[:, 0], a[:, 1])
+fig.savefig("nreader.pdf")
+""",
+        )
+        (figs / "xy.txt").write_text("1 2\n2 4\n", encoding="utf-8")
+        assert list(desktop_build(figs, "nreader.py")["stems"]) == ["nreader"]
+
+    def test_numpy_reads_the_scripts_own_sandbox_copy_first(self, tmp_path):
+        """脚本自己 `np.savetxt` 出来的那一份优先——回退不能把它换成图库里的同名文件。"""
+        figs = tmp_path / "figs"
+        write(
+            figs,
+            "nshadow.py",
+            """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+np.savetxt("vals.txt", [9.0, 9.0])
+ys = np.loadtxt("vals.txt")
+assert ys.tolist() == [9.0, 9.0], f"读到的是图库里那一份: {ys}"
+fig, ax = plt.subplots()
+ax.plot(ys)
+fig.savefig("nshadow.pdf")
+""",
+        )
+        (figs / "vals.txt").write_text("1\n2\n", encoding="utf-8")
+        assert list(desktop_build(figs, "nshadow.py")["stems"]) == ["nshadow"]
+        assert (figs / "vals.txt").read_text(encoding="utf-8") == "1\n2\n"
+
+    def test_numpy_reads_outside_the_project_or_another_destpath_are_not_redirected(self, tmp_path):
+        """越界的读、以及脚本自建 `DataSource(destpath=别处)` 的读，都原样交给 numpy 报错。"""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("7\n", encoding="utf-8")
+        figs = tmp_path / "figs"
+        write(
+            figs,
+            "nescape.py",
+            """\
+import numpy as np
+from numpy.lib import _datasource
+import matplotlib.pyplot as plt
+
+for attempt in (
+    lambda: np.loadtxt("../outside/secret.txt"),
+    lambda: _datasource.DataSource(DEST).open("local.txt"),
+):
+    try:
+        attempt()
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("回退把不该改指的读送进来了")
+fig, ax = plt.subplots()
+ax.plot([1, 2, 3])
+fig.savefig("nescape.pdf")
+""".replace("DEST", repr(str(outside))),
+        )
+        (figs / "local.txt").write_text("1\n", encoding="utf-8")
+        assert list(desktop_build(figs, "nescape.py")["stems"]) == ["nescape"]
+
 
 # ===========================================================================
 # 边界：没有原始产物的图不许伪装成可写回的面板
