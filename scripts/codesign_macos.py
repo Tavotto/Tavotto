@@ -172,12 +172,23 @@ LC_BUILD_VERSION = 0x32
 PLATFORM_MACOS = 1
 
 
-def _version(packed: int) -> tuple[int, int]:
-    """Mach-O 的 `xxxx.yy.zz` 打包版本号 → (major, minor)。"""
-    return packed >> 16, (packed >> 8) & 0xFF
+def _version(packed: int) -> tuple[int, int, int]:
+    """Mach-O 的 `xxxx.yy.zz` 打包版本号 → (major, minor, patch)。**patch 不许丢**：要求 14.0.1 的库
+    在 14.0 的系统上起不来，只比 major.minor 会让它混过 14.0 的下限（Codex #539）。"""
+    return packed >> 16, (packed >> 8) & 0xFF, packed & 0xFF
 
 
-def _thin_minos(fh, offset: int) -> tuple[int, int] | None:
+def _parse_version(text: str) -> tuple[int, int, int]:
+    """`14` / `14.0` / `14.0.1` → 三段元组，缺的补 0（与 `_version` 同一口径，才能比较）。"""
+    parts = [int(x) for x in str(text).strip().split(".")[:3]]
+    return tuple(parts + [0] * (3 - len(parts)))  # type: ignore[return-value]
+
+
+def _fmt(v: tuple[int, int, int]) -> str:
+    return ".".join(str(x) for x in (v if v[2] else v[:2]))
+
+
+def _thin_minos(fh, offset: int) -> tuple[int, int, int] | None:
     """一个 thin Mach-O 声明的最低 macOS（LC_BUILD_VERSION 或旧的 LC_VERSION_MIN_MACOSX）；没有就 None。"""
     fh.seek(offset)
     head = fh.read(32)
@@ -205,7 +216,7 @@ def _thin_minos(fh, offset: int) -> tuple[int, int] | None:
     return None
 
 
-def minos(path: Path, arch: str) -> tuple[int, int] | None:
+def minos(path: Path, arch: str) -> tuple[int, int, int] | None:
     """`path` 里 `arch` 那一片声明的最低 macOS；不是 Mach-O / 没有那一片 / 没写 就 None。"""
     want = {v: k for k, v in _CPU_NAMES.items()}.get(_ARCH_ALIASES.get(arch.lower(), arch))
     try:
@@ -237,10 +248,10 @@ def check_min_os(
     """
     if not expect_min_os:
         return
-    want = tuple(int(x) for x in expect_min_os.split(".")[:2])
+    want = _parse_version(expect_min_os)
     plist = app / "Contents" / "Info.plist"
     declared = plistlib.loads(plist.read_bytes()).get("LSMinimumSystemVersion", "")
-    if tuple(int(x) for x in str(declared).split(".")[:2]) != want:
+    if not str(declared).strip() or _parse_version(declared) != want:
         raise SignError(f"{plist} 的 LSMinimumSystemVersion = {declared!r}，期望 {expect_min_os}")
     arch = arch or platform.machine()
     seen, over = 0, []
@@ -257,7 +268,7 @@ def check_min_os(
         over.sort(key=lambda x: x[1], reverse=True)
         raise SignError(
             f"这些 Mach-O 要求的 macOS 高于声明的 {expect_min_os}（共 {len(over)} 个，列前 10 个）：\n  "
-            + "\n  ".join(f"{m.path.relative_to(app)} → {a}.{b}" for m, (a, b) in over[:10])
+            + "\n  ".join(f"{m.path.relative_to(app)} → {_fmt(v)}" for m, v in over[:10])
         )
     print(f"✓ Info.plist 最低 macOS {expect_min_os}；{seen} 个 Mach-O 的 minos 都不高于它")
 

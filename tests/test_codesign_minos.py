@@ -35,8 +35,9 @@ ARM64, X86_64 = 0x0100000C, 0x01000007
 
 
 def _packed(v: str) -> int:
-    major, minor = (int(x) for x in v.split("."))
-    return (major << 16) | (minor << 8)
+    parts = [int(x) for x in v.split(".")] + [0, 0]
+    major, minor, patch = parts[:3]
+    return (major << 16) | (minor << 8) | patch
 
 
 def _thin(cputype: int, min_os: str | None, *, legacy: bool = False) -> bytes:
@@ -89,11 +90,11 @@ def test_minos_reads_build_version_legacy_and_the_right_fat_slice(tmp_path):
     fat.write_bytes(_fat((X86_64, _thin(X86_64, "15.0")), (ARM64, _thin(ARM64, "11.0"))))
     none = tmp_path / "none.dylib"
     none.write_bytes(_thin(ARM64, None))
-    assert cs.minos(thin, "arm64") == (14, 0)
-    assert cs.minos(legacy, "x86_64") == (10, 13)
+    assert cs.minos(thin, "arm64") == (14, 0, 0)
+    assert cs.minos(legacy, "x86_64") == (10, 13, 0)
     # 同一个 fat 文件，按架构取各自那一片——取错片 = 拿 Intel 的 15.0 去判 arm64 的包
-    assert cs.minos(fat, "arm64") == (11, 0)
-    assert cs.minos(fat, "x86_64") == (15, 0)
+    assert cs.minos(fat, "arm64") == (11, 0, 0)
+    assert cs.minos(fat, "x86_64") == (15, 0, 0)
     assert cs.minos(none, "arm64") is None
     assert cs.minos(tmp_path / "missing", "arm64") is None
 
@@ -122,6 +123,16 @@ def test_check_fails_on_a_macho_that_needs_a_newer_macos(tmp_path):
     )
     with pytest.raises(cs.SignError, match=r"pikepdf/_core.so → 14.0"):
         cs.check_min_os(app, cs.scan(app), "11.0", "arm64")
+
+
+def test_the_patch_level_counts(tmp_path):
+    """Codex #539：14.0.1 的库在 14.0 的系统上起不来——只比 major.minor 会让它混过 14.0 的下限。"""
+    over = _app(tmp_path / "a", "14.0", {"Frameworks/p.dylib": _thin(ARM64, "14.0.1")})
+    with pytest.raises(cs.SignError, match=r"p.dylib → 14.0.1"):
+        cs.check_min_os(over, cs.scan(over), "14.0", "arm64")
+    exact = _app(tmp_path / "b", "14.0", {"Frameworks/p.dylib": _thin(ARM64, "14.0.0")})
+    cs.check_min_os(exact, cs.scan(exact), "14.0", "arm64")
+    assert cs.minos(over / "Contents" / "Frameworks" / "p.dylib", "arm64") == (14, 0, 1)
 
 
 def test_check_fails_when_the_plist_does_not_declare_the_expected_minimum(tmp_path):
@@ -161,7 +172,7 @@ def test_minos_agrees_with_otool_on_a_real_binary():
             for follow in lines[i : i + 6]:
                 parts = follow.split()
                 if parts and parts[0] in ("minos", "version"):
-                    want = tuple(int(x) for x in parts[1].split(".")[:2])
+                    want = cs._parse_version(parts[1])
                     break
             break
     if want is None:
