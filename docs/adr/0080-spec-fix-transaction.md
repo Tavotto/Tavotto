@@ -36,6 +36,8 @@
 | 等待期间文档被改过 | 丢弃结果（override 列表或 `loadSeq` 对不上），报 `stale`；同一时刻只跑一轮（`busy`） |
 | 「全部处理」的集合 | `batchable()` 唯一出处：本画布、`safe_auto`、**不含建议档**；组头的「全部修复」是点名那一组，带 `includeSuggestions`；逐条的「修复」照修建议档 |
 | 点了名却不修 | 规则不在可修清单 / B0 上没这条：逐条回 `skipped: not_found`，前端不计入「已修复」 |
+| 出界（`element-outside-figure`） | 也进可修清单，但不在 `plan()` 里算：由外边距重排修（挪子图、不挪那条文字，`specfix.LAYOUT_RULES`），修复前就已出界的也修（只要这一轮「点名没修好的严格更少、阻断不增」，`specfix.progressed()`）；到预算仍放不下就记 `no_fit`，**不连累同批别的修复** |
+| 修复结果的提示 | 后台渲染通知（渲染完成 / 正在构建）是**被动** toast（`uiStore.statusPassive`），不顶掉还挂着的非被动结果——验收里「已修复 8 项」只活了 30–50 ms 就被「渲染完成」盖掉 |
 | 可修规则集 | `specfix.FIXABLE_RULES` ↔ `issueFix.ENGINE_FIX_RULES` 严格同源对 |
 | 允许集合 | 按 prop 放行全图（刻度组 / 图例的字号字体落到子元素上是合法连带），外加 `COUPLED_PROPS` 里**实测**到的连带（`spine_linewidth` → 四边线宽；`linewidth` → 跟随源的图例示意线） |
 
@@ -53,6 +55,7 @@
 * 内嵌画布 / playground（装了替代传输）没有这个端点：面板内部的问题回 `unavailable`，
   画布层照修。
 * 图例在自己子图里换位置（ADR 0051 的第二族局部修复）桌面这条暂不做：挡住就如实退出。
+* 出界的修法只有外边距重排：它挪的是子图，放不下（例如 labelpad 大得离谱）就是 `no_fit`，缩字号、放大图幅仍要用户自己决定。
 * 引擎渲染不套 `bbox_inches="tight"`，所以画布上「磁盘原图 → 引擎重渲染」本身就会让
   几何变一下——这是 ADR 0051 §3 记着的未决问题，本 ADR 不解决。
 

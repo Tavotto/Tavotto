@@ -64,7 +64,8 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   可修规则集 `ENGINE_FIX_RULES` ↔ `specfix.FIXABLE_RULES` 是严格同源对。
   「全部处理」的集合唯一出处 `batchable()`（**不含建议档**；组头的「全部修复」
   是点名那一组，带 `includeSuggestions`）；计数与执行是同一个集合。修复在跑时
-  `uiStore.fixing` 把所有修复入口置灰（同一时刻只跑一轮，第二轮回 `busy`）。
+  `uiStore.fixing` 把所有修复入口置灰（同一时刻只跑一轮，第二轮回 `busy`）。修复结果
+  是非被动 toast，后台渲染通知以 `{ passive: true }` 发、顶不掉它（`uiStore.statusPassive`）。
 * **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
 * **面板的呈现层在 `lib/problemList.ts`（2026-09-06，审计 T09）**，纯函数，
   不跑第二遍求值器：① 范围「当前图 / 整个文档」——当前图 = 快速编辑的
