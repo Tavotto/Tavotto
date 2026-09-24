@@ -389,6 +389,29 @@ def test_real_probe_reports_each_module():
         assert health["ok"] is True
 
 
+def test_a_user_decision_landing_during_the_decision_is_not_overwritten(adopt_env, monkeypatch):
+    """同形清扫（先判后写分两步）：`_auto_adopt_allowed` 判完、写入之前，用户在设置里点了「改回」（明确选回
+    默认链条）。以前那条自动决策照写，把用户的决定盖掉；现在判断与写入在同一把锁里重判，不写、不通知。
+    同步点：判据一返回就让用户的那一下落地，不用 sleep。"""
+    project, env, heard = adopt_env
+    envs = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    real = deprepair._auto_adopt_allowed
+    verdicts = []
+
+    def allowed_then_user_clicks_revert(p, offer):
+        verdicts.append(real(p, offer))
+        projectenv.remember_default(p)
+        return verdicts[-1]
+
+    monkeypatch.setattr(deprepair, "_auto_adopt_allowed", allowed_then_user_clicks_revert)
+    assert deprepair.decide_environment(project, "fig.py") is None
+    assert verdicts == [True], "尺子是活的：判的那一刻确实允许"
+    record = projectenv.remembered_record(project)
+    assert record["mode"] == projectenv.MODE_DEFAULT_CHAIN, record
+    assert heard == []
+
+
 def test_decide_adopts_without_deadlocking_under_the_pool_lock(adopt_env, monkeypatch):
     """改用时不许去拿 `pool._lock`（例如 `pool.reset_worker_python()`）：2026-09-23 真机端到端抓到过一次
     死锁，那时决定还跑在持锁的 `_new_worker()` 里。今天 `pool.acquire()` 在锁外调它（见下面的

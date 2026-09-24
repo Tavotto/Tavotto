@@ -3478,12 +3478,14 @@ def _auto_adopt_allowed(project: str, offer: dict) -> bool:
     configured = _config_worker_python()
     if configured and pool._configured_source(configured) != pool.SOURCE_MANAGED:
         return False
-    record = projectenv.remembered_record(project)
-    if record is not None and (
-        record.get("mode") == projectenv.MODE_DEFAULT_CHAIN or not record.get("automatic", False)
-    ):
-        return False
-    return True
+    return _record_allows_auto_adopt(projectenv.remembered_record(project))
+
+
+def _record_allows_auto_adopt(record: dict | None) -> bool:
+    """项目记录这一半：没记过，或记着的是机器替用户挑的。用户为本项目挑过 / 明确选回默认链条就不碰。"""
+    return record is None or (
+        record.get("mode") != projectenv.MODE_DEFAULT_CHAIN and bool(record.get("automatic", False))
+    )
 
 
 def _config_worker_python() -> str:
@@ -3500,9 +3502,17 @@ def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None
     entry = userenvs.best(free, Path(project).name)
     if entry is None or not _auto_adopt_allowed(project, offer):
         return None
-    projectenv.remember(
-        project, entry["python"], automatic=True, trigger=TRIGGER_USER_ENVIRONMENT, health=entry
-    )
+    # 上面判过的「项目记录允许自动换」在写入锁里再判一次：判完到写之间用户的显式选择（设置里挑了一个 /
+    # 点了「改回」）可能刚落地，不许被这条自动决策盖掉（ADR 0079 §四：用户决定过的一个都不碰）
+    if not projectenv.remember(
+        project,
+        entry["python"],
+        automatic=True,
+        trigger=TRIGGER_USER_ENVIRONMENT,
+        health=entry,
+        only_if=_record_allows_auto_adopt,
+    ):
+        return None
     # 不调 `pool.reset_worker_python()`：`remember()` 已经更新了项目级解析缓存，全局链条的缓存与项目
     # 决策无关。（以前这里跑在持有 `pool._lock` 的 `_new_worker()` 里，再拿锁就是死锁——2026-09-23 真机
     # 抓到；现在 `pool.acquire()` 在锁外、起会话之前调它，但仍没有理由去碰全局缓存。）
