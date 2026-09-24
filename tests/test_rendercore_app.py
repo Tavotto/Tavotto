@@ -389,6 +389,17 @@ def test_backend_unavailable_holds_without_main_warming_the_implementation(
     monkeypatch.undo()
     facade.reset_for_tests()
 
+    # 正方向：同样不经 main()、_IMPLS 为空、后端可用时，直接用 app 渲染一次要成功（真走实现的初始化：
+    # 批准字体 / allowlist / render child），不是只有「不可用」那条路被量到
+    monkeypatch.setattr(pdfbackend, "_IMPLS", {})
+    renderhost.shutdown_shared()
+    facade.reset_for_tests()
+    ok = client.get("/api/render?id=p1.pdf&w=200")
+    assert ok.status_code == 200, ok.get_json() if ok.is_json else ok.status
+    png = ok.get_data()
+    assert png[:8] == b"\x89PNG\r\n\x1a\n" and int.from_bytes(png[16:20], "big") == 200
+    monkeypatch.undo()
+
     # 判据本身：实现一个都没装载时，也认得出选中实现声明的「不可用」
     monkeypatch.setattr(pdfbackend, "_IMPLS", {})
     assert pdfbackend.is_backend_unavailable(facade.UNAVAILABLE_ERRORS[0]("x"))
