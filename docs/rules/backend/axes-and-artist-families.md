@@ -61,7 +61,16 @@
     可调用对象 / Transform / Bbox / 'polar' 不出端点。**有字的注释不出端点**：箭尾从文字框
     算，拖尾巴就是拖字，字自己已能拖（`pos_frac`），两条 override 写同一个 `xyann` 只会互相
     盖写。
+  * **「可拖」始终绑在「此刻是纯箭头注释」上**（#552 评审）：有字的注释被清空文字、拖了箭头、
+    再恢复文字——端点那条 override 还在列表里但**失效**：setter 按这一轮将要落成的文字
+    （`state.pending` 里的 `text`，没有就是此刻的文字）重新裁决，不是纯箭头就把锚点放回
+    脚本原样、不发 warning（warning 会阻断写回，而它只是失效）；**裁决一变就重放**
+    （`_must_replay` 比这一轮的裁决与上次落下的 `_mm_endpoints_live`），文字变了而端点值没变
+    时也会被重新裁决。**不是每轮都重放**：constrained / tight 布局在锚点落下后会重排，热态每轮
+    重算会追着布局走，与只算一次的全量重放分岔（等价矩阵写回腿像素门实测 409）。判据不看
+    列表序，热态与全量重放判出同一个结果。
   * 看护：`test_arrowpatch_endpoints_and_style_roundtrip`（独立箭头）、
+    `test_annotation_endpoints_bind_to_empty_text_through_clear_drag_restore`、
     `test_pure_arrow_annotation_drags_via_its_anchors`（出 / 不出端点的判据、拖完不弹回、
     导出 PDF 在新位置、还原逐位）、`test_pure_arrow_annotation_head_dragged_out_of_axes_stays_drawn`、
     等价矩阵 `s3-pure-arrow-annotation`（含写回后重开）与

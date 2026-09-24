@@ -623,15 +623,19 @@ def _ann_coords_invertible(coords, *, text_end: bool) -> bool:
     return parts[0] in _ANN_COORD_BASES or (text_end and parts[0] == "offset")
 
 
-def annotation_arrow_owner(a):
+def annotation_arrow_owner(a, text: str | None = None):
     """这支箭头若是**纯箭头注释**（`annotate("", xy=…, xytext=…, arrowprops=…)`）
     且两端坐标系都可逆，回它的 Annotation；否则 None。
 
     只收空文字：有字的注释，箭尾从文字框算（`_arrow_relpos`），拖尾巴等于拖字——
     字自己已经能拖（`pos_frac`），两条 override 写同一个 `xyann` 只会互相盖写。
+    `text` 给了就按它判（setter 用：这一轮 apply **将要**落成的文字，见
+    `_annotation_text_after_apply`），否则看注释此刻的文字（manifest 用）。
     """
     ann = getattr(a, "_mm_annotation", None)
-    if ann is None or ann.get_text() != "" or ann.axes is None:
+    if ann is None or ann.axes is None:
+        return None
+    if (ann.get_text() if text is None else text) != "":
         return None
     if not _ann_coords_invertible(ann.xycoords, text_end=False):
         return None
@@ -680,13 +684,50 @@ def _set_annotation_arrow(ann, da, db) -> None:
     ann.set_annotation_clip(False)
 
 
-def _set_arrow_endpoints(a, value) -> None:
+def _annotation_text_after_apply(a, state) -> str | None:
+    """这一轮 apply 结束时注释会是什么文字：`state.pending` 里有这条注释的 `text`
+    就是它，否则是此刻的文字（不在新列表里的 text 已在还原段放回脚本原样）。
+    与列表序无关——同一批 patch 里 text 排在端点前后，判出来都一样。"""
+    ann = a._mm_annotation  # noqa: SLF001
+    gid = a.get_gid() or ""
+    key = (gid.removesuffix(".arrow"), "text")
+    pending = getattr(state, "pending", None) or {}
+    if key in pending:
+        v = pending[key]
+        return "" if v is None else str(v)
+    return ann.get_text()
+
+
+def _annotation_endpoints_live(a, state) -> bool:
+    """这一轮 apply 之后，注释箭头上的端点 override 该不该生效（= 注释是纯箭头）。"""
+    text = _annotation_text_after_apply(a, state) if state is not None else None
+    return annotation_arrow_owner(a, text) is not None
+
+
+def _set_arrow_endpoints(a, value, state=None) -> None:
     """拖动图内箭头。值为 figure 分数（top-origin）的 [ax, ay, bx, by]（A = 尾、
     B = 头），换算回箭头自己的坐标后落位——数据坐标里落点跟着数据范围走，figure
     分数才是「屏幕上挪到哪就是哪」。独立箭头（add_patch）`set_positions`；纯箭头
-    注释改注释的两个锚点（`_set_annotation_arrow`）。有字的注释 manifest 不出端点，
-    前端不会发。"""
+    注释改注释的两个锚点（`_set_annotation_arrow`）。
+
+    **可拖始终绑在「此刻是纯箭头注释」上**（#552 评审）：有字的注释先被清空、拖了箭头、
+    再把字恢复——端点那条 override 还留在列表里，但注释已经不是纯箭头了，此时它**不生效**，
+    锚点放回脚本原样（不给 warning：warning 会阻断写回，而这条 override 只是失效、不是
+    错误；manifest 同一时刻也不再出端点）。判据用这一轮将要落成的文字
+    （`_annotation_text_after_apply`），所以热态与全量重放判出同一个结果；这条 prop
+    在注释箭头上**裁决一变就重放**（`_must_replay`：上次落下的裁决记在 `_mm_endpoints_live`），
+    文字变了而端点值没变时也会被重新裁决。不是每轮都重放：constrained / tight 布局下锚点
+    落位后布局会重排，热态每轮重算会一路追着布局走，与只算一次的全量重放分岔（写回像素门
+    实测 409）。"""
     ann = getattr(a, "_mm_annotation", None)
+    if ann is not None:
+        live = _annotation_endpoints_live(a, state)
+        a._mm_endpoints_live = live  # noqa: SLF001
+        if not live:
+            orig = None if state is None else state.originals.get((a.get_gid(), "endpoints_frac"))
+            if isinstance(orig, _AnnAnchors):
+                _restore_arrow_endpoints(a, orig)
+            return
     fig = a.get_figure() if ann is None else ann.get_figure()
     da = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
     db = pathgeom.frac_to_display(fig, float(value[2]), float(value[3]))
@@ -695,6 +736,9 @@ def _set_arrow_endpoints(a, value) -> None:
         return
     inv = a.get_transform().inverted()
     a.set_positions(tuple(inv.transform(da)), tuple(inv.transform(db)))
+
+
+_set_arrow_endpoints._needs_state = True  # noqa: SLF001
 
 
 def _get_arrow_endpoints(a):
@@ -706,6 +750,7 @@ def _get_arrow_endpoints(a):
 
 
 def _restore_arrow_endpoints(a, orig) -> None:
+    a.__dict__.pop("_mm_endpoints_live", None)
     if isinstance(orig, _AnnAnchors):
         ann = a._mm_annotation  # noqa: SLF001
         ann.xy, ann.xyann = orig[0], orig[1]
@@ -3083,7 +3128,7 @@ def _is_geometry_key(prop: str, artist) -> bool:
     return prop in ("position", "xscale", "yscale", "zscale") and isinstance(artist, Axes)
 
 
-def _must_replay(prop: str, artist) -> bool:
+def _must_replay(prop: str, artist, state=None) -> bool:
     """每次 apply 都必须重放的 prop（「值没变就跳过」那条捷径对它们是错的）。
 
     刻度定位与单条刻度文字都是「按当前状态重算」的：改 xlim、换 scale、
@@ -3094,6 +3139,12 @@ def _must_replay(prop: str, artist) -> bool:
     """
     if isinstance(artist, TickSet):
         return prop in tickmodel._TICK_MODEL_PROPS
+    # 注释箭头的端点：它生不生效取决于注释**这一轮**的文字（见 `_set_arrow_endpoints`）。
+    # 文字 override 撤掉 / 加上而端点值没变时，跳过它热态就停在上一次的裁决上——所以
+    # **裁决变了**就重放。裁决没变不重放：布局会在锚点落下后重排，每轮重算会追着布局走
+    if prop == "endpoints_frac" and getattr(artist, "_mm_annotation", None) is not None:
+        live = _annotation_endpoints_live(artist, state)
+        return live != getattr(artist, "_mm_endpoints_live", None)
     return isinstance(artist, TickLabel) and prop == "text"
 
 
@@ -3553,7 +3604,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                 # ③ 别名组里被同组其他成员盖掉的（见 ALIAS_GROUPS / dirty_groups）
                 if (
                     not (geometry_moved and prop in _FRAC_ANCHORED)
-                    and not _must_replay(prop, artist)
+                    and not _must_replay(prop, artist, state)
                     and key not in dirty_groups
                     and not dirty_groups.intersection(owner.get(key, ()))
                 ):

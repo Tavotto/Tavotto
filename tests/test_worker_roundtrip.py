@@ -908,6 +908,68 @@ def test_pure_arrow_annotation_drags_via_its_anchors(tmp_path):
         proc.wait(timeout=10)
 
 
+def test_annotation_endpoints_bind_to_empty_text_through_clear_drag_restore(tmp_path):
+    """有字的注释：清空文字 → 拖箭头 → 恢复文字。端点那条 override 还留在列表里，但注释
+    已不是纯箭头，它必须**失效**（#552 评审）：文字回到原处、箭头回到脚本原样、manifest
+    不再出端点——否则这条看不见的 override 会继续改有字注释的 `xyann`，把字挪走。
+
+    同一组 patch 的全新 worker 重放必须与热态一致（热态 ≠ 重放就是写回 409 的那类分岔）；
+    而「文字清空 + 端点」这一组无论列表里谁先谁后，都落到拖过的位置。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_pure_arrow.py").write_text(PURE_ARROW_SCRIPT, encoding="utf-8")
+    text_gid, arrow_gid = "axes_0.texts_3", "axes_0.texts_3.arrow"
+
+    def els(resp):
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        return {e["gid"]: e for e in resp["manifest"]["elements"]}
+
+    procs = []
+    try:
+        hot = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path)
+        procs.append(hot)
+        _rpc(hot, {"cmd": "build"})
+        base = els(_rpc(hot, {"cmd": "override", "stem": "PureArrow", "patches": []}))
+        assert "arrow_endpoints" not in base[arrow_gid]  # 有字：不出端点
+
+        clear = {"gid": text_gid, "prop": "text", "value": ""}
+        cleared = els(_rpc(hot, {"cmd": "override", "stem": "PureArrow", "patches": [clear]}))
+        pts = cleared[arrow_gid].get("arrow_endpoints")
+        assert pts, "文字清空后它就是纯箭头注释，应当出端点"
+        target = [round(pts[0][0] + 0.1, 4), round(pts[0][1] - 0.1, 4), pts[1][0], pts[1][1]]
+        drag = {"gid": arrow_gid, "prop": "endpoints_frac", "value": target}
+        dragged = els(_rpc(hot, {"cmd": "override", "stem": "PureArrow", "patches": [clear, drag]}))
+        got = [v for p in dragged[arrow_gid]["arrow_endpoints"] for v in p]
+        assert got == pytest.approx(target, abs=2e-4)
+
+        # 恢复文字：text 那条撤掉，端点那条还在
+        restored = els(_rpc(hot, {"cmd": "override", "stem": "PureArrow", "patches": [drag]}))
+        assert "arrow_endpoints" not in restored[arrow_gid]
+        assert restored[text_gid]["anchor"] == pytest.approx(base[text_gid]["anchor"], abs=1e-6)
+        assert restored[arrow_gid]["bbox"] == pytest.approx(base[arrow_gid]["bbox"], abs=1e-6)
+
+        # 全新 worker 全量重放同一组 patch：与热态一致
+        fresh = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path / "fresh")
+        procs.append(fresh)
+        _rpc(fresh, {"cmd": "build"})
+        replay = els(_rpc(fresh, {"cmd": "override", "stem": "PureArrow", "patches": [drag]}))
+        assert replay[text_gid]["anchor"] == pytest.approx(restored[text_gid]["anchor"], abs=1e-6)
+        assert replay[arrow_gid]["bbox"] == pytest.approx(restored[arrow_gid]["bbox"], abs=1e-6)
+        # 「清空 + 端点」两种列表序都落到拖过的位置（判据看这一轮将落成的文字，不看列表序）
+        for order in ([clear, drag], [drag, clear]):
+            # 每种列表序都从「字已恢复、端点失效」起步：上一轮的空文字不能替这一轮兜底
+            els(_rpc(fresh, {"cmd": "override", "stem": "PureArrow", "patches": [drag]}))
+            e = els(_rpc(fresh, {"cmd": "override", "stem": "PureArrow", "patches": order}))
+            got = [v for p in e[arrow_gid]["arrow_endpoints"] for v in p]
+            assert got == pytest.approx(target, abs=2e-4), order
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                p.kill()
+            p.wait(timeout=10)
+
+
 def test_pure_arrow_annotation_head_dragged_out_of_axes_stays_drawn(tmp_path):
     """头拖出子图范围也照画：'data' 锚点离开数据范围时 matplotlib 默认整条注释不画
     （`annotation_clip`）；端点是 figure 锚定的，拖到哪就画在哪。还原时 clip 一并还原。"""
