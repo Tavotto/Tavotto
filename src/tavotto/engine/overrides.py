@@ -592,11 +592,16 @@ def _linestyle_name(a) -> str:
     return "-"  # (offset, seq) 自定义虚线：显示成实线占位，用户改了才覆盖
 
 
-#: annotate 锚点坐标系里「拖完能逆算回去」的那几种：与 renderer 无关、变换可逆。
-#: 其余写法（Artist / 可调用对象 / Transform / Bbox / 'polar'）一律不出端点——
-#: 判不出能不能写回，就不宣称这项能力。'offset …' 只对文字那一端（textcoords）成立。
+#: annotate 锚点坐标系里「拖完能逆算回去」的那几种：与 renderer 无关、变换可逆、
+#: **与 dpi 无关**。其余写法（Artist / 可调用对象 / Transform / Bbox / 'polar'）一律
+#: 不出端点——判不出能不能写回，就不宣称这项能力。'offset …' 只对文字那一端
+#: （textcoords）成立。
+#: **没有 'pixels'**（#552 评审）：像素单位的锚点是按应用那一刻的 figure dpi 逆算出来
+#: 的原始像素值，导出 / 预览换一个 dpi（`savefig(dpi=600)`）像素值不变、图幅变了，
+#: 箭头落到别处——热态 manifest ≠ 导出件。points / fontsize / fraction 都是物理量或
+#: 比例，换 dpi 不动。
 _ANN_COORD_BASES = ("figure", "subfigure", "axes")
-_ANN_COORD_UNITS = ("points", "pixels", "fraction", "fontsize")
+_ANN_COORD_UNITS = ("points", "fraction", "fontsize")
 
 
 def _ann_coords_invertible(coords, *, text_end: bool) -> bool:

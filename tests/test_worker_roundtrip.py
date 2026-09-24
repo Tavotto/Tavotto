@@ -782,6 +782,11 @@ def main():
     # 坐标系是 Artist：锚点要 renderer 才算得出，逆算不回去              texts_4
     ax.annotate("", xy=(0.5, 0.5), xycoords=ax.patch, xytext=(10, 90),
                 arrowprops=dict(arrowstyle="->"))
+    # 像素单位：逆算出的像素值随 dpi 漂（导出换 dpi 就落到别处），不出端点   texts_5 / 6
+    ax.annotate("", xy=(30, 20), xytext=(-40, 0), textcoords="offset pixels",
+                arrowprops=dict(arrowstyle="->"))
+    ax.annotate("", xy=(200, 150), xycoords="figure pixels", xytext=(10, 10),
+                arrowprops=dict(arrowstyle="->"))
     fig.savefig("PureArrow.pdf")
 """
 
@@ -811,7 +816,7 @@ def test_pure_arrow_annotation_drags_via_its_anchors(tmp_path):
     就弹回。现在 `endpoints_frac` 写的是**注释本身的两个锚点**（经各自坐标系逆算）：
 
     - 可逆坐标系（data / offset points / axes fraction）出端点，[尾, 头] = [xytext, xy]；
-      有字的注释、Artist 坐标系不出（不伪造能力）；
+      有字的注释、Artist 坐标系、像素单位（换 dpi 就漂）不出（不伪造能力）；
     - 拖完：端点落在目标、**画出来的箭头**（patch 的 bbox）跟着平移、再渲染一次不弹回、
       导出的 PDF 里箭头在新位置；
     - 空列表还原：端点与 bbox 逐位回到脚本原样。
@@ -828,7 +833,12 @@ def test_pure_arrow_annotation_drags_via_its_anchors(tmp_path):
         for gid in movable:
             pts = el[gid].get("arrow_endpoints")
             assert pts and len(pts) == 2, (gid, el[gid])
-        for gid in ("axes_0.texts_3.arrow", "axes_0.texts_4.arrow"):
+        for gid in (
+            "axes_0.texts_3.arrow",
+            "axes_0.texts_4.arrow",
+            "axes_0.texts_5.arrow",
+            "axes_0.texts_6.arrow",
+        ):
             assert "arrow_endpoints" not in el[gid], gid
         # 用户的那根：数据坐标 (20,60) → (40,60)，水平向右；尾在左
         (tx, ty), (hx, hy) = el["axes_0.texts_0.arrow"]["arrow_endpoints"]
