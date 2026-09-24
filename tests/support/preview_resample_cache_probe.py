@@ -72,6 +72,7 @@ def _rng():
 
 # ---- 基础图：各走 `_make_image` 的一条分支 -------------------------------------------------
 
+
 def rgb_uint8():
     f, ax = plt.subplots(figsize=(4, 3))
     im = ax.imshow(_rng().integers(0, 255, (700, 900, 3), dtype=np.uint8), interpolation="lanczos")
@@ -143,6 +144,7 @@ BASES = {
 
 # ---- 改动：缓存键的每一维各一条（漏一维 = 那一条变旧） ------------------------------------
 
+
 def _inplace_data(f, im):
     a = im.get_array()
     a[100:400, 100:500] = 0.0
@@ -169,11 +171,15 @@ MUTATIONS = {
     "cmap": lambda f, im: im.set_cmap("plasma"),
     "clim": lambda f, im: im.set_clim(0.2, 0.6),
     "alpha_scalar": lambda f, im: im.set_alpha(0.4),
-    "alpha_array": lambda f, im: im.set_alpha(np.linspace(1, 0.1, im.get_array().size).reshape(im.get_array().shape)),
+    "alpha_array": lambda f, im: im.set_alpha(
+        np.linspace(1, 0.1, im.get_array().size).reshape(im.get_array().shape)
+    ),
     "interpolation": lambda f, im: im.set_interpolation("bicubic"),
     # 3.8 默认就是 data、3.10 起默认 auto（缩小时落到 rgba）：换成与当前不同的那一个
     "interpolation_stage": lambda f, im: im.set_interpolation_stage(
-        "rgba" if getattr(im, "get_interpolation_stage", lambda: im._interpolation_stage)() == "data" else "data"
+        "rgba"
+        if getattr(im, "get_interpolation_stage", lambda: im._interpolation_stage)() == "data"
+        else "data"
     ),
     "resample": lambda f, im: im.set_resample(False),
     "filternorm": lambda f, im: im.set_filternorm(False),
@@ -229,11 +235,15 @@ def _mutation_case(name):
         after_on, _ = _svg(f, cached=True)
         after_off, _ = _svg(f, cached=False)
         plt.close(f)
-        out[base] = {"same_as_uncached": after_on == after_off, "changed_picture": after_off != before}
+        out[base] = {
+            "same_as_uncached": after_on == after_off,
+            "changed_picture": after_off != before,
+        }
     return out
 
 
 # ---- 直接调 `_resample`：matplotlib 自己从不传的实参（`alpha=`）也得在键里 -----------------
+
 
 def _direct():
     """缓存的是一个函数，契约就按函数的实参逐维验：每一维单独扰动一次，开缓存与原函数逐元素相同。"""
@@ -268,7 +278,10 @@ def _direct():
         "resample_kw": lambda c: {**c, "kwargs": {"resample": False}},
     }
     knobs = {
-        "interpolation": (lambda: im.set_interpolation("bicubic"), lambda: im.set_interpolation("lanczos")),
+        "interpolation": (
+            lambda: im.set_interpolation("bicubic"),
+            lambda: im.set_interpolation("lanczos"),
+        ),
         "filternorm": (lambda: im.set_filternorm(False), lambda: im.set_filternorm(True)),
         "filterrad": (lambda: im.set_filterrad(1.0), lambda: im.set_filterrad(4.0)),
         "resample_getter": (lambda: im.set_resample(False), lambda: im.set_resample(None)),
@@ -277,7 +290,10 @@ def _direct():
     # 3.11 起 `_resample` 只在 nearest 时按 origin 翻数据，且只在输出像素正好落在两个输入像素的
     # 分界上时结果才不同：整 2 倍缩小让每个输出像素都落在分界上
     nearest = {
-        "origin_nearest": (lambda: setattr(im, "origin", "lower"), lambda: setattr(im, "origin", "upper")),
+        "origin_nearest": (
+            lambda: setattr(im, "origin", "lower"),
+            lambda: setattr(im, "origin", "upper"),
+        ),
     }
 
     def run(fn, c):
@@ -295,7 +311,10 @@ def _direct():
                 changed_case = fn(start_case)
                 cached = run(wrapped, changed_case)
             truth = run(original, changed_case)
-            out[f"{start}:{name}"] = {"same": same(cached, truth), "changed": not same(truth, before)}
+            out[f"{start}:{name}"] = {
+                "same": same(cached, truth),
+                "changed": not same(truth, before),
+            }
         for name, (set_, reset) in knobs.items():
             with ph.preview_resample_cache():
                 before = run(wrapped, start_case)
@@ -303,7 +322,10 @@ def _direct():
                 cached = run(wrapped, start_case)
             truth = run(original, start_case)
             reset()
-            out[f"{start}:{name}"] = {"same": same(cached, truth), "changed": not same(truth, before)}
+            out[f"{start}:{name}"] = {
+                "same": same(cached, truth),
+                "changed": not same(truth, before),
+            }
         im.set_interpolation("nearest")
         on_edges = {**start_case, "out_shape": (300, 350), "transform": Affine2D().scale(0.5)}
         for name, (set_, reset) in nearest.items():
@@ -313,7 +335,10 @@ def _direct():
                 cached = run(wrapped, on_edges)
             truth = run(original, on_edges)
             reset()
-            out[f"{start}:{name}"] = {"same": same(cached, truth), "changed": not same(truth, before)}
+            out[f"{start}:{name}"] = {
+                "same": same(cached, truth),
+                "changed": not same(truth, before),
+            }
         im.set_interpolation("lanczos")
     plt.close(f)
     return out
@@ -326,7 +351,8 @@ def _gate():
     real = mimage._resample
     return {
         "installed": getattr(real, "__wrapped__", None) is not None,
-        "real_resample_recognised": ph._wrap_resample(getattr(real, "__wrapped__", real)) is not None,
+        "real_resample_recognised": ph._wrap_resample(getattr(real, "__wrapped__", real))
+        is not None,
         "unknown_read_rejected": ph._wrap_resample(reads_something_new) is None,
         "not_a_function_rejected": ph._wrap_resample(None) is None,
     }

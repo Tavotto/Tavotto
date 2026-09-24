@@ -132,7 +132,9 @@ def test_direct_calls_cover_every_argument(probe):
 
 def test_version_gate(probe):
     g = probe["gate"]
-    assert g["real_resample_recognised"], f"matplotlib {probe['matplotlib']} 的 _resample 读了认不出的名字"
+    assert g["real_resample_recognised"], (
+        f"matplotlib {probe['matplotlib']} 的 _resample 读了认不出的名字"
+    )
     assert g["installed"]
     assert g["unknown_read_rejected"]
     assert g["not_a_function_rejected"]

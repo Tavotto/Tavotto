@@ -166,12 +166,35 @@ def _save_with(plan, save, clock):
 # 别的线程的导出、manifest 那几次布局 draw 一律直通）。
 
 # 三档（3.8.4 / 3.10.8 / 3.11.1）`_resample.__code__.co_names` 的并集。
-_RESAMPLE_KNOWN_NAMES = frozenset({
-    "Affine2D", "_image", "_interpd_", "abs", "array", "ceil", "diff", "dtype", "flip",
-    "format", "get_filternorm", "get_filterrad", "get_interpolation", "get_resample",
-    "int", "np", "origin", "resample", "scale", "shape", "transform", "translate",
-    "warn", "warnings", "zeros",
-})
+_RESAMPLE_KNOWN_NAMES = frozenset(
+    {
+        "Affine2D",
+        "_image",
+        "_interpd_",
+        "abs",
+        "array",
+        "ceil",
+        "diff",
+        "dtype",
+        "flip",
+        "format",
+        "get_filternorm",
+        "get_filterrad",
+        "get_interpolation",
+        "get_resample",
+        "int",
+        "np",
+        "origin",
+        "resample",
+        "scale",
+        "shape",
+        "transform",
+        "translate",
+        "warn",
+        "warnings",
+        "zeros",
+    }
+)
 # 小图重采样本来就不要钱，不值得付哈希与拷贝
 _RESAMPLE_CACHE_MIN_ELEMENTS = 1 << 18
 _RESAMPLE_CACHE_MAX_BYTES = 64 << 20

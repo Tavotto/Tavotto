@@ -206,6 +206,33 @@ manifest 与几何 override 之后那次布局刷新要的只是布局与包围�
 剩下的 217ms 是预览 SVG 那一遍（它真要像素）。热态里图片没变时重采样结果是可以复用的，但缓存键要覆盖
 数据 / cmap / norm / alpha / 插值 / 变换 / dpi，另开一条做。
 
+### 做了：预览 SVG 那一遍的重采样按实参内容缓存（2026-09-24，同一张用户图）
+
+那 217ms 里约 170ms 是 (a) 面板的两次 lanczos 重采样（1005×1753，data 阶段的 MaskedArray 一次、
+RGBA 一次），图没变时输入逐字节相同。缓存**没有**装在 artist 那一层（要枚举 cmap / norm / clim / alpha /
+插值阶段……漏一个 = 预览显示旧图），而是装在 `matplotlib.image._resample`：它是纯函数，norm / cmap /
+alpha 数组在进来之前已经算进 `data` 了。键 = 数据内容的 sha256（含 dtype / shape / mask）+ 输出尺寸 +
+仿射矩阵 + `alpha=` / `resample=` 实参 + 它自己读的 getter（interpolation / resample / filternorm /
+filterrad / origin）。
+
+- **只在 `preview_hybrid._save_with` 里查**（contextvar）：manifest 的布局 draw、导出、别的线程一律直通。
+- **版本闸**：`_resample.__code__.co_names` 必须落在三档（3.8.4 / 3.10.8 / 3.11.1）的并集里。3.11 就多读了
+  一个 `image_obj.origin`——哪一版再多读一个，缓存不装、退回原路径（宁慢不旧）。
+- 命中与写入都给副本：调用方会就地改返回值（`out_alpha[out_mask] = 1`）。只缓存 ≥ 2¹⁸ 元素的输入，LRU 64 MiB。
+
+| `scripts/bench_render.py`，同一张图、同一台机器、交替各两轮 | 热 wall | canvas_draw | manifest | 冷 build 往返 | 导出 wall |
+|---|---|---|---|---|---|
+| 修前（af7c2cf4） | 261.6 / 259.2 | 216.7 / 215.1 | 38.6 / 37.6 | 1067.4 / 968.9 | 531.2 / 474.8 |
+| 修后 | **106.4 / 103.1（−60%）** | **61.4 / 59.4** | 38.2 / 37.2 | 941.1 / 930.6 | 495.3 / 473.1 |
+
+第一次（未命中）多付一次哈希：28 MB 的 float32 RGBA 约 8ms。
+
+正确性（`tests/test_preview_resample_cache.py`，在 3.8.4 / 3.10.8 / 3.11.1 三档各跑一遍）：开缓存与不开的
+预览 SVG 逐字节相同（未命中 / 命中 / 再命中 / 换 dpi，`svg.hashsalt` 钉住）；14 种图上改动 × rgba 与 data
+两个阶段各一次，改完不是旧图、且改动真的改变了画面；直接调 `_resample` 逐维扰动实参。变异：从键里逐项
+拿掉 12 项全红；存活的两项如实记在用例里——mask（C 那一层读的是 `.data`，mask 进键是不押注它的保险）与
+origin（3.10 不读它；在 3.11.1 上拿掉它由 `origin_nearest` 抓红）。
+
 ### 没做：队列（E3-3）
 
 `queue_wait` 恒为 0.0ms（观察 2），没有任何数据支撑去动它。workerd 已经有合并
