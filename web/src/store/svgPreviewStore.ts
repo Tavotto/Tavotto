@@ -84,6 +84,8 @@ interface PanelPreview {
   baseNodes: Map<string, Element>
   /** gid → 当前预览位移（figure 分数、y 向下） */
   transforms: Map<string, [number, number]>
+  /** gid → 当前预览缩放（倍数 + figure 分数的不动点）；只有图例整体缩放写它 */
+  scales: Map<string, PreviewScale>
   /** 样式改动的可逆账本（每个元素只记最早那次的整条 style 原文） */
   edits: StyleEdit[]
   /** `gid|prop` → 当前预览值，供重新挂载时重放 */
@@ -206,6 +208,7 @@ function panelStateFor(
     baseTransforms: new Map(),
     baseNodes: new Map(),
     transforms: new Map(),
+    scales: new Map(),
     edits: [],
     styles: new Map(),
     lines: new Map(),
@@ -411,8 +414,22 @@ function restorePanel(panelId: string): void {
 /*  逐帧写 DOM（rAF 合并）                                                     */
 /* -------------------------------------------------------------------------- */
 
+/** 绕不动点 (ox, oy)（figure 分数、y 向下）等比缩放 s 倍 */
+export interface PreviewScale {
+  s: number
+  ox: number
+  oy: number
+}
+
 type PendingOp =
-  | { kind: 'transform'; panelId: string; gid: string; dfx: number; dfy: number }
+  | {
+      kind: 'transform'
+      panelId: string
+      gid: string
+      dfx: number
+      dfy: number
+      scale?: PreviewScale
+    }
   | { kind: 'style'; panelId: string; gid: string; role: string; prop: string; value: unknown }
 
 const pending = new Map<string, PendingOp>()
@@ -458,6 +475,8 @@ function writeTransform(op: Extract<PendingOp, { kind: 'transform' }>): void {
   const svg = findPanelSvg(op.panelId)
   const node = findGidNode(svg, op.gid)
   p.transforms.set(op.gid, [op.dfx, op.dfy])
+  if (op.scale) p.scales.set(op.gid, op.scale)
+  else p.scales.delete(op.gid)
   if (!node) return // gid 在 SVG 里不存在：覆盖层预览接管，这里安静退出
   if (!p.baseTransforms.has(op.gid)) {
     p.baseTransforms.set(op.gid, node.getAttribute('transform'))
@@ -468,8 +487,17 @@ function writeTransform(op: Extract<PendingOp, { kind: 'transform' }>): void {
   const tx = op.dfx * vb[0]
   const ty = op.dfy * vb[1]
   // **永远从 base 现算**：`translate(…) <原始>` 让平移落在父坐标系里，
-  // matplotlib 自己的 scale/translate（`<image>` 上就有）原样保留
-  node.setAttribute('transform', base ? `translate(${tx},${ty}) ${base}` : `translate(${tx},${ty})`)
+  // matplotlib 自己的 scale/translate（`<image>` 上就有）原样保留。
+  // 带缩放时写成绕不动点的 matrix（同样落在父坐标系、同样前置于原始变换）
+  const own = op.scale
+    ? (() => {
+        const { s: k, ox, oy } = op.scale
+        const e = ox * vb[0] * (1 - k) + tx
+        const f = oy * vb[1] * (1 - k) + ty
+        return `matrix(${k},0,0,${k},${e},${f})`
+      })()
+    : `translate(${tx},${ty})`
+  node.setAttribute('transform', base ? `${own} ${base}` : own)
 }
 
 function writeStyle(op: Extract<PendingOp, { kind: 'style' }>): void {
@@ -503,6 +531,24 @@ function viewBox(svg: SVGSVGElement | null): [number, number] {
 export function previewTransform(gid: string, dfx: number, dfy: number): void {
   if (!session || session.settled) return
   schedule(`t:${gid}`, { kind: 'transform', panelId: session.panelId, gid, dfx, dfy })
+}
+
+/**
+ * 等比缩放预览：绕不动点 (ox, oy)（figure 分数、y 向下）放大 s 倍。只给图例整体
+ * 缩放用——图例的字号、边距、行距、示意线长度按同一个倍数走（见
+ * `lib/legendScale`），画出来几乎就是线性缩放；子图缩放**不**用它（matplotlib
+ * 重排后刻度和字号不跟着线性缩放，假预览会骗人）。
+ */
+export function previewScale(gid: string, s: number, ox: number, oy: number): void {
+  if (!session || session.settled) return
+  schedule(`t:${gid}`, {
+    kind: 'transform',
+    panelId: session.panelId,
+    gid,
+    dfx: 0,
+    dfy: 0,
+    scale: { s, ox, oy },
+  })
 }
 
 /**
@@ -582,7 +628,7 @@ export function reattachPreview(panelId: string, renderKey: string): void {
   p.baseNodes.clear()
   p.edits = []
   for (const [gid, [dfx, dfy]] of p.transforms) {
-    writeTransform({ kind: 'transform', panelId, gid, dfx, dfy })
+    writeTransform({ kind: 'transform', panelId, gid, dfx, dfy, scale: p.scales.get(gid) })
   }
   for (const st of p.styles.values()) {
     writeStyle({ kind: 'style', panelId, gid: st.gid, role: st.role, prop: st.prop, value: st.value })

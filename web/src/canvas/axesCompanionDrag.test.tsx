@@ -13,7 +13,9 @@
  *   3. manifest 点名的随行 axes（色条 / 孪生轴）跟着走，且预览期就跟手；
  *   4. 子图被钳在画布内时，随行元素用**净位移**，一组东西不被拆散；
  *   5. 全部进同一次 commit：一条撤销、一次权威渲染；
- *   6. 设置关掉后只动子图本身。
+ *   6. 设置关掉后只动子图本身；
+ *   7. 多选整组平移同样带上它们（2026-09-25 用户报：挪过「(a)」后再拖子图，
+ *      标签有时不跟——多选拖动那条路以前只写选中的几条 position）。
  */
 import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -28,7 +30,8 @@ import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { flushPreviewFrame, resetPreview } from '@/store/svgPreviewStore'
 import { emptyProject, type PanelObject } from '@/types/document'
-import { startAxesDrag } from './interactions'
+import { alignEntries } from '@/lib/elementGeom'
+import { startAxesDrag, startElementGroupMove } from './interactions'
 
 const engineRender = vi.fn()
 
@@ -369,5 +372,62 @@ describe('缩放子图不联动', () => {
     expect(overrideOf('axes_0', 'position')![2]).toBeGreaterThan(AXES_POS[2])
     expect(overrideOf('axes_1', 'position')).toBeUndefined()
     expect(overrideOf('axes_0.title', 'pos_frac')).toEqual([0.4, 0.09])
+  })
+})
+
+/* ============================ 多选整组平移同样联动 ============================ */
+
+describe('多选整组平移：选区里的子图同样带上随行元素', () => {
+  const groupDrag = (gids: string[]) => {
+    const entries = alignEntries(livePanel(), manifest, gids)
+    startElementGroupMove(down(0, 0), livePanel(), entries, layout)
+  }
+
+  it('被摆过的标签与色条跟着走，位移与整组一致；一条撤销、一次渲染', async () => {
+    await setup([{ gid: 'axes_0.title', prop: 'pos_frac', value: [0.4, 0.09] }])
+    groupDrag(['axes_0', 'axes_0.xlabel'])
+    dragTo(40, 20)
+    // 色条是平级的另一个 <g>，预览期就得单独跟手
+    expect(tf('axes_1')).toMatch(/^translate\(/)
+    fire('pointerup', 40, 20)
+
+    const [dfx, dfy] = [dfxOf(40), dfyOf(20)]
+    expect(overrideOf('axes_0.title', 'pos_frac')![0]).toBeCloseTo(0.4 + dfx, 4)
+    expect(overrideOf('axes_0.title', 'pos_frac')![1]).toBeCloseTo(0.09 + dfy, 4)
+    expect(overrideOf('axes_1', 'position')![0]).toBeCloseTo(CBAR_POS[0] + dfx, 4)
+    expect(overrideOf('axes_1', 'position')![1]).toBeCloseTo(CBAR_POS[1] - dfy, 4)
+    expect(engineRender).toHaveBeenCalledTimes(1)
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+
+  it('标签自己也在选区里：只按整组位移写一次，不叠加两次', async () => {
+    await setup([{ gid: 'axes_0.title', prop: 'pos_frac', value: [0.4, 0.09] }])
+    groupDrag(['axes_0', 'axes_0.title'])
+    dragTo(40, 20)
+    fire('pointerup', 40, 20)
+
+    expect(overrideOf('axes_0.title', 'pos_frac')![0]).toBeCloseTo(0.4 + dfxOf(40), 4)
+    expect(livePanel().overrides.filter((o) => o.gid === 'axes_0.title')).toHaveLength(1)
+  })
+
+  it('色条自己也在选区里：它那条 position 只写一次', async () => {
+    await setup()
+    groupDrag(['axes_0', 'axes_1'])
+    dragTo(40, 20)
+    fire('pointerup', 40, 20)
+
+    expect(overrideOf('axes_1', 'position')![0]).toBeCloseTo(CBAR_POS[0] + dfxOf(40), 4)
+    expect(livePanel().overrides.filter((o) => o.gid === 'axes_1')).toHaveLength(1)
+  })
+
+  it('设置关掉联动：只动选中的那几个', async () => {
+    await setup([{ gid: 'axes_0.title', prop: 'pos_frac', value: [0.4, 0.09] }])
+    useUiStore.setState({ dragAxesWithCompanions: false })
+    groupDrag(['axes_0', 'axes_0.xlabel'])
+    dragTo(40, 20)
+    fire('pointerup', 40, 20)
+
+    expect(overrideOf('axes_0.title', 'pos_frac')).toEqual([0.4, 0.09])
+    expect(overrideOf('axes_1', 'position')).toBeUndefined()
   })
 })

@@ -3962,6 +3962,7 @@ export default interface Resources {
       "restoreNativeSize": "恢复原始尺寸",
       "rotate": "旋转 {{deg}}°",
       "rotateReset": "取消旋转",
+      "scaleLegend": "缩放图例",
       "seedBaked": "载入文件中的基线",
       "setOpacity": "修改不透明度",
       "setPageSize": "修改画布尺寸",

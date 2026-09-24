@@ -46,6 +46,22 @@
   `QuickEdit` / `ElementBar`）与多选路径都给外侧带；多选时锚点**全体一致才给**
   （与 `sharedMarkerShape` 同一条纪律）。引擎不发 `loc_anchor` 时整带不出现，
   理由由 `UnsupportedProps` 按 reason code 说出口。
+* **整体缩放 = 拖图例的四个角**（2026-09-25 用户反馈，`canvas/interactions.startLegendScale`
+  + `lib/legendScale`）。图例盒尺寸 = 文字字号 × 一组以 `Legend._fontsize` 为单位的构建期
+  参数，而引擎的图例 `fontsize` override 只改每条文字（`legendmodel._set_legend_fontsize`），
+  `_fontsize` 不动——**只写字号不等于整体缩放**（字变大、边距和示意线原样）。所以倍数 s
+  落成：`fontsize`、有标题时的 `title_fontsize`、`borderpad` / `labelspacing` /
+  `handlelength` / `handletextpad` / `columnspacing` 各乘 s，再加一条 `loc_frac`
+  把对角钉住（`loc_frac` 是图例框左下角；不写的话会绕 `loc` 预设那个角缩放）。全是已有的、
+  可写回可重放的属性，引擎不加新属性。不缩的：`ncol`、标记大小（matplotlib 自己改字号也
+  不缩）、边框线宽。倍数取光标在对角线方向的投影（内容像素空间），夹进每条属性的
+  min / max 与 [0.25, 4]；基准优先取文档里尚未渲染回来的 override。一次 = 一条撤销 =
+  一次渲染。**做** SVG 缩放预览（`svgPreviewStore.previewScale`，绕不动点的 `matrix`）：
+  与子图缩放不同，这里字号与所有间距同乘一个倍数，成图几乎就是线性缩放（实测宽高
+  1.16 : 1.16，预览 1.2 : 1.2——只差标记与示意高度）。
+  已知限制（不是这次引入的）：manifest 在**文档 dpi（100）的 Agg** 上量图例框，与画布
+  上的矢量 SVG 差得不小（用户那张图的 6.9pt 图例：高 0.135 vs 0.121），锚在预设位置的
+  图例第一次被拖 / 缩放写成 `loc_frac` 时会跳几个像素（拖动本来就有）。
 * 看护：`inspector/legendCard.test.tsx`、`inspector/legendSpacingCard.test.tsx`、
-  `inspector/controls/pickers.test.tsx`；Python 侧 `tests/test_legend_binding.py`、
+  `inspector/controls/pickers.test.tsx`、`canvas/inFigureDrag.test.tsx`（整体缩放）；Python 侧 `tests/test_legend_binding.py`、
   `tests/test_legend_anchor.py`。

@@ -34,6 +34,7 @@ import {
   startCropDrag,
   startEndpointDrag,
   startGroupResize,
+  startLegendScale,
   startGuideDrag,
   startResizeDrag,
 } from './interactions'
@@ -788,6 +789,14 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const groupBox = group ? toBox(preview?.group ?? group.box) : null
   // 单选子图仍是它自己的八个手柄
   const axesBox = !groupBox && primary?.target.resizable ? primary.box : null
+  // 单选图例 → 四个角手柄，整体缩放（对角不动，见 startLegendScale）
+  const legendBox =
+    !groupBox &&
+    selectedGids.length === 1 &&
+    primary?.target.role === 'legend' &&
+    primary.target.drag_prop === 'loc_frac'
+      ? primary.box
+      : null
   // 单选图内独立箭头 → 两个端点手柄（画布原生箭头的同款交互）
   const arrowEl = !groupBox && primary?.target.arrow_endpoints ? primary.target : null
   const arrowPts = arrowEl ? arrowEndpointsOf(panel, arrowEl) : null
@@ -902,6 +911,18 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
             />
           ))}
 
+        {legendBox &&
+          primary &&
+          LEGEND_CORNERS.map((dir) => (
+            <Handle
+              key={dir}
+              box={legendBox}
+              dir={dir}
+              data-legend-scale={dir}
+              onPointerDown={(e) => startLegendScale(e, panel, primary.target, layout, dir)}
+            />
+          ))}
+
         {arrowEl && arrowPts && (
           <>
             {arrowPreview?.gid === arrowEl.gid && (
@@ -952,19 +973,25 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   )
 }
 
+/** 图例整体缩放只给四个角：等比缩放，边上的手柄没有意义 */
+const LEGEND_CORNERS = ['nw', 'ne', 'sw', 'se'] as const
+
 /** 图内元素 / 组包围框的缩放手柄 */
 function Handle({
   box,
   dir,
   onPointerDown,
+  'data-legend-scale': legendScale,
 }: {
   box: Box
   dir: ResizeDir
   onPointerDown: (e: React.PointerEvent) => void
+  'data-legend-scale'?: string
 }) {
   const p = handlePos(box, dir)
   return (
     <rect
+      data-legend-scale={legendScale}
       x={p.x - HANDLE / 2}
       y={p.y - HANDLE / 2}
       width={HANDLE}
