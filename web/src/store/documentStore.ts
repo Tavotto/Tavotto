@@ -74,6 +74,23 @@ export interface CanvasSession {
 
 type Recipe = (draft: FigureDocument) => void
 
+/**
+ * 事务收尾前的派生修正：`endTxn` 在压缩成一条历史**之前**依次跑一遍，改动并进这条
+ * 事务。给「手势进行中不许写、手势结束时必须和手势一起进历史」的派生值用——
+ * 典型是渲染回来的原生图幅（`useEngineSync`）：手势中途写进去，缩放 / 裁剪的下一帧
+ * 按按下时抓的旧几何写绝对尺寸，会把它盖掉；手势结束后再 silent 写，又不在这条
+ * 历史里，撤销 / 重做就不自洽。丢弃的事务不跑（回滚后由派生方自己 silent 补）。
+ */
+const txnFinalizers = new Set<Recipe>()
+
+/** 登记一个事务收尾修正，返回注销函数。 */
+export function registerTxnFinalizer(fn: Recipe): () => void {
+  txnFinalizers.add(fn)
+  return () => {
+    txnFinalizers.delete(fn)
+  }
+}
+
 interface DocumentState {
   /** 当前激活画布的活跃编辑态（schema 2 形状；画布编辑代码只认它） */
   doc: FigureDocument
@@ -336,9 +353,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   endTxn: (opts) => {
-    const state = get()
-    const txn = state.txn
+    let state = get()
+    let txn = state.txn
     if (!txn) return
+    if (!opts?.discard && txn.patches.length && txnFinalizers.size) {
+      for (const fn of txnFinalizers) {
+        const [next, patches, inverse] = produceWithPatches(state.doc, fn)
+        if (!patches.length) continue
+        txn = history.accumulate(txn, patches, inverse)
+        set({ doc: next, txn })
+        state = get()
+      }
+    }
     if (opts?.discard || !txn.patches.length) {
       // 丢弃：把反向补丁打回去，恢复到事务开始前
       set({ doc: history.rollback(state.doc, txn), txn: null })

@@ -11,6 +11,9 @@ import { useDocumentStore } from '@/store/documentStore'
 import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 import type { Manifest, PanelInfo } from '@/lib/api'
 import { panelScale } from '@/lib/preflight'
+import { startCropDrag, startResizeDrag } from '@/canvas/interactions'
+import { mmToWorld, useViewportStore } from '@/store/viewportStore'
+import { useUiStore } from '@/store/uiStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -621,6 +624,122 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       // 回滚只还原事务记下的东西：以前 w 回到 40、nativeW 停在 50 → 0.8
       expect(panelScale(current())).toBeCloseTo(1, 6)
       expect([current().nativeW, current().nativeH]).toEqual([50, 30])
+      await unmount()
+    })
+  })
+
+  describe('渲染到达之后又有拖动帧：手势按按下时的几何写尺寸，同步留到收尾', () => {
+    /** 屏幕像素指针桩（zoom=1、pan=0：1 mm = mmToWorld(1) px） */
+    const down = () =>
+      ({ clientX: 0, clientY: 0, button: 0, stopPropagation() {} }) as unknown as React.PointerEvent
+    const fire = (type: 'pointermove' | 'pointerup', mm: number) =>
+      window.dispatchEvent(new MouseEvent(type, { clientX: mmToWorld(mm), clientY: 0, bubbles: true }))
+    const current = () => useDocumentStore.getState().doc.objects[0] as PanelObject
+    const dims = (o: PanelObject) => [o.w, o.h, o.nativeW, o.nativeH]
+    /** 横纵两个方向各自的缩放比（未旋转）：页面尺寸 ÷ 取景比例 ÷ 原生图幅 */
+    const scales = (o: PanelObject) => {
+      const c = o.crop ?? { x: 0, y: 0, w: 1, h: 1 }
+      return [o.w / c.w / o.nativeW, o.h / c.h / o.nativeH]
+    }
+
+    /**
+     * 40×30 的 100% 面板拖 e 手柄左移 10 mm → 渲染回来 40×30 变 50×30 → 再拖一帧到
+     * 左移 8 mm → 松手。返回卸载函数。
+     */
+    async function dragAcrossRender(docId: string, start: () => void) {
+      globalThis.IS_REACT_ACT_ENVIRONMENT = true
+      useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0, viewW: 900, viewH: 700 })
+      useUiStore.setState({ snapEnabled: false })
+      const p = { ...panel('pg', 'Fig1.pdf', 0), w: 40, h: 30, script: null } as PanelObject
+      await useDocumentStore.getState().switchDocument(emptyProject(), docId)
+      useDocumentStore.getState().commit(literal('准备'), (d) => {
+        d.objects = [p]
+      })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+      const Probe = () => {
+        useEngineSync()
+        return null
+      }
+      await act(async () => {
+        root.render(createElement(Probe))
+      })
+      await act(async () => {
+        start()
+        fire('pointermove', -10)
+      })
+      await act(async () => {
+        seedExactRender(p, { stem: 'Fig1', size_mm: [50, 30], elements: [] })
+      })
+      // 渲染回来之后用户还在拖：这一帧按按下时抓的 40×30 写绝对尺寸
+      await act(async () => {
+        fire('pointermove', -8)
+      })
+      await act(async () => {
+        fire('pointerup', -8)
+      })
+      return async () => {
+        await act(async () => {
+          root.unmount()
+        })
+        container.remove()
+      }
+    }
+
+    async function undoRedoKeepsEnd() {
+      const done = current()
+      await act(async () => {
+        useDocumentStore.getState().undo()
+      })
+      // 撤到手势之前：旧图幅上的 100%，同步器随即补到新图幅，仍是 100%
+      expect(scales(current())).toEqual([1, 1])
+      await act(async () => {
+        useDocumentStore.getState().redo()
+      })
+      expect(dims(current())).toEqual(dims(done))
+      expect(current().crop).toEqual(done.crop)
+    }
+
+    it('缩放：松手后横纵缩放比一致（拖到的 80% × 100%），撤销 / 重做回到松手那一刻', async () => {
+      const unmount = await dragAcrossRender('d_size_drag_resize', () =>
+        startResizeDrag(down(), 'pg', 'e'),
+      )
+      // 以前：渲染一到就并入事务（37.5 宽），下一帧按旧几何写回 32，nativeW 已是 50
+      // → 横向 0.64、纵向 1，而且同步从此跳过
+      const o = current()
+      expect(o.nativeW).toBe(50)
+      expect(scales(o)[0]).toBeCloseTo(0.8, 6)
+      expect(scales(o)[1]).toBeCloseTo(1, 6)
+      expect(useDocumentStore.getState().past.length).toBe(2)
+      await undoRedoKeepsEnd()
+      await unmount()
+    })
+
+    it('按下没拖就松手（空事务，文档引用不变）：推迟的同步照样补上', async () => {
+      const unmount = await dragAcrossRender('d_size_drag_noop', () => {
+        useDocumentStore.getState().beginTxn(literal('缩放'))
+      })
+      // 桩里没有指针监听，两次 pointermove 都落空；事务是空的，结束时不换 doc
+      await act(async () => {
+        useDocumentStore.getState().endTxn()
+      })
+      expect(dims(current())).toEqual([50, 30, 50, 30])
+      await unmount()
+    })
+
+    it('裁剪：松手后仍是 100%，撤销 / 重做回到松手那一刻', async () => {
+      const unmount = await dragAcrossRender('d_size_drag_crop', () =>
+        startCropDrag(down(), 'pg', 'e'),
+      )
+      // 以前：整图宽 fullW 在按下时按 40 抓死，下一帧写 w = 40 × 0.8 = 32，
+      // 而 nativeW 已是 50 → 横向 0.8、纵向 1
+      const o = current()
+      expect(o.crop?.w).toBeCloseTo(0.8, 6)
+      expect(o.nativeW).toBe(50)
+      expect(scales(o)[0]).toBeCloseTo(1, 6)
+      expect(scales(o)[1]).toBeCloseTo(1, 6)
+      await undoRedoKeepsEnd()
       await unmount()
     })
   })
