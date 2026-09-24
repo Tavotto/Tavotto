@@ -253,15 +253,13 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   配置目录里的 `mcp-runtime/venv` 却原样留着上一版引擎，import 不过新桥就落到降级。
   这一格单独报 `managed_runtime_stale`（不是 `tavotto_missing`——恢复步骤不许把人支去
   另装 pipx），并且 `main()` 在降级前 **spawn 一个脱离本进程的 `--provision`**（不在
-  启动路径上同步跑 pip：`startup_timeout_sec` 只有 30 s）。锁 `mcp-runtime/provision.lock`
-  用 `O_CREAT|O_EXCL` **原子地**拿（几个会话同时起只有一个赢家），超过 20 分钟视为上一次已死；
-  接管过期锁时锁路径**全程不空**：不许按路径删（会删掉别人刚建的新锁），也不许先挪走
-  再核对（空档里第三个会话能独占创建）——先 `O_EXCL` 建绑定这把旧锁的一次性标记
-  （同一把旧锁只一个接管者），再核对，再 `os.replace` 原子换上自己的令牌；
-  后台 `--provision` 凭环境里的令牌只删**自己那把**锁（手动跑的不删），活着时每 60 s
-  续一次锁（pip 可能跑过 20 分钟；续锁门槛是过期线本身，暂停后醒来也接着续）；删锁
-  只在锁离过期还差 5 分钟以上时做，否则留给接管——「读到自己的令牌 → 删」之间不能
-  碰到接班者换上的新锁；刚拿到、还没交出去的锁出错时直接删，不再 open 核令牌（EMFILE）；
+  启动路径上同步跑 pip：`startup_timeout_sec` 只有 30 s）。互斥用 `mcp-runtime/provision.lock`
+  上的**内核文件锁**（POSIX `fcntl.flock` / Windows `msvcrt.locking`），**不许**退回「锁文件
+  + mtime + 令牌」：那套在纯文件语义下「核对所有权再删 / 续 / 接管」永远不原子，#548 的
+  Codex 评审一轮轮挖出新的竞态；内核锁随持有进程退出（含崩溃、被杀）自动释放，没有
+  过期锁可言。**改环境的一方拿锁**：`--provision`（后台的与手动 / `tavotto codex install`
+  跑的同一条路）动 venv 之前非阻塞地拿，拿不到就不动、报 `provision_in_progress`；
+  启动器只探一下锁（拿到即放）省掉明显多余的 spawn，多起一个子进程也只会有一个真跑 pip。
   `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 关掉。本次会话仍是降级、payload 带 `auto_provision`，
   文案说「后台在装、装完新开会话」。**只管「在、却 import 不过」**：能 import 但版本旧的
   自管环境不在这里重装（它此刻正被本会话用着）。看护 `tests/test_mcp_resolver.py` 末节。

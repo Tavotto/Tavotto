@@ -666,12 +666,64 @@ def managed_runtime_stale(resolution: dict) -> bool:
 
 #: 关掉启动时的后台自动重装（测试、或不想让启动器联网的用户）。
 NO_AUTO_PROVISION_ENV = "TAVOTTO_MCP_NO_AUTO_PROVISION"
-#: 后台重装的锁：同一时间只跑一个 pip；锁超过这个岁数视为上一次已经死掉。
-_PROVISION_LOCK_MAX_AGE = 20 * 60
 
 
 def _provision_lock_path() -> str:
     return os.path.join(managed_runtime_dir(), "provision.lock")
+
+
+def _try_lock_fd(fd: int) -> bool:
+    """在 fd 上非阻塞地拿**内核**排他锁：拿到 True，别人持有 False。
+
+    用操作系统的文件锁而不是「锁文件 + mtime + 令牌」（#548 Codex 评审，多轮）：
+    持有者无论正常结束、崩溃还是被杀，内核都在它退出时释放锁——没有「过期锁」，
+    也就不需要接管、心跳、令牌，那一整套「核对所有权再改」在纯文件语义下永远
+    不是原子的。POSIX 用 `flock`（按打开的文件描述，同进程两个 fd 也互斥），
+    Windows 用 `msvcrt.locking` 锁第 0 字节（文件为空也能锁）。"""
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+    import fcntl
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _acquire_provision_lock() -> "int | None":
+    """拿重装锁：拿到回持锁的 fd（关掉它 / 进程退出即释放），别人持有回 None。
+    打不开锁文件（EMFILE、只读盘……）照常抛 OSError，由调用方报出来。"""
+    os.makedirs(managed_runtime_dir(), exist_ok=True)
+    fd = os.open(_provision_lock_path(), os.O_RDWR | os.O_CREAT, 0o644)
+    if _try_lock_fd(fd):
+        return fd
+    os.close(fd)
+    return None
+
+
+def _release_provision_lock(fd: "int | None") -> None:
+    if fd is None:
+        return
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+    try:
+        os.close(fd)  # POSIX 上关 fd 即释放 flock
+    except OSError:
+        pass
 
 
 def kick_background_provision() -> dict:
@@ -683,7 +735,9 @@ def kick_background_provision() -> dict:
     子进程，本次会话照常以降级模式回话、把「正在后台升级」说出口；装完下一次
     新会话就是正常模式。
 
-    锁文件防并发（每开一次会话都会走到这里）；`--provision` 结束时删锁。
+    这里只**探一下**锁（拿到立刻放）来省掉明显多余的 spawn；真正的互斥在子进程
+    `--provision` 里——它改环境之前自己拿内核锁，拿不到就不动环境。所以几个会话
+    同时起、各自探到空闲而各起一个子进程也无妨：只有一个会真的跑 pip。
     返回 `{"started": bool, "reason": str, "log": path}`，进 health 与降级 payload。
     """
     root = managed_runtime_dir()
@@ -691,16 +745,15 @@ def kick_background_provision() -> dict:
     if os.environ.get(NO_AUTO_PROVISION_ENV) == "1":
         return {"started": False, "reason": "disabled", "log": log}
     try:
-        os.makedirs(root, exist_ok=True)
-        token = _acquire_provision_lock()
-        if token is None:
-            return {"started": False, "reason": "already_running", "log": log}
+        probe = _acquire_provision_lock()
     except OSError as exc:
         return {"started": False, "reason": f"cannot_write: {exc}", "log": log}
+    if probe is None:
+        return {"started": False, "reason": "already_running", "log": log}
+    _release_provision_lock(probe)
     try:
-        out = open(log, "w", encoding="utf-8")
+        out = open(log, "a", encoding="utf-8")
     except OSError as exc:
-        _drop_fresh_provision_lock()  # 没起子进程：锁不放就白挡后面的会话 20 分钟
         return {"started": False, "reason": f"cannot_write: {exc}", "log": log}
     kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": out, "stderr": out}
     if os.name == "nt":
@@ -711,184 +764,15 @@ def kick_background_provision() -> dict:
         kwargs["start_new_session"] = True  # host 关掉本 server 时不连带杀掉 pip
     env = dict(os.environ)
     env.pop(_EXECED_ENV, None)
-    env[_PROVISION_LOCK_TOKEN_ENV] = token  # 子进程凭它认领并释放这把锁
     try:
         subprocess.Popen(
             [sys.executable, os.path.abspath(__file__), "--provision"], env=env, **kwargs
         )
     except OSError as exc:
-        _drop_fresh_provision_lock()
         return {"started": False, "reason": f"spawn_failed: {exc}", "log": log}
     finally:
         out.close()
     return {"started": True, "reason": "stale_managed_runtime", "log": log}
-
-
-#: 后台 `--provision` 从环境里拿到的锁令牌：只有持令牌的那一次才删锁。
-_PROVISION_LOCK_TOKEN_ENV = "TAVOTTO_MCP_PROVISION_LOCK"
-
-
-def _acquire_provision_lock() -> "str | None":
-    """**原子地**拿锁（`O_CREAT | O_EXCL`），拿到回令牌，已被别人持有回 None。
-
-    插件升级后同时开的几个会话会几乎同时走到这里；「先看在不在、再 open 写」两步之间
-    两个进程都能看到「不在」，然后各起一个 pip 改同一个 venv——并发 pip 能把环境改坏，
-    正好造出这条路要修的零工具状态（#548 Codex 评审 P2）。独占创建只有一个赢家。
-    过期锁（上一次死掉的）走 `_take_over_stale_lock`，锁路径全程不空。
-    """
-    lock = _provision_lock_path()
-    token = f"{os.getpid()}-{os.urandom(8).hex()}"
-    for _attempt in range(2):
-        try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        except FileExistsError:
-            seen = _read_lock(lock)
-            if seen is None:
-                continue  # 刚被持有者释放：再独占创建一次
-            if time.time() - seen[1] < _PROVISION_LOCK_MAX_AGE:
-                return None
-            return _take_over_stale_lock(lock, seen, token)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(token)
-        return token
-    return None
-
-
-def _read_lock(path: str) -> "tuple[str, float] | None":
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            held = fh.read().strip()
-        return held, os.path.getmtime(path)
-    except OSError:
-        return None
-
-
-def _take_over_stale_lock(lock: str, seen: "tuple[str, float]", token: str) -> "str | None":
-    """接管**这一把**过期锁，成功回令牌；别人已在接管 / 锁已换代回 None。
-
-    所有权安全（#548 Codex 评审 P2，两轮）：不能「量完岁数按路径删」（会删掉别人刚建的
-    新锁），也不能先把锁挪走再核对（挪走的那一刻路径是空的，第三个会话能独占创建成功）。
-    这里锁路径**全程被占着**：
-    1. 用 `O_EXCL` 建一个**绑定到这把旧锁**（内容 + mtime）的一次性标记——同一把旧锁
-       只有一个接管者；标记留着不删，迟到的会话量到的还是这把旧锁时也建不成。
-    2. 再读一次锁，确认还是量过的那把（期间换代了就放弃）。
-    3. `os.replace` 原子地把自己的令牌换上去：路径从旧锁直接变成新锁，中间没有空档。
-    """
-    directory = os.path.dirname(lock)
-    _sweep_takeover_markers(directory)
-    ident = "".join(c for c in seen[0] if c.isalnum() or c == "-")[:64]
-    marker = f"{lock}.takeover-{ident}-{int(seen[1])}"
-    try:
-        os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644))
-    except OSError:
-        return None  # 这把旧锁已有人在接管
-    if _read_lock(lock) != seen:
-        return None
-    staged = f"{lock}.new-{token}"
-    try:
-        with open(staged, "w", encoding="utf-8") as fh:
-            fh.write(token)
-        os.replace(staged, lock)
-    except OSError:
-        try:
-            os.remove(staged)
-        except OSError:
-            pass
-        return None
-    return token
-
-
-def _sweep_takeover_markers(directory: str) -> None:
-    """接管标记只需活过「量到旧锁 → 建标记」那一瞬；远超锁寿命的才清，尽力而为。"""
-    try:
-        names = os.listdir(directory)
-    except OSError:
-        return
-    cutoff = time.time() - 2 * _PROVISION_LOCK_MAX_AGE
-    for name in names:
-        if name.startswith("provision.lock.takeover-"):
-            path = os.path.join(directory, name)
-            try:
-                if os.path.getmtime(path) < cutoff:
-                    os.remove(path)
-            except OSError:
-                pass
-
-
-#: 后台 `--provision` 活着时多久续一次锁的 mtime；远小于 `_PROVISION_LOCK_MAX_AGE`。
-_PROVISION_HEARTBEAT = 60
-#: 持有者只在锁离「可被接管」还差这么远时才续 / 删；过了这条线就不碰，交给接管。
-_PROVISION_RELEASE_MARGIN = 5 * 60
-
-
-def _drop_fresh_provision_lock() -> None:
-    """刚拿到、还没交给子进程的锁出错时直接删：**不读文件**核令牌（#548 评审 P2）。
-
-    日志打不开往往是进程级 EMFILE / ENFILE，这时再 open 锁文件核令牌同样失败，锁就
-    留下来白挡 20 分钟。这把锁是本进程几微秒前独占创建的，离可被接管（满 20 分钟）
-    还远，按路径删碰不到别人的锁；`os.remove` 也不占文件描述符。"""
-    try:
-        os.remove(_provision_lock_path())
-    except OSError:
-        pass
-
-
-def _own_live_lock(token: "str | None", margin: "float | None" = None) -> bool:
-    """锁是**我这把**、且离过期还远：只有这时续锁 / 删锁才不会碰到接班者的新锁。
-
-    接管只对岁数 ≥ `_PROVISION_LOCK_MAX_AGE` 的锁发生；持有者只在岁数 <
-    `MAX_AGE - MARGIN` 时动手，两者之间隔着几分钟，而「读 → 删」只隔一次系统调用
-    （#548 Codex 评审 P2）。活着的持有者靠心跳让锁永远离过期很远，所以接管只落在
-    真死掉的持有者身上。"""
-    if not token:
-        return False
-    seen = _read_lock(_provision_lock_path())
-    if seen is None or seen[0] != token:
-        return False
-    if margin is None:
-        margin = _PROVISION_RELEASE_MARGIN
-    return time.time() - seen[1] < _PROVISION_LOCK_MAX_AGE - margin
-
-
-def _release_provision_lock(token: "str | None") -> None:
-    """只删**自己那把、仍新鲜的**锁。手动跑的 `--provision` 没有令牌，不许把后台那一次
-    正持有的锁删掉；自己的锁已老到可能被接管（例如整机睡眠后醒来），也不删——
-    留给下一个会话按过期锁接管，而不是冒险删掉接班者刚换上的新锁。"""
-    if _own_live_lock(token):
-        try:
-            os.remove(_provision_lock_path())
-        except OSError:
-            pass
-
-
-def _heartbeat_provision_lock(token: "str | None") -> None:
-    """续锁：pip 联网装科学栈可能超过 20 分钟，不续就会被当成死锁接管、再起一个 pip。
-
-    续锁的门槛是**真正的过期线**，不是删锁用的安全线（#548 评审 P2）：进程 / 整机
-    暂停 15–20 分钟后醒来，锁仍是自己的、也还没到可被接管的岁数，必须接着续——
-    否则此后每次心跳都放弃，满 20 分钟就被接管、与仍活着的自己并发跑 pip。
-    接管只对岁数 ≥ 过期线的锁发生，续锁只对 < 过期线的锁发生，两者不重叠。"""
-    if _own_live_lock(token, margin=0):
-        try:
-            os.utime(_provision_lock_path(), None)
-        except OSError:
-            pass
-
-
-def _start_provision_heartbeat(token: "str | None"):
-    """后台线程每 `_PROVISION_HEARTBEAT` 秒续一次锁；返回停止用的 Event（没令牌回 None）。"""
-    if not token:
-        return None
-    import threading
-
-    stop = threading.Event()
-
-    def beat():
-        while not stop.wait(_PROVISION_HEARTBEAT):
-            _heartbeat_provision_lock(token)
-
-    threading.Thread(target=beat, name="tavotto-provision-heartbeat", daemon=True).start()
-    return stop
 
 
 # ------------------------------- 降级 server --------------------------------
@@ -1379,15 +1263,28 @@ def main() -> int:
                         )
                     )
                     return 2
-        lock_token = os.environ.get(_PROVISION_LOCK_TOKEN_ENV)
-        heartbeat = _start_provision_heartbeat(lock_token)
+        # 改环境之前先拿内核锁：后台那次与手动 / `tavotto codex install` 跑的这次
+        # 同一时间只许一个动 venv（#548 评审 P2）；拿不到就不动，明确报出来。
+        try:
+            lock = _acquire_provision_lock()
+        except OSError as exc:
+            lock, busy = None, str(exc)
+        else:
+            busy = None if lock is not None else "running"
+        if lock is None:
+            report = {
+                "ok": False,
+                "code": "provision_in_progress" if busy == "running" else "provision_lock_failed",
+                "error": "另一次重装正在进行（后台自动修复或另一条 --provision），等它结束后再试"
+                if busy == "running"
+                else f"拿不到重装锁：{busy}",
+            }
+            print(json.dumps(report, ensure_ascii=False))
+            return 3
         try:
             report, rc = provision(values["--from"], python_base=values["--python"])
         finally:
-            if heartbeat is not None:
-                heartbeat.set()
-            # 后台那一次起的锁：凭令牌只删自己的；手动跑时没有令牌，什么都不删
-            _release_provision_lock(lock_token)
+            _release_provision_lock(lock)
         print(json.dumps(report, ensure_ascii=False))
         return rc
 

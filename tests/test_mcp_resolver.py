@@ -16,7 +16,6 @@ import io
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -682,37 +681,6 @@ def test_an_explicit_override_still_wins_over_a_stale_managed_env(tmp_path):
     assert code == "engine_unavailable"
 
 
-def test_background_provision_spawns_once_detached_and_respects_the_lock(tmp_path, fake_popen):
-    """主语是**起了几个 pip**：每开一次会话都会走到这里，锁挡住第二个；进程要脱离本 server
-    （host 关掉 server 不连带杀掉装了一半的 pip），命令就是本文件的 `--provision`。"""
-    first = launcher.kick_background_provision()
-    assert first["started"] is True
-    assert len(fake_popen) == 1
-    call = fake_popen[0]
-    assert call["argv"][1:] == [os.path.abspath(launcher.__file__), "--provision"]
-    if os.name == "nt":
-        assert call["creationflags"]
-    else:
-        assert call["start_new_session"] is True
-    assert launcher._EXECED_ENV not in call["env"], "交棒标记传下去会让 --provision 以外的路径走偏"
-    assert os.path.isfile(launcher._provision_lock_path())
-
-    second = launcher.kick_background_provision()
-    assert second == {**second, "started": False, "reason": "already_running"}
-    assert len(fake_popen) == 1
-
-
-def test_a_stale_lock_does_not_block_forever(tmp_path, fake_popen):
-    """上一次后台重装死掉留下的锁：过了岁数就当它不存在，否则用户永远卡在降级。"""
-    lock = Path(launcher._provision_lock_path())
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("1", encoding="utf-8")
-    old = lock.stat().st_mtime - launcher._PROVISION_LOCK_MAX_AGE - 5
-    os.utime(lock, (old, old))
-    assert launcher.kick_background_provision()["started"] is True
-    assert len(fake_popen) == 1
-
-
 def test_background_provision_can_be_switched_off(tmp_path, fake_popen, monkeypatch):
     monkeypatch.setenv(launcher.NO_AUTO_PROVISION_ENV, "1")
     out = launcher.kick_background_provision()
@@ -762,239 +730,139 @@ def test_startup_with_a_stale_managed_env_kicks_the_upgrade_and_says_so(
     assert len(fake_popen) == 1
 
 
-def test_provision_releases_only_the_lock_it_was_given(tmp_path, monkeypatch, capsys):
-    """后台那次 `--provision` 结束（成败都算）凭令牌删**自己的**锁；手动跑的
-    `--provision`（没有令牌）或令牌对不上的，不许删别人正持有的锁。"""
-    lock = Path(launcher._provision_lock_path())
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(launcher, "provision", lambda spec, python_base=None: ({"ok": False}, 1))
-    monkeypatch.setattr(sys, "argv", ["server.py", "--provision"])
-
-    lock.write_text("owner-token", encoding="utf-8")
-    monkeypatch.delenv(launcher._PROVISION_LOCK_TOKEN_ENV, raising=False)
-    assert launcher.main() == 1
-    assert lock.exists(), "手动 --provision 删掉了后台那一次的锁"
-
-    monkeypatch.setenv(launcher._PROVISION_LOCK_TOKEN_ENV, "someone-else")
-    assert launcher.main() == 1
-    assert lock.exists(), "令牌对不上也删了锁"
-
-    monkeypatch.setenv(launcher._PROVISION_LOCK_TOKEN_ENV, "owner-token")
-    assert launcher.main() == 1
-    assert not lock.exists()
-
-
-def test_concurrent_startups_spawn_exactly_one_provision(tmp_path, fake_popen):
-    """插件升级后几个会话同时起（#548 评审 P2）：锁必须是原子的，只有一个 pip。
-
-    主语是**起了几个 pip**。八个线程在同一道栅栏后同时抢；「先看再写」的锁在这里会
-    放进不止一个。"""
-    import threading
-
-    gate = threading.Barrier(8)
-    results = []
-
-    def worker():
-        gate.wait()
-        results.append(launcher.kick_background_provision())
-
-    threads = [threading.Thread(target=worker) for _ in range(8)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert sum(r["started"] for r in results) == 1, results
-    assert len(fake_popen) == 1
-    assert {r["reason"] for r in results if not r["started"]} == {"already_running"}
-    token = fake_popen[0]["env"][launcher._PROVISION_LOCK_TOKEN_ENV]
-    assert Path(launcher._provision_lock_path()).read_text(encoding="utf-8") == token
-
-
-def _stale_lock(content: str = "dead-token") -> Path:
-    lock = Path(launcher._provision_lock_path())
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text(content, encoding="utf-8")
-    old = lock.stat().st_mtime - launcher._PROVISION_LOCK_MAX_AGE - 5
-    os.utime(lock, (old, old))
-    return lock
-
-
-def test_stale_takeover_never_replaces_a_lock_someone_else_just_took(
-    tmp_path, fake_popen, monkeypatch
+def test_background_provision_spawns_detached_and_skips_while_a_provision_holds_the_lock(
+    tmp_path, fake_popen
 ):
-    """#548 评审 P2：量完「过期」到动手之间，另一个会话已接管并建了**新锁**。
+    """主语是**起了几个 pip**：一次 `--provision` 正持有重装锁时不再起第二个；进程要脱离
+    本 server（host 关掉 server 不连带杀掉装了一半的 pip），命令就是本文件的 `--provision`。"""
+    held = launcher._acquire_provision_lock()
+    assert held is not None
+    try:
+        busy = launcher.kick_background_provision()
+        assert busy["started"] is False and busy["reason"] == "already_running"
+        assert fake_popen == []
+    finally:
+        launcher._release_provision_lock(held)
 
-    主语是**那把新锁还在不在、起了几个 pip**：按路径删 / 盲目覆盖都会把它的新锁弄没，
-    然后我们也起一个 pip。这里在我们核对前一刻把锁换成新鲜的。"""
-    lock = _stale_lock()
-    real_read = launcher._read_lock
-    calls = []
-
-    def racing_read(path):
-        calls.append(path)
-        if len(calls) == 2:  # 第二次读 = 接管前的核对：此刻别人已换上新锁
-            lock.write_text("winner-token", encoding="utf-8")
-        return real_read(path)
-
-    monkeypatch.setattr(launcher, "_read_lock", racing_read)
-    out = launcher.kick_background_provision()
-    assert len(calls) >= 2, "竞态没被模拟出来"
-    assert out["started"] is False and out["reason"] == "already_running"
-    assert fake_popen == []
-    assert lock.read_text(encoding="utf-8") == "winner-token", "别人刚建的新锁被删/换掉了"
-    assert not [p for p in lock.parent.iterdir() if ".new-" in p.name], "暂存文件没清掉"
-
-
-def test_two_sessions_verifying_the_same_stale_lock_start_only_one_pip(
-    tmp_path, fake_popen, monkeypatch
-):
-    """#548 评审 P2（第二轮）：两个会话都量到同一把过期锁、都核对通过，然后先后换锁——
-    没有「一把旧锁只许一个接管者」的裁决，两个都会起 pip；第三个会话此时也不许
-    趁锁路径空着抢到（路径全程不空）。这里在第一个会话换锁前一刻插进另一个完整的接管。"""
-    lock = _stale_lock()
-    real_replace = os.replace
-    nested = []
-
-    def racing_replace(src, dst):
-        if not nested and os.fspath(dst) == str(lock):
-            nested.append(launcher.kick_background_provision())  # 同时接管的另一个会话
-            assert lock.exists(), "接管途中锁路径空了：第三个会话能独占创建成功"
-            nested.append(launcher.kick_background_provision())  # 第三个会话
-        return real_replace(src, dst)
-
-    monkeypatch.setattr(launcher.os, "replace", racing_replace)
     first = launcher.kick_background_provision()
-    assert len(nested) == 2, "竞态没被模拟出来"
-    assert sum(r["started"] for r in [first, *nested]) == 1, [first, *nested]
+    assert first["started"] is True
     assert len(fake_popen) == 1
-    token = fake_popen[0]["env"][launcher._PROVISION_LOCK_TOKEN_ENV]
-    assert lock.read_text(encoding="utf-8") == token
+    call = fake_popen[0]
+    assert call["argv"][1:] == [os.path.abspath(launcher.__file__), "--provision"]
+    if os.name == "nt":
+        assert call["creationflags"]
+    else:
+        assert call["start_new_session"] is True
+    assert launcher._EXECED_ENV not in call["env"], "交棒标记传下去会让 --provision 以外的路径走偏"
+    fd = launcher._acquire_provision_lock()
+    assert fd is not None, "探锁之后锁没放"
+    launcher._release_provision_lock(fd)
 
 
-def test_concurrent_startups_over_a_stale_lock_spawn_exactly_one_provision(tmp_path, fake_popen):
-    """同一把过期锁前八个会话同时起：接管也只能有一个赢家。"""
+def test_only_one_of_several_concurrent_provisions_may_hold_the_lock(tmp_path):
+    """真正的互斥在改环境的那一方：几个会话同时起、各起一个 `--provision` 时，
+    同一时刻只有一个拿得到锁（#548 评审 P2）。"""
     import threading
 
-    lock = _stale_lock()
     gate = threading.Barrier(8)
-    results = []
+    got = []
 
     def worker():
         gate.wait()
-        results.append(launcher.kick_background_provision())
+        got.append(launcher._acquire_provision_lock())
 
     threads = [threading.Thread(target=worker) for _ in range(8)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-    assert sum(r["started"] for r in results) == 1, results
-    assert len(fake_popen) == 1
-    token = fake_popen[0]["env"][launcher._PROVISION_LOCK_TOKEN_ENV]
-    assert lock.read_text(encoding="utf-8") == token
+    holders = [fd for fd in got if fd is not None]
+    try:
+        assert len(holders) == 1, got
+    finally:
+        for fd in holders:
+            launcher._release_provision_lock(fd)
 
 
-def test_a_log_that_cannot_be_opened_does_not_leave_the_lock_behind(
-    tmp_path, fake_popen, monkeypatch
-):
-    """#548 评审 P2：拿到锁、日志却打不开（共享冲突 / fd 用尽）时没起子进程——锁不放，
-    后面 20 分钟的会话都会被「already_running」挡住，没人去修。"""
-    real_open = open
+def test_a_dead_holder_never_leaves_a_stale_lock(tmp_path):
+    """持锁的进程被杀（崩溃、断电前的强退）：内核随进程释放锁，下一次立刻拿得到——
+    不存在要等过期、要接管的「死锁文件」。这里用真子进程持锁，然后 kill 掉它。"""
+    import subprocess as sp
 
-    def flaky_open(path, *a, **kw):
-        if os.fspath(path).endswith("provision.log"):
-            raise PermissionError("sharing violation")
-        return real_open(path, *a, **kw)
-
-    monkeypatch.setattr(launcher, "open", flaky_open, raising=False)
-    out = launcher.kick_background_provision()
-    assert out["started"] is False and out["reason"].startswith("cannot_write")
-    assert not Path(launcher._provision_lock_path()).exists(), "没起子进程却把锁留下了"
-    monkeypatch.delattr(launcher, "open")
-    assert launcher.kick_background_provision()["started"] is True
-
-
-def test_an_owner_never_deletes_its_lock_once_it_could_have_been_taken_over(tmp_path):
-    """#548 评审 P2：持有者跑过了接管线（整机睡眠后醒来等），读到自己的令牌之后、删之前，
-    接班者可能已换上新锁——所以离过期不远的自己的锁**不删**，留给接管。"""
-    lock = Path(launcher._provision_lock_path())
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("mine", encoding="utf-8")
-    aged = time.time() - launcher._PROVISION_LOCK_MAX_AGE + launcher._PROVISION_RELEASE_MARGIN - 1
-    os.utime(lock, (aged, aged))
-    launcher._release_provision_lock("mine")
-    assert lock.exists(), "临近过期的锁被持有者删了：可能删掉的是接班者的新锁"
-
-    now = time.time()
-    os.utime(lock, (now, now))
-    launcher._release_provision_lock("mine")
-    assert not lock.exists()
-
-
-def test_the_heartbeat_keeps_only_my_lock_fresh(tmp_path):
-    lock = Path(launcher._provision_lock_path())
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("mine", encoding="utf-8")
-    old = time.time() - 120
-    os.utime(lock, (old, old))
-    launcher._heartbeat_provision_lock("theirs")
-    assert lock.stat().st_mtime == pytest.approx(old)
-    launcher._heartbeat_provision_lock("mine")
-    assert lock.stat().st_mtime > old + 60
-
-
-def test_a_long_background_provision_keeps_renewing_its_lock(tmp_path, monkeypatch, capsys):
-    """#548 评审 P2：pip 联网装可能超过 20 分钟——`--provision` 活着时必须一直续锁，
-    否则会被当成死锁接管、再起一个 pip。"""
-    lock = Path(launcher._provision_lock_path())
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("owner-token", encoding="utf-8")
-    beats = []
-    real_beat = launcher._heartbeat_provision_lock
-    monkeypatch.setattr(launcher, "_PROVISION_HEARTBEAT", 0.01)
-    monkeypatch.setattr(
-        launcher, "_heartbeat_provision_lock", lambda tok: (beats.append(tok), real_beat(tok))
+    code = (
+        "import importlib.util, sys, time\n"
+        f"spec = importlib.util.spec_from_file_location('launcher', {launcher.__file__!r})\n"
+        "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+        "fd = m._acquire_provision_lock()\n"
+        "print('held' if fd is not None else 'busy', flush=True)\n"
+        "time.sleep(60)\n"
     )
+    child = sp.Popen(
+        [sys.executable, "-c", code], stdout=sp.PIPE, encoding="utf-8", env=dict(os.environ)
+    )
+    try:
+        assert child.stdout.readline().strip() == "held"
+        assert launcher._acquire_provision_lock() is None, "子进程持锁时本进程也拿到了锁"
+    finally:
+        child.kill()
+        child.wait()
+    # Windows 文档：进程终止后由系统解锁，「时间取决于可用资源」——给几秒，不是等过期
+    import time
 
-    def slow_provision(spec, python_base=None):
-        deadline = time.time() + 5
-        while not beats and time.time() < deadline:
-            time.sleep(0.01)
-        return {"ok": True}, 0
+    deadline = time.monotonic() + 5
+    fd = launcher._acquire_provision_lock()
+    while fd is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+        fd = launcher._acquire_provision_lock()
+    assert fd is not None, "持锁进程死后锁没有随之释放"
+    launcher._release_provision_lock(fd)
 
-    monkeypatch.setattr(launcher, "provision", slow_provision)
+
+def _run_provision_main(monkeypatch, provision):
+    monkeypatch.setattr(launcher, "provision", provision)
     monkeypatch.setattr(sys, "argv", ["server.py", "--provision"])
-    monkeypatch.setenv(launcher._PROVISION_LOCK_TOKEN_ENV, "owner-token")
-    assert launcher.main() == 0
-    assert beats and set(beats) == {"owner-token"}
-    assert not lock.exists()
+    return launcher.main()
 
 
-def test_a_resumed_owner_keeps_renewing_until_the_real_stale_line(tmp_path):
-    """#548 评审 P2：暂停 15–20 分钟后醒来，锁仍是自己的、还没到可被接管的岁数——
-    心跳必须接着续（门槛是过期线，不是删锁的安全线）；已过过期线的就不再续
-    （那时它可能正被接管）。"""
-    lock = Path(launcher._provision_lock_path())
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("mine", encoding="utf-8")
-    in_band = (
-        time.time() - launcher._PROVISION_LOCK_MAX_AGE + launcher._PROVISION_RELEASE_MARGIN - 30
-    )
-    os.utime(lock, (in_band, in_band))
-    launcher._heartbeat_provision_lock("mine")
-    assert lock.stat().st_mtime > time.time() - 60, "醒来后的持有者放弃了续锁"
-
-    past = time.time() - launcher._PROVISION_LOCK_MAX_AGE - 1
-    os.utime(lock, (past, past))
-    launcher._heartbeat_provision_lock("mine")
-    assert lock.stat().st_mtime == pytest.approx(past), "已过过期线的锁不许续：它可能正被接管"
+def test_a_manual_provision_waits_its_turn_instead_of_mutating_alongside(
+    tmp_path, monkeypatch, capsys
+):
+    """#548 评审 P2：手动 `--provision` / `tavotto codex install` 与后台那次同时跑会各自
+    `venv --clear` + pip 同一个环境。拿不到锁就**不动环境**，并明确说在等谁。"""
+    ran = []
+    held = launcher._acquire_provision_lock()
+    try:
+        rc = _run_provision_main(monkeypatch, lambda spec, python_base=None: ran.append(1))
+    finally:
+        launcher._release_provision_lock(held)
+    report = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert rc != 0 and report["code"] == "provision_in_progress"
+    assert ran == [], "别人持锁时仍改了环境"
 
 
-def test_the_lock_is_dropped_even_when_no_descriptor_can_be_opened(
+def test_a_provision_releases_the_lock_whatever_happens(tmp_path, monkeypatch, capsys):
+    """成功、失败、抛异常都放锁——否则下一次修复被自己挡住。"""
+
+    def boom(spec, python_base=None):
+        raise RuntimeError("pip exploded")
+
+    with pytest.raises(RuntimeError):
+        _run_provision_main(monkeypatch, boom)
+    fd = launcher._acquire_provision_lock()
+    assert fd is not None, "抛异常后锁没放"
+    launcher._release_provision_lock(fd)
+
+    assert _run_provision_main(monkeypatch, lambda spec, python_base=None: ({"ok": True}, 0)) == 0
+    fd = launcher._acquire_provision_lock()
+    assert fd is not None, "成功后锁没放"
+    launcher._release_provision_lock(fd)
+
+
+def test_the_lock_is_not_left_behind_when_no_descriptor_can_be_opened(
     tmp_path, fake_popen, monkeypatch
 ):
-    """#548 评审 P2：日志打不开往往是进程级 EMFILE——此刻**任何** open 都失败，
-    释放不能依赖再 open 锁文件核令牌。"""
+    """#548 评审 P2：日志打不开往往是进程级 EMFILE——此刻什么都 open 不了。探锁已经
+    放掉，没起子进程也不会留下任何挡路的东西：下一次照常起。"""
     import errno
 
     def no_fds(*_a, **_kw):
@@ -1003,4 +871,5 @@ def test_the_lock_is_dropped_even_when_no_descriptor_can_be_opened(
     monkeypatch.setattr(launcher, "open", no_fds, raising=False)
     out = launcher.kick_background_provision()
     assert out["started"] is False and out["reason"].startswith("cannot_write")
-    assert not Path(launcher._provision_lock_path()).exists(), "fd 耗尽时锁被留下了"
+    monkeypatch.delattr(launcher, "open")
+    assert launcher.kick_background_provision()["started"] is True

@@ -1373,8 +1373,10 @@ def test_launcher_is_stdlib_only_and_parses():
         "shutil",
         "subprocess",
         "sys",
-        "threading",
         "time",
+        # 重装锁用内核文件锁（进程退出即释放）：POSIX / Windows 各一个标准库
+        "fcntl",
+        "msvcrt",
         "__future__",
         "tavotto",
         "tavotto_mcp",
