@@ -27,6 +27,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { alignEntries, groupOf } from '@/lib/elementGeom'
+import { alignSelected } from '@/store/actions'
+import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
@@ -35,13 +37,15 @@ import { flushPreviewFrame, resetPreview } from '@/store/svgPreviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { seedExactRender } from '@/test/renderFixtures'
-import { emptyProject, type PanelObject } from '@/types/document'
+import { emptyProject, type PanelObject, type ShapeObject } from '@/types/document'
 import fixture from './__fixtures__/geoReference.json'
 import {
   startAxesDrag,
   startElementDrag,
   startElementGroupMove,
   startGroupResize,
+  startMoveDrag,
+  startResizeDrag,
 } from './interactions'
 
 const engineRender = vi.fn()
@@ -619,4 +623,132 @@ describe('GEO-07 边界与 no-op：没有位移就什么都不产生；缩到最
 it('渲染键：夹具面板的变体键就是空 overrides（seedExactRender 之后权威就位）', async () => {
   await setup('G1')
   expect(useRenderStore.getState().byKey[renderKeyOf(livePanel())]?.status).toBe('ready')
+})
+
+/* ========================== GEO-05 四类缩放分离 =========================== */
+
+describe('GEO-05 视图倍率 / 画布上的图幅 / Axes 区域：各改各的', () => {
+  it('视图倍率（zoomBy / setZoomCentered / 直接改 zoom）：文档逐字节不变、不进历史、不发渲染', async () => {
+    await setup('G1', 1)
+    const before = JSON.stringify(useDocumentStore.getState().doc)
+    // zoomBy / setZoomCentered 走动画（rAF），jsdom 里不一定落地；直接改 zoom 那一下一定落地
+    useViewportStore.getState().zoomBy(1.25)
+    useViewportStore.getState().setZoomCentered(0.5)
+    useViewportStore.setState({ zoom: 1.73, panX: 12.5 })
+    expect(useViewportStore.getState().zoom).toBe(1.73)
+    expect(JSON.stringify(useDocumentStore.getState().doc)).toBe(before)
+    expect(useDocumentStore.getState().past).toHaveLength(0)
+    expect(engineRender).not.toHaveBeenCalled()
+  })
+
+  it('画布上拉面板的角（显示尺寸）：只改 x/y/w/h，一条 override 都不写', async () => {
+    await setup('G1', 1)
+    const p0 = livePanel()
+    startResizeDrag(down(0, 0), 'p1', 'se')
+    walk(0, 0, 60, 40, 6)
+    fire('pointerup', 60, 40)
+    const p1 = livePanel()
+    expect(p1.w).not.toBe(p0.w)
+    expect(p1.overrides).toEqual([])
+    const strip = (p: PanelObject) => ({ ...p, x: 0, y: 0, w: 0, h: 0 })
+    expect(strip(p1)).toEqual(strip(p0))
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+
+  it('Axes 区域缩放：只写这一个 Axes 的 position，面板的 x/y/w/h 不动', async () => {
+    await setup('G1', 1)
+    const p0 = livePanel()
+    startAxesDrag(down(0, 0), livePanel(), el('G1', 'axes_0'), layoutOf('G1'), 'nw')
+    walk(0, 0, 30, 20, 6)
+    fire('pointerup', 30, 20)
+    const p1 = livePanel()
+    expect(p1.overrides.map((o) => `${o.gid}|${o.prop}`)).toEqual(['axes_0|position'])
+    expect([p1.x, p1.y, p1.w, p1.h]).toEqual([p0.x, p0.y, p0.w, p0.h])
+  })
+})
+
+/* ========================= GEO-09 排列与整段撤销 ========================== */
+
+describe('GEO-09 拖动 → 缩放 → 对齐 → 分布，逐项撤销 / 重做：每个离散动作恰好一条历史', () => {
+  it('图内对象：四步四条历史，undo 逐步回到每一步之前，redo 回到终态', async () => {
+    await setup('G2', 1)
+    const snap = () => JSON.stringify(overridesNow())
+    const reseed = () => seedExactRender(livePanel(), manifestOf('G2'), { svg: FX.G2.svg })
+    const states = [snap()]
+    // 1. 拖一段文字
+    startElementDrag(down(0, 0), livePanel(), el('G2', 'axes_0.texts_0'), layoutOf('G2'))
+    walk(0, 0, 25, 12, 5)
+    fire('pointerup', 25, 12)
+    states.push(snap())
+    // 2. 缩放另一个 Axes
+    reseed()
+    startAxesDrag(down(0, 0), livePanel(), el('G2', 'axes_1'), layoutOf('G2'), 'e')
+    walk(0, 0, -20, 0, 5)
+    fire('pointerup', -20, 0)
+    states.push(snap())
+    // 3. 三段文字左对齐（权威就位后才执行，见 alignAction 的权威闸）
+    reseed()
+    useUiStore.setState({ selectedGids: ['axes_0.texts_0', 'axes_0.texts_1', 'axes_1.texts_0'] })
+    alignSelectedPanelElements('p1', 'left')
+    states.push(snap())
+    // 4. 三段文字纵向等距分布
+    reseed()
+    alignSelectedPanelElements('p1', 'vdist')
+    states.push(snap())
+
+    // 每一步都真的改了文档，且恰好一条历史
+    for (let i = 1; i < states.length; i++) expect(states[i], `第 ${i} 步`).not.toBe(states[i - 1])
+    expect(useDocumentStore.getState().past).toHaveLength(4)
+    // 逐项撤销：每撤一次回到上一步的精确状态
+    for (let i = states.length - 2; i >= 0; i--) {
+      useDocumentStore.getState().undo()
+      expect(snap(), `撤销到第 ${i} 步`).toBe(states[i])
+    }
+    expect(useDocumentStore.getState().past).toHaveLength(0)
+    for (let i = 1; i < states.length; i++) {
+      useDocumentStore.getState().redo()
+      expect(snap(), `重做到第 ${i} 步`).toBe(states[i])
+    }
+  })
+
+  it('画布对象：拖动 → 缩放 → 左对齐 → 水平分布，同样四条、逐项可逆', async () => {
+    await setup('G1', 1)
+    const rect = (id: string, x: number, y: number): ShapeObject => ({
+      id, type: 'shape', shape: 'rect', x, y, w: 10, h: 8, strokePt: 1, color: '#111111', fill: null,
+    })
+    useDocumentStore.getState().commit(literal('加形状'), (d) => {
+      d.objects.push(rect('r1', 150, 10), rect('r2', 180, 40), rect('r3', 230, 70))
+    })
+    useDocumentStore.setState({ past: [], future: [] })
+    const snap = () =>
+      JSON.stringify(
+        useDocumentStore.getState().doc.objects.filter((o) => o.id.startsWith('r')).map((o) => [o.x, o.y, o.w, o.h]),
+      )
+    const states = [snap()]
+    useSelectionStore.getState().set(['r1'])
+    startMoveDrag(down(0, 0), 'r1')
+    walk(0, 0, 30, 15, 5)
+    fire('pointerup', 30, 15)
+    states.push(snap())
+    startResizeDrag(down(0, 0), 'r2', 'se')
+    walk(0, 0, 25, 25, 5)
+    fire('pointerup', 25, 25)
+    states.push(snap())
+    useSelectionStore.getState().set(['r1', 'r2', 'r3'])
+    alignSelected('left')
+    states.push(snap())
+    // 左对齐之后三者 x 相同：水平分布会是 no-op，换成纵向分布
+    alignSelected('vdist')
+    states.push(snap())
+    for (let i = 1; i < states.length; i++) expect(states[i], `第 ${i} 步`).not.toBe(states[i - 1])
+    expect(useDocumentStore.getState().past).toHaveLength(4)
+    for (let i = states.length - 2; i >= 0; i--) {
+      useDocumentStore.getState().undo()
+      expect(snap(), `撤销到第 ${i} 步`).toBe(states[i])
+    }
+    for (let i = 1; i < states.length; i++) {
+      useDocumentStore.getState().redo()
+      expect(snap(), `重做到第 ${i} 步`).toBe(states[i])
+    }
+  })
 })

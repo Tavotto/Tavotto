@@ -81,6 +81,33 @@ def main():
         ax.text(0.3 + (i % 10) * 0.95, 0.3 + (i // 10) * 0.95, "n%02d" % i, fontsize=6)
     fig.savefig("G2big.pdf")
     plt.close(fig)
+
+    # G8：特殊坐标——对数 x、反转 y、twinx、axes 分数坐标的注释、figure 级文字
+    fig, (a, b) = plt.subplots(1, 2, figsize=(6.0, 3.0))
+    a.set_xscale("log")
+    a.plot([1.0, 10.0, 100.0], [1.0, 2.0, 3.0])
+    a.invert_yaxis()
+    a.text(10.0, 2.5, "logtxt")
+    tw = a.twinx()
+    tw.plot([1.0, 100.0], [0.0, 1.0], color="#d62728")
+    tw.text(30.0, 0.8, "twintxt")
+    b.plot([0.0, 1.0], [0.0, 1.0])
+    b.annotate("ann", xy=(0.5, 0.5), xycoords="axes fraction", xytext=(0.2, 0.8),
+               textcoords="axes fraction", arrowprops={"arrowstyle": "->"})
+    fig.text(0.02, 0.02, "figtxt")
+    fig.savefig("G8.pdf")
+    plt.close(fig)
+
+    # G10：无布局引擎——改图幅 / 字号后，拖过的与没拖过的文字各守各的合同
+    # （constrained / tight 下拖轴标签与标题的 y 分量会被布局引擎吃掉：QA 2026-09-24
+    #   product bug，复现在 docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py）
+    fig, ax = plt.subplots(figsize=(5.0, 3.2))
+    ax.plot(X, Y)
+    ax.set_title("G10 title")
+    ax.set_xlabel("time (s)")
+    ax.set_ylabel("value")
+    fig.savefig("G10.pdf")
+    plt.close(fig)
 """
 
 #: G1 里执行前写定的「可拖对象」（drag_prop 与脚本对照）
@@ -285,3 +312,71 @@ def test_axes_and_its_own_title_moved_together_move_the_title_once(hot):
     assert t2["anchor"][0] - title0["anchor"][0] == pytest.approx(dfx, abs=tol_x)
     assert t2["anchor"][1] - title0["anchor"][1] == pytest.approx(dfy, abs=tol_y)
     _man(hot, "G1")
+
+
+SIZE_MM["G8"] = (6.0 * 25.4, 3.0 * 25.4)
+SIZE_MM["G10"] = (5.0 * 25.4, 3.2 * 25.4)
+
+
+#: G8 里脚本写定可拖、且落点合同成立的三段文字。**注释（axes_1.texts_0，textcoords 为
+#: axes fraction）不在这里**：它写 pos_frac 后落点错位（QA 2026-09-24 product bug，复现
+#: `docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py`），修好之后加回来。
+G8_TEXTS = ("axes_0.texts_0", "axes_2.texts_0", "fig.texts_0")
+
+
+@pytest.mark.parametrize("gid", G8_TEXTS)
+def test_special_coordinates_drag_is_scale_independent(hot, gid):
+    """GEO-08：对数 x + 反转 y 上的文字、twinx 上的文字、figure 级文字——拖动写的是 figure
+    分数锚点，落点不套数据坐标公式；数据曲线、轴属性（对数刻度、反转）一样不变。"""
+    base = _by_gid(_man(hot, "G8"))
+    e0 = base[gid]
+    assert e0["draggable"] is True and e0["drag_prop"] == "pos_frac", e0
+    lines0 = {g: e.get("geometry") for g, e in base.items() if e["role"] == "line"}
+    ax_fields0 = {g: _non_position_fields(e) for g, e in base.items() if e["role"] == "axes"}
+    tol_x, tol_y = budget("G8")
+    for ux, uy in DIRECTIONS:
+        dfx, dfy = frac_delta("G8", 1.37, (ux * STEP_PX, uy * STEP_PX))
+        target = [e0["anchor"][0] + dfx, e0["anchor"][1] + dfy]
+        man = _by_gid(_man(hot, "G8", [{"gid": gid, "prop": "pos_frac", "value": target}]))
+        where = f"{gid} dir=({ux},{uy})"
+        assert man[gid]["anchor"][0] == pytest.approx(target[0], abs=tol_x), where
+        assert man[gid]["anchor"][1] == pytest.approx(target[1], abs=tol_y), where
+        for g, geom in lines0.items():
+            assert man[g].get("geometry") == geom, f"{where} 改了曲线 {g}"
+        for g, fields in ax_fields0.items():
+            assert _non_position_fields(man[g]) == fields, f"{where} 改了 {g} 的轴属性"
+    _man(hot, "G8")
+
+
+def test_moved_label_keeps_its_anchor_and_unmoved_text_keeps_reflowing(hot):
+    """GEO-10：改图幅与字号——拖过的 y 轴标签守住自己的 figure 分数锚点，没拖过的 x 轴标签
+    照常跟着排版走（与「没拖过任何东西」的对照组逐位相同）。
+
+    只覆盖**无布局引擎**的图：constrained / tight 布局下拖标题 / 轴标签的 y 分量不生效
+    （QA 2026-09-24 product bug，复现 `docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py`），
+    修好之后把 G10 换回 constrained。
+    """
+    base = _by_gid(_man(hot, "G10"))
+    ylabel0 = base["axes_0.ylabel"]
+    xlabel0 = base["axes_0.xlabel"]
+    reflow = [
+        {"gid": "figure", "prop": "size_mm", "value": [150.0, 70.0]},
+        {"gid": "axes_0.xlabel", "prop": "fontsize", "value": 16.0},
+        {"gid": "axes_0.ylabel", "prop": "fontsize", "value": 14.0},
+    ]
+    target = [round(ylabel0["anchor"][0] + 0.03, 4), round(ylabel0["anchor"][1] - 0.1, 4)]
+    moved = {"gid": "axes_0.ylabel", "prop": "pos_frac", "value": target}
+
+    control = _by_gid(_man(hot, "G10", reflow))
+    treated = _by_gid(_man(hot, "G10", [moved, *reflow]))
+    tol_x, tol_y = budget("G10")
+    # 拖过的：锚点仍是写下的那个 figure 分数
+    assert treated["axes_0.ylabel"]["anchor"][0] == pytest.approx(target[0], abs=tol_x)
+    assert treated["axes_0.ylabel"]["anchor"][1] == pytest.approx(target[1], abs=tol_y)
+    # 没拖过的：确实被重排了（改图幅 / 字号之后不在原处）……
+    assert control["axes_0.xlabel"]["anchor"] != pytest.approx(xlabel0["anchor"], abs=1e-3)
+    # ……而且拖 y 轴标签这件事没有把它锁住：与对照组逐位相同
+    assert treated["axes_0.xlabel"]["anchor"] == pytest.approx(
+        control["axes_0.xlabel"]["anchor"], abs=1e-9
+    )
+    _man(hot, "G10")

@@ -84,6 +84,31 @@ MUTATIONS = {
         '    kind, ax = getattr(t, "_mm_drag", (None, None))',
         [f"{PY} tests/test_geometry_reference.py"],
     ),
+    # GEO-10：拖轴标签时顺手把 x 轴标签钉死在一个绝对坐标上（「无效 override 锁住未移动对象」）
+    "M8-engine-pins-unmoved-label": (
+        "src/tavotto/engine/overrides.py",
+        "        fx, fy = ax.transAxes.inverted().transform(disp)\n"
+        "        axis.set_label_coords(float(fx), float(fy))\n"
+        "        return\n"
+        '    if kind == "title":',
+        "        fx, fy = ax.transAxes.inverted().transform(disp)\n"
+        "        axis.set_label_coords(float(fx), float(fy))\n"
+        '        ax.xaxis.set_label_coords(0.5, -0.12) if kind == "ylabel" else None\n'
+        "        return\n"
+        '    if kind == "title":',
+        [f"{PY} tests/test_geometry_reference.py -k 'moved_label or single_drag'"],
+    ),
+    # GEO-09 / GEO-01：一次单元素拖动落成两条历史（先写一条原值、再写终值）
+    "M9-drag-two-history-entries": (
+        "web/src/canvas/interactions.ts",
+        "      setOverride(panel.id, element.gid, dragProp, [anchor[0] + dfx, anchor[1] + dfy], true)",
+        "      setOverride(panel.id, element.gid, dragProp, [anchor[0], anchor[1] + 1e-3], 'none')\n"
+        "      setOverride(panel.id, element.gid, dragProp, [anchor[0] + dfx, anchor[1] + dfy], true)",
+        [
+            f"{VITEST} src/canvas/geometryReference.test.ts -t 'GEO-09'",
+            f"{VITEST} src/canvas/geometryReference.test.ts -t 'GEO-01'",
+        ],
+    ),
 }
 
 
