@@ -911,6 +911,7 @@ NOT_EMAILS = [
     "matplotlib@3.10,",
     "/x/.pnpm/jsdom@30.0.1/node_modules/jsdom/lib/api.js",
     "(@某人)",
+    "(@app.route)",  # 只有「@ 前只有开括号」这一条放行它：域名两段、不是版本号
     json.dumps({"dep": "numpy@1.26.4"}),
 ]
 
