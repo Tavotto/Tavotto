@@ -366,10 +366,13 @@ class LegendEntries:
         return any((gid, p) in self.state.applied for p in LEGEND_ENTRY_STYLE_PROPS)
 
     def is_frozen(self, j: int) -> bool:
-        """这一项是脚本自定义 handler 画的、没有源的整格示意：重建时原样复刻，
+        """这一项是脚本（自定义 handler）画的整格示意、此刻又不跟随源：重建时原样复刻，
         不从单个示意线派生，也不摆 handle_* 控件（一格里没有「那一条」线的样式可改）。
-        有源的项不走这里——它们从源派生，照旧（误差棒就是这样）。"""
-        return self.frozen[j] is not None and self.sources[j] is None
+
+        判据是**有效绑定**，不是「有没有源」：同名同类型的源找到了、指纹却对不上的项
+        默认就是 custom（`bind_legend_entries` 第 3 条），它照样该从脚本原样复刻（#544 评审）。
+        跟随中的项从源派生，照旧（有源的误差棒就是这样）。"""
+        return self.frozen[j] is not None and self.effective_binding(j) != "follow_source"
 
     def base_of(self, j: int):
         """重建 / 同步时这一项该从谁派生：跟随的从源，定格的原样复刻，其余从脚本原样快照。"""
@@ -926,7 +929,9 @@ def _detach_entry(model: LegendEntries, j: int) -> None:
     """
     k = model.display_index(j)
     if k is not None:
-        _legend_replace_handle(model.leg, k, model.pristine[j], copy_of=model.pristine[j])
+        # 脚本原样是整格的（定格过）就换回整格；此刻绑定还没写成 custom，所以直接看 `frozen`
+        base = model.frozen[j] if model.frozen[j] is not None else model.pristine[j]
+        _legend_replace_handle(model.leg, k, base, copy_of=model.pristine[j])
 
 
 def _entry_handle(t: Text):

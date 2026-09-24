@@ -183,3 +183,90 @@ def test_hot_equals_fresh_replay(hot, library):
         pool.discard(w)
     assert hot_png == fresh_png
     _man(hot)
+
+
+# ---------------------------------------------------------------------------
+# 源找到了、默认却是 custom 的自定义格子（#544 评审 P2）
+# ---------------------------------------------------------------------------
+#: 同一个色带，图里另有一个同名（「Band」）同类型（Rectangle）的形状：`bind_legend_entries`
+#: 按 label 找到它当源，指纹对不上 → 默认 custom。定格与否要看有效绑定，不看有没有源。
+SRC_SCRIPT = "fig_legend_custom_handler_src.py"
+SRC_STEM = "CustomSrc"
+SRC_LIBRARY = LIBRARY.replace(
+    "    handles, labels = ax.get_legend_handles_labels()\n",
+    '    ax.add_patch(mpl.patches.Rectangle((0.2, 0.1), 0.4, 0.1, facecolor="#dddddd",\n'
+    '                                       label="Band"))\n'
+    "    handles, labels = ax.get_legend_handles_labels()\n"
+    "    handles, labels = handles[:2], labels[:2]\n",
+).replace('fig.savefig("Custom.pdf")', 'fig.savefig("CustomSrc.pdf")')
+
+
+@pytest.fixture(scope="module")
+def hot_src(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("legend-custom-handler-src")
+    (figs / SRC_SCRIPT).write_text(SRC_LIBRARY, encoding="utf-8")
+    w = pool.one_shot(SRC_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        yield w
+    finally:
+        pool.discard(w)
+
+
+def _src_man(worker, patches=()):
+    resp = worker.override(SRC_STEM, list(patches))
+    assert not (resp.get("warnings") or []), resp["warnings"]
+    return resp["manifest"]
+
+
+def test_the_fixture_really_has_a_custom_bound_source(hot_src):
+    """前提先钉住：这一项确实找到了源、默认 custom——否则下面两条量的是「无源」那种。"""
+    info = _entry(_src_man(hot_src), BAND)
+    assert info["binding_default"] == "custom"
+    assert info["source_gid"].startswith("axes_0.patches_")
+
+
+def test_a_custom_bound_band_survives_a_rebuild(hot_src):
+    man = _src_man(hot_src)
+    same = [{"gid": LEG, "prop": "borderpad", "value": _legend_value(man, "borderpad")}]
+    original = hot_src.preview_png(SRC_STEM, [], 380, "src-orig").read_bytes()
+    rebuilt = hot_src.preview_png(SRC_STEM, same, 380, "src-rebuilt").read_bytes()
+    assert rebuilt == original
+    fields = _fields(man, BAND)
+    assert not [p for p in fields if p.startswith("handle_")]
+    assert fields["binding"]["value"] == "custom", "有源的项仍给绑定开关"
+    _src_man(hot_src)
+
+
+#: 有源、默认跟随的多 artist 项（误差棒：竖线 + 两端横杠）。断开跟随时示意线换成
+#: 「脚本原样」——那必须是整格的，不能只剩第一条线。
+ERR_SCRIPT = "fig_legend_errorbar_detach.py"
+ERR_STEM = "ErrDetach"
+ERR_LIBRARY = """\
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    ax.errorbar([0, 1, 2], [1, 2, 1], yerr=0.3, capsize=6, color="#1f77b4", label="Err")
+    ax.legend(loc="upper left", handlelength=3.0)
+    fig.savefig("ErrDetach.pdf")
+"""
+
+
+def test_detaching_a_following_multi_artist_entry_keeps_the_whole_cell(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("legend-errorbar-detach")
+    (figs / ERR_SCRIPT).write_text(ERR_LIBRARY, encoding="utf-8")
+    w = pool.one_shot(ERR_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        entry = f"{LEG}.texts_0"
+        man = w.override(ERR_STEM, [])["manifest"]
+        assert _entry(man, entry)["binding_default"] == "follow_source", "前提：它在跟随源"
+        original = w.preview_png(ERR_STEM, [], 380, "err-orig").read_bytes()
+        detached = w.preview_png(
+            ERR_STEM, [{"gid": entry, "prop": "binding", "value": "custom"}], 380, "err-det"
+        ).read_bytes()
+        assert detached == original
+    finally:
+        pool.discard(w)
