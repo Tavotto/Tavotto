@@ -143,8 +143,10 @@ def _raster_figure(norm, *, overlay=True, noise=False, flat=False):
 
 
 def _pixels(im, points):
+    """0–1 口径的 RGB。重着色的缓冲是 uint8（原件是什么类型就是什么类型）。"""
     arr = np.asarray(im.get_array())
-    return [[round(float(c), 4) for c in arr[r, c][:3]] for r, c in points]
+    scale = 255.0 if arr.dtype.kind in "ui" else 1.0
+    return [[round(float(c) / scale, 4) for c in arr[r, c][:3]] for r, c in points]
 
 
 def raster_fields() -> dict:
@@ -264,39 +266,72 @@ def orphan_scopes() -> dict:
     fig_p.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(rgb)
     cax_p = fig_p.add_axes([0.8, 0.1, 0.03, 0.8])
     fig_p.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), cax=cax_p)
-    # 超出反解内存预算的场图：一行渐变广播成方图（视图，不真分配）；同内容、预算内的对照
-    import colorbarmodel as C  # noqa: PLC0415
+    photo_state = _state(fig_p)
+    photo = {"summary": _summary(photo_state)}
+    photo_im = fig_p.axes[0].images[0]
+    bar_gid = next(g for g, e in photo["summary"].items() if e["role"] == "colorbar")
+    O.apply(photo_state, [{"gid": bar_gid, "prop": "cmap", "value": "magma"}])
+    fig_p.canvas.draw()
+    after = np.asarray(photo_im.get_array())[..., :3]
+    before = np.clip(np.rint(rgb * 255), 0, 255).astype(np.uint8)
+    split = int(w * 0.35)
+    photo["photo_unchanged"] = float((after[:, :split] == before[:, :split]).all(-1).mean())
+    y, x = 450, 700
+    photo["heat_pixel"] = [round(float(c) / 255, 4) for c in after[y, x]]
+    photo["heat_expected"] = [
+        round(float(c), 4) for c in matplotlib.colormaps["magma"](v[y, x])[:3]
+    ]
 
-    def _gradient_fig(side):
-        row = matplotlib.colormaps["viridis"](np.linspace(0, 1, side))[:, :3].astype(np.float32)
-        img = np.broadcast_to(row[None, :, :], (side, side, 3))
+    import tracemalloc  # noqa: PLC0415
+
+    def _field_image(h, w, lines=True):
+        """uint8 场图（viridis 渐变 + 每 64 行一条深色流线），绑一条 `cax=` 独立色条。"""
+        row = np.rint(matplotlib.colormaps["viridis"](np.linspace(0, 1, w))[:, :3] * 255)
+        img = np.empty((h, w, 3), np.uint8)
+        img[:] = row.astype(np.uint8)[None]
+        if lines:
+            img[::64] = (40, 40, 40)
         f = plt.figure(figsize=(4.0, 3.0))
         f.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(img)
         cx = f.add_axes([0.8, 0.1, 0.03, 0.8])
         f.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), cax=cx)
-        return _summary(_state(f))
+        st = _state(f)
+        return f, st, f.axes[0].images[0]
 
-    over = int(np.ceil(np.sqrt(C._FIELD_MAX_PIXELS))) + 1
-    budget = {"over": _gradient_fig(over), "within": _gradient_fig(over // 2)}
-    import tracemalloc  # noqa: PLC0415
+    def _recolor_peak(im):
+        """第一次重着色（边缘反解 + 查表 + 输出缓冲）的内存峰值；减掉与图无关的直查表
+        （每次重着色现建一张）。"""
+        field = im._mm_field
+        tracemalloc.start()
+        field.cb.mappable.set_cmap("magma")
+        field.sync()
+        peak = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+        return peak - (1 << 24) * 2
 
-    big = np.broadcast_to(
-        matplotlib.colormaps["viridis"](np.linspace(0, 1, 2000))[None, :, :3].astype(np.float32),
-        (2000, 2000, 3),
-    )
-    tracemalloc.start()
-    C._unique_colours_ok(big)
-    count_peak = tracemalloc.get_traced_memory()[1]
-    tracemalloc.stop()
+    # 旧上限（600 万像素）之上的大图：照样配对、照样重着色
+    big_fig, _big_state, big_im = _field_image(3000, 3000)
+    big = {"summary": _summary(_big_state)}
+    big_im._mm_field.cb.mappable.set_cmap("magma")
+    big_fig.canvas.draw()
+    big["pixel"] = [round(float(c) / 255, 4) for c in np.asarray(big_im.get_array())[1, 2999]]
+    big["expected"] = [round(float(c), 4) for c in matplotlib.colormaps["magma"](1.0)[:3]]
+    # 常驻 + 临时内存随像素数的增长斜率（两档之差：直查表、分块的临时量都是常数，相减抵消）
+    _, _, small_im = _field_image(1024, 1024)
+    _, _, large_im = _field_image(2048, 2048)
+    slope = (_recolor_peak(large_im) - _recolor_peak(small_im)) / (2048**2 - 1024**2)
+    # 极宽的图（#538 评审第二轮：按行分块时一行就是整张图）：峰值减掉输出缓冲本身
+    _, _, wide_im = _field_image(4, 3_000_000, lines=False)
+    wide_extra = _recolor_peak(wide_im) - 4 * 3_000_000 * 3
     return {
-        "budget": budget,
-        "count_peak_bytes": count_peak,
-        "count_pixels": 2000 * 2000,
+        "big": big,
+        "bytes_per_pixel": slope,
+        "wide_extra_bytes": wide_extra,
         "one_bar": _two(1),
         "two_bars": _two(2),
         "shared_cax": shared,
         "mixed": mixed,
-        "photo": _summary(_state(fig_p)),
+        "photo": photo,
     }
 
 

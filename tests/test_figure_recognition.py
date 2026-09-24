@@ -148,7 +148,8 @@ def test_raster_follows_the_colorbar_and_keeps_its_overlays(facts):
     field, line, edge = r["recolored"]
     assert field == pytest.approx(r["expected"][0], abs=2e-2)
     assert edge == pytest.approx(r["expected"][1], abs=2e-2)
-    assert line == pytest.approx(r["overlay"], abs=1e-6)
+    # 重着色写进的是 uint8 缓冲：原样保留的像素只差 8 位量化（≤ 1/255）
+    assert line == pytest.approx(r["overlay"], abs=1 / 255 + 1e-6)
     # 流线的抗锯齿边缘：底色的变化按覆盖率带过去，不留一圈旧色图的光晕
     assert r["antialiased"] == pytest.approx(r["antialiased_expected"], abs=2e-2)
     assert r["vmax_pixel"] == pytest.approx(r["vmax_expected"], abs=2e-2)
@@ -207,28 +208,39 @@ def test_declared_host_claims_before_the_generic_colorbar(facts):
     assert got == [("axes_0", ["axes_0.images_0"]), ("axes_1", ["axes_1.images_0"])]
 
 
-def test_binding_measures_unique_colours_at_full_resolution(facts):
-    """#527 评审 P2：嵌着照片的大图抽样过得了吻合度，全图唯一颜色却超过反解上限——
-    从前先报已绑定、第一次换色图才在反解里失败并默默画原件。现在不配对。"""
-    (bar,) = _bars(facts["orphan_scopes"]["photo"]).values()
-    assert bar["mappable_gid"] is None
+def test_a_bound_raster_really_recolours_even_with_a_photo_inside(facts):
+    """#527 评审 P2 的根：从前按唯一颜色暴力反解，嵌着照片的大图要么先报已绑定、换色图时
+    默默失败，要么只能拒绝配对。颜色查表（`_ColourTube`）与图大小、唯一颜色数都无关——
+    配对了就真的重着色：热图部分换成新色图，照片部分原样（随机颜色落进色图容差带的
+    那一两成不计）。"""
+    ph = facts["orphan_scopes"]["photo"]
+    (bar,) = _bars(ph["summary"]).values()
+    assert bar["mappable_gid"] == "axes_0.images_0"
+    assert ph["heat_pixel"] == pytest.approx(ph["heat_expected"], abs=2e-2)
+    assert ph["photo_unchanged"] > 0.97, ph["photo_unchanged"]
 
 
-def test_rasters_over_the_decode_budget_are_not_bound(facts):
-    """#538 评审 P2：全分辨率反解约 96 B/像素，超 `_FIELD_MAX_PIXELS` 的位图不配对（原样照画）；
-    同内容、预算内的对照照常绑定——拦下它的是像素数，不是内容。"""
-    b = facts["orphan_scopes"]["budget"]
-    (over,) = _bars(b["over"]).values()
-    (within,) = _bars(b["within"]).values()
-    assert over["mappable_gid"] is None
-    assert within["mappable_gid"] == "axes_0.images_0"
+def test_large_rasters_bind_and_recolour(facts):
+    """没有像素数上限：900 万像素（旧上限 600 万之上）的场图照样绑定，换色图后像素是新色图的颜色。"""
+    big = facts["orphan_scopes"]["big"]
+    (bar,) = _bars(big["summary"]).values()
+    assert bar["mappable_gid"] == "axes_0.images_0"
+    assert big["pixel"] == pytest.approx(big["expected"], abs=2e-2)
 
 
-def test_unique_colour_count_does_not_scale_with_the_image(facts):
-    """全图数唯一颜色按行分块：峰值与块大小有关、与图大小无关。整图一次打包 + `np.unique`
-    是约 24 B/像素（2000² 就是 96 MB）；分块后远在其下。"""
-    o = facts["orphan_scopes"]
-    assert o["count_peak_bytes"] < 12 * o["count_pixels"], o["count_peak_bytes"]
+def test_recolour_memory_grows_only_by_the_output_itself(facts):
+    """重着色的内存随像素数的增长斜率 ≈ 输出缓冲本身（RGB uint8 = 3 B/像素）加稀疏的边缘；
+    旧实现是约 96 B/像素的临时量外加 float32 输出。常数项（32 MiB 直查表、分块临时量）在
+    两档相减里抵消。"""
+    bpp = facts["orphan_scopes"]["bytes_per_pixel"]
+    assert bpp < 6, bpp
+
+
+def test_extremely_wide_rasters_stay_within_a_tile(facts):
+    """#538 评审第二轮：`(4, 3_000_000)` 这种极宽的图，按行分块时一块就是整张图。二维分块后，
+    除了输出缓冲本身，额外的峰值只有块大小那一量级。"""
+    extra = facts["orphan_scopes"]["wide_extra_bytes"]
+    assert extra < 32 * 2**20, extra
 
 
 # ============================================================ 热会话 == 全量重放
