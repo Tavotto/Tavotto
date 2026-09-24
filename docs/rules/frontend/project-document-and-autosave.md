@@ -22,6 +22,20 @@
   （键盘 / 顶栏按钮 / 桌面菜单加速键）必须走 `runUndoRedo`（带
   undoRedoBlocked 守卫）；undo/redo 的 applyPatches 有 try/catch，坏补丁丢弃
   该条而不是让栈与文档错位。
+- **事务收尾修正（2026-09-24，#543 评审）**：`documentStore.registerTxnFinalizer(fn)`
+  登记一个 recipe；`endTxn` 在把事务压成**一条历史之前**依次跑一遍登记过的修正，
+  改动并进这条事务（与手势本身同一条撤销记录）。**丢弃的事务不跑**（`discard` 或
+  没有补丁）：回滚后由派生方自己 silent 补。它给「手势进行中不许写、手势结束时
+  必须和手势一起进历史」的派生值用——中途写不行，缩放 / 裁剪 / 属性栏数值拖动都在
+  按下时抓了几何、每帧按它写绝对的 w/h，会把中途的派生修正盖回去；手势后 silent
+  写也不行，不在这条历史里，撤销 / 重做 / 取消就不自洽。第一个使用者是
+  `useEngineSync` 的**原生图幅同步**：事务开着时一个字都不写（`txnOpen` 在 effect
+  依赖里，空事务回滚不换 doc 也能补上），收尾时按同一比例把 w/h 换到新图幅；
+  撤销整体回到手势前的旧图幅（同步器随即 silent 补一次），重做回到松手那一刻。
+  **已知代价**：渲染在手势中途回来时，画布上的框到松手那一刻才换比例（中途仍按
+  旧图幅的纵横比）。看护：`hooks/useEngineSync.test.ts` 的「几何事务进行中收到
+  改了图幅的渲染」「渲染到达之后又有拖动帧」两组（真实 `startResizeDrag` /
+  `startCropDrag` 驱动）。
 - **自动保存**：磁盘为主（`PUT /api/autosave/<docId>` 原子写
   `layouts/_autosave/`），localStorage 只留索引 + 崩溃兜底副本
   （写盘成功即清、读取按 updatedAt 取新）。失败发
@@ -57,7 +71,7 @@
 - **派生字段 vs 用户数据**（`panelSourceSync.ts` 的表）：只有
   `script` / `cost` / `fileKind` / `pxW` 由 `/api/panels` 说了算；
   几何、`nativeW/nativeH`、crop、rotation、overrides、成组、锁定、选择一律
-  不碰。**图幅不是派生字段**——它是几何（`useEngineSync` 盯着它调 `h`），
+  不碰。**图幅不是派生字段**——它是几何（`useEngineSync` 盯着它按同一比例调 `w/h`，事务中推迟到收尾），
   而且权威在这个变体自己渲染回来的 manifest 上，不在磁盘文件上。runtime 面板
   整个跳过（`runtime:` 前缀的 id 永远不在 `/api/panels` 里）。
   **素材不在清单里 ≠ 脚本关系失效**：前者只记 `missing`、对象一个字节不动
