@@ -1,0 +1,203 @@
+{
+ "section": "§4 PATH",
+ "auditor": "独立复核子 Agent（workflow verify-path）",
+ "audited_branch": "qa/2026-09-24-path",
+ "audited_commit": "93dd9f4b86bea7fd5ccde339f57735b85a6cdf36",
+ "baseline": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+ "environment": {
+  "time_utc": "2026-09-24T19:10Z–19:40Z",
+  "os": "macOS 27.0 arm64",
+  "app_python": "/Volumes/Projects/Tavotto/.venv/bin/python (3.13.11)",
+  "worker_python": "/opt/homebrew/opt/python@3.13/libexec/bin/python3",
+  "worktree": "detached worktree at 93dd9f4b（分支已在执行者 worktree 检出，无法再 checkout 同名分支）",
+  "env": "PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 QA_SCRATCH=<scratchpad>/qa/vpath-scratch",
+  "ports": "没起自有后端；foundation_app 自取端口，未碰 5089"
+ },
+ "ledger_checks": {
+  "all_case_ids_present": true,
+  "fields_complete": "21 个字段每条都在；first_failed_invariant 在 7 条 pass/partial 上为 null（没有失败的不变量，可接受）",
+  "evidence_sha256_match": "17/17 一致"
+ },
+ "method": "逐字重跑 ledger 里每条 commands，只把日志名改成 verify/<原名>，避免覆盖执行者的原日志；比较退出码与 pytest 计数，repro 输出去掉时间/临时路径/hash 后 diff。",
+ "cases": [
+  {
+   "case_id": "PATH-01",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "逐字重跑（仅把日志名改成 verify/PATH-01）：exit 0，4 passed，与原记录一致。首开与重放（generation 递增）的全序列 + 输入 sha256 主语正确（manifest 几何在测试侧换算，没调产品坐标函数）。导出那条尺子量的不是产品这次读到的数据：不带 overrides 的 original 导出按 FO-065 交出磁盘原件、不重跑脚本（复核探针 VERIFY-export-probe.log 实测：选了脚本目录（干扰）后静态导出仍是真值折线；原件生成后把数据换成干扰，静态导出仍是真值）。这条断言在错误实现下也绿，不能当「导出读取正确数据」的证据。复核补量了带一次 override 的导出（当次 worker 现画）：它跟着选择/当前数据走，产品行为正确；所以结论保持，但证据来源是复核探针，不是执行者用例。",
+   "verify_logs": [
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-01.log",
+     "sha256": "305994a30a925b309c1fa58d0c682f6ffe7ce14786dee27e15a0558f52e124a8"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/VERIFY-export-probe.log",
+     "sha256": "2fa7a40b9a38e61dc7e272b7c103ec8c5f41985124e0719c0bc48facdf00212d"
+    }
+   ]
+  },
+  {
+   "case_id": "PATH-02",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "重跑 exit 0，17 passed，一致。导出带一次 title 编辑 → 当次 worker 现画，这把导出尺子是有效的。反证 M1 已由复核在 PATH-04 上复做（同一变异点）并变红。小缺口：规范「输出使用选定目录」里 savefig 落点在本用例没直接断言，由 PATH-09 的写入位置断言间接覆盖。",
+   "verify_logs": [
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-02.log",
+     "sha256": "4efdecfba913eae2481ecace647d84d4922e5f574e1bc929160f42f5e3ac06ba"
+    }
+   ]
+  },
+  {
+   "case_id": "PATH-03",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "重跑 exit 0，10 passed / 37 deselected，一致。__file__ 标题断言、项目外绝对路径全序列 = EXTERNAL_Y、失效绝对路径 status=error 且不发布，主语对应验收标准。M6 未复做（复核复做的是 M1/M2）。",
+   "verify_logs": [
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-03.log",
+     "sha256": "b835eae606afa99902b4788386afe530165743b181e01d474c18b08b0d2dba89"
+    }
+   ]
+  },
+  {
+   "case_id": "PATH-04",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "重跑 exit 0，7 passed / 1 skipped，一致；skip 的是 FO32（TAVOTTO_FOUNDATION_PROJECT_PYTHON 未设），执行者已单列 not_run、未计入通过。复核亲自复做 M2（databinding `elif conflicts:` → DEFAULT_OK）：在 test_first_open_paths_d1.py:469 needs_input 处红，git checkout 还原后回绿；复做 M1（project_root 的 cwd 换成脚本目录）：在 :483 全序列断言处红（读到 [..,9,..]），还原回绿，git status 干净。FO32 not_run 理由成立：它要「与 app 不同 minor 且装了 matplotlib+h5py」的解释器，本机 uv 离线缓存里 h5py 只有 cp313 轮子，app/worker 都是 3.13，不联网造不出来。导出那条尺子量的不是产品这次读到的数据：不带 overrides 的 original 导出按 FO-065 交出磁盘原件、不重跑脚本（复核探针 VERIFY-export-probe.log 实测：选了脚本目录（干扰）后静态导出仍是真值折线；原件生成后把数据换成干扰，静态导出仍是真值）。这条断言在错误实现下也绿，不能当「导出读取正确数据」的证据。复核补量了带一次 override 的导出（当次 worker 现画）：它跟着选择/当前数据走，产品行为正确；所以结论保持，但证据来源是复核探针，不是执行者用例。 执行者 one_line 里「改选脚本目录后都是干扰那份」只对渲染与输入 hash 成立，用例没量改选后的导出。",
+   "verify_logs": [
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-04.log",
+     "sha256": "ff61af433f0a296afc269b0c962b50a60acf9146c2c7807038c4d7d471fb37fe"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/VMUT-M1-mutated.log",
+     "sha256": "a1a23a3dec8d81fec32ce0ca66db558e8c99bdb95cdb3ea02050d461cd978c70"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/VMUT-M1-restored.log",
+     "sha256": "09bf86094fc78967b5a8edc32b7668a56bae47308da65f3e1d9e7dd492a86319"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/VMUT-M2-mutated.log",
+     "sha256": "87a8e8eafdcef1824fd2dc61f2c2438f14fd447b3219f3fa195eda59a81e6e88"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/VMUT-M2-restored.log",
+     "sha256": "a54b5820ca8d2f43835c34f4979bc0714331633a2425f05eba56220ecb94fb3a"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/VERIFY-export-probe.log",
+     "sha256": "2fa7a40b9a38e61dc7e272b7c103ec8c5f41985124e0719c0bc48facdf00212d"
+    }
+   ]
+  },
+  {
+   "case_id": "PATH-05",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "note": "pytest exit 0，3 passed / 7 deselected；env-var repro exit 0，输出与原日志逐行相同。partial 成立，且再加一条理由：特殊路径下的导出断言同样是不带 overrides 的静态导出（磁盘原件），「导出一致」在本用例里其实没被量到。",
+   "verify_logs": [
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-05.log",
+     "sha256": "6ddef5aee37a797ce724ed2c08dd51abd75045c97432db4b439a317ab2aacd54"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-05-env-var.log",
+     "sha256": "477715aad379dbe5e959ee277ebd8eb4dccf563f4607bf735f87a7bc2590f2bb"
+    }
+   ]
+  },
+  {
+   "case_id": "PATH-06",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "note": "pytest exit 0，10 passed / 39 deselected；readers repro exit 0；B1 repro exit 1（prepare status=ready、descriptors=[]，render 500 no_figures_captured）；B2 repro exit 1（真跑了，不是 exit 3）。四份输出去掉时间/路径/hash 后与原日志完全相同。B1 所指 preparation.py:619 `self._finish(entry, STATUS_READY)`、B2 所指 figcapture.InputObserver._note 只按项目根过滤，读代码核实属实。",
+   "verify_logs": [
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-06.log",
+     "sha256": "f304bc17c861fe818ae18174f56057a79aa0af3af3d55dc05368c0d34d5ab183"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-06-readers.log",
+     "sha256": "3101fe38042d6e527f65214ffacbbf13f47f0b8556eb8b7bb076b4f140d357c8"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-06-bug-prepare-ready-without-figure.log",
+     "sha256": "d0846100eea9b4d994acec691b726dd9f6eb1c819503003bab1a318261a4d093"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-06-bug-observer-venv-pollution.log",
+     "sha256": "a88321b6b3c7b3463cdde28214157692ddb4ed6831bb99709db707f70454e36e"
+    }
+   ]
+  },
+  {
+   "case_id": "PATH-07",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "note": "pytest exit 0，12 passed；B3 repro exit 1，步骤序列（prepare#2 needs_input 而 render#2 script_error，invalidate 后才 workdir_confirmation_required）与原日志相同；pool.py 只在 _new_worker 路径调 workdir.resolve_mode，核实属实。Windows 跨盘 / 网盘在 macOS 上确实执行不了，partial 成立。",
+   "verify_logs": [
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-07.log",
+     "sha256": "3cee64782aaf66441c50c1ef41b9890fad0649124a26cb43f37bb1e2a2fbcfbe"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-07-bug-gate-vs-live-worker.log",
+     "sha256": "9d44f1393bcb2f6871e2d3407a38619aa1c34be60d2b933c4534484bc891eb38"
+    }
+   ]
+  },
+  {
+   "case_id": "PATH-08",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "note": "pytest exit 0，4 passed；unmount repro（hdiutil 真挂载/卸载）exit 0，输出一致。「保存文档→完全退出→重开」和项目移动在本机其实可以做，没做就是缺口，不是做不了，所以 partial 维持。",
+   "verify_logs": [
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-08.log",
+     "sha256": "594ae15df3acf08e9084478edbc73fbb3c331b6715aebfa6484bf91f8a4dc1a3"
+    },
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-08-unmount.log",
+     "sha256": "f2cf3a554111518ea77f3ea467d3385f77c465a6923bfef11d4e4c0273236879"
+    }
+   ]
+  },
+  {
+   "case_id": "PATH-09",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "重跑 exit 0，11 passed，一致。写入位置按授权逐一断言，每轮 created_runtime=True。「撤销后旧计划不执行」由 test_a_plan_whose_grant_changed_before_execution_is_stale_and_runs_nothing 证明：用的是真实 preparation 执行线程，只在 pool 边界用替身，断言 build_calls==0 + preparation_plan_stale，主语正确。M5 未复做。",
+   "verify_logs": [
+    {
+     "path": "docs/qa/2026-09-24/path/logs/verify/PATH-09.log",
+     "sha256": "71de88fc61a98c34647b32174ee2378b2653e1f0d52206c26bf9da6099a7d5a8"
+    }
+   ]
+  }
+ ],
+ "corrections": [
+  "PATH-01 / PATH-04 / PATH-05 的导出断言用的是不带 overrides 的静态导出，按 FO-065 那是磁盘原件，脚本不跑，对「读哪份数据」不敏感。复核探针用带编辑的导出补量过，产品行为正确，结论不变，但新用例应该改成带编辑的导出，或者加上「改选后导出随之变化」的对照。",
+  "PATH-04 的 one_line 说「改选脚本目录后都是干扰那份」，但用例在改选后没有量导出。",
+  "REPO-GATES.log 记录的 sha 31dc90ef 不在分支祖先链上（它不是 case 证据，只作说明）；其余 case 日志的 sha 是 4be1d7eb / 8b69647c / 718838a0，和 HEAD 相比 src/ 与 tests/ 没有差异。"
+ ]
+}
