@@ -1,15 +1,15 @@
-"""TIFF 素材（issue #534）：进得了素材库、两条渲染路都画得对、范围之外如实拒绝。
+"""TIFF 素材（issue #534）：进得了素材库、渲染后端画得对、范围之外如实拒绝。
 
 主语分三层：
 
 1. **支持范围的判据**（`tavotto/tiffprobe.py`）——只读头，纯标准库。夹具用本文件里的
    `_tiff()` 手写（未压缩单条带），与被测解析器没有一行共享代码；
-2. **两条渲染路**（PyMuPDF 默认 / RenderCore 候选）经**真的 Flask 端点**：`/api/panels` →
-   `/api/render` 缩略图 → `/api/file` → 画布合成导出 → 原图导出。`backend` 夹具两档参数化，候选
-   那档缺候选包或批准字体时 skip（skip 不是绿：在装了 `.[rendercore]` 的 venv 里真跑过才算）；
+2. **渲染后端（RenderCore，U10 起唯一）**经**真的 Flask 端点**：`/api/panels` →
+   `/api/render` 缩略图 → `/api/file` → 画布合成导出 → 原图导出。缺 RenderCore 的包或批准字体时
+   skip（skip 不是绿：在装了 `.[rendercore]` 的 venv 里真跑过才算）；
 3. **范围之外**：不进面板表、进 `unsupported`；缩略图 / 原文件 / 导出都报同一个 code，不出错图。
 
-像素判据一律取「左红右蓝」两块纯色的中心点：两个后端的缩放滤波不同，边缘像素本来就不必一致。
+像素判据一律取「左红右蓝」两块纯色的中心点：缩放滤波会让边缘像素漂，中心不会。
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ RED, BLUE = (200, 30, 30), (30, 30, 200)
 
 
 # ---------------------------------------------------------------------------
-# 夹具：手写 TIFF（未压缩、单条带；判据只读头，像素给得真实，两个后端也能真解）
+# 夹具：手写 TIFF（未压缩、单条带；判据只读头，像素给得真实，后端能真解）
 # ---------------------------------------------------------------------------
 def _tiff(
     path: Path,
@@ -221,9 +221,9 @@ def test_tiff_density_comes_from_its_resolution_tags(tmp_path, resolution, dpi, 
 
 
 # ---------------------------------------------------------------------------
-# 3. 真端点，两条渲染路
+# 3. 真端点
 # ---------------------------------------------------------------------------
-@pytest.fixture(params=[pdfbackend.BACKEND_PYMUPDF, pdfbackend.BACKEND_RENDERCORE])
+@pytest.fixture(params=[pdfbackend.BACKEND_RENDERCORE])
 def backend(request, monkeypatch):
     name = request.param
     if name == pdfbackend.BACKEND_RENDERCORE:
@@ -250,7 +250,6 @@ def client(tmp_path, monkeypatch, backend):
     monkeypatch.setattr(m, "EXPORT_DIR", tmp_path / "exports")
     monkeypatch.setattr(m, "BAKED_DIR", tmp_path / "_baked")
     monkeypatch.setattr(m, "BAKED_PATH", tmp_path / "_legacy_baked.json")
-    m._SOURCE_SHA1.clear()
     exportjob.reset_for_tests()
     yield m.app.test_client()
     m.reset_projects()
@@ -376,12 +375,12 @@ def test_original_export_of_a_tiff_keeps_its_pixel_grid(client, tmp_path, fmt):
 
 @pytest.mark.parametrize("name", sorted(SUPPORTED))
 def test_every_supported_layout_renders_the_same_picture_on_both_backends(client, tmp_path, name):
-    """支持范围里的每一格，缩略图与画布合成在两条路上画出同一张图（取两块纯色的中心）。"""
+    """支持范围里的每一格，缩略图与画布合成都画出同一张图（取两块纯色的中心）。"""
     _project(tmp_path, v__tif=SUPPORTED[name])
     if name.startswith("gray"):
         want = ((200, 200, 200), (30, 30, 30)) if name == "gray16" else ((81,) * 3, (49,) * 3)
     elif name == "rgba8":
-        want = (RED, (142, 142, 227))  # 右半 alpha 128：两条路都压在白底上，alpha 没被丢掉
+        want = (RED, (142, 142, 227))  # 右半 alpha 128：缩略图与导出都压在白底上，alpha 没被丢掉
     else:
         want = (RED, BLUE)
     thumb = client.get("/api/render?id=v.tif&w=200")
@@ -400,7 +399,7 @@ def test_every_supported_layout_renders_the_same_picture_on_both_backends(client
     ["tiff_lzw", "tiff_adobe_deflate", "packbits", "jpeg", "multipage", "palette"],
 )
 def test_compressed_and_multipage_tiffs_render_on_both_backends(client, tmp_path, variant):
-    """常见压缩（Pillow 写，libtiff 口径）与多页（只取首页）在两条路上都画得对。"""
+    """常见压缩（Pillow 写，libtiff 口径）与多页（只取首页）都画得对。"""
     from PIL import Image
 
     im = Image.frombytes("RGB", (W, H), _halves(RED, BLUE))

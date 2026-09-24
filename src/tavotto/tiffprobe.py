@@ -1,14 +1,14 @@
 """TIFF 素材的**头部事实与支持范围** —— 「这张 TIFF 能不能当素材用」的唯一判据（issue #534）。
 
 纯标准库，只读文件头与第一个 IFD，一个像素都不解。Flask 父进程
-import 它，两条渲染路（PyMuPDF / RenderCore）都**不**各自再判一遍：素材清单（`app.scan_panels`）
-与每一次按面板 id 取文件（`app.safe_resolve`：缩略图、原文件、画布合成、原图导出、重渲染）都经这里，
-所以两个后端看到的 TIFF 天然是同一个集合。
+import 它，渲染后端（RenderCore）**不**另判一遍：素材清单（`app.scan_panels`）与每一次按面板 id
+取文件（`app.safe_resolve`：缩略图、原文件、原图导出、重渲染）都经这里，画布合成的静态源解析器
+（不经 `safe_resolve`）由 `app._export_produce_rendercore` 补同一道闸。
 
 ### 支持范围（定死，改它就是改产品能力）
 
-实测两条后端（PyMuPDF 1.28.2 / Pillow 12.3）对下面每一格都给出同一张图（`tests/test_tiff_assets.py`
-逐格对拍）：
+范围是在 U10 之前对两个后端（PyMuPDF 1.28.2 / RenderCore + Pillow 12.3）逐格实测、两边画出同一张图
+才定的；今天只剩 RenderCore，`tests/test_tiff_assets.py` 逐格看护它：
 
 * 容器：经典 TIFF（`II` / `MM` 两种字节序、条带或瓦片、样本交错存放）。**只取第一页**——多页 TIFF 与
   多页 PDF 同一条规则：一张「图」在本产品里恒等于一页，画布上看到的、导出的都是首页。
@@ -18,7 +18,8 @@ import 它，两条渲染路（PyMuPDF / RenderCore）都**不**各自再判一�
   会显得很暗，那是文件本来的样子）；1 位只在灰度上（线稿 / 传真）。
 * 压缩：无、LZW、Deflate（8 / 32946）、PackBits、JPEG（7）、CCITT G3 / G4。
 
-**范围之外一律拒绝，不静默出一张错图**（每条都是实测过的错法）：
+**范围之外一律拒绝，不静默出一张错图**（右列是 U10 前实测的错法；BigTIFF 与平面存放 RenderCore 其实解得开，
+放开它们要本模块先会读 BigTIFF 头、再补逐格用例，是后续一步，不在 #534 里顺手放）：
 
 | code | 什么样的文件 | 不拒绝会怎样 |
 | --- | --- | --- |
