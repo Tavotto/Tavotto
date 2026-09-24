@@ -142,15 +142,29 @@ export function PerfProbeHud() {
                 </p>
               )}
             </>
+          ) : notice === 'save_failed' ? (
+            <p className="text-xs text-danger" role="alert">
+              {t('perfProbe.saveFailed')}
+            </p>
           ) : (
             <p className="text-ink-2" role="status">
               {t('perfProbe.noData')}
             </p>
           )}
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-1.5">
             <Button variant="secondary" size="sm" onClick={() => probe().close()} data-perf-action="close">
               {t('perfProbe.close')}
             </Button>
+            {notice === 'save_failed' && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => void probe().retrySave()}
+                data-perf-action="retry-save"
+              >
+                {t('perfProbe.retrySave')}
+              </Button>
+            )}
           </div>
         </>
       )}

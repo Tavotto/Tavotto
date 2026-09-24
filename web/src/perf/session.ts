@@ -279,8 +279,12 @@ export interface SavedReport {
  * 保存报告。**经后端写进数据目录**（`POST /api/perf/report`）：桌面壳的
  * WKWebView 没有注册下载处理器，`<a download>` 在那里会被静默取消——报告
  * 必须落在一个壳能在访达里显示出来的地方。浏览器模式另外照常给一份下载。
+ *
+ * 回 `null` = 桌面版而后端没接住（数据目录不可写 / 满了 / 连不上）：报告**哪儿都
+ * 没落下**。这时不许退回浏览器下载——它在 WKWebView 里被取消却不报错，回一个
+ * 文件名就等于谎称「已保存」。报告留在调用方手里，由界面说出失败、给重试。
  */
-export async function saveReport(report: PerfReport): Promise<SavedReport> {
+export async function saveReport(report: PerfReport): Promise<SavedReport | null> {
   const body = JSON.stringify(report)
   try {
     const res = await fetch(
@@ -295,8 +299,9 @@ export async function saveReport(report: PerfReport): Promise<SavedReport> {
       }
     }
   } catch {
-    /* 落到下面的浏览器下载 */
+    /* 浏览器模式落到下面的下载；桌面版说失败 */
   }
+  if (isDesktop()) return null
   const name = reportFilename()
   downloadText(body, name)
   return { name, dir: null }

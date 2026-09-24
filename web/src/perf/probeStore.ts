@@ -11,6 +11,8 @@ import {
   quickSummary,
   saveReport,
   startProbe,
+  type PerfReport,
+  type SavedReport,
 } from './session'
 import { abortSynthetic, runStandardTest, STANDARD_PASSES } from './synthetic'
 
@@ -21,8 +23,10 @@ interface ProbeState {
   segments: number
   /** 自动测试正在跑第几轮（1 起） */
   pass: number
-  notice: 'not_draggable' | 'no_data' | null
+  notice: 'not_draggable' | 'no_data' | 'save_failed' | null
   result: { file: string; dir: string | null; fps: number | null; jankPct: number | null } | null
+  /** 桌面版后端没接住的那份报告：留着给「重试」，绝不因为保存失败就丢掉录好的数据 */
+  unsaved: PerfReport | null
   /** 在文件管理器里定位失败时的完整路径（失败绝不静默，与导出对话框同一条） */
   revealFailedPath: string | null
   start: () => boolean
@@ -31,6 +35,8 @@ interface ProbeState {
   runAt: (x: number, y: number) => Promise<void>
   stopTest: () => void
   finish: () => Promise<void>
+  /** 保存失败后再存一次同一份报告 */
+  retrySave: () => Promise<void>
   /** 桌面：在访达 / 资源管理器里显示报告 */
   reveal: () => void
   discard: () => void
@@ -45,6 +51,7 @@ export const usePerfProbeStore = create<ProbeState>((set, get) => ({
   pass: 0,
   notice: null,
   result: null,
+  unsaved: null,
   revealFailedPath: null,
 
   start: () => {
@@ -52,7 +59,7 @@ export const usePerfProbeStore = create<ProbeState>((set, get) => ({
     if (!startProbe()) return false
     unsub?.()
     unsub = perfSubscribe(() => set({ segments: perfSegmentCount() }))
-    set({ phase: 'recording', segments: 0, pass: 0, notice: null, result: null })
+    set({ phase: 'recording', segments: 0, pass: 0, notice: null, result: null, unsaved: null })
     return true
   },
   beginPick: () => {
@@ -80,15 +87,12 @@ export const usePerfProbeStore = create<ProbeState>((set, get) => ({
       set({ phase: 'done', notice: 'no_data', result: null })
       return
     }
-    const saved = await saveReport(report)
-    const s = quickSummary(report)
-    set({
-      phase: 'done',
-      notice: null,
-      revealFailedPath: null,
-      result: { file: saved.name, dir: saved.dir, fps: s.fps, jankPct: s.jankPct },
-    })
-    get().reveal()
+    landSaved(report, await saveReport(report))
+  },
+  retrySave: async () => {
+    const report = get().unsaved
+    if (!report || get().phase !== 'done') return
+    landSaved(report, await saveReport(report))
   },
   reveal: () => {
     const r = get().result
@@ -103,9 +107,28 @@ export const usePerfProbeStore = create<ProbeState>((set, get) => ({
     unsub?.()
     unsub = null
     cancelProbe()
-    set({ phase: 'off', segments: 0, pass: 0, notice: null, result: null })
+    set({ phase: 'off', segments: 0, pass: 0, notice: null, result: null, unsaved: null })
   },
-  close: () => set({ phase: 'off', notice: null, result: null, revealFailedPath: null }),
+  close: () =>
+    set({ phase: 'off', notice: null, result: null, unsaved: null, revealFailedPath: null }),
 }))
+
+/** 保存的结果落到界面：存上了给文件名与一句摘要；没存上说失败、留着报告 */
+function landSaved(report: PerfReport, saved: SavedReport | null): void {
+  const store = usePerfProbeStore
+  if (!saved) {
+    store.setState({ phase: 'done', notice: 'save_failed', result: null, unsaved: report })
+    return
+  }
+  const s = quickSummary(report)
+  store.setState({
+    phase: 'done',
+    notice: null,
+    unsaved: null,
+    revealFailedPath: null,
+    result: { file: saved.name, dir: saved.dir, fps: s.fps, jankPct: s.jankPct },
+  })
+  store.getState().reveal()
+}
 
 export const STANDARD_PASS_COUNT = STANDARD_PASSES.length

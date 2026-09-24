@@ -15,6 +15,8 @@
   `REPORT_SCHEMA` 并让分析器兼容旧版。
 - **片段边界只在 `interactionStore.begin / end`**：不在各个 `startXDrag` 里各切一遍。
   新增一种拖动只要照常 `interaction().begin(kind)`，探针自动覆盖。
+- **「停止」对整次标准测试生效**：停止旗子只在 `runStandardTest` 开头清一次、每轮开跑前
+  先看一眼；轮与轮之间那 800ms 里按停止，第二轮不开跑。看护：`perf/synthetic.test.ts`。
 - **自动测试绝不改用户文档**：收尾一律 `pointercancel`（取消语义见
   `fake-realtime-preview.md`）。`perf/synthetic.test.ts` 断言文档与撤销栈原样；
   把收尾换成 `pointerup` 它必须红。e2e 另断言零后端渲染、被拖元素 transform 复原。
@@ -24,7 +26,9 @@
 - **报告经后端落盘，不走 `<a download>`**：桌面壳的 WKWebView 会取消浏览器式下载
   （壳没注册下载处理器）。`saveReport` 先 `POST /api/perf/report`（写进数据目录、名字由
   后端生成），桌面版再 `revealExportedFile` 在访达里显示、失败时把完整路径说出来；
-  浏览器模式另给一份下载。
+  浏览器模式另给一份下载。**桌面版后端没接住时不退回下载**（那一下会被静默取消）：
+  `saveReport` 回 `null`，面板说「没保存」、报告留在 `probeStore.unsaved` 给「重试保存」
+  ——回一个文件名就是谎称已保存。看护：`perf/probeStore.test.tsx`。
 - **documentStore 的通知分三类记**（`store.document.doc` / `.save` / `.other`，片段上下文带
   `doc_split: true`）：同一个 store 里住着文档本体与保存状态，只数通知会把「上一次松手 1 秒后
   的自动保存改 saveState」读成「拖动途中写文档」。`flushAutosave` 外面的 `autosave.flush` span
@@ -32,7 +36,10 @@
 - **松手链路**：`renderStore` 发请求前 `perfRenderBegin(key)`、拿到响应 `perfRenderResponse`（照抄
   后端 timings 里的数字，含 `/api/engine/render` 的 `server_ms`）、写进 store 后 `perfRenderApplied`；
   `PanelView` 把那一版 SVG 换进 DOM 后 `perfRenderPainted(key)`，随后两帧记进 `swap_frames`（不依赖
-  片段——换图常在尾巴之后）。**渲染键只活在内存里**（它含文件名），报告里只有数字。
+  片段——换图常在尾巴之后）。**位图这一格（raster / evicted / 非编辑态的引擎位图）没有 SVG**：
+  落定是**这一版自己的**位图 `<img>` 的 onLoad（变体与 rev 都对得上；暂挂的上一张不算），
+  否则分析器退回拿 `applied` 当落定，取图、解码、换图整段漏掉。看护：
+  `canvas/panelPreviewMode.test.tsx`「性能探针」一组。**渲染键只活在内存里**（它含文件名），报告里只有数字。
 - **判断不在产品里**：产品只给帧率与超时比例一句话；「卡在哪、怎么改」在
   `scripts/perf_report.py`，判据随代码改，不为改一条规则发版本。
 - **探针面板拖动中不重渲染**：片段数只在片段结束时通知（`perfSegmentBegin` 不通知），
