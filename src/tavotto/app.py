@@ -4962,7 +4962,10 @@ def _set_project_environment(
         # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回，
         # 并按此刻的计划**重新**量一次装没装齐——「还被发现得到」不等于「还装齐」（弹窗开着期间环境变了，
         # 或交回的是界面上本就不可选的那种；Codex #522 P2）。这一次复核就是体检，下面不再起第二次
-        entry = engine_deprepair.recheck_user_environment(root, script, user_environment)
+        try:
+            entry = engine_deprepair.recheck_user_environment(root, script, user_environment)
+        except engine_pool.WorkerError as exc:
+            return jsonify({"error": str(exc), "code": exc.code}), 409
         if entry is None:
             return jsonify(
                 {

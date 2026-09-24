@@ -540,6 +540,63 @@ def test_a_reusable_session_is_not_asked_to_decide_again(spawn_box, monkeypatch)
     assert not created and calls == []
 
 
+def test_a_worker_that_dies_after_the_peek_still_gets_the_decision(spawn_box):
+    """Codex #562 P2：锁外窥视说「能复用」（于是没做决定），进锁时那条会话已经死了。锁内重建走的是只读的
+    依赖门——以前这里只会弹框，本该自动改用的没改。现在锁内发现要重建而还没决定过，就出锁补上决定再来一遍。
+    时刻用替身钉死：同一条会话第一次被问 `alive()`（窥视）答活着，第二次（锁内）答死了。"""
+    project, env = spawn_box["project"], spawn_box["env"]
+    spawn_box["envs"] = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    answers = iter([True, False])
+
+    class DiesAfterThePeek:
+        script_name, entry, python, last_used = "fig.py", "__main__", BEFORE, 0.0
+
+        def alive(self):
+            return next(answers, False)
+
+        def shutdown(self):
+            pass
+
+    with engine_pool._lock:
+        engine_pool._workers[(engine_pool._norm_dir(str(project)), "fig.py")] = DiesAfterThePeek()
+    w, created = engine_pool.acquire("fig.py", str(project), "__main__")
+    assert next(answers, "spent") == "spent", "尺子是活的：窥视与锁内各问了一次"
+    assert created and w.python == str(env), "补上了决定：改用了装齐的环境，而不是弹框"
+    assert spawn_box["spawned"] == [{"python": str(env), "mutating": False}]
+
+
+def test_a_lease_taken_between_the_check_and_the_lock_stops_the_spawn(spawn_box, monkeypatch):
+    """同一形状（锁外的检查被锁内信任）的另一处：锁外 `is_mutating` 说没人在装，进锁之前装包作业拿到了
+    这个环境的租约。锁内再查一次，拒起；以前 worker 照样起在正被写的 site-packages 上。
+    同步点：锁外那次检查一返回就让另一个作业拿住租约（真的 `envlease`），不用 sleep。"""
+    from tavotto.engine import envlease
+
+    project = spawn_box["project"]
+    offer = _offer([])
+    offer["plan"] = {"status": "nothing_needed", "missing": []}
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: (offer, []))
+    lease = envlease.mutating(envlease.env_key_of(BEFORE), BEFORE)
+    real = engine_pool.is_mutating
+    calls = []
+
+    def check_then_someone_starts_installing(python):
+        got = real(python)
+        calls.append(got)
+        if len(calls) == 1:
+            lease.__enter__()
+        return got
+
+    monkeypatch.setattr(engine_pool, "is_mutating", check_then_someone_starts_installing)
+    try:
+        with pytest.raises(engine_pool.WorkerError) as err:
+            engine_pool.acquire("fig.py", str(project), "__main__")
+    finally:
+        lease.__exit__(None, None, None)
+    assert calls[0] is False, "尺子是活的：锁外那次确实说没人在装"
+    assert spawn_box["spawned"] == [], f"worker 起在了被占用的环境上: {spawn_box['spawned']}"
+    assert err.value.code == engine_pool.ENVIRONMENT_MUTATING
+
+
 # ------------------------------------------------ 采用前复核（Codex #522 P2）
 
 
@@ -662,6 +719,62 @@ def test_the_uncached_recheck_never_accepts_a_result_slipped_into_the_cache(monk
         [],
     )[0]
     assert cached["satisfies"] is True and len(probed) == 1
+
+
+def test_adopting_when_the_plan_cannot_be_computed_is_refused(adopt_api, monkeypatch):
+    """Codex #562 P2：复核时联合计划算不出来，以前退回空的需求集合——什么都不量，任何健康的环境都「装齐」、
+    被记下。现在不知道脚本要什么就不下结论：`user_environment_unverifiable`，什么都不记。"""
+    project = adopt_api["project"]
+
+    def broken(root, script):
+        raise engine_pool.WorkerError("解释器解析失败", code="no_worker_python")
+
+    monkeypatch.setattr(deprepair, "joint_plan_for", broken)
+    resp = adopt_api["adopt"]()
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == deprepair.ERROR_USER_ENV_UNVERIFIABLE
+    assert projectenv.remembered_record(project) is None
+
+
+def test_the_recheck_measures_everything_the_script_needs_not_only_the_current_gap(
+    adopt_api, monkeypatch
+):
+    """同一形状（需求集合比判据要的窄）的另一处：计划的 `missing` 是相对**此刻的**解释器量的差集。内置
+    runtime 有 numpy、缺 openpyxl 时，一个只装了 openpyxl 的环境按差集量是「装齐」，改用之后脚本在 numpy 上
+    缺包。候选要量的是脚本开跑要的全部（`missing` + `satisfied`）。"""
+    project = adopt_api["project"]
+
+    class _Plan:
+        def to_payload(self):
+            return {
+                "status": "ready",
+                "missing": [{"import_name": "openpyxl", "distribution": "openpyxl"}],
+                "satisfied": [{"import_name": "numpy", "distribution": "numpy"}],
+                "unknown": [],
+            }
+
+    monkeypatch.setattr(
+        deprepair, "joint_plan_for", lambda root, script: (_Plan(), "tavotto_managed", BEFORE)
+    )
+    probed = []
+
+    def probe(python, module=None, *, modules=()):
+        probed.append(tuple(modules))
+        return {
+            "ok": True,
+            "code": "",
+            "support": "verified",
+            "python_version": "3.12.1",
+            "matplotlib_version": "3.10.0",
+            "modules_ok": {name: name == "openpyxl" for name in modules},
+        }
+
+    monkeypatch.setattr(projectenv, "probe_environment", probe)
+    resp = adopt_api["adopt"]()
+    assert probed and "numpy" in probed[-1], "尺子是活的：numpy 确实被量了"
+    assert resp.status_code == 400, resp.get_json()
+    assert resp.get_json()["params"] == {"packages": "numpy"}
+    assert projectenv.remembered_record(project) is None
 
 
 def test_adopting_a_complete_environment_is_remembered_as_the_users_choice(adopt_api):

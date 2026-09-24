@@ -3306,9 +3306,12 @@ def cancel_status(plan_id: str) -> dict:
 # `MAX_DEPENDENCY_REPAIR_ROUNDS` 兜底）。没有轮次了也放行。「有答案才放行 + 轮次上限」
 # 一起就是「无无限缺包循环」——而不是让同一个动作第二次悄悄变成另一种行为。
 ERROR_PREPARATION_REQUIRED = "dependency_preparation_required"
+#: 采用前复核时联合计划算不出来（解释器解析失败等）：不知道脚本要什么，就不能说这个环境「装齐」——
+#: 拿空的需求集合去量，任何健康的环境都会「装齐」并被记下（Codex #562 P2）。
+ERROR_USER_ENV_UNVERIFIABLE = "user_environment_unverifiable"
 #: 本模块里**常量式**、且会落到用户界面的 code（`tests/test_error_codes.py` 的码表读它；
 #: `RepairError` 那一族的文案在前端 `engine.repairError.*` 表里，按既有约定不进这里）。
-ERROR_CODES = (ERROR_PREPARATION_REQUIRED,)
+ERROR_CODES = (ERROR_PREPARATION_REQUIRED, ERROR_USER_ENV_UNVERIFIABLE)
 _gate_skipped: set[tuple[str, str]] = set()
 
 
@@ -3410,11 +3413,11 @@ def user_environment_candidates(
 
 def recheck_user_environment(project: str | Path, script: str, env_id: str) -> dict | None:
     """界面交回的 id → 按**此刻的**联合计划重新体检的那一条（`userenvs.evaluate` 的形状，不读体检缓存）；
-    本机的发现结果里找不到回 None。
+    本机的发现结果里找不到回 None；计划算不出来抛 `WorkerError(code=user_environment_unverifiable)`。
 
     「还被发现得到」不等于「还能用」：弹窗开着期间环境可能变了（包被卸掉、解释器坏了），调用方也可能交回
-    一个本来就没装齐（界面上不可选）的候选。所以采用前与弹窗列出时用同一个判据再量一次——装齐 = 计划里缺的
-    import 与映射不到包名的 import 全部 import 得到（ADR 0079 §二）；计划此刻什么都不缺时只剩环境健康这一条。"""
+    一个本来就没装齐（界面上不可选）的候选。所以采用前与弹窗列出时用同一个判据再量一次——装齐 = 脚本开跑
+    要的 import（计划的 `needed`：此刻缺的与此刻有的都算）与映射不到包名的 import 全部 import 得到。"""
     root = str(Path(project))
     cand = next(
         (
@@ -3428,17 +3431,23 @@ def recheck_user_environment(project: str | Path, script: str, env_id: str) -> d
         return None
     try:
         plan = joint_plan_for(root, script)[0].to_payload()
-    except pool.WorkerError:
-        plan = {}
+    except pool.WorkerError as exc:
+        raise pool.WorkerError(
+            "现在算不出这个脚本需要哪些包，没法确认这个环境装齐了，请重新检查",
+            code=ERROR_USER_ENV_UNVERIFIABLE,
+        ) from exc
     needed, unknown = _plan_imports(plan)
     return userenvs.evaluate([cand], needed, unknown, use_cache=False)[0]
 
 
 def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
-    """联合计划载荷里「要 import 得到」的两份：缺的（带 distribution）与映射不到包名的。"""
+    """联合计划载荷里「候选环境要 import 得到」的两份：脚本开跑要的第三方包（`missing` + `satisfied`，
+    带 distribution）与映射不到包名的。**不只是 `missing`**：`missing` 是相对**此刻的**解释器量的差集——
+    内置 runtime 里有 numpy、缺 openpyxl 时它只有 openpyxl，一个只装了 openpyxl 的环境就会被判「装齐」、
+    自动改用，脚本接着在 numpy 上缺包。"""
     needed = [
         {"import_name": m.get("import_name", ""), "distribution": m.get("distribution", "")}
-        for m in plan.get("missing") or []
+        for m in [*(plan.get("missing") or []), *(plan.get("satisfied") or [])]
     ]
     return needed, list(plan.get("unknown") or [])
 

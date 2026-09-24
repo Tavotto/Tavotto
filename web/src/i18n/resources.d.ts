@@ -1890,6 +1890,7 @@ export default interface Resources {
       "unsupported_script_type": "无法试运行：{{script}} 不是 .py 脚本",
       "user_environment_gone": "这个 Python 环境已经找不到了，请重新检查",
       "user_environment_incomplete": "这个 Python 环境里还缺 {{packages}}，请重新检查",
+      "user_environment_unverifiable": "现在算不出这个脚本需要哪些包，没法确认这个环境装齐了，请重新检查",
       "versions_unreadable": "无法读取版本历史，这次检查点没有写入。磁盘上的历史没有改动。",
       "workdir_confirmation_required": "要先选择脚本的运行目录",
       "workdir_mode_invalid": "不认识的工作目录模式：{{mode}}",

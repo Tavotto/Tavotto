@@ -141,6 +141,8 @@ USER_VISIBLE_CODES = {
     "user_environment_gone": set(),
     # 交回的环境按此刻的计划复核仍缺包（Codex #522 P2）
     "user_environment_incomplete": {"packages"},
+    # 复核时联合计划算不出来：不知道脚本要什么，不拿空集合判「装齐」（Codex #562 P2）
+    "user_environment_unverifiable": set(),
     # --- Compatibility Bridge Session 3：试运行路径校验的三种拒绝 ---
     "script_not_found": {"script"},
     "script_path_outside_project": {"script"},

@@ -2594,59 +2594,78 @@ def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorke
     """
     key = (_norm_dir(figures_dir), script_name)
     created = False
-    # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
-    # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
-    # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
-    want_python = resolve_worker_python(figures_dir, script=script_name)[0]
-    if ENVIRONMENT_DECIDERS and not _reusable(key, entry, want_python):
-        # 要起新会话：先让「换不换解释器」的决定落地，再按决定之后的世界解析、查租约——
-        # 下面的 `is_mutating` 与 `_new_worker()` 里构造函数解析到的必须是同一个解释器。
-        # 也在锁外：决定可能要体检若干个候选解释器（子进程），不能占着整个池的锁。
-        for decide in ENVIRONMENT_DECIDERS:
-            decide(figures_dir, script_name)
+    # 「换不换解释器」要在锁外、查租约之前决定（见下）；锁外那次「能不能复用」只是窥视——窥视说能复用、
+    # 进锁时它却死了 / 换了入口，就得出锁把决定补上再来一遍（Codex #562 P2），否则锁内重建走到只读的
+    # 依赖门，本该自动改用的只会弹框。第二遍一定已经决定过，所以最多两遍。
+    force_decide = False
+    while True:
+        # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
+        # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
+        # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
         want_python = resolve_worker_python(figures_dir, script=script_name)[0]
-    if is_mutating(want_python):
-        # 这个环境的 site-packages 正在被写。**不起新会话**——半装完的包
-        # import 到一半是最难解释的一档失败（有时成功、有时缺一个子模块）。
-        raise WorkerError("这个 Python 环境正在安装依赖，请稍候再试。", code=ENVIRONMENT_MUTATING)
-    with _lock:
-        w = _workers.get(key)
-        why = ""
-        if w is not None:
-            if not w.alive():
-                why = "已死"
-            elif w.entry != entry:
-                why = "入口已变"
-            elif not same_python(w.python, want_python):
-                # **worker 身份包含解释器**（ADR 0018）：项目自动切到 .venv 之后
-                # 还复用那条内置 runtime 起的会话，用户看到的就是「明明切了环境，
-                # 还是报缺包」。判据与 `entry` 那条同形，不另起一套 key。
-                why = "渲染解释器已变"
-        if why:
-            LOG.warning("worker %s，重建: %s", why, script_name)
-            w.shutdown()
-            w = None
-        if w is None:
-            w = _new_worker(script_name, figures_dir, entry)
-            _workers[key] = w
-            created = True
-        w.last_used = time.time()
-        alive = [(k, x) for k, x in _workers.items() if x.alive()]
-        if len(alive) > MAX_ALIVE:
-            stale = sorted(alive, key=lambda kv: kv[1].last_used)
-            for vkey, victim in stale[: len(alive) - MAX_ALIVE]:
-                if victim is not w:
-                    LOG.info("worker LRU 淘汰: %s", victim.script_name)
-                    _workers.pop(vkey, None)
-                    threading.Thread(target=victim.shutdown, daemon=True).start()
+        decided = not ENVIRONMENT_DECIDERS
+        if not decided and (force_decide or not _reusable(key, entry, want_python)):
+            # 要起新会话：先让「换不换解释器」的决定落地，再按决定之后的世界解析、查租约——
+            # 下面的 `is_mutating` 与 `_new_worker()` 里构造函数解析到的必须是同一个解释器。
+            # 也在锁外：决定可能要体检若干个候选解释器（子进程），不能占着整个池的锁。
+            for decide in ENVIRONMENT_DECIDERS:
+                decide(figures_dir, script_name)
+            want_python = resolve_worker_python(figures_dir, script=script_name)[0]
+            decided = True
+        _refuse_if_mutating(want_python)
+        with _lock:
+            w = _workers.get(key)
+            why = ""
+            if w is not None:
+                if not w.alive():
+                    why = "已死"
+                elif w.entry != entry:
+                    why = "入口已变"
+                elif not same_python(w.python, want_python):
+                    # **worker 身份包含解释器**（ADR 0018）：项目自动切到 .venv 之后
+                    # 还复用那条内置 runtime 起的会话，用户看到的就是「明明切了环境，
+                    # 还是报缺包」。判据与 `entry` 那条同形，不另起一套 key。
+                    why = "渲染解释器已变"
+            if (w is None or why) and not decided:
+                force_decide = True
+                continue  # 出锁：决定要体检子进程，不能占着池锁
+            if why:
+                LOG.warning("worker %s，重建: %s", why, script_name)
+                w.shutdown()
+                w = None
+            if w is None:
+                # 锁外那次租约检查到这里之间，装包的作业可能刚拿到这个环境的租约。**锁内再查一次**：
+                # 它先拿到 → 这里看得见；这里先登记 → 它的 `shutdown_workers_using()` 要等这把锁，
+                # 然后收掉这条会话，pip 在那之后才开始。锁序 `_lock` → envlease 内部锁，没有反向嵌套。
+                _refuse_if_mutating(want_python)
+                w = _new_worker(script_name, figures_dir, entry)
+                _workers[key] = w
+                created = True
+            w.last_used = time.time()
+            alive = [(k, x) for k, x in _workers.items() if x.alive()]
+            if len(alive) > MAX_ALIVE:
+                stale = sorted(alive, key=lambda kv: kv[1].last_used)
+                for vkey, victim in stale[: len(alive) - MAX_ALIVE]:
+                    if victim is not w:
+                        LOG.info("worker LRU 淘汰: %s", victim.script_name)
+                        _workers.pop(vkey, None)
+                        threading.Thread(target=victim.shutdown, daemon=True).start()
+        break
     if created:  # 出锁再清：prune 要遍历磁盘，不能占着 _lock
         _schedule_prune()
     return w, created
 
 
+def _refuse_if_mutating(python: str) -> None:
+    if is_mutating(python):
+        # 这个环境的 site-packages 正在被写。**不起新会话**——半装完的包
+        # import 到一半是最难解释的一档失败（有时成功、有时缺一个子模块）。
+        raise WorkerError("这个 Python 环境正在安装依赖，请稍候再试。", code=ENVIRONMENT_MUTATING)
+
+
 def _reusable(key: tuple[str, str], entry: str, want_python: str) -> bool:
     """池里这条会话此刻能不能直接复用（与 `acquire()` 锁内的重建判据同一组条件）。只是一次窥视：
-    复用的会话不需要重新决定环境；判错了（窥视之后它死了）锁内照样重建，只是那一次不换环境。"""
+    复用的会话不需要重新决定环境；判错了（窥视之后它死了）`acquire()` 在锁内发现，出锁补上决定再来一遍。"""
     with _lock:
         w = _workers.get(key)
         return (
