@@ -355,6 +355,23 @@ describe('属性页的各个入口都按页面值进出', () => {
     expect(overrideOf('axes_0.lines_1', 'linewidth')).toBe(1.5)
   })
 
+  it('边框卡：逐边的脚本值不同、页面值取整后相同（1.01 / 1.02 在 0.6 下都是 0.61）时仍是「多个值」，逐边区展开', async () => {
+    const m = manifest()
+    const axes = m.elements[0]
+    axes.editable = axes.editable.map((x) =>
+      x.prop === 'spine_left_linewidth' ? { ...x, value: 1.02 } : x.prop.endsWith('linewidth') ? { ...x, value: 1.01 } : x,
+    )
+    await seed(0.6, m)
+    await mount(['axes_0'])
+    // 四边一致时逐边区收着、逐边行不渲染；判据若在页面值上比，四边都是 0.61，这里就是 null
+    const side = (prop: string) =>
+      region('inspector').querySelector<HTMLInputElement>(`input[data-inspector-prop="${prop}"]`)
+    expect(side('spine_left_linewidth'), '逐边区因「四边不一致」展开').not.toBeNull()
+    expect(side('spine_left_linewidth')!.value).toBe('0.61')
+    expect(side('spine_top_linewidth')!.value).toBe('0.61')
+    expect(fieldInput('spine_linewidth').value, '联动行是「多个值」').toBe('')
+  })
+
   it('边框卡：「全部」与逐边是同一种单位，四边一致时不报「多个值」，写回脚本值', async () => {
     await seed(0.5)
     await mount(['axes_0'])
@@ -371,6 +388,28 @@ describe('属性页的各个入口都按页面值进出', () => {
     expect(len().value).toBe('3')
     await type(len(), '4.5')
     expect(overrideOf('axes_0.xticks', 'length')).toBe(7.5)
+  })
+
+  it('三维子图的轴箭头（arrow_head = mutation_scale，pt）：缩放比 0.5 时显示 6 × 0.5 = 3，输入 4 写回 8', async () => {
+    const m = manifest()
+    m.elements.push(
+      el('axes_1', 'axes3d', [
+        f('axis_arrows', 'bool', true, { group: '轴箭头' }),
+        f('arrow_color', 'color', '#000000', { group: '轴箭头' }),
+        f('arrow_width', 'number', 0.8, { min: 0.1, max: 3, step: 0.1, unit: 'pt', group: '轴箭头' }),
+        f('arrow_head', 'number', 6, { min: 2, max: 20, step: 0.5, unit: 'pt', group: '轴箭头' }),
+      ]),
+    )
+    await seed(0.5, m)
+    await mount(['axes_1'])
+    const more = [...region('inspector').querySelectorAll('button')].find((b) => b.textContent?.trim() === '更多')
+    if (more?.getAttribute('aria-expanded') === 'false') {
+      await act(async () => more.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    }
+    expect(fieldInput('arrow_width').value, '相邻的箭头线宽本来就换算').toBe('0.4')
+    expect(fieldInput('arrow_head').value).toBe('3')
+    await type(fieldInput('arrow_head'), '4')
+    expect(overrideOf('axes_1', 'arrow_head')).toBe(8)
   })
 
   it('局部预览拿到的与写进 override 的是同一个脚本值（曲线线宽：页面 1.2 = 脚本 2）', async () => {

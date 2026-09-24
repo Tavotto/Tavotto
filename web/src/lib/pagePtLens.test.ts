@@ -123,6 +123,13 @@ describe('上下界与取整', () => {
     expect(PAGE_PT_PROPS.has('size')).toBe(false)
   })
 
+  it('三维轴箭头的箭头大小（arrow_head，引擎里就是 mutation_scale）与相邻的箭头线宽同一种单位', () => {
+    const lens = pagePtLens(panelAt(0.5))
+    expect(lens.toPage('arrow_head', 6)).toBe(3)
+    expect(lens.toPage('mutation_scale', 6)).toBe(3)
+    expect(lens.toPage('arrow_width', 0.8)).toBe(0.4)
+  })
+
   it('边框卡的「全部」与逐边是同一种单位（一张卡里不许一个页面值一个脚本值）', () => {
     const lens = pagePtLens(panelAt(0.5))
     for (const side of ['top', 'right', 'bottom', 'left']) {

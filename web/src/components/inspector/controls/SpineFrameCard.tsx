@@ -64,10 +64,14 @@ export function SpineFrameCard({
   const overridden = (prop: string) =>
     panel.overrides.some((o) => o.gid === element.gid && o.prop === prop)
 
-  /** 一种属性在四边上的现值；逐边覆盖优先、其次 manifest 的逐边值 */
+  /** 一种属性在四边上的现值；逐边覆盖优先、其次 manifest 的逐边值（显示用：页面值） */
   const sideValues = (kind: Kind) => sides.map((s) => w.read(perSide(s, kind)))
+  /**
+   * 四边是否一致：在**脚本值**上比。显示的线宽是两位小数的页面值，本来不同的两条边
+   * （1.01 与 1.02 在 0.6 下都是 0.61）比页面值会被判成一样，逐边区就能收起来了
+   */
   const sidesDiffer = (kind: Kind) => {
-    const vs = sideValues(kind).map((v) => String(v))
+    const vs = sides.map((s) => String(w.readScript(perSide(s, kind))))
     return vs.some((v) => v !== vs[0])
   }
   const anySideOverridden = (kind: Kind) => sides.some((s) => overridden(perSide(s, kind)))

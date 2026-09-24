@@ -143,6 +143,7 @@ export const PAGE_PT_PROPS: ReadonlySet<string> = new Set([
   'handle_markersize',
   'axline_width',
   'arrow_width',
+  'arrow_head',
   'mutation_scale',
   'labelpad',
 ])
@@ -150,7 +151,9 @@ export const PAGE_PT_PROPS: ReadonlySet<string> = new Set([
 /**
  * 页面上的 pt → 写进 override 的脚本值。
  *
- * 取两位小数：manifest 把这些值按两位小数回报（`engine/manifest.py` 的 `round(…, 2)`），
+ * 取两位小数：manifest 把这些值按两位小数回报（`engine/manifest.py` 的 `round(…, 2)`；表里每一条
+ * 都是，`tests/test_page_pt_precision.py` 按 AST 看护——少一位的话输入 8.5 存 14.17、回报 14.2、
+ * 回显 8.52），
  * 预检读到的就是那两位——多写的位数下一轮就被截掉。用**就近**取整（误差 ≤ 0.005 × 缩放比）：
  * 一键修复知道自己要往规范的哪一侧走（`issueFix.writeFontSize` 按方向取整），样式不知道
  * 这个数贴着规范的哪条边，就近是唯一不偏向任何一侧的选择。缩放比算不出来时原样写。
