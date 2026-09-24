@@ -1422,6 +1422,8 @@ export function startLayoutAutoReflow(): () => void {
   }
   snapshot(prevDoc)
 
+  // 这一轮待发的重排是否**全部**由不进历史的尺寸变化引起（见下）
+  let derivedOnly = true
   const unsub = store.subscribe((state, prev) => {
     if (state.doc === prevDoc) return
     const undoRedo =
@@ -1438,8 +1440,17 @@ export function startLayoutAutoReflow(): () => void {
     )
     snapshot(state.doc)
     if (!dirty.length) return
+    // 这次更新前后 past / future 都没变 = 不进历史的派生写入（渲染回来的图幅同步
+    // 这类 silent）。它连带的重排也是派生的：同样 silent，不压历史、不清 future、
+    // 不提示 ⌘Z。否则撤销一次缩放 → 图幅同步 silent 补回新图幅 → 这里 commit 一条
+    // 重排 → future 被清空，重做就没了。用户手势 / commit 引起的仍是一条可撤销的历史
+    const historyless = state.past === prev.past && state.future === prev.future
+    if (timer === undefined) derivedOnly = true
+    derivedOnly = derivedOnly && historyless
     window.clearTimeout(timer)
     timer = window.setTimeout(() => {
+      timer = undefined
+      const silent = derivedOnly
       // 自动重排是「文档自己动了」，不是用户在拖——不给动效的话相邻面板会
       // 凭空跳一下，看不出跟刚才那次改动的因果。**只播没被选中/悬停的那些**：
       // 选择框与手柄由 OverlaySvg 按文档坐标画，它不参与这段补间，
@@ -1453,16 +1464,18 @@ export function startLayoutAutoReflow(): () => void {
       const play = flipCapture(els)
 
       let moved = 0
-      commit(hist('autoReflow'), (d) => {
+      const reflow = (d: FigureDocument) => {
         for (const g of dirty) {
           const gg = d.layoutGroups?.find((x) => x.id === g.id)
           if (gg) moved += applyReflowDraft(d, gg)
         }
-      })
+      }
+      if (silent) useDocumentStore.getState().silent(reflow)
+      else commit(hist('autoReflow'), reflow)
       snapshot(useDocumentStore.getState().doc)
       if (moved) {
         play()
-        status(note('layoutAutoReflowed', { undo: modKey('Z') }))
+        if (!silent) status(note('layoutAutoReflowed', { undo: modKey('Z') }))
       }
     }, 120)
   })
