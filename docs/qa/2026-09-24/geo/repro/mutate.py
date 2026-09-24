@@ -36,11 +36,13 @@ MUTATIONS = {
             f"{VITEST} src/canvas/fakeRealtimeDrag.test.tsx src/canvas/axesCompanionDrag.test.tsx",
         ],
     ),
-    # GEO-01 浏览器腿：漏 zoom（要先重建前端产物，否则测的是旧界面）
+    # GEO-01 浏览器腿：漏 zoom（要先重建前端产物，否则测的是旧界面）。
+    # 写成 zoom ** 0 而不是删掉 zoom：`tsc -b` 开着 noUnusedLocals，删掉会让构建先红——
+    # 那是「无关异常碰巧红」，不算反证（第一次执行实测过）。
     "M1e-missing-zoom-browser": (
         "web/src/canvas/interactions.ts",
         "return [dx / (layout.width * zoom), dy / (layout.height * zoom)]",
-        "return [dx / layout.width, dy / layout.height]",
+        "return [dx / (layout.width * zoom ** 0), dy / (layout.height * zoom ** 0)]",
         [
             f"PYTHONPATH={ROOT}/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py"
             " > /dev/null && cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python "
