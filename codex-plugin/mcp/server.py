@@ -128,6 +128,10 @@ def _plugin_locator():
     return handoff
 
 
+#: 读多语言头第二行的字节上限（见 `_shebang_interpreter`）。
+_POLYGLOT_LINE_MAX = 8192
+
+
 def _shebang_interpreter(script: str) -> "str | None":
     """console script 的 shebang → 装着 tavotto 的那个解释器。
 
@@ -138,7 +142,9 @@ def _shebang_interpreter(script: str) -> "str | None":
     try:
         with open(script, "rb") as f:
             first = f.readline(512)
-            second = f.readline(1024)
+            # 多语言头第二行装着完整解释器路径：上限按路径上限给（Linux PATH_MAX
+            # 4096，另留引号与 `"$0" "$@"` 的余量），不能按 1 KiB 截断
+            second = f.readline(_POLYGLOT_LINE_MAX)
     except OSError:
         return None
     if not first.startswith(b"#!"):

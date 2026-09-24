@@ -1344,6 +1344,30 @@ def test_launcher_reads_the_unquoted_polyglot_wrapper_of_an_overlong_path(tmp_pa
     assert launcher._shebang_interpreter(str(wrapper)) == str(python)
 
 
+def test_launcher_reads_a_polyglot_exec_line_longer_than_one_kib(tmp_path):
+    """解释器路径超过 1 KiB（Linux PATH_MAX 是 4096）时第二行不能被截断。
+
+    旧实现 `readline(1024)` 只读到半截路径，`isfile` 判否，装好的 tavotto 被漏掉。
+    样本是真实存在的深层目录（每段 < 255 字节的文件名上限），总长过 1 KiB。
+    """
+    sys.path.insert(0, str(PLUGIN / "mcp"))
+    import importlib
+
+    launcher = importlib.import_module("server")
+
+    venv_bin = tmp_path.joinpath(*(["e" * 200] * 6), "venvs", "tavotto", "bin")
+    venv_bin.mkdir(parents=True)
+    python = venv_bin / "python"
+    python.write_bytes(b"")
+    assert len(str(python)) > 1100  # 样本真在那一格
+    wrapper = venv_bin / "tavotto"
+    wrapper.write_text(
+        f"#!/bin/sh\n'''exec' {python} \"$0\" \"$@\"\n' '''\nimport sys\n",
+        encoding="utf-8",
+    )
+    assert launcher._shebang_interpreter(str(wrapper)) == str(python)
+
+
 def test_the_plugin_is_not_shipped_in_the_wheel():
     """插件随 Codex 市场分发，不属于 pip 包（pyproject 的 exclude 看着）。"""
     if tomllib is None:
