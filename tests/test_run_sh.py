@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -35,7 +34,9 @@ def _fake_venv(tmp: Path, *, pip_ok: bool = True) -> Path:
     for name, body in scripts.items():
         p = bindir / name
         p.write_text(f"#!/bin/sh\nLOG={log}\n{body}\n", encoding="utf-8")
-        p.chmod(p.stat().st_mode | stat.S_IXUSR)
+        p.chmod(
+            0o755
+        )  # 设执行位（不读 st_mode：那一族写法在 test_windows_regressions 的 meta 检查里是禁区）
     return log
 
 
