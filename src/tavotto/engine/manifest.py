@@ -13,10 +13,11 @@ from __future__ import annotations
 import math
 import re
 import sys
+from contextlib import contextmanager
 from functools import lru_cache
 
 import matplotlib as mpl
-from matplotlib import colors as mcolors, font_manager
+from matplotlib import colors as mcolors, font_manager, text as mtext
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
 from matplotlib.collections import (
@@ -34,6 +35,7 @@ from matplotlib.markers import MarkerStyle
 from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.text import Text
+from matplotlib.textpath import text_to_path
 
 import pathgeom
 from axestraversal import axis_drawn, frame_drawn, ordered_axes
@@ -4044,6 +4046,73 @@ def _clip_bbox(artist, W: float, H: float):
     return rect
 
 
+def _clear_text_metrics_cache(renderer) -> None:
+    """清掉 matplotlib 记在这个渲染器上的文字度量缓存（键里**不含度量方式**）。
+
+    两代实现都要认：3.11 起是每个渲染器一份 lru（`_get_text_metrics_function`），只清
+    这一份；3.8 / 3.10 是一份全局 lru（`_get_text_metrics_with_cache_impl`），只能整份清。
+    认不出时宁可什么都不做也不抛——代价是量到旧值，由 `test_manifest_vector_text_metrics`
+    在三档 matplotlib 上看着。
+    """
+    per_renderer = getattr(mtext, "_get_text_metrics_function", None)
+    if per_renderer is not None:
+        per_renderer(renderer).cache_clear()
+        return
+    impl = getattr(mtext, "_get_text_metrics_with_cache_impl", None)
+    if impl is not None:
+        impl.cache_clear()
+
+
+def _measure_like_vector(renderer) -> None:
+    """让这个 Agg 渲染器按**矢量输出的那把尺**量文字（实例属性，调用方负责撤掉）。
+
+    画布上挂的是矢量 SVG（`svg.fonttype='path'`，字形经 `TextToPath` 在 100 pt、
+    不带 hinting 下度量），导出的 PDF 同样不带 hinting；而 Agg 在文档 dpi（通常 100）
+    下量的是 hinting 后、按像素取整的字形。小字差得很多：6.9 pt 的图例高 0.135 vs
+    0.121（figure 分数，#576）。锚在预设位置的图例、tight 布局这类**位置取决于文字
+    尺寸**的东西因此在 manifest 里落在别处——拖一下写成绝对位置就跳。
+
+    换成与 SVG 同一个 `TextToPath` 度量后，全图文字包围盒与 SVG 逐位一致。usetex 的
+    文字两边本来就同走 dvi，不动。
+    """
+    agg = renderer.get_text_width_height_descent
+
+    def measure(s, prop, ismath):
+        if ismath == "TeX":
+            return agg(s, prop, ismath)
+        w, h, d = text_to_path.get_text_width_height_descent(s, prop, ismath)
+        k = renderer.points_to_pixels(1.0)
+        return w * k, h * k, d * k
+
+    renderer.get_text_width_height_descent = measure
+
+
+@contextmanager
+def vector_text_metrics(fig):
+    """manifest 这一整段（布局 draw + 之后的全部包围盒测量）用矢量的文字度量。
+
+    **只挂在这一段**：预览位图 / 导出 PNG 仍是 Agg 自己的度量（那是像素输出，按
+    像素排版才对）。两件事缺一不可：
+
+    * 挂在 canvas 的**那个**渲染器实例上：`FigureCanvasAgg.get_renderer()` 在尺寸与 dpi
+      不变时复用同一个对象，`draw()` 与各处不带参数的 `get_window_extent()` 拿到的都是它；
+    * 进出各清一次度量缓存：缓存键里有渲染器实例却没有度量方式——进来不清，量到的
+      是上一次预览留下的 hinting 值；出去不清，之后同 dpi 的位图绘制会用上矢量值。
+    """
+    if not hasattr(fig.canvas, "get_renderer"):
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+        FigureCanvasAgg(fig)  # 构造即绑定到 fig.canvas（见 `_ensure_agg_canvas`）
+    renderer = fig.canvas.get_renderer()
+    _clear_text_metrics_cache(renderer)
+    _measure_like_vector(renderer)
+    try:
+        yield
+    finally:
+        renderer.__dict__.pop("get_text_width_height_descent", None)
+        _clear_text_metrics_cache(renderer)
+
+
 def _ensure_agg_canvas(fig):
     """保证 fig 挂着 Agg canvas，然后返回 renderer。
 
@@ -4096,6 +4165,8 @@ def _layout_undrawn_legends(state: FigState, fig) -> None:
             from matplotlib.backends.backend_agg import RendererAgg
 
             scratch = RendererAgg(int(fig.bbox.width), int(fig.bbox.height), fig.dpi)
+            # 与 manifest 其余部分同一把尺（`vector_text_metrics`）；一次性的，用完即弃
+            _measure_like_vector(scratch)
         el["artist"]._legend_box.draw(scratch)  # noqa: SLF001
 
 
@@ -4158,7 +4229,7 @@ def build_manifest(state: FigState, stem: str) -> dict:
     调用边界：进来先 draw、出去之前不动图。谁把它挪到别处，得先重新证明那个
     前提在新位置还成立。
     """
-    with ticklabel_memo():
+    with ticklabel_memo(), vector_text_metrics(state.fig):
         return _build_manifest(state, stem)
 
 

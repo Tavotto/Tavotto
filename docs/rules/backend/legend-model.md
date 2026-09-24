@@ -62,7 +62,8 @@
   就是那次 dpi 的坐标除以文档像素（连常规 `render` 的 SVG 那次 `PREVIEW_DPI` draw 都会
   留下来）。契约：**隐藏图例文字的 bbox = 它在当前状态、文档 dpi 下显示时的 bbox**，与
   历史上谁画过它无关。落地在 `manifest._layout_undrawn_legends`：draw 会跳过的图例在一张
-  一次性 `RendererAgg(W, H, fig.dpi)` 上走一遍 `_legend_box.draw`（`_findoffset` 也在这条
+  一次性 `RendererAgg(W, H, fig.dpi)`（文字度量与 manifest 其余部分同一把矢量尺，见
+  `marker-and-path-geometry.md`）上走一遍 `_legend_box.draw`（`_findoffset` 也在这条
   路上，`loc='best'` 照常），真 canvas 不碰。**不用「preview 之后补一次文档 dpi 的 draw」**：
   预览里图例可见、会话里图例隐藏时，补的那次 draw 同样跳过图例（3.8.4 / 3.10.8 / 3.11.1
   都量过）。看护 `tests/test_hidden_legend_geometry.py`（七条：三种别的 dpi 的 draw、预览
