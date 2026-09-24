@@ -1435,6 +1435,53 @@ def _eb_caps(grp):
     return grp.artists["caps"]
 
 
+def _eb_color_handler():
+    """误差棒整个系列改色。三类成员各按自己的颜色模型改，**不按此刻的颜色现判**：
+
+    * 数据线（`fmt='o'` 那条）：只 `set_color`。它的 marker 边色 / 面色若是 `auto` 会自己跟着走；
+      脚本显式设的（`mec='red'`、`mfc='none'`，哪怕恰好等于线色）是脚本的样式，不动——按渲染出的
+      颜色相等去判「跟不跟」会把显式同色的边当成跟随（#556 评审）。原始模式因此从不被改写。
+    * 横杠：画出来的颜色在 **marker 边色**上，而那是 errorbar 自己显式设成 ecolor 的（与竖线组同属
+      「误差」那一部分）——系列改色时一起改；只 `set_color` 的话横杠留在原色。
+    * 竖线组：`set_color`。
+
+    还原按快照逐项放回，横杠存的是**原始**边色值（`_markeredgecolor`，可能是 `auto`），不是解析后的
+    颜色。没有任何按会话缓存的判据，native 会话换基线后照样成立。"""
+
+    def g(grp):
+        line = grp.artists.get("line")
+        return {
+            "line": None if line is None else line.get_color(),
+            "caps": [
+                (c.get_color(), getattr(c, "_markeredgecolor", c.get_markeredgecolor()))
+                for c in grp.artists["caps"]
+            ],
+            "bars": [b.get_color() for b in grp.artists["bars"]],
+        }
+
+    def s(grp, v):
+        line = grp.artists.get("line")
+        if line is not None:
+            line.set_color(v)
+        for c in grp.artists["caps"]:
+            c.set_color(v)
+            c.set_markeredgecolor(v)
+        for b in grp.artists["bars"]:
+            b.set_color(v)
+
+    def r(grp, orig):
+        line = grp.artists.get("line")
+        if line is not None and orig.get("line") is not None:
+            line.set_color(orig["line"])
+        for c, (color, edge) in zip(grp.artists["caps"], orig.get("caps", [])):
+            c.set_color(color)
+            c.set_markeredgecolor(edge)
+        for b, color in zip(grp.artists["bars"], orig.get("bars", [])):
+            b.set_color(color)
+
+    return (g, s), r
+
+
 def _eb_linewidth_members(grp):
     line = grp.artists.get("line")
     return ([line] if line is not None else []) + grp.artists["bars"]
@@ -2743,7 +2790,7 @@ HANDLERS[("bar_series", "label")] = (
 )
 
 for _prop, _pair in [
-    ("color", _eb_handler(lambda a: a.get_color(), lambda a, v: a.set_color(v))),
+    ("color", _eb_color_handler()),
     (
         "linewidth",
         _eb_handler(
