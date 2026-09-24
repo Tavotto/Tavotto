@@ -40,7 +40,7 @@ import type {
 } from '@/types/document'
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
 import { useAssetStore } from './assetStore'
-import { readAutosaveDoc, saveNow, useDocumentStore } from './documentStore'
+import { readAutosaveDoc, saveNow, useDocumentStore, type HistoryEntry } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useInteractionStore } from './interactionStore'
 import { renderKeyOf, useRenderStore } from './renderStore'
@@ -1452,6 +1452,8 @@ function historyMove(
  *   用户做过的，它本来就在历史里（重做会把它原样放回来）；
  * - 载入 / 切画布之后重排会让打开一份文档就变脏、多一条用户没做过的历史，
  *   还会把用户手动拖开的成员排回去。
+ * 防抖窗口（120 ms）里撤销掉的那次重排不会丢：记下它是替哪条历史排的，重做把那条
+ * 放回来时补排、进历史（#558 评审）。
  * 代价：图幅在历史之外变过（#543 那种由收尾修正并进缩放条目的图幅同步被撤掉，同步器再补回
  * 新图幅）时，撤到的那一格组内排布可能不齐——那是历史之外的变化，要用户的
  * 「重新排列」来落一条历史，不由这里替用户往撤销栈里塞条目。
@@ -1467,17 +1469,34 @@ export function startLayoutAutoReflow(): () => void {
   snapshot(store.getState().doc)
   // 文档停在历史的某一格上（不是用户刚编辑出来的状态）：订阅开始时是空白 / 载入态
   let resting = true
+  // 待发的重排是替哪条历史排的（防抖到点前它还没落成 autoReflow 条目）
+  let pendingFor: HistoryEntry | null = null
+  // 被撤销作废掉的那条：重做把它原样放回来时，重排也要补上——否则那一格
+  // 永远停在「缩放完、重排没落」，历史里也没有一条重排可以重做
+  let cancelledFor: HistoryEntry | null = null
 
   const unsub = store.subscribe((state, prev) => {
     const move = historyMove(state, prev)
     if (move === 'none') return
     // 事务进行中不记尺寸：松手那一下（edit）要拿事务前的尺寸比
     if (state.txn) return
-    if (move === 'edit') resting = false
-    else if (move === 'step' || move === 'swap') resting = true
+    // 重做回到的正是用户刚编辑完、重排还没落的那一格：按编辑处理。那条是它排上
+    // 重排时的 past 末位、之后又没有新编辑（新编辑会清掉 cancelledFor），所以重做
+    // 它之后 future 必然是空的——补一条重排不会清掉任何可重做的东西
+    const redoneCancelled =
+      move === 'step' && cancelledFor != null && state.past.at(-1) === cancelledFor
+    if (move === 'edit' || redoneCancelled) {
+      resting = false
+      cancelledFor = null
+    } else if (move === 'step' || move === 'swap') {
+      resting = true
+    }
     if (resting) {
-      // 待发的那次重排是为撤掉 / 换走之前的状态算的，作废
+      // 待发的那次重排是为撤掉 / 换走之前的状态算的，作废；记下它替哪条排的，
+      // 等重做把那条放回来时补上（按条目身份认：换了文档的话永远对不上）
+      if (pendingFor) cancelledFor = pendingFor
       window.clearTimeout(timer)
+      pendingFor = null
       snapshot(state.doc)
       return
     }
@@ -1487,7 +1506,9 @@ export function startLayoutAutoReflow(): () => void {
     snapshot(state.doc)
     if (!dirty.length) return
     window.clearTimeout(timer)
+    pendingFor = state.past.at(-1) ?? null
     timer = window.setTimeout(() => {
+      pendingFor = null
       // 自动重排是「文档自己动了」，不是用户在拖——不给动效的话相邻面板会
       // 凭空跳一下，看不出跟刚才那次改动的因果。**只播没被选中/悬停的那些**：
       // 选择框与手柄由 OverlaySvg 按文档坐标画，它不参与这段补间，
