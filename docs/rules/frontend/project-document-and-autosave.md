@@ -15,10 +15,7 @@
 - 文档模型可选字段（schema 仍为 2，旧文档兼容）：
   `PanelObject.lockedGids / flipH / flipV`、`ObjectBase.layoutPinned`、
   `FigureDocument.layoutGroups`（行/列/网格约束，id 即 groupId，
-  尺寸变化自动重排、undo/redo 不触发；**由不进历史的尺寸变化引起的重排不进历史**——
-  更新前后 past / future 都没变（图幅同步这类 silent）时重排同样 silent、不清 future、
-  不提示 ⌘Z，否则撤销后 silent 补回的图幅会连带 commit 一条重排、把重做清空；用户手势 /
-  commit 引起的仍是一条可撤销的「自动重排」，`startLayoutAutoReflow`）。
+  尺寸变化自动重排、undo/redo 不触发）。
 - **撤销防线（2026-08-17，数据损坏级）**：`txnUpdate` 在无事务时**丢弃更新**
   ——绝不静默直写 doc（拖动中事务被外部 endTxn/undo 结束后，pointermove 落进
   静默分支 = 位移绕过历史、撤销永远找不回，真实用户撞见过）。一切撤销入口
@@ -42,13 +39,10 @@
   伸缩反推 x/y——**只有这一处写 x/y**，别处不另写位置修正。没登记（数值拖动、
   事务外的 silent 同步）= 默认锚点左上角，x/y 不动。锚点只活在当前事务里：开新事务、
   事务结束（含丢弃）都清空。
-  收尾修正与「事务结束」**同一次 set** 落地（事务之后的变化）：只在事务外看文档的订阅者
-  （布局组自动重排）才看得见它；**由不进历史的尺寸变化引起的重排不进历史**（撤销到旧图幅后
-  同步器 silent 补回新图幅，连带的重排同样 silent，重做栈不丢）。
   **已知代价**：渲染在手势中途回来时，画布上的框到松手那一刻才换比例（中途仍按
   旧图幅的纵横比）。看护：`hooks/useEngineSync.test.ts` 的「几何事务进行中收到
   改了图幅的渲染」「渲染到达之后又有拖动帧」两组（真实 `startResizeDrag` /
-  `startCropDrag` 驱动，含西 / 北边柄单轴与两轴图幅变化、裁剪整图锚点、布局组重排与连续撤销后重做）。
+  `startCropDrag` 驱动，含西 / 北边柄单轴与两轴图幅变化、裁剪整图锚点）。
 - **自动保存**：磁盘为主（`PUT /api/autosave/<docId>` 原子写
   `layouts/_autosave/`），localStorage 只留索引 + 崩溃兜底副本
   （写盘成功即清、读取按 updatedAt 取新）。失败发

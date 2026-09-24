@@ -854,7 +854,7 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
         },
       )
       await settle()
-      const nb = () => useDocumentStore.getState().doc.objects.find((o) => o.id === 'nb') as PanelObject
+      const nb = () => useDocumentStore.getState().doc.objects.find((o) => o.id === 'nb')!
       const gapAfter = () => nb().x - (current().x + current().w)
       // 松手时宽 40 → 50（锚点是南边中点，x 到 -5）；nb 被推到右边 5 mm 处
       expect(current().w).toBeCloseTo(50, 6)
@@ -872,69 +872,8 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       })
       await settle()
       expect([box(current()), box(nb())]).toEqual(done)
-      // 连续撤销两次：第二次回到手势前的旧图幅，图幅同步随即 silent 补回新图幅，
-      // 它连带的重排也 silent——以前这里 commit 一条「自动重排」，future 被清空
-      for (let i = 0; i < 2; i++) {
-        await act(async () => {
-          useDocumentStore.getState().undo()
-        })
-        await settle()
-      }
-      expect(useDocumentStore.getState().future).toHaveLength(2)
-      for (let i = 0; i < 2; i++) {
-        await act(async () => {
-          useDocumentStore.getState().redo()
-        })
-        await settle()
-      }
-      expect([box(current()), box(nb())]).toEqual(done)
-      expect(dims(current())).toEqual([50, 26, 50, 30])
       stop()
       await unmount()
-    })
-
-    it('反向：用户在布局组里改面板宽度（commit 进历史、没有图幅变化），引起的重排仍是一条可撤销的历史', async () => {
-      globalThis.IS_REACT_ACT_ENVIRONMENT = true
-      useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0, viewW: 900, viewH: 700 })
-      useUiStore.setState({ snapEnabled: false })
-      await useDocumentStore.getState().switchDocument(emptyProject(), 'd_size_layout_user')
-      useDocumentStore.getState().commit(literal('准备'), (d) => {
-        d.objects = [
-          { ...panel('pg', 'Fig1.pdf', 0), w: 40, h: 30, script: null, groupId: 'row1' } as PanelObject,
-          {
-            ...panel('nb', 'Fig2.pdf', 0),
-            x: 45,
-            w: 20,
-            h: 30,
-            nativeW: 20,
-            nativeH: 30,
-            script: null,
-            groupId: 'row1',
-          } as PanelObject,
-        ]
-        d.layoutGroups = [{ id: 'row1', kind: 'row', order: ['pg', 'nb'], gap: 5, align: 'start' }]
-      })
-      const stop = startLayoutAutoReflow()
-      const nb = () => useDocumentStore.getState().doc.objects.find((o) => o.id === 'nb') as PanelObject
-      // 属性栏改宽度这类离散编辑：一次 commit
-      await act(async () => {
-        useDocumentStore.getState().commit(literal('改宽'), (d) => {
-          d.objects[0].w = 50
-        })
-        await new Promise((r) => setTimeout(r, 200))
-      })
-      const labels = () => useDocumentStore.getState().past.map((e) => e.label.key)
-      expect(current().w).toBeCloseTo(50, 6)
-      expect(nb().x).toBeCloseTo(55, 6)
-      expect(labels().at(-1)).toBe('history.autoReflow')
-      expect(useDocumentStore.getState().past).toHaveLength(3)
-      // 撤销一次只撤掉重排：nb 回到 45，面板仍是 50 宽
-      await act(async () => {
-        useDocumentStore.getState().undo()
-      })
-      expect(nb().x).toBeCloseTo(45, 6)
-      expect(current().w).toBeCloseTo(50, 6)
-      stop()
     })
 
     it('裁剪：松手后仍是 100%，撤销 / 重做回到松手那一刻', async () => {
