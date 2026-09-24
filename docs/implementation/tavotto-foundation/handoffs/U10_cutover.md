@@ -178,3 +178,11 @@ pypdfium2 5.13 要求 13，其余 ≤ 11；而桌面版声明的是 11.0——�
 **not_run**：`desktop-tauri.yml` 只挂在发版链上，叠 Intel 配置与 `--expect-min-os` 两步在 PR 上不跑——下一次发版之前手动触发
 一次 desktop-tauri 验它们；更老系统上真机「打不开」的表现没有机器验证。
 
+**给 U11 的输入 ① 已在合入 main 时提前接上**（Codex #539）：`release-publish.yml` 生成 SBOM 之后紧跟一步
+`retirement_scan.py --skip source,deps,block --sbom out/tavotto-sbom.spdx.json --wheel <发行 wheel>`；
+`tests/test_retirement_scan.py::test_every_sbom_the_workflows_produce_is_scanned` 看护「每个 SBOM 产出都被扫」。
+演练：本机用 anchore/syft 对本仓库 wheel 真生成 SPDX 2.3（与发布链同一种调用），扫描器正例过、注入 PyMuPDF 即红，
+那份输出存成 `tests/fixtures/sbom/syft_wheel.spdx.json`。**如实记一条**：syft 对单个 wheel 文件只列出 wheel 本身、
+不展开 Requires-Dist，所以发行 SBOM 上这把尺子抓的是「包里混进了 mupdf」，声明依赖由同一步的 wheel 尺子管。
+这一步只在真发版时执行，第一次真跑是下一次 release（not_run 至此）。
+

@@ -165,3 +165,33 @@ def test_every_sbom_the_workflows_produce_is_scanned():
                 unscanned.append(f"{wf.name}:{i + 1} {m.group(1)}")
     assert produced >= 1, "一个 SBOM 产出步骤都没扫到——判据量在空集合上"
     assert not unscanned, "这些 SBOM 产出之后没有退役扫描：\n" + "\n".join(unscanned)
+
+
+def test_the_sbom_ruler_reads_real_syft_output():
+    """夹具是 anchore/syft 对本仓库 wheel 真生成的 SPDX 2.3（发布链同一种调用：`file:<wheel>`、spdx-json）。
+    注意它只列出 wheel 本身、不展开 Requires-Dist——发行 SBOM 上的 sbom 尺子抓的是「包里混进了 mupdf」，
+    声明依赖由同一步的 wheel 尺子管。正例过、注入一个 PyMuPDF 包就红。"""
+    import copy
+
+    real = json.loads(
+        (ROOT / "tests" / "fixtures" / "sbom" / "syft_wheel.spdx.json").read_text(encoding="utf-8")
+    )
+    assert real["spdxVersion"].startswith("SPDX-2") and real["packages"], (
+        "夹具不是 syft 的 SPDX 输出"
+    )
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        good = Path(tmp) / "good.json"
+        good.write_text(json.dumps(real), encoding="utf-8")
+        assert rs.scan_sbom(good)["ok"]
+        bad_doc = copy.deepcopy(real)
+        pkg = copy.deepcopy(real["packages"][0])
+        pkg.update(
+            {"name": "PyMuPDF", "SPDXID": "SPDXRef-Package-python-PyMuPDF", "versionInfo": "1.28.2"}
+        )
+        bad_doc["packages"].append(pkg)
+        bad = Path(tmp) / "bad.json"
+        bad.write_text(json.dumps(bad_doc), encoding="utf-8")
+        r = rs.scan_sbom(bad)
+        assert not r["ok"] and r["hits"] == ["pymupdf"], r
