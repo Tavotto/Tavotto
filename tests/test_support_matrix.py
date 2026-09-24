@@ -340,3 +340,22 @@ def test_readmes_state_the_macos_minimums():
         text = (ROOT / name).read_text(encoding="utf-8")
         for w in words:
             assert w in text, f"{name} 要写出最低系统 {w}"
+
+
+def test_local_desktop_build_layers_the_same_intel_config_as_ci():
+    """Codex #539：文档里的本地构建 `scripts/build_desktop.py` 与 desktop-tauri.yml 用同一条判据叠 Intel 配置——
+    本地 Intel 构建不许拿到 Apple Silicon 的最低系统。"""
+    spec = importlib.util.spec_from_file_location(
+        "build_desktop", ROOT / "scripts" / "build_desktop.py"
+    )
+    bd = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bd)
+    intel = bd.tauri_arch_config("darwin", "x86_64")
+    assert intel == ["--config", str(ROOT / "src-tauri" / "tauri.intel.conf.json")], intel
+    assert bd.tauri_arch_config("darwin", "arm64") == []
+    assert bd.tauri_arch_config("win32", "AMD64") == [], (
+        "Windows 的 arch 也叫 x86_64 / AMD64，不许叠 Intel 配置"
+    )
+    wf = (ROOT / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
+    assert f"--config src-tauri/{Path(intel[1]).name}" in wf, "CI 与本地叠的必须是同一个文件"
+    assert _tauri_min(Path(intel[1])) == _targets()["macos-x86_64-desktop"]["min_os"]
