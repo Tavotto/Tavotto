@@ -156,11 +156,21 @@ function CanvasRow({
 
   return (
     <li
+      data-canvas-row
       draggable={!filtered && !renaming}
       onDragStart={() => {
         dragFrom.current = index
       }}
-      onDragOver={(e) => e.preventDefault()}
+      // 拖动取消 / 松在列表外时 onDrop 不会来：不清的话起点一直挂着，之后任何外部拖进来
+      // 落在画布行上的东西（访达里的文件、别处的文字）都会被当成「挪那一张」——而且挪的是
+      // 当时那个位置上此刻的画布（与工作区抽屉的收藏行同一个缺陷，Codex #550）
+      onDragEnd={() => {
+        dragFrom.current = null
+      }}
+      // 只接本列表内部发起的重排：起点为空 = 外部拖进来的，不 preventDefault（不接收）
+      onDragOver={(e) => {
+        if (dragFrom.current != null) e.preventDefault()
+      }}
       onDrop={() => {
         if (!filtered && dragFrom.current != null && dragFrom.current !== index) {
           useDocumentStore.getState().reorderCanvases(dragFrom.current, index)
