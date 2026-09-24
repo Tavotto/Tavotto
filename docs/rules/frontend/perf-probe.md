@@ -28,7 +28,9 @@
   后端生成），桌面版再 `revealExportedFile` 在访达里显示、失败时把完整路径说出来；
   浏览器模式另给一份下载。**桌面版后端没接住时不退回下载**（那一下会被静默取消）：
   `saveReport` 回 `null`，面板说「没保存」、报告留在 `probeStore.unsaved` 给「重试保存」
-  ——回一个文件名就是谎称已保存。看护：`perf/probeStore.test.tsx`。
+  ——回一个文件名就是谎称已保存。保存结果按**请求代数**落地：关掉 / 放弃 / 重新开始 / 再点一次
+  重试都换代，过时的结果既不许把关掉的面板重新打开，也不许盖掉后来的成功。失败提示的锚点是
+  `data-perf-notice="save-failed"`。看护：`perf/probeStore.test.tsx`。
 - **documentStore 的通知分三类记**（`store.document.doc` / `.save` / `.other`，片段上下文带
   `doc_split: true`）：同一个 store 里住着文档本体与保存状态，只数通知会把「上一次松手 1 秒后
   的自动保存改 saveState」读成「拖动途中写文档」。`flushAutosave` 外面的 `autosave.flush` span
@@ -39,7 +41,8 @@
   片段——换图常在尾巴之后）。**位图这一格（raster / evicted / 非编辑态的引擎位图）没有 SVG**：
   落定是**这一版自己的**位图 `<img>` 的 onLoad（变体与 rev 都对得上；暂挂的上一张不算），
   否则分析器退回拿 `applied` 当落定，取图、解码、换图整段漏掉。记录上 `painted_via` 分
-  `svg` / `png`，分析器把位图那段说成「取位图 + 解码」而不是 innerHTML。看护：
+  `svg` / `png`，分析器把位图那段说成「取位图 + 解码」而不是 innerHTML，上屏后那两帧说成
+  「绘制新位图」而不是「绘制新 SVG」。看护：
   `canvas/panelPreviewMode.test.tsx`「性能探针」一组、`tests/test_perf_probe.py` 的位图松手链路。**渲染键只活在内存里**（它含文件名），报告里只有数字。
 - **判断不在产品里**：产品只给帧率与超时比例一句话；「卡在哪、怎么改」在
   `scripts/perf_report.py`，判据随代码改，不为改一条规则发版本。
