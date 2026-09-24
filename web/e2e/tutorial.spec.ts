@@ -272,10 +272,10 @@ test('切到别的项目自动暂停，切回来自动继续', async ({ app, pag
   await expect(coachmark(page)).toContainText('打开一张图')
 
   // 切回原来的项目 → coachmark 消失（系统暂停）
-  await switchProjectVia(page, 'figures')
+  await switchProjectVia(page, { path: a.figures })
   await expect(page.getByRole('button', { name: /当前项目 figures/ })).toBeVisible({ timeout: 30_000 })
   await expect(coachmark(page)).toHaveCount(0)
   // 再切回教程 → 自动继续
-  await switchProjectVia(page, 'Tutorial')
+  await switchProjectVia(page, { tutorial: true })
   await expect(coachmark(page)).toContainText('打开一张图', { timeout: 60_000 })
 })

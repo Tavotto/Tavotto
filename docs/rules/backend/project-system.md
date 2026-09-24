@@ -7,7 +7,12 @@
   同时端着多个图库，`DEFAULT_PROJECT` 只是「不带 pj 的请求落到哪」。未打开项目时
   API 回 409 `code=no_project`，前端渲染 ProjectPicker。用户级配置在
   `engine/config.py`（macOS `~/Library/Application Support/Tavotto/config.json`，
-  测试用 `TAVOTTO_CONFIG_DIR` 重定向——conftest 已全局隔离）。
+  测试用 `TAVOTTO_CONFIG_DIR` 重定向——conftest 已全局隔离；用例里**别调
+  `monkeypatch.undo()`**，它会连这层隔离一起撤掉，要局部换东西用 `monkeypatch.context()`）。
+  **读-改-写配置只有 `with config.transaction() as cfg:` 一个入口**（与收藏、最近列表
+  同一把锁）：各模块各持各的锁再 `load()` → `save()` 会互相丢更新（Codex #550）；
+  `config.py` 之外直接调 `config.save()` 由 `tests/test_config_transaction.py` 的 AST
+  门禁拦下。
   每项目设置（导出/备份目录、`allow_write_back` 只读）经
   `PATCH /api/project/settings`；写回类端点先过 `_write_back_forbidden()`。
 - **每标签页一个项目**：请求靠 `pj` 认领（`_request_ctx()`）——**查询参数与

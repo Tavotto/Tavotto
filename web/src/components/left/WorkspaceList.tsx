@@ -317,6 +317,9 @@ function ProjectRow({
   return (
     <li
       data-workspace-row
+      // 稳定的身份锚点（e2e / 诊断按它找行，不按可达名——名字会重复、会翻译）
+      data-project-path={entry.path}
+      data-project-tutorial={entry.tutorial || undefined}
       draggable={!!order}
       onDragStart={() => {
         if (order) order.dragFrom.current = entry.path

@@ -16,12 +16,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import sys
+import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 RECENT_KEEP = 20
@@ -184,13 +187,40 @@ def load() -> dict:
 
 
 def save(cfg: dict) -> None:
-    """临时文件 + replace 原子落盘；目录不存在自动创建。"""
+    """临时文件 + replace 原子落盘；目录不存在自动创建。
+
+    **只在 `transaction()` 里调**（本模块内的函数已经持着 `_LOCK`）：别的模块直接
+    load → 改 → save 的话，两个写入方交错就是丢更新（`tests/test_config_transaction.py`
+    有结构门禁）。临时文件名每次唯一：万一有漏网的并发写入，也不会互相删掉对方的
+    `.tmp`、把一次 replace 变成 FileNotFoundError。
+    """
     d = config_dir()
     d.mkdir(parents=True, exist_ok=True)
     p = config_path()
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(p)
+    fd, tmp_name = tempfile.mkstemp(prefix=p.name + ".", suffix=".tmp", dir=d)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(cfg, ensure_ascii=False, indent=1))
+        tmp.replace(p)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+@contextlib.contextmanager
+def transaction() -> Iterator[dict]:
+    """读-改-写 `config.json` 的**唯一入口**：所有写配置的模块共用 `_LOCK`。
+
+    以前 updater / telemetry 各持各的模块锁再 `load()` → `save()`，与本模块的收藏、
+    最近列表写入互不排斥：交错时后写的一方用自己读到的旧快照整份覆盖，另一方的改动
+    丢失、却已经对调用方报了成功（Codex #550）。块内拿到的 dict 就是要写回的那份；
+    块里抛异常则什么都不写。
+    """
+    with _LOCK:
+        cfg = load()
+        yield cfg
+        save(cfg)
 
 
 def touch_recent(path: str, name: str | None = None) -> None:

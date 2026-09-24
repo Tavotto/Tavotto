@@ -1,6 +1,6 @@
 import { test as base, expect, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { copyFileSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -246,8 +246,21 @@ export async function openWorkspace(page: Page) {
   await expect(page.locator('[data-workspace-list]')).toBeVisible()
 }
 
-/** 在工作区抽屉里点开一个项目（按可达名找行：收藏区与最近区都算） */
-export async function switchProjectVia(page: Page, name: string) {
+/**
+ * 在工作区抽屉里点开一个项目，按**路径**（`data-project-path`）或教程标记找行——
+ * 不按可达名：名字会重名、会随语言变（Codex #550）。macOS 的临时目录在 `/var`，
+ * 后端可能记成解析后的 `/private/var`，两种写法都认。
+ */
+export async function switchProjectVia(page: Page, target: { path: string } | { tutorial: true }) {
   await openWorkspace(page)
-  await page.locator('[data-workspace-list]').getByRole('button', { name: `打开项目 ${name}` }).click()
+  const list = page.locator('[data-workspace-list]')
+  let row
+  if ('tutorial' in target) {
+    row = list.locator('[data-workspace-row][data-project-tutorial]')
+  } else {
+    const spellings = [...new Set([target.path, realpathSync(target.path)])]
+    row = list.locator(spellings.map((p) => `[data-workspace-row][data-project-path="${p}"]`).join(', '))
+  }
+  // 行里第一个按钮就是「打开」（后面是收藏开关与「…」）
+  await row.locator('button').first().click()
 }
