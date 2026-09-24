@@ -31,6 +31,7 @@ import numpy as np  # noqa: E402
 from matplotlib import colors as mcolors  # noqa: E402
 from matplotlib.cm import ScalarMappable  # noqa: E402
 
+import colorbarmodel as C  # noqa: E402
 import manifest as M  # noqa: E402
 import overrides as O  # noqa: E402
 
@@ -323,7 +324,86 @@ def orphan_scopes() -> dict:
     # 极宽的图（#538 评审第二轮：按行分块时一行就是整张图）：峰值减掉输出缓冲本身
     _, _, wide_im = _field_image(4, 3_000_000, lines=False)
     wide_extra = _recolor_peak(wide_im) - 4 * 3_000_000 * 3
+    # 单行色带（#538 评审第三轮：每个像素最多两个邻居，连片判据不封顶就一个都不算场）
+    strip = matplotlib.colormaps["viridis"](np.linspace(0, 1, 2000))[None, :, :3]
+    strip = strip.astype(np.float32)
+    fs = plt.figure(figsize=(4.0, 3.0))
+    fs.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(strip, aspect="auto")
+    cxs = fs.add_axes([0.8, 0.1, 0.03, 0.8])
+    fs.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), cax=cxs)
+    st_s = _state(fs)
+    strip_sum = _summary(st_s)
+    strip_im = fs.axes[0].images[0]
+    s_gid = next(g for g, e in strip_sum.items() if e["role"] == "colorbar")
+    O.apply(st_s, [{"gid": s_gid, "prop": "cmap", "value": "magma"}])
+    fs.canvas.draw()
+    after_s = np.asarray(strip_im.get_array())[0, :, :3]
+    thin = {
+        "summary": strip_sum,
+        "changed": float((after_s != np.rint(strip[0] * 255).astype(np.uint8)).any(-1).mean()),
+        "end_pixel": [round(float(c) / 255, 4) for c in after_s[-1]],
+        "end_expected": [round(float(c), 4) for c in matplotlib.colormaps["magma"](1.0)[:3]],
+    }
+
+    # 单行色带、每三个像素插一个叠加色：67% 在色图上，但没有一个场像素的两个邻居都在色图上——
+    # 连不成片，重着色一个像素都换不了；配对若不问同一个判据就会报已绑定
+    speck = strip.copy()
+    speck[0, 2::3] = (0.2, 0.21, 0.18)
+    fk = plt.figure(figsize=(4.0, 3.0))
+    fk.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(speck, aspect="auto")
+    cxk = fk.add_axes([0.8, 0.1, 0.03, 0.8])
+    fk.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), cax=cxk)
+    thin["speckled"] = _summary(_state(fk))
+
+    # 几万格的自定义色图：没有位图时 instrument 不建查色表；有位图时按封顶的格数建
+    huge = mcolors.LinearSegmentedColormap.from_list("huge", ["k", "r", "y", "w"], N=60000)
+    fh = plt.figure(figsize=(4.0, 3.0))
+    fh.add_axes([0.1, 0.1, 0.6, 0.8]).plot([0, 1], [0, 1])
+    cxh = fh.add_axes([0.8, 0.1, 0.03, 0.8])
+    fh.colorbar(ScalarMappable(mcolors.Normalize(0, 1), huge), cax=cxh)
+    tracemalloc.start()
+    _state(fh)
+    no_raster_peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    grad = huge(np.linspace(0, 1, 800))[None, :, :3].repeat(200, axis=0).astype(np.float32)
+    fr = plt.figure(figsize=(4.0, 3.0))
+    fr.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(grad, aspect="auto")
+    cxr = fr.add_axes([0.8, 0.1, 0.03, 0.8])
+    fr.colorbar(ScalarMappable(mcolors.Normalize(0, 1), huge), cax=cxr)
+    tracemalloc.start()
+    st_r = _state(fr)
+    huge_bind_peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    huge_sum = _summary(st_r)
+    h_gid = next(g for g, e in huge_sum.items() if e["role"] == "colorbar")
+    O.apply(st_r, [{"gid": h_gid, "prop": "cmap", "value": "viridis"}])
+    fr.canvas.draw()
+    huge_px = np.asarray(fr.axes[0].images[0].get_array())[100, 799, :3]
+    huge_cmap = {
+        "no_raster_peak": no_raster_peak,
+        "bind_peak": huge_bind_peak,
+        "summary": huge_sum,
+        "end_pixel": [round(float(c) / 255, 4) for c in huge_px],
+        "end_expected": [round(float(c), 4) for c in matplotlib.colormaps["viridis"](1.0)[:3]],
+    }
+    windows = {}
+    for h, w in [(3000, 3000), (1, 2000), (4, 3_000_000), (1005, 1753), (100_000, 3), (64, 64)]:
+        ws = list(C._sample_windows(h, w))
+        windows[f"{h}x{w}"] = {
+            "pixels": sum((y1 - y0) * (x1 - x0) for y0, y1, x0, x1 in ws),
+            "first_row": min(y0 for y0, _, _, _ in ws),
+            "last_row": max(y1 for _, y1, _, _ in ws),
+            "first_col": min(x0 for _, _, x0, _ in ws),
+            "last_col": max(x1 for _, _, _, x1 in ws),
+            "h": h,
+            "w": w,
+        }
     return {
+        "windows": windows,
+        "sample_limit": C._FIELD_SAMPLE,
+        "window": C._FIELD_WINDOW,
+        "thin": thin,
+        "huge_cmap": huge_cmap,
         "big": big,
         "bytes_per_pixel": slope,
         "wide_extra_bytes": wide_extra,

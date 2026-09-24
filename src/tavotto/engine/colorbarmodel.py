@@ -537,6 +537,10 @@ _FIELD_CORE_FLOOR = 0.6
 #: 这一条，它们会被当成底色，把四周的照片像素按边缘规则一起染色（实测一张嵌着照片的
 #: 热图，照片部分 20% 的像素变了色）。
 _FIELD_MIN_NEIGHBOURS = 3
+#: 查色表最多按这么多格建（见 `_cmap_lut8`）。
+_FIELD_MAX_ENTRIES = 1024
+#: 配对抽样用的连续窗口边长：连片判据（`_field_mask`）要真实相邻的像素，隔点抽样量不了。
+_FIELD_WINDOW = 64
 #: 查色表里「不在色图上」的记号（格号是 uint16，色图最多 65535 格）。
 _OFF_MAP = 0xFFFF
 #: 边缘像素的修正一次处理这么多个（稀疏列表，分段只为给病态图设上界）。
@@ -575,9 +579,12 @@ def _pack(rgb8):
 
 
 def _cmap_lut8(cmap):
+    """色图的查表颜色（0–255 float32），**最多 `_FIELD_MAX_ENTRIES` 格**：再细的色图在 8 位
+    颜色里也大多是重复色，格数只决定反解出的数值分辨率（1024 格 ≈ 0.1%）；不封顶的话
+    自定义的几万格色图建 `_ColourTube` 要 N×729 个候选（6 万格实测 1.3 GB，#538 评审第三轮）。"""
     import numpy as np
 
-    n = max(int(getattr(cmap, "N", 256)), 2)
+    n = min(max(int(getattr(cmap, "N", 256)), 2), _FIELD_MAX_ENTRIES)
     return (np.asarray(cmap(np.linspace(0.0, 1.0, n)))[:, :3] * 255.0).astype(np.float32)
 
 
@@ -592,18 +599,24 @@ def _opaque(arr):
 
 
 def _field_mask(on):
-    """`on` 里连成片的那部分（八邻域里至少 `_FIELD_MIN_NEIGHBOURS` 个也在色图上）。
-    边界一圈按缺席的邻居算——调用方给的块带着邻域那一圈，裁掉之后不受影响。"""
+    """`on` 里连成片的那部分：八邻域里至少 `_FIELD_MIN_NEIGHBOURS` 个也在色图上——**封顶到
+    这个像素实际有几个邻居**（#538 评审第三轮：单行 / 单列的位图每个像素最多两个邻居，
+    不封顶的话整条色带没有一个像素算场，配对报了已绑定却一个像素都换不了色）。
+    「实际有几个邻居」按传进来的这块算：调用方的块带着邻域那一圈，只有贴着图边的块
+    才会在边上缺邻居，那正是图本身的边。配对的吻合度（`_field_fit`）问的是同一个函数。"""
     import numpy as np
 
     h, w = on.shape
     pad = np.pad(on, 1).astype(np.uint8)
+    have = np.pad(np.ones((h, w), np.uint8), 1)
     count = np.zeros((h, w), np.uint8)
+    avail = np.zeros((h, w), np.uint8)
     for dy in (0, 1, 2):
         for dx in (0, 1, 2):
             if dy != 1 or dx != 1:
                 count += pad[dy : dy + h, dx : dx + w]
-    return on & (count >= _FIELD_MIN_NEIGHBOURS)
+                avail += have[dy : dy + h, dx : dx + w]
+    return on & (count >= np.minimum(avail, _FIELD_MIN_NEIGHBOURS))
 
 
 def _tiles(h: int, w: int, halo: int = 0):
@@ -874,26 +887,54 @@ def _orphan_mappable(m) -> bool:
     return m is not None and not isinstance(m, Artist) and getattr(m, "axes", None) is None
 
 
+def _sample_windows(h: int, w: int):
+    """配对抽样的窗口：把图切成 `_FIELD_WINDOW` 见方的格，**行、列各自均匀**取 gy × gx 格，
+    总像素不超 `_FIELD_SAMPLE`。窗口里的像素真实相邻，连片判据在窗口里与重着色时是同一个
+    判据。别按扁平序号隔 k 格取：k 是列数的倍数时全部落在同一列（3000² 的图实测只取到
+    最左一列，色图铺开 2%，配对失败）。"""
+    import math
+
+    sh, sw = min(h, _FIELD_WINDOW), min(w, _FIELD_WINDOW)
+    ny, nx = math.ceil(h / sh), math.ceil(w / sw)
+    n = max(1, _FIELD_SAMPLE // (sh * sw))
+    gy = max(1, min(ny, n, round(math.sqrt(n * ny / nx))))
+    gx = max(1, min(nx, n // gy))
+    rows = sorted({round(i * (ny - 1) / max(1, gy - 1)) for i in range(gy)})
+    cols = sorted({round(j * (nx - 1) / max(1, gx - 1)) for j in range(gx)})
+    for r in rows:
+        for c in cols:
+            y0, x0 = r * sh, c * sw
+            yield y0, min(h, y0 + sh), x0, min(w, x0 + sw)
+
+
 def _field_fit(arr, tube: "_ColourTube") -> float:
-    """这张位图有多大比例的不透明像素是 `tube` 那条色图画的（抽样）；铺不开色图全长回 0。"""
+    """这张位图有多大比例的不透明像素是 `tube` 那条色图画的**场**（抽样）；铺不开色图全长回 0。
+
+    「是场」与重着色时同一个判据：在色图上且连成片（`_field_mask`）。从前这里只问在不在
+    色图上、重着色时却还要连成片，两侧判据不同源——单行的色带在这里算吻合、在那里一个
+    像素都不算场，于是报了已绑定却换不了色（#538 评审第三轮）。
+    """
     import numpy as np
 
     a = np.asarray(arr)
     if a.ndim != 3 or a.shape[-1] not in (3, 4) or a.size == 0:
         return 0.0
-    stride = max(1, int(np.ceil(np.sqrt(a.shape[0] * a.shape[1] / _FIELD_SAMPLE))))
-    sub = a[::stride, ::stride]
-    opaque = _opaque(sub)
-    if not opaque.any():
+    n_opaque = 0
+    fields = []
+    for y0, y1, x0, x1 in _sample_windows(a.shape[0], a.shape[1]):
+        sub = a[y0:y1, x0:x1]
+        opaque = _opaque(sub)
+        idx = tube.lookup(_pack(_rgb8(sub)))
+        field = _field_mask((idx != _OFF_MAP) & opaque)
+        n_opaque += int(opaque.sum())
+        fields.append(idx[field])
+    got = np.concatenate(fields) if fields else np.empty(0, np.uint16)
+    if not n_opaque or not len(got):
         return 0.0
-    idx = tube.lookup(_pack(_rgb8(sub)))
-    on = (idx != _OFF_MAP) & opaque
-    if not on.any():
-        return 0.0
-    lo, hi = np.percentile(idx[on], [2, 98])
+    lo, hi = np.percentile(got, [2, 98])
     if (hi - lo) / (len(tube.lut) - 1) < _FIELD_MIN_SPREAD:
         return 0.0
-    return float(on.sum()) / float(opaque.sum())
+    return float(len(got)) / float(n_opaque)
 
 
 def _declared_parents(cb):
@@ -965,14 +1006,15 @@ def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
             continue
         if any(getattr(a, "norm", None) is m.norm for a in drawn):
             continue
+        candidates = [im for im in _rasters(scope) if id(im) not in taken]
+        if not candidates:
+            continue  # 没有候选位图就不建查色表（它跟色图格数成正比，不白花）
         try:
             tube = _ColourTube(m.get_cmap())
-        except Exception:  # noqa: BLE001 — 色图格数超出 uint16：不配对
+        except Exception:  # noqa: BLE001 — 建不出查色表：不配对
             continue
         best, score = None, _FIELD_MIN_ON
-        for im in _rasters(scope):
-            if id(im) in taken:
-                continue
+        for im in candidates:
             try:
                 fit = _field_fit(im.get_array(), tube)
             except Exception:  # noqa: BLE001 — 量不了就当不吻合

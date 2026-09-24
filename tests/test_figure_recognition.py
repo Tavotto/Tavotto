@@ -243,6 +243,42 @@ def test_extremely_wide_rasters_stay_within_a_tile(facts):
     assert extra < 32 * 2**20, extra
 
 
+def test_single_row_rasters_bind_and_really_recolour(facts):
+    """#538 评审第三轮：单行色带每个像素最多两个邻居。连片判据按实际邻居数封顶、配对与
+    重着色问同一个判据——绑定了就真的换得了色（改动前：报已绑定，换色图后 0 个像素变）。"""
+    thin = facts["orphan_scopes"]["thin"]
+    (bar,) = _bars(thin["summary"]).values()
+    assert bar["mappable_gid"] == "axes_0.images_0"
+    assert thin["changed"] > 0.9, thin["changed"]
+    assert thin["end_pixel"] == pytest.approx(thin["end_expected"], abs=2e-2)
+    # 反例：67% 在色图上却连不成片——重着色换不了一个像素，配对问同一个判据，就不报已绑定
+    (speck,) = _bars(thin["speckled"]).values()
+    assert speck["mappable_gid"] is None
+
+
+def test_huge_colormaps_cost_nothing_without_a_raster(facts):
+    """#538 评审第三轮：6 万格的自定义色图，改动前 instrument 一张没有位图的图也要建 N×729
+    的候选（实测 4.3 s / 1.3 GB）。现在没有候选位图就不建；有位图时按 1024 格封顶建，照样
+    绑定、照样重着色。"""
+    hc = facts["orphan_scopes"]["huge_cmap"]
+    assert hc["no_raster_peak"] < 16 * 2**20, hc["no_raster_peak"]
+    assert hc["bind_peak"] < 64 * 2**20, hc["bind_peak"]
+    (bar,) = _bars(hc["summary"]).values()
+    assert bar["mappable_gid"] == "axes_0.images_0"
+    assert hc["end_pixel"] == pytest.approx(hc["end_expected"], abs=2e-2)
+
+
+def test_fit_sampling_spans_the_whole_image_within_budget(facts):
+    """配对抽样的连续窗口：任何形状下总像素不超抽样上限，行、列都覆盖到两端的那一格。
+    按扁平序号隔 k 格取时，k 恰是列数的倍数就全落在最左一列（3000² 实测色图只铺开 2%）。"""
+    o = facts["orphan_scopes"]
+    limit, win = o["sample_limit"], o["window"]
+    for shape, f in o["windows"].items():
+        assert f["pixels"] <= limit, shape
+        assert f["first_row"] == 0 and f["first_col"] == 0, shape
+        assert f["last_row"] > f["h"] - win and f["last_col"] > f["w"] - win, shape
+
+
 # ============================================================ 热会话 == 全量重放
 SCRIPT = "fig_recognition.py"
 LIBRARY = """\
