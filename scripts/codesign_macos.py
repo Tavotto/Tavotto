@@ -268,7 +268,7 @@ def check_min_os(
         over.sort(key=lambda x: x[1], reverse=True)
         raise SignError(
             f"这些 Mach-O 要求的 macOS 高于声明的 {expect_min_os}（共 {len(over)} 个，列前 10 个）：\n  "
-            + "\n  ".join(f"{m.path.relative_to(app)} → {_fmt(v)}" for m, v in over[:10])
+            + "\n  ".join(f"{m.path.relative_to(app).as_posix()} → {_fmt(v)}" for m, v in over[:10])
         )
     print(f"✓ Info.plist 最低 macOS {expect_min_os}；{seen} 个 Mach-O 的 minos 都不高于它")
 
