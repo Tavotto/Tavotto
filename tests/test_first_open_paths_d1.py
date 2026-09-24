@@ -478,9 +478,10 @@ def test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_cho
         app.call("/api/engine/workdir", {"mode": "project_root"}, method="PATCH")
         state = app.prepare(panel["id"])
         assert state["result"]["status"] == "ready", state["result"]
-        assert _input_files(state["result"]) == [("data/points.csv", truth["true_sha"])]
+        # 三把互相独立的尺子，先量图里的全序列（ylim 在这里量不出差别），再量输入 hash、导出折线
         render = app.render(panel["id"])
         assert _plotted_y(render) == _approx_seq(TRUE_Y)
+        assert _input_files(state["result"]) == [("data/points.csv", truth["true_sha"])]
         pdf, _ = _export_pdf(app, panel["id"], "path04")
         assert _exported_series(pdf.read_bytes()) == _approx_seq(_normalized(TRUE_Y))
         # 改选脚本目录 → 干扰那份（机器不裁决，值跟着选择走）
