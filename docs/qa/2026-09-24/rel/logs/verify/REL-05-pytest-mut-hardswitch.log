@@ -1,0 +1,87 @@
+# cmd: git diff src/tavotto/engine/telemetry.py; PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/../verify-rel/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_telemetry.py tests/test_telemetry_api.py tests/test_telemetry_invariants.py tests/test_telemetry_disclosure.py tests/test_telemetry_integrations.py tests/test_diagnostics_bundle.py tests/test_diagnostics_worker_evidence.py -p no:cacheprovider -W ignore::DeprecationWarning -q
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:07:03Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+diff --git a/src/tavotto/engine/telemetry.py b/src/tavotto/engine/telemetry.py
+index 5ba2f075..ea480117 100644
+--- a/src/tavotto/engine/telemetry.py
++++ b/src/tavotto/engine/telemetry.py
+@@ -267,7 +267,7 @@ def hard_disabled() -> bool:
+     环境变量被设成空值是常见的「取消设置」写法。
+     """
+     raw = (os.environ.get("TAVOTTO_NO_TELEMETRY") or "").strip().lower()
+-    return raw not in ("", "0", "false", "no")
++    return False
+ 
+ 
+ def endpoint() -> str:
+....F............F.............................F...............F........ [ 23%]
+........................................................................ [ 46%]
+........................................................................ [ 69%]
+........................................................................ [ 92%]
+.......................                                                  [100%]
+=================================== FAILURES ===================================
+___________________ test_hard_env_switch_beats_saved_consent ___________________
+
+sent = [], monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108c57f00>
+
+    def test_hard_env_switch_beats_saved_consent(sent, monkeypatch):
+        _enable()
+        sent.clear()
+        monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
+>       assert telemetry.hard_disabled() is True
+E       assert False is True
+E        +  where False = <function hard_disabled at 0x106cf8d60>()
+E        +    where <function hard_disabled at 0x106cf8d60> = telemetry.hard_disabled
+
+tests/test_telemetry.py:87: AssertionError
+_______________ test_hard_switch_still_wins_over_a_stale_consent _______________
+
+sent = [{'schema_version': 1, 'distinct_id': '756dbd48-e858-41a0-b328-6f07b7d3ea9a', 'event': 'telemetry_enabled', 'properties': {'app_version': '0.16.0', 'platform': 'macos', 'arch': 'arm64', 'distribution': 'source', ...}}]
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109100370>
+
+    def test_hard_switch_still_wins_over_a_stale_consent(sent, monkeypatch):
+        _enable()
+        monkeypatch.setattr(telemetry, "CONSENT_VERSION", telemetry.CONSENT_VERSION + 1)
+        monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
+        pub = telemetry.public_settings()
+        assert pub["enabled"] is False
+        # 硬开关关着时不该再去骚扰用户重新同意——那个框点了也没用
+>       assert pub["needs_reconsent"] is False
+E       assert True is False
+
+tests/test_telemetry.py:220: AssertionError
+______________________ test_settings_reports_hard_disable ______________________
+
+client = <FlaskClient <Flask 'tavotto.app'>>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1091ada20>
+
+    def test_settings_reports_hard_disable(client, monkeypatch):
+        monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
+        body = client.get("/api/telemetry/settings").get_json()
+>       assert body["hard_disabled"] is True and body["enabled"] is False
+E       assert (False is True)
+
+tests/test_telemetry_api.py:86: AssertionError
+________________ test_capture_never_raises_whatever_goes_wrong _________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10914ab30>
+telemetry_sent = []
+
+    def test_capture_never_raises_whatever_goes_wrong(monkeypatch, telemetry_sent):
+        for target in ("validate", "_auto_props", "_enqueue", "install_id"):
+            monkeypatch.setattr(
+                telemetry, target, lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("boom"))
+            )
+>           assert telemetry.capture("export_completed", {"pdf": True}) is False
+E           AssertionError: assert True is False
+E            +  where True = <function capture at 0x106cf96c0>('export_completed', {'pdf': True})
+E            +    where <function capture at 0x106cf96c0> = telemetry.capture
+
+tests/test_telemetry_invariants.py:88: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_telemetry.py::test_hard_env_switch_beats_saved_consent - as...
+FAILED tests/test_telemetry.py::test_hard_switch_still_wins_over_a_stale_consent
+FAILED tests/test_telemetry_api.py::test_settings_reports_hard_disable - asse...
+FAILED tests/test_telemetry_invariants.py::test_capture_never_raises_whatever_goes_wrong
+# exit: 1

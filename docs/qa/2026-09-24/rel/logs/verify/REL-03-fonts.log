@@ -1,0 +1,6 @@
+# cmd: cp -R /Volumes/Projects/Tavotto/src/tavotto/resources/fonts/ src/tavotto/resources/fonts/ && PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python scripts/fetch_fonts.py --check; git status --porcelain
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:24:52Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel/src/tavotto/resources/fonts：13 张脸 sha256 全部一致
+# exit: 0
