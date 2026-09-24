@@ -12,7 +12,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { armNoProjectRecovery, type RecentProject } from '@/lib/api'
-import { startTutorial } from '@/lib/onboarding/tutorial'
+import { startTutorial, useTutorialStore } from '@/lib/onboarding/tutorial'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { useProjectStore } from './projectStore'
 
@@ -31,6 +31,8 @@ const opened: string[] = []
 const sent: string[] = []
 /** 只有「刷新与收藏赛跑」那条用例要把 GET recent 也挂起 */
 let holdRecent = false
+/** 「教程请求在路上时点别的项目」那条用例把 /api/tutorial/open 挂起 */
+let holdTutorial = false
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = String(url)
@@ -38,7 +40,8 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const hold =
     u.includes('/api/projects/open') ||
     (u.includes('/api/projects/pinned') && init?.method === 'POST') ||
-    (holdRecent && u.includes('/api/projects/recent'))
+    (holdRecent && u.includes('/api/projects/recent')) ||
+    (holdTutorial && u.includes('/api/tutorial/open'))
   if (hold) {
     if (u.includes('/api/projects/open')) opened.push(JSON.parse(String(init?.body)).path)
     return new Promise<Response>((resolve) => {
@@ -83,6 +86,10 @@ beforeEach(() => {
   opened.length = 0
   sent.length = 0
   holdRecent = false
+  holdTutorial = false
+  // 上一条用例里故意喂坏形状的教程请求会在「busy 已置、清 busy 之前」抛出，busy 留在
+  // 'open'——不重置的话下一条的 startTutorial 被防重入直接挡回，替上一条背锅
+  useTutorialStore.setState({ busy: null, failure: null })
   useProjectStore.setState({
     phase: 'open',
     project: { open: true, id: 'p0', name: 'start', figures_dir: '/figs/start' },
@@ -300,5 +307,30 @@ describe('失效会话里排着的收藏操作', () => {
     setCurrentProjectId('p-other')
     await op
     expect(sent.filter((u) => u.includes('/api/projects/pinned'))).toHaveLength(0)
+  })
+})
+
+describe('教程与别的打开按点击顺序落地', () => {
+  it('教程请求在路上时 switching 已亮；此时点的项目排在教程之后，最后停在它上面', async () => {
+    holdTutorial = true
+    const tut = startTutorial('help')
+    await settle()
+    expect(useProjectStore.getState().switching).toBe(true) // 请求在路上就算切换
+    const b = useProjectStore.getState().open('/figs/B')
+    await settle()
+    expect(opened).toEqual([]) // B 排在教程后面，一个请求都没发
+
+    take('/api/tutorial/open').release(200, {
+      project: { open: true, id: 'pT', name: 'Tutorial', figures_dir: '/data/tutorial/x' },
+      tutorial: { document_id: 'd_tut', document_name: 'tutorial', version: 1 },
+      created: false,
+    })
+    await tut.catch(() => undefined) // 画布装不装得上不是本条的主语
+    await settle()
+    expect(opened).toEqual(['/figs/B']) // 教程整个结束之后才轮到 B
+    take('/api/projects/open').release(200, { open: true, id: 'pB', name: 'B', figures_dir: '/figs/B' })
+    await b
+    expect(useProjectStore.getState().project?.id).toBe('pB')
+    expect(useProjectStore.getState().switching).toBe(false)
   })
 })

@@ -53,7 +53,7 @@ import { useWorkspaceStore } from '@/store/workspace'
  * 项目绑在**标签页**上（lib/session.ts 的 sessionStorage），不是绑在后端的
  * 全局状态上：换一个标签页可以开另一个图库，互不影响。
  */
-interface ProjectState {
+export interface ProjectState {
   phase: 'loading' | 'open' | 'none'
   project: ProjectStatus | null
   recent: RecentProject[]
@@ -99,6 +99,16 @@ interface ProjectState {
    * 排着的删除都不会让它移错项。
    */
   movePinned: (path: string, by: { delta: number } | { toPath: string }) => Promise<void>
+  /**
+   * 把「发请求 + 认领」整个当成**一次**切换排进切换队列（教程的 open / reset 用它）：
+   * 请求在路上时 `switching` 就亮着，后点的别的项目排在它后面，按点击顺序落地（Codex #550：
+   * 只把认领排队的话，教程请求还在路上时点的最近项目会先进队，随后教程的认领把它换掉）。
+   * `fn` 拿到的 `adopt` 直接认领、**不再排队**——在事务里调 `adoptOpenedProject` 会排在
+   * 自己后面，永远等不到。
+   */
+  switchTransaction: <T>(
+    fn: (adopt: ProjectState['adoptOpenedProject']) => Promise<T>,
+  ) => Promise<T>
   remove: (path: string) => Promise<void>
   /** 一次从最近列表移除多条（失效项分组的「全部移除」）；同样不删磁盘内容 */
   removeMany: (paths: string[]) => Promise<void>
@@ -381,6 +391,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     runSwitch(async () => adoptNow(await openProjectApi(path, create))),
 
   adoptOpenedProject: (status, opts) => runSwitch(() => adoptNow(status, opts)),
+
+  switchTransaction: (fn) => runSwitch(() => fn(adoptNow)),
 
   togglePin: (path) =>
     applyPinned(() => ({

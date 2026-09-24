@@ -272,6 +272,5 @@ export async function switchProjectVia(page: Page, target: { path: string } | { 
       spellings.map((p) => `[data-workspace-row][data-project-path="${cssString(p)}"]`).join(', '),
     )
   }
-  // 行里第一个按钮就是「打开」（后面是收藏开关与「…」）
-  await row.locator('button').first().click()
+  await row.locator('[data-workspace-open]').click()
 }

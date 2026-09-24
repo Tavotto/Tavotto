@@ -351,6 +351,8 @@ function ProjectRow({
       )}
     >
       <button
+        // 行里有打开 / 收藏 / 「…」几颗钮：「打开」自己带锚点，不靠在行里的次序
+        data-workspace-open
         onClick={onOpen}
         disabled={!openable}
         aria-current={current || undefined}
