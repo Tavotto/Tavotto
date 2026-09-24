@@ -20,6 +20,13 @@ import { useAssetStore } from '@/store/assetStore'
 import { VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import type { Manifest, PanelInfo } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
+import {
+  perfRenderApplied,
+  perfRenderBegin,
+  perfRenderResponse,
+  perfStart,
+  perfStop,
+} from '@/perf/core'
 
 const previewPng = vi.fn()
 /** 每条用例可换的取图实现；默认立即成功（与从前逐字节相同） */
@@ -519,5 +526,108 @@ describe('角标优先级：相邻两档同时成立时谁说了算', () => {
 
     expect(badgeText()).toBe('脚本已更新')
     expect(container.textContent).not.toContain('低内存编辑预览')
+  })
+})
+
+/**
+ * 性能探针（ADR 0075；#504 评审 P1）：位图这一格没有「SVG 换进 DOM」那一刻，
+ * 松手 → 图落定必须量到**这一版自己的位图加载完**。否则分析器拿 `applied`
+ * 当落定，取图、解码、换图整段被漏掉——而 raster 恰恰是探针最该量的大图。
+ *
+ * 主语：探针那条渲染记录的 `painted`（真 `perf/core`，不 mock），按渲染键认。
+ * 反证：把 PanelView 里 `onLoad={… perfRenderPainted …}` 拿掉 → 「加载完」那条红；
+ * 把 `pngBlob.variant === variantNow` 那一项拿掉 → 「上一变体」那条红；把 `pngBlob.rev === renderRev`
+ * 那一项拿掉 → 「上一 rev」那条红（提交前手工跑过）。
+ */
+describe('性能探针：位图这一格的「图落定」', () => {
+  afterEach(() => {
+    perfStop()
+  })
+
+  /** 探针开着，这个键的渲染已经写进 store（applied），等着上屏 */
+  function recordApplied(obj: PanelObject): void {
+    const h = perfRenderBegin(renderKeyOf(obj), obj.overrides.length)
+    perfRenderResponse(h, true, {})
+    perfRenderApplied(h)
+  }
+
+  const fireLoad = async (img: Element) => {
+    await act(async () => {
+      img.dispatchEvent(new Event('load'))
+    })
+  }
+
+  it('raster：位图加载完才算落定，之前不算', async () => {
+    expect(perfStart()).toBe(true)
+    seed({ svg: null, preview: RASTER })
+    recordApplied(PANEL)
+    await mount()
+
+    const img = container.querySelector('img')!
+    expect(img.getAttribute('src')).toBe('blob:mock/1')
+    const r = perfStop()!.renders[0]
+    // 位图已经取回来了，但还没加载完：不许提前收口
+    expect(r.applied).not.toBeNull()
+    expect(r.painted).toBeNull()
+  })
+
+  it('raster：这一版自己的位图加载完 → painted 落在 applied 之后', async () => {
+    expect(perfStart()).toBe(true)
+    seed({ svg: null, preview: RASTER })
+    recordApplied(PANEL)
+    await mount()
+
+    await fireLoad(container.querySelector('img')!)
+    const r = perfStop()!.renders[0]
+    expect(r.painted).not.toBeNull()
+    expect(r.painted!).toBeGreaterThanOrEqual(r.applied!)
+    // 分析器靠它把这段说成「取位图 + 解码」，而不是 innerHTML
+    expect(r.painted_via).toBe('png')
+  })
+
+  it('上一变体的位图（新图还在路上时的替身）加载完，不算这一版落定', async () => {
+    seed({ svg: null, preview: RASTER })
+    await mount() // 旧变体的位图已经挂上
+    const img = container.querySelector('img')!
+    expect(img.getAttribute('src')).toBe('blob:mock/1')
+
+    // 用户改了一下：新变体的渲染已写进 store，它的位图永不落地
+    const next = { ...PANEL, overrides: [{ gid: 'title', prop: 'fontsize', value: 12 }] } as PanelObject
+    previewPngImpl = () => new Promise<Blob>(() => {})
+    // rev 刻意不变：只让「变体」这一项把它挡下（rev 那一项另有一条）
+    useRenderStore.getState().patch(renderKeyOf(next), {
+      fileId: next.fileId,
+      manifest: MANIFEST,
+      rev: 3,
+      status: 'ready',
+      lastPatches: JSON.stringify(next.overrides),
+      preview: RASTER,
+    })
+    expect(perfStart()).toBe(true)
+    recordApplied(next)
+    await act(async () => {
+      root.render(<PanelView obj={next} />)
+    })
+    // 画布上仍暂挂着上一变体那张：它此刻加载完，也不是新变体上屏
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
+    await fireLoad(container.querySelector('img')!)
+    expect(perfStop()!.renders[0].painted).toBeNull()
+  })
+
+  it('同一变体的上一 rev 那张（新一版渲染后重取还在路上）加载完，不算这一版落定', async () => {
+    seed({ svg: null, preview: RASTER })
+    await mount() // rev 3 的位图已经挂上
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
+
+    // 同一变体重新渲染了一版（rev 4，比如脚本改了）：按 rev 重取的位图永不落地
+    previewPngImpl = () => new Promise<Blob>(() => {})
+    expect(perfStart()).toBe(true)
+    await act(async () => {
+      seed({ svg: null, preview: RASTER, rev: 4 })
+      recordApplied(PANEL)
+    })
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
+    await fireLoad(container.querySelector('img')!)
+    expect(perfStop()!.renders[0].painted).toBeNull()
   })
 })

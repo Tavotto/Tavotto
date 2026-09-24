@@ -111,6 +111,23 @@ export function PerfProbeHud() {
         </>
       )}
 
+      {phase === 'saving' && (
+        <>
+          <p className="text-ink-2" role="status" data-perf-status="saving">
+            {t('perfProbe.saving')}
+          </p>
+          <div className="flex justify-end gap-1.5">
+            <Button variant="ghost" size="sm" onClick={() => probe().discard()} data-perf-action="discard">
+              {t('perfProbe.discard')}
+            </Button>
+            {/* 保存在路上：主动作禁用（store 里另有幂等判断，不只靠这里） */}
+            <Button variant="primary" size="sm" disabled data-perf-action="finish">
+              {t('perfProbe.finish')}
+            </Button>
+          </div>
+        </>
+      )}
+
       {phase === 'done' && (
         <>
           {result ? (
@@ -142,15 +159,29 @@ export function PerfProbeHud() {
                 </p>
               )}
             </>
+          ) : notice === 'save_failed' ? (
+            <p className="text-xs text-danger" role="alert" data-perf-notice="save-failed">
+              {t('perfProbe.saveFailed')}
+            </p>
           ) : (
             <p className="text-ink-2" role="status">
               {t('perfProbe.noData')}
             </p>
           )}
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-1.5">
             <Button variant="secondary" size="sm" onClick={() => probe().close()} data-perf-action="close">
               {t('perfProbe.close')}
             </Button>
+            {notice === 'save_failed' && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => void probe().retrySave()}
+                data-perf-action="retry-save"
+              >
+                {t('perfProbe.retrySave')}
+              </Button>
+            )}
           </div>
         </>
       )}

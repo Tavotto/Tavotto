@@ -91,9 +91,14 @@ export function abortSynthetic(): void {
 
 /** 跑一轮。调用方负责先 `startProbe()`；这里只负责「像用户一样拖」 */
 export async function runSyntheticPass(x: number, y: number, pass: SyntheticPass): Promise<SyntheticResult> {
+  abortFlag = false
+  return drivePass(x, y, pass)
+}
+
+/** 一轮的本体。**不清停止旗子**：清旗子是「一次测试开始」的事，不是「一轮开始」的事 */
+async function drivePass(x: number, y: number, pass: SyntheticPass): Promise<SyntheticResult> {
   const target = document.elementFromPoint(x, y)
   if (!target) return 'no_target'
-  abortFlag = false
   perfSetSource('synthetic', pass.label)
   try {
     target.dispatchEvent(pointer('pointerdown', x, y, 1))
@@ -132,10 +137,15 @@ export async function runStandardTest(
   x: number,
   y: number,
   onPass?: (pass: SyntheticPass, index: number) => void,
+  passes: readonly SyntheticPass[] = STANDARD_PASSES,
 ): Promise<SyntheticResult> {
-  for (const [i, pass] of STANDARD_PASSES.entries()) {
+  // 「停止」对整次标准测试生效：旗子只在这里清一次。轮与轮之间那 800ms 里按下
+  // 停止，下一轮开跑前就得看见——每轮各清一次的话，那一下会被下一轮悄悄抹掉
+  abortFlag = false
+  for (const [i, pass] of passes.entries()) {
+    if (abortFlag) return 'aborted'
     onPass?.(pass, i)
-    const r = await runSyntheticPass(x, y, pass)
+    const r = await drivePass(x, y, pass)
     if (r !== 'ok') return r
     // 让上一轮的收尾（取消 + 尾巴采样）落完，再开下一轮
     await sleep(800)

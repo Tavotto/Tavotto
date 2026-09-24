@@ -1010,6 +1010,17 @@ CHAIN_STAGES = {
         "web/src/canvas/PanelView.tsx（内联 SVG）",
         "整棵 SVG 用 innerHTML 替换：复用没变的节点，或只替换变了的 <g>。",
     ),
+    "png": (
+        "取位图 + 解码（位图预览）",
+        "web/src/canvas/PanelView.tsx useEnginePngBlob → POST /api/engine/preview_png",
+        "位图预览松手后要等渲染回来、再另发一次出图请求并整张解码：让定稿渲染在同一次响应里带回位图"
+        "（Codex 内嵌画布已是这样），省掉第二次往返与重画。",
+    ),
+    "bitmap_draw": (
+        "换图后浏览器解码 / 绘制新位图",
+        "web/src/canvas/PanelView.tsx（CrossfadeImage 的两层 <img>）",
+        "位图按整图的分档尺寸出：档位远大于屏上显示尺寸时降一档，或先 img.decode() 离屏解码好再换 src。",
+    ),
     "layout": (
         "换图后浏览器排版 / 绘制新 SVG",
         "web/src/canvas/PanelView.tsx",
@@ -1074,13 +1085,17 @@ def release_chain(report: dict) -> list[dict]:
         else:
             # 老后端没有 server_ms：往返里后端与传输分不开，整段记成「传输 + 解析」前先扣掉 worker 那部分
             st["transfer"] = max(0.0, rt - (worker_total or 0.0) - (t.get("worker_get_ms") or 0.0))
+        # 位图预览（raster / evicted）的落定是这一版位图加载完：applied → painted 是再取一次位图 + 解码，
+        # 不是 innerHTML；随后那两帧画的是新位图，不是新 SVG。旧报告没有 painted_via，位图面板也从不写
+        # painted / swap_frames，按 SVG 读不会错
+        via_png = r.get("painted_via") == "png"
         if r.get("applied") is not None:
             st["apply"] = r["applied"] - r["response"]
             if r.get("painted") is not None:
-                st["dom"] = r["painted"] - r["applied"]
+                st["png" if via_png else "dom"] = r["painted"] - r["applied"]
         frames = r.get("swap_frames") or []
         if frames:
-            st["layout"] = max((f[1] or 0.0) for f in frames)
+            st["bitmap_draw" if via_png else "layout"] = max((f[1] or 0.0) for f in frames)
         settled = r.get("painted") if r.get("painted") is not None else r.get("applied")
         out.append(
             {

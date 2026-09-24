@@ -5,6 +5,10 @@
  * 判据的主语：documentStore 的 doc 与 past（撤销栈），测试前后各取一次。
  * 反证：把 synthetic.ts 收尾的 `pointercancel` 换成 `pointerup`，
  * 「对象没挪、历史没多」两条必须红（提交前手工跑过一次）。
+ *
+ * 另一条承诺是「停止」对整次标准测试生效（#504 评审）：主语是**第二轮有没有开跑**
+ * （pointerdown 的次数 + 片段里有没有第二轮的 label）。反证：runStandardTest 每轮
+ * 前重新清旗子（修复前的写法）→ 那条必红。
  */
 import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -16,7 +20,7 @@ import { useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type ShapeObject } from '@/types/document'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { perfStart, perfStop } from './core'
-import { runSyntheticPass } from './synthetic'
+import { abortSynthetic, runStandardTest, runSyntheticPass } from './synthetic'
 
 const rect: ShapeObject = {
   id: 's1',
@@ -87,6 +91,30 @@ describe('自动拖动测试', () => {
     perfStop()
     empty.remove()
     expect(r).toBe('not_draggable')
+    expect(useDocumentStore.getState().txn).toBeNull()
+  })
+
+  it('两轮之间的间隙里按停止：第二轮不开跑', async () => {
+    let downs = 0
+    host.addEventListener('pointerdown', () => downs++)
+    // 第一轮收尾的 pointercancel 之后下一个任务里按停止——此刻正落在两轮之间的 800ms
+    host.addEventListener('pointercancel', () => setTimeout(abortSynthetic, 0), { once: true })
+    const started: string[] = []
+    perfStart()
+    const r = await runStandardTest(
+      100,
+      100,
+      (p) => started.push(p.label),
+      [
+        { label: 'a', movesPerFrame: 1, durationMs: 120 },
+        { label: 'b', movesPerFrame: 1, durationMs: 120 },
+      ],
+    )
+    const raw = perfStop()!
+    expect(r).toBe('aborted')
+    expect(started).toEqual(['a'])
+    expect(downs).toBe(1)
+    expect(raw.segments.some((s) => s.label === 'b')).toBe(false)
     expect(useDocumentStore.getState().txn).toBeNull()
   })
 })

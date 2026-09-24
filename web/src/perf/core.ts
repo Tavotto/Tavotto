@@ -105,6 +105,12 @@ export interface RenderRecord {
   response: number | null
   applied: number | null
   painted: number | null
+  /**
+   * `painted` 是哪种上屏：`svg` = 内联 SVG 换进 DOM；`png` = 位图预览（raster / evicted /
+   * 非编辑态引擎位图）这一版自己的位图加载完——applied → painted 那段是再取一次位图 + 解码，
+   * 不是 innerHTML，分析器要分开说
+   */
+  painted_via: 'svg' | 'png' | null
   ok: boolean | null
   patches: number
   svg_kb: number | null
@@ -497,6 +503,7 @@ export function perfRenderBegin(key: string, patches: number): number {
     response: null,
     applied: null,
     painted: null,
+    painted_via: null,
     ok: null,
     patches,
     svg_kb: null,
@@ -532,16 +539,18 @@ export function perfRenderApplied(h: number): void {
 }
 
 /**
- * PanelView 把这个渲染键的 SVG 换进 DOM 之后调（useEffect：React 已 commit）。
+ * PanelView 把这个渲染键的 SVG 换进 DOM 之后调（useEffect：React 已 commit），
+ * 或位图预览这一版自己的位图加载完时调（`via = 'png'`）。
  * 认最近一次已写进 store、还没上屏的同键渲染
  */
-export function perfRenderPainted(key: string): void {
+export function perfRenderPainted(key: string, via: 'svg' | 'png' = 'svg'): void {
   const r = rec
   if (!r) return
   for (let i = r.live.length - 1; i >= 0; i--) {
     const l = r.live[i]
     if (l.key === key && l.rec.applied != null && l.rec.painted == null) {
       l.rec.painted = round1(perfNow() - r.t0)
+      l.rec.painted_via = via
       r.swap = l.rec
       return
     }

@@ -1,0 +1,282 @@
+/**
+ * 报告保存失败时说实话（ADR 0075；#504 评审）。
+ *
+ * 主语：**桌面版**、`POST /api/perf/report` 没接住的那一刻，界面上说的是什么、
+ * 报告还在不在。桌面壳的 WKWebView 会静默取消 `<a download>`，那条退路在桌面上
+ * 等于什么都没存——回一个文件名就是谎称「已保存」。
+ *
+ * 反证：把 `saveReport` 里 `if (isDesktop()) return null` 删掉（修复前的写法）→
+ * 「桌面版后端失败」两条必红；删掉 HUD 上的 `data-perf-notice` → 面板那条红；
+ * 去掉 probeStore 的保存代数判断 → 「过时的结果」三条红（提交前手工跑过）。
+ */
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { PerfProbeHud } from '@/components/PerfProbeHud'
+import { t as translate } from '@/i18n'
+import { useInteractionStore } from '@/store/interactionStore'
+import { usePerfProbeStore } from './probeStore'
+import { cancelProbe, saveReport, type PerfReport } from './session'
+
+vi.mock('@/lib/desktop', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/desktop')>()),
+  revealExportedFile: vi.fn(async () => true),
+}))
+
+/** 报告端点的行为；系统事实端点一律回空（与本组无关） */
+let reportReply: () => Promise<Response>
+const clicks = vi.fn()
+
+beforeEach(() => {
+  reportReply = () => Promise.reject(new TypeError('offline'))
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url: string) =>
+      String(url).includes('/api/perf/report')
+        ? reportReply()
+        : Promise.resolve(new Response('{}', { status: 200 })),
+    ),
+  )
+  clicks.mockClear()
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(clicks)
+  URL.createObjectURL = vi.fn(() => 'blob:mock/report')
+  URL.revokeObjectURL = vi.fn()
+})
+
+afterEach(() => {
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
+  usePerfProbeStore.getState().discard()
+  cancelProbe()
+  useInteractionStore.getState().end()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
+
+const asDesktop = () => {
+  ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+}
+const REPORT = { schema: 'tavotto-perf-probe/1', segments: [] } as unknown as PerfReport
+
+describe('saveReport', () => {
+  it('桌面版后端失败：回 null，不走浏览器下载', async () => {
+    asDesktop()
+    expect(await saveReport(REPORT)).toBeNull()
+    reportReply = () => Promise.resolve(new Response('disk full', { status: 507 }))
+    expect(await saveReport(REPORT)).toBeNull()
+    expect(clicks).not.toHaveBeenCalled()
+  })
+
+  it('浏览器模式后端失败：照旧给一份下载（那里下载是真的会落地的）', async () => {
+    const saved = await saveReport(REPORT)
+    expect(saved?.dir).toBeNull()
+    expect(saved?.name).toMatch(/^tavotto-perf-.*\.json$/)
+    expect(clicks).toHaveBeenCalledTimes(1)
+  })
+
+  it('桌面版后端写好了：回后端的名字与目录，不另下载', async () => {
+    asDesktop()
+    reportReply = () =>
+      Promise.resolve(Response.json({ dir: '/data/perf-reports', name: 'tavotto-perf-x.json' }))
+    expect(await saveReport(REPORT)).toEqual({ dir: '/data/perf-reports', name: 'tavotto-perf-x.json' })
+    expect(clicks).not.toHaveBeenCalled()
+  })
+})
+
+describe('探针面板：桌面版保存失败', () => {
+  it('不说「已保存」，报告留着，重试成功后才给文件名', async () => {
+    asDesktop()
+    const probe = usePerfProbeStore.getState
+    expect(probe().start()).toBe(true)
+    useInteractionStore.getState().begin('move')
+    useInteractionStore.getState().end()
+    await probe().finish()
+
+    expect(probe().phase).toBe('done')
+    expect(probe().notice).toBe('save_failed')
+    expect(probe().result).toBeNull()
+    expect(probe().unsaved?.segments.length).toBe(1)
+
+    // 面板上是失败 + 重试，不是「报告已保存」
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    // 页面上另有一个 alert（排在前面）：判据必须指向保存失败那一句，而不是「第一个 alert」
+    const decoy = document.createElement('p')
+    decoy.setAttribute('role', 'alert')
+    decoy.textContent = '别处的提示'
+    document.body.prepend(decoy)
+    await act(async () => root.render(<PerfProbeHud />))
+    expect(document.querySelector('[role="alert"]')).toBe(decoy) // 按 role 找会找错——这正是要防的
+    const notice = document.querySelector('[data-perf-notice="save-failed"]')
+    expect(notice?.textContent).toBe(translate('perfProbe.saveFailed', { ns: 'dialogs' }))
+    expect(notice?.getAttribute('role')).toBe('alert')
+    decoy.remove()
+    expect(host.querySelector('[data-perf-action="retry-save"]')).not.toBeNull()
+    expect(host.querySelector('[data-perf-action="reveal"]')).toBeNull()
+
+    reportReply = () =>
+      Promise.resolve(Response.json({ dir: '/data/perf-reports', name: 'tavotto-perf-y.json' }))
+    await act(async () => {
+      ;(host.querySelector('[data-perf-action="retry-save"]') as HTMLButtonElement).click()
+    })
+    expect(probe().notice).toBeNull()
+    expect(probe().unsaved).toBeNull()
+    expect(probe().result?.file).toBe('tavotto-perf-y.json')
+    expect(host.querySelector('[data-perf-action="retry-save"]')).toBeNull()
+    expect(host.querySelector('[data-perf-action="reveal"]')?.textContent).toBe('tavotto-perf-y.json')
+    act(() => root.unmount())
+    host.remove()
+  })
+})
+
+/** 手动放行的一次报告请求 */
+function deferReply(): { resolve: (r: Response) => void; reject: () => void } {
+  let resolve!: (r: Response) => void
+  let reject!: () => void
+  const p = new Promise<Response>((res, rej) => {
+    resolve = res
+    reject = () => rej(new TypeError('offline'))
+  })
+  reportReply = () => p
+  return { resolve, reject }
+}
+
+const ok = (name: string) => Response.json({ dir: '/data/perf-reports', name })
+/** 到目前为止发了几次 POST /api/perf/report */
+const reportCalls = () =>
+  vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/api/perf/report')).length
+
+/** 桌面版，录了一段，停在「录制中」 */
+function recordedOne() {
+  asDesktop()
+  const probe = usePerfProbeStore.getState
+  expect(probe().start()).toBe(true)
+  useInteractionStore.getState().begin('move')
+  useInteractionStore.getState().end()
+  return probe
+}
+
+/** 桌面版，录了一段、第一次保存失败，停在「没保存 + 重试」 */
+async function failedOnce() {
+  asDesktop()
+  const probe = usePerfProbeStore.getState
+  expect(probe().start()).toBe(true)
+  useInteractionStore.getState().begin('move')
+  useInteractionStore.getState().end()
+  await probe().finish()
+  expect(probe().notice).toBe('save_failed')
+  return probe
+}
+
+describe('探针面板：过时的保存结果不许落到界面', () => {
+  it('点了重试、请求还没回来就关掉面板：回来的结果不许把面板重新打开', async () => {
+    const probe = await failedOnce()
+    const req = deferReply()
+    const pending = probe().retrySave()
+    probe().close()
+    req.resolve(ok('tavotto-perf-late.json'))
+    await pending
+    expect(probe().phase).toBe('off')
+    expect(probe().result).toBeNull()
+  })
+
+  it('完成并保存还在路上就放弃：回来的失败不许把面板重新打开', async () => {
+    asDesktop()
+    const probe = usePerfProbeStore.getState
+    expect(probe().start()).toBe(true)
+    useInteractionStore.getState().begin('move')
+    useInteractionStore.getState().end()
+    const req = deferReply()
+    const pending = probe().finish()
+    // finishProbe 本身要等系统事实：放一拍让它走到保存请求上
+    await new Promise((r) => setTimeout(r, 0))
+    probe().discard()
+    req.reject()
+    await pending
+    expect(probe().phase).toBe('off')
+    expect(probe().notice).toBeNull()
+    expect(probe().unsaved).toBeNull()
+  })
+
+  it('连点两次重试：第二下是空操作，只发一次请求，落的是那一次的结果', async () => {
+    const probe = await failedOnce()
+    const before = reportCalls()
+    const req = deferReply()
+    const p1 = probe().retrySave()
+    expect(probe().phase).toBe('saving')
+    await probe().retrySave() // 保存在路上：立即返回，不换代、不另发请求
+    expect(probe().phase).toBe('saving')
+    req.resolve(ok('tavotto-perf-ok.json'))
+    await p1
+    expect(reportCalls() - before).toBe(1)
+    expect(probe().phase).toBe('done')
+    expect(probe().notice).toBeNull()
+    expect(probe().result?.file).toBe('tavotto-perf-ok.json')
+  })
+})
+
+/**
+ * 保存在路上（`saving`）时的各个入口（#537 第三轮评审）。设计：
+ * - 两个保存入口（完成并保存 / 重试保存）都是空操作：不换代、不改 phase、不另发请求；
+ * - 「开始」被拒（它会换代并清掉 unsaved）；
+ * - 「放弃」「关闭」照常生效：那是用户明确不要了，在路上的结果回来后丢掉（上一组已钉）。
+ * 反证（提交前手工跑过）：finish 入口判断改回「只排除 off / done」（修复前）→「连点两次完成并保存」红；
+ * finish 不切 `saving` → 本组三条红；retrySave 不切 `saving` →「连点两次重试」红；
+ * start 放行 `saving` →「重试或开始」那条红；面板主动作不禁用 → 面板那条红。
+ */
+describe('探针面板：保存在路上时重复触发', () => {
+  it('连点两次「完成并保存」：只发一次请求，最后落在已保存', async () => {
+    const probe = recordedOne()
+    const before = reportCalls()
+    const req = deferReply()
+    const p1 = probe().finish()
+    expect(probe().phase).toBe('saving')
+    const p2 = probe().finish()
+    await p2
+    expect(probe().phase).toBe('saving') // 第二下没把它改成 no_data
+    req.resolve(ok('tavotto-perf-once.json'))
+    await p1
+    expect(reportCalls() - before).toBe(1)
+    expect(probe().phase).toBe('done')
+    expect(probe().notice).toBeNull()
+    expect(probe().result?.file).toBe('tavotto-perf-once.json')
+  })
+
+  it('「完成并保存」在路上时点「重试保存」或「开始」：都不生效，落的仍是那一次的结果', async () => {
+    const probe = recordedOne()
+    const before = reportCalls()
+    const req = deferReply()
+    const p1 = probe().finish()
+    await new Promise((r) => setTimeout(r, 0))
+    await probe().retrySave()
+    expect(probe().start()).toBe(false)
+    expect(probe().phase).toBe('saving')
+    req.reject() // 这一次失败了：界面说失败、留着报告
+    await p1
+    expect(reportCalls() - before).toBe(1)
+    expect(probe().phase).toBe('done')
+    expect(probe().notice).toBe('save_failed')
+    expect(probe().unsaved?.segments.length).toBe(1)
+  })
+
+  it('面板在保存途中：状态说正在保存，主动作禁用，「放弃」可用', async () => {
+    const probe = recordedOne()
+    const req = deferReply()
+    const p1 = probe().finish()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    await act(async () => root.render(<PerfProbeHud />))
+    expect(host.querySelector('[data-perf-probe]')?.getAttribute('data-phase')).toBe('saving')
+    expect(host.querySelector('[data-perf-status="saving"]')).not.toBeNull()
+    expect((host.querySelector('[data-perf-action="finish"]') as HTMLButtonElement).disabled).toBe(true)
+    expect((host.querySelector('[data-perf-action="discard"]') as HTMLButtonElement).disabled).toBe(false)
+    req.resolve(ok('tavotto-perf-z.json'))
+    await act(async () => {
+      await p1
+    })
+    expect(host.querySelector('[data-perf-probe]')?.getAttribute('data-phase')).toBe('done')
+    act(() => root.unmount())
+    host.remove()
+  })
+})

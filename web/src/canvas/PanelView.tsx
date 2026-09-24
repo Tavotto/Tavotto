@@ -182,6 +182,15 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 拿上一变体的位图冒充当前变体——那正是「预览 ≠ 当前 overrides 且不吵」。
   const enginePng =
     pngBlob.url && (pngBlob.variant === variantNow || !pngBlob.failed) ? pngBlob.url : null
+  // 性能探针（ADR 0075）：位图这一格（raster / evicted / 非编辑态的引擎位图）没有
+  // 「SVG 换进 DOM」那一刻，松手 → 图落定要一直量到**这一版自己的位图**加载完
+  // （onLoad：取图、解码都已结束）。暂挂的上一变体 / 上一 rev 的那张不算——那是
+  // 新图还在路上时的替身，拿它收口就把取图与解码整段漏掉了。
+  const renderRev = render?.rev ?? 0
+  const pngPaintKey =
+    useEnginePng && enginePng && pngBlob.variant === variantNow && pngBlob.rev === renderRev
+      ? renderKeyOf(obj)
+      : null
   // runtime 面板的 stale / cache 状态（只查询，绝不触发脚本执行）
   const runtimeState = useRuntimeAssetStore((s) => (runtime ? s.byId[obj.fileId] : undefined))
   useEffect(() => {
@@ -281,6 +290,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
           <CrossfadeImage
             src={retry.src}
             onError={retry.onError}
+            onLoad={pngPaintKey != null ? () => perfRenderPainted(pngPaintKey, 'png') : undefined}
             alt={obj.name ?? obj.fileId}
             className="absolute select-none"
             style={{ ...layout, maxWidth: 'none' }}
@@ -314,16 +324,18 @@ function useEnginePngBlob(
   bucket: number,
   enabled: boolean,
   rev: number,
-): { url: string | null; variant: string | null; failed: boolean } {
+): { url: string | null; variant: string | null; rev: number; failed: boolean } {
   // `variant` 记的是 `url` 那张图**按哪组 overrides**出的：消费方靠它分辨
   // 「暂挂的上一张」与「就是当前这版」。`failed` = 最近一次取图以失败告终
   // （被新请求顶掉的中断不算）——此后上一张不再冒充当前变体，退位给 SVG /
-  // 「近似预览」角标，而不是安静地一直挂着。
+  // 「近似预览」角标，而不是安静地一直挂着。`rev` 同理，记的是这张图按哪一版
+  // 渲染出的（性能探针认「这一版自己的图」要它）。
   const [state, setState] = useState<{
     url: string | null
     variant: string | null
+    rev: number
     failed: boolean
-  }>({ url: null, variant: null, failed: false })
+  }>({ url: null, variant: null, rev: 0, failed: false })
   const urlRef = useRef<string | null>(null)
   // 依赖用变体串而不是 overrides 数组：数组每次 commit 都是新引用
   const variant = JSON.stringify(obj.overrides)
@@ -344,7 +356,7 @@ function useEnginePngBlob(
         landed = true
         if (urlRef.current) URL.revokeObjectURL(urlRef.current)
         urlRef.current = next
-        setState({ url: next, variant, failed: false })
+        setState({ url: next, variant, rev, failed: false })
       })
       .catch(() => {
         // 失败保留上一张（画布别空掉），但要记下「失败」：中断（deps 变了 /
@@ -390,6 +402,7 @@ function useEnginePngBlob(
 function CrossfadeImage({
   src,
   onError,
+  onLoad,
   alt,
   className,
   style,
@@ -397,6 +410,8 @@ function CrossfadeImage({
   src: string
   /** 当前层加载失败时（淡出层的失败不关心：它本来就要被换掉） */
   onError?: () => void
+  /** 当前层加载完成时（同上，只认当前层） */
+  onLoad?: () => void
   alt: string
   className?: string
   style?: React.CSSProperties
@@ -438,6 +453,7 @@ function CrossfadeImage({
             alt={isCur ? alt : ''}
             aria-hidden={isCur ? undefined : true}
             onError={isCur ? onError : undefined}
+            onLoad={isCur ? onLoad : undefined}
             draggable={false}
             className={cn(
               className,
