@@ -881,7 +881,9 @@ EMAIL_VECTORS = [
     ("x^y@例子.公司", "<email>"),  # Sk
     ("user%40example.com", "<email>"),  # URL 编码的 @
     ("ssh://git@github.com/x", "ssh://<email>/x"),  # URL userinfo 照样抹，停在 `/` 上
-    ("「用户@例子.公司」", "「<email>」"),  # 全角引号是分隔符
+    ("「用户@例子.公司」", "「<email>」"),  # 直角引号（Ps / Pe）是分隔符
+    ("“用户@例子.公司”", "“<email>”"),  # 弯引号（Pi / Pf）也是
+    ("«a@b.com»", "«<email>»"),
     ("C:\\Users\\a@b.com\\x", "C:\\Users\\<email>\\x"),
 ]
 NOT_EMAILS = [
