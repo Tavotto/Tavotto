@@ -1527,8 +1527,9 @@ export interface ManifestElement {
   anchor?: [number, number]
   drag_prop?: string
   /**
-   * 图内独立箭头（脚本 add_patch 的 FancyArrowPatch）的两个端点
-   * （figure 分数、y 向下）。有它 = 可整体拖动、可拖单个端点，
+   * 图内箭头的两个端点 [尾, 头]（figure 分数、y 向下）：脚本 add_patch 的独立
+   * FancyArrowPatch，以及纯箭头注释 `annotate("", xy=…, xytext=…)`（引擎改的是注释的
+   * 两个锚点；有字的注释不出）。有它 = 可整体拖动、可拖单个端点，
    * 写 endpoints_frac override（[ax, ay, bx, by]）。
    */
   arrow_endpoints?: [number, number][]
