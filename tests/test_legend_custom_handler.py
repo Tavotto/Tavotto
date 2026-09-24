@@ -328,3 +328,92 @@ def test_detaching_after_recolouring_the_source_recolours_the_whole_cell(tmp_pat
     finally:
         pool.discard(r)
     assert detached == red
+
+
+def test_undoing_a_colour_on_a_detached_errorbar_restores_it(tmp_path_factory):
+    """撤销 handle_color：存下的原样是 LineCollection 的 N×4 数组，还原要能落到整格里的 Line2D
+    上（#544 评审：原来这里报 warning、撤销不回去）。撤销到底与脚本原样逐像素相同。"""
+    figs = tmp_path_factory.mktemp("legend-errorbar-undo")
+    (figs / ERR_SCRIPT).write_text(ERR_LIBRARY, encoding="utf-8")
+    entry = f"{LEG}.texts_0"
+    w = pool.one_shot(ERR_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        original = w.preview_png(ERR_STEM, [], 380, "u-orig").read_bytes()
+        resp = w.override(ERR_STEM, [{"gid": entry, "prop": "handle_color", "value": "#d62728"}])
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        resp = w.override(ERR_STEM, [])
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        assert w.preview_png(ERR_STEM, [], 380, "u-undone").read_bytes() == original
+    finally:
+        pool.discard(w)
+
+
+#: 一格里：只描边的矩形 + 实心圆（面边同色）+ 空心圆（只有边），全是同一种颜色——整格同色，
+#: 给 handle_color；改色只能改看得见的那几路，描边的不能被填实、空心的不能被涂满。
+OUTLINE_SCRIPT = "fig_legend_outline_cell.py"
+OUTLINE_STEM = "OutlineCell"
+OUTLINE_LIBRARY = """\
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib.collections import PatchCollection
+from matplotlib.legend_handler import HandlerBase
+
+
+class Key:
+    pass
+
+
+class HandlerOutline(HandlerBase):
+    def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height,
+                       fontsize, trans):
+        r = height / 2.0
+        return [
+            mpl.patches.Rectangle((xdescent, ydescent), width, height, transform=trans,
+                                  facecolor="none", edgecolor="#1f77b4", linewidth=1.2),
+            PatchCollection([mpl.patches.Circle((xdescent + width * 0.3, ydescent + r), r * 0.6)],
+                            facecolor="#1f77b4", edgecolor="#1f77b4", linewidth=1.5,
+                            transform=trans),
+            PatchCollection([mpl.patches.Circle((xdescent + width * 0.7, ydescent + r), r * 0.6)],
+                            facecolor="none", edgecolor="#1f77b4", linewidth=1.5,
+                            transform=trans),
+        ]
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    ax.plot([0, 1], [0, 1], color="0.5")
+    ax.legend([Key()], ["Outline"], loc="upper left", handlelength=3.0,
+              handler_map={Key: HandlerOutline()})
+    fig.savefig("OutlineCell.pdf")
+"""
+
+
+def test_recolouring_a_uniform_cell_keeps_outlines_and_hollows(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("legend-outline-cell")
+    (figs / OUTLINE_SCRIPT).write_text(OUTLINE_LIBRARY, encoding="utf-8")
+    red_script = "fig_legend_outline_cell_red.py"
+    (figs / red_script).write_text(
+        OUTLINE_LIBRARY.replace("#1f77b4", "#d62728").replace(
+            "OutlineCell.pdf", "OutlineCellRed.pdf"
+        ),
+        encoding="utf-8",
+    )
+    entry = f"{LEG}.texts_0"
+    w = pool.one_shot(OUTLINE_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        assert "handle_color" in _fields(w.override(OUTLINE_STEM, [])["manifest"], entry)
+        recolour = [{"gid": entry, "prop": "handle_color", "value": "#d62728"}]
+        resp = w.override(OUTLINE_STEM, recolour)
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        recoloured = _legend_pixels(w, OUTLINE_STEM, recolour, "o-red")
+    finally:
+        pool.discard(w)
+    r = pool.one_shot(red_script, str(figs), ENTRY)
+    r.ensure_built()
+    try:
+        expected = _legend_pixels(r, "OutlineCellRed", [], "o-exp")
+    finally:
+        pool.discard(r)
+    assert recoloured == expected

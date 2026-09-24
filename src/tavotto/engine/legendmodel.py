@@ -1017,29 +1017,54 @@ def _entry_handle_write(t: Text, prop: str, v) -> None:
         k = model.display_index(j)
         boxes = _entry_boxes(model.leg) if k is not None else []
         if k is not None and k < len(boxes):
+            c = _single_color(v)
             for a in boxes[k][0].get_children():
-                _recolor_cell_artist(a, v)
+                _recolor_cell_artist(a, c)
             return
     _handle_write(model.handle_of(j), prop, v)
 
 
+def _single_color(v):
+    """一种颜色。撤销时还原的是 `_handle_read` 存下的原样：示意线是 LineCollection（误差棒）时那是
+    N×4 数组，整格里的 Line2D 吃不下——取第一行（#544 评审）。"""
+    if isinstance(v, str):
+        return v
+    try:
+        arr = np.asarray(v, dtype=float)
+    except (TypeError, ValueError):
+        return v
+    if arr.ndim == 2 and len(arr):
+        return tuple(arr[0])
+    return v
+
+
+def _visible(c) -> bool:
+    """这一路颜色画出来看得见（alpha > 0）。"""
+    rgba = _rgba(c)
+    return isinstance(rgba, tuple) and rgba[3] > 0
+
+
 def _recolor_cell_artist(a, v) -> None:
-    """整格改色里的一个 artist：线 / 线组改线色（marker 边色跟着走，实心 marker 的面色也是），
-    面片改看得见的那一面。"""
+    """整格改色里的一个 artist：**只改看得见的那几路颜色**，看不见的（透明的面、`'none'` 的边）
+    保持透明——只有描边的形状改完仍只有描边，只有面的仍没有边（#544 评审）。"""
     if isinstance(a, Line2D):
         a.set_color(v)
-        a.set_markeredgecolor(v)
-        if str(a.get_markerfacecolor()).lower() != "none":
+        if _visible(a.get_markeredgecolor()):
+            a.set_markeredgecolor(v)
+        if str(a.get_markerfacecolor()).lower() != "none" and _visible(a.get_markerfacecolor()):
             a.set_markerfacecolor(v)
     elif isinstance(a, LineCollection):
         a.set_color(v)
     elif isinstance(a, Patch):
-        if a.get_fill():
+        if a.get_fill() and _visible(a.get_facecolor()):
             a.set_facecolor(v)
-        if a.get_edgecolor()[3] > 0:
+        if _visible(a.get_edgecolor()):
             a.set_edgecolor(v)
     elif isinstance(a, Collection):
-        a.set_facecolor(v)
+        if any(_visible(c) for c in a.get_facecolor()):
+            a.set_facecolor(v)
+        if any(_visible(c) for c in a.get_edgecolor()):
+            a.set_edgecolor(v)
 
 
 def _visible_colors(a) -> set:
