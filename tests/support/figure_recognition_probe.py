@@ -264,7 +264,34 @@ def orphan_scopes() -> dict:
     fig_p.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(rgb)
     cax_p = fig_p.add_axes([0.8, 0.1, 0.03, 0.8])
     fig_p.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), cax=cax_p)
+    # 超出反解内存预算的场图：一行渐变广播成方图（视图，不真分配）；同内容、预算内的对照
+    import colorbarmodel as C  # noqa: PLC0415
+
+    def _gradient_fig(side):
+        row = matplotlib.colormaps["viridis"](np.linspace(0, 1, side))[:, :3].astype(np.float32)
+        img = np.broadcast_to(row[None, :, :], (side, side, 3))
+        f = plt.figure(figsize=(4.0, 3.0))
+        f.add_axes([0.1, 0.1, 0.6, 0.8]).imshow(img)
+        cx = f.add_axes([0.8, 0.1, 0.03, 0.8])
+        f.colorbar(ScalarMappable(mcolors.Normalize(0, 1), "viridis"), cax=cx)
+        return _summary(_state(f))
+
+    over = int(np.ceil(np.sqrt(C._FIELD_MAX_PIXELS))) + 1
+    budget = {"over": _gradient_fig(over), "within": _gradient_fig(over // 2)}
+    import tracemalloc  # noqa: PLC0415
+
+    big = np.broadcast_to(
+        matplotlib.colormaps["viridis"](np.linspace(0, 1, 2000))[None, :, :3].astype(np.float32),
+        (2000, 2000, 3),
+    )
+    tracemalloc.start()
+    C._unique_colours_ok(big)
+    count_peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
     return {
+        "budget": budget,
+        "count_peak_bytes": count_peak,
+        "count_pixels": 2000 * 2000,
         "one_bar": _two(1),
         "two_bars": _two(2),
         "shared_cax": shared,

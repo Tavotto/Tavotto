@@ -214,6 +214,23 @@ def test_binding_measures_unique_colours_at_full_resolution(facts):
     assert bar["mappable_gid"] is None
 
 
+def test_rasters_over_the_decode_budget_are_not_bound(facts):
+    """#538 评审 P2：全分辨率反解约 96 B/像素，超 `_FIELD_MAX_PIXELS` 的位图不配对（原样照画）；
+    同内容、预算内的对照照常绑定——拦下它的是像素数，不是内容。"""
+    b = facts["orphan_scopes"]["budget"]
+    (over,) = _bars(b["over"]).values()
+    (within,) = _bars(b["within"]).values()
+    assert over["mappable_gid"] is None
+    assert within["mappable_gid"] == "axes_0.images_0"
+
+
+def test_unique_colour_count_does_not_scale_with_the_image(facts):
+    """全图数唯一颜色按行分块：峰值与块大小有关、与图大小无关。整图一次打包 + `np.unique`
+    是约 24 B/像素（2000² 就是 96 MB）；分块后远在其下。"""
+    o = facts["orphan_scopes"]
+    assert o["count_peak_bytes"] < 12 * o["count_pixels"], o["count_peak_bytes"]
+
+
 # ============================================================ 热会话 == 全量重放
 SCRIPT = "fig_recognition.py"
 LIBRARY = """\

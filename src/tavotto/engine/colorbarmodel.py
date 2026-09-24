@@ -520,6 +520,12 @@ _FIELD_MIN_SPREAD = 0.1
 _FIELD_SAMPLE = 200_000
 #: 唯一颜色多到这个数就不是色图渲染（照片、截图）：不配对，也不花时间反解。
 _FIELD_MAX_UNIQUE = 250_000
+#: 能配对的位图最多这么多像素。全分辨率反解的临时内存约 96 B/像素（2026-09-24 实测，
+#: 1000² 与 2000² 两档线性），600 万像素（≈ 2800×2100）峰值约 580 MB、只在第一次重着色时
+#: 发生一次；更大的图不配对——原样照画，只是不跟色条走（#538 评审 P2：一万见方的图要近 10 GB）。
+_FIELD_MAX_PIXELS = 6_000_000
+#: 全图数唯一颜色时一块多少像素（约 24 B/像素的临时内存，块内数完即丢）。
+_FIELD_COUNT_CHUNK = 1_000_000
 #: 叠加物（流线、箭头）抗锯齿边缘向外找「底下的场」最多找几个像素。
 _FIELD_BG_RADIUS = 6
 #: 抗锯齿像素是叠加色 L 与底色 B 的线性混合 `a·L + (1-a)·B`，离底色的距离 `a·|L-B|`
@@ -789,12 +795,32 @@ def _unique_colours_ok(arr) -> bool:
     """全分辨率下唯一颜色数不超 `_FIELD_MAX_UNIQUE`——`_decode` 要的正是这一条。
     配对时的吻合度只看抽样（≤ `_FIELD_SAMPLE` 像素），抽样里的唯一颜色永远到不了上限，
     于是一张嵌着照片的大图会先报「已绑定」、第一次重着色才在反解里失败、默默画原件
-    （#527 评审 P2）。配对的最后一步用同一个判据量全图。"""
+    （#527 评审 P2）。配对的最后一步用同一个判据量全图。
+
+    **按行分块数、一超限就停**（#538 评审 P2）：整图一次打包再 `np.unique` 要两份与像素
+    同长的数组（约 24 B/像素），而那张图多半正是要被拒的那张。块内临时内存与图大小无关，
+    累计集合不超过上限本身。像素数超 `_FIELD_MAX_PIXELS` 的图在这之前就被拒了。
+    """
     import numpy as np
 
-    rgb = _rgb8(arr).reshape(-1, 3)
-    packed = (rgb[:, 0].astype(np.uint32) << 16) | (rgb[:, 1].astype(np.uint32) << 8) | rgb[:, 2]
-    return len(np.unique(packed)) <= _FIELD_MAX_UNIQUE
+    a = np.asarray(arr)
+    rows = max(1, _FIELD_COUNT_CHUNK // max(1, a.shape[1]))
+    seen = np.empty(0, np.uint32)
+    for r in range(0, a.shape[0], rows):
+        rgb = _rgb8(a[r : r + rows]).reshape(-1, 3)
+        packed = (
+            (rgb[:, 0].astype(np.uint32) << 16) | (rgb[:, 1].astype(np.uint32) << 8) | rgb[:, 2]
+        )
+        seen = np.union1d(seen, np.unique(packed))
+        if len(seen) > _FIELD_MAX_UNIQUE:
+            return False
+    return True
+
+
+def _raster_in_budget(arr) -> bool:
+    """像素数在全分辨率反解的内存预算之内（`_FIELD_MAX_PIXELS`）。只看 shape，不碰数据。"""
+    shape = getattr(arr, "shape", ())
+    return len(shape) == 3 and shape[0] * shape[1] <= _FIELD_MAX_PIXELS
 
 
 def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
@@ -803,7 +829,7 @@ def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
     只在两边都没有别的解释时才配对：色条的 mappable 不画在任何地方、也没有已画出的
     图元与它共用 norm（那是色阶兄弟，`scale_siblings` 管）；位图是已经成色的三 / 四
     通道数组。一张位图只认一条色条，取吻合度最高、且过 `_FIELD_MIN_ON`、全图唯一颜色
-    不超上限的那张；只在色条声明的宿主里找（`_orphan_scopes`）。
+    不超上限、像素数在反解预算内的那张；只在色条声明的宿主里找（`_orphan_scopes`）。
     可重入：已经绑过的位图（`_mm_field`）不再动。
     """
     drawn = [
@@ -839,7 +865,7 @@ def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
             continue
         fits = []
         for im in _rasters(scope):
-            if id(im) in taken:
+            if id(im) in taken or not _raster_in_budget(im.get_array()):
                 continue
             try:
                 fit = _field_fit(im.get_array(), m.get_cmap())
