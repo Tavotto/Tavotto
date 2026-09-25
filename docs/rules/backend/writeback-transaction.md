@@ -47,7 +47,16 @@
     **一条即阻断**，回 409 `code=write_back_warnings` + warnings 列表。
     staging 阶段**任何异常都要 unlink 掉所有 `.updating` 临时文件**
     （以前只有 file_locked 那条路径清理，PDF 成功 PNG 失败就留垃圾）。
-  * **commit**：备份 → 逐个 `tmp.replace(target)`。第 2+ 个撞锁时**把已经
+    一次性 worker 在 verify 段崩溃 / 超时 / 缺依赖（`WorkerError`）同样是
+    **409**，响应是 worker 错误体原样（`code` / `traceback` / `module`，前端
+    按 code 出文案）外加 `stage: "verify"`——commit 段不调 worker，走到这里
+    原件必然零改动（QA 2026-09-24 SCI-04-B1；以前回 500）。
+  * **commit**：**先把全部目标备份完** → 再逐个 `tmp.replace(target)`。两轮
+    不许交错（QA 2026-09-24 SCI-05-B1：「备份一个、换一个」时第二个目标备份
+    撞上磁盘满，PDF 已换、PNG 未换、`.updating` 残留、500）。备份失败（建目录 /
+    磁盘满 / 权限）时一个原件都还没动：删掉这次的备份（含半截的）、空目录一并删、
+    清掉 `.updating`，回 409 `write_back_backup_failed`（与 `file_locked` 同形，
+    `updated` / `rolled_back` / `rollback_failed` 恒为空）。第 2+ 个撞锁时**把已经
     换掉的从本次备份恢复回去**（PDF 新 / PNG 旧比整件事失败糟糕得多），
     响应带 `rolled_back` / `rollback_failed`，`updated` 的语义是「仍处于已被
     换掉状态的文件」（回滚成功即为空）。落盘后用 `probe_asset` 比页面尺寸与

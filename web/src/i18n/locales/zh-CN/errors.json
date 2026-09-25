@@ -180,6 +180,7 @@
     "workdir_mode_invalid": "不认识的工作目录模式：{{mode}}",
     "worker_build_timeout": "脚本未能运行完毕，工作进程已重启，请重试。判定超时的条件：20 分钟没有任何输出，或连续输出满 4 小时。展开输出查看停在哪一步；若脚本本身需要长时间静默计算，可在该阶段输出一行进度。",
     "worker_timeout": "渲染超时，工作进程已重启，请重试。若反复超时，请检查脚本本身能否运行完毕。",
+    "write_back_backup_failed": "无法写回：备份 {{file}} 时失败（磁盘可能已满），原文件未改动。腾出空间或检查备份目录后重试。",
     "write_back_disabled": "项目是只读的：无法写回原始文件。可在项目设置里恢复可写。",
     "write_back_format_unsupported": "写回只支持 PDF 和 PNG 素材，这张是 {{format}}。",
     "write_back_warnings": "无法写回：重放时出现了警告。",

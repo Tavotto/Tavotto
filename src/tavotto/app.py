@@ -539,14 +539,19 @@ def _refresh_error(exc):
     return jsonify(exc.as_payload()), 400
 
 
-def _worker_error_payload(exc) -> dict:
+def _worker_error_payload(exc, stage: str = "") -> dict:
     """worker 错误的统一响应体。
+
+    `stage` 非空时一并带上：写回事务的 verify 段挂掉回 409 + `stage: "verify"`，
+    与 prepare 段的那几个 409 区分开（QA 2026-09-24 SCI-04-B1）。
 
     `module` 只在 code == "missing_dependency" 时有值：用户脚本 import 了当前
     渲染环境里没有的包（内置 runtime 只带常用科学栈）。前端据此给「换成你自己
     的环境」这个可执行出口，而不是甩一段 ModuleNotFoundError。
     """
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
+    if stage:
+        body["stage"] = stage
     if getattr(exc, "module", ""):
         body["module"] = exc.module
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
@@ -3834,8 +3839,6 @@ def api_engine_update_source():
         result = _write_source_files(
             src, patches, worker, annotations=annotations, expected_mtime=body.get("expected_mtime")
         )
-    except engine_pool.WorkerError as exc:
-        return jsonify(_worker_error_payload(exc)), 500
     except (
         SourceChangedError,
         ScriptChangedError,
@@ -3843,6 +3846,8 @@ def api_engine_update_source():
         WriteBackVerifyError,
         FileLockedError,
         WriteBackFormatError,
+        WriteBackBackupError,
+        engine_pool.WorkerError,
     ) as exc:
         return _write_back_error_response(exc)
     # 把这组修改追加为该图的版本历史，末位即当前基线：
@@ -3910,6 +3915,21 @@ class FileLockedError(RuntimeError):
         self.name = name
         #: 仍处于「已被换掉」状态的文件（回滚成功后为空）
         self.updated = updated
+
+
+class WriteBackBackupError(RuntimeError):
+    """commit 前的备份失败（磁盘满 / 备份目录不可写）：一个原件都还没被替换。
+
+    与 `FileLockedError` 同形（`updated` / `rolled_back` / `rollback_failed`
+    恒为空），这样前端与 MCP 读 409 回执的代码不必为它多开一个分支。
+    """
+
+    def __init__(self, name: str, detail: str):
+        super().__init__(f"备份 {name} 失败，写回已取消，原文件未做任何改动：{detail}")
+        self.name = name
+        self.updated: list[str] = []
+        self.rolled_back: list[str] = []
+        self.rollback_failed: list[str] = []
 
 
 class SourceChangedError(RuntimeError):
@@ -4209,6 +4229,38 @@ def _rollback(done: list[Path], backup_dir: Path) -> tuple[list[str], list[str]]
     return rolled, failed
 
 
+def _backup_targets(tmps: list[tuple[Path, Path]], backup_dir: Path) -> None:
+    """commit 的第一轮：把**全部**目标备份进 `backup_dir`，一个原件都还没被替换。
+
+    任何一步失败（建目录 / 磁盘满 / 权限）：删掉这次写下的备份（含半截的那份）、
+    目录空了就一并删掉、清掉所有 `.updating`，抛 `WriteBackBackupError`——此刻
+    原件零改动，走写回事务统一的 409。
+    """
+    written: list[Path] = []
+    current = tmps[0][0] if tmps else Path("")
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for target, _tmp in tmps:
+            current = target
+            dest = backup_dir / target.name
+            written.append(dest)  # 先登记再拷：拷到一半抛了，半截文件也要删得掉
+            shutil.copy2(target, dest)
+    except OSError as exc:
+        for dest in written:
+            try:
+                dest.unlink(missing_ok=True)
+            except OSError:
+                LOG.warning("写回失败后清理备份失败: %s", dest, exc_info=True)
+        try:
+            backup_dir.rmdir()  # 只删空目录：同一秒另一次写回的备份不动
+        except OSError:
+            pass
+        for _t, leftover in tmps:
+            leftover.unlink(missing_ok=True)  # 不给图库留下半成品
+        LOG.warning("写回备份失败，已取消（原文件未改动）: %s: %s", current.name, exc)
+        raise WriteBackBackupError(current.name, str(exc)) from exc
+
+
 def _write_source_files(
     src: Path, patches: list, worker, annotations: list | None = None, expected_mtime=None
 ) -> dict:
@@ -4288,13 +4340,16 @@ def _write_source_files(
     finally:
         engine_pool.discard(fresh)
 
-    # ---- commit：备份 → 逐个原子替换（中途撞锁则回滚） ----------------------
+    # ---- commit：先把全部备份做完 → 再逐个原子替换（中途失败则回滚） ----------
+    # 备份与替换**分成两轮**（QA 2026-09-24 SCI-05-B1）：以前是「备份一个、换一个」，
+    # 第二个目标备份时磁盘满，PDF 已经换成新的、PNG 还是旧的，异常从 try 外面
+    # 冒出去成了 500，`.updating` 留在图库里。备份在任何一个原件被动之前全部
+    # 落好，失败时原件一个都还没碰过，清掉临时文件与这次的半截备份即可。
     backup_dir = project_backup_dir() / time.strftime("%m%d_%H%M%S")
-    backup_dir.mkdir(parents=True, exist_ok=True)
+    _backup_targets(tmps, backup_dir)
     updated: list[str] = []
     done: list[Path] = []
     for target, tmp in tmps:
-        shutil.copy2(target, backup_dir / target.name)
         try:
             tmp.replace(target)
         except OSError as exc:
@@ -4397,7 +4452,7 @@ def _write_back_response(result: dict, **extra) -> dict:
 
 
 def _write_back_error_response(exc):
-    """prepare/verify 失败 → 409 + 专属 code；格式不是写回目标 → 400；不认识的回 None。"""
+    """写回事务任一环失败（prepare / verify / commit）→ 409 + 专属 code；格式不是写回目标 → 400；不认识的回 None。"""
     if isinstance(exc, SourceChangedError):
         return jsonify(
             {
@@ -4457,6 +4512,25 @@ def _write_back_error_response(exc):
                 "params": {"format": exc.format},
             }
         ), 400
+    if isinstance(exc, WriteBackBackupError):
+        return jsonify(
+            {
+                "error": f"{exc}。请检查磁盘空间与备份目录后重试。",
+                "code": "write_back_backup_failed",
+                "params": {"file": exc.name},
+                "file": exc.name,
+                "updated": exc.updated,
+                "rolled_back": exc.rolled_back,
+                "rollback_failed": exc.rollback_failed,
+            }
+        ), 409
+    if isinstance(exc, engine_pool.WorkerError):
+        # verify 段的一次性 worker 崩了 / 超时 / 缺依赖（SCI-04-B1）。commit 段
+        # 不调 worker，所以走到这里原件必然零改动——按事务不变式回 409。
+        # worker 自己的 code / traceback / module 原样带上：前端按 code 出文案，
+        # `missing_dependency` 的恢复引导不能因为状态码变了就丢；`stage` 标明
+        # 这是写回事务的 verify 段挂了，与 prepare 段那几个 409 区分开。
+        return jsonify(_worker_error_payload(exc, stage="verify")), 409
     return None
 
 
@@ -4642,8 +4716,6 @@ def api_engine_history_restore():
         result = _write_source_files(
             src, patches, worker, expected_mtime=body.get("expected_mtime")
         )
-    except engine_pool.WorkerError as exc:
-        return jsonify(_worker_error_payload(exc)), 500
     except (
         SourceChangedError,
         ScriptChangedError,
@@ -4651,6 +4723,8 @@ def api_engine_history_restore():
         WriteBackVerifyError,
         FileLockedError,
         WriteBackFormatError,
+        WriteBackBackupError,
+        engine_pool.WorkerError,
     ) as exc:
         return _write_back_error_response(exc)
     append_baked(stem, patches, files=result["file_identity"])

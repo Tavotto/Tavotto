@@ -231,6 +231,8 @@ USER_VISIBLE_CODES = {
     "dir_fsync_failed": {"reason"},
     "write_back_disabled": set(),
     "write_back_warnings": set(),
+    # QA 2026-09-24 SCI-05-B1：commit 前的备份失败（磁盘满），原件零改动
+    "write_back_backup_failed": {"file"},
     # --- Prompt 10（ADR 0029）：全局 Style / Spec 清单（engine/profilestore.py）。
     #     全部经 app._profiles_error 一个漏斗转成 JSON；`name_missing` 复用上面
     #     那条（同一件事只该有一个 code）---
@@ -668,7 +670,7 @@ def test_every_worker_error_response_carries_a_failure_status():
     #
     # **它挡不住什么**：在 `app.py` 里包一层（`_native_worker_error()` 内部
     # 再调 `_worker_error_payload`）。那处调用没有消失，只是从路由搬进了
-    # wrapper——总数仍是 11，这条照样绿，而上面那条逐行判据也看不见 wrapper
+    # wrapper——总数不变，这条照样绿，而上面那条逐行判据也看不见 wrapper
     # 的调用方。真要挡它，判据得改成**数出口**：枚举每条路由的
     # `except pool.WorkerError` 分支、断言它的 `return` 带非 2xx。没这么写是
     # 因为 `app.py` 里的 `except pool.WorkerError` 形态很杂（有的往 checks 里
@@ -677,8 +679,10 @@ def test_every_worker_error_response_carries_a_failure_status():
     #
     # 写在这里是因为**理由写得比兑现的强，比没有理由更坏**：下一个人会以为
     # 这一格有人守着。
-    assert len(seen) == 11, (
-        f"`_worker_error_payload` 的调用点从 11 变成了 {len(seen)}：{seen}\n"
+    # 2026-09-25（QA SCI-04-B1）：update_source / history/restore 两处 `, 500` 收进
+    # `_write_back_error_response` 的一处 `, 409`（写回 verify 段挂了，原件零改动），11 → 10。
+    assert len(seen) == 10, (
+        f"`_worker_error_payload` 的调用点从 10 变成了 {len(seen)}：{seen}\n"
         "  新增出口 → 把这个数改成新的实测值，并确认它带了状态码；\n"
         "  变少了 → 确认那处是真的删了，而不是搬到了别的文件里。"
     )

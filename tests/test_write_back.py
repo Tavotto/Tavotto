@@ -230,18 +230,38 @@ def test_write_back_dedupes_warnings_across_targets(client, tmp_path, monkeypatc
     assert body["warnings"] == ["属性不支持: figure.wat"]
 
 
-def test_write_back_cleans_updating_when_second_export_fails(client, tmp_path, monkeypatch):
-    """PDF 导出成功、PNG 导出抛 WorkerError：图库里不许留 `.Fig1.pdf.updating`。"""
+@pytest.mark.parametrize(
+    ("url", "extra"),
+    [("/api/engine/update_source", {"patches": []}), ("/api/engine/history/restore", {"n": -1})],
+)
+def test_write_back_cleans_updating_when_second_export_fails(
+    client, tmp_path, monkeypatch, url, extra
+):
+    """PDF 导出成功、PNG 导出抛 WorkerError：图库里不许留 `.Fig1.pdf.updating`。
+
+    状态码是 **409**（QA 2026-09-24 SCI-04-B1）：WorkerError 只可能出在 verify 段
+    （commit 段不调 worker），此时原件零改动——正是根 AGENTS.md「任一环不过一律
+    409」那一类。worker 自己的 code / traceback 原样保留（前端按 code 出文案，
+    `missing_dependency` 之类的恢复引导不能因为换了状态码就丢），另带
+    `stage: "verify"` 与其它 409 区分开。
+    """
     figs = _figs(tmp_path)
-    before = (figs / "Fig1.pdf").read_bytes()
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
     hot, fresh = _pair(figs, tmp_path, fail_on="png")
     discarded = _use(monkeypatch, hot, fresh)
 
-    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
-    assert resp.status_code == 500
+    resp = client.post(url, json={"id": "Fig1.pdf", **extra})
+    assert fresh.calls[-1] == "png", "前提：失败确实发生在 PNG 导出那一步"
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["stage"] == "verify"
+    assert body["error"] == "导出炸了" and body["traceback"] == "traceback…"
     assert _leftovers(figs) == []
-    assert (figs / "Fig1.pdf").read_bytes() == before  # 原文件完好
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf  # 原文件完好
+    assert (figs / "Fig1.png").read_bytes() == before_png
     assert discarded == [fresh]
+    assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
 
 
 # ------------------------------ verify：干净重放 ------------------------------
@@ -595,6 +615,100 @@ def test_a_locked_first_target_reports_nothing_updated(client, tmp_path, monkeyp
     assert body["code"] == "file_locked" and body["file"] == "Fig1.pdf"
     assert body["updated"] == [] and body["rolled_back"] == []
     assert _leftovers(figs) == []
+
+
+# ------------------- commit：备份 / 替换在磁盘层面失败（QA SCI-05-B1） -------------------
+def _fail_nth_backup(monkeypatch, n: int) -> list[str]:
+    """第 n 次 `shutil.copy2`（commit 段的备份）抛 ENOSPC，返回每次调用的源文件名。
+
+    只数**写回事务自己**的 copy2：`m.shutil` 就是 app 模块里那一个名字。
+    磁盘满时 copy2 已经在目标处建了个半截文件——照真实形状也留一个。
+    """
+    import errno
+    import shutil
+
+    real = shutil.copy2
+    calls: list[str] = []
+
+    def copy2(src, dst, *a, **k):
+        calls.append(Path(src).name)
+        if len(calls) == n:
+            Path(dst).write_bytes(b"half")
+            raise OSError(errno.ENOSPC, "No space left on device", str(dst))
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(m.shutil, "copy2", copy2)
+    return calls
+
+
+def _backup_files() -> list[str]:
+    root = m.project_backup_dir(m.PROJECTS[next(iter(m.PROJECTS))])
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
+
+
+@pytest.mark.parametrize("nth", [1, 2])
+def test_a_failed_backup_leaves_every_original_untouched(client, tmp_path, monkeypatch, nth):
+    """备份第 n 个目标时磁盘满：409、两份原件逐字节不变、没有 `.updating`、基线不入账。
+
+    QA 2026-09-24 SCI-05-B1 的形状：以前备份在替换循环里、try 之外，第二个目标
+    备份失败时 PDF 已经换成新的、PNG 还是旧的，`.Fig1.png.updating` 留在图库里，
+    HTTP 500，没有回滚。备份必须在**任何一个原件被替换之前**全部做完。
+    """
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot, fresh = _pair(figs, tmp_path)
+    discarded = _use(monkeypatch, hot, fresh)
+    calls = _fail_nth_backup(monkeypatch, nth)
+
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    failed = ["Fig1.pdf", "Fig1.png"][nth - 1]
+    assert calls[:nth] == ["Fig1.pdf", "Fig1.png"][:nth], "前提：失败落在第 n 个目标的备份上"
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["code"] == "write_back_backup_failed"
+    assert body["file"] == failed and body["params"] == {"file": failed}
+    assert body["updated"] == [] and body["rolled_back"] == [] and body["rollback_failed"] == []
+
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert (figs / "Fig1.png").read_bytes() == before_png
+    assert _leftovers(figs) == []
+    assert _backup_files() == [], "失败的这次不该留下半截备份"
+    assert discarded == [fresh]
+    assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
+
+
+def test_a_failed_second_replace_rolls_the_first_one_back(client, tmp_path, monkeypatch):
+    """第二个目标的替换抛的不是锁、是一般 I/O 错误：同样回滚第一个、409、零改动。"""
+    import errno
+
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    real = Path.replace
+    replaced: list[str] = []
+
+    def guarded(self, target):
+        replaced.append(Path(target).name)
+        if Path(target).name == "Fig1.png":
+            raise OSError(errno.EIO, "Input/output error")
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "replace", guarded)
+
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert replaced == ["Fig1.pdf", "Fig1.png"], "前提：第一个确实先被换掉了"
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["file"] == "Fig1.png"
+    assert body["rolled_back"] == ["Fig1.pdf"] and body["rollback_failed"] == []
+    assert body["updated"] == []
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert (figs / "Fig1.png").read_bytes() == before_png
+    assert _leftovers(figs) == []
+    assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
 
 
 # ------------------------------ 历史恢复走同一条路 ----------------------------
