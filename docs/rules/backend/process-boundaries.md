@@ -19,6 +19,9 @@
   > 内置 / 自身 / 系统。**失效的显式选择不静默替换**：`explicit_python_unusable` /
   `project_python_unusable` 带 `explicit = {source, python, reason}`；只有自动记住的失效才作废并
   重新发现（`invalidated_decision()` 留记录）；用户明确选回默认链条记成 `projectenv.remember_default`。
+  进程内缓存（全局选定的解释器、项目解释器的体检结论、首开发现结果）**不许替已经变了的环境作答**：
+  全局那条命中前先查路径还在（删掉的设置解释器报 missing，QA ENV-03-B1）；项目那两份带
+  `projectenv.interpreter_fingerprint`（解释器 lstat / stat + `pyvenv.cfg`），同一路径被重建就重新体检（ENV-04-B1）。
 - `engine/worker.py`、`engine/manifest.py`、`engine/overrides.py`、
   `engine/figsession.py`、`engine/wireproto.py`、`engine/preview_complexity.py`
   只在执行侧子进程里跑，解释器由 `pool.find_worker_python()` 探测

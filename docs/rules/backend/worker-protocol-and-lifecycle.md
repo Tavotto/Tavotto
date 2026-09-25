@@ -85,6 +85,11 @@
   `test_non_utf8_bytes_inside_a_json_response…` / `test_a_non_json_line…`、
   `workerd/tests/supervisor_behaviour.rs` 的 `a_dead_worker_reports_how_it_died…` /
   `non_utf8_bytes_on_the_protocol_pipe…` / `non_utf8_bytes_inside_a_json_envelope…`。
+  **请求之间死掉的 worker 只有一个答案**（QA LONG-03-B1）：`EngineWorker.request` 拿锁时已看得见它死了、
+  写管道撞上 `BrokenPipeError` / 管道已关、写进去后读到 EOF，三处都走同一条带退出状态的 `session_dead`——
+  不许有 code 为空的「worker 进程已退出」，也不许让 `OSError` 冒成 internal_error
+  （`test_worker_exit_report.py` 的 `test_a_worker_killed_between_requests_is_always_session_dead`）。
+  `session_dead`（shutdown 之后的 EOF 除外）顺带丢掉那条解释器的进程内体检结论（`pool.forget_python_verdict`）。
 - **关停必须闭环：`kill()` ≠「进程已经退出并释放了文件」**。`Popen.kill()`
   两个平台上都只是发出请求（POSIX 是 SIGKILL，Windows 是 TerminateProcess），
   调用返回时进程可能还在，它打开的句柄一定还在。`EngineWorker.shutdown()` /
