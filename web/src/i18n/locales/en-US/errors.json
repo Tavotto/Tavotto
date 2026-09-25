@@ -186,6 +186,7 @@
     "worker_timeout": "The render timed out and the worker was restarted. Try again; if it keeps timing out, check whether the script itself completes.",
     "write_back_disabled": "This project is read-only, so original files can’t be written back. Re-enable write-back in project settings.",
     "write_back_format_unsupported": "Write-back only supports PDF and PNG assets. This one is {{format}}.",
+    "write_back_persist_failed": "Can’t write back: the backup or the new file couldn’t be flushed to disk ({{reason}}). Nothing was changed — check disk space and permissions, then retry.",
     "write_back_warnings": "Can’t write back. The engine reported warnings during replay.",
     "write_failed": "Couldn’t write to disk. Your local copy is still here — try again: {{reason}}",
     "pinned_full": "You can bookmark up to {{max}} projects. Remove a bookmark first."

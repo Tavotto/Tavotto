@@ -33,6 +33,7 @@ import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { resetExportState } from '@/store/exportStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
+import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
 import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
@@ -184,6 +185,10 @@ async function resetForNewProject() {
   // 带着 A 环境里的 `installed` 版本与 A 的索引源，而这一页的安装按钮作用在
   // **当前**项目上；在途的那次查找回来时同样按代际作废（ADR 0038）。
   usePackageStore.getState().clear()
+  // 依赖修复同一条纪律（issue #590）：计划 / 绑定 / 错误 / 钉住的解释器说的都是旧项目的环境，
+  // 在途请求按代际作废；**装包作业不取消**（后端的 close_project 不碰它，结果按计划自己的项目记账），
+  // 进度按所属项目分格——B 上不显示 A 的进度条，切回 A 接得上
+  useDepRepairStore.getState().clear()
   // 预览平面挂在「面板 + 那一版 SVG」上，旧项目的面板整批消失后那些账本
   // 指向的都是野节点，跟着一起清（DOM 由 React 自己收）
   resetPreview()

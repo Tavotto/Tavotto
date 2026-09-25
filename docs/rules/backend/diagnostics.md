@@ -21,7 +21,8 @@
     连续的非空白字符；一行整个是 JSON 时只在字符串字面量内容里按空白切、结构原样；`@` / `＠` /
     `\u0040` / `\uff20` / `%40` 都算 @；`"quoted local"@x` 这种 @ 前引号为奇数的并到上一个引号。
     `(user@x.com),` 连括号逗号一起抹——**不许再在 token 内部判断地址从哪到哪**。只放行负面清单
-    `_not_an_email`：@ 前只有开括号 / 引号（装饰器 / 提及）、域名不到两段（`localhost`、`HEAD@{0}`）、
+    `_not_an_email`：@ 前只有开括号（装饰器 / 提及；引号不算——`'@x.com` 的引号就是本地部分，#540）、
+    域名不到两段（`localhost`、`HEAD@{0}`；`[` 开头的地址字面量 `user@[IPv6:…]` 照抹）、
     域名是 ASCII 版本号（`numpy@1.26.4`、`jsdom@30.0.1/lib/…`）。看护含跨 24 个 Unicode 类别（含 ASCII
     标点）的随机抽样性质用例（`test_any_unicode_inside_an_address_is_redacted_whole`）。
   * `_project_section`：去掉 `name`；`figures_dir` 只剩记号，另给 `location`

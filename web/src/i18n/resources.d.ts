@@ -1910,6 +1910,7 @@ export default interface Resources {
       "worker_timeout": "渲染超时，工作进程已重启，请重试。若反复超时，请检查脚本本身能否运行完毕。",
       "write_back_disabled": "项目是只读的：无法写回原始文件。可在项目设置里恢复可写。",
       "write_back_format_unsupported": "写回只支持 PDF 和 PNG 素材，这张是 {{format}}。",
+      "write_back_persist_failed": "无法写回：备份或新文件没能写入磁盘（{{reason}}）。原文件未做任何改动，请检查磁盘空间与目录权限后重试。",
       "write_back_warnings": "无法写回：重放时出现了警告。",
       "write_failed": "无法写入磁盘。本机副本仍在，可重试：{{reason}}"
     },
@@ -3976,6 +3977,7 @@ export default interface Resources {
       "restoreNativeSize": "恢复原始尺寸",
       "rotate": "旋转 {{deg}}°",
       "rotateReset": "取消旋转",
+      "scaleLegend": "缩放图例",
       "seedBaked": "载入文件中的基线",
       "setOpacity": "修改不透明度",
       "setPageSize": "修改画布尺寸",

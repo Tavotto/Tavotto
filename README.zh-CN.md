@@ -322,17 +322,25 @@ DeepSeek Harness、WorkBuddy、ZCode 用的是**同一份** MCP 服务和技能�
    （文件名带 codex 是历史原因，内容对所有宿主都一样）。
 2. 引擎：已经 `pipx install "tavotto[worker]"` 的可以跳过；只装了桌面版或什么都没装，就显式运行一次
    `python3 <完整包>/mcp/server.py --provision`（在 Tavotto 配置目录下建一个独立环境，不改动系统 Python）。
+   Windows 上凡是写 `python3` 的地方都换成 `py -3`：那里的 `python3` 常常不存在，或者会打开 Microsoft Store 而不是运行 Python。
 3. 生成配置（**只打印，不写任何文件**）：
 
    ```sh
    python3 <完整包>/integrations/configure.py --host vscode --project-root /绝对路径/你的项目
    ```
 
+   Windows（PowerShell）：
+
+   ```powershell
+   py -3 '<完整包>\integrations\configure.py' --host vscode --project-root 'D:\你的项目'
+   ```
+
    `--host` 可选 `cursor` `zcode` `dsh` `workbuddy` `claude-code` `claude-desktop` `trae` `vscode`。stdout 是要合并的配置，
    stderr 写明合并到哪个文件或界面、授权的是哪个目录、引擎是否就绪、如何确认宿主已经加载、技能怎么装。
 4. 在对话里调用 `tavotto_health`，确认它回报的 `server.package_dir` 就是刚解压的那份包。
 
-授权范围只有 `--project-root` 指定的目录，不接受整个主目录或磁盘根目录。升级时解压新版到新目录，然后重新生成配置；
+授权范围只有 `--project-root` 指定的目录，不接受整个主目录或磁盘根目录。升级时解压新版到新目录，重新生成配置，并刷新技能：把新的 `tavotto-figure/` 覆盖复制到原来的位置，
+或者重新运行 `--emit instructions`、替换之前粘贴的说明；
 回退就是把配置改回指向旧目录。各宿主的依据与差异见 `docs/implementation/multi-host-mcp/hosts.md`。
 
 ### 桌面版

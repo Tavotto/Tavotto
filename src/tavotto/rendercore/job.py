@@ -58,10 +58,11 @@ def produce(
         # reason 里带上里层的 code（source_* / font_*）：读者据它分类，不必解析文案
         inner = exc.params.get("source_code") or exc.params.get("font_code") or ""
         code = f"{exc.code}:{inner}" if inner else exc.code
+        params = {"id": str(exc.params.get("id", "")), "reason": f"{code}: {exc}"}
+        if exc.params.get("why"):
+            params["why"] = str(exc.params["why"])  # 源不可读的细分（与写入器同一套词，#517）
         raise exportreq.ExportRequestError(
-            "export_render_failed",
-            f"{exc.params.get('id', '')} 编译失败: {exc}",
-            {"id": str(exc.params.get("id", "")), "reason": f"{code}: {exc}"},
+            "export_render_failed", f"{exc.params.get('id', '')} 编译失败: {exc}", params
         ) from exc
     except ir.IRError as exc:
         raise exportreq.ExportRequestError(

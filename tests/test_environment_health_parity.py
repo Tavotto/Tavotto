@@ -123,10 +123,14 @@ def client():
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
+    # 保存 / 还原原值，不是无条件清成 None：用例经 PATCH 写进去的假解释器要撤掉，
+    # 但用例之前那一份（哪怕是 None）原样放回，别替后面的文件改掉「选哪个解释器」（#483）。
+    saved = engine_config.worker_python()
     engine_pool.reset_worker_python()
     yield
-    engine_config.set_worker_python(None)
+    engine_config.set_worker_python(saved)
     engine_pool.reset_worker_python()
+    projectenv.reset_cache()
 
 
 # --------------------------------------------- 体检的主语 = worker 的启动导入链

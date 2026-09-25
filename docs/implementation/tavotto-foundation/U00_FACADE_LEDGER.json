@@ -233,7 +233,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_write_source_files",
-          "line": 4560,
+          "line": 4654,
           "role": "写回 verify 阶段：把画布标注画进 staging 的 PDF，再由同一份 PDF 栅格化 PNG（incremental save）"
         }
       ],
@@ -300,7 +300,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_replay_pixel_diff",
-          "line": 4406,
+          "line": 4500,
           "role": "写回像素门（ADR 0049，issue #81）：热态 vs 一次性 worker 重放的 render_png 逐 RGBA 比，阈值 app.REPLAY_PIXEL_TOL"
         }
       ],
@@ -985,7 +985,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_post_check_size",
-          "line": 4643,
+          "line": 4776,
           "role": "写回 commit 后自检：PDF 页面尺寸 vs 重放 manifest 的 size_mm（容差 0.5mm，不回滚）"
         },
         {

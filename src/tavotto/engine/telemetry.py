@@ -556,6 +556,11 @@ def _post(payload: dict) -> None:
             "User-Agent": f"{brand.PRODUCT_NAME}/{__version__}",
         },
     )
+    # 发出前紧挨着再判一次硬开关（#440）。`_run_sender` 出队时判的 `enabled()` 要读一次盘，
+    # 那一判与这里之间，测试的 teardown 可能已经把 `TAVOTTO_NO_TELEMETRY=1` 恢复了——
+    # 这一道把窗口从「一次读盘」缩到几个字节码；真正收口的是 `reset_for_tests()` 的 join。
+    if hard_disabled():
+        return
     try:
         with urllib.request.urlopen(req, timeout=NETWORK_TIMEOUT_S) as resp:
             resp.read(1024)  # 读掉响应体好让连接能复用/关闭
@@ -586,15 +591,22 @@ def reset_for_tests() -> None:
 
     发送线程要用哨兵**收掉**，不能只是把 `_QUEUE` 置空：那样每 reset 一次就
     留下一条永远阻塞在 `q.get()` 上的守护线程，一轮测试下来能攒几十条。
+
+    投完哨兵还要 **join 到它退出**（#440）：`_drop_pending()` 清得掉还在队列里的，
+    清不掉已经出队、正在投递的那一条。不等的话，fixture teardown 把 `_post` 与
+    `TAVOTTO_NO_TELEMETRY` 换回真的之后，那一条会用真 `_post` 发到真实 endpoint——
+    每个 pytest 会话漏一条 `telemetry_enabled`。有上限：投递本身有网络超时兜着。
     """
     global _QUEUE, _SENDER, _session_mode, _app_started_sent
     _drop_pending()
     with _LOCK:
-        old, _QUEUE, _SENDER = _QUEUE, None, None
+        old, sender, _QUEUE, _SENDER = _QUEUE, _SENDER, None, None
     if old is not None:
         try:
             old.put_nowait(None)
         except queue.Full:
             pass  # 满着的队列里那条自然会被丢掉
+    if sender is not None and sender is not threading.current_thread():
+        sender.join(NETWORK_TIMEOUT_S + 2)
     _session_mode = None
     _app_started_sent = False

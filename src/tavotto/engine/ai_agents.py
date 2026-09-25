@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -740,10 +741,19 @@ def candidates(agent: AgentDefinition, override: str | None = None) -> list[CliC
 
 
 _RESOLVE_CACHE: dict[str, Resolution] = {}
+#: 解析缓存代数（与 ai_bridge 的能力缓存代数同一个道理，#512 评审）：clear_cache
+#: 加一；一次 resolve 只有在它起跑时的代数仍是当前代数时才写回缓存——诊断超预算
+#: 留在后台的那次探测读的是改路径之前的设置，跑完不许把旧候选盖回去，否则
+#: `_cmd()` 直接读缓存，会启动用户已经换掉的那个可执行文件。
+_RESOLVE_GEN = 0
+_RESOLVE_LOCK = threading.Lock()
 
 
 def clear_cache() -> None:
-    _RESOLVE_CACHE.clear()
+    global _RESOLVE_GEN
+    with _RESOLVE_LOCK:
+        _RESOLVE_GEN += 1
+        _RESOLVE_CACHE.clear()
 
 
 def resolve(agent: AgentDefinition, probe_readiness: bool = True) -> Resolution:
@@ -754,9 +764,11 @@ def resolve(agent: AgentDefinition, probe_readiness: bool = True) -> Resolution:
     现在候选启动不了就换下一个；全都不行时把**第一个**坏候选记在 broken_path，
     界面据此把「安装不可用」与「未安装」分开说。
     """
-    cached = _RESOLVE_CACHE.get(agent.id)
-    if cached is not None:
-        return cached
+    with _RESOLVE_LOCK:
+        cached = _RESOLVE_CACHE.get(agent.id)
+        if cached is not None:
+            return cached
+        gen = _RESOLVE_GEN
     searched = [loc.path for loc in agent_search_locations(agent)]
     broken: str | None = None
     found: CliCandidate | None = None
@@ -786,7 +798,9 @@ def resolve(agent: AgentDefinition, probe_readiness: bool = True) -> Resolution:
             searched=searched,
             readiness=readiness,
         )
-    _RESOLVE_CACHE[agent.id] = res
+    with _RESOLVE_LOCK:
+        if gen == _RESOLVE_GEN:
+            _RESOLVE_CACHE[agent.id] = res
     return res
 
 

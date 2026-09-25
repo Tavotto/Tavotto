@@ -30,7 +30,7 @@ from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
 from matplotlib.patches import BoxStyle, FancyArrowPatch, Patch, Rectangle
-from matplotlib.text import Text
+from matplotlib.text import Annotation, Text
 from matplotlib.transforms import ScaledTranslation
 from mpl_toolkits.mplot3d import proj3d
 
@@ -225,10 +225,42 @@ class SeriesGroup:
         return list(self.artists)
 
 
-def _set_text_pos_frac(t: Text, value) -> None:
-    """拖动文字。轴标签/标题被 matplotlib 每次 draw 自动重定位，
-    需分别走 set_label_coords / 关闭 _autotitlepos，否则 set_position 会被覆盖。
-    （manifest.instrument 在这些 artist 上打了 _mm_drag 标记。）"""
+def annotation_text_draggable(t) -> bool:
+    """这段文字的 `pos_frac` 能不能**可靠地**落到写下的 figure 分数上。
+
+    **manifest 的 `draggable` 与 setter 共用这一份判据**（QA 2026-09-24 GEO-B1）：不是注释的
+    文字一律能拖；注释的文字位置是 `xyann`，按它自己的 `textcoords`（`anncoords`）解释，
+    只有这套坐标系**可逆、且与 dpi / 字号无关**时才宣称可拖——判据与纯箭头注释的端点
+    同一张表（`_ann_coords_invertible`）：'data'、figure / subfigure / axes 的 points /
+    fraction，以及相对 `xy` 的 'offset points'（这时 `xy` 的坐标系也得可逆，偏移的原点
+    要从它算）。**'pixels' / 'fontsize' / 可调用对象 / Artist 坐标不宣称**：前两种写进去的值
+    随导出 dpi / 之后改的字号漂走，后两种的原点取决于别的 artist 的排版——宣称可拖
+    就是静默落错，不宣称至少说的是真话。
+    """
+    if not isinstance(t, Annotation):
+        return True
+    if not _ann_coords_invertible(t.anncoords, text_end=True):
+        return False
+    coords = t.anncoords if isinstance(t.anncoords, tuple) else (t.anncoords,)
+    if any(isinstance(c, str) and c.startswith("offset") for c in coords):
+        return _ann_coords_invertible(t.xycoords, text_end=False)
+    return True
+
+
+def _place_text(t: Text, value) -> None:
+    """把文字落到 figure 分数（top-origin）`value`：按**此刻**的变换换算进它自己的坐标系。
+
+    轴标签 / 标题被 matplotlib 每次 draw 自动重定位，需分别走 set_label_coords /
+    关闭 _autotitlepos，否则 set_position 会被覆盖（manifest.instrument 在这些 artist
+    上打了 _mm_drag 标记）。
+
+    **注释不能用 `get_transform()`**（GEO-B1）：注释的 transform 是**上一次 draw 那一刻**
+    `update_positions` 按当时的 dpi / 子图框现算、再冻成一个 Affine2D 挂上去的快照。
+    预览 SVG 按 72 dpi 画、manifest 按 figure dpi 画，拿 72 dpi 的快照去逆算 figure dpi
+    下的 display 像素，'axes fraction' / 'offset points' / 'figure fraction' 的注释
+    就按 dpi 之比落到别处（实测 0.09–0.33 figure 分数，能跑出图外）。这里按注释自己的
+    `anncoords` **现算**一份（与纯箭头注释的端点同一个算法）。
+    """
     fig = t.get_figure()
     disp = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
     kind, ax = getattr(t, "_mm_drag", (None, None))
@@ -239,7 +271,109 @@ def _set_text_pos_frac(t: Text, value) -> None:
         return
     if kind == "title":
         ax._autotitlepos = False  # noqa: SLF001
+    if isinstance(t, Annotation):
+        if not annotation_text_draggable(t):
+            raise ValueError(f"注释文字的坐标系 {t.anncoords!r} 不支持拖动定位")
+        tr = t._get_xy_transform(None, t.anncoords)  # noqa: SLF001
+        x, y = tr.inverted().transform(disp)
+        t.xyann = (float(x), float(y))
+        return
     t.set_position(tuple(t.get_transform().inverted().transform(disp)))
+
+
+# ---------------------------------------------------------------------------
+# 布局引擎下拖过的文字（QA 2026-09-24 GEO-B2）
+#
+# `layout="constrained"` / `"tight"` 的图在**每次 draw 的最前面**重排子图，而重排的输入
+# 里有标题、轴标签、子图里的文字（它们的包围盒决定边距）。setter 把 figure 分数换算进
+# 文字的本地坐标（transAxes / transData）之后：① 文字挪了 → 边距变了 → 子图被挪 →
+# 跟着子图走的文字又被带走，y 分量等于没写（实测误差 ≈ 请求的 Δy）；② 之后改图幅，
+# 布局重排一次，锚点再漂一次。
+#
+# 修法与 `PinnedTightLayoutEngine` 同一个思路：**布局的输入必须与「没拖过」逐位相同**。
+# 布局引擎 `execute` 的前后各做一步——之前把拖过的文字放回脚本原样（自动定位照开），
+# 让引擎照常算；之后按排好的子图把它们重新落到写下的 figure 分数上。于是
+# * 拖过的文字每一次 draw 都精确落在写下的位置上（与 draw 次数、图幅、字号无关）；
+# * 没拖过的元素与「什么都没拖」的对照组逐位相同——拖一个标题不会让子图跳；
+# * 热态与重放走同一个 execute，布局不追着文字跑，所以收敛到同一张图。
+# 没有布局引擎的图不装这层（没有东西会在 draw 时挪子图），行为与从前逐位相同。
+# ---------------------------------------------------------------------------
+
+
+def _text_pins(fig) -> "weakref.WeakKeyDictionary":
+    """根 Figure 上「拖过的文字 → (figure 分数, 脚本原样)」表。弱引用：文字被删了不续命。"""
+    root = pathgeom.root_figure(fig)
+    pins = root.__dict__.get("_mm_text_pins")
+    if pins is None:
+        pins = weakref.WeakKeyDictionary()
+        root._mm_text_pins = pins  # noqa: SLF001
+    return pins
+
+
+def _text_native_state(t: Text):
+    """文字交给自动定位时的样子（第一次拖之前采）：位置、transform、自动定位开关。"""
+    kind, ax = getattr(t, "_mm_drag", (None, None))
+    if kind in ("xlabel", "ylabel"):
+        axis = ax.xaxis if kind == "xlabel" else ax.yaxis
+        return (t.get_position(), t.get_transform(), axis._autolabelpos)  # noqa: SLF001
+    if kind == "title":
+        return (t.get_position(), ax._autotitlepos)  # noqa: SLF001
+    return (t.get_position(),)
+
+
+def _put_text_native(t: Text, native) -> None:
+    kind, ax = getattr(t, "_mm_drag", (None, None))
+    if kind in ("xlabel", "ylabel"):
+        axis = ax.xaxis if kind == "xlabel" else ax.yaxis
+        t.set_transform(native[1])
+        axis._autolabelpos = native[2]  # noqa: SLF001
+    elif kind == "title":
+        ax._autotitlepos = native[1]  # noqa: SLF001
+    t.set_position(tuple(native[0]))
+
+
+def _ensure_text_pin_hook(fig) -> None:
+    """给这张图的布局引擎包上「先放回原样、排完再落回去」那一层（幂等）。
+
+    包的是**当前那个引擎实例**的 `execute`（实例属性），不换引擎：换引擎会改变
+    colorbar / subplots_adjust 的行为（`PinnedTightLayoutEngine` 的注释）。之后引擎被
+    `ensure_pinnable_layout_engine` 包进可钉的那一版时，新实例没有这层——但换引擎只
+    发生在 `axes.position` 落下时，那是几何键，frac 锚定 prop 随即全部重放，这里会在
+    新实例上再装一次（内层那份照旧幂等地跑，不改变结果）。
+    """
+    root = pathgeom.root_figure(fig)
+    engine = root.get_layout_engine()
+    if engine is None or engine.__dict__.get("_mm_text_pin_hook"):
+        return
+    native_execute = engine.execute
+
+    def execute(f):
+        pins = [
+            (t, v, n) for t, (v, n) in list(_text_pins(f).items()) if t.get_figure() is not None
+        ]
+        for t, _v, native in pins:
+            _put_text_native(t, native)
+        try:
+            native_execute(f)
+        finally:
+            for t, v, _native in pins:
+                _place_text(t, v)
+
+    engine.execute = execute
+    engine._mm_text_pin_hook = True  # noqa: SLF001
+
+
+def _set_text_pos_frac(t: Text, value) -> None:
+    """拖动文字：落到 figure 分数 `value`，并登记成「拖过的」（布局引擎下见上面那段）。
+
+    **可能失败的那一步（`_place_text`）排在登记之前**：坏值 / 不支持的坐标系抛出去时
+    表里不留半条，布局那一层不会在之后每一次 draw 里拿它重抛。"""
+    pins = _text_pins(t.get_figure())
+    prev = pins.get(t)
+    native = prev[1] if prev is not None else _text_native_state(t)
+    _place_text(t, value)
+    pins[t] = ((float(value[0]), float(value[1])), native)
+    _ensure_text_pin_hook(t.get_figure())
 
 
 def _get_text_pos(t: Text):
@@ -251,6 +385,9 @@ def _get_text_pos(t: Text):
 
 
 def _restore_text_pos(t: Text, orig) -> None:
+    fig = t.get_figure()
+    if fig is not None:
+        _text_pins(fig).pop(t, None)
     kind, ax = getattr(t, "_mm_drag", (None, None))
     if kind in ("xlabel", "ylabel"):
         axis = ax.xaxis if kind == "xlabel" else ax.yaxis
