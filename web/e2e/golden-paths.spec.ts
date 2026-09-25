@@ -214,7 +214,9 @@ test('导出诊断包：能下载，且不含主目录、用户脚本的报错�
   // 每一样都先证明它**确实流经了日志**（完整的 app.log 里有），再断言包里每个文件都没有。
   const CANARY = 'DIAGCANARY_q7'
   const ERR = `${CANARY}_errmsg`
-  const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-diag-'))
+  // Windows 的 os.tmpdir() 是 8.3 短名（`C:\\Users\\RUNNER~1\\…`），应用日志里写的是长名
+  // （`runneradmin`）：拿短名当主语，对照断言恒红、「包里没有它」恒真。先展开成长名。
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-diag-')))
   const home = path.join(root, 'home')
   const figures = path.join(home, `${CANARY}_proj`)
   copyTree(path.join(REPO, 'examples', 'figures'), figures)
