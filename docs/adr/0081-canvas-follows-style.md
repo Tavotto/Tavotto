@@ -239,6 +239,13 @@
       变化量，不冲掉手改。
     - 「只有抄来的烘焙基线」只比内容、不看 `baked_current`（`bakedBaseline.isCopiedBakedBaseline`）：文件被外部改过，
       机械抄进来的基线也不是用户的手改。
+    - **同一素材重跑也认得出新目标**（Codex #547 第二十一轮）：脚本重跑、`fileId` 不变时，`markStale` 换掉了权威
+      manifest，`面板 id @ 素材` 却没变，只按它认的话这张图永远算「看过了」，重跑后多出来的线 / 标签（新 gid）一直保持
+      脚本格式。所以 `seen` 里每张图还记着**看过时 manifest 的 gid 清单**；之后这张图的精确 manifest 里出现清单外的
+      gid，就只对这些新 gid 按整份样式对齐，一条「按样式对齐新图」，然后清单换成此刻的。看过时就在的 gid 一个都不碰
+      （属性页里的手改留着），新 gid 上已有 override 的那一项也不碰；没有新 gid 就什么都不写（已对齐的图重跑零历史）。
+      不把渲染修订号并进键：那样重跑后的图整张重新算「新图」，而它带着对齐时写的 override，会被「新图」判据跳过，
+      新 gid 照样落不上样式。补欠账时不覆盖已有的清单：欠账可能只是一笔变化量，新 gid 要留给下一次对账补整份。
 
 ### 十二、撤销不推回样式库（用户 2026-09-25 拍板）
 
@@ -284,6 +291,7 @@ P1。撤销只退画布之后，撤销回到它本来的样子：同步、只动
 | §十 旧样式升级：0.6 的图上输入 9 → 页面 9、标记写入、一次撤销退回画布（库保留升级后的那一份）、缩放比 1 的图不变；设置与样式对话框同一规则 | `styleBinding.test.ts`「旧样式…第一次被编辑」组、`profilesSettings.test.tsx`、`StyleDialog.test.tsx` |
 | §十一 各条（重载同一份文档不写、换绑定欠账作废、旧样式 0.6 上输入 6、只认当前变体、排空补跑） | `styleBinding.test.ts`「第二轮评审」组 |
 | §十二 撤销只退画布：撤销不写库、已脱离、再编辑后不跟回来、别的画布照样跟上、重做回到跟随并以库此刻为准、重新选中恢复跟随、撤销「按样式更新」也脱离；`undoAlso` 撤销 / 重做 / 再撤销一致；选择器与提示；读档带上标记 | `styleBinding.test.ts`「撤销只退画布」组、`documentStore.test.ts`「commit 的 undoAlso」组、`stylePanel.test.tsx`、`migrate.style.test.ts` |
+| §十一第 20 条同素材重跑：新 gid 套上样式、手改不被覆盖、没新目标零历史、撤销后不再对齐 | `styleBinding.test.ts`「第二十一轮评审」组 |
 | §九各条（异步回来画布变了、欠账补上、渲染到齐再跟随、交互结束补看、恢复等 manifest、副本回滚） | 同上「Codex #547 评审」组；`stylePresets.test.ts`、`stylePanel.test.tsx`、`profilesSettings.test.tsx`、`tests/test_profile_store.py` |
 | 面板里改值在绑定时走样式本身；选择器反映绑定；恢复原样 | `web/src/components/left/stylePanel.test.tsx` |
 | 设置「用于当前画布」= 同一个绑定函数；样式对话框只编辑不应用 | `profilesSettings.test.tsx`、`StyleDialog.test.tsx` |

@@ -1402,6 +1402,76 @@ describe('Codex #547 最后一轮评审（964ce71f）', () => {
   })
 })
 
+describe('Codex #547 第二十一轮评审（114a4c96）', () => {
+  /** 同一素材的脚本重跑之后多了一个 y 轴标签（新 gid，脚本自己的 9 pt） */
+  const withYLabel = (stem: string, axisLabel = 9) => {
+    const m = manifest(stem, axisLabel)
+    return {
+      ...m,
+      elements: [
+        ...m.elements,
+        { gid: 'axes_0.ylabel', role: 'axis_label', label: 'y', bbox: [0, 0, 1, 1], draggable: false, editable: [num('fontsize', 9)] },
+      ],
+    }
+  }
+  /** 与 `scriptRunStore` / `liveSync` 同形：脚本重跑 → `markStale`（面板 id、素材都不变）→ 按此刻的 override 渲染回来 */
+  function rerunScript(id: string, next: (size: number) => unknown) {
+    useRenderStore.getState().markStale([panelById(id).fileId])
+    const p = panelById(id)
+    const size = p.overrides.find((o) => o.gid === 'axes_0.xlabel' && o.prop === 'fontsize')?.value
+    seedExactRender(p, next(typeof size === 'number' ? size : 9) as never)
+  }
+
+  it('P1 同素材重跑后多出来的新 gid 按绑定的样式对齐，一条「按样式对齐新图」', async () => {
+    await seed([panel('a', 'FigA')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    const before = s().past.length
+    rerunScript('a', (size) => withYLabel('FigA', size))
+    expect(ov('a', 'axes_0.ylabel', 'fontsize'), '新加的 y 轴标签套上样式').toBe(10)
+    expect(s().past.length - before).toBe(1)
+    expect(s().past.at(-1)?.label).toMatchObject({ key: 'history.alignNewFigure' })
+  })
+
+  it('P1 反向：重跑前用户在这张图上手改过的值不被覆盖，只动新 gid', async () => {
+    await seed([panel('a', 'FigA')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    s().commit(literal('手改'), (d) => {
+      const o = d.objects[0] as PanelObject
+      o.overrides = o.overrides.map((v) => (v.gid === 'axes_0.xlabel' ? { ...v, value: 14 } : v))
+    })
+    rerender('a')
+    rerunScript('a', (size) => withYLabel('FigA', size))
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '手改的 14 留着').toBe(14)
+    expect(ov('a', 'axes_0.ylabel', 'fontsize')).toBe(10)
+  })
+
+  it('P1 反向：已对齐、重跑后没有新目标的图不产生任何历史', async () => {
+    await seed([panel('a', 'FigA')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    const before = s().past.length
+    rerunScript('a', (size) => manifest('FigA', size))
+    expect(s().past.length - before).toBe(0)
+  })
+
+  it('P1 撤销对齐新 gid 之后，渲染回来那一下不会再对齐一次', async () => {
+    await seed([panel('a', 'FigA')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    rerunScript('a', (size) => withYLabel('FigA', size))
+    expect(ov('a', 'axes_0.ylabel', 'fontsize')).toBe(10)
+    s().undo()
+    seedExactRender(panelById('a'), withYLabel('FigA', 10) as never)
+    expect(ov('a', 'axes_0.ylabel', 'fontsize'), '撤销的结果不会被渲染回来冲掉').toBeUndefined()
+  })
+})
+
 describe('撤销只退画布、不推回样式库（ADR 0081 §十二，用户 2026-09-25 拍板）', () => {
   const unrelatedEdit = () =>
     s().commit(literal('改了别的'), (d) => {

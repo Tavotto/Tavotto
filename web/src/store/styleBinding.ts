@@ -163,14 +163,25 @@ const ledgerKey = (doc: FigureDocument = docNow()) => `${generation()}|${doc.sty
  */
 const figKey = (p: PanelObject): string => `${p.id}@${p.fileId}`
 
-/** 「这一会话里已经按当前绑定看过的图」（图按 `figKey`，文字按 id） */
-const seen = new Map<string, Set<string>>()
-function markSeen(doc: FigureDocument, panelIds: Iterable<string>) {
+/**
+ * 「这一会话里已经按当前绑定看过的图」（图按 `figKey`，文字按 id）。图还记着**看过时 manifest 里有哪些
+ * gid**：同一素材的脚本重跑（`markStale` 换掉权威 manifest、`figKey` 不变）之后多出来的线 / 标签是
+ * 新 gid，按这份清单认出来、只对它们按样式对齐（Codex #547 P1）。文字是 `null`。
+ */
+const seen = new Map<string, Map<string, Set<string> | null>>()
+/** `gids`：这张图此刻 manifest 的 gid 清单；`keep`：已经记过清单的不覆盖（补欠账只补了变化量，新 gid 还没对齐） */
+function markSeen(
+  doc: FigureDocument,
+  ids: Iterable<string>,
+  gids: (id: string) => Set<string> | null = () => null,
+  keep = false,
+) {
   const key = ledgerKey(doc)
-  const set = seen.get(key) ?? new Set<string>()
-  for (const id of panelIds) set.add(id)
-  seen.set(key, set)
+  const map = seen.get(key) ?? new Map<string, Set<string> | null>()
+  for (const id of ids) if (!(keep && map.get(id))) map.set(id, gids(id))
+  seen.set(key, map)
 }
+const gidSet = (m: Manifest): Set<string> => new Set(m.elements.map((e) => e.gid))
 
 /**
  * 「这张图还欠着这些样式变化」：改样式 / 绑定的那一刻它还没有 manifest，那一次 commit 对不上它。
@@ -392,6 +403,12 @@ function bindNow(recordId: string | null): void {
   if (cur?.id === rec.id && sameRules(cur.snapshot, rec.data) && isEmptyPlan(plan)) return
   forgetDebts(rec.id)
   const missing = missingNow(doc)
+  // 看过时的 gid 清单也在 commit 之前量（commit 之后写过的图都暂时拿不到精确 manifest）
+  const gidsNow = new Map<string, Set<string>>()
+  for (const p of panelsOf(doc)) {
+    const m = manifestOf(p)
+    if (m) gidsNow.set(figKey(p), gidSet(m))
+  }
   commitWith(
     hist('bindStyle', { name: profileName(rec) }),
     (d) => {
@@ -401,7 +418,7 @@ function bindNow(recordId: string | null): void {
     plan,
   )
   owe(docNow(), delta, missing, delta)
-  markSeen(docNow(), panelsOf(docNow()).map(figKey).filter((k) => !missing.includes(k)))
+  markSeen(docNow(), gidsNow.keys(), (k) => gidsNow.get(k) ?? null)
   markTextsSeen()
 }
 
@@ -632,7 +649,7 @@ export function alignNewFigures(): number {
   const binding = canvasStyle(doc)
   if (!binding || blocked()) return 0
   const key = ledgerKey(doc)
-  const done = seen.get(key) ?? new Set<string>()
+  const done = seen.get(key) ?? new Map<string, Set<string> | null>()
   const style = resolvedStyle(binding)
   const preset: StylePreset = { ...style, name: bindingName(binding) }
   const owed = pending.get(key)
@@ -647,15 +664,18 @@ export function alignNewFigures(): number {
     if (!target) continue
     if (debt) {
       owed!.delete(fig)
-      markSeen(doc, [fig])
+      markSeen(doc, [fig], () => gidSet(m), true)
       const plan = changesFor({ ...pruneToStyle(debt, style), name: '' } as StylePreset, [target], current, false)
       if (isEmptyPlan(plan)) continue
       commitWith(hist('syncStyle', { name: bindingName(binding) }), (d) => writeStylePlan(d, plan, preset), plan)
       aligned += 1
       continue
     }
-    if (done.has(fig)) continue
-    markSeen(doc, [fig])
+    if (done.has(fig)) {
+      if (alignNewTargets(doc, fig, target, m, style, preset, done.get(fig) ?? null)) aligned += 1
+      continue
+    }
+    markSeen(doc, [fig], () => gidSet(m))
     // 带着样式管得到的 override = 对齐过 / 用户手改过——不碰。**例外是素材自带的烘焙基线**
     // （`addPanel` 把 `baked_overrides` 原样抄进来）：那不是用户的手改，绑定之后加进来的图与
     // 先加图再绑定应当得到同一个结果（Codex #547 P2）
@@ -696,6 +716,45 @@ export function alignNewFigures(): number {
     markSeen(docNow(), fresh)
   }
   return aligned
+}
+
+/**
+ * 看过的图**同一素材重渲染**之后 manifest 里多出来的目标（脚本重跑加了一条线 / 一个标签：新 gid，身上
+ * 没有 override，保持脚本的格式）：只对这些新 gid 按整份样式对齐，一条「按样式对齐新图」。
+ * 看过时就在的 gid 一个都不碰（用户在属性页里的手改留着）；新 gid 上已经有 override 的那一项也不碰。
+ * 没有新 gid（已对齐的图重跑、渲染回来）什么都不写（Codex #547 P1）。
+ */
+function alignNewTargets(
+  doc: FigureDocument,
+  fig: string,
+  target: PanelObject,
+  m: Manifest,
+  style: StyleProfileData,
+  preset: StylePreset,
+  known: Set<string> | null,
+): boolean {
+  const now = gidSet(m)
+  markSeen(doc, [fig], () => now)
+  // 看过时没记清单（不该发生：图都是带着 manifest 记的）：以此刻为准，不猜
+  if (!known) return false
+  const added = new Set([...now].filter((g) => !known.has(g)))
+  if (!added.size) return false
+  const current = docNow()
+  const raw = changesFor(presetDelta(null, style), [target], current, false)
+  const plan: StylePlan = {
+    ...raw,
+    panels: raw.panels
+      .map((pp) => ({
+        ...pp,
+        patches: pp.patches.filter(
+          (x) => added.has(x.gid) && !target.overrides.some((o) => o.gid === x.gid && o.prop === x.prop),
+        ),
+      }))
+      .filter((pp) => pp.patches.length > 0),
+  }
+  if (isEmptyPlan(plan)) return false
+  commitWith(hist('alignNewFigure'), (d) => writeStylePlan(d, plan, preset), plan)
+  return true
 }
 
 /** 此刻画布上的文字都算「看过了」（换进画布 / 绑定的那一刻调：它们不是绑定之后新加的） */
