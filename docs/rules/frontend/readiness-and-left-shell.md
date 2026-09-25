@@ -19,9 +19,9 @@
   素材卡角标、素材说明条、接入中心每一行、属性栏那条提示。按状态查句子会让
   只读项目里的用户一直等一个永远不来的结果（`auto_linkable` 有四个 code，
   一个是"马上就好"、三个是"不做点什么永远不会好"）。
-- **持有者只有 `store/projectReadinessStore.ts`**：并发纪律与 `assetStore`
-  逐条相同（请求序号挡旧响应、发请求那一刻的 pj 挡串项目、同批合并、
-  `force` 另起一次、失败保留上一次成功那份）；**fingerprint 没变时连报告
+- **持有者只有 `store/projectReadinessStore.ts`**：并发纪律取 `assetStore` 的这几条
+  （请求序号挡旧响应、发请求那一刻的 pj 挡串项目、同批合并、`force` 另起一次、
+  失败保留上一次成功那份；`assetStore` 的全文在 `asset-library.md`，它另有项目代际）；**fingerprint 没变时连报告
   对象的引用都不换**。刷新挂在 `liveSync.refreshAssetsAndSync()` 一处，
   与素材清单同一批事件、同一个 `force` 语义。
 - **开关只有 `uiStore.registryOpen`**（`RegistryDialog` 的文件名与导出名保留）。

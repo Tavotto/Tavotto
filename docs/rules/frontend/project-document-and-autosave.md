@@ -97,10 +97,8 @@
   `refreshAssetsAndSync()`。合并做在两层——`assetStore.load()` 复用同项目的
   在途请求（一批事件一个 `/api/panels`），`syncPanelSourceMetadata()` 无差异
   零改动（并不成一个请求的那些也不会重复置 dirty / 重复弹提示）。
-  `assetStore` 的三条并发纪律：**请求序号**挡旧响应覆盖新响应（不是"谁最后
-  返回"）、**发请求那一刻的 pj** 挡串项目（`null` 与具体 id 是两个取值）、
-  **失败不清空** `panels`/`byId`。`force: true` 永远另起一次（手动刷新不许被
-  在途请求吞掉）。
+  `assetStore` 的并发与换代纪律（请求序号、发请求那一刻的 pj、项目代际、同项目失败不清空、
+  `force`）全文只在 `asset-library.md`「`assetStore` 的清单纪律」一条，这里不留第二份。
 - **派生字段 vs 用户数据**（`panelSourceSync.ts` 的表）：只有
   `script` / `cost` / `fileKind` / `pxW` 由 `/api/panels` 说了算；
   几何、`nativeW/nativeH`、crop、rotation、overrides、成组、锁定、选择一律
