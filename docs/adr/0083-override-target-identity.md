@@ -109,6 +109,7 @@ worker warning，按写回事务的既有规矩**一条即阻断**（409 `write_
   alpha 上或谁都没有 + warning 点名；同结构 / 换数据不误拒；不带身份按位置（兼容承诺）；
   同一热会话里被拒即还原；写回 409 `write_back_warnings` 原件零改动；跨图同步不带身份。
 - `tests/test_patchspec.py` + `tests/golden/patch_vectors.json`（Python）/ `workerd/tests/golden_vectors.rs`（Rust）。
+- `web/src/components/inspector/staleIdentityOverrides.test.tsx`：身份对不上的进「清除失效修改」、对得上的不进。
 - `web/src/lib/overrideIdentity.test.ts`：抄写四条规则 + 真实写入口（`setOverride` / `setOverrides`
   经 `useEngineSync` 登记的抄写）+ 撤销一次连身份一起回去。
 
