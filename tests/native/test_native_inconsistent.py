@@ -9,14 +9,24 @@ Figure 与文档不一致，这里把它挡在 offline 同一条 409 路上：
 2. 不一致期间只放行**同一份列表**的重渲染（它会重试还原），报 0 即自动解除；
 3. 换列表的编辑、导出、历史预览一律 `native_figure_inconsistent`（409）；
 4. 导出与 offline 走同一条路：拿 live 图的那一步抛 `RunError`，作业不拿它交差。
+
+第九轮（Codex #549）补两条：
+
+5. 「查标记 → 发请求 → 按响应更新标记」是一整段（会话一把锁），两个请求重叠时第二个换了
+   列表的渲染 / 导出照样被拦，标记以最后一次响应为准；
+6. 任何一张图不一致时 continue / detach 一律拒绝（terminate 放行）；runner 侧
+   `release_barrier()` 还原不回去时同样不放行——下面两条真进程链用例量的就是 runner 那一层。
 """
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
+from support import nativekit
 from tavotto import app as m
-from tavotto.engine import nativesession, runcodes
+from tavotto.engine import nativesession, pool, runcodes
 from tavotto.engine.runcodes import RunError
 
 A = [{"gid": "axes_0.title", "prop": "text", "value": "A"}]
@@ -163,3 +173,235 @@ def test_export_cannot_take_the_live_figure_the_same_way_as_offline(tmp_path, mo
     }[state]
     assert err.value.code == want
     assert all(f["cmd"] != "export" for f in s.sent)
+
+
+# ---- 第九轮：并发串行化 ----
+
+
+class _Blocking(_Session):
+    """`_request` 按调用顺序各自等一个闸门：第一个请求在途时第二个请求会发生什么。"""
+
+    def __init__(self, out_dir, replies):
+        super().__init__(out_dir)
+        self.replies = list(replies)
+        self.gates: list[threading.Event] = []
+        self.entered = threading.Event()
+
+    def _request(self, obj, timeout):
+        self.sent.append(obj)
+        gate = threading.Event()
+        self.gates.append(gate)
+        reply = self.replies.pop(0)
+        self.entered.set()
+        assert gate.wait(10), "闸门没开"
+        return reply
+
+
+def _render_reply(n):
+    return {"ok": True, "manifest": {"elements": []}, "warnings": [], "unrestored": n}
+
+
+def _overlap(s, first, second):
+    """`first` 在途（卡在闸门上）时起 `second`，放开之后回 (second 的结果 / 异常, 帧数)。"""
+    out: dict = {}
+
+    def run(fn, key):
+        try:
+            out[key] = fn()
+        except Exception as exc:  # noqa: BLE001
+            out[key] = exc
+
+    t1 = threading.Thread(target=run, args=(first, "first"))
+    t1.start()
+    assert s.entered.wait(10)
+    t2 = threading.Thread(target=run, args=(second, "second"))
+    t2.start()
+    t2.join(0.3)  # 给没有锁的实现足够的时间把第二帧发出去
+    sent_while_first_in_flight = len(s.sent)
+    # 一直开闸直到两个线程都结束：第二个请求（若被放行）拿到的闸门是之后才建的
+    for _ in range(200):
+        for g in list(s.gates):
+            g.set()
+        if not t1.is_alive() and not t2.is_alive():
+            break
+        t2.join(0.05)
+    assert not t1.is_alive() and not t2.is_alive(), "线程没结束"
+    return out, sent_while_first_in_flight
+
+
+@pytest.mark.parametrize("second", ["render", "export", "continue"])
+def test_an_overlapping_request_waits_and_is_then_refused(tmp_path, second):
+    """第一个渲染在途、它的响应会报 `unrestored > 0`：第二个（换列表的渲染 / 导出 / continue）
+    必须等它回来、看到标记后被拦——不许在检查通过之后排在它后面执行。"""
+    s = _Blocking(tmp_path, [_render_reply(2), _render_reply(0), {"ok": True}])
+    s.state = nativesession.BARRIER
+    fn = {
+        "render": lambda: s.override("Fig1", B),
+        "export": lambda: s.export("Fig1", A, str(tmp_path / "x.pdf")),
+        "continue": s.resume,
+    }[second]
+    out, in_flight = _overlap(s, lambda: s.override("Fig1", A), fn)
+    assert in_flight == 1, "第一个请求在途时第二帧已经发出去了"
+    assert isinstance(out["second"], RunError), out
+    assert out["second"].code == runcodes.NATIVE_FIGURE_INCONSISTENT
+    assert [f["cmd"] for f in s.sent] == ["override"]
+    assert "Fig1" in s.inconsistent
+
+
+def test_the_flag_follows_the_last_response(tmp_path):
+    """两个同一份列表的渲染重叠：先发的报 2、后发的报 0——标记以后一个为准（已解除）。"""
+    s = _Blocking(tmp_path, [_render_reply(2), _render_reply(0)])
+    out, in_flight = _overlap(s, lambda: s.override("Fig1", A), lambda: s.override("Fig1", A))
+    assert in_flight == 1
+    assert not isinstance(out["second"], Exception), out
+    assert s.inconsistent == {}
+
+
+# ---- 第九轮：continue / detach 不放行，terminate 放行 ----
+
+
+class _Transport:
+    def __init__(self):
+        self.oneway: list[dict] = []
+
+    def send_oneway(self, obj, *, generation, revision):
+        self.oneway.append(obj)
+
+
+def _at_barrier(tmp_path, unrestored=1):
+    s = _Session(tmp_path)
+    s.state = nativesession.BARRIER
+    s.transport = _Transport()
+    s.unrestored = unrestored
+    s.override("Fig1", A)
+    return s
+
+
+@pytest.mark.parametrize("action", ["resume", "detach"])
+def test_continue_and_detach_are_refused_while_any_figure_is_inconsistent(tmp_path, action):
+    s = _at_barrier(tmp_path)
+    n = len(s.sent)
+    assert _code(getattr(s, action)) == runcodes.NATIVE_FIGURE_INCONSISTENT
+    assert len(s.sent) == n, "continue 发出去了"
+    assert s.state == nativesession.BARRIER
+
+
+def test_terminate_is_still_allowed_while_inconsistent(tmp_path):
+    s = _at_barrier(tmp_path)
+    assert s.terminate() == {"terminated": True}
+    assert [f["cmd"] for f in s.transport.oneway] == ["terminate"]
+
+
+def test_a_runner_refusal_comes_back_as_the_same_code(tmp_path):
+    """sidecar 这一层没看到不一致（例如还原只在放行那一刻失败）：runner 拒绝，码原样回来。"""
+    s = _at_barrier(tmp_path, unrestored=0)
+
+    def refuse(obj, timeout):
+        raise pool.WorkerError("还原不回去", code=runcodes.NATIVE_FIGURE_INCONSISTENT)
+
+    s._request = refuse  # type: ignore[method-assign]
+    assert _code(s.resume) == runcodes.NATIVE_FIGURE_INCONSISTENT
+    assert s.state == nativesession.BARRIER
+
+
+def test_continue_endpoint_answers_409_with_the_code(tmp_path, monkeypatch):
+    s = _at_barrier(tmp_path)
+    monkeypatch.setattr(nativesession.REGISTRY, "get", lambda sid: s)
+    m.app.config["TESTING"] = True
+    for action in ("continue", "detach"):
+        resp = m.app.test_client().post(f"/api/native/sessions/{s.session_id}/{action}")
+        assert resp.status_code == 409, action
+        assert resp.get_json()["code"] == runcodes.NATIVE_FIGURE_INCONSISTENT
+
+
+def test_the_runner_and_the_sidecar_agree_on_the_code():
+    """**严格同源对**：`bridge_runner.py` 在用户的解释器里按路径执行、import 不到 `tavotto.*`，
+    这个码只能各写一份——由这条逐字节对拍（与 `TERMINATE_EXIT` 同一种做法）。"""
+    from tavotto.engine import bridge_runner
+
+    assert bridge_runner.INCONSISTENT_CODE == runcodes.NATIVE_FIGURE_INCONSISTENT
+
+
+# ---- 第九轮：runner 这一层（真进程链：真 tavotto run → 真用户 Python → 真 Bridge Runner） ----
+
+#: 一段还原必抛的文字：Tavotto 改字号可以，改回脚本原样（10）时抛——还原失败只在放行那一刻
+#: 发生，sidecar 此前的每一次渲染都干净，挡住它的只能是 runner 自己
+PICKY_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.text import Text
+
+
+class Picky(Text):
+    armed = False
+
+    def set_fontsize(self, fontsize):
+        if Picky.armed and float(fontsize) == 10.0:
+            raise RuntimeError("还原坏了")
+        super().set_fontsize(fontsize)
+
+
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+ax.add_artist(Picky(0.5, 0.5, "picky", fontsize=10))
+Picky.armed = True
+plt.show()
+print("AFTER-SHOW")
+"""
+
+
+def _picky_gid(session, stem):
+    import json
+
+    man = json.loads((session.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+    for el in man["elements"]:
+        for f in el.get("editable") or []:
+            if f.get("prop") == "text" and f.get("value") == "picky":
+                return el["gid"]
+    raise AssertionError([e["gid"] for e in man["elements"]])
+
+
+def _edit_picky(session):
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    stem = next(iter(session.ensure_built()["stems"]))
+    gid = _picky_gid(session, stem)
+    resp = session.override(stem, [{"gid": gid, "prop": "fontsize", "value": 20}])
+    assert resp.get("unrestored") == 0 and "Fig" not in str(session.inconsistent)
+    return stem
+
+
+@nativekit.needs_user_python
+def test_the_runner_refuses_to_release_when_restore_fails_and_terminate_still_works(tmp_path):
+    nativekit.write(tmp_path / "figure.py", PICKY_SCRIPT)
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        _edit_picky(session)
+        assert session.inconsistent == {}, "前提：sidecar 这一层什么都没看到"
+        assert _code(session.resume) == runcodes.NATIVE_FIGURE_INCONSISTENT
+        assert session.state == nativesession.BARRIER, "runner 放行了"
+        assert proc.poll() is None
+        session.terminate()
+        out, err = proc.communicate(timeout=120)
+    assert "AFTER-SHOW" not in out, f"脚本带着改过的 Figure 往下跑了\n{err}"
+    assert proc.returncode == runcodes.EXIT_TERMINATED, f"{proc.returncode}\n{err}"
+
+
+@nativekit.needs_user_python
+def test_a_dropped_desktop_does_not_hand_an_unrestorable_figure_back_to_the_script(tmp_path):
+    """故障路径（桌面断开 / relay EOF）：还原不回去就不回到用户代码，按终止退出——
+    故障路径不许比正常路径更宽松（ADR 0021 §8.1）。"""
+    nativekit.write(tmp_path / "figure.py", PICKY_SCRIPT)
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        _edit_picky(session)
+        session.transport.close()
+        out, err = proc.communicate(timeout=180)
+    assert "AFTER-SHOW" not in out, f"断开之后脚本带着改过的 Figure 往下跑了\n{err}"
+    assert proc.returncode == runcodes.EXIT_TERMINATED, f"{proc.returncode}\n{err}"

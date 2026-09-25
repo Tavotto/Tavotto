@@ -321,6 +321,12 @@ class NativeSession:
         #: `native_figure_inconsistent`——与 offline 同一条 409 路。会话是用户的进程，
         #: 不杀不断开；重新运行原命令 = 新会话、新 Figure，这张表自然是空的（Codex #549 第八轮）
         self.inconsistent: dict[str, str] = {}
+        #: 「查 `inconsistent` → 发请求 → 按响应更新它」必须是一整段（Codex #549 第九轮）。
+        #: 传输支持多个等待者并发，两个 Flask 请求重叠时都会在第一个响应记下标记之前通过
+        #: 检查，第二个（换了列表的渲染 / 导出 / continue）就在不一致的 Figure 上执行了，
+        #: 晚到的响应还会把标记改回旧的那一次。bridge 本来就串行执行，这把锁只是让检查与
+        #: 执行同序。会话粒度（不是 stem）：continue / detach 看的是**所有** stem。
+        self._figure_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # 状态机
@@ -485,59 +491,64 @@ class NativeSession:
         native 面板每一次渲染都是 TypeError。
         """
         want = patchspec.patch_hash(patches)
-        owed = self.inconsistent.get(stem)
-        if owed is not None and owed != want:
-            raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
-        self.rev += 1
         payload = {"cmd": "override", "stem": stem, "patches": patches}
         # 不给就**一个字段都不加**：信封形状与 safe worker 一字不差
         if preview_dpi:
             payload["preview_dpi"] = int(preview_dpi)
         if inline_svg:
             payload["inline_svg"] = True
-        resp = self._request(payload, REQUEST_TIMEOUT)
-        unrestored = resp.get("unrestored")
-        if isinstance(unrestored, int) and unrestored > 0:
-            self.inconsistent[stem] = want
-        else:
-            self.inconsistent.pop(stem, None)
-        return resp
+        with self._figure_lock:
+            owed = self.inconsistent.get(stem)
+            if owed is not None and owed != want:
+                raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
+            self.rev += 1
+            resp = self._request(payload, REQUEST_TIMEOUT)
+            unrestored = resp.get("unrestored")
+            if isinstance(unrestored, int) and unrestored > 0:
+                self.inconsistent[stem] = want
+            else:
+                self.inconsistent.pop(stem, None)
+            return resp
 
-    def _require_consistent(self, stem: str) -> None:
-        """导出 / 历史预览拿的是 live Figure：图与文档不一致时不许拿它交差。"""
-        if stem in self.inconsistent:
+    def _require_consistent(self, stem: str | None = None) -> None:
+        """导出 / 历史预览拿的是 live Figure：图与文档不一致时不许拿它交差。
+        `stem=None` 问的是整条会话（continue / detach：脚本会看到**每一张**图）。
+        调用方必须持有 `_figure_lock`。"""
+        if self.inconsistent if stem is None else stem in self.inconsistent:
             raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
 
     def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
-        self._require_consistent(stem)
-        return self._request(
-            {
-                "cmd": "export",
-                "stem": stem,
-                "patches": patches,
-                "path": path,
-                "format": fmt,
-                "dpi": dpi,
-            },
-            EXPORT_TIMEOUT,
-        )
+        with self._figure_lock:
+            self._require_consistent(stem)
+            return self._request(
+                {
+                    "cmd": "export",
+                    "stem": stem,
+                    "patches": patches,
+                    "path": path,
+                    "format": fmt,
+                    "dpi": dpi,
+                },
+                EXPORT_TIMEOUT,
+            )
 
     def render_png(self, stem: str, width_px: int) -> Path:
         self._request({"cmd": "render_png", "stem": stem, "width": int(width_px)}, REQUEST_TIMEOUT)
         return self.out_dir / f"{stem}_w{int(width_px)}.png"
 
     def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
-        self._require_consistent(stem)
-        self._request(
-            {
-                "cmd": "preview_png",
-                "stem": stem,
-                "patches": patches,
-                "width": int(width_px),
-                "tag": tag,
-            },
-            REQUEST_TIMEOUT,
-        )
+        with self._figure_lock:
+            self._require_consistent(stem)
+            self._request(
+                {
+                    "cmd": "preview_png",
+                    "stem": stem,
+                    "patches": patches,
+                    "width": int(width_px),
+                    "tag": tag,
+                },
+                REQUEST_TIMEOUT,
+            )
         return self.out_dir / f"{stem}__{tag}.png"
 
     def svg_path(self, stem: str) -> Path:
@@ -549,7 +560,7 @@ class NativeSession:
         **runner 侧会先把 Figure 恢复成脚本原样**（ADR 0021 §8）——那一步在
         用户的进程里做，这里只是发一条 `continue`。
         """
-        resp = self._request({"cmd": "continue"}, REQUEST_TIMEOUT)
+        resp = self._release()
         self._set_state(CONTINUING)
         return resp
 
@@ -560,11 +571,28 @@ class NativeSession:
         屏障的恢复语义两者相同（runner 侧的 `release_barrier`），所以脚本
         无论如何都看不到 Tavotto 的 override。
         """
-        resp = self._request({"cmd": "continue"}, REQUEST_TIMEOUT)
+        resp = self._release()
         self._set_state(DETACHED)
         if self.transport is not None:
             self.transport.close()
         return resp
+
+    def _release(self) -> dict:
+        """continue / detach 共用的放行：**任何一张图与文档不一致就不放**（Codex #549 第九轮）。
+
+        放行之前 runner 要把 Figure 恢复成脚本原样（ADR 0021 §8.1），而欠着还原的图恰恰
+        恢复不回去——放行等于让脚本带着 Tavotto 半改的 Figure 往下跑。这里先挡一层；
+        runner 侧 `release_barrier()` 还原失败时同样拒绝（它回 `native_figure_inconsistent`，
+        这里原样翻成同一个码），不只靠这一层。`terminate` 不走这里：脚本不会再往下跑。
+        """
+        with self._figure_lock:
+            self._require_consistent()
+            try:
+                return self._request({"cmd": "continue"}, REQUEST_TIMEOUT)
+            except pool.WorkerError as exc:
+                if getattr(exc, "code", "") == runcodes.NATIVE_FIGURE_INCONSISTENT:
+                    raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT) from exc
+                raise
 
     def terminate(self) -> dict:
         """结束用户脚本——**明确的危险操作，不伪装成 continue**。

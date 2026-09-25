@@ -32,6 +32,7 @@
   | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `web/src/lib/typography.ts` 同名常量 ↔ `rendercore/typography.py` 同名常量（U06 起；U10 起契约层的就是 rendercore 的那一份） | `test_typography_families.py`（闭集 + 顺序）；`tests/test_rendercore_typography.py` |
   | `pyproject.toml` `dependencies` ↔ `requirements.txt`（钉死镜像，同名同序；U10 起含 RenderCore 的五个 native 包，PyMuPDF 只在 `legacy-pymupdf` extra，ADR 0072） | `tests/test_rendercore_fonts.py::test_requirements_txt_mirrors_the_runtime_dependencies_and_is_pinned` / `test_pymupdf_is_only_the_legacy_extra_never_a_runtime_dependency`；产物侧由 `scripts/ci/retirement_scan.py` 的 wheel / deps 尺子看 |
   | `engine/overrides.NO_COLOR`（manifest 颜色字段的「无」取值）↔ `web/src/components/ui/Input.tsx` 同名常量 | `tests/test_no_color_pair.py` |
+  | `engine/bridge_runner.INCONSISTENT_CODE`（runner 在用户解释器里跑、import 不到 `tavotto.*`）↔ `engine/runcodes.NATIVE_FIGURE_INCONSISTENT` | `tests/native/test_native_inconsistent.py::test_the_runner_and_the_sidecar_agree_on_the_code` |
   | `engine/pool.EXIT_GRACE`（管道 EOF 后等子进程自己退出的宽限）↔ `workerd/src/worker.rs` `EXIT_GRACE` | 两侧各自钉在 `tests/golden/exit_grace_ms.txt`：`tests/test_worker_exit_report.py::test_the_exit_grace_is_one_number_on_both_control_planes` + `workerd/tests/exit_grace_pair.rs`（不读对方源码） |
   | `src/tavotto/resources/private_python_lock.json` 两个 macOS 目标的 CPython 来源（version / release / triple / url / sha256 / size / archive_root）↔ `packaging/runtime-lock.json` 的 `macos-*` 目标 `python` 块（ADR 0063：桌面版内置渲染 runtime 与私有 Python 是同一份字节） | `tests/test_private_python.py::TestLock::test_macos_entries_are_the_same_origin_as_the_runtime_lock` |
 

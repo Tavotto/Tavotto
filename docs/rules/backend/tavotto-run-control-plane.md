@@ -48,7 +48,12 @@
   按 v1 render 结果的 `unrestored`（结构化字段，不解析 warning）记下「与文档不一致」的 stem
   与那份列表的 canonical hash；期间只放行同一份列表的重渲染（报 0 即解除），换列表的编辑、
   `export`、`preview_png` 一律 `native_figure_inconsistent`（409，与 offline 同一条路；导出
-  作业里它和 offline 一样在拿 live 图那一步抛出）。看护 `tests/native/test_native_inconsistent.py`。
+  作业里它和 offline 一样在拿 live 图那一步抛出）。「查标记 → 发请求 → 按响应更新」整段在
+  会话的 `_figure_lock` 里（传输允许并发等待者，不锁就会在检查通过后排到不一致的 Figure
+  上执行）。任何一张图不一致时 continue / detach 拒绝、terminate 放行；runner 侧
+  `release_barrier()` 恢复不回去同样不放行（回同一个码、重放回编辑态；控制通道断了就按
+  终止退出，ADR 0021 §8.1），两层各自成立。runner 的 `INCONSISTENT_CODE` ↔
+  `runcodes.NATIVE_FIGURE_INCONSISTENT` 是严格同源对。看护 `tests/native/test_native_inconsistent.py`。
 - **环境占用只有 `envlease` 一张表**：加第二张就保证了它们迟早不一致。
 - **连接过的 socket 一律 `shutdown(SHUT_RDWR)` 再 `close()`。** Linux 上
   `close(fd)` **不唤醒**另一个线程里阻塞着的 `recv(fd)`——那个系统调用还持着
