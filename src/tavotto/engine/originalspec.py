@@ -12,7 +12,8 @@
 本模块把它拆成两件事：
 
 * **量得到的**（`dpi_source="metadata"`）：PNG 的 `pHYs`、JPEG 的 JFIF 密度
-  或 Exif 分辨率。这是文件自己写下的物理密度，不是我们的推测。
+  或 Exif 分辨率、TIFF 的 `XResolution` / `YResolution`（单位英寸或厘米）。
+  这是文件自己写下的物理密度，不是我们的推测。
 * **量不到的**（`dpi_source="assumed"`）：文件没写。这时才用 `ASSUMED_DPI`
   ——取值与改造前**逐位相同**（PNG 600 / 其余 300），所以老项目里已经摆好的
   面板尺寸一个都不变；区别只是现在它**说出来**自己是假定的，界面据此提示。
@@ -29,6 +30,8 @@ from __future__ import annotations
 
 import struct
 from pathlib import Path
+
+from .. import tiffprobe
 
 #: pt → mm。与 `app.py` 的 `MM_PER_PT` 同值（那一份是 HTTP 层的常量，
 #: 这里不 import 它——engine 不依赖 app）。
@@ -193,7 +196,11 @@ def raster_dpi(path: Path) -> tuple[float, float] | None:
             if head[:2] == b"\xff\xd8":
                 # Exif 缩略图能把 APP1 顶到几十 KB，头 4 KB 不一定装得下
                 return _jpeg_dpi(head + fh.read(262144))
-    except OSError:
+        if tiffprobe.is_tiff(head):
+            # TIFF 的 IFD 可以在文件任何位置（常见写法放在像素之后），头 4 KB 不够——
+            # 按偏移读，解析只有 `tiffprobe` 一处。单位 1（只有纵横比）= 没写密度
+            return tiffprobe.density(tiffprobe.read_header(path))
+    except (OSError, tiffprobe.UnsupportedTiff):
         return None
     return None
 

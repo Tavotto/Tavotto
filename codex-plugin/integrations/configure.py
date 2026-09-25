@@ -3,7 +3,9 @@
 
     python3 <完整包>/integrations/configure.py --host vscode --project-root /abs/project
     python3 <完整包>/integrations/configure.py --host claude-desktop --project-root D:\\论文\\figs
+    python3 <完整包>/integrations/configure.py --host trae --project-root ... --emit instructions
     python3 <完整包>/integrations/configure.py --host cursor --project-root ... --diagnose
+    py -3 '<完整包>\\integrations\\configure.py' --host claude-desktop --project-root 'D:\\figs'   # Windows PowerShell
 
 `<完整包>` 是 GitHub Release 上的 `codex-plugin-<版本>.zip` 解出来的那个目录（名字
 里带 codex 是历史原因：同一份包、同一个启动器 `mcp/server.py`、同一份 Skill，Codex
@@ -49,6 +51,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -122,6 +125,8 @@ PROBE_TIMEOUT = 180
 #: 探针里禁写 .pyc：`--health` 会 import 包里的 handoff.py，默认会在包目录里落
 #: `__pycache__`——一个声称「不写任何文件」的工具不许改动包（Codex 在 #559 上指出）
 NO_BYTECODE_ENV = "PYTHONDONTWRITEBYTECODE"
+#: 生成配置的这台机器是不是 Windows（序列化里只有 Windows 专属的 env 透传看它；测试可替换）
+IS_WINDOWS = os.name == "nt"
 
 
 class ConfigureError(Exception):
@@ -136,7 +141,8 @@ class ConfigureError(Exception):
 # ------------------------------------------------------------------ 宿主表
 #: 每个宿主**只保存真正不同的那部分**：配置顶层 key、server 条目额外的字段、
 #: 格式、落点、确认加载的办法、Skill 入口。启动描述（command / args / env）只有
-#: 一份，由 `launch_descriptor()` 给出。文档证明不了的字段一个都不加。
+#: 一份，由 `launch_descriptor()` 给出。字段依据见 docs/implementation/multi-host-mcp/
+#: hosts.md（逐条带官方文档链接与查证日期）；文档证明不了的字段一个都不加。
 HOSTS: "dict[str, dict]" = {
     "cursor": {
         "label": "Cursor（本地 Agent）",
@@ -549,7 +555,7 @@ def _entry(host: str, desc: dict) -> dict:
     entry["command"] = desc["command"]
     entry["args"] = list(desc["args"])
     env = dict(desc["env"])
-    if os.name == "nt":
+    if IS_WINDOWS:
         for name in profile.get("windows_env", ()):
             value = os.environ.get(name)
             if value:
@@ -629,6 +635,76 @@ def render(host: str, config) -> str:
     return json.dumps(config, ensure_ascii=False, indent=2) + "\n"
 
 
+# ------------------------------------------------------------------ Skill 投影
+def _shell_quote(path: str) -> str:
+    """给终端用的单个参数，与启动器 `_self_command()` 同一规矩：POSIX 单引号（内部 ' 写成
+    '\\''）；Windows 按 PowerShell 写单引号（内部 ' 写成 ''）——PowerShell 的双引号会展开
+    `$x` 与反引号转义，而这两个字符在 Windows 路径里都合法（#578）。"""
+    if IS_WINDOWS:
+        return "'" + path.replace("'", "''") + "'"
+    return "'" + path.replace("'", "'\\''") + "'"
+
+
+#: Windows 上 `python3` 常常不存在或是 Microsoft Store 的别名（跑了就退出），命令示例改用
+#: Python 启动器 `py -3`（官方安装包自带；#578）。
+WINDOWS_PYTHON = "py -3"
+
+
+#: SKILL.md 规定「写任何画图脚本之前」必读的 references。没有本机文件读取能力的宿主
+#: （Claude Desktop 聊天）读不到包内路径，等价说明把它们的**原文**附在末尾（#578）；
+#: 与 SKILL.md 那一行的一致性由测试看着。其余 references「用到才读」，只给路径。
+INLINED_REFERENCES = ("figure-contract.md", "publication-style.md")
+
+
+def _strip_frontmatter(text: str) -> str:
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            text = text[end + 4 :].lstrip("\n")
+    return text
+
+
+def _resolve_skill_paths(text: str) -> str:
+    """相对引用 → 包内绝对路径。命令示例里的脚本（`python3 scripts/x.py …`）要能直接粘进
+    终端：包目录可能带空格，按本机 shell 的规矩加引号；行内代码里的引用只是指给人看的路径，不加。"""
+    text = re.sub(
+        r"(?<=\s)scripts/([\w.-]+\.py)",
+        lambda m: _shell_quote(os.path.join(SKILL_DIR, "scripts", m.group(1))),
+        text,
+    )
+    if IS_WINDOWS:
+        text = re.sub(r"(?m)^(\s*)python3 (?=')", r"\1" + WINDOWS_PYTHON + " ", text)
+    for sub in ("references", "scripts"):
+        abs_dir = os.path.join(SKILL_DIR, sub)
+        text = text.replace(f"`{sub}/", f"`{abs_dir}{os.sep}")
+        text = text.replace(f" {sub}/", f" {abs_dir}{os.sep}")
+    return text
+
+
+def skill_instructions() -> str:
+    """没有原生 Skill 入口的宿主用的等价说明（`instruction_fallback`）。
+
+    **不是第二份手写规则**：就是这份包里的 SKILL.md 正文（去掉 frontmatter），把
+    `references/…` 与 `scripts/…` 的相对引用改写成包内绝对路径——宿主的规则 /
+    提示词里没有「技能目录」这个概念，相对路径会悬空。写脚本前必读的 references
+    （`INLINED_REFERENCES`）的原文附在末尾，读不了本机文件的宿主也拿得到完整契约。
+    """
+    with open(os.path.join(SKILL_DIR, "SKILL.md"), "r", encoding="utf-8") as fh:
+        text = _resolve_skill_paths(_strip_frontmatter(fh.read()))
+    appendix = []
+    for name in INLINED_REFERENCES:
+        with open(os.path.join(SKILL_DIR, "references", name), "r", encoding="utf-8") as fh:
+            body = _resolve_skill_paths(fh.read()).strip("\n")
+        appendix.append(f"\n\n---\n\n<!-- 附录：references/{name} 原文 -->\n\n{body}\n")
+    header = (
+        "<!-- 由 Tavotto 完整包 integrations/configure.py 从 skills/tavotto-figure/SKILL.md 生成；"
+        "包升级后请重新生成。skill_mode: instruction_fallback。"
+        + "、".join(INLINED_REFERENCES)
+        + " 的原文附在末尾，读不了本机文件时以附录为准 -->\n"
+    )
+    return header + text.rstrip("\n") + "\n" + "".join(appendix)
+
+
 # ------------------------------------------------------------------ 主流程
 def _engine_summary(health: "dict | None") -> dict:
     if not health:
@@ -667,11 +743,12 @@ def build(host: str, project_root: str, python: "str | None", engine_python: "st
         # 显式引擎解释器**直接当启动命令**：启动器先试「当前解释器」，只把它塞进
         # TAVOTTO_MCP_PYTHON 的话，启动器解释器自己装着引擎时它会被静默忽略
         # （Codex 在 #559 上指出）。它能跑纯标准库的启动器是当然的。
-        if python and resolve_python(python) != resolve_python(engine_python):
+        engine = _resolve_engine_python(engine_python)
+        if python and resolve_python(python) != engine:
             raise ConfigureError(
                 "bad_args", "--engine-python 会直接作为启动命令，不要再给另一个 --python"
             )
-        return _build_with_engine(host, root, resolve_python(engine_python), pkg)
+        return _build_with_engine(host, root, engine, pkg)
     launcher_python = resolve_python(python)
     probe = probe_launcher(launcher_python, root)
     if not probe["starts"]:
@@ -707,6 +784,15 @@ def build(host: str, project_root: str, python: "str | None", engine_python: "st
     if engine["ok"]:
         _require_server_starts(desc)
     return _result(host, pkg, launcher_python, probe, engine, pinned, root, desc)
+
+
+def _resolve_engine_python(raw: str) -> str:
+    """`--engine-python` 找不到也是「显式引擎解释器不可用」（退出码 3），不是参数错
+    （Codex 在 #559 上指出）；`--python` 找不到仍是 2。"""
+    try:
+        return resolve_python(raw)
+    except ConfigureError as exc:
+        raise ConfigureError("engine_python_unusable", f"--engine-python：{exc}", rc=3) from exc
 
 
 def _build_with_engine(host: str, root: str, engine_python: str, pkg: dict) -> dict:
@@ -795,6 +881,27 @@ def _result(host, pkg, launcher_python, probe, engine, pinned, root, desc) -> di
     }
 
 
+def _shell_join(argv: "list[str]") -> str:
+    """给人复制粘贴的一行命令（按本机 shell 的引号规则）。"""
+    if os.name == "nt":
+        return subprocess.list2cmdline(argv)
+    import shlex
+
+    return shlex.join(argv)
+
+
+def claude_cli_argv(config: dict) -> "list[str]":
+    """与 Claude Code `.mcp.json` **逐字段相同**的 CLI 登记：`claude mcp add-json`。
+
+    不用 `claude mcp add`：它没有按服务器设超时的选项，走那条路会丢掉 `timeout`，
+    长时间的渲染 / 导出就退回 Claude Code 的默认超时（Codex 在 #560 上指出）。
+    add-json 收的就是 `.mcp.json` 里那一条的 JSON，所以两条路是同一份条目。
+    """
+    ((name, entry),) = config["mcpServers"].items()
+    payload = json.dumps(entry, ensure_ascii=False, separators=(",", ":"))
+    return ["claude", "mcp", "add-json", "--scope", "project", name, payload]
+
+
 def _notes(result: dict) -> "list[str]":
     """给人看的说明（stderr）。"""
     pkg, engine = result["package"], result["engine"]
@@ -822,6 +929,9 @@ def _notes(result: dict) -> "list[str]":
         )
         for step in engine.get("recovery") or []:
             lines.append(f"#   - {step}")
+    if result["host"] == "claude-code":
+        lines.append("# 或者用 CLI 登记（与上面的 .mcp.json 二选一，本工具不替你执行）：")
+        lines.append("#   " + _shell_join(claude_cli_argv(result["config"])))
     lines.append("# 确认宿主真的加载了：")
     for step in result["verify"]:
         lines.append(f"#   - {step}")
@@ -834,8 +944,8 @@ def _notes(result: dict) -> "list[str]":
         )
     else:
         lines.append(
-            "# Skill：这个宿主没有经核实的原生 Skill 入口（instruction_fallback）；"
-            f"技能正文在 {skill['source']}，本版本不自动生成等价说明"
+            "# Skill：这个宿主没有经核实的原生 Skill 入口——用 `--emit instructions` 生成等价说明，"
+            "放进它的规则 / 自定义智能体提示词（instruction_fallback）"
         )
     return lines
 
@@ -857,11 +967,23 @@ def main(argv: "list[str] | None" = None) -> int:
         "--engine-python",
         help="显式指定能 import tavotto 的引擎解释器（配置直接用它启动；与 --python 二选一）",
     )
-    ap.add_argument(
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument(
         "--diagnose", action="store_true", help="改为输出一份机器可读的诊断 JSON（不输出配置）"
+    )
+    mode.add_argument(
+        "--emit",
+        choices=("config", "instructions"),
+        default="config",
+        help="config = 宿主配置片段（默认）；instructions = 由 SKILL.md 生成的等价说明",
     )
     args = ap.parse_args(argv)
     try:
+        if args.emit == "instructions":
+            # 说明不依赖解释器探针，但仍然只为认识的宿主、合法的项目目录生成
+            validate_project_root(args.project_root)
+            sys.stdout.write(skill_instructions())
+            return 0
         result = build(args.host, args.project_root, args.python, args.engine_python)
     except ConfigureError as exc:
         if args.diagnose:

@@ -73,6 +73,7 @@ def test_patch_settings_round_trip(client, monkeypatch):
 
     body = client.patch("/api/telemetry/settings", json={"consent": "disabled"}).get_json()
     assert body["consent"] == "disabled" and body["enabled"] is False
+    assert telemetry.flush(5.0)  # 在 monkeypatch 恢复真 `_post` 之前投完（#440）
     telemetry.reset_for_tests()
 
 

@@ -46,6 +46,28 @@
   `QuickEdit` / `ElementBar`）与多选路径都给外侧带；多选时锚点**全体一致才给**
   （与 `sharedMarkerShape` 同一条纪律）。引擎不发 `loc_anchor` 时整带不出现，
   理由由 `UnsupportedProps` 按 reason code 说出口。
+* **整体缩放 = 拖图例的四个角**（2026-09-25 用户反馈，`canvas/interactions.startLegendScale`
+  + `lib/legendScale`）。图例盒尺寸 = 文字字号 × 一组以 `Legend._fontsize` 为单位的构建期
+  参数，而引擎的图例 `fontsize` override 只改每条文字（`legendmodel._set_legend_fontsize`），
+  `_fontsize` 不动——**只写字号不等于整体缩放**（字变大、边距和示意线原样）。所以倍数 s
+  落成：`fontsize`、有标题时的 `title_fontsize`、`borderpad` / `labelspacing` /
+  `handlelength` / `handletextpad` / `columnspacing` 各乘 s，再加一条 `loc_frac`
+  把对角钉住（`loc_frac` 是图例框左下角；不写的话会绕 `loc` 预设那个角缩放）。全是已有的、
+  可写回可重放的属性，引擎不加新属性。不缩的：`ncol`、标记大小（matplotlib 自己改字号也
+  不缩）、边框线宽。倍数取光标在对角线方向的投影（内容像素空间），夹进每条属性的
+  min / max 与 [0.25, 4]；基准优先取文档里尚未渲染回来的 override。一次 = 一条撤销 =
+  一次渲染。**做** SVG 缩放预览（`svgPreviewStore.previewScale`，绕不动点的 `matrix`）：
+  与子图缩放不同，这里字号与所有间距同乘一个倍数，**放大**实测是线性的（×1.2 → 宽 1.203 /
+  高 1.195，×2 → 2.000 / 1.990，以预览 SVG 的边框为尺；#576 修复前 manifest 在 100 dpi Agg 上量，
+  会误报成 1.16）。**往小缩不线性**：每行有不随字号缩的最小高度（示意线、标记），×0.8 高度
+  只到 0.925——`loc_frac` 只钉左下角，拖下面两个角时不动的上边会漂几个 pt。所以**松手后按
+  成图实测再钉一次对角**（`canvas/legendCornerSettle`，#575 评审）：第一版成图一到，读它 exact
+  manifest 里图例的实际框，对角偏差超过 0.05 mm 就把 δ 补进**同一条历史**
+  （`documentStore.amendLast`：只在那条仍是最后一条、没有进行中的事务时成立，否则放弃——
+  绝不并进用户之后的操作）并再渲染一次；补正前先把预览**改挂**到第一版上、平移 δ、改等补正
+  后那一版（`svgPreviewStore.retargetPreview`），中间那一版的偏差用户看不见。依赖 manifest 的
+  框与画布一致（#576 / #579），否则越补越偏。补了个 `handleheight` 实测只到 0.888，不值得为此
+  新增属性。
 * 看护：`inspector/legendCard.test.tsx`、`inspector/legendSpacingCard.test.tsx`、
-  `inspector/controls/pickers.test.tsx`；Python 侧 `tests/test_legend_binding.py`、
+  `inspector/controls/pickers.test.tsx`、`canvas/inFigureDrag.test.tsx`（整体缩放与钉对角）；Python 侧 `tests/test_legend_binding.py`、
   `tests/test_legend_anchor.py`。

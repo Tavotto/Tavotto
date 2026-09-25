@@ -27,6 +27,33 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   位置**（2026-09-24 用户实测，慢图上停顿半秒）；而字符串没变，`reattachPreview` 的 effect 也不跑。
   看护：`canvas/dragReleaseSnapback.test.tsx`（**真渲染 PanelView**；`fakeRealtimeDrag.test` 手写
   innerHTML 摆 SVG，看不见这一层）。
+* **缩放预览只有一处**：`previewScale`（绕不动点的 `matrix(s,0,0,s,e,f) <原始>`，同样从 base
+  现算、同样前置于原始变换、`reattachPreview` 连同倍数一起重放）只给图例整体缩放用——
+  那里字号与间距同乘一个倍数，线性预览是准的；子图缩放仍然只给线框（matplotlib 重排后刻度与字号不跟着线性缩放，
+  假预览会骗人，见 `startAxesDrag` 的注释）。
+* **改挂只有一处**：`retargetPreview` 把已提交、还在等权威渲染的预览改挂到另一版上（账本换版、
+  只留平移、换等待目标），只在渲染 store 的同步回调里调用（早于 React 换 DOM）。现在只有图例
+  缩放的钉对角用它（见 `legend-entries-and-binding.md`）。
+* **重放预览用 `useLayoutEffect`**（`PanelView` 的 `mountedEditSvg` 那个 effect）：新 DOM 挂上与重放
+  在同一帧绘制之前完成；passive effect 可能先画出一帧没有预览的新图。
+* **换一版 SVG 先解码它嵌着的位图**（`lib/useDecodedSvg`，2026-09-25 用户报「松手后整张图
+  糊一下」）：imshow / pcolormesh 在预览 SVG 里是 `<image href="data:…">`，innerHTML 一换
+  浏览器异步解码，那一两帧是空白 / 低清的中间态。新字符串到了先用离屏 `Image.decode()`
+  解一遍、再交出去，**旧 DOM（连同挂着的预览位移）留到那时**；从无到有、纯矢量、撤下
+  （null）、没有 `decode` 的环境立即生效；等待上限 `SWAP_DECODE_CAP_MS`，绝不把新图扣住；
+  等待途中又来一版以最新为准。因此 `reattachPreview` 的 effect 认的是**真正挂进 DOM
+  的那一版**（`PanelView` 的 `mountedEditSvg`），不是 store 里刚到的那一版；几何交互同理
+  （#575 评审）：`store/mountedSvgStore` 记每个面板挂着的那份 SVG（记字符串不记键——不同变体
+  可能出同一份 SVG），命中层与选中框 / 手柄一律经 `useDisplayedExactManifest` 取 manifest，
+  权威那一版的 SVG 还没挂上画面时像权威缺席一样停摆，绝不让用户点着旧图、改新几何。
+  **诚实的限制**：本机 Chromium / WebKit 截图与录像都没复现出「糊」本身（截图会强制
+  同步解码），这一条防的是最可能的成因；用户机器上的实测才是验收。看护：
+  `canvas/renderSwapFeel.test.tsx`。
+* **「渲染中」角标过了 700ms 还没画完才亮**（同日，`PanelView.RenderStatusBadge`）：画布上已经
+  是用户要的样子时（预览平面 / 上一版挂着），每次松手都闪一下角标只是噪音。冷启动与
+  「挂着磁盘原图」（近似预览，画面与文档对不上）照旧立刻说。**`building` 不等于冷启动**：
+  SSE 的 `render.started` 每次渲染都写一条 `cold: false`，判据只能看 `cold`（第一版判错、
+  真浏览器里角标照闪才发现）。看护：`canvas/renderSwapFeel.test.tsx`。
 * **局部样式预览是白名单**（`lib/svgStyle.ts` 的 `STYLE_ADAPTERS`），默认不支持。
   通用规则是「只改本来就声明了该属性、且值不是 `none` 的叶子」，因此
   `fill: none` 的线不会被 facecolor 填实、箭头杆与箭头帽各得其所。文字是唯一

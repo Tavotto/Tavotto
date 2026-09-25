@@ -355,6 +355,7 @@ codex-plugin/
 ├── .codex-plugin/plugin.json          # 插件清单（Codex 认的唯一入口）
 ├── .mcp.json                          # MCP server 声明（本地 stdio）
 ├── assets/tavotto.svg                 # composer 图标 / logo
+├── integrations/configure.py         # 给非 Codex 宿主打印配置片段（只打印，不写文件）
 ├── mcp/
 │   ├── server.py                      # 启动器：找到装着 tavotto 的解释器再交棒
 │   ├── tavotto_mcp/                   # 协议 + 引擎桥（纯标准库 + tavotto 本体）
@@ -372,6 +373,7 @@ codex-plugin/
     │   ├── publication-style.md       #   尺寸字号 / 克制 / 组图
     │   ├── desktop-handoff.md         #   交接与退出码分诊
     │   ├── issue-reporting.md         #   脱敏 issue 草稿 + 用户同意
+    │   ├── other-hosts.md             #   Codex 以外的宿主：安装 / 重载 / 能力差异
     │   └── compatibility.md           #   能鼠标改什么 / 必须回代码改什么
     └── scripts/handoff.py             # 登记 →（必要时）跑脚本 → 唤起 Tavotto
 ```

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { t as translate } from '@/i18n'
+import { formatMessage, t as translate } from '@/i18n'
 import {
   ChevronRight,
   ImageOff,
@@ -18,11 +18,14 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import {
+  backendCodeMsg,
   backendErrorMsg,
+  extOf,
   renderUrl,
   runtimePreviewUrl,
   type PanelInfo,
   type RuntimeAssetInfo,
+  type UnsupportedAsset,
 } from '@/lib/api'
 import { runtimeSiblingOf } from '@/lib/assetSibling'
 import { formatCm } from '@/lib/units'
@@ -36,7 +39,7 @@ import {
   type AssetSortKey,
   type AssetTypeFilter,
 } from '@/store/assetBrowseStore'
-import { folderLabel, useAssetStore } from '@/store/assetStore'
+import { assetFolders, folderLabel, useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
@@ -56,7 +59,13 @@ import { ScriptLibrary } from './ScriptLibrary'
 
 /** 面板文件名（带扩展名）：同 stem 的 PDF / PNG 靠它区分 */
 const fileName = (id: string) => id.split('/').pop() ?? id
-const formatOf = (p: PanelInfo) => (p.kind === 'pdf' ? 'PDF' : 'PNG')
+/** 格式名（不翻译）。位图按扩展名说实话：以前一律写 PNG，JPEG / TIFF 素材也被叫成 PNG */
+const FORMAT_LABEL: Record<string, string> = { jpg: 'JPEG', jpeg: 'JPEG', tif: 'TIFF', tiff: 'TIFF' }
+const formatOf = (p: PanelInfo) => {
+  if (p.kind === 'pdf') return 'PDF'
+  const ext = extOf(p.id)
+  return FORMAT_LABEL[ext] ?? (ext.toUpperCase() || 'PNG')
+}
 
 type TypeFilter = AssetTypeFilter
 type SortKey = AssetSortKey
@@ -104,6 +113,7 @@ const itemId = (it: LibraryItem) => (it.kind === 'file' ? it.panel.id : it.asset
 
 export function AssetBrowser() {
   const panels = useAssetStore((s) => s.panels)
+  const unsupported = useAssetStore((s) => s.unsupported)
   const loading = useAssetStore((s) => s.loading)
   const loaded = useAssetStore((s) => s.loaded)
   const error = useAssetStore((s) => s.error)
@@ -149,10 +159,21 @@ export function AssetBrowser() {
     return map
   }, [objects])
 
-  const folders = useMemo(
-    () => [...new Set(panels.map((p) => p.folder))].sort(),
-    [panels],
-  )
+  // 来源选项也收「用不了的文件」所在的目录：一个子目录里只有范围之外的 TIFF 时，它得选得中，
+  // 否则那张清单按来源筛不出来（Codex #561）
+  const folders = useMemo(() => assetFolders(panels, unsupported), [panels, unsupported])
+
+  /** 用不了的文件跟着同一组搜索 / 来源 / 类型筛选走；「已使用」筛选下它们不可能出现 */
+  const unsupportedShown = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const { source: src, type: ty, usedOnly: used } = filters
+    if (used || (ty !== 'all' && ty !== 'raster')) return []
+    return unsupported.filter(
+      (u) =>
+        (src === 'all' || u.folder === src) &&
+        (!q || u.id.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)),
+    )
+  }, [unsupported, query, filters])
 
   const { source, type, sort, usedOnly } = filters
   const items = useMemo<LibraryItem[]>(() => {
@@ -393,7 +414,9 @@ export function AssetBrowser() {
 
           {!loaded && !error && <GridSkeleton columns={columns} />}
 
-          {loaded && !error && items.length === 0 && (
+          {/* 用不了的文件也是「有东西可说」：只有一张范围之外的 TIFF 的项目不是「还没有图」，
+              只搜中了它也不是「没有匹配」——空态与下面那张清单不同时出现 */}
+          {loaded && !error && items.length === 0 && unsupportedShown.length === 0 && (
             query || chips.length ? (
               <EmptyState icon={SearchX} title={ab('noMatch')} />
             ) : (
@@ -444,6 +467,11 @@ export function AssetBrowser() {
                 ),
               )}
             </ul>
+          )}
+
+          {/* 与素材卡同一条规则：加载过就显示保留下来的那份——刷新失败时卡片还在，这张清单也在 */}
+          {loaded && unsupportedShown.length > 0 && (
+            <UnsupportedAssets items={unsupportedShown} />
           )}
         </div>
 
@@ -1158,6 +1186,30 @@ function CardAction({
       <Icon size={ICON_SIZE.sm} />
       <span className="sr-only">{label}</span>
     </span>
+  )
+}
+
+/**
+ * 是素材、但用不了的文件（支持范围之外的 TIFF，issue #534）：不给卡片（没有尺寸、画不出来），
+ * 也不静默消失——每个文件一行，说清为什么、该怎么另存。原因由后端的 code 定，文案在
+ * `errors:backend.<code>`（与 422 / 导出失败同一句话）。
+ */
+function UnsupportedAssets({ items }: { items: UnsupportedAsset[] }) {
+  useTranslation('workspace')
+  return (
+    <div className="mt-2" data-asset-unsupported>
+      <p className="type-meta text-ink-3">{ab('unsupportedTitle')}</p>
+      <ul className="mt-1 space-y-1">
+        {items.map((u) => (
+          <li key={u.id} className="flex gap-1.5 text-xs text-ink-2" title={u.id}>
+            <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" aria-hidden />
+            <span className="min-w-0">
+              {formatMessage(backendCodeMsg(u.code, { file: u.name }, u.name))}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 

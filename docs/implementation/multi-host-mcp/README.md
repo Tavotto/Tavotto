@@ -4,8 +4,13 @@
 > 启动器与 server、同一套引擎、同一份核心 Skill。宿主之间的差异只在配置 schema、
 > Skill 入口、说明与验收。Codex 插件那条路一字未改（回归基线）。
 
-本文是实施基线、接口、用户路径、两组改动的边界、限制与回退。每个宿主的官方依据与分层验收
-矩阵随第二组改动（Tavotto/Tavotto#560）加进本目录，在它合并之前本目录只有这一份。
+本目录三份文件：
+
+| 文件 | 内容 |
+| --- | --- |
+| `README.md`（本文） | 实施基线、接口、用户路径、两组改动的边界、限制与回退 |
+| `hosts.md` | 每个宿主的官方依据（链接 + 查证日期 + 证据等级）、生成的配置形状、Skill 入口、确认加载的办法 |
+| `acceptance.md` | 分层验收矩阵（配置 / 工具流程 / Skill / 画布 / 交接），初值 `not_run`，逐行可追溯 |
 
 ## 实施基线（2026-09-24，main@3b9bc66）
 
@@ -45,7 +50,7 @@ Trae）的官方站点在本次执行环境里只能拿到搜索摘要，证据�
 ```text
 python3 <完整包>/integrations/configure.py --host <profile> --project-root <绝对路径>
         [--python <启动器解释器>] [--engine-python <引擎解释器>]
-        [--diagnose]
+        [--diagnose | --emit config|instructions]
 ```
 
 - `--host`：`cursor` `zcode` `dsh` `workbuddy` `claude-code` `claude-desktop` `trae` `vscode`。
@@ -53,6 +58,10 @@ python3 <完整包>/integrations/configure.py --host <profile> --project-root <�
 - stdout：那一家可合并的配置片段（DSH 是 Cordis YAML patch，其余 JSON）；stderr：合并到哪、
   授权目录、引擎状态与恢复步骤、怎样确认宿主真的加载了、Skill 怎么装。失败非零、stdout 为空。
 - `--diagnose`：改为输出一份机器可读 JSON（包 / 启动器探针 / 引擎 / 授权 / Skill），**不含配置**。
+- `--emit instructions`：没有经核实的原生 Skill 入口的宿主用的等价说明——就是包里（已中立化的）
+  SKILL.md 的正文，相对引用改写成包内绝对路径（`instruction_fallback`，不是第二份手写规则）。
+  写脚本前必读的 `figure-contract.md` / `publication-style.md` 的原文附在末尾（读不了本机文件的宿主，
+  例如 Claude Desktop 聊天，也拿得到完整契约）；命令示例里的脚本路径按平台加引号，Windows 用 `py -3`。
 - `--engine-python`：显式的引擎解释器**直接作为启动命令**（与 `--python` 二选一），并验证体检报的就是它。
 - 退出码：0 片段已打印（引擎没就绪也是 0，配置本身是对的）；2 参数错；3 启动器起不来 / 包不完整 /
   显式引擎解释器不可用 / 引擎可用但按这份配置起的 server 握手失败。
@@ -74,20 +83,22 @@ Claude Desktop 的 `APPDATA`）。不依赖 shell、`~` 展开、宿主变量语
 3. 引擎：已装 `pipx install "tavotto[worker]"` 的直接下一步；只有桌面版或什么都没有时，显式跑
    `<python> <包>/mcp/server.py --provision`（在 Tavotto 配置目录下建自管环境，不碰系统 Python）。
    `--health` 随时自检。
-4. `python3 <包>/integrations/configure.py --host <宿主> --project-root <项目绝对路径>`，
+4. `python3 <包>/integrations/configure.py --host <宿主> --project-root <项目绝对路径>`
+   （Windows 在 PowerShell 里用 `py -3 '<包>\integrations\configure.py' …`：那里的 `python3` 常常是 Store 别名），
    把 stdout 合并进 stderr 指明的那个文件 / 设置界面。
-5. Skill：原生入口的宿主把整个 `skills/tavotto-figure/` 目录复制到它的 Skill 目录（没有原生入口
-   的宿主的等价说明随 Tavotto/Tavotto#560 提供）。
+5. Skill：原生入口的宿主把整个 `skills/tavotto-figure/` 目录复制到它的 Skill 目录；其余用
+   `--emit instructions` 放进规则 / 智能体提示词。
 6. 按 stderr 的「确认加载」步骤核对，再在对话里调用 `tavotto_health`——它回报的
    `server.package_dir` 应是这份包（同名 tavotto 被多处登记时靠它分辨）。
 
 恢复分三种，不混：**只有桌面版**（`desktop_only`：交接能用，MCP 要一个 Python 环境 → provision
 或 pipx）；**引擎未就绪 / 太旧**（按 `tavotto_health` / `--health` 的 code 只修那一项）；**宿主没加载
-工具**（配置位置 / 宿主 MCP 列表 / 智能体未启用工具 / 组织策略——configure 的 stderr 写明了每家怎样确认加载）。
+工具**（配置位置 / 宿主 MCP 列表 / 智能体未启用工具 / 组织策略——见 `hosts.md` 的失败分档）。
 
 ## 已知限制、升级影响与回退
 
-- 包目录是配置里的绝对路径：**升级 = 解压新版到新目录 + 重新生成配置**（旧目录可留作回退，
+- 包目录是配置里的绝对路径：**升级 = 解压新版到新目录 + 重新生成配置 + 刷新技能**（重新复制
+  `tavotto-figure/`，或重新 `--emit instructions` 替换原来那段；旧目录可留作回退，
   回退就是把配置指回旧目录）。本轮没有自动更新链——不另起第三条更新通道。
 - 远程 SSH / WSL / Dev Containers / 云端 Agent：不在首版承诺内，本机绝对路径不能直接给远程会话用。
 - 共享的自管 runtime（`--provision`）没有跨宿主的锁：两个宿主正在用时不要重跑 provision。

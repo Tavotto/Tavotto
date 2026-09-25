@@ -18,7 +18,7 @@ import time
 
 import pytest
 
-from support import nativekit
+from support import nativekit, procprobe
 from tavotto.engine import nativehandoff, nativesession, runcodes
 
 pytestmark = nativekit.needs_user_python
@@ -104,8 +104,8 @@ def test_run_messages_only_stderr(tmp_path):
     assert code == 0, err
     assert "Tavotto Run" in err and "Beta" in err
     # 逐字节相等，不判子串：脚本只打一行与路径无关的固定文字，stdout 就必须
-    # 恰好是它。查 "Tavotto" 子串会被探针打印的路径（仓库目录名）误报；只判
-    # 「一行能 json.loads」又放得过插空白、改写内容。
+    # 恰好是它。查 "Tavotto" 子串会被探针打印的路径（仓库目录名）误报（#449）；
+    # 只判「一行 JSON、键集合对」又放得过空行、插空白、改写内容。
     assert out == STDOUT_SENTINEL + "\n", f"Tavotto 碰了用户的 stdout: {out!r}"
 
 
@@ -461,20 +461,8 @@ def test_ctrl_c_reaches_the_script_and_leaves_no_orphan(tmp_path):
     assert proc.returncode == 130, (
         f"没有透传脚本的退出码: {proc.returncode}\nstdout={out!r}\nstderr={err!r}"
     )
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline and _alive(child_pid):
-        time.sleep(0.05)
-    assert not _alive(child_pid), f"孤儿进程留下了: pid={child_pid}"
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:  # pragma: no cover - 别人的进程，不在本用例范围
-        return True
-    return True
+    # 不用 os.kill(pid, 0)：Windows 上那是 TerminateProcess（#523，见 tests/support/procprobe）
+    assert procprobe.wait_gone(child_pid, timeout=30), f"孤儿进程留下了: pid={child_pid}"
 
 
 # --------------------------------------------------------------------------

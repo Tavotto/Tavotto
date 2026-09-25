@@ -69,6 +69,12 @@ REPO = Path(__file__).resolve().parent.parent
 DEFAULT_FIGURES = REPO / "examples" / "figures"
 BOOT_TIMEOUT_S = 120  # 冷启动 + 首次 import 在 Windows runner 上可能很慢
 RENDER_TIMEOUT_S = 300  # 冷启动一个 matplotlib 会话
+#: 整个 `GET /api/diagnostics` 的等待上限（#512）。服务端的最坏耗时是
+#: `tavotto.app.DIAG_PROBE_WORST_CASE_S`（matplotlib 探测与 AI CLI 探测并行、
+#: 两者预算取大）；这里不能 import 应用（冒烟客户端跑在 runner 的裸 Python 上），
+#: 所以是第二份表达，由 `tests/test_diagnostics_budget.py` 对拍「客户端 ≥ 服务端
+#: 最坏耗时 + 余量」。余量留给项目注册表扫描与 Windows runner 上的线程调度。
+DIAGNOSTICS_TIMEOUT_S = 60
 
 #: `--expect-source bundled` 时必须从子进程环境里摘掉的变量。
 #:
@@ -598,7 +604,7 @@ def run_smoke(
         if expect_tutorial:
             _check_tutorial(base)
 
-        diag = _get(f"{base}/api/diagnostics")["checks"]
+        diag = _get(f"{base}/api/diagnostics", timeout=DIAGNOSTICS_TIMEOUT_S)["checks"]
         bad = [c for c in diag if not c["ok"]]
         print(f"✓ 诊断 {len(diag)} 项，其中未通过 {len(bad)}: {[c['id'] for c in bad]}")
         if timings:

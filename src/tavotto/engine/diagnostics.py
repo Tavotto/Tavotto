@@ -157,19 +157,25 @@ def project_roots(project: dict | None = None) -> list[tuple[str, str]]:
 
 
 def _only_openers(text: str) -> bool:
-    """全由开括号 / 开引号组成（含空串）：`@` 前只有这些时，`@` 前没有账号。"""
-    return all(c in "\"'`" or unicodedata.category(c) in ("Ps", "Pi") for c in text)
+    """全由开括号组成（含空串）：`@` 前只有这些时，`@` 前没有账号。
+
+    **引号不算**（#540）：`'@example.com` / `` `@example.com `` / `“@x.com` 里那一个引号就是
+    合法的本地部分（RFC 5321 的 atext 含 `'` 与 `` ` ``，SMTPUTF8 放开了其余 Unicode）。代价是
+    `"@app.route"` 这种引号里的装饰器也被抹——宁可多抹。"""
+    return all(unicodedata.category(c) == "Ps" for c in text)
 
 
 def _not_an_email(local: str, domain: str) -> bool:
     """负面清单：结构上确定不是地址的已知格式。`local` / `domain` 是这个 `@` 两侧、到 token 边界
     （或同一 token 里相邻的 `@`）为止的全部字符。每条的理由：
 
-    * `@` 前没有账号——`@app.route`、`@dataclass`、`(@某人`：装饰器与提及；
+    * `@` 前没有账号——`@app.route`、`@dataclass`、`(@某人`：装饰器与提及（只认开括号，引号不算）；
     * 域名不到两段——`user@localhost`、`HEAD@{0}`、`a@b`、`x@例子`：邮件地址的域名至少两段；
     * 域名是版本号——`numpy@1.26.4`、`pkg@2.0.0-beta`、`jsdom@30.0.1/lib/x.js`：包管理器的
       「包@版本」写法（只看第一个 `/` 之前、去掉句读之后是不是版本号，只认 ASCII 数字）。
 
+    域名是方括号里的地址字面量（`user@[IPv6:2001:db8::1]`、`user@[192.0.2.1]`，#540）不算「不到
+    两段」：`[` 开头的域名一律按地址抹，先于数段数。
     URL 里的 userinfo（`ssh://git@github.com/…`）不在清单上：整个 token 照样抹。
     判断前先解开 `\\uXXXX`（`json.dumps` 把全角句点写成 `\\u3002`，不解开就数不出两段）。
     """
@@ -178,6 +184,8 @@ def _not_an_email(local: str, domain: str) -> bool:
     )
     if _only_openers(local):
         return True
+    if domain.startswith("["):
+        return False
     labels = re.split(f"[{_EMAIL_DOTS}]", domain.rstrip(_EMAIL_DOTS))
     if len(labels) < 2 or not all(labels):
         return True
