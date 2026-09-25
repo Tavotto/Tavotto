@@ -26,7 +26,10 @@ Codex 沿「仓库根 → cwd」拼接项目指令、默认 `project_doc_max_byt
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -123,8 +126,10 @@ def _looks_like_repo_path(tok: str) -> bool:
     return tok.split("/")[0] in REPO_FIRST_SEGMENTS
 
 
-def _resolves(tok: str) -> bool:
-    return any((root / tok).exists() for root in RELATIVE_ROOTS)
+def _resolves(tok: str, cited_in: Path | None = None) -> bool:
+    # 子系统速查表里的相对写法相对它自己的目录（`workerd/AGENTS.md` 里的 `tests/x.rs`）。
+    own = (cited_in.parent,) if cited_in is not None and cited_in.name == "AGENTS.md" else ()
+    return any((root / tok).exists() for root in own + RELATIVE_ROOTS)
 
 
 def _is_test_token(tok: str) -> bool:
@@ -225,7 +230,8 @@ def test_rules_files_declare_their_origin():
 
 
 def _all_guidance_files() -> list[Path]:
-    files = [ROOT / s for s in SHEETS]
+    # 没有细则层的那几份（packaging / src-tauri / workerd）也是每次拼进来的指令，引用同样得在。
+    files = [ROOT / s for s in _budget().agents_files()]
     for layer in LAYERS:
         files.extend(_rules_files(RULES / layer))
     return files
@@ -242,7 +248,7 @@ def test_repo_paths_cited_in_guidance_exist():
         for tok in _tokens(path.read_text(encoding="utf-8")):
             if _is_test_token(tok) or not _looks_like_repo_path(tok):
                 continue
-            if not _resolves(tok):
+            if not _resolves(tok, path):
                 broken.append(f"{path.relative_to(ROOT).as_posix()} → {tok}")
     assert not broken, "这些路径引用指向不存在的文件:\n  " + "\n  ".join(broken)
 
@@ -263,7 +269,7 @@ def test_tests_cited_in_guidance_exist():
                 continue
             base = tok.rsplit("/", 1)[-1]
             idx = py_idx if base.endswith(".py") else web_idx
-            if base not in idx and not _resolves(tok):
+            if base not in idx and not _resolves(tok, path):
                 broken.append(f"{path.relative_to(ROOT).as_posix()} → {tok}")
     assert not broken, "这些用例引用指向不存在的文件:\n  " + "\n  ".join(broken)
 
@@ -296,7 +302,7 @@ def test_codex_auto_concatenation_stays_under_the_default_cap():
     """从任何一个有 AGENTS.md 的目录开工，Codex 拼进来的那一串都不越过 32 KiB（#608）。
 
     判据的主语：**Codex**（默认 `project_doc_max_bytes`）在**加载项目指令的那一刻**、从
-    **每一份 AGENTS.md 所在的目录**开工时拼出来的「根 → cwd」那一串的**原始字节**。更深的
+    **每一份 AGENTS.md（git 跟踪的，含 `.agents/` 这类隐藏目录）所在的目录**开工时拼出来的「根 → cwd」那一串的**原始字节**。更深的
     cwd 拼到的是最近祖先那一串，不会更长，所以按目录枚举就是全集。Codex 在文件之间另加的
     分隔符不在这里算——留给余量（治理后最长一串约 27 KB）。
 
@@ -317,3 +323,34 @@ def test_codex_auto_concatenation_stays_under_the_default_cap():
         "Codex 会截掉这些拼接串的末尾（把速查表里写成全文的要点迁进细则，见 docs/rules/README.md）:\n  "
         + "\n  ".join(over)
     )
+
+
+def test_every_rules_layer_is_routed_from_a_sheet():
+    """`docs/rules/` 下每一层都得有一份速查表负责路由（上面的 `SHEETS`）。
+
+    新加一层却忘了登记，那一层的细则既不进「一一对应」也不进「引用都在」——判据量不到它。
+    """
+    on_disk = {p.name for p in RULES.iterdir() if p.is_dir()}
+    assert on_disk, "docs/rules 下一层都没有——判据量在空集合上"
+    assert on_disk == set(LAYERS), f"没有速查表路由的层: {sorted(on_disk - set(LAYERS))}"
+
+
+def test_budget_json_covers_every_layer_and_every_agents_file():
+    """`agents_budget.py --json` 的报告里，每一层细则、每一份 AGENTS.md 都在（#620 评审）。
+
+    主语是**那份报告的输出**（真跑脚本），不是脚本里的某个函数：报告层写死清单时，函数对、
+    输出照样漏。
+    """
+    out = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "dev" / "agents_budget.py"), "--json"],
+        capture_output=True,
+        check=True,
+    ).stdout.decode("utf-8")
+    report = json.loads(out)
+    layers_in_report = {r["file"].split("/")[2] for r in report["rules"]}
+    on_disk = {p.name for p in RULES.iterdir() if p.is_dir() and any(p.glob("*.md"))}
+    assert on_disk and layers_in_report == on_disk, sorted(on_disk ^ layers_in_report)
+    files = set(_budget().agents_files())
+    assert set(SHEETS) <= files
+    assert {s["file"] for s in report["sheets"]} == files
+    assert {f for c in report["codex"] for f in c["files"]} == files

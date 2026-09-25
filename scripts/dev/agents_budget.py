@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -40,14 +40,6 @@ AUDIT_BASELINE_BYTES = {
     ".github/AGENTS.md": 31_773,  # 2026-09-18 纳入（任务书之外，用户拍板）
     "codex-plugin/AGENTS.md": 35_199,  # 2026-09-25 纳入（#608，main @ e6e6e643）
 }
-
-SHEETS = [
-    "AGENTS.md",
-    "src/tavotto/AGENTS.md",
-    "web/AGENTS.md",
-    ".github/AGENTS.md",
-    "codex-plugin/AGENTS.md",
-]
 
 #: 三类代表任务（任务书点名的）+ 一个「只开会话」的对照。每项 = 根 + 速查表 + 细则。
 TASK_CHAINS: dict[str, list[str]] = {
@@ -75,11 +67,8 @@ TASK_CHAINS: dict[str, list[str]] = {
     ],
 }
 
-#: Codex 自动拼接：cwd → 路径上的 AGENTS.md（只算存在的）。这几个是固定展示的代表 cwd；
-#: 硬线判的是 `codex_cwds()`——它另外把**每一份** AGENTS.md 所在的目录都算上，新加一层不用改这里。
-CODEX_CWDS = [".", "src/tavotto", "src/tavotto/engine", "web", "web/src", "codex-plugin", ".github"]
-#: 找 AGENTS.md 时跳过的目录：依赖 / 构建产物，与隐藏目录（`.github` 除外）。
-_PRUNE = {"node_modules", "target", "dist", "build", "__pycache__"}
+#: 速查表、细则层、Codex 拼接的 cwd 都从仓库现状推出来（`agents_files()` / `rule_layers()`），
+#: 不写死清单：写死的清单漏掉新加的一层时报告照样「全 ok」（#620 评审）。
 
 
 def size(rel: str) -> int:
@@ -94,37 +83,50 @@ def verdict(n: int, budget: tuple[int, int]) -> str:
     return f"OVER +{n - hi}"
 
 
+def agents_files() -> list[str]:
+    """仓库**跟踪**的每一份 AGENTS.md（仓库根相对、posix），含隐藏目录（`.agents/`、`.codex-plugin/`…）。
+
+    判据的主语是「这个仓库发出去的指令」：CI 的 checkout 里只有跟踪的文件，所以按
+    `git ls-files` 枚举；本机未跟踪的 AGENTS.md（个人草稿）不是仓库的契约，不算。
+    不用目录遍历：遍历要剪掉 node_modules / .venv 之类，剪枝规则一宽就把 `.agents/` 这种
+    正经目录一起剪掉了，门禁对那里的文件是瞎的（#620 评审实测 40 KB 也绿）。
+    git 不可用时直接抛——返回空列表会让「都没越线」在空集合上恒真。
+    """
+    out = subprocess.run(
+        ["git", "ls-files", "-z", "--", "AGENTS.md", "*/AGENTS.md"],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+    ).stdout.decode("utf-8")
+    files = {f for f in out.split("\0") if f and (ROOT / f).is_file()}
+    return sorted(files, key=lambda f: (f.count("/"), f))
+
+
 def codex_chain(cwd: str) -> list[str]:
+    """从 cwd 开工时 Codex 沿「根 → cwd」拼进来的那几份（只算跟踪的）。"""
+    tracked = set(agents_files())
     parts = [] if cwd == "." else cwd.split("/")
     out = []
     for i in range(len(parts) + 1):
         rel = "/".join(parts[:i] + ["AGENTS.md"])
-        if (ROOT / rel).is_file():
+        if rel in tracked:
             out.append(rel)
     return out
 
 
-def agents_files() -> list[str]:
-    """仓库里每一份 AGENTS.md（仓库根相对、posix）。判据的主语：Codex 在这棵树里能加载到的那些文件。"""
-    out = []
-    for dirpath, dirnames, filenames in os.walk(ROOT):
-        dirnames[:] = [
-            d for d in dirnames if d not in _PRUNE and (not d.startswith(".") or d == ".github")
-        ]
-        if "AGENTS.md" in filenames:
-            out.append((Path(dirpath) / "AGENTS.md").relative_to(ROOT).as_posix())
-    return sorted(out)
-
-
 def codex_cwds() -> list[str]:
-    """代表 cwd + 每一份 AGENTS.md 所在的目录。更深的 cwd 拼到的是最近祖先那一串，不会更长。"""
-    dirs = [f.rsplit("/", 1)[0] if "/" in f else "." for f in agents_files()]
-    return list(dict.fromkeys(CODEX_CWDS + dirs))
+    """每一份 AGENTS.md 所在的目录。更深的 cwd 拼到的是最近祖先那一串，不会更长，所以这就是全集。"""
+    return [f.rsplit("/", 1)[0] if "/" in f else "." for f in agents_files()]
+
+
+def rule_layers() -> list[str]:
+    """`docs/rules/` 下的每一层（子目录名）。"""
+    return sorted(p.name for p in (ROOT / "docs" / "rules").iterdir() if p.is_dir())
 
 
 def report() -> dict:
     sheets = []
-    for s in SHEETS:
+    for s in agents_files():
         n = size(s)
         budget = BUDGET_ROOT if s == "AGENTS.md" else BUDGET_SHEET
         sheets.append(
@@ -137,7 +139,7 @@ def report() -> dict:
             }
         )
     rules = []
-    for layer in ("repo", "backend", "frontend", "ci"):
+    for layer in rule_layers():
         for p in sorted((ROOT / "docs" / "rules" / layer).glob("*.md")):
             rules.append({"file": p.relative_to(ROOT).as_posix(), "bytes": p.stat().st_size})
     chains = []
@@ -185,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"  {s['bytes']:>7,} B  预算 {s['budget'][0]:,}–{s['budget'][1]:,}  {s['verdict']:<12} {s['file']}{base}"
             )
         print("== 细则（按需读）")
-        for layer in ("repo", "backend", "frontend", "ci"):
+        for layer in rule_layers():
             items = [x for x in r["rules"] if x["file"].startswith(f"docs/rules/{layer}/")]
             total = sum(x["bytes"] for x in items)
             biggest = max(items, key=lambda x: x["bytes"]) if items else None
