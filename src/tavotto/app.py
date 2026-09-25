@@ -6998,9 +6998,14 @@ def main():
         nonce = engine_session_client.relaunch_nonce(args.port)
         if nonce:
             url += "#dnonce=" + nonce
+        if args.no_browser:
+            # 没有浏览器可开（服务器上经 SSH 转发用）：换到的 nonce 只能靠这里
+            # 交给人，与首次启动打印带 nonce 的地址同一口径。不打印就等于白换。
+            print(f"* Tavotto 已在 {landing(args.port)} 运行")
+            print(f"* 打开 {url}")
+            return
         print(f"* Tavotto 已在 {landing(args.port)} 运行，打开现有窗口")
-        if not args.no_browser:
-            webbrowser.open(url)
+        webbrowser.open(url)
         return
 
     url = landing(port)
