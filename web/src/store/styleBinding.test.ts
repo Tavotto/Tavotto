@@ -1364,6 +1364,23 @@ describe('Codex #547 最后一轮评审（964ce71f）', () => {
     expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(12)
     expect(ov('b', 'axes_0.title', 'fontsize'), '样式的其余部分也落上去').toBe(11)
   })
+  it('P1 同一时刻没 manifest 的、手改过的图：仍只欠这一笔变化量，不拿整份样式冲掉手改', async () => {
+    fakeLibrary([record({ id: 's1', data: { element: { axis_label: { fontsize: 10 }, title: { fontsize: 11 } }, pt_basis: 'page' } })])
+    await seed([panel('a', 'FigA'), panel('b', 'FigB')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    // 用户在属性页里把 b 的标题改成 14：这一版还没渲染回来
+    s().commit(literal('手改标题'), (d) => {
+      const o = d.objects.find((x) => x.id === 'b') as PanelObject
+      o.overrides = o.overrides.map((v) => (v.gid === 'axes_0.title' ? { ...v, value: 14 } : v))
+    })
+    rerender('a')
+    await editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 })
+    rerender('b')
+    expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(12)
+    expect(ov('b', 'axes_0.title', 'fontsize')).toBe(14)
+  })
 })
 
 describe('撤销只退画布、不推回样式库（ADR 0081 §十二，用户 2026-09-25 拍板）', () => {

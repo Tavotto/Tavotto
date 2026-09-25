@@ -222,20 +222,19 @@ const missingNow = (doc: FigureDocument): string[] => panelsOf(doc).filter((p) =
 /**
  * `full`：此刻整份样式（`presetDelta(null, 样式)`）。**还没对齐过的新图**欠的是整份，不是这一笔变化量——
  * 存库在飞时加进来的图（自动对齐被队列挡着）只记变化量的话，渲染回来按欠账补了这一项、记成看过了，
- * 样式的其余部分永远落不上去（Codex #547 P1）。「新图」按没 manifest 时认得出的判据：本会话没看过，
- * 且一个 override 都没有 / 只有抄来的烘焙基线；带着别的 override 的（重开的已对齐图、手改过的）仍只欠变化量。
+ * 样式的其余部分永远落不上去（Codex #547 P1）。「新图」按没 manifest 时认得出的判据：一个 override 都没有 /
+ * 只有抄来的烘焙基线；带着别的 override 的（对齐过的、手改过的）仍只欠变化量，不冲掉手改。
  */
 function owe(doc: FigureDocument, delta: StyleProfileData, missingIds: string[], full: StyleProfileData) {
   const ids = new Set(missingIds)
   const missing = panelsOf(doc).filter((p) => ids.has(figKey(p)))
   if (!missing.length) return
   const key = ledgerKey(doc)
-  const done = seen.get(key)
   const assets = useAssetStore.getState().byId
   const map = pending.get(key) ?? new Map<string, StyleProfileData>()
   for (const p of missing) {
-    const fresh =
-      !done?.has(figKey(p)) && (!p.overrides.length || isCopiedBakedBaseline(p.overrides, assets[p.fileId]))
+    // 对齐过的图带着样式写的 override，合样式的图欠整份等于只欠这一笔：只看 override 就够
+    const fresh = !p.overrides.length || isCopiedBakedBaseline(p.overrides, assets[p.fileId])
     const owed = fresh ? full : delta
     if (!Object.keys(owed.element ?? {}).length && !owed.palette?.length) continue
     map.set(figKey(p), mergeDelta(map.get(figKey(p)), owed))
