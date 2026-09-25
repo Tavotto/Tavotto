@@ -1,0 +1,208 @@
+{
+ "kind": "tavotto-proof",
+ "version": 3,
+ "stem": "qa_E0",
+ "profile": {
+  "profile_id": "lab-publication-v1",
+  "profile_version": "1.1.0",
+  "label": "课题组出版规范 v1"
+ },
+ "page_mm": {
+  "w": 150,
+  "h": 100,
+  "margin": 0
+ },
+ "dpi": 600,
+ "formats": [
+  "pdf"
+ ],
+ "checks": [
+  {
+   "id": "font-family-substituted",
+   "severity": "warn",
+   "text": "图内文字用 sans-serif，规范要求 Times New Roman；该字体是常见替代品，说明目标字体未安装。",
+   "count": 1,
+   "object_ids": [
+    "p_m4buixll"
+   ],
+   "gids": [
+    "fig.texts_0",
+    "fig.texts_1",
+    "axes_0.title",
+    "axes_0.xlabel",
+    "axes_0.ylabel",
+    "axes_0.texts_0",
+    "axes_0.legend.texts_0",
+    "axes_0.xticks",
+    "axes_0.yticks",
+    "axes_1.title",
+    "axes_1.xlabel",
+    "axes_1.xticks",
+    "axes_1.yticks",
+    "axes_2.ylabel",
+    "axes_2.yticks"
+   ],
+   "detail": {
+    "family": "sans-serif"
+   }
+  },
+  {
+   "id": "text-weight-policy",
+   "severity": "suggestion",
+   "text": "规范建议 axis_label 的字重为 bold，当前 normal。",
+   "count": 1,
+   "object_ids": [
+    "p_m4buixll"
+   ],
+   "gids": [
+    "axes_0.xlabel",
+    "axes_0.ylabel",
+    "axes_1.xlabel",
+    "axes_2.ylabel"
+   ],
+   "detail": {
+    "role": "axis_label",
+    "want": "bold",
+    "got": "normal"
+   }
+  },
+  {
+   "id": "axis-label-format",
+   "severity": "suggestion",
+   "text": "坐标轴标题「t / s」不是规范的「Title (unit)」形式",
+   "count": 1,
+   "object_ids": [
+    "p_m4buixll"
+   ],
+   "gids": [
+    "axes_0.xlabel",
+    "axes_0.ylabel",
+    "axes_1.xlabel",
+    "axes_2.ylabel"
+   ],
+   "detail": {
+    "text": "t / s"
+   }
+  },
+  {
+   "id": "legend-frame",
+   "severity": "warn",
+   "text": "图例带边框，规范要求图例无框",
+   "count": 1,
+   "object_ids": [
+    "p_m4buixll"
+   ],
+   "gids": [
+    "axes_0.legend"
+   ],
+   "detail": {}
+  },
+  {
+   "id": "legend-font-size",
+   "severity": "warn",
+   "text": "图例字号的有效值 10.00 pt 不在规范的 8–9 pt 之间。",
+   "count": 1,
+   "object_ids": [
+    "p_m4buixll"
+   ],
+   "gids": [
+    "axes_0.legend"
+   ],
+   "detail": {
+    "effective_pt": 10
+   }
+  },
+  {
+   "id": "tick-direction",
+   "severity": "warn",
+   "text": "刻度朝向为 out，规范要求 in",
+   "count": 1,
+   "object_ids": [
+    "p_m4buixll"
+   ],
+   "gids": [
+    "axes_0.xticks",
+    "axes_0.yticks",
+    "axes_1.xticks",
+    "axes_1.yticks",
+    "axes_2.yticks"
+   ],
+   "detail": {
+    "direction": "out",
+    "want": "in"
+   }
+  },
+  {
+   "id": "bar-without-errorbar",
+   "severity": "suggestion",
+   "text": "柱状图没有误差棒。柱子若是多次测量的均值，规范要求标出误差。",
+   "count": 1,
+   "object_ids": [
+    "p_m4buixll"
+   ],
+   "gids": [
+    "axes_1"
+   ],
+   "detail": {}
+  },
+  {
+   "id": "out-of-page",
+   "severity": "error",
+   "text": "对象超出页面范围，超出部分不会出现在成图里",
+   "count": 1,
+   "object_ids": [
+    "p_m4buixll"
+   ],
+   "gids": [],
+   "detail": {}
+  }
+ ],
+ "check_counts": {
+  "error": 1,
+  "warn": 4,
+  "not_verifiable": 0,
+  "suggestion": 3
+ },
+ "not_verifiable": [],
+ "forced": true,
+ "acknowledged": [
+  "out-of-page"
+ ],
+ "check_failed": false,
+ "acknowledged_check_failed": false,
+ "objects": [
+  {
+   "type": "panel",
+   "name": "Fig_flagship",
+   "file": "Fig_flagship.pdf",
+   "mtime": 1790278532,
+   "script": "scripts/entry.py",
+   "overrides": 0,
+   "rect_mm": [
+    -13.9,
+    9.36,
+    177.8,
+    81.28
+   ]
+  }
+ ],
+ "scope": "original",
+ "ppi": null,
+ "background": "white",
+ "files": [
+  {
+   "name": "qa_E0.pdf",
+   "format": "pdf",
+   "bytes": 15208,
+   "px": null,
+   "mm": [
+    177.8,
+    81.28
+   ],
+   "vector": true
+  }
+ ],
+ "ignored_transforms": [],
+ "exported_at": "2026-09-25 03:36:06",
+ "tavotto_version": "0.16.0"
+}

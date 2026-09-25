@@ -1,0 +1,65 @@
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/renderStore.test.ts src/store/geometryAuthority.test.ts src/store/projectSwitchWorkspace.test.ts src/store/documentStore.test.ts
+### time=2026-09-24T19:05:42Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/web
+
+
+ Test Files  4 passed (4)
+      Tests  58 passed (58)
+   Start at  03:05:42
+   Duration  1.47s (transform 893ms, setup 597ms, import 702ms, tests 638ms, environment 1.87s)
+
+
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest-repro state06_cross_project_render.test.ts
+### time=2026-09-24T19:05:44Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=1
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/web
+
+ ❯ src/__qa_repro__/state06_cross_project_render.test.ts (2 tests | 2 failed) 5ms
+     × 切项目（clear）之后才回来的 A 响应：B 的渲染态里不应出现 A 的 manifest 3ms
+     × B 自己的同键渲染先回来、A 的旧回包后到：byKey 不应被 A 覆盖 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/__qa_repro__/state06_cross_project_render.test.ts > STATE-06：A 项目在途的渲染回包不得落进 B > 切项目（clear）之后才回来的 A 响应：B 的渲染态里不应出现 A 的 manifest
+AssertionError: A 的 manifest 落进了 B 的变体格: expected 'A-fig1' to be undefined
+
+- Expected:
+undefined
+
++ Received:
+"A-fig1"
+
+ ❯ src/__qa_repro__/state06_cross_project_render.test.ts:81:81
+     79|     const b = panelIn('pB')
+     80|     // 期望：B 里什么都没有（B 自己的渲染还没发/没回）
+     81|     expect(st.byKey[renderKeyOf(b)]?.manifest?.stem, 'A 的 manifest 落进了…
+       |                                                                                 ^
+     82|     expect(st.latest['fig1.pdf'], 'A 的回包推进了 B 的 latest 显示退路').toBeUnde…
+     83|     expect(exactPanelManifest(st, b), 'A 的 manifest 成了 B 的几何权威').toBeN…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/__qa_repro__/state06_cross_project_render.test.ts > STATE-06：A 项目在途的渲染回包不得落进 B > B 自己的同键渲染先回来、A 的旧回包后到：byKey 不应被 A 覆盖
+AssertionError: B 的几何权威被 A 的晚到回包覆盖: expected 'A-fig1' to be 'B-fig1' // Object.is equality
+
+Expected: "B-fig1"
+Received: "A-fig1"
+
+ ❯ src/__qa_repro__/state06_cross_project_render.test.ts:110:7
+    108|       exactPanelManifest(useRenderStore.getState(), panelIn('pB'))?.st…
+    109|       'B 的几何权威被 A 的晚到回包覆盖',
+    110|     ).toBe('B-fig1')
+       |       ^
+    111|   })
+    112| })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  03:05:44
+   Duration  580ms (transform 174ms, setup 110ms, import 125ms, tests 5ms, environment 261ms)
+
+

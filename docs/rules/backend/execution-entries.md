@@ -38,6 +38,13 @@
   结构性守卫：`tests/bridge/test_bridge_namespace.py::test_no_bare_sibling_import_survives_in_overrides`，
   装载清单与 `tests/import_architecture_baseline.json` 的 `extra_edges` 对拍在
   `tests/test_import_architecture.py`）。
+- **装载引擎代码的那一段不写字节码**（QA REL-01-B1）：engine 目录就是安装目录（macOS 上在
+  签过名的 `.app` 里），用户解释器没有 `-B`，而我们也不给它加（会关掉用户整个进程的缓存；
+  native 档明令不加标志）。所以 `worker.py` / `bridge_runner.py` 按文件装 `bridgeboot` 的那一下、
+  `load_engine_modules` 的装载窗口、`projectenv._PROBE_SRC` 执行 `worker.py` 那一段各自把
+  `sys.dont_write_bytecode` 打开、finally 还原；一次性的 `discover.TARGET_PARSE_ARGS` 直接带 `-B`。
+  新增「用户解释器执行安装目录里的引擎代码」的入口，要在 `tests/test_install_dir_bytecode_free.py`
+  加一条（它两条边都钉：安装目录零 .pyc、用户模块照常缓存）。
 - **`bridge_runner` / `bridgeboot` 启动阶段不许 import matplotlib**，
   钩子挂在 `sys.meta_path` 的后置 import 回调上。
 - **native 侧不许起后台线程**：Figure 归主线程，`LiveFigureSession` 有线程
@@ -45,3 +52,14 @@
 - **spike 不是产品**：`python -m tavotto.engine.bridge_spike` 没有稳定契约、
   没有接进 `tavotto` CLI，别在文档 / 官网 / release notes 里提它。
   **产品入口是 `tavotto run`**（`docs/rules/backend/tavotto-run-control-plane.md`）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 两条入口都经 `bridgeboot` 把引擎模块装进私有包（safe 的清单 `_ENGINE_MODULES`、native 的 `_PHASE1/_PHASE2`），用户的同名模块永远赢
+- 兄弟模块只在模块层平铺 import 并登记（函数体内裸 import 会命中用户文件）
+- native 侧不起后台线程
+- 装载引擎代码那一段不写字节码（用户解释器不加 `-B`）

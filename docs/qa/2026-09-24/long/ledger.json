@@ -1,0 +1,418 @@
+[
+  {
+    "case_id": "LONG-01",
+    "title": "单会话耐久（同进程同项目循环有效编辑 / 渲染 / undo-redo / 导出）",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "scripts/ci/soak.py::run_soak（lab main/nightly/release 档 100/500/800 轮；只断言渲染回 manifest、导出不报错、孤儿进程；不量身份 / 几何 / 数据 / 历史不变量，无 undo/redo；资源趋势只在有 /proc 的平台判定，macOS 上 analysis=unsupported）",
+      "tests/test_ci_qualification.py::TestSoakLeakDetection（只看护 soak.analyse 的斜率判据本身：线性 FD/RSS 增长判泄漏、高水位不判、样本不足 inconclusive）"
+    ],
+    "expected_outcome": "缩短档（16 min + 35 min 两次）内每一次渲染：gid 集合 == 基线、标题 == 'Panel A'、SVG 点序列比值 == [0,.9,.2,1]、生效的 pos_frac/loc_frac 锚点 == 声明值（≤0.005）、同一历史状态回访时 manifest 逐字相等且 SVG（抹白名单非语义字段后）相等；导出 PDF/PNG 均成功；脚本与数据 hash 不变；预热后 FD / 线程 / 进程数平稳，退出无残留 worker。",
+    "product_outcome": "自动成功",
+    "test_verdict": "partial",
+    "verdict_reason": "缩短档，不是规范的 2–4 小时档。功能不变量全部成立：16.0 min 档（962.9 s 墙钟，无空闲窗口）1 349 轮、21 584 次渲染全过五条不变量（21 576 次历史回访逐字相等），undo 7 530 / redo 3 262，导出 675×2 文件；35.0 min 延长档（2 103 s）3 444 轮、55 104 次渲染全过（55 096 次回访相等），undo 19 039 / redo 8 513，导出 1 722×2 文件，独立读取器复核 1 722 份 PDF MediaBox 与 1 722 份 PNG 尺寸 0 问题、同状态 PNG 字节确定。零失败、零 skip、未重试，脚本 / 数据 hash 不变，退出无残留。资源：FD 163、线程 6、进程 3、worker 1 全程恒定，TMPDIR 0 文件，engine 缓存 68 KB 恒定，data/cache 增长只来自 app.log 轮转（1 MiB×3 上限）。**判 partial 的原因**：Flask 父进程 RSS 在 35 min 档里持续上行——预热后前 1/3 中位数 52.7 MiB → 后 1/3 78.3 MiB（最小二乘 +48.6 MiB/h），超过 analyze_samples 定义的「后 1/3 ≤ 1.25×前 1/3」；16 min 档同样可见 49→56 MiB。导出作业表有 15 min TTL（exportjob._TTL_S），但曲线在 15 min 后没有立刻走平，最后 5 min 停在 76–77 MiB 附近。按规范「持续单调增长需调查、仅凭 RSS 不判泄漏」，记为**待调查**而非确认缺陷。首轮探针曾把 SVG 字节不等判红：判据主语错（SVG 含 dc:date 时间戳与 matplotlib 每次随机盐的 marker/clip id），列白名单 svg_normal 后重跑——不是产品缺陷。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428) / Darwin 27.0.0",
+      "arch": "arm64 (Apple Silicon, Mac mini)",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8",
+      "numpy": "2.4.3",
+      "render_backend": "RenderCore（默认）；批准字体经 TAVOTTO_FONTS_DIR 指向主工作区已 fetch 的 13 张脸（fetch_fonts.py --check 通过）",
+      "control_plane": "Python 渲染池（engine/pool.py EngineWorker；源码树未构建 workerd）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "browser": "未使用（本节无 Playwright 用例）"
+    },
+    "fixtures": [
+      {
+        "path": "$QA_SCRATCH/fx/projA/fig.py（docs/qa/2026-09-24/long/repro/make_fixtures.py 生成）",
+        "sha256": "0933178dcc3dc27f00527aded9f81e3d5294753b6d25c07ba96bfd2445f91988"
+      },
+      {
+        "path": "$QA_SCRATCH/fx/projA/data/points.csv（y=0,9,2,10）",
+        "sha256": "6c16f53de6d1ae93aad515c324bb39b7bdafc8bbd4631a0f87d3f3cc06a7f0d1"
+      },
+      {
+        "path": "$QA_SCRATCH/fx/projB/fig.py",
+        "sha256": "8f71fa6dfaae305144117ff78ed17513a88612aed4ce8e4cd02077812106cfb1"
+      },
+      {
+        "path": "$QA_SCRATCH/fx/projB/data/points.csv（y=0,2,9,10）",
+        "sha256": "10e03f295cd3c0e60a629e9326e1412090047f363c2680f3e2f69532103cf34a"
+      }
+    ],
+    "entry": "HTTP（真实 `python -m tavotto` 后端，端口 5307，会话认证开）",
+    "commands": [
+      "export QA_SCRATCH=/private/tmp/qa-long && mkdir -p $QA_SCRATCH/raw",
+      "TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 sh docs/qa/2026-09-24/long/repro/run_long_suite.sh $QA_SCRATCH 16 10 10   # 依次跑 LONG-01(16 min) / LONG-02(10 min) / LONG-03(10 min)",
+      "TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/long_probe.py --mode long01 --minutes 35 --fixtures $QA_SCRATCH/fx --out $QA_SCRATCH/run-long01-ext --keep-going",
+      "/Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/analyze_samples.py $QA_SCRATCH/run-long01 5",
+      "/Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/analyze_samples.py $QA_SCRATCH/run-long01-ext 5",
+      "/Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/check_exports.py $QA_SCRATCH/run-long01-ext $QA_SCRATCH/fx/projA/tavottofile/export"
+    ],
+    "exit_codes": {
+      "long_probe long01 16min": 0,
+      "long_probe long01 35min": 0,
+      "analyze_samples": 0,
+      "check_exports（35min）": 0
+    },
+    "evidence": {
+      "logs": [
+        {
+          "path": "docs/qa/2026-09-24/long/logs/LONG-01.log",
+          "sha256": "40b0af6fb2d651a8800480caefce123f7e83783b82e52f62af6ab30147b395ef"
+        },
+        {
+          "path": "docs/qa/2026-09-24/long/logs/LONG-01.ext.log",
+          "sha256": "76eecb18f4d653eb03e93e24cae2aa9d3c8ecda19583cb7240f6bab5249c7ed8"
+        }
+      ],
+      "result_summary": "16 min：21 584/21 584 渲染通过、675 导出、资源 stable；35 min：55 104/55 104 渲染通过、1 722 导出复核 0 问题、FD/线程/进程 stable，父进程 RSS drift（52.7→78.3 MiB 中位数）；两次 exit 0"
+    },
+    "artifacts": [
+      "导出物在 scratch（每轮 PDF+PNG，未入库）；sha256 逐个记在 events.jsonl 的 export 行，check_exports.py 复核 MediaBox / PNG 尺寸 / 同状态 PNG 确定性"
+    ],
+    "first_failed_invariant": null,
+    "mutation_check": null,
+    "mutation_check_reason": "探针是 repro 脚本不是提交的门禁；其判据的有效性由 RAND-01 的新用例（同一类锚点 / 历史回访判据）做了定点反证 M1，LONG-03 的故障注入则证明探针在真实失败下会记账（session_dead 被逐次计数）。",
+    "new_tests": [],
+    "product_bugs": [],
+    "gaps": [
+      "未跑 2–4 h / 24 h / 72 h 档；本次最长 35 min。",
+      "Flask 父进程 RSS 35 min 内 +48.6 MiB/h 的上行未定性：需要 2–4 h 档 + tracemalloc 快照对比（候选：导出作业表 15 min TTL 内的作业对象、日志 / 事件对象、分配器碎片）确认是否有界。",
+      "只覆盖后端 HTTP 路径；前端 heap、拖动首帧与提交后收敛延迟未采（无浏览器）。",
+      "编辑集合固定 7 条（样式 2、拖动 2、图幅 1、子图 1、图例字号 1），不含对齐 / 分布 / 多选。",
+      "导出只复核页面盒 / 像素尺寸 / 确定性，没有逐对象比对导出内容。",
+      "workerd（Rust supervisor）控制面未覆盖：源码树没有构建它，走的是 Python 池。"
+    ]
+  },
+  {
+    "case_id": "LONG-02",
+    "title": "项目切换与回收（A→编辑→导出→关闭→B 循环）",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "tests/test_projects.py::test_two_projects_open_at_once_and_pj_routes_requests（pj 路由不串，只看 figures_dir）",
+      "tests/test_projects.py::test_close_project_leaves_others_alone（关闭后 pj 409；不起真 worker）",
+      "tests/test_projects.py::test_switch_between_two_projects（只看 panels.figures_dir 与最近列表）",
+      "tests/test_rendercore_app.py::test_reset_projects_reaps_the_render_child（整体收尾时 render child 被收）"
+    ],
+    "expected_outcome": "每轮 A、B 同名脚本同名面板 Fig1.pdf：标题与点序列比值各是本项目真值（A=[0,.9,.2,1]，B=[0,.2,.9,1]）；关闭项目 ≤3.5 s 后该项目 worker 进程 0 个；预热后 FD / 线程 / 进程平稳，TMPDIR 无残留；退出无残留 worker。",
+    "product_outcome": "自动成功",
+    "test_verdict": "pass",
+    "verdict_reason": "缩短档：实际 10.0 min（603.5 s）214 个 A→B 循环（428 次开 / 关项目），2 568 次渲染全部通过不变量（标题、数据比值逐项目正确，无串项目），428 次导出成功；每次关闭后 worker 数 0（服务进程 + RenderCore render child 共 2 个进程恒定）；FD 87 恒定、线程 4、RSS 中位数前 1/3 60.4 MiB → 后 1/3 55.9 MiB（不增）。零失败、零 skip、未重试。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428) / Darwin 27.0.0",
+      "arch": "arm64 (Apple Silicon, Mac mini)",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8",
+      "numpy": "2.4.3",
+      "render_backend": "RenderCore（默认）；批准字体经 TAVOTTO_FONTS_DIR 指向主工作区已 fetch 的 13 张脸（fetch_fonts.py --check 通过）",
+      "control_plane": "Python 渲染池（engine/pool.py EngineWorker；源码树未构建 workerd）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "browser": "未使用（本节无 Playwright 用例）"
+    },
+    "fixtures": [
+      {
+        "path": "$QA_SCRATCH/fx/projA/fig.py（docs/qa/2026-09-24/long/repro/make_fixtures.py 生成）",
+        "sha256": "0933178dcc3dc27f00527aded9f81e3d5294753b6d25c07ba96bfd2445f91988"
+      },
+      {
+        "path": "$QA_SCRATCH/fx/projA/data/points.csv（y=0,9,2,10）",
+        "sha256": "6c16f53de6d1ae93aad515c324bb39b7bdafc8bbd4631a0f87d3f3cc06a7f0d1"
+      },
+      {
+        "path": "$QA_SCRATCH/fx/projB/fig.py",
+        "sha256": "8f71fa6dfaae305144117ff78ed17513a88612aed4ce8e4cd02077812106cfb1"
+      },
+      {
+        "path": "$QA_SCRATCH/fx/projB/data/points.csv（y=0,2,9,10）",
+        "sha256": "10e03f295cd3c0e60a629e9326e1412090047f363c2680f3e2f69532103cf34a"
+      }
+    ],
+    "entry": "HTTP（/api/projects/open|close + X-Tavotto-Project 头，端口 5307）",
+    "commands": [
+      "TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 sh docs/qa/2026-09-24/long/repro/run_long_suite.sh $QA_SCRATCH 16 10 10",
+      "/Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/analyze_samples.py $QA_SCRATCH/run-long02 3"
+    ],
+    "exit_codes": {
+      "long_probe long02": 0,
+      "analyze_samples": 0
+    },
+    "evidence": {
+      "logs": [
+        {
+          "path": "docs/qa/2026-09-24/long/logs/LONG-02.log",
+          "sha256": "aa05fc9c43f8fb72e312a782d4bef3369a9505fda45ec27f6c293760c44e678d"
+        }
+      ],
+      "result_summary": "214 循环、2 568/2 568 渲染、428 导出、关闭后 worker=0、exit 0"
+    },
+    "artifacts": [
+      "导出物在 scratch，sha256 记在 events.jsonl"
+    ],
+    "first_failed_invariant": null,
+    "mutation_check": null,
+    "mutation_check_reason": "未做：候选变异点（close_project 不调 shutdown_all）要改产品代码并重启后端跑 ≥1 个循环；本节时间给了 RAND-01 的新门禁反证。探针的「关闭后 worker 数」判据在 LONG-03 里被 SIGKILL 事件的进程计数间接证明是活的（worker_pids 读的是真实进程树）。",
+    "new_tests": [],
+    "product_bugs": [],
+    "gaps": [
+      "监听器（watcher 线程）只通过总线程数间接观察（线程数恒定），没有按对象点名。",
+      "未覆盖两个项目同时打开、交错渲染的并发形态（本用例是串行 A→B）。",
+      "缩短档 10 min，非 24 h 周档。"
+    ]
+  },
+  {
+    "case_id": "LONG-03",
+    "title": "故障注入（杀 worker、乱序回包、导出目录不可写、SVG 驱逐）",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "tests/test_worker_roundtrip.py::test_request_timeout_kills_and_rebuilds_worker（超时 → kill + reap + 下次 get 重建）",
+      "tests/test_worker_exit_report.py::test_a_hard_crash_reports_the_exit_status_and_the_python_stack（请求中进程自己崩 → EOF 分支 session_dead + 退出状态）",
+      "web/src/store/geometryAuthority.test.ts::乱序返回：晚到的旧变体不得把显示拽回去 > 先发的 C 晚于后发的 A 返回时，latest 仍然停在 A",
+      "web/src/canvas/alignUndoConvergence.test.tsx::对齐的响应晚于撤销的响应回来，最终仍然停在 A",
+      "web/src/store/svgMemoryBudget.test.ts::乱序返回：晚到的旧变体不许赖在预算之上 / 被清掉 payload 的那一版：诚实的显示，不丢语义（驱逐只丢 svg，manifest / rev / 几何权威保留）"
+    ],
+    "expected_outcome": "循环中注入：请求间 SIGKILL worker、请求进行中（冷启动 build 期间）SIGKILL worker、导出目录临时只读。每次故障要么透明恢复、要么非 200 且带错误文字；随后同一历史状态的渲染与故障前逐字相同（身份 / 数据 / 锚点不变），导出目录恢复后导出成功；脚本与数据不被改写；退出无残留 worker / 临时导出目录。前端乱序与驱逐由现有 vitest 断言覆盖且能被定点变异打红。",
+    "product_outcome": "安全停止",
+    "test_verdict": "pass",
+    "verdict_reason": "缩短档 10.0 min：413 轮 7 080 次渲染全过不变量，注入 472 次故障（459 次 SIGKILL worker、13 次导出目录只读），472/472 恢复到故障前同一状态；故障当下 424 次可见错误（请求间 kill：149 次 session_dead、9 次透明 200；请求中 kill：118 次 session_dead、26 次 kill 前已完成、13 次未赶上请求中），导出目录只读时报 tmp_dir_failed（非 200），恢复后导出成功，未留下 .tavotto-export-* 临时目录；364 次成功导出经独立读取器复核 MediaBox / PNG 尺寸全对、同状态 PNG 字节确定。产品结果记「安全停止」：故障时刻给出可见错误而不是自动成功，恢复靠下一次操作重建会话。前端 5 个 vitest 文件 57/57 通过，变异「晚到响应也推进 latest」使 2 条乱序用例以预期断言变红、还原后 17/17 绿。资源：analyze_samples 把 fds 标成 drift 只因个别样本恰逢 worker 被杀、重建中（157 vs 163），前后 1/3 中位数都是 163；RSS 中位数 184→186 MiB，线程 / 进程恒定，退出无残留。发现 1 个缺陷（见 product_bugs）：首轮冒烟（try03）里同一故障落进三种错误分类，确定性复现脚本 exit 1。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428) / Darwin 27.0.0",
+      "arch": "arm64 (Apple Silicon, Mac mini)",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8",
+      "numpy": "2.4.3",
+      "render_backend": "RenderCore（默认）；批准字体经 TAVOTTO_FONTS_DIR 指向主工作区已 fetch 的 13 张脸（fetch_fonts.py --check 通过）",
+      "control_plane": "Python 渲染池（engine/pool.py EngineWorker；源码树未构建 workerd）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "browser": "未使用（本节无 Playwright 用例）"
+    },
+    "fixtures": [
+      {
+        "path": "$QA_SCRATCH/fx/projA/fig.py（docs/qa/2026-09-24/long/repro/make_fixtures.py 生成）",
+        "sha256": "0933178dcc3dc27f00527aded9f81e3d5294753b6d25c07ba96bfd2445f91988"
+      },
+      {
+        "path": "$QA_SCRATCH/fx/projA/data/points.csv（y=0,9,2,10）",
+        "sha256": "6c16f53de6d1ae93aad515c324bb39b7bdafc8bbd4631a0f87d3f3cc06a7f0d1"
+      },
+      {
+        "path": "$QA_SCRATCH/fx/projB/fig.py",
+        "sha256": "8f71fa6dfaae305144117ff78ed17513a88612aed4ce8e4cd02077812106cfb1"
+      },
+      {
+        "path": "$QA_SCRATCH/fx/projB/data/points.csv（y=0,2,9,10）",
+        "sha256": "10e03f295cd3c0e60a629e9326e1412090047f363c2680f3e2f69532103cf34a"
+      }
+    ],
+    "entry": "HTTP（真后端 5307）+ vitest（jsdom）+ 池层 Python（缺陷复现）",
+    "commands": [
+      "TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 sh docs/qa/2026-09-24/long/repro/run_long_suite.sh $QA_SCRATCH 16 10 10",
+      "/Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/analyze_samples.py $QA_SCRATCH/run-long03 3",
+      "/Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/check_exports.py $QA_SCRATCH/run-long03 $QA_SCRATCH/fx/projA/tavottofile/export",
+      "cd web && pnpm install --frozen-lockfile --prefer-offline && NODE_OPTIONS=--no-experimental-webstorage pnpm vitest run src/store/geometryAuthority.test.ts src/store/svgMemoryBudget.test.ts src/canvas/alignUndoConvergence.test.tsx src/store/renderStore.test.ts src/store/documentStore.sequences.test.ts",
+      "PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/worker_death_classification.py"
+    ],
+    "exit_codes": {
+      "long_probe long03": 0,
+      "check_exports": 0,
+      "vitest（5 文件）": 0,
+      "vitest 变异 latest（2 文件）": 1,
+      "vitest 还原后": 0,
+      "worker_death_classification（复现缺陷）": 1
+    },
+    "evidence": {
+      "logs": [
+        {
+          "path": "docs/qa/2026-09-24/long/logs/LONG-03.log",
+          "sha256": "197800e2bbd32ed509974f612aef85a7bf89c9509653c2189a35c4e2077112ec"
+        }
+      ],
+      "result_summary": "7 080/7 080 渲染、472/472 故障恢复、364 导出复核 0 问题、vitest 57/57、变异 2 红→还原绿、缺陷复现 exit 1"
+    },
+    "artifacts": [
+      "364 份 PDF + 364 份 PNG 在 scratch 导出目录；sha256 在 events.jsonl，复核结果见日志附录 exports"
+    ],
+    "first_failed_invariant": null,
+    "mutation_check": {
+      "target_file": "web/src/store/renderStore.ts",
+      "mutation": "const fresher = seq >= (s.latestSeq[fileId] ?? 0) → const fresher = true || seq >= (…)（晚到的旧响应也推进 latest）",
+      "expected_red_case": "geometryAuthority.test.ts「先发的 C 晚于后发的 A 返回时，latest 仍然停在 A」+ alignUndoConvergence.test.tsx「对齐的响应晚于撤销的响应回来，最终仍然停在 A」",
+      "observed": "red",
+      "restored_green": true
+    },
+    "mutation_check_reason": null,
+    "new_tests": [],
+    "product_bugs": [
+      {
+        "summary": "Python 渲染池：worker 在两次请求之间被外部杀掉时，同一故障按时间窗落进三种错误分类——session_dead（带退出状态，EOF 分支）、code=''「worker 进程已退出」（request() 拿锁后 alive() 为假，无 code 无退出状态）、internal_error（alive() 为真但管道已关，stdin.write 抛 BrokenPipeError，不是 WorkerError，走 Flask 未处理异常）。恢复不受影响，但后两种拿不到 session_dead 的解释与 worker.log 指引，前端无法按 code 分类，app.log 记一条未处理异常。",
+        "repro": "PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/worker_death_classification.py   # 窗口 A → WorkerError(code=''), 窗口 B → BrokenPipeError，exit 1；HTTP 实测见 logs/LONG-03.log 的 try03 附录（between 时 3 种结果都出现过）",
+        "location": "src/tavotto/engine/pool.py EngineWorker.request（`if not self.alive(): raise WorkerError(\"worker 进程已退出\", …)` 与紧随其后的 `self.proc.stdin.write(...)`）",
+        "severity": "P3（错误分类 / 诊断口径分叉；无数据损坏，下一次操作自动重建）"
+      }
+    ],
+    "gaps": [
+      "磁盘写满未实测（只做了导出目录只读这一代理）；数据目录（TAVOTTO_DATA_DIR）整体断开未测。",
+      "环境准备取消、睡眠/唤醒未执行（需受管环境安装流程与真机睡眠）。",
+      "乱序回包与 SVG 驱逐只在 jsdom 单元层（mock engineRender）验证，没有在真后端 + 真浏览器里制造慢请求乱序。",
+      "workerd 控制面上的同一组故障未测。"
+    ]
+  },
+  {
+    "case_id": "RAND-01",
+    "title": "有模型的操作序列（选择/拖动/缩放/undo-redo 等，每步对照独立参考模型）",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "tests/test_override_sequences.py::test_random_sequences_keep_hot_equal_to_replay（加/改/删样式的随机全量列表；每步 HOT==CLEAR+REPLAY manifest+像素，末步 HOT==FRESH；失败 delta-debug 最小化，FIXED 固定回归 5 条）",
+      "tests/test_override_sequences.py::test_fixed_regressions（#412/#413/#414/#423 的最小化序列）",
+      "web/src/store/documentStore.sequences.test.ts（前端纯内存 commit/事务/drag/undo/redo/切画布，五条历史不变式 + 最小化）",
+      "tests/test_worker_roundtrip.py::test_frac_anchored_props_survive_geometry_moves（FigS3 的一条手写固定序列）"
+    ],
+    "expected_outcome": "新增生成器在 InvMix / InvCont 上抽 样式 / 拖动(pos_frac, loc_frac) / 挪子图 / 改图幅 / undo / redo，每步：HOT==CLEAR+REPLAY（manifest 逐字 + 像素逐字节）、生效拖动的锚点 == 测试侧算出的声明值（≤0.002）、回访历史状态逐字相同；结束 HOT==FRESH。生成器强度：六种动作都出现、≥80% 步改变列表、回访 ≥2 次。定点变异 M1（几何 key 判据恒 False）必须让新用例以不变式 1/2 变红，而旧随机用例因不含几何 prop 应保持绿（证明缺口真实存在）。",
+    "product_outcome": "自动成功",
+    "test_verdict": "pass",
+    "verdict_reason": "新用例 tests/test_override_history_sequences.py 默认 3 种子 8/8 通过（35.7 s），TAVOTTO_HIST_SEEDS=16 共 34/34 通过；校准（16 种子×2 图×12 步，400 次锚点比对）锚点最大残差 2.8e-16，列表变化步 384/384，历史回访 105 次，0 被拒。变异 M1 在副本源码上（-o pythonpath 指向副本；第一次没加 -o 时 pytest.ini 的 pythonpath=src 把副本盖掉、全绿——假绿，已识别并重跑）：新用例 5/6 条序列以「不变式 1：热态 ≠ 清空重放」红（最小化到 2 步：loc_frac 拖图例 → 改图幅），旧 test_override_sequences 全绿（0 failed）；还原后（正常源码）8/8 绿。规范要求的「选择 / 对齐 / 视图倍率 / 取消 / 旧响应 / 保存重开」在引擎层没有对应物，本次未纳入，见 gaps。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428) / Darwin 27.0.0",
+      "arch": "arm64 (Apple Silicon, Mac mini)",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8",
+      "numpy": "2.4.3",
+      "render_backend": "RenderCore（默认）；批准字体经 TAVOTTO_FONTS_DIR 指向主工作区已 fetch 的 13 张脸（fetch_fonts.py --check 通过）",
+      "control_plane": "Python 渲染池（engine/pool.py EngineWorker；源码树未构建 workerd）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "browser": "未使用（本节无 Playwright 用例）"
+    },
+    "fixtures": [
+      {
+        "path": "tests/support/invariant_figures.py（InvMix / InvCont 图库）",
+        "sha256": "5815771654ee54725253922d39f241723ec7126d914ee2831729e441e24b42e9"
+      }
+    ],
+    "entry": "pytest（worker 子进程经 pool.one_shot，科学栈解释器）",
+    "commands": [
+      "PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_override_history_sequences.py -p no:cacheprovider -rA",
+      "TAVOTTO_HIST_SEEDS=16 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_override_history_sequences.py -p no:cacheprovider -rA",
+      "TAVOTTO_HIST_SEEDS=16 PYTHONPATH=$PWD/src:$PWD/tests TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 TAVOTTO_DATA_DIR=$QA_SCRATCH/rand-data /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/rand_history_calibration.py",
+      "cp -R src $QA_SCRATCH/mut-src && （把 $QA_SCRATCH/mut-src/tavotto/engine/overrides.py 里 _is_geometry_key 的两处 return 改成 return False）",
+      "PYTHONPATH=$QA_SCRATCH/mut-src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_override_history_sequences.py tests/test_override_sequences.py -o pythonpath=$QA_SCRATCH/mut-src -p no:cacheprovider -q -rfE"
+    ],
+    "exit_codes": {
+      "默认 3 种子": 0,
+      "16 种子": 0,
+      "校准": 0,
+      "变异 M1": 1,
+      "还原后默认": 0
+    },
+    "evidence": {
+      "logs": [
+        {
+          "path": "docs/qa/2026-09-24/long/logs/RAND-01.log",
+          "sha256": "35bcff60c4741914f043932edb12f76e252f4f6eeb7a37de0d049ce7fdb99501"
+        }
+      ],
+      "result_summary": "默认 8 passed；16 种子 34 passed；校准残差 2.8e-16；M1 → 5 failed（新）/ 0 failed（旧）；还原 8 passed"
+    },
+    "artifacts": [],
+    "first_failed_invariant": null,
+    "mutation_check": {
+      "target_file": "src/tavotto/engine/overrides.py（在 scratch 副本上变异，未触碰 worktree）",
+      "mutation": "_is_geometry_key：`return isinstance(artist, Figure)` 与 `return prop in (\"position\", …) and isinstance(artist, Axes)` 都改成 `return False`（几何变动后不再重放 figure 锚定的 pos_frac / loc_frac）",
+      "expected_red_case": "tests/test_override_history_sequences.py::test_history_and_geometry_sequences（不变式 1 / 2）；对照：tests/test_override_sequences.py 应仍绿",
+      "observed": "red",
+      "restored_green": true
+    },
+    "mutation_check_reason": null,
+    "new_tests": [
+      "tests/test_override_history_sequences.py::test_generator_really_exercises_history_and_geometry[InvMix|InvCont]",
+      "tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix|InvCont-0..2]"
+    ],
+    "product_bugs": [],
+    "gaps": [
+      "选择、对齐、分布、视图倍率、手势取消、旧响应、保存/重开是前端 / 文档层概念，引擎层随机序列量不到；前端 documentStore.sequences 覆盖 commit/txn/undo，但没有与真实渲染结果对拍。",
+      "拖动只覆盖 manifest 宣称 draggable 的元素（InvMix：3 个 patch + 图例；InvCont：图例），没有文字 pos_frac（InvPar 上才有，未纳入以控制时长）。",
+      "只量两张图；InvCbar / InvPar / InvTight 未纳入。"
+    ]
+  },
+  {
+    "case_id": "RAND-02",
+    "title": "随机深度（默认少量种子 + nightly TAVOTTO_SEQ_SEEDS=32；有效操作比例）",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "tests/test_override_sequences.py::test_random_sequences_keep_hot_equal_to_replay（默认 8 种子 × 2 图 × 10 步；lab nightly 32 种子分 4 片）",
+      "tests/test_override_sequences.py::test_the_candidate_pool_is_wide（候选 ≥20 组、≥3 种角色——量的是候选池，不是抽出来的序列是否有效）",
+      "tests/test_override_sequences.py::test_seed_slice_semantics（分片合同）"
+    ],
+    "expected_outcome": "默认种子与 32 种子都全绿；有效操作比例（与上一步相比 manifest 或像素变化）高、列表级 no-op 少、没有被拒；并如实报告序列覆盖了哪些角色 / 是否包含几何类 prop。",
+    "product_outcome": "自动成功",
+    "test_verdict": "partial",
+    "verdict_reason": "默认 8 种子：25 passed、1 skipped（KNOWN 为空列表导致的空参数集，test_known_divergences_still_diverge——预期内的空集，不是意外 skip）；TAVOTTO_SEQ_SEEDS=32：73 passed、1 skipped（同一条），未重试。有效操作统计（32 种子 × 2 图 × 10 步 = 640 步，独立记账版与被测 _sequence 逐字一致后才计数）：InvMix 有效 311/320=97.2%、InvCont 315/320=98.4%，列表级 no-op 各 2 步（add 了已生效的同一组），被拒 0；change 采样不出新值退化为删 0 次。但几何 / 拖动类 prop（pos_frac、loc_frac、position、size_mm、xlim、ylim、xscale…）出现 0 次、角色只有 collection/fill/legend/line/patch/scatter/bar/errorbar/stem 等样式角色——强度真实但**维度缺失**，所以判 partial；缺口由 RAND-01 新用例补上并反证（M1 下旧用例 0 failed 正是这个缺口的实证）。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428) / Darwin 27.0.0",
+      "arch": "arm64 (Apple Silicon, Mac mini)",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8",
+      "numpy": "2.4.3",
+      "render_backend": "RenderCore（默认）；批准字体经 TAVOTTO_FONTS_DIR 指向主工作区已 fetch 的 13 张脸（fetch_fonts.py --check 通过）",
+      "control_plane": "Python 渲染池（engine/pool.py EngineWorker；源码树未构建 workerd）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "browser": "未使用（本节无 Playwright 用例）"
+    },
+    "fixtures": [
+      {
+        "path": "tests/support/invariant_figures.py（InvMix / InvCont 图库）",
+        "sha256": "5815771654ee54725253922d39f241723ec7126d914ee2831729e441e24b42e9"
+      }
+    ],
+    "entry": "pytest",
+    "commands": [
+      "PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_override_sequences.py -p no:cacheprovider -q -rA",
+      "TAVOTTO_SEQ_SEEDS=32 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_override_sequences.py -p no:cacheprovider -q -rA",
+      "TAVOTTO_SEQ_SEEDS=32 PYTHONPATH=$PWD/src:$PWD/tests TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 TAVOTTO_DATA_DIR=$QA_SCRATCH/rand-data /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/rand_effective_ops.py"
+    ],
+    "exit_codes": {
+      "默认 8 种子": 0,
+      "32 种子": 0,
+      "有效操作统计": 0
+    },
+    "evidence": {
+      "logs": [
+        {
+          "path": "docs/qa/2026-09-24/long/logs/RAND-02.log",
+          "sha256": "537d0d1d3aa52de4a71eebff2ff59ea5bfa3aa7a3b51b1647f682419cd8c21c5"
+        }
+      ],
+      "result_summary": "默认 25 passed/1 skipped；32 种子 73 passed/1 skipped；有效步 97.2% / 98.4%，几何 prop 0 次"
+    },
+    "artifacts": [],
+    "first_failed_invariant": null,
+    "mutation_check": null,
+    "mutation_check_reason": "本条是对既有门禁的强度度量，不新增断言；对它的维度缺口的反证已在 RAND-01 的 M1 里完成（M1 下 tests/test_override_sequences.py 0 failed）。",
+    "new_tests": [],
+    "product_bugs": [],
+    "gaps": [
+      "既有随机序列不含任何几何 / 拖动 prop（已由 RAND-01 新用例补，默认 3 种子；是否也进 nightly 的 TAVOTTO_SEQ_SEEDS 扩展由维护者决定——新用例用的是独立的 TAVOTTO_HIST_SEEDS）。",
+      "前端 documentStore.sequences.test.ts 的有效操作比例未统计（其 run() 未导出，需要改测试文件才能记账）。",
+      "高风险混合选择的专门种子未加：引擎层没有「选择」概念。"
+    ]
+  }
+]

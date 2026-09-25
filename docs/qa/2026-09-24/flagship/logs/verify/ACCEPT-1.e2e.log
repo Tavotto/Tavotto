@@ -1,0 +1,8 @@
+
+Running 2 tests using 1 worker
+
+[e2e 假实时] 首帧 54.10000002384186ms · 40/40 帧（rAF 合并）· commit→权威 41.39999997615814ms
+  ✓  1 [chromium] › e2e/fake-realtime.spec.ts:14:1 › 拖图内元素：预览跟手、拖动期间零后端、松手一次定稿 (18.1s)
+  ✓  2 [chromium] › e2e/multi-select-geometry.spec.ts:104:1 › 图内混合多选整组拖动：锚点 = 独立模型，撤销 / 重做回到对应位置 (19.6s)
+
+  2 passed (38.2s)

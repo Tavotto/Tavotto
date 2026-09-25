@@ -19,9 +19,9 @@
   素材卡角标、素材说明条、接入中心每一行、属性栏那条提示。按状态查句子会让
   只读项目里的用户一直等一个永远不来的结果（`auto_linkable` 有四个 code，
   一个是"马上就好"、三个是"不做点什么永远不会好"）。
-- **持有者只有 `store/projectReadinessStore.ts`**：并发纪律与 `assetStore`
-  逐条相同（请求序号挡旧响应、发请求那一刻的 pj 挡串项目、同批合并、
-  `force` 另起一次、失败保留上一次成功那份）；**fingerprint 没变时连报告
+- **持有者只有 `store/projectReadinessStore.ts`**：并发纪律取 `assetStore` 的这几条
+  （请求序号挡旧响应、发请求那一刻的 pj 挡串项目、同批合并、`force` 另起一次、
+  失败保留上一次成功那份；`assetStore` 的全文在 `asset-library.md`，它另有项目代际）；**fingerprint 没变时连报告
   对象的引用都不换**。刷新挂在 `liveSync.refreshAssetsAndSync()` 一处，
   与素材清单同一批事件、同一个 `force` 语义。
 - **开关只有 `uiStore.registryOpen`**（`RegistryDialog` 的文件名与导出名保留）。
@@ -128,3 +128,23 @@
   `canvas/panelReadinessEntry.test.tsx`、`components/inspector/panelCapabilityNote.test.tsx`、
   `canvas/drawerViewportResize.test.tsx`、`store/uiStore.test.ts` 的两个左栏
   describe；e2e `a11y.spec.ts` 的接入状态两条 + `golden-paths.spec.ts`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 句子只有 `statusLabel()` / `reasonText()`（读 `reason_code`）
+- `allEditable` 一档不逐张重复
+- 「没测量」三档不压扁
+- 界面不执行动作、冲突不预选
+- 首开的运行目录确认框只翻译后端的三档载荷、歧义不预选、「运行」一次 PATCH、「稍后」留在错误块
+- 跑前的依赖授权框只翻译整份联合计划、先绑定计划再只发 plan_id、blocked 摆理由不装、「不准备直接运行」是明确的 skip
+- 装齐的用户环境排在安装目标前、只交 id 采用，后端已自动改用时不弹框、通知轨给「改回」（ADR 0079）
+- 侧栏「偏好」与「此刻开着」是两件事、自动让位绝不写回偏好
+- 切项目的列表只有工作区抽屉一份、顶栏项目名只开抽屉、收藏按路径发单个操作（不发整张列表）、切项目与改收藏各自串行
+- 元素树行 memo、props 只收显示字段（不收 `panel` / `el`）、回调树级稳定
+- 样式面板（ADR 0081）不判规范（「不合规」只按对象 · gid · `propertyPath` 认回问题清单已有的那一条，`cellIssues`）、数字是页面 pt（× `panelScale`，写入 ÷ 回去）、多个值不压扁
+- **应用样式只有绑定一条路**（`styleBinding`）：库写入一条队列、写文档前比代次、只认精确 manifest、欠账、写入前过 `effectiveChanges`（已合样式零 commit）、future 非空时不自动写、撤销只退画布并标「已脱离」（不推回库）
+- 重跑后脚本赢：不自动对齐，面板给「N 处不一致」+「对齐」，样式写的 override 登记在 `style.owned`、脚本改了（`value_original` ≠ 基线）就让位，用户写过的当场注销（ADR 0081 §十三）

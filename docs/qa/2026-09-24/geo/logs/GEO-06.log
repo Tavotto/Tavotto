@@ -1,0 +1,16 @@
+# case: GEO-06
+# time: 2026-09-25T03:13:20
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t "GEO-06"
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed | 28 skipped (32)
+   Start at  03:13:20
+   Duration  1.04s (transform 324ms, setup 152ms, import 268ms, tests 278ms, environment 266ms)
+
+[exit=0]
+

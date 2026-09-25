@@ -1,0 +1,14 @@
+{
+ "id": "Fig_flagship.pdf",
+ "patches": [
+  {
+   "gid": "fig.texts_0",
+   "prop": "pos_frac",
+   "value": [
+    0.5511672529581069,
+    0.053578509753757504
+   ]
+  }
+ ],
+ "inline_svg": true
+}

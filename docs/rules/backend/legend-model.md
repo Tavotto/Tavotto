@@ -67,3 +67,17 @@
   预览里图例可见、会话里图例隐藏时，补的那次 draw 同样跳过图例（3.8.4 / 3.10.8 / 3.11.1
   都量过）。看护 `tests/test_hidden_legend_geometry.py`（七条：三种别的 dpi 的 draw、预览
   显示 / 会话隐藏那格、藏 axes、隐藏 == 显示、可见图例不受影响）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 重建型 prop 一律 `rebuild_legend`，不把 `legend_handles` 副本喂回
+- 脱开的项 = 脚本原样 + 文档里的 handle_*（没有会话内的 custom_base）
+- 三条位置 prop 写槽位再整体重建，拖动过即绝对定位
+- `loc_anchor` 的 `null` 是取值
+- 隐藏图例的文字几何按文档 dpi 现排（`manifest._layout_undrawn_legends`），不靠上一次 draw
+- 自定义 handler 画的整格在不跟随时定格复刻
+- 指纹带虚线节奏

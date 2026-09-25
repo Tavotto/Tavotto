@@ -166,6 +166,10 @@ async function resetForNewProject() {
   useRuntimeAssetStore.getState().clear()
   // 素材库的搜索词与筛选说的是旧项目的目录与素材，跟着清
   useAssetBrowseStore.getState().clear()
+  // 素材清单本身也属于旧项目：面板、「无法使用」清单与由它们派生的来源目录。不清的话，
+  // 新项目的 /api/panels 挂起或失败时 B 下面显示的是 A 的卡片和 A 的文件名（#577）；
+  // 换代同时作废 A 还在飞的那次请求
+  useAssetStore.getState().clear()
   // 版本缩略图按 (项目, 素材版本, 变体) 缓存 blob：换项目时整表释放，
   // 既是回收 blob，也是防止旧项目的图被当成新项目某个版本的预览
   clearVariantPngCache()

@@ -52,3 +52,16 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   / `lib/canvasTextFont.test.ts` / `TextSection.test.tsx` / `textStyleBar.test.tsx`
   / `canvas/TextView.test.tsx` / `canvas/contextBar.test.tsx`；Python 侧
   `tests/test_typography_families.py`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 不许按对象类型 switch 写属性
+- 值四档不压扁
+- `propertyPathOf` 唯一
+- 画布字体族闭集与后端同源
+- invalid 输入不开事务不 clamp
+- 字形归属读生成的覆盖表不读浏览器字体栈

@@ -1,0 +1,30 @@
+# cmd: TAVOTTO_CI_STATE_ROOT=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/ci-state TAVOTTO_NO_TELEMETRY=1 TAVOTTO_NO_UPDATE_CHECK=1 /opt/homebrew/opt/python@3.13/libexec/bin/python3 scripts/ci/lab_acceptance.py --dist /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/dist
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:26:53Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+候选 wheel: tavotto-0.16.0-py3-none-any.whl
+sha256: d82ca78111864f72833891563cbcf0f5209c2d658c510344cd2e959a4a11d307
+大小: 11587887 字节
+
+### 候选包验收
+
+`tavotto-0.16.0-py3-none-any.whl`  sha256 `d82ca78111864f72…`
+
+| 项目 | 结果 | 细节 |
+| --- | --- | --- |
+| import tavotto | ✅ | 版本 0.16.0 |
+| 版本号非空 | ✅ | 0.16.0 |
+| 包内前端产物 web/index.html | ✅ | 在 |
+| worker 入口 engine/worker.py | ✅ | 在 |
+| patch 规范化 engine/patchspec.py | ✅ | 在 |
+| 出版规范 profiles/publication.json | ✅ | 在 |
+| 批准字体 resources/fonts/（13 张脸） | ✅ | 齐 |
+| 画布字形覆盖表 pdfbackend/canvas_coverage.json | ✅ | 在 |
+| 运行时依赖闭包零 PyMuPDF | ✅ | 干净 |
+| console script 存在 | ✅ | /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/ci-state/tmp/venv-acceptance-dl8nvlyd/bin/tavotto |
+| tavotto --help | ✅ | ok |
+| tavotto doctor --json | ✅ | 输出合法 JSON |
+| 端到端冒烟（smoke_app） | ✅ | 启动/渲染/热渲染/导出/覆盖导出/干净退出 |
+
+候选包验收：通过
+# exit: 0

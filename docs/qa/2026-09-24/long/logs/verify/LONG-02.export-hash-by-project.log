@@ -1,0 +1,7 @@
+# LONG-02 复核补充：每个项目导出文件 sha256（导出当时记录）的分布；两项目不重叠 = 导出层未串项目
+('projA', 'pdf') {'59d2bb6c4ea7b7cf3775aa472f7c6d86d5c1aa3d0fd69c7a024cf2e118d07abb': 236}
+('projA', 'png') {'5b4aaf3f407a24351dce39561c42e4416ec473cd29460c2ea11398b5b604c7c1': 236}
+('projB', 'pdf') {'03ed2848079f6fe911b62b2a0d3652ae3568566e5143554c5eb774ad87b54f42': 236}
+('projB', 'png') {'727d8640df17b3dbe6cc85cae0b102555132b42f2bb3bcd5de68898130eb3ffd': 236}
+png overlap A∩B: set()
+pdf overlap A∩B: set()

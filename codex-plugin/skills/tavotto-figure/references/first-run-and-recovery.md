@@ -112,6 +112,7 @@ clone 源码或本地构建**。已经画好的图和脚本都在磁盘上，联
 | `workspace_confirmation_declined` | `ask_user_again` | 用户看着框拒绝了：换个目录再问一次 |
 | `workspace_confirmation_cancelled` | `ask_user_again` | 框被关掉：可交互会话里请用户重新发起；`codex exec` 拿不到确认 |
 | `workspace_confirmation_no_response` | `fix_host_wiring` | **框从没到过用户面前**（超时/断开）：查宿主接线，别再让用户点 |
+| `workspace_confirmation_auto_declined` | `fix_host_wiring` | **宿主当场替用户回了拒绝**（Codex「完全访问」/ `codex exec`）：请用户把权限切到「请求批准」再开，别再让用户点 |
 | `workspace_confirmation_error` | `fix_host_wiring` | 宿主回了错误：看宿主日志 |
 | `workspace_confirmation_stale` | `ask_user_again` | 批准的目录在授权落地前变了：核对路径后重新批准 |
 | `workspace_confirmation_required` | `send_absolute_path` | 还没给出可展示的目录：改传绝对、已存在的路径 |

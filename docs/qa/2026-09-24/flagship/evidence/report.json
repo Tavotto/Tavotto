@@ -1,0 +1,5867 @@
+{
+  "started_at": "2026-09-24T19:25:44.865Z",
+  "port": 5306,
+  "entry": "HTTP + Playwright Chromium（浏览器模式落地 URL，会话认证开）；非桌面壳",
+  "fixture": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture",
+  "run_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/final",
+  "phases": [
+    {
+      "name": "P0 fixture baseline",
+      "started_at": "2026-09-24T19:25:44.866Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:25:45.045Z"
+    },
+    {
+      "name": "P1 first launch (fresh config)",
+      "started_at": "2026-09-24T19:25:45.045Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:25:45.749Z"
+    },
+    {
+      "name": "P2 first open: workdir confirmation (D1 ambiguity)",
+      "started_at": "2026-09-24T19:25:45.749Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:16.769Z"
+    },
+    {
+      "name": "P3 environment identity (E1)",
+      "started_at": "2026-09-24T19:26:16.769Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:17.232Z"
+    },
+    {
+      "name": "P4 data identity (D1) + external file + local module",
+      "started_at": "2026-09-24T19:26:17.233Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:17.235Z"
+    },
+    {
+      "name": "P4b zero-edit export E0 (calibration baseline)",
+      "started_at": "2026-09-24T19:26:17.236Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:19.936Z"
+    },
+    {
+      "name": "P5 single drag (suptitle)",
+      "started_at": "2026-09-24T19:26:19.936Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:22.153Z"
+    },
+    {
+      "name": "P5b calibration export Ecal (same RenderCore path, after first edit)",
+      "started_at": "2026-09-24T19:26:22.153Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:24.650Z"
+    },
+    {
+      "name": "P6 mixed multi-select drag (G2)",
+      "started_at": "2026-09-24T19:26:24.651Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:28.187Z"
+    },
+    {
+      "name": "P7 group scale of two Axes (se handle)",
+      "started_at": "2026-09-24T19:26:28.187Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:31.339Z"
+    },
+    {
+      "name": "P8 font size change (axes_0.xlabel → 14)",
+      "started_at": "2026-09-24T19:26:31.340Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:34.306Z"
+    },
+    {
+      "name": "P9 align bottom (xlabels + provenance text)",
+      "started_at": "2026-09-24T19:26:34.307Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:37.321Z"
+    },
+    {
+      "name": "P10 distribute horizontally (titles + suptitle)",
+      "started_at": "2026-09-24T19:26:37.322Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:40.319Z"
+    },
+    {
+      "name": "P11 undo ×2 / redo ×2 with authoritative re-render",
+      "started_at": "2026-09-24T19:26:40.319Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:55.637Z"
+    },
+    {
+      "name": "P12 save + quit app and worker",
+      "started_at": "2026-09-24T19:26:55.638Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:26:58.648Z"
+    },
+    {
+      "name": "P12b quit app and worker",
+      "started_at": "2026-09-24T19:26:58.648Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:27:00.673Z"
+    },
+    {
+      "name": "P13 reopen (same data/config dirs) + authoritative re-render",
+      "started_at": "2026-09-24T19:27:00.673Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:27:10.403Z"
+    },
+    {
+      "name": "P14 re-edit after reopen (drag axes_1.xlabel)",
+      "started_at": "2026-09-24T19:27:10.404Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:27:12.817Z"
+    },
+    {
+      "name": "P15 final export E1 (PDF) + independent reading",
+      "started_at": "2026-09-24T19:27:12.818Z",
+      "ok": false,
+      "finished_at": "2026-09-24T19:27:15.161Z"
+    },
+    {
+      "name": "P16 branch: continue snapshot after on-disk data change",
+      "started_at": "2026-09-24T19:27:15.162Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:27:24.087Z"
+    },
+    {
+      "name": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "started_at": "2026-09-24T19:27:24.088Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:27:34.936Z"
+    },
+    {
+      "name": "P18 side effects (no installs, no out-of-grant writes)",
+      "started_at": "2026-09-24T19:27:34.937Z",
+      "ok": true,
+      "finished_at": "2026-09-24T19:27:35.032Z"
+    }
+  ],
+  "first_deviation": {
+    "phase": "P15 final export E1 (PDF) + independent reading",
+    "check": "E1 vs Ecal: PDF text displacement == manifest displacement for 9 texts (≤0.05 mm; candidate 0.01 mm reported)",
+    "detail": {
+      "n": 9,
+      "max_err_mm": 0.14397743056786255
+    }
+  },
+  "checks": [
+    {
+      "phase": "P0 fixture baseline",
+      "name": "fixture files match generator hashes",
+      "ok": true
+    },
+    {
+      "phase": "P0 fixture baseline",
+      "name": "config dir starts empty (fresh user config)",
+      "ok": true
+    },
+    {
+      "phase": "P1 first launch (fresh config)",
+      "name": "unauthenticated API denied (401)",
+      "ok": true,
+      "detail": 401
+    },
+    {
+      "phase": "P1 first launch (fresh config)",
+      "name": "landing url carries one-time nonce",
+      "ok": true
+    },
+    {
+      "phase": "P2 first open: workdir confirmation (D1 ambiguity)",
+      "name": "render blocked with workdir_confirmation_required before any run",
+      "ok": true,
+      "detail": {
+        "blocked": 1,
+        "ok": 0
+      }
+    },
+    {
+      "phase": "P2 first open: workdir confirmation (D1 ambiguity)",
+      "name": "reason = ambiguous_data, conflicts = data/points.csv",
+      "ok": true,
+      "detail": "ambiguous_data"
+    },
+    {
+      "phase": "P2 first open: workdir confirmation (D1 ambiguity)",
+      "name": "no option preselected / no recommendation (machine does not decide)",
+      "ok": true,
+      "detail": [
+        [
+          "project_root",
+          false
+        ],
+        [
+          "project",
+          false
+        ],
+        [
+          "sandbox",
+          false
+        ]
+      ]
+    },
+    {
+      "phase": "P2 first open: workdir confirmation (D1 ambiguity)",
+      "name": "run button disabled until a choice is made",
+      "ok": true
+    },
+    {
+      "phase": "P2 first open: workdir confirmation (D1 ambiguity)",
+      "name": "T sanity: svg viewBox aspect == screen box aspect (±0.5%)",
+      "ok": true,
+      "detail": {
+        "vbAspect": 2.1875,
+        "screen": 2.187589102184738
+      }
+    },
+    {
+      "phase": "P2 first open: workdir confirmation (D1 ambiguity)",
+      "name": "figure size_mm = 7×3.2 in",
+      "ok": true,
+      "detail": [
+        177.8,
+        81.28
+      ]
+    },
+    {
+      "phase": "P3 environment identity (E1)",
+      "name": "environment endpoint: project python is paper/.venv (A), source project_venv",
+      "ok": true,
+      "detail": {
+        "python": ".venv/bin/python",
+        "source": "project_venv"
+      }
+    },
+    {
+      "phase": "P3 environment identity (E1)",
+      "name": "preparation ready without new input (decision remembered)",
+      "ok": true,
+      "detail": "ready"
+    },
+    {
+      "phase": "P3 environment identity (E1)",
+      "name": "receipt python_source = project_venv",
+      "ok": true,
+      "detail": "project_venv"
+    },
+    {
+      "phase": "P3 environment identity (E1)",
+      "name": "worker pid (from receipt) was launched through paper/.venv/bin/python (ps -E __PYVENV_LAUNCHER__ or argv0)",
+      "ok": true,
+      "detail": {
+        "pid": 11922,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-6/src/tavotto/engine/worker.py --script /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/scripts/entry.py --figures-dir /private/tmp/clau",
+        "pyvenv_launcher": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/.venv/bin/python",
+        "cwd": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper"
+      }
+    },
+    {
+      "phase": "P3 environment identity (E1)",
+      "name": "worker pid cwd == project root (lsof)",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper"
+    },
+    {
+      "phase": "P3 environment identity (E1)",
+      "name": "receipt: qa_signal imported from paper/.venv (env A), not envB",
+      "ok": true,
+      "detail": {
+        "name": "qa_signal",
+        "path": ".venv/lib/python3.13/site-packages/qa_signal/__init__.py",
+        "sha256": "2f6d9eb77db3b81c2b425d1cb589027a873b20fda1945761599df079af956db8"
+      }
+    },
+    {
+      "phase": "P3 environment identity (E1)",
+      "name": "receipt: labmod imported from scripts/labmod.py (local module, not a package)",
+      "ok": true,
+      "detail": {
+        "name": "labmod",
+        "path": "scripts/labmod.py",
+        "sha256": "b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385"
+      }
+    },
+    {
+      "phase": "P3 environment identity (E1)",
+      "name": "receipt: input data/points.csv sha256 == true file (not decoy)",
+      "ok": true,
+      "detail": {
+        "path": "data/points.csv",
+        "sha256": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+        "size": 21
+      }
+    },
+    {
+      "phase": "P3 environment identity (E1)",
+      "name": "receipt cwd origin = project.root",
+      "ok": true,
+      "detail": "project.root"
+    },
+    {
+      "phase": "P3 environment identity (E1)",
+      "name": "plan does not propose installing anything",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P3 environment identity (E1)",
+      "name": "no worker process runs envB python",
+      "ok": true
+    },
+    {
+      "phase": "P4 data identity (D1) + external file + local module",
+      "name": "s0: points line path present with 4 vertices",
+      "ok": true,
+      "detail": [
+        [
+          48.642078,
+          182.225455
+        ],
+        [
+          104.122597,
+          61.579636
+        ],
+        [
+          159.603117,
+          155.415273
+        ],
+        [
+          215.083636,
+          48.174545
+        ]
+      ]
+    },
+    {
+      "phase": "P4 data identity (D1) + external file + local module",
+      "name": "s0: plotted y sequence == expected [0,9,2,10] (affine residual < 0.01pt, every other candidate > 1pt or wrong sign)",
+      "ok": true,
+      "detail": {
+        "svg_y": [
+          182.225455,
+          61.579636,
+          155.415273,
+          48.174545
+        ],
+        "fit_expected": {
+          "a": 182.225455,
+          "b": -13.405091,
+          "maxResidualPt": 7.105427357601002e-15
+        },
+        "fit_other": {
+          "a": 136.0922154046823,
+          "b": -4.617807267558528,
+          "maxResidualPt": 65.27696486956523
+        },
+        "fit_others": [
+          {
+            "a": 136.0922154046823,
+            "b": -4.617807267558528,
+            "maxResidualPt": 65.27696486956523
+          },
+          {
+            "a": 202.67009099441344,
+            "b": -17.29930737988827,
+            "maxResidualPt": 4.643104145251385
+          }
+        ]
+      }
+    },
+    {
+      "phase": "P4 data identity (D1) + external file + local module",
+      "name": "s0: x spacing uniform (t = 0..3)",
+      "ok": true,
+      "detail": [
+        48.642078,
+        104.122597,
+        159.603117,
+        215.083636
+      ]
+    },
+    {
+      "phase": "P4 data identity (D1) + external file + local module",
+      "name": "s0: twin-axis signal == env A sequence (not B)",
+      "ok": true,
+      "detail": {
+        "fitA": {
+          "a": 226.9090915,
+          "b": -44.6836366,
+          "maxResidualPt": 3.000000106112566e-7
+        },
+        "fitB": {
+          "a": 48.17454550000001,
+          "b": 26.8101818,
+          "maxResidualPt": 53.62036410000002
+        }
+      }
+    },
+    {
+      "phase": "P4 data identity (D1) + external file + local module",
+      "name": "s0: provenance text == src c5de961e6faa env A",
+      "ok": true,
+      "detail": "src c5de961e6faa env A"
+    },
+    {
+      "phase": "P4 data identity (D1) + external file + local module",
+      "name": "s0: twin series label says env A",
+      "ok": true,
+      "detail": "曲线 “sig A”"
+    },
+    {
+      "phase": "P4 data identity (D1) + external file + local module",
+      "name": "bar heights ∝ external offsets × labmod.scale (1,3,5,7)",
+      "ok": true,
+      "detail": {
+        "bars": [
+          0.08707482993197277,
+          0.2612244897959183,
+          0.4353741496598639,
+          0.6095238095238094
+        ],
+        "exp": [
+          1,
+          3,
+          5,
+          7
+        ]
+      }
+    },
+    {
+      "phase": "P4b zero-edit export E0 (calibration baseline)",
+      "name": "E0: export job done with a PDF output",
+      "ok": true,
+      "detail": {
+        "status": "done",
+        "error": null,
+        "outputs": [
+          [
+            "pdf",
+            "done",
+            null
+          ],
+          [
+            "report",
+            "done",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "phase": "P4b zero-edit export E0 (calibration baseline)",
+      "name": "E0: page box == figure size 504×230.4 pt (±0.01)",
+      "ok": true,
+      "detail": [
+        504,
+        230.4
+      ]
+    },
+    {
+      "phase": "P4b zero-edit export E0 (calibration baseline)",
+      "name": "E0: PDF (pdfminer) point series == [0,9,2,10]; no other candidate fits",
+      "ok": true,
+      "detail": [
+        {
+          "uniform": false,
+          "res": 132.5377926421405,
+          "b": 4.623411371237459
+        },
+        {
+          "uniform": false,
+          "res": 84.82418729096989,
+          "b": 2.9589832775919738
+        },
+        {
+          "uniform": true,
+          "res": 1.4210854715202004e-14,
+          "b": 13.405091000000002
+        },
+        {
+          "uniform": false,
+          "res": 84.82418729096989,
+          "b": 2.9589832775919738
+        },
+        {
+          "uniform": false,
+          "res": 11.540705859531776,
+          "b": 0.40258276254180597
+        },
+        {
+          "uniform": false,
+          "res": 34.62211700334449,
+          "b": 1.207748267558528
+        },
+        {
+          "uniform": false,
+          "res": 57.70352872240803,
+          "b": 2.012913792642141
+        },
+        {
+          "uniform": false,
+          "res": 80.78494044147158,
+          "b": 2.818079317725753
+        },
+        {
+          "uniform": true,
+          "res": 19.12878113043479,
+          "b": 11.058826434782612
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167224075,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167223933,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167224075,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167223933,
+          "b": 0.12040133779264214
+        }
+      ]
+    },
+    {
+      "phase": "P4b zero-edit export E0 (calibration baseline)",
+      "name": "E0: PDF twin-axis series == env A signal",
+      "ok": true
+    },
+    {
+      "phase": "P4b zero-edit export E0 (calibration baseline)",
+      "name": "E0: PDF text layer carries provenance \"src c5de961e6faa env A\"",
+      "ok": true,
+      "detail": [
+        "src c5de961e6faa env A"
+      ]
+    },
+    {
+      "phase": "P4b zero-edit export E0 (calibration baseline)",
+      "name": "E0: every manifest text element found once in PDF text layer",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P5 single drag (suptitle)",
+      "name": "zero render requests during drag",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "phase": "P5 single drag (suptitle)",
+      "name": "exactly one render after release",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "phase": "P5 single drag (suptitle)",
+      "name": "s1: target anchors match independent model (≤0.5px)",
+      "ok": true,
+      "detail": [
+        {
+          "gid": "fig.texts_0",
+          "expected": [
+            0.5511672529581069,
+            0.05357987748796519
+          ],
+          "got": [
+            0.5511672529581069,
+            0.05357850975375755
+          ],
+          "err_px": [
+            0,
+            -0.0004887692189316026
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "P5 single drag (suptitle)",
+      "name": "s1: non-target anchors unchanged",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P5b calibration export Ecal (same RenderCore path, after first edit)",
+      "name": "Ecal: export job done with a PDF output",
+      "ok": true,
+      "detail": {
+        "status": "done",
+        "error": null,
+        "outputs": [
+          [
+            "pdf",
+            "done",
+            null
+          ],
+          [
+            "report",
+            "done",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "phase": "P5b calibration export Ecal (same RenderCore path, after first edit)",
+      "name": "Ecal: page box == figure size 504×230.4 pt (±0.01)",
+      "ok": true,
+      "detail": [
+        504,
+        230.4
+      ]
+    },
+    {
+      "phase": "P5b calibration export Ecal (same RenderCore path, after first edit)",
+      "name": "Ecal: PDF (pdfminer) point series == [0,9,2,10]; no other candidate fits",
+      "ok": true,
+      "detail": [
+        {
+          "uniform": false,
+          "res": 132.5377926421405,
+          "b": 4.623411371237459
+        },
+        {
+          "uniform": false,
+          "res": 84.82418729096989,
+          "b": 2.9589832775919738
+        },
+        {
+          "uniform": true,
+          "res": 1.4210854715202004e-14,
+          "b": 13.405091000000002
+        },
+        {
+          "uniform": false,
+          "res": 84.82418729096989,
+          "b": 2.9589832775919738
+        },
+        {
+          "uniform": false,
+          "res": 11.540705859531776,
+          "b": 0.40258276254180597
+        },
+        {
+          "uniform": false,
+          "res": 34.62211700334449,
+          "b": 1.207748267558528
+        },
+        {
+          "uniform": false,
+          "res": 57.70352872240803,
+          "b": 2.012913792642141
+        },
+        {
+          "uniform": false,
+          "res": 80.78494044147158,
+          "b": 2.818079317725753
+        },
+        {
+          "uniform": true,
+          "res": 19.12878113043479,
+          "b": 11.058826434782612
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167224075,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167223933,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167224075,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167223933,
+          "b": 0.12040133779264214
+        }
+      ]
+    },
+    {
+      "phase": "P5b calibration export Ecal (same RenderCore path, after first edit)",
+      "name": "Ecal: PDF twin-axis series == env A signal",
+      "ok": true
+    },
+    {
+      "phase": "P5b calibration export Ecal (same RenderCore path, after first edit)",
+      "name": "Ecal: PDF text layer carries provenance \"src c5de961e6faa env A\"",
+      "ok": true,
+      "detail": [
+        "src c5de961e6faa env A"
+      ]
+    },
+    {
+      "phase": "P5b calibration export Ecal (same RenderCore path, after first edit)",
+      "name": "Ecal: every manifest text element found once in PDF text layer",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P6 mixed multi-select drag (G2)",
+      "name": "element tree shows exactly the 5 intended members selected",
+      "ok": true,
+      "detail": [
+        "fig.texts_1",
+        "axes_0.title",
+        "axes_0.texts_0",
+        "axes_0.legend",
+        "axes_1.title"
+      ]
+    },
+    {
+      "phase": "P6 mixed multi-select drag (G2)",
+      "name": "zero render requests during group drag",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "phase": "P6 mixed multi-select drag (G2)",
+      "name": "exactly one render after release",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "phase": "P6 mixed multi-select drag (G2)",
+      "name": "s2: target anchors match independent model (≤0.5px)",
+      "ok": true,
+      "detail": [
+        {
+          "gid": "axes_0.title",
+          "expected": [
+            0.2936121861600412,
+            0.1035885171013855
+          ],
+          "got": [
+            0.2936,
+            0.10359999999999991
+          ],
+          "err_px": [
+            -0.009526530612186307,
+            0.0041034927367537555
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "expected": [
+            0.8203468800375922,
+            0.1035885171013855
+          ],
+          "got": [
+            0.8203,
+            0.10359999999999991
+          ],
+          "err_px": [
+            -0.03664846938764216,
+            0.0041034927367537555
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "expected": [
+            0.12190016801945167,
+            0.22980379487916336
+          ],
+          "got": [
+            0.1219,
+            0.2298
+          ],
+          "err_px": [
+            -0.00013134920634397598,
+            -0.0013561261495541857
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "expected": [
+            0.3706684632163183,
+            0.39144836558623386
+          ],
+          "got": [
+            0.37070000000000003,
+            0.39150000000000007
+          ],
+          "err_px": [
+            0.024653880643191878,
+            0.018451912619889415
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "expected": [
+            0.04197953309881676,
+            0.9296301837680521
+          ],
+          "got": [
+            0.042,
+            0.9296
+          ],
+          "err_px": [
+            0.016000000000000097,
+            -0.010786376953126498
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "P6 mixed multi-select drag (G2)",
+      "name": "s2: non-target anchors unchanged",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P6 mixed multi-select drag (G2)",
+      "name": "pairwise relative offsets preserved (≤1e-3 frac)",
+      "ok": true,
+      "detail": 0.00008809847914510438
+    },
+    {
+      "phase": "P6 mixed multi-select drag (G2)",
+      "name": "each moved member has exactly one position override",
+      "ok": true,
+      "detail": {
+        "axes_0.title": 1,
+        "axes_1.title": 1,
+        "axes_0.legend": 1,
+        "axes_0.texts_0": 1,
+        "fig.texts_1": 1
+      }
+    },
+    {
+      "phase": "P7 group scale of two Axes (se handle)",
+      "name": "selection = {axes_0, axes_1}",
+      "ok": true,
+      "detail": [
+        "axes_0",
+        "axes_1"
+      ]
+    },
+    {
+      "phase": "P7 group scale of two Axes (se handle)",
+      "name": "Axes boxes = c + s(box − c) about group top-left (≤0.5px)",
+      "ok": true,
+      "detail": [
+        {
+          "gid": "axes_0",
+          "expected": [
+            0.08,
+            0.18000000000000005,
+            0.3314986278015635,
+            0.5840335375200578
+          ],
+          "got": [
+            0.08,
+            0.18000000000000005,
+            0.3315,
+            0.584
+          ],
+          "ok": true
+        },
+        {
+          "gid": "axes_1",
+          "expected": [
+            0.560673010312267,
+            0.18000000000000005,
+            0.3314986278015634,
+            0.5840335375200578
+          ],
+          "got": [
+            0.5606,
+            0.18000000000000005,
+            0.3315,
+            0.584
+          ],
+          "ok": true
+        }
+      ]
+    },
+    {
+      "phase": "P7 group scale of two Axes (se handle)",
+      "name": "twin axes_2 follows axes_0 exactly once (same box)",
+      "ok": true,
+      "detail": {
+        "axes_2": [
+          0.08,
+          0.18000000000000005,
+          0.3315,
+          0.584
+        ],
+        "axes_0": [
+          0.08,
+          0.18000000000000005,
+          0.3315,
+          0.584
+        ]
+      }
+    },
+    {
+      "phase": "P7 group scale of two Axes (se handle)",
+      "name": "explicitly placed texts keep their absolute anchors through Axes scale",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P8 font size change (axes_0.xlabel → 14)",
+      "name": "fontsize editable value 14 in authoritative manifest",
+      "ok": true,
+      "detail": {
+        "before": 10,
+        "after": 14
+      }
+    },
+    {
+      "phase": "P8 font size change (axes_0.xlabel → 14)",
+      "name": "xlabel bbox grew (font really larger)",
+      "ok": true
+    },
+    {
+      "phase": "P8 font size change (axes_0.xlabel → 14)",
+      "name": "s4: target anchors match independent model (≤0.5px)",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P8 font size change (axes_0.xlabel → 14)",
+      "name": "s4: non-target anchors unchanged",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P9 align bottom (xlabels + provenance text)",
+      "name": "selection = 3 intended texts",
+      "ok": true,
+      "detail": [
+        "fig.texts_1",
+        "axes_0.xlabel",
+        "axes_1.xlabel"
+      ]
+    },
+    {
+      "phase": "P9 align bottom (xlabels + provenance text)",
+      "name": "every member bottom == max bottom of selection (≤0.5px), x unchanged",
+      "ok": true,
+      "detail": {
+        "maxB": 0.9389749999999999,
+        "res": [
+          {
+            "gid": "axes_0.xlabel",
+            "bottom": 0.938975,
+            "dx": -0.00004999999999999449,
+            "h": 0
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "bottom": 0.93895,
+            "dx": 0.00004999999999999449,
+            "h": 0
+          },
+          {
+            "gid": "fig.texts_1",
+            "bottom": 0.9389749999999999,
+            "dx": 0,
+            "h": 0
+          }
+        ]
+      }
+    },
+    {
+      "phase": "P9 align bottom (xlabels + provenance text)",
+      "name": "s5 (non-members): target anchors match independent model (≤0.5px)",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P9 align bottom (xlabels + provenance text)",
+      "name": "s5 (non-members): non-target anchors unchanged",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P10 distribute horizontally (titles + suptitle)",
+      "name": "selection = 3 intended texts",
+      "ok": true,
+      "detail": [
+        "fig.texts_0",
+        "axes_0.title",
+        "axes_1.title"
+      ]
+    },
+    {
+      "phase": "P10 distribute horizontally (titles + suptitle)",
+      "name": "lefts follow equal-gap model, ends fixed, y unchanged (≤0.5px)",
+      "ok": true,
+      "detail": [
+        {
+          "gid": "axes_0.title",
+          "expected_left": 0.2572607142857143,
+          "got_left": 0.2572607142857143,
+          "err_px": 0,
+          "dy_px": 0
+        },
+        {
+          "gid": "fig.texts_0",
+          "expected_left": 0.4890035714285714,
+          "got_left": 0.48895357142857143,
+          "err_px": -0.039087499999995695,
+          "dy_px": 0.007679687187628876
+        },
+        {
+          "gid": "axes_1.title",
+          "expected_left": 0.7839607142857143,
+          "got_left": 0.7839607142857143,
+          "err_px": 0,
+          "dy_px": 0
+        }
+      ]
+    },
+    {
+      "phase": "P10 distribute horizontally (titles + suptitle)",
+      "name": "s6 (non-members): target anchors match independent model (≤0.5px)",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P10 distribute horizontally (titles + suptitle)",
+      "name": "s6 (non-members): non-target anchors unchanged",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P11 undo ×2 / redo ×2 with authoritative re-render",
+      "name": "after 2 undos document overrides == s4 overrides (before align)",
+      "ok": true,
+      "detail": {
+        "got": 9,
+        "want": 9
+      }
+    },
+    {
+      "phase": "P11 undo ×2 / redo ×2 with authoritative re-render",
+      "name": "after 2 undos: authoritative re-render geometry == s4",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P11 undo ×2 / redo ×2 with authoritative re-render",
+      "name": "after 2 redos document overrides == s6 overrides (after distribute)",
+      "ok": true
+    },
+    {
+      "phase": "P11 undo ×2 / redo ×2 with authoritative re-render",
+      "name": "after 2 redos: authoritative re-render geometry == s6",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P12 save + quit app and worker",
+      "name": "last autosave PUT succeeded",
+      "ok": true,
+      "detail": {
+        "at": 1790278012774,
+        "status": 200
+      }
+    },
+    {
+      "phase": "P12 save + quit app and worker",
+      "name": "on-disk autosave document carries the final overrides",
+      "ok": true,
+      "detail": [
+        "d_ho03hj7o.json"
+      ]
+    },
+    {
+      "phase": "P12b quit app and worker",
+      "name": "server exited cleanly after /api/shutdown",
+      "ok": true,
+      "detail": {
+        "code": 0,
+        "killed": false
+      }
+    },
+    {
+      "phase": "P12b quit app and worker",
+      "name": "no worker / server process left referencing the fixture",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P13 reopen (same data/config dirs) + authoritative re-render",
+      "name": "no workdir confirmation asked again (decision remembered)",
+      "ok": true
+    },
+    {
+      "phase": "P13 reopen (same data/config dirs) + authoritative re-render",
+      "name": "reopened geometry == last committed (s8) for every element",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P13 reopen (same data/config dirs) + authoritative re-render",
+      "name": "reopened render request patches == saved overrides",
+      "ok": true,
+      "detail": {
+        "req": 11
+      }
+    },
+    {
+      "phase": "P13 reopen (same data/config dirs) + authoritative re-render",
+      "name": "s9: points line path present with 4 vertices",
+      "ok": true,
+      "detail": [
+        [
+          47.914364,
+          169.909527
+        ],
+        [
+          98.543455,
+          59.820218
+        ],
+        [
+          149.172545,
+          145.445236
+        ],
+        [
+          199.801636,
+          47.588073
+        ]
+      ]
+    },
+    {
+      "phase": "P13 reopen (same data/config dirs) + authoritative re-render",
+      "name": "s9: plotted y sequence == expected [0,9,2,10] (affine residual < 0.01pt, every other candidate > 1pt or wrong sign)",
+      "ok": true,
+      "detail": {
+        "svg_y": [
+          169.909527,
+          59.820218,
+          145.445236,
+          47.588073
+        ],
+        "fit_expected": {
+          "a": 169.909526909699,
+          "b": -12.232145411371237,
+          "maxResidualPt": 2.0735787131798133e-7
+        },
+        "fit_other": {
+          "a": 127.81294615384616,
+          "b": -4.213749076923077,
+          "maxResidualPt": 59.56523
+        },
+        "fit_others": [
+          {
+            "a": 127.81294615384616,
+            "b": -4.213749076923077,
+            "maxResidualPt": 59.56523
+          },
+          {
+            "a": 188.56525706145254,
+            "b": -15.785617821229051,
+            "maxResidualPt": 4.236832402234597
+          }
+        ]
+      }
+    },
+    {
+      "phase": "P13 reopen (same data/config dirs) + authoritative re-render",
+      "name": "s9: x spacing uniform (t = 0..3)",
+      "ok": true,
+      "detail": [
+        47.914364,
+        98.543455,
+        149.172545,
+        199.801636
+      ]
+    },
+    {
+      "phase": "P13 reopen (same data/config dirs) + authoritative re-render",
+      "name": "s9: twin-axis signal == env A sequence (not B)",
+      "ok": true,
+      "detail": {
+        "fitA": {
+          "a": 210.68334499999997,
+          "b": -40.773818,
+          "maxResidualPt": 2.842170943040401e-14
+        },
+        "fitB": {
+          "a": 47.58807300000001,
+          "b": 24.464290799999993,
+          "maxResidualPt": 48.9285816
+        }
+      }
+    },
+    {
+      "phase": "P13 reopen (same data/config dirs) + authoritative re-render",
+      "name": "s9: provenance text == src c5de961e6faa env A",
+      "ok": true,
+      "detail": "src c5de961e6faa env A"
+    },
+    {
+      "phase": "P13 reopen (same data/config dirs) + authoritative re-render",
+      "name": "s9: twin series label says env A",
+      "ok": true,
+      "detail": "曲线 “sig A”"
+    },
+    {
+      "phase": "P13 reopen (same data/config dirs) + authoritative re-render",
+      "name": "after restart: still project venv A",
+      "ok": true,
+      "detail": ".venv/bin/python"
+    },
+    {
+      "phase": "P14 re-edit after reopen (drag axes_1.xlabel)",
+      "name": "s10: target anchors match independent model (≤0.5px)",
+      "ok": true,
+      "detail": [
+        {
+          "gid": "axes_1.xlabel",
+          "expected": [
+            0.7647940129336082,
+            0.8784019346892847
+          ],
+          "got": [
+            0.7647940174953859,
+            0.8784026173457686
+          ],
+          "err_px": [
+            0.0000035644445980871143,
+            0.00024383396704431682
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "P14 re-edit after reopen (drag axes_1.xlabel)",
+      "name": "s10: non-target anchors unchanged",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P15 final export E1 (PDF) + independent reading",
+      "name": "E1: export job done with a PDF output",
+      "ok": true,
+      "detail": {
+        "status": "done",
+        "error": null,
+        "outputs": [
+          [
+            "pdf",
+            "done",
+            null
+          ],
+          [
+            "report",
+            "done",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "phase": "P15 final export E1 (PDF) + independent reading",
+      "name": "E1: page box == figure size 504×230.4 pt (±0.01)",
+      "ok": true,
+      "detail": [
+        504,
+        230.4
+      ]
+    },
+    {
+      "phase": "P15 final export E1 (PDF) + independent reading",
+      "name": "E1: PDF (pdfminer) point series == [0,9,2,10]; no other candidate fits",
+      "ok": true,
+      "detail": [
+        {
+          "uniform": false,
+          "res": 132.5377926421405,
+          "b": 4.623411371237459
+        },
+        {
+          "uniform": false,
+          "res": 77.40207090301004,
+          "b": 2.7000722408026756
+        },
+        {
+          "uniform": true,
+          "res": 2.0735785710712662e-7,
+          "b": 12.232145411371237
+        },
+        {
+          "uniform": false,
+          "res": 77.40207090301004,
+          "b": 2.7000722408026756
+        },
+        {
+          "uniform": false,
+          "res": 10.530893859531766,
+          "b": 0.3673567625418059
+        },
+        {
+          "uniform": false,
+          "res": 31.592682153846148,
+          "b": 1.1020703076923077
+        },
+        {
+          "uniform": false,
+          "res": 52.65446987290971,
+          "b": 1.83678383277592
+        },
+        {
+          "uniform": false,
+          "res": 73.71625816722408,
+          "b": 2.571497377926422
+        },
+        {
+          "uniform": true,
+          "res": 17.45501238795984,
+          "b": 10.091179036789297
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167224075,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167223933,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167224075,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167223933,
+          "b": 0.12040133779264214
+        }
+      ]
+    },
+    {
+      "phase": "P15 final export E1 (PDF) + independent reading",
+      "name": "E1: PDF twin-axis series == env A signal",
+      "ok": true
+    },
+    {
+      "phase": "P15 final export E1 (PDF) + independent reading",
+      "name": "E1: PDF text layer carries provenance \"src c5de961e6faa env A\"",
+      "ok": true,
+      "detail": [
+        "src c5de961e6faa env A"
+      ]
+    },
+    {
+      "phase": "P15 final export E1 (PDF) + independent reading",
+      "name": "E1: every manifest text element found once in PDF text layer",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P15 final export E1 (PDF) + independent reading",
+      "name": "E1 vs Ecal: PDF text displacement == manifest displacement for 9 texts (≤0.05 mm; candidate 0.01 mm reported)",
+      "ok": false,
+      "detail": {
+        "n": 9,
+        "max_err_mm": 0.14397743056786255
+      }
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "s11: target anchors match independent model (≤0.5px)",
+      "ok": true,
+      "detail": [
+        {
+          "gid": "axes_0.ylabel",
+          "expected": [
+            0.022757628297069565,
+            0.4720000000000001
+          ],
+          "got": [
+            0.022757627080595505,
+            0.4720000000000001
+          ],
+          "err_px": [
+            -9.505185580440688e-7,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "s11: non-target anchors unchanged",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "s11 (snapshot keeps old data): points line path present with 4 vertices",
+      "ok": true,
+      "detail": [
+        [
+          47.914364,
+          169.909527
+        ],
+        [
+          98.543455,
+          59.820218
+        ],
+        [
+          149.172545,
+          145.445236
+        ],
+        [
+          199.801636,
+          47.588073
+        ]
+      ]
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "s11 (snapshot keeps old data): plotted y sequence == expected [0,9,2,10] (affine residual < 0.01pt, every other candidate > 1pt or wrong sign)",
+      "ok": true,
+      "detail": {
+        "svg_y": [
+          169.909527,
+          59.820218,
+          145.445236,
+          47.588073
+        ],
+        "fit_expected": {
+          "a": 169.909526909699,
+          "b": -12.232145411371237,
+          "maxResidualPt": 2.0735787131798133e-7
+        },
+        "fit_other": {
+          "a": 127.81294615384616,
+          "b": -4.213749076923077,
+          "maxResidualPt": 59.56523
+        },
+        "fit_others": [
+          {
+            "a": 127.81294615384616,
+            "b": -4.213749076923077,
+            "maxResidualPt": 59.56523
+          },
+          {
+            "a": 188.56525706145254,
+            "b": -15.785617821229051,
+            "maxResidualPt": 4.236832402234597
+          }
+        ]
+      }
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "s11 (snapshot keeps old data): x spacing uniform (t = 0..3)",
+      "ok": true,
+      "detail": [
+        47.914364,
+        98.543455,
+        149.172545,
+        199.801636
+      ]
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "s11 (snapshot keeps old data): twin-axis signal == env A sequence (not B)",
+      "ok": true,
+      "detail": {
+        "fitA": {
+          "a": 210.68334499999997,
+          "b": -40.773818,
+          "maxResidualPt": 2.842170943040401e-14
+        },
+        "fitB": {
+          "a": 47.58807300000001,
+          "b": 24.464290799999993,
+          "maxResidualPt": 48.9285816
+        }
+      }
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "s11 (snapshot keeps old data): provenance text == src c5de961e6faa env A",
+      "ok": true,
+      "detail": "src c5de961e6faa env A"
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "s11 (snapshot keeps old data): twin series label says env A",
+      "ok": true,
+      "detail": "曲线 “sig A”"
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "E2: export job done with a PDF output",
+      "ok": true,
+      "detail": {
+        "status": "done",
+        "error": null,
+        "outputs": [
+          [
+            "pdf",
+            "done",
+            null
+          ],
+          [
+            "report",
+            "done",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "E2: page box == figure size 504×230.4 pt (±0.01)",
+      "ok": true,
+      "detail": [
+        504,
+        230.4
+      ]
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "E2: PDF (pdfminer) point series == [0,9,2,10]; no other candidate fits",
+      "ok": true,
+      "detail": [
+        {
+          "uniform": false,
+          "res": 132.5377926421405,
+          "b": 4.623411371237459
+        },
+        {
+          "uniform": false,
+          "res": 77.40207090301004,
+          "b": 2.7000722408026756
+        },
+        {
+          "uniform": true,
+          "res": 2.0735785710712662e-7,
+          "b": 12.232145411371237
+        },
+        {
+          "uniform": false,
+          "res": 77.40207090301004,
+          "b": 2.7000722408026756
+        },
+        {
+          "uniform": false,
+          "res": 10.530893859531766,
+          "b": 0.3673567625418059
+        },
+        {
+          "uniform": false,
+          "res": 31.592682153846148,
+          "b": 1.1020703076923077
+        },
+        {
+          "uniform": false,
+          "res": 52.65446987290971,
+          "b": 1.83678383277592
+        },
+        {
+          "uniform": false,
+          "res": 73.71625816722408,
+          "b": 2.571497377926422
+        },
+        {
+          "uniform": true,
+          "res": 17.45501238795984,
+          "b": 10.091179036789297
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167224075,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167223933,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167224075,
+          "b": 0.12040133779264214
+        },
+        {
+          "uniform": false,
+          "res": 3.4515050167223933,
+          "b": 0.12040133779264214
+        }
+      ]
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "E2: PDF twin-axis series == env A signal",
+      "ok": true
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "E2: PDF text layer carries provenance \"src c5de961e6faa env A\"",
+      "ok": true,
+      "detail": [
+        "src c5de961e6faa env A"
+      ]
+    },
+    {
+      "phase": "P16 branch: continue snapshot after on-disk data change",
+      "name": "E2: every manifest text element found once in PDF text layer",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "UI announces the semantic switch: \"已按源脚本重新构建\"",
+      "ok": true,
+      "detail": "已按源脚本重新构建"
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "s12 (recomputed on new data): points line path present with 4 vertices",
+      "ok": true,
+      "detail": [
+        [
+          47.914364,
+          169.909527
+        ],
+        [
+          98.543455,
+          62.878255
+        ],
+        [
+          149.172545,
+          139.329164
+        ],
+        [
+          199.801636,
+          47.588073
+        ]
+      ]
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "s12 (recomputed on new data): plotted y sequence == expected [1,8,3,9] (affine residual < 0.01pt, every other candidate > 1pt or wrong sign)",
+      "ok": true,
+      "detail": {
+        "svg_y": [
+          169.909527,
+          62.878255,
+          139.329164,
+          47.588073
+        ],
+        "fit_expected": {
+          "a": 185.1997089888268,
+          "b": -15.290181759776537,
+          "maxResidualPt": 2.9050278271824936e-7
+        },
+        "fit_other": {
+          "a": 166.94353880267556,
+          "b": -11.812816010033442,
+          "maxResidualPt": 3.988742782608682
+        },
+        "fit_others": [
+          {
+            "a": 166.94353880267556,
+            "b": -11.812816010033442,
+            "maxResidualPt": 3.988742782608682
+          },
+          {
+            "a": 129.35730594983278,
+            "b": -4.65353356187291,
+            "maxResidualPt": 57.17198382608695
+          }
+        ]
+      }
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "s12 (recomputed on new data): x spacing uniform (t = 0..3)",
+      "ok": true,
+      "detail": [
+        47.914364,
+        98.543455,
+        149.172545,
+        199.801636
+      ]
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "s12 (recomputed on new data): twin-axis signal == env A sequence (not B)",
+      "ok": true,
+      "detail": {
+        "fitA": {
+          "a": 210.68334499999997,
+          "b": -40.773818,
+          "maxResidualPt": 2.842170943040401e-14
+        },
+        "fitB": {
+          "a": 47.58807300000001,
+          "b": 24.464290799999993,
+          "maxResidualPt": 48.9285816
+        }
+      }
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "s12 (recomputed on new data): provenance text == src 949efa9e08ad env A",
+      "ok": true,
+      "detail": "src 949efa9e08ad env A"
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "s12 (recomputed on new data): twin series label says env A",
+      "ok": true,
+      "detail": "曲线 “sig A”"
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "all position-overridden elements keep their anchors across recompute",
+      "ok": true,
+      "detail": {
+        "overridden": [
+          "fig.texts_0",
+          "axes_0.title",
+          "axes_1.title",
+          "axes_0.legend",
+          "axes_0.texts_0",
+          "fig.texts_1",
+          "axes_0.xlabel",
+          "axes_1.xlabel",
+          "axes_0.ylabel"
+        ],
+        "drift": []
+      }
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "E3: export job done with a PDF output",
+      "ok": true,
+      "detail": {
+        "status": "done",
+        "error": null,
+        "outputs": [
+          [
+            "pdf",
+            "done",
+            null
+          ],
+          [
+            "report",
+            "done",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "E3: page box == figure size 504×230.4 pt (±0.01)",
+      "ok": true,
+      "detail": [
+        504,
+        230.4
+      ]
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "E3: PDF (pdfminer) point series == [1,8,3,9]; no other candidate fits",
+      "ok": true,
+      "detail": [
+        {
+          "uniform": false,
+          "res": 136.43798882681563,
+          "b": 7.722905027932962
+        },
+        {
+          "uniform": false,
+          "res": 79.67978547486032,
+          "b": 4.51017653631285
+        },
+        {
+          "uniform": true,
+          "res": 2.905027969291041e-7,
+          "b": 15.290181759776537
+        },
+        {
+          "uniform": false,
+          "res": 79.67978547486032,
+          "b": 4.51017653631285
+        },
+        {
+          "uniform": false,
+          "res": 10.8407869944134,
+          "b": 0.6136294525139663
+        },
+        {
+          "uniform": false,
+          "res": 32.52236157541899,
+          "b": 1.8408883910614522
+        },
+        {
+          "uniform": false,
+          "res": 54.20393556424582,
+          "b": 3.068147296089386
+        },
+        {
+          "uniform": false,
+          "res": 75.8855101452514,
+          "b": 4.295406234636873
+        },
+        {
+          "uniform": true,
+          "res": 15.945068491620106,
+          "b": 13.211628178770948
+        },
+        {
+          "uniform": false,
+          "res": 3.553072625698327,
+          "b": 0.2011173184357542
+        },
+        {
+          "uniform": false,
+          "res": 3.55307262569832,
+          "b": 0.2011173184357542
+        },
+        {
+          "uniform": false,
+          "res": 3.55307262569832,
+          "b": 0.2011173184357542
+        },
+        {
+          "uniform": false,
+          "res": 3.5530726256983485,
+          "b": 0.2011173184357542
+        }
+      ]
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "E3: PDF twin-axis series == env A signal",
+      "ok": true
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "E3: PDF text layer carries provenance \"src 949efa9e08ad env A\"",
+      "ok": true,
+      "detail": [
+        "src 949efa9e08ad env A"
+      ]
+    },
+    {
+      "phase": "P17 branch: explicit recompute (context menu → 重新构建)",
+      "name": "E3: every manifest text element found once in PDF text layer",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P18 side effects (no installs, no out-of-grant writes)",
+      "name": "project tree: nothing added/removed/changed beyond the whitelisted registry draft (data file restored)",
+      "ok": true,
+      "detail": {
+        "added": [
+          "tavotto_registry.json",
+          "tavottofile/export/qa_E0.pdf",
+          "tavottofile/export/qa_E0_style-check.json",
+          "tavottofile/export/qa_E1.pdf",
+          "tavottofile/export/qa_E1_style-check.json",
+          "tavottofile/export/qa_E2.pdf",
+          "tavottofile/export/qa_E2_style-check.json",
+          "tavottofile/export/qa_E3.pdf",
+          "tavottofile/export/qa_E3_style-check.json",
+          "tavottofile/export/qa_Ecal.pdf",
+          "tavottofile/export/qa_Ecal_style-check.json",
+          "tavottofile/versions/d_ho03hj7o.json"
+        ],
+        "removed": [],
+        "changed": []
+      }
+    },
+    {
+      "phase": "P18 side effects (no installs, no out-of-grant writes)",
+      "name": "script bytes unchanged",
+      "ok": true
+    },
+    {
+      "phase": "P18 side effects (no installs, no out-of-grant writes)",
+      "name": "external data unchanged",
+      "ok": true
+    },
+    {
+      "phase": "P18 side effects (no installs, no out-of-grant writes)",
+      "name": "env A site-packages listing unchanged (no installs)",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "phase": "P18 side effects (no installs, no out-of-grant writes)",
+      "name": "env B site-packages listing unchanged",
+      "ok": true
+    },
+    {
+      "phase": "P18 side effects (no installs, no out-of-grant writes)",
+      "name": "env A distributions unchanged",
+      "ok": true
+    }
+  ],
+  "snapshots": {
+    "s0-first-open": {
+      "at": "2026-09-24T19:26:16.766Z",
+      "manifest_sha256": "7bf466b823ec063784c13d48de50365c06d81d67e2c85d5663c7e63208a32103",
+      "svg_sha256": "28502d6e731e41724d43a8b410d3bc79be3feab0815c1ada395206a7f1863462",
+      "document_sha256": "1845f80879de8c8c2d60b50b7c14c7b8c98bbf8bdaa52ac2ae369d20b5e9280d",
+      "render_request_patches": [],
+      "render_count_total": 2,
+      "overrides": [],
+      "rev": 1
+    },
+    "s1-single-drag": {
+      "at": "2026-09-24T19:26:22.152Z",
+      "manifest_sha256": "610581068b35fd1662977ed8b6c1fd2fe846ed26851d8453ece3d5675811e675",
+      "svg_sha256": "89682c04fcee11e4fb5b82ebe5c71a18f23edfb28ed7317814f64ee0b489d133",
+      "document_sha256": "9baf8c6a0193c128a7c90df343c28260f641d54be95ebf3640561326a6163c3f",
+      "render_request_patches": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5511672529581069,
+            0.053578509753757504
+          ]
+        }
+      ],
+      "render_count_total": 3,
+      "overrides": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5511672529581069,
+            0.053578509753757504
+          ]
+        }
+      ],
+      "rev": 2
+    },
+    "multi_selection_rows": [
+      "fig.texts_1",
+      "axes_0.title",
+      "axes_0.texts_0",
+      "axes_0.legend",
+      "axes_1.title"
+    ],
+    "s2-multi-drag": {
+      "at": "2026-09-24T19:26:28.186Z",
+      "manifest_sha256": "e3fd79a837c5e4b3092f11754d8f4f369b12af4821279402a046100297a3e995",
+      "svg_sha256": "6036138130c8f973efce90589e08f1bc51015c5efc0781e5e45dbd6797f4a4e0",
+      "document_sha256": "bb30ef515a3aa635210e0e6dd56458b7f241bd9f76742594cdc56d527e3dda49",
+      "render_request_patches": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5511672529581069,
+            0.053578509753757504
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        }
+      ],
+      "render_count_total": 4,
+      "overrides": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5511672529581069,
+            0.053578509753757504
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        }
+      ],
+      "rev": 3
+    },
+    "annotation_arrow": {
+      "before": [
+        0.2121816114523623,
+        0.27264402717403613,
+        0.11895622002513566,
+        0.12361075335956047
+      ],
+      "after": [
+        0.21256416839688524,
+        0.2669749870824878,
+        0.150343933690213,
+        0.0929573598410431
+      ]
+    },
+    "group_scale_selection": [
+      "axes_0",
+      "axes_1"
+    ],
+    "s3-group-scale": {
+      "at": "2026-09-24T19:26:31.338Z",
+      "manifest_sha256": "6c47d2c80609bff286ea2295b44d5492b67ba70d8341cf455df69a03a364de22",
+      "svg_sha256": "10ed2e43926afe7b118b8891babf99475510fadff8eaa504d683c6c656e4b1e1",
+      "document_sha256": "25e9fd940dc4b341d147555e7e3753f8912ffe38470e88f976b7d60a3244e242",
+      "render_request_patches": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5511672529581069,
+            0.053578509753757504
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        }
+      ],
+      "render_count_total": 5,
+      "overrides": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5511672529581069,
+            0.053578509753757504
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        }
+      ],
+      "rev": 4
+    },
+    "group_scale": {
+      "s": 0.9125524023750905,
+      "sx": 0.9137630568121795,
+      "sy": 0.9125524023750905,
+      "group": [
+        0.08,
+        0.18000000000000005,
+        0.8899999999999999,
+        0.6399999999999999
+      ],
+      "cmp": [
+        {
+          "gid": "axes_0",
+          "expected": [
+            0.08,
+            0.18000000000000005,
+            0.3314986278015635,
+            0.5840335375200578
+          ],
+          "got": [
+            0.08,
+            0.18000000000000005,
+            0.3315,
+            0.584
+          ],
+          "ok": true
+        },
+        {
+          "gid": "axes_1",
+          "expected": [
+            0.560673010312267,
+            0.18000000000000005,
+            0.3314986278015634,
+            0.5840335375200578
+          ],
+          "got": [
+            0.5606,
+            0.18000000000000005,
+            0.3315,
+            0.584
+          ],
+          "ok": true
+        }
+      ]
+    },
+    "s4-fontsize": {
+      "at": "2026-09-24T19:26:34.306Z",
+      "manifest_sha256": "810a57ed24cf73b136c3a3e08219a1a3171569168ba0acb1d340a6fb2c3793a1",
+      "svg_sha256": "eed64f5a503c272a7c3dce37aa6f2c0fb164e0e4497e87ad65b146c18d12febb",
+      "document_sha256": "067ea68f0d93b334bb5e02473ad97ce2b502e8e018319e5824720b96f46516b9",
+      "render_request_patches": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5511672529581069,
+            0.053578509753757504
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        }
+      ],
+      "render_count_total": 6,
+      "overrides": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5511672529581069,
+            0.053578509753757504
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        }
+      ],
+      "rev": 5
+    },
+    "s5-align-bottom": {
+      "at": "2026-09-24T19:26:37.321Z",
+      "manifest_sha256": "f9c64651494fd2c7ad020344dc5dd059b6e969a06f775e20b334676c330e53eb",
+      "svg_sha256": "ee5622f4ba48cfc85af669a8787fc0f489a1fb6340774ab4ec2c3ab810b76cc4",
+      "document_sha256": "9cc76f76b96e6181b1f4e9a0e36c6ae7b65a7376ce36cfefb7fe31f138fd8503",
+      "render_request_patches": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5511672529581069,
+            0.053578509753757504
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7264,
+            0.8952
+          ]
+        }
+      ],
+      "render_count_total": 7,
+      "overrides": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5511672529581069,
+            0.053578509753757504
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7264,
+            0.8952
+          ]
+        }
+      ],
+      "rev": 6
+    },
+    "s6-distribute": {
+      "at": "2026-09-24T19:26:40.318Z",
+      "manifest_sha256": "03be91e8e708348b845c77c89d609e54f683d0c95a8983e2a49488702f1087a5",
+      "svg_sha256": "da0a2e8846566e2312a824c0c9ef784ee53c9c4edd043d8c57258998565daa8e",
+      "document_sha256": "2ce51c7fd6a88a512da7154d1abc095a1449c4f45d51ac482fe008e7d719bb61",
+      "render_request_patches": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5569,
+            0.0536
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7264,
+            0.8952
+          ]
+        }
+      ],
+      "render_count_total": 8,
+      "overrides": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5569,
+            0.0536
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7264,
+            0.8952
+          ]
+        }
+      ],
+      "rev": 7
+    },
+    "s7-undo2": {
+      "manifest_sha256": "810a57ed24cf73b136c3a3e08219a1a3171569168ba0acb1d340a6fb2c3793a1",
+      "overrides": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5511672529581069,
+            0.053578509753757504
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        }
+      ],
+      "via": "HTTP POST /api/engine/render (independent re-render of the document state)"
+    },
+    "s8-redo2": {
+      "manifest_sha256": "03be91e8e708348b845c77c89d609e54f683d0c95a8983e2a49488702f1087a5",
+      "overrides": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5569,
+            0.0536
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7264,
+            0.8952
+          ]
+        }
+      ],
+      "via": "HTTP POST /api/engine/render (independent re-render of the document state)"
+    },
+    "undo_redo_frontend_render_requests": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "saved_document_sha256": "24f5cd2564d8e35272bcf59fd6f05cec8059535ce57f8d9135aeb354c3b97007",
+    "s9-reopened": {
+      "at": "2026-09-24T19:27:09.368Z",
+      "manifest_sha256": "03be91e8e708348b845c77c89d609e54f683d0c95a8983e2a49488702f1087a5",
+      "svg_sha256": "8910a58d0537a8ab251adc879bdd4d482126fb031c445c126b6b379bb817240f",
+      "document_sha256": null,
+      "render_request_patches": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5569,
+            0.0536
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7264,
+            0.8952
+          ]
+        }
+      ],
+      "render_count_total": 1,
+      "overrides": null,
+      "rev": 1
+    },
+    "s10-reedit": {
+      "at": "2026-09-24T19:27:12.817Z",
+      "manifest_sha256": "000a1481e32c46c0db74d3fd32c23b149acbd0e4f95eb3357940841c6af8a248",
+      "svg_sha256": "f761a3668fd538cb9d89107fa239a56a9048bda5051bb81fa931ecf21a32205a",
+      "document_sha256": "7eee53aea2df681f377371b4ee452b61f866b0aa2066d22bab2b453438cf6cb4",
+      "render_request_patches": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5569,
+            0.0536
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7647940174953859,
+            0.8784026173457686
+          ]
+        }
+      ],
+      "render_count_total": 2,
+      "overrides": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5569,
+            0.0536
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7647940174953859,
+            0.8784026173457686
+          ]
+        }
+      ],
+      "rev": 2
+    },
+    "s11-snapshot-edit": {
+      "at": "2026-09-24T19:27:21.500Z",
+      "manifest_sha256": "dd52436d795294bf3e7fd2bad7f265d6221d37258e67d1d12d868caf84207bd5",
+      "svg_sha256": "2c8a83a1bdd2e0130de5f41d1a1786e03c8b7960cc11e9d18d2976eba1c6b262",
+      "document_sha256": "2ee4ca411d13861f28e1a18a3492a2b2f7a7bf8bfe3ea32c075caa2b740b4b3a",
+      "render_request_patches": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5569,
+            0.0536
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7647940174953859,
+            0.8784026173457686
+          ]
+        },
+        {
+          "gid": "axes_0.ylabel",
+          "prop": "pos_frac",
+          "value": [
+            0.022757627080595512,
+            0.4720000000000001
+          ]
+        }
+      ],
+      "render_count_total": 3,
+      "overrides": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5569,
+            0.0536
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7647940174953859,
+            0.8784026173457686
+          ]
+        },
+        {
+          "gid": "axes_0.ylabel",
+          "prop": "pos_frac",
+          "value": [
+            0.022757627080595512,
+            0.4720000000000001
+          ]
+        }
+      ],
+      "rev": 3
+    },
+    "s12-recomputed": {
+      "at": "2026-09-24T19:27:29.853Z",
+      "manifest_sha256": "7c59fd9e79f7b78f6577ef3b25366d4bcd9ba2574fad4614f82dd423ba086636",
+      "svg_sha256": "2728be50809e60bcd1f03ded1b2625bcbe7ae3e68238d09385634486e9ce4548",
+      "document_sha256": "2ee4ca411d13861f28e1a18a3492a2b2f7a7bf8bfe3ea32c075caa2b740b4b3a",
+      "render_request_patches": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5569,
+            0.0536
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7647940174953859,
+            0.8784026173457686
+          ]
+        },
+        {
+          "gid": "axes_0.ylabel",
+          "prop": "pos_frac",
+          "value": [
+            0.022757627080595512,
+            0.4720000000000001
+          ]
+        }
+      ],
+      "render_count_total": 4,
+      "overrides": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.5569,
+            0.0536
+          ]
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "pos_frac",
+          "value": [
+            0.2936,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_1.title",
+          "prop": "pos_frac",
+          "value": [
+            0.8203,
+            0.1036
+          ]
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc_frac",
+          "value": [
+            0.1219,
+            0.2298
+          ]
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "pos_frac",
+          "value": [
+            0.3707,
+            0.3915
+          ]
+        },
+        {
+          "gid": "fig.texts_1",
+          "prop": "pos_frac",
+          "value": [
+            0.042,
+            0.9296
+          ]
+        },
+        {
+          "gid": "axes_0",
+          "prop": "position",
+          "value": [
+            0.08,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_1",
+          "prop": "position",
+          "value": [
+            0.5606,
+            0.236,
+            0.3315,
+            0.584
+          ]
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 14
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.2457,
+            0.8796
+          ]
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "prop": "pos_frac",
+          "value": [
+            0.7647940174953859,
+            0.8784026173457686
+          ]
+        },
+        {
+          "gid": "axes_0.ylabel",
+          "prop": "pos_frac",
+          "value": [
+            0.022757627080595512,
+            0.4720000000000001
+          ]
+        }
+      ],
+      "rev": 1
+    }
+  },
+  "exports": {
+    "E0": {
+      "status": "done",
+      "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/tavottofile/export",
+      "output": {
+        "name": "qa_E0.pdf",
+        "bytes": 15208,
+        "vector": true,
+        "manifest": {
+          "backend": "rendercore",
+          "bytes": 15208,
+          "carrier": "vector",
+          "checks": {
+            "carrier": "verified",
+            "clipping": "unknown",
+            "fonts_embedded": "unknown",
+            "image_ppi": "not_applicable",
+            "integrity": "verified",
+            "size": "verified",
+            "text_layer": "unknown"
+          },
+          "dpi": null,
+          "fonts_used": [
+            "DejaVuSans"
+          ],
+          "format": "pdf",
+          "identity": {
+            "artifact": "af5ec37caf070020a1a804469588f82bef3ee2e61fd152f397e6654107796cfd",
+            "identity_version": 1,
+            "render": null,
+            "run": "e672feb1d2c94716",
+            "semantic": null
+          },
+          "manifest_version": 1,
+          "notes": [
+            "有 Type 3 字体（字形在 CharProcs 里），嵌入这一维记 unknown",
+            "计划里没有期望的文字行，文字层只抽不比",
+            "没有对象包围盒，裁切只对计划里的对象可判——本次无对象可判"
+          ],
+          "plan_identity": null,
+          "policy": "standard",
+          "provenance": {
+            "execution_receipts": [],
+            "nodes": [],
+            "nodes_truncated": false,
+            "receipts": [],
+            "sources": []
+          },
+          "px": null,
+          "required": [
+            "integrity",
+            "size"
+          ],
+          "sha256": "af5ec37caf070020a1a804469588f82bef3ee2e61fd152f397e6654107796cfd",
+          "size_pt": [
+            504,
+            230.4
+          ],
+          "verdict": "accepted"
+        }
+      },
+      "sha256": "af5ec37caf070020a1a804469588f82bef3ee2e61fd152f397e6654107796cfd",
+      "raster_sha256": "88db0b7e9a98e292d447975c50c0088765eb52b0a0aaf50714ac86a703c19bad",
+      "mediabox_pt": [
+        504,
+        230.4
+      ],
+      "document_revision": "101e5d476b3b9335",
+      "artifact_verdict": "accepted",
+      "text_pairs": [
+        {
+          "text": "QA flagship",
+          "gid": "fig.texts_0",
+          "m": [
+            0.5,
+            0.048124999999999904
+          ],
+          "p": [
+            0.5000074404761905,
+            0.05767795138888898
+          ]
+        },
+        {
+          "text": "src c5de961e6faa env A",
+          "gid": "fig.texts_1",
+          "m": [
+            0.13026785714285716,
+            0.9675
+          ],
+          "p": [
+            0.13015997023809525,
+            0.9783940972222223
+          ]
+        },
+        {
+          "text": "Signal",
+          "gid": "axes_0.title",
+          "m": [
+            0.2616326530612245,
+            0.13833333333333347
+          ],
+          "p": [
+            0.2616336451248016,
+            0.15203125000000006
+          ]
+        },
+        {
+          "text": "Signal",
+          "gid": "axes_1.title",
+          "m": [
+            0.7883673469387754,
+            0.13833333333333347
+          ],
+          "p": [
+            0.7883683390021826,
+            0.15203125000000006
+          ]
+        },
+        {
+          "text": "t / s",
+          "gid": "axes_0.xlabel",
+          "m": [
+            0.2616326530612245,
+            0.9333680555555555
+          ],
+          "p": [
+            0.26160227111686507,
+            0.9410747612847222
+          ]
+        },
+        {
+          "text": "t / s",
+          "gid": "axes_1.xlabel",
+          "m": [
+            0.7883673469387754,
+            0.9333680555555555
+          ],
+          "p": [
+            0.788336964994246,
+            0.9410747612847222
+          ]
+        },
+        {
+          "text": "y",
+          "gid": "axes_0.ylabel",
+          "m": [
+            0.022996031746031743,
+            0.49999999999999994
+          ],
+          "p": [
+            0.02808159722222222,
+            0.5000040690104167
+          ]
+        },
+        {
+          "text": "peak",
+          "gid": "axes_0.texts_0",
+          "m": [
+            0.29981027078493194,
+            0.36191860449610896
+          ],
+          "p": [
+            0.3629151205936508,
+            0.44021227904036453
+          ]
+        },
+        {
+          "text": "points",
+          "gid": "axes_0.legend.texts_0",
+          "m": [
+            0.18385912698412699,
+            0.24093750000000028
+          ],
+          "p": [
+            0.18388888888888885,
+            0.2504155815972222
+          ]
+        }
+      ]
+    },
+    "Ecal": {
+      "status": "done",
+      "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/tavottofile/export",
+      "output": {
+        "name": "qa_Ecal.pdf",
+        "bytes": 13271,
+        "vector": true,
+        "manifest": {
+          "backend": "rendercore",
+          "bytes": 13271,
+          "carrier": "vector",
+          "checks": {
+            "carrier": "verified",
+            "clipping": "unknown",
+            "fonts_embedded": "verified",
+            "image_ppi": "not_applicable",
+            "integrity": "verified",
+            "size": "verified",
+            "text_layer": "unknown"
+          },
+          "dpi": null,
+          "fonts_used": [
+            "DejaVuSans"
+          ],
+          "format": "pdf",
+          "identity": {
+            "artifact": "218950ffda374e682cc129afee2f6c4802ec590b3412ef7d2c6a9cbe3837bb27",
+            "identity_version": 1,
+            "render": null,
+            "run": "23394a8957d945f3",
+            "semantic": null
+          },
+          "manifest_version": 1,
+          "notes": [
+            "计划里没有期望的文字行，文字层只抽不比",
+            "没有对象包围盒，裁切只对计划里的对象可判——本次无对象可判"
+          ],
+          "plan_identity": null,
+          "policy": "standard",
+          "provenance": {
+            "execution_receipts": [],
+            "nodes": [],
+            "nodes_truncated": false,
+            "receipts": [],
+            "sources": []
+          },
+          "px": null,
+          "required": [
+            "integrity",
+            "size"
+          ],
+          "sha256": "218950ffda374e682cc129afee2f6c4802ec590b3412ef7d2c6a9cbe3837bb27",
+          "size_pt": [
+            504,
+            230.4
+          ],
+          "verdict": "accepted"
+        }
+      },
+      "sha256": "218950ffda374e682cc129afee2f6c4802ec590b3412ef7d2c6a9cbe3837bb27",
+      "raster_sha256": "17089197e7b44780e0ad1d81c6a78df719d2090ac76aa1b98e79c3548e45bfc6",
+      "mediabox_pt": [
+        504,
+        230.4
+      ],
+      "document_revision": "330a5cfd632ac7b3",
+      "artifact_verdict": "accepted",
+      "text_pairs": [
+        {
+          "text": "QA flagship",
+          "gid": "fig.texts_0",
+          "m": [
+            0.5511672529581069,
+            0.08170350975375755
+          ],
+          "p": [
+            0.5511746934343255,
+            0.07943354447612849
+          ]
+        },
+        {
+          "text": "src c5de961e6faa env A",
+          "gid": "fig.texts_1",
+          "m": [
+            0.13026785714285716,
+            0.9675
+          ],
+          "p": [
+            0.13015997023809525,
+            0.9685416666666666
+          ]
+        },
+        {
+          "text": "Signal",
+          "gid": "axes_0.title",
+          "m": [
+            0.2616326530612245,
+            0.13833333333333347
+          ],
+          "p": [
+            0.2616336451248016,
+            0.14020833333333338
+          ]
+        },
+        {
+          "text": "Signal",
+          "gid": "axes_1.title",
+          "m": [
+            0.7883673469387754,
+            0.13833333333333347
+          ],
+          "p": [
+            0.7883683390021826,
+            0.14020833333333338
+          ]
+        },
+        {
+          "text": "t / s",
+          "gid": "axes_0.xlabel",
+          "m": [
+            0.2616326530612245,
+            0.9333680555555555
+          ],
+          "p": [
+            0.26160227111686507,
+            0.9312223307291667
+          ]
+        },
+        {
+          "text": "t / s",
+          "gid": "axes_1.xlabel",
+          "m": [
+            0.7883673469387754,
+            0.9333680555555555
+          ],
+          "p": [
+            0.788336964994246,
+            0.9312223307291667
+          ]
+        },
+        {
+          "text": "y",
+          "gid": "axes_0.ylabel",
+          "m": [
+            0.022996031746031743,
+            0.49999999999999994
+          ],
+          "p": [
+            0.023577628968253966,
+            0.5000040690104167
+          ]
+        },
+        {
+          "text": "peak",
+          "gid": "axes_0.texts_0",
+          "m": [
+            0.29981027078493194,
+            0.36191860449610896
+          ],
+          "p": [
+            0.3629151205936508,
+            0.4303598484848091
+          ]
+        },
+        {
+          "text": "points",
+          "gid": "axes_0.legend.texts_0",
+          "m": [
+            0.18385912698412699,
+            0.24093750000000028
+          ],
+          "p": [
+            0.18388888888888885,
+            0.2405631510416668
+          ]
+        }
+      ]
+    },
+    "renderer_note": "E0（零 override）走原件路径（Type3 字体，与用户终端 matplotlib 原件同形）；带 override 的导出由 RenderCore 重画（Type0/CID）。两种字体的 pdfminer 竖向包围盒度量不同，位移对比只在同一渲染路径之间做（Ecal ↔ E1）。",
+    "E1": {
+      "status": "done",
+      "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/tavottofile/export",
+      "output": {
+        "name": "qa_E1.pdf",
+        "bytes": 13143,
+        "vector": true,
+        "manifest": {
+          "backend": "rendercore",
+          "bytes": 13143,
+          "carrier": "vector",
+          "checks": {
+            "carrier": "verified",
+            "clipping": "unknown",
+            "fonts_embedded": "verified",
+            "image_ppi": "not_applicable",
+            "integrity": "verified",
+            "size": "verified",
+            "text_layer": "unknown"
+          },
+          "dpi": null,
+          "fonts_used": [
+            "DejaVuSans"
+          ],
+          "format": "pdf",
+          "identity": {
+            "artifact": "78db22efacb74fdd3c49e569d9ead32597926c3c6e6d8b980d09c420a3294d4c",
+            "identity_version": 1,
+            "render": null,
+            "run": "6422c09a053c48d4",
+            "semantic": null
+          },
+          "manifest_version": 1,
+          "notes": [
+            "计划里没有期望的文字行，文字层只抽不比",
+            "没有对象包围盒，裁切只对计划里的对象可判——本次无对象可判"
+          ],
+          "plan_identity": null,
+          "policy": "standard",
+          "provenance": {
+            "execution_receipts": [],
+            "nodes": [],
+            "nodes_truncated": false,
+            "receipts": [],
+            "sources": []
+          },
+          "px": null,
+          "required": [
+            "integrity",
+            "size"
+          ],
+          "sha256": "78db22efacb74fdd3c49e569d9ead32597926c3c6e6d8b980d09c420a3294d4c",
+          "size_pt": [
+            504,
+            230.4
+          ],
+          "verdict": "accepted"
+        }
+      },
+      "sha256": "78db22efacb74fdd3c49e569d9ead32597926c3c6e6d8b980d09c420a3294d4c",
+      "raster_sha256": "dd7a0e7d3d05756b3d16c890cdd62f8d195eb6a95bdd759b16e57c630756e564",
+      "mediabox_pt": [
+        504,
+        230.4
+      ],
+      "document_revision": "df9a4f59423a86d7",
+      "artifact_verdict": "accepted",
+      "text_pairs": [
+        {
+          "text": "QA flagship",
+          "gid": "fig.texts_0",
+          "m": [
+            0.5569,
+            0.08172499999999976
+          ],
+          "p": [
+            0.5569074404761905,
+            0.07945503472222226
+          ]
+        },
+        {
+          "text": "src c5de961e6faa env A",
+          "gid": "fig.texts_1",
+          "m": [
+            0.16226785714285716,
+            0.9170999999999999
+          ],
+          "p": [
+            0.16215997023809525,
+            0.9181416666666666
+          ]
+        },
+        {
+          "text": "Signal",
+          "gid": "axes_0.title",
+          "m": [
+            0.29359999999999997,
+            0.08797500000000018
+          ],
+          "p": [
+            0.29360099206349205,
+            0.08984999999999999
+          ]
+        },
+        {
+          "text": "Signal",
+          "gid": "axes_1.title",
+          "m": [
+            0.8203,
+            0.08797500000000018
+          ],
+          "p": [
+            0.820300992063492,
+            0.08984999999999999
+          ]
+        },
+        {
+          "text": "t / s",
+          "gid": "axes_0.xlabel",
+          "m": [
+            0.2457,
+            0.9092875
+          ],
+          "p": [
+            0.2456977678571429,
+            0.9097416015625
+          ]
+        },
+        {
+          "text": "t / s",
+          "gid": "axes_1.xlabel",
+          "m": [
+            0.7647940174953859,
+            0.9002776173457686
+          ],
+          "p": [
+            0.7647636355509919,
+            0.8999032683875868
+          ]
+        },
+        {
+          "text": "y",
+          "gid": "axes_0.ylabel",
+          "m": [
+            0.022996031746031743,
+            0.47200000000000003
+          ],
+          "p": [
+            0.023577628968253966,
+            0.4720040690104167
+          ]
+        },
+        {
+          "text": "peak",
+          "gid": "axes_0.texts_0",
+          "m": [
+            0.31046913978119456,
+            0.33014285504772234
+          ],
+          "p": [
+            0.3949261904761905,
+            0.3800416666666667
+          ]
+        },
+        {
+          "text": "points",
+          "gid": "axes_0.legend.texts_0",
+          "m": [
+            0.21583849206349207,
+            0.1905638888888889
+          ],
+          "p": [
+            0.21586825396825396,
+            0.1919609157986112
+          ]
+        }
+      ]
+    },
+    "E1 vs Ecal displacement": {
+      "rows": [
+        {
+          "gid": "fig.texts_0",
+          "measure": "anchor",
+          "manifest_disp_mm": [
+            1.01928242404859,
+            0.001746727214566519
+          ],
+          "pdf_disp_mm": [
+            1.019282424043596,
+            0.0017467272025015745
+          ],
+          "err_mm": [
+            -4.994160640592327e-12,
+            -1.2064944598932925e-11
+          ],
+          "vertical_excluded": false
+        },
+        {
+          "gid": "fig.texts_1",
+          "measure": "anchor",
+          "manifest_disp_mm": [
+            5.6896,
+            -4.096512
+          ],
+          "pdf_disp_mm": [
+            5.6896,
+            -4.096512
+          ],
+          "err_mm": [
+            0,
+            0
+          ],
+          "vertical_excluded": false
+        },
+        {
+          "gid": "axes_0.title",
+          "measure": "anchor",
+          "manifest_disp_mm": [
+            5.683794285714286,
+            -4.0931253333333295
+          ],
+          "pdf_disp_mm": [
+            5.6837942856991654,
+            -4.093125333333338
+          ],
+          "err_mm": [
+            -1.512066027942183e-11,
+            -9.023892744153272e-15
+          ],
+          "vertical_excluded": false
+        },
+        {
+          "gid": "axes_1.title",
+          "measure": "anchor",
+          "manifest_disp_mm": [
+            5.677625714285737,
+            -4.0931253333333295
+          ],
+          "pdf_disp_mm": [
+            5.6776257143008175,
+            -4.093125333333338
+          ],
+          "err_mm": [
+            1.5081180748666158e-11,
+            -9.023892744153272e-15
+          ],
+          "vertical_excluded": false
+        },
+        {
+          "gid": "axes_0.xlabel",
+          "measure": "anchor",
+          "manifest_disp_mm": [
+            -2.8328257142857094,
+            -2.592267555555546
+          ],
+          "pdf_disp_mm": [
+            -2.8278206795786027,
+            -1.7459536666666748
+          ],
+          "err_mm": [
+            0.005005034707106504,
+            0
+          ],
+          "vertical_excluded": true
+        },
+        {
+          "gid": "axes_1.xlabel",
+          "measure": "anchor",
+          "manifest_disp_mm": [
+            -4.191337975034657,
+            -2.6895908176914753
+          ],
+          "pdf_disp_mm": [
+            -4.191337975010575,
+            -2.545613387123613
+          ],
+          "err_mm": [
+            2.4082513760959046e-11,
+            0.14397743056786255
+          ],
+          "vertical_excluded": false
+        },
+        {
+          "gid": "axes_0.ylabel",
+          "measure": "anchor",
+          "manifest_disp_mm": [
+            0,
+            -2.275839999999993
+          ],
+          "pdf_disp_mm": [
+            0,
+            -2.275840000000002
+          ],
+          "err_mm": [
+            0,
+            -9.023892744153272e-15
+          ],
+          "vertical_excluded": false
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "measure": "anchor",
+          "manifest_disp_mm": [
+            5.691568225108227,
+            -4.089861818181818
+          ],
+          "pdf_disp_mm": [
+            5.691568225115561,
+            -4.089861818178615
+          ],
+          "err_mm": [
+            7.333322837865807e-12,
+            3.203481924174412e-12
+          ],
+          "vertical_excluded": false
+        },
+        {
+          "gid": "axes_0.legend.texts_0",
+          "measure": "bbox_center",
+          "manifest_disp_mm": [
+            5.6859311111111115,
+            -4.094367111111133
+          ],
+          "pdf_disp_mm": [
+            5.685931111111117,
+            -3.950389680555561
+          ],
+          "err_mm": [
+            4.934941344458821e-15,
+            0.143977430555572
+          ],
+          "vertical_excluded": false
+        }
+      ],
+      "max_err_mm": 0.14397743056786255
+    },
+    "E2": {
+      "status": "done",
+      "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/tavottofile/export",
+      "output": {
+        "name": "qa_E2.pdf",
+        "bytes": 13145,
+        "vector": true,
+        "manifest": {
+          "backend": "rendercore",
+          "bytes": 13145,
+          "carrier": "vector",
+          "checks": {
+            "carrier": "verified",
+            "clipping": "unknown",
+            "fonts_embedded": "verified",
+            "image_ppi": "not_applicable",
+            "integrity": "verified",
+            "size": "verified",
+            "text_layer": "unknown"
+          },
+          "dpi": null,
+          "fonts_used": [
+            "DejaVuSans"
+          ],
+          "format": "pdf",
+          "identity": {
+            "artifact": "b3cec608c79c9bba7a08b9f633fbd05b74ed2a5cc74577b12a7eae6a166e38c4",
+            "identity_version": 1,
+            "render": null,
+            "run": "0a84d90e43b2498d",
+            "semantic": null
+          },
+          "manifest_version": 1,
+          "notes": [
+            "计划里没有期望的文字行，文字层只抽不比",
+            "没有对象包围盒，裁切只对计划里的对象可判——本次无对象可判"
+          ],
+          "plan_identity": null,
+          "policy": "standard",
+          "provenance": {
+            "execution_receipts": [],
+            "nodes": [],
+            "nodes_truncated": false,
+            "receipts": [],
+            "sources": []
+          },
+          "px": null,
+          "required": [
+            "integrity",
+            "size"
+          ],
+          "sha256": "b3cec608c79c9bba7a08b9f633fbd05b74ed2a5cc74577b12a7eae6a166e38c4",
+          "size_pt": [
+            504,
+            230.4
+          ],
+          "verdict": "accepted"
+        }
+      },
+      "sha256": "b3cec608c79c9bba7a08b9f633fbd05b74ed2a5cc74577b12a7eae6a166e38c4",
+      "raster_sha256": "149fda9b8094a613a4792d56c70902fcc8ae145682b3bbf2ba84bf9fb29081f5",
+      "mediabox_pt": [
+        504,
+        230.4
+      ],
+      "document_revision": "897d7154b1677dee",
+      "artifact_verdict": "accepted",
+      "text_pairs": [
+        {
+          "text": "QA flagship",
+          "gid": "fig.texts_0",
+          "m": [
+            0.5569,
+            0.08172499999999976
+          ],
+          "p": [
+            0.5569074404761905,
+            0.07945503472222226
+          ]
+        },
+        {
+          "text": "src c5de961e6faa env A",
+          "gid": "fig.texts_1",
+          "m": [
+            0.16226785714285716,
+            0.9170999999999999
+          ],
+          "p": [
+            0.16215997023809525,
+            0.9181416666666666
+          ]
+        },
+        {
+          "text": "Signal",
+          "gid": "axes_0.title",
+          "m": [
+            0.29359999999999997,
+            0.08797500000000018
+          ],
+          "p": [
+            0.29360099206349205,
+            0.08984999999999999
+          ]
+        },
+        {
+          "text": "Signal",
+          "gid": "axes_1.title",
+          "m": [
+            0.8203,
+            0.08797500000000018
+          ],
+          "p": [
+            0.820300992063492,
+            0.08984999999999999
+          ]
+        },
+        {
+          "text": "t / s",
+          "gid": "axes_0.xlabel",
+          "m": [
+            0.2457,
+            0.9092875
+          ],
+          "p": [
+            0.2456977678571429,
+            0.9097416015625
+          ]
+        },
+        {
+          "text": "t / s",
+          "gid": "axes_1.xlabel",
+          "m": [
+            0.7647940174953859,
+            0.9002776173457686
+          ],
+          "p": [
+            0.7647636355509919,
+            0.8999032683875868
+          ]
+        },
+        {
+          "text": "y",
+          "gid": "axes_0.ylabel",
+          "m": [
+            0.012757627080595507,
+            0.47200000000000003
+          ],
+          "p": [
+            0.013396267953571432,
+            0.4720040690104167
+          ]
+        },
+        {
+          "text": "peak",
+          "gid": "axes_0.texts_0",
+          "m": [
+            0.31046913978119456,
+            0.33014285504772234
+          ],
+          "p": [
+            0.3949261904761905,
+            0.3800416666666667
+          ]
+        },
+        {
+          "text": "points",
+          "gid": "axes_0.legend.texts_0",
+          "m": [
+            0.21583849206349207,
+            0.1905638888888889
+          ],
+          "p": [
+            0.21586825396825396,
+            0.1919609157986112
+          ]
+        }
+      ]
+    },
+    "E3": {
+      "status": "done",
+      "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/tavottofile/export",
+      "output": {
+        "name": "qa_E3.pdf",
+        "bytes": 12975,
+        "vector": true,
+        "manifest": {
+          "backend": "rendercore",
+          "bytes": 12975,
+          "carrier": "vector",
+          "checks": {
+            "carrier": "verified",
+            "clipping": "unknown",
+            "fonts_embedded": "verified",
+            "image_ppi": "not_applicable",
+            "integrity": "verified",
+            "size": "verified",
+            "text_layer": "unknown"
+          },
+          "dpi": null,
+          "fonts_used": [
+            "DejaVuSans"
+          ],
+          "format": "pdf",
+          "identity": {
+            "artifact": "e9fd141cbe983ef25e4d7b8c729dc9a1869dae604ecf251eafff960bab815e0b",
+            "identity_version": 1,
+            "render": null,
+            "run": "73eadc4e71d14933",
+            "semantic": null
+          },
+          "manifest_version": 1,
+          "notes": [
+            "计划里没有期望的文字行，文字层只抽不比",
+            "没有对象包围盒，裁切只对计划里的对象可判——本次无对象可判"
+          ],
+          "plan_identity": null,
+          "policy": "standard",
+          "provenance": {
+            "execution_receipts": [],
+            "nodes": [],
+            "nodes_truncated": false,
+            "receipts": [],
+            "sources": []
+          },
+          "px": null,
+          "required": [
+            "integrity",
+            "size"
+          ],
+          "sha256": "e9fd141cbe983ef25e4d7b8c729dc9a1869dae604ecf251eafff960bab815e0b",
+          "size_pt": [
+            504,
+            230.4
+          ],
+          "verdict": "accepted"
+        }
+      },
+      "sha256": "e9fd141cbe983ef25e4d7b8c729dc9a1869dae604ecf251eafff960bab815e0b",
+      "raster_sha256": "cd7fce219a96b72c4004efd29df1f5e4a58f4913b827d684e4dddd1e5259c535",
+      "mediabox_pt": [
+        504,
+        230.4
+      ],
+      "document_revision": "897d7154b1677dee",
+      "artifact_verdict": "accepted",
+      "text_pairs": [
+        {
+          "text": "QA flagship",
+          "gid": "fig.texts_0",
+          "m": [
+            0.5569,
+            0.08172499999999976
+          ],
+          "p": [
+            0.5569074404761905,
+            0.07945503472222226
+          ]
+        },
+        {
+          "text": "src 949efa9e08ad env A",
+          "gid": "fig.texts_1",
+          "m": [
+            0.16307142857142856,
+            0.9170999999999999
+          ],
+          "p": [
+            0.16301314484126986,
+            0.9181416666666666
+          ]
+        },
+        {
+          "text": "Signal",
+          "gid": "axes_0.title",
+          "m": [
+            0.29359999999999997,
+            0.08797500000000018
+          ],
+          "p": [
+            0.29360099206349205,
+            0.08984999999999999
+          ]
+        },
+        {
+          "text": "Signal",
+          "gid": "axes_1.title",
+          "m": [
+            0.8203,
+            0.08797500000000018
+          ],
+          "p": [
+            0.820300992063492,
+            0.08984999999999999
+          ]
+        },
+        {
+          "text": "t / s",
+          "gid": "axes_0.xlabel",
+          "m": [
+            0.2457,
+            0.9092875
+          ],
+          "p": [
+            0.2456977678571429,
+            0.9097416015625
+          ]
+        },
+        {
+          "text": "t / s",
+          "gid": "axes_1.xlabel",
+          "m": [
+            0.7647940174953859,
+            0.9002776173457686
+          ],
+          "p": [
+            0.7647636355509919,
+            0.8999032683875868
+          ]
+        },
+        {
+          "text": "y",
+          "gid": "axes_0.ylabel",
+          "m": [
+            0.012757627080595507,
+            0.47200000000000003
+          ],
+          "p": [
+            0.013396267953571432,
+            0.4720040690104167
+          ]
+        },
+        {
+          "text": "peak",
+          "gid": "axes_0.texts_0",
+          "m": [
+            0.3104920052008229,
+            0.33632249755467936
+          ],
+          "p": [
+            0.3949261904761905,
+            0.3800416666666667
+          ]
+        },
+        {
+          "text": "points",
+          "gid": "axes_0.legend.texts_0",
+          "m": [
+            0.21583849206349207,
+            0.1905638888888889
+          ],
+          "p": [
+            0.21586825396825396,
+            0.1919609157986112
+          ]
+        }
+      ]
+    }
+  },
+  "env_evidence": {
+    "environment": {
+      "bundled": false,
+      "control_plane": {
+        "path": null,
+        "selected": "python",
+        "sessions": [
+          "python"
+        ]
+      },
+      "managed": false,
+      "matplotlib": "3.11.2",
+      "ok": true,
+      "project": {
+        "automatic": true,
+        "can_use_project_venv": [
+          ".venv"
+        ],
+        "managed": {
+          "active_generation": "",
+          "created_at": 0,
+          "exists": false,
+          "generations": [],
+          "installed": [],
+          "python_version": "",
+          "state": ""
+        },
+        "module": "",
+        "open": true,
+        "python": ".venv/bin/python",
+        "resolution_error": null,
+        "source": "project_venv",
+        "source_label": "项目自带的虚拟环境",
+        "trigger": "first_open",
+        "workdir": {
+          "decided": true,
+          "grant": {
+            "cwd_write": {
+              "granted": true,
+              "granted_at": 1790277958.301198,
+              "mode": "project_root"
+            },
+            "decided": true
+          },
+          "mode": "project_root",
+          "modes": [
+            "sandbox",
+            "project",
+            "project_root"
+          ]
+        }
+      },
+      "python": "/Volumes/Projects/Tavotto/.venv/bin/python",
+      "runtime": {
+        "build": {},
+        "code": "",
+        "error": null,
+        "expected": false,
+        "packages": {},
+        "present": false,
+        "python": null,
+        "valid": false
+      },
+      "source": "current_process",
+      "state": "idle"
+    },
+    "preparation": {
+      "plan": {
+        "asset_id": "Fig_flagship.pdf",
+        "binding": {
+          "base": "project.root",
+          "binding_version": 1,
+          "expected": {
+            "data/points.csv": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266"
+          },
+          "missing": [
+            "t / s"
+          ],
+          "mode": "project_root",
+          "outside": [],
+          "revision": "sha256:dc02165a831a2aac77d4ce869bb779df34c1b3aee13307b8459d91e815e2f2d4"
+        },
+        "budget": {
+          "build_hard_timeout_s": 14400,
+          "build_idle_timeout_s": 1200
+        },
+        "created_at": 1790277977.095629,
+        "dependency_conflicts": [],
+        "dependency_intents": [],
+        "dependency_preparation": {
+          "clean_machine": false,
+          "code": "dependency_preparation_required",
+          "plan": {
+            "adapter": [],
+            "blocked": [],
+            "constraints": [],
+            "facts": {
+              "digest": "5d1ae5512a8c29c4",
+              "installed_count": 85,
+              "platform_machine": "arm64",
+              "python_version": "3.13.11",
+              "sys_platform": "darwin"
+            },
+            "hashes": {},
+            "identity": "d2192a9f588706b5",
+            "inputs_digest": "8a35ca9fd1075618",
+            "marker_env_digest": "3400af363c337198",
+            "missing": [],
+            "needed": [
+              {
+                "bucket": "third_party",
+                "context": "unconditional",
+                "distribution": "matplotlib",
+                "lines": [
+                  6,
+                  10
+                ],
+                "local_path": "",
+                "module": "matplotlib",
+                "needed": true,
+                "resolution_source": "curated",
+                "via": []
+              }
+            ],
+            "plan_version": 1,
+            "possible": [],
+            "require_hashes": false,
+            "requirements": [],
+            "satisfied": [
+              {
+                "declared": false,
+                "distribution": "matplotlib",
+                "import_name": "matplotlib",
+                "installed_version": "3.10.8",
+                "matches_declared": true,
+                "resolution_source": "curated",
+                "specifiers": [],
+                "via": []
+              }
+            ],
+            "scan": {
+              "classes": [
+                {
+                  "bucket": "stdlib",
+                  "context": "unconditional",
+                  "distribution": "",
+                  "lines": [
+                    2
+                  ],
+                  "local_path": "",
+                  "module": "csv",
+                  "needed": false,
+                  "resolution_source": "",
+                  "via": []
+                },
+                {
+                  "bucket": "stdlib",
+                  "context": "unconditional",
+                  "distribution": "",
+                  "lines": [
+                    3
+                  ],
+                  "local_path": "",
+                  "module": "hashlib",
+                  "needed": false,
+                  "resolution_source": "",
+                  "via": []
+                },
+                {
+                  "bucket": "local",
+                  "context": "unconditional",
+                  "distribution": "",
+                  "lines": [
+                    5
+                  ],
+                  "local_path": "scripts/labmod.py",
+                  "module": "labmod",
+                  "needed": false,
+                  "resolution_source": "",
+                  "via": []
+                },
+                {
+                  "bucket": "third_party",
+                  "context": "unconditional",
+                  "distribution": "matplotlib",
+                  "lines": [
+                    6,
+                    10
+                  ],
+                  "local_path": "",
+                  "module": "matplotlib",
+                  "needed": true,
+                  "resolution_source": "curated",
+                  "via": []
+                },
+                {
+                  "bucket": "unknown",
+                  "context": "unconditional",
+                  "distribution": "",
+                  "lines": [
+                    7
+                  ],
+                  "local_path": "",
+                  "module": "qa_signal",
+                  "needed": false,
+                  "resolution_source": "",
+                  "via": []
+                }
+              ],
+              "counts": {
+                "local": 1,
+                "stdlib": 2,
+                "third_party": 1,
+                "unknown": 1
+              },
+              "dynamic": [],
+              "problems": [],
+              "truncated": false
+            },
+            "script": "scripts/entry.py",
+            "selection": {
+              "available_groups": [],
+              "conflicts": [],
+              "constraints": [],
+              "requirements": [],
+              "selected_groups": [],
+              "skipped_marker": [],
+              "unselected_groups": [],
+              "unsupported": []
+            },
+            "status": "nothing_needed",
+            "target_kind": "project_venv",
+            "unknown": [
+              "qa_signal"
+            ]
+          },
+          "private_python": null,
+          "rounds_remaining": 3,
+          "script": "scripts/entry.py",
+          "skipped": false,
+          "target_kind": "project_venv",
+          "targets": [
+            {
+              "available": true,
+              "creates_environment": false,
+              "kind": "project_venv",
+              "modifies_user_environment": true,
+              "python": ".venv/bin/python",
+              "reason": "",
+              "venv": ".venv"
+            },
+            {
+              "available": true,
+              "creates_environment": true,
+              "kind": "tavotto_managed",
+              "modifies_user_environment": false,
+              "private_python": null,
+              "python": "",
+              "reason": "",
+              "venv": ""
+            }
+          ],
+          "user_environments": []
+        },
+        "entry": "__main__",
+        "environment": {
+          "automatic": true,
+          "discovery": {
+            "candidates": [
+              ".venv"
+            ],
+            "code": "",
+            "ok": true,
+            "rejected": []
+          },
+          "error": null,
+          "invalidated": null,
+          "matplotlib_version": "3.10.8",
+          "module": "",
+          "python": null,
+          "python_version": "3.13.11",
+          "source": "project_venv",
+          "source_label": "项目自带的虚拟环境",
+          "support": "verified",
+          "trigger": "first_open"
+        },
+        "grant": {
+          "cwd_write": {
+            "granted": true,
+            "granted_at": 1790277958.301198,
+            "mode": "project_root"
+          },
+          "decided": true
+        },
+        "launch_context": {
+          "argv": [],
+          "cwd_mode": "project_root",
+          "cwd_origin": "project.root",
+          "entry": "__main__",
+          "grant": {
+            "cwd_write": {
+              "granted": true,
+              "granted_at": 1790277958.301198,
+              "mode": "project_root"
+            },
+            "decided": true
+          },
+          "launch_context_version": 1,
+          "passthrough_savefig": false,
+          "profile": "safe",
+          "target": "scripts/entry.py",
+          "target_kind": "script",
+          "write_mode": "project_dir"
+        },
+        "plan_id": "prep-a1048e38353e4e049390becfe7ad5dea",
+        "plan_version": 1,
+        "project_id": "941066d0946b",
+        "python_requirement": {
+          "declared": false
+        },
+        "required_input": null,
+        "script": "scripts/entry.py",
+        "static_source": {
+          "bytes_sha256": "6500dce4916f2a64659157b6d298787b15c48bdad52a3dd75fe4e4ea343daeb0",
+          "generation": null,
+          "kind": "pdf",
+          "origin": "static",
+          "patch_hash": null,
+          "receipt_id": null,
+          "receipt_identity": null,
+          "size_bytes": 15369,
+          "source_artifact_version": 1,
+          "source_id": "Fig_flagship.pdf"
+        },
+        "stem": "Fig_flagship",
+        "workdir_decision": {
+          "confirmation": null,
+          "decided": true,
+          "evidence": null,
+          "mode": "project_root",
+          "needs_confirmation": false
+        }
+      },
+      "result": {
+        "cancel_requested_at": null,
+        "created_runtime": false,
+        "error": null,
+        "existing_runtime": {
+          "built": true,
+          "control_plane": "python_pool",
+          "generation": 1
+        },
+        "finished_at": 1790277977.101898,
+        "note": "复用现有 runtime，没有重新执行脚本",
+        "receipt": {
+          "binding": {
+            "base": "project.root",
+            "binding_version": 1,
+            "expected": {
+              "data/points.csv": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266"
+            },
+            "missing": [
+              "t / s"
+            ],
+            "mode": "project_root",
+            "outside": [],
+            "revision": "sha256:dc02165a831a2aac77d4ce869bb779df34c1b3aee13307b8459d91e815e2f2d4"
+          },
+          "binding_check": {
+            "changed": [],
+            "matched": true,
+            "observation": "partial",
+            "revision": "sha256:dc02165a831a2aac77d4ce869bb779df34c1b3aee13307b8459d91e815e2f2d4",
+            "same": [
+              "data/points.csv"
+            ],
+            "unobserved": []
+          },
+          "completeness": "complete",
+          "control_plane": "python_pool",
+          "descriptors": [
+            {
+              "asset_id": "runtime:scripts/entry.py#Fig_flagship",
+              "can_writeback_artifact": true,
+              "can_writeback_source": false,
+              "capture_source": "savefig",
+              "entry": "__main__",
+              "execution_profile": "safe",
+              "original_artifact": "Fig_flagship.pdf",
+              "script": "scripts/entry.py",
+              "size_mm": [
+                177.8,
+                81.28
+              ],
+              "source_fingerprint": "sha256:c6bcf99a6a368c90126f45a2c7397cd518953bbb80dd91cd48128e5d96ee5cc9",
+              "stem": "Fig_flagship"
+            }
+          ],
+          "generation": 1,
+          "inputs": {
+            "channels": [
+              "python_open",
+              "numpy_datasource"
+            ],
+            "files": [
+              {
+                "path": "data/points.csv",
+                "sha256": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+                "size": 21
+              }
+            ],
+            "local_modules": [
+              {
+                "name": "_virtualenv",
+                "path": ".venv/lib/python3.13/site-packages/_virtualenv.py",
+                "sha256": "cfb3db86aaa53bb62b5ff764970bec2d71c9228590a0ebec57f6ec926cc0bf1a"
+              },
+              {
+                "name": "labmod",
+                "path": "scripts/labmod.py",
+                "sha256": "b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385"
+              },
+              {
+                "name": "qa_signal",
+                "path": ".venv/lib/python3.13/site-packages/qa_signal/__init__.py",
+                "sha256": "2f6d9eb77db3b81c2b425d1cb589027a873b20fda1945761599df079af956db8"
+              }
+            ],
+            "observation": "partial",
+            "truncated": false,
+            "unobserved": [
+              "native_io",
+              "network",
+              "subprocess",
+              "os_open"
+            ]
+          },
+          "launch_context": {
+            "argv": [],
+            "cwd_mode": "project_root",
+            "cwd_origin": "project.root",
+            "entry": "__main__",
+            "grant": {
+              "cwd_write": {
+                "granted": true,
+                "granted_at": 1790277958.301198,
+                "mode": "project_root"
+              },
+              "decided": true
+            },
+            "launch_context_version": 1,
+            "passthrough_savefig": false,
+            "profile": "safe",
+            "target": "scripts/entry.py",
+            "target_kind": "script",
+            "write_mode": "project_dir"
+          },
+          "pid_check": "ok",
+          "profile": "safe",
+          "public_identity": "sha256:1879eb88326b1cc9d8f733c53e2477be98bd585e188744597582ac2738a7f2af",
+          "python_source": "project_venv",
+          "receipt_id": "sha256:681542fcc47fe5c129b1aeced397406399e2cf88d52dc54cc35815e7ccbc92e4",
+          "receipt_version": 1,
+          "runtime": {
+            "inputs": {
+              "channels": [
+                "python_open",
+                "numpy_datasource"
+              ],
+              "files": [
+                {
+                  "path": "data/points.csv",
+                  "sha256": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+                  "size": 21
+                }
+              ],
+              "local_modules": [
+                {
+                  "name": "_virtualenv",
+                  "path": ".venv/lib/python3.13/site-packages/_virtualenv.py",
+                  "sha256": "cfb3db86aaa53bb62b5ff764970bec2d71c9228590a0ebec57f6ec926cc0bf1a"
+                },
+                {
+                  "name": "labmod",
+                  "path": "scripts/labmod.py",
+                  "sha256": "b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385"
+                },
+                {
+                  "name": "qa_signal",
+                  "path": ".venv/lib/python3.13/site-packages/qa_signal/__init__.py",
+                  "sha256": "2f6d9eb77db3b81c2b425d1cb589027a873b20fda1945761599df079af956db8"
+                }
+              ],
+              "observation": "partial",
+              "truncated": false,
+              "unobserved": [
+                "native_io",
+                "network",
+                "subprocess",
+                "os_open"
+              ]
+            },
+            "machine": "arm64",
+            "packages": {
+              "matplotlib": "3.10.8",
+              "numpy": "2.4.3",
+              "pandas": "3.0.1",
+              "pillow": "12.1.0",
+              "scipy": "1.17.1"
+            },
+            "pid": 11922,
+            "platform": "darwin",
+            "ppid": 11522,
+            "python_implementation": "CPython",
+            "python_version": "3.13.11",
+            "report_origin": "build",
+            "runtime_report_version": 1
+          },
+          "runtime_rejected": null,
+          "source_revision": "7125ad4db1d8f5d41f1b345114a5dda85ef70f5b",
+          "spec": {
+            "argv": [],
+            "cwd_mode": "project_root",
+            "entry": "__main__",
+            "passthrough_savefig": false,
+            "profile": "safe",
+            "spec_version": 1,
+            "target": "scripts/entry.py",
+            "target_kind": "script"
+          }
+        },
+        "required_input": null,
+        "started_at": 1790277977.097273,
+        "status": "ready",
+        "trace": {
+          "current_phase": "receipt",
+          "dropped": 0,
+          "events": [
+            {
+              "at_ms": 1.615,
+              "facts": {
+                "plan_id": "prep-a1048e38353e4e049390becfe7ad5dea"
+              },
+              "outcome": "ok",
+              "phase": "plan"
+            },
+            {
+              "at_ms": 5.217,
+              "outcome": "ok",
+              "phase": "check"
+            },
+            {
+              "at_ms": 6.227,
+              "facts": {
+                "binding": true,
+                "completeness": "complete",
+                "reused": true
+              },
+              "outcome": "ok",
+              "phase": "receipt"
+            }
+          ],
+          "failed_code": null,
+          "failed_phase": null,
+          "limit": 64,
+          "trace_version": 1,
+          "truncated": false
+        }
+      }
+    },
+    "worker_pid": {
+      "pid": 11922,
+      "command": "/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-6/src/tavotto/engine/worker.py --script /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/scripts/entry.py --figures-dir /private/tmp/clau",
+      "pyvenv_launcher": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/.venv/bin/python",
+      "cwd": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper"
+    },
+    "receipt_inputs": {
+      "channels": [
+        "python_open",
+        "numpy_datasource"
+      ],
+      "files": [
+        {
+          "path": "data/points.csv",
+          "sha256": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+          "size": 21
+        }
+      ],
+      "local_modules": [
+        {
+          "name": "_virtualenv",
+          "path": ".venv/lib/python3.13/site-packages/_virtualenv.py",
+          "sha256": "cfb3db86aaa53bb62b5ff764970bec2d71c9228590a0ebec57f6ec926cc0bf1a"
+        },
+        {
+          "name": "labmod",
+          "path": "scripts/labmod.py",
+          "sha256": "b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385"
+        },
+        {
+          "name": "qa_signal",
+          "path": ".venv/lib/python3.13/site-packages/qa_signal/__init__.py",
+          "sha256": "2f6d9eb77db3b81c2b425d1cb589027a873b20fda1945761599df079af956db8"
+        }
+      ],
+      "observation": "partial",
+      "truncated": false,
+      "unobserved": [
+        "native_io",
+        "network",
+        "subprocess",
+        "os_open"
+      ]
+    },
+    "external_file_in_receipt": false,
+    "environment_after_restart": {
+      "bundled": false,
+      "control_plane": {
+        "path": null,
+        "selected": "python",
+        "sessions": [
+          "python"
+        ]
+      },
+      "managed": false,
+      "matplotlib": "3.11.2",
+      "ok": true,
+      "project": {
+        "automatic": true,
+        "can_use_project_venv": [
+          ".venv"
+        ],
+        "managed": {
+          "active_generation": "",
+          "created_at": 0,
+          "exists": false,
+          "generations": [],
+          "installed": [],
+          "python_version": "",
+          "state": ""
+        },
+        "module": "",
+        "open": true,
+        "python": ".venv/bin/python",
+        "resolution_error": null,
+        "source": "project_venv",
+        "source_label": "项目自带的虚拟环境",
+        "trigger": "first_open",
+        "workdir": {
+          "decided": true,
+          "grant": {
+            "cwd_write": {
+              "granted": true,
+              "granted_at": 1790277958.301198,
+              "mode": "project_root"
+            },
+            "decided": true
+          },
+          "mode": "project_root",
+          "modes": [
+            "sandbox",
+            "project",
+            "project_root"
+          ]
+        }
+      },
+      "python": "/Volumes/Projects/Tavotto/.venv/bin/python",
+      "runtime": {
+        "build": {},
+        "code": "",
+        "error": null,
+        "expected": false,
+        "packages": {},
+        "present": false,
+        "python": null,
+        "valid": false
+      },
+      "source": "current_process",
+      "state": "idle"
+    }
+  },
+  "data_evidence": {
+    "workdir_dialog": [
+      {
+        "mode": "project_root",
+        "checked": false,
+        "text": "项目根目录cwd 是这个项目的根目录：data/x.csv 这样的相对路径从项目根找。找得到：data/points.csv"
+      },
+      {
+        "mode": "project",
+        "checked": false,
+        "text": "脚本所在目录cwd 是脚本自己的目录：相对路径从脚本旁边找。找得到：data/points.csv"
+      },
+      {
+        "mode": "sandbox",
+        "checked": false,
+        "text": "继续在沙盒里运行cwd 是 Tavotto 的沙盒：只读的相对路径回退到脚本目录，写出的文件不碰项目。找得到：data/points.csv"
+      }
+    ],
+    "required_input": {
+      "answer": {
+        "body": {
+          "mode": "<options[*].mode>"
+        },
+        "http": "PATCH /api/engine/workdir"
+      },
+      "code": "workdir_confirmation_required",
+      "conflicts": [
+        "data/points.csv"
+      ],
+      "kind": "workdir",
+      "message": "脚本目录与项目根目录各有一份同名数据且内容不同，请先选择它的运行目录",
+      "options": [
+        {
+          "cwd_origin": "project.root",
+          "found": [
+            "data/points.csv"
+          ],
+          "mode": "project_root",
+          "recommended": false,
+          "write_mode": "project_dir"
+        },
+        {
+          "cwd_origin": "script.parent",
+          "found": [
+            "data/points.csv"
+          ],
+          "mode": "project",
+          "recommended": false,
+          "write_mode": "project_dir"
+        },
+        {
+          "cwd_origin": "sandbox",
+          "found": [
+            "data/points.csv"
+          ],
+          "mode": "sandbox",
+          "recommended": false,
+          "write_mode": "sandboxed"
+        }
+      ],
+      "reads": [
+        "t / s",
+        "data/points.csv"
+      ],
+      "reason": "ambiguous_data",
+      "recommended": null,
+      "script": "scripts/entry.py"
+    },
+    "s0": {
+      "points": {
+        "svg_y": [
+          182.225455,
+          61.579636,
+          155.415273,
+          48.174545
+        ],
+        "fit_expected": {
+          "a": 182.225455,
+          "b": -13.405091,
+          "maxResidualPt": 7.105427357601002e-15
+        },
+        "fit_other": {
+          "a": 136.0922154046823,
+          "b": -4.617807267558528,
+          "maxResidualPt": 65.27696486956523
+        },
+        "fit_others": [
+          {
+            "a": 136.0922154046823,
+            "b": -4.617807267558528,
+            "maxResidualPt": 65.27696486956523
+          },
+          {
+            "a": 202.67009099441344,
+            "b": -17.29930737988827,
+            "maxResidualPt": 4.643104145251385
+          }
+        ]
+      },
+      "signal": {
+        "fitA": {
+          "a": 226.9090915,
+          "b": -44.6836366,
+          "maxResidualPt": 3.000000106112566e-7
+        },
+        "fitB": {
+          "a": 48.17454550000001,
+          "b": 26.8101818,
+          "maxResidualPt": 53.62036410000002
+        }
+      },
+      "provenance": "src c5de961e6faa env A"
+    },
+    "s9": {
+      "points": {
+        "svg_y": [
+          169.909527,
+          59.820218,
+          145.445236,
+          47.588073
+        ],
+        "fit_expected": {
+          "a": 169.909526909699,
+          "b": -12.232145411371237,
+          "maxResidualPt": 2.0735787131798133e-7
+        },
+        "fit_other": {
+          "a": 127.81294615384616,
+          "b": -4.213749076923077,
+          "maxResidualPt": 59.56523
+        },
+        "fit_others": [
+          {
+            "a": 127.81294615384616,
+            "b": -4.213749076923077,
+            "maxResidualPt": 59.56523
+          },
+          {
+            "a": 188.56525706145254,
+            "b": -15.785617821229051,
+            "maxResidualPt": 4.236832402234597
+          }
+        ]
+      },
+      "signal": {
+        "fitA": {
+          "a": 210.68334499999997,
+          "b": -40.773818,
+          "maxResidualPt": 2.842170943040401e-14
+        },
+        "fitB": {
+          "a": 47.58807300000001,
+          "b": 24.464290799999993,
+          "maxResidualPt": 48.9285816
+        }
+      },
+      "provenance": "src c5de961e6faa env A"
+    },
+    "s11": {
+      "points": {
+        "svg_y": [
+          169.909527,
+          59.820218,
+          145.445236,
+          47.588073
+        ],
+        "fit_expected": {
+          "a": 169.909526909699,
+          "b": -12.232145411371237,
+          "maxResidualPt": 2.0735787131798133e-7
+        },
+        "fit_other": {
+          "a": 127.81294615384616,
+          "b": -4.213749076923077,
+          "maxResidualPt": 59.56523
+        },
+        "fit_others": [
+          {
+            "a": 127.81294615384616,
+            "b": -4.213749076923077,
+            "maxResidualPt": 59.56523
+          },
+          {
+            "a": 188.56525706145254,
+            "b": -15.785617821229051,
+            "maxResidualPt": 4.236832402234597
+          }
+        ]
+      },
+      "signal": {
+        "fitA": {
+          "a": 210.68334499999997,
+          "b": -40.773818,
+          "maxResidualPt": 2.842170943040401e-14
+        },
+        "fitB": {
+          "a": 47.58807300000001,
+          "b": 24.464290799999993,
+          "maxResidualPt": 48.9285816
+        }
+      },
+      "provenance": "src c5de961e6faa env A"
+    },
+    "s12": {
+      "points": {
+        "svg_y": [
+          169.909527,
+          62.878255,
+          139.329164,
+          47.588073
+        ],
+        "fit_expected": {
+          "a": 185.1997089888268,
+          "b": -15.290181759776537,
+          "maxResidualPt": 2.9050278271824936e-7
+        },
+        "fit_other": {
+          "a": 166.94353880267556,
+          "b": -11.812816010033442,
+          "maxResidualPt": 3.988742782608682
+        },
+        "fit_others": [
+          {
+            "a": 166.94353880267556,
+            "b": -11.812816010033442,
+            "maxResidualPt": 3.988742782608682
+          },
+          {
+            "a": 129.35730594983278,
+            "b": -4.65353356187291,
+            "maxResidualPt": 57.17198382608695
+          }
+        ]
+      },
+      "signal": {
+        "fitA": {
+          "a": 210.68334499999997,
+          "b": -40.773818,
+          "maxResidualPt": 2.842170943040401e-14
+        },
+        "fitB": {
+          "a": 47.58807300000001,
+          "b": 24.464290799999993,
+          "maxResidualPt": 48.9285816
+        }
+      },
+      "provenance": "src 949efa9e08ad env A"
+    }
+  },
+  "side_effects": {
+    "before": {
+      "paper": {
+        "Fig_flagship.pdf": "6500dce4916f2a64659157b6d298787b15c48bdad52a3dd75fe4e4ea343daeb0",
+        "data/points.csv": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+        "scripts/data/points.csv": "1c8ade0c7fd2a2b7f8ed6b2ab588c51e99d2838da5afdc8d529f357a4841f9c7",
+        "scripts/entry.py": "79b382af08dd2c506805584d6b710eddf4ed0006f013e14d4189db5873d06907",
+        "scripts/labmod.py": "b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385"
+      },
+      "external": "cd0bd6d847b26aa7eadac5fb9635038298cc9755c64ba3ce274b579a13ef343e",
+      "venvA_site": [
+        "__pycache__",
+        "_virtualenv.pth",
+        "_virtualenv.py",
+        "qa_signal"
+      ],
+      "venvB_site": [
+        "__pycache__",
+        "_virtualenv.pth",
+        "_virtualenv.py",
+        "qa_signal"
+      ]
+    },
+    "processes_after_quit": [],
+    "paper_tree_diff": {
+      "added": [
+        "tavotto_registry.json",
+        "tavottofile/export/qa_E0.pdf",
+        "tavottofile/export/qa_E0_style-check.json",
+        "tavottofile/export/qa_E1.pdf",
+        "tavottofile/export/qa_E1_style-check.json",
+        "tavottofile/export/qa_E2.pdf",
+        "tavottofile/export/qa_E2_style-check.json",
+        "tavottofile/export/qa_E3.pdf",
+        "tavottofile/export/qa_E3_style-check.json",
+        "tavottofile/export/qa_Ecal.pdf",
+        "tavottofile/export/qa_Ecal_style-check.json",
+        "tavottofile/versions/d_ho03hj7o.json"
+      ],
+      "removed": [],
+      "changed": []
+    },
+    "whitelisted_additions": [
+      "tavotto_registry.json",
+      "tavottofile/export/qa_E0.pdf",
+      "tavottofile/export/qa_E0_style-check.json",
+      "tavottofile/export/qa_E1.pdf",
+      "tavottofile/export/qa_E1_style-check.json",
+      "tavottofile/export/qa_E2.pdf",
+      "tavottofile/export/qa_E2_style-check.json",
+      "tavottofile/export/qa_E3.pdf",
+      "tavottofile/export/qa_E3_style-check.json",
+      "tavottofile/export/qa_Ecal.pdf",
+      "tavottofile/export/qa_Ecal_style-check.json",
+      "tavottofile/versions/d_ho03hj7o.json"
+    ],
+    "export_dirs": [
+      "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/tavottofile/export",
+      "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/tavottofile/export",
+      "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/tavottofile/export",
+      "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/tavottofile/export"
+    ]
+  },
+  "updated_at": "2026-09-24T19:27:35.532Z",
+  "server_S1": {
+    "version": {
+      "build": "index-qj9xX_eu",
+      "version": "0.16.0"
+    },
+    "env": {
+      "PATH_head": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/envB/bin",
+      "TAVOTTO_WORKER_PYTHON": null,
+      "TAVOTTO_FONTS_DIR": "/Volumes/Projects/Tavotto/src/tavotto/resources/fonts"
+    },
+    "unauth_status": 401
+  },
+  "browser": {
+    "name": "chromium",
+    "version": "151.0.7922.34"
+  },
+  "T": {
+    "x": 392.0048828125,
+    "y": 315.31268310546875,
+    "w": 781.75,
+    "h": 357.35687255859375,
+    "vb": [
+      0,
+      0,
+      504,
+      230.4
+    ]
+  },
+  "exports_gate": {
+    "E0": {
+      "formats": {
+        "PDF": true,
+        "PNG": false,
+        "EPS": false,
+        "TIFF": false
+      },
+      "check_text": "检查\n1 阻断 · 22 警告 · 9 建议\n· 仅此图\n在问题面板中查看\n超出页面范围\nFig_flagship\n定位\n知悉上述 1 条阻断问题，仍要导出",
+      "acknowledged_blockers": true
+    },
+    "Ecal": {
+      "formats": {
+        "PDF": true,
+        "PNG": false,
+        "EPS": false,
+        "TIFF": false
+      },
+      "check_text": "检查\n1 阻断 · 22 警告 · 9 建议\n· 仅此图\n在问题面板中查看\n超出页面范围\nFig_flagship\n定位\n知悉上述 1 条阻断问题，仍要导出",
+      "acknowledged_blockers": true
+    },
+    "E1": {
+      "formats": {
+        "PDF": true,
+        "PNG": false,
+        "EPS": false,
+        "TIFF": false
+      },
+      "check_text": "检查\n1 阻断 · 23 警告 · 9 建议\n· 仅此图\n在问题面板中查看\n超出页面范围\nFig_flagship\n定位\n知悉上述 1 条阻断问题，仍要导出",
+      "acknowledged_blockers": true
+    },
+    "E2": {
+      "formats": {
+        "PDF": true,
+        "PNG": false,
+        "EPS": false,
+        "TIFF": false
+      },
+      "check_text": "检查\n1 阻断 · 23 警告 · 9 建议\n· 仅此图\n在问题面板中查看\n超出页面范围\nFig_flagship\n定位\n知悉上述 1 条阻断问题，仍要导出",
+      "acknowledged_blockers": true
+    },
+    "E3": {
+      "formats": {
+        "PDF": true,
+        "PNG": false,
+        "EPS": false,
+        "TIFF": false
+      },
+      "check_text": "检查\n1 阻断 · 23 警告 · 9 建议\n· 仅此图\n在问题面板中查看\n超出页面范围\nFig_flagship\n定位\n知悉上述 1 条阻断问题，仍要导出",
+      "acknowledged_blockers": true
+    }
+  },
+  "saved_files": [
+    "d_ho03hj7o.json"
+  ],
+  "snapshot_branch": {
+    "original_sha256": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+    "changed_sha256": "949efa9e08adaed56cb084fb9bb15bc204eaa90aae8ecc3951eaf0647fa1581b",
+    "changed_at": "2026-09-24T19:27:15.162Z",
+    "preparation_after_change": {
+      "status": "ready",
+      "binding_check": {
+        "changed": [
+          "data/points.csv"
+        ],
+        "matched": false,
+        "observation": "partial",
+        "revision": "sha256:333d9660ed8831957850b58125b51a2bec9efa53f9678ac151821c574a3cb285",
+        "same": [],
+        "unobserved": []
+      },
+      "existing_runtime": {
+        "built": true,
+        "control_plane": "python_pool",
+        "generation": 1
+      }
+    },
+    "ui_status": "导出完成：qa_E2.pdf、qa_E2_style-check.json"
+  },
+  "recompute_branch": {
+    "ui_status": "已按源脚本重新构建",
+    "expected_provenance": "src 949efa9e08ad env A",
+    "data_restored_sha256": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266"
+  },
+  "finished_at": "2026-09-24T19:27:35.532Z"
+}

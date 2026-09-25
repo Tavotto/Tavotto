@@ -1,0 +1,23 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh verify/PATH-03 tests/test_first_open_paths_d1.py::test_path03_file_relative_and_absolute_outside_are_kept_and_a_stale_absolute_path_fails tests/test_foundation_first_open.py::test_fo03_file_relative_data_and_local_package_open_automatically tests/test_databinding.py::test_absolute_paths_are_never_touched tests/test_databinding.py::test_a_literal_that_escapes_the_project_root_is_never_touched tests/test_compat_capture_parity.py -k path03 or fo03 or absolute or escapes or abs -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path03_file_relative_and_absolute_outside_are_kept_and_a_stale_absolute_path_fails tests/test_foundation_first_open.py::test_fo03_file_relative_data_and_local_package_open_automatically tests/test_databinding.py::test_absolute_paths_are_never_touched tests/test_databinding.py::test_a_literal_that_escapes_the_project_root_is_never_touched tests/test_compat_capture_parity.py -k path03 or fo03 or absolute or escapes or abs -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vpath-scratch/pytest-verify/PATH-03
+# time: 2026-09-24T19:30:06Z
+# sha: 93dd9f4b86bea7fd5ccde339f57735b85a6cdf36  (worktree dirty files: 0)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-path
+configfile: pytest.ini
+collecting ... collected 47 items / 37 deselected / 10 selected
+
+tests/test_first_open_paths_d1.py::test_path03_file_relative_and_absolute_outside_are_kept_and_a_stale_absolute_path_fails PASSED [ 10%]
+tests/test_foundation_first_open.py::test_fo03_file_relative_data_and_local_package_open_automatically PASSED [ 20%]
+tests/test_databinding.py::test_absolute_paths_are_never_touched PASSED  [ 30%]
+tests/test_databinding.py::test_a_literal_that_escapes_the_project_root_is_never_touched PASSED [ 40%]
+tests/test_compat_capture_parity.py::TestAbsolutizedRelativeRead::test_absolute_path_into_sandbox_is_redirected PASSED [ 50%]
+tests/test_compat_capture_parity.py::TestAbsolutizedRelativeRead::test_absolute_path_outside_sandbox_is_never_redirected PASSED [ 60%]
+tests/test_compat_capture_parity.py::TestAbsolutizedRelativeRead::test_absolute_write_into_sandbox_still_lands_in_the_sandbox PASSED [ 70%]
+tests/test_compat_capture_parity.py::TestAbsolutizedRelativeRead::test_existing_sandbox_file_wins_over_the_project_copy PASSED [ 80%]
+tests/test_compat_capture_parity.py::TestAbsolutizedRelativeRead::test_chdir_then_write_then_read_keeps_the_scripts_own_copy PASSED [ 90%]
+tests/test_compat_capture_parity.py::TestAbsolutizedRelativeRead::test_chdir_then_read_a_file_only_the_project_has PASSED [100%]
+
+====================== 10 passed, 37 deselected in 30.17s ======================
+# exit_code: 0

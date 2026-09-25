@@ -1,0 +1,16 @@
+# verify: GEO-09-existing
+# time: 2026-09-25T03:22:35 (+2s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/alignUndoConvergence.test.tsx src/store/alignAction.test.ts src/store/alignSelectedTo.test.ts src/canvas/fakeRealtimeDrag.test.tsx
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-geo/web
+
+
+ Test Files  4 passed (4)
+      Tests  54 passed (54)
+   Start at  03:22:35
+   Duration  1.46s (transform 1.55s, setup 584ms, import 1.68s, tests 550ms, environment 1.27s)
+
+[exit=0]
+

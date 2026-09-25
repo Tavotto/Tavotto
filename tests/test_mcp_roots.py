@@ -303,6 +303,7 @@ def test_the_four_issue_buckets_map_to_four_different_dispositions():
         ("declined", "workspace_confirmation_declined", "ask_user_again"),
         ("cancelled", "workspace_confirmation_cancelled", "ask_user_again"),
         ("no_response", "workspace_confirmation_no_response", "fix_host_wiring"),
+        ("auto_declined", "workspace_confirmation_auto_declined", "fix_host_wiring"),
         ("error", "workspace_confirmation_error", "fix_host_wiring"),
         ("stale", "workspace_confirmation_stale", "ask_user_again"),
         ("unsupported", "no_workspace_root", "configure_roots"),

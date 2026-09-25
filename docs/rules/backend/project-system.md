@@ -133,3 +133,16 @@
   不得再从仓库根 `examples/` 读文件。
 - 前端侧（sessionStorage 的 pj、schema 3、画布会话、自动保存、剪贴板、撤销
   防线等）见 `web/AGENTS.md`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- `pj` 查询参数与请求头两条路都认，指名不存在的 409 绝不落默认项目
+- 基线按项目分键、绑定文件身份（`_baked_matches_file`）
+- 派生刷新只有 `app.refresh_project()` 一条编排
+- readiness 六态十码闭集、只报告不动手、「没测量」不压成零
+- `originalspec` 先量后猜
+- TIFF 范围只在 `tiffprobe`（候选后端静态源不经 `safe_resolve`，单独补闸）

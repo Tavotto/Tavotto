@@ -1,0 +1,14 @@
+# cmd: gh release view v0.16.0 -R Tavotto/Tavotto --json assets --jq '[.assets[]|{name,digest}]'; curl -s https://pypi.org/pypi/tavotto/0.16.0/json | python3 -c "import json,sys; [print(u['filename'], u['digests']['sha256']) for u in json.load(sys.stdin)['urls']]"; gh run view 35754630426 -R Tavotto/Tavotto --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv'
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:12:40Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+[{"digest":"sha256:1ab9dc613c5e5ca3ac5a7d7a72df30bfeae1406204bfde936c3134aa1fba371a","name":"artifact-manifest-python.json"},{"digest":"sha256:bce6b1980eb3c4251d17fda935300ed56d26c7c275bbd27a6cf91888215d044f","name":"artifact-manifest.json"},{"digest":"sha256:9326efe2e0e953e33a9bb0a60dc2d75fba6b4022ddb86d329e4c922067e805bf","name":"codex-plugin-0.16.0.zip"},{"digest":"sha256:ca8d0709be24deda0432a23de165008b3006be05dc738ebe436fd614d7b8ce79","name":"codex-plugin-build.json"},{"digest":"sha256:a439bb12fd611fd1df809ef65f95bcbd530b7369dc24cb7ba22bb3944c4a2cb7","name":"codex-plugin.json"},{"digest":"sha256:1438d233fdf8a1382e6a4907bb168a97a789b9b5f69f138a5fe7f6e4af96fc98","name":"latest.json"},{"digest":"sha256:0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0","name":"LICENSE"},{"digest":"sha256:f2c88a5b660d442aed72b3f27d3faf148c68ccd893676d285e3aeadb50dc5324","name":"SHA256SUMS.txt"},{"digest":"sha256:e097922d6229ddd7677fd7a97505484ffe6e1e77a5e60f6003068f95a102f5d0","name":"Tavotto-0.16.0-macOS.dmg"},{"digest":"sha256:6bd64b3318a3cb39e7581c8a3f5f89fc517a76acc91781ae75b5bc35273619b7","name":"tavotto-0.16.0-py3-none-any.whl"},{"digest":"sha256:31229608772fa94e01f7a3ef688e5dc6a102da7ede21239235245c0b9784b10d","name":"Tavotto-0.16.0-Windows-Setup.exe"},{"digest":"sha256:d04db295eb7dc5245321008f85693147e943aeecbc2c3bff70c2ff0d59522928","name":"tavotto-0.16.0.tar.gz"},{"digest":"sha256:639f25126a4b5ada4a14e3f81283a0ef1b64db783d2745cd8584c27cc9c7da5e","name":"tavotto-sbom.spdx.json"},{"digest":"sha256:af900af2b703cc044e72192a66934bb069cb6eba28baca29f4c620f1858ab712","name":"Tavotto.app.tar.gz"},{"digest":"sha256:a9002b99a739b1e0a3789c0560cc143da10e910597b3ebc40cdec9726a72e615","name":"Tavotto.app.tar.gz.sig"},{"digest":"sha256:3ba79feb0396c33659bd22aa5a73fffaca1c9a303d4f591267f3e6b24ae533d6","name":"Tavotto_0.16.0_x64-setup.nsis.zip"},{"digest":"sha256:83fc3efdacd64e5157ddf53ca74637e14c79e3498ecb5fc0ccac2445b3d6d3e2","name":"Tavotto_0.16.0_x64-setup.nsis.zip.sig"}]
+tavotto-0.16.0-py3-none-any.whl 6bd64b3318a3cb39e7581c8a3f5f89fc517a76acc91781ae75b5bc35273619b7
+tavotto-0.16.0.tar.gz d04db295eb7dc5245321008f85693147e943aeecbc2c3bff70c2ff0d59522928
+trust2	success
+validate_artifacts	success
+pypi	success
+github_release	failure
+n1_update_windows	skipped
+plugin_stable	skipped
+# exit: 0

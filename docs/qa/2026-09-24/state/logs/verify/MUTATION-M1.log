@@ -1,0 +1,28 @@
+### M1 复核：web/src/store/svgPreviewStore.ts  writeTransform 的 base 改为 node.getAttribute('transform')
+### time=2026-09-24T19:17:59Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97
+ web/src/store/svgPreviewStore.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+-  const base = p.baseTransforms.get(op.gid) ?? null
++  const base = node.getAttribute('transform')
+build exit=0
+### [变异] vitest
+     × 拖一百下也永远从 base 现算，绝不字符串累加 15ms
+ FAIL  src/store/svgPreviewStore.test.ts > 临时 transform 与 matplotlib 原有 transform 共存 > 拖一百下也永远从 base 现算，绝不字符串累加
+AssertionError: expected 'translate(28.8,0) translate(28.512,0)…' to be 'translate(28.8,0) scale(1 -1) transla…' // Object.is equality
+      Tests  1 failed | 47 passed (48)
+exit=1
+### [变异] e2e STATE-01
+  ✘  1 [chromium] › e2e/fake-realtime.spec.ts:188:1 › STATE-01 逐帧：预览从 base 现算、拖动中零渲染零保存、松手到权威全程不弹回 (20.1s)
+    Error: 原始 transform 必须原样保留在 translate 之后
+    > 253 |     expect(m![3], '原始 transform 必须原样保留在 translate 之后').toBe(suffix)
+    test-results/fake-realtime-STATE-01-逐帧：预览从-base-现算、拖动中零渲染零保存、松手到权威全程不弹回-chromium/test-failed-1.png
+  1 failed
+exit=1
+### 还原后 git status: []
+rebuild exit=0
+### [还原] vitest
+      Tests  48 passed (48)
+exit=0
+### [还原] e2e STATE-01
+  1 passed (20.5s)
+exit=0

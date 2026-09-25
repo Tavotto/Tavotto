@@ -29,3 +29,13 @@
 * 不可用的项用 `MenuItem.reason` 常驻原因，不用 tooltip（禁用项收不到指针）。
 * 看护：`canvas/objectContextMenu.test.tsx` / `store/quickEditActions.test.ts` /
   `tests/test_engine_invalidate.py` / `e2e/quick-menu.spec.ts`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 「更改为」的判据在 `lib/shapeSwitch.ts`
+- Esc 在 document 捕获层止步（jsdom 抓不到）
+- 不可用项用 `reason` 不用 tooltip

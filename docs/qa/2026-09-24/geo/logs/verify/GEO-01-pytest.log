@@ -1,0 +1,35 @@
+# verify: GEO-01-pytest
+# time: 2026-09-25T03:22:57 (+6s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_geometry_reference.py -k "fixture or single_drag"
+.......                                                                  [100%]
+==================================== PASSES ====================================
+________ test_single_drag_lands_on_the_independent_ruler[axes_0.legend] ________
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.legend worst |anchor - target| = 1.110e-16, worst bbox shift error = 1.527e-16 (budget x=6.944e-04, y=1.085e-03)
+______ test_single_drag_lands_on_the_independent_ruler[axes_0.patches_0] _______
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.patches_0 worst |anchor - target| = 1.110e-16, worst bbox shift error = 9.714e-17 (budget x=6.944e-04, y=1.085e-03)
+_______ test_single_drag_lands_on_the_independent_ruler[axes_0.texts_0] ________
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.texts_0 worst |anchor - target| = 1.110e-16, worst bbox shift error = 1.665e-16 (budget x=6.944e-04, y=1.085e-03)
+______ test_single_drag_lands_on_the_independent_ruler[axes_0.title_left] ______
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.title_left worst |anchor - target| = 1.388e-16, worst bbox shift error = 1.527e-16 (budget x=6.944e-04, y=1.085e-03)
+________ test_single_drag_lands_on_the_independent_ruler[axes_0.xlabel] ________
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.xlabel worst |anchor - target| = 5.551e-17, worst bbox shift error = 9.714e-17 (budget x=6.944e-04, y=1.085e-03)
+________ test_single_drag_lands_on_the_independent_ruler[axes_0.ylabel] ________
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.ylabel worst |anchor - target| = 1.110e-16, worst bbox shift error = 1.665e-16 (budget x=6.944e-04, y=1.085e-03)
+=========================== short test summary info ============================
+PASSED tests/test_geometry_reference.py::test_g1_fixture_is_what_the_ledger_declares
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.legend]
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.patches_0]
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.texts_0]
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.title_left]
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.xlabel]
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.ylabel]
+[exit=0]
+

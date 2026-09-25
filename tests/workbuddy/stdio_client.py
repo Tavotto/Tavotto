@@ -32,6 +32,7 @@ class StdioHost:
     policy:
       * ``elicitation``: ``"accept" | "decline" | "cancel" | "silent"``（silent = 不回，
         模拟「宿主声明了却没弹框」）
+      * ``answer_after_s``: 作答前等几秒；模拟真人拒绝要高于 server 的 1 s 下限
       * ``roots``: 列表（file:// URI 由这里生成）
     """
 
@@ -111,6 +112,9 @@ class StdioHost:
             result: dict = {"action": mode}
             if mode == "accept":
                 result["content"] = {"approve": True}
+            # 模拟真人作答的耗时：快于 server 的 HUMAN_RESPONSE_FLOOR_S 的拒绝会被判成
+            # 「宿主替用户回的」（ADR 0009 §2c）。
+            time.sleep(float(self.policy.get("answer_after_s", 0)))
             self._send({"jsonrpc": "2.0", "id": msg["id"], "result": result})
             return
         self._send(

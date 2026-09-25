@@ -1,0 +1,276 @@
+==================================================================
+## SCI-05 / writeback_faults_repro
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh docs/qa/2026-09-24/sci/repro/test_sci05_writeback_faults.py -s
+# start(UTC): 2026-09-24T18:33:57Z   end(UTC): 2026-09-24T18:34:01Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 1   raw_lines: 98   raw_sha256: baab223262f5c705da4709fafc157dab8505c572edc4b484a96ef8f76e49f720
+staging-export-failure status: 500 
+Fbackup-ENOSPC status: 500 changed: ['Fig1.pdf'] leftovers: ['.Fig1.png.updating']
+F
+=================================== FAILURES ===================================
+__________ test_staging_export_failure_keeps_bytes_and_reports_status __________
+
+project = (<module 'tavotto.app' from '/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/src/tavotto/app.py'>, <Flas.../var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4805/test_staging_export_failure_ke0/figures'))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10297c3e0>
+
+    def test_staging_export_failure_keeps_bytes_and_reports_status(project, monkeypatch):
+        """verify 阶段一次性 worker 导出 PNG 时崩溃：字节不变、无半成品；**状态码按合同应为 409**。"""
+        m, client, figs, patches = _prepared(project)
+        before = _snapshot(figs)
+        real_one_shot = pool.one_shot
+    
+        def one_shot(*a, **k):
+            w = real_one_shot(*a, **k)
+            real_export = w.export
+    
+            def export(stem, p, path, fmt="pdf", dpi=600):
+                if fmt == "png":
+                    Path(path).write_bytes(b"half")
+                    raise pool.WorkerError("injected: png export crashed", "")
+                return real_export(stem, p, path, fmt=fmt, dpi=dpi)
+    
+            w.export = export
+            return w
+    
+        monkeypatch.setattr(pool, "one_shot", one_shot)
+        r = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": patches})
+        for name, data in before.items():
+            assert (figs / name).read_bytes() == data
+        assert _leftovers(figs) == []
+        print("staging-export-failure status:", r.status_code, (r.get_json() or {}).get("code"))
+>       assert r.status_code == 409, f"合同要求 409，实际 {r.status_code}（{r.get_json()}）"
+E       AssertionError: 合同要求 409，实际 500（{'code': '', 'error': 'injected: png export crashed', 'traceback': ''}）
+E       assert 500 == 409
+E        +  where 500 = <WrapperTestResponse 66 bytes [500 INTERNAL SERVER ERROR]>.status_code
+
+docs/qa/2026-09-24/sci/repro/test_sci05_writeback_faults.py:69: AssertionError
+____ test_backup_disk_full_on_second_target_rolls_back_and_leaves_no_halves ____
+
+project = (<module 'tavotto.app' from '/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/src/tavotto/app.py'>, <Flas.../var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4805/test_backup_disk_full_on_secon0/figures'))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1026968b0>
+
+    def test_backup_disk_full_on_second_target_rolls_back_and_leaves_no_halves(project, monkeypatch):
+        """commit 阶段给第二个目标做备份时磁盘满（ENOSPC）：应 409、PDF 回滚、无 `.updating` 残留。"""
+        m, client, figs, patches = _prepared(project)
+        before = _snapshot(figs)
+        import shutil
+    
+        real_copy2 = shutil.copy2
+        calls: list[str] = []
+    
+        def copy2(src, dst, *a, **k):
+            calls.append(Path(src).name)
+            if len(calls) == 2:
+                raise OSError(errno.ENOSPC, "No space left on device (injected)", str(dst))
+            return real_copy2(src, dst, *a, **k)
+    
+        monkeypatch.setattr(m.shutil, "copy2", copy2)
+        try:
+            r = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": patches})
+            status = r.status_code
+        except OSError as exc:  # test client 可能把未处理异常直接抛上来
+            status = f"raised {exc!r}"
+        monkeypatch.setattr(m.shutil, "copy2", real_copy2)
+        assert len(calls) >= 2, calls
+        changed = [n for n, d in before.items() if (figs / n).read_bytes() != d]
+        left = _leftovers(figs)
+        print("backup-ENOSPC status:", status, "changed:", changed, "leftovers:", left)
+>       assert changed == [], f"磁盘满后原件被部分替换：{changed}（status={status}）"
+E       AssertionError: 磁盘满后原件被部分替换：['Fig1.pdf']（status=500）
+E       assert ['Fig1.pdf'] == []
+E         
+E         Left contains one more item: 'Fig1.pdf'
+E         Use -v to get more diff
+
+docs/qa/2026-09-24/sci/repro/test_sci05_writeback_faults.py:98: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    tavotto:app.py:670 未处理异常: POST /api/engine/update_source
+Traceback (most recent call last):
+  File "/Volumes/Projects/Tavotto/.venv/lib/python3.13/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Volumes/Projects/Tavotto/.venv/lib/python3.13/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/src/tavotto/app.py", line 3723, in api_engine_update_source
+    result = _write_source_files(
+        src, patches, worker, annotations=annotations, expected_mtime=body.get("expected_mtime")
+    )
+  File "/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/src/tavotto/app.py", line 4165, in _write_source_files
+    shutil.copy2(target, backup_dir / target.name)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/test_sci05_writeback_faults.py", line 84, in copy2
+    raise OSError(errno.ENOSPC, "No space left on device (injected)", str(dst))
+OSError: [Errno 28] No space left on device (injected): '/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4805/test_backup_disk_full_on_secon0/_cache/original_backups/0925_023401/Fig1.png'
+2 failed in 3.80s
+# exit_code: 1
+==================================================================
+## SCI-05 / autosave_crash_probe
+# cmd: bash docs/qa/2026-09-24/sci/repro/runpy.sh docs/qa/2026-09-24/sci/repro/sci05_autosave_crash.py
+# start(UTC): 2026-09-24T18:34:52Z   end(UTC): 2026-09-24T18:34:53Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 36   raw_sha256: a98ef9e814a20862e41c0a16363157ed1056444556ac77664e212cd16b4f7750
+原子写失败: PUT /api/autosave/d1: 写入失败：[Errno 28] No space left on device (injected)
+{
+ "K1_kill_before_commit": {
+  "rc": 137,
+  "responded": false,
+  "slot_is_v1": true,
+  "get_status": 200,
+  "get_updatedAt": 100,
+  "orphan_tmp": [
+   "d1.json.58492.1.tmp"
+  ],
+  "tmp_listed_as_document": false,
+  "ok": true
+ },
+ "K2_kill_after_commit": {
+  "rc": 137,
+  "responded": false,
+  "get_status": 200,
+  "get_updatedAt": 300,
+  "ok": true
+ },
+ "D1_disk_full": {
+  "status": 500,
+  "code": "write_failed",
+  "slot_unchanged": true,
+  "new_tmp_leftovers": [],
+  "ok": true
+ },
+ "C1_external_conflict": {
+  "status": 409,
+  "code": "external_change",
+  "disk_kept_external": true,
+  "ok": true
+ }
+}
+SCI-05 autosave VERDICT: PASS
+# exit_code: 0
+==================================================================
+## SCI-05 / backend_existing
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_autosave.py tests/test_document_persistence.py tests/test_write_back.py tests/test_write_back_real_409.py
+# start(UTC): 2026-09-24T18:34:53Z   end(UTC): 2026-09-24T18:35:21Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 17   raw_sha256: 8bf60af5770efdca09560e61d40348b9693fae9f606d0a312eb6b45fba819a32
+........................................................................ [ 70%]
+..............................                                           [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+102 passed, 5 warnings in 27.87s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0
+==================================================================
+## SCI-05 / vitest_diskWriter
+# cmd: bash docs/qa/2026-09-24/sci/repro/vitest.sh src/lib/autosave/diskWriter.test.ts
+# start(UTC): 2026-09-24T18:35:42Z   end(UTC): 2026-09-24T18:35:45Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 9   raw_sha256: 82c2e27247e8435b42969d1353d250a9a55482039b7590d6c564217efad2f0f3
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/web
+
+
+ Test Files  1 passed (1)
+      Tests  17 passed (17)
+   Start at  02:35:44
+   Duration  874ms (transform 139ms, setup 164ms, import 45ms, tests 7ms, environment 550ms)
+
+# exit_code: 0
+==================================================================
+## SCI-05 / mutation-write-failure-leaves-tmp
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/runpy.sh docs/qa/2026-09-24/sci/repro/sci05_autosave_crash.py
+# start(UTC): 2026-09-24T18:51:08Z   end(UTC): 2026-09-24T18:51:09Z
+# source_sha: 05ae1e3ef7f0da1227c76158bfc51c5b7821cfac  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 1   raw_lines: 38   raw_sha256: 18d0d3d86976cc8f093fc050bb6e6cad3365a0f5994844b4a99215288b941764
+原子写失败: PUT /api/autosave/d1: 写入失败：[Errno 28] No space left on device (injected)
+{
+ "K1_kill_before_commit": {
+  "rc": 137,
+  "responded": false,
+  "slot_is_v1": true,
+  "get_status": 200,
+  "get_updatedAt": 100,
+  "orphan_tmp": [
+   "d1.json.42428.1.tmp"
+  ],
+  "tmp_listed_as_document": false,
+  "ok": true
+ },
+ "K2_kill_after_commit": {
+  "rc": 137,
+  "responded": false,
+  "get_status": 200,
+  "get_updatedAt": 300,
+  "ok": true
+ },
+ "D1_disk_full": {
+  "status": 500,
+  "code": "write_failed",
+  "slot_unchanged": true,
+  "new_tmp_leftovers": [
+   "d1.json.42407.2.tmp"
+  ],
+  "ok": false
+ },
+ "C1_external_conflict": {
+  "status": 409,
+  "code": "external_change",
+  "disk_kept_external": true,
+  "ok": true
+ }
+}
+SCI-05 autosave VERDICT: FAIL
+# exit_code: 1
+==================================================================
+## SCI-05 / mutation-write-failure-leaves-tmp-restored
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/runpy.sh docs/qa/2026-09-24/sci/repro/sci05_autosave_crash.py
+# start(UTC): 2026-09-24T18:51:09Z   end(UTC): 2026-09-24T18:51:10Z
+# source_sha: 05ae1e3ef7f0da1227c76158bfc51c5b7821cfac  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 36   raw_sha256: 8864fa9ddbf144dc35490d8015abf6acd1defbbf89fa12252c5b4feb420d9ea3
+原子写失败: PUT /api/autosave/d1: 写入失败：[Errno 28] No space left on device (injected)
+{
+ "K1_kill_before_commit": {
+  "rc": 137,
+  "responded": false,
+  "slot_is_v1": true,
+  "get_status": 200,
+  "get_updatedAt": 100,
+  "orphan_tmp": [
+   "d1.json.42467.1.tmp"
+  ],
+  "tmp_listed_as_document": false,
+  "ok": true
+ },
+ "K2_kill_after_commit": {
+  "rc": 137,
+  "responded": false,
+  "get_status": 200,
+  "get_updatedAt": 300,
+  "ok": true
+ },
+ "D1_disk_full": {
+  "status": 500,
+  "code": "write_failed",
+  "slot_unchanged": true,
+  "new_tmp_leftovers": [],
+  "ok": true
+ },
+ "C1_external_conflict": {
+  "status": 409,
+  "code": "external_change",
+  "disk_kept_external": true,
+  "ok": true
+ }
+}
+SCI-05 autosave VERDICT: PASS
+# exit_code: 0

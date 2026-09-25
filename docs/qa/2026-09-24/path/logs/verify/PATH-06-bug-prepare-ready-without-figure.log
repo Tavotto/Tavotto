@@ -1,0 +1,18 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_repro.sh verify/PATH-06-bug-prepare-ready-without-figure docs/qa/2026-09-24/path/repro/repro_path06_prepare_ready_without_figure.py
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TMPDIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vpath-scratch/ /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/path/repro/repro_path06_prepare_ready_without_figure.py /opt/homebrew/opt/python@3.13/libexec/bin/python3
+# time: 2026-09-24T19:32:35Z
+# sha: 93dd9f4b86bea7fd5ccde339f57735b85a6cdf36
+{
+ "prepare": {
+  "status": "ready",
+  "error": null,
+  "descriptors": [],
+  "completeness": "complete"
+ },
+ "render": {
+  "http": 500,
+  "code": "no_figures_captured"
+ }
+}
+EXPECTED prepare.status != ready when no figure captured: VIOLATED
+# exit_code: 1

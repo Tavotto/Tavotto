@@ -453,6 +453,20 @@ def test_real_protocol_roundtrip_elicits_one_connection_scoped_root_and_opens_ca
     assert authority["workspace_confirmation"]["lifetime"] == "mcp_connection"
 
 
+def _answer_after(monkeypatch, seconds: float) -> None:
+    """让宿主「过了 seconds 秒才作答」：假宿主的回帧是预先写好的，墙钟上是 0 ms。
+
+    只替换量作答耗时的那只钟（``server._confirmation_clock``），每读一次前进
+    ``seconds``——发请求前读一次、收到回应后读一次，差值正好是 ``seconds``。
+    """
+    ticks = iter(range(10_000))
+    monkeypatch.setattr(server, "_confirmation_clock", lambda: next(ticks) * seconds)
+
+
+#: 真人读完整路径、再点一下所需的量级；远高于 ``HUMAN_RESPONSE_FLOOR_S``。
+A_PERSON_READING_THE_PROMPT_S = 4.0
+
+
 @pytest.mark.parametrize(
     "action,state",
     [
@@ -462,6 +476,7 @@ def test_real_protocol_roundtrip_elicits_one_connection_scoped_root_and_opens_ca
 )
 def test_workspace_elicitation_refusal_fails_closed(project, monkeypatch, action, state):
     """用户真的看见框并作了选择——**这一档才允许说「再问一次」**。"""
+    _answer_after(monkeypatch, A_PERSON_READING_THE_PROMPT_S)
     monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
     for name in bridge.WORKSPACE_ENVS:
         monkeypatch.delenv(name, raising=False)
@@ -637,6 +652,7 @@ def test_the_four_workspace_authorisation_failures_do_not_collapse(tmp_path, mon
     inside.mkdir()
     outside.mkdir()
 
+    _answer_after(monkeypatch, A_PERSON_READING_THE_PROMPT_S)
     declined = _open_over_stdio(
         {"elicitation": {}},
         str(inside),
@@ -723,6 +739,111 @@ def test_tool_errors_never_read_the_machine_code_out_loud(tmp_path, monkeypatch)
         if has_recovery:
             # 下一步必须真的出现在人读的那一份里，而不是只躺在结构化字段里
             assert payload["recovery"] in text
+
+
+#: Codex 0.155.1 在 approval_policy = never（桌面版「完全访问」）与 codex exec 下
+#: 回给 server 的原帧，逐字取自本机探针（没有 content、没有 _meta）。
+CODEX_AUTO_DECLINE_FRAME = {"action": "decline"}
+
+
+@pytest.mark.parametrize("action", ["decline", "cancel"])
+def test_a_host_that_answers_for_the_user_is_not_a_user_refusal(tmp_path, monkeypatch, action):
+    """宿主不弹框、当场替用户回拒绝：与 #173 同一个缺陷，只是答得快而不是不答。
+
+    现场（2026-09-24 用户反馈、#38 的 08-25 跟进）：宿主声明了 elicitation，框没出现，
+    server 立刻收到 decline，于是报「用户拒绝了」、叫人再点一次。这里用**真实墙钟**
+    与真 stdio 帧——宿主就是这么快回的，不需要任何替身钟。
+    """
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    payload = _open_over_stdio(
+        {"elicitation": {}},
+        str(inside),
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": "tavotto-elicitation-1",
+                "result": {**CODEX_AUTO_DECLINE_FRAME, "action": action},
+            }
+        ],
+    )
+    assert payload["code"] == "workspace_confirmation_auto_declined"
+    assert payload["disposition"] == "fix_host_wiring"
+    assert payload["workspace_confirmation"]["state"] == "auto_declined"
+    assert "这不是用户拒绝" in payload["recovery"]
+    assert "再让用户点一次也不会出现提示" in payload["recovery"]
+    # 指得出宿主侧该改的那个开关（桌面版权限下拉里的两档名字，取自 ChatGPT.app 26.917）
+    assert "完全访问" in payload["recovery"] and "请求批准" in payload["recovery"]
+    assert "不要自动循环重试" in payload["recovery"]
+    assert bridge.sessions() == {}
+
+
+@pytest.mark.parametrize(
+    "answered_in,code",
+    [
+        (server.HUMAN_RESPONSE_FLOOR_S * 0.9, "workspace_confirmation_auto_declined"),
+        (server.HUMAN_RESPONSE_FLOOR_S * 1.1, "workspace_confirmation_declined"),
+    ],
+)
+def test_the_human_response_floor_separates_the_two_buckets(
+    tmp_path, monkeypatch, answered_in, code
+):
+    """判据的两条边都钉住：刚低于下限是宿主代答，刚高于下限是人的选择。"""
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    _answer_after(monkeypatch, answered_in)
+    payload = _open_over_stdio(
+        {"elicitation": {}},
+        str(inside),
+        [{"jsonrpc": "2.0", "id": "tavotto-elicitation-1", "result": CODEX_AUTO_DECLINE_FRAME}],
+    )
+    assert payload["code"] == code
+
+
+def test_a_host_marked_auto_review_is_not_the_user_even_when_slow(tmp_path, monkeypatch):
+    """新版 codex-rs 代答时带 ``_meta.approvals_reviewer = auto_review``：自动审核可以
+    慢过真人，但它仍然不是用户——有标记就不看耗时。"""
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    _answer_after(monkeypatch, A_PERSON_READING_THE_PROMPT_S)
+    payload = _open_over_stdio(
+        {"elicitation": {}},
+        str(inside),
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": "tavotto-elicitation-1",
+                "result": {"action": "decline", "_meta": {"approvals_reviewer": "auto_review"}},
+            }
+        ],
+    )
+    assert payload["code"] == "workspace_confirmation_auto_declined"
+    # 同样慢、标记是 user 的，才是人的选择
+    _answer_after(monkeypatch, A_PERSON_READING_THE_PROMPT_S)
+    payload = _open_over_stdio(
+        {"elicitation": {}},
+        str(inside),
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": "tavotto-elicitation-1",
+                "result": {"action": "decline", "_meta": {"approvals_reviewer": "user"}},
+            }
+        ],
+    )
+    assert payload["code"] == "workspace_confirmation_declined"
 
 
 def test_a_host_that_never_answers_the_prompt_is_not_a_user_refusal(tmp_path, monkeypatch):

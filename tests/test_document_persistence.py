@@ -965,6 +965,58 @@ def test_pruning_skips_a_slot_rewritten_since_the_scan(client, tmp_path, monkeyp
     assert victim.is_file(), "清理删掉了一份刚刚被写过的槽位"
 
 
+def test_orphan_tmps_of_a_killed_writer_are_reaped_on_the_next_autosave(
+    client, tmp_path, monkeypatch
+):
+    """进程被杀在 `os.replace` 之前留下的 `<doc>.json.<pid>.<n>.tmp`（QA 2026-09-24 SCI-05-B2）。
+
+    它们不以 `.json` 结尾，槽位上限永远数不到——以前没有任何一条路会删它们。
+    回收判据是**年龄 + pid 已死**：一小时之内的一律不碰（正在写的那份活不了这么久），
+    pid 还活着的留到一天之后（pid 会被复用）；不是 `_next_tmp` 形状的 `.tmp` 不归我们管。
+
+    pid 死活换成确定的桩：用例量的是回收判据，不是操作系统（`_pid_alive` 另有一条）。
+    """
+    import time
+
+    d = tmp_path / documents.AUTOSAVE_DIRNAME
+    assert client.put("/api/autosave/d1", json=PD).status_code == 200
+    dead, alive = 999_991, 999_992
+    monkeypatch.setattr(atomicio, "_pid_alive", lambda pid: pid != dead)
+    now = time.time()
+    hour = 3600
+    plan = {
+        f"d1.json.{dead}.1.tmp": (2 * hour, True),  # 死进程、够老 → 回收
+        f"d1.json.{dead}.2.tmp": (60, False),  # 死进程但刚写 → 不碰
+        f"d1.json.{alive}.3.tmp": (2 * hour, False),  # 活进程、一天之内 → 不碰
+        f"d1.json.{alive}.4.tmp": (25 * hour, True),  # 活进程但过了一天 → 回收
+        "notes.tmp": (48 * hour, False),  # 不是 atomicio 起的名字 → 不碰
+    }
+    for name, (age, _gone) in plan.items():
+        (d / name).write_bytes(b'{"half')
+        os.utime(d / name, (now - age, now - age))
+
+    assert client.put("/api/autosave/d1", json=PD).status_code == 200
+    left = {p.name for p in d.iterdir()}
+    for name, (_age, gone) in plan.items():
+        assert (name not in left) is gone, (name, sorted(left))
+    assert "d1.json" in left
+    assert client.get("/api/autosave/d1").get_json() == PD
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows 上量不了 pid 存活（回 None，只按年龄）")
+def test_pid_alive_tells_a_finished_process_from_this_one():
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-c", "import os; print(os.getpid())"],
+        capture_output=True,
+        encoding="utf-8",
+    )
+    assert atomicio._pid_alive(os.getpid()) is True
+    assert atomicio._pid_alive(int(proc.stdout)) is False
+
+
 def test_the_byte_cap_never_cuts_autosave_below_the_slot_floor(client, tmp_path, monkeypatch):
     """字节上限**不许**把槽位数压到保底之下。
 

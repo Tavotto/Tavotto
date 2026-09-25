@@ -1,0 +1,83 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh MUT-M6-absolute-remapped-mutated tests/test_first_open_paths_d1.py::test_path03_file_relative_and_absolute_outside_are_kept_and_a_stale_absolute_path_fails -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path03_file_relative_and_absolute_outside_are_kept_and_a_stale_absolute_path_fails -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-MUT-M6-absolute-remapped-mutated
+# time: 2026-09-24T19:01:10Z
+# sha: 4be1d7eb1eed5f034fe11a648fa3d5f53ffe51ca  (worktree dirty files: 2)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-4
+configfile: pytest.ini
+collecting ... collected 1 item
+
+tests/test_first_open_paths_d1.py::test_path03_file_relative_and_absolute_outside_are_kept_and_a_stale_absolute_path_fails FAILED [100%]
+
+=================================== FAILURES ===================================
+_ test_path03_file_relative_and_absolute_outside_are_kept_and_a_stale_absolute_path_fails _
+
+tmp_path = PosixPath('/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-MUT-M6-absolute-remapped-mutated/test_path03_file_relative_and_0')
+
+    @needs_worker
+    def test_path03_file_relative_and_absolute_outside_are_kept_and_a_stale_absolute_path_fails(
+        tmp_path,
+    ):
+        """`__file__` 仍指真实脚本；项目外的有效绝对路径原样读取（不拷进项目 / 数据目录）；旧机器上的硬编码
+        绝对路径（basename 与项目里的 `data/points.csv` 相同）**明确失败**，不按同名映射到项目里那份。"""
+        paper, truth = _d1(tmp_path)
+        ext = tmp_path / "external store"
+        ext.mkdir()
+        (ext / "abs_points.csv").write_bytes(_csv(EXTERNAL_Y))
+        ext_sha = _sha256(_csv(EXTERNAL_Y))
+        s = paper / "scripts"
+        (s / "file_rel.py").write_text(
+            _plot_script(
+                "_read_csv(os.path.join(HERE, '..', 'data', 'points.csv'))",
+                "file_rel.pdf",
+                pre="HERE = os.path.dirname(os.path.abspath(__file__))\n",
+                title="os.path.basename(HERE) + '/' + os.path.basename(__file__)",
+            ),
+            encoding="utf-8",
+        )
+        (s / "abs_out.py").write_text(
+            _plot_script(f"_read_csv({str(ext / 'abs_points.csv')!r})", "abs_out.pdf"),
+            encoding="utf-8",
+        )
+        stale = "/nonexistent-old-machine/home/alice/paper/data/points.csv"
+        (s / "stale_abs.py").write_text(
+            _plot_script(f"_read_csv({stale!r})", "stale_abs.pdf"), encoding="utf-8"
+        )
+        _native(paper, "scripts/file_rel.py", tmp_path)
+        _native(paper, "scripts/abs_out.py", tmp_path)
+        # 旧机器上跑出来的原件（这台机器上脚本已经跑不通了）
+        shutil.copy(paper / "file_rel.pdf", paper / "stale_abs.pdf")
+        work = tmp_path / "work"
+        with fa.running_app(paper, work) as app:
+            # __file__
+            panel = _panel(app, "file_rel.pdf")
+            state = app.prepare(panel["id"])
+            assert state["result"]["status"] == "ready", state["result"]
+            assert state["plan"]["required_input"] is None
+            render = app.render(panel["id"])
+            assert _title_text(render) == "scripts/file_rel.py"
+            assert _plotted_y(render) == _approx_seq(TRUE_Y)
+            assert _input_files(state["result"]) == [("data/points.csv", truth["true_sha"])]
+            # 项目外的有效绝对路径：原样读取
+            panel = _panel(app, "abs_out.pdf")
+            state = app.prepare(panel["id"])
+            assert state["result"]["status"] == "ready", state["result"]
+            assert _plotted_y(app.render(panel["id"])) == _approx_seq(EXTERNAL_Y)
+            # 回执只记项目内的输入（观察有界、如实 partial）：项目外那份不在 files 里
+            assert state["result"]["receipt"]["inputs"]["observation"] == "partial"
+            assert _input_files(state["result"]) == []
+            # 旧机器的绝对路径：明确失败，一张图都不发布；项目里同名那份不许被拿来顶替
+            panel = _panel(app, "stale_abs.pdf")
+            state = app.prepare(panel["id"])
+            result = state["result"]
+>           assert result["status"] == "error", result
+E           AssertionError: {'cancel_requested_at': None, 'created_runtime': True, 'error': None, 'existing_runtime': None, ...}
+E           assert 'ready' == 'error'
+E             
+E             - error
+E             + ready
+
+tests/test_first_open_paths_d1.py:440: AssertionError
+============================== 1 failed in 16.27s ==============================
+# exit_code: 1

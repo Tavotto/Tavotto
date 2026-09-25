@@ -713,7 +713,17 @@ def missing_module(text: str) -> str:
     可复现，也让「重装就能修」这条退路失效。
     """
     m = _MISSING_RE.search(text or "")
-    return m.group(1).split(".")[0] if m else ""
+    if not m:
+        return ""
+    name = m.group(1)
+    if "." in name:
+        # `No module named 'pkg.sub'` 说明 `pkg` **已经 import 到了**（顶层都找不到时 Python 报的是
+        # `No module named 'pkg'`）：缺的是装着的包内部的一个子模块——包坏了（numpy 的
+        # `numpy.core._multiarray_umath`）、版本太旧没有这个子模块、或本地同名文件遮住了它
+        # （`'pkg' is not a package`）。都不是「缺依赖」，一键装顶层名装不回来（QA ENV-05-B1），
+        # 交回原来的脚本错误与 traceback。
+        return ""
+    return name
 
 
 def is_frozen() -> bool:
@@ -943,7 +953,17 @@ def select_worker_python() -> tuple[str, str]:
     """
     global _worker_python, _worker_source
     if _worker_python:
-        return _worker_python, _worker_source
+        try:
+            still_there = Path(_worker_python).exists()
+        except OSError:
+            still_there = False
+        if still_there:
+            return _worker_python, _worker_source
+        # 选定之后那条解释器被删了（用户删掉了设置里指定的环境、外置盘拔了）：缓存不许替它作答，
+        # 否则起 worker 时 `FileNotFoundError` 原文外露成 internal_error、环境状态仍报旧路径
+        # （QA ENV-03-B1）。重新走一遍下面的链条：设置里指定的那条以 `missing` 收场。
+        LOG.warning("已选定的渲染解释器不在了，重新选择: %s", _worker_python)
+        _worker_python, _worker_source = None, ""
     seen: set[str] = set()
     for cand, source in _prioritized_candidates():
         try:
@@ -973,10 +993,45 @@ def find_worker_python() -> str:
     return select_worker_python()[0]
 
 
-#: 项目记住的解释器**这次进程里**验过没有（避免每次 get() 都起一个 Python）。
+#: 项目记住的解释器**这次进程里**验过没有（避免每次 get() 都起一个 Python）：
+#: 路径 → (结论, 验的那一刻的 `projectenv.interpreter_fingerprint`)。指纹对不上 = 同一路径上
+#: 已经不是那个环境了（venv 被删了重建），结论作废重验（QA ENV-04-B1）。
 #: **刻意不共用 `_lock`**：worker 构造函数在 `get()` 已持有 `_lock` 时调用
 #: `resolve_worker_python()`，同一把非重入锁会当场自锁。
-_project_python_ok: dict[str, bool] = {}
+_project_python_ok: dict[str, tuple[bool, tuple]] = {}
+
+
+def _cached_verdict(python: str) -> bool | None:
+    """这条解释器在本进程里的体检结论；没验过、或验过之后原路径上的环境被替换了，回 None。"""
+    with _project_python_lock:
+        hit = _project_python_ok.get(python)
+    if hit is None:
+        return None
+    ok, fingerprint = hit
+    if projectenv.interpreter_fingerprint(python) != fingerprint:
+        return None
+    return ok
+
+
+def _record_verdict(python: str, ok: bool, fingerprint: tuple | None = None) -> None:
+    if fingerprint is None:
+        fingerprint = projectenv.interpreter_fingerprint(python)
+    with _project_python_lock:
+        _project_python_ok[python] = (ok, fingerprint)
+
+
+def forget_python_verdict(python: str | None) -> None:
+    """丢掉这条解释器的进程内体检结论：起在它上面的会话死了（`session_dead`）。
+
+    指纹看不见「原环境里 `pip uninstall` 掉了 matplotlib」这类就地改动；会话一死就不再替它担保，
+    下一次起会话前重新体检——自动记住的那条于是按 ADR 0057 作废、重新发现，而不是反复起在坏环境上。
+    """
+    if not python:
+        return
+    with _project_python_lock:
+        _project_python_ok.pop(python, None)
+
+
 _project_python_lock = threading.Lock()
 
 
@@ -1001,8 +1056,7 @@ def invalidated_decision(figures_dir: str | Path) -> dict | None:
 
 def first_open_outcome(figures_dir: str | Path) -> dict | None:
     """这个项目首开发现的结果（只读缓存；没做过回 None）——准备计划写 `environment.discovery`。"""
-    with projectenv._lock:
-        return projectenv._first_open.get(projectenv._key(figures_dir))
+    return projectenv.cached_first_open(figures_dir)
 
 
 def resolve_worker_python(
@@ -1061,14 +1115,13 @@ def resolve_worker_python(
                 raise _project_python_unusable(remembered, "missing", record)
             _invalidate_remembered(figures_dir, remembered, "missing", record)
         else:
-            with _project_python_lock:
-                ok = _project_python_ok.get(remembered)
+            ok = _cached_verdict(remembered)
             if ok is None:
                 # 轻量复检：venv 被删掉 / 被重建成另一个 Python 是常事，
-                # 记住过不等于现在还成立。每个进程每条解释器只做一次。
+                # 记住过不等于现在还成立。每个进程每条解释器（每个指纹）只做一次。
+                fingerprint = projectenv.interpreter_fingerprint(remembered)
                 ok = _has_matplotlib(remembered)
-                with _project_python_lock:
-                    _project_python_ok[remembered] = ok
+                _record_verdict(remembered, ok, fingerprint)
             if ok:
                 return remembered, remembered_source(figures_dir, remembered)
             if explicit_for_project:
@@ -1185,8 +1238,7 @@ def note_project_python_ok(python: str) -> None:
     `try_project_env()` 与依赖修复装完之后各调一次——两处都刚跑过比
     `_has_matplotlib` 严得多的检查。
     """
-    with _project_python_lock:
-        _project_python_ok[python] = True
+    _record_verdict(python, True)
 
 
 def same_python(a: str | None, b: str | None) -> bool:
@@ -1599,13 +1651,22 @@ class EngineWorker:
             # 拿到锁的那一刻 = 这条请求真正开始被处理。Python 池没有队列，
             # 「排队」全表现为在这把锁上等——所以它就是 queue_wait 的量法。
             t_lock = time.perf_counter()
-            if not self.alive():
-                raise WorkerError("worker 进程已退出", self._log_tail())
-            self.proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
-            self.proc.stdin.flush()
-            # build 跑的是用户整个脚本 → 静默看门狗；热态操作走平坦上限。
-            is_build = obj.get("cmd") == "build"
-            line = self._readline(timeout, idle=BUILD_IDLE_TIMEOUT if is_build else None)
+            # worker 在两次请求之间死掉（被杀、OOM）是**同一个故障**，不许按时间窗落进不同的分类
+            # （QA LONG-03-B1）：拿锁时已看得见它死了、写管道时撞上 BrokenPipe、写进去之后读到 EOF，
+            # 三处都走同一条 `session_dead`（带退出状态与 worker.log 指引）。
+            line = ""
+            exit_info = None
+            try:
+                alive = self.alive()
+                if alive:
+                    self.proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
+                    self.proc.stdin.flush()
+            except (OSError, ValueError):  # BrokenPipeError / 管道已关（ValueError: closed file）
+                alive = False
+            if alive:
+                # build 跑的是用户整个脚本 → 静默看门狗；热态操作走平坦上限。
+                is_build = obj.get("cmd") == "build"
+                line = self._readline(timeout, idle=BUILD_IDLE_TIMEOUT if is_build else None)
             if not line:
                 # **判死要在锁内、且是同步的。**
                 #
@@ -1640,6 +1701,11 @@ class EngineWorker:
                 session_dead_message(exit_info, tail, self.log_path), tail, code="session_dead"
             )
             err.extra = {"exit": exit_info} if exit_info is not None else {}
+            if obj.get("cmd") != "shutdown":
+                # 起在这条解释器上的会话死了：它的体检结论不再担保（ENV-04-B1，见
+                # `forget_python_verdict`）。shutdown 之后读到 EOF 是预期现象（worker 不回信封），
+                # 不是死——关停不许把刚验过的结论丢掉。
+                forget_python_verdict(getattr(self, "python", None))
             raise err
         resp = self._parse_line(line)
         self._check_envelope(resp, rid)
@@ -2072,6 +2138,8 @@ class WorkerdWorker:
         if not tb and code in _FATAL_CODES:
             tb = self._log_tail(FATAL_TAIL_LINES)  # 进程级失败时 worker 的 traceback 全在日志里
         message = str(exc)
+        if code == "session_dead":
+            forget_python_verdict(getattr(self, "python", None))
         if code == "session_dead" and isinstance(exc.extra, dict) and "exit" in exc.extra:
             # workerd 只如实报退出状态（`ExitReport`），怎么解释、日志空不空要不要
             # 说，都归这边——与 Python 池的 EOF 路径同一句话（`session_dead_message`）。

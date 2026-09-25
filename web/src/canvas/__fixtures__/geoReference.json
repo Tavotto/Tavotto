@@ -1,0 +1,3134 @@
+{
+ "G1": {
+  "stem": "G1",
+  "size_mm": [
+   127.0,
+   81.28
+  ],
+  "elements": [
+   {
+    "gid": "figure",
+    "role": "figure",
+    "label": "整张图",
+    "bbox": [
+     0.0,
+     0.0,
+     1.0,
+     1.0
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0",
+    "role": "axes",
+    "label": "子图 1",
+    "bbox": [
+     0.14,
+     0.14,
+     0.79,
+     0.69
+    ],
+    "draggable": false,
+    "resizable": true,
+    "editable": [
+     {
+      "prop": "position",
+      "type": "rect",
+      "value": [
+       0.14,
+       0.17,
+       0.79,
+       0.69
+      ]
+     }
+    ]
+   },
+   {
+    "gid": "axes_0.title_left",
+    "role": "title",
+    "label": "标题 “G1 title”",
+    "bbox": [
+     0.14,
+     0.07020833333333343,
+     0.1225,
+     0.05625
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14,
+     0.11395833333333338
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xlabel",
+    "role": "axis_label",
+    "label": "X 轴 “time (s)”",
+    "bbox": [
+     0.48125,
+     0.9214930555555555,
+     0.1075,
+     0.04375
+    ],
+    "draggable": true,
+    "anchor": [
+     0.535,
+     0.9214930555555555
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.ylabel",
+    "role": "axis_label",
+    "label": "Y 轴 “value”",
+    "bbox": [
+     0.04619444444444444,
+     0.4256249999999999,
+     0.028,
+     0.11875
+    ],
+    "draggable": true,
+    "anchor": [
+     0.07419444444444444,
+     0.485
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_0",
+    "role": "text",
+    "label": "文字 “note A”",
+    "bbox": [
+     0.23336363636363638,
+     0.2498977272727274,
+     0.09025,
+     0.04375
+    ],
+    "draggable": true,
+    "anchor": [
+     0.23336363636363638,
+     0.28427272727272734
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.lines_0",
+    "role": "line",
+    "label": "曲线 “signal”",
+    "bbox": [
+     0.1759090909090909,
+     0.1713636363636365,
+     0.7181818181818183,
+     0.6272727272727272
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.patches_0",
+    "role": "patch",
+    "label": "形状 1",
+    "bbox": [
+     0.6427272727272727,
+     0.6700454545454545,
+     0.14363636363636362,
+     0.09409090909090909
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6427272727272727,
+     0.7641363636363636
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.arrows_1",
+    "role": "arrow_patch",
+    "label": "箭头 1",
+    "bbox": [
+     0.35282273171164774,
+     0.4272402954101562,
+     0.16071506619939088,
+     0.17546423366705644
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.legend",
+    "role": "legend",
+    "label": "图例",
+    "bbox": [
+     0.7338611111111111,
+     0.7298263888888888,
+     0.18225,
+     0.07847222222222223
+    ],
+    "draggable": true,
+    "anchor": [
+     0.7338611111111111,
+     0.8082986111111111
+    ],
+    "drag_prop": "loc_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.legend.texts_0",
+    "role": "legend_text",
+    "label": "图例项 “signal”",
+    "bbox": [
+     0.82275,
+     0.7471875,
+     0.08225,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticks",
+    "role": "ticks",
+    "label": "X 刻度文字",
+    "bbox": [
+     0.1671590909090909,
+     0.8603819444444444,
+     0.7356818181818182,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_1",
+    "role": "ticklabel",
+    "label": "刻度 “0”",
+    "bbox": [
+     0.1671590909090909,
+     0.8603819444444444,
+     0.0175,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_2",
+    "role": "ticklabel",
+    "label": "刻度 “1”",
+    "bbox": [
+     0.31067045454545456,
+     0.8603819444444444,
+     0.01775,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_3",
+    "role": "ticklabel",
+    "label": "刻度 “2”",
+    "bbox": [
+     0.45443181818181827,
+     0.8603819444444444,
+     0.0175,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_4",
+    "role": "ticklabel",
+    "label": "刻度 “3”",
+    "bbox": [
+     0.5980681818181819,
+     0.8603819444444444,
+     0.0175,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_5",
+    "role": "ticklabel",
+    "label": "刻度 “4”",
+    "bbox": [
+     0.7417045454545454,
+     0.8603819444444444,
+     0.0175,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_6",
+    "role": "ticklabel",
+    "label": "刻度 “5”",
+    "bbox": [
+     0.8853409090909091,
+     0.8603819444444444,
+     0.0175,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticks",
+    "role": "ticks",
+    "label": "Y 刻度文字",
+    "bbox": [
+     0.08530555555555555,
+     0.15417613636363647,
+     0.03525,
+     0.6710227272727272
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_1",
+    "role": "ticklabel",
+    "label": "刻度 “0”",
+    "bbox": [
+     0.10305555555555555,
+     0.7814488636363636,
+     0.0175,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_2",
+    "role": "ticklabel",
+    "label": "刻度 “2”",
+    "bbox": [
+     0.10305555555555555,
+     0.6559943181818182,
+     0.0175,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_3",
+    "role": "ticklabel",
+    "label": "刻度 “4”",
+    "bbox": [
+     0.10305555555555555,
+     0.5305397727272727,
+     0.0175,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_4",
+    "role": "ticklabel",
+    "label": "刻度 “6”",
+    "bbox": [
+     0.10280555555555555,
+     0.4050852272727272,
+     0.01775,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_5",
+    "role": "ticklabel",
+    "label": "刻度 “8”",
+    "bbox": [
+     0.10280555555555555,
+     0.27963068181818185,
+     0.01775,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_6",
+    "role": "ticklabel",
+    "label": "刻度 “10”",
+    "bbox": [
+     0.08530555555555555,
+     0.15417613636363647,
+     0.03525,
+     0.04375
+    ],
+    "draggable": false,
+    "editable": []
+   }
+  ],
+  "svg": "<svg xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"360pt\" height=\"230.4pt\" viewBox=\"0 0 360 230.4\" xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">\n <defs>\n  <style type=\"text/css\">*{stroke-linejoin: round; stroke-linecap: butt}</style>\n </defs>\n <g id=\"figure_1\">\n  <g id=\"patch_1\">\n   <path d=\"M 0 230.4\nL 360 230.4\nL 360 0\nL 0 0\nz\n\" style=\"fill: #ffffff\"/>\n  </g>\n  <g id=\"axes_0\">\n   <g id=\"patch_2\">\n    <path d=\"M 0 0 L 1 1\" style=\"fill: #ffffff\"/>\n   </g>\n   <g id=\"axes_0.patches_0\">\n    <path d=\"M 0 0 L 1 1\" clip-path=\"url(#p000)\" style=\"fill: #ffdd99; stroke: #444444; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"axes_0.arrows_1\">\n    <path d=\"M 0 0 L 1 1\" clip-path=\"url(#p000)\" style=\"fill: none; stroke: #000000; stroke-linecap: round\"/>\n    <path d=\"M 0 0 L 1 1\" clip-path=\"url(#p000)\" style=\"fill: #1f77b4; stroke: #000000; stroke-linecap: round\"/>\n   </g>\n   <g id=\"matplotlib.axis_1\">\n    <g id=\"xtick_1\">\n     <g id=\"line2d_1\">\n      <defs>\n       <path id=\"m001\" d=\"M 0 0\nL 0 3.5\n\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </defs>\n      <g>\n       <use xlink:href=\"#m001\" x=\"63.327273\" y=\"191.232\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_1\">\n      <!-- 0 -->\n      <g transform=\"translate(60.146023 205.830437) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-30\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-30\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"xtick_2\">\n     <g id=\"line2d_2\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"115.036364\" y=\"191.232\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_2\">\n      <!-- 1 -->\n      <g transform=\"translate(111.855114 205.830437) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-31\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-31\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"xtick_3\">\n     <g id=\"line2d_3\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"166.745455\" y=\"191.232\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_3\">\n      <!-- 2 -->\n      <g transform=\"translate(163.564205 205.830437) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-32\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-32\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"xtick_4\">\n     <g id=\"line2d_4\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"218.454545\" y=\"191.232\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_4\">\n      <!-- 3 -->\n      <g transform=\"translate(215.273295 205.830437) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-33\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-33\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"xtick_5\">\n     <g id=\"line2d_5\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"270.163636\" y=\"191.232\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_5\">\n      <!-- 4 -->\n      <g transform=\"translate(266.982386 205.830437) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-34\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-34\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"xtick_6\">\n     <g id=\"line2d_6\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"321.872727\" y=\"191.232\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_6\">\n      <!-- 5 -->\n      <g transform=\"translate(318.691477 205.830437) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-35\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-35\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"axes_0.xlabel\">\n     <!-- time (s) -->\n     <g transform=\"translate(173.208594 219.508562) scale(0.1 -0.1)\">\n      <defs>\n       <path id=\"DejaVuSans-74\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-69\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-6d\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-65\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-20\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-28\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-73\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-29\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      </defs>\n      <use xlink:href=\"#DejaVuSans-74\"/>\n      <use xlink:href=\"#DejaVuSans-69\" transform=\"translate(39.208984 0)\"/>\n      <use xlink:href=\"#DejaVuSans-6d\" transform=\"translate(66.992188 0)\"/>\n      <use xlink:href=\"#DejaVuSans-65\" transform=\"translate(164.404297 0)\"/>\n      <use xlink:href=\"#DejaVuSans-20\" transform=\"translate(225.927734 0)\"/>\n      <use xlink:href=\"#DejaVuSans-28\" transform=\"translate(257.714844 0)\"/>\n      <use xlink:href=\"#DejaVuSans-73\" transform=\"translate(296.728516 0)\"/>\n      <use xlink:href=\"#DejaVuSans-29\" transform=\"translate(348.828125 0)\"/>\n     </g>\n    </g>\n   </g>\n   <g id=\"matplotlib.axis_2\">\n    <g id=\"ytick_1\">\n     <g id=\"line2d_7\">\n      <defs>\n       <path id=\"m002\" d=\"M 0 0\nL -3.5 0\n\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </defs>\n      <g>\n       <use xlink:href=\"#m002\" x=\"50.4\" y=\"184.005818\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_7\">\n      <!-- 0 -->\n      <g transform=\"translate(37.0375 187.805037) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-30\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_2\">\n     <g id=\"line2d_8\">\n      <g>\n       <use xlink:href=\"#m002\" x=\"50.4\" y=\"155.101091\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_8\">\n      <!-- 2 -->\n      <g transform=\"translate(37.0375 158.90031) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-32\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_3\">\n     <g id=\"line2d_9\">\n      <g>\n       <use xlink:href=\"#m002\" x=\"50.4\" y=\"126.196364\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_9\">\n      <!-- 4 -->\n      <g transform=\"translate(37.0375 129.995582) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-34\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_4\">\n     <g id=\"line2d_10\">\n      <g>\n       <use xlink:href=\"#m002\" x=\"50.4\" y=\"97.291636\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_10\">\n      <!-- 6 -->\n      <g transform=\"translate(37.0375 101.090855) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-36\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-36\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_5\">\n     <g id=\"line2d_11\">\n      <g>\n       <use xlink:href=\"#m002\" x=\"50.4\" y=\"68.386909\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_11\">\n      <!-- 8 -->\n      <g transform=\"translate(37.0375 72.186128) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-38\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-38\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_6\">\n     <g id=\"line2d_12\">\n      <g>\n       <use xlink:href=\"#m002\" x=\"50.4\" y=\"39.482182\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_12\">\n      <!-- 10 -->\n      <g transform=\"translate(30.675 43.281401) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-31\"/>\n       <use xlink:href=\"#DejaVuSans-30\" transform=\"translate(63.623047 0)\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"axes_0.ylabel\">\n     <!-- value -->\n     <g transform=\"translate(24.595313 125.401813) rotate(-90) scale(0.1 -0.1)\">\n      <defs>\n       <path id=\"DejaVuSans-76\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-61\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-6c\" d=\"M 603 4863\nL 1178 4863\nL 1178 0\nL 603 0\nL 603 4863\nz\n\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-75\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      </defs>\n      <use xlink:href=\"#DejaVuSans-76\"/>\n      <use xlink:href=\"#DejaVuSans-61\" transform=\"translate(59.179688 0)\"/>\n      <use xlink:href=\"#DejaVuSans-6c\" transform=\"translate(120.458984 0)\"/>\n      <use xlink:href=\"#DejaVuSans-75\" transform=\"translate(148.242188 0)\"/>\n      <use xlink:href=\"#DejaVuSans-65\" transform=\"translate(211.621094 0)\"/>\n     </g>\n    </g>\n   </g>\n   <g id=\"axes_0.lines_0\">\n    <path d=\"M 0 0 L 1 1\" clip-path=\"url(#p000)\" style=\"fill: none; stroke: #1f77b4; stroke-width: 1.5; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_3\">\n    <path d=\"M 50.4 191.232\nL 50.4 32.256\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_4\">\n    <path d=\"M 334.8 191.232\nL 334.8 32.256\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_5\">\n    <path d=\"M 50.4 191.232\nL 334.8 191.232\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_6\">\n    <path d=\"M 50.4 32.256\nL 334.8 32.256\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"axes_0.texts_0\">\n    <!-- note A -->\n    <g style=\"fill: #123456\" transform=\"translate(84.010909 65.496436) scale(0.1 -0.1)\">\n     <defs>\n      <path id=\"DejaVuSans-6e\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      <path id=\"DejaVuSans-6f\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      <path id=\"DejaVuSans-41\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#DejaVuSans-6e\"/>\n     <use xlink:href=\"#DejaVuSans-6f\" transform=\"translate(63.378906 0)\"/>\n     <use xlink:href=\"#DejaVuSans-74\" transform=\"translate(124.560547 0)\"/>\n     <use xlink:href=\"#DejaVuSans-65\" transform=\"translate(163.769531 0)\"/>\n     <use xlink:href=\"#DejaVuSans-20\" transform=\"translate(225.292969 0)\"/>\n     <use xlink:href=\"#DejaVuSans-41\" transform=\"translate(257.080078 0)\"/>\n    </g>\n   </g>\n   <g id=\"axes_0.title_left\">\n    <!-- G1 title -->\n    <g transform=\"translate(50.4 26.256) scale(0.12 -0.12)\">\n     <defs>\n      <path id=\"DejaVuSans-47\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#DejaVuSans-47\"/>\n     <use xlink:href=\"#DejaVuSans-31\" transform=\"translate(77.490234 0)\"/>\n     <use xlink:href=\"#DejaVuSans-20\" transform=\"translate(141.113281 0)\"/>\n     <use xlink:href=\"#DejaVuSans-74\" transform=\"translate(172.900391 0)\"/>\n     <use xlink:href=\"#DejaVuSans-69\" transform=\"translate(212.109375 0)\"/>\n     <use xlink:href=\"#DejaVuSans-74\" transform=\"translate(239.892578 0)\"/>\n     <use xlink:href=\"#DejaVuSans-6c\" transform=\"translate(279.101562 0)\"/>\n     <use xlink:href=\"#DejaVuSans-65\" transform=\"translate(306.884766 0)\"/>\n    </g>\n   </g>\n   <g id=\"axes_0.legend\">\n    <g id=\"patch_7\">\n     <path d=\"M 0 0 L 1 1\" style=\"fill: #ffffff; opacity: 0.8; stroke: #cccccc; stroke-linejoin: miter\"/>\n    </g>\n    <g id=\"line2d_13\">\n     <path d=\"M 0 0 L 1 1\" style=\"fill: none; stroke: #1f77b4; stroke-width: 1.5; stroke-linecap: square\"/>\n    </g>\n    <g id=\"axes_0.legend.texts_0\">\n     <!-- signal -->\n     <g transform=\"translate(296.220312 180.152312) scale(0.1 -0.1)\">\n      <defs>\n       <path id=\"DejaVuSans-67\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      </defs>\n      <use xlink:href=\"#DejaVuSans-73\"/>\n      <use xlink:href=\"#DejaVuSans-69\" transform=\"translate(52.099609 0)\"/>\n      <use xlink:href=\"#DejaVuSans-67\" transform=\"translate(79.882812 0)\"/>\n      <use xlink:href=\"#DejaVuSans-6e\" transform=\"translate(143.359375 0)\"/>\n      <use xlink:href=\"#DejaVuSans-61\" transform=\"translate(206.738281 0)\"/>\n      <use xlink:href=\"#DejaVuSans-6c\" transform=\"translate(268.017578 0)\"/>\n     </g>\n    </g>\n   </g>\n  </g>\n </g>\n <defs>\n  <clipPath id=\"p000\">\n   <rect x=\"50.4\" y=\"32.256\" width=\"284.4\" height=\"158.976\"/>\n  </clipPath>\n </defs>\n</svg>"
+ },
+ "G2": {
+  "stem": "G2",
+  "size_mm": [
+   162.56,
+   76.2
+  ],
+  "elements": [
+   {
+    "gid": "figure",
+    "role": "figure",
+    "label": "整张图",
+    "bbox": [
+     0.0,
+     0.0,
+     1.0,
+     1.0
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0",
+    "role": "axes",
+    "label": "子图 1",
+    "bbox": [
+     0.1,
+     0.16000000000000003,
+     0.3183673469387755,
+     0.66
+    ],
+    "draggable": false,
+    "resizable": true,
+    "follow_gids": [
+     "axes_2"
+    ],
+    "editable": [
+     {
+      "prop": "position",
+      "type": "rect",
+      "value": [
+       0.1,
+       0.18,
+       0.3184,
+       0.66
+      ]
+     }
+    ]
+   },
+   {
+    "gid": "axes_0.title",
+    "role": "title",
+    "label": "标题 “panel a”",
+    "bbox": [
+     0.21123445471938776,
+     0.08555555555555538,
+     0.0958984375,
+     0.06
+    ],
+    "draggable": true,
+    "anchor": [
+     0.25918367346938775,
+     0.13222222222222213
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xlabel",
+    "role": "axis_label",
+    "label": "X 轴 “x0”",
+    "bbox": [
+     0.24590242346938776,
+     0.9175925925925925,
+     0.0265625,
+     0.04666666666666667
+    ],
+    "draggable": true,
+    "anchor": [
+     0.25918367346938775,
+     0.9175925925925925
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_0",
+    "role": "text",
+    "label": "文字 “t0”",
+    "bbox": [
+     0.14341372912801484,
+     0.6933333333333334,
+     0.022265625,
+     0.04666666666666667
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14341372912801484,
+     0.73
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_1",
+    "role": "text",
+    "label": "文字 “t1”",
+    "bbox": [
+     0.3170686456400742,
+     0.2433333333333333,
+     0.0224609375,
+     0.04666666666666667
+    ],
+    "draggable": true,
+    "anchor": [
+     0.3170686456400742,
+     0.28
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.lines_0",
+    "role": "line",
+    "label": "曲线 “left”",
+    "bbox": [
+     0.11447124304267162,
+     0.18999999999999995,
+     0.28942486085343233,
+     0.6
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.legend",
+    "role": "legend",
+    "label": "图例",
+    "bbox": [
+     0.11085069444444444,
+     0.18314814814814817,
+     0.11347656249999998,
+     0.08370370370370371
+    ],
+    "draggable": true,
+    "anchor": [
+     0.11085069444444444,
+     0.2668518518518519
+    ],
+    "drag_prop": "loc_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.legend.texts_0",
+    "role": "legend_text",
+    "label": "图例项 “left”",
+    "bbox": [
+     0.18029513888888887,
+     0.20166666666666677,
+     0.0353515625,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticks",
+    "role": "ticks",
+    "label": "X 刻度文字",
+    "bbox": [
+     0.10763530554267162,
+     0.8524074074074074,
+     0.24521176368274583,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_1",
+    "role": "ticklabel",
+    "label": "刻度 “0”",
+    "bbox": [
+     0.10763530554267162,
+     0.8524074074074074,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_2",
+    "role": "ticklabel",
+    "label": "刻度 “2”",
+    "bbox": [
+     0.22340524988404456,
+     0.8524074074074074,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_3",
+    "role": "ticklabel",
+    "label": "刻度 “4”",
+    "bbox": [
+     0.3391751942254174,
+     0.8524074074074074,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticks",
+    "role": "ticks",
+    "label": "Y 刻度文字",
+    "bbox": [
+     0.05726996527777778,
+     0.17166666666666663,
+     0.0275390625,
+     0.6466666666666666
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_1",
+    "role": "ticklabel",
+    "label": "刻度 “0”",
+    "bbox": [
+     0.07113715277777778,
+     0.7716666666666666,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_2",
+    "role": "ticklabel",
+    "label": "刻度 “2”",
+    "bbox": [
+     0.07113715277777778,
+     0.6516666666666666,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_3",
+    "role": "ticklabel",
+    "label": "刻度 “4”",
+    "bbox": [
+     0.07113715277777778,
+     0.5316666666666667,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_4",
+    "role": "ticklabel",
+    "label": "刻度 “6”",
+    "bbox": [
+     0.07094184027777778,
+     0.4116666666666666,
+     0.0138671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_5",
+    "role": "ticklabel",
+    "label": "刻度 “8”",
+    "bbox": [
+     0.07094184027777778,
+     0.29166666666666663,
+     0.0138671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_6",
+    "role": "ticklabel",
+    "label": "刻度 “10”",
+    "bbox": [
+     0.05726996527777778,
+     0.17166666666666663,
+     0.0275390625,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1",
+    "role": "axes",
+    "label": "子图 2",
+    "bbox": [
+     0.5616326530612245,
+     0.16000000000000003,
+     0.3183673469387756,
+     0.66
+    ],
+    "draggable": false,
+    "resizable": true,
+    "editable": [
+     {
+      "prop": "position",
+      "type": "rect",
+      "value": [
+       0.5616,
+       0.18,
+       0.3184,
+       0.66
+      ]
+     }
+    ]
+   },
+   {
+    "gid": "axes_1.title",
+    "role": "title",
+    "label": "标题 “panel b”",
+    "bbox": [
+     0.6725741390306123,
+     0.08555555555555538,
+     0.096484375,
+     0.06
+    ],
+    "draggable": true,
+    "anchor": [
+     0.7208163265306122,
+     0.13222222222222213
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_1.ylabel",
+    "role": "axis_label",
+    "label": "Y 轴 “y1”",
+    "bbox": [
+     0.4883470627834467,
+     0.4614583333333333,
+     0.021875,
+     0.05708333333333333
+    ],
+    "draggable": true,
+    "anchor": [
+     0.5102220627834467,
+     0.49
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_1.texts_0",
+    "role": "text",
+    "label": "文字 “t2”",
+    "bbox": [
+     0.6339888682745826,
+     0.6333333333333333,
+     0.022265625,
+     0.04666666666666667
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6339888682745826,
+     0.6699999999999999
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_1.lines_0",
+    "role": "line",
+    "label": "曲线 “right”",
+    "bbox": [
+     0.576103896103896,
+     0.18999999999999995,
+     0.28942486085343233,
+     0.6
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.patches_0",
+    "role": "patch",
+    "label": "形状 1",
+    "bbox": [
+     0.7497588126159555,
+     0.37,
+     0.057884972170686486,
+     0.12
+    ],
+    "draggable": true,
+    "anchor": [
+     0.7497588126159555,
+     0.49
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_1.legend",
+    "role": "legend",
+    "label": "图例",
+    "bbox": [
+     0.572483347505669,
+     0.7131481481481481,
+     0.129296875,
+     0.08370370370370371
+    ],
+    "draggable": true,
+    "anchor": [
+     0.572483347505669,
+     0.7968518518518518
+    ],
+    "drag_prop": "loc_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_1.legend.texts_0",
+    "role": "legend_text",
+    "label": "图例项 “right”",
+    "bbox": [
+     0.6419277919501134,
+     0.7316666666666667,
+     0.051171875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.xticks",
+    "role": "ticks",
+    "label": "X 刻度文字",
+    "bbox": [
+     0.569267958603896,
+     0.8524074074074074,
+     0.24521176368274586,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.xticklabels_1",
+    "role": "ticklabel",
+    "label": "刻度 “0”",
+    "bbox": [
+     0.569267958603896,
+     0.8524074074074074,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.xticklabels_2",
+    "role": "ticklabel",
+    "label": "刻度 “2”",
+    "bbox": [
+     0.685037902945269,
+     0.8524074074074074,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.xticklabels_3",
+    "role": "ticklabel",
+    "label": "刻度 “4”",
+    "bbox": [
+     0.8008078472866419,
+     0.8524074074074074,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.yticks",
+    "role": "ticks",
+    "label": "Y 刻度文字",
+    "bbox": [
+     0.5189026183390022,
+     0.17166666666666663,
+     0.0275390625,
+     0.6466666666666666
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.yticklabels_1",
+    "role": "ticklabel",
+    "label": "刻度 “0”",
+    "bbox": [
+     0.5327698058390022,
+     0.7716666666666666,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.yticklabels_2",
+    "role": "ticklabel",
+    "label": "刻度 “2”",
+    "bbox": [
+     0.5327698058390022,
+     0.6516666666666666,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.yticklabels_3",
+    "role": "ticklabel",
+    "label": "刻度 “4”",
+    "bbox": [
+     0.5327698058390022,
+     0.5316666666666667,
+     0.013671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.yticklabels_4",
+    "role": "ticklabel",
+    "label": "刻度 “6”",
+    "bbox": [
+     0.5325744933390022,
+     0.4116666666666666,
+     0.0138671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.yticklabels_5",
+    "role": "ticklabel",
+    "label": "刻度 “8”",
+    "bbox": [
+     0.5325744933390022,
+     0.29166666666666663,
+     0.0138671875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_1.yticklabels_6",
+    "role": "ticklabel",
+    "label": "刻度 “10”",
+    "bbox": [
+     0.5189026183390022,
+     0.17166666666666663,
+     0.0275390625,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_2",
+    "role": "axes",
+    "label": "子图 1（右轴）",
+    "bbox": [
+     0.1,
+     0.16000000000000003,
+     0.3183673469387755,
+     0.66
+    ],
+    "draggable": false,
+    "resizable": true,
+    "follow_gids": [
+     "axes_0"
+    ],
+    "editable": [
+     {
+      "prop": "position",
+      "type": "rect",
+      "value": [
+       0.1,
+       0.18,
+       0.3184,
+       0.66
+      ]
+     }
+    ]
+   },
+   {
+    "gid": "axes_2.lines_0",
+    "role": "line",
+    "label": "曲线 “twin”",
+    "bbox": [
+     0.11447124304267162,
+     0.18999999999999995,
+     0.28942486085343233,
+     0.6
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_2.yticks",
+    "role": "ticks",
+    "label": "Y 刻度文字",
+    "bbox": [
+     0.43355831916099774,
+     0.17166666666666652,
+     0.034375,
+     0.6466666666666668
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_2.yticklabels_1",
+    "role": "ticklabel",
+    "label": "刻度 “0.0”",
+    "bbox": [
+     0.43355831916099774,
+     0.7716666666666666,
+     0.0341796875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_2.yticklabels_2",
+    "role": "ticklabel",
+    "label": "刻度 “0.2”",
+    "bbox": [
+     0.43355831916099774,
+     0.6516666666666666,
+     0.0341796875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_2.yticklabels_3",
+    "role": "ticklabel",
+    "label": "刻度 “0.4”",
+    "bbox": [
+     0.43355831916099774,
+     0.5316666666666665,
+     0.0341796875,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_2.yticklabels_4",
+    "role": "ticklabel",
+    "label": "刻度 “0.6”",
+    "bbox": [
+     0.43355831916099774,
+     0.4116666666666666,
+     0.034375,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_2.yticklabels_5",
+    "role": "ticklabel",
+    "label": "刻度 “0.8”",
+    "bbox": [
+     0.43355831916099774,
+     0.29166666666666663,
+     0.034375,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_2.yticklabels_6",
+    "role": "ticklabel",
+    "label": "刻度 “1.0”",
+    "bbox": [
+     0.43355831916099774,
+     0.17166666666666652,
+     0.034375,
+     0.04666666666666667
+    ],
+    "draggable": false,
+    "editable": []
+   }
+  ],
+  "svg": "<svg xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"460.8pt\" height=\"216pt\" viewBox=\"0 0 460.8 216\" xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">\n <defs>\n  <style type=\"text/css\">*{stroke-linejoin: round; stroke-linecap: butt}</style>\n </defs>\n <g id=\"figure_1\">\n  <g id=\"patch_1\">\n   <path d=\"M 0 216\nL 460.8 216\nL 460.8 0\nL 0 0\nz\n\" style=\"fill: #ffffff\"/>\n  </g>\n  <g id=\"axes_0\">\n   <g id=\"patch_2\">\n    <path d=\"M 0 0 L 1 1\" style=\"fill: #ffffff\"/>\n   </g>\n   <g id=\"matplotlib.axis_1\">\n    <g id=\"xtick_1\">\n     <g id=\"line2d_1\">\n      <defs>\n       <path id=\"m000\" d=\"M 0 0\nL 0 3.5\n\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </defs>\n      <g>\n       <use xlink:href=\"#m000\" x=\"52.748349\" y=\"177.12\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_1\">\n      <!-- 0 -->\n      <g transform=\"translate(49.567099 191.718437) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-30\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-30\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"xtick_2\">\n     <g id=\"line2d_2\">\n      <g>\n       <use xlink:href=\"#m000\" x=\"106.095139\" y=\"177.12\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_2\">\n      <!-- 2 -->\n      <g transform=\"translate(102.913889 191.718437) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-32\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-32\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"xtick_3\">\n     <g id=\"line2d_3\">\n      <g>\n       <use xlink:href=\"#m000\" x=\"159.441929\" y=\"177.12\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_3\">\n      <!-- 4 -->\n      <g transform=\"translate(156.260679 191.718437) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-34\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-34\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"axes_0.xlabel\">\n     <!-- x0 -->\n     <g transform=\"translate(113.291212 205.396562) scale(0.1 -0.1)\">\n      <defs>\n       <path id=\"DejaVuSans-78\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      </defs>\n      <use xlink:href=\"#DejaVuSans-78\"/>\n      <use xlink:href=\"#DejaVuSans-30\" transform=\"translate(59.179688 0)\"/>\n     </g>\n    </g>\n   </g>\n   <g id=\"matplotlib.axis_2\">\n    <g id=\"ytick_1\">\n     <g id=\"line2d_4\">\n      <defs>\n       <path id=\"m001\" d=\"M 0 0\nL -3.5 0\n\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </defs>\n      <g>\n       <use xlink:href=\"#m001\" x=\"46.08\" y=\"170.64\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_4\">\n      <!-- 0 -->\n      <g transform=\"translate(32.7175 174.439219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-30\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_2\">\n     <g id=\"line2d_5\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"46.08\" y=\"144.72\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_5\">\n      <!-- 2 -->\n      <g transform=\"translate(32.7175 148.519219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-32\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_3\">\n     <g id=\"line2d_6\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"46.08\" y=\"118.8\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_6\">\n      <!-- 4 -->\n      <g transform=\"translate(32.7175 122.599219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-34\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_4\">\n     <g id=\"line2d_7\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"46.08\" y=\"92.88\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_7\">\n      <!-- 6 -->\n      <g transform=\"translate(32.7175 96.679219) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-36\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-36\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_5\">\n     <g id=\"line2d_8\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"46.08\" y=\"66.96\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_8\">\n      <!-- 8 -->\n      <g transform=\"translate(32.7175 70.759219) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-38\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-38\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_6\">\n     <g id=\"line2d_9\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"46.08\" y=\"41.04\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_9\">\n      <!-- 10 -->\n      <g transform=\"translate(26.355 44.839219) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-31\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-31\"/>\n       <use xlink:href=\"#DejaVuSans-30\" transform=\"translate(63.623047 0)\"/>\n      </g>\n     </g>\n    </g>\n   </g>\n   <g id=\"axes_0.lines_0\">\n    <path d=\"M 0 0 L 1 1\" clip-path=\"url(#p002)\" style=\"fill: none; stroke: #1f77b4; stroke-width: 1.5; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_3\">\n    <path d=\"M 46.08 177.12\nL 46.08 34.56\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_4\">\n    <path d=\"M 192.783673 177.12\nL 192.783673 34.56\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_5\">\n    <path d=\"M 46.08 177.12\nL 192.783673 177.12\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_6\">\n    <path d=\"M 46.08 34.56\nL 192.783673 34.56\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"axes_0.texts_0\">\n    <!-- t0 -->\n    <g transform=\"translate(66.085046 157.68) scale(0.1 -0.1)\">\n     <defs>\n      <path id=\"DejaVuSans-74\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#DejaVuSans-74\"/>\n     <use xlink:href=\"#DejaVuSans-30\" transform=\"translate(39.208984 0)\"/>\n    </g>\n   </g>\n   <g id=\"axes_0.texts_1\">\n    <!-- t1 -->\n    <g transform=\"translate(146.105232 60.48) scale(0.1 -0.1)\">\n     <use xlink:href=\"#DejaVuSans-74\"/>\n     <use xlink:href=\"#DejaVuSans-31\" transform=\"translate(39.208984 0)\"/>\n    </g>\n   </g>\n   <g id=\"axes_0.title\">\n    <!-- panel a -->\n    <g transform=\"translate(97.200899 28.56) scale(0.12 -0.12)\">\n     <defs>\n      <path id=\"DejaVuSans-70\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      <path id=\"DejaVuSans-61\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      <path id=\"DejaVuSans-6e\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      <path id=\"DejaVuSans-65\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      <path id=\"DejaVuSans-6c\" d=\"M 603 4863\nL 1178 4863\nL 1178 0\nL 603 0\nL 603 4863\nz\n\" transform=\"scale(0.015625)\"/>\n      <path id=\"DejaVuSans-20\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#DejaVuSans-70\"/>\n     <use xlink:href=\"#DejaVuSans-61\" transform=\"translate(63.476562 0)\"/>\n     <use xlink:href=\"#DejaVuSans-6e\" transform=\"translate(124.755859 0)\"/>\n     <use xlink:href=\"#DejaVuSans-65\" transform=\"translate(188.134766 0)\"/>\n     <use xlink:href=\"#DejaVuSans-6c\" transform=\"translate(249.658203 0)\"/>\n     <use xlink:href=\"#DejaVuSans-20\" transform=\"translate(277.441406 0)\"/>\n     <use xlink:href=\"#DejaVuSans-61\" transform=\"translate(309.228516 0)\"/>\n    </g>\n   </g>\n   <g id=\"axes_0.legend\">\n    <g id=\"patch_7\">\n     <path d=\"M 0 0 L 1 1\" style=\"fill: #ffffff; opacity: 0.8; stroke: #cccccc; stroke-linejoin: miter\"/>\n    </g>\n    <g id=\"line2d_10\">\n     <path d=\"M 55.08 47.658437\nL 65.08 47.658437\nL 75.08 47.658437\n\" style=\"fill: none; stroke: #1f77b4; stroke-width: 1.5; stroke-linecap: square\"/>\n    </g>\n    <g id=\"axes_0.legend.texts_0\">\n     <!-- left -->\n     <g transform=\"translate(83.08 51.158437) scale(0.1 -0.1)\">\n      <defs>\n       <path id=\"DejaVuSans-66\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      </defs>\n      <use xlink:href=\"#DejaVuSans-6c\"/>\n      <use xlink:href=\"#DejaVuSans-65\" transform=\"translate(27.783203 0)\"/>\n      <use xlink:href=\"#DejaVuSans-66\" transform=\"translate(89.306641 0)\"/>\n      <use xlink:href=\"#DejaVuSans-74\" transform=\"translate(122.761719 0)\"/>\n     </g>\n    </g>\n   </g>\n  </g>\n  <g id=\"axes_1\">\n   <g id=\"patch_8\">\n    <path d=\"M 0 0 L 1 1\" style=\"fill: #ffffff\"/>\n   </g>\n   <g id=\"axes_1.patches_0\">\n    <path d=\"M 0 0 L 1 1\" clip-path=\"url(#p003)\" style=\"fill: #cce5ff; stroke: #000000; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"matplotlib.axis_3\">\n    <g id=\"xtick_4\">\n     <g id=\"line2d_11\">\n      <g>\n       <use xlink:href=\"#m000\" x=\"265.468675\" y=\"177.12\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_10\">\n      <!-- 0 -->\n      <g transform=\"translate(262.287425 191.718437) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-30\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"xtick_5\">\n     <g id=\"line2d_12\">\n      <g>\n       <use xlink:href=\"#m000\" x=\"318.815466\" y=\"177.12\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_11\">\n      <!-- 2 -->\n      <g transform=\"translate(315.634216 191.718437) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-32\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"xtick_6\">\n     <g id=\"line2d_13\">\n      <g>\n       <use xlink:href=\"#m000\" x=\"372.162256\" y=\"177.12\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_12\">\n      <!-- 4 -->\n      <g transform=\"translate(368.981006 191.718437) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-34\"/>\n      </g>\n     </g>\n    </g>\n   </g>\n   <g id=\"matplotlib.axis_4\">\n    <g id=\"ytick_7\">\n     <g id=\"line2d_14\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"258.800327\" y=\"170.64\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_13\">\n      <!-- 0 -->\n      <g transform=\"translate(245.437827 174.439219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-30\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_8\">\n     <g id=\"line2d_15\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"258.800327\" y=\"144.72\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_14\">\n      <!-- 2 -->\n      <g transform=\"translate(245.437827 148.519219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-32\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_9\">\n     <g id=\"line2d_16\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"258.800327\" y=\"118.8\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_15\">\n      <!-- 4 -->\n      <g transform=\"translate(245.437827 122.599219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-34\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_10\">\n     <g id=\"line2d_17\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"258.800327\" y=\"92.88\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_16\">\n      <!-- 6 -->\n      <g transform=\"translate(245.437827 96.679219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-36\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_11\">\n     <g id=\"line2d_18\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"258.800327\" y=\"66.96\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_17\">\n      <!-- 8 -->\n      <g transform=\"translate(245.437827 70.759219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-38\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_12\">\n     <g id=\"line2d_19\">\n      <g>\n       <use xlink:href=\"#m001\" x=\"258.800327\" y=\"41.04\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_18\">\n      <!-- 10 -->\n      <g transform=\"translate(239.075327 44.839219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-31\"/>\n       <use xlink:href=\"#DejaVuSans-30\" transform=\"translate(63.623047 0)\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"axes_1.ylabel\">\n     <!-- y1 -->\n     <g transform=\"translate(232.995639 111.980625) rotate(-90) scale(0.1 -0.1)\">\n      <defs>\n       <path id=\"DejaVuSans-79\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      </defs>\n      <use xlink:href=\"#DejaVuSans-79\"/>\n      <use xlink:href=\"#DejaVuSans-31\" transform=\"translate(59.179688 0)\"/>\n     </g>\n    </g>\n   </g>\n   <g id=\"axes_1.lines_0\">\n    <path d=\"M 0 0 L 1 1\" clip-path=\"url(#p003)\" style=\"fill: none; stroke: #1f77b4; stroke-width: 1.5; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_9\">\n    <path d=\"M 258.800327 177.12\nL 258.800327 34.56\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_10\">\n    <path d=\"M 405.504 177.12\nL 405.504 34.56\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_11\">\n    <path d=\"M 258.800327 177.12\nL 405.504 177.12\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_12\">\n    <path d=\"M 258.800327 34.56\nL 405.504 34.56\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"axes_1.texts_0\">\n    <!-- t2 -->\n    <g transform=\"translate(292.142071 144.72) scale(0.1 -0.1)\">\n     <use xlink:href=\"#DejaVuSans-74\"/>\n     <use xlink:href=\"#DejaVuSans-32\" transform=\"translate(39.208984 0)\"/>\n    </g>\n   </g>\n   <g id=\"axes_1.title\">\n    <!-- panel b -->\n    <g transform=\"translate(309.789038 28.56) scale(0.12 -0.12)\">\n     <defs>\n      <path id=\"DejaVuSans-62\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#DejaVuSans-70\"/>\n     <use xlink:href=\"#DejaVuSans-61\" transform=\"translate(63.476562 0)\"/>\n     <use xlink:href=\"#DejaVuSans-6e\" transform=\"translate(124.755859 0)\"/>\n     <use xlink:href=\"#DejaVuSans-65\" transform=\"translate(188.134766 0)\"/>\n     <use xlink:href=\"#DejaVuSans-6c\" transform=\"translate(249.658203 0)\"/>\n     <use xlink:href=\"#DejaVuSans-20\" transform=\"translate(277.441406 0)\"/>\n     <use xlink:href=\"#DejaVuSans-62\" transform=\"translate(309.228516 0)\"/>\n    </g>\n   </g>\n   <g id=\"axes_1.legend\">\n    <g id=\"patch_13\">\n     <path d=\"M 0 0 L 1 1\" style=\"fill: #ffffff; opacity: 0.8; stroke: #cccccc; stroke-linejoin: miter\"/>\n    </g>\n    <g id=\"line2d_20\">\n     <path d=\"M 0 0 L 1 1\" style=\"fill: none; stroke: #1f77b4; stroke-width: 1.5; stroke-linecap: square\"/>\n    </g>\n    <g id=\"axes_1.legend.texts_0\">\n     <!-- right -->\n     <g transform=\"translate(295.800327 166.040312) scale(0.1 -0.1)\">\n      <defs>\n       <path id=\"DejaVuSans-72\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-69\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-67\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n       <path id=\"DejaVuSans-68\" d=\"M 0 0 L 1 1\" transform=\"scale(0.015625)\"/>\n      </defs>\n      <use xlink:href=\"#DejaVuSans-72\"/>\n      <use xlink:href=\"#DejaVuSans-69\" transform=\"translate(41.113281 0)\"/>\n      <use xlink:href=\"#DejaVuSans-67\" transform=\"translate(68.896484 0)\"/>\n      <use xlink:href=\"#DejaVuSans-68\" transform=\"translate(132.373047 0)\"/>\n      <use xlink:href=\"#DejaVuSans-74\" transform=\"translate(195.751953 0)\"/>\n     </g>\n    </g>\n   </g>\n  </g>\n  <g id=\"axes_2\">\n   <g id=\"matplotlib.axis_5\">\n    <g id=\"ytick_13\">\n     <g id=\"line2d_21\">\n      <defs>\n       <path id=\"m004\" d=\"M 0 0\nL 3.5 0\n\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </defs>\n      <g>\n       <use xlink:href=\"#m004\" x=\"192.783673\" y=\"170.64\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_19\">\n      <!-- 0.0 -->\n      <g transform=\"translate(199.783673 174.439219) scale(0.1 -0.1)\">\n       <defs>\n        <path id=\"DejaVuSans-2e\" d=\"M 684 794\nL 1344 794\nL 1344 0\nL 684 0\nL 684 794\nz\n\" transform=\"scale(0.015625)\"/>\n       </defs>\n       <use xlink:href=\"#DejaVuSans-30\"/>\n       <use xlink:href=\"#DejaVuSans-2e\" transform=\"translate(63.623047 0)\"/>\n       <use xlink:href=\"#DejaVuSans-30\" transform=\"translate(95.410156 0)\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_14\">\n     <g id=\"line2d_22\">\n      <g>\n       <use xlink:href=\"#m004\" x=\"192.783673\" y=\"144.72\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_20\">\n      <!-- 0.2 -->\n      <g transform=\"translate(199.783673 148.519219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-30\"/>\n       <use xlink:href=\"#DejaVuSans-2e\" transform=\"translate(63.623047 0)\"/>\n       <use xlink:href=\"#DejaVuSans-32\" transform=\"translate(95.410156 0)\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_15\">\n     <g id=\"line2d_23\">\n      <g>\n       <use xlink:href=\"#m004\" x=\"192.783673\" y=\"118.8\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_21\">\n      <!-- 0.4 -->\n      <g transform=\"translate(199.783673 122.599219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-30\"/>\n       <use xlink:href=\"#DejaVuSans-2e\" transform=\"translate(63.623047 0)\"/>\n       <use xlink:href=\"#DejaVuSans-34\" transform=\"translate(95.410156 0)\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_16\">\n     <g id=\"line2d_24\">\n      <g>\n       <use xlink:href=\"#m004\" x=\"192.783673\" y=\"92.88\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_22\">\n      <!-- 0.6 -->\n      <g transform=\"translate(199.783673 96.679219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-30\"/>\n       <use xlink:href=\"#DejaVuSans-2e\" transform=\"translate(63.623047 0)\"/>\n       <use xlink:href=\"#DejaVuSans-36\" transform=\"translate(95.410156 0)\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_17\">\n     <g id=\"line2d_25\">\n      <g>\n       <use xlink:href=\"#m004\" x=\"192.783673\" y=\"66.96\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_23\">\n      <!-- 0.8 -->\n      <g transform=\"translate(199.783673 70.759219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-30\"/>\n       <use xlink:href=\"#DejaVuSans-2e\" transform=\"translate(63.623047 0)\"/>\n       <use xlink:href=\"#DejaVuSans-38\" transform=\"translate(95.410156 0)\"/>\n      </g>\n     </g>\n    </g>\n    <g id=\"ytick_18\">\n     <g id=\"line2d_26\">\n      <g>\n       <use xlink:href=\"#m004\" x=\"192.783673\" y=\"41.04\" style=\"stroke: #000000; stroke-width: 0.8\"/>\n      </g>\n     </g>\n     <g id=\"text_24\">\n      <!-- 1.0 -->\n      <g transform=\"translate(199.783673 44.839219) scale(0.1 -0.1)\">\n       <use xlink:href=\"#DejaVuSans-31\"/>\n       <use xlink:href=\"#DejaVuSans-2e\" transform=\"translate(63.623047 0)\"/>\n       <use xlink:href=\"#DejaVuSans-30\" transform=\"translate(95.410156 0)\"/>\n      </g>\n     </g>\n    </g>\n   </g>\n   <g id=\"axes_2.lines_0\">\n    <path d=\"M 0 0 L 1 1\" clip-path=\"url(#p002)\" style=\"fill: none; stroke: #d62728; stroke-width: 1.5; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_14\">\n    <path d=\"M 46.08 177.12\nL 46.08 34.56\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_15\">\n    <path d=\"M 192.783673 177.12\nL 192.783673 34.56\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_16\">\n    <path d=\"M 46.08 177.12\nL 192.783673 177.12\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_17\">\n    <path d=\"M 46.08 34.56\nL 192.783673 34.56\n\" style=\"fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square\"/>\n   </g>\n  </g>\n </g>\n <defs>\n  <clipPath id=\"p002\">\n   <rect x=\"46.08\" y=\"34.56\" width=\"146.703673\" height=\"142.56\"/>\n  </clipPath>\n  <clipPath id=\"p003\">\n   <rect x=\"258.800327\" y=\"34.56\" width=\"146.703673\" height=\"142.56\"/>\n  </clipPath>\n </defs>\n</svg>"
+ },
+ "G2big": {
+  "stem": "G2big",
+  "size_mm": [
+   152.4,
+   152.4
+  ],
+  "elements": [
+   {
+    "gid": "figure",
+    "role": "figure",
+    "label": "整张图",
+    "bbox": [
+     0.0,
+     0.0,
+     1.0,
+     1.0
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0",
+    "role": "axes",
+    "label": "子图 1",
+    "bbox": [
+     0.125,
+     0.12,
+     0.775,
+     0.77
+    ],
+    "draggable": false,
+    "resizable": true,
+    "editable": [
+     {
+      "prop": "position",
+      "type": "rect",
+      "value": [
+       0.125,
+       0.11,
+       0.775,
+       0.77
+      ]
+     }
+    ]
+   },
+   {
+    "gid": "axes_0.texts_0",
+    "role": "text",
+    "label": "文字 “n00”",
+    "bbox": [
+     0.14825,
+     0.8552333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14825,
+     0.8669
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_1",
+    "role": "text",
+    "label": "文字 “n01”",
+    "bbox": [
+     0.221875,
+     0.8552333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.221875,
+     0.8669
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_2",
+    "role": "text",
+    "label": "文字 “n02”",
+    "bbox": [
+     0.2955,
+     0.8552333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.2955,
+     0.8669
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_3",
+    "role": "text",
+    "label": "文字 “n03”",
+    "bbox": [
+     0.3691249999999999,
+     0.8552333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.3691249999999999,
+     0.8669
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_4",
+    "role": "text",
+    "label": "文字 “n04”",
+    "bbox": [
+     0.44275,
+     0.8552333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.44275,
+     0.8669
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_5",
+    "role": "text",
+    "label": "文字 “n05”",
+    "bbox": [
+     0.516375,
+     0.8552333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.516375,
+     0.8669
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_6",
+    "role": "text",
+    "label": "文字 “n06”",
+    "bbox": [
+     0.5899999999999999,
+     0.8552333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.5899999999999999,
+     0.8669
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_7",
+    "role": "text",
+    "label": "文字 “n07”",
+    "bbox": [
+     0.6636249999999999,
+     0.8552333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6636249999999999,
+     0.8669
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_8",
+    "role": "text",
+    "label": "文字 “n08”",
+    "bbox": [
+     0.73725,
+     0.8552333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.73725,
+     0.8669
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_9",
+    "role": "text",
+    "label": "文字 “n09”",
+    "bbox": [
+     0.810875,
+     0.8552333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.810875,
+     0.8669
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_10",
+    "role": "text",
+    "label": "文字 “n10”",
+    "bbox": [
+     0.14825,
+     0.7820833333333334,
+     0.026458333333333334,
+     0.015000000000000024
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14825,
+     0.79375
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_11",
+    "role": "text",
+    "label": "文字 “n11”",
+    "bbox": [
+     0.221875,
+     0.7820833333333334,
+     0.026458333333333334,
+     0.015000000000000024
+    ],
+    "draggable": true,
+    "anchor": [
+     0.221875,
+     0.79375
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_12",
+    "role": "text",
+    "label": "文字 “n12”",
+    "bbox": [
+     0.2955,
+     0.7820833333333334,
+     0.026458333333333334,
+     0.015000000000000024
+    ],
+    "draggable": true,
+    "anchor": [
+     0.2955,
+     0.79375
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_13",
+    "role": "text",
+    "label": "文字 “n13”",
+    "bbox": [
+     0.3691249999999999,
+     0.7820833333333334,
+     0.02666666666666667,
+     0.015000000000000024
+    ],
+    "draggable": true,
+    "anchor": [
+     0.3691249999999999,
+     0.79375
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_14",
+    "role": "text",
+    "label": "文字 “n14”",
+    "bbox": [
+     0.44275,
+     0.7820833333333334,
+     0.026458333333333334,
+     0.015000000000000024
+    ],
+    "draggable": true,
+    "anchor": [
+     0.44275,
+     0.79375
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_15",
+    "role": "text",
+    "label": "文字 “n15”",
+    "bbox": [
+     0.516375,
+     0.7820833333333334,
+     0.026458333333333334,
+     0.015000000000000024
+    ],
+    "draggable": true,
+    "anchor": [
+     0.516375,
+     0.79375
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_16",
+    "role": "text",
+    "label": "文字 “n16”",
+    "bbox": [
+     0.5899999999999999,
+     0.7820833333333334,
+     0.02666666666666667,
+     0.015000000000000024
+    ],
+    "draggable": true,
+    "anchor": [
+     0.5899999999999999,
+     0.79375
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_17",
+    "role": "text",
+    "label": "文字 “n17”",
+    "bbox": [
+     0.6636249999999999,
+     0.7820833333333334,
+     0.02666666666666667,
+     0.015000000000000024
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6636249999999999,
+     0.79375
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_18",
+    "role": "text",
+    "label": "文字 “n18”",
+    "bbox": [
+     0.73725,
+     0.7820833333333334,
+     0.02666666666666667,
+     0.015000000000000024
+    ],
+    "draggable": true,
+    "anchor": [
+     0.73725,
+     0.79375
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_19",
+    "role": "text",
+    "label": "文字 “n19”",
+    "bbox": [
+     0.810875,
+     0.7820833333333334,
+     0.026458333333333334,
+     0.015000000000000024
+    ],
+    "draggable": true,
+    "anchor": [
+     0.810875,
+     0.79375
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_20",
+    "role": "text",
+    "label": "文字 “n20”",
+    "bbox": [
+     0.14825,
+     0.7089333333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14825,
+     0.7206
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_21",
+    "role": "text",
+    "label": "文字 “n21”",
+    "bbox": [
+     0.221875,
+     0.7089333333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.221875,
+     0.7206
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_22",
+    "role": "text",
+    "label": "文字 “n22”",
+    "bbox": [
+     0.2955,
+     0.7089333333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.2955,
+     0.7206
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_23",
+    "role": "text",
+    "label": "文字 “n23”",
+    "bbox": [
+     0.3691249999999999,
+     0.7089333333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.3691249999999999,
+     0.7206
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_24",
+    "role": "text",
+    "label": "文字 “n24”",
+    "bbox": [
+     0.44275,
+     0.7089333333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.44275,
+     0.7206
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_25",
+    "role": "text",
+    "label": "文字 “n25”",
+    "bbox": [
+     0.516375,
+     0.7089333333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.516375,
+     0.7206
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_26",
+    "role": "text",
+    "label": "文字 “n26”",
+    "bbox": [
+     0.5899999999999999,
+     0.7089333333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.5899999999999999,
+     0.7206
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_27",
+    "role": "text",
+    "label": "文字 “n27”",
+    "bbox": [
+     0.6636249999999999,
+     0.7089333333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6636249999999999,
+     0.7206
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_28",
+    "role": "text",
+    "label": "文字 “n28”",
+    "bbox": [
+     0.73725,
+     0.7089333333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.73725,
+     0.7206
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_29",
+    "role": "text",
+    "label": "文字 “n29”",
+    "bbox": [
+     0.810875,
+     0.7089333333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.810875,
+     0.7206
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_30",
+    "role": "text",
+    "label": "文字 “n30”",
+    "bbox": [
+     0.14825,
+     0.6357833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14825,
+     0.6474500000000001
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_31",
+    "role": "text",
+    "label": "文字 “n31”",
+    "bbox": [
+     0.221875,
+     0.6357833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.221875,
+     0.6474500000000001
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_32",
+    "role": "text",
+    "label": "文字 “n32”",
+    "bbox": [
+     0.2955,
+     0.6357833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.2955,
+     0.6474500000000001
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_33",
+    "role": "text",
+    "label": "文字 “n33”",
+    "bbox": [
+     0.3691249999999999,
+     0.6357833333333334,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.3691249999999999,
+     0.6474500000000001
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_34",
+    "role": "text",
+    "label": "文字 “n34”",
+    "bbox": [
+     0.44275,
+     0.6357833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.44275,
+     0.6474500000000001
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_35",
+    "role": "text",
+    "label": "文字 “n35”",
+    "bbox": [
+     0.516375,
+     0.6357833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.516375,
+     0.6474500000000001
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_36",
+    "role": "text",
+    "label": "文字 “n36”",
+    "bbox": [
+     0.5899999999999999,
+     0.6357833333333334,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.5899999999999999,
+     0.6474500000000001
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_37",
+    "role": "text",
+    "label": "文字 “n37”",
+    "bbox": [
+     0.6636249999999999,
+     0.6357833333333334,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6636249999999999,
+     0.6474500000000001
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_38",
+    "role": "text",
+    "label": "文字 “n38”",
+    "bbox": [
+     0.73725,
+     0.6357833333333334,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.73725,
+     0.6474500000000001
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_39",
+    "role": "text",
+    "label": "文字 “n39”",
+    "bbox": [
+     0.810875,
+     0.6357833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.810875,
+     0.6474500000000001
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_40",
+    "role": "text",
+    "label": "文字 “n40”",
+    "bbox": [
+     0.14825,
+     0.5626333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14825,
+     0.5743
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_41",
+    "role": "text",
+    "label": "文字 “n41”",
+    "bbox": [
+     0.221875,
+     0.5626333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.221875,
+     0.5743
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_42",
+    "role": "text",
+    "label": "文字 “n42”",
+    "bbox": [
+     0.2955,
+     0.5626333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.2955,
+     0.5743
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_43",
+    "role": "text",
+    "label": "文字 “n43”",
+    "bbox": [
+     0.3691249999999999,
+     0.5626333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.3691249999999999,
+     0.5743
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_44",
+    "role": "text",
+    "label": "文字 “n44”",
+    "bbox": [
+     0.44275,
+     0.5626333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.44275,
+     0.5743
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_45",
+    "role": "text",
+    "label": "文字 “n45”",
+    "bbox": [
+     0.516375,
+     0.5626333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.516375,
+     0.5743
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_46",
+    "role": "text",
+    "label": "文字 “n46”",
+    "bbox": [
+     0.5899999999999999,
+     0.5626333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.5899999999999999,
+     0.5743
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_47",
+    "role": "text",
+    "label": "文字 “n47”",
+    "bbox": [
+     0.6636249999999999,
+     0.5626333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6636249999999999,
+     0.5743
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_48",
+    "role": "text",
+    "label": "文字 “n48”",
+    "bbox": [
+     0.73725,
+     0.5626333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.73725,
+     0.5743
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_49",
+    "role": "text",
+    "label": "文字 “n49”",
+    "bbox": [
+     0.810875,
+     0.5626333333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.810875,
+     0.5743
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_50",
+    "role": "text",
+    "label": "文字 “n50”",
+    "bbox": [
+     0.14825,
+     0.4894833333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14825,
+     0.50115
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_51",
+    "role": "text",
+    "label": "文字 “n51”",
+    "bbox": [
+     0.221875,
+     0.4894833333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.221875,
+     0.50115
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_52",
+    "role": "text",
+    "label": "文字 “n52”",
+    "bbox": [
+     0.2955,
+     0.4894833333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.2955,
+     0.50115
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_53",
+    "role": "text",
+    "label": "文字 “n53”",
+    "bbox": [
+     0.3691249999999999,
+     0.4894833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.3691249999999999,
+     0.50115
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_54",
+    "role": "text",
+    "label": "文字 “n54”",
+    "bbox": [
+     0.44275,
+     0.4894833333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.44275,
+     0.50115
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_55",
+    "role": "text",
+    "label": "文字 “n55”",
+    "bbox": [
+     0.516375,
+     0.4894833333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.516375,
+     0.50115
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_56",
+    "role": "text",
+    "label": "文字 “n56”",
+    "bbox": [
+     0.5899999999999999,
+     0.4894833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.5899999999999999,
+     0.50115
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_57",
+    "role": "text",
+    "label": "文字 “n57”",
+    "bbox": [
+     0.6636249999999999,
+     0.4894833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6636249999999999,
+     0.50115
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_58",
+    "role": "text",
+    "label": "文字 “n58”",
+    "bbox": [
+     0.73725,
+     0.4894833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.73725,
+     0.50115
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_59",
+    "role": "text",
+    "label": "文字 “n59”",
+    "bbox": [
+     0.810875,
+     0.4894833333333334,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.810875,
+     0.50115
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_60",
+    "role": "text",
+    "label": "文字 “n60”",
+    "bbox": [
+     0.14825,
+     0.41633333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14825,
+     0.42800000000000005
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_61",
+    "role": "text",
+    "label": "文字 “n61”",
+    "bbox": [
+     0.221875,
+     0.41633333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.221875,
+     0.42800000000000005
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_62",
+    "role": "text",
+    "label": "文字 “n62”",
+    "bbox": [
+     0.2955,
+     0.41633333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.2955,
+     0.42800000000000005
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_63",
+    "role": "text",
+    "label": "文字 “n63”",
+    "bbox": [
+     0.3691249999999999,
+     0.41633333333333333,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.3691249999999999,
+     0.42800000000000005
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_64",
+    "role": "text",
+    "label": "文字 “n64”",
+    "bbox": [
+     0.44275,
+     0.41633333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.44275,
+     0.42800000000000005
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_65",
+    "role": "text",
+    "label": "文字 “n65”",
+    "bbox": [
+     0.516375,
+     0.41633333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.516375,
+     0.42800000000000005
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_66",
+    "role": "text",
+    "label": "文字 “n66”",
+    "bbox": [
+     0.5899999999999999,
+     0.41633333333333333,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.5899999999999999,
+     0.42800000000000005
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_67",
+    "role": "text",
+    "label": "文字 “n67”",
+    "bbox": [
+     0.6636249999999999,
+     0.41633333333333333,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6636249999999999,
+     0.42800000000000005
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_68",
+    "role": "text",
+    "label": "文字 “n68”",
+    "bbox": [
+     0.73725,
+     0.41633333333333333,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.73725,
+     0.42800000000000005
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_69",
+    "role": "text",
+    "label": "文字 “n69”",
+    "bbox": [
+     0.810875,
+     0.41633333333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.810875,
+     0.42800000000000005
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_70",
+    "role": "text",
+    "label": "文字 “n70”",
+    "bbox": [
+     0.14825,
+     0.3431833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14825,
+     0.35485
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_71",
+    "role": "text",
+    "label": "文字 “n71”",
+    "bbox": [
+     0.221875,
+     0.3431833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.221875,
+     0.35485
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_72",
+    "role": "text",
+    "label": "文字 “n72”",
+    "bbox": [
+     0.2955,
+     0.3431833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.2955,
+     0.35485
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_73",
+    "role": "text",
+    "label": "文字 “n73”",
+    "bbox": [
+     0.3691249999999999,
+     0.3431833333333334,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.3691249999999999,
+     0.35485
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_74",
+    "role": "text",
+    "label": "文字 “n74”",
+    "bbox": [
+     0.44275,
+     0.3431833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.44275,
+     0.35485
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_75",
+    "role": "text",
+    "label": "文字 “n75”",
+    "bbox": [
+     0.516375,
+     0.3431833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.516375,
+     0.35485
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_76",
+    "role": "text",
+    "label": "文字 “n76”",
+    "bbox": [
+     0.5899999999999999,
+     0.3431833333333334,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.5899999999999999,
+     0.35485
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_77",
+    "role": "text",
+    "label": "文字 “n77”",
+    "bbox": [
+     0.6636249999999999,
+     0.3431833333333334,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6636249999999999,
+     0.35485
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_78",
+    "role": "text",
+    "label": "文字 “n78”",
+    "bbox": [
+     0.73725,
+     0.3431833333333334,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.73725,
+     0.35485
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_79",
+    "role": "text",
+    "label": "文字 “n79”",
+    "bbox": [
+     0.810875,
+     0.3431833333333334,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.810875,
+     0.35485
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_80",
+    "role": "text",
+    "label": "文字 “n80”",
+    "bbox": [
+     0.14825,
+     0.27003333333333335,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14825,
+     0.28169999999999995
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_81",
+    "role": "text",
+    "label": "文字 “n81”",
+    "bbox": [
+     0.221875,
+     0.27003333333333335,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.221875,
+     0.28169999999999995
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_82",
+    "role": "text",
+    "label": "文字 “n82”",
+    "bbox": [
+     0.2955,
+     0.27003333333333335,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.2955,
+     0.28169999999999995
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_83",
+    "role": "text",
+    "label": "文字 “n83”",
+    "bbox": [
+     0.3691249999999999,
+     0.27003333333333335,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.3691249999999999,
+     0.28169999999999995
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_84",
+    "role": "text",
+    "label": "文字 “n84”",
+    "bbox": [
+     0.44275,
+     0.27003333333333335,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.44275,
+     0.28169999999999995
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_85",
+    "role": "text",
+    "label": "文字 “n85”",
+    "bbox": [
+     0.516375,
+     0.27003333333333335,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.516375,
+     0.28169999999999995
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_86",
+    "role": "text",
+    "label": "文字 “n86”",
+    "bbox": [
+     0.5899999999999999,
+     0.27003333333333335,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.5899999999999999,
+     0.28169999999999995
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_87",
+    "role": "text",
+    "label": "文字 “n87”",
+    "bbox": [
+     0.6636249999999999,
+     0.27003333333333335,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6636249999999999,
+     0.28169999999999995
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_88",
+    "role": "text",
+    "label": "文字 “n88”",
+    "bbox": [
+     0.73725,
+     0.27003333333333335,
+     0.026875,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.73725,
+     0.28169999999999995
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_89",
+    "role": "text",
+    "label": "文字 “n89”",
+    "bbox": [
+     0.810875,
+     0.27003333333333335,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.810875,
+     0.28169999999999995
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_90",
+    "role": "text",
+    "label": "文字 “n90”",
+    "bbox": [
+     0.14825,
+     0.1968833333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.14825,
+     0.20855
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_91",
+    "role": "text",
+    "label": "文字 “n91”",
+    "bbox": [
+     0.221875,
+     0.1968833333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.221875,
+     0.20855
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_92",
+    "role": "text",
+    "label": "文字 “n92”",
+    "bbox": [
+     0.2955,
+     0.1968833333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.2955,
+     0.20855
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_93",
+    "role": "text",
+    "label": "文字 “n93”",
+    "bbox": [
+     0.3691249999999999,
+     0.1968833333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.3691249999999999,
+     0.20855
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_94",
+    "role": "text",
+    "label": "文字 “n94”",
+    "bbox": [
+     0.44275,
+     0.1968833333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.44275,
+     0.20855
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_95",
+    "role": "text",
+    "label": "文字 “n95”",
+    "bbox": [
+     0.516375,
+     0.1968833333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.516375,
+     0.20855
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_96",
+    "role": "text",
+    "label": "文字 “n96”",
+    "bbox": [
+     0.5899999999999999,
+     0.1968833333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.5899999999999999,
+     0.20855
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_97",
+    "role": "text",
+    "label": "文字 “n97”",
+    "bbox": [
+     0.6636249999999999,
+     0.1968833333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.6636249999999999,
+     0.20855
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_98",
+    "role": "text",
+    "label": "文字 “n98”",
+    "bbox": [
+     0.73725,
+     0.1968833333333333,
+     0.02666666666666667,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.73725,
+     0.20855
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.texts_99",
+    "role": "text",
+    "label": "文字 “n99”",
+    "bbox": [
+     0.810875,
+     0.1968833333333333,
+     0.026458333333333334,
+     0.015
+    ],
+    "draggable": true,
+    "anchor": [
+     0.810875,
+     0.20855
+    ],
+    "drag_prop": "pos_frac",
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticks",
+    "role": "ticks",
+    "label": "X 刻度文字",
+    "bbox": [
+     0.11770833333333333,
+     0.9062037037037037,
+     0.7969791666666667,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_0",
+    "role": "ticklabel",
+    "label": "刻度 “0”",
+    "bbox": [
+     0.11770833333333333,
+     0.9062037037037037,
+     0.014583333333333334,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_1",
+    "role": "ticklabel",
+    "label": "刻度 “2”",
+    "bbox": [
+     0.27270833333333333,
+     0.9062037037037037,
+     0.014583333333333334,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_2",
+    "role": "ticklabel",
+    "label": "刻度 “4”",
+    "bbox": [
+     0.42770833333333336,
+     0.9062037037037037,
+     0.014583333333333334,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_3",
+    "role": "ticklabel",
+    "label": "刻度 “6”",
+    "bbox": [
+     0.5826041666666667,
+     0.9062037037037037,
+     0.014791666666666667,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_4",
+    "role": "ticklabel",
+    "label": "刻度 “8”",
+    "bbox": [
+     0.7376041666666666,
+     0.9062037037037037,
+     0.014791666666666667,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.xticklabels_5",
+    "role": "ticklabel",
+    "label": "刻度 “10”",
+    "bbox": [
+     0.8853125,
+     0.9062037037037037,
+     0.029375,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticks",
+    "role": "ticks",
+    "label": "Y 刻度文字",
+    "bbox": [
+     0.07942129629629628,
+     0.11083333333333334,
+     0.029375,
+     0.7933333333333333
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_0",
+    "role": "ticklabel",
+    "label": "刻度 “0”",
+    "bbox": [
+     0.09421296296296296,
+     0.8808333333333334,
+     0.014583333333333334,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_1",
+    "role": "ticklabel",
+    "label": "刻度 “2”",
+    "bbox": [
+     0.09421296296296296,
+     0.7268333333333334,
+     0.014583333333333334,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_2",
+    "role": "ticklabel",
+    "label": "刻度 “4”",
+    "bbox": [
+     0.09421296296296296,
+     0.5728333333333333,
+     0.014583333333333334,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_3",
+    "role": "ticklabel",
+    "label": "刻度 “6”",
+    "bbox": [
+     0.09400462962962962,
+     0.4188333333333333,
+     0.014791666666666667,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_4",
+    "role": "ticklabel",
+    "label": "刻度 “8”",
+    "bbox": [
+     0.09400462962962962,
+     0.26483333333333325,
+     0.014791666666666667,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   },
+   {
+    "gid": "axes_0.yticklabels_5",
+    "role": "ticklabel",
+    "label": "刻度 “10”",
+    "bbox": [
+     0.07942129629629628,
+     0.11083333333333334,
+     0.029375,
+     0.023333333333333334
+    ],
+    "draggable": false,
+    "editable": []
+   }
+  ]
+ }
+}

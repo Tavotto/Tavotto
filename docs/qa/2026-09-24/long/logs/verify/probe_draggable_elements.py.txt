@@ -1,0 +1,21 @@
+import sys, random, collections
+sys.path.insert(0, sys.argv[1]); sys.path.insert(1, 'tests')
+import tavotto; print("tavotto from", tavotto.__file__)
+import tempfile, pathlib
+from support.invariant_figures import ENTRY, LIBRARY, SCRIPT_NAME
+from tavotto.engine import pool
+from test_override_sequences import _apply
+import test_override_history_sequences as H
+d = pathlib.Path(tempfile.mkdtemp()); (d/SCRIPT_NAME).write_text(LIBRARY)
+w = pool.one_shot(SCRIPT_NAME, str(d), ENTRY); w.ensure_built()
+for stem in H.STEMS:
+    base = _apply(w, stem)
+    dr = [(e['gid'], e.get('drag_prop'), e.get('role')) for e in base['elements'] if e.get('draggable') and e.get('drag_prop') in H._FRAC and e.get('anchor')]
+    print(stem, 'draggable frac elements:', dr)
+    for gid, prop, role in dr:
+        a = next(e for e in base['elements'] if e['gid']==gid)['anchor']
+        val = [round(a[0]+0.05,4), round(a[1]+0.03,4)]
+        m = _apply(w, stem, [{'gid':gid,'prop':prop,'value':val}])
+        a2 = next(e for e in m['elements'] if e['gid']==gid)['anchor']
+        print('  ', gid, prop, 'declared', val, 'manifest anchor', a2)
+pool.discard(w)

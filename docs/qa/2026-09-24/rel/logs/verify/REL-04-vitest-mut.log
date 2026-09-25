@@ -1,0 +1,216 @@
+# cmd: git diff web/src/hooks/useKeyboard.ts; cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/hooks/useKeyboardTextFocus.test.tsx
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:09:13Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+diff --git a/web/src/hooks/useKeyboard.ts b/web/src/hooks/useKeyboard.ts
+index 53df30ae..06c88930 100644
+--- a/web/src/hooks/useKeyboard.ts
++++ b/web/src/hooks/useKeyboard.ts
+@@ -67,7 +67,7 @@ function inEditableTarget(e: KeyboardEvent) {
+   if (!(el instanceof HTMLElement)) return false
+   return (
+     el.isContentEditable ||
+-    /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ||
++    /^(NOPE)$/.test(el.tagName) ||
+     el.closest('[role="dialog"]') != null
+   )
+ }
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel/web
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx (27 tests | 21 failed) 64ms
+     × Backspace 删的是字符，不是画布上选中的面板 20ms
+     × Delete 删的是字符，不是画布上选中的面板 2ms
+     × ⌘Z / Ctrl+Z / ⌘⇧Z 不动文档历史（让给原生文本撤销） 4ms
+     × 方向键移的是光标，不是面板 2ms
+     × 工具字母是在打字，不切工具 2ms
+     × 空格是空格，不进平移态 1ms
+     × ⌘A 全选文字，不全选画布；⌘D 不复制面板 2ms
+     × Backspace 删的是字符，不是画布上选中的面板 1ms
+     × Delete 删的是字符，不是画布上选中的面板 1ms
+     × ⌘Z / Ctrl+Z / ⌘⇧Z 不动文档历史（让给原生文本撤销） 2ms
+     × 方向键移的是光标，不是面板 1ms
+     × 工具字母是在打字，不切工具 1ms
+     × 空格是空格，不进平移态 1ms
+     × ⌘A 全选文字，不全选画布；⌘D 不复制面板 1ms
+     × Backspace 删的是字符，不是画布上选中的面板 1ms
+     × Delete 删的是字符，不是画布上选中的面板 1ms
+     × ⌘Z / Ctrl+Z / ⌘⇧Z 不动文档历史（让给原生文本撤销） 1ms
+     × 方向键移的是光标，不是面板 1ms
+     × 工具字母是在打字，不切工具 1ms
+     × 空格是空格，不进平移态 1ms
+     × ⌘A 全选文字，不全选画布；⌘D 不复制面板 1ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 21 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > Backspace 删的是字符，不是画布上选中的面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > Delete 删的是字符，不是画布上选中的面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > Backspace 删的是字符，不是画布上选中的面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > Delete 删的是字符，不是画布上选中的面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > Backspace 删的是字符，不是画布上选中的面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > Delete 删的是字符，不是画布上选中的面板
+AssertionError: expected undefined to be defined
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:126:21
+    124|   it.each(['Backspace', 'Delete'])('%s 删的是字符，不是画布上选中的面板', (key) => {
+    125|     const ev = press(field(sel), { key })
+    126|     expect(panel()).toBeDefined()
+       |                     ^
+    127|     expect(doc().past).toHaveLength(0)
+    128|     expect(ev.defaultPrevented).toBe(false)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > ⌘Z / Ctrl+Z / ⌘⇧Z 不动文档历史（让给原生文本撤销）
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > ⌘Z / Ctrl+Z / ⌘⇧Z 不动文档历史（让给原生文本撤销）
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > ⌘Z / Ctrl+Z / ⌘⇧Z 不动文档历史（让给原生文本撤销）
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:145:55
+    143|     expect(panel()!.x).toBe(99)
+    144|     expect(doc().past).toHaveLength(1)
+    145|     expect([a, b, c].some((e) => e.defaultPrevented)).toBe(false)
+       |                                                       ^
+    146|   })
+    147|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > 方向键移的是光标，不是面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > 方向键移的是光标，不是面板
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > 方向键移的是光标，不是面板
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:151:51
+    149|     const el = field(sel)
+    150|     for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDow…
+    151|       expect(press(el, { key }).defaultPrevented).toBe(false)
+       |                                                   ^
+    152|       press(el, { key, shiftKey: true })
+    153|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > 工具字母是在打字，不切工具
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > 工具字母是在打字，不切工具
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > 工具字母是在打字，不切工具
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:160:51
+    158|     const el = field(sel)
+    159|     for (const key of ['t', 'a', 'r', 'o', 'l', 'R']) {
+    160|       expect(press(el, { key }).defaultPrevented).toBe(false)
+       |                                                   ^
+    161|     }
+    162|     expect(useUiStore.getState().tool).toBe('select')
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > 空格是空格，不进平移态
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > 空格是空格，不进平移态
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > 空格是空格，不进平移态
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:167:51
+    165|   it('空格是空格，不进平移态', () => {
+    166|     const ev = press(field(sel), { key: ' ', code: 'Space' })
+    167|     expect(useViewportStore.getState().spaceDown).toBe(false)
+       |                                                   ^
+    168|     expect(ev.defaultPrevented).toBe(false)
+    169|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <input> 里 > ⌘A 全选文字，不全选画布；⌘D 不复制面板
+AssertionError: expected [ 'p_1zd3z7ak' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "p_1zd3z7ak",
++ ]
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:176:46
+    174|     const a = press(el, { key: 'a', metaKey: true })
+    175|     const d = press(el, { key: 'd', metaKey: true })
+    176|     expect(useSelectionStore.getState().ids).toEqual([])
+       |                                              ^
+    177|     expect(doc().doc.objects).toHaveLength(1)
+    178|     expect(a.defaultPrevented || d.defaultPrevented).toBe(false)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <textarea> 里 > ⌘A 全选文字，不全选画布；⌘D 不复制面板
+AssertionError: expected [ 'p_gpaz0uoy' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "p_gpaz0uoy",
++ ]
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:176:46
+    174|     const a = press(el, { key: 'a', metaKey: true })
+    175|     const d = press(el, { key: 'd', metaKey: true })
+    176|     expect(useSelectionStore.getState().ids).toEqual([])
+       |                                              ^
+    177|     expect(doc().doc.objects).toHaveLength(1)
+    178|     expect(a.defaultPrevented || d.defaultPrevented).toBe(false)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/21]⎯
+
+ FAIL  src/hooks/useKeyboardTextFocus.test.tsx > 焦点在 <select> 里 > ⌘A 全选文字，不全选画布；⌘D 不复制面板
+AssertionError: expected [ 'p_cat6fmti' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "p_cat6fmti",
++ ]
+
+ ❯ src/hooks/useKeyboardTextFocus.test.tsx:176:46
+    174|     const a = press(el, { key: 'a', metaKey: true })
+    175|     const d = press(el, { key: 'd', metaKey: true })
+    176|     expect(useSelectionStore.getState().ids).toEqual([])
+       |                                              ^
+    177|     expect(doc().doc.objects).toHaveLength(1)
+    178|     expect(a.defaultPrevented || d.defaultPrevented).toBe(false)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/21]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  21 failed | 6 passed (27)
+   Start at  03:09:13
+   Duration  1.09s (transform 373ms, setup 132ms, import 367ms, tests 64ms, environment 426ms)
+
+# exit: 1

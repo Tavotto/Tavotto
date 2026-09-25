@@ -1,0 +1,15 @@
+# verify: GEO-03-pytest
+# time: 2026-09-25T03:23:04 (+2s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_geometry_reference.py -k "own_title or legend"
+..                                                                       [100%]
+==================================== PASSES ====================================
+________ test_single_drag_lands_on_the_independent_ruler[axes_0.legend] ________
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.legend worst |anchor - target| = 1.110e-16, worst bbox shift error = 1.527e-16 (budget x=6.944e-04, y=1.085e-03)
+=========================== short test summary info ============================
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.legend]
+PASSED tests/test_geometry_reference.py::test_axes_and_its_own_title_moved_together_move_the_title_once
+[exit=0]
+

@@ -116,3 +116,17 @@
   `\\wsl.localhost\…` 上的路径 `_redact_text` 只认主目录、一个字都不动）；
   `empty` 标出「进程一个字没留下就没了」（硬崩溃的形状）。整段再过同一道
   `_redact_obj`。看护：`tests/test_diagnostics_worker_evidence.py`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 先脱敏再交出、项目清单只留条数
+- 项目根在所有文本里先于主目录换成 `<project:哈希>`、项目名不出门、云盘账号与邮箱兜底抹掉（`project_roots` / `_project_section`）
+- report.json 换形必升 bundle schema（现 3）
+- 服务端第二道校验刻意与前端判据不同
+- 坏载荷退化成不带前端文件的包、不 400
+- 不写盘不上传不进 telemetry
+- traceback 配收尾异常行、worker.log 只带证据行（#435）

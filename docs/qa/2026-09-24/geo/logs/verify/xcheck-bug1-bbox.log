@@ -1,0 +1,17 @@
+# verify: xcheck-bug1-bbox
+# time: 2026-09-25T03:30:14 (+1s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ TAVOTTO_DATA_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vgeo/s/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/logs/verify/xcheck_bug1_bbox.py /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vgeo/s $PWD/src
+axes_0.texts_0 b0 [0.2659, 0.2606, 0.1318, 0.0437] b1 [0.2159, 0.3006, 0.1317, 0.0437] a0 [0.2659090909090909, 0.2949999999999998] a1 [0.2159, 0.33499999999999985]
+axes_0.texts_0 文字 “plain text” bbox shift [-0.05, 0.04] requested (-0.05, 0.04) warnings []
+axes_0.texts_1 b0 [0.5195, 0.1629, 0.2934, 0.2815] b1 [0.5185, 0.1648, 0.2444, 0.3196] a0 [0.6886363636363636, 0.43499999999999994] a1 [0.6386, 0.47499999999999987]
+axes_0.texts_1 文字 “ann data” bbox shift [-0.001, 0.0019] requested (-0.05, 0.04) warnings []
+axes_0.texts_2 b0 [0.28, 0.5117, 0.225, 0.1566] b1 [0.3194, 0.5069, 0.1849, 0.0844] a0 [0.28, 0.659] a1 [0.3194444444444445, 0.5819444444444443]
+axes_0.texts_2 文字 “ann axfrac” bbox shift [0.0394, -0.0048] requested (-0.05, 0.04) warnings []
+axes_0.texts_3 b0 [0.3919, 0.6372, 0.1403, 0.0437] b1 [0.4749, 0.5651, 0.1403, 0.0437] a0 [0.3919191919191919, 0.6715972222222222] a1 [0.47486111111111107, 0.5994444444444444]
+axes_0.texts_3 文字 “ann offset” bbox shift [0.0829, -0.0722] requested (-0.05, 0.04) warnings []
+axes_0.texts_4 b0 [0.7, 0.0656, 0.1505, 0.0437] b1 [0.9028, -0.2288, 0.1505, 0.0437] a0 [0.7, 0.09999999999999998] a1 [0.9027777777777778, -0.19444444444444442]
+axes_0.texts_4 文字 “ann figfrac” bbox shift [0.2028, -0.2944] requested (-0.05, 0.04) warnings []
+[exit=0]
+

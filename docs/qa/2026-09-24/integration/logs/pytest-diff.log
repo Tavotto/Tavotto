@@ -1,0 +1,11 @@
+# 合并态全量 pytest 对照（QA 分支 vs 基线 62af729c，同机同条件：已 fetch_fonts、不设 TAVOTTO_WORKER_PYTHON）
+# QA HEAD: b262cc0ec8212d40809777fb995c65e2881d2fac
+## QA 分支失败清单
+FAILED tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan
+FAILED tests/native/test_run_cli_integration.py::test_run_messages_only_stderr
+rc=1
+## 基线失败清单
+FAILED tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan
+FAILED tests/native/test_run_cli_integration.py::test_run_messages_only_stderr
+rc=1
+## 仅 QA 分支红：0 条

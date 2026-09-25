@@ -81,7 +81,9 @@ Python，首次渲染也不联网：
   禁止写，两条合起来让随包发的预编译字节码一份都用不上，每次冷启动重编
   整个科学栈（只在 macOS 上发作：Windows 的 `._pth` 忽略环境变量）。Windows 上安装目录可能在 Program Files（没写权限）；
   **macOS 上后果更硬——`.app` 是签过名的，往里写一个 `__pycache__` 当场破坏
-  代码签名，用户下次启动看到「应用已损坏」**。
+  代码签名，用户下次启动看到「应用已损坏」**。非内置解释器（项目 .venv / 系统 /
+  `TAVOTTO_WORKER_PYTHON`）不加 `-B`，由引擎装载窗口里的 `sys.dont_write_bytecode` 挡
+  （`docs/rules/backend/execution-entries.md`，看护 `tests/test_install_dir_bytecode_free.py`）。
 - **`child_env()` 还要摘掉 `PYTHONHOME`/`PYTHONPATH`/`PYTHONSTARTUP`/
   `PYTHONUSERBASE`**：Windows 上 `._pth` 的隔离模式顺手挡住了它们，
   **macOS 上没有任何东西挡**。用户从终端启动 Tavotto 时，shell 里为 Conda 或

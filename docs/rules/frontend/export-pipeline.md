@@ -65,3 +65,21 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   `provenance`（源产物公开身份、回执公开事实 `ArtifactReceiptFacts`、节点表）、`ExportJob.trace`（有界阶段轨迹，
   `failed_phase` 是坏在哪一步）。界面**不画、不解读**它们（解读产物核验的仍只有 `inspectionState()`）；要显示时
   先定一份解读的唯一出处，别在组件里各自读字段。它们都是可选键：老服务端没有 = `undefined`，不是错误。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 载荷只由 `buildExportRequest()` 构造
+- `scope=original` 没有 x/y/w/h（类型上就没有）
+- PPI 无位图时 `null`
+- 作业活在 store、SSE 外加轮询
+- 「导出期间被编辑过」用此刻文档重算指纹
+- 文件名规则严格同源对、不用 `String.trim()`
+- 「哪一张」只在 `exportFigures.ts` 判
+- 产物核验的解读只有 `inspectionState()` 一处（全部可判项 verified 才画绿、没有 manifest = 未核验）
+- 严格核验只在勾了时带 `inspection` 段
+- `/api/render` 失败按 `imgRetry` 有界重试
+- `manifest.identity / provenance` 与作业 `trace`（U09）只是类型上接住，界面不画、不解读

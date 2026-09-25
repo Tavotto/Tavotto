@@ -1,0 +1,31 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh verify/PATH-08 tests/test_first_open_paths_d1.py::test_path08_deleted_or_unreadable_data_fails_explicitly_and_never_falls_back_to_the_decoy tests/test_foundation_join.py::test_fo30_data_changed_after_execution_is_an_explicit_snapshot_until_the_user_rebuilds tests/test_preparation_api.py::test_data_changed_after_the_plan_makes_it_stale_before_any_script_runs tests/test_preparation_api.py::test_data_changed_between_spawn_and_read_is_caught_by_the_observed_inputs -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path08_deleted_or_unreadable_data_fails_explicitly_and_never_falls_back_to_the_decoy tests/test_foundation_join.py::test_fo30_data_changed_after_execution_is_an_explicit_snapshot_until_the_user_rebuilds tests/test_preparation_api.py::test_data_changed_after_the_plan_makes_it_stale_before_any_script_runs tests/test_preparation_api.py::test_data_changed_between_spawn_and_read_is_caught_by_the_observed_inputs -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vpath-scratch/pytest-verify/PATH-08
+# time: 2026-09-24T19:33:59Z
+# sha: 93dd9f4b86bea7fd5ccde339f57735b85a6cdf36  (worktree dirty files: 0)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-path
+configfile: pytest.ini
+collecting ... collected 4 items
+
+tests/test_first_open_paths_d1.py::test_path08_deleted_or_unreadable_data_fails_explicitly_and_never_falls_back_to_the_decoy PASSED [ 25%]
+tests/test_foundation_join.py::test_fo30_data_changed_after_execution_is_an_explicit_snapshot_until_the_user_rebuilds PASSED [ 50%]
+tests/test_preparation_api.py::test_data_changed_after_the_plan_makes_it_stale_before_any_script_runs PASSED [ 75%]
+tests/test_preparation_api.py::test_data_changed_between_spawn_and_read_is_caught_by_the_observed_inputs PASSED [100%]
+
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 4 passed, 5 warnings in 32.11s ========================
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0

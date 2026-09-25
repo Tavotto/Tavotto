@@ -1,0 +1,24 @@
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/svgPreviewStore.test.ts src/canvas/fakeRealtimeDrag.test.tsx
+### time=2026-09-24T19:01:21Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/web
+
+
+ Test Files  2 passed (2)
+      Tests  48 passed (48)
+   Start at  03:01:22
+   Duration  1.86s (transform 805ms, setup 375ms, import 697ms, tests 794ms, environment 1.03s)
+
+
+### $ docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts 拖图内元素|STATE-01
+### time=2026-09-24T19:01:24Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0
+
+Running 2 tests using 1 worker
+
+[e2e 假实时] 首帧 54.90000009536743ms · 40/40 帧（rAF 合并）· commit→权威 43.300000071525574ms
+  ✓  1 [chromium] › e2e/fake-realtime.spec.ts:21:1 › 拖图内元素：预览跟手、拖动期间零后端、松手一次定稿 (18.0s)
+[QA STATE-01] 拖动帧 51 · 松手后帧 98 · 松手后最大偏离 0.002 CSS px
+  ✓  2 [chromium] › e2e/fake-realtime.spec.ts:188:1 › STATE-01 逐帧：预览从 base 现算、拖动中零渲染零保存、松手到权威全程不弹回 (19.8s)
+
+  2 passed (38.3s)
+

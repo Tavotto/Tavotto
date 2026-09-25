@@ -1,0 +1,18 @@
+# verify rerun ENV-05/pytest_dependency_plan
+# cmd: PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_dependency_plan.py -p no:cacheprovider -rs -v
+# head: 1f9f29099abe7d0448c44039e150ac9020cc6077
+# start(UTC): 2026-09-24T19:14:08Z
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env
+configfile: pytest.ini
+collected 101 items
+
+tests/test_dependency_plan.py .......................................... [ 41%]
+.....s.....................................................              [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_dependency_plan.py:379: 3.10 才没有 tomllib
+======================== 100 passed, 1 skipped in 0.44s ========================
+# end(UTC): 2026-09-24T19:14:08Z
+# exit_code: 0

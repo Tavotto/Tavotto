@@ -1,0 +1,230 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/long_probe.py --mode long01 --minutes 35 --fixtures /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/long/fx --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/long/run-long01-ext --keep-going
+# start: 2026-09-24T19:16:59Z
+# sha: 12e4ea6022b60505ae8ab3e14c4c3bdc4fbf2a9f
+# cwd: worktree root
+{
+ "mode": "long01",
+ "seed": 0,
+ "minutes_budget": 35.0,
+ "wall_s": 2103.0,
+ "iterations": 3444,
+ "counts": {
+  "render_ok": 55104,
+  "render_checked": 55104,
+  "revisits_equal": 55096,
+  "exports_ok": 1722,
+  "undo": 19039,
+  "redo": 8513,
+  "kills": 0,
+  "faults": 0,
+  "recovered": 0,
+  "visible_errors": 0,
+  "project_cycles": 0
+ },
+ "first_failure": null,
+ "probe_error": null,
+ "stop": {
+  "clean_exit": true,
+  "leftover": []
+ },
+ "user_files_unchanged": true,
+ "samples": 1151,
+ "trend": {
+  "rss_kib": {
+   "first_after_warm": 202608,
+   "last": 197024,
+   "min": 143568,
+   "max": 204240
+  },
+  "rss_server_kib": {
+   "first_after_warm": 69584,
+   "last": 78928,
+   "min": 47152,
+   "max": 79984
+  },
+  "threads": {
+   "first_after_warm": 6,
+   "last": 6,
+   "min": 6,
+   "max": 6
+  },
+  "fds": {
+   "first_after_warm": 163,
+   "last": 163,
+   "min": 163,
+   "max": 163
+  },
+  "processes": {
+   "first_after_warm": 3,
+   "last": 3,
+   "min": 3,
+   "max": 3
+  },
+  "tmp_files": {
+   "first_after_warm": 0,
+   "last": 0,
+   "min": 0,
+   "max": 0
+  },
+  "cache_bytes": {
+   "first_after_warm": 84055,
+   "last": 3102469,
+   "min": 84055,
+   "max": 4075509
+  },
+  "export_bytes": {
+   "first_after_warm": 33560,
+   "last": 57162308,
+   "min": 33560,
+   "max": 57162308
+  }
+ },
+ "states_seen": 8
+}
+# end: 2026-09-24T19:52:02Z
+# exit: 0
+
+# ===== 附录：LONG-01-ext-trend.json =====
+{
+ "run": "run-long01-ext",
+ "samples_total": 1151,
+ "samples_used": 1146,
+ "metrics": {
+  "rss_kib": {
+   "first": 191296.0,
+   "last": 197024.0,
+   "min": 143568.0,
+   "max": 202288.0,
+   "slope_per_hour": 53226.63,
+   "growth_over_span": 30733.9,
+   "median_first_third": 169496.0,
+   "median_last_third": 196424.0
+  },
+  "rss_server_kib": {
+   "first": 66192.0,
+   "last": 78928.0,
+   "min": 47152.0,
+   "max": 79984.0,
+   "slope_per_hour": 48551.44,
+   "growth_over_span": 28034.4,
+   "median_first_third": 52656.0,
+   "median_last_third": 78288.0
+  },
+  "fds": {
+   "first": 163.0,
+   "last": 163.0,
+   "min": 163.0,
+   "max": 163.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 163.0,
+   "median_last_third": 163.0
+  },
+  "fds_server": {
+   "first": 58.0,
+   "last": 58.0,
+   "min": 58.0,
+   "max": 58.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 58.0,
+   "median_last_third": 58.0
+  },
+  "threads": {
+   "first": 6.0,
+   "last": 6.0,
+   "min": 6.0,
+   "max": 6.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 6.0,
+   "median_last_third": 6.0
+  },
+  "threads_server": {
+   "first": 3.0,
+   "last": 3.0,
+   "min": 3.0,
+   "max": 3.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 3.0,
+   "median_last_third": 3.0
+  },
+  "processes": {
+   "first": 3.0,
+   "last": 3.0,
+   "min": 3.0,
+   "max": 3.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 3.0,
+   "median_last_third": 3.0
+  },
+  "workers": {
+   "first": 1.0,
+   "last": 1.0,
+   "min": 1.0,
+   "max": 1.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 1.0,
+   "median_last_third": 1.0
+  },
+  "tmp_files": {
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 0.0,
+   "median_last_third": 0.0
+  },
+  "cache_bytes": {
+   "first": 151109.0,
+   "last": 3102469.0,
+   "min": 151109.0,
+   "max": 4075509.0,
+   "slope_per_hour": 2648614.18,
+   "growth_over_span": 1529354.0,
+   "median_first_third": 3202686.5,
+   "median_last_third": 3573938.5
+  },
+  "export_bytes": {
+   "first": 198973.0,
+   "last": 57162308.0,
+   "min": 198973.0,
+   "max": 57162308.0,
+   "slope_per_hour": 98998408.55,
+   "growth_over_span": 57163331.1,
+   "median_first_third": 9695044.5,
+   "median_last_third": 47739169.5
+  }
+ },
+ "span_hours": 0.577,
+ "verdicts": {
+  "rss_kib": "stable",
+  "rss_server_kib": "drift",
+  "fds": "stable",
+  "fds_server": "stable",
+  "threads": "stable",
+  "threads_server": "stable",
+  "processes": "stable",
+  "workers": "stable",
+  "tmp_files": "stable"
+ },
+ "verdict": "drift"
+}
+
+# ===== 附录：LONG-01-ext-exports.json =====
+{
+ "checked": {
+  "pdf": 1722,
+  "png": 1722
+ },
+ "missing_files": 0,
+ "states_exported": 4,
+ "png_nondeterministic_states": {},
+ "problems": [],
+ "problem_count": 0
+}

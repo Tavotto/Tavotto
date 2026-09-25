@@ -287,7 +287,9 @@ def test_v1_error_envelope_becomes_a_workererror(tmp_path):
 
 def test_missing_dependency_still_wins_over_the_protocol_code(tmp_path):
     """缺包对用户是完全不同的一件事（有可执行出口），优先于协议 code。"""
-    tb = "Traceback…\nModuleNotFoundError: No module named 'rdkit.Chem'\n"
+    # `import rdkit.Chem` 而 rdkit 没装时，CPython 报的是顶层名（点分名说明顶层已 import 到，
+    # 那是包内部坏了，不是缺依赖——QA ENV-05-B1，见 test_bundled_runtime）
+    tb = "Traceback…\nModuleNotFoundError: No module named 'rdkit'\n"
     w = _worker(
         lambda env: {
             "ok": False,
@@ -326,17 +328,20 @@ def test_hash_mismatch_is_logged_but_the_result_is_used(tmp_path, caplog):
     assert any("哈希不一致" in r.getMessage() for r in caplog.records)
 
 
-def test_dead_worker_and_empty_response_keep_their_old_errors(tmp_path):
-    """老的两条兜底不变：进程已退出 / 管道 EOF。"""
+def test_dead_worker_and_empty_response_are_the_same_session_dead(tmp_path):
+    """两条兜底是同一个故障：管道 EOF，与拿锁时进程已经退出。以前后者是 code 为空的
+    「worker 进程已退出」（QA LONG-03-B1）；现在两条都是带退出状态的 `session_dead`。"""
     w = _worker(lambda env: "", tmp_path)  # 空行 = EOF = 它没了
     w.proc.pending.clear()
-    with pytest.raises(pool.WorkerError, match="渲染进程退出了"):
+    with pytest.raises(pool.WorkerError, match="渲染进程退出了") as e:
         w.request({"cmd": "ping"})
+    assert e.value.code == "session_dead"
 
     w2 = _worker(lambda env: _echo(env), tmp_path)
     w2.proc.returncode = 0
-    with pytest.raises(pool.WorkerError, match="已退出"):
+    with pytest.raises(pool.WorkerError, match="渲染进程退出了") as e:
         w2.request({"cmd": "ping"})
+    assert e.value.code == "session_dead"
 
 
 # ------------------------------ 计时管道 ------------------------------
