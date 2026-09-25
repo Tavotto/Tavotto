@@ -292,6 +292,6 @@ manifest 发 `loc_anchor` 的条件是锚框能被这个模型表达出来。两
 >   图例框随字号等比变（默认 10 pt 改 7 pt：97×42 px → 82×33 px），框的右 / 上边会挪。文字大小
 >   不变；间距要原来的样子可在属性页单独调回。写进发行说明，不做版本门（与 #414 同一处理）。
 >
-> 看护：`tests/test_legend_fontsize_native.py`、`web/src/lib/legendScale.test.ts`、
-> `web/src/canvas/inFigureDrag.test.tsx`。
+> 看护：`tests/test_legend_fontsize_native.py`、`web/src/canvas/inFigureDrag.test.tsx`
+> 「拖图例的角 = 整体缩放」。
 
