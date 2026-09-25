@@ -689,6 +689,76 @@ describe('阻断闸没有第二条路绕过去', () => {
   })
 })
 
+/**
+ * QA 2026-09-24 FLAG-B1：一张比画布页还宽的图（x < 0）按「原图尺寸」导出，
+ * 检查范围写着「仅此图」，却被「超出页面范围」阻断、报告里写着画布的 page_mm。
+ * 原图范围的产物页面 = 图幅，画布怎么摆不进这次导出（SCI-06）。
+ * 画布范围那半边是**前提**：同一份文档按画布导出时这条阻断必须还在。
+ */
+describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
+  const reopen = async () => {
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+  }
+  const offPage = async (tickPt: number) => {
+    await setup(tickPt, { w: 150, h: 100 })
+    useDocumentStore.getState().commit(literal('摆到页外'), (d) => {
+      ;(d.objects[0] as PanelObject).x = -20
+    })
+  }
+
+  it('画布范围仍是阻断；原图范围没有阻断，直接可导', async () => {
+    await offPage(9)
+    await reopen()
+    expect(text()).toContain('超出页面范围')
+    expect(button('开始导出')!.hasAttribute('disabled'), '前提：画布范围下它是阻断').toBe(true)
+
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await reopen()
+    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
+      'true',
+    )
+    expect(text()).not.toContain('超出页面范围')
+    expect(confirmBox()).toBeNull()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope).toBe('original')
+  })
+
+  it('样式检查报告：画布范围认画布页与 out-of-page；原图范围只认这张图的问题与图幅', async () => {
+    await offPage(8) // 8 pt 撞绝对下限：让原图范围也有一条要确认的阻断，报告才会生成
+    await reopen()
+    await act(async () => {
+      confirmBox()!.click()
+    })
+    await click(button('开始导出')!)
+    const canvasReport = exportBodies[0].style_check_report as Record<string, unknown>
+    expect(canvasReport.acknowledged).toContain('out-of-page')
+    expect(canvasReport.page_mm).toEqual({ w: 150, h: 100, margin: 0 })
+
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await reopen()
+    await act(async () => {
+      confirmBox()!.click()
+    })
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(2)
+    expect(exportBodies[1].scope).toBe('original')
+    const report = exportBodies[1].style_check_report as Record<string, unknown>
+    expect(report.acknowledged).toEqual(['font-below-absolute-floor'])
+    expect((report.checks as { id: string }[]).map((c) => c.id)).not.toContain('out-of-page')
+    expect(report.page_mm).toEqual({ w: 80, h: 60, margin: 0 })
+    expect((report.objects as { rect_mm: number[] }[]).map((o) => o.rect_mm)).toEqual([
+      [0, 0, 80, 60],
+    ])
+  })
+})
+
 describe('「能不能导」只有一份判断', () => {
   it('原图不可用时，「重试」这条路也发不出请求', async () => {
     jobStatus = 'conflict'
