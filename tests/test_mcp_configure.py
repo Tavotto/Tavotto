@@ -356,6 +356,22 @@ def test_a_missing_interpreter_is_named(unpacked, project, tmp_path):
     assert "python_not_found" in proc.stderr
 
 
+@pytest.mark.parametrize("which", ["absent_path", "absent_name"])
+def test_an_explicit_engine_python_that_does_not_exist_is_a_runtime_failure(
+    unpacked, project, tmp_path, which
+):
+    """找不到的 `--engine-python` 与「装不上引擎的」同一类：退出码 3，不是参数错（#578）。"""
+    raw = str(tmp_path / "nope") if which == "absent_path" else "tavotto-no-such-python-3"
+    proc = _run_configure(
+        unpacked,
+        ["--host", "vscode", "--project-root", str(project), "--engine-python", raw],
+        tmp_path,
+    )
+    assert proc.returncode == 3, proc.stderr
+    assert proc.stdout == ""
+    assert "engine_python_unusable" in proc.stderr
+
+
 def test_engine_found_only_through_the_shell_env_is_pinned(
     unpacked, project, tmp_path, monkeypatch
 ):

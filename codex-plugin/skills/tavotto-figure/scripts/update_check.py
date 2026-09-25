@@ -89,7 +89,10 @@ UPGRADE_COMMAND = "codex plugin marketplace upgrade tavotto"
 #: （Codex 在 #560 上指出：非 Codex 用户会被告知去跑一条与他无关的命令）。
 OTHER_HOSTS_UPGRADE = (
     "下载新版完整包 codex-plugin-<版本>.zip，解压到新目录，"
-    "再运行其中的 integrations/configure.py 重新生成配置"
+    "再运行其中的 integrations/configure.py 重新生成配置；"
+    "并刷新技能——复制过的就把新包里整个 skills/tavotto-figure/ 覆盖复制过去，"
+    "粘贴过等价说明的就重新运行 --emit instructions 并替换原来那段"
+    "（重新生成配置不会更新它们，旧技能配新服务会按过时的流程走）"
 )
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
