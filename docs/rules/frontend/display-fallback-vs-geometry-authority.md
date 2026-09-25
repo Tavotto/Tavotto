@@ -39,7 +39,7 @@
 * override 的 upsert **原地改值**，不许 `filter(...)+push(...)`：override 数组
   的 JSON 就是变体键，顺序一变键就变 = 一次完全没必要的重渲染。单条 `setOverride`
   与批量 `setOverrides` 共用 `upsertOverrides`；单条的同值写入整个是 no-op（不进历史、
-  不渲染）。
+  不渲染）。旧文档里重复的 (gid, prop) 按引擎的 last-wins：改的、比的都是最后那条。
 * 撤销的落点要还在：每个文件保留最近 4 档成功变体（有界），`latest` 按**请求
   序号**推进——乱序返回时旧变体只入库、不挪 `latest`，也不丢弃（同文件的另一个
   副本可能还等着它）。
