@@ -5171,7 +5171,10 @@ def api_engine_sync_overrides():
         if ngid not in dst_gids:
             unmatched.append(p)
             continue
-        np_ = {**p, "gid": ngid}
+        # 目标身份（ADR 0083）不跟过去：这里是**有意**按位置把编辑映射到另一张图的
+        # 另一个对象上，带着源图对象的身份只会在目标图上被判成「对象已找不到」
+        np_ = {k: v for k, v in p.items() if k != "identity"}
+        np_["gid"] = ngid
         if prop in _SYNC_POINT:
             src_bb, dst_bb = bbox_of(i)
             if src_bb and dst_bb:

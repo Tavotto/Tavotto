@@ -114,6 +114,35 @@ def test_extra_keys_do_not_change_identity():
     assert patchspec.patch_hash(a) == patchspec.patch_hash(b)
 
 
+def test_identity_participates_in_identity_and_absent_identity_changes_nothing():
+    """目标身份（ADR 0083）改变渲染结果（对不上就不应用），所以必须进哈希；
+
+    没带它的条目规范形与引入它之前逐字节相同——存量文档 / 写回基线里记着的
+    patch_hash 不因这次改动整体失效。
+    """
+    plain = [{"gid": "axes_0.lines_0", "prop": "color", "value": "#ff00ff"}]
+    stamped = [dict(plain[0], identity="l1:0123456789abcdef")]
+    other = [dict(plain[0], identity="l1:fedcba9876543210")]
+    assert patchspec.canonical_json(plain) == (
+        '[{"gid":"axes_0.lines_0","prop":"color","value":"#ff00ff"}]'
+    )
+    assert len({patchspec.patch_hash(x) for x in (plain, stamped, other)}) == 3
+    assert patchspec.canonical_json(stamped) == (
+        '[{"gid":"axes_0.lines_0","identity":"l1:0123456789abcdef",'
+        '"prop":"color","value":"#ff00ff"}]'
+    )
+
+
+def test_malformed_identity_is_a_visible_drop():
+    _, dropped = patchspec.canonicalize_with_diagnostics(
+        [
+            {"gid": "g", "prop": "p", "value": 1, "identity": ""},
+            {"gid": "g", "prop": "q", "value": 1, "identity": None},
+        ]
+    )
+    assert [d["reason"] for d in dropped] == ["bad_identity", "bad_identity"]
+
+
 # ---------------------------- 确定性序列化 ----------------------------
 def test_canonical_json_is_stable_across_calls():
     patches = [{"gid": "g", "prop": "text", "value": "µ 强度 ⁻¹"}]

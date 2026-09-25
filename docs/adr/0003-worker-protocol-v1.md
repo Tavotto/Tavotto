@@ -169,7 +169,10 @@ cancel；等读到了，那条请求早已结束。所以响应里 `cancelled` �
    对象；嵌套深度 ≤ 32）。不合规的条目由
    `canonicalize_with_diagnostics()` 连原因一起交出来——**静默丢一条 patch，
    用户看到的是「我改了但没生效」，没有任何线索**。条目上多出来的键忽略
-   （不参与身份）。
+   （不参与身份）。**修订（2026-09-25，ADR 0083）**：可选的 `identity`（override
+   的目标身份）是唯一的例外——它改变渲染结果，所以进规范形（键序
+   `gid < identity < prop < value`）；出现就必须是非空字符串，否则剔除
+   （`bad_identity`）；没带它的条目规范形与此前逐字节相同。
 2. **去重 last-wins**：同一 (gid, prop) 只留最后一条（与 `overrides.apply`
    建表同语义）。
 3. **排序**：按 (gid, prop) 字典序。Python 的码点序与 Rust 的 UTF-8 字节序

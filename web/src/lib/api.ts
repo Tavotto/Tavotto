@@ -1501,6 +1501,12 @@ export interface ManifestElement {
   gid: string
   role: string
   label: string
+  /**
+   * 目标身份（ADR 0083）：脚本给这个对象显式起的 label 的摘要（`l1:` + 16 位十六进制），
+   * 在 baseline 那一刻采、不随编辑变。没有显式 label 的元素缺席。产生者只有
+   * `engine/overrides.artist_identity`；前端写 override 时抄进 `PanelOverride.identity`。
+   */
+  identity?: string
   /** figure 分数坐标，y 向下：[x, y, w, h] */
   bbox: [number, number, number, number]
   /**

@@ -58,6 +58,11 @@ fn every_golden_vector_matches_byte_for_byte() {
             assert_eq!(got.gid, want["gid"].as_str().unwrap(), "[{name}] gid");
             assert_eq!(got.prop, want["prop"].as_str().unwrap(), "[{name}] prop");
             assert_eq!(
+                got.identity.as_deref(),
+                want.get("identity").and_then(Value::as_str),
+                "[{name}] identity"
+            );
+            assert_eq!(
                 render(&got.value),
                 render(&want["value"]),
                 "[{name}] {}::{} 的 value",

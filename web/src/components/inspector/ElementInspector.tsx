@@ -25,6 +25,7 @@ import type { EditableField, Manifest, ManifestElement, MarkerShape } from '@/li
 import { requestRender } from '@/store/renderScheduler'
 import { useQuickEdit } from '@/canvas/quickEditStore'
 import { formatNumberList, parseNumberList } from '@/lib/numberList'
+import { isStaleIdentityOverride } from '@/lib/overrideIdentity'
 import { cn } from '@/lib/utils'
 import {
   centerInFigure,
@@ -508,13 +509,16 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
 
 /**
  * 脚本被改过后，旧基线里指向已消失元素的 override 会一直报「元素不存在」。
- * 它们既改不到东西也删不掉，只能整条清掉——只认 gid 失效这一种，
- * 「属性不支持」类警告是另一回事，不在这里处理。
+ * 它们既改不到东西也删不掉，只能整条清掉——认两种失效：gid 整个没了，以及
+ * gid 还在、却已经指向另一个对象（目标身份对不上，ADR 0083：引擎不应用它、
+ * 报「编辑的对象已找不到」）。「属性不支持」类警告是另一回事，不在这里处理。
  */
 function OrphanOverrides({ panel, manifest }: { panel: PanelObject; manifest?: Manifest | null }) {
   useTranslation('inspector')
   if (!manifest) return null
-  const orphans = panel.overrides.filter((o) => !manifest.elements.some((e) => e.gid === o.gid))
+  const orphans = panel.overrides.filter(
+    (o) => !manifest.elements.some((e) => e.gid === o.gid) || isStaleIdentityOverride(o, manifest),
+  )
   if (!orphans.length) return null
   const gids = new Set(orphans.map((o) => o.gid))
   return (
