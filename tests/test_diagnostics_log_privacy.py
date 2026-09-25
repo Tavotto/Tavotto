@@ -365,6 +365,14 @@ def _logging_calls(tree: ast.AST):
         if node.func.attr not in _LEVELS:
             continue
         owner = node.func.value
+        if isinstance(owner, ast.Call):
+            # `logging.getLogger("tavotto").warning(...)`：不经变量、直接对 getLogger(...) 的结果调
+            # 级别方法（#601 评审：rendercore/facade.py 就是这个形状，以前整条漏过）
+            callee = owner.func
+            name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+            if name == "getLogger":
+                yield node
+            continue
         name = (
             owner.id
             if isinstance(owner, ast.Name)
@@ -395,11 +403,16 @@ def test_every_tavotto_log_template_is_a_string_literal():
 
 def test_the_ast_scan_catches_an_fstring_template():
     """反证落点：判据认得出 f-string 模板。"""
-    tree = ast.parse('LOG.error(f"失败: {exc}")\nLOG.info("ok %s", x)\n')
-    calls = list(_logging_calls(tree))
-    assert len(calls) == 2
-    assert not isinstance(calls[0].args[0], ast.Constant)
-    assert isinstance(calls[1].args[0], ast.Constant)
+    tree = ast.parse(
+        'LOG.error(f"失败: {exc}")\n'
+        'LOG.info("ok %s", x)\n'
+        # 不经变量、直接对 getLogger(...) 调级别方法（rendercore/facade.py 就是这个形状，#601 评审）
+        'logging.getLogger("tavotto").warning(f"预热未完成: {exc}")\n'
+        'getLogger("tavotto.x").error("ok %s", x)\n'
+    )
+    calls = sorted(_logging_calls(tree), key=lambda c: c.lineno)
+    assert [c.lineno for c in calls] == [1, 2, 3, 4]
+    assert [isinstance(c.args[0], ast.Constant) for c in calls] == [False, True, False, True]
 
 
 def _logsafe_calls(tree: ast.AST):
