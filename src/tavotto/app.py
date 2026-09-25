@@ -2035,6 +2035,53 @@ def project_backup_dir(ctx: "ProjectCtx | None" = None) -> Path:
     return Path(d).expanduser() if d else default
 
 
+#: `/api/diagnostics` 的探测预算（#512）。两项探测彼此独立、**并行**跑，
+#: 于是接口的最坏耗时是两者取大，而不是 30 s + 10 s × Agent 数 × 候选数：
+#:   * matplotlib：用 worker 解释器 `import matplotlib` 那个子进程的超时；
+#:   * AI CLI：`engine_ai.capabilities()` 整体的等待上限——它内部逐个候选跑
+#:     `--version`（各 `ai_agents.VERSION_TIMEOUT_S`）再加就绪检查，总数随机器
+#:     上的候选个数变，所以这里在外面给一个总预算；到点就报「探测超时」，
+#:     探测线程继续跑完并写进 capabilities 的缓存，下一次打开诊断直接命中。
+#: `scripts/smoke_app.py` 的 `DIAGNOSTICS_TIMEOUT_S` 按这两项推出来，
+#: 改这里就要过 `tests/test_diagnostics_budget.py` 的对拍。
+DIAG_MATPLOTLIB_TIMEOUT_S = 30
+DIAG_AI_PROBE_BUDGET_S = 30
+DIAG_PROBE_WORST_CASE_S = max(DIAG_MATPLOTLIB_TIMEOUT_S, DIAG_AI_PROBE_BUDGET_S)
+
+
+class _DiagCapsProbe(threading.Thread):
+    """在后台跑一次 `engine_ai.capabilities()`，结论留在线程对象上。"""
+
+    def __init__(self) -> None:
+        super().__init__(daemon=True, name="mm-diag-caps")
+        self.result: dict | None = None
+        self.error: BaseException | None = None
+
+    def run(self) -> None:
+        try:
+            self.result = engine_ai.capabilities()
+        except BaseException as exc:  # noqa: BLE001 — 交回请求线程原样抛
+            self.error = exc
+
+
+_DIAG_CAPS_LOCK = threading.Lock()
+_DIAG_CAPS_INFLIGHT: list[_DiagCapsProbe] = []
+
+
+def _diag_capabilities_start() -> _DiagCapsProbe:
+    """起（或复用还在跑的那个）AI 能力探测线程。
+
+    上一次诊断超时留下的探测还没跑完时直接跟上它，不再并发起第二份
+    ——用户连点「重新诊断」不该在一台慢机器上叠出一串 `--version` 子进程。"""
+    with _DIAG_CAPS_LOCK:
+        if _DIAG_CAPS_INFLIGHT and _DIAG_CAPS_INFLIGHT[0].is_alive():
+            return _DIAG_CAPS_INFLIGHT[0]
+        job = _DiagCapsProbe()
+        _DIAG_CAPS_INFLIGHT[:] = [job]
+        job.start()
+        return job
+
+
 @app.get("/api/diagnostics")
 def api_diagnostics():
     """首次运行 / 排障诊断：worker Python、matplotlib、AI CLI、项目权限、
@@ -2042,6 +2089,8 @@ def api_diagnostics():
     import subprocess as sp
 
     checks: list[dict] = []
+    # AI CLI 探测先在后台起跑，与下面的 matplotlib 探测并行（预算见上）
+    caps_job = _diag_capabilities_start()
 
     try:
         py = engine_pool.find_worker_python()
@@ -2055,7 +2104,7 @@ def api_diagnostics():
                 # engine/runtime.py——GUI 子系统进程不该弹控制台黑框。
                 encoding="utf-8",
                 errors="replace",
-                timeout=30,
+                timeout=DIAG_MATPLOTLIB_TIMEOUT_S,
                 stdin=sp.DEVNULL,
                 creationflags=engine_runtime.CREATE_NO_WINDOW,
             )
@@ -2103,16 +2152,28 @@ def api_diagnostics():
             }
         )
 
-    caps = engine_ai.capabilities()
-    for entry in caps["agents"]:
+    caps_job.join(DIAG_AI_PROBE_BUDGET_S)
+    if caps_job.is_alive():
         checks.append(
             {
-                "id": f"cli_{entry['id']}",
-                "ok": entry["installed"],
-                "label": f"{entry['display_name']} CLI",
-                "detail": entry["version"] or "未安装（改图助手对应选项不可用）",
+                "id": "cli_probe",
+                "ok": False,
+                "label": "AI CLI",
+                "detail": f"探测未在 {DIAG_AI_PROBE_BUDGET_S} 秒内完成（仍在后台进行，稍后重新诊断）",
             }
         )
+    elif caps_job.error is not None:
+        raise caps_job.error
+    else:
+        for entry in caps_job.result["agents"]:
+            checks.append(
+                {
+                    "id": f"cli_{entry['id']}",
+                    "ok": entry["installed"],
+                    "label": f"{entry['display_name']} CLI",
+                    "detail": entry["version"] or "未安装（改图助手对应选项不可用）",
+                }
+            )
 
     ctx = _request_ctx()
     if ctx is not None:
