@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { alignEntries, resolveGroup } from '@/lib/elementGeom'
-import { setOverride } from '@/store/actions'
+import { setOverride, setOverrides } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
@@ -330,6 +330,34 @@ describe('GEO-B6：单条 setOverride 原地改值', () => {
     expect(livePanel().overrides.map((o) => o.prop)).toEqual(['pos_frac', 'color'])
     expect(livePanel().overrides[0].value).toEqual([0.3, 0.1])
     expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+
+  // 载入的旧文档可能带重复的 (gid, prop)；引擎按 last-wins 取值（patchspec.py），
+  // 所以「同值」要比**生效的那条**（最后一条），写入也要落到生效的那条上
+  it('重复条目：写入落到生效的那条，前面的不遮住用户这次的改动', async () => {
+    await setup([
+      { gid: 'axes_0.title', prop: 'color', value: '#00ff00' },
+      { gid: 'axes_0.title', prop: 'pos_frac', value: [0.2, 0.1] },
+      { gid: 'axes_0.title', prop: 'color', value: '#ff0000' },
+    ])
+    // 与第一条同值、与生效值不同：不是 no-op
+    setOverride('p1', 'axes_0.title', 'color', '#00ff00', true)
+    const colors = livePanel().overrides.filter((o) => o.prop === 'color').map((o) => o.value)
+    expect(colors.at(-1)).toBe('#00ff00')
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+    // 与生效值同值：no-op
+    setOverride('p1', 'axes_0.title', 'color', '#00ff00', true)
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+
+  it('重复条目：批量 setOverrides 同样写到生效的那条', async () => {
+    await setup([
+      { gid: 'axes_0.title', prop: 'pos_frac', value: [0.1, 0.1] },
+      { gid: 'axes_0.title', prop: 'pos_frac', value: [0.2, 0.1] },
+    ])
+    setOverrides('p1', literal('测'), [{ gid: 'axes_0.title', prop: 'pos_frac', value: [0.5, 0.5] }])
+    const vals = livePanel().overrides.filter((o) => o.prop === 'pos_frac').map((o) => o.value)
+    expect(vals.at(-1)).toEqual([0.5, 0.5])
   })
 
   it('同值写入：数组不变、不进历史、变体键不变、不渲染', async () => {
