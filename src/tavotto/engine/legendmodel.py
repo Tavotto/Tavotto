@@ -44,6 +44,7 @@ class RebuildState(Protocol):
     index: dict
     elements: list
     applied: dict
+    index_generation: int
 
     def reapply(self, artist, prop: str, value) -> None: ...
 
@@ -1221,6 +1222,8 @@ def _reindex_legend_children(leg: Legend, state: RebuildState) -> None:
     title = leg.get_title()
     if title is not None:
         remap[f"{leg_gid}.title"] = title
+    # 换了对象：让按对象身份反查 gid 的缓存失效（overrides.apply 的别名组反查）
+    state.index_generation += 1
     for gid, artist in remap.items():
         artist.set_gid(gid)
         if gid in state.index:
