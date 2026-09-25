@@ -4383,13 +4383,23 @@ def _write_source_files(
     # 拷失败时第 1 个已被换掉却没人回滚。
     try:
         for target, tmp in tmps:
-            shutil.copy2(target, backup_dir / target.name)
-            engine_atomicio.fsync_file(backup_dir / target.name)
+            backup = backup_dir / target.name
+            # 先拷内容、趁备份还可写时 fsync，最后才抄权限与时间戳：原图若是
+            # 0444（目录可写时照样能被 replace），copy2 会把只读位带到备份上，
+            # 之后再以可写方式打开它 fsync 就是 PermissionError。
+            shutil.copyfile(target, backup)
+            engine_atomicio.fsync_file(backup)
+            shutil.copystat(target, backup)
             engine_atomicio.fsync_file(tmp)
         engine_atomicio.fsync_dir(backup_dir)
     except OSError as exc:
+        # 清 tmp 尽力而为、逐个吞错：文件系统正在报 EIO / EROFS 时 unlink 也可能
+        # 失败，不许它盖掉结构化的 409。
         for _t, leftover in tmps:
-            leftover.unlink(missing_ok=True)
+            try:
+                leftover.unlink(missing_ok=True)
+            except OSError as cleanup_exc:
+                LOG.warning("写回落盘失败后清理暂存文件失败: %s: %s", leftover, cleanup_exc)
         LOG.error("写回落盘失败（替换之前，原文件未动）: %s: %s", stem, exc)
         raise WriteBackPersistError(str(exc)) from exc
     updated: list[str] = []

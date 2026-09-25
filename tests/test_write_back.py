@@ -686,6 +686,45 @@ def test_fsync_failure_before_replace_is_a_clean_409(client, tmp_path, monkeypat
     assert _leftovers(figs) == []
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="POSIX 权限位语义；root 无视只读位，量不到",
+)
+def test_read_only_originals_still_write_back(client, tmp_path, monkeypatch):
+    """原图是 0444、目录可写：以前照样能 replace；补 fsync 之后也不许因为备份
+    继承了只读位、再以可写方式打开它 fsync 而整单 409（#580 评审）。"""
+    figs = _figs(tmp_path)
+    for n in ("Fig1.pdf", "Fig1.png"):
+        (figs / n).chmod(0o444)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    assert sorted(resp.get_json()["updated"]) == ["Fig1.pdf", "Fig1.png"]
+
+
+def test_cleanup_failure_does_not_mask_the_persist_error(client, tmp_path, monkeypatch):
+    """落盘失败时文件系统往往连 unlink 也失败：清理错误不许盖掉结构化的 409。"""
+    figs = _figs(tmp_path)
+    before = {n: (figs / n).read_bytes() for n in ("Fig1.pdf", "Fig1.png")}
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    originals = {_ident((figs / n).stat()) for n in before}
+    _fsync_spy(monkeypatch, lambda st: stat.S_ISREG(st.st_mode) and _ident(st) not in originals)
+    real_unlink = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self.name.endswith(".updating"):
+            raise OSError(errno.EROFS, "模拟的只读文件系统")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "write_back_persist_failed"
+    assert {n: (figs / n).read_bytes() for n in before} == before
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows 上打不开目录，没有目录 fsync 这一步")
 def test_dir_fsync_failure_after_replace_is_logged_not_rolled_back(
     client, tmp_path, monkeypatch, caplog
