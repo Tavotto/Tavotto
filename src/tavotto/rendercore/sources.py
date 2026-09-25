@@ -44,6 +44,7 @@ SOURCE_ERROR_CODES = (
     "source_changed",  # 冻结之后字节变了（hash 不符）
     "source_kind_unsupported",  # 扩展名不在 FILE_KINDS 里
     "source_outside_root",  # 路径逃出了项目根
+    "source_unreadable",  # 文件在但不是可用的产物（0 字节，why=empty）——与写入器同一个码、同一套 why（#517）
 )
 
 
@@ -221,6 +222,26 @@ def read_frozen(fs: FrozenSource) -> bytes:
     return bytes(view[:total])
 
 
+def static_artifact(path: Path, source_id: str) -> figcapture.SourceArtifact:
+    """磁盘原件 → `origin=static` 的 SourceArtifact；两个静态解析器（这里的 `StaticSourceResolver` 与
+    `facade._PathResolver`）共用这一处。0 字节的文件（写到一半被打断、同步工具的占位）不是产物：
+    报结构化的 `source_unreadable`（`why=empty`，与写入器坏源同一套词），不让 `SourceArtifact` 构造时的
+    `ValueError` 原文把整个作业打成 `export_failed`（#517）。"""
+    try:
+        empty = Path(path).stat().st_size == 0
+    except OSError as exc:
+        raise SourceError("source_missing", f"{source_id}: {exc}", {"figure": source_id}) from exc
+    if empty:
+        raise SourceError(
+            "source_unreadable",
+            f"{source_id}：文件是空的（0 字节）",
+            {"figure": source_id, "why": "empty"},
+        )
+    return figcapture.source_artifact_from_file(
+        path, source_id=source_id, origin=figcapture.ORIGIN_STATIC
+    )
+
+
 def needs_execution(obj: dict) -> bool:
     """这个面板要不要 worker 现画：runtime 素材永远要；带 override 的要。"""
     rel_id = str(obj.get("id", ""))
@@ -256,10 +277,7 @@ class StaticSourceResolver:
             raise SourceError(
                 "source_kind_unsupported", f"{rel_id}：{kind!r} 不是可放置的源", {"figure": rel_id}
             )
-        artifact = figcapture.source_artifact_from_file(
-            path, source_id=rel_id, origin=figcapture.ORIGIN_STATIC
-        )
-        return FrozenSource(artifact=artifact, path=path)
+        return FrozenSource(artifact=static_artifact(path, rel_id), path=path)
 
 
 @dataclass(frozen=True)

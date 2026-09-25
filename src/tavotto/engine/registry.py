@@ -15,10 +15,12 @@
   * cost: "light" 秒级 | "medium" 十秒级 | "heavy" 分钟级（冷启动，
     会话建立后 override 均为亚秒级）。它是**预期时长的标注**：界面用它给冷启动
     提示（`useServerEvents.ts` 的 coldHint）与面板角标，前端那条「请求是不是
-    悬挂了」的看门狗按它取 2/5/15 分钟（`renderStore.ts` 的 WATCHDOG_MS）。
+    悬挂了」的看门狗按它取 2/5/15 分钟（`renderStore.ts` 的 WATCHDOG_MS）——
+    三档都短于引擎的 20 分钟静默阈值，所以在画布上它事实上也是冷启动的总时长
+    上限（到点前端断开请求，服务端 build 照常继续；有意保留，#312）。
     **引擎的 build 超时不看它**——那边按「worker.log 还在不在长」判卡死
     （ADR 0050 的静默看门狗，`pool.BUILD_IDLE_TIMEOUT` / `BUILD_HARD_TIMEOUT`），
-    ADR 0048 的分档已删除，标 heavy 不再改变任何超时
+    ADR 0048 的分档已删除，标 heavy 不再改变引擎侧任何超时
   * notes: "3d" = 仅文字类元素可编辑；"dead" = 产物已不在磁盘
 
 **一个进程可以同时端着多个项目的注册表**（不同标签页各开各的图库），所以

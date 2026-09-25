@@ -183,3 +183,41 @@ def test_refresh_really_reprobes_the_resolver():
     # 候选与探测都被 _fake_cli 钉成可用：重新探测后必须翻案成「已安装」
     assert _agent(caps, "codex")["installed"] is True
     assert ai_agents._RESOLVE_CACHE["codex"].argv == ["/usr/bin/codex"]
+
+
+def test_a_resolve_started_before_clear_cache_does_not_publish(monkeypatch):
+    """诊断超预算留在后台的那次解析（#512）卡在 --version 时用户改了路径：
+    clear_cache + 重新探测拿到新路径之后，旧解析跑完不许把旧候选写回
+    `_RESOLVE_CACHE`——`_cmd()` 直接读这份缓存，会启动已经换掉的那个文件。"""
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+    path = {"p": "/old/codex"}
+
+    def candidates(agent, override=None):
+        return [ai_agents.CliCandidate(path["p"], "path")]
+
+    def probe_version(argv):
+        if argv[-1] == "/old/codex":
+            started.set()
+            release.wait(10)
+        return "test 0.0.0"
+
+    monkeypatch.setattr(ai_agents, "candidates", candidates)
+    monkeypatch.setattr(ai_agents, "probe_version", probe_version)
+    monkeypatch.setattr(ai_agents, "resolve_shim", lambda p: None)
+    codex = next(a for a in ai_agents.agents() if a.id == "codex")
+
+    old: list = []
+    t = threading.Thread(target=lambda: old.append(ai_agents.resolve(codex, probe_readiness=False)))
+    t.start()
+    try:
+        assert started.wait(10)
+        path["p"] = "/new/codex"
+        ai_agents.clear_cache()
+        assert ai_agents.resolve(codex, probe_readiness=False).path == "/new/codex"
+    finally:
+        release.set()
+        t.join(10)
+    assert old[0].path == "/old/codex"
+    assert ai_agents._RESOLVE_CACHE["codex"].path == "/new/codex"

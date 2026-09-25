@@ -879,6 +879,17 @@ class TestCommitPagination:
         f = self._write(tmp_path, json.dumps(pages))
         assert len(gate.load_commits(f, 41)) == 41
 
+    def test_compare_pages_past_the_250_cap(self, gate, tmp_path):
+        """#318：workflow 从 compare 逐页取、`--jq '.commits'` 每页吐一个数组。
+        251 条跨三页（100/100/51）必须全收；只收到旧端点那 250 条必须红。"""
+        pages = [[self._c(str(i)) for i in range(a, min(a + 100, 251))] for a in (0, 100, 200)]
+        f = self._write(tmp_path, "\n".join(json.dumps(p) for p in pages))
+        assert [len(p) for p in pages] == [100, 100, 51]
+        assert len(gate.load_commits(f, 251)) == 251
+        capped = self._write(tmp_path, json.dumps([self._c(str(i)) for i in range(250)]))
+        with pytest.raises(gate.ConfigError):
+            gate.load_commits(capped, 251)
+
     def test_truncated_to_first_page_is_rejected(self, gate, tmp_path):
         """**核心**：只拿到第一页 → 必须红，绝不按不完整名单判定。"""
         f = self._write(tmp_path, json.dumps([self._c(str(i)) for i in range(30)]))

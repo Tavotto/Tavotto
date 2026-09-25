@@ -369,6 +369,96 @@ def test_real_post_swallows_network_errors(monkeypatch):
     telemetry._post({"event": "app_started", "properties": {}})
 
 
+def test_reset_waits_for_the_in_flight_post(monkeypatch):
+    """#440：已经出队、正在投递的那一条，`reset_for_tests()` 返回前必须投完。
+
+    不等的话 fixture teardown 把真 `_post` 换回来之后，那一条会发到真实 endpoint。
+    这里让替身 `_post` 慢 0.3 秒，在它**已经开始**之后 reset：返回时线程必须已退出、
+    那一条必须已经投进替身，而不是还挂在半路。
+    """
+    import threading
+    import time
+
+    monkeypatch.delenv("TAVOTTO_NO_TELEMETRY", raising=False)
+    telemetry.reset_for_tests()
+    started, box = threading.Event(), []
+
+    def slow_post(payload):
+        started.set()
+        time.sleep(0.3)
+        box.append(payload)
+
+    monkeypatch.setattr(telemetry, "_post", slow_post)
+    telemetry.set_consent(telemetry.CONSENT_ENABLED)
+    assert started.wait(5.0), "发送线程没有开始投递"
+    sender = telemetry._SENDER
+    assert sender is not None and sender.is_alive()
+    telemetry.reset_for_tests()
+    assert not sender.is_alive()
+    assert [p["event"] for p in box] == ["telemetry_enabled"]
+
+
+def test_real_post_rechecks_the_hard_switch(monkeypatch):
+    """#440：`_post` 发出前紧挨着再判一次硬开关——出队时判过的 `enabled()` 可能已经过期。"""
+    import urllib.request
+
+    monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
+    calls = []
+
+    def record(*a, **_kw):
+        calls.append(a)
+        raise OSError("不该走到这里")
+
+    monkeypatch.setattr(urllib.request, "urlopen", record)
+    telemetry._post({"event": "app_started", "properties": {}})
+    assert calls == []
+
+
+def test_leak_probe_itself_fires():
+    """被下面那条用例当子进程里的「内层会话」跑：直接请求真实遥测 endpoint。
+
+    外层会话里它跳过——否则外层自己就被判红。
+    """
+    import os
+    import urllib.error
+    import urllib.request
+
+    if not os.environ.get("TAVOTTO_TEST_TELEMETRY_LEAK_PROBE"):
+        pytest.skip("只在 test_session_fails_when_the_telemetry_endpoint_is_requested 的子进程里跑")
+    with pytest.raises(urllib.error.URLError):
+        urllib.request.urlopen(telemetry.DEFAULT_ENDPOINT, timeout=1)
+
+
+def test_session_fails_when_the_telemetry_endpoint_is_requested():
+    """conftest 的会话级零网络断言是活的（#440）：内层会话请求一次遥测 endpoint →
+    请求被拦下（内层用例本身是绿的）、而整个会话 rc=1、报告点名线程与用例。
+    """
+    import os
+    import pathlib
+    import subprocess
+    import sys
+
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    env = {**os.environ, "TAVOTTO_TEST_TELEMETRY_LEAK_PROBE": "1"}
+    env.pop("TAVOTTO_DATA_DIR", None)
+    node = "tests/test_telemetry.py::test_leak_probe_itself_fires"
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", node],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=300,
+    )
+    out = proc.stdout + proc.stderr
+    assert "1 passed" in proc.stdout, out
+    assert proc.returncode == 1, out
+    assert "真实遥测 endpoint" in proc.stderr, out
+    assert "test_leak_probe_itself_fires" in proc.stderr, out
+
+
 # ---------------------------------------------------------------------------
 # 会话边界
 # ---------------------------------------------------------------------------

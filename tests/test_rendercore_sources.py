@@ -77,6 +77,39 @@ def test_execute_must_return_an_execution_artifact_not_a_disguised_static_one(pr
     assert exc.value.code == "source_needs_execution"
 
 
+def test_an_empty_source_file_is_a_structured_source_unreadable_in_both_static_resolvers(project):
+    """#517：0 字节的面板源（写到一半被打断、同步占位）→ `source_unreadable`（`why=empty`、带 `figure`），
+    与写入器那一侧坏源同一个码；不是 `SourceArtifact` 构造时的 `ValueError` 原文。两个静态解析器
+    （`StaticSourceResolver` / `facade._PathResolver`）同一个判据。"""
+    from tavotto.rendercore import facade
+
+    (project / "Empty.pdf").write_bytes(b"")
+    with pytest.raises(sources.SourceError) as exc:
+        sources.StaticSourceResolver(project).resolve({"type": "panel", "id": "Empty.pdf"})
+    assert exc.value.code == "source_unreadable"
+    assert exc.value.params == {"figure": "Empty.pdf", "why": "empty"}
+
+    r = facade._PathResolver()
+    r.paths["p1"] = project / "Empty.pdf"
+    with pytest.raises(sources.SourceError) as exc:
+        r.resolve({"type": "panel", "id": "p1"})
+    assert exc.value.code == "source_unreadable"
+    assert exc.value.params == {"figure": "p1", "why": "empty"}
+
+
+def test_an_empty_source_file_is_source_unreadable_when_exported_at_original_size(project):
+    """#517 同一判据的第三个入口：按原图导出（scope=original）位图源装进 PDF 走 `facade._file_resource`——0 字节
+    同样报 `source_unreadable` / `why=empty`，在写入之前、不需要批准字体。"""
+    from tavotto.rendercore import facade
+
+    (project / "Empty.png").write_bytes(b"")
+    with pytest.raises(sources.SourceError) as exc:
+        facade.original_pdf(project / "Empty.png", project / "out.pdf", (200.0, 150.0))
+    assert exc.value.code == "source_unreadable"
+    assert exc.value.params == {"figure": "Empty.png", "why": "empty"}
+    assert not (project / "out.pdf").exists()
+
+
 class _Session:
     """`nativesession.NativeSession` 的最小形状（回执只读这些属性）。"""
 

@@ -82,6 +82,37 @@ frozen process at the system bundle (`/etc/ssl/cert.pem`) in
 `packaging/entry.py`; count macOS desktop only from the first release that
 ships it. Windows desktop and pip installs were not affected.
 
+### Known bias: CI pytest sessions leaked phantom `source` installs (#440)
+
+**Status: ongoing until PR #580 lands on main.** Until that test-harness fix is
+merged, every CI pytest session can still send **one
+real `telemetry_enabled`** to the production endpoint: the telemetry sender
+thread posted after a test's `monkeypatch` had already been undone. Each leak
+created a fresh anonymous ID with `distribution=source` and exactly that one
+event — no `app_started`, nothing afterwards. The leak runs from whenever CI
+first reached the real endpoint until #580 is merged (record the merge date
+here when it lands); the exact start is not recorded. The count below is a
+snapshot, not a final total: by 2026-09-20 it had produced **249 phantom installs** (macOS/arm64
+146, Linux/x86_64 103, all from CI shards), against 44 real Windows desktop
+opt-ins. All 70 opt-ins in the week before launch (2026-09-12 → 09-19) were
+phantoms, and so were 7 of the 57 after it. Raw opt-in counts over that period
+are inflated roughly 5x.
+
+**How the dashboard handles it:** a filter on the dashboard side. No data is
+deleted from PostHog. The `opted_in_install` population in
+[`yc-dashboard.json`](yc-dashboard.json) excludes `$ci_phantom_installs`: every
+ID whose **entire all-time history** is a single `telemetry_enabled` with
+`distribution = 'source'` (the HogQL is in `ci_phantom_installs.hogql_exclusion`).
+Evaluate the one-event test over all time, not inside the metric window.
+Otherwise a real install whose other events fall outside the window gets
+dropped. Apply the same exclusion to any ad-hoc install or opt-in count.
+
+WSE, Engaged WAU/MAU and every other metric that needs an engaged event were
+never affected, because a phantom has no engaged event. The cost of the filter
+is that a real source-checkout user who opts in and never sends a second event
+is excluded as well. That user is not engaged by definition, so only raw
+opt-in counts lose them.
+
 ## North Star
 
 ### Weekly Successful Exporters (WSE)

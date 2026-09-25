@@ -21,7 +21,12 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -104,38 +109,292 @@ class TestClaWorkflowContract:
 
 
 class TestClaPaginationContract:
-    """分页只取到第一页 = 按不完整的贡献者名单判绿。**这是最坏的失败形态。**
+    """枚举不全 = 按不完整的贡献者名单判绿。**这是最坏的失败形态。**
 
-    `gh api --paginate` 的输出形状随版本而变（gh 2.97 合并数组，`--help` 却写
-    「Each page is a separate JSON array」），而 `test -s` 拦不住截断——文件非空。
-    所以判定器不信分页，核数量：PR 自己声明的提交数对不上就红。
+    两种「不全」都见过：`gh api --paginate` 的输出形状随版本而变、`test -s` 拦不住
+    截断（文件非空）；以及 #318——`pulls/{n}/commits` 的响应**封顶 250 条**，分页
+    也突破不了，于是超过 250 个提交的 PR 永远数不全、永远合不进去。所以数据源换成
+    compare（带分页参数时逐页给全），并且取完之后对账，不信任何一端。
     """
 
-    def test_workflow_verifies_the_commit_count_itself(self, cla_job):
-        """摘掉这段核对，41 提交的 PR 就会被静默少判。
+    def test_commits_come_from_compare_not_the_capped_pull_endpoint(self, cla_job):
+        """`pulls/{n}/commits` 封顶 250（官方文档原话），换回它，#318 就回来了。"""
+        code = _code(cla_job)
+        assert not re.search(r"pulls/\$PR/commits", code), (
+            "不许再从 `pulls/{n}/commits` 取提交：它最多返回 250 条，分页也突破不了（#318）"
+        )
+        assert re.search(r'cmp="repos/\$REPO/compare/\$base\.\.\.\$head"', code), (
+            "提交列表必须取自 `repos/{r}/compare/{base}...{head}`，两端来自同一个 PR 快照"
+        )
+        assert """gh api --paginate "$cmp?per_page=100" --jq '.commits'""" in code, (
+            "compare 必须带显式分页参数逐页取——不带分页参数时它同样封顶 250"
+        )
+
+    def test_snapshot_is_read_once_from_the_pull_object(self, cla_job):
+        """base / head / 声明的提交数必须出自**同一个**响应：主语是同一时刻的同一个 PR。"""
+        code = _code(cla_job)
+        snap = (
+            """gh api "repos/$REPO/pulls/$PR" --jq '"\\(.base.sha) \\(.head.sha) \\(.commits)"'"""
+        )
+        assert snap in code, "base / head / commits 必须从同一次 `pulls/{n}` 读取里一起取出"
+
+    def test_workflow_reconciles_every_count(self, cla_job):
+        """摘掉任何一处对账，截断 / 重叠 / 比错对象就会被静默判绿。
 
         **断言写在 workflow 的 bash 里，不推给判定器**——判定器取自默认分支，
         给它加新参数会在同一个 PR 里报 `unrecognized arguments`（见 job 顶部
         那段自举约束的注释）。能在 workflow 里做的断言就别跨那道边界。
         """
         code = _code(cla_job)
-        assert "pulls/$PR" in code and ".commits" in code, (
-            "workflow 必须取 PR 自身的 `commits` 字段当对照组"
-        )
-        assert re.search(r'--jq\s+[\'"]\.\[\]\.sha', code), (
-            "计数要用 `--jq '.[].sha'` **流式**输出：它按页应用过滤器，"
-            "与「gh 有没有把各页合并成一个数组」无关"
-        )
-        assert re.search(r"\$got.*!=.*\$want|\$want.*!=.*\$got", code), (
-            "取到的条数必须与 PR 声明的条数比对——不比就等于信任分页"
-        )
+        for pair in ('"$got" != "$uniq"', '"$got" != "$total"', '"$got" != "$want"'):
+            assert pair in code, f"少了一处对账：{pair}"
+        assert "--jq '.total_commits'" in code, "compare 自报的总数要当对照组"
+        assert 'grep -qx "$head" "$shas"' in code, "head SHA 必须在枚举结果里"
         assert "exit 1" in code, "对不上必须让这一步失败，不能只打印警告"
+
+    def test_judge_recounts_what_it_parsed(self, cla_job):
+        """判定器按自己解析出的条数再核一遍——参数在 main 上早就有，不跨自举边界。"""
+        code = _code(cla_job)
+        assert 'echo "CLA_EXPECTED_COMMITS=$want" >> "$GITHUB_ENV"' in code
+        assert '--expected-commits "$CLA_EXPECTED_COMMITS"' in code
 
     def test_workflow_does_not_use_slurp(self, cla_job):
         """`--slurp` 把每页包成一层，产出数组的数组——它是错的解法，不是修法。"""
         assert "--slurp" not in _code(cla_job), (
             "不要给数组端点加 --slurp：它产出数组的数组，判定器反而要额外兼容"
         )
+
+
+# ─────────────────────────────────────────────── 收集那一步原样跑（#318 的 >250 路径）
+#
+# 上面的形状判据证明「写了对账」，证明不了「对账在 251 个提交上真的给出结论」。
+# 这里把 ci.yml 里「收集这个 PR 的贡献者」与「判定」两步的 `run: |` **原文**交给
+# bash 执行，`gh` 换成一个按真实 API 行为建模的替身（`pulls/{n}/commits` 封顶 250、
+# compare 不带分页参数封顶 250、带了就逐页给全；`--paginate` 没写 per_page 时 gh 自己
+# 补 100——本机 gh 2.63 / 2.97 实测），`--jq` 交给真 jq。判定器是本树的
+# scripts/ci/cla_gate.py 副本，放在 $TRUSTED 下，与 job 取默认分支副本落的位置相同。
+#
+# 前提写在这里：替身的「封顶 250 / 逐页」是按官方 REST 描述与 2026-09-24 对本仓库
+# `archive/ui-audit-pre-squash`（252 个提交）的实测建的；GitHub 改了这两条行为，
+# 替身不会自己知道。
+#
+# 两步在 ci.yml 里 `runs-on: ubuntu-latest`，bash + jq 是它们唯一的执行环境；Windows 上
+# PATH 里的 bash 是 WSL 启动器（见 tests/test_update_chain_gates.py 的同名说明），如实 skip。
+_NEEDS_BASH_AND_JQ = pytest.mark.skipif(
+    sys.platform == "win32" or shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="收集那一步只在 ubuntu-latest 的 bash + jq 里执行；本机没有可用的 bash / jq",
+)
+
+#: gh 的替身。状态从 $FAKE_GH_STATE 读：pr 号、pull 对象、全部提交、total_commits、faults。
+_FAKE_GH = r"""
+import json, os, subprocess, sys
+from urllib.parse import parse_qs, urlsplit
+
+st = json.load(open(os.environ["FAKE_GH_STATE"], encoding="utf-8"))
+args, paginate, jq, path = sys.argv[1:], False, None, None
+assert args and args[0] == "api", args
+i = 1
+while i < len(args):
+    if args[i] == "--paginate":
+        paginate = True
+    elif args[i] == "--jq":
+        i += 1
+        jq = args[i]
+    elif path is None:
+        path = args[i]
+    else:
+        sys.exit(f"fake gh: 认不出的参数 {args[i]}")
+    i += 1
+
+def emit(doc):
+    if jq is None:
+        sys.stdout.write(json.dumps(doc))
+        return
+    r = subprocess.run(["jq", "-rc", jq], input=json.dumps(doc), capture_output=True, text=True)
+    if r.returncode:
+        sys.exit(f"fake gh: jq 失败：{r.stderr}")
+    sys.stdout.write(r.stdout)
+
+def paged(items, q, cap_without_params):
+    if paginate and "per_page" not in q:
+        q["per_page"] = ["100"]  # gh --paginate 自己补 per_page=100
+    if "per_page" not in q and "page" not in q:
+        return [items[:cap_without_params]]
+    k, start = int(q.get("per_page", ["30"])[0]), int(q.get("page", ["1"])[0])
+    pages = [items[j : j + k] for j in range(0, len(items), k)] or [[]]
+    return pages[start - 1 :] if paginate else pages[start - 1 : start]
+
+u = urlsplit(path)
+q = parse_qs(u.query)
+commits, faults = st["commits"], st.get("faults", [])
+if u.path.endswith(f"/pulls/{st['pr']}"):
+    emit(st["pull"])
+elif "/compare/" in u.path:
+    pages = paged(commits, q, 250)
+    if paginate and "drop_last_page" in faults:
+        pages = pages[:-1]
+    if paginate and "overlap_pages" in faults:
+        pages[1] = pages[0]  # 第二页重发了第一页；head 所在的末页还在——只有去重看得见
+    for p in pages:
+        emit({"total_commits": st.get("total_commits", len(commits)), "commits": p})
+elif u.path.endswith(f"/pulls/{st['pr']}/commits"):
+    for p in paged(commits[:250], q, 250):  # 官方：Lists a maximum of 250 commits
+        emit(p)
+else:
+    sys.exit(f"fake gh: 未建模的端点 {path}")
+"""
+
+
+def _step_script(step_name: str) -> str:
+    """cla-check 里某一步 `run: |` 的原文（允许空行）——要执行的就是它，不复刻。"""
+    block = _job(CI, CLA_JOB)
+    m = re.search(
+        rf"(?ms)^      - name: {re.escape(step_name)}\n.*?^        run: \|\n((?:(?:          [^\n]*)?\n)+)",
+        block,
+    )
+    assert m, f"cla-check 里读不出「{step_name}」的 run: | 块"
+    return "\n".join(ln[10:] for ln in m.group(1).splitlines()) + "\n"
+
+
+def _commit(i: int, login: str = "erwanjun") -> dict:
+    return {
+        "sha": f"{i + 1:040x}",
+        "author": {"login": login},
+        "commit": {
+            "author": {"name": login, "email": f"{login}@users.noreply.github.com"},
+            "message": f"c{i}",
+        },
+    }
+
+
+@_NEEDS_BASH_AND_JQ
+class TestClaCollectStepRunsForReal:
+    PR = 318
+    COLLECT = "收集这个 PR 的贡献者（只读元数据）"
+
+    def _setup(self, tmp_path: Path, commits: list, **over) -> tuple[dict, Path]:
+        work = tmp_path / "w"
+        (work / "bin").mkdir(parents=True)
+        (work / "runner-temp").mkdir()
+        gh = work / "bin" / "gh"
+        gh.write_text(f"#!{sys.executable}\n{_FAKE_GH}", encoding="utf-8")
+        gh.chmod(0o755)
+        (work / "bin" / "python3").symlink_to(sys.executable)
+        state = {
+            "pr": self.PR,
+            "commits": commits,
+            "pull": {
+                "base": {"sha": "b" * 40},
+                "head": {"sha": over.pop("head", commits[-1]["sha"])},
+                "commits": over.pop("declared", len(commits)),
+            },
+            **over,
+        }
+        (work / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (work / "github-env").write_text("", encoding="utf-8")
+        env = {
+            "PATH": f"{work / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
+            "RUNNER_TEMP": str(work / "runner-temp"),
+            "GITHUB_ENV": str(work / "github-env"),
+            "GH_TOKEN": "fake",
+            "REPO": "o/r",
+            "PR": str(self.PR),
+            "FAKE_GH_STATE": str(work / "state.json"),
+        }
+        return env, work
+
+    @staticmethod
+    def _bash(script: str, env: dict, cwd: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [shutil.which("bash"), "-c", script],
+            env=env,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def _collect(self, tmp_path: Path, commits: list, *, script: str | None = None, **over):
+        env, work = self._setup(tmp_path, commits, **over)
+        proc = self._bash(script or _step_script(self.COLLECT), env, work)
+        exported = dict(
+            ln.split("=", 1)
+            for ln in (work / "github-env").read_text(encoding="utf-8").splitlines()
+            if "=" in ln
+        )
+        return proc, env, work, exported
+
+    def _judge(self, env: dict, work: Path, exported: dict) -> tuple[int, dict]:
+        trusted = work / "trusted-cla"
+        for rel in (
+            "scripts/ci/cla_gate.py",
+            ".github/cla-policy.json",
+            "docs/legal/CLA_INDIVIDUAL.md",
+            "docs/legal/CLA_CORPORATE.md",
+        ):
+            (trusted / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT / rel, trusted / rel)
+        script = _step_script("判定").replace("${{ github.event_name }}", "pull_request")
+        assert "${{" not in script, "判定那一步多了新的表达式，这里要同步渲染"
+        env = {**env, **exported, "TRUSTED": str(trusted), "PR_AUTHOR": "erwanjun"}
+        proc = self._bash(script, env, work)
+        lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("{")]
+        assert len(lines) == 1, f"判定器没有恒输出一行 JSON：{proc.stdout}\n{proc.stderr}"
+        return proc.returncode, json.loads(lines[0])
+
+    def test_more_than_250_commits_reach_a_verdict(self, tmp_path):
+        """#318 验收一：251 个提交，门禁给出结论（这里是绿），不是拒判。"""
+        commits = [_commit(i) for i in range(251)]
+        proc, env, work, exported = self._collect(tmp_path, commits)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "提交数核对通过：251 / 251" in proc.stdout
+        assert exported.get("CLA_EXPECTED_COMMITS") == "251"
+        rc, verdict = self._judge(env, work, exported)
+        assert (rc, verdict["status"]) == (0, "success"), verdict
+
+    def test_unsigned_identity_past_the_old_cap_turns_it_red(self, tmp_path):
+        """#318 验收二：第 251 个提交（旧端点根本取不到的那一条）换成未签署的身份，必须红。"""
+        commits = [_commit(i) for i in range(250)] + [_commit(250, login="outsider")]
+        proc, env, work, exported = self._collect(tmp_path, commits)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        rc, verdict = self._judge(env, work, exported)
+        assert (rc, verdict["status"]) == (1, "failure"), verdict
+        missing = [r["login"] for r in verdict["contributors"] if r["verdict"] == "missing"]
+        assert missing == ["outsider"], verdict
+
+    @pytest.mark.parametrize(
+        "over",
+        [
+            pytest.param({"faults": ["drop_last_page"]}, id="last-page-lost"),
+            pytest.param({"faults": ["overlap_pages"]}, id="pages-overlap"),
+            pytest.param({"total_commits": 252}, id="compare-total-disagrees"),
+            pytest.param({"declared": 252}, id="pr-declares-more"),
+            pytest.param({"head": "f" * 40}, id="head-not-enumerated"),
+        ],
+    )
+    def test_incomplete_or_wrong_enumeration_refuses(self, tmp_path, over):
+        """任何一处对不上：这一步红、不导出条数——判定器不会拿到一份残缺名单。"""
+        commits = [_commit(i) for i in range(251)]
+        proc, _, _, exported = self._collect(tmp_path, commits, **over)
+        assert proc.returncode != 0, proc.stdout
+        assert "::error::" in proc.stdout, proc.stdout + proc.stderr
+        assert "CLA_EXPECTED_COMMITS" not in exported
+
+    def test_the_capped_pull_endpoint_is_what_broke(self, tmp_path):
+        """替身的保真度自检，也是 #318 的原样重现：把数据源换回 `pulls/{n}/commits`，
+        251 个提交的 PR 必须被拒判——替身要是没把 250 的顶建出来，上面那几条绿就不作数。"""
+        target = """gh api --paginate "$cmp?per_page=100" --jq '.commits' > "$out"\n"""
+        script = _step_script(self.COLLECT)
+        assert script.count(target) == 1, "变异的落点不在了——先改这里再谈结论"
+        mutated = script.replace(
+            target, 'gh api --paginate "repos/$REPO/pulls/$PR/commits" > "$out"\n'
+        )
+        proc, _, _, exported = self._collect(
+            tmp_path, [_commit(i) for i in range(251)], script=mutated
+        )
+        assert proc.returncode != 0, proc.stdout
+        assert "取到 250 个提交" in proc.stdout, proc.stdout + proc.stderr
+        assert "CLA_EXPECTED_COMMITS" not in exported
 
 
 class TestClaWorkflowSecurity:

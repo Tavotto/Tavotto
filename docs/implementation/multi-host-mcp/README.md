@@ -60,6 +60,8 @@ python3 <完整包>/integrations/configure.py --host <profile> --project-root <�
 - `--diagnose`：改为输出一份机器可读 JSON（包 / 启动器探针 / 引擎 / 授权 / Skill），**不含配置**。
 - `--emit instructions`：没有经核实的原生 Skill 入口的宿主用的等价说明——就是包里（已中立化的）
   SKILL.md 的正文，相对引用改写成包内绝对路径（`instruction_fallback`，不是第二份手写规则）。
+  写脚本前必读的 `figure-contract.md` / `publication-style.md` 的原文附在末尾（读不了本机文件的宿主，
+  例如 Claude Desktop 聊天，也拿得到完整契约）；命令示例里的脚本路径按平台加引号，Windows 用 `py -3`。
 - `--engine-python`：显式的引擎解释器**直接作为启动命令**（与 `--python` 二选一），并验证体检报的就是它。
 - 退出码：0 片段已打印（引擎没就绪也是 0，配置本身是对的）；2 参数错；3 启动器起不来 / 包不完整 /
   显式引擎解释器不可用 / 引擎可用但按这份配置起的 server 握手失败。
@@ -81,7 +83,8 @@ Claude Desktop 的 `APPDATA`）。不依赖 shell、`~` 展开、宿主变量语
 3. 引擎：已装 `pipx install "tavotto[worker]"` 的直接下一步；只有桌面版或什么都没有时，显式跑
    `<python> <包>/mcp/server.py --provision`（在 Tavotto 配置目录下建自管环境，不碰系统 Python）。
    `--health` 随时自检。
-4. `python3 <包>/integrations/configure.py --host <宿主> --project-root <项目绝对路径>`，
+4. `python3 <包>/integrations/configure.py --host <宿主> --project-root <项目绝对路径>`
+   （Windows 在 PowerShell 里用 `py -3 '<包>\integrations\configure.py' …`：那里的 `python3` 常常是 Store 别名），
    把 stdout 合并进 stderr 指明的那个文件 / 设置界面。
 5. Skill：原生入口的宿主把整个 `skills/tavotto-figure/` 目录复制到它的 Skill 目录；其余用
    `--emit instructions` 放进规则 / 智能体提示词。
@@ -94,7 +97,8 @@ Claude Desktop 的 `APPDATA`）。不依赖 shell、`~` 展开、宿主变量语
 
 ## 已知限制、升级影响与回退
 
-- 包目录是配置里的绝对路径：**升级 = 解压新版到新目录 + 重新生成配置**（旧目录可留作回退，
+- 包目录是配置里的绝对路径：**升级 = 解压新版到新目录 + 重新生成配置 + 刷新技能**（重新复制
+  `tavotto-figure/`，或重新 `--emit instructions` 替换原来那段；旧目录可留作回退，
   回退就是把配置指回旧目录）。本轮没有自动更新链——不另起第三条更新通道。
 - 远程 SSH / WSL / Dev Containers / 云端 Agent：不在首版承诺内，本机绝对路径不能直接给远程会话用。
 - 共享的自管 runtime（`--provision`）没有跨宿主的锁：两个宿主正在用时不要重跑 provision。

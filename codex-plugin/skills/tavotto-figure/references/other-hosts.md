@@ -19,6 +19,16 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
    python3 <完整包>/integrations/configure.py --host <宿主> --project-root <项目绝对路径>
    ```
 
+   Windows 上 `python3` 常常不存在，或者会打开 Microsoft Store 而不是运行 Python。请在
+   PowerShell 里用 Python 启动器 `py -3`，路径用单引号括起来：
+
+   ```text
+   py -3 '<完整包>\integrations\configure.py' --host <宿主> --project-root '<项目绝对路径>'
+   ```
+
+   `py` 也找不到，就说明这台机器没装 Python：请用户装一个 Python 3（python.org 的安装包自带
+   `py`），或者给出已装 Python 的绝对路径，例如 `& 'C:\Python312\python.exe' '<完整包>\integrations\configure.py' …`。
+
    `<宿主>` 是 `cursor` / `zcode` / `dsh` / `workbuddy` / `claude-code` / `claude-desktop` /
    `trae` / `vscode` 之一。它**只打印**配置（stdout）以及说明（stderr）：合并到哪个文件或界面、
    授权的是哪个目录、引擎是否就绪、怎样确认宿主真的加载了、Skill 怎么装。它不写任何文件。
@@ -55,7 +65,9 @@ health 结果里 `recovery` 给的原文**，那里是这台机器上的真实�
   不能把新脚本保存到本机。这种情况下直接问偏好；已有的本地图照常用 MCP 工具打开和修改；
   新的出图脚本交给用户保存并运行。
 - **复制出去的技能**里，`scripts/update_check.py` 找不到包的版本信息，更新检查会显示
-  「未知」，这不是故障。升级的方法是解压新版完整包，然后重新生成配置。
+  「未知」，这不是故障。升级的方法：解压新版完整包，重新生成配置，**并刷新技能**——复制过
+  `tavotto-figure/` 的，把新包里的整个目录覆盖复制过去；粘贴过等价说明的，重新运行
+  `--emit instructions` 并替换原来那段。只重新生成配置不会更新这两样，旧技能会配着新服务走过时的流程。
 - 多个宿主可以同时配置 Tavotto，各自起自己的 MCP 进程。会话会记录在 Tavotto 的数据目录里，
   另一个进程拿到同一个 `session_id` 时，**只有在它自己的授权也覆盖那个项目时**才能接着用；
   授权的是别的目录就拿不到（`workspace_root_changed`）。所以隔离靠的是授权目录，不是宿主本身：

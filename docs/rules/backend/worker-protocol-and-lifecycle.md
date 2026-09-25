@@ -41,7 +41,11 @@
   连着 `BUILD_IDLE_TIMEOUT`（20 分钟）没长才判死，`BUILD_HARD_TIMEOUT`（4 小时）
   兜底拦一直打印的死循环。**判据两条控制面同一条**——Python 池 `stat` 日志、
   workerd 收 `idle_timeout_ms` 后 `stat` 同一个文件。注册表的 `cost` **不再参与
-  超时**（它只剩「冷启动可能要几分钟」那句预测文案）；ADR 0048 的分档已删除。
+  引擎侧超时**（它只剩「冷启动可能要几分钟」那句预测文案）；ADR 0048 的分档已删除。
+  「会打进度的脚本不再有总时长上限」**只在引擎侧成立**：画布前端另有按 `cost`
+  取档的悬挂看门狗（`renderStore.ts` 的 `WATCHDOG_MS`，2 / 5 / 15 分钟，都短于
+  `BUILD_IDLE_TIMEOUT`），冷启动很长的脚本在画布上会先被前端断开请求，服务端 build
+  照常继续——有意保留的现状（#312，ADR 0050 补注）。
   测试可 monkeypatch）：超时即 kill 并报 `code=worker_timeout`，会话由下一次
   `get()` 原地重建——**状态未知的 worker 绝不复用**。超时实现是「读线程 +
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
