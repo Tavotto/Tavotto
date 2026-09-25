@@ -140,7 +140,7 @@ def test_project_venv_and_same_name_decoy_resolve_to_the_true_interpreter_and_fi
     decoy_sha = hashlib.sha256((proj / "scripts" / "data" / "points.csv").read_bytes()).hexdigest()
 
     venv_a = venvfixture.make_project_venv(proj, ".venv", python=WORKER_PY)
-    signal_a = _install_signal(venv_a, "A", SIGNAL_A)
+    _install_signal(venv_a, "A", SIGNAL_A)
     venv_b = venvfixture.make_project_venv(tmp_path / "elsewhere", "envB", python=WORKER_PY)
     _install_signal(venv_b, "B", SIGNAL_B)
     python_a = venvfixture.interpreter_of(venv_a)
@@ -197,9 +197,11 @@ def test_project_venv_and_same_name_decoy_resolve_to_the_true_interpreter_and_fi
         assert receipt["launch_context"]["cwd_origin"] == "project.root"
         inputs = receipt["runtime"]["inputs"]
         mods = {m["name"]: m for m in inputs["local_modules"]}
-        # worker 自报的 import 来源：qa_signal 是 A 那份（逐字节同一个文件），labmod 是脚本目录的本地模块
-        assert (proj / mods["qa_signal"]["path"]).resolve() == signal_a.resolve()
+        # worker 自报的本地模块：labmod 是脚本目录的本地模块；qa_signal 装在项目 `.venv`（A）的
+        # site-packages 里，是解释器自己的目录，不是用户的本地模块（PATH-B2，#599）。
+        # 「用的是 A 那份」的证据在 ④（图内写下的 env A + 折线顶点）与 ⑤（环境状态指 A）
         assert mods["labmod"]["path"] == "scripts/labmod.py"
+        assert set(mods) == {"labmod"}, mods
         files = {f["path"]: f["sha256"] for f in inputs["files"]}
         assert files.get("data/points.csv") == true_sha != decoy_sha
 
