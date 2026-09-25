@@ -1340,7 +1340,11 @@ describe('Codex #547 第二十轮评审（ddc3760b）', () => {
 })
 
 describe('Codex #547 最后一轮评审（964ce71f）', () => {
-  it('P1 存库在飞时加进来的新图：渲染回来按整份样式对齐，不只补这一笔变化量', async () => {
+  it.each([
+    ['一个 override 都没有', [] as PanelObject['overrides']],
+    ['只带着素材的烘焙基线', [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 7 }]],
+  ])('P1 存库在飞时加进来的新图（%s）：渲染回来按整份样式对齐，不只补这一笔变化量', async (_, baked) => {
+    useAssetStore.setState({ byId: { FigB: { id: 'FigB', baked_overrides: baked, baked_current: true } as never } })
     fakeLibrary([record({ id: 's1', data: { element: { axis_label: { fontsize: 10 }, title: { fontsize: 11 } }, pt_basis: 'page' } })])
     await seed([panel('a', 'FigA')])
     stop = startStyleBindingSync()
@@ -1355,7 +1359,7 @@ describe('Codex #547 最后一轮评审（964ce71f）', () => {
     const edit = editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 })
     await saving
     s().commit(literal('加一张图'), (d) => {
-      d.objects.push(panel('b', 'FigB'))
+      d.objects.push({ ...panel('b', 'FigB'), overrides: structuredClone(baked) })
     })
     release()
     expect(await edit).toBe(true)
