@@ -20,10 +20,16 @@
    一个语义错的精确值比一个诚实的失败更坏；
 5. 数组内的字符串字面量按出现顺序返回，**顺序是内容的一部分**。
 
-**已知边界**（写在明处，别让下一个人以为它是完整的 TS 解析器）：正则字面量
-不认。`/` 只有后面跟着 `/` 或 `*` 时才被当成注释开头，所以一条包含引号的正则
-字面量会让扫描错位。第 4 条那道「括号之间只许有字符串和逗号」的断言是这条
-边界的兜底：一旦扫错位，那道断言先红，而不是安静地给出一个错的答案。
+正则字面量（`/…/flags`）也整段抹掉（#540：`/export const V = 3;/` 曾被读成 3），
+但它不进 `spans`——它不是字符串。`/` 是除号还是正则的开头，按**上一个有效 token**
+判：上一个是标识符 / 数字 / `)` / `]` / 字符串 / 正则时是除号，`</` 与 `/>` 是 TSX
+标签，其余（运算符、`(`、
+`,`、`=`、`{`、`}`、文件开头……）是正则。
+
+**已知边界**（写在明处，别让下一个人以为它是完整的 TS 解析器）：关键字后面的正则
+（`return /x/`、`typeof /x/`）按标识符之后算成除号，`}` 之后一律当正则（对象字面量
+`{}` 之后的除号认错）。扫错位时第 4 条那道「括号之间只许有字符串和逗号」的断言与
+「只认恰好一处 `export const`」是兜底：先红，而不是安静地给出一个错的答案。
 """
 
 from __future__ import annotations
@@ -55,6 +61,8 @@ def blank_comments_and_strings(src: str) -> tuple[str, list[tuple[int, int]]]:
             if out[k] != "\n":
                 out[k] = " "
 
+    prev = ""  # 上一个有效 token 的末字符（注释不算）；字符串 / 正则之后记成 `)`，同为「值」
+
     while i < n:
         ch = src[i]
         if ch == "/" and i + 1 < n and src[i + 1] == "/":
@@ -83,7 +91,34 @@ def blank_comments_and_strings(src: str) -> tuple[str, list[tuple[int, int]]]:
             spans.append((i + 1, j))
             blank(i, j + 1)
             i = j + 1
+            prev = ")"
             continue
+        if ch == "/" and not (prev.isalnum() or prev in "_$)]<") and src[i + 1 : i + 2] != ">":
+            # 正则字面量（`</div>` / `<X />` 是 TSX 标签不是正则）：`[…]` 字符类里的 `/`
+            # 不收尾，反斜杠转义下一个字符，不许跨行
+            j, in_class = i + 1, False
+            while j < n and src[j] != "\n":
+                if src[j] == "\\":
+                    j += 2
+                    continue
+                if src[j] == "[":
+                    in_class = True
+                elif src[j] == "]":
+                    in_class = False
+                elif src[j] == "/" and not in_class:
+                    break
+                j += 1
+            if j >= n or src[j] != "/":
+                raise AssertionError(f"正则字面量没有收尾的 `/`（偏移 {i}）")
+            j += 1
+            while j < n and (src[j].isalnum() or src[j] in "_$"):
+                j += 1  # flags
+            blank(i, j)
+            i = j
+            prev = ")"
+            continue
+        if not ch.isspace():
+            prev = ch
         i += 1
 
     return "".join(out), spans

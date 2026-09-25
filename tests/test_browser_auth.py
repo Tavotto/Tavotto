@@ -14,6 +14,8 @@ import json
 import os
 import re
 import stat
+import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -250,6 +252,27 @@ def test_relaunch_handoff_issues_fresh_one_time_nonce(served):
     # relaunch 的 nonce 同样一次性
     status, _, _ = http_post_json(served.url(security.BOOTSTRAP_PATH), {"nonce": nonce})
     assert status == 403
+
+
+def test_second_launch_without_browser_prints_a_usable_login_link(served):
+    """服务器上经 SSH 转发用的路径：已有实例在跑时再跑一次 `tavotto --no-browser`，
+    换到的 nonce 必须打印出来——没有浏览器可交，不打印就等于白换，人拿不到新登录码。
+    打印的这枚要真能换到 cookie（量的是那条地址能不能用，不只是长得像）。"""
+    proc = subprocess.run(
+        [sys.executable, "-m", "tavotto", "--port", str(served.port), "--no-browser"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    m = re.search(r"#dnonce=([A-Za-z0-9_-]+)", proc.stdout)
+    assert m, f"--no-browser 复用已有实例时没有打印带 nonce 的地址: {proc.stdout!r}"
+    assert m.group(1) != served.nonce
+    cookie = bootstrap_cookie(served, m.group(1))
+    status, _, _ = http_get(served.url("/api/panels"), headers={"Cookie": cookie})
+    assert status in (200, 409)
 
 
 def test_relaunch_rejects_wrong_secret(served):

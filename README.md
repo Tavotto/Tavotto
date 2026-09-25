@@ -386,11 +386,18 @@ is in `docs/implementation/multi-host-mcp/acceptance.md`).
    a folder you will keep. The name says codex for historical reasons; the contents are the same for every host.
 2. Engine: skip this if you already ran `pipx install "tavotto[worker]"`. With only the desktop app, or nothing
    installed, run `python3 <package>/mcp/server.py --provision` once. It creates a separate environment in Tavotto's
-   config folder and leaves your system Python alone.
+   config folder and leaves your system Python alone. On Windows, use `py -3` wherever these steps say `python3`:
+   there `python3` is often missing or opens the Microsoft Store instead of running Python.
 3. Generate the config. The generator **only prints; it writes no files**:
 
    ```sh
    python3 <package>/integrations/configure.py --host vscode --project-root /absolute/path/to/project
+   ```
+
+   Windows (PowerShell):
+
+   ```powershell
+   py -3 '<package>\integrations\configure.py' --host vscode --project-root 'D:\path\to\project'
    ```
 
    `--host` is one of `cursor` `zcode` `dsh` `workbuddy` `claude-code` `claude-desktop` `trae` `vscode`. The config to
@@ -399,7 +406,8 @@ is in `docs/implementation/multi-host-mcp/acceptance.md`).
 4. In a chat, call `tavotto_health` and check that `server.package_dir` is the folder you just unzipped.
 
 Only the `--project-root` folder is authorized; your whole home folder or a drive root is refused. To upgrade, unzip
-the new version into a new folder and regenerate the config. To roll back, point the config at the old folder again.
+the new version into a new folder, regenerate the config, and refresh the skill: copy the new `tavotto-figure/`
+over the old copy, or rerun `--emit instructions` and replace the text you pasted before. To roll back, point the config at the old folder again.
 Per-host sources and differences are in `docs/implementation/multi-host-mcp/hosts.md`.
 
 ### Desktop
@@ -445,6 +453,33 @@ tavotto
 Your browser opens at `http://127.0.0.1:5089`. `--figures <dir>` opens a figure
 directory straight away, `--port` changes the port, `--no-browser` skips opening a
 browser.
+
+#### On a remote server, over SSH
+
+Tavotto only listens on `127.0.0.1`, so a server's copy is reached through an SSH port
+forward rather than over the network. On the server:
+
+```sh
+pipx install "tavotto[worker]"
+tavotto --no-browser
+```
+
+It prints a login address ending in `#dnonce=…`. On your own machine, forward the
+**same port number** and open that address in your browser:
+
+```sh
+ssh -L 5089:127.0.0.1:5089 you@server
+```
+
+- **The local port must equal the server's `--port`**, and the address must say
+  `127.0.0.1`, not `localhost`: Tavotto rejects any other `Host` to block DNS
+  rebinding, so a mismatch shows a `bad_host` error. If 5089 is taken on either side,
+  change both: `tavotto --port 5189 --no-browser` and `ssh -L 5189:127.0.0.1:5189 …`.
+- **Each login address works once.** The browser then keeps a session cookie for 30
+  days or until the server process restarts. For a new address while Tavotto is still
+  running, run the same `tavotto --no-browser` (same `--port`) again on the server: it
+  reuses the running instance and prints a fresh one, valid for five minutes.
+- Browser mode only: the desktop app cannot connect to a Tavotto on another machine.
 
 ### Try it in 30 seconds
 

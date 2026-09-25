@@ -211,6 +211,14 @@ interface DocumentState {
   /** 不进历史的写入：用于文字自适应高度这类由渲染反推的派生值 */
   silent: (recipe: Recipe) => void
 
+  /**
+   * 把一笔改动**补进 `entry` 那条历史**（撤销时两笔一起退）。只在 `entry` 仍是最后
+   * 一条、且没有进行中的事务时成立，否则什么都不做、返回 false——用户在那之后又
+   * 做了别的（或撤销了它），补进去就会让一次撤销退掉两件不相干的事。
+   * 用处：松手后按权威渲染的实测补正一次落点（图例整体缩放钉对角）。
+   */
+  amendLast: (entry: HistoryEntry, recipe: Recipe) => boolean
+
   /* ---------------- 画布（Canvas）操作 ---------------- */
   /** 当前完整项目文档快照（激活画布从 doc 同步） */
   buildProject: () => ProjectDocument
@@ -364,6 +372,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ...pushHistory(state, { label, patches, inverse, ...(sizeBasis.length ? { sizeBasis } : {}) }),
     })
     noteCommit(label, state, next, patches, false)
+  },
+
+  amendLast: (entry, recipe) => {
+    const state = get()
+    if (state.txn || state.past.at(-1) !== entry) return false
+    const [next, patches, inverse] = produceWithPatches(state.doc, recipe)
+    if (!patches.length) return true
+    // 撤销按 inverse 的顺序打回：后补的那笔先退，再退原来那条
+    const merged: HistoryEntry = {
+      ...entry,
+      patches: [...entry.patches, ...patches],
+      inverse: [...inverse, ...entry.inverse],
+    }
+    set({ doc: next, past: [...state.past.slice(0, -1), merged] })
+    noteCommit(entry.label, state, next, patches, false)
+    return true
   },
 
   beginTxn: (label) => {

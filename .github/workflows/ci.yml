@@ -252,9 +252,9 @@ jobs:
   #    输入，被 PR 改写的树不能参与判定自己。判定器、政策、签署记录、协议正文
   #    **全部取自默认分支**（与两个 Gate 取 aggregate_gate.py 同一条纪律），
   #    PR 侧只经 GitHub API 读元数据。因此这里**没有 actions/checkout**。
-  # 3. **权限最小。** contents: read 读默认分支的文件，pull-requests: read 读
-  #    PR 的 commit 列表。不写 comment、不写 status——签署 UX 归签名服务商，
-  #    这一格只负责判定。没有任何 secret。启用 provider 时才需要再加
+  # 3. **权限最小。** contents: read 读默认分支的文件与 compare 出来的提交列表，
+  #    pull-requests: read 读 PR 的 base / head / 提交数快照。不写 comment、
+  #    不写 status——签署 UX 归签名服务商，这一格只负责判定。没有任何 secret。启用 provider 时才需要再加
   #    `checks: read`（读它那条 check 的结论），届时同步改 tests 里的权限断言。
   #
   # 用 pull_request 而**不是** pull_request_target：后者会让这个 job 拿到写
@@ -307,17 +307,36 @@ jobs:
 
       # PR 侧只读元数据：作者 + 每个 commit 的 author + Co-authored-by。
       # 只看 PR 发起人是不够的——commit 作者和 co-author 同样在投稿。
-      # `--paginate` 的**输出形状随 gh 版本而变**：gh 2.97 对 REST 数组端点会把
-      # 各页合并成一个数组，而 `gh api --help` 写的是「Each page is a separate
-      # JSON array or object」。判定器三种形状都吃（见 load_commits），所以这里
-      # 不去赌 runner 装的是哪个版本。
       #
-      # **`--slurp` 是错的解法**：它把每页包成一层，产出数组的数组——判定器
-      # 反而要额外兼容。这里刻意不用。
+      # **数据源是 compare，不是 `pulls/{n}/commits`（#318）。** 后者的响应
+      # **封顶 250 条**（官方文档原话「Lists a maximum of 250 commits for a pull
+      # request」），`--paginate` 也突破不了：一个 251 提交的 PR 在这里永远数出
+      # 250，门禁（正确地）拒判，于是超过 250 个提交的 PR 永远合不进去。
+      # `repos/{r}/compare/{base}...{head}` 与 `git log BASE..HEAD` 同义，带分页
+      # 参数时**逐页给全**（不带时同样封顶 250——所以 per_page 显式写上，不赌 gh
+      # 会不会替你补），每条仍是同一种 commit 对象、`author.login` 照样由 GitHub
+      # 解析好，判定器一个字不用改（它取自默认分支，改接口要先落 main）。
       #
-      # 真正要防的不是形状，是**只拿到第一页却当成全部**：一个 41 提交的 PR
-      # 会只判前 30 个贡献者，**报绿而实际漏判**。`test -s` 拦不住（文件非空）。
-      # 所以把 PR 自己声明的提交数一并传下去，由判定器核对——少一条就红。
+      # **为什么不改用 git 枚举**（#318 原提议）：git 只有邮箱，没有 GitHub 账号。
+      # 本仓库历史里三百多个提交的作者邮箱不是 noreply 形态，只靠 API 的
+      # `author.login` 才认得出人——换成 git，它们会全部落进 unresolved、门禁全红；
+      # 况且那还要把 PR 的对象取进这个 job，而这一格的安全前提是一行 PR 内容都不碰。
+      #
+      # 判据的主语：**这个 PR 在「此刻这一次快照」里的全部提交**。base / head /
+      # 声明的提交数从同一个 `pulls/{n}` 响应里一次读出，compare 就按这两个 SHA
+      # 取——三个数对的是同一个对象、同一个时刻。
+      #
+      # `--jq '.commits'` 按页应用、每页吐一个数组，产出「多个数组首尾相接」的
+      # 形状——判定器的 load_commits 本来就吃这种形状（见它的 docstring）。
+      # **`--slurp` 是错的解法**：它把每页包成一层，产出数组的数组。这里刻意不用。
+      #
+      # 真正要防的是**只拿到一部分却当成全部**：漏掉的人不会被检查，而门禁报绿。
+      # `test -s` 拦不住（文件非空）。所以取完之后四处对账，任何一处不等就红：
+      #   枚举条数 == 去重条数（分页重叠会让「条数对了、人却漏了」）
+      #           == compare 自报的 total_commits（同一把尺子量两次）
+      #           == PR 自己声明的 commits（主语对不对：比的真是这个 PR）
+      # 外加 head SHA 必须在枚举结果里。条数再传给判定器的 --expected-commits，
+      # 让它按**自己解析出的**条数再核一遍。
       - name: 收集这个 PR 的贡献者（只读元数据）
         if: github.event_name == 'pull_request'
         env:
@@ -326,27 +345,37 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          gh api --paginate "repos/$REPO/pulls/$PR/commits" \
-            > "$RUNNER_TEMP/pr-commits.json"
-          test -s "$RUNNER_TEMP/pr-commits.json"
+          out="$RUNNER_TEMP/pr-commits.json"
 
-          # **核数量，不信分页。** `test -s` 只证明文件非空，挡不住「只拿到
-          # 第一页」——那会让判定器按不完整的贡献者名单判绿。
-          #
-          # 计数用 `--jq` **流式**输出：它按页应用过滤器、每条一行，因此与
-          # 「gh 有没有把各页合并成一个数组」无关（实测 per_page=5/10/100，
-          # 也就是 9/5/1 页，都数出 41）。对照组取 PR 自己的 `commits` 字段。
-          #
-          # **不要用 `--slurp`**：它把每页包成一层，`length` 数出来的是**页数**
-          # 而不是提交数（实测 5 页 → 5）。
-          want=$(gh api "repos/$REPO/pulls/$PR" --jq '.commits')
-          got=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[].sha' | wc -l | tr -d ' ')
-          if [ "$got" != "$want" ]; then
-            echo "::error::取到 $got 个提交，但这个 PR 声明有 $want 个——分页没取全。"\
-                 "绝不按不完整的贡献者名单判定：漏掉的人不会被检查，而门禁会报绿。"
+          snap=$(gh api "repos/$REPO/pulls/$PR" --jq '"\(.base.sha) \(.head.sha) \(.commits)"')
+          read -r base head want <<< "$snap"
+          if ! [[ "$base" =~ ^[0-9a-f]{40}$ && "$head" =~ ^[0-9a-f]{40}$ && "$want" =~ ^[0-9]+$ ]]; then
+            echo "::error::读不出这个 PR 的 base / head / commits 快照：「$snap」"
             exit 1
           fi
-          echo "提交数核对通过：$got / $want"
+
+          cmp="repos/$REPO/compare/$base...$head"
+          gh api --paginate "$cmp?per_page=100" --jq '.commits' > "$out"
+          test -s "$out"
+          total=$(gh api "$cmp?per_page=1" --jq '.total_commits')
+
+          # 数的是**落进文件的**那一份（判定器读的也是它），不另取一遍。
+          # SHA 先落盘再数：`jq | grep -q` 在 pipefail 下会因 SIGPIPE 误报失败。
+          shas="$RUNNER_TEMP/pr-shas.txt"
+          jq -r '.[].sha' "$out" > "$shas"
+          got=$(wc -l < "$shas" | tr -d ' ')
+          uniq=$(sort -u "$shas" | wc -l | tr -d ' ')
+          if [ "$got" != "$uniq" ] || [ "$got" != "$total" ] || [ "$got" != "$want" ]; then
+            echo "::error::取到 $got 个提交（去重后 $uniq），compare 自报 $total 个，这个 PR 声明有 $want 个——"\
+                 "枚举不全或对错了对象。绝不按不完整的贡献者名单判定：漏掉的人不会被检查，而门禁会报绿。"
+            exit 1
+          fi
+          if ! grep -qx "$head" "$shas"; then
+            echo "::error::head $head 不在取到的 $got 个提交里——比的不是这个 PR。"
+            exit 1
+          fi
+          echo "CLA_EXPECTED_COMMITS=$want" >> "$GITHUB_ENV"
+          echo "提交数核对通过：$got / $want（compare ${base:0:8}...${head:0:8}）"
 
       # -I（隔离模式）：不把脚本目录挂进 sys.path、无视 PYTHONPATH——
       # 与两个 Gate 同一双保险。
@@ -361,8 +390,10 @@ jobs:
                 --policy "$TRUSTED/.github/cla-policy.json"
                 --repo-root "$TRUSTED")
           if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # --expected-commits：判定器按**自己解析出的**条数再核一遍（它在 main 上早就有这个参数）。
             ARGS+=(--pr-author "$PR_AUTHOR"
-                   --commits-json "$RUNNER_TEMP/pr-commits.json")
+                   --commits-json "$RUNNER_TEMP/pr-commits.json"
+                   --expected-commits "$CLA_EXPECTED_COMMITS")
           fi
           python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}"
 

@@ -1127,6 +1127,25 @@ function upsertOverrides(
 }
 
 /**
+ * 把几条 override **补进 `entry` 那条历史**并立即重渲染（`documentStore.amendLast`
+ * 的面板版）。`entry` 已不是最后一条 / 有进行中的事务时什么都不写、返回 false。
+ */
+export function amendOverrides(
+  panelId: string,
+  entry: HistoryEntry,
+  patches: { gid: string; prop: string; value: unknown }[],
+): boolean {
+  const ok = useDocumentStore.getState().amendLast(entry, (d) => {
+    const o = d.objects.find((x) => x.id === panelId)
+    if (o?.type === 'panel') upsertOverrides(o, patches)
+  })
+  if (!ok) return false
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') requestRender(panel, true)
+  return true
+}
+
+/**
  * 一次写入多条 override（子图对齐等批量操作）：一条历史、一次渲染。
  * render 同 setOverride 的第五参：'none' 交给手势结束时的 flushRender 定稿。
  */

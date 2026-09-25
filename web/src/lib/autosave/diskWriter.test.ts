@@ -292,6 +292,37 @@ describe('冲突挡住排队那份、排空才唤醒等待方、手动标志只�
     expect(h.puts.map((p) => p.id)).toEqual(['A', 'B'])
   })
 
+  it('当前文档那份被冲突挡下后，排在它后面的别的文档照写，whenIdle 等它写完才 resolve（#411）', async () => {
+    let blocked = false
+    const h = harness({ blocked: () => blocked })
+    h.writer.rememberRevision('A', { revision: 'old' })
+    h.writer.rememberRevision('B', null)
+    h.holdPuts()
+    h.setPutMode('external')
+    h.writer.schedule('A', doc(1), null)
+    h.writer.schedule('A', doc(2), null) // 出队的第一份恰好是 A 自己排的那份
+    h.writer.schedule('B', doc(3), null)
+    let idle = false
+    void h.writer.whenIdle().then(() => {
+      idle = true
+    })
+    await tick() // 让 A 的 PUT 真正挂到 gate 上
+    expect(idle).toBe(false)
+    blocked = true // store 收到 failed 后把状态推成 conflict
+    h.release() // A 在途那次此刻结算成 409
+    h.setPutMode('ok')
+    await tick()
+    // A 在途那次 409；A 排队那份被挡、B 照样落到磁盘上
+    expect(h.puts.map((p) => [p.id, p.updatedAt])).toEqual([
+      ['A', 1],
+      ['B', 3],
+    ])
+    expect(h.events).toEqual(['saving:A', 'failed:A:external', 'saving:B', 'written:B@1000'])
+    expect(h.writer.queued).toBe(0)
+    expect(h.writer.busy).toBe(false)
+    expect(idle).toBe(true)
+  })
+
   it('whenIdle 在在途那次与队列都排空之后才 resolve；空队列立刻 resolve', async () => {
     const h = harness()
     h.writer.rememberRevision('A', null)

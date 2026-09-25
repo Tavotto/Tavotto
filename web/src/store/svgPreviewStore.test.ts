@@ -23,6 +23,8 @@ import {
   previewTransformOf,
   reattachPreview,
   resetPreview,
+  retargetPreview,
+  previewScale,
   setHistoryMode,
   settleFailedAuthority,
 } from './svgPreviewStore'
@@ -357,5 +359,55 @@ describe('权威渲染失败', () => {
     previewTransform('axes_0.lines_0', 0.4, 0)
     flushPreviewFrame()
     expect(previewSession()).not.toBeNull()
+  })
+})
+
+/* ------------------- 缩放预览与改挂（图例整体缩放，2026-09-25） ------------------- */
+
+describe('previewScale：绕不动点的等比缩放，同样前置于原始变换', () => {
+  it('写成 matrix(s,0,0,s,e,f)，不动点换算到 user unit；取消还原', () => {
+    begin()
+    previewScale('axes_0.lines_0', 1.5, 0.2, 0.4)
+    flushPreviewFrame()
+    const e = 0.2 * 288 * (1 - 1.5)
+    const f = 0.4 * 216 * (1 - 1.5)
+    expect(tf('axes_0.lines_0')).toBe(`matrix(1.5,0,0,1.5,${e},${f})`)
+    cancelPreview()
+    expect(tf('axes_0.lines_0')).toBeNull()
+  })
+
+  it('SVG 被原样重插：连同倍数一起重放', () => {
+    begin()
+    previewScale('axes_0.lines_0', 2, 0, 0)
+    flushPreviewFrame()
+    mountSvg()
+    reattachPreview(PANEL, KEY)
+    expect(tf('axes_0.lines_0')).toBe('matrix(2,0,0,2,0,0)')
+  })
+})
+
+describe('retargetPreview：把在等的预览改挂到中间那一版上', () => {
+  const FIRST = 'Fig1.pdf [第一版]'
+  const FINAL = 'Fig1.pdf [补正后]'
+
+  it('中间那一版换进 DOM：只重放平移 δ；补正后那一版到了才收工', () => {
+    begin()
+    previewScale('axes_0.lines_0', 0.8, 0.1, 0.1)
+    flushPreviewFrame()
+    commitPreview([], FIRST)
+    expect(retargetPreview(PANEL, FIRST, { 'axes_0.lines_0': [0.01, -0.02] }, FINAL)).toBe(true)
+
+    mountSvg() // 中间那一版的 DOM：图例大小已对，只差位置
+    reattachPreview(PANEL, FIRST)
+    expect(tf('axes_0.lines_0')).toBe(`translate(${0.01 * 288},${-0.02 * 216})`)
+    expect(previewSession()).not.toBeNull()
+
+    mountSvg()
+    reattachPreview(PANEL, FINAL)
+    expect(previewSession()).toBeNull()
+  })
+
+  it('没有在途会话：什么都不改，返回 false', () => {
+    expect(retargetPreview(PANEL, FIRST, {}, FINAL)).toBe(false)
   })
 })

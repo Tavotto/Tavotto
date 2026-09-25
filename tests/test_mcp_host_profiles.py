@@ -359,9 +359,85 @@ def test_instruction_fallback_quotes_script_paths_for_a_package_dir_with_spaces(
     assert f"`{skill / 'references'}{os.sep}" in text
 
 
-def test_shell_quote_on_windows_wraps_in_double_quotes(mod, monkeypatch):
+def test_shell_quote_on_windows_is_powershell_single_quoting(mod, monkeypatch):
+    """PowerShell 的双引号会展开 `$x` 与反引号，单引号里只有 ' 要写成 ''（#578）。"""
     monkeypatch.setattr(mod, "IS_WINDOWS", True)
-    assert mod._shell_quote(r"C:\Tavotto Package\x.py") == '"C:\\Tavotto Package\\x.py"'
+    assert mod._shell_quote(r"C:\Tav $x`y\it's\x.py") == "'C:\\Tav $x`y\\it''s\\x.py'"
+
+
+def test_windows_instructions_use_the_py_launcher_and_single_quotes(mod, monkeypatch):
+    """Windows 上 `python3` 常常不存在或是 Store 别名：命令示例改成 `py -3 '<脚本>'`（#578）。"""
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    text = mod.skill_instructions()
+    lines = [ln.strip() for ln in text.splitlines()]
+    scripts = [ln for ln in lines if re.search(r"(prefs|handoff)\.py'", ln)]
+    assert scripts, "等价说明里应有偏好 / 交接脚本的命令"
+    for ln in scripts:
+        assert ln.startswith(mod.WINDOWS_PYTHON + " '"), ln
+    assert not any(ln.startswith("python3 '") for ln in lines)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="只在 Windows 上能真的交给 PowerShell 跑")
+def test_windows_instruction_command_runs_in_powershell_with_dollar_and_backtick(
+    mod, tmp_path, monkeypatch
+):
+    """退出条件：包路径里有 `$` 与反引号时，生成的 prefs.py 命令交给 PowerShell 真跑能成功。
+    解释器前缀换成本测试的解释器（`py -3` 挑哪个 Python 与本条要证的引号无关）。"""
+    skill = tmp_path / "Tav $env_x `n pkg" / "it's" / "tavotto-figure"
+    shutil.copytree(SKILL, skill, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.setattr(mod, "SKILL_DIR", str(skill))
+    text = mod.skill_instructions()
+    line = next(
+        ln.strip()
+        for ln in text.splitlines()
+        if ln.strip().startswith(mod.WINDOWS_PYTHON + " '") and "prefs.py' --json" in ln
+    )
+    cmd = "& '" + sys.executable.replace("'", "''") + "'" + line[len(mod.WINDOWS_PYTHON) :]
+    ps = shutil.which("pwsh") or shutil.which("powershell")
+    assert ps, "Windows runner 上应有 PowerShell"
+    proc = subprocess.run(
+        [ps, "-NoProfile", "-NonInteractive", "-Command", cmd],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={
+            **os.environ,
+            "TAVOTTO_NO_TELEMETRY": "1",
+            "TAVOTTO_CONFIG_DIR": str(tmp_path / "config"),
+            "TAVOTTO_DATA_DIR": str(tmp_path / "data"),
+        },
+        timeout=180,
+    )
+    assert proc.returncode == 0, (cmd, proc.stderr)
+    json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def test_instruction_fallback_carries_the_references_required_before_any_script(
+    mod, tmp_path, monkeypatch
+):
+    """Claude Desktop 这类宿主读不了本机文件：写脚本前必读的 references 必须**原文**随等价
+    说明走，而不是只给一个读不到的路径（#578）。生成后把包删掉，说明本身仍然完整。"""
+    skill = tmp_path / "pkg" / "tavotto-figure"
+    shutil.copytree(SKILL, skill, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.setattr(mod, "SKILL_DIR", str(skill))
+    originals = {
+        name: (skill / "references" / name).read_text(encoding="utf-8")
+        for name in mod.INLINED_REFERENCES
+    }
+    text = mod.skill_instructions()
+    shutil.rmtree(tmp_path / "pkg")
+    for name, original in originals.items():
+        # 同一份原文（只改写了引用路径），不是第二份手写规则
+        assert mod._resolve_skill_paths(original).strip("\n") in text, name
+        assert f"附录：references/{name}" in text
+    assert text.index("附录：") > text.index("图文件契约（核心，违反即死图）")
+
+
+def test_inlined_references_match_the_skill_md_row_for_writing_scripts(mod):
+    """附哪几份由 SKILL.md「写任何画图脚本之前」那一行决定；两边漂移就红。"""
+    body = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    row = next(ln for ln in body.splitlines() if ln.startswith("| 写任何画图脚本之前"))
+    assert tuple(re.findall(r"references/([\w.-]+\.md)", row)) == mod.INLINED_REFERENCES
 
 
 def test_every_reference_the_skill_names_ships_inside_the_skill_dir():
@@ -446,3 +522,28 @@ def test_update_hint_is_not_codex_only():
     )
     assert "codex plugin marketplace upgrade tavotto" in text
     assert "integrations/configure.py" in text and "其他宿主" in text
+    # 重新生成配置不会更新复制出去的技能 / 粘贴的等价说明：两样都要明说（#578）
+    assert "skills/tavotto-figure/" in text and "--emit instructions" in text
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "README.md",
+        "README.zh-CN.md",
+        "codex-plugin/skills/tavotto-figure/references/other-hosts.md",
+    ],
+)
+def test_bootstrap_docs_give_a_windows_invocation(rel):
+    """工具还不存在时没有 `tavotto_health` 给真实命令：接入步骤本身要有 Windows 能跑的写法
+    （`python3` 在那里常常是 Store 别名；#578）。"""
+    text = (ROOT / rel).read_text(encoding="utf-8")
+    assert re.search(r"py -3 '<[^>]+>\\integrations\\configure\.py'", text), rel
+
+
+def test_other_hosts_upgrade_steps_refresh_the_skill():
+    """other-hosts.md 的升级说明与 update_check 同口径：重新复制技能或重新生成等价说明（#578）。"""
+    text = (SKILL / "references" / "other-hosts.md").read_text(encoding="utf-8")
+    upgrade = text[text.index("升级的方法") :]
+    upgrade = upgrade[: upgrade.index("\n- ")]
+    assert "tavotto-figure/" in upgrade and "--emit instructions" in upgrade

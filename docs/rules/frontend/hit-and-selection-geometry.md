@@ -95,3 +95,25 @@
   松手以最后一帧为准。它**推翻**了 #472 时「拖框不带字——要一起走用多选」的约定：
   那条约定下流程图每挪一个框要先圈上框、字、两头的箭头，而箭头还只能整根走。
   看护 `canvas/patchCarryDrag.test.tsx`。
+- **图内拖动的吸附**（2026-09-25，用户：拖「Vacuum」吸不到「Superconductor」、轴标题也不吸）：
+  图内文字 / 轴标题 / 图例 / 子图的整体拖动与多选整组平移都吸附，候选线唯一出处
+  `lib/elementGeom.inFigureSnapCandidates`——别的**可对齐**元素（`isAlignable`，与多选对齐
+  同一判据）墨迹框的左中右 / 上中下 + 整图四边与中线，换算到页面 mm 后与画布对象层
+  **同一把容差**（`snapTolMm`）、**同一套参考线**（`interactionStore.setSnap`）。
+  规则：① 取的是**权威** manifest（旧框会吸到旧位置）；② 被拖元素、它的**后代**与随行
+  元素不出线（`interactions.underAny`）——只排除自身不够，子图自己的标题离它的边往往就
+  一两个像素，会把一起动的东西吸走（`inFigureDrag.test` 有精确变异）；③ 三线里**离得
+  最近**的那条胜出（`geometry.snapMoveNearest`；画布层的 `snapMove` 按顺序取第一条，图内
+  元素挨得近，按顺序取会让左边先吸到不相干的线上）；④ ⌘ / Ctrl、吸附总开关、「吸附到
+  对象」任一关掉就不吸；shift 锁成水平 / 垂直时只在仍在走的那一轴上吸，锁成 45° 时修正沿锁定
+  方向投影（两轴里走得少的那条胜出，另一轴按比例跟着动，#575 评审）；⑤ 面板旋转 / 翻转时
+  不吸（与混排对齐同一取舍）；⑥ 吸附只改位移，写法不变（仍是一条 pos_frac / position）。
+  缩放手柄不吸。看护：`canvas/inFigureDrag.test.tsx`。
+- **子图的随行元素跟着一切平移手势走**（2026-09-25，用户：挪过「(a)」再拖主图，标签
+  有时不跟）：被手动摆过的后代（带 pos_frac / loc_frac / endpoints_frac）与 manifest
+  点名的随行 axes（`follow_gids`：色条、孪生轴），单个子图拖动由 `axesCompanions` 带着走；
+  **多选整组平移**以前只写选中的那几条 position——先点主图、⇧ 点色条一起拖正是最自然的
+  操作，于是标签「有时跟、有时不跟」。现在整组平移经 `elementGeom.companionPatchesFor`
+  补上同一批随行改动（已在选区里的 (gid, prop) 不重复写），预览期色条这类平级 `<g>`
+  单独跟手。缩放（单个 / 成组）仍然不带随行元素——该缩到哪里没有可信答案（原有取舍，
+  `axesCompanionDrag.test` 钉着）。看护：`canvas/axesCompanionDrag.test.tsx`。

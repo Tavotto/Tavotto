@@ -174,6 +174,62 @@ def test_number_const_ends_at_a_semicolon_or_a_declaration_keyword(src, value):
     assert exported_number(src, "V") == value
 
 
+# ---- 正则字面量（#540：`/export const V = 3;/` 曾被读成 3）----
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "const re = /export const V = 3;/\n",
+        "check(/export const V = 3;/g)\n",
+        "const re = /[/]export const V = 3;/\n",  # 字符类里的 `/` 不收尾
+        "const re = /\\/export const V = 3;/\n",  # 转义的 `/` 不收尾
+    ],
+)
+def test_number_const_inside_a_regex_literal_is_a_red(src):
+    with pytest.raises(AssertionError):
+        exported_number(src, "V")
+
+
+@pytest.mark.parametrize(
+    "regex",
+    [
+        "/'/",
+        "/[/]'/",  # 字符类里的 `/` 不收尾
+        "/\\/'/",  # 转义的 `/` 不收尾
+        "/'/gi",
+    ],
+)
+def test_regex_literal_with_a_quote_does_not_derail_the_scan(regex):
+    src = f"const re = {regex}\nexport const V = 3\n"
+    assert exported_number(src, "V") == 3
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        # 除号之后故意不再出现 `/`：否则两个除号之间恰好凑成一条正则，量不出误判
+        "const x = a / 2\nexport const V = 3\n",  # 标识符之后是除号
+        "const x = 6 / 2\nexport const V = 3\n",  # 数字之后是除号
+        "const x = f(a) / 2\nexport const V = 3\n",  # `)` 之后是除号
+        "const x = a[0] / 2\nexport const V = 3\n",  # `]` 之后是除号
+        "const x = '4' / 2\nexport const V = 3\n",  # 字符串之后是除号
+        "const x = <A>b</A>\nexport const V = 3\n",  # TSX 闭合标签
+        "const x = <A b={1} />\nexport const V = 3\n",  # TSX 自闭合（`}` 之后）
+    ],
+)
+def test_division_and_tsx_tags_are_not_regex_literals(src):
+    assert exported_number(src, "V") == 3
+
+
+def test_regex_literal_is_blanked_but_not_a_string_span():
+    src = "const re = /ab'c/gi; const s = 'd'\n"
+    code, spans = blank_comments_and_strings(src)
+    assert len(code) == len(src)
+    assert "ab" not in code and "gi" not in code
+    assert [src[a:b] for a, b in spans] == ["d"]
+
+
 def test_interface_member_with_a_multiline_union_is_one_member():
     """跨行的联合类型（`type:` 下面一行一个 `| '…'`）是**一个**成员，不是一串读不出形状的行。"""
     from tests.support.tsconst import exported_interface_members

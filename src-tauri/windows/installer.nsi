@@ -1115,10 +1115,14 @@ Function DirectoryLeave
   ClearErrors
   CreateDirectory "$INSTDIR"
   IfErrors dir_not_writable
-  FileOpen $R7 "$INSTDIR\.tavotto-write-probe" w
+  ; 写探针不用固定文件名（#533）：`FileOpen … w` 会先截断、随后 Delete 删掉
+  ; 用户目录里恰好同名的已有文件。GetTempFileName 在 $INSTDIR 里新建一个
+  ; 不撞名的空文件（Win32 GetTempFileName + CREATE_NEW，建不出来置错误标志），
+  ; 这一步本身就是写权限探测；Delete 只删它刚返回的那一个路径。它要求目录
+  ; 已存在，所以放在 CreateDirectory 之后。
+  GetTempFileName $R7 "$INSTDIR"
   IfErrors dir_not_writable
-  FileClose $R7
-  Delete "$INSTDIR\.tavotto-write-probe"
+  Delete "$R7"
   Return
   dir_not_writable:
   ${IfThen} $R6 = 1 ${|} RMDir "$INSTDIR" ${|}

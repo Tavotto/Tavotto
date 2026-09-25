@@ -85,6 +85,7 @@ from overrides import (
     _stroke_state,
     annotation_arrow_display,
     annotation_arrow_owner,
+    annotation_text_draggable,
     cjk_fallback_candidates,
     collection_caps,
     color_mapping_is_live,
@@ -611,7 +612,9 @@ def instrument(state: FigState) -> None:
                     t,
                     "text",
                     f"文字 “{_snippet(t.get_text())}”",
-                    draggable=True,
+                    # 注释文字按自己的 textcoords 落位：坐标系逆算不回去 / 随 dpi、
+                    # 字号漂的不宣称可拖（与 setter 同一份判据，GEO-B1）
+                    draggable=annotation_text_draggable(t),
                 )
             # annotate(...) 的箭头单独成元素；`annotate("", …)` 纯箭头也要能选中
             ap = getattr(t, "arrow_patch", None)

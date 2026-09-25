@@ -293,16 +293,12 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
       .finally(() => {
         diskBusy = false
         // 先出队再递归，队列里不会留下已经在写的那一份（不然同一 id 自己排自己）
-        const next = diskQueue.entries().next()
-        if (!next.done) {
-          const [qid, queued] = next.value
+        for (const [qid, queued] of diskQueue) {
           diskQueue.delete(qid)
-          // 冲突挡住之后，队列里排着的那份不能继续往磁盘上撞：它的内容已经
-          // 在本机副本里，等用户裁决完再写。
-          if (ports.writeBlocked() && ports.isCurrent(qid)) {
-            settleIdle()
-            return
-          }
+          // 冲突挡住之后，队列里排着的**当前文档**那份不能继续往磁盘上撞：它的
+          // 内容已经在本机副本里，等用户裁决完再写。只跳过它——排在后面的别的
+          // 文档照写，否则它们没人处理、等待方也一直醒不来（#411）。
+          if (ports.writeBlocked() && ports.isCurrent(qid)) continue
           schedule(qid, queued.pd, queued.pj)
           return
         }
