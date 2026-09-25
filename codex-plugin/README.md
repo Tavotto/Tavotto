@@ -426,6 +426,10 @@ cwd 正是插件目录，拿它当边界会把每张用户图判成越界。一�
 宿主声明了 `elicitation`/`roots` 却**没把框送到用户面前**（超时、断开）是
 `workspace_confirmation_no_response` / `workspace_roots_no_response`
 （`fix_host_wiring`——这不是用户拒绝，再点也不会有提示，去查宿主接线）；
+宿主不弹框、**当场替用户回了拒绝**（快过任何人能作答，或回应里标着
+`approvals_reviewer: auto_review`）是 `workspace_confirmation_auto_declined`
+（同样 `fix_host_wiring`：Codex 的「完全访问」权限与 `codex exec` 都会这样，
+把权限切到「请求批准」后重新打开即可弹框）；
 路径越界是 `path_out_of_scope`（`narrow_the_path`，错误里列出允许的根）；
 宿主既没给目录也不支持确认是 `no_workspace_root`（`configure_roots`，直接给
 `TAVOTTO_MCP_ROOTS` 的用法）。`tavotto_health` 的

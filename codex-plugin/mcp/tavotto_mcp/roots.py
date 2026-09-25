@@ -63,6 +63,7 @@ RESTART_HOST = "重启 MCP 宿主（Codex，或你配置 Tavotto 的那个编辑
 CODE_CONFIRMATION_DECLINED = "workspace_confirmation_declined"
 CODE_CONFIRMATION_CANCELLED = "workspace_confirmation_cancelled"
 CODE_CONFIRMATION_NO_RESPONSE = "workspace_confirmation_no_response"
+CODE_CONFIRMATION_AUTO_DECLINED = "workspace_confirmation_auto_declined"
 CODE_CONFIRMATION_ERROR = "workspace_confirmation_error"
 CODE_CONFIRMATION_STALE = "workspace_confirmation_stale"
 CODE_CONFIRMATION_REQUIRED = "workspace_confirmation_required"
@@ -119,6 +120,15 @@ WORKSPACE_FAILURES: dict[str, WorkspaceFailure] = {
             "这不是用户拒绝——再让用户点一次也不会出现提示。请检查宿主的 "
             "elicitation 接线（版本、权限、是不是非交互模式），或直接把 "
             f"{ROOTS_ENV} 设成工作目录后{RESTART_HOST}。",
+        ),
+        _failure(
+            CODE_CONFIRMATION_AUTO_DECLINED,
+            FIX_HOST_WIRING,
+            "宿主没有把确认框送到用户面前，而是按自己的审批设置直接替用户回了拒绝。",
+            "这不是用户拒绝——再让用户点一次也不会出现提示。Codex 的「完全访问」权限"
+            "（approval_policy = never）、没开 mcp_elicitations 的 granular 审批、非交互的 "
+            "codex exec 都会这样：请用户在可交互会话里把权限切到「请求批准」后重新打开，"
+            f"或把 {ROOTS_ENV} 设成项目目录后{RESTART_HOST}。不要自动循环重试。",
         ),
         _failure(
             CODE_CONFIRMATION_ERROR,
@@ -182,6 +192,7 @@ _CONFIRMATION_FAILURE_CODES = {
     "declined": CODE_CONFIRMATION_DECLINED,
     "cancelled": CODE_CONFIRMATION_CANCELLED,
     "no_response": CODE_CONFIRMATION_NO_RESPONSE,
+    "auto_declined": CODE_CONFIRMATION_AUTO_DECLINED,
     "error": CODE_CONFIRMATION_ERROR,
     "stale": CODE_CONFIRMATION_STALE,
 }
