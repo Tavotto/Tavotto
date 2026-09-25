@@ -84,6 +84,11 @@ def require_agent(agent_id: str) -> ai_agents.AgentDefinition:
 # 能力探测
 # ---------------------------------------------------------------------------
 _CAPS_CACHE: dict = {}
+#: 缓存代数。每次 invalidate / refresh 加一；一次探测只有在它**起跑时**的代数
+#: 仍是当前代数时才写回缓存——诊断接口超预算后留在后台的那次探测（#512）
+#: 读的是改设置之前的快照，跑完不许把旧结论盖回去。
+_CAPS_GEN = 0
+_CAPS_LOCK = threading.Lock()
 
 #: 界面状态机的六个值。语义见 docs/adr/0015。
 STATES = ("ready", "installed", "needs_auth", "broken", "not_installed", "disabled")
@@ -205,17 +210,20 @@ def capabilities(refresh: bool = False) -> dict:
     只需要往注册表里放一个适配器。模型与推理强度由适配器各自声明（两家能力
     不同构：claude CLI 不暴露推理强度开关，就不给这一档）。
     """
-    global _CAPS_CACHE
-    if refresh:
-        # refresh = 真的重新探测。解析缓存不清的话，改完自定义路径或点
-        # 「重新检测」拿到的仍是上一次的结论——新路径根本没被 --version
-        # 验过，界面于是一直说「未检测到」（issue #89 的另一半）。
-        ai_agents.clear_cache()
-    elif _CAPS_CACHE:
-        return _CAPS_CACHE
+    global _CAPS_CACHE, _CAPS_GEN
+    with _CAPS_LOCK:
+        if refresh:
+            # refresh = 真的重新探测。解析缓存不清的话，改完自定义路径或点
+            # 「重新检测」拿到的仍是上一次的结论——新路径根本没被 --version
+            # 验过，界面于是一直说「未检测到」（issue #89 的另一半）。
+            _CAPS_GEN += 1
+            ai_agents.clear_cache()
+        elif _CAPS_CACHE:
+            return _CAPS_CACHE
+        gen = _CAPS_GEN
     saved = config.ai_agent_settings()
     npm_available = _npm_argv() is not None
-    _CAPS_CACHE = {
+    caps = {
         "agents": [
             _agent_caps(a, saved.get(a.id) or {}, npm_available) for a in ai_agents.agents()
         ],
@@ -223,14 +231,21 @@ def capabilities(refresh: bool = False) -> dict:
         "presets": ai_providers.PRESETS,
         "checked_at_ms": int(time.time() * 1000),
     }
-    return _CAPS_CACHE
+    with _CAPS_LOCK:
+        # 起跑之后有人 invalidate / refresh 过：这份结论读的是旧设置，照样交给
+        # 调用方（它问的就是那一刻），但不写回共享缓存。
+        if gen == _CAPS_GEN:
+            _CAPS_CACHE = caps
+    return caps
 
 
 def invalidate_capabilities() -> None:
     """改过路径 / 开关 / 第三方接口后必须清缓存，否则界面一直是旧探测结果。"""
-    global _CAPS_CACHE
-    _CAPS_CACHE = {}
-    ai_agents.clear_cache()
+    global _CAPS_CACHE, _CAPS_GEN
+    with _CAPS_LOCK:
+        _CAPS_GEN += 1
+        _CAPS_CACHE = {}
+        ai_agents.clear_cache()
 
 
 def agent_caps(agent_id: str) -> dict | None:

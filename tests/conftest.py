@@ -34,7 +34,10 @@ os.environ.setdefault("TAVOTTO_DATA_DIR", _DATA_DIR)
 # 像素 / 描述符对比恒红、stdout 里带上别人的路径（#452、#483）。主语是「哪个时刻」：
 # collection 期与用例期读到的必须是**同一份**（空的）用户配置。
 _CONFIG_DIR = tempfile.mkdtemp(prefix="tavotto-config-")
-os.environ.setdefault("TAVOTTO_CONFIG_DIR", _CONFIG_DIR)
+# **无条件**覆盖，不用 setdefault：开发者自己 export 过 TAVOTTO_CONFIG_DIR（指向
+# 日常配置）时，setdefault 会让 collection 期仍读那份，而用例期的 fixture 又换成
+# 临时目录——两个时刻又不是同一份了。
+os.environ["TAVOTTO_CONFIG_DIR"] = _CONFIG_DIR
 
 # 渲染控制面**默认走 Python 池**。开发机上 `cargo build` 之后
 # `workerd/target/debug/tavotto-workerd` 就在那儿，pool 会自动认出来——
