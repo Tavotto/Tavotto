@@ -33,6 +33,7 @@ U10 起唯一实现，ADR 0067 / 0072）。
 
 from __future__ import annotations
 
+import atexit
 import dataclasses
 import shutil
 import tempfile
@@ -141,12 +142,23 @@ def preview_cache(cache_dir: Path | None = None, *, max_bytes: int | None = None
 def prewarm() -> threading.Thread:
     """冷启动三件（起 render child ~70 ms、字体注册表 ~90 ms、第一次排版载 CJK 脸 ~60 ms）放到后台线程里先做掉，
     用户的第一次预览 / 导出不再替它们付账。由 `pdfbackend.warm()` 在服务启动时调。失败只记日志：同一个错误
-    会在第一次真用到时原样抛出（无静默回退——这里不替谁选别的后端，也不吞掉那一次）。"""
+    会在第一次真用到时原样抛出（无静默回退——这里不替谁选别的后端，也不吞掉那一次）。
+
+    线程是 daemon（不挡服务启动，也不该挡 Ctrl-C），退出时由 `_stop_prewarm` 收住（#641）：原生那一段
+    （字体注册表 + 第一次排版：import pikepdf / uharfbuzz / fontTools、建 HarfBuzz 脸）只在 `native` 锁里、
+    先查 `cancel` 再进；起 child + ping 只用标准库（`renderhost` 父进程侧纯标准库，PDFium 在 child 里）。"""
+    cancel = threading.Event()
+    native = threading.Lock()
 
     def run() -> None:
         try:
+            if cancel.is_set():
+                return
             host().ping()
-            typography.text_width("图 Aa", 10.0, _faces("serif", False, False))
+            with native:
+                if cancel.is_set():
+                    return
+                typography.text_width("图 Aa", 10.0, _faces("serif", False, False))
         except Exception as exc:  # noqa: BLE001 —— 预热不是权威路径，真用到时同一个错误会再抛
             import logging
 
@@ -154,7 +166,25 @@ def prewarm() -> threading.Thread:
 
     t = threading.Thread(target=run, name="rendercore-prewarm", daemon=True)
     t.start()
+    atexit.register(_stop_prewarm, cancel, native)
     return t
+
+
+def _stop_prewarm(cancel: threading.Event, native: threading.Lock) -> None:
+    """退出前收住预热（#641）：返回之后，预热线程**要么已经做完原生那一段，要么永远不会进去**。
+
+    为什么必须收：预热里有第一次 import 原生扩展（pikepdf 是 nanobind）。解释器已经开始收尾时 daemon 线程
+    再去拿 GIL 会被当场 `pthread_exit`，Linux 上这是一次穿过 nanobind C++ 栈帧的强制展开——实测 py3.10
+    x86_64 上 abort（`Critical nanobind error: enum_create(...)`、`FATAL: exception not rethrown`）或 SIGSEGV。
+    atexit 回调跑在解释器进入收尾（finalizing）**之前**。
+
+    为什么不是「有界地 join」：ping 可能等到 child 的超时（默认 60 s），join 超时返回之后线程照样会走出
+    ping、进原生那一段——同一个崩溃（Codex #644）。所以先立 `cancel`，再拿一次 `native` 锁：线程若正在原生
+    那一段里，这里等它做完（纯 CPU + 读本地字体文件，不等 child、不等网络，没有会卡住的等待）；若还没进去，
+    它进锁后先查 `cancel` 就走。还停在 ping 里的线程只在标准库的锁 / 管道上等，收尾时被收掉不穿过 C++ 栈帧。"""
+    cancel.set()
+    with native:
+        pass
 
 
 def reset_for_tests() -> None:

@@ -7600,6 +7600,45 @@ def main():
     # 那一套。**失败一律不打扰用户**：清单只是快路径，已知安装位置那条腿还在。
     if engine_locate.refresh_manifest() is None:
         LOG.debug("安装清单未能刷新（不影响使用）")
+
+    # 落地地址的形状（含 `?open=<stem>`）只有 handoff.browser_url 一个出处：
+    # 前端 lib/openRequest.ts 认的就是它，两边别各写一份。
+    def landing(p: int) -> str:
+        return engine_handoff.browser_url(
+            p, engine_handoff.Target("", args.open_stem, args.open_pick)
+        )
+
+    insecure = args.insecure_no_auth or os.environ.get("TAVOTTO_INSECURE_NO_AUTH") == "1"
+
+    # **先问端口上是不是已经有一个 Tavotto，再做任何启动副作用**（#641）。复用路径只是把人指过去：
+    # 这个进程不提供服务，下面那些——清缓存线程、把 AI 会话标成中断、装载并预热 PDF 后端（起 render
+    # child、后台线程里 import pikepdf / HarfBuzz）、开项目起 watcher——在这里做全是白做，而且有害：
+    # 把 AI 会话标成中断改的是**在跑那个实例**正进行中的会话；预热线程是 daemon，本进程打印完就退，
+    # 解释器收尾时它还在 import 原生扩展，Linux 上直接 SIGSEGV / abort（py3.10 CI 抓到，-11）。
+    # 桌面 sidecar 不走端口复用（端口由壳分配），照旧在下面起服务前预热。
+    port = None
+    if not args.desktop_sidecar:
+        port = resolve_port(args.port)
+        if port is None:
+            # 端口上已经有一个 Tavotto 在跑：把浏览器指过去就够了，别再起一个。
+            # 双击应用图标的用户没有终端可看，这里必须自己把事办圆。
+            # 复用是一次**安全的 token 交接**：凭本机凭据文件向在跑的实例换一枚
+            # 一次性 nonce（session_client.relaunch_nonce）；对面是老版本或
+            # --insecure-no-auth 的实例时换不到，裸地址也照样能用。
+            url = landing(args.port)
+            nonce = engine_session_client.relaunch_nonce(args.port)
+            if nonce:
+                url += "#dnonce=" + nonce
+            if args.no_browser:
+                # 没有浏览器可开（服务器上经 SSH 转发用）：换到的 nonce 只能靠这里
+                # 交给人，与首次启动打印带 nonce 的地址同一口径。不打印就等于白换。
+                print(f"* Tavotto 已在 {landing(args.port)} 运行")
+                print(f"* 打开 {url}")
+                return
+            print(f"* Tavotto 已在 {landing(args.port)} 运行，打开现有窗口")
+            webbrowser.open(url)
+            return
+
     threading.Thread(
         target=prune_render_cache, daemon=True, name="mm-cache-prune"
     ).start()  # 启动清一次历史存量
@@ -7652,36 +7691,6 @@ def main():
         # telemetry.set_consent 补发（同一次会话只发一条）。
         engine_telemetry.note_app_started("desktop")
         sys.exit(desktop_mode.run(app))
-
-    # 落地地址的形状（含 `?open=<stem>`）只有 handoff.browser_url 一个出处：
-    # 前端 lib/openRequest.ts 认的就是它，两边别各写一份。
-    def landing(p: int) -> str:
-        return engine_handoff.browser_url(
-            p, engine_handoff.Target("", args.open_stem, args.open_pick)
-        )
-
-    insecure = args.insecure_no_auth or os.environ.get("TAVOTTO_INSECURE_NO_AUTH") == "1"
-
-    port = resolve_port(args.port)
-    if port is None:
-        # 端口上已经有一个 Tavotto 在跑：把浏览器指过去就够了，别再起一个。
-        # 双击应用图标的用户没有终端可看，这里必须自己把事办圆。
-        # 复用是一次**安全的 token 交接**：凭本机凭据文件向在跑的实例换一枚
-        # 一次性 nonce（session_client.relaunch_nonce）；对面是老版本或
-        # --insecure-no-auth 的实例时换不到，裸地址也照样能用。
-        url = landing(args.port)
-        nonce = engine_session_client.relaunch_nonce(args.port)
-        if nonce:
-            url += "#dnonce=" + nonce
-        if args.no_browser:
-            # 没有浏览器可开（服务器上经 SSH 转发用）：换到的 nonce 只能靠这里
-            # 交给人，与首次启动打印带 nonce 的地址同一口径。不打印就等于白换。
-            print(f"* Tavotto 已在 {landing(args.port)} 运行")
-            print(f"* 打开 {url}")
-            return
-        print(f"* Tavotto 已在 {landing(args.port)} 运行，打开现有窗口")
-        webbrowser.open(url)
-        return
 
     url = landing(port)
     if insecure:
