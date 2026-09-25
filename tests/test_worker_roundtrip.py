@@ -19,6 +19,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
+from support.pipedrain import StderrDrain
 from tavotto.engine import patchspec, pool, project_watch
 
 try:
@@ -66,6 +67,9 @@ def save(fig, stem, outdir="figures"):
 
 def _drain(proc, timeout=10) -> str:
     """把 worker 已经写出的 stderr 收上来（进程已死时会立刻读到 EOF）。"""
+    drain = getattr(proc, "stderr_drain", None)
+    if drain is not None:
+        return drain.tail(4000, wait=timeout) or "（无 stderr 输出）"
     box: list = []
     t = threading.Thread(target=lambda: box.append(proc.stderr.read()), daemon=True)
     t.start()
@@ -107,7 +111,7 @@ def _text_value(manifest, gid):
 
 
 def _spawn(script: Path, figs: Path, tmp_path: Path, entry: str = "main"):
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         [
             WORKER_PY,
             str(pool.WORKER_PY),
@@ -130,6 +134,10 @@ def _spawn(script: Path, figs: Path, tmp_path: Path, entry: str = "main"):
         encoding="utf-8",
         errors="replace",
     )  # 同 pool.py：管道钉死 UTF-8
+    proc.stderr_drain = StderrDrain(
+        proc
+    )  # 与子进程并发排空 stderr（support/pipedrain.py；#549 Windows 分片的教训）
+    return proc
 
 
 @pytest.fixture

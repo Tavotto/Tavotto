@@ -1,15 +1,25 @@
 import { useMemo } from 'react'
-import { t as translate } from '@/i18n'
+import { msg, t as translate, type UiMessage } from '@/i18n'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { fixOptions } from '@/lib/issueFix'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { cn } from '@/lib/utils'
 import type { ValidationIssue } from '@/lib/validation'
 import { useDocumentStore } from '@/store/documentStore'
-import { applyIssueFix } from '@/store/issueFixActions'
+import {
+  applyIssueFix,
+  applyIssueFixes,
+  isNativePanelIssue,
+  type BatchOptions,
+  type FixFailure,
+  type FixOutcome,
+} from '@/store/issueFixActions'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
 import { Menu, MenuItem } from '../ui/Menu'
+import { Tip } from '../ui/Tooltip'
 
 /** 本组文案在 errors:problems.* 下（与问题面板同一个命名空间） */
 const pr = (key: string, values?: Record<string, unknown>) =>
@@ -31,10 +41,31 @@ export function FixButton({ issue, className }: { issue: ValidationIssue; classN
     () => resolveDocumentSpec(doc.profile, toCatalog(specs)).profile,
     [doc.profile, specs],
   )
+  const fixing = useUiStore((s) => s.fixing)
+  // 订阅素材档案，档案晚到（`/api/runtime/status` 回来）时按钮跟着变
+  const assets = useRuntimeAssetStore((s) => s.byId)
+  const native = useMemo(() => isNativePanelIssue(issue, doc, assets), [issue, doc, assets])
   if (issue.fixKind === 'none') return null
+  if (native) {
+    // 问题照常列出，修复不可用：说一句为什么（只在悬停 / 聚焦时，不常驻）
+    return (
+      <Tip label={pr('fixNativeUnsupported', { product: PRODUCT_NAME })}>
+        <span className={cn('shrink-0', className)} tabIndex={0} data-fix-native-unsupported>
+          <Button size="sm" disabled>
+            {pr(issue.fixKind === 'safe_auto' ? 'fix' : 'fixChoose')}
+          </Button>
+        </span>
+      </Tip>
+    )
+  }
   if (issue.fixKind === 'safe_auto') {
     return (
-      <Button size="sm" className={cn('shrink-0', className)} onClick={() => runFix(issue)}>
+      <Button
+        size="sm"
+        className={cn('shrink-0', className)}
+        disabled={fixing}
+        onClick={() => void runFix(issue)}
+      >
         {pr('fix')}
       </Button>
     )
@@ -44,13 +75,13 @@ export function FixButton({ issue, className }: { issue: ValidationIssue; classN
     <Menu
       width={180}
       trigger={
-        <Button size="sm" className={cn('shrink-0', className)}>
+        <Button size="sm" className={cn('shrink-0', className)} disabled={fixing}>
           {pr('fixChoose')}
         </Button>
       }
     >
       {options.map((o) => (
-        <MenuItem key={o.choice} onSelect={() => runFix(issue, o.choice)}>
+        <MenuItem key={o.choice} onSelect={() => void runFix(issue, o.choice)}>
           {pr(`fixOption.${o.labelKey}`, o.params)}
         </MenuItem>
       ))}
@@ -58,16 +89,58 @@ export function FixButton({ issue, className }: { issue: ValidationIssue; classN
   )
 }
 
-/** 「这个项目按哪套规范检查」——只在 `lib/specBinding` 判，这里只是取一次 */
-export function currentProfile() {
-  const doc = useDocumentStore.getState().doc
-  return resolveDocumentSpec(doc.profile, useProfileStore.getState().catalog()).profile
+/** 修一条；结果用问题面板同一套措辞报出来。 */
+export function runFix(issue: ValidationIssue, choice?: string): Promise<void> {
+  return withBusy(() => applyIssueFix(issue, choice))
 }
 
-/** 修一条；成功 / 失败都用问题面板那两句 toast */
-export function runFix(issue: ValidationIssue, choice?: string): void {
-  const res = applyIssueFix(issue, currentProfile(), choice)
+/**
+ * 批量修：只修当前画布；「全部处理」不含建议档，组头的「全部修复」修的就是那一组
+ * （集合由 `batchable()` 定，与计数同一份）。
+ */
+export function runBatchFix(issues: ValidationIssue[], opts?: BatchOptions): Promise<void> {
+  return withBusy(() => applyIssueFixes(issues, opts))
+}
+
+async function withBusy(job: () => Promise<FixOutcome>): Promise<void> {
   const ui = useUiStore.getState()
-  if (res.ok) ui.setStatus({ key: 'problems.fixed', ns: 'errors', values: { count: res.applied } })
-  else ui.setStatus({ key: `problems.fixFailed.${res.reason}`, ns: 'errors' }, 'error')
+  // 后端事务要真实渲染一两遍，几秒钟：先说一声，免得用户以为没点上又点一次
+  ui.setFixing(true)
+  ui.setStatus({ key: 'problems.fixing', ns: 'errors' })
+  try {
+    reportFix(await job())
+  } finally {
+    useUiStore.getState().setFixing(false)
+  }
+}
+
+const fixFailedText = (f: FixFailure): UiMessage =>
+  msg(
+    `problems.fixFailed.${f.reason}`,
+    { product: PRODUCT_NAME, ...(f.font ? { font: f.font } : {}) },
+    'errors',
+  )
+
+/**
+ * 结果怎么说。**图动没动要说清楚**：没修成的那几条永远是「没改」，不是「改了一半」
+ * ——后端裁决不过时整张图一个字不动。
+ */
+export function reportFix(res: FixOutcome): void {
+  const ui = useUiStore.getState()
+  const failedCount = res.failed.reduce((n, f) => n + f.count, 0)
+  if (!res.ok) {
+    ui.setStatus(fixFailedText(res.failed[0] ?? { reason: res.reason, count: 0 }), 'error')
+    return
+  }
+  if (!failedCount) {
+    ui.setStatus(msg('problems.fixed', { count: res.applied }, 'errors'))
+    return
+  }
+  ui.setStatus(
+    msg(
+      'problems.fixedPartial',
+      { count: res.applied, failed: failedCount, why: fixFailedText(res.failed[0]) },
+      'errors',
+    ),
+  )
 }

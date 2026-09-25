@@ -37,13 +37,13 @@ import {
 } from '@/lib/validationText'
 import type { ValidationIssue } from '@/lib/validation'
 import { useDocumentStore } from '@/store/documentStore'
-import { applyIssueFixes } from '@/store/issueFixActions'
+import { batchable } from '@/store/issueFixActions'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
 import { schedule, useValidationStore } from '@/store/validationStore'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
-import { currentProfile, FixButton } from './IssueFixButton'
+import { FixButton, runBatchFix } from './IssueFixButton'
 import { Tab, TabList, TabPanel } from '../ui/Tabs'
 import { Tip } from '../ui/Tooltip'
 import { useScopedProblems } from './useProblemScope'
@@ -126,10 +126,10 @@ export function ProblemPanel() {
   const actionable = groups.filter((g) => g.severity !== 'not_verifiable')
   const unverifiable = groups.filter((g) => g.severity === 'not_verifiable')
 
-  const fixableHere = useMemo(
-    () => shown.filter((i) => i.fixKind === 'safe_auto' && i.objectRef.canvasId === activeCanvasId),
-    [shown, activeCanvasId],
-  )
+  // 与「全部处理」真正执行的是**同一个集合**（`batchable`：本画布、能自动修、
+  // 不含建议档）——计数说 5 项、点下去修了 7 项，是这颗按钮最不该有的样子
+  const fixableHere = useMemo(() => batchable(shown, activeCanvasId), [shown, activeCanvasId])
+  const fixing = useUiStore((s) => s.fixing)
 
   // 清单空了，「正在处理第几条」就没有主语了（全修好 / 换了文档）
   useEffect(() => {
@@ -212,9 +212,10 @@ export function ProblemPanel() {
                 size="md"
                 variant="primary"
                 className="shrink-0"
-                onClick={() => runBatchFix(fixableHere)}
+                disabled={fixing}
+                onClick={() => void runBatchFix(fixableHere)}
               >
-                {pr('fixAuto')}
+                {fixing ? pr('fixing') : pr('fixAuto')}
               </Button>
             </div>
           )}
@@ -478,9 +479,9 @@ function GroupBlock({
 }) {
   const Icon = SEVERITY_ICON[group.severity]
   const title = issueTitle(group.issues[0])
-  const fixable = group.issues.filter(
-    (i) => i.fixKind === 'safe_auto' && i.objectRef.canvasId === activeCanvasId,
-  )
+  // 组头的「全部修复」是用户点名这一组：建议档的组也照修（「全部处理」才不带建议档）
+  const fixable = batchable(group.issues, activeCanvasId, { includeSuggestions: true })
+  const fixing = useUiStore((s) => s.fixing)
   const currentAt = currentId ? group.issues.findIndex((i) => i.issueId === currentId) : -1
   const folded =
     !expanded && currentAt < PREVIEW_ROWS && group.issues.length >= PREVIEW_ROWS + MIN_HIDDEN_ROWS
@@ -525,7 +526,8 @@ function GroupBlock({
             size="sm"
             variant="ghost"
             className="shrink-0 text-ink-2 hover:text-ink"
-            onClick={() => runBatchFix(fixable)}
+            disabled={fixing}
+            onClick={() => void runBatchFix(fixable, { includeSuggestions: true })}
           >
             {pr('groupFixAll')}
           </Button>
@@ -770,11 +772,3 @@ function ReadinessLink() {
   )
 }
 
-/* -------------------------------- 动作 ------------------------------------ */
-
-function runBatchFix(issues: ValidationIssue[]): void {
-  const res = applyIssueFixes(issues, currentProfile())
-  const ui = useUiStore.getState()
-  if (res.ok) ui.setStatus({ key: 'problems.fixed', ns: 'errors', values: { count: res.applied } })
-  else ui.setStatus({ key: `problems.fixFailed.${res.reason}`, ns: 'errors' }, 'error')
-}

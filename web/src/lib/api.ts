@@ -1777,6 +1777,86 @@ export async function engineRender(
 }
 
 /**
+ * 按出版规范修一张图（ADR 0080）：后端算计划、真实渲染、对着修改前逐项裁决。
+ *
+ * **只算不写**：通过时回 `ok: true` 与这张图**最终的全量 override 列表**，由调用方
+ * 一次 commit 写进文档；不通过时 `ok: false`、`patches` 原样是发上去的那份，
+ * 调用方一个字不改。`only` 点名要修的 `(规则, gid)`；不给 = 全部（建议档不在内）。
+ */
+export interface SpecFixResponse {
+  ok: boolean
+  /** `done` / `nothing_to_do` / `font_unavailable` / `constraint_conflict` / `protected_changed` / `not_resolved` / `unsupported` / `budget_exceeded` */
+  exit: string
+  patches: { gid: string; prop: string; value: unknown }[]
+  changes: { rule: string; gid: string; prop: string; before: unknown; after: unknown }[]
+  skipped: { rule: string; gid: string; reason: string }[]
+  unresolved: { rule: string; gid: string }[]
+  blocking: { id: string; gids: string[]; bucket: string }[]
+  adjustments: unknown[]
+  /**
+   * 这次事务里有一次渲染带 warning 或抛了：热 worker 的状态不可信，后端已把它作废（下一次
+   * 请求重新起、按全量列表重放）。调用方没提交结果时要按此刻的列表重放一次。老后端不带。
+   */
+  worker_retired?: boolean
+  /**
+   * 这次事务里有一次渲染不干净，热态不是发出去的那份：调用方没提交结果时要按此刻的列表
+   * 重放一次。safe worker 时与 `worker_retired` 同真；native 会话不作废（ADR 0021），
+   * 只有这一个为真——引擎把还原失败的键留在账上，重放时自动重试。老后端不带。
+   */
+  replay_required?: boolean
+}
+
+const isStr = (v: unknown): v is string => typeof v === 'string'
+const isRec = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * 成功体的形状：**调用方会读的每一个字段**都验过（Codex #549 第七轮 P1）。缺一个就不是
+ * 「修好了 / 没修成」，是「不知道」——交给调用方的不确定路径，不许在消费处才炸。
+ */
+function isSpecFixResponse(body: Record<string, unknown>): boolean {
+  return (
+    typeof body.ok === 'boolean' &&
+    isStr(body.exit) &&
+    Array.isArray(body.patches) &&
+    body.patches.every((p) => isRec(p) && isStr(p.gid) && isStr(p.prop) && 'value' in p) &&
+    Array.isArray(body.skipped) &&
+    body.skipped.every((s) => isRec(s) && isStr(s.rule) && isStr(s.gid) && isStr(s.reason)) &&
+    (body.worker_retired === undefined || typeof body.worker_retired === 'boolean') &&
+    (body.replay_required === undefined || typeof body.replay_required === 'boolean')
+  )
+}
+
+export async function engineSpecfix(
+  id: string,
+  patches: unknown[],
+  scale: number,
+  profile: unknown,
+  only?: { rule: string; gid: string }[],
+): Promise<SpecFixResponse> {
+  const res = await fetch(apiUrl('/api/engine/specfix'), withProject({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, patches, scale, profile, ...(only ? { only } : {}) }),
+  }))
+  const body = await res.json().catch(() => ({}) as Record<string, unknown>)
+  if (!res.ok) {
+    noteProjectGone(res.status, body)
+    throw new EngineError(
+      (body.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
+      (body.traceback as string) || '',
+      (body.code as string) || '',
+      (body.module as string) || '',
+    )
+  }
+  // 形状不对 = 没拿到（代理页、别的服务占了端口、半截的响应），不是「修好了」
+  if (!isSpecFixResponse(body)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: res.status }), '', 'bad_shape', '')
+  }
+  return body as unknown as SpecFixResponse
+}
+
+/**
  * 作废这张图的热会话（QuickEdit「重新构建」）：下一次 `engineRender` 从头跑
  * 脚本。后端只让会话过期——不起 worker、不动源脚本、不写回、不清 override。
  * `invalidated: false` 是诚实的降级（native 会话是用户自己终端里的进程，不杀），

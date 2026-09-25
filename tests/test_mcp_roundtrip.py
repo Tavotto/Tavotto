@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from support.pipedrain import StderrDrain
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "codex-plugin" / "mcp"))
 
@@ -172,6 +174,9 @@ class Client:
             env=env,
             cwd=str(ROOT),
         )
+        self._stderr = StderrDrain(
+            self.proc
+        )  # 与子进程并发排空 stderr（support/pipedrain.py；#549 Windows 分片的教训）
         self.n = 0
 
     def call(self, method: str, params=None) -> dict:
@@ -183,9 +188,7 @@ class Client:
         self.proc.stdin.flush()
         line = self.proc.stdout.readline()
         if not line:
-            raise AssertionError(
-                "server 挂了:\n" + self.proc.stderr.read().decode("utf-8", "replace")[-4000:]
-            )
+            raise AssertionError("server 挂了:\n" + self._stderr.tail(4000, wait=10))
         return json.loads(line.decode("utf-8"))
 
     def tool(self, name: str, args: dict) -> dict:

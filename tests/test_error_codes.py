@@ -167,6 +167,12 @@ USER_VISIBLE_CODES = {
     "registry_update_failed": {"reason"},
     "settings_dir_unusable": {"key", "reason"},
     "invalid_preview_dpi": {"value"},
+    # ADR 0080：/api/engine/specfix 的入参校验
+    "invalid_scale": {"value"},
+    "invalid_profile": set(),
+    "invalid_only": set(),
+    # native 图（tavotto run）暂不支持自动修复：在任何渲染之前拒绝；产品名走 brand 常量
+    "specfix_native_unsupported": {"product"},
     "invalid_patches": set(),
     "invalid_width": {"value"},
     "not_parameterizable": set(),
@@ -681,9 +687,10 @@ def test_every_worker_error_response_carries_a_failure_status():
     # 写在这里是因为**理由写得比兑现的强，比没有理由更坏**：下一个人会以为
     # 这一格有人守着。
     # 2026-09-25（QA SCI-04-B1）：update_source / history/restore 两处 `, 500` 收进
-    # `_write_back_error_response` 的一处 `, 409`（写回 verify 段挂了，原件零改动），11 → 10。
-    assert len(seen) == 10, (
-        f"`_worker_error_payload` 的调用点从 10 变成了 {len(seen)}：{seen}\n"
+    # `_write_back_error_response` 的一处 `, 409`（写回 verify 段挂了，原件零改动），11 → 10；
+    # ADR 0080 的 /api/engine/specfix 渲染半路死了那一处 `, 500`，10 → 11。
+    assert len(seen) == 11, (
+        f"`_worker_error_payload` 的调用点从 11 变成了 {len(seen)}：{seen}\n"
         "  新增出口 → 把这个数改成新的实测值，并确认它带了状态码；\n"
         "  变少了 → 确认那处是真的删了，而不是搬到了别的文件里。"
     )

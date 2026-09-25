@@ -449,7 +449,7 @@ class BrowserSession:
             return _err("bad_request", f"没有这个 figure: {stem}")
         except Exception:  # noqa: BLE001 - 首次 instrument 也可能栽
             return _err("render_error", "渲染失败", traceback=self._trim_tb())
-        prev = [{"gid": g, "prop": p, "value": v} for (g, p), v in state.applied.items()]
+        prev = overrides_mod.snapshot(state)
         try:
             overrides_mod.apply(state, patches)
             w_in = float(state.fig.get_size_inches()[0]) or 1.0

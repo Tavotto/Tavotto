@@ -430,7 +430,7 @@ class LiveFigureSession:
     def snapshot(self, stem: str) -> list[dict]:
         """当前会话已应用的 override，作为「全量列表」形状的快照。"""
         state = self.states[stem]
-        return [{"gid": g, "prop": p, "value": v} for (g, p), v in state.applied.items()]
+        return overrides_mod.snapshot(state)
 
     def do_render(
         self,
