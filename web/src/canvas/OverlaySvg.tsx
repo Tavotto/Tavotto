@@ -25,7 +25,7 @@ import {
   useViewportStore,
   type ViewTransform,
 } from '@/store/viewportStore'
-import { useExactPanelManifest } from '@/store/renderStore'
+import { useDisplayedExactManifest } from '@/store/mountedSvgStore'
 import type { CanvasObject, LinearObject, PanelObject } from '@/types/document'
 import { isLinear, lineEndpoints, objectRotation, panelRotation } from '@/types/document'
 import {
@@ -739,7 +739,8 @@ function PreviewLines({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
 }
 
 function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
-  const manifest = useExactPanelManifest(panel)
+  // 换图解码那几帧不画框与手柄（画面上还是旧图），见 store/mountedSvgStore
+  const manifest = useDisplayedExactManifest(panel)
   const hoverGid = useInteractionStore((s) => s.hoverGid)
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)

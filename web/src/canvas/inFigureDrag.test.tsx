@@ -171,10 +171,15 @@ const fire = (
   type: 'pointermove' | 'pointerup' | 'pointercancel',
   clientX: number,
   clientY: number,
-  mods: { metaKey?: boolean; ctrlKey?: boolean } = {},
+  mods: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean } = {},
 ) => window.dispatchEvent(new MouseEvent(type, { clientX, clientY, bubbles: true, ...mods }))
 
-function dragTo(x: number, y: number, mods: { metaKey?: boolean } = {}, steps = 10) {
+function dragTo(
+  x: number,
+  y: number,
+  mods: { metaKey?: boolean; shiftKey?: boolean } = {},
+  steps = 10,
+) {
   for (let i = 1; i <= steps; i++) {
     fire('pointermove', (x * i) / steps, (y * i) / steps, mods)
     flushPreviewFrame()
@@ -317,6 +322,19 @@ describe('图内拖动吸附到别的元素', () => {
     expect((overrideOf('axes_1.patches_0', 'pos_frac') as number[])[0]).toBeCloseTo(0.47, 6)
     // 字确实被带着走了（这条用例的前提）
     expect(overrideOf('axes_1.texts_0', 'pos_frac')).toBeDefined()
+  })
+
+  it('⇧ 锁 45° 时只有一个轴够得着吸附线：修正沿锁定方向走，落点仍在 45° 上', async () => {
+    await setup()
+    // 斜拖 38px：「Vacuum」右边落到离标题中线约 2px 处，竖直方向 6px 内没有线
+    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+    dragTo(38, 38, { shiftKey: true })
+    fire('pointerup', 38, 38, { shiftKey: true })
+    const v = overrideOf('axes_0.texts_0', 'pos_frac') as number[]
+    const dxPx = (v[0] - 0.2) * layout.width
+    const dyPx = (v[1] - 0.28) * layout.height
+    expect(Math.abs(dxPx - 38)).toBeGreaterThan(0.1) // 前提：真的吸了
+    expect(dxPx).toBeCloseTo(dyPx, 6) // 仍是 45°
   })
 
   it('拖子图一小步：不会被只差 1px 的自己的标题吸走', async () => {

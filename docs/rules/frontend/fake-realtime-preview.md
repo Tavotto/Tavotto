@@ -42,7 +42,10 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   解一遍、再交出去，**旧 DOM（连同挂着的预览位移）留到那时**；从无到有、纯矢量、撤下
   （null）、没有 `decode` 的环境立即生效；等待上限 `SWAP_DECODE_CAP_MS`，绝不把新图扣住；
   等待途中又来一版以最新为准。因此 `reattachPreview` 的 effect 认的是**真正挂进 DOM
-  的那一版**（`PanelView` 的 `mountedEditSvg`），不是 store 里刚到的那一版。
+  的那一版**（`PanelView` 的 `mountedEditSvg`），不是 store 里刚到的那一版；几何交互同理
+  （#575 评审）：`store/mountedSvgStore` 记每个面板挂着的那份 SVG（记字符串不记键——不同变体
+  可能出同一份 SVG），命中层与选中框 / 手柄一律经 `useDisplayedExactManifest` 取 manifest，
+  权威那一版的 SVG 还没挂上画面时像权威缺席一样停摆，绝不让用户点着旧图、改新几何。
   **诚实的限制**：本机 Chromium / WebKit 截图与录像都没复现出「糊」本身（截图会强制
   同步解码），这一条防的是最可能的成因；用户机器上的实测才是验收。看护：
   `canvas/renderSwapFeel.test.tsx`。

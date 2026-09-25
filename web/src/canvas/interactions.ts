@@ -1472,8 +1472,8 @@ function contentDelta(panel: PanelObject, layout: { width: number; height: numbe
  * 容差、同一套参考线。返回的是要**额外加上**的分数位移。
  *
  * 吸附总开关或「吸附到对象」关掉、面板旋转 / 翻转、几何权威不在时返回 null——
- * 与画布层一样，按住 ⌘ / Ctrl 临时不吸。shift 锁向时只在锁定后仍在走的那个轴上吸，
- * 否则一吸就把锁拆了。
+ * 与画布层一样，按住 ⌘ / Ctrl 临时不吸。shift 锁成水平 / 垂直时只在仍在走的那个轴上吸；
+ * 锁成 45° 时修正沿锁定方向投影——否则一吸就把锁拆了。
  */
 function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean) {
   const prefs = snapPrefs()
@@ -1495,10 +1495,26 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean) {
     const snap = perfSpan('snap.compute', () =>
       snapMoveNearest(fracBoxToMm(panel, box), cands, snapTolMm(getTransform())),
     )
+    const sx = snap.dx / full.w
+    const sy = snap.dy / full.h
+    if (ev.shiftKey && locked[0] !== 0 && locked[1] !== 0) {
+      // 斜向（45°）锁定：修正只能沿锁定方向走，否则只吸一个轴就把 45° 拆了（#575 评审）。
+      // 两个轴各自要走多少个「锁定方向的单位」，取走得少的那一条，另一轴按同一比例跟着动
+      const kx = snap.guideXs.length ? sx / locked[0] : null
+      const ky = snap.guideYs.length ? sy / locked[1] : null
+      const useX = kx != null && (ky == null || Math.abs(kx) <= Math.abs(ky))
+      const k = useX ? kx : ky
+      if (k == null) {
+        interaction().setSnap([], [])
+        return [0, 0]
+      }
+      interaction().setSnap(useX ? snap.guideXs : [], useX ? [] : snap.guideYs)
+      return [k * locked[0], k * locked[1]]
+    }
     const freeX = !ev.shiftKey || locked[0] !== 0
     const freeY = !ev.shiftKey || locked[1] !== 0
     interaction().setSnap(freeX ? snap.guideXs : [], freeY ? snap.guideYs : [])
-    return [freeX ? snap.dx / full.w : 0, freeY ? snap.dy / full.h : 0]
+    return [freeX ? sx : 0, freeY ? sy : 0]
   }
 }
 

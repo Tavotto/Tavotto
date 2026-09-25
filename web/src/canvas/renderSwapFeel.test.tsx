@@ -215,3 +215,36 @@ describe('换一版 SVG：先把新图里的位图解码好再换', () => {
     expect(shown()).toContain('id="c"')
   })
 })
+
+/* ============== 换图解码期间几何交互停摆（#575 Codex 评审） ============== */
+
+describe('新权威已到、画面还是旧图的那几帧：命中层停摆，解码完恢复', () => {
+  let decodes: (() => void)[]
+  beforeEach(() => {
+    decodes = []
+    ;(Image.prototype as unknown as { decode: () => Promise<void> }).decode = () =>
+      new Promise<void>((resolve) => decodes.push(resolve))
+  })
+  afterEach(() => {
+    delete (Image.prototype as unknown as { decode?: unknown }).decode
+  })
+
+  it('解码中：data-authority=syncing；解码完：ready', async () => {
+    const authority = () =>
+      container.querySelector('[data-authority]')?.getAttribute('data-authority') ?? null
+    seedExact(BEFORE, { svg: svgWith('old', PNG_A) })
+    await mount(BEFORE)
+    expect(authority()).toBe('ready')
+
+    // 松手后新的一版到了（带位图）：store 里已是它，画面还挂着旧图
+    seedExact(AFTER, { svg: svgWith('new', PNG_B) })
+    await mount(AFTER)
+    expect(container.querySelector('[data-element-svg]')?.innerHTML).toContain('id="old"')
+    expect(authority()).toBe('syncing')
+
+    await act(async () => decodes.forEach((r) => r()))
+    expect(container.querySelector('[data-element-svg]')?.innerHTML).toContain('id="new"')
+    expect(authority()).toBe('ready')
+  })
+})
+

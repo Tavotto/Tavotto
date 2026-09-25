@@ -32,12 +32,12 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { nativePanelState, useNativeSessionStore } from '@/store/nativeSessionStore'
 import {
   renderKeyOf,
-  useExactPanelManifest,
   usePanelDisplayView,
   usePanelRender,
   useRenderStore,
 } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useDisplayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
 import { reattachPreview, settleFailedAuthority } from '@/store/svgPreviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
@@ -242,6 +242,12 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 换图要等新图的位图解码完（`useDecodedSvg`），这段时间 DOM 上还是旧节点 + 预览位移。
   // layout effect：新 DOM 挂上与重放预览在**同一帧绘制之前**完成——用 passive effect 的话
   // 浏览器可能先画出一帧没有预览的新图（松手弹一下、图例补正时闪一下中间那一版）。
+  // 几何交互只认「已经挂上画面」的那一版（`store/mountedSvgStore`）：同一个 layout effect 里
+  // 登记，与预览重放同帧、都在绘制之前
+  useLayoutEffect(() => {
+    useMountedSvgStore.getState().set(panelId, mountedEditSvg)
+  }, [mountedEditSvg, panelId])
+  useLayoutEffect(() => () => useMountedSvgStore.getState().set(panelId, null), [panelId])
   useLayoutEffect(() => {
     if (mountedEditSvg == null) return
     const st = useRenderStore.getState()
@@ -524,7 +530,8 @@ function ElementHitLayer({
   rot: PanelRotation
 }) {
   perfCount('render.ElementHitLayer')
-  const manifest = useExactPanelManifest(obj)
+  // 换图解码那几帧（新权威已到、画面还是旧图）停摆，见 store/mountedSvgStore
+  const manifest = useDisplayedExactManifest(obj)
   const setHoverGid = useInteractionStore((s) => s.setHoverGid)
   const zoom = useViewportStore((s) => s.zoom)
   const ref = useRef<HTMLDivElement>(null)
