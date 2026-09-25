@@ -17,7 +17,19 @@
   异常只留类型 + 错误 code（+ errno），**message 不出门**；绝对路径括成 `⟦…⟧`，出包时由 `_export_log_lines`
   换成 `_path_fact`（与 report 同一个 `<project:…>`）；文件名样的走 `_shorten_path_text`；请求行只留方法 +
   Flask 路由规则（`_route_rule_of`，匹配不上的 `route:<哈希>`）；键是标识符、值全是数的 JSON 原样（渲染计时）；
-  其余 `str:<哈希>`；`exc_info` 走 `evidence_lines`。记录行形如 `<时间> <级别> <logger> | <正文>`——` | `
+  其余 `str:<哈希>`；`exc_info` 走 `evidence_lines`。
+  **明文放行（用户拍板 #601：有实际参考意义的不哈希，没有的哈希）**：只有调用点用 `engine/logsafe.py`
+  标过的参数明文，判据是值的**出处**而不是长相——`known(value, 常量集合)`（值必须是源码里某个闭集的成员：
+  解释器来源 `pool.SOURCE_LABELS`、PDF 后端 `pdfbackend.BACKENDS`、导出状态 / scope / 格式、工作目录模式、
+  依赖修复目标 `deprepair.TARGETS`、包操作 `PACKAGE_OPS`、HTTP 方法……不在集合里的值原样交回、照样哈希）、
+  `known_each`（一组全在集合里才明文）、`route(request.url_rule)`（只收 werkzeug 注册出来的 `Rule` 对象）、
+  `version(value)`（只由 ASCII 数字、点与 PEP 440 固定后缀组成）。数 / 布尔 / None 本来就明文。`Plain` 只能
+  由这几个函数构造（私有令牌）。看护（`tests/test_diagnostics_log_privacy.py`）：每个放行值明文进包，
+  **同一个调用位置换成带金丝雀的自由字符串照样哈希**（放行口不许变成后门）；AST 扫全部 `logsafe.*` 调用——
+  `known` 的集合必须是模块常量或字符串字面量组成的元组 / 集合（`known(x, {x})` 红），`Plain` 不许在别处构造，
+  `route` 只收 `request.url_rule`。新加的日志参数想明文：先找到（或建）它所属的常量集合，再用 `known` 包；
+  找不到闭集的就是自由文本，让它哈希。异常的错误 code 仍按形状放行（小写标识符），是这里唯一的形状规则。
+  **不升 bundle schema**（用户拍板）：report.json 的字段形状没变，变的只是字符串内容里哪些段明文。记录行形如 `<时间> <级别> <logger> | <正文>`——` | `
   是出处标记：`recent_errors` 只原样放行这种形状的 ERROR 行，别的形状只留「时间 级别 logger: …」、
   前缀凑不齐的整行不要。前提是 `tavotto*` 的模板都是字符串字面量：`tests/test_diagnostics_log_privacy.py`
   用 AST 扫全部日志调用（f-string / 拼好的串 / 变量当模板都红），同一文件对包里每个文件与复制诊断做

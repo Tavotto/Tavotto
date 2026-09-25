@@ -29,8 +29,8 @@ from pathlib import Path
 
 import pytest
 
-from tavotto import app as m
-from tavotto.engine import diagnostics, pool
+from tavotto import app as m, pdfbackend
+from tavotto.engine import diagnostics, exportjob, logsafe, pool
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -212,6 +212,81 @@ def test_real_worker_script_error_never_reaches_the_bundle(client, tmp_path, wir
     log = texts["app.log"]
     assert re.search(r"worker 启动: …/file:[0-9a-f]{10}\.py", log)
     assert "ERROR tavotto | 引擎渲染失败: " in log
+    # 有参考意义的闭集值明文（用户拍板：有意义的不哈希）：这里走的是 TAVOTTO_WORKER_PYTHON
+    assert "解释器来源=env_override" in log
+
+
+# ------------------------------------------------------------------ 明文放行（logsafe）
+#
+# 用户拍板（#601）：有实际参考意义、且结构上不可能含用户内容的参数明文，其余照旧哈希。
+# 判据是值的**出处**（源码里的常量集合 / 路由对象 / 版本号形状），每条放行都配一条反证：
+# 同一个调用位置换成带金丝雀的自由字符串，必须仍被哈希——放行规则不许变成后门。
+
+_PLAIN_CASES = [
+    # (模板, 放行值, 包装)
+    (
+        "PDF 后端: %s",
+        pdfbackend.BACKEND_RENDERCORE,
+        lambda v: logsafe.known(v, pdfbackend.BACKENDS),
+    ),
+    ("来源 %s", pool.SOURCE_ENV, lambda v: logsafe.known(v, pool.SOURCE_LABELS)),
+    ("导出[%s]", exportjob.STATUS_DONE, lambda v: logsafe.known(v, exportjob.STATUSES)),
+    ("依赖修复成功: numpy %s", "1.26.4", logsafe.version),
+    ("私有 Python 就位（%s）", "3.13.1rc2", logsafe.version),
+]
+
+
+@pytest.mark.parametrize(("template", "value", "wrap"), _PLAIN_CASES)
+def test_closed_set_values_stay_readable(template, value, wrap):
+    out = _format("tavotto", template, wrap(value))
+    assert out.endswith(template % value), out
+
+
+@pytest.mark.parametrize(("template", "value", "wrap"), _PLAIN_CASES)
+def test_the_same_slot_with_free_text_is_still_hashed(template, value, wrap):
+    """关键反证：放行口认的是出处，不是位置——同一个调用点换成自由字符串照样哈希。"""
+    for free in (ERR_CANARY, f"{value} {ERR_CANARY}", f"{value}/{ERR_CANARY}", f"1.2.{ERR_CANARY}"):
+        out = _format("tavotto", template, wrap(free))
+        assert ERR_CANARY not in out, out
+
+
+def test_a_list_is_plain_only_when_every_member_is_known():
+    from tavotto.engine import exportreq
+
+    ok = _format("tavotto", "格式 %s", logsafe.known_each(["pdf", "png"], exportreq.ENGINE_FORMATS))
+    assert ok.endswith("格式 pdf, png")
+    bad = _format(
+        "tavotto", "格式 %s", logsafe.known_each(["pdf", ERR_CANARY], exportreq.ENGINE_FORMATS)
+    )
+    assert ERR_CANARY not in bad
+
+
+def test_only_a_real_flask_rule_passes_as_a_route(client):
+    class FakeRule:  # 长得像 Rule，但不是 werkzeug 注册出来的
+        rule = f"/api/{ERR_CANARY}"
+
+    assert ERR_CANARY not in _format("tavotto", "路由 %s", logsafe.route(FakeRule()))
+    real = next(r for r in m.app.url_map.iter_rules() if r.rule == "/api/render")
+    assert _format("tavotto", "路由 %s", logsafe.route(real)).endswith("路由 /api/render")
+    assert _format("tavotto", "路由 %s", logsafe.route(None)).endswith("路由 <no-route>")
+
+
+def test_plain_cannot_be_constructed_outside_logsafe():
+    with pytest.raises(TypeError):
+        logsafe.Plain(ERR_CANARY, object())
+
+
+def test_plain_values_reach_the_bundle_and_free_text_does_not(client, wired_logging):
+    """端到端：同一条日志语句，一次放行值、一次金丝雀——包里前者明文、后者没有。"""
+    log = logging.getLogger("tavotto")
+    log.info("渲染解释器来源: %s", logsafe.known(pool.SOURCE_BUNDLED, pool.SOURCE_LABELS))
+    log.info("渲染解释器来源: %s", logsafe.known(ERR_CANARY, pool.SOURCE_LABELS))
+    raw = (wired_logging / "app.log").read_text(encoding="utf-8")
+    assert ERR_CANARY in raw, "对照：完整日志里原值照写"
+    texts = _bundle_texts(client)
+    _assert_no_canary(texts)
+    assert "渲染解释器来源: bundled" in texts["app.log"]
+    assert re.search(r"渲染解释器来源: str:[0-9a-f]{10}", texts["app.log"])
 
 
 # ------------------------------------------------------------------ 格式器本身
@@ -323,6 +398,59 @@ def test_the_ast_scan_catches_an_fstring_template():
     assert len(calls) == 2
     assert not isinstance(calls[0].args[0], ast.Constant)
     assert isinstance(calls[1].args[0], ast.Constant)
+
+
+def _logsafe_calls(tree: ast.AST):
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        owner = func.value if isinstance(func, ast.Attribute) else None
+        owner_name = getattr(owner, "id", "") if owner is not None else ""
+        if "logsafe" in owner_name and name in ("known", "known_each", "route", "Plain"):
+            yield name, node
+
+
+def _allowed_is_a_constant(arg: ast.AST) -> bool:
+    """`known` 的集合只能是模块常量（`pool.SOURCE_LABELS`）或字符串字面量组成的元组 / 集合。"""
+    if isinstance(arg, (ast.Name, ast.Attribute)):
+        return True
+    if isinstance(arg, (ast.Tuple, ast.Set, ast.List)):
+        return all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in arg.elts)
+    return False
+
+
+def test_every_plain_release_names_a_constant_set():
+    """放行口不许在调用点现拼集合（`known(x, {x})` / `known(x, set(names))` 就是后门）；
+    `Plain` 不许在 logsafe 之外直接构造；`route` 只收 `request.url_rule`。"""
+    offenders = []
+    seen = 0
+    for path in sorted((REPO / "src" / "tavotto").rglob("*.py")):
+        if path.name == "logsafe.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for name, call in _logsafe_calls(tree):
+            seen += 1
+            where = f"{path.relative_to(REPO)}:{call.lineno}"
+            if name == "Plain":
+                offenders.append(f"{where} 直接构造 Plain")
+            elif name in ("known", "known_each"):
+                if len(call.args) != 2 or not _allowed_is_a_constant(call.args[1]):
+                    offenders.append(f"{where} {name} 的集合不是常量")
+            elif name == "route":
+                arg = call.args[0] if call.args else None
+                if not (isinstance(arg, ast.Attribute) and arg.attr == "url_rule"):
+                    offenders.append(f"{where} route 收的不是 request.url_rule")
+    assert seen >= 15, f"对照：扫描确实看到了放行调用（{seen}）"
+    assert not offenders, offenders
+
+
+def test_the_constant_set_scan_catches_an_inline_set():
+    """反证落点：现拼的集合认得出来。"""
+    tree = ast.parse("logsafe.known(x, {x})\nlogsafe.known(x, pool.SOURCE_LABELS)\n")
+    calls = [c for _n, c in _logsafe_calls(tree)]
+    assert [_allowed_is_a_constant(c.args[1]) for c in calls] == [False, True]
 
 
 def test_the_export_log_is_not_the_full_log():

@@ -34,7 +34,17 @@ import unicodedata
 import zipfile
 from pathlib import Path
 
-from . import ai_bridge, bootstrap, config, diagnostics_frontend, pool, runtime, telemetry, updater
+from . import (
+    ai_bridge,
+    bootstrap,
+    config,
+    diagnostics_frontend,
+    logsafe,
+    pool,
+    runtime,
+    telemetry,
+    updater,
+)
 
 LOG_TAIL_LINES = 400
 ERROR_TAIL = 30  # 报告里单列的最近错误条数
@@ -511,7 +521,12 @@ def _numeric_json(text: str) -> str | None:
 
 
 def _arg_for_export(value, route_of=None):
-    """一个日志参数 → 出门的形态。**出门的每一段要么是数、要么是闭集成员、要么是哈希**。"""
+    """一个日志参数 → 出门的形态。**出门的每一段要么是数、要么是闭集成员、要么是哈希**。
+
+    闭集成员由调用点用 `logsafe` 标出来（`known` / `known_each` / `route` / `version`，判据是值的
+    出处）；没标的字符串一律按下面的规则缩写或哈希。"""
+    if isinstance(value, logsafe.Plain):
+        return _ExportArg(value.text)
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, BaseException):

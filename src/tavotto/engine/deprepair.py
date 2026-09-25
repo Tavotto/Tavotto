@@ -51,6 +51,7 @@ from . import (
     envlease,
     execspec,
     importscan,
+    logsafe,
     managedenv,
     pool,
     privatepython,
@@ -612,7 +613,12 @@ def create_plan(
     _prune_plans()
     with _lock:
         _plans[plan.plan_id] = plan
-    LOG.info("依赖修复计划: %s → %s（%s）", plan.requirement.requirement(), target_kind, script)
+    LOG.info(
+        "依赖修复计划: %s → %s（%s）",
+        plan.requirement.requirement(),
+        logsafe.known(target_kind, TARGETS),
+        script,
+    )
     return plan
 
 
@@ -799,7 +805,12 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             "generation": outcome["generation"],
         }
         _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
-        LOG.info("依赖修复成功: %s %s → %s", req.distribution, version, plan.target_kind)
+        LOG.info(
+            "依赖修复成功: %s %s → %s",
+            req.distribution,
+            logsafe.version(version),
+            logsafe.known(plan.target_kind, TARGETS),
+        )
         return result
     if cancel_ev.is_set():
         return _finish_cancelled(plan, on_event, python)
@@ -883,7 +894,12 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         "target_kind": plan.target_kind,
     }
     _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
-    LOG.info("依赖修复成功: %s %s → %s", req.distribution, version, plan.target_kind)
+    LOG.info(
+        "依赖修复成功: %s %s → %s",
+        req.distribution,
+        logsafe.version(version),
+        logsafe.known(plan.target_kind, TARGETS),
+    )
     return result
 
 
@@ -1989,7 +2005,7 @@ def create_package_job(project: str | Path, op: str, spec: str) -> PackageJob:
         for stale in [k for k, j in _jobs.items() if j.expires_at < now]:
             _jobs.pop(stale, None)
         _jobs[job.job_id] = job
-    LOG.info("包操作作业: %s %s", op, requirement)
+    LOG.info("包操作作业: %s %s", logsafe.known(op, PACKAGE_OPS), requirement)
     return job
 
 
@@ -2106,7 +2122,12 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             "generation": outcome["generation"],
         }
         _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
-        LOG.info("包操作完成: %s %s %s", job.op, job.distribution, version)
+        LOG.info(
+            "包操作完成: %s %s %s",
+            logsafe.known(job.op, PACKAGE_OPS),
+            job.distribution,
+            logsafe.version(version),
+        )
         return result
     if cancel_ev.is_set():
         managedenv.mark_incomplete(project, f"{job.op} 被取消")
@@ -2192,7 +2213,12 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
         "python_version": (managedenv.read_manifest(project) or {}).get("python_version", ""),
     }
     _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
-    LOG.info("包操作完成: %s %s %s", job.op, job.distribution, version)
+    LOG.info(
+        "包操作完成: %s %s %s",
+        logsafe.known(job.op, PACKAGE_OPS),
+        job.distribution,
+        logsafe.version(version),
+    )
     return result
 
 
@@ -2552,7 +2578,12 @@ def create_joint_plan(
     _prune_plans()
     with _lock:
         _joint_plans[plan.plan_id] = plan
-    LOG.info("联合依赖计划: %s → %s（%s）", ", ".join(plan.requirements), kind, script)
+    LOG.info(
+        "联合依赖计划: %s → %s（%s）",
+        ", ".join(plan.requirements),
+        logsafe.known(kind, TARGETS),
+        script,
+    )
     return plan
 
 
