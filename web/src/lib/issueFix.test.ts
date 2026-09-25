@@ -407,6 +407,24 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     )
   })
 
+  it('native 会话回滚不干净（只带 replay_required，worker 没作废）：同样按此刻的列表重放', async () => {
+    // Codex #549 第八轮 P1：native 会话是用户自己的 Python，不杀；引擎在重放时重试还原
+    const base = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 15.5 }]
+    await seed([panel({ overrides: base })])
+    engineSpecfix.mockResolvedValue({
+      ...refused('constraint_conflict'),
+      worker_retired: false,
+      replay_required: true,
+    })
+    engineRender.mockClear()
+    const res = await applyIssueFix(floorIssue())
+    expect(res).toMatchObject({ ok: false, reason: 'would_worsen' })
+    expect(overridesOf()).toEqual(base)
+    expect(engineRender.mock.calls.some((c) => JSON.stringify(c[1]) === JSON.stringify(base))).toBe(
+      true,
+    )
+  })
+
   it('结果不确定、等待期间换了文档：不拿旧文档的面板去新文档里重放', async () => {
     await seed()
     let reject: (e: Error) => void = () => {}

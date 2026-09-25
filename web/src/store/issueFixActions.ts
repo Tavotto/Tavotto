@@ -212,7 +212,7 @@ async function runLocked(
    * 在两轮之间抢先落下，回滚随后又把 worker 盖回旧列表（Codex #549 第五轮 P1）。回来之后
    * 对这些面板照样对一次账。`sent: null` = 结果不确定（请求抛了：回程断线、成功体形状不对……）
    * ——服务端可能已经通过、worker 与 SVG 停在候选上，文档却还是 B0（Codex #549 第六轮 P1），
-   * 所以不比列表、一律重放；后端说 worker 已作废（`worker_retired`）的也一样（第七轮 P1）。
+   * 所以不比列表、一律重放；后端说热态不干净（`replay_required` / `worker_retired`）的也一样（第七、八轮 P1）。
    */
   const touched: { id: string; sent: string | null }[] = []
   if (byPanel.size && engineTransport()) {
@@ -245,10 +245,12 @@ async function runLocked(
       touched.push({ id, sent: null })
       continue
     }
-    // 后端作废了 worker（事务里有一次渲染不干净）：它的热态不是发出去的那份，没提交的
-    // 一律按此刻的列表重放，与结果不确定同一条路
+    // 事务里有一次渲染不干净：热态不是发出去的那份，没提交的一律按此刻的列表重放，与结果
+    // 不确定同一条路。safe worker 已被作废（`worker_retired`）；native 会话不作废，只带
+    // `replay_required`——引擎在重放时重试还原（Codex #549 第八轮 P1）
     if (!(res.ok && out.applied > 0)) {
-      touched.push({ id, sent: res.worker_retired ? null : same(panel.overrides) })
+      const dirty = res.replay_required || res.worker_retired
+      touched.push({ id, sent: dirty ? null : same(panel.overrides) })
     }
     for (const f of out.failed) addFailure(failed, f.reason, f.count, fontOf(profile))
     if (res.ok && out.applied > 0) {

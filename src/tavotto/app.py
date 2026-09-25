@@ -3703,10 +3703,11 @@ def api_engine_specfix():
 
     这个端点**只算不写**：不碰文档、不落盘、不写回源文件；worker 的热态在事务
     结束时要么是 B0，要么正是回给前端的那份列表（前端 commit 后照常重渲染一次），
-    要么**已经作废**（`worker_retired: true`）：只有「每一次渲染都干净」的事务才算
-    回滚成功——任何一次渲染带 warning（`overrides.apply()` 已把恢复失败的键从记账里
-    摘掉，之后的整份重放不再重试它）或抛异常，热态就不可信，一律作废，下一次请求重新
-    起、按全量列表重放（Codex #549 第七轮 P1）。
+    要么**不可信**（`replay_required: true`）：只有「每一次渲染都干净」的事务才算
+    回滚成功——任何一次渲染带 warning 或抛异常，热态就不是它声称的那一份。safe 池
+    worker 一律作废（`worker_retired: true`，下一次请求重新起、按全量列表重放，Codex
+    #549 第七轮 P1）；native 会话不杀（ADR 0021），`overrides.apply()` 把还原失败的键
+    留在账上、下一次渲染自动重试（第八轮 P1），前端照样按此刻的全量列表重放。
     """
     body = request.get_json(force=True) or {}
     rel_id = body.get("id", "")
@@ -3765,7 +3766,11 @@ def api_engine_specfix():
         # 事务本体自己出错时 worker 可能正停在候选上：同样不可信
         _retire_hot_worker(state["worker"])
         raise
+    # 不干净时两档降级：safe 池 worker 作废（下一次请求重新起）；native 会话是用户自己的
+    # 进程，不杀不断开——`apply()` 把还原失败的键留在账上，下一次渲染自动重试。两档都要
+    # 前端按此刻的全量列表重放一次（`replay_required`），重放仍带 warning 就是真故障
     out["worker_retired"] = not state["clean"] and _retire_hot_worker(state["worker"])
+    out["replay_required"] = not state["clean"]
     return jsonify(out)
 
 
@@ -3789,8 +3794,7 @@ def _specfix_transaction(render, base: list, scale: float, profile: dict, only) 
     b0_resp = render(base)
     if b0_resp.get("warnings"):
         # 基准自己就没能完整重放（热 worker 里上一份 override 恢复不回来，Codex #549 第三轮 P1）：
-        # overrides.apply() 会把失败的那个键从记账里摘掉，于是之后的候选渲染看起来都没有
-        # warning，却是对着一份被污染的 B0 验的。基准不干净就不开始，文档一个字不改
+        # 候选是对着一份被污染的 B0 验的。基准不干净就不开始，文档一个字不改
         return {
             "ok": False,
             "exit": engine_normalize.EXIT_UNSUPPORTED,

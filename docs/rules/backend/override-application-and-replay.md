@@ -37,9 +37,19 @@
   `COUPLED_PROPS` 登记的实测连带（`spine_linewidth` → 四边线宽、`linewidth` → 跟随源
   的图例示意线）；新增一类修复前先在真实渲染里看它连带改了什么再登记。「收不收这
   一轮局部修复」只有 `normalize.better_candidate()` 一处（bridge 与桌面共用）。
-  **只有每一次渲染都干净的事务才算回滚成功**：任何一次带 warning 或抛了，热 worker
-  一律作废（`app._retire_hot_worker` → `pool.invalidate`），响应带 `worker_retired`——
-  恢复失败的键已被 `apply()` 摘出记账，留着它的 worker 永远重放不回去。
+  **只有每一次渲染都干净的事务才算回滚成功**：任何一次带 warning 或抛了，响应带
+  `replay_required`（前端按此刻的列表重放）；safe 池 worker 另外作废（`app._retire_hot_worker`
+  → `pool.invalidate`，`worker_retired`），native 会话不杀（ADR 0021），靠下一条引擎保证。
+- **还原失败不遗忘（Codex #549 第八轮 P1）**：`apply()` 撤掉一条 override 时还原抛了，
+  这个键**不销账**——applied / originals / alias_seeded 原样留着，记进 `FigState.unrestored`；
+  下一次 apply 自动重试，欠着一天每次都报 `还原失败` warning（写回遇 warning 即阻断），
+  还原成功、或同一个键重新被成功应用（不走「值没变就跳过」，originals 仍是脚本原样）才清账。
+  别名组：广播端欠着账时组员的代采原样不回收；半路抛的还原照样标脏几何与别名组。
+  `overrides.snapshot()` 是「会话此刻是哪份列表」的唯一出处，**不含**欠账的键（状态中立预览
+  的收尾、native 屏障离开时保存的列表都读它，含了就会把用户撤掉的改动重新应用回去）。
+  旧实现无条件 pop，图永久停在半改状态且此后再无 warning——safe 能靠作废 worker 兜，native
+  会话（用户自己的 Python）兜不了。看护 `tests/test_restore_failure_retry.py`（含热态 == 冷
+  启动重放的逐字节不变量；把 `continue` 改回落到 pop，五条全红）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
   `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处）：
   图幅 size_mm → 色条方向 → 色条 extend → 子图 position → 刻度类型

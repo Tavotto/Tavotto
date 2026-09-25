@@ -23,7 +23,7 @@ import threading
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import pool as engine_pool, preflight, profiles, specfix
+from tavotto.engine import nativesession, pool as engine_pool, preflight, profiles, specfix
 
 
 def _worker_python():
@@ -492,16 +492,19 @@ def test_baseline_replay_with_warnings_aborts_before_any_candidate(render):
 
 # ---- 只有「一次干净、明确的拒绝」才算回滚成功（Codex #549 第七轮 P1） ----
 #
-# 回滚渲染（或事务里任何一次渲染）带 warning / 抛异常时，`overrides.apply()` 已经把
-# 恢复失败的那个键从记账里摘掉——之后的整份重放不再重试它，热 worker 永久停在被污染的
-# 状态上，而文档停在 B0。这种时候 worker 一律作废（`pool.invalidate`，与「重新构建」
-# 同一个原语），下一次请求重新起、按全量列表重放；响应带 `worker_retired: true`，前端
-# 据此按此刻的列表重放一次。下面几条走真端点，worker 换成转给真 worker 的替身，好在
+# 回滚渲染（或事务里任何一次渲染）带 warning / 抛异常时，热态不是它声称的那一份，而文档
+# 停在 B0。safe worker 一律作废（`pool.invalidate`，与「重新构建」同一个原语），下一次
+# 请求重新起、按全量列表重放；native 会话不杀（第八轮：引擎把还原失败的键留在账上、下一次
+# 渲染重试）。两档响应都带 `replay_required: true`，前端据此按此刻的列表重放一次。下面几条走真端点，worker 换成转给真 worker 的替身，好在
 # 指定的那一次渲染上注入 warning / 异常。
 
 
-def _post_specfix(monkeypatch, override, base, profile):
-    """走 `/api/engine/specfix`，渲染交给 `override(patches)`；回 (响应, 作废记录)。"""
+def _post_specfix(monkeypatch, override, base, profile, *, native=False):
+    """走 `/api/engine/specfix`，渲染交给 `override(patches)`；回 (响应, 作废记录)。
+
+    `native=True` 时替身是一条真的 `NativeSession`（不连 socket，`override` 转给真 worker）
+    ——端点按类型分辨 native（`enginesession.is_native`），鸭子替身量不到那一档。
+    """
 
     class _Worker:
         script_name = "fig.py"
@@ -510,8 +513,17 @@ def _post_specfix(monkeypatch, override, base, profile):
         def override(self, stem, patches, preview_dpi=None, inline_svg=False):
             return override(patches)
 
+    class _Native(nativesession.NativeSession):
+        def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+            return override(patches)
+
+    worker = (
+        _Native(session_id="native-specfix", descriptor={"native_id": "n" * 32, "out_dir": ""})
+        if native
+        else _Worker()
+    )
     retired: list[tuple] = []
-    monkeypatch.setattr(m, "_engine_worker", lambda rel_id: (_Worker(), "Kin"))
+    monkeypatch.setattr(m, "_engine_worker", lambda rel_id: (worker, "Kin"))
     monkeypatch.setattr(
         m.engine_pool, "invalidate", lambda script, root=None: retired.append((script, root))
     )
@@ -549,6 +561,7 @@ def test_clean_rejection_keeps_the_worker(render, monkeypatch):
     assert resp.status_code == 200 and not body["ok"]
     assert body["patches"] == BASE and render.calls[-1] == BASE
     assert body["worker_retired"] is False
+    assert body["replay_required"] is False
     assert retired == []
 
 
@@ -571,7 +584,43 @@ def test_rollback_with_warnings_retires_the_worker(render, monkeypatch):
     assert resp.status_code == 200 and not body["ok"]
     assert body["patches"] == BASE
     assert body["worker_retired"] is True
+    assert body["replay_required"] is True
     assert retired == [("fig.py", "/specfix-test-figures")]
+
+
+def test_unclean_rollback_on_a_native_session_asks_for_a_replay_instead(render, monkeypatch):
+    """Codex #549 第八轮 P1：native 会话（用户自己的 Python，ADR 0021）不杀、不断开。
+
+    引擎把还原失败的键留在账上、下一次渲染自动重试（`test_restore_failure_retry.py`），
+    所以端点对它只做一件事：告诉前端「热态不是发出去的那份，按此刻的列表重放」。
+    """
+    _reject_every_candidate(monkeypatch)
+    seen: list[list] = []
+
+    def warn_on_rollback(patches):
+        seen.append(list(patches))
+        resp = render(patches)
+        if len(seen) > 2 and patches == BASE:
+            resp = {**resp, "warnings": ["还原失败 axes_0.xticks.fontsize（模拟）"]}
+        return resp
+
+    resp, retired = _post_specfix(monkeypatch, warn_on_rollback, BASE, _profile(), native=True)
+    body = resp.get_json()
+    assert len(seen) >= 3 and seen[-1] == BASE, seen
+    assert resp.status_code == 200 and not body["ok"] and body["patches"] == BASE
+    assert body["worker_retired"] is False
+    assert body["replay_required"] is True
+    assert retired == []
+
+
+def test_clean_rejection_on_a_native_session_needs_no_replay(render, monkeypatch):
+    """对照组：native 上拒绝得干干净净——不要求重放（判据不是「native 就重放」）。"""
+    _reject_every_candidate(monkeypatch)
+    resp, retired = _post_specfix(monkeypatch, render, BASE, _profile(), native=True)
+    body = resp.get_json()
+    assert resp.status_code == 200 and not body["ok"]
+    assert body["worker_retired"] is False and body["replay_required"] is False
+    assert retired == []
 
 
 def test_rollback_that_raises_retires_the_worker(render, monkeypatch):
@@ -603,4 +652,5 @@ def test_baseline_with_warnings_retires_the_worker(render, monkeypatch):
     assert seen == [BASE]
     assert not body["ok"] and body["exit"] == "unsupported"
     assert body["worker_retired"] is True
+    assert body["replay_required"] is True
     assert retired == [("fig.py", "/specfix-test-figures")]

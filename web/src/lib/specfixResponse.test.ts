@@ -82,4 +82,14 @@ describe('engineSpecfix 的成功体校验', () => {
     body = { ...GOOD, worker_retired: 'yes' }
     await badShape()
   })
+
+  it('replay_required 不是布尔：抛', async () => {
+    body = { ...GOOD, replay_required: 1 }
+    await badShape()
+  })
+
+  it('带 replay_required（native 回滚不干净）：原样交出', async () => {
+    body = { ...GOOD, replay_required: true }
+    await expect(call()).resolves.toMatchObject({ ok: true, replay_required: true })
+  })
 })

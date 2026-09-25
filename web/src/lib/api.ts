@@ -1798,6 +1798,12 @@ export interface SpecFixResponse {
    * 请求重新起、按全量列表重放）。调用方没提交结果时要按此刻的列表重放一次。老后端不带。
    */
   worker_retired?: boolean
+  /**
+   * 这次事务里有一次渲染不干净，热态不是发出去的那份：调用方没提交结果时要按此刻的列表
+   * 重放一次。safe worker 时与 `worker_retired` 同真；native 会话不作废（ADR 0021），
+   * 只有这一个为真——引擎把还原失败的键留在账上，重放时自动重试。老后端不带。
+   */
+  replay_required?: boolean
 }
 
 const isStr = (v: unknown): v is string => typeof v === 'string'
@@ -1816,7 +1822,8 @@ function isSpecFixResponse(body: Record<string, unknown>): boolean {
     body.patches.every((p) => isRec(p) && isStr(p.gid) && isStr(p.prop) && 'value' in p) &&
     Array.isArray(body.skipped) &&
     body.skipped.every((s) => isRec(s) && isStr(s.rule) && isStr(s.gid) && isStr(s.reason)) &&
-    (body.worker_retired === undefined || typeof body.worker_retired === 'boolean')
+    (body.worker_retired === undefined || typeof body.worker_retired === 'boolean') &&
+    (body.replay_required === undefined || typeof body.replay_required === 'boolean')
   )
 }
 
