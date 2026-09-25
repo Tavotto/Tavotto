@@ -678,6 +678,37 @@ def test_a_failed_backup_leaves_every_original_untouched(client, tmp_path, monke
     assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
 
 
+def test_a_failed_backup_still_answers_409_when_a_temp_file_cannot_be_removed(
+    client, tmp_path, monkeypatch
+):
+    """备份失败后清 `.updating` 也失败（Windows 上被短暂锁住）：清理是尽力而为，
+    不许用第二个 OSError 盖掉备份失败本身——仍是 409 `write_back_backup_failed`、原件零改动。"""
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    _fail_nth_backup(monkeypatch, 2)
+    real_unlink = Path.unlink
+    refused: list[str] = []
+
+    def unlink(self, *a, **k):
+        if self.name.endswith(".updating"):
+            refused.append(self.name)
+            raise PermissionError(f"[WinError 32] 另一个程序正在使用 {self.name}")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+
+    assert refused, "前提：清 `.updating` 确实失败过"
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "write_back_backup_failed"
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert (figs / "Fig1.png").read_bytes() == before_png
+
+
 def test_a_failed_second_replace_rolls_the_first_one_back(client, tmp_path, monkeypatch):
     """第二个目标的替换抛的不是锁、是一般 I/O 错误：同样回滚第一个、409、零改动。"""
     import errno

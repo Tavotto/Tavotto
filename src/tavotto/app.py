@@ -4256,7 +4256,12 @@ def _backup_targets(tmps: list[tuple[Path, Path]], backup_dir: Path) -> None:
         except OSError:
             pass
         for _t, leftover in tmps:
-            leftover.unlink(missing_ok=True)  # 不给图库留下半成品
+            # 不给图库留下半成品；清不掉（Windows 上被短暂锁住）也只记日志——
+            # 第二个 OSError 不许盖掉备份失败本身，否则 409 变成 500
+            try:
+                leftover.unlink(missing_ok=True)
+            except OSError:
+                LOG.warning("写回失败后清理临时文件失败: %s", leftover, exc_info=True)
         LOG.warning("写回备份失败，已取消（原文件未改动）: %s: %s", current.name, exc)
         raise WriteBackBackupError(current.name, str(exc)) from exc
 
