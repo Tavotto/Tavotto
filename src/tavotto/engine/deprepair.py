@@ -463,7 +463,8 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     # worker 的环境里装包，装完还是跑不起来。
     if detail.get("code") == projectenv.ERROR_MODULE_MISSING:
         venv = detail.get("venv") or ""
-        python = projectenv.interpreter_of(venv) if venv else None
+        # `venv` 来自调用方交来的体检结果：照样钉在项目根之内再用（与 `_pick_project_venv` 同一条纪律）
+        python = projectenv.interpreter_of(venv, root=root) if venv else None
         if python:
             out["targets"].append(
                 {

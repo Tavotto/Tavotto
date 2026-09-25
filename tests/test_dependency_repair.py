@@ -1582,3 +1582,27 @@ def test_a_joint_plan_is_claimed_before_the_worker_starts(client, project, monke
         assert "已经在执行" in str(err.value)
     finally:
         deprepair._running.discard("jp-claim")
+
+
+def _shape_venv(path: Path) -> Path:
+    """形状上的 venv（`pyvenv.cfg` + 解释器文件），不能执行——这里只看它会不会被当成目标。"""
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "pyvenv.cfg").write_text("home = /nowhere\n", encoding="utf-8")
+    exe = path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    exe.write_text("", encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("inside", [True, False])
+def test_the_project_venv_target_is_pinned_inside_the_project(project, tmp_path, inside):
+    """体检结果里交来的 venv 在项目外时，不许成为「装进项目 venv」的目标。
+
+    `offer()` 的 `detail` 是调用方交来的；`interpreter_of` 必须带 `root` 把它钉在项目根之内
+    （与 `_pick_project_venv` 同一条纪律）。正向对照：同样的形状放在项目里就会被提供。
+    """
+    venv = _shape_venv((project if inside else tmp_path / "elsewhere") / ".venv")
+    detail = {"code": projectenv.ERROR_MODULE_MISSING, "module": "lmfit", "venv": str(venv)}
+    offer = deprepair.offer(str(project), "figure.py", "lmfit", detail)
+    kinds = {t["kind"] for t in offer["targets"]}
+    assert (deprepair.TARGET_PROJECT_VENV in kinds) is inside, offer["targets"]

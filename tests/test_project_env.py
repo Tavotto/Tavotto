@@ -1173,3 +1173,32 @@ def test_a_hostile_module_name_is_dropped_by_the_adopt_endpoint(client, project,
         json={"scope": "project", "python": "py", "module": "os; import shutil"},
     )
     assert seen == [None]
+
+
+@pytest.mark.parametrize("inside", [True, False])
+@pytest.mark.parametrize("entry", ["resolve", "first_open"])
+def test_a_discovered_venv_outside_the_project_never_reaches_the_probe(
+    tmp_path, monkeypatch, entry, inside
+):
+    """发现结果之后的两个入口（缺包接手 / 首开）自己也把候选钉在项目根之内再体检。
+
+    `discover()` 已经只回项目内的 venv；这里把它换成回项目外的一个，验证下游不是
+    靠「发现一定对」才安全（纵深防御，CodeQL #178 的处置）。正向对照：同一个形状放在
+    项目里，体检照常发生。
+    """
+    project = tmp_path / "proj"
+    project.mkdir()
+    venv = fake_venv((project if inside else tmp_path / "elsewhere") / ".venv")
+    monkeypatch.setattr(projectenv, "discover", lambda *a, **k: [str(venv)])
+    probed: list[str] = []
+
+    def probe(python, *a, **k):
+        probed.append(python)
+        return {"ok": False, "code": projectenv.ERROR_UNSUPPORTED_PYTHON, "python": python}
+
+    monkeypatch.setattr(projectenv, "probe_environment", probe)
+    if entry == "resolve":
+        projectenv._resolve_project_venv(project, "fig.py", "somepkg")
+    else:
+        projectenv.first_open_candidate(project, "fig.py")
+    assert bool(probed) is inside, probed
