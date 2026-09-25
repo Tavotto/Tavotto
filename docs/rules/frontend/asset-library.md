@@ -20,9 +20,8 @@
   装包进度）同样在 `resetForNewProject()` 里 `clear()` 换代（#590）：计划 / 绑定 / 采用 / 跳过的在途响应作废，
   已落地的计划与错误清掉；**装包作业不取消**（后端 `close_project` 不碰它，结果按计划自己的项目记账），进度按
   所属项目分格（`startedPlans` + `parked`，与 `packageStore` 的作业同一形状）——B 上不显示 A 的进度、A 的终态
-  副作用不在 B 上派发，切回 A 时接回进行中的进度或交出切走期间的结局。受管环境重建的进度 id **每次一个**、由前端在发请求
-  之前生成（`newRebuildProgressId()`，与后端 `REBUILD_PROGRESS_ID_RE` 是同源对，#606），所以重建**只在同一项目里单飞**
-  （`rebuilding` 按项目记，`clear()` 不动）；POST 失败先拿同一个 id 问 `GET /api/engine/dependency/state` 实况，在跑就接回来。
+  副作用不在 B 上派发，切回 A 时接回进行中的进度或交出切走期间的结局。受管环境**重建跨项目单飞**
+  （`rebuildRunning`，`clear()` 不放）：进度 id 固定 `managed-rebuild`、SSE 不带项目，两个项目各起一次就分不清是谁的。
   `envStore` 同样有项目代际（`resetProject()` 换代）：`refresh` / `setPython` / `setProjectPython` /
   `setWorkdirMode` / `revertAdoptedEnvironment` 在 await 之后、**写状态的那一侧**判代际——调用方在拿到结果之后
   再判已经晚了（写在返回之前就发生了，#605 评审）。看护 `store/projectSwitchDepRepair.test.ts`。
