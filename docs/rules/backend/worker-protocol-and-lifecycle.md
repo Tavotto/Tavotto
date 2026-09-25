@@ -125,3 +125,4 @@
 - 管道 EOF 先 `EXIT_GRACE` 内问退出状态再 kill，退出码进信封、解释只在 `pool.describe_exit` / `session_dead_message`，worker 开 faulthandler、脚本 `sys.exit(0)` 是正常结束（#435）
 - `_terminate_and_reap()` / `_kill_and_reap()` 闭环
 - export / preview_png 状态中立
+- 请求之间死掉的 worker（拿锁时已死 / 写管道 BrokenPipe / 读到 EOF）一律同一个带退出状态的 `session_dead`，非 shutdown 的 `session_dead` 丢掉那条解释器的体检结论（`pool.forget_python_verdict`）

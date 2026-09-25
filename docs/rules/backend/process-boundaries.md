@@ -45,3 +45,4 @@
 - 三侧模块名单与各自允许的依赖
 - 项目级解释器决策唯一出处 `pool.resolve_worker_python(项目, script=)`：显式 > 记住 > **项目 venv 首开发现**（ADR 0057）> 内置 / 自身 / 系统
 - 失效的显式选择报 `explicit_python_unusable` / `project_python_unusable` 不静默替换
+- 进程内缓存不替已经变了的环境作答（全局那条命中前查路径还在，项目体检结论与首开结果带 `projectenv.interpreter_fingerprint`，同一路径被重建 / 改权限就重验）

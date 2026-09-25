@@ -90,3 +90,4 @@
 - 文档落盘只有 `atomicio`（NaN/∞ 落盘前拒）、读侧同样有闸
 - `project_layout_dir()` 是收纳规则唯一出处
 - 另存为与自动保存共用 `_revision_conflict`、锁不可重入、GET 不用 `send_file`
+- 槽位清理顺带 `atomicio.reap_orphan_tmps`（只认 `_next_tmp` 的名字，年龄 + pid 已死，一天后只看年龄）
