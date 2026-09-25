@@ -116,8 +116,9 @@
   然后重启。**不改优先级本身**——「项目显式 > 全局显式」是
   ADR 级的另一个问题。
 - **重建受管环境的进度 id 每次一个**（#606）：`REBUILD_PROGRESS_ID_RE`（32 位小写十六进制）由发起方在发请求之前生成、
-  `POST /api/engine/environment/managed/rebuild {progress_id}` 交上来（没给就后端生成），`claim_rebuild_progress_id()` 在锁里
-  校验 + 占用（格式不对 / 已被占用 → `invalid_progress_id`）并先记一格 `preparing`——前端 POST 在网络层失败时拿同一个 id 问
+  `POST /api/engine/environment/managed/rebuild {progress_id}` 交上来，`claim_rebuild_progress_id()` 在锁里
+  校验 + 占用（格式不对 / 已被占用 → `invalid_progress_id`）并先记一格 `preparing`，**校验通过之后端点才清项目状态**；
+  没给 id（升级前的前端）用旧的固定 `managed-rebuild`，同一时刻只许一次（在跑 → `environment_mutating`）——前端 POST 在网络层失败时拿同一个 id 问
   `GET /api/engine/dependency/state` 分得清「已经起了」与「没到后端」。以前固定 `managed-rebuild`，两个项目同时重建时进度分不清。
   格式是前后端同源对（`tests/golden/rebuild_progress_id.json`）。
 - **pip exit 0 不等于修好了**：验证三层——import 那个包 / import matplotlib /

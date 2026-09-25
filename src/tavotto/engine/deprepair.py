@@ -909,26 +909,45 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
 #: （`web/src/store/depRepairStore.ts` 的 `newRebuildProgressId()`），SSE 早于 POST 响应到达也认得出；网络层失败时
 #: 还能拿同一个 id 去 `GET /api/engine/dependency/state` 问实况（#606 第 5 条）。格式是两侧的同源对：32 位小写十六进制。
 REBUILD_PROGRESS_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+#: **没给 id 的请求**（升级前的前端标签页、MCP）用的旧的固定 id（#634 评审 P2）。老前端认的就是这个字面量——
+#: 给它一个随机 id，那个标签页永远看不到进度、它那边的单飞也永远不放。固定 id 同一时刻只能有一次在跑：
+#: 第二个没给 id 的请求（另一个项目的老标签页）拿到的是 `environment_mutating`（「正在安装依赖，请稍候」），
+#: 与老前端本来就会遇到的那句拒绝同一个 code。新前端永远给 id，不走这条。
+LEGACY_REBUILD_PROGRESS_ID = "managed-rebuild"
 #: 发起方给的 id 格式不对 / 已经被占用
 ERROR_PROGRESS_ID_INVALID = "invalid_progress_id"
+_TERMINAL_STATES = (STATE_DONE, STATE_FAILED, STATE_CANCELLED)
 
 
 def new_rebuild_progress_id() -> str:
-    """发起方没给 id 时（MCP / 测试 / 老前端）由后端生成，格式与前端生成的相同。"""
+    """同步调用方（`rebuild_managed` 没给 id）用：格式与前端生成的相同。"""
     return secrets.token_hex(16)
 
 
 def claim_rebuild_progress_id(raw: str | None) -> str:
-    """校验并占用一个重建进度 id：没给就生成；给了就必须是 32 位小写十六进制、且不与任何计划 / 进度 / 在跑的
-    作业同名（占用在锁里做，两次同 id 的请求只有一次拿得到）。不合格抛 `RepairError(invalid_progress_id)`。"""
-    pid = str(raw or "") or new_rebuild_progress_id()
-    if not REBUILD_PROGRESS_ID_RE.match(pid):
-        raise RepairError(ERROR_PROGRESS_ID_INVALID, "重建进度编号格式不对")
+    """校验并占用一个重建进度 id。**只占 id，不动任何别的状态**：端点在它之后才清这个项目的计划 / 轮次
+    （#634 评审 P1：先清再校验的话，一个被拒的请求照样抹掉了项目的准备状态）。
+
+    * 没给：旧的固定 id `managed-rebuild`（老前端兼容）；它此刻在跑就抛 `RepairError(environment_mutating)`；
+    * 给了：必须是 32 位小写十六进制、且不与任何计划 / 进度 / 在跑的作业同名，否则 `invalid_progress_id`。
+
+    占用在锁里做（两次同 id 的请求只有一次拿得到），并先记一格 `preparing`：线程起来之前 `progress(id)`
+    就不是 idle——网络层失败后前端来问实况时，分得清「已经起了」与「根本没到后端」。"""
+    raw = str(raw or "")
     with _lock:
-        if pid in _progress or pid in _plans or pid in _cancels:
-            raise RepairError(ERROR_PROGRESS_ID_INVALID, "重建进度编号已经被占用")
-        # 先占一格：线程起来之前，`progress(pid)` 就回「在准备」，而不是 idle——网络层失败后前端来问实况时，
-        # 分得清「已经起了」与「根本没到后端」
+        if not raw:
+            pid = LEGACY_REBUILD_PROGRESS_ID
+            rec = _progress.get(pid)
+            if pid in _cancels or (rec is not None and rec.get("state") not in _TERMINAL_STATES):
+                raise RepairError(
+                    pool.ENVIRONMENT_MUTATING, "受管环境正在重建，请等这一次结束再试。"
+                )
+        else:
+            pid = raw
+            if not REBUILD_PROGRESS_ID_RE.match(pid):
+                raise RepairError(ERROR_PROGRESS_ID_INVALID, "重建进度编号格式不对")
+            if pid in _progress or pid in _plans or pid in _cancels:
+                raise RepairError(ERROR_PROGRESS_ID_INVALID, "重建进度编号已经被占用")
         _progress[pid] = {
             "plan_id": pid,
             "state": STATE_PREPARING,
@@ -939,14 +958,19 @@ def claim_rebuild_progress_id(raw: str | None) -> str:
     return pid
 
 
-def rebuild_managed_async(project: str | Path, on_event=None, progress_id: str = "") -> str:
-    """异步重建；回这次重建的进度 id（`claim_rebuild_progress_id` 的规则）。"""
-    pid = claim_rebuild_progress_id(progress_id)
+def start_rebuild(project: str | Path, on_event, progress_id: str) -> None:
+    """起重建线程（`progress_id` 必须已经由 `claim_rebuild_progress_id` 占用）。"""
     threading.Thread(
-        target=lambda: _rebuild_guarded(project, on_event, pid),
+        target=lambda: _rebuild_guarded(project, on_event, progress_id),
         daemon=True,
         name="tavotto-managed-rebuild",
     ).start()
+
+
+def rebuild_managed_async(project: str | Path, on_event=None, progress_id: str = "") -> str:
+    """占用 id + 起线程；回这次重建的进度 id（`claim_rebuild_progress_id` 的规则）。"""
+    pid = claim_rebuild_progress_id(progress_id)
+    start_rebuild(project, on_event, pid)
     return pid
 
 

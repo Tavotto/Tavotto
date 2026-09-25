@@ -6110,16 +6110,15 @@ def api_managed_environment_rebuild():
     # 里 pip install，而它的 venv 正在被删；而且两边拿的还是不同的 key
     # （install 用解释器路径，重建当时用合成 key），根本不互斥。
     body = request.get_json(silent=True) or {}
-    engine_deprepair.reset_state(root)
     try:
-        # 进度 id 每次重建一个、由前端在发请求之前生成（#606 第 3 / 5 条）；没给就后端生成，回在响应里
-        progress_id = engine_deprepair.rebuild_managed_async(
-            root,
-            lambda p: sse_publish("engine.dependency", p),
-            progress_id=str(body.get("progress_id") or ""),
-        )
+        # 进度 id 每次重建一个、由前端在发请求之前生成（#606 第 3 / 5 条）；没给就用旧的固定 id（老前端）。
+        # **先校验并占用 id，再清项目状态**（#634 评审 P1）：被拒的请求一个字节的状态都不动
+        progress_id = engine_deprepair.claim_rebuild_progress_id(str(body.get("progress_id") or ""))
     except engine_deprepair.RepairError as exc:
-        return jsonify({"error": str(exc), "code": exc.code}), 400
+        status = 409 if exc.code == engine_pool.ENVIRONMENT_MUTATING else 400
+        return jsonify({"error": str(exc), "code": exc.code}), status
+    engine_deprepair.reset_state(root)
+    engine_deprepair.start_rebuild(root, lambda p: sse_publish("engine.dependency", p), progress_id)
     return jsonify({"started": True, "progress_id": progress_id})
 
 

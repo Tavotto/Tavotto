@@ -16,6 +16,8 @@ describe('重建进度 id（同源对）', () => {
     for (const raw of golden.reject) expect(re.test(raw)).toBe(false)
     const ids = Array.from({ length: 64 }, () => newRebuildProgressId())
     for (const id of ids) expect(id).toMatch(re)
+    // 旧固定 id 只留给没给 id 的老前端（后端兜底），新前端生成不出它
+    expect(re.test(golden.legacy)).toBe(false)
     expect(new Set(ids).size).toBe(ids.length)
   })
 })
