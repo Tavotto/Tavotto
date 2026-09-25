@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from tavotto import tiffprobe
+
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "src" / "tavotto" / "app.py"
 LOCALES = ROOT / "web" / "src" / "i18n" / "locales"
@@ -64,6 +66,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.deprepair",
     # U10（ADR 0072）：`TAVOTTO_RENDER_BACKEND` 指着退役 / 不认识的后端——`BackendSelectionError.code`
     "tavotto.pdfbackend",
+    # issue #534：TIFF 素材的支持范围（`UnsupportedTiff(code)` 由 app 的 422 漏斗 / 导出作业转出）
+    "tavotto.tiffprobe",
 )
 
 
@@ -290,6 +294,11 @@ USER_VISIBLE_CODES = {
     "tutorial_locked": {"reason"},
     # --- #264：版本时间线读不出来时拒绝整份写回（写入侧那道闸）---
     "versions_unreadable": set(),
+    # --- issue #534：TIFF 素材。范围之外的 TIFF 在 `/api/panels` 的 `unsupported`、`safe_resolve`
+    #     的 422 与导出作业里都报同一个 code，params 只有文件名 ---
+    **{code: {"file"} for code in tiffprobe.ERROR_CODES},
+    # 写回只重写 .pdf / .png：画布上是 JPEG / TIFF 时如实拒绝
+    "write_back_format_unsupported": {"format"},
     # --- U08（ADR 0068）：有限产物验证。`artifact_rejected` 是逐项失败（partial 那一档），
     #     `bad_inspection` 是请求里的检查政策不合法 / 指向的规范不可用 ---
     "artifact_rejected": {"failed", "policy"},

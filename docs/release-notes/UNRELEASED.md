@@ -14,6 +14,22 @@ release.yml 的「拼 release body」当场红（scripts/check_pending_release_n
 
 ## Added
 
+**TIFF files show up in the asset library.**
+Trigger: a project folder contains `.tif` / `.tiff` figures (a common journal
+submission format). Before: they were silently left out of the asset library —
+and a script that saved only a TIFF made its figure disappear from the library
+altogether. Now they are listed, previewed, placed on the canvas and exported
+like PNG / JPEG. Supported: 8-bit and 16-bit (reduced to 8-bit, no automatic
+contrast stretch) grayscale / RGB with or without alpha, 8-bit palette and
+1-bit black-and-white images; uncompressed, LZW, Deflate, PackBits, JPEG and
+CCITT G3/G4 compression. Multi-page TIFFs use the first page, as multi-page
+PDFs do. Floating-point or signed pixels, CMYK / Lab, 32-bit samples, other
+compressions (ZSTD, WebP, JPEG 2000), BigTIFF and planar TIFFs are not
+supported: they are listed under "These files can’t be used" with the reason
+and how to re-save them, instead of being drawn wrong. Writing edits back into
+the original file still works only for PDF / PNG figures; for a JPEG or TIFF
+figure it now says so instead of reporting success without changing the file.
+
 **Settings → Diagnostics → Performance records where drag stutter comes from.**
 Trigger: dragging figure sub-elements or canvas objects feels choppy on a
 particular Mac. Before: there was no way to show *where* the time went on that

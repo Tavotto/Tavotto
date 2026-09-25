@@ -34,7 +34,9 @@
   不跑脚本（RC-019）；带 override / runtime 素材抛 `source_needs_execution`（U08 接 worker + 回执，
   RC-017：绝不拿 materialized cache 冒充）；`read_frozen()` 在读字节那一刻核 sha256，不符就是
   `source_changed`（RC-014）。同一张图两套 override = 两条资源（key 含字节 hash + 语义身份），
-  不按 stem 串用（RC-015）。不复制脚本 / 实验数据到 staging。
+  不按 stem 串用（RC-015）。不复制脚本 / 实验数据到 staging。**它不经 `app.safe_resolve`**（包含检查与存在性
+  自己做），所以 app 层的 `_StaticInProject` 在它返回之后补 TIFF 支持范围那道闸（`tiffprobe.check`，issue #534）
+  ——范围只有一处判据，两个后端都在它后面，见 `project-system.md`。
 - **身份不另造**：`plan.compile_plan()` 的 `plan_identity` 就是 U01 的 `exportreq.render_plan_ref()`
   （04 §3 三种身份不混）；`FileResource.semantic_identity` 是 `SourceArtifact.semantic_identity()`。
 - **Arrow / Shape 编译成 `Path`**（`geometry`，框空间 y 向下 + 一个 `Group.transform`）；

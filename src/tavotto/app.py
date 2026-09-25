@@ -46,7 +46,7 @@ from flask import (
 from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException
 
-from . import pdfbackend
+from . import pdfbackend, tiffprobe
 from .engine import (
     ai_bridge as engine_ai,
     ai_history as engine_ai_history,
@@ -109,6 +109,9 @@ DATA_ROOT = engine_config.data_dir()  # 可写：运行时产物（装成包后 
 EXCLUDE_DIRS = engine_refresh.EXCLUDE_DIRS
 PDF_EXT = engine_refresh.PDF_EXT
 IMG_EXT = engine_refresh.IMG_EXT
+TIFF_EXT = engine_refresh.TIFF_EXT
+#: 写回重写的产物格式（顺序即写的顺序：PDF 在前，PNG 由它的同一次重放出）
+WRITE_BACK_EXT = (".pdf", ".png")
 
 MM_PER_PT = 25.4 / 72.0
 RENDER_BUCKETS = [200, 400, 800, 1600, 3200]
@@ -375,7 +378,13 @@ def current_registry() -> engine_registry.Registry:
 
 
 def safe_resolve(rel_id: str) -> Path:
-    """把面板 id（相对路径）解析回 figures 目录内的真实文件，禁止越权访问。"""
+    """把面板 id（相对路径）解析回 figures 目录内的真实文件，禁止越权访问。
+
+    TIFF 还要过支持范围（`tiffprobe.check`，issue #534）：缩略图、原文件、画布合成、原图导出、
+    重渲染全都经这里取文件，所以范围之外的 TIFF 在**两个渲染后端之前**就被拦下，抛
+    `tiffprobe.UnsupportedTiff`（HTTP 路上由 `_unsupported_tiff` 转成 422 + code，导出作业里
+    由 `_resolve_panel_source` 转成作业的 code）——不交给后端去各出一张不同的错图。
+    """
     root = require_project()
     p = (root / rel_id).resolve()
     if not p.is_relative_to(root.resolve()):
@@ -384,11 +393,24 @@ def safe_resolve(rel_id: str) -> Path:
         abort(404)
     if p.suffix.lower() not in PDF_EXT | IMG_EXT:
         abort(403)
+    if p.suffix.lower() in TIFF_EXT:
+        tiffprobe.check(p)
     return p
 
 
-def scan_panels() -> list[dict]:
-    """扫描 figures 目录：PDF 是首选（矢量）；无同名 PDF 的图片按位图收录。"""
+@app.errorhandler(tiffprobe.UnsupportedTiff)
+def _unsupported_tiff(exc):
+    """范围之外的 TIFF：422 + 稳定 code（`tiffprobe.ERROR_CODES`），文案归前端。"""
+    return jsonify({"error": exc.message, "code": exc.code, "params": exc.params}), 422
+
+
+def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
+    """扫描 figures 目录：PDF 是首选（矢量）；无同名 PDF 的图片按位图收录。
+
+    `unsupported` 给了就收「是素材、但用不了」的那些（目前只有支持范围之外的 TIFF，
+    `{id, name, folder, code}`）：它们不进返回的面板表（没有尺寸、画不出来），但也**不许
+    静默消失**——`/api/panels` 把这张表一起交给前端，素材库如实说出来。
+    """
     ctx = current_ctx()
     baked = load_baked(ctx)  # 本项目的写回基线，局部变量（绝不跨项目共享）
     panels = []
@@ -406,6 +428,16 @@ def scan_panels() -> list[dict]:
     for p, kind in assets:
         rel = str(p.relative_to(root))
         folder = str(p.parent.relative_to(root)) or "."
+        if p.suffix.lower() in TIFF_EXT:
+            try:
+                tiffprobe.check(p)
+            except tiffprobe.UnsupportedTiff as exc:
+                LOG.info("素材扫描: %s 不在 TIFF 支持范围内（%s）", p, exc.code)
+                if unsupported is not None:
+                    unsupported.append(
+                        {"id": rel, "name": p.name, "folder": folder, "code": exc.code}
+                    )
+                continue
         entry = {
             "id": rel,
             "name": p.stem,
@@ -739,7 +771,11 @@ def api_version():
 
 @app.get("/api/panels")
 def api_panels():
-    resp = jsonify({"figures_dir": str(require_project()), "panels": scan_panels()})
+    unsupported: list[dict] = []
+    panels = scan_panels(unsupported)
+    resp = jsonify(
+        {"figures_dir": str(require_project()), "panels": panels, "unsupported": unsupported}
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -851,12 +887,20 @@ def _resolve_panel_source(
     if engine_runtimeasset.is_runtime_id(rel_id):
         # runtime 素材没有磁盘原件，**永远**由 worker 现画
         return _serialize_figure(rel_id, overrides, "pdf", dpi, sink, out_dir)
-    path = safe_resolve(o["id"])
+    try:
+        path = safe_resolve(o["id"])
+    except tiffprobe.UnsupportedTiff as exc:
+        raise _export_tiff_error(exc) from exc
     if overrides or rerender:
         rendered = _serialize_figure(rel_id, overrides, "pdf", dpi, sink, out_dir)
         if rendered is not None:
             path = rendered
     return path
+
+
+def _export_tiff_error(exc: tiffprobe.UnsupportedTiff) -> engine_exportreq.ExportRequestError:
+    """导出作业里没有 HTTP 响应可回：范围之外的 TIFF 换成作业自己的结构化失败，code 原样带过去。"""
+    return engine_exportreq.ExportRequestError(exc.code, exc.message, exc.params)
 
 
 def _serialize_figure(
@@ -1179,7 +1223,16 @@ def _export_produce_rendercore(job, tmp_dir: Path) -> list:
         项目——与旧路 `safe_resolve` 只在碰面板时才要项目同一语义。"""
 
         def resolve(self, obj: dict):
-            return rc_sources.StaticSourceResolver(require_project()).resolve(obj)
+            fs = rc_sources.StaticSourceResolver(require_project()).resolve(obj)
+            # 这条路不经 `safe_resolve`（它自己做包含检查与存在性），TIFF 的支持范围得在这里补上：
+            # 漏掉它，范围之外的 TIFF 在候选后端下会被画成一张错图交付（issue #534）。先让解析器把
+            # 路径核进项目根，再读它的头
+            if fs.path.suffix.lower() in TIFF_EXT:
+                try:
+                    tiffprobe.check(fs.path)
+                except tiffprobe.UnsupportedTiff as exc:
+                    raise _export_tiff_error(exc) from exc
+            return fs
 
     resolver = rc_sources.ExecutionSourceResolver(
         static=_StaticInProject(),
@@ -3773,6 +3826,9 @@ def api_engine_update_source():
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
         ), 404
+    if fmt_err := _write_back_format_error(src):
+        # 起 worker 之前就拒（判据与 `_write_source_files` 里那道是同一个函数）
+        return _write_back_error_response(fmt_err)
     worker = _safe_worker(info["script"], info["entry"], src.stem)
     try:
         result = _write_source_files(
@@ -3786,6 +3842,7 @@ def api_engine_update_source():
         ReplayDivergenceError,
         WriteBackVerifyError,
         FileLockedError,
+        WriteBackFormatError,
     ) as exc:
         return _write_back_error_response(exc)
     # 把这组修改追加为该图的版本历史，末位即当前基线：
@@ -3806,6 +3863,23 @@ def _write_back_forbidden():
             }
         ), 403
     return None
+
+
+class WriteBackFormatError(RuntimeError):
+    """画布上这张素材不是写回会重写的格式（JPEG / TIFF）：写回与版本恢复都一个字节写不进它。"""
+
+    def __init__(self, fmt: str) -> None:
+        super().__init__(f"写回只支持 PDF / PNG 素材，这张是 {fmt}")
+        self.format = fmt
+
+
+def _write_back_format_error(src: Path) -> WriteBackFormatError | None:
+    """写回的目标是 `src` 同名的 .pdf / .png（`WRITE_BACK_EXT`）。`src` 自己不在其中时，画布上这张
+    一个字节都不会变——以前会报成功、记下基线（JPEG 一直如此；#534 让 TIFF 也走到这里）。
+    **唯一判据**：update_source / history/restore 的早检与 `_write_source_files` 里的扼流点都问它。"""
+    if src.suffix.lower() in WRITE_BACK_EXT:
+        return None
+    return WriteBackFormatError(src.suffix.lstrip(".").upper())
 
 
 class FileLockedError(RuntimeError):
@@ -4161,9 +4235,12 @@ def _write_source_files(
     WorkerError 时，`.Fig1.pdf.updating` 就永久留在图库里了。
     """
     stem = src.stem
+    if fmt_err := _write_back_format_error(src):
+        # 唯一的扼流点：调用方忘了早检，也绝不「零个目标、报成功、记基线」
+        raise fmt_err
     _write_back_prepare(src, worker, expected_mtime)
 
-    targets = [p for p in (src.with_suffix(".pdf"), src.with_suffix(".png")) if p.exists()]
+    targets = [p for p in (src.with_suffix(ext) for ext in WRITE_BACK_EXT) if p.exists()]
     man_hot = _hot_manifest(worker, stem, patches)
 
     # ---- verify：全新 worker 全量重放，staging 也从它出 ----------------------
@@ -4320,7 +4397,7 @@ def _write_back_response(result: dict, **extra) -> dict:
 
 
 def _write_back_error_response(exc):
-    """三种 prepare/verify 失败 → 409 + 专属 code；不认识的回 None。"""
+    """prepare/verify 失败 → 409 + 专属 code；格式不是写回目标 → 400；不认识的回 None。"""
     if isinstance(exc, SourceChangedError):
         return jsonify(
             {
@@ -4372,6 +4449,14 @@ def _write_back_error_response(exc):
                 "rollback_failed": exc.rollback_failed,
             }
         ), 409
+    if isinstance(exc, WriteBackFormatError):
+        return jsonify(
+            {
+                "error": str(exc),
+                "code": "write_back_format_unsupported",
+                "params": {"format": exc.format},
+            }
+        ), 400
     return None
 
 
@@ -4544,11 +4629,15 @@ def api_engine_history_restore():
                 "params": {"id": body.get("id", "")},
             }
         ), 400
+    src = safe_resolve(body.get("id", ""))
+    if fmt_err := _write_back_format_error(src):
+        # 历史版本可能来自这张图还是 PDF / PNG 的时候；现在它是 JPEG / TIFF，恢复同样一个字节
+        # 都写不进去——起 worker 之前拒，与 update_source 同一个 code（Codex #561）
+        return _write_back_error_response(fmt_err)
     worker, stem = _engine_worker(body.get("id", ""))
     n = int(body.get("n", -1))
     versions = load_baked().get(stem, {}).get("versions") or []
     patches = [] if n < 0 or n >= len(versions) else versions[n]["patches"]
-    src = safe_resolve(body.get("id", ""))
     try:
         result = _write_source_files(
             src, patches, worker, expected_mtime=body.get("expected_mtime")
@@ -4561,6 +4650,7 @@ def api_engine_history_restore():
         ReplayDivergenceError,
         WriteBackVerifyError,
         FileLockedError,
+        WriteBackFormatError,
     ) as exc:
         return _write_back_error_response(exc)
     append_baked(stem, patches, files=result["file_identity"])
