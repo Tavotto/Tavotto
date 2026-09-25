@@ -25,6 +25,10 @@
   `envStore` 同样有项目代际（`resetProject()` 换代）：`refresh` / `setPython` / `setProjectPython` /
   `setWorkdirMode` / `revertAdoptedEnvironment` 在 await 之后、**写状态的那一侧**判代际——调用方在拿到结果之后
   再判已经晚了（写在返回之前就发生了，#605 评审）。看护 `store/projectSwitchDepRepair.test.ts`。
+  `assetStore`（`/api/panels` 的清单：面板、`unsupported`、目录）同样在
+  `resetForNewProject()` 里 `clear()` 换代（#577）：「刷新失败保留上一份」只对**同一项目**成立，切项目
+  时 B 的清单挂起或失败都不许显示 A 的卡片与「无法使用」清单；`recentlyUsed` 是按文件 id 记的本机偏好，
+  不清。看护 `store/projectSwitchAssets.test.ts`。
 - **`scriptRunStore` 的四条纪律**（vitest 看护）：同脚本防并发（busy 即
   no-op，后端另有 409）；cancel 走后端取消端点（置标志 + 硬杀 worker），
   行内状态等**原请求**以 `execution_cancelled` 落地——绝不「界面装停了、
