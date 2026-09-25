@@ -112,6 +112,8 @@ def _run(body: str) -> str:
         [WORKER_PY, "-c", _DRIVER + body, str(ENGINE_DIR)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=180,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
