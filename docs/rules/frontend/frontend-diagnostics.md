@@ -29,3 +29,14 @@
   且靠 immer 的结构共享 + WeakMap 缓存（`digest.ts`），改一个对象只 hash 一个。
 - 看护：`web/src/diagnostics/*.test.ts` + `tests/test_diagnostics_bundle.py`
   （服务端第二道校验、ZIP、端到端隐私回归）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 权威判据委托 `exactPanelRender`
+- 只观察不当真源、吞异常
+- 序列化遍历 schema 不遍历输入
+- 定长 240 纯内存、切项目清环

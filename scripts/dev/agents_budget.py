@@ -1,8 +1,10 @@
 """按**实际加载路径**量指导文档的体积，对照试行预算打印一张表。
 
-只报告，不当门禁（`--strict` 才按预算退非零）。理由写在 docs/rules/README.md：预算是
+试行预算只报告，不当门禁（`--strict` 才按预算退非零）。理由写在 docs/rules/README.md：预算是
 本项目试行的数字，超标先报告、不为达标粗暴删规则；量的是原始字节，**不是 token 数**，
-也不代表任何账户的实际扣费。
+也不代表任何账户的实际扣费。**唯一的硬线是 Codex 自动拼接不越过 32 KiB**（#608）——那不是
+我们定的预算，是 Codex 的默认上限，越过就静默截掉末尾；`--check` 按它退非零，
+`tests/test_agents_rules_index.py` 钉着同一条。
 
 两种加载方式各量一份：
 
@@ -11,20 +13,16 @@
 * **按任务读**（Claude Code 与 Codex 里按根的指示手动读的那条路）：根 + 本层速查表 +
   这项任务要读的细则，就是这次会话为规则付出的字节。
 
-用法：`python scripts/dev/agents_budget.py [--strict] [--json]`
+用法：`python scripts/dev/agents_budget.py [--strict] [--check] [--json]`
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
-
-# Windows 上 stdout 被重定向成管道时会退回系统区域编码（cp1252/cp936），报告里全是中文。
-for _stream in (sys.stdout, sys.stderr):
-    if hasattr(_stream, "reconfigure"):
-        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -40,9 +38,16 @@ AUDIT_BASELINE_BYTES = {
     "src/tavotto/AGENTS.md": 143_922,
     "web/AGENTS.md": 147_812,
     ".github/AGENTS.md": 31_773,  # 2026-09-18 纳入（任务书之外，用户拍板）
+    "codex-plugin/AGENTS.md": 35_199,  # 2026-09-25 纳入（#608，main @ e6e6e643）
 }
 
-SHEETS = ["AGENTS.md", "src/tavotto/AGENTS.md", "web/AGENTS.md", ".github/AGENTS.md"]
+SHEETS = [
+    "AGENTS.md",
+    "src/tavotto/AGENTS.md",
+    "web/AGENTS.md",
+    ".github/AGENTS.md",
+    "codex-plugin/AGENTS.md",
+]
 
 #: 三类代表任务（任务书点名的）+ 一个「只开会话」的对照。每项 = 根 + 速查表 + 细则。
 TASK_CHAINS: dict[str, list[str]] = {
@@ -70,8 +75,11 @@ TASK_CHAINS: dict[str, list[str]] = {
     ],
 }
 
-#: Codex 自动拼接：cwd → 路径上的 AGENTS.md（只算存在的）。
+#: Codex 自动拼接：cwd → 路径上的 AGENTS.md（只算存在的）。这几个是固定展示的代表 cwd；
+#: 硬线判的是 `codex_cwds()`——它另外把**每一份** AGENTS.md 所在的目录都算上，新加一层不用改这里。
 CODEX_CWDS = [".", "src/tavotto", "src/tavotto/engine", "web", "web/src", "codex-plugin", ".github"]
+#: 找 AGENTS.md 时跳过的目录：依赖 / 构建产物，与隐藏目录（`.github` 除外）。
+_PRUNE = {"node_modules", "target", "dist", "build", "__pycache__"}
 
 
 def size(rel: str) -> int:
@@ -94,6 +102,24 @@ def codex_chain(cwd: str) -> list[str]:
         if (ROOT / rel).is_file():
             out.append(rel)
     return out
+
+
+def agents_files() -> list[str]:
+    """仓库里每一份 AGENTS.md（仓库根相对、posix）。判据的主语：Codex 在这棵树里能加载到的那些文件。"""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [
+            d for d in dirnames if d not in _PRUNE and (not d.startswith(".") or d == ".github")
+        ]
+        if "AGENTS.md" in filenames:
+            out.append((Path(dirpath) / "AGENTS.md").relative_to(ROOT).as_posix())
+    return sorted(out)
+
+
+def codex_cwds() -> list[str]:
+    """代表 cwd + 每一份 AGENTS.md 所在的目录。更深的 cwd 拼到的是最近祖先那一串，不会更长。"""
+    dirs = [f.rsplit("/", 1)[0] if "/" in f else "." for f in agents_files()]
+    return list(dict.fromkeys(CODEX_CWDS + dirs))
 
 
 def report() -> dict:
@@ -121,7 +147,7 @@ def report() -> dict:
             {"task": name, "files": files, "bytes": total, "verdict": verdict(total, BUDGET_CHAIN)}
         )
     codex = []
-    for cwd in CODEX_CWDS:
+    for cwd in codex_cwds():
         files = codex_chain(cwd)
         total = sum(size(f) for f in files)
         codex.append(
@@ -138,8 +164,16 @@ def report() -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--strict", action="store_true", help="任一速查表或任务链超预算即退 1")
+    ap.add_argument(
+        "--check", action="store_true", help="任一 Codex 自动拼接越过默认上限即退 1（硬线，#608）"
+    )
     ap.add_argument("--json", action="store_true", help="机器可读输出")
     args = ap.parse_args(argv)
+    # Windows 上 stdout 被重定向成管道时会退回系统区域编码（cp1252/cp936），报告里全是中文。
+    # 放在 main 里：被 import（门禁用例）时不去动调用方的 stdout。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     r = report()
     if args.json:
         print(json.dumps(r, ensure_ascii=False, indent=2))
@@ -175,6 +209,8 @@ def main(argv: list[str] | None = None) -> int:
         c for c in r["chains"] if c["verdict"] != "ok"
     ]
     if args.strict and over:
+        return 1
+    if args.check and not all(c["within_default_cap"] for c in r["codex"]):
         return 1
     return 0
 

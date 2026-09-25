@@ -52,3 +52,13 @@
 - **spike 不是产品**：`python -m tavotto.engine.bridge_spike` 没有稳定契约、
   没有接进 `tavotto` CLI，别在文档 / 官网 / release notes 里提它。
   **产品入口是 `tavotto run`**（`docs/rules/backend/tavotto-run-control-plane.md`）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 两条入口都经 `bridgeboot` 把引擎模块装进私有包（safe 的清单 `_ENGINE_MODULES`、native 的 `_PHASE1/_PHASE2`），用户的同名模块永远赢
+- 兄弟模块只在模块层平铺 import 并登记（函数体内裸 import 会命中用户文件）
+- native 侧不起后台线程

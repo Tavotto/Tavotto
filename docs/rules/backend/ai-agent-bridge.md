@@ -104,3 +104,16 @@
   按 project 列过滤）；启动时 running→interrupted + purge(180d，pinned 豁免)；
   历史 API：list（分页/搜索/筛选）/delete/pin。前端默认只显示人类可读目标，
   脚本名收在「技术详情」。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 「支持哪些 Agent」只在 `AGENT_REGISTRY`，通用层不许 `if agent == "codex"`
+- CLI 子进程一律 `spawn_env()`
+- 就绪检查只跑官方本地状态命令、`claude auth status` 只取 `loggedIn`
+- `path_override` 必须 realpath + 指向该 Agent
+- spawn 时注入、绝不改写用户的 settings / config.toml
+- 模型名不写进源码

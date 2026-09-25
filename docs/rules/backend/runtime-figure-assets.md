@@ -52,3 +52,15 @@
   * 看护 `tests/test_runtime_asset.py`；`tavotto open` 的自动 probe 仍
     刻意未动（Session 6）。素材库普通入口已落地（Session 5，前端规则见
     `web/AGENTS.md`）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- id 不透明、解析正向重算不反解
+- cache 是派生物、metadata 最后写
+- status / preview / assets 端点只读绝不执行
+- 写回硬拒绝 `runtime_asset_has_no_original_artifact`
+- 导出必须当次 live 渲染

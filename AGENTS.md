@@ -106,7 +106,7 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 | `src-tauri/` | `src-tauri/AGENTS.md` | 桌面壳、ACL、更新通道、安装界面、壳内 i18n |
 | `workerd/` | `workerd/AGENTS.md` | Rust supervisor |
 | `packaging/` | `packaging/AGENTS.md` | wheel/sdist、内置渲染 runtime、PyInstaller、macOS 签名 |
-| `codex-plugin/` | `codex-plugin/AGENTS.md` | Codex 插件、技能、MCP server、内嵌画布、首次使用契约 |
+| `codex-plugin/` | `codex-plugin/AGENTS.md` → `docs/rules/plugin/` | Codex 插件、技能、MCP server、内嵌画布、首次使用契约 |
 | `.github/` | `.github/AGENTS.md`（速查表）→ `docs/rules/ci/` | CI 分层、门禁纪律、验证链、发布链 |
 | 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语 |
 | 架构决策 | `docs/adr/` | 改动前先读对应 ADR |

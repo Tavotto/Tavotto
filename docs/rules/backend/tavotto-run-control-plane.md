@@ -57,3 +57,15 @@
 - **native 面板"出自哪一档"只有一个出处**：`enginesession.profile_of()`。
   `/api/runtime/status` 的 `execution_profile` 与渲染路由读的是同一份，
   另立一份迟早在某个边角上分叉，而分叉的那一侧会在界面上显示成"能编辑"。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- CLI 拥有用户的 Python
+- 确认前一行用户代码不跑
+- Tavotto 只写 stderr（`--help` 唯一例外）
+- 屏障释放必经 `release_barrier()`
+- socket 先 `shutdown(SHUT_RDWR)` 再 `close()`

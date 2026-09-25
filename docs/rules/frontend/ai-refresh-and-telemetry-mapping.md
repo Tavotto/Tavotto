@@ -32,3 +32,14 @@
 * 看护：`lib/activityTelemetry.test.ts` / `components/CommandPalette.test.tsx` /
   `store/projectReadinessStore.test.ts`「打开接入中心的遥测」/ `hooks/useServerEvents.test.ts`
   「AI 修改之后」。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 刷新入口只有 `refreshProjectNow()`
+- `ai.done` 不 markStale、`refresh.status === 'failed'` 单独说
+- 活动 → 遥测映射只在一处、只映射浮动栏排列
+- 命令 id 稳定、高亮按身份记

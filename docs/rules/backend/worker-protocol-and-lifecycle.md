@@ -112,3 +112,16 @@
   与 `self._log.close()` 之前——workerd 的 stderr 就绑在那个文件上。看护：
   `test_workerd_client.py` 的假 supervisor 两条（每处 call site 各一条，
   合并成一条就抓不到只漏改一处的回归）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 协议 v1 信封原样回显、`request_id` 对不上 kill
+- patch 规范化唯一权威 `patchspec.py`（↔ Rust 逐字节）
+- build 用静默看门狗（ADR 0050）
+- 管道 EOF 先 `EXIT_GRACE` 内问退出状态再 kill，退出码进信封、解释只在 `pool.describe_exit` / `session_dead_message`，worker 开 faulthandler、脚本 `sys.exit(0)` 是正常结束（#435）
+- `_terminate_and_reap()` / `_kill_and_reap()` 闭环
+- export / preview_png 状态中立

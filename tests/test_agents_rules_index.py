@@ -18,11 +18,14 @@ Codex 沿「仓库根 → cwd」拼接项目指令、默认 `project_doc_max_byt
 解析不了的（`<占位>`、通配、数据目录里的路径）不判——判不出就别判，别让一条门禁为了
 覆盖率去猜。
 
-体积不在这里判：预算是试行的、按实际加载路径量的，看 `scripts/dev/agents_budget.py`。
+体积只判一条硬线：**Codex 自动拼接不越过默认的 32 KiB**（#608，理由见 docs/rules/README.md
+第 3 条）——那是 Codex 的上限不是我们的预算，越过就静默截掉末尾的规则。其余预算是试行的、
+只报告，看 `scripts/dev/agents_budget.py`。
 """
 
 from __future__ import annotations
 
+import importlib.util
 import re
 from pathlib import Path
 
@@ -37,6 +40,7 @@ SHEETS: dict[str, Path] = {
     "src/tavotto/AGENTS.md": RULES / "backend",
     "web/AGENTS.md": RULES / "frontend",
     ".github/AGENTS.md": RULES / "ci",
+    "codex-plugin/AGENTS.md": RULES / "plugin",
 }
 #: 细则目录 = 速查表点名的那些（加一层只改上表）。
 LAYERS = tuple(dict.fromkeys(v.name for v in SHEETS.values()))
@@ -80,7 +84,16 @@ REPO_FIRST_SEGMENTS = {
     "test",
 }
 #: 相对写法可能落在的根，按顺序试。
-RELATIVE_ROOTS = (ROOT, ROOT / "web", ROOT / "web" / "src", ROOT / "src", ROOT / "src" / "tavotto")
+RELATIVE_ROOTS = (
+    ROOT,
+    ROOT / "web",
+    ROOT / "web" / "src",
+    ROOT / "src",
+    ROOT / "src" / "tavotto",
+    # 插件细则里的相对写法（相对插件根 / 技能目录：`mcp/server.py`、`scripts/handoff.py`）
+    ROOT / "codex-plugin",
+    ROOT / "codex-plugin" / "skills" / "tavotto-figure",
+)
 
 
 def _read(rel: str) -> str:
@@ -102,6 +115,8 @@ def _tokens(text: str) -> list[str]:
 
 def _looks_like_repo_path(tok: str) -> bool:
     if "/" not in tok or any(c in SKIP_CHARS for c in tok):
+        return False
+    if "..." in tok:  # ASCII 省略号与 `…` 同义：`codex-plugin/.../scripts/x.py` 不是可解析路径
         return False
     if not tok.endswith(PATH_EXT):
         return False
@@ -144,10 +159,12 @@ def test_the_rules_corpus_is_actually_there():
     frontend = _rules_files(RULES / "frontend")
     repo = _rules_files(RULES / "repo")
     ci = _rules_files(RULES / "ci")
+    plugin = _rules_files(RULES / "plugin")
     assert len(backend) >= 25, f"backend 细则只有 {len(backend)} 份"
     assert len(frontend) >= 25, f"frontend 细则只有 {len(frontend)} 份"
     assert len(repo) >= 2, f"repo 细则只有 {len(repo)} 份"
     assert len(ci) >= 10, f"ci 细则只有 {len(ci)} 份"
+    assert len(plugin) >= 10, f"plugin 细则只有 {len(plugin)} 份"
     for sheet in SHEETS:
         assert (ROOT / sheet).is_file(), sheet
 
@@ -261,3 +278,42 @@ def test_adrs_cited_in_guidance_exist():
             if num.zfill(4) not in existing:
                 broken.append(f"{path.relative_to(ROOT).as_posix()} → ADR {num}")
     assert not broken, f"这些 ADR 引用没有对应文件: {sorted(set(broken))}"
+
+
+# ---------------------------------------------------------------- 三、Codex 自动拼接的硬线
+
+
+def _budget():
+    spec = importlib.util.spec_from_file_location(
+        "agents_budget", ROOT / "scripts" / "dev" / "agents_budget.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_codex_auto_concatenation_stays_under_the_default_cap():
+    """从任何一个有 AGENTS.md 的目录开工，Codex 拼进来的那一串都不越过 32 KiB（#608）。
+
+    判据的主语：**Codex**（默认 `project_doc_max_bytes`）在**加载项目指令的那一刻**、从
+    **每一份 AGENTS.md 所在的目录**开工时拼出来的「根 → cwd」那一串的**原始字节**。更深的
+    cwd 拼到的是最近祖先那一串，不会更长，所以按目录枚举就是全集。Codex 在文件之间另加的
+    分隔符不在这里算——留给余量（治理后最长一串约 27 KB）。
+
+    反证：往任一速查表塞到越过上限 1 KiB，这里必红（变异记在 #608 的 PR 里）。
+    """
+    ab = _budget()
+    files = ab.agents_files()
+    # 前提：枚举真的看到了每一份速查表（空集合上的「都没越线」恒真）。
+    assert set(SHEETS) <= set(files), f"枚举漏了速查表: {sorted(set(SHEETS) - set(files))}"
+    chains = [(cwd, ab.codex_chain(cwd)) for cwd in ab.codex_cwds()]
+    assert {f for _, fs in chains for f in fs} == set(files)
+    over = []
+    for cwd, fs in chains:
+        total = sum((ROOT / f).stat().st_size for f in fs)
+        if total > ab.CODEX_DEFAULT_CAP:
+            over.append(f"cwd={cwd}: {total:,} B > {ab.CODEX_DEFAULT_CAP:,} B ← {' + '.join(fs)}")
+    assert not over, (
+        "Codex 会截掉这些拼接串的末尾（把速查表里写成全文的要点迁进细则，见 docs/rules/README.md）:\n  "
+        + "\n  ".join(over)
+    )

@@ -71,3 +71,14 @@
 * 看护：`inspector/legendCard.test.tsx`、`inspector/legendSpacingCard.test.tsx`、
   `inspector/controls/pickers.test.tsx`、`canvas/inFigureDrag.test.tsx`（整体缩放与钉对角）；Python 侧 `tests/test_legend_binding.py`、
   `tests/test_legend_anchor.py`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 脱开判据 = 任一 `handle_*` override 在
+- 恢复跟随只有 `restoreLegendEntryFollow` 一次 commit
+- 位置控件内 / 外两带一次点击一次 commit、写 `loc` 时删 `loc_frac`
+- `LEGEND_ENTRY_STYLE_PROPS` / `LEGEND_BINDINGS` 与引擎严格同源

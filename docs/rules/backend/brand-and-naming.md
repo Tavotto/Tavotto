@@ -23,3 +23,13 @@ LEGACY_ 常量**，别照着旧模式再加一档。两个例外都在 mm 前缀
 论文 Figure 排版 + 参数化图表编辑工具。Flask 后端（`src/tavotto/app.py`）+
 RenderCore（pikepdf / HarfBuzz / PDFium，**只经 `src/tavotto/pdfbackend/` 契约层**），前端 `web/`
 （Vite + React 19 + TS + Tailwind v4）；旧 v1 前端已于 2026-08-15 删除（git 可找回）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 干净断裂：旧名一律不认、不加 LEGACY_
+- 唯二例外 `mm_registry.json`（`registry.existing_registry_path()`）与 `MM_WORKER_PYTHON`（`pool.worker_python_env()`）只在读取端回退
+- 桌面 id `com.tavotto.tavotto`

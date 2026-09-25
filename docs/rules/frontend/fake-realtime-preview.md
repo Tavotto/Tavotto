@@ -85,3 +85,16 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   （100 次 move 零后端 / 取消语义 / 撤销重做）、
   `components/inspector/elementStylePreview.test.tsx`、
   `e2e/fake-realtime.spec.ts`（真浏览器，顺带产出 perf-baseline 的 Phase G 数字）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 临时 transform 写成 `translate(…) <原始 transform>`、从 base 现算
+- `pointercancel` 与 `pointerup` 分开
+- 挂 SVG 的 innerHTML 按字符串复用同一个 `{__html}`（`useHtmlMarkup`，否则松手弹回原位）
+- `reattachPreview` 只在 DOM 真被换过时重放
+- 样式预览是白名单且与 `applyStyleEdit` 共用 `styleTargets`
+- `'none'` 策略仍写 `wantPatches`
