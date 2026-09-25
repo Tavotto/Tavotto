@@ -119,6 +119,20 @@ describe('切项目', () => {
     expect(p().lastDocumentIssue).toBeNull()
   })
 
+  it('切回来时槽位里有比磁盘新的本机副本：换回那份文档，并把恢复副本交给横幅（#643 评审）', async () => {
+    await makeContentDoc('d_a', 'Fig A')
+    await p().open('/figs/b')
+    // 本机留着一份比磁盘新的 d_a（上次写盘没成）
+    const disk = JSON.parse(diskSlots.get('d_a')!) as ProjectDocument
+    localStorage.setItem(
+      'tavotto.autosave.d_a',
+      JSON.stringify({ ...disk, updatedAt: (disk.updatedAt ?? 0) + 1000 }),
+    )
+    await p().open('/figs/a')
+    expect(s().documentId).toBe('d_a')
+    expect(s().docNotice).toMatchObject({ kind: 'recovery', docId: 'd_a' })
+  })
+
   it('记录在、槽位读不回来：说出名字并给重试；重试成功后横幅收起', async () => {
     await makeContentDoc('d_a', 'Fig A')
     await p().open('/figs/b')

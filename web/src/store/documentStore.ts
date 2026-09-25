@@ -1354,6 +1354,31 @@ export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
 }
 
 /**
+ * 「这份文档此刻要落盘的是什么」的身份：`buildProject()` 读的每一片（`doc` / `canvases` /
+ * `activeCanvasId` / `projectMeta`）加上文档身份（`documentId`）与载入代次（`loadSeq`）。
+ * store 的更新都是不可变的，任何一次改动都会换掉其中至少一个引用——比较引用就知道有没有被改过。
+ * **`buildProject` 多读一片，这里就要多加一片**（看护：documentStore.test 里重命名项目 / 挪非激活画布那两条）。
+ */
+const persistedIdentity = (s: DocumentState) =>
+  [s.documentId, s.loadSeq, s.doc, s.canvases, s.activeCanvasId, s.projectMeta] as const
+
+/**
+ * 读自动保存槽位并切到这份文档（同一个 documentId），**切过去之后**再把读盘带回来的待裁决事项
+ * （上次没写进盘的恢复副本、schema 太新）挂到 `docNotice` 上——`switchDocument` 会清掉它，
+ * 挂早了就没了。教程装文档、切项目接回上次的文档都走这里；工作台挂载时的 `restoreSession()`
+ * 看到文档已经装好就不再读盘，所以这句提示每条路径上恰好出现一次。
+ */
+export async function loadAutosavedDocument(
+  id: string,
+): Promise<{ loaded: boolean; notice: DocNotice | null }> {
+  const { doc, notice } = await readAutosaveDoc(id)
+  if (!doc) return { loaded: false, notice }
+  const loaded = await useDocumentStore.getState().switchDocument(doc, id)
+  if (loaded && notice) setDocNotice(notice)
+  return { loaded, notice }
+}
+
+/**
  * 把一份项目文档装进 store —— **不 flush、不写本机副本**。
  *
  * 与 `switchDocument` 的分工：那条是用户动作的入口（会先冲刷旧文档、会立刻
@@ -1440,13 +1465,14 @@ export async function restoreSession(): Promise<boolean> {
   // 文档）：内存里这份就是它、而且是最新的，不再从磁盘读一遍盖上去。盖上去的是刚落盘的那一版，
   // 在它路上的这段时间里用户若已开始拖动，拖动当场作废——慢机器上教程一打开就拖，图纹丝不动
   // （windows-exe-smoke 上撞到过；e2e tutorial.spec「教程刚打开就拖」把读盘压慢后在任何机器上复现）
+  // 装它的那一方（`loadAutosavedDocument`）已经把读盘带回来的待裁决事项挂上了，这里不再重复
   const before = useDocumentStore.getState()
   if (before.documentId === id) return false
+  const identity = persistedIdentity(before)
   const { doc: pd, notice } = await readAutosaveDoc(id)
-  // 读盘在路上时别处换过文档或改过它：那份更新，这次恢复让位
-  const now = useDocumentStore.getState()
-  if (now.documentId !== before.documentId || now.loadSeq !== before.loadSeq || now.doc !== before.doc)
-    return false
+  // 读盘在路上时别处换过文档或改过它的任何一片要落盘的内容：那份更新，这次恢复让位
+  const now = persistedIdentity(useDocumentStore.getState())
+  if (now.some((v, i) => v !== identity[i])) return false
   if (!pd) {
     // schema 太新是**载入失败里唯一需要说话的那一种**：文件好好的，是这个
     // 构建读不了它。默不作声地开一份空白，用户会以为自己的文档没了。

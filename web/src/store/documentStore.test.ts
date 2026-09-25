@@ -284,6 +284,55 @@ describe('多画布数据层', () => {
     expect(s().doc.objects.map((o) => o.id)).toEqual(['mine'])
   })
 
+  it.each([
+    ['改项目名', () => useDocumentStore.getState().renameProject('用户刚改的名字')],
+    [
+      '挪动非激活画布的顺序',
+      () => {
+        useDocumentStore.getState().reorderCanvases(0, 1)
+      },
+    ],
+    [
+      '改非激活画布的名字',
+      () => {
+        const st = useDocumentStore.getState()
+        const other = st.canvases.find((c) => c.id !== st.activeCanvasId)!
+        st.renameCanvas(other.id, '用户刚改的画布名')
+      },
+    ],
+  ])('读盘在路上时%s（不动激活画布的 doc）：恢复同样让位', async (_label, edit) => {
+    const s = () => useDocumentStore.getState()
+    s().commit(literal('加字'), (d) => {
+      d.objects.push(text('t1', 'x'))
+    })
+    expect(flushAutosave()).toBe('saved')
+    await tick()
+    const docId = s().documentId
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
+    s().addCanvas() // 两张画布：第二张激活，第一张是「非激活」的那张
+    localStorage.setItem('tavotto.currentDoc', docId)
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (!init?.method || init.method === 'GET') await gate
+      return baseFetchImpl(url as string, init)
+    }) as typeof fetch
+    try {
+      const restoring = restoreSession()
+      const docRef = s().doc
+      edit()
+      expect(s().doc).toBe(docRef) // 这些编辑确实没碰激活画布的 doc——量的是另外几片
+      const after = { name: s().projectMeta.name, canvases: s().canvases }
+      release()
+      expect(await restoring).toBe(false)
+      expect(s().documentId).toBe('d_other')
+      expect(s().projectMeta.name).toBe(after.name)
+      expect(s().canvases).toBe(after.canvases)
+    } finally {
+      globalThis.fetch = baseFetchImpl
+    }
+  })
+
   it('自动保存：磁盘落 schema 3，成功后本机副本清空', async () => {
     const s = () => useDocumentStore.getState()
     s().commit(literal('加字'), (d) => {
