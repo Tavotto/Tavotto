@@ -162,6 +162,34 @@ def test_the_candidate_prewarm_starts_the_child_and_loads_the_faces(candidate, f
     assert facade._PROVIDER is not None, "预热之后字体注册表应当已经建好"
 
 
+def test_prewarm_is_awaited_before_the_interpreter_finalizes(monkeypatch):
+    """预热线程是 daemon，做的事里有第一次 import 原生扩展（pikepdf / uharfbuzz）。进程在它做完之前退出时，
+    解释器收尾中的 daemon 线程被强制退出，穿过 nanobind 的 C++ 栈帧——py3.10 x86_64 上 abort / SIGSEGV
+    （#641）。所以 `prewarm()` 登记一个 atexit 回调（它跑在解释器进入收尾之前），有界地等预热做完。"""
+    import threading
+    import types
+
+    from tavotto.rendercore import facade
+
+    gate = threading.Event()
+    done: list[str] = []
+    registered: list[tuple] = []
+    monkeypatch.setattr(facade.atexit, "register", lambda fn, *a: registered.append((fn, a)))
+    monkeypatch.setattr(facade, "host", lambda: types.SimpleNamespace(ping=gate.wait))
+    monkeypatch.setattr(facade, "_faces", lambda *a: None)
+    monkeypatch.setattr(
+        facade, "typography", types.SimpleNamespace(text_width=lambda *a: done.append("shaped"))
+    )
+    t = facade.prewarm()
+    assert registered == [(facade._await_prewarm, (t,))], "预热线程必须在退出前被等"
+    assert t.is_alive() and done == []
+    gate.set()
+    fn, args = registered[0]
+    fn(*args)
+    assert not t.is_alive() and done == ["shaped"], "atexit 回调返回时预热必须已经做完"
+    assert 0 < facade.PREWARM_EXIT_JOIN_S <= 10, "退出不能无限挂着等一个卡住的 child"
+
+
 def test_probe_asset_reuses_its_answer_until_the_file_changes(candidate, monkeypatch, tmp_path):
     """素材库每次 `/api/panels` 都把每个素材探一遍（`app.scan_panels`，没有别的缓存）：文件没动就不再问 child
     （`host.requests` 不涨）；换成另一份文件（inode 变了）就重新探；调用方改了回来的 dict 也不污染下一次。

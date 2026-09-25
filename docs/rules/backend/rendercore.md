@@ -113,7 +113,10 @@
   同一 tick 里的等长改写指纹相同（git 的 racy clean）；失败不记；`probe_asset` 每次回新 dict。用例里要量复用的，把 mtime **往回**拨
   （往前拨会落进「刚改过 / 来自未来」，快路根本走不到——这条假绿抓到过一次）。
 - **冷启动预热**（ADR 0077）：`pdfbackend.warm()` 装载实现之后，实现若有 `prewarm()` 就交给它；候选在后台线程里起 child、建字体注册表、
-  载 CJK 脸。失败只记日志，同一个错误在第一次真用到时原样抛出（不静默回退）。
+  载 CJK 脸。失败只记日志，同一个错误在第一次真用到时原样抛出（不静默回退）。预热线程是 daemon，但 `prewarm()` 同时登记 atexit 回调
+  有界地等它做完（`PREWARM_EXIT_JOIN_S`，#641）：它做的事里有第一次 import 原生扩展（pikepdf 是 nanobind），解释器收尾时
+  daemon 线程被强制退出、穿过 C++ 栈帧，py3.10 Linux 上 abort / SIGSEGV；atexit 跑在收尾之前。启动时起的其它 daemon 线程
+  （三个清缓存、更新检查、项目 watcher、render-child-reader）只跑标准库，不进 C++ 扩展，不需要等。
 - **PDFium 的 PNG 跨平台像素不同、同平台可复现**（ADR 0055 §7）：`evidence/u07/u07_pdfium.png` 是 macOS arm64 基线，
   `foundation-u06-rendercore.yml` 三平台只记各自的 sha256、**不判相等**；判的是 `u07.pdf` 逐字节相同与 truth 里的像素
   采样点；pdftotext 一律显式 `-enc UTF-8`（U06 的教训）。

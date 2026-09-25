@@ -33,7 +33,9 @@
   这条边，`packaging/tavotto.spec` 的 hiddenimports 从契约层 `_IMPL_MODULES` 铺进去、不抄第二份，退役模块的
   hidden import 随模块一起消失（`tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select`）；
   ② 装载是惰性的，`app.main()` 起服务前 `pdfbackend.warm()` 一次——第一次 probe 不再多付 import 的延迟，选了
-  退役 / 不认识 / 装不上的后端在启动时就报、不退默认（`warm` 不在 `__all__`）。
+  退役 / 不认识 / 装不上的后端在启动时就报、不退默认（`warm` 不在 `__all__`）。**只在这个进程要起服务时 warm**（浏览器模式与桌面 sidecar；#641）：端口上已经有
+  Tavotto 的复用路径只换 nonce、把人指过去，不装载、不预热，也不做别的启动副作用——那个进程不提供服务，它起的
+  daemon 预热线程会在进程退出时撞上解释器收尾（py3.10 Linux 上 SIGSEGV / abort）。看护 `tests/test_app_main_startup.py`。
 - **旧行为的参照只在批准资产里**（06 §3）：`tests/fixtures/legacy_pymupdf/`（退役前一提交上旧后端跑出的
   `oracle.json` / `preview_300.png` / `calibration/<case>.pdf`）与 `evidence/u10/*.pymupdf.json`
   （旧覆盖表 / 旧向量）。需要「旧实现当年怎么做」时读它们，不重新 import 旧库；重生成只能在装了

@@ -33,6 +33,7 @@ U10 起唯一实现，ADR 0067 / 0072）。
 
 from __future__ import annotations
 
+import atexit
 import dataclasses
 import shutil
 import tempfile
@@ -154,7 +155,21 @@ def prewarm() -> threading.Thread:
 
     t = threading.Thread(target=run, name="rendercore-prewarm", daemon=True)
     t.start()
+    atexit.register(_await_prewarm, t)
     return t
+
+
+#: 解释器退出时最多等预热线程多久。正常 ~220 ms 就做完；等不到（child 卡住等）就放手——退出不能无限挂着。
+PREWARM_EXIT_JOIN_S = 5.0
+
+
+def _await_prewarm(t: threading.Thread) -> None:
+    """退出前把还没做完的预热等完（#641）。预热线程是 daemon（不挡服务启动，也不该挡 Ctrl-C），可它做的事里有
+    **第一次 import 原生扩展**（`hbshaper.require` → pikepdf / uharfbuzz）：解释器已经开始收尾时，daemon 线程
+    再去拿 GIL 会被当场 `pthread_exit`，Linux 上这是一次穿过 nanobind C++ 栈帧的强制展开——实测 py3.10 x86_64
+    上 abort（`Critical nanobind error: enum_create(...)`、`FATAL: exception not rethrown`）或 SIGSEGV。
+    atexit 回调跑在解释器进入收尾（finalizing）**之前**，此刻等它做完，它就绝不会撞上收尾。"""
+    t.join(PREWARM_EXIT_JOIN_S)
 
 
 def reset_for_tests() -> None:
