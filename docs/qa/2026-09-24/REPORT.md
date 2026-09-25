@@ -169,7 +169,7 @@
 
 **复核指出的测试强度缺口**（测试本身是绿的，但判据偏弱，建议后续补强）：
 
-- `test_appearance_edits_keep_science.py` 只看相对位置。复核用「外观补丁同时把数据乘 1.1 + 自动缩放」做变异，用例仍然是绿的。
+- ~~`test_appearance_edits_keep_science.py` 只看相对位置~~ **已补（见 §7.1 末段）**：复核用「外观补丁同时把数据乘 1.1 + 自动缩放」做变异时原用例仍绿；现已加第二把尺子「绝对数据坐标」，同类变异（y ×1000）变红。
 - `test_first_open_paths_d1.py` 在 PATH-01/04/05 里导出时没带编辑，按 FO-065 交出的是磁盘原件，读错数据文件也照样绿。应改成带编辑导出。
 - `test_override_history_sequences.py`：测试图库里没有可拖动的文字（文字拖动变异存活）；撤销走的是测试侧模型。
 - `web/e2e/fake-realtime.spec.ts` 的 STATE-05 守的是画面，不守 `latest`；`latest` 由 jsdom 用例守。
