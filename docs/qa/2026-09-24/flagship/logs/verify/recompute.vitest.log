@@ -1,0 +1,9 @@
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-flagship/web
+
+
+ Test Files  2 passed (2)
+      Tests  90 passed (90)
+   Start at  03:48:55
+   Duration  2.44s (transform 773ms, setup 289ms, import 799ms, tests 1.18s, environment 977ms)
+

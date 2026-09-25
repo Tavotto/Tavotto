@@ -1,0 +1,99 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh MUT-M1-root-as-scriptdir-mutated tests/test_first_open_paths_d1.py::test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-MUT-M1-root-as-scriptdir-mutated
+# time: 2026-09-24T18:57:15Z
+# sha: 4be1d7eb1eed5f034fe11a648fa3d5f53ffe51ca  (worktree dirty files: 2)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-4
+configfile: pytest.ini
+collecting ... collected 2 items
+
+tests/test_first_open_paths_d1.py::test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart FAILED [ 50%]
+tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file FAILED [100%]
+
+=================================== FAILURES ===================================
+_ test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart _
+
+tmp_path = PosixPath('/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-MUT-M1-root-as-scriptdir-mutated/test_path02_split_directories_0')
+
+    @needs_worker
+    def test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart(
+        tmp_path,
+    ):
+        """`scripts/` 与 `data/` 分离：先问一次（推荐项目根）、选择前不出图；选项目根后 cwd 是**项目根**
+        （不是脚本目录）、全序列 = 真值；关掉服务再开（编辑重开）不再问，带一次编辑导出仍是真值。"""
+        paper, truth = _d1(tmp_path)
+        _native(paper, "scripts/entry.py", tmp_path)
+        script_bytes = (paper / "scripts" / "entry.py").read_bytes()
+        work = tmp_path / "work"
+        with fa.running_app(paper, work) as app:
+            panel = _panel(app, "entry.pdf")
+            state = app.prepare(panel["id"])
+            result = state["result"]
+            assert result["status"] == "needs_input", result
+            need = result["required_input"]
+            assert need["code"] == "workdir_confirmation_required"
+            assert need["reason"] == "project_root_evidence"
+            assert need["recommended"] == "project_root"
+            by_mode = {o["mode"]: o for o in need["options"]}
+            assert by_mode["project_root"]["found"] == ["data/points.csv"]
+            assert by_mode["project"]["found"] == []
+            assert result["receipt"] is None
+            assert _blocked_code(app, panel["id"]) == "workdir_confirmation_required"
+            _, patched = app.call("/api/engine/workdir", {"mode": "project_root"}, method="PATCH")
+            assert patched["workdir"]["grant"]["cwd_write"]["granted"] is True
+            state = app.prepare(panel["id"])
+            result = state["result"]
+>           assert result["status"] == "ready", result
+E           AssertionError: {'cancel_requested_at': None, 'created_runtime': False, 'error': {'code': 'script_error', 'message': "脚本执行失败: [Errno 2] No such file or directory: 'data/points.csv'"}, 'existing_runtime': None, ...}
+E           assert 'error' == 'ready'
+E             
+E             - ready
+E             + error
+
+tests/test_first_open_paths_d1.py:353: AssertionError
+_ test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file _
+
+tmp_path = PosixPath('/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-MUT-M1-root-as-scriptdir-mutated/test_path04_same_name_decoy_as0')
+
+    @needs_worker
+    def test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file(
+        tmp_path,
+    ):
+        """脚本目录（`scripts/data/points.csv`，干扰）与项目根（`data/points.csv`，正确）各一份同名数据，
+        极值 / 均值 / ylim 全同。确认前不发布图、不预选；选项目根 → 全序列、输入 hash、导出折线都 = 正确那份；
+        改选脚本目录 → 全部 = 干扰那份（值必须等于**选的**那份）。"""
+        paper, truth = _d1(tmp_path, decoy=True)
+        _native(paper, "scripts/entry.py", tmp_path)
+        work = tmp_path / "work"
+        with fa.running_app(paper, work) as app:
+            panel = _panel(app, "entry.pdf")
+            state = app.prepare(panel["id"])
+            result = state["result"]
+            assert result["status"] == "needs_input", result
+            need = result["required_input"]
+            assert need["reason"] == "ambiguous_data"
+            assert need["recommended"] is None, "歧义时不预选"
+            assert not any(o.get("recommended") for o in need["options"])
+            assert need["conflicts"] == ["data/points.csv"]
+            assert result["receipt"] is None and result["started_at"] is None
+            assert _blocked_code(app, panel["id"]) == "workdir_confirmation_required"
+            # 选项目根 → 正确那份
+            app.call("/api/engine/workdir", {"mode": "project_root"}, method="PATCH")
+            state = app.prepare(panel["id"])
+            assert state["result"]["status"] == "ready", state["result"]
+            # 三把互相独立的尺子，先量图里的全序列（ylim 在这里量不出差别），再量输入 hash、导出折线
+            render = app.render(panel["id"])
+>           assert _plotted_y(render) == _approx_seq(TRUE_Y)
+E           assert [-1.054711873...91, 9.0, 10.0] == approx([0 ± 0...2, 10 ± 0.02])
+E             
+E             comparison failed. Mismatched elements: 2 / 4:
+E             Max absolute difference: 7.000000000000001
+E             Max relative difference: 3.500000000000002
+E             Index | Obtained           | Expected
+E             1     | 1.9999999999999991 | 9 ± 0.02
+E             2     | 9.0                | 2 ± 0.02
+
+tests/test_first_open_paths_d1.py:483: AssertionError
+============================== 2 failed in 27.48s ==============================
+# exit_code: 1

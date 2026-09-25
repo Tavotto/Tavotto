@@ -229,7 +229,7 @@ def main() -> int:
         summary["server_requests"] = [x["method"] for x in host.server_requests]
     elif a.scenario == "deny":
         proj = workspace(CORPUS)
-        host = StdioHost(env_extra=env, policy={"elicitation": "decline"})
+        host = StdioHost(env_extra=env, policy={"elicitation": "decline", "answer_after_s": 1.5})
         host.initialize({"elicitation": {}})
         r = sc(host.call("tavotto_open_figure", {"project_path": str(proj), "stem": "c01_line"}))
         dump(out, "open", r)

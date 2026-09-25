@@ -51,3 +51,14 @@ writer、第二份对象模型：一张图在文档里只有**一个**面板对�
   id 回 `null`，不发明一张不存在的图。
 - 看护：`store/workspace.test.ts`、`lib/originalSpec.test.ts`、
   `canvas/fastEditStage.test.tsx`；后端事实层 `tests/test_original_spec.py`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 模式是工作区状态不进文档
+- 快速编辑一个字不写 x/y/w/h，但视口必须还原（带画布 id）
+- 四个稳定动作是唯一出口、`findFigurePanel()` 唯一
+- 原图规格优先级 ① manifest `size_mm` → ② `nativeW/H` → ③ `original_spec` → ④ fallback，画布变换只进 `ignored`

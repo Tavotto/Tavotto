@@ -1,0 +1,76 @@
+{
+  "t": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "y_correct": [
+    0,
+    9,
+    2,
+    10
+  ],
+  "y_decoy": [
+    0,
+    2,
+    9,
+    10
+  ],
+  "signal_A": [
+    1.0,
+    3.0,
+    2.0,
+    4.0
+  ],
+  "signal_B": [
+    3.0,
+    1.0,
+    4.0,
+    2.0
+  ],
+  "y_changed": [
+    1,
+    8,
+    3,
+    9
+  ],
+  "offsets": [
+    0.5,
+    1.5,
+    2.5,
+    3.5
+  ],
+  "labmod_scale": 2.0,
+  "ident_A": "A",
+  "ident_B": "B",
+  "expected_provenance_text": "src c5de961e6faa env A",
+  "decoy_provenance_text": "src 1c8ade0c7fd2 env A",
+  "env_A": {
+    "executable": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/.venv/bin/python",
+    "prefix": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/.venv",
+    "base_prefix": "/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13",
+    "qa_signal_file": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/.venv/lib/python3.13/site-packages/qa_signal/__init__.py",
+    "ident": "A",
+    "matplotlib": "3.10.8"
+  },
+  "env_B": {
+    "executable": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/envB/bin/python",
+    "prefix": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/envB",
+    "base_prefix": "/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13",
+    "qa_signal_file": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/envB/lib/python3.13/site-packages/qa_signal/__init__.py",
+    "ident": "B",
+    "matplotlib": "3.10.8"
+  },
+  "files_sha256": {
+    "paper/Fig_flagship.pdf": "6500dce4916f2a64659157b6d298787b15c48bdad52a3dd75fe4e4ea343daeb0",
+    "paper/data/points.csv": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+    "paper/scripts/data/points.csv": "1c8ade0c7fd2a2b7f8ed6b2ab588c51e99d2838da5afdc8d529f357a4841f9c7",
+    "paper/scripts/entry.py": "79b382af08dd2c506805584d6b710eddf4ed0006f013e14d4189db5873d06907",
+    "paper/scripts/labmod.py": "b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385",
+    "external/offsets.csv": "cd0bd6d847b26aa7eadac5fb9635038298cc9755c64ba3ce274b579a13ef343e"
+  },
+  "external_abs": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/external/offsets.csv",
+  "base_python": "/opt/homebrew/opt/python@3.13/libexec/bin/python3",
+  "generator_python": "3.13.11"
+}

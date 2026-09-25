@@ -74,3 +74,15 @@
 - 合成复现在 `tests/fixtures/large_figures/`，摊成可用图库用
   `tests/support/large_figures.py`。**跑出来的 SVG/PDF 绝不提交**
   （默认规模下 SVG 一百多 MB）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 判定在 `read_text()` 之前
+- 超限是一次成功渲染（只少 `svg`）
+- 分析器只算账不改 artist
+- rasterized 先读后写、还原失败要吵
+- 成本模型改了必须重跑对拍

@@ -294,3 +294,22 @@
   `tests/test_dependency_repair_e2e.py`（门之后 skip 再走运行后那条路）、`tests/test_mcp_server.py`（投影 /
   `prepare_dependencies` 闭集 / 批量拒绝）、`web/src/components/DependencyPrepareDialog.test.tsx`。
 
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 内置 runtime 永不是安装目标
+- import 名只认两档高置信解析
+- 包名语法是安全边界、装前再验
+- 计划绑定不是 `confirmed=true`
+- pip exit 0 ≠ 修好（三层验证）
+- 全局显式解释器生效时不提供任何目标（`pool.explicit_worker_python()`，#465）
+- `_attempted` 只记 pip 成功那次、三种拒绝各自有 code（#466）
+- 查找走 `pip index versions`、`--retries 1` 是判据一部分
+- 体检执行的是 `worker.py` 文件本身（不是清单、也不是 `import worker`），全局与项目路径同一份体检（#435）
+- **声明无损读法只有一份**（`packaging`，unknown / unsupported 不是空依赖，选中组里有就 `blocked`）
+- 「需要」按 import 上下文判，本地模块永不装、unknown 永不猜
+- 交给安装器的串一律重新序列化
+- 跑前的门先找用户自己的环境（ADR 0079）：只读磁盘记录 + 问一次登录 shell，装齐按 import 判，装齐的里按 `userenvs.rank()` 挑最好的自动改用，用户显式决定过的一个都不碰（`_auto_adopt_allowed`），载荷与 SSE 只带 `env_id` 不带路径

@@ -54,3 +54,17 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
 上新图到达 + SSE `render.done` + prune 真清掉一条 → 元素树只提交一次）与「A4 的前提」
 （按 AST 钉 Workspace：调 `useEngineDocumentSync`、挂 `<EngineRenderSync />`、不调
 `useEngineSync` / `useRenderStore`）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 键唯一出处 `renderKeyOf`
+- 调度（防抖 / 定稿 / 取消）只住 `renderScheduler`，基线判据只住 `bakedBaseline.isJustBakedBaselineOf`
+- `latest` 退路只能看不能写
+- SSE 只写文件级 `building`
+- 同步器的渲染态一侧只挂叶子 `<EngineRenderSync />`，Workspace 不订阅渲染态
+- 磁盘原图冒充不了 overrides 渲染结果（必须出「近似预览」角标）
+- `baked_current` 失效时重新裁决

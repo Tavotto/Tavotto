@@ -1,0 +1,17 @@
+# 目的：M2（文字 pos_frac setter 偏移 0.01）为何存活——列出 InvMix/InvCont 里可被 RAND-01 生成器拖动的元素
+tavotto from <scratch>/qa/verify-long/src/tavotto/__init__.py
+InvMix draggable frac elements: [('axes_0.patches_0', 'pos_frac', 'patch'), ('axes_0.patches_1', 'pos_frac', 'patch'), ('axes_0.patches_2', 'pos_frac', 'patch'), ('axes_0.legend', 'loc_frac', 'legend')]
+   axes_0.patches_0 pos_frac declared [0.2942, 0.6633] manifest anchor [0.2942, 0.6633]
+   axes_0.patches_1 pos_frac declared [0.3538, 0.6687] manifest anchor [0.3538, 0.6687]
+   axes_0.patches_2 pos_frac declared [0.33, 0.6901] manifest anchor [0.33000000000000007, 0.6901]
+   axes_0.legend loc_frac declared [0.623, 0.5774] manifest anchor [0.6230000000000001, 0.5774]
+InvCont draggable frac elements: [('axes_0.legend', 'loc_frac', 'legend')]
+   axes_0.legend loc_frac declared [0.1915, 0.3811] manifest anchor [0.1915, 0.3811]
+tavotto from <scratch>/qa/vlong/mut2/tavotto/__init__.py
+InvMix draggable frac elements: [('axes_0.patches_0', 'pos_frac', 'patch'), ('axes_0.patches_1', 'pos_frac', 'patch'), ('axes_0.patches_2', 'pos_frac', 'patch'), ('axes_0.legend', 'loc_frac', 'legend')]
+   axes_0.patches_0 pos_frac declared [0.2942, 0.6633] manifest anchor [0.2942, 0.6633]
+   axes_0.patches_1 pos_frac declared [0.3538, 0.6687] manifest anchor [0.3538, 0.6687]
+   axes_0.patches_2 pos_frac declared [0.33, 0.6901] manifest anchor [0.33000000000000007, 0.6901]
+   axes_0.legend loc_frac declared [0.623, 0.5774] manifest anchor [0.6230000000000001, 0.5774]
+InvCont draggable frac elements: [('axes_0.legend', 'loc_frac', 'legend')]
+   axes_0.legend loc_frac declared [0.1915, 0.3811] manifest anchor [0.1915, 0.3811]

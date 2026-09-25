@@ -38,6 +38,9 @@ const PYTHON = process.env.WB_SPIKE_PYTHON || path.join(REPO, '.venv', 'bin', 'p
 const HOST = 'http://workbuddy-host.test'
 const SANDBOX = 'http://workbuddy-sandbox.test'
 const LAZY_THRESHOLD = 256 * 1024
+/** 真人看见确认框、读完路径再点拒绝的耗时；要高于 server 的 HUMAN_RESPONSE_FLOOR_S（1 s）。
+ *  快于下限的拒绝会被判成「宿主替用户回的」（`auto-decline` 那一档，ADR 0009 §2c）。 */
+const HUMAN_ANSWER_MS = 1500
 
 test.skip(!existsSync(PYTHON), `没有装了 tavotto 的解释器（WB_SPIKE_PYTHON=${PYTHON}）——本组未执行`)
 test.skip(
@@ -48,6 +51,8 @@ test.skip(
 // ---------------------------------------------------------------- 真 stdio server
 type Json = Record<string, unknown>
 
+type Elicitation = 'accept' | 'decline' | 'auto-decline'
+
 class RealServer {
   private proc: ChildProcessWithoutNullStreams
   private id = 0
@@ -55,9 +60,9 @@ class RealServer {
   readonly serverRequests: string[] = []
   stderr = ''
 
-  private elicitation: 'accept' | 'decline'
+  private elicitation: Elicitation
 
-  constructor(elicitation: 'accept' | 'decline') {
+  constructor(elicitation: Elicitation) {
     this.elicitation = elicitation
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -95,11 +100,14 @@ class RealServer {
   private answer(msg: Json) {
     this.serverRequests.push(msg.method as string)
     if (msg.method === 'elicitation/create') {
-      const result =
-        this.elicitation === 'accept'
-          ? { action: 'accept', content: { approve: true } }
-          : { action: 'decline' }
-      return this.write({ jsonrpc: '2.0', id: msg.id, result })
+      if (this.elicitation === 'accept') {
+        return this.write({ jsonrpc: '2.0', id: msg.id, result: { action: 'accept', content: { approve: true } } })
+      }
+      const reply = () => this.write({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline' } })
+      // auto-decline = 宿主不弹框、当场替用户回（Codex「完全访问」实测 0 ms）
+      if (this.elicitation === 'auto-decline') return reply()
+      setTimeout(reply, HUMAN_ANSWER_MS)
+      return
     }
     this.write({
       jsonrpc: '2.0',
@@ -317,7 +325,7 @@ async function boot(
     decisions: string[]
     hostContext?: Json
     lazy?: boolean
-    elicitation?: 'accept' | 'decline'
+    elicitation?: Elicitation
   },
 ): Promise<Boot> {
   const server = new RealServer(opts.elicitation ?? 'accept')
@@ -587,6 +595,26 @@ test('工作区授权被拒：open 不建会话、不带 UI', async () => {
     expect(sc(r).code).toBe('workspace_confirmation_declined')
     expect(sc(r).session_id ?? null).toBeNull()
     expect(server.serverRequests).toEqual(['elicitation/create'])
+    const h = sc(await server.call('tavotto_health', {}))
+    expect(h.sessions).toEqual([])
+  } finally {
+    server.close()
+    rmSync(path.dirname(project), { recursive: true, force: true })
+  }
+})
+
+test('宿主不弹框、当场替用户回拒绝：不说成用户拒绝，同样不建会话', async () => {
+  const project = workspace(CORPUS)
+  const server = new RealServer('auto-decline')
+  try {
+    await server.init()
+    const r = await server.call('tavotto_open_figure', {
+      project_path: project,
+      stem: 'c01_line',
+    })
+    expect(sc(r).code).toBe('workspace_confirmation_auto_declined')
+    expect(sc(r).disposition).toBe('fix_host_wiring')
+    expect(sc(r).session_id ?? null).toBeNull()
     const h = sc(await server.call('tavotto_health', {}))
     expect(h.sessions).toEqual([])
   } finally {

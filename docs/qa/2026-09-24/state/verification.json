@@ -1,0 +1,118 @@
+{
+ "section": "state",
+ "spec": "Tavotto_QA_Test_Spec_2026-09-24.md §2 STATE-01…09",
+ "audited_branch": "qa/2026-09-24-state",
+ "audited_commit": "ac0b0e02081a96b04b6e2d5764efaff8cc577d97",
+ "ledger_integrity": {
+  "all_case_ids_present": true,
+  "fields_complete": true,
+  "evidence_sha256_all_match": true,
+  "fixture_sha256_all_match": true,
+  "notes": "9 个 case ID 齐；字段齐（STATE-06…09 多一个 mutation_check_reason）；9 份 evidence 日志的 sha256 都与记录一致；fixtures 哈希一致。"
+ },
+ "mutation_rechecked": {
+  "id": "M1-preview-accumulates",
+  "result": "变异红（vitest 1 failed；e2e STATE-01 1 failed）→ 还原绿（48 passed；1 passed），git status 干净",
+  "log": "docs/qa/2026-09-24/state/logs/verify/MUTATION-M1.log"
+ },
+ "environment": {
+  "os": "macOS 27.0 arm64",
+  "node": "v26.7.0",
+  "pnpm": "11.0.7",
+  "playwright": "1.62.1 chromium headless",
+  "python_backend": "/Volumes/Projects/Tavotto/.venv/bin/python + PYTHONPATH=<worktree>/src + PYTHONDONTWRITEBYTECODE=1",
+  "python_worker": "Homebrew python@3.13（matplotlib 3.10.8，numpy 2.4.3）",
+  "worktree": "scratchpad/qa/verify-state（detached ac0b0e02）",
+  "frontend": "build_frontend 已在重跑前执行；变异前后各重建一次",
+  "ports": "e2e fixture 使用随机空闲端口，没有自起后端，没有碰 5089 和用户数据目录"
+ },
+ "verified_at": "2026-09-24T19:20Z（UTC）",
+ "logs": {
+  "docs/qa/2026-09-24/state/logs/verify/MUTATION-M1.log": "d72dce057509f91002d288e1354fa05de24b8dea082ac1a2e2f1939db6f117f6",
+  "docs/qa/2026-09-24/state/logs/verify/STATE-01.log": "e89d3387e1c040efa59ec4669fd6f4b274426810adde64fc7ee66520faf4ed98",
+  "docs/qa/2026-09-24/state/logs/verify/STATE-02.log": "727a0324181f1ec6e48f23d855af3e1717a02e2487f19754ae3731feb8c8191d",
+  "docs/qa/2026-09-24/state/logs/verify/STATE-03.log": "0a6553ffbac638b54ef6eff6bb40a89e2cfdea431f49b590f4b438817cbbd74c",
+  "docs/qa/2026-09-24/state/logs/verify/STATE-04.log": "25ea09671b29602cf5fe9214864f1eaf07b8119b65a65e6f5b64822200659902",
+  "docs/qa/2026-09-24/state/logs/verify/STATE-05-names.log": "3a2869dd4360205d9ded6f60c6ce1bfda9f0d2b02a8832a21a8014b8e2608c68",
+  "docs/qa/2026-09-24/state/logs/verify/STATE-05.log": "c827e099d837cba1c01417efb5fa0c9a5fcdbb7382d9f783f88add30f06f4cdf",
+  "docs/qa/2026-09-24/state/logs/verify/STATE-06.log": "3b9faf6f003f50c14065814c8d09f151f35a054e90e4d2aede259608b7ff5a0a",
+  "docs/qa/2026-09-24/state/logs/verify/STATE-07.log": "9452eebbd282b300ed3ee4dbc78e1059f0b4452c488e9ad10208ac952cbae46e",
+  "docs/qa/2026-09-24/state/logs/verify/STATE-08.log": "ac4750d44b97f446a5ca7e414ff75663f9be6391943854f75ae165106baad5f4",
+  "docs/qa/2026-09-24/state/logs/verify/STATE-09.log": "ed86ea24cbb986794e0fb5c1f371ab1a87067e8392ba00a0e690028c29815584"
+ },
+ "summary": "9/9 重跑后退出码与计数全部一致；无改判（pass 3、partial 1、fail 5 维持）。",
+ "cases": [
+  {
+   "case_id": "STATE-01",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "3 条命令逐字重跑，退出码 0/0/0，vitest 48 passed、e2e 2 passed，逐帧日志同为「拖动帧 51 · 松手后帧 98 · 最大偏离 0.002 CSS px」。读断言：几何期望由测试侧独立算（起点+鼠标位移，未调生产坐标函数），逐帧全序列检查格式与比例（不是只看极值），松手后全部帧取最大偏离，并断言权威 SVG 已换上，所以采样窗口不会在权威到达前结束。亲自复做 M1（base 改为读当前 transform）：vitest 1 failed、e2e STATE-01 失败于「原始 transform 必须原样保留」；git checkout 还原并重建前端后两者回绿，git status 干净（MUTATION-M1.log）。有两处限制，但不改判：e2e 对 M1 只靠后缀断言打红，前提是标题自带 transform；「拖动中 0 文档提交」在 e2e 里用自动保存 PUT 计数代理，而拖动短于 1s 防抖窗，真正守门的是 jsdom「拖动期间文档一个字节都没动」。另外 ledger exit_codes 只有 2 项，对应 3 条命令，build_frontend 那条没有记。"
+  },
+  {
+   "case_id": "STATE-02",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "note": "4 条命令重跑，退出码 0/0/0/1，计数一致：6 passed | 19 skipped（-t 有意筛选）、1 passed、4 passed、1 failed。复现 Esc×2 退出图内编辑后松手仍发出 pos_frac 渲染，与原结论一致。探针还显示单按 Esc 后预览继续跟手、松手照常提交（ledger 记为「无合同、只观察」，没有据此判红）。这条判 fail 依赖「不得在已离开的编辑态里提交」这一解读，产品合同文档没有写 Esc 语义，需要产品拍板；缺陷本身可复现。"
+  },
+  {
+   "case_id": "STATE-03",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "重跑退出码 0，26 passed，一致。新用例渲染真 PanelView，断言节点确实被替换（not.toBe(before)），并断言新节点上的 transform 与替换前逐字相等（只重附一次，不是 0 次也不是 2 次）；继续拖动的期望由 layout 与 viewBox 独立换算，没有调生产换算函数。ledger 已自行说明第三个断言只对 M3b 敏感；M3a 由 svgPreviewStore.test 打红。未复做 M3 变异。「拖动中换成另一个渲染键」没有测，ledger 已记为 gap，且它不在本条验收的必需项内。"
+  },
+  {
+   "case_id": "STATE-04",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "note": "退出码 0/1/1，计数 65 passed、2 failed、1 failed，一致。真浏览器复现：撤销后标题仍带 translate(57.46,28.73)，偏离原位 d1=d2=67.08px，晚到的回包放行后也不回来。读 renderStore 与复现用例后，成因描述可信。M4 变异没有复做。"
+  },
+  {
+   "case_id": "STATE-05",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "退出码 0/0，计数 6 passed | 49 skipped、1 passed，一致。用 --reporter=verbose 列出实际执行的 6 条（STATE-05-names.log），覆盖了乱序不推进 latest、SVG 与 manifest 同一次响应、在途撤销后晚到回包不改权威与显示来源。注意：ledger existing_tests 里列的「同一文件的两个副本」不匹配本条 -t 过滤，本条命令并没有执行它（它在 STATE-04/06 的整文件跑里是绿的）。ledger 已说明 M5 下 e2e 仍绿，latest 由 jsdom 守。维持 pass。"
+  },
+  {
+   "case_id": "STATE-06",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "note": "退出码 0/1，计数 58 passed、2 failed，一致。复现 mock 了 engineRender，我因此检查过 api 层是否另有拦截：lib/api.ts 的 engineRender 只带 withProject 头和调用方给的 signal；renderStore.render 的 AbortController 只归 watchdog 用，clear() 只清 inflight、liveKeys 和状态，不 abort 在途请求；成功分支的 set() 没有项目代际检查（projectAtStart 只在失败分支用）。所以 mock 没有绕过任何真实的闸，缺陷成立。只有 store 层证据，真浏览器没有切项目，ledger 已写明。"
+  },
+  {
+   "case_id": "STATE-07",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "note": "两条探针退出码 0/0，一致；探针本身没有断言，fail 是从日志数值判出来的。复跑数值：⌘= 之后指针只移 1px，元素 x 从 726.998 变到 712.998，跳了 14.0px（≈60×0.25）；改窗口宽度与 DPR 1→2 都连续，与原结论一致。小问题：ledger verdict_reason 里写的 704.8→690.8 与它自己的 STATE-07.log（729.28→715.28）对不上，跳幅 14px 是一致的，应当以日志为准。真实跨显示器 / 系统缩放没有执行，理由成立（单屏 headless）。"
+  },
+  {
+   "case_id": "STATE-08",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "note": "退出码 0/0，计数 48 passed、1 passed，一致。partial 成立：没有做 GEO-02/04，没有再导出。「批准字体缺」这个未执行理由偏弱：scripts/fetch_fonts.py 在仓库里，本机很可能能补齐字体后执行导出腿；复核也没有执行。"
+  },
+  {
+   "case_id": "STATE-09",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "note": "退出码 0/0/1，计数 40 passed、51 passed、1 failed 1 passed（对照组绿），一致。读码确认：ai_bridge.revert 无条件把快照原子写回，app.py 的 api_ai_revert 直接调用它，途中没有版本核对。真实 AI CLI 没有调用，ledger 已写明。"
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh PATH-01 tests/test_first_open_paths_d1.py::test_path01_same_directory_csv_from_a_foreign_cwd_first_open_replay_and_export tests/test_first_open_paths_d1.py::test_the_decoy_is_indistinguishable_by_extrema_mean_and_ylim tests/test_foundation_first_open.py::test_fo01_same_directory_csv_opens_automatically tests/test_databinding.py::test_default_ok_when_the_script_directory_has_the_data -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path01_same_directory_csv_from_a_foreign_cwd_first_open_replay_and_export tests/test_first_open_paths_d1.py::test_the_decoy_is_indistinguishable_by_extrema_mean_and_ylim tests/test_foundation_first_open.py::test_fo01_same_directory_csv_opens_automatically tests/test_databinding.py::test_default_ok_when_the_script_directory_has_the_data -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-PATH-01
+# time: 2026-09-24T19:02:23Z
+# sha: 8b69647c607b766d78f107b77af9e72f9dbb2b0f  (worktree dirty files: 0)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-4
+configfile: pytest.ini
+collecting ... collected 4 items
+
+tests/test_first_open_paths_d1.py::test_path01_same_directory_csv_from_a_foreign_cwd_first_open_replay_and_export PASSED [ 25%]
+tests/test_first_open_paths_d1.py::test_the_decoy_is_indistinguishable_by_extrema_mean_and_ylim PASSED [ 50%]
+tests/test_foundation_first_open.py::test_fo01_same_directory_csv_opens_automatically PASSED [ 75%]
+tests/test_databinding.py::test_default_ok_when_the_script_directory_has_the_data PASSED [100%]
+
+============================== 4 passed in 29.86s ==============================
+# exit_code: 0

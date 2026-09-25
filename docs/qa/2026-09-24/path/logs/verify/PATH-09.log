@@ -1,0 +1,38 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh verify/PATH-09 tests/test_first_open_paths_d1.py::test_path09_relative_writes_land_only_where_the_current_grant_allows tests/test_workdir_mode.py tests/test_preparation_api.py::test_a_plan_whose_grant_changed_before_execution_is_stale_and_runs_nothing tests/test_preparation_api.py::test_a_decision_for_sandbox_is_remembered_and_never_asked_again tests/test_first_open_workdir.py::test_project_root_mode_really_runs_at_the_project_root_with_cjk_and_spaces -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path09_relative_writes_land_only_where_the_current_grant_allows tests/test_workdir_mode.py tests/test_preparation_api.py::test_a_plan_whose_grant_changed_before_execution_is_stale_and_runs_nothing tests/test_preparation_api.py::test_a_decision_for_sandbox_is_remembered_and_never_asked_again tests/test_first_open_workdir.py::test_project_root_mode_really_runs_at_the_project_root_with_cjk_and_spaces -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vpath-scratch/pytest-verify/PATH-09
+# time: 2026-09-24T19:34:48Z
+# sha: 93dd9f4b86bea7fd5ccde339f57735b85a6cdf36  (worktree dirty files: 0)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-path
+configfile: pytest.ini
+collecting ... collected 11 items
+
+tests/test_first_open_paths_d1.py::test_path09_relative_writes_land_only_where_the_current_grant_allows PASSED [  9%]
+tests/test_workdir_mode.py::test_project_mode_only_adds_cwd_and_keeps_the_sandbox PASSED [ 18%]
+tests/test_workdir_mode.py::test_cwd_mode_is_execution_semantics_not_a_path PASSED [ 27%]
+tests/test_workdir_mode.py::test_the_switch_is_project_scoped_and_defaults_to_the_sandbox PASSED [ 36%]
+tests/test_workdir_mode.py::test_all_three_spawn_paths_take_the_mode_from_one_place PASSED [ 45%]
+tests/test_workdir_mode.py::test_sandbox_mode_still_hides_relative_data_from_exists_and_glob PASSED [ 54%]
+tests/test_workdir_mode.py::test_project_mode_runs_the_script_where_it_lives PASSED [ 63%]
+tests/test_workdir_mode.py::test_switching_the_mode_restarts_the_sessions_of_that_project PASSED [ 72%]
+tests/test_preparation_api.py::test_a_plan_whose_grant_changed_before_execution_is_stale_and_runs_nothing PASSED [ 81%]
+tests/test_preparation_api.py::test_a_decision_for_sandbox_is_remembered_and_never_asked_again PASSED [ 90%]
+tests/test_first_open_workdir.py::test_project_root_mode_really_runs_at_the_project_root_with_cjk_and_spaces PASSED [100%]
+
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 11 passed, 5 warnings in 19.07s ========================
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0

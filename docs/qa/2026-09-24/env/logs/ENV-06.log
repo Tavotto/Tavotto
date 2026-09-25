@@ -1,0 +1,224 @@
+# case: ENV-06 离线与准备事务
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# 各节开头是逐字命令与时间；<worktree> 是仓库根，<scratch> 是 QA scratch 目录
+
+===== 探针 ENV-06（断网注入）（原始日志 ENV-06.probe.log）=====
+$ cd <worktree> && TAVOTTO_FONTS_DIR=<scratch>/fonts PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/e1_http_probe_more.py ENV-06 --e1 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final
+# date: 2026-09-24T18:58:56Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  tree: clean-src
+[02:58:56] scenario=ENV-06 e1=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 port=5303
+[02:59:10] PASS 断网：prepare ready（已齐依赖无需网络）
+[02:59:10] PASS 断网: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[02:59:10] PASS 断网: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[02:59:10] PASS 断网: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/bin/python
+[02:59:10] PASS 断网: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv
+[02:59:10] PASS 断网: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[02:59:10] PASS 断网: 包版本 :: 1.0.0
+[02:59:10] PASS 断网: 图中完整点序列 :: [0, 9, 2, 10]
+[02:59:10] PASS 断网：导出 done :: done
+[02:59:10] PASS 服务日志里没有 pip / uv 安装调用
+[02:59:11] PASS 断网：用户 venv 未被安装 / 升级 / 删除 :: {'dists_added': [], 'dists_removed': [], 'files_added': [], 'files_removed': [], 'files_changed': []}
+[02:59:11] RESULT ENV-06: PASS (11/11 checks)
+# exit_code: 0
+
+===== pytest test_dependency_transaction.py（原始日志 test_dependency_transaction.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_dependency_transaction.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:37:07Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 44 items
+
+tests/test_dependency_transaction.py ................................... [ 79%]
+.........                                                                [100%]
+
+=============================== warnings summary ===============================
+../../../.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885
+  /Volumes/Projects/Tavotto/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; support.dependency_repair
+    self.import_plugin(import_spec)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================== 44 passed, 1 warning in 113.03s (0:01:53) ===================
+# exit_code: 0
+
+===== pytest test_foundation_dependencies.py（原始日志 test_foundation_dependencies.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_foundation_dependencies.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:33:19Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 7 items
+
+tests/test_foundation_dependencies.py .....ss                            [100%]
+
+=============================== warnings summary ===============================
+../../../.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885
+  /Volumes/Projects/Tavotto/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; support.dependency_repair
+    self.import_plugin(import_spec)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_foundation_dependencies.py:628: 要联网装 matplotlib 进受管环境：TAVOTTO_FOUNDATION_ONLINE=1 才跑（nightly foundation-observing）
+SKIPPED [1] tests/test_foundation_dependencies.py:695: 要联网装 matplotlib 进受管环境：TAVOTTO_FOUNDATION_ONLINE=1 才跑（nightly foundation-observing）
+============= 5 passed, 2 skipped, 1 warning in 227.61s (0:03:47) ==============
+# exit_code: 0
+
+===== pytest test_dependency_repair_e2e.py（首跑：缺字体）（原始日志 test_dependency_repair_e2e.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_dependency_repair_e2e.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:32:27Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 10 items
+
+tests/test_dependency_repair_e2e.py F.........                           [100%]
+
+=================================== FAILURES ===================================
+________________ test_golden_path_install_into_the_project_venv ________________
+
+client = <FlaskClient <Flask 'tavotto.app'>>
+project = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4800/test_golden_path_install_into_0/figs')
+wheelhouse = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4800/test_golden_path_install_into_0/wheelhouse')
+
+    def test_golden_path_install_into_the_project_venv(client, project, wheelhouse):
+        """用户看到「缺少 X」→ 点一次 → 图出来 → 还能编辑和导出。
+    
+        这条链的每一步都走真实入口：`/api/registry/probe`（素材库打开脚本）、
+        `/api/engine/dependency/plan`、`/api/engine/dependency/install`、
+        `/api/engine/render`（编辑）、`/api/export`（导出）。
+        """
+        from tavotto import app as m
+    
+        venv = real_venv(project)
+        # 项目自己声明过这个依赖 —— 最可信的那一档解析
+        (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+        m.open_project(str(project))
+    
+        # ---- 0. U04 的门：脚本开跑要的包声明过、目标里没有 → 起会话之前先问一次 ----
+        gate = _probe(client)["error"]
+        assert gate["code"] == "dependency_preparation_required"
+        offer = gate["dependency_preparation"]
+        assert offer["plan"]["status"] == "ready"
+        assert offer["plan"]["requirements"] == [FIXTURE_DIST]
+        assert offer["target_kind"] == deprepair.TARGET_PROJECT_VENV
+        # 用户明确「不准备，直接跑」：门放行，再跑就是运行后那条路（下面的老流程）
+        resp = client.post("/api/engine/dependencies/skip", json={"script": "figure.py"})
+        assert resp.status_code == 200 and resp.get_json()["skipped"] is True
+    
+        # ---- 1. 跑脚本：缺依赖，且**带着可执行的修复建议** -------------------
+        first = _probe(client)
+        err = first["error"]
+        assert err["code"] == "missing_dependency"
+        assert err["params"]["module"] == FIXTURE_IMPORT
+        # Session 7 已经体检过项目 venv：它健康，只是没有这个包
+        assert err["params"]["project_env"] == projectenv.ERROR_MODULE_MISSING
+        repair = err["dependency_repair"]
+        assert repair["requirement"]["installable"] is True
+        assert repair["requirement"]["resolution_source"] == "project_declared"
+        targets = {t["kind"]: t for t in repair["targets"]}
+        assert targets["project_venv"]["modifies_user_environment"] is True
+        assert targets["project_venv"]["venv"] == ".venv"
+    
+        # ---- 2. 形成计划：说清楚装什么、装到哪、会不会改用户的环境 -----------
+        plan = _plan(client, FIXTURE_IMPORT, deprepair.TARGET_PROJECT_VENV)
+        assert plan["modifies_user_environment"] is True
+        assert plan["network_required"] is True
+        assert plan["python"].startswith(".venv"), "界面上只出项目相对路径"
+        assert plan["distribution"].replace("_", "-") == FIXTURE_DIST
+    
+        # ---- 3. 安装 ----------------------------------------------------------
+        final = _install(client, plan["plan_id"])
+        assert final["state"] == deprepair.STATE_DONE, final
+        assert final["result"]["version"] == "1.0"
+    
+        # ---- 4. 包**真的**进了那个 venv（不是「字符串对了」）------------------
+        assert (site_packages(venv) / f"{FIXTURE_IMPORT}.py").is_file()
+        python = projectenv.interpreter_of(venv)
+        where = _in_venv(python, f"import {FIXTURE_IMPORT},sys;print(sys.executable)")
+        assert Path(where).is_relative_to(project)
+    
+        # ---- 5. worker 用新解释器重建，Figure 出来 ---------------------------
+        second = _probe(client)
+        assert second["error"] is None, second["error"]
+        assert second["stems"] == ["Fig1"]
+        worker = engine_pool.get("figure.py", str(project), second["entry"])
+        assert engine_pool.same_python(worker.python, python)
+        assert worker.python_source == engine_pool.SOURCE_PROJECT_VENV
+    
+        # ---- 6. 编辑（改标题）+ 导出：修好之后是完整可用的，不是「能打开」----
+        asset_id = second["descriptors"][0]["asset_id"]
+        rendered = client.post("/api/engine/render", json={"id": asset_id, "patches": []})
+        assert rendered.status_code == 200, rendered.get_json()
+        manifest = rendered.get_json()["manifest"]
+        gid = next(
+            el["gid"]
+            for el in manifest["elements"]
+            for f in el.get("editable", [])
+            if f["prop"] == "text" and f["value"] == "Original Title"
+        )
+        patch = [{"gid": gid, "prop": "text", "value": "Repaired Title"}]
+        edited = client.post("/api/engine/render", json={"id": asset_id, "patches": patch})
+        assert edited.status_code == 200, edited.get_json()
+        assert any(
+            f["value"] == "Repaired Title"
+            for el in edited.get_json()["manifest"]["elements"]
+            for f in el.get("editable", [])
+            if f["prop"] == "text"
+        )
+        exported = client.post(
+            "/api/export",
+            json={
+                "page_w_mm": 100,
+                "page_h_mm": 80,
+                "formats": ["pdf"],
+                "stem": "repaired",
+                "objects": [
+                    {
+                        "type": "panel",
+                        "id": asset_id,
+                        "x_mm": 0,
+                        "y_mm": 0,
+                        "w_mm": 100,
+                        "h_mm": 80,
+                        "overrides": patch,
+                    }
+                ],
+            },
+        )
+>       assert exported.status_code == 200, exported.get_json()
+E       AssertionError: {'code': 'backend_unavailable', 'conflicts': [], 'document_revision': None, 'error': {'code': 'backend_unavailable', '...ar', 'LiberationSerif-Bold', 'LiberationSerif-BoldItalic', 'LiberationSerif-Italic', 'Lib"}, 'recoverable': True}, ...}
+E       assert 500 == 200
+E        +  where 500 = <WrapperTestResponse streamed [500 INTERNAL SERVER ERROR]>.status_code
+
+tests/test_dependency_repair_e2e.py:198: AssertionError
+=============================== warnings summary ===============================
+../../../.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885
+  /Volumes/Projects/Tavotto/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; support.dependency_repair
+    self.import_plugin(import_spec)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=================== 1 failed, 9 passed, 1 warning in 51.71s ====================
+# exit_code: 1
+
+===== pytest test_dependency_repair_e2e.py（TAVOTTO_FONTS_DIR）（原始日志 test_dependency_repair_e2e.fonts.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_dependency_repair_e2e.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:39:33Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 10 items
+
+tests/test_dependency_repair_e2e.py ..........                           [100%]
+
+=============================== warnings summary ===============================
+../../../.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885
+  /Volumes/Projects/Tavotto/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; support.dependency_repair
+    self.import_plugin(import_spec)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 10 passed, 1 warning in 47.04s ========================
+# exit_code: 0
+

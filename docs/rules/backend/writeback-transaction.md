@@ -88,3 +88,18 @@
   * 看护：`tests/test_write_back.py`（假 worker，全部分支）+
     `tests/test_worker_roundtrip.py` 末节（真 matplotlib + Flask 全链路，
     含 workerd 路径的一次性会话不泄漏）+ `web` 的 `WriteBackDialog.test.tsx`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- `expected_mtime` / `script_sha1` 两道 prepare 校验
+- verify 用一次性 worker 全量重放 + 几何 + 像素（`pdfbackend.compare_png` 逐 RGBA 通道）
+- 热态不是这组 patches 就报 `fresh_only` 不假比
+- commit 第 2+ 个撞锁回滚
+- 泄漏断言只对本次 `one_shot()` 的 base 负责
+- verify 段 `WorkerError` 回 409（worker code 原样 + `stage: "verify"`）
+- commit 先备份全部并 fsync 备份与 staging 再替换（失败 409 `write_back_persist_failed`，删本次备份），备份目录每次写回独占（同秒接 `-2`），替换后目录 fsync 只记日志不回滚
+- 三个失败出口清 `.updating` 都尽力而为不盖原错

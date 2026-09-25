@@ -85,3 +85,15 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` / `lib/problemList.test.ts` /
   `store/validationStore.test.ts` / `components/left/problemPanel.test.tsx`；
   Python 侧 `tests/test_preflight.py` 的跨语言同源一条。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 摘要只由 `summaryFor()` 组装、按导出目标取范围并重挑 message
+- `ready` / `failed` 不压成「没问题」
+- 定位只有 `focusObject()` 一处、失败回闭集原因
+- 字段落点 `data-prop`
+- `safe_auto` 三条判据

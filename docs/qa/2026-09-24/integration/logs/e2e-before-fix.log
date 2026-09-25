@@ -1,0 +1,10 @@
+
+Running 11 tests using 1 worker
+
+[1/11] [chromium] › e2e/fake-realtime.spec.ts:21:1 › 拖图内元素：预览跟手、拖动期间零后端、松手一次定稿
+[chromium] › e2e/fake-realtime.spec.ts:21:1 › 拖图内元素：预览跟手、拖动期间零后端、松手一次定稿
+    Error: 五个成员应当恰好都在选区里
+    test-results/multi-select-geometry-图内混合多选整组拖动：锚点-独立模型，撤销-重做回到对应位置-chromium/test-failed-1.png
+    Error Context: test-results/multi-select-geometry-图内混合多选整组拖动：锚点-独立模型，撤销-重做回到对应位置-chromium/error-context.md
+  1 failed
+  10 passed (4.2m)

@@ -124,3 +124,18 @@
   哨兵只活在 `originals` 里，不进 patch、不过 JSON。看护 `tests/test_patch_edgecolor_mode.py`。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 七档顺序是契约
+- 刻度类与 frac 锚定 prop 每次重放
+- `PinnedTightLayoutEngine` 安装点只有一个、`set_position` 排在换引擎之前
+- `face` / `math_face` 唯一出处 `manifest.font_faces()`
+- 文字背景框显隐只归 `bbox_visible`，样式不露框
+- 原样是模式的 getter 回哨兵（`_AUTOSCALE` / `_NO_BBOX` / `_PatchEdge` / `_PatchFace`）
+- 颜色字段 alpha 0 报 `NO_COLOR`
+- 拖过的文字不进重排（`_ensure_text_pin_hook`）

@@ -1,0 +1,32 @@
+# case: GEO-05
+# time: 2026-09-25T03:13:13
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t "GEO-05"
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed | 29 skipped (32)
+   Start at  03:13:14
+   Duration  857ms (transform 316ms, setup 139ms, import 277ms, tests 65ms, environment 293ms)
+
+[exit=0]
+
+# case: GEO-05
+# time: 2026-09-25T03:13:15
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/viewportStore.test.ts
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  19 passed (19)
+   Start at  03:13:15
+   Duration  4.49s (transform 241ms, setup 127ms, import 192ms, tests 3.82s, environment 262ms)
+
+[exit=0]
+

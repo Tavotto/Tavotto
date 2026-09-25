@@ -1,0 +1,19 @@
+{
+  "out": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vf-run/fixture",
+  "env_A": {
+    "executable": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vf-run/fixture/paper/.venv/bin/python",
+    "prefix": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vf-run/fixture/paper/.venv",
+    "base_prefix": "/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13",
+    "qa_signal_file": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vf-run/fixture/paper/.venv/lib/python3.13/site-packages/qa_signal/__init__.py",
+    "ident": "A",
+    "matplotlib": "3.10.8"
+  },
+  "env_B": {
+    "executable": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vf-run/fixture/envB/bin/python",
+    "prefix": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vf-run/fixture/envB",
+    "base_prefix": "/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13",
+    "qa_signal_file": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vf-run/fixture/envB/lib/python3.13/site-packages/qa_signal/__init__.py",
+    "ident": "B",
+    "matplotlib": "3.10.8"
+  }
+}

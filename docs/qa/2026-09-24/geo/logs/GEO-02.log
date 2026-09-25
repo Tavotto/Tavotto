@@ -1,0 +1,45 @@
+# case: GEO-02
+# time: 2026-09-25T03:12:30
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t "GEO-02"
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed | 28 skipped (32)
+   Start at  03:12:30
+   Duration  1.18s (transform 312ms, setup 139ms, import 287ms, tests 153ms, environment 498ms)
+
+[exit=0]
+
+# case: GEO-02
+# time: 2026-09-25T03:12:31
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_geometry_reference.py -p no:cacheprovider -q -rA -k "group_move"
+...                                                                      [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[2]
+PASSED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[10]
+PASSED tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[100]
+[exit=0]
+
+# case: GEO-02
+# time: 2026-09-25T03:12:34
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/alignSelectedTo.test.ts src/canvas/groupLockDrag.test.ts src/canvas/context-bar/multiSelectionBar.test.tsx src/store/alignAction.test.ts
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  4 passed (4)
+      Tests  89 passed (89)
+   Start at  03:12:34
+   Duration  2.15s (transform 1.55s, setup 723ms, import 1.55s, tests 951ms, environment 1.52s)
+
+[exit=0]
+

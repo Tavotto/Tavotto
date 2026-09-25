@@ -84,3 +84,16 @@
   `axes3dPanel.test.tsx`、`tickTaskCard.test.tsx`、`lib/viewAngle.test.ts`
   （三维方向示意的期望值取自真 matplotlib 的 `proj3d._view_axes`，
   文件头写了重新生成的脚本）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 排版决策唯一出处、字段进多少出多少
+- 控件形态按 prop + 角色认
+- 「脚本原始」格画 `marker_original`
+- 色阶共用关系只认 `mappable_gid` / `scale_gids`（谓词 `colorbarCovers` 一处）
+- 本机字体并表只在 `withMachineFamilies` 一处
+- 多选事实全体一致才给

@@ -1,0 +1,245 @@
+### §9 定点反证原始输出（mutate.py 过滤后的行）；变异基于提交 4a95b4d8（本分支 WIP，产品代码 = 62af729c）
+
+=================== mut_M1-preview-accumulates.log ===================
+# mutation M1-preview-accumulates on web/src/store/svgPreviewStore.ts
+target occurrences = 1
+## mutated run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/store/svgPreviewStore.test.ts src/canvas/fakeRealtimeDrag.test.tsx
+ ❯ src/store/svgPreviewStore.test.ts (23 tests | 1 failed) 250ms
+     × 拖一百下也永远从 base 现算，绝不字符串累加 18ms
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 47 passed (48)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/store/svgPreviewStore.test.ts > 临时 transform 与 matplotlib 原有 transform 共存 > 拖一百下也永远从 base 现算，绝不字符串累加
+AssertionError: expected 'translate(28.8,0) translate(28.512,0)…' to be 'translate(28.8,0) scale(1 -1) transla…' // Object.is equality
+exit=1
+$ env PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py
+transforming...✓ 745 modules transformed.
+✓ built in 387ms
+✓ 前端已就位: src/tavotto/web（8 个文件）
+exit=0
+## mutated run (e2e)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-01
+  ✘  1 [chromium] › e2e/fake-realtime.spec.ts:182:1 › STATE-01 逐帧：预览从 base 现算、拖动中零渲染零保存、松手到权威全程不弹回 (22.1s)
+    Error: 原始 transform 必须原样保留在 translate 之后
+    expect(received).toBe(expected) // Object.is equality
+    test-results/fake-realtime-STATE-01-逐帧：预览从-base-现算、拖动中零渲染零保存、松手到权威全程不弹回-chromium/test-failed-1.png
+  1 failed
+exit=1
+## restored run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/store/svgPreviewStore.test.ts src/canvas/fakeRealtimeDrag.test.tsx
+ Test Files  2 passed (2)
+      Tests  48 passed (48)
+exit=0
+$ env PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py
+transforming...✓ 745 modules transformed.
+✓ built in 341ms
+✓ 前端已就位: src/tavotto/web（8 个文件）
+exit=0
+## restored run (e2e)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-01
+  ✓  1 [chromium] › e2e/fake-realtime.spec.ts:182:1 › STATE-01 逐帧：预览从 base 现算、拖动中零渲染零保存、松手到权威全程不弹回 (21.2s)
+  1 passed (21.8s)
+exit=0
+SUMMARY M1-preview-accumulates: mutated vitest exit=1 e2e exit=1 | restored vitest exit=0 e2e exit=0
+
+=================== mut_M2a-cancel-still-commits.log ===================
+# mutation M2a-cancel-still-commits on web/src/canvas/interactions.ts
+target occurrences = 1
+## mutated run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/canvas/fakeRealtimeDrag.test.tsx
+ ❯ src/canvas/fakeRealtimeDrag.test.tsx (25 tests | 4 failed) 750ms
+     × 不写 override、不进历史、不渲染、不留临时 transform 52ms
+     × 取消之后紧接着正常拖一次，落点正确（没有被上一轮的 base 污染） 22ms
+     × 图内文字：不写 override、不进历史、不渲染、DOM 逐字节还原、无悬空事务 32ms
+     × 被夺走捕获之后立刻正常拖一次：一条历史、一次渲染、落点从原锚点起算 22ms
+ Test Files  1 failed (1)
+      Tests  4 failed | 21 passed (25)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/canvas/fakeRealtimeDrag.test.tsx > pointercancel > 不写 override、不进历史、不渲染、不留临时 transform
+AssertionError: expected [ 0.790625, 0.36777777777777776 ] to be undefined
+ FAIL  src/canvas/fakeRealtimeDrag.test.tsx > pointercancel > 取消之后紧接着正常拖一次，落点正确（没有被上一轮的 base 污染）
+AssertionError: expected 1.4416666666666667 to be close to 0.6604166666666667, received difference is 0.78125, but expected 5e-7
+ FAIL  src/canvas/fakeRealtimeDrag.test.tsx > lostpointercapture 与 pointercancel 同一条取消路径 > 图内文字：不写 override、不进历史、不渲染、DOM 逐字节还原、无悬空事务
+AssertionError: expected [ 0.790625, 0.36777777777777776 ] to be undefined
+ FAIL  src/canvas/fakeRealtimeDrag.test.tsx > lostpointercapture 与 pointercancel 同一条取消路径 > 被夺走捕获之后立刻正常拖一次：一条历史、一次渲染、落点从原锚点起算
+AssertionError: expected [ { label: { …(3) }, …(2) }, …(1) ] to have a length of 1 but got 2
+exit=1
+$ env PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py
+transforming...✓ 745 modules transformed.
+✓ built in 435ms
+✓ 前端已就位: src/tavotto/web（8 个文件）
+exit=0
+## mutated run (e2e)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-02
+  ✘  1 [chromium] › e2e/fake-realtime.spec.ts:278:1 › STATE-02 取消入口：pointercancel / lostpointercapture 还原 DOM 且零提交；画布外松手照常定稿、不再跟指针 (22.4s)
+    Error: pointercancel：元素应当回到原位
+    expect(received).toBeLessThan(expected)
+    test-results/fake-realtime-STATE-02-取消入-91ca0-还原-DOM-且零提交；画布外松手照常定稿、不再跟指针-chromium/test-failed-1.png
+  1 failed
+exit=1
+## restored run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/canvas/fakeRealtimeDrag.test.tsx
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+exit=0
+$ env PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py
+transforming...✓ 745 modules transformed.
+✓ built in 354ms
+✓ 前端已就位: src/tavotto/web（8 个文件）
+exit=0
+## restored run (e2e)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-02
+  ✓  1 [chromium] › e2e/fake-realtime.spec.ts:278:1 › STATE-02 取消入口：pointercancel / lostpointercapture 还原 DOM 且零提交；画布外松手照常定稿、不再跟指针 (25.9s)
+  1 passed (26.3s)
+exit=0
+SUMMARY M2a-cancel-still-commits: mutated vitest exit=1 e2e exit=1 | restored vitest exit=0 e2e exit=0
+
+=================== mut_M2b-no-lostpointercapture.log ===================
+# mutation M2b-no-lostpointercapture on web/src/canvas/interactions.ts
+target occurrences = 1
+## mutated run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/canvas/fakeRealtimeDrag.test.tsx
+ ❯ src/canvas/fakeRealtimeDrag.test.tsx (25 tests | 3 failed) 781ms
+     × 图内文字：不写 override、不进历史、不渲染、DOM 逐字节还原、无悬空事务 39ms
+     × 子图整体拖动与箭头整体拖动：同样干净 34ms
+     × 被夺走捕获之后立刻正常拖一次：一条历史、一次渲染、落点从原锚点起算 34ms
+ Test Files  1 failed (1)
+      Tests  3 failed | 22 passed (25)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/canvas/fakeRealtimeDrag.test.tsx > lostpointercapture 与 pointercancel 同一条取消路径 > 图内文字：不写 override、不进历史、不渲染、DOM 逐字节还原、无悬空事务
+AssertionError: expected 'translate(112.5,59.99999999999999)' to be null
+ FAIL  src/canvas/fakeRealtimeDrag.test.tsx > lostpointercapture 与 pointercancel 同一条取消路径 > 子图整体拖动与箭头整体拖动：同样干净
+AssertionError: expected 'element' to be 'none' // Object.is equality
+ FAIL  src/canvas/fakeRealtimeDrag.test.tsx > lostpointercapture 与 pointercancel 同一条取消路径 > 被夺走捕获之后立刻正常拖一次：一条历史、一次渲染、落点从原锚点起算
+AssertionError: expected [ { label: { …(3) }, …(2) }, …(3) ] to have a length of 1 but got 4
+exit=1
+## restored run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/canvas/fakeRealtimeDrag.test.tsx
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+exit=0
+SUMMARY M2b-no-lostpointercapture: mutated vitest exit=1 e2e exit=None | restored vitest exit=0 e2e exit=None
+
+=================== mut_M3a-reattach-ignores-domIntact.log ===================
+# mutation M3a-reattach-ignores-domIntact on web/src/store/svgPreviewStore.ts
+target occurrences = 1
+## mutated run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/store/svgPreviewStore.test.ts src/canvas/dragReleaseSnapback.test.tsx
+ ❯ src/store/svgPreviewStore.test.ts (23 tests | 1 failed) 375ms
+     × DOM 其实没换（组件只是重跑了一遍）→ 什么都不做，位移绝不翻倍 8ms
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 25 passed (26)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/store/svgPreviewStore.test.ts > SVG 被 React 重新插入 > DOM 其实没换（组件只是重跑了一遍）→ 什么都不做，位移绝不翻倍
+AssertionError: expected 'translate(28.8,0) translate(28.8,0) t…' to be 'translate(28.8,0) scale(1 -1) transla…' // Object.is equality
+exit=1
+## restored run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/store/svgPreviewStore.test.ts src/canvas/dragReleaseSnapback.test.tsx
+ Test Files  2 passed (2)
+      Tests  26 passed (26)
+exit=0
+SUMMARY M3a-reattach-ignores-domIntact: mutated vitest exit=1 e2e exit=None | restored vitest exit=0 e2e exit=None
+
+=================== mut_M3b-html-markup-not-memoized.log ===================
+# mutation M3b-html-markup-not-memoized on web/src/lib/useHtmlMarkup.ts
+target occurrences = 1
+## mutated run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/canvas/dragReleaseSnapback.test.tsx
+ ❯ src/canvas/dragReleaseSnapback.test.tsx (3 tests | 3 failed) 189ms
+     × 提交让面板重渲：SVG 节点不重建，预览位移一直挂着（不弹回原位） 111ms
+     × 与拖动无关的重渲也不重写 SVG（同一份字符串 = 同一个节点） 43ms
+     × 节点换了：预览只重附一次、不叠加；继续拖从 base 现算；取消还原 33ms
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/canvas/dragReleaseSnapback.test.tsx > 松手之后、新图到达之前 > 提交让面板重渲：SVG 节点不重建，预览位移一直挂着（不弹回原位）
+AssertionError: SVG 被原样重写了一遍（节点换了）: expected SVGGElement{ …(2) } to be SVGGElement{ …(2) } // Object.is equality
+ FAIL  src/canvas/dragReleaseSnapback.test.tsx > 松手之后、新图到达之前 > 与拖动无关的重渲也不重写 SVG（同一份字符串 = 同一个节点）
+AssertionError: expected SVGGElement{ …(2) } to be SVGGElement{ …(2) } // Object.is equality
+ FAIL  src/canvas/dragReleaseSnapback.test.tsx > 拖动中 SVG 被真替换 > 节点换了：预览只重附一次、不叠加；继续拖从 base 现算；取消还原
+AssertionError: 节点没换的重渲不许重采 base: expected null to be 'translate(150,74.99999999999999)' // Object.is equality
+exit=1
+## restored run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/canvas/dragReleaseSnapback.test.tsx
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+exit=0
+SUMMARY M3b-html-markup-not-memoized: mutated vitest exit=1 e2e exit=None | restored vitest exit=0 e2e exit=None
+
+=================== mut_M4-authority-falls-back-to-display.log ===================
+# mutation M4-authority-falls-back-to-display on web/src/store/renderStore.ts
+target occurrences = 1
+## mutated run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/store/geometryAuthority.test.ts src/store/alignAction.test.ts src/canvas/fakeRealtimeDrag.test.tsx
+ ❯ src/store/geometryAuthority.test.ts (12 tests | 4 failed) 9ms
+     × B 还没画出来时权威为空——哪怕 A 的 manifest 就在隔壁 5ms
+     × 脚本改过（markStale）之后，曾经成功的那份 manifest 不得重新当权威 1ms
+     × 只登记了 wantPatches、还没有任何成功结果时权威为空 0ms
+     × panel A 的权威为空时不得借 panel B 的 manifest 1ms
+ ❯ src/canvas/fakeRealtimeDrag.test.tsx (25 tests | 1 failed) 590ms
+     × 在途期间：权威为空、对齐被拒且选区与文档不动；纯样式修改照常进历史 16ms
+ Test Files  2 failed | 1 passed (3)
+      Tests  5 failed | 45 passed (50)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/canvas/fakeRealtimeDrag.test.tsx > 松手后权威在途：旧 manifest 不得作为几何写的输入 > 在途期间：权威为空、对齐被拒且选区与文档不动；纯样式修改照常进历史
+AssertionError: expected { stem: 'Fig1', …(2) } to be null
+ FAIL  src/store/geometryAuthority.test.ts > exactPanelRender：只认自己那一格，且必须对得上当前 overrides > B 还没画出来时权威为空——哪怕 A 的 manifest 就在隔壁
+AssertionError: expected { fileId: 'Fig1.pdf', rev: 2, …(21) } to be null
+ FAIL  src/store/geometryAuthority.test.ts > exactPanelRender：只认自己那一格，且必须对得上当前 overrides > 脚本改过（markStale）之后，曾经成功的那份 manifest 不得重新当权威
+AssertionError: expected { fileId: 'Fig1.pdf', rev: 1, …(21) } to be null
+ FAIL  src/store/geometryAuthority.test.ts > exactPanelRender：只认自己那一格，且必须对得上当前 overrides > 只登记了 wantPatches、还没有任何成功结果时权威为空
+AssertionError: expected { fileId: 'Fig1.pdf', rev: +0, …(21) } to be null
+ FAIL  src/store/geometryAuthority.test.ts > 同一文件的两个副本：显示可以互相垫底，几何绝不互相借用 > panel A 的权威为空时不得借 panel B 的 manifest
+AssertionError: expected { fileId: 'Fig1.pdf', rev: 1, …(21) } to be null
+exit=1
+## restored run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/store/geometryAuthority.test.ts src/store/alignAction.test.ts src/canvas/fakeRealtimeDrag.test.tsx
+ Test Files  3 passed (3)
+      Tests  50 passed (50)
+exit=0
+SUMMARY M4-authority-falls-back-to-display: mutated vitest exit=1 e2e exit=None | restored vitest exit=0 e2e exit=None
+
+=================== mut_M5-stale-response-advances-latest.log ===================
+# mutation M5-stale-response-advances-latest on web/src/store/renderStore.ts
+target occurrences = 1
+## mutated run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/store/geometryAuthority.test.ts src/canvas/alignUndoConvergence.test.tsx src/canvas/fakeRealtimeDrag.test.tsx
+ ❯ src/store/geometryAuthority.test.ts (12 tests | 1 failed) 9ms
+     × 先发的 C 晚于后发的 A 返回时，latest 仍然停在 A 3ms
+ ❯ src/canvas/alignUndoConvergence.test.tsx (5 tests | 1 failed) 35ms
+     × 对齐的响应晚于撤销的响应回来，最终仍然停在 A 5ms
+ Test Files  2 failed | 1 passed (3)
+      Tests  2 failed | 40 passed (42)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/canvas/alignUndoConvergence.test.tsx > 对齐 → 撤销：文档、画面、权威、选择框收敛到同一版 > 对齐的响应晚于撤销的响应回来，最终仍然停在 A
+AssertionError: expected 'f1 [{"gid":"t2","prop":"pos_frac","va…' to be 'f1 []' // Object.is equality
+ FAIL  src/store/geometryAuthority.test.ts > 乱序返回：晚到的旧变体不得把显示拽回去 > 先发的 C 晚于后发的 A 返回时，latest 仍然停在 A
+AssertionError: expected 'Fig1.pdf [{"gid":"g","prop":"x","valu…' to be 'Fig1.pdf [{"gid":"g","prop":"x","valu…' // Object.is equality
+exit=1
+$ env PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py
+transforming...✓ 745 modules transformed.
+✓ built in 363ms
+✓ 前端已就位: src/tavotto/web（8 个文件）
+exit=0
+## mutated run (e2e)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-05
+  ✓  1 [chromium] › e2e/fake-realtime.spec.ts:333:1 › STATE-05 乱序回包：旧变体晚于新变体返回，不把画布拽回旧版 (21.3s)
+  1 passed (21.7s)
+exit=0
+## restored run (vitest)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh vitest src/store/geometryAuthority.test.ts src/canvas/alignUndoConvergence.test.tsx src/canvas/fakeRealtimeDrag.test.tsx
+ Test Files  3 passed (3)
+      Tests  42 passed (42)
+exit=0
+$ env PYTHONPATH=/Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py
+transforming...✓ 745 modules transformed.
+✓ built in 346ms
+✓ 前端已就位: src/tavotto/web（8 个文件）
+exit=0
+## restored run (e2e)
+$ /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-05
+  ✓  1 [chromium] › e2e/fake-realtime.spec.ts:333:1 › STATE-05 乱序回包：旧变体晚于新变体返回，不把画布拽回旧版 (20.8s)
+  1 passed (21.2s)
+exit=0
+SUMMARY M5-stale-response-advances-latest: mutated vitest exit=1 e2e exit=0 | restored vitest exit=0 e2e exit=0

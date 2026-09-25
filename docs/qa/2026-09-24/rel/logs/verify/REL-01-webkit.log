@@ -1,0 +1,38 @@
+# cmd: cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/../verify-rel/src PYTHONDONTWRITEBYTECODE=1 npx playwright test --project=webkit --reporter=list
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:13:27Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+
+Running 24 tests using 1 worker
+
+  ✓   1 [webkit] › e2e/a11y.spec.ts:205:1 › 项目选择器：axe 无违规、无未定性的「查不了」、自算对比度达标 (2.9s)
+  ✓   2 [webkit] › e2e/a11y.spec.ts:212:1 › 工作台（项目已开、画布有面板）：axe 无违规、无未定性的「查不了」、自算对比度达标 (12.6s)
+  ✓   3 [webkit] › e2e/a11y.spec.ts:229:1 › 图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净 (15.4s)
+  ✓   4 [webkit] › e2e/a11y.spec.ts:288:1 › 图内编辑的属性栏（属性页签，选中标题）：正文框有名字，展开每个折叠区后 axe 仍然干净 (18.0s)
+  ✓   5 [webkit] › e2e/a11y.spec.ts:362:1 › 导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复 (13.1s)
+  ✓   6 [webkit] › e2e/a11y.spec.ts:408:1 › 项目接入状态：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复 (3.1s)
+  ✓   7 [webkit] › e2e/a11y.spec.ts:467:1 › 素材卡的状态角标不引入嵌套交互（axe nested-interactive） (2.3s)
+  ✓   8 [webkit] › e2e/a11y.spec.ts:494:1 › 问题面板：axe 无违规、行内的「修复」不是「定位」的子节点 (13.1s)
+  ✓   9 [webkit] › e2e/a11y.spec.ts:528:1 › 图标按钮都有可访问名（axe button-name / 顶栏抽查） (2.9s)
+  ✓  10 [webkit] › e2e/a11y.spec.ts:541:1 › 键盘可达性底线：Tab 能进入界面且焦点可见 (1.8s)
+  ✓  11 [webkit] › e2e/golden-paths.spec.ts:30:1 › 首次启动：用户目录为空时进项目选择器，而不是白屏 (1.7s)
+[e2e] 项目目录 /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-1790277296086/我的 论文 图/figures（真实路径 /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-1790277296086/我的 论文 图/figures）: Fig1_kinetics.pdf, Fig2_correlation.pdf, Fig2_yield.pdf, fig1_kinetics.py, fig2_comparison.py, paper_style.py, tavotto_registry.json
+  ✓  12 [webkit] › e2e/golden-paths.spec.ts:42:1 › 直接粘贴路径打开项目（含中文与空格） (1.9s)
+  ✓  13 [webkit] › e2e/golden-paths.spec.ts:61:1 › 打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复 (12.5s)
+  ✓  14 [webkit] › e2e/golden-paths.spec.ts:95:1 › 还没连上源脚本时，界面给得出「重新扫描 / 试运行」而不是让用户对着空列表猜 (2.3s)
+  ✓  15 [webkit] › e2e/golden-paths.spec.ts:124:1 › 没装 Python 时给出引导，而不是闪退 (14.9s)
+  ✓  16 [webkit] › e2e/golden-paths.spec.ts:145:1 › AI CLI 不存在时，设置里说清「找过哪些位置」 (2.0s)
+  ✓  17 [webkit] › e2e/golden-paths.spec.ts:176:1 › 导出诊断包：能下载，且不含密钥与主目录 (2.1s)
+  ✓  18 [webkit] › e2e/golden-paths.spec.ts:188:1 › 导出 PDF 后文件真的落盘 (7.1s)
+  ✓  19 [webkit] › e2e/keyboard-golden-path.spec.ts:193:1 › 纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo → 导出 (21.3s)
+  ✓  20 [webkit] › e2e/keyboard-golden-path.spec.ts:364:1 › 键盘错误恢复：路径打不开报错，改对路径后继续 (2.0s)
+  ✓  21 [webkit] › e2e/keyboard-golden-path.spec.ts:388:1 › 快捷键不吞按钮的 Enter：焦点在「导出」按钮上按 Enter 打开的是对话框 (12.6s)
+[e2e 探针] m1: 181 帧 / 3017ms
+[e2e 探针] m3: 181 帧 / 3017ms
+[e2e 性能探针] 报告 19451 字节 · 片段 4 · m3 每帧 3.0 个 move
+  ✓  22 [webkit] › e2e/perf-probe.spec.ts:17:1 › 性能探针：录制真实拖动 + 自动测试 + 保存报告 (29.1s)
+  ✓  23 [webkit] › e2e/twin-axes-pick.spec.ts:74:1 › twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了谁 (17.8s)
+  ✓  24 [webkit] › e2e/twin-axes-pick.spec.ts:163:1 › 键盘轮换：bbox 中心不在曲线身上时也走得回来 (18.8s)
+
+  24 passed (3.9m)
+# exit: 0

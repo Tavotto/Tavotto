@@ -1,0 +1,1118 @@
+[
+ {
+  "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+  "tests_sha": "2a4d39fdfd6039c9a3b9f593b18f756178c46690",
+  "environment": {
+   "os": "macOS 27.0 (26A428)",
+   "arch": "arm64",
+   "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+   "worker_python": "3.13.11（/opt/homebrew/opt/python@3.13/libexec/bin/python3）",
+   "matplotlib": "3.10.8",
+   "numpy": "2.4.3",
+   "node": "v26.7.0",
+   "vitest": "4.1.11（jsdom）",
+   "playwright": "1.62.1",
+   "browser": "chromium 151.0.7922.34（Playwright 自带，Desktop Chrome 设备，DPR 1；另一条 DPR 2）",
+   "render_control_plane": "Python 池（TAVOTTO_WORKERD=0，conftest 默认）"
+  },
+  "case_id": "GEO-01",
+  "title": "单选八方向",
+  "coverage_status": "部分覆盖",
+  "existing_tests": [
+   "web/src/canvas/fakeRealtimeDrag.test.tsx::pointerup：一次权威渲染，用最后一帧的值 > 只发一次，patch 正是最后一帧预览的位置（只在 zoom=1；M1 反证下 22 条既有用例全绿 = 对 zoom 失明）",
+   "web/src/canvas/fakeRealtimeDrag.test.tsx::pointercancel > 取消之后紧接着正常拖一次，落点正确",
+   "web/src/canvas/dragReleaseSnapback.test.tsx::松手之后、新图到达之前 > 提交让面板重渲：SVG 节点不重建，预览位移一直挂着（不弹回原位）",
+   "tests/test_worker_roundtrip.py::test_patch_shapes_are_draggable_via_pos_frac（引擎侧只覆盖形状一类、一个方向）"
+  ],
+  "expected_outcome": "G1 的六类可拖对象（左对齐标题、x/y 轴标签、ax.text、FancyBboxPatch、图例）与 Axes，八个方向 × 视图倍率 0.75/1/1.5/1.37，屏幕 Δs=37 CSS px：写下的锚点 = 独立 T⁻¹(T(p)+Δs)（容差 round4 半步 5e-5）；预览 transform = translate(Δfrac·viewBox) 且目标节点子树逐字节不变；只写 1 条 override、1 条历史、1 次渲染。引擎侧：manifest anchor 落在同一点、bbox 整体平移且尺寸不变、非目标（含曲线点序列）不动、目标的非位置属性不变、图例后代随父只走一次。浏览器：权威重渲染后墨迹框平移 = Δs（≤0.5 CSS px），在默认 / 放大 / 缩小 / DPR2 下都成立。",
+  "product_outcome": "功能失败",
+  "test_verdict": "partial",
+  "verdict_reason": "G1 全部对象在 jsdom（4 档 zoom × 8 方向）与引擎（3 档 zoom × 8 方向）两半都精确落在独立尺上（实测误差 ≤1.4e-16，预算 6.9e-4），浏览器腿标题在 94%/118%/72%/DPR2 下误差 ≤0.002 CSS px。但示例图 Fig1_kinetics 的图例（frameon=False、loc='lower right'）在真浏览器里首次拖动后横向多走 1.42–1.47 CSS px（超 0.5 预算），根因是同一次响应里 SVG 与 manifest 对图例位置差一个常量（GEO-BUG-4）；只看 manifest 的判据（规范字面要求）是绿的，用户看到的画面不是。浏览器腿只覆盖了标题一个对象、示例图而非 G1。无意外 skip；vitest -t 过滤导致的 skipped 是按名字筛选，不是意外 skip。",
+  "fixtures": [
+   {
+    "path": "docs/qa/2026-09-24/geo/repro/geo_library.py",
+    "sha256": "e9665afcd53590d0c6cb3761d22f78a5747bad3238e5667b4fd8f251c8737b40",
+    "note": "G1/G2/G2big 夹具脚本（确定性，无随机数）"
+   },
+   {
+    "path": "web/src/canvas/__fixtures__/geoReference.json",
+    "sha256": "07f107880fdf2f404c2a284f3fa2918159b683364f35cb597acf878ba208da66",
+    "note": "真实 worker 输出的 G1/G2/G2big manifest（裁剪）+ G1/G2 SVG；dump_geo_fixtures.py 两次生成 hash 相同"
+   },
+   {
+    "path": "tests/test_geometry_reference.py",
+    "sha256": "97de81b27d2df62bdb022ced1e187c11a356e44638cbdc353e2bd1849ea7386d",
+    "note": "内嵌 LIBRARY：G1 / G2big / G8 / G10（与 geo_library.py 的 G1 同一份脚本）"
+   },
+   {
+    "path": "examples/figures/Fig1_kinetics.pdf",
+    "sha256": "9a136a53d4e09ebc5d54eb90c35c4cff359a8d4e22e01c716991a4ab30d9fdda",
+    "note": "浏览器腿用的示例图（e2e fixtures 默认图库的拷贝）"
+   },
+   {
+    "path": "examples/figures/fig1_kinetics.py",
+    "sha256": "1e6d4255f76c73443e3964848a812fcd3df84acc0680a599cb473415c088ee01"
+   },
+   {
+    "path": "examples/figures/paper_style.py",
+    "sha256": "79895c5c61a8ec0a1ae0183563af4e0a1d3530bcf5437fc857ac2f0c35547680"
+   }
+  ],
+  "entry": "vitest（jsdom，seedExactRender + 真实 G1 manifest/SVG）+ pytest（真 worker，pool.one_shot）+ playwright（chromium，真后端 + 真 PanelView）",
+  "commands": [
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-01\"",
+   "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_geometry_reference.py -k \"fixture or single_drag\"",
+   "PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py && cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/../src npx playwright test e2e/geometry-reference.spec.ts --project=chromium -g GEO-01",
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/fakeRealtimeDrag.test.tsx src/canvas/dragReleaseSnapback.test.tsx",
+   "TAVOTTO_DATA_DIR=<scratch>/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/probe_legend_svg_vs_manifest.py <scratch> fig1",
+   "cp docs/qa/2026-09-24/geo/repro/legend-jump.repro.spec.ts web/e2e/ && (E2E 命令，把 spec 换成 e2e/legend-jump.repro.spec.ts)"
+  ],
+  "exit_codes": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   1
+  ],
+  "evidence": [
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/GEO-01.log",
+    "sha256": "60ab9635dc274d7e363a577747038dc432b8541b6523f283561493ec6c6f7281",
+    "runs": [
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-01\"",
+      "exit": 0,
+      "summary": "vitest: 6 passed | 26 skipped (共 32)"
+     },
+     {
+      "command": "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_geometry_reference.py -p no:cacheprovider -q -rA -k \"fixture or single_drag\"",
+      "exit": 0,
+      "summary": "pytest: 7 passed, 0 failed（-rA 逐条列出；其余 deselected）"
+     },
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/fakeRealtimeDrag.test.tsx src/canvas/dragReleaseSnapback.test.tsx",
+      "exit": 0,
+      "summary": "vitest: 22 passed (共 22)"
+     },
+     {
+      "command": "TAVOTTO_DATA_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/geo/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/probe_legend_svg_vs_manifest.py /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/geo fig1",
+      "exit": 0,
+      "summary": "见日志"
+     },
+     {
+      "command": "cp docs/qa/2026-09-24/geo/repro/legend-jump.repro.spec.ts web/e2e/ && cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/../src npx playwright test e2e/legend-jump.repro.spec.ts --project=chromium; rc=$?; rm -f e2e/legend-jump.repro.spec.ts; exit $rc",
+      "exit": 1,
+      "summary": "playwright: 1 failed"
+     }
+    ]
+   },
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/E2E-geometry-reference.log",
+    "sha256": "ebdccb2a089f0db0a2ea7d8637e0d91c98b8c53a9d7a2a1c7926c5ea799b4374",
+    "runs": [
+     {
+      "command": "cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/../src npx playwright test e2e/geometry-reference.spec.ts --project=chromium",
+      "exit": 0,
+      "summary": "playwright: 5 passed"
+     }
+    ]
+   }
+  ],
+  "artifacts": [],
+  "first_failed_invariant": "浏览器：图例墨迹框平移 ≠ Δs（x 多 1.42 CSS px）—— SVG 与同一响应的 manifest 对图例位置不一致",
+  "mutation_check": {
+   "id": "M1",
+   "target_file": "web/src/canvas/interactions.ts",
+   "mutation": "contentDelta 漏乘 zoom：dx/(layout.width*zoom) → dx/layout.width",
+   "expected_red_case": "geometryReference.test.ts GEO-01 的 zoom=0.75/1.5/1.37 三条 + Axes 移动；zoom=1 那条应保持绿",
+   "observed": "red",
+   "restored_green": true,
+   "log": "docs/qa/2026-09-24/geo/logs/mutations.log",
+   "additional": [
+    {
+     "id": "M1e",
+     "target_file": "web/src/canvas/interactions.ts",
+     "mutation": "同上（写成 zoom ** 0，避免 noUnusedLocals 让构建先红；第一次尝试删掉 zoom 时 tsc 先红，属无关异常，已作废重做）",
+     "expected_red_case": "e2e/geometry-reference.spec.ts 放大一档 / 缩小一档",
+     "observed": "red（Δbox=39.891 vs 37 @108%；27.846 vs 37 @75%）",
+     "restored_green": true
+    },
+    {
+     "id": "M2",
+     "target_file": "web/src/canvas/interactions.ts",
+     "mutation": "Axes 移动 y 方向反号：y - dfy → y + dfy",
+     "expected_red_case": "GEO-01 Axes 整体移动（bottom-origin）",
+     "observed": "red",
+     "restored_green": true
+    },
+    {
+     "id": "M7",
+     "target_file": "src/tavotto/engine/overrides.py",
+     "mutation": "_set_text_pos_frac 的 y 加 0.01",
+     "expected_red_case": "tests/test_geometry_reference.py 文字类单拖（title/xlabel/ylabel/texts）",
+     "observed": "red（图例、形状不走这个 setter，保持绿，符合预期）",
+     "restored_green": true
+    }
+   ]
+  },
+  "new_tests": [
+   "web/src/canvas/geometryReference.test.ts::GEO-01 单选八方向 × 四档视图倍率（5 条）",
+   "tests/test_geometry_reference.py::test_g1_fixture_is_what_the_ledger_declares",
+   "tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[6 个对象]",
+   "web/e2e/geometry-reference.spec.ts::GEO-01 单选（默认 / 放大一档 / 缩小一档 / DPR 2）"
+  ],
+  "product_bugs": [
+   {
+    "id": "GEO-BUG-4",
+    "summary": "图例首次写 loc_frac（右/中对齐 loc 的图例）：同一次响应里 SVG 的图例内容相对 manifest bbox 横移一个常量（示例图 Fig1_kinetics：1.036 pt ≈ 0.37 mm；浏览器 112% 下 1.42–1.47 CSS px，纯竖直拖动 x 也跳）；G1（带边框图例）同一偏差仅 0.03 pt。manifest 自洽，所以只看 manifest 的判据全绿",
+    "repro": "TAVOTTO_DATA_DIR=<scratch>/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/probe_legend_svg_vs_manifest.py <scratch> fig1；浏览器：cp docs/qa/2026-09-24/geo/repro/legend-jump.repro.spec.ts web/e2e/ 后按 E2E 命令跑",
+    "severity": "中低（亚毫米，但超 0.5 CSS px 预算；与 PR #575 记录的遗留『manifest dpi 致图例首拖跳』同族，疑为 manifest 与 SVG 两次排版的文字宽度不一致）"
+   }
+  ],
+  "gaps": [
+   "浏览器腿只拖了标题（示例图）；G1 夹具没有进浏览器（e2e 图库固定为 examples/figures）",
+   "WebKit 未跑：playwright.config 的 webkit project 用 testMatch 白名单，新 spec 不在其中",
+   "『不同面板位置』只在 jsdom 用面板偏移 + pan 覆盖；浏览器里面板位置由适应画布决定",
+   "字体 / 绑定未变只在引擎 manifest 的 editable 字段层面比较，没有做像素或导出比对",
+   "旋转 / 裁剪面板下的拖动未覆盖（contentDelta 的 unrotateVec 分支）"
+  ],
+  "mutation_check_reason": null
+ },
+ {
+  "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+  "tests_sha": "2a4d39fdfd6039c9a3b9f593b18f756178c46690",
+  "environment": {
+   "os": "macOS 27.0 (26A428)",
+   "arch": "arm64",
+   "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+   "worker_python": "3.13.11（/opt/homebrew/opt/python@3.13/libexec/bin/python3）",
+   "matplotlib": "3.10.8",
+   "numpy": "2.4.3",
+   "node": "v26.7.0",
+   "vitest": "4.1.11（jsdom）",
+   "playwright": "1.62.1",
+   "browser": "chromium 151.0.7922.34（Playwright 自带，Desktop Chrome 设备，DPR 1；另一条 DPR 2）",
+   "render_control_plane": "Python 池（TAVOTTO_WORKERD=0，conftest 默认）"
+  },
+  "case_id": "GEO-02",
+  "title": "多选规模与混合类型",
+  "coverage_status": "部分覆盖",
+  "existing_tests": [
+   "web/src/store/alignSelectedTo.test.ts::锁定与成组 > 锁定对象不动，但仍算进选区参照框；提示跳过了几个（画布对象层）",
+   "web/src/canvas/groupLockDrag.test.ts::组内含锁定成员 → 整组不可移动 > 拖动：全员未锁的组照常整组一起走（画布对象层）",
+   "（图内整组平移 startElementGroupMove 此前没有任何用例：M3 反证下 alignAction / alignSelectedTo / alignUndoConvergence / fakeRealtimeDrag 共 54 条全绿）"
+  ],
+  "expected_outcome": "图内：G2big 均匀取 2/10/100 个文字、G2 混合（文字 + 图例 + 形状 + 另一面板同名对象）同一屏幕位移——恰好每成员一条 override（不多不少）、值 = 各自锚点 + 独立尺 Δ（round4 内）、两两间距在 2×round4 半步内不变、未选中的零写入、一条历史一次渲染；预览里每个成员各挂一次相同 translate。引擎：2/10/100 个成员同时写入后逐个落点、间距不变、其余不动。浏览器：标题 + y 轴标签整组拖动后两者各平移 Δs（≤0.5 CSS px），未选中的图例不动。锁定对象：画布层按既有合同不动但参与参照框。",
+  "product_outcome": "自动成功",
+  "test_verdict": "pass",
+  "verdict_reason": "jsdom 4 条、引擎 3 条、浏览器 1 条全部通过；浏览器里 y 轴标签误差 0.17 CSS px（标题 0.004），在 0.5 预算内但不是零，已记入校准。图例进整组平移会撞 GEO-BUG-4（浏览器腿因此换成 y 轴标签，并在用例注释里写明）。图内对象的锁定是『不可命中、从选区剔除』（toggleElementLocked），所以『锁定对象参与参照框』只在画布对象层成立并由既有用例覆盖。",
+  "fixtures": [
+   {
+    "path": "docs/qa/2026-09-24/geo/repro/geo_library.py",
+    "sha256": "e9665afcd53590d0c6cb3761d22f78a5747bad3238e5667b4fd8f251c8737b40",
+    "note": "G1/G2/G2big 夹具脚本（确定性，无随机数）"
+   },
+   {
+    "path": "web/src/canvas/__fixtures__/geoReference.json",
+    "sha256": "07f107880fdf2f404c2a284f3fa2918159b683364f35cb597acf878ba208da66",
+    "note": "真实 worker 输出的 G1/G2/G2big manifest（裁剪）+ G1/G2 SVG；dump_geo_fixtures.py 两次生成 hash 相同"
+   },
+   {
+    "path": "tests/test_geometry_reference.py",
+    "sha256": "97de81b27d2df62bdb022ced1e187c11a356e44638cbdc353e2bd1849ea7386d",
+    "note": "内嵌 LIBRARY：G1 / G2big / G8 / G10（与 geo_library.py 的 G1 同一份脚本）"
+   },
+   {
+    "path": "examples/figures/Fig1_kinetics.pdf",
+    "sha256": "9a136a53d4e09ebc5d54eb90c35c4cff359a8d4e22e01c716991a4ab30d9fdda",
+    "note": "浏览器腿用的示例图（e2e fixtures 默认图库的拷贝）"
+   },
+   {
+    "path": "examples/figures/fig1_kinetics.py",
+    "sha256": "1e6d4255f76c73443e3964848a812fcd3df84acc0680a599cb473415c088ee01"
+   },
+   {
+    "path": "examples/figures/paper_style.py",
+    "sha256": "79895c5c61a8ec0a1ae0183563af4e0a1d3530bcf5437fc857ac2f0c35547680"
+   }
+  ],
+  "entry": "vitest + pytest（真 worker）+ playwright（chromium）",
+  "commands": [
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-02\"",
+   "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_geometry_reference.py -k \"group_move\"",
+   "PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py && cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/../src npx playwright test e2e/geometry-reference.spec.ts --project=chromium -g GEO-02",
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/alignSelectedTo.test.ts src/canvas/groupLockDrag.test.ts src/canvas/context-bar/multiSelectionBar.test.tsx src/store/alignAction.test.ts"
+  ],
+  "exit_codes": [
+   0,
+   0,
+   0,
+   0
+  ],
+  "evidence": [
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/GEO-02.log",
+    "sha256": "0511c363541927b15b9a27f6fa6b99921c7b5cc47c08a63a6fa249d42186bf50",
+    "runs": [
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-02\"",
+      "exit": 0,
+      "summary": "vitest: 4 passed | 28 skipped (共 32)"
+     },
+     {
+      "command": "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_geometry_reference.py -p no:cacheprovider -q -rA -k \"group_move\"",
+      "exit": 0,
+      "summary": "pytest: 3 passed, 0 failed（-rA 逐条列出；其余 deselected）"
+     },
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/alignSelectedTo.test.ts src/canvas/groupLockDrag.test.ts src/canvas/context-bar/multiSelectionBar.test.tsx src/store/alignAction.test.ts",
+      "exit": 0,
+      "summary": "vitest: 89 passed (共 89)"
+     }
+    ]
+   },
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/E2E-geometry-reference.log",
+    "sha256": "ebdccb2a089f0db0a2ea7d8637e0d91c98b8c53a9d7a2a1c7926c5ea799b4374",
+    "runs": [
+     {
+      "command": "cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/../src npx playwright test e2e/geometry-reference.spec.ts --project=chromium",
+      "exit": 0,
+      "summary": "playwright: 5 passed"
+     }
+    ]
+   }
+  ],
+  "artifacts": [],
+  "first_failed_invariant": null,
+  "mutation_check": {
+   "id": "M3",
+   "target_file": "web/src/canvas/interactions.ts",
+   "mutation": "startElementGroupMove 松手写入 entries.map(write).slice(1)（多选漏一人）",
+   "expected_red_case": "GEO-02 四条（长度 2→1 / 10→9 / 100→99 / 5→4）",
+   "observed": "red",
+   "restored_green": true,
+   "log": "docs/qa/2026-09-24/geo/logs/mutations.log"
+  },
+  "new_tests": [
+   "web/src/canvas/geometryReference.test.ts::GEO-02（G2big 2/10/100 + G2 混合）",
+   "tests/test_geometry_reference.py::test_group_move_moves_every_member_exactly_once[2|10|100]",
+   "web/e2e/geometry-reference.spec.ts::GEO-02 多选：标题 + y 轴标签"
+  ],
+  "product_bugs": [],
+  "gaps": [
+   "10 / 100 成员只在 jsdom 与引擎两半分别验证，没有端到端（浏览器里框选 100 个对象未做）",
+   "混合选区里含图例的浏览器整组平移受 GEO-BUG-4 影响，未进门禁",
+   "『G2 的锁定对象』：图内锁定对象不能进选区，未单独构造『锁定成员参与参照框』的图内场景（合同里没有这一档）"
+  ],
+  "mutation_check_reason": null
+ },
+ {
+  "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+  "tests_sha": "2a4d39fdfd6039c9a3b9f593b18f756178c46690",
+  "environment": {
+   "os": "macOS 27.0 (26A428)",
+   "arch": "arm64",
+   "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+   "worker_python": "3.13.11（/opt/homebrew/opt/python@3.13/libexec/bin/python3）",
+   "matplotlib": "3.10.8",
+   "numpy": "2.4.3",
+   "node": "v26.7.0",
+   "vitest": "4.1.11（jsdom）",
+   "playwright": "1.62.1",
+   "browser": "chromium 151.0.7922.34（Playwright 自带，Desktop Chrome 设备，DPR 1；另一条 DPR 2）",
+   "render_control_plane": "Python 池（TAVOTTO_WORKERD=0，conftest 默认）"
+  },
+  "case_id": "GEO-03",
+  "title": "Axes 与跟随对象",
+  "coverage_status": "部分覆盖",
+  "existing_tests": [
+   "web/src/canvas/axesCompanionDrag.test.tsx::被手动摆过位置的后代跟着子图走 > 标题的 pos_frac 加上同一个位移，图例式的 loc_frac 同理",
+   "web/src/canvas/axesCompanionDrag.test.tsx::manifest 点名的随行 axes（色条 / 孪生轴） > 跟着走，且预览期就跟手",
+   "web/src/canvas/axesCompanionDrag.test.tsx::被手动摆过位置的后代跟着子图走 > 没被摆过的后代不平白多出一条 override",
+   "web/src/canvas/axesCompanionDrag.test.tsx::子图被钳在画布内时随行元素用净位移"
+  ],
+  "expected_outcome": "单独拖 Axes：没摆过的孩子随 Axes 走一次、摆过的孩子由随行 override 走一次；Axes 与它自己的孩子一起选中整组平移：预览与提交后孩子都只走 Δ 一次（不是 2Δ）；引擎侧 Axes position + 孩子 pos_frac 同时写入时孩子只走 Δ；图例后代随图例走一次。",
+  "product_outcome": "功能失败",
+  "test_verdict": "fail",
+  "verdict_reason": "提交与引擎侧正确：只挪 Axes 时标题随行 Δ、Axes+标题同写时标题只走 Δ（test_axes_and_its_own_title_moved_together_move_the_title_once 绿），图例后代随父一次（单拖图例用例里断言）。但图内整组平移的**预览**把嵌套孩子平移两次：实测累计 translate (60,30) vs 期望 (30,15)，松手后权威图到达时跳回（GEO-BUG-3）。既有 axesCompanionDrag 只覆盖 startAxesDrag，不覆盖 startElementGroupMove。",
+  "fixtures": [
+   {
+    "path": "docs/qa/2026-09-24/geo/repro/geo_library.py",
+    "sha256": "e9665afcd53590d0c6cb3761d22f78a5747bad3238e5667b4fd8f251c8737b40",
+    "note": "G1/G2/G2big 夹具脚本（确定性，无随机数）"
+   },
+   {
+    "path": "web/src/canvas/__fixtures__/geoReference.json",
+    "sha256": "07f107880fdf2f404c2a284f3fa2918159b683364f35cb597acf878ba208da66",
+    "note": "真实 worker 输出的 G1/G2/G2big manifest（裁剪）+ G1/G2 SVG；dump_geo_fixtures.py 两次生成 hash 相同"
+   },
+   {
+    "path": "tests/test_geometry_reference.py",
+    "sha256": "97de81b27d2df62bdb022ced1e187c11a356e44638cbdc353e2bd1849ea7386d",
+    "note": "内嵌 LIBRARY：G1 / G2big / G8 / G10（与 geo_library.py 的 G1 同一份脚本）"
+   }
+  ],
+  "entry": "vitest（复现探针）+ pytest（真 worker）",
+  "commands": [
+   "cp docs/qa/2026-09-24/geo/repro/geoParentChild.repro.test.ts web/src/canvas/ && cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoParentChild.repro.test.ts; rm web/src/canvas/geoParentChild.repro.test.ts",
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/axesCompanionDrag.test.tsx",
+   "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_geometry_reference.py -k \"own_title or legend\""
+  ],
+  "exit_codes": [
+   1,
+   0,
+   0
+  ],
+  "evidence": [
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/GEO-03.log",
+    "sha256": "258f80d570ca597fc9a0d10c31edb78bbb446f8e289dcd9532a0fb32aa2588fb",
+    "runs": [
+     {
+      "command": "cp docs/qa/2026-09-24/geo/repro/geoParentChild.repro.test.ts web/src/canvas/ && cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoParentChild.repro.test.ts; rc=$?; rm -f src/canvas/geoParentChild.repro.test.ts; exit $rc",
+      "exit": 1,
+      "summary": "vitest: 1 failed (共 1)"
+     },
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/axesCompanionDrag.test.tsx",
+      "exit": 0,
+      "summary": "vitest: 10 passed (共 10)"
+     },
+     {
+      "command": "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_geometry_reference.py -p no:cacheprovider -q -rA -k \"own_title or legend\"",
+      "exit": 0,
+      "summary": "pytest: 2 passed, 0 failed（-rA 逐条列出；其余 deselected）"
+     }
+    ]
+   }
+  ],
+  "artifacts": [],
+  "first_failed_invariant": "拖动中标题节点的累计 translate = 2Δ（父 axes_0 一次 + 自己一次），应为 Δ",
+  "mutation_check": {
+   "id": "M7(第二次，全文件)",
+   "target_file": "src/tavotto/engine/overrides.py",
+   "mutation": "M7：_set_text_pos_frac 的 y +0.01",
+   "expected_red_case": "test_axes_and_its_own_title_moved_together_move_the_title_once",
+   "observed": "red",
+   "restored_green": true,
+   "log": "docs/qa/2026-09-24/geo/logs/mutations.log"
+  },
+  "new_tests": [
+   "tests/test_geometry_reference.py::test_axes_and_its_own_title_moved_together_move_the_title_once"
+  ],
+  "product_bugs": [
+   {
+    "id": "GEO-BUG-3",
+    "summary": "图内多选同时选中 Axes 与它自己的孩子（如 axes_0 + axes_0.title）整组平移：startElementGroupMove 对每个成员各 previewTransform 一次，孩子的 <g> 嵌在 Axes 的 <g> 里，预览中孩子走 2Δ；松手提交正确（引擎里只走 Δ），权威图到达时孩子从 2Δ 跳回 Δ",
+    "repro": "cp docs/qa/2026-09-24/geo/repro/geoParentChild.repro.test.ts web/src/canvas/ && cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoParentChild.repro.test.ts   # 期望累计平移 30,15，实测 60,30",
+    "severity": "中（预览错位 + 松手后跳位；startAxesDrag 已有『后代不单独平移』的处理，整组平移缺这一条）"
+   }
+  ],
+  "gaps": [
+   "只在 jsdom 里量了预览；真浏览器里的跳位没有录像 / 截图取证",
+   "图例 / 色条作为 Axes 的孩子一起整组平移的组合未逐一覆盖（同一代码路径，预期同样 2Δ）"
+  ],
+  "mutation_check_reason": null
+ },
+ {
+  "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+  "tests_sha": "2a4d39fdfd6039c9a3b9f593b18f756178c46690",
+  "environment": {
+   "os": "macOS 27.0 (26A428)",
+   "arch": "arm64",
+   "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+   "worker_python": "3.13.11（/opt/homebrew/opt/python@3.13/libexec/bin/python3）",
+   "matplotlib": "3.10.8",
+   "numpy": "2.4.3",
+   "node": "v26.7.0",
+   "vitest": "4.1.11（jsdom）",
+   "playwright": "1.62.1",
+   "browser": "chromium 151.0.7922.34（Playwright 自带，Desktop Chrome 设备，DPR 1；另一条 DPR 2）",
+   "render_control_plane": "Python 池（TAVOTTO_WORKERD=0，conftest 默认）"
+  },
+  "case_id": "GEO-04",
+  "title": "八手柄缩放",
+  "coverage_status": "部分覆盖",
+  "existing_tests": [
+   "web/src/canvas/rotatedObjects.test.tsx::anchoredRect > 八个方向 × 三个角度：对面锚点全都不动（画布对象）",
+   "web/src/canvas/shiftConstraints.test.tsx::shift 缩放等比 > 角柄 + shift：即使 alt 反转也强制等比",
+   "web/src/canvas/fakeRealtimeDrag.test.tsx::子图**缩放**不做 SVG 假预览，但最终 patch 与覆盖层线框仍然正确",
+   "（图内成组缩放 startGroupResize 此前没有用例）"
+  ],
+  "expected_outcome": "G2 两个 Axes 成组缩放，八个手柄：每个成员 top-origin 框 = c + S(p − c)（c = 对面边 / 角，边柄单轴、角柄取变化更大的一轴等比），误差 ≤ 2×round4 半步；一条历史；未选中的孪生轴不被前端写入。画布对象的八手柄由既有 rotatedObjects 覆盖。",
+  "product_outcome": "自动成功",
+  "test_verdict": "partial",
+  "verdict_reason": "8 个手柄全部通过；M6（西侧基点错）让 w/nw/sw 三条按预期红。未覆盖：成组缩放后引擎重排的权威 manifest、字号是否随缩放变化的合同、混合选区（含文字 / 图例时 groupOf 返回 null 的『不可缩放』合同只读了代码未断言）、最小尺寸合同见 GEO-07。",
+  "fixtures": [
+   {
+    "path": "docs/qa/2026-09-24/geo/repro/geo_library.py",
+    "sha256": "e9665afcd53590d0c6cb3761d22f78a5747bad3238e5667b4fd8f251c8737b40",
+    "note": "G1/G2/G2big 夹具脚本（确定性，无随机数）"
+   },
+   {
+    "path": "web/src/canvas/__fixtures__/geoReference.json",
+    "sha256": "07f107880fdf2f404c2a284f3fa2918159b683364f35cb597acf878ba208da66",
+    "note": "真实 worker 输出的 G1/G2/G2big manifest（裁剪）+ G1/G2 SVG；dump_geo_fixtures.py 两次生成 hash 相同"
+   },
+   {
+    "path": "tests/test_geometry_reference.py",
+    "sha256": "97de81b27d2df62bdb022ced1e187c11a356e44638cbdc353e2bd1849ea7386d",
+    "note": "内嵌 LIBRARY：G1 / G2big / G8 / G10（与 geo_library.py 的 G1 同一份脚本）"
+   }
+  ],
+  "entry": "vitest",
+  "commands": [
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-04\"",
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/rotatedObjects.test.tsx src/canvas/shiftConstraints.test.tsx"
+  ],
+  "exit_codes": [
+   0,
+   0
+  ],
+  "evidence": [
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/GEO-04.log",
+    "sha256": "f795d375d0b5d1cf42dbfce6a4dba394f23aaec46b7da970bfa61e54ae5de541",
+    "runs": [
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-04\"",
+      "exit": 0,
+      "summary": "vitest: 8 passed | 24 skipped (共 32)"
+     },
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/rotatedObjects.test.tsx src/canvas/shiftConstraints.test.tsx",
+      "exit": 0,
+      "summary": "vitest: 28 passed (共 28)"
+     }
+    ]
+   }
+  ],
+  "artifacts": [],
+  "first_failed_invariant": null,
+  "mutation_check": {
+   "id": "M6",
+   "target_file": "web/src/lib/axesLayout.ts",
+   "mutation": "resizeGroup 西侧基点：west ? gx + gw - gw*sx : gx → gx",
+   "expected_red_case": "GEO-04 手柄 w / nw / sw",
+   "observed": "red",
+   "restored_green": true,
+   "log": "docs/qa/2026-09-24/geo/logs/mutations.log"
+  },
+  "new_tests": [
+   "web/src/canvas/geometryReference.test.ts::GEO-04 成组缩放八手柄（8 条）"
+  ],
+  "product_bugs": [],
+  "gaps": [
+   "引擎侧成组缩放后的 manifest 落点与数据数组不变未验证",
+   "字号合同未验证",
+   "浏览器腿未做"
+  ],
+  "mutation_check_reason": null
+ },
+ {
+  "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+  "tests_sha": "2a4d39fdfd6039c9a3b9f593b18f756178c46690",
+  "environment": {
+   "os": "macOS 27.0 (26A428)",
+   "arch": "arm64",
+   "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+   "worker_python": "3.13.11（/opt/homebrew/opt/python@3.13/libexec/bin/python3）",
+   "matplotlib": "3.10.8",
+   "numpy": "2.4.3",
+   "node": "v26.7.0",
+   "vitest": "4.1.11（jsdom）",
+   "playwright": "1.62.1",
+   "browser": "chromium 151.0.7922.34（Playwright 自带，Desktop Chrome 设备，DPR 1；另一条 DPR 2）",
+   "render_control_plane": "Python 池（TAVOTTO_WORKERD=0，conftest 默认）"
+  },
+  "case_id": "GEO-05",
+  "title": "四类缩放分离",
+  "coverage_status": "部分覆盖",
+  "existing_tests": [
+   "（viewportStore.test.ts 只跑过、未逐条核对其断言的主语，不计为本用例的覆盖）"
+  ],
+  "expected_outcome": "视图倍率变化（zoomBy / setZoomCentered / 直接改 zoom）文档逐字节不变、0 历史、0 渲染；画布上拉面板角只改 x/y/w/h、0 override；Axes 区域缩放只写该 Axes 的 position、面板 x/y/w/h 不动；GEO-04 的选区缩放只写被选 Axes。",
+  "product_outcome": "自动成功",
+  "test_verdict": "partial",
+  "verdict_reason": "三条新断言全绿。视图倍率不影响写入量另由 GEO-01 的四档 zoom 与浏览器三档间接证明（同一 Δs 的墨迹位移相同）。未做：每次缩放后比较 manifest 与导出物（导出尺寸 / 字号），Figure size_mm 只在 GEO-10 引擎用例里作为条件使用。",
+  "fixtures": [
+   {
+    "path": "docs/qa/2026-09-24/geo/repro/geo_library.py",
+    "sha256": "e9665afcd53590d0c6cb3761d22f78a5747bad3238e5667b4fd8f251c8737b40",
+    "note": "G1/G2/G2big 夹具脚本（确定性，无随机数）"
+   },
+   {
+    "path": "web/src/canvas/__fixtures__/geoReference.json",
+    "sha256": "07f107880fdf2f404c2a284f3fa2918159b683364f35cb597acf878ba208da66",
+    "note": "真实 worker 输出的 G1/G2/G2big manifest（裁剪）+ G1/G2 SVG；dump_geo_fixtures.py 两次生成 hash 相同"
+   },
+   {
+    "path": "tests/test_geometry_reference.py",
+    "sha256": "97de81b27d2df62bdb022ced1e187c11a356e44638cbdc353e2bd1849ea7386d",
+    "note": "内嵌 LIBRARY：G1 / G2big / G8 / G10（与 geo_library.py 的 G1 同一份脚本）"
+   }
+  ],
+  "entry": "vitest",
+  "commands": [
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-05\"",
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/viewportStore.test.ts"
+  ],
+  "exit_codes": [
+   0,
+   0
+  ],
+  "evidence": [
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/GEO-05.log",
+    "sha256": "5b606accafb4e600a305d90cef096b74e460807fa0cf8695328c5bfa4b12c0c3",
+    "runs": [
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-05\"",
+      "exit": 0,
+      "summary": "vitest: 3 passed | 29 skipped (共 32)"
+     },
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/viewportStore.test.ts",
+      "exit": 0,
+      "summary": "vitest: 19 passed (共 19)"
+     }
+    ]
+   }
+  ],
+  "artifacts": [],
+  "first_failed_invariant": null,
+  "mutation_check": null,
+  "mutation_check_reason": "本用例不在规范 §9 反证表内，三条断言都是『不变』型，未做定点变异（时间优先给 §9 点名的 GEO-01/02/03/06）",
+  "new_tests": [
+   "web/src/canvas/geometryReference.test.ts::GEO-05（3 条）"
+  ],
+  "product_bugs": [],
+  "gaps": [
+   "导出物（PDF/PNG 尺寸、字号）未在每类缩放后比对",
+   "Figure 尺寸 override 的『只改声明属性』未单独断言"
+  ]
+ },
+ {
+  "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+  "tests_sha": "2a4d39fdfd6039c9a3b9f593b18f756178c46690",
+  "environment": {
+   "os": "macOS 27.0 (26A428)",
+   "arch": "arm64",
+   "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+   "worker_python": "3.13.11（/opt/homebrew/opt/python@3.13/libexec/bin/python3）",
+   "matplotlib": "3.10.8",
+   "numpy": "2.4.3",
+   "node": "v26.7.0",
+   "vitest": "4.1.11（jsdom）",
+   "playwright": "1.62.1",
+   "browser": "chromium 151.0.7922.34（Playwright 自带，Desktop Chrome 设备，DPR 1；另一条 DPR 2）",
+   "render_control_plane": "Python 池（TAVOTTO_WORKERD=0，conftest 默认）"
+  },
+  "case_id": "GEO-06",
+  "title": "事件密度与往返",
+  "coverage_status": "部分覆盖",
+  "existing_tests": [
+   "web/src/canvas/fakeRealtimeDrag.test.tsx::历史：一次拖动一条 > 连续两次拖动是累加的 —— 第二次绝不能拿 manifest 上的旧锚点起算",
+   "web/src/canvas/fakeRealtimeDrag.test.tsx::历史：一次拖动一条 > 一次拖动含一百次 pointermove，只压一条历史"
+  ],
+  "expected_outcome": "吸附关闭。同一起终点 2 次 vs 200 次 move：写下的值逐位相同；一次长拖 vs 三段拖：单元素在 round4 半步内一致、整组在 3 个半步内一致；反向拖回：单元素回到原锚点（半步内），整组 20 次往返的累计漂移 ≤ 1e-4（一次 round4 整步，不随次数增长）；Axes 右柄拉宽再拉回：position 回到 2 个半步内。",
+  "product_outcome": "自动成功",
+  "test_verdict": "pass",
+  "verdict_reason": "4 条全绿；M5（第二段拖动忽略已写 override、从 manifest 旧锚点起算）让『三段拖』与『反向拖回』两条红。实测：2 vs 200 次 move 逐位相等（trackPointer 只取终点相对起点的位移）；单元素 pos_frac 不取整、整组与 Axes 写 round4。注意：反向拖回虽然回到原值，但会留下一条等于原值的 override（见 GEO-07 / GEO-BUG-5）。",
+  "fixtures": [
+   {
+    "path": "docs/qa/2026-09-24/geo/repro/geo_library.py",
+    "sha256": "e9665afcd53590d0c6cb3761d22f78a5747bad3238e5667b4fd8f251c8737b40",
+    "note": "G1/G2/G2big 夹具脚本（确定性，无随机数）"
+   },
+   {
+    "path": "web/src/canvas/__fixtures__/geoReference.json",
+    "sha256": "07f107880fdf2f404c2a284f3fa2918159b683364f35cb597acf878ba208da66",
+    "note": "真实 worker 输出的 G1/G2/G2big manifest（裁剪）+ G1/G2 SVG；dump_geo_fixtures.py 两次生成 hash 相同"
+   },
+   {
+    "path": "tests/test_geometry_reference.py",
+    "sha256": "97de81b27d2df62bdb022ced1e187c11a356e44638cbdc353e2bd1849ea7386d",
+    "note": "内嵌 LIBRARY：G1 / G2big / G8 / G10（与 geo_library.py 的 G1 同一份脚本）"
+   }
+  ],
+  "entry": "vitest",
+  "commands": [
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-06\""
+  ],
+  "exit_codes": [
+   0
+  ],
+  "evidence": [
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/GEO-06.log",
+    "sha256": "f6d33c5c049f62c5108913696dbd6f5595e5fe1eac8d3f0dd61d938af6c08712",
+    "runs": [
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-06\"",
+      "exit": 0,
+      "summary": "vitest: 4 passed | 28 skipped (共 32)"
+     }
+    ]
+   }
+  ],
+  "artifacts": [],
+  "first_failed_invariant": null,
+  "mutation_check": {
+   "id": "M5",
+   "target_file": "web/src/lib/elementGeom.ts",
+   "mutation": "anchorOf 忽略已写 override（if (ov && Array.isArray(ov.value) && false)）",
+   "expected_red_case": "GEO-06 一次长拖 vs 分三段 / 反向拖回",
+   "observed": "red",
+   "restored_green": true,
+   "log": "docs/qa/2026-09-24/geo/logs/mutations.log"
+  },
+  "new_tests": [
+   "web/src/canvas/geometryReference.test.ts::GEO-06（4 条）"
+  ],
+  "product_bugs": [],
+  "gaps": [
+   "只在 jsdom；真浏览器里 Playwright mouse.move 一步一帧，事件合并行为不同",
+   "长期漂移只测了 20 次往返，不是小时级"
+  ],
+  "mutation_check_reason": null
+ },
+ {
+  "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+  "tests_sha": "2a4d39fdfd6039c9a3b9f593b18f756178c46690",
+  "environment": {
+   "os": "macOS 27.0 (26A428)",
+   "arch": "arm64",
+   "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+   "worker_python": "3.13.11（/opt/homebrew/opt/python@3.13/libexec/bin/python3）",
+   "matplotlib": "3.10.8",
+   "numpy": "2.4.3",
+   "node": "v26.7.0",
+   "vitest": "4.1.11（jsdom）",
+   "playwright": "1.62.1",
+   "browser": "chromium 151.0.7922.34（Playwright 自带，Desktop Chrome 设备，DPR 1；另一条 DPR 2）",
+   "render_control_plane": "Python 池（TAVOTTO_WORKERD=0，conftest 默认）"
+  },
+  "case_id": "GEO-07",
+  "title": "边界与 no-op",
+  "coverage_status": "部分覆盖",
+  "existing_tests": [
+   "web/src/canvas/fakeRealtimeDrag.test.tsx::历史：一次拖动一条 > 没真的动过（只是点了一下）不产生历史，也不渲染",
+   "web/src/store/alignAction.test.ts::没有视觉位移就不写 override > 整组已经左对齐时再点一次 = 完全的 no-op",
+   "web/src/canvas/hitTest.test.tsx::hitStrokeWidth 换算 > zoom 为 0 也不炸"
+  ],
+  "expected_outcome": "只 pointerdown/up（含 1px 抖动）在单拖 / 整组 / Axes 移动 / Axes 缩放 / 成组缩放五个入口都 0 override / 0 历史 / 0 渲染 / 0 残留 transform；Axes 与成组缩放连续缩到最小再放大：全程有限正数、不低于 MIN、可放大回来；pointercancel 中断整组平移不留痕；已对齐再对齐是 no-op；非整数 zoom 1.37 与 DPR 2 下几何照常（GEO-01）。拖出去再拖回原点松手也是 no-op。",
+  "product_outcome": "功能失败",
+  "test_verdict": "fail",
+  "verdict_reason": "新增 4 条与既有 3 条全绿（M4 去掉 2px 阈值后『只按下抬起』那条按预期红）。但『拖出去 30px 再拖回原点松手』写下一条等于原锚点的 pos_frac、1 条历史、1 次渲染（GEO-BUG-5），违反『无位移时不生成 override、不冻结自动布局、不增加历史或渲染』；另发现单条 setOverride 的 filter+push 会改顺序（GEO-BUG-6）。",
+  "fixtures": [
+   {
+    "path": "docs/qa/2026-09-24/geo/repro/geo_library.py",
+    "sha256": "e9665afcd53590d0c6cb3761d22f78a5747bad3238e5667b4fd8f251c8737b40",
+    "note": "G1/G2/G2big 夹具脚本（确定性，无随机数）"
+   },
+   {
+    "path": "web/src/canvas/__fixtures__/geoReference.json",
+    "sha256": "07f107880fdf2f404c2a284f3fa2918159b683364f35cb597acf878ba208da66",
+    "note": "真实 worker 输出的 G1/G2/G2big manifest（裁剪）+ G1/G2 SVG；dump_geo_fixtures.py 两次生成 hash 相同"
+   },
+   {
+    "path": "tests/test_geometry_reference.py",
+    "sha256": "97de81b27d2df62bdb022ced1e187c11a356e44638cbdc353e2bd1849ea7386d",
+    "note": "内嵌 LIBRARY：G1 / G2big / G8 / G10（与 geo_library.py 的 G1 同一份脚本）"
+   }
+  ],
+  "entry": "vitest",
+  "commands": [
+   "cp docs/qa/2026-09-24/geo/repro/geoNoopDragBack.repro.test.ts web/src/canvas/ && cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoNoopDragBack.repro.test.ts; rm web/src/canvas/geoNoopDragBack.repro.test.ts",
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-07\"",
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/alignAction.test.ts src/canvas/fakeRealtimeDrag.test.tsx src/canvas/hitTest.test.tsx"
+  ],
+  "exit_codes": [
+   1,
+   0,
+   0
+  ],
+  "evidence": [
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/GEO-07.log",
+    "sha256": "4329aaf86573c91568ab5d5633822e5a65368961e12fe659b665d6aab45aa4c6",
+    "runs": [
+     {
+      "command": "cp docs/qa/2026-09-24/geo/repro/geoNoopDragBack.repro.test.ts web/src/canvas/ && cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoNoopDragBack.repro.test.ts; rc=$?; rm -f src/canvas/geoNoopDragBack.repro.test.ts; exit $rc",
+      "exit": 1,
+      "summary": "vitest: 2 failed (共 2)"
+     },
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-07\"",
+      "exit": 0,
+      "summary": "vitest: 4 passed | 28 skipped (共 32)"
+     },
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/alignAction.test.ts src/canvas/fakeRealtimeDrag.test.tsx src/canvas/hitTest.test.tsx",
+      "exit": 0,
+      "summary": "vitest: 50 passed (共 50)"
+     }
+    ]
+   }
+  ],
+  "artifacts": [],
+  "first_failed_invariant": "拖回原点松手后 overrides = [{axes_0.title_left, pos_frac, [0.14, 0.11395833…]}]（= 原锚点），past=1，engineRender=1；应为 []/0/0",
+  "mutation_check": {
+   "id": "M4",
+   "target_file": "web/src/canvas/interactions.ts",
+   "mutation": "trackPointer 阈值 threshold = 2 → 0",
+   "expected_red_case": "GEO-07 只 pointerdown/up（含 1px 抖动）",
+   "observed": "red",
+   "restored_green": true,
+   "log": "docs/qa/2026-09-24/geo/logs/mutations.log"
+  },
+  "new_tests": [
+   "web/src/canvas/geometryReference.test.ts::GEO-07（4 条）"
+  ],
+  "product_bugs": [
+   {
+    "id": "GEO-BUG-5",
+    "summary": "拖出去再拖回原点松手（终点位移 0）：startElementDrag 仍写一条等于原锚点的 pos_frac + 一条历史 + 一次渲染；这条 override 把标题 / 轴标签从 matplotlib 自动布局里钉死（对齐路径由 layoutBoxes 的 no-op 判据挡住，拖动路径没有）",
+    "repro": "cp docs/qa/2026-09-24/geo/repro/geoNoopDragBack.repro.test.ts web/src/canvas/ && cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoNoopDragBack.repro.test.ts -t 'A\\.'",
+    "severity": "中（无形的布局冻结，改字号 / 图幅后才显现）"
+   },
+   {
+    "id": "GEO-BUG-6",
+    "summary": "单条 setOverride 用 filter+push：给已有 override 写值（哪怕同一个值）会把它挪到数组末尾，变体键随之改变 → 多一次白渲染；违反 docs/rules/frontend/display-fallback-vs-geometry-authority.md『override 的 upsert 原地改值，不许 filter(...)+push(...)』（批量 setOverrides 已是原地 upsert）",
+    "repro": "cp docs/qa/2026-09-24/geo/repro/geoNoopDragBack.repro.test.ts web/src/canvas/ && cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoNoopDragBack.repro.test.ts -t 'B\\.'",
+    "severity": "低（性能 / 键 churn；不改变画面）"
+   }
+  ],
+  "gaps": [
+   "高 DPI 只在 chromium 模拟 DPR 2；真 Retina / 跨显示器未测",
+   "画布对象（非图内）缩到最小未覆盖"
+  ],
+  "mutation_check_reason": null
+ },
+ {
+  "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+  "tests_sha": "2a4d39fdfd6039c9a3b9f593b18f756178c46690",
+  "environment": {
+   "os": "macOS 27.0 (26A428)",
+   "arch": "arm64",
+   "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+   "worker_python": "3.13.11（/opt/homebrew/opt/python@3.13/libexec/bin/python3）",
+   "matplotlib": "3.10.8",
+   "numpy": "2.4.3",
+   "node": "v26.7.0",
+   "vitest": "4.1.11（jsdom）",
+   "playwright": "1.62.1",
+   "browser": "chromium 151.0.7922.34（Playwright 自带，Desktop Chrome 设备，DPR 1；另一条 DPR 2）",
+   "render_control_plane": "Python 池（TAVOTTO_WORKERD=0，conftest 默认）"
+  },
+  "case_id": "GEO-08",
+  "title": "特殊坐标",
+  "coverage_status": "部分覆盖",
+  "existing_tests": [
+   "web/src/canvas/twinAxesPick.test.tsx::⌥ 点击：画布上换得到孪生轴，并且说得出换到了谁 > 第一下选宿主（= 普通点击的结果），第二下换到孪生轴（只量命中，不量落点）",
+   "tests/test_legend_anchor.py::test_an_anchor_shape_this_model_cannot_express_is_declared_unsupported",
+   "tests/test_legend_anchor.py::test_an_anchor_pinned_to_another_coordinate_system_is_declared_unsupported",
+   "tests/test_equivalence_matrix.py EqvAnnot（constrained + annotate；只比热态 == 重放，不量落点——所以下面两个缺陷它看不见）"
+  ],
+  "expected_outcome": "G8：对数 x + 反转 y 上的文字、twinx 上的文字、axes fraction 坐标的注释、figure 级文字——八个方向拖动后 manifest 锚点落在独立尺的 figure 分数上，曲线点序列与轴属性（对数、反转）不变；表达不出来的对象明确不宣称（unsupported_props），不套通用 x/y 公式。",
+  "product_outcome": "功能失败",
+  "test_verdict": "fail",
+  "verdict_reason": "对数 / 反转 / twinx / figure 级文字三类全部精确（M7 让三条按预期红）。但 textcoords≠'data' 的注释（axes fraction / offset points / figure fraction）manifest 宣称可拖、写 pos_frac 后落点错 0.09–0.33 figure 分数（GEO-BUG-1），属于『套用通用公式得到错误结果』且无明确限制。图例外侧锚点的两种不可表达形状由既有用例证明会明确声明 unsupported。",
+  "fixtures": [
+   {
+    "path": "docs/qa/2026-09-24/geo/repro/geo_library.py",
+    "sha256": "e9665afcd53590d0c6cb3761d22f78a5747bad3238e5667b4fd8f251c8737b40",
+    "note": "G1/G2/G2big 夹具脚本（确定性，无随机数）"
+   },
+   {
+    "path": "web/src/canvas/__fixtures__/geoReference.json",
+    "sha256": "07f107880fdf2f404c2a284f3fa2918159b683364f35cb597acf878ba208da66",
+    "note": "真实 worker 输出的 G1/G2/G2big manifest（裁剪）+ G1/G2 SVG；dump_geo_fixtures.py 两次生成 hash 相同"
+   },
+   {
+    "path": "tests/test_geometry_reference.py",
+    "sha256": "97de81b27d2df62bdb022ced1e187c11a356e44638cbdc353e2bd1849ea7386d",
+    "note": "内嵌 LIBRARY：G1 / G2big / G8 / G10（与 geo_library.py 的 G1 同一份脚本）"
+   }
+  ],
+  "entry": "pytest（真 worker）+ vitest + 复现脚本",
+  "commands": [
+   "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_geometry_reference.py -k \"special\"",
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/twinAxesPick.test.tsx",
+   "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_legend_anchor.py -k \"unsupported\"",
+   "TAVOTTO_DATA_DIR=<scratch>/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py <scratch>"
+  ],
+  "exit_codes": [
+   0,
+   0,
+   0,
+   1
+  ],
+  "evidence": [
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/GEO-08.log",
+    "sha256": "6dbbc9e5a1ac17b15035e265a8f69fbc1f0ae3a94e136ca4c2de1d5c2536f379",
+    "runs": [
+     {
+      "command": "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_geometry_reference.py -p no:cacheprovider -q -rA -k \"special\"",
+      "exit": 0,
+      "summary": "pytest: 3 passed, 0 failed（-rA 逐条列出；其余 deselected）"
+     },
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/twinAxesPick.test.tsx",
+      "exit": 0,
+      "summary": "vitest: 25 passed (共 25)"
+     },
+     {
+      "command": "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_legend_anchor.py -p no:cacheprovider -q -rA -k \"unsupported\"",
+      "exit": 0,
+      "summary": "pytest: 2 passed, 0 failed（-rA 逐条列出；其余 deselected）"
+     },
+     {
+      "command": "TAVOTTO_DATA_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/geo/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/geo",
+      "exit": 1,
+      "summary": "repro: 6 OK, 11 BAD"
+     }
+    ]
+   }
+  ],
+  "artifacts": [],
+  "first_failed_invariant": "Ann/axes_0.texts_2（textcoords='axes fraction'）写 pos_frac=[0.23,0.699] 后 anchor=[0.319,0.582]",
+  "mutation_check": {
+   "id": "M7(第二次，全文件)",
+   "target_file": "src/tavotto/engine/overrides.py",
+   "mutation": "M7：_set_text_pos_frac 的 y +0.01",
+   "expected_red_case": "test_special_coordinates_drag_is_scale_independent[3 个]",
+   "observed": "red",
+   "restored_green": true,
+   "log": "docs/qa/2026-09-24/geo/logs/mutations.log"
+  },
+  "new_tests": [
+   "tests/test_geometry_reference.py::test_special_coordinates_drag_is_scale_independent[axes_0.texts_0|axes_2.texts_0|fig.texts_0]"
+  ],
+  "product_bugs": [
+   {
+    "id": "GEO-BUG-1",
+    "summary": "ax.annotate(..., textcoords≠'data')（axes fraction / offset points / figure fraction）的注释文字：manifest 宣称 draggable+pos_frac，写 pos_frac 后落点错位 0.09–0.33 figure 分数（可跑出图外），无 warning；热态与重放一致所以写回校验拦不住",
+    "repro": "TAVOTTO_DATA_DIR=<scratch>/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py <scratch>   # 退出码 1 = 复现（BAD 行：Ann/axes_0.texts_2..4）",
+    "severity": "高（静默错位，对象跳到远处；textcoords 非 data 的注释在论文图里常见）"
+   }
+  ],
+  "gaps": [
+   "混合坐标（blended transform）的文字未构造",
+   "极坐标 / 3D / 地图投影 Axes 未覆盖",
+   "前端 jsdom 与浏览器腿未覆盖特殊坐标（前端只写 figure 分数，与坐标系无关）"
+  ],
+  "mutation_check_reason": null
+ },
+ {
+  "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+  "tests_sha": "2a4d39fdfd6039c9a3b9f593b18f756178c46690",
+  "environment": {
+   "os": "macOS 27.0 (26A428)",
+   "arch": "arm64",
+   "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+   "worker_python": "3.13.11（/opt/homebrew/opt/python@3.13/libexec/bin/python3）",
+   "matplotlib": "3.10.8",
+   "numpy": "2.4.3",
+   "node": "v26.7.0",
+   "vitest": "4.1.11（jsdom）",
+   "playwright": "1.62.1",
+   "browser": "chromium 151.0.7922.34（Playwright 自带，Desktop Chrome 设备，DPR 1；另一条 DPR 2）",
+   "render_control_plane": "Python 池（TAVOTTO_WORKERD=0，conftest 默认）"
+  },
+  "case_id": "GEO-09",
+  "title": "排列与整段撤销",
+  "coverage_status": "部分覆盖",
+  "existing_tests": [
+   "web/src/canvas/alignUndoConvergence.test.tsx::对齐 → 撤销：文档、画面、权威、选择框收敛到同一版 > 撤销后立刻复用缓存里的精确旧变体",
+   "web/src/store/alignAction.test.ts::没有视觉位移就不写 override > 撤销一次精确回到对齐前，重做一次精确恢复",
+   "web/src/store/alignAction.test.ts::左对齐是独立的一条历史，绝不并进上一轮还开着的手势 > 属性修改与左对齐各成一条",
+   "web/src/store/alignSelectedTo.test.ts::离散动作与连续手势 > 开着的手势先被收掉：对齐是独立的一条历史",
+   "web/src/canvas/fakeRealtimeDrag.test.tsx::undo / redo 恢复正式 override 的准确值 > 两次拖动分别可撤销，撤一次只退一步"
+  ],
+  "expected_outcome": "图内：拖文字 → 缩放 Axes → 三段文字左对齐 → 纵向分布，四步恰好四条历史；逐项 undo 每步回到上一步的精确 overrides，redo 回到终态。画布对象：拖动 → 缩放 → 左对齐 → 纵向分布，同样四条、逐项可逆。",
+  "product_outcome": "自动成功",
+  "test_verdict": "pass",
+  "verdict_reason": "两条序列用例全绿；M9（一次拖动落成两条历史）让序列用例与 GEO-01 四条按预期红。既有 5 条覆盖『离散动作不被手势吞掉』与对齐撤销收敛。水平分布在左对齐之后是 no-op，所以画布序列用纵向分布（用例里写明）。",
+  "fixtures": [
+   {
+    "path": "docs/qa/2026-09-24/geo/repro/geo_library.py",
+    "sha256": "e9665afcd53590d0c6cb3761d22f78a5747bad3238e5667b4fd8f251c8737b40",
+    "note": "G1/G2/G2big 夹具脚本（确定性，无随机数）"
+   },
+   {
+    "path": "web/src/canvas/__fixtures__/geoReference.json",
+    "sha256": "07f107880fdf2f404c2a284f3fa2918159b683364f35cb597acf878ba208da66",
+    "note": "真实 worker 输出的 G1/G2/G2big manifest（裁剪）+ G1/G2 SVG；dump_geo_fixtures.py 两次生成 hash 相同"
+   },
+   {
+    "path": "tests/test_geometry_reference.py",
+    "sha256": "97de81b27d2df62bdb022ced1e187c11a356e44638cbdc353e2bd1849ea7386d",
+    "note": "内嵌 LIBRARY：G1 / G2big / G8 / G10（与 geo_library.py 的 G1 同一份脚本）"
+   }
+  ],
+  "entry": "vitest",
+  "commands": [
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-09\"",
+   "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/alignUndoConvergence.test.tsx src/store/alignAction.test.ts src/store/alignSelectedTo.test.ts src/canvas/fakeRealtimeDrag.test.tsx"
+  ],
+  "exit_codes": [
+   0,
+   0
+  ],
+  "evidence": [
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/GEO-09.log",
+    "sha256": "e28b7e4e4525b20bd45bb6800478d2c29158b8dfd3aef7615b2a704a9dbdec24",
+    "runs": [
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t \"GEO-09\"",
+      "exit": 0,
+      "summary": "vitest: 2 passed | 30 skipped (共 32)"
+     },
+     {
+      "command": "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/alignUndoConvergence.test.tsx src/store/alignAction.test.ts src/store/alignSelectedTo.test.ts src/canvas/fakeRealtimeDrag.test.tsx",
+      "exit": 0,
+      "summary": "vitest: 54 passed (共 54)"
+     }
+    ]
+   }
+  ],
+  "artifacts": [],
+  "first_failed_invariant": null,
+  "mutation_check": {
+   "id": "M9",
+   "target_file": "web/src/canvas/interactions.ts",
+   "mutation": "startElementDrag 松手前多写一条 setOverride(…, 'none')（一次拖动两条历史）",
+   "expected_red_case": "GEO-09 图内四步序列（past 4→5）；GEO-01 『只写一条』",
+   "observed": "red",
+   "restored_green": true,
+   "log": "docs/qa/2026-09-24/geo/logs/mutations.log"
+  },
+  "new_tests": [
+   "web/src/canvas/geometryReference.test.ts::GEO-09（图内 / 画布各 1 条）"
+  ],
+  "product_bugs": [],
+  "gaps": [
+   "序列中间没有真实后端重渲染（用 seedExactRender 模拟权威就位）",
+   "浏览器腿与桌面壳未做"
+  ],
+  "mutation_check_reason": null
+ },
+ {
+  "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+  "tests_sha": "2a4d39fdfd6039c9a3b9f593b18f756178c46690",
+  "environment": {
+   "os": "macOS 27.0 (26A428)",
+   "arch": "arm64",
+   "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+   "worker_python": "3.13.11（/opt/homebrew/opt/python@3.13/libexec/bin/python3）",
+   "matplotlib": "3.10.8",
+   "numpy": "2.4.3",
+   "node": "v26.7.0",
+   "vitest": "4.1.11（jsdom）",
+   "playwright": "1.62.1",
+   "browser": "chromium 151.0.7922.34（Playwright 自带，Desktop Chrome 设备，DPR 1；另一条 DPR 2）",
+   "render_control_plane": "Python 池（TAVOTTO_WORKERD=0，conftest 默认）"
+  },
+  "case_id": "GEO-10",
+  "title": "图幅与文字联动",
+  "coverage_status": "部分覆盖",
+  "existing_tests": [
+   "tests/test_layout_engine_pinning.py::test_a_persistent_tight_layout_no_longer_eats_edited_positions（只量 Axes position 在 tight 引擎下钉得住）",
+   "web/src/store/alignAction.test.ts::没有视觉位移就不写 override > 左对齐只给真正要动的两个元素发补丁，基准元素保持自动布局"
+  ],
+  "expected_outcome": "改图幅（size_mm）与字号后：拖过的 y 轴标签守住写下的 figure 分数锚点；没拖过的 x 轴标签确实被重排、且与『什么都没拖』的对照组逐位相同（没被无效 override 锁住）。constrained / tight 布局下同一合同也应成立；拖出去再拖回原点不应留下锁住自动布局的 override。",
+  "product_outcome": "功能失败",
+  "test_verdict": "fail",
+  "verdict_reason": "无布局引擎的图：新用例绿（M8『拖 y 轴标签时顺手钉死 x 轴标签』让它按预期红）。但 layout='constrained' / 'tight' 下拖标题或轴标签，pos_frac 的 y 分量根本不生效，改图幅后也漂（GEO-BUG-2）；拖回原点会写下钉死自动布局的 override（GEO-BUG-5）。因此提交的 G10 夹具只能用无布局引擎的图，constrained 版本留在复现脚本里。",
+  "fixtures": [
+   {
+    "path": "docs/qa/2026-09-24/geo/repro/geo_library.py",
+    "sha256": "e9665afcd53590d0c6cb3761d22f78a5747bad3238e5667b4fd8f251c8737b40",
+    "note": "G1/G2/G2big 夹具脚本（确定性，无随机数）"
+   },
+   {
+    "path": "web/src/canvas/__fixtures__/geoReference.json",
+    "sha256": "07f107880fdf2f404c2a284f3fa2918159b683364f35cb597acf878ba208da66",
+    "note": "真实 worker 输出的 G1/G2/G2big manifest（裁剪）+ G1/G2 SVG；dump_geo_fixtures.py 两次生成 hash 相同"
+   },
+   {
+    "path": "tests/test_geometry_reference.py",
+    "sha256": "97de81b27d2df62bdb022ced1e187c11a356e44638cbdc353e2bd1849ea7386d",
+    "note": "内嵌 LIBRARY：G1 / G2big / G8 / G10（与 geo_library.py 的 G1 同一份脚本）"
+   }
+  ],
+  "entry": "pytest（真 worker）+ 复现脚本 + vitest 复现探针",
+  "commands": [
+   "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_geometry_reference.py tests/test_layout_engine_pinning.py -k \"moved_label or tight_layout\"",
+   "TAVOTTO_DATA_DIR=<scratch>/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py <scratch>",
+   "cp docs/qa/2026-09-24/geo/repro/geoNoopDragBack.repro.test.ts web/src/canvas/ && cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoNoopDragBack.repro.test.ts -t 'A\\.'; rm web/src/canvas/geoNoopDragBack.repro.test.ts"
+  ],
+  "exit_codes": [
+   0,
+   1,
+   1
+  ],
+  "evidence": [
+   {
+    "log": "docs/qa/2026-09-24/geo/logs/GEO-10.log",
+    "sha256": "2973fa778c0fbafdedb6a4351e80a3de42132bd4795a1af7bc33ebff7f0204ed",
+    "runs": [
+     {
+      "command": "TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_geometry_reference.py tests/test_layout_engine_pinning.py -p no:cacheprovider -q -rA -k \"moved_label or tight_layout\"",
+      "exit": 0,
+      "summary": "pytest: 2 passed, 0 failed（-rA 逐条列出；其余 deselected）"
+     },
+     {
+      "command": "TAVOTTO_DATA_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/geo/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/geo",
+      "exit": 1,
+      "summary": "repro: 6 OK, 11 BAD"
+     },
+     {
+      "command": "cp docs/qa/2026-09-24/geo/repro/geoNoopDragBack.repro.test.ts web/src/canvas/ && cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoNoopDragBack.repro.test.ts -t \"A\\\\.\"; rc=$?; rm -f src/canvas/geoNoopDragBack.repro.test.ts; exit $rc",
+      "exit": 1,
+      "summary": "vitest: 1 failed | 1 skipped (共 2)"
+     }
+    ]
+   }
+  ],
+  "artifacts": [],
+  "first_failed_invariant": "TConstrained/axes_0.title 写 pos_frac=[0.4817,0.0968] 后 anchor=[0.48160,0.05689]（y 未动）",
+  "mutation_check": {
+   "id": "M8",
+   "target_file": "src/tavotto/engine/overrides.py",
+   "mutation": "拖 y 轴标签时顺手 ax.xaxis.set_label_coords(0.5, -0.12)",
+   "expected_red_case": "test_moved_label_keeps_its_anchor_and_unmoved_text_keeps_reflowing（『没被锁住』那条断言）+ 单拖 ylabel 的非目标断言",
+   "observed": "red",
+   "restored_green": true,
+   "log": "docs/qa/2026-09-24/geo/logs/mutations.log"
+  },
+  "new_tests": [
+   "tests/test_geometry_reference.py::test_moved_label_keeps_its_anchor_and_unmoved_text_keeps_reflowing"
+  ],
+  "product_bugs": [
+   {
+    "id": "GEO-BUG-2",
+    "summary": "layout='constrained' / 'tight' 的图里拖标题或轴标签：pos_frac 的 y 分量不生效（误差 ≈ 请求的 Δy，x 另差 ~1e-4），改图幅后同样漂移；manifest 仍宣称 draggable、无 warning；热态 == 全新 worker 重放，写回 verify 不会拦",
+    "repro": "TAVOTTO_DATA_DIR=<scratch>/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/repro_title_and_annotation_drag.py <scratch>   # BAD 行：TConstrained / TTight 的 axes_0.title / axes_0.xlabel",
+    "severity": "高（constrained 是新式脚本的常见写法；松手后纵向弹回原处）"
+   },
+   {
+    "id": "GEO-BUG-5",
+    "summary": "拖出去再拖回原点松手（终点位移 0）：startElementDrag 仍写一条等于原锚点的 pos_frac + 一条历史 + 一次渲染；这条 override 把标题 / 轴标签从 matplotlib 自动布局里钉死（对齐路径由 layoutBoxes 的 no-op 判据挡住，拖动路径没有）",
+    "repro": "cp docs/qa/2026-09-24/geo/repro/geoNoopDragBack.repro.test.ts web/src/canvas/ && cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoNoopDragBack.repro.test.ts -t 'A\\.'",
+    "severity": "中（无形的布局冻结，改字号 / 图幅后才显现）"
+   }
+  ],
+  "gaps": [
+   "换字体族、换布局引擎（运行时切换）未覆盖",
+   "只在 manifest 层比较，未做导出物比对"
+  ],
+  "mutation_check_reason": null
+ }
+]

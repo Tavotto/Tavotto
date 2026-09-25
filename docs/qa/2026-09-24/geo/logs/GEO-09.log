@@ -1,0 +1,32 @@
+# case: GEO-09
+# time: 2026-09-25T03:13:35
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t "GEO-09"
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 30 skipped (32)
+   Start at  03:13:35
+   Duration  904ms (transform 326ms, setup 130ms, import 298ms, tests 64ms, environment 331ms)
+
+[exit=0]
+
+# case: GEO-09
+# time: 2026-09-25T03:13:36
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/alignUndoConvergence.test.tsx src/store/alignAction.test.ts src/store/alignSelectedTo.test.ts src/canvas/fakeRealtimeDrag.test.tsx
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  4 passed (4)
+      Tests  54 passed (54)
+   Start at  03:13:36
+   Duration  1.33s (transform 999ms, setup 553ms, import 1.03s, tests 526ms, environment 1.53s)
+
+[exit=0]
+

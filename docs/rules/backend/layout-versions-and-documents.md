@@ -79,3 +79,15 @@
   还活着的留到一天后（pid 复用 / Windows 量不了存活）；只认 `_next_tmp` 起的
   名字，命名与判据同在 `atomicio`。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 版本上限条数 + 字节两条
+- 文档落盘只有 `atomicio`（NaN/∞ 落盘前拒）、读侧同样有闸
+- `project_layout_dir()` 是收纳规则唯一出处
+- 另存为与自动保存共用 `_revision_conflict`、锁不可重入、GET 不用 `send_file`
+- 槽位清理顺带 `atomicio.reap_orphan_tmps`（只认 `_next_tmp` 的名字，年龄 + pid 已死，一天后只看年龄）

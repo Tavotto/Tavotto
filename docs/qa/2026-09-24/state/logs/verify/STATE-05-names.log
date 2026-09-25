@@ -1,0 +1,6 @@
+ ✓ src/store/renderStore.test.ts > render：SVG 与 manifest 同一次响应 > inline 回来的 SVG 直接入库（去掉 width/height 铺满容器） 2ms
+ ✓ src/store/renderStore.test.ts > render：SVG 与 manifest 同一次响应 > 两个变体各存各的，互不覆盖 0ms
+ ✓ src/store/renderStore.test.ts > render：SVG 与 manifest 同一次响应 > 降质渲染把 preview_dpi 带下去并记在条目上 1ms
+ ✓ src/store/geometryAuthority.test.ts > 乱序返回：晚到的旧变体不得把显示拽回去 > 先发的 C 晚于后发的 A 返回时，latest 仍然停在 A 2ms
+ ✓ src/canvas/alignUndoConvergence.test.tsx > 对齐 → 撤销：文档、画面、权威、选择框收敛到同一版 > 对齐的响应晚于撤销的响应回来，最终仍然停在 A 12ms
+ ✓ src/canvas/fakeRealtimeDrag.test.tsx > 松手后权威在途：旧 manifest 不得作为几何写的输入 > 在途期间撤销：立刻回到精确旧变体；晚到的回包不改文档、不改当前权威与显示来源 49ms

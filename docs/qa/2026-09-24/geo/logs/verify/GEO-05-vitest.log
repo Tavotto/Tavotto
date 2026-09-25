@@ -1,0 +1,16 @@
+# verify: GEO-05-vitest
+# time: 2026-09-25T03:21:59 (+1s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts -t "GEO-05"
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-geo/web
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed | 29 skipped (32)
+   Start at  03:22:00
+   Duration  822ms (transform 302ms, setup 122ms, import 277ms, tests 59ms, environment 283ms)
+
+[exit=0]
+

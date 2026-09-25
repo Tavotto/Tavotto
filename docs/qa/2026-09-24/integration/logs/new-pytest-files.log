@@ -1,0 +1,6 @@
+## -m 'not slow'（TAVOTTO_WORKER_PYTHON=Homebrew python3.13 + matplotlib 3.10.8；HEAD b262cc0e）
+50 passed, 5 warnings in 210.21s (0:03:30)
+rc=0
+## -m 'slow or not slow'（TAVOTTO_WORKER_PYTHON=Homebrew python3.13 + matplotlib 3.10.8；HEAD b262cc0e）
+50 passed, 5 warnings in 208.44s (0:03:28)
+rc=0

@@ -1,0 +1,54 @@
+# cmd: pnpm vitest run src/store/geometryAuthority.test.ts src/canvas/alignUndoConvergence.test.tsx
+# start: 2026-09-24T20:17:32Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+
+ RUN  v4.1.11 <scratch>/qa/verify-long/web
+
+ ❯ src/store/geometryAuthority.test.ts (12 tests | 1 failed) 9ms
+     × 先发的 C 晚于后发的 A 返回时，latest 仍然停在 A 4ms
+ ❯ src/canvas/alignUndoConvergence.test.tsx (5 tests | 1 failed) 32ms
+     × 对齐的响应晚于撤销的响应回来，最终仍然停在 A 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/alignUndoConvergence.test.tsx > 对齐 → 撤销：文档、画面、权威、选择框收敛到同一版 > 对齐的响应晚于撤销的响应回来，最终仍然停在 A
+AssertionError: expected 'f1 [{"gid":"t2","prop":"pos_frac","va…' to be 'f1 []' // Object.is equality
+
+Expected: "f1 []"
+Received: "f1 [{"gid":"t2","prop":"pos_frac","value":[0.1,0.3]}]"
+
+ ❯ src/canvas/alignUndoConvergence.test.tsx:210:26
+    208|     expect(view.kind).toBe('exact')
+    209|     expect(view.svg).toContain('A2')
+    210|     expect(st.latest.f1).toBe(renderKey('f1', []))
+       |                          ^
+    211|     // C 的结果照旧留着（同文件的另一个副本可能还等着它）
+    212|     expect(st.byKey[renderKey('f1', cPatches)]?.manifest).toBe(MANIFES…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/store/geometryAuthority.test.ts > 乱序返回：晚到的旧变体不得把显示拽回去 > 先发的 C 晚于后发的 A 返回时，latest 仍然停在 A
+AssertionError: expected 'Fig1.pdf [{"gid":"g","prop":"x","valu…' to be 'Fig1.pdf [{"gid":"g","prop":"x","valu…' // Object.is equality
+
+Expected: "Fig1.pdf [{"gid":"g","prop":"x","value":1}]"
+Received: "Fig1.pdf [{"gid":"g","prop":"x","value":3}]"
+
+ ❯ src/store/geometryAuthority.test.ts:257:35
+    255|     const st = useRenderStore.getState()
+    256|     expect(st.byKey[renderKey('Fig1.pdf', C)]?.manifest?.stem).toBe('F…
+    257|     expect(st.latest['Fig1.pdf']).toBe(renderKey('Fig1.pdf', A))
+       |                                   ^
+    258|   })
+    259| })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 15 passed (17)
+   Start at  04:17:33
+   Duration  931ms (transform 441ms, setup 252ms, import 385ms, tests 41ms, environment 907ms)
+
+# end: 2026-09-24T20:17:34Z
+# exit: 1

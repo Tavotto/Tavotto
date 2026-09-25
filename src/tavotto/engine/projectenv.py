@@ -921,7 +921,7 @@ def _resolve_project_venv(figures_dir: str | Path, script: str, module: str) -> 
     healthy: list[dict] = []
     failures: list[dict] = []
     for venv in candidates:
-        python = interpreter_of(venv)
+        python = interpreter_of(venv, root=figures_dir)
         if not python:
             continue
         health = probe_environment(python, module)
@@ -1010,7 +1010,7 @@ def first_open_candidate(figures_dir: str | Path, script: str | None = None) -> 
     # 指纹在体检**之前**量：体检途中被替换的话，下一次比对就对不上、重新体检
     probed: list[tuple[str, tuple]] = []
     for venv in candidates:
-        python = interpreter_of(venv)
+        python = interpreter_of(venv, root=figures_dir)
         if not python:
             continue
         probed.append((python, interpreter_fingerprint(python)))
