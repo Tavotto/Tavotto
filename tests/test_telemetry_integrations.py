@@ -21,6 +21,8 @@ def sent(monkeypatch):
     box: list[dict] = []
     monkeypatch.setattr(telemetry, "_post", box.append)
     telemetry.set_consent(telemetry.CONSENT_ENABLED, source="settings")
+    # 先排空再清：不等的话同意那条 telemetry_enabled 可能在 clear 之后才落进 box（#440）
+    assert telemetry.flush(5.0)
     box.clear()
     yield box
     telemetry.reset_for_tests()

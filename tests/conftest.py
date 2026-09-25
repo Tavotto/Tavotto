@@ -12,6 +12,9 @@ import tempfile
 import threading
 import time
 import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import pytest
 
@@ -41,6 +44,64 @@ os.environ.setdefault("TAVOTTO_USER_ENV_DISCOVERY", "0")
 # 只靠 TAVOTTO_CONFIG_DIR 隔离在 fixture 就位之前的模块级 import 期间是空的。
 # 遥测自己的用例把它摘掉并替换掉传输层（tests/test_telemetry.py）。
 os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
+
+# ---------------------------------------------------------------------------
+# 会话级零网络断言：遥测 endpoint 一次都不许被真的请求（#440）
+# ---------------------------------------------------------------------------
+# 上面那条硬开关管的是「同意判定」，管不到**判定之后**：发送线程在出队时判过
+# `enabled()`，随后某条用例的 teardown 把 `_post` 与 `TAVOTTO_NO_TELEMETRY` 换回真的，
+# 那一条就以真 `_post` 发到 PostHog——#440 里 249 个「source」幻影安装全是这么来的。
+#
+# 判据的主语：**这个 pytest 进程**里、**任何线程**、**整个会话任何时刻**（含用例之间与
+# 收集期），对**遥测 endpoint 那台主机**调用了 `urllib.request.urlopen`。探针在 conftest
+# import 时就装上（早于任何用例模块与 tavotto 的 import），命中就记下线程与当时的用例并
+# **拒绝发出**，会话结束时有记录就判红。
+#
+# 前提与盲点（写在明处）：`engine/telemetry.py` 纯标准库，唯一的传输是按属性名调用的
+# `urllib.request.urlopen`——这正是它能被这里截住的原因。哪天遥测换了传输（http.client
+# 直连、`from urllib.request import urlopen` 早绑定），这道探针就量不到了，要跟着改。
+# 用例自己 monkeypatch `urlopen` 期间调用走的是它的替身，也不经过这里；undo 之后回到探针。
+_REAL_URLOPEN = urllib.request.urlopen
+#: 命中记录：`线程名 | 当时的用例 | URL`。为空 = 本会话一次都没请求过遥测 endpoint。
+_TELEMETRY_LEAKS: list[str] = []
+
+
+def _refuse_telemetry_urlopen(url, *args, **kwargs):
+    from tavotto.engine.telemetry import DEFAULT_ENDPOINT  # 地址唯一出处；调用时才 import
+
+    target = url.full_url if isinstance(url, urllib.request.Request) else str(url)
+    if urllib.parse.urlsplit(target).hostname == urllib.parse.urlsplit(DEFAULT_ENDPOINT).hostname:
+        current = os.environ.get("PYTEST_CURRENT_TEST", "（不在任何用例里）")
+        _TELEMETRY_LEAKS.append(f"{threading.current_thread().name} | {current} | {target}")
+        raise urllib.error.URLError("测试进程不许请求真实遥测 endpoint（tests/conftest.py，#440）")
+    return _REAL_URLOPEN(url, *args, **kwargs)
+
+
+urllib.request.urlopen = _refuse_telemetry_urlopen
+
+
+def _fail_session_on_telemetry_leaks(session) -> None:
+    """会话结束：本进程请求过遥测 endpoint 就判红（#440 的零网络断言）。
+
+    由下面的 `pytest_sessionfinish` 调用（一个 conftest 里同名钩子只能有一个）。
+    判之前先把还活着的发送线程收掉（`reset_for_tests()` 会 join 它）：一条在飞的
+    投递若要漏，就让它在判定之前漏进探针，而不是在判定之后。
+    """
+    telemetry = sys.modules.get("tavotto.engine.telemetry")
+    if telemetry is not None:
+        telemetry.reset_for_tests()
+    if not _TELEMETRY_LEAKS:
+        return
+    _write_report_to_stderr(
+        f"\n本会话请求了 {len(_TELEMETRY_LEAKS)} 次真实遥测 endpoint（已拦下，未发出；"
+        "线程 | 当时的用例 | URL）：\n"
+        + "\n".join(f"  - {line}" for line in _TELEMETRY_LEAKS)
+        + "\n\n测试进程绝不产生真实的产品事件（docs/rules/backend/telemetry.md）。"
+        "常见成因：fixture teardown 恢复真 `_post` 时发送线程还有一条在飞——"
+        "见 `telemetry.reset_for_tests()` 的 join。\n"
+    )
+    if session.exitstatus == pytest.ExitCode.OK:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 #: 会改变「渲染解释器选谁」的进程级环境变量。用例之间必须互不影响。
@@ -179,6 +240,7 @@ def pytest_sessionfinish(session, exitstatus):
     # 句柄）就算了——下一次会话仍是新目录，不复用。放在线程判定之前：目录该删与线程泄不泄漏无关，
     # Ctrl+C 那一档也一样要删。验证在 tests/test_conftest_data_dir.py：子进程跑一个会话，结束后目录不在。
     shutil.rmtree(_DATA_DIR, ignore_errors=True)
+    _fail_session_on_telemetry_leaks(session)
     if exitstatus == pytest.ExitCode.INTERRUPTED:
         return
     stuck = _threads_that_block_interpreter_exit()
