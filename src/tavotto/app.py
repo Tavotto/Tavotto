@@ -2054,6 +2054,9 @@ class _DiagCapsProbe(threading.Thread):
 
     def __init__(self) -> None:
         super().__init__(daemon=True, name="mm-diag-caps")
+        # 起跑时的能力代数：设置改过（invalidate / refresh）之后这次探测读的是旧快照，
+        # 下一次诊断不许再跟上它
+        self.generation = engine_ai.capabilities_generation()
         self.result: dict | None = None
         self.error: BaseException | None = None
 
@@ -2074,7 +2077,11 @@ def _diag_capabilities_start() -> _DiagCapsProbe:
     上一次诊断超时留下的探测还没跑完时直接跟上它，不再并发起第二份
     ——用户连点「重新诊断」不该在一台慢机器上叠出一串 `--version` 子进程。"""
     with _DIAG_CAPS_LOCK:
-        if _DIAG_CAPS_INFLIGHT and _DIAG_CAPS_INFLIGHT[0].is_alive():
+        if (
+            _DIAG_CAPS_INFLIGHT
+            and _DIAG_CAPS_INFLIGHT[0].is_alive()
+            and _DIAG_CAPS_INFLIGHT[0].generation == engine_ai.capabilities_generation()
+        ):
             return _DIAG_CAPS_INFLIGHT[0]
         job = _DiagCapsProbe()
         _DIAG_CAPS_INFLIGHT[:] = [job]

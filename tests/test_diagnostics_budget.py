@@ -220,3 +220,31 @@ def test_ai_wait_is_only_what_is_left_after_the_matplotlib_probe(client, monkeyp
     assert c.get("/api/diagnostics").status_code == 200
     assert len(joined) == 1
     assert joined[0] == max(0.0, m.DIAG_AI_PROBE_BUDGET_S - m.DIAG_MATPLOTLIB_TIMEOUT_S)
+
+
+def test_a_probe_from_before_a_settings_change_is_not_reused(client, monkeypatch):
+    """超预算的探测还在跑时用户改了设置（invalidate）：下一次诊断不许跟上那次
+    读旧快照的探测，要另起一次。"""
+    m, c = client
+    release = threading.Event()
+
+    def caps(refresh=False):
+        release.wait(10)
+        return _fake_caps()
+
+    def no_worker():
+        raise m.engine_pool.WorkerError("no worker in this test")
+
+    monkeypatch.setattr(m.engine_pool, "find_worker_python", no_worker)
+    monkeypatch.setattr(m.engine_ai, "capabilities", caps)
+    monkeypatch.setattr(m, "DIAG_AI_PROBE_BUDGET_S", 0.2)
+    try:
+        c.get("/api/diagnostics")
+        stale = m._DIAG_CAPS_INFLIGHT[0]
+        ai_bridge.invalidate_capabilities()
+        c.get("/api/diagnostics")
+        assert m._DIAG_CAPS_INFLIGHT[0] is not stale
+    finally:
+        release.set()
+        for job in (stale, m._DIAG_CAPS_INFLIGHT[0]):
+            job.join(5)

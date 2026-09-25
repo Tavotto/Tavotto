@@ -239,6 +239,12 @@ def capabilities(refresh: bool = False) -> dict:
     return caps
 
 
+def capabilities_generation() -> int:
+    """当前能力缓存代数：调用方据此判断手里那次探测是否已被 invalidate / refresh 作废。"""
+    with _CAPS_LOCK:
+        return _CAPS_GEN
+
+
 def invalidate_capabilities() -> None:
     """改过路径 / 开关 / 第三方接口后必须清缓存，否则界面一直是旧探测结果。"""
     global _CAPS_CACHE, _CAPS_GEN
