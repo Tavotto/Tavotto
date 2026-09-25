@@ -74,16 +74,27 @@ def test_server_probes_use_the_named_budgets():
     t = _kw(runs[0], "timeout")
     assert isinstance(t, ast.Name) and t.id == "DIAG_MATPLOTLIB_TIMEOUT_S"
 
-    # AI 探测：后台线程，请求线程只按预算 join
+    # AI 探测：后台线程，请求线程只等到**共同截止时刻**（起跑时 + 预算）为止
+    deadlines = [
+        n
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Assign)
+        and [getattr(x, "id", None) for x in n.targets] == ["caps_deadline"]
+    ]
+    assert len(deadlines) == 1
+    assert "DIAG_AI_PROBE_BUDGET_S" in {
+        x.id for x in ast.walk(deadlines[0].value) if isinstance(x, ast.Name)
+    }
     joins = [
         c
         for c in calls
         if isinstance(c.func, ast.Attribute)
         and c.func.attr == "join"
-        and len(c.args) == 1
-        and isinstance(c.args[0], ast.Name)
+        and isinstance(c.func.value, ast.Name)
+        and c.func.value.id == "caps_job"
     ]
-    assert [c.args[0].id for c in joins] == ["DIAG_AI_PROBE_BUDGET_S"]
+    assert len(joins) == 1
+    assert "caps_deadline" in {x.id for x in ast.walk(joins[0].args[0]) if isinstance(x, ast.Name)}
     started = [
         c for c in calls if isinstance(c.func, ast.Name) and c.func.id == "_diag_capabilities_start"
     ]
@@ -175,3 +186,37 @@ def test_ai_probe_over_budget_returns_instead_of_hanging(client, monkeypatch):
         m._DIAG_CAPS_INFLIGHT[0].join(5)
     again = {x["id"]: x for x in c.get("/api/diagnostics").get_json()["checks"]}
     assert "cli_probe" not in again
+
+
+def test_ai_wait_is_only_what_is_left_after_the_matplotlib_probe(client, monkeypatch):
+    """matplotlib 探测用掉的时间从 AI 的等待里扣掉：两者共用一个截止时刻，
+    接口最坏是两份预算取大、不是相加。用假时钟判，不比墙钟。"""
+    import subprocess
+
+    m, c = client
+    clock = [1000.0]
+    joined: list[float] = []
+
+    class FakeJob:
+        result = _fake_caps()
+        error = None
+
+        def join(self, timeout=None):
+            joined.append(timeout)
+
+        def is_alive(self):
+            return False
+
+    def run(argv, **kw):
+        # matplotlib 探测一直拖到自己的超时才回来
+        clock[0] += m.DIAG_MATPLOTLIB_TIMEOUT_S
+        return subprocess.CompletedProcess(argv, 0, stdout="3.9.0\n", stderr="")
+
+    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(m.engine_pool, "find_worker_python", lambda: "/x/python")
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(m, "_diag_capabilities_start", lambda: FakeJob())
+
+    assert c.get("/api/diagnostics").status_code == 200
+    assert len(joined) == 1
+    assert joined[0] == max(0.0, m.DIAG_AI_PROBE_BUDGET_S - m.DIAG_MATPLOTLIB_TIMEOUT_S)

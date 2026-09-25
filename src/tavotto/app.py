@@ -2089,7 +2089,10 @@ def api_diagnostics():
     import subprocess as sp
 
     checks: list[dict] = []
-    # AI CLI 探测先在后台起跑，与下面的 matplotlib 探测并行（预算见上）
+    # AI CLI 探测先在后台起跑，与下面的 matplotlib 探测并行（预算见上）。
+    # 截止时刻从两项探测**同时起跑**那一刻算：matplotlib 那边用掉的时间要从
+    # AI 的等待里扣掉，否则最坏会是两份预算相加而不是两者取大。
+    caps_deadline = time.monotonic() + DIAG_AI_PROBE_BUDGET_S
     caps_job = _diag_capabilities_start()
 
     try:
@@ -2152,7 +2155,7 @@ def api_diagnostics():
             }
         )
 
-    caps_job.join(DIAG_AI_PROBE_BUDGET_S)
+    caps_job.join(max(0.0, caps_deadline - time.monotonic()))
     if caps_job.is_alive():
         checks.append(
             {
