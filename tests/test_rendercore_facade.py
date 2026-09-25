@@ -162,6 +162,69 @@ def test_the_candidate_prewarm_starts_the_child_and_loads_the_faces(candidate, f
     assert facade._PROVIDER is not None, "预热之后字体注册表应当已经建好"
 
 
+def _stub_prewarm(monkeypatch, *, ping, faces):
+    """把预热的两段换成可控的桩：`ping`（标准库那段）与 `_faces`（原生那段的入口）；回登记的 atexit 回调。"""
+    import types
+
+    from tavotto.rendercore import facade
+
+    registered: list[tuple] = []
+    monkeypatch.setattr(facade.atexit, "register", lambda fn, *a: registered.append((fn, a)))
+    monkeypatch.setattr(facade, "host", lambda: types.SimpleNamespace(ping=ping))
+    monkeypatch.setattr(facade, "_faces", faces)
+    monkeypatch.setattr(facade, "typography", types.SimpleNamespace(text_width=lambda *a: None))
+    t = facade.prewarm()
+    assert len(registered) == 1 and registered[0][0] is facade._stop_prewarm, "预热必须登记退出收尾"
+    fn, args = registered[0]
+    return t, (lambda: fn(*args))
+
+
+def test_prewarm_never_enters_native_code_after_the_exit_hook_returns(monkeypatch):
+    """预热线程是 daemon，原生那一段里有第一次 import pikepdf（nanobind）/ uharfbuzz。解释器收尾时 daemon 线程
+    被强制退出、穿过 C++ 栈帧——py3.10 x86_64 上 abort / SIGSEGV（#641）。退出回调返回时线程还卡在 ping 里
+    （child 慢，ping 可以等到 60 s），之后走出 ping 也**绝不能**再进原生那一段（Codex #644：有界 join 挡不住）。"""
+    import threading
+
+    in_ping, release_ping = threading.Event(), threading.Event()
+    native_calls: list[str] = []
+
+    def ping():
+        in_ping.set()
+        release_ping.wait()
+
+    t, stop = _stub_prewarm(monkeypatch, ping=ping, faces=lambda *a: native_calls.append("faces"))
+    assert in_ping.wait(10), "预热线程应当已经在 ping 里"
+    stop()  # 解释器收尾前的 atexit：线程还卡在 ping 里（超过任何有界等待）
+    release_ping.set()  # 之后 child 回话了
+    t.join(10)
+    assert not t.is_alive()
+    assert native_calls == [], "退出回调返回之后预热线程进了原生那一段"
+
+
+def test_the_exit_hook_waits_out_a_native_section_already_in_progress(monkeypatch):
+    """线程已经在原生那一段里（正在 import / 建脸）：退出回调要等它做完再返回，不能留它在收尾时还在 C++ 里。"""
+    import threading
+
+    in_native, release_native = threading.Event(), threading.Event()
+    order: list[str] = []
+
+    def faces(*a):
+        in_native.set()
+        release_native.wait()
+        order.append("native_done")
+
+    t, stop = _stub_prewarm(monkeypatch, ping=lambda: None, faces=faces)
+    assert in_native.wait(10), "预热线程应当已经在原生那一段里"
+    hook = threading.Thread(target=lambda: (stop(), order.append("hook_returned")))
+    hook.start()
+    hook.join(0.2)
+    assert hook.is_alive(), "原生那一段还没做完，退出回调就返回了"
+    release_native.set()
+    hook.join(10)
+    t.join(10)
+    assert order == ["native_done", "hook_returned"]
+
+
 def test_probe_asset_reuses_its_answer_until_the_file_changes(candidate, monkeypatch, tmp_path):
     """素材库每次 `/api/panels` 都把每个素材探一遍（`app.scan_panels`，没有别的缓存）：文件没动就不再问 child
     （`host.requests` 不涨）；换成另一份文件（inode 变了）就重新探；调用方改了回来的 dict 也不污染下一次。
