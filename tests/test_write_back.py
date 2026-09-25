@@ -742,6 +742,49 @@ def test_failing_to_open_a_backup_parent_for_fsync_is_a_clean_409(client, tmp_pa
     assert {n: (figs / n).read_bytes() for n in before} == before
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上打不开目录，没有目录 fsync 这一步")
+def test_the_backup_root_is_fsynced_through_the_descriptor_that_was_opened(
+    client, tmp_path, monkeypatch
+):
+    """验证能打开、再二次打开去 fsync 的写法，第二次打开的瞬时错误会被吞掉：
+    第一次之后的打开全部 EIO 时，备份根仍须在第一次 replace 前落盘（#580 评审）。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    backup_root = m.project_backup_dir()
+    backup_root.mkdir(parents=True, exist_ok=True)
+    root_id = _ident(backup_root.stat())
+    real_open = os.open
+    opens = {"n": 0}
+
+    def fake_open(path, flags, *a, **kw):
+        if Path(path) == backup_root and not flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT):
+            opens["n"] += 1
+            if opens["n"] > 1:
+                raise OSError(errno.EIO, "模拟的 I/O 错误")
+        return real_open(path, flags, *a, **kw)
+
+    synced: list = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(os, "open", fake_open)
+    monkeypatch.setattr(
+        os, "fsync", lambda fd: (synced.append(_ident(os.fstat(fd))), real_fsync(fd))[1]
+    )
+    at_first_replace: list = []
+    real_replace = Path.replace
+    monkeypatch.setattr(
+        Path,
+        "replace",
+        lambda self, t: (
+            at_first_replace or at_first_replace.append(list(synced)),
+            real_replace(self, t),
+        )[1],
+    )
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    assert root_id in at_first_replace[0]
+
+
 @pytest.mark.skipif(
     sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
     reason="POSIX 权限位语义；root 无视只读位，量不到",

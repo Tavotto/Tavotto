@@ -134,9 +134,19 @@ def fsync_dir(directory: Path) -> None:
     （不可读的目录、EIO……）原样抛 `OSError`——否则调用方以为名字已落盘，
     接着就去替换原图。fsync 本身失败照旧抛 `AtomicWriteError`（`OSError` 子类）。
     """
-    if os.name != "nt":
-        os.close(os.open(directory, os.O_RDONLY))
-    _fsync_dir(Path(directory))
+    if os.name == "nt":
+        _fsync_dir(Path(directory))
+        return
+    # 同一个描述符打开即 fsync：不先「验证能打开」再交给会吞掉打开失败的
+    # `_fsync_dir` 二次打开——两次打开之间的瞬时 EIO / 改名会让它静默返回。
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    except OSError as exc:
+        if exc.errno not in _DIR_FSYNC_UNSUPPORTED:
+            raise AtomicWriteError("dir_fsync_failed", f"目录项落盘失败：{exc}", directory) from exc
+    finally:
+        os.close(fd)
 
 
 def dumps_json(obj: Any, *, indent: int | None = None) -> bytes:
