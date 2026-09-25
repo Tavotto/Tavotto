@@ -924,6 +924,13 @@ EMAIL_VECTORS = [
     ("(user@x.com), ok", "<email> ok"),
     ("a@b.com,c@例子.中国", "<email>"),
     (json.dumps({"k": 'x "quoted local"@x.com'}), '{"k": "x <email>"}'),  # JSON 行：结构原样
+    # #540：方括号地址字面量的域名按点切只有一段；本地部分只有一个引号也是合法地址
+    ("user@[IPv6:2001:db8::1]", "<email>"),
+    ("mail user@[IPv6:2001:db8::1] now", "mail <email> now"),
+    ("'@example.com", "<email>"),
+    ("`@example.com", "<email>"),
+    ('"@example.com', "<email>"),
+    ("“@example.com", "<email>"),
 ]
 NOT_EMAILS = [
     "matplotlib@3.10",
@@ -1009,10 +1016,10 @@ def test_any_unicode_inside_an_address_is_redacted_whole():
         return "".join(chars)
 
     def only_openers(t: str) -> bool:
-        return all(c in "\"'`" or unicodedata.category(c) in ("Ps", "Pi") for c in t)
+        return all(unicodedata.category(c) == "Ps" for c in t)
 
     for k in range(len(cats) * 20):
-        # 负面清单的两种形状要避开，性质才量得到：本地部分只有开括号 / 开引号（= 「@ 前没有账号」）、
+        # 负面清单的两种形状要避开，性质才量得到：本地部分只有开括号（= 「@ 前没有账号」；引号不算，#540）、
         # 域名以 ASCII 数字或 v 开头（可能是版本号）
         local = piece(cats[k % len(cats)])
         while only_openers(local):
