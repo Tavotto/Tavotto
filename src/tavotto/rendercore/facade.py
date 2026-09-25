@@ -510,12 +510,9 @@ def compose(page_w_mm: float, page_h_mm: float, transparent: bool = False) -> Ca
 # 按原图导出（scope=original）
 # ---------------------------------------------------------------------------
 def _file_resource(path: Path, source_id: str) -> tuple[str, ir.FileResource, bytes]:
-    from ..engine import figcapture
-
+    # 与面板解析器同一处：0 字节报结构化的 source_unreadable（why=empty），不漏 ValueError 原文（#517）
+    art = static_artifact(Path(path), source_id)
     data = Path(path).read_bytes()
-    art = figcapture.source_artifact_from_file(
-        path, source_id=source_id, origin=figcapture.ORIGIN_STATIC
-    )
     key = f"file:{art.bytes_sha256[:16]}:{art.semantic_identity()[7:23]}"
     res = ir.FileResource(
         source_id=art.source_id,
