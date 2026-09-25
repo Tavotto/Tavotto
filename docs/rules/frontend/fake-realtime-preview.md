@@ -54,6 +54,13 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   「挂着磁盘原图」（近似预览，画面与文档对不上）照旧立刻说。**`building` 不等于冷启动**：
   SSE 的 `render.started` 每次渲染都写一条 `cold: false`，判据只能看 `cold`（第一版判错、
   真浏览器里角标照闪才发现）。看护：`canvas/renderSwapFeel.test.tsx`。
+* **手势不许比它的依据活得更久**（QA 2026-09-24 STATE-02 / 04 / 07，#583）：
+  拖动中按 Esc = 先取消这次指针手势（`cancelActivePointerGesture()`，与 pointercancel
+  同一条 `finish(true)`），这一下不做别的；松手后等图期间文档变了（撤销 / 重置），
+  `settleUnbackedCommit` 按「提交时那组 patch 是否仍逐条在文档里」判——不在就还原，
+  **不能**按「键还等不等于 awaitKey」判（松手后改别的也会换键，预览必须继续挂着）；
+  拖动中视图倍率变了，`contentDelta` 以变化那一刻重建基准，不按新倍率重算整段位移。
+  看护：`canvas/dragGestureLifecycle.test.tsx`、`e2e/drag-gesture-lifecycle.spec.ts`。
 * **局部样式预览是白名单**（`lib/svgStyle.ts` 的 `STYLE_ADAPTERS`），默认不支持。
   通用规则是「只改本来就声明了该属性、且值不是 `none` 的叶子」，因此
   `fill: none` 的线不会被 facecolor 填实、箭头杆与箭头帽各得其所。文字是唯一
