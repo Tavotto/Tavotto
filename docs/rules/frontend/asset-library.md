@@ -84,6 +84,7 @@
   `errors:backend.<code>`；它非空时不出空态 / 「没有匹配」（空态与清单不同时出现）；刷新失败时与素材卡
   一样保留上一份照常显示；来源筛选的选项由 `assetFolders()` 并上它的目录。看护 `lib/panelSrc.test.ts`、`AssetBrowser.tiff.test.tsx`。
 - 看护：`scriptRunStore.test.ts` / `ScriptLibrary.test.tsx` /
-  `AssetBrowser.runtime.test.tsx` / `runtimeSourceSection.test.tsx` / `projectSwitchDepRepair.test.ts` +
+  `AssetBrowser.runtime.test.tsx` / `runtimeSourceSection.test.tsx` / `projectSwitchDepRepair.test.ts` /
+  `projectSwitchAssets.test.ts` +
   `e2e/asset-library.spec.ts`（show-only 项目真实后端黄金路径 + 窄视口 +
   保存/关闭/重开/重放/预检/导出完整链 + 多 Figure 选择器）。
