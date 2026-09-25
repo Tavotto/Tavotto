@@ -17,7 +17,7 @@ import sys
 import pytest
 
 from tavotto import app as appmod, pdfbackend
-from tavotto.rendercore import facade, renderhost
+from tavotto.rendercore import renderhost
 
 
 @pytest.fixture
@@ -42,7 +42,9 @@ def startup(monkeypatch):
     monkeypatch.setattr(appmod.engine_ai_history, "purge", lambda **k: 0)
     monkeypatch.setattr(appmod.engine_updater, "check_in_background", lambda: None)
     monkeypatch.setattr(appmod.engine_telemetry, "note_app_started", lambda *a: None)
-    monkeypatch.setattr(facade, "prewarm", lambda: calls.append("prewarm"))
+    # 打在 `warm()` 真会装载的那个实现模块上：别的用例会把 facade 从 sys.modules 里摘掉重新 import，
+    # 这个文件 import 时拿到的 `facade` 可能已经不是 `pdfbackend._IMPLS` 里的那一个
+    monkeypatch.setattr(pdfbackend._impl(), "prewarm", lambda: calls.append("prewarm"))
     monkeypatch.setattr(renderhost.RenderHost, "_start", lambda self: calls.append("render_child"))
     monkeypatch.setattr(
         appmod.localserver, "serve_browser", lambda *a, **k: calls.append("serve_browser")
