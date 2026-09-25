@@ -192,6 +192,8 @@ async function setup(overrides: PanelObject['overrides'] = []) {
 beforeEach(() => setup())
 
 afterEach(() => {
+  // 断言在松手前就红了的话，trackPointer 的 window 监听还挂着，会串进下一条用例
+  fire('pointercancel', 0, 0)
   resetPreview()
   useInteractionStore.getState().end()
   document.body.innerHTML = ''
