@@ -202,6 +202,8 @@ USER_VISIBLE_CODES = {
     "endpoint_invalid": {"reason"},
     "ai_start_failed": {"reason"},
     "ai_revert_failed": {"reason"},
+    # QA STATE-09：脚本在这次 AI 修改之后又变过，回滚被拒（409，AgentError 漏斗）
+    "ai_revert_conflict": {"script"},
     # --- 编码 Agent 注册表（ADR 0013）：全部经 AgentError 抛出、
     #     由 app.py 的 _agent_error 一个漏斗转成 JSON ---
     "ai_agent_unknown": {"agent"},

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 import logging
 import os
@@ -657,6 +658,9 @@ def run(
                     sess["status"] = "timeout"
             proc.wait()
             stderr_log.close()
+            # 「这次 AI 改完的那一版」：回滚只认它（STATE-09）。在 `ai.done` 之前记下，
+            # 前端收到完成事件后立刻点回滚也有据可查；sidecar 一并记，重启后照样认。
+            _record_after(sess, script_path.read_bytes())
             new_text = script_path.read_text(encoding="utf-8", errors="replace")
             old_text = snap.read_text(encoding="utf-8", errors="replace")
             sess["changed"] = new_text != old_text
@@ -768,6 +772,27 @@ def refresh_outcome(on_changed, script: str, changed: bool) -> dict:
     }
 
 
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _record_after(sess: dict, data: bytes) -> None:
+    """记下会话结束时 AI 留在磁盘上的那一版（只记摘要）：内存会话与 sidecar 各一份。
+
+    sidecar 写不进去不影响会话结局——内存那份仍在，只是重启后这个会话退回
+    「不知道」一档（见 `_refuse_stale_revert()`）。
+    """
+    digest = _sha256(data)
+    sess["after_sha256"] = digest
+    side = SNAP_DIR / f"{sess['id']}.json"
+    try:
+        meta = json.loads(side.read_text(encoding="utf-8"))
+        meta["after_sha256"] = digest
+        side.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        LOG.warning("AI 会话结束版本未能写进 sidecar（%s）: %s", sess["id"], exc)
+
+
 def _load_sidecar(sid: str) -> dict | None:
     p = SNAP_DIR / f"{sid}.json"
     if not p.is_file():
@@ -848,6 +873,7 @@ def revert(sid: str) -> dict:
     if target is None:
         raise AgentError("script_path_outside_project", {"script": sess["script"]})
     script_path = Path(target)  # 已 realpath：脚本是符号链接时写的是它指向的真文件
+    _refuse_stale_revert(sess, script_path, data)
     atomicio.write_bytes(script_path, data)  # 失败抛 AtomicWriteError（app.py 已有映射）
     try:
         os.chmod(script_path, mode)
@@ -858,6 +884,36 @@ def revert(sid: str) -> dict:
         SESSIONS[sid]["status"] = "reverted"
     ai_history.update_status(sid, "reverted")
     return {"ok": True, "script": sess["script"]}
+
+
+def _refuse_stale_revert(sess: dict, script_path: Path, snapshot: bytes) -> None:
+    """回滚是一次**带版本的写**（QA STATE-09）：只回滚「这次 AI 改完的那一版」。
+
+    对照物是会话结束时记下的 `after_sha256`（`_record_after`）。脚本此刻不是那一版
+    ——AI 之后人工又改过、另一次 AI 会话又改过、或文件被删了——用快照盖上去就是静默
+    丢掉后来的改动，所以拒绝：`ai_revert_conflict`（HTTP 409），用户脚本一个字节不动。
+    不做「合并」：Tavotto 不替用户决定哪份改动该留。
+
+    两档放行，都不会丢任何东西：
+
+    * 脚本已经等于快照（重复点回滚）——写不写结果都一样。
+    * **没有记录**（会话结束前后端就重启了的 `interrupted` 会话、本改动之前的老
+      sidecar）——判不出之后有没有别的改动。「不知道」是独立一档，不并进「冲突」：
+      那是用户撤掉一次中断的 AI 改动的唯一出口，保持原来的行为。
+
+    判与写之间仍有一个毫秒级窗口（与 watcher 同一类竞态），这里不加锁去消它。
+    """
+    expected = sess.get("after_sha256")
+    if not expected:
+        return
+    try:
+        current = script_path.read_bytes()
+    except OSError:
+        current = None  # 删掉 / 读不出也是「之后变过」，不拿快照去填
+    if current is not None and (current == snapshot or _sha256(current) == expected):
+        return
+    LOG.info("AI 回滚被拒：%s 在这次 AI 修改之后又变过（session %s）", sess["script"], sess["id"])
+    raise AgentError("ai_revert_conflict", {"script": sess["script"]})
 
 
 def get(sid: str) -> dict | None:
