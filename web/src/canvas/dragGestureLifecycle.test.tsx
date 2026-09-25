@@ -208,6 +208,38 @@ describe('STATE-04：权威渲染在途时撤销', () => {
     expect(tf(), '拖动那条还在文档里，预览却被撤了（会先弹回原位再跳回来）').toBe(applied)
     expect(previewSession(), '会话应当还在等图').not.toBeNull()
   })
+
+  it('拖动前就有的无关 override 在等图期间被改掉 / 删掉：拖动那条还在，预览继续挂着', async () => {
+    setOverride('p1', 'axes_0.title', 'color', '#00ff00', true)
+    await show()
+    engineRender.mockClear()
+    dragTitle()
+    fire('pointerup', 200, 100)
+    await show()
+    const applied = tf()
+    expect(applied).toMatch(/^translate\(/)
+    // 改掉拖动之前就在的那条（不是这次手势写的）
+    setOverride('p1', 'axes_0.title', 'color', '#0000ff', true)
+    await show()
+    expect(tf(), '改的是拖动之前就有的 override，拖动的预览却被撤了').toBe(applied)
+    // 再把它整条删掉
+    useDocumentStore.getState().commit(literal('删颜色'), (d) => {
+      const o = d.objects.find((x) => x.id === 'p1') as PanelObject
+      o.overrides = o.overrides.filter((x) => x.prop !== 'color')
+    })
+    await show()
+    expect(tf(), '删的是拖动之前就有的 override，拖动的预览却被撤了').toBe(applied)
+    expect(previewSession(), '会话应当还在等图').not.toBeNull()
+    // 撤掉拖动本身（连撤两步：删颜色、改颜色，再撤拖动）才还原
+    runUndoRedo(false)
+    runUndoRedo(false)
+    await show()
+    expect(tf()).toBe(applied)
+    runUndoRedo(false)
+    await show()
+    expect(livePanel().overrides.map((o) => o.prop)).toEqual(['color'])
+    expect(tf(), '撤掉拖动之后预览应当还原').toBe(baseTf)
+  })
 })
 
 describe('STATE-02：拖动中按 Esc', () => {

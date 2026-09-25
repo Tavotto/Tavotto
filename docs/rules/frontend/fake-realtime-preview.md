@@ -57,7 +57,8 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
 * **手势不许比它的依据活得更久**（QA 2026-09-24 STATE-02 / 04 / 07，#583）：
   拖动中按 Esc = 先取消这次指针手势（`cancelActivePointerGesture()`，与 pointercancel
   同一条 `finish(true)`），这一下不做别的；松手后等图期间文档变了（撤销 / 重置），
-  `settleUnbackedCommit` 按「提交时那组 patch 是否仍逐条在文档里」判——不在就还原，
+  `settleUnbackedCommit` 按「这次手势写出的那组 patch（`commitElementPreview` 只交手势新写 /
+  改写的，不含手势之前就有的无关 override）是否仍逐条在文档里」判——不在就还原，
   **不能**按「键还等不等于 awaitKey」判（松手后改别的也会换键，预览必须继续挂着）；
   拖动中视图倍率变了，`contentDelta` 以变化那一刻重建基准，不按新倍率重算整段位移。
   看护：`canvas/dragGestureLifecycle.test.tsx`、`e2e/drag-gesture-lifecycle.spec.ts`。

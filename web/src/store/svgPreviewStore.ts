@@ -674,7 +674,8 @@ export function reattachPreview(panelId: string, renderKey: string): void {
  * 拖动那一版晚到时也只入库。于是画布一直挂着文档里已经没有的位移，选择框（按 exact
  * manifest 画在原位）、文档、画面三方各说各话（QA STATE-04-B1）。
  *
- * 判据是「提交时的那组 patch 是否仍逐条在文档里」，而**不是**「文档的键还等不等于
+ * 判据是「这次手势提交的那组 patch（`commitElementPreview` 只交手势新写 / 改写的，
+ * 不含手势之前就有的无关 override）是否仍逐条在文档里」，而**不是**「文档的键还等不等于
  * awaitKey」：松手后又改了别的东西（键变了、但拖动那条还在）时，新一版权威渲染照样
  * 带着这次拖动，预览必须继续挂着，撤掉就是先弹回原位再跳回来。
  * 不成立 → 结束会话、把这块面板上的预览全部还原到当前 DOM 的 base（同一面板上更早
@@ -699,7 +700,8 @@ export function settleUnbackedCommit(panelId: string, overrides: readonly Previe
   restorePanel(panelId)
 }
 
-const patchId = (p: PreviewPatch): string => `${p.gid}\u0000${p.prop}\u0000${JSON.stringify(p.value)}`
+/** patch 的身份（gid + prop + 值）：「这条正式值还在不在文档里」只按这一份比 */
+export const patchId = (p: PreviewPatch): string => `${p.gid}\u0000${p.prop}\u0000${JSON.stringify(p.value)}`
 
 /** 账本里记着的那些节点是不是还在文档里、还是同一批（= DOM 没被重插） */
 function domIntact(p: PanelPreview, svg: SVGSVGElement): boolean {
