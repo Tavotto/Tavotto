@@ -718,6 +718,30 @@ def test_the_new_backup_directory_is_published_in_its_parent_before_any_replace(
     assert root_id in at_first_replace[0], "备份根目录没在第一次 replace 之前落盘"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上打不开目录是常态，那里本就忽略")
+def test_failing_to_open_a_backup_parent_for_fsync_is_a_clean_409(client, tmp_path, monkeypatch):
+    """POSIX 上打不开备份根目录去 fsync（不可读 / EIO）不许被当成「没有这一步」：
+    否则名字没落盘就去替换原图（#580 评审）。"""
+    figs = _figs(tmp_path)
+    before = {n: (figs / n).read_bytes() for n in ("Fig1.pdf", "Fig1.png")}
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    backup_root = m.project_backup_dir()
+    backup_root.mkdir(parents=True, exist_ok=True)
+    real_open = os.open
+
+    def fake_open(path, flags, *a, **kw):
+        if Path(path) == backup_root and not flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT):
+            raise OSError(errno.EIO, "模拟的 I/O 错误")
+        return real_open(path, flags, *a, **kw)
+
+    monkeypatch.setattr(os, "open", fake_open)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "write_back_persist_failed"
+    assert {n: (figs / n).read_bytes() for n in before} == before
+
+
 @pytest.mark.skipif(
     sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
     reason="POSIX 权限位语义；root 无视只读位，量不到",

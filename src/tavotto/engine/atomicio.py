@@ -127,7 +127,15 @@ def fsync_file(path: Path) -> None:
 
 
 def fsync_dir(directory: Path) -> None:
-    """`_fsync_dir` 的公开入口：目录项落盘，失败抛 `AtomicWriteError`（`OSError` 子类）。"""
+    """目录项落盘，给「落盘失败就整体放弃」的事务用（原图写回，issue #252）。
+
+    与 `_fsync_dir` 的区别只在打开目录失败时：那里一律当「这个平台没有目录
+    fsync」忽略；这里只在 Windows（确实打不开目录）忽略，POSIX 上打不开
+    （不可读的目录、EIO……）原样抛 `OSError`——否则调用方以为名字已落盘，
+    接着就去替换原图。fsync 本身失败照旧抛 `AtomicWriteError`（`OSError` 子类）。
+    """
+    if os.name != "nt":
+        os.close(os.open(directory, os.O_RDONLY))
     _fsync_dir(Path(directory))
 
 
