@@ -189,8 +189,15 @@ interface DocumentState {
   /** 进行中的拖动事务：pointerdown 开启，pointerup 合并成一条历史 */
   txn: { label: UiMessage; patches: Patch[]; inverse: Patch[] } | null
 
-  /** 一次用户操作 = 一条历史记录 */
-  commit: (label: UiMessage, recipe: Recipe) => void
+  /**
+   * 一次用户操作 = 一条历史记录。
+   *
+   * `undoAlso`：撤销这一条时，除了回到操作之前，**再**落下这几处改动（重做时先把它们撤掉、
+   * 再重放操作）——两者都在这一条历史的补丁里，撤销 / 重做 / 再撤销都一致。用于「撤销之后
+   * 的状态不等于操作之前」的写入：撤销一次样式修改，画布回到旧值并标成「已脱离样式」
+   * （ADR 0081 §十二）。只用于独立的一条历史：事务开着时先收尾
+   */
+  commit: (label: UiMessage, recipe: Recipe, opts?: { undoAlso?: Recipe }) => void
   /** 不进历史的即时修改（仅在事务中使用） */
   beginTxn: (label: UiMessage) => void
   txnUpdate: (recipe: Recipe) => void
@@ -332,10 +339,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   future: [],
   txn: null,
 
-  commit: (label, recipe) => {
+  commit: (label, recipe, opts) => {
+    if (opts?.undoAlso && get().txn) get().endTxn()
     const state = get()
     const [next, patches, inverse] = produceWithPatches(state.doc, recipe)
     if (!patches.length) return
+    if (opts?.undoAlso) {
+      // 撤销落在「操作之前 + undoAlso」上：inverse 之后接 extra；重做先 extraInverse 回到操作之前
+      const [, extra, extraInverse] = produceWithPatches(state.doc, opts.undoAlso)
+      const entry = { label, patches: [...extraInverse, ...patches], inverse: [...inverse, ...extra] }
+      set({ doc: next, ...pushHistory(state, entry) })
+      noteCommit(label, state, next, patches, false)
+      return
+    }
     if (state.txn) {
       // 事务进行中的结构性操作也并入当前事务
       set({ doc: next, txn: history.accumulate(state.txn, patches, inverse) })

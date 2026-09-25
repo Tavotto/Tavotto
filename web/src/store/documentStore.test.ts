@@ -420,6 +420,53 @@ describe('事务压缩：撤销回到事务开始前', () => {
 /** 上面那套即答即回的 fetch mock；下面按需换成可控延迟的版本再换回来 */
 const baseFetch = globalThis.fetch
 
+describe('commit 的 undoAlso：撤销落在「操作之前 + 这几处」上', () => {
+  beforeEach(reset)
+  const s = () => useDocumentStore.getState()
+
+  it('撤销 / 重做 / 再撤销都一致，只占一条历史', () => {
+    s().commit(literal('加字'), (d) => {
+      d.objects.push(text('t1', 'x'))
+    })
+    const before = s().past.length
+    s().commit(
+      literal('改字'),
+      (d) => {
+        ;(d.objects[0] as TextObject).text = 'y'
+      },
+      { undoAlso: (d) => void ((d.objects[0] as TextObject).color = '#f00') },
+    )
+    expect(s().past.length - before).toBe(1)
+    const t = () => s().doc.objects[0] as TextObject
+    expect([t().text, t().color]).toEqual(['y', '#000'])
+    s().undo()
+    expect([t().text, t().color]).toEqual(['x', '#f00'])
+    s().redo()
+    expect([t().text, t().color]).toEqual(['y', '#000'])
+    s().undo()
+    expect([t().text, t().color]).toEqual(['x', '#f00'])
+    // 再往前撤：回到加字之前，不留残渣
+    s().undo()
+    expect(s().doc.objects).toEqual([])
+  })
+
+  it('事务开着时先收尾：undoAlso 的这一条是独立的一条历史', () => {
+    s().commit(literal('加字'), (d) => {
+      d.objects.push(text('t1', 'x'))
+    })
+    s().beginTxn(literal('移动对象'))
+    s().txnUpdate((d) => {
+      d.objects[0].x = 10
+    })
+    s().commit(literal('改字'), (d) => void ((d.objects[0] as TextObject).text = 'y'), {
+      undoAlso: (d) => void ((d.objects[0] as TextObject).color = '#f00'),
+    })
+    expect(s().txn).toBeNull()
+    expect(formatMessage(s().undo())).toBe('改字')
+    expect(formatMessage(s().undo())).toBe('移动对象')
+  })
+})
+
 describe('自动保存磁盘写入队列', () => {
   /** 每个 PUT 一发出就挂起，等 releaseNext() 逐个放行——用来制造「在途」窗口 */
   const putLog: { id: string; body: string }[] = []

@@ -103,6 +103,17 @@
   移除不取消收藏）。收藏里是用户的项目路径：诊断包的条数化与路径记号两处都要带上它。
   看护：`components/left/workspaceList.test.tsx`、`store/projectSwitchSerial.test.ts`、`tests/test_projects.py` 的 pinned 六条、
   `tests/test_diagnostics_bundle.py::test_pinned_projects_are_redacted_like_recent_ones`。
+- **左栏「样式」面板（2026-09-24）**：`components/left/StylePanel.tsx`，排在「问题」前面、两者互相
+  跳转。**当前图**与问题面板同一个判据（`useCurrentFigure`）；面板**不判规范**——「这一格不合规」只按
+  对象 · gid · `propertyPath` 认回问题清单里已有的那一条（`lib/stylePanelModel.cellIssues`），点行尾记号走
+  `issueFocus.openProblemAt`（定位仍是 `focusObject`，再把问题面板的范围 / 筛选 / 游标摆好）。数字是**页面上
+  的 pt**（× `panelScale`，写入 ÷ 回去，与样式应用同一个换算）；图内元素经 `useTextStyleAdapter`、画布标注经
+  `useCanvasTypography` 写（Inspector 同一条路，一次改动一次 commit）；多个值是「多个值」不压扁。底部是**画布跟随
+  样式**（ADR 0081，唯一实现 `store/styleBinding.ts`）：选一套 = 绑定并立刻对齐整张画布（一次 commit）；已绑定时各格
+  的改动改的是**这套样式本身**（先存库、存成功再一次 commit 对齐改了的那一项，内置样式先复制一份再改绑）；「不跟随
+  样式」只解绑；「恢复原样」清整张画布样式管得到的 override 并解绑。写入前一律过 `effectiveChanges`，已合样式的图零
+  commit。设置 › 样式页的「用于当前画布」调同一个 `bindCanvasStyle`；样式对话框只编辑、不应用。
+  看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
   `components/DependencyPrepareDialog.test.tsx`、`components/notificationRail.test.tsx`（「已改用你的环境」）、

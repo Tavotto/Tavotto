@@ -3,7 +3,7 @@
  *
  * 1. 从设置带来的样式**预选**；没带而草稿为空时选第一条已存样式——「空样式」与
  *    刚才点的那条是什么关系，不该让用户猜；
- * 2. 作用范围说的是「图」，不是「面板」这种泛称；作用对象与变化数先说总账；
+ * 2. 这里只编辑样式、不应用（ADR 0081：应用 = 画布绑定，在左栏样式面板）；
  * 3. 它压在设置之上：设置被盖住但没关，关掉样式就回到设置。
  */
 import { act } from 'react'
@@ -155,28 +155,18 @@ describe('预选', () => {
   })
 })
 
-describe('作用范围与影响', () => {
-  it('范围说的是「图」；主按钮写明应用到哪；先说总账', async () => {
+describe('只编辑、不应用（ADR 0081：应用 = 画布绑定，只在左栏样式面板一处）', () => {
+  it('没有第二套应用流程：没有范围选择、没有「应用到…」按钮；编辑与保存照旧', async () => {
     await mount()
     await act(async () => {
-      useUiStore.getState().setStylesOpen(true)
+      useUiStore.getState().setStylesOpen(true, { presetId: 's1' })
     })
     await act(async () => {})
-    // 四档是底部「应用范围」的分段选择器（取值控件；2026-09-13 审计 B25）
-    const scopeArea = document.body.querySelector('[data-style-scope]')!
-    const group = scopeArea.querySelector('[role="radiogroup"]')!
-    const labels = [...group.querySelectorAll('[role="radio"]')].map((b) => b.textContent?.trim())
-    expect(labels).toEqual(['当前图', '选中的图', '同一脚本的图', '整个文档'])
-    // 范围区在字段清单之后：先看这份样式是什么，再定用到哪
-    const entries = document.body.querySelector('[data-style-entries]')!
-    expect(entries.compareDocumentPosition(scopeArea) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    for (const gone of ['面板', '选区', '全文档']) expect(labels.join(' ')).not.toContain(gone)
-    expect(text()).toContain('应用到当前图')
-    // 空集时只说下一步（全面打磨 D27）：「此范围内没有图会被改动。」是后一句的前提，
-    // 说了等于把唯一能做的那件事推到第二句去
-    expect(document.body.querySelector('[data-style-affect-summary]')?.textContent).toContain(
-      '先在画布上选中一张可编辑的图',
-    )
+    const labels = [...document.body.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '')
+    expect(labels).toEqual(expect.arrayContaining(['保存', '关闭']))
+    expect(labels.filter((l) => l.startsWith('应用'))).toEqual([])
+    expect(document.body.querySelector('[data-style-entries]')).not.toBeNull()
+    expect(document.body.querySelector('[role="radiogroup"][aria-label="应用范围"]')).toBeNull()
   })
 })
 
@@ -232,5 +222,63 @@ describe('压在设置之上', () => {
     const left = [...document.body.querySelectorAll('[role="dialog"]')]
     expect(left).toHaveLength(1)
     expect(left[0].hasAttribute('data-covered')).toBe(false)
+  })
+})
+
+describe('条目控件说的是真值、有本地化的可达名（2026-09-24 实测）', () => {
+  it('0.75 的线宽显示 0.75（不是一位小数的 0.8），下拉的可达名是属性名的译文', async () => {
+    const withFrame = envelope({
+      id: 's2',
+      display_name: '边框',
+      data: {
+        element: {
+          axes: { spine_linewidth: 0.75 },
+          axis_label: { fontfamily: 'Times New Roman' },
+          title: { weight: 'bold' },
+          ticks: { direction: 'in' },
+        },
+      },
+    })
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ profiles: [withFrame] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    ) as typeof fetch
+    await mount()
+    await act(async () => {
+      useUiStore.getState().setStylesOpen(true, { presetId: 's2' })
+    })
+    await act(async () => {})
+    const frame = document.body.querySelector<HTMLInputElement>('input[aria-label="边框线宽"]')
+    expect(frame?.value).toBe('0.75')
+    const names = [...document.body.querySelectorAll('[data-style-entries] [role="combobox"]')].map((c) =>
+      c.getAttribute('aria-label'),
+    )
+    expect(names).toEqual(expect.arrayContaining(['字体', '字重', '刻度朝向']))
+    for (const raw of ['fontfamily', 'weight', 'direction']) expect(names).not.toContain(raw)
+  })
+})
+
+describe('旧样式在样式对话框里第一次被存：升级成按页面 pt 记（与样式面板 / 设置同一条规则）', () => {
+  it('存下的内容带 pt_basis:"page"，已有数字原样', async () => {
+    await mount()
+    await act(async () => {
+      useUiStore.getState().setStylesOpen(true, { presetId: 's1' })
+    })
+    await act(async () => {})
+    const saves: Record<string, unknown>[] = []
+    useProfileStore.setState({
+      save: async (_k, id, data) => {
+        saves.push(data)
+        return { ...(USER as never as object), id, data } as never
+      },
+      rename: async (_k, id) => ({ ...(USER as never as object), id }) as never,
+    })
+    await act(async () => {
+      ;[...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === '保存')!.click()
+    })
+    expect(saves[0]).toMatchObject({ pt_basis: 'page', element: (USER as unknown as { data: { element: unknown } }).data.element })
   })
 })

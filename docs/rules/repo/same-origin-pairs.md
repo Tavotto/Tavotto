@@ -27,6 +27,7 @@
   | `engine/profiles.py` `FALLBACK_MIN_FONT_SIZE_PT` ↔ `web/src/lib/profile.ts` 同名常量 | `test_font_floor_fallback_is_one_number_on_both_sides` |
   | codex-plugin `bridge.export_raster_issues()` ↔ `web/src/lib/validation.ts` `exportContextRaw()` | `test_the_export_context_rule_is_one_rule_on_both_sides` |
   | `engine/exportreq.py` 文件名规则 ↔ `web/src/lib/exportName.ts` | `tests/golden/filename_vectors.json`（八条原因逐条比，顺序也比） |
+  | `engine/profilestore._STYLE_KEYS`（样式内容的键白名单，含 `pt_basis` 与它唯一的取值 `"page"`）↔ `web/src/lib/stylePresets.ts` `StyleProfileData`（ADR 0081 §九：漏一个键，存一次就被收进 `extra`、前端读不到） | `tests/test_style_schema_pair.py`（读 TS 源码的接口字段与后端白名单比集合 + 比取值） |
   | `pdfbackend.CANVAS_TEXT_FAMILIES` ↔ `web/src/lib/typography.ts` 同名常量 ↔ `rendercore/typography.py` 同名常量（U06 起；U10 起契约层的就是 rendercore 的那一份） | `test_typography_families.py`（闭集 + 顺序）；`tests/test_rendercore_typography.py` |
   | `pyproject.toml` `dependencies` ↔ `requirements.txt`（钉死镜像，同名同序；U10 起含 RenderCore 的五个 native 包，PyMuPDF 只在 `legacy-pymupdf` extra，ADR 0072） | `tests/test_rendercore_fonts.py::test_requirements_txt_mirrors_the_runtime_dependencies_and_is_pinned` / `test_pymupdf_is_only_the_legacy_extra_never_a_runtime_dependency`；产物侧由 `scripts/ci/retirement_scan.py` 的 wheel / deps 尺子看 |
   | `engine/overrides.NO_COLOR`（manifest 颜色字段的「无」取值）↔ `web/src/components/ui/Input.tsx` 同名常量 | `tests/test_no_color_pair.py` |

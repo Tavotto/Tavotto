@@ -54,13 +54,19 @@ def test_builtin_style_is_derived_from_the_default_spec(data_dir, tmp_path, monk
     判据刻意**换一份规范来量**：两侧都取自同一份文件时，把派生换成写死的
     9.0 / "Times New Roman" 也照样绿——那种用例什么都没量到
     （同一个值填了两个出处 = 恒等成立）。这里给一份改过数字的规范，
-    样式必须跟着变。
+    样式必须跟着变；刻度 / 图例那一档的数字也全由改过的下限与区间推出来
+    （9.2 → 格子上的 9.5；图例区间 [10, 10.5] 把它顶到 10）。
     """
     doc = json.loads(profiles.profiles_path().read_text(encoding="utf-8"))
     lab = doc["profiles"]["lab-publication-v1"]
     lab["default_font_size_pt"] = 11.5
+    lab["min_effective_font_size_pt"] = 9.2
+    lab["absolute_min_font_size_pt"] = 9.0
+    lab["legend_policy"]["min_font_size_pt"] = 10.0
+    lab["legend_policy"]["max_font_size_pt"] = 10.5
     lab["font_family"]["latin"] = "Nimbus Roman"
     lab["line_widths_pt"] = [0.25, 2.0]
+    lab["axis_policy"]["frame_linewidth_pt"] = [1.25]
     lab["axis_policy"]["tick_direction"] = "out"
     other = tmp_path / "other-profiles.json"
     other.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
@@ -69,11 +75,66 @@ def test_builtin_style_is_derived_from_the_default_spec(data_dir, tmp_path, monk
     spec = profiles.load()
     style = store.list_profiles(store.KIND_STYLE)[0]
     el = style["data"]["element"]
-    assert el["text"]["fontsize"] == spec["default_font_size_pt"] == 11.5
-    assert el["text"]["fontfamily"] == spec["font_family"]["latin"] == "Nimbus Roman"
-    assert el["line"]["linewidth"] == spec["line_widths_pt"][0] == 0.25
+    for role in ("text", "title", "axis_label"):
+        assert el[role]["fontsize"] == spec["default_font_size_pt"] == 11.5, role
+    assert el["ticks"]["fontsize"] == 9.5
+    assert el["legend"]["fontsize"] == 10.0
+    for role in ("text", "title", "axis_label", "ticks", "legend_text"):
+        assert el[role]["fontfamily"] == spec["font_family"]["latin"] == "Nimbus Roman", role
+    assert el["axes"]["spine_linewidth"] == spec["axis_policy"]["frame_linewidth_pt"][0] == 1.25
     assert el["ticks"]["direction"] == spec["axis_policy"]["tick_direction"] == "out"
     assert style["read_only"] is True
+
+
+def test_builtin_style_keeps_the_type_hierarchy_and_passes_its_own_spec(data_dir):
+    """默认样式套上去之后，**它自己的规范**不能再报字号问题，而且层级还在。
+
+    2026-09-24 用户实测：旧规则把所有文字一律设成 9 pt（刻度与轴标题一样大），
+    且刻度 / 图例若按脚本里常见的 8 pt 写，正好踩在 `eff <= floor` 那条不含等号的
+    边上。这里用真实的默认规范逐条对：正文档含等号地落在区间里、刻度 / 图例
+    严格高于绝对下限、不高于轴标题、图例在图例区间里。
+    """
+    spec = profiles.load()
+    el = store.list_profiles(store.KIND_STYLE)[0]["data"]["element"]
+    floor = spec["absolute_min_font_size_pt"]
+    strict = spec["min_effective_font_size_pt"]
+    biggest = spec["max_font_size_pt"]
+    lo, hi = spec["legend_policy"]["min_font_size_pt"], spec["legend_policy"]["max_font_size_pt"]
+    sizes = {role: el[role]["fontsize"] for role in ("title", "axis_label", "ticks", "legend")}
+    for role, size in sizes.items():
+        assert floor < size <= biggest and size >= strict, (role, size)
+    assert lo <= sizes["legend"] <= hi
+    assert sizes["ticks"] < sizes["axis_label"], "刻度与轴标题一样大 = 层级被抹平"
+    assert sizes["legend"] <= sizes["axis_label"]
+
+
+def test_builtin_legend_size_stays_inside_the_legend_band(data_dir, tmp_path, monkeypatch):
+    """图例区间比「最小一档」还窄时，图例取区间上沿，不越出 `legend_policy`。
+
+    8 / 8 的下限推出 8.5，而图例区间只到 8.25：照搬 8.5 的话套完样式图例当场
+    报 `legend-font-size`。8.25 仍然严格高于绝对下限，是这份规范里唯一两头都满足的值。
+    """
+    doc = json.loads(profiles.profiles_path().read_text(encoding="utf-8"))
+    lab = doc["profiles"]["lab-publication-v1"]
+    lab["legend_policy"]["min_font_size_pt"] = 8.0
+    lab["legend_policy"]["max_font_size_pt"] = 8.25
+    other = tmp_path / "narrow-legend.json"
+    other.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv(profiles.PROFILE_ENV, str(other))
+
+    el = store.list_profiles(store.KIND_STYLE)[0]["data"]["element"]
+    assert el["ticks"]["fontsize"] == 8.5
+    assert el["legend"]["fontsize"] == 8.25
+
+
+def test_builtin_style_leaves_data_line_widths_alone(data_dir):
+    """数据曲线的线宽不在默认样式里统一（理由见 `_builtin_style_record` 的说明）。
+
+    旧规则取 `line_widths_pt[0]`（0.5 pt）一刀切，数据线变得又细又淡，
+    而且把主曲线 / 参考线的粗细差抹平了。
+    """
+    el = store.list_profiles(store.KIND_STYLE)[0]["data"]["element"]
+    assert "linewidth" not in el.get("line", {})
 
 
 def test_the_style_profile_has_no_ppi_of_its_own(data_dir):
@@ -584,3 +645,19 @@ def test_a_bad_journal_says_so_instead_of_blaming_the_profile_id(data_dir):
         store.resolve_spec("lab-publication-v1", {"widths_mm": {"single": -1}})
     assert exc.value.code == "profile_bad_journal"
     assert "widths_mm" in str(exc.value)
+
+
+def test_style_pt_basis_marker_round_trips_and_builtin_is_page(data_dir):
+    """样式里以 pt 计的数字按什么口径读（Codex #547 P1）：`pt_basis: "page"` = 页面上读者量到的 pt。
+
+    标记必须**存得住**（白名单里没有它的话会被塞进 `extra`，前端读不到，新样式存一次就退回
+    旧口径）；旧版存下的样式没有它，保持原样（前端按脚本值写）；认不出的取值不收。
+    内置样式从规范派生，数字就是规范里的页面 pt，所以带标记。
+    """
+    assert store.list_profiles(store.KIND_STYLE)[0]["data"]["pt_basis"] == "page"
+    marked = store.create_profile(store.KIND_STYLE, {"element": {}, "pt_basis": "page"}, "新")
+    assert marked["data"]["pt_basis"] == "page" and "extra" not in marked["data"]
+    legacy = store.create_profile(store.KIND_STYLE, {"element": {"title": {"fontsize": 9}}}, "旧")
+    assert "pt_basis" not in legacy["data"]
+    odd = store.create_profile(store.KIND_STYLE, {"element": {}, "pt_basis": "script"}, "怪")
+    assert "pt_basis" not in odd["data"]

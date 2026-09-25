@@ -29,6 +29,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
+import { cursorFor, groupIssues, issuesInScope } from './problemList'
 import type { Severity } from './profile'
 import type { ObjectRef, ValidationIssue } from './validation'
 import type { CanvasObject } from '@/types/document'
@@ -198,6 +199,33 @@ const cssEscape = (v: string): string => v.replace(/[^A-Za-z0-9_-]/g, (c) => `\\
 export function openProblems(filter?: { severities?: Severity[] }): void {
   useUiStore.getState().setProblemFilter(filter?.severities ?? null)
   useUiStore.getState().setLeftTab('problems')
+}
+
+/**
+ * 从别处（左栏「样式」面板里不合规的那一格）跳到问题清单里的**那一条**。
+ *
+ * 定位本身仍是 `focusIssue` → `focusObject` 这一个动作（与在问题面板里点一行相同）；
+ * 之后把问题面板切到这条所在的范围（图内元素 = 当前图，画布标注 = 整个文档）、
+ * 清掉等级筛选（筛掉了就找不到它），再把「正在处理」的游标落到它上面——
+ * 游标怎么认一条问题只有 `problemList.cursorFor` 一份。
+ *
+ * `all` 是此刻的完整问题清单（`validationStore.issues`），由调用方传进来：
+ * 这里不订阅检查结果，也就不会与 validationStore 形成 import 环。
+ */
+export function openProblemAt(
+  issue: ValidationIssue,
+  all: readonly ValidationIssue[],
+  figureId: string | null,
+): FocusOutcome {
+  const outcome = focusIssue(issue)
+  if (!outcome.ok) return outcome
+  const ui = useUiStore.getState()
+  const scope = figureId && issue.objectRef.objectId === figureId ? 'figure' : 'document'
+  ui.setProblemFilter(null)
+  ui.setProblemScope(scope)
+  ui.setLeftTab('problems')
+  ui.setProblemCursor(cursorFor(groupIssues(issuesInScope(all, scope, figureId)), issue.issueId))
+  return outcome
 }
 
 /** 定位失败时说什么。四个成因各有各的下一步，不共用一句"定位失败"。 */

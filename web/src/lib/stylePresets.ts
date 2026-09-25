@@ -1,6 +1,8 @@
-import type { Manifest } from './api'
+import type { Manifest, ManifestElement } from './api'
 import { t } from '@/i18n'
-import type { CanvasTextFamily } from './typography'
+import { panelScale } from './preflight'
+import { sameRules } from './specBinding'
+import { effectiveCanvasFamily, type CanvasTextFamily } from './typography'
 import type { FigureDocument, PanelObject, PanelOverride, TextObject } from '@/types/document'
 
 /**
@@ -9,6 +11,14 @@ import type { FigureDocument, PanelObject, PanelOverride, TextObject } from '@/t
  * 应用是纯前端映射：按角色把预设值翻译成图内元素 override 与画布标注属性，
  * 走与手动编辑完全相同的通路（PanelObject.overrides + TextObject 字段），
  * 因此天然进撤销、天然不写回源文件。
+ *
+ * ### 样式里的数字 = 页面上读者量到的 pt（2026-09-24）
+ *
+ * 字号与线宽这类以 pt 计的量（`PAGE_PT_PROPS`），样式里写的是**页面上**的值，
+ * 与预检量的同一个东西（`preflight.panelScale`：manifest 值 × 面板在页面上的缩放比）。
+ * 写进 override 之前除以缩放比换回脚本坐标系，提取时乘回来——面板缩到 60% 时
+ * 样式写 9 pt，读者量到的就是 9 pt，而不是 5.4 pt、套完检查照样红。
+ * 画布标注的 `sizePt` 本来就是页面上的绝对 pt，不换算。
  */
 
 /**
@@ -49,6 +59,13 @@ export interface StyleProfileData {
   background?: string
   /** 这份样式是从哪套规范派生的（内置样式用；只作说明） */
   derived_from_spec?: string
+  /**
+   * 以 pt 计的数字按什么口径读（`PAGE_PT_PROPS`）。`'page'` = 页面上读者量到的 pt，写入前
+   * ÷ 面板缩放比（2026-09-24 起新建 / 提取 / 内置的样式都带它）；**缺席 = 旧版存下的样式**，
+   * 数字就是当年写进 override 的脚本值，照旧原样写——不带标记的老样式换了语义的话，套在
+   * 缩到 60% 的图上会从 9 pt 静默变成 15 pt。严格同源：`engine/profilestore._STYLE_KEYS`。
+   */
+  pt_basis?: 'page'
   /** 导入 / 迁移时没能映射的字段：**留着，不丢**（界面把它记成一条 warning） */
   extra?: Record<string, unknown>
 }
@@ -66,18 +83,72 @@ export interface StylePreset extends StyleProfileData {
  * 预设里允许出现的 role → props 白名单（与 manifest 的 editable 字段一一对应）。
  * **加一项之前先确认 manifest 真的暴露了它**——白名单里多一个渲染层没有的
  * prop，应用时只会安静地进 `unmappable`，用户以为设了、其实什么都没发生。
+ *
+ * 字体族按 manifest 真实暴露的位置登记：`ticks` 有 `fontfamily`（引擎的
+ * `("ticks", "fontfamily")`，ADR 0051）；**图例容器没有**，字体在每条图例项
+ * （`legend_text`）上；图例标题没有 override 入口，应用时如实进 `unmappable`
+ * （见 `planStyle`），不假装改了。
  */
 export const STYLE_ROLE_PROPS: Record<string, string[]> = {
   text: ['fontsize', 'color', 'fontfamily', 'weight', 'style'],
   title: ['fontsize', 'color', 'weight', 'style', 'fontfamily'],
   axis_label: ['fontsize', 'color', 'weight', 'style', 'fontfamily'],
-  ticks: ['fontsize', 'color', 'direction', 'length', 'width', 'minor_length', 'minor_width'],
+  ticks: ['fontsize', 'fontfamily', 'color', 'direction', 'length', 'width', 'minor_length', 'minor_width'],
   legend: ['fontsize', 'frameon', 'framealpha', 'edgecolor'],
+  legend_text: ['fontfamily'],
   line: ['linewidth', 'linestyle', 'marker', 'markersize'],
   errorbar: ['linewidth', 'capsize', 'cap_thickness'],
   bar_series: ['linewidth', 'edgecolor'],
   axes: ['spine_linewidth', 'spine_color'],
   colorbar: ['tick_fontsize', 'outline_width'],
+}
+
+/**
+ * 以 pt 计、**跟着面板缩放**的属性：样式里的值是页面上的 pt，写入前 ÷ 缩放比。
+ *
+ * 口径与预检同源——`preflight.ts` 量字号（`fontsize` / `tick_fontsize` /
+ * `title_fontsize`）与线宽（`linewidth` / `spine_linewidth` / `handle_linewidth`）
+ * 时都乘 `scale`；其余同为 pt 的几何量（刻度长宽、标记、误差棒帽、图例框线、
+ * 色条外框）预检不量，但它们在页面上同样跟着面板缩放，同一份样式里不该有两种单位。
+ * 透明度、颜色、枚举不在表里：它们没有尺寸。
+ */
+export const PAGE_PT_PROPS: ReadonlySet<string> = new Set([
+  'fontsize',
+  'title_fontsize',
+  'tick_fontsize',
+  'linewidth',
+  'spine_linewidth',
+  'handle_linewidth',
+  'frame_linewidth',
+  'outline_width',
+  'width',
+  'minor_width',
+  'length',
+  'minor_length',
+  'markersize',
+  'capsize',
+  'cap_thickness',
+])
+
+/**
+ * 页面上的 pt → 写进 override 的脚本值。
+ *
+ * 取两位小数：manifest 把这些值按两位小数回报（`engine/manifest.py` 的 `round(…, 2)`），
+ * 预检读到的就是那两位——多写的位数下一轮就被截掉。用**就近**取整（误差 ≤ 0.005 × 缩放比）：
+ * 一键修复知道自己要往规范的哪一侧走（`issueFix.writeFontSize` 按方向取整），样式不知道
+ * 这个数贴着规范的哪条边，就近是唯一不偏向任何一侧的选择。缩放比算不出来时原样写。
+ */
+export function toScriptValue(prop: string, value: unknown, scale: number): unknown {
+  if (!PAGE_PT_PROPS.has(prop) || typeof value !== 'number') return value
+  if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return value
+  return Math.round((value / scale) * 100) / 100
+}
+
+/** 脚本值 → 页面上的 pt（显示与提取用），同样两位小数 */
+export function toPageValue(prop: string, value: unknown, scale: number): unknown {
+  if (!PAGE_PT_PROPS.has(prop) || typeof value !== 'number') return value
+  if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return value
+  return Math.round(value * scale * 100) / 100
 }
 
 /** 信封 → 编辑草稿。内容里的未知字段（`extra`）原样带着走。 */
@@ -97,6 +168,7 @@ export function profileToDraft(record: {
     ...(d.page ? { page: d.page } : {}),
     ...(d.background ? { background: d.background } : {}),
     ...(d.derived_from_spec ? { derived_from_spec: d.derived_from_spec } : {}),
+    ...(d.pt_basis === 'page' ? { pt_basis: 'page' as const } : {}),
     ...(d.extra ? { extra: d.extra } : {}),
   }
 }
@@ -104,7 +176,25 @@ export function profileToDraft(record: {
 /** 编辑草稿 → 信封里的 `data`（把 id / name 摘掉，别的原样）。 */
 export function draftToData(preset: StylePreset): Record<string, unknown> {
   const { id: _id, name: _name, ...data } = preset
-  return data as Record<string, unknown>
+  // 编辑器里存下的数字一律按页面 pt 记（旧样式在这里第一次被编辑时升级，见 `withPageBasis`）
+  return withPageBasis(data as StyleProfileData) as unknown as Record<string, unknown>
+}
+
+/** 这份样式是旧版存的吗（数字是脚本值，没有 `pt_basis`） */
+export const isLegacyBasis = (data: { pt_basis?: unknown } | null | undefined): boolean =>
+  !!data && data.pt_basis !== 'page'
+
+/**
+ * 旧样式**第一次被编辑**时升级成按页面 pt 记（2026-09-24 拍板）：已有的数字原样保留。
+ *
+ * 这等于把旧数字按缩放比 1 解读——旧样式是按原生尺寸从图里提取的，原尺寸摆放的图上页面值
+ * 就等于脚本值，那些图套用前后一个字节都不变；缩放过的图从此按页面 pt 对齐（读者量到的
+ * 就是样式里写的数）。不升级的话，面板交出的页面值会被当成脚本值写进去：缩放比 0.6 的图
+ * 上输入 9，脚本字号变成 9，读者量到 5.4。所有编辑入口（样式面板 / 设置 / 样式对话框）
+ * 都经过这里。
+ */
+export function withPageBasis<T extends { pt_basis?: 'page' }>(data: T): T {
+  return data.pt_basis === 'page' ? data : { ...data, pt_basis: 'page' }
 }
 
 /** 样式表里角色的显示名；未登记的角色原样显示 */
@@ -127,8 +217,11 @@ export const isSubLabel = (t: TextObject) => SUB_LABEL_RE.test(t.text.trim())
 /**
  * 从一个已渲染面板提取样式：每个角色取第一个元素的当前值。
  * 只提取白名单里的 prop，且元素确实暴露了该字段才提取。
+ *
+ * `scale` 是这张面板在页面上的缩放比（`preflight.panelScale`）：提取出来的字号 /
+ * 线宽是**页面上**的 pt，与样式里数字的语义一致（见文件头）。
  */
-export function extractFromManifest(manifest: Manifest): StylePreset['element'] {
+export function extractFromManifest(manifest: Manifest, scale = 1): StylePreset['element'] {
   const out: StylePreset['element'] = {}
   for (const [role, props] of Object.entries(STYLE_ROLE_PROPS)) {
     const el = manifest.elements.find((e) => e.role === role && e.editable.length > 0)
@@ -136,7 +229,7 @@ export function extractFromManifest(manifest: Manifest): StylePreset['element'] 
     const entry: Record<string, unknown> = {}
     for (const prop of props) {
       const f = el.editable.find((x) => x.prop === prop)
-      if (f && f.value !== null && f.value !== undefined) entry[prop] = f.value
+      if (f && f.value !== null && f.value !== undefined) entry[prop] = toPageValue(prop, f.value, scale)
     }
     if (Object.keys(entry).length) out[role] = entry
   }
@@ -160,11 +253,6 @@ export function extractPalette(manifest: Manifest): string[] {
 
 /* ------------------------------- 应用 ------------------------------------- */
 
-export type StyleScope = 'panel' | 'selection' | 'sameScript' | 'document'
-
-export const styleScopeLabel = (scope: StyleScope): string =>
-  t(`style.scopeLabel.${scope}`, { ns: 'dialogs' })
-
 export interface PanelPlan {
   panel: PanelObject
   patches: PanelOverride[]
@@ -186,28 +274,6 @@ export interface StylePlan {
   background?: string
 }
 
-/** 目标面板集合（scope 语义见 STYLE_SCOPE_LABEL） */
-export function targetPanels(
-  doc: FigureDocument,
-  scope: StyleScope,
-  primaryPanelId: string | null,
-  selectedIds: string[],
-): PanelObject[] {
-  const panels = doc.objects.filter(
-    (o): o is PanelObject => o.type === 'panel' && !!o.script,
-  )
-  if (scope === 'document') return panels
-  if (scope === 'sameScript') {
-    const primary = panels.find((p) => p.id === primaryPanelId)
-    if (!primary) return []
-    // 同脚本：这里用 fileId 的 stem 前缀不可靠，直接比对 script 字段
-    return panels.filter((p) => p.script === primary.script)
-  }
-  if (scope === 'selection') return panels.filter((p) => selectedIds.includes(p.id))
-  const primary = panels.find((p) => p.id === primaryPanelId)
-  return primary ? [primary] : []
-}
-
 /** 把预设映射成每个面板的 override 批次（不执行，仅供预览与应用） */
 export function planStyle(
   preset: StylePreset,
@@ -227,6 +293,9 @@ export function planStyle(
     }
     const patches: PanelOverride[] = []
     const unmappable: string[] = []
+    // 样式里的 pt 是页面上的 pt：按这张面板的缩放比换回脚本坐标系再写。
+    // 不带 `pt_basis` 的旧样式存的是脚本值，原样写（缩放比当 1）
+    const scale = preset.pt_basis === 'page' ? panelScale(panel) : 1
     for (const [role, props] of Object.entries(preset.element)) {
       const els = manifest.elements.filter((e) => e.role === role)
       for (const el of els) {
@@ -238,8 +307,23 @@ export function planStyle(
             )
             continue
           }
-          patches.push({ gid: el.gid, prop, value })
+          patches.push({ gid: el.gid, prop, value: toScriptValue(prop, value, scale) })
         }
+      }
+    }
+    // 图例标题没有字体的 override 入口（引擎只有 `title_fontsize`）：样式统一了图例项
+    // 的字体时，有标题的图例如实记一条「这里没改到」，别让用户以为整块图例都换了
+    const legendFamily = preset.element.legend_text?.fontfamily
+    if (legendFamily !== undefined) {
+      for (const el of manifest.elements) {
+        if (el.role !== 'legend' || !legendTitle(el)) continue
+        unmappable.push(
+          t('style.unmappableEntry', {
+            ns: 'dialogs',
+            label: t('style.legendTitle', { ns: 'dialogs' }),
+            prop: 'fontfamily',
+          }),
+        )
       }
     }
     if (preset.palette?.length) {
@@ -284,6 +368,31 @@ export function planStyle(
   }
 }
 
+/** 图例有没有标题（manifest 的 `title` 字段非空） */
+const legendTitle = (el: ManifestElement): boolean => {
+  const v = el.editable.find((f) => f.prop === 'title')?.value
+  return typeof v === 'string' && v.trim() !== ''
+}
+
+/**
+ * 一张图上「样式管得到」的那些 override：role × prop 落在 `STYLE_ROLE_PROPS` 里，
+ * 或者是配色循环承接颜色的那一格（`PALETTE_PROP`）。「恢复原样」清的正是这批——
+ * 与 `planStyle` 能写的范围同一张表，不另立一份。
+ */
+export function styleOverrideTargets(
+  panel: PanelObject,
+  manifest: Manifest,
+): { gid: string; prop: string }[] {
+  const roleOf = new Map(manifest.elements.map((e) => [e.gid, e.role]))
+  return panel.overrides
+    .filter((o) => {
+      const role = roleOf.get(o.gid)
+      if (!role) return false
+      return !!STYLE_ROLE_PROPS[role]?.includes(o.prop) || PALETTE_PROP[role] === o.prop
+    })
+    .map((o) => ({ gid: o.gid, prop: o.prop }))
+}
+
 /** 预设内容的一行行摘要（编辑器里展示 / 删除用） */
 export interface PresetEntry {
   role: string
@@ -316,6 +425,7 @@ const STYLE_GROUP_OF: Record<string, StyleGroup> = {
   ticks: 'axes',
   colorbar: 'axes',
   legend: 'legend',
+  legend_text: 'legend',
 }
 export const STYLE_GROUP_ORDER: readonly StyleGroup[] = ['text', 'series', 'axes', 'legend', 'other']
 export const styleGroupOf = (role: string): StyleGroup => STYLE_GROUP_OF[role] ?? 'other'
@@ -330,3 +440,115 @@ export function groupedEntries(preset: StylePreset): { group: StyleGroup; entrie
     entries: entries.filter((en) => styleGroupOf(en.role) === group),
   })).filter((g) => g.entries.length > 0)
 }
+
+/* ------------------------------ 跟随（ADR 0081） ------------------------------ */
+
+/** 内容比较（键序无关）：与规范绑定判「有没有新版」同一把尺子 */
+const sameValue = (a: unknown, b: unknown): boolean => sameRules(a ?? null, b ?? null)
+
+/**
+ * 两份样式内容之间**变了的那部分**，拼成一份只含变化的预设。
+ *
+ * 画布跟随样式时，库里那一条改了一个字号，画布上要动的就只有那一个字号——整份重新
+ * 套一遍的话，用户在属性页里对某一张图刻意改过的别的项（字体、颜色）会被顺手冲掉。
+ * 从样式里**删掉**的条目不在结果里：样式不再管它，图就保持现在的样子。
+ * `prev` 为 null（刚绑定）时就是整份。
+ */
+export function presetDelta(prev: StyleProfileData | null, next: StyleProfileData): StylePreset {
+  const out: StylePreset = { name: '', element: {} }
+  for (const [role, props] of Object.entries(next.element ?? {})) {
+    for (const [prop, value] of Object.entries(props)) {
+      if (prev && sameValue(prev.element?.[role]?.[prop], value)) continue
+      ;(out.element[role] ??= {})[prop] = value
+    }
+  }
+  if (next.palette?.length && (!prev || !sameValue(prev.palette, next.palette))) out.palette = next.palette
+  // 标注 / 序号标签**逐个属性**比：只改了字号时不该把颜色、字体一起重新套一遍
+  // （用户在绑定之后对某一条标注手改的颜色会被冲掉）
+  const textDelta = (a: StyleTextEntry | undefined, b: StyleTextEntry | undefined) => {
+    if (!b) return undefined
+    const d: StyleTextEntry = {}
+    for (const [k, v] of Object.entries(b) as [keyof StyleTextEntry, unknown][]) {
+      if (prev && sameValue(a?.[k], v)) continue
+      ;(d as Record<string, unknown>)[k] = v
+    }
+    return Object.keys(d).length ? d : undefined
+  }
+  const annotation = textDelta(prev?.annotation, next.annotation)
+  if (annotation) out.annotation = annotation
+  const subLabel = textDelta(prev?.subLabel, next.subLabel)
+  if (subLabel) out.subLabel = subLabel
+  if (next.page && (!prev || !sameValue(prev.page, next.page))) out.page = next.page
+  if (next.background && (!prev || prev.background !== next.background)) out.background = next.background
+  if (next.pt_basis === 'page') out.pt_basis = 'page'
+  return out
+}
+
+/** 读数一样吗：数值按 manifest 回报的两位小数比（写进去的也是两位），其余按内容 */
+const sameReading = (a: unknown, b: unknown): boolean =>
+  typeof a === 'number' && typeof b === 'number' ? Math.abs(a - b) < 0.005 : sameValue(a, b)
+
+/** 画布文字此刻的样子是不是已经等于这一项样式 */
+function textMatches(o: TextObject, st: StyleTextEntry): boolean {
+  if (st.sizePt != null && !sameReading(o.sizePt, st.sizePt)) return false
+  if (st.bold != null && !!o.bold !== st.bold) return false
+  if (st.italic != null && !!o.italic !== st.italic) return false
+  if (st.color != null && (o.color ?? '').toLowerCase() !== st.color.toLowerCase()) return false
+  if (st.fontFamily != null && effectiveCanvasFamily(o) !== st.fontFamily) return false
+  return true
+}
+
+/**
+ * 只留**会真的改变什么**的那部分：值与此刻一样的 patch、已经是这个样子的标注、
+ * 已经是这个尺寸 / 底色的页面，全部去掉。
+ *
+ * 「此刻」= 这个 (gid, prop) 上的 override，没有 override 就是 manifest 报的值——
+ * 与属性页读值同一个口径（`textStyleModel.currentOf`）。结果为空（`isEmptyPlan`）
+ * 就**不写**：打开文档、切画布、渲染回来这些时刻，已经合样式的图不该产生任何一条历史。
+ */
+export function effectiveChanges(
+  plan: StylePlan,
+  doc: FigureDocument,
+  manifestOf: (panel: PanelObject) => Manifest | null | undefined,
+  preset: StylePreset,
+): StylePlan {
+  const panels = plan.panels
+    .map((pp) => {
+      const manifest = manifestOf(pp.panel)
+      const patches = pp.patches.filter((p) => {
+        const ov = pp.panel.overrides.find((o) => o.gid === p.gid && o.prop === p.prop)
+        const now = ov
+          ? ov.value
+          : manifest?.elements.find((e) => e.gid === p.gid)?.editable.find((f) => f.prop === p.prop)?.value
+        return !sameReading(now, p.value)
+      })
+      return { ...pp, patches }
+    })
+    .filter((pp) => pp.patches.length > 0)
+  const text = (id: string) => doc.objects.find((o): o is TextObject => o.id === id && o.type === 'text')
+  const annotationIds = plan.annotationIds.filter((id) => {
+    const o = text(id)
+    return !!o && !!preset.annotation && !textMatches(o, preset.annotation)
+  })
+  const subLabelIds = plan.subLabelIds.filter((id) => {
+    const o = text(id)
+    return !!o && !!preset.subLabel && !textMatches(o, preset.subLabel)
+  })
+  const page =
+    plan.page && (Math.abs(plan.page.w - doc.page.w) > 1e-6 || Math.abs(plan.page.h - doc.page.h) > 1e-6)
+      ? plan.page
+      : undefined
+  const background =
+    plan.background && (doc.page.bg ?? '').toLowerCase() !== plan.background.toLowerCase()
+      ? plan.background
+      : undefined
+  return { ...plan, panels, annotationIds, subLabelIds, page, background }
+}
+
+/** 这份计划写下去什么都不会变 */
+export const isEmptyPlan = (plan: StylePlan): boolean =>
+  !plan.panels.some((p) => p.patches.length) &&
+  !plan.annotationIds.length &&
+  !plan.subLabelIds.length &&
+  !plan.page &&
+  !plan.background

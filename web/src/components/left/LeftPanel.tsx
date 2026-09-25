@@ -15,6 +15,7 @@ import { DrawerCount } from './DrawerCount'
 import { ElementTree } from './ElementTree'
 import { LayerTree } from './LayerTree'
 import { ProblemPanel } from './ProblemPanel'
+import { StylePanel } from './StylePanel'
 import { WorkspaceList } from './WorkspaceList'
 
 /**
@@ -95,6 +96,8 @@ export function LeftPanel({
         <AssetBrowser />
       ) : tab === 'layers' ? (
         <LayerTree />
+      ) : tab === 'style' ? (
+        <StylePanel />
       ) : tab === 'problems' ? (
         <ProblemPanel />
       ) : (

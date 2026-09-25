@@ -376,23 +376,71 @@ describe('无障碍', () => {
   })
 })
 
-describe('「应用到当前图…」交给样式对话框（审计 T35）', () => {
-  it('带着此刻选中的那条样式打开，设置本身不关（样式对话框压在它上面）', async () => {
+describe('「用于当前画布」：应用 = 绑定，与左栏样式面板同一个函数（ADR 0081）', () => {
+  it('当前画布绑上此刻选中的那条样式，关掉设置、打开左栏「样式」面板；不再压一层样式对话框', async () => {
     const { useUiStore } = await import('@/store/uiStore')
+    const { useDocumentStore } = await import('@/store/documentStore')
     useUiStore.setState({ settingsOpen: true, settingsSection: 'style', stylesOpen: false, dialogStack: ['settings'] })
     await mount()
     await act(async () => {
       buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
     })
     await act(async () => {
-      byText('应用到当前图…')!.click()
+      byText('用于当前画布')!.click()
     })
     const s = useUiStore.getState()
-    expect(s.stylesOpen).toBe(true)
-    expect(s.stylesPresetId, '预选的是刚才在设置里选中的那一条').toBe('s1')
-    expect(s.settingsOpen, '设置不关：样式对话框关掉就回到这里').toBe(true)
-    expect(s.dialogStack).toEqual(['settings', 'styles'])
-    useUiStore.setState({ settingsOpen: false, stylesOpen: false, stylesPresetId: null, dialogStack: [] })
+    expect(useDocumentStore.getState().doc.style?.id, '绑的是刚才在设置里选中的那一条').toBe('s1')
+    expect(s.leftOpen && s.leftTab).toBe('style')
+    expect(s.settingsOpen, '设置关掉：结果在画布上').toBe(false)
+    expect(s.stylesOpen, '不再开第二份应用流程').toBe(false)
+    expect(s.dialogStack).toEqual([])
+    useDocumentStore.getState().undo()
+  })
+})
+
+describe('Codex #547：草稿没存时「用于当前画布」先不做', () => {
+  it('改了名字（草稿脏了）→ 这颗钮置灰并说先保存', async () => {
+    await mount()
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
+    })
+    const use = () => byText('用于当前画布')!
+    expect(use().disabled).toBe(false)
+    const input = document.body.querySelector<HTMLInputElement>('input[aria-label="名称"]')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, '投稿用 改')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(use().disabled).toBe(true)
+    expect(use().title).toBe('先保存这份样式的改动，再用于画布')
+  })
+})
+
+describe('旧样式在设置里第一次被编辑：与样式面板同一条升级规则（pt_basis）', () => {
+  it('保存旧版存下的样式（没有 pt_basis）时写上 pt_basis:"page"，已有数字原样', async () => {
+    await mount()
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
+    })
+    const saves: Record<string, unknown>[] = []
+    const real = useProfileStore.getState().save
+    useProfileStore.setState({
+      save: async (kind, id, data) => {
+        saves.push(data)
+        return real(kind, id, data)
+      },
+    })
+    const input = document.body.querySelector<HTMLInputElement>('input[aria-label="名称"]')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, '投稿用 改')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      byText('保存')!.click()
+    })
+    expect(saves[0]).toEqual({ element: { line: { linewidth: 1.25 } }, pt_basis: 'page' })
   })
 })
 

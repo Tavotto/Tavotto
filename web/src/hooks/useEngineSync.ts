@@ -36,6 +36,13 @@ export function renderTargets(
   latest: Record<string, string | undefined> = {},
   // 素材的基线事实由调用方给；不给就读素材表（与 syncEngine 同一份）
   assets: Record<string, BakedBaselineFacts | undefined> = useAssetStore.getState().byId,
+  /**
+   * 这张画布绑定了样式（ADR 0081）。绑定说的是「这张画布上的图长成那套样式的样子」，
+   * 要对齐一张图就得先读到它的 manifest——所以绑定画布上「只带基线、还没动过」的
+   * 面板也渲染一次。这不是「白跑」：用户选绑定的那一刻就是在要这个结果。
+   * runtime 面板照旧（重开文档绝不自动执行脚本）。
+   */
+  styleBound = false,
 ): PanelObject[] {
   const seen = new Set<string>()
   const targets: PanelObject[] = []
@@ -53,6 +60,7 @@ export function renderTargets(
           // 「只带基线、还没动过」的面板不渲染：磁盘文件本身就是那个样子，
           // 白跑一次引擎（heavy 脚本要几分钟）没有意义。
           o.id === editingId ||
+          styleBound ||
           !!tracked[o.fileId] ||
           (o.overrides.length > 0 && !isJustBakedBaselineOf(o.overrides, assets[o.fileId]))
     if (!wants) continue
@@ -84,7 +92,9 @@ function liveRenderKeys(objects: readonly CanvasObject[]): Set<string> {
 export function syncEngine(objects: readonly CanvasObject[], editingId: string | null): void {
   const store = useRenderStore.getState()
   const assets = useAssetStore.getState().byId
-  for (const panel of renderTargets(objects, editingId, store.tracked, store.latest, assets)) {
+  const style = useDocumentStore.getState().doc.style
+  const styleBound = !!style && !style.detached
+  for (const panel of renderTargets(objects, editingId, store.tracked, store.latest, assets, styleBound)) {
     const want = JSON.stringify(panel.overrides)
     const state = store.byKey[renderKeyOf(panel)]
     // `svgEvicted` 打断这条跳过：这一版确实画出来过（lastPatches 对得上、
@@ -137,10 +147,13 @@ export function useEngineDocumentSync() {
   // 判据结论可能翻转——不订阅的话，「磁盘产物被外部刷回脚本原值」那一刻
   // 没有任何东西会让同步器重新看一眼，面板就此停在磁盘原图上。
   const assets = useAssetStore((s) => s.byId)
+  // 绑定 / 解绑样式只改 `doc.style`、对象数组可能一个都没换（图已经合样式）——
+  // 不盯着它的话，刚绑上的画布里没渲染过的图要等到下一次别的变化才去渲染
+  const styleBound = useDocumentStore((s) => !!s.doc.style && !s.doc.style.detached)
 
   useEffect(() => {
     syncEngine(objects, editingId)
-  }, [objects, editingId, assets])
+  }, [objects, editingId, assets, styleBound])
 }
 
 /** 同步器的渲染态一侧，挂成不画任何东西的叶子（理由见 `useEngineDocumentSync`）。 */

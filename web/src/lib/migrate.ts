@@ -92,6 +92,16 @@ export function normalizeLayout(
     )
     doc.guides = Array.isArray(raw.guides) ? (raw.guides as FigureDocument['guides']) : []
     doc.name = typeof raw.name === 'string' && raw.name ? raw.name : name
+    // 样式绑定（ADR 0081）是 schema 2 形状里的可选字段：原样带过来，否则打开一份绑定的版面
+    // 再存一次，绑定就静默没了（Codex #547 P1）。形状不对的不收
+    const style = raw.style as Unknown | undefined
+    if (style && typeof style.id === 'string' && style.snapshot && typeof style.snapshot === 'object') {
+      doc.style = {
+        id: style.id,
+        snapshot: style.snapshot as Record<string, unknown>,
+        ...(style.detached === true ? { detached: true as const } : {}),
+      }
+    }
     return doc
   }
 
