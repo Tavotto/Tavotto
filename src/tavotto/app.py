@@ -7042,8 +7042,21 @@ def api_profiles_import(kind):
         return _profiles_error(exc)
 
 
+#: 探测是否带 `SO_REUSEADDR`：**与真正 listen 的那个 socket 同一口径**（QA STATE-08-B1）。
+#: `localserver.LocalWSGIServer` 继承 `http.server.HTTPServer`（`allow_reuse_address = 1`），
+#: bind 前设 `SO_REUSEADDR`——所以上一个实例刚退出留下的 TIME_WAIT（macOS 实测约 31 s）
+#: 挡不住它；探测不带的话却会判「占用」，同端口重启被顺延到下一个端口，浏览器按源存的
+#: localStorage（「上次文档」）换了源就读不到。
+#: **只在 POSIX 上带**：Windows 上 `SO_REUSEADDR` 的语义是「允许与正在 listen 的 socket 共用
+#: 端口」，带上它探测会把别的程序正占着的端口也判成空闲；而 Windows 的 bind 本来就不被
+#: TIME_WAIT 挡住，不带才是与「有没有人在用」一致的判据。
+_PORT_PROBE_REUSEADDR = os.name != "nt"
+
+
 def port_is_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if _PORT_PROBE_REUSEADDR:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(("127.0.0.1", port))
             return True
