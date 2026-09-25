@@ -383,7 +383,7 @@ def test_windows_instruction_command_runs_in_powershell_with_dollar_and_backtick
 ):
     """退出条件：包路径里有 `$` 与反引号时，生成的 prefs.py 命令交给 PowerShell 真跑能成功。
     解释器前缀换成本测试的解释器（`py -3` 挑哪个 Python 与本条要证的引号无关）。"""
-    skill = tmp_path / "Tav $env:x `n pkg" / "it's" / "tavotto-figure"
+    skill = tmp_path / "Tav $env_x `n pkg" / "it's" / "tavotto-figure"
     shutil.copytree(SKILL, skill, ignore=shutil.ignore_patterns("__pycache__"))
     monkeypatch.setattr(mod, "SKILL_DIR", str(skill))
     text = mod.skill_instructions()
