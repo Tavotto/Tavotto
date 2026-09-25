@@ -3,12 +3,16 @@
 判据的主语：
 * `userenvs.discover()` 的**候选表**（顺序 = 优先级、来源、标签、去重）——只读磁盘 + 问一次登录 shell；
 * `userenvs.evaluate()` / `best()` 的**挑选结果**——装齐 = 脚本要的 import 在那个环境里 import 得到；
-* `deprepair.gate()` 的**放行与记录**——自动改用时本项目记成 `automatic=True, trigger=user_environment`，
-  用户显式选过 / 明确选回默认 / 项目自己的 venv 时一个都不碰。
+* `deprepair.decide_environment()` 的**记录**——自动改用时本项目记成 `automatic=True, trigger=user_environment`，
+  用户显式选过 / 明确选回默认 / 项目自己的 venv 时一个都不碰；`deprepair.gate()` 只读、不换解释器；
+* **决定的时刻**（Codex #522 两条 P1）——换解释器发生在「解析解释器 / 查租约」之前：`pool.acquire()`
+  的 `is_mutating` 与构造函数解析到的是同一个解释器，worker 不起在被占用的环境上；
+* **采用前的复核**（Codex #522 P2）——弹窗交回的 id 按此刻的计划重新量装没装齐，不读体检缓存。
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -264,6 +268,7 @@ def _offer(envs, *, target_kind="tavotto_managed"):
 def adopt_env(tmp_path, monkeypatch):
     project = tmp_path / "paper"
     project.mkdir()
+    (project / "fig.py").write_text("import openpyxl\n", encoding="utf-8")
     env = _python(tmp_path / "lab")
     heard = []
     monkeypatch.setattr(deprepair, "_adoption_listeners", [lambda p, e: heard.append((p, e))])
@@ -272,14 +277,15 @@ def adopt_env(tmp_path, monkeypatch):
     return project, env, heard
 
 
-def test_gate_adopts_the_best_user_environment_and_passes(adopt_env, monkeypatch):
+def test_decide_adopts_the_best_user_environment(adopt_env, monkeypatch):
     project, env, heard = adopt_env
     envs = [
         _entry(str(env), userenvs.SOURCE_LOGIN_SHELL),
         _entry("/other", userenvs.SOURCE_CONDA),
     ]
     monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
-    assert deprepair.gate(project, "fig.py") is None, "装齐的用户环境 → 直接改用、放行"
+    got = deprepair.decide_environment(project, "fig.py")
+    assert got is not None and got["python"] == str(env), "装齐的用户环境 → 直接改用"
     record = projectenv.remembered_record(project)
     assert record["automatic"] is True
     assert record["trigger"] == deprepair.TRIGGER_USER_ENVIRONMENT
@@ -288,10 +294,22 @@ def test_gate_adopts_the_best_user_environment_and_passes(adopt_env, monkeypatch
     assert "python" not in heard[0][1], "通知也不带路径"
 
 
-def test_gate_asks_when_nothing_is_complete(adopt_env, monkeypatch):
+def test_the_gate_only_reads_and_never_switches(adopt_env, monkeypatch):
+    """门只读：换不换解释器只在 `decide_environment()` 一处（它跑在解析解释器与查租约之前）。门里再换一次，
+    就回到了 #522 的形状——快照 / 租约查的是旧的，起的是新的。"""
+    project, env, heard = adopt_env
+    envs = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    got = deprepair.gate(project, "fig.py")
+    assert got is not None and got["user_environments"] == [userenvs.public(e) for e in envs]
+    assert projectenv.remembered_record(project) is None and heard == []
+
+
+def test_decide_does_nothing_when_nothing_is_complete(adopt_env, monkeypatch):
     project, env, heard = adopt_env
     envs = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL, missing=["openpyxl"])]
     monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    assert deprepair.decide_environment(project, "fig.py") is None
     got = deprepair.gate(project, "fig.py")
     assert got is not None
     assert got["user_environments"] == [userenvs.public(e) for e in envs]
@@ -302,7 +320,7 @@ def test_gate_asks_when_nothing_is_complete(adopt_env, monkeypatch):
 @pytest.mark.parametrize(
     "case", ["default_chain", "user_picked", "project_venv", "explicit", "configured"]
 )
-def test_gate_never_overrides_a_user_decision(adopt_env, monkeypatch, case):
+def test_decide_never_overrides_a_user_decision(adopt_env, monkeypatch, case):
     project, env, heard = adopt_env
     target_kind = "tavotto_managed"
     if case == "default_chain":
@@ -320,6 +338,7 @@ def test_gate_never_overrides_a_user_decision(adopt_env, monkeypatch, case):
     monkeypatch.setattr(
         deprepair, "_preparation_offer", lambda p, s: _door(envs, target_kind=target_kind)
     )
+    assert deprepair.decide_environment(project, "fig.py") is None, case
     assert deprepair.gate(project, "fig.py") is not None, case
     assert heard == []
     record = projectenv.remembered_record(project)
@@ -370,12 +389,35 @@ def test_real_probe_reports_each_module():
         assert health["ok"] is True
 
 
-def test_gate_adopts_without_deadlocking_under_the_pool_lock(adopt_env, monkeypatch):
-    """门跑在 `pool.get()` 持有 `pool._lock` 的 `_new_worker()` 里：改用时再去拿这把锁（例如
-    `pool.reset_worker_python()`）就是死锁。真机端到端抓到过一次——单测直接调 gate 看不见，所以这里
-    在持锁的线程里调。锁换成一把替身（`reset_worker_python` 按名字取模块全局的 `_lock`，照样撞上），
-    **在 finally 里自己换回**——不用 monkeypatch：它的还原排在 `clean_state` 收尾之后，反证时收尾会撞上
-    被死锁线程占住的替身（实测挂死过）。"""
+def test_a_user_decision_landing_during_the_decision_is_not_overwritten(adopt_env, monkeypatch):
+    """同形清扫（先判后写分两步）：`_auto_adopt_allowed` 判完、写入之前，用户在设置里点了「改回」（明确选回
+    默认链条）。以前那条自动决策照写，把用户的决定盖掉；现在判断与写入在同一把锁里重判，不写、不通知。
+    同步点：判据一返回就让用户的那一下落地，不用 sleep。"""
+    project, env, heard = adopt_env
+    envs = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    real = deprepair._auto_adopt_allowed
+    verdicts = []
+
+    def allowed_then_user_clicks_revert(p, offer):
+        verdicts.append(real(p, offer))
+        projectenv.remember_default(p)
+        return verdicts[-1]
+
+    monkeypatch.setattr(deprepair, "_auto_adopt_allowed", allowed_then_user_clicks_revert)
+    assert deprepair.decide_environment(project, "fig.py") is None
+    assert verdicts == [True], "尺子是活的：判的那一刻确实允许"
+    record = projectenv.remembered_record(project)
+    assert record["mode"] == projectenv.MODE_DEFAULT_CHAIN, record
+    assert heard == []
+
+
+def test_decide_adopts_without_deadlocking_under_the_pool_lock(adopt_env, monkeypatch):
+    """改用时不许去拿 `pool._lock`（例如 `pool.reset_worker_python()`）：2026-09-23 真机端到端抓到过一次
+    死锁，那时决定还跑在持锁的 `_new_worker()` 里。今天 `pool.acquire()` 在锁外调它（见下面的
+    `test_acquire_decides_before_the_lease_check_*`），这条仍在持锁的线程里调，钉住「决定本身不碰池锁」。
+    锁换成一把替身（`reset_worker_python` 按名字取模块全局的 `_lock`，照样撞上），**在 finally 里自己换回**——
+    不用 monkeypatch：它的还原排在 `clean_state` 收尾之后，反证时收尾会撞上被死锁线程占住的替身（实测挂死过）。"""
     import threading
 
     project, env, heard = adopt_env
@@ -385,7 +427,7 @@ def test_gate_adopts_without_deadlocking_under_the_pool_lock(adopt_env, monkeypa
 
     def run():
         with engine_pool._lock:
-            out["gate"] = deprepair.gate(project, "fig.py")
+            out["got"] = deprepair.decide_environment(project, "fig.py")
 
     original = engine_pool._lock
     engine_pool._lock = threading.Lock()
@@ -395,8 +437,377 @@ def test_gate_adopts_without_deadlocking_under_the_pool_lock(adopt_env, monkeypa
         th.join(10)
     finally:
         engine_pool._lock = original
-    assert not th.is_alive(), "持有 pool._lock 时门里的自动改用卡死了"
-    assert out["gate"] is None and projectenv.remembered_record(project)["path"] == str(env)
+    assert not th.is_alive(), "持有 pool._lock 时自动改用卡死了"
+    assert out["got"] is not None and projectenv.remembered_record(project)["path"] == str(env)
+
+
+# ------------------------------------------------ 决定的时刻：先于解析解释器与租约检查（Codex #522 P1）
+
+BEFORE = "/envs/before/bin/python"
+
+
+@pytest.fixture
+def spawn_box(adopt_env, monkeypatch):
+    """真 `pool.acquire()`，只把「起进程」换成记账：构造函数照真 worker 那样自己解析解释器（`EngineWorker`
+    就是这么拿 `self.python` 的），并记下那一刻那个环境是不是正被改动——主语是**起会话那一刻、它用的解释器**。
+
+    解释器解析换成「项目记住了谁就是谁，没记住是 BEFORE」：`remember()` 改变解析结果这件事照真的来，
+    只是不去体检一个并不存在的解释器。依赖门（`_spawn_gate`）与工作目录门都是真的。"""
+    from tavotto.engine import envlease, workerd_client
+
+    project, env, heard = adopt_env
+
+    def resolve(root=None, **kw):
+        record = projectenv.remembered_record(root) if root else None
+        if record and record.get("path"):
+            return record["path"], "project"
+        return BEFORE, "bundled"
+
+    monkeypatch.setattr(engine_pool, "resolve_worker_python", resolve)
+    monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
+    monkeypatch.setattr(engine_pool, "_schedule_prune", lambda: None)  # 替身没有会话目录可收
+    spawned: list[dict] = []
+
+    class Recorder:
+        def __init__(self, script_name, figures_dir, entry, base_dir=None):
+            self.script_name, self.entry = script_name, entry
+            self.python = engine_pool.resolve_worker_python(figures_dir, script=script_name)[0]
+            self.last_used = 0.0
+            spawned.append({"python": self.python, "mutating": envlease.is_mutating(self.python)})
+
+        def alive(self):
+            return True
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(engine_pool, "EngineWorker", Recorder)
+
+    def door(p, s):
+        """按**此刻**解析到的解释器回计划：还是 BEFORE 就缺包（ready + 候选表），换过了就什么都不缺。"""
+        if resolve(str(p))[0] != BEFORE:
+            offer = _offer([])
+            offer["plan"] = {"status": "nothing_needed", "missing": []}
+            return offer, []
+        return _door(box["envs"])
+
+    monkeypatch.setattr(deprepair, "_preparation_offer", door)
+    box = {"project": project, "env": env, "spawned": spawned, "envs": []}
+    yield box
+    with engine_pool._lock:
+        engine_pool._workers.pop((engine_pool._norm_dir(str(project)), "fig.py"), None)
+
+
+def test_acquire_decides_before_the_lease_check_so_no_worker_starts_on_a_busy_environment(
+    spawn_box, monkeypatch
+):
+    """确定性的同步点：改用的通知在 `remember()` 之后、调用方解析解释器之前触发——在那一刻让另一个作业
+    拿住被选中环境的租约（真的 `envlease`，环境占用唯一的那张表）。修好之后 `acquire()` 是按**决定之后**的
+    解释器查租约的：拒起、`environment_mutating`，一个 worker 都没有构造。以前决定藏在 `_new_worker()` 的
+    门里，`is_mutating` 查的是 BEFORE，构造函数却解析到被占用的那一个——worker 起在装了一半的 site-packages 上。"""
+    from tavotto.engine import envlease
+
+    project, env = spawn_box["project"], spawn_box["env"]
+    spawn_box["envs"] = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    lease = envlease.mutating(envlease.env_key_of(str(env)), str(env))
+
+    def another_job_starts_installing(p, e):
+        lease.__enter__()
+
+    monkeypatch.setattr(deprepair, "_adoption_listeners", [another_job_starts_installing])
+    try:
+        with pytest.raises(engine_pool.WorkerError) as err:
+            engine_pool.acquire("fig.py", str(project), "__main__")
+        held = envlease.is_mutating(str(env))
+    finally:
+        lease.__exit__(None, None, None)
+    assert held, "尺子是活的：同步点确实拿住了被选中环境的租约"
+    assert spawn_box["spawned"] == [], f"worker 起在了被占用的环境上: {spawn_box['spawned']}"
+    assert err.value.code == engine_pool.ENVIRONMENT_MUTATING
+    assert projectenv.remembered_record(project)["path"] == str(env)
+
+
+def test_acquire_starts_the_worker_on_the_adopted_environment(spawn_box):
+    """对照组（同一副替身、没有别的作业）：决定落地之后，查租约与起会话用的是同一个——改用的那个。"""
+    project, env = spawn_box["project"], spawn_box["env"]
+    spawn_box["envs"] = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    w, created = engine_pool.acquire("fig.py", str(project), "__main__")
+    assert created and w.python == str(env)
+    assert spawn_box["spawned"] == [{"python": str(env), "mutating": False}]
+
+
+def test_an_environment_already_being_changed_is_not_adopted(spawn_box, tmp_path):
+    """挑选时就跳过正被改动的环境：它此刻的体检读的是装了一半的 site-packages。装齐的另一个照常被选中。"""
+    from tavotto.engine import envlease
+
+    project, busy = spawn_box["project"], spawn_box["env"]
+    other = _python(tmp_path / "other")
+    spawn_box["envs"] = [
+        _entry(str(busy), userenvs.SOURCE_LOGIN_SHELL),  # 排第一：不过滤就选它
+        _entry(str(other), userenvs.SOURCE_CONDA),
+    ]
+    with envlease.mutating(envlease.env_key_of(str(busy)), str(busy)):
+        w, _created = engine_pool.acquire("fig.py", str(project), "__main__")
+    assert projectenv.remembered_record(project)["path"] == str(other)
+    assert spawn_box["spawned"] == [{"python": str(other), "mutating": False}]
+
+
+def test_a_reusable_session_is_not_asked_to_decide_again(spawn_box, monkeypatch):
+    """热会话复用时不重新决定（决定要算计划、可能体检候选——每次渲染都来一遍不可接受）。"""
+    project, env = spawn_box["project"], spawn_box["env"]
+    spawn_box["envs"] = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    engine_pool.acquire("fig.py", str(project), "__main__")
+    calls = []
+    monkeypatch.setattr(engine_pool, "ENVIRONMENT_DECIDERS", [lambda d, s: calls.append((d, s))])
+    _w, created = engine_pool.acquire("fig.py", str(project), "__main__")
+    assert not created and calls == []
+
+
+def test_a_worker_that_dies_after_the_peek_still_gets_the_decision(spawn_box):
+    """Codex #562 P2：锁外窥视说「能复用」（于是没做决定），进锁时那条会话已经死了。锁内重建走的是只读的
+    依赖门——以前这里只会弹框，本该自动改用的没改。现在锁内发现要重建而还没决定过，就出锁补上决定再来一遍。
+    时刻用替身钉死：同一条会话第一次被问 `alive()`（窥视）答活着，第二次（锁内）答死了。"""
+    project, env = spawn_box["project"], spawn_box["env"]
+    spawn_box["envs"] = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    answers = iter([True, False])
+
+    class DiesAfterThePeek:
+        script_name, entry, python, last_used = "fig.py", "__main__", BEFORE, 0.0
+
+        def alive(self):
+            return next(answers, False)
+
+        def shutdown(self):
+            pass
+
+    with engine_pool._lock:
+        engine_pool._workers[(engine_pool._norm_dir(str(project)), "fig.py")] = DiesAfterThePeek()
+    w, created = engine_pool.acquire("fig.py", str(project), "__main__")
+    assert next(answers, "spent") == "spent", "尺子是活的：窥视与锁内各问了一次"
+    assert created and w.python == str(env), "补上了决定：改用了装齐的环境，而不是弹框"
+    assert spawn_box["spawned"] == [{"python": str(env), "mutating": False}]
+
+
+def test_a_lease_taken_between_the_check_and_the_lock_stops_the_spawn(spawn_box, monkeypatch):
+    """同一形状（锁外的检查被锁内信任）的另一处：锁外 `is_mutating` 说没人在装，进锁之前装包作业拿到了
+    这个环境的租约。锁内再查一次，拒起；以前 worker 照样起在正被写的 site-packages 上。
+    同步点：锁外那次检查一返回就让另一个作业拿住租约（真的 `envlease`），不用 sleep。"""
+    from tavotto.engine import envlease
+
+    project = spawn_box["project"]
+    offer = _offer([])
+    offer["plan"] = {"status": "nothing_needed", "missing": []}
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: (offer, []))
+    lease = envlease.mutating(envlease.env_key_of(BEFORE), BEFORE)
+    real = engine_pool.is_mutating
+    calls = []
+
+    def check_then_someone_starts_installing(python):
+        got = real(python)
+        calls.append(got)
+        if len(calls) == 1:
+            lease.__enter__()
+        return got
+
+    monkeypatch.setattr(engine_pool, "is_mutating", check_then_someone_starts_installing)
+    try:
+        with pytest.raises(engine_pool.WorkerError) as err:
+            engine_pool.acquire("fig.py", str(project), "__main__")
+    finally:
+        lease.__exit__(None, None, None)
+    assert calls[0] is False, "尺子是活的：锁外那次确实说没人在装"
+    assert spawn_box["spawned"] == [], f"worker 起在了被占用的环境上: {spawn_box['spawned']}"
+    assert err.value.code == engine_pool.ENVIRONMENT_MUTATING
+
+
+# ------------------------------------------------ 采用前复核（Codex #522 P2）
+
+
+@pytest.fixture
+def adopt_api(project, client, monkeypatch, tmp_path):
+    """真端点 `PATCH /api/engine/environment {scope: project, user_environment: id}`：发现结果与计划由替身给，
+    体检换成可切换的替身（`probe_environment` 是体检唯一的出口）。"""
+    from tavotto import app as m
+
+    m.open_project(str(project))
+    env = _python(tmp_path / "lab")
+    monkeypatch.setattr(
+        deprepair,
+        "user_environment_candidates",
+        lambda root, script, exclude="": [
+            {"python": str(env), "source": userenvs.SOURCE_CONDA, "label": "lab"}
+        ],
+    )
+
+    class _Plan:
+        def to_payload(self):
+            return {
+                "status": "ready",
+                "missing": [{"import_name": "openpyxl", "distribution": "openpyxl"}],
+                "unknown": [],
+            }
+
+    monkeypatch.setattr(
+        deprepair, "joint_plan_for", lambda root, script: (_Plan(), "tavotto_managed", BEFORE)
+    )
+    state = {"has_openpyxl": True}
+
+    def probe(python, module=None, *, modules=()):
+        return {
+            "ok": True,
+            "code": "",
+            "support": "verified",
+            "python_version": "3.12.1",
+            "matplotlib_version": "3.10.0",
+            "modules_ok": {name: state["has_openpyxl"] for name in modules},
+        }
+
+    monkeypatch.setattr(projectenv, "probe_environment", probe)
+
+    def adopt():
+        return client.patch(
+            "/api/engine/environment",
+            json={
+                "scope": "project",
+                "user_environment": userenvs.env_id(str(env)),
+                "script": "figure.py",
+            },
+        )
+
+    return {"project": project, "env": env, "state": state, "adopt": adopt}
+
+
+def test_adopting_an_environment_that_changed_while_the_dialog_was_open_is_refused(adopt_api):
+    """弹窗列出时装齐（这一次体检进了缓存），点下去之前 openpyxl 被卸了：采用前按此刻的计划重量一次，
+    `user_environment_incomplete` + 缺什么，什么都不记。以前只核「还被发现得到」+ 不带模块的体检，照样记下、
+    关框，下一次渲染撞同一个缺包。"""
+    project, env = adopt_api["project"], adopt_api["env"]
+    listed = deprepair.user_environment_offer(
+        project,
+        "figure.py",
+        {"missing": [{"import_name": "openpyxl", "distribution": "openpyxl"}], "unknown": []},
+        BEFORE,
+    )
+    assert [e["satisfies"] for e in listed] == [True], "弹窗打开那一刻它是装齐的"
+    adopt_api["state"]["has_openpyxl"] = False
+    resp = adopt_api["adopt"]()
+    assert resp.status_code == 400, resp.get_json()
+    body = resp.get_json()
+    assert body["code"] == "user_environment_incomplete"
+    assert body["params"] == {"packages": "openpyxl"}
+    assert str(env) not in json.dumps(body)
+    assert projectenv.remembered_record(project) is None
+
+
+def test_the_uncached_recheck_never_accepts_a_result_slipped_into_the_cache(monkeypatch):
+    """Codex #562 P2 的交错，确定性地复现：复核（`use_cache=False`）量的必须是此刻的环境。旧实现先把缓存那条
+    删掉、放锁，再走 `_probe()` 重新读缓存——两步之间并发的一次更早开始的体检可以把旧结论（「装齐」）塞回去，
+    复核就收下了它。这里用缓存的替身把那一刻钉死：每次被删之后立刻有人塞回一条过期的「装齐」，不用 sleep。
+    判据：复核回的是真体检的结论（缺 openpyxl），不是塞进来的那条；真体检确实跑了（尺子是活的）。"""
+    stale = {
+        "ok": True,
+        "support": "verified",
+        "python_version": "3.12.1",
+        "modules_ok": {"openpyxl": True},
+    }
+    imports = ("openpyxl",)
+    key = (userenvs._key("/lab/python"), imports)
+
+    class Racy(dict):
+        def pop(self, k, *default):
+            got = super().pop(k, *default)
+            self[k] = dict(stale)  # 另一个线程的旧体检恰好在这一刻写回
+            return got
+
+    monkeypatch.setattr(userenvs, "_probe_cache", Racy({key: dict(stale)}))
+    probed = []
+
+    def fresh(python, module=None, *, modules=()):
+        probed.append((python, tuple(modules)))
+        return {**stale, "modules_ok": {"openpyxl": False}}
+
+    monkeypatch.setattr(projectenv, "probe_environment", fresh)
+    got = userenvs.evaluate(
+        [{"python": "/lab/python", "source": userenvs.SOURCE_CONDA, "label": "lab"}],
+        [{"import_name": "openpyxl", "distribution": "openpyxl"}],
+        [],
+        use_cache=False,
+    )[0]
+    assert probed == [("/lab/python", imports)], "复核真起了一次体检"
+    assert got["satisfies"] is False and got["missing"] == ["openpyxl"], got
+    # 走缓存的那条路（弹窗列表）照旧读缓存：同一个替身下它回的是缓存里的那条
+    cached = userenvs.evaluate(
+        [{"python": "/lab/python", "source": userenvs.SOURCE_CONDA, "label": "lab"}],
+        [{"import_name": "openpyxl", "distribution": "openpyxl"}],
+        [],
+    )[0]
+    assert cached["satisfies"] is True and len(probed) == 1
+
+
+def test_adopting_when_the_plan_cannot_be_computed_is_refused(adopt_api, monkeypatch):
+    """Codex #562 P2：复核时联合计划算不出来，以前退回空的需求集合——什么都不量，任何健康的环境都「装齐」、
+    被记下。现在不知道脚本要什么就不下结论：`user_environment_unverifiable`，什么都不记。"""
+    project = adopt_api["project"]
+
+    def broken(root, script):
+        raise engine_pool.WorkerError("解释器解析失败", code="no_worker_python")
+
+    monkeypatch.setattr(deprepair, "joint_plan_for", broken)
+    resp = adopt_api["adopt"]()
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == deprepair.ERROR_USER_ENV_UNVERIFIABLE
+    assert projectenv.remembered_record(project) is None
+
+
+def test_the_recheck_measures_everything_the_script_needs_not_only_the_current_gap(
+    adopt_api, monkeypatch
+):
+    """同一形状（需求集合比判据要的窄）的另一处：计划的 `missing` 是相对**此刻的**解释器量的差集。内置
+    runtime 有 numpy、缺 openpyxl 时，一个只装了 openpyxl 的环境按差集量是「装齐」，改用之后脚本在 numpy 上
+    缺包。候选要量的是脚本开跑要的全部（`missing` + `satisfied`）。"""
+    project = adopt_api["project"]
+
+    class _Plan:
+        def to_payload(self):
+            return {
+                "status": "ready",
+                "missing": [{"import_name": "openpyxl", "distribution": "openpyxl"}],
+                "satisfied": [{"import_name": "numpy", "distribution": "numpy"}],
+                "unknown": [],
+            }
+
+    monkeypatch.setattr(
+        deprepair, "joint_plan_for", lambda root, script: (_Plan(), "tavotto_managed", BEFORE)
+    )
+    probed = []
+
+    def probe(python, module=None, *, modules=()):
+        probed.append(tuple(modules))
+        return {
+            "ok": True,
+            "code": "",
+            "support": "verified",
+            "python_version": "3.12.1",
+            "matplotlib_version": "3.10.0",
+            "modules_ok": {name: name == "openpyxl" for name in modules},
+        }
+
+    monkeypatch.setattr(projectenv, "probe_environment", probe)
+    resp = adopt_api["adopt"]()
+    assert probed and "numpy" in probed[-1], "尺子是活的：numpy 确实被量了"
+    assert resp.status_code == 400, resp.get_json()
+    assert resp.get_json()["params"] == {"packages": "numpy"}
+    assert projectenv.remembered_record(project) is None
+
+
+def test_adopting_a_complete_environment_is_remembered_as_the_users_choice(adopt_api):
+    """对照组：装齐的照常采用，记成用户的选择（`automatic=False`）。"""
+    project, env = adopt_api["project"], adopt_api["env"]
+    resp = adopt_api["adopt"]()
+    assert resp.status_code == 200, resp.get_json()
+    record = projectenv.remembered_record(project)
+    assert record["path"] == str(env) and record["automatic"] is False
+    assert record["trigger"] == deprepair.TRIGGER_USER_ENVIRONMENT
 
 
 def test_the_switch_turns_discovery_off(tmp_path, monkeypatch):

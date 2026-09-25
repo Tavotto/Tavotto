@@ -143,6 +143,8 @@
     "perf_report_rejected": "Not a performance report; nothing was saved ({{reason}})",
     "perf_report_write_failed": "Couldn't write the performance report to the data folder",
     "user_environment_gone": "That Python environment can no longer be found. Check again.",
+    "user_environment_incomplete": "That Python environment is still missing {{packages}}. Check again.",
+    "user_environment_unverifiable": "Can't work out which packages this script needs right now, so this environment can't be confirmed. Check again.",
     "script_changed": "Write-back blocked: the script changed during this session. Re-render and try again.",
     "script_error": "The script failed while building the figure: {{error}}",
     "script_exited": "The script ended early by calling sys.exit() ({{error}}). Tavotto needs the figures the script leaves in memory when it finishes: remove that exit, or exit only on error.",

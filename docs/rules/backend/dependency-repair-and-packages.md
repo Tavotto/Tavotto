@@ -29,11 +29,17 @@
   + 老链条系统解释器，逐个 `probe_environment(python, modules=缺的 import)`——**装齐按 import 判**，
   「环境健康」与「装没装齐」分开报；正缺包的解释器不体检。装齐的里按 `userenvs.rank()` 挑最好的
   （来源档位 → verified → Python 新），**此刻的解释器是机器替用户挑的**就 `remember(automatic=True,
-  trigger=user_environment)` 并放行、发 SSE `engine.environment_adopted`；显式全局选择 / 为本项目挑过的 /
+  trigger=user_environment)`、发 SSE `engine.environment_adopted`；**换不换只在 `deprepair.decide_environment()`
+  一处，且在解析解释器之前**：`preparation.plan_for` 拍快照之前、`pool.acquire()` 查租约（`is_mutating`）之前
+  （`pool.ENVIRONMENT_DECIDERS`，锁外）——`gate()` 只读；正被改动（`envlease`）的环境不采用（Codex #522 两条 P1）；显式全局选择 / 为本项目挑过的 /
   明确选回默认 / 项目 venv / 干净机器一个都不碰（判据唯一出处 `deprepair._auto_adopt_allowed`）。
   公开载荷与 SSE **不带路径**（ADR 0053 §二），只带 `userenvs.env_id()`；采用走 `PATCH
   /api/engine/environment {scope: project, user_environment: id, script}`，后端用自己的发现结果换回路径，
-  找不到报 `user_environment_gone`。发现 / 体检缓存挂在 `projectenv.RESET_HOOKS` 上随 `reset_cache()` 一起清
+  找不到报 `user_environment_gone`；换回来之后按此刻的计划重新量装没装齐（`deprepair.recheck_user_environment`，
+  不读也不写体检缓存；量的是 `missing` + `satisfied` 全部，不是此刻解释器的差集），缺就 `user_environment_incomplete`、
+  计划算不出来就 `user_environment_unverifiable`，都不记（Codex #522 / #562 P2）。`pool.acquire()` 锁外窥视说能复用、
+  锁内却要重建时出锁补上决定再来一遍，锁内起会话前再查一次租约；自动改用写记录用 `remember(only_if=…)`，
+  「项目记录允不允许自动换」与写入在 `projectenv._decision_lock` 里一起判，判完到写之间落地的用户决定不会被盖掉。发现 / 体检缓存挂在 `projectenv.RESET_HOOKS` 上随 `reset_cache()` 一起清
   （`projectenv` 不 import `userenvs`：它要 import 本模块的体检）。`TAVOTTO_USER_ENV_DISCOVERY=0` 整个关掉，
   **测试进程默认关**（`tests/conftest.py`，否则用例结果随 CI 机器上碰巧装了什么而变）；`script` 可来自请求体，
   `discover()` 先过 `projectenv.contained_path()`，下游只用净化器回的值（CodeQL `py/path-injection`）。

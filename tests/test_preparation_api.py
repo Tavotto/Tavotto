@@ -918,3 +918,84 @@ def test_reusing_a_hot_session_after_the_data_changed_is_ready_but_says_it_is_a_
     assert result["receipt"]["binding_check"]["matched"] is False
     assert "旧快照" in result["note"]
     assert fake_pool["build_calls"] == 0
+
+
+def test_auto_adopting_a_user_environment_does_not_stale_the_first_preparation(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """ADR 0079 的自动改用走真的 `/api/engine/preparation`（Codex #522 P1）：缺包、有装齐的用户环境 →
+    计划里换成它。换的那一下必须在计划拍快照（解释器 / LaunchContext / 环境事实）**之前**——以前藏在
+    `gate()` 里、排在快照之后，执行前 `_stale_reason` 拿旧快照比新决策，第一次请求必以
+    `preparation_plan_stale` / `environment_changed` 收场，用户得无端重试一次。
+
+    解释器解析换成「项目记住了谁就是谁」：`remember()` 改变解析结果这件事照真的来；计划替身按此刻解析到的
+    解释器回（还是旧的就缺包 + 候选表，换过了就什么都不缺）；门、决定、快照、过期检查都是真的。"""
+    from tavotto.engine import deprepair, projectenv, userenvs
+
+    deprepair.reset_state()
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    before = "/envs/fake/bin/python"
+    lab = tmp_path / "lab" / "bin" / "python"
+    lab.parent.mkdir(parents=True)
+    lab.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    def resolve(root=None, **kw):
+        record = projectenv.remembered_record(root) if root else None
+        if record and record.get("path"):
+            return record["path"], "project"
+        return before, "bundled"
+
+    monkeypatch.setattr(engine_pool, "resolve_worker_python", resolve)
+    monkeypatch.setattr(engine_pool, "same_python", lambda a, b: a == b)
+    monkeypatch.setattr(engine_pool, "explicit_worker_python", lambda: "")
+    monkeypatch.setattr(deprepair, "_config_worker_python", lambda: "")
+    adopted = []
+    monkeypatch.setattr(deprepair, "_adoption_listeners", [lambda p, e: adopted.append(e["id"])])
+    entry = {
+        "python": str(lab),
+        "source": userenvs.SOURCE_CONDA,
+        "label": "lab",
+        "ok": True,
+        "code": "",
+        "support": "verified",
+        "python_version": "3.12.1",
+        "matplotlib_version": "3.10.0",
+        "missing": [],
+        "satisfies": True,
+    }
+
+    def door(p, s):
+        missing = resolve(str(p))[0] == before
+        plan = {
+            "status": "ready" if missing else "nothing_needed",
+            "missing": [{"import_name": "openpyxl", "distribution": "openpyxl"}] if missing else [],
+        }
+        envs = [entry] if missing else []
+        offer = {
+            "code": deprepair.ERROR_PREPARATION_REQUIRED,
+            "script": s,
+            "plan": plan,
+            "target_kind": deprepair.TARGET_MANAGED,
+            "targets": [],
+            "rounds_remaining": 3,
+            "skipped": False,
+            "clean_machine": False,
+            "private_python": None,
+            "user_environments": [userenvs.public(e) for e in envs],
+        }
+        return offer, envs
+
+    monkeypatch.setattr(deprepair, "_preparation_offer", door)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    assert resp.status_code == 202, resp.get_json()
+    plan = resp.get_json()["plan"]
+    assert adopted == [userenvs.env_id(str(lab))], "改用发生了（尺子是活的）"
+    assert plan["required_input"] is None, "改用之后什么都不缺，不再问"
+    assert plan["environment"]["source"] == "project"
+    body = _wait(client, plan["plan_id"])
+    result = body["result"]
+    assert result["error"] is None, result["error"]
+    assert result["status"] == preparation.STATUS_READY
+    assert fake_pool["build_calls"] == 1
+    assert str(lab) not in json.dumps(body), "公开投影不带用户环境的路径"
