@@ -417,8 +417,27 @@ def test_missing_dependency_is_recognised_from_traceback():
         "ModuleNotFoundError: No module named 'rdkit'\n"
     )
     assert pool.missing_module(tb) == "rdkit"
-    assert pool.missing_module('ModuleNotFoundError: No module named "astropy.io"') == "astropy"
     assert pool.missing_module("ValueError: 随便什么别的错") == ""
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # numpy 的二进制坏了：包在，它自己内部的扩展模块 import 不到
+        "ModuleNotFoundError: No module named 'numpy.core._multiarray_umath'",
+        # 已安装包内部 import 了一个不存在的子模块（QA ENV-05 的 qa_subbroken_pkg）
+        "ModuleNotFoundError: No module named 'qa_subbroken_pkg._missing_sub'",
+        'ModuleNotFoundError: No module named "astropy.io"',
+        # 本地同名文件遮住了包
+        "ModuleNotFoundError: No module named 'yaml.loader'; 'yaml' is not a package",
+    ],
+)
+def test_a_missing_submodule_of_an_importable_package_is_not_a_missing_dependency(text):
+    """QA ENV-05-B1：顶层包找不到时 Python 报的是 `No module named 'pkg'`；报点分名说明顶层
+    **已经 import 到了**，缺的是它内部的子模块——包坏了 / 版本太旧 / 被本地文件遮住。以前截成
+    顶层名报 `missing_dependency` 并提示「一键装上」，而装一遍顶层包修不好它。"""
+    assert pool.missing_module(text) == ""
+    assert pool.missing_module(f"Traceback (most recent call last):\n{text}\n") == ""
 
 
 def test_bundled_worker_never_writes_into_the_install_dir():
