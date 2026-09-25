@@ -226,6 +226,30 @@ def test_refused_edit_is_undone_in_a_live_session(tmp_path):
         pool.discard(w)
 
 
+def test_renaming_the_curve_does_not_invalidate_its_own_edits(tmp_path):
+    """label 本身是可编辑的 prop：身份必须是 baseline 那一刻采的，不跟着编辑走。
+
+    按实况现算的话，改名那一刻起这条曲线的身份就换了——同一份 patches 第二次渲染
+    （每一次拖动定稿都是）会把用户自己的编辑全部判成「对象已找不到」。
+    """
+    figs = _library(tmp_path / "rename", BASE)
+    w = pool.one_shot("fig1.py", str(figs), "main")
+    try:
+        w.override("Fig1", [])
+        first = json.loads((Path(w.out_dir) / "Fig1.json").read_text(encoding="utf-8"))
+        patches, gid = _stamped_patches(first)
+        ident = patches[0]["identity"]
+        patches.append({"gid": gid, "prop": "label", "value": "renamed", "identity": ident})
+        for _ in range(2):
+            resp = w.override("Fig1", patches)
+            assert list(resp.get("warnings") or []) == []
+        man = json.loads((Path(w.out_dir) / "Fig1.json").read_text(encoding="utf-8"))
+        assert _lines(man)["renamed"]["color"] == MAGENTA
+        assert _lines(man)["renamed"]["identity"] == ident
+    finally:
+        pool.discard(w)
+
+
 # ---------------- 写回：同一道核对在一次性重放里拦下 ----------------
 
 REGISTRY = {
