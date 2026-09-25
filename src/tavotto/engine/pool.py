@@ -1365,6 +1365,9 @@ class EngineWorker:
         self.last_patch_hash_by_stem: dict[str, str] = {}
         self.lock = threading.Lock()
         self.built = False
+        #: 上一次**跑完的** build 是失败的（`built=False` 分不出「还没 build / 正在 build」与「build 过但失败了」，
+        #: 复用前的工作目录门只管后者——Codex #599 P2）。成功那一刻清掉。
+        self.build_failed = False
         #: 最近一次 build 响应里的 CapturedFigureDescriptor payload 列表。
         #: RuntimeFigureAsset 的 cache 物化从这里取（app 层复制预览文件 +
         #: 描述符即可），**不必为拿描述符再跑一次脚本**。
@@ -1749,7 +1752,12 @@ class EngineWorker:
     def ensure_built(self) -> dict:
         # build 要跑用户整个脚本。传的是**兜底上限**——真正判死的是静默看门狗
         # （ADR 0050），所以这里不再需要先知道这个脚本有多慢。
-        resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
+        try:
+            resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
+        except BaseException:
+            self.build_failed = True
+            raise
+        self.build_failed = False
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
@@ -2056,6 +2064,7 @@ class WorkerdWorker:
         # 「一个慢请求占死整条会话」重新绑回来。
         self.lock = threading.Lock()
         self.built = False
+        self.build_failed = False  # 与 EngineWorker 同一个判据
         self.last_build_descriptors: list = []
         self.last_build_runtime: dict | None = None
         self.child_pid: int | None = None
@@ -2250,7 +2259,12 @@ class WorkerdWorker:
     def ensure_built(self) -> dict:
         # 与 Python 池同一条判据（ADR 0050）：兜底上限 + 静默看门狗，
         # 看门狗由 workerd 那侧执行（它 stat 的是同一个 worker.log）。
-        resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
+        try:
+            resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
+        except BaseException:
+            self.build_failed = True  # 与 EngineWorker 同一个判据
+            raise
+        self.build_failed = False
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
@@ -2732,12 +2746,15 @@ def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorke
             if (w is None or why) and not decided:
                 force_decide = True
                 continue  # 出锁：决定要体检子进程，不能占着池锁
-            if w is not None and not why and not getattr(w, "built", True):
-                # 活着但没 build 成（上一次 build 失败留下的会话）：下一次用它就是在它起会话时的 cwd 里
-                # **重跑整个脚本**——那是一次新的执行，要过与起新会话同一道门。门在它起会话之后变了
-                # （静态证据变了：数据出现在项目根 / 两处同名）时，这里就停下来问，与准备接口、新会话同一个
-                # code（QA 2026-09-24 PATH-B3）。会话本身不动：它可能正被别的调用方 build 着；用户答完
-                # `PATCH /api/engine/workdir` 会收掉这个项目的全部会话。已 build 的热态会话不过门（它不再跑脚本）。
+            if w is not None and not why and getattr(w, "build_failed", False):
+                # 活着、上一次跑完的 build 失败了：下一次用它就是在它起会话时的 cwd 里**重跑整个脚本**——
+                # 那是一次新的执行，要过与起新会话同一道门。门在它起会话之后变了（静态证据变了：数据出现在
+                # 项目根 / 两处同名）时，这里就停下来问，与准备接口、新会话同一个 code（QA 2026-09-24 PATH-B3）。
+                # 会话本身不动；用户答完 `PATCH /api/engine/workdir` 会收掉这个项目的全部会话。
+                # 判据是 `build_failed` 不是 `not built`（Codex #599 P2）：**正在 build 的**会话 `built` 也是
+                # False，第二个调用方只是在 worker 锁上排队、复用那次 build 的结果，不会重跑脚本，不该被拦。
+                # 已 build 的热态会话同理不过门。已知边界：排在一次**将要失败**的 build 后面的调用方，进门时它还
+                # 没失败，这里看不见——它随后会自己再跑一次 build；这一窗口与起会话本身的竞态同形，不在这里加锁。
                 _workdir_gate(figures_dir, script_name)
             if why:
                 LOG.warning("worker %s，重建: %s", why, script_name)

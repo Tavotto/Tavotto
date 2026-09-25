@@ -47,7 +47,8 @@
 - **`ready` 要求这张面板真的被捕获**（QA 2026-09-24 PATH-B1）：build（或复用的会话）的捕获表里没有 `plan.stem` 时落
   `error`，code 与渲染入口**同一个**（`no_figures_captured` / `no_figures_captured_silent` / `unknown_stem`，
   `pool.missing_stem_error` 走 `_explain_empty_capture` 同一条换码路），回执照样留着（脚本确实跑过）。
-- **门也管复用**（QA 2026-09-24 PATH-B3）：池里活着但**没 build 成**的会话（上一次 build 失败留下的）再被取用就是
+- **门也管复用**（QA 2026-09-24 PATH-B3）：池里活着、**上一次跑完的 build 失败了**的会话（`build_failed`；不是
+  `not built`——正在 build 的会话只是让后来者排队复用，不过门，Codex #599 P2）再被取用就是
   在它起会话时的 cwd 里重跑整个脚本——`pool.acquire` 复用它之前过 `_workdir_gate`（与 `_new_worker` 同一处），
   证据变成要问就抛同一个 `workdir_confirmation_required`；会话本身不动（答完 `PATCH /api/engine/workdir` 会收掉）。
   已 build 的热态会话不再跑脚本，不过门。

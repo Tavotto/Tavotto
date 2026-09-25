@@ -150,10 +150,12 @@ def test_pool_raises_the_structured_confirmation_before_spawning_anything(tmp_pa
 
 
 class _LiveSession:
-    """池里一条活着的会话替身：`built=False` = 上一次 build 失败留下的（下一次用它会重跑整个脚本）。"""
+    """池里一条活着的会话替身。三种状态：`built`（热态）/ `in_flight`（第一次 build 正在跑：`built=False`、
+    `build_failed=False`）/ `failed`（上一次 build 失败留下的：下一次用它会重跑整个脚本）。"""
 
-    def __init__(self, built: bool):
-        self.built = built
+    def __init__(self, state: str):
+        self.built = state == "built"
+        self.build_failed = state == "failed"
         self.entry = "__main__"
         self.python = "/nonexistent/python"
         self.script_name = "s/fig.py"
@@ -167,21 +169,25 @@ class _LiveSession:
         self.shutdowns += 1
 
 
-@pytest.mark.parametrize("built", [False, True])
-def test_a_live_session_that_never_built_passes_the_same_gate_before_reuse(
-    tmp_path, monkeypatch, built
+@pytest.mark.parametrize("state", ["failed", "in_flight", "built"])
+def test_a_live_session_whose_build_failed_passes_the_same_gate_before_reuse(
+    tmp_path, monkeypatch, state
 ):
     """QA 2026-09-24 PATH-B3：会话起在「证据说不用问」的时候（数据还没放进项目根，verdict=unknown），build 失败留在
-    池里；之后数据出现在项目根，证据变成要问。准备接口说 `needs_input`——渲染入口复用那条没 build 成的会话就是在
-    旧沙盒里把脚本再跑一遍（曾报 `script_error`）。没 build 成的会话复用前要过同一道门、同一个 code、同一份载荷；
-    会话本身不动（可能正被别的调用方 build 着）。已 build 的热态会话不再跑脚本，不过门，原样复用。"""
+    池里；之后数据出现在项目根，证据变成要问。准备接口说 `needs_input`——渲染入口复用那条 build 失败的会话就是在
+    旧沙盒里把脚本再跑一遍（曾报 `script_error`）。build 失败的会话复用前要过同一道门、同一个 code、同一份载荷；
+    会话本身不动。
+
+    **正在 build 的**会话（`built` 也是 False）不过门（Codex #599 P2）：第二个调用方只是在 worker 锁上排队、等
+    那次 build 完成后复用它，不会重跑脚本——拿它当「失败」拦下来就是把一个本来会成功的请求变成「需要输入」。
+    已 build 的热态会话同理，原样复用。"""
     root = _project(tmp_path, ROOT_ONLY, {})
     # 起会话那一刻不用问
     assert workdir.decision_for(root, "s/fig.py")["needs_confirmation"] is False
     monkeypatch.setattr(
         engine_pool, "resolve_worker_python", lambda *a, **k: ("/nonexistent/python", "system")
     )
-    live = _LiveSession(built=built)
+    live = _LiveSession(state)
     key = (engine_pool._norm_dir(str(root)), "s/fig.py")
     engine_pool._workers[key] = live
     try:
@@ -189,18 +195,46 @@ def test_a_live_session_that_never_built_passes_the_same_gate_before_reuse(
         (root / "data" / "x.csv").write_text("x\n", encoding="utf-8")  # 证据变了：只有项目根找得到
         expected = workdir.decision_for(root, "s/fig.py")["confirmation"]
         assert expected is not None
-        if built:
-            w, created = engine_pool.acquire("s/fig.py", str(root), "__main__")
-            assert w is live and created is False
-        else:
+        if state == "failed":
             with pytest.raises(engine_pool.WorkerError) as err:
                 engine_pool.acquire("s/fig.py", str(root), "__main__")
             assert err.value.code == workdir.ERROR_CONFIRMATION_REQUIRED
             assert err.value.confirmation == expected
             assert err.value.script_name == "s/fig.py"
+        else:
+            w, created = engine_pool.acquire("s/fig.py", str(root), "__main__")
+            assert w is live and created is False
         assert engine_pool._workers.get(key) is live and live.shutdowns == 0
     finally:
         engine_pool._workers.pop(key, None)
+
+
+@pytest.mark.parametrize("control_plane", ["python_pool", "workerd"])
+def test_build_failed_is_set_by_a_finished_failing_build_and_cleared_by_a_success(control_plane):
+    """`build_failed` 的主语：这条会话**上一次跑完的** build 的结局——不是「此刻 built 是不是 False」。
+    两条控制面同一个判据：失败那一刻置上，成功那一刻清掉；构造出来（第一次 build 之前 / 正在跑）是 False。"""
+    cls = engine_pool.EngineWorker if control_plane == "python_pool" else engine_pool.WorkerdWorker
+    w = cls.__new__(cls)
+    w.built = False
+    w.build_failed = False
+    w.last_patch_hash_by_stem = {}
+    outcome = {"raise": True}
+
+    def call(*a, **k):
+        if outcome["raise"]:
+            raise engine_pool.WorkerError("boom", code="script_error")
+        return {"descriptors": [], "stems": {}}
+
+    if control_plane == "python_pool":
+        w.request = call
+    else:
+        w._call = call
+    with pytest.raises(engine_pool.WorkerError):
+        w.ensure_built()
+    assert w.build_failed is True and w.built is False
+    outcome["raise"] = False
+    w.ensure_built()
+    assert w.build_failed is False and w.built is True
 
 
 # ---------------------------------------------------------------- execspec：project_root 档
