@@ -212,8 +212,10 @@ def test_real_worker_script_error_never_reaches_the_bundle(client, tmp_path, wir
     log = texts["app.log"]
     assert re.search(r"worker 启动: …/file:[0-9a-f]{10}\.py", log)
     assert "ERROR tavotto | 引擎渲染失败: " in log
-    # 有参考意义的闭集值明文（用户拍板：有意义的不哈希）：这里走的是 TAVOTTO_WORKER_PYTHON
-    assert "解释器来源=env_override" in log
+    # 有参考意义的闭集值明文（用户拍板：有意义的不哈希）：解释器来源是 pool.SOURCE_LABELS 的成员之一
+    # （哪一个取决于这台机器怎么找到的解释器，不钉死）
+    sources = re.findall(r"解释器来源=([^）]+)）", log)
+    assert sources and all(src in pool.SOURCE_LABELS for src in sources), sources
 
 
 # ------------------------------------------------------------------ 明文放行（logsafe）
