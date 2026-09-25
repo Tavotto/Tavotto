@@ -1339,6 +1339,33 @@ describe('Codex #547 第二十轮评审（ddc3760b）', () => {
   })
 })
 
+describe('Codex #547 最后一轮评审（964ce71f）', () => {
+  it('P1 存库在飞时加进来的新图：渲染回来按整份样式对齐，不只补这一笔变化量', async () => {
+    fakeLibrary([record({ id: 's1', data: { element: { axis_label: { fontsize: 10 }, title: { fontsize: 11 } }, pt_basis: 'page' } })])
+    await seed([panel('a', 'FigA')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    let started!: () => void
+    const saving = new Promise<void>((r) => (started = r))
+    const real = useProfileStore.getState().save
+    useProfileStore.setState({ save: async (...args) => (started(), await gate, real(...args)) })
+    const edit = editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 })
+    await saving
+    s().commit(literal('加一张图'), (d) => {
+      d.objects.push(panel('b', 'FigB'))
+    })
+    release()
+    expect(await edit).toBe(true)
+    await whenLibraryIdle()
+    rerender('b')
+    expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(12)
+    expect(ov('b', 'axes_0.title', 'fontsize'), '样式的其余部分也落上去').toBe(11)
+  })
+})
+
 describe('撤销只退画布、不推回样式库（ADR 0081 §十二，用户 2026-09-25 拍板）', () => {
   const unrelatedEdit = () =>
     s().commit(literal('改了别的'), (d) => {

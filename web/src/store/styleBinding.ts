@@ -219,14 +219,28 @@ function pruneToStyle(debt: StyleProfileData, style: StyleProfileData): StylePro
  */
 const missingNow = (doc: FigureDocument): string[] => panelsOf(doc).filter((p) => !manifestOf(p)).map(figKey)
 
-function owe(doc: FigureDocument, delta: StyleProfileData, missingIds: string[]) {
+/**
+ * `full`：此刻整份样式（`presetDelta(null, 样式)`）。**还没对齐过的新图**欠的是整份，不是这一笔变化量——
+ * 存库在飞时加进来的图（自动对齐被队列挡着）只记变化量的话，渲染回来按欠账补了这一项、记成看过了，
+ * 样式的其余部分永远落不上去（Codex #547 P1）。「新图」按没 manifest 时认得出的判据：本会话没看过，
+ * 且一个 override 都没有 / 只有抄来的烘焙基线；带着别的 override 的（重开的已对齐图、手改过的）仍只欠变化量。
+ */
+function owe(doc: FigureDocument, delta: StyleProfileData, missingIds: string[], full: StyleProfileData) {
   const ids = new Set(missingIds)
   const missing = panelsOf(doc).filter((p) => ids.has(figKey(p)))
-  if (!missing.length || (!Object.keys(delta.element ?? {}).length && !delta.palette?.length)) return
+  if (!missing.length) return
   const key = ledgerKey(doc)
+  const done = seen.get(key)
+  const assets = useAssetStore.getState().byId
   const map = pending.get(key) ?? new Map<string, StyleProfileData>()
-  for (const p of missing) map.set(figKey(p), mergeDelta(map.get(figKey(p)), delta))
-  pending.set(key, map)
+  for (const p of missing) {
+    const fresh =
+      !done?.has(figKey(p)) && (!p.overrides.length || isCopiedBakedBaseline(p.overrides, assets[p.fileId]))
+    const owed = fresh ? full : delta
+    if (!Object.keys(owed.element ?? {}).length && !owed.palette?.length) continue
+    map.set(figKey(p), mergeDelta(map.get(figKey(p)), owed))
+  }
+  if (map.size) pending.set(key, map)
 }
 
 /**
@@ -387,7 +401,7 @@ function bindNow(recordId: string | null): void {
     },
     plan,
   )
-  owe(docNow(), delta, missing)
+  owe(docNow(), delta, missing, delta)
   markSeen(docNow(), panelsOf(docNow()).map(figKey).filter((k) => !missing.includes(k)))
   markTextsSeen()
 }
@@ -498,7 +512,7 @@ export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
       plan,
       detachOnUndo,
     )
-    owe(docNow(), delta, missing)
+    owe(docNow(), delta, missing, presetDelta(null, data))
     // 改绑真的落进了发起的那张画布：记下转发，让同一个代次里排在后面的改动顺着落到新的那一条上。
     // 复制内置与「库里没有这一条、按快照新建」两条路都算（Codex #547 P1）
     if (copied) redirects.set(`${origin}|${binding.id}`, stored.id)
@@ -605,7 +619,7 @@ export function followLibrary(): boolean {
   // 渲染不了的图（渲染出错 / runtime 拿不到精确 manifest）不挡快照前进——挡的话一张坏图就让
   // 整张画布永远跟不上库——但它们欠着这一笔：记账，等它们哪天渲染成功时补上（Codex #547 P1）。
   // 不记的话它身上旧样式的 override 会让「新图」判据跳过它，它就永远停在旧样式上
-  owe(docNow(), delta, missing)
+  owe(docNow(), delta, missing, presetDelta(null, data))
   return true
 }
 
