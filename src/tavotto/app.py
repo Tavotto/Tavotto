@@ -1770,7 +1770,13 @@ def _publish_user_environment_adopted(project: str, entry: dict) -> None:
         target = Path(project)
     # 不拿 `_PROJECT_LOCK`：这里跑在起 worker 的门里，调用链上游可能正持有它。快照一份字典就够
     pids = [pid for pid, ctx in dict(PROJECTS).items() if Path(ctx.path).resolve() == target]
-    for pid in pids or [""]:
+    if not pids:
+        # 路径此刻不在 PROJECTS 里（刚关掉）：**不发**。以前以空 `pj` 群发，前端那道按项目挡事件的闸对
+        # 「没有 pj」一律放行，每个标签页都会冒出「已改用某环境」（#606 第 2 条）。改用本身已经记在那个
+        # 项目的设置里，重开时环境行照实显示；丢掉的只是一条临时提示
+        LOG.info("自动改用的通知没有对应的已打开项目，不发: %s", entry.get("id", ""))
+        return
+    for pid in pids:
         sse_publish(
             "engine.environment_adopted",
             {
@@ -3341,8 +3347,12 @@ def _native_session_event(session, entry: dict) -> None:
     """
     try:
         pj = _project_id(Path(session.project_root))
-    except (OSError, ValueError):  # 项目目录已经不在了：事件照发，pj 留空
-        pj = ""
+    except (OSError, ValueError):
+        # 项目目录已经不在了、算不出 pj：**不发**（#606 同形清扫）。空 `pj` 会越过前端按项目挡事件的闸，
+        # 落到每个标签页的 nativeSessionStore 上——到了屏障，每个标签页都会替这条会话发一次 build。
+        # 会话的真实状态照样在 `GET /api/native/sessions`，界面重连 / 重开时 `refresh()` 对账
+        LOG.info("native 会话事件算不出所属项目，不发: %s", getattr(session, "session_id", ""))
+        return
     sse_publish(
         "native.session",
         {"pj": pj, "session": session.public_state(), "event": entry},
@@ -6099,9 +6109,18 @@ def api_managed_environment_rebuild():
     # 然后异步去重建——那个窗口里一个已经形成的 plan 可以开始往这个解释器
     # 里 pip install，而它的 venv 正在被删；而且两边拿的还是不同的 key
     # （install 用解释器路径，重建当时用合成 key），根本不互斥。
+    body = request.get_json(silent=True) or {}
     engine_deprepair.reset_state(root)
-    engine_deprepair.rebuild_managed_async(root, lambda p: sse_publish("engine.dependency", p))
-    return jsonify({"started": True})
+    try:
+        # 进度 id 每次重建一个、由前端在发请求之前生成（#606 第 3 / 5 条）；没给就后端生成，回在响应里
+        progress_id = engine_deprepair.rebuild_managed_async(
+            root,
+            lambda p: sse_publish("engine.dependency", p),
+            progress_id=str(body.get("progress_id") or ""),
+        )
+    except engine_deprepair.RepairError as exc:
+        return jsonify({"error": str(exc), "code": exc.code}), 400
+    return jsonify({"started": True, "progress_id": progress_id})
 
 
 # ------------------------- 包管理（ADR 0038）---------------------------------

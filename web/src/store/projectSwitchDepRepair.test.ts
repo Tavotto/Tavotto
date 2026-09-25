@@ -27,6 +27,12 @@ import { useRenderStore } from './renderStore'
 const held = new Map<string, (body: unknown, status?: number) => void>()
 const holding = new Set<string>()
 const calls: { url: string; body: unknown }[] = []
+/** `GET /api/engine/dependency/state` 的回答（`'network'` = 连实况都问不到） */
+let stateAnswer: unknown = { state: 'idle', plan_id: '', log: '', error: null, code: '' }
+/** 重建的 POST 在网络层失败（后端可能已经起了） */
+let rebuildNetworkError = false
+/** 后端此刻的全局解释器（`GET /api/engine/environment` 回它） */
+let globalPython = '/p'
 
 const PLAN_A: DependencyRepairPlan = {
   plan_id: 'plan-a',
@@ -48,11 +54,16 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
       })
     }
   }
+  if (u.includes('/api/engine/dependency/state')) {
+    if (stateAnswer === 'network') throw new TypeError('Failed to fetch')
+    return respond(stateAnswer)
+  }
   if (u.includes('/api/engine/dependency/plan')) return respond({ plan: PLAN_A })
   if (u.includes('/api/engine/dependency/install'))
     return respond({ started: true, plan_id: 'plan-a', state: 'installing', log: '', error: null, code: '' })
+  if (u.includes('/managed/rebuild') && rebuildNetworkError) throw new TypeError('Failed to fetch')
   const body = u.includes('/api/engine/environment')
-    ? { ok: true, python: '/p', source: 'system', project: { open: true } }
+    ? { ok: true, python: globalPython, source: 'system', project: { open: true } }
     : u.includes('/api/projects/recent')
       ? { recent: [] }
       : u.includes('/api/projects/open')
@@ -62,6 +73,12 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
           : {}
   return respond(body)
 }) as typeof fetch
+
+/** 最近一次重建请求交上去的进度 id（前端在发请求之前生成的那个） */
+const lastRebuildId = (): string => {
+  const post = [...calls].reverse().find((c) => c.url.includes('/managed/rebuild'))
+  return (post?.body as { progress_id?: string } | null)?.progress_id ?? ''
+}
 
 const switchTo = (id: string) =>
   useProjectStore.getState().adoptOpenedProject({ id, path: `/${id}`, name: id, writable: true, open: true } as never)
@@ -103,6 +120,9 @@ const ENV_ORIGINAL = { ...useEnvStore.getState() }
 const RENDER_ORIGINAL = { ...useRenderStore.getState() }
 
 beforeEach(async () => {
+  stateAnswer = { state: 'idle', plan_id: '', log: '', error: null, code: '' }
+  rebuildNetworkError = false
+  globalPython = '/p'
   useEnvStore.setState({
     setProjectPython: ENV_ORIGINAL.setProjectPython,
     refresh: ENV_ORIGINAL.refresh,
@@ -116,7 +136,7 @@ beforeEach(async () => {
   calls.length = 0
   setCurrentProjectId('p1')
   // 上一个用例可能把作业收进了某个项目那格：先整份换干净，再回到 p1
-  useDepRepairStore.setState({ parked: {}, rebuildRunning: false })
+  useDepRepairStore.setState({ parked: {}, rebuilding: {} })
   useDepRepairStore.getState().reset()
   useEnvStore.setState({ dependencyPreparation: null })
 })
@@ -291,7 +311,7 @@ describe('换项目时的依赖修复状态（issue #590）', () => {
     await pending
     expect(useDepRepairStore.getState().progress).toBeNull()
     await switchTo('p1')
-    expect(useDepRepairStore.getState().progress?.plan_id).toBe('managed-rebuild')
+    expect(useDepRepairStore.getState().progress?.plan_id).toBe(lastRebuildId())
   })
 
   it('A 的「改用系统解释器」在途时切到 B：不重排 B 的渲染', async () => {
@@ -399,28 +419,39 @@ describe('写状态的那一侧按代际判（#605 评审 P1：envStore 的在�
   })
 })
 
-describe('重建跨项目单飞（#605 评审 P1）', () => {
+describe('重建：进度 id 每次一个，单飞只在同一项目里（#606 第 3 条）', () => {
   const rebuildPosts = () => calls.filter((c) => c.url.includes('/managed/rebuild')).length
 
-  it('A 的重建没结束：切到 B 起不了第二次，A 的进度仍归 A；终局之后才放开', async () => {
+  it('A 的重建没结束：A 起不了第二次，B 可以起自己的；两边的进度各归各的', async () => {
     await useDepRepairStore.getState().rebuildManaged()
+    const idA = lastRebuildId()
+    expect(idA).toMatch(/^[0-9a-f]{32}$/)
     expect(rebuildPosts()).toBe(1) // 尺子是活的：A 确实起了一次
+    await useDepRepairStore.getState().rebuildManaged()
+    expect(rebuildPosts()).toBe(1) // 同一项目单飞
+
     await switchTo('p2')
-    expect(useDepRepairStore.getState().rebuildRunning).toBe(true)
+    expect(useDepRepairStore.getState().rebuildRunningFor('p2')).toBe(false)
     await useDepRepairStore.getState().rebuildManaged()
-    expect(rebuildPosts()).toBe(1)
-
-    // A 的进度到了：B 上不显示、不在 B 上派发
-    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
-    useDepRepairStore.getState().onProgress(progress('installing', { plan_id: 'managed-rebuild' }))
-    expect(useDepRepairStore.getState().progress).toBeNull()
-    useDepRepairStore.getState().onProgress(progress('done', { plan_id: 'managed-rebuild' }))
-    expect(retry).not.toHaveBeenCalled()
-    expect(useDepRepairStore.getState().rebuildRunning).toBe(false)
-
-    // 放开之后 B 可以起自己的
-    await useDepRepairStore.getState().rebuildManaged()
+    const idB = lastRebuildId()
     expect(rebuildPosts()).toBe(2)
+    expect(idB).not.toBe(idA)
+
+    // A 的进度：B 上不显示、不在 B 上派发；B 的进度：落在 B 上
+    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
+    useDepRepairStore.getState().onProgress(progress('installing', { plan_id: idA }))
+    expect(useDepRepairStore.getState().progress?.plan_id).toBe(idB)
+    useDepRepairStore.getState().onProgress(progress('done', { plan_id: idA }))
+    expect(retry).not.toHaveBeenCalled()
+    expect(useDepRepairStore.getState().rebuildRunningFor('p1')).toBe(false) // A 的单飞放开
+    expect(useDepRepairStore.getState().rebuildRunningFor('p2')).toBe(true) // B 的不受影响
+    useDepRepairStore.getState().onProgress(progress('installing', { plan_id: idB }))
+    expect(useDepRepairStore.getState().progress?.state).toBe('installing')
+
+    // 切回 A：看到的是 A 自己的结局，不是 B 的进度
+    await switchTo('p1')
+    expect(useDepRepairStore.getState().progress?.plan_id).toBe(idA)
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
   })
 })
 
@@ -443,7 +474,7 @@ describe('A → B → A 之后才被拒（#605 评审 P2）', () => {
 
 describe('重建的所属与单飞在发请求之前落定（#605 评审第二轮 P1）', () => {
   const rebuild = (state: DependencyProgress['state'], over: Partial<DependencyProgress> = {}) =>
-    progress(state, { plan_id: 'managed-rebuild', ...over })
+    progress(state, { plan_id: lastRebuildId(), ...over })
 
   it('POST 回来之前进度就到了、而且立刻失败：结局留在卡片上，不被乐观的 creating_env 盖回去', async () => {
     const armed = holdOnce('/api/engine/environment/managed/rebuild')
@@ -452,8 +483,8 @@ describe('重建的所属与单飞在发请求之前落定（#605 评审第二�
     useDepRepairStore.getState().onProgress(rebuild('installing'))
     expect(useDepRepairStore.getState().progress?.state).toBe('installing') // 尺子是活的：早到的进度认得出是自己的
     useDepRepairStore.getState().onProgress(rebuild('failed', { code: 'managed_rebuild_failed', error: '建不起来' }))
-    expect(useDepRepairStore.getState().rebuildRunning).toBe(false)
-    release({ started: true, requirements: [] })
+    expect(useDepRepairStore.getState().rebuildRunningFor('p1')).toBe(false)
+    release({ started: true, progress_id: lastRebuildId() })
     await pending
     const s = useDepRepairStore.getState()
     expect(s.progress?.state).toBe('failed')
@@ -468,14 +499,16 @@ describe('重建的所属与单飞在发请求之前落定（#605 评审第二�
     release({ error: '忙', code: 'environment_mutating' }, 409)
     await pending
     let s = useDepRepairStore.getState()
-    expect(s.rebuildRunning).toBe(false)
+    const failedId = lastRebuildId()
+    expect(s.rebuildRunningFor('p1')).toBe(false)
     expect(s.progress).toBeNull()
     expect(s.errorCode).toBe('environment_mutating')
     useDepRepairStore.getState().onProgress(rebuild('installing'))
     expect(useDepRepairStore.getState().progress).toBeNull()
     await useDepRepairStore.getState().rebuildManaged()
     s = useDepRepairStore.getState()
-    expect(s.progress?.plan_id).toBe('managed-rebuild')
+    expect(s.progress?.plan_id).toBe(lastRebuildId())
+    expect(lastRebuildId()).not.toBe(failedId)
   })
 
   it('请求在切项目之后才失败：A 那格记成失败、单飞放开，B 不动', async () => {
@@ -485,10 +518,71 @@ describe('重建的所属与单飞在发请求之前落定（#605 评审第二�
     await switchTo('p2')
     release({ error: '忙', code: 'environment_mutating' }, 409)
     await pending
-    expect(useDepRepairStore.getState().rebuildRunning).toBe(false)
+    expect(useDepRepairStore.getState().rebuildRunningFor('p1')).toBe(false)
     expect(useDepRepairStore.getState().errorCode).toBe('')
     await switchTo('p1')
     expect(useDepRepairStore.getState().progress?.state).toBe('failed')
     expect(useDepRepairStore.getState().errorCode).toBe('environment_mutating')
+  })
+})
+
+describe('重建请求失败先问实况（#606 第 5 条）', () => {
+  it('POST 在网络层失败、后端其实在建：进度照样显示，本项目的重建按钮保持占用', async () => {
+    rebuildNetworkError = true
+    stateAnswer = 'pending-fill'
+    const pending = useDepRepairStore.getState().rebuildManaged()
+    const id = lastRebuildId()
+    stateAnswer = { plan_id: id, state: 'installing', log: 'Collecting lmfit', error: null, code: '' }
+    await pending
+    let s = useDepRepairStore.getState()
+    expect(calls.some((c) => c.url.includes(`/api/engine/dependency/state?plan_id=${id}`))).toBe(true)
+    expect(s.progress?.plan_id).toBe(id)
+    expect(s.progress?.state).toBe('installing')
+    expect(s.rebuildRunningFor('p1')).toBe(true)
+    expect(s.errorCode).toBe('')
+    expect(s.busy).toBe(false)
+    // 之后的 SSE 照常接着走，终局放开单飞
+    useDepRepairStore.getState().onProgress(progress('done', { plan_id: id }))
+    s = useDepRepairStore.getState()
+    expect(s.progress?.state).toBe('done')
+    expect(s.rebuildRunningFor('p1')).toBe(false)
+  })
+
+  it('对照：POST 失败、实况说没到过后端（idle）——当作没起来，报错并放开', async () => {
+    rebuildNetworkError = true
+    await useDepRepairStore.getState().rebuildManaged()
+    const s = useDepRepairStore.getState()
+    expect(calls.some((c) => c.url.includes('/api/engine/dependency/state'))).toBe(true)
+    expect(s.progress).toBeNull()
+    expect(s.rebuildRunningFor('p1')).toBe(false)
+    expect(s.errorText).not.toBe('')
+  })
+
+  it('POST 失败、实况已经是失败结局：结局与错误交出来，单飞放开', async () => {
+    rebuildNetworkError = true
+    const pending = useDepRepairStore.getState().rebuildManaged()
+    stateAnswer = { plan_id: lastRebuildId(), state: 'failed', log: '', error: '建不起来', code: 'managed_rebuild_failed' }
+    await pending
+    const s = useDepRepairStore.getState()
+    expect(s.progress?.state).toBe('failed')
+    expect(s.errorCode).toBe('managed_rebuild_failed')
+    expect(s.rebuildRunningFor('p1')).toBe(false)
+  })
+})
+
+describe('全局解释器改动在切项目之后才回来（#606 第 4 条）', () => {
+  it('B 按此刻重新问一次：显示新的全局解释器，不带 A 的 project', async () => {
+    const armed = holdOnce('/api/engine/environment')
+    const pending = useEnvStore.getState().setPython('/usr/bin/python3.12')
+    const release = await armed
+    await switchTo('p2')
+    await vi.waitFor(() => expect(useEnvStore.getState().env?.python).toBe('/p'))
+    // 尺子是活的：B 切换时那次 refresh 先回来了，此刻显示的还是旧的全局解释器
+    globalPython = '/usr/bin/python3.12' // 后端已经全局换了
+    release({ ok: true, python: '/usr/bin/python3.12', source: 'configured', project: A_PROJECT_ENV })
+    expect(await pending).toBeNull()
+    const env = useEnvStore.getState().env
+    expect(env?.python).toBe('/usr/bin/python3.12')
+    expect(JSON.stringify(env ?? {})).not.toContain('/envs/a')
   })
 })

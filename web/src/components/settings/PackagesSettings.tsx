@@ -310,8 +310,8 @@ function EnvironmentSection() {
   useTranslation('dialogs')
   const env = usePackageStore((s) => s.data?.environment)
   const capability = usePackageStore((s) => s.data?.capability)
-  // 重建跨项目单飞：别的项目的重建还没结束时这里同样起不了（`rebuildRunning`）
-  const rebuildBusy = useDepRepairStore((s) => s.busy || s.rebuildRunning)
+  // 本项目的重建还没结束时起不了第二次（别的项目的重建不挡这里，#606）
+  const rebuildBusy = useDepRepairStore((s) => s.busy || s.rebuildRunningFor(currentProjectId()))
   const rebuildManaged = useDepRepairStore((s) => s.rebuildManaged)
   if (!capability || capability.reason === 'no_project') return null
   const exists = !!env?.exists

@@ -903,28 +903,62 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     return result
 
 
-#: 重建受管环境时进度用的固定 id（它没有 plan——重建不装新东西，只是把
-#: 我们自己记过的那些装回去，用户点的就是「重建」本身）。
-REBUILD_PROGRESS_ID = "managed-rebuild"
+#: 重建受管环境的进度 id：**每次重建一个**（#606 第 3 条）。以前是固定的 `"managed-rebuild"`——SSE 不带项目，
+#: 两个项目各起一次重建，前端分不清进度是谁的，只好全局单飞；同一项目先后两次，轮询还会把上一次的终态当成这一次的。
+#: 它没有 plan（重建不装新东西，只是把我们记过的那些装回去），所以 id 由发起方给：前端在发请求**之前**生成
+#: （`web/src/store/depRepairStore.ts` 的 `newRebuildProgressId()`），SSE 早于 POST 响应到达也认得出；网络层失败时
+#: 还能拿同一个 id 去 `GET /api/engine/dependency/state` 问实况（#606 第 5 条）。格式是两侧的同源对：32 位小写十六进制。
+REBUILD_PROGRESS_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+#: 发起方给的 id 格式不对 / 已经被占用
+ERROR_PROGRESS_ID_INVALID = "invalid_progress_id"
 
 
-def rebuild_managed_async(project: str | Path, on_event=None) -> None:
+def new_rebuild_progress_id() -> str:
+    """发起方没给 id 时（MCP / 测试 / 老前端）由后端生成，格式与前端生成的相同。"""
+    return secrets.token_hex(16)
+
+
+def claim_rebuild_progress_id(raw: str | None) -> str:
+    """校验并占用一个重建进度 id：没给就生成；给了就必须是 32 位小写十六进制、且不与任何计划 / 进度 / 在跑的
+    作业同名（占用在锁里做，两次同 id 的请求只有一次拿得到）。不合格抛 `RepairError(invalid_progress_id)`。"""
+    pid = str(raw or "") or new_rebuild_progress_id()
+    if not REBUILD_PROGRESS_ID_RE.match(pid):
+        raise RepairError(ERROR_PROGRESS_ID_INVALID, "重建进度编号格式不对")
+    with _lock:
+        if pid in _progress or pid in _plans or pid in _cancels:
+            raise RepairError(ERROR_PROGRESS_ID_INVALID, "重建进度编号已经被占用")
+        # 先占一格：线程起来之前，`progress(pid)` 就回「在准备」，而不是 idle——网络层失败后前端来问实况时，
+        # 分得清「已经起了」与「根本没到后端」
+        _progress[pid] = {
+            "plan_id": pid,
+            "state": STATE_PREPARING,
+            "log": "",
+            "error": None,
+            "code": "",
+        }
+    return pid
+
+
+def rebuild_managed_async(project: str | Path, on_event=None, progress_id: str = "") -> str:
+    """异步重建；回这次重建的进度 id（`claim_rebuild_progress_id` 的规则）。"""
+    pid = claim_rebuild_progress_id(progress_id)
     threading.Thread(
-        target=lambda: _rebuild_guarded(project, on_event),
+        target=lambda: _rebuild_guarded(project, on_event, pid),
         daemon=True,
         name="tavotto-managed-rebuild",
     ).start()
+    return pid
 
 
-def _rebuild_guarded(project, on_event) -> dict:
+def _rebuild_guarded(project, on_event, progress_id: str) -> dict:
     try:
-        return rebuild_managed(project, on_event)
+        return rebuild_managed(project, on_event, progress_id=progress_id)
     except RepairError as exc:
-        return _emit(REBUILD_PROGRESS_ID, STATE_FAILED, on_event, code=exc.code, error=str(exc))
+        return _emit(progress_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
     except Exception as exc:  # noqa: BLE001
         LOG.exception("受管环境重建异常")
         return _emit(
-            REBUILD_PROGRESS_ID,
+            progress_id,
             STATE_FAILED,
             on_event,
             code=ERROR_MANAGED_CREATE_FAILED,
@@ -932,9 +966,9 @@ def _rebuild_guarded(project, on_event) -> dict:
         )
 
 
-def rebuild_managed(project: str | Path, on_event=None) -> dict:
+def rebuild_managed(project: str | Path, on_event=None, *, progress_id: str = "") -> dict:
     """重建受管环境：按账上记过的那些**建新的一代**，验完再切 active（U04 起不再删旧的
-    重来——旧代留到没人用）。
+    重来——旧代留到没人用）。`progress_id` 没给就现生成一个（同步调用方用回值里的 `progress_id`）。
 
     **读账与建代在同一把环境锁之内**（Codex 评审 P1 的形状）：锁是合成 key +
     active 那一代的解释器，install 那条路（同一把）被挡在外面。
@@ -944,12 +978,13 @@ def rebuild_managed(project: str | Path, on_event=None) -> dict:
     换一个别的版本装上——「重建完跟以前不一样」比「重建失败」难查得多。
     """
     root = str(Path(project))
+    pid = progress_id or new_rebuild_progress_id()
     cancel_ev = threading.Event()
     with _lock:
-        _cancels[REBUILD_PROGRESS_ID] = cancel_ev
+        _cancels[pid] = cancel_ev
     try:
         job = _GenerationJob(
-            progress_id=REBUILD_PROGRESS_ID,
+            progress_id=pid,
             project=root,
             script="",
             delta=(),
@@ -960,17 +995,18 @@ def rebuild_managed(project: str | Path, on_event=None) -> dict:
             record=(),
             reason=managedenv.REASON_MISSING_DEPENDENCY,
             identity="",
-            emit=lambda state, **kw: _emit(REBUILD_PROGRESS_ID, state, on_event, **kw),
-            on_log=lambda text: _append_log(REBUILD_PROGRESS_ID, text, on_event),
+            emit=lambda state, **kw: _emit(pid, state, on_event, **kw),
+            on_log=lambda text: _append_log(pid, text, on_event),
             label="rebuild",
         )
         outcome = _run_generation(job, cancel_ev)
         if outcome.get("ok"):
             outcome["restored"] = managedenv.installed_requirements(root)
+        outcome["progress_id"] = pid
         return outcome
     finally:
         with _lock:
-            _cancels.pop(REBUILD_PROGRESS_ID, None)
+            _cancels.pop(pid, None)
 
 
 def _finish_cancelled(plan: RepairPlan, on_event, python: str) -> dict:

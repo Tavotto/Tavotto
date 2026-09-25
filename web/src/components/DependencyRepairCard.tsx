@@ -8,6 +8,7 @@ import type {
   SystemInterpreterRejection,
 } from '@/lib/api'
 import { useRenderStore } from '@/store/renderStore'
+import { currentProjectId } from '@/lib/session'
 import { isRepairRunning, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -482,9 +483,9 @@ function Failure({ code, text }: { code: string; text: string }) {
 export function ManagedEnvironmentRow() {
   useTranslation('errors')
   const { env } = useEnvStore()
-  const { busy: repairBusy, rebuildRunning, rebuildManaged } = useDepRepairStore()
-  // 重建跨项目单飞：别的项目的重建还没结束时这里同样起不了
-  const busy = repairBusy || rebuildRunning
+  const { busy: repairBusy, rebuildRunningFor, rebuildManaged } = useDepRepairStore()
+  // 本项目的重建还没结束时起不了第二次（别的项目的重建不挡这里，#606）
+  const busy = repairBusy || rebuildRunningFor(currentProjectId())
   const managed = env?.project?.managed
   if (!env?.project?.open || !managed?.exists) return null
   return (

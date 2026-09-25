@@ -33,7 +33,8 @@
   一处，且在解析解释器之前**：`preparation.plan_for` 拍快照之前、`pool.acquire()` 查租约（`is_mutating`）之前
   （`pool.ENVIRONMENT_DECIDERS`，锁外）——`gate()` 只读；正被改动（`envlease`）的环境不采用（Codex #522 两条 P1）；显式全局选择 / 为本项目挑过的 /
   明确选回默认 / 项目 venv / 干净机器一个都不碰（判据唯一出处 `deprepair._auto_adopt_allowed`）。
-  公开载荷与 SSE **不带路径**（ADR 0053 §二），只带 `userenvs.env_id()`；采用走 `PATCH
+  公开载荷与 SSE **不带路径**（ADR 0053 §二），只带 `userenvs.env_id()`；SSE `engine.environment_adopted` 找不到已打开的项目时**不发**
+  （以前以空 `pj` 群发、落到每个标签页，#606）；采用走 `PATCH
   /api/engine/environment {scope: project, user_environment: id, script}`，后端用自己的发现结果换回路径，
   找不到报 `user_environment_gone`；换回来之后按此刻的计划重新量装没装齐（`deprepair.recheck_user_environment`，
   不读也不写体检缓存；量的是 `missing` + `satisfied` 全部，不是此刻解释器的差集），缺就 `user_environment_incomplete`、
@@ -114,6 +115,11 @@
   （清全局设置 + 重排失败的渲染），`env_override` 按 `variable` 点名要清哪个变量、
   然后重启。**不改优先级本身**——「项目显式 > 全局显式」是
   ADR 级的另一个问题。
+- **重建受管环境的进度 id 每次一个**（#606）：`REBUILD_PROGRESS_ID_RE`（32 位小写十六进制）由发起方在发请求之前生成、
+  `POST /api/engine/environment/managed/rebuild {progress_id}` 交上来（没给就后端生成），`claim_rebuild_progress_id()` 在锁里
+  校验 + 占用（格式不对 / 已被占用 → `invalid_progress_id`）并先记一格 `preparing`——前端 POST 在网络层失败时拿同一个 id 问
+  `GET /api/engine/dependency/state` 分得清「已经起了」与「没到后端」。以前固定 `managed-rebuild`，两个项目同时重建时进度分不清。
+  格式是前后端同源对（`tests/golden/rebuild_progress_id.json`）。
 - **pip exit 0 不等于修好了**：验证三层——import 那个包 / import matplotlib /
   **真起一次 worker 跑通 build**（`deprepair.worker_self_test`，argv 走
   `execspec.worker_argv` 那一份，不另拼）。
