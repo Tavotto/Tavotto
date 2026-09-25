@@ -10,6 +10,23 @@ import { expect, test } from './fixtures'
  *   STATE-07-B1  拖动中 ⌘= 改视图倍率：下一次 move 不跳位，之后逐帧跟着指针的增量走。
  */
 
+// 这里量的是「元素跟着指针的增量走、不跳位」。图内拖动吸附（#575）会有意把落点拽到别的
+// 元素的对齐线上，而它的容差按屏幕像素折成 mm、随倍率变——STATE-07 改倍率之后吸上 /
+// 脱开会跳 6–9 px，与这把尺子正交（2026-09-26 rebase 到含 #575 的 main 后实测；关掉吸附
+// 即绿）。吸附自己的行为由 #575 的用例看护，所以本文件与 fake-realtime.spec.ts 一样，
+// 一律在关掉吸附的画布上量（与用户在画布设置里关掉「吸附」同一个偏好键）。
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      const key = 'tavotto.ui'
+      const saved = JSON.parse(localStorage.getItem(key) || '{}')
+      localStorage.setItem(key, JSON.stringify({ ...saved, prefsVersion: 2, snapEnabled: false }))
+    } catch {
+      /* 存储不可用时照常跑：吸附只在碰到对齐线时才介入 */
+    }
+  })
+})
+
 type Probe = { x: number; y: number; tf: string | null }
 type Opened = Probe & { pid: string }
 
