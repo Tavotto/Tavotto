@@ -37,6 +37,9 @@
   `COUPLED_PROPS` 登记的实测连带（`spine_linewidth` → 四边线宽、`linewidth` → 跟随源
   的图例示意线）；新增一类修复前先在真实渲染里看它连带改了什么再登记。「收不收这
   一轮局部修复」只有 `normalize.better_candidate()` 一处（bridge 与桌面共用）。
+  **只有每一次渲染都干净的事务才算回滚成功**：任何一次带 warning 或抛了，热 worker
+  一律作废（`app._retire_hot_worker` → `pool.invalidate`），响应带 `worker_retired`——
+  恢复失败的键已被 `apply()` 摘出记账，留着它的 worker 永远重放不回去。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
   `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处）：
   图幅 size_mm → 色条方向 → 色条 extend → 子图 position → 刻度类型

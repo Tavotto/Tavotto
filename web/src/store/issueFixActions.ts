@@ -212,7 +212,7 @@ async function runLocked(
    * 在两轮之间抢先落下，回滚随后又把 worker 盖回旧列表（Codex #549 第五轮 P1）。回来之后
    * 对这些面板照样对一次账。`sent: null` = 结果不确定（请求抛了：回程断线、成功体形状不对……）
    * ——服务端可能已经通过、worker 与 SVG 停在候选上，文档却还是 B0（Codex #549 第六轮 P1），
-   * 所以不比列表、一律重放。
+   * 所以不比列表、一律重放；后端说 worker 已作废（`worker_retired`）的也一样（第七轮 P1）。
    */
   const touched: { id: string; sent: string | null }[] = []
   if (byPanel.size && engineTransport()) {
@@ -228,6 +228,7 @@ async function runLocked(
       continue
     }
     let res: SpecFixResponse
+    let out: ReturnType<typeof settle>
     try {
       res = await engineSpecfix(
         panel.fileId,
@@ -236,13 +237,19 @@ async function runLocked(
         profile,
         list.map((i) => ({ rule: i.ruleCode, gid: i.objectRef.gid ?? '' })),
       )
+      // 读响应也在 catch 之内（Codex #549 第七轮 P1）：api 层验过形状，这里是第二道——
+      // 读到一半炸了的响应同样是「不知道」，要走下面的重放，不许把整轮修复抛出去
+      out = settle(res, list)
     } catch {
       addFailure(failed, 'engine_failed', list.length)
       touched.push({ id, sent: null })
       continue
     }
-    const out = settle(res, list)
-    if (!(res.ok && out.applied > 0)) touched.push({ id, sent: same(panel.overrides) })
+    // 后端作废了 worker（事务里有一次渲染不干净）：它的热态不是发出去的那份，没提交的
+    // 一律按此刻的列表重放，与结果不确定同一条路
+    if (!(res.ok && out.applied > 0)) {
+      touched.push({ id, sent: res.worker_retired ? null : same(panel.overrides) })
+    }
     for (const f of out.failed) addFailure(failed, f.reason, f.count, fontOf(profile))
     if (res.ok && out.applied > 0) {
       next.set(id, { overrides: res.patches.map((p) => ({ ...p })), applied: out.applied })

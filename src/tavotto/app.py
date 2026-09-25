@@ -3702,7 +3702,11 @@ def api_engine_specfix():
     字体那几条单独退出（`font_unavailable`），其余照常修。
 
     这个端点**只算不写**：不碰文档、不落盘、不写回源文件；worker 的热态在事务
-    结束时要么是 B0，要么正是回给前端的那份列表（前端 commit 后照常重渲染一次）。
+    结束时要么是 B0，要么正是回给前端的那份列表（前端 commit 后照常重渲染一次），
+    要么**已经作废**（`worker_retired: true`）：只有「每一次渲染都干净」的事务才算
+    回滚成功——任何一次渲染带 warning（`overrides.apply()` 已把恢复失败的键从记账里
+    摘掉，之后的整份重放不再重试它）或抛异常，热态就不可信，一律作废，下一次请求重新
+    起、按全量列表重放（Codex #549 第七轮 P1）。
     """
     body = request.get_json(force=True) or {}
     rel_id = body.get("id", "")
@@ -3732,21 +3736,52 @@ def api_engine_specfix():
         return jsonify({"error": "only 必须是 [{rule, gid}] 列表", "code": "invalid_only"}), 400
 
     worker, stem = _engine_worker(rel_id)
-    state = {"worker": worker, "stem": stem}
+    # `clean`：这次事务里的每一次渲染都没有 warning、没有抛——只有这样，事务结束时
+    # 的热态才是它声称的那一份（B0 或回给前端的列表）。判据收在这一个闭包里，而不是
+    # 逐个回滚点各查各的：回滚点有好几处，漏一处就是一个永久被污染的 worker
+    state = {"worker": worker, "stem": stem, "clean": True}
 
     def render(patches: list) -> dict:
-        wk, st, resp = _engine_attempt(
-            rel_id, state["worker"], state["stem"], lambda w, s: w.override(s, patches, None)
-        )
+        try:
+            wk, st, resp = _engine_attempt(
+                rel_id, state["worker"], state["stem"], lambda w, s: w.override(s, patches, None)
+            )
+        except BaseException:
+            state["clean"] = False
+            raise
         state["worker"], state["stem"] = wk, st
+        if resp.get("warnings"):
+            state["clean"] = False
         return resp
 
     try:
-        return jsonify(_specfix_transaction(render, base, scale, profile, only))
+        out = _specfix_transaction(render, base, scale, profile, only)
     except engine_pool.WorkerError as exc:
         LOG.error("按规范修图失败: %s: %s", stem, exc)
-        # 渲染半路死了：worker 的热态未知，下一次 render 会按全量列表重放，不在这里补
+        # 渲染半路死了（含回滚那一次）：热态未知，作废，下一次请求重新起、按全量列表重放
+        _retire_hot_worker(state["worker"])
         return jsonify(_worker_error_payload(exc)), 500
+    except BaseException:
+        # 事务本体自己出错时 worker 可能正停在候选上：同样不可信
+        _retire_hot_worker(state["worker"])
+        raise
+    out["worker_retired"] = not state["clean"] and _retire_hot_worker(state["worker"])
+    return jsonify(out)
+
+
+def _retire_hot_worker(worker) -> bool:
+    """作废一条热态不可信的会话；回「真的作废了没有」。
+
+    用的是「重新构建」与脚本变更**同一个原语**（`pool.invalidate`）：只让会话过期、
+    不在这里起 worker，下一次请求按全量列表冷重放。native 会话是用户自己终端里的进程
+    （ADR 0021），与 `/api/engine/invalidate` 一样不杀，回 False。
+    """
+    if engine_enginesession.is_native(worker):
+        LOG.warning("按规范修图后热态不可信，但 native 会话不作废: %s", worker)
+        return False
+    engine_pool.invalidate(worker.script_name, worker.figures_dir)
+    LOG.warning("按规范修图后热态不可信，作废会话: %s", worker.script_name)
+    return True
 
 
 def _specfix_transaction(render, base: list, scale: float, profile: dict, only) -> dict:

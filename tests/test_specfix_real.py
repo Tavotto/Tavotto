@@ -488,3 +488,119 @@ def test_baseline_replay_with_warnings_aborts_before_any_candidate(render):
     assert res["exit"] == "unsupported"
     assert res["patches"] == base
     assert calls == [base]
+
+
+# ---- 只有「一次干净、明确的拒绝」才算回滚成功（Codex #549 第七轮 P1） ----
+#
+# 回滚渲染（或事务里任何一次渲染）带 warning / 抛异常时，`overrides.apply()` 已经把
+# 恢复失败的那个键从记账里摘掉——之后的整份重放不再重试它，热 worker 永久停在被污染的
+# 状态上，而文档停在 B0。这种时候 worker 一律作废（`pool.invalidate`，与「重新构建」
+# 同一个原语），下一次请求重新起、按全量列表重放；响应带 `worker_retired: true`，前端
+# 据此按此刻的列表重放一次。下面几条走真端点，worker 换成转给真 worker 的替身，好在
+# 指定的那一次渲染上注入 warning / 异常。
+
+
+def _post_specfix(monkeypatch, override, base, profile):
+    """走 `/api/engine/specfix`，渲染交给 `override(patches)`；回 (响应, 作废记录)。"""
+
+    class _Worker:
+        script_name = "fig.py"
+        figures_dir = "/specfix-test-figures"
+
+        def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+            return override(patches)
+
+    retired: list[tuple] = []
+    monkeypatch.setattr(m, "_engine_worker", lambda rel_id: (_Worker(), "Kin"))
+    monkeypatch.setattr(
+        m.engine_pool, "invalidate", lambda script, root=None: retired.append((script, root))
+    )
+    m.app.config["TESTING"] = True
+    resp = m.app.test_client().post(
+        "/api/engine/specfix",
+        json={"id": "Kin.pdf", "patches": base, "scale": 1.0, "profile": profile},
+    )
+    return resp, retired
+
+
+def _reject_every_candidate(monkeypatch):
+    """把刻度字号「修」到 40 pt：新增 warn，裁决必挡——事务一定走回滚那条路。"""
+    real_plan = specfix.plan
+
+    def bad_plan(manifest, prof, *, scale, targets):
+        out = real_plan(manifest, prof, scale=scale, targets=targets)
+        ticks = [el["gid"] for el in manifest["elements"] if el.get("role") == "ticks"]
+        out["patches"] = [p for p in out["patches"] if p["prop"] != "fontsize"] + [
+            {"gid": g, "prop": "fontsize", "value": 40} for g in ticks
+        ]
+        return out
+
+    monkeypatch.setattr(specfix, "plan", bad_plan)
+
+
+BASE = [{"gid": "figure", "prop": "facecolor", "value": "#ffffff"}]
+
+
+def test_clean_rejection_keeps_the_worker(render, monkeypatch):
+    """对照组：拒绝得干干净净（每次渲染都没有 warning）——worker 回到 B0，照常复用。"""
+    _reject_every_candidate(monkeypatch)
+    resp, retired = _post_specfix(monkeypatch, render, BASE, _profile())
+    body = resp.get_json()
+    assert resp.status_code == 200 and not body["ok"]
+    assert body["patches"] == BASE and render.calls[-1] == BASE
+    assert body["worker_retired"] is False
+    assert retired == []
+
+
+def test_rollback_with_warnings_retires_the_worker(render, monkeypatch):
+    """Codex #549 第七轮 P1：候选被拒后回滚到 B0 的那次渲染带 warning——worker 作废。"""
+    _reject_every_candidate(monkeypatch)
+    seen: list[list] = []
+
+    def warn_on_rollback(patches):
+        seen.append(list(patches))
+        resp = render(patches)
+        # 第一次是 B0、第二次是候选，之后回到 B0 的那一次就是回滚
+        if len(seen) > 2 and patches == BASE:
+            resp = {**resp, "warnings": ["还原失败 axes_0.xticks.fontsize（模拟）"]}
+        return resp
+
+    resp, retired = _post_specfix(monkeypatch, warn_on_rollback, BASE, _profile())
+    body = resp.get_json()
+    assert len(seen) >= 3 and seen[-1] == BASE, seen
+    assert resp.status_code == 200 and not body["ok"]
+    assert body["patches"] == BASE
+    assert body["worker_retired"] is True
+    assert retired == [("fig.py", "/specfix-test-figures")]
+
+
+def test_rollback_that_raises_retires_the_worker(render, monkeypatch):
+    """回滚那次渲染自己抛了：热态未知，同样作废，再照常回 500。"""
+    _reject_every_candidate(monkeypatch)
+    seen: list[list] = []
+
+    def die_on_rollback(patches):
+        seen.append(list(patches))
+        if len(seen) > 2:
+            raise engine_pool.WorkerError("回滚半路死了（模拟）")
+        return render(patches)
+
+    resp, retired = _post_specfix(monkeypatch, die_on_rollback, BASE, _profile())
+    assert resp.status_code == 500
+    assert retired == [("fig.py", "/specfix-test-figures")]
+
+
+def test_baseline_with_warnings_retires_the_worker(render, monkeypatch):
+    """B0 那一遍重放就带 warning：热 worker 早已表示不了 B0，退出之外还要作废它。"""
+    seen: list[list] = []
+
+    def warn_on_base(patches):
+        seen.append(list(patches))
+        return {**render(patches), "warnings": ["上一份 override 恢复不回来（模拟）"]}
+
+    resp, retired = _post_specfix(monkeypatch, warn_on_base, BASE, _profile())
+    body = resp.get_json()
+    assert seen == [BASE]
+    assert not body["ok"] and body["exit"] == "unsupported"
+    assert body["worker_retired"] is True
+    assert retired == [("fig.py", "/specfix-test-figures")]

@@ -379,6 +379,34 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     )
   })
 
+  it('成功体缺了下游要读的字段（skipped）：不抛出去，按结果不确定处理并重放', async () => {
+    // api 层会先拦下这种形状；这里绕过它，盯的是消费侧自己也不许在 catch 之外读空字段
+    const base = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 14.75 }]
+    await seed([panel({ overrides: base })])
+    const { skipped: _, ...noSkipped } = refused('constraint_conflict')
+    engineSpecfix.mockResolvedValue(noSkipped)
+    engineRender.mockClear()
+    const res = await applyIssueFix(floorIssue())
+    expect(res).toMatchObject({ ok: false, reason: 'engine_failed' })
+    expect(overridesOf()).toEqual(base)
+    expect(engineRender.mock.calls.some((c) => JSON.stringify(c[1]) === JSON.stringify(base))).toBe(
+      true,
+    )
+  })
+
+  it('后端拒绝但说 worker 已作废（回滚不干净）：文档不改，按此刻的列表重放', async () => {
+    const base = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 15.25 }]
+    await seed([panel({ overrides: base })])
+    engineSpecfix.mockResolvedValue({ ...refused('constraint_conflict'), worker_retired: true })
+    engineRender.mockClear()
+    const res = await applyIssueFix(floorIssue())
+    expect(res).toMatchObject({ ok: false, reason: 'would_worsen' })
+    expect(overridesOf()).toEqual(base)
+    expect(engineRender.mock.calls.some((c) => JSON.stringify(c[1]) === JSON.stringify(base))).toBe(
+      true,
+    )
+  })
+
   it('结果不确定、等待期间换了文档：不拿旧文档的面板去新文档里重放', async () => {
     await seed()
     let reject: (e: Error) => void = () => {}

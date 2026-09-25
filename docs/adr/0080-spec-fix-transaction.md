@@ -32,6 +32,8 @@
 | 装不下 | 新增 / 加重的裁切或文字压进别的子图时，用 ADR 0051 的外边距重排（`adapt_margins`）最多三轮；「收不收这一轮」只有 `normalize.better_candidate()` 一处 |
 | 字体没装 | 字体那几条单独退出（`font_unavailable`，报出规范要的字体名），其余照修 |
 | 不通过 | worker 回到 B0，回 `ok: false` 与原列表；前端**文档零改动**，原因走闭集 `FixFailureReason` |
+| 回滚干不干净 | 只有**事务里每一次渲染都没有 warning、没有抛**才算回滚成功（判据收在端点的 `render` 闭包一处，不逐个回滚点各查各的）。否则——B0 重放、候选、外边距那一轮、任何一次回滚带 warning（`overrides.apply()` 已把恢复失败的键从记账里摘掉，之后的整份重放不再重试它），或渲染 / 事务本体抛了——热 worker 一律作废（`app._retire_hot_worker` → `pool.invalidate`，与「重新构建」同一个原语；native 会话不杀，同 `/api/engine/invalidate`），下一次请求重新起、按全量列表重放；200 响应带 `worker_retired: true`（干净时 `false`）。前端没提交结果时按此刻的列表重放，与结果不确定同一条路 |
+| 结果不确定 | 请求抛了（回程断线、非 2xx）、或成功体里**任何一个下游要读的字段**形状不对（`ok` / `exit` / `patches` 每一项的 `{gid, prop, value}` / `skipped` 每一项的 `{rule, gid, reason}` / `worker_retired`，校验在 `api.engineSpecfix` 一处）：文档不改、按此刻的列表重放 worker；读响应（`settle()`）也在同一个 catch 里，读到一半炸了同样算不确定 |
 | 通过 | 回这张图**最终的全量 override 列表**；前端所有面板都回来之后**一次 commit**（⌘Z 一次撤回） |
 | 等待期间文档被改过 | 丢弃结果（override 列表或 `loadSeq` 对不上），报 `stale`；同一时刻只跑一轮（`busy`） |
 | 「全部处理」的集合 | `batchable()` 唯一出处：本画布、`safe_auto`、**不含建议档**；组头的「全部修复」是点名那一组，带 `includeSuggestions`；逐条的「修复」照修建议档 |
@@ -66,5 +68,5 @@
 点名未处理逐条报出、端点入参校验）、`tests/test_specfix.py`（合成 manifest 上的计划：
 缩放换算与取整方向、层级补齐、图例区间交集、空区间不硬修、等距取细、批量集合、
 逐 gid 展开、同源对）、`web/src/lib/issueFix.test.ts`（发出去的是什么、通过才写且只
-写一次、五种退出码 → 原因、抛错 / 缺字体 / 过期 / busy / 无后端、批量集合、画布层）、
+写一次、五种退出码 → 原因、抛错 / 缺字体 / 过期 / busy / 无后端、批量集合、画布层、缺字段与 `worker_retired` 走重放）、`web/src/lib/specfixResponse.test.ts`（成功体逐字段校验）、`tests/test_specfix_real.py` 的端点四条（干净拒绝不作废 / 回滚带 warning、回滚抛、B0 带 warning 都作废）、
 `web/src/components/left/problemPanel.test.tsx`（修复在跑时置灰）。
