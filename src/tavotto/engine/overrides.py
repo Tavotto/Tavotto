@@ -139,6 +139,10 @@ class FigState:
         # 登记时），不随 override 变：label 本身就是可编辑的 prop，改过之后再采，
         # 采到的是用户的编辑而不是脚本里的那个对象。没有身份的元素不在表里。
         self.identity: dict[str, str] = {}
+        # (gid, prop) -> 这条已应用 override 带来的目标身份（ADR 0083）。`applied` 只存值；
+        # 会话快照（`FigSession.snapshot`）要把身份一起交出去——native 屏障离开时存的就是
+        # 那份快照，下一个屏障 rebase 重放它，丢了身份就又按位置落到别的对象上。
+        self.applied_identity: dict[tuple, str] = {}
 
     def index_ids(self) -> set[int]:
         """已登记 artist 的 `id()` 集合（伪元素也在，它们不是真 artist 但不碍事）。"""
@@ -3679,12 +3683,21 @@ def snapshot(state: FigState) -> list[dict]:
     还原失败、欠着账的键（`state.unrestored`）不算：用户已经把它撤了，它留在 applied
     里只是为了下一次 apply 重试还原。把它算进来的话，状态中立的预览在收尾时会把它
     **重新应用**回去，屏障离开时保存的列表也会把它带进下一次 rebase 的重放。
+
+    带着目标身份（ADR 0083，`state.applied_identity`）：native 屏障离开时存的正是这份快照，
+    下一个屏障 rebase 按它重放——只存 gid / prop / value 的话，脚本在两个屏障之间删 / 插 /
+    重排带 label 的对象，编辑又会按位置静默落到别的对象上（#602 评审 P1）。
     """
-    return [
-        {"gid": g, "prop": p, "value": v}
-        for (g, p), v in state.applied.items()
-        if (g, p) not in state.unrestored
-    ]
+    out: list[dict] = []
+    for key, v in state.applied.items():
+        if key in state.unrestored:
+            continue
+        entry = {"gid": key[0], "prop": key[1], "value": v}
+        ident = state.applied_identity.get(key)
+        if ident is not None:
+            entry["identity"] = ident
+        out.append(entry)
+    return out
 
 
 def apply(state: FigState, patches: list[dict]) -> list[str]:
@@ -3717,6 +3730,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     # 跨图同步这类有意按位置映射的）照旧按位置匹配。last-wins 与 patchspec 同语义：
     # 同一 (gid, prop) 以最后一条为准，最后一条被拒就是整个 key 不应用。
     refused: dict[tuple, None] = {}
+    carried: dict[tuple, str] = {}
     for p in patches:
         key = (str(p["gid"]), str(p["prop"]))
         want = p.get("identity")
@@ -3734,6 +3748,10 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
             continue
         refused.pop(key, None)
         new[key] = p["value"]
+        if isinstance(want, str):
+            carried[key] = want
+        else:
+            carried.pop(key, None)
     for gid, prop in refused:
         warnings.append(f"编辑的对象已找不到（脚本结构可能已改动，未应用）: {gid}.{prop}")
 
@@ -4008,6 +4026,8 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     finally:
         # 下一次 apply 绝不能拿着上一批的 patch 表去算落位
         state.pending = {}
+        # 已应用的那些 key 各自带来的身份（快照原样交出去，见 FigState.applied_identity）
+        state.applied_identity = {k: v for k, v in carried.items() if k in state.applied}
 
     # 图例项跟随源对象（派生显示，不进 applied）。放在整轮之后：源对象的
     # 改动与还原都已落定，此刻派生出来的才是「这一次改完之后」的样子。

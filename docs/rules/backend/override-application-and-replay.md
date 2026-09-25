@@ -133,7 +133,9 @@
   `l1:` + 16 位十六进制，不取类型 / 数据 / 父 axes / 文字内容（取舍表见 ADR）；在
   **baseline 那一刻**由 `manifest._register` 采进 `FigState.identity`（`instrument` 清表重采，
   label 是可编辑 prop，编辑之后再采就采成了用户的编辑），manifest 元素发 `identity`。
-  看护 `tests/test_override_identity.py`。
+  已应用条目带来的身份记在 `FigState.applied_identity`，`FigSession.snapshot()` 原样交出——native
+  屏障离开时存的就是这份快照，丢了身份，下一个屏障 rebase 又按位置落到别的对象上（#602 评审）。
+  看护 `tests/test_override_identity.py`、`tests/native/test_native_barrier_semantics.py::test_target_identity_survives_the_barrier_snapshot`。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。
 

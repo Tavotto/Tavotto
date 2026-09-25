@@ -34,6 +34,11 @@ gid 仍是位置式的、仍是唯一寻址方式（存量文档、别名、跨�
 - 带了但不是非空字符串 → 同样不应用（不许退回按位置匹配，那正是要堵的路）；
 - 非空但方案前缀不认识 → 不核对（给以后换方案留余地；老构建本来就不核对）。
 
+会话快照同样带着身份：已应用条目的身份记在 `FigState.applied_identity`，`FigSession.snapshot()`
+原样交出。native 屏障（`tavotto run`）离开时存的就是这份快照、下一个屏障 rebase 按它重放——
+只存 gid / prop / value 的话，脚本在两个屏障之间删 / 插 / 重排带 label 的对象，编辑又按位置
+落到别的对象上（#602 评审 P1）。
+
 写回不用另加任何东西：verify 的一次性 worker 按同一组 patches 从零重放，被拒的那条是一条
 worker warning，按写回事务的既有规矩**一条即阻断**（409 `write_back_warnings`），原件零改动。
 
