@@ -23,7 +23,7 @@
       "given": "tavotto_health 回 desktop_only（只装了桌面版）",
       "expect": "桌面交接照常可用；不说「没装 Tavotto」；只有用户要内嵌工具才 provision",
       "anchors": [
-        {"doc": "codex-plugin/skills/tavotto-figure/SKILL.md", "must": ["不要说「没有安装 Tavotto」", "只有用户需要 Codex 内嵌画布/MCP 工具时"]},
+        {"doc": "codex-plugin/skills/tavotto-figure/SKILL.md", "must": ["不要说「没有安装 Tavotto」", "只有用户需要宿主内嵌画布/MCP 工具时"]},
         {"doc": "codex-plugin/skills/tavotto-figure/references/first-run-and-recovery.md", "must": ["桌面交接（`scripts/handoff.py`）此刻就能用", "--provision"]}
       ]
     },

@@ -60,5 +60,43 @@
       "en": "No desktop installer. Browser mode from PyPI: `pipx install \"tavotto[worker]\"`, then `tavotto` opens the editor in your browser.",
       "note": "无桌面安装包，不写 desktop support；CI 的 backend/package 矩阵在 Linux 上最全，但没有发行安装物验收。"
     }
-  ]
+  ],
+  "mcp_hosts": {
+    "note": "非 Codex 本地 MCP 宿主的支持口径（2026-09-24）。这里是**口径**的唯一出处，证据在 docs/implementation/multi-host-mcp/acceptance.md；tests/test_mcp_host_profiles.py 对拍三处：本表 id == configure.py 的 HOST_IDS == 验收矩阵的行。status 只有两档：experimental = 配置生成已通过独立期望测试、真实客户端未验收（协议级覆盖逐行见验收矩阵，DSH 目前没有）；verified = 验收矩阵里该行至少一项 host_verified 且附证据。没有 verified 之前，README / 网站不得写「支持」某宿主，只能写「可接入（实验）」。",
+    "channel": "GitHub Release 的完整包 codex-plugin-<版本>.zip + integrations/configure.py 生成配置",
+    "hosts": [
+      {
+        "id": "cursor",
+        "status": "experimental"
+      },
+      {
+        "id": "zcode",
+        "status": "experimental"
+      },
+      {
+        "id": "dsh",
+        "status": "experimental"
+      },
+      {
+        "id": "workbuddy",
+        "status": "experimental"
+      },
+      {
+        "id": "claude-code",
+        "status": "experimental"
+      },
+      {
+        "id": "claude-desktop",
+        "status": "experimental"
+      },
+      {
+        "id": "trae",
+        "status": "experimental"
+      },
+      {
+        "id": "vscode",
+        "status": "experimental"
+      }
+    ]
+  }
 }

@@ -374,6 +374,34 @@ Send Codex this message, in full:
 > plugin and the Tavotto engine it needs, then run the health check; when a new
 > session is required, tell me so explicitly and stop.
 
+### Using Tavotto from other AI editors and clients (experimental)
+
+Cursor, Claude Code, Claude Desktop (local chat), VS Code (GitHub Copilot agent), Trae, DeepSeek Harness,
+WorkBuddy and ZCode use **the same** MCP server and skill as Codex. You don't need Codex, a clone of this repository,
+or a frontend build. Status: **experimental**. Config generation passes its tests and every host except DSH has
+protocol-level tests, but none of these clients has been verified hands-on yet (the claim lives in `mcp_hosts` in `docs/support-matrix.json`; the evidence
+is in `docs/implementation/multi-host-mcp/acceptance.md`).
+
+1. Download `codex-plugin-<version>.zip` from [Releases](https://github.com/Tavotto/Tavotto/releases) and unzip it into
+   a folder you will keep. The name says codex for historical reasons; the contents are the same for every host.
+2. Engine: skip this if you already ran `pipx install "tavotto[worker]"`. With only the desktop app, or nothing
+   installed, run `python3 <package>/mcp/server.py --provision` once. It creates a separate environment in Tavotto's
+   config folder and leaves your system Python alone.
+3. Generate the config. The generator **only prints; it writes no files**:
+
+   ```sh
+   python3 <package>/integrations/configure.py --host vscode --project-root /absolute/path/to/project
+   ```
+
+   `--host` is one of `cursor` `zcode` `dsh` `workbuddy` `claude-code` `claude-desktop` `trae` `vscode`. The config to
+   merge goes to stdout. stderr says which file or settings screen to merge it into, which folder is authorized,
+   whether the engine is ready, how to confirm the host loaded it, and where to put the skill.
+4. In a chat, call `tavotto_health` and check that `server.package_dir` is the folder you just unzipped.
+
+Only the `--project-root` folder is authorized; your whole home folder or a drive root is refused. To upgrade, unzip
+the new version into a new folder and regenerate the config. To roll back, point the config at the old folder again.
+Per-host sources and differences are in `docs/implementation/multi-host-mcp/hosts.md`.
+
 ### Desktop
 
 Download from the [latest release](https://github.com/Tavotto/Tavotto/releases/latest):
