@@ -82,7 +82,8 @@ APT_PACKAGES=(
     # 是机器残缺：同一份代码在 GitHub 的 ubuntu runner 上通过。装它对既有渲染
     # 无影响——两份 DejaVuSans.ttf 字形一致。见 issue #229。
     fonts-dejavu-extra
-    flock                     # 服务端互斥（GitHub concurrency 之外的第二道保险）
+    util-linux                # 提供 flock(1)：服务端互斥（GitHub concurrency 之外的第二道保险）。
+                              # noble 没有名为 flock 的包——写 flock 会让整条 apt-get 失败（#482）
 )
 
 check_cmd() {
