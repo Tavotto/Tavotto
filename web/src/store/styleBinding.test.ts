@@ -34,7 +34,15 @@ import {
 } from './styleBinding'
 import { useUiStore } from './uiStore'
 
-globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
+// 渲染请求**永远不回来**（中止时才落定）：这里的 manifest 一律由用例自己挂（`seedExactRender`）。
+// 回一个空的 `{}` 的话，那次渲染会以「就绪、没有 manifest」落地，把用例刚挂好的精确 manifest 冲掉——
+// 冲在哪一步由 Node 版本的微任务时序决定：Node 26 上碰巧绿，CI 的 Node 22 上红（#547 CI）
+globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+  String(input).includes('/api/engine/render')
+    ? new Promise<Response>((_, reject) =>
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))),
+      )
+    : Promise.resolve(new Response('{}', { status: 200 }))) as typeof fetch
 
 const s = () => useDocumentStore.getState()
 const panelById = (id: string) => s().doc.objects.find((o) => o.id === id) as PanelObject
@@ -596,8 +604,15 @@ describe('Codex #547 第二轮评审：库写入一条队列 + 代次', () => {
     release()
     expect(await edit).toBe(false)
     expect(s().loadSeq).toBe(seq)
+    // 旧编辑没有写进新载入的那一份：历史里没有「修改样式」
+    expect(s().past.map((e) => e.label)).not.toContainEqual(expect.objectContaining({ key: 'history.editStyle' }))
+    // 库已经存了：重载进来的那一份由 `followLibrary` 按内容不等跟上，单独一条「按样式更新」
+    // （ADR 0081 §十一第 2 条）；撤销它 = 画布回到载入时的样子
+    expect(s().past).toHaveLength(1)
+    expect(s().past.at(-1)?.label).toMatchObject({ key: 'history.syncStyle' })
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(12)
+    s().undo()
     expect(ov('a', 'axes_0.xlabel', 'fontsize'), '重载进来的那一份原样').toBe(10)
-    expect(s().past).toHaveLength(0)
   })
 
   it('P2 换绑定时欠账作废：A 的欠账不会在画布跟随 B 之后写下去', async () => {
