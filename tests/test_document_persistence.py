@@ -990,7 +990,9 @@ def test_pid_alive_tells_a_finished_process_from_this_one():
     import sys
 
     proc = subprocess.run(
-        [sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True
+        [sys.executable, "-c", "import os; print(os.getpid())"],
+        capture_output=True,
+        encoding="utf-8",
     )
     assert atomicio._pid_alive(os.getpid()) is True
     assert atomicio._pid_alive(int(proc.stdout)) is False
