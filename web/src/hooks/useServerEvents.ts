@@ -93,13 +93,18 @@ export function handleServerEvent(ev: ServerEvent) {
             { name: short(ev.id), hint },
             'workspace',
           ),
+          'info',
+          { passive: true },
         )
       }
       break
     }
     case 'render.done':
       render.noteBuilding(ev.id, null)
-      setStatus(msg('status.renderDone', { name: short(ev.id) }, 'workspace'))
+      // 被动通知：不顶掉用户刚触发的那句结果（「已修复 N 项」之类，见 uiStore.statusPassive）
+      setStatus(msg('status.renderDone', { name: short(ev.id) }, 'workspace'), 'info', {
+        passive: true,
+      })
       break
     case 'render.failed':
       render.noteBuilding(ev.id, null)

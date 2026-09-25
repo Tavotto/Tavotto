@@ -743,6 +743,20 @@ def compare(
     }
 
 
+def better_candidate(new: dict, old: dict) -> bool:
+    """一个局部修复候选比上一版更好：不越权、不超预算、阻断项**严格更少**。
+
+    唯一出处：Codex 的规范化事务（`bridge`）与桌面的按规范修图（`/api/engine/specfix`）
+    都用它判「收不收这一轮」。
+    """
+    if new["protected_changes"] or new["budget"]["over"]:
+        return False
+    st = new["structure"]
+    if st["missing"] or st["extra"] or st["role_changed"] or st["legend_entries_changed"]:
+        return False
+    return len(new["blocking"]) < len(old["blocking"])
+
+
 def _target_size(contract: dict) -> list[float] | None:
     t = contract["targets"]
     w0, h0 = contract["baseline"]["size_mm"]

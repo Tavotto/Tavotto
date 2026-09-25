@@ -25,6 +25,7 @@ import {
   validateProject,
 } from './validation'
 import type { CanvasData, FigureDocument, PanelObject } from '@/types/document'
+import { fixRoute } from './issueFix'
 
 const profile = loadProfile()
 
@@ -524,7 +525,7 @@ describe('元素超出图幅（审计 T14）：接成可定位的阻断问题', 
   const p = panel()
   const doc = docWith([p])
 
-  it('阻断级、定位到那个元素（主语是引擎标签）、没有自动修复、带探出的毫米数', () => {
+  it('阻断级、定位到那个元素（主语是引擎标签）、走后端的外边距重排修、带探出的毫米数', () => {
     const issue = runOne(doc, renderFor(p, clipped())).issues.find(
       (i) => i.ruleCode === 'element-outside-figure',
     )!
@@ -533,7 +534,10 @@ describe('元素超出图幅（审计 T14）：接成可定位的阻断问题', 
     expect(issue.objectRef).toMatchObject({ canvasId: 'c1', objectId: 'p1', gid: 'axes_0.xlabel' })
     expect(issue.subject.kind).toBe('element')
     expect(issue.subject.elementLabel).toBe('X 轴 “Reaction time (min)”')
-    expect(issue.fixKind).toBe('none')
+    // ADR 0080：出界由后端的外边距重排修（挪子图、不挪文字；放不下如实报 no_fit），
+    // 所以连着脚本的面板上它是 safe_auto、路由是 engine
+    expect(issue.fixKind).toBe('safe_auto')
+    expect(fixRoute(issue, doc)).toBe('engine')
     expect(issue.message.values).toEqual({ mm: '2.45' })
     expect(issue.technicalDetails).toEqual({ overflow_mm: 2.45, side: 'bottom' })
   })

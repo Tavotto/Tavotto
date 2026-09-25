@@ -10,15 +10,15 @@ import { describe, expect, it } from 'vitest'
 import type { FixPlan } from '@/lib/issueFix'
 import { mergePlans } from './issueFixActions'
 
+/** 画布标注文字的字号计划（面板内部的同类合并在后端，见 `engine/specfix._plan_fonts`） */
 const override = (value: number, bound?: { min?: number; max?: number }): FixPlan => ({
-  kind: 'override',
-  objectId: 'p1',
-  patches: [{ gid: 'legend_0', prop: 'fontsize', value }],
+  kind: 'textSize',
+  objectId: 't1',
+  sizePt: value,
   bound,
 })
 
-const valueOf = (plan: FixPlan): unknown =>
-  plan.kind === 'override' ? plan.patches[0].value : plan.kind === 'textSize' ? plan.sizePt : null
+const valueOf = (plan: FixPlan): unknown => (plan.kind === 'textSize' ? plan.sizePt : null)
 
 describe('同属性的计划合并', () => {
   it('取区间交集，结果同时满足两条规则（不是后写的赢）', () => {
@@ -59,20 +59,10 @@ describe('同属性的计划合并', () => {
     expect(skipped).toBe(2)
   })
 
-  it('不同属性 / 不同对象各走各的，一条都不许被合并掉', () => {
-    const other: FixPlan = {
-      kind: 'override',
-      objectId: 'p1',
-      patches: [{ gid: 'legend_0', prop: 'frameon', value: false }],
-    }
-    const another: FixPlan = {
-      kind: 'override',
-      objectId: 'p2',
-      patches: [{ gid: 'legend_0', prop: 'fontsize', value: 8.5 }],
-      bound: { min: 8.5 },
-    }
-    const { plans, skipped } = mergePlans([override(8.5, { min: 8.5 }), other, another])
-    expect(plans).toHaveLength(3)
+  it('不同对象各走各的，一条都不许被合并掉', () => {
+    const another: FixPlan = { kind: 'textSize', objectId: 't2', sizePt: 8.5, bound: { min: 8.5 } }
+    const { plans, skipped } = mergePlans([override(8.5, { min: 8.5 }), another])
+    expect(plans).toHaveLength(2)
     expect(skipped).toBe(0)
   })
 

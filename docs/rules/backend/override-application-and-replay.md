@@ -27,6 +27,33 @@
   判据，`_check_panel_clipping` 与 B0 对比共用它——改判据只改这一处。三条干涉检查的
   severity 登记在 `publication.json`（warn），文案 key 在 `errors.json` 的 `preflight.*`
   与 `problems.title.*`（`test_i18n_dead_keys` 扫 `src/tavotto` 与插件目录）。
+- **桌面的按规范修图（ADR 0080，`engine/specfix.py`，纯标准库）**是同一套事务的
+  第二个入口（`/api/engine/specfix`）：**哪里违规只认 `preflight.run()` 的 gid**（逐 gid
+  展开后按 `(规则, gid)` 配对，`element-outside-figure` 交给逐元素的几何清单），
+  改成多少由 `plan()` 按**页面 pt** 算再按面板缩放换回（字号按角色层级抬升：抬了
+  下层就把上层补齐，不倒挂），裁决 = `normalize.compare()` + 点名的问题真的不见了
+  + **修复引入的 warn 级规范问题也挡**（`STRICT_SEVERITIES`；规范化那边只挡 error）。
+  允许集合按 prop 放行全图（刻度组 / 图例的字号字体会落到子元素上），外加
+  `COUPLED_PROPS` 登记的实测连带（`spine_linewidth` → 四边线宽、`linewidth` → 跟随源
+  的图例示意线）；新增一类修复前先在真实渲染里看它连带改了什么再登记。「收不收这
+  一轮局部修复」只有 `normalize.better_candidate()` 一处（bridge 与桌面共用）。
+  **只有每一次渲染都干净的事务才算回滚成功**：任何一次带 warning 或抛了，响应带
+  `replay_required`（前端按此刻的列表重放），worker 作废（`app._retire_hot_worker`
+  → `pool.invalidate`，`worker_retired`）。**native 图不修**：端点在任何渲染之前回 409
+  `specfix_native_unsupported`——作废这条兜底对用户自己的进程不成立（ADR 0080）。判据先看
+  描述符存的档案（`profile_of`）再解析会话；事务途中每次渲染前、提交前各再比一次，变成 native
+  就中止（`_require_route_unchanged`）；事务里每一处解析 worker 都带 `safe_only=True`（入口 +
+  `_engine_attempt` 的依赖重试），拿到 native 会话在调它之前就拒（AST 守卫钉着）。
+- **还原失败不遗忘（Codex #549 第八轮 P1）**：`apply()` 撤掉一条 override 时还原抛了，
+  这个键**不销账**——applied / originals / alias_seeded 原样留着，记进 `FigState.unrestored`；
+  下一次 apply 自动重试，欠着一天每次都报 `还原失败` warning（写回遇 warning 即阻断），
+  还原成功、或同一个键重新被成功应用（不走「值没变就跳过」，originals 仍是脚本原样）才清账。
+  别名组：广播端欠着账时组员的代采原样不回收；半路抛的还原照样标脏几何与别名组。
+  `overrides.snapshot()` 是「会话此刻是哪份列表」的唯一出处，**不含**欠账的键（状态中立预览
+  的收尾、native 屏障离开时保存的列表都读它，含了就会把用户撤掉的改动重新应用回去）。
+  旧实现无条件 pop，图永久停在半改状态且此后再无 warning——safe 能靠作废 worker 兜，native
+  会话（用户自己的 Python）兜不了。看护 `tests/test_restore_failure_retry.py`（含热态 == 冷
+  启动重放的逐字节不变量；把 `continue` 改回落到 pop，五条全红）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
   `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处）：
   图幅 size_mm → 色条方向 → 色条 extend → 子图 position → 刻度类型

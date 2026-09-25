@@ -119,6 +119,12 @@ class FigState:
         # 是 originals 里没有对应 applied 条目的那些，单独记一笔才能在广播
         # 撤销之后跟着清掉——否则 originals 里会留下永远没人回收的条目。
         self.alias_seeded: set[tuple] = set()
+        # **还原失败、仍欠着的键**（它们照旧留在 applied / originals 里）。撤掉一条 override
+        # 时还原抛了，Figure 就停在半改状态；把它当成已还原删掉账，之后每一次全量重放都不会
+        # 再碰它，图永久与文档不一致而再没有任何 warning（Codex #549 第八轮 P1）。留账的话
+        # 下一次 apply 自动重试，每失败一次报一次 warning（写回遇 warning 即阻断）；重试成功
+        # 或同一个键重新被应用成功才清掉。`snapshot` 不把它们算作「已应用」。
+        self.unrestored: set[tuple] = set()
         self.colorbar_axes: set = set()  # 承载色条的轴（manifest 标记用）
         # 宿主 axes gid -> 拖动它时应当一起走的其他 axes gid（色条轴 / 孪生轴）
         self.axes_follow: dict[str, list[str]] = {}
@@ -3641,6 +3647,20 @@ def set_original_reader(reader) -> None:
     _ORIGINAL_READER = reader
 
 
+def snapshot(state: FigState) -> list[dict]:
+    """当前已应用的 override，全量列表形状——**「会话此刻是哪份列表」的唯一出处**。
+
+    还原失败、欠着账的键（`state.unrestored`）不算：用户已经把它撤了，它留在 applied
+    里只是为了下一次 apply 重试还原。把它算进来的话，状态中立的预览在收尾时会把它
+    **重新应用**回去，屏障离开时保存的列表也会把它带进下一次 rebase 的重放。
+    """
+    return [
+        {"gid": g, "prop": p, "value": v}
+        for (g, p), v in state.applied.items()
+        if (g, p) not in state.unrestored
+    ]
+
+
 def apply(state: FigState, patches: list[dict]) -> list[str]:
     """把全量 patch 列表同步到 Figure。返回 warning 列表（孤儿 gid 等）。
 
@@ -3722,12 +3742,38 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     #: 对它们是错的，与 `_must_replay` 同一个道理。
     dirty_groups: set[tuple] = set()
 
-    # 上次应用、这次不在 → 恢复原值（originals 存的是本地坐标，与几何无关）
+    def _mark_restored(key: tuple, artist) -> None:
+        """还原（或半路抛了的还原）动过这个键：几何标记与别名组标脏。"""
+        nonlocal geometry_moved
+        if _is_geometry_key(key[1], artist):
+            geometry_moved = True
+        # 还原一个组员会把同组其他成员一起盖掉（广播还原写的是整组，
+        # 窄的还原写的是广播本该管着的那一个）——整组标脏，下面重放。
+        if key in owner:
+            dirty_groups.update(owner[key])
+        else:
+            _members = _alias_members(key, artist)
+            if _members:
+                dirty_groups.add(key)
+                # **对等的广播端也要标脏**。撤掉的这条把共享的那份状态
+                # 还原成了脚本原样，而另一条色条的 override 还在生效——
+                # 它的值一个字节没变，走「值没变就跳过」的捷径就永远
+                # 不会被重放，热态于是停在脚本原样，而全新重放里它还在
+                # （实测热态 viridis vs 重放 cividis）。
+                for _nk in _members:
+                    dirty_groups.update(owner.get(_nk, ()))
+
+    # 上次应用、这次不在 → 恢复原值（originals 存的是本地坐标，与几何无关）。
+    # 上一轮还原失败的键（`state.unrestored`）还在 applied 里，于是这里天然重试
     for key in list(state.applied):
         if key in new:
             continue
         artist = state.resolve(key[0])
         orig = state.originals.get(key)
+        if artist is None and key in state.unrestored:
+            # 欠着还原的元素这一轮解不出来：还不回去，也不许悄悄销账
+            warnings.append(f"还原失败 {key[0]}.{key[1]}: 元素不存在")
+            continue
         if artist is not None and key in state.originals:
             ck = _cls_key(artist)
             try:
@@ -3743,37 +3789,28 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                         setter(artist, orig, state)
                     else:
                         setter(artist, orig)
-                if _is_geometry_key(key[1], artist):
-                    geometry_moved = True
-                # 还原一个组员会把同组其他成员一起盖掉（广播还原写的是整组，
-                # 窄的还原写的是广播本该管着的那一个）——整组标脏，下面重放。
-                if key in owner:
-                    dirty_groups.update(owner[key])
-                else:
-                    _members = _alias_members(key, artist)
-                    if _members:
-                        dirty_groups.add(key)
-                        # **对等的广播端也要标脏**。撤掉的这条把共享的那份状态
-                        # 还原成了脚本原样，而另一条色条的 override 还在生效——
-                        # 它的值一个字节没变，走「值没变就跳过」的捷径就永远
-                        # 不会被重放，热态于是停在脚本原样，而全新重放里它还在
-                        # （实测热态 viridis vs 重放 cividis）。
-                        for _nk in _members:
-                            dirty_groups.update(owner.get(_nk, ()))
             except Exception as exc:  # noqa: BLE001 — 单条失败不拖垮整次渲染
                 warnings.append(f"还原失败 {key[0]}.{key[1]}: {exc}")
+                # **不销账**：applied / originals / alias_seeded 原样留着，下一次 apply
+                # 接着重试。半路抛的还原可能已经写了一部分（几何、组员），照样标脏
+                _mark_restored(key, artist)
+                state.unrestored.add(key)
+                continue
+            _mark_restored(key, artist)
         state.applied.pop(key)
         state.originals.pop(key, None)
         state.original_values.pop(key, None)
         state.alias_seeded.discard(key)
+        state.unrestored.discard(key)
 
     # 广播 prop 代采的「脚本原样」：广播自己也退场了就跟着清掉，否则
     # `originals` 会攒下一堆没有 applied 条目、永远没人回收的记录。
-    # 广播还在的（只撤了窄的那一条）要留着——用户再点回来时还要用它。
+    # 广播还在的（只撤了窄的那一条）要留着——用户再点回来时还要用它。广播**还原失败、
+    # 欠着账**的也算还在：它下一轮重试时要把组员一起写回去，组员的原样现在删了就没了
     for _nkey in list(state.alias_seeded):
         if _nkey in state.applied:
             continue
-        if any(_b in new for _b in owner.get(_nkey, ())):
+        if any(_b in new or _b in state.unrestored for _b in owner.get(_nkey, ())):
             continue
         state.originals.pop(_nkey, None)
         state.original_values.pop(_nkey, None)
@@ -3850,6 +3887,9 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                     and not _must_replay(prop, artist, state)
                     and key not in dirty_groups
                     and not dirty_groups.intersection(owner.get(key, ()))
+                    # ④ 上一轮撤掉它时还原失败、此刻又回到列表里：图上停的是半改状态，
+                    #    不是 applied 里记的那个值
+                    and key not in state.unrestored
                 ):
                     continue
             elif _is_geometry_key(prop, artist):
@@ -3951,6 +3991,8 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                 else:
                     setter(artist, value)
                 state.applied[key] = value
+                # 重新落成了请求值：欠的还原一笔勾销（originals 一直留着，仍是脚本原样）
+                state.unrestored.discard(key)
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"应用失败 {gid}.{prop}: {exc}")
     finally:

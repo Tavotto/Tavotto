@@ -34,6 +34,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import pymupdf
 import pytest
 
+from support.pipedrain import StderrDrain
 from tavotto import app as m
 from tavotto.engine import ai_agents, ai_bridge, pool, project_watch, workerd_client
 
@@ -405,11 +406,14 @@ def test_worker_pipes_survive_non_utf8_locale(tmp_path):
         errors="replace",
         env={**os.environ, "PYTHONIOENCODING": "gbk:replace", "PYTHONUTF8": "0", "LC_ALL": "C"},
     )
+    drain = StderrDrain(
+        proc
+    )  # 与子进程并发排空 stderr（support/pipedrain.py；#549 Windows 分片的教训）
     try:
         proc.stdin.write(json.dumps({"cmd": "build"}) + "\n")
         proc.stdin.flush()
         line = proc.stdout.readline()
-        assert line, f"worker 无响应\n{proc.stderr.read()[-2000:]}"
+        assert line, f"worker 无响应\n{drain.tail(2000, wait=10)}"
         resp = json.loads(line)
         assert resp.get("ok"), resp
         assert "CJK_1" in resp["stems"]

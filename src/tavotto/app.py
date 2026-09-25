@@ -77,6 +77,7 @@ from .engine import (
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
+    normalize as engine_normalize,
     originalspec as engine_originalspec,
     patchspec as engine_patchspec,
     perfprobe as engine_perfprobe,
@@ -94,6 +95,7 @@ from .engine import (
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
     session_client as engine_session_client,
+    specfix as engine_specfix,
     telemetry as engine_telemetry,
     tutorial as engine_tutorial,
     updater as engine_updater,
@@ -3552,18 +3554,21 @@ def _switched_to_project_env(worker, exc) -> bool:
     return False
 
 
-def _engine_attempt(rel_id: str, worker, stem: str, action):
+def _engine_attempt(rel_id: str, worker, stem: str, action, *, safe_only: bool = False):
     """`action(worker, stem)`；缺依赖时切项目环境**重试一次**。
 
     回 `(worker, stem, 结果)`——重试后 worker 换成了新解释器起的那个，调用方
     后续要拿 `rev` / `last_build_descriptors` 的话必须用回传的这一个。
+
+    `safe_only`：重试时重新解析出来的若是 native 会话，在 `action` 之前就抛
+    `NativeWorkerRefused`（原样转给 `_engine_worker`，见那里）。
     """
     try:
         return worker, stem, action(worker, stem)
     except engine_pool.WorkerError as exc:
         if not _switched_to_project_env(worker, exc):
             raise
-    worker, stem = _engine_worker(rel_id)
+    worker, stem = _engine_worker(rel_id, safe_only=safe_only)
     return worker, stem, action(worker, stem)
 
 
@@ -3585,8 +3590,18 @@ def _safe_worker(script: str, entry: str, stem: str = ""):
     )
 
 
-def _engine_worker(rel_id: str):
+class NativeWorkerRefused(Exception):
+    """`safe_only` 的解析拿到了 native 会话：调用方在碰它之前就被拦下。"""
+
+
+def _engine_worker(rel_id: str, *, safe_only: bool = False):
     """面板 id → (worker-like, stem)；非脚本面板 404。
+
+    `safe_only=True`：只要 safe worker——解析出来的是 native 会话就抛
+    `NativeWorkerRefused`，调用方一个请求都发不到那张 live 图上。给「native 图不支持」
+    的事务用（`/api/engine/specfix`，ADR 0080）：事务要好几秒，途中另一个 `tavotto run`
+    会话可能把描述符换成 native，任何一处重新解析都得过这道闸（Codex #549 第十二轮；
+    `tests/test_specfix_real.py` 的 AST 守卫钉着事务里的每个解析点都带它）。
 
     runtime 素材（`runtime:` 前缀，ADR 0013）不经 safe_resolve——它没有磁盘
     原件。解析走注册表正向重算（`runtimeasset.resolve`，不反解 id），解析
@@ -3597,6 +3612,14 @@ def _engine_worker(rel_id: str):
     这里绝不写 `if 有 native 会话 … else pool.get(…)`——那个形状会在下一个
     端点上被漏掉一次，表现是"预览是 native 的、导出是 safe 的"。
     """
+    worker, stem = _resolve_engine_worker(rel_id)
+    if safe_only and engine_enginesession.is_native(worker):
+        raise NativeWorkerRefused(rel_id)
+    return worker, stem
+
+
+def _resolve_engine_worker(rel_id: str):
+    """`_engine_worker` 的本体（「谁来渲染」按档案解析，不设闸）。"""
     root = str(require_project())
     if engine_runtimeasset.is_runtime_id(rel_id):
         info = engine_runtimeasset.resolve(rel_id, current_registry())
@@ -3756,6 +3779,345 @@ def api_engine_render():
         # 同上：加字段不改老形状。只在**真的发生了自动切换**的那一次响应里出现。
         out["environment_switched"] = switched
     return jsonify(out)
+
+
+@app.post("/api/engine/specfix")
+def api_engine_specfix():
+    """按出版规范修一张图（桌面「问题」面板的修复，ADR 0080 / 0051）。
+
+    请求：`{id, patches, scale, profile, only?}`——`patches` 是这张图**此刻**的全量
+    override 列表（B0），`scale` 是它在页面上的缩放比（摆放宽度 / 原生宽度），
+    `profile` 是这份文档生效的那份规范全文（快照 + 期刊覆盖合并后的，与前端预检
+    用的是同一份），`only` 是逐条修复时点名的 `[{rule, gid}]`；不给 = 全部处理
+    （建议档不在内）。
+
+    流程：B0 渲染 → `specfix.plan()` → 候选渲染 → `specfix.verdict()`
+    →（新增 / 加重了裁切或文字压进别的子图时）外边距局部修复，最多
+    `normalize.MAX_REPAIR_ROUNDS` 轮 → 通过则回 `ok: true` 与**最终的全量列表**，
+    由前端一次 commit 写进文档（一条历史、⌘Z 一次撤回）；不通过则 worker 回到
+    B0、回 `ok: false` 与理由，**文档一个字不改**。请求的字体这台机器上没有时，
+    字体那几条单独退出（`font_unavailable`），其余照常修。
+
+    这个端点**只算不写**：不碰文档、不落盘、不写回源文件；worker 的热态在事务
+    结束时要么是 B0，要么正是回给前端的那份列表（前端 commit 后照常重渲染一次），
+    要么**不可信**（`replay_required: true`）：只有「每一次渲染都干净」的事务才算
+    回滚成功——任何一次渲染带 warning 或抛异常，热态就不是它声称的那一份，worker 一律
+    作废（`worker_retired: true`，下一次请求重新起、按全量列表重放，Codex #549 第七轮 P1）。
+
+    **native 图（`tavotto run` 的 live Figure）不做**：在任何一次渲染之前回 409
+    `specfix_native_unsupported`。那是用户自己的进程（ADR 0021），不能作废重起，而事务
+    的回滚干净与否只有作废这一条兜底——native 的完整保证另在叠栈 PR 里做（ADR 0080）。
+    """
+    body = request.get_json(force=True) or {}
+    rel_id = body.get("id", "")
+    base = body.get("patches")
+    if not isinstance(base, list):
+        return jsonify({"error": "patches 必须是列表", "code": "invalid_patches"}), 400
+    raw_scale = body.get("scale")
+    try:
+        scale = float(raw_scale)
+    except (TypeError, ValueError):
+        scale = float("nan")
+    if not (scale > 0 and scale != float("inf")):
+        return jsonify(
+            {
+                "error": f"scale 必须为正数: {raw_scale!r}",
+                "code": "invalid_scale",
+                "params": {"value": repr(raw_scale)},
+            }
+        ), 400
+    profile = body.get("profile")
+    if not isinstance(profile, dict) or not isinstance(profile.get("severity"), dict):
+        return jsonify({"error": "profile 必须是一份完整的规范", "code": "invalid_profile"}), 400
+    only = body.get("only")
+    if only is not None and not (
+        isinstance(only, list) and all(isinstance(o, dict) and o.get("rule") for o in only)
+    ):
+        return jsonify({"error": "only 必须是 [{rule, gid}] 列表", "code": "invalid_only"}), 400
+
+    # native 图一次渲染都不做、那张 live 图一个字节都不碰：前端对 native 图本来就不给修复
+    # 按钮，这里是后端自己的那道闸（界面之外的调用方、界面判据漏掉的那一刻）。**先按存下的
+    # 档案判，再去解析会话**（Codex #549 r4106101158）：会话已结束的 native 图解析会抛
+    # `native_session_offline`，前端就分不出「不支持」与「出错了」
+    if _specfix_profile(rel_id) == engine_enginesession.PROFILE_NATIVE:
+        return _specfix_native_unsupported()
+    # 事务里**每一处**解析 worker 都只要 safe（入口这里 + 下面依赖重试里的那一处）
+    try:
+        worker, stem = _engine_worker(rel_id, safe_only=True)
+    except NativeWorkerRefused:
+        return _specfix_native_unsupported()
+    # `clean`：这次事务里的每一次渲染都没有 warning、没有抛——只有这样，事务结束时
+    # 的热态才是它声称的那一份（B0 或回给前端的列表）。判据收在这一个闭包里，而不是
+    # 逐个回滚点各查各的：回滚点有好几处，漏一处就是一个永久被污染的 worker
+    state = {"worker": worker, "stem": stem, "clean": True}
+
+    def render(patches: list) -> dict:
+        # 事务要渲染好几次、要好几秒：这期间另一个 `tavotto run` 会话可能到了屏障、把这张图
+        # 的描述符换成 native（Codex #549 r4106101147）。每次渲染之前再问一次，变了就中止——
+        # 不再渲染、不提交，safe worker 作废，那张 live 图不碰
+        _require_route_unchanged(rel_id)
+        try:
+            wk, st, resp = _engine_attempt(
+                rel_id,
+                state["worker"],
+                state["stem"],
+                lambda w, s: w.override(s, patches, None),
+                safe_only=True,
+            )
+        except BaseException:
+            state["clean"] = False
+            raise
+        state["worker"], state["stem"] = wk, st
+        if resp.get("warnings"):
+            state["clean"] = False
+        return resp
+
+    try:
+        out = _specfix_transaction(render, base, scale, profile, only)
+        # 提交之前最后问一次：最后一次渲染之后变的，同样不把列表交给前端去写
+        _require_route_unchanged(rel_id)
+    except (_SpecfixRouteChanged, NativeWorkerRefused):
+        # 档案变了（渲染前 / 提交前的检查），或依赖重试重新解析拿到了 native 会话：
+        # 中止、不提交，作废的是事务一直在用的那个 safe worker，native 那张图没碰过
+        LOG.warning("按规范修图途中这张图改由 native 会话渲染，中止: %s", rel_id)
+        _retire_hot_worker(state["worker"])
+        return _specfix_native_unsupported()
+    except engine_pool.WorkerError as exc:
+        LOG.error("按规范修图失败: %s: %s", stem, exc)
+        # 渲染半路死了（含回滚那一次）：热态未知，作废，下一次请求重新起、按全量列表重放
+        _retire_hot_worker(state["worker"])
+        return jsonify(_worker_error_payload(exc)), 500
+    except BaseException:
+        # 事务本体自己出错时 worker 可能正停在候选上：同样不可信
+        _retire_hot_worker(state["worker"])
+        raise
+    # 不干净：worker 作废（下一次请求重新起），前端按此刻的全量列表重放一次
+    # （`replay_required`；`apply()` 把还原失败的键留在账上，重放时也会重试）
+    out["worker_retired"] = not state["clean"] and _retire_hot_worker(state["worker"])
+    out["replay_required"] = not state["clean"]
+    return jsonify(out)
+
+
+class _SpecfixRouteChanged(Exception):
+    """修复事务途中，这张图「由谁渲染」变了（safe → native）。"""
+
+
+def _specfix_profile(rel_id: str) -> str:
+    """这张图此刻记在描述符里的那一档（`enginesession.profile_of`，与渲染路由同一个出处）。
+    磁盘面板永远是 safe（`_engine_worker` 同一条规矩）。"""
+    if not engine_runtimeasset.is_runtime_id(rel_id):
+        return engine_enginesession.PROFILE_SAFE
+    return engine_enginesession.profile_of(str(require_project()), rel_id)
+
+
+def _require_route_unchanged(rel_id: str) -> None:
+    """事务只在 safe 图上开始（native 在入口就拒了），所以「没变」= 此刻仍是 safe。"""
+    if _specfix_profile(rel_id) != engine_enginesession.PROFILE_SAFE:
+        raise _SpecfixRouteChanged(rel_id)
+
+
+def _specfix_native_unsupported():
+    return jsonify(
+        {
+            "error": "native 图暂不支持自动修复",
+            "code": "specfix_native_unsupported",
+            "params": {"product": engine_brand.PRODUCT_NAME},
+        }
+    ), 409
+
+
+def _retire_hot_worker(worker) -> bool:
+    """作废一条热态不可信的会话；回「真的作废了没有」。
+
+    用的是「重新构建」与脚本变更**同一个原语**（`pool.invalidate`）：只让会话过期、
+    不在这里起 worker，下一次请求按全量列表冷重放。native 会话是用户自己终端里的进程
+    （ADR 0021），与 `/api/engine/invalidate` 一样不杀，回 False——specfix 端点在渲染之前
+    就挡掉了 native，这一支只是兜底。
+    """
+    if engine_enginesession.is_native(worker):
+        LOG.warning("按规范修图后热态不可信，但 native 会话不作废: %s", worker)
+        return False
+    engine_pool.invalidate(worker.script_name, worker.figures_dir)
+    LOG.warning("按规范修图后热态不可信，作废会话: %s", worker.script_name)
+    return True
+
+
+def _specfix_transaction(render, base: list, scale: float, profile: dict, only) -> dict:
+    """`/api/engine/specfix` 的事务本体（拆出来是为了让测试能注入假的渲染）。"""
+    b0_resp = render(base)
+    if b0_resp.get("warnings"):
+        # 基准自己就没能完整重放（热 worker 里上一份 override 恢复不回来，Codex #549 第三轮 P1）：
+        # 候选是对着一份被污染的 B0 验的。基准不干净就不开始，文档一个字不改
+        return {
+            "ok": False,
+            "exit": engine_normalize.EXIT_UNSUPPORTED,
+            "warnings": list(b0_resp["warnings"]),
+            "patches": list(base),
+            "changes": [],
+            "skipped": [],
+            "adjustments": [],
+            "unresolved": [],
+            "blocking": [],
+        }
+    b0 = b0_resp["manifest"]
+    issues = engine_specfix.all_issues(b0, profile, scale)
+    targets = engine_specfix.select(issues, only)
+    layout = [t for t in targets if t[0] in engine_specfix.LAYOUT_RULES]
+    # 点了名、这里却不会去修的（规则不在可修清单里，或 B0 上根本没这条）：逐条说出口。
+    # 不报的话前端会把它当成「修好了」——那是最坏的一种回答
+    missed = [
+        {"rule": str(o.get("rule")), "gid": str(o.get("gid") or ""), "reason": "not_found"}
+        for o in (only or [])
+        if not any(
+            r == o.get("rule") and (g == o.get("gid") or not o.get("gid")) for r, g in targets
+        )
+    ]
+    out: dict = {
+        "ok": False,
+        "patches": list(base),
+        "changes": [],
+        "skipped": list(missed),
+        "adjustments": [],
+        "unresolved": [],
+        "blocking": [],
+    }
+    if not targets:
+        out.update({"ok": not missed, "exit": engine_specfix.EXIT_NOTHING_TO_DO})
+        return out
+
+    font_off: list[tuple[str, str]] = []
+    for _attempt in range(2):
+        live = [t for t in targets if t not in font_off]
+        plan = engine_specfix.plan(b0, profile, scale=scale, targets=live)
+        skipped = (
+            missed
+            + plan["skipped"]
+            + [{"rule": r, "gid": g, "reason": "font_unavailable"} for r, g in font_off]
+        )
+        if not plan["patches"] and not layout:
+            render(base)
+            out.update({"exit": engine_specfix.EXIT_NOTHING_TO_DO, "skipped": skipped})
+            out["ok"] = not skipped
+            return out
+        contract = engine_specfix.build_contract(
+            b0, profile, scale=scale, base_patches=base, planned=plan["patches"]
+        )
+        # 真正要修的是计划落了 patch 的那些；算不出目标值的已经进了 skipped
+        planned_targets = [
+            t
+            for t in live
+            if not any(s["rule"] == t[0] and s["gid"] == t[1] for s in plan["skipped"])
+        ]
+        candidate = engine_normalize.merge_patches(base, plan["patches"])
+        resp = render(candidate)
+        if resp.get("warnings"):
+            # 有一条 override 没写进去 = 修复没有真的落地。不带着 warning 往下验
+            render(base)
+            out.update(
+                {
+                    "exit": engine_normalize.EXIT_UNSUPPORTED,
+                    "warnings": list(resp["warnings"]),
+                    "skipped": skipped,
+                }
+            )
+            return out
+
+        def judge(manifest: dict, patches: list) -> dict:
+            return engine_specfix.verdict(
+                contract, manifest, profile, scale=scale, targets=planned_targets, patches=patches
+            )
+
+        manifest = resp["manifest"]
+        v = judge(manifest, candidate)
+        if v["exit"] == engine_normalize.EXIT_FONT_UNAVAILABLE and not font_off:
+            # 规范要的字体这台机器上没有：字体那几条单独退出，其余再来一遍
+            font_off = [t for t in targets if t[0] == "font-family-substituted"]
+            continue
+        break
+
+    def margin_needs(v: dict, manifest: dict) -> list[dict]:
+        """这一版还需要外边距重排来解决的：新增 / 加重的裁切与压图，加上点名要修、
+        还探在图幅外的那几条（修复前就已经出界的，不在阻断清单里）。"""
+        need = [b for b in v["repairable"] if b["repair"] == "margins"]
+        left = {(u["rule"], u["gid"]) for u in v["unresolved"]}
+        need += [
+            c
+            for c in engine_normalize.per_element_clipping(manifest)
+            if (c["id"], c["gids"][0]) in left
+        ]
+        return need
+
+    adjustments: list[dict] = []
+    rounds = 0
+    while (
+        not v["ok"]
+        and v["exit"]
+        in (engine_normalize.EXIT_CONSTRAINT_CONFLICT, engine_specfix.EXIT_NOT_RESOLVED)
+        and rounds < engine_normalize.MAX_REPAIR_ROUNDS
+    ):
+        need = margin_needs(v, manifest)
+        if not need:
+            break
+        rounds += 1
+        dirs = engine_normalize.repair_directions(need)
+        cand = engine_normalize.adapt_margins(contract, manifest, directions=dirs or None)
+        if "conflict" in cand or not cand["patches"]:
+            break
+        trial = engine_normalize.merge_patches(candidate, cand["patches"])
+        if engine_normalize.authorize(contract, trial):
+            break  # 局部修复越出了约定：不收（按 normalize 的纪律这不该发生）
+        resp2 = render(trial)
+        if resp2.get("warnings"):
+            # 这一轮有 override 没写进去（重放不完整）：与首轮候选同一条纪律，不收。
+            # 退回到上一版已验过、没有 warning 的候选，而不是带着它往下验
+            render(candidate)
+            break
+        m2 = resp2["manifest"]
+        v2 = judge(m2, trial)
+        if not engine_specfix.progressed(v2, v):
+            render(candidate)
+            break
+        candidate, manifest, v = trial, m2, v2
+        adjustments.extend(cand["changed"])
+
+    # 装不下的出界（外边距重排已经到预算 / 冲突）：如实记成「放不下」，**不连累同一批
+    # 里别的修复**——前提是除了它们之外裁决全过（没有变差、没有越权）
+    stuck = [u for u in v["unresolved"] if u["rule"] in engine_specfix.LAYOUT_RULES]
+    if (
+        stuck
+        and v["exit"] == engine_specfix.EXIT_NOT_RESOLVED
+        and len(stuck) == len(v["unresolved"])
+    ):
+        skipped = skipped + [{**u, "reason": "no_fit"} for u in stuck]
+        v["unresolved"] = []
+        v["ok"] = True
+        v["exit"] = engine_normalize.EXIT_DONE
+        if candidate == list(base):
+            # 什么都没改成：这一轮只有放不下的出界
+            render(base)
+            out.update({"exit": engine_specfix.EXIT_NOTHING_TO_DO, "skipped": skipped})
+            return out
+
+    out.update(
+        {
+            "exit": v["exit"],
+            "changes": plan["changes"],
+            "skipped": skipped,
+            "adjustments": adjustments,
+            "unresolved": v["unresolved"],
+            "blocking": [
+                {"id": b.get("id"), "gids": b.get("gids") or [], "bucket": b.get("bucket")}
+                for b in v["blocking"]
+            ],
+            "protected_changes": v["protected_changes"],
+            "font_unresolved": v["font_unresolved"],
+        }
+    )
+    if not v["ok"]:
+        render(base)
+        return out
+    out.update({"ok": True, "patches": candidate})
+    return out
 
 
 @app.post("/api/engine/invalidate")
@@ -7233,6 +7595,45 @@ def main():
     # 那一套。**失败一律不打扰用户**：清单只是快路径，已知安装位置那条腿还在。
     if engine_locate.refresh_manifest() is None:
         LOG.debug("安装清单未能刷新（不影响使用）")
+
+    # 落地地址的形状（含 `?open=<stem>`）只有 handoff.browser_url 一个出处：
+    # 前端 lib/openRequest.ts 认的就是它，两边别各写一份。
+    def landing(p: int) -> str:
+        return engine_handoff.browser_url(
+            p, engine_handoff.Target("", args.open_stem, args.open_pick)
+        )
+
+    insecure = args.insecure_no_auth or os.environ.get("TAVOTTO_INSECURE_NO_AUTH") == "1"
+
+    # **先问端口上是不是已经有一个 Tavotto，再做任何启动副作用**（#641）。复用路径只是把人指过去：
+    # 这个进程不提供服务，下面那些——清缓存线程、把 AI 会话标成中断、装载并预热 PDF 后端（起 render
+    # child、后台线程里 import pikepdf / HarfBuzz）、开项目起 watcher——在这里做全是白做，而且有害：
+    # 把 AI 会话标成中断改的是**在跑那个实例**正进行中的会话；预热线程是 daemon，本进程打印完就退，
+    # 解释器收尾时它还在 import 原生扩展，Linux 上直接 SIGSEGV / abort（py3.10 CI 抓到，-11）。
+    # 桌面 sidecar 不走端口复用（端口由壳分配），照旧在下面起服务前预热。
+    port = None
+    if not args.desktop_sidecar:
+        port = resolve_port(args.port)
+        if port is None:
+            # 端口上已经有一个 Tavotto 在跑：把浏览器指过去就够了，别再起一个。
+            # 双击应用图标的用户没有终端可看，这里必须自己把事办圆。
+            # 复用是一次**安全的 token 交接**：凭本机凭据文件向在跑的实例换一枚
+            # 一次性 nonce（session_client.relaunch_nonce）；对面是老版本或
+            # --insecure-no-auth 的实例时换不到，裸地址也照样能用。
+            url = landing(args.port)
+            nonce = engine_session_client.relaunch_nonce(args.port)
+            if nonce:
+                url += "#dnonce=" + nonce
+            if args.no_browser:
+                # 没有浏览器可开（服务器上经 SSH 转发用）：换到的 nonce 只能靠这里
+                # 交给人，与首次启动打印带 nonce 的地址同一口径。不打印就等于白换。
+                print(f"* Tavotto 已在 {landing(args.port)} 运行")
+                print(f"* 打开 {url}")
+                return
+            print(f"* Tavotto 已在 {landing(args.port)} 运行，打开现有窗口")
+            webbrowser.open(url)
+            return
+
     threading.Thread(
         target=prune_render_cache, daemon=True, name="mm-cache-prune"
     ).start()  # 启动清一次历史存量
@@ -7285,36 +7686,6 @@ def main():
         # telemetry.set_consent 补发（同一次会话只发一条）。
         engine_telemetry.note_app_started("desktop")
         sys.exit(desktop_mode.run(app))
-
-    # 落地地址的形状（含 `?open=<stem>`）只有 handoff.browser_url 一个出处：
-    # 前端 lib/openRequest.ts 认的就是它，两边别各写一份。
-    def landing(p: int) -> str:
-        return engine_handoff.browser_url(
-            p, engine_handoff.Target("", args.open_stem, args.open_pick)
-        )
-
-    insecure = args.insecure_no_auth or os.environ.get("TAVOTTO_INSECURE_NO_AUTH") == "1"
-
-    port = resolve_port(args.port)
-    if port is None:
-        # 端口上已经有一个 Tavotto 在跑：把浏览器指过去就够了，别再起一个。
-        # 双击应用图标的用户没有终端可看，这里必须自己把事办圆。
-        # 复用是一次**安全的 token 交接**：凭本机凭据文件向在跑的实例换一枚
-        # 一次性 nonce（session_client.relaunch_nonce）；对面是老版本或
-        # --insecure-no-auth 的实例时换不到，裸地址也照样能用。
-        url = landing(args.port)
-        nonce = engine_session_client.relaunch_nonce(args.port)
-        if nonce:
-            url += "#dnonce=" + nonce
-        if args.no_browser:
-            # 没有浏览器可开（服务器上经 SSH 转发用）：换到的 nonce 只能靠这里
-            # 交给人，与首次启动打印带 nonce 的地址同一口径。不打印就等于白换。
-            print(f"* Tavotto 已在 {landing(args.port)} 运行")
-            print(f"* 打开 {url}")
-            return
-        print(f"* Tavotto 已在 {landing(args.port)} 运行，打开现有窗口")
-        webbrowser.open(url)
-        return
 
     url = landing(port)
     if insecure:
