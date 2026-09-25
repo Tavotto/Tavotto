@@ -21,6 +21,7 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
+import { useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { runValidation, useValidationStore } from '@/store/validationStore'
@@ -311,6 +312,29 @@ describe('画布跟随样式（ADR 0081）：底部选择器 = 绑定，绑定�
     expect(s().undo()).not.toBeNull()
     expect(current().overrides).toHaveLength(2)
     expect(s().doc.style?.id).toBe('s1')
+  })
+
+  it('脚本重跑后与样式不一致（用户 2026-09-25 裁决：不自动对齐）：显示处数与「对齐」，点一次对齐、一条历史；不一致为 0 时整行不在', async () => {
+    await seed()
+    bindCanvasStyle('s1')
+    seedExactRender(current(), manifest(15) as never)
+    await mount()
+    expect(container.querySelector('[data-style-mismatch]'), '已经合样式：不摆提示').toBeNull()
+    // 同一素材重跑：多了一个 y 轴标签（脚本 15 pt，读者量到 9 pt），样式不自动写
+    await act(async () => {
+      useRenderStore.getState().markStale(['Fig1.pdf'])
+      const m = manifest(15)
+      seedExactRender(current(), {
+        ...m,
+        elements: [...m.elements, el('axes_0.ylabel', 'axis_label', [num('fontsize', 15), fam('serif')])],
+      } as never)
+    })
+    const row = container.querySelector('[data-style-mismatch]')!
+    expect(row.textContent).toContain('1 处与样式不一致')
+    const before = s().past.length
+    await click(row.querySelector('[data-style-align]')!)
+    expect(s().past.length - before).toBe(1)
+    expect(current().overrides.find((o) => o.gid === 'axes_0.ylabel')?.value).toBe(20)
   })
 
   it('没绑、也没有可恢复的：不摆恢复钮（没有禁用的恢复钮）', async () => {

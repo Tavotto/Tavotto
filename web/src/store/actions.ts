@@ -22,6 +22,7 @@ import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
 import { TEXT_EFFECTS } from '@/lib/textEffects'
 import { canvasTextDefaults, writeCanvasText } from '@/lib/typography'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
+import { releaseOwned } from '@/lib/styleOwned'
 import {
   switchKindLabel,
   switchObject,
@@ -33,6 +34,7 @@ import type {
   CanvasObject,
   FigureDocument,
   LayoutGroup,
+  PanelOverride,
   PanelObject,
   ShapeObject,
   TextObject,
@@ -267,16 +269,39 @@ export function addSubLabels() {
 
 /* ------------------------------- 编辑操作 --------------------------------- */
 
+/**
+ * 这一次 recipe 里**被写过**的 override（新加的、换过值的、删掉的）。按条目身份比：`filter` + `push`、
+ * `upsertOverrides` 的原地替换都会换一个新对象，没动过的那几条在草稿里还是同一个对象。
+ */
+function writtenOverrides(before: PanelOverride[], after: PanelOverride[]): { gid: string; prop: string }[] {
+  const at = (list: PanelOverride[], x: PanelOverride) => list.find((o) => o.gid === x.gid && o.prop === x.prop)
+  return [...before, ...after].filter((x) => at(before, x) !== at(after, x))
+}
+
+/**
+ * 用户对这张图的 override 动了手：动过的那几条从「样式写的」登记里注销（ADR 0081 §十三）——从此归用户，
+ * 脚本重跑不让位。样式自己的写入不走这里（`styleBinding` 直接 commit 并登记）。
+ */
+function withOwnedRelease(d: FigureDocument, o: CanvasObject, patch: () => void) {
+  if (o.type !== 'panel') {
+    patch()
+    return
+  }
+  const before = [...o.overrides]
+  patch()
+  releaseOwned(d, o, writtenOverrides(before, o.overrides))
+}
+
 export function updateObject<T extends CanvasObject>(id: string, label: UiMessage, patch: (o: T) => void) {
   commit(label, (d) => {
     const o = d.objects.find((x) => x.id === id) as T | undefined
-    if (o) patch(o)
+    if (o) withOwnedRelease(d, o, () => patch(o))
   })
 }
 
 export function updateObjects(ids: string[], label: UiMessage, patch: (o: CanvasObject) => void) {
   commit(label, (d) => {
-    for (const o of d.objects) if (ids.includes(o.id)) patch(o)
+    for (const o of d.objects) if (ids.includes(o.id)) withOwnedRelease(d, o, () => patch(o))
   })
 }
 
@@ -1139,7 +1164,7 @@ export function applyMixedAlign(
   if (!patches.length && !moves.length) return
   useDocumentStore.getState().commit(label, (d) => {
     const p = d.objects.find((o) => o.id === panelId)
-    if (p?.type === 'panel') upsertOverrides(p, patches)
+    if (p?.type === 'panel') withOwnedRelease(d, p, () => upsertOverrides(p, patches))
     for (const mv of moves) {
       const o = d.objects.find((x) => x.id === mv.id)
       if (o && !o.locked) {

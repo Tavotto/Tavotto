@@ -23,7 +23,15 @@ import { cn } from '@/lib/utils'
 import type { ValidationIssue } from '@/lib/validation'
 import { issueTitle, SEVERITY_ICON } from '@/lib/validationText'
 import { enterElementEdit } from '@/store/actions'
-import { bindCanvasStyle, bindingName, editBoundStyle, restoreCanvasStyle, restoreReady } from '@/store/styleBinding'
+import {
+  alignCanvasToStyle,
+  bindCanvasStyle,
+  bindingName,
+  editBoundStyle,
+  restoreCanvasStyle,
+  restoreReady,
+  styleMismatchCount,
+} from '@/store/styleBinding'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
 import {
@@ -549,6 +557,9 @@ const DETACHED = '__detached__'
  *
  * 「恢复原样」清掉这张画布上所有图里样式管得到的 override，并解绑（理由见
  * `styleBinding.restoreCanvasStyle`）；没有可恢复的、也没有绑定时不摆这颗钮。
+ *
+ * 脚本重跑之后样式不自动对齐（用户 2026-09-25 裁决：脚本赢）：与样式不一致的处数与「对齐」只在
+ * 有不一致时出现（`styleMismatchCount` / `alignCanvasToStyle`，一次 commit）。
  */
 function ApplyStyle() {
   const records = useProfileStore((s) => s.styles)
@@ -574,6 +585,10 @@ function ApplyStyle() {
   }, [objects, byKey, latest])
 
   const detached = !!binding?.detached
+  const mismatches = useMemo(
+    () => (binding && !detached ? styleMismatchCount() : 0),
+    [binding, detached, objects, byKey, latest, records], // eslint-disable-line react-hooks/exhaustive-deps
+  )
   const options = [
     ...(binding && detached ? [{ value: DETACHED, label: sp('detached', { name: bindingName(binding) }) }] : []),
     { value: UNBOUND, label: sp('unbound') },
@@ -599,6 +614,14 @@ function ApplyStyle() {
       <p data-style-bind-hint className="mt-1.5 text-xs leading-relaxed text-ink-2">
         {detached ? sp('detachedHint') : binding ? sp('boundHint') : sp('unboundHint')}
       </p>
+      {mismatches > 0 && (
+        <div data-style-mismatch className="mt-1.5 flex h-7 items-center gap-1.5">
+          <span className="min-w-0 flex-1 truncate text-xs text-ink-2">{sp('mismatch', { count: mismatches })}</span>
+          <Button data-style-align variant="ghost" onClick={() => void alignCanvasToStyle()}>
+            {sp('align')}
+          </Button>
+        </div>
+      )}
       <div className="mt-2 flex items-center gap-1.5">
         {(restoreCount > 0 || binding) && (
           <Button

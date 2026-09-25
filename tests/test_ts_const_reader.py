@@ -172,3 +172,20 @@ def test_number_const_it_cannot_read_exactly_is_a_red(src):
 )
 def test_number_const_ends_at_a_semicolon_or_a_declaration_keyword(src, value):
     assert exported_number(src, "V") == value
+
+
+def test_interface_member_with_a_multiline_union_is_one_member():
+    """跨行的联合类型（`type:` 下面一行一个 `| '…'`）是**一个**成员，不是一串读不出形状的行。"""
+    from tests.support.tsconst import exported_interface_members
+
+    src = """export interface F {
+  prop: string
+  type:
+    | 'text'
+    | 'number'
+  value: unknown
+}
+"""
+    got = exported_interface_members(src, "F")
+    assert list(got) == ["prop", "type", "value"]
+    assert "'number'" in got["type"]

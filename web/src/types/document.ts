@@ -364,6 +364,25 @@ export interface DocumentStyle {
    * 不再跟随库；再明确选一次绑定才恢复。只由撤销落下（`commit` 的 `undoAlso`），重做把它撤掉
    */
   detached?: true
+  /**
+   * 哪些 override 是**样式写的**（ADR 0081 §十三）：`面板 id @ 素材` → gid → prop → 那一条。存在即表示
+   * 样式写的；不在表里的 override 一律是用户的（老文档没有这个字段 = 全是用户的，保守：不让位）。
+   * 只在「此刻那条 override 的值仍是 `value`」时算数：用户在属性页里改过它，它就归用户了。
+   * 随绑定一起进历史（撤销 / 重做与 override 同一次回退）；解绑 / 恢复原样随 `style` 一起消失。
+   */
+  owned?: Record<string, Record<string, Record<string, StyleOwnedOverride>>>
+}
+
+/** 样式写下的一条 override（ADR 0081 §十三） */
+export interface StyleOwnedOverride {
+  /** 样式写下的值（脚本坐标系，即 override 里那个值） */
+  value: unknown
+  /**
+   * 样式写入那一刻**脚本的原生值**（manifest 口径）。之后精确 manifest 的 `value_original` 与它不等 =
+   * 脚本改过这一项 → 样式让位。说不出（老引擎、写在用户 override 之上又没有 `value_original`）时缺席 =
+   * 不知道，永不让位
+   */
+  base?: unknown
 }
 
 export interface FigureDocument {

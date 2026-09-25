@@ -259,7 +259,14 @@ def exported_interface_members(src: str, name: str) -> dict[str, str]:
         if (depth == 0 and c in "\n;") or k == close_at:
             pieces.append((start, k))
             start = k + 1
+    # 跨行的联合 / 交叉类型（`type:\n  | 'text'\n  | 'number'`）：以 `|` / `&` 开头的一行接在上一个成员后面
+    merged: list[tuple[int, int]] = []
     for a, b in pieces:
+        if merged and code[a:b].strip()[:1] in ("|", "&"):
+            merged[-1] = (merged[-1][0], b)
+        else:
+            merged.append((a, b))
+    for a, b in merged:
         text = code[a:b]
         if not text.strip():
             continue

@@ -8,6 +8,7 @@
  *   不做，要么改到另一张画布的同名对象上。
  * * **只走 documentStore**：dirty、undo、autosave 全部照常，与用户手改一模一样。
  */
+import { releaseOwned } from '@/lib/styleOwned'
 import { msg, type UiMessage } from '@/i18n'
 import { requestRender } from '@/store/renderScheduler'
 import { fixOptions, planFix, type FixChoice, type FixPlan } from '@/lib/issueFix'
@@ -197,6 +198,8 @@ export function applyFixPlans(plans: FixPlan[], label: UiMessage): void {
         obj.overrides = obj.overrides.filter((x) => !(x.gid === p.gid && x.prop === p.prop))
         obj.overrides.push({ gid: p.gid, prop: p.prop, value: p.value })
       }
+      // 一键修复是用户的动作：修过的那几条从「样式写的」登记里注销（ADR 0081 §十三），脚本重跑不让位
+      releaseOwned(d, obj, plan.patches)
       touched.add(obj.id)
     }
   })

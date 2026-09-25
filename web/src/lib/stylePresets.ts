@@ -485,7 +485,7 @@ export function presetDelta(prev: StyleProfileData | null, next: StyleProfileDat
 }
 
 /** 读数一样吗：数值按 manifest 回报的两位小数比（写进去的也是两位），其余按内容 */
-const sameReading = (a: unknown, b: unknown): boolean =>
+export const sameReading = (a: unknown, b: unknown): boolean =>
   typeof a === 'number' && typeof b === 'number' ? Math.abs(a - b) < 0.005 : sameValue(a, b)
 
 /** 画布文字此刻的样子是不是已经等于这一项样式 */

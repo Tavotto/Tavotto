@@ -13,7 +13,13 @@
  * | 用户在样式面板里改一个值（已绑定） | 先存进样式库那一条，再改快照 + 只对齐改了的那一项 | 修改样式「X」 |
  * | 样式库那一条被别处改过（设置里保存、另一张画布上改过） | 快照 + 只对齐变了的那几项 | 按样式「X」更新 |
  * | 绑定画布上的一张图**第一次**拿到 manifest | 只对齐这一张 | 按样式对齐新图 |
+ * | 用户点样式面板的「对齐」 | 此刻画布上与样式不一致的地方（用户手改的不算） | 按样式「X」对齐 |
+ * | 精确 manifest 说脚本改了某条**样式写的** override 底下的值 | 去掉那几条 override（脚本赢） | 脚本改动优先于样式 |
  * | 不跟随样式 / 恢复原样 | 解绑（恢复原样还清掉样式管得到的 override） | 各自一条 |
+ *
+ * **脚本重跑之后不自动对齐**（用户 2026-09-25 裁决：重跑后脚本赢）：同一素材重渲染出来的新值、新 gid
+ * 都不写，样式面板显示「N 处与样式不一致」和「对齐」。样式写的每一条 override 都登记在
+ * `style.owned`（连同写入那一刻脚本的原生值）；脚本改了那一项，它就让位（§十三）。
  *
  * **撤销只退画布，不推回样式库**（§十二，用户 2026-09-25 拍板）：撤销一次「修改样式 / 按样式
  * 更新」，这张画布回到旧值并标成「已脱离样式」（`style.detached`，由那一条历史的 `undoAlso`
@@ -47,6 +53,7 @@
 import { msg, t, type UiMessage } from '@/i18n'
 import type { Manifest, ProfileRecord } from '@/lib/api'
 import { profileName } from '@/lib/profileText'
+import { figKey, ownedLive } from '@/lib/styleOwned'
 import { currentProjectId } from '@/lib/session'
 import { sameRules } from '@/lib/specBinding'
 import {
@@ -56,13 +63,14 @@ import {
   planStyle,
   presetDelta,
   profileToDraft,
+  sameReading,
   styleOverrideTargets,
   withPageBasis,
   type StyleProfileData,
   type StylePlan,
   type StylePreset,
 } from '@/lib/stylePresets'
-import type { DocumentStyle, FigureDocument, PanelObject } from '@/types/document'
+import type { DocumentStyle, FigureDocument, PanelObject, StyleOwnedOverride } from '@/types/document'
 import { renderStylePlan, writeStylePlan } from './actions'
 import { isCopiedBakedBaseline } from '@/lib/bakedBaseline'
 import { useAssetStore } from './assetStore'
@@ -140,6 +148,77 @@ function changesFor(preset: StylePreset, panels: PanelObject[], doc: FigureDocum
   return effectiveChanges(plan, doc, manifestOf, preset)
 }
 
+/* ------------------------ 样式写的 override（§十三） ------------------------ */
+
+type OwnedMap = NonNullable<DocumentStyle['owned']>
+type OwnedWrite = { fig: string; gid: string; prop: string; entry: StyleOwnedOverride }
+
+/**
+ * 这份计划写下去的每一条要登记成什么（**commit 之前**量：写过的图之后都暂时拿不到精确 manifest）。
+ *
+ * 基线 = 写入那一刻脚本的原生值：原来就是样式写的，沿用它登记时的基线（样式只是换了个值，脚本没动）；
+ * 原来没有 override，就是 manifest 的 `value`；原来是用户的 override，就是 `value_original`——
+ * 老引擎说不出时缺席，这一条永不让位（保守）。
+ */
+function ownedWrites(doc: FigureDocument, plan: StylePlan): OwnedWrite[] {
+  const out: OwnedWrite[] = []
+  for (const { panel, patches } of plan.panels) {
+    const m = manifestOf(panel)
+    for (const { gid, prop, value } of patches) {
+      const prev = ownedLive(doc, panel, gid, prop)
+      let base: unknown
+      if (prev) base = prev.base
+      else {
+        const f = m?.elements.find((e) => e.gid === gid)?.editable.find((x) => x.prop === prop)
+        base = panel.overrides.some((o) => o.gid === gid && o.prop === prop) ? f?.value_original : f?.value
+      }
+      out.push({ fig: figKey(panel), gid, prop, entry: base === undefined ? { value } : { value, base } })
+    }
+  }
+  return out
+}
+
+/**
+ * 写完之后的登记表（整份新建，不在草稿上改）：此刻仍然算数的旧登记（`ownedLive`）+ 这一次写的；
+ * 已经不算数的（用户改过 / 清掉了 / 面板不在了）顺手清掉。`drop` 里的去掉（让位）。
+ */
+function nextOwned(
+  doc: FigureDocument,
+  writes: OwnedWrite[],
+  drop: (fig: string, gid: string, prop: string) => boolean = () => false,
+): OwnedMap | undefined {
+  const out: OwnedMap = {}
+  const put = (fig: string, gid: string, prop: string, e: StyleOwnedOverride) => {
+    ;((out[fig] ??= {})[gid] ??= {})[prop] = e
+  }
+  const byFig = new Map(panelsOf(doc).map((p) => [figKey(p), p]))
+  for (const [fig, gids] of Object.entries(doc.style?.owned ?? {})) {
+    const p = byFig.get(fig)
+    if (!p) continue
+    for (const [gid, props] of Object.entries(gids)) {
+      for (const [prop, e] of Object.entries(props)) {
+        if (!drop(fig, gid, prop) && ownedLive(doc, p, gid, prop)) put(fig, gid, prop, e)
+      }
+    }
+  }
+  for (const w of writes) put(w.fig, w.gid, w.prop, w.entry)
+  return Object.keys(out).length ? out : undefined
+}
+
+/** 草稿上的绑定换成这张登记表（没有绑定时什么都不做） */
+function setOwned(d: FigureDocument, owned: OwnedMap | undefined) {
+  if (!d.style) return
+  if (owned) d.style.owned = owned
+  else delete d.style.owned
+}
+
+/** 新的绑定对象：带上登记表（改绑 / 改值 / 跟随都不许把「哪些是样式写的」丢掉） */
+const styleWith = (id: string, snapshot: Record<string, unknown>, owned: OwnedMap | undefined): DocumentStyle => ({
+  id,
+  snapshot: structuredClone(snapshot),
+  ...(owned ? { owned } : {}),
+})
+
 /* ------------------------------- 代次 -------------------------------------- */
 
 /**
@@ -156,32 +235,24 @@ const ledgerKey = (doc: FigureDocument = docNow()) => `${generation()}|${doc.sty
 
 /* --------------------------- 会话记账：看过的图 / 欠账 ----------------------- */
 
-/**
- * 会话记账里一张图的身份：**面板 id + 素材**。替换素材（`replacePanelAsset`）保留面板 id、换掉文件与
- * override——只按 id 记的话，换进来的新图被当成「看过了」，永远不按绑定的样式对齐（Codex #547 P1）；
- * 旧素材欠着的那一笔也不该落到新素材上（新图按整份样式对齐）。
+/*
+ * 会话记账里一张图的身份：**面板 id + 素材**（`figKey`，与 `style.owned` 同一把键）。替换素材
+ * （`replacePanelAsset`）保留面板 id、换掉文件与 override——只按 id 记的话，换进来的新图被当成「看过了」，
+ * 永远不按绑定的样式对齐（Codex #547 P1）；旧素材欠着的那一笔也不该落到新素材上（新图按整份样式对齐）。
  */
-const figKey = (p: PanelObject): string => `${p.id}@${p.fileId}`
 
 /**
- * 「这一会话里已经按当前绑定看过的图」（图按 `figKey`，文字按 id）。图还记着**看过时 manifest 里有哪些
- * gid**：同一素材的脚本重跑（`markStale` 换掉权威 manifest、`figKey` 不变）之后多出来的线 / 标签是
- * 新 gid，按这份清单认出来、只对它们按样式对齐（Codex #547 P1）。文字是 `null`。
+ * 「这一会话里已经按当前绑定看过的图」（图按 `figKey`，文字按 id）。看过的图**同一素材重跑**之后
+ * 不再自动对齐（用户 2026-09-25 裁决：重跑后脚本赢）——多出来的新 gid、脚本改了的值都由样式面板的
+ * 「对齐」处理，这里不记 gid 清单。
  */
-const seen = new Map<string, Map<string, Set<string> | null>>()
-/** `gids`：这张图此刻 manifest 的 gid 清单；`keep`：已经记过清单的不覆盖（补欠账只补了变化量，新 gid 还没对齐） */
-function markSeen(
-  doc: FigureDocument,
-  ids: Iterable<string>,
-  gids: (id: string) => Set<string> | null = () => null,
-  keep = false,
-) {
+const seen = new Map<string, Set<string>>()
+function markSeen(doc: FigureDocument, ids: Iterable<string>) {
   const key = ledgerKey(doc)
-  const map = seen.get(key) ?? new Map<string, Set<string> | null>()
-  for (const id of ids) if (!(keep && map.get(id))) map.set(id, gids(id))
-  seen.set(key, map)
+  const set = seen.get(key) ?? new Set<string>()
+  for (const id of ids) set.add(id)
+  seen.set(key, set)
 }
-const gidSet = (m: Manifest): Set<string> => new Set(m.elements.map((e) => e.gid))
 
 /**
  * 「这张图还欠着这些样式变化」：改样式 / 绑定的那一刻它还没有 manifest，那一次 commit 对不上它。
@@ -282,8 +353,7 @@ function enqueue<T>(job: () => Promise<T>): Promise<T> {
     if (inflight === 0) {
       // 改绑的「转发」只对还排着的任务有意义：排空就作废（用户之后自己绑回 A，不该被转到 B）
       redirects.clear()
-      followLibrary()
-      alignNewFigures()
+      syncNow()
     }
   })
 }
@@ -403,22 +473,20 @@ function bindNow(recordId: string | null): void {
   if (cur?.id === rec.id && sameRules(cur.snapshot, rec.data) && isEmptyPlan(plan)) return
   forgetDebts(rec.id)
   const missing = missingNow(doc)
-  // 看过时的 gid 清单也在 commit 之前量（commit 之后写过的图都暂时拿不到精确 manifest）
-  const gidsNow = new Map<string, Set<string>>()
-  for (const p of panelsOf(doc)) {
-    const m = manifestOf(p)
-    if (m) gidsNow.set(figKey(p), gidSet(m))
-  }
+  // 看过的图也在 commit 之前量（commit 之后写过的图都暂时拿不到精确 manifest）
+  const shown = panelsOf(doc).filter((p) => manifestOf(p)).map(figKey)
+  // 改绑时上一套写的登记留着：那些 override 仍是样式写的（这一次写到的会换成新的一条）
+  const owned = nextOwned(doc, ownedWrites(doc, plan))
   commitWith(
     hist('bindStyle', { name: profileName(rec) }),
     (d) => {
-      d.style = { id: rec.id, snapshot: structuredClone(rec.data) }
+      d.style = styleWith(rec.id, rec.data, owned)
       writeStylePlan(d, plan, { ...delta, name: preset.name })
     },
     plan,
   )
   owe(docNow(), delta, missing, delta)
-  markSeen(docNow(), gidsNow.keys(), (k) => gidsNow.get(k) ?? null)
+  markSeen(docNow(), shown)
   markTextsSeen()
 }
 
@@ -518,10 +586,11 @@ export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
     const delta = deltaFrom(current.snapshot as unknown as StyleProfileData, data)
     const plan = changesFor(delta, panelsOf(doc), doc, true)
     const missing = missingNow(doc)
+    const owned = nextOwned(doc, ownedWrites(doc, plan))
     commitWith(
       hist('editStyle', { name }),
       (d) => {
-        d.style = { id: stored.id, snapshot: structuredClone(stored.data) }
+        d.style = styleWith(stored.id, stored.data, owned)
         // 写的是**变化量**：标注只改了字号时，不把颜色 / 字体一起重新套一遍（Codex #547 P1）
         writeStylePlan(d, plan, { ...delta, name })
       },
@@ -623,10 +692,11 @@ export function followLibrary(): boolean {
   const delta = deltaFrom(before, data)
   const plan = changesFor(delta, panelsOf(doc), doc, true)
   const missing = missingNow(doc)
+  const owned = nextOwned(doc, ownedWrites(doc, plan))
   commitWith(
     hist('syncStyle', { name }),
     (d) => {
-      d.style = { id: rec.id, snapshot: structuredClone(rec.data) }
+      d.style = styleWith(rec.id, rec.data, owned)
       writeStylePlan(d, plan, { ...delta, name })
     },
     plan,
@@ -649,7 +719,7 @@ export function alignNewFigures(): number {
   const binding = canvasStyle(doc)
   if (!binding || blocked()) return 0
   const key = ledgerKey(doc)
-  const done = seen.get(key) ?? new Map<string, Set<string> | null>()
+  const done = seen.get(key) ?? new Set<string>()
   const style = resolvedStyle(binding)
   const preset: StylePreset = { ...style, name: bindingName(binding) }
   const owed = pending.get(key)
@@ -664,18 +734,16 @@ export function alignNewFigures(): number {
     if (!target) continue
     if (debt) {
       owed!.delete(fig)
-      markSeen(doc, [fig], () => gidSet(m), true)
+      markSeen(doc, [fig])
       const plan = changesFor({ ...pruneToStyle(debt, style), name: '' } as StylePreset, [target], current, false)
       if (isEmptyPlan(plan)) continue
-      commitWith(hist('syncStyle', { name: bindingName(binding) }), (d) => writeStylePlan(d, plan, preset), plan)
+      writeAligned(hist('syncStyle', { name: bindingName(binding) }), current, plan, preset)
       aligned += 1
       continue
     }
-    if (done.has(fig)) {
-      if (alignNewTargets(doc, fig, target, m, style, preset, done.get(fig) ?? null)) aligned += 1
-      continue
-    }
-    markSeen(doc, [fig], () => gidSet(m))
+    // 看过的图不再自动对齐：同一素材重跑后的新 gid、脚本改了的值由样式面板的「对齐」处理（脚本赢）
+    if (done.has(fig)) continue
+    markSeen(doc, [fig])
     // 带着样式管得到的 override = 对齐过 / 用户手改过——不碰。**例外是素材自带的烘焙基线**
     // （`addPanel` 把 `baked_overrides` 原样抄进来）：那不是用户的手改，绑定之后加进来的图与
     // 先加图再绑定应当得到同一个结果（Codex #547 P2）
@@ -684,7 +752,7 @@ export function alignNewFigures(): number {
     if (!baseline && styleOverrideTargets(panel, m).length) continue
     const plan = changesFor(presetDelta(null, style), [target], current, false)
     if (isEmptyPlan(plan)) continue
-    commitWith(hist('alignNewFigure'), (d) => writeStylePlan(d, plan, preset), plan)
+    writeAligned(hist('alignNewFigure'), current, plan, preset)
     aligned += 1
   }
   // 绑定之后新加的画布标注 / 序号标签：同一条纪律（只对齐一次、单独一条历史）。已有的文字在
@@ -718,42 +786,112 @@ export function alignNewFigures(): number {
   return aligned
 }
 
+/** 按样式写一份计划并登记（绑定在、只动 override 的写入：补欠账 / 对齐新图 / 「对齐」） */
+function writeAligned(label: UiMessage, doc: FigureDocument, plan: StylePlan, preset: StylePreset) {
+  const owned = nextOwned(doc, ownedWrites(doc, plan))
+  commitWith(
+    label,
+    (d) => {
+      writeStylePlan(d, plan, preset)
+      setOwned(d, owned)
+    },
+    plan,
+  )
+}
+
+/* ---------------------- 重跑后：脚本赢 / 不一致 / 对齐 ----------------------- */
+
 /**
- * 看过的图**同一素材重渲染**之后 manifest 里多出来的目标（脚本重跑加了一条线 / 一个标签：新 gid，身上
- * 没有 override，保持脚本的格式）：只对这些新 gid 按整份样式对齐，一条「按样式对齐新图」。
- * 看过时就在的 gid 一个都不碰（用户在属性页里的手改留着）；新 gid 上已经有 override 的那一项也不碰。
- * 没有新 gid（已对齐的图重跑、渲染回来）什么都不写（Codex #547 P1）。
+ * **样式写的** override 底下，脚本的值变了（精确 manifest 的 `value_original` ≠ 登记时的基线）：
+ * 脚本改过这一项，样式让位——去掉这几条 override、注销登记，一次 commit「脚本改动优先于样式」。
+ * 之后那一项显示脚本的新值，计入样式面板的「不一致」。
+ *
+ * - 只看此刻仍然算数的登记（`ownedLive`）：用户改过的那一条已经归用户，不让位；
+ * - 基线或 `value_original` 说不出（老文档 / 老引擎）= 不知道，不让位；
+ * - 重开文档后第一次渲染回来同样按基线判：app 关着时改过脚本，一样认得出；
+ * - 已脱离的画布也让位（让位是撤掉样式写的值，不是往画布上写样式）。
  */
-function alignNewTargets(
-  doc: FigureDocument,
-  fig: string,
-  target: PanelObject,
-  m: Manifest,
-  style: StyleProfileData,
-  preset: StylePreset,
-  known: Set<string> | null,
-): boolean {
-  const now = gidSet(m)
-  markSeen(doc, [fig], () => now)
-  // 看过时没记清单（不该发生：图都是带着 manifest 记的）：以此刻为准，不猜
-  if (!known) return false
-  const added = new Set([...now].filter((g) => !known.has(g)))
-  if (!added.size) return false
-  const current = docNow()
-  const raw = changesFor(presetDelta(null, style), [target], current, false)
-  const plan: StylePlan = {
+export function yieldToScript(): number {
+  const doc = docNow()
+  const owned = doc.style?.owned
+  if (!owned || blocked()) return 0
+  const drop = new Set<string>()
+  const key = (fig: string, gid: string, prop: string) => JSON.stringify([fig, gid, prop])
+  const touched = new Map<string, { gid: string; prop: string }[]>()
+  for (const p of panelsOf(doc)) {
+    const byGid = owned[figKey(p)]
+    const m = byGid && manifestOf(p)
+    if (!m) continue
+    for (const [gid, props] of Object.entries(byGid)) {
+      const el = m.elements.find((e) => e.gid === gid)
+      for (const prop of Object.keys(props)) {
+        const e = ownedLive(doc, p, gid, prop)
+        const f = el?.editable.find((x) => x.prop === prop)
+        if (!e || !('base' in e) || f?.value_original === undefined) continue
+        if (sameReading(f.value_original, e.base)) continue
+        drop.add(key(figKey(p), gid, prop))
+        touched.set(p.id, [...(touched.get(p.id) ?? []), { gid, prop }])
+      }
+    }
+  }
+  if (!drop.size) return 0
+  const next = nextOwned(doc, [], (fig, gid, prop) => drop.has(key(fig, gid, prop)))
+  commitWith(
+    hist('scriptWinsOverStyle'),
+    (d) => {
+      for (const o of d.objects) {
+        const gone = o.type === 'panel' ? touched.get(o.id) : undefined
+        if (o.type !== 'panel' || !gone) continue
+        o.overrides = o.overrides.filter((ov) => !gone.some((x) => x.gid === ov.gid && x.prop === ov.prop))
+      }
+      setOwned(d, next)
+    },
+    null,
+  )
+  for (const o of docNow().objects) if (o.type === 'panel' && touched.has(o.id)) requestRender(o, true)
+  return drop.size
+}
+
+/**
+ * 此刻当前画布上**与样式不一致**的地方（样式面板的「N 处与样式不一致」与「对齐」共用这一份）：
+ * 每张拿得到精确 manifest 的图上，样式管得到的属性值 ≠ 样式值的那几项。**用户手改过的不算**
+ * （那一条上有 override、又不是样式写的）；没绑 / 已脱离时没有。只算当前画布、只算图内元素。
+ */
+export function styleMismatchPlan(doc: FigureDocument = docNow()): StylePlan | null {
+  const binding = canvasStyle(doc)
+  if (!binding) return null
+  const panels = panelsOf(doc).filter((p) => manifestOf(p))
+  const raw = changesFor(presetDelta(null, resolvedStyle(binding)), panels, doc, false)
+  return {
     ...raw,
     panels: raw.panels
       .map((pp) => ({
         ...pp,
         patches: pp.patches.filter(
-          (x) => added.has(x.gid) && !target.overrides.some((o) => o.gid === x.gid && o.prop === x.prop),
+          (x) =>
+            !pp.panel.overrides.some((o) => o.gid === x.gid && o.prop === x.prop) ||
+            !!ownedLive(doc, pp.panel, x.gid, x.prop),
         ),
       }))
       .filter((pp) => pp.patches.length > 0),
   }
-  if (isEmptyPlan(plan)) return false
-  commitWith(hist('alignNewFigure'), (d) => writeStylePlan(d, plan, preset), plan)
+}
+
+/** 不一致的处数（一个 gid 上的一个属性算一处） */
+export const styleMismatchCount = (doc: FigureDocument = docNow()): number =>
+  styleMismatchPlan(doc)?.panels.reduce((n, pp) => n + pp.patches.length, 0) ?? 0
+
+/**
+ * 样式面板的「对齐」：把此刻画布上所有不一致处按样式对齐，**一次 commit**「按样式「X」对齐」。
+ * 用户手改的不动；写下的每一条登记成样式写的（基线是此刻脚本的值）。撤销回到脚本的值。
+ */
+export function alignCanvasToStyle(): boolean {
+  const doc = docNow()
+  const binding = canvasStyle(doc)
+  const plan = styleMismatchPlan(doc)
+  if (!binding || !plan || isEmptyPlan(plan)) return false
+  const name = bindingName(binding)
+  writeAligned(hist('alignToStyle', { name }), doc, plan, { ...resolvedStyle(binding), name })
   return true
 }
 
@@ -776,6 +914,13 @@ function ensureLibrary() {
   void p.load()
 }
 
+/** 被挡下 / 该看一眼的时刻统一跑的三件事：先让位（脚本改过的），再跟随库，再对齐新图 */
+function syncNow() {
+  yieldToScript()
+  followLibrary()
+  alignNewFigures()
+}
+
 /**
  * 同步器：订阅文档、样式库、渲染态、交互四处，把上面的「跟随」接到对的时刻上。
  * 返回退订函数（App 挂一次；测试各自起停）。
@@ -787,8 +932,7 @@ export function startStyleBindingSync(): () => void {
     last = s
     // 事务收尾 / 离开「停在历史上」（future 被一次新编辑清空）：期间被挡下的触发补看一次
     if ((prev.txn && !s.txn) || (prev.future.length > 0 && s.future.length === 0)) {
-      followLibrary()
-      alignNewFigures()
+      syncNow()
     }
     if (s.doc === prev.doc) return
     const switched =
@@ -797,8 +941,7 @@ export function startStyleBindingSync(): () => void {
       // 换进来一张画布：库里那条变过就跟上
       ensureLibrary()
       markTextsSeen()
-      followLibrary()
-      alignNewFigures()
+      syncNow()
       return
     }
     // 画布上的对象变了（加了一段标注 / 一张图）：看看有没有要对齐的新东西
@@ -809,20 +952,17 @@ export function startStyleBindingSync(): () => void {
   })
   const unRender = useRenderStore.subscribe((s, prev) => {
     if (s.byKey !== prev.byKey) {
-      followLibrary()
-      alignNewFigures()
+      syncNow()
     }
   })
   const unInteraction = useInteractionStore.subscribe((s, prev) => {
     if (prev.kind !== 'none' && s.kind === 'none') {
-      followLibrary()
-      alignNewFigures()
+      syncNow()
     }
   })
   ensureLibrary()
   markTextsSeen()
-  followLibrary()
-  alignNewFigures()
+  syncNow()
   return () => {
     unDoc()
     unProfiles()

@@ -113,7 +113,13 @@
   的改动改的是**这套样式本身**（先存库、存成功再一次 commit 对齐改了的那一项，内置样式先复制一份再改绑）；「不跟随
   样式」只解绑；「恢复原样」清整张画布样式管得到的 override 并解绑。写入前一律过 `effectiveChanges`，已合样式的图零
   commit。设置 › 样式页的「用于当前画布」调同一个 `bindCanvasStyle`；样式对话框只编辑、不应用。
-  看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`。
+  **脚本重跑后脚本赢**（用户 2026-09-25 裁决，ADR 0081 §十三）：样式只在绑定 / 改值 / 库更新 / 新图第一次拿到 manifest
+  时自动写；重跑后的不一致（脚本改了的值、新 gid）由面板显示「N 处与样式不一致」+「对齐」（`styleMismatchPlan` /
+  `alignCanvasToStyle`，一次 commit，用户手改的不算不动，为 0 时整行不出现）。样式写的每条 override 登记在
+  `style.owned`（连同写入时脚本的原生值），精确 manifest 的 `value_original` 与基线不等时让位（`yieldToScript`，一次
+  commit「脚本改动优先于样式」）；登记只在 override 仍是那个值时算数（`lib/styleOwned.ownedLive`），用户经
+  `updateObject` / 混排对齐 / 一键修复写过的那一条当场注销；老文档、老引擎不让位。
+  看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
   `components/DependencyPrepareDialog.test.tsx`、`components/notificationRail.test.tsx`（「已改用你的环境」）、

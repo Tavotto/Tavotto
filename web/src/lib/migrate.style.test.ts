@@ -34,6 +34,17 @@ describe('normalizeLayout：schema 2 的样式绑定', () => {
     expect((load('yes') as { style?: unknown }).style).toEqual({ id: 's1', snapshot: {} })
   })
 
+  it('样式写的 override 登记（owned，ADR 0081 §十三）跟着带过来；不是对象的不收', () => {
+    const owned = { 'p1@f1': { 'axes_0.title': { fontsize: { value: 8, base: 10 } } } }
+    const load = (o: unknown) =>
+      normalizeLayout(
+        { schema: 2, name: '版面', page: { w: 80, h: 60 }, objects: [], guides: [], style: { id: 's1', snapshot: {}, owned: o } },
+        '版面',
+      ) as { style?: unknown }
+    expect(load(owned).style).toEqual({ id: 's1', snapshot: {}, owned })
+    expect(load([1]).style).toEqual({ id: 's1', snapshot: {} })
+  })
+
   it('形状不对的不收（没有 id / snapshot 不是对象）', () => {
     const doc = normalizeLayout({ schema: 2, page: { w: 80, h: 60 }, objects: [], style: { snapshot: 3 } }, 'x')
     expect('style' in doc ? doc.style : undefined).toBeUndefined()

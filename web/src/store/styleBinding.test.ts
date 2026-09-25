@@ -9,20 +9,23 @@
  *    撤销之后本会话里不会被当场再对齐；
  * 6. 缩放过的图按页面 pt 换算；
  * 7. 库里那条在别处被改了（设置里保存）→ 只对齐变了的那一项；
- * 8. 恢复原样 = 清样式管得到的 override + 解绑，一条历史。
+ * 8. 恢复原样 = 清样式管得到的 override + 解绑，一条历史；
+ * 9. 脚本重跑后脚本赢（2026-09-25 裁决，§十三）：不自动对齐，给「不一致」+「对齐」；样式写的 override 在脚本
+ *    改了那一项之后让位，用户手改的永远保留。
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { literal } from '@/i18n'
 import type { ProfileRecord } from '@/lib/api'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject, type ProjectDocument } from '@/types/document'
-import { startLayoutAutoReflow } from './actions'
+import { setOverride, startLayoutAutoReflow } from './actions'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { useInteractionStore } from './interactionStore'
 import { useProfileStore } from './profileStore'
 import { renderKeyOf, useRenderStore } from './renderStore'
 import {
+  alignCanvasToStyle,
   alignNewFigures,
   bindCanvasStyle,
   editBoundStyle,
@@ -30,6 +33,7 @@ import {
   resetStyleBindingSession,
   restoreCanvasStyle,
   startStyleBindingSync,
+  styleMismatchCount,
   whenLibraryIdle,
 } from './styleBinding'
 import { useUiStore } from './uiStore'
@@ -45,6 +49,11 @@ globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
     : Promise.resolve(new Response('{}', { status: 200 }))) as typeof fetch
 
 const s = () => useDocumentStore.getState()
+/** 绑定本身（id / 快照 / 已脱离）；样式写的 override 登记（`owned`）由各自的用例单独断言 */
+const bindingOf = () => {
+  const { owned: _owned, ...rest } = s().doc.style ?? ({} as NonNullable<ReturnType<typeof s>['doc']['style']>)
+  return s().doc.style ? rest : undefined
+}
 const panelById = (id: string) => s().doc.objects.find((o) => o.id === id) as PanelObject
 const ov = (id: string, gid: string, prop: string) =>
   panelById(id).overrides.find((o) => o.gid === gid && o.prop === prop)?.value
@@ -205,13 +214,13 @@ describe('绑定后改值 = 改这套样式本身，画布上所有图跟着变'
     const writes = saved.length
     s().undo()
     expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(10)
-    expect(s().doc.style).toEqual({ id: 's1', snapshot: USER.data, detached: true })
+    expect(bindingOf()).toEqual({ id: 's1', snapshot: USER.data, detached: true })
     await whenLibraryIdle()
     expect(saved.length, '撤销不写样式库').toBe(writes)
     expect(useProfileStore.getState().styles.find((r) => r.id === 's1')?.data).toEqual(NEW)
 
     s().redo()
-    expect(s().doc.style, '重做回到跟随状态').toEqual({ id: 's1', snapshot: NEW })
+    expect(bindingOf(), '重做回到跟随状态').toEqual({ id: 's1', snapshot: NEW })
     expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(11)
     s().undo()
     expect(s().doc.style?.detached, '再撤销仍落在已脱离').toBe(true)
@@ -562,7 +571,7 @@ describe('旧样式（没有 pt_basis）第一次被编辑：升级成按页面 
     s().undo()
     expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(10)
     expect(ov('a', 'axes_0.title', 'fontsize')).toBe(12)
-    expect(s().doc.style).toEqual({ id: 'old', snapshot: LEGACY.data, detached: true })
+    expect(bindingOf()).toEqual({ id: 'old', snapshot: LEGACY.data, detached: true })
     await whenLibraryIdle()
     expect(useProfileStore.getState().styles.find((r) => r.id === 'old')?.data).toEqual(upgraded)
   })
@@ -1402,73 +1411,181 @@ describe('Codex #547 最后一轮评审（964ce71f）', () => {
   })
 })
 
-describe('Codex #547 第二十一轮评审（114a4c96）', () => {
-  /** 同一素材的脚本重跑之后多了一个 y 轴标签（新 gid，脚本自己的 9 pt） */
-  const withYLabel = (stem: string, axisLabel = 9) => {
-    const m = manifest(stem, axisLabel)
-    return {
-      ...m,
-      elements: [
-        ...m.elements,
-        { gid: 'axes_0.ylabel', role: 'axis_label', label: 'y', bbox: [0, 0, 1, 1], draggable: false, editable: [num('fontsize', 9)] },
-      ],
-    }
+describe('重跑后脚本赢：不自动对齐，显示不一致、一键对齐（用户 2026-09-25 裁决，ADR 0081 §二 / §十三）', () => {
+  type F = { value: number; original?: number }
+  /** 一张图的 manifest：x / y 轴标签的字号，`original` = 引擎报的 `value_original`（有 override 时才有） */
+  const fig = (stem: string, x: F, y?: F) => {
+    const field = (f: F) => ({ ...num('fontsize', f.value), ...(f.original !== undefined ? { value_original: f.original } : {}) })
+    const el = (gid: string, f: F) => ({ gid, role: 'axis_label', label: gid, bbox: [0, 0, 1, 1], draggable: false, editable: [field(f)] })
+    return { stem, size_mm: [80, 60], elements: [el('axes_0.xlabel', x), ...(y ? [el('axes_0.ylabel', y)] : [])] }
   }
-  /** 与 `scriptRunStore` / `liveSync` 同形：脚本重跑 → `markStale`（面板 id、素材都不变）→ 按此刻的 override 渲染回来 */
-  function rerunScript(id: string, next: (size: number) => unknown) {
-    useRenderStore.getState().markStale([panelById(id).fileId])
+  /** 引擎按此刻的 override 渲染回来：xlabel 上有 override 就报 override 的值，`script` 是脚本自己的值 */
+  function renderWith(id: string, scriptX: number, y?: number, engineReportsOriginal = true) {
     const p = panelById(id)
-    const size = p.overrides.find((o) => o.gid === 'axes_0.xlabel' && o.prop === 'fontsize')?.value
-    seedExactRender(p, next(typeof size === 'number' ? size : 9) as never)
+    const x = p.overrides.find((o) => o.gid === 'axes_0.xlabel' && o.prop === 'fontsize')?.value
+    const ys = p.overrides.find((o) => o.gid === 'axes_0.ylabel' && o.prop === 'fontsize')?.value
+    const f = (script: number, ovv: unknown): F =>
+      typeof ovv === 'number' ? { value: ovv, ...(engineReportsOriginal ? { original: script } : {}) } : { value: script }
+    seedExactRender(p, fig(p.fileId, f(scriptX, x), y === undefined ? undefined : f(y, ys)) as never)
+  }
+  /** 与 `scriptRunStore` / `liveSync` 同形：脚本重跑 → `markStale`（面板 id、素材都不变）→ 渲染回来 */
+  function rerun(id: string, scriptX: number, y?: number, engineReportsOriginal = true) {
+    useRenderStore.getState().markStale([panelById(id).fileId])
+    renderWith(id, scriptX, y, engineReportsOriginal)
+  }
+  const owned = (id: string, gid = 'axes_0.xlabel') => s().doc.style?.owned?.[`${id}@${panelById(id).fileId}`]?.[gid]?.fontsize
+  /** 绑定：x 轴标签脚本 9 → 样式写 10（基线 9）；y 轴标签脚本本来就是 10，不写 */
+  async function bound() {
+    await seed([panel('a', 'FigA')])
+    renderWith('a', 9, 10)
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    renderWith('a', 9, 10)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(10)
+    expect(owned('a'), '样式写的那一条登记了，基线是脚本当时的值').toEqual({ value: 10, base: 9 })
+    expect(styleMismatchCount()).toBe(0)
   }
 
-  it('P1 同素材重跑后多出来的新 gid 按绑定的样式对齐，一条「按样式对齐新图」', async () => {
-    await seed([panel('a', 'FigA')])
-    stop = startStyleBindingSync()
-    bindCanvasStyle('s1')
-    rerenderAll()
+  it('Codex r4104608121：没有 override 的 y 轴标签被脚本改成 12——不自动写、不一致 1 处；点「对齐」一条历史写回 10，撤销回到脚本的 12', async () => {
+    await bound()
     const before = s().past.length
-    rerunScript('a', (size) => withYLabel('FigA', size))
-    expect(ov('a', 'axes_0.ylabel', 'fontsize'), '新加的 y 轴标签套上样式').toBe(10)
+    rerun('a', 9, 12)
+    expect(s().past.length - before, '重跑之后样式不自动写').toBe(0)
+    expect(ov('a', 'axes_0.ylabel', 'fontsize')).toBeUndefined()
+    expect(styleMismatchCount()).toBe(1)
+    expect(alignCanvasToStyle()).toBe(true)
     expect(s().past.length - before).toBe(1)
-    expect(s().past.at(-1)?.label).toMatchObject({ key: 'history.alignNewFigure' })
-  })
-
-  it('P1 反向：重跑前用户在这张图上手改过的值不被覆盖，只动新 gid', async () => {
-    await seed([panel('a', 'FigA')])
-    stop = startStyleBindingSync()
-    bindCanvasStyle('s1')
-    rerenderAll()
-    s().commit(literal('手改'), (d) => {
-      const o = d.objects[0] as PanelObject
-      o.overrides = o.overrides.map((v) => (v.gid === 'axes_0.xlabel' ? { ...v, value: 14 } : v))
-    })
-    rerender('a')
-    rerunScript('a', (size) => withYLabel('FigA', size))
-    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '手改的 14 留着').toBe(14)
+    expect(s().past.at(-1)?.label).toMatchObject({ key: 'history.alignToStyle', values: { name: '投稿用' } })
     expect(ov('a', 'axes_0.ylabel', 'fontsize')).toBe(10)
+    expect(owned('a', 'axes_0.ylabel'), '「对齐」写的也登记，基线是此刻脚本的 12').toEqual({ value: 10, base: 12 })
+    s().undo()
+    expect(ov('a', 'axes_0.ylabel', 'fontsize')).toBeUndefined()
+    expect(owned('a', 'axes_0.ylabel')).toBeUndefined()
   })
 
-  it('P1 反向：已对齐、重跑后没有新目标的图不产生任何历史', async () => {
+  it('重跑后多出来的新 gid：不自动写，计入不一致', async () => {
     await seed([panel('a', 'FigA')])
+    renderWith('a', 9)
     stop = startStyleBindingSync()
     bindCanvasStyle('s1')
-    rerenderAll()
+    renderWith('a', 9)
     const before = s().past.length
-    rerunScript('a', (size) => manifest('FigA', size))
+    rerun('a', 9, 9)
+    expect(s().past.length - before).toBe(0)
+    expect(ov('a', 'axes_0.ylabel', 'fontsize')).toBeUndefined()
+    expect(styleMismatchCount()).toBe(1)
+  })
+
+  it('样式写的 override，脚本把那一项改了（10 → 12）：让位——去掉 override、注销登记、一条「脚本改动优先于样式」；显示脚本的值，计入不一致', async () => {
+    await bound()
+    const before = s().past.length
+    rerun('a', 12, 10)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '样式的 override 让位').toBeUndefined()
+    expect(owned('a')).toBeUndefined()
+    expect(s().past.length - before).toBe(1)
+    expect(s().past.at(-1)?.label).toMatchObject({ key: 'history.scriptWinsOverStyle' })
+    renderWith('a', 12, 10)
+    expect(styleMismatchCount()).toBe(1)
+    // 与没 override 的 y 轴标签同一个结果：脚本改了，画面就是脚本的值
+  })
+
+  it('撤销让位：override 与登记一起回来', async () => {
+    await bound()
+    rerun('a', 12, 10)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBeUndefined()
+    s().undo()
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(10)
+    expect(owned('a')).toEqual({ value: 10, base: 9 })
+  })
+
+  it('脚本重跑但没改这一项（value_original 仍是 9）：不让位、零历史', async () => {
+    await bound()
+    const before = s().past.length
+    rerun('a', 9, 10)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(10)
     expect(s().past.length - before).toBe(0)
   })
 
-  it('P1 撤销对齐新 gid 之后，渲染回来那一下不会再对齐一次', async () => {
-    await seed([panel('a', 'FigA')])
+  it('用户在属性页手改过（14）：从登记里注销，脚本改了也不让位，不计入不一致', async () => {
+    await bound()
+    setOverride('a', 'axes_0.xlabel', 'fontsize', 14, true)
+    expect(owned('a'), '手改的那一条归用户').toBeUndefined()
+    renderWith('a', 9, 10)
+    rerun('a', 12, 10)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(14)
+    expect(styleMismatchCount()).toBe(0)
+  })
+
+  it('用户在属性页把它「改」成与样式相同的值：同样注销（那是用户的决定）', async () => {
+    await bound()
+    setOverride('a', 'axes_0.xlabel', 'fontsize', 10, true)
+    expect(owned('a')).toBeUndefined()
+    renderWith('a', 9, 10)
+    rerun('a', 12, 10)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(10)
+  })
+
+  it('老文档（绑定里没有 owned）：override 全当用户写的，不让位', async () => {
+    const p = { ...panel('a', 'FigA'), overrides: [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 10 }] }
+    await seed([p], (proj) => {
+      proj.canvases[0].style = { id: 's1', snapshot: USER.data }
+    })
     stop = startStyleBindingSync()
-    bindCanvasStyle('s1')
-    rerenderAll()
-    rerunScript('a', (size) => withYLabel('FigA', size))
-    expect(ov('a', 'axes_0.ylabel', 'fontsize')).toBe(10)
+    const before = s().past.length
+    rerun('a', 12)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(10)
+    expect(s().past.length - before).toBe(0)
+  })
+
+  it('老引擎（manifest 没有 value_original）：说不出脚本改没改，不让位', async () => {
+    await bound()
+    rerun('a', 12, 10, false)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(10)
+  })
+
+  it('app 关着时脚本改过：重开文档、第一次渲染回来按登记的基线判，照样让位', async () => {
+    const p = { ...panel('a', 'FigA'), overrides: [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 10 }] }
+    await seed([p], (proj) => {
+      proj.canvases[0].style = {
+        id: 's1',
+        snapshot: USER.data,
+        owned: { 'a@FigA': { 'axes_0.xlabel': { fontsize: { value: 10, base: 9 } } } },
+      }
+    })
+    stop = startStyleBindingSync()
+    renderWith('a', 12)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBeUndefined()
+    expect(s().past.at(-1)?.label).toMatchObject({ key: 'history.scriptWinsOverStyle' })
+  })
+
+  it('改样式的值：登记沿用原来的基线（脚本没动，只是样式换了个值）', async () => {
+    await bound()
+    await editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 11 })
+    expect(owned('a')).toEqual({ value: 11, base: 9 })
+    expect(owned('a', 'axes_0.ylabel'), '脚本本来就是 10 的 y 轴标签这回被写成 11，基线 10').toEqual({ value: 11, base: 10 })
+  })
+
+  it('不跟随样式 / 恢复原样：登记随绑定一起消失，撤销一起回来', async () => {
+    await bound()
+    bindCanvasStyle(null)
+    expect(s().doc.style).toBeUndefined()
     s().undo()
-    seedExactRender(panelById('a'), withYLabel('FigA', 10) as never)
-    expect(ov('a', 'axes_0.ylabel', 'fontsize'), '撤销的结果不会被渲染回来冲掉').toBeUndefined()
+    expect(owned('a')).toEqual({ value: 10, base: 9 })
+    expect(restoreCanvasStyle()).toBe(true)
+    expect(s().doc.style).toBeUndefined()
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBeUndefined()
+    s().undo()
+    expect(owned('a')).toEqual({ value: 10, base: 9 })
+  })
+
+  it('不一致为 0 / 已脱离 / 没绑：「对齐」无事可做，不产生历史', async () => {
+    await bound()
+    const before = s().past.length
+    expect(alignCanvasToStyle()).toBe(false)
+    bindCanvasStyle(null)
+    expect(styleMismatchCount()).toBe(0)
+    expect(alignCanvasToStyle()).toBe(false)
+    expect(s().past.length - before).toBe(1)
   })
 })
 
@@ -1566,7 +1683,7 @@ describe('撤销只退画布、不推回样式库（ADR 0081 §十二，用户 2
     rerenderAll()
     useProfileStore.setState({ styles: [USER] })
     bindCanvasStyle('s1')
-    expect(s().doc.style).toEqual({ id: 's1', snapshot: USER.data })
+    expect(bindingOf()).toEqual({ id: 's1', snapshot: USER.data })
   })
 
   it('撤销一次「按样式更新」（跟随库）也脱离：之后的编辑不会让它再跟回来', async () => {

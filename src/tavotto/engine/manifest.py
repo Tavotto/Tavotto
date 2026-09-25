@@ -96,6 +96,7 @@ from overrides import (
     legend_handle_props,
     remember_axis_directions,
     scale_options,
+    set_original_reader,
     text_linespacing,
     to_hex,
 )
@@ -3743,6 +3744,39 @@ def _generic_fields(a) -> list[dict]:
     ]
 
 
+#: 可编辑字段上「override 之前脚本的值」那一键。严格同源：`web/src/lib/api.ts` 的
+#: `EditableField.value_original`（`tests/test_value_original_pair.py`）。
+VALUE_ORIGINAL_KEY = "value_original"
+
+
+def _field_values(state: FigState, gid: str) -> dict:
+    """一个元素**此刻**各字段的 `value`，与 manifest 发出去的是同一份读法（`_fields_for`）。
+
+    `overrides.apply` 在第一次采某个 `(gid, prop)` 的脚本原样时调它（`set_original_reader`），
+    把「脚本原样按 manifest 口径长什么样」记进 `state.original_values`。
+    """
+    el = next((e for e in state.elements if e["gid"] == gid), None)
+    if el is None:
+        return {}
+    return {f["prop"]: f["value"] for f in _fields_for(el, state) if "value" in f}
+
+
+def _with_value_original(fields: list[dict], state: FigState, gid: str) -> list[dict]:
+    """字段上有**已应用**的 override 时，补上 `value_original`：override 之前脚本的值（ADR 0081 §十三）。
+
+    - 数据源是 `state.original_values`：与 `originals` 同一时刻、按同一份字段读法采下；脚本重跑 /
+      native 屏障 rebase 时 originals 清空重采，它跟着按**新的**脚本值重采。
+    - 没有 override 时整个缺席（`value` 就是脚本的值）；有 override 但采不到时也缺席 = 不知道。
+    - 与 `marker_original` / `cmap_original` 不合并：那两个是「形状 / 色图」的只读事实（另一套结构），
+      这里是与 `value` 同一口径的值。
+    """
+    for f in fields:
+        key = (gid, f.get("prop"))
+        if key in state.applied and key in state.original_values:
+            f[VALUE_ORIGINAL_KEY] = state.original_values[key]
+    return fields
+
+
 def _fields_for(el, state: FigState) -> list[dict]:
     artist, role, gid = el["artist"], el["role"], el["gid"]
     if role == "figure":
@@ -4222,7 +4256,7 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             "role": el["role"],
             "label": el["label"],
             "draggable": el["draggable"],
-            "editable": _fields_for(el, state),
+            "editable": _with_value_original(_fields_for(el, state), state, el["gid"]),
         }
         # 文字类元素的显示名跟着**当前**文字走：登记名是 build 那一刻的快照，
         # 改过字（或色条翻转把标签搬了家）之后它就成了旧内容，元素树里对不上
@@ -4632,3 +4666,7 @@ def _build_manifest(state: FigState, stem: str) -> dict:
     if rows:
         out["unsupported"] = rows
     return out
+
+
+# `overrides.apply` 采「脚本原样」时按这里的字段读法记下 `value_original`（见 `_field_values`）
+set_original_reader(_field_values)

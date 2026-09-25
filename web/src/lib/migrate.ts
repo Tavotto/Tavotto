@@ -100,6 +100,10 @@ export function normalizeLayout(
         id: style.id,
         snapshot: style.snapshot as Record<string, unknown>,
         ...(style.detached === true ? { detached: true as const } : {}),
+        // 样式写的 override 登记（§十三）：丢了它，重开后样式写的全被当成用户手改，脚本重跑不再让位
+        ...(style.owned && typeof style.owned === 'object' && !Array.isArray(style.owned)
+          ? { owned: style.owned as NonNullable<FigureDocument['style']>['owned'] }
+          : {}),
       }
     }
     return doc

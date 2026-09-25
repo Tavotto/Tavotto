@@ -3869,6 +3869,7 @@ export default interface Resources {
       "adjustCrop": "调整裁剪",
       "alignNewFigure": "按样式对齐新图",
       "alignNewText": "按样式对齐新标注",
+      "alignToStyle": "按样式「{{name}}」对齐",
       "alignWithRef": "{{mode}}（{{ref}}）",
       "applyStyle": "应用样式「{{name}}」",
       "arrowEndpoint": "调整箭头端点",
@@ -3931,6 +3932,7 @@ export default interface Resources {
       "restoreStyle": "恢复原样并解除样式跟随",
       "rotate": "旋转 {{deg}}°",
       "rotateReset": "取消旋转",
+      "scriptWinsOverStyle": "脚本改动优先于样式",
       "seedBaked": "载入文件中的基线",
       "setOpacity": "修改不透明度",
       "setPageSize": "修改画布尺寸",
@@ -4258,6 +4260,7 @@ export default interface Resources {
       "undone": "撤销：{{label}}"
     },
     "stylePanel": {
+      "align": "对齐",
       "bindCancelled": "切换了画布，刚才选的样式没有绑上，请在那张画布上再选一次",
       "bindLabel": "跟随样式",
       "bindMissing": "要绑定的那套样式已经不在样式库里了，没有改动",
@@ -4276,6 +4279,7 @@ export default interface Resources {
       "issueJump": "在问题中查看：{{title}}",
       "load": "读取样式",
       "manage": "管理样式…",
+      "mismatch_other": "{{count}} 处与样式不一致",
       "missingStyle": "样式库里找不到的样式",
       "needRender": "要读出这张图的样式，需要渲染一次。",
       "noManifest": "这张图还没有可读的图内元素。",

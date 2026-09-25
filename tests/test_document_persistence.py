@@ -224,6 +224,25 @@ def test_layout_save_round_trips_a_project_document(client, tmp_path):
     assert "主图" in client.get("/api/layouts").get_json()["layouts"]
 
 
+def test_canvas_style_binding_with_owned_overrides_round_trips(client):
+    """画布的样式绑定连同 `owned`（ADR 0081 §十三：哪些 override 是样式写的 + 写入那一刻脚本的
+    原生值）原样存、原样读回——另存为与自动保存两条路。后端不认识这些字段，**一个都不许丢**：
+    丢了 `owned` 的文档重开后样式写的 override 全被当成用户手改，脚本重跑再也不让位。"""
+    style = {
+        "id": "s1",
+        "snapshot": {"element": {"title": {"fontsize": 8}}, "pt_basis": "page"},
+        "owned": {
+            "p1@f1": {"axes_0.title": {"fontsize": {"value": 8, "base": 10.0}}},
+            "p2@f2": {"axes_0.xlabel": {"color": {"value": "#123456"}}},
+        },
+    }
+    doc = {**PD, "canvases": [{**PD["canvases"][0], "style": style}]}
+    assert client.post("/api/layouts/绑定", json=doc).status_code == 200
+    assert client.get("/api/layouts/绑定").get_json()["canvases"][0]["style"] == style
+    assert client.put("/api/autosave/owned", json=doc).status_code == 200
+    assert client.get("/api/autosave/owned").get_json()["canvases"][0]["style"] == style
+
+
 @pytest.mark.parametrize(
     "raw",
     [
