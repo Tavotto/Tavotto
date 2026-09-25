@@ -1436,7 +1436,17 @@ export async function restoreSession(): Promise<boolean> {
   if (consumeSkipRestore()) return false
   const id = readCurrentId()
   if (!id) return false
+  // 工作台挂载**之前**已经有人把这份文档装进来了（教程的 prepareDocument、切项目时接回上次的
+  // 文档）：内存里这份就是它、而且是最新的，不再从磁盘读一遍盖上去。盖上去的是刚落盘的那一版，
+  // 在它路上的这段时间里用户若已开始拖动，拖动当场作废——慢机器上教程一打开就拖，图纹丝不动
+  // （windows-exe-smoke 上撞到过；e2e tutorial.spec「教程刚打开就拖」把读盘压慢后在任何机器上复现）
+  const before = useDocumentStore.getState()
+  if (before.documentId === id) return false
   const { doc: pd, notice } = await readAutosaveDoc(id)
+  // 读盘在路上时别处换过文档或改过它：那份更新，这次恢复让位
+  const now = useDocumentStore.getState()
+  if (now.documentId !== before.documentId || now.loadSeq !== before.loadSeq || now.doc !== before.doc)
+    return false
   if (!pd) {
     // schema 太新是**载入失败里唯一需要说话的那一种**：文件好好的，是这个
     // 构建读不了它。默不作声地开一份空白，用户会以为自己的文档没了。

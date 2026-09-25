@@ -78,6 +78,12 @@
   `lib/autosave/diskWriter.ts`（`createDiskWriter(ports)`，不认识 store、不碰 window /
   localStorage / 遥测），`documentStore` 只装配端口；用例 `lib/autosave/diskWriter.test.ts`
   用假端口 + 手动 gate 直接量时序。
+- **启动恢复不覆盖已经装好的文档（2026-09-26）**：工作台挂载时 `restoreSession()` 读
+  `tavotto.currentDoc` 那一份——但教程 / 切项目的 `prepareDocument` 往往**挂载前**就把它装好了，
+  这时再读盘整份替换，读到的是用户第一次编辑还没落盘时的旧一版（慢机器上教程一打开就拖，拖动被盖回去，
+  windows-exe-smoke 撞到过）。两道判断：`documentId` 已经是它就不读盘；读盘在路上时 `documentId` /
+  `loadSeq` / `doc` 任一变了就让位。启动时的 `documentId` 是随机新 id，刷新后恢复不受影响。看护
+  `store/documentStore.test.ts`（两条）+ `e2e/tutorial.spec.ts`「教程刚打开就拖」（把那次读盘扣到拖动之后再放）。
 - **`doc` / `canvases` 的变化有三种性质**，`startAutosave` 的订阅按两个代次
   区分，**改这段之前先想清楚新写入属于哪一档**：
 

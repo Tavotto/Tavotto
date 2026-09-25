@@ -258,6 +258,44 @@ test('重置教程项目：画布恢复原样、onboarding 从头；最近列表
   await expect(current).not.toContainText(a.dataDir)
 })
 
+test('教程刚打开就拖：工作台挂载时的启动恢复晚到，也不把拖动冲掉', async ({ app, page }) => {
+  // windows-exe-smoke 上撞到过（#621 的合并组，2026-09-25）：教程文档在工作台挂载**之前**就装好了，
+  // 挂载时的 `restoreSession()` 却照样读一遍磁盘、整份替换。慢机器上那次读盘晚到，读到的是拖动
+  // 还没落盘时的旧一版，拖动被悄悄盖回去。这里把那次读盘**扣在拖动结束之后、自动保存落盘之前**
+  // 才放出去，让这个时序在任何机器上都发生；修好之后挂载时根本不再读盘，扣住的闸也就没人碰。
+  test.setTimeout(120_000)
+  let reads = 0
+  let releaseRead!: () => void
+  const dragDone = new Promise<void>((r) => (releaseRead = r))
+  await page.route('**/api/autosave/**', async (route) => {
+    // 第一次是教程自己装文档（槽位还是空的）；之后的那次就是挂载时的恢复
+    if (route.request().method() === 'GET' && ++reads > 1) await dragDone
+    await route.continue()
+  })
+  const a = await app({ noProject: true })
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await openTutorialFromPicker(page, a.baseURL)
+  await coachmark(page).getByRole('button', { name: '开始' }).click()
+  const fracX = async () => {
+    const sheet = (await page.locator('[data-page-sheet]').boundingBox())!
+    const box = (await page.locator('[data-object-id="p1"]').boundingBox())!
+    return (box.x - sheet.x) / sheet.width
+  }
+  await page.getByRole('button', { name: '适应画布' }).click()
+  await page.waitForTimeout(400)
+  const p1 = page.locator('[data-object-id="p1"]')
+  const before = (await p1.boundingBox())!
+  const frac0 = await fracX()
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(before.x + before.width / 2 + 120, before.y + before.height / 2 + 40, { steps: 10 })
+  await page.mouse.up()
+  // 拖动已经落在内存里、还没落盘：这时才把那次恢复读盘放出去
+  releaseRead()
+  await page.waitForTimeout(1500)
+  expect((await fracX()) - frac0).toBeGreaterThan(0.05)
+})
+
 test('切到别的项目自动暂停，切回来自动继续', async ({ app, page }) => {
   test.setTimeout(240_000)
   const a = await app()
