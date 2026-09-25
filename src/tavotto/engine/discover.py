@@ -290,7 +290,15 @@ def analyze_in_interpreter(python: str, path: Path, figures_dir: Path) -> dict:
     engine_dir = str(Path(__file__).resolve().parent)
     try:
         proc = subprocess.run(
-            [python, *TARGET_PARSE_ARGS, "-c", _TARGET_SRC, engine_dir, str(path), str(figures_dir)],
+            [
+                python,
+                *TARGET_PARSE_ARGS,
+                "-c",
+                _TARGET_SRC,
+                engine_dir,
+                str(path),
+                str(figures_dir),
+            ],
             capture_output=True,
             text=True,
             encoding="utf-8",

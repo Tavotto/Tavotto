@@ -183,8 +183,6 @@ def test_native_bridge_runner_writes_no_bytecode_into_the_install_dir(install, p
         env=_env(),
     )
     assert r.returncode == 0, r.stderr[-2000:]
-    assert [f["stem"] for f in json.loads(report.read_text(encoding="utf-8"))["figures"]] == [
-        "fig"
-    ]
+    assert [f["stem"] for f in json.loads(report.read_text(encoding="utf-8"))["figures"]] == ["fig"]
     assert _pycs(install) == []
     _assert_user_side_still_cached(project)
