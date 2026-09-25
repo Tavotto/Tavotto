@@ -135,7 +135,9 @@ import 不 import 得到（`deprepair.unknown_imports_missing` → `userenvs.imp
 **边界。**
 
 * 只在「此刻的解释器**确实** import 不到」时触发：import 得到的不找；体检起不来 / 结果里没有这一项 = 判不出，
-  不算缺（拿没量到的东西去换环境是替用户做了一个没根据的决定）。
+  不算缺（拿没量到的东西去换环境是替用户做了一个没根据的决定）。此刻的解释器是内置 runtime 时，按 worker 起它的
+  同一套量（`runtime.child_env()` / `child_args()`：摘掉 shell 带来的 `PYTHONPATH` 等、带 `-B`），否则体检看得见的包
+  worker 看不见（Codex #609 P2）。
 * 条件式 import（`try/except ImportError` 包着的、函数里延后的）不触发：它们本来就不在 `unknown` 里
   （`depplan` 只收 `CONTEXT_UNCONDITIONAL`）。
 * **仍然绝不安装**：unknown 的 import 永远不猜包名、不装（FO-034 不变），这一支只找、只改用。

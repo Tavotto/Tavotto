@@ -711,7 +711,7 @@ def test_the_uncached_recheck_never_accepts_a_result_slipped_into_the_cache(monk
         "modules_ok": {"openpyxl": True},
     }
     imports = ("openpyxl",)
-    key = (userenvs._key("/lab/python"), imports)
+    key = (userenvs._key("/lab/python"), imports, False)  # 第三维：是不是按内置 runtime 的环境量的
 
     class Racy(dict):
         def pop(self, k, *default):
@@ -973,3 +973,29 @@ def test_the_switch_also_stops_measuring_unknown_imports(monkeypatch):
     monkeypatch.setattr(userenvs, "imports_missing", lambda *a: called.append(a) or ["x"])
     assert deprepair.unknown_imports_missing({"unknown": ["x"]}, "/p/python") == []
     assert called == []
+
+
+@POSIX
+@_needs_worker
+def test_the_bundled_interpreter_is_measured_with_the_workers_own_environment(
+    tmp_path, monkeypatch
+):
+    """Codex #609 P2：此刻的解释器是内置 runtime 时，worker 起它用的是 `runtime.child_env()` /
+    `child_args()`（摘掉 `PYTHONPATH` 等、带 `-B`）。体检若不用同一套，从终端启动、shell 里
+    `PYTHONPATH` 指着某个包时，体检说「import 得到」、worker 却缺它，发现就被错过了。
+
+    变异反证：`unknown_imports_missing` 不把内置 runtime 认出来（`bundled=False`），第二个断言回 []。
+    """
+    from tavotto.engine import runtime
+
+    shell_path = tmp_path / "shell_path"
+    (shell_path / "qa_shell_pkg").mkdir(parents=True)
+    (shell_path / "qa_shell_pkg" / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(shell_path))
+    plan = {"unknown": ["qa_shell_pkg"]}
+    # 对照：用户自己的解释器——worker 继承同一份环境，import 得到就是 import 得到
+    monkeypatch.setattr(runtime, "bundled_python", lambda: None)
+    assert deprepair.unknown_imports_missing(plan, _WORKER_PY) == []
+    # 同一个解释器当内置 runtime：按 worker 的环境量，`PYTHONPATH` 被摘掉，确实缺
+    monkeypatch.setattr(runtime, "bundled_python", lambda: _WORKER_PY)
+    assert deprepair.unknown_imports_missing(plan, _WORKER_PY) == ["qa_shell_pkg"]

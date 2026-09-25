@@ -3470,7 +3470,9 @@ def unknown_imports_missing(plan: dict, python: str) -> list[str]:
     unknown = [u for u in plan.get("unknown") or [] if u]
     if not unknown:
         return []
-    return userenvs.imports_missing(python, unknown)
+    # 内置 runtime 由 worker 按 `runtime.child_env()` / `child_args()` 起：体检用同一套（Codex #609 P2）
+    bundled = pool.same_python(python, runtime.bundled_python())
+    return userenvs.imports_missing(python, unknown, bundled=bundled)
 
 
 def user_environment_offer(project: str | Path, script: str, plan: dict, python: str) -> list[dict]:
