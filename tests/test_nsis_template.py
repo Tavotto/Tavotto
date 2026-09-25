@@ -22,6 +22,7 @@ UAC、中文路径这些只有 Windows 上跑真产物才算数，走
 import json
 import os
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -134,13 +135,11 @@ def test_directory_page_rejects_unwritable_folders_on_the_page():
     body = _function_body("DirectoryLeave")
     # 主语是 $INSTDIR：先建，建不出来就拒
     assert re.search(r'CreateDirectory "\$INSTDIR"\s*\n\s*IfErrors dir_not_writable', body)
-    # 探针必须直接落在 $INSTDIR 里：[^"\\]+ 挡住 `$INSTDIR\..\probe` 这类越级
-    assert re.search(r'FileOpen \S+ "\$INSTDIR\\[^"\\]+" w\s*\n\s*IfErrors dir_not_writable', body)
+    # 探针直接落在 $INSTDIR 里（名字不固定的那条看护在下一条用例）
+    assert re.search(r'GetTempFileName \$R\d "\$INSTDIR"\s*\n\s*IfErrors dir_not_writable', body)
     # 不许再按「存在的祖先」替它作证
     assert "${GetParent}" not in body
     assert "IfFileExists" not in body
-    # 探针用完即删
-    assert re.search(r'Delete "\$INSTDIR\\[^"\\]+"', body)
     # 被拒时只收拾本函数刚建的那一层：非递归，且有「原本不存在」的前提
     assert "RMDir /r" not in body
     assert re.search(r"\$\{IfThen\} \$R6 = 1 \$\{\|\} RMDir \"\$INSTDIR\" \$\{\|\}", body)
@@ -149,6 +148,64 @@ def test_directory_page_rejects_unwritable_folders_on_the_page():
     # LEAVE 里 Abort = 留在本页重选
     assert 'MessageBox MB_OK|MB_ICONEXCLAMATION "$(installDirNotWritable)"' in body
     assert re.search(r"MessageBox[^\n]*\n\s*Abort", body)
+
+
+def _instructions(body: str) -> list[list[str]]:
+    """函数体里的**指令**（整行注释剥掉），按 NSIS 的引号规则切成词。
+
+    判据打在指令词上而不是原文子串：解释这条规则的注释里正写着旧的探针名。
+    """
+    out = []
+    for ln in body.splitlines():
+        s = ln.strip()
+        if not s or s.startswith((";", "#")):
+            continue
+        out.append(shlex.split(s, posix=True))
+    return out
+
+
+# 会给第一个操作数（一个变量）赋值的指令。${IfThen} … ${|} StrCpy $x … 这种
+# 嵌在行中间的也算，所以按「任意位置的词」找，不只看行首。
+_VAR_WRITERS = {"StrCpy", "Pop", "GetTempFileName", "FileOpen", "ReadRegStr", "ReadEnvStr", "IntOp"}
+# 会在磁盘上建出文件的指令
+_FILE_CREATORS = {"FileOpen", "GetTempFileName", "CopyFiles", "File", "Rename"}
+
+
+def test_directory_page_write_probe_never_touches_a_file_it_did_not_create():
+    """写权限探针不许用固定文件名（#533）。
+
+    主语：DirectoryLeave 在用户选的目录里**建**了哪个文件、**删**了哪个文件。
+    旧写法 `FileOpen $R7 "$INSTDIR\\.tavotto-write-probe" w` + `Delete` 同一个
+    固定名——目录里恰好有同名文件时，先被截断、再被删掉。
+
+    正面判据：本函数里唯一建文件的指令是 `GetTempFileName $x "$INSTDIR"`（由
+    系统挑一个不撞名的名字并以 CREATE_NEW 建出来），每一条 Delete 的目标都恰好
+    是 $x 本身，且两者之间 $x 没被改写。前提：GetTempFileName 失败时置错误标志、
+    紧跟的 IfErrors 跳走，于是 Delete 只会在它成功后执行（上一条用例钉住那条跳转）。
+    """
+    instrs = _instructions(_function_body("DirectoryLeave"))
+    creators = [(i, t) for i, t in enumerate(instrs) if t[0] in _FILE_CREATORS]
+    assert len(creators) == 1, f"DirectoryLeave 里建文件的指令应当只有一条: {creators}"
+    at, creator = creators[0]
+    assert creator[0] == "GetTempFileName" and creator[2:] == ["$INSTDIR"], creator
+    var = creator[1]
+    assert re.fullmatch(r"\$R?\d", var), var
+
+    # GetTempFileName 要求目录已存在：必须排在 CreateDirectory 之后
+    mkdir = [i for i, t in enumerate(instrs) if t[0] == "CreateDirectory"]
+    assert mkdir and mkdir[0] < at
+
+    deletes = [t for t in instrs if "Delete" in t]
+    assert deletes, "探针用完要删"
+    for t in deletes:
+        assert t == ["Delete", var], f"Delete 只许删 GetTempFileName 刚建的那个文件: {t}"
+
+    writes = [
+        (i, t)
+        for i, t in enumerate(instrs)
+        if any(w in _VAR_WRITERS and nxt == var for w, nxt in zip(t, t[1:]))
+    ]
+    assert writes == [(at, creator)], f"{var} 在探针建出之后被改写过: {writes}"
 
 
 def test_directory_page_button_says_install():

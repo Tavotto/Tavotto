@@ -2759,3 +2759,181 @@ def test_build_scripts_have_one_tool_check_and_it_is_not_by_path_suffix():
     assert "vite_build_argv" in imported, (
         f"playground 从 build_mcp_widget 导入的是 {imported}，没有 vite_build_argv"
     )
+
+
+# ---------------------------------------------------------------------------
+# os.kill(pid, 0) 在 Windows 上不是存活探测（#523）
+# ---------------------------------------------------------------------------
+#: 扫哪些源码根。主语是「会在某台机器上被执行的仓库 Python」：产品源码、脚本、用例。
+_KILL0_ROOTS = ("src", "scripts", "tests")
+
+
+def _is_os_name(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "name"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "os"
+    )
+
+
+def _is_sys_platform(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "platform"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "sys"
+    )
+
+
+def _platform_test(test: ast.expr) -> str | None:
+    """`if` 条件在问「是不是 Windows」：回 "nt"（真 = Windows）/ "posix"（真 = 非 Windows）/ None（判不出）。
+
+    认得的只有四种正面写法：`os.name == "nt"` / `os.name != "nt"` / `os.name == "posix"` /
+    `sys.platform ==|!= "win32"`。其余写法（`platform.system()`、`startswith("win")`、
+    `and` / `or` 组合）一律判不出 → 不算守卫——宁可误报一次让人改成这四种之一，也不猜。
+    """
+    if not (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], (ast.Eq, ast.NotEq))
+        and isinstance(test.comparators[0], ast.Constant)
+    ):
+        return None
+    left, value = test.left, test.comparators[0].value
+    if _is_os_name(left) and value == "nt" or _is_sys_platform(left) and value == "win32":
+        means_nt = True
+    elif _is_os_name(left) and value == "posix":
+        means_nt = False
+    else:
+        return None
+    if isinstance(test.ops[0], ast.NotEq):
+        means_nt = not means_nt
+    return "nt" if means_nt else "posix"
+
+
+def _always_leaves(body: list[ast.stmt]) -> bool:
+    """这段语句块走完一定离开当前函数（最后一句是 return / raise）。"""
+    return bool(body) and isinstance(body[-1], (ast.Return, ast.Raise))
+
+
+def _is_kill_zero(node: ast.AST) -> bool:
+    """真实的 `os.kill(<任意>, 0)` 调用——信号是字面量 0（不是 False，也不是 SIGTERM 之类）。"""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "kill"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+        and len(node.args) == 2
+        and isinstance(node.args[1], ast.Constant)
+        and type(node.args[1].value) is int
+        and node.args[1].value == 0
+    )
+
+
+def _kill_zero_sites(stmts: list[ast.stmt], posix_only: bool, out: list[tuple[int, bool]]) -> None:
+    """按语句顺序走一遍，给每个 `os.kill(x, 0)` 记下（行号, 是否只在非 Windows 上可达）。
+
+    「只在非 Windows 上可达」在结构上只认两种：
+      ① 词法上在 `if <非 Windows>:` 的 body 里，或 `if <Windows>:` 的 else 里；
+      ② 同一语句块里、它之前有一句 `if <Windows>:`（无 else）且那段 body 以 return / raise 结尾——
+         即 `if os.name == "nt": return ...` 这种提前离开。
+    """
+    for st in stmts:
+        kind = _platform_test(st.test) if isinstance(st, ast.If) else None
+        if kind is not None:
+            _kill_zero_sites(st.body, posix_only or kind == "posix", out)
+            _kill_zero_sites(st.orelse, posix_only or kind == "nt", out)
+            if kind == "nt" and not st.orelse and _always_leaves(st.body):
+                posix_only = True  # ② 之后的兄弟语句只有非 Windows 走得到
+            continue
+        for _field, value in ast.iter_fields(st):
+            items = value if isinstance(value, list) else [value]
+            if items and all(isinstance(item, ast.stmt) for item in items):
+                # 整个语句块一起走：② 的「提前离开」只对同一块里**之后**的兄弟语句成立
+                _kill_zero_sites(items, posix_only, out)
+                continue
+            for item in items:
+                if isinstance(item, (ast.excepthandler, ast.match_case)):
+                    _kill_zero_sites(item.body, posix_only, out)
+                elif isinstance(item, ast.AST):
+                    # 表达式（含 if 的条件、装饰器、默认值）：里面不会再有语句，直接找调用
+                    out.extend((n.lineno, posix_only) for n in ast.walk(item) if _is_kill_zero(n))
+
+
+def _kill_zero_report(source: str) -> list[tuple[int, bool]]:
+    out: list[tuple[int, bool]] = []
+    _kill_zero_sites(ast.parse(source).body, False, out)
+    return out
+
+
+@pytest.mark.parametrize(
+    ("source", "guarded"),
+    [
+        ("import os\nos.kill(pid, 0)\n", False),
+        (
+            "import os\ndef f(p):\n    try:\n        os.kill(p, 0)\n    except OSError:\n        pass\n",
+            False,
+        ),
+        ('import os\nif os.name == "nt":\n    os.kill(p, 0)\n', False),
+        ('import os\nif os.name == "nt":\n    pass\nos.kill(p, 0)\n', False),  # 没有提前离开
+        (
+            'import os\nif os.name == "nt":\n    return None\nelse:\n    x = 1\nos.kill(p, 0)\n',
+            False,
+        ),
+        ('import os\nif os.name == "posix":\n    os.kill(p, 0)\n', True),
+        ('import os\nif os.name != "nt":\n    os.kill(p, 0)\n', True),
+        ('import sys, os\nif sys.platform == "win32":\n    pass\nelse:\n    os.kill(p, 0)\n', True),
+        (
+            'import os\ndef f(p):\n    if os.name == "nt":\n        return None\n'
+            "    try:\n        os.kill(p, 0)\n    except OSError:\n        return False\n",
+            True,
+        ),
+        (
+            'import os\ndef f(p):\n    if os.name == "nt":\n        raise RuntimeError\n    os.kill(p, 0)\n',
+            True,
+        ),
+    ],
+)
+def test_kill_zero_guard_recognizer(source, guarded):
+    """判据自己的反证：认得出守卫，也认得出**不是**守卫的那几种长相。"""
+    lineno = next(i for i, line in enumerate(source.splitlines(), 1) if "os.kill(" in line)
+    assert _kill_zero_report(source) == [(lineno, guarded)]
+
+
+def test_no_unguarded_os_kill_zero():
+    """仓库里每一处 `os.kill(pid, 0)` 都必须结构上只在非 Windows 上可达（#523）。
+
+    Windows 上信号 0 不是探测：CPython 把它交给 TerminateProcess，pid 眼下属于谁就杀谁；
+    而 Windows 回收 pid 很快，于是「探测」会误报活着、顺手杀掉一个无关进程。
+    用例里判「那个子进程还在不在」请用 `tests/support/procprobe.alive / wait_gone`；
+    不在 tests/ 里的代码（产品、脚本）就写 `if os.name == "nt": return/raise …` 提前离开。
+
+    判据走 AST 的真实 Call 节点（注释、docstring 里解释这个坑的 `os.kill(pid, 0)` 不算），
+    守卫只认 `_kill_zero_sites` 写明的两种结构。**盲点（写在明处）**：
+    `from os import kill` 之后的裸 `kill(p, 0)`、信号写成变量、`pytest.mark.skipif(win32)`
+    装饰的用例（那种用例本身安全，但这里认不出，要么改写成上面的结构，要么改用 procprobe）。
+    """
+    root = Path(__file__).resolve().parent.parent
+    guarded, offenders, unparsable = [], [], []
+    for top in _KILL0_ROOTS:
+        for path in sorted((root / top).rglob("*.py")):
+            if "node_modules" in path.parts:
+                continue
+            try:
+                source = path.read_text(encoding="utf-8")
+                sites = _kill_zero_report(source)
+            except (SyntaxError, UnicodeDecodeError):
+                unparsable.append(path.relative_to(root).as_posix())
+                continue
+            for lineno, ok in sites:
+                where = f"{path.relative_to(root).as_posix()}:{lineno}"
+                (guarded if ok else offenders).append(where)
+    assert not offenders, (
+        "这些 os.kill(pid, 0) 在 Windows 上会终止进程（#523）；改用 tests/support/procprobe，"
+        '或在前面加 `if os.name == "nt": return/raise …`：\n  ' + "\n  ".join(offenders)
+    )
+    # 正面形式：扫描真的看见了已知的正确写法——rglob 坏了 / 识别器全失灵时这里先红，而不是一片空绿
+    assert any(g.startswith("tests/support/procprobe.py:") for g in guarded), guarded
+    assert not unparsable, f"这些文件解析不了，判据看不见它们：{unparsable}"
