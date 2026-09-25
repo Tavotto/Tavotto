@@ -226,6 +226,16 @@ def test_refused_edit_is_undone_in_a_live_session(tmp_path):
         pool.discard(w)
 
 
+def test_malformed_identity_is_refused_not_matched_by_position(base, tmp_path):
+    """带了 identity 却不是非空字符串 = 脏数据：不许退回按位置匹配（那正是要堵的路）。"""
+    patches = [
+        {"gid": _lines(base)["alpha"]["gid"], "prop": "color", "value": MAGENTA, "identity": ""}
+    ]
+    manifest, warnings = _replay(_library(tmp_path / "bad", VARIANTS["reorder"]), patches)
+    assert all(v["color"] != MAGENTA for v in _lines(manifest).values())
+    assert any(REFUSED.search(w) for w in warnings)
+
+
 def test_renaming_the_curve_does_not_invalidate_its_own_edits(tmp_path):
     """label 本身是可编辑的 prop：身份必须是 baseline 那一刻采的，不跟着编辑走。
 
