@@ -15,6 +15,7 @@ import {
   nudgeSelected,
   selectAll,
 } from '@/store/actions'
+import { cancelActivePointerGesture } from '@/canvas/interactions'
 import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -114,6 +115,16 @@ export function useKeyboard() {
 
       if (e.code === 'Space' && !inEditableTarget(e)) {
         if (!e.repeat) useViewportStore.getState().setSpaceDown(true)
+        e.preventDefault()
+        return
+      }
+
+      // 拖动 / 缩放 / 框选进行中按 Esc = **先取消这次手势**（与 pointercancel 同一条路：
+      // 还原 DOM、不写 override、不进历史、不渲染），这一下不再做别的。放在一切判断之前：
+      // 手势开着时 Esc 若先去清选中 / 退图内编辑态，手势会比它所属的编辑态活得更久，
+      // 松手在已经离开的画面里写文档（QA STATE-02-B1）；焦点留在输入框里也照样取消——
+      // 那次拖动是画布上的，与输入框无关。
+      if (e.key === 'Escape' && cancelActivePointerGesture()) {
         e.preventDefault()
         return
       }

@@ -143,17 +143,41 @@ interface TrackOptions {
   threshold?: number
 }
 
+/**
+ * 此刻开着的那一次指针追踪的「取消」出口；null = 没有。
+ *
+ * 指针追踪的监听挂在 window 上，只有 pointerup / pointercancel / lostpointercapture
+ * 收得了它。键盘上的取消（Esc）够不着那几个闭包——于是拖动中按 Esc 退出图内编辑态，
+ * 手势照样活着，松手在已经离开的画面里写文档（QA STATE-02-B1）。这里把「取消」登记成
+ * 一个出口，走的是与 pointercancel **同一条** `finish(true)`：还原 DOM、不写 override、
+ * 不进历史、不渲染，各个 onEnd 早就按 `TrackEnd.cancelled` 分好了路。
+ */
+let activeTrackCancel: (() => void) | null = null
+
+/**
+ * 取消此刻进行中的指针手势（拖动 / 缩放 / 框选 / 绘制……）。回 true = 真的取消了一次；
+ * 没有进行中的手势时什么都不做、回 false，调用方照常走它自己的逻辑。
+ */
+export function cancelActivePointerGesture(): boolean {
+  const cancel = activeTrackCancel
+  if (!cancel) return false
+  cancel()
+  return true
+}
+
 export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 2 }: TrackOptions) {
   const startX = e.clientX
   const startY = e.clientY
   let moved = false
   let done = false
+  let lastEv: PointerEvent | null = null
 
   const move = (ev: PointerEvent) => {
     const dx = ev.clientX - startX
     const dy = ev.clientY - startY
     if (!moved && Math.abs(dx) + Math.abs(dy) < threshold) return
     moved = true
+    lastEv = ev
     // 性能探针（ADR 0075）：量业务处理 + 紧随其后的 React 同步重渲染；没录制时直接调用
     perfInput(() => onMove(ev, dx, dy))
   }
@@ -164,11 +188,16 @@ export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 
     window.removeEventListener('pointerup', up)
     window.removeEventListener('pointercancel', cancel)
     window.removeEventListener('lostpointercapture', cancel)
+    if (activeTrackCancel === cancelByKey) activeTrackCancel = null
     // 性能探针（ADR 0075）：松手那一下的同步提交与随后的 React 重渲染
     perfRelease(() => onEnd(moved, ev as PointerEvent, { cancelled }))
   }
   const up = finish(false)
   const cancel = finish(true)
+  // 键盘取消没有自己的指针事件：交给 onEnd 的是最后一次 move（没有就是按下那一下），
+  // 取消分支本来就不读它，给一个真实的指针事件只是免得有人读到 undefined
+  const cancelByKey = () => cancel(lastEv ?? (e.nativeEvent as PointerEvent))
+  activeTrackCancel = cancelByKey
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', up)
   window.addEventListener('pointercancel', cancel)
@@ -1458,10 +1487,33 @@ export function startArrowDrag(
  */
 function contentDelta(panel: PanelObject, layout: { width: number; height: number }) {
   const rot = panelRotation(panel)
-  return (dxPx: number, dyPx: number): [number, number] => {
-    const { zoom } = useViewportStore.getState()
+  const toFrac = (dxPx: number, dyPx: number, zoom: number): [number, number] => {
     const [dx, dy] = unrotateVec(dxPx, dyPx, rot)
     return [dx / (layout.width * zoom), dy / (layout.height * zoom)]
+  }
+  // 拖动途中视图倍率变了（⌘= / ⌘− / 捏合）：**以倍率变化那一刻为新基准**。
+  // 传进来的是「从按下起累计的屏幕位移」，一直按此刻的倍率整段换算的话，倍率一变，
+  // 之前走过的那段屏幕位移就被按新倍率重算一遍——下一次 move 元素凭空跳 Δ×(k−1)
+  // （QA STATE-07-B1）。改成：变化前走过的那段按**当时的**倍率折成内容位移存起来，
+  // 之后只把新增的屏幕位移按新倍率换算。元素在倍率变化时随画布一起缩放（内容位置
+  // 不变），此后逐帧跟着指针的增量走，不跳位；抓取点相对指针的偏移随缩放变化，
+  // 这是「重建基准」的定义本身，不是缺陷。
+  let zoom0 = useViewportStore.getState().zoom
+  let base: [number, number] = [0, 0] // 倍率变化之前已走过的内容位移
+  let origin: [number, number] = [0, 0] // 上一次倍率变化时的累计屏幕位移
+  let lastPx: [number, number] = [0, 0]
+  return (dxPx: number, dyPx: number): [number, number] => {
+    const { zoom } = useViewportStore.getState()
+    if (zoom !== zoom0) {
+      // 在倍率变化前看到的最后一个指针位置处结账：那之后的位移都发生在新倍率下
+      const [bx, by] = toFrac(lastPx[0] - origin[0], lastPx[1] - origin[1], zoom0)
+      base = [base[0] + bx, base[1] + by]
+      origin = lastPx
+      zoom0 = zoom
+    }
+    lastPx = [dxPx, dyPx]
+    const [cx, cy] = toFrac(dxPx - origin[0], dyPx - origin[1], zoom)
+    return [base[0] + cx, base[1] + cy]
   }
 }
 
