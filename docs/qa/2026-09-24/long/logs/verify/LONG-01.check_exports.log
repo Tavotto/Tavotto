@@ -1,0 +1,17 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/check_exports.py <scratch>/qa/vlong/run-long01 <scratch>/qa/vlong/fx/projA/tavottofile/export
+# start: 2026-09-24T20:33:16Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+{
+ "checked": {
+  "pdf": 867,
+  "png": 867
+ },
+ "missing_files": 0,
+ "states_exported": 4,
+ "png_nondeterministic_states": {},
+ "problems": [],
+ "problem_count": 0
+}
+# end: 2026-09-24T20:33:16Z
+# exit: 0

@@ -53,3 +53,15 @@
 - 看护：`web/src/perf/core.test.ts`、`web/src/perf/synthetic.test.ts`、
   `web/e2e/perf-probe.spec.ts`（真浏览器：渲染列有值、两轮跑满、零后端、报告不含文件名）、
   `tests/test_perf_probe.py`（机器事实解析 + 身份反查 + 分析器排序）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 热路径只 import `perf/core.ts`（叶子）、没录制时零成本
+- 插桩点闭集且与 `scripts/perf_report.py` 同步
+- 自动测试一律 `pointercancel` 收尾、绝不改文档
+- 报告只有数字、桌面版存不上就说存不上
+- 判断在分析器不在产品

@@ -1,0 +1,30 @@
+# verify rerun ENV-03/repro_vanish
+# cmd: TAVOTTO_FONTS_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/fonts PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/env03_configured_python_vanishes.py --e1 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1 --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final
+# head: 1f9f29099abe7d0448c44039e150ac9020cc6077
+# start(UTC): 2026-09-24T19:09:18Z
+{
+  "patch_status": 200,
+  "environment_resolution_error_after_delete": null,
+  "environment_python_after_delete": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/vanish/c_env/bin/python",
+  "prepare_after_delete": {
+    "status": "error",
+    "error": {
+      "code": "internal_error",
+      "message": "FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/vanish/c_env/bin/python'"
+    }
+  },
+  "render_after_delete": {
+    "status": 500,
+    "code": "internal_error"
+  },
+  "prepare_after_restart": {
+    "status": "error",
+    "error": {
+      "code": "explicit_python_unusable",
+      "message": "你在设置里指定的环境 指定的解释器用不了：这条路径已经不存在（/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/vanish/c_env/bin/python）。Tavotto 不会自动换成别的环境：请重新指定，或清除这条设置回到自动选择。"
+    }
+  }
+}
+DEVIATION: same-process prepare after the configured interpreter vanished returned 'internal_error' instead of explicit_python_unusable/missing
+# end(UTC): 2026-09-24T19:09:41Z
+# exit_code: 1

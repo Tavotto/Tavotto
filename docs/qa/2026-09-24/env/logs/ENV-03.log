@@ -1,0 +1,334 @@
+# case: ENV-03 显式失效
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# 各节开头是逐字命令与时间；<worktree> 是仓库根，<scratch> 是 QA scratch 目录
+
+===== 探针 ENV-03（已还原树）（原始日志 ENV-03.probe.log）=====
+$ cd <worktree> && TAVOTTO_FONTS_DIR=<scratch>/fonts PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/e1_http_probe.py ENV-03 --e1 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final
+# date: 2026-09-24T18:56:27Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  tree: clean-src
+[02:56:27] scenario=ENV-03 e1=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 port=5303
+[02:56:28] PASS (a) env 变量 bare：environment 报 explicit_python_unusable/no_matplotlib :: {'code': 'explicit_python_unusable', 'explicit': {'reason': 'no_matplotlib', 'source': 'env_override'}, 'message': '环境变量 TAVOTTO_WORKER_PYTHON 指定的解释器用不了：它 import 不到 matplotlib（或起不来）（/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/bare/.venv/bin/python）。Tavotto 不会自动换成别的环境：请重新指定，或清除这条设置回到自动选择。'}
+[02:56:29] PASS (a) prepare 终局 error=explicit_python_unusable，未起 runtime :: {'status': 'error', 'error': {'code': 'explicit_python_unusable', 'message': '环境变量 TAVOTTO_WORKER_PYTHON 指定的解释器用不了：它 import 不到 matplotlib（或起不来）（/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/bare/.venv/bin/python）。Tavotto 不会自动换成别的环境：请重新指定，或清除这条设置回到自动选择。'}, 'plan_env_python': None}
+[02:56:29] PASS (a) render 被拒且 code=explicit_python_unusable :: explicit_python_unusable
+[02:56:29] PASS (a) 没有偷偷记住项目环境（用户配置里没有 project_env 决策） :: {}
+[02:56:43] PASS (a') 纠正后 prepare ready
+[02:56:43] PASS (a') 纠正后: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[02:56:43] PASS (a') 纠正后: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[02:56:43] PASS (a') 纠正后: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/bin/python
+[02:56:43] PASS (a') 纠正后: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv
+[02:56:43] PASS (a') 纠正后: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[02:56:43] PASS (a') 纠正后: 包版本 :: 1.0.0
+[02:56:43] PASS (a') 纠正后: 图中完整点序列 :: [0, 9, 2, 10]
+[02:56:57] PASS (b) env 变量指向不存在路径：按没设（ADR 0057），首开选 A 并 ready :: {'status': 'ready', 'source': 'project_venv'}
+[02:57:10] PASS (c) PATCH 全局解释器 C 被接受 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/ENV-03/c_env/bin/python
+[02:57:10] FAIL (c) 设置里的解释器消失：explicit_python_unusable/missing，不静默换 A :: {'code': 'internal_error', 'message': "FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/ENV-03/c_env/bin/python'"}
+[02:57:11] PASS (c') 清除设置后 prepare ready 且来源 project_venv :: {'status': 'ready', 'source': 'project_venv'}
+[02:57:11] PASS (c') 纠正后: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[02:57:11] PASS (c') 纠正后: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[02:57:11] PASS (c') 纠正后: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/bin/python
+[02:57:11] PASS (c') 纠正后: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv
+[02:57:11] PASS (c') 纠正后: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[02:57:11] PASS (c') 纠正后: 包版本 :: 1.0.0
+[02:57:11] PASS (c') 纠正后: 图中完整点序列 :: [0, 9, 2, 10]
+[02:57:24] PASS (d) PATCH 项目解释器 D 被接受 :: system
+[02:57:25] PASS (d) 手选 D 生效（source 非 project_venv 的自动发现） :: {'status': 'ready', 'source': 'system'}
+[02:57:26] PASS (d) 手选项目环境失效：project_python_unusable，不静默换 A :: {'code': 'project_python_unusable', 'message': '为这个项目指定的解释器用不了：它 import 不到 matplotlib（或起不来）（/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/ENV-03/d_env/bin/python）。Tavotto 不会自动换成别的环境：请在渲染环境设置里重新指定，或清除它回到自动选择。'}
+[02:57:40] PASS (d') 用户选回默认链条后可运行 :: {'status': 'ready', 'source': 'current_process'}
+[02:57:40] RESULT ENV-03: FAIL (26/27 checks)
+# exit_code: 1
+
+===== 最小复现：设置里的解释器在进程内消失（原始日志 ENV-03.vanish.probe.log）=====
+$ cd <worktree> && TAVOTTO_FONTS_DIR=<scratch>/fonts PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/env03_configured_python_vanishes.py --e1 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final
+# date: 2026-09-24T18:59:29Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  tree: clean-src
+{
+  "patch_status": 200,
+  "environment_resolution_error_after_delete": null,
+  "environment_python_after_delete": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/vanish/c_env/bin/python",
+  "prepare_after_delete": {
+    "status": "error",
+    "error": {
+      "code": "internal_error",
+      "message": "FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/vanish/c_env/bin/python'"
+    }
+  },
+  "render_after_delete": {
+    "status": 500,
+    "code": "internal_error"
+  },
+  "prepare_after_restart": {
+    "status": "error",
+    "error": {
+      "code": "explicit_python_unusable",
+      "message": "你在设置里指定的环境 指定的解释器用不了：这条路径已经不存在（/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/vanish/c_env/bin/python）。Tavotto 不会自动换成别的环境：请重新指定，或清除这条设置回到自动选择。"
+    }
+  }
+}
+DEVIATION: same-process prepare after the configured interpreter vanished returned 'internal_error' instead of explicit_python_unusable/missing
+# exit_code: 1
+
+===== 变异 M1 下的探针 ENV-03（原始日志 ENV-03.M1_mutated.probe.log）=====
+[02:51:15] scenario=ENV-03 e1=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 port=5303
+[02:51:17] FAIL (a) env 变量 bare：environment 报 explicit_python_unusable/no_matplotlib
+[02:51:42] FAIL (a) prepare 终局 error=explicit_python_unusable，未起 runtime :: {'status': 'error', 'error': {'code': 'missing_dependency', 'message': '脚本用到的 qa_probe_pkg 在当前渲染环境里没有。可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 qa_probe_pkg 的 Python / Conda 环境。', 'module': 'qa_probe_pkg'}, 'plan_env_python': None}
+[02:51:42] FAIL (a) render 被拒且 code=explicit_python_unusable :: missing_dependency
+[02:51:42] FAIL (a) 没有偷偷记住项目环境（用户配置里没有 project_env 决策） :: {'/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj': {'environment': {'automatic': True, 'trigger': 'missing_dependency', 'module': 'qa_probe_pkg', 'python_version': '3.13.11', 'matplotlib_version': '3.10.8', 'support': 'verified', 'python_relative': '.venv/bin/python'}}}
+[02:51:56] PASS (a') 纠正后 prepare ready
+[02:51:56] PASS (a') 纠正后: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[02:51:56] PASS (a') 纠正后: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[02:51:56] PASS (a') 纠正后: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/bin/python
+[02:51:56] PASS (a') 纠正后: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv
+[02:51:56] PASS (a') 纠正后: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[02:51:56] PASS (a') 纠正后: 包版本 :: 1.0.0
+[02:51:56] PASS (a') 纠正后: 图中完整点序列 :: [0, 9, 2, 10]
+[02:52:11] PASS (b) env 变量指向不存在路径：按没设（ADR 0057），首开选 A 并 ready :: {'status': 'ready', 'source': 'project_venv'}
+[02:52:25] PASS (c) PATCH 全局解释器 C 被接受 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/runs_M1/ENV-03/c_env/bin/python
+[02:52:25] FAIL (c) 设置里的解释器消失：explicit_python_unusable/missing，不静默换 A :: {'code': 'internal_error', 'message': "FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/runs_M1/ENV-03/c_env/bin/python'"}
+[02:52:27] PASS (c') 清除设置后 prepare ready 且来源 project_venv :: {'status': 'ready', 'source': 'project_venv'}
+[02:52:27] PASS (c') 纠正后: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[02:52:27] PASS (c') 纠正后: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[02:52:27] PASS (c') 纠正后: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/bin/python
+[02:52:27] PASS (c') 纠正后: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv
+[02:52:27] PASS (c') 纠正后: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[02:52:27] PASS (c') 纠正后: 包版本 :: 1.0.0
+[02:52:27] PASS (c') 纠正后: 图中完整点序列 :: [0, 9, 2, 10]
+[02:52:43] PASS (d) PATCH 项目解释器 D 被接受 :: system
+[02:52:44] PASS (d) 手选 D 生效（source 非 project_venv 的自动发现） :: {'status': 'ready', 'source': 'system'}
+[02:52:45] PASS (d) 手选项目环境失效：project_python_unusable，不静默换 A :: {'code': 'project_python_unusable', 'message': '为这个项目指定的解释器用不了：它 import 不到 matplotlib（或起不来）（/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/runs_M1/ENV-03/d_env/bin/python）。Tavotto 不会自动换成别的环境：请在渲染环境设置里重新指定，或清除它回到自动选择。'}
+[02:53:17] PASS (d') 用户选回默认链条后可运行 :: {'status': 'ready', 'source': 'current_process'}
+[02:53:17] RESULT ENV-03: FAIL (22/27 checks)
+
+===== 变异 M1 下的新用例（原始日志 test_first_open_same_name_package.M1_mutated.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_same_name_package.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:50:33Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 2 items
+
+tests/test_first_open_same_name_package.py .F                            [100%]
+
+=================================== FAILURES ===================================
+_ test_an_unusable_explicit_interpreter_stops_and_clearing_it_recovers_the_project_venv _
+
+tmp_path = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4853/test_an_unusable_explicit_inte0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x102e4f100>
+
+    @needs_worker
+    def test_an_unusable_explicit_interpreter_stops_and_clearing_it_recovers_the_project_venv(
+        tmp_path, monkeypatch
+    ):
+        root, truth_a, _ = _two_envs(tmp_path, monkeypatch)
+        bare = tmp_path / "bare"
+        subprocess.run([WORKER_PY, "-m", "venv", str(bare)], check=True, timeout=300)
+        bare_py = projectenv.interpreter_of(bare)
+        assert subprocess.run([bare_py, "-c", "import matplotlib"], capture_output=True).returncode != 0
+        monkeypatch.setenv(engine_pool.WORKER_PYTHON_ENV, bare_py)
+        with pytest.raises(engine_pool.WorkerError) as err:
+            engine_pool.build("figure.py", str(root), "__main__")
+>       assert err.value.code == engine_pool.EXPLICIT_UNUSABLE_CODE
+E       AssertionError: assert 'missing_dependency' == 'explicit_python_unusable'
+E         
+E         - explicit_python_unusable
+E         + missing_dependency
+
+tests/test_first_open_same_name_package.py:168: AssertionError
+========================= 1 failed, 1 passed in 10.25s =========================
+# exit_code: 1
+
+===== 变异 M1 下的既有用例（原始日志 test_first_open_environment.M1_mutated.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_environment.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:50:43Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 13 items
+
+tests/test_first_open_environment.py ....FF.....ss                       [100%]
+
+=================================== FAILURES ===================================
+_ test_fo15_an_explicit_env_var_without_matplotlib_stops_instead_of_falling_through _
+
+tmp_path = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4854/test_fo15_an_explicit_env_var_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x104762250>
+
+    @needs_worker
+    def test_fo15_an_explicit_env_var_without_matplotlib_stops_instead_of_falling_through(
+        tmp_path, monkeypatch
+    ):
+        root = _project(tmp_path)
+        venvfixture.make_project_venv(root, ".venv", python=WORKER_PY)  # 旁边有个能用的也不换
+        bare = _bare_venv(tmp_path)
+        monkeypatch.setenv(engine_pool.WORKER_PYTHON_ENV, bare)
+>       with pytest.raises(engine_pool.WorkerError) as err:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE WorkerError
+
+tests/test_first_open_environment.py:185: Failed
+__ test_a_configured_interpreter_that_is_gone_or_broken_stops_with_the_reason __
+
+tmp_path = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4854/test_a_configured_interpreter_0')
+
+    @needs_worker
+    def test_a_configured_interpreter_that_is_gone_or_broken_stops_with_the_reason(tmp_path):
+        root = _project(tmp_path)
+        bare = _bare_venv(tmp_path)
+        engine_config.set_worker_python(bare)
+        engine_pool.reset_worker_python()
+>       with pytest.raises(engine_pool.WorkerError) as err:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE WorkerError
+
+tests/test_first_open_environment.py:205: Failed
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_first_open_environment.py:350: not_run：TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON 没有指向「支持矩阵外」的真实解释器
+SKIPPED [1] tests/test_first_open_environment.py:434: not_run：TAVOTTO_FOUNDATION_ALT_PYTHON 没有指向「另一个 minor 且装了 matplotlib」的解释器
+=================== 2 failed, 9 passed, 2 skipped in 22.32s ====================
+# exit_code: 1
+
+===== 变异 M1 下的 FO15（HTTP）（原始日志 test_foundation_first_open.M1_mutated_fo15.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_foundation_first_open.py::test_fo15_explicit_interpreter_without_matplotlib_stops_with_a_reason -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:53:34Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 1 item
+
+tests/test_foundation_first_open.py F                                    [100%]
+
+=================================== FAILURES ===================================
+____ test_fo15_explicit_interpreter_without_matplotlib_stops_with_a_reason _____
+
+tmp_path = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4871/test_fo15_explicit_interpreter0')
+
+    @needs_worker
+    def test_fo15_explicit_interpreter_without_matplotlib_stops_with_a_reason(tmp_path):
+        """用户显式指定 A（`TAVOTTO_WORKER_PYTHON`），A 不满足约束（没有 matplotlib）：产品
+        **停下来说原因**，不静默换一个能 import 的 Python、不装包、不执行脚本；静态原件照常可见。"""
+        case, binding = _case("FO15")
+        truth = _truth("single_file_csv")
+        proj = tmp_path / "proj"
+        shutil.copytree(FIXTURES / "single_file_csv", proj)
+        _native_reference(proj, "figure.py", tmp_path)
+        bare = _bare_venv(tmp_path)
+        evidence: list[str] = []
+        with fa.running_app(
+            proj, tmp_path / "work", env_overrides={"TAVOTTO_WORKER_PYTHON": bare}
+        ) as app:
+            panel = _panel(app, truth["expected_output"])
+            assert panel["capability"]["status"] == "editable"  # 静态原件与脚本关系仍在
+            _, envst = app.call("/api/engine/environment", timeout=30)
+            err = envst["project"]["resolution_error"]
+>           assert err and err["code"] == "explicit_python_unusable"
+E           assert (None)
+
+tests/test_foundation_first_open.py:482: AssertionError
+============================== 1 failed in 3.15s ===============================
+# exit_code: 1
+
+===== 还原后：新用例（原始日志 test_first_open_same_name_package.M1_restored.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_same_name_package.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:53:43Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 2 items
+
+tests/test_first_open_same_name_package.py ..                            [100%]
+
+============================== 2 passed in 10.10s ==============================
+# exit_code: 0
+
+===== 还原后：既有用例（原始日志 test_first_open_environment.M1_restored.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_environment.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:53:53Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 13 items
+
+tests/test_first_open_environment.py ...........ss                       [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_first_open_environment.py:350: not_run：TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON 没有指向「支持矩阵外」的真实解释器
+SKIPPED [1] tests/test_first_open_environment.py:434: not_run：TAVOTTO_FOUNDATION_ALT_PYTHON 没有指向「另一个 minor 且装了 matplotlib」的解释器
+======================== 11 passed, 2 skipped in 21.88s ========================
+# exit_code: 0
+
+===== 还原后：FO15（原始日志 test_foundation_first_open.M1_restored.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_foundation_first_open.py::test_fo15_explicit_interpreter_without_matplotlib_stops_with_a_reason -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:54:15Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 1 item
+
+tests/test_foundation_first_open.py .                                    [100%]
+
+============================== 1 passed in 3.73s ===============================
+# exit_code: 0
+
+===== 变异 M3 下（项目级手选失效）（原始日志 test_first_open_environment.M3_mutated.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_environment.py::test_fo16_a_user_chosen_project_interpreter_that_broke_stops_with_the_reason -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:55:23Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 1 item
+
+tests/test_first_open_environment.py F                                   [100%]
+
+=================================== FAILURES ===================================
+_ test_fo16_a_user_chosen_project_interpreter_that_broke_stops_with_the_reason _
+
+tmp_path = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4878/test_fo16_a_user_chosen_projec0')
+
+    @needs_worker
+    def test_fo16_a_user_chosen_project_interpreter_that_broke_stops_with_the_reason(tmp_path):
+        root = _project(tmp_path)
+        bare = _bare_venv(tmp_path)
+        projectenv.remember(root, bare, automatic=False, trigger="user_selected")
+        engine_pool.reset_worker_python()
+>       with pytest.raises(engine_pool.WorkerError) as err:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE WorkerError
+
+tests/test_first_open_environment.py:262: Failed
+------------------------------ Captured log call -------------------------------
+WARNING  tavotto.engine:pool.py:1147 项目自动记住的解释器已不可用（no_matplotlib），作废并重新发现: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4878/test_fo16_a_user_chosen_projec0/bare/bin/python
+============================== 1 failed in 1.79s ===============================
+# exit_code: 1
+
+===== 还原后（M3）（原始日志 test_first_open_environment.M3_restored.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_environment.py::test_fo16_a_user_chosen_project_interpreter_that_broke_stops_with_the_reason -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:55:25Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 1 item
+
+tests/test_first_open_environment.py .                                   [100%]
+
+============================== 1 passed in 1.78s ===============================
+# exit_code: 0
+
+===== pytest test_foundation_first_open.py（基线）（原始日志 test_foundation_first_open.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_foundation_first_open.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:29:28Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 6 items
+
+tests/test_foundation_first_open.py ......                               [100%]
+
+========================= 6 passed in 89.14s (0:01:29) =========================
+# exit_code: 0
+

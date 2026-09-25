@@ -1,0 +1,52 @@
+# case: ENV-07 持久化
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# 各节开头是逐字命令与时间；<worktree> 是仓库根，<scratch> 是 QA scratch 目录
+
+===== 探针 ENV-07（原始日志 ENV-07.probe.log）=====
+$ cd <worktree> && TAVOTTO_FONTS_DIR=<scratch>/fonts PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/e1_http_probe_more.py ENV-07 --e1 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final
+# date: 2026-09-24T18:59:11Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  tree: clean-src
+[02:59:11] scenario=ENV-07 e1=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 port=5303
+[02:59:29] PASS 第 1 轮：首开后 project_venv / first_open :: {'source': 'project_venv', 'trigger': 'first_open', 'automatic': True, 'python_version': '3.13.11', 'matplotlib_version': '3.10.8', 'support': 'verified'}
+[02:59:29] PASS 重启后：prepare 之前的环境状态已是记住的 project_venv（automatic, first_open） :: {'source': 'project_venv', 'automatic': True, 'trigger': 'first_open', 'source_label': '项目自带的虚拟环境'}
+[02:59:29] PASS 重启后：计划的选择原因仍可解释（source / trigger） :: {'source': 'project_venv', 'trigger': 'first_open', 'automatic': True, 'python_version': '3.13.11', 'matplotlib_version': '3.10.8', 'support': 'verified'}
+[02:59:29] PASS 回执带选择来源 python_source :: {'python_source': 'project_venv', 'generation': 1, 'pid_check': 'ok', 'completeness': 'complete', 'public_identity': 'sha256:6cf338690aa4c2a46ece166c9aaa829905929b2ff59320c7e0063bf7efa37782', 'source_revision': 'da0a85c8bc2d328ec2bb162d2a4efaf1b424ecb2'}
+[02:59:29] PASS 第 1 轮: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/bin/python
+[02:59:29] PASS 第 1 轮: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv
+[02:59:29] PASS 第 1 轮: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[02:59:29] PASS 第 1 轮: 包版本 :: 1.0.0
+[02:59:29] PASS 第 1 轮: 图中完整点序列 :: [0, 9, 2, 10]
+[02:59:29] PASS 第 1 轮导出含 A 的点序列
+[02:59:29] PASS 第 2 轮: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/bin/python
+[02:59:29] PASS 第 2 轮: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv
+[02:59:29] PASS 第 2 轮: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[02:59:29] PASS 第 2 轮: 包版本 :: 1.0.0
+[02:59:29] PASS 第 2 轮: 图中完整点序列 :: [0, 9, 2, 10]
+[02:59:29] PASS 第 2 轮导出含 A 的点序列
+[02:59:29] PASS 两轮导出语义身份一致（结果重现） :: ['sha256:ac94a490c9cb3e876b2c4d8785e1a25ce857dbbd2ffc626e36562e7608350d8f', 'sha256:ac94a490c9cb3e876b2c4d8785e1a25ce857dbbd2ffc626e36562e7608350d8f']
+[02:59:29] PASS 回执公开身份两轮一致 :: ['sha256:6cf338690aa4c2a46ece166c9aaa829905929b2ff59320c7e0063bf7efa37782', 'sha256:6cf338690aa4c2a46ece166c9aaa829905929b2ff59320c7e0063bf7efa37782']
+[02:59:29] RESULT ENV-07: PASS (18/18 checks)
+# exit_code: 0
+
+===== pytest test_foundation_dependencies.py（含 FO31 重启）（原始日志 test_foundation_dependencies.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_foundation_dependencies.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:33:19Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 7 items
+
+tests/test_foundation_dependencies.py .....ss                            [100%]
+
+=============================== warnings summary ===============================
+../../../.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885
+  /Volumes/Projects/Tavotto/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; support.dependency_repair
+    self.import_plugin(import_spec)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_foundation_dependencies.py:628: 要联网装 matplotlib 进受管环境：TAVOTTO_FOUNDATION_ONLINE=1 才跑（nightly foundation-observing）
+SKIPPED [1] tests/test_foundation_dependencies.py:695: 要联网装 matplotlib 进受管环境：TAVOTTO_FOUNDATION_ONLINE=1 才跑（nightly foundation-observing）
+============= 5 passed, 2 skipped, 1 warning in 227.61s (0:03:47) ==============
+# exit_code: 0
+

@@ -1,0 +1,21 @@
+### $ docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_probe.spec.ts --grep 视图倍率
+### time=2026-09-24T19:15:26Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=0
+
+Running 1 test using 1 worker
+
+{"probe":"zoom-mid-drag","pointer":{"x0":647.99853515625,"y0":264.0103759765625,"dx":61},"c0":{"x":647.99853515625,"y":264.0103759765625},"cBeforeZoom":{"x":707.9983520507812,"y":264.0103759765625},"cAfterZoomNoMove":{"x":726.9979248046875,"y":234.51296997070312},"cAfterZoomMove":{"x":712.9979248046875,"y":234.51296997070312},"cFinal":{"x":712.9979858398438,"y":234.51296997070312},"renders":1,"body":"{\"id\":\"Fig1_kinetics.pdf\",\"patches\":[{\"gid\":\"axes_0.title\",\"prop\":\"pos_frac\",\"value\":[0.7009524631682658,0.08325231481481465]}],\"inline_svg\":true}"}
+{"probe":"resize-mid-drag","pointer":{"x0":712.9979858398438,"y0":234.51296997070312,"dy":41},"d0":{"x":712.9979858398438,"y":234.51296997070312},"dBefore":{"x":712.9979858398438,"y":274.5108642578125},"dAfterResize":{"x":412.99798583984375,"y":274.5108642578125},"dAfterResizeMove":{"x":412.99798583984375,"y":275.51080322265625},"renders":2}
+  ✓  1 [chromium] › e2e/state_probe.spec.ts:160:1 › probe: 视图倍率 / 窗口宽度在拖动中改变（STATE-07 浏览器腿） (25.8s)
+
+  1 passed (26.2s)
+
+### $ docs/qa/2026-09-24/state/repro/run.sh e2e-repro state07_dpr_probe.spec.ts
+### time=2026-09-24T19:15:53Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=0
+
+Running 1 test using 1 worker
+
+{"probe":"dpr-mid-drag","p0":{"x":637.3345642089844,"y":267.5911865234375,"tf":null,"dpr":1},"before":{"x":677.3344421386719,"y":287.5901184082031,"tf":"translate(36.48085905707515,18.240429541943442)","dpr":1},"afterDpr":{"x":677.3344421386719,"y":287.5901184082031,"tf":"translate(36.48085905707515,18.240429541943442)","dpr":2},"afterDprMove":{"x":678.33447265625,"y":287.5901184082031,"tf":"translate(37.39288053350203,18.240429541943442)","dpr":2},"final":{"x":678.33447265625,"y":287.5901184082031,"tf":null,"dpr":2},"pointerEnd":{"x":678.3345642089844,"y":287.5911865234375},"renders":["{\"id\":\"Fig1_kinetics.pdf\",\"patches\":[{\"gid\":\"axes_0.title\",\"prop\":\"pos_frac\",\"value\":[0.6773922159094101,0.19496790824937427]}],\"inline_svg\":true}"]}
+  ✓  1 [chromium] › e2e/state07_dpr_probe.spec.ts:18:1 › probe STATE-07：拖动中 DPR 1→2 (21.2s)
+
+  1 passed (21.7s)
+

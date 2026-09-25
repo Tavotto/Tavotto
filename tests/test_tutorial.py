@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from support.pipedrain import StderrDrain
 from tavotto import app as m
 from tavotto.engine import (
     config as engine_config,
@@ -897,7 +898,7 @@ def _rpc(proc, obj, timeout=180):
     reader.join(timeout)
     assert not reader.is_alive(), f"worker 超时（{timeout}s）: {obj.get('cmd')}"
     line = box[0] if box else ""
-    assert line, f"worker 无响应: {obj.get('cmd')}\n{proc.stderr.read()}"
+    assert line, f"worker 无响应: {obj.get('cmd')}\n{proc.stderr_drain.tail(4000, wait=10)}"
     resp = json.loads(line)
     assert resp.get("ok"), f"{resp.get('error', resp)}\n{resp.get('traceback', '')}"
     return resp
@@ -936,6 +937,9 @@ def test_tutorial_scripts_build_in_a_worker_and_expose_editable_roles(
         encoding="utf-8",
         errors="replace",
     )
+    proc.stderr_drain = StderrDrain(
+        proc
+    )  # 与子进程并发排空 stderr（support/pipedrain.py；#549 Windows 分片的教训）
     try:
         resp = _rpc(proc, {"cmd": "build"})
         assert panel["stem"] in resp["stems"]

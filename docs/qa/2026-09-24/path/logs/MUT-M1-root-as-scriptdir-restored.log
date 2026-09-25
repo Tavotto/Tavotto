@@ -1,0 +1,15 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh MUT-M1-root-as-scriptdir-restored tests/test_first_open_paths_d1.py::test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-MUT-M1-root-as-scriptdir-restored
+# time: 2026-09-24T18:57:43Z
+# sha: 4be1d7eb1eed5f034fe11a648fa3d5f53ffe51ca  (worktree dirty files: 1)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-4
+configfile: pytest.ini
+collecting ... collected 2 items
+
+tests/test_first_open_paths_d1.py::test_path02_split_directories_ask_once_remember_project_root_and_survive_a_restart PASSED [ 50%]
+tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file PASSED [100%]
+
+============================== 2 passed in 31.20s ==============================
+# exit_code: 0

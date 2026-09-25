@@ -395,21 +395,61 @@ def test_a_bridge_failure_is_never_reported_as_a_success(client, monkeypatch, ac
 
 
 def test_every_worker_error_payload_in_app_carries_a_status_code():
-    """**结构性守卫**：`_worker_error_payload()` 的每一处使用都必须带 `, 500`。
+    """**结构性守卫**：`_worker_error_payload()` 的每一处使用都必须以
+    `return jsonify(_worker_error_payload(...)), <4xx/5xx>` 的形状带上失败状态码。
 
     上面那条参数化用例钉的是今天的四个端点；这一条钉的是明天新加的第五个。
     漏掉状态码不会有任何静态信号——`return _worker_error_payload(exc)` 是一句
     合法的 Flask 返回，它只是**默认 200**。
+
+    判据按 AST 认形状，不按行尾子串：以前是「整行以 `, 500` 结尾」，写回 verify
+    段合法的 `jsonify(_worker_error_payload(exc, stage="verify")), 409`
+    （QA 2026-09-24 SCI-04-B1，写回事务「一律 409」）被它判成了漏状态码；
+    反过来它也认不出折行写法。主语是**每一个调用节点**：它必须恰好是一条
+    `return` 元组的第一项里 `jsonify(...)` 的唯一实参，第二项是 400–599 的整数字面量。
     """
+    import ast
+
     src = __import__("pathlib").Path(appmod.__file__).read_text(encoding="utf-8")
-    uses = [
-        line.strip()
-        for line in src.splitlines()
-        if "_worker_error_payload(" in line and not line.lstrip().startswith(("#", "def "))
+    tree = ast.parse(src)
+
+    def is_payload_call(node) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_worker_error_payload"
+        )
+
+    calls = [n for n in ast.walk(tree) if is_payload_call(n)]
+    ok: set[int] = set()
+    for ret in ast.walk(tree):
+        if not (isinstance(ret, ast.Return) and isinstance(ret.value, ast.Tuple)):
+            continue
+        elts = ret.value.elts
+        if len(elts) != 2:
+            continue
+        body, status = elts
+        if not (
+            isinstance(body, ast.Call)
+            and isinstance(body.func, ast.Name)
+            and body.func.id == "jsonify"
+            and len(body.args) == 1
+            and is_payload_call(body.args[0])
+        ):
+            continue
+        if (
+            isinstance(status, ast.Constant)
+            and type(status.value) is int
+            and 400 <= status.value < 600
+        ):
+            ok.add(id(body.args[0]))
+    assert len(calls) >= 10, f"没解析到使用点（只拿到 {len(calls)} 处）——判据本身坏了"
+    bare = [
+        f"app.py:{c.lineno}: {ast.get_source_segment(src, c)}" for c in calls if id(c) not in ok
     ]
-    assert len(uses) >= 10, f"没解析到使用点（只拿到 {uses}）——判据本身坏了"
-    bare = [u for u in uses if not u.endswith(", 500")]
-    assert bare == [], f"app.py 里这些 `_worker_error_payload` 没带状态码（Flask 会回 200）: {bare}"
+    assert bare == [], (
+        f"app.py 里这些 `_worker_error_payload` 没带失败状态码（Flask 会回 200）: {bare}"
+    )
 
 
 # --------------------------------------------------------------------------

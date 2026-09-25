@@ -1,0 +1,129 @@
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/canvas/fakeRealtimeDrag.test.tsx -t 'pointercancel|lostpointercapture'
+### time=2026-09-24T19:12:02Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=0
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-state/web
+
+
+ Test Files  1 passed (1)
+      Tests  6 passed | 19 skipped (25)
+   Start at  03:12:03
+   Duration  1.24s (transform 412ms, setup 129ms, import 402ms, tests 167ms, environment 453ms)
+
+
+### $ docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-02
+### time=2026-09-24T19:12:04Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=0
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium] › e2e/fake-realtime.spec.ts:284:1 › STATE-02 取消入口：pointercancel / lostpointercapture 还原 DOM 且零提交；画布外松手照常定稿、不再跟指针 (26.4s)
+
+  1 passed (26.8s)
+
+### $ docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_probe.spec.ts --grep 'Esc|blur|移出'
+### time=2026-09-24T19:12:31Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=0
+
+Running 4 tests using 1 worker
+
+{"probe":"esc","beforeEsc":"translate(57.299990585674564,28.6499953138937)","afterEsc":"translate(57.299990585674564,28.6499953138937)","afterMoreMove":"translate(85.94998587851185,42.97499297084055)","editSvgStillThere":1,"renders":1,"renderBodies":["{\"id\":\"Fig1_kinetics.pdf\",\"patches\":[{\"gid\":\"axes_0.title\",\"prop\":\"pos_frac\",\"value\":[0.8915155619648647,0.346457566179304]}],\"inline_svg\":true}"]}
+  ✓  1 [chromium] › e2e/state_probe.spec.ts:64:1 › probe: Esc 在拖动中 (22.0s)
+{"probe":"esc2","svgCountAfter":0,"renders":1,"renderBodies":["{\"id\":\"Fig1_kinetics.pdf\",\"patches\":[{\"gid\":\"axes_0.title\",\"prop\":\"pos_frac\",\"value\":[0.8756074203501915,0.3354102456135587]}],\"inline_svg\":true}"]}
+  ✓  2 [chromium] › e2e/state_probe.spec.ts:84:1 › probe: Esc 两次（退出图内编辑）在拖动中 (21.5s)
+{"probe":"blur","tfAfterBlur":"translate(78.64876555575371,39.32438280677845)","renders":1}
+  ✓  3 [chromium] › e2e/state_probe.spec.ts:101:1 › probe: window blur 在拖动中（合成 blur 事件 + 另开页面抢焦点） (21.8s)
+{"probe":"outside","tfAtRelease":"translate(-547.8242235866335,0)","tfAfterUp":null,"tfAfterMove":null,"rendersAfterInViewport":1,"rendersTotal":1,"tfAfterOutsideViewport":null}
+  ✓  4 [chromium] › e2e/state_probe.spec.ts:120:1 › probe: 移出画布 / 移出视口后松开 (26.6s)
+
+  4 passed (1.5m)
+
+### $ docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_bugs_repro.spec.ts --grep STATE-02
+### time=2026-09-24T19:14:05Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=1
+
+Running 1 test using 1 worker
+
+{"case":"STATE-02-esc","renders":["{\"id\":\"Fig1_kinetics.pdf\",\"patches\":[{\"gid\":\"axes_0.title\",\"prop\":\"pos_frac\",\"value\":[0.8588298980178624,0.3237591884383301]}],\"inline_svg\":true}"]}
+[e2e] app-0 进程输出（尾部）:
+2026-09-25 03:14:06,587 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET / HTTP/1.1" 200 -
+2026-09-25 03:14:06,593 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /assets/index-7yGgmWmw.css HTTP/1.1" 200 -
+2026-09-25 03:14:06,593 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /assets/index-qj9xX_eu.js HTTP/1.1" 200 -
+2026-09-25 03:14:06,661 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/session/ping HTTP/1.1" 200 -
+2026-09-25 03:14:06,690 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/telemetry/settings HTTP/1.1" 200 -
+2026-09-25 03:14:06,691 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/project HTTP/1.1" 200 -
+2026-09-25 03:14:06,708 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/projects/recent?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,709 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/projects?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,757 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/version?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,770 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/project/readiness?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,772 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-4317Of/figures → 3 个素材
+2026-09-25 03:14:06,781 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/panels?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,786 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-4317Of/figures&pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,795 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/events?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,879 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:14:06,967 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:14:06,967 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/runtime/assets?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,969 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/version?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,971 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/project/readiness?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,972 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-4317Of/figures&pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,974 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-4317Of/figures → 3 个素材
+2026-09-25 03:14:06,978 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/panels?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,989 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:14:06,993 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/registry?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:06,998 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:06] "GET /api/render?id=Fig2_correlation.pdf&w=400&m=1790277246&pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:07,008 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:07] "GET /api/render?id=Fig1_kinetics.pdf&w=400&m=1790277246&pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:07,025 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:07] "GET /api/ai/capabilities?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:07,027 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:07] "GET /api/render?id=Fig2_yield.pdf&w=400&m=1790277246&pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:07,165 INFO tavotto.engine: worker 启动: fig1_kinetics.py（entry=main，解释器来源=env_override）
+2026-09-25 03:14:07,170 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:07] "GET /api/engine/environment HTTP/1.1" 200 -
+2026-09-25 03:14:07,220 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:07] "GET /api/update/check HTTP/1.1" 200 -
+2026-09-25 03:14:07,845 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:07] "GET /api/autosave/d_ripca027?pj=bbf2f5969ec5 HTTP/1.1" 404 -
+2026-09-25 03:14:07,848 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:07] "PUT /api/autosave/d_ripca027?base_revision=absent&pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:20,466 INFO tavotto: 引擎渲染: Fig1_kinetics 13456ms（冷启动） timings={"build_total_ms": 13262.722, "canvas_draw_ms": 15.599, "manifest_ms": 17.185, "patch_apply_ms": 0.317, "preview_plan_ms": 0.036, "queue_wait_ms": 0.001, "script_build_ms": 168.374, "script_exec_ms": 19.12, "server_ms": 13455.771, "total_ms": 35.363, "worker_get_ms": 157.506}
+2026-09-25 03:14:20,466 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:20] "POST /api/engine/render?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:21,479 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:21] "PUT /api/autosave/d_ripca027?base=1790277247843&base_revision=29203fbf39e1f2608a9edd7d3095bde8&pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:23,769 INFO tavotto: 引擎渲染: Fig1_kinetics 37ms timings={"canvas_draw_ms": 15.606, "manifest_ms": 17.451, "patch_apply_ms": 0.514, "preview_plan_ms": 0.037, "queue_wait_ms": 0.001, "server_ms": 36.708, "total_ms": 35.931, "worker_get_ms": 0.581}
+2026-09-25 03:14:23,770 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:23] "POST /api/engine/render?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:23,788 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:23] "POST /api/engine/preview_png?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:23,797 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:23] "POST /api/engine/preview_png?pj=bbf2f5969ec5 HTTP/1.1" 200 -
+2026-09-25 03:14:23,800 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:23] "GET /api/engine/preview_png?pj=bbf2f5969ec5 HTTP/1.1" 405 -
+2026-09-25 03:14:24,739 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:24] "PUT /api/autosave/d_ripca027?base=1790277261477&base_revision=47acabdb8c283747991b0d6db035cc30&pj=bbf2f5969ec5 HTTP/1.1" 200 -
+
+  ✘  1 [chromium] › e2e/state_bugs_repro.spec.ts:64:1 › B. STATE-02：拖动中 Esc×2 退出图内编辑，松手不应再改文档 (21.9s)
+
+
+  1) [chromium] › e2e/state_bugs_repro.spec.ts:64:1 › B. STATE-02：拖动中 Esc×2 退出图内编辑，松手不应再改文档 ────────
+
+    Error: 已退出图内编辑态，松手仍写下 override 并渲染
+
+    expect(received).toHaveLength(expected)
+
+    Expected length: 0
+    Received length: 1
+    Received array:  ["{\"id\":\"Fig1_kinetics.pdf\",\"patches\":[{\"gid\":\"axes_0.title\",\"prop\":\"pos_frac\",\"value\":[0.8588298980178624,0.3237591884383301]}],\"inline_svg\":true}"]
+
+      80 |   await page.waitForTimeout(3000)
+      81 |   console.log(JSON.stringify({ case: 'STATE-02-esc', renders: renders.map((r) => r.slice(0, 200)) }))
+    > 82 |   expect(renders, '已退出图内编辑态，松手仍写下 override 并渲染').toHaveLength(0)
+         |                                                  ^
+      83 | })
+      84 |
+        at /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-state/web/e2e/state_bugs_repro.spec.ts:82:50
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/state_bugs_repro-B-STATE-02：拖动中-Esc×2-退出图内编辑，松手不应再改文档-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/state_bugs_repro-B-STATE-02：拖动中-Esc×2-退出图内编辑，松手不应再改文档-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/state_bugs_repro-B-STATE-02：拖动中-Esc×2-退出图内编辑，松手不应再改文档-chromium/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/state_bugs_repro-B-STATE-02：拖动中-Esc×2-退出图内编辑，松手不应再改文档-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/state_bugs_repro-B-STATE-02：拖动中-Esc×2-退出图内编辑，松手不应再改文档-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › e2e/state_bugs_repro.spec.ts:64:1 › B. STATE-02：拖动中 Esc×2 退出图内编辑，松手不应再改文档 ─────────
+

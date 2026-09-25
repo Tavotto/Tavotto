@@ -44,3 +44,13 @@
   matplotlib 默认同口径），新增 `minor_length` / `minor_width` 只动次刻度（getter
   三级真值链：Tick 对象 → `_minor_tick_kw` → rcParams，次刻度没开也有值）；
   `direction` / 颜色 / 字号仍 which="both"。看护 `tests/test_tick_sides_geometry.py`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 刻度与边框都是「写进 cfg 再整体重建」，没表态 = 脚本原样
+- 单条刻度文字冻结整条轴、序号越界抛异常
+- spines 端点取 `Spine.get_path()` 不用 `get_window_extent`

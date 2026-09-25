@@ -1,0 +1,4 @@
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 509ms
+tailwind-scan-check: dist/assets/index-7yGgmWmw.css 85123 字节、1235 个规则块；正向 11/11 在、金丝雀 .tracking-widest 0 条
+build rc=0

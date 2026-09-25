@@ -1,0 +1,67 @@
+# case: GEO-03
+# time: 2026-09-25T03:09:54
+# HEAD: f0ed2e4b7bef40ad5e0c3a0f053e8638a406d488
+# cwd: <worktree root>
+$ cp docs/qa/2026-09-24/geo/repro/geoParentChild.repro.test.ts web/src/canvas/ && cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geoParentChild.repro.test.ts; rc=$?; rm -f src/canvas/geoParentChild.repro.test.ts; exit $rc
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+stdout | src/canvas/geoParentChild.repro.test.ts > 选中 Axes + 它自己的标题一起平移：标题在预览里只应走一次
+[GEO-03 probe] 期望累计平移 30.0000,15.0000，实测 60.0000,30.0000
+
+ ❯ src/canvas/geoParentChild.repro.test.ts (1 test | 1 failed) 41ms
+   × 选中 Axes + 它自己的标题一起平移：标题在预览里只应走一次 41ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  03:09:55
+   Duration  969ms (transform 292ms, setup 123ms, import 270ms, tests 41ms, environment 446ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geoParentChild.repro.test.ts > 选中 Axes + 它自己的标题一起平移：标题在预览里只应走一次
+AssertionError: expected 59.99999999999999 to be close to 29.999999999999996, received difference is 29.999999999999996, but expected 5e-7
+ ❯ src/canvas/geoParentChild.repro.test.ts:102:18
+    100|   // 记录实测值，便于在日志里直接看到「两倍」
+    101|   console.log(`[GEO-03 probe] 期望累计平移 ${once.map((v) => v.toFixed(4))}，…
+    102|   expect(got[0]).toBeCloseTo(once[0], 6)
+       |                  ^
+    103|   expect(got[1]).toBeCloseTo(once[1], 6)
+    104|   window.dispatchEvent(new MouseEvent('pointerup', { clientX: ds[0], c…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+[exit=1]
+
+# case: GEO-03
+# time: 2026-09-25T03:12:36
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/axesCompanionDrag.test.tsx
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-1/web
+
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  03:12:37
+   Duration  1.04s (transform 373ms, setup 169ms, import 317ms, tests 197ms, environment 273ms)
+
+[exit=0]
+
+# case: GEO-03
+# time: 2026-09-25T03:12:38
+# HEAD: 2a4d39fdfd6039c9a3b9f593b18f756178c46690
+# cwd: <worktree root>
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_geometry_reference.py -p no:cacheprovider -q -rA -k "own_title or legend"
+..                                                                       [100%]
+==================================== PASSES ====================================
+________ test_single_drag_lands_on_the_independent_ruler[axes_0.legend] ________
+----------------------------- Captured stdout call -----------------------------
+[calibration] axes_0.legend worst |anchor - target| = 1.110e-16, worst bbox shift error = 1.527e-16 (budget x=6.944e-04, y=1.085e-03)
+=========================== short test summary info ============================
+PASSED tests/test_geometry_reference.py::test_single_drag_lands_on_the_independent_ruler[axes_0.legend]
+PASSED tests/test_geometry_reference.py::test_axes_and_its_own_title_moved_together_move_the_title_once
+[exit=0]
+

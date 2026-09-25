@@ -43,3 +43,15 @@
 * 看护：`canvas/panelPreviewMode.test.tsx`、`lib/previewBudget.test.ts`、
   `store/renderStore.test.ts` 的「二道闸」一组、`mcp/session.test.ts` 的
   raster 一组；Python 侧 `tests/test_preview_budget.py`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 加字段协议（老后端 = `VECTOR_PREVIEW`）
+- hybrid 不新增分支
+- raster 复用 `useEnginePngBlob` 链路
+- 丢弃时 `reason` 改 `fallback`
+- 退回来的 SVG 带自己的表示法

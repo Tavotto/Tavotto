@@ -1,0 +1,11 @@
+# cmd: cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/../verify-rel/src PYTHONDONTWRITEBYTECODE=1 npx playwright test e2e/error-recovery-en.spec.ts --project=chromium-en -g missing_dependency --reporter=list
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:24:07Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium-en] › e2e/error-recovery-en.spec.ts:96:1 › 脚本缺包（missing_dependency）：英文缺包卡片，指名包与修复路径 (26.7s)
+
+  1 passed (27.1s)
+# exit: 0

@@ -1,0 +1,46 @@
+# verify rerun ENV-01/M2_mutated_probe
+# cmd: TAVOTTO_FONTS_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/fonts PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/e1_http_probe.py ENV-01 --e1 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1 --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final-M2
+# head: 1f9f29099abe7d0448c44039e150ac9020cc6077
+# start(UTC): 2026-09-24T19:21:42Z
+[03:21:42] scenario=ENV-01 e1=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1 port=5303
+[03:21:42] PASS 前提：Tavotto 自身 / 内置解释器里 import 不到 qa_probe_pkg :: /Volumes/Projects/Tavotto/.venv/bin/python
+[03:22:09] PASS prepare 终局 ready（无需输入）
+[03:22:09] FAIL 计划选择来源 = project_venv :: current_process
+[03:22:09] FAIL 计划 trigger = first_open :: 
+[03:22:09] FAIL 准备回执 python_source = project_venv、generation = 1、pid_check ok :: {'python_source': 'project_venv', 'generation': 2, 'pid_check': 'ok', 'completeness': 'complete'}
+[03:22:09] PASS 首次渲染: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[03:22:09] PASS 首次渲染: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[03:22:09] PASS 首次渲染: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/bin/python
+[03:22:09] PASS 首次渲染: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv
+[03:22:09] PASS 首次渲染: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[03:22:09] PASS 首次渲染: 包版本 :: 1.0.0
+[03:22:09] PASS 首次渲染: 图中完整点序列 :: [0, 9, 2, 10]
+[03:22:09] PASS 找到可编辑的曲线颜色 :: ['label', 'color', 'linewidth', 'linestyle', 'alpha', 'visible', 'marker', 'markersize', 'markerfacecolor', 'markeredgecolor', 'zorder']
+[03:22:09] PASS 编辑后渲染: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[03:22:09] PASS 编辑后渲染: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[03:22:09] PASS 编辑后渲染: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/bin/python
+[03:22:09] PASS 编辑后渲染: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv
+[03:22:09] PASS 编辑后渲染: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[03:22:09] PASS 编辑后渲染: 包版本 :: 1.0.0
+[03:22:09] PASS 编辑后渲染: 图中完整点序列 :: [0, 9, 2, 10]
+[03:22:10] PASS 导出 status == done :: done
+[03:22:10] PASS 导出 PDF 文字层含 A 的点序列 :: 0 1 2 3
+0
+2
+4
+6
+8
+10
+QA-E1 [0, 9, 2, 10]
+ID {"base_prefix": "/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13", "executable": "/private/tmp/claude-501/-Volumes-Projects-
+[03:22:10] PASS 导出 PDF 文字层不含 B 的点序列
+[03:22:10] PASS 导出 PDF 文字层含 A 的包路径
+[03:22:10] PASS 导出 manifest 回执 python_version 与 A 一致 :: 3.13.11
+[03:22:10] PASS 服务日志里没有 missing_dependency（没有先在内置环境跑错一次）
+[03:22:11] PASS 副作用：A 包清单不变 :: {'dists_added': [], 'dists_removed': [], 'files_added': [], 'files_removed': [], 'files_changed': []}
+[03:22:11] PASS 副作用：A 文件（白名单外）不变 :: {'dists_added': [], 'dists_removed': [], 'files_added': [], 'files_removed': [], 'files_changed': []}
+[03:22:11] PASS 副作用：B 包清单不变 :: {'dists_added': [], 'dists_removed': [], 'files_added': [], 'files_removed': [], 'files_changed': []}
+[03:22:11] PASS 副作用：B 文件（白名单外）不变 :: {'dists_added': [], 'dists_removed': [], 'files_added': [], 'files_removed': [], 'files_changed': []}
+[03:22:11] RESULT ENV-01: FAIL (27/30 checks)
+# end(UTC): 2026-09-24T19:22:11Z
+# exit_code: 1

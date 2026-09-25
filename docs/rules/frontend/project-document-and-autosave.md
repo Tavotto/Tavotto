@@ -97,10 +97,8 @@
   `refreshAssetsAndSync()`。合并做在两层——`assetStore.load()` 复用同项目的
   在途请求（一批事件一个 `/api/panels`），`syncPanelSourceMetadata()` 无差异
   零改动（并不成一个请求的那些也不会重复置 dirty / 重复弹提示）。
-  `assetStore` 的三条并发纪律：**请求序号**挡旧响应覆盖新响应（不是"谁最后
-  返回"）、**发请求那一刻的 pj** 挡串项目（`null` 与具体 id 是两个取值）、
-  **失败不清空** `panels`/`byId`。`force: true` 永远另起一次（手动刷新不许被
-  在途请求吞掉）。
+  `assetStore` 的并发与换代纪律（请求序号、发请求那一刻的 pj、项目代际、同项目失败不清空、
+  `force`）全文只在 `asset-library.md`「`assetStore` 的清单纪律」一条，这里不留第二份。
 - **派生字段 vs 用户数据**（`panelSourceSync.ts` 的表）：只有
   `script` / `cost` / `fileKind` / `pxW` 由 `/api/panels` 说了算；
   几何、`nativeW/nativeH`、crop、rotation、overrides、成组、锁定、选择一律
@@ -128,3 +126,16 @@
   新项目再换空白文档，而换文档第一句就是把旧文档冲刷落盘。当前项目名的投影在
   `lib/projectLabel.ts`（由 `projectStore` 写、`documentStore` 读，避免两个 store
   互相 import 成环）。旧条目没有这两个字段 = **不知道**，什么都不标。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- schema 3 只在持久化边界、读档走 `migrateToProject()`
+- 文档变化三种性质（载入 / 用户编辑 / 外部派生）按两个代次区分，第三档唯一写入口 `applyDerivedUpdate()`
+- 手势中不许写、须与手势同进一条历史的派生值走 `registerTxnFinalizer`（丢弃的事务不跑）
+- 派生字段只有 `script / cost / fileKind / pxW`，图幅不是派生字段
+- 素材不在清单 ≠ 脚本关系失效
+- 切项目回到上次文档、旧条目「不知道」不标

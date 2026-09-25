@@ -1,0 +1,134 @@
+# verify: mutation-V1-missing-zoom
+# time: 2026-09-25T03:28:47 (+3s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-geo/web
+
+ ❯ src/canvas/geometryReference.test.ts (32 tests | 8 failed) 897ms
+     × zoom=0.75：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标 25ms
+     × zoom=1.5：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标 10ms
+     × zoom=1.37：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标 10ms
+     × Axes 整体移动（position 是 bottom-origin）：八个方向，y 分量方向正确 9ms
+     × G2big：2 个文字同一屏幕位移 4ms
+     × G2big：10 个文字同一屏幕位移 5ms
+     × G2big：100 个文字同一屏幕位移 20ms
+     × G2 混合类型（文字 + 图例 + 形状 + 另一面板的标题），跨两个 Axes 40ms
+
+ Test Files  1 failed (1)
+      Tests  8 failed | 24 passed (32)
+   Start at  03:28:48
+   Duration  1.89s (transform 324ms, setup 143ms, import 283ms, tests 897ms, environment 480ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > zoom=0.75：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标
+AssertionError: axes_0.title_left zoom=0.75 dir=(1,0): expected 9.249999999999996 to be less than 1e-9
+ ❯ src/canvas/geometryReference.test.ts:248:54
+    246|           const t = translateOf(gid)
+    247|           expect(t, where).not.toBeNull()
+    248|           expect(Math.abs(t![0] - dfx * vbW), where).toBeLessThan(1e-9)
+       |                                                      ^
+    249|           expect(Math.abs(t![1] - dfy * vbH), where).toBeLessThan(1e-9)
+    250|           expect(svgNode(gid)!.innerHTML, `${where} 原始子节点/transform 不得…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > zoom=1.5：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标
+AssertionError: axes_0.title_left zoom=1.5 dir=(1,0): expected 9.25 to be less than 1e-9
+ ❯ src/canvas/geometryReference.test.ts:248:54
+    246|           const t = translateOf(gid)
+    247|           expect(t, where).not.toBeNull()
+    248|           expect(Math.abs(t![0] - dfx * vbW), where).toBeLessThan(1e-9)
+       |                                                      ^
+    249|           expect(Math.abs(t![1] - dfy * vbH), where).toBeLessThan(1e-9)
+    250|           expect(svgNode(gid)!.innerHTML, `${where} 原始子节点/transform 不得…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > zoom=1.37：六类可拖对象 × 八个方向，预览与提交都落在独立尺上，只写一条、只动目标
+AssertionError: axes_0.title_left zoom=1.37 dir=(1,0): expected 7.494525547445257 to be less than 1e-9
+ ❯ src/canvas/geometryReference.test.ts:248:54
+    246|           const t = translateOf(gid)
+    247|           expect(t, where).not.toBeNull()
+    248|           expect(Math.abs(t![0] - dfx * vbW), where).toBeLessThan(1e-9)
+       |                                                      ^
+    249|           expect(Math.abs(t![1] - dfy * vbH), where).toBeLessThan(1e-9)
+    250|           expect(svgNode(gid)!.innerHTML, `${where} 原始子节点/transform 不得…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-01 单选八方向 × 四档视图倍率：落点 = 独立尺的 T⁻¹(T(p)+Δs) > Axes 整体移动（position 是 bottom-origin）：八个方向，y 分量方向正确
+AssertionError: axes_0 zoom=0.75 dir=(1,0): expected 0.007655555555555582 to be less than 0.000050000001000000005
+ ❯ src/canvas/geometryReference.test.ts:283:57
+    281|         fire('pointerup', 300 + ds[0], 200 + ds[1])
+    282|         const v = valueOf('axes_0', 'position')!
+    283|         expect(Math.abs(v[0] - (pos0[0] + dfx)), where).toBeLessThan(Q)
+       |                                                         ^
+    284|         expect(Math.abs(v[1] - (pos0[1] - dfy)), where).toBeLessThan(Q…
+    285|         expect(v[2], where).toBe(r4(pos0[2]))
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：2 个文字同一屏幕位移
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：10 个文字同一屏幕位移
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2big：100 个文字同一屏幕位移
+AssertionError: axes_0.texts_0: expected 0.013329629629629636 to be less than 0.000050000001000000005
+ ❯ src/canvas/geometryReference.test.ts:321:52
+    319|         const a = el('G2big', gid).anchor!
+    320|         const v = valueOf(gid, 'pos_frac')!
+    321|         expect(Math.abs(v[0] - (a[0] + dfx)), gid).toBeLessThan(Q)
+       |                                                    ^
+    322|         expect(Math.abs(v[1] - (a[1] + dfy)), gid).toBeLessThan(Q)
+    323|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
+
+ FAIL  src/canvas/geometryReference.test.ts > GEO-02 多选整组平移：每个成员恰好一次、间距不变、未选中的不动 > G2 混合类型（文字 + 图例 + 形状 + 另一面板的标题），跨两个 Axes
+AssertionError: axes_0.texts_0: expected 4.749999999999998 to be less than 1e-9
+ ❯ src/canvas/geometryReference.test.ts:357:48
+    355|       const t = translateOf(gid)
+    356|       expect(t, gid).not.toBeNull()
+    357|       expect(Math.abs(t![0] - dfx * vbW), gid).toBeLessThan(1e-9)
+       |                                                ^
+    358|       expect(Math.abs(t![1] - dfy * vbH), gid).toBeLessThan(1e-9)
+    359|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯
+
+[exit=1]
+
+# verify: mutation-V1-missing-zoom
+# time: 2026-09-25T03:28:50 (+2s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/fakeRealtimeDrag.test.tsx src/canvas/axesCompanionDrag.test.tsx src/canvas/dragReleaseSnapback.test.tsx
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-geo/web
+
+
+ Test Files  3 passed (3)
+      Tests  32 passed (32)
+   Start at  03:28:50
+   Duration  1.27s (transform 862ms, setup 409ms, import 842ms, tests 736ms, environment 938ms)
+
+[exit=0]
+
+# verify: mutation-V1-missing-zoom
+# time: 2026-09-25T03:28:52 (+3s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/canvas/geometryReference.test.ts
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-geo/web
+
+
+ Test Files  1 passed (1)
+      Tests  32 passed (32)
+   Start at  03:28:52
+   Duration  2.44s (transform 283ms, setup 110ms, import 260ms, tests 1.72s, environment 269ms)
+
+[exit=0]
+

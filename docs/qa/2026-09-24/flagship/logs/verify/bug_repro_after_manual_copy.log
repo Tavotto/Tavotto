@@ -1,0 +1,24 @@
+{
+ "page_mm": {
+  "w": 150,
+  "h": 100
+ },
+ "panel_rect_mm": [
+  -13.900000000000006,
+  9.36,
+  177.8,
+  81.28
+ ],
+ "panel_out_of_page": true,
+ "dialog_check_text": "检查\n1 阻断 · 22 警告 · 9 建议\n· 仅此图\n在问题面板中查看\n超出页面范围\nFig_flagship\n定位\n知悉上述 1 条阻断问题，仍要导出",
+ "had_to_acknowledge": true,
+ "style_report_scope": "original",
+ "style_report_acknowledged": [
+  "out-of-page"
+ ],
+ "exported_mediabox_pt": [
+  504.0,
+  230.4
+ ]
+}
+defect shape reproduced

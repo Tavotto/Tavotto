@@ -1,0 +1,17 @@
+# cmd: cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/../verify-rel/src PYTHONDONTWRITEBYTECODE=1 npx playwright test --config=playwright.qa-webkit.config.ts --reporter=list
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:17:20Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+
+Running 5 tests using 1 worker
+
+  ✓  1 [webkit-qa-geometry] › e2e/element-path-selection.spec.ts:208:1 › 图内曲线：沿真实路径选中，bbox 空白角不误命中 (17.7s)
+  ✓  2 [webkit-qa-geometry] › e2e/element-path-selection.spec.ts:302:1 › 图内散点：描每颗 marker 的轮廓，两颗之间的空白不误命中 (16.7s)
+
+  ✓  3 [webkit-qa-geometry] › e2e/element-path-selection.spec.ts:404:1 › 图内只有 marker 的曲线：也描每颗 marker 的轮廓，不描那条不存在的折线 (17.0s)
+[e2e 假实时] 首帧 70ms · 13/40 帧（rAF 合并）· commit→权威 54ms
+  ✓  4 [webkit-qa-geometry] › e2e/fake-realtime.spec.ts:14:1 › 拖图内元素：预览跟手、拖动期间零后端、松手一次定稿 (17.4s)
+  ✓  5 [webkit-qa-geometry] › e2e/quick-menu.spec.ts:13:1 › 右键菜单：Esc 不清空选区 / 越界翻转 / 重新构建真跑脚本 / 多选对齐 (17.4s)
+
+  5 passed (1.5m)
+# exit: 0

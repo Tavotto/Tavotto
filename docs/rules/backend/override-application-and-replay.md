@@ -40,9 +40,12 @@
   **只有每一次渲染都干净的事务才算回滚成功**：任何一次带 warning 或抛了，响应带
   `replay_required`（前端按此刻的列表重放），worker 作废（`app._retire_hot_worker`
   → `pool.invalidate`，`worker_retired`）。**native 图不修**：端点在任何渲染之前回 409
-  `specfix_native_unsupported`——作废这条兜底对用户自己的进程不成立（ADR 0080）。任何
-  渲染留下的欠账（v1 render / export / preview_png 结果的 `unrestored > 0`）在 native 上就是
-  「与文档不一致」，挡编辑、导出与 continue（`native_figure_inconsistent`，见 `tavotto-run-control-plane.md`）。
+  `specfix_native_unsupported`——作废这条兜底对用户自己的进程不成立（ADR 0080）。判据先看
+  描述符存的档案（`profile_of`）再解析会话；事务途中每次渲染前、提交前各再比一次，变成 native
+  就中止（`_require_route_unchanged`）；事务里每一处解析 worker 都带 `safe_only=True`（入口 +
+  `_engine_attempt` 的依赖重试），拿到 native 会话在调它之前就拒（AST 守卫钉着）。任何渲染留下的欠账（v1 render / export / preview_png 结果的
+  `unrestored > 0`）在 native 上就是「与文档不一致」，挡编辑、导出与 continue
+  （`native_figure_inconsistent`，见 `tavotto-run-control-plane.md`）。
 - **还原失败不遗忘（Codex #549 第八轮 P1）**：`apply()` 撤掉一条 override 时还原抛了，
   这个键**不销账**——applied / originals / alias_seeded 原样留着，记进 `FigState.unrestored`；
   下一次 apply 自动重试，欠着一天每次都报 `还原失败` warning（写回遇 warning 即阻断），
@@ -123,3 +126,18 @@
   哨兵只活在 `originals` 里，不进 patch、不过 JSON。看护 `tests/test_patch_edgecolor_mode.py`。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 七档顺序是契约
+- 刻度类与 frac 锚定 prop 每次重放
+- `PinnedTightLayoutEngine` 安装点只有一个、`set_position` 排在换引擎之前
+- `face` / `math_face` 唯一出处 `manifest.font_faces()`
+- 文字背景框显隐只归 `bbox_visible`，样式不露框
+- 原样是模式的 getter 回哨兵（`_AUTOSCALE` / `_NO_BBOX` / `_PatchEdge` / `_PatchFace`）
+- 颜色字段 alpha 0 报 `NO_COLOR`
+- 拖过的文字不进重排（`_ensure_text_pin_hook`）

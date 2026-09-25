@@ -1,0 +1,55 @@
+# cmd: TAVOTTO_CI_STATE_ROOT=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/ci-state2 TAVOTTO_NO_TELEMETRY=1 TAVOTTO_NO_UPDATE_CHECK=1 /opt/homebrew/opt/python@3.13/libexec/bin/python3 scripts/ci/upgrade_acceptance.py --candidate /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/dist/tavotto-0.16.0-py3-none-any.whl --baseline-tag v0.16.0
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:27:38Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+候选: tavotto-0.16.0-py3-none-any.whl（0.16.0）
+基线: v0.16.0
+已取得上一版 wheel: tavotto-0.16.0-py3-none-any.whl
+corpus 产物 13 个
+
+=== 阶段一：用 N-1 写出用户状态 ===
+  [N-1] $ --port 52016 --no-browser --figures /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/ci-state2/tmp/artifact-upgrade-kkiknjq2/升级 测试 项目
+  [N-1] 已取得会话凭据
+
+=== 阶段二：候选版打开同一份状态 ===
+  [N#1] $ --port 52508 --no-browser --figures /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/ci-state2/tmp/artifact-upgrade-kkiknjq2/升级 测试 项目
+  [N#1] 已取得会话凭据
+
+=== 阶段三：再启动一次（第二次仍须正常）===
+  [N#2] $ --port 52744 --no-browser --figures /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/ci-state2/tmp/artifact-upgrade-kkiknjq2/升级 测试 项目
+  [N#2] 已取得会话凭据
+
+### 升级验收 · v0.16.0 → 候选
+
+| 项目 | 结果 | 细节 |
+| --- | --- | --- |
+| N-1 写出状态 | ✅ | v0.16.0 · 27 元素 · 布局 ✓ · 自动保存 ✓ |
+| 第 1 次启动 | ✅ | 版本 0.16.0（上一版 0.16.0） |
+| 老项目可打开 | ✅ | /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/ci-state2/tmp/artifact-upgrade-kkiknjq2/升级 测试 项目 |
+| 老面板仍在 | ✅ | c01_bar.pdf |
+| 老 patches 仍可渲染 | ✅ | 27 个元素 |
+| 升级前够得着的元素一个都没丢 | ✅ | 27 个都在 |
+| 渲染无 warning | ✅ | 无 |
+| 老布局可列出 | ✅ | ['升级布局'] |
+| 老布局可打开 | ✅ | schema 2，含 c01_bar.pdf |
+| 老自动保存可解析 | ✅ | schema 2，含 c01_bar.pdf |
+| 升级后仍可导出 | ✅ | 升级后导出_0925_032854.pdf 13027 字节 |
+| app.log 无 traceback | ✅ | 无 |
+| 用户配置未被静默重置 | ✅ | recent_projects 1 → 1 |
+| 无孤儿 worker | ✅ | 0 |
+| 第 2 次启动（二次启动） | ✅ | 版本 0.16.0（上一版 0.16.0） |
+| 老项目可打开（二次启动） | ✅ | /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/ci-state2/tmp/artifact-upgrade-kkiknjq2/升级 测试 项目 |
+| 老面板仍在（二次启动） | ✅ | c01_bar.pdf |
+| 老 patches 仍可渲染（二次启动） | ✅ | 27 个元素 |
+| 升级前够得着的元素一个都没丢（二次启动） | ✅ | 27 个都在 |
+| 渲染无 warning（二次启动） | ✅ | 无 |
+| 老布局可列出（二次启动） | ✅ | ['升级布局'] |
+| 老布局可打开（二次启动） | ✅ | schema 2，含 c01_bar.pdf |
+| 老自动保存可解析（二次启动） | ✅ | schema 2，含 c01_bar.pdf |
+| 升级后仍可导出（二次启动） | ✅ | 升级后导出_0925_032859.pdf 13027 字节 |
+| app.log 无 traceback（二次启动） | ✅ | 无 |
+| 用户配置未被静默重置（二次启动） | ✅ | recent_projects 1 → 1 |
+| 无孤儿 worker（二次启动） | ✅ | 0 |
+
+升级验收：通过
+# exit: 0

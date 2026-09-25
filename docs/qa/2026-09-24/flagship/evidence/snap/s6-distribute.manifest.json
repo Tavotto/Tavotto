@@ -1,0 +1,6010 @@
+{
+ "elements": [
+  {
+   "bbox": [
+    0,
+    0,
+    1,
+    1
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "size_mm",
+     "type": "pair",
+     "unit": "mm",
+     "value": [
+      177.8,
+      81.3
+     ]
+    },
+    {
+     "group": "背景",
+     "prop": "facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "背景",
+     "prop": "transparent",
+     "type": "bool",
+     "value": false
+    }
+   ],
+   "gid": "figure",
+   "label": "整张图",
+   "role": "figure"
+  },
+  {
+   "anchor": [
+    0.5569,
+    0.05359999999999976
+   ],
+   "bbox": [
+    0.48895357142857143,
+    0.05359999999999976,
+    0.13589285714285715,
+    0.05625
+   ],
+   "drag_prop": "pos_frac",
+   "draggable": true,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "QA flagship"
+    },
+    {
+     "max": 36,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 12
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "options": [
+      "normal",
+      "bold"
+     ],
+     "prop": "weight",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "normal",
+      "italic"
+     ],
+     "prop": "style",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "max": 180,
+     "min": -180,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "排版",
+     "options": [
+      "left",
+      "center",
+      "right"
+     ],
+     "prop": "ha",
+     "type": "enum",
+     "value": "center"
+    },
+    {
+     "group": "排版",
+     "options": [
+      "top",
+      "center",
+      "bottom",
+      "baseline"
+     ],
+     "prop": "va",
+     "type": "enum",
+     "value": "top"
+    },
+    {
+     "group": "排版",
+     "max": 3,
+     "min": 0.5,
+     "prop": "linespacing",
+     "step": 0.05,
+     "type": "number",
+     "value": 1.2
+    },
+    {
+     "group": "排版",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "背景",
+     "max": 1,
+     "min": 0,
+     "prop": "bbox_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_edgecolor",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "背景",
+     "max": 3,
+     "min": 0,
+     "prop": "bbox_linewidth",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 0
+    },
+    {
+     "group": "背景",
+     "max": 2,
+     "min": 0,
+     "prop": "bbox_pad",
+     "step": 0.05,
+     "type": "number",
+     "value": 0.3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_rounded",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_enabled",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_color",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "描边",
+     "max": 6,
+     "min": 0.25,
+     "prop": "stroke_width",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "fig.texts_0",
+   "label": "文字 “QA flagship”",
+   "role": "text"
+  },
+  {
+   "anchor": [
+    0.042,
+    0.9296
+   ],
+   "bbox": [
+    0.042,
+    0.8952249999999999,
+    0.2405357142857143,
+    0.04375
+   ],
+   "drag_prop": "pos_frac",
+   "draggable": true,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "src c5de961e6faa env A"
+    },
+    {
+     "max": 36,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "options": [
+      "normal",
+      "bold"
+     ],
+     "prop": "weight",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "normal",
+      "italic"
+     ],
+     "prop": "style",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "max": 180,
+     "min": -180,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "排版",
+     "options": [
+      "left",
+      "center",
+      "right"
+     ],
+     "prop": "ha",
+     "type": "enum",
+     "value": "left"
+    },
+    {
+     "group": "排版",
+     "options": [
+      "top",
+      "center",
+      "bottom",
+      "baseline"
+     ],
+     "prop": "va",
+     "type": "enum",
+     "value": "baseline"
+    },
+    {
+     "group": "排版",
+     "max": 3,
+     "min": 0.5,
+     "prop": "linespacing",
+     "step": 0.05,
+     "type": "number",
+     "value": 1.2
+    },
+    {
+     "group": "排版",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "背景",
+     "max": 1,
+     "min": 0,
+     "prop": "bbox_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_edgecolor",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "背景",
+     "max": 3,
+     "min": 0,
+     "prop": "bbox_linewidth",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 0
+    },
+    {
+     "group": "背景",
+     "max": 2,
+     "min": 0,
+     "prop": "bbox_pad",
+     "step": 0.05,
+     "type": "number",
+     "value": 0.3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_rounded",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_enabled",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_color",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "描边",
+     "max": 6,
+     "min": 0.25,
+     "prop": "stroke_width",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "fig.texts_1",
+   "label": "文字 “src c5de961e6faa …”",
+   "role": "text"
+  },
+  {
+   "bbox": [
+    0.08,
+    0.18000000000000005,
+    0.3315,
+    0.584
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "position",
+     "type": "rect",
+     "value": [
+      0.08,
+      0.236,
+      0.3315,
+      0.584
+     ]
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "数据范围",
+     "prop": "xlim",
+     "type": "pair",
+     "value": [
+      -0.15000000000000002,
+      3.15
+     ]
+    },
+    {
+     "group": "数据范围",
+     "prop": "ylim",
+     "type": "pair",
+     "value": [
+      -0.5,
+      10.5
+     ]
+    },
+    {
+     "group": "数据范围",
+     "options": [
+      "linear",
+      "log",
+      "symlog",
+      "logit"
+     ],
+     "prop": "xscale",
+     "type": "enum",
+     "value": "linear"
+    },
+    {
+     "group": "数据范围",
+     "options": [
+      "linear",
+      "log",
+      "symlog",
+      "logit"
+     ],
+     "prop": "yscale",
+     "type": "enum",
+     "value": "linear"
+    },
+    {
+     "group": "数据范围",
+     "prop": "invert_x",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "数据范围",
+     "prop": "invert_y",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "数据范围",
+     "prop": "aspect",
+     "type": "text",
+     "value": "auto"
+    },
+    {
+     "group": "刻度线",
+     "prop": "ticks_bottom",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "刻度线",
+     "prop": "ticks_top",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "刻度线",
+     "prop": "ticks_left",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "刻度线",
+     "prop": "ticks_right",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "网格与边框",
+     "prop": "grid_x",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "网格与边框",
+     "prop": "grid_y",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "网格与边框",
+     "prop": "grid_color",
+     "type": "color",
+     "value": "#b0b0b0"
+    },
+    {
+     "group": "网格与边框",
+     "options": [
+      "-",
+      "--",
+      ":",
+      "-."
+     ],
+     "prop": "grid_linestyle",
+     "type": "enum",
+     "value": "-"
+    },
+    {
+     "group": "网格与边框",
+     "max": 3,
+     "min": 0.1,
+     "prop": "grid_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "网格与边框",
+     "max": 1,
+     "min": 0,
+     "prop": "grid_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_top",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_right",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_bottom",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_left",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "网格与边框",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_top_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_top_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_right_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_right_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_bottom_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_bottom_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_left_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_left_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "网格与边框",
+     "prop": "facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    }
+   ],
+   "follow_gids": [
+    "axes_2"
+   ],
+   "gid": "axes_0",
+   "label": "子图 1",
+   "resizable": true,
+   "role": "axes",
+   "spines": {
+    "bottom": {
+     "from": [
+      0.08,
+      0.764
+     ],
+     "ticks": true,
+     "to": [
+      0.4115,
+      0.764
+     ],
+     "visible": true
+    },
+    "left": {
+     "from": [
+      0.08,
+      0.764
+     ],
+     "ticks": true,
+     "to": [
+      0.08,
+      0.18
+     ],
+     "visible": true
+    },
+    "right": {
+     "from": [
+      0.4115,
+      0.764
+     ],
+     "ticks": false,
+     "to": [
+      0.4115,
+      0.18
+     ],
+     "visible": true
+    },
+    "top": {
+     "from": [
+      0.08,
+      0.18
+     ],
+     "ticks": false,
+     "to": [
+      0.4115,
+      0.18
+     ],
+     "visible": true
+    }
+   }
+  },
+  {
+   "anchor": [
+    0.29359999999999997,
+    0.10360000000000014
+   ],
+   "bbox": [
+    0.2572607142857143,
+    0.05985000000000018,
+    0.07267857142857143,
+    0.05625
+   ],
+   "drag_prop": "pos_frac",
+   "draggable": true,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "Signal"
+    },
+    {
+     "max": 36,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 12
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "options": [
+      "normal",
+      "bold"
+     ],
+     "prop": "weight",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "normal",
+      "italic"
+     ],
+     "prop": "style",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "max": 180,
+     "min": -180,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "排版",
+     "options": [
+      "left",
+      "center",
+      "right"
+     ],
+     "prop": "ha",
+     "type": "enum",
+     "value": "center"
+    },
+    {
+     "group": "排版",
+     "options": [
+      "top",
+      "center",
+      "bottom",
+      "baseline"
+     ],
+     "prop": "va",
+     "type": "enum",
+     "value": "baseline"
+    },
+    {
+     "group": "排版",
+     "max": 3,
+     "min": 0.5,
+     "prop": "linespacing",
+     "step": 0.05,
+     "type": "number",
+     "value": 1.2
+    },
+    {
+     "group": "排版",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "背景",
+     "max": 1,
+     "min": 0,
+     "prop": "bbox_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_edgecolor",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "背景",
+     "max": 3,
+     "min": 0,
+     "prop": "bbox_linewidth",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 0
+    },
+    {
+     "group": "背景",
+     "max": 2,
+     "min": 0,
+     "prop": "bbox_pad",
+     "step": 0.05,
+     "type": "number",
+     "value": 0.3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_rounded",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_enabled",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_color",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "描边",
+     "max": 6,
+     "min": 0.25,
+     "prop": "stroke_width",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.title",
+   "label": "标题 “Signal”",
+   "role": "title"
+  },
+  {
+   "anchor": [
+    0.2457,
+    0.8796
+   ],
+   "bbox": [
+    0.2193607142857143,
+    0.8796,
+    0.05267857142857143,
+    0.059375
+   ],
+   "drag_prop": "pos_frac",
+   "draggable": true,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "t / s"
+    },
+    {
+     "max": 36,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 14
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "options": [
+      "normal",
+      "bold"
+     ],
+     "prop": "weight",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "normal",
+      "italic"
+     ],
+     "prop": "style",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "max": 180,
+     "min": -180,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "排版",
+     "options": [
+      "left",
+      "center",
+      "right"
+     ],
+     "prop": "ha",
+     "type": "enum",
+     "value": "center"
+    },
+    {
+     "group": "排版",
+     "options": [
+      "top",
+      "center",
+      "bottom",
+      "baseline"
+     ],
+     "prop": "va",
+     "type": "enum",
+     "value": "top"
+    },
+    {
+     "group": "排版",
+     "max": 3,
+     "min": 0.5,
+     "prop": "linespacing",
+     "step": 0.05,
+     "type": "number",
+     "value": 1.2
+    },
+    {
+     "group": "排版",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "背景",
+     "max": 1,
+     "min": 0,
+     "prop": "bbox_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_edgecolor",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "背景",
+     "max": 3,
+     "min": 0,
+     "prop": "bbox_linewidth",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 0
+    },
+    {
+     "group": "背景",
+     "max": 2,
+     "min": 0,
+     "prop": "bbox_pad",
+     "step": 0.05,
+     "type": "number",
+     "value": 0.3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_rounded",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_enabled",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_color",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "描边",
+     "max": 6,
+     "min": 0.25,
+     "prop": "stroke_width",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.xlabel",
+   "label": "X 轴 “t / s”",
+   "role": "axis_label"
+  },
+  {
+   "anchor": [
+    0.032996031746031745,
+    0.4720000000000001
+   ],
+   "bbox": [
+    0.012996031746031745,
+    0.45910937500000004,
+    0.02,
+    0.02578125
+   ],
+   "drag_prop": "pos_frac",
+   "draggable": true,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "y"
+    },
+    {
+     "max": 36,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "options": [
+      "normal",
+      "bold"
+     ],
+     "prop": "weight",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "normal",
+      "italic"
+     ],
+     "prop": "style",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "max": 180,
+     "min": -180,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 90
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "排版",
+     "options": [
+      "left",
+      "center",
+      "right"
+     ],
+     "prop": "ha",
+     "type": "enum",
+     "value": "center"
+    },
+    {
+     "group": "排版",
+     "options": [
+      "top",
+      "center",
+      "bottom",
+      "baseline"
+     ],
+     "prop": "va",
+     "type": "enum",
+     "value": "bottom"
+    },
+    {
+     "group": "排版",
+     "max": 3,
+     "min": 0.5,
+     "prop": "linespacing",
+     "step": 0.05,
+     "type": "number",
+     "value": 1.2
+    },
+    {
+     "group": "排版",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "背景",
+     "max": 1,
+     "min": 0,
+     "prop": "bbox_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_edgecolor",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "背景",
+     "max": 3,
+     "min": 0,
+     "prop": "bbox_linewidth",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 0
+    },
+    {
+     "group": "背景",
+     "max": 2,
+     "min": 0,
+     "prop": "bbox_pad",
+     "step": 0.05,
+     "type": "number",
+     "value": 0.3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_rounded",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_enabled",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_color",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "描边",
+     "max": 6,
+     "min": 0.25,
+     "prop": "stroke_width",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.ylabel",
+   "label": "Y 轴 “y”",
+   "role": "axis_label"
+  },
+  {
+   "anchor": [
+    0.37070000000000003,
+    0.39149999999999996
+   ],
+   "bbox": [
+    0.20148827956238913,
+    0.2594107100954448,
+    0.2179617204376109,
+    0.14146428990455506
+   ],
+   "drag_prop": "pos_frac",
+   "draggable": true,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "peak"
+    },
+    {
+     "max": 36,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "options": [
+      "normal",
+      "bold"
+     ],
+     "prop": "weight",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "normal",
+      "italic"
+     ],
+     "prop": "style",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "max": 180,
+     "min": -180,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "排版",
+     "options": [
+      "left",
+      "center",
+      "right"
+     ],
+     "prop": "ha",
+     "type": "enum",
+     "value": "left"
+    },
+    {
+     "group": "排版",
+     "options": [
+      "top",
+      "center",
+      "bottom",
+      "baseline"
+     ],
+     "prop": "va",
+     "type": "enum",
+     "value": "baseline"
+    },
+    {
+     "group": "排版",
+     "max": 3,
+     "min": 0.5,
+     "prop": "linespacing",
+     "step": 0.05,
+     "type": "number",
+     "value": 1.2
+    },
+    {
+     "group": "排版",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "背景",
+     "max": 1,
+     "min": 0,
+     "prop": "bbox_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_edgecolor",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "背景",
+     "max": 3,
+     "min": 0,
+     "prop": "bbox_linewidth",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 0
+    },
+    {
+     "group": "背景",
+     "max": 2,
+     "min": 0,
+     "prop": "bbox_pad",
+     "step": 0.05,
+     "type": "number",
+     "value": 0.3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_rounded",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_enabled",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_color",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "描边",
+     "max": 6,
+     "min": 0.25,
+     "prop": "stroke_width",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.texts_0",
+   "label": "文字 “peak”",
+   "role": "text"
+  },
+  {
+   "bbox": [
+    0.20148827956238913,
+    0.2594107100954448,
+    0.1614087306351034,
+    0.1003417923882095
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "options": [
+      "-",
+      "->",
+      "-|>",
+      "<-",
+      "<|-",
+      "<->",
+      "<|-|>",
+      "|-|",
+      "]-[",
+      "simple",
+      "fancy",
+      "wedge"
+     ],
+     "prop": "arrowstyle",
+     "type": "enum",
+     "value": "->"
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "max": 6,
+     "min": 0.1,
+     "prop": "linewidth",
+     "step": 0.05,
+     "type": "number",
+     "unit": "pt",
+     "value": 1
+    },
+    {
+     "max": 40,
+     "min": 1,
+     "prop": "mutation_scale",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "options": [
+      "-",
+      "--",
+      "-.",
+      ":"
+     ],
+     "prop": "linestyle",
+     "type": "enum",
+     "value": "-"
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "排列",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    }
+   ],
+   "gid": "axes_0.texts_0.arrow",
+   "label": "标注箭头",
+   "role": "arrow_patch"
+  },
+  {
+   "bbox": [
+    0.08911580086580087,
+    0.19352462121212122,
+    0.31326839826839836,
+    0.5569507575757575
+   ],
+   "clip_bbox": [
+    0.08,
+    0.18000000000000005,
+    0.3315,
+    0.584
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "label",
+     "type": "text",
+     "value": "points"
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#1f77b4"
+    },
+    {
+     "max": 8,
+     "min": 0.1,
+     "prop": "linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    },
+    {
+     "options": [
+      "-",
+      "--",
+      ":",
+      "-."
+     ],
+     "prop": "linestyle",
+     "type": "enum",
+     "value": "-"
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "线条与标记",
+     "marker_current": {
+      "kind": "named",
+      "name": "o"
+     },
+     "options": [
+      "None",
+      "o",
+      "s",
+      "D",
+      "^",
+      "v",
+      "<",
+      ">",
+      "x",
+      "+",
+      "*",
+      "."
+     ],
+     "prop": "marker",
+     "type": "enum",
+     "value": "o"
+    },
+    {
+     "group": "线条与标记",
+     "max": 20,
+     "min": 0,
+     "prop": "markersize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 6
+    },
+    {
+     "group": "线条与标记",
+     "prop": "markerfacecolor",
+     "type": "color",
+     "value": "#1f77b4"
+    },
+    {
+     "group": "线条与标记",
+     "prop": "markeredgecolor",
+     "type": "color",
+     "value": "#1f77b4"
+    },
+    {
+     "group": "排列",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 2
+    }
+   ],
+   "geometry": {
+    "clip": [
+     0.08,
+     0.18,
+     0.3315,
+     0.584
+    ],
+    "fill": false,
+    "kind": "polyline",
+    "paths": [
+     {
+      "closed": false,
+      "points": [
+       [
+        0.09507,
+        0.73745
+       ],
+       [
+        0.19552,
+        0.25964
+       ],
+       [
+        0.29598,
+        0.63127
+       ],
+       [
+        0.39643,
+        0.20655
+       ]
+      ]
+     }
+    ],
+    "stroke": true,
+    "stroke_pt": 1.5
+   },
+   "gid": "axes_0.lines_0",
+   "label": "曲线 “points”",
+   "role": "line"
+  },
+  {
+   "anchor": [
+    0.1219,
+    0.2298
+   ],
+   "bbox": [
+    0.1219,
+    0.15132777777777784,
+    0.13232142857142856,
+    0.07847222222222214
+   ],
+   "drag_prop": "loc_frac",
+   "draggable": true,
+   "editable": [
+    {
+     "options": [
+      "custom",
+      "best",
+      "upper right",
+      "upper left",
+      "lower left",
+      "lower right",
+      "right",
+      "center left",
+      "center right",
+      "lower center",
+      "upper center",
+      "center"
+     ],
+     "prop": "loc",
+     "type": "enum",
+     "value": "custom"
+    },
+    {
+     "max": 2,
+     "min": -1,
+     "prop": "loc_anchor",
+     "step": 0.01,
+     "type": "pair",
+     "value": null
+    },
+    {
+     "max": 24,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "prop": "frameon",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "样式",
+     "prop": "title",
+     "type": "text",
+     "value": ""
+    },
+    {
+     "group": "样式",
+     "max": 24,
+     "min": 3,
+     "prop": "title_fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "group": "样式",
+     "prop": "facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "样式",
+     "max": 1,
+     "min": 0,
+     "prop": "framealpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 0.8
+    },
+    {
+     "group": "样式",
+     "prop": "edgecolor",
+     "type": "color",
+     "value": "#cccccc"
+    },
+    {
+     "group": "布局",
+     "options": [
+      "points"
+     ],
+     "prop": "entry_order",
+     "type": "order",
+     "value": [
+      0
+     ]
+    },
+    {
+     "group": "布局",
+     "max": 6,
+     "min": 1,
+     "prop": "ncol",
+     "step": 1,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "布局",
+     "max": 3,
+     "min": 0,
+     "prop": "borderpad",
+     "step": 0.1,
+     "type": "number",
+     "value": 0.4
+    },
+    {
+     "group": "布局",
+     "max": 3,
+     "min": 0,
+     "prop": "labelspacing",
+     "step": 0.1,
+     "type": "number",
+     "value": 0.5
+    },
+    {
+     "group": "布局",
+     "max": 5,
+     "min": 0,
+     "prop": "handlelength",
+     "step": 0.1,
+     "type": "number",
+     "value": 2
+    },
+    {
+     "group": "布局",
+     "max": 3,
+     "min": 0,
+     "prop": "handletextpad",
+     "step": 0.1,
+     "type": "number",
+     "value": 0.8
+    },
+    {
+     "group": "布局",
+     "max": 6,
+     "min": 0,
+     "prop": "columnspacing",
+     "step": 0.1,
+     "type": "number",
+     "value": 2
+    },
+    {
+     "group": "样式",
+     "max": 4,
+     "min": 0,
+     "prop": "frame_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 1
+    },
+    {
+     "group": "样式",
+     "prop": "frame_rounded",
+     "type": "bool",
+     "value": true
+    }
+   ],
+   "gid": "axes_0.legend",
+   "label": "图例",
+   "role": "legend"
+  },
+  {
+   "bbox": [
+    0.1853920634920635,
+    0.1686888888888889,
+    0.060892857142857144,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "points"
+    },
+    {
+     "max": 36,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "options": [
+      "normal",
+      "bold"
+     ],
+     "prop": "weight",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "normal",
+      "italic"
+     ],
+     "prop": "style",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "max": 180,
+     "min": -180,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "排版",
+     "options": [
+      "left",
+      "center",
+      "right"
+     ],
+     "prop": "ha",
+     "type": "enum",
+     "value": "left"
+    },
+    {
+     "group": "排版",
+     "options": [
+      "top",
+      "center",
+      "bottom",
+      "baseline"
+     ],
+     "prop": "va",
+     "type": "enum",
+     "value": "baseline"
+    },
+    {
+     "group": "排版",
+     "max": 3,
+     "min": 0.5,
+     "prop": "linespacing",
+     "step": 0.05,
+     "type": "number",
+     "value": 1.2
+    },
+    {
+     "group": "排版",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "背景",
+     "max": 1,
+     "min": 0,
+     "prop": "bbox_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_edgecolor",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "背景",
+     "max": 3,
+     "min": 0,
+     "prop": "bbox_linewidth",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 0
+    },
+    {
+     "group": "背景",
+     "max": 2,
+     "min": 0,
+     "prop": "bbox_pad",
+     "step": 0.05,
+     "type": "number",
+     "value": 0.3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_rounded",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_enabled",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_color",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "描边",
+     "max": 6,
+     "min": 0.25,
+     "prop": "stroke_width",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    },
+    {
+     "group": "图例项",
+     "options": [
+      "follow_source",
+      "custom"
+     ],
+     "prop": "binding",
+     "type": "enum",
+     "value": "follow_source"
+    },
+    {
+     "group": "图例项",
+     "prop": "handle_color",
+     "type": "color",
+     "value": "#1f77b4"
+    },
+    {
+     "group": "图例项",
+     "options": [
+      "-",
+      "--",
+      ":",
+      "-."
+     ],
+     "prop": "handle_linestyle",
+     "type": "enum",
+     "value": "-"
+    },
+    {
+     "group": "图例项",
+     "max": 8,
+     "min": 0.1,
+     "prop": "handle_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    },
+    {
+     "group": "图例项",
+     "marker_current": {
+      "kind": "named",
+      "name": "o"
+     },
+     "options": [
+      "None",
+      "o",
+      "s",
+      "D",
+      "^",
+      "v",
+      "<",
+      ">",
+      "x",
+      "+",
+      "*",
+      "."
+     ],
+     "prop": "handle_marker",
+     "type": "enum",
+     "value": "o"
+    },
+    {
+     "group": "图例项",
+     "max": 20,
+     "min": 0,
+     "prop": "handle_markersize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 6
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.legend.texts_0",
+   "label": "图例项 “points”",
+   "legend_entry": {
+    "binding_default": "follow_source",
+    "index": 0,
+    "source_gid": "axes_0.lines_0"
+   },
+   "role": "legend_text"
+  },
+  {
+   "bbox": [
+    0.08881818181818182,
+    0.7943819444444444,
+    0.3138636363636364,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "max": 24,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "max": 90,
+     "min": -90,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "刻度线",
+     "options": [
+      "out",
+      "in",
+      "inout"
+     ],
+     "prop": "direction",
+     "type": "enum",
+     "value": "out"
+    },
+    {
+     "group": "刻度线",
+     "max": 12,
+     "min": 0,
+     "prop": "length",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 3.5
+    },
+    {
+     "group": "刻度线",
+     "max": 3,
+     "min": 0.1,
+     "prop": "width",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "刻度线",
+     "max": 12,
+     "min": 0,
+     "prop": "minor_length",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 2
+    },
+    {
+     "group": "刻度线",
+     "max": 3,
+     "min": 0.1,
+     "prop": "minor_width",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.6
+    },
+    {
+     "group": "刻度线",
+     "options": [
+      "auto",
+      "%.0f",
+      "%.1f",
+      "%.2f",
+      "%.3f",
+      "%g",
+      "sci"
+     ],
+     "prop": "format",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "auto",
+      "step",
+      "fixed"
+     ],
+     "prop": "major_mode",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "min": 0,
+     "prop": "major_step",
+     "step": 0.1,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "刻度定位",
+     "prop": "major_values",
+     "type": "number_list",
+     "value": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "group": "刻度定位",
+     "prop": "minor_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "auto",
+      "step"
+     ],
+     "prop": "minor_mode",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "min": 0,
+     "prop": "minor_step",
+     "step": 0.1,
+     "type": "number",
+     "value": 0
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "none",
+      "auto",
+      "%.0f",
+      "%.1f",
+      "%.2f",
+      "%.3f",
+      "%g",
+      "sci"
+     ],
+     "prop": "minor_format",
+     "type": "enum",
+     "value": "none"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.xticks",
+   "label": "X 刻度文字",
+   "role": "ticks"
+  },
+  {
+   "bbox": [
+    0.08881818181818182,
+    0.7943819444444444,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "0"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.xticklabels_1",
+   "label": "刻度 “0”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.18918344155844158,
+    0.7943819444444444,
+    0.012678571428571428,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "1"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.xticklabels_2",
+   "label": "刻度 “1”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.2897272727272727,
+    0.7943819444444444,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "2"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.xticklabels_3",
+   "label": "刻度 “2”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.39018181818181824,
+    0.7943819444444444,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "3"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.xticklabels_4",
+   "label": "刻度 “3”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.04093253968253968,
+    0.18935795454545468,
+    0.02517857142857143,
+    0.5746590909090908
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "max": 24,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "max": 90,
+     "min": -90,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "刻度线",
+     "options": [
+      "out",
+      "in",
+      "inout"
+     ],
+     "prop": "direction",
+     "type": "enum",
+     "value": "out"
+    },
+    {
+     "group": "刻度线",
+     "max": 12,
+     "min": 0,
+     "prop": "length",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 3.5
+    },
+    {
+     "group": "刻度线",
+     "max": 3,
+     "min": 0.1,
+     "prop": "width",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "刻度线",
+     "max": 12,
+     "min": 0,
+     "prop": "minor_length",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 2
+    },
+    {
+     "group": "刻度线",
+     "max": 3,
+     "min": 0.1,
+     "prop": "minor_width",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.6
+    },
+    {
+     "group": "刻度线",
+     "options": [
+      "auto",
+      "%.0f",
+      "%.1f",
+      "%.2f",
+      "%.3f",
+      "%g",
+      "sci"
+     ],
+     "prop": "format",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "auto",
+      "step",
+      "fixed"
+     ],
+     "prop": "major_mode",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "min": 0,
+     "prop": "major_step",
+     "step": 0.1,
+     "type": "number",
+     "value": 2
+    },
+    {
+     "group": "刻度定位",
+     "prop": "major_values",
+     "type": "number_list",
+     "value": [
+      -2,
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12
+     ]
+    },
+    {
+     "group": "刻度定位",
+     "prop": "minor_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "auto",
+      "step"
+     ],
+     "prop": "minor_mode",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "min": 0,
+     "prop": "minor_step",
+     "step": 0.1,
+     "type": "number",
+     "value": 0
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "none",
+      "auto",
+      "%.0f",
+      "%.1f",
+      "%.2f",
+      "%.3f",
+      "%g",
+      "sci"
+     ],
+     "prop": "minor_format",
+     "type": "enum",
+     "value": "none"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.yticks",
+   "label": "Y 刻度文字",
+   "role": "ticks"
+  },
+  {
+   "bbox": [
+    0.05361111111111111,
+    0.7202670454545455,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "0"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.yticklabels_1",
+   "label": "刻度 “0”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.05361111111111111,
+    0.6140852272727273,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "2"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.yticklabels_2",
+   "label": "刻度 “2”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.05361111111111111,
+    0.5079034090909091,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "4"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.yticklabels_3",
+   "label": "刻度 “4”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.053432539682539686,
+    0.401721590909091,
+    0.012678571428571428,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "6"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.yticklabels_4",
+   "label": "刻度 “6”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.053432539682539686,
+    0.2955397727272727,
+    0.012678571428571428,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "8"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.yticklabels_5",
+   "label": "刻度 “8”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.04093253968253968,
+    0.18935795454545468,
+    0.02517857142857143,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "10"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_0.yticklabels_6",
+   "label": "刻度 “10”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.5606,
+    0.18000000000000005,
+    0.3315,
+    0.584
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "position",
+     "type": "rect",
+     "value": [
+      0.5606,
+      0.236,
+      0.3315,
+      0.584
+     ]
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "数据范围",
+     "prop": "xlim",
+     "type": "pair",
+     "value": [
+      -0.5900000000000001,
+      3.5900000000000003
+     ]
+    },
+    {
+     "group": "数据范围",
+     "prop": "ylim",
+     "type": "pair",
+     "value": [
+      0,
+      7.35
+     ]
+    },
+    {
+     "group": "数据范围",
+     "options": [
+      "linear",
+      "log",
+      "symlog",
+      "logit"
+     ],
+     "prop": "xscale",
+     "type": "enum",
+     "value": "linear"
+    },
+    {
+     "group": "数据范围",
+     "options": [
+      "linear",
+      "log",
+      "symlog",
+      "logit"
+     ],
+     "prop": "yscale",
+     "type": "enum",
+     "value": "linear"
+    },
+    {
+     "group": "数据范围",
+     "prop": "invert_x",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "数据范围",
+     "prop": "invert_y",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "数据范围",
+     "prop": "aspect",
+     "type": "text",
+     "value": "auto"
+    },
+    {
+     "group": "刻度线",
+     "prop": "ticks_bottom",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "刻度线",
+     "prop": "ticks_top",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "刻度线",
+     "prop": "ticks_left",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "刻度线",
+     "prop": "ticks_right",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "网格与边框",
+     "prop": "grid_x",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "网格与边框",
+     "prop": "grid_y",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "网格与边框",
+     "prop": "grid_color",
+     "type": "color",
+     "value": "#b0b0b0"
+    },
+    {
+     "group": "网格与边框",
+     "options": [
+      "-",
+      "--",
+      ":",
+      "-."
+     ],
+     "prop": "grid_linestyle",
+     "type": "enum",
+     "value": "-"
+    },
+    {
+     "group": "网格与边框",
+     "max": 3,
+     "min": 0.1,
+     "prop": "grid_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "网格与边框",
+     "max": 1,
+     "min": 0,
+     "prop": "grid_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_top",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_right",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_bottom",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_left",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "网格与边框",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_top_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_top_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_right_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_right_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_bottom_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_bottom_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_left_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_left_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "网格与边框",
+     "prop": "facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    }
+   ],
+   "gid": "axes_1",
+   "label": "子图 2",
+   "resizable": true,
+   "role": "axes",
+   "spines": {
+    "bottom": {
+     "from": [
+      0.5606,
+      0.764
+     ],
+     "ticks": true,
+     "to": [
+      0.8921,
+      0.764
+     ],
+     "visible": true
+    },
+    "left": {
+     "from": [
+      0.5606,
+      0.764
+     ],
+     "ticks": true,
+     "to": [
+      0.5606,
+      0.18
+     ],
+     "visible": true
+    },
+    "right": {
+     "from": [
+      0.8921,
+      0.764
+     ],
+     "ticks": false,
+     "to": [
+      0.8921,
+      0.18
+     ],
+     "visible": true
+    },
+    "top": {
+     "from": [
+      0.5606,
+      0.18
+     ],
+     "ticks": false,
+     "to": [
+      0.8921,
+      0.18
+     ],
+     "visible": true
+    }
+   }
+  },
+  {
+   "anchor": [
+    0.8203,
+    0.10360000000000014
+   ],
+   "bbox": [
+    0.7839607142857143,
+    0.05985000000000018,
+    0.07267857142857143,
+    0.05625
+   ],
+   "drag_prop": "pos_frac",
+   "draggable": true,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "Signal"
+    },
+    {
+     "max": 36,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 12
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "options": [
+      "normal",
+      "bold"
+     ],
+     "prop": "weight",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "normal",
+      "italic"
+     ],
+     "prop": "style",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "max": 180,
+     "min": -180,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "排版",
+     "options": [
+      "left",
+      "center",
+      "right"
+     ],
+     "prop": "ha",
+     "type": "enum",
+     "value": "center"
+    },
+    {
+     "group": "排版",
+     "options": [
+      "top",
+      "center",
+      "bottom",
+      "baseline"
+     ],
+     "prop": "va",
+     "type": "enum",
+     "value": "baseline"
+    },
+    {
+     "group": "排版",
+     "max": 3,
+     "min": 0.5,
+     "prop": "linespacing",
+     "step": 0.05,
+     "type": "number",
+     "value": 1.2
+    },
+    {
+     "group": "排版",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "背景",
+     "max": 1,
+     "min": 0,
+     "prop": "bbox_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_edgecolor",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "背景",
+     "max": 3,
+     "min": 0,
+     "prop": "bbox_linewidth",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 0
+    },
+    {
+     "group": "背景",
+     "max": 2,
+     "min": 0,
+     "prop": "bbox_pad",
+     "step": 0.05,
+     "type": "number",
+     "value": 0.3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_rounded",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_enabled",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_color",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "描边",
+     "max": 6,
+     "min": 0.25,
+     "prop": "stroke_width",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.title",
+   "label": "标题 “Signal”",
+   "role": "title"
+  },
+  {
+   "anchor": [
+    0.7264,
+    0.8952
+   ],
+   "bbox": [
+    0.7078285714285715,
+    0.8952,
+    0.037142857142857144,
+    0.04375
+   ],
+   "drag_prop": "pos_frac",
+   "draggable": true,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "t / s"
+    },
+    {
+     "max": 36,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "options": [
+      "normal",
+      "bold"
+     ],
+     "prop": "weight",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "normal",
+      "italic"
+     ],
+     "prop": "style",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "max": 180,
+     "min": -180,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "排版",
+     "options": [
+      "left",
+      "center",
+      "right"
+     ],
+     "prop": "ha",
+     "type": "enum",
+     "value": "center"
+    },
+    {
+     "group": "排版",
+     "options": [
+      "top",
+      "center",
+      "bottom",
+      "baseline"
+     ],
+     "prop": "va",
+     "type": "enum",
+     "value": "top"
+    },
+    {
+     "group": "排版",
+     "max": 3,
+     "min": 0.5,
+     "prop": "linespacing",
+     "step": 0.05,
+     "type": "number",
+     "value": 1.2
+    },
+    {
+     "group": "排版",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "背景",
+     "max": 1,
+     "min": 0,
+     "prop": "bbox_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_edgecolor",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "背景",
+     "max": 3,
+     "min": 0,
+     "prop": "bbox_linewidth",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 0
+    },
+    {
+     "group": "背景",
+     "max": 2,
+     "min": 0,
+     "prop": "bbox_pad",
+     "step": 0.05,
+     "type": "number",
+     "value": 0.3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_rounded",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_enabled",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_color",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "描边",
+     "max": 6,
+     "min": 0.25,
+     "prop": "stroke_width",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.xlabel",
+   "label": "X 轴 “t / s”",
+   "role": "axis_label"
+  },
+  {
+   "bbox": [
+    0.5756681818181819,
+    0.2078095238095239,
+    0.3013636363636363,
+    0.5561904761904761
+   ],
+   "clip_bbox": [
+    0.5606,
+    0.18000000000000005,
+    0.3315,
+    0.584
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "label",
+     "type": "text",
+     "value": ""
+    },
+    {
+     "prop": "facecolor",
+     "type": "color",
+     "value": "#7f7f7f"
+    },
+    {
+     "prop": "edgecolor",
+     "type": "color",
+     "value": "none"
+    },
+    {
+     "max": 5,
+     "min": 0,
+     "prop": "linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 1
+    },
+    {
+     "max": 5,
+     "min": 0.01,
+     "prop": "bar_width",
+     "step": 0.02,
+     "type": "number",
+     "unit": "数据单位",
+     "value": 0.8
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "排列",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 1
+    }
+   ],
+   "geometry": {
+    "clip": [
+     0.5606,
+     0.18,
+     0.3315,
+     0.584
+    ],
+    "fill": true,
+    "kind": "multi_path",
+    "paths": [
+     {
+      "closed": true,
+      "points": [
+       [
+        0.57567,
+        0.764
+       ],
+       [
+        0.63911,
+        0.764
+       ],
+       [
+        0.63911,
+        0.68454
+       ],
+       [
+        0.57567,
+        0.68454
+       ]
+      ]
+     },
+     {
+      "closed": true,
+      "points": [
+       [
+        0.65497,
+        0.764
+       ],
+       [
+        0.71842,
+        0.764
+       ],
+       [
+        0.71842,
+        0.52563
+       ],
+       [
+        0.65497,
+        0.52563
+       ]
+      ]
+     },
+     {
+      "closed": true,
+      "points": [
+       [
+        0.73428,
+        0.764
+       ],
+       [
+        0.79773,
+        0.764
+       ],
+       [
+        0.79773,
+        0.36672
+       ],
+       [
+        0.73428,
+        0.36672
+       ]
+      ]
+     },
+     {
+      "closed": true,
+      "points": [
+       [
+        0.81359,
+        0.764
+       ],
+       [
+        0.87703,
+        0.764
+       ],
+       [
+        0.87703,
+        0.20781
+       ],
+       [
+        0.81359,
+        0.20781
+       ]
+      ]
+     }
+    ],
+    "stroke": false
+   },
+   "gid": "axes_1.barseries_0",
+   "label": "柱形系列 1",
+   "role": "bar_series"
+  },
+  {
+   "bbox": [
+    0.5756681818181819,
+    0.6845442176870749,
+    0.06344497607655504,
+    0.07945578231292516
+   ],
+   "clip_bbox": [
+    0.5606,
+    0.18000000000000005,
+    0.3315,
+    0.584
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "facecolor",
+     "type": "color",
+     "value": "#7f7f7f"
+    },
+    {
+     "prop": "edgecolor",
+     "type": "color",
+     "value": "none"
+    },
+    {
+     "max": 5,
+     "min": 0,
+     "prop": "linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 1
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    }
+   ],
+   "gid": "axes_1.barseries_0.bar_0",
+   "label": "柱 1",
+   "role": "bar"
+  },
+  {
+   "bbox": [
+    0.6549744019138756,
+    0.5256326530612245,
+    0.06344497607655504,
+    0.23836734693877548
+   ],
+   "clip_bbox": [
+    0.5606,
+    0.18000000000000005,
+    0.3315,
+    0.584
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "facecolor",
+     "type": "color",
+     "value": "#7f7f7f"
+    },
+    {
+     "prop": "edgecolor",
+     "type": "color",
+     "value": "none"
+    },
+    {
+     "max": 5,
+     "min": 0,
+     "prop": "linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 1
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    }
+   ],
+   "gid": "axes_1.barseries_0.bar_1",
+   "label": "柱 2",
+   "role": "bar"
+  },
+  {
+   "bbox": [
+    0.7342806220095693,
+    0.3667210884353741,
+    0.06344497607655512,
+    0.3972789115646259
+   ],
+   "clip_bbox": [
+    0.5606,
+    0.18000000000000005,
+    0.3315,
+    0.584
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "facecolor",
+     "type": "color",
+     "value": "#7f7f7f"
+    },
+    {
+     "prop": "edgecolor",
+     "type": "color",
+     "value": "none"
+    },
+    {
+     "max": 5,
+     "min": 0,
+     "prop": "linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 1
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    }
+   ],
+   "gid": "axes_1.barseries_0.bar_2",
+   "label": "柱 3",
+   "role": "bar"
+  },
+  {
+   "bbox": [
+    0.8135868421052631,
+    0.2078095238095239,
+    0.06344497607655496,
+    0.5561904761904761
+   ],
+   "clip_bbox": [
+    0.5606,
+    0.18000000000000005,
+    0.3315,
+    0.584
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "facecolor",
+     "type": "color",
+     "value": "#7f7f7f"
+    },
+    {
+     "prop": "edgecolor",
+     "type": "color",
+     "value": "none"
+    },
+    {
+     "max": 5,
+     "min": 0,
+     "prop": "linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 1
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    }
+   ],
+   "gid": "axes_1.barseries_0.bar_3",
+   "label": "柱 4",
+   "role": "bar"
+  },
+  {
+   "bbox": [
+    0.6011406698564593,
+    0.7943819444444444,
+    0.2504186602870814,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "max": 24,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "max": 90,
+     "min": -90,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "刻度线",
+     "options": [
+      "out",
+      "in",
+      "inout"
+     ],
+     "prop": "direction",
+     "type": "enum",
+     "value": "out"
+    },
+    {
+     "group": "刻度线",
+     "max": 12,
+     "min": 0,
+     "prop": "length",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 3.5
+    },
+    {
+     "group": "刻度线",
+     "max": 3,
+     "min": 0.1,
+     "prop": "width",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "刻度线",
+     "max": 12,
+     "min": 0,
+     "prop": "minor_length",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 2
+    },
+    {
+     "group": "刻度线",
+     "max": 3,
+     "min": 0.1,
+     "prop": "minor_width",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.6
+    },
+    {
+     "group": "刻度线",
+     "options": [
+      "auto",
+      "%.0f",
+      "%.1f",
+      "%.2f",
+      "%.3f",
+      "%g",
+      "sci"
+     ],
+     "prop": "format",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "auto",
+      "step",
+      "fixed"
+     ],
+     "prop": "major_mode",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "min": 0,
+     "prop": "major_step",
+     "step": 0.1,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "刻度定位",
+     "prop": "major_values",
+     "type": "number_list",
+     "value": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "group": "刻度定位",
+     "prop": "minor_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "auto",
+      "step"
+     ],
+     "prop": "minor_mode",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "min": 0,
+     "prop": "minor_step",
+     "step": 0.1,
+     "type": "number",
+     "value": 0
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "none",
+      "auto",
+      "%.0f",
+      "%.1f",
+      "%.2f",
+      "%.3f",
+      "%g",
+      "sci"
+     ],
+     "prop": "minor_format",
+     "type": "enum",
+     "value": "none"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.xticks",
+   "label": "X 刻度文字",
+   "role": "ticks"
+  },
+  {
+   "bbox": [
+    0.6011406698564593,
+    0.7943819444444444,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "0"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.xticklabels_1",
+   "label": "刻度 “0”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.6803576042378674,
+    0.7943819444444444,
+    0.012678571428571428,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "1"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.xticklabels_2",
+   "label": "刻度 “1”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.7597531100478468,
+    0.7943819444444444,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "2"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.xticklabels_3",
+   "label": "刻度 “2”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.8390593301435407,
+    0.7943819444444444,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "3"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.xticklabels_4",
+   "label": "刻度 “3”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.5340325396825397,
+    0.270077806122449,
+    0.012678571428571428,
+    0.520484693877551
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "max": 24,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "max": 90,
+     "min": -90,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "刻度线",
+     "options": [
+      "out",
+      "in",
+      "inout"
+     ],
+     "prop": "direction",
+     "type": "enum",
+     "value": "out"
+    },
+    {
+     "group": "刻度线",
+     "max": 12,
+     "min": 0,
+     "prop": "length",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 3.5
+    },
+    {
+     "group": "刻度线",
+     "max": 3,
+     "min": 0.1,
+     "prop": "width",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "刻度线",
+     "max": 12,
+     "min": 0,
+     "prop": "minor_length",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 2
+    },
+    {
+     "group": "刻度线",
+     "max": 3,
+     "min": 0.1,
+     "prop": "minor_width",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.6
+    },
+    {
+     "group": "刻度线",
+     "options": [
+      "auto",
+      "%.0f",
+      "%.1f",
+      "%.2f",
+      "%.3f",
+      "%g",
+      "sci"
+     ],
+     "prop": "format",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "auto",
+      "step",
+      "fixed"
+     ],
+     "prop": "major_mode",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "min": 0,
+     "prop": "major_step",
+     "step": 0.1,
+     "type": "number",
+     "value": 2
+    },
+    {
+     "group": "刻度定位",
+     "prop": "major_values",
+     "type": "number_list",
+     "value": [
+      0,
+      2,
+      4,
+      6,
+      8
+     ]
+    },
+    {
+     "group": "刻度定位",
+     "prop": "minor_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "auto",
+      "step"
+     ],
+     "prop": "minor_mode",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "min": 0,
+     "prop": "minor_step",
+     "step": 0.1,
+     "type": "number",
+     "value": 0
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "none",
+      "auto",
+      "%.0f",
+      "%.1f",
+      "%.2f",
+      "%.3f",
+      "%g",
+      "sci"
+     ],
+     "prop": "minor_format",
+     "type": "enum",
+     "value": "none"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.yticks",
+   "label": "Y 刻度文字",
+   "role": "ticks"
+  },
+  {
+   "bbox": [
+    0.5342111111111111,
+    0.7468125,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "0"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.yticklabels_0",
+   "label": "刻度 “0”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.5342111111111111,
+    0.5879009353741497,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "2"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.yticklabels_1",
+   "label": "刻度 “2”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.5342111111111111,
+    0.42898937074829935,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "4"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.yticklabels_2",
+   "label": "刻度 “4”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.5340325396825397,
+    0.270077806122449,
+    0.012678571428571428,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "6"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_1.yticklabels_3",
+   "label": "刻度 “6”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.08,
+    0.18000000000000005,
+    0.3315,
+    0.584
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "position",
+     "type": "rect",
+     "value": [
+      0.08,
+      0.236,
+      0.3315,
+      0.584
+     ]
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "数据范围",
+     "prop": "xlim",
+     "type": "pair",
+     "value": [
+      -0.15000000000000002,
+      3.15
+     ]
+    },
+    {
+     "group": "数据范围",
+     "prop": "ylim",
+     "type": "pair",
+     "value": [
+      0.85,
+      4.15
+     ]
+    },
+    {
+     "group": "数据范围",
+     "options": [
+      "linear",
+      "log",
+      "symlog",
+      "logit"
+     ],
+     "prop": "xscale",
+     "type": "enum",
+     "value": "linear"
+    },
+    {
+     "group": "数据范围",
+     "options": [
+      "linear",
+      "log",
+      "symlog",
+      "logit"
+     ],
+     "prop": "yscale",
+     "type": "enum",
+     "value": "linear"
+    },
+    {
+     "group": "数据范围",
+     "prop": "invert_x",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "数据范围",
+     "prop": "invert_y",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "数据范围",
+     "prop": "aspect",
+     "type": "text",
+     "value": "auto"
+    },
+    {
+     "group": "刻度线",
+     "prop": "ticks_left",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "刻度线",
+     "prop": "ticks_right",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "grid_y",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "网格与边框",
+     "prop": "grid_color",
+     "type": "color",
+     "value": "#b0b0b0"
+    },
+    {
+     "group": "网格与边框",
+     "options": [
+      "-",
+      "--",
+      ":",
+      "-."
+     ],
+     "prop": "grid_linestyle",
+     "type": "enum",
+     "value": "-"
+    },
+    {
+     "group": "网格与边框",
+     "max": 3,
+     "min": 0.1,
+     "prop": "grid_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "网格与边框",
+     "max": 1,
+     "min": 0,
+     "prop": "grid_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_top",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_right",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_bottom",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_left",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "网格与边框",
+     "prop": "spine_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "网格与边框",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_top_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_top_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_right_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_right_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_bottom_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_bottom_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "边框（逐条）",
+     "prop": "spine_left_color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "边框（逐条）",
+     "max": 3,
+     "min": 0.1,
+     "prop": "spine_left_linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "网格与边框",
+     "prop": "facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    }
+   ],
+   "follow_gids": [
+    "axes_0"
+   ],
+   "gid": "axes_2",
+   "label": "子图 1（右轴）",
+   "resizable": true,
+   "role": "axes",
+   "spines": {
+    "left": {
+     "from": [
+      0.08,
+      0.764
+     ],
+     "ticks": false,
+     "to": [
+      0.08,
+      0.18
+     ],
+     "visible": true
+    },
+    "right": {
+     "from": [
+      0.4115,
+      0.764
+     ],
+     "ticks": true,
+     "to": [
+      0.4115,
+      0.18
+     ],
+     "visible": true
+    }
+   }
+  },
+  {
+   "anchor": [
+    0.44600396825396826,
+    0.4720000000000001
+   ],
+   "bbox": [
+    0.44600396825396826,
+    0.4077421875,
+    0.02,
+    0.128515625
+   ],
+   "drag_prop": "pos_frac",
+   "draggable": true,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "signal"
+    },
+    {
+     "max": 36,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "options": [
+      "normal",
+      "bold"
+     ],
+     "prop": "weight",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "normal",
+      "italic"
+     ],
+     "prop": "style",
+     "type": "enum",
+     "value": "normal"
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "max": 180,
+     "min": -180,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 90
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "排版",
+     "options": [
+      "left",
+      "center",
+      "right"
+     ],
+     "prop": "ha",
+     "type": "enum",
+     "value": "center"
+    },
+    {
+     "group": "排版",
+     "options": [
+      "top",
+      "center",
+      "bottom",
+      "baseline"
+     ],
+     "prop": "va",
+     "type": "enum",
+     "value": "top"
+    },
+    {
+     "group": "排版",
+     "max": 3,
+     "min": 0.5,
+     "prop": "linespacing",
+     "step": 0.05,
+     "type": "number",
+     "value": 1.2
+    },
+    {
+     "group": "排版",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_facecolor",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "背景",
+     "max": 1,
+     "min": 0,
+     "prop": "bbox_alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_edgecolor",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "group": "背景",
+     "max": 3,
+     "min": 0,
+     "prop": "bbox_linewidth",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 0
+    },
+    {
+     "group": "背景",
+     "max": 2,
+     "min": 0,
+     "prop": "bbox_pad",
+     "step": 0.05,
+     "type": "number",
+     "value": 0.3
+    },
+    {
+     "group": "背景",
+     "prop": "bbox_rounded",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_enabled",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "描边",
+     "prop": "stroke_color",
+     "type": "color",
+     "value": "#ffffff"
+    },
+    {
+     "group": "描边",
+     "max": 6,
+     "min": 0.25,
+     "prop": "stroke_width",
+     "step": 0.25,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_2.ylabel",
+   "label": "Y 轴 “signal”",
+   "role": "axis_label"
+  },
+  {
+   "bbox": [
+    0.08911580086580087,
+    0.19352462121212122,
+    0.31326839826839836,
+    0.5569507575757576
+   ],
+   "clip_bbox": [
+    0.08,
+    0.18000000000000005,
+    0.3315,
+    0.584
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "label",
+     "type": "text",
+     "value": "sig A"
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#d62728"
+    },
+    {
+     "max": 8,
+     "min": 0.1,
+     "prop": "linewidth",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 1.5
+    },
+    {
+     "options": [
+      "-",
+      "--",
+      ":",
+      "-."
+     ],
+     "prop": "linestyle",
+     "type": "enum",
+     "value": "--"
+    },
+    {
+     "max": 1,
+     "min": 0,
+     "prop": "alpha",
+     "step": 0.05,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "线条与标记",
+     "marker_current": {
+      "kind": "named",
+      "name": "s"
+     },
+     "options": [
+      "None",
+      "o",
+      "s",
+      "D",
+      "^",
+      "v",
+      "<",
+      ">",
+      "x",
+      "+",
+      "*",
+      "."
+     ],
+     "prop": "marker",
+     "type": "enum",
+     "value": "s"
+    },
+    {
+     "group": "线条与标记",
+     "max": 20,
+     "min": 0,
+     "prop": "markersize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 6
+    },
+    {
+     "group": "线条与标记",
+     "prop": "markerfacecolor",
+     "type": "color",
+     "value": "#d62728"
+    },
+    {
+     "group": "线条与标记",
+     "prop": "markeredgecolor",
+     "type": "color",
+     "value": "#d62728"
+    },
+    {
+     "group": "排列",
+     "max": 50,
+     "min": -5,
+     "prop": "zorder",
+     "step": 1,
+     "type": "number",
+     "value": 2
+    }
+   ],
+   "geometry": {
+    "clip": [
+     0.08,
+     0.18,
+     0.3315,
+     0.584
+    ],
+    "fill": false,
+    "kind": "polyline",
+    "paths": [
+     {
+      "closed": false,
+      "points": [
+       [
+        0.09507,
+        0.73745
+       ],
+       [
+        0.19552,
+        0.38352
+       ],
+       [
+        0.29598,
+        0.56048
+       ],
+       [
+        0.39643,
+        0.20655
+       ]
+      ]
+     }
+    ],
+    "stroke": true,
+    "stroke_pt": 1.5
+   },
+   "gid": "axes_2.lines_0",
+   "label": "曲线 “sig A”",
+   "role": "line"
+  },
+  {
+   "bbox": [
+    0.4253888888888889,
+    0.18935795454545468,
+    0.012678571428571428,
+    0.5746590909090908
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "max": 24,
+     "min": 3,
+     "prop": "fontsize",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 10
+    },
+    {
+     "options": [
+      "serif",
+      "sans-serif",
+      "monospace",
+      "Times New Roman",
+      "Arial",
+      "Helvetica",
+      "Hiragino Sans GB",
+      "STHeiti",
+      "Songti SC",
+      "Arial Unicode MS",
+      "Microsoft YaHei"
+     ],
+     "prop": "fontfamily",
+     "type": "enum",
+     "value": "sans-serif"
+    },
+    {
+     "prop": "color",
+     "type": "color",
+     "value": "#000000"
+    },
+    {
+     "max": 90,
+     "min": -90,
+     "prop": "rotation",
+     "step": 5,
+     "type": "number",
+     "unit": "°",
+     "value": 0
+    },
+    {
+     "prop": "visible",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "group": "刻度线",
+     "options": [
+      "out",
+      "in",
+      "inout"
+     ],
+     "prop": "direction",
+     "type": "enum",
+     "value": "out"
+    },
+    {
+     "group": "刻度线",
+     "max": 12,
+     "min": 0,
+     "prop": "length",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 3.5
+    },
+    {
+     "group": "刻度线",
+     "max": 3,
+     "min": 0.1,
+     "prop": "width",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.8
+    },
+    {
+     "group": "刻度线",
+     "max": 12,
+     "min": 0,
+     "prop": "minor_length",
+     "step": 0.5,
+     "type": "number",
+     "unit": "pt",
+     "value": 2
+    },
+    {
+     "group": "刻度线",
+     "max": 3,
+     "min": 0.1,
+     "prop": "minor_width",
+     "step": 0.1,
+     "type": "number",
+     "unit": "pt",
+     "value": 0.6
+    },
+    {
+     "group": "刻度线",
+     "options": [
+      "auto",
+      "%.0f",
+      "%.1f",
+      "%.2f",
+      "%.3f",
+      "%g",
+      "sci"
+     ],
+     "prop": "format",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "auto",
+      "step",
+      "fixed"
+     ],
+     "prop": "major_mode",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "min": 0,
+     "prop": "major_step",
+     "step": 0.1,
+     "type": "number",
+     "value": 1
+    },
+    {
+     "group": "刻度定位",
+     "prop": "major_values",
+     "type": "number_list",
+     "value": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+     ]
+    },
+    {
+     "group": "刻度定位",
+     "prop": "minor_visible",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "auto",
+      "step"
+     ],
+     "prop": "minor_mode",
+     "type": "enum",
+     "value": "auto"
+    },
+    {
+     "group": "刻度定位",
+     "min": 0,
+     "prop": "minor_step",
+     "step": 0.1,
+     "type": "number",
+     "value": 0
+    },
+    {
+     "group": "刻度定位",
+     "options": [
+      "none",
+      "auto",
+      "%.0f",
+      "%.1f",
+      "%.2f",
+      "%.3f",
+      "%g",
+      "sci"
+     ],
+     "prop": "minor_format",
+     "type": "enum",
+     "value": "none"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_2.yticks",
+   "label": "Y 刻度文字",
+   "role": "ticks"
+  },
+  {
+   "bbox": [
+    0.4253888888888889,
+    0.7202670454545455,
+    0.012678571428571428,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "1"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_2.yticklabels_1",
+   "label": "刻度 “1”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.4253888888888889,
+    0.5432973484848486,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "2"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_2.yticklabels_2",
+   "label": "刻度 “2”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.4253888888888889,
+    0.36632765151515156,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "3"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_2.yticklabels_3",
+   "label": "刻度 “3”",
+   "role": "ticklabel"
+  },
+  {
+   "bbox": [
+    0.4253888888888889,
+    0.18935795454545468,
+    0.0125,
+    0.04375
+   ],
+   "draggable": false,
+   "editable": [
+    {
+     "prop": "text",
+     "type": "text",
+     "value": "4"
+    }
+   ],
+   "face": "DejaVu Sans",
+   "gid": "axes_2.yticklabels_4",
+   "label": "刻度 “4”",
+   "role": "ticklabel"
+  }
+ ],
+ "font_families": [
+  "Academy Engraved LET",
+  "Al Bayan",
+  "Al Nile",
+  "Al Tarikh",
+  "American Typewriter",
+  "Andale Mono",
+  "Anonymous Pro for Powerline",
+  "Apple Braille",
+  "Apple Chancery",
+  "Apple LiGothic",
+  "Apple LiSung",
+  "Apple SD Gothic Neo",
+  "Apple Symbols",
+  "AppleGothic",
+  "AppleMyungjo",
+  "Arial",
+  "Arial Black",
+  "Arial Hebrew",
+  "Arial Narrow",
+  "Arial Rounded MT Bold",
+  "Arial Unicode MS",
+  "Arimo for Powerline",
+  "Athelas",
+  "Avenir",
+  "Avenir Next",
+  "Avenir Next Condensed",
+  "Ayuthaya",
+  "Baghdad",
+  "Bangla MN",
+  "Bangla Sangam MN",
+  "Baoli SC",
+  "Baskerville",
+  "Bear Sans UI",
+  "Bear Sans UI Heading",
+  "Beirut",
+  "BiauKaiHK",
+  "Big Caslon",
+  "BIZ UDGothic",
+  "BIZ UDMincho",
+  "BM Dohyeon",
+  "BM Hanna 11yrs Old",
+  "BM Hanna Air",
+  "BM Hanna Pro",
+  "BM Jua",
+  "BM Kirang Haerang",
+  "BM Yeonsung",
+  "Bodoni 72",
+  "Bodoni 72 Oldstyle",
+  "Bodoni 72 Smallcaps",
+  "Bodoni Ornaments",
+  "Bradley Hand",
+  "Brush Script MT",
+  "Calibri",
+  "Chalkboard",
+  "Chalkboard SE",
+  "Chalkduster",
+  "Charter",
+  "cmb10",
+  "cmex10",
+  "cmmi10",
+  "cmr10",
+  "cmss10",
+  "cmsy10",
+  "cmtt10",
+  "Cochin",
+  "Comic Sans MS",
+  "Copperplate",
+  "Corsiva Hebrew",
+  "Courier",
+  "Courier New",
+  "Cousine for Powerline",
+  "CPMono_v07",
+  "Damascus",
+  "DecoType Naskh",
+  "DejaVu Sans",
+  "DejaVu Sans Display",
+  "DejaVu Sans Mono",
+  "DejaVu Sans Mono for Powerline",
+  "DejaVu Serif",
+  "DejaVu Serif Display",
+  "Devanagari MT",
+  "Devanagari Sangam MN",
+  "DFYanKaiW7-B5",
+  "DFYanKaiW7-GB",
+  "Didot",
+  "DIN Alternate",
+  "DIN Condensed",
+  "Diwan Kufi",
+  "Diwan Thuluth",
+  "Droid Sans Mono Dotted for Powerline",
+  "Droid Sans Mono for Powerline",
+  "Droid Sans Mono Slashed for Powerline",
+  "Euphemia UCAS",
+  "Farah",
+  "Farisi",
+  "Fira Mono for Powerline",
+  "FOT-Carat Std",
+  "FOT-Chiaro Std",
+  "FOT-Matisse Pro",
+  "FOT-NewCinemaA Std",
+  "FOT-UDKakugo_Large Pr6N",
+  "FOT-UDMarugo_Small Pr6N",
+  "Futura",
+  "FZBeiWeiKaiShu_GB18030-S19",
+  "FZChaoCuHei-M10",
+  "FZLanTingHei-DB1-GBK",
+  "FZLanTingHei-EB-GBK",
+  "FZLanTingHei-H-GBK",
+  "FZLanTingHei-L-GBK",
+  "FZLanTingHei-M-GBK",
+  "FZLanTingYuan-DB-GBK",
+  "FZLanTingYuan-DB1-GBK",
+  "FZLanTingYuan-H-GBK",
+  "FZLanTingYuan-M-GBK",
+  "FZLanTingYuan-R-GBK",
+  "FZPingXianYaSong-R-GBK",
+  "FZRuiShuiYunS",
+  "FZSJ-CAOMWDQH",
+  "FZSJ-DUANZDALWYX",
+  "FZSJ-JUEJSLJNZ",
+  "FZSJ-MAOXQST",
+  "FZSJ-XIANGNYWYYW",
+  "FZSJ-XIAOXXLYB",
+  "FZSJ-YOUDAKDBRS",
+  "FZYaSong-B-GBK",
+  "FZYaSong-DB-GBK",
+  "FZYaSong-DB1-GBK",
+  "FZYiSongJF",
+  "FZZH-ZYHWBJF",
+  "FZZJ-ZSCXWBJF",
+  "Galvji",
+  "Geeza Pro",
+  "Geneva",
+  "Georgia",
+  "Gill Sans",
+  "Go Mono for Powerline",
+  "Gujarati MT",
+  "Gujarati Sangam MN",
+  "GungSeo",
+  "Gurmukhi MN",
+  "Gurmukhi MT",
+  "Gurmukhi Sangam MN",
+  "Hack",
+  "Hannotate SC",
+  "HanziPen SC",
+  "HeadLineA",
+  "Hei",
+  "Heiti TC",
+  "Helvetica",
+  "Helvetica Neue",
+  "Herculanum",
+  "Hiragino Maru Gothic Pro",
+  "Hiragino Mincho ProN",
+  "Hiragino Sans",
+  "Hiragino Sans GB",
+  "Hoefler Text",
+  "HYPangDunDun",
+  "IBM 3270",
+  "IBM 3270 Condensed",
+  "IBM 3270 Semi-Condensed",
+  "Impact",
+  "InaiMathi",
+  "Inconsolata for Powerline",
+  "Inconsolata-dz for Powerline",
+  "Inconsolata-g for Powerline",
+  "Iowan Old Style",
+  "ITF Devanagari",
+  "Kai",
+  "Kailasa",
+  "Kaisei Decol Medium",
+  "Kaiti SC",
+  "Kannada MN",
+  "Kannada Sangam MN",
+  "Kefa III",
+  "Khmer MN",
+  "Khmer Sangam MN",
+  "Klee",
+  "Kohinoor Bangla",
+  "Kohinoor Devanagari",
+  "Kohinoor Gujarati",
+  "Kohinoor Telugu",
+  "Kokonor",
+  "Krungthep",
+  "KufiStandardGK",
+  "Lantinghei SC",
+  "Lao MN",
+  "Lao Sangam MN",
+  "Liberation Mono for Powerline",
+  "Libian SC",
+  "LiHei Pro",
+  "LingWai SC",
+  "LingWai TC",
+  "LiSong Pro",
+  "Lucida Grande",
+  "Luminari",
+  "Malayalam MN",
+  "Malayalam Sangam MN",
+  "Maple Mono NF CN",
+  "Marion",
+  "Marker Felt",
+  "Menlo",
+  "Meslo LG L DZ for Powerline",
+  "Meslo LG L for Powerline",
+  "Meslo LG M DZ for Powerline",
+  "Meslo LG M for Powerline",
+  "Meslo LG S DZ for Powerline",
+  "Meslo LG S for Powerline",
+  "Microsoft Sans Serif",
+  "Microsoft YaHei",
+  "Mishafi",
+  "Mishafi Gold",
+  "Monaco",
+  "monofur for Powerline",
+  "Mshtakan",
+  "Mukta Mahee",
+  "Muna",
+  "Myanmar MN",
+  "Myanmar Sangam MN",
+  "Nadeem",
+  "Nanum Brush Script",
+  "Nanum Gothic",
+  "Nanum Myeongjo",
+  "New Peninim MT",
+  "Noteworthy",
+  "Noto Mono for Powerline",
+  "Noto Nastaliq Urdu",
+  "Noto Sans Adlam",
+  "Noto Sans Armenian",
+  "Noto Sans Avestan",
+  "Noto Sans Bamum",
+  "Noto Sans Bassa Vah",
+  "Noto Sans Batak",
+  "Noto Sans Bhaiksuki",
+  "Noto Sans Buginese",
+  "Noto Sans Buhid",
+  "Noto Sans Carian",
+  "Noto Sans Caucasian Albanian",
+  "Noto Sans Chakma",
+  "Noto Sans Cham",
+  "Noto Sans Coptic",
+  "Noto Sans Cuneiform",
+  "Noto Sans Cypriot",
+  "Noto Sans Duployan",
+  "Noto Sans Egyptian Hieroglyphs",
+  "Noto Sans Elbasan",
+  "Noto Sans Glagolitic",
+  "Noto Sans Gothic",
+  "Noto Sans Gunjala Gondi",
+  "Noto Sans Hanifi Rohingya",
+  "Noto Sans Hanunoo",
+  "Noto Sans Hatran",
+  "Noto Sans Imperial Aramaic",
+  "Noto Sans Inscriptional Pahlavi",
+  "Noto Sans Inscriptional Parthian",
+  "Noto Sans Javanese",
+  "Noto Sans Kaithi",
+  "Noto Sans Kannada",
+  "Noto Sans Kayah Li",
+  "Noto Sans Kharoshthi",
+  "Noto Sans Khojki",
+  "Noto Sans Khudawadi",
+  "Noto Sans Lepcha",
+  "Noto Sans Limbu",
+  "Noto Sans Linear A",
+  "Noto Sans Linear B",
+  "Noto Sans Lisu",
+  "Noto Sans Lycian",
+  "Noto Sans Lydian",
+  "Noto Sans Mahajani",
+  "Noto Sans Mandaic",
+  "Noto Sans Manichaean",
+  "Noto Sans Marchen",
+  "Noto Sans Masaram Gondi",
+  "Noto Sans Meetei Mayek",
+  "Noto Sans Mende Kikakui",
+  "Noto Sans Meroitic",
+  "Noto Sans Miao",
+  "Noto Sans Modi",
+  "Noto Sans Mongolian",
+  "Noto Sans Mro",
+  "Noto Sans Multani",
+  "Noto Sans Myanmar",
+  "Noto Sans Nabataean",
+  "Noto Sans Nag Mundari",
+  "Noto Sans New Tai Lue",
+  "Noto Sans Newa",
+  "Noto Sans NKo",
+  "Noto Sans Ol Chiki",
+  "Noto Sans Old Hungarian",
+  "Noto Sans Old Italic",
+  "Noto Sans Old North Arabian",
+  "Noto Sans Old Permic",
+  "Noto Sans Old Persian",
+  "Noto Sans Old South Arabian",
+  "Noto Sans Old Turkic",
+  "Noto Sans Oriya",
+  "Noto Sans Osage",
+  "Noto Sans Osmanya",
+  "Noto Sans Pahawh Hmong",
+  "Noto Sans Palmyrene",
+  "Noto Sans Pau Cin Hau",
+  "Noto Sans PhagsPa",
+  "Noto Sans Phoenician",
+  "Noto Sans Psalter Pahlavi",
+  "Noto Sans Rejang",
+  "Noto Sans Samaritan",
+  "Noto Sans Saurashtra",
+  "Noto Sans Sharada",
+  "Noto Sans Siddham",
+  "Noto Sans Sora Sompeng",
+  "Noto Sans Sundanese",
+  "Noto Sans Sunuwar",
+  "Noto Sans Syloti Nagri",
+  "Noto Sans Syriac",
+  "Noto Sans Tagalog",
+  "Noto Sans Tagbanwa",
+  "Noto Sans Tai Le",
+  "Noto Sans Tai Tham",
+  "Noto Sans Tai Viet",
+  "Noto Sans Takri",
+  "Noto Sans Thaana",
+  "Noto Sans Tifinagh",
+  "Noto Sans Tirhuta",
+  "Noto Sans Ugaritic",
+  "Noto Sans Vai",
+  "Noto Sans Wancho",
+  "Noto Sans Warang Citi",
+  "Noto Sans Yi",
+  "Noto Serif Ahom",
+  "Noto Serif Balinese",
+  "Noto Serif Hmong Nyiakeng",
+  "Noto Serif Myanmar",
+  "Noto Serif Yezidi",
+  "NovaMono for Powerline",
+  "Optima",
+  "Oriya MN",
+  "Oriya Sangam MN",
+  "Osaka",
+  "Palatino",
+  "Papyrus",
+  "Party LET",
+  "PCMyungjo",
+  "Phosphate",
+  "PilGi",
+  "PingFang HK",
+  "Plantagenet Cherokee",
+  "ProFont for Powerline",
+  "PT Mono",
+  "PT Sans",
+  "PT Serif",
+  "PT Serif Caption",
+  "Raanana",
+  "Roboto Mono for Powerline",
+  "Roboto Mono Light for Powerline",
+  "Roboto Mono Medium for Powerline",
+  "Roboto Mono Thin for Powerline",
+  "Rockwell",
+  "Sana",
+  "Sathu",
+  "Savoye LET",
+  "SentyVanilla",
+  "Seravek",
+  "SF Pro",
+  "SF Pro Display",
+  "SF Pro Rounded",
+  "SF Pro Text",
+  "Shree Devanagari 714",
+  "SignPainter",
+  "Silom",
+  "SimSong",
+  "Sinhala MN",
+  "Sinhala Sangam MN",
+  "Skia",
+  "Snell Roundhand",
+  "Songti SC",
+  "Source Code Pro for Powerline",
+  "Space Mono",
+  "Space Mono for Powerline",
+  "STFangsong",
+  "STHeiti",
+  "STIX Two Math",
+  "STIX Two Text",
+  "STIXGeneral",
+  "STIXIntegralsD",
+  "STIXIntegralsSm",
+  "STIXIntegralsUp",
+  "STIXIntegralsUpD",
+  "STIXIntegralsUpSm",
+  "STIXNonUnicode",
+  "STIXSizeFiveSym",
+  "STIXSizeFourSym",
+  "STIXSizeOneSym",
+  "STIXSizeThreeSym",
+  "STIXSizeTwoSym",
+  "STIXVariants",
+  "Sukhumvit Set",
+  "Superclarendon",
+  "Swei Sans CJK SC",
+  "Swei Sans CJK TC",
+  "Swei Spring CJK TC",
+  "Swei Spring Sugar CJK TC",
+  "Symbol",
+  "Symbol Neu for Powerline",
+  "Symbols Nerd Font",
+  "Symbols Nerd Font Mono",
+  "System Font",
+  "Tahoma",
+  "Tamil MN",
+  "Tamil Sangam MN",
+  "Telugu MN",
+  "Telugu Sangam MN",
+  "Thonburi",
+  "Times",
+  "Times New Roman",
+  "Tinos for Powerline",
+  "Toppan Bunkyu Gothic",
+  "Toppan Bunkyu Midashi Gothic",
+  "Toppan Bunkyu Midashi Mincho",
+  "Toppan Bunkyu Mincho",
+  "Trattatello",
+  "Trebuchet MS",
+  "Tsukushi A Round Gothic",
+  "Tsukushi B Round Gothic",
+  "Ubuntu Mono",
+  "Ubuntu Mono derivative Powerline",
+  "UoqMunThenKhung",
+  "Verdana",
+  "Waseem",
+  "Wawati SC",
+  "Wawati TC",
+  "Webdings",
+  "Weibei SC",
+  "Weibei TC",
+  "Wingdings",
+  "Wingdings 2",
+  "Wingdings 3",
+  "Xingkai SC",
+  "Yuanti SC",
+  "YuGothic",
+  "YuKyokasho Yoko",
+  "YuMincho",
+  "Yuppy SC",
+  "Yuppy TC",
+  "Zapf Dingbats",
+  "Zapfino"
+ ],
+ "size_mm": [
+  177.8,
+  81.28
+ ],
+ "stem": "Fig_flagship"
+}

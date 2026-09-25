@@ -1,0 +1,12 @@
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/svgPreviewStore.test.ts src/canvas/dragReleaseSnapback.test.tsx
+### time=2026-09-24T19:04:26Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-2/web
+
+
+ Test Files  2 passed (2)
+      Tests  26 passed (26)
+   Start at  03:04:26
+   Duration  1.19s (transform 584ms, setup 282ms, import 531ms, tests 321ms, environment 942ms)
+
+

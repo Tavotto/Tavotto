@@ -1,0 +1,89 @@
+# cmd: PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/../verify-rel/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/rel/repro/rel05_privacy_probe.py --scratch /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/rel05 --worker-python /opt/homebrew/opt/python@3.13/libexec/bin/python3 --fonts-dir /Volumes/Projects/Tavotto/src/tavotto/resources/fonts --port 5408
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:07:46Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+seed_consent: {"consent": "enabled", "has_id": true}
+{
+  "sink": "127.0.0.1:<ephemeral>/v1/events",
+  "control": {
+    "telemetry_settings": {
+      "consent": "enabled",
+      "consent_version": 2,
+      "enabled": true,
+      "hard_disabled": false,
+      "needs_reconsent": false,
+      "saved_consent_version": 2
+    },
+    "render_ok": true,
+    "boom_status": 500,
+    "export_status": 200,
+    "export_files": [
+      "qa_rel05_0925_030800.pdf"
+    ],
+    "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/rel05/home/qa_private_user_zz/Documents/QAPRIV_Alice 论文 项目/tavottofile/export",
+    "frontend_event_status": 200,
+    "sink_hits": 3
+  },
+  "nohard": {
+    "unauth_status": 401,
+    "telemetry_settings": {
+      "consent": "enabled",
+      "consent_version": 2,
+      "enabled": false,
+      "hard_disabled": true,
+      "needs_reconsent": false,
+      "saved_consent_version": 2
+    },
+    "render_ok": true,
+    "boom_status": 500,
+    "export_status": 200,
+    "export_files": [
+      "qa_rel05_0925_030808.pdf"
+    ],
+    "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/rel05/home/qa_private_user_zz/Documents/QAPRIV_Alice 论文 项目/tavottofile/export",
+    "frontend_event_status": 200,
+    "traversal_engine_render_status": 403,
+    "traversal_preview_status": 403,
+    "traversal_preview_is_png": false,
+    "bundle_status": [
+      200,
+      200,
+      200
+    ],
+    "sink_hits": 0,
+    "bundle_files": [
+      "GET:README.txt",
+      "GET:app.log",
+      "GET:config.json",
+      "GET:manifest.json",
+      "GET:report.json",
+      "POST:README.txt",
+      "POST:app.log",
+      "POST:config.json",
+      "POST:frontend-state.json",
+      "POST:manifest.json",
+      "POST:report.json",
+      "summary"
+    ],
+    "canary_hits": [
+      "error_message in GET:report.json",
+      "error_message in GET:app.log",
+      "outside_dir in GET:app.log",
+      "error_message in POST:report.json",
+      "error_message in POST:app.log",
+      "outside_dir in POST:app.log",
+      "error_message in summary"
+    ],
+    "report_project_token": "<project:b515e70b53>",
+    "app_log_bytes": 4517,
+    "worker_logs_present": true,
+    "raw_worker_log_has_err_canary": false,
+    "raw_app_log_has_err_canary": true,
+    "raw_app_log_has_project_path": true
+  },
+  "bundle_sha256_get": "1eb1d5e49b978150d09504f63eeb22dfe6acf352e7e56e76bee9d3c081350e28",
+  "failures": [
+    "诊断包泄漏: ['error_message in GET:report.json', 'error_message in GET:app.log', 'outside_dir in GET:app.log', 'error_message in POST:report.json', 'error_message in POST:app.log', 'outside_dir in POST:app.log', 'error_message in summary']"
+  ]
+}
+# exit: 1

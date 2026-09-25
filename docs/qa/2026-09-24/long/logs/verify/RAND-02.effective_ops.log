@@ -1,0 +1,65 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/rand_effective_ops.py
+# start: 2026-09-24T20:16:06Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+{
+ "seeds": 32,
+ "steps_per_seq": 10,
+ "per_stem": {
+  "InvMix": {
+   "candidate_groups": 303,
+   "steps_total": 320,
+   "actions": {
+    "add(forced)": 29,
+    "add": 150,
+    "remove": 78,
+    "change": 61,
+    "add_same": 2
+   },
+   "list_noop_steps": 2,
+   "effective_steps": 311,
+   "effective_ratio": 0.972,
+   "rejected_steps": 0,
+   "distinct_role_prop_touched": 76,
+   "roles_touched": [
+    "collection",
+    "fill",
+    "legend",
+    "legend_text",
+    "line",
+    "linecoll",
+    "patch",
+    "scatter"
+   ],
+   "geometry_prop_occurrences": 0
+  },
+  "InvCont": {
+   "candidate_groups": 140,
+   "steps_total": 320,
+   "actions": {
+    "add(forced)": 30,
+    "add": 155,
+    "change": 44,
+    "remove": 89,
+    "add_same": 2
+   },
+   "list_noop_steps": 2,
+   "effective_steps": 315,
+   "effective_ratio": 0.984,
+   "rejected_steps": 0,
+   "distinct_role_prop_touched": 73,
+   "roles_touched": [
+    "bar",
+    "bar_series",
+    "errorbar",
+    "legend",
+    "legend_text",
+    "line",
+    "stem_series"
+   ],
+   "geometry_prop_occurrences": 0
+  }
+ }
+}
+# end: 2026-09-24T20:16:38Z
+# exit: 0

@@ -1,0 +1,12 @@
+# verify: GEO-01-probe-legend
+# time: 2026-09-25T03:23:37 (+1s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ TAVOTTO_DATA_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vgeo/s/data TAVOTTO_WORKERD=0 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/geo/repro/probe_legend_svg_vs_manifest.py /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vgeo/s/a fig1
+{"stem": "Fig1_kinetics", "requested": [-0.1013, 0.0], "manifest_bbox_d": [-0.10127444884406184, -1.5432098765533198e-06], "svg_content_d": [-0.10584444121045215, -1.5434027735551093e-06], "svg_minus_manifest_frac": [-0.004569992366390316, -1.9289700178954642e-10], "svg_minus_manifest_pt": [-1.036344727693706, -3.149537196930202e-08]}
+{"stem": "Fig1_kinetics", "requested": [-0.05, 0.0], "manifest_bbox_d": [-0.049974448844061825, -1.5432098765533198e-06], "svg_content_d": [-0.054544444959598, -1.5434027735551093e-06], "svg_minus_manifest_frac": [-0.004569996115536178, -1.9289700178954642e-10], "svg_minus_manifest_pt": [-1.036345577893714, -3.149537196930202e-08]}
+{"stem": "Fig1_kinetics", "requested": [0.03, 0.0], "manifest_bbox_d": [0.03002555115593819, -1.5432098765533198e-06], "svg_content_d": [0.02545555803901311, -1.5434027735551093e-06], "svg_minus_manifest_frac": [-0.004569993116925082, -1.9289700178954642e-10], "svg_minus_manifest_pt": [-1.0363448978937164, -3.149537196930202e-08]}
+{"stem": "Fig1_kinetics", "requested": [0.0, 0.05], "manifest_bbox_d": [2.5551155938219328e-05, 0.04999845679012338], "svg_content_d": [-0.00454444363668134, 0.04999845322868868], "svg_minus_manifest_frac": [-0.004569994792619559, -3.5614347027035365e-09], "svg_minus_manifest_pt": [-1.0363452778937245, -5.81495354978756e-07]}
+{"stem": "Fig1_kinetics", "requested": [-0.1013, 0.0583], "manifest_bbox_d": [-0.10127444884406184, 0.058298456790123354], "svg_content_d": [-0.10584444121045215, 0.058298456870996725], "svg_minus_manifest_frac": [-0.004569992366390316, 8.087337050044496e-11], "svg_minus_manifest_pt": [-1.036344727693706, 1.3204646265307929e-08]}
+[exit=0]
+

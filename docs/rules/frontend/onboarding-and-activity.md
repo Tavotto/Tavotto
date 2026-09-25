@@ -101,3 +101,15 @@
   `e2e/tutorial.spec.ts`（四条：完整走完 / 刷新恢复 + Esc + 更多菜单 + axe / 重新开始 / 切项目暂停继续）。
   jsdom 里所有盒子都是 0×0：层的用例要给锚点 `getBoundingClientRect` 假矩形；用假计时器时 flush 要
   `advanceTimersByTimeAsync`，别等真的 setTimeout。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 活动信号闭集、一个 action 一个发射点
+- step id 是持久化格式
+- 四个入口共用 `tutorial.ts`
+- 锚点是稳定 `data-*`（清单在细则里）
+- `data-status-live` 是唯一的播报区、`[role=status]` 绝不当选择器

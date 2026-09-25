@@ -47,13 +47,27 @@
     **一条即阻断**，回 409 `code=write_back_warnings` + warnings 列表。
     staging 阶段**任何异常都要 unlink 掉所有 `.updating` 临时文件**
     （以前只有 file_locked 那条路径清理，PDF 成功 PNG 失败就留垃圾）。
-  * **commit**：备份 → 落盘 → 逐个 `tmp.replace(target)`。**落盘**（ADR 0023
-    §3.1，issue #252）分两半、处置相反：任何 replace **之前**先拷齐备份，并
-    fsync 备份、staging 与备份目录——失败回 409 `write_back_persist_failed`
-    （params `reason`），清 tmp，原文件零改动；整个替换循环**之后**再尽力 fsync
-    各目标的父目录，失败只记 ERROR、不回滚、不改响应。后者绝不许并进替换
-    循环的 `except OSError`（也就是不许直接换成 `atomicio.publish_file`）：
-    那会回滚别的目标、独独留下刚换好的这一个，还对用户报「已回滚」。
+    三个失败出口（verify / 落盘准备 / 替换撞锁）的清理都走 `_discard_updating`，
+    **尽力而为**：清不掉（Windows 短暂锁住）只记日志，第二个 OSError 不许盖掉
+    触发清理的原错（Codex #595 P2：verify 段以前没兜，409 又变回 500）。
+    一次性 worker 在 verify 段崩溃 / 超时 / 缺依赖（`WorkerError`）同样是
+    **409**，响应是 worker 错误体原样（`code` / `traceback` / `module`，前端
+    按 code 出文案）外加 `stage: "verify"`——commit 段不调 worker，走到这里
+    原件必然零改动（QA 2026-09-24 SCI-04-B1；以前回 500）。
+  * **commit**：备份 → 落盘 → 逐个 `tmp.replace(target)`。备份与替换**两轮不许
+    交错**（QA 2026-09-24 SCI-05-B1：「备份一个、换一个」时第二个目标备份撞上
+    磁盘满，PDF 已换、PNG 未换、`.updating` 残留、500）。备份目录**每次写回独占**
+    （`_new_backup_dir`：`<月日_时分秒>`，同秒已占用接 `-2`、`-3`，
+    `mkdir(exist_ok=False)` 即占有）——按秒共用时，同一 stem 一秒内写回两次，
+    第二次会覆盖掉第一次写回前的原件备份、失败清理还会删掉它（Codex #595 P2）。
+    **落盘**（ADR 0023 §3.1，issue #252）分两半、处置相反：任何 replace **之前**
+    先拷齐备份，并 fsync 备份、staging、备份目录与新建目录的父目录——任一步失败
+    （建目录 / 磁盘满 / 权限 / fsync）一个原件都还没动：删掉本次的备份（含半截的）
+    与本次目录、清 tmp，回 409 `write_back_persist_failed`（params `reason`）；
+    整个替换循环**之后**再尽力 fsync 各目标的父目录，失败只记 ERROR、不回滚、
+    不改响应。后者绝不许并进替换循环的 `except OSError`（也就是不许直接换成
+    `atomicio.publish_file`）：那会回滚别的目标、独独留下刚换好的这一个，还对
+    用户报「已回滚」。
     第 2+ 个撞锁时**把已经换掉的从本次备份恢复回去**（PDF 新 / PNG 旧比整件事失败糟糕得多），
     响应带 `rolled_back` / `rollback_failed`，`updated` 的语义是「仍处于已被
     换掉状态的文件」（回滚成功即为空）。落盘后用 `probe_asset` 比页面尺寸与
@@ -74,3 +88,18 @@
   * 看护：`tests/test_write_back.py`（假 worker，全部分支）+
     `tests/test_worker_roundtrip.py` 末节（真 matplotlib + Flask 全链路，
     含 workerd 路径的一次性会话不泄漏）+ `web` 的 `WriteBackDialog.test.tsx`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- `expected_mtime` / `script_sha1` 两道 prepare 校验
+- verify 用一次性 worker 全量重放 + 几何 + 像素（`pdfbackend.compare_png` 逐 RGBA 通道）
+- 热态不是这组 patches 就报 `fresh_only` 不假比
+- commit 第 2+ 个撞锁回滚
+- 泄漏断言只对本次 `one_shot()` 的 base 负责
+- verify 段 `WorkerError` 回 409（worker code 原样 + `stage: "verify"`）
+- commit 先备份全部并 fsync 备份与 staging 再替换（失败 409 `write_back_persist_failed`，删本次备份），备份目录每次写回独占（同秒接 `-2`），替换后目录 fsync 只记日志不回滚
+- 三个失败出口清 `.updating` 都尽力而为不盖原错

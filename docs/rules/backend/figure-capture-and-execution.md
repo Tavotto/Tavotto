@@ -124,3 +124,18 @@
 - worker 里 **`sys.argv` 必须换成脚本自己的**。不换的话按参数命名输出的脚本
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 捕获策略两条入口同一份实现
+- fallback stem 按本次捕获序号
+- 相对路径只读回退四条同时成立才改指（`builtins.open` / `io.open` / 3.10 的 `Path.open` / numpy `DataSource.open` 四处）、不扩到 `exists` / `glob`
+- `safe_spec()` / `worker_argv()` 唯一出处
+- `cwd_mode` 三档（`project` 仍是脚本目录，`project_root` 是项目根）
+- 首开由 `workdir.resolve_mode` 按 `databinding` 静态证据决定问不问，问就 `workdir_confirmation_required`，不猜不就近不自动切
+- `import paper_style` 留在 try 里、排在 argv 换好之后且在 SystemExit 保护内
+- `sys.argv` 换成脚本自己的

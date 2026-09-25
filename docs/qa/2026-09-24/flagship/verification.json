@@ -1,0 +1,91 @@
+{
+ "section": "flagship",
+ "verified_commit": "ae017721",
+ "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+ "verified_at": "2026-09-24T19:51:26Z",
+ "verifier_environment": {
+  "worktree": "detached ae017721（执行者 worktree 仍占着分支，故 detached 复核后快进）",
+  "os": "macOS 27.0 arm64",
+  "node": "v26.7.0",
+  "playwright": "1.62.1（web/ 本地）",
+  "backend_python": "/Volumes/Projects/Tavotto/.venv/bin/python + PYTHONPATH=worktree/src + PYTHONDONTWRITEBYTECODE=1",
+  "worker_python": "驱动与新 pytest 未设 TAVOTTO_WORKER_PYTHON（产品自选 paper/.venv）；e2e 按 ledger 命令设 /opt/homebrew/opt/python@3.13/libexec/bin/python3",
+  "frontend_bundle": "index-qj9xX_eu.js（与执行者一致）",
+  "driver_port": "QA_PORT=5406（未碰 5089）",
+  "scratch": "$SCRATCH=scratchpad/qa/vf-run（fixture / final / evidence 都在 scratch，未覆盖已提交证据）"
+ },
+ "ledger_integrity": {
+  "case_ids_in_spec": [
+   "QA-FLAGSHIP-01",
+   "QA-FLAGSHIP-01-snapshot（规范「继续快照」分支）",
+   "QA-FLAGSHIP-01-recompute（规范「明确重算」分支）",
+   "ACCEPT-1（§10 第一批强验收①）",
+   "ACCEPT-2（§10 第一批强验收②）"
+  ],
+  "all_present": true,
+  "fields_complete": true,
+  "evidence_sha256": "ledger 中所有仓库内路径（evidence / fixtures / artifacts）的 sha256 全部与文件一致，0 条不符",
+  "fixture_sha_note": "$SCRATCH 下的 8 条夹具产物中 6 条在复核时逐字节一致；scripts/entry.py 与 Fig_flagship.pdf 不同——entry.py 把项目外数据的绝对路径（含 $SCRATCH）写进脚本，产物随路径变化。ledger 标注的「生成器确定性产物」只在同一 $SCRATCH 路径下成立。"
+ },
+ "cases": [
+  {
+   "case_id": "QA-FLAGSHIP-01",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "note": "按 ledger 命令逐字重跑（端口改 5406）：make_fixture/driver/collect_evidence 退出码都是 0；128 条检查 127 过 1 挂，检查名与顺序和已提交的 report.json 完全一致；唯一的失败仍是 P15 E1 vs Ecal 位移，max_err_mm=0.14397743056786255，与原值逐位相同（确定性）。P4b 假阻断缺陷复现：离线脚本在我的证据上 exit 0 = defect shape reproduced（page 150×100 mm，panel x=-13.9 mm，对话框写「仅此图」+「超出页面范围」阻断，style-check scope=original、acknowledged=[out-of-page]，mediabox 504×230.4 pt）。读了 ExportDialog.tsx:424-440：original 范围按 objectId 筛选问题，而 out-of-page 的 objectIds 含该面板，所以会被留下，与缺陷描述一致。可复现性瑕疵：bug_original_scope_out_of_page.py 读的是 exports/E0_style-check.restored3-run.json，但 collect_evidence.py 不生成这个文件（执行者是手工改名放进去的），照文档命令跑会 FileNotFoundError（exit 1，见 logs/verify/bug_repro.log）。要先从 <fixture>/paper/tavottofile/export/qa_E0_style-check.json 手工复制过来才能 exit 0（见 bug_repro_after_manual_copy.log）。结论不变，复现步骤缺一步。"
+  },
+  {
+   "case_id": "QA-FLAGSHIP-01-snapshot",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "重跑 P16 14/14 通过。report.json.snapshot_branch 显示磁盘数据 sha 确实从 c5de961e… 变成了 949efa9e…，binding_check.changed=[data/points.csv]。s11 画布与 E2 PDF（pdfminer）点序列都是 [0,9,2,10]，用全序列仿射拟合判断，不是极值或均值。没有变异反证（mutation_check=null），但同一把尺在 P17 能读出新数据 [1,8,3,9]，说明尺子分得清两份数据，这条判据不是恒真，所以维持 pass。「界面不提示数据已变」按规范 SCI-08 不属于快照分支的验收项，作为缺口记录是合理的。"
+  },
+  {
+   "case_id": "QA-FLAGSHIP-01-recompute",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "重跑 P17 14/14 通过：界面播报「已按源脚本重新构建」，s12 与 E3 PDF 点序列是 [1,8,3,9]，出处文字 src 949efa9e08ad env A，带 override 的元素锚点不变。vitest quickEditActions + objectContextMenu 2 个文件 90 条全过，exit 0，与原值一致。变异 M3（前端 rebuildPanel）没有复做，因为要重建前端并整轮重跑驱动，所以取成本更低、同样关键的 M1 来复做。"
+  },
+  {
+   "case_id": "ACCEPT-1",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "note": "驱动 P5–P14 全部 PASS，P15 挂 1 条（同主流程）。e2e multi-select-geometry + fake-realtime 2 passed，exit 0；vitest 7 个文件 93 条全过，与原值一致。读了新 e2e 的断言主语：期望锚点 = 拖前 manifest 锚点 + Δpx / SVG 根节点屏幕框，没有调用生产坐标函数；比的是权威渲染回来的 manifest，不是预览 DOM；另外断言了非成员不动、拖动途中零渲染、松手只发一次定稿；撤销和重做比的是 SVG 节点屏幕中心，对照拖前拖后实测位置（拖后位置先经过独立模型核对）。主语符合规范。局限（执行者已自认）：只在 DPR=1、单一视图倍率、5 个成员下测过。维持 partial（导出段有假阻断和 0.144 mm 偏差）。"
+  },
+  {
+   "case_id": "ACCEPT-2",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "第一条 pytest（新用例 + FO + workdir + databinding）59 passed，exit 0；test_first_open_environment 11 passed 2 skipped，exit 0，与原值一致。变异 M1 亲自复做：execspec.safe_spec 的 project_root 分支改成脚本目录后，新用例在 `files.get(\"data/points.csv\") == true_sha` 处变红，inputs.files 只剩 scripts/data/points.csv；前面 receipt.launch_context.cwd_origin == project.root 那条仍然通过，印证了执行者「光看标签证明不了」的结论。git checkout 还原后 git status 干净，复跑变绿。驱动 P3 用 ps -E 和 lsof 独立核对了 worker 的解释器和 cwd，全部 PASS。修正 not_run 的一条：fo16 需要的「支持矩阵外的真实解释器」本机就有，/usr/bin/python3 是 3.9.6，低于 PYTHON_MIN=(3,10)。设 TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON=/usr/bin/python3 后 fo16 1 passed（见 ACCEPT-2.fo16_with_usr_bin_python39.log），所以它不该算 not_run。fo11 需要另一个 minor 且装了 matplotlib 的受支持解释器，本机没有（3.11、3.12、3.14 都没装 matplotlib；3.9 有但不受支持），不装包的前提下 not_run 成立。判定不受影响，维持 pass。"
+  }
+ ],
+ "mutation_reproduced": {
+  "id": "M1",
+  "target": "src/tavotto/engine/execspec.py safe_spec CWD_PROJECT_ROOT 分支",
+  "mutated_exit": 1,
+  "first_red": "tests/test_qa_first_open_env_and_data.py:… assert files.get('data/points.csv') == true_sha（None）",
+  "restored_exit": 0,
+  "git_status_after_restore": "clean（只剩未跟踪的 logs/verify/）",
+  "logs": [
+   "logs/verify/M1.mutation.diff.txt",
+   "logs/verify/M1.mutated.pytest.log",
+   "logs/verify/M1.restored.pytest.log"
+  ]
+ },
+ "corrections": [
+  "bug_original_scope_out_of_page.py 依赖的 evidence/exports/E0_style-check.restored3-run.json 不由 collect_evidence.py 产出，照 ledger 命令复现会 FileNotFoundError；要手工从 <fixture>/paper/tavottofile/export/qa_E0_style-check.json 复制过来。",
+  "ACCEPT-2 里 fo16 的 not_run 理由不成立：本机 /usr/bin/python3（3.9.6）就是支持矩阵外的真实解释器，指过去后 fo16 通过。fo11 的 not_run 成立。",
+  "ledger fixtures 里 entry.py 与 Fig_flagship.pdf 的 sha256 依赖 $SCRATCH 的绝对路径，不是跨路径确定的。"
+ ],
+ "logs_dir": "docs/qa/2026-09-24/flagship/logs/verify/"
+}

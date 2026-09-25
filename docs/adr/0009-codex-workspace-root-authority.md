@@ -67,7 +67,7 @@
 | `disposition` | 何时 | `code` |
 | --- | --- | --- |
 | `ask_user_again` | 用户看着确认框作了选择，或批准的目录在授权落地前变了 | `workspace_confirmation_declined` / `_cancelled` / `_stale` |
-| `fix_host_wiring` | 宿主声明了 `elicitation`/`roots`，却超时、断开或回错误 | `workspace_confirmation_no_response` / `_error`、`workspace_roots_no_response` / `workspace_roots_error` |
+| `fix_host_wiring` | 宿主声明了 `elicitation`/`roots`，却超时、断开、回错误，或不弹框就替用户回了拒绝（§2c） | `workspace_confirmation_no_response` / `_error` / `_auto_declined`、`workspace_roots_no_response` / `workspace_roots_error` |
 | `narrow_the_path` | 路径不在允许的根之内（错误里列出允许的根） | `path_out_of_scope` |
 | `configure_roots` | 宿主既没给工作区目录，也不支持确认 | `no_workspace_root` |
 | `send_absolute_path` | 还没有可以展示给用户的绝对路径，或多根下传了相对路径 | `workspace_confirmation_required` / `ambiguous_workspace_root` |
@@ -79,6 +79,29 @@
 或项目目录被替换成指向范围外的 symlink/junction 后，旧项目不再在范围内就删除该
 session，并回 `workspace_root_changed`。重新规范化失败或项目已不再是目录也按越界
 fail-closed，不能让保存下来的词法路径继续授权 worker 重启。
+
+### 2c. 宿主代答的拒绝不是用户拒绝（2026-09-25）
+
+用户反馈（与 #38 的 2026-08-25 跟进同一现场）：宿主声明了 `elicitation`，框没出现，
+server **立刻**收到 `decline`，于是报 `workspace_confirmation_declined`、叫人再点一次。
+这是 §2b 同一个缺陷的另一种形态：宿主没回应改成了宿主**替用户**回应。
+
+根因在宿主的审批设置（codex-rs `core/src/session/mcp.rs`）：`approval_policy = never`
+（桌面版权限下拉里的「完全访问」）或 granular 策略没开 `mcp_elicitations` 时，Codex 不把
+elicitation 交给界面，直接回 `decline`。本机实测 codex-cli 0.155.1：`never` 与 `codex exec`
+（无论 `on-request` 与否）都在 **0 ms** 内回 `{"action": "decline"}`，不带 `_meta`；新版源码
+在代答时带 `_meta.approvals_reviewer = "auto_review"`。
+
+server 看不见宿主的审批设置，只能看**作答的那一方**：`decline` / `cancel` 快于
+`HUMAN_RESPONSE_FLOOR_S`（1 s，真人要先看见框、读完整路径），或带 `auto_review` 标记，就归
+`workspace_confirmation_auto_declined`（`fix_host_wiring`），恢复话术点名「完全访问 → 请求批准」
+与 `TAVOTTO_MCP_ROOTS` 两条路。误判两头不对称：真人 0.9 s 内的拒绝被报成宿主代答，只是多一句
+关于权限设置的话；反过来就是 #173 的原样。授权本身不放宽：`accept` 分支一字未改，代答的
+拒绝照样 fail-closed。
+
+同一轮核过「宿主自动传项目根」这条路：Codex 0.155.1 的 `tools/call._meta.x-codex-turn-metadata`
+只有 session / sandbox / 模型等字段、没有工作区路径，也不给 MCP 子进程设任何 `CODEX_*`
+环境变量——§1 第 4 档那几个变量名在这一版上不会命中，这条路今天不存在。
 
 ### 3. server→client 请求必须留在原始请求窗口里
 

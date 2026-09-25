@@ -541,14 +541,19 @@ def _refresh_error(exc):
     return jsonify(exc.as_payload()), 400
 
 
-def _worker_error_payload(exc) -> dict:
+def _worker_error_payload(exc, stage: str = "") -> dict:
     """worker 错误的统一响应体。
+
+    `stage` 非空时一并带上：写回事务的 verify 段挂掉回 409 + `stage: "verify"`，
+    与 prepare 段的那几个 409 区分开（QA 2026-09-24 SCI-04-B1）。
 
     `module` 只在 code == "missing_dependency" 时有值：用户脚本 import 了当前
     渲染环境里没有的包（内置 runtime 只带常用科学栈）。前端据此给「换成你自己
     的环境」这个可执行出口，而不是甩一段 ModuleNotFoundError。
     """
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
+    if stage:
+        body["stage"] = stage
     if getattr(exc, "module", ""):
         body["module"] = exc.module
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
@@ -3550,18 +3555,21 @@ def _switched_to_project_env(worker, exc) -> bool:
     return False
 
 
-def _engine_attempt(rel_id: str, worker, stem: str, action):
+def _engine_attempt(rel_id: str, worker, stem: str, action, *, safe_only: bool = False):
     """`action(worker, stem)`；缺依赖时切项目环境**重试一次**。
 
     回 `(worker, stem, 结果)`——重试后 worker 换成了新解释器起的那个，调用方
     后续要拿 `rev` / `last_build_descriptors` 的话必须用回传的这一个。
+
+    `safe_only`：重试时重新解析出来的若是 native 会话，在 `action` 之前就抛
+    `NativeWorkerRefused`（原样转给 `_engine_worker`，见那里）。
     """
     try:
         return worker, stem, action(worker, stem)
     except engine_pool.WorkerError as exc:
         if not _switched_to_project_env(worker, exc):
             raise
-    worker, stem = _engine_worker(rel_id)
+    worker, stem = _engine_worker(rel_id, safe_only=safe_only)
     return worker, stem, action(worker, stem)
 
 
@@ -3583,8 +3591,18 @@ def _safe_worker(script: str, entry: str, stem: str = ""):
     )
 
 
-def _engine_worker(rel_id: str):
+class NativeWorkerRefused(Exception):
+    """`safe_only` 的解析拿到了 native 会话：调用方在碰它之前就被拦下。"""
+
+
+def _engine_worker(rel_id: str, *, safe_only: bool = False):
     """面板 id → (worker-like, stem)；非脚本面板 404。
+
+    `safe_only=True`：只要 safe worker——解析出来的是 native 会话就抛
+    `NativeWorkerRefused`，调用方一个请求都发不到那张 live 图上。给「native 图不支持」
+    的事务用（`/api/engine/specfix`，ADR 0080）：事务要好几秒，途中另一个 `tavotto run`
+    会话可能把描述符换成 native，任何一处重新解析都得过这道闸（Codex #549 第十二轮；
+    `tests/test_specfix_real.py` 的 AST 守卫钉着事务里的每个解析点都带它）。
 
     runtime 素材（`runtime:` 前缀，ADR 0013）不经 safe_resolve——它没有磁盘
     原件。解析走注册表正向重算（`runtimeasset.resolve`，不反解 id），解析
@@ -3595,6 +3613,14 @@ def _engine_worker(rel_id: str):
     这里绝不写 `if 有 native 会话 … else pool.get(…)`——那个形状会在下一个
     端点上被漏掉一次，表现是"预览是 native 的、导出是 safe 的"。
     """
+    worker, stem = _resolve_engine_worker(rel_id)
+    if safe_only and engine_enginesession.is_native(worker):
+        raise NativeWorkerRefused(rel_id)
+    return worker, stem
+
+
+def _resolve_engine_worker(rel_id: str):
+    """`_engine_worker` 的本体（「谁来渲染」按档案解析，不设闸）。"""
     root = str(require_project())
     if engine_runtimeasset.is_runtime_id(rel_id):
         info = engine_runtimeasset.resolve(rel_id, current_registry())
@@ -3814,26 +3840,34 @@ def api_engine_specfix():
     ):
         return jsonify({"error": "only 必须是 [{rule, gid}] 列表", "code": "invalid_only"}), 400
 
-    worker, stem = _engine_worker(rel_id)
-    if engine_enginesession.is_native(worker):
-        # 一次渲染都不做、那张 live 图一个字节都不碰：前端对 native 图本来就不给修复按钮，
-        # 这里是后端自己的那道闸（界面之外的调用方、界面判据漏掉的那一刻）
-        return jsonify(
-            {
-                "error": "native 图暂不支持自动修复",
-                "code": "specfix_native_unsupported",
-                "params": {"product": engine_brand.PRODUCT_NAME},
-            }
-        ), 409
+    # native 图一次渲染都不做、那张 live 图一个字节都不碰：前端对 native 图本来就不给修复
+    # 按钮，这里是后端自己的那道闸（界面之外的调用方、界面判据漏掉的那一刻）。**先按存下的
+    # 档案判，再去解析会话**（Codex #549 r4106101158）：会话已结束的 native 图解析会抛
+    # `native_session_offline`，前端就分不出「不支持」与「出错了」
+    if _specfix_profile(rel_id) == engine_enginesession.PROFILE_NATIVE:
+        return _specfix_native_unsupported()
+    # 事务里**每一处**解析 worker 都只要 safe（入口这里 + 下面依赖重试里的那一处）
+    try:
+        worker, stem = _engine_worker(rel_id, safe_only=True)
+    except NativeWorkerRefused:
+        return _specfix_native_unsupported()
     # `clean`：这次事务里的每一次渲染都没有 warning、没有抛——只有这样，事务结束时
     # 的热态才是它声称的那一份（B0 或回给前端的列表）。判据收在这一个闭包里，而不是
     # 逐个回滚点各查各的：回滚点有好几处，漏一处就是一个永久被污染的 worker
     state = {"worker": worker, "stem": stem, "clean": True}
 
     def render(patches: list) -> dict:
+        # 事务要渲染好几次、要好几秒：这期间另一个 `tavotto run` 会话可能到了屏障、把这张图
+        # 的描述符换成 native（Codex #549 r4106101147）。每次渲染之前再问一次，变了就中止——
+        # 不再渲染、不提交，safe worker 作废，那张 live 图不碰
+        _require_route_unchanged(rel_id)
         try:
             wk, st, resp = _engine_attempt(
-                rel_id, state["worker"], state["stem"], lambda w, s: w.override(s, patches, None)
+                rel_id,
+                state["worker"],
+                state["stem"],
+                lambda w, s: w.override(s, patches, None),
+                safe_only=True,
             )
         except BaseException:
             state["clean"] = False
@@ -3845,6 +3879,14 @@ def api_engine_specfix():
 
     try:
         out = _specfix_transaction(render, base, scale, profile, only)
+        # 提交之前最后问一次：最后一次渲染之后变的，同样不把列表交给前端去写
+        _require_route_unchanged(rel_id)
+    except (_SpecfixRouteChanged, NativeWorkerRefused):
+        # 档案变了（渲染前 / 提交前的检查），或依赖重试重新解析拿到了 native 会话：
+        # 中止、不提交，作废的是事务一直在用的那个 safe worker，native 那张图没碰过
+        LOG.warning("按规范修图途中这张图改由 native 会话渲染，中止: %s", rel_id)
+        _retire_hot_worker(state["worker"])
+        return _specfix_native_unsupported()
     except engine_pool.WorkerError as exc:
         LOG.error("按规范修图失败: %s: %s", stem, exc)
         # 渲染半路死了（含回滚那一次）：热态未知，作废，下一次请求重新起、按全量列表重放
@@ -3859,6 +3901,34 @@ def api_engine_specfix():
     out["worker_retired"] = not state["clean"] and _retire_hot_worker(state["worker"])
     out["replay_required"] = not state["clean"]
     return jsonify(out)
+
+
+class _SpecfixRouteChanged(Exception):
+    """修复事务途中，这张图「由谁渲染」变了（safe → native）。"""
+
+
+def _specfix_profile(rel_id: str) -> str:
+    """这张图此刻记在描述符里的那一档（`enginesession.profile_of`，与渲染路由同一个出处）。
+    磁盘面板永远是 safe（`_engine_worker` 同一条规矩）。"""
+    if not engine_runtimeasset.is_runtime_id(rel_id):
+        return engine_enginesession.PROFILE_SAFE
+    return engine_enginesession.profile_of(str(require_project()), rel_id)
+
+
+def _require_route_unchanged(rel_id: str) -> None:
+    """事务只在 safe 图上开始（native 在入口就拒了），所以「没变」= 此刻仍是 safe。"""
+    if _specfix_profile(rel_id) != engine_enginesession.PROFILE_SAFE:
+        raise _SpecfixRouteChanged(rel_id)
+
+
+def _specfix_native_unsupported():
+    return jsonify(
+        {
+            "error": "native 图暂不支持自动修复",
+            "code": "specfix_native_unsupported",
+            "params": {"product": engine_brand.PRODUCT_NAME},
+        }
+    ), 409
 
 
 def _retire_hot_worker(worker) -> bool:
@@ -4207,8 +4277,6 @@ def api_engine_update_source():
         result = _write_source_files(
             src, patches, worker, annotations=annotations, expected_mtime=body.get("expected_mtime")
         )
-    except engine_pool.WorkerError as exc:
-        return jsonify(_worker_error_payload(exc)), 500
     except (
         SourceChangedError,
         ScriptChangedError,
@@ -4217,6 +4285,7 @@ def api_engine_update_source():
         WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
+        engine_pool.WorkerError,
     ) as exc:
         return _write_back_error_response(exc)
     # 把这组修改追加为该图的版本历史，末位即当前基线：
@@ -4596,6 +4665,89 @@ def _rollback(done: list[Path], backup_dir: Path) -> tuple[list[str], list[str]]
     return rolled, failed
 
 
+def _discard_updating(tmps: list[tuple[Path, Path]]) -> None:
+    """写回失败后清掉全部 `.updating`：**尽力而为**。
+
+    清不掉（Windows 上被短暂锁住）只记日志——第二个 OSError 不许盖掉触发清理的
+    那个原错，否则承诺的 409 变成 500（Codex #595 P2）。三个失败出口共用这一处。
+    """
+    for _t, leftover in tmps:
+        try:
+            leftover.unlink(missing_ok=True)
+        except OSError:
+            LOG.warning("写回失败后清理临时文件失败: %s", leftover, exc_info=True)
+
+
+def _new_backup_dir(root: Path) -> Path:
+    """本次写回**独占**的备份目录：`<月日_时分秒>`，同一秒已被占用就接 `-2`、`-3`…
+
+    按秒命名的目录在同一 stem 一秒内写回两次时会被共用：第二次的备份覆盖第一次的
+    （第一次写回前的原件就此丢失），第二次备份失败时的清理还会删掉第一次的备份
+    （Codex #595 P2）。`exist_ok=False` 让「建出来」本身就是占有，不存在先查后建的窗口。
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    base = time.strftime("%m%d_%H%M%S")
+    n = 1
+    while True:
+        cand = root / (base if n == 1 else f"{base}-{n}")
+        try:
+            cand.mkdir()
+            return cand
+        except FileExistsError:
+            n += 1
+
+
+def _backup_targets(tmps: list[tuple[Path, Path]], backup_root: Path, stem: str) -> Path:
+    """commit 的第一轮：把**全部**目标备份进本次独占的备份目录并落盘，一个原件都还没被替换。
+
+    回这个目录（回滚与响应用它）。落盘（ADR 0023 §3.1，issue #252）：`os.replace`
+    只保证「要么旧要么新」，不保证新内容已离开页缓存，所以**碰任何目标之前**先把
+    备份与 staging 都 fsync 掉，新建的各级目录的名字也要在各自父目录里落盘——否则
+    掉电后原图已是新内容、备份目录却整个不见了。
+
+    任何一步失败（建目录 / 磁盘满 / 权限 / fsync）：删掉这次写下的备份（含半截的
+    那份）、本次目录一并删掉、清掉所有 `.updating`，抛 `WriteBackPersistError`——
+    此刻原件零改动，走写回事务统一的 409。
+    """
+    written: list[Path] = []
+    backup_dir: Path | None = None
+    try:
+        # 这次新建出来的各级目录（最深的在前）；本次的备份目录必然是新建的
+        created_dirs = [p for p in (backup_root, *backup_root.parents) if not p.exists()]
+        backup_dir = _new_backup_dir(backup_root)
+        created_dirs.insert(0, backup_dir)
+        for target, tmp in tmps:
+            backup = backup_dir / target.name
+            written.append(backup)  # 先登记再拷：拷到一半抛了，半截文件也要删得掉
+            # 先拷内容、趁备份还可写时 fsync，最后才抄权限与时间戳：原图若是
+            # 0444（目录可写时照样能被 replace），copy2 会把只读位带到备份上，
+            # 之后再以可写方式打开它 fsync 就是 PermissionError。
+            shutil.copyfile(target, backup)
+            engine_atomicio.fsync_file(backup)
+            shutil.copystat(target, backup)
+            engine_atomicio.fsync_file(tmp)
+        engine_atomicio.fsync_dir(backup_dir)
+        for created in created_dirs:
+            engine_atomicio.fsync_dir(created.parent)
+    except OSError as exc:
+        # 清理全部尽力而为、逐个吞错：文件系统正在报 EIO / EROFS 时 unlink 也可能
+        # 失败，不许它盖掉结构化的 409。
+        for dest in written:
+            try:
+                dest.unlink(missing_ok=True)
+            except OSError:
+                LOG.warning("写回失败后清理备份失败: %s", dest, exc_info=True)
+        if backup_dir is not None:
+            try:
+                backup_dir.rmdir()  # 目录是本次独占的；删不掉就是还有东西，留着
+            except OSError:
+                pass
+        _discard_updating(tmps)  # 不给图库留下半成品
+        LOG.error("写回落盘失败（替换之前，原文件未动）: %s: %s", stem, exc)
+        raise WriteBackPersistError(str(exc)) from exc
+    return backup_dir
+
+
 def _write_source_files(
     src: Path, patches: list, worker, annotations: list | None = None, expected_mtime=None
 ) -> dict:
@@ -4669,54 +4821,24 @@ def _write_source_files(
         if diffs:
             raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
     except BaseException:
-        for _t, leftover in tmps:
-            leftover.unlink(missing_ok=True)
+        _discard_updating(tmps)
         raise
     finally:
         engine_pool.discard(fresh)
 
-    # ---- commit：备份 → 逐个原子替换（中途撞锁则回滚） ----------------------
-    backup_dir = project_backup_dir() / time.strftime("%m%d_%H%M%S")
-    # 这次新建出来的各级目录（最深的在前）：它们的名字要在各自父目录里落盘，
-    # 否则掉电后原图已是新内容、备份目录却整个不见了。
-    created_dirs = [p for p in (backup_dir, *backup_dir.parents) if not p.exists()]
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    # 落盘（ADR 0023 §3.1，issue #252）：`os.replace` 只保证「要么旧要么新」，
-    # 不保证新内容已离开页缓存。所以**碰任何目标之前**先把备份与 staging 都
-    # fsync 掉——这一段失败属于「replace 之前」：一个目标都没动，清 tmp 回 409，
-    # 原文件零改动。备份也挪到这里一次拷完：以前在替换循环里逐个拷，第 2 个
-    # 拷失败时第 1 个已被换掉却没人回滚。
-    try:
-        for target, tmp in tmps:
-            backup = backup_dir / target.name
-            # 先拷内容、趁备份还可写时 fsync，最后才抄权限与时间戳：原图若是
-            # 0444（目录可写时照样能被 replace），copy2 会把只读位带到备份上，
-            # 之后再以可写方式打开它 fsync 就是 PermissionError。
-            shutil.copyfile(target, backup)
-            engine_atomicio.fsync_file(backup)
-            shutil.copystat(target, backup)
-            engine_atomicio.fsync_file(tmp)
-        engine_atomicio.fsync_dir(backup_dir)
-        for created in created_dirs:
-            engine_atomicio.fsync_dir(created.parent)
-    except OSError as exc:
-        # 清 tmp 尽力而为、逐个吞错：文件系统正在报 EIO / EROFS 时 unlink 也可能
-        # 失败，不许它盖掉结构化的 409。
-        for _t, leftover in tmps:
-            try:
-                leftover.unlink(missing_ok=True)
-            except OSError as cleanup_exc:
-                LOG.warning("写回落盘失败后清理暂存文件失败: %s: %s", leftover, cleanup_exc)
-        LOG.error("写回落盘失败（替换之前，原文件未动）: %s: %s", stem, exc)
-        raise WriteBackPersistError(str(exc)) from exc
+    # ---- commit：先把全部备份做完并落盘 → 再逐个原子替换（中途失败则回滚） ----
+    # 备份与替换**分成两轮**（QA 2026-09-24 SCI-05-B1）：以前是「备份一个、换一个」，
+    # 第二个目标备份时磁盘满，PDF 已经换成新的、PNG 还是旧的，异常从 try 外面
+    # 冒出去成了 500，`.updating` 留在图库里。备份与 staging 在任何一个原件被动之前
+    # 全部拷完并 fsync（ADR 0023 §3.1，issue #252），失败时原件一个都还没碰过。
+    backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
     updated: list[str] = []
     done: list[Path] = []
     for target, tmp in tmps:
         try:
             tmp.replace(target)
         except OSError as exc:
-            for _t, leftover in tmps:
-                leftover.unlink(missing_ok=True)  # 不给图库留下半成品
+            _discard_updating(tmps)  # 不给图库留下半成品
             LOG.warning("写回原图失败（文件被占用？）: %s: %s", target.name, exc)
             rolled, failed = _rollback(done, backup_dir)
             raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc
@@ -4823,7 +4945,7 @@ def _write_back_response(result: dict, **extra) -> dict:
 
 
 def _write_back_error_response(exc):
-    """prepare/verify 失败 → 409 + 专属 code；格式不是写回目标 → 400；不认识的回 None。"""
+    """写回事务任一环失败（prepare / verify / commit）→ 409 + 专属 code；格式不是写回目标 → 400；不认识的回 None。"""
     if isinstance(exc, SourceChangedError):
         return jsonify(
             {
@@ -4892,6 +5014,13 @@ def _write_back_error_response(exc):
                 "params": {"format": exc.format},
             }
         ), 400
+    if isinstance(exc, engine_pool.WorkerError):
+        # verify 段的一次性 worker 崩了 / 超时 / 缺依赖（SCI-04-B1）。commit 段
+        # 不调 worker，所以走到这里原件必然零改动——按事务不变式回 409。
+        # worker 自己的 code / traceback / module 原样带上：前端按 code 出文案，
+        # `missing_dependency` 的恢复引导不能因为状态码变了就丢；`stage` 标明
+        # 这是写回事务的 verify 段挂了，与 prepare 段那几个 409 区分开。
+        return jsonify(_worker_error_payload(exc, stage="verify")), 409
     return None
 
 
@@ -5077,8 +5206,6 @@ def api_engine_history_restore():
         result = _write_source_files(
             src, patches, worker, expected_mtime=body.get("expected_mtime")
         )
-    except engine_pool.WorkerError as exc:
-        return jsonify(_worker_error_payload(exc)), 500
     except (
         SourceChangedError,
         ScriptChangedError,
@@ -5087,6 +5214,7 @@ def api_engine_history_restore():
         WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
+        engine_pool.WorkerError,
     ) as exc:
         return _write_back_error_response(exc)
     append_baked(stem, patches, files=result["file_identity"])
@@ -6711,7 +6839,15 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
     删之前在**该文件自己的锁**里重新 stat 一次：扫描到删除之间有人写过它，
     说明它已经不是"最旧的那几个"了，跳过。少了这一步，一次并发保存可以被这
     条清理路径当场删掉，而那次保存已经回了 200。
+
+    顺带回收被杀在 `os.replace` 之前的进程留下的 `<doc>.json.<pid>.<n>.tmp`
+    （QA 2026-09-24 SCI-05-B2）：它们不以 `.json` 结尾，下面的条数 / 字节上限
+    永远数不到，以前没有任何一条路会删它们。判据（年龄 + pid 已死）在
+    `atomicio.reap_orphan_tmps`——tmp 的命名也出自那里。
     """
+    orphans = engine_atomicio.reap_orphan_tmps(AUTOSAVE_DIR)
+    if orphans:
+        LOG.info("自动保存目录清理：删掉 %d 个中断写入留下的临时文件", len(orphans))
     try:
         rows = []
         for entry in os.scandir(AUTOSAVE_DIR):
@@ -7344,8 +7480,21 @@ def api_profiles_import(kind):
         return _profiles_error(exc)
 
 
+#: 探测是否带 `SO_REUSEADDR`：**与真正 listen 的那个 socket 同一口径**（QA STATE-08-B1）。
+#: `localserver.LocalWSGIServer` 继承 `http.server.HTTPServer`（`allow_reuse_address = 1`），
+#: bind 前设 `SO_REUSEADDR`——所以上一个实例刚退出留下的 TIME_WAIT（macOS 实测约 31 s）
+#: 挡不住它；探测不带的话却会判「占用」，同端口重启被顺延到下一个端口，浏览器按源存的
+#: localStorage（「上次文档」）换了源就读不到。
+#: **只在 POSIX 上带**：Windows 上 `SO_REUSEADDR` 的语义是「允许与正在 listen 的 socket 共用
+#: 端口」，带上它探测会把别的程序正占着的端口也判成空闲；而 Windows 的 bind 本来就不被
+#: TIME_WAIT 挡住，不带才是与「有没有人在用」一致的判据。
+_PORT_PROBE_REUSEADDR = os.name != "nt"
+
+
 def port_is_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if _PORT_PROBE_REUSEADDR:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(("127.0.0.1", port))
             return True
@@ -7524,9 +7673,14 @@ def main():
         nonce = engine_session_client.relaunch_nonce(args.port)
         if nonce:
             url += "#dnonce=" + nonce
+        if args.no_browser:
+            # 没有浏览器可开（服务器上经 SSH 转发用）：换到的 nonce 只能靠这里
+            # 交给人，与首次启动打印带 nonce 的地址同一口径。不打印就等于白换。
+            print(f"* Tavotto 已在 {landing(args.port)} 运行")
+            print(f"* 打开 {url}")
+            return
         print(f"* Tavotto 已在 {landing(args.port)} 运行，打开现有窗口")
-        if not args.no_browser:
-            webbrowser.open(url)
+        webbrowser.open(url)
         return
 
     url = landing(port)

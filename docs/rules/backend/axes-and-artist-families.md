@@ -166,3 +166,19 @@
   `test_manifest_geometry.py::test_quadmesh_outline_is_clipped_to_what_is_drawn`。
 - 面板翻转（flip_h/flip_v，先翻转后旋转）：导出按 dpi 位图嵌入
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- `fig.axes` 只许出现在白名单函数里
+- 族模块（`axestraversal` / `spinemodel` / `tickmodel` / `colorbarmodel` / `legendmodel`，基座 `pathgeom`）是叶子、只依赖排在前面的族、只迁移一份、`HANDLERS` 只经展开登记、`RESTORE` 必须并进 `_RESTORE`
+- 编号顺序 `fig.axes` → 子 axes → 寄生轴是契约
+- 能力按真实 getter 实况判不按类名（映射中的 Collection 不给 facecolor）
+- 认不出的 Artist 只开 visible / zorder
+- 纯箭头注释拖动写注释锚点、有字的不出端点
+- 独立形状可拖（`pos_frac`，平移叠在 transform 上、先回基准再量）
+- 画不画只问 `axis_drawn` / `frame_drawn`
+- 面状色图集合同位图代理宿主

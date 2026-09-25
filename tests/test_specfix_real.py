@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import threading
@@ -23,7 +24,15 @@ import threading
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import nativesession, pool as engine_pool, preflight, profiles, specfix
+from tavotto.engine import (
+    nativesession,
+    pool as engine_pool,
+    preflight,
+    profiles,
+    runcodes,
+    specfix,
+)
+from tavotto.engine.runcodes import RunError
 
 
 def _worker_python():
@@ -79,6 +88,17 @@ if __name__ == "__main__":
 """
 
 
+def _stderr_tail(proc, n: int = 4000) -> str:
+    """worker 的 stderr 落在文件里（`_spawn_render`）：失败时附上尾部。"""
+    path = getattr(proc, "stderr_log", None)
+    if path is None:
+        return ""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[-n:]
+    except OSError:
+        return ""
+
+
 def _rpc(proc, obj, timeout=180):
     proc.stdin.write(json.dumps(obj) + "\n")
     proc.stdin.flush()
@@ -86,9 +106,13 @@ def _rpc(proc, obj, timeout=180):
     reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()), daemon=True)
     reader.start()
     reader.join(timeout)
-    assert not reader.is_alive(), f"worker 超时: {obj.get('cmd')}"
+    assert not reader.is_alive(), (
+        f"worker 超时: {obj.get('cmd')}\n--- worker stderr（尾部）---\n{_stderr_tail(proc)}"
+    )
     line = box[0] if box else ""
-    assert line, f"worker 无响应: {obj.get('cmd')}\n{proc.stderr.read()}"
+    assert line, (
+        f"worker 无响应: {obj.get('cmd')}\n--- worker stderr（尾部）---\n{_stderr_tail(proc)}"
+    )
     resp = json.loads(line)
     assert resp.get("ok"), f"{resp.get('error', resp)}\n{resp.get('traceback', '')}"
     return resp
@@ -99,6 +123,11 @@ def _spawn_render(tmp_path, script: str, stem: str):
     figs = tmp_path / "figures"
     figs.mkdir()
     (figs / "fig.py").write_text(script, encoding="utf-8")
+    # **stderr 落文件，与产品的 worker 一样**（`pool` 把它绑在 worker.log 上）。开成 PIPE 却
+    # 只读 stdout 的话，worker 往 stderr 写满管道缓冲就阻塞在写日志上、应答永远不来——
+    # 缺字体的渲染刷 25 KB 的 findfont 警告，Windows 的小缓冲上这条用例卡满 180 秒（#549）
+    stderr_log = tmp_path / "worker-stderr.log"
+    stderr_file = open(stderr_log, "w", encoding="utf-8")  # noqa: SIM115 — 跟着进程活
     proc = subprocess.Popen(
         [
             WORKER_PY,
@@ -116,12 +145,14 @@ def _spawn_render(tmp_path, script: str, stem: str):
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=stderr_file,
         text=True,
         bufsize=1,
         encoding="utf-8",
         errors="replace",
     )
+    stderr_file.close()  # 子进程持有自己那一份句柄，父进程这份不需要
+    proc.stderr_log = stderr_log  # type: ignore[attr-defined]
     _rpc(proc, {"cmd": "build"})
     calls: list[list] = []
 
@@ -499,7 +530,9 @@ def test_baseline_replay_with_warnings_aborts_before_any_candidate(render):
 # 指定的那一次渲染上注入 warning / 异常。
 
 
-def _post_specfix(monkeypatch, override, base, profile, *, native=False):
+def _post_specfix(
+    monkeypatch, override, base, profile, *, native=False, rel_id="Kin.pdf", engine_worker=None
+):
     """走 `/api/engine/specfix`，渲染交给 `override(patches)`；回 (响应, 作废记录)。
 
     `native=True` 时替身是一条真的 `NativeSession`（不连 socket，`override` 转给真 worker）
@@ -523,14 +556,17 @@ def _post_specfix(monkeypatch, override, base, profile, *, native=False):
         else _Worker()
     )
     retired: list[tuple] = []
-    monkeypatch.setattr(m, "_engine_worker", lambda rel_id: (worker, "Kin"))
+    # 替的是解析本体，不是 `_engine_worker`：`safe_only` 那道闸要走真实现
+    monkeypatch.setattr(
+        m, "_resolve_engine_worker", engine_worker or (lambda rel_id: (worker, "Kin"))
+    )
     monkeypatch.setattr(
         m.engine_pool, "invalidate", lambda script, root=None: retired.append((script, root))
     )
     m.app.config["TESTING"] = True
     resp = m.app.test_client().post(
         "/api/engine/specfix",
-        json={"id": "Kin.pdf", "patches": base, "scale": 1.0, "profile": profile},
+        json={"id": rel_id, "patches": base, "scale": 1.0, "profile": profile},
     )
     return resp, retired
 
@@ -637,3 +673,200 @@ def test_baseline_with_warnings_retires_the_worker(render, monkeypatch):
     assert body["worker_retired"] is True
     assert body["replay_required"] is True
     assert retired == [("fig.py", "/specfix-test-figures")]
+
+
+# ---- 第十一轮：事务途中这张图的档案变了（Codex #549 r4106101147 / r4106101158） ----
+
+RUNTIME_ID = "runtime:fig.py#Kin"
+
+
+def _stored_profile(monkeypatch, tmp_path, answer):
+    """`enginesession.profile_of`（物化描述符记的那一档）换成可控的：`answer()` 每问一次回一次。"""
+    asked: list[str] = []
+
+    def profile_of(root, asset_id, *, default="safe"):
+        asked.append(asset_id)
+        return answer()
+
+    monkeypatch.setattr(m.engine_enginesession, "profile_of", profile_of)
+    monkeypatch.setattr(m, "require_project", lambda: tmp_path)
+    return asked
+
+
+def test_a_figure_that_becomes_native_mid_transaction_is_aborted_before_the_next_render(
+    render, monkeypatch, tmp_path
+):
+    """B0 渲染之后另一个 `tavotto run` 会话到了屏障、把描述符换成 native：下一次渲染之前就
+    中止，回 `specfix_native_unsupported`，不提交；safe worker 作废，路由到 native 的那张 live 图
+    一次都没被渲染（`_engine_worker` 只在开头解析过一次，之后没有再去取会话）。"""
+    now = {"profile": "safe"}
+    _stored_profile(monkeypatch, tmp_path, lambda: now["profile"])
+    seen: list[list] = []
+    resolved: list[str] = []
+
+    class _Worker:
+        script_name = "fig.py"
+        figures_dir = "/specfix-test-figures"
+
+        def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+            seen.append(list(patches))
+            resp = render(patches)
+            now["profile"] = "native"  # ← B0 一回来，档案就变了
+            return resp
+
+    def engine_worker(rel_id):
+        resolved.append(rel_id)
+        return _Worker(), "Kin"
+
+    resp, retired = _post_specfix(
+        monkeypatch, render, BASE, _profile(), rel_id=RUNTIME_ID, engine_worker=engine_worker
+    )
+    body = resp.get_json()
+    assert resp.status_code == 409, body
+    assert body["code"] == "specfix_native_unsupported"
+    assert "patches" not in body
+    assert seen == [BASE], "档案变了之后还在渲染"
+    assert resolved == [RUNTIME_ID]
+    assert retired == [("fig.py", "/specfix-test-figures")]
+
+
+def test_a_figure_that_becomes_native_before_commit_is_not_committed(render, monkeypatch, tmp_path):
+    """最后一次渲染之后、回结果之前档案变了：同样中止，不把列表交给前端去提交。"""
+    now = {"profile": "safe", "renders": 0}
+    _stored_profile(monkeypatch, tmp_path, lambda: now["profile"])
+
+    def flip_at_last(patches):
+        resp = render(patches)
+        now["renders"] += 1
+        if patches != BASE:
+            now["profile"] = "native"  # ← 候选一回来就变（之后的渲染或提交前的检查必须拦住）
+        return resp
+
+    resp, _retired = _post_specfix(monkeypatch, flip_at_last, BASE, _profile(), rel_id=RUNTIME_ID)
+    body = resp.get_json()
+    assert resp.status_code == 409, body
+    assert body["code"] == "specfix_native_unsupported"
+    assert now["renders"] >= 2
+
+
+def test_an_ended_native_figure_gets_the_unsupported_code_not_offline(monkeypatch, tmp_path):
+    """r4106101158：描述符记着 native、会话已经结束——先按存下的档案拒绝，不去解析会话
+    （解析会抛 `native_session_offline`，前端就归成 engine_failed 还去重放）。"""
+    _stored_profile(monkeypatch, tmp_path, lambda: "native")
+
+    def offline(rel_id):
+        raise RunError(runcodes.NATIVE_SESSION_OFFLINE)
+
+    resp, retired = _post_specfix(
+        monkeypatch, lambda p: {}, BASE, _profile(), rel_id=RUNTIME_ID, engine_worker=offline
+    )
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "specfix_native_unsupported"
+    assert retired == []
+
+
+# ---- 第十二轮：事务里每一处解析 worker 都只要 safe（Codex #549 r4106191018） ----
+
+
+def test_a_dependency_retry_that_resolves_a_native_session_never_touches_it(monkeypatch, tmp_path):
+    """初次 safe 渲染缺依赖 → 切项目环境 → `_engine_attempt` 重新解析；恰在这时另一个
+    `tavotto run` 会话把描述符换成了 native，重新解析拿到的是 `NativeSession`。它的
+    `override()` 一次都不许被调（渲染前那道档案检查已经过了、提交前那道只能事后拒掉），
+    结果是被拒，safe worker 作废。"""
+    now = {"profile": "safe"}
+    _stored_profile(monkeypatch, tmp_path, lambda: now["profile"])
+    touched: list[list] = []
+
+    class _Safe:
+        script_name = "fig.py"
+        figures_dir = "/specfix-test-figures"
+
+        def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+            now["profile"] = "native"  # ← 缺依赖的这一刻，native 会话换了描述符
+            raise engine_pool.WorkerError("缺依赖（模拟）", code="missing_dependency")
+
+    class _Live(nativesession.NativeSession):
+        def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+            touched.append(list(patches))
+            return {"manifest": {"elements": []}, "warnings": []}
+
+    safe = _Safe()
+    live = _Live(session_id="native-live", descriptor={"native_id": "l" * 32, "out_dir": ""})
+
+    def resolve(rel_id):
+        return (live if now["profile"] == "native" else safe), "Kin"
+
+    monkeypatch.setattr(m, "_switched_to_project_env", lambda worker, exc: True)
+    resp, retired = _post_specfix(
+        monkeypatch, lambda p: {}, BASE, _profile(), rel_id=RUNTIME_ID, engine_worker=resolve
+    )
+    assert touched == [], "依赖重试把修复发到了用户的 live 图上"
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "specfix_native_unsupported"
+    assert retired == [("fig.py", "/specfix-test-figures")]
+
+
+def _calls_in(fn: ast.AST, name: str) -> list[ast.Call]:
+    return [
+        n
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == name
+    ]
+
+
+def _kw_true(call: ast.Call, key: str) -> bool:
+    return any(
+        k.arg == key and isinstance(k.value, ast.Constant) and k.value.value is True
+        for k in call.keywords
+    )
+
+
+def test_every_worker_resolution_inside_the_specfix_transaction_is_safe_only():
+    """**结构性守卫**：`/api/engine/specfix` 里（含内层的 `render` 闭包）每一处解析 worker 的
+    调用——`_engine_worker` 与会在重试时重新解析的 `_engine_attempt`——都必须带
+    `safe_only=True`；`_engine_attempt` 自己必须把它原样转给重试里那一次 `_engine_worker`。
+    漏一处就是一条能把修复发到用户 live 图上的路（Codex #549 r4106191018）。"""
+    import inspect
+
+    tree = ast.parse(inspect.getsource(m))
+    funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    endpoint = funcs["api_engine_specfix"]
+    resolving = _calls_in(endpoint, "_engine_worker") + _calls_in(endpoint, "_engine_attempt")
+    assert len(resolving) >= 2, "判据落在空集合上：端点里没找到解析 worker 的调用"
+    for call in resolving:
+        assert _kw_true(call, "safe_only"), (
+            f"api_engine_specfix 第 {call.lineno} 行的 {call.func.id} 没带 safe_only=True"
+        )
+    # 端点里不许绕开这两扇门直接去取会话
+    for bypass in ("_resolve_engine_worker", "_safe_worker"):
+        assert not _calls_in(endpoint, bypass), f"api_engine_specfix 直接调了 {bypass}"
+    retry = _calls_in(funcs["_engine_attempt"], "_engine_worker")
+    assert len(retry) == 1
+    fwd = [k for k in retry[0].keywords if k.arg == "safe_only"]
+    assert fwd and isinstance(fwd[0].value, ast.Name) and fwd[0].value.id == "safe_only", (
+        "_engine_attempt 的重试没把 safe_only 转给 _engine_worker"
+    )
+
+
+# ---- 第十三轮：夹具的 stderr 不再是没人读的管道（#549 Windows 分片的 180 秒超时） ----
+
+#: 脚本在出图之前往 stderr 写 300 KB——远超任何平台的管道缓冲（macOS / Linux 64 KiB）。
+#: 缺字体的渲染在 Windows 上刷 25 KB findfont 警告就够卡死小缓冲；这里放大到哪个平台都复现
+LOUD = SCRIPT.replace(
+    "def main():",
+    "def main():\n    import sys\n    sys.stderr.write('x' * 300_000 + '\\n')\n    sys.stderr.flush()",
+    1,
+)
+
+
+def test_a_worker_that_floods_stderr_still_answers(tmp_path):
+    """旧夹具（`stderr=PIPE`、只读 stdout）在这里卡在 build 上直到超时；stderr 落文件之后
+    照常应答，失败信息里也还拿得到它写了什么。"""
+    proc, render = _spawn_render(tmp_path, LOUD, "Kin")
+    try:
+        assert render([])["manifest"]["elements"]
+        assert "x" * 1000 in _stderr_tail(proc, 400_000)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)

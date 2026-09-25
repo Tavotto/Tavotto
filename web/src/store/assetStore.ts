@@ -53,6 +53,12 @@ function readUsed(): Record<string, number> {
 let seq = 0
 /** 已经落地的那次请求的号；比它小的响应一律丢弃 */
 let applied = 0
+/**
+ * 项目代际：`clear()`（切项目）时 +1。发请求那一刻记下，落地时不等就丢——与 `pj` 那道判据
+ * 各管一半：`pj` 挡「响应属于别的项目」，代际挡「A → B → A 切回来时，第一次进 A 时发出、
+ * 这会儿才到的那份」（它属于 A，却早于这次进入 A 的清空）。
+ */
+let epoch = 0
 /** 同项目可复用的在途请求；`force` 不看它，也不写它 */
 let inflight: {
   pj: string | null
@@ -90,6 +96,13 @@ interface AssetState {
   /** 事件驱动的刷新入口：与同一批里的其它调用合并成一次请求 */
   refresh: () => Promise<PanelsResponse | null>
   markUsed: (id: string) => void
+  /**
+   * 切项目：清掉属于上一个项目的**全部**清单派生（面板、`unsupported`、目录），并换代——
+   * 否则新项目的 `/api/panels` 挂起或失败时，素材库会在 B 下面显示 A 的卡片与「无法使用」
+   * 清单（#577）。同一项目内的刷新失败不走这里，照旧保留上一份（#561）。
+   * `recentlyUsed` 不清：那是按文件 id 记的本机使用偏好，不是清单数据。
+   */
+  clear: () => void
 }
 
 export const useAssetStore = create<AssetState>((set, get) => ({
@@ -117,11 +130,12 @@ export const useAssetStore = create<AssetState>((set, get) => ({
 
     const mine = ++seq
     const pj = currentProjectId()
+    const born = epoch
     set({ loading: true })
     const promise = fetchPanels()
       .then((data) => {
         // 换过项目 = 这份清单属于别人的图库，一个字节都不许落地
-        if (pj !== currentProjectId()) return null
+        if (pj !== currentProjectId() || born !== epoch) return null
         // 更新的那次已经落地了：旧响应到得再晚也只是历史
         if (mine < applied) return null
         applied = mine
@@ -136,7 +150,7 @@ export const useAssetStore = create<AssetState>((set, get) => ({
         return data
       })
       .catch((err: unknown) => {
-        if (pj !== currentProjectId() || mine < applied) return null
+        if (pj !== currentProjectId() || born !== epoch || mine < applied) return null
         // **panels / byId 一个都不清**：后台刷新失败时清空等于让画布上的
         // 面板集体变成「缺失素材」，而磁盘上它们好好的。首次加载失败时
         // `loaded` 仍是 false，界面照旧显示 EmptyState。
@@ -154,6 +168,20 @@ export const useAssetStore = create<AssetState>((set, get) => ({
   },
 
   refresh: () => get().load(),
+
+  clear: () => {
+    epoch += 1
+    inflight = null
+    set({
+      panels: [],
+      byId: {},
+      unsupported: [],
+      figuresDir: '',
+      loading: false,
+      loaded: false,
+      error: null,
+    })
+  },
 
   markUsed: (id) =>
     set((s) => {

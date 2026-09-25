@@ -1,0 +1,135 @@
+==================================================================
+## SCI-03 / structure_change_probe
+# cmd: bash docs/qa/2026-09-24/sci/repro/runpy.sh docs/qa/2026-09-24/sci/repro/sci03_structure_change.py
+# start(UTC): 2026-09-24T18:31:43Z   end(UTC): 2026-09-24T18:32:08Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 1   raw_lines: 128   raw_sha256: 37686b0df0d19f3639c22c02a5af640328a822a2d96ebde9190b0a918d428449
+{
+ "reorder": {
+  "original_gid_of_alpha": "axes_0.lines_0",
+  "http_status": 200,
+  "http": {
+   "magenta_on": [
+    "alpha"
+   ],
+   "warnings": [],
+   "ok": true
+  },
+  "fresh_worker": {
+   "magenta_on": [
+    "beta"
+   ],
+   "warnings": [],
+   "ok": false
+  },
+  "lines_after_fresh": {
+   "beta": {
+    "gid": "axes_0.lines_0",
+    "color": "#ff00ff",
+    "linewidth": 4.5
+   },
+   "alpha": {
+    "gid": "axes_0.lines_1",
+    "color": "#1f77b4",
+    "linewidth": 1.5
+   }
+  }
+ },
+ "insert_before": {
+  "original_gid_of_alpha": "axes_0.lines_0",
+  "http_status": 200,
+  "http": {
+   "magenta_on": [
+    "gamma"
+   ],
+   "warnings": [],
+   "ok": false
+  },
+  "fresh_worker": {
+   "magenta_on": [
+    "gamma"
+   ],
+   "warnings": [],
+   "ok": false
+  },
+  "lines_after_fresh": {
+   "gamma": {
+    "gid": "axes_0.lines_0",
+    "color": "#ff00ff",
+    "linewidth": 4.5
+   },
+   "alpha": {
+    "gid": "axes_0.lines_1",
+    "color": "#1f77b4",
+    "linewidth": 1.5
+   },
+   "beta": {
+    "gid": "axes_0.lines_2",
+    "color": "#2ca02c",
+    "linewidth": 1.5
+   }
+  }
+ },
+ "delete_a": {
+  "original_gid_of_alpha": "axes_0.lines_0",
+  "http_status": 200,
+  "http": {
+   "magenta_on": [
+    "beta"
+   ],
+   "warnings": [],
+   "ok": false
+  },
+  "fresh_worker": {
+   "magenta_on": [
+    "beta"
+   ],
+   "warnings": [],
+   "ok": false
+  },
+  "lines_after_fresh": {
+   "beta": {
+    "gid": "axes_0.lines_0",
+    "color": "#ff00ff",
+    "linewidth": 4.5
+   }
+  }
+ },
+ "insert_axes": {
+  "original_gid_of_alpha": "axes_0.lines_0",
+  "http_status": 200,
+  "http": {
+   "magenta_on": [
+    "delta"
+   ],
+   "warnings": [],
+   "ok": false
+  },
+  "fresh_worker": {
+   "magenta_on": [
+    "delta"
+   ],
+   "warnings": [],
+   "ok": false
+  },
+  "lines_after_fresh": {
+   "delta": {
+    "gid": "axes_0.lines_0",
+    "color": "#ff00ff",
+    "linewidth": 4.5
+   },
+   "alpha": {
+    "gid": "axes_1.lines_0",
+    "color": "#1f77b4",
+    "linewidth": 1.5
+   },
+   "beta": {
+    "gid": "axes_1.lines_1",
+    "color": "#2ca02c",
+    "linewidth": 1.5
+   }
+  }
+ }
+}
+SCI-03 VERDICT: FAIL
+# exit_code: 1

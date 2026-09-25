@@ -1,0 +1,203 @@
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/geometryAuthority.test.ts src/store/alignAction.test.ts src/canvas/alignUndoConvergence.test.tsx src/diagnostics/authority.test.ts src/canvas/fakeRealtimeDrag.test.tsx
+### time=2026-09-24T19:14:29Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=0
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-state/web
+
+
+ Test Files  5 passed (5)
+      Tests  65 passed (65)
+   Start at  03:14:30
+   Duration  1.98s (transform 2.11s, setup 972ms, import 2.22s, tests 773ms, environment 2.06s)
+
+
+### $ docs/qa/2026-09-24/state/repro/run.sh vitest-repro state04_undo_while_authority_pending.test.tsx
+### time=2026-09-24T19:14:32Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=1
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-state/web
+
+ ❯ src/__qa_repro__/state04_undo_while_authority_pending.test.tsx (2 tests | 2 failed) 96ms
+     × 撤销之后画布不应再挂着拖动的预览位移 70ms
+     × 拖动那一版的回包之后才到：仍应回到原位 25ms
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  03:14:32
+   Duration  1.23s (transform 497ms, setup 142ms, import 511ms, tests 96ms, environment 368ms)
+
+stderr | src/__qa_repro__/state04_undo_while_authority_pending.test.tsx > STATE-04：权威在途时撤销 > 撤销之后画布不应再挂着拖动的预览位移
+An update to PanelView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to PanelView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | src/__qa_repro__/state04_undo_while_authority_pending.test.tsx > STATE-04：权威在途时撤销 > 拖动那一版的回包之后才到：仍应回到原位
+An update to PanelView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to PanelView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/__qa_repro__/state04_undo_while_authority_pending.test.tsx > STATE-04：权威在途时撤销 > 撤销之后画布不应再挂着拖动的预览位移
+AssertionError: 撤销后文档已无 override，画布却仍挂着拖动位移: expected 'translate(150,74.99999999999999)' to be null
+
+- Expected:
+null
+
++ Received:
+"translate(150,74.99999999999999)"
+
+ ❯ src/__qa_repro__/state04_undo_while_authority_pending.test.tsx:125:49
+    123|     await show()
+    124|     expect(livePanel().overrides).toEqual([]) // 文档已撤销
+    125|     expect(tf(), '撤销后文档已无 override，画布却仍挂着拖动位移').toBeNull()
+       |                                                 ^
+    126|   })
+    127|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/__qa_repro__/state04_undo_while_authority_pending.test.tsx > STATE-04：权威在途时撤销 > 拖动那一版的回包之后才到：仍应回到原位
+AssertionError: 拖动那一版回包之后，撤销掉的位移仍挂在画布上: expected 'translate(150,74.99999999999999)' to be null
+
+- Expected:
+null
+
++ Received:
+"translate(150,74.99999999999999)"
+
+ ❯ src/__qa_repro__/state04_undo_while_authority_pending.test.tsx:143:44
+    141|     })
+    142|     await show()
+    143|     expect(tf(), '拖动那一版回包之后，撤销掉的位移仍挂在画布上').toBeNull()
+       |                                            ^
+    144|   })
+    145| })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+### $ docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_bugs_repro.spec.ts --grep STATE-04
+### time=2026-09-24T19:14:34Z sha=ac0b0e02081a96b04b6e2d5764efaff8cc577d97 exit=1
+
+Running 1 test using 1 worker
+
+{"case":"STATE-04","t0":{"x":625.0816650390625,"y":271.7055206298828,"tf":null},"afterUndo":{"x":685.0815124511719,"y":301.7039337158203,"tf":"translate(57.457088260086145,28.72854415115722)"},"afterLate":{"x":685.0815124511719,"y":301.7039337158203,"tf":"translate(57.457088260086145,28.72854415115722)"},"d1":67.08119317029889,"d2":67.08119317029889}
+[e2e] app-0 进程输出（尾部）:
+2026-09-25 03:14:35,734 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /api/version HTTP/1.1" 200 -
+2026-09-25 03:14:35,741 WARNING tavotto: RenderCore 预热未完成：批准字体不全：缺 ['LiberationMono-Bold', 'LiberationMono-BoldItalic', 'LiberationMono-Italic', 'LiberationMono-Regular', 'LiberationSans-Bold', 'LiberationSans-BoldItalic', 'LiberationSans-Italic', 'LiberationSans-Regular', 'LiberationSerif-Bold', 'LiberationSerif-BoldItalic', 'LiberationSerif-Italic', 'LiberationSerif-Regular', 'NotoSansSC-Regular']（先跑 scripts/fetch_fonts.py）
+2026-09-25 03:14:35,747 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET / HTTP/1.1" 200 -
+2026-09-25 03:14:35,753 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /assets/index-7yGgmWmw.css HTTP/1.1" 200 -
+2026-09-25 03:14:35,753 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /assets/index-qj9xX_eu.js HTTP/1.1" 200 -
+2026-09-25 03:14:35,822 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /api/session/ping HTTP/1.1" 200 -
+2026-09-25 03:14:35,875 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /api/project HTTP/1.1" 200 -
+2026-09-25 03:14:35,886 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /api/telemetry/settings HTTP/1.1" 200 -
+2026-09-25 03:14:35,887 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /api/projects?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:35,888 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /api/projects/recent?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:35,954 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /api/version?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:35,959 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-k8jGex/figures → 3 个素材
+2026-09-25 03:14:35,967 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /api/project/readiness?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:35,982 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /api/panels?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:35,984 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-k8jGex/figures&pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:35,986 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:35] "GET /api/events?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:36,098 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:14:36,162 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:14:36,163 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:36] "GET /api/runtime/assets?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:36,165 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:36] "GET /api/version?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:36,166 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:36] "GET /api/native/sessions?project_root=/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-k8jGex/figures&pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:36,167 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:36] "GET /api/project/readiness?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:36,168 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-k8jGex/figures → 3 个素材
+2026-09-25 03:14:36,170 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:36] "GET /api/panels?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:36,177 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:14:36,180 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:36] "GET /api/registry?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:36,186 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:36] "GET /api/render?id=Fig2_yield.pdf&w=400&m=1790277275&pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:36,193 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:36] "GET /api/render?id=Fig1_kinetics.pdf&w=400&m=1790277275&pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:36,200 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:36] "GET /api/ai/capabilities?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:36,206 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:36] "GET /api/render?id=Fig2_correlation.pdf&w=400&m=1790277275&pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:36,337 INFO tavotto.engine: worker 启动: fig1_kinetics.py（entry=main，解释器来源=env_override）
+2026-09-25 03:14:36,341 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:36] "GET /api/engine/environment HTTP/1.1" 200 -
+2026-09-25 03:14:37,071 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:37] "GET /api/autosave/d_vx1fzbwy?pj=e08ba88361ec HTTP/1.1" 404 -
+2026-09-25 03:14:37,073 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:37] "PUT /api/autosave/d_vx1fzbwy?base_revision=absent&pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:39,066 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:39] "GET /api/update/check HTTP/1.1" 200 -
+2026-09-25 03:14:50,072 INFO tavotto: 引擎渲染: Fig1_kinetics 13878ms（冷启动） timings={"build_total_ms": 13687.785, "canvas_draw_ms": 18.741, "manifest_ms": 19.365, "patch_apply_ms": 0.438, "preview_plan_ms": 0.04, "queue_wait_ms": 0.002, "script_build_ms": 190.839, "script_exec_ms": 19.78, "server_ms": 13877.922, "total_ms": 44.21, "worker_get_ms": 145.365}
+2026-09-25 03:14:50,074 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:50] "POST /api/engine/render?pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:51,099 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:51] "PUT /api/autosave/d_vx1fzbwy?base=1790277277067&base_revision=e1567c06e074ae8de3d05535edd1481d&pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:54,457 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:54] "PUT /api/autosave/d_vx1fzbwy?base=1790277291090&base_revision=5b1faeac4fd4f3cb064324bbba6a5e1d&pj=e08ba88361ec HTTP/1.1" 200 -
+2026-09-25 03:14:54,505 INFO tavotto: 引擎渲染: Fig1_kinetics 35ms timings={"canvas_draw_ms": 14.144, "manifest_ms": 16.721, "patch_apply_ms": 0.645, "preview_plan_ms": 0.034, "queue_wait_ms": 0.0, "server_ms": 35.118, "total_ms": 33.804, "worker_get_ms": 1.059}
+2026-09-25 03:14:54,506 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:14:54] "POST /api/engine/render?pj=e08ba88361ec HTTP/1.1" 200 -
+
+  ✘  1 [chromium] › e2e/state_bugs_repro.spec.ts:32:1 › A. STATE-04：权威在途时撤销，画布应回到原位 (23.5s)
+
+
+  1) [chromium] › e2e/state_bugs_repro.spec.ts:32:1 › A. STATE-04：权威在途时撤销，画布应回到原位 ──────────────────
+
+    Error: 撤销后标题仍停在拖到的位置（画布与文档不一致）
+
+    expect(received).toBeLessThan(expected)
+
+    Expected: < 1
+    Received:   67.08119317029889
+
+      58 |   const d2 = Math.hypot(afterLate!.x - t0.x, afterLate!.y - t0.y)
+      59 |   console.log(JSON.stringify({ case: 'STATE-04', t0, afterUndo, afterLate, d1, d2 }))
+    > 60 |   expect(d1, '撤销后标题仍停在拖到的位置（画布与文档不一致）').toBeLessThan(1)
+         |                                         ^
+      61 |   expect(d2, '拖动那一版回包之后，撤销掉的位移仍挂在画布上').toBeLessThan(1)
+      62 | })
+      63 |
+        at /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-state/web/e2e/state_bugs_repro.spec.ts:60:41
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/state_bugs_repro-A-STATE-04：权威在途时撤销，画布应回到原位-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/state_bugs_repro-A-STATE-04：权威在途时撤销，画布应回到原位-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/state_bugs_repro-A-STATE-04：权威在途时撤销，画布应回到原位-chromium/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/state_bugs_repro-A-STATE-04：权威在途时撤销，画布应回到原位-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/state_bugs_repro-A-STATE-04：权威在途时撤销，画布应回到原位-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › e2e/state_bugs_repro.spec.ts:32:1 › A. STATE-04：权威在途时撤销，画布应回到原位 ───────────────────
+

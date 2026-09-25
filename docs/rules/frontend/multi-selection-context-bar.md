@@ -44,3 +44,14 @@
 * 看护：`canvas/context-bar/position.test.ts` / `multiSelectionBar.test.tsx` /
   `canvas/primarySelection.test.tsx` / `store/alignSelectedTo.test.ts` /
   `store/arrangeStore.test.ts` / `canvas/contextBar.test.tsx`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 进裁剪一律 `beginCrop`（记基线）
+- 浮动栏只发意图，落地走 `alignSelectedTo` 等同一函数
+- 参照只有 `arrangeStore`
+- `qb()` 的 key 删掉 i18n 检查是绿的

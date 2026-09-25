@@ -161,3 +161,53 @@
   + `collect_all("pikepdf")`，冻结入口 `packaging/entry.py` 先分派 `--render-child`）带全部依赖与字体；facade 19 项
   的终态记在 `docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.md`。旧默认字体（Times-Roman 等 base-14）
   到 Liberation 的布局政策在 ADR 0073：位置 / 内容 / 框尺寸保持、advance 相同、基线按批准量变、旧项目不重排。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 纯模型只许标准库、整包零 `import pymupdf`、与 `pdfbackend` / worker 互不 import（importgraph 层规则）
+- IR 就是 PDF 空间（pt、左下原点，y 向上），毫米 → IR 只在 `plan.compile_page()` 换算一次
+- `ir.validate()` 挡 NaN / 非正尺寸 / 不可逆矩阵 / 悬空资源
+- `CAPABILITIES` 声明 unsupported 的操作写入器必须结构化拒绝
+- 文字量宽与落笔同一份 shaped plan、没有 fallback 脸
+- 字体只认 allowlist 里的 sha256、不摸系统字体、文件不进 git
+- 原生包只在函数里 import、用例缺包 / 缺字体 skip 并写理由
+- 一个 ActualText 段一个 `TJ`、缺字写 .notdef 不换脸
+- 静态源不跑脚本、读前核 sha256
+- 面板落位顺序只在 `placement.place()`（crop → 翻转 → 顺时针旋转 → 填满）
+- 外来页是 Form XObject（页盒 / Rotate / UserUnit 由 qpdf 折进 /Matrix、恰好一次）、opacity 是透明组、镜像是负缩放、不退位图、源编码照搬
+- 位图源经 `rasterio` 成 straight-alpha 的 `RasterBuffer`，两级像素预算在解码前记账
+- 写入器再核一次字节 sha256
+- PDFium 只在 render child 里、父进程一把锁串行 + 有界队列、超时 kill/reap/重启
+- PNG 与 TIFF 从同一个 RasterBuffer 编码、只从 Canonical PDF 来
+- 预览缓存键 = 内容身份 + 后端 build + 字体政策 + 像素参数，异常不给空白图
+- 派生值按文件指纹复用、不当身份
+- PDFium PNG 按平台分基线
+- `facade.py` 是契约的唯一实现、U10 起即默认（19 项同签名，ADR 0072），`TAVOTTO_RENDER_BACKEND=pymupdf` 报 `backend_retired`、不静默回退
+- 「不可用」只经 `UNAVAILABLE_ERRORS` / `pdfbackend.is_backend_unavailable` 暴露
+- 执行侧源经 `ExecutionSourceResolver` 附回执、`origin=execution` 必核
+- 覆盖表 / 向量与退役前旧表（`evidence/u10/*.pymupdf.json`）的差异是闭集
+- U08 的 14 条 deselect 已在 U10 逐条处置（台账 `u10_disposition`）
+- `inspector.py` 重新打开封口产物量事实、plan / observed / policy 分开、unknown 不是 verified、standard 只拦完整性与尺寸、strict 必需 unknown 也拦、钩子在提交点之前、阈值只从出版规范来
+- HTTP 与 MCP 两个导出入口接的是同一份 `engine/artifactinspect` 接线，回执里的 `manifest` 原样带出、未核验不说成已核验
+- 四身份并列（run 不进 semantic / render，artifact 不回写进文件，字体政策版本进 render）
+- `provenance`（源 / 回执公开事实 / 节点表：对象 id + 实例序号、外来页 internal=unknown、有界）
+- 离开本机的只有 `inspector.public_projection()`（不带 notes / 文字行 / source_id / 路径）
+- MCP 直出路经 `artifactinspect.execution_provenance()` 同一份算法
+
+看护（速查表原「看护」列里、上文没有逐字点名的用例）：`test_rendercore_plan.py`、`test_rendercore_typography.py`、`test_rendercore_job.py`、`test_rendercore_evidence.py`、`test_rendercore_raster.py`、`test_rendercore_renderchild.py`、`test_rendercore_rasterize.py`、`test_rendercore_preview.py`、`test_rendercore_facade.py`、`test_rendercore_app.py`、`test_rendercore_sources.py`、`test_rendercore_inspector.py`、`test_export_inspection.py`、`test_mcp_export_inspection.py`、`test_export_phase_labels.py`、`test_export_identity.py`、`test_foundation_join.py`、`test_retirement_scan.py`、`test_compose_text.py`、`test_compose_arrow.py`
+
+## 验证（2026-09-25 迁自 `src/tavotto/AGENTS.md`「验证」，#608）
+
+速查表那一节只留一行指向这里；下面是原文，一字未改。
+
+- 改了 `rendercore/` 的字体 / 写入器 / render child / facade / 契约层 / 导出接线：先 `python scripts/fetch_fonts.py` 取批准
+  字体（不进 git；缺了 rendercore 用例 skip，skip 不是绿），再跑 `tests/test_rendercore_*.py` 与旧契约用例
+  （`test_export_pipeline.py` / `test_compose_text.py` / `test_glyph_plan.py` …——U10 起默认就是 RenderCore，普通测试就是对拍）
+  与 `tests/test_retirement_scan.py`（应用闭包零 pymupdf 的三把尺子）；改了批准字体集合 / typography 就重生成
+  `gen_canvas_coverage.py --write`、`gen_glyph_plan_vectors.py --write`（差异逐条对着 ADR 0060 §1 / 0073 解释，不盲目 --write）；
+  改了 evidence 的输入就重生成 `scripts/dev/u06_evidence.py --out docs/implementation/tavotto-foundation/evidence/u06` /
+  `scripts/dev/u07_evidence.py --out …/evidence/u07`（PNG 是 macOS arm64 基线，其它平台看 `foundation-u06-rendercore.yml` 的工件）。

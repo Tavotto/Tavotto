@@ -121,3 +121,17 @@
   的 `mappable_gid` 在反查不到时回退到绑定的位图。看护 `tests/test_figure_recognition.py`
   （含热会话 == 全量重放逐字节、噪声 / BoundaryNorm / 贴端点的平图三个反例、嵌照片的图、
   900 万像素的图、内存随像素的斜率 < 6 B、极宽图的块内峰值）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 就地结构改造、`fig.axes` 顺序不动
+- `_inside` 与 `extend` 一起改
+- 改 extend 前 box_aspect 放回基线
+- `("axes","position")` 原样记 `get_position(original=True)`
+- 色条轴上的 patch 不登记
+- 共用 norm 对象的 mappable 是色阶兄弟（`scale_siblings` 唯一判据），色条的 cmap / vmin / vmax 与别名组落到整组、manifest 发 `scale_gids`
+- 独立 mappable 色条认领同签名 norm、绑定已成色位图（`RasterField`）

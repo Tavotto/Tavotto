@@ -45,3 +45,16 @@
     每个封口的临时文件（接线层 `engine/artifactinspect.py`，两个入口共用；检查器 `rendercore/inspector.py`），拒绝的那一项 `artifact_rejected` 不发布（partial 语义不变），合格的
     带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,
     profile_id}`（缺省 standard，老客户端等价）；strict 的阈值只从 `profilestore.resolve_spec` 来。细则在 `rendercore.md`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 五个端点一个服务
+- `original` 段没有 x/y/w/h
+- `partial` 独立一档
+- 终局字段先于 `status` 可见
+- 文件名规则严格同源对
+- EPS 只有 worker 写得出、不伪称矢量

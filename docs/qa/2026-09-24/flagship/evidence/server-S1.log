@@ -1,0 +1,103 @@
+2026-09-25 03:25:45,254 INFO tavotto: PDF 后端: rendercore
+2026-09-25 03:25:45,259 INFO tavotto: 项目已打开: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper（1 个脚本，注册表为静态扫描草稿）
+* 项目: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper（1 个脚本）
+* 未找到注册表，已静态扫描生成草稿（cost 默认 medium，请按需修正）
+* 打开 http://127.0.0.1:5306/#dnonce=<redacted>
+ * Serving Flask app 'tavotto.app'
+ * Debug mode: off
+2026-09-25 03:25:45,262 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5306
+2026-09-25 03:25:45,262 INFO werkzeug: Press CTRL+C to quit
+2026-09-25 03:25:45,328 INFO pikepdf._core: pikepdf C++ to Python logger bridge initialized
+2026-09-25 03:25:45,357 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/version HTTP/1.1" 200 -
+2026-09-25 03:25:45,368 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "[31m[1mGET /api/panels HTTP/1.1[0m" 401 -
+2026-09-25 03:25:45,523 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET / HTTP/1.1" 200 -
+2026-09-25 03:25:45,529 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /assets/index-7yGgmWmw.css HTTP/1.1" 200 -
+2026-09-25 03:25:45,529 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /assets/index-qj9xX_eu.js HTTP/1.1" 200 -
+2026-09-25 03:25:45,603 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "POST /api/session/bootstrap HTTP/1.1" 200 -
+2026-09-25 03:25:45,614 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/project HTTP/1.1" 200 -
+2026-09-25 03:25:45,619 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/telemetry/settings HTTP/1.1" 200 -
+2026-09-25 03:25:45,628 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/projects/recent?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,629 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/projects?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,678 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/version?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,701 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/project/readiness?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,703 INFO tavotto: 素材扫描: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper → 1 个素材
+2026-09-25 03:25:45,706 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/panels?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,708 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/native/sessions?project_root=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,715 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/events?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,924 INFO tavotto.engine: 渲染解释器: /Volumes/Projects/Tavotto/.venv/bin/python（来源 current_process）
+2026-09-25 03:25:45,925 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/runtime/assets?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,927 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/version?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,931 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/project/readiness?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,933 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/native/sessions?project_root=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,935 INFO tavotto.engine: 渲染解释器: /Volumes/Projects/Tavotto/.venv/bin/python（来源 current_process）
+2026-09-25 03:25:45,940 INFO tavotto: 素材扫描: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper → 1 个素材
+2026-09-25 03:25:45,942 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/panels?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,949 INFO tavotto.engine: 渲染解释器: /Volumes/Projects/Tavotto/.venv/bin/python（来源 current_process）
+2026-09-25 03:25:45,951 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/registry?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,960 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/render?id=Fig_flagship.pdf&w=400&m=1790277944&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:45,983 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:45] "GET /api/render?id=Fig_flagship.pdf&w=1600&m=1790277944&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:46,001 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:46] "GET /api/ai/capabilities?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:46,051 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:46] "GET /api/update/check HTTP/1.1" 200 -
+2026-09-25 03:25:46,096 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:46] "GET /api/engine/environment HTTP/1.1" 200 -
+2026-09-25 03:25:46,798 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:46] "[33mGET /api/autosave/d_ho03hj7o?pj=941066d0946b HTTP/1.1[0m" 404 -
+2026-09-25 03:25:46,800 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:46] "PUT /api/autosave/d_ho03hj7o?base_revision=absent&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:58,038 INFO tavotto.engine: 首开采用项目自带的环境: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/.venv/bin/python（/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper）
+2026-09-25 03:25:58,040 ERROR tavotto: worker 错误: POST /api/engine/render: 脚本目录与项目根目录各有一份同名数据且内容不同，请先选择它的运行目录
+2026-09-25 03:25:58,040 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:58] "[35m[1mPOST /api/engine/render?pj=941066d0946b HTTP/1.1[0m" 500 -
+2026-09-25 03:25:58,301 INFO tavotto: 项目工作目录模式: sandbox → project_root（/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper）
+2026-09-25 03:25:58,302 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:25:58] "PATCH /api/engine/workdir?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:25:58,767 INFO tavotto.engine: worker 启动: scripts/entry.py（entry=__main__，解释器来源=project_venv）
+2026-09-25 03:26:00,068 INFO tavotto: 引擎渲染: Fig_flagship 1448ms（冷启动） timings={"build_total_ms": 1085.479, "canvas_draw_ms": 92.953, "manifest_ms": 76.036, "patch_apply_ms": 0.331, "preview_plan_ms": 0.047, "queue_wait_ms": 0.001, "script_build_ms": 361.211, "script_exec_ms": 96.111, "server_ms": 1448.433, "total_ms": 201.484, "worker_get_ms": 160.814}
+2026-09-25 03:26:00,075 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:00] "POST /api/engine/render?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:00,805 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:00] "POST /api/versions/d_ho03hj7o?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:17,063 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:17] "GET /api/engine/environment HTTP/1.1" 200 -
+2026-09-25 03:26:17,069 INFO tavotto: 素材扫描: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper → 1 个素材
+2026-09-25 03:26:17,078 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:17] "GET /api/panels HTTP/1.1" 200 -
+2026-09-25 03:26:17,099 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:17] "[35m[1mPOST /api/engine/preparation HTTP/1.1[0m" 202 -
+2026-09-25 03:26:17,105 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:17] "GET /api/engine/preparation/prep-a1048e38353e4e049390becfe7ad5dea HTTP/1.1" 200 -
+2026-09-25 03:26:17,270 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:17] "GET /api/profiles/style?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:17,272 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:17] "GET /api/profiles/spec?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:17,302 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:17] "GET /api/render?id=Fig_flagship.pdf&w=200&m=1790277944&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:18,790 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:18] "POST /api/export/start?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:19,107 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:19] "GET /api/export/state?job_id=e672feb1d2c94716 HTTP/1.1" 200 -
+2026-09-25 03:26:19,661 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:19] "GET /exports/qa_E0.pdf HTTP/1.1" 200 -
+2026-09-25 03:26:20,402 INFO tavotto: 引擎渲染: Fig_flagship 82ms timings={"canvas_draw_ms": 24.69, "manifest_ms": 45.564, "patch_apply_ms": 3.824, "preview_plan_ms": 0.048, "queue_wait_ms": 0.001, "server_ms": 81.559, "total_ms": 80.206, "worker_get_ms": 1.092}
+2026-09-25 03:26:20,403 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:20] "POST /api/engine/render?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:21,324 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:21] "PUT /api/autosave/d_ho03hj7o?base=1790277946796&base_revision=c9f5cc3975a2a7b439c6a69681b346c1&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:22,188 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:22] "GET /api/profiles/style?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:22,189 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:22] "GET /api/profiles/spec?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:22,202 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:22] "[36mGET /api/render?id=Fig_flagship.pdf&w=200&m=1790277944&pj=941066d0946b HTTP/1.1[0m" 304 -
+2026-09-25 03:26:23,554 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:23] "POST /api/export/start?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:23,874 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:23] "GET /api/export/state?job_id=23394a8957d945f3 HTTP/1.1" 200 -
+2026-09-25 03:26:24,446 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:24] "GET /exports/qa_Ecal.pdf HTTP/1.1" 200 -
+2026-09-25 03:26:26,436 INFO tavotto: 引擎渲染: Fig_flagship 66ms timings={"canvas_draw_ms": 23.241, "manifest_ms": 37.025, "patch_apply_ms": 0.508, "preview_plan_ms": 0.046, "queue_wait_ms": 0.001, "server_ms": 66.26, "total_ms": 64.887, "worker_get_ms": 1.143}
+2026-09-25 03:26:26,437 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:26] "POST /api/engine/render?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:27,379 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:27] "PUT /api/autosave/d_ho03hj7o?base=1790277981320&base_revision=7fdf8aaf8d2d5a62df09bc86cbb6d139&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:29,595 INFO tavotto: 引擎渲染: Fig_flagship 85ms timings={"canvas_draw_ms": 28.473, "manifest_ms": 34.27, "patch_apply_ms": 13.186, "preview_plan_ms": 0.043, "queue_wait_ms": 0.001, "server_ms": 85.335, "total_ms": 83.862, "worker_get_ms": 1.132}
+2026-09-25 03:26:29,596 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:29] "POST /api/engine/render?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:30,507 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:30] "PUT /api/autosave/d_ho03hj7o?base=1790277987370&base_revision=406ac1c11967cc2a0cfe357bf2047394&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:32,616 INFO tavotto: 引擎渲染: Fig_flagship 88ms timings={"canvas_draw_ms": 23.885, "manifest_ms": 55.769, "patch_apply_ms": 0.286, "preview_plan_ms": 0.045, "queue_wait_ms": 0.001, "server_ms": 87.788, "total_ms": 86.383, "worker_get_ms": 1.124}
+2026-09-25 03:26:32,617 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:32] "POST /api/engine/render?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:33,232 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:33] "PUT /api/autosave/d_ho03hj7o?base=1790277990504&base_revision=0931340672318639d30657f09a137c29&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:35,604 INFO tavotto: 引擎渲染: Fig_flagship 93ms timings={"canvas_draw_ms": 35.114, "manifest_ms": 49.021, "patch_apply_ms": 0.444, "preview_plan_ms": 0.045, "queue_wait_ms": 0.0, "server_ms": 92.747, "total_ms": 92.019, "worker_get_ms": 0.515}
+2026-09-25 03:26:35,606 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:35] "POST /api/engine/render?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:36,509 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:36] "PUT /api/autosave/d_ho03hj7o?base=1790277993227&base_revision=8dbd400af33eb035a8cfb5e8560e3b20&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:38,560 INFO tavotto: 引擎渲染: Fig_flagship 58ms timings={"canvas_draw_ms": 16.146, "manifest_ms": 37.744, "patch_apply_ms": 0.311, "preview_plan_ms": 0.044, "queue_wait_ms": 0.0, "server_ms": 57.801, "total_ms": 57.126, "worker_get_ms": 0.516}
+2026-09-25 03:26:38,561 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:38] "POST /api/engine/render?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:39,506 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:39] "PUT /api/autosave/d_ho03hj7o?base=1790277996506&base_revision=c23bb2e0e13e0db3efb10b00ca8a08ac&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:40,322 INFO tavotto: 素材扫描: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper → 1 个素材
+2026-09-25 03:26:40,322 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:40] "GET /api/panels HTTP/1.1" 200 -
+2026-09-25 03:26:41,330 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:41] "PUT /api/autosave/d_ho03hj7o?base=1790277999504&base_revision=2cf0b222ad7c749b9ffc8b8e8f315953&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:45,109 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:45] "PUT /api/autosave/d_ho03hj7o?base=1790278001327&base_revision=d17e93f5a7801ae46e9b69a1282b0bf3&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:45,699 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:45] "GET /api/version?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:45,934 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:45] "GET /api/version?pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:47,954 INFO tavotto: 引擎渲染: Fig_flagship 69ms timings={"canvas_draw_ms": 17.447, "manifest_ms": 46.522, "patch_apply_ms": 0.393, "preview_plan_ms": 0.049, "queue_wait_ms": 0.001, "server_ms": 69.12, "total_ms": 67.789, "worker_get_ms": 1.101}
+2026-09-25 03:26:47,955 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:47] "POST /api/engine/render HTTP/1.1" 200 -
+2026-09-25 03:26:48,994 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:48] "PUT /api/autosave/d_ho03hj7o?base=1790278005107&base_revision=8f9f7b466e50878397d1f9e32ef8c5ae&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:52,773 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:52] "PUT /api/autosave/d_ho03hj7o?base=1790278008992&base_revision=80b0d8d16838e32eca86f18b48f4da52&pj=941066d0946b HTTP/1.1" 200 -
+2026-09-25 03:26:55,599 INFO tavotto: 引擎渲染: Fig_flagship 55ms timings={"canvas_draw_ms": 14.882, "manifest_ms": 36.535, "patch_apply_ms": 0.368, "preview_plan_ms": 0.047, "queue_wait_ms": 0.0, "server_ms": 54.936, "total_ms": 54.3, "worker_get_ms": 0.484}
+2026-09-25 03:26:55,600 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:55] "POST /api/engine/render HTTP/1.1" 200 -
+2026-09-25 03:26:58,649 INFO tavotto: 收到关闭请求，正在收尾
+2026-09-25 03:26:58,705 INFO tavotto: 项目已关闭: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper
+2026-09-25 03:26:58,728 INFO werkzeug: 127.0.0.1 - - [25/Sep/2026 03:26:58] "POST /api/shutdown HTTP/1.1" 200 -

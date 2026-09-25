@@ -1,0 +1,34 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh REPO-GATES tests/test_docs_references.py tests/test_source_hygiene.py tests/test_tracked_paths_are_windows_safe.py tests/test_generated_untracked.py tests/test_agents_rules_index.py tests/test_import_architecture.py tests/test_foundation_harness.py -v
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_docs_references.py tests/test_source_hygiene.py tests/test_tracked_paths_are_windows_safe.py tests/test_generated_untracked.py tests/test_agents_rules_index.py tests/test_import_architecture.py tests/test_foundation_harness.py -v -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-REPO-GATES
+# time: 2026-09-24T19:22:24Z
+# sha: 31dc90ef8f46d6f59d4bd77623ead8b9e7e48758  (worktree dirty files: 1)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-4
+configfile: pytest.ini
+collected 85 items
+
+tests/test_docs_references.py .....                                      [  5%]
+tests/test_source_hygiene.py ............................                [ 38%]
+tests/test_tracked_paths_are_windows_safe.py .                           [ 40%]
+tests/test_generated_untracked.py .....                                  [ 45%]
+tests/test_agents_rules_index.py .............                           [ 61%]
+tests/test_import_architecture.py ................                       [ 80%]
+tests/test_foundation_harness.py .................                       [100%]
+
+=============================== warnings summary ===============================
+tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry
+tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry
+tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 85 passed, 5 warnings in 29.45s ========================
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0

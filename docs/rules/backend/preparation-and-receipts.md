@@ -92,3 +92,32 @@
   `tests/test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、
   `tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、
   `tests/test_foundation_join.py`、`tests/test_export_identity.py`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 执行只走 `pool.build`
+- 回执两半缺一半就是 `partial`
+- 身份三分不混（私有键含路径、公开身份不含、文件 hash 单列）
+- LaunchContext 是派生视图、四个来源各一个生产者
+- 环境选择前移的落点是 `plan_for`（证据 / 发现 / 作废 / 显式失效如实写）
+- 首开要问的是终局 `needs_input`
+- 过期计划 `preparation_plan_stale` 不执行
+- DependencyIntent 只读不装
+- enrollment 台账空集合不是通过、safe_stop 的通过不进兼容成功分子
+- 自报只收这一条会话的（`report_origin=build` + pid 对 `child_pid`，或 launcher 的子进程按 ppid 对 → `ok_via_launcher`；体检 / 探针冒充 = `runtime_rejected` + partial）
+- 输入观察永远 partial、观察到的数据身份进公开身份
+- `binding_for` 进计划，起会话前授权 / 解释器 / 绑定三比不一致即 `preparation_plan_stale` + reason
+- 复用热态会话时不一致是明示旧快照
+- `Trace` 有界、第一次失败是根因
+
+## 验证（2026-09-25 迁自 `src/tavotto/AGENTS.md`「验证」，#608）
+
+速查表那一节只留一行指向这里；下面是原文，一字未改。
+
+- 改了回执 / 准备 / 数据绑定 / 轨迹 / manifest 身份（U09）：跑 `tests/test_execution_receipt.py test_preparation_api.py
+  test_worker_runtime_report.py test_trace.py test_export_identity.py test_foundation_join.py`；FO32 两个出口在候选 venv 里带
+  `TAVOTTO_FOUNDATION_PROJECT_PYTHON`（另一 minor + matplotlib + h5py）/ `TAVOTTO_PRIVATE_PYTHON_REAL=1` + `_CACHE` + `_WHEELHOUSE` 真跑；skip 不是绿。

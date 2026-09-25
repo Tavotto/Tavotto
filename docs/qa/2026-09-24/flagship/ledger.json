@@ -1,0 +1,2427 @@
+[
+  {
+    "case_id": "QA-FLAGSHIP-01",
+    "title": "旗舰端到端闭环：E1 项目 .venv + 内置缺依赖 + D1 分离/项目外数据 + 本地模块 + 双轴/图例/注释/多子图，全新配置首开 → 编辑 → 保存退出 → 重开再编辑 → 导出并独立核对",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "tests/test_foundation_first_open.py::test_fo02_scripts_and_data_split_asks_once_then_runs_at_the_project_root",
+      "tests/test_foundation_first_open.py::test_fo07_same_name_data_in_two_places_asks_and_honours_the_choice",
+      "tests/test_first_open_environment.py::test_a_healthy_project_venv_is_chosen_before_the_first_run_and_remembered",
+      "web/e2e/fake-realtime.spec.ts::拖图内元素：预览跟手、拖动期间零后端、松手一次定稿",
+      "web/src/store/alignAction.test.ts::撤销一次精确回到对齐前，重做一次精确恢复",
+      "web/src/canvas/alignUndoConvergence.test.tsx::撤销后立刻复用缓存里的精确旧变体，不用白跑一次引擎"
+    ],
+    "existing_tests_note": "上述每条都只量闭环里的一段（环境 / 数据 / 单选拖动 / 对齐撤销，且对齐与撤销是 jsdom + 手写 manifest）；仓库里没有把首开、混合多选、组缩放、保存重开、导出串起来的用例。本节的完整闭环只存在于 repro/flagship_driver.cjs（不进 CI），新增两条回归只覆盖其中两段。",
+    "expected_outcome": "引导后成功：首开因同名数据歧义问一次运行目录（不预选、选择前不发布图）；选项目根后 worker 由项目 .venv(A) 执行（不是 PATH 上更靠前的 B、不是内置环境），读 data/points.csv 真值 y=[0,9,2,10]、外部绝对路径数据与本地模块；单选拖动、混合多选拖动、两子图成组缩放、改字号、底对齐、水平等距、撤销×2/重做×2 每步锚点符合独立模型（≤0.5 CSS px）、非目标不动；保存并完全退出应用与 worker 后重开不再询问、几何与 override 与退出前逐项相同；再编辑后导出 PDF，独立读取的页面盒 / 点序列 / 文字 / 位移与权威 manifest 一致；无包安装、无授权外写入。",
+    "product_outcome": "引导后成功",
+    "test_verdict": "partial",
+    "verdict_reason": "最终运行 127/128 条检查通过（还原后复跑同样 127/128，确定性）。两处偏离：① P4b 首次导出（原图尺寸）被画布页 out-of-page 假阻断，须勾知情确认才能导出（product_bug，见 product_bugs）——驱动按用户路径勾选后继续；② P15 预设的「导出文字位移 == manifest 位移 ≤0.05 mm」对 9 条文字里 2 条（axes_1.xlabel、图例文字）为 0.144 mm，其余 7 条 <0.001 mm；这两条在校准导出 Ecal 里处于自动布局、在 E1 里被钉住，偏差更像 PDF 与 SVG 两个渲染器对自动布局文字的度量差，根因未确诊，按预设阈值记失败，不放宽。无意外 skip、无空集、无重试。桌面壳未测（入口是 HTTP+浏览器）。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+      "worker_python": "3.13.11（产品自己选中的项目 venv paper/.venv，base = Homebrew python@3.13）",
+      "matplotlib": "3.10.8",
+      "numpy": "2.4.3",
+      "node": "v26.7.0",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（headless，viewport 1600×1000 / e2e 默认 1280×720）",
+      "pdf_readers": "pdfminer.six 20251230、poppler pdftoppm 26.03.0（独立于产品）",
+      "product_version": "0.16.0（前端构建 index-qj9xX_eu）",
+      "fonts": "TAVOTTO_FONTS_DIR 指向主仓库已取回的批准字体（只读）",
+      "entry_note": "HTTP 浏览器模式（python -m tavotto --no-browser，端口 5306，会话认证开，落地 URL 的一次性 nonce）+ Playwright 真 Chromium；不是桌面壳（Tauri 壳不可自动化，未测）"
+    },
+    "fixtures": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/repro/make_flagship_project.py",
+        "sha256": "6aa8247ec86d14770763100dc05809998cbe68be6ec5582747883b2f13f45d89"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/fixture-truth.json",
+        "sha256": "b9fddf7b90a042645fc9545d00f0ee4f2d44cab940fccb4ad974ba94b76d25a3"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/Fig_flagship.pdf",
+        "sha256": "6500dce4916f2a64659157b6d298787b15c48bdad52a3dd75fe4e4ea343daeb0",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/data/points.csv",
+        "sha256": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/data/points.csv",
+        "sha256": "1c8ade0c7fd2a2b7f8ed6b2ab588c51e99d2838da5afdc8d529f357a4841f9c7",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/entry.py",
+        "sha256": "79b382af08dd2c506805584d6b710eddf4ed0006f013e14d4189db5873d06907",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/labmod.py",
+        "sha256": "b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/external/offsets.csv",
+        "sha256": "cd0bd6d847b26aa7eadac5fb9635038298cc9755c64ba3ce274b579a13ef343e",
+        "note": "生成器确定性产物"
+      }
+    ],
+    "entry": "HTTP（浏览器模式落地 URL + 会话认证）+ Playwright Chromium",
+    "commands": [
+      "cd web && pnpm install --frozen-lockfile --prefer-offline && cd ..",
+      "PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py",
+      "SCRATCH=<任意临时目录>",
+      "/opt/homebrew/opt/python@3.13/libexec/bin/python3 docs/qa/2026-09-24/flagship/repro/make_flagship_project.py $SCRATCH/fixture --base-python /opt/homebrew/opt/python@3.13/libexec/bin/python3",
+      "QA_FONTS=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts node docs/qa/2026-09-24/flagship/repro/flagship_driver.cjs $SCRATCH/fixture $SCRATCH/final",
+      "/opt/homebrew/opt/python@3.13/libexec/bin/python3 docs/qa/2026-09-24/flagship/repro/collect_evidence.py $SCRATCH/final $SCRATCH/fixture docs/qa/2026-09-24/flagship/evidence"
+    ],
+    "exit_codes": {
+      "make_flagship_project.py": 0,
+      "flagship_driver.cjs": 0,
+      "collect_evidence.py": 0,
+      "note": "驱动恒 0，结论按 PASS/FAIL 行与 report.json.checks 计"
+    },
+    "evidence": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/logs/QA-FLAGSHIP-01.log",
+        "sha256": "45ffab03f9402018e03125873175d203e98b357606025192de588d305effb8a1"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/report.json",
+        "sha256": "05daa1786796139dcb447786db0058daa1c6fb09cd746ef0ee8e82748173501f"
+      },
+      {
+        "summary": "checks: 128；passed 127；failed 1（P15 E1 vs Ecal 位移 0.144 mm）；phases 22；first_deviation(按检查)=P15；首个产品层偏离 = P4b 导出假阻断（被驱动知情放行，不在 FAIL 计数里）"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E0.pdf",
+        "sha256": "af5ec37caf070020a1a804469588f82bef3ee2e61fd152f397e6654107796cfd"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/Ecal.pdf",
+        "sha256": "218950ffda374e682cc129afee2f6c4802ec590b3412ef7d2c6a9cbe3837bb27"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E1.pdf",
+        "sha256": "78db22efacb74fdd3c49e569d9ead32597926c3c6e6d8b980d09c420a3294d4c"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E2.pdf",
+        "sha256": "b3cec608c79c9bba7a08b9f633fbd05b74ed2a5cc74577b12a7eae6a166e38c4"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E3.pdf",
+        "sha256": "e9fd141cbe983ef25e4d7b8c729dc9a1869dae604ecf251eafff960bab815e0b"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E1.png",
+        "sha256": "dd7a0e7d3d05756b3d16c890cdd62f8d195eb6a95bdd759b16e57c630756e564"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E2.png",
+        "sha256": "149fda9b8094a613a4792d56c70902fcc8ae145682b3bbf2ba84bf9fb29081f5"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E3.png",
+        "sha256": "cd7fce219a96b72c4004efd29df1f5e4a58f4913b827d684e4dddd1e5259c535"
+      }
+    ],
+    "stage_snapshots": {
+      "s0-first-open": {
+        "at": "2026-09-24T19:26:16.766Z",
+        "manifest_sha256": "7bf466b823ec063784c13d48de50365c06d81d67e2c85d5663c7e63208a32103",
+        "svg_sha256": "28502d6e731e41724d43a8b410d3bc79be3feab0815c1ada395206a7f1863462",
+        "document_sha256": "1845f80879de8c8c2d60b50b7c14c7b8c98bbf8bdaa52ac2ae369d20b5e9280d",
+        "render_request_patches": [],
+        "render_count_total": 2,
+        "overrides": [],
+        "rev": 1
+      },
+      "s1-single-drag": {
+        "at": "2026-09-24T19:26:22.152Z",
+        "manifest_sha256": "610581068b35fd1662977ed8b6c1fd2fe846ed26851d8453ece3d5675811e675",
+        "svg_sha256": "89682c04fcee11e4fb5b82ebe5c71a18f23edfb28ed7317814f64ee0b489d133",
+        "document_sha256": "9baf8c6a0193c128a7c90df343c28260f641d54be95ebf3640561326a6163c3f",
+        "render_request_patches": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5511672529581069,
+              0.053578509753757504
+            ]
+          }
+        ],
+        "render_count_total": 3,
+        "overrides": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5511672529581069,
+              0.053578509753757504
+            ]
+          }
+        ],
+        "rev": 2
+      },
+      "s2-multi-drag": {
+        "at": "2026-09-24T19:26:28.186Z",
+        "manifest_sha256": "e3fd79a837c5e4b3092f11754d8f4f369b12af4821279402a046100297a3e995",
+        "svg_sha256": "6036138130c8f973efce90589e08f1bc51015c5efc0781e5e45dbd6797f4a4e0",
+        "document_sha256": "bb30ef515a3aa635210e0e6dd56458b7f241bd9f76742594cdc56d527e3dda49",
+        "render_request_patches": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5511672529581069,
+              0.053578509753757504
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          }
+        ],
+        "render_count_total": 4,
+        "overrides": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5511672529581069,
+              0.053578509753757504
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          }
+        ],
+        "rev": 3
+      },
+      "s3-group-scale": {
+        "at": "2026-09-24T19:26:31.338Z",
+        "manifest_sha256": "6c47d2c80609bff286ea2295b44d5492b67ba70d8341cf455df69a03a364de22",
+        "svg_sha256": "10ed2e43926afe7b118b8891babf99475510fadff8eaa504d683c6c656e4b1e1",
+        "document_sha256": "25e9fd940dc4b341d147555e7e3753f8912ffe38470e88f976b7d60a3244e242",
+        "render_request_patches": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5511672529581069,
+              0.053578509753757504
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          }
+        ],
+        "render_count_total": 5,
+        "overrides": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5511672529581069,
+              0.053578509753757504
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          }
+        ],
+        "rev": 4
+      },
+      "s4-fontsize": {
+        "at": "2026-09-24T19:26:34.306Z",
+        "manifest_sha256": "810a57ed24cf73b136c3a3e08219a1a3171569168ba0acb1d340a6fb2c3793a1",
+        "svg_sha256": "eed64f5a503c272a7c3dce37aa6f2c0fb164e0e4497e87ad65b146c18d12febb",
+        "document_sha256": "067ea68f0d93b334bb5e02473ad97ce2b502e8e018319e5824720b96f46516b9",
+        "render_request_patches": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5511672529581069,
+              0.053578509753757504
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          }
+        ],
+        "render_count_total": 6,
+        "overrides": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5511672529581069,
+              0.053578509753757504
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          }
+        ],
+        "rev": 5
+      },
+      "s5-align-bottom": {
+        "at": "2026-09-24T19:26:37.321Z",
+        "manifest_sha256": "f9c64651494fd2c7ad020344dc5dd059b6e969a06f775e20b334676c330e53eb",
+        "svg_sha256": "ee5622f4ba48cfc85af669a8787fc0f489a1fb6340774ab4ec2c3ab810b76cc4",
+        "document_sha256": "9cc76f76b96e6181b1f4e9a0e36c6ae7b65a7376ce36cfefb7fe31f138fd8503",
+        "render_request_patches": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5511672529581069,
+              0.053578509753757504
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7264,
+              0.8952
+            ]
+          }
+        ],
+        "render_count_total": 7,
+        "overrides": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5511672529581069,
+              0.053578509753757504
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7264,
+              0.8952
+            ]
+          }
+        ],
+        "rev": 6
+      },
+      "s6-distribute": {
+        "at": "2026-09-24T19:26:40.318Z",
+        "manifest_sha256": "03be91e8e708348b845c77c89d609e54f683d0c95a8983e2a49488702f1087a5",
+        "svg_sha256": "da0a2e8846566e2312a824c0c9ef784ee53c9c4edd043d8c57258998565daa8e",
+        "document_sha256": "2ce51c7fd6a88a512da7154d1abc095a1449c4f45d51ac482fe008e7d719bb61",
+        "render_request_patches": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5569,
+              0.0536
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7264,
+              0.8952
+            ]
+          }
+        ],
+        "render_count_total": 8,
+        "overrides": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5569,
+              0.0536
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7264,
+              0.8952
+            ]
+          }
+        ],
+        "rev": 7
+      },
+      "s7-undo2": {
+        "manifest_sha256": "810a57ed24cf73b136c3a3e08219a1a3171569168ba0acb1d340a6fb2c3793a1",
+        "overrides": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5511672529581069,
+              0.053578509753757504
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          }
+        ],
+        "via": "HTTP POST /api/engine/render (independent re-render of the document state)"
+      },
+      "s8-redo2": {
+        "manifest_sha256": "03be91e8e708348b845c77c89d609e54f683d0c95a8983e2a49488702f1087a5",
+        "overrides": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5569,
+              0.0536
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7264,
+              0.8952
+            ]
+          }
+        ],
+        "via": "HTTP POST /api/engine/render (independent re-render of the document state)"
+      },
+      "s9-reopened": {
+        "at": "2026-09-24T19:27:09.368Z",
+        "manifest_sha256": "03be91e8e708348b845c77c89d609e54f683d0c95a8983e2a49488702f1087a5",
+        "svg_sha256": "8910a58d0537a8ab251adc879bdd4d482126fb031c445c126b6b379bb817240f",
+        "document_sha256": null,
+        "render_request_patches": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5569,
+              0.0536
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7264,
+              0.8952
+            ]
+          }
+        ],
+        "render_count_total": 1,
+        "overrides": null,
+        "rev": 1
+      },
+      "s10-reedit": {
+        "at": "2026-09-24T19:27:12.817Z",
+        "manifest_sha256": "000a1481e32c46c0db74d3fd32c23b149acbd0e4f95eb3357940841c6af8a248",
+        "svg_sha256": "f761a3668fd538cb9d89107fa239a56a9048bda5051bb81fa931ecf21a32205a",
+        "document_sha256": "7eee53aea2df681f377371b4ee452b61f866b0aa2066d22bab2b453438cf6cb4",
+        "render_request_patches": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5569,
+              0.0536
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7647940174953859,
+              0.8784026173457686
+            ]
+          }
+        ],
+        "render_count_total": 2,
+        "overrides": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5569,
+              0.0536
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7647940174953859,
+              0.8784026173457686
+            ]
+          }
+        ],
+        "rev": 2
+      },
+      "s11-snapshot-edit": {
+        "at": "2026-09-24T19:27:21.500Z",
+        "manifest_sha256": "dd52436d795294bf3e7fd2bad7f265d6221d37258e67d1d12d868caf84207bd5",
+        "svg_sha256": "2c8a83a1bdd2e0130de5f41d1a1786e03c8b7960cc11e9d18d2976eba1c6b262",
+        "document_sha256": "2ee4ca411d13861f28e1a18a3492a2b2f7a7bf8bfe3ea32c075caa2b740b4b3a",
+        "render_request_patches": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5569,
+              0.0536
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7647940174953859,
+              0.8784026173457686
+            ]
+          },
+          {
+            "gid": "axes_0.ylabel",
+            "prop": "pos_frac",
+            "value": [
+              0.022757627080595512,
+              0.4720000000000001
+            ]
+          }
+        ],
+        "render_count_total": 3,
+        "overrides": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5569,
+              0.0536
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7647940174953859,
+              0.8784026173457686
+            ]
+          },
+          {
+            "gid": "axes_0.ylabel",
+            "prop": "pos_frac",
+            "value": [
+              0.022757627080595512,
+              0.4720000000000001
+            ]
+          }
+        ],
+        "rev": 3
+      },
+      "s12-recomputed": {
+        "at": "2026-09-24T19:27:29.853Z",
+        "manifest_sha256": "7c59fd9e79f7b78f6577ef3b25366d4bcd9ba2574fad4614f82dd423ba086636",
+        "svg_sha256": "2728be50809e60bcd1f03ded1b2625bcbe7ae3e68238d09385634486e9ce4548",
+        "document_sha256": "2ee4ca411d13861f28e1a18a3492a2b2f7a7bf8bfe3ea32c075caa2b740b4b3a",
+        "render_request_patches": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5569,
+              0.0536
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7647940174953859,
+              0.8784026173457686
+            ]
+          },
+          {
+            "gid": "axes_0.ylabel",
+            "prop": "pos_frac",
+            "value": [
+              0.022757627080595512,
+              0.4720000000000001
+            ]
+          }
+        ],
+        "render_count_total": 4,
+        "overrides": [
+          {
+            "gid": "fig.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.5569,
+              0.0536
+            ]
+          },
+          {
+            "gid": "axes_0.title",
+            "prop": "pos_frac",
+            "value": [
+              0.2936,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_1.title",
+            "prop": "pos_frac",
+            "value": [
+              0.8203,
+              0.1036
+            ]
+          },
+          {
+            "gid": "axes_0.legend",
+            "prop": "loc_frac",
+            "value": [
+              0.1219,
+              0.2298
+            ]
+          },
+          {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [
+              0.3707,
+              0.3915
+            ]
+          },
+          {
+            "gid": "fig.texts_1",
+            "prop": "pos_frac",
+            "value": [
+              0.042,
+              0.9296
+            ]
+          },
+          {
+            "gid": "axes_0",
+            "prop": "position",
+            "value": [
+              0.08,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_1",
+            "prop": "position",
+            "value": [
+              0.5606,
+              0.236,
+              0.3315,
+              0.584
+            ]
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "fontsize",
+            "value": 14
+          },
+          {
+            "gid": "axes_0.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.2457,
+              0.8796
+            ]
+          },
+          {
+            "gid": "axes_1.xlabel",
+            "prop": "pos_frac",
+            "value": [
+              0.7647940174953859,
+              0.8784026173457686
+            ]
+          },
+          {
+            "gid": "axes_0.ylabel",
+            "prop": "pos_frac",
+            "value": [
+              0.022757627080595512,
+              0.4720000000000001
+            ]
+          }
+        ],
+        "rev": 1
+      }
+    },
+    "first_failed_invariant": "产品层：P4b 原图范围导出的检查范围混入画布页面几何（out-of-page 阻断）；断言层：P15 E1↔Ecal 文字位移 2/9 条 0.144 mm > 0.05 mm",
+    "mutation_check": {
+      "target_file": "src/tavotto/engine/execspec.py",
+      "mutation": "safe_spec 里 cwd_mode == project_root 的分支 `cwd = str(Path(figures_dir))` → 脚本目录（把项目根当脚本目录 ⇒ 同名干扰文件被读入）",
+      "expected_red_case": "ACCEPT-2 / QA-FLAGSHIP-01 的数据身份不变量：回执输入文件 sha256 == 真值、折线全序列 == [0,9,2,10]、出处文字；新 pytest 同一处",
+      "observed": "red",
+      "observed_detail": "pytest：assert None == <真值 sha>（inputs.files 只剩 scripts/data/points.csv）；驱动：P3 worker cwd(lsof) 与回执 sha 两条 FAIL、P4 折线序列与出处文字 FAIL（y=[0,2,9,10]）。回执 launch_context.cwd_origin 仍报 project.root——标签不足以证明，独立探针才抓得到",
+      "restored_green": true
+    },
+    "new_tests": [
+      "tests/test_qa_first_open_env_and_data.py::test_project_venv_and_same_name_decoy_resolve_to_the_true_interpreter_and_file",
+      "web/e2e/multi-select-geometry.spec.ts::图内混合多选整组拖动：锚点 = 独立模型，撤销 / 重做回到对应位置"
+    ],
+    "product_bugs": [
+      {
+        "summary": "「原图尺寸」导出被画布页面越界（out-of-page）当成阻断：快速编辑把 177.8 mm 宽的图放到默认 150×100 mm 画布页（x=−13.9 mm），导出对话框在范围「原图尺寸 / 仅此图」下仍列 1 条阻断「超出页面范围」，必须勾「知悉……仍要导出」；样式检查报告写下 scope=original + acknowledged=[out-of-page] + 画布 page_mm。原图导出物与画布页面无关（页面盒 = 504×230.4 pt）。违背 ExportDialog 自己的注释「按原图导出只算那张图上的问题——页面的比例都不是这次要出的东西」与规范 §SCI-06「原图范围不混入画布 x/y/w/h」。",
+        "repro": "flagship_driver.cjs 跑到 P4b（或手动：干净配置、打开宽于 150 mm 的图 → 导出 → 原图尺寸）；离线核对：python docs/qa/2026-09-24/flagship/repro/bug_original_scope_out_of_page.py docs/qa/2026-09-24/flagship/evidence（exit 0 = 缺陷形状成立）",
+        "severity": "中（P2）：不丢数据、可知情放行，但每张宽于默认页的图首次导出都会被假阻断，且把一次『用户知悉阻断』写进审计报告",
+        "evidence": [
+          "docs/qa/2026-09-24/flagship/evidence/snap/E0-export-dialog.png",
+          "docs/qa/2026-09-24/flagship/evidence/snap/s0-first-open.document.json",
+          "docs/qa/2026-09-24/flagship/evidence/exports/E0_style-check.restored3-run.json",
+          "docs/qa/2026-09-24/flagship/evidence/report.json#exports_gate"
+        ]
+      }
+    ],
+    "gaps": [
+      "桌面壳（Tauri / WKWebView）未测：本节是 HTTP + Chromium；桌面入口、文件对话框、真退出应用未覆盖",
+      "锁定对象（lockedGids）未进本流程：图内锁定元素点不中，未测「锁定不动但参与参照框」",
+      "『完全退出』= /api/shutdown + ps 确认无残留进程；浏览器侧用 storageState 延续 localStorage（模拟同一 webview 配置），不是冷启动的新浏览器配置",
+      "导出位移的候选预算 0.01 mm 未校准：7/9 条满足，2/9 条 0.144 mm，根因未确诊（见 verdict_reason）",
+      "E0（零 override）走原件路径（Type3 字体）而 E1 由 RenderCore 重画（Type0/CID），两者不可直接做位移对拍；对拍改在同一路径（Ecal↔E1）",
+      "旋转的多字符文字（twin 轴 ylabel 'signal'）pdfminer 按字拆行，未参与 PDF 文字配对",
+      "回执 inputs.files 不记录项目外的绝对路径数据（external/offsets.csv），外部数据的身份只能靠图内数值（柱高比）旁证",
+      "databinding 把 set_xlabel('t / s') 当成相对数据路径字面量（准备载荷 reads 与回执 binding.missing 里出现 't / s'）；按 ADR 0057 的启发式定义属已知噪声，未判定为缺陷",
+      "open_project 在用户项目根写 tavotto_registry.json 草稿；导出与版本写进 <项目>/tavottofile/（文档化目录）；P18 按白名单明列，未算越权"
+    ]
+  },
+  {
+    "case_id": "QA-FLAGSHIP-01-snapshot",
+    "title": "旗舰分支「继续快照」：编辑后改磁盘数据，不重跑，继续编辑并导出",
+    "coverage_status": "待实现",
+    "existing_tests": [],
+    "existing_tests_note": "仓库里没有「编辑后磁盘数据变化 → 继续用热态快照导出」的用例；project_watch 只看脚本 / 注册表 / 素材，不看数据文件（ADR 0026）。",
+    "expected_outcome": "自动成功：改写 data/points.csv（y→[1,8,3,9]）后再做一次图内拖动并导出，画布与导出物仍是编辑时的快照数据 [0,9,2,10] + 全部编辑；导出不擅自重跑脚本；后端对这次数据变化留有记录。",
+    "product_outcome": "自动成功",
+    "test_verdict": "pass",
+    "verdict_reason": "P16 全部 14 条检查通过：拖动锚点符合模型、非目标不动；SVG 折线与出处文字仍是旧数据；E2 PDF（pdfminer 独立读取）点序列 == [0,9,2,10]、出处文字旧 sha、twin 序列 == 环境 A。准备接口的 binding_check 记下 changed=[data/points.csv]、matched=false（后端有记录）。界面状态栏没有任何「数据已变」提示——规范只对重算分支要求显示语义切换，此处记为缺口不判失败。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+      "worker_python": "3.13.11（产品自己选中的项目 venv paper/.venv，base = Homebrew python@3.13）",
+      "matplotlib": "3.10.8",
+      "numpy": "2.4.3",
+      "node": "v26.7.0",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（headless，viewport 1600×1000 / e2e 默认 1280×720）",
+      "pdf_readers": "pdfminer.six 20251230、poppler pdftoppm 26.03.0（独立于产品）",
+      "product_version": "0.16.0（前端构建 index-qj9xX_eu）",
+      "fonts": "TAVOTTO_FONTS_DIR 指向主仓库已取回的批准字体（只读）",
+      "entry_note": "HTTP 浏览器模式（python -m tavotto --no-browser，端口 5306，会话认证开，落地 URL 的一次性 nonce）+ Playwright 真 Chromium；不是桌面壳（Tauri 壳不可自动化，未测）"
+    },
+    "fixtures": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/repro/make_flagship_project.py",
+        "sha256": "6aa8247ec86d14770763100dc05809998cbe68be6ec5582747883b2f13f45d89"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/fixture-truth.json",
+        "sha256": "b9fddf7b90a042645fc9545d00f0ee4f2d44cab940fccb4ad974ba94b76d25a3"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/Fig_flagship.pdf",
+        "sha256": "6500dce4916f2a64659157b6d298787b15c48bdad52a3dd75fe4e4ea343daeb0",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/data/points.csv",
+        "sha256": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/data/points.csv",
+        "sha256": "1c8ade0c7fd2a2b7f8ed6b2ab588c51e99d2838da5afdc8d529f357a4841f9c7",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/entry.py",
+        "sha256": "79b382af08dd2c506805584d6b710eddf4ed0006f013e14d4189db5873d06907",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/labmod.py",
+        "sha256": "b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/external/offsets.csv",
+        "sha256": "cd0bd6d847b26aa7eadac5fb9635038298cc9755c64ba3ce274b579a13ef343e",
+        "note": "生成器确定性产物"
+      }
+    ],
+    "entry": "HTTP + Playwright Chromium（与主流程同一会话，驱动 P16）",
+    "commands": [
+      "cd web && pnpm install --frozen-lockfile --prefer-offline && cd ..",
+      "PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py",
+      "SCRATCH=<任意临时目录>",
+      "/opt/homebrew/opt/python@3.13/libexec/bin/python3 docs/qa/2026-09-24/flagship/repro/make_flagship_project.py $SCRATCH/fixture --base-python /opt/homebrew/opt/python@3.13/libexec/bin/python3",
+      "QA_FONTS=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts node docs/qa/2026-09-24/flagship/repro/flagship_driver.cjs $SCRATCH/fixture $SCRATCH/final",
+      "/opt/homebrew/opt/python@3.13/libexec/bin/python3 docs/qa/2026-09-24/flagship/repro/collect_evidence.py $SCRATCH/final $SCRATCH/fixture docs/qa/2026-09-24/flagship/evidence"
+    ],
+    "exit_codes": {
+      "flagship_driver.cjs": 0
+    },
+    "evidence": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/logs/QA-FLAGSHIP-01-snapshot.log",
+        "sha256": "50547667ad10f3247b289380454bd15f4441d0481c3e2c478f48af3840f4ff84"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/report.json",
+        "sha256": "05daa1786796139dcb447786db0058daa1c6fb09cd746ef0ee8e82748173501f"
+      },
+      {
+        "summary": "P16 checks 14/14 passed；report.json.snapshot_branch 含改写前后 sha256 与 binding_check"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E2.pdf",
+        "sha256": "b3cec608c79c9bba7a08b9f633fbd05b74ed2a5cc74577b12a7eae6a166e38c4"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E2.png",
+        "sha256": "149fda9b8094a613a4792d56c70902fcc8ae145682b3bbf2ba84bf9fb29081f5"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E2.inspect.json",
+        "sha256": "cd1e0acb615e8eebb18f9d886e997dc66806db418977f9b8941636f97e67da6a"
+      }
+    ],
+    "first_failed_invariant": null,
+    "mutation_check": null,
+    "mutation_check_reason": "未做：「导出使用旧版本 / 导出偷偷重跑脚本」的定点变异需要改导出作业的会话来源，本节时间内没有找到单行即可命中的落点；本分支的判据（旧数据 + 编辑）已在 M3 变异下对照组验证过「数据会不会变」的尺子是活的（M3 让重算不重跑，P17 的新数据判据随之变红）",
+    "new_tests": [],
+    "product_bugs": [],
+    "gaps": [
+      "界面不提示磁盘数据已与快照不同（只有准备接口的 binding_check 记了）",
+      "只测了同一会话内；重启后首次渲染会重跑脚本读新数据（预期如此），未单独断言其提示",
+      "未测 PNG/TIFF 等位图导出与快照语义"
+    ]
+  },
+  {
+    "case_id": "QA-FLAGSHIP-01-recompute",
+    "title": "旗舰分支「明确重算」：右键「重新构建」按新数据重跑，编辑保持，语义切换可见，再导出",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "web/src/store/quickEditActions.test.ts::先作废（按文件 id）、再按当前 overrides 渲染；文档与历史一个字不动",
+      "web/src/canvas/objectContextMenu.test.tsx::重新构建 → 作废这张图的会话再按当前 overrides 渲染；文档与历史不动"
+    ],
+    "existing_tests_note": "两条都是 mock 引擎：量「先 invalidate 再按 overrides 渲染、文档不动、播报 panelRebuilt」的调用顺序，不量真实脚本是否重读了磁盘数据、编辑落点是否保持。",
+    "expected_outcome": "引导后成功（用户显式动作）：右键面板 →「重新构建」后界面播报「已按源脚本重新构建」；画布折线变为新数据 [1,8,3,9]、出处文字换成新文件 sha；所有带位置 override 的元素锚点不变；E3 导出物是新数据 + 全部编辑。",
+    "product_outcome": "引导后成功",
+    "test_verdict": "pass",
+    "verdict_reason": "P17 全部 14 条检查通过；变异 M3（不作废热会话）下界面改播「已按当前修改重新渲染；源脚本没有重跑」、折线与导出仍是旧数据，判据按预期变红，还原后复跑回绿。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+      "worker_python": "3.13.11（产品自己选中的项目 venv paper/.venv，base = Homebrew python@3.13）",
+      "matplotlib": "3.10.8",
+      "numpy": "2.4.3",
+      "node": "v26.7.0",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（headless，viewport 1600×1000 / e2e 默认 1280×720）",
+      "pdf_readers": "pdfminer.six 20251230、poppler pdftoppm 26.03.0（独立于产品）",
+      "product_version": "0.16.0（前端构建 index-qj9xX_eu）",
+      "fonts": "TAVOTTO_FONTS_DIR 指向主仓库已取回的批准字体（只读）",
+      "entry_note": "HTTP 浏览器模式（python -m tavotto --no-browser，端口 5306，会话认证开，落地 URL 的一次性 nonce）+ Playwright 真 Chromium；不是桌面壳（Tauri 壳不可自动化，未测）"
+    },
+    "fixtures": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/repro/make_flagship_project.py",
+        "sha256": "6aa8247ec86d14770763100dc05809998cbe68be6ec5582747883b2f13f45d89"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/fixture-truth.json",
+        "sha256": "b9fddf7b90a042645fc9545d00f0ee4f2d44cab940fccb4ad974ba94b76d25a3"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/Fig_flagship.pdf",
+        "sha256": "6500dce4916f2a64659157b6d298787b15c48bdad52a3dd75fe4e4ea343daeb0",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/data/points.csv",
+        "sha256": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/data/points.csv",
+        "sha256": "1c8ade0c7fd2a2b7f8ed6b2ab588c51e99d2838da5afdc8d529f357a4841f9c7",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/entry.py",
+        "sha256": "79b382af08dd2c506805584d6b710eddf4ed0006f013e14d4189db5873d06907",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/labmod.py",
+        "sha256": "b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/external/offsets.csv",
+        "sha256": "cd0bd6d847b26aa7eadac5fb9635038298cc9755c64ba3ce274b579a13ef343e",
+        "note": "生成器确定性产物"
+      }
+    ],
+    "entry": "HTTP + Playwright Chromium（驱动 P17：返回画布 → 右键 [data-canvas-stage] [data-object-id] → [data-quick-item=rebuild]）",
+    "commands": [
+      "cd web && pnpm install --frozen-lockfile --prefer-offline && cd ..",
+      "PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py",
+      "SCRATCH=<任意临时目录>",
+      "/opt/homebrew/opt/python@3.13/libexec/bin/python3 docs/qa/2026-09-24/flagship/repro/make_flagship_project.py $SCRATCH/fixture --base-python /opt/homebrew/opt/python@3.13/libexec/bin/python3",
+      "QA_FONTS=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts node docs/qa/2026-09-24/flagship/repro/flagship_driver.cjs $SCRATCH/fixture $SCRATCH/final",
+      "/opt/homebrew/opt/python@3.13/libexec/bin/python3 docs/qa/2026-09-24/flagship/repro/collect_evidence.py $SCRATCH/final $SCRATCH/fixture docs/qa/2026-09-24/flagship/evidence",
+      "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/quickEditActions.test.ts src/canvas/objectContextMenu.test.tsx"
+    ],
+    "exit_codes": {
+      "flagship_driver.cjs": 0,
+      "vitest": 0
+    },
+    "evidence": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/logs/QA-FLAGSHIP-01-recompute.log",
+        "sha256": "bc38211bdaaaccb922907b2e762d3eaf34b08f3ecfdc707fa3670582242ab7b8"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/report.json",
+        "sha256": "05daa1786796139dcb447786db0058daa1c6fb09cd746ef0ee8e82748173501f"
+      },
+      {
+        "summary": "P17 checks 14/14 passed；既有 vitest 2 files / 90 tests passed；变异 M3 下 P17 5 条 FAIL"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E3.pdf",
+        "sha256": "e9fd141cbe983ef25e4d7b8c729dc9a1869dae604ecf251eafff960bab815e0b"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E3.png",
+        "sha256": "cd7fce219a96b72c4004efd29df1f5e4a58f4913b827d684e4dddd1e5259c535"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E3.inspect.json",
+        "sha256": "4c4aaa079af147e73b939d2bb39f41776e0bd57d76f129e1c916d46ec28a0be5"
+      }
+    ],
+    "first_failed_invariant": null,
+    "mutation_check": {
+      "target_file": "web/src/store/actions.ts",
+      "mutation": "rebuildPanel 不作废热会话（`invalidated = false`），「重新构建」退化为只按 override 重画",
+      "expected_red_case": "QA-FLAGSHIP-01-recompute：界面宣布语义切换、重算后折线 == 新数据、导出 PDF == 新数据",
+      "observed": "red",
+      "observed_detail": "界面播报「已按当前修改重新渲染；源脚本没有重跑」；s12 折线仍是 [0,9,2,10]、出处文字仍是旧 sha；E3 PDF 同样是旧数据",
+      "restored_green": true
+    },
+    "new_tests": [],
+    "product_bugs": [],
+    "gaps": [
+      "「重新构建」不进历史（按合同）；未测撤销是否会把数据退回旧快照（合同说不会，未断言）",
+      "未测重算失败路径（脚本报错 / 数据文件被删）"
+    ]
+  },
+  {
+    "case_id": "ACCEPT-1",
+    "title": "第一批强验收①：G2 混合多选连续编辑 → undo/redo → 权威重渲染 → 保存重开 → 导出，锚点始终符合独立参考",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "web/e2e/fake-realtime.spec.ts::拖图内元素：预览跟手、拖动期间零后端、松手一次定稿",
+      "web/src/store/alignAction.test.ts::撤销一次精确回到对齐前，重做一次精确恢复",
+      "web/src/store/alignAction.test.ts::左对齐只给真正要动的两个元素发补丁，基准元素保持自动布局",
+      "web/src/canvas/alignUndoConvergence.test.tsx::对齐的响应晚于撤销的响应回来，最终仍然停在 A",
+      "web/src/canvas/fakeRealtimeDrag.test.tsx（100 次 move 零后端 / 取消语义 / 撤销重做）",
+      "web/src/canvas/dragReleaseSnapback.test.tsx（松手不弹回）"
+    ],
+    "existing_tests_note": "e2e 只拖单个元素、只断言 transform 形状与请求次数，不核对落点数值；jsdom 用例用 seedExactRender / 手写 manifest，量不到真 matplotlib 的锚点。新增 e2e 补上「混合多选 + 独立坐标尺 + 撤销重做画面位置」；组缩放 / 对齐 / 分布 / 保存重开 / 导出的真浏览器闭环仍只在 repro 驱动里。",
+    "expected_outcome": "自动成功（几何部分）：每步权威 manifest 锚点 = 独立模型（拖动 anchor+Δs/(W,H)；组缩放 c+s(box−c)，c=组框左上、s 取主导比例；底对齐 = 选区最大底边；水平等距 = 首尾不动等间距）≤0.5 CSS px，非目标不动，孪生轴随宿主恰好一次；拖动途中 0 渲染、松手 1 次；撤销×2 / 重做×2 的文档 override 与独立 HTTP 重渲染几何逐项回到对应快照；保存退出重开后几何 == 退出前；导出 PDF 的文字位移 == manifest 位移。",
+    "product_outcome": "引导后成功",
+    "test_verdict": "partial",
+    "verdict_reason": "P5–P14 全部几何检查通过（最大锚点误差 0.03 px 量级，均受 round4 量化）；撤销/重做在前端命中 4 档变体缓存、0 次后端渲染，用独立 HTTP 重渲染核对几何逐项相同；重开后 11 条 override 与几何逐项一致。导出段：页面盒、点序列、文字齐全通过，文字位移 7/9 精确、2/9 为 0.144 mm（>0.05 mm 预设，见 QA-FLAGSHIP-01）；导出前须对假阻断知情确认（product_bug）。新 e2e 通过，M2 变异下以「漏掉的成员锚点 −30 px」变红、还原回绿。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+      "worker_python": "3.13.11（产品自己选中的项目 venv paper/.venv，base = Homebrew python@3.13）",
+      "matplotlib": "3.10.8",
+      "numpy": "2.4.3",
+      "node": "v26.7.0",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（headless，viewport 1600×1000 / e2e 默认 1280×720）",
+      "pdf_readers": "pdfminer.six 20251230、poppler pdftoppm 26.03.0（独立于产品）",
+      "product_version": "0.16.0（前端构建 index-qj9xX_eu）",
+      "fonts": "TAVOTTO_FONTS_DIR 指向主仓库已取回的批准字体（只读）",
+      "entry_note": "HTTP 浏览器模式（python -m tavotto --no-browser，端口 5306，会话认证开，落地 URL 的一次性 nonce）+ Playwright 真 Chromium；不是桌面壳（Tauri 壳不可自动化，未测）"
+    },
+    "fixtures": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/repro/make_flagship_project.py",
+        "sha256": "6aa8247ec86d14770763100dc05809998cbe68be6ec5582747883b2f13f45d89"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/fixture-truth.json",
+        "sha256": "b9fddf7b90a042645fc9545d00f0ee4f2d44cab940fccb4ad974ba94b76d25a3"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/Fig_flagship.pdf",
+        "sha256": "6500dce4916f2a64659157b6d298787b15c48bdad52a3dd75fe4e4ea343daeb0",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/data/points.csv",
+        "sha256": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/data/points.csv",
+        "sha256": "1c8ade0c7fd2a2b7f8ed6b2ab588c51e99d2838da5afdc8d529f357a4841f9c7",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/entry.py",
+        "sha256": "79b382af08dd2c506805584d6b710eddf4ed0006f013e14d4189db5873d06907",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/labmod.py",
+        "sha256": "b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/external/offsets.csv",
+        "sha256": "cd0bd6d847b26aa7eadac5fb9635038298cc9755c64ba3ce274b579a13ef343e",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "web/e2e/multi-select-geometry.spec.ts",
+        "sha256": "42b698a6012b156e780b6418177973caa16ce1e6166dd55b4122cae4f43ac4b2"
+      }
+    ],
+    "entry": "Playwright Chromium（驱动 + 新 e2e），权威几何经 /api/engine/render 响应与独立 HTTP 重渲染",
+    "commands": [
+      "cd web && pnpm install --frozen-lockfile --prefer-offline && cd ..",
+      "PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py",
+      "SCRATCH=<任意临时目录>",
+      "/opt/homebrew/opt/python@3.13/libexec/bin/python3 docs/qa/2026-09-24/flagship/repro/make_flagship_project.py $SCRATCH/fixture --base-python /opt/homebrew/opt/python@3.13/libexec/bin/python3",
+      "QA_FONTS=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts node docs/qa/2026-09-24/flagship/repro/flagship_driver.cjs $SCRATCH/fixture $SCRATCH/final",
+      "/opt/homebrew/opt/python@3.13/libexec/bin/python3 docs/qa/2026-09-24/flagship/repro/collect_evidence.py $SCRATCH/final $SCRATCH/fixture docs/qa/2026-09-24/flagship/evidence",
+      "cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/../src npx playwright test e2e/multi-select-geometry.spec.ts e2e/fake-realtime.spec.ts --project=chromium",
+      "cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/alignAction.test.ts src/canvas/alignUndoConvergence.test.tsx src/store/geometryAuthority.test.ts src/canvas/fakeRealtimeDrag.test.tsx src/canvas/dragReleaseSnapback.test.tsx src/components/WorkdirConfirmDialog.test.tsx src/store/documentStore.test.ts"
+    ],
+    "exit_codes": {
+      "flagship_driver.cjs": 0,
+      "playwright(restored)": 0,
+      "playwright(M2)": 1,
+      "vitest": 0
+    },
+    "evidence": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/logs/ACCEPT-1.log",
+        "sha256": "a69b4a3be6a975e7d63ba05fe53f891ba6e5ad975ab37c631317d73a4e587b91"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/report.json",
+        "sha256": "05daa1786796139dcb447786db0058daa1c6fb09cd746ef0ee8e82748173501f"
+      },
+      {
+        "summary": "驱动 P5–P14 全 PASS、P15 1 FAIL；e2e 2 passed（新 + fake-realtime）；vitest 7 files / 93 tests passed；M2 下 e2e 1 failed、驱动 P6 3 FAIL"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E0.pdf",
+        "sha256": "af5ec37caf070020a1a804469588f82bef3ee2e61fd152f397e6654107796cfd"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/Ecal.pdf",
+        "sha256": "218950ffda374e682cc129afee2f6c4802ec590b3412ef7d2c6a9cbe3837bb27"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E1.pdf",
+        "sha256": "78db22efacb74fdd3c49e569d9ead32597926c3c6e6d8b980d09c420a3294d4c"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E2.pdf",
+        "sha256": "b3cec608c79c9bba7a08b9f633fbd05b74ed2a5cc74577b12a7eae6a166e38c4"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E3.pdf",
+        "sha256": "e9fd141cbe983ef25e4d7b8c729dc9a1869dae604ecf251eafff960bab815e0b"
+      }
+    ],
+    "first_failed_invariant": "P15 导出文字位移（2/9 条 0.144 mm）；产品层首个偏离为 P4b 导出假阻断",
+    "mutation_check": {
+      "target_file": "web/src/canvas/interactions.ts",
+      "mutation": "startElementGroupMove 松手 `entries.map((en, i) => en.write(boxes[i]))` → `entries.slice(1).map(...)`（多选漏一人）；重建前端后测",
+      "expected_red_case": "ACCEPT-1：成员锚点 = 独立模型、每个成员恰好一条位置 override、组内相对间距守恒",
+      "observed": "red",
+      "observed_detail": "新 e2e：axes_0.title x 锚点 px 误差 −30；驱动 P6：axes_0.title err_px [−25, 18]、override 计数 axes_0.title=0、相对间距 0.0598",
+      "restored_green": true
+    },
+    "new_tests": [
+      "web/e2e/multi-select-geometry.spec.ts::图内混合多选整组拖动：锚点 = 独立模型，撤销 / 重做回到对应位置"
+    ],
+    "product_bugs": [
+      {
+        "summary": "「原图尺寸」导出被画布页面越界（out-of-page）当成阻断：快速编辑把 177.8 mm 宽的图放到默认 150×100 mm 画布页（x=−13.9 mm），导出对话框在范围「原图尺寸 / 仅此图」下仍列 1 条阻断「超出页面范围」，必须勾「知悉……仍要导出」；样式检查报告写下 scope=original + acknowledged=[out-of-page] + 画布 page_mm。原图导出物与画布页面无关（页面盒 = 504×230.4 pt）。违背 ExportDialog 自己的注释「按原图导出只算那张图上的问题——页面的比例都不是这次要出的东西」与规范 §SCI-06「原图范围不混入画布 x/y/w/h」。",
+        "repro": "flagship_driver.cjs 跑到 P4b（或手动：干净配置、打开宽于 150 mm 的图 → 导出 → 原图尺寸）；离线核对：python docs/qa/2026-09-24/flagship/repro/bug_original_scope_out_of_page.py docs/qa/2026-09-24/flagship/evidence（exit 0 = 缺陷形状成立）",
+        "severity": "中（P2）：不丢数据、可知情放行，但每张宽于默认页的图首次导出都会被假阻断，且把一次『用户知悉阻断』写进审计报告",
+        "evidence": [
+          "docs/qa/2026-09-24/flagship/evidence/snap/E0-export-dialog.png",
+          "docs/qa/2026-09-24/flagship/evidence/snap/s0-first-open.document.json",
+          "docs/qa/2026-09-24/flagship/evidence/exports/E0_style-check.restored3-run.json",
+          "docs/qa/2026-09-24/flagship/evidence/report.json#exports_gate"
+        ]
+      }
+    ],
+    "gaps": [
+      "多选规模只到 5 个成员（GEO-02 的 10/100 未做）",
+      "只测 100% 附近的一个视图倍率与 DPR=1；75%/150%、非整数 zoom、高 DPI 未测",
+      "锁定对象未进选区",
+      "组缩放只用了右下手柄一种方向",
+      "WebKit 未跑（新 e2e 只在 chromium project）"
+    ]
+  },
+  {
+    "case_id": "ACCEPT-2",
+    "title": "第一批强验收②：E1 项目环境 + D1 分离目录与同名干扰数据，从首开走到最终导出，证明真实解释器、输入数据与科研结果正确",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "tests/test_foundation_first_open.py::test_fo02_scripts_and_data_split_asks_once_then_runs_at_the_project_root",
+      "tests/test_foundation_first_open.py::test_fo07_same_name_data_in_two_places_asks_and_honours_the_choice",
+      "tests/test_first_open_environment.py::test_a_healthy_project_venv_is_chosen_before_the_first_run_and_remembered",
+      "tests/test_first_open_environment.py::test_fo17_two_venvs_on_the_same_base_are_kept_apart",
+      "tests/test_databinding.py（五档结论与不猜的负例）",
+      "tests/test_first_open_workdir.py（决定 / 门 / 第三档）"
+    ],
+    "existing_tests_note": "FO02/FO07 有数据歧义但项目里没有 venv、PATH 上没有竞争环境，且用 ylim（极值）当数值判据——D1 的真值与干扰极值 / 均值相同，这把尺子分不开；环境用例在进程内调 resolve_worker_python，没有数据歧义也不经 HTTP。新增 pytest 把两条轴合在同一个真实 HTTP 首开里，并用全序列（折线顶点仿射拟合）+ 回执输入 sha256 + worker 自报 import 来源判。",
+    "expected_outcome": "引导后成功：干净配置、无 TAVOTTO_WORKER_PYTHON、PATH 最前是环境 B；首开以 ambiguous_data 问一次（不预选、选择前不发布图、一行脚本不跑）；选项目根后环境来源 project_venv（A），worker 进程经 paper/.venv/bin/python 启动、cwd = 项目根；回执 qa_signal 来自 A、labmod 来自 scripts/、data/points.csv sha256 == 真值；图内全序列 == [0,9,2,10]、twin 序列 == A、出处文字 == 真值 sha + env A、柱高 ∝ 外部数据×2；重启后不再问、仍是 A；最终导出 PDF 独立读取数值同上；两个 venv 无新增包、项目无授权外写入。",
+    "product_outcome": "引导后成功",
+    "test_verdict": "pass",
+    "verdict_reason": "驱动 P0–P4、P12b–P13、P15（数据 / 环境部分）、P18 全部通过：worker pid 的 __PYVENV_LAUNCHER__ = paper/.venv/bin/python、lsof cwd = 项目根，均为独立探针；E1/E2 PDF 点序列仿射残差 <1e-6 pt、干扰序列残差 >1 pt。新 pytest 在系统兜底与显式 TAVOTTO_WORKER_PYTHON 两种 runner 环境下均通过；M1 变异下新 pytest 与驱动都以「读到干扰文件」变红（回执 cwd_origin 标签却仍报 project.root），还原回绿。导出须对假阻断知情确认，属 ACCEPT-1/主流程记录的缺陷，不影响本条的环境 / 数据结论。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "backend_python": "3.13.11（/Volumes/Projects/Tavotto/.venv，无 matplotlib；PYTHONPATH=worktree/src）",
+      "worker_python": "3.13.11（产品自己选中的项目 venv paper/.venv，base = Homebrew python@3.13）",
+      "matplotlib": "3.10.8",
+      "numpy": "2.4.3",
+      "node": "v26.7.0",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（headless，viewport 1600×1000 / e2e 默认 1280×720）",
+      "pdf_readers": "pdfminer.six 20251230、poppler pdftoppm 26.03.0（独立于产品）",
+      "product_version": "0.16.0（前端构建 index-qj9xX_eu）",
+      "fonts": "TAVOTTO_FONTS_DIR 指向主仓库已取回的批准字体（只读）",
+      "entry_note": "HTTP 浏览器模式（python -m tavotto --no-browser，端口 5306，会话认证开，落地 URL 的一次性 nonce）+ Playwright 真 Chromium；不是桌面壳（Tauri 壳不可自动化，未测）"
+    },
+    "fixtures": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/repro/make_flagship_project.py",
+        "sha256": "6aa8247ec86d14770763100dc05809998cbe68be6ec5582747883b2f13f45d89"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/fixture-truth.json",
+        "sha256": "b9fddf7b90a042645fc9545d00f0ee4f2d44cab940fccb4ad974ba94b76d25a3"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/Fig_flagship.pdf",
+        "sha256": "6500dce4916f2a64659157b6d298787b15c48bdad52a3dd75fe4e4ea343daeb0",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/data/points.csv",
+        "sha256": "c5de961e6faaca467b4f3c5fa2bae072c85faf7f4b1d672624fdff6ca1b6a266",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/data/points.csv",
+        "sha256": "1c8ade0c7fd2a2b7f8ed6b2ab588c51e99d2838da5afdc8d529f357a4841f9c7",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/entry.py",
+        "sha256": "79b382af08dd2c506805584d6b710eddf4ed0006f013e14d4189db5873d06907",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/paper/scripts/labmod.py",
+        "sha256": "b927cc81b79389041f3271cf198231ce5fb909722a46b41ee2d0790b25f63385",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "$SCRATCH/fixture/external/offsets.csv",
+        "sha256": "cd0bd6d847b26aa7eadac5fb9635038298cc9755c64ba3ce274b579a13ef343e",
+        "note": "生成器确定性产物"
+      },
+      {
+        "path": "tests/test_qa_first_open_env_and_data.py",
+        "sha256": "5aeb730f6e45001aa61a03cec68039d2706f3a37f26da348ef780a624b16aec0"
+      }
+    ],
+    "entry": "HTTP（会话认证开；准备接口 / 渲染 / workdir PATCH / 环境状态）+ Playwright Chromium（驱动）",
+    "commands": [
+      "cd web && pnpm install --frozen-lockfile --prefer-offline && cd ..",
+      "PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py",
+      "SCRATCH=<任意临时目录>",
+      "/opt/homebrew/opt/python@3.13/libexec/bin/python3 docs/qa/2026-09-24/flagship/repro/make_flagship_project.py $SCRATCH/fixture --base-python /opt/homebrew/opt/python@3.13/libexec/bin/python3",
+      "QA_FONTS=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts node docs/qa/2026-09-24/flagship/repro/flagship_driver.cjs $SCRATCH/fixture $SCRATCH/final",
+      "/opt/homebrew/opt/python@3.13/libexec/bin/python3 docs/qa/2026-09-24/flagship/repro/collect_evidence.py $SCRATCH/final $SCRATCH/fixture docs/qa/2026-09-24/flagship/evidence",
+      "PATH=/opt/homebrew/opt/python@3.13/libexec/bin:/usr/bin:/bin:/opt/homebrew/bin PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_qa_first_open_env_and_data.py tests/test_foundation_first_open.py tests/test_first_open_workdir.py tests/test_databinding.py -p no:cacheprovider -q -rs",
+      "PATH=/opt/homebrew/opt/python@3.13/libexec/bin:/usr/bin:/bin:/opt/homebrew/bin PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_environment.py -p no:cacheprovider -q -rs"
+    ],
+    "exit_codes": {
+      "flagship_driver.cjs": 0,
+      "pytest(new+FO+workdir+databinding)": 0,
+      "pytest(test_first_open_environment, 无显式变量)": 0,
+      "pytest(同上, runner 设了 TAVOTTO_WORKER_PYTHON)": 1,
+      "pytest(M1)": 1
+    },
+    "evidence": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/logs/ACCEPT-2.log",
+        "sha256": "6ef9f3237cbd77e18e6020f2660c701b1de2faeb37d9500a3b0d83992137a999"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/report.json",
+        "sha256": "05daa1786796139dcb447786db0058daa1c6fb09cd746ef0ee8e82748173501f"
+      },
+      {
+        "summary": "pytest 59 passed / 0 skipped；test_first_open_environment 11 passed / 2 skipped（TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON / ALT_PYTHON 未提供 → not_run，单列）；runner 带显式 TAVOTTO_WORKER_PYTHON 时该文件 7 条假红（显式变量按合同压过项目 venv，用例未 delenv），记为测试环境敏感，不是产品缺陷"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E1.pdf",
+        "sha256": "78db22efacb74fdd3c49e569d9ead32597926c3c6e6d8b980d09c420a3294d4c"
+      },
+      {
+        "path": "docs/qa/2026-09-24/flagship/evidence/exports/E1.inspect.json",
+        "sha256": "637caa732d6eb0ea402feb0654ce7f772ef31849d106964d4a8fd8032990e2d2"
+      }
+    ],
+    "first_failed_invariant": null,
+    "mutation_check": {
+      "target_file": "src/tavotto/engine/execspec.py",
+      "mutation": "safe_spec 里 cwd_mode == project_root 的分支 `cwd = str(Path(figures_dir))` → 脚本目录（把项目根当脚本目录 ⇒ 同名干扰文件被读入）",
+      "expected_red_case": "ACCEPT-2 / QA-FLAGSHIP-01 的数据身份不变量：回执输入文件 sha256 == 真值、折线全序列 == [0,9,2,10]、出处文字；新 pytest 同一处",
+      "observed": "red",
+      "observed_detail": "pytest：assert None == <真值 sha>（inputs.files 只剩 scripts/data/points.csv）；驱动：P3 worker cwd(lsof) 与回执 sha 两条 FAIL、P4 折线序列与出处文字 FAIL（y=[0,2,9,10]）。回执 launch_context.cwd_origin 仍报 project.root——标签不足以证明，独立探针才抓得到",
+      "restored_green": true
+    },
+    "new_tests": [
+      "tests/test_qa_first_open_env_and_data.py::test_project_venv_and_same_name_decoy_resolve_to_the_true_interpreter_and_file"
+    ],
+    "product_bugs": [],
+    "gaps": [
+      "回执不记录项目外绝对路径输入（external/offsets.csv）；外部数据只靠柱高比旁证",
+      "新 pytest 不做 pid → 进程命令行的探针（跨平台不稳）；该探针只在 macOS 驱动里做了",
+      "未测 Conda / 其它管理器、离线安装、显式失效（ENV-03 等不在本节）",
+      "test_first_open_environment.py 对 runner 的 TAVOTTO_WORKER_PYTHON 敏感（7 条假红），建议该文件 autouse delenv——本节未改既有用例"
+    ]
+  }
+]

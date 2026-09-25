@@ -1,0 +1,113 @@
+{
+ "schema": 3,
+ "project": {
+  "id": "p_iuv10kcz",
+  "name": "新文档"
+ },
+ "canvases": [
+  {
+   "id": "c_sbr0ynl3",
+   "name": "Figure 1",
+   "page": {
+    "w": 150,
+    "h": 100
+   },
+   "objects": [
+    {
+     "id": "p_1btfuqzi",
+     "type": "panel",
+     "fileId": "Fig_flagship.pdf",
+     "fileKind": "pdf",
+     "nativeW": 177.8,
+     "nativeH": 81.28,
+     "script": "scripts/entry.py",
+     "cost": "medium",
+     "overrides": [
+      {
+       "gid": "fig.texts_0",
+       "prop": "pos_frac",
+       "value": [
+        0.5511672529581069,
+        0.053578509753757504
+       ]
+      },
+      {
+       "gid": "axes_0.title",
+       "prop": "pos_frac",
+       "value": [
+        0.2936,
+        0.1036
+       ]
+      },
+      {
+       "gid": "axes_1.title",
+       "prop": "pos_frac",
+       "value": [
+        0.8203,
+        0.1036
+       ]
+      },
+      {
+       "gid": "axes_0.legend",
+       "prop": "loc_frac",
+       "value": [
+        0.1219,
+        0.2298
+       ]
+      },
+      {
+       "gid": "axes_0.texts_0",
+       "prop": "pos_frac",
+       "value": [
+        0.3707,
+        0.3915
+       ]
+      },
+      {
+       "gid": "fig.texts_1",
+       "prop": "pos_frac",
+       "value": [
+        0.042,
+        0.9296
+       ]
+      },
+      {
+       "gid": "axes_0",
+       "prop": "position",
+       "value": [
+        0.08,
+        0.236,
+        0.3315,
+        0.584
+       ]
+      },
+      {
+       "gid": "axes_1",
+       "prop": "position",
+       "value": [
+        0.5606,
+        0.236,
+        0.3315,
+        0.584
+       ]
+      },
+      {
+       "gid": "axes_0.xlabel",
+       "prop": "fontsize",
+       "value": 14
+      }
+     ],
+     "name": "Fig_flagship",
+     "x": -13.900000000000006,
+     "y": 9.36,
+     "w": 177.8,
+     "h": 81.28
+    }
+   ],
+   "guides": []
+  }
+ ],
+ "activeCanvasId": "c_sbr0ynl3",
+ "createdAt": 1790277945590,
+ "updatedAt": 1790278005107
+}

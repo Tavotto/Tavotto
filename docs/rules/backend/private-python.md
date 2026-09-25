@@ -71,3 +71,20 @@
   下载期间取消无残留、两项目共享一份、有代记着的旧 runtime 不删；`TestCleanMachine` 四条干净机器；`TestRealChain`
   真归档要 `TAVOTTO_PRIVATE_PYTHON_REAL=1`）+ `tests/test_foundation_private_python.py`（FO24 / FO25 / FO26 经产品 HTTP
   入口，进程内 test_client）+ `web/src/components/DependencyPrepareDialog.test.tsx` + `tests/test_mcp_server.py` 的干净机器一条。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 只补受管环境的**基础解释器来源**、安装器仍是 pip（不下载 uv）
+- 锁文件是唯一输入、两个 macOS 目标与 `packaging/runtime-lock.json` 同源
+- 目录按内容命名不可变 + staging + 真起一次 + `os.replace`，`python_of` 只看最终目录
+- 校验先于一切执行（整份 sha256 → 逐成员校验 → 可执行位 → 真起）
+- 离线有缓存零请求、无缓存有界 `private_python_offline`
+- 联网只有 urllib（TLS 默认、代理只从环境变量）
+- 授权绑在计划的 `private_python` 载荷上、重建 / 首装不下载
+- 取消按消费者、提交点后无效
+- 旧 runtime 有代记着（`referenced_base_runtimes`）就不退役
+- `enabled` 全 false 直到目标资格取得，`TAVOTTO_PRIVATE_PYTHON` 只是工程逃生门

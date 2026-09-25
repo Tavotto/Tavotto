@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -302,6 +303,130 @@ def test_an_automatically_remembered_interpreter_that_broke_is_invalidated_and_r
     assert plan.environment["invalidated"]["reason"] == "no_matplotlib"
     assert plan.environment["trigger"] == projectenv.TRIGGER_FIRST_OPEN
     assert plan.environment["python_version"] and plan.environment["support"]
+
+
+@needs_worker
+def test_a_configured_interpreter_deleted_after_it_was_selected_stops_with_missing(tmp_path):
+    """QA ENV-03-B1：设置里的解释器**在本进程里已经被选定（缓存）之后**才被删掉。以前缓存命中就
+    直接交出那条路径：起 worker 时 `FileNotFoundError` 原文外露成 internal_error，环境状态仍报
+    `resolution_error: null` 和旧路径。合同（ADR 0057 §一）：`explicit_python_unusable` / missing。
+
+    变异反证：拿掉 `select_worker_python()` 缓存命中处的存在性检查，第二次解析直接交回旧路径。
+    """
+    root = _project(tmp_path)
+    venv = venvfixture.make_project_venv(tmp_path, "chosen", python=WORKER_PY)
+    chosen = projectenv.interpreter_of(venv)
+    engine_config.set_worker_python(chosen)
+    engine_pool.reset_worker_python()
+    python, source = engine_pool.resolve_worker_python(str(root), script="figure.py")
+    assert engine_pool.same_python(python, chosen) and source == engine_pool.SOURCE_CONFIGURED
+    shutil.rmtree(venv)  # 用户删掉了那个环境（或外置盘拔了）；进程没重启
+    for discover in (False, True):  # 环境状态端点（discover=False）与起会话同一个答案
+        with pytest.raises(engine_pool.WorkerError) as err:
+            engine_pool.resolve_worker_python(str(root), script="figure.py", discover=discover)
+        assert err.value.explicit == {
+            "source": engine_pool.SOURCE_CONFIGURED,
+            "python": chosen,
+            "reason": "missing",
+        }
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.get("figure.py", str(root), "__main__")
+    assert err.value.code == engine_pool.EXPLICIT_UNUSABLE_CODE
+    assert not engine_pool._workers
+
+
+@needs_worker
+def test_a_project_venv_rebuilt_broken_at_the_same_path_is_rechecked_not_trusted(tmp_path):
+    """QA ENV-04-B1：首开采用了项目 `.venv`，之后用户在终端里把它删了、在**同一路径**重建成没有
+    matplotlib 的环境。以前进程内的「健康」结论按路径缓存、看不见替换：「重新构建」直接起在坏环境
+    上反复 `session_dead`，准备计划仍写 `discovery.ok = true`，只有重启后端才重新体检。
+
+    变异反证：`_cached_verdict()` 不比指纹（直接回缓存的结论）→ 第二次 build 是 session_dead。
+    """
+    root = _project(tmp_path)
+    venv = venvfixture.make_project_venv(root, ".venv", python=WORKER_PY)
+    venv_python = projectenv.interpreter_of(venv)
+    worker, _ = engine_pool.build("figure.py", str(root), "__main__")
+    assert worker.python_source == engine_pool.SOURCE_PROJECT_VENV
+    assert engine_pool.first_open_outcome(root)["ok"] is True
+    engine_pool.shutdown_all(wait=True)
+    shutil.rmtree(venv)
+    _bare_venv(root, ".venv")  # 同一路径，没有 matplotlib
+    engine_pool.invalidate("figure.py", str(root))  # 界面上的「重新构建」
+    worker, _ = engine_pool.build("figure.py", str(root), "__main__")  # 不是 session_dead
+    assert not engine_pool.same_python(worker.python, venv_python)
+    inv = engine_pool.invalidated_decision(root)
+    assert inv == {"python": venv_python, "reason": "no_matplotlib", "trigger": "first_open"}
+    outcome = engine_pool.first_open_outcome(root)
+    assert outcome["ok"] is False
+    assert outcome["rejected"][0]["code"] == projectenv.ERROR_NO_MATPLOTLIB
+
+
+@needs_worker
+def test_a_rejected_project_venv_repaired_at_the_same_path_is_discovered_again(tmp_path):
+    """ENV-04 的反方向：首开体检拒了项目 `.venv`（没有 matplotlib），用户在同一路径把它重建好。
+    首开结果按项目缓存，以前要重启后端才会再看一眼；现在缓存带着体检那一刻的指纹，对不上就重做。
+
+    变异反证：`cached_first_open()` 不比指纹 → 仍用缓存里的「拒了」，不采用修好的 venv。
+    """
+    root = _project(tmp_path)
+    _bare_venv(root, ".venv")
+    python, source = engine_pool.resolve_worker_python(str(root), script="figure.py")
+    assert source != engine_pool.SOURCE_PROJECT_VENV
+    assert engine_pool.first_open_outcome(root)["ok"] is False
+    shutil.rmtree(root / ".venv")
+    venv = venvfixture.make_project_venv(root, ".venv", python=WORKER_PY)
+    python, source = engine_pool.resolve_worker_python(str(root), script="figure.py")
+    assert source == engine_pool.SOURCE_PROJECT_VENV
+    assert engine_pool.same_python(python, projectenv.interpreter_of(venv))
+    assert engine_pool.first_open_outcome(root)["ok"] is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 的可执行位")
+def test_an_interpreter_made_non_executable_after_its_verdict_is_rechecked(tmp_path):
+    """Codex #598 P2：验过之后解释器被 `chmod -x`，inode / mtime / size 都不动，旧指纹看不见，
+    `_cached_verdict()` 仍回 True，下一次起 worker 在 `Popen` 上抛 `PermissionError` 成 internal_error。
+    指纹带上权限位与 ctime 之后结论作废、重新体检。
+
+    变异反证：指纹里去掉 `st_mode` 与 `st_ctime_ns`，第二个断言回 True。
+    """
+    exe = tmp_path / "env" / "bin" / "python"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    exe.chmod(0o755)
+    engine_pool._record_verdict(str(exe), True)
+    assert engine_pool._cached_verdict(str(exe)) is True
+    exe.chmod(0o644)
+    assert engine_pool._cached_verdict(str(exe)) is None
+
+
+@needs_worker
+def test_a_session_dead_on_a_remembered_venv_drops_its_health_verdict(tmp_path):
+    """ENV-04 的另一半：环境**就地**坏掉（`pip uninstall matplotlib`、包被别的东西遮住），解释器
+    文件与 `pyvenv.cfg` 一个都没动，指纹看不见。会话一死（`session_dead`）就不再替它担保：下一次
+    起会话前重新体检，自动记住的那条作废、重新发现——而不是一直起在坏环境上。
+
+    变异反证：拿掉 `request()` 的 session_dead 分支里的 `forget_python_verdict(...)`，第二次
+    build 仍是 session_dead。
+    """
+    root = _project(tmp_path)
+    venv = venvfixture.make_project_venv(root, ".venv", python=WORKER_PY)
+    venv_python = projectenv.interpreter_of(venv)
+    worker, _ = engine_pool.build("figure.py", str(root), "__main__")
+    assert worker.python_source == engine_pool.SOURCE_PROJECT_VENV
+    engine_pool.shutdown_all(wait=True)
+    # 就地弄坏：venv 自己的 site-packages 排在继承来的宿主目录之前，一个同名包就遮住了 matplotlib
+    site = next(p for p in venv.rglob("site-packages") if p.is_dir())
+    (site / "matplotlib").mkdir()
+    (site / "matplotlib" / "__init__.py").write_text(
+        "raise ImportError('matplotlib 被就地弄坏了')\n", encoding="utf-8"
+    )
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("figure.py", str(root), "__main__")
+    assert err.value.code == "session_dead", (err.value.code, str(err.value))
+    worker, _ = engine_pool.build("figure.py", str(root), "__main__")
+    assert not engine_pool.same_python(worker.python, venv_python)
+    assert engine_pool.invalidated_decision(root)["reason"] == "no_matplotlib"
 
 
 @needs_worker

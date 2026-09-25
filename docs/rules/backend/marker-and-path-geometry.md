@@ -93,3 +93,15 @@
   一条（或全相同）的偏移经 `offset_transform` 加到轮廓上，多条不同的偏移让 cell 各奔东西、
   退回 bbox。bbox 一个字节不动。
   前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 形状是只读派生事实不是取值，13 个名字之外发归一化几何
+- 发不发看 `state.applied`
+- geometry 是渲染派生数据不进文档
+- 散点 / 纯 marker 线 / 柱逐个描，超过 `MAX_MARKERS` 整组退回 bbox
+- 彩色网格只描外轮廓 + 裁剪框，不逐 cell
