@@ -757,6 +757,41 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
       [0, 0, 80, 60],
     ])
   })
+
+  /**
+   * 那张图**不在当前画布上**（Codex 评审 #596 P2）：`findFigurePanel()` 会跨画布找到它，
+   * 检查与报告就都得按**它所在的那张画布**算——拿当前画布去裁，摘要里一条都剩不下
+   * （8 pt 的阻断被说成没问题），报告的 `objects` 也是空的。
+   */
+  it('图在另一张画布上：检查按它所在的画布算，报告里有这张图', async () => {
+    await offPage(8)
+    await act(async () => {
+      useDocumentStore.getState().addCanvas('空白')
+    })
+    const home = useDocumentStore.getState().canvases.find((c) =>
+      c.objects.some((o) => o.id === 'p1'),
+    )
+    expect(home, '前提：p1 在另一张画布上').toBeTruthy()
+    expect(useDocumentStore.getState().activeCanvasId).not.toBe(home!.id)
+    await reopen()
+    await click(document.body.querySelectorAll('[role="radio"]')[0])
+    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
+      'true',
+    )
+    // 这张图自己的阻断（8 pt）必须在；画布摆放那条不算
+    expect(button('开始导出')!.hasAttribute('disabled'), '8 pt 的阻断被裁没了').toBe(true)
+    expect(text()).not.toContain('超出页面范围')
+    await act(async () => {
+      confirmBox()!.click()
+    })
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    const report = exportBodies[0].style_check_report as Record<string, unknown>
+    expect(report.acknowledged).toEqual(['font-below-absolute-floor'])
+    expect((report.objects as { name: string; rect_mm: number[] }[])).toEqual([
+      expect.objectContaining({ name: 'Fig1.pdf', rect_mm: [0, 0, 80, 60] }),
+    ])
+  })
 })
 
 describe('「能不能导」只有一份判断', () => {

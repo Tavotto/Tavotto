@@ -624,7 +624,7 @@ describe('原图范围不算画布摆放类规则（FLAG-B1）', () => {
         dpi: 300,
         formats: ['pdf'],
         stem: 'Fig1',
-        original: { objectId: 'p1', widthMm: 177.8, heightMm: 81.28 },
+        original: { panel: p1, widthMm: 177.8, heightMm: 81.28 },
       },
       profile,
     ) as { page_mm: unknown; objects: { name: string; rect_mm: number[] }[] }

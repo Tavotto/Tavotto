@@ -331,12 +331,18 @@ export function ExportDialog() {
   });
   // 只给缩略图换代用（runtime 素材重跑后换 src）；规格与可用性都从上面那个 hook 来
   const runtimePreviewNonce = useRuntimeAssetStore((s) => s.previewNonce);
-  const panel = useMemo(
-    () => (figureId ? (findFigurePanel(figureId)?.panel ?? null) : null),
+  /**
+   * 那张图与**它所在的画布**。`findFigurePanel()` 会跨画布找——图不在当前画布上时，
+   * 检查与报告都得按它自己那张画布算（Codex 评审 #596 P2）：拿当前画布去裁，
+   * 摘要里一条都剩不下，报告的 `objects` 也是空的。
+   */
+  const target = useMemo(
+    () => (figureId ? findFigurePanel(figureId) : null),
     // 同上：`findFigurePanel()` 问的是 documentStore 的当前快照
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [figureId, doc.objects],
+    [figureId, doc.objects, canvases],
   );
+  const panel = target?.panel ?? null;
 
   useEffect(() => {
     if (!open) return;
@@ -427,10 +433,13 @@ export function ExportDialog() {
    * 范围的裁法在 `summaryFor()` 一处，对话框不自己筛。
    */
   const targetObjectId = scope === "original" && panel ? panel.id : undefined;
+  /** 检查按哪张画布裁：原图 = 那张图所在的画布，画布 = 当前画布 */
+  const checkCanvasId =
+    scope === "original" && target ? target.canvasId : activeCanvasId;
   const summary = useMemo(
     () =>
       summaryFor(validationIssues, {
-        canvasId: activeCanvasId,
+        canvasId: checkCanvasId,
         objectId: targetObjectId,
         extra: exportIssues,
         ready: validationReady,
@@ -438,7 +447,7 @@ export function ExportDialog() {
       }),
     [
       validationIssues,
-      activeCanvasId,
+      checkCanvasId,
       targetObjectId,
       exportIssues,
       validationReady,
@@ -640,7 +649,7 @@ export function ExportDialog() {
               // 报告里的条目集合与界面上的摘要裁同一刀（按原图 = 只有那张图的）
               ...(targetObjectId
                 ? rawIssuesForObject(
-                    rawIssuesFor(activeCanvasId),
+                    rawIssuesFor(checkCanvasId),
                     targetObjectId,
                   )
                 : rawIssuesFor(activeCanvasId)),
@@ -651,10 +660,11 @@ export function ExportDialog() {
               formats,
               stem: filename,
               // 原图范围：报告的页面 = 这张图的图幅，不写画布页面与摆放（QA FLAG-B1）
+              // 直接交那张图本身：它可能不在当前画布（`doc`）上
               original:
                 targetObjectId && panel
                   ? {
-                      objectId: targetObjectId,
+                      panel,
                       widthMm: availability.spec?.widthMm ?? panel.nativeW,
                       heightMm: availability.spec?.heightMm ?? panel.nativeH,
                     }
@@ -723,6 +733,7 @@ export function ExportDialog() {
       availability.spec,
       canStart,
       targetObjectId,
+      checkCanvasId,
     ],
   );
 

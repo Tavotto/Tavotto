@@ -1131,9 +1131,10 @@ export function buildProofPayload(
      * 按原图导出时的那张图与它的图幅（mm）。给了就不写画布：`page_mm` 是
      * 产物的页面（= 图幅，margin 0，与 MCP 那条入口 `_proof_bytes` 同一口径），
      * `objects` 只有这张图、铺满那一页——画布的页面与 x/y/w/h 不进原图导出
-     * （ADR 0031 §original，QA FLAG-B1）。
+     * （ADR 0031 §original，QA FLAG-B1）。交的是**那张图本身**而不是 id：
+     * 它可能不在 `doc`（当前画布）上（Codex 评审 #596 P2）。
      */
-    original?: { objectId: string; widthMm: number; heightMm: number }
+    original?: { panel: PanelObject; widthMm: number; heightMm: number }
   },
   profile: PublicationProfile,
   /**
@@ -1161,7 +1162,7 @@ export function buildProofPayload(
   const rectOf = (o: FigureDocument['objects'][number]) =>
     (orig ? [0, 0, orig.widthMm, orig.heightMm] : [o.x, o.y, o.w, o.h]).map(round2)
   const reported = orig
-    ? doc.objects.filter((o) => o.id === orig.objectId)
+    ? [orig.panel]
     : doc.objects.filter((o) => !o.hidden)
   return {
     kind: PROOF_KIND,
