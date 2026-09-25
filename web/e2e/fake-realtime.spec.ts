@@ -5,6 +5,21 @@ import path from 'node:path'
 import type { Page, Route } from '@playwright/test'
 import { expect, freePort, test } from './fixtures'
 
+// 这里量的是「位移严格等于鼠标位移 Δs」（独立模型）。图内拖动吸附（#575）会有意把落点
+// 拽到别的元素的对齐线上，与这把尺子正交——吸附自己的行为由 #575 的用例看护。所以本文件
+// 一律在关掉吸附的画布上量（与用户在画布设置里关掉「吸附」同一个偏好键）。
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      const key = 'tavotto.ui'
+      const saved = JSON.parse(localStorage.getItem(key) || '{}')
+      localStorage.setItem(key, JSON.stringify({ ...saved, prefsVersion: 2, snapEnabled: false }))
+    } catch {
+      /* 存储不可用时照常跑：吸附只在碰到对齐线时才介入 */
+    }
+  })
+})
+
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 
 /**
