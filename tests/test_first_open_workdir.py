@@ -149,6 +149,60 @@ def test_pool_raises_the_structured_confirmation_before_spawning_anything(tmp_pa
     assert not engine_pool._workers
 
 
+class _LiveSession:
+    """池里一条活着的会话替身：`built=False` = 上一次 build 失败留下的（下一次用它会重跑整个脚本）。"""
+
+    def __init__(self, built: bool):
+        self.built = built
+        self.entry = "__main__"
+        self.python = "/nonexistent/python"
+        self.script_name = "s/fig.py"
+        self.last_used = 0.0
+        self.shutdowns = 0
+
+    def alive(self) -> bool:
+        return True
+
+    def shutdown(self, *a, **k) -> None:
+        self.shutdowns += 1
+
+
+@pytest.mark.parametrize("built", [False, True])
+def test_a_live_session_that_never_built_passes_the_same_gate_before_reuse(
+    tmp_path, monkeypatch, built
+):
+    """QA 2026-09-24 PATH-B3：会话起在「证据说不用问」的时候（数据还没放进项目根，verdict=unknown），build 失败留在
+    池里；之后数据出现在项目根，证据变成要问。准备接口说 `needs_input`——渲染入口复用那条没 build 成的会话就是在
+    旧沙盒里把脚本再跑一遍（曾报 `script_error`）。没 build 成的会话复用前要过同一道门、同一个 code、同一份载荷；
+    会话本身不动（可能正被别的调用方 build 着）。已 build 的热态会话不再跑脚本，不过门，原样复用。"""
+    root = _project(tmp_path, ROOT_ONLY, {})
+    # 起会话那一刻不用问
+    assert workdir.decision_for(root, "s/fig.py")["needs_confirmation"] is False
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda *a, **k: ("/nonexistent/python", "system")
+    )
+    live = _LiveSession(built=built)
+    key = (engine_pool._norm_dir(str(root)), "s/fig.py")
+    engine_pool._workers[key] = live
+    try:
+        (root / "data").mkdir()
+        (root / "data" / "x.csv").write_text("x\n", encoding="utf-8")  # 证据变了：只有项目根找得到
+        expected = workdir.decision_for(root, "s/fig.py")["confirmation"]
+        assert expected is not None
+        if built:
+            w, created = engine_pool.acquire("s/fig.py", str(root), "__main__")
+            assert w is live and created is False
+        else:
+            with pytest.raises(engine_pool.WorkerError) as err:
+                engine_pool.acquire("s/fig.py", str(root), "__main__")
+            assert err.value.code == workdir.ERROR_CONFIRMATION_REQUIRED
+            assert err.value.confirmation == expected
+            assert err.value.script_name == "s/fig.py"
+        assert engine_pool._workers.get(key) is live and live.shutdowns == 0
+    finally:
+        engine_pool._workers.pop(key, None)
+
+
 # ---------------------------------------------------------------- execspec：project_root 档
 def test_project_root_mode_is_a_third_cwd_mode_and_project_keeps_its_meaning(tmp_path):
     root = tmp_path / "p"

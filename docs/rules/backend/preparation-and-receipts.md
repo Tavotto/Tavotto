@@ -44,6 +44,13 @@
   `result.required_input` = `workdir.confirmation_payload`（选项 / 证据 / 怎么回答），不起线程、
   不碰 pool。runner 抛 `workdir_confirmation_required`（计划后决定被清掉）落同一终局。答完
   （`PATCH /api/engine/workdir`）重新准备。
+- **`ready` 要求这张面板真的被捕获**（QA 2026-09-24 PATH-B1）：build（或复用的会话）的捕获表里没有 `plan.stem` 时落
+  `error`，code 与渲染入口**同一个**（`no_figures_captured` / `no_figures_captured_silent` / `unknown_stem`，
+  `pool.missing_stem_error` 走 `_explain_empty_capture` 同一条换码路），回执照样留着（脚本确实跑过）。
+- **门也管复用**（QA 2026-09-24 PATH-B3）：池里活着但**没 build 成**的会话（上一次 build 失败留下的）再被取用就是
+  在它起会话时的 cwd 里重跑整个脚本——`pool.acquire` 复用它之前过 `_workdir_gate`（与 `_new_worker` 同一处），
+  证据变成要问就抛同一个 `workdir_confirmation_required`；会话本身不动（答完 `PATCH /api/engine/workdir` 会收掉）。
+  已 build 的热态会话不再跑脚本，不过门。
 - **过期计划不执行**（FO-007）：执行线程在起会话之前把 `workdir.grant_for(root)` 与计划记下的
   `grant` 比一次，不一致就 `preparation_plan_stale`，一行脚本不跑。
 - **自报只收这一条会话的（U09，ADR 0070）**：worker 的 `runtime_report()` 带 `report_origin=build` 与 `pid`；
@@ -57,7 +64,9 @@
   `inputs.channels` 如实列出装上了的通道 `python_open` / `numpy_datasource`）（先于只读回退装，
   记实际打开的那条路径；源码文件剔掉、去重、有界），h5py / `os.open` / 网络 / 子进程看不见——`inputs.observation=partial`
   + `unobserved` 如实列出；观察到的文件身份（相对路径 + sha256）**进公开语义身份**，机器路径不进；`local_modules` 是
-  `sys.modules` 里落在项目根内的模块。build 那一刻定格，之后进程里再读什么都不是它的输入。
+  `sys.modules` 里落在项目根内的模块。**解释器自己的目录不算**（QA 2026-09-24 PATH-B2）：项目根里的 `.venv`（ADR 0057 首开第 4 条）
+  的 prefix / site-packages 严格落在项目根内时，底下的库文件既不记成数据输入、也不占预算、也不算本地模块
+  （`figcapture.interpreter_dirs_within`，主语是跑脚本的那个进程的 `sys.prefix` 等）；前缀等于或包含项目根时不排除。build 那一刻定格，之后进程里再读什么都不是它的输入。
 - **数据绑定与旧计划失效（U09，ADR 0071 / FO30）**：`databinding.binding_for(script, root, mode)` 按 cwd 档记「会读哪些
   文件、内容 sha256、修订」进 `PreparationPlan.binding`；执行线程起会话之前把授权 / 解释器决策 / 数据绑定三样与此刻各比
   一次，不一致就 `preparation_plan_stale` + `reason ∈ {grant_changed, environment_changed, data_binding_changed}` +
