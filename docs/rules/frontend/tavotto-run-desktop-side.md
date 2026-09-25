@@ -42,13 +42,3 @@ descriptor 文件读。
   送到的更新状态）。
 - 看护：`nativeSessionStore.test.ts` / `NativeConfirmDialog.test.tsx` /
   `openRequest.test.ts` / `runtimeAssetStore.test.ts`。
-
-## 速查表原要点（2026-09-25 迁入，#608）
-
-`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
-下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
-它们与上文同等有效，改规则时一并改这里。
-
-- 前端只提交不透明 `native_id`
-- 交接 ID 两条入口都必须带
-- 确认屏是闸（`blockDismiss`）、两条 → 排队
