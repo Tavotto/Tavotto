@@ -16,7 +16,11 @@
   Zustand reset 长，`clear()` 必须换代 + 清 inflight，A 项目的响应绝不
   落进 B（Session 6 评审修复；vitest 各有作废用例看护）。`packageStore`
   按同一条纪律换代（见 `docs/rules/frontend/settings-shell-and-packages.md`）——**新写一个会在项目之间
-  存活的 store 时，先回来把它加进这份名单**。
+  存活的 store 时，先回来把它加进这份名单**。`depRepairStore`（依赖修复：单包计划、联合计划、钉住的解释器、
+  装包进度）同样在 `resetForNewProject()` 里 `clear()` 换代（#590）：计划 / 绑定 / 采用 / 跳过的在途响应作废，
+  已落地的计划与错误清掉；**装包作业不取消**（后端 `close_project` 不碰它，结果按计划自己的项目记账），进度按
+  所属项目分格（`startedPlans` + `parked`，与 `packageStore` 的作业同一形状）——B 上不显示 A 的进度、A 的终态
+  副作用不在 B 上派发，切回 A 时接回进行中的进度或交出切走期间的结局。看护 `store/projectSwitchDepRepair.test.ts`。
 - **`scriptRunStore` 的四条纪律**（vitest 看护）：同脚本防并发（busy 即
   no-op，后端另有 409）；cancel 走后端取消端点（置标志 + 硬杀 worker），
   行内状态等**原请求**以 `execution_cancelled` 落地——绝不「界面装停了、
