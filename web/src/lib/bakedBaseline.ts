@@ -29,3 +29,18 @@ export function isJustBakedBaselineOf(
   if (facts?.baked_current === false) return false
   return JSON.stringify(overrides) === JSON.stringify(baked)
 }
+
+/**
+ * 「这个面板的 overrides 就是从素材基线原样抄来的」：只比内容，**不看** `baked_current`。
+ *
+ * 与 `isJustBakedBaselineOf` 回答的是两个问题：那个问「磁盘文件是否已经带着这些 override」
+ * （决定渲染 / 写回 / 导出，文件被外部改过就不成立）；这个问「这些 override 是不是用户的手改」
+ * ——文件被外部改过不会把 `addPanel` / 替换素材机械抄进来的基线变成用户的手改。唯一消费点是
+ * 画布跟随样式的「新图」判据（ADR 0081）：拿前者判的话，基线失效的素材加进绑定画布会被当成
+ * 手改过、永远不对齐（Codex #547 P2）。
+ */
+export function isCopiedBakedBaseline(overrides: readonly unknown[], facts: BakedBaselineFacts | undefined): boolean {
+  const baked = facts?.baked_overrides
+  if (!baked?.length) return false
+  return JSON.stringify(overrides) === JSON.stringify(baked)
+}

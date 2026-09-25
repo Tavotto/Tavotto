@@ -64,7 +64,7 @@ import {
 } from '@/lib/stylePresets'
 import type { DocumentStyle, FigureDocument, PanelObject } from '@/types/document'
 import { renderStylePlan, writeStylePlan } from './actions'
-import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
+import { isCopiedBakedBaseline } from '@/lib/bakedBaseline'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
@@ -156,7 +156,14 @@ const ledgerKey = (doc: FigureDocument = docNow()) => `${generation()}|${doc.sty
 
 /* --------------------------- 会话记账：看过的图 / 欠账 ----------------------- */
 
-/** 「这一会话里已经按当前绑定看过的图」 */
+/**
+ * 会话记账里一张图的身份：**面板 id + 素材**。替换素材（`replacePanelAsset`）保留面板 id、换掉文件与
+ * override——只按 id 记的话，换进来的新图被当成「看过了」，永远不按绑定的样式对齐（Codex #547 P1）；
+ * 旧素材欠着的那一笔也不该落到新素材上（新图按整份样式对齐）。
+ */
+const figKey = (p: PanelObject): string => `${p.id}@${p.fileId}`
+
+/** 「这一会话里已经按当前绑定看过的图」（图按 `figKey`，文字按 id） */
 const seen = new Map<string, Set<string>>()
 function markSeen(doc: FigureDocument, panelIds: Iterable<string>) {
   const key = ledgerKey(doc)
@@ -210,15 +217,15 @@ function pruneToStyle(debt: StyleProfileData, style: StyleProfileData): StylePro
  * override，每一张被写过的图的渲染变体键都变了、此刻都拿不到精确 manifest——commit 之后再量的话，
  * 已经写好的图也会被记一笔欠账，用户在它重画回来之前手改的值之后会被这笔假账冲掉（Codex #547 P1）
  */
-const missingNow = (doc: FigureDocument): string[] => panelsOf(doc).filter((p) => !manifestOf(p)).map((p) => p.id)
+const missingNow = (doc: FigureDocument): string[] => panelsOf(doc).filter((p) => !manifestOf(p)).map(figKey)
 
 function owe(doc: FigureDocument, delta: StyleProfileData, missingIds: string[]) {
   const ids = new Set(missingIds)
-  const missing = panelsOf(doc).filter((p) => ids.has(p.id))
+  const missing = panelsOf(doc).filter((p) => ids.has(figKey(p)))
   if (!missing.length || (!Object.keys(delta.element ?? {}).length && !delta.palette?.length)) return
   const key = ledgerKey(doc)
   const map = pending.get(key) ?? new Map<string, StyleProfileData>()
-  for (const p of missing) map.set(p.id, mergeDelta(map.get(p.id), delta))
+  for (const p of missing) map.set(figKey(p), mergeDelta(map.get(figKey(p)), delta))
   pending.set(key, map)
 }
 
@@ -381,7 +388,7 @@ function bindNow(recordId: string | null): void {
     plan,
   )
   owe(docNow(), delta, missing)
-  markSeen(docNow(), panelsOf(docNow()).map((p) => p.id).filter((id) => !missing.includes(id)))
+  markSeen(docNow(), panelsOf(docNow()).map(figKey).filter((k) => !missing.includes(k)))
   markTextsSeen()
 }
 
@@ -620,25 +627,27 @@ export function alignNewFigures(): number {
   for (const panel of panelsOf(doc)) {
     const m = manifestOf(panel)
     if (!m) continue
-    const debt = owed?.get(panel.id)
+    const fig = figKey(panel)
+    const debt = owed?.get(fig)
     const current = docNow()
     const target = current.objects.find((o): o is PanelObject => o.id === panel.id && o.type === 'panel')
     if (!target) continue
     if (debt) {
-      owed!.delete(panel.id)
-      markSeen(doc, [panel.id])
+      owed!.delete(fig)
+      markSeen(doc, [fig])
       const plan = changesFor({ ...pruneToStyle(debt, style), name: '' } as StylePreset, [target], current, false)
       if (isEmptyPlan(plan)) continue
       commitWith(hist('syncStyle', { name: bindingName(binding) }), (d) => writeStylePlan(d, plan, preset), plan)
       aligned += 1
       continue
     }
-    if (done.has(panel.id)) continue
-    markSeen(doc, [panel.id])
+    if (done.has(fig)) continue
+    markSeen(doc, [fig])
     // 带着样式管得到的 override = 对齐过 / 用户手改过——不碰。**例外是素材自带的烘焙基线**
     // （`addPanel` 把 `baked_overrides` 原样抄进来）：那不是用户的手改，绑定之后加进来的图与
     // 先加图再绑定应当得到同一个结果（Codex #547 P2）
-    const baseline = isJustBakedBaselineOf(panel.overrides, useAssetStore.getState().byId[panel.fileId])
+    // 只比内容、不看基线是否仍有效：文件被外部改过，抄进来的基线也不是用户的手改（Codex #547 P2）
+    const baseline = isCopiedBakedBaseline(panel.overrides, useAssetStore.getState().byId[panel.fileId])
     if (!baseline && styleOverrideTargets(panel, m).length) continue
     const plan = changesFor(presetDelta(null, style), [target], current, false)
     if (isEmptyPlan(plan)) continue

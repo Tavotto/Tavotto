@@ -4,7 +4,7 @@
  * 这里直接量判据本体，免得哪天消费点换了路，判据被顺手「简化」成 `!baked_current`。
  */
 import { describe, expect, it } from 'vitest'
-import { isJustBakedBaselineOf } from './bakedBaseline'
+import { isCopiedBakedBaseline, isJustBakedBaselineOf } from './bakedBaseline'
 
 const baked = [{ gid: 'g0', prop: 'color', value: '#000' }]
 const same = [{ gid: 'g0', prop: 'color', value: '#000' }]
@@ -41,5 +41,15 @@ describe('isJustBakedBaselineOf', () => {
     const swapped = [two[1], two[0]]
     expect(isJustBakedBaselineOf(two, { baked_overrides: two, baked_current: true })).toBe(true)
     expect(isJustBakedBaselineOf(swapped, { baked_overrides: two, baked_current: true })).toBe(false)
+  })
+})
+
+describe('isCopiedBakedBaseline：抄来的基线不是手改（与文件是否仍带着它无关）', () => {
+  const base = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 7 }]
+  it('基线失效（baked_current === false）时照样认出是抄来的；内容不同 / 没有基线不认', () => {
+    expect(isCopiedBakedBaseline(structuredClone(base), { baked_overrides: base, baked_current: false })).toBe(true)
+    expect(isJustBakedBaselineOf(structuredClone(base), { baked_overrides: base, baked_current: false })).toBe(false)
+    expect(isCopiedBakedBaseline([{ ...base[0], value: 8 }], { baked_overrides: base })).toBe(false)
+    expect(isCopiedBakedBaseline([], { baked_overrides: [] })).toBe(false)
   })
 })

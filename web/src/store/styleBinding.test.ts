@@ -1307,6 +1307,38 @@ describe('Codex #547 第十九轮评审', () => {
   })
 })
 
+describe('Codex #547 第二十轮评审（ddc3760b）', () => {
+  it('P1 已对齐的图换了素材（面板 id 不变）：新素材渲染回来时按绑定的样式对齐', async () => {
+    await seed([panel('a', 'FigA'), panel('b', 'FigB')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(10)
+    // 与 replacePanelAsset 同形：换文件、override 换成新素材的（这里没有基线 = 空），id 不变
+    s().commit(literal('替换素材'), (d) => {
+      const o = d.objects.find((x) => x.id === 'b') as PanelObject
+      o.fileId = 'FigC'
+      o.overrides = []
+    })
+    seedExactRender(panelById('b'), manifest('FigC', 8) as never)
+    expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(10)
+  })
+
+  it('P2 素材的烘焙基线已失效（文件被外部改过）：抄进来的基线照样不算手改，新图照样对齐', async () => {
+    const baked = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 7 }]
+    useAssetStore.setState({ byId: { FigB: { id: 'FigB', baked_overrides: baked, baked_current: false } as never } })
+    await seed([panel('a', 'FigA')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    s().commit(literal('加一张带失效基线的图'), (d) => {
+      d.objects.push({ ...panel('b', 'FigB'), overrides: structuredClone(baked) })
+    })
+    seedExactRender(panelById('b'), manifest('FigB', 7) as never)
+    expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(10)
+  })
+})
+
 describe('撤销只退画布、不推回样式库（ADR 0081 §十二，用户 2026-09-25 拍板）', () => {
   const unrelatedEdit = () =>
     s().commit(literal('改了别的'), (d) => {
