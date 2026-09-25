@@ -3809,23 +3809,25 @@ def api_engine_specfix():
     ):
         return jsonify({"error": "only 必须是 [{rule, gid}] 列表", "code": "invalid_only"}), 400
 
+    # native 图一次渲染都不做、那张 live 图一个字节都不碰：前端对 native 图本来就不给修复
+    # 按钮，这里是后端自己的那道闸（界面之外的调用方、界面判据漏掉的那一刻）。**先按存下的
+    # 档案判，再去解析会话**（Codex #549 r4106101158）：会话已结束的 native 图解析会抛
+    # `native_session_offline`，前端就分不出「不支持」与「出错了」
+    if _specfix_profile(rel_id) == engine_enginesession.PROFILE_NATIVE:
+        return _specfix_native_unsupported()
     worker, stem = _engine_worker(rel_id)
     if engine_enginesession.is_native(worker):
-        # 一次渲染都不做、那张 live 图一个字节都不碰：前端对 native 图本来就不给修复按钮，
-        # 这里是后端自己的那道闸（界面之外的调用方、界面判据漏掉的那一刻）
-        return jsonify(
-            {
-                "error": "native 图暂不支持自动修复",
-                "code": "specfix_native_unsupported",
-                "params": {"product": engine_brand.PRODUCT_NAME},
-            }
-        ), 409
+        return _specfix_native_unsupported()
     # `clean`：这次事务里的每一次渲染都没有 warning、没有抛——只有这样，事务结束时
     # 的热态才是它声称的那一份（B0 或回给前端的列表）。判据收在这一个闭包里，而不是
     # 逐个回滚点各查各的：回滚点有好几处，漏一处就是一个永久被污染的 worker
     state = {"worker": worker, "stem": stem, "clean": True}
 
     def render(patches: list) -> dict:
+        # 事务要渲染好几次、要好几秒：这期间另一个 `tavotto run` 会话可能到了屏障、把这张图
+        # 的描述符换成 native（Codex #549 r4106101147）。每次渲染之前再问一次，变了就中止——
+        # 不再渲染、不提交，safe worker 作废，那张 live 图不碰
+        _require_route_unchanged(rel_id)
         try:
             wk, st, resp = _engine_attempt(
                 rel_id, state["worker"], state["stem"], lambda w, s: w.override(s, patches, None)
@@ -3840,6 +3842,12 @@ def api_engine_specfix():
 
     try:
         out = _specfix_transaction(render, base, scale, profile, only)
+        # 提交之前最后问一次：最后一次渲染之后变的，同样不把列表交给前端去写
+        _require_route_unchanged(rel_id)
+    except _SpecfixRouteChanged:
+        LOG.warning("按规范修图途中这张图改由 native 会话渲染，中止: %s", rel_id)
+        _retire_hot_worker(state["worker"])
+        return _specfix_native_unsupported()
     except engine_pool.WorkerError as exc:
         LOG.error("按规范修图失败: %s: %s", stem, exc)
         # 渲染半路死了（含回滚那一次）：热态未知，作废，下一次请求重新起、按全量列表重放
@@ -3854,6 +3862,34 @@ def api_engine_specfix():
     out["worker_retired"] = not state["clean"] and _retire_hot_worker(state["worker"])
     out["replay_required"] = not state["clean"]
     return jsonify(out)
+
+
+class _SpecfixRouteChanged(Exception):
+    """修复事务途中，这张图「由谁渲染」变了（safe → native）。"""
+
+
+def _specfix_profile(rel_id: str) -> str:
+    """这张图此刻记在描述符里的那一档（`enginesession.profile_of`，与渲染路由同一个出处）。
+    磁盘面板永远是 safe（`_engine_worker` 同一条规矩）。"""
+    if not engine_runtimeasset.is_runtime_id(rel_id):
+        return engine_enginesession.PROFILE_SAFE
+    return engine_enginesession.profile_of(str(require_project()), rel_id)
+
+
+def _require_route_unchanged(rel_id: str) -> None:
+    """事务只在 safe 图上开始（native 在入口就拒了），所以「没变」= 此刻仍是 safe。"""
+    if _specfix_profile(rel_id) != engine_enginesession.PROFILE_SAFE:
+        raise _SpecfixRouteChanged(rel_id)
+
+
+def _specfix_native_unsupported():
+    return jsonify(
+        {
+            "error": "native 图暂不支持自动修复",
+            "code": "specfix_native_unsupported",
+            "params": {"product": engine_brand.PRODUCT_NAME},
+        }
+    ), 409
 
 
 def _retire_hot_worker(worker) -> bool:

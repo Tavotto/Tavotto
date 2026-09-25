@@ -23,7 +23,15 @@ import threading
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import nativesession, pool as engine_pool, preflight, profiles, specfix
+from tavotto.engine import (
+    nativesession,
+    pool as engine_pool,
+    preflight,
+    profiles,
+    runcodes,
+    specfix,
+)
+from tavotto.engine.runcodes import RunError
 
 
 def _worker_python():
@@ -499,7 +507,9 @@ def test_baseline_replay_with_warnings_aborts_before_any_candidate(render):
 # 指定的那一次渲染上注入 warning / 异常。
 
 
-def _post_specfix(monkeypatch, override, base, profile, *, native=False):
+def _post_specfix(
+    monkeypatch, override, base, profile, *, native=False, rel_id="Kin.pdf", engine_worker=None
+):
     """走 `/api/engine/specfix`，渲染交给 `override(patches)`；回 (响应, 作废记录)。
 
     `native=True` 时替身是一条真的 `NativeSession`（不连 socket，`override` 转给真 worker）
@@ -523,14 +533,14 @@ def _post_specfix(monkeypatch, override, base, profile, *, native=False):
         else _Worker()
     )
     retired: list[tuple] = []
-    monkeypatch.setattr(m, "_engine_worker", lambda rel_id: (worker, "Kin"))
+    monkeypatch.setattr(m, "_engine_worker", engine_worker or (lambda rel_id: (worker, "Kin")))
     monkeypatch.setattr(
         m.engine_pool, "invalidate", lambda script, root=None: retired.append((script, root))
     )
     m.app.config["TESTING"] = True
     resp = m.app.test_client().post(
         "/api/engine/specfix",
-        json={"id": "Kin.pdf", "patches": base, "scale": 1.0, "profile": profile},
+        json={"id": rel_id, "patches": base, "scale": 1.0, "profile": profile},
     )
     return resp, retired
 
@@ -637,3 +647,93 @@ def test_baseline_with_warnings_retires_the_worker(render, monkeypatch):
     assert body["worker_retired"] is True
     assert body["replay_required"] is True
     assert retired == [("fig.py", "/specfix-test-figures")]
+
+
+# ---- 第十一轮：事务途中这张图的档案变了（Codex #549 r4106101147 / r4106101158） ----
+
+RUNTIME_ID = "runtime:fig.py#Kin"
+
+
+def _stored_profile(monkeypatch, tmp_path, answer):
+    """`enginesession.profile_of`（物化描述符记的那一档）换成可控的：`answer()` 每问一次回一次。"""
+    asked: list[str] = []
+
+    def profile_of(root, asset_id, *, default="safe"):
+        asked.append(asset_id)
+        return answer()
+
+    monkeypatch.setattr(m.engine_enginesession, "profile_of", profile_of)
+    monkeypatch.setattr(m, "require_project", lambda: tmp_path)
+    return asked
+
+
+def test_a_figure_that_becomes_native_mid_transaction_is_aborted_before_the_next_render(
+    render, monkeypatch, tmp_path
+):
+    """B0 渲染之后另一个 `tavotto run` 会话到了屏障、把描述符换成 native：下一次渲染之前就
+    中止，回 `specfix_native_unsupported`，不提交；safe worker 作废，路由到 native 的那张 live 图
+    一次都没被渲染（`_engine_worker` 只在开头解析过一次，之后没有再去取会话）。"""
+    now = {"profile": "safe"}
+    _stored_profile(monkeypatch, tmp_path, lambda: now["profile"])
+    seen: list[list] = []
+    resolved: list[str] = []
+
+    class _Worker:
+        script_name = "fig.py"
+        figures_dir = "/specfix-test-figures"
+
+        def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+            seen.append(list(patches))
+            resp = render(patches)
+            now["profile"] = "native"  # ← B0 一回来，档案就变了
+            return resp
+
+    def engine_worker(rel_id):
+        resolved.append(rel_id)
+        return _Worker(), "Kin"
+
+    resp, retired = _post_specfix(
+        monkeypatch, render, BASE, _profile(), rel_id=RUNTIME_ID, engine_worker=engine_worker
+    )
+    body = resp.get_json()
+    assert resp.status_code == 409, body
+    assert body["code"] == "specfix_native_unsupported"
+    assert "patches" not in body
+    assert seen == [BASE], "档案变了之后还在渲染"
+    assert resolved == [RUNTIME_ID]
+    assert retired == [("fig.py", "/specfix-test-figures")]
+
+
+def test_a_figure_that_becomes_native_before_commit_is_not_committed(render, monkeypatch, tmp_path):
+    """最后一次渲染之后、回结果之前档案变了：同样中止，不把列表交给前端去提交。"""
+    now = {"profile": "safe", "renders": 0}
+    _stored_profile(monkeypatch, tmp_path, lambda: now["profile"])
+
+    def flip_at_last(patches):
+        resp = render(patches)
+        now["renders"] += 1
+        if patches != BASE:
+            now["profile"] = "native"  # ← 候选一回来就变（之后的渲染或提交前的检查必须拦住）
+        return resp
+
+    resp, _retired = _post_specfix(monkeypatch, flip_at_last, BASE, _profile(), rel_id=RUNTIME_ID)
+    body = resp.get_json()
+    assert resp.status_code == 409, body
+    assert body["code"] == "specfix_native_unsupported"
+    assert now["renders"] >= 2
+
+
+def test_an_ended_native_figure_gets_the_unsupported_code_not_offline(monkeypatch, tmp_path):
+    """r4106101158：描述符记着 native、会话已经结束——先按存下的档案拒绝，不去解析会话
+    （解析会抛 `native_session_offline`，前端就归成 engine_failed 还去重放）。"""
+    _stored_profile(monkeypatch, tmp_path, lambda: "native")
+
+    def offline(rel_id):
+        raise RunError(runcodes.NATIVE_SESSION_OFFLINE)
+
+    resp, retired = _post_specfix(
+        monkeypatch, lambda p: {}, BASE, _profile(), rel_id=RUNTIME_ID, engine_worker=offline
+    )
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "specfix_native_unsupported"
+    assert retired == []
