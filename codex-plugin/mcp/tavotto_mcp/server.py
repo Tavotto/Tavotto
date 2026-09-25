@@ -45,6 +45,19 @@ SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-1
 ROOTS_REQUEST_TIMEOUT_S = 2.0
 # 工作区授权需要真人看清路径再点选，不能沿用 roots 探针的 2 秒预算。
 ELICITATION_REQUEST_TIMEOUT_S = 300.0
+#: 拒绝 / 取消快于这个值，就不是人作的选择：真人要先看见框、读完整路径再点。
+#: 实测 Codex 0.155.1 在 approval_policy = never（桌面版「完全访问」）与
+#: ``codex exec`` 下都在 0 ms 内回 ``{"action": "decline"}``、不带任何标记
+#: （codex-rs ``core/src/session/mcp.rs`` 的 ``mcp_elicitation_decline_without_message``）。
+#: 误判两头不对称：把真人 0.9 s 的拒绝报成宿主自动拒绝，只是多一句关于权限设置的话；
+#: 反过来就是 #173 的原样——让用户去点一个根本不存在的框。
+HUMAN_RESPONSE_FLOOR_S = 1.0
+#: 新版 codex-rs 在替用户作答时给回应带上 ``_meta.approvals_reviewer = "auto_review"``。
+#: 有这个标记就不看耗时——自动审核可以慢，但它仍然不是用户。
+AUTO_REVIEWER_META = ("approvals_reviewer", "auto_review")
+#: 量「宿主多久作答」的钟。单列出来是为了让用例能模拟真人的作答耗时，
+#: 不必真的睡一秒；``_client_request`` 的超时仍用 ``time.monotonic``。
+_confirmation_clock = time.monotonic
 
 #: Codex 把每个 MCP 工具结果的**事件副本**——送给桌面 UI 去喂 iframe、写进 rollout
 #: 的那一份——封顶在 1 MiB（codex-rs `core/src/mcp_tool_call.rs` 的
@@ -1375,6 +1388,20 @@ def call_tool(name: str, args: dict) -> dict:
     return result
 
 
+def _answered_without_a_person(result: dict, answered_in: float) -> bool:
+    """这次拒绝 / 取消是不是宿主替用户作的答（没有人看见过框）。
+
+    判据的主语是**作答的那一方**，不是回应里写的 action——宿主替用户回的
+    ``decline`` 与用户亲手点的 ``decline`` 字面上一模一样。两条证据任一成立即是：
+    宿主自己标明了代答（``_meta``），或快到没有人来得及读完路径。
+    """
+    meta = result.get("_meta")
+    key, value = AUTO_REVIEWER_META
+    if isinstance(meta, dict) and meta.get(key) == value:
+        return True
+    return answered_in < HUMAN_RESPONSE_FLOOR_S
+
+
 # ------------------------------- 协议主循环 ---------------------------------
 class Server:
     def __init__(self, conn: StdioConnection | None = None) -> None:
@@ -1500,6 +1527,7 @@ class Server:
             "仅当它是本次任务要使用的工作区时批准。授权只在当前 Tavotto "
             "MCP 连接内有效；拒绝不会修改任何文件。"
         )
+        asked_at = _confirmation_clock()
         response, transport_error = self._client_request(
             "elicitation",
             "elicitation/create",
@@ -1536,6 +1564,15 @@ class Server:
             return
         action = result.get("action")
         if action != "accept":
+            answered_in = _confirmation_clock() - asked_at
+            if _answered_without_a_person(result, answered_in):
+                # 宿主替用户回的：框从没到过用户面前，报成用户拒绝会把人送去
+                # 「再点一次」——与 #173 同一个缺陷，只是宿主答得快而不是不答。
+                bridge.fail_user_binding(
+                    f"宿主在 {answered_in * 1000:.0f} ms 内替用户回了 {action or 'cancel'}",
+                    state="auto_declined",
+                )
+                return
             state = "declined" if action == "decline" else "cancelled"
             bridge.fail_user_binding(f"用户选择 {action or 'cancel'}", state=state)
             return
