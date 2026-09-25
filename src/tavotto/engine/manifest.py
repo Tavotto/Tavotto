@@ -2698,7 +2698,11 @@ def _colorbar_fields(p, state: FigState, gid: str) -> list[dict]:
 
 
 def _legend_fields(leg) -> list[dict]:
-    sizes = [t.get_fontsize() for t in leg.get_texts()]
+    # 图例级字号报 matplotlib 的 `_fontsize`（原生语义，ADR 0034 2026-09-25 修订）：盒按它排、
+    # 写 `fontsize` 改的也是它。不报第一条文字的字号——那条单独设过字号（脚本或
+    # `texts_0.fontsize`）时，拖角缩放会从错的基准乘倍数（7 pt 的图例首条 13 pt，×1.5 写成
+    # 19.5）。单条文字各有自己的 `fontsize` 字段，预检的最小字号逐条查它们。
+    size = float(getattr(leg, "_fontsize", 0) or 0)
     frame = leg.get_frame()
     loc_name = _legend_loc_name(leg)
     loc_opts = (["custom"] if loc_name == "custom" else []) + _LEGEND_LOCS
@@ -2708,7 +2712,7 @@ def _legend_fields(leg) -> list[dict]:
         {
             "prop": "fontsize",
             "type": "number",
-            "value": round(float(sizes[0]), 2) if sizes else 8,
+            "value": round(size, 2) if size > 0 else 8,
             "min": 3,
             "max": 24,
             "step": 0.5,

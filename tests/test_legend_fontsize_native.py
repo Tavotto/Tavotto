@@ -220,3 +220,24 @@ def test_hot_equals_fresh_replay(library, hot, patches):
     # 重建换掉了文字对象，单条的值要被接回新对象（_reindex_legend_children）
     assert (_val(got, T0, "fontsize"), _val(got, T1, "fontsize")) == (7, 12)
     _man(hot)
+
+
+def test_legend_level_field_reports_the_native_base(library, hot):
+    """图例级 `fontsize` 报 `_fontsize`（盒的基准），不报第一条文字的字号。
+
+    前端拖角缩放拿它当基准乘倍数：首条单独设过字号时报首条，就会从错的值乘
+    （10 pt 的图例首条 13 pt，×1.5 写成 19.5 而不是 15）。
+    """
+    # 会话里单独改了首条
+    got = _man(hot, [{"gid": T0, "prop": "fontsize", "value": 13}])
+    assert _val(got, T0, "fontsize") == 13
+    assert _val(got, LEG, "fontsize") == 10
+    _man(hot)
+    # 脚本自己把首条设成 13
+    w = _worker(library, "nonuniform")
+    try:
+        base = _man(w)
+        assert (_val(base, T0, "fontsize"), _val(base, LEG, "fontsize")) == (13, 10)
+        assert _val(_man(w, [{"gid": LEG, "prop": "fontsize", "value": 7}]), LEG, "fontsize") == 7
+    finally:
+        pool.discard(w)
