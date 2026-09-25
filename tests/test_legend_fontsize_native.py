@@ -241,3 +241,42 @@ def test_legend_level_field_reports_the_native_base(library, hot):
         assert _val(_man(w, [{"gid": LEG, "prop": "fontsize", "value": 7}]), LEG, "fontsize") == 7
     finally:
         pool.discard(w)
+
+
+def test_hidden_entry_takes_the_legend_size_when_shown_again(library, hot):
+    """先藏一项、再改整组字号、再把它放出来：它要是整组的字号，热态 == 全新重放。
+
+    `leg.get_texts()` 只含显示着的项；setter 只改它们的话，藏着的那条 Text 留着脚本
+    字号，放出来时重建从它抄样子，而整组那条 override 值没变、不重放——热态混着两种
+    字号，全新重放却全是新字号（Codex #579 第 3 轮 P1）。
+    """
+    hide = {"gid": T1, "prop": "visible", "value": False}
+    size = {"gid": LEG, "prop": "fontsize", "value": 7}
+    _man(hot, [hide])
+    _man(hot, [hide, size])
+    got = _man(hot, [size])
+    fresh = _fresh(library, [size])
+    assert (_val(got, T0, "fontsize"), _val(got, T1, "fontsize")) == (7, 7)
+    assert _box(got) == _box(fresh)
+    _man(hot)
+
+
+def test_hidden_entry_keeps_its_own_size_through_a_legend_change(library, hot):
+    """隐藏项上有单条字号：整组字号改动写到它身上之后，单条那条要重放回来（组员含隐藏项）。"""
+    hide = {"gid": T1, "prop": "visible", "value": False}
+    own = {"gid": T1, "prop": "fontsize", "value": 12}
+    size = {"gid": LEG, "prop": "fontsize", "value": 7}
+    _man(hot, [own, hide])
+    # 还藏着的那一刻：隐藏项的 Text 仍在元素表里、报字号——它也得是 12，与全新重放一致
+    # （放出来时重建会把单条字号重放回来，只看放出来之后的话，组员漏了隐藏项也看不出）
+    hidden = _man(hot, [own, hide, size])
+    assert (
+        _val(hidden, T1, "fontsize")
+        == _val(_fresh(library, [own, hide, size]), T1, "fontsize")
+        == 12
+    )
+    got = _man(hot, [own, size])
+    fresh = _fresh(library, [own, size])
+    assert (_val(got, T0, "fontsize"), _val(got, T1, "fontsize")) == (7, 12)
+    assert _box(got) == _box(fresh)
+    _man(hot)

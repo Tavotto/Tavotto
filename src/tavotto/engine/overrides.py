@@ -3514,7 +3514,9 @@ def _alias_same_element(narrow_prop: str):
 #:     管住了（刻度文字永远最后、且每次重放）。
 ALIAS_GROUPS: dict[tuple[str, str], object] = {
     # 图例整体字号 → 每一条图例项的字号
-    ("legend", "fontsize"): _alias_by_artists(lambda leg: list(leg.get_texts()), "fontsize"),
+    # 组员 = 全部图例项（含隐藏的）：整组字号连隐藏项一起写（见 `legendmodel._set_legend_fontsize`），
+    # 隐藏项上的单条字号被盖掉之后也要进脏组重放
+    ("legend", "fontsize"): _alias_by_artists(legendmodel.legend_entry_texts, "fontsize"),
     # 图例标题字号 → 图例标题那个 Text（它不在 get_texts() 里，单独一条）
     ("legend", "title_fontsize"): _alias_by_artists(lambda leg: [leg.get_title()], "fontsize"),
     # 色条刻度 → 色条轴上的刻度组（tick_params 默认写 x/y 两条）

@@ -79,13 +79,25 @@ def _set_legend_fontsize(leg, value, state) -> None:
         leg.prop.set_size(base)
         leg._fontsize = leg.prop.get_size_in_points()  # noqa: SLF001
         rebuild_legend(leg, state)
-    # 重建把文字的样子从旧对象搬了过来、并重放了单条字号的 override；这里按
-    # 列表序覆盖整组（广播语义不变：谁在列表里靠后谁赢，见 ALIAS_GROUPS）
-    for i, t in enumerate(leg.get_texts()):
+    # 重建把文字的样子从旧对象搬了过来、并重放了单条字号的 override；这里覆盖整组
+    # （广播先于窄的，见 ALIAS_GROUPS）。**连隐藏着的项一起**：放出来时重建从它抄样子，
+    # 只改显示着的那几条的话，放出来的那项是旧字号，而整组 override 值没变不重放——
+    # 热态混着两种字号，全新重放全是新字号（#579 Codex P1）
+    for i, t in enumerate(legend_entry_texts(leg)):
         t.set_fontsize(sizes[min(i, len(sizes) - 1)])
 
 
 _set_legend_fontsize._needs_state = True  # noqa: SLF001
+
+
+def legend_entry_texts(leg) -> list:
+    """图例的**全部**项的 Text，按原始序号（重排 / 隐藏都不改顺序）。
+
+    `leg.get_texts()` 只含显示着的、按显示顺序——拿它当 getter 的话，重排或隐藏之后
+    撤销就逐条对不上。没有条目模型（没登记的图例）时退回它。
+    """
+    model = legend_entries(leg)
+    return list(model.texts) if model is not None else list(leg.get_texts())
 
 
 # ---------------------------------------------------------------------------
@@ -1249,7 +1261,7 @@ HANDLERS_BASIC: dict[tuple[str, str], tuple] = {
     # string or a real number, not 'list'`）。CompatBench 的 art_legend 就是
     # 这么把它抓出来的。
     ("legend", "fontsize"): (
-        lambda a: [t.get_fontsize() for t in a.get_texts()],
+        lambda a: [t.get_fontsize() for t in legend_entry_texts(a)],
         _set_legend_fontsize,
     ),
     ("legend", "loc_frac"): (_get_legend_loc, _mk_legend_pos_setter("loc_frac")),
