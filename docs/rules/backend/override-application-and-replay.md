@@ -38,8 +38,9 @@
   的图例示意线）；新增一类修复前先在真实渲染里看它连带改了什么再登记。「收不收这
   一轮局部修复」只有 `normalize.better_candidate()` 一处（bridge 与桌面共用）。
   **只有每一次渲染都干净的事务才算回滚成功**：任何一次带 warning 或抛了，响应带
-  `replay_required`（前端按此刻的列表重放）；safe 池 worker 另外作废（`app._retire_hot_worker`
-  → `pool.invalidate`，`worker_retired`），native 会话不杀（ADR 0021），靠下一条引擎保证。
+  `replay_required`（前端按此刻的列表重放），worker 作废（`app._retire_hot_worker`
+  → `pool.invalidate`，`worker_retired`）。**native 图不修**：端点在任何渲染之前回 409
+  `specfix_native_unsupported`——作废这条兜底对用户自己的进程不成立（ADR 0080）。
 - **还原失败不遗忘（Codex #549 第八轮 P1）**：`apply()` 撤掉一条 override 时还原抛了，
   这个键**不销账**——applied / originals / alias_seeded 原样留着，记进 `FigState.unrestored`；
   下一次 apply 自动重试，欠着一天每次都报 `还原失败` warning（写回遇 warning 即阻断），

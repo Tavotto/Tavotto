@@ -1882,6 +1882,7 @@ export default interface Resources {
       "settings_dir_unusable": "{{key}} 不可用：{{reason}}",
       "source_changed": "写回被阻止：原始文件在此期间被修改过，请刷新素材后再试",
       "source_missing": "该图的源文件暂时不可用：{{figure}}。",
+      "specfix_native_unsupported": "用 {{product}} Run 打开的图暂不支持自动修复，图没有改动。",
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "tiff_bigtiff": "{{file}} 是 BigTIFF，暂不支持。请另存为普通 TIFF 或 PNG。",
@@ -2226,6 +2227,7 @@ export default interface Resources {
         "canvas_missing": "找不到这条问题所在的画布，请刷新问题列表。",
         "engine_failed": "修复时渲染出错，图没有改动。",
         "font_unavailable": "规范要求的字体「{{font}}」在这台电脑上没有安装，字体没有改。",
+        "native_unsupported": "用 {{product}} Run 打开的图暂不支持自动修复，图没有改动。",
         "needs_choice": "这条问题要先选一种修法。",
         "no_fit": "出界的文字靠调整边距放不下，这一条没有改。可以缩小字号或加大图幅后再试。",
         "no_plan": "此问题没有安全的自动修复方式，请手动调整。",
@@ -2235,6 +2237,7 @@ export default interface Resources {
         "unavailable": "这里不能自动修复图内元素，请在 Tavotto 桌面端处理。",
         "would_worsen": "这样修会让别处变差（例如文字被挤出图幅），已放弃，图没有改动。"
       },
+      "fixNativeUnsupported": "用 {{product}} Run 打开的图暂不支持自动修复",
       "fixOption": {
         "double": "改成双栏宽 {{mm}} mm",
         "single": "改成单栏宽 {{mm}} mm"

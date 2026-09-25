@@ -14,6 +14,7 @@ import { LeftRail } from './LeftRail'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
@@ -319,6 +320,27 @@ describe('安全修复', () => {
       await gate
     })
     expect(all.disabled).toBe(false)
+  })
+
+  it('native 图（tavotto run）：问题照常列出，修复按钮不可用，悬停说一句为什么（ADR 0080）', async () => {
+    await seed()
+    useRuntimeAssetStore.setState({
+      byId: { 'Fig1.pdf': { status: 'fresh', cached: true, registered: true, profile: 'native', checked: true } },
+    } as never)
+    try {
+      await mount(<ProblemPanel />)
+      expect(useValidationStore.getState().issues.length).toBeGreaterThan(0)
+      const wraps = [...container.querySelectorAll('[data-fix-native-unsupported]')]
+      expect(wraps.length).toBeGreaterThan(0)
+      for (const w of wraps) expect(w.querySelector('button')?.hasAttribute('disabled')).toBe(true)
+      // 说明不常驻：不悬停时界面上没有这句
+      expect(text()).not.toContain('暂不支持自动修复')
+      const calls = engineSpecfix.mock.calls.length
+      await click(wraps[0].querySelector('button')!)
+      expect(engineSpecfix.mock.calls.length).toBe(calls)
+    } finally {
+      useRuntimeAssetStore.setState({ byId: {} })
+    }
   })
 
   it('不能安全自动修的那些没有「修复」按钮', async () => {

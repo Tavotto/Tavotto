@@ -588,39 +588,22 @@ def test_rollback_with_warnings_retires_the_worker(render, monkeypatch):
     assert retired == [("fig.py", "/specfix-test-figures")]
 
 
-def test_unclean_rollback_on_a_native_session_asks_for_a_replay_instead(render, monkeypatch):
-    """Codex #549 第八轮 P1：native 会话（用户自己的 Python，ADR 0021）不杀、不断开。
+def test_a_native_figure_is_refused_before_any_render(monkeypatch):
+    """native 图（`tavotto run` 的 live Figure）暂不支持自动修复（ADR 0080）：**一次渲染都不做**，
+    那张图一个字节都不碰。那是用户自己的进程，事务的回滚兜底（作废 worker）对它不成立；
+    完整保证在叠栈的新 PR 里做。"""
+    calls: list[list] = []
 
-    引擎把还原失败的键留在账上、下一次渲染自动重试（`test_restore_failure_retry.py`），
-    所以端点对它只做一件事：告诉前端「热态不是发出去的那份，按此刻的列表重放」。
-    """
-    _reject_every_candidate(monkeypatch)
-    seen: list[list] = []
+    def never(patches):
+        calls.append(list(patches))
+        raise AssertionError("native 图被渲染了")
 
-    def warn_on_rollback(patches):
-        seen.append(list(patches))
-        resp = render(patches)
-        if len(seen) > 2 and patches == BASE:
-            resp = {**resp, "warnings": ["还原失败 axes_0.xticks.fontsize（模拟）"]}
-        return resp
-
-    resp, retired = _post_specfix(monkeypatch, warn_on_rollback, BASE, _profile(), native=True)
+    resp, retired = _post_specfix(monkeypatch, never, BASE, _profile(), native=True)
+    assert resp.status_code == 409
     body = resp.get_json()
-    assert len(seen) >= 3 and seen[-1] == BASE, seen
-    assert resp.status_code == 200 and not body["ok"] and body["patches"] == BASE
-    assert body["worker_retired"] is False
-    assert body["replay_required"] is True
-    assert retired == []
-
-
-def test_clean_rejection_on_a_native_session_needs_no_replay(render, monkeypatch):
-    """对照组：native 上拒绝得干干净净——不要求重放（判据不是「native 就重放」）。"""
-    _reject_every_candidate(monkeypatch)
-    resp, retired = _post_specfix(monkeypatch, render, BASE, _profile(), native=True)
-    body = resp.get_json()
-    assert resp.status_code == 200 and not body["ok"]
-    assert body["worker_retired"] is False and body["replay_required"] is False
-    assert retired == []
+    assert body["code"] == "specfix_native_unsupported"
+    assert body["params"] == {"product": "Tavotto"}
+    assert calls == [] and retired == []
 
 
 def test_rollback_that_raises_retires_the_worker(render, monkeypatch):

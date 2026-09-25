@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { msg, t as translate, type UiMessage } from '@/i18n'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { fixOptions } from '@/lib/issueFix'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { cn } from '@/lib/utils'
@@ -8,14 +9,17 @@ import { useDocumentStore } from '@/store/documentStore'
 import {
   applyIssueFix,
   applyIssueFixes,
+  isNativePanelIssue,
   type BatchOptions,
   type FixFailure,
   type FixOutcome,
 } from '@/store/issueFixActions'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
 import { Menu, MenuItem } from '../ui/Menu'
+import { Tip } from '../ui/Tooltip'
 
 /** 本组文案在 errors:problems.* 下（与问题面板同一个命名空间） */
 const pr = (key: string, values?: Record<string, unknown>) =>
@@ -38,7 +42,22 @@ export function FixButton({ issue, className }: { issue: ValidationIssue; classN
     [doc.profile, specs],
   )
   const fixing = useUiStore((s) => s.fixing)
+  // 订阅素材档案，档案晚到（`/api/runtime/status` 回来）时按钮跟着变
+  const assets = useRuntimeAssetStore((s) => s.byId)
+  const native = useMemo(() => isNativePanelIssue(issue, doc, assets), [issue, doc, assets])
   if (issue.fixKind === 'none') return null
+  if (native) {
+    // 问题照常列出，修复不可用：说一句为什么（只在悬停 / 聚焦时，不常驻）
+    return (
+      <Tip label={pr('fixNativeUnsupported', { product: PRODUCT_NAME })}>
+        <span className={cn('shrink-0', className)} tabIndex={0} data-fix-native-unsupported>
+          <Button size="sm" disabled>
+            {pr(issue.fixKind === 'safe_auto' ? 'fix' : 'fixChoose')}
+          </Button>
+        </span>
+      </Tip>
+    )
+  }
   if (issue.fixKind === 'safe_auto') {
     return (
       <Button
@@ -96,7 +115,11 @@ async function withBusy(job: () => Promise<FixOutcome>): Promise<void> {
 }
 
 const fixFailedText = (f: FixFailure): UiMessage =>
-  msg(`problems.fixFailed.${f.reason}`, f.font ? { font: f.font } : undefined, 'errors')
+  msg(
+    `problems.fixFailed.${f.reason}`,
+    { product: PRODUCT_NAME, ...(f.font ? { font: f.font } : {}) },
+    'errors',
+  )
 
 /**
  * 结果怎么说。**图动没动要说清楚**：没修成的那几条永远是「没改」，不是「改了一半」

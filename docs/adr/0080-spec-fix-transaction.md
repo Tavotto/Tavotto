@@ -32,7 +32,8 @@
 | 装不下 | 新增 / 加重的裁切或文字压进别的子图时，用 ADR 0051 的外边距重排（`adapt_margins`）最多三轮；「收不收这一轮」只有 `normalize.better_candidate()` 一处 |
 | 字体没装 | 字体那几条单独退出（`font_unavailable`，报出规范要的字体名），其余照修 |
 | 不通过 | worker 回到 B0，回 `ok: false` 与原列表；前端**文档零改动**，原因走闭集 `FixFailureReason` |
-| 回滚干不干净 | 只有**事务里每一次渲染都没有 warning、没有抛**才算回滚成功（判据收在端点的 `render` 闭包一处，不逐个回滚点各查各的）。否则——B0 重放、候选、外边距那一轮、任何一次回滚带 warning，或渲染 / 事务本体抛了——热态不是它声称的那一份，分两档降级：**safe 池 worker** 一律作废（`app._retire_hot_worker` → `pool.invalidate`，与「重新构建」同一个原语），下一次请求重新起、按全量列表重放，响应带 `worker_retired: true`；**native 会话**是用户自己的 Python（ADR 0021），不杀不断开，`worker_retired: false`——靠的是引擎自己的保证：`overrides.apply()` **还原失败不遗忘**（键留在 applied / originals，记进 `FigState.unrestored`，下一次 apply 重试，欠着一天每次渲染报一次 warning，还原成功才清账；Codex #549 第八轮 P1）。两档响应都带 `replay_required: true`（干净时两者都是 `false`），前端没提交结果时按此刻的列表重放，与结果不确定同一条路 |
+| 回滚干不干净 | 只有**事务里每一次渲染都没有 warning、没有抛**才算回滚成功（判据收在端点的 `render` 闭包一处，不逐个回滚点各查各的）。否则——B0 重放、候选、外边距那一轮、任何一次回滚带 warning，或渲染 / 事务本体抛了——热态不是它声称的那一份：worker 一律作废（`app._retire_hot_worker` → `pool.invalidate`，与「重新构建」同一个原语），下一次请求重新起、按全量列表重放，响应带 `worker_retired: true` 与 `replay_required: true`（干净时两者都是 `false`），前端没提交结果时按此刻的列表重放，与结果不确定同一条路。引擎另有一条通用保证：`overrides.apply()` **还原失败不遗忘**（键留在 applied / originals，记进 `FigState.unrestored`，下一次 apply 重试，欠着一天每次渲染报一次 warning，还原成功才清账；Codex #549 第八轮 P1） |
+| native 图（`tavotto run`） | **暂不支持自动修复**（2026-09-25 用户决定）。端点在任何一次渲染之前回 409 `specfix_native_unsupported`，那张 live 图一个字节都不碰；前端问题照常列出，修复按钮不可用、悬停说一句为什么（`isNativePanelIssue`，判据与面板角标同一个出处 `runtimeAssetStore.profile`，未知按 safe），批量里它们计为 `native_unsupported`。理由：native 进程归用户（ADR 0021），不能作废重起，而事务回滚不干净时的兜底恰恰是作废 worker——在 native 上这条兜底不成立，热态与文档会不一致。native 的完整保证（图与文档不一致的标记、请求串行化、不一致时不放行 continue）在叠栈 PR（分支 `fix/native-figure-inconsistent`，base 为本 PR 分支）里做，那里决定何时放开 |
 | 结果不确定 | 请求抛了（回程断线、非 2xx）、或成功体里**任何一个下游要读的字段**形状不对（`ok` / `exit` / `patches` 每一项的 `{gid, prop, value}` / `skipped` 每一项的 `{rule, gid, reason}` / `worker_retired` / `replay_required`，校验在 `api.engineSpecfix` 一处）：文档不改、按此刻的列表重放 worker；读响应（`settle()`）也在同一个 catch 里，读到一半炸了同样算不确定 |
 | 通过 | 回这张图**最终的全量 override 列表**；前端所有面板都回来之后**一次 commit**（⌘Z 一次撤回） |
 | 等待期间文档被改过 | 丢弃结果（override 列表或 `loadSeq` 对不上），报 `stale`；同一时刻只跑一轮（`busy`） |
@@ -68,5 +69,5 @@
 点名未处理逐条报出、端点入参校验）、`tests/test_specfix.py`（合成 manifest 上的计划：
 缩放换算与取整方向、层级补齐、图例区间交集、空区间不硬修、等距取细、批量集合、
 逐 gid 展开、同源对）、`web/src/lib/issueFix.test.ts`（发出去的是什么、通过才写且只
-写一次、五种退出码 → 原因、抛错 / 缺字体 / 过期 / busy / 无后端、批量集合、画布层、缺字段与 `worker_retired` / `replay_required` 走重放）、`web/src/lib/specfixResponse.test.ts`（成功体逐字段校验）、`tests/test_specfix_real.py` 的端点六条（干净拒绝不作废 / 回滚带 warning、回滚抛、B0 带 warning 都作废 / native 会话回滚不干净不作废但要求重放、干净时不要求）、`tests/test_restore_failure_retry.py`（还原失败留账重试、欠账期间点回来原样不丢、别名组组员的代采原样不回收、还原成功后热态与冷启动重放像素 + manifest 逐字节相同）、
-`web/src/components/left/problemPanel.test.tsx`（修复在跑时置灰）。
+写一次、五种退出码 → 原因、抛错 / 缺字体 / 过期 / busy / 无后端、批量集合、画布层、缺字段与 `worker_retired` / `replay_required` 走重放）、`web/src/lib/specfixResponse.test.ts`（成功体逐字段校验）、`tests/test_specfix_real.py` 的端点五条（干净拒绝不作废 / 回滚带 warning、回滚抛、B0 带 warning 都作废 / native 图在任何渲染之前被拒）、`tests/test_restore_failure_retry.py`（还原失败留账重试、欠账期间点回来原样不丢、别名组组员的代采原样不回收、还原成功后热态与冷启动重放像素 + manifest 逐字节相同）、
+`web/src/components/left/problemPanel.test.tsx`（修复在跑时置灰；native 图的修复按钮不可用）、`web/src/lib/issueFix.test.ts` 的 native 一组（不发请求、不重放、后端拒绝报同一个原因）。

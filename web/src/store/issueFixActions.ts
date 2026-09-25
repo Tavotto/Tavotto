@@ -14,7 +14,7 @@
  * * **只走 documentStore**：dirty、undo、autosave 全部照常，与用户手改一模一样。
  */
 import { msg, type UiMessage } from '@/i18n'
-import { engineSpecfix, type SpecFixResponse } from '@/lib/api'
+import { EngineError, engineSpecfix, type SpecFixResponse } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { fixOptions, fixRoute, planFix, type FixChoice, type FixPlan } from '@/lib/issueFix'
 import { panelScale } from '@/lib/preflight'
@@ -22,10 +22,11 @@ import type { PublicationProfile } from '@/lib/profile'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import type { ValidationIssue } from '@/lib/validation'
 import { requestRender } from '@/store/renderScheduler'
-import type { PanelObject, PanelOverride } from '@/types/document'
+import type { FigureDocument, PanelObject, PanelOverride } from '@/types/document'
 import { activateCanvas } from './canvasSession'
 import { useDocumentStore } from './documentStore'
 import { useProfileStore } from './profileStore'
+import { useRuntimeAssetStore } from './runtimeAssetStore'
 
 /**
  * 一条没修成的原因（闭集，文案在 `errors:problems.fixFailed.*`）。
@@ -54,6 +55,8 @@ export type FixFailureReason =
   | 'busy'
   /** 这个宿主里没有后端事务（内嵌画布 / playground） */
   | 'unavailable'
+  /** 用 `tavotto run` 打开的图（native，ADR 0080）：暂不支持自动修复，图没有改动 */
+  | 'native_unsupported'
 
 export interface FixFailure {
   reason: FixFailureReason
@@ -149,6 +152,26 @@ export function batchable(
   )
 }
 
+/**
+ * 这条问题要在一张 **native 图**（`tavotto run` 打开的 live Figure）里改——暂不支持自动修复
+ * （ADR 0080：那是用户自己的进程，事务没法保证干净回滚）。画布层的修复（标注字号、页宽）
+ * 不受影响。「出自哪一档」与面板角标同一个出处（`runtimeAssetStore` 的 `profile`，
+ * 即后端的 `enginesession.profile_of`）；未知按 safe（未知不等于 native）。
+ */
+export function isNativePanelIssue(
+  issue: ValidationIssue,
+  doc: FigureDocument,
+  assets = useRuntimeAssetStore.getState().byId,
+): boolean {
+  if (fixRoute(issue, doc) !== 'engine') return false
+  const panel = doc.objects.find((o) => o.id === issue.objectRef.objectId)
+  if (panel?.type !== 'panel') return false
+  return assets[panel.fileId]?.profile === 'native'
+}
+
+/** 后端对 native 图的拒绝码（与 `app.api_engine_specfix` 同一个串） */
+export const SPECFIX_NATIVE_UNSUPPORTED = 'specfix_native_unsupported'
+
 function fail(reason: FixFailureReason, count: number): FixOutcome {
   return { ok: false, reason, failed: [{ reason, count }] }
 }
@@ -227,6 +250,11 @@ async function runLocked(
       addFailure(failed, 'object_missing', list.length)
       continue
     }
+    if (isNativePanelIssue(list[0], docAtStart)) {
+      // 不发请求：后端也会在任何渲染之前拒绝，这里不必去碰那张 live 图
+      addFailure(failed, 'native_unsupported', list.length)
+      continue
+    }
     let res: SpecFixResponse
     let out: ReturnType<typeof settle>
     try {
@@ -240,14 +268,19 @@ async function runLocked(
       // 读响应也在 catch 之内（Codex #549 第七轮 P1）：api 层验过形状，这里是第二道——
       // 读到一半炸了的响应同样是「不知道」，要走下面的重放，不许把整轮修复抛出去
       out = settle(res, list)
-    } catch {
+    } catch (err) {
+      if (err instanceof EngineError && err.code === SPECFIX_NATIVE_UNSUPPORTED) {
+        // 后端在任何渲染之前就拒绝了（界面判据漏掉的那一刻）：live 图没被碰过，不用重放
+        addFailure(failed, 'native_unsupported', list.length)
+        continue
+      }
       addFailure(failed, 'engine_failed', list.length)
       touched.push({ id, sent: null })
       continue
     }
     // 事务里有一次渲染不干净：热态不是发出去的那份，没提交的一律按此刻的列表重放，与结果
-    // 不确定同一条路。safe worker 已被作废（`worker_retired`）；native 会话不作废，只带
-    // `replay_required`——引擎在重放时重试还原（Codex #549 第八轮 P1）
+    // 不确定同一条路（worker 已被作废，`worker_retired` / `replay_required`；引擎在重放时
+    // 也会重试还原，Codex #549 第八轮 P1）
     if (!(res.ok && out.applied > 0)) {
       const dirty = res.replay_required || res.worker_retired
       touched.push({ id, sent: dirty ? null : same(panel.overrides) })

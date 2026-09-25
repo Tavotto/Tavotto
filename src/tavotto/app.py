@@ -3775,10 +3775,12 @@ def api_engine_specfix():
     这个端点**只算不写**：不碰文档、不落盘、不写回源文件；worker 的热态在事务
     结束时要么是 B0，要么正是回给前端的那份列表（前端 commit 后照常重渲染一次），
     要么**不可信**（`replay_required: true`）：只有「每一次渲染都干净」的事务才算
-    回滚成功——任何一次渲染带 warning 或抛异常，热态就不是它声称的那一份。safe 池
-    worker 一律作废（`worker_retired: true`，下一次请求重新起、按全量列表重放，Codex
-    #549 第七轮 P1）；native 会话不杀（ADR 0021），`overrides.apply()` 把还原失败的键
-    留在账上、下一次渲染自动重试（第八轮 P1），前端照样按此刻的全量列表重放。
+    回滚成功——任何一次渲染带 warning 或抛异常，热态就不是它声称的那一份，worker 一律
+    作废（`worker_retired: true`，下一次请求重新起、按全量列表重放，Codex #549 第七轮 P1）。
+
+    **native 图（`tavotto run` 的 live Figure）不做**：在任何一次渲染之前回 409
+    `specfix_native_unsupported`。那是用户自己的进程（ADR 0021），不能作废重起，而事务
+    的回滚干净与否只有作废这一条兜底——native 的完整保证另在叠栈 PR 里做（ADR 0080）。
     """
     body = request.get_json(force=True) or {}
     rel_id = body.get("id", "")
@@ -3808,6 +3810,16 @@ def api_engine_specfix():
         return jsonify({"error": "only 必须是 [{rule, gid}] 列表", "code": "invalid_only"}), 400
 
     worker, stem = _engine_worker(rel_id)
+    if engine_enginesession.is_native(worker):
+        # 一次渲染都不做、那张 live 图一个字节都不碰：前端对 native 图本来就不给修复按钮，
+        # 这里是后端自己的那道闸（界面之外的调用方、界面判据漏掉的那一刻）
+        return jsonify(
+            {
+                "error": "native 图暂不支持自动修复",
+                "code": "specfix_native_unsupported",
+                "params": {"product": engine_brand.PRODUCT_NAME},
+            }
+        ), 409
     # `clean`：这次事务里的每一次渲染都没有 warning、没有抛——只有这样，事务结束时
     # 的热态才是它声称的那一份（B0 或回给前端的列表）。判据收在这一个闭包里，而不是
     # 逐个回滚点各查各的：回滚点有好几处，漏一处就是一个永久被污染的 worker
@@ -3837,9 +3849,8 @@ def api_engine_specfix():
         # 事务本体自己出错时 worker 可能正停在候选上：同样不可信
         _retire_hot_worker(state["worker"])
         raise
-    # 不干净时两档降级：safe 池 worker 作废（下一次请求重新起）；native 会话是用户自己的
-    # 进程，不杀不断开——`apply()` 把还原失败的键留在账上，下一次渲染自动重试。两档都要
-    # 前端按此刻的全量列表重放一次（`replay_required`），重放仍带 warning 就是真故障
+    # 不干净：worker 作废（下一次请求重新起），前端按此刻的全量列表重放一次
+    # （`replay_required`；`apply()` 把还原失败的键留在账上，重放时也会重试）
     out["worker_retired"] = not state["clean"] and _retire_hot_worker(state["worker"])
     out["replay_required"] = not state["clean"]
     return jsonify(out)
@@ -3850,7 +3861,8 @@ def _retire_hot_worker(worker) -> bool:
 
     用的是「重新构建」与脚本变更**同一个原语**（`pool.invalidate`）：只让会话过期、
     不在这里起 worker，下一次请求按全量列表冷重放。native 会话是用户自己终端里的进程
-    （ADR 0021），与 `/api/engine/invalidate` 一样不杀，回 False。
+    （ADR 0021），与 `/api/engine/invalidate` 一样不杀，回 False——specfix 端点在渲染之前
+    就挡掉了 native，这一支只是兜底。
     """
     if engine_enginesession.is_native(worker):
         LOG.warning("按规范修图后热态不可信，但 native 会话不作废: %s", worker)

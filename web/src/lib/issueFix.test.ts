@@ -17,7 +17,13 @@ import { setEngineTransport } from './engineTransport'
 import { loadProfile } from './profile'
 import { fixOptions, fixRoute, planFix } from './issueFix'
 import { validateCanvas, type ValidationIssue } from './validation'
-import { applyIssueFix, applyIssueFixes, batchable } from '@/store/issueFixActions'
+import {
+  applyIssueFix,
+  applyIssueFixes,
+  batchable,
+  isNativePanelIssue,
+} from '@/store/issueFixActions'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useProfileStore } from '@/store/profileStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -139,6 +145,7 @@ beforeEach(() => {
 
 afterEach(() => {
   setEngineTransport(null)
+  useRuntimeAssetStore.setState({ byId: {} })
 })
 
 describe('路由：面板内部走后端，画布层在前端', () => {
@@ -689,5 +696,40 @@ describe('跨画布', () => {
       ok: false,
       reason: 'object_missing',
     })
+  })
+})
+
+describe('native 图（tavotto run）暂不支持自动修复（ADR 0080）', () => {
+  const markNative = (profile: 'native' | 'safe' = 'native') =>
+    useRuntimeAssetStore.setState({
+      byId: { 'Fig1.pdf': { status: 'fresh', cached: true, registered: true, profile, checked: true } },
+    } as never)
+
+  it('问题照常列出，但不发修复请求、文档不改、live 图不重放', async () => {
+    await seed()
+    markNative()
+    expect(isNativePanelIssue(floorIssue(), useDocumentStore.getState().doc)).toBe(true)
+    engineRender.mockClear()
+    const res = await applyIssueFix(floorIssue())
+    expect(res).toMatchObject({ ok: false, reason: 'native_unsupported' })
+    expect(engineSpecfix).not.toHaveBeenCalled()
+    expect(engineRender).not.toHaveBeenCalled()
+    expect(overridesOf()).toEqual([])
+  })
+
+  it('未知 / safe 的档案照常修（未知不等于 native）', async () => {
+    await seed()
+    markNative('safe')
+    expect(isNativePanelIssue(floorIssue(), useDocumentStore.getState().doc)).toBe(false)
+  })
+
+  it('后端以 specfix_native_unsupported 拒绝（界面判据漏掉的那一刻）：报同一个原因，不重放', async () => {
+    const { EngineError } = await import('./api')
+    await seed()
+    engineSpecfix.mockRejectedValue(new EngineError('不支持', '', 'specfix_native_unsupported'))
+    engineRender.mockClear()
+    const res = await applyIssueFix(floorIssue())
+    expect(res).toMatchObject({ ok: false, reason: 'native_unsupported' })
+    expect(engineRender).not.toHaveBeenCalled()
   })
 })
