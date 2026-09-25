@@ -54,6 +54,14 @@
   判据要两条：一条量**不变式本身**（替身 socket 记 `shutdown` / `close` 的
   调用顺序，任何平台都红），一条量行为（对端看不看得到 EOF，只有 Linux 红）。
   只留后者等于把判据的有效性押在 CI 的平台组合上。
+- **runner 这一侧，握手之后对端 reset 与对端 EOF 是同一个结论：父进程走了**（#240）。
+  CLI 撤掉 relay 之后 runner 只要再写一个字节（进屏障先发 `barrier` 事件），对端内核
+  就回 RST，紧接着的 `recv` 读到 EOF 还是 `ECONNRESET` 只看 RST 与 `recv` 谁先到——
+  纯时序。归错的形状是 Ctrl+C 之后一串 Tavotto 的 traceback + 退出码 1（而不是脚本的
+  130），或者 `plt.show()` 屏障上的断线变成用户脚本的崩溃。归类只在
+  `bridge_runner.Control` 一处（`ConnectionError` 一族，不放宽到 `OSError`；握手期间
+  照旧大声失败）。判据用 `SO_LINGER(1, 0)` 的假父进程把次序钉死（只发 RST 不发 FIN，
+  runner 不可能先读到 EOF）：`tests/bridge/test_bridge_parent_gone.py`。
 - **native 面板"出自哪一档"只有一个出处**：`enginesession.profile_of()`。
   `/api/runtime/status` 的 `execution_profile` 与渲染路由读的是同一份，
   另立一份迟早在某个边角上分叉，而分叉的那一侧会在界面上显示成"能编辑"。
