@@ -2040,6 +2040,60 @@ def project_backup_dir(ctx: "ProjectCtx | None" = None) -> Path:
     return Path(d).expanduser() if d else default
 
 
+#: `/api/diagnostics` 的探测预算（#512）。两项探测彼此独立、**并行**跑，
+#: 于是接口的最坏耗时是两者取大，而不是 30 s + 10 s × Agent 数 × 候选数：
+#:   * matplotlib：用 worker 解释器 `import matplotlib` 那个子进程的超时；
+#:   * AI CLI：`engine_ai.capabilities()` 整体的等待上限——它内部逐个候选跑
+#:     `--version`（各 `ai_agents.VERSION_TIMEOUT_S`）再加就绪检查，总数随机器
+#:     上的候选个数变，所以这里在外面给一个总预算；到点就报「探测超时」，
+#:     探测线程继续跑完并写进 capabilities 的缓存，下一次打开诊断直接命中。
+#: `scripts/smoke_app.py` 的 `DIAGNOSTICS_TIMEOUT_S` 按这两项推出来，
+#: 改这里就要过 `tests/test_diagnostics_budget.py` 的对拍。
+DIAG_MATPLOTLIB_TIMEOUT_S = 30
+DIAG_AI_PROBE_BUDGET_S = 30
+DIAG_PROBE_WORST_CASE_S = max(DIAG_MATPLOTLIB_TIMEOUT_S, DIAG_AI_PROBE_BUDGET_S)
+
+
+class _DiagCapsProbe(threading.Thread):
+    """在后台跑一次 `engine_ai.capabilities()`，结论留在线程对象上。"""
+
+    def __init__(self) -> None:
+        super().__init__(daemon=True, name="mm-diag-caps")
+        # 起跑时的能力代数：设置改过（invalidate / refresh）之后这次探测读的是旧快照，
+        # 下一次诊断不许再跟上它
+        self.generation = engine_ai.capabilities_generation()
+        self.result: dict | None = None
+        self.error: BaseException | None = None
+
+    def run(self) -> None:
+        try:
+            self.result = engine_ai.capabilities()
+        except BaseException as exc:  # noqa: BLE001 — 交回请求线程原样抛
+            self.error = exc
+
+
+_DIAG_CAPS_LOCK = threading.Lock()
+_DIAG_CAPS_INFLIGHT: list[_DiagCapsProbe] = []
+
+
+def _diag_capabilities_start() -> _DiagCapsProbe:
+    """起（或复用还在跑的那个）AI 能力探测线程。
+
+    上一次诊断超时留下的探测还没跑完时直接跟上它，不再并发起第二份
+    ——用户连点「重新诊断」不该在一台慢机器上叠出一串 `--version` 子进程。"""
+    with _DIAG_CAPS_LOCK:
+        if (
+            _DIAG_CAPS_INFLIGHT
+            and _DIAG_CAPS_INFLIGHT[0].is_alive()
+            and _DIAG_CAPS_INFLIGHT[0].generation == engine_ai.capabilities_generation()
+        ):
+            return _DIAG_CAPS_INFLIGHT[0]
+        job = _DiagCapsProbe()
+        _DIAG_CAPS_INFLIGHT[:] = [job]
+        job.start()
+        return job
+
+
 @app.get("/api/diagnostics")
 def api_diagnostics():
     """首次运行 / 排障诊断：worker Python、matplotlib、AI CLI、项目权限、
@@ -2047,6 +2101,11 @@ def api_diagnostics():
     import subprocess as sp
 
     checks: list[dict] = []
+    # AI CLI 探测先在后台起跑，与下面的 matplotlib 探测并行（预算见上）。
+    # 截止时刻从两项探测**同时起跑**那一刻算：matplotlib 那边用掉的时间要从
+    # AI 的等待里扣掉，否则最坏会是两份预算相加而不是两者取大。
+    caps_deadline = time.monotonic() + DIAG_AI_PROBE_BUDGET_S
+    caps_job = _diag_capabilities_start()
 
     try:
         py = engine_pool.find_worker_python()
@@ -2060,7 +2119,7 @@ def api_diagnostics():
                 # engine/runtime.py——GUI 子系统进程不该弹控制台黑框。
                 encoding="utf-8",
                 errors="replace",
-                timeout=30,
+                timeout=DIAG_MATPLOTLIB_TIMEOUT_S,
                 stdin=sp.DEVNULL,
                 creationflags=engine_runtime.CREATE_NO_WINDOW,
             )
@@ -2108,16 +2167,28 @@ def api_diagnostics():
             }
         )
 
-    caps = engine_ai.capabilities()
-    for entry in caps["agents"]:
+    caps_job.join(max(0.0, caps_deadline - time.monotonic()))
+    if caps_job.is_alive():
         checks.append(
             {
-                "id": f"cli_{entry['id']}",
-                "ok": entry["installed"],
-                "label": f"{entry['display_name']} CLI",
-                "detail": entry["version"] or "未安装（改图助手对应选项不可用）",
+                "id": "cli_probe",
+                "ok": False,
+                "label": "AI CLI",
+                "detail": f"探测未在 {DIAG_AI_PROBE_BUDGET_S} 秒内完成（仍在后台进行，稍后重新诊断）",
             }
         )
+    elif caps_job.error is not None:
+        raise caps_job.error
+    else:
+        for entry in caps_job.result["agents"]:
+            checks.append(
+                {
+                    "id": f"cli_{entry['id']}",
+                    "ok": entry["installed"],
+                    "label": f"{entry['display_name']} CLI",
+                    "detail": entry["version"] or "未安装（改图助手对应选项不可用）",
+                }
+            )
 
     ctx = _request_ctx()
     if ctx is not None:
@@ -3844,9 +3915,9 @@ def api_engine_update_source():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
-        WriteBackBackupError,
         engine_pool.WorkerError,
     ) as exc:
         return _write_back_error_response(exc)
@@ -3917,21 +3988,6 @@ class FileLockedError(RuntimeError):
         self.updated = updated
 
 
-class WriteBackBackupError(RuntimeError):
-    """commit 前的备份失败（磁盘满 / 备份目录不可写）：一个原件都还没被替换。
-
-    与 `FileLockedError` 同形（`updated` / `rolled_back` / `rollback_failed`
-    恒为空），这样前端与 MCP 读 409 回执的代码不必为它多开一个分支。
-    """
-
-    def __init__(self, name: str, detail: str):
-        super().__init__(f"备份 {name} 失败，写回已取消，原文件未做任何改动：{detail}")
-        self.name = name
-        self.updated: list[str] = []
-        self.rolled_back: list[str] = []
-        self.rollback_failed: list[str] = []
-
-
 class SourceChangedError(RuntimeError):
     """写回目标在用户按下确认之后被外部改过（mtime 与前端手里的对不上）。
 
@@ -3989,6 +4045,19 @@ class WriteBackVerifyError(RuntimeError):
         more = f"（另有 {len(warnings) - 3} 条）" if len(warnings) > 3 else ""
         super().__init__(f"{head}{more}")
         self.warnings = warnings
+
+
+class WriteBackPersistError(RuntimeError):
+    """commit 的落盘准备（拷备份 + fsync 备份与 staging）没过，一个目标都还没替换。
+
+    与 `FileLockedError` 分成两类是刻意的（issue #252）：这一类发生在任何
+    `replace` **之前**，不存在回滚，原文件一字未动；「replace 之后目录项落盘
+    失败」则根本不走异常，只记日志——文件已换，再报失败只会让人误以为没写进去。
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _write_back_warning_error(exc: "WriteBackVerifyError") -> str:
@@ -4261,24 +4330,41 @@ def _new_backup_dir(root: Path) -> Path:
             n += 1
 
 
-def _backup_targets(tmps: list[tuple[Path, Path]], backup_root: Path) -> Path:
-    """commit 的第一轮：把**全部**目标备份进本次独占的备份目录，一个原件都还没被替换。
+def _backup_targets(tmps: list[tuple[Path, Path]], backup_root: Path, stem: str) -> Path:
+    """commit 的第一轮：把**全部**目标备份进本次独占的备份目录并落盘，一个原件都还没被替换。
 
-    回这个目录（回滚与响应用它）。任何一步失败（建目录 / 磁盘满 / 权限）：删掉这次
-    写下的备份（含半截的那份）、目录空了就一并删掉、清掉所有 `.updating`，抛
-    `WriteBackBackupError`——此刻原件零改动，走写回事务统一的 409。
+    回这个目录（回滚与响应用它）。落盘（ADR 0023 §3.1，issue #252）：`os.replace`
+    只保证「要么旧要么新」，不保证新内容已离开页缓存，所以**碰任何目标之前**先把
+    备份与 staging 都 fsync 掉，新建的各级目录的名字也要在各自父目录里落盘——否则
+    掉电后原图已是新内容、备份目录却整个不见了。
+
+    任何一步失败（建目录 / 磁盘满 / 权限 / fsync）：删掉这次写下的备份（含半截的
+    那份）、本次目录一并删掉、清掉所有 `.updating`，抛 `WriteBackPersistError`——
+    此刻原件零改动，走写回事务统一的 409。
     """
     written: list[Path] = []
-    current = tmps[0][0] if tmps else Path("")
     backup_dir: Path | None = None
     try:
+        # 这次新建出来的各级目录（最深的在前）；本次的备份目录必然是新建的
+        created_dirs = [p for p in (backup_root, *backup_root.parents) if not p.exists()]
         backup_dir = _new_backup_dir(backup_root)
-        for target, _tmp in tmps:
-            current = target
-            dest = backup_dir / target.name
-            written.append(dest)  # 先登记再拷：拷到一半抛了，半截文件也要删得掉
-            shutil.copy2(target, dest)
+        created_dirs.insert(0, backup_dir)
+        for target, tmp in tmps:
+            backup = backup_dir / target.name
+            written.append(backup)  # 先登记再拷：拷到一半抛了，半截文件也要删得掉
+            # 先拷内容、趁备份还可写时 fsync，最后才抄权限与时间戳：原图若是
+            # 0444（目录可写时照样能被 replace），copy2 会把只读位带到备份上，
+            # 之后再以可写方式打开它 fsync 就是 PermissionError。
+            shutil.copyfile(target, backup)
+            engine_atomicio.fsync_file(backup)
+            shutil.copystat(target, backup)
+            engine_atomicio.fsync_file(tmp)
+        engine_atomicio.fsync_dir(backup_dir)
+        for created in created_dirs:
+            engine_atomicio.fsync_dir(created.parent)
     except OSError as exc:
+        # 清理全部尽力而为、逐个吞错：文件系统正在报 EIO / EROFS 时 unlink 也可能
+        # 失败，不许它盖掉结构化的 409。
         for dest in written:
             try:
                 dest.unlink(missing_ok=True)
@@ -4286,12 +4372,12 @@ def _backup_targets(tmps: list[tuple[Path, Path]], backup_root: Path) -> Path:
                 LOG.warning("写回失败后清理备份失败: %s", dest, exc_info=True)
         if backup_dir is not None:
             try:
-                backup_dir.rmdir()  # 只删空目录（目录是本次独占的，删不掉就是还有东西）
+                backup_dir.rmdir()  # 目录是本次独占的；删不掉就是还有东西，留着
             except OSError:
                 pass
         _discard_updating(tmps)  # 不给图库留下半成品
-        LOG.warning("写回备份失败，已取消（原文件未改动）: %s: %s", current.name, exc)
-        raise WriteBackBackupError(current.name, str(exc)) from exc
+        LOG.error("写回落盘失败（替换之前，原文件未动）: %s: %s", stem, exc)
+        raise WriteBackPersistError(str(exc)) from exc
     return backup_dir
 
 
@@ -4373,12 +4459,12 @@ def _write_source_files(
     finally:
         engine_pool.discard(fresh)
 
-    # ---- commit：先把全部备份做完 → 再逐个原子替换（中途失败则回滚） ----------
+    # ---- commit：先把全部备份做完并落盘 → 再逐个原子替换（中途失败则回滚） ----
     # 备份与替换**分成两轮**（QA 2026-09-24 SCI-05-B1）：以前是「备份一个、换一个」，
     # 第二个目标备份时磁盘满，PDF 已经换成新的、PNG 还是旧的，异常从 try 外面
-    # 冒出去成了 500，`.updating` 留在图库里。备份在任何一个原件被动之前全部
-    # 落好，失败时原件一个都还没碰过，清掉临时文件与这次的半截备份即可。
-    backup_dir = _backup_targets(tmps, project_backup_dir())
+    # 冒出去成了 500，`.updating` 留在图库里。备份与 staging 在任何一个原件被动之前
+    # 全部拷完并 fsync（ADR 0023 §3.1，issue #252），失败时原件一个都还没碰过。
+    backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
     updated: list[str] = []
     done: list[Path] = []
     for target, tmp in tmps:
@@ -4391,6 +4477,15 @@ def _write_source_files(
             raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc
         done.append(target)
         updated.append(target.name)
+    # 目录项落盘放在整个替换循环**之后**、且只尽力而为：此刻各 replace 都已
+    # 成功，新内容对任何读者已可见。失败只记 ERROR、不回滚——若塞进上面的
+    # `except OSError`，就会回滚别的目标、独独留下刚换好的这一个，还对用户
+    # 报「已回滚」（issue #252 讲的半应用陷阱）。
+    for parent in dict.fromkeys(t.parent for t in done):
+        try:
+            engine_atomicio.fsync_dir(parent)
+        except OSError:
+            LOG.error("写回后目录项落盘失败（文件已替换，备份在 %s）: %s", backup_dir, parent)
     prune_backups(backup_dir.parent)
     LOG.info(
         "更新原图: %s → %s（备份 %s，标注 %d 条）",
@@ -4522,6 +4617,15 @@ def _write_back_error_response(exc):
                 "warnings": exc.warnings,
             }
         ), 409
+    if isinstance(exc, WriteBackPersistError):
+        return jsonify(
+            {
+                "error": f"写回前的落盘准备失败（备份或临时文件没能写入磁盘）：{exc.reason}。"
+                "写回已取消，原文件未做任何改动。请检查磁盘空间与目录权限后重试。",
+                "code": "write_back_persist_failed",
+                "params": {"reason": exc.reason},
+            }
+        ), 409
     if isinstance(exc, FileLockedError):
         # 可操作的错误：告诉用户是哪个文件、该去关掉谁；回滚结果一并报出来，
         # 免得用户以为「什么都没发生」或者反过来以为「已经写进去了」
@@ -4543,18 +4647,6 @@ def _write_back_error_response(exc):
                 "params": {"format": exc.format},
             }
         ), 400
-    if isinstance(exc, WriteBackBackupError):
-        return jsonify(
-            {
-                "error": f"{exc}。请检查磁盘空间与备份目录后重试。",
-                "code": "write_back_backup_failed",
-                "params": {"file": exc.name},
-                "file": exc.name,
-                "updated": exc.updated,
-                "rolled_back": exc.rolled_back,
-                "rollback_failed": exc.rollback_failed,
-            }
-        ), 409
     if isinstance(exc, engine_pool.WorkerError):
         # verify 段的一次性 worker 崩了 / 超时 / 缺依赖（SCI-04-B1）。commit 段
         # 不调 worker，所以走到这里原件必然零改动——按事务不变式回 409。
@@ -4752,9 +4844,9 @@ def api_engine_history_restore():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
-        WriteBackBackupError,
         engine_pool.WorkerError,
     ) as exc:
         return _write_back_error_response(exc)

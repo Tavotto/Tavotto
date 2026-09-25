@@ -179,6 +179,40 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
+def fsync_file(path: Path) -> None:
+    """把一个**已经写好**的文件内容落盘，不做 replace。失败原样抛 `OSError`。
+
+    给「replace 由调用方自己做」的事务用（原图写回，issue #252）：调用方要在
+    **碰任何目标之前**确认所有临时文件都落了盘，失败时才能干净地整体放弃。
+    可写方式打开的理由同 `publish_file`：Windows 的 `os.fsync()` 只接受可写句柄。
+    """
+    with open(path, "rb+") as handle:
+        os.fsync(handle.fileno())
+
+
+def fsync_dir(directory: Path) -> None:
+    """目录项落盘，给「落盘失败就整体放弃」的事务用（原图写回，issue #252）。
+
+    与 `_fsync_dir` 的区别只在打开目录失败时：那里一律当「这个平台没有目录
+    fsync」忽略；这里只在 Windows（确实打不开目录）忽略，POSIX 上打不开
+    （不可读的目录、EIO……）原样抛 `OSError`——否则调用方以为名字已落盘，
+    接着就去替换原图。fsync 本身失败照旧抛 `AtomicWriteError`（`OSError` 子类）。
+    """
+    if os.name == "nt":
+        _fsync_dir(Path(directory))
+        return
+    # 同一个描述符打开即 fsync：不先「验证能打开」再交给会吞掉打开失败的
+    # `_fsync_dir` 二次打开——两次打开之间的瞬时 EIO / 改名会让它静默返回。
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    except OSError as exc:
+        if exc.errno not in _DIR_FSYNC_UNSUPPORTED:
+            raise AtomicWriteError("dir_fsync_failed", f"目录项落盘失败：{exc}", directory) from exc
+    finally:
+        os.close(fd)
+
+
 def dumps_json(obj: Any, *, indent: int | None = None) -> bytes:
     """序列化成 **RFC 8259 合法**的 JSON 字节。
 

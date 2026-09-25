@@ -25,7 +25,12 @@
 （真 matplotlib + 真重放）由 test_worker_roundtrip.py 的写回一节看护。
 """
 
+import errno
 import json
+import logging
+import os
+import stat
+import sys
 from pathlib import Path
 
 import pymupdf
@@ -619,25 +624,25 @@ def test_a_locked_first_target_reports_nothing_updated(client, tmp_path, monkeyp
 
 # ------------------- commit：备份 / 替换在磁盘层面失败（QA SCI-05-B1） -------------------
 def _fail_nth_backup(monkeypatch, n: int) -> list[str]:
-    """第 n 次 `shutil.copy2`（commit 段的备份）抛 ENOSPC，返回每次调用的源文件名。
+    """第 n 次 `shutil.copyfile`（commit 段的备份）抛 ENOSPC，返回每次调用的源文件名。
 
-    只数**写回事务自己**的 copy2：`m.shutil` 就是 app 模块里那一个名字。
-    磁盘满时 copy2 已经在目标处建了个半截文件——照真实形状也留一个。
+    只数**写回事务自己**的 copyfile：`m.shutil` 就是 app 模块里那一个名字。
+    磁盘满时 copyfile 已经在目标处建了个半截文件——照真实形状也留一个。
     """
     import errno
     import shutil
 
-    real = shutil.copy2
+    real = shutil.copyfile
     calls: list[str] = []
 
-    def copy2(src, dst, *a, **k):
+    def copyfile(src, dst, *a, **k):
         calls.append(Path(src).name)
         if len(calls) == n:
             Path(dst).write_bytes(b"half")
             raise OSError(errno.ENOSPC, "No space left on device", str(dst))
         return real(src, dst, *a, **k)
 
-    monkeypatch.setattr(m.shutil, "copy2", copy2)
+    monkeypatch.setattr(m.shutil, "copyfile", copyfile)
     return calls
 
 
@@ -662,13 +667,11 @@ def test_a_failed_backup_leaves_every_original_untouched(client, tmp_path, monke
     calls = _fail_nth_backup(monkeypatch, nth)
 
     resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
-    failed = ["Fig1.pdf", "Fig1.png"][nth - 1]
     assert calls[:nth] == ["Fig1.pdf", "Fig1.png"][:nth], "前提：失败落在第 n 个目标的备份上"
     assert resp.status_code == 409, resp.get_json()
     body = resp.get_json()
-    assert body["code"] == "write_back_backup_failed"
-    assert body["file"] == failed and body["params"] == {"file": failed}
-    assert body["updated"] == [] and body["rolled_back"] == [] and body["rollback_failed"] == []
+    assert body["code"] == "write_back_persist_failed"
+    assert "No space left on device" in body["params"]["reason"]
 
     assert (figs / "Fig1.pdf").read_bytes() == before_pdf
     assert (figs / "Fig1.png").read_bytes() == before_png
@@ -682,7 +685,7 @@ def test_a_failed_backup_still_answers_409_when_a_temp_file_cannot_be_removed(
     client, tmp_path, monkeypatch
 ):
     """备份失败后清 `.updating` 也失败（Windows 上被短暂锁住）：清理是尽力而为，
-    不许用第二个 OSError 盖掉备份失败本身——仍是 409 `write_back_backup_failed`、原件零改动。"""
+    不许用第二个 OSError 盖掉备份失败本身——仍是 409 `write_back_persist_failed`、原件零改动。"""
     figs = _figs(tmp_path)
     before_pdf = (figs / "Fig1.pdf").read_bytes()
     before_png = (figs / "Fig1.png").read_bytes()
@@ -704,7 +707,7 @@ def test_a_failed_backup_still_answers_409_when_a_temp_file_cannot_be_removed(
 
     assert refused, "前提：清 `.updating` 确实失败过"
     assert resp.status_code == 409, resp.get_json()
-    assert resp.get_json()["code"] == "write_back_backup_failed"
+    assert resp.get_json()["code"] == "write_back_persist_failed"
     assert (figs / "Fig1.pdf").read_bytes() == before_pdf
     assert (figs / "Fig1.png").read_bytes() == before_png
 
@@ -808,6 +811,251 @@ def test_a_failed_second_replace_rolls_the_first_one_back(client, tmp_path, monk
     assert (figs / "Fig1.png").read_bytes() == before_png
     assert _leftovers(figs) == []
     assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
+
+
+# ----------------------- commit 的落盘（issue #252） -------------------------
+def _ident(st) -> tuple[int, int]:
+    return (st.st_dev, st.st_ino)
+
+
+def _fsync_spy(monkeypatch, fail=None) -> list[tuple[int, int]]:
+    """把 `os.fsync` 换成记账版；`fail(st)` 为真时抛 EIO（真 I/O 错误的形状）。
+
+    返回被 fsync 过的 (st_dev, st_ino) 清单——replace 不换 inode，所以
+    「目标现在的 inode 在清单里」= 「替换进来的那份内容 replace 前落过盘」。
+    """
+    real = os.fsync
+    seen: list[tuple[int, int]] = []
+
+    def spy(fd):
+        st = os.fstat(fd)
+        if fail is not None and fail(st):
+            raise OSError(errno.EIO, "模拟的 I/O 错误")
+        seen.append(_ident(st))
+        return real(fd)
+
+    monkeypatch.setattr(os, "fsync", spy)
+    return seen
+
+
+def test_staging_and_backups_are_fsynced_before_any_replace(client, tmp_path, monkeypatch):
+    """每一次 replace 发生时，全部 staging 与备份都已落盘（ADR 0023 §3.1）。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    seen = _fsync_spy(monkeypatch)
+    real_replace = Path.replace
+    snapshots: list[set] = []
+
+    def replace(self, target):
+        snapshots.append(set(seen))
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    backup_dir = Path(resp.get_json()["backup_dir"])
+    staged = {_ident(p.stat()) for p in (figs / "Fig1.pdf", figs / "Fig1.png")}
+    backups = {_ident(p.stat()) for p in backup_dir.iterdir()}
+    assert len(snapshots) == 2 and len(backups) == 2
+    # 第一次 replace 时就要齐：「先 fsync 完全部再动任何目标」
+    assert staged | backups <= snapshots[0]
+
+
+@pytest.mark.parametrize("which", ["staging", "backup"])
+def test_fsync_failure_before_replace_is_a_clean_409(client, tmp_path, monkeypatch, which):
+    """replace 之前落盘失败：409 `write_back_persist_failed`，原文件零改动，不留 tmp。"""
+    figs = _figs(tmp_path)
+    before = {n: (figs / n).read_bytes() for n in ("Fig1.pdf", "Fig1.png")}
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    originals = {_ident((figs / n).stat()) for n in before}
+
+    def fail(st):
+        if not stat.S_ISREG(st.st_mode):
+            return False
+        is_staging = _ident(st) not in originals and any(
+            _ident(p.stat()) == _ident(st) for p in figs.glob(".*.updating")
+        )
+        return is_staging if which == "staging" else not is_staging
+
+    _fsync_spy(monkeypatch, fail)
+    replaced: list[str] = []
+    real_replace = Path.replace
+    monkeypatch.setattr(
+        Path, "replace", lambda self, t: (replaced.append(Path(t).name), real_replace(self, t))[1]
+    )
+
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["code"] == "write_back_persist_failed"
+    assert "模拟的 I/O 错误" in body["params"]["reason"]
+    assert replaced == [], "落盘失败必须发生在任何 replace 之前"
+    assert {n: (figs / n).read_bytes() for n in before} == before
+    assert _leftovers(figs) == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上打不开目录，没有目录 fsync 这一步")
+def test_the_new_backup_directory_is_published_in_its_parent_before_any_replace(
+    client, tmp_path, monkeypatch
+):
+    """新建的时间戳备份目录，它的名字要在父目录（备份根）里落盘之后才动原图：
+    只 fsync 备份目录本身，掉电后可能原图已换、备份目录整个不见（#580 评审）。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    backup_root = m.project_backup_dir()
+    backup_root.mkdir(parents=True, exist_ok=True)
+    root_id = _ident(backup_root.stat())
+    synced: list = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(
+        os, "fsync", lambda fd: (synced.append(_ident(os.fstat(fd))), real_fsync(fd))[1]
+    )
+    at_first_replace: list = []
+    real_replace = Path.replace
+    monkeypatch.setattr(
+        Path,
+        "replace",
+        lambda self, t: (
+            at_first_replace or at_first_replace.append(list(synced)),
+            real_replace(self, t),
+        )[1],
+    )
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    assert root_id in at_first_replace[0], "备份根目录没在第一次 replace 之前落盘"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上打不开目录是常态，那里本就忽略")
+def test_failing_to_open_a_backup_parent_for_fsync_is_a_clean_409(client, tmp_path, monkeypatch):
+    """POSIX 上打不开备份根目录去 fsync（不可读 / EIO）不许被当成「没有这一步」：
+    否则名字没落盘就去替换原图（#580 评审）。"""
+    figs = _figs(tmp_path)
+    before = {n: (figs / n).read_bytes() for n in ("Fig1.pdf", "Fig1.png")}
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    backup_root = m.project_backup_dir()
+    backup_root.mkdir(parents=True, exist_ok=True)
+    real_open = os.open
+
+    def fake_open(path, flags, *a, **kw):
+        if Path(path) == backup_root and not flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT):
+            raise OSError(errno.EIO, "模拟的 I/O 错误")
+        return real_open(path, flags, *a, **kw)
+
+    monkeypatch.setattr(os, "open", fake_open)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "write_back_persist_failed"
+    assert {n: (figs / n).read_bytes() for n in before} == before
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上打不开目录，没有目录 fsync 这一步")
+def test_the_backup_root_is_fsynced_through_the_descriptor_that_was_opened(
+    client, tmp_path, monkeypatch
+):
+    """验证能打开、再二次打开去 fsync 的写法，第二次打开的瞬时错误会被吞掉：
+    第一次之后的打开全部 EIO 时，备份根仍须在第一次 replace 前落盘（#580 评审）。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    backup_root = m.project_backup_dir()
+    backup_root.mkdir(parents=True, exist_ok=True)
+    root_id = _ident(backup_root.stat())
+    real_open = os.open
+    opens = {"n": 0}
+
+    def fake_open(path, flags, *a, **kw):
+        if Path(path) == backup_root and not flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT):
+            opens["n"] += 1
+            if opens["n"] > 1:
+                raise OSError(errno.EIO, "模拟的 I/O 错误")
+        return real_open(path, flags, *a, **kw)
+
+    synced: list = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(os, "open", fake_open)
+    monkeypatch.setattr(
+        os, "fsync", lambda fd: (synced.append(_ident(os.fstat(fd))), real_fsync(fd))[1]
+    )
+    at_first_replace: list = []
+    real_replace = Path.replace
+    monkeypatch.setattr(
+        Path,
+        "replace",
+        lambda self, t: (
+            at_first_replace or at_first_replace.append(list(synced)),
+            real_replace(self, t),
+        )[1],
+    )
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    assert root_id in at_first_replace[0]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="POSIX 权限位语义；root 无视只读位，量不到",
+)
+def test_read_only_originals_still_write_back(client, tmp_path, monkeypatch):
+    """原图是 0444、目录可写：以前照样能 replace；补 fsync 之后也不许因为备份
+    继承了只读位、再以可写方式打开它 fsync 而整单 409（#580 评审）。"""
+    figs = _figs(tmp_path)
+    for n in ("Fig1.pdf", "Fig1.png"):
+        (figs / n).chmod(0o444)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    assert sorted(resp.get_json()["updated"]) == ["Fig1.pdf", "Fig1.png"]
+
+
+def test_cleanup_failure_does_not_mask_the_persist_error(client, tmp_path, monkeypatch):
+    """落盘失败时文件系统往往连 unlink 也失败：清理错误不许盖掉结构化的 409。"""
+    figs = _figs(tmp_path)
+    before = {n: (figs / n).read_bytes() for n in ("Fig1.pdf", "Fig1.png")}
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    originals = {_ident((figs / n).stat()) for n in before}
+    _fsync_spy(monkeypatch, lambda st: stat.S_ISREG(st.st_mode) and _ident(st) not in originals)
+    real_unlink = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self.name.endswith(".updating"):
+            raise OSError(errno.EROFS, "模拟的只读文件系统")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "write_back_persist_failed"
+    assert {n: (figs / n).read_bytes() for n in before} == before
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上打不开目录，没有目录 fsync 这一步")
+def test_dir_fsync_failure_after_replace_is_logged_not_rolled_back(
+    client, tmp_path, monkeypatch, caplog
+):
+    """replace 之后目录项落盘失败：文件已换，照常成功，只记 ERROR——绝不回滚半边。"""
+    figs = _figs(tmp_path)
+    before = {n: (figs / n).read_bytes() for n in ("Fig1.pdf", "Fig1.png")}
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    figs_id = _ident(figs.stat())
+    _fsync_spy(monkeypatch, lambda st: _ident(st) == figs_id)
+
+    with caplog.at_level(logging.ERROR, logger=m.LOG.name):
+        resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()
+    assert sorted(body["updated"]) == ["Fig1.pdf", "Fig1.png"]
+    for n, old in before.items():
+        assert (figs / n).read_bytes() != old, f"{n} 必须保持新内容（不回滚）"
+    assert any("目录项落盘失败" in r.getMessage() for r in caplog.records)
+    assert _leftovers(figs) == []
 
 
 # ------------------------------ 历史恢复走同一条路 ----------------------------

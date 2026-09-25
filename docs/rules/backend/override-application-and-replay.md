@@ -63,6 +63,19 @@
   **与寄生轴（#217）不冲突**：布局引擎在 `Figure.draw` 最前面跑（钉住宿主），
   宿主的 `draw()` 随后把自己的 rect 推给寄生轴（寄生跟着走）；寄生轴自己的
   position 照旧是死开关（reason `parasite_host_rect`）。
+- **拖过的文字（`("text", "pos_frac")`）落在写下的 figure 分数上（2026-09-25，QA GEO-B1 / GEO-B2）**：
+  ① 注释文字的换算按它自己的 `anncoords` **现算**（`_get_xy_transform`），不许用 `get_transform()`——
+  那是上一次 draw 冻下来的快照，预览 SVG 按 72 dpi 画、manifest 按 figure dpi 画，拿快照逆算会按
+  dpi 之比落错。'pixels' / 'fontsize' / 可调用 / Artist 坐标系的注释**不宣称可拖**，manifest 与
+  setter 共用 `annotation_text_draggable` 一份判据（硬写一条 → warning，不静默落错）。
+  ② 有布局引擎（constrained / compressed / tight）的图：setter 把拖过的文字登记进根 Figure 的
+  `_mm_text_pins`，并给**当前引擎实例**的 `execute` 包一层（`_ensure_text_pin_hook`，幂等）——
+  排版前把登记的文字放回脚本原样（自动定位照开），引擎照常算，排完再按新的子图框落回写下的
+  分数。与 `PinnedTightLayoutEngine` 同一条理由：**布局的输入必须与「没拖过」逐位相同**，否则拖一个
+  标题会让子图跳、文字又被跳走的子图带走（y 分量等于没写），热态与重放也不收敛到同一张图。
+  撤销（`_restore_text_pos`）同时摘掉登记。没有布局引擎的图不装这层。看护
+  `tests/test_text_drag_anchor.py`。上游性质（与拖动无关）：**没拖过的** 'figure fraction' 注释
+  在 constrained 图里就会让子图每画一次挪一次（钉在 figure 上的注释进了布局，边距不收敛）。
 - **文字背景框的显隐只由 `bbox_visible` 决定（2026-09-19，#412）**：`true` 显示；显式 `false`
   或不在列表里 = 脚本原样（脚本 `set_bbox` 过就显示，没有就不显示）。`bbox_facecolor` 等五条
   只改样式、**永不改显隐**——框还没有时现建一个不可见的（`_BBOX_CREATE` 带

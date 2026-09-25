@@ -6,7 +6,7 @@
  * **trace 把三个变体身份的变化说清楚了**——诊断能力本身要有用例守着，
  * 否则它会在某次重构里悄悄退化成一串没有信息量的记录。
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -17,9 +17,17 @@ import type { Manifest } from '@/lib/api'
 import { VECTOR_PREVIEW } from '@/lib/previewBudget'
 import type { PanelObject } from '@/types/document'
 import { __resetDiagnosticsForTests, readDiagnosticTrace, recordDiagnosticEvent } from './store'
-import { __setDiagnosticSaltForTests, docHash, variantHash } from './hash'
+import { __setDiagnosticSaltForTests, diagnosticHash, docHash, variantHash } from './hash'
 import { buildFrontendDiagnosticSnapshot } from './snapshot'
 import { buildDiagnosticPayload } from './index'
+
+// 「结构共享」量成 hash 次数而不是墙钟（#368）：只把导出的 diagnosticHash 包一层计数，
+// 行为原样。hash.ts 内部（docHash / tagged）调的是模块内的本地绑定，不经过这层——
+// 所以数到的是**别的模块**（digest.ts 的 digestObject、sanitize）喂进来的次数。
+vi.mock('./hash', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./hash')>()
+  return { ...real, diagnosticHash: vi.fn(real.diagnosticHash) }
+})
 
 const MANIFEST = {
   stem: 'Fig1',
@@ -476,23 +484,32 @@ describe('性能预算（ADR 0016 §15）', () => {
       txn: null,
     })
 
-    // 第一次：冷的，要把 500 个对象都 hash 一遍
-    const t0 = performance.now()
+    // 判据的主语：**文档对象**被 diagnosticHash 了几次——不是墙钟。两次墙钟测量落在不同
+    // 负载下比大小，全量并行时会翻过来（#368）。只数实参是本文档对象的那些调用，
+    // 诊断事件的 sanitize 等别处的 hash 不算。
+    const ours = new Set<unknown>()
+    const objectHashes = () =>
+      vi.mocked(diagnosticHash).mock.calls.filter(([v]) => ours.has(v)).length
+    const track = () => useDocumentStore.getState().doc.objects.forEach((o) => ours.add(o))
+    track()
+    vi.mocked(diagnosticHash).mockClear()
+
+    // 第一次：冷的，要把 500 个对象都 hash 一遍（before 那份文档从没摘要过）
     useDocumentStore.getState().commit(msg('setProp', undefined, 'inspector'), (d) => {
       ;(d.objects[0] as { x: number }).x = 999
     })
-    const cold = performance.now() - t0
+    track()
+    const cold = objectHashes()
+    expect(cold).toBeGreaterThanOrEqual(500)
 
-    // 之后每次只改一个对象：其余 499 个引用没变，WeakMap 直接命中
-    const t1 = performance.now()
+    // 之后每次只改一个对象：其余 499 个引用没变，WeakMap 直接命中——每次只 hash 被改的那一个
     for (let i = 1; i <= 20; i++) {
+      vi.mocked(diagnosticHash).mockClear()
       useDocumentStore.getState().commit(msg('setProp', undefined, 'inspector'), (d) => {
         ;(d.objects[i] as { x: number }).x = 1000 + i
       })
+      track()
+      expect(objectHashes(), `第 ${i} 次热 commit`).toBe(1)
     }
-    const warmEach = (performance.now() - t1) / 20
-
-    // 热态单次必须明显快过冷启动那次；这条是「结构共享真的被用上了」的判据
-    expect(warmEach).toBeLessThan(Math.max(cold, 1))
   })
 })

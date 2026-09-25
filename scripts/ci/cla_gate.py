@@ -113,7 +113,11 @@ def load_json(path: Path, what: str):
 
 
 def load_commits(path: Path, expected: int | None) -> list:
-    """把 `pulls/{n}/commits` 的响应读成一个扁平的提交列表。
+    """把 PR 的提交列表读成一个扁平的提交列表。
+
+    来源是 `compare/{base}...{head}` 逐页的 `.commits`（#318：`pulls/{n}/commits`
+    的响应封顶 250 条，分页也突破不了，已不再使用）；每条仍是同一种 commit 对象。
+    workflow 用 `--jq '.commits'` 取，每页吐一个数组——下面第二种形状。
 
     **三种形状都要接受，因为 `gh --paginate` 的输出形状随版本而变**：
 
@@ -274,7 +278,7 @@ def verify_documents(policy: dict, root: Path) -> list[str]:
 def collect_contributors(pr_author: str | None, commits: list) -> tuple[list[dict], list[dict]]:
     """把 PR 作者 + 每个 commit 的 author + Co-authored-by 收成一张去重的表。
 
-    纯函数：`commits` 就是 `GET /repos/{o}/{r}/pulls/{n}/commits` 的响应。
+    纯函数：`commits` 是 PR 的全部提交对象（`GET /repos/{o}/{r}/compare/{base}...{head}` 逐页的 `commits`）。
     只检查 PR 发起人是不够的——一个 PR 里可以有别人写的 commit，也可以有
     co-author，那些人同样在向仓库投稿。
     """
@@ -607,7 +611,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--pr-author", default=None)
     ap.add_argument(
-        "--commits-json", default=None, help="`GET /repos/{o}/{r}/pulls/{n}/commits` 的响应文件"
+        "--commits-json",
+        default=None,
+        help="PR 的提交列表：`compare/{base}...{head}` 逐页 `.commits` 首尾相接的文件",
     )
     ap.add_argument(
         "--expected-commits",

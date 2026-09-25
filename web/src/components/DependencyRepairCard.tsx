@@ -482,7 +482,9 @@ function Failure({ code, text }: { code: string; text: string }) {
 export function ManagedEnvironmentRow() {
   useTranslation('errors')
   const { env } = useEnvStore()
-  const { busy, rebuildManaged } = useDepRepairStore()
+  const { busy: repairBusy, rebuildRunning, rebuildManaged } = useDepRepairStore()
+  // 重建跨项目单飞：别的项目的重建还没结束时这里同样起不了
+  const busy = repairBusy || rebuildRunning
   const managed = env?.project?.managed
   if (!env?.project?.open || !managed?.exists) return null
   return (

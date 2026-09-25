@@ -231,8 +231,9 @@ USER_VISIBLE_CODES = {
     "dir_fsync_failed": {"reason"},
     "write_back_disabled": set(),
     "write_back_warnings": set(),
-    # QA 2026-09-24 SCI-05-B1：commit 前的备份失败（磁盘满），原件零改动
-    "write_back_backup_failed": {"file"},
+    # issue #252 / QA 2026-09-24 SCI-05-B1：commit 的落盘准备（备份 + fsync）没过，
+    # 任何 replace 之前，原件零改动
+    "write_back_persist_failed": {"reason"},
     # --- Prompt 10（ADR 0029）：全局 Style / Spec 清单（engine/profilestore.py）。
     #     全部经 app._profiles_error 一个漏斗转成 JSON；`name_missing` 复用上面
     #     那条（同一件事只该有一个 code）---

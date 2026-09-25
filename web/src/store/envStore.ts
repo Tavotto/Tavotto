@@ -102,6 +102,14 @@ export interface AdoptedEnvironment {
   token: number
 }
 
+/**
+ * 项目代际（issue #605 评审 / #606 第 1 条）：`resetProject()`（换项目）加一。`env.project`、工作目录模式、
+ * 项目解释器说的都是**发请求那个项目**；A 的 GET / PATCH 在切到 B 之后才回来的话，写进来就是把 A 的项目
+ * 环境摆在 B 上。所以每个 await 之后、写状态之前按代际判一次——判在写的这一侧，调用方（`depRepairStore`
+ * 的采用、设置页）不必各自再挡一遍，也挡不住（写在它们看得见结果之前就发生了）。
+ */
+let projectEpoch = 0
+
 export const useEnvStore = create<EnvState>((set, get) => ({
   env: null,
   adoptedEnvironment: null,
@@ -131,11 +139,15 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     set({ adoptedEnvironment: null })
   },
   revertAdoptedEnvironment: async () => {
+    const epoch = projectEpoch
     const error = await get().setProjectPython(null)
+    // 「改回」记在 A 上；切到 B 之后才回来的话，B 的提示与面板一个都不动
+    if (epoch !== projectEpoch) return null
     if (error) return error
     get().dismissAdoptedEnvironment()
     // 后端已关掉本项目的会话；每个在用的面板都要按原来的环境重建（不只是失败的那些）
     const { useRenderStore } = await import('@/store/renderStore')
+    if (epoch !== projectEpoch) return null
     const render = useRenderStore.getState()
     const ids = [...new Set(Object.values(render.byKey).map((v) => v.fileId))]
     if (ids.length) render.markStale(ids)
@@ -143,8 +155,11 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   },
 
   refresh: async () => {
+    const epoch = projectEpoch
     try {
-      set({ env: await fetchEngineEnvironment() })
+      const env = await fetchEngineEnvironment()
+      if (epoch !== projectEpoch) return // 响应里的 project 是发请求那个项目的
+      set({ env })
     } catch {
       // 探测失败不该打扰用户：真要渲染时自然会报错
     }
@@ -164,28 +179,37 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   },
 
   setPython: async (path) => {
+    const epoch = projectEpoch
     try {
       const env = await setEngineEnvironment(path)
+      // 全局解释器已经改了（它不属于哪个项目）；但响应里带着发请求那个项目的 `project`，切过就不写，
+      // 换项目时那次 refresh 会拿到新项目的整份
+      if (epoch !== projectEpoch) return null
       set({ env })
       // PATCH 的响应现在与 GET 同形（带 `project`）；老服务端没带的话整体替换会把
       // 受管环境 / 工作目录那几行藏到下一次无关刷新——补一次 GET（Codex 评审 P2）
       if (!env.project) await get().refresh()
       return null
     } catch (e) {
+      if (epoch !== projectEpoch) return null
       // 按 code 翻（`environment_mutating` = 安装进行中，暂时不能改），查不到才原文
       return e instanceof Error ? backendErrorText(e) : t('engine.setPythonFailed', { ns: 'errors' })
     }
   },
 
   setProjectPython: async (path, module) => {
+    const epoch = projectEpoch
     try {
       const res = await setProjectEnvironment(path, module)
+      // A 的项目环境不写进 B 的 env（#605 评审 P1）；A 的错误也不在 B 上说
+      if (epoch !== projectEpoch) return null
       // 项目那半边变了，全局状态里的 project 换成后端刚算出来的那份
       const env = get().env
       if (env) set({ env: { ...env, project: res.project } })
       else await get().refresh()
       return null
     } catch (e) {
+      if (epoch !== projectEpoch) return null
       return e instanceof Error ? e.message : t('engine.setPythonFailed', { ns: 'errors' })
     }
   },
@@ -213,14 +237,19 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       )
       if (!ok) return null
     }
+    const epoch = projectEpoch
     try {
       const res = await setProjectWorkdir(mode)
+      // 模式记在 A 上；B 的环境行、确认框、渲染重排、状态栏一个都不动
+      if (epoch !== projectEpoch) return null
       const env = get().env
       if (env) set({ env: { ...env, project: res.project } })
       else await get().refresh()
+      if (epoch !== projectEpoch) return null
       set({ workdirConfirmation: null })
       // 后端已经关掉了这个项目的会话；把因「没出图」/「要先选目录」失败的面板重新排上
       const { useRenderStore } = await import('@/store/renderStore')
+      if (epoch !== projectEpoch) return null
       useRenderStore.getState().retryEnvironmentFailures()
       const now =
         mode === 'project_root'
@@ -231,11 +260,14 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       useUiStore.getState().setStatus(msg(now, undefined, 'errors'))
       return null
     } catch (e) {
+      if (epoch !== projectEpoch) return null
       return e instanceof Error ? e.message : t('engine.setPythonFailed', { ns: 'errors' })
     }
   },
 
   resetProject: () => {
+    // 换代**排在清空与重取之前**：之前发出的请求作废，下面这次 refresh 属于新项目
+    projectEpoch += 1
     const env = get().env
     // 首开确认框属于旧项目：A 项目问的问题不能由 B 项目回答
     if (env)
