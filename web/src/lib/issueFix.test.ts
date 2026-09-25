@@ -331,6 +331,47 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     )
   })
 
+  it('等待期间换了文档：丢弃，而且不拿旧文档的面板去新文档里重放', async () => {
+    await seed()
+    let release: (v: SpecFixResponse) => void = () => {}
+    engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
+    const pending = applyIssueFix(floorIssue())
+    // 另一份文档里恰好也有一个 id 为 p1 的面板
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other_project')
+    useDocumentStore.getState().commit(literal('另一份'), (d) => {
+      d.objects = [panel({ overrides: [{ gid: 'axes_0.title', prop: 'text', value: 'B' }] })]
+    })
+    engineRender.mockClear()
+    release(passed())
+    expect(await pending).toMatchObject({ ok: false, reason: 'stale' })
+    expect(engineRender).not.toHaveBeenCalled()
+  })
+
+  it('后端拒绝、等待期间用户又改了这张图：按此刻的列表重放（回滚盖回了旧列表）', async () => {
+    await seed()
+    let release: (v: SpecFixResponse) => void = () => {}
+    engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((r) => (release = r)))
+    const pending = applyIssueFix(floorIssue())
+    const mine = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 13.75 }]
+    useDocumentStore.getState().commit(literal('用户改了'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides = mine
+    })
+    engineRender.mockClear()
+    release(refused('constraint_conflict'))
+    expect(await pending).toMatchObject({ ok: false, reason: 'would_worsen' })
+    expect(engineRender.mock.calls.some((c) => JSON.stringify(c[1]) === JSON.stringify(mine))).toBe(
+      true,
+    )
+  })
+
+  it('后端拒绝、这张图没被改过：不多发一次渲染', async () => {
+    await seed()
+    engineSpecfix.mockResolvedValue(refused('constraint_conflict'))
+    engineRender.mockClear()
+    await applyIssueFix(floorIssue())
+    expect(engineRender).not.toHaveBeenCalled()
+  })
+
   it('等待期间用户缩放了这张图（override 没变）：缩放比已不是发出去的那个，丢弃', async () => {
     await seed()
     let release: (v: SpecFixResponse) => void = () => {}

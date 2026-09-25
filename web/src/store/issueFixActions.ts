@@ -206,6 +206,13 @@ async function runLocked(
   // 串行而不是并发：同一个脚本的几张图共用一个 worker，交错的事务会让它的热态
   // 在别人的候选与基准之间来回跳（每条响应本身仍然正确，但没有必要去赌）
   const next = new Map<string, { overrides: PanelOverride[]; applied: number }>()
+  /**
+   * 跑过后端事务、但结果**不会被写进文档**的面板（被拒绝 / 没修成任何一条），以及发出去的
+   * 那份列表。后端拒绝时会把 worker 回滚到 B0；而用户在这几秒里改过这张图的话，普通渲染可能
+   * 在两轮之间抢先落下，回滚随后又把 worker 盖回旧列表（Codex #549 第五轮 P1）。回来之后
+   * 对这些面板照样对一次账。
+   */
+  const touched: { id: string; sent: string }[] = []
   if (byPanel.size && engineTransport()) {
     for (const list of byPanel.values()) addFailure(failed, 'unavailable', list.length)
     byPanel.clear()
@@ -232,6 +239,7 @@ async function runLocked(
       continue
     }
     const out = settle(res, list)
+    if (!(res.ok && out.applied > 0)) touched.push({ id, sent: same(panel.overrides) })
     for (const f of out.failed) addFailure(failed, f.reason, f.count, fontOf(profile))
     if (res.ok && out.applied > 0) {
       next.set(id, { overrides: res.patches.map((p) => ({ ...p })), applied: out.applied })
@@ -253,17 +261,31 @@ async function runLocked(
     const after = now.doc.objects.find((o) => o.id === id)
     return !!before && !!after && same(before) === same(after)
   }
+  /**
+   * 把 worker 按这张图**此刻**的列表重放一遍——只在同一份载入的文档里做（Codex #549 第五轮
+   * P1）：换了项目 / 文档之后 `now.doc` 里同 id 的对象是另一份文档的，拿出发时那份面板去
+   * 渲染则会把 A 的文件与列表渲染、缓存到 B 名下。那时 worker 已不属于当前界面，不动它。
+   */
+  const replay = (id: string): void => {
+    if (now.loadSeq !== loadSeq) return
+    const panel = now.doc.objects.find((o) => o.id === id)
+    if (panel?.type === 'panel') requestRender(panel, true)
+  }
   for (const [id, item] of [...next]) {
     if (moved || !unchanged(id)) {
       addFailure(failed, 'stale', item.applied)
       next.delete(id)
       // 后端说通过时，共享 worker 与它写的 SVG 停在**候选**列表上（Codex #549 第四轮）。
-      // 丢弃结果只撤掉了文档那一侧；不把 worker 按这张图此刻的列表重放一遍，
-      // `/api/engine/svg` 与下一次命中的就是一份没提交的候选
-      const panel =
-        now.doc.objects.find((o) => o.id === id) ?? docAtStart.objects.find((o) => o.id === id)
-      if (panel?.type === 'panel') requestRender(panel, true)
+      // 丢弃结果只撤掉了文档那一侧；不重放的话，`/api/engine/svg` 与下一次命中的就是一份
+      // 没提交的候选
+      replay(id)
     }
+  }
+  // 没被写进文档的那些：后端已回滚到发出去的列表；此刻的列表若已不同（等待期间用户改过），
+  // 回滚把 worker 盖回了旧列表，按此刻的再重放一遍
+  for (const { id, sent } of touched) {
+    const panel = now.doc.objects.find((o) => o.id === id)
+    if (panel?.type === 'panel' && same(panel.overrides) !== sent) replay(id)
   }
   const fresh = plans.filter((plan) =>
     moved

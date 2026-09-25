@@ -72,8 +72,11 @@ COUPLED_PROPS = {
     "linewidth": ("handle_linewidth",),
 }
 
-#: 人用的 0.5 pt 档格（字号）；与前端 `issueFix.ts` 的 GRID 同值
-GRID = 0.5
+#: 字号的人用档格：每 pt 几档（2 = 0.5 pt 一档）。严格同源对：`web/src/lib/issueFix.ts` 的
+#: `FONT_GRID_STEPS_PER_PT`（看护 `tests/test_specfix.py::test_font_grid_is_one_number_on_both_sides`）；
+#: 写成整数是为了让看护按结构读 TS 侧，不用正则猜小数
+FONT_GRID_STEPS_PER_PT = 2
+GRID = 1 / FONT_GRID_STEPS_PER_PT
 
 #: 修复**引入**的规范问题到这个等级就挡事务（见 `verdict`）
 STRICT_SEVERITIES = ("error", "warn")
@@ -138,7 +141,9 @@ def all_issues(manifest: dict, profile: dict, scale: float) -> list[dict]:
 def select(issues: list[dict], only: list[dict] | None) -> list[tuple[str, str]]:
     """要修哪些 `(规则, gid)`。`only` 为空 = 「全部处理」：可修规则里去掉建议档。"""
     fixable = [i for i in issues if i.get("id") in FIXABLE_RULES and i.get("gids")]
-    if only:
+    # `only` 缺席（None）= 全部处理；给了列表就只修列表里的——**空列表 = 一条都不修**，
+    # 不能因为它是假值就落回全部处理（Codex #549）
+    if only is not None:
         want = {(str(o.get("rule")), str(o.get("gid") or "")) for o in only}
         rules_any_gid = {r for r, g in want if not g}
         return [

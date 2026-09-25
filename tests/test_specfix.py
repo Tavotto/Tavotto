@@ -92,6 +92,8 @@ def test_select_skips_suggestions_in_batch_but_honours_them_when_named():
     assert specfix.select(issues, None) == [("legend-frame", "a.legend")]
     named = specfix.select(issues, [{"rule": "text-weight-policy", "gid": "a.xlabel"}])
     assert named == [("text-weight-policy", "a.xlabel")]
+    # 显式给了空列表 = 一条都不修，不是「全部处理」
+    assert specfix.select(issues, []) == []
     # 不认识的规则（不在 FIXABLE_RULES 里）点名了也不修
     assert specfix.select(issues, [{"rule": "axis-label-format", "gid": ""}]) == []
 
@@ -141,3 +143,20 @@ def test_lowering_a_heading_lowers_bigger_lower_ranked_text_with_it():
     assert _change(plan, "a.xlabel", "fontsize")["rule"] == "keep-hierarchy"
     # 本来就更小的下层一个字不动
     assert not any(c["gid"] == "a.xticks" for c in plan["changes"])
+
+
+def test_font_grid_is_one_number_on_both_sides():
+    """严格同源对：`specfix.FONT_GRID_STEPS_PER_PT` ↔ `issueFix.ts` 的同名常量（Codex #549 P1）。
+
+    画布标注的字号在前端修、图内文字在后端修；档格分叉的话，同一种「字号偏小」在两处落在
+    不同的档上。TS 侧按结构读（只认一处 `export const`、初始化式必须是整数字面量）。
+    """
+    from pathlib import Path
+
+    from tests.support.tsconst import exported_number
+
+    ts = Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "issueFix.ts"
+    assert exported_number(ts.read_text(encoding="utf-8"), "FONT_GRID_STEPS_PER_PT") == (
+        specfix.FONT_GRID_STEPS_PER_PT
+    )
+    assert specfix.GRID == 1 / specfix.FONT_GRID_STEPS_PER_PT

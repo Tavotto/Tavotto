@@ -23,7 +23,15 @@ import type { ValidationIssue } from './validation'
 import type { FigureDocument } from '@/types/document'
 
 /** 字号 / 线宽落在人用的 0.5 档格子上，而不是 8.000001 这种数字。 */
-const GRID = 0.5
+/**
+ * 字号的人用档格：每 pt 几档（2 = 0.5 pt 一档）。写成整数，是为了让两侧的同源看护能按
+ * 结构读它（`tests/support/tsconst.exported_number` 只认整数字面量，不猜小数）。
+ * 严格同源对：`engine/specfix.FONT_GRID_STEPS_PER_PT`（看护
+ * `tests/test_specfix.py::test_font_grid_is_one_number_on_both_sides`）——两侧分叉的后果是
+ * 画布标注与图内文字的同一种修复落在不同的档上。
+ */
+export const FONT_GRID_STEPS_PER_PT = 2
+const GRID = 1 / FONT_GRID_STEPS_PER_PT
 const up = (v: number): number => Math.ceil(v / GRID - 1e-9) * GRID
 const down = (v: number): number => Math.floor(v / GRID + 1e-9) * GRID
 const num = (v: unknown): number | null =>
