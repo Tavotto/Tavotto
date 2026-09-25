@@ -232,12 +232,15 @@ interface RenderState {
   noteBuilding: (fileId: string, info: { cold: boolean; cost: string } | null) => void
   /** 渲染并取回 SVG（与 manifest 同一响应）；同键渲染中重复调用只保留最后一次待办。
    *  `policy` 只进诊断事件，**不影响任何渲染行为**——它是「这次是定稿还是防抖」
-   *  的说明，缺省按 immediate 记。 */
+   *  的说明，缺省按 immediate 记。
+   *  `epoch`：延迟发起的调用方在**排渲染那一刻**取的 `renderEpoch()`；与当前代际不符
+   *  时整次作废。同步调用不传，按调用那一刻的代际算。 */
   render: (
     fileId: string,
     patches: unknown[],
     previewDpi?: number,
     policy?: RenderRequestPolicy,
+    epoch?: number,
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
@@ -444,6 +447,15 @@ let requestSeq = 0
 let projectEpoch = 0
 
 /**
+ * 此刻的项目代际。**延迟发起渲染的调用方**（`renderScheduler` 的防抖计时器）在排渲染
+ * 那一刻取它、到点时原样交给 `render()`：到点那一刻 `clear()` 可能早换过代了，
+ * 那时再取就是新项目的代，旧项目排下的请求会一路畅通地写进新项目（Codex #597 P2）。
+ */
+export function renderEpoch(): number {
+  return projectEpoch
+}
+
+/**
  * 渲染请求看门狗：fetch 永不 settle（服务重启留下的半开连接、代理悬挂）时
  * busy 永远不释放，该面板从此渲染不动。它按脚本 cost 取档、刻意宽松——heavy
  * 冷启动本身就是分钟级；本意是兜连接悬挂，不是性能预算。
@@ -496,7 +508,10 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       return { building: { ...s.building, [fileId]: info } }
     }),
 
-  render: async (fileId, patches, previewDpi, policy) => {
+  render: async (fileId, patches, previewDpi, policy, epoch) => {
+    // 排渲染时的项目已经不是当前项目：连请求都不发（发出去 pj 是新项目的，
+    // 渲染的却是旧项目的 fileId 与 patches）
+    if (epoch !== undefined && epoch !== projectEpoch) return
     const key = renderKey(fileId, patches)
     // 序号在**请求进来的那一刻**取，不是发出的那一刻：忙时排队的那次要带着
     // 自己的序号走完全程，否则一个早就该被覆盖的旧变体会因为「重试发得晚」

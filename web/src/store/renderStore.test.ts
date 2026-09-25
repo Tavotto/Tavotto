@@ -388,6 +388,38 @@ describe('项目代际（STATE-06）：clear() 之前发出的渲染，回包不
     expect(st.latest['fig1.pdf']).toBe(renderKeyOf(b))
   })
 
+  it('防抖窗口里换了项目：旧项目排下的那次到点也不发、不落进新项目（Codex #597 P2）', async () => {
+    // 代际要在**排渲染那一刻**记下，不是到点发出那一刻——到点时 clear() 早换过代了，
+    // 那时再取就是新项目的代，旧请求会带着新代际一路畅通地写进新项目
+    const { requestRender } = await import('./renderScheduler')
+    vi.useFakeTimers()
+    try {
+      requestRender(panel('pA', 'fig1.pdf'), 'defer')
+      useRenderStore.getState().clear()
+      engineRender.mockResolvedValue(ok('A-fig1'))
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(engineRender).not.toHaveBeenCalled()
+      expect(useRenderStore.getState().byKey[renderKeyOf(b)]).toBeUndefined()
+      expect(useRenderStore.getState().latest['fig1.pdf']).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('对照：防抖窗口里没换项目，到点照常发出并入库', async () => {
+    const { requestRender } = await import('./renderScheduler')
+    vi.useFakeTimers()
+    try {
+      engineRender.mockResolvedValue(ok('A-fig1'))
+      requestRender(panel('pA', 'fig1.pdf'), 'defer')
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(engineRender).toHaveBeenCalledTimes(1)
+      expect(useRenderStore.getState().byKey[renderKeyOf(b)].manifest?.stem).toBe('A-fig1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('对照：没换项目时挂起的失败照常落成错误块', async () => {
     const { EngineError } = await import('@/lib/api')
     const a = holdNextRender()
