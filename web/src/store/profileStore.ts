@@ -90,9 +90,20 @@ function asFailure(err: unknown): ApiFailure {
   return { status: e?.status, body: e?.body, message: e?.message ?? String(err) }
 }
 
-/** 请求序号：慢响应不许覆盖新的（与 assetStore / readiness 同一条纪律）。 */
+/**
+ * 请求序号：慢响应不许覆盖新的（与 assetStore / readiness 同一条纪律）。**成功的写操作也占一个号**：
+ * 写之前发出的清单请求回来的是写之前的那一份，照样发布的话会把刚存进去的那一条换回旧值，
+ * 跟着清单走的画布（ADR 0081）会把用户刚做的修改悄悄反做回去（Codex #547 P1）。
+ */
 let seq = 0
 let applied = 0
+/** 最近一次发起的清单请求的号：被写操作盖过的那一次如果还是最近的，就重拉一次 */
+let latestLoad = 0
+
+/** 一次写操作成功：比它早发出的清单请求一律作废 */
+const noteMutation = () => {
+  applied = ++seq
+}
 
 /**
  * 清单记录 → 规范目录。**纯函数**：组件里 `useMemo([specs])` 直接用它，
@@ -118,8 +129,9 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   error: null,
   conflict: null,
 
-  load: async () => {
+  load: async (): Promise<void> => {
     const mine = ++seq
+    latestLoad = mine
     set({ loading: true })
     try {
       const [styles, specs] = await Promise.all([fetchProfiles('style'), fetchProfiles('spec')])
@@ -127,11 +139,12 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       // 的响应（代理、离线页、别的服务占了端口）会把内置规范一起抹掉，而
       // 界面上看起来只是"这台机器上没有规范"——最坏的那种静默。
       if (!Array.isArray(styles) || !Array.isArray(specs)) throw new Error('bad_shape')
-      if (mine < applied) return
+      // 被写操作盖过、而且没有更新的请求在路上：这一份是写之前的，重拉一次（等它的人拿到的是新的）
+      if (mine < applied) return mine === latestLoad ? get().load() : undefined
       applied = mine
       set({ styles, specs, loaded: true, loading: false, error: null })
     } catch (err) {
-      if (mine < applied) return
+      if (mine < applied) return mine === latestLoad ? get().load() : undefined
       applied = mine
       // 后端不在：规范退回内置清单，样式保持空。**不是错误状态**——
       // 演练场里本来就没有后端，把它标红只会教用户忽略红色。
@@ -171,6 +184,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   remove: async (kind, id) => {
     try {
       await deleteProfile(kind, id)
+      noteMutation()
       set({
         ...replace(kind, get().list(kind).filter((r) => r.id !== id)),
         error: null,
@@ -224,6 +238,7 @@ async function run(
 ): Promise<ProfileRecord | null> {
   try {
     const rec = await op()
+    noteMutation()
     const list = get().list(kind)
     const idx = list.findIndex((r) => r.id === rec.id)
     const next = idx < 0 ? [...list, rec] : list.map((r) => (r.id === rec.id ? rec : r))
