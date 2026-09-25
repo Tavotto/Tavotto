@@ -12,12 +12,28 @@
   "populations": {
     "opted_in_install": {
       "description": "One random UUIDv4 distinct_id that has sent at least one product event. NOT a person and NOT every user — telemetry is opt-in, so all product metrics are a lower bound.",
-      "distinct_id": "random UUIDv4 generated on the machine at opt-in"
+      "distinct_id": "random UUIDv4 generated on the machine at opt-in",
+      "exclude": "$ci_phantom_installs",
+      "exclude_note": "Applies to EVERY metric with population opted_in_install, and to any ad-hoc install / opt-in count (e.g. unique distinct_id with telemetry_enabled). See ci_phantom_installs."
     },
     "distribution_metrics": {
       "description": "Scheduled collector rows. Constant distinct_id 'distribution_metrics'. Never mix into user cohorts.",
       "distinct_id": "distribution_metrics"
     }
+  },
+  "ci_phantom_installs": {
+    "issue": "#440",
+    "what": "Historical phantom installs leaked by the pytest suite: each CI pytest session sent exactly one real telemetry_enabled (source=settings, occasionally first_run) with distribution='source' and nothing else — no app_started, no later event.",
+    "definition": "a distinct_id whose ENTIRE event history (all time, not the query window) is exactly one event, that event is telemetry_enabled, and its distribution property is 'source'",
+    "hogql_exclusion": "distinct_id NOT IN (SELECT distinct_id FROM events WHERE distinct_id != 'distribution_metrics' GROUP BY distinct_id HAVING count() = 1 AND any(event) = 'telemetry_enabled' AND any(properties.distribution) = 'source')",
+    "evaluate_over": "all_time",
+    "why_all_time": "Evaluating the one-event test inside the metric window would misclassify a real install whose other events fall outside the window.",
+    "scale_at_discovery": "249 phantom installs all-time as of 2026-09-20 (macos/arm64 146, linux/x86_64 103, all from CI pytest shards) vs 44 real Windows desktop opt-ins; all 70 opt-ins in 2026-09-12..2026-09-19 and 7 of 57 after launch were phantoms",
+    "leak_period": "from the first CI pytest session that could reach the real endpoint until the harness fix in PR #580 (reset_for_tests joins the sender thread, _post re-checks the hard switch, session-level zero-network probe in conftest)",
+    "affects": "install / opt-in counts (unique distinct_id with telemetry_enabled or with any event), activation cohorts anchored on telemetry_enabled, platform mix of opt-ins",
+    "does_not_affect": "weekly_successful_exporters, engaged_wau, engaged_mau and every other metric that requires an engaged event — a phantom has only telemetry_enabled",
+    "data_handling": "Dashboard-side filter only. The phantom persons and events are NOT deleted from PostHog.",
+    "known_cost": "A genuine source-checkout user who opts in and never sends a second event is excluded too. Such an install is not engaged by definition, so only raw opt-in counts lose it."
   },
   "role_resolution": {
     "rule": "RESOLVE ROLE PER asset_id FIRST: asset_role is a label on a row, not part of the asset's identity — asset_id is. Take the role from each asset_id's MOST RECENT snapshot, then aggregate over ALL of that asset_id's rows regardless of the role recorded on older ones. Filtering rows by asset_role and aggregating within the filtered set splits a reclassified asset in two.",
