@@ -275,13 +275,13 @@ test('教程刚打开就拖：工作台挂载时的启动恢复晚到，也不�
   const a = await app({ noProject: true })
   await page.setViewportSize({ width: 1400, height: 900 })
   await openTutorialFromPicker(page, a.baseURL)
-  await coachmark(page).getByRole('button', { name: '开始' }).click()
+  await coachmark(page).locator('[data-onboarding-primary]').click()
   const fracX = async () => {
     const sheet = (await page.locator('[data-page-sheet]').boundingBox())!
     const box = (await page.locator('[data-object-id="p1"]').boundingBox())!
     return (box.x - sheet.x) / sheet.width
   }
-  await page.getByRole('button', { name: '适应画布' }).click()
+  await page.locator('[data-fit-canvas]').click()
   await page.waitForTimeout(400)
   const p1 = page.locator('[data-object-id="p1"]')
   const before = (await p1.boundingBox())!
