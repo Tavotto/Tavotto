@@ -392,6 +392,7 @@
     "firstBuild": "First build…",
     "memoryEfficientPreview": "Memory-efficient preview",
     "memoryEfficientPreviewHint": "This figure is complex, so Tavotto switched to a memory-efficient editing preview. Export quality is unaffected.",
+    "nativeInconsistent": "Some edits couldn’t be undone — re-run the original command to keep editing",
     "nativeOffline": "Session ended — re-run the original command to keep editing",
     "nativeRunning": "Script is running — editing resumes when it stops",
     "rendering": "Rendering…",

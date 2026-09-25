@@ -62,7 +62,9 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   被改过（override 列表或 `loadSeq` 对不上）一律**文档零改动**，原因走闭集
   `FixFailureReason`。成功体里下游要读的每个字段都在 `api.engineSpecfix` 验形状，不对就抛；抛的、
   以及后端说 `replay_required` / `worker_retired`（事务里有一次渲染不干净；safe worker
-  已作废，native 会话不作废、引擎在重放时重试还原）的，没提交时一律按此刻的列表重放 worker。**画布层**（标注字号、页宽）仍在 `lib/issueFix.planFix()`。
+  已作废，native 会话不作废、引擎在重放时重试还原）的，没提交时一律按此刻的列表重放 worker；
+  重放仍报 `unrestored > 0` 的 native 图由 `renderStore.inconsistent` → `nativePanelState`
+  标成 `'inconsistent'`（角标，与 offline 同一套）。**画布层**（标注字号、页宽）仍在 `lib/issueFix.planFix()`。
   可修规则集 `ENGINE_FIX_RULES` ↔ `specfix.FIXABLE_RULES` 是严格同源对。
   「全部处理」的集合唯一出处 `batchable()`（**不含建议档**；组头的「全部修复」
   是点名那一组，带 `includeSuggestions`）；计数与执行是同一个集合。修复在跑时

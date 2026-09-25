@@ -33,6 +33,7 @@
 | 字体没装 | 字体那几条单独退出（`font_unavailable`，报出规范要的字体名），其余照修 |
 | 不通过 | worker 回到 B0，回 `ok: false` 与原列表；前端**文档零改动**，原因走闭集 `FixFailureReason` |
 | 回滚干不干净 | 只有**事务里每一次渲染都没有 warning、没有抛**才算回滚成功（判据收在端点的 `render` 闭包一处，不逐个回滚点各查各的）。否则——B0 重放、候选、外边距那一轮、任何一次回滚带 warning，或渲染 / 事务本体抛了——热态不是它声称的那一份，分两档降级：**safe 池 worker** 一律作废（`app._retire_hot_worker` → `pool.invalidate`，与「重新构建」同一个原语），下一次请求重新起、按全量列表重放，响应带 `worker_retired: true`；**native 会话**是用户自己的 Python（ADR 0021），不杀不断开，`worker_retired: false`——靠的是引擎自己的保证：`overrides.apply()` **还原失败不遗忘**（键留在 applied / originals，记进 `FigState.unrestored`，下一次 apply 重试，欠着一天每次渲染报一次 warning，还原成功才清账；Codex #549 第八轮 P1）。两档响应都带 `replay_required: true`（干净时两者都是 `false`），前端没提交结果时按此刻的列表重放，与结果不确定同一条路 |
+| 重放之后仍不干净（native） | 真故障：这张 live 图与文档不一致。v1 render 结果带结构化的 `unrestored`（欠着几条还原；判据只看它，不解析 warning），`NativeSession` 据此记下这张图：只放行同一份列表的重渲染（重试，报 0 即自动解除），换列表的编辑、导出、历史预览一律 `native_figure_inconsistent`（409，与 `native_session_offline` 同一条路，ADR 0021 §9.3）；前端 `renderStore.inconsistent`（文件级）→ `nativePanelState` 的 `'inconsistent'` 角标「有改动没能还原，重新运行原命令可继续编辑」。重新运行 = 新会话、新 Figure |
 | 结果不确定 | 请求抛了（回程断线、非 2xx）、或成功体里**任何一个下游要读的字段**形状不对（`ok` / `exit` / `patches` 每一项的 `{gid, prop, value}` / `skipped` 每一项的 `{rule, gid, reason}` / `worker_retired` / `replay_required`，校验在 `api.engineSpecfix` 一处）：文档不改、按此刻的列表重放 worker；读响应（`settle()`）也在同一个 catch 里，读到一半炸了同样算不确定 |
 | 通过 | 回这张图**最终的全量 override 列表**；前端所有面板都回来之后**一次 commit**（⌘Z 一次撤回） |
 | 等待期间文档被改过 | 丢弃结果（override 列表或 `loadSeq` 对不上），报 `stale`；同一时刻只跑一轮（`busy`） |
@@ -68,5 +69,5 @@
 点名未处理逐条报出、端点入参校验）、`tests/test_specfix.py`（合成 manifest 上的计划：
 缩放换算与取整方向、层级补齐、图例区间交集、空区间不硬修、等距取细、批量集合、
 逐 gid 展开、同源对）、`web/src/lib/issueFix.test.ts`（发出去的是什么、通过才写且只
-写一次、五种退出码 → 原因、抛错 / 缺字体 / 过期 / busy / 无后端、批量集合、画布层、缺字段与 `worker_retired` / `replay_required` 走重放）、`web/src/lib/specfixResponse.test.ts`（成功体逐字段校验）、`tests/test_specfix_real.py` 的端点六条（干净拒绝不作废 / 回滚带 warning、回滚抛、B0 带 warning 都作废 / native 会话回滚不干净不作废但要求重放、干净时不要求）、`tests/test_restore_failure_retry.py`（还原失败留账重试、欠账期间点回来原样不丢、别名组组员的代采原样不回收、还原成功后热态与冷启动重放像素 + manifest 逐字节相同）、
+写一次、五种退出码 → 原因、抛错 / 缺字体 / 过期 / busy / 无后端、批量集合、画布层、缺字段与 `worker_retired` / `replay_required` 走重放）、`web/src/lib/specfixResponse.test.ts`（成功体逐字段校验）、`tests/test_specfix_real.py` 的端点六条（干净拒绝不作废 / 回滚带 warning、回滚抛、B0 带 warning 都作废 / native 会话回滚不干净不作废但要求重放、干净时不要求）、`tests/native/test_native_inconsistent.py`（只放行同一份列表、报 0 自动解除、导出 / 历史预览与 offline 一样被拦、端点透传 `unrestored` 与 409）、`web/src/store/renderStore.test.ts` / `nativeSessionStore.test.ts`（不一致标记按文件记、干净即解除、`'inconsistent'` 角标判据）、`tests/test_restore_failure_retry.py`（v1 render 带 `unrestored`、还原失败留账重试、欠账期间点回来原样不丢、别名组组员的代采原样不回收、还原成功后热态与冷启动重放像素 + manifest 逐字节相同）、
 `web/src/components/left/problemPanel.test.tsx`（修复在跑时置灰）。

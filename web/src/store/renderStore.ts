@@ -220,6 +220,14 @@ interface RenderState {
    * 上限是硬的——不设上限等于把一次长编辑的每一版 SVG 全留在内存里。
    */
   recent: Record<string, string[]>
+  /**
+   * 文件级：引擎说这张 live Figure **与文档不一致**（撤掉的改动还原不回去，Codex #549
+   * 第八轮）。成功响应的 `unrestored > 0` 置位、`= 0` 解除；被后端以
+   * `native_figure_inconsistent` 拒绝的渲染同样置位。**不写进变体条目**：不一致是
+   * 那一份 Figure 的事实，撤销落到一个早先画干净的变体上（命中缓存、不发请求）时，
+   * 按变体读会把它读成「好了」。只有 native 面板读它（`nativePanelState`）。
+   */
+  inconsistent: Record<string, boolean>
   get: (key: string) => PanelRender
   patch: (key: string, next: Partial<PanelRender>) => void
   /**
@@ -273,6 +281,9 @@ interface RenderState {
   /** 换项目：渲染态、跟踪表、在途账本一起归零 */
   clear: () => void
 }
+
+/** 后端拒绝在「与文档不一致」的 native 图上编辑 / 导出时的稳定码（`runcodes.NATIVE_FIGURE_INCONSISTENT`） */
+export const NATIVE_FIGURE_INCONSISTENT = 'native_figure_inconsistent'
 
 /** 每个变体一份在途状态：busy 时只记最后一次待办，避免连发把 worker 淹没 */
 const inflight = new Map<
@@ -461,6 +472,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
   latestSeq: {},
   recent: {},
   building: {},
+  inconsistent: {},
 
   get: (key) => get().byKey[key] ?? EMPTY,
 
@@ -608,6 +620,8 @@ export const useRenderStore = create<RenderState>((set, get) => ({
               latest: fresher ? { ...s.latest, [fileId]: key } : s.latest,
               latestSeq: fresher ? { ...s.latestSeq, [fileId]: seq } : s.latestSeq,
               recent: { ...s.recent, [fileId]: recent },
+              // 按响应到达的顺序记：会话对一张图串行执行，最后回来的就是它此刻的账
+              inconsistent: { ...s.inconsistent, [fileId]: (res.unrestored ?? 0) > 0 },
             }
           })
           // 刚往堆里加了一份 payload：立刻把驻留字节收回预算之内。
@@ -671,6 +685,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             useEnvStore
               .getState()
               .requestDependencyPreparation(dependencyPreparation, projectAtStart)
+          }
+          if (err instanceof EngineError && err.code === NATIVE_FIGURE_INCONSISTENT) {
+            set((s) => ({ inconsistent: { ...s.inconsistent, [fileId]: true } }))
           }
           // 失败时保留旧 SVG，用户还能看到上一版
           patch(key, {
@@ -779,7 +796,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       delete latest[fileId]
       delete latestSeq[fileId]
       delete recent[fileId]
-      return { byKey, tracked, latest, latestSeq, recent }
+      const inconsistent = { ...s.inconsistent }
+      delete inconsistent[fileId]
+      return { byKey, tracked, latest, latestSeq, recent, inconsistent }
     }),
 
   prune: (live) => {
@@ -853,7 +872,15 @@ export const useRenderStore = create<RenderState>((set, get) => ({
   clear: () => {
     inflight.clear()
     liveKeys.clear()
-    set({ byKey: {}, tracked: {}, latest: {}, latestSeq: {}, recent: {}, building: {} })
+    set({
+      byKey: {},
+      tracked: {},
+      latest: {},
+      latestSeq: {},
+      recent: {},
+      building: {},
+      inconsistent: {},
+    })
   },
 }))
 

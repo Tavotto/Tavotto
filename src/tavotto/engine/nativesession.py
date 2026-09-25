@@ -57,7 +57,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import envlease, nativerelay, pool, runcodes
+from . import envlease, nativerelay, patchspec, pool, runcodes
 from .runcodes import RunError
 
 #: 带外事件的键——**与 `bridge_runner.EVENT_KEY` 严格同源**。
@@ -315,6 +315,12 @@ class NativeSession:
         self._on_change = None
         #: 本会话占着的环境租约有没有被释放过（只释放一次）。
         self._lease_released = False
+        #: 「与文档不一致」的图：stem → 让它停在这一档的那份全量列表的 canonical hash。
+        #: 引擎报 `unrestored > 0`（撤掉的改动还原不回去）时记下，下一次 render 报 0 时解除。
+        #: 这期间只放行**同一份列表**的重渲染（它会重试还原），换列表的编辑与导出一律
+        #: `native_figure_inconsistent`——与 offline 同一条 409 路。会话是用户的进程，
+        #: 不杀不断开；重新运行原命令 = 新会话、新 Figure，这张表自然是空的（Codex #549 第八轮）
+        self.inconsistent: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # 状态机
@@ -478,6 +484,10 @@ class NativeSession:
         inline_svg=...)`——第三个是**位置**参数。原来的 `**kw` 收不下它，
         native 面板每一次渲染都是 TypeError。
         """
+        want = patchspec.patch_hash(patches)
+        owed = self.inconsistent.get(stem)
+        if owed is not None and owed != want:
+            raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
         self.rev += 1
         payload = {"cmd": "override", "stem": stem, "patches": patches}
         # 不给就**一个字段都不加**：信封形状与 safe worker 一字不差
@@ -485,9 +495,21 @@ class NativeSession:
             payload["preview_dpi"] = int(preview_dpi)
         if inline_svg:
             payload["inline_svg"] = True
-        return self._request(payload, REQUEST_TIMEOUT)
+        resp = self._request(payload, REQUEST_TIMEOUT)
+        unrestored = resp.get("unrestored")
+        if isinstance(unrestored, int) and unrestored > 0:
+            self.inconsistent[stem] = want
+        else:
+            self.inconsistent.pop(stem, None)
+        return resp
+
+    def _require_consistent(self, stem: str) -> None:
+        """导出 / 历史预览拿的是 live Figure：图与文档不一致时不许拿它交差。"""
+        if stem in self.inconsistent:
+            raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
 
     def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
+        self._require_consistent(stem)
         return self._request(
             {
                 "cmd": "export",
@@ -505,6 +527,7 @@ class NativeSession:
         return self.out_dir / f"{stem}_w{int(width_px)}.png"
 
     def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
+        self._require_consistent(stem)
         self._request(
             {
                 "cmd": "preview_png",

@@ -558,6 +558,7 @@ ADR 0013 的 asset id 是 `runtime:<script>#<stem>`。**一次性 session token
 |---|---|
 | `barrier` | manifest / edit / render / export / continue |
 | `running_script` / `continuing` | **不允许** Figure 请求 → `native_session_not_at_barrier` |
+| `barrier`，但这张图**与文档不一致**（引擎撤掉的改动还原不回去，v1 render 报 `unrestored > 0`；ADR 0080，2026-09-25 补） | 只放行**同一份列表**的重渲染（它重试还原，报 0 即自动解除）；换列表的编辑、导出、历史预览 → `native_figure_inconsistent`（409，与 offline 同一条路）；界面角标说「重新运行原命令」。会话不杀不断开 |
 
 **不在后台排队然后几分钟后偷偷执行**用户之前点的操作。UI 在脚本继续运行时
 禁用编辑控件但保留最后一帧 preview。
@@ -676,7 +677,7 @@ Waiting for Tavotto desktop…
 | invocation | `run_command_missing` `unsupported_run_command` `unsupported_python_option` `interpreter_not_found` `interpreter_not_executable` `unsupported_python_version` `unsupported_python_implementation` `script_target_missing` `script_target_not_file` `invalid_module_name` `project_root_invalid` `project_unreadable` |
 | handoff | `native_handoff_invalid` `native_handoff_expired` `native_handoff_consumed` |
 | attach / relay | `native_desktop_required` `native_attach_cancelled` `native_attach_timeout` `native_attach_failed` `native_relay_failed` `native_auth_failed` |
-| session | `native_session_conflict` `native_asset_conflict` `native_session_not_at_barrier` `native_session_offline` `native_session_ended` `native_session_disconnected` `bridge_child_exited` |
+| session | `native_session_conflict` `native_asset_conflict` `native_session_not_at_barrier` `native_session_offline` `native_figure_inconsistent` `native_session_ended` `native_session_disconnected` `bridge_child_exited` |
 | 结果 | `no_figure_captured` |
 | 环境 | `environment_in_use_by_native_session`（+ 复用既有 `environment_mutating`） |
 

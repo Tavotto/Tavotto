@@ -39,7 +39,9 @@
   一轮局部修复」只有 `normalize.better_candidate()` 一处（bridge 与桌面共用）。
   **只有每一次渲染都干净的事务才算回滚成功**：任何一次带 warning 或抛了，响应带
   `replay_required`（前端按此刻的列表重放）；safe 池 worker 另外作废（`app._retire_hot_worker`
-  → `pool.invalidate`，`worker_retired`），native 会话不杀（ADR 0021），靠下一条引擎保证。
+  → `pool.invalidate`，`worker_retired`），native 会话不杀（ADR 0021），靠下一条引擎保证；
+  重放后仍欠着还原（v1 render 的 `unrestored > 0`）就是「与文档不一致」，挡编辑与导出
+  （`native_figure_inconsistent`，见 `tavotto-run-control-plane.md`）。
 - **还原失败不遗忘（Codex #549 第八轮 P1）**：`apply()` 撤掉一条 override 时还原抛了，
   这个键**不销账**——applied / originals / alias_seeded 原样留着，记进 `FigState.unrestored`；
   下一次 apply 自动重试，欠着一天每次都报 `还原失败` warning（写回遇 warning 即阻断），
