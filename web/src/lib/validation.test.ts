@@ -11,6 +11,7 @@ import goldenVectors from '../../../tests/golden/preflight_vectors.json'
 import { loadProfile } from './profile'
 import { buildProofPayload, buildSpec, runSpec, type PreflightSpec } from './preflight'
 import {
+  appliesToOriginal,
   canvasInput,
   exportContextIssues,
   fingerprintOf,
@@ -365,7 +366,12 @@ describe('摘要按导出目标取范围（审计 T33）', () => {
     const whole = summaryFor(all, { canvasId: 'c1', ready: true, failed: false })
     const mine = summaryFor(all, { canvasId: 'c1', objectId: 'p1', ready: true, failed: false })
     expect(whole.counts.error).toBe(perPanel * 2)
-    expect(mine.counts.error, '别的图的阻断项不算').toBe(perPanel)
+    // 夹具两张图都探出 80 × 40 的页面（out-of-page）：那是画布摆放类，按原图不算（FLAG-B1）
+    const perPanelOriginal = all.filter(
+      (i) => i.severity === 'error' && i.objectRef.objectId === 'p1' && appliesToOriginal(i.ruleCode),
+    ).length
+    expect(perPanelOriginal).toBeGreaterThan(0)
+    expect(mine.counts.error, '别的图的阻断项、画布摆放类阻断项都不算').toBe(perPanelOriginal)
     expect(mine.issues.every((i) => i.objectRef.objectId === 'p1')).toBe(true)
     expect(
       mine.issues.some((i) => i.objectRef.objectId === null),
@@ -509,6 +515,131 @@ describe('摘要按导出目标取范围（审计 T33）', () => {
     expect(check.text).toContain('5.00')
     expect(check.text).not.toContain('4.00')
     expect(check.text).not.toContain('7.00')
+  })
+})
+
+/**
+ * **按原图导出时，画布摆放类规则不算**（QA 2026-09-24 FLAG-B1）。
+ *
+ * 主语：`out-of-page` / `outside-margin` / `overlap` 判的是**这个对象在画布页面上
+ * 怎么摆**（`preflight._check_geometry` 只读 rect_mm 与页面），
+ * 而原图范围导出的是那张图本身——页面盒 = 图幅，画布的 x/y/w/h 不进产物（SCI-06）。
+ * 真机现场：177.8 mm 的图摆在 150 × 100 mm 画布上（x = −13.9），对话框写着「仅此图」
+ * 却列出一条阻断「超出页面范围」，不勾知情确认就不能导出。
+ *
+ * 每个夹具先断言**画布范围下这条规则确实命中了 p1**——前提不成立的话，
+ * 「原图范围下没有它」恒真。
+ */
+describe('原图范围不算画布摆放类规则（FLAG-B1）', () => {
+  const clean = () => manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 6 }])
+  const fixtures: { rule: string; build: () => FigureDocument }[] = [
+    {
+      rule: 'out-of-page',
+      build: () => {
+        const d = docWith([panel({ x: -13.9, y: 9.36, w: 177.8, h: 81.28, nativeW: 177.8, nativeH: 81.28 })])
+        d.page = { w: 150, h: 100 }
+        return d
+      },
+    },
+    {
+      rule: 'outside-margin',
+      build: () => {
+        const d = docWith([panel({ x: 2, y: 20, w: 60, h: 40 })])
+        d.page = { w: 150, h: 100, margin: 5 }
+        return d
+      },
+    },
+    {
+      rule: 'overlap',
+      build: () => {
+        const d = docWith([
+          panel({ x: 10, y: 10, w: 60, h: 40 }),
+          { ...panel({ id: 'p2', x: 30, y: 20, w: 60, h: 40 }) },
+        ])
+        d.page = { w: 150, h: 100 }
+        return d
+      },
+    },
+  ]
+
+  for (const { rule, build } of fixtures) {
+    it(`${rule}：画布范围照报，原图范围（摘要与报告那份投影）都不算`, () => {
+      const p1 = panel()
+      const result = runOne(build(), renderFor(p1, clean()))
+      // 前提：画布范围下这条规则确实落在 p1 头上
+      const canvasSummary = summaryFor(result.issues, { canvasId: 'c1', ready: true, failed: false })
+      expect(
+        canvasSummary.issues.some((i) => i.ruleCode === rule && i.objectRef.objectId === 'p1'),
+        `夹具得让 ${rule} 命中 p1`,
+      ).toBe(true)
+
+      const original = summaryFor(result.issues, {
+        canvasId: 'c1',
+        objectId: 'p1',
+        ready: true,
+        failed: false,
+      })
+      expect(original.issues.map((i) => i.ruleCode)).not.toContain(rule)
+      // 裁的只是摆放那一维：这张图自己的字号阻断仍然在（否则「全删光」也会绿）
+      expect(original.issues.some((i) => i.ruleCode === 'font-below-absolute-floor')).toBe(true)
+
+      const raw = rawIssuesForObject(result.raw, 'p1')
+      expect(raw.map((i) => i.id)).not.toContain(rule)
+      expect(raw.some((i) => i.id === 'font-below-absolute-floor')).toBe(true)
+    })
+  }
+
+  it('hidden 刻意不裁：隐藏的图不做图内检查，那条 warn 是原图范围下唯一的提示', () => {
+    const p1 = panel({ x: 10, y: 10, w: 60, h: 40, hidden: true })
+    const d = docWith([p1])
+    d.page = { w: 150, h: 100 }
+    const result = runOne(d, renderFor(p1, clean()))
+    const original = summaryFor(result.issues, { canvasId: 'c1', objectId: 'p1', ready: true, failed: false })
+    expect(original.issues.map((i) => i.ruleCode)).toEqual(['hidden'])
+  })
+
+  it('out-of-page 在原图范围下不再是阻断：摘要里没有它带来的 error', () => {
+    const p1 = panel()
+    const d = fixtures[0].build()
+    const result = runOne(d, renderFor(p1, manifestWith([
+      { gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 9 },
+    ])))
+    const canvas = summaryFor(result.issues, { canvasId: 'c1', ready: true, failed: false })
+    expect(canvas.issues.filter((i) => i.severity === 'error').map((i) => i.ruleCode)).toEqual([
+      'out-of-page',
+    ])
+    const original = summaryFor(result.issues, { canvasId: 'c1', objectId: 'p1', ready: true, failed: false })
+    expect(original.blocking).toBe(false)
+  })
+
+  it('原图范围的样式检查报告：page_mm 是图幅，objects 只有这张图、铺满那一页', () => {
+    const p1 = panel({ x: -13.9, y: 9.36, w: 177.8, h: 81.28 })
+    const p2 = panel({ id: 'p2', fileId: 'Fig2.pdf', x: 100, y: 0, w: 40, h: 30 })
+    const d = docWith([p1, p2])
+    d.page = { w: 150, h: 100, margin: 3 }
+    const original = buildProofPayload(
+      d,
+      assets,
+      [],
+      {
+        dpi: 300,
+        formats: ['pdf'],
+        stem: 'Fig1',
+        original: { panel: p1, widthMm: 177.8, heightMm: 81.28 },
+      },
+      profile,
+    ) as { page_mm: unknown; objects: { name: string; rect_mm: number[] }[] }
+    expect(original.page_mm).toEqual({ w: 177.8, h: 81.28, margin: 0 })
+    expect(original.objects).toHaveLength(1)
+    expect(original.objects[0]).toMatchObject({ name: 'Fig1.pdf', rect_mm: [0, 0, 177.8, 81.28] })
+
+    // 画布范围照旧：画布页面 + 画布上的摆放
+    const canvas = buildProofPayload(d, assets, [], { dpi: 300, formats: ['pdf'], stem: 'c' }, profile) as {
+      page_mm: unknown
+      objects: unknown[]
+    }
+    expect(canvas.page_mm).toEqual({ w: 150, h: 100, margin: 3 })
+    expect(canvas.objects).toHaveLength(2)
   })
 })
 

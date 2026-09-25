@@ -91,6 +91,7 @@
     "profileLabel": "Profile",
     "profileMissing": "This spec isn’t on this computer. Checking against the default for now.",
     "profileMissingPinned": "This spec isn’t on this computer. Still checking against the copy saved in this project.",
+    "profileOtherCanvas": "This figure is on the canvas “{{canvas}}” and is checked against that canvas’s profile. Switch to that canvas to change it.",
     "profileSync": "Sync to the new version",
     "profileUpdateAvailable": "A newer version of this spec is available.",
     "replaced": "replaced",
