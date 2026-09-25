@@ -296,7 +296,9 @@ async function snapshot(page, rec, name, since, opts = {}) {
 
 // ------------------------------------------------------------------ 独立数据核对
 function linePathYs(svg, gid) {
-  const re = new RegExp(`<g id="${gid.replace(/\./g, '\\.')}"[\\s\\S]*?<path d="([^"]+)"`)
+  // gid 当字面量进正则：所有元字符（含反斜杠）都转义，不只是点
+  const lit = gid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`<g id="${lit}"[\\s\\S]*?<path d="([^"]+)"`)
   const m = re.exec(svg)
   if (!m) return null
   const pts = [...m[1].matchAll(/[ML]\s*(-?[\d.]+)\s+(-?[\d.]+)/g)].map((q) => [Number(q[1]), Number(q[2])])

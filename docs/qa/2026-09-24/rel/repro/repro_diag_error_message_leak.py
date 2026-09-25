@@ -23,20 +23,27 @@ import sys
 
 from tavotto.engine import diagnostics
 
-SECRET = "patient_0931_BloodGlucose=7318.0931"
-ERROR_LINE = f"2026-09-25 02:46:03,688 ERROR tavotto: 引擎渲染失败: boom: 脚本执行失败: {SECRET}"
+CANARY = "patient_0931_BloodGlucose=7318.0931"
+ERROR_LINE = f"2026-09-25 02:46:03,688 ERROR tavotto: 引擎渲染失败: boom: 脚本执行失败: {CANARY}"
 TB = [
     "Traceback (most recent call last):",
     '  File "/Users/x/proj/boom.py", line 7, in main',
-    f"ValueError: {SECRET}",
+    f"ValueError: {CANARY}",
 ]
 
 out_err = diagnostics.recent_errors([ERROR_LINE])
 out_tb = diagnostics.recent_errors(TB)
-print("ERROR 行 →", out_err)
-print("traceback →", out_tb)
-leaked_via_error_line = any(SECRET in s for s in out_err)
-redacted_via_traceback = not any(SECRET in s for s in out_tb)
+# 输出里不回显金丝雀本身：只报它在哪一路留下了（缺陷证据是布尔值，不需要把被泄漏的内容再打一遍）
+
+
+def _masked(lines: list[str]) -> list[str]:
+    return [s.replace(CANARY, "<CANARY>") for s in lines]
+
+
+print("ERROR 行 →", _masked(out_err))
+print("traceback →", _masked(out_tb))
+leaked_via_error_line = any(CANARY in s for s in out_err)
+redacted_via_traceback = not any(CANARY in s for s in out_tb)
 print("leaked_via_error_line =", leaked_via_error_line)
 print("redacted_via_traceback =", redacted_via_traceback)
 ok = leaked_via_error_line and redacted_via_traceback
