@@ -244,6 +244,7 @@ Tavotto 的结果记在 `--status-file` 的 `session_result` 里。
 | `native_attach_timeout` / `native_attach_cancelled` | 桌面没连上 / 你取消了 |
 | `native_session_not_at_barrier` | 脚本正在跑，等下一张图出现才能编辑 |
 | `native_session_offline` / `native_session_ended` | 那条会话结束了。重新运行原命令即可继续对象级编辑 |
+| `native_figure_inconsistent` | 会话还在，但这张图有改动没能还原、与文档不一致。这时不能继续运行脚本（只能终止）；重新运行原命令后可继续编辑与导出 |
 | `native_asset_conflict` | 这张图已经绑在另一条会话上（你在两个终端跑了同一个脚本） |
 | `no_figure_captured` | 脚本跑完了，但没有 Matplotlib Figure |
 

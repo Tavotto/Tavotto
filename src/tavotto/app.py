@@ -3269,6 +3269,7 @@ _NATIVE_STATUS = {
     engine_runcodes.NATIVE_ASSET_CONFLICT: 409,
     engine_runcodes.NATIVE_SESSION_NOT_AT_BARRIER: 409,
     engine_runcodes.NATIVE_SESSION_OFFLINE: 409,
+    engine_runcodes.NATIVE_FIGURE_INCONSISTENT: 409,
     engine_runcodes.NATIVE_SESSION_ENDED: 409,
     engine_runcodes.NATIVE_SESSION_DISCONNECTED: 409,
     engine_runcodes.NATIVE_AUTH_FAILED: 403,
@@ -3748,6 +3749,10 @@ def api_engine_render():
     # 老 worker 不返回 `preview` 时这个字段整个不出现，前端维持既有行为。
     if "preview" in resp:
         out["preview"] = resp["preview"]
+    # 这张图还欠着几条还原（`overrides.apply` 的 `unrestored`，Codex #549 第八轮）：
+    # 前端据此把 native 面板标成「与文档不一致」。老 worker 不给时字段整个不出现
+    if "unrestored" in resp:
+        out["unrestored"] = resp["unrestored"]
     switched = g.pop("environment_switched", None)
     if switched:
         # 同上：加字段不改老形状。只在**真的发生了自动切换**的那一次响应里出现。

@@ -281,3 +281,56 @@ describe('首开确认（U03）：失败路径把后端的「需要输入」交�
     }
   })
 })
+
+describe('native 图与文档不一致（Codex #549 第八轮）：文件级，按响应顺序记', () => {
+  const ok = (unrestored?: number) => ({
+    rev: 1,
+    manifest: manifest('Fig1'),
+    warnings: [],
+    ...(unrestored === undefined ? {} : { unrestored }),
+  })
+  const ID = 'runtime:fig.py#Fig1'
+
+  it('unrestored > 0 置位；同一份列表重渲染干净（0）后自动解除', async () => {
+    engineRender.mockResolvedValue(ok(2))
+    await useRenderStore.getState().render(ID, [])
+    expect(useRenderStore.getState().inconsistent[ID]).toBe(true)
+    engineRender.mockResolvedValue(ok(0))
+    await useRenderStore.getState().render(ID, [{ gid: 'g', prop: 'p', value: 1 }])
+    expect(useRenderStore.getState().inconsistent[ID]).toBe(false)
+  })
+
+  it('老后端不给 unrestored：按 0 读，不挂标记', async () => {
+    engineRender.mockResolvedValue(ok())
+    await useRenderStore.getState().render(ID, [])
+    expect(useRenderStore.getState().inconsistent[ID]).toBe(false)
+  })
+
+  it('后端以 native_figure_inconsistent 拒绝换列表的渲染：同样置位，别的错误码不碰它', async () => {
+    const { EngineError } = await import('@/lib/api')
+    engineRender.mockRejectedValue(new EngineError('不一致', '', 'native_figure_inconsistent'))
+    await useRenderStore.getState().render(ID, [])
+    expect(useRenderStore.getState().inconsistent[ID]).toBe(true)
+    useRenderStore.getState().clear()
+    engineRender.mockRejectedValue(new EngineError('超时', '', 'native_relay_failed'))
+    await useRenderStore.getState().render(ID, [])
+    expect(useRenderStore.getState().inconsistent[ID]).toBeUndefined()
+  })
+
+  it('不按变体记：撤销落到早先画干净的变体（命中缓存、不发请求）时标记还在', async () => {
+    engineRender.mockResolvedValue(ok(0))
+    await useRenderStore.getState().render(ID, [])
+    engineRender.mockResolvedValue(ok(1))
+    await useRenderStore.getState().render(ID, [{ gid: 'g', prop: 'p', value: 1 }])
+    // 早先那个变体的条目仍是干净的，但这张 Figure 的事实是「不一致」
+    expect(useRenderStore.getState().get(renderKey(ID, [])).status).toBe('ready')
+    expect(useRenderStore.getState().inconsistent[ID]).toBe(true)
+  })
+
+  it('reset / clear 清掉标记（重新运行原命令 = 新会话、新 Figure）', async () => {
+    engineRender.mockResolvedValue(ok(1))
+    await useRenderStore.getState().render(ID, [])
+    useRenderStore.getState().reset(ID)
+    expect(useRenderStore.getState().inconsistent[ID]).toBeUndefined()
+  })
+})

@@ -40,7 +40,9 @@
   **只有每一次渲染都干净的事务才算回滚成功**：任何一次带 warning 或抛了，响应带
   `replay_required`（前端按此刻的列表重放），worker 作废（`app._retire_hot_worker`
   → `pool.invalidate`，`worker_retired`）。**native 图不修**：端点在任何渲染之前回 409
-  `specfix_native_unsupported`——作废这条兜底对用户自己的进程不成立（ADR 0080）。
+  `specfix_native_unsupported`——作废这条兜底对用户自己的进程不成立（ADR 0080）。任何
+  渲染留下的欠账（v1 render / export / preview_png 结果的 `unrestored > 0`）在 native 上就是
+  「与文档不一致」，挡编辑、导出与 continue（`native_figure_inconsistent`，见 `tavotto-run-control-plane.md`）。
 - **还原失败不遗忘（Codex #549 第八轮 P1）**：`apply()` 撤掉一条 override 时还原抛了，
   这个键**不销账**——applied / originals / alias_seeded 原样留着，记进 `FigState.unrestored`；
   下一次 apply 自动重试，欠着一天每次都报 `还原失败` warning（写回遇 warning 即阻断），

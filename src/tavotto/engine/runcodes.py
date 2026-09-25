@@ -53,6 +53,8 @@ NATIVE_SESSION_CONFLICT = "native_session_conflict"
 NATIVE_ASSET_CONFLICT = "native_asset_conflict"
 NATIVE_SESSION_NOT_AT_BARRIER = "native_session_not_at_barrier"
 NATIVE_SESSION_OFFLINE = "native_session_offline"
+#: 活会话里这张图有改动还原不回去（`overrides.apply` 的 `unrestored`，Codex #549 第八轮）
+NATIVE_FIGURE_INCONSISTENT = "native_figure_inconsistent"
 NATIVE_SESSION_ENDED = "native_session_ended"
 NATIVE_SESSION_DISCONNECTED = "native_session_disconnected"
 NATIVE_SESSION_UNKNOWN = "native_session_unknown"
@@ -179,6 +181,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh": "这张图来自已结束的 Tavotto Run 会话。重新运行原命令后可继续对象级编辑。",
         "en": "This figure came from a Tavotto Run session that has ended."
         " Re-run the original command to resume object-level editing.",
+    },
+    NATIVE_FIGURE_INCONSISTENT: {
+        "zh": "这张图有改动没能还原，与文档不一致。重新运行原命令后可继续编辑与导出。",
+        "en": "Some edits to this figure couldn’t be undone, so it no longer matches the document."
+        " Re-run the original command to resume editing and export.",
     },
     NATIVE_SESSION_ENDED: {
         "zh": "这个 Tavotto Run 会话已经结束。",
