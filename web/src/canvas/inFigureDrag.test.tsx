@@ -119,7 +119,7 @@ const legendOf = (title = ''): ManifestElement => ({
   drag_prop: 'loc_frac',
 })
 
-const manifestWith = (legend: ManifestElement): Manifest => ({
+const manifestWith = (legend: ManifestElement, extra: ManifestElement[] = []): Manifest => ({
   stem: 'Fig1',
   size_mm: [101.6, 76.2],
   elements: [
@@ -130,6 +130,7 @@ const manifestWith = (legend: ManifestElement): Manifest => ({
     superconductor,
     ownTitle,
     legend,
+    ...extra,
   ],
 })
 
@@ -185,8 +186,12 @@ const tf = (gid: string) =>
 
 /* -------------------------------- 环境搭建 -------------------------------- */
 
-async function setup(legend = legendOf(), overrides: PanelObject['overrides'] = []) {
-  const manifest = manifestWith(legend)
+async function setup(
+  legend = legendOf(),
+  overrides: PanelObject['overrides'] = [],
+  extra: ManifestElement[] = [],
+) {
+  const manifest = manifestWith(legend, extra)
   engineRender.mockReset()
   engineRender.mockResolvedValue({ rev: 2, manifest, svg: MATPLOTLIB_SVG, warnings: [] })
   resetPreview()
@@ -280,6 +285,38 @@ describe('图内拖动吸附到别的元素', () => {
     dragTo(px, 0)
     fire('pointerup', px, 0)
     expect((overrideOf('axes_0', 'position') as number[])[0]).toBeCloseTo(0.55, 4)
+  })
+
+  it('拖形状：它装着的字跟着它走，不出吸附线（按住 ⌘ 不带内容时本来就不吸）', async () => {
+    // 形状框左边 0.47（附近 6px 内没有别的线），里面那行字左边只差 1px 多——若字也出线，
+    // 形状一动就被它拽过去
+    const box: ManifestElement = {
+      gid: 'axes_1.patches_0',
+      role: 'patch',
+      label: '形状',
+      bbox: [0.47, 0.3, 0.2, 0.12],
+      editable: [],
+      draggable: true,
+      anchor: [0.47, 0.42],
+      drag_prop: 'pos_frac',
+    }
+    const inner: ManifestElement = {
+      gid: 'axes_1.texts_0',
+      role: 'text',
+      label: '文字',
+      bbox: [0.474, 0.34, 0.1, 0.03],
+      editable: [],
+      draggable: true,
+      anchor: [0.524, 0.355],
+      drag_prop: 'pos_frac',
+    }
+    await setup(legendOf(), [], [box, inner])
+    startElementDrag(down(0, 0), livePanel(), box, layout)
+    dragTo(0, 12)
+    fire('pointerup', 0, 12)
+    expect((overrideOf('axes_1.patches_0', 'pos_frac') as number[])[0]).toBeCloseTo(0.47, 6)
+    // 字确实被带着走了（这条用例的前提）
+    expect(overrideOf('axes_1.texts_0', 'pos_frac')).toBeDefined()
   })
 
   it('拖子图一小步：不会被只差 1px 的自己的标题吸走', async () => {
