@@ -22,7 +22,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 
 import { ExportDialog } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
-import { readExportDefaults } from '@/lib/exportDefaults'
+import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { postTelemetryEvent } from '@/lib/api'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -791,6 +791,68 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     expect((report.objects as { name: string; rect_mm: number[] }[])).toEqual([
       expect.objectContaining({ name: 'Fig1.pdf', rect_mm: [0, 0, 80, 60] }),
     ])
+  })
+
+  /**
+   * 两张画布绑的规范不同（Codex 评审 #596 P1）：图所在的画布是宽松的 free-form
+   * （8 pt 合规），当前画布是 lab-publication（8 pt 是阻断）。摘要按图所在画布的规范算
+   * 出「干净」，那么报告的规范戳、严格核验的 `profile_id` 也必须是那一套——各取各的话，
+   * 报告会声称这张 8 pt 的图是按当前画布那套严规范查过并通过的。
+   * 对照：切回画布范围，四处一起换成当前画布的规范（判据不是恒等成立）。
+   */
+  it('图在另一张画布上且两张画布规范不同：检查、报告、严格核验都按图所在画布的规范', async () => {
+    const entry = (id: string) => {
+      const e = toCatalog(useProfileStore.getState().specs).find((x) => x.id === id)
+      expect(e, `夹具里没有 ${id}`).toBeTruthy()
+      return e!
+    }
+    writeExportDefaults({ withProof: true, strictInspection: true })
+    await setup(8)
+    useDocumentStore.getState().commit(literal('图所在画布：宽松规范'), (d) => {
+      d.profile = bindingFor(entry('free-form-v1'))
+    })
+    await act(async () => {
+      useDocumentStore.getState().addCanvas('严规范')
+    })
+    useDocumentStore.getState().commit(literal('当前画布：严规范'), (d) => {
+      d.profile = bindingFor(entry('lab-publication-v1'))
+    })
+    const s = useDocumentStore.getState()
+    const home = s.canvases.find((c) => c.objects.some((o) => o.id === 'p1'))
+    expect(home?.profile?.id, '前提：p1 所在画布绑的是 free-form').toBe('free-form-v1')
+    expect(s.activeCanvasId, '前提：p1 不在当前画布上').not.toBe(home!.id)
+    expect(s.doc.profile?.id, '前提：当前画布绑的是 lab-publication').toBe('lab-publication-v1')
+
+    await reopen()
+    await click(document.body.querySelectorAll('[role="radio"]')[0])
+    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
+      'true',
+    )
+    // 按 free-form 算：8 pt 合规，没有要确认的东西
+    expect(confirmBox(), '8 pt 在图所在画布的规范下不是阻断').toBeNull()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    expect(
+      document.body.querySelector('[data-export-profile-canvas]'),
+      '规范下拉显示的是别的画布的规范，得说出来',
+    ).toBeTruthy()
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope).toBe('original')
+    const report = exportBodies[0].style_check_report as Record<string, unknown>
+    expect(report, '夹具开了报告').toBeTruthy()
+    expect((report.profile as Record<string, string>).profile_id).toBe('free-form-v1')
+    expect(report.checks).toEqual([])
+    expect(exportBodies[0].inspection).toEqual({ mode: 'strict', profile_id: 'free-form-v1' })
+
+    // 对照：画布范围 = 当前画布，规范跟着换成 lab-publication
+    await click(document.body.querySelectorAll('[role="radio"]')[1])
+    expect(document.body.querySelector('[data-export-profile-canvas]')).toBeNull()
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(2)
+    expect(exportBodies[1].scope).toBe('canvas')
+    const canvasReport = exportBodies[1].style_check_report as Record<string, unknown>
+    expect((canvasReport.profile as Record<string, string>).profile_id).toBe('lab-publication-v1')
+    expect(exportBodies[1].inspection).toEqual({ mode: 'strict', profile_id: 'lab-publication-v1' })
   })
 })
 

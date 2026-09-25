@@ -109,7 +109,7 @@ import {
   type ExportRequestInput,
 } from "@/lib/exportRequest";
 import type { OverwritePolicy } from "@/lib/exportRequest";
-import type { PublicationProfile } from "@/lib/profile";
+import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
 import {
   bindingFor,
@@ -269,16 +269,6 @@ export function ExportDialog() {
   const [profileId, setProfileId] = useState(
     () => docProfileId ?? readExportDefaults().profileId,
   );
-  /**
-   * **实际生效的规范只解析一次**（ADR 0029）：有快照就按快照，没有才按全局
-   * 现值。导出面板不许自己再挑一遍——那正是「预检说合规、导出按另一套规矩」
-   * 的来源。
-   */
-  const resolved = useMemo(
-    () => resolveDocumentSpec(doc.profile ?? { id: profileId }, catalog),
-    [doc.profile, profileId, catalog],
-  );
-  const profile: PublicationProfile = resolved.profile;
 
   /* --------------------------- 这次要导的是什么 --------------------------- */
   /*
@@ -343,6 +333,43 @@ export function ExportDialog() {
     [figureId, doc.objects, canvases],
   );
   const panel = target?.panel ?? null;
+  /**
+   * 这次的检查、留档与严格核验**按哪张画布算**：原图 = 那张图所在的画布（它可能不是
+   * 当前画布），画布 = 当前画布。下面的规范、摘要、导出上下文检查、报告的条目与规范戳、
+   * 严格核验的 `profile_id` 全都从这一个 id 取——各取各的，就会出现「摘要按目标画布的
+   * 8 pt 判干净、报告却说按当前画布的 10 pt 查过」（Codex 评审 #596 P1）。
+   */
+  const checkCanvasId =
+    scope === "original" && target ? target.canvasId : activeCanvasId;
+  const checkOnActive = checkCanvasId === activeCanvasId;
+  /**
+   * **实际生效的规范只解析一次**（ADR 0029），解析的是 `checkCanvasId` 那张画布的
+   * 绑定：有快照就按快照，没有才按全局现值。导出面板不许自己再挑一遍——那正是
+   * 「预检说合规、导出按另一套规矩」的来源。
+   *
+   * - 当前画布：绑定读现值 `doc.profile`（`canvases[]` 那份要等切画布才回写），
+   *   没绑过时按对话框里挑的那套；
+   * - 别的画布：**只按它自己的绑定**，与 `collectCanvases()` 给那张画布跑检查时的
+   *   输入逐字相同——摘要是按那一份算出来的，报告与严格核验就不能盖另一份的戳。
+   */
+  const resolved = useMemo(
+    () =>
+      resolveDocumentSpec(
+        checkOnActive
+          ? (doc.profile ?? { id: profileId })
+          : canvases.find((c) => c.id === checkCanvasId)?.profile,
+        catalog,
+      ),
+    [checkOnActive, checkCanvasId, doc.profile, profileId, canvases, catalog],
+  );
+  const profile: PublicationProfile = resolved.profile;
+  /** 这次生效的那套规范的 id：规范下拉的显示值、严格核验的 `profile_id` 都认它 */
+  const checkProfileId =
+    resolved.profileId ?? (checkOnActive ? profileId : DEFAULT_PROFILE_ID);
+  /** 别的画布上的规范在这里改不了（`applyProfile` 写的是当前画布）——说出原因，不静默改错画布 */
+  const checkCanvasName = checkOnActive
+    ? null
+    : (canvases.find((c) => c.id === checkCanvasId)?.name ?? "");
 
   useEffect(() => {
     if (!open) return;
@@ -423,9 +450,9 @@ export function ExportDialog() {
     () =>
       exportContextIssues({ formats, dpi: Number(ppi) }, profile, {
         documentId,
-        canvasId: activeCanvasId,
+        canvasId: checkCanvasId,
       }),
-    [formats, ppi, profile, documentId, activeCanvasId],
+    [formats, ppi, profile, documentId, checkCanvasId],
   );
   /**
    * 摘要**按导出目标取范围**（审计 T33）：按原图导出只算那张图上的问题——
@@ -433,9 +460,6 @@ export function ExportDialog() {
    * 范围的裁法在 `summaryFor()` 一处，对话框不自己筛。
    */
   const targetObjectId = scope === "original" && panel ? panel.id : undefined;
-  /** 检查按哪张画布裁：原图 = 那张图所在的画布，画布 = 当前画布 */
-  const checkCanvasId =
-    scope === "original" && target ? target.canvasId : activeCanvasId;
   const summary = useMemo(
     () =>
       summaryFor(validationIssues, {
@@ -556,7 +580,7 @@ export function ExportDialog() {
       background: transparent && transparentApplies ? "transparent" : "white",
       includeReport: reportOn,
       strictInspection: strict,
-      profileId: doc.profile?.id ?? profileId,
+      profileId: checkProfileId,
       acknowledged:
         needsConfirm && confirmed
           ? [...new Set(errors.map((i) => i.ruleCode))]
@@ -594,6 +618,8 @@ export function ExportDialog() {
 
   /* -------------------------------- 动作 --------------------------------- */
   const applyProfile = (id: string) => {
+    // 规范绑定写在当前画布上；检查按的是别的画布时下拉是灰的，这里再挡一道
+    if (!checkOnActive) return;
     setProfileId(id);
     writeExportDefaults({ profileId: id });
     const entry = catalog.find((e) => e.id === id);
@@ -611,6 +637,7 @@ export function ExportDialog() {
   };
 
   const syncProfile = () => {
+    if (!checkOnActive) return;
     const entry = catalog.find((e) => e.id === (doc.profile?.id ?? profileId));
     if (!entry) return;
     commit(
@@ -652,7 +679,7 @@ export function ExportDialog() {
                     rawIssuesFor(checkCanvasId),
                     targetObjectId,
                   )
-                : rawIssuesFor(activeCanvasId)),
+                : rawIssuesFor(checkCanvasId)),
               ...exportContextRaw({ formats, dpi: Number(ppi) }, profile),
             ],
             {
@@ -714,10 +741,10 @@ export function ExportDialog() {
     [
       doc,
       assets,
-      activeCanvasId,
       formats,
       ppi,
       profile,
+      checkProfileId,
       filename,
       errors,
       notVerifiable,
@@ -1068,8 +1095,9 @@ export function ExportDialog() {
         <section className="flex flex-col gap-1.5">
           <FormRow label={ex("profileLabel")}>
             <Select
-              value={doc.profile?.id ?? profileId}
+              value={checkProfileId}
               onChange={applyProfile}
+              disabled={!checkOnActive}
               options={catalog.map((p) => ({
                 value: p.id,
                 label: p.display_name,
@@ -1092,8 +1120,19 @@ export function ExportDialog() {
               {ex("profileEdit")}
             </Button>
           </FormRow>
+          {/* 图在别的画布上：显示的是那张画布的规范，改它得先切过去（Codex 评审 #596 P1） */}
+          {checkCanvasName !== null && (
+            <FormRow>
+              <p
+                data-export-profile-canvas
+                className="text-xs leading-relaxed text-ink-2"
+              >
+                {ex("profileOtherCanvas", { canvas: checkCanvasName })}
+              </p>
+            </FormRow>
+          )}
           {/* 规范异常提示不藏起来 */}
-          {resolved.updateAvailable && (
+          {resolved.updateAvailable && checkOnActive && (
             <FormRow>
               <p className="flex flex-wrap items-center gap-2 text-xs leading-relaxed text-ink-2">
                 {ex("profileUpdateAvailable")}

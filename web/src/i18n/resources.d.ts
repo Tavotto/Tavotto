@@ -287,6 +287,7 @@ export default interface Resources {
       "profileLabel": "规范",
       "profileMissing": "这套规范在这台电脑上找不到了，暂时按默认规范检查。",
       "profileMissingPinned": "这套规范在这台电脑上找不到了，仍按项目里保存的那一份检查。",
+      "profileOtherCanvas": "这张图在画布「{{canvas}}」上，按那张画布的规范检查。要换规范，先切到那张画布。",
       "profileSync": "同步到新版",
       "profileUpdateAvailable": "这套规范有了新版本。",
       "replaced": "已覆盖",
