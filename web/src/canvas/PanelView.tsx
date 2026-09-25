@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { perfCount, perfRenderPainted } from '@/perf/core'
 import { t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { enginePreviewPng, panelSrc, type ManifestElement } from '@/lib/api'
+import { useDecodedSvg } from '@/lib/useDecodedSvg'
 import { useHtmlMarkup } from '@/lib/useHtmlMarkup'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { engineTransport } from '@/lib/engineTransport'
@@ -31,12 +32,12 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { nativePanelState, useNativeSessionStore } from '@/store/nativeSessionStore'
 import {
   renderKeyOf,
-  useExactPanelManifest,
   usePanelDisplayView,
   usePanelRender,
   useRenderStore,
 } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useDisplayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
 import { reattachPreview, settleFailedAuthority } from '@/store/svgPreviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
@@ -135,25 +136,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 命中层不受影响，见下面的 ElementHitLayer：位图只是画法，几何权威仍是
   // exact manifest（不变量 4）。
   const svgHtml = editing && !bitmapOnly ? (render?.svg ?? null) : null
-
-  // 预览平面与权威 SVG 的接合点：内联 SVG 每换一次就来认领一次。
-  // 换上来的正是等的那一版 → 预览功成身退（DOM 已经整个换掉）；还是原来那一版
-  // （React 把同一份 SVG 重新插了一遍：面板重挂、标签页切回来）→ 把挂起的预览
-  // 重放上去，否则用户刚拖完的元素会凭空弹回原位。判断收在 svgPreviewStore。
-  //
-  // 依赖只认 svgHtml 与 obj.id，**不能带整个 obj**：obj 每次 commit 都是新引用，
-  // 带上它等于每写一条 override 就重放一次预览——而重放会重新采 base，
-  // 那时 DOM 上还挂着预览位移，采到的 base 就是「已经挪过的位置」，位移翻倍。
   const panelId = obj.id
-  useEffect(() => {
-    if (svgHtml == null) return
-    const st = useRenderStore.getState()
-    const cur = st.byKey[renderKeyOf(obj)]?.svg ? renderKeyOf(obj) : (st.latest[obj.fileId] ?? '')
-    reattachPreview(panelId, cur)
-    // 性能探针（ADR 0075）：这一版 SVG 已经进了 DOM
-    perfRenderPainted(cur)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [svgHtml, panelId])
 
   // 权威渲染失败：等不到那一版 SVG 了，会话就地收尾。
   // **预览留在画布上**——文档里已经是用户要的值，把预览撤掉会让画布与属性页
@@ -242,7 +225,39 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const showSvg = inlineSvg != null
   // 同一份字符串 = 同一个 `{__html}` 对象：否则每次重渲都会原样重写 innerHTML，把挂在节点上的
   // 拖动预览抹掉（松手弹回原位，见 `lib/useHtmlMarkup`）。hook 必须在任何提前 return 之前调用
-  const svgMarkup = useHtmlMarkup(inlineSvg)
+  // 换一版时先把新图里的位图解码好再换（松手后「整张图糊一下」，见 `lib/useDecodedSvg`）
+  const mountedSvg = useDecodedSvg(inlineSvg)
+  const svgMarkup = useHtmlMarkup(mountedSvg)
+  const mountedEditSvg = svgHtml != null ? mountedSvg : null
+  // 预览平面与权威 SVG 的接合点：内联 SVG 每换一次就来认领一次。
+  // 换上来的正是等的那一版 → 预览功成身退（DOM 已经整个换掉）；还是原来那一版
+  // （React 把同一份 SVG 重新插了一遍：面板重挂、标签页切回来）→ 把挂起的预览
+  // 重放上去，否则用户刚拖完的元素会凭空弹回原位。判断收在 svgPreviewStore。
+  //
+  // 依赖只认 svgHtml 与 obj.id，**不能带整个 obj**：obj 每次 commit 都是新引用，
+  // 带上它等于每写一条 override 就重放一次预览——而重放会重新采 base，
+  // 那时 DOM 上还挂着预览位移，采到的 base 就是「已经挪过的位置」，位移翻倍。
+  //
+  // 认领的是**真正挂进 DOM 的那一版**（`mountedEditSvg`），不是 store 里刚到的那一版：
+  // 换图要等新图的位图解码完（`useDecodedSvg`），这段时间 DOM 上还是旧节点 + 预览位移。
+  // layout effect：新 DOM 挂上与重放预览在**同一帧绘制之前**完成——用 passive effect 的话
+  // 浏览器可能先画出一帧没有预览的新图（松手弹一下、图例补正时闪一下中间那一版）。
+  // 几何交互只认「已经挂上画面」的那一版（`store/mountedSvgStore`）：同一个 layout effect 里
+  // 登记，与预览重放同帧、都在绘制之前
+  useLayoutEffect(() => {
+    useMountedSvgStore.getState().set(panelId, mountedEditSvg)
+  }, [mountedEditSvg, panelId])
+  useLayoutEffect(() => () => useMountedSvgStore.getState().set(panelId, null), [panelId])
+  useLayoutEffect(() => {
+    if (mountedEditSvg == null) return
+    const st = useRenderStore.getState()
+    const cur = st.byKey[renderKeyOf(obj)]?.svg ? renderKeyOf(obj) : (st.latest[obj.fileId] ?? '')
+    reattachPreview(panelId, cur)
+    // 性能探针（ADR 0075）：这一版 SVG 已经进了 DOM
+    perfRenderPainted(cur)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mountedEditSvg, panelId])
+
   // 面板需要引擎产物（有图内修改 / 脚本领先 / runtime），画布上挂的却是磁盘
   // 原图——这一格必须与「近似预览」同级地诚实说出来（web/AGENTS.md：不许无
   // 提示地拿磁盘原图冒充当前视觉状态）。渲染中 / 失败由既有角标压过本条；
@@ -515,7 +530,8 @@ function ElementHitLayer({
   rot: PanelRotation
 }) {
   perfCount('render.ElementHitLayer')
-  const manifest = useExactPanelManifest(obj)
+  // 换图解码那几帧（新权威已到、画面还是旧图）停摆，见 store/mountedSvgStore
+  const manifest = useDisplayedExactManifest(obj)
   const setHoverGid = useInteractionStore((s) => s.setHoverGid)
   const zoom = useViewportStore((s) => s.zoom)
   const ref = useRef<HTMLDivElement>(null)
@@ -961,6 +977,27 @@ type BadgeInfo = {
   hint?: string
 }
 
+/**
+ * 普通重渲染超过这么久还没画完，才亮「渲染中」。松手 → 新图在用户那张三联图上约
+ * 260ms（本机 e2e 220–450ms）；阈值贴着它会在「刚好画完」时闪一下角标（实测 400ms
+ * 时闪过一次），所以留足余量。
+ */
+const BUSY_BADGE_DELAY_MS = 700
+
+/** `on` 连续为真满 `ms` 毫秒后返回 true；一旦变假立即复位 */
+function useElapsed(on: boolean, ms: number): boolean {
+  const [elapsed, setElapsed] = useState(false)
+  useEffect(() => {
+    if (!on) {
+      setElapsed(false)
+      return
+    }
+    const id = window.setTimeout(() => setElapsed(true), ms)
+    return () => window.clearTimeout(id)
+  }, [on, ms])
+  return on && elapsed
+}
+
 function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?: boolean }) {
   const render = usePanelRender(obj)
   // 冷启动/构建中是**文件级**的事实（一个 stem 一份 live figure），由 SSE 写；
@@ -987,8 +1024,18 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
     !!nativeState ||
     rasterEditing ||
     approx
+  // 一次普通的重渲染（松手、改一个值）画布上已经是用户要的样子了（预览平面 / 上一版
+  // 留着），这时立刻亮「渲染中」只会让每次松手都闪一下角标（2026-09-25 用户反馈）。
+  // 所以这一档**过了 BUSY_BADGE_DELAY_MS 还没画完**才说；冷启动本来就慢，挂着的是
+  // 磁盘原图（approx）时画面与文档对不上——这两种照旧立刻说。
+  // 注意 `building` 不等于冷启动：SSE 的 `render.started` 每一次渲染都会写一条
+  // （`cold: false`），只有 `cold` 才是「要等很久」。
+  const quietBusy =
+    (render?.status === 'rendering' || !!building) && !building?.cold && !approx
+  const slowBusy = useElapsed(quietBusy, BUSY_BADGE_DELAY_MS)
   const info = useMemo((): BadgeInfo | null => {
     if (!relevant) return null
+    if (quietBusy && !slowBusy) return null
     if (render?.status === 'rendering' || building) {
       return {
         tone: 'busy',
@@ -1051,7 +1098,7 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
       return { tone: runtimeBadge.tone, cold: false, text: badge(runtimeBadge.key) }
     }
     return null
-  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx])
+  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx, quietBusy, slowBusy])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)

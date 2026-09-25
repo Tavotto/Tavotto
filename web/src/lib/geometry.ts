@@ -109,6 +109,36 @@ export function snapMove(rect: Rect, cands: SnapCandidates, tol: number): SnapRe
   return res
 }
 
+/**
+ * 三线吸附的「就近」版：左/中/右（上/中/下）里**离候选线最近**的那条边胜出，
+ * 而不是按顺序第一个进入容差的。图内元素挨得近（相邻两行字、刻度与轴标题），
+ * 按顺序取会让左边先吸到一条不相干的线上，想对齐的中线反而永远吸不到。
+ */
+export function snapMoveNearest(rect: Rect, cands: SnapCandidates, tol: number): SnapResult {
+  const res: SnapResult = { dx: 0, dy: 0, guideXs: [], guideYs: [] }
+  const pick = (start: number, size: number, lines: number[]) => {
+    let best: { d: number; line: number } | null = null
+    for (const edge of [0, size / 2, size]) {
+      for (const c of lines) {
+        const d = c - (start + edge)
+        if (Math.abs(d) < tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, line: c }
+      }
+    }
+    return best
+  }
+  const bx = pick(rect.x, rect.w, cands.xs)
+  if (bx) {
+    res.dx = bx.d
+    res.guideXs.push(bx.line)
+  }
+  const by = pick(rect.y, rect.h, cands.ys)
+  if (by) {
+    res.dy = by.d
+    res.guideYs.push(by.line)
+  }
+  return res
+}
+
 /** 缩放时只吸附正在移动的那条边 */
 export function snapEdge(value: number, cands: number[], tol: number): number | null {
   return nearest(value, cands, tol)

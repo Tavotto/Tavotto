@@ -12,6 +12,7 @@ import {
   snapCandidates,
   snapEdge,
   snapMove,
+  snapMoveNearest,
   unrotateVecDeg,
   type Rect,
   type ResizeDir,
@@ -22,10 +23,15 @@ import {
   anchorOf,
   arrowEndpointsOf,
   axesCompanions,
+  companionPatchesFor,
+  elementBoxOf,
   elementSnapCandidates,
+  fracBoxToMm,
   groupBoxes,
+  inFigureSnapCandidates,
   groupPatches,
   isElementHidden,
+  panelFullRect,
   patchContents,
   positionOf,
   type AlignEntry,
@@ -33,6 +39,14 @@ import {
   type Group,
 } from '@/lib/elementGeom'
 import { newId } from '@/lib/id'
+import {
+  boxAfterScale,
+  clampLegendScale,
+  legendScaleBases,
+  legendScalePatches,
+  scaledLegendBox,
+  type LegendCorner,
+} from '@/lib/legendScale'
 import {
   geomAreaFrac,
   geomContains,
@@ -54,12 +68,13 @@ import {
   useViewportStore,
 } from '@/store/viewportStore'
 import { setOverride, setOverrides } from '@/store/actions'
-import { previewLine, previewTransform } from '@/store/svgPreviewStore'
+import { previewLine, previewScale, previewTransform } from '@/store/svgPreviewStore'
 import {
   beginElementPreview,
   cancelElementPreview,
   commitElementPreview,
 } from './elementPreview'
+import { settleLegendCorner } from './legendCornerSettle'
 import {
   authorityFields,
   panelHash,
@@ -1295,11 +1310,25 @@ export function startElementDrag(
   // shift 先于抬指松开时落点会与预览差一口气
   let last: [number, number] = [0, 0]
   const unwatchKeys = watchCarryKeys(carried, () => last)
+  // 吸附：被拖的框 = 起手时的墨迹框；图例的条目是它的后代、形状装着的内容跟着它走，都不出线
+  const box0 = elementBoxOf(panel, element)
+  const snapper = box0
+    ? inFigureSnapper(panel, underAny([element.gid, ...carried.map((c) => c.gid)]))
+    : null
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       let [dfx, dfy] = toContent(dxPx, dyPx)
       if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
+      if (snapper && box0) {
+        const [sx, sy] = snapper(
+          [box0[0] + dfx, box0[1] + dfy, box0[2], box0[3]],
+          ev,
+          [dfx, dfy],
+        )
+        dfx += sx
+        dfy += sy
+      }
       last = [dfx, dfy]
       previewTransform(element.gid, dfx, dfy)
       if (carried.length) previewCarried(carried, dfx, dfy, carriesContents(ev))
@@ -1436,6 +1465,63 @@ function contentDelta(panel: PanelObject, layout: { width: number; height: numbe
   }
 }
 
+/**
+ * 图内拖动的吸附（2026-09-25 用户反馈：拖「Vacuum」吸不到「Superconductor」、轴标题
+ * 也不吸）。起手时量一次候选线（别的元素的三线 + 整图四边与中线，见
+ * `inFigureSnapCandidates`），每帧把被拖的框换算到页面 mm，与画布对象的吸附同一把
+ * 容差、同一套参考线。返回的是要**额外加上**的分数位移。
+ *
+ * 吸附总开关或「吸附到对象」关掉、面板旋转 / 翻转、几何权威不在时返回 null——
+ * 与画布层一样，按住 ⌘ / Ctrl 临时不吸。shift 锁成水平 / 垂直时只在仍在走的那个轴上吸；
+ * 锁成 45° 时修正沿锁定方向投影——否则一吸就把锁拆了。
+ */
+function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean) {
+  const prefs = snapPrefs()
+  if (!prefs?.objects) return null
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  if (!manifest) return null
+  const cands = inFigureSnapCandidates(panel, manifest, moving)
+  if (!cands) return null
+  const full = panelFullRect(panel)
+  return (
+    box: Rect4,
+    ev: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean },
+    locked: [number, number],
+  ): [number, number] => {
+    if (ev.metaKey || ev.ctrlKey) {
+      interaction().setSnap([], [])
+      return [0, 0]
+    }
+    const snap = perfSpan('snap.compute', () =>
+      snapMoveNearest(fracBoxToMm(panel, box), cands, snapTolMm(getTransform())),
+    )
+    const sx = snap.dx / full.w
+    const sy = snap.dy / full.h
+    if (ev.shiftKey && locked[0] !== 0 && locked[1] !== 0) {
+      // 斜向（45°）锁定：修正只能沿锁定方向走，否则只吸一个轴就把 45° 拆了（#575 评审）。
+      // 两个轴各自要走多少个「锁定方向的单位」，取走得少的那一条，另一轴按同一比例跟着动
+      const kx = snap.guideXs.length ? sx / locked[0] : null
+      const ky = snap.guideYs.length ? sy / locked[1] : null
+      const useX = kx != null && (ky == null || Math.abs(kx) <= Math.abs(ky))
+      const k = useX ? kx : ky
+      if (k == null) {
+        interaction().setSnap([], [])
+        return [0, 0]
+      }
+      interaction().setSnap(useX ? snap.guideXs : [], useX ? [] : snap.guideYs)
+      return [k * locked[0], k * locked[1]]
+    }
+    const freeX = !ev.shiftKey || locked[0] !== 0
+    const freeY = !ev.shiftKey || locked[1] !== 0
+    interaction().setSnap(freeX ? snap.guideXs : [], freeY ? snap.guideYs : [])
+    return [freeX ? sx : 0, freeY ? sy : 0]
+  }
+}
+
+/** `gid` 是 roots 之一或其后代 */
+const underAny = (roots: readonly string[]) => (gid: string) =>
+  roots.some((r) => gid === r || gid.startsWith(`${r}.`))
+
 /* -------------------------------------------------------------------------- */
 /*  axes 拖动 / 缩放子图占比                                                   */
 /* -------------------------------------------------------------------------- */
@@ -1481,14 +1567,32 @@ export function startAxesDrag(
     hasOverride(panel, element.gid, 'position'),
   )
   const toContent = contentDelta(panel, layout)
+  // 整体拖动才吸附（缩放没有 SVG 预览、线框本来就是示意）；随行元素一起动，不出线
+  const snapper =
+    mode === 'move'
+      ? inFigureSnapper(
+          panel,
+          underAny([element.gid, ...(element.follow_gids ?? []), ...companions.map((c) => c.gid)]),
+        )
+      : null
 
-  const compute = (dxPx: number, dyPx: number, shift = false) => {
+  const compute = (
+    dxPx: number,
+    dyPx: number,
+    ev: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean } | null = null,
+  ) => {
     let [dfx, dfy] = toContent(dxPx, dyPx)
     let [x, y, w, h] = start
 
     if (mode === 'move') {
       // 整体拖动支持 shift 锁向（与画布对象移动一致）；缩放手柄不参与
-      if (shift) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
+      if (ev?.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
+      if (snapper && ev) {
+        const b = flipY(start)
+        const [sx, sy] = snapper([b[0] + dfx, b[1] + dfy, b[2], b[3]], ev, [dfx, dfy])
+        dfx += sx
+        dfy += sy
+      }
       x = clamp(x + dfx, 0, 1 - w)
       y = clamp(y - dfy, 0, 1 - h) // 屏幕向下 = bottom-origin 的 y 变小
       return { rect: [x, y, w, h] as Rect4, dfx, dfy }
@@ -1521,7 +1625,7 @@ export function startAxesDrag(
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
-      const { rect } = compute(dxPx, dyPx, ev.shiftKey)
+      const { rect } = compute(dxPx, dyPx, ev)
       last = rect
       interaction().setElementPreview({ boxes: { [element.gid]: flipY(rect) } })
       // 只有纯平移的 SVG 预览是准的。缩放要 matplotlib 重排（刻度、字号、
@@ -1564,6 +1668,82 @@ export function startAxesDrag(
 }
 
 /**
+ * 拖图例的四个角 = 图例**整体缩放**（对角不动）。2026-09-25 用户反馈：图例只能在
+ * 属性页一格一格改字号和间距，缺一个像子图那样直接拖的手柄。
+ *
+ * 落成哪几条 override 由 `lib/legendScale` 决定（字号、标题字号与五个以字号为单位的
+ * 间距同乘一个倍数）；再加一条 `loc_frac` 把不动的那个角钉住——图例的 `loc_frac`
+ * 是它左下角的位置，不写的话缩放会绕 loc 预设的那个角进行，而不是用户按住的对角。
+ *
+ * 预览：与子图缩放不同，这里**做** SVG 预览——字号与所有间距按同一倍数走，matplotlib
+ * 画出来几乎就是线性缩放（只差标记大小与边框线宽），比只给一个线框更「无感」。
+ * 松手一次 setOverrides = 一条撤销 = 一次权威渲染。
+ */
+export function startLegendScale(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  element: ManifestElement,
+  layout: { width: number; height: number },
+  corner: LegendCorner,
+) {
+  const bases = legendScaleBases(panel, element)
+  const box0 = elementBoxOf(panel, element)
+  const anchor = anchorOf(panel, element)
+  if (!bases.length || !box0 || !anchor || element.drag_prop !== 'loc_frac') return
+  e.stopPropagation()
+  interaction().begin('element')
+  beginElementPreview(panel)
+  noteDragBegin('resize.begin', panel, element.gid, 'fontsize', hasOverride(panel, element.gid, 'fontsize'))
+  const toContent = contentDelta(panel, layout)
+  // loc_frac 与墨迹框左下角之间的差（正常情况下是 0），缩放后照样加回去
+  const off: [number, number] = [anchor[0] - box0[0], anchor[1] - (box0[1] + box0[3])]
+  let last: { s: number; fixed: [number, number] } | null = null
+
+  trackPointer(e, {
+    onMove: (_ev, dxPx, dyPx) => {
+      const [dfx, dfy] = toContent(dxPx, dyPx)
+      const r = scaledLegendBox(box0, corner, dfx, dfy, layout)
+      const s = clampLegendScale(bases, r.s)
+      last = { s, fixed: r.fixed }
+      interaction().setElementPreview({
+        boxes: { [element.gid]: boxAfterScale(box0, r.fixed, s) },
+      })
+      previewScale(element.gid, s, r.fixed[0], r.fixed[1])
+    },
+    onEnd: (moved, _ev, end) => {
+      interaction().end()
+      if (!moved || !last || end.cancelled || Math.abs(last.s - 1) < 1e-3) {
+        cancelElementPreview()
+        return
+      }
+      const nb = boxAfterScale(box0, last.fixed, last.s)
+      const patches = [
+        ...legendScalePatches(element.gid, bases, last.s),
+        {
+          gid: element.gid,
+          prop: 'loc_frac',
+          value: [round4(nb[0] + off[0]), round4(nb[1] + nb[3] + off[1])],
+        },
+      ]
+      setOverrides(panel.id, hist('scaleLegend'), patches, true)
+      commitElementPreview(panel.id)
+      noteDragCommit('resize.commit', panel.id, element.gid, 'fontsize', patches.length)
+      // 成图的倍数与预览不完全相同（往小缩尤甚）：第一版到了按实测把对角钉回去
+      const entry = useDocumentStore.getState().past.at(-1)
+      if (entry) {
+        settleLegendCorner({
+          panelId: panel.id,
+          gid: element.gid,
+          corner,
+          fixed: last.fixed,
+          entry,
+        })
+      }
+    },
+  })
+}
+
+/**
  * 图内多选整组平移：拖动多选里的任一成员，全体按同一位移走。
  *
  * 每个成员写自己的那条 override —— 子图与位图（经 geom 代理）写 position、
@@ -1599,6 +1779,21 @@ export function startElementGroupMove(
         new Set(entries.map((en) => en.key)),
       )
     : []
+  // 选区里的子图也要带上它们的随行元素（色条轴、孪生轴、被挪过的标签），与单个
+  // 子图拖动同一套：以前整组平移只写选中的那几条，挪过的「(a)」就留在原地
+  const companionManifest = useUiStore.getState().dragAxesWithCompanions ? manifest : null
+  const keys = new Set(entries.map((en) => en.key))
+  const previewCompanions = companionManifest
+    ? [
+        ...new Set(
+          entries
+            .filter((en) => en.resizable)
+            .flatMap((en) => axesCompanions(panel, companionManifest, en.key))
+            .filter((c) => c.previewsSeparately && !keys.has(c.gid))
+            .map((c) => c.gid),
+        ),
+      ]
+    : []
 
   const shifted = (dfx: number, dfy: number): Rect4[] =>
     entries.map((en) => [en.box[0] + dfx, en.box[1] + dfy, en.box[2], en.box[3]])
@@ -1606,11 +1801,37 @@ export function startElementGroupMove(
   // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove（见 startArrowDrag）
   let last: [number, number] = [0, 0]
   const unwatchKeys = watchCarryKeys(carried, () => last)
+  // 整组的包围框参与吸附；组员、它们的后代、随行元素与形状装着的内容一起动，不出线
+  const group0 = unionBox(entries.map((en) => en.box))
+  const snapper = group0
+    ? inFigureSnapper(
+        panel,
+        underAny([
+          ...keys,
+          ...previewCompanions,
+          ...carried.map((c) => c.gid),
+          ...entries.flatMap((en) =>
+            companionManifest
+              ? (companionManifest.elements.find((el) => el.gid === en.key)?.follow_gids ?? [])
+              : [],
+          ),
+        ]),
+      )
+    : null
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       let [dfx, dfy] = toContent(dxPx, dyPx)
       if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
+      if (snapper && group0) {
+        const [sx, sy] = snapper(
+          [group0[0] + dfx, group0[1] + dfy, group0[2], group0[3]],
+          ev,
+          [dfx, dfy],
+        )
+        dfx += sx
+        dfy += sy
+      }
       last = [dfx, dfy]
       const boxes = shifted(dfx, dfy)
       interaction().setElementPreview({
@@ -1618,6 +1839,7 @@ export function startElementGroupMove(
         group: unionBox(boxes) ?? undefined,
       })
       for (const en of entries) previewTransform(en.key, dfx, dfy)
+      for (const gid of previewCompanions) previewTransform(gid, dfx, dfy)
       if (carried.length) previewCarried(carried, dfx, dfy, carriesContents(ev))
     },
     onEnd: (moved, ev, end) => {
@@ -1628,8 +1850,10 @@ export function startElementGroupMove(
         return
       }
       const boxes = shifted(last[0], last[1])
+      const patches = entries.map((en, i) => en.write(boxes[i]))
       setOverrides(panel.id, hist('moveElements', { count: entries.length }), [
-        ...entries.map((en, i) => en.write(boxes[i])),
+        ...patches,
+        ...(companionManifest ? companionPatchesFor(panel, companionManifest, patches) : []),
         ...(carriesContents(ev) ? carried.map((c) => c.shift(last[0], last[1])) : []),
       ])
       commitElementPreview(panel.id)

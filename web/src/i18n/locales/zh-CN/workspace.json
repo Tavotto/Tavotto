@@ -272,6 +272,7 @@
     "switchKind": "改为{{name}}",
     "switchKindCount": "把 {{count}} 个对象改为{{name}}",
     "resizeAxes": "缩放 {{count}} 个子图",
+    "scaleLegend": "缩放图例",
     "resizeObjects": "缩放对象",
     "restoreAspect": "恢复原始比例",
     "restoreNativeSize": "恢复原始尺寸",
