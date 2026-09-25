@@ -363,6 +363,26 @@ def test_a_project_venv_rebuilt_broken_at_the_same_path_is_rechecked_not_trusted
 
 
 @needs_worker
+def test_a_rejected_project_venv_repaired_at_the_same_path_is_discovered_again(tmp_path):
+    """ENV-04 的反方向：首开体检拒了项目 `.venv`（没有 matplotlib），用户在同一路径把它重建好。
+    首开结果按项目缓存，以前要重启后端才会再看一眼；现在缓存带着体检那一刻的指纹，对不上就重做。
+
+    变异反证：`cached_first_open()` 不比指纹 → 仍用缓存里的「拒了」，不采用修好的 venv。
+    """
+    root = _project(tmp_path)
+    _bare_venv(root, ".venv")
+    python, source = engine_pool.resolve_worker_python(str(root), script="figure.py")
+    assert source != engine_pool.SOURCE_PROJECT_VENV
+    assert engine_pool.first_open_outcome(root)["ok"] is False
+    shutil.rmtree(root / ".venv")
+    venv = venvfixture.make_project_venv(root, ".venv", python=WORKER_PY)
+    python, source = engine_pool.resolve_worker_python(str(root), script="figure.py")
+    assert source == engine_pool.SOURCE_PROJECT_VENV
+    assert engine_pool.same_python(python, projectenv.interpreter_of(venv))
+    assert engine_pool.first_open_outcome(root)["ok"] is True
+
+
+@needs_worker
 def test_a_session_dead_on_a_remembered_venv_drops_its_health_verdict(tmp_path):
     """ENV-04 的另一半：环境**就地**坏掉（`pip uninstall matplotlib`、包被别的东西遮住），解释器
     文件与 `pyvenv.cfg` 一个都没动，指纹看不见。会话一死（`session_dead`）就不再替它担保：下一次
