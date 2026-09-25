@@ -18,6 +18,7 @@ import { INSPECTOR_LABEL_W } from './layout'
 import { Tip } from '../ui/Tooltip'
 import { TypographyControls } from './controls/TypographyControls'
 import { FIGURE_TEXT_BATCH_PROPS, useFigureTypography } from './typographyAdapter'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /**
  * 图例卡（ADR 0034）：选中图例时常驻在属性区首屏的两块——
@@ -171,7 +172,7 @@ const DASH: Record<string, string | undefined> = {
 function HandleSwatch({ panel, entry }: { panel: PanelObject; entry: LegendEntryView }) {
   const el = entry.element
   const read = (prop: string): unknown => {
-    const ov = panel.overrides.find((o) => o.gid === el.gid && o.prop === prop)
+    const ov = effectiveOverride(panel.overrides, el.gid, prop)
     if (ov) return ov.value
     return el.editable.find((f) => f.prop === prop)?.value
   }

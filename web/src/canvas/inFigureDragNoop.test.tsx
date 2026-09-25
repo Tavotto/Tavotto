@@ -18,7 +18,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
-import { alignEntries, resolveGroup } from '@/lib/elementGeom'
+import { effectiveOverride } from '@/lib/effectiveOverride'
+import { alignEntries, anchorOf, arrowEndpointsOf, positionOf, resolveGroup } from '@/lib/elementGeom'
+import { currentOf } from '@/components/inspector/textStyleModel'
 import { setOverride, setOverrides } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -358,6 +360,42 @@ describe('GEO-B6：单条 setOverride 原地改值', () => {
     setOverrides('p1', literal('测'), [{ gid: 'axes_0.title', prop: 'pos_frac', value: [0.5, 0.5] }])
     const vals = livePanel().overrides.filter((o) => o.prop === 'pos_frac').map((o) => o.value)
     expect(vals.at(-1)).toEqual([0.5, 0.5])
+  })
+
+  // 读与写同一判据（#587 评审 P1）：写入改的是最后那条，读取方也必须读最后那条——
+  // 读第一条的话控件一直显示过期值，位置类编辑还拿过期值算下一次拖动、画面会跳
+  it('重复条目：编辑之后读取方（几何辅助 / 检查器当前值 / 下一次拖动）看到的是新值', async () => {
+    await setup([
+      { gid: 'axes_0.title', prop: 'pos_frac', value: [0.1, 0.1] },
+      { gid: 'axes_0', prop: 'position', value: [0.1, 0.1, 0.5, 0.5] },
+      { gid: 'axes_0.arrows_3', prop: 'endpoints_frac', value: [0, 0, 0.1, 0.1] },
+      { gid: 'axes_0.title', prop: 'color', value: '#111111' },
+      { gid: 'axes_0.title', prop: 'pos_frac', value: [0.2, 0.1] },
+      { gid: 'axes_0', prop: 'position', value: [0.2, 0.2, 0.5, 0.5] },
+      { gid: 'axes_0.arrows_3', prop: 'endpoints_frac', value: [0.2, 0.2, 0.3, 0.3] },
+      { gid: 'axes_0.title', prop: 'color', value: '#222222' },
+    ])
+    setOverride('p1', 'axes_0.title', 'pos_frac', [0.5, 0.5], true)
+    setOverride('p1', 'axes_0', 'position', [0.3, 0.3, 0.5, 0.5], true)
+    setOverride('p1', 'axes_0.arrows_3', 'endpoints_frac', [0.4, 0.4, 0.6, 0.6], true)
+    setOverride('p1', 'axes_0.title', 'color', '#333333', true)
+    const p = livePanel()
+    expect(anchorOf(p, titleEl)).toEqual([0.5, 0.5])
+    expect(positionOf(p, axesEl)).toEqual([0.3, 0.3, 0.5, 0.5])
+    expect(arrowEndpointsOf(p, arrowEl)).toEqual([
+      [0.4, 0.4],
+      [0.6, 0.6],
+    ])
+    expect(currentOf(p, titleEl, 'color')).toBe('#333333')
+
+    // 下一次拖动从新值出发：只往右拖，y 必须还是 0.5（读第一条的话会从 0.1 起跳）
+    startElementDrag(down(100, 100), livePanel(), titleEl, layout)
+    path([[130, 100]])
+    fire('pointerup', 130, 100)
+    const written = effectiveOverride(livePanel().overrides, 'axes_0.title', 'pos_frac')?.value as number[]
+    expect(written[1]).toBeCloseTo(0.5, 6)
+    expect(written[0]).toBeGreaterThan(0.5)
+    expect(written[0]).toBeLessThan(0.7)
   })
 
   it('同值写入：数组不变、不进历史、变体键不变、不渲染', async () => {

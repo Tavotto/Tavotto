@@ -7,6 +7,7 @@ import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
 import { emitActivity } from '@/lib/activity'
+import { effectiveOverride, effectiveOverrideIndex } from '@/lib/effectiveOverride'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
 import { modKey } from '@/lib/utils'
@@ -731,7 +732,7 @@ export function setOverride(
   // （engine/patchspec.py），前面的重复条目同值不代表这次写入是 no-op
   const current = findObject(panelId)
   if (current?.type === 'panel') {
-    const i = lastOverrideIndex(current.overrides, gid, prop)
+    const i = effectiveOverrideIndex(current.overrides, gid, prop)
     if (i >= 0 && JSON.stringify(current.overrides[i].value) === JSON.stringify(value)) return
   }
   // 原地 upsert（与批量 setOverrides 同一个 upsertOverrides）：filter + push 会把命中的
@@ -928,7 +929,7 @@ export function setLegendPlacement(
     panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
   )
   const changes = plan.set.filter((t) => {
-    const cur = panel.overrides.find((p) => p.gid === t.gid && p.prop === t.prop)
+    const cur = effectiveOverride(panel.overrides, t.gid, t.prop)
     return !cur || JSON.stringify(cur.value) !== JSON.stringify(t.value)
   })
   if (!removes.length && !changes.length) return
@@ -1101,25 +1102,13 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
  * 「改回同一个值」也会触发一次完全没必要的重渲染，撤销栈里还多一条看不出
  * 差别的历史。issue #131 里对齐一次能挪好几条，键churn 尤其明显。
  */
-/** (gid, prop) 生效的那条 override 的下标：重复时取最后一条（与引擎 last-wins 一致），没有为 -1 */
-function lastOverrideIndex(
-  overrides: readonly { gid: string; prop: string }[],
-  gid: string,
-  prop: string,
-): number {
-  for (let i = overrides.length - 1; i >= 0; i--) {
-    if (overrides[i].gid === gid && overrides[i].prop === prop) return i
-  }
-  return -1
-}
-
 function upsertOverrides(
   panel: PanelObject,
   patches: { gid: string; prop: string; value: unknown }[],
 ) {
   for (const p of patches) {
     // 改生效的那条（重复条目时是最后一条，引擎 last-wins）；改第一条会被后面的遮住
-    const i = lastOverrideIndex(panel.overrides, p.gid, p.prop)
+    const i = effectiveOverrideIndex(panel.overrides, p.gid, p.prop)
     if (i >= 0) panel.overrides[i] = { ...panel.overrides[i], ...p }
     else panel.overrides.push(p)
   }

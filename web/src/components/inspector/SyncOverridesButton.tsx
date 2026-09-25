@@ -21,6 +21,7 @@ import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { Popover } from '../ui/Popover'
+import { effectiveOverrideIndex } from '@/lib/effectiveOverride'
 
 /** 本组文案在 inspector:sync.* 下 */
 const sy = (key: string, values?: Record<string, unknown>) =>
@@ -191,7 +192,8 @@ function ResultDialog({
       const baseline = target.baked_overrides ?? []
       const merged = [...baseline]
       for (const p of mapped.map(clean)) {
-        const i = merged.findIndex((x) => x.gid === p.gid && x.prop === p.prop)
+        // 覆盖生效的那条（重复时是最后一条，引擎 last-wins）
+        const i = effectiveOverrideIndex(merged, p.gid, p.prop)
         if (i >= 0) merged[i] = p
         else merged.push(p)
       }

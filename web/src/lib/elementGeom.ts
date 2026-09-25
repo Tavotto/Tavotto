@@ -19,6 +19,7 @@ import {
   type PanelObject,
   type PanelOverride,
 } from '@/types/document'
+import { effectiveOverride, isEffectiveOverrideAt } from '@/lib/effectiveOverride'
 
 /**
  * 图内元素的几何代理层。
@@ -163,7 +164,7 @@ export function geomTarget(
 
 /** 元素当前的 axes position（优先取尚未渲染回来的 override） */
 export function positionOf(panel: PanelObject, el: ManifestElement): Rect4 | null {
-  const ov = panel.overrides.find((o) => o.gid === el.gid && o.prop === 'position')
+  const ov = effectiveOverride(panel.overrides, el.gid, 'position')
   if (ov && Array.isArray(ov.value)) return (ov.value as number[]).slice(0, 4) as Rect4
   const f = el.editable.find((x) => x.prop === 'position')
   return Array.isArray(f?.value) ? ((f.value as number[]).slice(0, 4) as Rect4) : null
@@ -175,7 +176,7 @@ export function arrowEndpointsOf(
   el: ManifestElement,
 ): [number, number][] | null {
   if (!el.arrow_endpoints || el.arrow_endpoints.length < 2) return null
-  const ov = panel.overrides.find((o) => o.gid === el.gid && o.prop === 'endpoints_frac')
+  const ov = effectiveOverride(panel.overrides, el.gid, 'endpoints_frac')
   if (ov && Array.isArray(ov.value) && ov.value.length === 4) {
     const v = ov.value as number[]
     return [
@@ -225,7 +226,7 @@ export function segIntersectsRect(
  */
 export function anchorOf(panel: PanelObject, el: ManifestElement): [number, number] | null {
   if (!el.anchor || !el.drag_prop) return null
-  const ov = panel.overrides.find((o) => o.gid === el.gid && o.prop === el.drag_prop)
+  const ov = effectiveOverride(panel.overrides, el.gid, el.drag_prop)
   if (ov && Array.isArray(ov.value)) {
     const v = ov.value as number[]
     return [v[0], v[1]]
@@ -407,8 +408,10 @@ function movedDescendants(
   roots: readonly string[],
 ): { gid: string; prop: string; nums: number[] }[] {
   const out: { gid: string; prop: string; nums: number[] }[] = []
-  for (const o of panel.overrides) {
+  for (const [i, o] of panel.overrides.entries()) {
     if (!FRAC_ANCHORED_PROPS.has(o.prop)) continue
+    // 被后面同键遮住的旧重复条目不算：引擎用的是最后那条，拿旧值平移会把它挪回旧位置
+    if (!isEffectiveOverrideAt(panel.overrides, i)) continue
     if (!roots.some((root) => o.gid.startsWith(`${root}.`))) continue
     const v = o.value
     if (!Array.isArray(v) || (v.length !== 2 && v.length !== 4)) continue

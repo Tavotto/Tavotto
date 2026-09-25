@@ -6,6 +6,7 @@ import { useDocumentStore, type HistoryEntry } from '@/store/documentStore'
 import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { retargetPreview } from '@/store/svgPreviewStore'
 import type { PanelObject } from '@/types/document'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /** 对角偏差小于这么多（mm）就不补——比一个屏幕像素还小，补了只多一次渲染 */
 export const CORNER_SETTLE_TOL_MM = 0.05
@@ -69,7 +70,7 @@ export function settleLegendCorner(opts: {
     if (!render?.manifest) return
     stop()
     const el = render.manifest.elements.find((e) => e.gid === gid)
-    const loc = panel.overrides.find((o) => o.gid === gid && o.prop === 'loc_frac')?.value
+    const loc = effectiveOverride(panel.overrides, gid, 'loc_frac')?.value
     if (!el || !Array.isArray(loc) || loc.length !== 2) return
     const actual = fixedCornerOf(el.bbox as Rect4, corner)
     const dx = fixed[0] - actual[0]
