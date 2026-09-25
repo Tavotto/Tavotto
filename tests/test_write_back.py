@@ -25,7 +25,12 @@
 （真 matplotlib + 真重放）由 test_worker_roundtrip.py 的写回一节看护。
 """
 
+import errno
 import json
+import logging
+import os
+import stat
+import sys
 from pathlib import Path
 
 import pymupdf
@@ -594,6 +599,113 @@ def test_a_locked_first_target_reports_nothing_updated(client, tmp_path, monkeyp
     ).get_json()
     assert body["code"] == "file_locked" and body["file"] == "Fig1.pdf"
     assert body["updated"] == [] and body["rolled_back"] == []
+    assert _leftovers(figs) == []
+
+
+# ----------------------- commit 的落盘（issue #252） -------------------------
+def _ident(st) -> tuple[int, int]:
+    return (st.st_dev, st.st_ino)
+
+
+def _fsync_spy(monkeypatch, fail=None) -> list[tuple[int, int]]:
+    """把 `os.fsync` 换成记账版；`fail(st)` 为真时抛 EIO（真 I/O 错误的形状）。
+
+    返回被 fsync 过的 (st_dev, st_ino) 清单——replace 不换 inode，所以
+    「目标现在的 inode 在清单里」= 「替换进来的那份内容 replace 前落过盘」。
+    """
+    real = os.fsync
+    seen: list[tuple[int, int]] = []
+
+    def spy(fd):
+        st = os.fstat(fd)
+        if fail is not None and fail(st):
+            raise OSError(errno.EIO, "模拟的 I/O 错误")
+        seen.append(_ident(st))
+        return real(fd)
+
+    monkeypatch.setattr(os, "fsync", spy)
+    return seen
+
+
+def test_staging_and_backups_are_fsynced_before_any_replace(client, tmp_path, monkeypatch):
+    """每一次 replace 发生时，全部 staging 与备份都已落盘（ADR 0023 §3.1）。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    seen = _fsync_spy(monkeypatch)
+    real_replace = Path.replace
+    snapshots: list[set] = []
+
+    def replace(self, target):
+        snapshots.append(set(seen))
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    backup_dir = Path(resp.get_json()["backup_dir"])
+    staged = {_ident(p.stat()) for p in (figs / "Fig1.pdf", figs / "Fig1.png")}
+    backups = {_ident(p.stat()) for p in backup_dir.iterdir()}
+    assert len(snapshots) == 2 and len(backups) == 2
+    # 第一次 replace 时就要齐：「先 fsync 完全部再动任何目标」
+    assert staged | backups <= snapshots[0]
+
+
+@pytest.mark.parametrize("which", ["staging", "backup"])
+def test_fsync_failure_before_replace_is_a_clean_409(client, tmp_path, monkeypatch, which):
+    """replace 之前落盘失败：409 `write_back_persist_failed`，原文件零改动，不留 tmp。"""
+    figs = _figs(tmp_path)
+    before = {n: (figs / n).read_bytes() for n in ("Fig1.pdf", "Fig1.png")}
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    originals = {_ident((figs / n).stat()) for n in before}
+
+    def fail(st):
+        if not stat.S_ISREG(st.st_mode):
+            return False
+        is_staging = _ident(st) not in originals and any(
+            _ident(p.stat()) == _ident(st) for p in figs.glob(".*.updating")
+        )
+        return is_staging if which == "staging" else not is_staging
+
+    _fsync_spy(monkeypatch, fail)
+    replaced: list[str] = []
+    real_replace = Path.replace
+    monkeypatch.setattr(
+        Path, "replace", lambda self, t: (replaced.append(Path(t).name), real_replace(self, t))[1]
+    )
+
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["code"] == "write_back_persist_failed"
+    assert "模拟的 I/O 错误" in body["params"]["reason"]
+    assert replaced == [], "落盘失败必须发生在任何 replace 之前"
+    assert {n: (figs / n).read_bytes() for n in before} == before
+    assert _leftovers(figs) == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上打不开目录，没有目录 fsync 这一步")
+def test_dir_fsync_failure_after_replace_is_logged_not_rolled_back(
+    client, tmp_path, monkeypatch, caplog
+):
+    """replace 之后目录项落盘失败：文件已换，照常成功，只记 ERROR——绝不回滚半边。"""
+    figs = _figs(tmp_path)
+    before = {n: (figs / n).read_bytes() for n in ("Fig1.pdf", "Fig1.png")}
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    figs_id = _ident(figs.stat())
+    _fsync_spy(monkeypatch, lambda st: _ident(st) == figs_id)
+
+    with caplog.at_level(logging.ERROR, logger=m.LOG.name):
+        resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()
+    assert sorted(body["updated"]) == ["Fig1.pdf", "Fig1.png"]
+    for n, old in before.items():
+        assert (figs / n).read_bytes() != old, f"{n} 必须保持新内容（不回滚）"
+    assert any("目录项落盘失败" in r.getMessage() for r in caplog.records)
     assert _leftovers(figs) == []
 
 

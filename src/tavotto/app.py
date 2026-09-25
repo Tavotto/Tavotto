@@ -3912,6 +3912,7 @@ def api_engine_update_source():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
     ) as exc:
@@ -4040,6 +4041,19 @@ class WriteBackVerifyError(RuntimeError):
         more = f"（另有 {len(warnings) - 3} 条）" if len(warnings) > 3 else ""
         super().__init__(f"{head}{more}")
         self.warnings = warnings
+
+
+class WriteBackPersistError(RuntimeError):
+    """commit 的落盘准备（拷备份 + fsync 备份与 staging）没过，一个目标都还没替换。
+
+    与 `FileLockedError` 分成两类是刻意的（issue #252）：这一类发生在任何
+    `replace` **之前**，不存在回滚，原文件一字未动；「replace 之后目录项落盘
+    失败」则根本不走异常，只记日志——文件已换，再报失败只会让人误以为没写进去。
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _write_back_warning_error(exc: "WriteBackVerifyError") -> str:
@@ -4362,10 +4376,25 @@ def _write_source_files(
     # ---- commit：备份 → 逐个原子替换（中途撞锁则回滚） ----------------------
     backup_dir = project_backup_dir() / time.strftime("%m%d_%H%M%S")
     backup_dir.mkdir(parents=True, exist_ok=True)
+    # 落盘（ADR 0023 §3.1，issue #252）：`os.replace` 只保证「要么旧要么新」，
+    # 不保证新内容已离开页缓存。所以**碰任何目标之前**先把备份与 staging 都
+    # fsync 掉——这一段失败属于「replace 之前」：一个目标都没动，清 tmp 回 409，
+    # 原文件零改动。备份也挪到这里一次拷完：以前在替换循环里逐个拷，第 2 个
+    # 拷失败时第 1 个已被换掉却没人回滚。
+    try:
+        for target, tmp in tmps:
+            shutil.copy2(target, backup_dir / target.name)
+            engine_atomicio.fsync_file(backup_dir / target.name)
+            engine_atomicio.fsync_file(tmp)
+        engine_atomicio.fsync_dir(backup_dir)
+    except OSError as exc:
+        for _t, leftover in tmps:
+            leftover.unlink(missing_ok=True)
+        LOG.error("写回落盘失败（替换之前，原文件未动）: %s: %s", stem, exc)
+        raise WriteBackPersistError(str(exc)) from exc
     updated: list[str] = []
     done: list[Path] = []
     for target, tmp in tmps:
-        shutil.copy2(target, backup_dir / target.name)
         try:
             tmp.replace(target)
         except OSError as exc:
@@ -4376,6 +4405,15 @@ def _write_source_files(
             raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc
         done.append(target)
         updated.append(target.name)
+    # 目录项落盘放在整个替换循环**之后**、且只尽力而为：此刻各 replace 都已
+    # 成功，新内容对任何读者已可见。失败只记 ERROR、不回滚——若塞进上面的
+    # `except OSError`，就会回滚别的目标、独独留下刚换好的这一个，还对用户
+    # 报「已回滚」（issue #252 讲的半应用陷阱）。
+    for parent in dict.fromkeys(t.parent for t in done):
+        try:
+            engine_atomicio.fsync_dir(parent)
+        except OSError:
+            LOG.error("写回后目录项落盘失败（文件已替换，备份在 %s）: %s", backup_dir, parent)
     prune_backups(backup_dir.parent)
     LOG.info(
         "更新原图: %s → %s（备份 %s，标注 %d 条）",
@@ -4505,6 +4543,15 @@ def _write_back_error_response(exc):
                 "error": _write_back_warning_error(exc),
                 "code": "write_back_warnings",
                 "warnings": exc.warnings,
+            }
+        ), 409
+    if isinstance(exc, WriteBackPersistError):
+        return jsonify(
+            {
+                "error": f"写回前的落盘准备失败（备份或临时文件没能写入磁盘）：{exc.reason}。"
+                "写回已取消，原文件未做任何改动。请检查磁盘空间与目录权限后重试。",
+                "code": "write_back_persist_failed",
+                "params": {"reason": exc.reason},
             }
         ), 409
     if isinstance(exc, FileLockedError):
@@ -4720,6 +4767,7 @@ def api_engine_history_restore():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
     ) as exc:

@@ -115,6 +115,22 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
+def fsync_file(path: Path) -> None:
+    """把一个**已经写好**的文件内容落盘，不做 replace。失败原样抛 `OSError`。
+
+    给「replace 由调用方自己做」的事务用（原图写回，issue #252）：调用方要在
+    **碰任何目标之前**确认所有临时文件都落了盘，失败时才能干净地整体放弃。
+    可写方式打开的理由同 `publish_file`：Windows 的 `os.fsync()` 只接受可写句柄。
+    """
+    with open(path, "rb+") as handle:
+        os.fsync(handle.fileno())
+
+
+def fsync_dir(directory: Path) -> None:
+    """`_fsync_dir` 的公开入口：目录项落盘，失败抛 `AtomicWriteError`（`OSError` 子类）。"""
+    _fsync_dir(Path(directory))
+
+
 def dumps_json(obj: Any, *, indent: int | None = None) -> bytes:
     """序列化成 **RFC 8259 合法**的 JSON 字节。
 
