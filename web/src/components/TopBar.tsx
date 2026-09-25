@@ -578,6 +578,8 @@ function ZoomControls() {
           size="icon"
           onClick={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
           aria-label={t('topbar.fitCanvas')}
+          // e2e 的稳定锚点（选择器不认 aria-label / 文案，web/AGENTS.md）
+          data-fit-canvas
         >
           <Maximize2 size={ICON_SIZE.md} />
         </Button>
