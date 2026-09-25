@@ -386,7 +386,7 @@ def _probe_scratch_dir() -> str:
 
 
 def probe_environment(
-    python: str, module: str | None = None, *, modules: tuple[str, ...] = ()
+    python: str, module: str | None = None, *, modules: tuple[str, ...] = (), bundled: bool = False
 ) -> dict:
     """在候选解释器里跑一次体检，回机器可读结构。
 
@@ -399,6 +399,10 @@ def probe_environment(
 
     `modules`（ADR 0079）：再顺带 import 这一组，结果进 `modules_ok`（{名字: bool}），**不影响**
     `ok` / `code`——「环境健康」与「装没装齐这个脚本要的包」是两件事，调用方分开判。
+
+    `bundled`：这是 Tavotto 的内置 runtime——按 worker 起它的同一套来量（`runtime.child_args()` 的 `-B`、
+    `runtime.child_env()` 摘掉 `PYTHONPATH` 等），与 `pool._has_matplotlib(bundled=True)` 同一条纪律：
+    从终端启动时 shell 里的 `PYTHONPATH` 会让体检看见 worker 看不见的包（Codex #609 P2）。
     """
     modules = tuple(m for m in modules if valid_module_name(m))
     if module and not valid_module_name(module):
@@ -412,7 +416,8 @@ def probe_environment(
     # import 得到：体检量的是另一个对象。`-I` 真正想挡的只是 cwd 被塞进
     # `sys.path[0]`（Flask 进程的 cwd 是任意的，里面一个 `matplotlib.py`
     # 就能把体检骗过去），这件事改由把 cwd 换成一个**空的临时目录**来做。
-    argv = [python, "-c", _PROBE_SRC, engine_dir, module or ""]
+    argv = [python, *(runtime.child_args() if bundled else []), "-c", _PROBE_SRC, engine_dir]
+    argv.append(module or "")
     if modules:
         argv.append(",".join(modules))
     scratch = ""
@@ -430,6 +435,7 @@ def probe_environment(
             timeout=PROBE_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
+            env=runtime.child_env() if bundled else None,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as exc:
