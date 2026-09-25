@@ -2571,7 +2571,8 @@ export const historyPreviewUrl = (id: string, n: number, w = 400) =>
 
 export const restoreHistory = (id: string, n: number, expectedMtime?: number) =>
   jsonFetch<
-    WriteBackResponse & { patches: { gid: string; prop: string; value: unknown }[] }
+    // identity：那一版写下时记着的目标身份（ADR 0083），恢复时原样放回
+    WriteBackResponse & { patches: { gid: string; prop: string; value: unknown; identity?: string }[] }
   >('/api/engine/history/restore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

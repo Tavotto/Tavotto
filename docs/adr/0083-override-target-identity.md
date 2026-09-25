@@ -97,8 +97,12 @@ worker warning，按写回事务的既有规矩**一条即阻断**（409 `write_
    身份就去掉；manifest 里没有这个 gid / 还没画出来就不动；
 2. 原地改值、身份是从旧条目原样继承来的（upsert 的展开写法）→ 同 1，按此刻重抄（用户在
    「现在的 lines_0」上改，这条编辑属于现在的它）；
-3. 带着别的身份来的（历史版本 / 布局版本恢复）→ **不重抄**：它们有来历，按此刻重抄等于把
-   旧编辑按位置绑到新对象上；
+3. 带着别的身份来的 → **不重抄**：它们有来历，按此刻重抄等于把旧编辑按位置绑到新对象上；
+   **恢复不靠这一条认**：从存储原样读回来的一整份（布局版本 `restoreLayoutVersion`、写回历史
+   `restorePanelOverrides`、写回基线 `seedBakedOverrides` / 换素材 / 重链接）由调用方显式
+   `commit(…, { overrides: 'restored' })`，整次提交不抄，存的是什么就是什么（#602 评审 P1：
+   当前文档与要恢复的版本在同一 (gid, prop) 上记着同一个身份、只是值不同——最常见的恢复——
+   与「原地改值」长得一模一样，从身份相等推断会把它当 upsert 按此刻重抄）；
 4. 值没变、身份却丢了（filter + push 同值重建）→ 放回原来的身份。
 
 跨图同步（`/api/engine/sync_overrides`）是**有意**按位置映射到另一张图的另一个对象：后端
@@ -116,7 +120,8 @@ worker warning，按写回事务的既有规矩**一条即阻断**（409 `write_
 - `tests/test_patchspec.py` + `tests/golden/patch_vectors.json`（Python）/ `workerd/tests/golden_vectors.rs`（Rust）。
 - `web/src/components/inspector/staleIdentityOverrides.test.tsx`：身份对不上的进「清除失效修改」、对得上的不进。
 - `web/src/lib/overrideIdentity.test.ts`：抄写四条规则 + 真实写入口（`setOverride` / `setOverrides`
-  经 `useEngineSync` 登记的抄写）+ 撤销一次连身份一起回去。
+  经 `useEngineSync` 登记的抄写）+ 撤销一次连身份一起回去 + 两条真实恢复入口在「同一身份、
+  值不同」时原样保留存下的身份（带普通编辑的对照）。
 
 ## 已定（2026-09-25 用户拍板）
 

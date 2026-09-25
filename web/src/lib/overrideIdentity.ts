@@ -7,7 +7,10 @@
  *
  * 这里只有两件事，都不认识 store：
  *   - `stampOverrideIdentities`：文档提交之后，给**这一次新写或改了值**的 override
- *     抄上写它时那一版 manifest 的身份（元素没有身份就去掉——不许把旧身份留在新编辑上）；
+ *     抄上写它时那一版 manifest 的身份（元素没有身份就去掉——不许把旧身份留在新编辑上）。
+ *     只管**用户编辑**的提交：从存储原样读回来的（布局版本 / 写回历史 / 写回基线）由调用方
+ *     显式标 `commit(…, { overrides: 'restored' })`，整次提交根本不进这里——「恢复」从数据
+ *     里推断不出来（同一身份、值不同的恢复与原地改值长得一模一样，#602 评审 P1）；
  *   - `isStaleIdentityOverride`：这条 override 的身份与此刻 manifest 对不上 = 失效修改。
  *
  * 判据与引擎 `overrides.apply` 同一条：带了认识的方案前缀、gid 此刻还在、身份不等。
@@ -55,9 +58,8 @@ export function stampOverrideIdentities(
       const target = () => (draft.objects[i] as PanelObject).overrides[j]
       if (o.identity !== undefined) {
         // 自带身份的：只有「原地改值、身份是从旧条目原样继承来的」（upsert 的展开写法）
-        // 才按此刻重抄。别的都是有来历的身份——历史版本 / 布局版本恢复回来的条目带着
-        // 它们写下时的身份，按此刻的 manifest 重抄等于把旧编辑按位置重新绑到新对象上，
-        // 正是这道核对要堵的那条路。
+        // 才按此刻重抄。带着别的身份来的是有来历的，不重抄（防线；恢复本身不靠这一条
+        // 认——它们整次提交不进这里，见文件头）。
         if (!prev || prev.identity !== o.identity || unchanged) return
       } else if (unchanged) {
         // 值没变、身份却丢了：是哪条写法把条目重建成了 {gid, prop, value}

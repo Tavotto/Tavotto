@@ -117,10 +117,26 @@ export function registerOverrideStamper(fn: OverrideStamper): () => void {
   }
 }
 
+/**
+ * 一次提交里的 override **从哪来**（ADR 0083）——由调用方显式说，不从数据里推断：
+ *
+ * - `'edit'`（默认）：用户此刻的编辑，新写 / 改了值的条目抄身份；
+ * - `'restored'`：从存储原样读回来的一整份（布局版本、写回历史、写回基线）。这些条目的
+ *   身份是**它们写下那一刻**的事实，按此刻的 manifest 重抄等于把旧编辑按位置绑到新对象上
+ *   （#602 评审 P1：同一 (gid, prop) 在当前文档与要恢复的版本里记着同一个身份、只是值不同
+ *   ——最常见的恢复——看起来和「原地改值」一模一样，推断不出来）。整次提交不抄，
+ *   存的是什么就是什么，没带身份的也照旧不带（按位置，与引入身份之前一致）。
+ */
+export type CommitOptions = { overrides?: 'edit' | 'restored' }
+
 /** `produceWithPatches` + 身份抄写：两段补丁按时序拼成一份（反向补丁倒序）。 */
-function produceStamped(base: FigureDocument, recipe: Recipe): [FigureDocument, Patch[], Patch[]] {
+function produceStamped(
+  base: FigureDocument,
+  recipe: Recipe,
+  opts?: CommitOptions,
+): [FigureDocument, Patch[], Patch[]] {
   const [next, patches, inverse] = produceWithPatches(base, recipe)
-  const stamp = overrideStamper
+  const stamp = opts?.overrides === 'restored' ? null : overrideStamper
   if (!patches.length || !stamp) return [next, patches, inverse]
   const [stamped, more, moreInverse] = produceWithPatches(next, (d) => stamp(d, base, next))
   if (!more.length) return [next, patches, inverse]
@@ -218,8 +234,11 @@ interface DocumentState {
   /** 进行中的拖动事务：pointerdown 开启，pointerup 合并成一条历史 */
   txn: { label: UiMessage; patches: Patch[]; inverse: Patch[] } | null
 
-  /** 一次用户操作 = 一条历史记录 */
-  commit: (label: UiMessage, recipe: Recipe) => void
+  /**
+   * 一次用户操作 = 一条历史记录。`opts.overrides === 'restored'`：这次写进去的 override
+   * 是从存储原样读回来的，身份不按此刻重抄（`CommitOptions`）。
+   */
+  commit: (label: UiMessage, recipe: Recipe, opts?: CommitOptions) => void
   /** 不进历史的即时修改（仅在事务中使用） */
   beginTxn: (label: UiMessage) => void
   txnUpdate: (recipe: Recipe) => void
@@ -369,9 +388,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   future: [],
   txn: null,
 
-  commit: (label, recipe) => {
+  commit: (label, recipe, opts) => {
     const state = get()
-    const [next, patches, inverse] = produceStamped(state.doc, recipe)
+    const [next, patches, inverse] = produceStamped(state.doc, recipe, opts)
     if (!patches.length) return
     if (state.txn) {
       // 事务进行中的结构性操作也并入当前事务

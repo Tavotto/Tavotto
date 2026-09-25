@@ -73,8 +73,11 @@
   schema）由 `documentStore.commit / txnUpdate` 在 recipe 之后跑一遍登记的抄写
   （`registerOverrideStamper`，`useEngineSync` 登记，抄写本身是纯函数
   `lib/overrideIdentity.stampOverrideIdentities`），补丁并进同一条历史 / 事务。只给**新写或
-  改了值**的条目抄**提交之前用户看着的那一版** manifest（`panelRender`）里的身份；带着别的
-  身份回来的（历史 / 版本恢复）不重抄，同值被重建丢了身份的放回原来的。写入点一律不手填。
+  改了值**的条目抄**提交之前用户看着的那一版** manifest（`panelRender`）里的身份；同值被重建丢了
+  身份的放回原来的。写入点一律不手填。**恢复的来源显式传**：从存储原样读回来的（布局版本
+  `restoreLayoutVersion`、写回历史 `restorePanelOverrides`、写回基线 / 换素材 / 重链接）一律
+  `commit(…, { overrides: 'restored' })`，整次不抄——不从「身份等不等」推断是不是恢复
+  （同一身份、值不同的恢复与原地改值长得一样，#602 评审 P1）。新增一条恢复路径同样要带。
   「清除失效修改」把身份对不上的也算进去（`isStaleIdentityOverride`，与引擎同一条判据）。
 - **自动保存**：磁盘为主（`PUT /api/autosave/<docId>` 原子写
   `layouts/_autosave/`），localStorage 只留索引 + 崩溃兜底副本

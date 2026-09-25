@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { literal } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { useEngineSync } from '@/hooks/useEngineSync'
-import { setOverride, setOverrides } from '@/store/actions'
+import { restoreLayoutVersion, restorePanelOverrides, setOverride, setOverrides } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
 import { seedExactRender } from '@/test/renderFixtures'
@@ -183,6 +183,46 @@ describe('真实写入口：setOverride / setOverrides 经 documentStore 提交�
   it('setOverrides（原地 upsert）新增的一条同样带身份', () => {
     setOverrides('p1', literal('批量'), [{ gid: 'axes_0.lines_1', prop: 'linewidth', value: 3 }], 'none')
     expect(overrides()).toEqual([{ gid: 'axes_0.lines_1', prop: 'linewidth', value: 3, identity: BETA }])
+  })
+
+  describe('恢复：同一身份、值不同（#602 评审 P1）——存下的身份原样保留，不按此刻重抄', () => {
+    // 当前文档与要恢复的版本在同一个 (gid, prop) 上都记着 alpha、只是值不同；之后脚本
+    // 改了，lines_0 此刻指向 beta。这就是最常见的恢复，它与「原地改值」长得一模一样——
+    // 从身份相等推断不出来，必须由恢复路径显式说
+    const now: PanelOverride = { gid: 'axes_0.lines_0', prop: 'color', value: '#000000', identity: ALPHA }
+    const stored: PanelOverride = { gid: 'axes_0.lines_0', prop: 'color', value: '#ff00ff', identity: ALPHA }
+    const legacy: PanelOverride = { gid: 'axes_0.lines_1', prop: 'alpha', value: 0.5 }
+
+    beforeEach(() => {
+      useDocumentStore.getState().commit(literal('准备：当前文档'), (d) => {
+        ;(d.objects[0] as PanelObject).overrides = [structuredClone(now)]
+      })
+      // 脚本结构变了：此刻用户看着的 manifest 里 lines_0 = beta
+      seedExactRender(useDocumentStore.getState().doc.objects[0] as PanelObject, manifest(BETA, ALPHA))
+    })
+
+    it('对照：同样的状态下普通编辑确实会按此刻的对象抄成 beta（尺子是活的）', () => {
+      setOverride('p1', 'axes_0.lines_0', 'color', '#ff00ff', 'none')
+      expect(overrides()[0].identity).toBe(BETA)
+    })
+
+    it('写回历史恢复（HistoryPanel → restorePanelOverrides）', () => {
+      restorePanelOverrides('p1', literal('恢复写回历史'), [stored, legacy])
+      expect(overrides()).toEqual([stored, legacy])
+    })
+
+    it('布局版本恢复（VersionDialog → restoreLayoutVersion）', () => {
+      const version = structuredClone(useDocumentStore.getState().doc)
+      ;(version.objects[0] as PanelObject).overrides = [stored, legacy]
+      restoreLayoutVersion(literal('恢复布局版本'), version)
+      expect(overrides()).toEqual([stored, legacy])
+    })
+
+    it('撤销恢复回到恢复之前（身份一起回去）', () => {
+      restorePanelOverrides('p1', literal('恢复写回历史'), [stored])
+      useDocumentStore.getState().undo()
+      expect(overrides()).toEqual([now])
+    })
   })
 
   it('卸下同步器之后不再抄（登记是 useEngineSync 挂上的，注销干净）', async () => {
