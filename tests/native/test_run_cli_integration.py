@@ -18,7 +18,7 @@ import time
 
 import pytest
 
-from support import nativekit
+from support import nativekit, procprobe
 from tavotto.engine import nativehandoff, nativesession, runcodes
 
 pytestmark = nativekit.needs_user_python
@@ -446,20 +446,8 @@ def test_ctrl_c_reaches_the_script_and_leaves_no_orphan(tmp_path):
     assert proc.returncode == 130, (
         f"没有透传脚本的退出码: {proc.returncode}\nstdout={out!r}\nstderr={err!r}"
     )
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline and _alive(child_pid):
-        time.sleep(0.05)
-    assert not _alive(child_pid), f"孤儿进程留下了: pid={child_pid}"
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:  # pragma: no cover - 别人的进程，不在本用例范围
-        return True
-    return True
+    # 不用 os.kill(pid, 0)：Windows 上那是 TerminateProcess（#523，见 tests/support/procprobe）
+    assert procprobe.wait_gone(child_pid, timeout=30), f"孤儿进程留下了: pid={child_pid}"
 
 
 # --------------------------------------------------------------------------
