@@ -539,14 +539,19 @@ def _refresh_error(exc):
     return jsonify(exc.as_payload()), 400
 
 
-def _worker_error_payload(exc) -> dict:
+def _worker_error_payload(exc, stage: str = "") -> dict:
     """worker 错误的统一响应体。
+
+    `stage` 非空时一并带上：写回事务的 verify 段挂掉回 409 + `stage: "verify"`，
+    与 prepare 段的那几个 409 区分开（QA 2026-09-24 SCI-04-B1）。
 
     `module` 只在 code == "missing_dependency" 时有值：用户脚本 import 了当前
     渲染环境里没有的包（内置 runtime 只带常用科学栈）。前端据此给「换成你自己
     的环境」这个可执行出口，而不是甩一段 ModuleNotFoundError。
     """
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
+    if stage:
+        body["stage"] = stage
     if getattr(exc, "module", ""):
         body["module"] = exc.module
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
@@ -3905,8 +3910,6 @@ def api_engine_update_source():
         result = _write_source_files(
             src, patches, worker, annotations=annotations, expected_mtime=body.get("expected_mtime")
         )
-    except engine_pool.WorkerError as exc:
-        return jsonify(_worker_error_payload(exc)), 500
     except (
         SourceChangedError,
         ScriptChangedError,
@@ -3915,6 +3918,7 @@ def api_engine_update_source():
         WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
+        engine_pool.WorkerError,
     ) as exc:
         return _write_back_error_response(exc)
     # 把这组修改追加为该图的版本历史，末位即当前基线：
@@ -4294,6 +4298,89 @@ def _rollback(done: list[Path], backup_dir: Path) -> tuple[list[str], list[str]]
     return rolled, failed
 
 
+def _discard_updating(tmps: list[tuple[Path, Path]]) -> None:
+    """写回失败后清掉全部 `.updating`：**尽力而为**。
+
+    清不掉（Windows 上被短暂锁住）只记日志——第二个 OSError 不许盖掉触发清理的
+    那个原错，否则承诺的 409 变成 500（Codex #595 P2）。三个失败出口共用这一处。
+    """
+    for _t, leftover in tmps:
+        try:
+            leftover.unlink(missing_ok=True)
+        except OSError:
+            LOG.warning("写回失败后清理临时文件失败: %s", leftover, exc_info=True)
+
+
+def _new_backup_dir(root: Path) -> Path:
+    """本次写回**独占**的备份目录：`<月日_时分秒>`，同一秒已被占用就接 `-2`、`-3`…
+
+    按秒命名的目录在同一 stem 一秒内写回两次时会被共用：第二次的备份覆盖第一次的
+    （第一次写回前的原件就此丢失），第二次备份失败时的清理还会删掉第一次的备份
+    （Codex #595 P2）。`exist_ok=False` 让「建出来」本身就是占有，不存在先查后建的窗口。
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    base = time.strftime("%m%d_%H%M%S")
+    n = 1
+    while True:
+        cand = root / (base if n == 1 else f"{base}-{n}")
+        try:
+            cand.mkdir()
+            return cand
+        except FileExistsError:
+            n += 1
+
+
+def _backup_targets(tmps: list[tuple[Path, Path]], backup_root: Path, stem: str) -> Path:
+    """commit 的第一轮：把**全部**目标备份进本次独占的备份目录并落盘，一个原件都还没被替换。
+
+    回这个目录（回滚与响应用它）。落盘（ADR 0023 §3.1，issue #252）：`os.replace`
+    只保证「要么旧要么新」，不保证新内容已离开页缓存，所以**碰任何目标之前**先把
+    备份与 staging 都 fsync 掉，新建的各级目录的名字也要在各自父目录里落盘——否则
+    掉电后原图已是新内容、备份目录却整个不见了。
+
+    任何一步失败（建目录 / 磁盘满 / 权限 / fsync）：删掉这次写下的备份（含半截的
+    那份）、本次目录一并删掉、清掉所有 `.updating`，抛 `WriteBackPersistError`——
+    此刻原件零改动，走写回事务统一的 409。
+    """
+    written: list[Path] = []
+    backup_dir: Path | None = None
+    try:
+        # 这次新建出来的各级目录（最深的在前）；本次的备份目录必然是新建的
+        created_dirs = [p for p in (backup_root, *backup_root.parents) if not p.exists()]
+        backup_dir = _new_backup_dir(backup_root)
+        created_dirs.insert(0, backup_dir)
+        for target, tmp in tmps:
+            backup = backup_dir / target.name
+            written.append(backup)  # 先登记再拷：拷到一半抛了，半截文件也要删得掉
+            # 先拷内容、趁备份还可写时 fsync，最后才抄权限与时间戳：原图若是
+            # 0444（目录可写时照样能被 replace），copy2 会把只读位带到备份上，
+            # 之后再以可写方式打开它 fsync 就是 PermissionError。
+            shutil.copyfile(target, backup)
+            engine_atomicio.fsync_file(backup)
+            shutil.copystat(target, backup)
+            engine_atomicio.fsync_file(tmp)
+        engine_atomicio.fsync_dir(backup_dir)
+        for created in created_dirs:
+            engine_atomicio.fsync_dir(created.parent)
+    except OSError as exc:
+        # 清理全部尽力而为、逐个吞错：文件系统正在报 EIO / EROFS 时 unlink 也可能
+        # 失败，不许它盖掉结构化的 409。
+        for dest in written:
+            try:
+                dest.unlink(missing_ok=True)
+            except OSError:
+                LOG.warning("写回失败后清理备份失败: %s", dest, exc_info=True)
+        if backup_dir is not None:
+            try:
+                backup_dir.rmdir()  # 目录是本次独占的；删不掉就是还有东西，留着
+            except OSError:
+                pass
+        _discard_updating(tmps)  # 不给图库留下半成品
+        LOG.error("写回落盘失败（替换之前，原文件未动）: %s: %s", stem, exc)
+        raise WriteBackPersistError(str(exc)) from exc
+    return backup_dir
+
+
 def _write_source_files(
     src: Path, patches: list, worker, annotations: list | None = None, expected_mtime=None
 ) -> dict:
@@ -4367,54 +4454,24 @@ def _write_source_files(
         if diffs:
             raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
     except BaseException:
-        for _t, leftover in tmps:
-            leftover.unlink(missing_ok=True)
+        _discard_updating(tmps)
         raise
     finally:
         engine_pool.discard(fresh)
 
-    # ---- commit：备份 → 逐个原子替换（中途撞锁则回滚） ----------------------
-    backup_dir = project_backup_dir() / time.strftime("%m%d_%H%M%S")
-    # 这次新建出来的各级目录（最深的在前）：它们的名字要在各自父目录里落盘，
-    # 否则掉电后原图已是新内容、备份目录却整个不见了。
-    created_dirs = [p for p in (backup_dir, *backup_dir.parents) if not p.exists()]
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    # 落盘（ADR 0023 §3.1，issue #252）：`os.replace` 只保证「要么旧要么新」，
-    # 不保证新内容已离开页缓存。所以**碰任何目标之前**先把备份与 staging 都
-    # fsync 掉——这一段失败属于「replace 之前」：一个目标都没动，清 tmp 回 409，
-    # 原文件零改动。备份也挪到这里一次拷完：以前在替换循环里逐个拷，第 2 个
-    # 拷失败时第 1 个已被换掉却没人回滚。
-    try:
-        for target, tmp in tmps:
-            backup = backup_dir / target.name
-            # 先拷内容、趁备份还可写时 fsync，最后才抄权限与时间戳：原图若是
-            # 0444（目录可写时照样能被 replace），copy2 会把只读位带到备份上，
-            # 之后再以可写方式打开它 fsync 就是 PermissionError。
-            shutil.copyfile(target, backup)
-            engine_atomicio.fsync_file(backup)
-            shutil.copystat(target, backup)
-            engine_atomicio.fsync_file(tmp)
-        engine_atomicio.fsync_dir(backup_dir)
-        for created in created_dirs:
-            engine_atomicio.fsync_dir(created.parent)
-    except OSError as exc:
-        # 清 tmp 尽力而为、逐个吞错：文件系统正在报 EIO / EROFS 时 unlink 也可能
-        # 失败，不许它盖掉结构化的 409。
-        for _t, leftover in tmps:
-            try:
-                leftover.unlink(missing_ok=True)
-            except OSError as cleanup_exc:
-                LOG.warning("写回落盘失败后清理暂存文件失败: %s: %s", leftover, cleanup_exc)
-        LOG.error("写回落盘失败（替换之前，原文件未动）: %s: %s", stem, exc)
-        raise WriteBackPersistError(str(exc)) from exc
+    # ---- commit：先把全部备份做完并落盘 → 再逐个原子替换（中途失败则回滚） ----
+    # 备份与替换**分成两轮**（QA 2026-09-24 SCI-05-B1）：以前是「备份一个、换一个」，
+    # 第二个目标备份时磁盘满，PDF 已经换成新的、PNG 还是旧的，异常从 try 外面
+    # 冒出去成了 500，`.updating` 留在图库里。备份与 staging 在任何一个原件被动之前
+    # 全部拷完并 fsync（ADR 0023 §3.1，issue #252），失败时原件一个都还没碰过。
+    backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
     updated: list[str] = []
     done: list[Path] = []
     for target, tmp in tmps:
         try:
             tmp.replace(target)
         except OSError as exc:
-            for _t, leftover in tmps:
-                leftover.unlink(missing_ok=True)  # 不给图库留下半成品
+            _discard_updating(tmps)  # 不给图库留下半成品
             LOG.warning("写回原图失败（文件被占用？）: %s: %s", target.name, exc)
             rolled, failed = _rollback(done, backup_dir)
             raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc
@@ -4521,7 +4578,7 @@ def _write_back_response(result: dict, **extra) -> dict:
 
 
 def _write_back_error_response(exc):
-    """prepare/verify 失败 → 409 + 专属 code；格式不是写回目标 → 400；不认识的回 None。"""
+    """写回事务任一环失败（prepare / verify / commit）→ 409 + 专属 code；格式不是写回目标 → 400；不认识的回 None。"""
     if isinstance(exc, SourceChangedError):
         return jsonify(
             {
@@ -4590,6 +4647,13 @@ def _write_back_error_response(exc):
                 "params": {"format": exc.format},
             }
         ), 400
+    if isinstance(exc, engine_pool.WorkerError):
+        # verify 段的一次性 worker 崩了 / 超时 / 缺依赖（SCI-04-B1）。commit 段
+        # 不调 worker，所以走到这里原件必然零改动——按事务不变式回 409。
+        # worker 自己的 code / traceback / module 原样带上：前端按 code 出文案，
+        # `missing_dependency` 的恢复引导不能因为状态码变了就丢；`stage` 标明
+        # 这是写回事务的 verify 段挂了，与 prepare 段那几个 409 区分开。
+        return jsonify(_worker_error_payload(exc, stage="verify")), 409
     return None
 
 
@@ -4775,8 +4839,6 @@ def api_engine_history_restore():
         result = _write_source_files(
             src, patches, worker, expected_mtime=body.get("expected_mtime")
         )
-    except engine_pool.WorkerError as exc:
-        return jsonify(_worker_error_payload(exc)), 500
     except (
         SourceChangedError,
         ScriptChangedError,
@@ -4785,6 +4847,7 @@ def api_engine_history_restore():
         WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
+        engine_pool.WorkerError,
     ) as exc:
         return _write_back_error_response(exc)
     append_baked(stem, patches, files=result["file_identity"])
@@ -6409,7 +6472,15 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
     删之前在**该文件自己的锁**里重新 stat 一次：扫描到删除之间有人写过它，
     说明它已经不是"最旧的那几个"了，跳过。少了这一步，一次并发保存可以被这
     条清理路径当场删掉，而那次保存已经回了 200。
+
+    顺带回收被杀在 `os.replace` 之前的进程留下的 `<doc>.json.<pid>.<n>.tmp`
+    （QA 2026-09-24 SCI-05-B2）：它们不以 `.json` 结尾，下面的条数 / 字节上限
+    永远数不到，以前没有任何一条路会删它们。判据（年龄 + pid 已死）在
+    `atomicio.reap_orphan_tmps`——tmp 的命名也出自那里。
     """
+    orphans = engine_atomicio.reap_orphan_tmps(AUTOSAVE_DIR)
+    if orphans:
+        LOG.info("自动保存目录清理：删掉 %d 个中断写入留下的临时文件", len(orphans))
     try:
         rows = []
         for entry in os.scandir(AUTOSAVE_DIR):

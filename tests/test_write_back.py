@@ -235,18 +235,38 @@ def test_write_back_dedupes_warnings_across_targets(client, tmp_path, monkeypatc
     assert body["warnings"] == ["属性不支持: figure.wat"]
 
 
-def test_write_back_cleans_updating_when_second_export_fails(client, tmp_path, monkeypatch):
-    """PDF 导出成功、PNG 导出抛 WorkerError：图库里不许留 `.Fig1.pdf.updating`。"""
+@pytest.mark.parametrize(
+    ("url", "extra"),
+    [("/api/engine/update_source", {"patches": []}), ("/api/engine/history/restore", {"n": -1})],
+)
+def test_write_back_cleans_updating_when_second_export_fails(
+    client, tmp_path, monkeypatch, url, extra
+):
+    """PDF 导出成功、PNG 导出抛 WorkerError：图库里不许留 `.Fig1.pdf.updating`。
+
+    状态码是 **409**（QA 2026-09-24 SCI-04-B1）：WorkerError 只可能出在 verify 段
+    （commit 段不调 worker），此时原件零改动——正是根 AGENTS.md「任一环不过一律
+    409」那一类。worker 自己的 code / traceback 原样保留（前端按 code 出文案，
+    `missing_dependency` 之类的恢复引导不能因为换了状态码就丢），另带
+    `stage: "verify"` 与其它 409 区分开。
+    """
     figs = _figs(tmp_path)
-    before = (figs / "Fig1.pdf").read_bytes()
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
     hot, fresh = _pair(figs, tmp_path, fail_on="png")
     discarded = _use(monkeypatch, hot, fresh)
 
-    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
-    assert resp.status_code == 500
+    resp = client.post(url, json={"id": "Fig1.pdf", **extra})
+    assert fresh.calls[-1] == "png", "前提：失败确实发生在 PNG 导出那一步"
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["stage"] == "verify"
+    assert body["error"] == "导出炸了" and body["traceback"] == "traceback…"
     assert _leftovers(figs) == []
-    assert (figs / "Fig1.pdf").read_bytes() == before  # 原文件完好
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf  # 原文件完好
+    assert (figs / "Fig1.png").read_bytes() == before_png
     assert discarded == [fresh]
+    assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
 
 
 # ------------------------------ verify：干净重放 ------------------------------
@@ -600,6 +620,197 @@ def test_a_locked_first_target_reports_nothing_updated(client, tmp_path, monkeyp
     assert body["code"] == "file_locked" and body["file"] == "Fig1.pdf"
     assert body["updated"] == [] and body["rolled_back"] == []
     assert _leftovers(figs) == []
+
+
+# ------------------- commit：备份 / 替换在磁盘层面失败（QA SCI-05-B1） -------------------
+def _fail_nth_backup(monkeypatch, n: int) -> list[str]:
+    """第 n 次 `shutil.copyfile`（commit 段的备份）抛 ENOSPC，返回每次调用的源文件名。
+
+    只数**写回事务自己**的 copyfile：`m.shutil` 就是 app 模块里那一个名字。
+    磁盘满时 copyfile 已经在目标处建了个半截文件——照真实形状也留一个。
+    """
+    import errno
+    import shutil
+
+    real = shutil.copyfile
+    calls: list[str] = []
+
+    def copyfile(src, dst, *a, **k):
+        calls.append(Path(src).name)
+        if len(calls) == n:
+            Path(dst).write_bytes(b"half")
+            raise OSError(errno.ENOSPC, "No space left on device", str(dst))
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(m.shutil, "copyfile", copyfile)
+    return calls
+
+
+def _backup_files() -> list[str]:
+    root = m.project_backup_dir(m.PROJECTS[next(iter(m.PROJECTS))])
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
+
+
+@pytest.mark.parametrize("nth", [1, 2])
+def test_a_failed_backup_leaves_every_original_untouched(client, tmp_path, monkeypatch, nth):
+    """备份第 n 个目标时磁盘满：409、两份原件逐字节不变、没有 `.updating`、基线不入账。
+
+    QA 2026-09-24 SCI-05-B1 的形状：以前备份在替换循环里、try 之外，第二个目标
+    备份失败时 PDF 已经换成新的、PNG 还是旧的，`.Fig1.png.updating` 留在图库里，
+    HTTP 500，没有回滚。备份必须在**任何一个原件被替换之前**全部做完。
+    """
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot, fresh = _pair(figs, tmp_path)
+    discarded = _use(monkeypatch, hot, fresh)
+    calls = _fail_nth_backup(monkeypatch, nth)
+
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert calls[:nth] == ["Fig1.pdf", "Fig1.png"][:nth], "前提：失败落在第 n 个目标的备份上"
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["code"] == "write_back_persist_failed"
+    assert "No space left on device" in body["params"]["reason"]
+
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert (figs / "Fig1.png").read_bytes() == before_png
+    assert _leftovers(figs) == []
+    assert _backup_files() == [], "失败的这次不该留下半截备份"
+    assert discarded == [fresh]
+    assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
+
+
+def test_a_failed_backup_still_answers_409_when_a_temp_file_cannot_be_removed(
+    client, tmp_path, monkeypatch
+):
+    """备份失败后清 `.updating` 也失败（Windows 上被短暂锁住）：清理是尽力而为，
+    不许用第二个 OSError 盖掉备份失败本身——仍是 409 `write_back_persist_failed`、原件零改动。"""
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    _fail_nth_backup(monkeypatch, 2)
+    real_unlink = Path.unlink
+    refused: list[str] = []
+
+    def unlink(self, *a, **k):
+        if self.name.endswith(".updating"):
+            refused.append(self.name)
+            raise PermissionError(f"[WinError 32] 另一个程序正在使用 {self.name}")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+
+    assert refused, "前提：清 `.updating` 确实失败过"
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "write_back_persist_failed"
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert (figs / "Fig1.png").read_bytes() == before_png
+
+
+@pytest.mark.parametrize(
+    ("url", "extra"),
+    [("/api/engine/update_source", {"patches": []}), ("/api/engine/history/restore", {"n": -1})],
+)
+def test_a_verify_worker_error_still_answers_409_when_a_temp_file_cannot_be_removed(
+    client, tmp_path, monkeypatch, url, extra
+):
+    """verify 段 worker 崩了、清 `.updating` 又撞上 Windows 短暂锁：清理尽力而为，
+    第二个 OSError 不许盖掉 WorkerError——仍是 409 + worker 原 code + `stage: "verify"`
+    （Codex #595 P2：以前这一处清理没兜，回的是 500）。"""
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    hot, fresh = _pair(figs, tmp_path, fail_on="png")
+    discarded = _use(monkeypatch, hot, fresh)
+    real_unlink = Path.unlink
+    refused: list[str] = []
+
+    def unlink(self, *a, **k):
+        if self.name.endswith(".updating"):
+            refused.append(self.name)
+            raise PermissionError(f"[WinError 32] 另一个程序正在使用 {self.name}")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    resp = client.post(url, json={"id": "Fig1.pdf", **extra})
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+
+    assert refused, "前提：清 `.updating` 确实失败过"
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["stage"] == "verify"
+    assert body["error"] == "导出炸了"
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert discarded == [fresh]
+
+
+@pytest.mark.parametrize("second_fails", [False, True])
+def test_two_write_backs_in_the_same_second_keep_separate_backups(
+    client, tmp_path, monkeypatch, second_fails
+):
+    """同一 stem 一秒内写回两次：各用各的备份目录（Codex #595 P2）。
+
+    以前目录按秒命名、两次共用：第二次的备份覆盖掉第一次的（第一次写回**之前**的原件
+    就此没了），第二次备份失败时的清理还会把第一次的备份删掉。钉死时钟让两次必然同秒。
+    """
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    monkeypatch.setattr(m.time, "strftime", lambda fmt, *a: "0925_120000")
+
+    first = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert first.status_code == 200, first.get_json()
+    first_dir = Path(first.get_json()["backup_dir"])
+    if second_fails:
+        _fail_nth_backup(monkeypatch, 2)
+    second = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert second.status_code == (409 if second_fails else 200), second.get_json()
+
+    # 第一次写回前的原件，仍然完整地待在第一次的备份目录里
+    assert (first_dir / "Fig1.pdf").read_bytes() == before_pdf
+    assert (first_dir / "Fig1.png").read_bytes() == before_png
+    if not second_fails:
+        second_dir = Path(second.get_json()["backup_dir"])
+        assert second_dir != first_dir and second_dir.parent == first_dir.parent
+
+
+def test_a_failed_second_replace_rolls_the_first_one_back(client, tmp_path, monkeypatch):
+    """第二个目标的替换抛的不是锁、是一般 I/O 错误：同样回滚第一个、409、零改动。"""
+    import errno
+
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    real = Path.replace
+    replaced: list[str] = []
+
+    def guarded(self, target):
+        replaced.append(Path(target).name)
+        if Path(target).name == "Fig1.png":
+            raise OSError(errno.EIO, "Input/output error")
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "replace", guarded)
+
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert replaced == ["Fig1.pdf", "Fig1.png"], "前提：第一个确实先被换掉了"
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["file"] == "Fig1.png"
+    assert body["rolled_back"] == ["Fig1.pdf"] and body["rollback_failed"] == []
+    assert body["updated"] == []
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert (figs / "Fig1.png").read_bytes() == before_png
+    assert _leftovers(figs) == []
+    assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
 
 
 # ----------------------- commit 的落盘（issue #252） -------------------------
