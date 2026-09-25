@@ -3554,18 +3554,21 @@ def _switched_to_project_env(worker, exc) -> bool:
     return False
 
 
-def _engine_attempt(rel_id: str, worker, stem: str, action):
+def _engine_attempt(rel_id: str, worker, stem: str, action, *, safe_only: bool = False):
     """`action(worker, stem)`；缺依赖时切项目环境**重试一次**。
 
     回 `(worker, stem, 结果)`——重试后 worker 换成了新解释器起的那个，调用方
     后续要拿 `rev` / `last_build_descriptors` 的话必须用回传的这一个。
+
+    `safe_only`：重试时重新解析出来的若是 native 会话，在 `action` 之前就抛
+    `NativeWorkerRefused`（原样转给 `_engine_worker`，见那里）。
     """
     try:
         return worker, stem, action(worker, stem)
     except engine_pool.WorkerError as exc:
         if not _switched_to_project_env(worker, exc):
             raise
-    worker, stem = _engine_worker(rel_id)
+    worker, stem = _engine_worker(rel_id, safe_only=safe_only)
     return worker, stem, action(worker, stem)
 
 
@@ -3587,8 +3590,18 @@ def _safe_worker(script: str, entry: str, stem: str = ""):
     )
 
 
-def _engine_worker(rel_id: str):
+class NativeWorkerRefused(Exception):
+    """`safe_only` 的解析拿到了 native 会话：调用方在碰它之前就被拦下。"""
+
+
+def _engine_worker(rel_id: str, *, safe_only: bool = False):
     """面板 id → (worker-like, stem)；非脚本面板 404。
+
+    `safe_only=True`：只要 safe worker——解析出来的是 native 会话就抛
+    `NativeWorkerRefused`，调用方一个请求都发不到那张 live 图上。给「native 图不支持」
+    的事务用（`/api/engine/specfix`，ADR 0080）：事务要好几秒，途中另一个 `tavotto run`
+    会话可能把描述符换成 native，任何一处重新解析都得过这道闸（Codex #549 第十二轮；
+    `tests/test_specfix_real.py` 的 AST 守卫钉着事务里的每个解析点都带它）。
 
     runtime 素材（`runtime:` 前缀，ADR 0013）不经 safe_resolve——它没有磁盘
     原件。解析走注册表正向重算（`runtimeasset.resolve`，不反解 id），解析
@@ -3599,6 +3612,14 @@ def _engine_worker(rel_id: str):
     这里绝不写 `if 有 native 会话 … else pool.get(…)`——那个形状会在下一个
     端点上被漏掉一次，表现是"预览是 native 的、导出是 safe 的"。
     """
+    worker, stem = _resolve_engine_worker(rel_id)
+    if safe_only and engine_enginesession.is_native(worker):
+        raise NativeWorkerRefused(rel_id)
+    return worker, stem
+
+
+def _resolve_engine_worker(rel_id: str):
+    """`_engine_worker` 的本体（「谁来渲染」按档案解析，不设闸）。"""
     root = str(require_project())
     if engine_runtimeasset.is_runtime_id(rel_id):
         info = engine_runtimeasset.resolve(rel_id, current_registry())
@@ -3820,8 +3841,10 @@ def api_engine_specfix():
     # `native_session_offline`，前端就分不出「不支持」与「出错了」
     if _specfix_profile(rel_id) == engine_enginesession.PROFILE_NATIVE:
         return _specfix_native_unsupported()
-    worker, stem = _engine_worker(rel_id)
-    if engine_enginesession.is_native(worker):
+    # 事务里**每一处**解析 worker 都只要 safe（入口这里 + 下面依赖重试里的那一处）
+    try:
+        worker, stem = _engine_worker(rel_id, safe_only=True)
+    except NativeWorkerRefused:
         return _specfix_native_unsupported()
     # `clean`：这次事务里的每一次渲染都没有 warning、没有抛——只有这样，事务结束时
     # 的热态才是它声称的那一份（B0 或回给前端的列表）。判据收在这一个闭包里，而不是
@@ -3835,7 +3858,11 @@ def api_engine_specfix():
         _require_route_unchanged(rel_id)
         try:
             wk, st, resp = _engine_attempt(
-                rel_id, state["worker"], state["stem"], lambda w, s: w.override(s, patches, None)
+                rel_id,
+                state["worker"],
+                state["stem"],
+                lambda w, s: w.override(s, patches, None),
+                safe_only=True,
             )
         except BaseException:
             state["clean"] = False
@@ -3849,7 +3876,9 @@ def api_engine_specfix():
         out = _specfix_transaction(render, base, scale, profile, only)
         # 提交之前最后问一次：最后一次渲染之后变的，同样不把列表交给前端去写
         _require_route_unchanged(rel_id)
-    except _SpecfixRouteChanged:
+    except (_SpecfixRouteChanged, NativeWorkerRefused):
+        # 档案变了（渲染前 / 提交前的检查），或依赖重试重新解析拿到了 native 会话：
+        # 中止、不提交，作废的是事务一直在用的那个 safe worker，native 那张图没碰过
         LOG.warning("按规范修图途中这张图改由 native 会话渲染，中止: %s", rel_id)
         _retire_hot_worker(state["worker"])
         return _specfix_native_unsupported()

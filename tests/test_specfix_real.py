@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import threading
@@ -533,7 +534,10 @@ def _post_specfix(
         else _Worker()
     )
     retired: list[tuple] = []
-    monkeypatch.setattr(m, "_engine_worker", engine_worker or (lambda rel_id: (worker, "Kin")))
+    # 替的是解析本体，不是 `_engine_worker`：`safe_only` 那道闸要走真实现
+    monkeypatch.setattr(
+        m, "_resolve_engine_worker", engine_worker or (lambda rel_id: (worker, "Kin"))
+    )
     monkeypatch.setattr(
         m.engine_pool, "invalidate", lambda script, root=None: retired.append((script, root))
     )
@@ -737,3 +741,86 @@ def test_an_ended_native_figure_gets_the_unsupported_code_not_offline(monkeypatc
     assert resp.status_code == 409
     assert resp.get_json()["code"] == "specfix_native_unsupported"
     assert retired == []
+
+
+# ---- 第十二轮：事务里每一处解析 worker 都只要 safe（Codex #549 r4106191018） ----
+
+
+def test_a_dependency_retry_that_resolves_a_native_session_never_touches_it(monkeypatch, tmp_path):
+    """初次 safe 渲染缺依赖 → 切项目环境 → `_engine_attempt` 重新解析；恰在这时另一个
+    `tavotto run` 会话把描述符换成了 native，重新解析拿到的是 `NativeSession`。它的
+    `override()` 一次都不许被调（渲染前那道档案检查已经过了、提交前那道只能事后拒掉），
+    结果是被拒，safe worker 作废。"""
+    now = {"profile": "safe"}
+    _stored_profile(monkeypatch, tmp_path, lambda: now["profile"])
+    touched: list[list] = []
+
+    class _Safe:
+        script_name = "fig.py"
+        figures_dir = "/specfix-test-figures"
+
+        def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+            now["profile"] = "native"  # ← 缺依赖的这一刻，native 会话换了描述符
+            raise engine_pool.WorkerError("缺依赖（模拟）", code="missing_dependency")
+
+    class _Live(nativesession.NativeSession):
+        def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+            touched.append(list(patches))
+            return {"manifest": {"elements": []}, "warnings": []}
+
+    safe = _Safe()
+    live = _Live(session_id="native-live", descriptor={"native_id": "l" * 32, "out_dir": ""})
+
+    def resolve(rel_id):
+        return (live if now["profile"] == "native" else safe), "Kin"
+
+    monkeypatch.setattr(m, "_switched_to_project_env", lambda worker, exc: True)
+    resp, retired = _post_specfix(
+        monkeypatch, lambda p: {}, BASE, _profile(), rel_id=RUNTIME_ID, engine_worker=resolve
+    )
+    assert touched == [], "依赖重试把修复发到了用户的 live 图上"
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "specfix_native_unsupported"
+    assert retired == [("fig.py", "/specfix-test-figures")]
+
+
+def _calls_in(fn: ast.AST, name: str) -> list[ast.Call]:
+    return [
+        n
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == name
+    ]
+
+
+def _kw_true(call: ast.Call, key: str) -> bool:
+    return any(
+        k.arg == key and isinstance(k.value, ast.Constant) and k.value.value is True
+        for k in call.keywords
+    )
+
+
+def test_every_worker_resolution_inside_the_specfix_transaction_is_safe_only():
+    """**结构性守卫**：`/api/engine/specfix` 里（含内层的 `render` 闭包）每一处解析 worker 的
+    调用——`_engine_worker` 与会在重试时重新解析的 `_engine_attempt`——都必须带
+    `safe_only=True`；`_engine_attempt` 自己必须把它原样转给重试里那一次 `_engine_worker`。
+    漏一处就是一条能把修复发到用户 live 图上的路（Codex #549 r4106191018）。"""
+    import inspect
+
+    tree = ast.parse(inspect.getsource(m))
+    funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    endpoint = funcs["api_engine_specfix"]
+    resolving = _calls_in(endpoint, "_engine_worker") + _calls_in(endpoint, "_engine_attempt")
+    assert len(resolving) >= 2, "判据落在空集合上：端点里没找到解析 worker 的调用"
+    for call in resolving:
+        assert _kw_true(call, "safe_only"), (
+            f"api_engine_specfix 第 {call.lineno} 行的 {call.func.id} 没带 safe_only=True"
+        )
+    # 端点里不许绕开这两扇门直接去取会话
+    for bypass in ("_resolve_engine_worker", "_safe_worker"):
+        assert not _calls_in(endpoint, bypass), f"api_engine_specfix 直接调了 {bypass}"
+    retry = _calls_in(funcs["_engine_attempt"], "_engine_worker")
+    assert len(retry) == 1
+    fwd = [k for k in retry[0].keywords if k.arg == "safe_only"]
+    assert fwd and isinstance(fwd[0].value, ast.Name) and fwd[0].value.id == "safe_only", (
+        "_engine_attempt 的重试没把 safe_only 转给 _engine_worker"
+    )
