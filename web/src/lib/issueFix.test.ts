@@ -364,6 +364,36 @@ describe('不通过：文档一个字不改，并说出原因', () => {
     )
   })
 
+  it('后端结果不确定（回程断线 / 成功体形状不对）：文档不改，按此刻的列表重放 worker', async () => {
+    // 取一份别的用例没用过的列表：挂起的渲染按「文件 + 列表」占着槽位，同一个键会排队
+    const base = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 14.25 }]
+    await seed([panel({ overrides: base })])
+    // 服务端可能已经通过、worker 停在候选上，只是回程没拿到
+    engineSpecfix.mockRejectedValue(new TypeError('Failed to fetch'))
+    engineRender.mockClear()
+    const res = await applyIssueFix(floorIssue())
+    expect(res).toMatchObject({ ok: false, reason: 'engine_failed' })
+    expect(overridesOf()).toEqual(base)
+    expect(engineRender.mock.calls.some((c) => JSON.stringify(c[1]) === JSON.stringify(base))).toBe(
+      true,
+    )
+  })
+
+  it('结果不确定、等待期间换了文档：不拿旧文档的面板去新文档里重放', async () => {
+    await seed()
+    let reject: (e: Error) => void = () => {}
+    engineSpecfix.mockReturnValue(new Promise<SpecFixResponse>((_, r) => (reject = r)))
+    const pending = applyIssueFix(floorIssue())
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other_uncertain')
+    useDocumentStore.getState().commit(literal('另一份'), (d) => {
+      d.objects = [panel({ overrides: [{ gid: 'axes_0.title', prop: 'text', value: 'C' }] })]
+    })
+    engineRender.mockClear()
+    reject(new TypeError('Failed to fetch'))
+    expect(await pending).toMatchObject({ ok: false, reason: 'engine_failed' })
+    expect(engineRender).not.toHaveBeenCalled()
+  })
+
   it('后端拒绝、这张图没被改过：不多发一次渲染', async () => {
     await seed()
     engineSpecfix.mockResolvedValue(refused('constraint_conflict'))

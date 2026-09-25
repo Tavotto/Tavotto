@@ -210,9 +210,11 @@ async function runLocked(
    * 跑过后端事务、但结果**不会被写进文档**的面板（被拒绝 / 没修成任何一条），以及发出去的
    * 那份列表。后端拒绝时会把 worker 回滚到 B0；而用户在这几秒里改过这张图的话，普通渲染可能
    * 在两轮之间抢先落下，回滚随后又把 worker 盖回旧列表（Codex #549 第五轮 P1）。回来之后
-   * 对这些面板照样对一次账。
+   * 对这些面板照样对一次账。`sent: null` = 结果不确定（请求抛了：回程断线、成功体形状不对……）
+   * ——服务端可能已经通过、worker 与 SVG 停在候选上，文档却还是 B0（Codex #549 第六轮 P1），
+   * 所以不比列表、一律重放。
    */
-  const touched: { id: string; sent: string }[] = []
+  const touched: { id: string; sent: string | null }[] = []
   if (byPanel.size && engineTransport()) {
     for (const list of byPanel.values()) addFailure(failed, 'unavailable', list.length)
     byPanel.clear()
@@ -236,6 +238,7 @@ async function runLocked(
       )
     } catch {
       addFailure(failed, 'engine_failed', list.length)
+      touched.push({ id, sent: null })
       continue
     }
     const out = settle(res, list)
@@ -282,10 +285,10 @@ async function runLocked(
     }
   }
   // 没被写进文档的那些：后端已回滚到发出去的列表；此刻的列表若已不同（等待期间用户改过），
-  // 回滚把 worker 盖回了旧列表，按此刻的再重放一遍
+  // 回滚把 worker 盖回了旧列表，按此刻的再重放一遍；结果不确定的不管列表变没变都重放
   for (const { id, sent } of touched) {
     const panel = now.doc.objects.find((o) => o.id === id)
-    if (panel?.type === 'panel' && same(panel.overrides) !== sent) replay(id)
+    if (panel?.type === 'panel' && (sent === null || same(panel.overrides) !== sent)) replay(id)
   }
   const fresh = plans.filter((plan) =>
     moved
