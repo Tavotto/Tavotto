@@ -646,7 +646,20 @@ export function ExportDialog() {
                 : rawIssuesFor(activeCanvasId)),
               ...exportContextRaw({ formats, dpi: Number(ppi) }, profile),
             ],
-            { dpi: Number(ppi), formats, stem: filename },
+            {
+              dpi: Number(ppi),
+              formats,
+              stem: filename,
+              // 原图范围：报告的页面 = 这张图的图幅，不写画布页面与摆放（QA FLAG-B1）
+              original:
+                targetObjectId && panel
+                  ? {
+                      objectId: targetObjectId,
+                      widthMm: availability.spec?.widthMm ?? panel.nativeW,
+                      heightMm: availability.spec?.heightMm ?? panel.nativeH,
+                    }
+                  : undefined,
+            },
             profile,
             {
               forced: errors.length > 0 && confirmed,

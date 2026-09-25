@@ -1123,7 +1123,18 @@ export function buildProofPayload(
   doc: FigureDocument,
   assets: Record<string, PanelInfo>,
   issues: PreflightIssue[],
-  settings: { dpi: number; formats: string[]; stem: string },
+  settings: {
+    dpi: number
+    formats: string[]
+    stem: string
+    /**
+     * 按原图导出时的那张图与它的图幅（mm）。给了就不写画布：`page_mm` 是
+     * 产物的页面（= 图幅，margin 0，与 MCP 那条入口 `_proof_bytes` 同一口径），
+     * `objects` 只有这张图、铺满那一页——画布的页面与 x/y/w/h 不进原图导出
+     * （ADR 0031 §original，QA FLAG-B1）。
+     */
+    original?: { objectId: string; widthMm: number; heightMm: number }
+  },
   profile: PublicationProfile,
   /**
    * 用户按下的那次显式确认。
@@ -1142,12 +1153,22 @@ export function buildProofPayload(
   },
 ) {
   const sum = summarize(issues)
+  const orig = settings.original
+  const round2 = (v: number) => Math.round(v * 100) / 100
+  const pageMm = orig
+    ? { w: orig.widthMm, h: orig.heightMm, margin: 0 }
+    : { w: doc.page.w, h: doc.page.h, margin: doc.page.margin ?? 0 }
+  const rectOf = (o: FigureDocument['objects'][number]) =>
+    (orig ? [0, 0, orig.widthMm, orig.heightMm] : [o.x, o.y, o.w, o.h]).map(round2)
+  const reported = orig
+    ? doc.objects.filter((o) => o.id === orig.objectId)
+    : doc.objects.filter((o) => !o.hidden)
   return {
     kind: PROOF_KIND,
     version: 2,
     stem: settings.stem,
     profile: profileStamp(profile),
-    page_mm: { w: doc.page.w, h: doc.page.h, margin: doc.page.margin ?? 0 },
+    page_mm: pageMm,
     dpi: settings.dpi,
     formats: settings.formats,
     checks: issues.map((i) => ({
@@ -1172,9 +1193,7 @@ export function buildProofPayload(
     // 「查不了」与「没问题」是两个答案，留档里同样不许压扁（T-54）
     check_failed: forced?.checkFailed ?? false,
     acknowledged_check_failed: forced?.acknowledgedCheckFailed ?? false,
-    objects: doc.objects
-      .filter((o) => !o.hidden)
-      .map((o) =>
+    objects: reported.map((o) =>
         o.type === 'panel'
           ? {
               type: o.type,
@@ -1183,13 +1202,13 @@ export function buildProofPayload(
               mtime: assets[o.fileId]?.mtime ?? null,
               script: o.script ?? null,
               overrides: o.overrides.length,
-              rect_mm: [o.x, o.y, o.w, o.h].map((v) => Math.round(v * 100) / 100),
+              rect_mm: rectOf(o),
             }
           : {
               type: o.type,
               name: undefined,
-              rect_mm: [o.x, o.y, o.w, o.h].map((v) => Math.round(v * 100) / 100),
+              rect_mm: rectOf(o),
             },
-      ),
+    ),
   }
 }

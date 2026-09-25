@@ -113,7 +113,7 @@ export function fingerprintOf(
  * 两层都要有：只有目录的话会给出一颗按了没反应的「修复」按钮，只有
  * planFix 的话每次渲染都要为每条问题算一遍计划。
  */
-const RULES: Record<string, { context: IssueContext; fix: FixKind }> = {
+const RULES: Record<string, { context: IssueContext; fix: FixKind; placement?: true }> = {
   'page-width': { context: 'document', fix: 'user_choice' },
   'page-aspect': { context: 'document', fix: 'none' },
   'missing-asset': { context: 'document', fix: 'none' },
@@ -148,9 +148,17 @@ const RULES: Record<string, { context: IssueContext; fix: FixKind }> = {
   'bar-without-errorbar': { context: 'document', fix: 'none' },
   'fit-without-ci': { context: 'document', fix: 'none' },
   'palette-line-markers': { context: 'document', fix: 'none' },
-  'out-of-page': { context: 'document', fix: 'none' },
-  'outside-margin': { context: 'document', fix: 'none' },
-  'overlap': { context: 'document', fix: 'none' },
+  /*
+   * `placement`：判的是**这个对象在画布页面上怎么摆**（`preflight._check_geometry`
+   * 只读画布 rect_mm 与页面）。按原图导出时产物的页面盒 = 图幅、画布的 x/y/w/h
+   * 不进产物（ADR 0031 §original），这几条的主语不在这次导出里——按原图裁范围时
+   * （`summaryFor({ objectId })` / `rawIssuesForObject()`）不算（QA FLAG-B1：
+   * 177.8 mm 的图摆在 150 mm 画布上，「仅此图」的原图导出被「超出页面范围」阻断）。
+   * `hidden` 刻意不在里面：隐藏的图不做图内检查，那条 warn 是原图范围下唯一提示。
+   */
+  'out-of-page': { context: 'document', fix: 'none', placement: true },
+  'outside-margin': { context: 'document', fix: 'none', placement: true },
+  'overlap': { context: 'document', fix: 'none', placement: true },
   'hidden': { context: 'document', fix: 'none' },
 }
 
@@ -158,6 +166,12 @@ const RULES: Record<string, { context: IssueContext; fix: FixKind }> = {
 const UNKNOWN_RULE = { context: 'document' as IssueContext, fix: 'none' as FixKind }
 
 export const ruleEntry = (code: string) => RULES[code] ?? UNKNOWN_RULE
+
+/**
+ * 这条规则在「按原图导出」时还算不算。画布摆放类（`placement`）不算；
+ * 目录里没登记的 code 照算（绝不猜——宁可多报一条也不静默放行）。
+ */
+export const appliesToOriginal = (code: string): boolean => !ruleEntry(code).placement
 
 /** 目录里登记过的全部 rule code（看护用例拿它与求值器对拍）。 */
 export const knownRuleCodes = (): string[] => Object.keys(RULES).sort()
@@ -462,7 +476,8 @@ export function summaryFor(
     canvasId?: string
     /**
      * 只看这一个画布对象（按原图导出时 = 那张图，审计 T33）。页面级问题
-     * （`objectId` 为 null）不算——这次导出的不是那张页面。要配合 `canvasId`
+     * （`objectId` 为 null）不算——这次导出的不是那张页面；画布摆放类规则
+     * （`appliesToOriginal()` 为假）也不算——它们判的是那张页面上的摆法。要配合 `canvasId`
      */
     objectId?: string
     extra?: ValidationIssue[]
@@ -473,7 +488,8 @@ export function summaryFor(
   const base = issues.filter(
     (i) =>
       (!opts.canvasId || i.objectRef.canvasId === opts.canvasId) &&
-      (!opts.objectId || i.objectRef.objectId === opts.objectId),
+      (!opts.objectId ||
+        (i.objectRef.objectId === opts.objectId && appliesToOriginal(i.ruleCode))),
   )
   return summarizeIssues(mergeExportIssues(base, opts.extra ?? []), {
     ready: opts.ready,
@@ -484,7 +500,7 @@ export function summaryFor(
 /**
  * 聚合投影按对象裁一刀（按原图导出时写进样式检查报告的那份）。命中了这个对象
  * 的条目留下并**投影到它身上**：`objectIds` 只剩它、`gids` / `occurrences` 只剩
- * 它的；页面级条目（没有对象）不算。
+ * 它的；页面级条目（没有对象）与画布摆放类规则（`appliesToOriginal()`）不算。
  *
  * **`message` / `detail` 跟着一起重算。** 它们原本是**全画布**最糟那一次的，而
  * `buildProofPayload()` 序列化的正是这两个字段（不是 occurrences）——同一条规则
@@ -497,7 +513,8 @@ export function summaryFor(
  */
 export function rawIssuesForObject(raw: PreflightIssue[], objectId: string): PreflightIssue[] {
   return raw
-    .filter((i) => i.objectIds.includes(objectId))
+    // 与 `summaryFor({ objectId })` 裁同一刀：画布摆放类规则不算
+    .filter((i) => i.objectIds.includes(objectId) && appliesToOriginal(i.id))
     .map((i) => {
       const occurrences = i.occurrences.filter((o) => o.objectId === objectId)
       const gids = [...new Set(occurrences.map((o) => o.gid).filter((g): g is string => !!g))]
