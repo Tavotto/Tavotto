@@ -1,4 +1,4 @@
-import { Fragment } from 'react'
+import { Fragment, useLayoutEffect } from 'react'
 import { perfCount } from '@/perf/core'
 import type { ElementGeometry, ManifestElement } from '@/lib/api'
 import type { Rect4 } from '@/lib/axesLayout'
@@ -9,6 +9,12 @@ import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib
 import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
+import {
+  discardPanelPreview,
+  previewPanelIds,
+  usePreviewLinePanels,
+  usePreviewLines,
+} from '@/store/svgPreviewStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import {
@@ -118,6 +124,17 @@ export function OverlaySvg() {
   const editingTextId = useUiStore((s) => s.editingTextId)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const issueHighlight = useUiStore((s) => s.issueHighlight)
+  // 预览线按「持有预览账本的面板」画，不按图内编辑态（见 PreviewLines）
+  const linePanelIds = usePreviewLinePanels()
+  // 被隐藏 / 删掉的面板：预览账本整份作废（它的 PanelView 已卸载，没人再来收）。
+  // 隐藏走哪条路都一样——图层树、右键菜单、撤销重做——所以按文档状态判，不挂在某个动作上。
+  // layout effect：在浏览器绘制之前作废，隐藏那一帧不会先闪一下悬空的虚线
+  useLayoutEffect(() => {
+    for (const id of previewPanelIds()) {
+      const p = objects.find((o) => o.id === id)
+      if (!p || p.type !== 'panel' || p.hidden) discardPanelPreview(id)
+    }
+  }, [objects, linePanelIds])
 
   const selected = objects.filter((o) => selectedIds.includes(o.id) && !o.hidden)
   // 主选 = 选区末位（对齐 / 等宽等高的「主选」参照）。多选时它的轮廓略粗——
@@ -327,6 +344,10 @@ export function OverlaySvg() {
       {cropTarget && cropTarget.type === 'panel' && <CropFrame obj={cropTarget} t={t} />}
 
       {elementPanel?.type === 'panel' && <ElementBoxes panel={elementPanel} t={t} />}
+      {linePanelIds.map((id) => {
+        const p = objects.find((o) => o.id === id)
+        return p?.type === 'panel' ? <PreviewLines key={id} panel={p} t={t} /> : null
+      })}
     </svg>
   )
 }
@@ -675,6 +696,47 @@ function GeometryOutline({
  * ——用户看到的是「框和图对不上、框还能拖」。权威没就位就一个框都不画，
  * selectedGids 照旧留着，等精确 manifest 回来框自己复位。
  */
+/**
+ * 拖形状时只有一端跟着走的箭头的虚线（形状变了，SVG 平移会骗人）。它是**预览平面**
+ * 的一部分（`svgPreviewStore.previewLine`），与 SVG 平移预览同层、同一套收尾，
+ * 所以**不挂在几何权威的闸门后面**：松手提交后 overrides 已变、新渲染没回来的那段
+ * 时间 `useExactPanelManifest` 是 null，ElementBoxes 整个不画——虚线若在里面，慢图上
+ * 旧箭头就先露出来（#553 评审）。换算只用面板与视口，不读 manifest。
+ * 同理**也不挂在图内编辑态上**：那段时间里点一下别的对象，`elementPanelId` 就清掉了，
+ * 而预览账本还在；哪块面板要画，按 `usePreviewLinePanels` 的账本定。
+ */
+function PreviewLines({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
+  const lines = usePreviewLines(panel.id)
+  if (!lines.size) return null
+  const full = panelFullRect(panel)
+  const panelBox = toScreen(panel, t)
+  const rot = panelRotation(panel)
+  const spin = rot
+    ? `rotate(${rot} ${panelBox.x + panelBox.w / 2} ${panelBox.y + panelBox.h / 2})`
+    : undefined
+  const toPoint = (p: [number, number]) => {
+    const b = toScreen({ x: full.x + p[0] * full.w, y: full.y + p[1] * full.h, w: 0, h: 0 }, t)
+    return { x: b.x, y: b.y }
+  }
+  return (
+    <g transform={spin}>
+      {[...lines].map(([gid, c]) => (
+        <line
+          key={gid}
+          data-carried-arrow={gid}
+          x1={toPoint(c.a).x}
+          y1={toPoint(c.a).y}
+          x2={toPoint(c.b).x}
+          y2={toPoint(c.b).y}
+          stroke="var(--color-sel)"
+          strokeWidth={1}
+          strokeDasharray="4 3"
+        />
+      ))}
+    </g>
+  )
+}
+
 function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const manifest = useExactPanelManifest(panel)
   const hoverGid = useInteractionStore((s) => s.hoverGid)

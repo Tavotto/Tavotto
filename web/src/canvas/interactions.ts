@@ -26,8 +26,10 @@ import {
   groupBoxes,
   groupPatches,
   isElementHidden,
+  patchContents,
   positionOf,
   type AlignEntry,
+  type CarriedItem,
   type Group,
 } from '@/lib/elementGeom'
 import { newId } from '@/lib/id'
@@ -52,7 +54,7 @@ import {
   useViewportStore,
 } from '@/store/viewportStore'
 import { setOverride, setOverrides } from '@/store/actions'
-import { previewTransform } from '@/store/svgPreviewStore'
+import { previewLine, previewTransform } from '@/store/svgPreviewStore'
 import {
   beginElementPreview,
   cancelElementPreview,
@@ -1213,6 +1215,54 @@ function noteDragCommit(
   })
 }
 
+/**
+ * 拖形状时「带着内容走」的开关：**按住 ⌘ / Ctrl = 只拖它自己**。与拖动时临时关吸附
+ * 是同一个修饰键、同一种语义（按住时关掉那个聪明的默认行为），⇧ 锁向与 ⌥ 轮换各有
+ * 所属；拖动途中随时按下 / 松开都生效。**提交按松手那个 pointerup 上的修饰键**
+ * （#553 评审）：停住不动时按下 / 松开 ⌘ 然后立刻松手，中间不一定有 pointermove，
+ * 拿最后一帧 move 的状态就会提交错的跟随集合。
+ */
+const carriesContents = (ev: { metaKey: boolean; ctrlKey: boolean }) => !ev.metaKey && !ev.ctrlKey
+
+/**
+ * 停住不动时按下 / 松开 ⌘ / Ctrl：没有 pointermove，预览也得跟着换——否则画面上是
+ * 「带着走」、松手提交的却是「只拖自己」（提交认的是 pointerup 上的修饰键）。
+ * 回一个解绑函数，收尾时调用。
+ */
+function watchCarryKeys(
+  items: CarriedItem[],
+  delta: () => [number, number],
+): () => void {
+  if (!items.length) return () => {}
+  const onKey = (ev: KeyboardEvent) => {
+    if (ev.key !== 'Meta' && ev.key !== 'Control') return
+    const [dfx, dfy] = delta()
+    previewCarried(items, dfx, dfy, carriesContents(ev))
+  }
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKey)
+  return () => {
+    window.removeEventListener('keydown', onKey)
+    window.removeEventListener('keyup', onKey)
+  }
+}
+
+/**
+ * 被带着走的内容的乐观预览：整体平移的（文字、形状、两端都在框里的箭头）平移 SVG 组；
+ * 只有一端跟随的箭头形状变了，交给覆盖层画虚线（`previewLine`，预览平面的一部分：
+ * 松手后留到权威渲染换上来）。`on=false`（按住了 ⌘）时全部归位。
+ */
+function previewCarried(items: CarriedItem[], dfx: number, dfy: number, on: boolean): void {
+  for (const it of items) {
+    const whole = !it.ends || (it.ends[0] && it.ends[1])
+    if (whole) previewTransform(it.gid, on ? dfx : 0, on ? dfy : 0)
+    else if (on) {
+      const [a, b] = it.endpointsAt(dfx, dfy)!
+      previewLine(it.gid, { a, b })
+    } else previewLine(it.gid, null)
+  }
+}
+
 export function startElementDrag(
   e: ReactPointerEvent,
   panel: PanelObject,
@@ -1224,6 +1274,11 @@ export function startElementDrag(
   const dragProp = element.drag_prop
   // 基准走 anchorOf：它优先取文档里已写下的 override（见那边的说明）
   const anchor = anchorOf(panel, element) ?? element.anchor
+  // 形状带着装在里面的字 / 形状 / 箭头端点一起走（`patchContents`）——读的是几何，
+  // 只认权威那一份 manifest
+  const manifest =
+    element.role === 'patch' ? exactPanelManifest(useRenderStore.getState(), panel) : null
+  const carried = manifest ? patchContents(panel, manifest, [element.gid]) : []
 
   interaction().begin('element')
   beginElementPreview(panel)
@@ -1239,6 +1294,7 @@ export function startElementDrag(
   // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove，若重读松手坐标，
   // shift 先于抬指松开时落点会与预览差一口气
   let last: [number, number] = [0, 0]
+  const unwatchKeys = watchCarryKeys(carried, () => last)
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
@@ -1246,9 +1302,11 @@ export function startElementDrag(
       if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
       last = [dfx, dfy]
       previewTransform(element.gid, dfx, dfy)
+      if (carried.length) previewCarried(carried, dfx, dfy, carriesContents(ev))
       interaction().setGidDrag({ gid: element.gid, dfx, dfy })
     },
-    onEnd: (moved, _ev, end) => {
+    onEnd: (moved, ev, end) => {
+      unwatchKeys()
       interaction().end()
       if (!moved || end.cancelled) {
         cancelElementPreview()
@@ -1261,9 +1319,15 @@ export function startElementDrag(
         return
       }
       const [dfx, dfy] = last
-      setOverride(panel.id, element.gid, dragProp, [anchor[0] + dfx, anchor[1] + dfy], true)
+      const own = { gid: element.gid, prop: dragProp, value: [anchor[0] + dfx, anchor[1] + dfy] }
+      // 跟随集合按松手那一下的修饰键定（见 carriesContents）
+      const followers = carriesContents(ev) ? carried.map((c) => c.shift(dfx, dfy)) : []
+      // 带着内容走时一次 setOverrides = 一条撤销 = 一次权威渲染
+      if (followers.length)
+        setOverrides(panel.id, hist('moveElement', { label: element.label }), [own, ...followers], true)
+      else setOverride(panel.id, element.gid, dragProp, own.value, true)
       commitElementPreview(panel.id)
-      noteDragCommit('element.drag.commit', panel.id, element.gid, dragProp, 1)
+      noteDragCommit('element.drag.commit', panel.id, element.gid, dragProp, 1 + followers.length)
     },
   })
 }
@@ -1509,6 +1573,9 @@ export function startAxesDrag(
  *
  * 不把成员钳进画布：一旦有成员贴边，钳位会让整组卡住、相对布局也被拆散，
  * 与成组缩放（resizeGroup）的取舍一致，超出部分由 matplotlib 自己裁掉。
+ *
+ * 选区里的形状照样带着装在里面的内容走（`patchContents`，与单拖一个形状同一判据、
+ * 同一个 ⌘ / Ctrl 出口），全部进这同一次 setOverrides。
  */
 export function startElementGroupMove(
   e: ReactPointerEvent,
@@ -1521,12 +1588,24 @@ export function startElementGroupMove(
   // 纯平移的乐观预览是准的（不像缩放会触发 matplotlib 重排），SVG 一起跟手
   beginElementPreview(panel)
   const toContent = contentDelta(panel, layout)
+  // 选区里的形状照样带着各自的内容走（与单拖一个形状同一判据）；已经在选区里的
+  // 不重复算——它们按选区的位移走
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  const carried = manifest
+    ? patchContents(
+        panel,
+        manifest,
+        entries.map((en) => en.key),
+        new Set(entries.map((en) => en.key)),
+      )
+    : []
 
   const shifted = (dfx: number, dfy: number): Rect4[] =>
     entries.map((en) => [en.box[0] + dfx, en.box[1] + dfy, en.box[2], en.box[3]])
 
   // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove（见 startArrowDrag）
   let last: [number, number] = [0, 0]
+  const unwatchKeys = watchCarryKeys(carried, () => last)
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
@@ -1539,19 +1618,20 @@ export function startElementGroupMove(
         group: unionBox(boxes) ?? undefined,
       })
       for (const en of entries) previewTransform(en.key, dfx, dfy)
+      if (carried.length) previewCarried(carried, dfx, dfy, carriesContents(ev))
     },
-    onEnd: (moved, _ev, end) => {
+    onEnd: (moved, ev, end) => {
+      unwatchKeys()
       interaction().end()
       if (!moved || end.cancelled) {
         cancelElementPreview()
         return
       }
       const boxes = shifted(last[0], last[1])
-      setOverrides(
-        panel.id,
-        hist('moveElements', { count: entries.length }),
-        entries.map((en, i) => en.write(boxes[i])),
-      )
+      setOverrides(panel.id, hist('moveElements', { count: entries.length }), [
+        ...entries.map((en, i) => en.write(boxes[i])),
+        ...(carriesContents(ev) ? carried.map((c) => c.shift(last[0], last[1])) : []),
+      ])
       commitElementPreview(panel.id)
     },
   })

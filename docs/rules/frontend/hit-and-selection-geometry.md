@@ -62,4 +62,36 @@
   命中/框选按**线本身**不按 bbox 空白矩形、选中/hover 沿线描示无矩形外框、
   拖端点 shift 锁 15°、整体拖 shift 锁水平/垂直/45°（分数坐标锁角必须换算到
   内容像素系）；图内文字/子图拖动同样有 shift 锁向，画布对象拖动可吸附图内
-  元素中心线（elementSnapCandidates）。
+  元素中心线（elementSnapCandidates）。纯箭头注释（`annotate("", …)`）同样出端点、
+  同一套交互（引擎侧见 `docs/rules/backend/axes-and-artist-families.md`）。
+- **拖形状带着装在里面的内容走（2026-09-24，用户的流程图：拖框时框里的字与连着框的
+  箭头留在原地）**。判据只有 `lib/elementGeom.patchContents` 一处，纯几何、只读权威
+  manifest（`exactPanelManifest`）与文档：
+  * 文字与形状（`role` 为 `text` / `patch`、可拖）的包围盒（权威 manifest 的；权威在时它与
+    文档 overrides 逐字一致，不存在「override 已写、几何未回」要补位移的状态）完全落在容器框里、
+    且**面积比容器小**——整体平移；嵌套的框因此带着自己的字走，
+    拖外层虚线框 = 搬整个模块。「比容器小」挡的是一样大的两个框（阴影、叠放）互相带着走；
+  * 箭头（有 `arrow_endpoints`）按**端点**判：落在框里的那一端跟着走、两端都在则整根
+    平移——连着两个框的箭头拖其中一个时被拉长，而不是被扯走；
+  * 两条都带 `PATCH_CARRY_TOL_PT`（3pt）容差：annotate 的端点是未扣 shrinkA / shrinkB
+    （默认 2pt）的锚点，脚本常把它写在框的名义边上、画出来的圆角框又多一圈 pad；
+  * 锁定（`lockedGids`）与隐藏的不动；多选整组拖动时选区里的形状同样带着内容走，已在
+    选区里的按选区位移、不重复算。
+  每件内容写**它自己的**那条 override（`pos_frac` / `endpoints_frac`，值 = 当前值 + 位移），
+  与子图拖动的 `axesCompanions` 同一个办法：文档里仍是普通 override，重放、写回、撤销都
+  不需要新机制；连同形状自己进**同一次** `setOverrides`（一条撤销、一次渲染）。预览：
+  整体平移的内容平移 SVG 组，只有一端跟随的箭头形状变了、画覆盖层虚线
+  （`svgPreviewStore.previewLine`：**挂在预览平面上**，与 SVG 预览同一个账本、同一套收尾——
+  松手后留着，权威渲染换上来 / 取消 / 被顶掉时才消失；挂在交互状态上的话 `end()` 一收它就没了，
+  慢图上旧箭头会先露出来，#553 评审）。覆盖层上它由 `OverlaySvg` 的 `PreviewLines` 画，**在几何权威
+  闸门之外**：松手提交后 overrides 已变、新渲染没回来时 `useExactPanelManifest` 是 null，
+  `ElementBoxes` 整个不画，虚线若在里面照样会先消失；换算只用面板与视口，不读 manifest。
+  也**不挂在图内编辑态上**：那段时间点一下别的对象 `elementPanelId` 就清掉了，而预览账本
+  还在——画哪块面板按 `usePreviewLinePanels`（持有预览线的面板）定。面板被**隐藏 / 删掉**时它的
+  PanelView 卸载、`reattachPreview` 再也收不到这份预览，所以 `OverlaySvg` 按文档状态（不挂在某个
+  动作上）在 layout effect 里 `discardPanelPreview`：账本整份作废、会话收尾，再显示时从新 SVG 重来。
+  **出口是按住 ⌘ / Ctrl = 只拖它自己**——与拖动时临时关吸附同一个修饰键、同一种语义
+  （关掉那个聪明的默认行为），⇧ 锁向、⌥ 轮换各有所属；拖动途中随时按下 / 松开都算，
+  松手以最后一帧为准。它**推翻**了 #472 时「拖框不带字——要一起走用多选」的约定：
+  那条约定下流程图每挪一个框要先圈上框、字、两头的箭头，而箭头还只能整根走。
+  看护 `canvas/patchCarryDrag.test.tsx`。
