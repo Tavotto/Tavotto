@@ -75,13 +75,26 @@ def test_the_script_keeps_the_users_stdout_cwd_env_and_argv(tmp_path):
     assert info["package"] is None, "__package__ 不是 None（与真 python 不一致）"
 
 
+STDOUT_SENTINEL = '{"probe": "stdout-only-user", "n": 42}'
+STDOUT_SENTINEL_SCRIPT = f"""\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+fig.savefig("Fig1.pdf")
+print({STDOUT_SENTINEL!r})
+"""
+
+
 def test_run_messages_only_stderr(tmp_path):
     """**用户的 Python 起来之后**，Tavotto 自己的话全部写 stderr。
 
     "全部"只在这条路上成立——`--help` 归 stdout，见
     `test_help_goes_to_stdout_and_shows_the_delimiter`（issue #198）。
     """
-    nativekit.write(tmp_path / "figure.py", PROBE_SCRIPT)
+    nativekit.write(tmp_path / "figure.py", STDOUT_SENTINEL_SCRIPT)
     with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
         session,
         proc,
@@ -90,13 +103,10 @@ def test_run_messages_only_stderr(tmp_path):
         code, out, err = nativekit.finish(session, proc)
     assert code == 0, err
     assert "Tavotto Run" in err and "Beta" in err
-    # 判结构，不判子串：探针恰好打一行 JSON，stdout 就必须恰好是这一行。
-    # 查 "Tavotto" 子串会被探针自己打印的路径（仓库目录名）误报。
-    lines = out.splitlines(keepends=True)
-    assert len(lines) == 1 and lines[0].endswith("\n"), (
-        f"Tavotto 的文字混进了用户的 stdout: {out!r}"
-    )
-    json.loads(lines[0])
+    # 逐字节相等，不判子串：脚本只打一行与路径无关的固定文字，stdout 就必须
+    # 恰好是它。查 "Tavotto" 子串会被探针打印的路径（仓库目录名）误报；只判
+    # 「一行能 json.loads」又放得过插空白、改写内容。
+    assert out == STDOUT_SENTINEL + "\n", f"Tavotto 碰了用户的 stdout: {out!r}"
 
 
 def test_quiet_silences_tavotto_but_not_the_user(tmp_path):
