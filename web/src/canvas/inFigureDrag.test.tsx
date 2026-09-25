@@ -377,3 +377,128 @@ describe('拖图例的角 = 整体缩放', () => {
     expect(engineRender).not.toHaveBeenCalled()
   })
 })
+
+/* ====================== 松手后按实测把对角钉回去（#575 评审） ====================== */
+
+/**
+ * 引擎桩：按收到的 patch 算图例的**实际**框——宽按倍数线性，高往小缩时有下限
+ * （真实 matplotlib：×0.8 → 0.925，每行有不随字号缩的最小高度）。loc_frac 是左下角。
+ */
+function legendEngine(nonlinear = true) {
+  return async (_id: string, patches: { gid: string; prop: string; value: unknown }[]) => {
+    const get = (prop: string) => patches.find((p) => p.gid === 'axes_1.legend' && p.prop === prop)?.value
+    const s = ((get('fontsize') as number | undefined) ?? 7) / 7
+    const loc = (get('loc_frac') as number[] | undefined) ?? [0.6, 0.72]
+    const w = 0.2 * s
+    const h = 0.1 * (nonlinear && s < 1 ? 1 - (1 - s) * 0.4 : s)
+    const legend: ManifestElement = {
+      ...legendOf(),
+      bbox: [loc[0], loc[1] - h, w, h],
+      anchor: [loc[0], loc[1]],
+    }
+    return { rev: 2, manifest: manifestWith(legend), svg: MATPLOTLIB_SVG, warnings: [] }
+  }
+}
+
+const settle = async () => {
+  for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0))
+}
+
+describe('图例缩放松手后按成图实测钉对角', () => {
+  // 右下角往里拖：缩到 0.8 倍，不动的是左上角
+  const shrink = () => [0.2 * layout.width * -0.2, 0.1 * layout.height * -0.2] as const
+
+  it('往小缩、成图比预测高：补一笔 loc_frac 进同一条历史，左上角回到按住的地方', async () => {
+    await setup()
+    engineRender.mockImplementation(legendEngine())
+    const [dx, dy] = shrink()
+    startLegendScale(down(0, 0), livePanel(), legendOf(), layout, 'se')
+    dragTo(dx, dy)
+    fire('pointerup', dx, dy)
+    await settle()
+
+    // 实际高 = 0.1 × 0.92；左上角要回到 y = 0.62 → 左下角 = 0.62 + 0.092
+    const loc = overrideOf('axes_1.legend', 'loc_frac') as number[]
+    expect(loc[0]).toBeCloseTo(0.6, 4)
+    expect(loc[1]).toBeCloseTo(0.62 + 0.092, 4)
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+    expect(engineRender).toHaveBeenCalledTimes(2)
+    // 撤销一次：两笔一起退
+    useDocumentStore.getState().undo()
+    expect(livePanel().overrides).toHaveLength(0)
+  })
+
+  it('成图与预测一致（放大是线性的）：不补、只渲染一次', async () => {
+    await setup()
+    engineRender.mockImplementation(legendEngine(false))
+    const [dx, dy] = shrink()
+    startLegendScale(down(0, 0), livePanel(), legendOf(), layout, 'se')
+    dragTo(dx, dy)
+    fire('pointerup', dx, dy)
+    await settle()
+    expect(engineRender).toHaveBeenCalledTimes(1)
+    expect((overrideOf('axes_1.legend', 'loc_frac') as number[])[1]).toBeCloseTo(0.62 + 0.08, 4)
+  })
+
+  it('拖上面的角（不动的是下边）：左下角本来就钉住，不补', async () => {
+    await setup()
+    engineRender.mockImplementation(legendEngine())
+    const [dx, dy] = shrink()
+    startLegendScale(down(0, 0), livePanel(), legendOf(), layout, 'ne')
+    dragTo(dx, -dy)
+    fire('pointerup', dx, -dy)
+    await settle()
+    expect(engineRender).toHaveBeenCalledTimes(1)
+  })
+
+  it('等成图期间用户又改了别的：放弃补正，绝不并进别人的那一步', async () => {
+    await setup()
+    let release: () => void = () => {}
+    const engine = legendEngine()
+    engineRender.mockImplementation(
+      (id: string, patches: { gid: string; prop: string; value: unknown }[]) =>
+        new Promise((resolve) => {
+          release = () => resolve(engine(id, patches))
+        }),
+    )
+    const [dx, dy] = shrink()
+    startLegendScale(down(0, 0), livePanel(), legendOf(), layout, 'se')
+    dragTo(dx, dy)
+    fire('pointerup', dx, dy)
+    // 渲染还没回来，用户接着改了图例的列数
+    useDocumentStore.getState().commit(literal('改列数'), (d) => {
+      const o = d.objects.find((x) => x.id === 'p1')
+      if (o?.type === 'panel') o.overrides.push({ gid: 'axes_1.legend', prop: 'ncol', value: 2 })
+    })
+    release()
+    await settle()
+    expect((overrideOf('axes_1.legend', 'loc_frac') as number[])[1]).toBeCloseTo(0.62 + 0.08, 4)
+    expect(useDocumentStore.getState().past).toHaveLength(2)
+  })
+
+  it('等成图期间用户改的是别的对象（这个面板没变）：同样放弃，补正不并进别人那一步', async () => {
+    await setup()
+    let release: () => void = () => {}
+    const engine = legendEngine()
+    engineRender.mockImplementation(
+      (id: string, patches: { gid: string; prop: string; value: unknown }[]) =>
+        new Promise((resolve) => {
+          release = () => resolve(engine(id, patches))
+        }),
+    )
+    const [dx, dy] = shrink()
+    startLegendScale(down(0, 0), livePanel(), legendOf(), layout, 'se')
+    dragTo(dx, dy)
+    fire('pointerup', dx, dy)
+    useDocumentStore.getState().commit(literal('改页面'), (d) => {
+      d.page.w += 1
+    })
+    release()
+    await settle()
+    expect((overrideOf('axes_1.legend', 'loc_frac') as number[])[1]).toBeCloseTo(0.62 + 0.08, 4)
+    expect(engineRender).toHaveBeenCalledTimes(1)
+    // 撤销一次只退「改页面」，缩放那条原样在
+    useDocumentStore.getState().undo()
+    expect(overrideOf('axes_1.legend', 'fontsize')).toBeCloseTo(5.6, 6)
+  })
+})

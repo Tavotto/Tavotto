@@ -74,6 +74,7 @@ import {
   cancelElementPreview,
   commitElementPreview,
 } from './elementPreview'
+import { settleLegendCorner } from './legendCornerSettle'
 import {
   authorityFields,
   panelHash,
@@ -1711,6 +1712,17 @@ export function startLegendScale(
       setOverrides(panel.id, hist('scaleLegend'), patches, true)
       commitElementPreview(panel.id)
       noteDragCommit('resize.commit', panel.id, element.gid, 'fontsize', patches.length)
+      // 成图的倍数与预览不完全相同（往小缩尤甚）：第一版到了按实测把对角钉回去
+      const entry = useDocumentStore.getState().past.at(-1)
+      if (entry) {
+        settleLegendCorner({
+          panelId: panel.id,
+          gid: element.gid,
+          corner,
+          fixed: last.fixed,
+          entry,
+        })
+      }
     },
   })
 }

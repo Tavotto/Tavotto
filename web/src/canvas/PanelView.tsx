@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { perfCount, perfRenderPainted } from '@/perf/core'
 import { t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -240,7 +240,9 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   //
   // 认领的是**真正挂进 DOM 的那一版**（`mountedEditSvg`），不是 store 里刚到的那一版：
   // 换图要等新图的位图解码完（`useDecodedSvg`），这段时间 DOM 上还是旧节点 + 预览位移。
-  useEffect(() => {
+  // layout effect：新 DOM 挂上与重放预览在**同一帧绘制之前**完成——用 passive effect 的话
+  // 浏览器可能先画出一帧没有预览的新图（松手弹一下、图例补正时闪一下中间那一版）。
+  useLayoutEffect(() => {
     if (mountedEditSvg == null) return
     const st = useRenderStore.getState()
     const cur = st.byKey[renderKeyOf(obj)]?.svg ? renderKeyOf(obj) : (st.latest[obj.fileId] ?? '')

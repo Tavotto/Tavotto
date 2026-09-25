@@ -110,6 +110,12 @@ export function legendScalePatches(
 
 export type LegendCorner = 'nw' | 'ne' | 'sw' | 'se'
 
+/** 拖 `corner` 时不动的那个角（对角）在框上的位置（figure 分数、top-origin） */
+export function fixedCornerOf(box: Rect4, corner: LegendCorner): [number, number] {
+  const [x, y, w, h] = box
+  return [corner.includes('e') ? x : x + w, corner.includes('s') ? y : y + h]
+}
+
 /**
  * 拖 `corner` 这个角、对角不动时，框缩放后的样子（figure 分数、top-origin）。
  * 倍数取光标位移在**对角线方向上的投影**（内容像素空间里算，分数坐标的 x / y
@@ -122,7 +128,7 @@ export function scaledLegendBox(
   dfy: number,
   layout: { width: number; height: number },
 ): { s: number; fixed: [number, number] } {
-  const [x, y, w, h] = box
+  const [, , w, h] = box
   const sx = corner.includes('e') ? 1 : -1
   const sy = corner.includes('s') ? 1 : -1
   const W = w * layout.width
@@ -131,8 +137,7 @@ export function scaledLegendBox(
   const nh = H + sy * dfy * layout.height
   const d2 = W * W + H * H
   const s = d2 > 0 ? (nw * W + nh * H) / d2 : 1
-  const fixed: [number, number] = [corner.includes('e') ? x : x + w, corner.includes('s') ? y : y + h]
-  return { s, fixed }
+  return { s, fixed: fixedCornerOf(box, corner) }
 }
 
 /** 绕不动点缩放 s 倍之后的框 */

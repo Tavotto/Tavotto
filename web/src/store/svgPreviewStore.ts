@@ -534,6 +534,36 @@ export function previewTransform(gid: string, dfx: number, dfy: number): void {
 }
 
 /**
+ * 把已提交、还在等权威渲染的预览**改挂**到另一版 SVG 上：账本换成 `baseKey` 那一版、
+ * 只留 `translate` 里的平移，等待目标改成 `awaitKey`。
+ *
+ * 用处（图例整体缩放钉对角）：第一版成图到了，实测对角偏了 δ——这一版的图例大小
+ * 是对的，只差位置。在它换进 DOM **之前**改挂上一个 δ 的平移、改等补正后的那一版，
+ * 画面就从预览直接过渡到终态，中间那一版的偏差用户看不见。必须在渲染 store 的
+ * 同步回调里调用（早于 React 换 DOM），`reattachPreview` 会在新 DOM 上重放它。
+ * 没有同一面板的在途会话时返回 false。
+ */
+export function retargetPreview(
+  panelId: string,
+  baseKey: string,
+  translate: Record<string, [number, number]>,
+  awaitKey: string,
+): boolean {
+  if (!session || session.panelId !== panelId || session.settled || session.cancelled) return false
+  const p = panels.get(panelId)
+  if (!p) return false
+  p.renderKey = baseKey
+  p.baseTransforms.clear()
+  p.baseNodes.clear()
+  p.transforms = new Map(Object.entries(translate))
+  p.scales.clear()
+  p.edits = []
+  p.styles.clear()
+  session.awaitKey = awaitKey
+  return true
+}
+
+/**
  * 等比缩放预览：绕不动点 (ox, oy)（figure 分数、y 向下）放大 s 倍。只给图例整体
  * 缩放用——图例的字号、边距、行距、示意线长度按同一个倍数走（见
  * `lib/legendScale`），画出来几乎就是线性缩放；子图缩放**不**用它（matplotlib

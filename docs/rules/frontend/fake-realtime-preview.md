@@ -31,6 +31,11 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   现算、同样前置于原始变换、`reattachPreview` 连同倍数一起重放）只给图例整体缩放用——
   那里字号与间距同乘一个倍数，线性预览是准的；子图缩放仍然只给线框（matplotlib 重排后刻度与字号不跟着线性缩放，
   假预览会骗人，见 `startAxesDrag` 的注释）。
+* **改挂只有一处**：`retargetPreview` 把已提交、还在等权威渲染的预览改挂到另一版上（账本换版、
+  只留平移、换等待目标），只在渲染 store 的同步回调里调用（早于 React 换 DOM）。现在只有图例
+  缩放的钉对角用它（见 `legend-entries-and-binding.md`）。
+* **重放预览用 `useLayoutEffect`**（`PanelView` 的 `mountedEditSvg` 那个 effect）：新 DOM 挂上与重放
+  在同一帧绘制之前完成；passive effect 可能先画出一帧没有预览的新图。
 * **换一版 SVG 先解码它嵌着的位图**（`lib/useDecodedSvg`，2026-09-25 用户报「松手后整张图
   糊一下」）：imshow / pcolormesh 在预览 SVG 里是 `<image href="data:…">`，innerHTML 一换
   浏览器异步解码，那一两帧是空白 / 低清的中间态。新字符串到了先用离屏 `Image.decode()`
