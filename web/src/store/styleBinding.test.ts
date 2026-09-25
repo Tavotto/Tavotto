@@ -1578,6 +1578,50 @@ describe('重跑后脚本赢：不自动对齐，显示不一致、一键对齐�
     expect(owned('a')).toEqual({ value: 10, base: 9 })
   })
 
+  /** 脚本重跑后 x 轴标签不见了（gid 消失）：精确 manifest 里只剩 y 轴标签 */
+  function rerunWithoutX(id: string) {
+    useRenderStore.getState().markStale([panelById(id).fileId])
+    const p = panelById(id)
+    const y = fig(p.fileId, { value: 9 }, { value: 10 }).elements[1]
+    seedExactRender(p, { stem: p.fileId, size_mm: [80, 60], elements: [y] } as never)
+  }
+
+  it('Codex r4105655215：gid 在重跑后消失时恢复原样，样式登记过的孤儿 override 一起清掉；脚本之后把它加回来，旧样式值不再生效', async () => {
+    await bound()
+    rerunWithoutX('a')
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '前提：孤儿 override 还在').toBe(10)
+    expect(restoreCanvasStyle()).toBe(true)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '样式写的孤儿一起清掉').toBeUndefined()
+    // 脚本又把 x 轴标签加回来：画布已解绑，显示的是脚本自己的 9
+    renderWith('a', 9, 10)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBeUndefined()
+    s().undo()
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '撤销连孤儿一起回来').toBe(10)
+  })
+
+  it('不跟随样式时同样清掉样式写的孤儿 override（此刻看不见，留着的话 gid 回来时旧样式值在已解绑的画布上生效）', async () => {
+    await bound()
+    rerunWithoutX('a')
+    bindCanvasStyle(null)
+    expect(s().doc.style).toBeUndefined()
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBeUndefined()
+  })
+
+  it('反向：孤儿但归用户的 override（没登记）不动——恢复原样与不跟随样式都留着', async () => {
+    await bound()
+    s().commit(literal('用户的手改'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides.push({ gid: 'axes_0.legacy', prop: 'fontsize', value: 7 })
+    })
+    rerunWithoutX('a')
+    expect(restoreCanvasStyle()).toBe(true)
+    expect(ov('a', 'axes_0.legacy', 'fontsize')).toBe(7)
+    s().undo()
+    rerunWithoutX('a')
+    bindCanvasStyle(null)
+    expect(ov('a', 'axes_0.legacy', 'fontsize')).toBe(7)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '同一次里样式写的孤儿照样清').toBeUndefined()
+  })
+
   it('不一致为 0 / 已脱离 / 没绑：「对齐」无事可做，不产生历史', async () => {
     await bound()
     const before = s().past.length

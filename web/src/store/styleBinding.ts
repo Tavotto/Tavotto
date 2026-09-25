@@ -455,9 +455,13 @@ function bindNow(recordId: string | null): void {
   }
   if (recordId === null) {
     if (!doc.style) return
+    // 图保持此刻的样子；只清样式写的**孤儿**（此刻看不见，留着的话 gid 回来时旧样式值在解绑的画布上生效）
+    const orphans = ownedOrphans(doc)
     commitWith(hist('unbindStyle'), (d) => {
       delete d.style
+      dropTargets(d, orphans)
     }, null)
+    rerenderTargets(orphans)
     return
   }
   const rec = recordOf(recordId)
@@ -617,26 +621,62 @@ export function restoreCanvasStyle(): boolean {
   const doc = docNow()
   // 带着 override、却还没有 manifest 的图：认不出哪些 override 是样式写的——等它们渲染出来
   if (!restoreReady(doc)) return false
-  const targets = panelsOf(doc).flatMap((p) => {
-    const m = manifestOf(p)
-    return m ? styleOverrideTargets(p, m).map((x) => ({ panelId: p.id, ...x })) : []
-  })
+  // 此刻 manifest 上样式管得到的 + 登记为样式写的（含 manifest 里已经没有的孤儿，Codex #547 P1）
+  const targets = [
+    ...panelsOf(doc).flatMap((p) => {
+      const m = manifestOf(p)
+      return m ? styleOverrideTargets(p, m).map((x) => ({ panelId: p.id, ...x })) : []
+    }),
+    ...ownedTargets(doc, () => true),
+  ]
   if (!targets.length && !doc.style) return false
-  const touched = new Set(targets.map((x) => x.panelId))
   // 欠账不清：撤销恢复原样会把绑定带回来，它那几张还没对齐的图仍然要补（同解绑，Codex #547 P1）
   commitWith(hist('restoreStyle'), (d) => {
     delete d.style
-    for (const o of d.objects) {
-      if (o.type !== 'panel' || !touched.has(o.id)) continue
-      o.overrides = o.overrides.filter(
-        (ov) => !targets.some((x) => x.panelId === o.id && x.gid === ov.gid && x.prop === ov.prop),
-      )
-    }
+    dropTargets(d, targets)
   }, null)
-  for (const o of docNow().objects) {
-    if (o.type === 'panel' && touched.has(o.id)) requestRender(o, true)
-  }
+  rerenderTargets(targets)
   return true
+}
+
+type Target = { panelId: string; gid: string; prop: string }
+
+/** 登记为样式写、此刻仍然算数（`ownedLive`）、且满足 `pick` 的那几条 override */
+function ownedTargets(doc: FigureDocument, pick: (p: PanelObject, gid: string, prop: string) => boolean): Target[] {
+  const out: Target[] = []
+  for (const p of panelsOf(doc)) {
+    for (const [gid, props] of Object.entries(doc.style?.owned?.[figKey(p)] ?? {})) {
+      for (const prop of Object.keys(props)) {
+        if (ownedLive(doc, p, gid, prop) && pick(p, gid, prop)) out.push({ panelId: p.id, gid, prop })
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * 样式写的**孤儿**：这张图的精确 manifest 里已经没有这个 (gid, prop)（脚本重跑删掉了那条线 / 标签）。
+ * 拿不到精确 manifest 的图认不出谁是孤儿，不动（保守）。用户的 override 不在登记里，永远不算。
+ */
+const ownedOrphans = (doc: FigureDocument): Target[] =>
+  ownedTargets(doc, (p, gid, prop) => {
+    const m = manifestOf(p)
+    return !!m && !m.elements.some((e) => e.gid === gid && e.editable.some((f) => f.prop === prop))
+  })
+
+function dropTargets(d: FigureDocument, targets: Target[]) {
+  if (!targets.length) return
+  for (const o of d.objects) {
+    if (o.type !== 'panel' || !targets.some((x) => x.panelId === o.id)) continue
+    o.overrides = o.overrides.filter(
+      (ov) => !targets.some((x) => x.panelId === o.id && x.gid === ov.gid && x.prop === ov.prop),
+    )
+  }
+}
+
+function rerenderTargets(targets: Target[]) {
+  const ids = new Set(targets.map((x) => x.panelId))
+  for (const o of docNow().objects) if (o.type === 'panel' && ids.has(o.id)) requestRender(o, true)
 }
 
 /** 此刻这份项目里有没有哪张画布绑着这一条样式（激活画布看 doc，其余看画布快照；已脱离的也算：选择器里还指着它） */
