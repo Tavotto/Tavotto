@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from support.pipedrain import StderrDrain
 from tavotto.rendercore import inspector
 from tests.support import pluginkit as kit
 from tests.test_mcp_roundtrip import REGISTRY, SCRIPT, _worker_python, patches_for
@@ -100,6 +101,9 @@ class HostClient:
             env=env,
             cwd=str(cwd),
         )
+        self._stderr = StderrDrain(
+            self.proc
+        )  # 与子进程并发排空 stderr（support/pipedrain.py；#549 Windows 分片的教训）
         self.n = 0
         init = self.call(
             "initialize",
@@ -120,7 +124,7 @@ class HostClient:
         self.proc.stdin.flush()
         line = self.proc.stdout.readline()
         if not line:
-            raise AssertionError(self.proc.stderr.read().decode("utf-8", "replace")[-4000:])
+            raise AssertionError(self._stderr.tail(4000, wait=10))
         return json.loads(line.decode("utf-8"))
 
     def raw_tool(self, name: str, args: dict) -> dict:
@@ -140,6 +144,7 @@ class HostClient:
             pass
         assert self.proc.wait(timeout=120) == 0  # stdin 关 = 宿主走了，server 干净退出
         self.proc.stdout.close()
+        self._stderr.join()
         self.proc.stderr.close()
 
 

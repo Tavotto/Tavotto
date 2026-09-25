@@ -88,6 +88,17 @@ if __name__ == "__main__":
 """
 
 
+def _stderr_tail(proc, n: int = 4000) -> str:
+    """worker 的 stderr 落在文件里（`_spawn_render`）：失败时附上尾部。"""
+    path = getattr(proc, "stderr_log", None)
+    if path is None:
+        return ""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[-n:]
+    except OSError:
+        return ""
+
+
 def _rpc(proc, obj, timeout=180):
     proc.stdin.write(json.dumps(obj) + "\n")
     proc.stdin.flush()
@@ -95,9 +106,13 @@ def _rpc(proc, obj, timeout=180):
     reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()), daemon=True)
     reader.start()
     reader.join(timeout)
-    assert not reader.is_alive(), f"worker 超时: {obj.get('cmd')}"
+    assert not reader.is_alive(), (
+        f"worker 超时: {obj.get('cmd')}\n--- worker stderr（尾部）---\n{_stderr_tail(proc)}"
+    )
     line = box[0] if box else ""
-    assert line, f"worker 无响应: {obj.get('cmd')}\n{proc.stderr.read()}"
+    assert line, (
+        f"worker 无响应: {obj.get('cmd')}\n--- worker stderr（尾部）---\n{_stderr_tail(proc)}"
+    )
     resp = json.loads(line)
     assert resp.get("ok"), f"{resp.get('error', resp)}\n{resp.get('traceback', '')}"
     return resp
@@ -108,6 +123,11 @@ def _spawn_render(tmp_path, script: str, stem: str):
     figs = tmp_path / "figures"
     figs.mkdir()
     (figs / "fig.py").write_text(script, encoding="utf-8")
+    # **stderr 落文件，与产品的 worker 一样**（`pool` 把它绑在 worker.log 上）。开成 PIPE 却
+    # 只读 stdout 的话，worker 往 stderr 写满管道缓冲就阻塞在写日志上、应答永远不来——
+    # 缺字体的渲染刷 25 KB 的 findfont 警告，Windows 的小缓冲上这条用例卡满 180 秒（#549）
+    stderr_log = tmp_path / "worker-stderr.log"
+    stderr_file = open(stderr_log, "w", encoding="utf-8")  # noqa: SIM115 — 跟着进程活
     proc = subprocess.Popen(
         [
             WORKER_PY,
@@ -125,12 +145,14 @@ def _spawn_render(tmp_path, script: str, stem: str):
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=stderr_file,
         text=True,
         bufsize=1,
         encoding="utf-8",
         errors="replace",
     )
+    stderr_file.close()  # 子进程持有自己那一份句柄，父进程这份不需要
+    proc.stderr_log = stderr_log  # type: ignore[attr-defined]
     _rpc(proc, {"cmd": "build"})
     calls: list[list] = []
 
@@ -824,3 +846,27 @@ def test_every_worker_resolution_inside_the_specfix_transaction_is_safe_only():
     assert fwd and isinstance(fwd[0].value, ast.Name) and fwd[0].value.id == "safe_only", (
         "_engine_attempt 的重试没把 safe_only 转给 _engine_worker"
     )
+
+
+# ---- 第十三轮：夹具的 stderr 不再是没人读的管道（#549 Windows 分片的 180 秒超时） ----
+
+#: 脚本在出图之前往 stderr 写 300 KB——远超任何平台的管道缓冲（macOS / Linux 64 KiB）。
+#: 缺字体的渲染在 Windows 上刷 25 KB findfont 警告就够卡死小缓冲；这里放大到哪个平台都复现
+LOUD = SCRIPT.replace(
+    "def main():",
+    "def main():\n    import sys\n    sys.stderr.write('x' * 300_000 + '\\n')\n    sys.stderr.flush()",
+    1,
+)
+
+
+def test_a_worker_that_floods_stderr_still_answers(tmp_path):
+    """旧夹具（`stderr=PIPE`、只读 stdout）在这里卡在 build 上直到超时；stderr 落文件之后
+    照常应答，失败信息里也还拿得到它写了什么。"""
+    proc, render = _spawn_render(tmp_path, LOUD, "Kin")
+    try:
+        assert render([])["manifest"]["elements"]
+        assert "x" * 1000 in _stderr_tail(proc, 400_000)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)

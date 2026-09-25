@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pytest
 
+from support.pipedrain import StderrDrain
+
 ROOT = Path(__file__).resolve().parent.parent
 SERVER = ROOT / "codex-plugin" / "mcp" / "server.py"
 WIDGET_URI = "ui://tavotto/canvas/v1.html"
@@ -47,6 +49,9 @@ class Client:
             env=env,
             cwd=cwd or str(ROOT),
         )
+        self._stderr = StderrDrain(
+            self.proc
+        )  # 与子进程并发排空 stderr（support/pipedrain.py；#549 Windows 分片的教训）
         self.n = 0
 
     def write(self, msg: dict) -> None:
@@ -56,9 +61,7 @@ class Client:
     def read(self) -> dict:
         line = self.proc.stdout.readline()
         if not line:
-            raise AssertionError(
-                "server 挂了:\n" + self.proc.stderr.read().decode("utf-8", "replace")[-4000:]
-            )
+            raise AssertionError("server 挂了:\n" + self._stderr.tail(4000, wait=10))
         return json.loads(line.decode("utf-8"))
 
     def call(self, method: str, params=None) -> dict:
