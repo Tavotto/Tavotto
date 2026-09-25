@@ -90,6 +90,12 @@ interface DepRepairState {
   clear: () => void
   /** 切走的项目上还没看到结局的作业：项目 → 最后一条进度（界面不读它，切回去时 `clear()` 放回 `progress`） */
   parked: Readonly<Record<string, DependencyProgress>>
+  /**
+   * 受管环境重建正在进行（**跨项目全局单飞**，`clear()` 不放）：重建的进度 id 固定是 `managed-rebuild`、
+   * SSE 又不带项目，两个项目各起一次就分不清进度是谁的——B 起的那次会把 A 的所属改成 B，A 之后的进度被当成
+   * B 的（#605 评审 P1）。所以 A 的重建没结束之前，哪个项目都起不了第二次；按钮据此禁用。
+   */
+  rebuildRunning: boolean
 
   // ---- 联合准备（U04，ADR 0061）：跑前的那一次授权 ----
   // 载荷本身（整份联合计划 + 可选目标）住在 `envStore.dependencyPreparation`（与运行目录的确认
@@ -122,6 +128,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   jointPlan: null,
   jointBlocked: null,
   parked: {},
+  rebuildRunning: false,
 
   prepare: async (target) => {
     const offer = useEnvStore.getState().dependencyPreparation
@@ -275,11 +282,12 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   },
 
   rebuildManaged: async () => {
-    if (get().busy) return
+    if (get().busy || get().rebuildRunning) return
     const epoch = projectEpoch
     // 所属项目在发请求**之前**记：响应回来时可能已经切到 B
     const owner = currentProjectId()
-    set({ busy: true, errorCode: '', errorText: '' })
+    // 单飞从发请求这一刻就占住（在途的那一次也算）：否则 A 的请求还没回来、切到 B 又点一次，照样两次
+    set({ busy: true, errorCode: '', errorText: '', rebuildRunning: true })
     try {
       await rebuildManagedEnvironment()
       startedPlans.set(REBUILD_ID, owner)
@@ -291,6 +299,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       }
       set({ busy: false, progress: started })
     } catch (e) {
+      // 没起来：单飞放开（与哪个项目开着无关）
+      set({ rebuildRunning: false })
       if (epoch !== projectEpoch) return
       const { code, text } = failure(e)
       set({ busy: false, errorCode: code, errorText: text })
@@ -298,6 +308,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   },
 
   onProgress: (p) => {
+    // 重建到了终局：单飞放开——不管它属于哪个项目、此刻开着哪个
+    if (p.plan_id === REBUILD_ID && TERMINAL.includes(p.state)) set({ rebuildRunning: false })
     // 作业属于**别的项目**（本标签页起的、起完切走了）：进度只更新它那一格，此刻的界面与副作用
     // （刷环境 / 重排渲染 / 关框 / 错误文案）一个都不碰——那些说的都是此刻开着的项目（issue #590）
     const owner = startedPlans.get(p.plan_id)
@@ -376,6 +388,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
 
 /** 重建受管环境的进度 id（后端 `deprepair.REBUILD_PROGRESS_ID`，每个项目都是这一个） */
 const REBUILD_ID = 'managed-rebuild'
+const TERMINAL: readonly DependencyProgress['state'][] = ['done', 'failed', 'cancelled']
 
 /**
  * 切项目之后才失败的那次执行请求（install / prepare 的 POST 被拒）：作业没起来，它所属项目那格要说出
@@ -384,12 +397,24 @@ const REBUILD_ID = 'managed-rebuild'
 function lateFailure(planId: string, e: unknown): void {
   const owner = startedPlans.get(planId)
   if (owner === undefined) return
-  const key = projectKey(owner)
-  const parked = useDepRepairStore.getState().parked
-  const p = parked[key]
-  if (!p || p.plan_id !== planId) return
   const { code, text } = failure(e)
-  useDepRepairStore.setState({ parked: { ...parked, [key]: { ...p, state: 'failed', code, error: text } } })
+  const store = useDepRepairStore.getState()
+  // A → B → A 之后才被拒：作业已经被 `clear()` 放回当前的 `progress`，`parked` 里没有它了（#605 评审 P2）。
+  // 所属项目此刻开着，就在当前卡片上说出结局
+  if (projectKey(owner) === projectKey(currentProjectId())) {
+    if (store.progress?.plan_id !== planId) return
+    useDepRepairStore.setState({
+      busy: false,
+      progress: { ...store.progress, state: 'failed', code, error: text },
+      errorCode: code,
+      errorText: text,
+    })
+    return
+  }
+  const key = projectKey(owner)
+  const p = store.parked[key]
+  if (!p || p.plan_id !== planId) return
+  useDepRepairStore.setState({ parked: { ...store.parked, [key]: { ...p, state: 'failed', code, error: text } } })
 }
 
 /** 安装是不是正在进行（界面据此禁用按钮、显示进度而不是选项） */

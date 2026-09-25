@@ -94,13 +94,29 @@ async function startInstallOnA() {
   useDepRepairStore.getState().onProgress(progress('installing', { log: 'Collecting lmfit' }))
 }
 
+/**
+ * zustand 的 `set` 会把被 spy 的函数抄进新 state，`restoreAllMocks` 只还原旧对象上的那个——spy 会跨用例
+ * 留下来（一个用例把 `setProjectPython` 换成永不回答的替身，后面的用例就永远发不出请求）。每个用例前把
+ * 原函数放回去
+ */
+const ENV_ORIGINAL = { ...useEnvStore.getState() }
+const RENDER_ORIGINAL = { ...useRenderStore.getState() }
+
 beforeEach(async () => {
+  useEnvStore.setState({
+    setProjectPython: ENV_ORIGINAL.setProjectPython,
+    refresh: ENV_ORIGINAL.refresh,
+  })
+  useRenderStore.setState({
+    retryEnvironmentFailures: RENDER_ORIGINAL.retryEnvironmentFailures,
+    markStale: RENDER_ORIGINAL.markStale,
+  })
   held.clear()
   holding.clear()
   calls.length = 0
   setCurrentProjectId('p1')
   // 上一个用例可能把作业收进了某个项目那格：先整份换干净，再回到 p1
-  useDepRepairStore.setState({ parked: {} })
+  useDepRepairStore.setState({ parked: {}, rebuildRunning: false })
   useDepRepairStore.getState().reset()
   useEnvStore.setState({ dependencyPreparation: null })
 })
@@ -290,5 +306,137 @@ describe('换项目时的依赖修复状态（issue #590）', () => {
     await pending
     expect(retry).not.toHaveBeenCalled()
     expect(useDepRepairStore.getState().busy).toBe(false)
+  })
+
+})
+
+// ---------------------------------------------------------------- #605 评审第一轮
+
+/**
+ * 扣住**下一次**匹配的请求：先布置（发请求之前调），拿到它之后立刻停止扣——之后同一路径的请求（切项目时
+ * 新项目的那次 refresh）照常回答
+ */
+function holdOnce(part: string) {
+  holding.add(part)
+  return vi
+    .waitFor(() => expect(held.has(part)).toBe(true))
+    .then(() => {
+      holding.delete(part)
+      return held.get(part)!
+    })
+}
+
+const A_PROJECT_ENV = { open: true, python: '/envs/a/bin/python', source: 'project' }
+
+describe('写状态的那一侧按代际判（#605 评审 P1：envStore 的在途响应）', () => {
+  it('对照：A 还开着时「改用系统解释器」的响应照常写进 env（尺子是活的）', async () => {
+    useEnvStore.setState({ env: { ok: true, python: '/p', source: 'system', project: { open: true } } as never })
+    const armed = holdOnce('/api/engine/environment')
+    const pending = useDepRepairStore.getState().adoptSystemPython('/usr/bin/python3', 'lmfit')
+    const release = await armed
+    release({ ok: true, project: A_PROJECT_ENV })
+    await pending
+    expect(JSON.stringify(useEnvStore.getState().env)).toContain('/envs/a')
+  })
+
+  it('「改用系统解释器」切项目之后才回来：A 的项目环境不写进 B', async () => {
+    const armed = holdOnce('/api/engine/environment')
+    const pending = useDepRepairStore.getState().adoptSystemPython('/usr/bin/python3', 'lmfit')
+    const release = await armed
+    await switchTo('p2')
+    release({ ok: true, project: A_PROJECT_ENV })
+    await pending
+    expect(JSON.stringify(useEnvStore.getState().env ?? {})).not.toContain('/envs/a')
+  })
+
+  it('envStore.refresh() 切项目之后才回来：A 的 env 不覆盖 B 的', async () => {
+    const armed = holdOnce('/api/engine/environment')
+    const pending = useEnvStore.getState().refresh()
+    const release = await armed
+    await switchTo('p2')
+    await vi.waitFor(() => expect(useEnvStore.getState().env?.project?.open).toBe(true))
+    release({ ok: true, python: '/p', source: 'system', project: A_PROJECT_ENV })
+    await pending
+    expect(JSON.stringify(useEnvStore.getState().env ?? {})).not.toContain('/envs/a')
+  })
+
+  it('全局 setPython 切项目之后才回来：响应里 A 的 project 不写进 B', async () => {
+    const armed = holdOnce('/api/engine/environment')
+    const pending = useEnvStore.getState().setPython('/usr/bin/python3')
+    const release = await armed
+    await switchTo('p2')
+    release({ ok: true, python: '/usr/bin/python3', source: 'configured', project: A_PROJECT_ENV })
+    expect(await pending).toBeNull()
+    expect(JSON.stringify(useEnvStore.getState().env ?? {})).not.toContain('/envs/a')
+  })
+
+  it('setWorkdirMode 切项目之后才回来：B 的 env / 确认框 / 渲染都不动', async () => {
+    const armed = holdOnce('/api/engine/workdir')
+    const pending = useEnvStore.getState().setWorkdirMode('sandbox', { confirmed: true })
+    const release = await armed
+    await switchTo('p2')
+    useEnvStore.setState({ workdirConfirmation: { script: 'b.py' } as never })
+    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
+    release({ ok: true, project: A_PROJECT_ENV })
+    expect(await pending).toBeNull()
+    expect(JSON.stringify(useEnvStore.getState().env ?? {})).not.toContain('/envs/a')
+    expect(useEnvStore.getState().workdirConfirmation).not.toBeNull()
+    expect(retry).not.toHaveBeenCalled()
+  })
+
+  it('「改回」切项目之后才回来：B 的「已改用」提示与面板都不动', async () => {
+    const armed = holdOnce('/api/engine/environment')
+    const pending = useEnvStore.getState().revertAdoptedEnvironment()
+    const release = await armed
+    await switchTo('p2')
+    useEnvStore.getState().noteEnvironmentAdopted({ source: 'conda', label: 'b', python_version: '3.12' } as never)
+    const stale = vi.spyOn(useRenderStore.getState(), 'markStale')
+    release({ ok: true, project: A_PROJECT_ENV })
+    expect(await pending).toBeNull()
+    expect(useEnvStore.getState().adoptedEnvironment?.label).toBe('b')
+    expect(stale).not.toHaveBeenCalled()
+    useEnvStore.getState().dismissAdoptedEnvironment()
+  })
+})
+
+describe('重建跨项目单飞（#605 评审 P1）', () => {
+  const rebuildPosts = () => calls.filter((c) => c.url.includes('/managed/rebuild')).length
+
+  it('A 的重建没结束：切到 B 起不了第二次，A 的进度仍归 A；终局之后才放开', async () => {
+    await useDepRepairStore.getState().rebuildManaged()
+    expect(rebuildPosts()).toBe(1) // 尺子是活的：A 确实起了一次
+    await switchTo('p2')
+    expect(useDepRepairStore.getState().rebuildRunning).toBe(true)
+    await useDepRepairStore.getState().rebuildManaged()
+    expect(rebuildPosts()).toBe(1)
+
+    // A 的进度到了：B 上不显示、不在 B 上派发
+    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
+    useDepRepairStore.getState().onProgress(progress('installing', { plan_id: 'managed-rebuild' }))
+    expect(useDepRepairStore.getState().progress).toBeNull()
+    useDepRepairStore.getState().onProgress(progress('done', { plan_id: 'managed-rebuild' }))
+    expect(retry).not.toHaveBeenCalled()
+    expect(useDepRepairStore.getState().rebuildRunning).toBe(false)
+
+    // 放开之后 B 可以起自己的
+    await useDepRepairStore.getState().rebuildManaged()
+    expect(rebuildPosts()).toBe(2)
+  })
+})
+
+describe('A → B → A 之后才被拒（#605 评审 P2）', () => {
+  it('作业已经放回当前卡片：结局落在当前卡片上，不停在 preparing', async () => {
+    await useDepRepairStore.getState().makePlan({ module: 'lmfit', script: 'fig.py', target: 'tavotto_managed' })
+    const armed = holdOnce('/api/engine/dependency/install')
+    const pending = useDepRepairStore.getState().install()
+    const release = await armed
+    await switchTo('p2')
+    await switchTo('p1')
+    expect(useDepRepairStore.getState().progress?.state).toBe('preparing') // 尺子是活的：确实放回来了
+    release({ error: '拒绝', code: 'dependency_install_not_allowed' }, 409)
+    await pending
+    const s = useDepRepairStore.getState()
+    expect(s.progress?.state).toBe('failed')
+    expect(s.errorCode).toBe('dependency_install_not_allowed')
   })
 })
