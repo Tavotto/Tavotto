@@ -62,3 +62,4 @@
 - 两条入口都经 `bridgeboot` 把引擎模块装进私有包（safe 的清单 `_ENGINE_MODULES`、native 的 `_PHASE1/_PHASE2`），用户的同名模块永远赢
 - 兄弟模块只在模块层平铺 import 并登记（函数体内裸 import 会命中用户文件）
 - native 侧不起后台线程
+- 装载引擎代码那一段不写字节码（用户解释器不加 `-B`）
