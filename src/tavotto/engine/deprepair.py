@@ -58,6 +58,7 @@ from . import (
     runcodes,
     runtime,
     userenvs,
+    workdir,
 )
 
 LOG = logging.getLogger("tavotto.deprepair")
@@ -3305,9 +3306,12 @@ def cancel_status(plan_id: str) -> dict:
 # `MAX_DEPENDENCY_REPAIR_ROUNDS` 兜底）。没有轮次了也放行。「有答案才放行 + 轮次上限」
 # 一起就是「无无限缺包循环」——而不是让同一个动作第二次悄悄变成另一种行为。
 ERROR_PREPARATION_REQUIRED = "dependency_preparation_required"
+#: 采用前复核时联合计划算不出来（解释器解析失败等）：不知道脚本要什么，就不能说这个环境「装齐」——
+#: 拿空的需求集合去量，任何健康的环境都会「装齐」并被记下（Codex #562 P2）。
+ERROR_USER_ENV_UNVERIFIABLE = "user_environment_unverifiable"
 #: 本模块里**常量式**、且会落到用户界面的 code（`tests/test_error_codes.py` 的码表读它；
 #: `RepairError` 那一族的文案在前端 `engine.repairError.*` 表里，按既有约定不进这里）。
-ERROR_CODES = (ERROR_PREPARATION_REQUIRED,)
+ERROR_CODES = (ERROR_PREPARATION_REQUIRED, ERROR_USER_ENV_UNVERIFIABLE)
 _gate_skipped: set[tuple[str, str]] = set()
 
 
@@ -3407,12 +3411,45 @@ def user_environment_candidates(
     return uniq
 
 
-def user_environment_path(project: str | Path, script: str, env_id: str) -> str | None:
-    """界面交回的 id → 解释器路径（只在本机自己的发现结果里找；找不到回 None）。"""
-    for cand in user_environment_candidates(project, script):
-        if userenvs.env_id(cand["python"]) == env_id:
-            return cand["python"]
-    return None
+def recheck_user_environment(project: str | Path, script: str, env_id: str) -> dict | None:
+    """界面交回的 id → 按**此刻的**联合计划重新体检的那一条（`userenvs.evaluate` 的形状，不读体检缓存）；
+    本机的发现结果里找不到回 None；计划算不出来抛 `WorkerError(code=user_environment_unverifiable)`。
+
+    「还被发现得到」不等于「还能用」：弹窗开着期间环境可能变了（包被卸掉、解释器坏了），调用方也可能交回
+    一个本来就没装齐（界面上不可选）的候选。所以采用前与弹窗列出时用同一个判据再量一次——装齐 = 脚本开跑
+    要的 import（计划的 `needed`：此刻缺的与此刻有的都算）与映射不到包名的 import 全部 import 得到。"""
+    root = str(Path(project))
+    cand = next(
+        (
+            c
+            for c in user_environment_candidates(root, script)
+            if userenvs.env_id(c["python"]) == env_id
+        ),
+        None,
+    )
+    if cand is None:
+        return None
+    try:
+        plan = joint_plan_for(root, script)[0].to_payload()
+    except pool.WorkerError as exc:
+        raise pool.WorkerError(
+            "现在算不出这个脚本需要哪些包，没法确认这个环境装齐了，请重新检查",
+            code=ERROR_USER_ENV_UNVERIFIABLE,
+        ) from exc
+    needed, unknown = _plan_imports(plan)
+    return userenvs.evaluate([cand], needed, unknown, use_cache=False)[0]
+
+
+def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
+    """联合计划载荷里「候选环境要 import 得到」的两份：脚本开跑要的第三方包（`missing` + `satisfied`，
+    带 distribution）与映射不到包名的。**不只是 `missing`**：`missing` 是相对**此刻的**解释器量的差集——
+    内置 runtime 里有 numpy、缺 openpyxl 时它只有 openpyxl，一个只装了 openpyxl 的环境就会被判「装齐」、
+    自动改用，脚本接着在 numpy 上缺包。"""
+    needed = [
+        {"import_name": m.get("import_name", ""), "distribution": m.get("distribution", "")}
+        for m in [*(plan.get("missing") or []), *(plan.get("satisfied") or [])]
+    ]
+    return needed, list(plan.get("unknown") or [])
 
 
 def user_environment_offer(project: str | Path, script: str, plan: dict, python: str) -> list[dict]:
@@ -3421,11 +3458,7 @@ def user_environment_offer(project: str | Path, script: str, plan: dict, python:
         # 关掉：不发现、不体检、不自动改用（用户的逃生口；测试进程默认关，见 tests/conftest.py）
         return []
     root = str(Path(project))
-    needed = [
-        {"import_name": m.get("import_name", ""), "distribution": m.get("distribution", "")}
-        for m in plan.get("missing") or []
-    ]
-    unknown = list(plan.get("unknown") or [])
+    needed, unknown = _plan_imports(plan)
     if not needed and not unknown:
         return []
     entries = userenvs.evaluate(
@@ -3445,12 +3478,14 @@ def _auto_adopt_allowed(project: str, offer: dict) -> bool:
     configured = _config_worker_python()
     if configured and pool._configured_source(configured) != pool.SOURCE_MANAGED:
         return False
-    record = projectenv.remembered_record(project)
-    if record is not None and (
-        record.get("mode") == projectenv.MODE_DEFAULT_CHAIN or not record.get("automatic", False)
-    ):
-        return False
-    return True
+    return _record_allows_auto_adopt(projectenv.remembered_record(project))
+
+
+def _record_allows_auto_adopt(record: dict | None) -> bool:
+    """项目记录这一半：没记过，或记着的是机器替用户挑的。用户为本项目挑过 / 明确选回默认链条就不碰。"""
+    return record is None or (
+        record.get("mode") != projectenv.MODE_DEFAULT_CHAIN and bool(record.get("automatic", False))
+    )
 
 
 def _config_worker_python() -> str:
@@ -3460,15 +3495,27 @@ def _config_worker_python() -> str:
 
 
 def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None:
-    entry = userenvs.best(user_envs, Path(project).name)
+    # 正被改动的环境不采用（envlease 是「环境占用」的唯一一张表）：它此刻的体检结论读的是装了一半的
+    # site-packages，记下来就是把一次半成品的观测变成项目的决策。这只是挑选时的过滤；真正挡住
+    # 「在被占用的环境上起会话」的是调用方的顺序——决定落地之后才解析解释器、才查租约（`decide_environment`）
+    free = [e for e in user_envs if not envlease.is_mutating(e["python"])]
+    entry = userenvs.best(free, Path(project).name)
     if entry is None or not _auto_adopt_allowed(project, offer):
         return None
-    projectenv.remember(
-        project, entry["python"], automatic=True, trigger=TRIGGER_USER_ENVIRONMENT, health=entry
-    )
-    # **不调 `pool.reset_worker_python()`**：门跑在 `pool.get()` 持有 `pool._lock`（不可重入）的
-    # `_new_worker()` 里，那里再拿锁就是死锁（2026-09-23 真机端到端抓到，单测直接调 gate 看不见）。
-    # 也不需要：`remember()` 已经更新了项目级解析缓存，全局链条的缓存与项目决策无关。
+    # 上面判过的「项目记录允许自动换」在写入锁里再判一次：判完到写之间用户的显式选择（设置里挑了一个 /
+    # 点了「改回」）可能刚落地，不许被这条自动决策盖掉（ADR 0079 §四：用户决定过的一个都不碰）
+    if not projectenv.remember(
+        project,
+        entry["python"],
+        automatic=True,
+        trigger=TRIGGER_USER_ENVIRONMENT,
+        health=entry,
+        only_if=_record_allows_auto_adopt,
+    ):
+        return None
+    # 不调 `pool.reset_worker_python()`：`remember()` 已经更新了项目级解析缓存，全局链条的缓存与项目
+    # 决策无关。（以前这里跑在持有 `pool._lock` 的 `_new_worker()` 里，再拿锁就是死锁——2026-09-23 真机
+    # 抓到；现在 `pool.acquire()` 在锁外、起会话之前调它，但仍没有理由去碰全局缓存。）
     LOG.info("缺包：自动改用用户环境 %s（%s）", entry["python"], entry.get("source"))
     for listener in list(_adoption_listeners):
         try:
@@ -3524,20 +3571,50 @@ def _preparation_offer(project: str | Path, script: str) -> tuple[dict, list[dic
     return offer, user_envs
 
 
-def gate(project: str | Path, script: str) -> dict | None:
-    """起会话前的门：计划 `ready`、还有轮次、用户没说过「直接跑」→ 回载荷（调用方据此不起会话）；
-    否则 None（放行）。"""
+def _gate_open(root: str, script: str) -> bool:
+    """门还问不问（没轮次了 / 用户说过「直接跑」就不问，也不替它换环境）。"""
+    return rounds_remaining(root, script) > 0 and not preparation_skipped(root, script)
+
+
+def decide_environment(project: str | Path, script: str) -> dict | None:
+    """「换不换解释器」的**唯一一处**决定（ADR 0079 §四）：缺包且有装齐的用户环境、此刻的解释器又是
+    机器替用户挑的，就把它记成本项目的自动决策；回采用的那一条（`userenvs.evaluate` 的形状），不换回 None。
+
+    **必须在「解析解释器」之前调**，它之后的一切都读决定之后的世界：准备计划的快照（`preparation.plan_for`：
+    解释器、LaunchContext、环境事实——否则 `_stale_reason` 拿旧快照比新决策，第一次准备就以
+    `preparation_plan_stale` 收场）与起会话前的租约检查（`pool.acquire` 经 `pool.ENVIRONMENT_DECIDERS`：
+    否则 `is_mutating` 查的是旧解释器，worker 却起在刚换上、可能正被装包的那一个上）。以前这件事藏在
+    `gate()` 里、门又跑在快照与租约检查之后——两条 Codex #522 P1 是同一个顺序错误。
+
+    工作目录还要先问时不决定：那道门排在依赖门前面，没答之前不起会话，也就轮不到换环境。"""
     root = str(Path(project))
-    if rounds_remaining(root, script) <= 0 or preparation_skipped(root, script):
+    if not _gate_open(root, script):
+        return None
+    if workdir.decision_for(root, script)["needs_confirmation"]:
         return None
     got = _preparation_offer(root, script)
     if got is None:
         return None
     offer, user_envs = got
+    if offer["plan"]["status"] != depplan.STATUS_READY:
+        return None
+    return _auto_adopt(root, offer, user_envs)
+
+
+def gate(project: str | Path, script: str) -> dict | None:
+    """起会话前的门：计划 `ready`、还有轮次、用户没说过「直接跑」→ 回载荷（调用方据此不起会话）；
+    否则 None（放行）。
+
+    门**只读**，不换解释器：换不换在 `decide_environment()` 里、在解析解释器之前已经决定过了——决定换了，
+    这里按新解释器算出来的计划就是 `nothing_needed`，自然放行。"""
+    root = str(Path(project))
+    if not _gate_open(root, script):
+        return None
+    got = _preparation_offer(root, script)
+    if got is None:
+        return None
+    offer, _user_envs = got
     if offer["plan"]["status"] == depplan.STATUS_READY:
-        if _auto_adopt(root, offer, user_envs) is not None:
-            # 已改用装齐了的用户环境：放行，紧接着起的 worker 自己解析到它（`resolve_worker_python` 第 3 条）
-            return None
         return offer
     # 干净机器：什么都不缺也没有解释器可跑——环境（含私有 Python）本身就是要授权的东西。判据是
     # `clean_machine`，不是有没有下载载荷：私有 Python 被别的项目供应过之后本项目照样一个解释器都没有、
@@ -3564,3 +3641,4 @@ def _spawn_gate(figures_dir: str, script_name: str) -> None:
 
 
 pool.register_spawn_gate(_spawn_gate)
+pool.register_environment_decider(decide_environment)

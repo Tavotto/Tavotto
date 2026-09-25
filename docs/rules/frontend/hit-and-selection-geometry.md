@@ -62,4 +62,58 @@
   命中/框选按**线本身**不按 bbox 空白矩形、选中/hover 沿线描示无矩形外框、
   拖端点 shift 锁 15°、整体拖 shift 锁水平/垂直/45°（分数坐标锁角必须换算到
   内容像素系）；图内文字/子图拖动同样有 shift 锁向，画布对象拖动可吸附图内
-  元素中心线（elementSnapCandidates）。
+  元素中心线（elementSnapCandidates）。纯箭头注释（`annotate("", …)`）同样出端点、
+  同一套交互（引擎侧见 `docs/rules/backend/axes-and-artist-families.md`）。
+- **拖形状带着装在里面的内容走（2026-09-24，用户的流程图：拖框时框里的字与连着框的
+  箭头留在原地）**。判据只有 `lib/elementGeom.patchContents` 一处，纯几何、只读权威
+  manifest（`exactPanelManifest`）与文档：
+  * 文字与形状（`role` 为 `text` / `patch`、可拖）的包围盒（权威 manifest 的；权威在时它与
+    文档 overrides 逐字一致，不存在「override 已写、几何未回」要补位移的状态）完全落在容器框里、
+    且**面积比容器小**——整体平移；嵌套的框因此带着自己的字走，
+    拖外层虚线框 = 搬整个模块。「比容器小」挡的是一样大的两个框（阴影、叠放）互相带着走；
+  * 箭头（有 `arrow_endpoints`）按**端点**判：落在框里的那一端跟着走、两端都在则整根
+    平移——连着两个框的箭头拖其中一个时被拉长，而不是被扯走；
+  * 两条都带 `PATCH_CARRY_TOL_PT`（3pt）容差：annotate 的端点是未扣 shrinkA / shrinkB
+    （默认 2pt）的锚点，脚本常把它写在框的名义边上、画出来的圆角框又多一圈 pad；
+  * 锁定（`lockedGids`）与隐藏的不动；多选整组拖动时选区里的形状同样带着内容走，已在
+    选区里的按选区位移、不重复算。
+  每件内容写**它自己的**那条 override（`pos_frac` / `endpoints_frac`，值 = 当前值 + 位移），
+  与子图拖动的 `axesCompanions` 同一个办法：文档里仍是普通 override，重放、写回、撤销都
+  不需要新机制；连同形状自己进**同一次** `setOverrides`（一条撤销、一次渲染）。预览：
+  整体平移的内容平移 SVG 组，只有一端跟随的箭头形状变了、画覆盖层虚线
+  （`svgPreviewStore.previewLine`：**挂在预览平面上**，与 SVG 预览同一个账本、同一套收尾——
+  松手后留着，权威渲染换上来 / 取消 / 被顶掉时才消失；挂在交互状态上的话 `end()` 一收它就没了，
+  慢图上旧箭头会先露出来，#553 评审）。覆盖层上它由 `OverlaySvg` 的 `PreviewLines` 画，**在几何权威
+  闸门之外**：松手提交后 overrides 已变、新渲染没回来时 `useExactPanelManifest` 是 null，
+  `ElementBoxes` 整个不画，虚线若在里面照样会先消失；换算只用面板与视口，不读 manifest。
+  也**不挂在图内编辑态上**：那段时间点一下别的对象 `elementPanelId` 就清掉了，而预览账本
+  还在——画哪块面板按 `usePreviewLinePanels`（持有预览线的面板）定。面板被**隐藏 / 删掉**时它的
+  PanelView 卸载、`reattachPreview` 再也收不到这份预览，所以 `OverlaySvg` 按文档状态（不挂在某个
+  动作上）在 layout effect 里 `discardPanelPreview`：账本整份作废、会话收尾，再显示时从新 SVG 重来。
+  **出口是按住 ⌘ / Ctrl = 只拖它自己**——与拖动时临时关吸附同一个修饰键、同一种语义
+  （关掉那个聪明的默认行为），⇧ 锁向、⌥ 轮换各有所属；拖动途中随时按下 / 松开都算，
+  松手以最后一帧为准。它**推翻**了 #472 时「拖框不带字——要一起走用多选」的约定：
+  那条约定下流程图每挪一个框要先圈上框、字、两头的箭头，而箭头还只能整根走。
+  看护 `canvas/patchCarryDrag.test.tsx`。
+- **图内拖动的吸附**（2026-09-25，用户：拖「Vacuum」吸不到「Superconductor」、轴标题也不吸）：
+  图内文字 / 轴标题 / 图例 / 子图的整体拖动与多选整组平移都吸附，候选线唯一出处
+  `lib/elementGeom.inFigureSnapCandidates`——别的**可对齐**元素（`isAlignable`，与多选对齐
+  同一判据）墨迹框的左中右 / 上中下 + 整图四边与中线，换算到页面 mm 后与画布对象层
+  **同一把容差**（`snapTolMm`）、**同一套参考线**（`interactionStore.setSnap`）。
+  规则：① 取的是**权威** manifest（旧框会吸到旧位置）；② 被拖元素、它的**后代**与随行
+  元素不出线（`interactions.underAny`）——只排除自身不够，子图自己的标题离它的边往往就
+  一两个像素，会把一起动的东西吸走（`inFigureDrag.test` 有精确变异）；③ 三线里**离得
+  最近**的那条胜出（`geometry.snapMoveNearest`；画布层的 `snapMove` 按顺序取第一条，图内
+  元素挨得近，按顺序取会让左边先吸到不相干的线上）；④ ⌘ / Ctrl、吸附总开关、「吸附到
+  对象」任一关掉就不吸；shift 锁成水平 / 垂直时只在仍在走的那一轴上吸，锁成 45° 时修正沿锁定
+  方向投影（两轴里走得少的那条胜出，另一轴按比例跟着动，#575 评审）；⑤ 面板旋转 / 翻转时
+  不吸（与混排对齐同一取舍）；⑥ 吸附只改位移，写法不变（仍是一条 pos_frac / position）。
+  缩放手柄不吸。看护：`canvas/inFigureDrag.test.tsx`。
+- **子图的随行元素跟着一切平移手势走**（2026-09-25，用户：挪过「(a)」再拖主图，标签
+  有时不跟）：被手动摆过的后代（带 pos_frac / loc_frac / endpoints_frac）与 manifest
+  点名的随行 axes（`follow_gids`：色条、孪生轴），单个子图拖动由 `axesCompanions` 带着走；
+  **多选整组平移**以前只写选中的那几条 position——先点主图、⇧ 点色条一起拖正是最自然的
+  操作，于是标签「有时跟、有时不跟」。现在整组平移经 `elementGeom.companionPatchesFor`
+  补上同一批随行改动（已在选区里的 (gid, prop) 不重复写），预览期色条这类平级 `<g>`
+  单独跟手。缩放（单个 / 成组）仍然不带随行元素——该缩到哪里没有可信答案（原有取舍，
+  `axesCompanionDrag.test` 钉着）。看护：`canvas/axesCompanionDrag.test.tsx`。

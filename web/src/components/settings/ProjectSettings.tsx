@@ -97,7 +97,7 @@ export function ProjectSettings() {
           size="sm"
           onClick={() => {
             useUiStore.getState().setSettingsOpen(false)
-            useProjectStore.setState({ phase: 'none' }) // Picker 接管；可从最近项目回来
+            useProjectStore.getState().showPicker() // Picker 接管；可从最近项目回来
           }}
         >
           {st('project.switch')}

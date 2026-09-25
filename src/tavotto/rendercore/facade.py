@@ -47,7 +47,7 @@ from .hbshaper import CandidatePackagesMissing, HbFaceProvider
 from .ir import hex2rgb, mm2pt
 from .preview import PreviewCache
 from .renderhost import RenderHost
-from .sources import FingerprintMemo, FrozenSource, SourceError
+from .sources import FingerprintMemo, FrozenSource, SourceError, static_artifact
 from .typography import CANVAS_TEXT_FAMILIES, COVERAGE_MAX_CP
 
 #: 「这个实现此刻不可用」的异常（依赖包 / 批准字体不在）。契约层 `pdfbackend.is_backend_unavailable()`
@@ -347,8 +347,6 @@ class _PathResolver:
         self.paths: dict[str, Path] = {}
 
     def resolve(self, obj: dict) -> FrozenSource:
-        from ..engine import figcapture
-
         oid = str(obj.get("id", ""))
         path = self.paths.get(oid)
         if path is None:
@@ -360,10 +358,7 @@ class _PathResolver:
             raise SourceError(
                 "source_kind_unsupported", f"{oid}: {kind!r} 不是可放置的源", {"figure": oid}
             )
-        art = figcapture.source_artifact_from_file(
-            path, source_id=oid, origin=figcapture.ORIGIN_STATIC
-        )
-        return FrozenSource(artifact=art, path=Path(path))
+        return FrozenSource(artifact=static_artifact(Path(path), oid), path=Path(path))
 
 
 class Canvas:
@@ -515,12 +510,9 @@ def compose(page_w_mm: float, page_h_mm: float, transparent: bool = False) -> Ca
 # 按原图导出（scope=original）
 # ---------------------------------------------------------------------------
 def _file_resource(path: Path, source_id: str) -> tuple[str, ir.FileResource, bytes]:
-    from ..engine import figcapture
-
+    # 与面板解析器同一处：0 字节报结构化的 source_unreadable（why=empty），不漏 ValueError 原文（#517）
+    art = static_artifact(Path(path), source_id)
     data = Path(path).read_bytes()
-    art = figcapture.source_artifact_from_file(
-        path, source_id=source_id, origin=figcapture.ORIGIN_STATIC
-    )
     key = f"file:{art.bytes_sha256[:16]}:{art.semantic_identity()[7:23]}"
     res = ir.FileResource(
         source_id=art.source_id,

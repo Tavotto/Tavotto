@@ -62,6 +62,7 @@
     "typeRaster": "图片",
     "typeRuntime": "运行时图",
     "typeScript": "可编辑",
+    "unsupportedTitle": "以下文件无法使用",
     "usedChip": "已使用",
     "usedOnly": "已使用",
     "usedOnlyAria": "仅显示当前文档用到的素材",
@@ -271,6 +272,7 @@
     "switchKind": "改为{{name}}",
     "switchKindCount": "把 {{count}} 个对象改为{{name}}",
     "resizeAxes": "缩放 {{count}} 个子图",
+    "scaleLegend": "缩放图例",
     "resizeObjects": "缩放对象",
     "restoreAspect": "恢复原始比例",
     "restoreNativeSize": "恢复原始尺寸",
@@ -432,7 +434,8 @@
     "problems": "问题",
     "problemsCount_other": "问题 · {{count}}",
     "readiness": "项目接入状态",
-    "settings": "设置"
+    "settings": "设置",
+    "workspace": "工作区"
   },
   "readiness": {
     "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅排版。",

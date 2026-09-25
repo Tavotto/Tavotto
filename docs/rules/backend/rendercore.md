@@ -34,7 +34,9 @@
   不跑脚本（RC-019）；带 override / runtime 素材抛 `source_needs_execution`（U08 接 worker + 回执，
   RC-017：绝不拿 materialized cache 冒充）；`read_frozen()` 在读字节那一刻核 sha256，不符就是
   `source_changed`（RC-014）。同一张图两套 override = 两条资源（key 含字节 hash + 语义身份），
-  不按 stem 串用（RC-015）。不复制脚本 / 实验数据到 staging。
+  不按 stem 串用（RC-015）。不复制脚本 / 实验数据到 staging。**它不经 `app.safe_resolve`**（包含检查与存在性
+  自己做），所以 app 层的 `_StaticInProject` 在它返回之后补 TIFF 支持范围那道闸（`tiffprobe.check`，issue #534）
+  ——范围只有一处判据，两个后端都在它后面，见 `project-system.md`。
 - **身份不另造**：`plan.compile_plan()` 的 `plan_identity` 就是 U01 的 `exportreq.render_plan_ref()`
   （04 §3 三种身份不混）；`FileResource.semantic_identity` 是 `SourceArtifact.semantic_identity()`。
 - **Arrow / Shape 编译成 `Path`**（`geometry`，框空间 y 向下 + 一个 `Group.transform`）；
@@ -69,7 +71,7 @@
   ——**不再自己转、自己乘**（RC-039：恰好一次）；资源随 form 各自一份，同名 /F1 / /X1 互不相干（RC-043），同一 (资源 key, 页)
   只搬一次（按字节身份去重，绝不按名字）。面板 opacity < 1 是**透明组**（组内 alpha 从 1 起算，RC-041），镜像是 `cm` 里的
   负缩放（RC-040）——两者都仍是矢量、文字层在；`opacity: 0` 是取值不是缺席（RC-042）。注释 / 动作 / JavaScript 不进产物，
-  要密码 / 坏文件 / 缺页以 `source_unreadable` 拒绝（RC-046；只有 owner 密码的按普通 PDF 导入，#516），不画空框。**源的编码原样照搬**（ADR 0077）：单段带过滤器的内容流
+  要密码 / 坏文件 / 缺页以 `source_unreadable` 拒绝（RC-046；只有 owner 密码的按普通 PDF 导入，#516），0 字节的源在解析时就报 `source_unreadable`（`why=empty`，`sources.static_artifact` 一处，#517），不画空框。**源的编码原样照搬**（ADR 0077）：单段带过滤器的内容流
   直接用源的已编码字节（`_keep_source_encoding`，解码后与 Form 明文逐字节相同才换）；保存**不交给** qpdf 的 `compress_streams`
   （它会把带 predictor 的 Flate 图片流解码重压），只压确实没有过滤器的流（`_compress_unfiltered` → `deflate.zlib_compress`，
   XMP /Metadata 保持明文）。

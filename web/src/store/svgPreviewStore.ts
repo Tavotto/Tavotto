@@ -24,6 +24,7 @@
  *    连着拖两个元素时，第二次 begin 不能把第一次的预览位移当成 base
  *    （那会双倍位移，而且第一个元素的预览会在权威渲染回来之前弹回去）。
  */
+import { useSyncExternalStore } from 'react'
 import { perfSpan } from '@/perf/core'
 import {
   adapterFor,
@@ -83,10 +84,19 @@ interface PanelPreview {
   baseNodes: Map<string, Element>
   /** gid → 当前预览位移（figure 分数、y 向下） */
   transforms: Map<string, [number, number]>
+  /** gid → 当前预览缩放（倍数 + figure 分数的不动点）；只有图例整体缩放写它 */
+  scales: Map<string, PreviewScale>
   /** 样式改动的可逆账本（每个元素只记最早那次的整条 style 原文） */
   edits: StyleEdit[]
   /** `gid|prop` → 当前预览值，供重新挂载时重放 */
   styles: Map<string, PreviewPatch & { role: string }>
+  /**
+   * gid → 覆盖层上的预览线（figure 分数、y 向下）：拖形状时只有一端跟随的箭头
+   * 形状变了、SVG 平移会骗人，改画一条虚线。它是**预览平面的一部分**，与这一版
+   * SVG 同生共死——松手后留着，直到权威渲染换上来（或取消 / 被顶掉时还原）才消失；
+   * 挂在交互状态上的话 `end()` 一收它就没了，慢图上旧箭头会先露出来。
+   */
+  lines: Map<string, { a: [number, number]; b: [number, number] }>
   sizeMm: readonly number[] | undefined
 }
 
@@ -198,10 +208,13 @@ function panelStateFor(
     baseTransforms: new Map(),
     baseNodes: new Map(),
     transforms: new Map(),
+    scales: new Map(),
     edits: [],
     styles: new Map(),
+    lines: new Map(),
     sizeMm,
   }
+  if (cur?.lines.size) bumpLines()
   panels.set(panelId, next)
   return next
 }
@@ -273,10 +286,107 @@ export function previewTransformOf(panelId: string, gid: string): [number, numbe
   return panels.get(panelId)?.transforms.get(gid) ?? null
 }
 
+/* ---- 覆盖层预览线（订阅式：OverlaySvg 要跟着重画）---- */
+let linesVersion = 0
+const lineListeners = new Set<() => void>()
+
+function bumpLines(): void {
+  linesVersion++
+  for (const fn of lineListeners) fn()
+}
+
+/** 面板的预览账本整份作废（还原 / 权威换上来 / 版本换了）：连同预览线一起 */
+function dropPanel(panelId: string): void {
+  const had = !!panels.get(panelId)?.lines.size
+  panels.delete(panelId)
+  if (had) bumpLines()
+}
+
+const NO_LINES: ReadonlyMap<string, { a: [number, number]; b: [number, number] }> = new Map()
+
+/** 某个面板当前挂着的预览线（没有就是一个共享的空表） */
+export function previewLinesOf(
+  panelId: string,
+): ReadonlyMap<string, { a: [number, number]; b: [number, number] }> {
+  return panels.get(panelId)?.lines ?? NO_LINES
+}
+
+const subscribeLines = (fn: () => void) => {
+  lineListeners.add(fn)
+  return () => {
+    lineListeners.delete(fn)
+  }
+}
+
+/** 覆盖层订阅：预览线一变（含整份作废）就重画 */
+export function usePreviewLines(
+  panelId: string,
+): ReadonlyMap<string, { a: [number, number]; b: [number, number] }> {
+  useSyncExternalStore(subscribeLines, () => linesVersion)
+  return previewLinesOf(panelId)
+}
+
+/**
+ * 此刻挂着预览线的面板（按预览账本，不按「图内编辑态是哪块面板」）。松手后、权威渲染
+ * 回来之前用户点了别的对象，`elementPanelId` 被清掉，而这块面板上的预览账本还在——
+ * 覆盖层必须照这张表画，不能跟着编辑态走。
+ */
+export function usePreviewLinePanels(): string[] {
+  const v = useSyncExternalStore(subscribeLines, () => linesVersion)
+  void v
+  return [...panels].filter(([, p]) => p.lines.size).map(([id]) => id)
+}
+
+/**
+ * 设 / 清一条预览线（`ends = null` 清掉）；无 session 时是 no-op。
+ * 与 `previewTransform` 同一个账本，所以同一套收尾：提交后留到权威渲染换上来。
+ */
+export function previewLine(
+  gid: string,
+  ends: { a: [number, number]; b: [number, number] } | null,
+): void {
+  if (!session || session.settled) return
+  const p = panels.get(session.panelId)
+  if (!p) return
+  if (ends) p.lines.set(gid, ends)
+  else if (!p.lines.delete(gid)) return
+  bumpLines()
+}
+
+/** 此刻有预览账本的面板（快照，不订阅） */
+export function previewPanelIds(): string[] {
+  return [...panels.keys()]
+}
+
+/**
+ * 面板被隐藏（或删掉）：它的预览账本整份作废，会话若挂在它上面一并收尾。
+ *
+ * 隐藏时 ObjectView 卸载 PanelView，`reattachPreview` 的 effect 再也不会为这版 SVG 跑——
+ * 松手后在等权威渲染的那份预览没人收，而覆盖层按账本画的预览线会悬在一块看不见的面板
+ * 上（#553 评审）。DOM 已随 PanelView 卸掉，这里只清账：再显示时从新 SVG 重来，没有残留。
+ * 不在账上的面板是 no-op。
+ */
+export function discardPanelPreview(panelId: string): void {
+  if (session?.panelId === panelId) {
+    recordDiagnosticEvent({
+      type: 'preview.retire',
+      session: previewHash(session.id),
+      panel: panelHash(panelId),
+      reason: 'reset',
+      duration_ms: Math.max(0, Math.round((performance?.now?.() ?? Date.now()) - session.startedAt)),
+    })
+    session.settled = true
+    session = null
+  }
+  if (panels.has(panelId)) restorePanel(panelId)
+}
+
 /** 测试与切项目用：清干净，不碰 DOM（DOM 由 React 自己收） */
 export function resetPreview(): void {
   session = null
+  const hadLines = [...panels.values()].some((p) => p.lines.size)
   panels.clear()
+  if (hadLines) bumpLines()
   pending.clear()
   if (rafId != null) cancelRaf(rafId)
   rafId = null
@@ -297,15 +407,29 @@ function restorePanel(panelId: string): void {
     else node.setAttribute('transform', base)
   }
   restoreStyleEdits(p.edits)
-  panels.delete(panelId)
+  dropPanel(panelId)
 }
 
 /* -------------------------------------------------------------------------- */
 /*  逐帧写 DOM（rAF 合并）                                                     */
 /* -------------------------------------------------------------------------- */
 
+/** 绕不动点 (ox, oy)（figure 分数、y 向下）等比缩放 s 倍 */
+export interface PreviewScale {
+  s: number
+  ox: number
+  oy: number
+}
+
 type PendingOp =
-  | { kind: 'transform'; panelId: string; gid: string; dfx: number; dfy: number }
+  | {
+      kind: 'transform'
+      panelId: string
+      gid: string
+      dfx: number
+      dfy: number
+      scale?: PreviewScale
+    }
   | { kind: 'style'; panelId: string; gid: string; role: string; prop: string; value: unknown }
 
 const pending = new Map<string, PendingOp>()
@@ -351,6 +475,8 @@ function writeTransform(op: Extract<PendingOp, { kind: 'transform' }>): void {
   const svg = findPanelSvg(op.panelId)
   const node = findGidNode(svg, op.gid)
   p.transforms.set(op.gid, [op.dfx, op.dfy])
+  if (op.scale) p.scales.set(op.gid, op.scale)
+  else p.scales.delete(op.gid)
   if (!node) return // gid 在 SVG 里不存在：覆盖层预览接管，这里安静退出
   if (!p.baseTransforms.has(op.gid)) {
     p.baseTransforms.set(op.gid, node.getAttribute('transform'))
@@ -361,8 +487,17 @@ function writeTransform(op: Extract<PendingOp, { kind: 'transform' }>): void {
   const tx = op.dfx * vb[0]
   const ty = op.dfy * vb[1]
   // **永远从 base 现算**：`translate(…) <原始>` 让平移落在父坐标系里，
-  // matplotlib 自己的 scale/translate（`<image>` 上就有）原样保留
-  node.setAttribute('transform', base ? `translate(${tx},${ty}) ${base}` : `translate(${tx},${ty})`)
+  // matplotlib 自己的 scale/translate（`<image>` 上就有）原样保留。
+  // 带缩放时写成绕不动点的 matrix（同样落在父坐标系、同样前置于原始变换）
+  const own = op.scale
+    ? (() => {
+        const { s: k, ox, oy } = op.scale
+        const e = ox * vb[0] * (1 - k) + tx
+        const f = oy * vb[1] * (1 - k) + ty
+        return `matrix(${k},0,0,${k},${e},${f})`
+      })()
+    : `translate(${tx},${ty})`
+  node.setAttribute('transform', base ? `${own} ${base}` : own)
 }
 
 function writeStyle(op: Extract<PendingOp, { kind: 'style' }>): void {
@@ -396,6 +531,54 @@ function viewBox(svg: SVGSVGElement | null): [number, number] {
 export function previewTransform(gid: string, dfx: number, dfy: number): void {
   if (!session || session.settled) return
   schedule(`t:${gid}`, { kind: 'transform', panelId: session.panelId, gid, dfx, dfy })
+}
+
+/**
+ * 把已提交、还在等权威渲染的预览**改挂**到另一版 SVG 上：账本换成 `baseKey` 那一版、
+ * 只留 `translate` 里的平移，等待目标改成 `awaitKey`。
+ *
+ * 用处（图例整体缩放钉对角）：第一版成图到了，实测对角偏了 δ——这一版的图例大小
+ * 是对的，只差位置。在它换进 DOM **之前**改挂上一个 δ 的平移、改等补正后的那一版，
+ * 画面就从预览直接过渡到终态，中间那一版的偏差用户看不见。必须在渲染 store 的
+ * 同步回调里调用（早于 React 换 DOM），`reattachPreview` 会在新 DOM 上重放它。
+ * 没有同一面板的在途会话时返回 false。
+ */
+export function retargetPreview(
+  panelId: string,
+  baseKey: string,
+  translate: Record<string, [number, number]>,
+  awaitKey: string,
+): boolean {
+  if (!session || session.panelId !== panelId || session.settled || session.cancelled) return false
+  const p = panels.get(panelId)
+  if (!p) return false
+  p.renderKey = baseKey
+  p.baseTransforms.clear()
+  p.baseNodes.clear()
+  p.transforms = new Map(Object.entries(translate))
+  p.scales.clear()
+  p.edits = []
+  p.styles.clear()
+  session.awaitKey = awaitKey
+  return true
+}
+
+/**
+ * 等比缩放预览：绕不动点 (ox, oy)（figure 分数、y 向下）放大 s 倍。只给图例整体
+ * 缩放用——图例的字号、边距、行距、示意线长度按同一个倍数走（见
+ * `lib/legendScale`），画出来几乎就是线性缩放；子图缩放**不**用它（matplotlib
+ * 重排后刻度和字号不跟着线性缩放，假预览会骗人）。
+ */
+export function previewScale(gid: string, s: number, ox: number, oy: number): void {
+  if (!session || session.settled) return
+  schedule(`t:${gid}`, {
+    kind: 'transform',
+    panelId: session.panelId,
+    gid,
+    dfx: 0,
+    dfy: 0,
+    scale: { s, ox, oy },
+  })
 }
 
 /**
@@ -454,14 +637,14 @@ export function reattachPreview(panelId: string, renderKey: string): void {
       reason: 'committed',
       duration_ms: Math.max(0, Math.round((performance?.now?.() ?? Date.now()) - s.startedAt)),
     })
-    panels.delete(panelId)
+    dropPanel(panelId)
     session = null
     return
   }
   if (!p) return
   if (p.renderKey !== renderKey) {
     // 已经不是预览挂靠的那一版：DOM 节点全换了，账本里的引用都是野的
-    panels.delete(panelId)
+    dropPanel(panelId)
     if (s) session = null
     return
   }
@@ -475,7 +658,7 @@ export function reattachPreview(panelId: string, renderKey: string): void {
   p.baseNodes.clear()
   p.edits = []
   for (const [gid, [dfx, dfy]] of p.transforms) {
-    writeTransform({ kind: 'transform', panelId, gid, dfx, dfy })
+    writeTransform({ kind: 'transform', panelId, gid, dfx, dfy, scale: p.scales.get(gid) })
   }
   for (const st of p.styles.values()) {
     writeStyle({ kind: 'style', panelId, gid: st.gid, role: st.role, prop: st.prop, value: st.value })

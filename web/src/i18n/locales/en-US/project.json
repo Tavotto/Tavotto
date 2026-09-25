@@ -81,19 +81,37 @@
     "tutorialUnavailable": "The tutorial resources are incomplete. Reinstall Tavotto."
   },
   "switcher": {
-    "allProjects": "All projects…",
-    "browse": "Browse folder…",
-    "create": "New project…",
-    "current": "Current project",
     "newTabLabel": "Open in a new tab",
     "newTabTip": "Open in a new tab. Switch to another project there.",
-    "openInNewTab": "Open this project in a new tab",
-    "opened": "Open",
+    "trigger": "Current project {{name}} — click to switch"
+  },
+  "workspace": {
+    "current": "Current",
+    "currentActions": "More actions for the current project",
+    "emptyRecent": "Projects you open will show up here",
+    "filter": "Filter by name or path",
+    "filterLabel": "Filter projects",
+    "listLabel": "{{section}} projects",
+    "moveDown": "Move down",
+    "moveUp": "Move up",
+    "newProject": "New project…",
+    "noMatch": "No matching projects",
+    "openFolder": "Open folder…",
+    "openInNewTab": "Open in a new tab",
+    "openedElsewhere": "Open",
+    "pin": "Bookmark",
+    "pinLabel": "Bookmark {{name}}",
+    "pinned": "Bookmarked",
     "readOnlySuffix": " · read-only",
     "recent": "Recent",
     "registry": "Project readiness…",
+    "removeFromList": "Remove from recent",
+    "removeMissing_one": "Remove {{count}} missing project",
+    "removeMissing_other": "Remove {{count}} missing projects",
+    "rowActions": "More actions for {{name}}",
     "scriptCount_one": "{{count}} linked script",
     "scriptCount_other": "{{count}} linked scripts",
-    "trigger": "Current project {{name}} — click to switch"
+    "unpin": "Remove bookmark",
+    "unpinLabel": "Remove bookmark for {{name}}"
   }
 }

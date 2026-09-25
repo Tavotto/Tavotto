@@ -95,6 +95,63 @@ export function elementSnapCandidates(
   return { xs, ys }
 }
 
+/**
+ * 图内拖动的吸附候选线（页面 mm）：别的元素墨迹框的左 / 中 / 右与上 / 中 / 下，
+ * 外加整张图的四边与中线。「Vacuum 与 Superconductor 左对齐」「两个子图的 x 轴
+ * 标题齐平」「图例居中」都靠它。
+ *
+ * - `moving(gid)` 为真的元素不出线（被拖的那个、它的后代与随行元素——它们
+ *   跟着一起动，吸到它们身上等于吸到自己）；
+ * - 只取有版面意义的元素（与多选对齐同一判据 `isAlignable`），位图代理跳过
+ *   （它的框就是宿主子图的框）；独立箭头是线不是块，跳过；
+ * - 必须传**权威** manifest：拿到的是墨迹框，上一版的框会吸到旧位置上；
+ * - 面板带旋转 / 翻转时返回 null（分数坐标与页面轴不再平行，与混排对齐同一取舍）。
+ */
+export function inFigureSnapCandidates(
+  panel: PanelObject,
+  manifest: Manifest,
+  moving: (gid: string) => boolean,
+): { xs: number[]; ys: number[] } | null {
+  if (panelRotation(panel) || panel.flipH || panel.flipV) return null
+  const full = panelFullRect(panel)
+  const xs: number[] = []
+  const ys: number[] = []
+  const push = (b: Rect4) => {
+    xs.push(full.x + b[0] * full.w, full.x + (b[0] + b[2] / 2) * full.w, full.x + (b[0] + b[2]) * full.w)
+    ys.push(full.y + b[1] * full.h, full.y + (b[1] + b[3] / 2) * full.h, full.y + (b[1] + b[3]) * full.h)
+  }
+  push([0, 0, 1, 1])
+  for (const el of manifest.elements) {
+    if (!isAlignable(el) || isElementHidden(el) || el.arrow_endpoints || el.geom_gid) continue
+    if (moving(el.gid)) continue
+    const box = elementBoxOf(panel, el)
+    if (box && box[2] > 0 && box[3] > 0) push(box)
+  }
+  return { xs, ys }
+}
+
+/**
+ * 元素此刻的框（figure 分数、top-origin）：子图取 position（请求空间，与对齐同源），
+ * 文字 / 图例取墨迹框并跟着未渲染回来的锚点平移。
+ */
+export function elementBoxOf(panel: PanelObject, el: ManifestElement): Rect4 | null {
+  if (el.resizable && !el.geom_gid) {
+    const pos = positionOf(panel, el)
+    return pos ? flipY(pos) : null
+  }
+  const anchor = anchorOf(panel, el)
+  if (anchor && el.anchor) {
+    return [el.bbox[0] + anchor[0] - el.anchor[0], el.bbox[1] + anchor[1] - el.anchor[1], el.bbox[2], el.bbox[3]]
+  }
+  return [el.bbox[0], el.bbox[1], el.bbox[2], el.bbox[3]]
+}
+
+/** 分数坐标框 → 页面 mm 矩形（面板未旋转 / 未翻转时） */
+export function fracBoxToMm(panel: PanelObject, b: Rect4): { x: number; y: number; w: number; h: number } {
+  const full = panelFullRect(panel)
+  return { x: full.x + b[0] * full.w, y: full.y + b[1] * full.h, w: b[2] * full.w, h: b[3] * full.h }
+}
+
 /** 承载 position override 的 manifest entry（位图 → 宿主 axes） */
 export function geomTarget(
   manifest: Manifest | null | undefined,
@@ -327,7 +384,29 @@ export function axesCompanions(
   }
 
   // 宿主与随行 axes 底下、被用户挪过位置的后代
-  const roots = [axesGid, ...followGids]
+  for (const d of movedDescendants(panel, [axesGid, ...followGids])) {
+    out.push({
+      gid: d.gid,
+      // 后代嵌在所属 axes 的 <g> 里，那个组一平移它们已经跟着动了
+      previewsSeparately: false,
+      shift: (dfx, dfy) => ({
+        gid: d.gid,
+        prop: d.prop,
+        // pos_frac/loc_frac 是 [x, y]，endpoints_frac 是 [ax, ay, bx, by]，
+        // 都是 top-origin：位移直接加
+        value: d.nums.map((n, i) => round4(n + (i % 2 === 0 ? dfx : dfy))),
+      }),
+    })
+  }
+  return out
+}
+
+/** 某些 axes 底下、带着 figure 锚定 override（被用户手动摆过）的后代 */
+function movedDescendants(
+  panel: PanelObject,
+  roots: readonly string[],
+): { gid: string; prop: string; nums: number[] }[] {
+  const out: { gid: string; prop: string; nums: number[] }[] = []
   for (const o of panel.overrides) {
     if (!FRAC_ANCHORED_PROPS.has(o.prop)) continue
     if (!roots.some((root) => o.gid.startsWith(`${root}.`))) continue
@@ -335,17 +414,170 @@ export function axesCompanions(
     if (!Array.isArray(v) || (v.length !== 2 && v.length !== 4)) continue
     const nums = v as number[]
     if (nums.some((n) => typeof n !== 'number' || !Number.isFinite(n))) continue
-    const { gid, prop } = o
+    out.push({ gid: o.gid, prop: o.prop, nums })
+  }
+  return out
+}
+
+/**
+ * 一批 `position` patch 之外，还应当随之写下的随行改动——改子图落位的**平移**手势
+ * 共用这一处（单个子图拖动的预览仍用 `axesCompanions` 逐个跟手，写入语义相同）。
+ *
+ * 2026-09-25 用户报：挪过「(a)」之后再拖子图，标签有时不跟。单个子图的平移一直
+ * 带着随行元素，可**多选整组平移**只写了选中的那几条 position——被挪过的标签身上
+ * 那条 figure 锚定 override 原地不动，于是「有时跟、有时不跟」，取决于用户当时是
+ * 单选还是多选（先点主图、再 ⇧ 点色条一起拖，正是最自然的操作）。
+ *
+ * 只处理**纯平移**（宽高不变）的 patch：随行 axes（色条、孪生轴）的 position 与宿主 /
+ * 随行 axes 底下被挪过的后代，一起加上同一个位移。尺寸变了的一律不带——与单个
+ * 子图缩放同一条取舍（`startAxesDrag`）：随行元素该缩到哪里没有可信答案。
+ *
+ * 已经在 `patches` 里的 (gid, prop) 不重复写：用户把标签和子图一起选中拖，标签
+ * 自己那条已经是对的。
+ */
+export function companionPatchesFor(
+  panel: PanelObject,
+  manifest: Manifest,
+  patches: readonly PanelOverride[],
+): PanelOverride[] {
+  const taken = new Set(patches.map((p) => `${p.gid}|${p.prop}`))
+  const out: PanelOverride[] = []
+  for (const p of patches) {
+    if (p.prop !== 'position' || !Array.isArray(p.value) || p.value.length < 4) continue
+    const el = manifest.elements.find((e) => e.gid === p.gid)
+    if (!el) continue
+    const from = positionOf(panel, el)
+    if (!from) continue
+    const to = (p.value as number[]).slice(0, 4)
+    if (Math.abs(from[2] - to[2]) > 1e-6 || Math.abs(from[3] - to[3]) > 1e-6) continue
+    // position 是 bottom-origin；随行元素的位移按 top-origin（y 向下）给
+    const dfx = to[0] - from[0]
+    const dfy = from[1] - to[1]
+    if (Math.abs(dfx) < 1e-9 && Math.abs(dfy) < 1e-9) continue
+    for (const c of axesCompanions(panel, manifest, p.gid)) {
+      const patch = c.shift(dfx, dfy)
+      const k = `${patch.gid}|${patch.prop}`
+      if (taken.has(k)) continue
+      taken.add(k)
+      out.push(patch)
+    }
+  }
+  return out
+}
+
+/**
+ * 「装在形状里」判据的容差（pt）。要盖住的是两处量出来的缝：annotate 箭头的端点
+ * 是**未扣 shrinkA / shrinkB**（默认 2pt）的锚点，而脚本常把锚点写在框的名义边上、
+ * 画出来的圆角框又多出一圈 pad；框里的字偶尔探出边框一点点也还是「框里的字」。
+ */
+export const PATCH_CARRY_TOL_PT = 3
+
+/** 拖动形状时跟着走的一件内容 */
+export interface CarriedItem {
+  gid: string
+  /**
+   * 箭头的哪几端跟着走（[尾, 头]）；文字 / 形状是整体平移，为 null。
+   * 两端都在 = 整根平移（预览照样平移 SVG）；只有一端 = 形状变了，预览画虚线。
+   */
+  ends: [boolean, boolean] | null
+  /** 位移后的箭头端点（figure 分数、y 向下）；非箭头为 null */
+  endpointsAt: (dfx: number, dfy: number) => [[number, number], [number, number]] | null
+  /** dfx/dfy 是内容分数位移，**y 向下**（与 contentDelta 的输出同一套） */
+  shift: (dfx: number, dfy: number) => PanelOverride
+}
+
+/**
+ * 元素的墨迹框，直接取 manifest。调用方给的必须是**几何权威**那一份
+ * （`exactPanelManifest`：lastPatches 与文档 overrides 逐字一致），所以不存在
+ * 「override 已写、几何还没回来」要补位移的状态——渲染挂起时拖动根本起不了手。
+ */
+const boxOf = (el: ManifestElement): Rect4 => [el.bbox[0], el.bbox[1], el.bbox[2], el.bbox[3]]
+
+/**
+ * 拖动形状（`role === 'patch'`）时装在它里面、该跟着走的内容（2026-09-24，用户的流程图：
+ * 拖框时框里的字与连着框的箭头留在原地）。判据纯几何，只看 manifest 与文档：
+ *
+ * - **文字与形状**：包围盒（带容差）完全落在某个容器的包围盒里、且面积比那个容器小
+ *   ——整体平移。嵌套的框因此带着自己的字一起走，拖外层虚线框 = 搬整个模块；
+ * - **箭头**（有 `arrow_endpoints` 的）：端点落在某个容器包围盒里（带容差）的那一端
+ *   跟着走，两端都在则整根平移——连着两个框的箭头拖其中一个框时被拉长，而不是被扯走。
+ *
+ * 每件内容写**它自己的**那条 override（pos_frac / endpoints_frac，值 = 当前值 + 位移），
+ * 文档里仍是普通 override：重放与写回不需要新机制（与 `axesCompanions` 同一个办法）。
+ * `exclude` 是已经在拖的（多选里的成员），锁定的元素不动（`lockedGids`）。
+ */
+export function patchContents(
+  panel: PanelObject,
+  manifest: Manifest,
+  containerGids: readonly string[],
+  exclude: ReadonlySet<string> = new Set(),
+): CarriedItem[] {
+  const byGid = new Map(manifest.elements.map((e) => [e.gid, e]))
+  const containers = containerGids
+    .map((g) => byGid.get(g))
+    .filter((e): e is ManifestElement => !!e && e.role === 'patch')
+    .map((e) => ({ gid: e.gid, box: boxOf(e) }))
+  if (!containers.length) return []
+  const locked = new Set(panel.lockedGids ?? [])
+  const [wMm, hMm] = manifest.size_mm
+  const tolPtMm = (PATCH_CARRY_TOL_PT * 25.4) / 72
+  const tx = wMm > 0 ? tolPtMm / wMm : 0
+  const ty = hMm > 0 ? tolPtMm / hMm : 0
+  const within = (p: [number, number], c: Rect4) =>
+    p[0] >= c[0] - tx && p[0] <= c[0] + c[2] + tx && p[1] >= c[1] - ty && p[1] <= c[1] + c[3] + ty
+  const area = (r: Rect4) => r[2] * r[3]
+
+  const out: CarriedItem[] = []
+  for (const el of manifest.elements) {
+    if (exclude.has(el.gid) || locked.has(el.gid) || isElementHidden(el)) continue
+    if (containers.some((c) => c.gid === el.gid)) continue
+
+    if (el.arrow_endpoints) {
+      const pts = arrowEndpointsOf(panel, el)
+      if (!pts || pts.length < 2) continue
+      const tail: [number, number] = [pts[0][0], pts[0][1]]
+      const head: [number, number] = [pts[1][0], pts[1][1]]
+      const ends: [boolean, boolean] = [
+        containers.some((c) => within(tail, c.box)),
+        containers.some((c) => within(head, c.box)),
+      ]
+      if (!ends[0] && !ends[1]) continue
+      const at = (dfx: number, dfy: number): [[number, number], [number, number]] => [
+        ends[0] ? [tail[0] + dfx, tail[1] + dfy] : tail,
+        ends[1] ? [head[0] + dfx, head[1] + dfy] : head,
+      ]
+      out.push({
+        gid: el.gid,
+        ends,
+        endpointsAt: at,
+        shift: (dfx, dfy) => {
+          const [a, b] = at(dfx, dfy)
+          return { gid: el.gid, prop: 'endpoints_frac', value: [a[0], a[1], b[0], b[1]].map(round4) }
+        },
+      })
+      continue
+    }
+
+    if (el.role !== 'text' && el.role !== 'patch') continue
+    const anchor = anchorOf(panel, el)
+    if (!anchor || !el.drag_prop) continue
+    const box = boxOf(el)
+    const inside = containers.some(
+      (c) =>
+        area(box) < area(c.box) &&
+        within([box[0], box[1]], c.box) &&
+        within([box[0] + box[2], box[1] + box[3]], c.box),
+    )
+    if (!inside) continue
+    const prop = el.drag_prop
     out.push({
-      gid,
-      // 后代嵌在所属 axes 的 <g> 里，那个组一平移它们已经跟着动了
-      previewsSeparately: false,
+      gid: el.gid,
+      ends: null,
+      endpointsAt: () => null,
       shift: (dfx, dfy) => ({
-        gid,
+        gid: el.gid,
         prop,
-        // pos_frac/loc_frac 是 [x, y]，endpoints_frac 是 [ax, ay, bx, by]，
-        // 都是 top-origin：位移直接加
-        value: nums.map((n, i) => round4(n + (i % 2 === 0 ? dfx : dfy))),
+        value: [round4(anchor[0] + dfx), round4(anchor[1] + dfy)],
       }),
     })
   }

@@ -95,6 +95,75 @@ ADR 0019 §十「不做静态扫描后批量安装」据此修订为：**不做�
 不变），轮次上限 `MAX_DEPENDENCY_REPAIR_ROUNDS` 不变。「打开项目不联网」（§十一）不变：跑前的判断只读本机
 （目标解释器里 `importlib.metadata`），联网的只有安装、只由点击触发。
 
+**2026-09-24 修订：import 了、却从未用到的缺包不挡图。** 用户实测：脚本第 2 行 `import sympy as smp`、全文件一次没读
+`smp`，内置 runtime 没有 sympy——门要求先装 sympy，不装就在 import 那一行 `ModuleNotFoundError`，一个根本没用到的包
+挡住了整张图。永远不改用户脚本，所以从产品侧解决，两半用**同一份**判据 `figcapture.unused_imports`（纯标准库，
+Flask 父进程与 worker 都已加载它）：
+
+* **判据只收 AST 能证明的**：这个模块在脚本里出现的每一处都是**起了别名**、不带点的 `import X as Y`、都不在
+  `try` / `with` 里（**裸 `import X` 一律不收**：没读过的裸 import 常常是为了副作用——`import scienceplots` 之后
+  `plt.style.use("science")`、`import cmocean` 注册色图；占位会把「请装 scienceplots」换成看不懂的「样式不存在」。
+  起了别名 = 写的人打算用那个名字，一次没用才是遗留）；**X 在实测过的无副作用名单 `figcapture.SIDE_EFFECT_FREE_IMPORTS`
+  里**（评审 #555 P1：别名同样可以只为副作用而起——`import scienceplots as _sp` / `import cmocean as cm`；「绑定没读」
+  证明不了「import 没用」）；绑定名在别处**一次都不出现**（Name 的读写删、形参、global、函数 / 类 / except / match 捕获名、
+  别的 import 的绑定、属性名、关键字名——宁可多判「用到了」）；X 与绑定名都不以字符串常量出现（`sys.modules["X"]`、
+  `import_module("X")`、`getattr(m, "Y")`、`__all__`）；脚本里出现 `globals` / `vars` / `locals` / `eval` / `exec` /
+  `compile` / `__import__` / `__dict__` 任一个就整份放弃（读不清）。只看脚本自己：本地模块也 import 了它时照旧按上下文判。
+* **本地模块可以借走脚本的绑定**（评审 #555 P2）：`helper.py` 里 `from __main__ import smp` 之后 `smp.Symbol(...)`——
+  脚本自己没读，别名照样被用到。`importscan` 对每个跟进到的本地模块调 `figcapture.reaches_main`：`import __main__` /
+  `from __main__ import …`、import 脚本自己的 stem（`entry` 不是 `__main__` 时脚本按 stem 作为模块 import）、字符串
+  `"__main__"` 或 stem（`sys.modules["__main__"]`；`__name__ == "__main__"` 入口守卫里的不算）、经栈帧取 globals
+  （`sys._getframe` / `inspect.currentframe` / `f_globals` / `f_back` / `inspect.stack`）——任一命中，脚本的全部 `unused`
+  作废。**按整份脚本、不按名字**：`from __main__ import *`、`getattr(__main__, 变量)`、栈帧都给不出名字，按名字精确
+  保留在静态上做不完备。看不全也作废：跟进被截断、有本地模块读不了、有本地编译扩展、有非字面量的动态 import。
+  **包里的子模块同样要看**（评审 #555 P2 第二条：`helper/__init__.py` 里 `from . import inner`、`inner.py` 里
+  `from __main__ import smp`；既有跟进只给 `__init__.py`、相对导入被丢掉）：跟进到的包里**全部** .py 都交给
+  `reaches_main`（也盖住 `import helper.inner` 这类绝对的子模块 import），每个扫过的文件里的相对导入逐条解析
+  （`from . import x` / `from .x import y` / `from .. import z`），解析到的目标同样看；解析不到、越出项目根、只落到
+  编译扩展、或文件超过 `MAX_MAIN_SCAN_FILES`，都按看不全作废。这一遍**只为这个判断**——包内子模块里的第三方 import
+  仍按既有跟进规则进不进 needed（没扫到的缺包照旧由运行后的有界重计划接手），本修订不改 needed 的集合。
+  盲区：第三方包在 import 时自己去读 `__main__`（没有扫描它们）；把 `__main__` 拼成字符串等动态写法。
+  worker 只看脚本、不跟进本地模块，所以用户明确「不准备，直接运行」时借用的那个名字仍会拿到占位；本地模块一读它
+  就抛与原来逐字相同的 `No module named 'X'`，走运行后的缺包修复（端到端实测如此）。
+* **计划**：`importscan` 给这类名字标 `unused`，`needed` 不含它（因而不进 `missing` / `unknown`、门不问、ADR 0079 的
+  用户环境发现也不为它起），`JointPlan.unused` 列出来（诊断可见，不装）。
+* **执行**：safe worker 在脚本开跑前按同一份判据装 `figcapture.install_unused_import_placeholders`——包一层
+  `builtins.__import__`，只在「发起者是脚本自己（globals 的 `__file__`）+ `level == 0` 无 fromlist + 名字在名单里 +
+  真 import 抛的 `ModuleNotFoundError` 缺的正是 X 本身 + **import 系统确实找不到它**（`importlib.util.find_spec(X) is None`，
+  评审 #555 P2：`exc.name == X` 只说明异常这么写着——项目里的同名 `sympy.py` 执行到一半自己抛
+  `ModuleNotFoundError(name="sympy")` 时它找得到，已经执行的副作用不会因占位撤销；`find_spec` 自己抛错按判不清处理）」
+  时回一个占位模块；占位**不进 `sys.modules`**（库里的
+  `try: import X except ImportError` 照旧看到失败），读它任何非 dunder 属性抛与原来逐字相同的
+  `ModuleNotFoundError: No module named 'X'`——判据若错，失败形状不变，运行后的缺包修复照旧接手。装了的包照常 import。
+* **native 会话不做**：`tavotto run` 跑在用户自己的解释器里、语义就是 `python script.py`（CLI 拥有用户的 Python），
+  门也只在 `pool._new_worker` 上；那条路上缺包照旧由用户自己的环境决定。
+* **名单怎么来的**（评审 #555 两条 P1）：别名同样可以只为副作用而写——注册样式 / 色图（`import cmocean as cm`），
+  也可以是与 matplotlib 无关的进程级改动（`import requests as _r` 改 warnings 过滤器、装 logging handler）；占位不执行
+  这些，之后的行为就悄悄变了。所以进名单的判据是一份**进程级副作用快照**（唯一出处
+  `tests/support/import_side_effects.py`，名单现量用例与实测脚本共用）：全新解释器 `-I` 里 import 前后比——matplotlib
+  是否进 `sys.modules`、`os.environ` 整体、`warnings.filters`、logging（root 与已有 logger 的 handlers / level /
+  propagate / disabled，新出现且带 handler 的 logger，`NullHandler` 也算）、`sys.path` / `meta_path` / `path_hooks`、
+  全部信号处理器、`sys.excepthook` / `displayhook` / `threading.excepthook`、atexit 注册数、builtins 的名字与身份、
+  `codecs.register` / `locale.setlocale` 调用与当前 locale、递归上限 / 线程切换间隔 / 存活线程数 / gc / trace /
+  标准流身份 / cwd——**任何一项变了就不进**。唯一的豁免：新加的 warnings 过滤器只管这个包**自己定义的**警告类
+  （包不在，这个类就不存在，谁也发不出）。
+  实测（Python 3.13 / matplotlib 3.11.2，2026-09-24，16 个候选）：**只剩 sympy / tqdm / statsmodels / networkx /
+  tabulate / yaml 六个**（sympy 唯一的变化是给自己的 `SymPyDeprecationWarning` 加 `once`，落在豁免里）。剔掉的：
+  requests（warnings + logging handler + atexit）、astropy（warnings + logging handler）、sklearn（环境变量 + warnings +
+  logging handler + meta_path + atexit）、numba / h5py / openpyxl（warnings + atexit）、joblib / netCDF4（环境变量 +
+  warnings + atexit）、xarray（warnings + meta_path + atexit）、numexpr（warnings）；cmocean / scienceplots / colorcet /
+  cmasher / seaborn / lmfit 还会装 matplotlib。表外的名字（含一切不认识的）照旧准备；扩名单要用同一份快照实测。
+* **为什么不做「发过占位的运行失败就按缺包报」**：它兜得住样式 / 色图查不到的**响亮**失败，兜不住静默的（rcParams、
+  warnings、logging 悄悄不同，图照常出来）；还要在两条控制面的错误出口各加一层归因。名单是按构造就对的那一边，1.0
+  收敛期选它。代价：名单外、确实没用到的包仍会被要求安装（和修订前一样，不会更差）——名单只有六个，这个修订实际
+  覆盖的是「sympy 这类纯计算库的遗留别名 import」。
+* **残余风险**：快照看不见的副作用（改了别的第三方模块的全局、写磁盘、开网络连接、只在某个平台或某个版本上才有的
+  import 期动作）仍是盲区；名单是**某个版本、某个平台**上的实测，将来某一版开始在 import 时改动进程状态，判据不会自己
+  知道。看护用例在 worker 解释器里对名单上装了的那些用同一份快照现量一遍（装了多少量多少，一个都没装就 skip）；快照
+  自己是活的由合成模块逐类钉着（每一类副作用各造一个模块必须被看见、什么都不改的必须量出空、豁免只放行自己的警告类）。
+* 看护：`tests/test_unused_missing_import.py`（判据的每一条「不收」、计划、真子进程里的占位、真 worker 出图与反向用例、
+  名单现量）。
+
 ### 三、联合计划：要装的、约束的、adapter 的，与四种明确停下
 
 `engine/depplan.py` 把三个权威合成一份 `JointPlan`（不装任何东西）：

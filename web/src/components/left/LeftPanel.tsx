@@ -15,6 +15,7 @@ import { DrawerCount } from './DrawerCount'
 import { ElementTree } from './ElementTree'
 import { LayerTree } from './LayerTree'
 import { ProblemPanel } from './ProblemPanel'
+import { WorkspaceList } from './WorkspaceList'
 
 /**
  * 左侧上下文抽屉：内容由图标轨道决定，一次只有一个上下文。
@@ -86,7 +87,9 @@ export function LeftPanel({
           </IconButton>
         )}
       </div>
-      {tab === 'canvases' ? (
+      {tab === 'workspace' ? (
+        <WorkspaceList />
+      ) : tab === 'canvases' ? (
         <CanvasList />
       ) : tab === 'assets' ? (
         <AssetBrowser />

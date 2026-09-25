@@ -174,6 +174,19 @@ export interface ReadinessReport {
 export interface PanelsResponse {
   figures_dir: string
   panels: PanelInfo[]
+  /**
+   * 「是素材、但用不了」的文件（目前只有支持范围之外的 TIFF，后端 `tavotto/tiffprobe.py`）。
+   * 它们不在 `panels` 里——没有尺寸、画不出来——但也不许静默消失：素材库如实列出来，
+   * `code` 按 `errors:backend.<code>` 翻译（params 只有 `file`）。老后端不发这个字段。
+   */
+  unsupported?: UnsupportedAsset[]
+}
+
+export interface UnsupportedAsset {
+  id: string
+  name: string
+  folder: string
+  code: string
 }
 
 /** 带上服务器错误体的 Error：某些端点会附带可操作的线索（如就近可用路径） */
@@ -399,8 +412,31 @@ export const openProjectApi = (path: string, create = false) =>
     body: JSON.stringify({ path, create }),
   })
 
-export const fetchRecentProjects = () =>
-  jsonFetch<{ recent: RecentProject[] }>('/api/projects/recent').then((r) => r.recent)
+/**
+ * 最近与收藏两份列表（同一个端点、同一种条目）。收藏是左栏「工作区」抽屉的；
+ * 老后端没有这个字段——当成「没有收藏」，而不是整份请求失败。
+ */
+export const fetchProjectLists = () =>
+  jsonFetch<{ recent: RecentProject[]; pinned?: RecentProject[] }>('/api/projects/recent').then(
+    (r) => ({ recent: r.recent, pinned: r.pinned ?? [] }),
+  )
+
+/**
+ * 对收藏列表做**一个操作**，回新列表。按路径认对象、由后端对照最新那份执行
+ * （`config.edit_pinned`）——不发整张列表：两个标签页各自从旧列表算出的整张列表
+ * 会互相盖掉，按下标排队的挪动也会移错项。
+ */
+export type PinnedOp =
+  | { op: 'add' | 'remove'; path: string }
+  | { op: 'move'; path: string; delta: number }
+  | { op: 'move'; path: string; to_path: string }
+
+export const postPinnedOp = (op: PinnedOp) =>
+  jsonFetch<{ pinned: RecentProject[] }>('/api/projects/pinned', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(op),
+  }).then((r) => r.pinned)
 
 export const removeRecentProject = (path: string) =>
   jsonFetch<{ ok: boolean }>('/api/projects/remove', {
@@ -532,8 +568,25 @@ export const runtimePreviewUrl = (id: string, nonce?: number) =>
   apiUrl(`/api/runtime/preview?id=${encodeURIComponent(id)}${nonce ? `&t=${nonce}` : ''}`)
 
 /**
+ * 浏览器 `<img>` 在所有桌面壳里都解得开的位图扩展名（小写、不带点）。**这是浏览器的
+ * 能力清单，不是素材清单**：素材边界的唯一出处是后端 `engine/project_refresh.IMG_EXT`，
+ * 那里多出来的格式（TIFF：Chromium / WebView2 不认）不在这张表里，就走下面的分档渲染
+ * ——判据写成允许清单，新加一种素材格式时默认落在「后端转 PNG」这条安全的路上。
+ */
+const BROWSER_RASTER_EXTS = new Set(['png', 'jpg', 'jpeg'])
+
+/** 面板 id 的扩展名（小写、不带点；没有就是空串） */
+export const extOf = (id: string): string => {
+  const name = id.split(/[\\/]/).pop() ?? id
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+}
+
+/**
  * 位图走原文件、矢量走分档渲染、runtime 走 materialized cache 预览，
  * 未知形态**不给地址**（fail closed：绝不把不认识的 id 猜成文件路径）。
+ * 浏览器解不开的位图（TIFF）也走分档渲染：`/api/file` 回的是原字节，Chromium
+ * 系的 WebView 画不出来（issue #534）。
  * runtime 分支的 `mtime` 参数承载的是预览换代计数（重跑后换 src 用），
  * 不是文件 mtime——runtime 素材没有文件。
  */
@@ -543,7 +596,8 @@ export const panelSrc = (
   bucket: number,
   mtime?: number,
 ): string | null => {
-  if (kind === 'raster') return fileUrl(id, mtime)
+  if (kind === 'raster')
+    return BROWSER_RASTER_EXTS.has(extOf(id)) ? fileUrl(id, mtime) : renderUrl(id, bucket, mtime)
   if (kind === 'pdf') return renderUrl(id, bucket, mtime)
   if (kind === 'runtime') return runtimePreviewUrl(id, mtime)
   return null
@@ -1527,8 +1581,9 @@ export interface ManifestElement {
   anchor?: [number, number]
   drag_prop?: string
   /**
-   * 图内独立箭头（脚本 add_patch 的 FancyArrowPatch）的两个端点
-   * （figure 分数、y 向下）。有它 = 可整体拖动、可拖单个端点，
+   * 图内箭头的两个端点 [尾, 头]（figure 分数、y 向下）：脚本 add_patch 的独立
+   * FancyArrowPatch，以及纯箭头注释 `annotate("", xy=…, xytext=…)`（引擎改的是注释的
+   * 两个锚点；有字的注释不出）。有它 = 可整体拖动、可拖单个端点，
    * 写 endpoints_frac override（[ax, ay, bx, by]）。
    */
   arrow_endpoints?: [number, number][]

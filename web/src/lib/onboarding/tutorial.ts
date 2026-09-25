@@ -37,7 +37,7 @@ import {
   useDocumentStore,
 } from '@/store/documentStore'
 import { ONBOARDING_FLOW_VERSION, type OnboardingStatus, useOnboardingStore } from '@/store/onboardingStore'
-import { useProjectStore } from '@/store/projectStore'
+import { useProjectStore, type ProjectState } from '@/store/projectStore'
 import { useUiStore, askConfirm } from '@/store/uiStore'
 import { migrateToProject } from '@/types/document'
 
@@ -184,13 +184,28 @@ export type TutorialEntrySource = 'picker' | 'help' | 'settings' | 'palette' | '
  * 发 `GET /api/tutorial` 探资源，用户紧接着点「用示例了解 Tavotto」——探测还在飞就把点击判成
  * 「打不开」，用户看到的是一条无中生有的红字（U08 把后端第一次 probe 变慢了 100 ms，e2e 就撞上）。
  */
+/**
+ * 教程自己在开 / 重置，或者**项目正在切换**：这时不再发起第二次。教程也是一次切项目
+ * （`adoptOpenedProject`），切换中再点只会排上一次用户没想要的完整换代（Codex #550）。
+ * 所有入口（画布空态、命令面板、帮助菜单、设置、Picker）都经这里，拦一处就够。
+ */
 function mutating(): boolean {
   const b = useTutorialStore.getState().busy
-  return b === 'open' || b === 'reset'
+  return b === 'open' || b === 'reset' || useProjectStore.getState().switching
 }
 
 export async function startTutorial(source?: TutorialEntrySource): Promise<TutorialOutcome> {
   if (mutating()) return fail('open_failed')
+  // 请求 + 认领是一次切换：请求在路上时别的打开就得排在它后面（Codex #550）
+  return useProjectStore
+    .getState()
+    .switchTransaction((adopt) => startTutorialNow(adopt, source))
+}
+
+async function startTutorialNow(
+  adopt: AdoptProject,
+  source?: TutorialEntrySource,
+): Promise<TutorialOutcome> {
   useTutorialStore.setState({ busy: 'open', failure: null })
   // 手里这份就是教程画布时先把它从自动保存链路上摘下来（与重置同一条路）。open 可能换
   // 副本（资源升级换了目录 = 新项目 id），换副本要走认领，而认领的第一步就是把当前文档
@@ -209,7 +224,7 @@ export async function startTutorial(source?: TutorialEntrySource): Promise<Tutor
   // 后端刚建了一份全新的副本（首次 / 资源升级换了目录）并清了磁盘上的槽位；
   // 本机这格不忘掉的话 readAutosaveDoc 会把上一份副本的排版推回来——与重置同一条路
   if (res.created) forgetLocalDocument(res.tutorial.document_id)
-  const out = await landTutorial(res, 'start', source)
+  const out = await landTutorial(res, 'start', adopt, source)
   if (suspended) resumeAutosave()
   return out
 }
@@ -243,6 +258,15 @@ export async function resetTutorial(): Promise<TutorialOutcome> {
     danger: true,
   })
   if (!ok) return { ok: false, reason: 'cancelled', message: failureMessage('cancelled') }
+  // 确认框等用户的那段不算切换；点了确认之后「重置请求 + 认领」是一次切换
+  if (mutating()) return fail('open_failed')
+  return useProjectStore.getState().switchTransaction((adopt) => resetTutorialNow(adopt, meta))
+}
+
+async function resetTutorialNow(
+  adopt: AdoptProject,
+  meta: TutorialMetadata | null,
+): Promise<TutorialOutcome> {
   useTutorialStore.setState({ busy: 'reset', failure: null })
   // 先把手里这份教程画布从自动保存链路上摘下来，再让后端清槽位、换目录：重置窗口里
   // 的防抖写盘 / 派生同步（项目重开会推 registry.changed / assets.changed）否则会把
@@ -260,7 +284,7 @@ export async function resetTutorial(): Promise<TutorialOutcome> {
   }
   // 后端只清了磁盘那格；本机这格不忘掉的话 readAutosaveDoc 会把旧进度推回去
   forgetLocalDocument(res.tutorial.document_id)
-  const out = await landTutorial(res, 'reset')
+  const out = await landTutorial(res, 'reset', adopt)
   if (!out.ok) resumeAutosave()
   return out
 }
@@ -276,9 +300,13 @@ async function savedLayoutsInTutorial(meta: TutorialMetadata | null): Promise<st
   }
 }
 
+/** 事务里用的认领：直接执行、不再排切换队列（见 `projectStore.switchTransaction`） */
+type AdoptProject = ProjectState['adoptOpenedProject']
+
 async function landTutorial(
   res: TutorialOpenResult,
   how: 'start' | 'reset',
+  adopt: AdoptProject,
   source?: TutorialEntrySource,
 ): Promise<TutorialOutcome> {
   const meta = res.tutorial
@@ -295,7 +323,7 @@ async function landTutorial(
     }
   } else {
     try {
-      await proj.adoptOpenedProject(res.project, {
+      await adopt(res.project, {
         prepareDocument: async () => {
           docOk = await loadTutorialDocument(meta)
         },

@@ -64,6 +64,7 @@
     "typeRaster": "Images",
     "typeRuntime": "Runtime figure",
     "typeScript": "Editable",
+    "unsupportedTitle": "These files can’t be used",
     "usedChip": "Used",
     "usedOnly": "Used",
     "usedOnlyAria": "Show only assets used in this document",
@@ -284,6 +285,7 @@
     "switchKind": "Change to {{name}}",
     "switchKindCount": "Change {{count}} objects to {{name}}",
     "resizeAxes": "Resize {{count}} axes",
+    "scaleLegend": "Scale legend",
     "resizeObjects": "Resize objects",
     "restoreAspect": "Restore original ratio",
     "restoreNativeSize": "Restore original size",
@@ -453,7 +455,8 @@
     "problemsCount_one": "Problems · {{count}}",
     "problemsCount_other": "Problems · {{count}}",
     "readiness": "Project readiness",
-    "settings": "Settings"
+    "settings": "Settings",
+    "workspace": "Workspace"
   },
   "readiness": {
     "bannerSummary": "{{total}} figures found: {{editable}} editable, {{pending}} waiting to connect, {{layoutOnly}} layout only.",

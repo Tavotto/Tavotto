@@ -3,7 +3,8 @@
 集中在 Tavotto 里**文字与非矢量内容**这一侧，几条直接对应 CLAUDE.md 记录过的坑：
 
 * 图例重建后必须重挂 `_legend_box.set_offset`，否则导出时图例整块消失；
-* `annotate` 的 arrow_patch 端点由注释机制每次 draw 重定位，**刻意不出端点**；
+* **有字的** `annotate` 箭头刻意不出端点（箭尾从文字框算，拖尾巴就是拖字）；
+  纯箭头注释 `annotate("", …)` 可拖，写的是注释的锚点；
 * `image.alpha` 实测不可预览（透明度烤进 PNG 栅格），必须回退后端重画；
 * 图内元素文字走 mathtext（`cm$^{-1}$`），与画布标注的 `^{}`/`_{}` 是两套。
 
@@ -32,7 +33,7 @@ def legend_variants():
 
 
 def annotations():
-    """注释箭头 + 文本框。annotate 的箭头不出端点，是刻意的产品语义。"""
+    """注释箭头 + 文本框。有字的 annotate 箭头不出端点，是刻意的产品语义。"""
     x = np.linspace(0, 10, 200)
     y = np.exp(-((x - 4) ** 2) / 2.0)
     fig, ax = plt.subplots(figsize=(3.6, 2.5))

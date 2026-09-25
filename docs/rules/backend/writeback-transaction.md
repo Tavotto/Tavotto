@@ -47,8 +47,14 @@
     **一条即阻断**，回 409 `code=write_back_warnings` + warnings 列表。
     staging 阶段**任何异常都要 unlink 掉所有 `.updating` 临时文件**
     （以前只有 file_locked 那条路径清理，PDF 成功 PNG 失败就留垃圾）。
-  * **commit**：备份 → 逐个 `tmp.replace(target)`。第 2+ 个撞锁时**把已经
-    换掉的从本次备份恢复回去**（PDF 新 / PNG 旧比整件事失败糟糕得多），
+  * **commit**：备份 → 落盘 → 逐个 `tmp.replace(target)`。**落盘**（ADR 0023
+    §3.1，issue #252）分两半、处置相反：任何 replace **之前**先拷齐备份，并
+    fsync 备份、staging 与备份目录——失败回 409 `write_back_persist_failed`
+    （params `reason`），清 tmp，原文件零改动；整个替换循环**之后**再尽力 fsync
+    各目标的父目录，失败只记 ERROR、不回滚、不改响应。后者绝不许并进替换
+    循环的 `except OSError`（也就是不许直接换成 `atomicio.publish_file`）：
+    那会回滚别的目标、独独留下刚换好的这一个，还对用户报「已回滚」。
+    第 2+ 个撞锁时**把已经换掉的从本次备份恢复回去**（PDF 新 / PNG 旧比整件事失败糟糕得多），
     响应带 `rolled_back` / `rollback_failed`，`updated` 的语义是「仍处于已被
     换掉状态的文件」（回滚成功即为空）。落盘后用 `probe_asset` 比页面尺寸与
     重放 manifest 的 size_mm（容差 0.5mm），不符只记 ERROR + 响应

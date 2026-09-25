@@ -46,7 +46,7 @@ from flask import (
 from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException
 
-from . import pdfbackend
+from . import pdfbackend, tiffprobe
 from .engine import (
     ai_bridge as engine_ai,
     ai_history as engine_ai_history,
@@ -109,6 +109,9 @@ DATA_ROOT = engine_config.data_dir()  # 可写：运行时产物（装成包后 
 EXCLUDE_DIRS = engine_refresh.EXCLUDE_DIRS
 PDF_EXT = engine_refresh.PDF_EXT
 IMG_EXT = engine_refresh.IMG_EXT
+TIFF_EXT = engine_refresh.TIFF_EXT
+#: 写回重写的产物格式（顺序即写的顺序：PDF 在前，PNG 由它的同一次重放出）
+WRITE_BACK_EXT = (".pdf", ".png")
 
 MM_PER_PT = 25.4 / 72.0
 RENDER_BUCKETS = [200, 400, 800, 1600, 3200]
@@ -375,7 +378,13 @@ def current_registry() -> engine_registry.Registry:
 
 
 def safe_resolve(rel_id: str) -> Path:
-    """把面板 id（相对路径）解析回 figures 目录内的真实文件，禁止越权访问。"""
+    """把面板 id（相对路径）解析回 figures 目录内的真实文件，禁止越权访问。
+
+    TIFF 还要过支持范围（`tiffprobe.check`，issue #534）：缩略图、原文件、画布合成、原图导出、
+    重渲染全都经这里取文件，所以范围之外的 TIFF 在**两个渲染后端之前**就被拦下，抛
+    `tiffprobe.UnsupportedTiff`（HTTP 路上由 `_unsupported_tiff` 转成 422 + code，导出作业里
+    由 `_resolve_panel_source` 转成作业的 code）——不交给后端去各出一张不同的错图。
+    """
     root = require_project()
     p = (root / rel_id).resolve()
     if not p.is_relative_to(root.resolve()):
@@ -384,11 +393,24 @@ def safe_resolve(rel_id: str) -> Path:
         abort(404)
     if p.suffix.lower() not in PDF_EXT | IMG_EXT:
         abort(403)
+    if p.suffix.lower() in TIFF_EXT:
+        tiffprobe.check(p)
     return p
 
 
-def scan_panels() -> list[dict]:
-    """扫描 figures 目录：PDF 是首选（矢量）；无同名 PDF 的图片按位图收录。"""
+@app.errorhandler(tiffprobe.UnsupportedTiff)
+def _unsupported_tiff(exc):
+    """范围之外的 TIFF：422 + 稳定 code（`tiffprobe.ERROR_CODES`），文案归前端。"""
+    return jsonify({"error": exc.message, "code": exc.code, "params": exc.params}), 422
+
+
+def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
+    """扫描 figures 目录：PDF 是首选（矢量）；无同名 PDF 的图片按位图收录。
+
+    `unsupported` 给了就收「是素材、但用不了」的那些（目前只有支持范围之外的 TIFF，
+    `{id, name, folder, code}`）：它们不进返回的面板表（没有尺寸、画不出来），但也**不许
+    静默消失**——`/api/panels` 把这张表一起交给前端，素材库如实说出来。
+    """
     ctx = current_ctx()
     baked = load_baked(ctx)  # 本项目的写回基线，局部变量（绝不跨项目共享）
     panels = []
@@ -406,6 +428,16 @@ def scan_panels() -> list[dict]:
     for p, kind in assets:
         rel = str(p.relative_to(root))
         folder = str(p.parent.relative_to(root)) or "."
+        if p.suffix.lower() in TIFF_EXT:
+            try:
+                tiffprobe.check(p)
+            except tiffprobe.UnsupportedTiff as exc:
+                LOG.info("素材扫描: %s 不在 TIFF 支持范围内（%s）", p, exc.code)
+                if unsupported is not None:
+                    unsupported.append(
+                        {"id": rel, "name": p.name, "folder": folder, "code": exc.code}
+                    )
+                continue
         entry = {
             "id": rel,
             "name": p.stem,
@@ -739,7 +771,11 @@ def api_version():
 
 @app.get("/api/panels")
 def api_panels():
-    resp = jsonify({"figures_dir": str(require_project()), "panels": scan_panels()})
+    unsupported: list[dict] = []
+    panels = scan_panels(unsupported)
+    resp = jsonify(
+        {"figures_dir": str(require_project()), "panels": panels, "unsupported": unsupported}
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -851,12 +887,20 @@ def _resolve_panel_source(
     if engine_runtimeasset.is_runtime_id(rel_id):
         # runtime 素材没有磁盘原件，**永远**由 worker 现画
         return _serialize_figure(rel_id, overrides, "pdf", dpi, sink, out_dir)
-    path = safe_resolve(o["id"])
+    try:
+        path = safe_resolve(o["id"])
+    except tiffprobe.UnsupportedTiff as exc:
+        raise _export_tiff_error(exc) from exc
     if overrides or rerender:
         rendered = _serialize_figure(rel_id, overrides, "pdf", dpi, sink, out_dir)
         if rendered is not None:
             path = rendered
     return path
+
+
+def _export_tiff_error(exc: tiffprobe.UnsupportedTiff) -> engine_exportreq.ExportRequestError:
+    """导出作业里没有 HTTP 响应可回：范围之外的 TIFF 换成作业自己的结构化失败，code 原样带过去。"""
+    return engine_exportreq.ExportRequestError(exc.code, exc.message, exc.params)
 
 
 def _serialize_figure(
@@ -1179,7 +1223,16 @@ def _export_produce_rendercore(job, tmp_dir: Path) -> list:
         项目——与旧路 `safe_resolve` 只在碰面板时才要项目同一语义。"""
 
         def resolve(self, obj: dict):
-            return rc_sources.StaticSourceResolver(require_project()).resolve(obj)
+            fs = rc_sources.StaticSourceResolver(require_project()).resolve(obj)
+            # 这条路不经 `safe_resolve`（它自己做包含检查与存在性），TIFF 的支持范围得在这里补上：
+            # 漏掉它，范围之外的 TIFF 在候选后端下会被画成一张错图交付（issue #534）。先让解析器把
+            # 路径核进项目根，再读它的头
+            if fs.path.suffix.lower() in TIFF_EXT:
+                try:
+                    tiffprobe.check(fs.path)
+                except tiffprobe.UnsupportedTiff as exc:
+                    raise _export_tiff_error(exc) from exc
+            return fs
 
     resolver = rc_sources.ExecutionSourceResolver(
         static=_StaticInProject(),
@@ -1982,6 +2035,60 @@ def project_backup_dir(ctx: "ProjectCtx | None" = None) -> Path:
     return Path(d).expanduser() if d else default
 
 
+#: `/api/diagnostics` 的探测预算（#512）。两项探测彼此独立、**并行**跑，
+#: 于是接口的最坏耗时是两者取大，而不是 30 s + 10 s × Agent 数 × 候选数：
+#:   * matplotlib：用 worker 解释器 `import matplotlib` 那个子进程的超时；
+#:   * AI CLI：`engine_ai.capabilities()` 整体的等待上限——它内部逐个候选跑
+#:     `--version`（各 `ai_agents.VERSION_TIMEOUT_S`）再加就绪检查，总数随机器
+#:     上的候选个数变，所以这里在外面给一个总预算；到点就报「探测超时」，
+#:     探测线程继续跑完并写进 capabilities 的缓存，下一次打开诊断直接命中。
+#: `scripts/smoke_app.py` 的 `DIAGNOSTICS_TIMEOUT_S` 按这两项推出来，
+#: 改这里就要过 `tests/test_diagnostics_budget.py` 的对拍。
+DIAG_MATPLOTLIB_TIMEOUT_S = 30
+DIAG_AI_PROBE_BUDGET_S = 30
+DIAG_PROBE_WORST_CASE_S = max(DIAG_MATPLOTLIB_TIMEOUT_S, DIAG_AI_PROBE_BUDGET_S)
+
+
+class _DiagCapsProbe(threading.Thread):
+    """在后台跑一次 `engine_ai.capabilities()`，结论留在线程对象上。"""
+
+    def __init__(self) -> None:
+        super().__init__(daemon=True, name="mm-diag-caps")
+        # 起跑时的能力代数：设置改过（invalidate / refresh）之后这次探测读的是旧快照，
+        # 下一次诊断不许再跟上它
+        self.generation = engine_ai.capabilities_generation()
+        self.result: dict | None = None
+        self.error: BaseException | None = None
+
+    def run(self) -> None:
+        try:
+            self.result = engine_ai.capabilities()
+        except BaseException as exc:  # noqa: BLE001 — 交回请求线程原样抛
+            self.error = exc
+
+
+_DIAG_CAPS_LOCK = threading.Lock()
+_DIAG_CAPS_INFLIGHT: list[_DiagCapsProbe] = []
+
+
+def _diag_capabilities_start() -> _DiagCapsProbe:
+    """起（或复用还在跑的那个）AI 能力探测线程。
+
+    上一次诊断超时留下的探测还没跑完时直接跟上它，不再并发起第二份
+    ——用户连点「重新诊断」不该在一台慢机器上叠出一串 `--version` 子进程。"""
+    with _DIAG_CAPS_LOCK:
+        if (
+            _DIAG_CAPS_INFLIGHT
+            and _DIAG_CAPS_INFLIGHT[0].is_alive()
+            and _DIAG_CAPS_INFLIGHT[0].generation == engine_ai.capabilities_generation()
+        ):
+            return _DIAG_CAPS_INFLIGHT[0]
+        job = _DiagCapsProbe()
+        _DIAG_CAPS_INFLIGHT[:] = [job]
+        job.start()
+        return job
+
+
 @app.get("/api/diagnostics")
 def api_diagnostics():
     """首次运行 / 排障诊断：worker Python、matplotlib、AI CLI、项目权限、
@@ -1989,6 +2096,11 @@ def api_diagnostics():
     import subprocess as sp
 
     checks: list[dict] = []
+    # AI CLI 探测先在后台起跑，与下面的 matplotlib 探测并行（预算见上）。
+    # 截止时刻从两项探测**同时起跑**那一刻算：matplotlib 那边用掉的时间要从
+    # AI 的等待里扣掉，否则最坏会是两份预算相加而不是两者取大。
+    caps_deadline = time.monotonic() + DIAG_AI_PROBE_BUDGET_S
+    caps_job = _diag_capabilities_start()
 
     try:
         py = engine_pool.find_worker_python()
@@ -2002,7 +2114,7 @@ def api_diagnostics():
                 # engine/runtime.py——GUI 子系统进程不该弹控制台黑框。
                 encoding="utf-8",
                 errors="replace",
-                timeout=30,
+                timeout=DIAG_MATPLOTLIB_TIMEOUT_S,
                 stdin=sp.DEVNULL,
                 creationflags=engine_runtime.CREATE_NO_WINDOW,
             )
@@ -2050,16 +2162,28 @@ def api_diagnostics():
             }
         )
 
-    caps = engine_ai.capabilities()
-    for entry in caps["agents"]:
+    caps_job.join(max(0.0, caps_deadline - time.monotonic()))
+    if caps_job.is_alive():
         checks.append(
             {
-                "id": f"cli_{entry['id']}",
-                "ok": entry["installed"],
-                "label": f"{entry['display_name']} CLI",
-                "detail": entry["version"] or "未安装（改图助手对应选项不可用）",
+                "id": "cli_probe",
+                "ok": False,
+                "label": "AI CLI",
+                "detail": f"探测未在 {DIAG_AI_PROBE_BUDGET_S} 秒内完成（仍在后台进行，稍后重新诊断）",
             }
         )
+    elif caps_job.error is not None:
+        raise caps_job.error
+    else:
+        for entry in caps_job.result["agents"]:
+            checks.append(
+                {
+                    "id": f"cli_{entry['id']}",
+                    "ok": entry["installed"],
+                    "label": f"{entry['display_name']} CLI",
+                    "detail": entry["version"] or "未安装（改图助手对应选项不可用）",
+                }
+            )
 
     ctx = _request_ctx()
     if ctx is not None:
@@ -2326,12 +2450,19 @@ def api_projects_open_list():
     return resp
 
 
-@app.get("/api/projects/recent")
-def api_projects_recent():
-    open_paths = {str(c.path): c.id for c in PROJECTS.values()}
-    current = _request_ctx()
+def _project_list_entries(stored: list[dict], current: "ProjectCtx | None") -> list[dict]:
+    """最近 / 收藏两份列表的同一种条目：配置里记的 + 此刻的状态（在不在、开没开）。
+
+    `current` 由调用方先解析好传进来：写配置的端点必须在**改动之前**就知道 pj
+    有没有失效，否则会出现「配置已经改了、响应却是 409」。
+    """
+    # 快照在项目锁里取：别的标签页同时开 / 关项目会改 PROJECTS，不持锁的遍历会抛
+    # 「dictionary changed size during iteration」——而收藏端点走到这里时配置已经写了，
+    # 500 会让界面按失败保留旧列表（Codex #550；同文件另两处遍历本来就持锁）
+    with _PROJECT_LOCK:
+        open_paths = {str(c.path): c.id for c in PROJECTS.values()}
     entries = []
-    for e in engine_config.recent_projects():
+    for e in stored:
         p = Path(e["path"])
         entries.append(
             {
@@ -2345,9 +2476,57 @@ def api_projects_recent():
                 "tutorial": engine_tutorial.is_tutorial_path(p),
             }
         )
-    resp = jsonify({"recent": entries})
+    return entries
+
+
+@app.get("/api/projects/recent")
+def api_projects_recent():
+    current = _request_ctx()
+    resp = jsonify(
+        {
+            "recent": _project_list_entries(engine_config.recent_projects(), current),
+            "pinned": _project_list_entries(engine_config.pinned_projects(), current),
+        }
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@app.post("/api/projects/pinned")
+def api_projects_pinned():
+    """对收藏列表做一个操作（add / remove / move），回新列表；只改配置，不碰磁盘内容。
+
+    按路径认对象、在后端对照最新的那份执行（`config.edit_pinned`）：多个标签页、
+    排着队的多次操作互相不会盖掉。
+    """
+    body = request.get_json(force=True, silent=True)
+    body = body if isinstance(body, dict) else {}
+    op, path = body.get("op"), body.get("path")
+    delta, to_path = body.get("delta"), body.get("to_path")
+    ok = op in engine_config.PINNED_OPS and isinstance(path, str) and path.strip()
+    if ok and op == "move":
+        # 两种挪法恰好给一种：相对位移（非零整数，bool 不算）或目标路径
+        by_delta = type(delta) is int and delta != 0 and to_path is None
+        by_target = delta is None and isinstance(to_path, str) and to_path.strip()
+        ok = by_delta or by_target
+    elif ok:
+        ok = delta is None and to_path is None
+    if not ok:
+        return jsonify({"error": "收藏操作的参数不合法", "code": "bad_request", "params": {}}), 400
+    # 先解析请求的项目（失效的 pj 在这里就 409），**再**写配置：反过来的话配置已经
+    # 改了、响应却说失败，界面按失败保留旧列表，重开后又冒出来（Codex #550 P2）
+    current = _request_ctx()
+    try:
+        stored = engine_config.edit_pinned(op, path, delta=delta, to_path=to_path)
+    except engine_config.PinnedFullError:
+        return jsonify(
+            {
+                "error": f"收藏最多 {engine_config.PINNED_KEEP} 个",
+                "code": "pinned_full",
+                "params": {"max": engine_config.PINNED_KEEP},
+            }
+        ), 409
+    return jsonify({"pinned": _project_list_entries(stored, current)})
 
 
 def _unsafe_new_project_part(p: Path, leaf: str) -> str | None:
@@ -3718,6 +3897,9 @@ def api_engine_update_source():
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
         ), 404
+    if fmt_err := _write_back_format_error(src):
+        # 起 worker 之前就拒（判据与 `_write_source_files` 里那道是同一个函数）
+        return _write_back_error_response(fmt_err)
     worker = _safe_worker(info["script"], info["entry"], src.stem)
     try:
         result = _write_source_files(
@@ -3730,7 +3912,9 @@ def api_engine_update_source():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackPersistError,
         FileLockedError,
+        WriteBackFormatError,
     ) as exc:
         return _write_back_error_response(exc)
     # 把这组修改追加为该图的版本历史，末位即当前基线：
@@ -3751,6 +3935,23 @@ def _write_back_forbidden():
             }
         ), 403
     return None
+
+
+class WriteBackFormatError(RuntimeError):
+    """画布上这张素材不是写回会重写的格式（JPEG / TIFF）：写回与版本恢复都一个字节写不进它。"""
+
+    def __init__(self, fmt: str) -> None:
+        super().__init__(f"写回只支持 PDF / PNG 素材，这张是 {fmt}")
+        self.format = fmt
+
+
+def _write_back_format_error(src: Path) -> WriteBackFormatError | None:
+    """写回的目标是 `src` 同名的 .pdf / .png（`WRITE_BACK_EXT`）。`src` 自己不在其中时，画布上这张
+    一个字节都不会变——以前会报成功、记下基线（JPEG 一直如此；#534 让 TIFF 也走到这里）。
+    **唯一判据**：update_source / history/restore 的早检与 `_write_source_files` 里的扼流点都问它。"""
+    if src.suffix.lower() in WRITE_BACK_EXT:
+        return None
+    return WriteBackFormatError(src.suffix.lstrip(".").upper())
 
 
 class FileLockedError(RuntimeError):
@@ -3840,6 +4041,19 @@ class WriteBackVerifyError(RuntimeError):
         more = f"（另有 {len(warnings) - 3} 条）" if len(warnings) > 3 else ""
         super().__init__(f"{head}{more}")
         self.warnings = warnings
+
+
+class WriteBackPersistError(RuntimeError):
+    """commit 的落盘准备（拷备份 + fsync 备份与 staging）没过，一个目标都还没替换。
+
+    与 `FileLockedError` 分成两类是刻意的（issue #252）：这一类发生在任何
+    `replace` **之前**，不存在回滚，原文件一字未动；「replace 之后目录项落盘
+    失败」则根本不走异常，只记日志——文件已换，再报失败只会让人误以为没写进去。
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _write_back_warning_error(exc: "WriteBackVerifyError") -> str:
@@ -4106,9 +4320,12 @@ def _write_source_files(
     WorkerError 时，`.Fig1.pdf.updating` 就永久留在图库里了。
     """
     stem = src.stem
+    if fmt_err := _write_back_format_error(src):
+        # 唯一的扼流点：调用方忘了早检，也绝不「零个目标、报成功、记基线」
+        raise fmt_err
     _write_back_prepare(src, worker, expected_mtime)
 
-    targets = [p for p in (src.with_suffix(".pdf"), src.with_suffix(".png")) if p.exists()]
+    targets = [p for p in (src.with_suffix(ext) for ext in WRITE_BACK_EXT) if p.exists()]
     man_hot = _hot_manifest(worker, stem, patches)
 
     # ---- verify：全新 worker 全量重放，staging 也从它出 ----------------------
@@ -4158,11 +4375,41 @@ def _write_source_files(
 
     # ---- commit：备份 → 逐个原子替换（中途撞锁则回滚） ----------------------
     backup_dir = project_backup_dir() / time.strftime("%m%d_%H%M%S")
+    # 这次新建出来的各级目录（最深的在前）：它们的名字要在各自父目录里落盘，
+    # 否则掉电后原图已是新内容、备份目录却整个不见了。
+    created_dirs = [p for p in (backup_dir, *backup_dir.parents) if not p.exists()]
     backup_dir.mkdir(parents=True, exist_ok=True)
+    # 落盘（ADR 0023 §3.1，issue #252）：`os.replace` 只保证「要么旧要么新」，
+    # 不保证新内容已离开页缓存。所以**碰任何目标之前**先把备份与 staging 都
+    # fsync 掉——这一段失败属于「replace 之前」：一个目标都没动，清 tmp 回 409，
+    # 原文件零改动。备份也挪到这里一次拷完：以前在替换循环里逐个拷，第 2 个
+    # 拷失败时第 1 个已被换掉却没人回滚。
+    try:
+        for target, tmp in tmps:
+            backup = backup_dir / target.name
+            # 先拷内容、趁备份还可写时 fsync，最后才抄权限与时间戳：原图若是
+            # 0444（目录可写时照样能被 replace），copy2 会把只读位带到备份上，
+            # 之后再以可写方式打开它 fsync 就是 PermissionError。
+            shutil.copyfile(target, backup)
+            engine_atomicio.fsync_file(backup)
+            shutil.copystat(target, backup)
+            engine_atomicio.fsync_file(tmp)
+        engine_atomicio.fsync_dir(backup_dir)
+        for created in created_dirs:
+            engine_atomicio.fsync_dir(created.parent)
+    except OSError as exc:
+        # 清 tmp 尽力而为、逐个吞错：文件系统正在报 EIO / EROFS 时 unlink 也可能
+        # 失败，不许它盖掉结构化的 409。
+        for _t, leftover in tmps:
+            try:
+                leftover.unlink(missing_ok=True)
+            except OSError as cleanup_exc:
+                LOG.warning("写回落盘失败后清理暂存文件失败: %s: %s", leftover, cleanup_exc)
+        LOG.error("写回落盘失败（替换之前，原文件未动）: %s: %s", stem, exc)
+        raise WriteBackPersistError(str(exc)) from exc
     updated: list[str] = []
     done: list[Path] = []
     for target, tmp in tmps:
-        shutil.copy2(target, backup_dir / target.name)
         try:
             tmp.replace(target)
         except OSError as exc:
@@ -4173,6 +4420,15 @@ def _write_source_files(
             raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc
         done.append(target)
         updated.append(target.name)
+    # 目录项落盘放在整个替换循环**之后**、且只尽力而为：此刻各 replace 都已
+    # 成功，新内容对任何读者已可见。失败只记 ERROR、不回滚——若塞进上面的
+    # `except OSError`，就会回滚别的目标、独独留下刚换好的这一个，还对用户
+    # 报「已回滚」（issue #252 讲的半应用陷阱）。
+    for parent in dict.fromkeys(t.parent for t in done):
+        try:
+            engine_atomicio.fsync_dir(parent)
+        except OSError:
+            LOG.error("写回后目录项落盘失败（文件已替换，备份在 %s）: %s", backup_dir, parent)
     prune_backups(backup_dir.parent)
     LOG.info(
         "更新原图: %s → %s（备份 %s，标注 %d 条）",
@@ -4265,7 +4521,7 @@ def _write_back_response(result: dict, **extra) -> dict:
 
 
 def _write_back_error_response(exc):
-    """三种 prepare/verify 失败 → 409 + 专属 code；不认识的回 None。"""
+    """prepare/verify 失败 → 409 + 专属 code；格式不是写回目标 → 400；不认识的回 None。"""
     if isinstance(exc, SourceChangedError):
         return jsonify(
             {
@@ -4304,6 +4560,15 @@ def _write_back_error_response(exc):
                 "warnings": exc.warnings,
             }
         ), 409
+    if isinstance(exc, WriteBackPersistError):
+        return jsonify(
+            {
+                "error": f"写回前的落盘准备失败（备份或临时文件没能写入磁盘）：{exc.reason}。"
+                "写回已取消，原文件未做任何改动。请检查磁盘空间与目录权限后重试。",
+                "code": "write_back_persist_failed",
+                "params": {"reason": exc.reason},
+            }
+        ), 409
     if isinstance(exc, FileLockedError):
         # 可操作的错误：告诉用户是哪个文件、该去关掉谁；回滚结果一并报出来，
         # 免得用户以为「什么都没发生」或者反过来以为「已经写进去了」
@@ -4317,6 +4582,14 @@ def _write_back_error_response(exc):
                 "rollback_failed": exc.rollback_failed,
             }
         ), 409
+    if isinstance(exc, WriteBackFormatError):
+        return jsonify(
+            {
+                "error": str(exc),
+                "code": "write_back_format_unsupported",
+                "params": {"format": exc.format},
+            }
+        ), 400
     return None
 
 
@@ -4489,11 +4762,15 @@ def api_engine_history_restore():
                 "params": {"id": body.get("id", "")},
             }
         ), 400
+    src = safe_resolve(body.get("id", ""))
+    if fmt_err := _write_back_format_error(src):
+        # 历史版本可能来自这张图还是 PDF / PNG 的时候；现在它是 JPEG / TIFF，恢复同样一个字节
+        # 都写不进去——起 worker 之前拒，与 update_source 同一个 code（Codex #561）
+        return _write_back_error_response(fmt_err)
     worker, stem = _engine_worker(body.get("id", ""))
     n = int(body.get("n", -1))
     versions = load_baked().get(stem, {}).get("versions") or []
     patches = [] if n < 0 or n >= len(versions) else versions[n]["patches"]
-    src = safe_resolve(body.get("id", ""))
     try:
         result = _write_source_files(
             src, patches, worker, expected_mtime=body.get("expected_mtime")
@@ -4505,7 +4782,9 @@ def api_engine_history_restore():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackPersistError,
         FileLockedError,
+        WriteBackFormatError,
     ) as exc:
         return _write_back_error_response(exc)
     append_baked(stem, patches, files=result["file_identity"])
@@ -4944,7 +5223,9 @@ def _set_project_environment(
     另一个错。体检不过一律 400 + 稳定 code，绝不先存下来再说。
 
     `user_environment` 是依赖弹窗里点的「改用这个环境」（ADR 0079）：载荷只带 id，这里用本机自己的
-    发现结果换回路径，换不回来报 `user_environment_gone`；之后与手填路径走同一次体检。
+    发现结果换回路径，换不回来报 `user_environment_gone`；换回来之后按此刻的计划重新量一次装没装齐
+    （`deprepair.recheck_user_environment`，与弹窗列出时同一个判据），缺就 `user_environment_incomplete`，
+    不健康与手填路径同一组 code。
 
     `module` 是用户从依赖修复面板采用系统解释器时带过来的「缺的那个包」
     （ADR 0044）：体检连它一起验——面板列出候选与用户点下去之间那个环境可能
@@ -4955,17 +5236,33 @@ def _set_project_environment(
     root = str(require_project())
     if module and not engine_projectenv.valid_module_name(module):
         module = ""
+    health: dict | None = None
     if user_environment:
-        # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回
-        found = engine_deprepair.user_environment_path(root, script, user_environment)
-        if not found:
+        # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回，
+        # 并按此刻的计划**重新**量一次装没装齐——「还被发现得到」不等于「还装齐」（弹窗开着期间环境变了，
+        # 或交回的是界面上本就不可选的那种；Codex #522 P2）。这一次复核就是体检，下面不再起第二次
+        try:
+            entry = engine_deprepair.recheck_user_environment(root, script, user_environment)
+        except engine_pool.WorkerError as exc:
+            return jsonify({"error": str(exc), "code": exc.code}), 409
+        if entry is None:
             return jsonify(
                 {
                     "error": "这个 Python 环境已经找不到了，请重新检查",
                     "code": "user_environment_gone",
                 }
             ), 400
-        raw = found
+        if entry["ok"] and not entry["satisfies"]:
+            packages = ", ".join(entry["missing"])
+            return jsonify(
+                {
+                    "error": f"这个 Python 环境里还缺 {packages}，请重新检查",
+                    "code": "user_environment_incomplete",
+                    "params": {"packages": packages},
+                }
+            ), 400
+        raw = entry["python"]
+        health = entry
     if not raw:
         # 清掉 = 用户明确选回默认链条（U03，FO-013）：记成一条决定，而不是「忘了」——
         # 忘了的话下一次首开又会把项目 venv 发现出来、盖掉这次的选择。
@@ -4997,7 +5294,8 @@ def _set_project_environment(
                 "params": {"path": str(candidate)},
             }
         ), 400
-    health = engine_projectenv.probe_environment(str(candidate), module or None)
+    if health is None:
+        health = engine_projectenv.probe_environment(str(candidate), module or None)
     if not health.get("ok"):
         return jsonify(
             {
@@ -6924,9 +7222,14 @@ def main():
         nonce = engine_session_client.relaunch_nonce(args.port)
         if nonce:
             url += "#dnonce=" + nonce
+        if args.no_browser:
+            # 没有浏览器可开（服务器上经 SSH 转发用）：换到的 nonce 只能靠这里
+            # 交给人，与首次启动打印带 nonce 的地址同一口径。不打印就等于白换。
+            print(f"* Tavotto 已在 {landing(args.port)} 运行")
+            print(f"* 打开 {url}")
+            return
         print(f"* Tavotto 已在 {landing(args.port)} 运行，打开现有窗口")
-        if not args.no_browser:
-            webbrowser.open(url)
+        webbrowser.open(url)
         return
 
     url = landing(port)

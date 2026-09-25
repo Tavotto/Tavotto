@@ -348,7 +348,10 @@ def test_sitecustomize_silently_does_nothing_under_E(user_python, tmp_path, sc_c
     assert "RAN" in r.stdout, f"观测失效：脚本根本没跑起来 {r.stdout!r} / {r.stderr!r}"
     assert "NOT-HOOKED" in r.stdout, "-E 下 B 的钩子竟然装上了"
     assert data is None, "-E 下 B 的钩子根本没装上，不该有报告"
-    assert "tavotto" not in r.stderr.lower(), f"没有任何来自 Tavotto 的提示: {r.stderr}"
+    # 主语是 Tavotto 自己的提示行（`[Tavotto Run…]` / `[tavotto] …` 这类行首前缀），
+    # 不是子串：警告里带出的脚本路径含 Tavotto（--basetemp 等）就会假红（#449）。
+    ours = [ln for ln in r.stderr.splitlines() if ln.lstrip().lower().startswith("[tavotto")]
+    assert not ours, f"没有任何来自 Tavotto 的提示: {r.stderr}"
 
 
 def test_sitecustomize_does_nothing_under_S(user_python, tmp_path, sc_chained):

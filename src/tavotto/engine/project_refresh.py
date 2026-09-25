@@ -55,7 +55,12 @@ def _target_parser(root) -> str | None:
 #: 导出的 PDF/PNG 落在里面，素材扫描必须剪掉，否则导出一次素材面板就多一堆成图。
 EXCLUDE_DIRS = {"__pycache__", "_cache", "_palette_ref", "scripts", ".git", "tavottofile"}
 PDF_EXT = {".pdf"}
-IMG_EXT = {".png", ".jpg", ".jpeg"}
+#: TIFF 也是素材（issue #534）。**列进来不等于用得了**：支持范围在 `tavotto/tiffprobe.py`，
+#: 范围之外的那些由 `/api/panels` 的 `unsupported` 如实报出来、`safe_resolve` 拒绝取用——
+#: 这里只管「哪些文件算素材」这一把尺，判断「这张 TIFF 能不能用」要读文件头，不放进
+#: watcher / inventory 这条只看文件签名的轻量路径。
+TIFF_EXT = {".tif", ".tiff"}
+IMG_EXT = {".png", ".jpg", ".jpeg"} | TIFF_EXT
 
 #: 允许的刷新来由。**闭集**：它进日志、进事件、以后还会进遥测的枚举维度，
 #: 客户端传什么就记什么等于让外面的人往我们的指标里写自由文本。

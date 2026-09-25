@@ -83,6 +83,9 @@ from overrides import (
     _linecoll_linestyle_name,
     _linestyle_name,
     _stroke_state,
+    annotation_arrow_display,
+    annotation_arrow_owner,
+    annotation_text_draggable,
     cjk_fallback_candidates,
     collection_caps,
     color_mapping_is_live,
@@ -608,11 +611,16 @@ def instrument(state: FigState) -> None:
                     t,
                     "text",
                     f"文字 “{_snippet(t.get_text())}”",
-                    draggable=True,
+                    # 注释文字按自己的 textcoords 落位：坐标系逆算不回去 / 随 dpi、
+                    # 字号漂的不宣称可拖（与 setter 同一份判据，GEO-B1）
+                    draggable=annotation_text_draggable(t),
                 )
             # annotate(...) 的箭头单独成元素；`annotate("", …)` 纯箭头也要能选中
             ap = getattr(t, "arrow_patch", None)
             if ap is not None:
+                # 箭头 patch 每次 draw 都按注释的 xy / xyann 重定位：拖动写的是注释本身
+                # （`overrides._set_annotation_arrow`），从 patch 找得回它
+                ap._mm_annotation = t  # noqa: SLF001
                 _register(state, f"axes_{i}.texts_{j}.arrow", ap, "arrow_patch", "标注箭头")
         if not is3d:
             # 数据系列容器先注册（其成员不再作为独立曲线/集合重复注册）
@@ -764,7 +772,7 @@ def instrument(state: FigState) -> None:
                 if isinstance(pt, FancyArrowPatch):
                     arrow_n += 1
                     # 独立箭头的端点归自己管（set_positions 持久生效），可拖；
-                    # annotate 的 arrow_patch 每次 draw 被注释机制重定位，不标
+                    # annotate 的 arrow_patch 不在 ax.patches 里（登记在注释那一支）
                     pt._mm_arrow_standalone = True  # noqa: SLF001
                     _register(state, f"axes_{i}.arrows_{j}", pt, "arrow_patch", f"箭头 {arrow_n}")
                 elif isinstance(pt, Patch) and id(pt) not in skip_ids and not is_cbax:
@@ -2334,8 +2342,9 @@ def _cmap_options(current: str) -> list[str]:
 def _arrowpatch_fields(a) -> list[dict]:
     """图内箭头（FancyArrowPatch）：样式 / 颜色 / 线宽 / 帽大小 / 线型 /
     透明度 / 显隐。独立箭头（脚本 add_patch 的）另有端点可在画布上直接拖动
-    （manifest 的 arrow_endpoints + endpoints_frac override）；annotate 的箭头
-    端点由注释机制每次 draw 重定位，只放样式。"""
+    （manifest 的 arrow_endpoints + endpoints_frac override），纯箭头注释
+    （`annotate("", …)`）同样可拖——写的是注释的两个锚点；有字的注释只放样式
+    （拖字就是挪箭尾）。"""
     alpha = a.get_alpha()
     style = _arrowstyle_name(a)
     style_opts = ([style] if style not in _ARROWSTYLES else []) + _ARROWSTYLES
@@ -2873,13 +2882,22 @@ def _legend_entry_fields(t, state: FigState, gid: str) -> list[dict]:
                 "group": "图例项",
             }
         )
-    props = legend_handle_props(h)
+    # 脚本自己画的整格（色带等）没有「那一条」示意线的样式可改；整格同一种颜色的仍给颜色，
+    # 改色落到整格每个 artist 上（legendmodel._entry_handle_write）。本来跟随源、被断开的格子
+    # （误差棒）照旧按示意线类型给——改之前给了，改完不能消失
+    if model.is_script_drawn(j):
+        props = ("handle_color",) if model.frozen_color_uniform(j) else ()
+    else:
+        props = legend_handle_props(h)
     if "handle_color" in props:
         fields.append(
             {
                 "prop": "handle_color",
                 "type": "color",
-                "value": to_hex(_handle_color_of(h)),
+                # 整格同色的定格项取整格唯一的可见颜色（第一个 artist 可能只有描边、面是透明的）
+                "value": to_hex(
+                    model.cell_color(j) if model.cell_color(j) is not None else _handle_color_of(h)
+                ),
                 "group": "图例项",
             }
         )
@@ -4461,19 +4479,28 @@ def _build_manifest(state: FigState, stem: str) -> dict:
             geom = pathgeom.patch_group_geometry(artist.artists, W, H, budget)
             if geom is not None:
                 entry["geometry"] = geom
-        # 独立箭头：端点（figure 分数、top-origin）随 manifest 下发，
-        # 前端据此画端点手柄、整体拖动 / 单端拖动都写 endpoints_frac override
-        if el["role"] == "arrow_patch" and getattr(artist, "_mm_arrow_standalone", False):
-            pts = getattr(artist, "_posA_posB", None)
-            if pts is not None:
-                try:
-                    conv = getattr(artist, "_convert_xy_units", lambda p: p)
-                    disp = artist.get_transform().transform([conv(pts[0]), conv(pts[1])])
-                    entry["arrow_endpoints"] = [
-                        [round(float(x) / W, 4), round(1.0 - float(y) / H, 4)] for x, y in disp
-                    ]
-                except Exception:
-                    pass
+        # 箭头：端点（figure 分数、top-origin，[尾, 头]）随 manifest 下发，前端据此画
+        # 端点手柄、整体拖动 / 单端拖动都写 endpoints_frac override。两类出端点：
+        # 独立箭头（端点就是 patch 自己的 posA / posB）与**纯箭头注释**（端点是注释的
+        # xyann / xy，patch 每次 draw 按它们重定位——所以从注释算，不读 patch 上一帧
+        # 的缓存）。有字的注释、坐标系逆算不回去的注释不出（`annotation_arrow_owner`）
+        if el["role"] == "arrow_patch":
+            disp = None
+            ann = annotation_arrow_owner(artist)
+            try:
+                if ann is not None:
+                    disp = annotation_arrow_display(ann)
+                elif getattr(artist, "_mm_arrow_standalone", False):
+                    pts = getattr(artist, "_posA_posB", None)
+                    if pts is not None:
+                        conv = getattr(artist, "_convert_xy_units", lambda p: p)
+                        disp = artist.get_transform().transform([conv(pts[0]), conv(pts[1])])
+            except Exception:
+                disp = None
+            if disp is not None:
+                entry["arrow_endpoints"] = [
+                    [round(float(x) / W, 4), round(1.0 - float(y) / H, 4)] for x, y in disp
+                ]
         # 裁剪框（figure 分数、top-origin）：matplotlib 会在这个框处把这个元素
         # 切掉，框外的部分一笔都不会画。**bbox 不含这一维**——数据远超坐标轴
         # 范围的散点 / 曲线，`get_window_extent` / `get_datalim` 给的是**未裁剪的

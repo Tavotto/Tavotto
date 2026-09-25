@@ -705,6 +705,12 @@ def project_relative(figures_dir: str | Path, python: str) -> str:
     return Path(rel).as_posix()
 
 
+#: 项目环境决策的写入互斥（`remember` / `remember_default` 全程持有，可重入）。`only_if` 的判断与写入
+#: 在同一把锁里：「先看记录允不允许、再写」分两步的话，两步之间用户的显式选择可以落地，随后被一条
+#: 自动决策盖掉（Codex #562 同形清扫）。
+_decision_lock = threading.RLock()
+
+
 def remember(
     figures_dir: str | Path,
     python: str,
@@ -713,12 +719,23 @@ def remember(
     trigger: str = "",
     module: str = "",
     health: dict | None = None,
-) -> None:
-    """记住这个项目该用哪个解释器（进程缓存 + 项目设置持久化）。
+    only_if=None,
+) -> bool:
+    """记住这个项目该用哪个解释器（进程缓存 + 项目设置持久化）；回写了没有。
+
+    `only_if(record)`：给了就在写入锁里拿此刻的 `remembered_record()` 问一次，False 就不写（回 False）。
 
     **绝不写全局 `worker.python` 设置**：那会让 A 项目找到的 `.venv` 变成
     B 项目的渲染环境——两个项目各有各的环境正是本轮要解决的事。
     """
+    with _decision_lock:
+        if only_if is not None and not only_if(remembered_record(figures_dir)):
+            return False
+        _remember(figures_dir, python, automatic, trigger, module, health)
+        return True
+
+
+def _remember(figures_dir, python, automatic, trigger, module, health) -> None:
     key = _key(figures_dir)
     with _lock:
         _resolved[key] = python
@@ -752,22 +769,23 @@ def remember_default(figures_dir: str | Path) -> None:
     """记住「这个项目明确用默认链条」（用户在设置里清掉项目环境时）——不是 `forget()`：
     忘了等于没决定过，下一次首开又会把 venv 找出来。"""
     key = _key(figures_dir)
-    with _lock:
-        _resolved[key] = ""
-        _first_open.pop(key, None)
-    try:
-        config.set_project_settings(
-            str(Path(figures_dir)),
-            {
-                SETTINGS_KEY: {
-                    "mode": MODE_DEFAULT_CHAIN,
-                    "automatic": False,
-                    "trigger": "user_selected",
-                }
-            },
-        )
-    except OSError as exc:
-        LOG.warning("项目环境决策未能持久化: %s", exc)
+    with _decision_lock:
+        with _lock:
+            _resolved[key] = ""
+            _first_open.pop(key, None)
+        try:
+            config.set_project_settings(
+                str(Path(figures_dir)),
+                {
+                    SETTINGS_KEY: {
+                        "mode": MODE_DEFAULT_CHAIN,
+                        "automatic": False,
+                        "trigger": "user_selected",
+                    }
+                },
+            )
+        except OSError as exc:
+            LOG.warning("项目环境决策未能持久化: %s", exc)
 
 
 def uses_default_chain(figures_dir: str | Path) -> bool:

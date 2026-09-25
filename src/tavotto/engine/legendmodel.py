@@ -15,6 +15,7 @@ matplotlib + 基座 `pathgeom`（`frac_to_display`）：不 import `overrides`�
 
 from __future__ import annotations
 
+import copy
 import inspect
 import math
 import sys
@@ -26,9 +27,11 @@ from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.collections import Collection, LineCollection
 from matplotlib.legend import Legend
+from matplotlib.legend_handler import HandlerBase
 from matplotlib.lines import Line2D
 from matplotlib.patches import BoxStyle, Patch
 from matplotlib.text import Text
+from matplotlib.transforms import Affine2D
 
 import pathgeom
 from axestraversal import ordered_axes
@@ -318,6 +321,18 @@ class LegendEntries:
         # 快照只能造出 Line2D（HandlerLineCollection），拿快照比会永远对不上
         self.orig_fp: list[tuple] = [legend_handle_fingerprint(h) for h in handles[:n]]
         self.pristine: list = [self.snapshot(h) for h in handles[:n]]
+        # 脚本自定义 handler 一格画了好几个 artist（色带 = 24 段矩形 + 描边）时，`pristine`
+        # 只是其中第一个——重建只拿它就把整格画成一块纯色。这种格子原样定格一份（见
+        # `FrozenLegendHandle`）；造不出定格的项是 None，照旧走 `pristine`
+        boxes = _entry_boxes(leg)
+        self.frozen: list = [
+            _freeze_entry(leg, h, boxes[k][0]) if k < len(boxes) else None
+            for k, h in enumerate(handles[:n])
+        ]
+        if any(f is not None for f in self.frozen):
+            custom = dict(leg._custom_handler_map or {})  # noqa: SLF001
+            custom[FrozenLegendHandle] = _FROZEN_HANDLER
+            leg._custom_handler_map = custom  # noqa: SLF001
         self.orig_labels: list[str] = [t.get_text() for t in texts[:n]]
         self.texts: list = texts[:n]
         self.order: list[int] = list(range(n))
@@ -350,10 +365,61 @@ class LegendEntries:
         gid = self.gid_of(j)
         return any((gid, p) in self.state.applied for p in LEGEND_ENTRY_STYLE_PROPS)
 
+    def is_frozen(self, j: int) -> bool:
+        """这一项是脚本（自定义 handler）画的整格示意、此刻又不跟随源：重建时原样复刻，
+        不从单个示意线派生，也不摆 handle_* 控件（一格里没有「那一条」线的样式可改）。
+
+        判据是**有效绑定**，不是「有没有源」：同名同类型的源找到了、指纹却对不上的项
+        默认就是 custom（`bind_legend_entries` 第 3 条），它照样该从脚本原样复刻（#544 评审）。
+        跟随中的项从源派生，照旧（有源的误差棒就是这样）。"""
+        return self.frozen[j] is not None and self.effective_binding(j) != "follow_source"
+
+    def is_script_drawn(self, j: int) -> bool:
+        """定格的这一格是**脚本自己画的**（自定义 handler：色带等；默认就不跟随源）。与之相对的是
+        「本来跟随源派生、被断开了」的格子（有源的误差棒）：那种格子原本就有按示意线类型给的控件，
+        断开后照旧给——改完控件消失是「宣称了却改不动」（不变式 capability truthfulness）。"""
+        return self.is_frozen(j) and not (
+            self.sources[j] is not None and self.default_binding[j] == "follow_source"
+        )
+
+    def frozen_color_uniform(self, j: int) -> bool:
+        """定格的整格在脚本原样里是不是**同一种颜色**（误差棒是，色带不是）。是的话「示意线
+        颜色」有意义：改色落到整格每个 artist 上。判据取脚本原样，不取此刻（此刻可能已改过色）。"""
+        f = self.frozen[j]
+        if f is None:
+            return False
+        colors: set = set()
+        for a in f.artists:
+            c = _visible_colors(a)
+            if c is None:
+                return False
+            colors |= c
+        return len(colors) == 1
+
+    def cell_color(self, j: int):
+        """整格同色的定格项此刻那**唯一的可见颜色**（RGBA）；不是这种格子、或此刻不止一种颜色回 None。
+
+        检查器显示的值与撤销存下的原样都取它，不取第一个 artist：第一个是只描边的形状时，它的
+        面色是透明的——显示成 `none`，撤销时再把 `none` 写回整格就把所有描边抹掉了（#544 评审）。"""
+        if not self.frozen_color_uniform(j):
+            return None
+        k = self.display_index(j)
+        boxes = _entry_boxes(self.leg) if k is not None else []
+        artists = boxes[k][0].get_children() if k is not None and k < len(boxes) else []
+        colors: set = set()
+        for a in artists or self.frozen[j].artists:
+            c = _visible_colors(a)
+            if c is None:
+                return None
+            colors |= c
+        return next(iter(colors)) if len(colors) == 1 else None
+
     def base_of(self, j: int):
-        """重建 / 同步时这一项该从谁派生：跟随的从源，其余从脚本原样快照。"""
+        """重建 / 同步时这一项该从谁派生：跟随的从源，定格的原样复刻，其余从脚本原样快照。"""
         if self.effective_binding(j) == "follow_source":
             return self.sources[j]
+        if self.is_frozen(j):
+            return self.frozen[j]
         return self.pristine[j]
 
     # ---- 视图 ----
@@ -456,6 +522,20 @@ def _first(seq, default=None):
         return default
 
 
+def _dash_key(h: Line2D):
+    """虚线的**节奏**（未按线宽缩放的 offset + on/off 序列）。`get_linestyle()` 对任何自定义
+    虚线元组都只回 `'--'`：脚本特意给图例配的短虚线 `(0, (3, 2))` 与图中那条 `(0, (5, 3))`
+    指纹相同，被当成「跟随源」，第一次 apply 就换回了源的长虚线。"""
+    pattern = getattr(h, "_unscaled_dash_pattern", None)
+    if not pattern:
+        return None
+    offset, seq = pattern
+    return (
+        round(float(offset or 0.0), 3),
+        None if seq is None else tuple(round(float(x), 3) for x in seq),
+    )
+
+
 def legend_handle_fingerprint(h) -> tuple:
     """示意线的**样式指纹**：两份指纹相等 = 画出来一模一样。
 
@@ -468,6 +548,7 @@ def legend_handle_fingerprint(h) -> tuple:
             kind,
             _rgba(h.get_color()),
             str(h.get_linestyle()),
+            _dash_key(h),
             round(float(h.get_linewidth()), 3),
             str(h.get_marker()),
             round(float(h.get_markersize()), 3),
@@ -521,6 +602,108 @@ def _entry_boxes(leg: Legend) -> list[tuple]:
             if hb is not None and tb is not None:
                 out.append((hb, tb))
     return out
+
+
+class FrozenLegendHandle:
+    """脚本自定义 handler 画出来的一整格示意（多个 artist）的**定格副本**。
+
+    matplotlib 不保存 `legend(handles, …)` 收到的原始 handle，也不保存 handler 画了几个
+    artist——`legend_handles` 里只有 `legend_artist()` 回的第一个。所以重建（改内边距 /
+    列数 / 顺序 / 隐藏……）拿不回脚本的自定义画法，只能原样复刻它当初画出的那一格：
+    副本存在这里，`_FrozenHandler` 按新格子的尺寸把它们等比铺进去。
+    """
+
+    def __init__(self, artists: list, box, modes: list) -> None:
+        self.artists = [copy.copy(a) for a in artists]
+        #: 每个 artist 挂在这一格坐标上的是哪一个变换（`_cell_transform_mode`）：复刻时替换那一个
+        self.modes = list(modes)
+        self.x0, self.y0 = -float(box.xdescent), -float(box.ydescent)
+        self.width, self.height = float(box.width), float(box.height)
+
+
+class _FrozenHandler(HandlerBase):
+    """把 `FrozenLegendHandle` 的副本铺进新的 handlebox（旧格 → 新格的仿射）。"""
+
+    def legend_artist(self, legend, orig_handle, fontsize, handlebox):  # noqa: ARG002
+        f = orig_handle
+        sx = handlebox.width / f.width if f.width else 1.0
+        sy = handlebox.height / f.height if f.height else 1.0
+        place = (
+            Affine2D()
+            .translate(-f.x0, -f.y0)
+            .scale(sx, sy)
+            .translate(-handlebox.xdescent, -handlebox.ydescent)
+        )
+        out = []
+        for a, mode in zip(f.artists, f.modes):
+            c = copy.copy(a)
+            cell = place + handlebox.get_transform()
+            if mode in ("main", "both"):
+                c.set_transform(cell)
+            if mode in ("offset", "both"):
+                c.set_offset_transform(cell)
+            handlebox.add_artist(c)
+            out.append(c)
+        return out[0]
+
+
+_FROZEN_HANDLER = _FrozenHandler()
+
+
+def _freeze_entry(leg: Legend, h, box):
+    """这一格要不要定格：脚本画出的 artist 比「从 `h` 按 matplotlib 默认 handler 重派生」
+    多，就定格（重派生会丢东西）；一格只有一个 artist、或者某个 artist 不是画在这一格
+    自己的坐标里（没法按新格子等比铺），就不定格。"""
+    from matplotlib.offsetbox import DrawingArea  # 只在这里用，别污染模块层
+
+    kids = list(box.get_children())
+    if len(kids) <= 1:
+        return None
+    probe = DrawingArea(
+        width=box.width, height=box.height, xdescent=box.xdescent, ydescent=box.ydescent
+    )
+    probe.set_figure(_owning_figure(leg))
+    try:
+        legend_fresh_handle(leg, h, probe)
+    except Exception:  # noqa: BLE001 — 派生不出来就当它只能造出 0 个
+        pass
+    if len(probe.get_children()) >= len(kids):
+        return None
+    modes = [_cell_transform_mode(a, box) for a in kids]
+    if any(m is None for m in modes):
+        return None
+    return FrozenLegendHandle(kids, box, modes)
+
+
+def _is_cell_transform(t, box) -> bool:
+    """`t` 就是这一格的变换：`DrawingArea.get_transform()` 每次现拼 `dpi_transform + offset_transform`，
+    按**对象身份**认这两个成员，不按数值比——定格判定跑在还没排版的图例上，那时格子变换在数值上
+    恰好是单位阵，按值比会把 Collection 自带的 IdentityTransform 也认成「挂在格子上」（散点式示意
+    的主变换被换掉，点被放大到格子外）。"""
+    return (
+        getattr(t, "_a", None) is box.dpi_transform
+        and getattr(t, "_b", None) is box.offset_transform
+    )
+
+
+def _cell_transform_mode(a, box):
+    """artist 靠哪一个变换画在这一格的坐标里：主变换（`main`）；Collection 也可以只靠**偏移**变换
+    （`offset_transform=trans` 定位、marker 尺寸按点——散点式的示意）；两者都是（`both`）。都不是
+    回 None：没法按新格子等比铺，这一格不定格（#544 评审：只认主变换会把用偏移定位的自定义
+    handler 整格拒掉，重建时又塌成第一个 artist）。"""
+    main = _is_cell_transform(Artist.get_transform(a), box)
+    offset = False
+    if isinstance(a, Collection):
+        # 读**原始**属性，不调 `get_offset_transform()`：那个 getter 在属性为 None 时会顺手写进一个
+        # IdentityTransform——判定跑在活的图例对象上，一读就改了原样（误差棒的竖线组当场画偏）
+        offset = _is_cell_transform(getattr(a, "_offset_transform", None), box)
+    if main and offset:
+        return "both"
+    if main:
+        return "main"
+    if offset:
+        return "offset"
+    return None
 
 
 def _legend_replace_handle(leg: Legend, k: int, orig, copy_of=None) -> bool:
@@ -823,7 +1006,9 @@ def _detach_entry(model: LegendEntries, j: int) -> None:
     """
     k = model.display_index(j)
     if k is not None:
-        _legend_replace_handle(model.leg, k, model.pristine[j], copy_of=model.pristine[j])
+        # 脚本原样是整格的（定格过）就换回整格；此刻绑定还没写成 custom，所以直接看 `frozen`
+        base = model.frozen[j] if model.frozen[j] is not None else model.pristine[j]
+        _legend_replace_handle(model.leg, k, base, copy_of=model.pristine[j])
 
 
 def _entry_handle(t: Text):
@@ -881,14 +1066,115 @@ def _entry_handle_write(t: Text, prop: str, v) -> None:
         # 第一条 handle_* override 落下的这一刻它脱开跟随。`applied` 要到
         # setter 返回后才登记，所以这里还看得见「它刚才还在跟随」
         _detach_entry(model, j)
+    if prop == "handle_color" and model.frozen_color_uniform(j):
+        # 整格的（误差棒：竖线组 + 横杠 + 中线）：颜色落到这一格的每一个 artist 上，
+        # 只改第一个的话其余几条退回脚本原色（#544 评审：先随源改色再断开）
+        k = model.display_index(j)
+        boxes = _entry_boxes(model.leg) if k is not None else []
+        if k is not None and k < len(boxes):
+            c = _single_color(v)
+            for a in boxes[k][0].get_children():
+                _recolor_cell_artist(a, c)
+            return
     _handle_write(model.handle_of(j), prop, v)
+
+
+def _single_color(v):
+    """一种颜色。撤销时还原的是 `_handle_read` 存下的原样：示意线是 LineCollection（误差棒）时那是
+    N×4 数组，整格里的 Line2D 吃不下——取第一行（#544 评审）。"""
+    if isinstance(v, str):
+        return v
+    try:
+        arr = np.asarray(v, dtype=float)
+    except (TypeError, ValueError):
+        return v
+    if arr.ndim == 2 and len(arr):
+        return tuple(arr[0])
+    return v
+
+
+def _visible(c) -> bool:
+    """这一路颜色画出来看得见（alpha > 0）。"""
+    rgba = _rgba(c)
+    return isinstance(rgba, tuple) and rgba[3] > 0
+
+
+def _recolor_cell_artist(a, v) -> None:
+    """整格改色里的一个 artist：**只改看得见的那几路颜色**，看不见的（透明的面、`'none'` 的边）
+    保持透明——只有描边的形状改完仍只有描边，只有面的仍没有边（#544 评审）。"""
+    if isinstance(a, Line2D):
+        a.set_color(v)
+        if _visible(a.get_markeredgecolor()):
+            a.set_markeredgecolor(v)
+        if str(a.get_markerfacecolor()).lower() != "none" and _visible(a.get_markerfacecolor()):
+            a.set_markerfacecolor(v)
+    elif isinstance(a, LineCollection):
+        a.set_color(v)
+    elif isinstance(a, Patch):
+        if a.get_fill() and _visible(a.get_facecolor()):
+            a.set_facecolor(v)
+        if _visible(a.get_edgecolor()):
+            a.set_edgecolor(v)
+    elif isinstance(a, Collection):
+        if any(_visible(c) for c in a.get_facecolor()):
+            a.set_facecolor(v)
+        if any(_visible(c) for c in a.get_edgecolor()):
+            a.set_edgecolor(v)
+
+
+def _visible_colors(a) -> set:
+    """一个 artist 画出来看得见的颜色（完全透明的不算）；认不出的类型回 None 当「不一致」。
+
+    **透明度算在颜色里**（画出来的那个：artist 显式设了 alpha 就用它，否则用颜色自带的）：同一色相、透明度不同的一格（渐隐）
+    不是「同一种颜色」——当成同色的话改色把每一段都变成不透明，撤销也还原不回各段的透明度（#544 评审）。"""
+    out: set = set()
+    art_alpha = a.get_alpha()
+
+    def add(c) -> None:
+        # 画出来的透明度按 Matplotlib 的规则算：artist 显式设了 alpha 就**替换**颜色自带的那个
+        # （`to_rgba(color, alpha)`），不是相乘——相乘会凭空造出透明度差异（#544 评审）
+        rgba = _rgba(c)
+        if not isinstance(rgba, tuple):
+            return
+        alpha = rgba[3] if art_alpha is None else float(art_alpha)
+        if alpha > 0:
+            out.add((*rgba[:3], round(alpha, 4)))
+
+    if isinstance(a, Line2D):
+        add(a.get_color())
+        if a.get_marker() not in (None, "None", "", " "):
+            add(a.get_markeredgecolor())
+            if str(a.get_markerfacecolor()).lower() != "none":
+                add(a.get_markerfacecolor())
+    elif isinstance(a, LineCollection):
+        for c in a.get_colors():
+            add(c)
+    elif isinstance(a, Patch):
+        if a.get_fill():
+            add(a.get_facecolor())
+        add(a.get_edgecolor())
+    elif isinstance(a, Collection):
+        for c in list(a.get_facecolor()) + list(a.get_edgecolor()):
+            add(c)
+    else:
+        return None
+    return out
 
 
 def _mk_entry_handle_handler(prop: str) -> tuple:
     return (
-        lambda t: _handle_read(_entry_handle(t), prop),
+        lambda t: _entry_handle_read(t, prop),
         lambda t, v: _entry_handle_write(t, prop, v),
     )
+
+
+def _entry_handle_read(t: Text, prop: str):
+    model, j = _entry_of(t)
+    if prop == "handle_color":
+        c = model.cell_color(j)
+        if c is not None:
+            return c
+    return _handle_read(model.handle_of(j), prop)
 
 
 def _reindex_legend_children(leg: Legend, state: RebuildState) -> None:

@@ -18,7 +18,7 @@ import time
 
 import pytest
 
-from support import nativekit
+from support import nativekit, procprobe
 from tavotto.engine import nativehandoff, nativesession, runcodes
 
 pytestmark = nativekit.needs_user_python
@@ -44,6 +44,18 @@ print(json.dumps({
     "file": __file__,
 }))
 """
+
+#: 探针那一行 JSON 的键集合——判「stdout 上只有用户的输出」用正面形式量它（#449）。
+PROBE_KEYS = {
+    "argv",
+    "cwd",
+    "executable",
+    "marker",
+    "bridge_token_visible",
+    "path0",
+    "package",
+    "file",
+}
 
 
 def test_the_script_keeps_the_users_stdout_cwd_env_and_argv(tmp_path):
@@ -90,8 +102,11 @@ def test_run_messages_only_stderr(tmp_path):
         code, out, err = nativekit.finish(session, proc)
     assert code == 0, err
     assert "Tavotto Run" in err and "Beta" in err
-    assert "Tavotto" not in out, f"Tavotto 的文字混进了用户的 stdout: {out!r}"
-    json.loads(out.strip())
+    # 正面形式：stdout **只有**探针那一行 JSON、键集合固定。不做 `"Tavotto" not in out`
+    # 的子串否定——那量到的是路径（--basetemp、解释器路径、cwd 里含 Tavotto 就假红，#449）。
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    assert len(lines) == 1, f"用户的 stdout 上混进了探针之外的行: {out!r}"
+    assert set(json.loads(lines[0])) == PROBE_KEYS, f"stdout 那一行不是探针的 JSON: {out!r}"
 
 
 def test_quiet_silences_tavotto_but_not_the_user(tmp_path):
@@ -446,20 +461,8 @@ def test_ctrl_c_reaches_the_script_and_leaves_no_orphan(tmp_path):
     assert proc.returncode == 130, (
         f"没有透传脚本的退出码: {proc.returncode}\nstdout={out!r}\nstderr={err!r}"
     )
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline and _alive(child_pid):
-        time.sleep(0.05)
-    assert not _alive(child_pid), f"孤儿进程留下了: pid={child_pid}"
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:  # pragma: no cover - 别人的进程，不在本用例范围
-        return True
-    return True
+    # 不用 os.kill(pid, 0)：Windows 上那是 TerminateProcess（#523，见 tests/support/procprobe）
+    assert procprobe.wait_gone(child_pid, timeout=30), f"孤儿进程留下了: pid={child_pid}"
 
 
 # --------------------------------------------------------------------------

@@ -2,6 +2,9 @@
 
 本文件展开 SKILL.md「会话入口」各状态的恢复动作。**健康会话一个字都不用读。**
 
+下面的安装命令是 **Codex** 的。用户在别的宿主里（Cursor、Claude、VS Code、Trae、DSH、
+WorkBuddy、ZCode……）时，安装和重载看 `other-hosts.md`；引擎侧的恢复（provision、错误码）两边一样。
+
 ## 插件没有在本会话加载（工具列表里没有 `tavotto_health`）
 
 说明插件不在本会话里。给用户 README「在 Codex 中第一次使用 Tavotto」的两条

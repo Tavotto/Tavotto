@@ -30,7 +30,7 @@ from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
 from matplotlib.patches import BoxStyle, FancyArrowPatch, Patch, Rectangle
-from matplotlib.text import Text
+from matplotlib.text import Annotation, Text
 from matplotlib.transforms import ScaledTranslation
 from mpl_toolkits.mplot3d import proj3d
 
@@ -219,10 +219,42 @@ class SeriesGroup:
         return list(self.artists)
 
 
-def _set_text_pos_frac(t: Text, value) -> None:
-    """拖动文字。轴标签/标题被 matplotlib 每次 draw 自动重定位，
-    需分别走 set_label_coords / 关闭 _autotitlepos，否则 set_position 会被覆盖。
-    （manifest.instrument 在这些 artist 上打了 _mm_drag 标记。）"""
+def annotation_text_draggable(t) -> bool:
+    """这段文字的 `pos_frac` 能不能**可靠地**落到写下的 figure 分数上。
+
+    **manifest 的 `draggable` 与 setter 共用这一份判据**（QA 2026-09-24 GEO-B1）：不是注释的
+    文字一律能拖；注释的文字位置是 `xyann`，按它自己的 `textcoords`（`anncoords`）解释，
+    只有这套坐标系**可逆、且与 dpi / 字号无关**时才宣称可拖——判据与纯箭头注释的端点
+    同一张表（`_ann_coords_invertible`）：'data'、figure / subfigure / axes 的 points /
+    fraction，以及相对 `xy` 的 'offset points'（这时 `xy` 的坐标系也得可逆，偏移的原点
+    要从它算）。**'pixels' / 'fontsize' / 可调用对象 / Artist 坐标不宣称**：前两种写进去的值
+    随导出 dpi / 之后改的字号漂走，后两种的原点取决于别的 artist 的排版——宣称可拖
+    就是静默落错，不宣称至少说的是真话。
+    """
+    if not isinstance(t, Annotation):
+        return True
+    if not _ann_coords_invertible(t.anncoords, text_end=True):
+        return False
+    coords = t.anncoords if isinstance(t.anncoords, tuple) else (t.anncoords,)
+    if any(isinstance(c, str) and c.startswith("offset") for c in coords):
+        return _ann_coords_invertible(t.xycoords, text_end=False)
+    return True
+
+
+def _place_text(t: Text, value) -> None:
+    """把文字落到 figure 分数（top-origin）`value`：按**此刻**的变换换算进它自己的坐标系。
+
+    轴标签 / 标题被 matplotlib 每次 draw 自动重定位，需分别走 set_label_coords /
+    关闭 _autotitlepos，否则 set_position 会被覆盖（manifest.instrument 在这些 artist
+    上打了 _mm_drag 标记）。
+
+    **注释不能用 `get_transform()`**（GEO-B1）：注释的 transform 是**上一次 draw 那一刻**
+    `update_positions` 按当时的 dpi / 子图框现算、再冻成一个 Affine2D 挂上去的快照。
+    预览 SVG 按 72 dpi 画、manifest 按 figure dpi 画，拿 72 dpi 的快照去逆算 figure dpi
+    下的 display 像素，'axes fraction' / 'offset points' / 'figure fraction' 的注释
+    就按 dpi 之比落到别处（实测 0.09–0.33 figure 分数，能跑出图外）。这里按注释自己的
+    `anncoords` **现算**一份（与纯箭头注释的端点同一个算法）。
+    """
     fig = t.get_figure()
     disp = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
     kind, ax = getattr(t, "_mm_drag", (None, None))
@@ -233,7 +265,109 @@ def _set_text_pos_frac(t: Text, value) -> None:
         return
     if kind == "title":
         ax._autotitlepos = False  # noqa: SLF001
+    if isinstance(t, Annotation):
+        if not annotation_text_draggable(t):
+            raise ValueError(f"注释文字的坐标系 {t.anncoords!r} 不支持拖动定位")
+        tr = t._get_xy_transform(None, t.anncoords)  # noqa: SLF001
+        x, y = tr.inverted().transform(disp)
+        t.xyann = (float(x), float(y))
+        return
     t.set_position(tuple(t.get_transform().inverted().transform(disp)))
+
+
+# ---------------------------------------------------------------------------
+# 布局引擎下拖过的文字（QA 2026-09-24 GEO-B2）
+#
+# `layout="constrained"` / `"tight"` 的图在**每次 draw 的最前面**重排子图，而重排的输入
+# 里有标题、轴标签、子图里的文字（它们的包围盒决定边距）。setter 把 figure 分数换算进
+# 文字的本地坐标（transAxes / transData）之后：① 文字挪了 → 边距变了 → 子图被挪 →
+# 跟着子图走的文字又被带走，y 分量等于没写（实测误差 ≈ 请求的 Δy）；② 之后改图幅，
+# 布局重排一次，锚点再漂一次。
+#
+# 修法与 `PinnedTightLayoutEngine` 同一个思路：**布局的输入必须与「没拖过」逐位相同**。
+# 布局引擎 `execute` 的前后各做一步——之前把拖过的文字放回脚本原样（自动定位照开），
+# 让引擎照常算；之后按排好的子图把它们重新落到写下的 figure 分数上。于是
+# * 拖过的文字每一次 draw 都精确落在写下的位置上（与 draw 次数、图幅、字号无关）；
+# * 没拖过的元素与「什么都没拖」的对照组逐位相同——拖一个标题不会让子图跳；
+# * 热态与重放走同一个 execute，布局不追着文字跑，所以收敛到同一张图。
+# 没有布局引擎的图不装这层（没有东西会在 draw 时挪子图），行为与从前逐位相同。
+# ---------------------------------------------------------------------------
+
+
+def _text_pins(fig) -> "weakref.WeakKeyDictionary":
+    """根 Figure 上「拖过的文字 → (figure 分数, 脚本原样)」表。弱引用：文字被删了不续命。"""
+    root = pathgeom.root_figure(fig)
+    pins = root.__dict__.get("_mm_text_pins")
+    if pins is None:
+        pins = weakref.WeakKeyDictionary()
+        root._mm_text_pins = pins  # noqa: SLF001
+    return pins
+
+
+def _text_native_state(t: Text):
+    """文字交给自动定位时的样子（第一次拖之前采）：位置、transform、自动定位开关。"""
+    kind, ax = getattr(t, "_mm_drag", (None, None))
+    if kind in ("xlabel", "ylabel"):
+        axis = ax.xaxis if kind == "xlabel" else ax.yaxis
+        return (t.get_position(), t.get_transform(), axis._autolabelpos)  # noqa: SLF001
+    if kind == "title":
+        return (t.get_position(), ax._autotitlepos)  # noqa: SLF001
+    return (t.get_position(),)
+
+
+def _put_text_native(t: Text, native) -> None:
+    kind, ax = getattr(t, "_mm_drag", (None, None))
+    if kind in ("xlabel", "ylabel"):
+        axis = ax.xaxis if kind == "xlabel" else ax.yaxis
+        t.set_transform(native[1])
+        axis._autolabelpos = native[2]  # noqa: SLF001
+    elif kind == "title":
+        ax._autotitlepos = native[1]  # noqa: SLF001
+    t.set_position(tuple(native[0]))
+
+
+def _ensure_text_pin_hook(fig) -> None:
+    """给这张图的布局引擎包上「先放回原样、排完再落回去」那一层（幂等）。
+
+    包的是**当前那个引擎实例**的 `execute`（实例属性），不换引擎：换引擎会改变
+    colorbar / subplots_adjust 的行为（`PinnedTightLayoutEngine` 的注释）。之后引擎被
+    `ensure_pinnable_layout_engine` 包进可钉的那一版时，新实例没有这层——但换引擎只
+    发生在 `axes.position` 落下时，那是几何键，frac 锚定 prop 随即全部重放，这里会在
+    新实例上再装一次（内层那份照旧幂等地跑，不改变结果）。
+    """
+    root = pathgeom.root_figure(fig)
+    engine = root.get_layout_engine()
+    if engine is None or engine.__dict__.get("_mm_text_pin_hook"):
+        return
+    native_execute = engine.execute
+
+    def execute(f):
+        pins = [
+            (t, v, n) for t, (v, n) in list(_text_pins(f).items()) if t.get_figure() is not None
+        ]
+        for t, _v, native in pins:
+            _put_text_native(t, native)
+        try:
+            native_execute(f)
+        finally:
+            for t, v, _native in pins:
+                _place_text(t, v)
+
+    engine.execute = execute
+    engine._mm_text_pin_hook = True  # noqa: SLF001
+
+
+def _set_text_pos_frac(t: Text, value) -> None:
+    """拖动文字：落到 figure 分数 `value`，并登记成「拖过的」（布局引擎下见上面那段）。
+
+    **可能失败的那一步（`_place_text`）排在登记之前**：坏值 / 不支持的坐标系抛出去时
+    表里不留半条，布局那一层不会在之后每一次 draw 里拿它重抛。"""
+    pins = _text_pins(t.get_figure())
+    prev = pins.get(t)
+    native = prev[1] if prev is not None else _text_native_state(t)
+    _place_text(t, value)
+    pins[t] = ((float(value[0]), float(value[1])), native)
+    _ensure_text_pin_hook(t.get_figure())
 
 
 def _get_text_pos(t: Text):
@@ -245,6 +379,9 @@ def _get_text_pos(t: Text):
 
 
 def _restore_text_pos(t: Text, orig) -> None:
+    fig = t.get_figure()
+    if fig is not None:
+        _text_pins(fig).pop(t, None)
     kind, ax = getattr(t, "_mm_drag", (None, None))
     if kind in ("xlabel", "ylabel"):
         axis = ax.xaxis if kind == "xlabel" else ax.yaxis
@@ -592,24 +729,185 @@ def _linestyle_name(a) -> str:
     return "-"  # (offset, seq) 自定义虚线：显示成实线占位，用户改了才覆盖
 
 
-def _set_arrow_endpoints(a, value) -> None:
-    """拖动图内独立箭头。值为 figure 分数（top-origin）的 [ax, ay, bx, by]，
-    换算回箭头自己的 transform 坐标后 set_positions——数据坐标里落点跟着
-    数据范围走，figure 分数才是「屏幕上挪到哪就是哪」。annotate 的箭头每次
-    draw 会被注释机制重定位，manifest 不给它出端点，这里只会收到独立箭头。"""
-    fig = a.get_figure()
+#: annotate 锚点坐标系里「拖完能逆算回去」的那几种：与 renderer 无关、变换可逆、
+#: **与 dpi 无关**。其余写法（Artist / 可调用对象 / Transform / Bbox / 'polar'）一律
+#: 不出端点——判不出能不能写回，就不宣称这项能力。'offset …' 只对文字那一端
+#: （textcoords）成立。
+#: **没有 'pixels'**（#552 评审）：像素单位的锚点是按应用那一刻的 figure dpi 逆算出来
+#: 的原始像素值，导出 / 预览换一个 dpi（`savefig(dpi=600)`）像素值不变、图幅变了，
+#: 箭头落到别处——热态 manifest ≠ 导出件。
+#: **也没有 'fontsize'**（#552 第三轮评审）：这类变换按注释**当前字号**缩放，而字号是
+#: 另一条 override——端点先落、字号后改时锚点跟着字号漂离请求的位置，`_must_replay`
+#: 只在几何档变化时重放端点，字号不在其中。纯箭头注释的字号用户看不见也极少去改，
+#: 为它把字号拉进「几何」档、牵动全部 figure 锚定 prop 的重放不值得。
+#: 剩下 points / fraction：物理量或比例，与 dpi、字号都无关。
+_ANN_COORD_BASES = ("figure", "subfigure", "axes")
+_ANN_COORD_UNITS = ("points", "fraction")
+
+
+def _ann_coords_invertible(coords, *, text_end: bool) -> bool:
+    if isinstance(coords, tuple):
+        return len(coords) == 2 and all(
+            _ann_coords_invertible(c, text_end=text_end) for c in coords
+        )
+    if not isinstance(coords, str):
+        return False
+    if coords == "data":
+        return True
+    parts = coords.split()
+    if len(parts) != 2 or parts[1] not in _ANN_COORD_UNITS:
+        return False
+    return parts[0] in _ANN_COORD_BASES or (text_end and parts[0] == "offset")
+
+
+def annotation_arrow_owner(a, text: str | None = None):
+    """这支箭头若是**纯箭头注释**（`annotate("", xy=…, xytext=…, arrowprops=…)`）
+    且两端坐标系都可逆，回它的 Annotation；否则 None。
+
+    只收空文字：有字的注释，箭尾从文字框算（`_arrow_relpos`），拖尾巴等于拖字——
+    字自己已经能拖（`pos_frac`），两条 override 写同一个 `xyann` 只会互相盖写。
+    `text` 给了就按它判（setter 用：这一轮 apply **将要**落成的文字，见
+    `_annotation_text_after_apply`），否则看注释此刻的文字（manifest 用）。
+    """
+    ann = getattr(a, "_mm_annotation", None)
+    if ann is None or ann.axes is None:
+        return None
+    if (ann.get_text() if text is None else text) != "":
+        return None
+    if not _ann_coords_invertible(ann.xycoords, text_end=False):
+        return None
+    if not _ann_coords_invertible(ann.anncoords, text_end=True):
+        return None
+    return ann
+
+
+def _unit_scalar(v) -> float:
+    """单位换算结果 → 一个 float。分类轴（坐标写成组名）的换算在 matplotlib 3.8 上回的是
+    **只有一个元素的数组**：直接 `float()` 在 NumPy ≥ 1.25 给 DeprecationWarning、将来报错
+    ——到那时图里只要有这样一根纯箭头注释，manifest 就建不出来。先取出唯一的元素。"""
+    return float(np.asarray(v, dtype=float).reshape(-1)[0])
+
+
+def _ann_point_display(ann, xy, coords):
+    """注释的一个锚点 → display 像素。与 `Annotation._get_xy` 同一算法（'data'
+    分量先过单位换算），只用于可逆坐标系（见 `_ann_coords_invertible`），
+    所以 renderer 传 None。"""
+    x, y = xy
+    xc, yc = coords if isinstance(coords, tuple) else (coords, coords)
+    if xc == "data":
+        x = _unit_scalar(ann.convert_xunits(x))
+    if yc == "data":
+        y = _unit_scalar(ann.convert_yunits(y))
+    return ann._get_xy_transform(None, coords).transform((x, y))  # noqa: SLF001
+
+
+def annotation_arrow_display(ann):
+    """纯箭头注释的 (箭尾, 箭头) display 坐标：箭尾 = `xyann`（空文字的文字框
+    退化成一个点，`update_positions` 的 arrow_begin 就是它），箭头 = `xy`。
+    与独立箭头的 `_posA_posB` 同口径：未扣 shrinkA / shrinkB。"""
+    head = _ann_point_display(ann, ann.xy, ann.xycoords)
+    tail = _ann_point_display(ann, ann.xyann, ann.anncoords)
+    return tail, head
+
+
+class _AnnAnchors(tuple):
+    """纯箭头注释的原样：(xy, xyann, annotation_clip)。与独立箭头的端点对区分开，
+    还原时认得出该写回哪一边。只活在 originals 里，不过 JSON。"""
+
+
+def _set_annotation_arrow(ann, da, db) -> None:
+    """把纯箭头注释的两端挪到 display 点 da（尾）/ db（头）：改的是**注释本身**
+    的 `xy` / `xyann`——箭头 patch 每次 draw 都按这两个锚点重定位，直接改 patch
+    下一帧就弹回。先写 xy：'offset …' 的 textcoords 以 xy 为原点。"""
+    head = ann._get_xy_transform(None, ann.xycoords).inverted().transform(db)  # noqa: SLF001
+    ann.xy = (float(head[0]), float(head[1]))
+    tail = ann._get_xy_transform(None, ann.anncoords).inverted().transform(da)  # noqa: SLF001
+    ann.xyann = (float(tail[0]), float(tail[1]))
+    # 'data' 锚点落到子图范围外时 matplotlib 默认整条注释不画（`_check_xy`）。端点
+    # 是 figure 锚定的：拖到哪就画在哪，不因为离开了数据范围凭空消失
+    ann.set_annotation_clip(False)
+
+
+def _annotation_text_after_apply(a, state) -> str | None:
+    """这一轮 apply 结束时注释会是什么文字：`state.pending` 里有这条注释的 `text`
+    就是它，否则是此刻的文字（不在新列表里的 text 已在还原段放回脚本原样）。
+    与列表序无关——同一批 patch 里 text 排在端点前后，判出来都一样。"""
+    ann = a._mm_annotation  # noqa: SLF001
+    gid = a.get_gid() or ""
+    key = (gid.removesuffix(".arrow"), "text")
+    pending = getattr(state, "pending", None) or {}
+    if key in pending:
+        v = pending[key]
+        return "" if v is None else str(v)
+    return ann.get_text()
+
+
+def _annotation_endpoints_live(a, state) -> bool:
+    """这一轮 apply 之后，注释箭头上的端点 override 该不该生效（= 注释是纯箭头）。"""
+    text = _annotation_text_after_apply(a, state) if state is not None else None
+    return annotation_arrow_owner(a, text) is not None
+
+
+def _set_arrow_endpoints(a, value, state=None) -> None:
+    """拖动图内箭头。值为 figure 分数（top-origin）的 [ax, ay, bx, by]（A = 尾、
+    B = 头），换算回箭头自己的坐标后落位——数据坐标里落点跟着数据范围走，figure
+    分数才是「屏幕上挪到哪就是哪」。独立箭头（add_patch）`set_positions`；纯箭头
+    注释改注释的两个锚点（`_set_annotation_arrow`）。
+
+    **可拖始终绑在「此刻是纯箭头注释」上**（#552 评审）：有字的注释先被清空、拖了箭头、
+    再把字恢复——端点那条 override 还留在列表里，但注释已经不是纯箭头了，此时它**不生效**，
+    锚点放回脚本原样（不给 warning：warning 会阻断写回，而这条 override 只是失效、不是
+    错误；manifest 同一时刻也不再出端点）。判据用这一轮将要落成的文字
+    （`_annotation_text_after_apply`），所以热态与全量重放判出同一个结果；这条 prop
+    在注释箭头上**裁决一变就重放**（`_must_replay`：上次落下的裁决记在 `_mm_endpoints_live`），
+    文字变了而端点值没变时也会被重新裁决。不是每轮都重放：constrained / tight 布局下锚点
+    落位后布局会重排，热态每轮重算会一路追着布局走，与只算一次的全量重放分岔（写回像素门
+    实测 409）。"""
+    ann = getattr(a, "_mm_annotation", None)
+    if ann is not None:
+        live = _annotation_endpoints_live(a, state)
+        if not live:
+            orig = None if state is None else state.originals.get((a.get_gid(), "endpoints_frac"))
+            if isinstance(orig, _AnnAnchors):
+                _put_ann_anchors(ann, orig)
+            # 「失效」这个裁决要**留着**（#552 第五轮评审）：清掉它，下一轮无变化的渲染里
+            # `_must_replay` 会把 None ≠ False 当成裁决变了、再撤一次——而那时 xyann 已是
+            # 恢复文字后用户拖过的位置，字被拽回去、没变的 pos_frac 又被跳过
+            a._mm_endpoints_live = False  # noqa: SLF001
+            return
+        a._mm_endpoints_live = True  # noqa: SLF001
+    fig = a.get_figure() if ann is None else ann.get_figure()
     da = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
     db = pathgeom.frac_to_display(fig, float(value[2]), float(value[3]))
+    if ann is not None:
+        _set_annotation_arrow(ann, da, db)
+        return
     inv = a.get_transform().inverted()
     a.set_positions(tuple(inv.transform(da)), tuple(inv.transform(db)))
 
 
+_set_arrow_endpoints._needs_state = True  # noqa: SLF001
+
+
 def _get_arrow_endpoints(a):
+    ann = getattr(a, "_mm_annotation", None)
+    if ann is not None:
+        return _AnnAnchors((ann.xy, ann.xyann, ann.get_annotation_clip()))
     pts = getattr(a, "_posA_posB", None)
     return None if pts is None else (tuple(pts[0]), tuple(pts[1]))
 
 
+def _put_ann_anchors(ann, orig: _AnnAnchors) -> None:
+    ann.xy, ann.xyann = orig[0], orig[1]
+    ann.set_annotation_clip(orig[2])
+
+
 def _restore_arrow_endpoints(a, orig) -> None:
+    """端点 override 被撤掉（不在新列表里）：锚点回原样，裁决记号一并清掉。"""
+    a.__dict__.pop("_mm_endpoints_live", None)
+    if isinstance(orig, _AnnAnchors):
+        _put_ann_anchors(a._mm_annotation, orig)  # noqa: SLF001
+        return
     if orig is not None:
         a.set_positions(orig[0], orig[1])
 
@@ -2582,8 +2880,9 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda a: float(a.get_zorder()),
         lambda a, v: a.set_zorder(float(v)),
     ),
-    # 端点与样式：位置只对独立箭头开放（manifest 侧把关），样式两类都能改。
-    # 原生值分别是 transform 坐标的端点对 / ArrowStyle 对象 / linestyle 原值，
+    # 端点与样式：位置对独立箭头与纯箭头注释开放（manifest 侧把关：有字的注释、
+    # 坐标系逆算不回去的注释不出端点），样式两类都能改。原生值分别是 transform
+    # 坐标的端点对（注释是 `_AnnAnchors`）/ ArrowStyle 对象 / linestyle 原值，
     # 恢复走 _RESTORE 里的专用函数
     ("arrowpatch", "endpoints_frac"): (_get_arrow_endpoints, _set_arrow_endpoints),
     # 独立形状的拖动：figure 分数（top-origin）的包围盒左下角；平移叠在 artist 级
@@ -3028,7 +3327,7 @@ def _is_geometry_key(prop: str, artist) -> bool:
     return prop in ("position", "xscale", "yscale", "zscale") and isinstance(artist, Axes)
 
 
-def _must_replay(prop: str, artist) -> bool:
+def _must_replay(prop: str, artist, state=None) -> bool:
     """每次 apply 都必须重放的 prop（「值没变就跳过」那条捷径对它们是错的）。
 
     刻度定位与单条刻度文字都是「按当前状态重算」的：改 xlim、换 scale、
@@ -3039,6 +3338,12 @@ def _must_replay(prop: str, artist) -> bool:
     """
     if isinstance(artist, TickSet):
         return prop in tickmodel._TICK_MODEL_PROPS
+    # 注释箭头的端点：它生不生效取决于注释**这一轮**的文字（见 `_set_arrow_endpoints`）。
+    # 文字 override 撤掉 / 加上而端点值没变时，跳过它热态就停在上一次的裁决上——所以
+    # **裁决变了**就重放。裁决没变不重放：布局会在锚点落下后重排，每轮重算会追着布局走
+    if prop == "endpoints_frac" and getattr(artist, "_mm_annotation", None) is not None:
+        live = _annotation_endpoints_live(artist, state)
+        return live != getattr(artist, "_mm_endpoints_live", None)
     return isinstance(artist, TickLabel) and prop == "text"
 
 
@@ -3498,7 +3803,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                 # ③ 别名组里被同组其他成员盖掉的（见 ALIAS_GROUPS / dirty_groups）
                 if (
                     not (geometry_moved and prop in _FRAC_ANCHORED)
-                    and not _must_replay(prop, artist)
+                    and not _must_replay(prop, artist, state)
                     and key not in dirty_groups
                     and not dirty_groups.intersection(owner.get(key, ()))
                 ):

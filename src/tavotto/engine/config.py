@@ -16,15 +16,20 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import sys
+import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 RECENT_KEEP = 20
+#: 收藏的项目上限：收藏是用户手工挑的，远少于这个数；封顶只为挡住坏请求把配置撑大
+PINNED_KEEP = 50
 
 _LOCK = threading.Lock()
 
@@ -133,6 +138,7 @@ def data_path(*parts: str) -> Path:
 def _defaults() -> dict:
     return {
         "recent_projects": [],
+        "pinned_projects": [],
         "projects": {},
         "ai": {},
         "updates": {},
@@ -156,6 +162,14 @@ def load() -> dict:
             for e in data["recent_projects"]
             if isinstance(e, dict) and isinstance(e.get("path"), str)
         ]
+    # 收藏（左栏「工作区」抽屉）：与最近列表同形状、同一道过滤。**必须在这里显式
+    # 收下**，理由同下面的 telemetry：漏掉它，任何一次 save() 都会把收藏抹掉。
+    if isinstance(data.get("pinned_projects"), list):
+        out["pinned_projects"] = [
+            e
+            for e in data["pinned_projects"]
+            if isinstance(e, dict) and isinstance(e.get("path"), str)
+        ]
     if isinstance(data.get("projects"), dict):
         out["projects"] = data["projects"]
     if isinstance(data.get("ai"), dict):
@@ -173,13 +187,40 @@ def load() -> dict:
 
 
 def save(cfg: dict) -> None:
-    """临时文件 + replace 原子落盘；目录不存在自动创建。"""
+    """临时文件 + replace 原子落盘；目录不存在自动创建。
+
+    **只在 `transaction()` 里调**（本模块内的函数已经持着 `_LOCK`）：别的模块直接
+    load → 改 → save 的话，两个写入方交错就是丢更新（`tests/test_config_transaction.py`
+    有结构门禁）。临时文件名每次唯一：万一有漏网的并发写入，也不会互相删掉对方的
+    `.tmp`、把一次 replace 变成 FileNotFoundError。
+    """
     d = config_dir()
     d.mkdir(parents=True, exist_ok=True)
     p = config_path()
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(p)
+    fd, tmp_name = tempfile.mkstemp(prefix=p.name + ".", suffix=".tmp", dir=d)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(cfg, ensure_ascii=False, indent=1))
+        tmp.replace(p)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+@contextlib.contextmanager
+def transaction() -> Iterator[dict]:
+    """读-改-写 `config.json` 的**唯一入口**：所有写配置的模块共用 `_LOCK`。
+
+    以前 updater / telemetry 各持各的模块锁再 `load()` → `save()`，与本模块的收藏、
+    最近列表写入互不排斥：交错时后写的一方用自己读到的旧快照整份覆盖，另一方的改动
+    丢失、却已经对调用方报了成功（Codex #550）。块内拿到的 dict 就是要写回的那份；
+    块里抛异常则什么都不写。
+    """
+    with _LOCK:
+        cfg = load()
+        yield cfg
+        save(cfg)
 
 
 def touch_recent(path: str, name: str | None = None) -> None:
@@ -212,6 +253,78 @@ def remove_recent(path: str) -> bool:
 
 def recent_projects() -> list[dict]:
     return load()["recent_projects"]
+
+
+def pinned_projects() -> list[dict]:
+    """收藏的项目，按用户排的顺序。与最近列表互相独立：从最近列表移除不取消收藏。"""
+    return load()["pinned_projects"]
+
+
+PINNED_OPS = ("add", "remove", "move")
+
+
+class PinnedFullError(Exception):
+    """收藏已满 `PINNED_KEEP` 条还要 add：说出来，而不是回 200 假装加上了。"""
+
+
+def edit_pinned(
+    op: str, path: str, *, delta: int | None = None, to_path: str | None = None
+) -> list[dict]:
+    """对收藏列表做**一个操作**，在锁里对照此刻存着的那份执行，回新列表。
+
+    不收整张列表：整张替换的 payload 是客户端从它看到的那份算出来的，两个标签页
+    （或一个标签页里排着队的两次操作）各自从旧列表出发，后到的就把先到的盖掉；
+    排序按下标排队也会移错项（Codex #550）。这里一律按**路径**认对象、执行时才查
+    当前位置，所以操作可以交错、可以重放：
+
+    * `add`：不在就追加到末尾（已在 = 什么都不做；满 `PINNED_KEEP` 条抛 `PinnedFullError`）；
+    * `remove`：在就删（不在 = 什么都不做）；
+    * `move`：`delta` 相对挪（±N，夹在两端），或 `to_path` 挪到那一条此刻的位置；
+      任一方不在列表里 = 什么都不做。
+
+    名字沿用已有的记录（收藏里的 → 最近列表里的 → 目录名）。不动磁盘上的项目内容，
+    也不检查目录在不在——失效的收藏照样留着，由界面标出来、让用户自己取消。
+    """
+    if op not in PINNED_OPS:
+        raise ValueError(op)
+    path = str(Path(path))
+    with _LOCK:
+        cfg = load()
+        items = list(cfg["pinned_projects"])
+        paths = [e["path"] for e in items]
+        if op == "add":
+            if path in paths:
+                return items
+            if len(items) >= PINNED_KEEP:
+                raise PinnedFullError(PINNED_KEEP)
+            known = {
+                e["path"]: e.get("name")
+                for e in cfg["recent_projects"] + items
+                if isinstance(e.get("name"), str)
+            }
+            items.append({"path": path, "name": known.get(path) or Path(path).name})
+        elif op == "remove":
+            if path not in paths:
+                return items
+            items = [e for e in items if e["path"] != path]
+        else:
+            if path not in paths:
+                return items
+            src = paths.index(path)
+            if to_path is not None:
+                target = str(Path(to_path))
+                if target not in paths:
+                    return items
+                dst = paths.index(target)
+            else:
+                dst = max(0, min(len(items) - 1, src + (delta or 0)))
+            if dst == src:
+                return items
+            moved = items.pop(src)
+            items.insert(dst, moved)
+        cfg["pinned_projects"] = items
+        save(cfg)
+        return items
 
 
 def last_project() -> str | None:

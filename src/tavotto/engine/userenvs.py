@@ -422,8 +422,11 @@ def _probe(python: str, modules: tuple[str, ...]) -> dict:
     return health
 
 
-def evaluate(candidates: list[dict], needed: list[dict], unknown: list[str]) -> list[dict]:
-    """逐个体检候选，回同顺序的结果表。
+def evaluate(
+    candidates: list[dict], needed: list[dict], unknown: list[str], *, use_cache: bool = True
+) -> list[dict]:
+    """逐个体检候选，回同顺序的结果表。`use_cache=False` 真起一次、不读也不写缓存：采用前的
+    复核要的是此刻的环境，不是弹窗打开那一刻（或并发的另一次）体检。
 
     `needed` 是联合计划里缺的那些（`{"import_name", "distribution"}`），`unknown` 是映射不到
     distribution 的无条件 import。**判「装没装齐」看 import 得不得到**，不看包元数据：worker 跑脚本
@@ -435,7 +438,15 @@ def evaluate(candidates: list[dict], needed: list[dict], unknown: list[str]) -> 
     todo = candidates[:PROBE_LIMIT]
 
     def one(cand: dict) -> dict:
-        health = _probe(cand["python"], imports)
+        if use_cache:
+            health = _probe(cand["python"], imports)
+        else:
+            from . import projectenv
+
+            # 不经缓存、也不回写：「先删缓存再走 `_probe`」不是原子的——删完放锁到 `_probe` 再读之间，
+            # 并发的一次（更早开始的）体检可以把它的旧结论塞回去，复核于是收下一次过期的「装齐」
+            # （Codex #562 P2）。回写同理会让在途的旧体检与这次新结论互相覆盖，所以这里只量、不记。
+            health = projectenv.probe_environment(cand["python"], modules=imports)
         ok_map = health.get("modules_ok") or {}
         missing = sorted(
             {n["distribution"] for n in needed if ok_map.get(n.get("import_name")) is not True}

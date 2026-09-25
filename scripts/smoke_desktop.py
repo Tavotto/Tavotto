@@ -91,6 +91,12 @@ def _descendants(pid: int) -> set[int]:
 
 
 def _alive(pid: int) -> bool:
+    """POSIX 上这个 pid 还在不在。只拿来查 `_descendants` 的快照——那在 Windows 上恒为空集。"""
+    if os.name == "nt":
+        # Windows 上 `os.kill(pid, 0)` 不是探测：信号 0 走 TerminateProcess，pid 被复用时
+        # 还会把无关进程杀掉（#523）。那边没有 ps、后代快照恒空，覆盖由 `_leftover_workers` 负责；
+        # 哪天真在 Windows 上走到这里，宁可当场报错也不误杀。
+        raise RuntimeError("_alive 只用于 POSIX：Windows 上 os.kill(pid, 0) 会终止进程")
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

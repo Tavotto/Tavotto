@@ -44,7 +44,7 @@ ENTRY = "main"
 # 场景表（一个 figure 一个场景，一次 build 全捕获）：
 #   EqvMulti  s1 多 axes 2D（tight_layout）+ 双图例 + errorbar + 散点
 #   EqvImage  s2 imshow + colorbar（aspect=equal）+ 散点子图
-#   EqvAnnot  s3 constrained_layout + annotate 箭头 + 独立 FancyArrowPatch
+#   EqvAnnot  s3 constrained_layout + annotate 箭头（有字 / 纯箭头）+ 独立 FancyArrowPatch
 #   Eqv3D     s4 3D axes（文字 + 视角 + zlabel）
 #   EqvMath   s5 mathtext + serif/sans 混排
 #   EqvCJK    s6 中文标签（探测不到 CJK 字体时该场景的用例单独 skip）
@@ -122,6 +122,9 @@ def main():
     cx.plot(t, np.exp(-t / 3.0))
     cx.annotate("decay", xy=(2.0, 0.51), xytext=(3.4, 0.80),
                 arrowprops=dict(arrowstyle="->", color="#2A6F3C"))
+    # 纯箭头注释（2026-09-24 用户流程图的 draw_arrow）：可拖，写的是注释的锚点
+    cx.annotate("", xy=(5.2, 0.62), xytext=(4.2, 0.95),
+                arrowprops=dict(arrowstyle="-|>", color="#4885B8", shrinkA=2, shrinkB=2))
     cx.add_patch(FancyArrowPatch(posA=(1.0, 0.20), posB=(4.5, 0.35),
                                  transform=cx.transData, arrowstyle="-|>",
                                  mutation_scale=8, color="#76008A"))
@@ -176,6 +179,10 @@ def main():
     # 位置是排版不是数据，拖动走 pos_frac                        # patches_0
     gx1.add_patch(FancyBboxPatch((4.0, 0.2), 2.0, 0.5, boxstyle="round,pad=0.1",
                                  facecolor="#E8F2FA", edgecolor="#8BB7DA"))
+    gx1.text(5.0, 0.45, "box", ha="center", va="center")     # texts_0：框里的字
+    # 从框右缘出发的纯箭头注释：拖框时尾巴跟着走、头不动          # texts_1
+    gx1.annotate("", xy=(8.5, 0.45), xytext=(6.1, 0.45),
+                 arrowprops=dict(arrowstyle="-|>", shrinkA=2, shrinkB=2))
     gx1.set_xlim(0, 10)
     gx1.set_ylim(-0.4, 2.6)
     gx1.set_title("Families")
@@ -452,6 +459,27 @@ def _g_arrow_endpoints(getbase):
     )
 
 
+def _g_pure_arrow_annotation(getbase):
+    """纯箭头注释拖动（endpoints_frac 写注释的 xy / xyann）→ 换样式 → 再改图幅。
+
+    constrained_layout 下改图幅会重排子图，'data' 锚点在 display 里跟着走；
+    endpoints_frac 属于 `_FRAC_ANCHORED`、几何一变必须重放——三条腿都要落回同一个
+    figure 分数，否则「写回时箭头在这儿、重开后在那儿」。
+    """
+    pts = _el(getbase(), "axes_0.texts_1.arrow")["arrow_endpoints"]
+    moved = [
+        round(pts[0][0] - 0.10, 4),
+        round(pts[0][1] + 0.04, 4),
+        round(pts[1][0] + 0.06, 4),
+        round(pts[1][1] + 0.08, 4),
+    ]
+    return _cumulative(
+        {"gid": "axes_0.texts_1.arrow", "prop": "endpoints_frac", "value": moved},
+        {"gid": "axes_0.texts_1.arrow", "prop": "arrowstyle", "value": "->"},
+        {"gid": "figure", "prop": "size_mm", "value": [96.0, 70.0]},
+    )
+
+
 def _g_view3d_and_visible(_getbase):
     """3D 视角（elev/azim 一动，盒内所有元素的落位全变）+ 文字 visible。"""
     return _cumulative(
@@ -527,6 +555,37 @@ def _g_patch_drag(getbase):
         {"gid": "axes_0.patches_0", "prop": "facecolor", "value": "#B34700"},
         {"gid": "figure", "prop": "size_mm", "value": [148.0, 66.0]},
     )
+
+
+def _g_patch_drag_carries(getbase):
+    """拖框带着内容走（前端 `patchContents` 写出来的那组 override）→ 再改图幅。
+
+    框 pos_frac、框里的字 pos_frac、箭头 endpoints_frac（只挪尾）同一个位移、同一次
+    提交——引擎侧没有新机制，钉的是这组普通 override 放在一起仍然三路 / 四路一致。
+    """
+    base = getbase()
+    box = _el(base, "axes_0.patches_0")["anchor"]
+    text = _el(base, "axes_0.texts_0")["anchor"]
+    (tx, ty), (hx, hy) = _el(base, "axes_0.texts_1.arrow")["arrow_endpoints"]
+    dx, dy = 0.06, -0.08
+    drag = [  # 一次拖动 = 一次提交：三条一起落
+        {
+            "gid": "axes_0.patches_0",
+            "prop": "pos_frac",
+            "value": [round(box[0] + dx, 4), round(box[1] + dy, 4)],
+        },
+        {
+            "gid": "axes_0.texts_0",
+            "prop": "pos_frac",
+            "value": [round(text[0] + dx, 4), round(text[1] + dy, 4)],
+        },
+        {
+            "gid": "axes_0.texts_1.arrow",
+            "prop": "endpoints_frac",
+            "value": [round(tx + dx, 4), round(ty + dy, 4), hx, hy],
+        },
+    ]
+    return [drag, [*drag, {"gid": "figure", "prop": "size_mm", "value": [148.0, 66.0]}]]
 
 
 def _g_axes_range_scale_and_ticks(_getbase):
@@ -714,11 +773,13 @@ GROUPS = [
     ("s2-scatter-marker", "EqvImage", _g_scatter_marker),
     ("s3-annotation-move", "EqvAnnot", _g_annotation_text_move),
     ("s3-arrow-endpoints", "EqvAnnot", _g_arrow_endpoints),
+    ("s3-pure-arrow-annotation", "EqvAnnot", _g_pure_arrow_annotation),
     ("s4-view3d-visible", "Eqv3D", _g_view3d_and_visible),
     ("s5-mathtext-labels", "EqvMath", _g_labels_and_title),
     ("s7-collection-family", "EqvFam", _g_collection_family),
     ("s7-patch-and-stem", "EqvFam", _g_patch_family_and_stem),
     ("s7-patch-drag", "EqvFam", _g_patch_drag),
+    ("s7-patch-drag-carries", "EqvFam", _g_patch_drag_carries),
     # 色条的 `tick_*` 与色条轴刻度组**刻意不在这里**：它俩覆盖的是同一批
     # 标签（不是「整组 vs 其中一个」），后应用的必然盖掉前一个，manifest 也
     # 只报得出一个值——`_assert_effect` 表达不了「两个都落地」。它的还原语义
@@ -736,8 +797,9 @@ def test_three_ways_agree(library, case_id, stem, builder):
     _three_ways(library, stem, steps)
 
 
-def test_annotation_arrow_never_exposes_endpoints(library):
-    """annotate 的箭头即使在文字被拖走之后也不出端点（拖了会被下一帧弹回）。
+def test_text_annotation_arrow_never_exposes_endpoints(library):
+    """**有字的** annotate 箭头即使在文字被拖走之后也不出端点：箭尾从文字框算，
+    拖尾巴就是拖字（字自己能拖），两条 override 写同一个 `xyann` 只会互相盖写。
 
     这条与 `s3-annotation-move` 那格是同一组 patch 的两个断言面：那边看几何
     四路是否一致，这边看**暴露给前端的能力**在移动之后有没有跑出来。
@@ -749,8 +811,9 @@ def test_annotation_arrow_never_exposes_endpoints(library):
     finally:
         pool.discard(w)
     assert "arrow_endpoints" not in _el(man, "axes_0.texts_0.arrow")
-    # 同一张图上的独立箭头照常有端点——「不出端点」是注释箭头独有的约定
+    # 同一张图上的独立箭头与纯箭头注释照常有端点——「不出端点」是有字注释独有的约定
     assert _el(man, "axes_0.arrows_0").get("arrow_endpoints")
+    assert _el(man, "axes_0.texts_1.arrow").get("arrow_endpoints")
 
 
 def test_cjk_scenario_three_ways_agree(library, cjk_font):
@@ -795,7 +858,7 @@ def _flask_project(tmp_path, monkeypatch, library: Path):
     # 写回覆盖的是磁盘上**已有**的原件（真实图库里它由脚本跑出来）。
     # 只给真的会被写回的那几个 stem 造占位——`WRITE_BACK_GROUPS` 里出现过
     # 的都要在这儿，漏一个的表现是 404 而不是断言失败，很容易误读成产品问题。
-    for stem in ("EqvMulti", "EqvImage", "EqvFam", "EqvAlias"):
+    for stem in ("EqvMulti", "EqvImage", "EqvAnnot", "EqvFam", "EqvAlias"):
         doc = pymupdf.open()
         doc.new_page(width=200, height=100)
         doc.save(figs / f"{stem}.pdf")
@@ -854,6 +917,11 @@ WRITE_BACK_GROUPS = [
     # 拖过的形状：平移是叠在 transform 上的，写回的 PDF 与重开后的重放要落在
     # 同一处（图幅还变过一次）
     ("s7-patch-drag", "EqvFam", _g_patch_drag, ("Families",)),
+    # 拖框带内容：框 / 字 / 箭头尾各写各的 override，写回后重开仍落在一起
+    ("s7-patch-drag-carries", "EqvFam", _g_patch_drag_carries, ("Families", "box")),
+    # 纯箭头注释：拖动写的是注释的锚点（不是箭头 patch），写回的 PDF 与重开后的
+    # 重放要落在同一处；constrained_layout + 图幅变过一次
+    ("s3-pure-arrow-annotation", "EqvAnnot", _g_pure_arrow_annotation, ("Constrained",)),
     # 别名组：广播型 prop 与窄 prop 叠加。写回这条腿尤其要紧——热态是
     # 「先整体后单条」的增量，写回校验拿的是**全量重放**，两者不一致时
     # 事务会回 409 replay_divergence，正是这个 bug 当初现形的地方。

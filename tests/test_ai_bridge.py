@@ -247,3 +247,45 @@ def test_run_snapshots_a_script_registered_under_subdirectories(tmp_path, monkey
     assert meta["snapshot"] == str(snap)
     assert snap.read_bytes() == b"print('fig')\r\n"
     assert meta["script"] == script
+
+
+def test_a_probe_started_before_invalidate_does_not_overwrite_the_cache(monkeypatch):
+    """诊断超预算留在后台的探测（#512）跑完时，设置已经改过、缓存已经刷新：
+    它读的是旧快照，不许把旧结论写回共享缓存。"""
+    import threading
+    import types
+
+    from tavotto.engine import ai_agents
+
+    ai_bridge.invalidate_capabilities()
+    started, release = threading.Event(), threading.Event()
+    version = {"v": "old"}
+
+    def fake_caps(agent, saved, npm_available):
+        seen = version["v"]
+        if seen == "old":
+            started.set()
+            release.wait(10)
+        return {"id": "fake", "version": seen}
+
+    monkeypatch.setattr(ai_agents, "agents", lambda: [types.SimpleNamespace(id="fake")])
+    monkeypatch.setattr(ai_bridge, "_agent_caps", fake_caps)
+    monkeypatch.setattr(ai_bridge.ai_providers, "list_providers", lambda: [])
+
+    stale: dict = {}
+    t = threading.Thread(target=lambda: stale.update(ai_bridge.capabilities()))
+    t.start()
+    try:
+        assert started.wait(10)
+        version["v"] = "new"
+        ai_bridge.invalidate_capabilities()
+        fresh = ai_bridge.capabilities(refresh=True)
+        assert fresh["agents"][0]["version"] == "new"
+    finally:
+        release.set()
+        t.join(10)
+    # 旧探测照样把它那一刻的结论交给了它的调用方……
+    assert stale["agents"][0]["version"] == "old"
+    # ……但共享缓存仍是刷新后的那份
+    assert ai_bridge.capabilities()["agents"][0]["version"] == "new"
+    ai_bridge.invalidate_capabilities()

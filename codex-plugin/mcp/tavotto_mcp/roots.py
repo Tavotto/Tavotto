@@ -56,6 +56,10 @@ DISPOSITIONS = (
     SEND_ABSOLUTE_PATH,
 )
 
+#: 「改完环境变量之后」要重启的对象。不只 Codex：Cursor / Claude / VS Code / Trae … 用的是
+#: 同一个 server，变量写在各自的 MCP 配置里（`integrations/configure.py` 生成）。
+RESTART_HOST = "重启 MCP 宿主（Codex，或你配置 Tavotto 的那个编辑器 / 客户端里的 tavotto 服务）"
+
 CODE_CONFIRMATION_DECLINED = "workspace_confirmation_declined"
 CODE_CONFIRMATION_CANCELLED = "workspace_confirmation_cancelled"
 CODE_CONFIRMATION_NO_RESPONSE = "workspace_confirmation_no_response"
@@ -99,7 +103,7 @@ WORKSPACE_FAILURES: dict[str, WorkspaceFailure] = {
             ASK_USER_AGAIN,
             "用户在工作区确认框里拒绝了这个目录。",
             "换一个目录再问一次，或请用户把 "
-            f"{ROOTS_ENV} 设成工作目录后重启 Codex；不要自动循环重试。",
+            f"{ROOTS_ENV} 设成工作目录后{RESTART_HOST}；不要自动循环重试。",
         ),
         _failure(
             CODE_CONFIRMATION_CANCELLED,
@@ -114,7 +118,7 @@ WORKSPACE_FAILURES: dict[str, WorkspaceFailure] = {
             "宿主声明支持工作区确认，却没有把确认框送到用户面前（超时或连接中断）。",
             "这不是用户拒绝——再让用户点一次也不会出现提示。请检查宿主的 "
             "elicitation 接线（版本、权限、是不是非交互模式），或直接把 "
-            f"{ROOTS_ENV} 设成工作目录后重启 Codex。",
+            f"{ROOTS_ENV} 设成工作目录后{RESTART_HOST}。",
         ),
         _failure(
             CODE_CONFIRMATION_ERROR,
@@ -141,7 +145,7 @@ WORKSPACE_FAILURES: dict[str, WorkspaceFailure] = {
             FIX_HOST_WIRING,
             "宿主声明支持 MCP roots，却没有回应工作区目录查询（超时或连接中断）。",
             "这不是用户拒绝，也不是没配置——请检查宿主的 roots 接线，或直接把 "
-            f"{ROOTS_ENV} 设成工作目录后重启 Codex。",
+            f"{ROOTS_ENV} 设成工作目录后{RESTART_HOST}。",
         ),
         _failure(
             CODE_ROOTS_ERROR,
@@ -153,14 +157,14 @@ WORKSPACE_FAILURES: dict[str, WorkspaceFailure] = {
             CODE_NO_WORKSPACE_ROOT,
             CONFIGURE_ROOTS,
             "宿主既没有给出工作区目录，也不支持工作区确认。",
-            f"把 {ROOTS_ENV} 设成你的项目目录（多个用 {os.pathsep} 分隔）后重启 Codex 再试。",
+            f"把 {ROOTS_ENV} 设成你的项目目录（多个用 {os.pathsep} 分隔）后{RESTART_HOST}再试。",
         ),
         _failure(
             CODE_PATH_OUT_OF_SCOPE,
             NARROW_THE_PATH,
             "这条路径不在当前允许的工作区范围内。",
             "改用允许的根之内的路径；确实要放开别的目录，就把 "
-            f"{ROOTS_ENV} 设成它们（{os.pathsep} 分隔）后重启 Codex。",
+            f"{ROOTS_ENV} 设成它们（{os.pathsep} 分隔）后{RESTART_HOST}。",
         ),
         _failure(
             CODE_AMBIGUOUS_ROOT,

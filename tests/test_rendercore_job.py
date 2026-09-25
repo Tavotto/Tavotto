@@ -392,6 +392,35 @@ def test_a_frozen_source_that_changes_before_writing_fails_the_job(
     assert calls["n"] == 1
 
 
+def test_an_empty_panel_source_fails_with_a_structured_source_unreadable(project, tmp_path):
+    """#517：面板指向 0 字节的 PDF → `export_render_failed`，reason 带 `source_unreadable`、`why=empty`，
+    而不是 `export_failed` 带 `SourceArtifact` 的 ValueError 原文。编译期就失败，用不到字体（provider=None）。"""
+    (project / "figs" / "Empty.pdf").write_bytes(b"")
+    job = exportjob.prepare(
+        _spec(
+            [
+                {
+                    "type": "panel",
+                    "id": "figs/Empty.pdf",
+                    "x_mm": 5,
+                    "y_mm": 5,
+                    "w_mm": 60,
+                    "h_mm": 40,
+                }
+            ],
+            formats=("pdf",),
+        ),
+        tmp_path / "out",
+    )
+    payload = _run(job, project, None)
+    assert payload["status"] == "failed"
+    err = payload["error"]
+    assert err["code"] == "export_render_failed", err
+    assert err["params"]["id"] == "figs/Empty.pdf"
+    assert err["params"]["reason"].startswith("source:source_unreadable:")
+    assert err["params"]["why"] == "empty"
+
+
 def test_a_panel_with_overrides_is_refused_without_running_anything(project, provider, tmp_path):
     job = exportjob.prepare(
         _spec(
