@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { t } from '@/i18n'
+import { currentProjectId } from '@/lib/session'
 import {
   agentById,
   agentDisplayName,
@@ -37,6 +38,8 @@ export interface AiSession {
   prompt: string
   script: string
   /** 发起时选中的面板与元素，用于结束后精准刷新 */
+  /** 会话所属的项目（发起那一刻认领的 pj）：撤销 / 中止都发往它，不跟着此刻的项目走（#589） */
+  project: string | null
   panelId: string | null
   fileId: string | null
   gid: string | null
@@ -61,6 +64,13 @@ interface AiState {
   /** 用户选择的作用范围；目标不支持时由面板降级，不改这里 */
   scope: AiScope
   sessions: AiSession[]
+  /**
+   * 项目代际：`clear()` 时 +1。每个 await 之后、写状态之前核一次——包括「写进别的 store」
+   * （撤销之后标脏渲染、发状态提示），那些由调用方在 `revert()` 回 `true` 之后才做（#605 的教训：
+   * 被调的一方先写了状态，调用方回头再判就晚了）。助手面板以它为 key 重挂，草稿 / 错误 /
+   * 历史视图这些组件内状态跟着换代。
+   */
+  generation: number
   /** 本机 CLI 实测能力；null = 尚未探测（界面显示「正在检测」，不是「未安装」） */
   caps: AiCapabilities | null
   /** 每个 Agent 各自的模型 / 推理强度选择（能力不同构，不共用） */
@@ -84,12 +94,20 @@ interface AiState {
   }) => Promise<void>
   appendDelta: (sid: string, kind: AiDeltaKind, text: string) => void
   finish: (p: { session: string; status: string; changed: boolean; diff: string; error?: string }) => void
-  revert: (sid: string) => Promise<void>
+  /** 回 `false` = 这次撤销的结果被丢弃了（期间换过项目）：调用方不许再往别的 store 里写它的后果 */
+  revert: (sid: string) => Promise<boolean>
   cancel: (sid: string) => Promise<void>
+  /**
+   * 切项目：对话历史属于旧项目，整份丢掉并换代（#589）。在途的 `start` / `revert` / `cancel` 回来时
+   * 代际对不上就不落地。**不取消后端任务**：切项目不是「我不要这次修改了」，它照样改完、记进 A 的
+   * 历史（`/api/ai/history` 按项目存），切回 A 在历史里看得到。Agent 首选、作用范围、模型 / 强度、
+   * `caps` 是本机偏好与探测，不属于项目，不清。
+   */
   clear: () => void
 }
 
 const MAX_LINES = 600
+
 const LS_AGENT = 'tavotto.ai.agent'
 const LS_PREFS = 'tavotto.ai.prefs'
 
@@ -156,6 +174,7 @@ export const useAiStore = create<AiState>((set, get) => ({
   agent: readAgent(),
   scope: 'element',
   sessions: [],
+  generation: 0,
   caps: null,
   ...readPrefs(),
 
@@ -214,12 +233,17 @@ export const useAiStore = create<AiState>((set, get) => ({
     const effort = info?.efforts.length
       ? (get().efforts[agent] ?? info.default_effort ?? null)
       : null
-    const res = await aiRun({
-      agent, id: fileId, prompt, gid, label, overrides,
-      model, effort, scope, target, canvas,
-    })
+    const born = get().generation
+    const project = currentProjectId()
+    const res = await aiRun(
+      { agent, id: fileId, prompt, gid, label, overrides, model, effort, scope, target, canvas },
+      project,
+    )
+    // 发起之后换了项目：这次任务属于 A（后端照样跑完、记进 A 的历史），B 的面板里不许出现它
+    if (born !== get().generation) return
     const session: AiSession = {
       id: res.session,
+      project,
       agent,
       agentLabel: agentDisplayName(caps, agent),
       prompt,
@@ -281,22 +305,32 @@ export const useAiStore = create<AiState>((set, get) => ({
     })),
 
   revert: async (sid) => {
-    await aiRevert(sid)
+    const target = get().sessions.find((x) => x.id === sid)
+    if (!target) return false
+    const born = get().generation
+    await aiRevert(sid, target.project)
+    if (born !== get().generation) return false
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === sid ? { ...x, status: 'reverted', changed: false } : x,
       ),
     }))
+    return true
   },
 
   cancel: async (sid) => {
-    await aiCancel(sid)
+    const target = get().sessions.find((x) => x.id === sid)
+    if (!target) return
+    const born = get().generation
+    await aiCancel(sid, target.project)
+    // 换代之后会话列表已清空、sid 不复用，下面这次按 sid 写本来就落空——这一判是防御，量不出来
+    if (born !== get().generation) return
     set((s) => ({
       sessions: s.sessions.map((x) => (x.id === sid ? { ...x, status: 'cancelled' } : x)),
     }))
   },
 
-  clear: () => set({ sessions: [] }),
+  clear: () => set((s) => ({ sessions: [], generation: s.generation + 1 })),
 }))
 
 /** 会话标签：优先用当前 capabilities 的显示名，探测不可用时回退到快照。 */

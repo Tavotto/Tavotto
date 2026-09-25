@@ -2218,13 +2218,17 @@ export interface AiHistoryEntry {
   transcript: { kind: string; text: string }[]
 }
 
-export const fetchAiHistory = (opts: {
-  q?: string
-  status?: string
-  pinned?: boolean
-  limit?: number
-  offset?: number
-}) => {
+/** 历史按项目存；`pj` 是历史视图打开那一刻的项目（#589），它的每一个动作都钉在这个项目上 */
+export const fetchAiHistory = (
+  opts: {
+    q?: string
+    status?: string
+    pinned?: boolean
+    limit?: number
+    offset?: number
+  },
+  pj: string | null,
+) => {
   const params = new URLSearchParams()
   if (opts.q) params.set('q', opts.q)
   if (opts.status) params.set('status', opts.status)
@@ -2233,20 +2237,28 @@ export const fetchAiHistory = (opts: {
   params.set('offset', String(opts.offset ?? 0))
   return jsonFetch<{ total: number; sessions: AiHistoryEntry[] }>(
     `/api/ai/history?${params}`,
+    undefined,
+    pj,
   )
 }
 
-export const deleteAiHistory = (sid: string) =>
-  jsonFetch<{ ok: boolean }>(`/api/ai/history/${encodeURIComponent(sid)}`, {
-    method: 'DELETE',
-  })
+export const deleteAiHistory = (sid: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(
+    `/api/ai/history/${encodeURIComponent(sid)}`,
+    { method: 'DELETE' },
+    pj,
+  )
 
-export const pinAiHistory = (sid: string, pinned: boolean) =>
-  jsonFetch<{ ok: boolean }>(`/api/ai/history/${encodeURIComponent(sid)}/pin`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pinned }),
-  })
+export const pinAiHistory = (sid: string, pinned: boolean, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(
+    `/api/ai/history/${encodeURIComponent(sid)}/pin`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinned }),
+    },
+    pj,
+  )
 
 export interface AiRunRequest {
   agent: AiAgentId
@@ -2262,18 +2274,30 @@ export interface AiRunRequest {
   canvas?: string | null
 }
 
-export const aiRun = (req: AiRunRequest) =>
-  jsonFetch<{ session: string; script: string }>('/api/ai/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(req),
-  })
+/**
+ * `pj`：会话**所属**的项目（#589）。发起、撤销、中止都钉在它上面，不跟着「此刻认领的项目」走——
+ * 切项目之后还能摸到的旧会话按钮，请求也绝不发往新项目。
+ */
+export const aiRun = (req: AiRunRequest, pj: string | null) =>
+  jsonFetch<{ session: string; script: string }>(
+    '/api/ai/run',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    },
+    pj,
+  )
 
-export const aiRevert = (sid: string) =>
-  jsonFetch<{ ok: boolean; script: string }>(`/api/ai/sessions/${sid}/revert`, { method: 'POST' })
+export const aiRevert = (sid: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean; script: string }>(
+    `/api/ai/sessions/${sid}/revert`,
+    { method: 'POST' },
+    pj,
+  )
 
-export const aiCancel = (sid: string) =>
-  jsonFetch<{ ok: boolean }>(`/api/ai/sessions/${sid}/cancel`, { method: 'POST' })
+export const aiCancel = (sid: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(`/api/ai/sessions/${sid}/cancel`, { method: 'POST' }, pj)
 
 /* ------------------------- 项目刷新（统一入口） ---------------------------- */
 
@@ -2411,9 +2435,11 @@ export type ServerEvent =
   | ({ kind: 'engine.package' } & PackageProgress)
   /** 导出作业的进度与终局。载荷 = `ExportJob` 的全部字段（不是增量，是快照） */
   | ({ kind: 'export.progress' } & ExportJob)
-  | { kind: 'ai.delta'; session: string; text: string; kindOf?: AiDeltaKind }
+  | { kind: 'ai.delta'; pj?: string; session: string; text: string; kindOf?: AiDeltaKind }
   | ({
       kind: 'ai.done'
+      /** 发起这次任务的项目（#589）；老后端没有这个字段 */
+      pj?: string
       session: string
       status: string
       changed: boolean

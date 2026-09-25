@@ -5,7 +5,7 @@
 
 - `POST /api/ai/run` → spawn 本机的编码 Agent CLI（`codex exec` / `claude -p`），
   cwd=figures 目录；修改前快照到 `cache/ai_snapshots/`，结束后 diff 经 SSE
-  `ai.done` 推送；revert 恢复快照——**只回滚这次 AI 改完的那一版**：会话结束时
+  `ai.done` 推送（`ai.*` 事件由 app 层补上发起项目的 `pj`，#589）；revert 恢复快照——**只回滚这次 AI 改完的那一版**：会话结束时
   记下 `after_sha256`（内存会话 + sidecar），脚本此后又变过（人工 / 另一次 AI /
   删除）就 409 `ai_revert_conflict`、原件零改动；没有记录（中断会话、老 sidecar）
   是「不知道」一档，照旧放行（`tests/test_ai_revert_stale.py`，QA STATE-09）。**文件真的变了就在 `ai.done` 之前走统一刷新**

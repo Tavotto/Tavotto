@@ -15,6 +15,7 @@ import { applyExportJob } from '@/store/exportStore'
 import { recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
+import { currentProjectId } from '@/lib/session'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
@@ -212,10 +213,15 @@ export function handleServerEvent(ev: ServerEvent) {
     }
 
     case 'ai.delta':
+      // 上面那道按 `project?.id` 判：切项目的换代期间它还是旧值。AI 事件改看**此刻认领的** pj
+      // ——A 的任务切走之后才说完的话、收尾的提示，都不落进 B（#589）
+      // （`clear()` 与认领新 pj 在同一段同步代码里发生，A 的会话此刻已不在列表里；这一判是防御）
+      if (ev.pj && ev.pj !== currentProjectId()) break
       useAiStore.getState().appendDelta(ev.session, ev.kindOf ?? 'message', ev.text)
       break
 
     case 'ai.done': {
+      if (ev.pj && ev.pj !== currentProjectId()) break
       const ai = useAiStore.getState()
       ai.finish(ev)
       // 这里**不再 markStale**：文件变了的话后端在 ai.done 之前已经作废 worker、
