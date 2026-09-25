@@ -233,7 +233,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_write_source_files",
-          "line": 4270,
+          "line": 4298,
           "role": "写回 verify 阶段：把画布标注画进 staging 的 PDF，再由同一份 PDF 栅格化 PNG（incremental save）"
         }
       ],
@@ -985,7 +985,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_post_check_size",
-          "line": 4422,
+          "line": 4448,
           "role": "写回 commit 后自检：PDF 页面尺寸 vs 重放 manifest 的 size_mm（容差 0.5mm，不回滚）"
         },
         {

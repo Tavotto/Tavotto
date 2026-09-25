@@ -4229,17 +4229,50 @@ def _rollback(done: list[Path], backup_dir: Path) -> tuple[list[str], list[str]]
     return rolled, failed
 
 
-def _backup_targets(tmps: list[tuple[Path, Path]], backup_dir: Path) -> None:
-    """commit 的第一轮：把**全部**目标备份进 `backup_dir`，一个原件都还没被替换。
+def _discard_updating(tmps: list[tuple[Path, Path]]) -> None:
+    """写回失败后清掉全部 `.updating`：**尽力而为**。
 
-    任何一步失败（建目录 / 磁盘满 / 权限）：删掉这次写下的备份（含半截的那份）、
-    目录空了就一并删掉、清掉所有 `.updating`，抛 `WriteBackBackupError`——此刻
-    原件零改动，走写回事务统一的 409。
+    清不掉（Windows 上被短暂锁住）只记日志——第二个 OSError 不许盖掉触发清理的
+    那个原错，否则承诺的 409 变成 500（Codex #595 P2）。三个失败出口共用这一处。
+    """
+    for _t, leftover in tmps:
+        try:
+            leftover.unlink(missing_ok=True)
+        except OSError:
+            LOG.warning("写回失败后清理临时文件失败: %s", leftover, exc_info=True)
+
+
+def _new_backup_dir(root: Path) -> Path:
+    """本次写回**独占**的备份目录：`<月日_时分秒>`，同一秒已被占用就接 `-2`、`-3`…
+
+    按秒命名的目录在同一 stem 一秒内写回两次时会被共用：第二次的备份覆盖第一次的
+    （第一次写回前的原件就此丢失），第二次备份失败时的清理还会删掉第一次的备份
+    （Codex #595 P2）。`exist_ok=False` 让「建出来」本身就是占有，不存在先查后建的窗口。
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    base = time.strftime("%m%d_%H%M%S")
+    n = 1
+    while True:
+        cand = root / (base if n == 1 else f"{base}-{n}")
+        try:
+            cand.mkdir()
+            return cand
+        except FileExistsError:
+            n += 1
+
+
+def _backup_targets(tmps: list[tuple[Path, Path]], backup_root: Path) -> Path:
+    """commit 的第一轮：把**全部**目标备份进本次独占的备份目录，一个原件都还没被替换。
+
+    回这个目录（回滚与响应用它）。任何一步失败（建目录 / 磁盘满 / 权限）：删掉这次
+    写下的备份（含半截的那份）、目录空了就一并删掉、清掉所有 `.updating`，抛
+    `WriteBackBackupError`——此刻原件零改动，走写回事务统一的 409。
     """
     written: list[Path] = []
     current = tmps[0][0] if tmps else Path("")
+    backup_dir: Path | None = None
     try:
-        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_dir = _new_backup_dir(backup_root)
         for target, _tmp in tmps:
             current = target
             dest = backup_dir / target.name
@@ -4251,19 +4284,15 @@ def _backup_targets(tmps: list[tuple[Path, Path]], backup_dir: Path) -> None:
                 dest.unlink(missing_ok=True)
             except OSError:
                 LOG.warning("写回失败后清理备份失败: %s", dest, exc_info=True)
-        try:
-            backup_dir.rmdir()  # 只删空目录：同一秒另一次写回的备份不动
-        except OSError:
-            pass
-        for _t, leftover in tmps:
-            # 不给图库留下半成品；清不掉（Windows 上被短暂锁住）也只记日志——
-            # 第二个 OSError 不许盖掉备份失败本身，否则 409 变成 500
+        if backup_dir is not None:
             try:
-                leftover.unlink(missing_ok=True)
+                backup_dir.rmdir()  # 只删空目录（目录是本次独占的，删不掉就是还有东西）
             except OSError:
-                LOG.warning("写回失败后清理临时文件失败: %s", leftover, exc_info=True)
+                pass
+        _discard_updating(tmps)  # 不给图库留下半成品
         LOG.warning("写回备份失败，已取消（原文件未改动）: %s: %s", current.name, exc)
         raise WriteBackBackupError(current.name, str(exc)) from exc
+    return backup_dir
 
 
 def _write_source_files(
@@ -4339,8 +4368,7 @@ def _write_source_files(
         if diffs:
             raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
     except BaseException:
-        for _t, leftover in tmps:
-            leftover.unlink(missing_ok=True)
+        _discard_updating(tmps)
         raise
     finally:
         engine_pool.discard(fresh)
@@ -4350,16 +4378,14 @@ def _write_source_files(
     # 第二个目标备份时磁盘满，PDF 已经换成新的、PNG 还是旧的，异常从 try 外面
     # 冒出去成了 500，`.updating` 留在图库里。备份在任何一个原件被动之前全部
     # 落好，失败时原件一个都还没碰过，清掉临时文件与这次的半截备份即可。
-    backup_dir = project_backup_dir() / time.strftime("%m%d_%H%M%S")
-    _backup_targets(tmps, backup_dir)
+    backup_dir = _backup_targets(tmps, project_backup_dir())
     updated: list[str] = []
     done: list[Path] = []
     for target, tmp in tmps:
         try:
             tmp.replace(target)
         except OSError as exc:
-            for _t, leftover in tmps:
-                leftover.unlink(missing_ok=True)  # 不给图库留下半成品
+            _discard_updating(tmps)  # 不给图库留下半成品
             LOG.warning("写回原图失败（文件被占用？）: %s: %s", target.name, exc)
             rolled, failed = _rollback(done, backup_dir)
             raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc

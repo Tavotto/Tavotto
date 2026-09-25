@@ -709,6 +709,74 @@ def test_a_failed_backup_still_answers_409_when_a_temp_file_cannot_be_removed(
     assert (figs / "Fig1.png").read_bytes() == before_png
 
 
+@pytest.mark.parametrize(
+    ("url", "extra"),
+    [("/api/engine/update_source", {"patches": []}), ("/api/engine/history/restore", {"n": -1})],
+)
+def test_a_verify_worker_error_still_answers_409_when_a_temp_file_cannot_be_removed(
+    client, tmp_path, monkeypatch, url, extra
+):
+    """verify 段 worker 崩了、清 `.updating` 又撞上 Windows 短暂锁：清理尽力而为，
+    第二个 OSError 不许盖掉 WorkerError——仍是 409 + worker 原 code + `stage: "verify"`
+    （Codex #595 P2：以前这一处清理没兜，回的是 500）。"""
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    hot, fresh = _pair(figs, tmp_path, fail_on="png")
+    discarded = _use(monkeypatch, hot, fresh)
+    real_unlink = Path.unlink
+    refused: list[str] = []
+
+    def unlink(self, *a, **k):
+        if self.name.endswith(".updating"):
+            refused.append(self.name)
+            raise PermissionError(f"[WinError 32] 另一个程序正在使用 {self.name}")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    resp = client.post(url, json={"id": "Fig1.pdf", **extra})
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+
+    assert refused, "前提：清 `.updating` 确实失败过"
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["stage"] == "verify"
+    assert body["error"] == "导出炸了"
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert discarded == [fresh]
+
+
+@pytest.mark.parametrize("second_fails", [False, True])
+def test_two_write_backs_in_the_same_second_keep_separate_backups(
+    client, tmp_path, monkeypatch, second_fails
+):
+    """同一 stem 一秒内写回两次：各用各的备份目录（Codex #595 P2）。
+
+    以前目录按秒命名、两次共用：第二次的备份覆盖掉第一次的（第一次写回**之前**的原件
+    就此没了），第二次备份失败时的清理还会把第一次的备份删掉。钉死时钟让两次必然同秒。
+    """
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    monkeypatch.setattr(m.time, "strftime", lambda fmt, *a: "0925_120000")
+
+    first = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert first.status_code == 200, first.get_json()
+    first_dir = Path(first.get_json()["backup_dir"])
+    if second_fails:
+        _fail_nth_backup(monkeypatch, 2)
+    second = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert second.status_code == (409 if second_fails else 200), second.get_json()
+
+    # 第一次写回前的原件，仍然完整地待在第一次的备份目录里
+    assert (first_dir / "Fig1.pdf").read_bytes() == before_pdf
+    assert (first_dir / "Fig1.png").read_bytes() == before_png
+    if not second_fails:
+        second_dir = Path(second.get_json()["backup_dir"])
+        assert second_dir != first_dir and second_dir.parent == first_dir.parent
+
+
 def test_a_failed_second_replace_rolls_the_first_one_back(client, tmp_path, monkeypatch):
     """第二个目标的替换抛的不是锁、是一般 I/O 错误：同样回滚第一个、409、零改动。"""
     import errno

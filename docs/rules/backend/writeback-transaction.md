@@ -47,11 +47,18 @@
     **一条即阻断**，回 409 `code=write_back_warnings` + warnings 列表。
     staging 阶段**任何异常都要 unlink 掉所有 `.updating` 临时文件**
     （以前只有 file_locked 那条路径清理，PDF 成功 PNG 失败就留垃圾）。
+    三个失败出口（verify / 备份 / 替换撞锁）的清理都走 `_discard_updating`，
+    **尽力而为**：清不掉（Windows 短暂锁住）只记日志，第二个 OSError 不许盖掉
+    触发清理的原错（Codex #595 P2：verify 段以前没兜，409 又变回 500）。
     一次性 worker 在 verify 段崩溃 / 超时 / 缺依赖（`WorkerError`）同样是
     **409**，响应是 worker 错误体原样（`code` / `traceback` / `module`，前端
     按 code 出文案）外加 `stage: "verify"`——commit 段不调 worker，走到这里
     原件必然零改动（QA 2026-09-24 SCI-04-B1；以前回 500）。
-  * **commit**：**先把全部目标备份完** → 再逐个 `tmp.replace(target)`。两轮
+  * **commit**：**先把全部目标备份完** → 再逐个 `tmp.replace(target)`。
+    备份目录**每次写回独占**（`_new_backup_dir`：`<月日_时分秒>`，同秒已占用接
+    `-2`、`-3`，`mkdir(exist_ok=False)` 即占有）——按秒共用时，同一 stem 一秒内
+    写回两次，第二次会覆盖掉第一次写回前的原件备份、备份失败时的清理还会删掉它
+    （Codex #595 P2）。两轮
     不许交错（QA 2026-09-24 SCI-05-B1：「备份一个、换一个」时第二个目标备份
     撞上磁盘满，PDF 已换、PNG 未换、`.updating` 残留、500）。备份失败（建目录 /
     磁盘满 / 权限）时一个原件都还没动：删掉这次的备份（含半截的）、空目录一并删、
