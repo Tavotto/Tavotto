@@ -9,6 +9,20 @@
   **密钥与个人路径必须先脱敏再交出去**（用户会把它贴进 issue 或发到群里）。
   `recent_projects` / `projects` **只留条数**：那是用户所有课题的名字与路径，
   排障一次都用不到（当前项目在 report.json 的 project 段里）。
+- **包里的日志取自出门版 `cache/diagnostics.log`，不读 `cache/app.log`（QA 2026-09-24 REL-05-B1 / B2）**：
+  `LOG.error("引擎渲染失败: %s: %s", stem, exc)` 格式化之后，用户脚本 raise 的文字与模板长在同一行，
+  事后分不出哪段是用户的字；访问日志带着查询串，`worker 启动: fig_priv.py` 带着脚本名。所以在**写入那一刻**
+  分：`app.setup_logging` 在完整的 app.log 之外再挂一个 handler，`ExportLogFormatter` 只信模板
+  （`record.msg`，`tavotto*` 与 werkzeug 的 logger；其余 logger 正文 `…`），参数按类型换形——数原样；
+  异常只留类型 + 错误 code（+ errno），**message 不出门**；绝对路径括成 `⟦…⟧`，出包时由 `_export_log_lines`
+  换成 `_path_fact`（与 report 同一个 `<project:…>`）；文件名样的走 `_shorten_path_text`；请求行只留方法 +
+  Flask 路由规则（`_route_rule_of`，匹配不上的 `route:<哈希>`）；键是标识符、值全是数的 JSON 原样（渲染计时）；
+  其余 `str:<哈希>`；`exc_info` 走 `evidence_lines`。记录行形如 `<时间> <级别> <logger> | <正文>`——` | `
+  是出处标记：`recent_errors` 只原样放行这种形状的 ERROR 行，别的形状只留「时间 级别 logger: …」、
+  前缀凑不齐的整行不要。前提是 `tavotto*` 的模板都是字符串字面量：`tests/test_diagnostics_log_privacy.py`
+  用 AST 扫全部日志调用（f-string / 拼好的串 / 变量当模板都红），同一文件对包里每个文件与复制诊断做
+  金丝雀全文搜索（桩 worker + 真 worker 两条）。完整的 app.log 不变，留给用户自己看；report.json
+  的 `paths.log` 仍指向它。
 - **项目在哪、叫什么不出门**（2026-09-23 beta 诊断包实测：云盘目录名带邮箱、课题目录带人名，
   以前只把主目录换成 `~`，其余原样进 report.json / app.log / 复制诊断）：
   * `project_roots(project)`：当前项目 + 最近项目的根（原样、realpath、正斜杠三种写法，长的在前）
@@ -99,7 +113,7 @@
   但**至少回溯到最近一个崩溃头**（`_scan_start`：`all_threads=True` 一段能超过 400 行）。
   `recent_errors` 里配对的收尾句走**同一个** `_closer_for_export`（只留类型 / 加载器形状——
   「复制诊断」的文本会被贴进公开 issue，`ValueError: patient-123` 缩路径救不了），
-  ERROR 行是应用自己的日志语句，过路径缩写。**先扫 `WORKER_LOG_SCAN_LINES`（400）行再抽块、再按块截到
+  ERROR 行按出处放行（见上「包里的日志取自出门版」），出门版的再过一道路径缩写。**先扫 `WORKER_LOG_SCAN_LINES`（400）行再抽块、再按块截到
   `WORKER_LOG_TAIL_LINES`（`last_blocks_within`：最后那块再长也整块要）**——先按行截
   再抽块会把一段长崩溃栈截成没有头的帧行，状态机一条都不认。文件只读最后
   `WORKER_LOG_SCAN_BYTES` 字节且是 **seek 过去再读**（`_read_tail_bytes`），不是 `read_bytes()`

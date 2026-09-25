@@ -4,7 +4,8 @@
 本身一个字都没带；而 worker 自己的日志（worker.log）根本不在包里。于是维护者
 拿到的是一份长了一屏、信息量为零的报告，来回还得问一次。两处各一组用例：
 
-* `recent_errors`：每段 traceback 与它收尾的那句异常配成一条；ERROR 行照旧。
+* `recent_errors`：每段 traceback 与它收尾的那句异常配成一条；ERROR 行按出处放行——
+  `ExportLogFormatter` 写的（`<logger> | `）原样，别的形状只留「时间 级别 logger: …」（REL-05-B1）。
 * `render.worker_logs`：最近几份 worker.log 尾巴里的**证据块**进报告（按 mtime 取
   最近的，空的要标出来），且**过同一道脱敏**（主目录、密钥）。README 承诺包里
   不含脚本源码与数据——所以只认两种结构块：Python traceback（头 + `File "…", line N`
@@ -38,7 +39,8 @@ def client():
 
 # ------------------------------------------------------------ recent_errors
 APP_LOG = """\
-2026-09-20 10:47:02,622 ERROR tavotto: 引擎渲染失败: Figure 1: 渲染进程退出了
+2026-09-20 10:47:02,622 ERROR tavotto | 引擎渲染失败: str:5d41402abc: WorkerError[worker_exited]
+2026-09-20 10:47:03,000 ERROR tavotto: 引擎渲染失败: boom: 脚本执行失败: patient-123
 2026-09-20 10:49:00,000 WARNING tavotto: 素材扫描跳过 x.png（probe 失败）
 Traceback (most recent call last):
   File "/app/tavotto/app.py", line 588, in _panels
@@ -63,7 +65,9 @@ def test_each_traceback_is_paired_with_its_exception_line():
     （评审 #443 第七轮 P1：`ValueError: patient-123` 这种 message 是用户数据）。"""
     got = diagnostics.recent_errors(APP_LOG)
     assert got == [
-        "2026-09-20 10:47:02,622 ERROR tavotto: 引擎渲染失败: Figure 1: 渲染进程退出了",
+        "2026-09-20 10:47:02,622 ERROR tavotto | 引擎渲染失败: str:5d41402abc: WorkerError[worker_exited]",
+        # app.log 形状（不是出门版写的）：分不出哪段是用户的字，正文整个不带（REL-05-B1）
+        "2026-09-20 10:47:03,000 ERROR tavotto: …",
         "Traceback (most recent call last): → OSError: …",
         "Traceback (most recent call last): → ImportError: DLL load failed while importing mod:c2efbf3758",
         "Traceback (most recent call last): → exc:a7bb77bcf2: …",  # 用户定义的异常类名也不出门
@@ -72,11 +76,11 @@ def test_each_traceback_is_paired_with_its_exception_line():
 
 def test_the_paired_exception_line_drops_its_message_and_error_lines_lose_their_paths():
     """评审 #443 第四轮 P1 → 第七轮 P1：收尾句里的路径先是与 worker 证据同一道缩写，
-    第七轮起整句 message 都不带（`ValueError: patient-123` 缩路径也救不了）。ERROR 行是
-    应用自己的日志语句，路径缩写、其余照旧。"""
+    第七轮起整句 message 都不带（`ValueError: patient-123` 缩路径也救不了）。出门版写的
+    ERROR 行（`<logger> | `）是模板 + 换过形的参数，路径再缩一道、其余照旧。"""
     got = diagnostics.recent_errors(
         [
-            "2026-09-20 10:00:00,000 ERROR tavotto: 导出失败: D:\\Study\\fig1.pdf 写不进去",
+            "2026-09-20 10:00:00,000 ERROR tavotto | 导出失败: D:\\Study\\fig1.pdf 写不进去",
             "Traceback (most recent call last):",
             '  File "/app/x.py", line 1, in <module>',
             "OSError: [Errno 13] Permission denied: '/mnt/private-study/patient-a/data.csv'",
@@ -86,7 +90,7 @@ def test_the_paired_exception_line_drops_its_message_and_error_lines_lose_their_
         ]
     )
     assert got == [
-        "2026-09-20 10:00:00,000 ERROR tavotto: 导出失败: …/file:6fe886ec6b.pdf 写不进去",
+        "2026-09-20 10:00:00,000 ERROR tavotto | 导出失败: …/file:6fe886ec6b.pdf 写不进去",
         "Traceback (most recent call last): → OSError: …",
         "Traceback (most recent call last): → ValueError: …",
     ]
@@ -108,7 +112,7 @@ def test_a_traceback_cut_off_at_the_end_of_the_tail_is_kept_as_is():
 
 
 def test_the_limit_keeps_the_most_recent_entries():
-    lines = [f"2026-09-20 10:00:{i:02d},000 ERROR tavotto: e{i}" for i in range(40)]
+    lines = [f"2026-09-20 10:00:{i:02d},000 ERROR tavotto | e{i}" for i in range(40)]
     got = diagnostics.recent_errors(lines, limit=5)
     assert [ln.rsplit(" ", 1)[1] for ln in got] == ["e35", "e36", "e37", "e38", "e39"]
 

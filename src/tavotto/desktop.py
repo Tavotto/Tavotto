@@ -240,7 +240,7 @@ def run(flask_app) -> int:
             "desktop sidecar 需要启动凭据：由 Tavotto 桌面应用启动，"
             "或调试时设置 TAVOTTO_DESKTOP_NONCE"
         )
-        LOG.error(msg)
+        LOG.error("desktop sidecar 缺启动凭据，拒绝以无认证方式启动")
         write_handshake(handshake, ready=False, error=msg)
         return 2
 

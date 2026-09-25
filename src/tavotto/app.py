@@ -199,9 +199,30 @@ def setup_logging() -> None:
         CACHE_DIR / "app.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
     )
     file.setFormatter(fmt)
+    # 诊断包的那份（REL-05）：同一批记录，模板原样、参数按类型换形——报错文字、脚本名、
+    # 请求的查询串在写入那一刻就不进这个文件（engine/diagnostics.py `ExportLogFormatter`）。
+    # cache/app.log 仍是完整的，留给用户自己看。
+    export = RotatingFileHandler(
+        CACHE_DIR / engine_diagnostics.EXPORT_LOG_NAME,
+        maxBytes=1_000_000,
+        backupCount=1,
+        encoding="utf-8",
+    )
+    export.setFormatter(engine_diagnostics.ExportLogFormatter(route_of=_route_rule_of))
     root.setLevel(logging.INFO)
     root.addHandler(stream)
     root.addHandler(file)
+    root.addHandler(export)
+
+
+def _route_rule_of(method: str, path: str) -> str | None:
+    """请求路径 → Flask 路由规则的字符串（`/api/native/sessions/<session_id>`），匹配不上 None。
+    诊断用的访问日志只写规则，不写请求里的具体值（REL-05-B2）。"""
+    try:
+        rule, _args = app.url_map.bind("localhost").match(path, method=method, return_rule=True)
+    except Exception:  # noqa: BLE001 — 404 / 405 / 重定向都按「不认识」处理
+        return None
+    return rule.rule
 
 
 def prune_render_cache(max_bytes: int = RENDER_CACHE_MAX_BYTES) -> int:
