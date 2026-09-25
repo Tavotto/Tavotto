@@ -84,13 +84,15 @@ ships it. Windows desktop and pip installs were not affected.
 
 ### Known bias: CI pytest sessions leaked phantom `source` installs (#440)
 
-Until the test-harness fix in PR #580, every CI pytest session could send **one
+**Status: ongoing until PR #580 lands on main.** Until that test-harness fix is
+merged, every CI pytest session can still send **one
 real `telemetry_enabled`** to the production endpoint: the telemetry sender
 thread posted after a test's `monkeypatch` had already been undone. Each leak
 created a fresh anonymous ID with `distribution=source` and exactly that one
-event — no `app_started`, nothing afterwards. The leak ran from whenever CI
-first reached the real endpoint until PR #580; the exact start is not
-recorded. By 2026-09-20 it had produced **249 phantom installs** (macOS/arm64
+event — no `app_started`, nothing afterwards. The leak runs from whenever CI
+first reached the real endpoint until #580 is merged (record the merge date
+here when it lands); the exact start is not recorded. The count below is a
+snapshot, not a final total: by 2026-09-20 it had produced **249 phantom installs** (macOS/arm64
 146, Linux/x86_64 103, all from CI shards), against 44 real Windows desktop
 opt-ins. All 70 opt-ins in the week before launch (2026-09-12 → 09-19) were
 phantoms, and so were 7 of the 57 after it. Raw opt-in counts over that period

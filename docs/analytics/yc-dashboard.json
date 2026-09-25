@@ -29,7 +29,7 @@
     "evaluate_over": "all_time",
     "why_all_time": "Evaluating the one-event test inside the metric window would misclassify a real install whose other events fall outside the window.",
     "scale_at_discovery": "249 phantom installs all-time as of 2026-09-20 (macos/arm64 146, linux/x86_64 103, all from CI pytest shards) vs 44 real Windows desktop opt-ins; all 70 opt-ins in 2026-09-12..2026-09-19 and 7 of 57 after launch were phantoms",
-    "leak_period": "from the first CI pytest session that could reach the real endpoint until the harness fix in PR #580 (reset_for_tests joins the sender thread, _post re-checks the hard switch, session-level zero-network probe in conftest)",
+    "leak_period": "ongoing: from the first CI pytest session that could reach the real endpoint until the harness fix in PR #580 (reset_for_tests joins the sender thread, _post re-checks the hard switch, session-level zero-network probe in conftest) lands on main. Until then CI can keep adding phantoms, so the scale below is a lower bound; replace this with the merge date once #580 is merged",
     "affects": "install / opt-in counts (unique distinct_id with telemetry_enabled or with any event), activation cohorts anchored on telemetry_enabled, platform mix of opt-ins",
     "does_not_affect": "weekly_successful_exporters, engaged_wau, engaged_mau and every other metric that requires an engaged event — a phantom has only telemetry_enabled",
     "data_handling": "Dashboard-side filter only. The phantom persons and events are NOT deleted from PostHog.",
