@@ -12,7 +12,7 @@
   幂等去重）、`runtimeAssetStore.assets`（`GET /api/runtime/assets`，只读
   清单 + `previewNonce` 预览换代）、`scriptRunStore`（运行状态机）。
   三者都在 `registry.changed` SSE 时重取**已经取过的**，项目切换全清。
-  **三个 store 都有项目代际（epoch）**：模块级 in-flight 请求活得比一次
+  **三个 store 都有项目代际（epoch）**（清单本身的 `assetStore` 同样有，见下一条）：模块级 in-flight 请求活得比一次
   Zustand reset 长，`clear()` 必须换代 + 清 inflight，A 项目的响应绝不
   落进 B（Session 6 评审修复；vitest 各有作废用例看护）。`packageStore`
   按同一条纪律换代（见 `docs/rules/frontend/settings-shell-and-packages.md`）——**新写一个会在项目之间
@@ -25,10 +25,14 @@
   `envStore` 同样有项目代际（`resetProject()` 换代）：`refresh` / `setPython` / `setProjectPython` /
   `setWorkdirMode` / `revertAdoptedEnvironment` 在 await 之后、**写状态的那一侧**判代际——调用方在拿到结果之后
   再判已经晚了（写在返回之前就发生了，#605 评审）。看护 `store/projectSwitchDepRepair.test.ts`。
-  `assetStore`（`/api/panels` 的清单：面板、`unsupported`、目录）同样在
-  `resetForNewProject()` 里 `clear()` 换代（#577）：「刷新失败保留上一份」只对**同一项目**成立，切项目
-  时 B 的清单挂起或失败都不许显示 A 的卡片与「无法使用」清单；`recentlyUsed` 是按文件 id 记的本机偏好，
-  不清。看护 `store/projectSwitchAssets.test.ts`。
+- **`assetStore` 的清单纪律**（`/api/panels`：面板、`unsupported`、目录；本条是全文，
+  `project-document-and-autosave.md` 只引用）：**请求序号**挡旧响应覆盖新响应（不是"谁最后返回"）；
+  **发请求那一刻的 pj** 挡串项目（`null` 与具体 id 是两个取值）；**项目代际**——`resetForNewProject()`
+  里 `clear()` 清空并换代，发请求时记下的代际对不上就丢（#577：切项目时 B 的清单挂起或失败都不许显示
+  A 的卡片与「无法使用」清单；A → B → A 时 A 第一次发出的迟到响应 pj 对得上，只有代际挡得住）；
+  **同一项目**刷新失败不清空 `panels` / `byId` / `unsupported`（#561）；同项目的在途请求被合并、在途期间
+  的调用共用一次补问，`force: true` 永远另起一次（手动刷新不许被在途请求吞掉）。`recentlyUsed` 是按
+  文件 id 记的本机偏好，不清。看护 `store/assetStore.test.ts`、`store/projectSwitchAssets.test.ts`。
 - **`scriptRunStore` 的四条纪律**（vitest 看护）：同脚本防并发（busy 即
   no-op，后端另有 409）；cancel 走后端取消端点（置标志 + 硬杀 worker），
   行内状态等**原请求**以 `execution_cancelled` 落地——绝不「界面装停了、

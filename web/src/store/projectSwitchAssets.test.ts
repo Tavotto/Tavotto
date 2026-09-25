@@ -92,16 +92,23 @@ beforeEach(async () => {
 describe('切到 B 时 A 的清单不跟过来', () => {
   it('B 的 /api/panels 挂起：没有 A 的卡片、无法使用清单、来源目录', async () => {
     panelsMode = 'hold'
-    void switchProject('pb')
-    await tick()
-    const s = useAssetStore.getState()
-    expect(s.loaded).toBe(false)
-    expect(leaked()).not.toContain('a1')
-    expect(leaked()).not.toContain('scan.tif')
-    expect(leaked()).not.toContain('raw-a')
-    expect(leaked()).not.toContain('figs')
-    expect(leaked()).not.toContain('/a')
-    held.forEach((r) => r(new Response(JSON.stringify({ figures_dir: '/b', panels: [] }))))
+    // 切换要等 B 的清单：先扣住它、在半途断言，最后放行并等切换走完——不留一个悬着的
+    // adoptOpenedProject 去和下一条用例的 beforeEach 赛跑
+    // （放行写在 finally 里：半途断言红了也照样放行，不让切换队列卡住后面的用例）
+    const switching = switchProject('pb')
+    try {
+      await tick()
+      const s = useAssetStore.getState()
+      expect(s.loaded).toBe(false)
+      expect(leaked()).not.toContain('a1')
+      expect(leaked()).not.toContain('scan.tif')
+      expect(leaked()).not.toContain('raw-a')
+      expect(leaked()).not.toContain('figs')
+      expect(leaked()).not.toContain('/a')
+    } finally {
+      held.splice(0).forEach((r) => r(new Response(JSON.stringify({ figures_dir: '/b', panels: [] }))))
+      await switching
+    }
   })
 
   it('B 的 /api/panels 失败：同样一条都不带过来（「失败保留」只对同一项目）', async () => {
@@ -117,7 +124,7 @@ describe('切到 B 时 A 的清单不跟过来', () => {
 
   it('A 在切走之前发出的请求切完才回来：不落地', async () => {
     panelsMode = 'hold'
-    void useAssetStore.getState().load({ force: true }) // A 的一次刷新，扣住
+    const refreshA = useAssetStore.getState().load({ force: true }) // A 的一次刷新，扣住
     const staleA = held.pop()!
     // B 的清单失败：没有任何更新的响应落地，请求序号（`mine < applied`）挡不住那份旧的
     panelsMode = 'fail'
@@ -126,6 +133,8 @@ describe('切到 B 时 A 的清单不跟过来', () => {
     // 但它早于切项目时的清空——只有代际挡得住它
     setCurrentProjectId('pa')
     staleA(new Response(JSON.stringify(A_PANELS)))
+    // 这次刷新自己也要走完：它的 finally 会动 `loading`，不许漏到下一条用例里
+    expect(await refreshA).toBeNull()
     await tick()
     expect(leaked()).not.toContain('scan.tif')
     expect(leaked()).not.toContain('a1')
