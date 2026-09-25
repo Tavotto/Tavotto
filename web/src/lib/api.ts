@@ -1645,11 +1645,6 @@ export interface EngineRenderResponse {
    */
   preview?: PreviewMetadata
   /**
-   * 这张图还欠着几条还原（引擎撤掉改动时还原抛了、账还留着，下一次渲染重试；Codex #549
-   * 第八轮）。> 0 = live Figure 与文档不一致。老后端不给这个字段，按 0 读。
-   */
-  unrestored?: number
-  /**
    * 只在**这一次响应真的发生了项目环境自动接手**时出现（ADR 0018）：
    * 内置环境缺包 → Tavotto 自己找到并换用了项目的 `.venv`。界面据此给一条
    * 轻量 toast（「已自动使用这个项目的 Python 环境」），不弹阻断式对话框——

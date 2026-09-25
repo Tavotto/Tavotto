@@ -139,7 +139,6 @@ interface NativeSessionStore {
  * |---|---|---|---|
  * | 活会话拥有它，且停在屏障上 | `null` | **能** | 一切正常，不打扰 |
  * | 活会话拥有它，脚本正在跑 | `'running'` | **不能** | 点进去 409 `native_session_not_at_barrier`；等屏障 |
- * | 活会话拥有它、停在屏障上，但引擎说图与文档不一致 | `'inconsistent'` | **不能** | 撤掉的改动还原不回去（`unrestored > 0`）；换列表的编辑与导出 409 `native_figure_inconsistent`，同一份列表的重渲染放行（会重试，干净了自动解除）；要重跑原命令 |
  * | 出自 native，但没有活会话 | `'offline'` | **不能** | 点进去 409 `native_session_offline`；要重跑原命令。顺带：你看到的那张是 last-known preview |
  * | 不是 native | `null` | 能 | |
  *
@@ -163,21 +162,14 @@ export function nativePanelState(
   sessions: Record<string, NativeSessionInfo>,
   fileId: string,
   profile: 'safe' | 'native' | undefined,
-  inconsistent = false,
-): NativePanelState {
+): 'running' | 'offline' | null {
   const live = Object.values(sessions).find(
     (one) =>
       !isNativeTerminal(one.state) && one.descriptors.some((d) => d.asset_id === fileId),
   )
-  if (live) {
-    if (!live.editable) return 'running'
-    // 只对活会话成立：会话结束了就是 offline（重跑同样解决它），不一致那句不再是真话
-    return inconsistent ? 'inconsistent' : null
-  }
+  if (live) return live.editable ? null : 'running'
   return profile === 'native' ? 'offline' : null
 }
-
-export type NativePanelState = 'running' | 'offline' | 'inconsistent' | null
 
 /** 卡片按开始时间排；活着的排在前面（用户此刻要动的是那些）。 */
 export const sortSessions = (all: NativeSessionInfo[]): NativeSessionInfo[] =>

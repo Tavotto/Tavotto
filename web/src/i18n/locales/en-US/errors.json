@@ -75,7 +75,6 @@
     "native_attach_cancelled": "Cancelled. Your script didn’t run.",
     "native_attach_failed": "The Tavotto desktop couldn’t attach to this run.",
     "native_auth_failed": "Authentication failed on the Tavotto Run control channel.",
-    "native_figure_inconsistent": "Some edits to this figure couldn’t be undone, so it no longer matches the document. Re-run the original command to resume editing and export.",
     "native_handoff_consumed": "This Tavotto Run handoff request has already been handled.",
     "native_handoff_expired": "This Tavotto Run handoff request has expired; run the command again.",
     "native_handoff_invalid": "This Tavotto Run handoff request isn’t valid.",

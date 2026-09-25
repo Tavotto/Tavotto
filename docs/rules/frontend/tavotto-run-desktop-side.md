@@ -30,10 +30,7 @@ descriptor 文件读。
   `FigurePickerDialog`（native 只是换了个数据源）。
 - **面板角标只在需要说话时说话**（`nativePanelState`）：停在屏障上 → 无；
   脚本正在跑 → 「停下来才能编辑」；出自 native 但没有活会话 → 「会话已
-  结束」；停在屏障上但这张图**与文档不一致**（引擎撤掉的改动还原不回去，
-  `renderStore.inconsistent`：v1 render 的 `unrestored > 0` 或被
-  `native_figure_inconsistent` 拒绝时置位，文件级、不按变体，下一次渲染报 0 即解除）
-  → 「有改动没能还原，重新运行原命令可继续编辑」（ADR 0080 / 0021 §9.3）。后两句都是**在用户点进图内编辑之前**说的——不说的话他撞到的是
+  结束」。后两句都是**在用户点进图内编辑之前**说的——不说的话他撞到的是
   一条 409，而那两句话描述的是**正常状态**、不是故障。判据**按描述符里的
   asset id 认领，不按 stem 猜**（同名 stem 在两个项目里到处都是）；
   「这张图出自哪一档」来自 `/api/runtime/status` 的 `execution_profile`

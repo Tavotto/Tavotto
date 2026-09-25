@@ -338,9 +338,6 @@ EVENT_KEY = "bridge_event"
 #: 执行，import 不到 `tavotto.*`，所以只能各写一份、由用例逐字节对拍
 #: （`tests/native/test_run_codes.py::test_the_runner_and_the_cli_agree_on_the_terminate_code`）。
 TERMINATE_EXIT = 5
-#: 图与文档不一致、不许放行（与 `runcodes.NATIVE_FIGURE_INCONSISTENT` 同一个串；runner 在用户
-#: 的解释器里跑、import 不到 `tavotto.engine`，由 `test_native_inconsistent.py` 钉两侧相等）
-INCONSISTENT_CODE = "native_figure_inconsistent"
 
 
 def _take_token() -> str:
@@ -429,9 +426,6 @@ class BridgeRun:
         self.handler = None  # wireproto.V1Handler
         self.script_error: dict | None = None
         self.released = False
-        #: 这一次屏障的 `release_barrier()` 已经在 continue 里干净地做完了（`barrier()` 的
-        #: `finally` 不再做第二遍：第二遍会把已经恢复成原样的 Figure 快照成空列表存下来）。
-        self._barrier_released = False
         self._pkg2_loaded = False
         #: 上一次屏障离开时保存下来的 Tavotto override（stem → 全量 patch 列表）。
         #: **它不在 Figure 上**——离开屏障之前 Figure 已经被恢复成脚本原样了
@@ -517,18 +511,6 @@ class BridgeRun:
 
             def handle_extra(self, cmd, req, payload):
                 if cmd == "continue":
-                    # **先恢复、恢复干净了才放行**（ADR 0021 §8.1，Codex #549 第九轮）：
-                    # 还原不回去的图会让脚本看到 Tavotto 半改的 Figure。那就不放，
-                    # 把编辑态重放回去、停在屏障上，让界面说清楚（只剩 terminate / 重跑）
-                    owed = run.release_barrier("continue")
-                    if owed:
-                        run.resume_editing()
-                        raise wireproto.ProtocolError(
-                            INCONSISTENT_CODE,
-                            "有图的改动还原不回去，不能放行：" + ", ".join(owed),
-                            extra={"stems": owed},
-                        )
-                    run._barrier_released = True
                     run.released = True
                     return {"released": True}
                 if cmd == "terminate":
@@ -621,7 +603,7 @@ class BridgeRun:
                 self.rebase_warnings[stem] = list(warnings)
             self.session.render(stem)
 
-    def release_barrier(self, reason: str) -> list:
+    def release_barrier(self, reason: str) -> None:
         """**任何**离开屏障的路径都要经过这里（ADR 0021 §8.1）。
 
             continue / detach / 桌面断开 / App 崩了 / relay EOF / shutdown
@@ -633,15 +615,10 @@ class BridgeRun:
         为什么这条对**故障路径**尤其重要：不做的话，App 一崩，用户的脚本反而
         带着 Tavotto 的 override 继续跑完——故障路径上的语义比正常路径更宽松，
         而这正是最难被发现的一类不一致（谁会去测"崩溃之后脚本看到了什么"）。
-
-        回**没能恢复成原样的 stem**（`overrides.apply` 的 `FigState.unrestored` 不空，或
-        恢复本身抛了）。非空 = 这次**不许放行**：continue 拒绝并回到编辑态，控制通道断了
-        的故障路径不回到用户代码（`barrier()`）——Codex #549 第九轮。
         """
         if self.session is None:
-            return []
+            return
         overrides = _PKG.overrides
-        owed: list = []
         for stem, state in self.session.states.items():
             snapshot = self.session.snapshot(stem)
             if snapshot:
@@ -655,22 +632,8 @@ class BridgeRun:
                     f"[tavotto] 恢复 {stem} 的脚本原样时出错（{reason}）: {exc}",
                     file=sys.stderr,
                 )
-                owed.append(stem)
-                continue
-            if state.unrestored:
-                owed.append(stem)
         self._known_stems = set(self.session.states)
         self._had_barrier = True
-        return owed
-
-    def resume_editing(self) -> None:
-        """放行被拒之后回到编辑态：把刚存下的列表重放回去（与 `rebase()` 的重放同一个 apply）。"""
-        overrides = _PKG.overrides
-        for stem, state in self.session.states.items():
-            try:
-                overrides.apply(state, self.saved_patches.get(stem) or [])
-            except Exception as exc:  # noqa: BLE001 — 重放失败照实说，屏障照旧停着
-                print(f"[tavotto] 回到编辑态时重放 {stem} 出错: {exc}", file=sys.stderr)
 
     # ---- 屏障 ----
     def barrier(self, reason: str) -> None:
@@ -689,7 +652,6 @@ class BridgeRun:
         self.rebase()
         wireproto = _PKG.wireproto
         self.released = False
-        self._barrier_released = False
         self.control.event(
             "barrier",
             reason=reason,
@@ -702,7 +664,7 @@ class BridgeRun:
                 line = self.control.readline()
                 if not line:  # 父进程走了：不能把用户的脚本永远挂在这儿
                     self.control = None
-                    break
+                    return
                 line = line.strip()
                 if not line:
                     continue
@@ -726,19 +688,7 @@ class BridgeRun:
                     raise
                 self.control.respond(resp)
         finally:
-            owed = [] if self._barrier_released else self.release_barrier(reason)
-        if owed:
-            # 故障路径（控制通道断了）上还原不回去：**不回到用户代码**。挂在这儿等一个
-            # 永远不来的桌面同样不行，于是按「终止」退出——故障路径不能比正常路径更宽松
-            # （ADR 0021 §8.1）。shutdown / terminate 走的是上面的 SystemExit，到不了这里
-            print(
-                "[tavotto] 有图的改动还原不回去，脚本不能带着它继续运行，已终止: "
-                + ", ".join(owed),
-                file=sys.stderr,
-            )
-            raise SystemExit(TERMINATE_EXIT)
-        if self.control is None:
-            return
+            self.release_barrier(reason)
         self.control.event("released", reason=reason)
 
 

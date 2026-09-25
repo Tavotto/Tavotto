@@ -223,21 +223,3 @@ assert not restored(w), w
 assert not owed(hot)
 """
     )
-
-
-def test_v1_render_reports_the_owed_count_and_legacy_stays_untouched(tmp_path):
-    """`unrestored` 是 v1 render 结果里的结构化字段（native 会话据此标「与文档不一致」），
-    legacy 扁平信封一字不动（`test_worker_roundtrip.py::test_legacy_envelope_keeps_the_old_response_shape`）。"""
-    (tmp_path / "fig_owed.py").write_text(
-        "import matplotlib.pyplot as plt\n\n\ndef main():\n"
-        "    fig, ax = plt.subplots()\n    ax.plot([0, 1], [0, 1])\n    fig.savefig('Owed.png')\n",
-        encoding="utf-8",
-    )
-    w = pool.one_shot("fig_owed.py", str(tmp_path), "main")
-    try:
-        w.ensure_built()
-        resp = w.override("Owed", [{"gid": "axes_0.lines_0", "prop": "linewidth", "value": 3.0}])
-        assert resp["unrestored"] == 0
-        assert w.override("Owed", [])["unrestored"] == 0
-    finally:
-        w.shutdown()

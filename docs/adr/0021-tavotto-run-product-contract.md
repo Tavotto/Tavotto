@@ -501,14 +501,6 @@ confirmation 关闭 / timeout recovery（选择让脚本继续时）
 否则 App 一崩，用户脚本反而带着 Tavotto 的 override 继续执行——那是最坏的
 一种：**故障路径上的语义比正常路径更宽松**。
 
-**恢复不回去就不放行**（2026-09-25 补，Codex #549 第九轮）：「恢复 baseline」是放行的
-前提，不是放行时顺手做的一件事。`release_barrier()` 之后仍有图欠着还原（引擎的
-`FigState.unrestored` 不空，或恢复本身抛了），continue / detach 一律拒绝
-（`native_figure_inconsistent`，runner 把编辑态重放回去、停在屏障上；sidecar 看到任何一张图
-不一致时也先挡，两层各自成立）；控制通道已经断了的故障路径不回到用户代码，按终止退出
-（`EXIT_TERMINATED`）——挂着等一个不会再来的桌面同样不行。只剩 `terminate` 照常放行。
-判别性用例：`tests/native/test_native_inconsistent.py` 的两条真进程链用例。
-
 `terminate` 不需要继续执行，所以它是唯一不必先恢复的释放路径。
 
 ### 8.2 `show(block=False)` 与重复 `show()`
@@ -566,7 +558,6 @@ ADR 0013 的 asset id 是 `runtime:<script>#<stem>`。**一次性 session token
 |---|---|
 | `barrier` | manifest / edit / render / export / continue |
 | `running_script` / `continuing` | **不允许** Figure 请求 → `native_session_not_at_barrier` |
-| `barrier`，但这张图**与文档不一致**（引擎撤掉的改动还原不回去，v1 render 报 `unrestored > 0`；ADR 0080，2026-09-25 补） | 只放行**同一份列表**的重渲染（它重试还原，报 0 即自动解除）；换列表的编辑、导出、历史预览、continue / detach → `native_figure_inconsistent`（409，与 offline 同一条路；「查标记 → 发请求 → 更新标记」在会话锁里成一整段）；terminate 照常；界面角标说「重新运行原命令」。会话不杀不断开 |
 
 **不在后台排队然后几分钟后偷偷执行**用户之前点的操作。UI 在脚本继续运行时
 禁用编辑控件但保留最后一帧 preview。
@@ -685,7 +676,7 @@ Waiting for Tavotto desktop…
 | invocation | `run_command_missing` `unsupported_run_command` `unsupported_python_option` `interpreter_not_found` `interpreter_not_executable` `unsupported_python_version` `unsupported_python_implementation` `script_target_missing` `script_target_not_file` `invalid_module_name` `project_root_invalid` `project_unreadable` |
 | handoff | `native_handoff_invalid` `native_handoff_expired` `native_handoff_consumed` |
 | attach / relay | `native_desktop_required` `native_attach_cancelled` `native_attach_timeout` `native_attach_failed` `native_relay_failed` `native_auth_failed` |
-| session | `native_session_conflict` `native_asset_conflict` `native_session_not_at_barrier` `native_session_offline` `native_figure_inconsistent` `native_session_ended` `native_session_disconnected` `bridge_child_exited` |
+| session | `native_session_conflict` `native_asset_conflict` `native_session_not_at_barrier` `native_session_offline` `native_session_ended` `native_session_disconnected` `bridge_child_exited` |
 | 结果 | `no_figure_captured` |
 | 环境 | `environment_in_use_by_native_session`（+ 复用既有 `environment_mutating`） |
 
