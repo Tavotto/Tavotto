@@ -43,3 +43,15 @@ byte-budget policy   SVG_RECENT_BUDGET_PER_FILE = 16 MiB
   的 evicted 一条、`hooks/useEngineSync.test.ts` 的重排一组、
   `embedded/session.test.ts` 的种子记账两条。**新增判据前先跑一次变异**——
   本节 20 条错误实现逐条反证过，其中「种子那一帧不记账」最初是全绿的。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 条目数与字节两条策略并存
+- 记账每次现算不维护计数器
+- 三条 pin 一条不能少、全被 pin 住宁可超预算
+- 被驱逐的是独立一档 `evicted`
+- `useEngineSync` 对 `svgEvicted` 重排一次

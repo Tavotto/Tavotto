@@ -10,3 +10,12 @@
 就得同步加进去**。完整的 playground 纪律（Pyodide、完整性校验、案例库、
 预热）在 `web/AGENTS.md` 与 `docs/adr/0007-browser-playground.md` /
 `docs/adr/0011-playground-examples-first.md`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 平铺 import 与 worker 同一条 sys.path 纪律、不许分叉出 browser_manifest
+- 加一个 flat import 必须同步 `ENGINE_FILES` 白名单

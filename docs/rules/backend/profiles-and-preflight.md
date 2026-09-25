@@ -57,3 +57,15 @@
   `_read_user()` 对「读不懂」与「一条都没有」回的是同一个空清单。
 - 导出目录规则收在 `engine/config.project_export_dir(project, fallback)` —— Flask 与
   MCP server 都调它（`fallback` 是参数不是常量：app 的 `EXPORT_DIR` 会被测试 monkeypatch）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 规则唯一权威是那份 JSON，两侧求值器靠 golden vectors 对齐（只比判据）
+- 字号按最终物理尺寸判、阈值不进求值器
+- `clip_bbox` 只给 `element-outside-figure` 用
+- 没登记的检查项兜底 warn
+- 磁盘更高版本只读不写

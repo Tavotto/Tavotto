@@ -80,3 +80,14 @@
   `tests/test_distribution_metrics.py`、`web` 的 `lib/telemetry.test.ts` /
   `store/telemetryStore.test.ts` / `components/TelemetryConsentDialog.test.tsx` /
   `components/SettingsTelemetry.test.tsx`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 不引入任何分析 SDK
+- `capture()` 永不抛不阻塞、无落盘队列
+- 加事件两侧表 + 样例 + 文档三处一起改、范围扩大升 `CONSENT_VERSION`
+- 发行量指标绝不混进用户队列

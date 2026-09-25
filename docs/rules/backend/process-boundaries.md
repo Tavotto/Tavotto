@@ -35,3 +35,14 @@
   conftest 已全局隔离）：cache / layouts / exports / baked_overrides/&lt;项目id&gt;.json /
   ai_history.sqlite3 / ai_snapshots 全在那儿。**不要再往包目录或仓库根写东西**
   ——site-packages 不可写，装成 wheel 后会直接崩。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 三侧模块名单与各自允许的依赖
+- 项目级解释器决策唯一出处 `pool.resolve_worker_python(项目, script=)`：显式 > 记住 > **项目 venv 首开发现**（ADR 0057）> 内置 / 自身 / 系统
+- 失效的显式选择报 `explicit_python_unusable` / `project_python_unusable` 不静默替换
+- 进程内缓存不替已经变了的环境作答（全局那条命中前查路径还在，项目体检结论与首开结果带 `projectenv.interpreter_fingerprint`，同一路径被重建 / 改权限就重验）

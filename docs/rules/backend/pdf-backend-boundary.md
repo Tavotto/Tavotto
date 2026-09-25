@@ -117,3 +117,18 @@
   面板）。child 有界队列满 → 503 + `Retry-After: 1`（背压不是故障）。看护 `tests/test_render_cache.py`
   （真实端点的用户合同）、`tests/test_rendercore_preview.py`（键 / 去重 / 退让 / 抄字节）、
   `tests/test_windows_regressions.py`、`tests/test_rendercore_app.py`。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 契约层 19 项唯一实现 `rendercore/facade`（U10 起，ADR 0072）
+- 开关 `TAVOTTO_RENDER_BACKEND` 闭集只有 `rendercore`、`pymupdf` 报 `backend_retired`、选定即定不静默回退
+- 应用闭包零 pymupdf 由 `scripts/ci/retirement_scan.py` 五把尺子看护（主语是闭包不是硬盘；旧行为参照只在 `tests/fixtures/legacy_pymupdf/`）
+- 字形归属四层只在 `glyphplan.py`、`fallback` 恒空
+- 本机字体族在 manifest 顶层 `font_families` 只发一次
+- 「自定义色图」判对象不判名（`_registered_colormap`）
+- CJK 回退尾巴必须在 `font.family` 列表里
+- 预览缓存是 `rendercore.preview.PreviewCache`（键含内容身份 / build / 字体政策，不用 mtime，Windows 退让）

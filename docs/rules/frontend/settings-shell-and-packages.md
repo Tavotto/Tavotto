@@ -122,3 +122,16 @@
 * 看护：`SettingsDialog.test.tsx` / `settings/PackagesSettings.test.tsx` /
   `settings/DiagnosticsSettings.test.tsx` / `settings/agentState.test.ts` / `e2e/settings-shell.spec.ts`
   （外框逐像素、溢出、窄窗口、英文、方向键、axe——**量之前先等 `getAnimations().finished`**）。
+
+## 速查表原要点（2026-09-25 迁入，#608）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
+下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
+它们与上文同等有效，改规则时一并改这里。
+
+- 深链返回是闭集
+- 一级列表只有名称 · 版本 · 状态
+- e2e 锚点全是 `data-agent-*` / `data-rail` / `data-write-back`
+- 查找只在点「在 PyPI 查找」时出网
+- 代际与 `lookupSeq` 两条轴不合并、作业按所属项目分格
+- 说明先改控件、常规字段不挂问号
