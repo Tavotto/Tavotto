@@ -26,6 +26,16 @@ from support import shard as _shard
 _DATA_DIR = tempfile.mkdtemp(prefix="tavotto-data-")
 os.environ.setdefault("TAVOTTO_DATA_DIR", _DATA_DIR)
 
+# 用户配置同理，而且**必须在 collection 之前**：`_isolated_user_config` 是 fixture，
+# 管不到 collection 时求值的模块级常量——`WORKER_PY = pool.find_worker_python()`
+# （test_mcp_normalize / test_compat_capture_parity / support.nativekit / support.bridgekit）
+# 在那一刻读的若是开发机真实配置里的 `worker_python`，而用例里 `reset_worker_python()`
+# 之后产品在隔离配置下重选了别的解释器，「参考侧」与「产品侧」就出自两个解释器：
+# 像素 / 描述符对比恒红、stdout 里带上别人的路径（#452、#483）。主语是「哪个时刻」：
+# collection 期与用例期读到的必须是**同一份**（空的）用户配置。
+_CONFIG_DIR = tempfile.mkdtemp(prefix="tavotto-config-")
+os.environ.setdefault("TAVOTTO_CONFIG_DIR", _CONFIG_DIR)
+
 # 渲染控制面**默认走 Python 池**。开发机上 `cargo build` 之后
 # `workerd/target/debug/tavotto-workerd` 就在那儿，pool 会自动认出来——
 # 那样整套既有用例会在不知不觉间换一条控制面跑，「Python 实现是参考实现」
@@ -41,7 +51,7 @@ os.environ.setdefault("TAVOTTO_USER_ENV_DISCOVERY", "0")
 # 匿名遥测在测试里**硬关**。用 setdefault 之外还要真的钉住：这不是「默认值」
 # 那一类偏好，而是「测试进程绝不产生真实的 PostHog 事件」这条硬约束——
 # 开发机上的用户配置里很可能已经同意过遥测（那是同一个 config.json），
-# 只靠 TAVOTTO_CONFIG_DIR 隔离在 fixture 就位之前的模块级 import 期间是空的。
+# 而上面的 TAVOTTO_CONFIG_DIR 是 setdefault——外面已经设了就沿用外面那份。
 # 遥测自己的用例把它摘掉并替换掉传输层（tests/test_telemetry.py）。
 os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
 
