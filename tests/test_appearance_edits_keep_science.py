@@ -7,14 +7,23 @@ worker 按 override 重新序列化出的 PDF，用 PyMuPDF（与 matplotlib / R
 它们只由数据与坐标范围决定。带单位的轴标签用文字层比（刻度个数随图幅由 locator 重选，不比）；源脚本与数据文件比 sha256，
 写回原件之后再比一次（写回只许动图库里的 PDF/PNG）。
 
-判据的主语：**产物里那条曲线**（不是 manifest、不是请求）。反证：把 patch 换成改 `ylim` 的非外观 patch，
-归一化顶点必然变——`test_the_ruler_sees_a_real_data_change` 钉住尺子是活的。
+判据的主语：**产物里那条曲线**（不是 manifest、不是请求）。两把尺子：
+
+* 归一化顶点（axes 分数）：只由数据与坐标范围决定，看得见「曲线相对坐标区挪了」；
+* **绝对数据坐标**：用产物自己的刻度线位置 + 刻度标签上的数值拟合出「页面坐标 → 数据值」的映射，
+  把曲线顶点换回数据值，与源数据 `POINTS` 逐点比。归一化那把尺子对「数据整体做仿射变换 + 自动
+  坐标范围」是瞎的（伏 → 毫伏：顶点在坐标区里的相对位置一模一样），这把看得见，因为刻度数值跟着变了
+  （评审 PR #583）。
+
+反证：把 patch 换成改 `ylim` 的非外观 patch，归一化顶点必然变、而数据坐标不变——
+`test_the_ruler_sees_a_real_data_change` 钉住两把尺子都是活的、各自量的是自己那个维度。
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pymupdf
@@ -146,12 +155,62 @@ def _original_pdf(client, name: str, patches: list) -> Path:
     return Path(body["export_dir"]) / out["name"]
 
 
+_NUMBER = re.compile(r"^[−-]?\d+(?:\.\d+)?$")
+
+
+def _tick_map(drawings, labels, ax, axis: str) -> tuple[float, float]:
+    """一根轴的「页面坐标 → 数据值」线性映射 `(a, b)`：value = a + b·pos。
+
+    刻度**位置**取刻度线（从坐标区边框伸出去的那一小段线，页面上的精确坐标），刻度**数值**取离它最近
+    的数字标签的文字——标签的包围盒只用来配对，不参与定位（标签与刻度的对齐方式随字体度量而变）。
+    """
+    segs = [
+        (d["items"][0][1], d["items"][0][2])
+        for d in drawings
+        if len(d["items"]) == 1 and d["items"][0][0] == "l"
+    ]
+    if axis == "x":  # 从下边框往下伸的竖短线；标签在坐标区下方
+        ticks = [
+            a.x for a, b in segs if abs(a.y - ax.y1) < 0.01 < b.y - a.y and abs(a.x - b.x) < 0.01
+        ]
+        cands = [(v, (r.x0 + r.x1) / 2) for v, r in labels if r.y0 > ax.y1]
+    else:  # 从左边框往左伸的横短线；标签在坐标区左侧
+        ticks = [
+            a.y for a, b in segs if abs(a.x - ax.x0) < 0.01 < a.x - b.x and abs(a.y - b.y) < 0.01
+        ]
+        cands = [(v, (r.y0 + r.y1) / 2) for v, r in labels if r.x1 < ax.x0]
+    pairs = []
+    for t in ticks:
+        v, _c = min(cands, key=lambda vc: abs(vc[1] - t))
+        pairs.append((t, v))
+    assert len(pairs) >= 2 and len({v for _t, v in pairs}) == len(pairs), (
+        f"{axis} 轴刻度配对：{pairs}"
+    )
+    n = len(pairs)
+    mt = sum(t for t, _v in pairs) / n
+    mv = sum(v for _t, v in pairs) / n
+    b = sum((t - mt) * (v - mv) for t, v in pairs) / sum((t - mt) ** 2 for t, _v in pairs)
+    a = mv - b * mt
+    # 尺子自检：刻度是等距的，数值必须落在同一条直线上（否则配对错了）
+    worst = max(abs(a + b * t - v) for t, v in pairs)
+    assert worst <= 1e-3 * max(abs(v) for _t, v in pairs), f"{axis} 轴刻度不共线：{pairs}"
+    return a, b
+
+
 def _science(pdf: Path, line_color: str) -> dict:
-    """产物里的科学事实：曲线的 axes 分数坐标顶点 + 文字层。"""
+    """产物里的科学事实：曲线的 axes 分数坐标顶点、按产物刻度换回的数据坐标顶点、文字层。"""
     with pymupdf.open(pdf) as doc:
         page = doc[0]
         drawings = page.get_drawings()
         text = page.get_text()
+        spans = [
+            (
+                "".join(s["text"] for s in line["spans"]).strip(),
+                pymupdf.Rect(line["bbox"]),
+            )
+            for block in page.get_text("dict")["blocks"]
+            for line in block.get("lines", [])
+        ]
     face = [d for d in drawings if _close(d.get("fill"), _rgb(AX_FACE))]
     assert len(face) == 1, f"坐标区底色矩形应恰有一个，找到 {len(face)}"
     ax = face[0]["rect"]
@@ -163,14 +222,28 @@ def _science(pdf: Path, line_color: str) -> dict:
         and len([it for it in d["items"] if it[0] == "l"]) >= 3
     ]
     assert len(lines) == 1, f"颜色 {line_color} 的数据曲线应恰有一条，找到 {len(lines)}"
-    pts = []
+    labels = [(float(t.replace("−", "-")), r) for t, r in spans if _NUMBER.match(t)]
+    ax_x, bx = _tick_map(drawings, labels, ax, "x")
+    ay, by = _tick_map(drawings, labels, ax, "y")
+    pts, data = [], []
     for it in lines[0]["items"]:
         if it[0] == "l":
             for p in (it[1], it[2]):
                 q = ((p.x - ax.x0) / ax.width, (ax.y1 - p.y) / ax.height)
                 if not pts or max(abs(q[0] - pts[-1][0]), abs(q[1] - pts[-1][1])) > 1e-9:
                     pts.append(q)
-    return {"points": pts, "text": text, "axes_pt": (ax.width, ax.height)}
+                    data.append((ax_x + bx * p.x, ay + by * p.y))
+    return {"points": pts, "data": data, "text": text, "axes_pt": (ax.width, ax.height)}
+
+
+TRUE_DATA = [(float(i), float(v)) for i, v in enumerate(POINTS.split(","))]
+
+
+def _assert_true_data(data, tol=1e-3):
+    """绝对数据坐标 = 源数据（x 是下标、y 是 points.csv 的值），逐点。"""
+    assert len(data) == len(TRUE_DATA), (len(data), data)
+    for i, (p, q) in enumerate(zip(TRUE_DATA, data)):
+        assert abs(p[0] - q[0]) <= tol and abs(p[1] - q[1]) <= tol, f"第 {i} 点数据值：{p} → {q}"
 
 
 def _assert_same_points(a, b, tol=1e-3):
@@ -200,6 +273,9 @@ def test_appearance_only_patches_keep_points_ticks_units_and_sources(project):
     after = _science(_original_pdf(client, "After", patches), "#d62728")
     assert after["axes_pt"] != pytest.approx(before["axes_pt"], abs=1.0), "前提：坐标区确实变了尺寸"
     _assert_same_points(before["points"], after["points"])
+    # 绝对科学值：前后都等于源数据（归一化顶点对「数据仿射变换 + 自动范围」是瞎的，这一条不是）
+    _assert_true_data(before["data"])
+    _assert_true_data(after["data"])
 
     # 刻度**个数**随图幅由 matplotlib 的 locator 重选（坐标区变长 → 刻度变密），那不是数据变化；
     # 数据范围是否不变已由上面的归一化顶点量过（顶点 = 数据经坐标范围映射）。这里只比单位。
@@ -212,10 +288,12 @@ def test_appearance_only_patches_keep_points_ticks_units_and_sources(project):
     assert _sha(figs / "points.csv") == data_sha
     written = _science(figs / "Fig1.pdf", "#d62728")
     _assert_same_points(before["points"], written["points"])
+    _assert_true_data(written["data"])
 
 
 def test_the_ruler_sees_a_real_data_change(project):
-    """反证：改 y 轴范围（不是外观）时，同一把尺子必须量出顶点变了。"""
+    """反证：改 y 轴范围（不是外观）时，归一化那把尺子必须量出顶点变了；而数据坐标那把尺子必须**不**变——
+    它量的是数据值本身，看范围不看数据的改动对它不可见，这正是它与前一把分开的那个维度。"""
     _m, client, _figs = project
     _manifest(client, [])
     _materialize(client)
@@ -228,3 +306,6 @@ def test_the_ruler_sees_a_real_data_change(project):
     )
     diff = max(abs(p[1] - q[1]) for p, q in zip(before["points"], moved["points"]))
     assert diff > 0.05, f"尺子没看见数据坐标的变化（最大差 {diff}）"
+    # 数据坐标尺子：刻度数值换了、曲线在页面上挪了，换回来的数据值仍是源数据
+    _assert_true_data(before["data"])
+    _assert_true_data(moved["data"])

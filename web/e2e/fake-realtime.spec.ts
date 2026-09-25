@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { cpSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -134,10 +134,14 @@ test('拖图内元素：预览跟手、拖动期间零后端、松手一次定�
 
 type QaTarget = { id: string; x: number; y: number; transform: string | null }
 
+/**
+ * 打开样例图进快速编辑。素材卡认稳定锚点 `data-card`（文件名文案可能同时出现在别处）；快速编辑里
+ * 图内编辑宿主 `[data-element-svg]` 是单例——先断言恰好一个再用，不取「第一个匹配」。
+ */
 async function openKineticsTitle(page: Page, baseURL: string): Promise<QaTarget> {
   await page.goto(baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
+  await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
+  await expectSingleElementSvg(page)
   // 首次渲染与打开文档那次自动保存（1s 防抖）都安顿下来，再开始数
   await page.waitForTimeout(2500)
   const t = await locateGid(page, 'axes_0.title')
@@ -145,9 +149,17 @@ async function openKineticsTitle(page: Page, baseURL: string): Promise<QaTarget>
   return t!
 }
 
+/** 图内编辑宿主恰好一个，且它的 SVG 已经画出来 */
+async function expectSingleElementSvg(page: Page) {
+  await expect(page.locator('[data-element-svg]')).toHaveCount(1, { timeout: 60_000 })
+  await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 60_000 })
+}
+
 const locateGid = (page: Page, id: string) =>
   page.evaluate((gid) => {
-    const n = document.querySelector(`[data-element-svg] [id="${gid}"]`) as SVGGraphicsElement | null
+    const hosts = document.querySelectorAll('[data-element-svg]')
+    if (hosts.length !== 1) throw new Error(`图内编辑宿主应恰有一个，实际 ${hosts.length}`)
+    const n = hosts[0].querySelector(`[id="${gid}"]`) as SVGGraphicsElement | null
     if (!n) return null
     const r = n.getBoundingClientRect()
     return { id: gid, x: r.x + r.width / 2, y: r.y + r.height / 2, transform: n.getAttribute('transform') }
@@ -379,8 +391,10 @@ test('STATE-05 乱序回包：旧变体晚于新变体返回，不把画布拽�
 /** 标题中心在整张图 SVG 里的相对位置（与视口 / 缩放无关，重开前后可比） */
 const relTitle = (page: Page) =>
   page.evaluate(() => {
-    const n = document.querySelector('[data-element-svg] [id="axes_0.title"]') as SVGGraphicsElement | null
-    const svg = document.querySelector('[data-element-svg] svg') as SVGGraphicsElement | null
+    const hosts = document.querySelectorAll('[data-element-svg]')
+    if (hosts.length !== 1) throw new Error(`图内编辑宿主应恰有一个，实际 ${hosts.length}`)
+    const n = hosts[0].querySelector('[id="axes_0.title"]') as SVGGraphicsElement | null
+    const svg = hosts[0].querySelector(':scope > svg') as SVGGraphicsElement | null
     if (!n || !svg) return null
     const r = n.getBoundingClientRect()
     const s = svg.getBoundingClientRect()
@@ -430,12 +444,19 @@ test('STATE-08 保存重开：提交→撤销→重做→自动保存→整个�
   expect(a1.proc.exitCode, '后端应当已经退出').not.toBeNull()
   // 产品判「端口空闲」用的是不带 SO_REUSEADDR 的 bind：上一个实例的 TIME_WAIT 没过完就会顺延到
   // 下一个端口（换了源 = 本机记的「上次文档」读不到）。同一种 bind 等到它真空出来再重开。
+  // Node 的 net.listen 在 POSIX 上自带 SO_REUSEADDR，量的不是同一件事，所以借 Python 的 socket；
+  // 解释器名按平台取（Windows 的 setup-python 只有 `python`，同 large-figure.spec.ts），
+  // 起不来（ENOENT 等，没有退出码）直接抛——不许当成「端口还忙」一直等到超时。
+  const py = process.env.TAVOTTO_WORKER_PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
   const t0 = Date.now()
   for (;;) {
     try {
-      execSync(`python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',${port}))"`, { stdio: 'ignore' })
+      execFileSync(py, ['-c', `import socket;s=socket.socket();s.bind(('127.0.0.1',${port}))`], {
+        stdio: 'ignore',
+      })
       break
-    } catch {
+    } catch (e) {
+      if ((e as { status?: number | null }).status == null) throw e
       expect(Date.now() - t0, '端口 150s 内都没空出来').toBeLessThan(150_000)
       await new Promise((r) => setTimeout(r, 1000))
     }
@@ -455,16 +476,26 @@ test('STATE-08 保存重开：提交→撤销→重做→自动保存→整个�
   expect(JSON.parse(saved).canvases[0].objects).toEqual(reread.canvases[0].objects)
 
   // 画面：重开后进图内编辑，标题停在最后提交的位置（相对整张图，独立于视口）
-  const panel = page.locator('[data-object-id]').first()
+  // 画布上恰好这一个面板（上面已从磁盘文档核过 panels 只有一个），单例先断言
+  const panel = page.locator('[data-canvas-stage] [data-object-id]')
+  await expect(panel).toHaveCount(1, { timeout: 60_000 })
   await expect(panel).toBeVisible({ timeout: 60_000 })
   await panel.click()
   await page.keyboard.press('Enter')
-  await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
+  await expectSingleElementSvg(page)
   await expect
     .poll(() => relTitle(page).then((r) => r && Math.hypot(r.rx - relCommitted.rx, r.ry - relCommitted.ry)), {
       timeout: 60_000,
       message: '重开后标题应当停在最后提交的位置',
     })
     .toBeLessThan(1e-3)
-  rmSync(root, { recursive: true, force: true })
+  // 清理数据目录之前先让第二个实例整个退出：它还握着 data/cache/app.log。POSIX 上 unlink 打开着的
+  // 文件照样成功，所以本机看不出来；Windows 上是 EBUSY（CI windows-exe-smoke 实测）。fixture 的收尾
+  // 在用例体**之后**才停它，来不及。退出后句柄释放可能滞后一拍，删目录带有界重试。
+  await a2.stop()
+  for (let i = 0; i < 60 && a2.proc.exitCode === null && a2.proc.signalCode === null; i++) {
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  expect(a2.proc.exitCode !== null || a2.proc.signalCode !== null, '第二个实例应当已经退出').toBe(true)
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
 })

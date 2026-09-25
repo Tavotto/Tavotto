@@ -496,17 +496,70 @@ def test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_cho
 # ================================================================ PATH-05 特殊路径 / 参数 / 环境
 
 
+def _windows_long_paths_enabled() -> bool:
+    """这台 Windows 开没开长路径（`LongPathsEnabled`）。没开的机器上，用户自己（资源管理器、Python、
+    matplotlib）就建不出超过 MAX_PATH 的路径——「> 260」这一维在那里不存在。"""
+    import winreg  # noqa: PLC0415 — 只在 Windows 上有
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem"
+        ) as key:
+            return winreg.QueryValueEx(key, "LongPathsEnabled")[0] == 1
+    except OSError:
+        return False
+
+
+def _pad_dirs(base: Path, tail: tuple[str, ...], target: int) -> Path:
+    """在 `base` 与 `tail` 之间插入「长路径段」目录，让 `base/…/tail` 的总长到 `target`（差不过 1 个字符）。
+
+    长度按**这台机器上的真实前缀**（`tmp_path`）现算：Linux 的 `/tmp/pytest-of-runner/…` 比 macOS 的
+    `/private/var/folders/…` 短六十来个字符，写死段数的话「> 260」只在写用例的那台机器上成立（CI 实测 223）。
+    单段 ≤ 68 字符 / 100 UTF-8 字节，远低于各文件系统 255 的分量上限；段尾不是空格或点（Windows 不许）。"""
+    unit = "长路径段_long_segment_" * 4
+    deep = base
+    while (room := target - len(str(deep.joinpath(*tail))) - 1) >= 1:
+        deep = deep / unit[: min(room, len(unit))]
+    return deep
+
+
 @needs_worker
 def test_path05_cjk_space_quotes_long_path_and_no_env_secret_in_public_responses(tmp_path):
-    """项目路径含中文、空格、单双引号且总长 > 260；数据文件名含中文与空格。首开自动成功、全序列 = 真值；
+    """项目路径含中文、空格、引号且总长 > 260；数据文件名含中文与空格。首开自动成功、全序列 = 真值；
     服务环境里的一条「密钥」不出现在准备 / 渲染 / 导出的任何公开响应里。safe 档没有给脚本传参的入口：
-    要参数的脚本明确报 `script_needs_arguments`（安全停止，不是兼容成功）。"""
-    deep = tmp_path / "数据 目录 'single' \"double\"" / ("长路径段_long_segment_" * 6)
-    paper = deep / "paper project"
-    (paper / "分析 a").mkdir(parents=True)
-    (paper / "分析 a" / "点 数据.csv").write_bytes(_csv(TRUE_Y))
-    (paper / "分析 a" / "图 一.py").write_text(
-        _plot_script("_read_csv('点 数据.csv')", "图 一.pdf"), encoding="utf-8"
+    要参数的脚本明确报 `script_needs_arguments`（安全停止，不是兼容成功）。
+
+    路径按平台的规则造（用户在那个平台上真建得出来的才算数）：
+
+    * 双引号：POSIX 上是合法文件名字符，照测；Windows 的文件名不许有 `"`（`< > : " / \\ | ? *`
+      都不许），用户在 Windows 上根本建不出这样的目录——那里只测单引号。
+    * > 260：POSIX 没有 MAX_PATH，目录本身就拉到 260 以上。Windows 上只有开了 `LongPathsEnabled`
+      才成立；而**当前目录**另有 MAX_PATH − 12 的限制（脚本以它为 cwd 运行），所以那里目录停在 230
+      以内、由数据文件名把全路径推过 260。没开长路径的 Windows 上这一维不适用：路径留在 260 以内，
+      中文 / 空格 / 单引号照测。
+    """
+    tail = ("paper project", "分析 a")
+    data_name = "点 数据.csv"
+    long_path = True
+    if sys.platform == "win32":
+        top = tmp_path / "数据 目录 'single'"
+        long_path = _windows_long_paths_enabled()
+        if long_path:
+            analysis = _pad_dirs(top, tail, 230).joinpath(*tail)
+            stem = "点 数据 "
+            while len(str(analysis / f"{stem}.csv")) <= 270:
+                stem += "长文件名_long_name_"
+            data_name = f"{stem.rstrip()}.csv"
+        else:
+            analysis = _pad_dirs(top, tail, 200).joinpath(*tail)
+    else:
+        top = tmp_path / "数据 目录 'single' \"double\""
+        analysis = _pad_dirs(top, tail, 280).joinpath(*tail)
+    paper = analysis.parent
+    analysis.mkdir(parents=True)
+    (analysis / data_name).write_bytes(_csv(TRUE_Y))
+    (analysis / "图 一.py").write_text(
+        _plot_script(f"_read_csv({data_name!r})", "图 一.pdf"), encoding="utf-8"
     )
     (paper / "分析 a" / "needs_args.py").write_text(
         "import argparse\nap = argparse.ArgumentParser()\nap.add_argument('--data', required=True)\n"
@@ -514,7 +567,10 @@ def test_path05_cjk_space_quotes_long_path_and_no_env_secret_in_public_responses
         "fig, ax = plt.subplots()\nax.plot([0, 1])\nfig.savefig('needs_args.pdf')\n",
         encoding="utf-8",
     )
-    assert len(str(paper / "分析 a" / "点 数据.csv")) > 260
+    if long_path:
+        assert len(str(analysis / data_name)) > 260
+    else:  # 没开长路径的 Windows：这一维不适用（见 docstring），其余维度照测
+        assert len(str(analysis / data_name)) < 260
     _native(paper, "图 一.py", tmp_path, cwd=paper / "分析 a")
     shutil.copy(paper / "分析 a" / "图 一.pdf", paper / "分析 a" / "needs_args.pdf")
     secret = "qa-secret-5f0c2d9e-not-a-real-key"
@@ -526,7 +582,7 @@ def test_path05_cjk_space_quotes_long_path_and_no_env_secret_in_public_responses
         state = app.prepare(panel["id"])
         responses.append(json.dumps(state, ensure_ascii=False))
         assert state["result"]["status"] == "ready", state["result"]
-        assert _input_files(state["result"]) == [("分析 a/点 数据.csv", _sha256(_csv(TRUE_Y)))]
+        assert _input_files(state["result"]) == [(f"分析 a/{data_name}", _sha256(_csv(TRUE_Y)))]
         render = app.render(panel["id"])
         responses.append(json.dumps(render, ensure_ascii=False))
         assert _plotted_y(render) == _approx_seq(TRUE_Y)

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -126,7 +127,12 @@ def _two_envs(tmp_path: Path, monkeypatch) -> tuple[Path, dict, dict]:
     truth_b = _import_from(py_b)
     assert truth_a == {"file": str(init_a), "value": VALUES["A"]}
     assert truth_b == {"file": str(init_b), "value": VALUES["B"]}
-    on_path = _import_from("python", env=dict(os.environ))
+    # 「PATH 上第一个 python」按 PATH 查（shutil.which），不交给 CreateProcess 去找：Windows 的
+    # CreateProcess 先搜**父进程 exe 所在目录**、再搜系统目录、最后才轮到 PATH，裸名 `python` 在那里
+    # 拿到的是跑 pytest 的那个解释器，不是 PATH 最前的 B（CI 实测：import 不到包，退出码 1）
+    first = shutil.which("python", path=os.environ["PATH"])
+    assert first is not None and Path(first).parent.resolve() == Path(py_b).parent.resolve(), first
+    on_path = _import_from(first, env=dict(os.environ))
     assert Path(on_path["file"]).resolve() == init_b.resolve(), on_path
     return root, truth_a, truth_b
 

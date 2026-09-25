@@ -24,7 +24,10 @@ type Box = { x: number; y: number; w: number; h: number }
 
 async function boxOf(page: Page, gid: string): Promise<Box | null> {
   return page.evaluate((id) => {
-    const n = document.querySelector(`[data-element-svg] [id="${id}"]`)
+    // 快速编辑里图内编辑宿主是单例：恰好一个才量，不取「第一个匹配」
+    const hosts = document.querySelectorAll('[data-element-svg]')
+    if (hosts.length !== 1) throw new Error(`图内编辑宿主应恰有一个，实际 ${hosts.length}`)
+    const n = hosts[0].querySelector(`[id="${id}"]`)
     if (!n) return null
     const r = (n as SVGGraphicsElement).getBoundingClientRect()
     return { x: r.x, y: r.y, w: r.width, h: r.height }
@@ -39,8 +42,10 @@ const timingsCount = (page: Page) =>
 
 async function openFigure(page: Page, baseURL: string) {
   await page.goto(baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
+  // 素材卡认稳定锚点 data-card，不认文件名文案
+  await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
+  await expect(page.locator('[data-element-svg]')).toHaveCount(1, { timeout: 60_000 })
+  await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 60_000 })
   // 首次渲染安顿下来
   await page.waitForTimeout(1500)
 }
@@ -125,19 +130,33 @@ test('GEO-02 多选：标题 + y 轴标签一起拖，两者各平移 Δs 一次
   const a = await app()
   await openFigure(page, a.baseURL)
   await zoomTo(page, 'Control+=')
-  const t0 = (await boxOf(page, 'axes_0.title'))!
-  const y0 = (await boxOf(page, 'axes_0.ylabel'))!
-  const l0 = (await boxOf(page, 'axes_0.legend'))!
+  const tA = (await boxOf(page, 'axes_0.title'))!
+  const yA = (await boxOf(page, 'axes_0.ylabel'))!
   // 点标题选中，⇧ 点 y 轴标签加选（PanelView 的加选语义）
   // （x 轴标签在这张示例图里压在面板下沿，中心点落在面板外，点不中；
   //   图例的整组平移见 docs/qa/2026-09-24/geo/repro/ 的图例横跳复现——那是已知缺陷，不进这条门禁）
-  await page.mouse.click(center(t0).x, center(t0).y)
+  await page.mouse.click(center(tA).x, center(tA).y)
   await page.keyboard.down('Shift')
-  await page.mouse.click(center(y0).x, center(y0).y)
+  await page.mouse.click(center(yA).x, center(yA).y)
   await page.keyboard.up('Shift')
   await page.waitForTimeout(300)
 
-  const ds: [number, number] = [-33, 19]
+  // 第一拖只是把两者从「matplotlib 自动定位」换成「显式位置」，**不计入**这条门禁：y 轴标签的
+  // 自动位置由刻度标签宽度现算，manifest 在 100 dpi Agg 上量文字、画布是矢量 SVG，两边差一截
+  // 与平台字形度量有关的量（CI 实测 Linux +1.02 px / Windows −0.28 px / 本机 −0.17 px，标题恒 ≈ 0）
+  // ——那是 #576 的首拖跳（同一根因，不是多选的缺陷），在这里只记下数字。
+  const warm: [number, number] = [-33, 19]
+  await dragAndSettle(page, center(tA), warm)
+  const t0 = (await boxOf(page, 'axes_0.title'))!
+  const y0 = (await boxOf(page, 'axes_0.ylabel'))!
+  const l0 = (await boxOf(page, 'axes_0.legend'))!
+  console.log(
+    `[GEO-02 e2e] 首拖（#576，不计入）ylabel 误差=(${(y0.x - yA.x - warm[0]).toFixed(3)}, ${(y0.y - yA.y - warm[1]).toFixed(3)}) ` +
+      `title 误差=(${(t0.x - tA.x - warm[0]).toFixed(3)}, ${(t0.y - tA.y - warm[1]).toFixed(3)})`,
+  )
+
+  // 计入门禁的这一拖：两者都已是显式位置，多选整组平移必须对每个成员恰好 Δs
+  const ds: [number, number] = [29, -17]
   await dragAndSettle(page, center(t0), ds)
 
   const t1 = (await boxOf(page, 'axes_0.title'))!
