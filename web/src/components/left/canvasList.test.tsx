@@ -201,3 +201,35 @@ describe('列表里能管理画布', () => {
     expect(texts.some((t) => t.includes('复制'))).toBe(true)
   })
 })
+
+describe('拖动重排', () => {
+  const rows = () => [...container.querySelectorAll<HTMLElement>('[data-canvas-row]')]
+  const fire = async (el: Element, type: string) => {
+    const e = new Event(type, { bubbles: true, cancelable: true })
+    await act(async () => {
+      el.dispatchEvent(e)
+    })
+    return e
+  }
+
+  it('内部拖动：把第 1 张落到第 3 张上，顺序真的变了', async () => {
+    await mount()
+    const before = names()
+    const [a, , c] = rows()
+    await fire(a, 'dragstart')
+    expect((await fire(c, 'dragover')).defaultPrevented).toBe(true)
+    await fire(c, 'drop')
+    expect(names()).toEqual([before[1], before[2], before[0]])
+  })
+
+  it('拖动取消后，外部拖进来的东西不接、顺序不动（起点不会一直挂着）', async () => {
+    await mount()
+    const before = names()
+    const [a, b] = rows()
+    await fire(a, 'dragstart')
+    await fire(a, 'dragend') // Esc / 松在列表外：没有 drop
+    expect((await fire(b, 'dragover')).defaultPrevented).toBe(false)
+    await fire(b, 'drop')
+    expect(names()).toEqual(before)
+  })
+})
