@@ -961,3 +961,352 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
     })
   })
 })
+
+describe('事务之外改了图幅：撤销 / 重做回到用户设定的缩放比', () => {
+  /*
+   * 撤销栈按 **immer 补丁**记账，不是整份快照：一次缩放 commit 记下的是
+   * `replace objects[i].w/h`（绝对值），里面没有 nativeW/H——缩放没改它们。
+   * 事务之外的图幅同步走 `silent`：nativeW/H 与 w/h 一起改了，**历史里什么都没留**
+   * （不加条目，也不改已有条目）。于是撤销那次缩放时 w/h 回到按**旧图幅**量的值，
+   * nativeW 却停在新图幅上；同一个 manifest、同一个变体键，同步器看 nativeW 已经
+   * 等于 size_mm，不会再补——缩放比就一直错着。
+   */
+  let unmount: (() => Promise<void>) | null = null
+  afterEach(async () => {
+    await unmount?.()
+    unmount = null
+  })
+
+  /** 摆一个 100% 的面板（40×30 mm、原生 40×30）、挂上同步器。 */
+  async function mount(docId: string, extra: Partial<PanelObject> = {}): Promise<PanelObject> {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    const p = { ...panel('pu', 'Fig1.pdf', 0), script: null, ...extra } as PanelObject
+    await useDocumentStore.getState().switchDocument(emptyProject(), docId)
+    useDocumentStore.getState().commit(literal('准备'), (d) => {
+      d.objects = [p]
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const Probe = () => {
+      useEngineSync()
+      return null
+    }
+    await act(async () => {
+      root.render(createElement(Probe))
+    })
+    unmount = async () => {
+      await act(async () => {
+        root.unmount()
+      })
+      container.remove()
+    }
+    return p
+  }
+  const current = () => useDocumentStore.getState().doc.objects[0] as PanelObject
+  const nativeOf = (o: PanelObject) => [o.nativeW, o.nativeH]
+  /** 用户明确地把面板缩到原生图幅的 `s` 倍（一次 commit，与松手后的缩放同形） */
+  const resizeTo = async (s: number) => {
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('缩放'), (d) => {
+        const o = d.objects[0] as PanelObject
+        o.w = o.nativeW * s
+        o.h = o.nativeH * s
+      })
+    })
+  }
+  const undo = async () => {
+    await act(async () => {
+      useDocumentStore.getState().undo()
+    })
+  }
+  const redo = async () => {
+    await act(async () => {
+      useDocumentStore.getState().redo()
+    })
+  }
+  /** 事务之外，一次渲染（脚本被改过、同一个变体键）把图幅改成 50×30 */
+  const renderNewSize = async (p: PanelObject) => {
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [50, 30], elements: [] })
+    })
+  }
+
+  it('缩放 commit → 图幅变化 → 撤销 → 重做：每一步都是用户设定的那个比例', async () => {
+    const p = await mount('d_size_undo_basic')
+    await resizeTo(0.75)
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    const depth = useDocumentStore.getState().past.length
+
+    await renderNewSize(p)
+    // 静默同步：比例不变、原生图幅跟 manifest 走，历史一条都没多
+    expect(nativeOf(current())).toEqual([50, 30])
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    expect(useDocumentStore.getState().past.length).toBe(depth)
+    expect(useDocumentStore.getState().future.length).toBe(0)
+
+    await undo()
+    // 撤销的是「缩到 75%」这件事：回到缩放之前的 100%，原生图幅仍是这个变体的 manifest
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+  })
+
+  it('拖手柄缩放（事务，松手落历史）→ 图幅变化 → 撤销 → 重做', async () => {
+    const p = await mount('d_size_undo_txn')
+    await act(async () => {
+      const s = useDocumentStore.getState()
+      s.beginTxn(literal('缩放'))
+      for (const k of [0.9, 0.8, 0.75]) {
+        s.txnUpdate((d) => {
+          const o = d.objects[0] as PanelObject
+          o.w = 40 * k
+          o.h = 30 * k
+        })
+      }
+      useDocumentStore.getState().endTxn()
+    })
+    await renderNewSize(p)
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+  })
+
+  it('收尾修正把图幅并进了缩放这条历史 → 之后事务外图幅再变 → 撤销 → 重做', async () => {
+    // 这条历史两侧的原生图幅不同（40 → 50，收尾修正并进来的），而此刻又是第三个图幅
+    const p = await mount('d_size_undo_finalizer')
+    await act(async () => {
+      useDocumentStore.getState().beginTxn(literal('缩放'))
+      useDocumentStore.getState().txnUpdate((d) => {
+        const o = d.objects[0] as PanelObject
+        o.w = 30
+        o.h = 22.5
+      })
+    })
+    // 手势中途渲染回来（40×30 → 50×30）：事务开着不写，留给收尾
+    await renderNewSize(p)
+    expect(nativeOf(current())).toEqual([40, 30])
+    await act(async () => {
+      useDocumentStore.getState().endTxn()
+    })
+    expect(nativeOf(current())).toEqual([50, 30])
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    // 松手之后，事务之外又一次渲染把图幅改成 60×30
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [60, 30], elements: [] })
+    })
+    expect(nativeOf(current())).toEqual([60, 30])
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([60, 30])
+    await redo()
+    // 重做打回的是松手那一刻（按 50 量的 w/h），要换到此刻的 60，而不是按收尾之前的 40
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    expect(nativeOf(current())).toEqual([60, 30])
+  })
+
+  it('只改了宽（取消宽高比锁定）→ 两轴图幅都变 → 撤销 / 重做只换算条目打回的那一维', async () => {
+    // 条目只记了 w；h 从没离开过当前单位（silent 同步已经把它换到新图幅），
+    // 撤销时再乘一遍的话 h 会翻倍两次（Codex #551 P1）
+    const p = await mount('d_size_undo_one_dim')
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('改宽'), (d) => {
+        ;(d.objects[0] as PanelObject).w = 20
+      })
+    })
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [80, 60], elements: [] })
+    })
+    expect([current().w, current().h]).toEqual([40, 60])
+    await undo()
+    expect([current().w, current().h]).toEqual([80, 60])
+    expect(nativeOf(current())).toEqual([80, 60])
+    await redo()
+    expect([current().w, current().h]).toEqual([40, 60])
+  })
+
+  it('撤销 / 重做换基的锚点是左上角：打回来的 x/y 原样，重做与撤销前逐位相同', async () => {
+    // 与事务外的 silent 同步同一个默认锚点：重做那一侧正是 silent 同步换算过的
+    // 状态，锚点不同的话重做会把面板挪走
+    const p = await mount('d_size_undo_anchor', { x: 10, y: 5 })
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('拖西边'), (d) => {
+        const o = d.objects[0] as PanelObject
+        o.x = 30
+        o.w = 20
+      })
+    })
+    await renderNewSize(p)
+    const box = (o: PanelObject) => [o.x, o.y, o.w, o.h, o.nativeW, o.nativeH]
+    const synced = box(current())
+    await undo()
+    expect(box(current())).toEqual([10, 5, 50, 30, 50, 30])
+    await redo()
+    expect(box(current())).toEqual(synced)
+  })
+
+  it('正方形面板转 90°（w/h 数值不变）→ 图幅变化 → 撤销回到未转的方向', async () => {
+    // 条目里没有 w/h 的补丁，但宽高对应的原生轴互换了（Codex #551 P2）
+    const p = await mount('d_size_undo_square_rot', { w: 40, h: 40, nativeW: 40, nativeH: 40 })
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('旋转'), (d) => {
+        ;(d.objects[0] as PanelObject).rotation = 90
+      })
+    })
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [80, 40], elements: [] })
+    })
+    // 转过的包围盒：页面宽 = 内容高
+    expect([current().w, current().h]).toEqual([40, 80])
+    await undo()
+    expect([current().w, current().h]).toEqual([80, 40])
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    await redo()
+    expect([current().w, current().h]).toEqual([40, 80])
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+  })
+
+  it('只改了宽的拖动，收尾修正把两轴图幅并进来 → 事务外再变 → 重做连 h 一起换', async () => {
+    // 手势本身只动了 w，h 是收尾修正改的：条目打回哪几维要按收尾之后的文档算，
+    // 按手势那一刻算会漏掉 h，重做后 h 停在松手时的单位上
+    const p = await mount('d_size_undo_finalizer_dims')
+    await act(async () => {
+      useDocumentStore.getState().beginTxn(literal('改宽'))
+      useDocumentStore.getState().txnUpdate((d) => {
+        ;(d.objects[0] as PanelObject).w = 20
+      })
+    })
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [80, 60], elements: [] })
+    })
+    await act(async () => {
+      useDocumentStore.getState().endTxn()
+    })
+    expect([current().w, current().h]).toEqual([40, 60])
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [160, 120], elements: [] })
+    })
+    expect([current().w, current().h]).toEqual([80, 120])
+    await undo()
+    expect([current().w, current().h]).toEqual([160, 120])
+    await redo()
+    expect([current().w, current().h]).toEqual([80, 120])
+    expect(nativeOf(current())).toEqual([160, 120])
+  })
+
+  it('角柄缩放中途改过高、松手时高回到原值（压缩后补丁里仍有 h）→ 图幅变化 → 撤销 / 重做', async () => {
+    // 取消宽高比锁定的角柄：h 在中途动过又回到 30，前后值相等；`history.compress`
+    // 仍在两侧留着 `replace h = 30`，撤销 / 重做会把 h 打回 30（按旧图幅量的值）。
+    // 按前后值是否相等判「打回了哪几维」会漏掉 h（Codex #551 线程 4095444146）
+    const p = await mount('d_size_undo_noop_h')
+    await act(async () => {
+      const s = useDocumentStore.getState()
+      s.beginTxn(literal('缩放'))
+      for (const [w, h] of [[30, 20], [25, 15], [20, 30]]) {
+        s.txnUpdate((d) => {
+          const o = d.objects[0] as PanelObject
+          o.w = w
+          o.h = h
+        })
+      }
+      useDocumentStore.getState().endTxn()
+    })
+    expect([current().w, current().h]).toEqual([20, 30])
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [80, 60], elements: [] })
+    })
+    expect([current().w, current().h]).toEqual([40, 60])
+    await undo()
+    expect([current().w, current().h]).toEqual([80, 60])
+    await redo()
+    expect([current().w, current().h]).toEqual([40, 60])
+  })
+
+  it('两次缩放 → 图幅变化 → 连撤两步再连重做两步', async () => {
+    const p = await mount('d_size_undo_deep')
+    await resizeTo(0.75)
+    await resizeTo(0.5)
+    await renderNewSize(p)
+    expect(panelScale(current())).toBeCloseTo(0.5, 6)
+
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.5, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+  })
+
+  it('转了 90° 的面板：撤销后页面包围盒的宽仍跟内容的高走', async () => {
+    // 包围盒是转过的：页面宽 = 内容高
+    const p = await mount('d_size_undo_rot', { w: 30, h: 40, rotation: 90 })
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('缩放'), (d) => {
+        const o = d.objects[0] as PanelObject
+        o.w = 22.5
+        o.h = 30
+      })
+    })
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await renderNewSize(p)
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    // 内容 50×30 转 90° → 页面 30 宽 × 50 高
+    expect([current().w, current().h]).toEqual([30, 50])
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+  })
+
+  it('图幅变化在缩放之前：撤销到更早不受影响（条目记下的就是新图幅）', async () => {
+    const p = await mount('d_size_undo_before')
+    await renderNewSize(p)
+    expect(nativeOf(current())).toEqual([50, 30])
+    await resizeTo(0.5)
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([50, 30])
+    await redo()
+    expect(panelScale(current())).toBeCloseTo(0.5, 6)
+  })
+
+  it('图幅是 override 改的：撤掉那条 override 回到旧变体，再撤到缩放之前', async () => {
+    // 这条是对照组：变体键会变回去，旧变体的 manifest 还在，同步器自己就能对齐
+    const p = await mount('d_size_undo_override')
+    await act(async () => {
+      seedExactRender(p, { stem: 'Fig1', size_mm: [40, 30], elements: [] })
+    })
+    await resizeTo(0.75)
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('改图幅'), (d) => {
+        const o = d.objects[0] as PanelObject
+        o.overrides = [{ gid: 'fig', prop: 'size_mm', value: [50, 30] }]
+      })
+    })
+    await act(async () => {
+      seedExactRender(current(), { stem: 'Fig1', size_mm: [50, 30], elements: [] })
+    })
+    expect(nativeOf(current())).toEqual([50, 30])
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await undo()
+    expect(nativeOf(current())).toEqual([40, 30])
+    expect(panelScale(current())).toBeCloseTo(0.75, 6)
+    await undo()
+    expect(panelScale(current())).toBeCloseTo(1, 6)
+    expect(nativeOf(current())).toEqual([40, 30])
+  })
+})
