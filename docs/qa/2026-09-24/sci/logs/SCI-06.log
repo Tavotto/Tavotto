@@ -1,0 +1,205 @@
+==================================================================
+## SCI-06 / vitest_artifactInspection
+# cmd: bash docs/qa/2026-09-24/sci/repro/vitest.sh src/lib/artifactInspection.test.ts
+# start(UTC): 2026-09-24T18:35:54Z   end(UTC): 2026-09-24T18:35:56Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 9   raw_sha256: dd14073e81e0766c28fc5651459cfbe01d4700c139b37e6180eab153ab8e2e3e
+
+ RUN  v4.1.11 /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/web
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  02:35:55
+   Duration  1.25s (transform 273ms, setup 362ms, import 12ms, tests 5ms, environment 756ms)
+
+# exit_code: 0
+==================================================================
+## SCI-06 / backend_existing
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_export_pipeline.py tests/test_export_request.py tests/test_export_endpoint.py tests/test_export_inspection.py tests/test_export_identity.py tests/test_tiffwrite.py tests/test_epsfile.py tests/test_mcp_export_inspection.py tests/test_export_phase_labels.py
+# start(UTC): 2026-09-24T18:35:54Z   end(UTC): 2026-09-24T18:36:04Z
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 18   raw_sha256: 424bb12c6bf3661748b32625ce95f0a28479e00b361c3567419f04375b2f7982
+........................................................................ [ 47%]
+........................................................................ [ 94%]
+.........                                                                [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+153 passed, 5 warnings in 9.72s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0
+==================================================================
+## SCI-06 / mutation-panel-y-not-flipped
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_export_anchor_readback.py
+# start(UTC): 2026-09-24T18:50:07Z   end(UTC): 2026-09-24T18:50:08Z
+# source_sha: 0bd3c54268ee4b834487ec06d14c08d2ee611d2b  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 1   raw_lines: 111   raw_sha256: 7bcbee0d132bf151e5af6a47a3c98ef07859e5a4846ddbae070060fa68147dd1
+FFF.                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_panel_anchor_lands_where_the_canvas_put_it_in_every_format[whole-page] __
+
+env = <FlaskClient <Flask 'tavotto.app'>>
+panel = {'type': 'panel', 'id': 'src.pdf', 'x_mm': 30, 'y_mm': 20, ...}
+
+    @pytest.mark.parametrize(
+        "panel",
+        [_panel(), _panel(w_mm=30, crop={"x": 0, "y": 0, "w": 0.5, "h": 1})],
+        ids=["whole-page", "left-half-crop"],
+    )
+    def test_panel_anchor_lands_where_the_canvas_put_it_in_every_format(env, panel):
+        files = _export(env, "Anchor", panel, ["pdf", "png", "tiff"])
+    
+        # PDF：页面盒（纯标准库读取）+ PyMuPDF 独立栅格化后的方块位置
+        raw = files["pdf"].read_bytes()
+        with pymupdf.open(stream=raw, filetype="pdf") as doc:
+            assert doc.page_count == 1
+            rect = doc[0].rect
+            assert rect.width == pytest.approx(PAGE_MM[0] / 25.4 * 72, abs=0.05)
+            assert rect.height == pytest.approx(PAGE_MM[1] / 25.4 * 72, abs=0.05)
+            pix = doc[0].get_pixmap(dpi=PPI, alpha=False)
+            pdf_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+>       _assert_box(_ink_bbox(pdf_img), "PDF（PyMuPDF 栅格）")
+
+tests/test_export_anchor_readback.py:119: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+box = (425, 661, 638, 874), what = 'PDF（PyMuPDF 栅格）'
+
+    def _assert_box(box, what: str) -> None:
+        want = tuple(_px(v) for v in BOX_MM)
+        for got, exp, edge in zip(box, want, ("x0", "y0", "x1", "y1")):
+>           assert abs(got - exp) <= TOL_PX, f"{what} 的 {edge}：产物 {got}px，独立换算 {exp:.1f}px"
+E           AssertionError: PDF（PyMuPDF 栅格） 的 y0：产物 661px，独立换算 307.1px
+E           assert 353.9133858267717 <= 2
+E            +  where 353.9133858267717 = abs((661 - 307.0866141732283))
+
+tests/test_export_anchor_readback.py:99: AssertionError
+_ test_panel_anchor_lands_where_the_canvas_put_it_in_every_format[left-half-crop] _
+
+env = <FlaskClient <Flask 'tavotto.app'>>
+panel = {'type': 'panel', 'id': 'src.pdf', 'x_mm': 30, 'y_mm': 20, ...}
+
+    @pytest.mark.parametrize(
+        "panel",
+        [_panel(), _panel(w_mm=30, crop={"x": 0, "y": 0, "w": 0.5, "h": 1})],
+        ids=["whole-page", "left-half-crop"],
+    )
+    def test_panel_anchor_lands_where_the_canvas_put_it_in_every_format(env, panel):
+        files = _export(env, "Anchor", panel, ["pdf", "png", "tiff"])
+    
+        # PDF：页面盒（纯标准库读取）+ PyMuPDF 独立栅格化后的方块位置
+        raw = files["pdf"].read_bytes()
+        with pymupdf.open(stream=raw, filetype="pdf") as doc:
+            assert doc.page_count == 1
+            rect = doc[0].rect
+            assert rect.width == pytest.approx(PAGE_MM[0] / 25.4 * 72, abs=0.05)
+            assert rect.height == pytest.approx(PAGE_MM[1] / 25.4 * 72, abs=0.05)
+            pix = doc[0].get_pixmap(dpi=PPI, alpha=False)
+            pdf_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+>       _assert_box(_ink_bbox(pdf_img), "PDF（PyMuPDF 栅格）")
+
+tests/test_export_anchor_readback.py:119: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+box = (425, 661, 638, 874), what = 'PDF（PyMuPDF 栅格）'
+
+    def _assert_box(box, what: str) -> None:
+        want = tuple(_px(v) for v in BOX_MM)
+        for got, exp, edge in zip(box, want, ("x0", "y0", "x1", "y1")):
+>           assert abs(got - exp) <= TOL_PX, f"{what} 的 {edge}：产物 {got}px，独立换算 {exp:.1f}px"
+E           AssertionError: PDF（PyMuPDF 栅格） 的 y0：产物 661px，独立换算 307.1px
+E           assert 353.9133858267717 <= 2
+E            +  where 353.9133858267717 = abs((661 - 307.0866141732283))
+
+tests/test_export_anchor_readback.py:99: AssertionError
+_ test_transparent_background_is_transparent_outside_the_box_and_opaque_inside _
+
+env = <FlaskClient <Flask 'tavotto.app'>>
+
+    def test_transparent_background_is_transparent_outside_the_box_and_opaque_inside(env):
+        files = _export(env, "Clear", _panel(), ["png", "tiff"], background="transparent")
+        cx, cy = round(_px(45)), round(_px(35))  # 方块中心
+        for fmt in ("png", "tiff"):
+            with Image.open(files[fmt]) as img:
+                rgba = img.convert("RGBA")
+                assert img.mode in ("RGBA", "LA"), (fmt, img.mode)
+                assert rgba.getpixel((2, 2))[3] == 0, f"{fmt} 页面空白处不透明"
+                r, g, b, a = rgba.getpixel((cx, cy))
+>               assert a == 255 and max(r, g, b) < 40, (fmt, (r, g, b, a))
+E               AssertionError: ('png', (0, 0, 0, 0))
+E               assert (0 == 255)
+
+tests/test_export_anchor_readback.py:141: AssertionError
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3 failed, 1 passed, 5 warnings in 0.60s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 1
+==================================================================
+## SCI-06 / mutation-panel-y-not-flipped-restored
+# cmd: bash /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-5/docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_export_anchor_readback.py
+# start(UTC): 2026-09-24T18:50:08Z   end(UTC): 2026-09-24T18:50:09Z
+# source_sha: 0bd3c54268ee4b834487ec06d14c08d2ee611d2b  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 16   raw_sha256: 8d883c986378101958a14d3903497dd281a2b0cba04c1f0ccedeed2d3005d97d
+....                                                                     [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+4 passed, 5 warnings in 0.60s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0
+==================================================================
+## SCI-06 / new_test_anchor
+# cmd: bash docs/qa/2026-09-24/sci/repro/pytest.sh tests/test_export_anchor_readback.py
+# start(UTC): 2026-09-24T18:51:51Z   end(UTC): 2026-09-24T18:51:52Z
+# source_sha: 05ae1e3ef7f0da1227c76158bfc51c5b7821cfac  (worktree 相对基线 62af729c 只多出 docs/qa 与新增测试)
+# exit_code: 0   raw_lines: 16   raw_sha256: ac6f8bf645fd7d4c843ce6ea7655901ce9f7c4c12dd56130e3d24f9e61c4f142
+....                                                                     [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+4 passed, 5 warnings in 0.68s
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+# exit_code: 0

@@ -1,0 +1,815 @@
+[
+  {
+    "case_id": "STATE-01",
+    "title": "预览到定稿：逐帧 transform、拖动中 0 提交 0 渲染、松手一条历史一次定稿、提交到权威无弹回",
+    "coverage_status": "已有完整断言",
+    "existing_tests": [
+      "web/src/store/svgPreviewStore.test.ts::临时 transform 与 matplotlib 原有 transform 共存（3 条）",
+      "web/src/store/svgPreviewStore.test.ts::rAF 合并：攒下的操作只在 flush 时落一次",
+      "web/src/store/svgPreviewStore.test.ts::提交：commit 之后 DOM 上的预览一动不动",
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::一百次 pointermove：engineRender 一次都没被叫到",
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::拖动期间文档一个字节都没动",
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::只发一次，patch 正是最后一帧预览的位置",
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::一次拖动含一百次 pointermove，只压一条历史",
+      "web/e2e/fake-realtime.spec.ts::拖图内元素：预览跟手、拖动期间零后端、松手一次定稿"
+    ],
+    "expected_outcome": "拖动中每帧 transform = translate(Δ) <原始>、Δ 与鼠标位移成固定比例（从 base 现算）；拖动中 0 次 /api/engine/render、0 次自动保存 PUT；松手恰好 1 次渲染、渲染体与随后自动保存里恰好一条该元素 pos_frac 且无 translate(；松手到权威上屏后 1.5s 内每帧元素中心不离开松手位置（>2px 视为弹回）。",
+    "product_outcome": "自动成功",
+    "test_verdict": "pass",
+    "verdict_reason": "jsdom 8 条既有断言 + 真浏览器新用例全绿：拖动 51 帧全部是 translate(…) 且比例恒定，松手后 98 帧最大偏离 0.002 CSS px，拖动中 0 渲染 0 保存，松手 1 渲染、自动保存 override 与渲染体一致。QA 前为「部分覆盖」：既有 e2e 只看拖完那一刻的 transform 前缀与请求数，没有逐帧、没有松手后到权威之间的弹回判据、没有文档提交计数；本次补上。2px 是「不是弹回」的判据而非精度预算（精度预算未校准，只记录实测 0.002px）。无意外 skip、无重试。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，editable 指主工作区，故一律 PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8（worker 侧）",
+      "numpy": "2.4.3（worker 侧）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（Playwright 'Desktop Chrome'，DPR 1，headless）",
+      "render_backend": "rendercore（本 worktree 未跑 scripts/fetch_fonts.py：批准字体缺，导出路径未测）"
+    },
+    "fixtures": [
+      {
+        "path": "examples/figures/Fig1_kinetics.pdf",
+        "sha256": "9a136a53d4e09ebc5d54eb90c35c4cff359a8d4e22e01c716991a4ab30d9fdda"
+      },
+      {
+        "path": "examples/figures/fig1_kinetics.py",
+        "sha256": "1e6d4255f76c73443e3964848a812fcd3df84acc0680a599cb473415c088ee01"
+      },
+      {
+        "path": "examples/figures/paper_style.py",
+        "sha256": "79895c5c61a8ec0a1ae0183563af4e0a1d3530bcf5437fc857ac2f0c35547680"
+      },
+      {
+        "path": "web/src/lib/__fixtures__/matplotlibSvg.ts",
+        "sha256": "e67113340a02b87cd0465b557d1105b5db87b7f0250f8da4eaaadea110632493"
+      }
+    ],
+    "entry": "vitest(jsdom) + playwright(chromium)",
+    "commands": [
+      "docs/qa/2026-09-24/state/repro/run.sh vitest src/store/svgPreviewStore.test.ts src/canvas/fakeRealtimeDrag.test.tsx",
+      "PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python scripts/build_frontend.py",
+      "docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts '拖图内元素|STATE-01'"
+    ],
+    "exit_codes": [
+      0,
+      0
+    ],
+    "evidence": {
+      "log": "docs/qa/2026-09-24/state/logs/STATE-01.log",
+      "sha256": "fad767c283b0c51ba7ed982116990fabf0bfeb00d5c48afc2118587d3ce3e633",
+      "summary": [
+        "### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/svgPreviewStore.test.ts src/canvas/fakeRealtimeDrag.test.tsx",
+        "### time=2026-09-24T19:01:21Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "Tests  48 passed (48)",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts 拖图内元素|STATE-01",
+        "### time=2026-09-24T19:01:24Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "2 passed (38.3s)"
+      ],
+      "note": "日志头里的 sha= 是运行时本分支 HEAD（WIP 提交 4a95b4d8，产品代码与 62af729c 逐字相同）；运行时工作区另含随最终提交入库的 STATE-08 用例与 repro 文件。vitest 的 `-t` 过滤带来的 skipped 是有意筛选，不是意外 skip；预期红的 repro 以 exit=1 记录。mutation 原始输出见 logs/MUTATIONS.log。"
+    },
+    "artifacts": [],
+    "first_failed_invariant": null,
+    "mutation_check": {
+      "id": "M1-preview-accumulates",
+      "target_file": "web/src/store/svgPreviewStore.ts",
+      "mutation": "writeTransform: `const base = p.baseTransforms.get(op.gid) ?? null` → `const base = node.getAttribute('transform')`（预览在当前 transform 上字符串累加）",
+      "expected_red_case": "svgPreviewStore.test.ts::拖一百下也永远从 base 现算；fake-realtime.spec.ts::STATE-01",
+      "observed": "red",
+      "observed_detail": "vitest 1 failed（expected 'translate(28.8,0) translate(28.512,0)…'）；e2e STATE-01 失败于「原始 transform 必须原样保留在 translate 之后」",
+      "restored_green": true,
+      "note": "变异原始输出：repro/mutate.py <ID> [--e2e] 可复现；本次结果摘要见 logs/MUTATIONS.log"
+    },
+    "new_tests": [
+      "web/e2e/fake-realtime.spec.ts::STATE-01 逐帧：预览从 base 现算、拖动中零渲染零保存、松手到权威全程不弹回"
+    ],
+    "product_bugs": [],
+    "gaps": [
+      "只在 Chromium（DPR 1、headless）跑；WebKit / 桌面壳 WKWebView 未跑本条",
+      "只拖了标题（text / pos_frac）；axes 移动、箭头、图例、多选整组的逐帧弹回在真浏览器里未量",
+      "锚点精度预算（≤0.5 CSS px）未按字体样本校准，本条只做弹回判据"
+    ]
+  },
+  {
+    "case_id": "STATE-02",
+    "title": "取消入口：Esc / pointercancel / lostpointercapture / 窗口失焦 / 移出画布松开，之后立即正常拖动",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::pointercancel › 不写 override、不进历史、不渲染、不留临时 transform",
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::pointercancel › 子图与箭头的取消同样干净",
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::pointercancel › 取消之后紧接着正常拖一次，落点正确",
+      "web/src/store/svgPreviewStore.test.ts::取消：平移 + 样式一起取消，SVG 逐字节回到原样"
+    ],
+    "expected_outcome": "pointercancel / lostpointercapture：DOM 逐字节还原、0 override / 0 历史 / 0 渲染 / 0 保存、interaction 回 none 且无开着的 txn，迟到的 move/up 不复活；随后一次正常拖动 = 1 条历史 1 次渲染、落点从原锚点起算。移出画布松开：按结束合同定稿，松开后不再跟指针。Esc / 失焦：按产品合同收束——合同未写明时至少不得出现「手势比所属编辑态活得久、在离开的画面里写文档」。",
+    "product_outcome": "功能失败",
+    "test_verdict": "fail",
+    "verdict_reason": "六个入口里四个符合：pointercancel、lostpointercapture（jsdom + 真浏览器均干净，之后正常拖动成功）、视口内画布外松手（定稿 1 次、松开后不再跟指针）。窗口失焦：浏览器腿（合成 blur + 另开页面抢前台）不取消，拖动继续、松手提交；合同未定义 blur 行为，真实 OS 切窗未执行。Esc：单按一次只清选中、拖动继续并提交（合同未定义，记观察）；**按两次 Esc 退出图内编辑态后，画布上已没有这张 SVG，松手仍写下 pos_frac 并发出渲染**——手势比它所属的编辑态活得久（悬空事务），判 fail。QA 前 lostpointercapture 零覆盖；本次补 jsdom 3 条 + 真浏览器 1 条。视口外松开的探针因目标在上一步被拖出图外而未能命中，记未执行。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，editable 指主工作区，故一律 PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8（worker 侧）",
+      "numpy": "2.4.3（worker 侧）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（Playwright 'Desktop Chrome'，DPR 1，headless）",
+      "render_backend": "rendercore（本 worktree 未跑 scripts/fetch_fonts.py：批准字体缺，导出路径未测）"
+    },
+    "fixtures": [
+      {
+        "path": "examples/figures/Fig1_kinetics.pdf",
+        "sha256": "9a136a53d4e09ebc5d54eb90c35c4cff359a8d4e22e01c716991a4ab30d9fdda"
+      },
+      {
+        "path": "examples/figures/fig1_kinetics.py",
+        "sha256": "1e6d4255f76c73443e3964848a812fcd3df84acc0680a599cb473415c088ee01"
+      },
+      {
+        "path": "examples/figures/paper_style.py",
+        "sha256": "79895c5c61a8ec0a1ae0183563af4e0a1d3530bcf5437fc857ac2f0c35547680"
+      },
+      {
+        "path": "web/src/lib/__fixtures__/matplotlibSvg.ts",
+        "sha256": "e67113340a02b87cd0465b557d1105b5db87b7f0250f8da4eaaadea110632493"
+      }
+    ],
+    "entry": "vitest(jsdom) + playwright(chromium)",
+    "commands": [
+      "docs/qa/2026-09-24/state/repro/run.sh vitest src/canvas/fakeRealtimeDrag.test.tsx -t 'pointercancel|lostpointercapture'",
+      "docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-02",
+      "docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_probe.spec.ts --grep 'Esc|blur|移出'",
+      "docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_bugs_repro.spec.ts --grep STATE-02"
+    ],
+    "exit_codes": [
+      0,
+      0,
+      0,
+      1
+    ],
+    "evidence": {
+      "log": "docs/qa/2026-09-24/state/logs/STATE-02.log",
+      "sha256": "cbd76fddc1e18e53a43caaace04858963163a41c60aed4028c2bac251a2be3f4",
+      "summary": [
+        "### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/canvas/fakeRealtimeDrag.test.tsx -t pointercancel|lostpointercapture",
+        "### time=2026-09-24T19:02:03Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "Tests  6 passed | 19 skipped (25)",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-02",
+        "### time=2026-09-24T19:02:05Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "1 passed (26.8s)",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_probe.spec.ts --grep Esc|blur|移出",
+        "### time=2026-09-24T19:02:32Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "4 passed (1.5m)",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_bugs_repro.spec.ts --grep STATE-02",
+        "### time=2026-09-24T19:04:03Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=1",
+        "1 failed"
+      ],
+      "note": "日志头里的 sha= 是运行时本分支 HEAD（WIP 提交 4a95b4d8，产品代码与 62af729c 逐字相同）；运行时工作区另含随最终提交入库的 STATE-08 用例与 repro 文件。vitest 的 `-t` 过滤带来的 skipped 是有意筛选，不是意外 skip；预期红的 repro 以 exit=1 记录。mutation 原始输出见 logs/MUTATIONS.log。"
+    },
+    "artifacts": [],
+    "first_failed_invariant": "Esc×2 退出图内编辑态之后，进行中的拖动仍在 pointerup 时 setOverride + engineRender（无悬空事务）",
+    "mutation_check": [
+      {
+        "id": "M2a-cancel-still-commits",
+        "target_file": "web/src/canvas/interactions.ts",
+        "mutation": "startElementDrag onEnd：`if (!moved || end.cancelled)` → `if (!moved)`（取消后仍 commit）",
+        "expected_red_case": "fakeRealtimeDrag.test.tsx pointercancel/lostpointercapture；fake-realtime.spec.ts::STATE-02",
+        "observed": "red",
+        "observed_detail": "vitest 4 failed（expected [0.790625, …] to be undefined 等）；e2e STATE-02 失败于「pointercancel：元素应当回到原位」",
+        "restored_green": true,
+        "note": "变异原始输出：repro/mutate.py <ID> [--e2e] 可复现；本次结果摘要见 logs/MUTATIONS.log"
+      },
+      {
+        "id": "M2b-no-lostpointercapture",
+        "target_file": "web/src/canvas/interactions.ts",
+        "mutation": "删掉 trackPointer 里 `window.addEventListener('lostpointercapture', cancel)`",
+        "expected_red_case": "fakeRealtimeDrag.test.tsx::lostpointercapture 与 pointercancel 同一条取消路径（3 条）",
+        "observed": "red",
+        "observed_detail": "3 failed：translate 未还原 / interaction kind 仍为 element / 历史 4 条而非 1",
+        "restored_green": true,
+        "note": "变异原始输出：repro/mutate.py <ID> [--e2e] 可复现；本次结果摘要见 logs/MUTATIONS.log"
+      }
+    ],
+    "new_tests": [
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::lostpointercapture 与 pointercancel 同一条取消路径 › 图内文字：不写 override、不进历史、不渲染、DOM 逐字节还原、无悬空事务",
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::lostpointercapture 与 pointercancel 同一条取消路径 › 子图整体拖动与箭头整体拖动：同样干净",
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::lostpointercapture 与 pointercancel 同一条取消路径 › 被夺走捕获之后立刻正常拖一次",
+      "web/e2e/fake-realtime.spec.ts::STATE-02 取消入口：pointercancel / lostpointercapture 还原 DOM 且零提交；画布外松手照常定稿、不再跟指针"
+    ],
+    "product_bugs": [
+      {
+        "summary": "拖动中按两次 Esc 退出图内编辑态，拖动手势不被取消；松手时仍把 override 写进文档并发出权威渲染（用户已离开编辑画面，改动不可见地落盘）",
+        "repro": "docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_bugs_repro.spec.ts --grep STATE-02（B 用例，预期红）；成因：hooks/useKeyboard.ts 的 Escape 分支不看 interactionStore.kind，canvas/interactions.ts 的 trackPointer 不监听 Esc / 编辑态退出",
+        "severity": "P2"
+      }
+    ],
+    "gaps": [
+      "Esc 与窗口失焦在 docs/rules/frontend/fake-realtime-preview.md 里没有取消/结束合同——需要产品拍板（本台账按「至少不能悬空」判）",
+      "真实 OS 失焦（⌘Tab、切 Space、系统弹窗）与真实触控/笔的 pointercancel 未执行：Playwright 只能合成事件",
+      "视口外松开：未命中目标，未执行",
+      "Esc 单按一次的行为（清选中、拖动继续并提交）只记观察，未判"
+    ]
+  },
+  {
+    "case_id": "STATE-03",
+    "title": "DOM 替换：拖动中同一变体 SVG 被真替换 / 与 SVG 无关的重渲，预览只重附一次、不叠加；提交后不弹回",
+    "coverage_status": "已有完整断言",
+    "existing_tests": [
+      "web/src/store/svgPreviewStore.test.ts::SVG 被 React 重新插入 › 还是同一版 → 把挂起的预览重放上去",
+      "web/src/store/svgPreviewStore.test.ts::SVG 被 React 重新插入 › DOM 其实没换 → 什么都不做，位移绝不翻倍",
+      "web/src/store/svgPreviewStore.test.ts::SVG 被 React 重新插入 › 重放之后取消，仍然能还原到 matplotlib 的原样",
+      "web/src/store/svgPreviewStore.test.ts::提交 › 换上来的是别的版本 → 预览静默作废",
+      "web/src/canvas/dragReleaseSnapback.test.tsx::松手之后、新图到达之前 › 提交让面板重渲：SVG 节点不重建（真渲染 PanelView）",
+      "web/src/canvas/dragReleaseSnapback.test.tsx::与拖动无关的重渲也不重写 SVG"
+    ],
+    "expected_outcome": "拖动中同一渲染键的 SVG 字符串变了（节点真换）：新节点上恰好重附一次预览（transform 与替换前逐字相同）；继续拖时位移按独立公式 Δpx/内容宽×viewBox 从新 base 现算；节点没换的重渲不重采 base；取消把新节点还原、0 历史 0 渲染。",
+    "product_outcome": "自动成功",
+    "test_verdict": "pass",
+    "verdict_reason": "既有 6 条 + 新增 1 条（真渲染 PanelView，拖动中替换 SVG）全绿。注意：新用例第三个断言（节点没换的重渲）在 M3a 变异下没有变红——那次重渲 svgHtml 不变，reattach effect 根本不跑，domIntact 不被调用；它由 M3b（{__html} 每次新对象）打红，M3a 由 svgPreviewStore.test 的「DOM 其实没换」打红。jsdom 量的是节点身份与 transform 字符串，不是几何。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，editable 指主工作区，故一律 PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8（worker 侧）",
+      "numpy": "2.4.3（worker 侧）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（Playwright 'Desktop Chrome'，DPR 1，headless）",
+      "render_backend": "rendercore（本 worktree 未跑 scripts/fetch_fonts.py：批准字体缺，导出路径未测）"
+    },
+    "fixtures": [
+      {
+        "path": "web/src/lib/__fixtures__/matplotlibSvg.ts",
+        "sha256": "e67113340a02b87cd0465b557d1105b5db87b7f0250f8da4eaaadea110632493"
+      }
+    ],
+    "entry": "vitest(jsdom，真渲染 PanelView)",
+    "commands": [
+      "docs/qa/2026-09-24/state/repro/run.sh vitest src/store/svgPreviewStore.test.ts src/canvas/dragReleaseSnapback.test.tsx"
+    ],
+    "exit_codes": [
+      0
+    ],
+    "evidence": {
+      "log": "docs/qa/2026-09-24/state/logs/STATE-03.log",
+      "sha256": "208600db9b0d4a3bca3bbc3fa5d225ffc849af22df02a0f8f6657c80a33409ae",
+      "summary": [
+        "### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/svgPreviewStore.test.ts src/canvas/dragReleaseSnapback.test.tsx",
+        "### time=2026-09-24T19:04:26Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "Tests  26 passed (26)"
+      ],
+      "note": "日志头里的 sha= 是运行时本分支 HEAD（WIP 提交 4a95b4d8，产品代码与 62af729c 逐字相同）；运行时工作区另含随最终提交入库的 STATE-08 用例与 repro 文件。vitest 的 `-t` 过滤带来的 skipped 是有意筛选，不是意外 skip；预期红的 repro 以 exit=1 记录。mutation 原始输出见 logs/MUTATIONS.log。"
+    },
+    "artifacts": [],
+    "first_failed_invariant": null,
+    "mutation_check": [
+      {
+        "id": "M3a-reattach-ignores-domIntact",
+        "target_file": "web/src/store/svgPreviewStore.ts",
+        "mutation": "reattachPreview 删掉 `if (domIntact(p, svg)) return`",
+        "expected_red_case": "svgPreviewStore.test.ts::DOM 其实没换 → 位移绝不翻倍",
+        "observed": "red",
+        "observed_detail": "1 failed：'translate(28.8,0) translate(28.8,0) …'（位移叠加）；新增 dragReleaseSnapback 用例对此变异保持绿（见 verdict_reason）",
+        "restored_green": true,
+        "note": "变异原始输出：repro/mutate.py <ID> [--e2e] 可复现；本次结果摘要见 logs/MUTATIONS.log"
+      },
+      {
+        "id": "M3b-html-markup-not-memoized",
+        "target_file": "web/src/lib/useHtmlMarkup.ts",
+        "mutation": "{__html} 不再 useMemo（每次渲染新对象 = 松手重写 DOM）",
+        "expected_red_case": "dragReleaseSnapback.test.tsx 三条",
+        "observed": "red",
+        "observed_detail": "3 failed：节点被重建 / 节点没换的重渲预览丢失（expected null to be 'translate(150,…)'）",
+        "restored_green": true,
+        "note": "变异原始输出：repro/mutate.py <ID> [--e2e] 可复现；本次结果摘要见 logs/MUTATIONS.log"
+      }
+    ],
+    "new_tests": [
+      "web/src/canvas/dragReleaseSnapback.test.tsx::拖动中 SVG 被真替换 › 节点换了：预览只重附一次、不叠加；继续拖从 base 现算；取消还原"
+    ],
+    "product_bugs": [],
+    "gaps": [
+      "真浏览器里「拖动中同键 SVG 被真替换」没有造出来（需要在拖动中触发 markStale 重建或字节预算驱逐重取），逐帧 transform 追踪只在 jsdom 做",
+      "拖动中换上来的是**另一个渲染键**（reattachPreview 会直接作废会话、DOM 回原位而拖动仍继续）只读码未测：正常流程下拖动期间文档不变、键不变，是否可达未证实"
+    ]
+  },
+  {
+    "case_id": "STATE-04",
+    "title": "旧权威：慢请求在途时的下一几何动作 / undo / 保存 / 布局变体变化",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "web/src/store/geometryAuthority.test.ts::exactPanelRender：只认自己那一格（4 条）",
+      "web/src/store/alignAction.test.ts::权威不在时，对齐明确拒绝（3 条）",
+      "web/src/canvas/alignUndoConvergence.test.tsx::选择框：权威没就位时一个都不画；对齐 → 撤销全程 selectedGids 不丢",
+      "web/src/diagnostics/authority.test.ts::几何权威过期时 › 写入被拒，文档与历史都不动"
+    ],
+    "expected_outcome": "松手后新变体在途：exactPanelManifest 为空、对齐返回 {ok:false, reason:'syncing'} 且选区与文档不动；颜色这类纯样式修改照常进历史；在途期间撤销：文档回到拖动前，几何权威立刻回到缓存里的精确旧变体，**画布也回到原位**；拖动那一版晚到只入库，不改文档 / 当前权威 / 显示来源 / 画面。",
+    "product_outcome": "功能失败",
+    "test_verdict": "fail",
+    "verdict_reason": "store 层全部符合（新增 jsdom 2 条绿：权威闸、样式放行、撤销后权威即回旧变体、晚到回包不改当前权威与显示来源）。但**画面层不符合**：权威在途时撤销，文档已无 override（自动保存体里无 pos_frac），画布上的标题却一直挂着拖动的预览位移（真浏览器：撤销后与 V1 回包 3s 后均偏离原位 67.08 CSS px；jsdom 真渲染 PanelView 复现同形状）。之后用户去点「看到的」标题，命中层按 exact manifest 在原位，实测点到的是顶边框命中区，写下了 ticks_top / xticks.direction 两条 override（STATE-05 探针里观察到）。保存在途期间不写预览：自动保存体无 translate(（STATE-01/08 覆盖）。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，editable 指主工作区，故一律 PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8（worker 侧）",
+      "numpy": "2.4.3（worker 侧）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（Playwright 'Desktop Chrome'，DPR 1，headless）",
+      "render_backend": "rendercore（本 worktree 未跑 scripts/fetch_fonts.py：批准字体缺，导出路径未测）"
+    },
+    "fixtures": [
+      {
+        "path": "examples/figures/Fig1_kinetics.pdf",
+        "sha256": "9a136a53d4e09ebc5d54eb90c35c4cff359a8d4e22e01c716991a4ab30d9fdda"
+      },
+      {
+        "path": "examples/figures/fig1_kinetics.py",
+        "sha256": "1e6d4255f76c73443e3964848a812fcd3df84acc0680a599cb473415c088ee01"
+      },
+      {
+        "path": "examples/figures/paper_style.py",
+        "sha256": "79895c5c61a8ec0a1ae0183563af4e0a1d3530bcf5437fc857ac2f0c35547680"
+      },
+      {
+        "path": "web/src/lib/__fixtures__/matplotlibSvg.ts",
+        "sha256": "e67113340a02b87cd0465b557d1105b5db87b7f0250f8da4eaaadea110632493"
+      }
+    ],
+    "entry": "vitest(jsdom) + playwright(chromium，route 扣住 /api/engine/render)",
+    "commands": [
+      "docs/qa/2026-09-24/state/repro/run.sh vitest src/store/geometryAuthority.test.ts src/store/alignAction.test.ts src/canvas/alignUndoConvergence.test.tsx src/diagnostics/authority.test.ts src/canvas/fakeRealtimeDrag.test.tsx",
+      "docs/qa/2026-09-24/state/repro/run.sh vitest-repro state04_undo_while_authority_pending.test.tsx",
+      "docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_bugs_repro.spec.ts --grep STATE-04"
+    ],
+    "exit_codes": [
+      0,
+      1,
+      1
+    ],
+    "evidence": {
+      "log": "docs/qa/2026-09-24/state/logs/STATE-04.log",
+      "sha256": "5e11adf7a5f1f1b46e922a6f9a54cce5a040ebb3456f65f79383a17c883c6213",
+      "summary": [
+        "### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/geometryAuthority.test.ts src/store/alignAction.test.ts src/canvas/alignUndoConvergence.test.tsx src/diagnostics/authority.test.ts src/canvas/fakeRealtimeDrag.test.tsx",
+        "### time=2026-09-24T19:04:27Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "Tests  65 passed (65)",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh vitest-repro state04_undo_while_authority_pending.test.tsx",
+        "### time=2026-09-24T19:04:30Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=1",
+        "Tests  2 failed (2)",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_bugs_repro.spec.ts --grep STATE-04",
+        "### time=2026-09-24T19:04:31Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=1",
+        "1 failed"
+      ],
+      "note": "日志头里的 sha= 是运行时本分支 HEAD（WIP 提交 4a95b4d8，产品代码与 62af729c 逐字相同）；运行时工作区另含随最终提交入库的 STATE-08 用例与 repro 文件。vitest 的 `-t` 过滤带来的 skipped 是有意筛选，不是意外 skip；预期红的 repro 以 exit=1 记录。mutation 原始输出见 logs/MUTATIONS.log。"
+    },
+    "artifacts": [],
+    "first_failed_invariant": "撤销后 DOM 上预览位移未撤：svgPreviewStore 会话在等拖动那一版的键，撤销让面板键回到缓存变体、其 SVG 字符串与正在显示的退路相同 → PanelView 的 reattach effect 不跑；拖动手势没在 gestureCoordinator 登记，runUndoRedo → finishActiveGesture() 收不到它",
+    "mutation_check": {
+      "id": "M4-authority-falls-back-to-display",
+      "target_file": "web/src/store/renderStore.ts",
+      "mutation": "exactPanelRender 改为返回 panelRender（显示那份，可退回 latest）= 读旧 manifest 写文档",
+      "expected_red_case": "geometryAuthority.test.ts；fakeRealtimeDrag.test.tsx::在途期间：权威为空、对齐被拒…",
+      "observed": "red",
+      "observed_detail": "5 failed（geometryAuthority 4 + 新增 1，均为「expected … to be null」）；alignAction.test 的「字号刚改完→拒绝」保持绿——alignAction 的第二道闸 exactKeyOf!==renderKeyOf 兜住了（纵深防御，不是空门禁）",
+      "restored_green": true,
+      "note": "变异原始输出：repro/mutate.py <ID> [--e2e] 可复现；本次结果摘要见 logs/MUTATIONS.log"
+    },
+    "new_tests": [
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::松手后权威在途：旧 manifest 不得作为几何写的输入 › 在途期间：权威为空、对齐被拒且选区与文档不动；纯样式修改照常进历史",
+      "web/src/canvas/fakeRealtimeDrag.test.tsx::松手后权威在途：旧 manifest 不得作为几何写的输入 › 在途期间撤销：立刻回到精确旧变体；晚到的回包不改文档、不改当前权威与显示来源"
+    ],
+    "product_bugs": [
+      {
+        "summary": "权威渲染在途时撤销：文档回到拖动前，但画布上被拖元素的预览位移一直不撤（拖动那一版回包后也不撤），画面、选择框（按 exact manifest 在原位）与文档三方不一致；用户点「看到的」元素会点到别的对象",
+        "repro": "docs/qa/2026-09-24/state/repro/run.sh vitest-repro state04_undo_while_authority_pending.test.tsx（2 条预期红）；docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_bugs_repro.spec.ts --grep STATE-04（预期红，偏离 67.08px）",
+        "severity": "P1"
+      }
+    ],
+    "gaps": [
+      "「布局变体变化」只由既有 alignAction「字号刚改完」覆盖（jsdom），真浏览器未做",
+      "在途期间保存（⌘S 手动保存）未单测；自动保存体不含预览由 STATE-01/08 的真浏览器断言覆盖",
+      "在途期间的第二次拖动：命中层按 exact manifest 停摆，真浏览器里只间接观察到（撤销后点到了别的对象），未单独断言"
+    ]
+  },
+  {
+    "case_id": "STATE-05",
+    "title": "回包乱序：先交新再交旧，旧结果入库不推进 latest、不覆盖当前权威；SVG 与 manifest 同一响应",
+    "coverage_status": "已有完整断言",
+    "existing_tests": [
+      "web/src/store/geometryAuthority.test.ts::乱序返回：先发的 C 晚于后发的 A 返回时，latest 仍然停在 A",
+      "web/src/canvas/alignUndoConvergence.test.tsx::对齐的响应晚于撤销的响应回来，最终仍然停在 A",
+      "web/src/store/renderStore.test.ts::render：inline 回来的 SVG 直接入库 / 两个变体各存各的",
+      "web/src/store/geometryAuthority.test.ts::同一文件的两个副本：显示可以互相垫底，几何绝不互相借用"
+    ],
+    "expected_outcome": "旧变体晚到：byKey 里入库（供另一副本 / 重做），latest 不回退，当前面板的 exact 权威与显示来源不变；真浏览器里画面停在新变体；V1 到达不引出新渲染。",
+    "product_outcome": "自动成功",
+    "test_verdict": "pass",
+    "verdict_reason": "jsdom 既有 + 新增全绿；真浏览器新用例：V1（拖标题）扣住、V2（Delete 隐藏标题）先回，V1 晚到 3s 后标题仍不画出、渲染仍为 2 次。M5（旧响应推进 latest）让 jsdom 两条既有用例变红，但**真浏览器 STATE-05 用例对 M5 保持绿**：PanelView 优先显示自己那一格，latest 只是退路，所以这条 e2e 守的是「画面不回退」而不是 latest 本身——latest 由 jsdom 守。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，editable 指主工作区，故一律 PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8（worker 侧）",
+      "numpy": "2.4.3（worker 侧）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（Playwright 'Desktop Chrome'，DPR 1，headless）",
+      "render_backend": "rendercore（本 worktree 未跑 scripts/fetch_fonts.py：批准字体缺，导出路径未测）"
+    },
+    "fixtures": [
+      {
+        "path": "examples/figures/Fig1_kinetics.pdf",
+        "sha256": "9a136a53d4e09ebc5d54eb90c35c4cff359a8d4e22e01c716991a4ab30d9fdda"
+      },
+      {
+        "path": "examples/figures/fig1_kinetics.py",
+        "sha256": "1e6d4255f76c73443e3964848a812fcd3df84acc0680a599cb473415c088ee01"
+      },
+      {
+        "path": "examples/figures/paper_style.py",
+        "sha256": "79895c5c61a8ec0a1ae0183563af4e0a1d3530bcf5437fc857ac2f0c35547680"
+      }
+    ],
+    "entry": "vitest(jsdom) + playwright(chromium，route 扣住 V1)",
+    "commands": [
+      "docs/qa/2026-09-24/state/repro/run.sh vitest src/store/geometryAuthority.test.ts src/store/renderStore.test.ts src/canvas/alignUndoConvergence.test.tsx src/canvas/fakeRealtimeDrag.test.tsx -t '乱序|晚到|晚于|SVG 与 manifest|在途期间撤销'",
+      "docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-05"
+    ],
+    "exit_codes": [
+      0,
+      0
+    ],
+    "evidence": {
+      "log": "docs/qa/2026-09-24/state/logs/STATE-05.log",
+      "sha256": "878770dc30c0355a4397e4b0e460245ec535c953344cd5420fd7579b4ce435a2",
+      "summary": [
+        "### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/geometryAuthority.test.ts src/store/renderStore.test.ts src/canvas/alignUndoConvergence.test.tsx src/canvas/fakeRealtimeDrag.test.tsx -t 乱序|晚到|晚于|SVG 与 manifest|在途期间撤销",
+        "### time=2026-09-24T19:05:09Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "Tests  6 passed | 49 skipped (55)",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-05",
+        "### time=2026-09-24T19:05:13Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "1 passed (27.2s)"
+      ],
+      "note": "日志头里的 sha= 是运行时本分支 HEAD（WIP 提交 4a95b4d8，产品代码与 62af729c 逐字相同）；运行时工作区另含随最终提交入库的 STATE-08 用例与 repro 文件。vitest 的 `-t` 过滤带来的 skipped 是有意筛选，不是意外 skip；预期红的 repro 以 exit=1 记录。mutation 原始输出见 logs/MUTATIONS.log。"
+    },
+    "artifacts": [],
+    "first_failed_invariant": null,
+    "mutation_check": {
+      "id": "M5-stale-response-advances-latest",
+      "target_file": "web/src/store/renderStore.ts",
+      "mutation": "`const fresher = seq >= (s.latestSeq[fileId] ?? 0)` → `const fresher = true || …`",
+      "expected_red_case": "geometryAuthority.test.ts::乱序返回；alignUndoConvergence.test.tsx::对齐的响应晚于撤销的响应回来",
+      "observed": "red",
+      "observed_detail": "vitest 2 failed（latest 被拽到旧变体键）；e2e STATE-05 在变异下仍绿（exit=0），见 verdict_reason",
+      "restored_green": true,
+      "note": "变异原始输出：repro/mutate.py <ID> [--e2e] 可复现；本次结果摘要见 logs/MUTATIONS.log"
+    },
+    "new_tests": [
+      "web/e2e/fake-realtime.spec.ts::STATE-05 乱序回包：旧变体晚于新变体返回，不把画布拽回旧版"
+    ],
+    "product_bugs": [],
+    "gaps": [
+      "「同时保留可能供另一副本使用的旧变体」只在 jsdom（geometryAuthority 两副本 + 新增用例 lateEntry 入库）验证，真浏览器未造两副本",
+      "e2e STATE-05 对 latest 回退不敏感（M5 存活），latest 的守护只在 jsdom"
+    ]
+  },
+  {
+    "case_id": "STATE-06",
+    "title": "跨项目 / 跨副本：A/B 同名脚本、A 请求在切 B 后返回；同一源图两个副本",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "web/src/store/geometryAuthority.test.ts::同一文件的两个副本（2 条）",
+      "web/src/store/renderStore.test.ts::在途中切了项目：A 的失败回来时不把 A 的问题弹到 B 上（只管首开确认框）",
+      "web/src/store/documentStore.test.ts::addCanvas 新建并切换；undo 栈按画布隔离",
+      "web/src/store/projectSwitchWorkspace.test.ts::换项目与工作区偏好（2 条）"
+    ],
+    "expected_outcome": "切项目（renderStore.clear()）之后才回来的 A 渲染响应：不写进 B 的 byKey、不推进 B 的 latest、不成为 B 同名面板的几何权威；B 自己的同键结果不被 A 的晚到回包覆盖。两个副本各自渲染与落点。",
+    "product_outcome": "功能失败",
+    "test_verdict": "fail",
+    "verdict_reason": "副本隔离（jsdom）符合。跨项目不符合：renderStore.render 的成功分支无条件写 byKey[key] 与 latest[fileId]，没有项目代际闸（失败分支只对首开确认框用了 projectAtStart）；clear() 只清 inflight map，不作废在途 promise。repro 两条均红：A 的 manifest 落进 B 的变体格并成为 B 的 exact 权威；B 已画好的同键结果被 A 晚到回包覆盖。可达条件：两个项目有同名图文件（fileId 相同）且切项目时 A 有在途渲染。**真浏览器里没有走切项目入口复现**（只到 store 层）。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，editable 指主工作区，故一律 PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8（worker 侧）",
+      "numpy": "2.4.3（worker 侧）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（Playwright 'Desktop Chrome'，DPR 1，headless）",
+      "render_backend": "rendercore（本 worktree 未跑 scripts/fetch_fonts.py：批准字体缺，导出路径未测）"
+    },
+    "fixtures": [
+      {
+        "path": "docs/qa/2026-09-24/state/repro/state06_cross_project_render.test.ts",
+        "sha256": "d5c53afd8c16c0bbd653ac532383b8ace7923d8b0849957d0752129bc5e30483"
+      }
+    ],
+    "entry": "vitest(jsdom)",
+    "commands": [
+      "docs/qa/2026-09-24/state/repro/run.sh vitest src/store/renderStore.test.ts src/store/geometryAuthority.test.ts src/store/projectSwitchWorkspace.test.ts src/store/documentStore.test.ts",
+      "docs/qa/2026-09-24/state/repro/run.sh vitest-repro state06_cross_project_render.test.ts"
+    ],
+    "exit_codes": [
+      0,
+      1
+    ],
+    "evidence": {
+      "log": "docs/qa/2026-09-24/state/logs/STATE-06.log",
+      "sha256": "04305defc83386214cbb8b41401399dc117e2aea722efdd3815aa858cef50037",
+      "summary": [
+        "### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/renderStore.test.ts src/store/geometryAuthority.test.ts src/store/projectSwitchWorkspace.test.ts src/store/documentStore.test.ts",
+        "### time=2026-09-24T19:05:42Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "Tests  58 passed (58)",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh vitest-repro state06_cross_project_render.test.ts",
+        "### time=2026-09-24T19:05:44Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=1",
+        "Tests  2 failed (2)"
+      ],
+      "note": "日志头里的 sha= 是运行时本分支 HEAD（WIP 提交 4a95b4d8，产品代码与 62af729c 逐字相同）；运行时工作区另含随最终提交入库的 STATE-08 用例与 repro 文件。vitest 的 `-t` 过滤带来的 skipped 是有意筛选，不是意外 skip；预期红的 repro 以 exit=1 记录。mutation 原始输出见 logs/MUTATIONS.log。"
+    },
+    "artifacts": [],
+    "first_failed_invariant": "web/AGENTS.md「会在项目之间存活的 store 都有项目代际：clear() 换代 + 清 inflight，A 项目的响应绝不落进 B」——renderStore 成功分支未按请求时的项目/代际丢弃回包",
+    "mutation_check": null,
+    "mutation_check_reason": "产品缺陷本身已使 repro 为红，不存在可反证的通过断言；修复后应以本 repro 作回归并对「删掉代际判据」做一次反证",
+    "new_tests": [],
+    "product_bugs": [
+      {
+        "summary": "切项目后，A 项目在途的 /api/engine/render 成功回包写进 B 的渲染态：同名文件的面板显示 A 的图，同键时 A 的 manifest 成为 B 的几何权威（或覆盖 B 已画好的结果）",
+        "repro": "docs/qa/2026-09-24/state/repro/run.sh vitest-repro state06_cross_project_render.test.ts（2 条预期红）",
+        "severity": "P2"
+      }
+    ],
+    "gaps": [
+      "真浏览器双项目（同名 Fig1_kinetics.pdf）+ 慢渲染 + 切项目的端到端复现未做",
+      "跨项目的选区 / 历史 / override 隔离只读码（resetForNewProject 清选区、换空白文档），未新增断言",
+      "同一源图两个副本在真浏览器里的独立落点未测"
+    ]
+  },
+  {
+    "case_id": "STATE-07",
+    "title": "视口改变中断：拖动中改窗口宽度、视图倍率、DPR / 系统缩放",
+    "coverage_status": "待实现",
+    "existing_tests": [],
+    "expected_outcome": "按定义重建基准或取消；不突然跳位；提交值与最后一帧预览一致，不凭旧几何写文档。浏览器 DPR 模拟不代替真实跨显示器。",
+    "product_outcome": "功能失败",
+    "test_verdict": "fail",
+    "verdict_reason": "仓库里没有任何量「拖动中视口改变」的用例。探针（浏览器腿）：①改窗口宽度 70%：画布整体平移 −300px，元素随画布走，下一次 move 连续（+1px），不跳；②CDP 把 DPR 1→2：元素仍在指针下（差 0.0001px），下一次 move 连续，松手权威与预览一致；③**视图倍率 ⌘= (×1.25)：倍率变化当帧元素随画布缩放移到 704.8，下一次 move（指针只动 1px）元素跳回 690.8，跳了 ≈14px = 60px×(1.25−1)**，之后元素不再在指针下（纵向差 28px）。成因：contentDelta 每次按当前 zoom 换算「从起点累计的屏幕位移」，起点不随倍率重建。提交值与最后一帧预览一致（松手后权威 690.78 vs 预览 690.78），没有用旧几何写文档。真实跨显示器 / 系统缩放未执行（本机单屏、headless）。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，editable 指主工作区，故一律 PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8（worker 侧）",
+      "numpy": "2.4.3（worker 侧）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（Playwright 'Desktop Chrome'，DPR 1，headless）",
+      "render_backend": "rendercore（本 worktree 未跑 scripts/fetch_fonts.py：批准字体缺，导出路径未测）"
+    },
+    "fixtures": [
+      {
+        "path": "examples/figures/Fig1_kinetics.pdf",
+        "sha256": "9a136a53d4e09ebc5d54eb90c35c4cff359a8d4e22e01c716991a4ab30d9fdda"
+      },
+      {
+        "path": "examples/figures/fig1_kinetics.py",
+        "sha256": "1e6d4255f76c73443e3964848a812fcd3df84acc0680a599cb473415c088ee01"
+      },
+      {
+        "path": "examples/figures/paper_style.py",
+        "sha256": "79895c5c61a8ec0a1ae0183563af4e0a1d3530bcf5437fc857ac2f0c35547680"
+      }
+    ],
+    "entry": "playwright(chromium) 探针 + CDP Emulation.setDeviceMetricsOverride",
+    "commands": [
+      "docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_probe.spec.ts --grep 视图倍率",
+      "docs/qa/2026-09-24/state/repro/run.sh e2e-repro state07_dpr_probe.spec.ts"
+    ],
+    "exit_codes": [
+      0,
+      0
+    ],
+    "evidence": {
+      "log": "docs/qa/2026-09-24/state/logs/STATE-07.log",
+      "sha256": "20194ea9d485cc440a366996659ef1d5012925c58cb6fa7ec20329de28142780",
+      "summary": [
+        "### $ docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_probe.spec.ts --grep 视图倍率",
+        "### time=2026-09-24T19:05:45Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "1 passed (25.7s)",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh e2e-repro state07_dpr_probe.spec.ts",
+        "### time=2026-09-24T19:06:11Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "1 passed (21.5s)"
+      ],
+      "note": "日志头里的 sha= 是运行时本分支 HEAD（WIP 提交 4a95b4d8，产品代码与 62af729c 逐字相同）；运行时工作区另含随最终提交入库的 STATE-08 用例与 repro 文件。vitest 的 `-t` 过滤带来的 skipped 是有意筛选，不是意外 skip；预期红的 repro 以 exit=1 记录。mutation 原始输出见 logs/MUTATIONS.log。"
+    },
+    "artifacts": [],
+    "first_failed_invariant": "拖动中改视图倍率后第一次 pointermove 元素跳位 ≈ 累计位移×(新倍率/旧倍率−1)",
+    "mutation_check": null,
+    "mutation_check_reason": "本条无通过的断言可反证（既有覆盖为零，探针是 characterization）；规范 §9 未要求 STATE-07 反证",
+    "new_tests": [],
+    "product_bugs": [
+      {
+        "summary": "拖动中改变视图倍率（⌘= / ⌘−，或触控板捏合）后，下一次 pointermove 被拖元素跳位 ≈ Δ×(k−1)，且此后不再跟在指针下；起点未随倍率重建",
+        "repro": "docs/qa/2026-09-24/state/repro/run.sh e2e-repro state_probe.spec.ts --grep 视图倍率（看 zoom-mid-drag 一行：cAfterZoomNoMove.x=704.78 → cAfterZoomMove.x=690.78，指针只动 1px）",
+        "severity": "P3"
+      }
+    ],
+    "gaps": [
+      "真实跨显示器（不同 DPR 的两块屏之间拖窗口）与系统缩放：本机不可行，未执行",
+      "触控板捏合缩放（ctrl+wheel）在拖动中未测，只测了键盘 ⌘=",
+      "WebKit / 桌面壳未测",
+      "探针未固化为用例：视口改变的产品合同（重建基准 vs 取消）未定，等拍板后再写断言"
+    ]
+  },
+  {
+    "case_id": "STATE-08",
+    "title": "保存重开：提交→权威→undo/redo→保存→完全退出 app/worker→重开→再导出",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "web/e2e/golden-paths.spec.ts::打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复（只断言 reload 后画布非空）",
+      "web/src/store/documentStore.test.ts::自动保存：磁盘落 schema 3 / 从磁盘恢复不是一次编辑 / 409 stale_write 等",
+      "web/src/lib/autosave/diskWriter.test.ts::基线：成功推进、409 一个都不推 等 13 条"
+    ],
+    "expected_outcome": "最后一次自动保存里恰好一条最后提交的 override、无 translate(；后端（含 worker）退出后同端口同数据目录重开：磁盘文档的 objects 与退出前最后一次保存逐项相等（身份、绑定、override 顺序）；重开后第一次渲染带同一份 patches；进图内编辑后标题相对整张图的位置与退出前最后提交一致（<1e-3）。",
+    "product_outcome": "自动成功",
+    "test_verdict": "partial",
+    "verdict_reason": "新增真浏览器用例全绿（单元素拖动 → 撤销 → 重做 → 自动保存 → /api/shutdown 进程退出 exit=0 → 同端口重开 → 文档逐项相等、渲染 patches 相等、标题位置差 <1e-3）。partial 的原因：规范要求对 GEO-02（多选）/ GEO-04（八手柄缩放）做，本次只做了单选拖动；「再导出」未执行（本 worktree 没跑 scripts/fetch_fonts.py，RenderCore 批准字体缺，导出路径不可用于判读）。另测得：重开前必须等上一个实例的 TIME_WAIT 过完（实测 31s），否则产品会顺延到下一个端口。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，editable 指主工作区，故一律 PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8（worker 侧）",
+      "numpy": "2.4.3（worker 侧）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（Playwright 'Desktop Chrome'，DPR 1，headless）",
+      "render_backend": "rendercore（本 worktree 未跑 scripts/fetch_fonts.py：批准字体缺，导出路径未测）"
+    },
+    "fixtures": [
+      {
+        "path": "examples/figures/Fig1_kinetics.pdf",
+        "sha256": "9a136a53d4e09ebc5d54eb90c35c4cff359a8d4e22e01c716991a4ab30d9fdda"
+      },
+      {
+        "path": "examples/figures/fig1_kinetics.py",
+        "sha256": "1e6d4255f76c73443e3964848a812fcd3df84acc0680a599cb473415c088ee01"
+      },
+      {
+        "path": "examples/figures/paper_style.py",
+        "sha256": "79895c5c61a8ec0a1ae0183563af4e0a1d3530bcf5437fc857ac2f0c35547680"
+      }
+    ],
+    "entry": "playwright(chromium，两次启动后端，同端口同 TAVOTTO_DATA_DIR/CONFIG_DIR) + vitest",
+    "commands": [
+      "docs/qa/2026-09-24/state/repro/run.sh vitest src/store/documentStore.test.ts src/lib/autosave/diskWriter.test.ts",
+      "docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-08"
+    ],
+    "exit_codes": [
+      0,
+      0
+    ],
+    "evidence": {
+      "log": "docs/qa/2026-09-24/state/logs/STATE-08.log",
+      "sha256": "be74fa5717c88e03a6d5f3e36e259cf105e33d074d22f3f15d9a74847dc5ba1e",
+      "summary": [
+        "### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/store/documentStore.test.ts src/lib/autosave/diskWriter.test.ts",
+        "### time=2026-09-24T19:06:33Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "Tests  48 passed (48)",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh e2e fake-realtime.spec.ts STATE-08",
+        "### time=2026-09-24T19:06:35Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "1 passed (1.1m)"
+      ],
+      "note": "日志头里的 sha= 是运行时本分支 HEAD（WIP 提交 4a95b4d8，产品代码与 62af729c 逐字相同）；运行时工作区另含随最终提交入库的 STATE-08 用例与 repro 文件。vitest 的 `-t` 过滤带来的 skipped 是有意筛选，不是意外 skip；预期红的 repro 以 exit=1 记录。mutation 原始输出见 logs/MUTATIONS.log。"
+    },
+    "artifacts": [],
+    "first_failed_invariant": null,
+    "mutation_check": null,
+    "mutation_check_reason": "规范 §9 未要求；本条的判据（文档逐项相等、patches 相等、位置差）直接比对重开前后两份真实产物，未另做变异",
+    "new_tests": [
+      "web/e2e/fake-realtime.spec.ts::STATE-08 保存重开：提交→撤销→重做→自动保存→整个后端（含 worker）退出→同端口同数据目录重开，文档与画面都是最后提交那一版"
+    ],
+    "product_bugs": [
+      {
+        "summary": "浏览器模式同端口快速重启会被顺延到下一个端口：app.port_is_free() 用不带 SO_REUSEADDR 的 bind 判空闲，上一个实例留下的 TIME_WAIT（实测 ~31s）让它判「占用」，而 tavotto_is_serving() 又为假 → 换端口；换了源之后 localStorage 里的「上次文档」读不到",
+        "repro": "docs/qa/2026-09-24/state/repro/run.sh e2e-repro state08_probe.spec.ts（看 state08-timewait 一行 waitedMs≈31000；去掉等待循环即复现「端口 N 被占用，改用 N+1」）",
+        "severity": "P3"
+      }
+    ],
+    "gaps": [
+      "GEO-02 多选整组 / GEO-04 缩放的保存重开未做，只做了单选拖动",
+      "再导出与独立 PDF 读取核验未执行（批准字体缺）",
+      "桌面壳（Tauri + sidecar）完全退出重开未执行；这里的「退出」是 /api/shutdown 的浏览器模式后端"
+    ]
+  },
+  {
+    "case_id": "STATE-09",
+    "title": "AI 与人工交错：AI 修改后人工 undo；持有旧版本的 AI 写入",
+    "coverage_status": "部分覆盖",
+    "existing_tests": [
+      "tests/test_ai_refresh.py（ADR 0041：AI 改动走统一刷新、watcher 不重复发布等）",
+      "tests/test_ai_revert_atomic.py（回滚原子、写对对象、越界拒绝、mtime、权限位）",
+      "tests/test_ai_history.py",
+      "web/src/hooks/useServerEvents.test.ts::AI 修改之后（ADR 0041）3 条"
+    ],
+    "expected_outcome": "AI 对脚本的写入与回滚都绑定版本；AI 之后脚本又被人工（或另一次 AI）改过时，回滚这类持旧版本的写入被冲突拒绝或按明确规则协调，不静默覆盖；人工 undo 只动文档历史，不与 AI 的脚本修改互相吞。",
+    "product_outcome": "功能失败",
+    "test_verdict": "fail",
+    "verdict_reason": "既有 pytest（40 条）与前端 AI 事件用例全绿，覆盖刷新顺序、原子写、越界、权限。缺的正是版本绑定：ai_bridge.revert(sid) 无条件把会话开始前的快照写回，不核对脚本当前是否仍是这次 AI 改完的版本。repro：AI 改完后人工追加一行，再对该会话回滚 → 接口回 {ok: true}，人工那行被静默覆盖（红）；对照组（脚本仍是 AI 版）正常恢复快照（绿）。AiPanel 历史列表的回滚按钮没有确认框，历史跨会话保留，所以「回滚一个很早的会话」会抹掉其后的全部改动。真实 AI CLI（codex / claude）未调用：不在本机跑付费 / 联网 Agent，AI 那一侧用会话 sidecar 直接构造。",
+    "source_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+    "environment": {
+      "os": "macOS 27.0 (26A428)",
+      "arch": "arm64",
+      "python_backend": "3.13.11（/Volumes/Projects/Tavotto/.venv，editable 指主工作区，故一律 PYTHONPATH=<worktree>/src）",
+      "python_worker": "3.13.11（Homebrew python@3.13，TAVOTTO_WORKER_PYTHON）",
+      "matplotlib": "3.10.8（worker 侧）",
+      "numpy": "2.4.3（worker 侧）",
+      "node": "v26.7.0",
+      "pnpm": "11.0.7",
+      "vitest": "4.1.11（jsdom）",
+      "playwright": "1.62.1",
+      "browser": "Chromium 151.0.7922.34（Playwright 'Desktop Chrome'，DPR 1，headless）",
+      "render_backend": "rendercore（本 worktree 未跑 scripts/fetch_fonts.py：批准字体缺，导出路径未测）"
+    },
+    "fixtures": [
+      {
+        "path": "docs/qa/2026-09-24/state/repro/test_state09_ai_revert_stale.py",
+        "sha256": "cf66ab4d83eb80fc88730cad93dbd32fd738a18ec45dcedaa99fdb1ca77c9691"
+      }
+    ],
+    "entry": "pytest（直接调 ai_bridge.revert，构造会话 sidecar）+ vitest",
+    "commands": [
+      "docs/qa/2026-09-24/state/repro/run.sh pytest tests/test_ai_refresh.py tests/test_ai_revert_atomic.py tests/test_ai_history.py",
+      "docs/qa/2026-09-24/state/repro/run.sh vitest src/hooks/useServerEvents.test.ts src/store/aiStore.test.ts",
+      "docs/qa/2026-09-24/state/repro/run.sh pytest docs/qa/2026-09-24/state/repro/test_state09_ai_revert_stale.py"
+    ],
+    "exit_codes": [
+      0,
+      0,
+      1
+    ],
+    "evidence": {
+      "log": "docs/qa/2026-09-24/state/logs/STATE-09.log",
+      "sha256": "eaef16a32705ad3b1ad99f6e0e6f08e548123d05ce43f669463544f6d370817f",
+      "summary": [
+        "### $ docs/qa/2026-09-24/state/repro/run.sh pytest tests/test_ai_refresh.py tests/test_ai_revert_atomic.py tests/test_ai_history.py",
+        "### time=2026-09-24T19:07:43Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "40 passed, 5 warnings in 1.68s",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh vitest src/hooks/useServerEvents.test.ts src/store/aiStore.test.ts",
+        "### time=2026-09-24T19:07:45Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=0",
+        "Tests  51 passed (51)",
+        "### $ docs/qa/2026-09-24/state/repro/run.sh pytest docs/qa/2026-09-24/state/repro/test_state09_ai_revert_stale.py",
+        "### time=2026-09-24T19:07:47Z sha=4a95b4d83f33d42f844238d3f09c8d169b5259d1 exit=1",
+        "1 failed, 1 passed in 0.03s"
+      ],
+      "note": "日志头里的 sha= 是运行时本分支 HEAD（WIP 提交 4a95b4d8，产品代码与 62af729c 逐字相同）；运行时工作区另含随最终提交入库的 STATE-08 用例与 repro 文件。vitest 的 `-t` 过滤带来的 skipped 是有意筛选，不是意外 skip；预期红的 repro 以 exit=1 记录。mutation 原始输出见 logs/MUTATIONS.log。"
+    },
+    "artifacts": [],
+    "first_failed_invariant": "revert 是不带版本前提的写：未比较脚本当前字节与 AI 会话结束时的版本",
+    "mutation_check": null,
+    "mutation_check_reason": "缺陷本身让 repro 为红；对照组为绿，证明判据不是恒红",
+    "new_tests": [],
+    "product_bugs": [
+      {
+        "summary": "AI 会话回滚不核对版本：AI 改完之后脚本被人工或另一次 AI 改过，点历史里那次会话的「回滚」会用快照静默覆盖后来的全部改动（接口 ok、界面「已回滚」、无确认）",
+        "repro": "docs/qa/2026-09-24/state/repro/run.sh pytest docs/qa/2026-09-24/state/repro/test_state09_ai_revert_stale.py（1 红 1 绿）",
+        "severity": "P2"
+      }
+    ],
+    "gaps": [
+      "真实 AI CLI 端到端（AI 修改 → 人工 undo → AI 再提交）未执行",
+      "「持有旧版本的 AI 请求提交」：AI 通过 CLI 直接写文件，产品侧没有「AI 请求带版本号提交」这一接口，本条只能在回滚这条写路径上判",
+      "两个 AI 会话并发改同一脚本未测"
+    ]
+  }
+]

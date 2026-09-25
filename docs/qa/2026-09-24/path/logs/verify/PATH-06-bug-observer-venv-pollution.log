@@ -1,0 +1,36 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_repro.sh verify/PATH-06-bug-observer-venv-pollution docs/qa/2026-09-24/path/repro/repro_path06_observer_venv_pollution.py
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TMPDIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vpath-scratch/ /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/path/repro/repro_path06_observer_venv_pollution.py /opt/homebrew/opt/python@3.13/libexec/bin/python3
+# time: 2026-09-24T19:32:49Z
+# sha: 93dd9f4b86bea7fd5ccde339f57735b85a6cdf36
+{
+ "sandbox_default": {
+  "status": "ready",
+  "n_files": 46,
+  "n_venv_files": 45,
+  "has_data_file": true,
+  "truncated": true,
+  "first_5": [
+   ".venv/lib/python3.13/site-packages/PIL/_imaging.cpython-313-darwin.so",
+   ".venv/lib/python3.13/site-packages/kiwisolver/_cext.cpython-313-darwin.so",
+   ".venv/lib/python3.13/site-packages/matplotlib/_c_internal_utils.cpython-313-darwin.so",
+   ".venv/lib/python3.13/site-packages/matplotlib/_image.cpython-313-darwin.so",
+   ".venv/lib/python3.13/site-packages/matplotlib/_path.cpython-313-darwin.so"
+  ]
+ },
+ "project": {
+  "status": "ready",
+  "n_files": 46,
+  "n_venv_files": 45,
+  "has_data_file": true,
+  "truncated": true,
+  "first_5": [
+   ".venv/lib/python3.13/site-packages/PIL/_imaging.cpython-313-darwin.so",
+   ".venv/lib/python3.13/site-packages/kiwisolver/_cext.cpython-313-darwin.so",
+   ".venv/lib/python3.13/site-packages/matplotlib/_c_internal_utils.cpython-313-darwin.so",
+   ".venv/lib/python3.13/site-packages/matplotlib/_image.cpython-313-darwin.so",
+   ".venv/lib/python3.13/site-packages/matplotlib/_path.cpython-313-darwin.so"
+  ]
+ }
+}
+EXPECTED sandbox inputs has data file and no .venv entries: VIOLATED
+# exit_code: 1

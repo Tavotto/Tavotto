@@ -1,0 +1,14 @@
+# cmd: cd web && NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/hooks/useKeyboardTextFocus.test.tsx src/hooks/useKeyboard.test.ts src/hooks/useKeyboardSave.test.tsx src/hooks/useKeyboardFastEdit.test.tsx
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:08:28Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+
+ RUN  v4.1.11 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel/web
+
+
+ Test Files  4 passed (4)
+      Tests  40 passed (40)
+   Start at  03:08:32
+   Duration  3.30s (transform 6.40s, setup 1.78s, import 6.41s, tests 120ms, environment 4.01s)
+
+# exit: 0

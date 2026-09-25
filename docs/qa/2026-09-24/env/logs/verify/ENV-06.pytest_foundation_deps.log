@@ -1,0 +1,24 @@
+# verify rerun ENV-06/pytest_foundation_deps
+# cmd: PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_foundation_dependencies.py -p no:cacheprovider -rs -v
+# head: 1f9f29099abe7d0448c44039e150ac9020cc6077
+# start(UTC): 2026-09-24T19:16:09Z
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env
+configfile: pytest.ini
+collected 7 items
+
+tests/test_foundation_dependencies.py .....ss                            [100%]
+
+=============================== warnings summary ===============================
+../../../../../../../../Volumes/Projects/Tavotto/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885
+  /Volumes/Projects/Tavotto/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:885: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; support.dependency_repair
+    self.import_plugin(import_spec)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_foundation_dependencies.py:628: 要联网装 matplotlib 进受管环境：TAVOTTO_FOUNDATION_ONLINE=1 才跑（nightly foundation-observing）
+SKIPPED [1] tests/test_foundation_dependencies.py:695: 要联网装 matplotlib 进受管环境：TAVOTTO_FOUNDATION_ONLINE=1 才跑（nightly foundation-observing）
+============= 5 passed, 2 skipped, 1 warning in 180.22s (0:03:00) ==============
+# end(UTC): 2026-09-24T19:19:09Z
+# exit_code: 0

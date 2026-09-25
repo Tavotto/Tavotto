@@ -1,0 +1,178 @@
+{
+ "section": "geo",
+ "audited_branch": "qa/2026-09-24-geo",
+ "audited_commit": "cd848fe239c6eeb7d9c02c66e640988bdd0288dd",
+ "baseline": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+ "verified_at": "2026-09-25T03:10–03:40 (本机时间)",
+ "environment": {
+  "os": "macOS 27.0 (26A428) arm64",
+  "backend_python": "/Volumes/Projects/Tavotto/.venv/bin/python 3.13.11 + PYTHONPATH=worktree/src + PYTHONDONTWRITEBYTECODE=1",
+  "worker_python": "/opt/homebrew/opt/python@3.13/libexec/bin/python3 3.13.11，matplotlib 3.10.8，numpy 2.4.3",
+  "node": "v26.7.0",
+  "vitest": "4.1.11 (jsdom)",
+  "playwright": "1.62.1 chromium",
+  "worktree": "scratchpad/qa/verify-geo（detached 于 cd848fe2，因为分支已在执行者的 worktree 中检出）；pnpm install --frozen-lockfile --prefer-offline；E2E 前先运行 build_frontend；E2E 由 fixtures 自起后端（随机端口、临时数据目录与 HOME），没有碰 5089 和用户数据目录"
+ },
+ "ledger_integrity": {
+  "all_case_ids_present": true,
+  "fields_complete": true,
+  "evidence_and_fixture_sha256_match": true,
+  "note": "GEO-01…10 共 10 条齐全，每条 23 个字段一致；所有 fixtures、evidence 路径都存在，sha256 与记录一致。执行者日志的 HEAD 分别是 6f19b8b0、f0ed2e4b、2a4d39fd，这之间只有 repro/ 与 mutate.py 有改动，测试代码相同；本次复核在 cd848fe2 上全部重跑。产品代码相对基线零改动。"
+ },
+ "mutation_replays": [
+  {
+   "id": "V1 = 原 M1 漏 zoom",
+   "file": "web/src/canvas/interactions.ts",
+   "result": "geometryReference：8 failed / 24 passed（zoom≠1 的三档、Axes 移动、GEO-02 四条），zoom=1 档仍绿；既有 3 个文件 32 条全绿；git checkout 还原后 32/32 绿，git status 干净",
+   "log": "docs/qa/2026-09-24/geo/logs/verify/mutation-V1-missing-zoom.log"
+  },
+  {
+   "id": "V2 = M3 的变体，漏最后一名成员",
+   "file": "web/src/canvas/interactions.ts",
+   "result": "GEO-02 四条都按长度断言变红（2→1、10→9、100→99、5→4）；6 个既有文件共 114 条全绿；还原后 4/4 绿，git status 干净",
+   "log": "docs/qa/2026-09-24/geo/logs/verify/mutation-V2-group-drops-last.log"
+  }
+ ],
+ "corrections": [
+  "GEO-02：原判 pass，复核降为 partial。混合选区没有注释（G2 夹具不含 ax.annotate），浏览器腿为避开 BUG-4 把图例换掉了，端到端的混合类型不达标没有被判据量到。",
+  "ledger 中 GEO-03、GEO-07、GEO-10 的复现命令转录有误：`cd web && …; rm web/src/canvas/…` 删不到文件，照抄会留下残留，退出码也来自 rm。实际执行的命令（见原日志）是 `rc=$?; rm -f src/…; exit $rc`，写法正确。应以日志里的命令为准。",
+  "GEO-BUG-4 的量级：本次在浏览器 112% 下量到 1.4895 CSS px，略超缺陷描述写的 1.42–1.47，属于同一缺陷，建议把范围改写为约 1.39–1.49。"
+ ],
+ "cases": [
+  {
+   "case_id": "GEO-01",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "logs": [
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-01-vitest.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-01-pytest.log",
+    "docs/qa/2026-09-24/geo/logs/verify/E2E-geometry-reference.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-01-existing.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-01-probe-legend.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-01-legend-jump-repro.log",
+    "docs/qa/2026-09-24/geo/logs/verify/mutation-V1-missing-zoom.log"
+   ],
+   "note": "6 条命令逐条重跑，退出码 [0,0,0,0,0,1] 与原记录一致：vitest 6 passed | 26 skipped；pytest 7 passed、0 skip；E2E 5 passed；既有用例 22/22；图例探针 SVG−manifest 恒为 −1.0363 pt，与原记录相同；legend-jump 复现红，本次 1.4895 CSS px（原日志 1.3857，缺陷描述写 1.42–1.47），同一缺陷，量级略超原写范围。复做 M1（漏 zoom）：zoom=0.75/1.5/1.37 与 Axes 移动变红，zoom=1 档仍绿；fakeRealtimeDrag、axesCompanionDrag、dragReleaseSnapback 共 32 条既有用例仍绿，说明既有用例看不到 zoom 这一维，还原后 32/32 绿。已读断言：期望值只用测试自己的 96/25.4 与脚本 figsize，没有调用生产坐标函数。维持 partial。"
+  },
+  {
+   "case_id": "GEO-02",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "partial",
+   "logs": [
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-02-vitest.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-02-pytest.log",
+    "docs/qa/2026-09-24/geo/logs/verify/E2E-geometry-reference.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-02-existing.log",
+    "docs/qa/2026-09-24/geo/logs/verify/mutation-V2-group-drops-last.log"
+   ],
+   "note": "重跑结果全部一致：vitest 4/4、pytest 3/3（无 skip）、E2E GEO-02 通过、既有用例 89/89。另做一个变体变异：漏掉最后一名成员（原 M3 漏的是第一名），GEO-02 四条按长度断言变红；六个既有文件共 114 条仍绿，还原后 4/4 绿。机制层面的断言是对的。降为 partial，因为『混合类型』这一条的验收主语没有兑现：(1) 规范要求混合选区含『注释』，但 G2 夹具里没有 ax.annotate，混合用例的成员只有文字、图例、形状和标题；GEO-08 已证实 textcoords≠data 的注释写入 pos_frac 后落点错（BUG-1），整组里放这类注释会不合格，只是没被量到。(2) 浏览器腿本应以图例作混合代表，执行者因 BUG-4（图例横跳 1.4–1.5 CSS px，超过 0.5 预算）特意换成 y 轴标签。也就是说，真实界面里含图例的整组平移按本规范的预算不达标。jsdom 和引擎两半成立，但端到端的混合选区不能判 pass。"
+  },
+  {
+   "case_id": "GEO-03",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "logs": [
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-03-repro.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-03-existing.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-03-pytest.log"
+   ],
+   "note": "复现用例红：预览里标题平移 60，期望 30（2Δ）；axesCompanionDrag 10/10 绿；引擎 2/2 绿，提交后只走一次。与原记录一致，BUG-3 成立。命令转录有问题：ledger 的 commands 写的是 `…; rm web/src/canvas/…`，cd web 之后这个路径找不到，照抄会把复现文件留在 web/src/canvas，退出码也变成 rm 的。原日志里实际执行的是 `rc=$?; rm -f src/…; exit $rc`，写法正确。"
+  },
+  {
+   "case_id": "GEO-04",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "logs": [
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-04-vitest.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-04-existing.log"
+   ],
+   "note": "vitest 8 passed | 24 skipped；既有用例 28/28，都与原记录一致。引擎侧落点、字号合同和混合选区都没测，partial 合理。M6 没有复做。"
+  },
+  {
+   "case_id": "GEO-05",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "logs": [
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-05-vitest.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-05-existing.log"
+   ],
+   "note": "vitest 3 passed | 29 skipped；viewportStore 19/19，与原记录一致。没有比对导出物，也没有做反证，partial 合理。"
+  },
+  {
+   "case_id": "GEO-06",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "logs": [
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-06-vitest.log"
+   ],
+   "note": "4 passed | 28 skipped，与原记录一致。读过断言：2 次和 200 次 move 比较的是最终写入值；三段拖与一段拖比较、20 次往返的漂移上限（1e-4 整步，不随次数累加）、Axes 逆缩放都用独立尺，没有调用生产换算；吸附已关（snapEnabled:false）。有一处可能的质疑：分段之间权威渲染一直没到（engineRender 永不 resolve），走的是『从已写 override 起算』这条路径。但 anchorOf 本来就优先读 override，权威到达后的锚点与 override 相同，两条路径等价，所以不降级。局限是只在 jsdom 里测，这一点 coverage_status 已标为部分覆盖。"
+  },
+  {
+   "case_id": "GEO-07",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "logs": [
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-07-repro.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-07-repro-verbatim.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-07-vitest.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-07-existing.log"
+   ],
+   "note": "复现两条都红：A 是拖回原点后仍写入 axes_0.title_left 的 override；B 是 override 顺序变成 ['color','pos_frac']。vitest 4/4，既有用例 50/50，都与原记录一致，BUG-5、BUG-6 成立。另按 ledger 原文照抄跑了一遍：rm 报 No such file，repro 文件残留在 web/src/canvas（已手动删掉并核对工作区干净），退出码 1 来自 rm，而不是 vitest。同一处转录问题也出现在 GEO-03 和 GEO-10。"
+  },
+  {
+   "case_id": "GEO-08",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "logs": [
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-08-pytest.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-08-existing.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-08-pytest-legend.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-08-10-repro-title-annotation.log",
+    "docs/qa/2026-09-24/geo/logs/verify/xcheck-bug1-bbox.log"
+   ],
+   "note": "pytest special 3/3、twinAxesPick 25/25、legend unsupported 2/2 都绿；repro 退出码 1，Ann texts_2/3/4 的误差逐位等于原记录。用另一把尺做了交叉验证：不看 manifest 的 anchor，改看墨迹 bbox 的平移（请求 Δ=(−0.05,+0.04)）。没有箭头的 texts_3（offset points）实际平移 (0.083,−0.072)，texts_4（figure fraction）实际平移 (0.203,−0.294)，warnings 为空，BUG-1 成立。有箭头的 texts_1/2 的 bbox 把箭头也并了进去，这把尺对它们不适用，不作结论。"
+  },
+  {
+   "case_id": "GEO-09",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "logs": [
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-09-vitest.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-09-existing.log"
+   ],
+   "note": "2 passed | 30 skipped；既有用例 54/54，与原记录一致。读过断言：四步中每步都确认文档确实变了，past 恰好为 4，逐项 undo 精确回到上一步的 overrides 快照，redo 精确回到终态，图内对象与画布对象各测一条。注意：reseed() 每次用的是夹具原始 manifest，没有反映前一步的位移，模拟的权威渲染是陈旧的。本用例的判据是历史条数和撤销精确性，不受影响，维持 pass。"
+  },
+  {
+   "case_id": "GEO-10",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "fail",
+   "audited_verdict": "fail",
+   "logs": [
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-10-pytest.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-08-10-repro-title-annotation.log",
+    "docs/qa/2026-09-24/geo/logs/verify/GEO-10-repro.log",
+    "docs/qa/2026-09-24/geo/logs/verify/xcheck-bug2-bbox.log"
+   ],
+   "note": "pytest 2/2 绿；repro 退出码 1，TConstrained/TTight 的 title 和 xlabel 共 8 行 BAD，误差与原记录逐位相同；noop 复现 A 红。交叉验证：TConstrained 标题写入 pos_frac（Δ=(−0.05,+0.04)）后，墨迹 bbox 的 x 平移 −0.0501，y 只变了 +0.00012，TNone 对照组的 y 变了 +0.04。y 分量不生效不是 manifest anchor 报错造成的，BUG-2 成立。"
+  }
+ ]
+}

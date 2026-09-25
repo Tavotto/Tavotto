@@ -1,0 +1,13 @@
+# verify: GEO-08-pytest
+# time: 2026-09-25T03:23:06 (+3s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_geometry_reference.py -k "special"
+...                                                                      [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_geometry_reference.py::test_special_coordinates_drag_is_scale_independent[axes_0.texts_0]
+PASSED tests/test_geometry_reference.py::test_special_coordinates_drag_is_scale_independent[axes_2.texts_0]
+PASSED tests/test_geometry_reference.py::test_special_coordinates_drag_is_scale_independent[fig.texts_0]
+[exit=0]
+

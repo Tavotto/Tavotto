@@ -1,0 +1,23 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh verify/PATH-04 tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file tests/test_first_open_paths_d1.py::test_the_decoy_is_indistinguishable_by_extrema_mean_and_ylim tests/test_foundation_first_open.py::test_fo07_same_name_data_in_two_places_asks_and_honours_the_choice tests/test_databinding.py::test_ambiguous_when_both_places_have_a_same_name_file_with_different_bytes tests/test_databinding.py::test_identical_bytes_in_both_places_is_not_ambiguous tests/test_databinding.py::test_ambiguous_when_the_two_places_hold_different_halves_of_the_reads tests/test_databinding.py::test_unknown_when_nothing_is_found_anywhere_and_no_same_name_search_happens tests/test_foundation_join.py::test_fo32_wrong_choice_reads_the_decoy_and_the_identities_say_so -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file tests/test_first_open_paths_d1.py::test_the_decoy_is_indistinguishable_by_extrema_mean_and_ylim tests/test_foundation_first_open.py::test_fo07_same_name_data_in_two_places_asks_and_honours_the_choice tests/test_databinding.py::test_ambiguous_when_both_places_have_a_same_name_file_with_different_bytes tests/test_databinding.py::test_identical_bytes_in_both_places_is_not_ambiguous tests/test_databinding.py::test_ambiguous_when_the_two_places_hold_different_halves_of_the_reads tests/test_databinding.py::test_unknown_when_nothing_is_found_anywhere_and_no_same_name_search_happens tests/test_foundation_join.py::test_fo32_wrong_choice_reads_the_decoy_and_the_identities_say_so -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vpath-scratch/pytest-verify/PATH-04
+# time: 2026-09-24T19:30:36Z
+# sha: 93dd9f4b86bea7fd5ccde339f57735b85a6cdf36  (worktree dirty files: 0)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-path
+configfile: pytest.ini
+collecting ... collected 8 items
+
+tests/test_first_open_paths_d1.py::test_path04_same_name_decoy_asks_without_preselection_and_reads_only_the_chosen_file PASSED [ 12%]
+tests/test_first_open_paths_d1.py::test_the_decoy_is_indistinguishable_by_extrema_mean_and_ylim PASSED [ 25%]
+tests/test_foundation_first_open.py::test_fo07_same_name_data_in_two_places_asks_and_honours_the_choice PASSED [ 37%]
+tests/test_databinding.py::test_ambiguous_when_both_places_have_a_same_name_file_with_different_bytes PASSED [ 50%]
+tests/test_databinding.py::test_identical_bytes_in_both_places_is_not_ambiguous PASSED [ 62%]
+tests/test_databinding.py::test_ambiguous_when_the_two_places_hold_different_halves_of_the_reads PASSED [ 75%]
+tests/test_databinding.py::test_unknown_when_nothing_is_found_anywhere_and_no_same_name_search_happens PASSED [ 87%]
+tests/test_foundation_join.py::test_fo32_wrong_choice_reads_the_decoy_and_the_identities_say_so SKIPPED [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_foundation_join.py:446: TAVOTTO_FOUNDATION_PROJECT_PYTHON 没指向一个「另一个 minor 且装了 matplotlib + h5py」的解释器（not_run）
+======================== 7 passed, 1 skipped in 29.64s =========================
+# exit_code: 0

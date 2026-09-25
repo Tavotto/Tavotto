@@ -1,0 +1,58 @@
+# case: ENV-05 本地模块与异常分类
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# 各节开头是逐字命令与时间；<worktree> 是仓库根，<scratch> 是 QA scratch 目录
+
+===== 探针 ENV-05（已还原树）（原始日志 ENV-05.probe.log）=====
+$ cd <worktree> && TAVOTTO_FONTS_DIR=<scratch>/fonts PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/e1_http_probe_more.py ENV-05 --e1 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final
+# date: 2026-09-24T18:58:18Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  tree: clean-src
+[02:58:18] scenario=ENV-05 e1=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/e1 port=5303
++ uv venv --python /opt/homebrew/opt/python@3.13/libexec/bin/python3 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/ENV-05/p/.venv
++ uv pip install --offline --python /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/ENV-05/p/.venv/bin/python matplotlib==3.10.8 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/ENV-05/wheels/qa_broken_pkg-1.0.0-py3-none-any.whl /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/ENV-05/wheels/qa_abi_pkg-1.0.0-py3-none-any.whl /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/ENV-05/wheels/qa_subbroken_pkg-1.0.0-py3-none-any.whl
+[02:58:39] fig_local: {"ok": true, "values": [0, 9, 2, 10]}
+[02:58:40] fig_optional: {"ok": true, "values": [0, 9, 2, 10]}
+[02:58:40] fig_broken_internal: {"ok": false, "status": 500, "code": "script_error", "module": null, "project_env": null, "params": null, "repair_keys": [], "dependency_repair": null, "message": "脚本执行失败: cannot import name '_missing_sub' from partially initialized module 'qa_broken_pkg' (most likely due to a circular import) (/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/ENV-05/p/.venv/lib/python3.13/site-packages/qa_broken_pkg"}
+[02:58:41] fig_abi: {"ok": false, "status": 500, "code": "script_error", "module": null, "project_env": null, "params": null, "repair_keys": [], "dependency_repair": null, "message": "脚本执行失败: dlopen(/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/env/final/ENV-05/p/.venv/lib/python3.13/site-packages/qa_abi_pkg/_native.cpython-313-darwin.so, 0x0002): tried: '/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be"}
+[02:58:54] fig_local_typo: {"ok": false, "status": 500, "code": "missing_dependency", "module": "lab_typo_helper", "project_env": {"candidates": [], "code": "project_env_already_attempted", "module": "lab_typo_helper", "python_version": "", "system": [], "venv": ""}, "params": null, "repair_keys": ["dependency_repair"], "dependency_repair": {"code": "dependency_unresolved", "import_name": "lab_typo_helper", "requirement": null, "rounds_remaining": 3, "script": "fig_local_typo.py", "system_rejected": [], "targets": []}, "m
+[02:58:55] fig_broken_submodule: {"ok": false, "status": 500, "code": "missing_dependency", "module": "qa_subbroken_pkg", "project_env": {"candidates": [], "code": "project_env_already_attempted", "module": "qa_subbroken_pkg", "python_version": "", "system": [], "venv": ""}, "params": null, "repair_keys": ["dependency_repair"], "dependency_repair": {"code": "dependency_unresolved", "import_name": "qa_subbroken_pkg", "requirement": null, "rounds_remaining": 3, "script": "fig_broken_submodule.py", "system_rejected": [], "targets"
+[02:58:56] PASS 副作用：项目 venv 包清单不变（没有盲目安装） :: []
+[02:58:56] PASS 本地模块 labmod：自动成功且值 = [0, 9, 2, 10] :: {'ok': True, 'values': [0, 9, 2, 10]}
+[02:58:56] PASS 可选 / 动态 import：自动成功 :: {'ok': True, 'values': [0, 9, 2, 10]}
+[02:58:56] PASS 包内部 ImportError（cannot import name）：渲染失败（与终端一致） :: script_error
+[02:58:56] PASS 包内部 ImportError（cannot import name）：不被归为「缺包」missing_dependency（包已安装） :: {'code': 'script_error', 'module': None}
+[02:58:56] PASS 二进制加载失败（dlopen）：渲染失败（与终端一致） :: script_error
+[02:58:56] PASS 二进制加载失败（dlopen）：不被归为「缺包」missing_dependency（包已安装） :: {'code': 'script_error', 'module': None}
+[02:58:56] PASS 已安装包内部缺子模块（No module named 'pkg._sub'）：渲染失败（与终端一致） :: missing_dependency
+[02:58:56] FAIL 已安装包内部缺子模块（No module named 'pkg._sub'）：不被归为「缺包」missing_dependency（包已安装） :: {'code': 'missing_dependency', 'module': 'qa_subbroken_pkg'}
+[02:58:56] PASS 本地拼错的模块名：渲染失败（与终端一致） :: missing_dependency
+[02:58:56] PASS 本地拼错的模块名：没有被解析成可安装的包（不盲目安装） :: {}
+[02:58:56] PASS 静态计划：lab_typo_helper 归 unknown、needed=false（不猜） :: [{'bucket': 'unknown', 'context': 'conditional', 'distribution': '', 'lines': [], 'local_path': '', 'module': 'lab_typo_helper', 'needed': False, 'resolution_source': '', 'via': ['labbroken.py']}]
+[02:58:56] PASS 静态计划：labmod 归 local、needed=false（本地模块不当 PyPI 包） :: [{'bucket': 'local', 'context': 'unconditional', 'distribution': '', 'lines': [6], 'local_path': 'labmod.py', 'module': 'labmod', 'needed': False, 'resolution_source': '', 'via': []}]
+[02:58:56] RESULT ENV-05: FAIL (12/13 checks)
+# exit_code: 1
+
+===== 最小复现（分类函数）（原始日志 ENV-05.classifier.probe.log）=====
+$ cd <worktree> && TAVOTTO_FONTS_DIR=<scratch>/fonts PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/env05_submodule_misclassified.py
+# date: 2026-09-24T18:59:51Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5  tree: clean-src
+"ModuleNotFoundError: No module named 'rdkit'"                                   -> missing_module='rdkit' (合同期望 'rdkit')
+"ModuleNotFoundError: No module named 'numpy.core._multiarray_umath'"            -> missing_module='numpy' (合同期望 '')
+"ModuleNotFoundError: No module named 'qa_subbroken_pkg._missing_sub'"           -> missing_module='qa_subbroken_pkg' (合同期望 '')
+DEVIATION: 2 条已安装包的内部子模块缺失被归为缺包
+# exit_code: 1
+
+===== pytest test_dependency_plan.py（原始日志 test_dependency_plan.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_dependency_plan.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:30:57Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 101 items
+
+tests/test_dependency_plan.py .......................................... [ 41%]
+.....s.....................................................              [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_dependency_plan.py:379: 3.10 才没有 tomllib
+======================== 100 passed, 1 skipped in 0.50s ========================
+# exit_code: 0
+

@@ -1,0 +1,85 @@
+{
+ "mode": "long01",
+ "seed": 0,
+ "minutes_budget": 16.0,
+ "wall_s": 962.6,
+ "iterations": 1733,
+ "counts": {
+  "render_ok": 27728,
+  "render_checked": 27728,
+  "revisits_equal": 27720,
+  "exports_ok": 867,
+  "undo": 9662,
+  "redo": 4202,
+  "kills": 0,
+  "faults": 0,
+  "recovered": 0,
+  "visible_errors": 0,
+  "project_cycles": 0
+ },
+ "first_failure": null,
+ "probe_error": null,
+ "stop": {
+  "clean_exit": true,
+  "leftover": []
+ },
+ "user_files_unchanged": true,
+ "user_files": {
+  "projB/fig.py": "8f71fa6dfaae305144117ff78ed17513a88612aed4ce8e4cd02077812106cfb1",
+  "projA/fig.py": "0933178dcc3dc27f00527aded9f81e3d5294753b6d25c07ba96bfd2445f91988",
+  "projA/data/points.csv": "6c16f53de6d1ae93aad515c324bb39b7bdafc8bbd4631a0f87d3f3cc06a7f0d1",
+  "projB/data/points.csv": "10e03f295cd3c0e60a629e9326e1412090047f363c2680f3e2f69532103cf34a"
+ },
+ "samples": 580,
+ "trend": {
+  "rss_kib": {
+   "first_after_warm": 245616,
+   "last": 189360,
+   "min": 144080,
+   "max": 250496
+  },
+  "rss_server_kib": {
+   "first_after_warm": 102032,
+   "last": 70880,
+   "min": 50272,
+   "max": 102240
+  },
+  "threads": {
+   "first_after_warm": 6,
+   "last": 6,
+   "min": 6,
+   "max": 7
+  },
+  "fds": {
+   "first_after_warm": 163,
+   "last": 163,
+   "min": 163,
+   "max": 163
+  },
+  "processes": {
+   "first_after_warm": 3,
+   "last": 3,
+   "min": 3,
+   "max": 3
+  },
+  "tmp_files": {
+   "first_after_warm": 0,
+   "last": 0,
+   "min": 0,
+   "max": 0
+  },
+  "cache_bytes": {
+   "first_after_warm": 84053,
+   "last": 3651948,
+   "min": 84053,
+   "max": 4074837
+  },
+  "export_bytes": {
+   "first_after_warm": 33560,
+   "last": 28797993,
+   "min": 33560,
+   "max": 28797993
+  }
+ },
+ "states_seen": 8
+}

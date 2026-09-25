@@ -1,0 +1,18 @@
+# verify rerun ENV-01/pytest_first_open_env
+# cmd: PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_environment.py -p no:cacheprovider -rs -v
+# head: 1f9f29099abe7d0448c44039e150ac9020cc6077
+# start(UTC): 2026-09-24T19:20:29Z
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env
+configfile: pytest.ini
+collected 13 items
+
+tests/test_first_open_environment.py ...........ss                       [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_first_open_environment.py:350: not_run：TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON 没有指向「支持矩阵外」的真实解释器
+SKIPPED [1] tests/test_first_open_environment.py:434: not_run：TAVOTTO_FOUNDATION_ALT_PYTHON 没有指向「另一个 minor 且装了 matplotlib」的解释器
+======================== 11 passed, 2 skipped in 20.98s ========================
+# end(UTC): 2026-09-24T19:20:50Z
+# exit_code: 0

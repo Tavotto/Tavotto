@@ -1,0 +1,51 @@
+# verify rerun ENV-04/probe
+# cmd: TAVOTTO_FONTS_DIR=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/fonts PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/env/repro/e1_http_probe_more.py ENV-04 --e1 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1 --out /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final
+# head: 1f9f29099abe7d0448c44039e150ac9020cc6077
+# start(UTC): 2026-09-24T19:11:51Z
+[03:11:51] scenario=ENV-04 e1=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1 port=5303
++ uv venv --python /opt/homebrew/opt/python@3.13/libexec/bin/python3 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv
++ uv pip install --offline --python /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/bin/python matplotlib==3.10.8 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/wheels/qa_probe_pkg-1.0.0-py3-none-any.whl
++ uv venv --python /opt/homebrew/opt/python@3.13/libexec/bin/python3 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv
++ uv pip install --offline --python /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv/bin/python matplotlib==3.10.8 /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/wheels/qa_probe_pkg-2.0.0-py3-none-any.whl
+[03:12:01] PASS 打开第二个项目 pB 得到项目 id :: 53c3b8fcc3d0
+[03:12:15] PASS pA / pB 准备都 ready :: ['ready', 'ready']
+[03:12:15] PASS pA 第一次: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[03:12:15] PASS pA 第一次: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[03:12:15] PASS pA 第一次: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/bin/python
+[03:12:15] PASS pA 第一次: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv
+[03:12:15] PASS pA 第一次: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[03:12:15] PASS pA 第一次: 包版本 :: 1.0.0
+[03:12:15] PASS pA 第一次: 图中完整点序列 :: [0, 9, 2, 10]
+[03:12:15] PASS pB（夹在两次 pA 之间）: 回执 runtime.python_version == 期望解释器版本 :: 3.13.11
+[03:12:15] PASS pB（夹在两次 pA 之间）: 回执 runtime.packages.matplotlib == 期望环境的 :: 3.10.8
+[03:12:15] PASS pB（夹在两次 pA 之间）: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv/bin/python
+[03:12:15] PASS pB（夹在两次 pA 之间）: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv
+[03:12:15] PASS pB（夹在两次 pA 之间）: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[03:12:15] PASS pB（夹在两次 pA 之间）: 包版本 :: 2.0.0
+[03:12:15] PASS pB（夹在两次 pA 之间）: 图中完整点序列 :: [1, 1, 1, 1]
+[03:12:15] PASS pA 第二次（pB 之后）: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/bin/python
+[03:12:15] PASS pA 第二次（pB 之后）: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv
+[03:12:15] PASS pA 第二次（pB 之后）: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[03:12:15] PASS pA 第二次（pB 之后）: 包版本 :: 1.0.0
+[03:12:15] PASS pA 第二次（pB 之后）: 图中完整点序列 :: [0, 9, 2, 10]
+[03:12:16] PASS 两个项目的环境状态各指自己项目内的 .venv :: {'pA': '.venv/bin/python', 'pB': '.venv/bin/python'}
+[03:12:16] PASS 前提：pA 的 .venv 里现在是 1.1.0 / [3, 1, 4, 1] :: [3, 1, 4, 1]
+[03:12:16] 观察：换依赖后不点重新构建直接渲染 → [0, 9, 2, 10]（热会话）
+[03:12:16] PASS 用户点「重新构建」：invalidated :: {'invalidated': True}
+[03:12:17] PASS 换依赖 + 重新构建后: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/bin/python
+[03:12:17] PASS 换依赖 + 重新构建后: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv
+[03:12:17] PASS 换依赖 + 重新构建后: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pA/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[03:12:17] PASS 换依赖 + 重新构建后: 包版本 :: 1.1.0
+[03:12:17] PASS 换依赖 + 重新构建后: 图中完整点序列 :: [3, 1, 4, 1]
+[03:12:17] PASS pB 不受 pA 换依赖影响: 图内身份 sys.executable == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv/bin/python
+[03:12:17] PASS pB 不受 pA 换依赖影响: 图内身份 sys.prefix == 期望 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv
+[03:12:17] PASS pB 不受 pA 换依赖影响: 包 __file__ 在期望环境里 :: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/pB/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py
+[03:12:17] PASS pB 不受 pA 换依赖影响: 包版本 :: 2.0.0
+[03:12:17] PASS pB 不受 pA 换依赖影响: 图中完整点序列 :: [1, 1, 1, 1]
+[03:12:17] PASS 换 Python 后：没有沿用旧模块（没有画出旧值） :: {'ok': False, 'status': 500, 'code': 'session_dead', 'message': '渲染进程退出了：退出码 1：Python 层的致命错误，或进程被外部终止；原因看下面的输出。会话已作废，下一次操作会重建。 它最后的输出在下面（完整日志：/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/final/ENV-04/work/data/cache/engine/99a051b3-figure.py/worker.log）。', 'module': None, 'project_env': None}
+[03:12:17] FAIL 换 Python 后（同一进程）：重新体检——计划写出 invalidated / discovery 拒绝原因，而不是旧的「健康」结论 :: {'prepare': 'session_dead', 'invalidated': None, 'discovery_ok': True}
+[03:12:32] 重启后 prepare: {"status": "error", "error": {"code": "missing_dependency", "message": "脚本用到的 qa_probe_pkg 在当前渲染环境里没有。可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 qa_probe_pkg 的 Python / Conda 环境。", "module": "qa_probe_pkg", "project_env": {"code": "project_env_no_matplotlib", "module": "qa_probe_pkg", "ok": false}}, "plan_env": {"source": "current_process", "trigger": "", "invalidated": {"python": null, "reason": "no_matplotlib", "trigger": "first_open"}, "error": null, "discovery": {"candidates": [".venv"], "code": "project_env_no_matplotlib", "ok": false, "rejected": [{"code": "project_env_no_matplotlib", "matp
+[03:12:32] PASS 重启后：重新体检、作废自动决定并说明原因（不静默换、不 crash） :: {'invalidated': {'python': None, 'reason': 'no_matplotlib', 'trigger': 'first_open'}, 'discovery': {'candidates': ['.venv'], 'code': 'project_env_no_matplotlib', 'ok': False, 'rejected': [{'code': 'project_env_no_matplotlib', 'matplotlib_version': '', 'python_version': '3.13.11', 'support': '', 'venv': '.venv'}]}}
+[03:12:32] RESULT ENV-04: FAIL (36/37 checks)
+# end(UTC): 2026-09-24T19:12:32Z
+# exit_code: 1

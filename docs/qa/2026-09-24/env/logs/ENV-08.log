@@ -1,0 +1,29 @@
+# case: ENV-08 Conda/其它管理器
+# source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# 各节开头是逐字命令与时间；<worktree> 是仓库根，<scratch> 是 QA scratch 目录
+
+===== which conda mamba micromamba pyenv + ls 常见安装根（原始日志 which_conda.log）=====
+conda not found
+mamba not found
+micromamba not found
+pyenv not found
+ls: ~/.pyenv: No such file or directory
+ls: ~/anaconda3: No such file or directory
+ls: ~/miniconda3: No such file or directory
+ls: ~/miniforge3: No such file or directory
+# exit_code: 1
+
+===== pytest test_user_environments.py（原始日志 test_user_environments.log）=====
+$ PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_user_environments.py -p no:cacheprovider -rs -v
+# date: 2026-09-24T18:30:58Z  source_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-3
+configfile: pytest.ini
+collected 17 items
+
+tests/test_user_environments.py .................                        [100%]
+
+============================== 17 passed in 0.71s ==============================
+# exit_code: 0
+

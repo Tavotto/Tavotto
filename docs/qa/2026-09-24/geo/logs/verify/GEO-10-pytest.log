@@ -1,0 +1,12 @@
+# verify: GEO-10-pytest
+# time: 2026-09-25T03:23:11 (+5s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/src PYTHONDONTWRITEBYTECODE=1 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -p no:cacheprovider -q -rA tests/test_geometry_reference.py tests/test_layout_engine_pinning.py -k "moved_label or tight_layout"
+..                                                                       [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_geometry_reference.py::test_moved_label_keeps_its_anchor_and_unmoved_text_keeps_reflowing
+PASSED tests/test_layout_engine_pinning.py::test_a_persistent_tight_layout_no_longer_eats_edited_positions
+[exit=0]
+

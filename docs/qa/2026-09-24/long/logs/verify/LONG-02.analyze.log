@@ -1,0 +1,136 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/long/repro/analyze_samples.py <scratch>/qa/vlong/run-long02 3
+# start: 2026-09-24T20:20:53Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+{
+ "run": "run-long02",
+ "samples_total": 120,
+ "samples_used": 117,
+ "metrics": {
+  "rss_kib": {
+   "first": 140592.0,
+   "last": 89056.0,
+   "min": 81792.0,
+   "max": 143536.0,
+   "slope_per_hour": -345657.26,
+   "growth_over_span": -55305.2,
+   "median_first_third": 142016.0,
+   "median_last_third": 87584.0
+  },
+  "rss_server_kib": {
+   "first": 102192.0,
+   "last": 60256.0,
+   "min": 54064.0,
+   "max": 104864.0,
+   "slope_per_hour": -281961.66,
+   "growth_over_span": -45113.9,
+   "median_first_third": 103552.0,
+   "median_last_third": 58960.0
+  },
+  "fds": {
+   "first": 87.0,
+   "last": 87.0,
+   "min": 87.0,
+   "max": 87.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 87.0,
+   "median_last_third": 87.0
+  },
+  "fds_server": {
+   "first": 55.0,
+   "last": 55.0,
+   "min": 55.0,
+   "max": 55.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 55.0,
+   "median_last_third": 55.0
+  },
+  "threads": {
+   "first": 4.0,
+   "last": 4.0,
+   "min": 4.0,
+   "max": 4.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 4.0,
+   "median_last_third": 4.0
+  },
+  "threads_server": {
+   "first": 2.0,
+   "last": 2.0,
+   "min": 2.0,
+   "max": 2.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 2.0,
+   "median_last_third": 2.0
+  },
+  "processes": {
+   "first": 2.0,
+   "last": 2.0,
+   "min": 2.0,
+   "max": 2.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 2.0,
+   "median_last_third": 2.0
+  },
+  "workers": {
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 0.0,
+   "median_last_third": 0.0
+  },
+  "tmp_files": {
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0,
+   "slope_per_hour": 0.0,
+   "growth_over_span": 0.0,
+   "median_first_third": 0.0,
+   "median_last_third": 0.0
+  },
+  "cache_bytes": {
+   "first": 171913.0,
+   "last": 1704567.0,
+   "min": 171913.0,
+   "max": 1704567.0,
+   "slope_per_hour": 9570642.64,
+   "growth_over_span": 1531302.8,
+   "median_first_third": 423904.0,
+   "median_last_third": 1459003.0
+  },
+  "export_bytes": {
+   "first": 311285.0,
+   "last": 14692652.0,
+   "min": 311285.0,
+   "max": 14692652.0,
+   "slope_per_hour": 89799516.22,
+   "growth_over_span": 14367922.6,
+   "median_first_third": 2677051.0,
+   "median_last_third": 12389143.0
+  }
+ },
+ "span_hours": 0.16,
+ "verdicts": {
+  "rss_kib": "stable",
+  "rss_server_kib": "stable",
+  "fds": "stable",
+  "fds_server": "stable",
+  "threads": "stable",
+  "threads_server": "stable",
+  "processes": "stable",
+  "workers": "stable",
+  "tmp_files": "stable"
+ },
+ "verdict": "stable"
+}
+# end: 2026-09-24T20:20:53Z
+# exit: 0

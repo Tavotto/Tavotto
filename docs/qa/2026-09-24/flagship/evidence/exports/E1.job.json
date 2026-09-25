@@ -1,0 +1,166 @@
+{
+ "conflicts": [],
+ "document_revision": "df9a4f59423a86d7",
+ "error": null,
+ "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/flagship/fixture/paper/tavottofile/export",
+ "job_id": "6422c09a053c48d4",
+ "outputs": [
+  {
+   "bytes": 13143,
+   "dimensions": {
+    "mm": [
+     177.8,
+     81.28
+    ],
+    "px": null
+   },
+   "error": null,
+   "format": "pdf",
+   "manifest": {
+    "backend": "rendercore",
+    "bytes": 13143,
+    "carrier": "vector",
+    "checks": {
+     "carrier": "verified",
+     "clipping": "unknown",
+     "fonts_embedded": "verified",
+     "image_ppi": "not_applicable",
+     "integrity": "verified",
+     "size": "verified",
+     "text_layer": "unknown"
+    },
+    "dpi": null,
+    "fonts_used": [
+     "DejaVuSans"
+    ],
+    "format": "pdf",
+    "identity": {
+     "artifact": "78db22efacb74fdd3c49e569d9ead32597926c3c6e6d8b980d09c420a3294d4c",
+     "identity_version": 1,
+     "render": null,
+     "run": "6422c09a053c48d4",
+     "semantic": null
+    },
+    "manifest_version": 1,
+    "notes": [
+     "计划里没有期望的文字行，文字层只抽不比",
+     "没有对象包围盒，裁切只对计划里的对象可判——本次无对象可判"
+    ],
+    "plan_identity": null,
+    "policy": "standard",
+    "provenance": {
+     "execution_receipts": [],
+     "nodes": [],
+     "nodes_truncated": false,
+     "receipts": [],
+     "sources": []
+    },
+    "px": null,
+    "required": [
+     "integrity",
+     "size"
+    ],
+    "sha256": "78db22efacb74fdd3c49e569d9ead32597926c3c6e6d8b980d09c420a3294d4c",
+    "size_pt": [
+     504,
+     230.4
+    ],
+    "verdict": "accepted"
+   },
+   "name": "qa_E1.pdf",
+   "replaced": false,
+   "status": "done",
+   "url": "/exports/qa_E1.pdf",
+   "vector": true
+  },
+  {
+   "bytes": 4136,
+   "dimensions": {
+    "mm": null,
+    "px": null
+   },
+   "error": null,
+   "format": "report",
+   "manifest": null,
+   "name": "qa_E1_style-check.json",
+   "replaced": false,
+   "status": "done",
+   "url": "/exports/qa_E1_style-check.json",
+   "vector": false
+  }
+ ],
+ "progress": {
+  "phase": "done",
+  "step": 2,
+  "total": 2
+ },
+ "request": {
+  "acknowledged": [
+   "out-of-page"
+  ],
+  "background": "white",
+  "document_id": "d_ho03hj7o",
+  "document_revision": "df9a4f59423a86d7",
+  "figure_id": "Fig_flagship.pdf",
+  "filename": "qa_E1",
+  "formats": [
+   "pdf"
+  ],
+  "include_report": true,
+  "inspection": {
+   "mode": "standard",
+   "profile_id": null
+  },
+  "overwrite": "ask",
+  "ppi": null,
+  "scope": "original",
+  "validation_policy": "acknowledged"
+ },
+ "status": "done",
+ "timing": {
+  "elapsed_ms": 114,
+  "finished_at": 1790278034.249772,
+  "started_at": 1790278034.1354072
+ },
+ "trace": {
+  "current_phase": "report",
+  "dropped": 0,
+  "events": [
+   {
+    "at_ms": 0.128,
+    "facts": {
+     "formats": 1
+    },
+    "outcome": "ok",
+    "phase": "prepare"
+   },
+   {
+    "at_ms": 0.538,
+    "outcome": "ok",
+    "phase": "source"
+   },
+   {
+    "at_ms": 104.139,
+    "outcome": "ok",
+    "phase": "inspect"
+   },
+   {
+    "at_ms": 113.552,
+    "outcome": "ok",
+    "phase": "publish"
+   },
+   {
+    "at_ms": 113.94,
+    "outcome": "ok",
+    "phase": "report"
+   }
+  ],
+  "failed_code": null,
+  "failed_phase": null,
+  "limit": 64,
+  "trace_version": 1,
+  "truncated": false
+ },
+ "validation_summary": {},
+ "warnings": []
+}

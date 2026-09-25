@@ -1,0 +1,34 @@
+# cmd: gh release download v0.16.0 -R Tavotto/Tavotto -p Tavotto.app.tar.gz -D /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/rel-assets --clobber && bash docs/qa/2026-09-24/rel/repro/compare_installed_app_to_release.sh /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/rel-assets/Tavotto.app.tar.gz /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/app-extract
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:29:53Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+tarball sha256: af900af2b703cc044e72192a66934bb069cb6eba28baca29f4c620f1858ab712
+release main exe:   7c730f1b19450a3a185248574a5530745b694202efd0a0cccefb25043d2d4164
+installed main exe: 7c730f1b19450a3a185248574a5530745b694202efd0a0cccefb25043d2d4164
+-- pristine release app: codesign --verify --deep --strict
+pristine_verify_exit=0
+-- __pycache__ dirs under tavotto/engine in release vs installed
+release:   0
+installed: 1
+-- file-set diff (installed minus release), relative paths
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/axestraversal.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/bridgeboot.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/colorbarmodel.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/figcapture.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/figsession.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/legendmodel.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/manifest.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/overrides.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/patchspec.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/pathgeom.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/preview_complexity.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/preview_hybrid.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/previewbudget.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/spinemodel.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/tickmodel.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/wireproto.cpython-313.pyc
+./Contents/Resources/sidecar/Tavotto/_internal/tavotto/engine/__pycache__/worker.cpython-313.pyc
+-- files in release missing from installed
+-- content diffs among common files (sha256 mismatch)
+done
+# exit: 0

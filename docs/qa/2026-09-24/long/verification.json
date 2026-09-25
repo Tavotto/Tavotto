@@ -1,0 +1,214 @@
+{
+ "section": "§7 长时运行、随机序列与故障恢复（long）",
+ "audited_branch": "qa/2026-09-24-long",
+ "audited_commit": "d566c865a34f1cf9a1aceb849b43478d780ddd4b",
+ "baseline_sha": "62af729c2f84652bf3979c25b0c3117fcfa756a5",
+ "verifier_environment": {
+  "os": "macOS / Darwin 27.0.0 arm64（与执行者同一台机器）",
+  "python_backend": "/Volumes/Projects/Tavotto/.venv/bin/python + PYTHONPATH=<worktree>/src + PYTHONDONTWRITEBYTECODE=1",
+  "worker_python": "/opt/homebrew/opt/python@3.13/libexec/bin/python3（TAVOTTO_WORKER_PYTHON）",
+  "fonts": "TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts（只读引用）",
+  "frontend": "pnpm install --frozen-lockfile --prefer-offline；vitest 4.1.11；NODE_OPTIONS=--no-experimental-webstorage",
+  "port": 5407,
+  "data_dirs": "全部在 scratch（probe 的 run 目录下 data/config/home/tmp）；未碰 5089 与用户数据目录",
+  "worktree": "detached worktree @ d566c865（分支已被执行者 worktree 占用，改用 detached 后 fast-forward 回分支）",
+  "time_utc": "2026-09-24T19:56Z – 2026-09-24T20:40Z"
+ },
+ "ledger_integrity": {
+  "all_spec_case_ids_present": true,
+  "spec_case_ids": [
+   "LONG-01",
+   "LONG-02",
+   "LONG-03",
+   "RAND-01",
+   "RAND-02"
+  ],
+  "fields_complete": true,
+  "evidence_sha256_all_match": true,
+  "notes": "6 个 evidence 日志 sha256 与 ledger 一致；日志头里的 sha 是压缩前的 WIP 提交（12e4ea60 / 4dbc424d），git diff 62af729c..d566c865 -- src web 为空，产品代码与基线一致。"
+ },
+ "cases": [
+  {
+   "case_id": "LONG-01",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "note": "按 ledger 参数（16 min，端口改 5407）重跑：1 733 轮、27 728/27 728 渲染过五条不变量、27 720 次历史回访相等、undo 9 662/redo 4 202、867 次导出；check_exports 867 PDF + 867 PNG、missing 0、problem 0；exit 0，无残留。父进程 RSS drift 复现且更明显：前 1/3 中位数 53.8 MiB → 后 1/3 72.3 MiB（执行者 16 min 档 49→56），analyze_samples 判 rss_server_kib=drift，FD/线程/进程 stable。35 min 档超过 15 分钟未重跑。partial 成立。断言主语核对：锚点不变量比的是 manifest 实测 anchor（draw 后量）与测试侧声明值，不调用生产坐标换算，主语对。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-01.probe.log",
+     "sha256": "7a09e57427d0044f2fbfe720388095bd33cba0aa03d411f3d7724e935d3b60a5"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/run-long01.summary.json",
+     "sha256": "3f11b151fbc563b6e0e325dc585bf004bf937bf661c5a25f21f64bd04b07ff2d"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-01.analyze.log",
+     "sha256": "8270f4d78ad7d8becf74e4f3d718160775e2c4d2e06d2f51227d71016a3c4c6f"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-01.check_exports.log",
+     "sha256": "0a022519672e1918ff44a29c6779fd5101fe729f1faa10b1fd0251474a50fb83"
+    }
+   ]
+  },
+  {
+   "case_id": "LONG-02",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "pass",
+   "note": "10 min 重跑：236 个 A→B 循环、2 832/2 832 渲染通过、472 次导出，关闭后 worker 为 0，FD 87/线程 4/进程 2 恒定，analyze_samples 判 stable，exit 0。执行者没做变异，复核补了一条 M4（close_project 不调 engine_pool.shutdown_all）：1 min 档第 1 个循环就红（「关闭项目 3.5 s 后仍有 worker 进程」，exit 1），回收判据是活的。补充一条导出层串项目检查：projA/projB 各自的 PDF/PNG sha256 全程只有 1 个且两项目不重叠。剩余缺口（不影响在已覆盖范围内判 pass）：监听器没单独量；循环里两个项目从不同时打开，所以同时打开时是否复用 worker 没测到（规范的循环形状本来也不要求）。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-02.probe.log",
+     "sha256": "6799e9a5235ff90d7e6ee6222bca8342ed34543c7823d7aaa599e724825f1742"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/run-long02.summary.json",
+     "sha256": "90a7642442dd0891b69b7bc0789a641424b8fb4ad9c08d8290f72817cd3353dd"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-02.analyze.log",
+     "sha256": "1af1ac99a5639d9449bf89549cf17425b8308c012250e317b18078b85427a3e3"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-02.mutation-M4.log",
+     "sha256": "dd390371d13935365cea619b13b420464a398a34d84ade6b0e45df9b3c99c352"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-02.export-hash-by-project.log",
+     "sha256": "f22c4cdb0a14be44a9b9036464f92f5eab2ae57acf3e417dc5cbb9c7fb4dd584"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/mutations.diff.log",
+     "sha256": "744c198992b557b478d331c78bb1b3cfb0d1f73c0c67258f7f85713fcb2dd0dd"
+    }
+   ]
+  },
+  {
+   "case_id": "LONG-03",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "partial",
+   "note": "数字复现：10 min 档 560/560 故障恢复（523 次 kill），8 384/8 384 渲染通过，exit 0；vitest 57/57；前端 latest 变异复做后红 2 条、还原后 17/17 绿、git status 干净；worker_death_classification.py exit 1（窗口 A code=''，窗口 B BrokenPipeError），P3 成立。补跑 3 min 档后 check_exports 128+128、missing 0。**降级为 partial 的原因**：(1) 规范列了 7 类故障，只做了杀 worker（请求间/请求中）一类，外加导出目录只读（代替数据目录断开）；磁盘满（可用 hdiutil 挂小 RAM 盘）和数据目录断开（改名或卸载 DMG）在本机都能做，环境准备取消也能走 API，这几项没做不是因为本机做不到。(2)「当前文档不损坏」是在 probe 自己持有的 patch 列表上验证的；后端无状态，真正的文档在前端 store，故障下前端文档这一侧没测到。(3) kill_between 分支只数了失败次数，没断言失败响应带非空错误文字（只有 kill_during 分支断言了）。(4) 就在这条错误路径上发现了 P3 分类分叉。这些情况下判 pass 是把『已执行子集全过』说成了『验收满足』。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-03.probe.log",
+     "sha256": "f21ed9034b4c6bc0e81942eb603692f97cba73bbd2bce7aff67c7a9b05ac680e"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/run-long03.summary.json",
+     "sha256": "128b2512ca2a0207e4b2421b3902128b827bd5c6dbad9f31639d3065fbb166db"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-03.analyze.log",
+     "sha256": "d8475736f4401d6852e08717f040083bf19eb90b3026b39fc0c210db30d3a621"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-03.vitest.log",
+     "sha256": "f03506b516b486fb34b960a0022efa30fb07e0846e44e169eeebf15a8885cc75"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-03.mutation-latest.log",
+     "sha256": "2f48d118735b08437f4b90c0c2ca03db28e24aeee427694ade48a8e737359fa7"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-03.mutation-restored.log",
+     "sha256": "3cb1fd79a942bd2819b6651fb88f295970bb6f2c59a9cccebc3cbe52c8d9b93a"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-03.worker_death.log",
+     "sha256": "51dc2fdeed154bc68c0e1b8c9fd71f2bf1fa21c55d434e04ad29780429866768"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-03.short3min.log",
+     "sha256": "0ec12284094b9edeea435fd11679ff78a7319554db90f0785ba7dfe52e814b60"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/run-long03b.summary.json",
+     "sha256": "f2408b76050fc416f204a387e6fb1600a6c8aea0bfb0f550214cc1187aaafd5c"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-03.short3min.check_exports.log",
+     "sha256": "410fc44a08c7ae358e87c05f3d67ffc42579f510ac128a0b89921c4a8830ed08"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/LONG-03.check_exports.log",
+     "sha256": "96aa36ed10e7865af6b5e1d43aa1db9643073960505b0bf8e92116974993012f"
+    }
+   ]
+  },
+  {
+   "case_id": "RAND-01",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "pass",
+   "audited_verdict": "partial",
+   "note": "计数复现：默认 8 passed；16 种子 34 passed；校准锚点残差 ≤2.8e-16；变异 M1（_is_geometry_key 全部 return False，实为 3 处，ledger 写的是『两处』）→ 新用例 5 failed、旧用例 0 failed，与执行者一致。补做变异 M3（patch pos_frac setter 偏 0.01）→ 3 failed，不变式 2 能抓到 patch 拖动。**降级为 partial 的原因**：(1) 变异 M2（文字 pos_frac setter 偏 0.01）存活，33 passed。InvMix/InvCont 里可拖的只有 patches_0..2 和 legend，没有一个文字元素可拖，新用例 docstring 当靶子的 FigS3『先拖文字再挪子图』这条路径从没执行过。(2) undo/redo 是测试自己的栈模型在切换全量 patch 列表；引擎无状态，产品真正的撤销实现（前端 documentStore）没被测到，这里量的是『同一列表重放出同一结果』。(3) 不变式 1 HOT==REPLAY 两侧是同一套实现做差分，不是规范说的独立参考模型；独立的只有锚点这一条。(4) 选择、对齐、视图倍率、取消、旧响应、保存重开都缺；『引擎层做不到』属实，但前端有 documentStore.sequences.test.ts 可以接，不是本机做不到；规范要求的有效/正确拒绝/no-op 统计也没有进用例输出。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/RAND-01.default.log",
+     "sha256": "45b40bfa210f39ca3a2f7a748a4f234e82a21e9714aebf92bd6295bf77146bb4"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/RAND-01.hist16.log",
+     "sha256": "3e18c7aa315c880c7f3211ab0f3f21415cca872b9b6a918249a203cfe01380f1"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/RAND-01.calibration.log",
+     "sha256": "8b440a71dbe6f22065f98fe0c7ed4f6f384214cc55327efac07351ff56317aed"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/RAND-01.mut1.log",
+     "sha256": "a1c3dcd5d9870be04a94a178ef43db1b5a053da344e7b15dd090a2110495d2d1"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/RAND-01.mut2.log",
+     "sha256": "54edcf0ecb1558a6e39048fe0db3e550fe2f7bb71fe5b97625b647c6c4e04266"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/RAND-01.mut3.log",
+     "sha256": "e166ffed3934d416305992551653731bd07235ccd352d7e0591571be8b81286b"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/RAND-01.draggable-elements.log",
+     "sha256": "d148c85bb4bc3399ce1054e0dc6f01c80738e5d8b326fc4c2f6fcc00ab4e5f7f"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/mutations.diff.log",
+     "sha256": "744c198992b557b478d331c78bb1b3cfb0d1f73c0c67258f7f85713fcb2dd0dd"
+    }
+   ]
+  },
+  {
+   "case_id": "RAND-02",
+   "rerun": true,
+   "matches": true,
+   "original_verdict": "partial",
+   "audited_verdict": "partial",
+   "note": "默认 25 passed/1 skipped，32 种子 73 passed/1 skipped。skip 核实为 KNOWN 为空列表导致的空参数集（tests/test_override_sequences.py:537），不是把失败藏成 skip。rand_effective_ops：有效步 0.972 / 0.984，rejected 0，geometry_prop_occurrences 0，与执行者一致。partial 成立；『对高风险混合选择加种子』也没做。",
+   "evidence": [
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/RAND-02.default.log",
+     "sha256": "a43d8ef66266d929fd7029a8afdf7e04e9180d1e3791387a226bdeb0e404d95f"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/RAND-02.seq32.log",
+     "sha256": "7f10be942441a822f5bfc4714e4d10db5420ef6291d8568cec52ee4f95d917a3"
+    },
+    {
+     "path": "docs/qa/2026-09-24/long/logs/verify/RAND-02.effective_ops.log",
+     "sha256": "de9725b785ca885d5b0b43aa6068ac08e0b131d5123fae1fa3df5f5038e99a03"
+    }
+   ]
+  }
+ ],
+ "tooling_findings": [
+  "check_exports.py 把输入缺失当成通过：导出文件被下一档 probe 启动时的 rmtree(tavottofile) 删掉后，它报 checked pdf=0/png=0、missing_files=862，仍然 exit 0（见 logs/verify/LONG-03.check_exports.log）。执行者记录的几次都是 missing 0，结论不受影响；但 ledger 里 LONG-03 的 check_exports 命令只有在 run_long_suite.sh 把 LONG-03 排在最后时才有效，单独按 case 重跑会静默变成空检查。",
+  "run_long_suite.sh 端口写死为 probe 默认的 5307，没有传 --port；复核按约定逐档手动加 --port 5407，其余参数不变。"
+ ]
+}

@@ -1,0 +1,94 @@
+{
+ "mode": "long03",
+ "seed": 0,
+ "minutes_budget": 10.0,
+ "wall_s": 603.8,
+ "iterations": 489,
+ "counts": {
+  "render_ok": 8384,
+  "render_checked": 8384,
+  "revisits_equal": 8376,
+  "exports_ok": 431,
+  "undo": 2693,
+  "redo": 1219,
+  "kills": 523,
+  "faults": 560,
+  "recovered": 560,
+  "visible_errors": 490,
+  "project_cycles": 0,
+  "between_codes": {
+   "'session_dead'": 186,
+   "200": 1
+  },
+  "during_codes": {
+   "None": 31,
+   "not_mid_request": 38,
+   "session_dead": 118
+  }
+ },
+ "first_failure": null,
+ "probe_error": null,
+ "stop": {
+  "clean_exit": true,
+  "leftover": []
+ },
+ "user_files_unchanged": true,
+ "user_files": {
+  "projB/fig.py": "8f71fa6dfaae305144117ff78ed17513a88612aed4ce8e4cd02077812106cfb1",
+  "projA/fig.py": "0933178dcc3dc27f00527aded9f81e3d5294753b6d25c07ba96bfd2445f91988",
+  "projA/data/points.csv": "6c16f53de6d1ae93aad515c324bb39b7bdafc8bbd4631a0f87d3f3cc06a7f0d1",
+  "projB/data/points.csv": "10e03f295cd3c0e60a629e9326e1412090047f363c2680f3e2f69532103cf34a"
+ },
+ "samples": 166,
+ "trend": {
+  "rss_kib": {
+   "first_after_warm": 246000,
+   "last": 199568,
+   "min": 177728,
+   "max": 246000
+  },
+  "rss_server_kib": {
+   "first_after_warm": 102064,
+   "last": 66528,
+   "min": 61808,
+   "max": 102064
+  },
+  "threads": {
+   "first_after_warm": 6,
+   "last": 6,
+   "min": 6,
+   "max": 6
+  },
+  "fds": {
+   "first_after_warm": 163,
+   "last": 163,
+   "min": 157,
+   "max": 163
+  },
+  "processes": {
+   "first_after_warm": 3,
+   "last": 3,
+   "min": 3,
+   "max": 3
+  },
+  "tmp_files": {
+   "first_after_warm": 0,
+   "last": 0,
+   "min": 0,
+   "max": 0
+  },
+  "cache_bytes": {
+   "first_after_warm": 84050,
+   "last": 3751386,
+   "min": 84050,
+   "max": 3751386
+  },
+  "export_bytes": {
+   "first_after_warm": 32518,
+   "last": 14283686,
+   "min": 32518,
+   "max": 14283686
+  }
+ },
+ "states_seen": 8
+}

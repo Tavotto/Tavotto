@@ -1,0 +1,62 @@
+# verify: GEO-01-legend-jump-repro
+# time: 2026-09-25T03:26:52 (+19s)
+# HEAD: cd848fe239c6eeb7d9c02c66e640988bdd0288dd
+# cwd: <verify worktree root>
+$ cp docs/qa/2026-09-24/geo/repro/legend-jump.repro.spec.ts web/e2e/ && (cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 PYTHONPATH=$PWD/../src npx playwright test e2e/legend-jump.repro.spec.ts --project=chromium); rc=$?; rm web/e2e/legend-jump.repro.spec.ts; exit $rc
+
+Running 1 test using 1 worker
+
+[GEO legend repro] 误差 (-1.490,-0.001) CSS px
+[e2e] app-0 进程输出（尾部）:
+2026-09-25 03:26:53,797 INFO pikepdf._core: pikepdf C++ to Python logger bridge initialized
+2026-09-25 03:26:53,816 WARNING tavotto: RenderCore 预热未完成：批准字体不全：缺 ['LiberationMono-Bold', 'LiberationMono-BoldItalic', 'LiberationMono-Italic', 'LiberationMono-Regular', 'LiberationSans-Bold', 'LiberationSans-BoldItalic', 'LiberationSans-Italic', 'LiberationSans-Regular', 'LiberationSerif-Bold', 'LiberationSerif-BoldItalic', 'LiberationSerif-Italic', 'LiberationSerif-Regular', 'NotoSansSC-Regular']（先跑 scripts/fetch_fonts.py）
+2026-09-25 03:26:54,072 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-U80GCy/figures → 3 个素材
+2026-09-25 03:26:54,156 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:26:54,239 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:26:54,240 INFO tavotto.engine: 渲染解释器: /opt/homebrew/opt/python@3.13/libexec/bin/python3（来源 env_override）
+2026-09-25 03:26:54,252 INFO tavotto: 素材扫描: /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-U80GCy/figures → 3 个素材
+2026-09-25 03:26:54,431 INFO tavotto.engine: worker 启动: fig1_kinetics.py（entry=main，解释器来源=env_override）
+2026-09-25 03:27:06,721 INFO tavotto: 引擎渲染: Fig1_kinetics 12445ms（冷启动） timings={"build_total_ms": 12251.564, "canvas_draw_ms": 14.362, "manifest_ms": 16.444, "patch_apply_ms": 0.31, "preview_plan_ms": 0.035, "queue_wait_ms": 0.001, "script_build_ms": 163.644, "script_exec_ms": 17.522, "server_ms": 12444.64, "total_ms": 33.269, "worker_get_ms": 157.761}
+2026-09-25 03:27:09,639 INFO tavotto: 引擎渲染: Fig1_kinetics 36ms timings={"canvas_draw_ms": 14.795, "manifest_ms": 17.815, "patch_apply_ms": 0.411, "preview_plan_ms": 0.032, "queue_wait_ms": 0.0, "server_ms": 35.728, "total_ms": 35.179, "worker_get_ms": 0.426}
+
+  ✘  1 [chromium] › e2e/legend-jump.repro.spec.ts:76:1 › 图例整组 / 单独平移：权威重渲染后图例墨迹框应平移 Δs（已知缺陷：多走约 1 pt） (17.8s)
+
+
+  1) [chromium] › e2e/legend-jump.repro.spec.ts:76:1 › 图例整组 / 单独平移：权威重渲染后图例墨迹框应平移 Δs（已知缺陷：多走约 1 pt） 
+
+    Error: expect(received).toBeLessThanOrEqual(expected)
+
+    Expected: <= 0.5
+    Received:    1.489501953125
+
+      85 |   const err = [l1.x - l0.x - ds[0], l1.y - l0.y - ds[1]]
+      86 |   console.log(`[GEO legend repro] 误差 (${err.map((v) => v.toFixed(3))}) CSS px`)
+    > 87 |   expect(Math.abs(err[0])).toBeLessThanOrEqual(BUDGET_PX)
+         |                            ^
+      88 |   expect(Math.abs(err[1])).toBeLessThanOrEqual(BUDGET_PX)
+      89 | })
+      90 |
+        at /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-geo/web/e2e/legend-jump.repro.spec.ts:87:28
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/legend-jump.repro-图例整组-单独平移：权威重渲染后图例墨迹框应平移-Δs（已知缺陷：多走约-1-pt）-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/legend-jump.repro-图例整组-单独平移：权威重渲染后图例墨迹框应平移-Δs（已知缺陷：多走约-1-pt）-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/legend-jump.repro-图例整组-单独平移：权威重渲染后图例墨迹框应平移-Δs（已知缺陷：多走约-1-pt）-chromium/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/legend-jump.repro-图例整组-单独平移：权威重渲染后图例墨迹框应平移-Δs（已知缺陷：多走约-1-pt）-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/legend-jump.repro-图例整组-单独平移：权威重渲染后图例墨迹框应平移-Δs（已知缺陷：多走约-1-pt）-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › e2e/legend-jump.repro.spec.ts:76:1 › 图例整组 / 单独平移：权威重渲染后图例墨迹框应平移 Δs（已知缺陷：多走约 1 pt） ─
+[exit=1]
+

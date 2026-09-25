@@ -1,0 +1,3382 @@
+{
+  "scenario": "ENV-02",
+  "ok": false,
+  "crashed": null,
+  "checks": [
+    {
+      "check": "前提：Tavotto 自身 / 内置解释器里 import 不到 qa_probe_pkg",
+      "ok": true,
+      "detail": "/Volumes/Projects/Tavotto/.venv/bin/python"
+    },
+    {
+      "check": "前提：PATH 上第一个 python 是 B 且 import 得到 qa_probe_pkg",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/envB/.venv [1, 1, 1, 1]"
+    },
+    {
+      "check": "prepare 终局 ready（无需输入）",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "计划选择来源 = project_venv",
+      "ok": false,
+      "detail": "current_process"
+    },
+    {
+      "check": "计划 trigger = first_open",
+      "ok": false,
+      "detail": ""
+    },
+    {
+      "check": "准备回执 python_source = project_venv、generation = 1、pid_check ok",
+      "ok": false,
+      "detail": {
+        "python_source": "project_venv",
+        "generation": 2,
+        "pid_check": "ok",
+        "completeness": "complete"
+      }
+    },
+    {
+      "check": "首次渲染: 回执 runtime.python_version == 期望解释器版本",
+      "ok": true,
+      "detail": "3.13.11"
+    },
+    {
+      "check": "首次渲染: 回执 runtime.packages.matplotlib == 期望环境的",
+      "ok": true,
+      "detail": "3.10.8"
+    },
+    {
+      "check": "首次渲染: 图内身份 sys.executable == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/bin/python"
+    },
+    {
+      "check": "首次渲染: 图内身份 sys.prefix == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv"
+    },
+    {
+      "check": "首次渲染: 包 __file__ 在期望环境里",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py"
+    },
+    {
+      "check": "首次渲染: 包版本",
+      "ok": true,
+      "detail": "1.0.0"
+    },
+    {
+      "check": "首次渲染: 图中完整点序列",
+      "ok": true,
+      "detail": [
+        0,
+        9,
+        2,
+        10
+      ]
+    },
+    {
+      "check": "找到可编辑的曲线颜色",
+      "ok": true,
+      "detail": [
+        "label",
+        "color",
+        "linewidth",
+        "linestyle",
+        "alpha",
+        "visible",
+        "marker",
+        "markersize",
+        "markerfacecolor",
+        "markeredgecolor",
+        "zorder"
+      ]
+    },
+    {
+      "check": "编辑后渲染: 回执 runtime.python_version == 期望解释器版本",
+      "ok": true,
+      "detail": "3.13.11"
+    },
+    {
+      "check": "编辑后渲染: 回执 runtime.packages.matplotlib == 期望环境的",
+      "ok": true,
+      "detail": "3.10.8"
+    },
+    {
+      "check": "编辑后渲染: 图内身份 sys.executable == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/bin/python"
+    },
+    {
+      "check": "编辑后渲染: 图内身份 sys.prefix == 期望",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv"
+    },
+    {
+      "check": "编辑后渲染: 包 __file__ 在期望环境里",
+      "ok": true,
+      "detail": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py"
+    },
+    {
+      "check": "编辑后渲染: 包版本",
+      "ok": true,
+      "detail": "1.0.0"
+    },
+    {
+      "check": "编辑后渲染: 图中完整点序列",
+      "ok": true,
+      "detail": [
+        0,
+        9,
+        2,
+        10
+      ]
+    },
+    {
+      "check": "导出 status == done",
+      "ok": true,
+      "detail": "done"
+    },
+    {
+      "check": "导出 PDF 文字层含 A 的点序列",
+      "ok": true,
+      "detail": "0 1 2 3\r\n0\r\n2\r\n4\r\n6\r\n8\r\n10\r\nQA-E1 [0, 9, 2, 10]\r\nID {\"base_prefix\": \"/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13\", \"executable\": \"/private/tmp/claude-501/-Volumes-Projects-"
+    },
+    {
+      "check": "导出 PDF 文字层不含 B 的点序列",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "导出 PDF 文字层含 A 的包路径",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "导出 manifest 回执 python_version 与 A 一致",
+      "ok": true,
+      "detail": "3.13.11"
+    },
+    {
+      "check": "服务日志里没有 missing_dependency（没有先在内置环境跑错一次）",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "副作用：A 包清单不变",
+      "ok": true,
+      "detail": {
+        "dists_added": [],
+        "dists_removed": [],
+        "files_added": [],
+        "files_removed": [],
+        "files_changed": []
+      }
+    },
+    {
+      "check": "副作用：A 文件（白名单外）不变",
+      "ok": true,
+      "detail": {
+        "dists_added": [],
+        "dists_removed": [],
+        "files_added": [],
+        "files_removed": [],
+        "files_changed": []
+      }
+    },
+    {
+      "check": "副作用：B 包清单不变",
+      "ok": true,
+      "detail": {
+        "dists_added": [],
+        "dists_removed": [],
+        "files_added": [],
+        "files_removed": [],
+        "files_changed": []
+      }
+    },
+    {
+      "check": "副作用：B 文件（白名单外）不变",
+      "ok": true,
+      "detail": {
+        "dists_added": [],
+        "dists_removed": [],
+        "files_added": [],
+        "files_removed": [],
+        "files_changed": []
+      }
+    }
+  ],
+  "evidence": {
+    "snapshots": {
+      "before": {
+        "A": {
+          "dists": [
+            "contourpy==1.4.0",
+            "cycler==0.12.1",
+            "fonttools==4.66.0",
+            "kiwisolver==1.5.1",
+            "matplotlib==3.10.8",
+            "numpy==2.5.3",
+            "packaging==26.3",
+            "pillow==12.3.0",
+            "pyparsing==3.3.3",
+            "python-dateutil==2.9.0.post0",
+            "qa-probe-pkg==1.0.0",
+            "six==1.17.0"
+          ],
+          "file_count": 2199
+        },
+        "B": {
+          "dists": [
+            "contourpy==1.4.0",
+            "cycler==0.12.1",
+            "fonttools==4.66.0",
+            "kiwisolver==1.5.1",
+            "matplotlib==3.10.8",
+            "numpy==2.5.3",
+            "packaging==26.3",
+            "pillow==12.3.0",
+            "pyparsing==3.3.3",
+            "python-dateutil==2.9.0.post0",
+            "qa-probe-pkg==2.0.0",
+            "six==1.17.0"
+          ],
+          "file_count": 2199
+        }
+      },
+      "after": {
+        "A": {
+          "dists": [
+            "contourpy==1.4.0",
+            "cycler==0.12.1",
+            "fonttools==4.66.0",
+            "kiwisolver==1.5.1",
+            "matplotlib==3.10.8",
+            "numpy==2.5.3",
+            "packaging==26.3",
+            "pillow==12.3.0",
+            "pyparsing==3.3.3",
+            "python-dateutil==2.9.0.post0",
+            "qa-probe-pkg==1.0.0",
+            "six==1.17.0"
+          ],
+          "file_count": 2199
+        },
+        "B": {
+          "dists": [
+            "contourpy==1.4.0",
+            "cycler==0.12.1",
+            "fonttools==4.66.0",
+            "kiwisolver==1.5.1",
+            "matplotlib==3.10.8",
+            "numpy==2.5.3",
+            "packaging==26.3",
+            "pillow==12.3.0",
+            "pyparsing==3.3.3",
+            "python-dateutil==2.9.0.post0",
+            "qa-probe-pkg==2.0.0",
+            "six==1.17.0"
+          ],
+          "file_count": 2199
+        }
+      }
+    },
+    "server_env_PATH_head": [
+      "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/envB/.venv/bin",
+      "~/.claude_env/bin"
+    ],
+    "environment_before_prepare": {
+      "automatic": false,
+      "can_use_project_venv": [
+        ".venv"
+      ],
+      "managed": {
+        "active_generation": "",
+        "created_at": 0,
+        "exists": false,
+        "generations": [],
+        "installed": [],
+        "python_version": "",
+        "state": ""
+      },
+      "module": "",
+      "open": true,
+      "python": "/Volumes/Projects/Tavotto/.venv/bin/python",
+      "resolution_error": null,
+      "source": "current_process",
+      "source_label": "Tavotto 自身的解释器",
+      "trigger": "",
+      "workdir": {
+        "decided": false,
+        "grant": {
+          "cwd_write": {
+            "granted": false,
+            "granted_at": null,
+            "mode": null
+          },
+          "decided": false
+        },
+        "mode": "sandbox",
+        "modes": [
+          "sandbox",
+          "project",
+          "project_root"
+        ]
+      }
+    },
+    "plan_environment": {
+      "automatic": false,
+      "discovery": null,
+      "error": null,
+      "invalidated": null,
+      "matplotlib_version": "",
+      "module": "",
+      "python": null,
+      "python_version": "",
+      "source": "current_process",
+      "source_label": "Tavotto 自身的解释器",
+      "support": "",
+      "trigger": ""
+    },
+    "result_status": "ready",
+    "receipt": {
+      "binding": {
+        "base": "script.parent",
+        "binding_version": 1,
+        "expected": {},
+        "missing": [
+          "E1 用户脚本：数据来自同名包 qa_probe_pkg（A / B 两份返回不同数值）。"
+        ],
+        "mode": "sandbox",
+        "outside": [],
+        "revision": "sha256:3880f0f5edfad8bcc889ed79b8033602895b7a19e2320868ae5d6fd67fd9d7dd"
+      },
+      "binding_check": {
+        "changed": [],
+        "matched": null,
+        "observation": "partial",
+        "revision": "sha256:3880f0f5edfad8bcc889ed79b8033602895b7a19e2320868ae5d6fd67fd9d7dd",
+        "same": [],
+        "unobserved": []
+      },
+      "completeness": "complete",
+      "control_plane": "python_pool",
+      "descriptors": [
+        {
+          "asset_id": "runtime:figure.py#figure",
+          "can_writeback_artifact": true,
+          "can_writeback_source": false,
+          "capture_source": "savefig",
+          "entry": "__main__",
+          "execution_profile": "safe",
+          "original_artifact": "figure.pdf",
+          "script": "figure.py",
+          "size_mm": [
+            81.28,
+            60.96
+          ],
+          "source_fingerprint": "sha256:6f04315331d887e5fafc15322597221e4467f66d6fe4e94c6def997ff76d6126",
+          "stem": "figure"
+        }
+      ],
+      "generation": 2,
+      "inputs": {
+        "channels": [
+          "python_open",
+          "numpy_datasource"
+        ],
+        "files": [
+          {
+            "path": ".venv/lib/python3.13/site-packages/PIL/_imaging.cpython-313-darwin.so",
+            "sha256": "e01c11b87293f9b61d312908680e6fd5f957cf5e48ff2bc7815d3295dd8f513a",
+            "size": 617184
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/kiwisolver/_cext.cpython-313-darwin.so",
+            "sha256": "91004a9043a2ddd2ec2807443bb2b95983aa7cca104fac6352a9eea364f8cd94",
+            "size": 222392
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_c_internal_utils.cpython-313-darwin.so",
+            "sha256": "0f2a229dca2f7c039141bd03ea88c45e6ee564c6afc2c46a523e10f4df2f09ab",
+            "size": 174648
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_image.cpython-313-darwin.so",
+            "sha256": "b58d9f9cd8fcc341f0b5f1da632bd86433d15f75d04adbdca884ffd93fca7a0a",
+            "size": 369200
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_path.cpython-313-darwin.so",
+            "sha256": "598a81155f2c6594656097c6ee39ca250068b983d8f3df7dbb0b92c369770a7b",
+            "size": 362072
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/_backend_agg.cpython-313-darwin.so",
+            "sha256": "80c94fbbfbd2f58e63de9f1515e80ece7961a92ae3edb8345266dba5b017314f",
+            "size": 485520
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/ft2font.cpython-313-darwin.so",
+            "sha256": "136f2a1f8e475bb203d9b59604061dd0c07862dcdbf68c248de6b2cf58772c11",
+            "size": 1072640
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/fonts/ttf/DejaVuSans.ttf",
+            "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22",
+            "size": 756072
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/Solarize_Light2.mplstyle",
+            "sha256": "6b2b4e9b8793fd23efb3b1c2dbc658e06ba478de38abe484d0910c091f2454e9",
+            "size": 1257
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/_classic_test_patch.mplstyle",
+            "sha256": "8a8a47a4c68cde29bf00ad9a8871ae3360ca3398bd29cf38bfa35012849bd744",
+            "size": 167
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/_mpl-gallery-nogrid.mplstyle",
+            "sha256": "d5538bdd44aa0fa8ae190692ca7360d50872530bca2e790bc9429d6c13279ea8",
+            "size": 489
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/_mpl-gallery.mplstyle",
+            "sha256": "30dfaae7d0a20ea1d707cc45297c7309b2496c998d0e105ef650c9240a0c4cf0",
+            "size": 504
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/bmh.mplstyle",
+            "sha256": "f8a6e1688f39f412131c8a3251921fa500e37dc9202c0943012ff274ab26ea67",
+            "size": 712
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/classic.mplstyle",
+            "sha256": "d68e5be3b543fd1219bf7ba79c6f469b6b5ba6b4ef39e3465ccf21242986b982",
+            "size": 24670
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/dark_background.mplstyle",
+            "sha256": "1b34810f4ea3be54583aabbb0f96796b9c76e65f499d382d39b9fb4b80fdcee8",
+            "size": 607
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/fast.mplstyle",
+            "sha256": "c936b66042083fdc62e55fc6d29daf4a5c6086e84dc23462f603c408cc724623",
+            "size": 288
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/fivethirtyeight.mplstyle",
+            "sha256": "21c06dd83483cfd0adbb20a2b3d259b53dcdaa887a2d53be741eba03139b51c0",
+            "size": 780
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/ggplot.mplstyle",
+            "sha256": "bb6a0f1cc2d616d65ca488c7936b308b636bb783609c4b687f9971730334443d",
+            "size": 956
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/grayscale.mplstyle",
+            "sha256": "2822e0fa95e99ecf5c9ca0d728dd961fa995e35387fba71b4fee73290a2d49dc",
+            "size": 526
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/petroff10.mplstyle",
+            "sha256": "423ee93db1e1dcbdb991db0fb75ca9c2f291ddd3f3b8eac5cf34133f731f8a58",
+            "size": 298
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-bright.mplstyle",
+            "sha256": "a43aa7dfe354c952ef95f918b3c9fc1f3359be6b2554c0a191e1fe1ed66e2487",
+            "size": 144
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-colorblind.mplstyle",
+            "sha256": "7824b3163e7fdaf47a9f9aaed6b1c4e3ac2f49519971d56acfce68bf8d19b07f",
+            "size": 148
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-dark-palette.mplstyle",
+            "sha256": "a7900128d407446edb9381d7a8c42b4418c3971180a374425c775098fee0f8d8",
+            "size": 142
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-dark.mplstyle",
+            "sha256": "238c50ef9bc4e7ff57e24d1c3438aa8619c5dce72b676c653d7f0b97b3829281",
+            "size": 667
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-darkgrid.mplstyle",
+            "sha256": "d9b5ce4b34b98263f3441ad19b3556ca183fed9681450eadffe3be711bb26680",
+            "size": 670
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-deep.mplstyle",
+            "sha256": "e3874b7178e346047eeb26a8a60191227695833de393c5495504db048731441d",
+            "size": 142
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-muted.mplstyle",
+            "sha256": "4f8a378efa8a0ff2265c3929eba5c5395ff1ac1545528949537e090c59355e49",
+            "size": 143
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-notebook.mplstyle",
+            "sha256": "3dcbd941b62b0dd76e72b3656af04f990d60da68a78a8ffd1a4514151760b683",
+            "size": 382
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-paper.mplstyle",
+            "sha256": "9f499ba14a760b852cab68fab4d59cbb84d9fd84f8fa42a0ad83b4b7eaf3d72c",
+            "size": 393
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-pastel.mplstyle",
+            "sha256": "f2757ca91a5b52b9c565ec84e95710d6846e64f2e29765bbe0cd94dfb0cd30e1",
+            "size": 144
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-poster.mplstyle",
+            "sha256": "75468aa931383117d4ab6ad65576dba2eee4cc3ed9f4f13d2a8f1a5cbcdaf090",
+            "size": 403
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-talk.mplstyle",
+            "sha256": "ec59c168111d5816e77139bafc447e11055afdb66053b7677207b3f9ecfc47be",
+            "size": 403
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-ticks.mplstyle",
+            "sha256": "0884d9999154169e3430ad8ecfcb48f1aed64680a2cd053d678275ef66167d6c",
+            "size": 665
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-white.mplstyle",
+            "sha256": "5a327a2c453aae50b052e813a1ac1c8806ca3fda044451ebf6b7c5954add4f1d",
+            "size": 665
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-whitegrid.mplstyle",
+            "sha256": "79ce018ec37398ebc7a6d709de674fc542c5dd2d7f535114a1cbaa7c8a70f8d9",
+            "size": 664
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8.mplstyle",
+            "sha256": "fd7bbaa972b38b86f71b2982381d5bd7eca429343cc610e5899f1ecc7193880b",
+            "size": 1130
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/tableau-colorblind10.mplstyle",
+            "sha256": "06c8ab6557752e63d64f8b41233ea5a193e365c227a10ac819f0bbaefcea989c",
+            "size": 190
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_multiarray_umath.cpython-313-darwin.so",
+            "sha256": "c3f325f8c20ffada58134c2bf0cfe157bd03bccdaac784168f1b97bd6ba12c23",
+            "size": 3995688
+          },
+          {
+            "path": ".venv/lib/python3.13/site-packages/numpy/linalg/_umath_linalg.cpython-313-darwin.so",
+            "sha256": "5d8fb8134d1d8f5e729bb5b00a356f458d064b5925245b8d1fec93ec2686b84f",
+            "size": 154880
+          }
+        ],
+        "local_modules": [
+          {
+            "name": "PIL",
+            "path": ".venv/lib/python3.13/site-packages/PIL/__init__.py",
+            "sha256": "7361b6ad3878589affe5956e4a4da24d71398b0891fd3a8c15e9362217b4ca01"
+          },
+          {
+            "name": "PIL.ExifTags",
+            "path": ".venv/lib/python3.13/site-packages/PIL/ExifTags.py",
+            "sha256": "61c257add6fffd463aa788e37f998b3920c57fe931db10faf9bd921eef36bdf3"
+          },
+          {
+            "name": "PIL.GimpGradientFile",
+            "path": ".venv/lib/python3.13/site-packages/PIL/GimpGradientFile.py",
+            "sha256": "cd675b313f95b2c5f1d138340ce9b2b13a14818f9fc825c9bd89854a927578d8"
+          },
+          {
+            "name": "PIL.GimpPaletteFile",
+            "path": ".venv/lib/python3.13/site-packages/PIL/GimpPaletteFile.py",
+            "sha256": "8481d0f4b279ae2d21cb57bfbd961e0fe9faed459d8440e529ce2f0f181a51d8"
+          },
+          {
+            "name": "PIL.Image",
+            "path": ".venv/lib/python3.13/site-packages/PIL/Image.py",
+            "sha256": "04af3f2db7ffdd61e829fa7aa8f5481d394a0a4129a8fd8aa5b13908928fcd6d"
+          },
+          {
+            "name": "PIL.ImageChops",
+            "path": ".venv/lib/python3.13/site-packages/PIL/ImageChops.py",
+            "sha256": "1848e5ca67280ed03938e788c505485fde810feb3a01785bed39922d89f6b548"
+          },
+          {
+            "name": "PIL.ImageColor",
+            "path": ".venv/lib/python3.13/site-packages/PIL/ImageColor.py",
+            "sha256": "20603d0b6ba67840ff1334b60af8fa2ac53456eb42f51b2d58860f7bcb83b159"
+          },
+          {
+            "name": "PIL.ImageFile",
+            "path": ".venv/lib/python3.13/site-packages/PIL/ImageFile.py",
+            "sha256": "983c4f35e0c51046d4c636998ec77000cd2da208870a03b205e104cd0b2df629"
+          },
+          {
+            "name": "PIL.ImageMode",
+            "path": ".venv/lib/python3.13/site-packages/PIL/ImageMode.py",
+            "sha256": "69a6551c088211a9ce0362b58cddc3956dcd3ca6bc0e6e672174d712bcf2166b"
+          },
+          {
+            "name": "PIL.ImagePalette",
+            "path": ".venv/lib/python3.13/site-packages/PIL/ImagePalette.py",
+            "sha256": "667e20ff1710d4a0e57f494a72f3cd72320f7ae7d0c7e92d3b91dc777c8a771f"
+          },
+          {
+            "name": "PIL.ImageSequence",
+            "path": ".venv/lib/python3.13/site-packages/PIL/ImageSequence.py",
+            "sha256": "32986092befdb1c9980609a2f5982e8437d5c07be92d25f9b995470d996b9f42"
+          },
+          {
+            "name": "PIL.PaletteFile",
+            "path": ".venv/lib/python3.13/site-packages/PIL/PaletteFile.py",
+            "sha256": "b2e0dd00be953258d7c38a049f5be14ede03438bdba481c6777038a313a013ab"
+          },
+          {
+            "name": "PIL.PngImagePlugin",
+            "path": ".venv/lib/python3.13/site-packages/PIL/PngImagePlugin.py",
+            "sha256": "5911ebb3c8e58edf4fccace85ade20c3a062cc41dc55340bfb7b40f0bf1861c5"
+          },
+          {
+            "name": "PIL.TiffTags",
+            "path": ".venv/lib/python3.13/site-packages/PIL/TiffTags.py",
+            "sha256": "766dea350424b9a2caab3513be794689403c2b7222cd038006f69cff08edb45d"
+          },
+          {
+            "name": "PIL._binary",
+            "path": ".venv/lib/python3.13/site-packages/PIL/_binary.py",
+            "sha256": "a6e0e837223ccab3b0e91c77223c951d3b3fb9d69ac2ce52430ced719baf3975"
+          },
+          {
+            "name": "PIL._deprecate",
+            "path": ".venv/lib/python3.13/site-packages/PIL/_deprecate.py",
+            "sha256": "2a1c8b566418555c30d2b3916d4db84dededf1f3adf46d8b78ce9f24659b974a"
+          },
+          {
+            "name": "PIL._imaging",
+            "path": ".venv/lib/python3.13/site-packages/PIL/_imaging.cpython-313-darwin.so",
+            "sha256": "e01c11b87293f9b61d312908680e6fd5f957cf5e48ff2bc7815d3295dd8f513a"
+          },
+          {
+            "name": "PIL._util",
+            "path": ".venv/lib/python3.13/site-packages/PIL/_util.py",
+            "sha256": "7f185676b2c04727363ec3203779bdfd4d5d637a1429b57b9a4a0771782879e0"
+          },
+          {
+            "name": "PIL._version",
+            "path": ".venv/lib/python3.13/site-packages/PIL/_version.py",
+            "sha256": "fe7d75d4019326aca24ae57d4ab190cd62ba1225b175051119cd61cd87e42b1d"
+          },
+          {
+            "name": "_virtualenv",
+            "path": ".venv/lib/python3.13/site-packages/_virtualenv.py",
+            "sha256": "cfb3db86aaa53bb62b5ff764970bec2d71c9228590a0ebec57f6ec926cc0bf1a"
+          },
+          {
+            "name": "cycler",
+            "path": ".venv/lib/python3.13/site-packages/cycler/__init__.py",
+            "sha256": "d4975182fe59cf1a3e5b57afec1fcb5aabb2b163fa2d91fa08793f08eb486971"
+          },
+          {
+            "name": "dateutil",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/__init__.py",
+            "sha256": "32a6a6ebb58ef4891399417223aeaf4ba2284974e9f46dfcf0369d1f62c230b6"
+          },
+          {
+            "name": "dateutil._common",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/_common.py",
+            "sha256": "efbc34cb2b64af19586d29fefa50d53d431a6d45d147d237941bffbd0454a946"
+          },
+          {
+            "name": "dateutil._version",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/_version.py",
+            "sha256": "055d37d4ec430c09b2e7c9de520e72caa2e42daa88c3b89b2bd02cde388c89bd"
+          },
+          {
+            "name": "dateutil.parser",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/parser/__init__.py",
+            "sha256": "c1693a185bb14e98e8820086b6091c789a2d8b8a558e5e3f7c7417a4d39a4988"
+          },
+          {
+            "name": "dateutil.parser._parser",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/parser/_parser.py",
+            "sha256": "ee494377289c92c401fd7825fb7500981c33098a2bd40219aa4948713e9d1fff"
+          },
+          {
+            "name": "dateutil.parser.isoparser",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/parser/isoparser.py",
+            "sha256": "f05cbdf7d6e709dd5fad274e62e3ab6967c94ed7795bba90e7537036e1ff8573"
+          },
+          {
+            "name": "dateutil.relativedelta",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/relativedelta.py",
+            "sha256": "218fe6825323a196d87ebbe5a1363671ed366a25633c892265faa03536517ee0"
+          },
+          {
+            "name": "dateutil.rrule",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/rrule.py",
+            "sha256": "289cca95a09dd6311bbb8037f1996db256a801487d9d26dd6ce15d8e9ef429ec"
+          },
+          {
+            "name": "dateutil.tz",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/tz/__init__.py",
+            "sha256": "17e333d77bfa8d8b1e92541ff537bd27a9f370b0e6ab8ee03916bad4adf9fc50"
+          },
+          {
+            "name": "dateutil.tz._common",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/tz/_common.py",
+            "sha256": "720cc34c036c397bc473ce9c605efb12c962b9269bf0fbb0a6c979f9b5f7fd2e"
+          },
+          {
+            "name": "dateutil.tz._factories",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/tz/_factories.py",
+            "sha256": "ba76fa5d0357acf32f7a4b13094f8083c8e6559b384a88e83d47001e95a7aef5"
+          },
+          {
+            "name": "dateutil.tz.tz",
+            "path": ".venv/lib/python3.13/site-packages/dateutil/tz/tz.py",
+            "sha256": "1149c474c7de4e15e263a978b21f7205a6d9eb7fcf3b3cb4d734ac87db619f5a"
+          },
+          {
+            "name": "kiwisolver",
+            "path": ".venv/lib/python3.13/site-packages/kiwisolver/__init__.py",
+            "sha256": "0d42d2b355c4b47ac2c8b84dfe0f89f0f8af557b6f4b128dd97cf98116ca9122"
+          },
+          {
+            "name": "kiwisolver._cext",
+            "path": ".venv/lib/python3.13/site-packages/kiwisolver/_cext.cpython-313-darwin.so",
+            "sha256": "91004a9043a2ddd2ec2807443bb2b95983aa7cca104fac6352a9eea364f8cd94"
+          },
+          {
+            "name": "kiwisolver.exceptions",
+            "path": ".venv/lib/python3.13/site-packages/kiwisolver/exceptions.py",
+            "sha256": "85a18408089f16356ac13e5eb10d6c122aac6a35ba272762a75ea27873de2f4e"
+          },
+          {
+            "name": "matplotlib",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/__init__.py",
+            "sha256": "c6c47d1ecf25d7934f38c8a55c3b8e116d41aa08d8ecfa82f6ae8af589216a3a"
+          },
+          {
+            "name": "matplotlib._afm",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_afm.py",
+            "sha256": "7167b521bdfb4fa6721db47afe13eecc08e8b4c9a2df6cbe90307e8b6f22caa1"
+          },
+          {
+            "name": "matplotlib._api",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_api/__init__.py",
+            "sha256": "7b45f97630b1870dd80c58a7d88cd4dd129dffb84cdc6e71569b359751250274"
+          },
+          {
+            "name": "matplotlib._api.deprecation",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_api/deprecation.py",
+            "sha256": "5c9c64b1257cba44bc912566b063d2d3382fd5f7c56bc58d6912c0937d5d98e3"
+          },
+          {
+            "name": "matplotlib._blocking_input",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_blocking_input.py",
+            "sha256": "54736cc6f5f6993c7fc41927777d0c4a27159515d2e1d0837bd84372d6d5e6b9"
+          },
+          {
+            "name": "matplotlib._c_internal_utils",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_c_internal_utils.cpython-313-darwin.so",
+            "sha256": "0f2a229dca2f7c039141bd03ea88c45e6ee564c6afc2c46a523e10f4df2f09ab"
+          },
+          {
+            "name": "matplotlib._cm",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_cm.py",
+            "sha256": "3ee608024529cf8bb86a2523bdd5799e321f1b427f31063da4cd98cf78f7297b"
+          },
+          {
+            "name": "matplotlib._cm_bivar",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_cm_bivar.py",
+            "sha256": "82998a892c6c5a854658889fb1e874828343ed8ef34d624ab339ebfd0904b438"
+          },
+          {
+            "name": "matplotlib._cm_listed",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_cm_listed.py",
+            "sha256": "ddad3698f5129ceb1792a445371286c08bc9080298e657b3054aea19c9659ef9"
+          },
+          {
+            "name": "matplotlib._cm_multivar",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_cm_multivar.py",
+            "sha256": "d148cd156ed2cad8f5b77d500fdf5e6dfafe6a5ecd982a5684a50ecaaf55ccaf"
+          },
+          {
+            "name": "matplotlib._color_data",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_color_data.py",
+            "sha256": "93ec1d4e2e80ac9c64b2a05f313fbb532daa5b3f175f84e1e60b237f7d82c263"
+          },
+          {
+            "name": "matplotlib._constrained_layout",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_constrained_layout.py",
+            "sha256": "5d7ff67a5a87ba4177b687840eea7040f94dffc504bf7fb218a951d00f769fbe"
+          },
+          {
+            "name": "matplotlib._docstring",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_docstring.py",
+            "sha256": "bbdc89a2b262748f24d56f12d3548832a36687954e31573e02ac844bae8411d9"
+          },
+          {
+            "name": "matplotlib._enums",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_enums.py",
+            "sha256": "7ae0f6b23d8521b40ccc83c0e2b0ab208ff2f1157368cc8404ab1274141a51be"
+          },
+          {
+            "name": "matplotlib._fontconfig_pattern",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_fontconfig_pattern.py",
+            "sha256": "842a6ea53a217aa249a4849510ddc536fe966593d56a828ebaa18c983dd6c61e"
+          },
+          {
+            "name": "matplotlib._image",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_image.cpython-313-darwin.so",
+            "sha256": "b58d9f9cd8fcc341f0b5f1da632bd86433d15f75d04adbdca884ffd93fca7a0a"
+          },
+          {
+            "name": "matplotlib._layoutgrid",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_layoutgrid.py",
+            "sha256": "98507d6ac655a25d9a57d84b069767b6e1b9c758ac294ada8c5fb74d484282ca"
+          },
+          {
+            "name": "matplotlib._mathtext",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_mathtext.py",
+            "sha256": "2a73714baaff611cdab68ed7c10d7b48c0a65711cf23ff7585202e6c92512a8c"
+          },
+          {
+            "name": "matplotlib._mathtext_data",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_mathtext_data.py",
+            "sha256": "f72fffee37f76f380e983da51185b742982c4fecfd403ba2c112d51fb5aaf0fc"
+          },
+          {
+            "name": "matplotlib._path",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_path.cpython-313-darwin.so",
+            "sha256": "598a81155f2c6594656097c6ee39ca250068b983d8f3df7dbb0b92c369770a7b"
+          },
+          {
+            "name": "matplotlib._pylab_helpers",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_pylab_helpers.py",
+            "sha256": "a49111cad1c3997a3654fdec1fd430e8dc093f485e7cd3d03145c2567b67a072"
+          },
+          {
+            "name": "matplotlib._text_helpers",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_text_helpers.py",
+            "sha256": "9f3d69bc4a7cef9e8f0ab9fa28863633abd503e6de61434e0efbdfe0d9c61748"
+          },
+          {
+            "name": "matplotlib._tight_bbox",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_tight_bbox.py",
+            "sha256": "75d2795625ee95b3cba1c1ebf919162b6ed6252b95d965d4c7be236722f434e8"
+          },
+          {
+            "name": "matplotlib._tight_layout",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_tight_layout.py",
+            "sha256": "037bd92819b1722ef0df938ef65c607d4aab44a813afe37f754cdad0cd395b11"
+          },
+          {
+            "name": "matplotlib._version",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/_version.py",
+            "sha256": "c69ca4ce37a02a6cc1e586d6a0522408c6b1e97aa6b6e0ec16b0733b6fdb33b8"
+          },
+          {
+            "name": "matplotlib.artist",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/artist.py",
+            "sha256": "85f0861134641cb7cffa2e0f9a636c73bb325f2153662e0762fcf213cabd6a4d"
+          },
+          {
+            "name": "matplotlib.axes",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/axes/__init__.py",
+            "sha256": "68713fcc88e98482645b8ff57f2a05b845936fb80245ec0ae633595891c47603"
+          },
+          {
+            "name": "matplotlib.axes._axes",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/axes/_axes.py",
+            "sha256": "0b0054161e1f225245e0a9bcd1aa45787f6c3d5062fb738f4ce9f1a8abde6794"
+          },
+          {
+            "name": "matplotlib.axes._base",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/axes/_base.py",
+            "sha256": "7976ab5c8924d5289044f6bb45dbbf47a803807766da5eb41e1d913ed3d37fb1"
+          },
+          {
+            "name": "matplotlib.axes._secondary_axes",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/axes/_secondary_axes.py",
+            "sha256": "49ec3e2cae7b9839dd5176fef7f547cece5d24b43a7e1e27b2d66d7e9663ba2d"
+          },
+          {
+            "name": "matplotlib.axis",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/axis.py",
+            "sha256": "6ec3c4ca7e1e3009e44c26d6e2bc529bccac3cd607da9feeafb44dfd97d9469b"
+          },
+          {
+            "name": "matplotlib.backend_bases",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/backend_bases.py",
+            "sha256": "e446886212c2ecb74aae4d126123418985b71b5e8a6db7b19dd161a0e5fbfe36"
+          },
+          {
+            "name": "matplotlib.backend_managers",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/backend_managers.py",
+            "sha256": "45085e08efdc40195a5ac60c6c09acc2ed143ca53b6e62d32392c4160a2d9250"
+          },
+          {
+            "name": "matplotlib.backend_tools",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/backend_tools.py",
+            "sha256": "782c7ce25f090586b28eee51cb52d417228b22b760c661944c9c3bd9534fd72a"
+          },
+          {
+            "name": "matplotlib.backends",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/__init__.py",
+            "sha256": "268c097beb43ad404c3494e22404e0884b800a981dc6c2a744261afa70b6e790"
+          },
+          {
+            "name": "matplotlib.backends._backend_agg",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/_backend_agg.cpython-313-darwin.so",
+            "sha256": "80c94fbbfbd2f58e63de9f1515e80ece7961a92ae3edb8345266dba5b017314f"
+          },
+          {
+            "name": "matplotlib.backends.backend_agg",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/backend_agg.py",
+            "sha256": "3f2feb5d16c34cfd194ab341d8ee539a1e55f06e55f558971ff615e4f4d7f71c"
+          },
+          {
+            "name": "matplotlib.backends.backend_mixed",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/backend_mixed.py",
+            "sha256": "19fff60438f2f7815945700b9b45f7c51a4aff597c6d9192602aa7ad28eb8cc1"
+          },
+          {
+            "name": "matplotlib.backends.backend_svg",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/backend_svg.py",
+            "sha256": "450bcf13da51d314aee7934831a8d7d5606a9a65db5165b0756af6a8c1beeb79"
+          },
+          {
+            "name": "matplotlib.backends.registry",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/registry.py",
+            "sha256": "33604784129b509f04d81d901317d57fc35b00ae1916126d98a45e9416590e1e"
+          },
+          {
+            "name": "matplotlib.bezier",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/bezier.py",
+            "sha256": "6a12750512684db73126836617598261cf7a996b398d23380ce2b9f2361a5e45"
+          },
+          {
+            "name": "matplotlib.category",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/category.py",
+            "sha256": "52c67cadb003007f7a61fa630fe3750cb4dc4bf710c25b332084366516a25a6e"
+          },
+          {
+            "name": "matplotlib.cbook",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/cbook.py",
+            "sha256": "9c5da1342febca225c79ce7c0a7a7fd26006483d0b7ec9e36f352e087e29f8eb"
+          },
+          {
+            "name": "matplotlib.cm",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/cm.py",
+            "sha256": "e716aff81bc9e2959255dbc6aa5e2861ce04a40f91e8eb943f9c63ad908c2af8"
+          },
+          {
+            "name": "matplotlib.collections",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/collections.py",
+            "sha256": "e40717de54ec283d4e6d23a42ebfa2af360f7dd271b0dae0c397400fcf3abc21"
+          },
+          {
+            "name": "matplotlib.colorbar",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/colorbar.py",
+            "sha256": "f8fc15df191ccdcc8fabd2a2ff37e941d3ffd44a8e141ce87944ac325505d9c1"
+          },
+          {
+            "name": "matplotlib.colorizer",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/colorizer.py",
+            "sha256": "473134ce3a81e9e96991eb4a89dcba9fe4510db605f7cb2978420e20c7c815be"
+          },
+          {
+            "name": "matplotlib.colors",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/colors.py",
+            "sha256": "875615e7dcb85afb2d38f0b4c7c799cf01d822d6a5ed58e355cc954b79e26923"
+          },
+          {
+            "name": "matplotlib.container",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/container.py",
+            "sha256": "63abf88fbf60324f100d87eb74ea9b6c91c7d01a0e20ef5e9f3e1db656814895"
+          },
+          {
+            "name": "matplotlib.contour",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/contour.py",
+            "sha256": "c2932dacc64488360f46e15b679f761ef42a9f834e07249f335edd7ad2a87a76"
+          },
+          {
+            "name": "matplotlib.dates",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/dates.py",
+            "sha256": "c5f70563783702c5bd8ac9c420a1468f8817ab45dea31a31ff77f13420d0d357"
+          },
+          {
+            "name": "matplotlib.dviread",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/dviread.py",
+            "sha256": "06a420d1fa970ff4e600124f4960c2f87d9acedec1e7735f384d520ba99b5e22"
+          },
+          {
+            "name": "matplotlib.figure",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/figure.py",
+            "sha256": "08d3cc974402c61af787758671ddbbd691385edbf8adaa515ae5121523494ae7"
+          },
+          {
+            "name": "matplotlib.font_manager",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/font_manager.py",
+            "sha256": "b52a4e959aa23547489f781008537ffa738b674f165c1aa3fee9cfea8d49c88c"
+          },
+          {
+            "name": "matplotlib.ft2font",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/ft2font.cpython-313-darwin.so",
+            "sha256": "136f2a1f8e475bb203d9b59604061dd0c07862dcdbf68c248de6b2cf58772c11"
+          },
+          {
+            "name": "matplotlib.gridspec",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/gridspec.py",
+            "sha256": "b3a4645c49383915ac3078d790af7c66fa2c6790feaa07a754d934848bccc0ec"
+          },
+          {
+            "name": "matplotlib.hatch",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/hatch.py",
+            "sha256": "b5f10cd03431c8b91413cee51ddb8c365139e4628836d019a3863f62c026489a"
+          },
+          {
+            "name": "matplotlib.image",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/image.py",
+            "sha256": "30b160d3a276c65966d6d9a00e794b630f204f2efffcd1a791fe1264ffb7992b"
+          },
+          {
+            "name": "matplotlib.inset",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/inset.py",
+            "sha256": "7c957c54c318d3bffdee2251dff44ef3dd9600a13b9b27d5fc6aa0faa2bdf6f8"
+          },
+          {
+            "name": "matplotlib.layout_engine",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/layout_engine.py",
+            "sha256": "9b044d875de6210fb0a63415801681fcb58a3750224135a5760f97f672e65689"
+          },
+          {
+            "name": "matplotlib.legend",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/legend.py",
+            "sha256": "e4d0cf6d6aa488890fd45277b0b36a99ec368e43636b041fd86fc1a99346feee"
+          },
+          {
+            "name": "matplotlib.legend_handler",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/legend_handler.py",
+            "sha256": "7a48594d3d57f7241ded334845dbbfbee8b9151d824e62343564c5253a85d4de"
+          },
+          {
+            "name": "matplotlib.lines",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/lines.py",
+            "sha256": "046df1853bb3603163cdffa4e4271073f57b5b81e5425e022fb442410cf4102f"
+          },
+          {
+            "name": "matplotlib.markers",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/markers.py",
+            "sha256": "83aba47ab6799ffb03fc49e4d1e240e24913bce3a9f007d2181abad0f1e8b7e1"
+          },
+          {
+            "name": "matplotlib.mathtext",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mathtext.py",
+            "sha256": "c9396951f9cac73ac597b5cd8f2b82fb1301067c54b9f53a195c10ca1400236a"
+          },
+          {
+            "name": "matplotlib.mlab",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/mlab.py",
+            "sha256": "4fbd69e31d0a24d546af052ea03760723590b9c2104ee56ba1c382f7c65dc2c7"
+          },
+          {
+            "name": "matplotlib.offsetbox",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/offsetbox.py",
+            "sha256": "85c04dee0d940452eefd684183f6c39671dc21d8dce8f8fe90789c7e13a94e92"
+          },
+          {
+            "name": "matplotlib.patches",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/patches.py",
+            "sha256": "b977b0d7d6d27a0275bf154885932199ff1fe175f207bc0a2308009c53dfc279"
+          },
+          {
+            "name": "matplotlib.path",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/path.py",
+            "sha256": "42241148c8c76ca081a635b227728f20980ad44ab4eea5d462350b6831e0b798"
+          },
+          {
+            "name": "matplotlib.patheffects",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/patheffects.py",
+            "sha256": "e2969080f18a73fc5d073fc167f31a561289d85c590c67a1e731f0ce7ddebc36"
+          },
+          {
+            "name": "matplotlib.projections",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/projections/__init__.py",
+            "sha256": "80808a80d7e327eb62a161056bbe4128a2591ba2498f1e3afd1a44aade5f93de"
+          },
+          {
+            "name": "matplotlib.projections.geo",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/projections/geo.py",
+            "sha256": "7de4767726c2ca5864eb17be333c41aff7bc31d6e955cf2d06d090409d15d9ca"
+          },
+          {
+            "name": "matplotlib.projections.polar",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/projections/polar.py",
+            "sha256": "bc4cbb141e059c4bbb08e5b28d94fecd80ede2d6d3c245bc06f642afb92a6224"
+          },
+          {
+            "name": "matplotlib.pyplot",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/pyplot.py",
+            "sha256": "d3e6a71727bdf305419aced04be05deda74f69654d25611546acca2a7a2bdd4c"
+          },
+          {
+            "name": "matplotlib.quiver",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/quiver.py",
+            "sha256": "831fa65f8044d8357512345031347fde3a9933c3438759e950e8b37400b2e224"
+          },
+          {
+            "name": "matplotlib.rcsetup",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/rcsetup.py",
+            "sha256": "f3b2ab41e0c5838b11bb8a1bc45e26734786482b82946caecd7b31a19fe499ee"
+          },
+          {
+            "name": "matplotlib.scale",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/scale.py",
+            "sha256": "9f726a2d4fddddd00aacfd6e3b99538a95446b18222e10d1dac4a4f1301713f3"
+          },
+          {
+            "name": "matplotlib.spines",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/spines.py",
+            "sha256": "ffd0dce28200803b37300eab642c2bd6c70f1824b36c09e6629dcf433a4a15e5"
+          },
+          {
+            "name": "matplotlib.stackplot",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/stackplot.py",
+            "sha256": "6ba21402e8c38c6a5a16a893cc6afce5e0c3f25e9b6962cfacce5836f6fa83d2"
+          },
+          {
+            "name": "matplotlib.streamplot",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/streamplot.py",
+            "sha256": "ad754a6048b831f4a0dc79c06966fcc38a85a7de6645fe9da2c315aad5d91291"
+          },
+          {
+            "name": "matplotlib.style",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/style/__init__.py",
+            "sha256": "7eb690b72042dd3636653b0b7712fbccdb3db49619b637bbb5b8aa11fdcce7a3"
+          },
+          {
+            "name": "matplotlib.style.core",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/style/core.py",
+            "sha256": "452347d8d3b4c4afd8dfb75ba4c5b269630c8ef70c6bf34768a5c36b9238fed0"
+          },
+          {
+            "name": "matplotlib.table",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/table.py",
+            "sha256": "32417db3cbb65fef7f09e8bdb098b19636f6fc8fc1ff850ea95c7489178a214d"
+          },
+          {
+            "name": "matplotlib.texmanager",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/texmanager.py",
+            "sha256": "93751deef1dbb58d028d79b31cff999c403183a6c7571a3600bbdeeff7b5aca8"
+          },
+          {
+            "name": "matplotlib.text",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/text.py",
+            "sha256": "c584a42d988ea5ec381b58e42c0e69523b45eea5213acdf2a7c20414ca84e868"
+          },
+          {
+            "name": "matplotlib.textpath",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/textpath.py",
+            "sha256": "426ad943632d7f26a8eaa5a0fb09841806d3c24b89e7802703315ff4dcd91e0e"
+          },
+          {
+            "name": "matplotlib.ticker",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/ticker.py",
+            "sha256": "628209c96565624dc32196c197ec3a7f392e5444b78f574de27c9ff921ca5438"
+          },
+          {
+            "name": "matplotlib.transforms",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/transforms.py",
+            "sha256": "72d9ce4ea80f3f87601c29929146b24162fd2a48f3592cd011900b71cf681330"
+          },
+          {
+            "name": "matplotlib.tri",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/__init__.py",
+            "sha256": "6ac9df79f291a49bfbb066df75d08cc9b9c92275433f082987b8349a9a21daee"
+          },
+          {
+            "name": "matplotlib.tri._triangulation",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_triangulation.py",
+            "sha256": "52bda528c3b1e0dad9c70ca2d2105e06757389cb8a68291ed0d92b6677929253"
+          },
+          {
+            "name": "matplotlib.tri._tricontour",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_tricontour.py",
+            "sha256": "cb1787f10801b9bd674eaf6a6cee488a2cfcd5b70b5c378c7091d44b60219a7b"
+          },
+          {
+            "name": "matplotlib.tri._trifinder",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_trifinder.py",
+            "sha256": "de05332590c8c1f76c489504f2120ab28f5ed7e506bf29d437d1f16aa0b51047"
+          },
+          {
+            "name": "matplotlib.tri._triinterpolate",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_triinterpolate.py",
+            "sha256": "e05b72252a09a47705c644a464767568d7a7815356a95285e25efc3e0087f0ed"
+          },
+          {
+            "name": "matplotlib.tri._tripcolor",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_tripcolor.py",
+            "sha256": "67abab16ffa7683337feb86ffe9920219239de1f3c68ea3da96737307ec69810"
+          },
+          {
+            "name": "matplotlib.tri._triplot",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_triplot.py",
+            "sha256": "8e51d2cf7e99e52d7ccc129ceb7f4f952a9d85f97b8c7a25f04c6575d26e0c8e"
+          },
+          {
+            "name": "matplotlib.tri._trirefine",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_trirefine.py",
+            "sha256": "346f1bb03859e443b1313f8cb045b3266d75651dfff020181e51b9dc81a2d29b"
+          },
+          {
+            "name": "matplotlib.tri._tritools",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_tritools.py",
+            "sha256": "c02f4a544e94aa45951e9c96f4553885076a455455989961681175117b1a0fc5"
+          },
+          {
+            "name": "matplotlib.units",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/units.py",
+            "sha256": "ecefa595cf24dc6a5da2d52cdad59c1068285071d7f98ee8d11edffb526f7b79"
+          },
+          {
+            "name": "matplotlib.widgets",
+            "path": ".venv/lib/python3.13/site-packages/matplotlib/widgets.py",
+            "sha256": "cd474d43fba7a872e1efab9c0b12ca1515060e2141d588bc326128779226e47f"
+          },
+          {
+            "name": "mpl_toolkits.mplot3d",
+            "path": ".venv/lib/python3.13/site-packages/mpl_toolkits/mplot3d/__init__.py",
+            "sha256": "7c7f4774c7c532f8db216ab2da08d09e6da6dda7b50af2e2b87e8bc0a1e8d242"
+          },
+          {
+            "name": "mpl_toolkits.mplot3d.art3d",
+            "path": ".venv/lib/python3.13/site-packages/mpl_toolkits/mplot3d/art3d.py",
+            "sha256": "a2fca09025783fb750f7122271ccdb272c806da132d82d47627ce3b95dc23aeb"
+          },
+          {
+            "name": "mpl_toolkits.mplot3d.axes3d",
+            "path": ".venv/lib/python3.13/site-packages/mpl_toolkits/mplot3d/axes3d.py",
+            "sha256": "84205d6b6401ebf398c8a109386d2968f1200cf98b21cac432466e2aa394161a"
+          },
+          {
+            "name": "mpl_toolkits.mplot3d.axis3d",
+            "path": ".venv/lib/python3.13/site-packages/mpl_toolkits/mplot3d/axis3d.py",
+            "sha256": "7903d6a364ca6d1b0f63c254b7976b8c16f245d54a060793d841781c6839d685"
+          },
+          {
+            "name": "mpl_toolkits.mplot3d.proj3d",
+            "path": ".venv/lib/python3.13/site-packages/mpl_toolkits/mplot3d/proj3d.py",
+            "sha256": "e879ba58fcdebbfc237de47c69fad0d6709f8d2d29df08efa122312565654b4b"
+          },
+          {
+            "name": "numpy",
+            "path": ".venv/lib/python3.13/site-packages/numpy/__init__.py",
+            "sha256": "09295a80660f17925ae23765ce8cbd7ff7ceae968d5f2f89349f1cb74c0b9e11"
+          },
+          {
+            "name": "numpy.__config__",
+            "path": ".venv/lib/python3.13/site-packages/numpy/__config__.py",
+            "sha256": "ab93a7e2f79a9d1f6f688d2769490683a20c1526b1e415bb58913b43f3aa6949"
+          },
+          {
+            "name": "numpy._array_api_info",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_array_api_info.py",
+            "sha256": "4332889405b9c5b4f946d761086346f58c0acb82bbfb5f9180b30d5520b5c972"
+          },
+          {
+            "name": "numpy._core",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/__init__.py",
+            "sha256": "837ce8aec8693095d2e1c7c306d385d1785a50be97a009935c64cae04e3555d2"
+          },
+          {
+            "name": "numpy._core._add_newdocs",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_add_newdocs.py",
+            "sha256": "2fc06f2d919b16afc1e1f1abdb161bdce9eedafe3e07f127bb0f45b0841964c6"
+          },
+          {
+            "name": "numpy._core._add_newdocs_scalars",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_add_newdocs_scalars.py",
+            "sha256": "db6f2b889f9dcfd7d5df64ef3a430f532b3fdbfc279c3b94f8451b1757a16efb"
+          },
+          {
+            "name": "numpy._core._asarray",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_asarray.py",
+            "sha256": "f5aa779032cd51c8ca49039fae454fcebd2d64647513576d0884ff61e68525d2"
+          },
+          {
+            "name": "numpy._core._dtype",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_dtype.py",
+            "sha256": "59a285cabfcef070f8c3e6eaa15c1d4fde4791983e374e275944fd638c11f926"
+          },
+          {
+            "name": "numpy._core._dtype_ctypes",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_dtype_ctypes.py",
+            "sha256": "28f3e56a40ec3e4b938523abe6a1705b48c9f559e36ef5b811684e6c21d81881"
+          },
+          {
+            "name": "numpy._core._exceptions",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_exceptions.py",
+            "sha256": "5fc120d61ab5b94f0bf7088ec05a368d1aba4b4be78c27606051e3de1016f42a"
+          },
+          {
+            "name": "numpy._core._internal",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_internal.py",
+            "sha256": "497f1ce325bcc6ffc2ccf013e2cdd2ff2e32c55106a0a07997213d45d6c777a0"
+          },
+          {
+            "name": "numpy._core._methods",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_methods.py",
+            "sha256": "724facf7e63c5b8fcc2fac14bf31a02cb048d9e28f516d86502ba5077a425476"
+          },
+          {
+            "name": "numpy._core._multiarray_umath",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_multiarray_umath.cpython-313-darwin.so",
+            "sha256": "c3f325f8c20ffada58134c2bf0cfe157bd03bccdaac784168f1b97bd6ba12c23"
+          },
+          {
+            "name": "numpy._core._string_helpers",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_string_helpers.py",
+            "sha256": "e929a0a22ea80f60ae9e3c014abf41676d079029ef5ba9d33db953394de95a78"
+          },
+          {
+            "name": "numpy._core._type_aliases",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_type_aliases.py",
+            "sha256": "fd576d1516aca4b752b374a3b448f03a9acc6b748243dd72f89619f7b300344d"
+          },
+          {
+            "name": "numpy._core._ufunc_config",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/_ufunc_config.py",
+            "sha256": "0e938bb63600619bfe9028e8f285f9ddcd925b62d0220690ec4a650a48ac45a5"
+          },
+          {
+            "name": "numpy._core.arrayprint",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/arrayprint.py",
+            "sha256": "ea1e7577acc4048383d842a628827e33dc544f06842ab5848b3ee3bb298eaea2"
+          },
+          {
+            "name": "numpy._core.einsumfunc",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/einsumfunc.py",
+            "sha256": "4b4fc2d54ebe6b533f680fde2fa468d30449c2d44afc73041b6debb6e302dedf"
+          },
+          {
+            "name": "numpy._core.fromnumeric",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/fromnumeric.py",
+            "sha256": "09b04d56271fa78c43f6aca66ec06c802b0b22b026ae2fa6153575459b6dab53"
+          },
+          {
+            "name": "numpy._core.function_base",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/function_base.py",
+            "sha256": "97925f5f2a271088cbff838a149a6312335d8dac80ac0314f0c85a31b442c1b5"
+          },
+          {
+            "name": "numpy._core.getlimits",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/getlimits.py",
+            "sha256": "ec0927f602302ef9b449f2773151deaab480cb5ad8eff4c8bbba59e489daf106"
+          },
+          {
+            "name": "numpy._core.memmap",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/memmap.py",
+            "sha256": "9f79da21b64da6722a66cc86e126061b33371ad66139314580de483a0ebc254c"
+          },
+          {
+            "name": "numpy._core.multiarray",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/multiarray.py",
+            "sha256": "afd14181b927aa10800a0c5dab5f456f52e219726847dbef379e313419029d49"
+          },
+          {
+            "name": "numpy._core.numeric",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/numeric.py",
+            "sha256": "feb150554b4879d4df7bd0a4ab7b1a6b818de7ba994ed0c73583fee177533417"
+          },
+          {
+            "name": "numpy._core.numerictypes",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/numerictypes.py",
+            "sha256": "de7be532bd85cff56ad4e29786d76ec5bf2d511f7e364919bdd7cb0ad93ad3a8"
+          },
+          {
+            "name": "numpy._core.overrides",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/overrides.py",
+            "sha256": "88cf63f86be1eba2a303d221f011af2077194d819c06a10c725f01c939afe4ca"
+          },
+          {
+            "name": "numpy._core.printoptions",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/printoptions.py",
+            "sha256": "345a6fcb96e78dbbea9ca7aa42dd2f784131a400180153688865c7de98255807"
+          },
+          {
+            "name": "numpy._core.records",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/records.py",
+            "sha256": "f6c0878df1c604fda7043d738e8b2bb54d8f771ceffa92b81236407a99475df5"
+          },
+          {
+            "name": "numpy._core.shape_base",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/shape_base.py",
+            "sha256": "1d6e897dfdb7edf2d71e8ed75254a6e7106b1a947592f88d91af96d1ad2c469e"
+          },
+          {
+            "name": "numpy._core.umath",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_core/umath.py",
+            "sha256": "fabc529bdfcc632ae82bcaaa5539494802757e5a52c492999e2ebfe10f396987"
+          },
+          {
+            "name": "numpy._distributor_init",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_distributor_init.py",
+            "sha256": "14148976054795071ae41ad011560fa059ba2924c98481675ad59b1241214d2a"
+          },
+          {
+            "name": "numpy._expired_attrs_2_0",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_expired_attrs_2_0.py",
+            "sha256": "a6cf0f96202d89f172abe6ad706fe252ba7672ee35091722bd70870c83a0426f"
+          },
+          {
+            "name": "numpy._globals",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_globals.py",
+            "sha256": "fe13921c6f4a00bd12891da7d800f2a42f878c067d8ed881ddf0af3fbace3a36"
+          },
+          {
+            "name": "numpy._pytesttester",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_pytesttester.py",
+            "sha256": "cc2729e50688028a9aeedb131b2a12c0480f3477cc1c0e84be7f5d4177164002"
+          },
+          {
+            "name": "numpy._typing",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_typing/__init__.py",
+            "sha256": "23712a130b95f1134c0e93988ee72abe6c1015180277768ac13bae4fe1c8f59b"
+          },
+          {
+            "name": "numpy._typing._array_like",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_array_like.py",
+            "sha256": "5c9d8a290c4d76fe7e85f4367f21fdc33f40eed80b44f66d6378629fb4271bf8"
+          },
+          {
+            "name": "numpy._typing._char_codes",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_char_codes.py",
+            "sha256": "c1ad22e8a3fb2405b257e8bdb303a07ff0a923ab23f7175bf5af3b6b62316bd1"
+          },
+          {
+            "name": "numpy._typing._dtype_like",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_dtype_like.py",
+            "sha256": "060ecb1f4c35793a8a3b4fe200cb1151b51b7d17fc2e53ac7699da4271752bc7"
+          },
+          {
+            "name": "numpy._typing._nbit",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_nbit.py",
+            "sha256": "9a353bc8328b57ad47a79fbe36eae4c48272b136a7307df7b70e5ae2e725a284"
+          },
+          {
+            "name": "numpy._typing._nbit_base",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_nbit_base.py",
+            "sha256": "496ed60d5b3b711b201c21e1608c9f2e3f4757f0173f85ffd83d7187e54da43c"
+          },
+          {
+            "name": "numpy._typing._nested_sequence",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_nested_sequence.py",
+            "sha256": "3bc45b3564a962a54c203adede2390a7c852ba48349a4c9332a5e7abfe3f2c24"
+          },
+          {
+            "name": "numpy._typing._scalars",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_scalars.py",
+            "sha256": "02ee1deaaea050040b408b9613fe4f1de80b45290a5c1bb38d5d70a76a6eb7f5"
+          },
+          {
+            "name": "numpy._typing._shape",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_shape.py",
+            "sha256": "8086f11c19de0c82c78caa3617e4d4f0834ae82afd843befb0f88e9700137a3e"
+          },
+          {
+            "name": "numpy._typing._ufunc",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_ufunc.py",
+            "sha256": "1ce91a13eeb05747dddeb9876460b7f580072087fcb72be5cde903e32e064310"
+          },
+          {
+            "name": "numpy._utils",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_utils/__init__.py",
+            "sha256": "4a9a9d941150a1648e017b1efcd2ebb8ffdde730f9c0366f1d826121eb099caf"
+          },
+          {
+            "name": "numpy._utils._conversions",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_utils/_conversions.py",
+            "sha256": "d3133175e2cece20e61ec44cffc96e121e12fa441d328320e86c4d0c36acebd9"
+          },
+          {
+            "name": "numpy._utils._inspect",
+            "path": ".venv/lib/python3.13/site-packages/numpy/_utils/_inspect.py",
+            "sha256": "cc5b890011f4f03d4a82afde79c6240f53a0834397a75b78a2a8d9c4cd2474b9"
+          },
+          {
+            "name": "numpy.dtypes",
+            "path": ".venv/lib/python3.13/site-packages/numpy/dtypes.py",
+            "sha256": "29ba7455e6125e2986d6e1149cd4ae9d699b208ad23edf1cd7482fdac29bda4a"
+          },
+          {
+            "name": "numpy.exceptions",
+            "path": ".venv/lib/python3.13/site-packages/numpy/exceptions.py",
+            "sha256": "df16e967d97b1779a1c2dca6be5d2fa84e346a237c6e471e6a8f1a5df66c9795"
+          },
+          {
+            "name": "numpy.lib",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/__init__.py",
+            "sha256": "9983bd3542d050794af5c33999f9d6caedb36fc2c4c3184442b842fef757d92d"
+          },
+          {
+            "name": "numpy.lib._array_utils_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_array_utils_impl.py",
+            "sha256": "4644b9438e60d2a4cc38e0fb70d2a36b0887e0ae2251b37a1a9bb6b4da0a7b6e"
+          },
+          {
+            "name": "numpy.lib._arraypad_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_arraypad_impl.py",
+            "sha256": "69f17907431860505f879f7ac0f69be927464119e4068583b5f84f11fee63131"
+          },
+          {
+            "name": "numpy.lib._arraysetops_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_arraysetops_impl.py",
+            "sha256": "9f896cc0ddc2f4f94ed7cf0b28fa5dba777ec77df3c44788afcd6448d55416b4"
+          },
+          {
+            "name": "numpy.lib._arrayterator_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_arrayterator_impl.py",
+            "sha256": "1ed3800c81ee1bd0036db3138268783ff9ae91ed55fbc13e14d10eddb54e18f0"
+          },
+          {
+            "name": "numpy.lib._datasource",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_datasource.py",
+            "sha256": "9ead7eb599f6ed893aae85ddf9a8316502b4efd0595cea2b9ddf7af1ab097460"
+          },
+          {
+            "name": "numpy.lib._format_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_format_impl.py",
+            "sha256": "5d7fd66e8c78d0bd9fab82e8893609ba88f7fcd3569eaebb0748f40768e85c16"
+          },
+          {
+            "name": "numpy.lib._function_base_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_function_base_impl.py",
+            "sha256": "000d045b739c89974bfd9bae66beaa35bfd97ea7a06d13378aa234153a3b6116"
+          },
+          {
+            "name": "numpy.lib._histograms_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_histograms_impl.py",
+            "sha256": "3f4f1940f437fe139d852031afe1c2b9f85e32a2c32f8d90c0125445af9f16cd"
+          },
+          {
+            "name": "numpy.lib._index_tricks_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_index_tricks_impl.py",
+            "sha256": "e168b1ab86f91c9c8ab64e97b2fdc7eb3fe0559c8432d33c9b267b68b4eb407e"
+          },
+          {
+            "name": "numpy.lib._iotools",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_iotools.py",
+            "sha256": "04e6c05a9fe7ebd9a92d888524bf15512926b9272b453ae5c4ac5c63ab816b48"
+          },
+          {
+            "name": "numpy.lib._nanfunctions_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_nanfunctions_impl.py",
+            "sha256": "d923a746bdfc4cbc254cd932c03670a9f7566827002b2cf5dc40db8bc81bb5fb"
+          },
+          {
+            "name": "numpy.lib._npyio_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_npyio_impl.py",
+            "sha256": "51eb4572baad1e8198f71b3488a3cbcdb81ac85aa3c15cc2708cd907198a1fb5"
+          },
+          {
+            "name": "numpy.lib._polynomial_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_polynomial_impl.py",
+            "sha256": "530f29b1db6a1610bd02291c94196e100a3dd7b80f3a278fb6173e29dd297545"
+          },
+          {
+            "name": "numpy.lib._scimath_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_scimath_impl.py",
+            "sha256": "6f9ffec91cd62483bc75afd9e01f2a41eebc8fc9693bc82db4696f18da65cadc"
+          },
+          {
+            "name": "numpy.lib._shape_base_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_shape_base_impl.py",
+            "sha256": "b550d0cc5e7efe46dc1c77f0286330fcb4100fcbbeb98f41aa9127c2c44e01ec"
+          },
+          {
+            "name": "numpy.lib._stride_tricks_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_stride_tricks_impl.py",
+            "sha256": "0db57f30a81b00919e7922828cc23c4c32759c07a647639b76d1e157871fe862"
+          },
+          {
+            "name": "numpy.lib._twodim_base_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_twodim_base_impl.py",
+            "sha256": "a11d0bdecd5064dae7aca1ecbc3fdb9ff0eacae4cdfa8ed1a644ac0bb4a58fe6"
+          },
+          {
+            "name": "numpy.lib._type_check_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_type_check_impl.py",
+            "sha256": "53a091170f8fe5fafb13e7b241f8d04c352185c1253125c389aba52ee37e4939"
+          },
+          {
+            "name": "numpy.lib._ufunclike_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_ufunclike_impl.py",
+            "sha256": "f468fbb02ccb1038be6194044b04d3f873604c130f59841612109b0e1718feea"
+          },
+          {
+            "name": "numpy.lib._utils_impl",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_utils_impl.py",
+            "sha256": "4cb745a05e5cef826bc6c38c55d62cd02113a61d4531b26098c7d86ff2ae2435"
+          },
+          {
+            "name": "numpy.lib._version",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/_version.py",
+            "sha256": "0affabe9bf73540e9b0febf2158f2d09746ef5de4eb069e3a976a57d8d9194e0"
+          },
+          {
+            "name": "numpy.lib.array_utils",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/array_utils.py",
+            "sha256": "5db732849f52d0894d9cff4dcbacb280b30400259650f34e53cbdebe3d531292"
+          },
+          {
+            "name": "numpy.lib.format",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/format.py",
+            "sha256": "9e9274789853eee28d2b96b49423067e226ff91e23c8d86220f7996c970d5c1b"
+          },
+          {
+            "name": "numpy.lib.introspect",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/introspect.py",
+            "sha256": "e97a1b86c7a928352ff339a83e47d53391206421afeb53f63ca97f6916c49074"
+          },
+          {
+            "name": "numpy.lib.mixins",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/mixins.py",
+            "sha256": "cd047e8888c2492796c5ea4ae62fbbba34967f0163ad467fab18deac88a4c3a6"
+          },
+          {
+            "name": "numpy.lib.npyio",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/npyio.py",
+            "sha256": "79a3ef7c7192cd413bd132471cb3823c85fd1b98a132e0447b1cbafcf36127d4"
+          },
+          {
+            "name": "numpy.lib.scimath",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/scimath.py",
+            "sha256": "aa315a41eab4cc4225ee02aa3a16a3fef9820bf29a15dc9398774b514912a792"
+          },
+          {
+            "name": "numpy.lib.stride_tricks",
+            "path": ".venv/lib/python3.13/site-packages/numpy/lib/stride_tricks.py",
+            "sha256": "c74fc17f097270102547706fa714e775e3fde9d1c14ff7c049b9134d3cc16202"
+          },
+          {
+            "name": "numpy.linalg",
+            "path": ".venv/lib/python3.13/site-packages/numpy/linalg/__init__.py",
+            "sha256": "3b50094af1bb3530254d3bcb19349c612d5db6f859707320a466c7f71499abc2"
+          },
+          {
+            "name": "numpy.linalg._linalg",
+            "path": ".venv/lib/python3.13/site-packages/numpy/linalg/_linalg.py",
+            "sha256": "fb51e084cbb05b72a571a088299222055f3f176792ea9ea66186327a31ec787f"
+          },
+          {
+            "name": "numpy.linalg._umath_linalg",
+            "path": ".venv/lib/python3.13/site-packages/numpy/linalg/_umath_linalg.cpython-313-darwin.so",
+            "sha256": "5d8fb8134d1d8f5e729bb5b00a356f458d064b5925245b8d1fec93ec2686b84f"
+          },
+          {
+            "name": "numpy.ma",
+            "path": ".venv/lib/python3.13/site-packages/numpy/ma/__init__.py",
+            "sha256": "5e90d6617c1ab83738f7e20db24e39e43d37530e29eb115db1d58e9f6aedf3b5"
+          },
+          {
+            "name": "numpy.ma.core",
+            "path": ".venv/lib/python3.13/site-packages/numpy/ma/core.py",
+            "sha256": "818970ed04f1e64ba5bc741a3a9336aeb222515a1a748b7bc16408c3d36313f9"
+          },
+          {
+            "name": "numpy.ma.extras",
+            "path": ".venv/lib/python3.13/site-packages/numpy/ma/extras.py",
+            "sha256": "ffe5314b5364a723057ecf51d1da2ee21e0473eec10a982e03bf6bef70539417"
+          },
+          {
+            "name": "numpy.matrixlib",
+            "path": ".venv/lib/python3.13/site-packages/numpy/matrixlib/__init__.py",
+            "sha256": "52de88a9f8ee03e930c28e8704e6008058d75c2fe1ed857fdc7c83b0a33bd9d9"
+          },
+          {
+            "name": "numpy.matrixlib.defmatrix",
+            "path": ".venv/lib/python3.13/site-packages/numpy/matrixlib/defmatrix.py",
+            "sha256": "8ce552b26458ede8773335bba3835e1c6793f28d5c83ef29dcaa535a8f645c53"
+          },
+          {
+            "name": "numpy.version",
+            "path": ".venv/lib/python3.13/site-packages/numpy/version.py",
+            "sha256": "c1357b603c81e0fcbf935e7ccfc9202cafba0b30e38c625b568004002e372205"
+          },
+          {
+            "name": "packaging",
+            "path": ".venv/lib/python3.13/site-packages/packaging/__init__.py",
+            "sha256": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5"
+          },
+          {
+            "name": "packaging.version",
+            "path": ".venv/lib/python3.13/site-packages/packaging/version.py",
+            "sha256": "558b2fb50fd198c660a4c082f96b8919c565911b6b4b6e07f34b6b60c074be97"
+          },
+          {
+            "name": "pyparsing",
+            "path": ".venv/lib/python3.13/site-packages/pyparsing/__init__.py",
+            "sha256": "1044324626b725bd5b0a58ef95f1477e99720a7665dca42ba93d142d9be458f0"
+          },
+          {
+            "name": "pyparsing.actions",
+            "path": ".venv/lib/python3.13/site-packages/pyparsing/actions.py",
+            "sha256": "a435badd59168794ea47a00a38cc830a86c8d0917e42e05ce39008fa82240fcc"
+          },
+          {
+            "name": "pyparsing.common",
+            "path": ".venv/lib/python3.13/site-packages/pyparsing/common.py",
+            "sha256": "968900729a4983416c871f5489f1fee41d8248f009a87777c02c46b14957006c"
+          },
+          {
+            "name": "pyparsing.core",
+            "path": ".venv/lib/python3.13/site-packages/pyparsing/core.py",
+            "sha256": "e84663e68207f710f8f49d970931685a13ac008694ec96b9ff430017fa46999a"
+          },
+          {
+            "name": "pyparsing.exceptions",
+            "path": ".venv/lib/python3.13/site-packages/pyparsing/exceptions.py",
+            "sha256": "66df7ebeb038b9357c2752252550b48254206a4c1104e61c0ec3774dfc2a41ea"
+          },
+          {
+            "name": "pyparsing.helpers",
+            "path": ".venv/lib/python3.13/site-packages/pyparsing/helpers.py",
+            "sha256": "1a08dbad6dbc7ebdede21980605cc553fd8fa2454fd719c9a9f5e49e1ad99db0"
+          },
+          {
+            "name": "pyparsing.results",
+            "path": ".venv/lib/python3.13/site-packages/pyparsing/results.py",
+            "sha256": "944655c903d659aaf39f063f25fff6b7de07bc623b7950f367c812e297f47934"
+          },
+          {
+            "name": "pyparsing.testing",
+            "path": ".venv/lib/python3.13/site-packages/pyparsing/testing.py",
+            "sha256": "91cabab0b3f2036de1af00f3074345e57eb5286cf42110e39e139b0badbf98e9"
+          },
+          {
+            "name": "pyparsing.unicode",
+            "path": ".venv/lib/python3.13/site-packages/pyparsing/unicode.py",
+            "sha256": "8e6b33a519dfca10905a5d9187ff78753fe5c5033a7782a249ff62bd8f5bfe6e"
+          },
+          {
+            "name": "pyparsing.util",
+            "path": ".venv/lib/python3.13/site-packages/pyparsing/util.py",
+            "sha256": "54b22b72a221e70ea7f7eb760b3c11008b3f8f4750eff0166e7d9e688c851f15"
+          },
+          {
+            "name": "pyparsing.warnings",
+            "path": ".venv/lib/python3.13/site-packages/pyparsing/warnings.py",
+            "sha256": "c1058d33b29a975d0e4011c7706f5281dc1a05e15b51eddf0c41777dc1c11c21"
+          },
+          {
+            "name": "qa_probe_pkg",
+            "path": ".venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py",
+            "sha256": "b356c65516dd62bf0b12c070617ef1f2916c9f94702186e316f3db179eca43ca"
+          },
+          {
+            "name": "six",
+            "path": ".venv/lib/python3.13/site-packages/six.py",
+            "sha256": "c51c91f703d3d4b3696c923cb5fec213e05e75d9215393befac7f2fa6a3904df"
+          }
+        ],
+        "observation": "partial",
+        "truncated": true,
+        "unobserved": [
+          "native_io",
+          "network",
+          "subprocess",
+          "os_open"
+        ]
+      },
+      "launch_context": {
+        "argv": [],
+        "cwd_mode": "sandbox",
+        "cwd_origin": "sandbox",
+        "entry": "__main__",
+        "grant": {
+          "cwd_write": {
+            "granted": false,
+            "granted_at": null,
+            "mode": null
+          },
+          "decided": false
+        },
+        "launch_context_version": 1,
+        "passthrough_savefig": false,
+        "profile": "safe",
+        "target": "figure.py",
+        "target_kind": "script",
+        "write_mode": "sandboxed"
+      },
+      "pid_check": "ok",
+      "profile": "safe",
+      "public_identity": "sha256:6cf338690aa4c2a46ece166c9aaa829905929b2ff59320c7e0063bf7efa37782",
+      "python_source": "project_venv",
+      "receipt_id": "sha256:0ec6a0dd3d5fa52fa22c16b29fe5bb1e27199feee4755593b706bd8f16566bf9",
+      "receipt_version": 1,
+      "runtime": {
+        "inputs": {
+          "channels": [
+            "python_open",
+            "numpy_datasource"
+          ],
+          "files": [
+            {
+              "path": ".venv/lib/python3.13/site-packages/PIL/_imaging.cpython-313-darwin.so",
+              "sha256": "e01c11b87293f9b61d312908680e6fd5f957cf5e48ff2bc7815d3295dd8f513a",
+              "size": 617184
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/kiwisolver/_cext.cpython-313-darwin.so",
+              "sha256": "91004a9043a2ddd2ec2807443bb2b95983aa7cca104fac6352a9eea364f8cd94",
+              "size": 222392
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_c_internal_utils.cpython-313-darwin.so",
+              "sha256": "0f2a229dca2f7c039141bd03ea88c45e6ee564c6afc2c46a523e10f4df2f09ab",
+              "size": 174648
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_image.cpython-313-darwin.so",
+              "sha256": "b58d9f9cd8fcc341f0b5f1da632bd86433d15f75d04adbdca884ffd93fca7a0a",
+              "size": 369200
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_path.cpython-313-darwin.so",
+              "sha256": "598a81155f2c6594656097c6ee39ca250068b983d8f3df7dbb0b92c369770a7b",
+              "size": 362072
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/_backend_agg.cpython-313-darwin.so",
+              "sha256": "80c94fbbfbd2f58e63de9f1515e80ece7961a92ae3edb8345266dba5b017314f",
+              "size": 485520
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/ft2font.cpython-313-darwin.so",
+              "sha256": "136f2a1f8e475bb203d9b59604061dd0c07862dcdbf68c248de6b2cf58772c11",
+              "size": 1072640
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/fonts/ttf/DejaVuSans.ttf",
+              "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22",
+              "size": 756072
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/Solarize_Light2.mplstyle",
+              "sha256": "6b2b4e9b8793fd23efb3b1c2dbc658e06ba478de38abe484d0910c091f2454e9",
+              "size": 1257
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/_classic_test_patch.mplstyle",
+              "sha256": "8a8a47a4c68cde29bf00ad9a8871ae3360ca3398bd29cf38bfa35012849bd744",
+              "size": 167
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/_mpl-gallery-nogrid.mplstyle",
+              "sha256": "d5538bdd44aa0fa8ae190692ca7360d50872530bca2e790bc9429d6c13279ea8",
+              "size": 489
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/_mpl-gallery.mplstyle",
+              "sha256": "30dfaae7d0a20ea1d707cc45297c7309b2496c998d0e105ef650c9240a0c4cf0",
+              "size": 504
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/bmh.mplstyle",
+              "sha256": "f8a6e1688f39f412131c8a3251921fa500e37dc9202c0943012ff274ab26ea67",
+              "size": 712
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/classic.mplstyle",
+              "sha256": "d68e5be3b543fd1219bf7ba79c6f469b6b5ba6b4ef39e3465ccf21242986b982",
+              "size": 24670
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/dark_background.mplstyle",
+              "sha256": "1b34810f4ea3be54583aabbb0f96796b9c76e65f499d382d39b9fb4b80fdcee8",
+              "size": 607
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/fast.mplstyle",
+              "sha256": "c936b66042083fdc62e55fc6d29daf4a5c6086e84dc23462f603c408cc724623",
+              "size": 288
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/fivethirtyeight.mplstyle",
+              "sha256": "21c06dd83483cfd0adbb20a2b3d259b53dcdaa887a2d53be741eba03139b51c0",
+              "size": 780
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/ggplot.mplstyle",
+              "sha256": "bb6a0f1cc2d616d65ca488c7936b308b636bb783609c4b687f9971730334443d",
+              "size": 956
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/grayscale.mplstyle",
+              "sha256": "2822e0fa95e99ecf5c9ca0d728dd961fa995e35387fba71b4fee73290a2d49dc",
+              "size": 526
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/petroff10.mplstyle",
+              "sha256": "423ee93db1e1dcbdb991db0fb75ca9c2f291ddd3f3b8eac5cf34133f731f8a58",
+              "size": 298
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-bright.mplstyle",
+              "sha256": "a43aa7dfe354c952ef95f918b3c9fc1f3359be6b2554c0a191e1fe1ed66e2487",
+              "size": 144
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-colorblind.mplstyle",
+              "sha256": "7824b3163e7fdaf47a9f9aaed6b1c4e3ac2f49519971d56acfce68bf8d19b07f",
+              "size": 148
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-dark-palette.mplstyle",
+              "sha256": "a7900128d407446edb9381d7a8c42b4418c3971180a374425c775098fee0f8d8",
+              "size": 142
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-dark.mplstyle",
+              "sha256": "238c50ef9bc4e7ff57e24d1c3438aa8619c5dce72b676c653d7f0b97b3829281",
+              "size": 667
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-darkgrid.mplstyle",
+              "sha256": "d9b5ce4b34b98263f3441ad19b3556ca183fed9681450eadffe3be711bb26680",
+              "size": 670
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-deep.mplstyle",
+              "sha256": "e3874b7178e346047eeb26a8a60191227695833de393c5495504db048731441d",
+              "size": 142
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-muted.mplstyle",
+              "sha256": "4f8a378efa8a0ff2265c3929eba5c5395ff1ac1545528949537e090c59355e49",
+              "size": 143
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-notebook.mplstyle",
+              "sha256": "3dcbd941b62b0dd76e72b3656af04f990d60da68a78a8ffd1a4514151760b683",
+              "size": 382
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-paper.mplstyle",
+              "sha256": "9f499ba14a760b852cab68fab4d59cbb84d9fd84f8fa42a0ad83b4b7eaf3d72c",
+              "size": 393
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-pastel.mplstyle",
+              "sha256": "f2757ca91a5b52b9c565ec84e95710d6846e64f2e29765bbe0cd94dfb0cd30e1",
+              "size": 144
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-poster.mplstyle",
+              "sha256": "75468aa931383117d4ab6ad65576dba2eee4cc3ed9f4f13d2a8f1a5cbcdaf090",
+              "size": 403
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-talk.mplstyle",
+              "sha256": "ec59c168111d5816e77139bafc447e11055afdb66053b7677207b3f9ecfc47be",
+              "size": 403
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-ticks.mplstyle",
+              "sha256": "0884d9999154169e3430ad8ecfcb48f1aed64680a2cd053d678275ef66167d6c",
+              "size": 665
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-white.mplstyle",
+              "sha256": "5a327a2c453aae50b052e813a1ac1c8806ca3fda044451ebf6b7c5954add4f1d",
+              "size": 665
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8-whitegrid.mplstyle",
+              "sha256": "79ce018ec37398ebc7a6d709de674fc542c5dd2d7f535114a1cbaa7c8a70f8d9",
+              "size": 664
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/seaborn-v0_8.mplstyle",
+              "sha256": "fd7bbaa972b38b86f71b2982381d5bd7eca429343cc610e5899f1ecc7193880b",
+              "size": 1130
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mpl-data/stylelib/tableau-colorblind10.mplstyle",
+              "sha256": "06c8ab6557752e63d64f8b41233ea5a193e365c227a10ac819f0bbaefcea989c",
+              "size": 190
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_multiarray_umath.cpython-313-darwin.so",
+              "sha256": "c3f325f8c20ffada58134c2bf0cfe157bd03bccdaac784168f1b97bd6ba12c23",
+              "size": 3995688
+            },
+            {
+              "path": ".venv/lib/python3.13/site-packages/numpy/linalg/_umath_linalg.cpython-313-darwin.so",
+              "sha256": "5d8fb8134d1d8f5e729bb5b00a356f458d064b5925245b8d1fec93ec2686b84f",
+              "size": 154880
+            }
+          ],
+          "local_modules": [
+            {
+              "name": "PIL",
+              "path": ".venv/lib/python3.13/site-packages/PIL/__init__.py",
+              "sha256": "7361b6ad3878589affe5956e4a4da24d71398b0891fd3a8c15e9362217b4ca01"
+            },
+            {
+              "name": "PIL.ExifTags",
+              "path": ".venv/lib/python3.13/site-packages/PIL/ExifTags.py",
+              "sha256": "61c257add6fffd463aa788e37f998b3920c57fe931db10faf9bd921eef36bdf3"
+            },
+            {
+              "name": "PIL.GimpGradientFile",
+              "path": ".venv/lib/python3.13/site-packages/PIL/GimpGradientFile.py",
+              "sha256": "cd675b313f95b2c5f1d138340ce9b2b13a14818f9fc825c9bd89854a927578d8"
+            },
+            {
+              "name": "PIL.GimpPaletteFile",
+              "path": ".venv/lib/python3.13/site-packages/PIL/GimpPaletteFile.py",
+              "sha256": "8481d0f4b279ae2d21cb57bfbd961e0fe9faed459d8440e529ce2f0f181a51d8"
+            },
+            {
+              "name": "PIL.Image",
+              "path": ".venv/lib/python3.13/site-packages/PIL/Image.py",
+              "sha256": "04af3f2db7ffdd61e829fa7aa8f5481d394a0a4129a8fd8aa5b13908928fcd6d"
+            },
+            {
+              "name": "PIL.ImageChops",
+              "path": ".venv/lib/python3.13/site-packages/PIL/ImageChops.py",
+              "sha256": "1848e5ca67280ed03938e788c505485fde810feb3a01785bed39922d89f6b548"
+            },
+            {
+              "name": "PIL.ImageColor",
+              "path": ".venv/lib/python3.13/site-packages/PIL/ImageColor.py",
+              "sha256": "20603d0b6ba67840ff1334b60af8fa2ac53456eb42f51b2d58860f7bcb83b159"
+            },
+            {
+              "name": "PIL.ImageFile",
+              "path": ".venv/lib/python3.13/site-packages/PIL/ImageFile.py",
+              "sha256": "983c4f35e0c51046d4c636998ec77000cd2da208870a03b205e104cd0b2df629"
+            },
+            {
+              "name": "PIL.ImageMode",
+              "path": ".venv/lib/python3.13/site-packages/PIL/ImageMode.py",
+              "sha256": "69a6551c088211a9ce0362b58cddc3956dcd3ca6bc0e6e672174d712bcf2166b"
+            },
+            {
+              "name": "PIL.ImagePalette",
+              "path": ".venv/lib/python3.13/site-packages/PIL/ImagePalette.py",
+              "sha256": "667e20ff1710d4a0e57f494a72f3cd72320f7ae7d0c7e92d3b91dc777c8a771f"
+            },
+            {
+              "name": "PIL.ImageSequence",
+              "path": ".venv/lib/python3.13/site-packages/PIL/ImageSequence.py",
+              "sha256": "32986092befdb1c9980609a2f5982e8437d5c07be92d25f9b995470d996b9f42"
+            },
+            {
+              "name": "PIL.PaletteFile",
+              "path": ".venv/lib/python3.13/site-packages/PIL/PaletteFile.py",
+              "sha256": "b2e0dd00be953258d7c38a049f5be14ede03438bdba481c6777038a313a013ab"
+            },
+            {
+              "name": "PIL.PngImagePlugin",
+              "path": ".venv/lib/python3.13/site-packages/PIL/PngImagePlugin.py",
+              "sha256": "5911ebb3c8e58edf4fccace85ade20c3a062cc41dc55340bfb7b40f0bf1861c5"
+            },
+            {
+              "name": "PIL.TiffTags",
+              "path": ".venv/lib/python3.13/site-packages/PIL/TiffTags.py",
+              "sha256": "766dea350424b9a2caab3513be794689403c2b7222cd038006f69cff08edb45d"
+            },
+            {
+              "name": "PIL._binary",
+              "path": ".venv/lib/python3.13/site-packages/PIL/_binary.py",
+              "sha256": "a6e0e837223ccab3b0e91c77223c951d3b3fb9d69ac2ce52430ced719baf3975"
+            },
+            {
+              "name": "PIL._deprecate",
+              "path": ".venv/lib/python3.13/site-packages/PIL/_deprecate.py",
+              "sha256": "2a1c8b566418555c30d2b3916d4db84dededf1f3adf46d8b78ce9f24659b974a"
+            },
+            {
+              "name": "PIL._imaging",
+              "path": ".venv/lib/python3.13/site-packages/PIL/_imaging.cpython-313-darwin.so",
+              "sha256": "e01c11b87293f9b61d312908680e6fd5f957cf5e48ff2bc7815d3295dd8f513a"
+            },
+            {
+              "name": "PIL._util",
+              "path": ".venv/lib/python3.13/site-packages/PIL/_util.py",
+              "sha256": "7f185676b2c04727363ec3203779bdfd4d5d637a1429b57b9a4a0771782879e0"
+            },
+            {
+              "name": "PIL._version",
+              "path": ".venv/lib/python3.13/site-packages/PIL/_version.py",
+              "sha256": "fe7d75d4019326aca24ae57d4ab190cd62ba1225b175051119cd61cd87e42b1d"
+            },
+            {
+              "name": "_virtualenv",
+              "path": ".venv/lib/python3.13/site-packages/_virtualenv.py",
+              "sha256": "cfb3db86aaa53bb62b5ff764970bec2d71c9228590a0ebec57f6ec926cc0bf1a"
+            },
+            {
+              "name": "cycler",
+              "path": ".venv/lib/python3.13/site-packages/cycler/__init__.py",
+              "sha256": "d4975182fe59cf1a3e5b57afec1fcb5aabb2b163fa2d91fa08793f08eb486971"
+            },
+            {
+              "name": "dateutil",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/__init__.py",
+              "sha256": "32a6a6ebb58ef4891399417223aeaf4ba2284974e9f46dfcf0369d1f62c230b6"
+            },
+            {
+              "name": "dateutil._common",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/_common.py",
+              "sha256": "efbc34cb2b64af19586d29fefa50d53d431a6d45d147d237941bffbd0454a946"
+            },
+            {
+              "name": "dateutil._version",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/_version.py",
+              "sha256": "055d37d4ec430c09b2e7c9de520e72caa2e42daa88c3b89b2bd02cde388c89bd"
+            },
+            {
+              "name": "dateutil.parser",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/parser/__init__.py",
+              "sha256": "c1693a185bb14e98e8820086b6091c789a2d8b8a558e5e3f7c7417a4d39a4988"
+            },
+            {
+              "name": "dateutil.parser._parser",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/parser/_parser.py",
+              "sha256": "ee494377289c92c401fd7825fb7500981c33098a2bd40219aa4948713e9d1fff"
+            },
+            {
+              "name": "dateutil.parser.isoparser",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/parser/isoparser.py",
+              "sha256": "f05cbdf7d6e709dd5fad274e62e3ab6967c94ed7795bba90e7537036e1ff8573"
+            },
+            {
+              "name": "dateutil.relativedelta",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/relativedelta.py",
+              "sha256": "218fe6825323a196d87ebbe5a1363671ed366a25633c892265faa03536517ee0"
+            },
+            {
+              "name": "dateutil.rrule",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/rrule.py",
+              "sha256": "289cca95a09dd6311bbb8037f1996db256a801487d9d26dd6ce15d8e9ef429ec"
+            },
+            {
+              "name": "dateutil.tz",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/tz/__init__.py",
+              "sha256": "17e333d77bfa8d8b1e92541ff537bd27a9f370b0e6ab8ee03916bad4adf9fc50"
+            },
+            {
+              "name": "dateutil.tz._common",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/tz/_common.py",
+              "sha256": "720cc34c036c397bc473ce9c605efb12c962b9269bf0fbb0a6c979f9b5f7fd2e"
+            },
+            {
+              "name": "dateutil.tz._factories",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/tz/_factories.py",
+              "sha256": "ba76fa5d0357acf32f7a4b13094f8083c8e6559b384a88e83d47001e95a7aef5"
+            },
+            {
+              "name": "dateutil.tz.tz",
+              "path": ".venv/lib/python3.13/site-packages/dateutil/tz/tz.py",
+              "sha256": "1149c474c7de4e15e263a978b21f7205a6d9eb7fcf3b3cb4d734ac87db619f5a"
+            },
+            {
+              "name": "kiwisolver",
+              "path": ".venv/lib/python3.13/site-packages/kiwisolver/__init__.py",
+              "sha256": "0d42d2b355c4b47ac2c8b84dfe0f89f0f8af557b6f4b128dd97cf98116ca9122"
+            },
+            {
+              "name": "kiwisolver._cext",
+              "path": ".venv/lib/python3.13/site-packages/kiwisolver/_cext.cpython-313-darwin.so",
+              "sha256": "91004a9043a2ddd2ec2807443bb2b95983aa7cca104fac6352a9eea364f8cd94"
+            },
+            {
+              "name": "kiwisolver.exceptions",
+              "path": ".venv/lib/python3.13/site-packages/kiwisolver/exceptions.py",
+              "sha256": "85a18408089f16356ac13e5eb10d6c122aac6a35ba272762a75ea27873de2f4e"
+            },
+            {
+              "name": "matplotlib",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/__init__.py",
+              "sha256": "c6c47d1ecf25d7934f38c8a55c3b8e116d41aa08d8ecfa82f6ae8af589216a3a"
+            },
+            {
+              "name": "matplotlib._afm",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_afm.py",
+              "sha256": "7167b521bdfb4fa6721db47afe13eecc08e8b4c9a2df6cbe90307e8b6f22caa1"
+            },
+            {
+              "name": "matplotlib._api",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_api/__init__.py",
+              "sha256": "7b45f97630b1870dd80c58a7d88cd4dd129dffb84cdc6e71569b359751250274"
+            },
+            {
+              "name": "matplotlib._api.deprecation",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_api/deprecation.py",
+              "sha256": "5c9c64b1257cba44bc912566b063d2d3382fd5f7c56bc58d6912c0937d5d98e3"
+            },
+            {
+              "name": "matplotlib._blocking_input",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_blocking_input.py",
+              "sha256": "54736cc6f5f6993c7fc41927777d0c4a27159515d2e1d0837bd84372d6d5e6b9"
+            },
+            {
+              "name": "matplotlib._c_internal_utils",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_c_internal_utils.cpython-313-darwin.so",
+              "sha256": "0f2a229dca2f7c039141bd03ea88c45e6ee564c6afc2c46a523e10f4df2f09ab"
+            },
+            {
+              "name": "matplotlib._cm",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_cm.py",
+              "sha256": "3ee608024529cf8bb86a2523bdd5799e321f1b427f31063da4cd98cf78f7297b"
+            },
+            {
+              "name": "matplotlib._cm_bivar",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_cm_bivar.py",
+              "sha256": "82998a892c6c5a854658889fb1e874828343ed8ef34d624ab339ebfd0904b438"
+            },
+            {
+              "name": "matplotlib._cm_listed",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_cm_listed.py",
+              "sha256": "ddad3698f5129ceb1792a445371286c08bc9080298e657b3054aea19c9659ef9"
+            },
+            {
+              "name": "matplotlib._cm_multivar",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_cm_multivar.py",
+              "sha256": "d148cd156ed2cad8f5b77d500fdf5e6dfafe6a5ecd982a5684a50ecaaf55ccaf"
+            },
+            {
+              "name": "matplotlib._color_data",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_color_data.py",
+              "sha256": "93ec1d4e2e80ac9c64b2a05f313fbb532daa5b3f175f84e1e60b237f7d82c263"
+            },
+            {
+              "name": "matplotlib._constrained_layout",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_constrained_layout.py",
+              "sha256": "5d7ff67a5a87ba4177b687840eea7040f94dffc504bf7fb218a951d00f769fbe"
+            },
+            {
+              "name": "matplotlib._docstring",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_docstring.py",
+              "sha256": "bbdc89a2b262748f24d56f12d3548832a36687954e31573e02ac844bae8411d9"
+            },
+            {
+              "name": "matplotlib._enums",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_enums.py",
+              "sha256": "7ae0f6b23d8521b40ccc83c0e2b0ab208ff2f1157368cc8404ab1274141a51be"
+            },
+            {
+              "name": "matplotlib._fontconfig_pattern",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_fontconfig_pattern.py",
+              "sha256": "842a6ea53a217aa249a4849510ddc536fe966593d56a828ebaa18c983dd6c61e"
+            },
+            {
+              "name": "matplotlib._image",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_image.cpython-313-darwin.so",
+              "sha256": "b58d9f9cd8fcc341f0b5f1da632bd86433d15f75d04adbdca884ffd93fca7a0a"
+            },
+            {
+              "name": "matplotlib._layoutgrid",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_layoutgrid.py",
+              "sha256": "98507d6ac655a25d9a57d84b069767b6e1b9c758ac294ada8c5fb74d484282ca"
+            },
+            {
+              "name": "matplotlib._mathtext",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_mathtext.py",
+              "sha256": "2a73714baaff611cdab68ed7c10d7b48c0a65711cf23ff7585202e6c92512a8c"
+            },
+            {
+              "name": "matplotlib._mathtext_data",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_mathtext_data.py",
+              "sha256": "f72fffee37f76f380e983da51185b742982c4fecfd403ba2c112d51fb5aaf0fc"
+            },
+            {
+              "name": "matplotlib._path",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_path.cpython-313-darwin.so",
+              "sha256": "598a81155f2c6594656097c6ee39ca250068b983d8f3df7dbb0b92c369770a7b"
+            },
+            {
+              "name": "matplotlib._pylab_helpers",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_pylab_helpers.py",
+              "sha256": "a49111cad1c3997a3654fdec1fd430e8dc093f485e7cd3d03145c2567b67a072"
+            },
+            {
+              "name": "matplotlib._text_helpers",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_text_helpers.py",
+              "sha256": "9f3d69bc4a7cef9e8f0ab9fa28863633abd503e6de61434e0efbdfe0d9c61748"
+            },
+            {
+              "name": "matplotlib._tight_bbox",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_tight_bbox.py",
+              "sha256": "75d2795625ee95b3cba1c1ebf919162b6ed6252b95d965d4c7be236722f434e8"
+            },
+            {
+              "name": "matplotlib._tight_layout",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_tight_layout.py",
+              "sha256": "037bd92819b1722ef0df938ef65c607d4aab44a813afe37f754cdad0cd395b11"
+            },
+            {
+              "name": "matplotlib._version",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/_version.py",
+              "sha256": "c69ca4ce37a02a6cc1e586d6a0522408c6b1e97aa6b6e0ec16b0733b6fdb33b8"
+            },
+            {
+              "name": "matplotlib.artist",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/artist.py",
+              "sha256": "85f0861134641cb7cffa2e0f9a636c73bb325f2153662e0762fcf213cabd6a4d"
+            },
+            {
+              "name": "matplotlib.axes",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/axes/__init__.py",
+              "sha256": "68713fcc88e98482645b8ff57f2a05b845936fb80245ec0ae633595891c47603"
+            },
+            {
+              "name": "matplotlib.axes._axes",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/axes/_axes.py",
+              "sha256": "0b0054161e1f225245e0a9bcd1aa45787f6c3d5062fb738f4ce9f1a8abde6794"
+            },
+            {
+              "name": "matplotlib.axes._base",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/axes/_base.py",
+              "sha256": "7976ab5c8924d5289044f6bb45dbbf47a803807766da5eb41e1d913ed3d37fb1"
+            },
+            {
+              "name": "matplotlib.axes._secondary_axes",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/axes/_secondary_axes.py",
+              "sha256": "49ec3e2cae7b9839dd5176fef7f547cece5d24b43a7e1e27b2d66d7e9663ba2d"
+            },
+            {
+              "name": "matplotlib.axis",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/axis.py",
+              "sha256": "6ec3c4ca7e1e3009e44c26d6e2bc529bccac3cd607da9feeafb44dfd97d9469b"
+            },
+            {
+              "name": "matplotlib.backend_bases",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/backend_bases.py",
+              "sha256": "e446886212c2ecb74aae4d126123418985b71b5e8a6db7b19dd161a0e5fbfe36"
+            },
+            {
+              "name": "matplotlib.backend_managers",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/backend_managers.py",
+              "sha256": "45085e08efdc40195a5ac60c6c09acc2ed143ca53b6e62d32392c4160a2d9250"
+            },
+            {
+              "name": "matplotlib.backend_tools",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/backend_tools.py",
+              "sha256": "782c7ce25f090586b28eee51cb52d417228b22b760c661944c9c3bd9534fd72a"
+            },
+            {
+              "name": "matplotlib.backends",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/__init__.py",
+              "sha256": "268c097beb43ad404c3494e22404e0884b800a981dc6c2a744261afa70b6e790"
+            },
+            {
+              "name": "matplotlib.backends._backend_agg",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/_backend_agg.cpython-313-darwin.so",
+              "sha256": "80c94fbbfbd2f58e63de9f1515e80ece7961a92ae3edb8345266dba5b017314f"
+            },
+            {
+              "name": "matplotlib.backends.backend_agg",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/backend_agg.py",
+              "sha256": "3f2feb5d16c34cfd194ab341d8ee539a1e55f06e55f558971ff615e4f4d7f71c"
+            },
+            {
+              "name": "matplotlib.backends.backend_mixed",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/backend_mixed.py",
+              "sha256": "19fff60438f2f7815945700b9b45f7c51a4aff597c6d9192602aa7ad28eb8cc1"
+            },
+            {
+              "name": "matplotlib.backends.backend_svg",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/backend_svg.py",
+              "sha256": "450bcf13da51d314aee7934831a8d7d5606a9a65db5165b0756af6a8c1beeb79"
+            },
+            {
+              "name": "matplotlib.backends.registry",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/backends/registry.py",
+              "sha256": "33604784129b509f04d81d901317d57fc35b00ae1916126d98a45e9416590e1e"
+            },
+            {
+              "name": "matplotlib.bezier",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/bezier.py",
+              "sha256": "6a12750512684db73126836617598261cf7a996b398d23380ce2b9f2361a5e45"
+            },
+            {
+              "name": "matplotlib.category",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/category.py",
+              "sha256": "52c67cadb003007f7a61fa630fe3750cb4dc4bf710c25b332084366516a25a6e"
+            },
+            {
+              "name": "matplotlib.cbook",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/cbook.py",
+              "sha256": "9c5da1342febca225c79ce7c0a7a7fd26006483d0b7ec9e36f352e087e29f8eb"
+            },
+            {
+              "name": "matplotlib.cm",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/cm.py",
+              "sha256": "e716aff81bc9e2959255dbc6aa5e2861ce04a40f91e8eb943f9c63ad908c2af8"
+            },
+            {
+              "name": "matplotlib.collections",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/collections.py",
+              "sha256": "e40717de54ec283d4e6d23a42ebfa2af360f7dd271b0dae0c397400fcf3abc21"
+            },
+            {
+              "name": "matplotlib.colorbar",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/colorbar.py",
+              "sha256": "f8fc15df191ccdcc8fabd2a2ff37e941d3ffd44a8e141ce87944ac325505d9c1"
+            },
+            {
+              "name": "matplotlib.colorizer",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/colorizer.py",
+              "sha256": "473134ce3a81e9e96991eb4a89dcba9fe4510db605f7cb2978420e20c7c815be"
+            },
+            {
+              "name": "matplotlib.colors",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/colors.py",
+              "sha256": "875615e7dcb85afb2d38f0b4c7c799cf01d822d6a5ed58e355cc954b79e26923"
+            },
+            {
+              "name": "matplotlib.container",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/container.py",
+              "sha256": "63abf88fbf60324f100d87eb74ea9b6c91c7d01a0e20ef5e9f3e1db656814895"
+            },
+            {
+              "name": "matplotlib.contour",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/contour.py",
+              "sha256": "c2932dacc64488360f46e15b679f761ef42a9f834e07249f335edd7ad2a87a76"
+            },
+            {
+              "name": "matplotlib.dates",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/dates.py",
+              "sha256": "c5f70563783702c5bd8ac9c420a1468f8817ab45dea31a31ff77f13420d0d357"
+            },
+            {
+              "name": "matplotlib.dviread",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/dviread.py",
+              "sha256": "06a420d1fa970ff4e600124f4960c2f87d9acedec1e7735f384d520ba99b5e22"
+            },
+            {
+              "name": "matplotlib.figure",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/figure.py",
+              "sha256": "08d3cc974402c61af787758671ddbbd691385edbf8adaa515ae5121523494ae7"
+            },
+            {
+              "name": "matplotlib.font_manager",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/font_manager.py",
+              "sha256": "b52a4e959aa23547489f781008537ffa738b674f165c1aa3fee9cfea8d49c88c"
+            },
+            {
+              "name": "matplotlib.ft2font",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/ft2font.cpython-313-darwin.so",
+              "sha256": "136f2a1f8e475bb203d9b59604061dd0c07862dcdbf68c248de6b2cf58772c11"
+            },
+            {
+              "name": "matplotlib.gridspec",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/gridspec.py",
+              "sha256": "b3a4645c49383915ac3078d790af7c66fa2c6790feaa07a754d934848bccc0ec"
+            },
+            {
+              "name": "matplotlib.hatch",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/hatch.py",
+              "sha256": "b5f10cd03431c8b91413cee51ddb8c365139e4628836d019a3863f62c026489a"
+            },
+            {
+              "name": "matplotlib.image",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/image.py",
+              "sha256": "30b160d3a276c65966d6d9a00e794b630f204f2efffcd1a791fe1264ffb7992b"
+            },
+            {
+              "name": "matplotlib.inset",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/inset.py",
+              "sha256": "7c957c54c318d3bffdee2251dff44ef3dd9600a13b9b27d5fc6aa0faa2bdf6f8"
+            },
+            {
+              "name": "matplotlib.layout_engine",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/layout_engine.py",
+              "sha256": "9b044d875de6210fb0a63415801681fcb58a3750224135a5760f97f672e65689"
+            },
+            {
+              "name": "matplotlib.legend",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/legend.py",
+              "sha256": "e4d0cf6d6aa488890fd45277b0b36a99ec368e43636b041fd86fc1a99346feee"
+            },
+            {
+              "name": "matplotlib.legend_handler",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/legend_handler.py",
+              "sha256": "7a48594d3d57f7241ded334845dbbfbee8b9151d824e62343564c5253a85d4de"
+            },
+            {
+              "name": "matplotlib.lines",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/lines.py",
+              "sha256": "046df1853bb3603163cdffa4e4271073f57b5b81e5425e022fb442410cf4102f"
+            },
+            {
+              "name": "matplotlib.markers",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/markers.py",
+              "sha256": "83aba47ab6799ffb03fc49e4d1e240e24913bce3a9f007d2181abad0f1e8b7e1"
+            },
+            {
+              "name": "matplotlib.mathtext",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mathtext.py",
+              "sha256": "c9396951f9cac73ac597b5cd8f2b82fb1301067c54b9f53a195c10ca1400236a"
+            },
+            {
+              "name": "matplotlib.mlab",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/mlab.py",
+              "sha256": "4fbd69e31d0a24d546af052ea03760723590b9c2104ee56ba1c382f7c65dc2c7"
+            },
+            {
+              "name": "matplotlib.offsetbox",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/offsetbox.py",
+              "sha256": "85c04dee0d940452eefd684183f6c39671dc21d8dce8f8fe90789c7e13a94e92"
+            },
+            {
+              "name": "matplotlib.patches",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/patches.py",
+              "sha256": "b977b0d7d6d27a0275bf154885932199ff1fe175f207bc0a2308009c53dfc279"
+            },
+            {
+              "name": "matplotlib.path",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/path.py",
+              "sha256": "42241148c8c76ca081a635b227728f20980ad44ab4eea5d462350b6831e0b798"
+            },
+            {
+              "name": "matplotlib.patheffects",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/patheffects.py",
+              "sha256": "e2969080f18a73fc5d073fc167f31a561289d85c590c67a1e731f0ce7ddebc36"
+            },
+            {
+              "name": "matplotlib.projections",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/projections/__init__.py",
+              "sha256": "80808a80d7e327eb62a161056bbe4128a2591ba2498f1e3afd1a44aade5f93de"
+            },
+            {
+              "name": "matplotlib.projections.geo",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/projections/geo.py",
+              "sha256": "7de4767726c2ca5864eb17be333c41aff7bc31d6e955cf2d06d090409d15d9ca"
+            },
+            {
+              "name": "matplotlib.projections.polar",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/projections/polar.py",
+              "sha256": "bc4cbb141e059c4bbb08e5b28d94fecd80ede2d6d3c245bc06f642afb92a6224"
+            },
+            {
+              "name": "matplotlib.pyplot",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/pyplot.py",
+              "sha256": "d3e6a71727bdf305419aced04be05deda74f69654d25611546acca2a7a2bdd4c"
+            },
+            {
+              "name": "matplotlib.quiver",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/quiver.py",
+              "sha256": "831fa65f8044d8357512345031347fde3a9933c3438759e950e8b37400b2e224"
+            },
+            {
+              "name": "matplotlib.rcsetup",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/rcsetup.py",
+              "sha256": "f3b2ab41e0c5838b11bb8a1bc45e26734786482b82946caecd7b31a19fe499ee"
+            },
+            {
+              "name": "matplotlib.scale",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/scale.py",
+              "sha256": "9f726a2d4fddddd00aacfd6e3b99538a95446b18222e10d1dac4a4f1301713f3"
+            },
+            {
+              "name": "matplotlib.spines",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/spines.py",
+              "sha256": "ffd0dce28200803b37300eab642c2bd6c70f1824b36c09e6629dcf433a4a15e5"
+            },
+            {
+              "name": "matplotlib.stackplot",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/stackplot.py",
+              "sha256": "6ba21402e8c38c6a5a16a893cc6afce5e0c3f25e9b6962cfacce5836f6fa83d2"
+            },
+            {
+              "name": "matplotlib.streamplot",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/streamplot.py",
+              "sha256": "ad754a6048b831f4a0dc79c06966fcc38a85a7de6645fe9da2c315aad5d91291"
+            },
+            {
+              "name": "matplotlib.style",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/style/__init__.py",
+              "sha256": "7eb690b72042dd3636653b0b7712fbccdb3db49619b637bbb5b8aa11fdcce7a3"
+            },
+            {
+              "name": "matplotlib.style.core",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/style/core.py",
+              "sha256": "452347d8d3b4c4afd8dfb75ba4c5b269630c8ef70c6bf34768a5c36b9238fed0"
+            },
+            {
+              "name": "matplotlib.table",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/table.py",
+              "sha256": "32417db3cbb65fef7f09e8bdb098b19636f6fc8fc1ff850ea95c7489178a214d"
+            },
+            {
+              "name": "matplotlib.texmanager",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/texmanager.py",
+              "sha256": "93751deef1dbb58d028d79b31cff999c403183a6c7571a3600bbdeeff7b5aca8"
+            },
+            {
+              "name": "matplotlib.text",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/text.py",
+              "sha256": "c584a42d988ea5ec381b58e42c0e69523b45eea5213acdf2a7c20414ca84e868"
+            },
+            {
+              "name": "matplotlib.textpath",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/textpath.py",
+              "sha256": "426ad943632d7f26a8eaa5a0fb09841806d3c24b89e7802703315ff4dcd91e0e"
+            },
+            {
+              "name": "matplotlib.ticker",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/ticker.py",
+              "sha256": "628209c96565624dc32196c197ec3a7f392e5444b78f574de27c9ff921ca5438"
+            },
+            {
+              "name": "matplotlib.transforms",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/transforms.py",
+              "sha256": "72d9ce4ea80f3f87601c29929146b24162fd2a48f3592cd011900b71cf681330"
+            },
+            {
+              "name": "matplotlib.tri",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/__init__.py",
+              "sha256": "6ac9df79f291a49bfbb066df75d08cc9b9c92275433f082987b8349a9a21daee"
+            },
+            {
+              "name": "matplotlib.tri._triangulation",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_triangulation.py",
+              "sha256": "52bda528c3b1e0dad9c70ca2d2105e06757389cb8a68291ed0d92b6677929253"
+            },
+            {
+              "name": "matplotlib.tri._tricontour",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_tricontour.py",
+              "sha256": "cb1787f10801b9bd674eaf6a6cee488a2cfcd5b70b5c378c7091d44b60219a7b"
+            },
+            {
+              "name": "matplotlib.tri._trifinder",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_trifinder.py",
+              "sha256": "de05332590c8c1f76c489504f2120ab28f5ed7e506bf29d437d1f16aa0b51047"
+            },
+            {
+              "name": "matplotlib.tri._triinterpolate",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_triinterpolate.py",
+              "sha256": "e05b72252a09a47705c644a464767568d7a7815356a95285e25efc3e0087f0ed"
+            },
+            {
+              "name": "matplotlib.tri._tripcolor",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_tripcolor.py",
+              "sha256": "67abab16ffa7683337feb86ffe9920219239de1f3c68ea3da96737307ec69810"
+            },
+            {
+              "name": "matplotlib.tri._triplot",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_triplot.py",
+              "sha256": "8e51d2cf7e99e52d7ccc129ceb7f4f952a9d85f97b8c7a25f04c6575d26e0c8e"
+            },
+            {
+              "name": "matplotlib.tri._trirefine",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_trirefine.py",
+              "sha256": "346f1bb03859e443b1313f8cb045b3266d75651dfff020181e51b9dc81a2d29b"
+            },
+            {
+              "name": "matplotlib.tri._tritools",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/tri/_tritools.py",
+              "sha256": "c02f4a544e94aa45951e9c96f4553885076a455455989961681175117b1a0fc5"
+            },
+            {
+              "name": "matplotlib.units",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/units.py",
+              "sha256": "ecefa595cf24dc6a5da2d52cdad59c1068285071d7f98ee8d11edffb526f7b79"
+            },
+            {
+              "name": "matplotlib.widgets",
+              "path": ".venv/lib/python3.13/site-packages/matplotlib/widgets.py",
+              "sha256": "cd474d43fba7a872e1efab9c0b12ca1515060e2141d588bc326128779226e47f"
+            },
+            {
+              "name": "mpl_toolkits.mplot3d",
+              "path": ".venv/lib/python3.13/site-packages/mpl_toolkits/mplot3d/__init__.py",
+              "sha256": "7c7f4774c7c532f8db216ab2da08d09e6da6dda7b50af2e2b87e8bc0a1e8d242"
+            },
+            {
+              "name": "mpl_toolkits.mplot3d.art3d",
+              "path": ".venv/lib/python3.13/site-packages/mpl_toolkits/mplot3d/art3d.py",
+              "sha256": "a2fca09025783fb750f7122271ccdb272c806da132d82d47627ce3b95dc23aeb"
+            },
+            {
+              "name": "mpl_toolkits.mplot3d.axes3d",
+              "path": ".venv/lib/python3.13/site-packages/mpl_toolkits/mplot3d/axes3d.py",
+              "sha256": "84205d6b6401ebf398c8a109386d2968f1200cf98b21cac432466e2aa394161a"
+            },
+            {
+              "name": "mpl_toolkits.mplot3d.axis3d",
+              "path": ".venv/lib/python3.13/site-packages/mpl_toolkits/mplot3d/axis3d.py",
+              "sha256": "7903d6a364ca6d1b0f63c254b7976b8c16f245d54a060793d841781c6839d685"
+            },
+            {
+              "name": "mpl_toolkits.mplot3d.proj3d",
+              "path": ".venv/lib/python3.13/site-packages/mpl_toolkits/mplot3d/proj3d.py",
+              "sha256": "e879ba58fcdebbfc237de47c69fad0d6709f8d2d29df08efa122312565654b4b"
+            },
+            {
+              "name": "numpy",
+              "path": ".venv/lib/python3.13/site-packages/numpy/__init__.py",
+              "sha256": "09295a80660f17925ae23765ce8cbd7ff7ceae968d5f2f89349f1cb74c0b9e11"
+            },
+            {
+              "name": "numpy.__config__",
+              "path": ".venv/lib/python3.13/site-packages/numpy/__config__.py",
+              "sha256": "ab93a7e2f79a9d1f6f688d2769490683a20c1526b1e415bb58913b43f3aa6949"
+            },
+            {
+              "name": "numpy._array_api_info",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_array_api_info.py",
+              "sha256": "4332889405b9c5b4f946d761086346f58c0acb82bbfb5f9180b30d5520b5c972"
+            },
+            {
+              "name": "numpy._core",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/__init__.py",
+              "sha256": "837ce8aec8693095d2e1c7c306d385d1785a50be97a009935c64cae04e3555d2"
+            },
+            {
+              "name": "numpy._core._add_newdocs",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_add_newdocs.py",
+              "sha256": "2fc06f2d919b16afc1e1f1abdb161bdce9eedafe3e07f127bb0f45b0841964c6"
+            },
+            {
+              "name": "numpy._core._add_newdocs_scalars",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_add_newdocs_scalars.py",
+              "sha256": "db6f2b889f9dcfd7d5df64ef3a430f532b3fdbfc279c3b94f8451b1757a16efb"
+            },
+            {
+              "name": "numpy._core._asarray",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_asarray.py",
+              "sha256": "f5aa779032cd51c8ca49039fae454fcebd2d64647513576d0884ff61e68525d2"
+            },
+            {
+              "name": "numpy._core._dtype",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_dtype.py",
+              "sha256": "59a285cabfcef070f8c3e6eaa15c1d4fde4791983e374e275944fd638c11f926"
+            },
+            {
+              "name": "numpy._core._dtype_ctypes",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_dtype_ctypes.py",
+              "sha256": "28f3e56a40ec3e4b938523abe6a1705b48c9f559e36ef5b811684e6c21d81881"
+            },
+            {
+              "name": "numpy._core._exceptions",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_exceptions.py",
+              "sha256": "5fc120d61ab5b94f0bf7088ec05a368d1aba4b4be78c27606051e3de1016f42a"
+            },
+            {
+              "name": "numpy._core._internal",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_internal.py",
+              "sha256": "497f1ce325bcc6ffc2ccf013e2cdd2ff2e32c55106a0a07997213d45d6c777a0"
+            },
+            {
+              "name": "numpy._core._methods",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_methods.py",
+              "sha256": "724facf7e63c5b8fcc2fac14bf31a02cb048d9e28f516d86502ba5077a425476"
+            },
+            {
+              "name": "numpy._core._multiarray_umath",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_multiarray_umath.cpython-313-darwin.so",
+              "sha256": "c3f325f8c20ffada58134c2bf0cfe157bd03bccdaac784168f1b97bd6ba12c23"
+            },
+            {
+              "name": "numpy._core._string_helpers",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_string_helpers.py",
+              "sha256": "e929a0a22ea80f60ae9e3c014abf41676d079029ef5ba9d33db953394de95a78"
+            },
+            {
+              "name": "numpy._core._type_aliases",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_type_aliases.py",
+              "sha256": "fd576d1516aca4b752b374a3b448f03a9acc6b748243dd72f89619f7b300344d"
+            },
+            {
+              "name": "numpy._core._ufunc_config",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/_ufunc_config.py",
+              "sha256": "0e938bb63600619bfe9028e8f285f9ddcd925b62d0220690ec4a650a48ac45a5"
+            },
+            {
+              "name": "numpy._core.arrayprint",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/arrayprint.py",
+              "sha256": "ea1e7577acc4048383d842a628827e33dc544f06842ab5848b3ee3bb298eaea2"
+            },
+            {
+              "name": "numpy._core.einsumfunc",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/einsumfunc.py",
+              "sha256": "4b4fc2d54ebe6b533f680fde2fa468d30449c2d44afc73041b6debb6e302dedf"
+            },
+            {
+              "name": "numpy._core.fromnumeric",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/fromnumeric.py",
+              "sha256": "09b04d56271fa78c43f6aca66ec06c802b0b22b026ae2fa6153575459b6dab53"
+            },
+            {
+              "name": "numpy._core.function_base",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/function_base.py",
+              "sha256": "97925f5f2a271088cbff838a149a6312335d8dac80ac0314f0c85a31b442c1b5"
+            },
+            {
+              "name": "numpy._core.getlimits",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/getlimits.py",
+              "sha256": "ec0927f602302ef9b449f2773151deaab480cb5ad8eff4c8bbba59e489daf106"
+            },
+            {
+              "name": "numpy._core.memmap",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/memmap.py",
+              "sha256": "9f79da21b64da6722a66cc86e126061b33371ad66139314580de483a0ebc254c"
+            },
+            {
+              "name": "numpy._core.multiarray",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/multiarray.py",
+              "sha256": "afd14181b927aa10800a0c5dab5f456f52e219726847dbef379e313419029d49"
+            },
+            {
+              "name": "numpy._core.numeric",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/numeric.py",
+              "sha256": "feb150554b4879d4df7bd0a4ab7b1a6b818de7ba994ed0c73583fee177533417"
+            },
+            {
+              "name": "numpy._core.numerictypes",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/numerictypes.py",
+              "sha256": "de7be532bd85cff56ad4e29786d76ec5bf2d511f7e364919bdd7cb0ad93ad3a8"
+            },
+            {
+              "name": "numpy._core.overrides",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/overrides.py",
+              "sha256": "88cf63f86be1eba2a303d221f011af2077194d819c06a10c725f01c939afe4ca"
+            },
+            {
+              "name": "numpy._core.printoptions",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/printoptions.py",
+              "sha256": "345a6fcb96e78dbbea9ca7aa42dd2f784131a400180153688865c7de98255807"
+            },
+            {
+              "name": "numpy._core.records",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/records.py",
+              "sha256": "f6c0878df1c604fda7043d738e8b2bb54d8f771ceffa92b81236407a99475df5"
+            },
+            {
+              "name": "numpy._core.shape_base",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/shape_base.py",
+              "sha256": "1d6e897dfdb7edf2d71e8ed75254a6e7106b1a947592f88d91af96d1ad2c469e"
+            },
+            {
+              "name": "numpy._core.umath",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_core/umath.py",
+              "sha256": "fabc529bdfcc632ae82bcaaa5539494802757e5a52c492999e2ebfe10f396987"
+            },
+            {
+              "name": "numpy._distributor_init",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_distributor_init.py",
+              "sha256": "14148976054795071ae41ad011560fa059ba2924c98481675ad59b1241214d2a"
+            },
+            {
+              "name": "numpy._expired_attrs_2_0",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_expired_attrs_2_0.py",
+              "sha256": "a6cf0f96202d89f172abe6ad706fe252ba7672ee35091722bd70870c83a0426f"
+            },
+            {
+              "name": "numpy._globals",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_globals.py",
+              "sha256": "fe13921c6f4a00bd12891da7d800f2a42f878c067d8ed881ddf0af3fbace3a36"
+            },
+            {
+              "name": "numpy._pytesttester",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_pytesttester.py",
+              "sha256": "cc2729e50688028a9aeedb131b2a12c0480f3477cc1c0e84be7f5d4177164002"
+            },
+            {
+              "name": "numpy._typing",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_typing/__init__.py",
+              "sha256": "23712a130b95f1134c0e93988ee72abe6c1015180277768ac13bae4fe1c8f59b"
+            },
+            {
+              "name": "numpy._typing._array_like",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_array_like.py",
+              "sha256": "5c9d8a290c4d76fe7e85f4367f21fdc33f40eed80b44f66d6378629fb4271bf8"
+            },
+            {
+              "name": "numpy._typing._char_codes",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_char_codes.py",
+              "sha256": "c1ad22e8a3fb2405b257e8bdb303a07ff0a923ab23f7175bf5af3b6b62316bd1"
+            },
+            {
+              "name": "numpy._typing._dtype_like",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_dtype_like.py",
+              "sha256": "060ecb1f4c35793a8a3b4fe200cb1151b51b7d17fc2e53ac7699da4271752bc7"
+            },
+            {
+              "name": "numpy._typing._nbit",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_nbit.py",
+              "sha256": "9a353bc8328b57ad47a79fbe36eae4c48272b136a7307df7b70e5ae2e725a284"
+            },
+            {
+              "name": "numpy._typing._nbit_base",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_nbit_base.py",
+              "sha256": "496ed60d5b3b711b201c21e1608c9f2e3f4757f0173f85ffd83d7187e54da43c"
+            },
+            {
+              "name": "numpy._typing._nested_sequence",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_nested_sequence.py",
+              "sha256": "3bc45b3564a962a54c203adede2390a7c852ba48349a4c9332a5e7abfe3f2c24"
+            },
+            {
+              "name": "numpy._typing._scalars",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_scalars.py",
+              "sha256": "02ee1deaaea050040b408b9613fe4f1de80b45290a5c1bb38d5d70a76a6eb7f5"
+            },
+            {
+              "name": "numpy._typing._shape",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_shape.py",
+              "sha256": "8086f11c19de0c82c78caa3617e4d4f0834ae82afd843befb0f88e9700137a3e"
+            },
+            {
+              "name": "numpy._typing._ufunc",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_typing/_ufunc.py",
+              "sha256": "1ce91a13eeb05747dddeb9876460b7f580072087fcb72be5cde903e32e064310"
+            },
+            {
+              "name": "numpy._utils",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_utils/__init__.py",
+              "sha256": "4a9a9d941150a1648e017b1efcd2ebb8ffdde730f9c0366f1d826121eb099caf"
+            },
+            {
+              "name": "numpy._utils._conversions",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_utils/_conversions.py",
+              "sha256": "d3133175e2cece20e61ec44cffc96e121e12fa441d328320e86c4d0c36acebd9"
+            },
+            {
+              "name": "numpy._utils._inspect",
+              "path": ".venv/lib/python3.13/site-packages/numpy/_utils/_inspect.py",
+              "sha256": "cc5b890011f4f03d4a82afde79c6240f53a0834397a75b78a2a8d9c4cd2474b9"
+            },
+            {
+              "name": "numpy.dtypes",
+              "path": ".venv/lib/python3.13/site-packages/numpy/dtypes.py",
+              "sha256": "29ba7455e6125e2986d6e1149cd4ae9d699b208ad23edf1cd7482fdac29bda4a"
+            },
+            {
+              "name": "numpy.exceptions",
+              "path": ".venv/lib/python3.13/site-packages/numpy/exceptions.py",
+              "sha256": "df16e967d97b1779a1c2dca6be5d2fa84e346a237c6e471e6a8f1a5df66c9795"
+            },
+            {
+              "name": "numpy.lib",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/__init__.py",
+              "sha256": "9983bd3542d050794af5c33999f9d6caedb36fc2c4c3184442b842fef757d92d"
+            },
+            {
+              "name": "numpy.lib._array_utils_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_array_utils_impl.py",
+              "sha256": "4644b9438e60d2a4cc38e0fb70d2a36b0887e0ae2251b37a1a9bb6b4da0a7b6e"
+            },
+            {
+              "name": "numpy.lib._arraypad_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_arraypad_impl.py",
+              "sha256": "69f17907431860505f879f7ac0f69be927464119e4068583b5f84f11fee63131"
+            },
+            {
+              "name": "numpy.lib._arraysetops_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_arraysetops_impl.py",
+              "sha256": "9f896cc0ddc2f4f94ed7cf0b28fa5dba777ec77df3c44788afcd6448d55416b4"
+            },
+            {
+              "name": "numpy.lib._arrayterator_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_arrayterator_impl.py",
+              "sha256": "1ed3800c81ee1bd0036db3138268783ff9ae91ed55fbc13e14d10eddb54e18f0"
+            },
+            {
+              "name": "numpy.lib._datasource",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_datasource.py",
+              "sha256": "9ead7eb599f6ed893aae85ddf9a8316502b4efd0595cea2b9ddf7af1ab097460"
+            },
+            {
+              "name": "numpy.lib._format_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_format_impl.py",
+              "sha256": "5d7fd66e8c78d0bd9fab82e8893609ba88f7fcd3569eaebb0748f40768e85c16"
+            },
+            {
+              "name": "numpy.lib._function_base_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_function_base_impl.py",
+              "sha256": "000d045b739c89974bfd9bae66beaa35bfd97ea7a06d13378aa234153a3b6116"
+            },
+            {
+              "name": "numpy.lib._histograms_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_histograms_impl.py",
+              "sha256": "3f4f1940f437fe139d852031afe1c2b9f85e32a2c32f8d90c0125445af9f16cd"
+            },
+            {
+              "name": "numpy.lib._index_tricks_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_index_tricks_impl.py",
+              "sha256": "e168b1ab86f91c9c8ab64e97b2fdc7eb3fe0559c8432d33c9b267b68b4eb407e"
+            },
+            {
+              "name": "numpy.lib._iotools",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_iotools.py",
+              "sha256": "04e6c05a9fe7ebd9a92d888524bf15512926b9272b453ae5c4ac5c63ab816b48"
+            },
+            {
+              "name": "numpy.lib._nanfunctions_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_nanfunctions_impl.py",
+              "sha256": "d923a746bdfc4cbc254cd932c03670a9f7566827002b2cf5dc40db8bc81bb5fb"
+            },
+            {
+              "name": "numpy.lib._npyio_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_npyio_impl.py",
+              "sha256": "51eb4572baad1e8198f71b3488a3cbcdb81ac85aa3c15cc2708cd907198a1fb5"
+            },
+            {
+              "name": "numpy.lib._polynomial_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_polynomial_impl.py",
+              "sha256": "530f29b1db6a1610bd02291c94196e100a3dd7b80f3a278fb6173e29dd297545"
+            },
+            {
+              "name": "numpy.lib._scimath_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_scimath_impl.py",
+              "sha256": "6f9ffec91cd62483bc75afd9e01f2a41eebc8fc9693bc82db4696f18da65cadc"
+            },
+            {
+              "name": "numpy.lib._shape_base_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_shape_base_impl.py",
+              "sha256": "b550d0cc5e7efe46dc1c77f0286330fcb4100fcbbeb98f41aa9127c2c44e01ec"
+            },
+            {
+              "name": "numpy.lib._stride_tricks_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_stride_tricks_impl.py",
+              "sha256": "0db57f30a81b00919e7922828cc23c4c32759c07a647639b76d1e157871fe862"
+            },
+            {
+              "name": "numpy.lib._twodim_base_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_twodim_base_impl.py",
+              "sha256": "a11d0bdecd5064dae7aca1ecbc3fdb9ff0eacae4cdfa8ed1a644ac0bb4a58fe6"
+            },
+            {
+              "name": "numpy.lib._type_check_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_type_check_impl.py",
+              "sha256": "53a091170f8fe5fafb13e7b241f8d04c352185c1253125c389aba52ee37e4939"
+            },
+            {
+              "name": "numpy.lib._ufunclike_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_ufunclike_impl.py",
+              "sha256": "f468fbb02ccb1038be6194044b04d3f873604c130f59841612109b0e1718feea"
+            },
+            {
+              "name": "numpy.lib._utils_impl",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_utils_impl.py",
+              "sha256": "4cb745a05e5cef826bc6c38c55d62cd02113a61d4531b26098c7d86ff2ae2435"
+            },
+            {
+              "name": "numpy.lib._version",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/_version.py",
+              "sha256": "0affabe9bf73540e9b0febf2158f2d09746ef5de4eb069e3a976a57d8d9194e0"
+            },
+            {
+              "name": "numpy.lib.array_utils",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/array_utils.py",
+              "sha256": "5db732849f52d0894d9cff4dcbacb280b30400259650f34e53cbdebe3d531292"
+            },
+            {
+              "name": "numpy.lib.format",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/format.py",
+              "sha256": "9e9274789853eee28d2b96b49423067e226ff91e23c8d86220f7996c970d5c1b"
+            },
+            {
+              "name": "numpy.lib.introspect",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/introspect.py",
+              "sha256": "e97a1b86c7a928352ff339a83e47d53391206421afeb53f63ca97f6916c49074"
+            },
+            {
+              "name": "numpy.lib.mixins",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/mixins.py",
+              "sha256": "cd047e8888c2492796c5ea4ae62fbbba34967f0163ad467fab18deac88a4c3a6"
+            },
+            {
+              "name": "numpy.lib.npyio",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/npyio.py",
+              "sha256": "79a3ef7c7192cd413bd132471cb3823c85fd1b98a132e0447b1cbafcf36127d4"
+            },
+            {
+              "name": "numpy.lib.scimath",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/scimath.py",
+              "sha256": "aa315a41eab4cc4225ee02aa3a16a3fef9820bf29a15dc9398774b514912a792"
+            },
+            {
+              "name": "numpy.lib.stride_tricks",
+              "path": ".venv/lib/python3.13/site-packages/numpy/lib/stride_tricks.py",
+              "sha256": "c74fc17f097270102547706fa714e775e3fde9d1c14ff7c049b9134d3cc16202"
+            },
+            {
+              "name": "numpy.linalg",
+              "path": ".venv/lib/python3.13/site-packages/numpy/linalg/__init__.py",
+              "sha256": "3b50094af1bb3530254d3bcb19349c612d5db6f859707320a466c7f71499abc2"
+            },
+            {
+              "name": "numpy.linalg._linalg",
+              "path": ".venv/lib/python3.13/site-packages/numpy/linalg/_linalg.py",
+              "sha256": "fb51e084cbb05b72a571a088299222055f3f176792ea9ea66186327a31ec787f"
+            },
+            {
+              "name": "numpy.linalg._umath_linalg",
+              "path": ".venv/lib/python3.13/site-packages/numpy/linalg/_umath_linalg.cpython-313-darwin.so",
+              "sha256": "5d8fb8134d1d8f5e729bb5b00a356f458d064b5925245b8d1fec93ec2686b84f"
+            },
+            {
+              "name": "numpy.ma",
+              "path": ".venv/lib/python3.13/site-packages/numpy/ma/__init__.py",
+              "sha256": "5e90d6617c1ab83738f7e20db24e39e43d37530e29eb115db1d58e9f6aedf3b5"
+            },
+            {
+              "name": "numpy.ma.core",
+              "path": ".venv/lib/python3.13/site-packages/numpy/ma/core.py",
+              "sha256": "818970ed04f1e64ba5bc741a3a9336aeb222515a1a748b7bc16408c3d36313f9"
+            },
+            {
+              "name": "numpy.ma.extras",
+              "path": ".venv/lib/python3.13/site-packages/numpy/ma/extras.py",
+              "sha256": "ffe5314b5364a723057ecf51d1da2ee21e0473eec10a982e03bf6bef70539417"
+            },
+            {
+              "name": "numpy.matrixlib",
+              "path": ".venv/lib/python3.13/site-packages/numpy/matrixlib/__init__.py",
+              "sha256": "52de88a9f8ee03e930c28e8704e6008058d75c2fe1ed857fdc7c83b0a33bd9d9"
+            },
+            {
+              "name": "numpy.matrixlib.defmatrix",
+              "path": ".venv/lib/python3.13/site-packages/numpy/matrixlib/defmatrix.py",
+              "sha256": "8ce552b26458ede8773335bba3835e1c6793f28d5c83ef29dcaa535a8f645c53"
+            },
+            {
+              "name": "numpy.version",
+              "path": ".venv/lib/python3.13/site-packages/numpy/version.py",
+              "sha256": "c1357b603c81e0fcbf935e7ccfc9202cafba0b30e38c625b568004002e372205"
+            },
+            {
+              "name": "packaging",
+              "path": ".venv/lib/python3.13/site-packages/packaging/__init__.py",
+              "sha256": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5"
+            },
+            {
+              "name": "packaging.version",
+              "path": ".venv/lib/python3.13/site-packages/packaging/version.py",
+              "sha256": "558b2fb50fd198c660a4c082f96b8919c565911b6b4b6e07f34b6b60c074be97"
+            },
+            {
+              "name": "pyparsing",
+              "path": ".venv/lib/python3.13/site-packages/pyparsing/__init__.py",
+              "sha256": "1044324626b725bd5b0a58ef95f1477e99720a7665dca42ba93d142d9be458f0"
+            },
+            {
+              "name": "pyparsing.actions",
+              "path": ".venv/lib/python3.13/site-packages/pyparsing/actions.py",
+              "sha256": "a435badd59168794ea47a00a38cc830a86c8d0917e42e05ce39008fa82240fcc"
+            },
+            {
+              "name": "pyparsing.common",
+              "path": ".venv/lib/python3.13/site-packages/pyparsing/common.py",
+              "sha256": "968900729a4983416c871f5489f1fee41d8248f009a87777c02c46b14957006c"
+            },
+            {
+              "name": "pyparsing.core",
+              "path": ".venv/lib/python3.13/site-packages/pyparsing/core.py",
+              "sha256": "e84663e68207f710f8f49d970931685a13ac008694ec96b9ff430017fa46999a"
+            },
+            {
+              "name": "pyparsing.exceptions",
+              "path": ".venv/lib/python3.13/site-packages/pyparsing/exceptions.py",
+              "sha256": "66df7ebeb038b9357c2752252550b48254206a4c1104e61c0ec3774dfc2a41ea"
+            },
+            {
+              "name": "pyparsing.helpers",
+              "path": ".venv/lib/python3.13/site-packages/pyparsing/helpers.py",
+              "sha256": "1a08dbad6dbc7ebdede21980605cc553fd8fa2454fd719c9a9f5e49e1ad99db0"
+            },
+            {
+              "name": "pyparsing.results",
+              "path": ".venv/lib/python3.13/site-packages/pyparsing/results.py",
+              "sha256": "944655c903d659aaf39f063f25fff6b7de07bc623b7950f367c812e297f47934"
+            },
+            {
+              "name": "pyparsing.testing",
+              "path": ".venv/lib/python3.13/site-packages/pyparsing/testing.py",
+              "sha256": "91cabab0b3f2036de1af00f3074345e57eb5286cf42110e39e139b0badbf98e9"
+            },
+            {
+              "name": "pyparsing.unicode",
+              "path": ".venv/lib/python3.13/site-packages/pyparsing/unicode.py",
+              "sha256": "8e6b33a519dfca10905a5d9187ff78753fe5c5033a7782a249ff62bd8f5bfe6e"
+            },
+            {
+              "name": "pyparsing.util",
+              "path": ".venv/lib/python3.13/site-packages/pyparsing/util.py",
+              "sha256": "54b22b72a221e70ea7f7eb760b3c11008b3f8f4750eff0166e7d9e688c851f15"
+            },
+            {
+              "name": "pyparsing.warnings",
+              "path": ".venv/lib/python3.13/site-packages/pyparsing/warnings.py",
+              "sha256": "c1058d33b29a975d0e4011c7706f5281dc1a05e15b51eddf0c41777dc1c11c21"
+            },
+            {
+              "name": "qa_probe_pkg",
+              "path": ".venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py",
+              "sha256": "b356c65516dd62bf0b12c070617ef1f2916c9f94702186e316f3db179eca43ca"
+            },
+            {
+              "name": "six",
+              "path": ".venv/lib/python3.13/site-packages/six.py",
+              "sha256": "c51c91f703d3d4b3696c923cb5fec213e05e75d9215393befac7f2fa6a3904df"
+            }
+          ],
+          "observation": "partial",
+          "truncated": true,
+          "unobserved": [
+            "native_io",
+            "network",
+            "subprocess",
+            "os_open"
+          ]
+        },
+        "machine": "arm64",
+        "packages": {
+          "matplotlib": "3.10.8",
+          "numpy": "2.5.3",
+          "pillow": "12.3.0"
+        },
+        "pid": 5301,
+        "platform": "darwin",
+        "ppid": 4308,
+        "python_implementation": "CPython",
+        "python_version": "3.13.11",
+        "report_origin": "build",
+        "runtime_report_version": 1
+      },
+      "runtime_rejected": null,
+      "source_revision": "da0a85c8bc2d328ec2bb162d2a4efaf1b424ecb2",
+      "spec": {
+        "argv": [],
+        "cwd_mode": "sandbox",
+        "entry": "__main__",
+        "passthrough_savefig": false,
+        "profile": "safe",
+        "spec_version": 1,
+        "target": "figure.py",
+        "target_kind": "script"
+      }
+    },
+    "render1_runtime": {},
+    "export_status": "done",
+    "export": {
+      "name": "qa-env-export.pdf",
+      "sha256": "99d797dfcfc63fe2915649776d2d6f03c7e1927ff1a0fa8b9d58108b9c4d4c95",
+      "manifest_sha256": "99d797dfcfc63fe2915649776d2d6f03c7e1927ff1a0fa8b9d58108b9c4d4c95"
+    },
+    "export_text_head": "0 1 2 3\r\n0\r\n2\r\n4\r\n6\r\n8\r\n10\r\nQA-E1 [0, 9, 2, 10]\r\nID {\"base_prefix\": \"/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13\", \"executable\": \"/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/bin/python\", \"pkg_file\": \"/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-env-scratch/e1/proj/.venv/lib/python3.13/site-packages/qa_probe_pkg/__init__.py\", \"pkg_version\": \"1.0.0\", \"prefix\": \"/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04",
+    "export_receipt_facts": [
+      {
+        "binding": {
+          "changed": 0,
+          "matched": null,
+          "revision": "sha256:3880f0f5edfad8bcc889ed79b8033602895b7a19e2320868ae5d6fd67fd9d7dd",
+          "unobserved": 0
+        },
+        "completeness": "complete",
+        "control_plane": "python_pool",
+        "cwd_origin": "sandbox",
+        "generation": 2,
+        "machine": "arm64",
+        "observation": "partial",
+        "packages": {
+          "matplotlib": "3.10.8",
+          "numpy": "2.5.3",
+          "pillow": "12.3.0"
+        },
+        "pid_check": "ok",
+        "platform": "darwin",
+        "python_implementation": "CPython",
+        "python_source": "project_venv",
+        "python_version": "3.13.11",
+        "receipt_id": "sha256:0ec6a0dd3d5fa52fa22c16b29fe5bb1e27199feee4755593b706bd8f16566bf9",
+        "receipt_identity": "sha256:6cf338690aa4c2a46ece166c9aaa829905929b2ff59320c7e0063bf7efa37782",
+        "runtime_rejected": null,
+        "source_revision": "da0a85c8bc2d328ec2bb162d2a4efaf1b424ecb2"
+      }
+    ],
+    "environment_after": {
+      "automatic": true,
+      "can_use_project_venv": [
+        ".venv"
+      ],
+      "managed": {
+        "active_generation": "",
+        "created_at": 0,
+        "exists": false,
+        "generations": [],
+        "installed": [],
+        "python_version": "",
+        "state": ""
+      },
+      "module": "qa_probe_pkg",
+      "open": true,
+      "python": ".venv/bin/python",
+      "resolution_error": null,
+      "source": "project_venv",
+      "source_label": "项目自带的虚拟环境",
+      "trigger": "missing_dependency",
+      "workdir": {
+        "decided": false,
+        "grant": {
+          "cwd_write": {
+            "granted": false,
+            "granted_at": null,
+            "mode": null
+          },
+          "decided": false
+        },
+        "mode": "sandbox",
+        "modes": [
+          "sandbox",
+          "project",
+          "project_root"
+        ]
+      }
+    },
+    "server_log_mentions_missing_dependency": false,
+    "side_effects": {
+      "A": {
+        "dists_added": [],
+        "dists_removed": [],
+        "files_added": [],
+        "files_removed": [],
+        "files_changed": []
+      },
+      "B": {
+        "dists_added": [],
+        "dists_removed": [],
+        "files_added": [],
+        "files_removed": [],
+        "files_changed": []
+      }
+    }
+  }
+}

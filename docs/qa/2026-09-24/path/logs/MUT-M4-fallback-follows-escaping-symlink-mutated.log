@@ -1,0 +1,67 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh MUT-M4-fallback-follows-escaping-symlink-mutated tests/test_first_open_paths_d1.py::test_path07_symlinks_inside_are_read_and_escaping_ones_are_not_followed_by_the_fallback -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path07_symlinks_inside_are_read_and_escaping_ones_are_not_followed_by_the_fallback -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-MUT-M4-fallback-follows-escaping-symlink-mutated
+# time: 2026-09-24T18:59:44Z
+# sha: 4be1d7eb1eed5f034fe11a648fa3d5f53ffe51ca  (worktree dirty files: 2)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-4
+configfile: pytest.ini
+collecting ... collected 1 item
+
+tests/test_first_open_paths_d1.py::test_path07_symlinks_inside_are_read_and_escaping_ones_are_not_followed_by_the_fallback FAILED [100%]
+
+=================================== FAILURES ===================================
+_ test_path07_symlinks_inside_are_read_and_escaping_ones_are_not_followed_by_the_fallback _
+
+tmp_path = PosixPath('/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/path/pytest-MUT-M4-fallback-follows-escaping-symlink-mutated/test_path07_symlinks_inside_ar0')
+
+    @needs_worker
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="Windows 的 symlink 要开发者模式；另腿记 not_run"
+    )
+    def test_path07_symlinks_inside_are_read_and_escaping_ones_are_not_followed_by_the_fallback(
+        tmp_path,
+    ):
+        """沙盒默认：项目内指向项目内的软链接经只读回退读到目标（全序列 = 真值）；指向项目外的软链接**不**被
+        回退跟出去——脚本读不到、不发布图（安全停止）。之后项目根上出现一份同名文件：静态证据**不**把逃出项目
+        的那条算进候选（ADR 0057「不碰项目根之外」），于是问一次、推荐项目根；用户显式选「脚本目录」后行为
+        与终端里站在脚本目录一致（读到外部那份），项目根那份同名文件一个字节都没被读。"""
+        paper, truth = _d1(tmp_path)
+        ext = tmp_path / "outside"
+        ext.mkdir()
+        (ext / "abs_points.csv").write_bytes(_csv(EXTERNAL_Y))
+        a = paper / "analysis"
+        a.mkdir()
+        os.symlink(paper / "data" / "points.csv", a / "link_in.csv")
+        os.symlink(ext / "abs_points.csv", a / "link_out.csv")
+        (a / "link_in.py").write_text(
+            _plot_script("_read_csv('link_in.csv')", "link_in.pdf"), encoding="utf-8"
+        )
+        (a / "link_out.py").write_text(
+            _plot_script("_read_csv('link_out.csv')", "link_out.pdf"), encoding="utf-8"
+        )
+        _native(paper, "link_in.py", tmp_path, cwd=a)
+        _native(paper, "link_out.py", tmp_path, cwd=a)
+        with fa.running_app(paper, tmp_path / "work") as app:
+            panel = _panel(app, "analysis/link_in.pdf")
+            state = app.prepare(panel["id"])
+            assert state["result"]["status"] == "ready", state["result"]
+            assert _plotted_y(app.render(panel["id"])) == _approx_seq(TRUE_Y)
+            assert _input_files(state["result"]) == [("data/points.csv", truth["true_sha"])]
+            # 逃出项目的软链接：静态证据记为 outside、不参与判决；运行时回退不跟出去
+            panel = _panel(app, "analysis/link_out.pdf")
+            state = app.prepare(panel["id"])
+            evidence = state["plan"]["workdir_decision"]["evidence"]
+            assert evidence["candidates"]["script.parent"]["outside"] == ["link_out.csv"]
+            assert evidence["verdict"] == "unknown"
+            result = state["result"]
+>           assert result["status"] == "error", result
+E           AssertionError: {'cancel_requested_at': None, 'created_runtime': True, 'error': None, 'existing_runtime': None, ...}
+E           assert 'ready' == 'error'
+E             
+E             - error
+E             + ready
+
+tests/test_first_open_paths_d1.py:660: AssertionError
+============================== 1 failed in 16.81s ==============================
+# exit_code: 1

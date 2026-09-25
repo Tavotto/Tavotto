@@ -1,0 +1,26 @@
+# cmd: cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 TAVOTTO_FONTS_DIR=/Volumes/Projects/Tavotto/src/tavotto/resources/fonts PYTHONPATH=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/../verify-rel/src PYTHONDONTWRITEBYTECODE=1 npx playwright test e2e/fake-realtime.spec.ts e2e/twin-axes-pick.spec.ts e2e/keyboard-golden-path.spec.ts e2e/golden-paths.spec.ts --project=chromium --reporter=list
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:10:32Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+
+Running 14 tests using 1 worker
+
+[e2e 假实时] 首帧 60.39999997615814ms · 40/40 帧（rAF 合并）· commit→权威 44.60000002384186ms
+  ✓   1 [chromium] › e2e/fake-realtime.spec.ts:14:1 › 拖图内元素：预览跟手、拖动期间零后端、松手一次定稿 (19.2s)
+  ✓   2 [chromium] › e2e/golden-paths.spec.ts:30:1 › 首次启动：用户目录为空时进项目选择器，而不是白屏 (1.6s)
+[e2e] 项目目录 /var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-1790277054396/我的 论文 图/figures（真实路径 /private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/tavotto-e2e-1790277054396/我的 论文 图/figures）: Fig1_kinetics.pdf, Fig2_correlation.pdf, Fig2_yield.pdf, fig1_kinetics.py, fig2_comparison.py, paper_style.py, tavotto_registry.json
+  ✓   3 [chromium] › e2e/golden-paths.spec.ts:42:1 › 直接粘贴路径打开项目（含中文与空格） (1.8s)
+  ✓   4 [chromium] › e2e/golden-paths.spec.ts:61:1 › 打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复 (12.2s)
+  ✓   5 [chromium] › e2e/golden-paths.spec.ts:95:1 › 还没连上源脚本时，界面给得出「重新扫描 / 试运行」而不是让用户对着空列表猜 (2.3s)
+  ✓   6 [chromium] › e2e/golden-paths.spec.ts:124:1 › 没装 Python 时给出引导，而不是闪退 (16.0s)
+  ✓   7 [chromium] › e2e/golden-paths.spec.ts:145:1 › AI CLI 不存在时，设置里说清「找过哪些位置」 (1.8s)
+  ✓   8 [chromium] › e2e/golden-paths.spec.ts:176:1 › 导出诊断包：能下载，且不含密钥与主目录 (2.0s)
+  ✓   9 [chromium] › e2e/golden-paths.spec.ts:188:1 › 导出 PDF 后文件真的落盘 (7.0s)
+  ✓  10 [chromium] › e2e/keyboard-golden-path.spec.ts:193:1 › 纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo → 导出 (21.3s)
+  ✓  11 [chromium] › e2e/keyboard-golden-path.spec.ts:364:1 › 键盘错误恢复：路径打不开报错，改对路径后继续 (1.8s)
+  ✓  12 [chromium] › e2e/keyboard-golden-path.spec.ts:388:1 › 快捷键不吞按钮的 Enter：焦点在「导出」按钮上按 Enter 打开的是对话框 (12.3s)
+  ✓  13 [chromium] › e2e/twin-axes-pick.spec.ts:74:1 › twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了谁 (18.0s)
+  ✓  14 [chromium] › e2e/twin-axes-pick.spec.ts:163:1 › 键盘轮换：bbox 中心不在曲线身上时也走得回来 (19.1s)
+
+  14 passed (2.3m)
+# exit: 0

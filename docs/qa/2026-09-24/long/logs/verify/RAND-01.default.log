@@ -1,0 +1,18 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_override_history_sequences.py -p no:cacheprovider -rA
+# start: 2026-09-24T19:57:08Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+........                                                                 [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_override_history_sequences.py::test_generator_really_exercises_history_and_geometry[InvMix]
+PASSED tests/test_override_history_sequences.py::test_generator_really_exercises_history_and_geometry[InvCont]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-0]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-1]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-2]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-0]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-1]
+PASSED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-2]
+8 passed in 32.33s
+# end: 2026-09-24T19:57:41Z
+# exit: 0

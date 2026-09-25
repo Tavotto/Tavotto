@@ -1,0 +1,25 @@
+# cmd: sed -n 175,190p web/e2e/golden-paths.spec.ts; /Volumes/Projects/Tavotto/.venv/bin/python -c "
+import zipfile;p='/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel-scratch/rel05/bundle_get.zip';z=zipfile.ZipFile(p);print([(i.filename,i.compress_type) for i in z.infolist()]);b=open(p,'rb').read();print('canary_in_raw_zip_bytes', b'ERRMSGCANARY' in b.decode('latin1').encode('latin1'));print('canary_in_inflated_app_log', b'ERRMSGCANARY' in z.read('app.log'))"
+# cwd: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-rel
+# utc: 2026-09-24T19:35:46Z
+# head: e7bc6e779266e39fcaefd03e3ee7615d1694a407
+
+test('导出诊断包：能下载，且不含密钥与主目录', async ({ app, page }) => {
+  const a = await app()
+  await page.goto(a.baseURL)
+
+  const resp = await page.request.get(`${a.baseURL}/api/diagnostics/bundle`)
+  expect(resp.ok()).toBe(true)
+  expect(resp.headers()['content-type']).toContain('zip')
+  const body = await resp.body()
+  expect(body.length).toBeGreaterThan(200)
+  expect(body.toString('latin1')).not.toContain(a.home) // 个人路径已抹掉
+})
+
+test('导出 PDF 后文件真的落盘', async ({ app, page }) => {
+  const a = await app()
+  await page.goto(a.baseURL)
+[('report.json', 8), ('app.log', 8), ('config.json', 8), ('manifest.json', 8), ('README.txt', 8)]
+canary_in_raw_zip_bytes False
+canary_in_inflated_app_log True
+# exit: 0

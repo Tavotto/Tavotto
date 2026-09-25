@@ -1,4 +1,26 @@
-import { expect, test } from './fixtures'
+import { execFileSync } from 'node:child_process'
+import { cpSync, mkdtempSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import type { Page, Route } from '@playwright/test'
+import { expect, freePort, test } from './fixtures'
+
+// 这里量的是「位移严格等于鼠标位移 Δs」（独立模型）。图内拖动吸附（#575）会有意把落点
+// 拽到别的元素的对齐线上，与这把尺子正交——吸附自己的行为由 #575 的用例看护。所以本文件
+// 一律在关掉吸附的画布上量（与用户在画布设置里关掉「吸附」同一个偏好键）。
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      const key = 'tavotto.ui'
+      const saved = JSON.parse(localStorage.getItem(key) || '{}')
+      localStorage.setItem(key, JSON.stringify({ ...saved, prefsVersion: 2, snapEnabled: false }))
+    } catch {
+      /* 存储不可用时照常跑：吸附只在碰到对齐线时才介入 */
+    }
+  })
+})
+
+const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 
 /**
  * 假实时交互：**真浏览器里**跑一遍，量的是真实帧代价与真实等待。
@@ -111,4 +133,384 @@ test('拖图内元素：预览跟手、拖动期间零后端、松手一次定�
   expect(last!.preview_move_count as number).toBeGreaterThanOrEqual(
     last!.preview_frame_count as number,
   )
+})
+
+/* -------------------------------------------------------------------------- */
+/*  QA 2026-09-24 §2（STATE-01 / 02 / 05）：逐帧、取消入口、乱序回包              */
+/* -------------------------------------------------------------------------- */
+//
+// 下面三条补的是上一条量不到的维度：
+//   * 逐帧：不是「拖完看一眼」，而是每一帧的 transform 与元素屏幕位置（rAF 采样），
+//     一直采到权威 SVG 换上来之后——「松手先弹回原位」只活在那几帧里；
+//   * 几何真值由测试侧独立算：预览期间屏幕位置 = 起点 + 鼠标位移（视口 CSS 像素），
+//     不调任何生产坐标换算；
+//   * 文档一侧从网络上看：拖动中 0 次 `/api/engine/render`、0 次自动保存 PUT；
+//     松手后那次渲染与随后的自动保存里恰好一条该元素的 override，且没有预览 transform。
+
+type QaTarget = { id: string; x: number; y: number; transform: string | null }
+
+/**
+ * 打开样例图进快速编辑。素材卡认稳定锚点 `data-card`（文件名文案可能同时出现在别处）；快速编辑里
+ * 图内编辑宿主 `[data-element-svg]` 是单例——先断言恰好一个再用，不取「第一个匹配」。
+ */
+async function openKineticsTitle(page: Page, baseURL: string): Promise<QaTarget> {
+  await page.goto(baseURL)
+  await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
+  await expectSingleElementSvg(page)
+  // 首次渲染与打开文档那次自动保存（1s 防抖）都安顿下来，再开始数
+  await page.waitForTimeout(2500)
+  const t = await locateGid(page, 'axes_0.title')
+  expect(t, '样例图应当有标题').not.toBeNull()
+  return t!
+}
+
+/** 图内编辑宿主恰好一个，且它的 SVG 已经画出来 */
+async function expectSingleElementSvg(page: Page) {
+  await expect(page.locator('[data-element-svg]')).toHaveCount(1, { timeout: 60_000 })
+  await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 60_000 })
+}
+
+const locateGid = (page: Page, id: string) =>
+  page.evaluate((gid) => {
+    const hosts = document.querySelectorAll('[data-element-svg]')
+    if (hosts.length !== 1) throw new Error(`图内编辑宿主应恰有一个，实际 ${hosts.length}`)
+    const n = hosts[0].querySelector(`[id="${gid}"]`) as SVGGraphicsElement | null
+    if (!n) return null
+    const r = n.getBoundingClientRect()
+    return { id: gid, x: r.x + r.width / 2, y: r.y + r.height / 2, transform: n.getAttribute('transform') }
+  }, id)
+
+/** 请求计数：渲染与自动保存各一份（带 body），`reset()` 之后重新数 */
+function netLog(page: Page) {
+  const log = { renders: [] as string[], autosaves: [] as string[] }
+  page.on('request', (req) => {
+    const u = req.url()
+    if (u.includes('/api/engine/render')) log.renders.push(req.postData() ?? '')
+    if (u.includes('/api/autosave/') && req.method() === 'PUT') log.autosaves.push(req.postData() ?? '')
+  })
+  return {
+    log,
+    reset: () => {
+      log.renders.length = 0
+      log.autosaves.length = 0
+    },
+  }
+}
+
+/** 某元素 override 在一份 JSON 文本里出现了几条（渲染请求体 / 自动保存体通用） */
+function overridesOf(json: string, gid: string, prop: string): unknown[] {
+  const found: unknown[] = []
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) v.forEach(walk)
+    else if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>
+      if (o.gid === gid && o.prop === prop && 'value' in o) found.push(o.value)
+      Object.values(o).forEach(walk)
+    }
+  }
+  walk(JSON.parse(json))
+  return found
+}
+
+test('STATE-01 逐帧：预览从 base 现算、拖动中零渲染零保存、松手到权威全程不弹回', async ({
+  app,
+  page,
+}) => {
+  const a = await app()
+  const net = netLog(page)
+  const t = await openKineticsTitle(page, a.baseURL)
+  net.reset()
+
+  // rAF 采样器：每一帧记下 transform 与屏幕中心；`mark` 记松手那一刻的帧号
+  await page.evaluate((gid) => {
+    const w = window as unknown as Record<string, unknown>
+    const frames: { tf: string | null; x: number | null; y: number | null }[] = []
+    w.__qaFrames = frames
+    w.__qaStop = false
+    const loop = () => {
+      const n = document.querySelector(`[data-element-svg] [id="${gid}"]`) as SVGGraphicsElement | null
+      const r = n?.getBoundingClientRect()
+      frames.push({
+        tf: n?.getAttribute('transform') ?? null,
+        x: r ? r.x + r.width / 2 : null,
+        y: r ? r.y + r.height / 2 : null,
+      })
+      if (!w.__qaStop) requestAnimationFrame(loop)
+    }
+    requestAnimationFrame(loop)
+  }, t.id)
+
+  const STEP: [number, number] = [1.5, 0.8]
+  const N = 40
+  await page.mouse.move(t.x, t.y)
+  await page.mouse.down()
+  for (let i = 1; i <= N; i++) await page.mouse.move(t.x + i * STEP[0], t.y + i * STEP[1])
+  await page.waitForTimeout(200) // 让最后一个 move 落到一帧上
+  expect(net.log.renders, '拖动中不该有 /api/engine/render').toHaveLength(0)
+  expect(net.log.autosaves, '拖动中文档不该被提交（自动保存 PUT 为 0）').toHaveLength(0)
+  const mark = await page.evaluate(() => (window as unknown as { __qaFrames: unknown[] }).__qaFrames.length)
+  await page.mouse.up()
+
+  await expect.poll(() => net.log.renders.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1)
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => ((window as unknown as { __MM_PREVIEW_TIMINGS__?: unknown[] }).__MM_PREVIEW_TIMINGS__ ?? []).length,
+        ),
+      { timeout: 60_000, message: '权威 SVG 应当换上画布' },
+    )
+    .toBeGreaterThan(0)
+  await page.waitForTimeout(1500) // 权威上屏之后再多采一秒半，同时等自动保存防抖
+  const frames = await page.evaluate(() => {
+    const w = window as unknown as { __qaFrames: { tf: string | null; x: number | null; y: number | null }[]; __qaStop: boolean }
+    w.__qaStop = true
+    return w.__qaFrames
+  })
+
+  // ---- 拖动段：格式与「从 base 现算」 ----
+  const suffix = t.transform ? ` ${t.transform}` : ''
+  const re = /^translate\(([-\d.e]+),([-\d.e]+)\)(.*)$/
+  const dragFrames = frames.slice(0, mark).filter((f) => f.tf !== t.transform)
+  expect(dragFrames.length, '拖动中应当采到带预览位移的帧').toBeGreaterThan(5)
+  const ratios: number[] = []
+  for (const f of dragFrames) {
+    const m = re.exec(f.tf ?? '')
+    expect(m, `预览帧必须是 translate(…) <原始>：${f.tf}`).not.toBeNull()
+    expect(m![3], '原始 transform 必须原样保留在 translate 之后').toBe(suffix)
+    // 屏幕位移与 SVG 单位位移之比恒定 = 从 base 现算（字符串累加会让这个比值一路涨）
+    const dxScreen = f.x! - t.x
+    if (Math.abs(dxScreen) > 3) ratios.push(Number(m![1]) / dxScreen)
+    // 屏幕上始终沿着鼠标那条直线走（独立模型：屏幕位移 ∥ 鼠标位移）
+    expect(Math.abs((f.y! - t.y) * STEP[0] - (f.x! - t.x) * STEP[1])).toBeLessThan(0.75)
+  }
+  expect(Math.max(...ratios) - Math.min(...ratios)).toBeLessThan(1e-3 * Math.abs(ratios[0]))
+  const release = { x: t.x + N * STEP[0], y: t.y + N * STEP[1] }
+  const lastDrag = frames[mark - 1]
+  expect(Math.abs(lastDrag.x! - release.x), '松手前一帧：元素应当正好跟到鼠标位移').toBeLessThan(0.5)
+  expect(Math.abs(lastDrag.y! - release.y)).toBeLessThan(0.5)
+
+  // ---- 松手段：从松手到权威换上之后一秒半，每一帧都停在松手的位置 ----
+  const after = frames.slice(mark).filter((f) => f.x != null)
+  expect(after.length).toBeGreaterThan(10)
+  const worst = Math.max(...after.map((f) => Math.hypot(f.x! - release.x, f.y! - release.y)))
+  console.log(`[QA STATE-01] 拖动帧 ${dragFrames.length} · 松手后帧 ${after.length} · 松手后最大偏离 ${worst.toFixed(3)} CSS px`)
+  // 弹回原位的幅度是整段位移（~68px）；2px 是「不是弹回」的判据，不是精度预算（精度预算未校准，只记录）
+  expect(worst, '松手后某一帧离开了松手位置（弹回 / 跳位）').toBeLessThan(2)
+  expect(after.some((f) => f.tf === t.transform), '权威 SVG 应当已经换上（预览 transform 收工）').toBe(true)
+
+  // ---- 文档一侧：一次定稿、一条 override、预览不进持久化 ----
+  expect(net.log.renders).toHaveLength(1)
+  expect(overridesOf(net.log.renders[0], t.id, 'pos_frac')).toHaveLength(1)
+  expect(net.log.autosaves.length, '松手后应当自动保存一次').toBeGreaterThanOrEqual(1)
+  const saved = net.log.autosaves.at(-1)!
+  expect(overridesOf(saved, t.id, 'pos_frac')).toEqual(overridesOf(net.log.renders[0], t.id, 'pos_frac'))
+  expect(saved.includes('translate('), '预览 transform 进了持久化文档').toBe(false)
+})
+
+test('STATE-02 取消入口：pointercancel / lostpointercapture 还原 DOM 且零提交；画布外松手照常定稿、不再跟指针', async ({
+  app,
+  page,
+}) => {
+  const a = await app()
+  const net = netLog(page)
+  const t = await openKineticsTitle(page, a.baseURL)
+
+  for (const kind of ['pointercancel', 'lostpointercapture'] as const) {
+    net.reset()
+    await page.mouse.move(t.x, t.y)
+    await page.mouse.down()
+    for (let i = 1; i <= 20; i++) await page.mouse.move(t.x + i * 2.5, t.y + i * 1.25)
+    await expect.poll(() => locateGid(page, t.id).then((g) => g?.transform)).toMatch(/^translate\(/)
+    await page.evaluate((k) => window.dispatchEvent(new PointerEvent(k, { bubbles: true })), kind)
+    // 系统作废之后手还在动、然后才松开：两者都不许让这次拖动复活
+    await page.mouse.move(t.x + 80, t.y + 40)
+    await page.mouse.up()
+    await page.waitForTimeout(1800) // 覆盖自动保存的 1s 防抖
+    const g = await locateGid(page, t.id)
+    expect(g!.transform, `${kind}：DOM 必须还原到 matplotlib 的原样`).toBe(t.transform)
+    expect(Math.hypot(g!.x - t.x, g!.y - t.y), `${kind}：元素应当回到原位`).toBeLessThan(0.5)
+    expect(net.log.renders, `${kind}：不该发渲染`).toHaveLength(0)
+    expect(net.log.autosaves, `${kind}：不该提交文档`).toHaveLength(0)
+  }
+
+  // 取消之后紧接着正常拖一次：一次定稿、一条 override
+  net.reset()
+  await page.mouse.move(t.x, t.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 20; i++) await page.mouse.move(t.x + i * 2, t.y)
+  await page.mouse.up()
+  await expect.poll(() => net.log.renders.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1)
+  await page.waitForTimeout(1500)
+  expect(net.log.renders).toHaveLength(1)
+  expect(overridesOf(net.log.renders[0], t.id, 'pos_frac')).toHaveLength(1)
+
+  // 移出画布（视口内、左侧栏上方）松开：按结束合同定稿，松开之后不再跟着指针走
+  const t2 = (await locateGid(page, t.id))!
+  net.reset()
+  await page.mouse.move(t2.x, t2.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 20; i++) await page.mouse.move(t2.x + ((8 - t2.x) * i) / 20, t2.y)
+  await page.mouse.up()
+  await expect.poll(() => net.log.renders.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1)
+  await page.waitForTimeout(1500)
+  const settled = await locateGid(page, t.id)
+  await page.mouse.move(t2.x + 150, t2.y + 60)
+  await page.mouse.move(t2.x + 200, t2.y + 90)
+  await page.waitForTimeout(500)
+  const later = await locateGid(page, t.id)
+  expect(later?.transform ?? null, '松开之后元素不许继续跟着指针').toBe(settled?.transform ?? null)
+  expect(net.log.renders, '松开之后的移动不许再触发渲染').toHaveLength(1)
+})
+
+test('STATE-05 乱序回包：旧变体晚于新变体返回，不把画布拽回旧版', async ({ app, page }) => {
+  const a = await app()
+  const net = netLog(page)
+  const t = await openKineticsTitle(page, a.baseURL)
+
+  // 扣住下一次渲染（V1 = 拖动标题）；之后的请求照常放行
+  const held: Route[] = []
+  let holdNext = 0
+  await page.route('**/api/engine/render**', async (route) => {
+    if (holdNext > 0) {
+      holdNext--
+      held.push(route)
+      return
+    }
+    await route.continue()
+  })
+  net.reset()
+  holdNext = 1
+  await page.mouse.move(t.x, t.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 20; i++) await page.mouse.move(t.x + i * 3, t.y)
+  await page.mouse.up()
+  await expect.poll(() => held.length, { timeout: 15_000 }).toBe(1)
+
+  // V2 = 在 V1 之上把标题隐藏（Delete 写 visible:false，不读几何），它先回来
+  await page.keyboard.press('Delete')
+  await expect.poll(() => net.log.renders.length, { timeout: 15_000 }).toBe(2)
+  const v2Body = net.log.renders[1]
+  expect(overridesOf(v2Body, t.id, 'visible')).toEqual([false])
+  await expect
+    .poll(() => locateGid(page, t.id), { timeout: 60_000, message: 'V2 上屏后标题应当不再画出' })
+    .toBeNull()
+
+  // V1 姗姗来迟：可以入库，但画布停在 V2
+  await held[0].continue()
+  await page.waitForTimeout(3000)
+  expect(await locateGid(page, t.id), '晚到的 V1 把画布拽回了旧变体').toBeNull()
+  expect(net.log.renders, 'V1 到达不应再引出新的渲染').toHaveLength(2)
+})
+
+/** 标题中心在整张图 SVG 里的相对位置（与视口 / 缩放无关，重开前后可比） */
+const relTitle = (page: Page) =>
+  page.evaluate(() => {
+    const hosts = document.querySelectorAll('[data-element-svg]')
+    if (hosts.length !== 1) throw new Error(`图内编辑宿主应恰有一个，实际 ${hosts.length}`)
+    const n = hosts[0].querySelector('[id="axes_0.title"]') as SVGGraphicsElement | null
+    const svg = hosts[0].querySelector(':scope > svg') as SVGGraphicsElement | null
+    if (!n || !svg) return null
+    const r = n.getBoundingClientRect()
+    const s = svg.getBoundingClientRect()
+    return { rx: (r.x + r.width / 2 - s.x) / s.width, ry: (r.y + r.height / 2 - s.y) / s.height }
+  })
+
+test('STATE-08 保存重开：提交→撤销→重做→自动保存→整个后端（含 worker）退出→同端口同数据目录重开，文档与画面都是最后提交那一版', async ({
+  app,
+  page,
+}) => {
+  test.setTimeout(420_000)
+  const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-state08-'))
+  const figures = path.join(root, 'figures')
+  cpSync(path.join(REPO_ROOT, 'examples', 'figures'), figures, { recursive: true })
+  const env = { TAVOTTO_DATA_DIR: path.join(root, 'data'), TAVOTTO_CONFIG_DIR: path.join(root, 'config') }
+  const port = await freePort()
+  const net = netLog(page)
+  const saveUrls: string[] = []
+  page.on('request', (r) => {
+    if (r.url().includes('/api/autosave/') && r.method() === 'PUT') saveUrls.push(r.url())
+  })
+
+  const a1 = await app({ figures, port, env })
+  const t = await openKineticsTitle(page, a1.baseURL)
+  const rel0 = await relTitle(page)
+  await page.mouse.move(t.x, t.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 20; i++) await page.mouse.move(t.x + i * 2.5, t.y + i)
+  await page.mouse.up()
+  await expect.poll(() => relTitle(page).then((r) => r && r.rx - rel0!.rx), { timeout: 60_000 }).toBeGreaterThan(0.05)
+  await page.waitForTimeout(1500)
+  const relCommitted = (await relTitle(page))!
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => relTitle(page).then((r) => r && Math.abs(r.rx - rel0!.rx)), { timeout: 60_000 }).toBeLessThan(1e-3)
+  await page.keyboard.press('Control+Shift+z')
+  await expect.poll(() => relTitle(page).then((r) => r && Math.abs(r.rx - relCommitted.rx)), { timeout: 60_000 }).toBeLessThan(1e-3)
+  await page.waitForTimeout(2000) // 自动保存 1s 防抖
+  const saved = net.log.autosaves.at(-1)!
+  const committed = overridesOf(saved, t.id, 'pos_frac')
+  expect(committed, '最后一次自动保存里恰好一条标题位置 override').toHaveLength(1)
+  expect(saved.includes('translate('), '预览 transform 进了持久化文档').toBe(false)
+  const docId = decodeURIComponent(saveUrls.at(-1)!.split('/api/autosave/')[1].split('?')[0])
+
+  // 整个后端退出（worker 是它的子进程）
+  await fetch(`${a1.baseURL}/api/shutdown`, { method: 'POST' }).catch(() => {})
+  for (let i = 0; i < 60 && a1.proc.exitCode === null; i++) await new Promise((r) => setTimeout(r, 250))
+  expect(a1.proc.exitCode, '后端应当已经退出').not.toBeNull()
+  // 产品判「端口空闲」用的是不带 SO_REUSEADDR 的 bind：上一个实例的 TIME_WAIT 没过完就会顺延到
+  // 下一个端口（换了源 = 本机记的「上次文档」读不到）。同一种 bind 等到它真空出来再重开。
+  // Node 的 net.listen 在 POSIX 上自带 SO_REUSEADDR，量的不是同一件事，所以借 Python 的 socket；
+  // 解释器名按平台取（Windows 的 setup-python 只有 `python`，同 large-figure.spec.ts），
+  // 起不来（ENOENT 等，没有退出码）直接抛——不许当成「端口还忙」一直等到超时。
+  const py = process.env.TAVOTTO_WORKER_PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
+  const t0 = Date.now()
+  for (;;) {
+    try {
+      execFileSync(py, ['-c', `import socket;s=socket.socket();s.bind(('127.0.0.1',${port}))`], {
+        stdio: 'ignore',
+      })
+      break
+    } catch (e) {
+      if ((e as { status?: number | null }).status == null) throw e
+      expect(Date.now() - t0, '端口 150s 内都没空出来').toBeLessThan(150_000)
+      await new Promise((r) => setTimeout(r, 1000))
+    }
+  }
+
+  net.reset()
+  const a2 = await app({ figures, port, env })
+  expect(a2.baseURL).toBe(a1.baseURL)
+  await page.goto(a2.baseURL)
+  // 重开后第一次权威渲染带的就是最后提交那一份 patches
+  await expect.poll(() => net.log.renders.length, { timeout: 60_000 }).toBeGreaterThanOrEqual(1)
+  expect(overridesOf(net.log.renders[0], t.id, 'pos_frac')).toEqual(committed)
+  // 磁盘上那份文档逐字节回得来：身份、绑定、override 顺序都在
+  const reread = await (await page.request.get(`${a2.baseURL}/api/autosave/${encodeURIComponent(docId)}`)).json()
+  const panels = (reread.canvases as { objects: { type: string }[] }[]).flatMap((c) => c.objects).filter((o) => o.type === 'panel')
+  expect(panels).toHaveLength(1)
+  expect(JSON.parse(saved).canvases[0].objects).toEqual(reread.canvases[0].objects)
+
+  // 画面：重开后进图内编辑，标题停在最后提交的位置（相对整张图，独立于视口）
+  // 画布上恰好这一个面板（上面已从磁盘文档核过 panels 只有一个），单例先断言
+  const panel = page.locator('[data-canvas-stage] [data-object-id]')
+  await expect(panel).toHaveCount(1, { timeout: 60_000 })
+  await expect(panel).toBeVisible({ timeout: 60_000 })
+  await panel.click()
+  await page.keyboard.press('Enter')
+  await expectSingleElementSvg(page)
+  await expect
+    .poll(() => relTitle(page).then((r) => r && Math.hypot(r.rx - relCommitted.rx, r.ry - relCommitted.ry)), {
+      timeout: 60_000,
+      message: '重开后标题应当停在最后提交的位置',
+    })
+    .toBeLessThan(1e-3)
+  // 清理数据目录之前先让第二个实例整个退出：它还握着 data/cache/app.log。POSIX 上 unlink 打开着的
+  // 文件照样成功，所以本机看不出来；Windows 上是 EBUSY（CI windows-exe-smoke 实测）。fixture 的收尾
+  // 在用例体**之后**才停它，来不及。退出后句柄释放可能滞后一拍，删目录带有界重试。
+  await a2.stop()
+  for (let i = 0; i < 60 && a2.proc.exitCode === null && a2.proc.signalCode === null; i++) {
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  expect(a2.proc.exitCode !== null || a2.proc.signalCode !== null, '第二个实例应当已经退出').toBe(true)
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
 })

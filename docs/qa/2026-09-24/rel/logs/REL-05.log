@@ -1,0 +1,290 @@
+########## part: REL-05-pytest.log ##########
+# command: /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_telemetry.py tests/test_telemetry_api.py tests/test_telemetry_invariants.py tests/test_telemetry_disclosure.py tests/test_telemetry_integrations.py tests/test_diagnostics_bundle.py tests/test_diagnostics_worker_evidence.py -p no:cacheprovider -rs -W ignore::DeprecationWarning
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8
+# started_utc: 2026-09-24T18:30:57+00:00
+# ended_utc: 2026-09-24T18:31:02+00:00
+# head_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# exit_code: 0
+
+........................................................................ [ 23%]
+........................................................................ [ 46%]
+........................................................................ [ 69%]
+........................................................................ [ 92%]
+.......................                                                  [100%]
+311 passed in 4.81s
+
+# exit_code: 0
+
+########## part: REL-05-probe.log ##########
+# command: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/rel/repro/rel05_privacy_probe.py --scratch /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05 --worker-python /opt/homebrew/opt/python@3.13/libexec/bin/python3 --fonts-dir /Volumes/Projects/Tavotto/src/tavotto/resources/fonts
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8
+# started_utc: 2026-09-24T18:54:17+00:00
+# ended_utc: 2026-09-24T18:54:45+00:00
+# head_sha: cb6296804ac28586fe46c8c36f7e54e3eefb0c88
+# exit_code: 1
+
+seed_consent: {"consent": "enabled", "has_id": true}
+{
+  "sink": "127.0.0.1:<ephemeral>/v1/events",
+  "control": {
+    "telemetry_settings": {
+      "consent": "enabled",
+      "consent_version": 2,
+      "enabled": true,
+      "hard_disabled": false,
+      "needs_reconsent": false,
+      "saved_consent_version": 2
+    },
+    "render_ok": true,
+    "boom_status": 500,
+    "export_status": 200,
+    "export_files": [
+      "qa_rel05_0925_025430.pdf"
+    ],
+    "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05/home/qa_private_user_zz/Documents/QAPRIV_Alice 论文 项目/tavottofile/export",
+    "frontend_event_status": 200,
+    "sink_hits": 3
+  },
+  "nohard": {
+    "unauth_status": 401,
+    "telemetry_settings": {
+      "consent": "enabled",
+      "consent_version": 2,
+      "enabled": false,
+      "hard_disabled": true,
+      "needs_reconsent": false,
+      "saved_consent_version": 2
+    },
+    "render_ok": true,
+    "boom_status": 500,
+    "export_status": 200,
+    "export_files": [
+      "qa_rel05_0925_025438.pdf"
+    ],
+    "export_dir": "/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/rel/rel05/home/qa_private_user_zz/Documents/QAPRIV_Alice 论文 项目/tavottofile/export",
+    "frontend_event_status": 200,
+    "traversal_engine_render_status": 403,
+    "traversal_preview_status": 403,
+    "traversal_preview_is_png": false,
+    "bundle_status": [
+      200,
+      200,
+      200
+    ],
+    "sink_hits": 0,
+    "bundle_files": [
+      "GET:README.txt",
+      "GET:app.log",
+      "GET:config.json",
+      "GET:manifest.json",
+      "GET:report.json",
+      "POST:README.txt",
+      "POST:app.log",
+      "POST:config.json",
+      "POST:frontend-state.json",
+      "POST:manifest.json",
+      "POST:report.json",
+      "summary"
+    ],
+    "canary_hits": [
+      "error_message in GET:report.json",
+      "error_message in GET:app.log",
+      "outside_dir in GET:app.log",
+      "error_message in POST:report.json",
+      "error_message in POST:app.log",
+      "outside_dir in POST:app.log",
+      "error_message in summary"
+    ],
+    "report_project_token": "<project:f1e30c1dc6>",
+    "app_log_bytes": 4515,
+    "worker_logs_present": true,
+    "raw_worker_log_has_err_canary": false,
+    "raw_app_log_has_err_canary": true,
+    "raw_app_log_has_project_path": true
+  },
+  "bundle_sha256_get": "76289ba6baa0f62a7efc56b081cf3f9103a6df07f6e34279b05f9ce7cedcf70e",
+  "failures": [
+    "诊断包泄漏: ['error_message in GET:report.json', 'error_message in GET:app.log', 'outside_dir in GET:app.log', 'error_message in POST:report.json', 'error_message in POST:app.log', 'outside_dir in POST:app.log', 'error_message in summary']"
+  ]
+}
+
+# exit_code: 1
+
+########## part: REL-05-leak-repro.log ##########
+# command: /Volumes/Projects/Tavotto/.venv/bin/python docs/qa/2026-09-24/rel/repro/repro_diag_error_message_leak.py
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8
+# started_utc: 2026-09-24T18:49:07+00:00
+# ended_utc: 2026-09-24T18:49:07+00:00
+# head_sha: 62af729c2f84652bf3979c25b0c3117fcfa756a5
+# exit_code: 0
+
+ERROR 行 → ['2026-09-25 02:46:03,688 ERROR tavotto: 引擎渲染失败: boom: 脚本执行失败: patient_0931_BloodGlucose=7318.0931']
+traceback → ['Traceback (most recent call last): → ValueError: …']
+leaked_via_error_line = True
+redacted_via_traceback = True
+REPRODUCED
+
+# exit_code: 0
+
+########## part: REL-05-mutation-red.log ##########
+# command: /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_telemetry.py tests/test_telemetry_api.py tests/test_telemetry_invariants.py -p no:cacheprovider -W ignore::DeprecationWarning
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8
+# started_utc: 2026-09-24T18:51:24+00:00
+# ended_utc: 2026-09-24T18:51:26+00:00
+# head_sha: cb6296804ac28586fe46c8c36f7e54e3eefb0c88
+# exit_code: 1
+
+....F............F.............................F...............F........ [ 61%]
+..............................................                           [100%]
+=================================== FAILURES ===================================
+___________________ test_hard_env_switch_beats_saved_consent ___________________
+
+sent = [], monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x106550d10>
+
+    def test_hard_env_switch_beats_saved_consent(sent, monkeypatch):
+        _enable()
+        sent.clear()
+        monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
+>       assert telemetry.hard_disabled() is True
+E       assert False is True
+E        +  where False = <function hard_disabled at 0x10458b1a0>()
+E        +    where <function hard_disabled at 0x10458b1a0> = telemetry.hard_disabled
+
+tests/test_telemetry.py:87: AssertionError
+_______________ test_hard_switch_still_wins_over_a_stale_consent _______________
+
+sent = [{'schema_version': 1, 'distinct_id': '5c0a04cc-c696-485c-9da7-6b5608113336', 'event': 'telemetry_enabled', 'properties': {'app_version': '0.16.0', 'platform': 'macos', 'arch': 'arm64', 'distribution': 'source', ...}}]
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10669ae90>
+
+    def test_hard_switch_still_wins_over_a_stale_consent(sent, monkeypatch):
+        _enable()
+        monkeypatch.setattr(telemetry, "CONSENT_VERSION", telemetry.CONSENT_VERSION + 1)
+        monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
+        pub = telemetry.public_settings()
+        assert pub["enabled"] is False
+        # 硬开关关着时不该再去骚扰用户重新同意——那个框点了也没用
+>       assert pub["needs_reconsent"] is False
+E       assert True is False
+
+tests/test_telemetry.py:220: AssertionError
+______________________ test_settings_reports_hard_disable ______________________
+
+client = <FlaskClient <Flask 'tavotto.app'>>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10658e6d0>
+
+    def test_settings_reports_hard_disable(client, monkeypatch):
+        monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
+        body = client.get("/api/telemetry/settings").get_json()
+>       assert body["hard_disabled"] is True and body["enabled"] is False
+E       assert (False is True)
+
+tests/test_telemetry_api.py:86: AssertionError
+________________ test_capture_never_raises_whatever_goes_wrong _________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10658fee0>
+telemetry_sent = []
+
+    def test_capture_never_raises_whatever_goes_wrong(monkeypatch, telemetry_sent):
+        for target in ("validate", "_auto_props", "_enqueue", "install_id"):
+            monkeypatch.setattr(
+                telemetry, target, lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("boom"))
+            )
+>           assert telemetry.capture("export_completed", {"pdf": True}) is False
+E           AssertionError: assert True is False
+E            +  where True = <function capture at 0x10458bb00>('export_completed', {'pdf': True})
+E            +    where <function capture at 0x10458bb00> = telemetry.capture
+
+tests/test_telemetry_invariants.py:88: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_telemetry.py::test_hard_env_switch_beats_saved_consent - as...
+FAILED tests/test_telemetry.py::test_hard_switch_still_wins_over_a_stale_consent
+FAILED tests/test_telemetry_api.py::test_settings_reports_hard_disable - asse...
+FAILED tests/test_telemetry_invariants.py::test_capture_never_raises_whatever_goes_wrong
+4 failed, 114 passed in 1.87s
+
+# exit_code: 1
+
+########## part: REL-05-mutation-restored.log ##########
+# command: /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_telemetry.py tests/test_telemetry_api.py tests/test_telemetry_invariants.py -p no:cacheprovider -W ignore::DeprecationWarning
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8
+# started_utc: 2026-09-24T18:51:38+00:00
+# ended_utc: 2026-09-24T18:51:40+00:00
+# head_sha: cb6296804ac28586fe46c8c36f7e54e3eefb0c88
+# exit_code: 0
+
+........................................................................ [ 61%]
+..............................................                           [100%]
+118 passed in 1.18s
+
+# exit_code: 0
+
+########## part: REL-05-homemut-pytest.log ##########
+# command: /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_diagnostics_bundle.py -p no:cacheprovider -W ignore::DeprecationWarning -k 'redact_home or no_secret_string'
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8
+# started_utc: 2026-09-24T18:56:04+00:00
+# ended_utc: 2026-09-24T18:56:05+00:00
+# head_sha: c7fde831daee379ec80b7efc17275fe271f8d7ff
+# exit_code: 1
+
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+_____________ test_report_and_config_still_redact_home_and_secrets _____________
+
+client = <FlaskClient <Flask 'tavotto.app'>>
+tmp_path = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4881/test_report_and_config_still_r0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1041c1e00>
+
+    def test_report_and_config_still_redact_home_and_secrets(client, tmp_path, monkeypatch):
+        from tavotto.engine import config as engine_config
+    
+        cfg = tmp_path / "config.json"
+        cfg.write_text(
+            json.dumps({"api_key": SECRET_KEY, "backup_dir": os.path.join(REAL_HOME, "backups")}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(engine_config, "config_path", lambda: cfg)
+        z = open_bundle(client.get("/api/diagnostics/bundle").data)
+        body = z.read("config.json").decode()
+        assert SECRET_KEY not in body
+        assert "***" in body
+        # 主目录换成了 ~
+        assert REAL_HOME not in body
+>       assert "~" in body
+E       assert '~' in '{\n "api_key": "***",\n "backup_dir": "/Users/<user>/backups"\n}'
+
+tests/test_diagnostics_bundle.py:188: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_diagnostics_bundle.py::test_report_and_config_still_redact_home_and_secrets
+1 failed, 1 passed, 102 deselected in 1.09s
+
+# exit_code: 1
+
+########## part: REL-05-homemut-e2e.log ##########
+# command: npx playwright test e2e/golden-paths.spec.ts --project=chromium -g '导出诊断包' --reporter=list
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8/web
+# started_utc: 2026-09-24T18:56:13+00:00
+# ended_utc: 2026-09-24T18:56:16+00:00
+# head_sha: c7fde831daee379ec80b7efc17275fe271f8d7ff
+# exit_code: 0
+
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium] › e2e/golden-paths.spec.ts:176:1 › 导出诊断包：能下载，且不含密钥与主目录 (1.9s)
+
+  1 passed (2.4s)
+
+# exit_code: 0
+
+########## part: REL-05-homemut-restored.log ##########
+# command: /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_diagnostics_bundle.py -p no:cacheprovider -W ignore::DeprecationWarning -k 'redact_home or no_secret_string'
+# cwd: /Volumes/Projects/Tavotto/.claude/worktrees/wf_99ddf90f-6d7-8
+# started_utc: 2026-09-24T18:56:28+00:00
+# ended_utc: 2026-09-24T18:56:29+00:00
+# head_sha: c7fde831daee379ec80b7efc17275fe271f8d7ff
+# exit_code: 0
+
+..                                                                       [100%]
+2 passed, 102 deselected in 1.11s
+
+# exit_code: 0

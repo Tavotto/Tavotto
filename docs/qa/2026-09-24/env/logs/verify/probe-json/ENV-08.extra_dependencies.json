@@ -1,0 +1,171 @@
+{
+ "groups": [],
+ "offer": {
+  "clean_machine": false,
+  "code": "dependency_preparation_required",
+  "plan": {
+   "adapter": [
+    "matplotlib>=3.8,<3.12",
+    "numpy>=1.24,<3"
+   ],
+   "blocked": [],
+   "constraints": [],
+   "facts": {
+    "digest": "625a7500948d1043",
+    "install": {
+     "digest": "77588640a0bc5f5e",
+     "installed_count": 2,
+     "platform_machine": "arm64",
+     "python_version": "3.13.11",
+     "sys_platform": "darwin"
+    },
+    "installed_count": 52,
+    "platform_machine": "arm64",
+    "python_version": "3.13.11",
+    "sys_platform": "darwin"
+   },
+   "hashes": {},
+   "identity": "029c878f4c23aba9",
+   "inputs_digest": "a5dc83c79def6707",
+   "marker_env_digest": "3400af363c337198",
+   "missing": [],
+   "needed": [
+    {
+     "bucket": "third_party",
+     "context": "unconditional",
+     "distribution": "matplotlib",
+     "lines": [
+      5,
+      8
+     ],
+     "local_path": "",
+     "module": "matplotlib",
+     "needed": true,
+     "resolution_source": "curated",
+     "via": []
+    }
+   ],
+   "plan_version": 1,
+   "possible": [],
+   "require_hashes": false,
+   "requirements": [],
+   "satisfied": [
+    {
+     "declared": false,
+     "distribution": "matplotlib",
+     "import_name": "matplotlib",
+     "installed_version": "3.11.2",
+     "matches_declared": true,
+     "resolution_source": "curated",
+     "specifiers": [],
+     "via": []
+    }
+   ],
+   "scan": {
+    "classes": [
+     {
+      "bucket": "stdlib",
+      "context": "unconditional",
+      "distribution": "",
+      "lines": [
+       2
+      ],
+      "local_path": "",
+      "module": "json",
+      "needed": false,
+      "resolution_source": "",
+      "via": []
+     },
+     {
+      "bucket": "third_party",
+      "context": "unconditional",
+      "distribution": "matplotlib",
+      "lines": [
+       5,
+       8
+      ],
+      "local_path": "",
+      "module": "matplotlib",
+      "needed": true,
+      "resolution_source": "curated",
+      "via": []
+     },
+     {
+      "bucket": "unknown",
+      "context": "unconditional",
+      "distribution": "",
+      "lines": [
+       10
+      ],
+      "local_path": "",
+      "module": "qa_probe_pkg",
+      "needed": false,
+      "resolution_source": "",
+      "via": []
+     },
+     {
+      "bucket": "stdlib",
+      "context": "unconditional",
+      "distribution": "",
+      "lines": [
+       3
+      ],
+      "local_path": "",
+      "module": "sys",
+      "needed": false,
+      "resolution_source": "",
+      "via": []
+     }
+    ],
+    "counts": {
+     "local": 0,
+     "stdlib": 2,
+     "third_party": 1,
+     "unknown": 1
+    },
+    "dynamic": [],
+    "problems": [],
+    "truncated": false
+   },
+   "script": "figure.py",
+   "selection": {
+    "available_groups": [
+     "environment.yml"
+    ],
+    "conflicts": [],
+    "constraints": [],
+    "requirements": [],
+    "selected_groups": [],
+    "skipped_marker": [],
+    "unselected_groups": [
+     "environment.yml"
+    ],
+    "unsupported": []
+   },
+   "status": "nothing_needed",
+   "target_kind": "tavotto_managed",
+   "unknown": [
+    "qa_probe_pkg"
+   ]
+  },
+  "private_python": null,
+  "rounds_remaining": 3,
+  "script": "figure.py",
+  "skipped": false,
+  "target_kind": "tavotto_managed",
+  "targets": [
+   {
+    "available": true,
+    "creates_environment": true,
+    "kind": "tavotto_managed",
+    "modifies_user_environment": false,
+    "private_python": null,
+    "python": "",
+    "reason": "",
+    "venv": ""
+   }
+  ],
+  "user_environments": []
+ },
+ "rounds_remaining": 3
+}

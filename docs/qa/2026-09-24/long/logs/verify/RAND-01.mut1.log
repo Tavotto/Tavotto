@@ -1,0 +1,266 @@
+# cmd: /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_override_history_sequences.py tests/test_override_sequences.py -o pythonpath=<scratch>/qa/vlong/mut1 -p no:cacheprovider -rfE
+# start: 2026-09-24T20:01:26Z
+# sha: d566c865a34f1cf9a1aceb849b43478d780ddd4b
+# cwd: worktree root
+...FFFFF....................s.....                                       [100%]
+=================================== FAILURES ===================================
+________________ test_history_and_geometry_sequences[InvMix-1] _________________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x105020e90>
+replay = <tavotto.engine.pool.EngineWorker object at 0x105020d60>
+library = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4995/history-sequence-figures0')
+stem = 'InvMix', seed = 1
+
+    @pytest.mark.parametrize("seed", SEEDS)
+    @pytest.mark.parametrize("stem", STEMS)
+    def test_history_and_geometry_sequences(hot, replay, library, stem, seed):
+        """每一步：HOT == CLEAR+REPLAY、拖动锚点守恒、回访状态逐字相同；结束 HOT == FRESH。"""
+        base = _apply(hot, stem)
+        tag = f"hist-{stem}-s{seed}"
+        gen, h = Generator(random.Random(f"hist:{stem}:{seed}"), base), History()
+        first_seen = {_k([]): (base, _png(hot, stem, [], f"{tag}-base"))}
+        man_now = base
+        seq: list[list[dict]] = []
+        log: list[str] = []
+        for k in range(STEPS):
+            kind = gen.step(h, man_now)
+            one = [dict(p) for p in h.current]
+            seq.append(one)
+            log.append(kind)
+            hot_man = _apply(hot, stem, one)
+            _apply(replay, stem, [])
+            replay_man = _apply(replay, stem, one)
+            hot_png = _png(hot, stem, one, f"{tag}-hot-{k}")
+            replay_png = _png(replay, stem, one, f"{tag}-replay-{k}")
+            where = f"{tag} 第 {k} 步（{kind}）；动作 {log}\n{_describe(seq)}"
+            paths = _diff_paths(hot_man, replay_man)
+            if paths or hot_png != replay_png:
+                minimal = _minimize(library, stem, seq, tag)
+>               pytest.fail(
+                    f"{where}\n不变式 1：热态 ≠ 清空重放（manifest 差 {sorted(paths)[:8]}，"
+                    f"像素{'不同' if hot_png != replay_png else '相同'}）。最小化后：\n{_describe(minimal)}"
+                )
+E               Failed: hist-InvMix-s1 第 6 步（move_axes）；动作 ['drag:axes_0.legend', 'resize', 'drag:axes_0.legend', 'undo', 'style', 'resize', 'move_axes']
+E                 step 0: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.5912, 0.5258]}]
+E                 step 1: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.5912, 0.5258]}, {"gid": "figure", "prop": "size_mm", "value": [100.1, 76.3]}]
+E                 step 2: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.6263, 0.5485]}, {"gid": "figure", "prop": "size_mm", "value": [100.1, 76.3]}]
+E                 step 3: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.5912, 0.5258]}, {"gid": "figure", "prop": "size_mm", "value": [100.1, 76.3]}]
+E                 step 4: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.5912, 0.5258]}, {"gid": "figure", "prop": "size_mm", "value": [100.1, 76.3]}, {"gid": "axes_0.legend.texts_4", "prop": "bbox_visible", "value": true}, {"gid": "axes_0.legend.texts_4", "prop": "bbox_facecolor", "value": "#123456"}]
+E                 step 5: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.5912, 0.5258]}, {"gid": "figure", "prop": "size_mm", "value": [114.8, 87.5]}, {"gid": "axes_0.legend.texts_4", "prop": "bbox_visible", "value": true}, {"gid": "axes_0.legend.texts_4", "prop": "bbox_facecolor", "value": "#123456"}]
+E                 step 6: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.5912, 0.5258]}, {"gid": "figure", "prop": "size_mm", "value": [114.8, 87.5]}, {"gid": "axes_0.legend.texts_4", "prop": "bbox_visible", "value": true}, {"gid": "axes_0.legend.texts_4", "prop": "bbox_facecolor", "value": "#123456"}, {"gid": "axes_0", "prop": "position", "value": [0.1241, 0.102, 0.7505, 0.7435]}]
+E               不变式 1：热态 ≠ 清空重放（manifest 差 ['elements[axes_0.legend.texts_0].bbox', 'elements[axes_0.legend.texts_1].bbox', 'elements[axes_0.legend.texts_2].bbox', 'elements[axes_0.legend.texts_3].bbox', 'elements[axes_0.legend.texts_4].bbox', 'elements[axes_0.legend.texts_5].bbox', 'elements[axes_0.legend].anchor', 'elements[axes_0.legend].bbox']，像素不同）。最小化后：
+E                 step 0: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.5912, 0.5258]}, {"gid": "figure", "prop": "size_mm", "value": [114.8, 87.5]}, {"gid": "axes_0.legend.texts_4", "prop": "bbox_visible", "value": true}, {"gid": "axes_0.legend.texts_4", "prop": "bbox_facecolor", "value": "#123456"}]
+E                 step 1: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.5912, 0.5258]}, {"gid": "figure", "prop": "size_mm", "value": [114.8, 87.5]}, {"gid": "axes_0.legend.texts_4", "prop": "bbox_visible", "value": true}, {"gid": "axes_0.legend.texts_4", "prop": "bbox_facecolor", "value": "#123456"}, {"gid": "axes_0", "prop": "position", "value": [0.1241, 0.102, 0.7505, 0.7435]}]
+
+tests/test_override_history_sequences.py:266: Failed
+________________ test_history_and_geometry_sequences[InvMix-2] _________________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x104f4b820>
+replay = <tavotto.engine.pool.EngineWorker object at 0x105020fc0>
+library = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4995/history-sequence-figures0')
+stem = 'InvMix', seed = 2
+
+    @pytest.mark.parametrize("seed", SEEDS)
+    @pytest.mark.parametrize("stem", STEMS)
+    def test_history_and_geometry_sequences(hot, replay, library, stem, seed):
+        """每一步：HOT == CLEAR+REPLAY、拖动锚点守恒、回访状态逐字相同；结束 HOT == FRESH。"""
+        base = _apply(hot, stem)
+        tag = f"hist-{stem}-s{seed}"
+        gen, h = Generator(random.Random(f"hist:{stem}:{seed}"), base), History()
+        first_seen = {_k([]): (base, _png(hot, stem, [], f"{tag}-base"))}
+        man_now = base
+        seq: list[list[dict]] = []
+        log: list[str] = []
+        for k in range(STEPS):
+            kind = gen.step(h, man_now)
+            one = [dict(p) for p in h.current]
+            seq.append(one)
+            log.append(kind)
+            hot_man = _apply(hot, stem, one)
+            _apply(replay, stem, [])
+            replay_man = _apply(replay, stem, one)
+            hot_png = _png(hot, stem, one, f"{tag}-hot-{k}")
+            replay_png = _png(replay, stem, one, f"{tag}-replay-{k}")
+            where = f"{tag} 第 {k} 步（{kind}）；动作 {log}\n{_describe(seq)}"
+            paths = _diff_paths(hot_man, replay_man)
+            if paths or hot_png != replay_png:
+                minimal = _minimize(library, stem, seq, tag)
+>               pytest.fail(
+                    f"{where}\n不变式 1：热态 ≠ 清空重放（manifest 差 {sorted(paths)[:8]}，"
+                    f"像素{'不同' if hot_png != replay_png else '相同'}）。最小化后：\n{_describe(minimal)}"
+                )
+E               Failed: hist-InvMix-s2 第 11 步（resize）；动作 ['style', 'undo', 'drag:axes_0.patches_2', 'undo', 'redo', 'drag:axes_0.patches_1', 'undo', 'drag:axes_0.legend', 'drag:axes_0.patches_1', 'style', 'undo', 'resize']
+E                 step 0: [{"gid": "axes_0.legend.texts_3", "prop": "bbox_visible", "value": true}, {"gid": "axes_0.legend.texts_3", "prop": "bbox_facecolor", "value": "#ff00ff"}, {"gid": "axes_0.legend.texts_3", "prop": "bbox_rounded", "value": true}]
+E                 step 1: []
+E                 step 2: [{"gid": "axes_0.patches_2", "prop": "pos_frac", "value": [0.3363, 0.6896]}]
+E                 step 3: []
+E                 step 4: [{"gid": "axes_0.patches_2", "prop": "pos_frac", "value": [0.3363, 0.6896]}]
+E                 step 5: [{"gid": "axes_0.patches_2", "prop": "pos_frac", "value": [0.3363, 0.6896]}, {"gid": "axes_0.patches_1", "prop": "pos_frac", "value": [0.343, 0.6482]}]
+E                 step 6: [{"gid": "axes_0.patches_2", "prop": "pos_frac", "value": [0.3363, 0.6896]}]
+E                 step 7: [{"gid": "axes_0.patches_2", "prop": "pos_frac", "value": [0.3363, 0.6896]}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.6202, 0.5352]}]
+E                 step 8: [{"gid": "axes_0.patches_2", "prop": "pos_frac", "value": [0.3363, 0.6896]}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.6202, 0.5352]}, {"gid": "axes_0.patches_1", "prop": "pos_frac", "value": [0.2662, 0.6452]}]
+E                 step 9: [{"gid": "axes_0.patches_2", "prop": "pos_frac", "value": [0.3363, 0.6896]}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.6202, 0.5352]}, {"gid": "axes_0.patches_1", "prop": "pos_frac", "value": [0.2662, 0.6452]}, {"gid": "axes_0.legend.texts_1", "prop": "color", "value": "#123456"}]
+E                 step 10: [{"gid": "axes_0.patches_2", "prop": "pos_frac", "value": [0.3363, 0.6896]}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.6202, 0.5352]}, {"gid": "axes_0.patches_1", "prop": "pos_frac", "value": [0.2662, 0.6452]}]
+E                 step 11: [{"gid": "axes_0.patches_2", "prop": "pos_frac", "value": [0.3363, 0.6896]}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.6202, 0.5352]}, {"gid": "axes_0.patches_1", "prop": "pos_frac", "value": [0.2662, 0.6452]}, {"gid": "figure", "prop": "size_mm", "value": [95.8, 73.0]}]
+E               不变式 1：热态 ≠ 清空重放（manifest 差 ['elements[axes_0.legend.texts_0].bbox', 'elements[axes_0.legend.texts_1].bbox', 'elements[axes_0.legend.texts_2].bbox', 'elements[axes_0.legend.texts_3].bbox', 'elements[axes_0.legend.texts_4].bbox', 'elements[axes_0.legend.texts_5].bbox', 'elements[axes_0.legend].anchor', 'elements[axes_0.legend].bbox']，像素不同）。最小化后：
+E                 step 0: [{"gid": "axes_0.patches_2", "prop": "pos_frac", "value": [0.3363, 0.6896]}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.6202, 0.5352]}, {"gid": "axes_0.patches_1", "prop": "pos_frac", "value": [0.2662, 0.6452]}]
+E                 step 1: [{"gid": "axes_0.patches_2", "prop": "pos_frac", "value": [0.3363, 0.6896]}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.6202, 0.5352]}, {"gid": "axes_0.patches_1", "prop": "pos_frac", "value": [0.2662, 0.6452]}, {"gid": "figure", "prop": "size_mm", "value": [95.8, 73.0]}]
+
+tests/test_override_history_sequences.py:266: Failed
+________________ test_history_and_geometry_sequences[InvCont-0] ________________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x105020b00>
+replay = <tavotto.engine.pool.EngineWorker object at 0x105020c30>
+library = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4995/history-sequence-figures0')
+stem = 'InvCont', seed = 0
+
+    @pytest.mark.parametrize("seed", SEEDS)
+    @pytest.mark.parametrize("stem", STEMS)
+    def test_history_and_geometry_sequences(hot, replay, library, stem, seed):
+        """每一步：HOT == CLEAR+REPLAY、拖动锚点守恒、回访状态逐字相同；结束 HOT == FRESH。"""
+        base = _apply(hot, stem)
+        tag = f"hist-{stem}-s{seed}"
+        gen, h = Generator(random.Random(f"hist:{stem}:{seed}"), base), History()
+        first_seen = {_k([]): (base, _png(hot, stem, [], f"{tag}-base"))}
+        man_now = base
+        seq: list[list[dict]] = []
+        log: list[str] = []
+        for k in range(STEPS):
+            kind = gen.step(h, man_now)
+            one = [dict(p) for p in h.current]
+            seq.append(one)
+            log.append(kind)
+            hot_man = _apply(hot, stem, one)
+            _apply(replay, stem, [])
+            replay_man = _apply(replay, stem, one)
+            hot_png = _png(hot, stem, one, f"{tag}-hot-{k}")
+            replay_png = _png(replay, stem, one, f"{tag}-replay-{k}")
+            where = f"{tag} 第 {k} 步（{kind}）；动作 {log}\n{_describe(seq)}"
+            paths = _diff_paths(hot_man, replay_man)
+            if paths or hot_png != replay_png:
+                minimal = _minimize(library, stem, seq, tag)
+>               pytest.fail(
+                    f"{where}\n不变式 1：热态 ≠ 清空重放（manifest 差 {sorted(paths)[:8]}，"
+                    f"像素{'不同' if hot_png != replay_png else '相同'}）。最小化后：\n{_describe(minimal)}"
+                )
+E               Failed: hist-InvCont-s0 第 1 步（move_axes）；动作 ['drag:axes_0.legend', 'move_axes']
+E                 step 0: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1852, 0.3388]}]
+E                 step 1: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1852, 0.3388]}, {"gid": "axes_0", "prop": "position", "value": [0.1518, 0.1205, 0.6984, 0.7091]}]
+E               不变式 1：热态 ≠ 清空重放（manifest 差 ['elements[axes_0.legend.texts_0].bbox', 'elements[axes_0.legend.texts_1].bbox', 'elements[axes_0.legend.texts_2].bbox', 'elements[axes_0.legend].anchor', 'elements[axes_0.legend].bbox']，像素不同）。最小化后：
+E                 step 0: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1852, 0.3388]}]
+E                 step 1: [{"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1852, 0.3388]}, {"gid": "axes_0", "prop": "position", "value": [0.1518, 0.1205, 0.6984, 0.7091]}]
+
+tests/test_override_history_sequences.py:266: Failed
+________________ test_history_and_geometry_sequences[InvCont-1] ________________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x105021220>
+replay = <tavotto.engine.pool.EngineWorker object at 0x1050208a0>
+library = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4995/history-sequence-figures0')
+stem = 'InvCont', seed = 1
+
+    @pytest.mark.parametrize("seed", SEEDS)
+    @pytest.mark.parametrize("stem", STEMS)
+    def test_history_and_geometry_sequences(hot, replay, library, stem, seed):
+        """每一步：HOT == CLEAR+REPLAY、拖动锚点守恒、回访状态逐字相同；结束 HOT == FRESH。"""
+        base = _apply(hot, stem)
+        tag = f"hist-{stem}-s{seed}"
+        gen, h = Generator(random.Random(f"hist:{stem}:{seed}"), base), History()
+        first_seen = {_k([]): (base, _png(hot, stem, [], f"{tag}-base"))}
+        man_now = base
+        seq: list[list[dict]] = []
+        log: list[str] = []
+        for k in range(STEPS):
+            kind = gen.step(h, man_now)
+            one = [dict(p) for p in h.current]
+            seq.append(one)
+            log.append(kind)
+            hot_man = _apply(hot, stem, one)
+            _apply(replay, stem, [])
+            replay_man = _apply(replay, stem, one)
+            hot_png = _png(hot, stem, one, f"{tag}-hot-{k}")
+            replay_png = _png(replay, stem, one, f"{tag}-replay-{k}")
+            where = f"{tag} 第 {k} 步（{kind}）；动作 {log}\n{_describe(seq)}"
+            paths = _diff_paths(hot_man, replay_man)
+            if paths or hot_png != replay_png:
+                minimal = _minimize(library, stem, seq, tag)
+>               pytest.fail(
+                    f"{where}\n不变式 1：热态 ≠ 清空重放（manifest 差 {sorted(paths)[:8]}，"
+                    f"像素{'不同' if hot_png != replay_png else '相同'}）。最小化后：\n{_describe(minimal)}"
+                )
+E               Failed: hist-InvCont-s1 第 11 步（resize）；动作 ['style', 'undo', 'redo', 'style', 'style', 'drag:axes_0.legend', 'undo', 'drag:axes_0.legend', 'style', 'drag:axes_0.legend', 'drag:axes_0.legend', 'resize']
+E                 step 0: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}]
+E                 step 1: []
+E                 step 2: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}]
+E                 step 3: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}, {"gid": "axes_0.errorbar_2", "prop": "capsize", "value": 7.5}]
+E                 step 4: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}, {"gid": "axes_0.errorbar_2", "prop": "capsize", "value": 7.5}, {"gid": "axes_0.stemseries_0", "prop": "alpha", "value": 0.9}]
+E                 step 5: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}, {"gid": "axes_0.errorbar_2", "prop": "capsize", "value": 7.5}, {"gid": "axes_0.stemseries_0", "prop": "alpha", "value": 0.9}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1985, 0.3228]}]
+E                 step 6: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}, {"gid": "axes_0.errorbar_2", "prop": "capsize", "value": 7.5}, {"gid": "axes_0.stemseries_0", "prop": "alpha", "value": 0.9}]
+E                 step 7: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}, {"gid": "axes_0.errorbar_2", "prop": "capsize", "value": 7.5}, {"gid": "axes_0.stemseries_0", "prop": "alpha", "value": 0.9}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1336, 0.3799]}]
+E                 step 8: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}, {"gid": "axes_0.errorbar_2", "prop": "capsize", "value": 7.5}, {"gid": "axes_0.stemseries_0", "prop": "alpha", "value": 0.9}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1336, 0.3799]}, {"gid": "axes_0.legend.texts_2", "prop": "rotation", "value": 36.0}]
+E                 step 9: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}, {"gid": "axes_0.errorbar_2", "prop": "capsize", "value": 7.5}, {"gid": "axes_0.stemseries_0", "prop": "alpha", "value": 0.9}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1182, 0.4011]}, {"gid": "axes_0.legend.texts_2", "prop": "rotation", "value": 36.0}]
+E                 step 10: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}, {"gid": "axes_0.errorbar_2", "prop": "capsize", "value": 7.5}, {"gid": "axes_0.stemseries_0", "prop": "alpha", "value": 0.9}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1068, 0.373]}, {"gid": "axes_0.legend.texts_2", "prop": "rotation", "value": 36.0}]
+E                 step 11: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}, {"gid": "axes_0.errorbar_2", "prop": "capsize", "value": 7.5}, {"gid": "axes_0.stemseries_0", "prop": "alpha", "value": 0.9}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1068, 0.373]}, {"gid": "axes_0.legend.texts_2", "prop": "rotation", "value": 36.0}, {"gid": "figure", "prop": "size_mm", "value": [119.5, 91.1]}]
+E               不变式 1：热态 ≠ 清空重放（manifest 差 ['elements[axes_0.legend.texts_0].bbox', 'elements[axes_0.legend.texts_1].bbox', 'elements[axes_0.legend.texts_2].bbox', 'elements[axes_0.legend].anchor', 'elements[axes_0.legend].bbox']，像素相同）。最小化后：
+E                 step 0: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}, {"gid": "axes_0.errorbar_2", "prop": "capsize", "value": 7.5}, {"gid": "axes_0.stemseries_0", "prop": "alpha", "value": 0.9}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1068, 0.373]}, {"gid": "axes_0.legend.texts_2", "prop": "rotation", "value": 36.0}]
+E                 step 1: [{"gid": "axes_0.legend.texts_2", "prop": "binding", "value": "custom"}, {"gid": "axes_0.errorbar_2", "prop": "capsize", "value": 7.5}, {"gid": "axes_0.stemseries_0", "prop": "alpha", "value": 0.9}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1068, 0.373]}, {"gid": "axes_0.legend.texts_2", "prop": "rotation", "value": 36.0}, {"gid": "figure", "prop": "size_mm", "value": [119.5, 91.1]}]
+
+tests/test_override_history_sequences.py:266: Failed
+________________ test_history_and_geometry_sequences[InvCont-2] ________________
+
+hot = <tavotto.engine.pool.EngineWorker object at 0x105022060>
+replay = <tavotto.engine.pool.EngineWorker object at 0x105021f30>
+library = PosixPath('/private/var/folders/fm/3y1w_stx44v_108h6qnw8p180000gn/T/pytest-of-jiaqi/pytest-4995/history-sequence-figures0')
+stem = 'InvCont', seed = 2
+
+    @pytest.mark.parametrize("seed", SEEDS)
+    @pytest.mark.parametrize("stem", STEMS)
+    def test_history_and_geometry_sequences(hot, replay, library, stem, seed):
+        """每一步：HOT == CLEAR+REPLAY、拖动锚点守恒、回访状态逐字相同；结束 HOT == FRESH。"""
+        base = _apply(hot, stem)
+        tag = f"hist-{stem}-s{seed}"
+        gen, h = Generator(random.Random(f"hist:{stem}:{seed}"), base), History()
+        first_seen = {_k([]): (base, _png(hot, stem, [], f"{tag}-base"))}
+        man_now = base
+        seq: list[list[dict]] = []
+        log: list[str] = []
+        for k in range(STEPS):
+            kind = gen.step(h, man_now)
+            one = [dict(p) for p in h.current]
+            seq.append(one)
+            log.append(kind)
+            hot_man = _apply(hot, stem, one)
+            _apply(replay, stem, [])
+            replay_man = _apply(replay, stem, one)
+            hot_png = _png(hot, stem, one, f"{tag}-hot-{k}")
+            replay_png = _png(replay, stem, one, f"{tag}-replay-{k}")
+            where = f"{tag} 第 {k} 步（{kind}）；动作 {log}\n{_describe(seq)}"
+            paths = _diff_paths(hot_man, replay_man)
+            if paths or hot_png != replay_png:
+                minimal = _minimize(library, stem, seq, tag)
+>               pytest.fail(
+                    f"{where}\n不变式 1：热态 ≠ 清空重放（manifest 差 {sorted(paths)[:8]}，"
+                    f"像素{'不同' if hot_png != replay_png else '相同'}）。最小化后：\n{_describe(minimal)}"
+                )
+E               Failed: hist-InvCont-s2 第 7 步（move_axes）；动作 ['style', 'drag:axes_0.legend', 'style', 'drag:axes_0.legend', 'undo', 'style', 'drag:axes_0.legend', 'move_axes']
+E                 step 0: [{"gid": "axes_0.stemseries_0", "prop": "color", "value": "#123456"}]
+E                 step 1: [{"gid": "axes_0.stemseries_0", "prop": "color", "value": "#123456"}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1971, 0.3382]}]
+E                 step 2: [{"gid": "axes_0.stemseries_0", "prop": "color", "value": "#123456"}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1971, 0.3382]}, {"gid": "axes_0.legend", "prop": "handlelength", "value": 2.5}]
+E                 step 3: [{"gid": "axes_0.stemseries_0", "prop": "color", "value": "#123456"}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.2157, 0.3334]}, {"gid": "axes_0.legend", "prop": "handlelength", "value": 2.5}]
+E                 step 4: [{"gid": "axes_0.stemseries_0", "prop": "color", "value": "#123456"}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1971, 0.3382]}, {"gid": "axes_0.legend", "prop": "handlelength", "value": 2.5}]
+E                 step 5: [{"gid": "axes_0.stemseries_0", "prop": "color", "value": "#123456"}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.1971, 0.3382]}, {"gid": "axes_0.legend", "prop": "handlelength", "value": 2.5}, {"gid": "axes_0.legend.texts_2", "prop": "weight", "value": "bold"}]
+E                 step 6: [{"gid": "axes_0.stemseries_0", "prop": "color", "value": "#123456"}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.2555, 0.3187]}, {"gid": "axes_0.legend", "prop": "handlelength", "value": 2.5}, {"gid": "axes_0.legend.texts_2", "prop": "weight", "value": "bold"}]
+E                 step 7: [{"gid": "axes_0.stemseries_0", "prop": "color", "value": "#123456"}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.2555, 0.3187]}, {"gid": "axes_0.legend", "prop": "handlelength", "value": 2.5}, {"gid": "axes_0.legend.texts_2", "prop": "weight", "value": "bold"}, {"gid": "axes_0", "prop": "position", "value": [0.1226, 0.1257, 0.7567, 0.7569]}]
+E               不变式 1：热态 ≠ 清空重放（manifest 差 ['elements[axes_0.legend.texts_0].bbox', 'elements[axes_0.legend.texts_1].bbox', 'elements[axes_0.legend.texts_2].bbox', 'elements[axes_0.legend].anchor', 'elements[axes_0.legend].bbox']，像素不同）。最小化后：
+E                 step 0: [{"gid": "axes_0.stemseries_0", "prop": "color", "value": "#123456"}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.2555, 0.3187]}, {"gid": "axes_0.legend", "prop": "handlelength", "value": 2.5}, {"gid": "axes_0.legend.texts_2", "prop": "weight", "value": "bold"}]
+E                 step 1: [{"gid": "axes_0.stemseries_0", "prop": "color", "value": "#123456"}, {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.2555, 0.3187]}, {"gid": "axes_0.legend", "prop": "handlelength", "value": 2.5}, {"gid": "axes_0.legend.texts_2", "prop": "weight", "value": "bold"}, {"gid": "axes_0", "prop": "position", "value": [0.1226, 0.1257, 0.7567, 0.7569]}]
+
+tests/test_override_history_sequences.py:266: Failed
+=========================== short test summary info ============================
+FAILED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-1]
+FAILED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvMix-2]
+FAILED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-0]
+FAILED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-1]
+FAILED tests/test_override_history_sequences.py::test_history_and_geometry_sequences[InvCont-2]
+5 failed, 28 passed, 1 skipped in 190.58s (0:03:10)
+# end: 2026-09-24T20:04:37Z
+# exit: 1

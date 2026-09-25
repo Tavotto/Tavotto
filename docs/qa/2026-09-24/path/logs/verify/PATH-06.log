@@ -1,0 +1,23 @@
+# command: bash docs/qa/2026-09-24/path/repro/qa_pytest.sh verify/PATH-06 tests/test_first_open_paths_d1.py::test_path06_probe_then_read_is_a_guided_stop_in_the_sandbox_and_correct_in_project_mode tests/test_workdir_mode.py::test_sandbox_mode_still_hides_relative_data_from_exists_and_glob tests/test_workdir_mode.py::test_project_mode_runs_the_script_where_it_lives tests/test_zero_capture.py tests/test_compat_capture_parity.py -k path06 or sandbox_mode or project_mode_runs or numpy or zero or no_figures or empty -vv
+# expanded: PYTHONPATH=<worktree>/src PYTHONDONTWRITEBYTECODE=1 TAVOTTO_WORKER_PYTHON=/opt/homebrew/opt/python@3.13/libexec/bin/python3 /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_first_open_paths_d1.py::test_path06_probe_then_read_is_a_guided_stop_in_the_sandbox_and_correct_in_project_mode tests/test_workdir_mode.py::test_sandbox_mode_still_hides_relative_data_from_exists_and_glob tests/test_workdir_mode.py::test_project_mode_runs_the_script_where_it_lives tests/test_zero_capture.py tests/test_compat_capture_parity.py -k path06 or sandbox_mode or project_mode_runs or numpy or zero or no_figures or empty -vv -p no:cacheprovider -rs --basetemp=/private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/vpath-scratch/pytest-verify/PATH-06
+# time: 2026-09-24T19:31:38Z
+# sha: 93dd9f4b86bea7fd5ccde339f57735b85a6cdf36  (worktree dirty files: 0)
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /Volumes/Projects/Tavotto/.venv/bin/python
+rootdir: /private/tmp/claude-501/-Volumes-Projects-Tavotto/47aff04a-e334-4d42-be51-2f032b92dc64/scratchpad/qa/verify-path
+configfile: pytest.ini
+collecting ... collected 49 items / 39 deselected / 10 selected
+
+tests/test_first_open_paths_d1.py::test_path06_probe_then_read_is_a_guided_stop_in_the_sandbox_and_correct_in_project_mode PASSED [ 10%]
+tests/test_workdir_mode.py::test_sandbox_mode_still_hides_relative_data_from_exists_and_glob PASSED [ 20%]
+tests/test_workdir_mode.py::test_project_mode_runs_the_script_where_it_lives PASSED [ 30%]
+tests/test_zero_capture.py::test_zero_figures_report_the_script_output_not_unknown_stem PASSED [ 40%]
+tests/test_zero_capture.py::test_the_second_generation_does_not_show_the_first_generations_output PASSED [ 50%]
+tests/test_zero_capture.py::test_a_silent_script_gets_the_silent_code_and_no_placeholder PASSED [ 60%]
+tests/test_compat_capture_parity.py::TestRelativeFileIO::test_numpy_text_readers_resolve_next_to_the_script PASSED [ 70%]
+tests/test_compat_capture_parity.py::TestRelativeFileIO::test_numpy_finds_a_compressed_sibling_like_it_does_on_its_own PASSED [ 80%]
+tests/test_compat_capture_parity.py::TestRelativeFileIO::test_numpy_reads_the_scripts_own_sandbox_copy_first PASSED [ 90%]
+tests/test_compat_capture_parity.py::TestRelativeFileIO::test_numpy_reads_outside_the_project_or_another_destpath_are_not_redirected PASSED [100%]
+
+====================== 10 passed, 39 deselected in 19.45s ======================
+# exit_code: 0

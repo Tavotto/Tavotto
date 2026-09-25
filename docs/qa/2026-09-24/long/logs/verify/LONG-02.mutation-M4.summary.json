@@ -1,0 +1,88 @@
+{
+ "mode": "long02",
+ "seed": 0,
+ "minutes_budget": 1.0,
+ "wall_s": 24.0,
+ "iterations": 1,
+ "counts": {
+  "render_ok": 12,
+  "render_checked": 12,
+  "revisits_equal": 2,
+  "exports_ok": 2,
+  "undo": 2,
+  "redo": 0,
+  "kills": 0,
+  "faults": 0,
+  "recovered": 0,
+  "visible_errors": 0,
+  "project_cycles": 1
+ },
+ "first_failure": {
+  "where": "it1-projA-close",
+  "invariant": "关闭项目 3.5 s 后仍有 worker 进程 [14696]"
+ },
+ "probe_error": null,
+ "stop": {
+  "clean_exit": true,
+  "leftover": []
+ },
+ "user_files_unchanged": true,
+ "user_files": {
+  "projB/fig.py": "8f71fa6dfaae305144117ff78ed17513a88612aed4ce8e4cd02077812106cfb1",
+  "projA/fig.py": "0933178dcc3dc27f00527aded9f81e3d5294753b6d25c07ba96bfd2445f91988",
+  "projA/data/points.csv": "6c16f53de6d1ae93aad515c324bb39b7bdafc8bbd4631a0f87d3f3cc06a7f0d1",
+  "projB/data/points.csv": "10e03f295cd3c0e60a629e9326e1412090047f363c2680f3e2f69532103cf34a"
+ },
+ "samples": 3,
+ "trend": {
+  "rss_kib": {
+   "first_after_warm": 129984,
+   "last": 288800,
+   "min": 129984,
+   "max": 292192
+  },
+  "rss_server_kib": {
+   "first_after_warm": 96112,
+   "last": 60608,
+   "min": 60608,
+   "max": 96112
+  },
+  "threads": {
+   "first_after_warm": 3,
+   "last": 6,
+   "min": 3,
+   "max": 6
+  },
+  "fds": {
+   "first_after_warm": 86,
+   "last": 239,
+   "min": 86,
+   "max": 239
+  },
+  "processes": {
+   "first_after_warm": 2,
+   "last": 4,
+   "min": 2,
+   "max": 4
+  },
+  "tmp_files": {
+   "first_after_warm": 0,
+   "last": 0,
+   "min": 0,
+   "max": 0
+  },
+  "cache_bytes": {
+   "first_after_warm": 17501,
+   "last": 145342,
+   "min": 17501,
+   "max": 145342
+  },
+  "export_bytes": {
+   "first_after_warm": 0,
+   "last": 62257,
+   "min": 0,
+   "max": 62257
+  }
+ },
+ "states_seen": 10
+}
