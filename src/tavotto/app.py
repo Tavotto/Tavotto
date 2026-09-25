@@ -6349,7 +6349,15 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
     删之前在**该文件自己的锁**里重新 stat 一次：扫描到删除之间有人写过它，
     说明它已经不是"最旧的那几个"了，跳过。少了这一步，一次并发保存可以被这
     条清理路径当场删掉，而那次保存已经回了 200。
+
+    顺带回收被杀在 `os.replace` 之前的进程留下的 `<doc>.json.<pid>.<n>.tmp`
+    （QA 2026-09-24 SCI-05-B2）：它们不以 `.json` 结尾，下面的条数 / 字节上限
+    永远数不到，以前没有任何一条路会删它们。判据（年龄 + pid 已死）在
+    `atomicio.reap_orphan_tmps`——tmp 的命名也出自那里。
     """
+    orphans = engine_atomicio.reap_orphan_tmps(AUTOSAVE_DIR)
+    if orphans:
+        LOG.info("自动保存目录清理：删掉 %d 个中断写入留下的临时文件", len(orphans))
     try:
         rows = []
         for entry in os.scandir(AUTOSAVE_DIR):

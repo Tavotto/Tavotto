@@ -35,7 +35,9 @@ import errno
 import hashlib
 import json
 import os
+import re
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +71,68 @@ def _next_tmp(path: Path) -> Path:
         _seq += 1
         n = _seq
     return path.with_name(f"{path.name}.{os.getpid()}.{n}.tmp")
+
+
+#: `_next_tmp` 起的名字：`<目标文件名>.<pid>.<序号>.tmp`。回收只认这一种形状，
+#: 别人放在同一目录里的 `*.tmp` 不归这里管。
+_TMP_NAME = re.compile(r"^.+\.(?P<pid>\d+)\.\d+\.tmp$")
+#: 比这个年轻的临时文件一律不碰：一次原子写从建 tmp 到 replace 是毫秒级，一小时
+#: 还没收尾的只可能是写它的进程已经死在半路（QA 2026-09-24 SCI-05-B2）。
+ORPHAN_TMP_MIN_AGE_S = 3600
+#: 过了这个年龄不再问 pid 死活：pid 会被复用，Windows 上也量不了存活。
+ORPHAN_TMP_MAX_AGE_S = 24 * 3600
+
+
+def _pid_alive(pid: int) -> bool | None:
+    """`True` / `False`；量不了回 None（Windows 上 `os.kill(pid, 0)` 不是探测）。"""
+    if os.name == "nt":
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+    return True
+
+
+def reap_orphan_tmps(directory: Path, *, now: float | None = None) -> list[str]:
+    """回收 `directory` 里被杀在 `os.replace` 之前的进程留下的临时文件，返回删掉的名字。
+
+    `write_bytes` 的失败路径会清 tmp，但进程在第 1 步与第 4 步之间被杀（SIGKILL /
+    断电 / 强退）时没有任何代码有机会跑，`<名字>.<pid>.<n>.tmp` 就永久留在盘上。
+    判据两条腿：**年龄**（`ORPHAN_TMP_MIN_AGE_S` 之内一律不碰，正在写的那份
+    不可能活这么久）+ **pid 已死**；过了 `ORPHAN_TMP_MAX_AGE_S` 只看年龄。
+    尽力而为：读不动 / 删不掉都跳过，绝不让调用方因此失败。
+    """
+    now = time.time() if now is None else now
+    removed: list[str] = []
+    try:
+        entries = list(os.scandir(directory))
+    except OSError:
+        return removed
+    for entry in entries:
+        match = _TMP_NAME.match(entry.name)
+        if match is None:
+            continue
+        try:
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            age = now - entry.stat(follow_symlinks=False).st_mtime
+        except OSError:
+            continue
+        if age < ORPHAN_TMP_MIN_AGE_S:
+            continue
+        if age < ORPHAN_TMP_MAX_AGE_S and _pid_alive(int(match["pid"])) is not False:
+            continue
+        try:
+            os.unlink(entry.path)
+        except OSError:
+            continue
+        removed.append(entry.name)
+    return removed
 
 
 def _discard(tmp: Path) -> None:
