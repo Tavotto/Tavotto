@@ -277,3 +277,21 @@ manifest 发 `loc_anchor` 的条件是锚框能被这个模型表达出来。两
 > 看护：`tests/test_legend_binding.py`（脱开 = 脚本原样 + override、显式 custom 热态 == 全新
 > worker）、`tests/test_override_sequences.py::test_fixed_regressions[414-…]`、
 > `web/src/store/legendDetach.test.ts`、`web/src/components/inspector/legendCard.test.tsx`。
+
+> **2026-09-25 修订（#575 / #579）：图例字号改成 matplotlib 原生语义。** 原来 `legend.fontsize`
+> 只改每条文字的字号、`Legend._fontsize` 原样，而 matplotlib 图例盒的边距 / 行距 / 示意线长 /
+> 线字间距 / 列距 / 行高下限都以 `_fontsize` 为单位——字变了框不跟着变。#575 的拖角整体缩放把
+> 这个差放大成可见缺陷：先缩 ×0.7 成图只 ×0.883、再放 ×1.5 成图只 ×1.17，松手回弹。原生语义下
+> 改字号严格等比（×0.6–×2 到 4 位小数）。
+>
+> * 引擎：标量 = `ax.legend(fontsize=v)`（改 `_fontsize` + `rebuild_legend`）；列表 = 撤销形态
+>   （脚本原样的 `_fontsize` + 逐条字号）；五条间距仍单独可调，以新字号为单位；标题字号不跟。
+> * 前端：拖角缩放只写 `fontsize` / `title_fontsize`，间距由引擎随字号等比，不再乘倍数。
+> * 兼容（用户拍板）：已有文档里带图例字号 override 的——属性页改过的，以及应用过内置样式 /
+>   出版规范预设的（`profilestore._builtin_style_record` 给每个图例写 `legend.fontsize`）——重开后
+>   图例框随字号等比变（默认 10 pt 改 7 pt：97×42 px → 82×33 px），框的右 / 上边会挪。文字大小
+>   不变；间距要原来的样子可在属性页单独调回。写进发行说明，不做版本门（与 #414 同一处理）。
+>
+> 看护：`tests/test_legend_fontsize_native.py`、`web/src/lib/legendScale.test.ts`、
+> `web/src/canvas/inFigureDrag.test.tsx`。
+
