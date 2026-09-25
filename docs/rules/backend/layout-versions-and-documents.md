@@ -73,4 +73,9 @@
   删之前在该文件自己的锁里重新 stat 一次。这是**兜底不是主路径**：主清理在
   前端（被 `tavotto.docIndex` 的 12 条挤出去的槽位会被 DELETE 掉），上限刻意
   远高于 12，只够到清过站点数据 / 换浏览器 / 换机器共用数据目录留下的孤儿。
+  同一次清理顺带跑 `atomicio.reap_orphan_tmps()`（QA 2026-09-24 SCI-05-B2）：
+  进程被杀在 `os.replace` 之前留下的 `<doc>.json.<pid>.<n>.tmp` 不以 `.json`
+  结尾，上限永远数不到。判据是**年龄 + pid 已死**——一小时内一律不碰、pid
+  还活着的留到一天后（pid 复用 / Windows 量不了存活）；只认 `_next_tmp` 起的
+  名字，命名与判据同在 `atomicio`。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。

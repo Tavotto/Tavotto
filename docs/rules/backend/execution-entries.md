@@ -38,6 +38,13 @@
   结构性守卫：`tests/bridge/test_bridge_namespace.py::test_no_bare_sibling_import_survives_in_overrides`，
   装载清单与 `tests/import_architecture_baseline.json` 的 `extra_edges` 对拍在
   `tests/test_import_architecture.py`）。
+- **装载引擎代码的那一段不写字节码**（QA REL-01-B1）：engine 目录就是安装目录（macOS 上在
+  签过名的 `.app` 里），用户解释器没有 `-B`，而我们也不给它加（会关掉用户整个进程的缓存；
+  native 档明令不加标志）。所以 `worker.py` / `bridge_runner.py` 按文件装 `bridgeboot` 的那一下、
+  `load_engine_modules` 的装载窗口、`projectenv._PROBE_SRC` 执行 `worker.py` 那一段各自把
+  `sys.dont_write_bytecode` 打开、finally 还原；一次性的 `discover.TARGET_PARSE_ARGS` 直接带 `-B`。
+  新增「用户解释器执行安装目录里的引擎代码」的入口，要在 `tests/test_install_dir_bytecode_free.py`
+  加一条（它两条边都钉：安装目录零 .pyc、用户模块照常缓存）。
 - **`bridge_runner` / `bridgeboot` 启动阶段不许 import matplotlib**，
   钩子挂在 `sys.meta_path` 的后置 import 回调上。
 - **native 侧不许起后台线程**：Figure 归主线程，`LiveFigureSession` 有线程

@@ -158,6 +158,14 @@ def load_engine_modules(engine_dir: str, names) -> types.ModuleType:
         return pkg
 
     saved_path = list(sys.path)
+    # **装载窗口里不写字节码**（QA REL-01-B1）：`engine_dir` 就是安装目录（macOS 上在签过名的
+    # `.app` 里），SourceFileLoader 会把 `__pycache__` 写在源码旁边——一个 .pyc 就让
+    # `codesign --verify` 失败、下次启动「应用已损坏」。内置 runtime 有 `-B` 挡着，**用户的
+    # 解释器没有**，而我们不能给它加 `-B`（那会关掉他整个进程的字节码缓存，native 档更是明令
+    # 不加任何标志）。所以只关这一段、finally 里还原：用户自己的模块照常缓存。
+    # 看护：tests/test_install_dir_bytecode_free.py（两条边都钉）。
+    saved_dont_write = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     saved_top = {n: sys.modules.get(n) for n in _TOPLEVEL_TO_RESTORE}
     saved_present = {n: (n in sys.modules) for n in _TOPLEVEL_TO_RESTORE}
     sys.path.insert(0, engine_dir)
@@ -201,6 +209,7 @@ def load_engine_modules(engine_dir: str, names) -> types.ModuleType:
         # 顶层模块名还被我们挪着——他之后的 `import manifest` 会拿不到自己
         # 那份，报出来的错与真实原因（"引擎没装起来"）毫无关系。
         sys.path[:] = saved_path
+        sys.dont_write_bytecode = saved_dont_write
         # 顶层名字逐个还原（原本没有的删掉）。到这一步为止引擎模块之间的
         # 引用早已绑进各自的 globals，删名字不影响它们；唯一会在运行期再查
         # 名字的是 overrides 那两处 late import，它们走 `_sibling()`。

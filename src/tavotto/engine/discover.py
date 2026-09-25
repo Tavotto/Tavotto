@@ -176,6 +176,11 @@ PARSER_TARGET = "target"
 #: 目标解释器里跑分析的超时（秒）：冷启动一个解释器 + 解析一个文件，几秒足够；
 #: 超时按「目标解析器不可用」处理（问题仍是宿主报的那个语法错误，`parser_error` 记原因）。
 TARGET_PARSE_TIMEOUT_S = 30.0
+#: 目标解释器静态分析子进程的解释器参数（`analyze_in_interpreter` 与看护用例共用）。
+#: `-B`：这个一次性进程执行的是安装目录里的引擎源码（`from tavotto.engine import discover`），
+#: 字节码不许写回那里（macOS 上会破坏 .app 的代码签名，QA REL-01-B1）；它不跑用户代码，
+#: 关掉整个进程的字节码写入没有代价。
+TARGET_PARSE_ARGS: tuple[str, ...] = ("-I", "-B")
 
 #: 目标解析结果缓存：(目标解释器, 脚本路径, 项目根, 文件内容 sha1) → 结果。刷新会反复扫
 #: 同一批文件，每次都起一个解释器是分钟级的代价；文件内容 / 位置变了键就变。
@@ -285,7 +290,15 @@ def analyze_in_interpreter(python: str, path: Path, figures_dir: Path) -> dict:
     engine_dir = str(Path(__file__).resolve().parent)
     try:
         proc = subprocess.run(
-            [python, "-I", "-c", _TARGET_SRC, engine_dir, str(path), str(figures_dir)],
+            [
+                python,
+                *TARGET_PARSE_ARGS,
+                "-c",
+                _TARGET_SRC,
+                engine_dir,
+                str(path),
+                str(figures_dir),
+            ],
             capture_output=True,
             text=True,
             encoding="utf-8",

@@ -192,7 +192,8 @@ def test_missing_dependency_still_wins_over_the_supervisor_code():
 
     这条体验在 Python 池里是 `EngineWorker._error_of` 保的；换控制面不许回退。
     """
-    tb = "Traceback…\nModuleNotFoundError: No module named 'rdkit.Chem'\n"
+    # 缺的是顶层 rdkit 时 CPython 报的就是顶层名（点分名 = 包内部坏了，QA ENV-05-B1）
+    tb = "Traceback…\nModuleNotFoundError: No module named 'rdkit'\n"
     err = pool._worker_error("脚本执行失败", "script_error", tb)
     assert err.code == "missing_dependency"
     assert err.module == "rdkit"

@@ -330,6 +330,8 @@ except Exception as exc:
 if out["matplotlib_version"]:
     import importlib.util, os
     sys.path.insert(0, engine_dir)
+    dont_write = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     try:
         # **就是 worker 自己的启动导入链**，不是它的一个子集：以前这里只 import
         # figcapture / manifest / overrides，而 worker.py 还要 matplotlib.figure
@@ -340,6 +342,9 @@ if out["matplotlib_version"]:
         # sitecustomize / .pth 若已经 import 过一个不相干的顶层 `worker`，import 语句
         # 拿到的是缓存里那一个、体检就绿了；真 worker 是 `python worker.py` 起的，
         # 与这里一样执行的是文件。
+        # 按文件执行 worker.py 时 SourceFileLoader 会把 `worker.cpython-3xx.pyc` 写进
+        # engine 目录（= 安装目录，macOS 上在签过名的 .app 里，QA REL-01-B1）：只在这一段
+        # 关掉字节码写入（上面那两行）。worker 自己装引擎模块那一段由 bridgeboot 同样关着。
         spec = importlib.util.spec_from_file_location(
             "tavotto_probe_worker", os.path.join(engine_dir, "worker.py")
         )
@@ -347,6 +352,8 @@ if out["matplotlib_version"]:
         out["tavotto_worker_ok"] = True
     except BaseException as exc:  # SystemExit 也算：起不来就是起不来
         out["error"] = "worker: %s: %s" % (type(exc).__name__, exc)
+    finally:
+        sys.dont_write_bytecode = dont_write
 if module:
     out["requested_module"] = module
     try:
@@ -498,6 +505,34 @@ def _executable_key(python: str) -> str:
 
 def _same_executable(a: str, b: str) -> bool:
     return _executable_key(a) == _executable_key(b)
+
+
+def interpreter_fingerprint(python: str) -> tuple:
+    """「同一条路径上还是不是体检时的那个解释器」的指纹：进程内体检结论的有效期。
+
+    按路径缓存的体检结论看不见**同一路径被替换**——用户在终端里把 `.venv` 删了重建（没装
+    matplotlib）、换了基础 Python，路径一个字都没变（QA ENV-04-B1：旧的「健康」被沿用，重建会话
+    直接起在坏环境上、反复 `session_dead`）。指纹取三样的 (inode, mtime_ns, ctime_ns, size, mode)——
+    权限位与 ctime 管「内容没动、执行权限被拿掉了」（`chmod -x`：否则起 worker 时 `PermissionError`
+    外露成 internal_error，Codex #598 P2）：
+
+    * 解释器路径**本身**（`lstat`：venv 的 `bin/python` 是软链接，重建时换的是这条链接）；
+    * 它指向的真实文件（`stat`：基础 Python 被升级 / 重装）；
+    * venv 根上的 `pyvenv.cfg`（`python -m venv` / `uv venv` 每次重建都重写它；不是 venv 就记 None）。
+
+    **看不见的**：在原环境里 `pip uninstall` 掉某个包（三样都不动）——那条由 `session_dead`
+    之后丢掉结论兜住（`pool.forget_python_verdict`）。纯 `os.stat`，不起子进程。
+    """
+    p = Path(python)
+    parts: list = []
+    for path, follow in ((p, False), (p, True), (p.parent.parent / "pyvenv.cfg", True)):
+        try:
+            st = os.stat(path, follow_symlinks=follow)
+        except (OSError, ValueError):
+            parts.append(None)
+            continue
+        parts.append((st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_mode))
+    return tuple(parts)
 
 
 def probe_system_candidates(
@@ -920,9 +955,31 @@ def _resolve_project_venv(figures_dir: str | Path, script: str, module: str) -> 
     }
 
 
-#: 首开发现的结果缓存：项目键 → 结果结构（`first_open_candidate()`）。同一进程里同一个
-#: 项目只做一次发现 + 体检；`reset_cache()` 一并清掉。
-_first_open: dict[str, dict] = {}
+#: 首开发现的结果缓存：项目键 → (结果结构, 体检过的每条解释器的指纹)（`first_open_candidate()`）。
+#: 同一进程里同一个项目只做一次发现 + 体检；`reset_cache()` 一并清掉。指纹对不上（同一路径上的
+#: venv 被重建 / 换了 Python）就当没做过——结论与它成立的前提放在同一个值里，不分两张表。
+_first_open: dict[str, tuple[dict, tuple]] = {}
+
+
+def _outcome_fingerprint(outcome: dict) -> tuple:
+    pythons = [e.get("python", "") for e in outcome.get("rejected") or []]
+    if outcome.get("ok"):
+        pythons.append(outcome.get("python", ""))
+    return tuple((p, interpreter_fingerprint(p)) for p in pythons if p)
+
+
+def cached_first_open(figures_dir: str | Path) -> dict | None:
+    """这个项目首开发现的结果（只读缓存；没做过、或体检过的解释器已在原路径上被替换，回 None）。"""
+    key = _key(figures_dir)
+    with _lock:
+        cached = _first_open.get(key)
+    if cached is None:
+        return None
+    outcome, fingerprint = cached
+    if _outcome_fingerprint(outcome) != fingerprint:
+        return None
+    return outcome
+
 
 #: 首开自动采用项目 venv 时记进项目设置的 trigger（与 `missing_dependency` 分开：那条是
 #: 「内置跑错一次之后接手」，这条是「一次都没跑错、开门就选对」）。
@@ -944,17 +1001,19 @@ def first_open_candidate(figures_dir: str | Path, script: str | None = None) -> 
     Python」有解释力。**只做发现与体检，不做决策**：谁压过谁仍归 `pool.resolve_worker_python`。
     """
     key = _key(figures_dir)
-    with _lock:
-        cached = _first_open.get(key)
+    cached = cached_first_open(figures_dir)
     if cached is not None:
         return cached
     candidates = discover(figures_dir, script)
     rejected: list[dict] = []
     chosen: dict | None = None
+    # 指纹在体检**之前**量：体检途中被替换的话，下一次比对就对不上、重新体检
+    probed: list[tuple[str, tuple]] = []
     for venv in candidates:
         python = interpreter_of(venv)
         if not python:
             continue
+        probed.append((python, interpreter_fingerprint(python)))
         health = probe_environment(python)
         entry = {
             "venv": venv,
@@ -975,7 +1034,7 @@ def first_open_candidate(figures_dir: str | Path, script: str | None = None) -> 
         code = rejected[0]["code"] if rejected else ERROR_NOT_FOUND
         outcome = {"ok": False, "code": code, "rejected": rejected, "candidates": candidates}
     with _lock:
-        _first_open[key] = outcome
+        _first_open[key] = (outcome, tuple(probed))
     return outcome
 
 

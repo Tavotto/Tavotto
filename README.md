@@ -454,6 +454,33 @@ Your browser opens at `http://127.0.0.1:5089`. `--figures <dir>` opens a figure
 directory straight away, `--port` changes the port, `--no-browser` skips opening a
 browser.
 
+#### On a remote server, over SSH
+
+Tavotto only listens on `127.0.0.1`, so a server's copy is reached through an SSH port
+forward rather than over the network. On the server:
+
+```sh
+pipx install "tavotto[worker]"
+tavotto --no-browser
+```
+
+It prints a login address ending in `#dnonce=…`. On your own machine, forward the
+**same port number** and open that address in your browser:
+
+```sh
+ssh -L 5089:127.0.0.1:5089 you@server
+```
+
+- **The local port must equal the server's `--port`**, and the address must say
+  `127.0.0.1`, not `localhost`: Tavotto rejects any other `Host` to block DNS
+  rebinding, so a mismatch shows a `bad_host` error. If 5089 is taken on either side,
+  change both: `tavotto --port 5189 --no-browser` and `ssh -L 5189:127.0.0.1:5189 …`.
+- **Each login address works once.** The browser then keeps a session cookie for 30
+  days or until the server process restarts. For a new address while Tavotto is still
+  running, run the same `tavotto --no-browser` (same `--port`) again on the server: it
+  reuses the running instance and prints a fresh one, valid for five minutes.
+- Browser mode only: the desktop app cannot connect to a Tavotto on another machine.
+
 ### Try it in 30 seconds
 
 ```sh
