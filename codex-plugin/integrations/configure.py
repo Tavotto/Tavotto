@@ -5,6 +5,7 @@
     python3 <完整包>/integrations/configure.py --host claude-desktop --project-root D:\\论文\\figs
     python3 <完整包>/integrations/configure.py --host trae --project-root ... --emit instructions
     python3 <完整包>/integrations/configure.py --host cursor --project-root ... --diagnose
+    py -3 '<完整包>\\integrations\\configure.py' --host claude-desktop --project-root 'D:\\figs'   # Windows PowerShell
 
 `<完整包>` 是 GitHub Release 上的 `codex-plugin-<版本>.zip` 解出来的那个目录（名字
 里带 codex 是历史原因：同一份包、同一个启动器 `mcp/server.py`、同一份 Skill，Codex
@@ -636,10 +637,48 @@ def render(host: str, config) -> str:
 
 # ------------------------------------------------------------------ Skill 投影
 def _shell_quote(path: str) -> str:
-    """给终端用的单个参数：Windows（cmd / PowerShell）用双引号，POSIX 用单引号。"""
+    """给终端用的单个参数，与启动器 `_self_command()` 同一规矩：POSIX 单引号（内部 ' 写成
+    '\\''）；Windows 按 PowerShell 写单引号（内部 ' 写成 ''）——PowerShell 的双引号会展开
+    `$x` 与反引号转义，而这两个字符在 Windows 路径里都合法（#578）。"""
     if IS_WINDOWS:
-        return '"' + path + '"'
+        return "'" + path.replace("'", "''") + "'"
     return "'" + path.replace("'", "'\\''") + "'"
+
+
+#: Windows 上 `python3` 常常不存在或是 Microsoft Store 的别名（跑了就退出），命令示例改用
+#: Python 启动器 `py -3`（官方安装包自带；#578）。
+WINDOWS_PYTHON = "py -3"
+
+
+#: SKILL.md 规定「写任何画图脚本之前」必读的 references。没有本机文件读取能力的宿主
+#: （Claude Desktop 聊天）读不到包内路径，等价说明把它们的**原文**附在末尾（#578）；
+#: 与 SKILL.md 那一行的一致性由测试看着。其余 references「用到才读」，只给路径。
+INLINED_REFERENCES = ("figure-contract.md", "publication-style.md")
+
+
+def _strip_frontmatter(text: str) -> str:
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            text = text[end + 4 :].lstrip("\n")
+    return text
+
+
+def _resolve_skill_paths(text: str) -> str:
+    """相对引用 → 包内绝对路径。命令示例里的脚本（`python3 scripts/x.py …`）要能直接粘进
+    终端：包目录可能带空格，按本机 shell 的规矩加引号；行内代码里的引用只是指给人看的路径，不加。"""
+    text = re.sub(
+        r"(?<=\s)scripts/([\w.-]+\.py)",
+        lambda m: _shell_quote(os.path.join(SKILL_DIR, "scripts", m.group(1))),
+        text,
+    )
+    if IS_WINDOWS:
+        text = re.sub(r"(?m)^(\s*)python3 (?=')", r"\1" + WINDOWS_PYTHON + " ", text)
+    for sub in ("references", "scripts"):
+        abs_dir = os.path.join(SKILL_DIR, sub)
+        text = text.replace(f"`{sub}/", f"`{abs_dir}{os.sep}")
+        text = text.replace(f" {sub}/", f" {abs_dir}{os.sep}")
+    return text
 
 
 def skill_instructions() -> str:
@@ -647,31 +686,23 @@ def skill_instructions() -> str:
 
     **不是第二份手写规则**：就是这份包里的 SKILL.md 正文（去掉 frontmatter），把
     `references/…` 与 `scripts/…` 的相对引用改写成包内绝对路径——宿主的规则 /
-    提示词里没有「技能目录」这个概念，相对路径会悬空。
+    提示词里没有「技能目录」这个概念，相对路径会悬空。写脚本前必读的 references
+    （`INLINED_REFERENCES`）的原文附在末尾，读不了本机文件的宿主也拿得到完整契约。
     """
-    path = os.path.join(SKILL_DIR, "SKILL.md")
-    with open(path, "r", encoding="utf-8") as fh:
-        text = fh.read()
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            text = text[end + 4 :].lstrip("\n")
-    # 命令示例里的脚本（`python3 scripts/x.py …`）要能直接粘进终端：包目录可能带空格，
-    # 按本机 shell 的规矩加引号；行内代码里的引用只是指给人看的路径，不加。
-    text = re.sub(
-        r"(?<=\s)scripts/([\w.-]+\.py)",
-        lambda m: _shell_quote(os.path.join(SKILL_DIR, "scripts", m.group(1))),
-        text,
-    )
-    for sub in ("references", "scripts"):
-        abs_dir = os.path.join(SKILL_DIR, sub)
-        text = text.replace(f"`{sub}/", f"`{abs_dir}{os.sep}")
-        text = text.replace(f" {sub}/", f" {abs_dir}{os.sep}")
+    with open(os.path.join(SKILL_DIR, "SKILL.md"), "r", encoding="utf-8") as fh:
+        text = _resolve_skill_paths(_strip_frontmatter(fh.read()))
+    appendix = []
+    for name in INLINED_REFERENCES:
+        with open(os.path.join(SKILL_DIR, "references", name), "r", encoding="utf-8") as fh:
+            body = _resolve_skill_paths(fh.read()).strip("\n")
+        appendix.append(f"\n\n---\n\n<!-- 附录：references/{name} 原文 -->\n\n{body}\n")
     header = (
         "<!-- 由 Tavotto 完整包 integrations/configure.py 从 skills/tavotto-figure/SKILL.md 生成；"
-        "包升级后请重新生成。skill_mode: instruction_fallback -->\n"
+        "包升级后请重新生成。skill_mode: instruction_fallback。"
+        + "、".join(INLINED_REFERENCES)
+        + " 的原文附在末尾，读不了本机文件时以附录为准 -->\n"
     )
-    return header + text
+    return header + text.rstrip("\n") + "\n" + "".join(appendix)
 
 
 # ------------------------------------------------------------------ 主流程
@@ -712,11 +743,12 @@ def build(host: str, project_root: str, python: "str | None", engine_python: "st
         # 显式引擎解释器**直接当启动命令**：启动器先试「当前解释器」，只把它塞进
         # TAVOTTO_MCP_PYTHON 的话，启动器解释器自己装着引擎时它会被静默忽略
         # （Codex 在 #559 上指出）。它能跑纯标准库的启动器是当然的。
-        if python and resolve_python(python) != resolve_python(engine_python):
+        engine = _resolve_engine_python(engine_python)
+        if python and resolve_python(python) != engine:
             raise ConfigureError(
                 "bad_args", "--engine-python 会直接作为启动命令，不要再给另一个 --python"
             )
-        return _build_with_engine(host, root, resolve_python(engine_python), pkg)
+        return _build_with_engine(host, root, engine, pkg)
     launcher_python = resolve_python(python)
     probe = probe_launcher(launcher_python, root)
     if not probe["starts"]:
@@ -752,6 +784,15 @@ def build(host: str, project_root: str, python: "str | None", engine_python: "st
     if engine["ok"]:
         _require_server_starts(desc)
     return _result(host, pkg, launcher_python, probe, engine, pinned, root, desc)
+
+
+def _resolve_engine_python(raw: str) -> str:
+    """`--engine-python` 找不到也是「显式引擎解释器不可用」（退出码 3），不是参数错
+    （Codex 在 #559 上指出）；`--python` 找不到仍是 2。"""
+    try:
+        return resolve_python(raw)
+    except ConfigureError as exc:
+        raise ConfigureError("engine_python_unusable", f"--engine-python：{exc}", rc=3) from exc
 
 
 def _build_with_engine(host: str, root: str, engine_python: str, pkg: dict) -> dict:
