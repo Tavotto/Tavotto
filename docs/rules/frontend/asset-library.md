@@ -27,8 +27,9 @@
   再判已经晚了（写在返回之前就发生了，#605 评审）。看护 `store/projectSwitchDepRepair.test.ts`。
   `aiStore`（改图助手的对话）同样在 `resetForNewProject()` 里 `clear()` 换代（#589）：会话记下所属项目
   （`project`），发起 / 撤销 / 中止都钉在它上面；`start` / `revert` / `cancel` 在 await 之后判代际，
-  撤销的后果（标脏、提示）由 `revertSession` 在 `revert()` 回 `true` 之后才写；`ai.delta` / `ai.done`
-  带发起项目的 `pj`，按**此刻认领的** pj 丢弃（换代窗口里 `project` 还是旧值）；助手面板以 `generation`
+  撤销的后果（标脏、提示）由 `revertSession` 在 `revert()` 回 `true` 之后才写；`ai.*` 事件带发起项目的
+  `pj`，而 `ai.done` 的副作用只在 `finish()` 认出是本标签页此刻持有的会话时才做（老后端不带 pj，项目判据
+  拦不住它）；助手面板以 `generation`
   为 key 重挂，任务历史视图钉在打开它的项目上。**后端任务不取消**——照样改完、记进 A 的历史（按项目存），
   切回 A 在历史里看得到；首选 Agent / 作用范围 / 模型 / `caps` 是本机偏好，不清。看护
   `store/projectSwitchAi.test.ts`、`components/ai/assistantProjectScope.test.tsx`。

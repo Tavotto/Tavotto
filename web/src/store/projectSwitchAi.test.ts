@@ -64,6 +64,25 @@ const startA = () =>
     overrides: [],
   })
 
+const sessionOf = (id: string) => ({
+  id,
+  project: null,
+  agent: 'codex',
+  agentLabel: 'Codex',
+  prompt: 'p',
+  script: 'fig1.py',
+  panelId: 'p1',
+  fileId: 'Fig1.pdf',
+  gid: null,
+  scope: 'figure' as const,
+  target: '整张图',
+  entries: [],
+  status: 'running' as const,
+  changed: false,
+  diff: '',
+  startedAt: 1,
+})
+
 const releaseAll = async (body: unknown) => {
   for (const h of held.splice(0)) h.release(body)
   for (let i = 0; i < 10; i++) await Promise.resolve()
@@ -149,31 +168,43 @@ describe('撤销 / 中止钉在会话自己的项目上', () => {
   })
 })
 
-describe('ai.done 带着别的项目的 pj', () => {
-  const done = (pj: string) =>
+describe('ai.done 只对本标签页此刻持有的会话起作用', () => {
+  const done = (session: string, pj?: string) =>
     handleServerEvent({
       kind: 'ai.done',
-      pj,
-      session: 'sx',
+      ...(pj ? { pj } : {}),
+      session,
       status: 'done',
       changed: false,
       diff: '',
       script: 'fig1.py',
     } as never)
 
-  it('对照：本项目的收尾照常提示', () => {
-    setCurrentProjectId('pb')
-    useProjectStore.setState({ project: { id: 'pb' } as never })
-    done('pb')
+  it('对照：B 自己的会话收尾，照常提示并记成完成', async () => {
+    await switchProject('pb')
+    await startA() // 此刻认领的是 B：这条会话属于 B
+    const sid = useAiStore.getState().sessions[0].id
+    useUiStore.setState({ status: null })
+    done(sid, 'pb')
     expect(useUiStore.getState().status).not.toBeNull()
+    expect(useAiStore.getState().sessions[0].status).toBe('done')
   })
 
-  it('A 的收尾在换代窗口里到达：不提示、不碰会话', () => {
-    // 切换进行到一半：全局 pj 已经是 B，`project` 还没发布、仍是 A——通用的 `project?.id`
-    // 那道判据此刻放行 A 的事件，只有按「此刻认领的 pj」判的那一道挡得住
+  it('老后端的 ai.done 不带 pj：A → B 之后 A 的收尾在 B 里不提示', async () => {
+    await startA()
+    const sid = useAiStore.getState().sessions[0].id
+    await switchProject('pb')
+    useUiStore.setState({ status: null })
+    done(sid) // 没有 pj——项目判据拦不住它，只能靠「这不是我持有的会话」
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('换代窗口：A 的会话还在、全局 pj 已是 B、`project` 仍是 A——带 A 的 pj 的收尾不接', () => {
+    useAiStore.setState({ sessions: [{ ...sessionOf('s-a'), project: 'pa' }] })
     setCurrentProjectId('pb')
     useProjectStore.setState({ project: { id: 'pa' } as never })
-    done('pa')
+    done('s-a', 'pa')
     expect(useUiStore.getState().status).toBeNull()
+    expect(useAiStore.getState().sessions[0].status).toBe('running')
   })
 })

@@ -42,6 +42,7 @@ import {
   syncLoadedDocument,
 } from '@/store/liveSync'
 import { useProjectStore } from '@/store/projectStore'
+import { useAiStore } from '@/store/aiStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -515,6 +516,8 @@ describe('AI 修改之后（ADR 0041）', () => {
   beforeEach(() => {
     // panel.file_changed 会顺手刷一次素材清单：给它一份空清单，别让在途请求悬着
     mockPanels.mockResolvedValue(panels([]))
+    // `ai.done` 只对本标签页持有的会话起作用（#589）：这批用例说的都是自己发起的那一次
+    useAiStore.setState({ sessions: [{ id: 's1', status: 'running', entries: [] } as never] })
   })
 
   it('ai.done 不再自己 markStale：stale 只由 panel.file_changed（reason=ai）置一次', () => {

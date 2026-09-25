@@ -5,7 +5,8 @@
 
 - 前端把 pj 存 **sessionStorage**（`lib/session.ts`，按标签页隔离，「不同
   标签页开不同图库」就是靠它）；`?pj=` 出现在地址栏时认下并立刻抹掉。
-  SSE 事件带 `pj`，前端只处理属于本标签页项目的那些。后端语义见
+  SSE 事件带 `pj`，前端只处理属于本标签页项目的那些（按**此刻认领的** pj 判，不看 `project`：
+  切项目的换代窗口里它还是旧值，#589）。后端语义见
   `src/tavotto/AGENTS.md`。
 - **schema 3**：`ProjectDocument{project, canvases[], activeCanvasId}`；
   运行时激活画布仍是 schema 2 形状的 `documentStore.doc`（画布编辑代码零改动），

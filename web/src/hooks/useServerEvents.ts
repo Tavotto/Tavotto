@@ -45,7 +45,10 @@ export function handleServerEvent(ev: ServerEvent) {
   // SSE 是全进程共享的一条流，后端同时端着多个项目。带了 pj 的事件只属于
   // 那个项目——本标签页开的是另一个图库时必须无视它，否则会拿别人的脚本
   // 变更把自己的面板判成过期、白跑一轮 heavy 重建。
-  const mine = useProjectStore.getState().project?.id
+  //
+  // 「本标签页的项目」取**此刻认领的** pj：切项目的换代期间 `project` 还是旧值，拿它判的话，
+  // 旧项目在这段窗口里发来的事件会被放进来、写进已经换过代的 store（#589）。
+  const mine = currentProjectId() ?? useProjectStore.getState().project?.id
   if ('pj' in ev && ev.pj && mine && ev.pj !== mine) return
 
   switch (ev.kind) {
@@ -213,17 +216,15 @@ export function handleServerEvent(ev: ServerEvent) {
     }
 
     case 'ai.delta':
-      // 上面那道按 `project?.id` 判：切项目的换代期间它还是旧值。AI 事件改看**此刻认领的** pj
-      // ——A 的任务切走之后才说完的话、收尾的提示，都不落进 B（#589）
-      // （`clear()` 与认领新 pj 在同一段同步代码里发生，A 的会话此刻已不在列表里；这一判是防御）
-      if (ev.pj && ev.pj !== currentProjectId()) break
+      // 按 sid 写进自己的会话；不是本标签页此刻持有的会话就什么都不做
       useAiStore.getState().appendDelta(ev.session, ev.kindOf ?? 'message', ev.text)
       break
 
     case 'ai.done': {
-      if (ev.pj && ev.pj !== currentProjectId()) break
       const ai = useAiStore.getState()
-      ai.finish(ev)
+      // **只对自己持有的会话起副作用**（提示、失败说明……）：老后端的 `ai.done` 不带 pj，上面那道
+      // 项目判据拦不住它；切项目之后 A 的会话已不在列表里，这里就一个字都不说（#589）
+      if (!ai.finish(ev)) break
       // 这里**不再 markStale**：文件变了的话后端在 ai.done 之前已经作废 worker、
       // 跑过统一刷新、发过 `panel.file_changed`（reason=ai），上面那个分支按
       // stem 把画布上的面板全部转入跟踪——同一次修改只置一次 stale（ADR 0041）。

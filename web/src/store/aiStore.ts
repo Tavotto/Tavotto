@@ -93,7 +93,8 @@ interface AiState {
     canvas?: string | null
   }) => Promise<void>
   appendDelta: (sid: string, kind: AiDeltaKind, text: string) => void
-  finish: (p: { session: string; status: string; changed: boolean; diff: string; error?: string }) => void
+  /** 回 `true` = 这是本标签页此刻持有的会话；`false` 时调用方不许再做任何副作用（#589） */
+  finish: (p: { session: string; status: string; changed: boolean; diff: string; error?: string }) => boolean
   /** 回 `false` = 这次撤销的结果被丢弃了（期间换过项目）：调用方不许再往别的 store 里写它的后果 */
   revert: (sid: string) => Promise<boolean>
   cancel: (sid: string) => Promise<void>
@@ -287,7 +288,8 @@ export const useAiStore = create<AiState>((set, get) => ({
       }),
     })),
 
-  finish: ({ session, status, changed, diff, error }) =>
+  finish: ({ session, status, changed, diff, error }) => {
+    if (!get().sessions.some((x) => x.id === session)) return false
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === session
@@ -302,7 +304,9 @@ export const useAiStore = create<AiState>((set, get) => ({
             }
           : x,
       ),
-    })),
+    }))
+    return true
+  },
 
   revert: async (sid) => {
     const target = get().sessions.find((x) => x.id === sid)
