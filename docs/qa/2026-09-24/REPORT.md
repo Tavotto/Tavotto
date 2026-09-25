@@ -205,3 +205,20 @@ QA 用例都在 `62af729c` 上执行。集成分支合并时，`origin/main` 已
 **合并态暴露的测试缺陷（已修）**：`multi-select-geometry.spec.ts` 在旗舰分支（基线 62af729c）上是绿的。合入 #543 后，面板保持原生缩放比，第二个子图伸进了右侧属性栏底下，点它的标题会点到属性栏上，导致连续 3 次红。修法是点选前先适应页面（⌘1）再缩小一档（⌘-），并在每次点选前断言落点在 `[data-canvas-stage]` 上。反证见 `e2e-multiselect-mutation.log`：去掉 ⌘1/⌘- 后守卫在 `axes_1.title` 处红；「多选漏一人」变异下 `axes_0.title` 的锚点误差为 −30 px 并变红；还原后回绿。
 
 **与在途 PR 的关系**：GEO-B4（图例首拖横跳）与 open 的 #579（#576）同族；#579 合入后应当重跑 `geo/repro/probe_legend_svg_vs_manifest.py` 与 `legend-jump.repro.spec.ts` 复核。
+
+### 7.1 PR #583 首轮 CI 暴露的问题（2026-09-25，全部是新增用例的环境假设，已修）
+
+首轮 CI 跑在 `73dd4b53` 的合并 ref 上。本机（macOS、开发档 matplotlib 3.10.8）全绿的新增用例，在 Linux / Windows 腿上红了 5 处，另有 CodeQL 4 条告警。修复后在两棵树上各跑了一遍受影响的用例：本分支，以及 `origin/main@f8928bca` + 本分支的本地合并树（重建了前端）。
+
+| CI 腿 | 现象 | 根因 | 修法 |
+| --- | --- | --- | --- |
+| backend-fast（3.10 / 3.13 / 3.14） | PATH-05 `assert 223 > 260` | 长路径靠写死 6 段目录凑。macOS 的 `tmp_path`（`/private/var/folders/…`）比 Linux 的 `/tmp/pytest-of-runner/…` 长六十来个字符，「> 260」只在本机成立 | `_pad_dirs` 按本机真实前缀现算要补几段目录。反证：去掉补段后在本机报 `168 > 260` |
+| backend-platforms（windows，1/2） | PATH-05 `WinError 123` | 目录名里有 `"`，Windows 文件名不允许这个字符，用户在 Windows 上根本建不出这种目录 | 按平台造路径：POSIX 保留单、双引号；Windows 只放单引号。「> 260」这一维在 Windows 上只对开了 `LongPathsEnabled` 的机器成立（读注册表判断），且当前目录受 MAX_PATH−12 限制，所以目录停在 230 字符以内，由数据文件名把全路径推过 260；没开长路径的机器上这一维不适用，其余维度照测 |
+| backend-platforms（windows，2/2） | ENV-02/03 前提断言：`python -c "import qa_probe_pkg"` 退出码 1 | 裸名 `python` 交给了 CreateProcess。它先搜父进程 exe 所在目录和系统目录，最后才搜 PATH，所以拿到的是跑 pytest 的那个解释器，而不是 PATH 最前面的 B | 改用 `shutil.which("python", path=PATH)` 按 PATH 查，并断言查到的就在 B 的目录里。反证：去掉给 PATH 加前缀的那一步，前提断言立刻红 |
+| windows-exe-smoke（1） | STATE-08 `EBUSY … data\cache\app.log` | 用例体末尾就 `rmSync` 了，而第二个实例要到 fixture 收尾时才停，那时它还握着 app.log。POSIX 允许 unlink 打开着的文件，所以本机看不出来 | 删目录前先 `a2.stop()`，等进程确实退出，`rmSync` 再带有界重试。端口探针同一处的 `python3` 改成按平台取解释器名（同 `large-figure.spec.ts`），起不来就直接抛，不再当成「端口还忙」一直等到超时（Codex P1） |
+| posix-e2e | GEO-02 `ylabel` 误差 1.016 px（预算 0.5） | 不是多选的缺陷，是 #576 的首拖跳。y 轴标签自动定位时，x 坐标由刻度标签宽度现算：manifest 在 100 dpi Agg 上量，画布用的是矢量 SVG，两边差一截与字形度量有关的量。第一次拖动把它换成显式位置时，就跳这么一截。从 CI 的 trace 里核对：两个元素写进 `pos_frac` 的分数位移完全相同（−0.10231），manifest 里 ylabel 的包围盒也恰好平移了这么多，但 SVG 里 ylabel 的平移比标题少 0.72 pt，也就是 1.02 CSS px。各环境实测首拖误差：Linux +1.02、Windows −0.28、本机 −0.17，标题恒为 0 左右 | 第一拖只用来把两者换成显式位置，误差只打进日志，标注 #576、不计入门禁；门禁量第二拖，预算仍是 0.5 px，没有放宽。第二拖实测误差：本机 0.002 px，合并树 0.001 px。反证：把整组平移改成漏写最后一名成员后，ylabel 误差为 (−29, 17) px，用例变红。#579 合入后，首拖这一截应当归零 |
+| CodeQL | `flagship_driver.cjs:299` 正则只转义了点；`repro_diag_error_message_leak.py:36/37` 打印了金丝雀；`diagnostics.py:691` 的 SHA1 告警是同一个金丝雀的数据流带过去的（产品代码本 PR 没动） | repro 脚本自身的问题 | 正则按全部元字符转义；金丝雀改名为 `CANARY`，输出时替换成 `<CANARY>`，复现结论（布尔值）不变 |
+
+一并处理了评审意见：素材卡改用 `data-card` 锚点定位；图内编辑宿主先断言恰好一个再使用，不再取第一个匹配（Codex P1）。SCI-02 增加了第二把尺子「绝对数据坐标」（Codex P2）：用产物里的刻度线位置和刻度数值，把曲线顶点换算回数据值，逐点和 `points.csv` 比较。反证：让改线宽的 override 顺带把 y 数据 ×1000 并自动缩放，原来的归一化尺子仍然是绿的（这正是评审指出的盲区），新尺子报 `(1.0, 9.0) → (1.0, 8999.99…)`，用例变红。
+
+Windows 两腿的改动在本机跑不了，是按 Windows 语义推断出来的，推断依据写在 PR 评论里，要等下一轮 CI 确认。
