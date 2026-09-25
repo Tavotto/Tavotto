@@ -1589,6 +1589,108 @@ describe('重跑后脚本赢：不自动对齐，显示不一致、一键对齐�
   })
 })
 
+describe('第二十二轮评审（2a98d163）的场景按用户裁决改判：同一 gid 上脚本改了值 = 脚本赢，不自动对账', () => {
+  /** 脚本原生的 x 轴标签字号是 `native`；有 override 时 manifest 报的是 override 的值（真引擎的样子） */
+  function renderNative(id: string, native: number) {
+    const p = panelById(id)
+    const size = p.overrides.find((o) => o.gid === 'axes_0.xlabel' && o.prop === 'fontsize')?.value
+    seedExactRender(p, manifest(p.fileId, typeof size === 'number' ? size : native) as never)
+  }
+  /** 脚本重跑：`markStale`（面板 id、素材都不变）→ 按此刻的 override 渲染回来，原生字号换成 `native` */
+  function rerunNative(id: string, native: number) {
+    useRenderStore.getState().markStale([panelById(id).fileId])
+    renderNative(id, native)
+  }
+  /** 脚本原生就是 10 pt（= 样式），绑定不写 override */
+  async function boundMatching() {
+    await seed([panel('a', 'FigA')])
+    renderNative('a', 10)
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    renderNative('a', 10)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '原生就合样式：没有 override').toBeUndefined()
+  }
+
+  it('重跑把没有 override 的 x 轴标签从 10 改成 14：不自动写（脚本赢），计入不一致', async () => {
+    await boundMatching()
+    const before = s().past.length
+    rerunNative('a', 14)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '脚本的 14 留着').toBeUndefined()
+    expect(s().past.length - before).toBe(0)
+    expect(styleMismatchCount()).toBe(1)
+  })
+
+  it('那一项上有用户明确的 override 时，重跑改了原生值也不碰', async () => {
+    await boundMatching()
+    s().commit(literal('手改'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides.push({ gid: 'axes_0.xlabel', prop: 'fontsize', value: 12 })
+    })
+    renderNative('a', 10)
+    const before = s().past.length
+    rerunNative('a', 14)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '手改的 12 留着').toBe(12)
+    expect(s().past.length - before).toBe(0)
+  })
+
+  it('用户删掉自己的 override（回到脚本值）：不被样式套回去', async () => {
+    await boundMatching()
+    s().commit(literal('手改'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides.push({ gid: 'axes_0.xlabel', prop: 'fontsize', value: 12 })
+    })
+    renderNative('a', 10)
+    // 之后脚本重跑成 14，再删掉手改：看到的 14 是用户「回到脚本值」的结果
+    rerunNative('a', 14)
+    s().commit(literal('恢复脚本值'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides = []
+    })
+    renderNative('a', 14)
+    const before = s().past.length
+    alignNewFigures()
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBeUndefined()
+    expect(s().past.length - before).toBe(0)
+  })
+
+  it('欠账已经合样式（补账是空计划）、脚本同时改了别的项：补账什么都不写，别的项也不自动对账（脚本赢），计入不一致', async () => {
+    const TWO = record({
+      id: 's2',
+      display_name: '两项',
+      data: { element: { axis_label: { fontsize: 10 }, title: { fontsize: 9 } }, pt_basis: 'page' },
+    })
+    useProfileStore.setState({ styles: [...useProfileStore.getState().styles, TWO] })
+    // 一条与样式无关的手改：这张图不算「新图」，欠账只欠变化量
+    const a = { ...panel('a', 'FigA'), overrides: [{ gid: 'axes_0.title', prop: 'color', value: '#333333' }] }
+    await seed([a])
+    renderNative('a', 10)
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s2')
+    renderNative('a', 10)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBeUndefined()
+    // 脚本在重跑（拿不到精确 manifest）时改了样式：x 轴标签欠一笔 12
+    useRenderStore.getState().markStale([panelById('a').fileId])
+    expect(await editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 })).toBe(true)
+    // 重跑回来：x 轴标签脚本自己就成了 12（欠账已合样式），标题被脚本改成了 11
+    const m = manifest('FigA', 12)
+    m.elements[1].editable = [num('fontsize', 11)]
+    seedExactRender(panelById('a'), m as never)
+    expect(ov('a', 'axes_0.title', 'fontsize'), '脚本改了的标题不自动对回').toBeUndefined()
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '已合样式的那一项不写').toBeUndefined()
+    expect(styleMismatchCount(), '标题 11 ≠ 样式 9').toBe(1)
+  })
+
+  it('缩放后渲染回来零历史', async () => {
+    await boundMatching()
+    const before = s().past.length
+    s().commit(literal('缩放'), (d) => {
+      const o = d.objects[0] as PanelObject
+      o.w = 48
+      o.h = 36
+    })
+    renderNative('a', 10)
+    expect(s().past.length - before, '只有缩放那一条').toBe(1)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBeUndefined()
+  })
+})
+
 describe('撤销只退画布、不推回样式库（ADR 0081 §十二，用户 2026-09-25 拍板）', () => {
   const unrelatedEdit = () =>
     s().commit(literal('改了别的'), (d) => {
