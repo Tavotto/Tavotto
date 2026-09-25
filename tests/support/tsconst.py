@@ -131,6 +131,10 @@ def exported_string_array(src: str, name: str) -> list[str]:
     包装只认这一种，而且 `]` 之后必须紧跟 `)`（中间只许一个尾逗号与空白）——`new Set([...a],
     b)`、`new Set(OTHER)` 这类读不出确切取值的写法一律红，数组本身的纪律（只许字符串字面量）
     照旧。其余包装（`Object.freeze(...)`、函数调用）不认：声明找不到，按「零处」报红。
+
+    初始化式读完（`)` 或 `]`，普通数组可再跟一个 `as const`）之后这条声明必须结束
+    （`_expect_statement_end`）：`new Set([...]).add('x')`、`[...].concat(OTHER)` 一律红——
+    否则读到的只是前半截，续上去的条目被静默丢掉（#557 评审 P1）。
     """
     code, spans = blank_comments_and_strings(src)
     decl = re.compile(
@@ -162,11 +166,18 @@ def exported_string_array(src: str, name: str) -> list[str]:
     if close_at < 0:
         raise AssertionError(f"{name} 的数组没有收尾方括号")
 
-    if wrapped and not re.match(r"\s*,?\s*\)", code[close_at + 1 :]):
-        raise AssertionError(
-            f"{name} 是 `new Set([...])`，但 `]` 之后不是紧跟着 `)`——Set 的实参不止这一个数组，"
-            f"判据读不出确切取值：{src[hits[0].start() : close_at + 40]!r}"
-        )
+    if wrapped:
+        paren = re.compile(r"\s*,?\s*\)").match(code, close_at + 1)
+        if paren is None:
+            raise AssertionError(
+                f"{name} 是 `new Set([...])`，但 `]` 之后不是紧跟着 `)`——Set 的实参不止这一个数组，"
+                f"判据读不出确切取值：{src[hits[0].start() : close_at + 40]!r}"
+            )
+        end_at = paren.end()
+    else:
+        end_at = close_at + 1
+    # 初始化式到这里必须结束：`new Set([...]).add('x')`、`[...].concat(OTHER)` 读法只读到前半截
+    _expect_statement_end(src, code, spans, name, end_at, "初始化式", allow_as_const=not wrapped)
 
     inner = code[open_at + 1 : close_at]
     if not re.fullmatch(r"[\s,]*", inner):
@@ -204,6 +215,10 @@ def exported_string(src: str, name: str) -> str:
         if content_start - 1 < at:
             continue
         if code[at : content_start - 1].strip() == "":
+            # 字面量之后这条声明必须结束：`'a' + OTHER`、`'a'.trim()` 读到的只是前半截
+            _expect_statement_end(
+                src, code, spans, name, content_end + 1, "字符串字面量", allow_as_const=True
+            )
             return src[content_start:content_end]
         break
     raise AssertionError(f"{name} 的取值不是一个字符串字面量——判据读不出确切取值")
@@ -218,6 +233,54 @@ _STATEMENT_STARTERS = frozenset(
 )
 #: 十进制整数字面量（允许数字分隔符 `1_000`；不认 `0x3` / `3n` / `3.0` / `3e0` / 前导零的 `03`）
 _DECIMAL_INT = re.compile(r"(?:0|[1-9](?:_?[0-9])*)(?![\w$.])")
+
+
+def _expect_statement_end(
+    src: str,
+    code: str,
+    spans: list[tuple[int, int]],
+    name: str,
+    pos: int,
+    what: str,
+    *,
+    allow_as_const: bool = False,
+) -> None:
+    """`pos` 处（初始化式读完的地方）之后，这条声明必须就此结束，否则报错。
+
+    只许：同一行的 `;`，或者换行后下一个 token 是 `_STATEMENT_STARTERS` 里的声明关键字 / 文件
+    结束（中间只隔空白与注释，不许隔着字符串——`\n`x`` 是带标签的模板）。同一行的 `.add(…)` /
+    `.concat(…)` / `as` / `satisfies` / 运算符，换行后的 `.` / `(` / `+`……一律红：它们都会把
+    表达式续下去，而读法只读到了前半截（#557 评审 P1：`new Set([...]).add('x')` 的 `'x'` 被
+    静默丢掉）。三个读法（数组 / 字符串 / 整数）共用这一处，不各写一份。
+
+    `allow_as_const`：数组与字符串字面量之后多认一个 `as const`（只收窄类型、不改取值）；
+    整数不认（它的既有纪律是 `as` 一律红）。
+    """
+    if allow_as_const:
+        as_const = re.compile(r"[ \t]*as[ \t]+const\b").match(code, pos)
+        if as_const:
+            pos = as_const.end()
+    tail = re.compile(r"[ \t]*(?:(;)|\n\s*(?:(?P<word>[A-Za-z_$][\w$]*)|(?P<other>\S))?|\Z)").match(
+        code, pos
+    )
+    if tail is None:
+        raise AssertionError(
+            f"{name} 的{what}之后同一行还有东西：{src[pos : pos + 30]!r}"
+            "（成员访问 / 调用 / `as` / `satisfies` / 运算符都会改变取值或类型）"
+        )
+    if tail.group(1) is None:
+        nxt = tail.start("word") if tail.group("word") else tail.start("other")
+        gap_end = nxt if nxt >= 0 else len(code)
+        if any(pos <= a - 1 < gap_end for a, _ in spans):
+            raise AssertionError(f"{name} 的{what}之后隔着一个字符串 / 模板字面量，可能是续写")
+        if tail.group("other") is not None or (
+            tail.group("word") is not None and tail.group("word") not in _STATEMENT_STARTERS
+        ):
+            nxt_tok = tail.group("word") or tail.group("other")
+            raise AssertionError(
+                f"{name} 的{what}换行后接着 {nxt_tok!r}——不是声明关键字，表达式可能续写"
+                f"（只认 `;` 或换行后接 {sorted(_STATEMENT_STARTERS)}）"
+            )
 
 
 def exported_number(src: str, name: str) -> int:
@@ -244,27 +307,7 @@ def exported_number(src: str, name: str) -> int:
         raise AssertionError(
             f"{name} 的初始化式不是十进制整数字面量：{src[at : at + 20]!r}（`0x3` / `3n` / 小数 / 负号 / 标识符都不认）"
         )
-    tail = re.compile(r"[ \t]*(?:(;)|\n\s*(?:(?P<word>[A-Za-z_$][\w$]*)|(?P<other>\S))?|\Z)").match(
-        code, lit.end()
-    )
-    if tail is None:
-        raise AssertionError(
-            f"{name} 的字面量之后同一行还有东西：{src[lit.end() : lit.end() + 20]!r}"
-            "（`as` / `satisfies` / 运算符都会改变取值或类型）"
-        )
-    if tail.group(1) is None:
-        nxt = tail.start("word") if tail.group("word") else tail.start("other")
-        gap_end = nxt if nxt >= 0 else len(code)
-        if any(lit.end() <= a - 1 < gap_end for a, _ in spans):
-            raise AssertionError(f"{name} 的字面量之后隔着一个字符串 / 模板字面量，可能是续写")
-        if tail.group("other") is not None or (
-            tail.group("word") is not None and tail.group("word") not in _STATEMENT_STARTERS
-        ):
-            nxt_tok = tail.group("word") or tail.group("other")
-            raise AssertionError(
-                f"{name} 的字面量换行后接着 {nxt_tok!r}——不是声明关键字，表达式可能续写"
-                f"（只认 `;` 或换行后接 {sorted(_STATEMENT_STARTERS)}）"
-            )
+    _expect_statement_end(src, code, spans, name, lit.end(), "字面量")
     return int(lit.group().replace("_", ""))
 
 

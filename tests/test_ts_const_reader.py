@@ -266,3 +266,57 @@ def test_interface_member_with_a_multiline_union_is_one_member():
     got = exported_interface_members(src, "F")
     assert list(got) == ["prop", "type", "value"]
     assert "'number'" in got["type"]
+
+
+# ---- 初始化式之后必须结束（#557 评审 P1：`new Set([...]).add('x')` 的 `'x'` 被静默丢掉）----
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "export const S: ReadonlySet<string> = new Set(['a']).add('x')\n",
+        "export const S = new Set(['a'])\n  .add('x')\n",
+        "export const S = new Set(['a']) // 注释\n  .add('x')\n",
+        "export const S = new Set(['a']) as ReadonlySet<string>\n",
+        "export const S = new Set(['a']) || OTHER\n",
+        "export const S = new Set(['a'])\n  ? A : B\n",
+        "export const S = new Set(['a'])\n`tag`\nexport const T = 1\n",
+        "export const E = ['a'].concat(['x'])\n",
+        "export const E = ['a']\n  .concat(EXTRA)\n",
+        "export const E = ['a', 'b'].filter((s) => s !== 'b')\n",
+        "export const E = ['a'] as const satisfies readonly string[]\n",
+        "export const E = [...['a']]\n",
+    ],
+)
+def test_a_continued_array_or_set_initializer_is_a_red(src):
+    with pytest.raises(AssertionError):
+        exported_string_array(src, src.split()[2].rstrip(":"))
+
+
+@pytest.mark.parametrize(
+    ("src", "name", "value"),
+    [
+        ("export const S = new Set(['a', 'b'])", "S", ["a", "b"]),  # 文件结束
+        ("export const S = new Set(['a', 'b',]);\nfoo()\n", "S", ["a", "b"]),
+        ("export const S = new Set([\n  'a',\n]) // 说明\n\nexport function f() {}\n", "S", ["a"]),
+        ("export const E = ['a'] as const\nconst x = 1\n", "E", ["a"]),
+        ("export const E = ['a'];\n", "E", ["a"]),
+    ],
+)
+def test_an_initializer_that_ends_there_still_reads(src, name, value):
+    assert exported_string_array(src, name) == value
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "export const D = 'a' + OTHER\n",
+        "export const D = 'a'.trim()\n",
+        "export const D = 'a'\n  .concat('b')\n",
+        "export const D = 'a' as string\n",
+        "export const D = 'a' ? 'b' : 'c'\n",
+    ],
+)
+def test_a_continued_string_initializer_is_a_red(src):
+    with pytest.raises(AssertionError):
+        exported_string(src, "D")

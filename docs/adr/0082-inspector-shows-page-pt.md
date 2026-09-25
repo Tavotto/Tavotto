@@ -42,7 +42,9 @@
 `arrow_head` 原来只报一位：缩放比 0.6 时输入 8.5，存 14.17，回报 14.2，回显 8.52。现在已改成两位，
 由 `tests/test_page_pt_precision.py` 用 AST 看护（表从 TS 源码里读）。值在上游取好的字段（`bbox_linewidth` 的
 `bb["lw"]`）从**这一条字段的 value 表达式**出发追到同一函数里的每一处赋值、再追到常量表的定义，逐处过同一条
-判据；追不到就红。模块里别处有同名的键不算数。
+判据；追不到就红。模块里别处有同名的键不算数。条件表达式 / `or` / `and` 的每条分支、每个数字缺省值同样要
+两位以内；`**` 展开、常量表被改写、属性名不是字面量的数字字段都按红算。表的读法要求 `new Set([...])` 就此结束，
+续上 `.add(…)` 之类一律红。
 
 界面代码不许 import `panelScale` / `toPageValue` / `toScriptValue` / `pageField`，由 `lib/pagePtLens.test.ts` 用 AST 看护。
 

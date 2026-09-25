@@ -16,6 +16,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from tests.support.tsconst import exported_string_array
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,19 +49,20 @@ def _prop_names(node: ast.expr) -> list[str]:
 
 
 def _is_round_2(node: ast.expr) -> bool:
-    """`round(x, 2)`；或 `round(x, 2) if … else <数字常量>`（缺省值本来就是有限小数）。"""
-    if isinstance(node, ast.IfExp):
-        return all(
-            _is_round_2(branch)
-            or (isinstance(branch, ast.Constant) and isinstance(branch.value, (int, float)))
-            for branch in (node.body, node.orelse)
-        )
+    """恰好是 `round(x, 2)` 这一个调用。
+
+    条件表达式不在这里认：它的每条分支（包括数字常量的缺省值）都要过 `_value_ok` 的同一条
+    判据——从前这里对常量分支只看「是个数」，`round(v, 2) if v else 0.125` 照样绿（#557 评审 P1）。
+    """
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "round"
         and len(node.args) == 2
+        and not node.keywords
+        and not isinstance(node.args[0], ast.Starred)
         and isinstance(node.args[1], ast.Constant)
+        and type(node.args[1].value) is int
         and node.args[1].value == 2
     )
 
@@ -89,16 +92,61 @@ def _is_two_decimal_number(value: object) -> bool:
     )
 
 
-def _module_const_dict(module: Path, tree: ast.Module, name: str) -> ast.Dict | None:
-    """`name` 在模块级的字典字面量定义：本模块定义的，或从引擎另一个模块 import 进来的。"""
-    for stmt in tree.body:
+def _table_touched(tree: ast.Module, name: str) -> bool:
+    """模块里有没有改写这张表的地方：`NAME[...] = …`、`del NAME[...]`、`NAME.update(…)` 这类。"""
+    for node in ast.walk(tree):
         if (
-            isinstance(stmt, ast.Assign)
-            and len(stmt.targets) == 1
-            and isinstance(stmt.targets[0], ast.Name)
-            and stmt.targets[0].id == name
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == name
+            and isinstance(node.ctx, (ast.Store, ast.Del))
         ):
-            return stmt.value if isinstance(stmt.value, ast.Dict) else None
+            return True
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == name
+            and node.func.attr in _MUTATORS
+        ):
+            return True
+    return False
+
+
+_MUTATORS = frozenset({"update", "setdefault", "__setitem__", "pop", "popitem", "clear", "__ior__"})
+
+
+def _module_const_dict(module: Path, tree: ast.Module, name: str) -> ast.Dict | None:
+    """`name` 在模块级的字典字面量定义：本模块定义的，或从引擎另一个模块 import 进来的。
+
+    定义必须是**唯一一处**模块级绑定、字典字面量里没有 `**` 展开，而且定义它的模块与引用它的
+    模块里都没有改写它——否则读到的那一项不是运行时的取值，一律回 None（判红）。
+    """
+    if _table_touched(tree, name):
+        return None
+    defs = [
+        stmt
+        for stmt in tree.body
+        if isinstance(stmt, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == name for t in stmt.targets)
+    ]
+    rebinds = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Store)
+    ]
+    if defs:
+        stmt = defs[0]
+        ok = (
+            len(defs) == 1
+            and len(rebinds) == 1
+            and len(stmt.targets) == 1
+            and isinstance(stmt.value, ast.Dict)
+            and None not in stmt.value.keys
+        )
+        return stmt.value if ok else None
+    if rebinds:
+        return None
     for stmt in tree.body:
         if not isinstance(stmt, ast.ImportFrom) or stmt.module is None:
             continue
@@ -131,7 +179,11 @@ def _local_sources(func: ast.AST, var: str, key: str) -> tuple[bool, list[ast.ex
             for tgt in targets:
                 if isinstance(tgt, ast.Name) and tgt.id == var:
                     # 整体赋值必须是字典字面量，且确实写了这个键
-                    if not isinstance(node.value, ast.Dict) or isinstance(node, ast.AugAssign):
+                    if (
+                        not isinstance(node.value, ast.Dict)
+                        or isinstance(node, ast.AugAssign)
+                        or None in node.value.keys  # `**` 展开可能盖掉这一项
+                    ):
                         return True, None
                     items = _dict_item(node.value, key)
                     if len(items) != 1:
@@ -154,7 +206,7 @@ def _local_sources(func: ast.AST, var: str, key: str) -> tuple[bool, list[ast.ex
             and isinstance(node.func, ast.Attribute)
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == var
-            and node.func.attr in {"update", "setdefault", "__setitem__"}
+            and node.func.attr in _MUTATORS
         ):
             return True, None
     if not bound:
@@ -197,12 +249,18 @@ def _value_ok(
         return True
     if depth >= _MAX_DEPTH:
         return False
+    # 数字常量（缺省值）同一条两位小数判据，不管它出现在哪一层分支里
+    if isinstance(expr, ast.Constant):
+        return _is_two_decimal_number(expr.value)
+    # 条件表达式：两条分支都要过；`a or b` / `a and b`：取值可能是任何一个操作数，全部要过
     if isinstance(expr, ast.IfExp):
-        return all(
-            _value_ok(b, func, module, tree, depth + 1)
-            or (isinstance(b, ast.Constant) and _is_two_decimal_number(b.value))
-            for b in (expr.body, expr.orelse)
-        )
+        branches: list[ast.expr] = [expr.body, expr.orelse]
+    elif isinstance(expr, ast.BoolOp):
+        branches = list(expr.values)
+    else:
+        branches = []
+    if branches:
+        return all(_value_ok(b, func, module, tree, depth + 1) for b in branches)
     if not (isinstance(expr, ast.Subscript) and isinstance(expr.value, ast.Name)):
         return False
     key = _const_key(expr.slice)
@@ -243,14 +301,30 @@ def _field_violations(path: Path, wanted: set[str], seen: set[str]) -> list[str]
         }
         if "prop" not in entries or "value" not in entries:
             continue
-        for name in _prop_names(entries["prop"]):
+        func = _enclosing_function(parents, node) or tree
+        spread = None in node.keys  # `**extra` 可能在运行时盖掉 value
+        names = _prop_names(entries["prop"])
+        if not names and _is_number_field(entries):
+            # 属性名不是字面量（`"prop": prop`、认不出的 f-string）：看不出它是不是表里的，
+            # 于是数字字段一律按表里的判——否则经由变量进来的页面 pt 量整条不在视野里
+            if spread or not _value_ok(entries["value"], func, path, tree):
+                bad.append(f"{path.name}:{node.lineno} <{ast.unparse(entries['prop'])}>")
+            continue
+        for name in names:
             if name not in wanted:
                 continue
             seen.add(name)
-            func = _enclosing_function(parents, node) or tree
-            if not _value_ok(entries["value"], func, path, tree):
+            if spread or not _value_ok(entries["value"], func, path, tree):
                 bad.append(f"{path.name}:{node.lineno} {name}")
     return bad
+
+
+def _is_number_field(entries: dict[object, ast.expr]) -> bool:
+    """manifest 字段（有 `type`）且类型是 `"number"`，或类型不是字面量（看不出就按数字算）。"""
+    ty = entries.get("type")
+    if ty is None:
+        return False  # 没有 `type` 的是编辑 / 补丁记录，不是 manifest 字段
+    return not (isinstance(ty, ast.Constant) and ty.value != "number")
 
 
 def test_every_page_pt_field_is_reported_with_two_decimals():
@@ -315,3 +389,102 @@ def test_every_traced_source_must_be_two_decimals(tmp_path):
     ):
         assert old in _TRACED_OK
         assert _violations_in(tmp_path, _TRACED_OK.replace(old, new)), new
+
+
+# ---- #557 第二轮：每一条分支、每一个缺省值、每一处可能盖掉取值的写法都过同一条判据 ----
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "round(float(p.lw), 2) if p else 0.125",  # 缺省值三位小数
+        "0.125 if p else round(float(p.lw), 2)",
+        "round(float(p.lw), 2) if p else (0.5 if q else 0.333)",  # 嵌套分支里的常量
+        "round(float(p.lw), 2) or 0.125",  # BoolOp 的每个操作数
+        "p.lw and round(float(p.lw), 2)",
+        "round(float(p.lw), 2) if p else True",  # 布尔不是数
+        "round(float(p.lw), 2) if p else -0.5",  # 一元负号：读不出就红
+        "round(float(p.lw), 2.0)",
+        "round(float(p.lw), ndigits=2)",
+    ],
+)
+def test_every_branch_and_fallback_is_two_decimals(tmp_path, value):
+    src = f'def fields(p, q):\n    return [{{"prop": "bbox_linewidth", "value": {value}}}]\n'
+    assert _violations_in(tmp_path, src), value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "round(float(p.lw), 2) if p else 0.25",
+        "round(float(p.lw), 2) if p else 8",
+        "round(float(p.lw), 2) if p else (0.5 if q else 1.0)",
+        "round(float(p.lw), 2) or 0.0",
+    ],
+)
+def test_two_decimal_fallbacks_still_pass(tmp_path, value):
+    src = f'def fields(p, q):\n    return [{{"prop": "bbox_linewidth", "value": {value}}}]\n'
+    assert _violations_in(tmp_path, src) == [], value
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        # 字段字面量里的 `**` 展开可能盖掉 value
+        ('"value": bb["lw"]}', '"value": bb["lw"], **p.extra}'),
+        # 局部字典里的 `**` 展开可能盖掉这一项
+        ('bb = {"lw": round(float(p.lw), 2)}', 'bb = {"lw": round(float(p.lw), 2), **p.extra}'),
+        # 常量表：展开、重复定义、被改写、被重新绑定
+        ('TABLE = {"bbox_linewidth": 0.0}', 'TABLE = {"bbox_linewidth": 0.0, **EXTRA}'),
+        (
+            'TABLE = {"bbox_linewidth": 0.0}',
+            'TABLE = {"bbox_linewidth": 0.0}\nTABLE = {"bbox_linewidth": 0.0}',
+        ),
+        (
+            'TABLE = {"bbox_linewidth": 0.0}',
+            'TABLE = {"bbox_linewidth": 0.0}\nTABLE["bbox_linewidth"] = 0.125',
+        ),
+        (
+            'TABLE = {"bbox_linewidth": 0.0}',
+            'TABLE = {"bbox_linewidth": 0.0}\nTABLE.update(bbox_linewidth=0.125)',
+        ),
+        (
+            'TABLE = {"bbox_linewidth": 0.0}',
+            'TABLE = {"bbox_linewidth": 0.0}\nTABLE |= {"bbox_linewidth": 0.125}',
+        ),
+        (
+            'TABLE = {"bbox_linewidth": 0.0}',
+            'TABLE = {"bbox_linewidth": 0.0}\nfor TABLE in []: pass',
+        ),
+    ],
+)
+def test_anything_that_can_overwrite_the_value_is_a_red(tmp_path, old, new):
+    assert old in _TRACED_OK
+    assert _violations_in(tmp_path, _TRACED_OK.replace(old, new)), new
+
+
+def test_a_number_field_whose_prop_is_not_a_literal_is_judged_too(tmp_path):
+    """`"prop": prop` 看不出是不是表里的——数字字段一律按表里的判，别让变量把它带出视野。"""
+    bad = 'def f(prop, v):\n    return {"prop": prop, "type": "number", "value": float(v)}\n'
+    assert _violations_in(tmp_path, bad)
+    ok = 'def f(prop, v):\n    return {"prop": prop, "type": "number", "value": round(float(v), 2)}\n'
+    assert _violations_in(tmp_path, ok) == []
+    enum = 'def f(prop, v):\n    return {"prop": prop, "type": "enum", "value": v}\n'
+    assert _violations_in(tmp_path, enum) == []
+    fstr = 'def f(s, v):\n    return {"prop": f"edge_{s}_width", "type": "number", "value": float(v)}\n'
+    assert _violations_in(tmp_path, fstr)
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [").add('new_prop')", ")\n  .add('new_prop')", ") as ReadonlySet<string>", ") || EXTRA"],
+)
+def test_the_real_declaration_with_a_continuation_is_a_red(suffix):
+    """#557 评审 P1：真实声明后面续上 `.add(…)`，读法必须红，而不是静默丢掉那一条。"""
+    src = TS.read_text(encoding="utf-8")
+    decl = src.index("export const PAGE_PT_PROPS")
+    close = src.index("])", decl) + 1
+    assert src[close] == ")"
+    mutated = src[:close] + suffix + src[close + 1 :]
+    with pytest.raises(AssertionError):
+        exported_string_array(mutated, "PAGE_PT_PROPS")
