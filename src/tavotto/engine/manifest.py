@@ -4088,29 +4088,37 @@ def _measure_like_vector(renderer) -> None:
 
 
 @contextmanager
-def vector_text_metrics(fig):
-    """manifest 这一整段（布局 draw + 之后的全部包围盒测量）用矢量的文字度量。
+def vector_text_metrics():
+    """manifest 的**测量阶段**用矢量的文字度量；交出 `arm(renderer)`，布局 draw 之后再挂。
 
-    **只挂在这一段**：预览位图 / 导出 PNG 仍是 Agg 自己的度量（那是像素输出，按
-    像素排版才对）。两件事缺一不可：
+    **布局那一次 draw 不换尺**：`constrained_layout` 这类布局的结果在 ulp 级依赖上一次
+    draw 留下的位置，Agg 的 26.6 定点度量把这种末位噪声吸收掉了；换成连续的矢量度量后，
+    「上一张预览是 hybrid 还是纯矢量」会让 manifest 末位不同（`test_preview_hybrid` 的
+    逐字节不变量在 3.10 上抓到）。而用户看得见的偏差不在布局里：图例的位置是
+    `get_window_extent` 时现算的（`OffsetBox.get_offset`），文字框也是现量的——测量阶段
+    换尺就够。图例子项的偏移是 draw 时写死的，由 `_layout_legends_for_measure` 在一次性
+    渲染器上按同一把尺补排版。
+
+    **只挂在这一段**：预览位图 / 导出 PNG 仍是 Agg 自己的度量。两件事缺一不可：
 
     * 挂在 canvas 的**那个**渲染器实例上：`FigureCanvasAgg.get_renderer()` 在尺寸与 dpi
-      不变时复用同一个对象，`draw()` 与各处不带参数的 `get_window_extent()` 拿到的都是它；
-    * 进出各清一次度量缓存：缓存键里有渲染器实例却没有度量方式——进来不清，量到的
-      是上一次预览留下的 hinting 值；出去不清，之后同 dpi 的位图绘制会用上矢量值。
+      不变时复用同一个对象，各处不带参数的 `get_window_extent()` 拿到的都是它；
+    * 挂上与撤掉时各清一次度量缓存：缓存键里有渲染器实例却没有度量方式——挂上不清，
+      量到的是布局 draw 留下的 hinting 值；撤掉不清，之后同 dpi 的位图绘制会用上矢量值。
     """
-    if not hasattr(fig.canvas, "get_renderer"):
-        from matplotlib.backends.backend_agg import FigureCanvasAgg
+    armed: list = []
 
-        FigureCanvasAgg(fig)  # 构造即绑定到 fig.canvas（见 `_ensure_agg_canvas`）
-    renderer = fig.canvas.get_renderer()
-    _clear_text_metrics_cache(renderer)
-    _measure_like_vector(renderer)
-    try:
-        yield
-    finally:
-        renderer.__dict__.pop("get_text_width_height_descent", None)
+    def arm(renderer) -> None:
         _clear_text_metrics_cache(renderer)
+        _measure_like_vector(renderer)
+        armed.append(renderer)
+
+    try:
+        yield arm
+    finally:
+        for renderer in armed:
+            renderer.__dict__.pop("get_text_width_height_descent", None)
+            _clear_text_metrics_cache(renderer)
 
 
 def _ensure_agg_canvas(fig):
@@ -4132,16 +4140,14 @@ def _ensure_agg_canvas(fig):
     return fig.canvas.get_renderer()
 
 
-def _legend_would_not_draw(leg) -> bool:
-    """这次 `fig.canvas.draw()` 会不会跳过这个图例：自己不可见，或它住的 axes 不可见。"""
-    if not leg.get_visible():
-        return True
-    parent = getattr(leg, "parent", None)
-    return parent is not None and not parent.get_visible()
+def _layout_legends_for_measure(state: FigState, fig) -> None:
+    """把每个图例的子项按**文档 dpi + 测量用的矢量度量**重新排一次版，manifest 才能量它的文字。
 
+    两个理由，同一个做法：
 
-def _layout_undrawn_legends(state: FigState, fig) -> None:
-    """把 draw 跳过的图例按**文档 dpi** 重新排一次版，manifest 才能量它的文字。
+    * 布局 draw 用的是 Agg 度量（见 `vector_text_metrics`：布局不换尺），子项偏移按那把尺写死，
+      而图例本体的框是测量时按矢量度量现算的——不补排，框与框里的字各用一把尺；
+    * 下面这段（#413）：draw 跳过的图例，子项偏移冻结在上一次画它的那一回。
 
     图例文字的像素位置不是现算的：`Legend.draw` 走到 `OffsetBox.draw` 时才把每个
     `TextArea` 的偏移写死成当时 renderer 下的像素（`TextArea.set_offset`），之后
@@ -4159,7 +4165,7 @@ def _layout_undrawn_legends(state: FigState, fig) -> None:
     """
     scratch = None
     for el in state.elements:
-        if el["role"] != "legend" or not _legend_would_not_draw(el["artist"]):
+        if el["role"] != "legend":
             continue
         if scratch is None:
             from matplotlib.backends.backend_agg import RendererAgg
@@ -4229,17 +4235,19 @@ def build_manifest(state: FigState, stem: str) -> dict:
     调用边界：进来先 draw、出去之前不动图。谁把它挪到别处，得先重新证明那个
     前提在新位置还成立。
     """
-    with ticklabel_memo(), vector_text_metrics(state.fig):
-        return _build_manifest(state, stem)
+    with ticklabel_memo(), vector_text_metrics() as arm:
+        return _build_manifest(state, stem, arm)
 
 
-def _build_manifest(state: FigState, stem: str) -> dict:
+def _build_manifest(state: FigState, stem: str, arm) -> dict:
     fig = state.fig
     renderer = _ensure_agg_canvas(fig)
+    # 布局 draw 之后才换尺：之后的全部测量与画布上的矢量 SVG 同一把尺（`vector_text_metrics`）
+    arm(renderer)
     W, H = float(fig.bbox.width), float(fig.bbox.height)
     # draw 跳过的图例（隐藏 / 住在隐藏的 axes 里）按文档 dpi 补排一次版，否则它的
     # 文字几何是上一次画它那回的像素（#413）
-    _layout_undrawn_legends(state, fig)
+    _layout_legends_for_measure(state, fig)
     # 刻度伪元素按**当前**刻度状态对齐（必须在 draw 之后：标签的文字是 draw
     # 那一刻由 Formatter 填进去的）
     sync_tick_elements(state)

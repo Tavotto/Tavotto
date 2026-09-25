@@ -94,20 +94,24 @@
   退回 bbox。bbox 一个字节不动。
   前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`。
 * **manifest 量文字用矢量输出的那把尺**（2026-09-25，#576，`manifest.vector_text_metrics`）：
-  manifest 的布局 draw 与之后全部包围盒测量都在文档 dpi（通常 100）的 Agg 渲染器上做，
-  而画布挂的是矢量 SVG（字形经 `TextToPath` 在 100 pt、不带 hinting 下度量）、导出的是
-  PDF。Agg 的度量带 hinting、按像素取整，小字差一圈（6.9 pt 的图例高 0.135 vs 0.121，
-  figure 分数）——锚在预设位置的图例、tight 布局这类**位置取决于文字尺寸**的东西在 manifest
-  里落在别处，第一次拖动写成绝对位置就跳。所以 `build_manifest` 整段把 canvas 那个 Agg
-  渲染器实例的 `get_text_width_height_descent` 换成 `TextToPath` 度量（按 `points_to_pixels`
-  换算，usetex 不动），隐藏图例的一次性渲染器（`_layout_undrawn_legends`）同一把尺；出段即撤。
-  **度量缓存进出各清一次**：matplotlib 的缓存键有渲染器实例、没有度量方式——进来不清读到
-  上一次预览位图留下的 hinting 值，出去不清矢量值串进之后同 dpi 的位图绘制。缓存有两代：
-  3.11 起每个渲染器一份（`_get_text_metrics_function(r).cache_clear()`），3.8 / 3.10 是一份
-  全局 lru（`_get_text_metrics_with_cache_impl`，只能整份清），两支都要认。
-  看护：`tests/test_manifest_vector_text_metrics.py`（以预览 SVG 里图例边框的路径坐标为独立
-  一侧：manifest 框 == SVG 框、把报出的锚点写回图例不动；段内矢量 / 段外 Agg 的隔离）、
-  `tests/test_hidden_legend_geometry.py`（隐藏 == 显示，一次性渲染器漏换尺时红）。
+  manifest 在文档 dpi（通常 100）的 Agg 渲染器上量，而画布挂的是矢量 SVG（字形经 `TextToPath`
+  在 100 pt、不带 hinting 下度量）、导出的是 PDF。Agg 的度量带 hinting、按像素取整，小字差一圈
+  （6.9 pt 的图例高 0.135 vs 0.121，figure 分数）——锚在预设位置的图例左下角因此报错，第一次
+  拖动写成绝对位置就跳。所以**测量阶段**（布局 draw 之后的全部 `get_window_extent`）把 canvas
+  那个 Agg 渲染器实例的 `get_text_width_height_descent` 换成 `TextToPath` 度量（按
+  `points_to_pixels` 换算，usetex 不动），出 `build_manifest` 即撤。
+  **布局那一次 draw 不换尺**：`constrained_layout` 的结果在 ulp 级依赖上一次 draw 留下的位置，
+  Agg 的 26.6 定点度量把末位噪声吸收掉；布局也换成连续的矢量度量后，「上一张预览是 hybrid 还是
+  纯矢量」会让 manifest 末位不同（`test_preview_hybrid` 的逐字节不变量在 3.10 上抓到；把矢量度量
+  量化到 1/64 px 反而更糟）。用户看得见的偏差不在布局里：图例位置是测量时现算的
+  （`OffsetBox.get_offset`）。图例子项的偏移是 draw 时写死的，`_layout_legends_for_measure` 在一次性
+  渲染器上按同一把尺给**每个**图例补排版（隐藏图例 #413 的那条路扩到全部）。
+  **度量缓存挂上 / 撤掉各清一次**：缓存键有渲染器实例、没有度量方式。两代实现都认：3.11 起每个
+  渲染器一份（`_get_text_metrics_function(r).cache_clear()`），3.8 / 3.10 一份全局 lru
+  （`_get_text_metrics_with_cache_impl`，只能整份清）。
+  看护：`tests/test_manifest_vector_text_metrics.py`（以预览 SVG 里图例边框的路径坐标为独立一侧：
+  manifest 框 == SVG 框、把报出的锚点写回图例不动；段内矢量 / 段外 Agg 的隔离）、
+  `tests/test_hidden_legend_geometry.py`、`tests/test_preview_hybrid.py`（表示法不改 manifest）。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

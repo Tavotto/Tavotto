@@ -120,6 +120,42 @@ def test_legend_box_matches_the_vector_svg(worker):
     assert _close(got, want), (got, want)
 
 
+def _svg_legend_text_origins(svg: str) -> list[tuple[float, float]]:
+    """每条图例文字在预览 SVG 里的落笔点（`translate(X Y)`，基线左端，pt、y 向下）。"""
+    out = []
+    for j in range(4):
+        m = re.search(
+            rf'<g id="axes_0\.legend\.texts_{j}">.*?translate\(([-\d.e]+) ([-\d.e]+)\)', svg, re.S
+        )
+        assert m, f"预览 SVG 里没有第 {j} 条图例文字"
+        out.append((float(m.group(1)), float(m.group(2))))
+    return out
+
+
+def test_legend_texts_sit_where_the_vector_svg_draws_them(worker):
+    """图例里的字（偏移是 draw 时写死的）也按同一把尺：左边与行距都与画布上的 SVG 一致。
+
+    框对上、字对不上是最容易漏的一格：图例本体的框是测量时现算的，子项偏移却是布局
+    draw 写死的——不在测量阶段按矢量度量补排版，字会跟着 Agg 算出的图例宽度挪开。
+    """
+    man = _apply(worker, [])
+    svg = worker.svg_path(STEM).read_text(encoding="utf-8")
+    W, H = _svg_size_pt(svg)
+    origins = _svg_legend_text_origins(svg)
+    boxes = [
+        next(e["bbox"] for e in man["elements"] if e["gid"] == f"{LEGEND}.texts_{j}")
+        for j in range(4)
+    ]
+    for (ox, _), b in zip(origins, boxes, strict=True):
+        assert abs(b[0] * W - ox) <= TOL_PT, (b[0] * W, ox)
+    svg_steps = [origins[j + 1][1] - origins[j][1] for j in range(3)]
+    man_steps = [(boxes[j + 1][1] - boxes[j][1]) * H for j in range(3)]
+    assert all(abs(a - b) <= TOL_PT for a, b in zip(svg_steps, man_steps, strict=True)), (
+        svg_steps,
+        man_steps,
+    )
+
+
 def test_writing_the_reported_anchor_does_not_move_the_legend(worker):
     """用户看到的那一跳：把 manifest 报的锚点原样写成 loc_frac，图例在画布上一动不动。"""
     man0 = _apply(worker, [])
@@ -150,7 +186,8 @@ def h():
     return t.get_window_extent(r).height
 
 before = h()  # 先留下一份 Agg 自己的缓存值（模拟之前画过一张预览位图）
-with manifest.vector_text_metrics(fig):
+with manifest.vector_text_metrics() as arm:
+    arm(fig.canvas.get_renderer())
     assert fig.canvas.get_renderer() is r  # 挂在 canvas 的那个实例上
     inside = h()
 after = h()

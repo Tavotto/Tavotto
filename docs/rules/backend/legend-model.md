@@ -61,7 +61,7 @@
   `render_png` 在别的 dpi 上的 savefig 恰好会画一回，之后 manifest 量到的六个文字 bbox
   就是那次 dpi 的坐标除以文档像素（连常规 `render` 的 SVG 那次 `PREVIEW_DPI` draw 都会
   留下来）。契约：**隐藏图例文字的 bbox = 它在当前状态、文档 dpi 下显示时的 bbox**，与
-  历史上谁画过它无关。落地在 `manifest._layout_undrawn_legends`：draw 会跳过的图例在一张
+  历史上谁画过它无关。落地在 `manifest._layout_legends_for_measure`：draw 会跳过的图例在一张
   一次性 `RendererAgg(W, H, fig.dpi)`（文字度量与 manifest 其余部分同一把矢量尺，见
   `marker-and-path-geometry.md`）上走一遍 `_legend_box.draw`（`_findoffset` 也在这条
   路上，`loc='best'` 照常），真 canvas 不碰。**不用「preview 之后补一次文档 dpi 的 draw」**：
@@ -79,6 +79,6 @@
 - 脱开的项 = 脚本原样 + 文档里的 handle_*（没有会话内的 custom_base）
 - 三条位置 prop 写槽位再整体重建，拖动过即绝对定位
 - `loc_anchor` 的 `null` 是取值
-- 隐藏图例的文字几何按文档 dpi 现排（`manifest._layout_undrawn_legends`），不靠上一次 draw
+- 隐藏图例的文字几何按文档 dpi 现排（`manifest._layout_legends_for_measure`），不靠上一次 draw
 - 自定义 handler 画的整格在不跟随时定格复刻
 - 指纹带虚线节奏
