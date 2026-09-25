@@ -95,6 +95,9 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
 - 临时 transform 写成 `translate(…) <原始 transform>`、从 base 现算
 - `pointercancel` 与 `pointerup` 分开
 - 挂 SVG 的 innerHTML 按字符串复用同一个 `{__html}`（`useHtmlMarkup`，否则松手弹回原位）
-- `reattachPreview` 只在 DOM 真被换过时重放
 - 样式预览是白名单且与 `applyStyleEdit` 共用 `styleTargets`
 - `'none'` 策略仍写 `wantPatches`
+- `reattachPreview` 只在 DOM 真被换过时重放、认真正挂进 DOM 的那一版，几何交互同样只认已挂上的那一版（`useDisplayedExactManifest`）
+- 换一版 SVG 先解码它嵌的位图（`useDecodedSvg`）
+- 缩放预览只给图例（`previewScale`）
+- 「渲染中」普通重渲染过 700ms 才亮、只有 `cold` 算冷启动

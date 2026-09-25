@@ -82,3 +82,4 @@
 - 恢复跟随只有 `restoreLegendEntryFollow` 一次 commit
 - 位置控件内 / 外两带一次点击一次 commit、写 `loc` 时删 `loc_frac`
 - `LEGEND_ENTRY_STYLE_PROPS` / `LEGEND_BINDINGS` 与引擎严格同源
+- 拖角整体缩放 = 字号 + 五个间距同乘一倍数 + `loc_frac` 钉对角

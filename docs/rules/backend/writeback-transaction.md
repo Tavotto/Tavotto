@@ -100,3 +100,4 @@
 - 热态不是这组 patches 就报 `fresh_only` 不假比
 - commit 第 2+ 个撞锁回滚
 - 泄漏断言只对本次 `one_shot()` 的 base 负责
+- commit 前 fsync 备份与 staging（失败 409 `write_back_persist_failed`），替换后目录 fsync 只记日志不回滚

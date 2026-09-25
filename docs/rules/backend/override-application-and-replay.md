@@ -111,3 +111,4 @@
 - 文字背景框显隐只归 `bbox_visible`，样式不露框
 - 原样是模式的 getter 回哨兵（`_AUTOSCALE` / `_NO_BBOX` / `_PatchEdge` / `_PatchFace`）
 - 颜色字段 alpha 0 报 `NO_COLOR`
+- 拖过的文字不进重排（`_ensure_text_pin_hook`）
