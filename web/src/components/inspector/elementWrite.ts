@@ -10,6 +10,7 @@ import { registerGesture } from '@/store/gestureCoordinator'
 import { getHistoryMode, previewStyle } from '@/store/svgPreviewStore'
 import type { PanelObject } from '@/types/document'
 import { propLabel } from './roles/registry'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /**
  * 原生取色对话框（`<input type="color">`）不保证发 blur：连续拖着选色时，
@@ -123,7 +124,7 @@ export function useElementWriter(panel: PanelObject, element: ManifestElement): 
   const fieldOf = (prop: string) => element.editable.find((f) => f.prop === prop)
 
   const read = (prop: string) => {
-    const ov = panel.overrides.find((o) => o.gid === gid && o.prop === prop)
+    const ov = effectiveOverride(panel.overrides, gid, prop)
     return ov ? ov.value : fieldOf(prop)?.value
   }
 

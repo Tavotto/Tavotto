@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/Button'
 import { MenuButton } from '@/components/ui/Menu'
 import { NumberField, TextArea } from '@/components/ui/Input'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /**
  * 右键快捷编辑：光标处的小弹层。
@@ -217,7 +218,7 @@ function ElementQuick({
 
   /** 当前值：用户改过的 override 优先于渲染时的初值 */
   const read = (prop: string, from: ManifestElement = el) => {
-    const ov = panel.overrides.find((o) => o.gid === from.gid && o.prop === prop)
+    const ov = effectiveOverride(panel.overrides, from.gid, prop)
     if (ov) return ov.value
     return from.editable.find((f) => f.prop === prop)?.value
   }

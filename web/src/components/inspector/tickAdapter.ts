@@ -9,6 +9,7 @@ import { fieldVisible } from './presentation/registry'
 import { propLabel } from './roles/registry'
 import type { TickAxisAdapter } from './controls/TickTaskCard'
 import type { AxisTickState, TickDirection } from './controls/TickAndSpineDiagram'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /**
  * 刻度写入面的组装。
@@ -53,7 +54,7 @@ export function useTickAxisAdapter(
   const role = element.role
   const fieldOf = (prop: string) => element.editable.find((f) => f.prop === prop)
   const read = (prop: string) => {
-    const ov = panel.overrides.find((o) => o.gid === gid && o.prop === prop)
+    const ov = effectiveOverride(panel.overrides, gid, prop)
     return ov ? ov.value : fieldOf(prop)?.value
   }
   const write = (prop: string, value: unknown, immediate = false) => {
