@@ -347,6 +347,43 @@ def test_a_hard_crash_reports_the_exit_status_and_the_python_stack(figs):
     assert "没有留下任何输出" not in str(e)
 
 
+def _killed_between_requests(figs: Path):
+    """起一条会话、build 成功，然后在**两次请求之间**把 worker 杀掉并等它真的没了。"""
+    (figs / "fig_ok.py").write_text(EXIT_OK, encoding="utf-8")
+    worker, _ = pool.build("fig_ok.py", str(figs), "__main__")
+    assert isinstance(worker, pool.EngineWorker), type(worker)
+    worker.proc.kill()  # POSIX 是 SIGKILL，Windows 是 TerminateProcess——「被外部杀掉」
+    worker.proc.wait(timeout=30)
+    return worker
+
+
+def _assert_session_dead(e: pool.WorkerError, worker) -> None:
+    assert e.code == "session_dead", (e.code, str(e))
+    assert isinstance(e.extra.get("exit"), dict), e.extra  # 退出状态随信封带出
+    assert "渲染进程退出了" in str(e)
+    assert str(worker.log_path) in str(e)  # worker.log 指引
+
+
+@needs_worker
+@pytest.mark.parametrize("window", ["death_already_visible", "pipe_already_closed"])
+def test_a_worker_killed_between_requests_is_always_session_dead(figs, window):
+    """QA LONG-03-B1：同一个故障（worker 在两次请求之间被杀）以前按时间窗落进三种分类——
+    EOF 那一支是 `session_dead`；拿锁时 `alive()` 已为假的那一支是 code 为空的「worker 进程已退出」；
+    `alive()` 还没看见、管道已关的那一支 `stdin.write` 抛 `BrokenPipeError`，冒到 Flask 成了
+    internal_error。三支必须是同一个答案。
+
+    `pipe_already_closed` 把 `alive()` 钉成 True，确定性地造出「进程已死、poll 还没看见」那一瞬。
+    变异反证：把 `request()` 里的 `except (OSError, ValueError)` 拿掉，第二格抛 BrokenPipeError；
+    把 `alive()` 为假时的分支改回 `raise WorkerError("worker 进程已退出")`，第一格 code 为空。
+    """
+    worker = _killed_between_requests(figs)
+    if window == "pipe_already_closed":
+        worker.alive = lambda: True
+    with pytest.raises(pool.WorkerError) as err:
+        worker.override("Fig1", [])
+    _assert_session_dead(err.value, worker)
+
+
 @needs_worker
 @needs_workerd
 def test_workerd_gives_the_same_answer_for_a_hard_crash(workerd_figs):
