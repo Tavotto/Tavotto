@@ -276,7 +276,7 @@ class TestPrivateBase:
         server, src, _ = fake
         project = _project(tmp_path)
         managedenv.write_manifest(project, managedenv.new_manifest(project, "x"))
-        out = deprepair._rebuild_guarded(project, None)
+        out = deprepair._rebuild_guarded(project, None, deprepair.new_rebuild_progress_id())
         assert out["state"] == deprepair.STATE_FAILED
         assert out["code"] == deprepair.ERROR_MANAGED_UNAVAILABLE
         assert server.requests == []
@@ -548,7 +548,7 @@ class TestPrivateBase:
         assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         # 重建一次：重建的代号只由账上的需求 + 约束算（与联合计划的身份公式不同），于是**两次重建**
         # 之间意图不变 → 同一个代号——这正是「锁换了版本、意图没变」会撞上的那条路
-        out0 = deprepair._rebuild_guarded(project, None)
+        out0 = deprepair._rebuild_guarded(project, None, deprepair.new_rebuild_progress_id())
         assert out0.get("ok") is True, out0
         gen_a = managedenv.active_generation(project)
         assert gen_a == out0["generation"]
@@ -571,7 +571,7 @@ class TestPrivateBase:
         # 重建（delta 为空 → 与 gen_a 同一份意图），但 wheelhouse 被清空 → pip 必失败
         monkeypatch.setenv("PIP_FIND_LINKS", str(tmp_path / "empty-house"))
         (tmp_path / "empty-house").mkdir()
-        out = deprepair._rebuild_guarded(project, None)
+        out = deprepair._rebuild_guarded(project, None, deprepair.new_rebuild_progress_id())
         assert out["state"] == deprepair.STATE_FAILED, out
         assert managedenv.active_generation(project) == gen_a
         assert managedenv.python_of(project) == python_a
@@ -583,7 +583,7 @@ class TestPrivateBase:
         assert gens[failed[0]]["base_runtime"] == src_b.id
         # wheelhouse 回来：重建成功 → 新代（≠ gen_a）active、base 是 B；旧代退役
         monkeypatch.setenv("PIP_FIND_LINKS", str(house))
-        out2 = deprepair._rebuild_guarded(project, None)
+        out2 = deprepair._rebuild_guarded(project, None, deprepair.new_rebuild_progress_id())
         assert out2.get("ok") is True, out2  # 成功时回的是事务结果（ok / generation），不是进度记录
         gen_b = managedenv.active_generation(project)
         assert gen_b != gen_a and gen_b == failed[0]
