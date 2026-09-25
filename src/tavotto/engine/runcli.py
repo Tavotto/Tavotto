@@ -298,6 +298,13 @@ def _wait_for_child_process(
        应答它就永远不退。那等于 **Tavotto 改变了 Ctrl+C 的含义**：用户按了
        中断，终端却再也回不来。撤掉通道之后 runner 在屏障处看到 EOF，会先把
        Figure 恢复成脚本原样再放开（ADR 0021 §8.1），进程正常退出。
+
+    **撤通道与 runner 进屏障谁先谁后不由这里定**（#240）：`Popen.wait()` 收到第一个
+    KeyboardInterrupt 时自己先再等孩子 0.25 秒（CPython bpo-25942）才把它抛上来，
+    所以撤通道落在信号之后约 250 ms；runner 从 KeyboardInterrupt 到发出"脚本结束"的
+    `barrier` 事件本机约 170 ms，慢机器上会越过去。越过去时 runner 是往一条已经关了的
+    连接上写，读回来的可能是 reset 而不是 EOF——两者由 `bridge_runner.Control` 归成
+    同一个"父进程走了"，这里不赌次序。
     """
     interrupted = False
     while True:
