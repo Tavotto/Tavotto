@@ -58,7 +58,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import brand, config, logsafe, runtime
+from . import brand, config, runtime
 
 LOG = logging.getLogger("tavotto.privatepython")
 
@@ -682,7 +682,7 @@ def _provision_once(source: PythonSource, job: _Inflight) -> str:
         raise ProvisionError(ERROR_LAUNCH_FAILED, "改名后最终目录里没有可执行的解释器")
     _record(source, probe)
     _emit(job, STAGE_COMMITTED, source.size, source.size)
-    LOG.info("私有 Python 就位: %s（%s）", source.id, logsafe.version(source.version))
+    LOG.info("私有 Python 就位: %s（%s）", source.id, source.version)
     return result
 
 
