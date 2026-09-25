@@ -21,7 +21,8 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   规则**（目录里 `placement: true`：`out-of-page` / `outside-margin` / `overlap`，
   判的是对象在画布页面上的摆法）按原图也不算（`appliesToOriginal()`，QA FLAG-B1）；
   原图范围的报告 `page_mm` = 图幅、`objects` 只有那张图（`buildProofPayload` 的
-  `settings.original`）。**裁完
+  `settings.original` 直接交那张图本身）。原图范围的检查**按那张图所在的画布**裁
+  （`findFigurePanel()` 的 `canvasId`），它不一定在当前画布上。**裁完
   `message` / `detail` 要按留下来的那些命中重挑一次**（尺子与 `Sink` 完全一样：
   带排名的取最糟那次，不带排名的第一次说了算）——它们原本属于**全画布**最糟
   那一次，而 `buildProofPayload()` 序列化的正是这两个字段（不是 occurrences）；
