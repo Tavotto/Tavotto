@@ -686,6 +686,38 @@ def test_fsync_failure_before_replace_is_a_clean_409(client, tmp_path, monkeypat
     assert _leftovers(figs) == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上打不开目录，没有目录 fsync 这一步")
+def test_the_new_backup_directory_is_published_in_its_parent_before_any_replace(
+    client, tmp_path, monkeypatch
+):
+    """新建的时间戳备份目录，它的名字要在父目录（备份根）里落盘之后才动原图：
+    只 fsync 备份目录本身，掉电后可能原图已换、备份目录整个不见（#580 评审）。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    backup_root = m.project_backup_dir()
+    backup_root.mkdir(parents=True, exist_ok=True)
+    root_id = _ident(backup_root.stat())
+    synced: list = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(
+        os, "fsync", lambda fd: (synced.append(_ident(os.fstat(fd))), real_fsync(fd))[1]
+    )
+    at_first_replace: list = []
+    real_replace = Path.replace
+    monkeypatch.setattr(
+        Path,
+        "replace",
+        lambda self, t: (
+            at_first_replace or at_first_replace.append(list(synced)),
+            real_replace(self, t),
+        )[1],
+    )
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    assert root_id in at_first_replace[0], "备份根目录没在第一次 replace 之前落盘"
+
+
 @pytest.mark.skipif(
     sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
     reason="POSIX 权限位语义；root 无视只读位，量不到",

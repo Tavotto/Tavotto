@@ -4375,6 +4375,9 @@ def _write_source_files(
 
     # ---- commit：备份 → 逐个原子替换（中途撞锁则回滚） ----------------------
     backup_dir = project_backup_dir() / time.strftime("%m%d_%H%M%S")
+    # 这次新建出来的各级目录（最深的在前）：它们的名字要在各自父目录里落盘，
+    # 否则掉电后原图已是新内容、备份目录却整个不见了。
+    created_dirs = [p for p in (backup_dir, *backup_dir.parents) if not p.exists()]
     backup_dir.mkdir(parents=True, exist_ok=True)
     # 落盘（ADR 0023 §3.1，issue #252）：`os.replace` 只保证「要么旧要么新」，
     # 不保证新内容已离开页缓存。所以**碰任何目标之前**先把备份与 staging 都
@@ -4392,6 +4395,8 @@ def _write_source_files(
             shutil.copystat(target, backup)
             engine_atomicio.fsync_file(tmp)
         engine_atomicio.fsync_dir(backup_dir)
+        for created in created_dirs:
+            engine_atomicio.fsync_dir(created.parent)
     except OSError as exc:
         # 清 tmp 尽力而为、逐个吞错：文件系统正在报 EIO / EROFS 时 unlink 也可能
         # 失败，不许它盖掉结构化的 409。
