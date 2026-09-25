@@ -297,9 +297,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       if (epoch !== projectEpoch) return
       set({ busy: false })
     } catch (e) {
-      // 没起来：结局交给所属那格（此刻开着就是当前卡片），再撤掉所属与单飞
+      // 没起来：结局交给所属那格（此刻开着就是当前卡片），撤掉乐观进度与单飞。所属登记不必撤：进度一撤，
+      // 这条 id 就没有任何一格认领（`onProgress` 只认显示着 / 收着的那一条），下一次起重建时会重新登记
       if (epoch !== projectEpoch) lateFailure(REBUILD_ID, e)
-      startedPlans.delete(REBUILD_ID)
       set({ rebuildRunning: false })
       if (epoch !== projectEpoch) return
       const { code, text } = failure(e)
