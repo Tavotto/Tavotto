@@ -505,7 +505,9 @@ def interpreter_fingerprint(python: str) -> tuple:
 
     按路径缓存的体检结论看不见**同一路径被替换**——用户在终端里把 `.venv` 删了重建（没装
     matplotlib）、换了基础 Python，路径一个字都没变（QA ENV-04-B1：旧的「健康」被沿用，重建会话
-    直接起在坏环境上、反复 `session_dead`）。指纹取三样的 (inode, mtime_ns, size)：
+    直接起在坏环境上、反复 `session_dead`）。指纹取三样的 (inode, mtime_ns, ctime_ns, size, mode)——
+    权限位与 ctime 管「内容没动、执行权限被拿掉了」（`chmod -x`：否则起 worker 时 `PermissionError`
+    外露成 internal_error，Codex #598 P2）：
 
     * 解释器路径**本身**（`lstat`：venv 的 `bin/python` 是软链接，重建时换的是这条链接）；
     * 它指向的真实文件（`stat`：基础 Python 被升级 / 重装）；
@@ -522,7 +524,7 @@ def interpreter_fingerprint(python: str) -> tuple:
         except (OSError, ValueError):
             parts.append(None)
             continue
-        parts.append((st.st_ino, st.st_mtime_ns, st.st_size))
+        parts.append((st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_mode))
     return tuple(parts)
 
 

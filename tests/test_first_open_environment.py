@@ -382,6 +382,24 @@ def test_a_rejected_project_venv_repaired_at_the_same_path_is_discovered_again(t
     assert engine_pool.first_open_outcome(root)["ok"] is True
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 的可执行位")
+def test_an_interpreter_made_non_executable_after_its_verdict_is_rechecked(tmp_path):
+    """Codex #598 P2：验过之后解释器被 `chmod -x`，inode / mtime / size 都不动，旧指纹看不见，
+    `_cached_verdict()` 仍回 True，下一次起 worker 在 `Popen` 上抛 `PermissionError` 成 internal_error。
+    指纹带上权限位与 ctime 之后结论作废、重新体检。
+
+    变异反证：指纹里去掉 `st_mode` 与 `st_ctime_ns`，第二个断言回 True。
+    """
+    exe = tmp_path / "env" / "bin" / "python"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    exe.chmod(0o755)
+    engine_pool._record_verdict(str(exe), True)
+    assert engine_pool._cached_verdict(str(exe)) is True
+    exe.chmod(0o644)
+    assert engine_pool._cached_verdict(str(exe)) is None
+
+
 @needs_worker
 def test_a_session_dead_on_a_remembered_venv_drops_its_health_verdict(tmp_path):
     """ENV-04 的另一半：环境**就地**坏掉（`pip uninstall matplotlib`、包被别的东西遮住），解释器
