@@ -90,8 +90,13 @@ def test_run_messages_only_stderr(tmp_path):
         code, out, err = nativekit.finish(session, proc)
     assert code == 0, err
     assert "Tavotto Run" in err and "Beta" in err
-    assert "Tavotto" not in out, f"Tavotto 的文字混进了用户的 stdout: {out!r}"
-    json.loads(out.strip())
+    # 判结构，不判子串：探针恰好打一行 JSON，stdout 就必须恰好是这一行。
+    # 查 "Tavotto" 子串会被探针自己打印的路径（仓库目录名）误报。
+    lines = out.splitlines(keepends=True)
+    assert len(lines) == 1 and lines[0].endswith("\n"), (
+        f"Tavotto 的文字混进了用户的 stdout: {out!r}"
+    )
+    json.loads(lines[0])
 
 
 def test_quiet_silences_tavotto_but_not_the_user(tmp_path):
