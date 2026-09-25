@@ -1516,23 +1516,30 @@ def test_render_cache_yields_when_the_target_is_locked_by_a_reader(tmp_path, mon
     POSIX 的 rename 盖得掉一个开着的文件，Windows 盖不掉（werkzeug 的
     `open(path, "rb")` 没带 FILE_SHARE_DELETE）。真机现象：16 个并发
     `/api/render` 撞一次就有人拿到 500，而图其实好好地躺在磁盘上。
+    U10 起这条路是 `rendercore.preview.PreviewCache`（ADR 0072）；退让的纪律一字不变。
     """
+    pytest.importorskip("pypdfium2", reason="RenderCore 依赖未装（not_run，不是绿）")
+    from tavotto.rendercore import facade, preview as rc_preview, renderhost
+
     figs = _figs(tmp_path)
     src = figs / "Fig1.pdf"
-    m.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cached = m.CACHE_DIR / "locked-target.png"
+    facade.reset_for_tests()
+    try:
+        cache = facade.preview_cache(m.CACHE_DIR)
+        cached = cache.get("Fig1.pdf", src, 200)  # 先有一份完整的
+        good = cached.read_bytes()
+        assert good.startswith(b"\x89PNG\r\n\x1a\n")
 
-    m._write_render_cache(src, 200, cached)  # 先有一份完整的
-    good = cached.read_bytes()
-    assert good.startswith(b"\x89PNG\r\n\x1a\n")
+        def denied(_a, _b):
+            raise PermissionError(5, "Access is denied")
 
-    def denied(_a, _b):
-        raise PermissionError(5, "Access is denied")
-
-    monkeypatch.setattr(m.os, "replace", denied)
-    m._write_render_cache(src, 200, cached)  # 退让，不许抛
-    assert cached.read_bytes() == good, "已经在那儿的同一张图不该被动过"
-    assert not list(m.CACHE_DIR.glob("*.part.png")), "临时文件必须清掉"
+        monkeypatch.setattr(rc_preview.os, "replace", denied)
+        cache._write(src, 200, cached, transparent=False, page=0)  # 退让，不许抛
+        assert cached.read_bytes() == good, "已经在那儿的同一张图不该被动过"
+        assert not list(m.CACHE_DIR.glob("*.part.png")), "临时文件必须清掉"
+    finally:
+        facade.reset_for_tests()
+        renderhost.shutdown_shared()
 
 
 def test_a_replace_that_never_succeeds_still_fails_loudly(tmp_path, monkeypatch):
@@ -1541,19 +1548,27 @@ def test_a_replace_that_never_succeeds_still_fails_loudly(tmp_path, monkeypatch)
     目标不存在还一直换不过去 = 真出事了（盘满、权限、杀毒软件锁着临时文件），
     这时**必须如实抛出**——伪装成成功，用户得到的是一个永远画不出来的面板。
     """
+    pytest.importorskip("pypdfium2", reason="RenderCore 依赖未装（not_run，不是绿）")
+    from tavotto.rendercore import facade, preview as rc_preview, renderhost
+
     figs = _figs(tmp_path)
     m.CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cached = m.CACHE_DIR / "never-lands.png"
-
-    monkeypatch.setattr(m, "_REPLACE_BACKOFF_S", 0.0)  # 别让重试拖慢测试
-    monkeypatch.setattr(
-        m.os,
-        "replace",
-        lambda _a, _b: (_ for _ in ()).throw(PermissionError(5, "Access is denied")),
-    )
-    with pytest.raises(PermissionError):
-        m._write_render_cache(figs / "Fig1.pdf", 200, cached)
-    assert not list(m.CACHE_DIR.glob("*.part.png")), "失败路径也不许留临时文件"
+    facade.reset_for_tests()
+    try:
+        cache = facade.preview_cache(m.CACHE_DIR)
+        monkeypatch.setattr(rc_preview, "_REPLACE_BACKOFF_S", 0.0)  # 别让重试拖慢测试
+        monkeypatch.setattr(
+            rc_preview.os,
+            "replace",
+            lambda _a, _b: (_ for _ in ()).throw(PermissionError(5, "Access is denied")),
+        )
+        with pytest.raises(PermissionError):
+            cache._write(figs / "Fig1.pdf", 200, cached, transparent=False, page=0)
+        assert not list(m.CACHE_DIR.glob("*.part.png")), "失败路径也不许留临时文件"
+    finally:
+        facade.reset_for_tests()
+        renderhost.shutdown_shared()
 
 
 # ---------------- 关进程慢：poll() 还说活着，握手其实早就失败了 --------------
@@ -1806,6 +1821,8 @@ def _byte_compared_generated_files() -> list[str]:
         # U06 的批准字体 allowlist：report.json 记它的 sha256、evidence 用例逐字节核。人写的 JSON，
         # 与 CLA 正文同一类——u06-rendercore.yml windows 腿 CRLF 检出后哈希对不上红过一次。
         "src/tavotto/rendercore/fonts_allowlist.json",
+        # Codex 插件的 sh / cmd 双语启动器：shebang 与 heredoc 终止行逐字节匹配，CRLF 即失效
+        "codex-plugin/mcp/launch.cmd",
     ]
 
 

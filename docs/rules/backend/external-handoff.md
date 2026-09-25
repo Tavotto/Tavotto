@@ -28,7 +28,7 @@
   `tavotto/cli_entry.py`（pip/pipx 的 console script 与 `python -m tavotto`）、
   `packaging/entry.py`（冻结产物）、`app.main()`（兼容旧调用方式）。
   分派**必须在 import Flask 之前**：一次交接用不上任何 HTTP 端点，却要付
-  整个 Flask + PyMuPDF 的冷启动；更要紧的是 `doctor` 本该是「装坏了怎么查」
+  整个 Flask + RenderCore 的冷启动；更要紧的是 `doctor` 本该是「装坏了怎么查」
   的工具，界面依赖 import 失败时它自己也得能跑
   （`test_subcommands_run_without_flask_or_pymupdf` 看护）。
 - **`HandoffError` 一律带稳定 `code`**（`registry_write_failed` /

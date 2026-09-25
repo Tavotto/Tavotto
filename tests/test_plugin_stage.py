@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from tavotto.engine import pluginmanifest
 from tests.support import pluginkit as kit
 
 ROOT = kit.ROOT
@@ -179,6 +180,84 @@ def test_release_staging_refuses_an_absolute_interpreter_path(staging):
     assert any("只许裸名字" in s for s in probs)
     with pytest.raises(stage.StageError):
         stage.describe(d, {})
+
+
+@pytest.mark.parametrize(
+    ("command", "ok"),
+    [
+        ("./mcp/launch.cmd", True),  # 插件自带、按 cwd（插件根）解析的启动器（#266）
+        ("./mcp/missing.cmd", False),  # 指向不存在的文件
+        ("./mcp/../../outside.cmd", False),  # 跳出插件目录
+        ("mcp/launch.cmd", False),  # 不是 ./ 开头：Codex 当成 PATH 上的名字去找
+        (".\\mcp\\launch.cmd", False),  # 反斜杠：只在 Windows 上是路径
+        ("./mcp/server.py", False),  # 在插件里但不是那个启动器：POSIX 上起不来（#548 P2）
+        ("./mcp/other.cmd", False),  # 可执行、在插件里，但不是**那一个**启动器
+    ],
+)
+def test_release_staging_accepts_only_the_bundled_relative_launcher(staging, command, ok):
+    """发行件里的路径形 command 只放行一种：插件自带且可执行的 `./mcp/launch.cmd`。
+    机器相关的绝对路径仍然只属于已装副本（上一条用例）。"""
+    d, _m = staging
+    for name in ("launch.cmd", "other.cmd", "server.py"):
+        f = d / "mcp" / name
+        f.parent.mkdir(parents=True, exist_ok=True)
+        if not f.exists():
+            f.write_text('#!/bin/sh\nexec python3 "$@"\n', encoding="utf-8")
+    for name in ("launch.cmd", "other.cmd"):
+        (d / "mcp" / name).chmod(0o755)
+    mcp = d / ".mcp.json"
+    data = json.loads(mcp.read_text(encoding="utf-8"))
+    for entry in data["mcpServers"].values():
+        entry["command"] = command
+    mcp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    flagged = any("只许裸名字" in s for s in stage.verify_dir(d))
+    assert flagged is (not ok), (command, stage.verify_dir(d))
+
+
+def test_release_staging_rejects_a_launcher_that_is_not_executable(staging):
+    """#548 Codex 评审 P2：启动器在清单里不是 100755，POSIX 上 Codex 起它就是
+    permission denied，插件又回到零工具——这种发行件必须在验收时红，而不是到用户机器上
+    才坏。模式以清单为准（Windows 上文件系统没有执行位）。"""
+    d, _m = staging
+    assert not any("只许裸名字" in s for s in stage.verify_dir(d))
+    path = d / pluginmanifest.BUILD_MANIFEST
+    data = json.loads(path.read_text(encoding="utf-8"))
+    (entry,) = [e for e in data["files"] if e["path"] == pluginmanifest.BUNDLED_LAUNCHER]
+    assert entry["mode"] == "100755"
+    entry["mode"] = "100644"
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    assert any("只许裸名字" in s for s in stage.verify_dir(d))
+
+
+def test_the_manifest_mode_of_the_launcher_wins_over_the_filesystem(tmp_path):
+    """Windows 上文件系统没有执行位：模式以 staging 清单 / git 为准，不看 os.access。"""
+    d = tmp_path / "p"
+    launch = d / "mcp" / "launch.cmd"
+    launch.parent.mkdir(parents=True)
+    launch.write_text("x", encoding="utf-8")
+    launch.chmod(0o755)
+    cmd = "./mcp/launch.cmd"
+    assert pluginmanifest._is_bundled_launcher(cmd, d, {"mcp/launch.cmd": "100755"})
+    assert not pluginmanifest._is_bundled_launcher(cmd, d, {"mcp/launch.cmd": "100644"})
+
+
+def test_without_a_mode_source_windows_does_not_reject_the_bundled_launcher(tmp_path, monkeypatch):
+    """#548 CI windows：文件系统量不出执行位、又没有清单时，不能把自带启动器判成
+    「路径形 command」——旧发行件体检、`write_build_manifest(modes={})` 都会在 Windows 上
+    误红。有清单时仍照清单判（清单说 100644 照样拒）。"""
+    d = tmp_path / "p"
+    launch = d / "mcp" / "launch.cmd"
+    launch.parent.mkdir(parents=True)
+    launch.write_text("x", encoding="utf-8")
+    launch.chmod(0o644)
+    cmd = "./mcp/launch.cmd"
+    monkeypatch.setattr(pluginmanifest, "_fs_exec_bit_observable", lambda: False)
+    assert pluginmanifest._is_bundled_launcher(cmd, d, {})
+    assert pluginmanifest._is_bundled_launcher(cmd, d, None)
+    assert not pluginmanifest._is_bundled_launcher(cmd, d, {"mcp/launch.cmd": "100644"})
+    if os.name != "nt":
+        monkeypatch.setattr(pluginmanifest, "_fs_exec_bit_observable", lambda: True)
+        assert not pluginmanifest._is_bundled_launcher(cmd, d, {}), "POSIX 上不可执行仍要拒"
 
 
 # ================================================================ 已装副本
@@ -622,3 +701,32 @@ def test_the_dev_marketplace_never_ships(tmp_path):
     d = tmp_path / "s"
     kit.synthetic_staging(d)
     assert not (d / ".agents").exists()
+
+
+@pytest.mark.parametrize("fs_observable", [False, True])
+def test_a_manifest_written_without_modes_verifies_its_own_launcher(
+    tmp_path, monkeypatch, fs_observable
+):
+    """#548 Codex 评审 P2：`write_build_manifest(modes={})` 放行了启动器，就必须把放行它的
+    那个模式写进清单——否则清单记 100644，紧接着的 verify_dir 照清单把同一个启动器拒掉。
+    Windows（量不出执行位）与 POSIX（文件系统有执行位）两种都要前后一致。"""
+    if fs_observable and os.name == "nt":
+        pytest.skip("POSIX 执行位语义")
+    plugin = tmp_path / "codex-plugin"
+    shutil.copytree(ROOT / "codex-plugin", plugin)
+    launch = plugin / pluginmanifest.BUNDLED_LAUNCHER
+    launch.chmod(0o755 if fs_observable else 0o644)
+    monkeypatch.setattr(pluginmanifest, "_fs_exec_bit_observable", lambda: fs_observable)
+    manifest = pluginmanifest.write_build_manifest(
+        plugin,
+        modes={},
+        source_sha="0" * 40,
+        fingerprint="f" * 16,
+        lockfile_sha256=None,
+        toolchain={},
+        min_tavotto_version="0.13.0",
+    )
+    (entry,) = [e for e in manifest["files"] if e["path"] == pluginmanifest.BUNDLED_LAUNCHER]
+    assert entry["mode"] == "100755", entry
+    problems = pluginmanifest.verify_dir(plugin)
+    assert not any("只许裸名字" in p for p in problems), problems

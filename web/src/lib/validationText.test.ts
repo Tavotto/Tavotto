@@ -179,7 +179,6 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
         stale: false,
         render_error: null,
         unapplied_overrides: 0,
-        bitmap_embed: false,
         hidden: false,
       },
     ],

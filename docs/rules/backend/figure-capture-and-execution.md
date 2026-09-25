@@ -33,7 +33,18 @@
     `<沙盒>/x.png`——CompatBench 的 minimum 档抓到的正是这个。存在性判据
     **必须按真正的 open 会用的那条路径走**，拿沙盒根去拼的话，脚本
     `os.chdir()` 进子目录后自己写出来的中间结果会被无声换成图库里的原件。
-  * **回退只覆盖 `open` 三个入口**：`os.path.exists` / `os.stat` / `glob` /
+  * **第四个入口：numpy 的 `DataSource.open`（2026-09-24）**。`np.loadtxt` / `np.genfromtxt`
+    经它读，它先 `os.path.exists` 再 open，三个 open 入口够不着——脚本旁边的 `data.txt`
+    读不到，而 `databinding` 对这种脚本判 `default_ok`（不问），前提是假的。包它的判据与
+    三个 open 入口逐条相同（同一个 `_fallback_path`），外加「DataSource 的 `destpath` 就是
+    此刻的 cwd」；只包已载入的 numpy（worker 经 matplotlib 已载入），不替脚本 import。
+    候选名按 numpy 自己的那串找（`_possible_names`：原名、`.gz` / `.bz2` / `.xz` …）；整串里有一个在
+    cwd 下存在就不改道（numpy 自己会读到它）。
+    这**不是**把回退扩到 `exists`：脚本自己问 `exists()` 仍然得到沙盒里的真话。
+    **输入观察器（`InputObserver`）同样包它**：numpy 的打开器在载入时就绑了原来的
+    `io.open`，三处 open 包装看不见它读了什么；按返回文件对象的 `.name` 记实际打开的
+    那个文件（改指来的与绝对路径的都算），否则数据身份与绑定比对漏掉它们（#545 评审）。
+  * **回退只覆盖上面四个打开入口**：`os.path.exists` / `os.stat` / `glob` /
     `os.listdir` 与任何 C++ 读取器（ovito、h5py 的原生打开）都在盲区。用
     `exists()` 先判再 `open()` 的脚本在沙盒里会把「数据不存在」当真、跳过
     全部分析、一张图都不画——那时 `known == []` 的 `unknown_stem` 由
@@ -105,6 +116,11 @@
   自己要参数同一个答案 `script_needs_arguments`，会话还活着；以前它在保护之外、argv 之前，
   worker 随之退出、上层报 session_dead（`test_paper_style_sees_the_scripts_own_argv` /
   `test_an_exit_raised_while_importing_paper_style_is_the_scripts_own` 看护）。
+- **未使用的缺失 import 给占位（ADR 0061 §二 2026-09-24 修订）**：worker 在 `sys.argv` 换好之后、脚本开跑之前按
+  `figcapture.unused_imports`（与联合计划同一份判据）装 `install_unused_import_placeholders`：只有脚本自己的
+  `import X as Y`（X 在无副作用名单里）、真缺的正是 X 本身、且 `importlib.util.find_spec(X) is None`（找得到的同名模块自己抛同名的错不算缺，评审 #555 P2）时才回占位；占位不进 `sys.modules`、读属性抛逐字相同的 `No module named 'X'`；
+  装了就不卸（脚本的函数在渲染期仍可能 import）。native 会话不装——那是用户自己的 `python script.py`
+  （`tests/test_unused_missing_import.py` 看护）。
 - worker 里 **`sys.argv` 必须换成脚本自己的**。不换的话按参数命名输出的脚本
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。

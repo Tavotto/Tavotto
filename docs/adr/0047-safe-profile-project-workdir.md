@@ -9,7 +9,7 @@
 
 worker 把 cwd 切到会话沙盒是 safe 档的写入边界：脚本用相对路径写出 / 删除的东西不碰
 真实图库。为了让 `pd.read_csv("data.csv")` 这类相对读仍然成立，`figcapture` 给只读的
-`open` 装了回退到脚本目录的逻辑（`builtins.open` / `io.open` / `Path.open` 三个入口）。
+`open` 装了回退到脚本目录的逻辑（`builtins.open` / `io.open` / `Path.open` 三个入口）。（这是本 ADR 当时的状况；2026-09-24 起另有第四个入口 numpy 的 `DataSource.open`——`np.loadtxt` / `np.genfromtxt` 经它读——见 `figcapture` 模块头与 `docs/rules/backend/figure-capture-and-execution.md`）
 
 真实用户数据（2026-09-06，`2d 处理/` 的九个 ovito 脚本）暴露了这条回退的盲区：脚本用
 `os.path.exists("1/etch_5-5.lammpstrj")`、`glob("./**/*.lammpstrj")` 判数据在不在，再交给

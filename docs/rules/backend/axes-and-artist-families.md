@@ -39,10 +39,46 @@
   `arrow_endpoints`（figure 分数、y 向下），可整体拖动 / 拖单个端点
   （override `endpoints_frac`=[ax,ay,bx,by]，setter 经箭头自身 transform 逆变换
   后 `set_positions`）；arrowstyle / linestyle 两类箭头都可改
-  （识别不出的自定义样式报 "custom"，选它=不动）。**annotate 的 arrow_patch
-  端点由注释机制每次 draw 重定位，绝不出端点**——出了用户拖完下一帧就弹回
-  （test_arrowpatch_endpoints_and_style_roundtrip 看护）。前端交互语义见
-  `web/AGENTS.md`。
+  （识别不出的自定义样式报 "custom"，选它=不动）。前端交互语义见
+  `docs/rules/frontend/hit-and-selection-geometry.md`「图内箭头交互」。
+  * **纯箭头注释同样可拖（2026-09-24，用户的流程图：10 根箭头全是
+    `ax.annotate("", xy=…, xytext=…)`，一根都拖不动）**。annotate 的 arrow_patch 每次
+    draw 由 `update_positions` 按注释的 `xy` / `xyann` 重定位——**改 patch 下一帧就弹回**，
+    这条事实不变；变的是 setter 改的对象：`endpoints_frac` 落到**注释本身的两个锚点**
+    （`overrides._set_annotation_arrow`：头经 `xycoords`、尾经 `textcoords` 的变换逆算，
+    先写 `xy`——'offset …' 的尾以头为原点），`[尾, 头] = [xytext, xy]`，与独立箭头的
+    posA / posB 同口径（未扣 shrink）。manifest 的端点**从注释算**（`annotation_arrow_display`），
+    不读 patch 上一帧留下的像素缓存。拖过的注释 `annotation_clip=False`：'data' 锚点离开
+    数据范围时 matplotlib 默认整条不画，而端点是 figure 锚定的。原样是 `_AnnAnchors`
+    （xy / xyann / clip 三样），只活在 originals 里。
+  * **只对「逆算得回去」的开放**（`annotation_arrow_owner`，判不出就不宣称）：文字为空、
+    两端坐标系都是 renderer 无关的可逆写法——'data'、'{figure,subfigure,axes}
+    {points,fraction}'、尾端另加 'offset …'，以及它们的二元组。**'pixels' 不算**
+    （#552 评审）：逆算出的是应用那一刻 dpi 下的原始像素值，导出换 dpi 后像素值不变、图幅
+    变了，箭头落到别处（热态 ≠ 导出）。points 系的负值**不换参考角**：3.8.4 / 3.10.8 / 3.11.1
+    的 `_get_xy_transform` 都从左下角线性延伸，拖过参考边坐标变号照样落在请求处
+    （`test_points_anchors_dragged_across_their_reference_edge_stay_put` 钉住）。**'fontsize' 也不算**：变换按注释当前字号缩放，
+    端点先落、字号后改时锚点跟着字号漂，而 `_must_replay` 不因字号变化重放端点——为一条
+    看不见的空注释的字号把它拉进几何档不值得。points / fraction 与 dpi、字号都无关。Artist /
+    可调用对象 / Transform / Bbox / 'polar' 不出端点。**有字的注释不出端点**：箭尾从文字框
+    算，拖尾巴就是拖字，字自己已能拖（`pos_frac`），两条 override 写同一个 `xyann` 只会互相
+    盖写。
+  * **「可拖」始终绑在「此刻是纯箭头注释」上**（#552 评审）：有字的注释被清空文字、拖了箭头、
+    再恢复文字——端点那条 override 还在列表里但**失效**：setter 按这一轮将要落成的文字
+    （`state.pending` 里的 `text`，没有就是此刻的文字）重新裁决，不是纯箭头就把锚点放回
+    脚本原样、不发 warning（warning 会阻断写回，而它只是失效）；**裁决一变就重放**
+    （`_must_replay` 比这一轮的裁决与上次落下的 `_mm_endpoints_live`），文字变了而端点值没变
+    时也会被重新裁决。**不是每轮都重放**：constrained / tight 布局在锚点落下后会重排，热态每轮
+    重算会追着布局走，与只算一次的全量重放分岔（等价矩阵写回腿像素门实测 409）。判据不看
+    列表序，热态与全量重放判出同一个结果。「失效」这个裁决**留在记号上**（`False`，只在端点
+    override 被撤掉时清）：清掉的话下一轮无变化的渲染把 None ≠ False 当成裁决变了、再撤一次
+    锚点，恢复文字后用户拖过的字被拽回去（#552 第五轮评审）。
+  * 看护：`test_arrowpatch_endpoints_and_style_roundtrip`（独立箭头）、
+    `test_annotation_endpoints_bind_to_empty_text_through_clear_drag_restore`、
+    `test_pure_arrow_annotation_drags_via_its_anchors`（出 / 不出端点的判据、拖完不弹回、
+    导出 PDF 在新位置、还原逐位）、`test_pure_arrow_annotation_head_dragged_out_of_axes_stays_drawn`、
+    等价矩阵 `s3-pure-arrow-annotation`（含写回后重开）与
+    `test_text_annotation_arrow_never_exposes_endpoints`。
 - **独立形状（Patch family）可拖动（2026-09-21，用户的流程图脚本：框拖不动）**：
   `ax.patches` 里登记成 `patch` 的形状 `draggable=True`，manifest 的 `anchor` 是
   **包围盒左下角**（figure 分数、y 向下，`Patch.get_window_extent()` 不需要

@@ -289,7 +289,6 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
   const ids = objs.map((o) => o.id)
   const rot = sharedPanel(objs, panelRotation)
   const opacity = sharedPanel(objs, (o) => Math.round((o.opacity ?? 1) * 100))
-  const translucent = objs.some((o) => (o.opacity ?? 1) < 1)
   const flipped = objs.some((o) => o.flipH || o.flipV)
 
   const setEach = (label: UiMessage, fn: (o: PanelObject) => void) =>
@@ -382,13 +381,6 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
             onChange={(v) => setPanelOpacity(ids, v / 100)}
           />
         </Row>
-
-        {/* 说明只讲导出后果：翻转 / 半透明面板在 PDF 里按位图嵌入，矢量文字不再可选中 */}
-        {(flipped || translucent) && (
-          <p className="text-xs leading-relaxed text-ink-3">
-            {pn(flipped && translucent ? 'bitmapBoth' : flipped ? 'bitmapFlip' : 'bitmapOpacity')}
-          </p>
-        )}
 
         {/* 替换素材是设置行里的一个动作，不是整行 CTA */}
         <Row label={pn('replace')} labelWidth={INSPECTOR_LABEL_W}>

@@ -123,11 +123,11 @@ def settings() -> dict:
 
 
 def set_settings(patch: dict) -> dict:
-    with _LOCK:
-        cfg = config.load()
+    # 模块锁管本模块的其它状态；配置的读-改-写走 config 的共享事务（与收藏、最近
+    # 列表等所有写入方同一把锁，Codex #550）。锁序固定：模块锁 → config 锁
+    with _LOCK, config.transaction() as cfg:
         merged = {**(cfg.get("updates") or {}), **patch}
         cfg["updates"] = {k: v for k, v in merged.items() if v is not None}
-        config.save(cfg)
     return settings()
 
 

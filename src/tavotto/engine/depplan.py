@@ -360,6 +360,9 @@ class JointPlan:
     #: 规划输入的指纹：声明意图（各声明文件解析出的全部条目，稳定顺序）+ 脚本与跟进过的本地模块的字节。
     #: 与事实无关（替身事实与真事实算出来一样）——执行端据此判「用户看到的计划还是不是这些输入算的」。
     inputs_digest: str = ""
+    #: 脚本 import 了、绑定却从未被读的名字（`importscan` 的 `unused`）：不进 needed / unknown，
+    #: 只列出来；缺的话 worker 给那一行占位（ADR 0061 §二 2026-09-24 修订）。
+    unused: tuple[str, ...] = ()
 
     @property
     def actionable(self) -> bool:
@@ -376,6 +379,7 @@ class JointPlan:
             "satisfied": [dict(s) for s in self.satisfied],
             "unknown": list(self.unknown),
             "possible": [dict(p) for p in self.possible],
+            "unused": list(self.unused),
             "requirements": list(self.requirements),
             "constraints": list(self.constraints),
             "hashes": {k: list(v) for k, v in self.hashes.items()},
@@ -428,8 +432,11 @@ def plan(
     unknown = tuple(
         c.module
         for c in scan.classes
-        if c.bucket == importscan.BUCKET_UNKNOWN and c.context == importscan.CONTEXT_UNCONDITIONAL
+        if c.bucket == importscan.BUCKET_UNKNOWN
+        and c.context == importscan.CONTEXT_UNCONDITIONAL
+        and not c.unused
     )
+    unused = tuple(c.module for c in scan.classes if c.unused)
     possible = tuple(
         c.to_payload()
         for c in scan.classes
@@ -576,6 +583,7 @@ def plan(
         satisfied=tuple(satisfied),
         unknown=unknown,
         possible=possible,
+        unused=unused,
         requirements=tuple(reqs),
         constraints=tuple(cons),
         hashes={k: tuple(v) for k, v in hashes.items()},

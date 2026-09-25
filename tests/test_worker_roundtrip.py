@@ -692,13 +692,13 @@ def test_arrowpatch_and_gradient_fill_editable(tmp_path):
 
 
 def test_arrowpatch_endpoints_and_style_roundtrip(tmp_path):
-    """独立箭头可自由挪动与改样式；annotate 箭头端点归注释机制、不放出来。
+    """独立箭头可自由挪动与改样式。
 
     - 独立箭头（add_patch）manifest 带 arrow_endpoints（figure 分数、y 向下），
       endpoints_frac override 拖到哪端点就落到哪；
     - arrowstyle / linestyle 可换、可还原（全量列表语义）；
-    - annotate 的 arrow_patch 每次 draw 被注释机制重定位，绝不能出端点，
-      否则用户拖完下一帧就弹回去。
+    - 纯箭头注释（`annotate("", …)`）也出端点——它的拖动写注释的锚点，
+      不写 patch（见 `test_pure_arrow_annotation_drags_via_its_anchors`）。
     """
     figs = tmp_path / "figures"
     figs.mkdir()
@@ -716,7 +716,10 @@ def test_arrowpatch_endpoints_and_style_roundtrip(tmp_path):
         # 脚本里 posA=(5,1.4) 在 posB=(5,1.05) 上方：top-origin 下 A 的 fy 更小
         assert pts[0][1] < pts[1][1]
         assert all(0.0 <= v <= 1.0 for p in pts for v in p)
-        assert "arrow_endpoints" not in annotate
+        # 纯箭头注释：[尾, 头] = [xytext, xy]。脚本里 xytext=(2.0, 1.3) 在 xy=(3.0, 0.6)
+        # 左上方：top-origin 下尾的 fx 更小、fy 更小
+        ann_pts = annotate.get("arrow_endpoints")
+        assert ann_pts and ann_pts[0][0] < ann_pts[1][0] and ann_pts[0][1] < ann_pts[1][1]
         assert _field_value(man, "axes_0.arrows_1", "arrowstyle") == "-|>"
         assert _field_value(man, "axes_0.texts_0.arrow", "arrowstyle") == "->"
         assert _field_value(man, "axes_0.arrows_1", "linestyle") == "-"
@@ -746,6 +749,457 @@ def test_arrowpatch_endpoints_and_style_roundtrip(tmp_path):
             assert abs(want[0] - have[0]) < 0.01 and abs(want[1] - have[1]) < 0.01
         assert _field_value(man, "axes_0.arrows_1", "arrowstyle") == "-|>"
         assert _field_value(man, "axes_0.arrows_1", "linestyle") == "-"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+PURE_ARROW_SCRIPT = """\
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig = plt.figure(figsize=(4, 3))
+    ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 100)
+    ax.axis("off")
+    # 用户流程图的 draw_arrow：纯箭头注释、数据坐标、两端各缩 2pt      texts_0
+    ax.annotate("", xy=(40, 60), xytext=(20, 60),
+                arrowprops=dict(arrowstyle="-|>", color="#4885B8", lw=1.8,
+                                shrinkA=2, shrinkB=2))
+    # 尾巴按 offset points 挂在头上                                   texts_1
+    ax.annotate("", xy=(70, 30), xytext=(-30, 20), textcoords="offset points",
+                arrowprops=dict(arrowstyle="->", color="#B34700"))
+    # 两端都是子图分数                                                texts_2
+    ax.annotate("", xy=(0.9, 0.9), xycoords="axes fraction",
+                xytext=(0.7, 0.8), textcoords="axes fraction",
+                arrowprops=dict(arrowstyle="->", color="#2A6F3C"))
+    # 有字的注释：拖尾巴 = 拖字，字自己能拖；箭头不出端点                  texts_3
+    ax.annotate("note", xy=(50, 10), xytext=(60, 20),
+                arrowprops=dict(arrowstyle="->"))
+    # 坐标系是 Artist：锚点要 renderer 才算得出，逆算不回去              texts_4
+    ax.annotate("", xy=(0.5, 0.5), xycoords=ax.patch, xytext=(10, 90),
+                arrowprops=dict(arrowstyle="->"))
+    # 像素单位：逆算出的像素值随 dpi 漂（导出换 dpi 就落到别处），不出端点   texts_5 / 6
+    ax.annotate("", xy=(30, 20), xytext=(-40, 0), textcoords="offset pixels",
+                arrowprops=dict(arrowstyle="->"))
+    ax.annotate("", xy=(200, 150), xycoords="figure pixels", xytext=(10, 10),
+                arrowprops=dict(arrowstyle="->"))
+    # 字号单位：锚点随注释字号缩放，改字号就漂，不出端点                 texts_7 / 8
+    ax.annotate("", xy=(80, 80), xytext=(-3, -2), textcoords="offset fontsize",
+                arrowprops=dict(arrowstyle="->"))
+    ax.annotate("", xy=(0.2, 0.2), xycoords="axes fraction",
+                xytext=(2, 3), textcoords="axes fontsize",
+                arrowprops=dict(arrowstyle="->"))
+    # points 坐标：负值照样从左下角线性延伸（3.8.4 / 3.10.8 / 3.11.1 实测），拖过边界
+    # 不换参考角                                                         texts_9
+    ax.annotate("", xy=(40, 150), xycoords="figure points",
+                xytext=(20, 60), textcoords="axes points",
+                arrowprops=dict(arrowstyle="->"))
+    fig.savefig("PureArrow.pdf")
+"""
+
+
+def _pdf_stroke_bbox(pdf: Path, rgb: tuple[float, float, float]):
+    """PDF 里指定描边色的矢量路径的并集框（PDF 点、y 向下）——导出件里箭头在哪。"""
+    rects = []
+    with pymupdf.open(pdf) as doc:
+        page = doc[0]
+        for d in page.get_drawings():
+            c = d.get("color")
+            if c and all(abs(a - b) < 0.01 for a, b in zip(c, rgb)):
+                rects.append(d["rect"])
+        size = (page.rect.width, page.rect.height)
+    assert rects, f"导出件里没有 {rgb} 这支箭头"
+    r = rects[0]
+    for x in rects[1:]:
+        r |= x
+    return r, size
+
+
+def test_pure_arrow_annotation_drags_via_its_anchors(tmp_path):
+    """纯箭头注释（`annotate("", xy=…, xytext=…)`）可以拖，拖完不弹回。
+
+    2026-09-24 用户的流程图：10 根箭头全是 `ax.annotate("", …)`，此前 manifest 不给
+    端点——箭头 patch 每次 draw 都被注释机制按 xy / xyann 重定位，直接改 patch 下一帧
+    就弹回。现在 `endpoints_frac` 写的是**注释本身的两个锚点**（经各自坐标系逆算）：
+
+    - 可逆坐标系（data / offset points / axes fraction）出端点，[尾, 头] = [xytext, xy]；
+      有字的注释、Artist 坐标系、像素单位（换 dpi 就漂）、字号单位（改字号就漂）不出
+      （不伪造能力）；
+    - 拖完：端点落在目标、**画出来的箭头**（patch 的 bbox）跟着平移、再渲染一次不弹回、
+      导出的 PDF 里箭头在新位置；
+    - 空列表还原：端点与 bbox 逐位回到脚本原样。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_pure_arrow.py").write_text(PURE_ARROW_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "PureArrow", "patches": []})["manifest"]
+        el = {e["gid"]: e for e in man["elements"]}
+        movable = ["axes_0.texts_0.arrow", "axes_0.texts_1.arrow", "axes_0.texts_2.arrow"]
+        for gid in movable:
+            pts = el[gid].get("arrow_endpoints")
+            assert pts and len(pts) == 2, (gid, el[gid])
+        for gid in (
+            "axes_0.texts_3.arrow",
+            "axes_0.texts_4.arrow",
+            "axes_0.texts_5.arrow",
+            "axes_0.texts_6.arrow",
+            "axes_0.texts_7.arrow",
+            "axes_0.texts_8.arrow",
+        ):
+            assert "arrow_endpoints" not in el[gid], gid
+        # 用户的那根：数据坐标 (20,60) → (40,60)，水平向右；尾在左
+        (tx, ty), (hx, hy) = el["axes_0.texts_0.arrow"]["arrow_endpoints"]
+        assert tx < hx and ty == pytest.approx(hy, abs=1e-4)
+
+        # 三根各自整体挪 (+0.1, +0.15)；offset 那根再单拖头（形状变了，尾不动）
+        def shifted(gid, dx, dy):
+            (ax_, ay_), (bx_, by_) = el[gid]["arrow_endpoints"]
+            return [round(v, 4) for v in (ax_ + dx, ay_ + dy, bx_ + dx, by_ + dy)]
+
+        targets = {gid: shifted(gid, 0.1, 0.15) for gid in movable}
+        (oax, oay), (obx, oby) = el["axes_0.texts_1.arrow"]["arrow_endpoints"]
+        targets["axes_0.texts_1.arrow"] = [oax, oay, round(obx + 0.12, 4), round(oby - 0.2, 4)]
+        patches = [{"gid": g, "prop": "endpoints_frac", "value": v} for g, v in targets.items()]
+        for _ in range(2):  # 第二遍 = 同一组 patch 再渲染一次：不弹回、幂等
+            resp = _rpc(proc, {"cmd": "override", "stem": "PureArrow", "patches": patches})
+            assert resp.get("warnings") in (None, []), resp.get("warnings")
+            moved = {e["gid"]: e for e in resp["manifest"]["elements"]}
+            for gid, want in targets.items():
+                got = [v for p in moved[gid]["arrow_endpoints"] for v in p]
+                assert got == pytest.approx(want, abs=2e-4), (gid, want, got)
+            # 画出来的那支箭头真的走了（patch 的 bbox 由 draw 时的重定位决定——
+            # 改的若是 patch 而不是注释，这里量到的就是弹回原处的那一支）
+            for gid in ("axes_0.texts_0.arrow", "axes_0.texts_2.arrow"):
+                b0, b1 = el[gid]["bbox"], moved[gid]["bbox"]
+                assert b1[0] - b0[0] == pytest.approx(0.1, abs=2e-3), (gid, b0, b1)
+                assert b1[1] - b0[1] == pytest.approx(0.15, abs=2e-3), (gid, b0, b1)
+                assert b1[2:] == pytest.approx(b0[2:], abs=2e-3), (gid, b0, b1)
+
+        # 导出件：用户那根（#4885B8）在 PDF 里也挪了 (+0.1, +0.15) 个图幅
+        pdf0, pdf1 = tmp_path / "before.pdf", tmp_path / "after.pdf"
+        for path, ps in ((pdf0, []), (pdf1, patches)):
+            _rpc(
+                proc,
+                {
+                    "cmd": "export",
+                    "stem": "PureArrow",
+                    "patches": ps,
+                    "path": str(path),
+                    "format": "pdf",
+                    "dpi": 300,
+                },
+            )
+        blue = (0x48 / 255, 0x85 / 255, 0xB8 / 255)
+        r0, (pw, ph) = _pdf_stroke_bbox(pdf0, blue)
+        r1, _ = _pdf_stroke_bbox(pdf1, blue)
+        assert (r1.x0 - r0.x0) / pw == pytest.approx(0.1, abs=3e-3), (r0, r1)
+        assert (r1.y0 - r0.y0) / ph == pytest.approx(0.15, abs=3e-3), (r0, r1)
+
+        back = _rpc(proc, {"cmd": "override", "stem": "PureArrow", "patches": []})["manifest"]
+        restored = {e["gid"]: e for e in back["elements"]}
+        for gid in movable:
+            assert restored[gid]["arrow_endpoints"] == el[gid]["arrow_endpoints"], gid
+            assert restored[gid]["bbox"] == pytest.approx(el[gid]["bbox"], abs=1e-9), gid
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+def test_annotation_endpoints_bind_to_empty_text_through_clear_drag_restore(tmp_path):
+    """有字的注释：清空文字 → 拖箭头 → 恢复文字。端点那条 override 还留在列表里，但注释
+    已不是纯箭头，它必须**失效**（#552 评审）：文字回到原处、箭头回到脚本原样、manifest
+    不再出端点——否则这条看不见的 override 会继续改有字注释的 `xyann`，把字挪走。
+
+    同一组 patch 的全新 worker 重放必须与热态一致（热态 ≠ 重放就是写回 409 的那类分岔）；
+    而「文字清空 + 端点」这一组无论列表里谁先谁后，都落到拖过的位置。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_pure_arrow.py").write_text(PURE_ARROW_SCRIPT, encoding="utf-8")
+    text_gid, arrow_gid = "axes_0.texts_3", "axes_0.texts_3.arrow"
+
+    def els(resp):
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        return {e["gid"]: e for e in resp["manifest"]["elements"]}
+
+    procs = []
+    try:
+        hot = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path)
+        procs.append(hot)
+        _rpc(hot, {"cmd": "build"})
+        base = els(_rpc(hot, {"cmd": "override", "stem": "PureArrow", "patches": []}))
+        assert "arrow_endpoints" not in base[arrow_gid]  # 有字：不出端点
+
+        clear = {"gid": text_gid, "prop": "text", "value": ""}
+        cleared = els(_rpc(hot, {"cmd": "override", "stem": "PureArrow", "patches": [clear]}))
+        pts = cleared[arrow_gid].get("arrow_endpoints")
+        assert pts, "文字清空后它就是纯箭头注释，应当出端点"
+        target = [round(pts[0][0] + 0.1, 4), round(pts[0][1] - 0.1, 4), pts[1][0], pts[1][1]]
+        drag = {"gid": arrow_gid, "prop": "endpoints_frac", "value": target}
+        dragged = els(_rpc(hot, {"cmd": "override", "stem": "PureArrow", "patches": [clear, drag]}))
+        got = [v for p in dragged[arrow_gid]["arrow_endpoints"] for v in p]
+        assert got == pytest.approx(target, abs=2e-4)
+
+        # 恢复文字：text 那条撤掉，端点那条还在
+        restored = els(_rpc(hot, {"cmd": "override", "stem": "PureArrow", "patches": [drag]}))
+        assert "arrow_endpoints" not in restored[arrow_gid]
+        assert restored[text_gid]["anchor"] == pytest.approx(base[text_gid]["anchor"], abs=1e-6)
+        assert restored[arrow_gid]["bbox"] == pytest.approx(base[arrow_gid]["bbox"], abs=1e-6)
+
+        # 全新 worker 全量重放同一组 patch：与热态一致
+        fresh = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path / "fresh")
+        procs.append(fresh)
+        _rpc(fresh, {"cmd": "build"})
+        replay = els(_rpc(fresh, {"cmd": "override", "stem": "PureArrow", "patches": [drag]}))
+        assert replay[text_gid]["anchor"] == pytest.approx(restored[text_gid]["anchor"], abs=1e-6)
+        assert replay[arrow_gid]["bbox"] == pytest.approx(restored[arrow_gid]["bbox"], abs=1e-6)
+        # 「清空 + 端点」两种列表序都落到拖过的位置（判据看这一轮将落成的文字，不看列表序）
+        for order in ([clear, drag], [drag, clear]):
+            # 每种列表序都从「字已恢复、端点失效」起步：上一轮的空文字不能替这一轮兜底
+            els(_rpc(fresh, {"cmd": "override", "stem": "PureArrow", "patches": [drag]}))
+            e = els(_rpc(fresh, {"cmd": "override", "stem": "PureArrow", "patches": order}))
+            got = [v for p in e[arrow_gid]["arrow_endpoints"] for v in p]
+            assert got == pytest.approx(target, abs=2e-4), order
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                p.kill()
+            p.wait(timeout=10)
+
+
+def test_restored_text_can_be_dragged_after_its_arrow_endpoints_went_stale(tmp_path):
+    """清空文字 → 拖箭头 → 恢复文字 → **拖文字** → 再渲染一次：字停在拖过的位置（#552 第五轮）。
+
+    恢复文字后端点那条 override 失效；失效这个裁决若被清掉，下一次无变化的渲染会把
+    None ≠ False 当成「裁决变了」再撤一次锚点——xyann 被拽回原样，而没变的 pos_frac
+    被跳过，字弹回去。全新 worker 重放同一组 patch（两种列表序）必须与热态一致。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_pure_arrow.py").write_text(PURE_ARROW_SCRIPT, encoding="utf-8")
+    text_gid, arrow_gid = "axes_0.texts_3", "axes_0.texts_3.arrow"
+
+    def els(proc, patches):
+        resp = _rpc(proc, {"cmd": "override", "stem": "PureArrow", "patches": patches})
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        return {e["gid"]: e for e in resp["manifest"]["elements"]}
+
+    procs = []
+    try:
+        hot = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path)
+        procs.append(hot)
+        _rpc(hot, {"cmd": "build"})
+        base = els(hot, [])
+        clear = {"gid": text_gid, "prop": "text", "value": ""}
+        pts = els(hot, [clear])[arrow_gid]["arrow_endpoints"]
+        drag_arrow = {
+            "gid": arrow_gid,
+            "prop": "endpoints_frac",
+            "value": [round(pts[0][0] + 0.1, 4), round(pts[0][1] - 0.1, 4), pts[1][0], pts[1][1]],
+        }
+        els(hot, [clear, drag_arrow])
+        els(hot, [drag_arrow])  # 恢复文字：端点失效
+        a0 = base[text_gid]["anchor"]
+        want = [round(a0[0] - 0.12, 4), round(a0[1] + 0.05, 4)]
+        drag_text = {"gid": text_gid, "prop": "pos_frac", "value": want}
+        first = els(hot, [drag_arrow, drag_text])
+        again = els(hot, [drag_arrow, drag_text])  # 无变化的再渲染一次
+        for e in (first, again):
+            assert e[text_gid]["anchor"] == pytest.approx(want, abs=1e-3), e[text_gid]["anchor"]
+            assert "arrow_endpoints" not in e[arrow_gid]
+
+        fresh = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path / "fresh")
+        procs.append(fresh)
+        _rpc(fresh, {"cmd": "build"})
+        for order in ([drag_arrow, drag_text], [drag_text, drag_arrow]):
+            els(fresh, [])
+            e = els(fresh, order)
+            assert e[text_gid]["anchor"] == pytest.approx(again[text_gid]["anchor"], abs=1e-6)
+            assert e[arrow_gid]["bbox"] == pytest.approx(again[arrow_gid]["bbox"], abs=1e-6)
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                p.kill()
+            p.wait(timeout=10)
+
+
+def test_points_anchors_dragged_across_their_reference_edge_stay_put(tmp_path):
+    """points 坐标系的端点拖过参考边（坐标变号）：落在请求的图幅位置，再渲染一次也不跳。
+
+    #552 第五轮评审担心「正值从左下角、负值从右上角算」——实测 3.8.4 / 3.10.8 / 3.11.1
+    的 `_get_xy_transform` 都是从左下角线性延伸，负值不换参考角；这条用例把它钉住，
+    matplotlib 哪天改回按符号选角，这里先红。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_pure_arrow.py").write_text(PURE_ARROW_SCRIPT, encoding="utf-8")
+    gid = "axes_0.texts_9.arrow"
+    proc = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "PureArrow", "patches": []})["manifest"]
+        el = next(e for e in man["elements"] if e["gid"] == gid)
+        assert el.get("arrow_endpoints"), el
+        # 子图从 0.1 起：尾（axes points）拖到 0.03 = 越过子图左边、坐标变负；
+        # 头（figure points）拖到 -0.02 = 越过图幅左边、坐标变负
+        (_tx, ty), (_hx, hy) = el["arrow_endpoints"]
+        target = [0.03, ty, -0.02, hy]
+        patches = [{"gid": gid, "prop": "endpoints_frac", "value": target}]
+        for _ in range(2):
+            resp = _rpc(proc, {"cmd": "override", "stem": "PureArrow", "patches": patches})
+            assert resp.get("warnings") in (None, []), resp.get("warnings")
+            moved = next(e for e in resp["manifest"]["elements"] if e["gid"] == gid)
+            got = [v for p in moved["arrow_endpoints"] for v in p]
+            assert got == pytest.approx(target, abs=2e-4), got
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+CATEGORICAL_ARROW_SCRIPT = """\
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    groups = ["对照组", "处理 A", "处理 B"]
+    ax.bar(groups, [3.1, 5.4, 4.2])
+    ax.annotate("", xy=("处理 A", 5.6), xytext=("对照组", 3.3), arrowprops=dict(arrowstyle="->"))
+    fig.savefig("CatArrow.pdf")
+"""
+
+
+def test_pure_arrow_on_categorical_axis_is_draggable(tmp_path):
+    """坐标写成组名的纯箭头注释（分类轴）：出端点、拖动后落在请求处、预览与导出不抛。
+
+    「一元素数组转 float」那一维由下一条用例单独钉：它在 matplotlib 3.8 上才出现，
+    而 3.8 自己的 `Annotation._get_xy` 也是 `float(convert_xunits(x))`——把那条弃用当
+    错误时 matplotlib 自己的 draw 先炸，端到端在任何一档上都量不到我们这一行。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_cat.py").write_text(CATEGORICAL_ARROW_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_cat.py", figs, tmp_path)
+    gid = "axes_0.texts_0.arrow"
+    try:
+        built = _rpc(proc, {"cmd": "build"})
+        assert built.get("ok"), built
+        man = _rpc(proc, {"cmd": "override", "stem": "CatArrow", "patches": []})["manifest"]
+        el = next(e for e in man["elements"] if e["gid"] == gid)
+        pts = el.get("arrow_endpoints")
+        assert pts and len(pts) == 2, el
+        assert pts[0][0] < pts[1][0]  # 尾在「对照组」、头在「处理 A」
+        target = [round(pts[0][0] + 0.05, 4), pts[0][1], round(pts[1][0] + 0.05, 4), pts[1][1]]
+        patches = [{"gid": gid, "prop": "endpoints_frac", "value": target}]
+        resp = _rpc(proc, {"cmd": "override", "stem": "CatArrow", "patches": patches})
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        moved = next(e for e in resp["manifest"]["elements"] if e["gid"] == gid)
+        got = [v for p in moved["arrow_endpoints"] for v in p]
+        assert got == pytest.approx(target, abs=2e-4), got
+        png = _rpc(proc, {"cmd": "preview_png", "stem": "CatArrow", "patches": patches})
+        assert png.get("ok") is True, png
+        pdf = tmp_path / "cat.pdf"
+        exp = _rpc(
+            proc,
+            {
+                "cmd": "export",
+                "stem": "CatArrow",
+                "patches": patches,
+                "path": str(pdf),
+                "format": "pdf",
+                "dpi": 300,
+            },
+        )
+        assert exp.get("ok") is True, exp
+        assert pdf.exists() and pdf.stat().st_size > 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+_UNIT_SCALAR_DRIVER = r"""
+import sys, warnings
+sys.path.insert(0, sys.argv[1])
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import overrides
+
+fig, ax = plt.subplots()
+ax.bar(["对照组", "处理 A", "处理 B"], [3.1, 5.4, 4.2])
+ann = ax.annotate("", xy=("处理 A", 5.6), xytext=("对照组", 3.3), arrowprops=dict(arrowstyle="->"))
+ax.figure.canvas.draw()
+want = overrides.annotation_arrow_display(ann)
+
+# matplotlib 3.8 的分类换算回**一元素数组**（3.10 / 3.11 回标量）：按 3.8 的形状喂，
+# 与这台机器上装的是哪一档无关
+cx, cy = ann.convert_xunits, ann.convert_yunits
+ann.convert_xunits = lambda v: np.atleast_1d(np.asarray(cx(v), dtype=float))
+ann.convert_yunits = lambda v: np.atleast_1d(np.asarray(cy(v), dtype=float))
+with warnings.catch_warnings():
+    warnings.simplefilter("error", DeprecationWarning)
+    got = overrides.annotation_arrow_display(ann)
+assert np.allclose(np.asarray(got), np.asarray(want)), (got, want)
+print("OK")
+"""
+
+
+def test_annotation_anchor_conversion_takes_the_single_element_not_float_of_array():
+    """注释锚点的单位换算结果是一元素数组时（matplotlib 3.8 的分类轴），取出那个元素再
+    转数字，不对数组调 `float()`——后者在 NumPy ≥ 1.25 是 DeprecationWarning、将来报错，
+    到那时图里有一根组名坐标的纯箭头注释，manifest 就建不出来。这里把那条弃用当错误，
+    按 3.8 的返回形状喂换算函数：与装的是哪一档 matplotlib 无关，每档都量得到。"""
+    engine = Path(__file__).resolve().parent.parent / "src" / "tavotto" / "engine"
+    out = subprocess.run(
+        [WORKER_PY, "-c", _UNIT_SCALAR_DRIVER, str(engine)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert out.stdout.strip().endswith("OK"), out.stdout
+
+
+def test_pure_arrow_annotation_head_dragged_out_of_axes_stays_drawn(tmp_path):
+    """头拖出子图范围也照画：'data' 锚点离开数据范围时 matplotlib 默认整条注释不画
+    （`annotation_clip`）；端点是 figure 锚定的，拖到哪就画在哪。还原时 clip 一并还原。"""
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_pure_arrow.py").write_text(PURE_ARROW_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_pure_arrow.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        man = _rpc(proc, {"cmd": "override", "stem": "PureArrow", "patches": []})["manifest"]
+        gid = "axes_0.texts_0.arrow"
+        base = next(e for e in man["elements"] if e["gid"] == gid)
+        (ax_, ay_), _head = base["arrow_endpoints"]
+        # 子图占 [0.1, 0.9]：头挪到 0.97 已在数据范围之外
+        value = [ax_, ay_, 0.97, ay_]
+        resp = _rpc(
+            proc,
+            {
+                "cmd": "override",
+                "stem": "PureArrow",
+                "patches": [{"gid": gid, "prop": "endpoints_frac", "value": value}],
+            },
+        )
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        moved = next(e for e in resp["manifest"]["elements"] if e["gid"] == gid)
+        x, _y, w, _h = moved["bbox"]
+        # 画出来了、且伸到了子图外（扣掉 shrinkB 与箭帽，右缘仍 > 0.93）
+        assert x + w > 0.93, moved["bbox"]
     finally:
         if proc.poll() is None:
             proc.kill()

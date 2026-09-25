@@ -42,9 +42,12 @@ ready, and one item on it is a genuine blocker.
   source-available dependency exists anywhere in the closure. The MPL-2.0 items
   are a notice obligation, not a copyleft barrier — see the
   [dependency audit](COMMERCIALIZATION_DEPENDENCY_AUDIT.md#the-mpl-20-crates-facts-separated-from-conclusions).
-- **The one blocker has a designed exit.** `pdfbackend/` is already a contract
-  boundary with a single permitted `import pymupdf`, enforced as a repository
-  invariant.
+- **The one blocker has a designed exit — and it was taken.** `pdfbackend/` was
+  a contract boundary with a single permitted `import pymupdf`; on 2026-09-22
+  (ADR 0072) the implementation behind it was replaced by RenderCore and PyMuPDF
+  left the runtime closure (see the addendum in the dependency audit). The
+  blocker row below is kept as the audited finding; the status line is not
+  re-declared until the audit is re-baselined.
 
 ### Why not `READY`
 
@@ -146,8 +149,11 @@ its naming are governed by [`TRADEMARKS.md`](../../TRADEMARKS.md) independently.
 1. ~~Resolve `RIGHTS_HOLDER_CONFIGURATION_REQUIRED`~~ — **done**: Jiaqi Wan,
    Hong Kong SAR law, CLA final at `1.0`. Remaining: connect a signature
    provider when an external contribution is actually expected.
-2. Resolve PyMuPDF — Artifex commercial licence, or an alternative backend
-   behind the existing `pdfbackend/` contract.
+2. ~~Resolve PyMuPDF~~ — **done 2026-09-22 (ADR 0072)**: RenderCore replaced it
+   behind the existing `pdfbackend/` contract; PyMuPDF is out of the runtime
+   closure (`scripts/ci/retirement_scan.py` enforces). Remaining: re-baseline the
+   dependency audit with the replacement components (pikepdf MPL-2.0 is a notice
+   obligation, folded into item 3) and have counsel review it.
 3. Ship licence and third-party notices in every distributed artefact,
    including MPL-2.0 source availability for the linked Rust crates.
 4. Obtain legal review of the Copilot Autofix edits and of any rights-holder

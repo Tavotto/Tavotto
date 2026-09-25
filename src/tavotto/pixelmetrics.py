@@ -1,6 +1,6 @@
 """像素差异指标 —— 写回像素门的**比较器**，与后端无关（统一实施包 U08，ADR 0067）。
 
-`pdfbackend.compare_png` 的两个实现（PyMuPDF 解码 / RenderCore 经 `rasterio` 解码）只负责
+`pdfbackend.compare_png` 的实现（U10 之前是 PyMuPDF 解码 / RenderCore 经 `rasterio` 解码两份，现在只剩后者）只负责
 把 PNG 变成 RGBA 字节，**指标的算法只有这一份**：逐 RGBA 通道、每像素取通道最大差、底噪
 `PNG_NOISE_FLOOR`，三指标 `changed_pixel_ratio / mean_abs_diff / max_abs_diff`。两个后端换的是
 解码器，不是尺子——尺子在两边各写一份，等亮度换色这类分歧就可能只在一边被看见。

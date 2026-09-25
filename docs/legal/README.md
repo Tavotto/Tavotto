@@ -25,7 +25,7 @@ Dependency audit     →  what THIRD-PARTY code permits
 
 The mistake worth naming: **"we own the code, so we can license it however we
 like."** That holds for layer 1 only. A contribution someone else wrote is
-layer 2 (the CLA governs it), and Flask, React and PyMuPDF are layer 3 (nothing
+layer 2 (the CLA governs it), and Flask, React and pikepdf are layer 3 (nothing
 Tavotto signs changes their terms).
 
 ## The documents
@@ -57,7 +57,7 @@ Also: [`LICENSE`](../../LICENSE), [`TRADEMARKS.md`](../../TRADEMARKS.md) and
 | Signature authority | **The provider.** The repository stores no signer data. |
 | CI enforcement | **Live.** `cla-check` feeds the existing `CI fast gate`; no fourth required context added |
 | Trademark | **Tavotto™**, unregistered. ® is not used and CI fails if it appears |
-| Proprietary-edition readiness | **`READY_WITH_BLOCKERS`** — one real dependency blocker (**PyMuPDF**) plus governance items |
+| Proprietary-edition readiness | **`READY_WITH_BLOCKERS`** at the audited baseline — the one dependency blocker (**PyMuPDF**) left the runtime closure on 2026-09-22 (ADR 0072; addendum in the audit); the status is not re-declared until the audit is re-baselined and reviewed. Governance items stand |
 
 ## The two things a maintainer should not get wrong
 
@@ -69,6 +69,6 @@ separately licensed edition. Tavotto has never operated a DCO. The single
 evidence of one.
 
 **The CLA does not launder dependencies.** However complete Tavotto's rights
-over its own code become, PyMuPDF is still dual-licensed AGPL/commercial and
-React is still MIT. A proprietary build must pass a fresh third-party audit
-regardless.
+over its own code become, pikepdf is still MPL-2.0 and React is still MIT (and
+PyMuPDF, now retired from the closure, was still AGPL/commercial). A proprietary
+build must pass a fresh third-party audit regardless.

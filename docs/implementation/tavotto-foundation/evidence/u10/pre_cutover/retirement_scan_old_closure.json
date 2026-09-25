@@ -1,0 +1,229 @@
+{
+ "schema": 1,
+ "kind": "u10_retirement_scan",
+ "python": "<scratch>/u10/rc-venv/bin/python",
+ "out_of_scope": {
+  "tests/**": "测试的独立读取器（D15）：读产物、造夹具；不进任何发行闭包",
+  "scripts/dev/**": "隔离的历史差分工具（06 §3）：需要旧后端时只经可选 extra legacy-pymupdf",
+  "scripts/build_brand_assets.py / build_dmg_background.py / build_installer_assets.py / recover_frac_positions.py / bench_render.py / scripts/ci/compat_matrix.py": "维护者 / 实验室脚本：产出进 git 的位图或只读产物；不随发行物执行（U00 ledger bypasses 已登记）",
+  "用户科学脚本": "worker 侧、用户自己的环境；`import fitz` 是用户的事，不是应用残留",
+  "git 历史 / 文档 / 注释": "AST 与 METADATA 都看不到；按 06 §3 保留、分类清楚"
+ },
+ "rulers": {
+  "source": {
+   "ok": false,
+   "files": 142,
+   "hits": [
+    {
+     "file": "src/tavotto/pdfbackend/pymupdf_backend.py",
+     "line": 22,
+     "what": "import pymupdf"
+    }
+   ]
+  },
+  "deps": {
+   "ok": false,
+   "closure": {
+    "tavotto": "0.15.0",
+    "pymupdf": "1.28.2",
+    "packaging": "26.3",
+    "flask": "3.1.3",
+    "werkzeug": "3.1.8",
+    "markupsafe": "3.0.3",
+    "jinja2": "3.1.6",
+    "itsdangerous": "2.2.0",
+    "click": "8.5.0",
+    "blinker": "1.9.0"
+   },
+   "retired_in_closure": [
+    "pymupdf"
+   ],
+   "missing": [],
+   "edges": [
+    [
+     "tavotto",
+     "flask"
+    ],
+    [
+     "tavotto",
+     "packaging"
+    ],
+    [
+     "tavotto",
+     "pymupdf"
+    ],
+    [
+     "flask",
+     "blinker"
+    ],
+    [
+     "flask",
+     "click"
+    ],
+    [
+     "flask",
+     "itsdangerous"
+    ],
+    [
+     "flask",
+     "jinja2"
+    ],
+    [
+     "flask",
+     "markupsafe"
+    ],
+    [
+     "flask",
+     "werkzeug"
+    ],
+    [
+     "werkzeug",
+     "markupsafe"
+    ],
+    [
+     "jinja2",
+     "markupsafe"
+    ]
+   ]
+  },
+  "block": {
+   "ok": false,
+   "selftest": {
+    "ok": true,
+    "bit": true,
+    "message": "retirement_scan: import 'colorsys' 被阻断——PyMuPDF 已退役（ADR 0072）"
+   },
+   "steps": [
+    {
+     "step": "import tavotto.app",
+     "ok": true,
+     "info": {
+      "routes": 131
+     }
+    },
+    {
+     "step": "pdfbackend.selected",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "                                                                                 ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 181, in __getattr__\n    return getattr(_impl(), name)\n                   ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "probe_asset pdf",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "e.pdf\", \"pdf\"))\n                                    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 113, in probe_asset\n    return _impl().probe_asset(path, kind)\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "probe_asset raster",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "er\"))\n                                       ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 113, in probe_asset\n    return _impl().probe_asset(path, kind)\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "text_width / text_plan / missing_glyphs",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "h(\"Hello 你好 m⁻²\", 10.0),\n             ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 125, in text_width\n    return _impl().text_width(s, size_pt, bold, italic, family)\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "coverage_ranges",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "items()})\n                                                                   ~~~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 137, in coverage_ranges\n    return _impl().coverage_ranges()\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "compose → save_pdf / save_png / save_tiff",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "= fn()\n  File \"<string>\", line 42, in s_compose\n    canvas = pdfbackend.compose(120, 60)\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 145, in compose\n    return _impl().compose(page_w_mm, page_h_mm, transparent)\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "pdf_fonts",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "pdfbackend.pdf_fonts(tmp / \"c.pdf\")})\n                                        ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 117, in pdf_fonts\n    return _impl().pdf_fonts(path)\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "compare_png",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "\"c.png\"))\n                                ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 141, in compare_png\n    return _impl().compare_png(baseline, candidate)\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "render_preview_png",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": ")\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 121, in render_preview_png\n    return _impl().render_preview_png(path, width_px, out)\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "original_pdf",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "\n                                 ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 149, in original_pdf\n    return _impl().original_pdf(src, out, page_pt)\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "original_png",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "                ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 153, in original_png\n    return _impl().original_png(src, out, ppi, transparent)\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "original_tiff",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 157, in original_tiff\n    return _impl().original_tiff(src, out, ppi, transparent, dpi_meta=dpi_meta)\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "annotate_asset",
+     "ok": false,
+     "error": "ImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）",
+     "trace": "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 161, in annotate_asset\n    return _impl().annotate_asset(pdf_path, png_path, objects, dpi)\n           ~~~~~^^\n  File \"<worktree>/src/tavotto/pdfbackend/__init__.py\", line 104, in _impl\n    mod = importlib.import_module(_IMPL_MODULES[name])\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/importlib/__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1387, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1331, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 935, in _load_unlocked\n  File \"<frozen importlib._bootstrap_external>\", line 1023, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"<worktree>/src/tavotto/pdfbackend/pymupdf_backend.py\", line 22, in <module>\n    import pymupdf\n  File \"<string>\", line 8, in find_spec\n    raise ImportError(\"retirement_scan: import %r 被阻断——PyMuPDF 已退役（ADR 0072）\" % name)\nImportError: retirement_scan: import 'pymupdf' 被阻断——PyMuPDF 已退役（ADR 0072）\n"
+    },
+    {
+     "step": "engine.cli doctor --json",
+     "ok": true,
+     "info": {
+      "rc": 0
+     }
+    },
+    {
+     "step": "MCP bridge / server import",
+     "ok": true,
+     "info": {
+      "bridge": "tavotto_mcp.bridge"
+     }
+    },
+    {
+     "step": "render child reaped",
+     "ok": true,
+     "info": {}
+    }
+   ],
+   "leaked_modules": [],
+   "all_ok": false
+  },
+  "native": {
+   "status": "not_run",
+   "why": "没给 --dist / --wheel（产物在别的 job 里）"
+  },
+  "sbom": {
+   "status": "not_run",
+   "why": "没给 --sbom（只有发布链产 SBOM）"
+  },
+  "run": {
+   "status": "not_run",
+   "why": "没给 --smoke"
+  }
+ },
+ "ran": [
+  "block",
+  "deps",
+  "source"
+ ],
+ "not_run": [
+  "native",
+  "run",
+  "sbom"
+ ],
+ "all_ok": false
+}

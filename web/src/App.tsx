@@ -339,7 +339,7 @@ function useDesktopMenu() {
         (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))
       switch (action) {
         case 'menu-open-project':
-          useProjectStore.setState({ phase: 'none' })
+          useProjectStore.getState().showPicker()
           break
         case 'menu-export':
           if (useProjectStore.getState().phase === 'open') ui.setExportOpen(true)

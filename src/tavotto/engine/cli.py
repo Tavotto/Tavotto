@@ -2,7 +2,7 @@
 
 **为什么单独一个模块。** 这两条命令是给别的程序调的（Codex 插件、安装器、
 编辑器），它们只需要纯标准库的那点逻辑，却曾经只能从 `app.main()` 进——
-那条路会 import Flask、pymupdf 和整个 app.py。装在用户机器上的
+那条路会 import Flask、RenderCore 和整个 app.py。装在用户机器上的
 `tavotto-cli.exe` 每次交接都要付这份冷启动，而它一个 HTTP 端点都用不上。
 
 所以分派提到这里，`packaging/entry.py` 与 `app.main()` 都先问它一句；

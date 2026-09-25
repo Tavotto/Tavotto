@@ -26,10 +26,11 @@ Codex 不认识这种来源时，`codex plugin list` 里不会出现 `tavotto`�
 
 ### 插件明明装着、也新开过会话，工具还是一个都没有（多见于 Windows）
 
-这时候**不是插件没装**，是 Codex 起 MCP server 的那一跳没起来：插件清单里钉的
-启动命令是 `python3`，Windows 上这个名字常常指向微软商店的 App Execution Alias
-——命令**存在**、启动起来只有一个 9009 且什么都不打印。于是插件的启动器一次都
-没跑起来，连会说人话的降级 server 都没有，Codex 那边也不会为此报任何错。
+这时候**不是插件没装**，是 Codex 起 MCP server 的那一跳没起来。插件的启动命令是
+自带的 `./mcp/launch.cmd`，它会自己找一个能跑的 Python（Windows 上会跳过微软商店的
+App Execution Alias——命令**存在**、启动起来只有一个 9009 且什么都不打印）；还是一个
+工具都没有，说明这台机器上它一个能跑的 Python 都没找到，连会说人话的降级 server 都
+起不来，Codex 那边也不会为此报任何错。
 
 给用户这两条里的一条（**不要重装插件、不要 marketplace upgrade**）：
 
@@ -62,6 +63,12 @@ tavotto codex install     # 修：把已装副本的启动命令钉到一个验�
 * `tavotto_missing` —— 机器上确实没有 Tavotto。按用户的需求引导：只要桌面收尾
   就装桌面版（<https://github.com/Tavotto/Tavotto/releases>），要 Codex 内嵌
   工具就 `pipx install "tavotto[worker]"`。
+* `managed_runtime_stale` —— 插件自管环境还是旧版引擎（插件升级后最常见）。
+  启动器**已经在后台**把它重装到插件对应的版本（`auto_provision.started`；日志在
+  `auto_provision.log`），告诉用户等一两分钟后**新开会话**即可，不要让他重装插件或
+  装 pipx。`auto_provision.started` 为 false 且原因不是 `already_running` 时（离线、
+  被 `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 关掉），才给手动那条
+  `python3 <插件目录>/mcp/server.py --provision`。
 * `engine_unavailable`（`TAVOTTO_MCP_PYTHON` 指错了）—— 指名道姓地把它报给
   用户，让用户改环境变量或去掉；不要悄悄换别的解释器。
 * 其它 code —— 把 `code` + health 输出里的 `recovery` 步骤原样转达。
@@ -77,8 +84,10 @@ marketplace add/upgrade。
 codex plugin marketplace upgrade tavotto
 ```
 
-升级后同样要新开会话。**Windows 上升级完还要再跑一次 `tavotto codex install`**
-——升级会把插件目录整个换掉，之前钉进已装副本的启动命令会跟着被换回 `python3`。
+升级后同样要新开会话。升级会把插件目录整个换掉，之前 `tavotto codex install` 钉进
+已装副本的解释器绝对路径会被换回自带的 `./mcp/launch.cmd`——它自己找 Python，多数
+机器上不用再做什么；**Windows 上升级后若又一个工具都没有，再跑一次
+`tavotto codex install`**。
 不自动升级、不反复提醒、不为此打断手里的活。`update`
 里若还有 `tavotto` 字段，那是说本机 Tavotto 版本低于新插件的要求——让用户去
 Releases 更新 Tavotto（**跟插件是两码事，别混着说**）。

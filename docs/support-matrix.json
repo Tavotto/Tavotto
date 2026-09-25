@@ -1,9 +1,15 @@
 {
   "schema": 1,
-  "note": "支持矩阵的唯一权威文件（1.0 审计 P1-06）。README、发布页、官网、应用内文案都以这里为准；tests/test_support_matrix.py 逐条与 pyproject / runtime-lock 对拍，防止承诺与事实分叉。status 语义：supported = 有安装包 + CI 门禁 + 真产物冒烟；beta = 可用但验收面没到 supported；unsupported = 不构建不承诺（能跑也别写进宣传）。label_en / en 是发布页用的英文成文（scripts/make_release_support_section.py 渲染进每个 Release body）——状态词由 status 派生，en 只写渠道与出路，不写支持等级。",
+  "note": "支持矩阵的唯一权威文件（1.0 审计 P1-06）。桌面目标的 min_os 是最低操作系统版本（macOS 两档由打进去的原生库决定，见 macos-x86_64-desktop 的 note）。README、发布页、官网、应用内文案都以这里为准；tests/test_support_matrix.py 逐条与 pyproject / runtime-lock 对拍，防止承诺与事实分叉。status 语义：supported = 有安装包 + CI 门禁 + 真产物冒烟；beta = 可用但验收面没到 supported；unsupported = 不构建不承诺（能跑也别写进宣传）。label_en / en 是发布页用的英文成文（scripts/make_release_support_section.py 渲染进每个 Release body）——状态词由 status 派生，en 只写渠道与出路，不写支持等级。",
   "python": {
     "requires": ">=3.10,<3.15",
-    "tested": ["3.10", "3.11", "3.12", "3.13", "3.14"],
+    "tested": [
+      "3.10",
+      "3.11",
+      "3.12",
+      "3.13",
+      "3.14"
+    ],
     "note": "与 CI 矩阵一致（backend-fast 跑 3.10 / 3.13 / 3.14，package 的 wheel 冒烟多一档 Linux 3.14；tests/test_support_matrix.py 钉住 tested 的最高档必须在 backend-fast 里有腿）。3.14 于 2026-09-14 放开（issue #33）：Homebrew / pipx 默认解释器已是 3.14，而只有没写上界的 0.8.0 能被 3.14 的 pip 解析到。桌面版内置 runtime 仍是 3.13（packaging/runtime-lock.json），放开上界不等于换发行 runtime。"
   },
   "targets": [
@@ -22,7 +28,8 @@
       "label_en": "macOS Apple Silicon desktop",
       "status": "supported",
       "channel": "dmg（签名 + 公证；含内置渲染 runtime）",
-      "en": "Signed and notarized `.dmg` with a bundled rendering runtime — download the `.dmg` below.",
+      "min_os": "14.0",
+      "en": "Signed and notarized `.dmg` with a bundled rendering runtime — download the `.dmg` below. Requires macOS 14 or later.",
       "gates": "macos-app-smoke + 签完名的 .app 从中文+空格路径冒烟"
     },
     {
@@ -31,9 +38,10 @@
       "label_en": "macOS Intel desktop",
       "status": "supported",
       "channel": "独立的 Intel dmg（签名 + 公证；含 x86_64 内置渲染 runtime）",
-      "en": "A separate signed and notarized `-Intel.dmg` with an x86_64 bundled rendering runtime — download the `-macOS-Intel.dmg` below.",
+      "min_os": "15.0",
+      "en": "A separate signed and notarized `-Intel.dmg` with an x86_64 bundled rendering runtime — download the `-macOS-Intel.dmg` below. Requires macOS 15 or later.",
       "gates": "desktop-tauri 的 macos-26-intel 腿：与 Apple Silicon 同一套真产物冒烟 + 签完名的 .app 从中文+空格路径冒烟",
-      "note": "ADR 0076：按架构各发一个 dmg，不做 universal2。Intel 在原生 Intel runner 上构建与冒烟；GitHub 的 Intel runner 有退役日期，退役前要换成自备 Intel 机器，否则这一档要降级。"
+      "note": "ADR 0076：按架构各发一个 dmg，不做 universal2。Intel 在原生 Intel runner 上构建与冒烟；GitHub 的 Intel runner 有退役日期，退役前要换成自备 Intel 机器，否则这一档要降级。min_os：RenderCore（ADR 0072）打进去的 pikepdf 10.x 的 x86_64 wheel 要求 macOS 15（Apple Silicon 那档是 14）；来源是 evidence/u10/wheel_matrix.json 的 macos_floor，tests/test_support_matrix.py 把 min_os、src-tauri 的 minimumSystemVersion 与它钉在一起，desktop-tauri 的架构核对步再在真 .app 上逐个 Mach-O 核一遍。"
     },
     {
       "id": "windows-arm64",

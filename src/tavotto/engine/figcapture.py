@@ -19,7 +19,9 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
 * `savefig_stem()` —— `savefig(路径)` 里那个 stem 怎么取；
 * `collect_pyplot_figures()` —— 脚本跑完之后还活着的 pyplot Figure 怎么补进
   捕获表（去重、命名、保序）；
-* `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）。
+* `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
+* `unused_imports()` / `install_unused_import_placeholders()` —— 脚本 import 了却从未用到、
+  又没装的包不挡图（ADR 0061 §二 2026-09-24 修订；判据父进程与 worker 各调一次）。
 
 ## fallback stem 的稳定性
 
@@ -98,7 +100,18 @@ pyproject 的 `requires-python` 下界正是 3.10，所以这不是理论问题�
 `self.open(...)` 的实例方法查找，打在类上对每个版本都成立，也不必知道
 `_accessor` 存不存在。
 
-这三个之外不再扩大：pandas 的 `get_handle`、`numpy.load`、`PIL.Image.open`、
+**第四个入口是 numpy 自己的 `DataSource.open`**（2026-09-24）。`np.loadtxt` /
+`np.genfromtxt` 不直接调 open：`DataSource.open` 先用 `os.path.exists` 在 cwd 与它的
+`destpath` 下找文件，找不到当场 FileNotFoundError（"d.txt not found."），根本走不到
+上面三个。而 `databinding.evidence` 对「数据就在脚本旁边」判 `default_ok`、不问用户
+——它的前提正是「沙盒 + 只读回退读得到」，对科学脚本里最常见的这两个读取器前提不成立，
+脚本旁边的 `data.txt` 一行 `np.loadtxt("data.txt")` 就读不到。包在它上面**不是**把回退
+扩到 `exists`：判据与三个 open 入口逐条相同（同一个 `_fallback_path`），外加一条——
+只在 DataSource 的 `destpath` 就是此刻的 cwd 时改指（相对路径那时才与真正的 open 解到
+同一处；自建 `DataSource(destpath=…)` 的不碰）。只包已经 import 过的 numpy：本模块
+纯标准库，不替脚本 import 它（worker 在装回退之前已经经 matplotlib 载入了 numpy）。
+
+这四个之外不再扩大：pandas 的 `get_handle`、`numpy.load`、`PIL.Image.open`、
 `json.load(open(...))` 全部经过它们。`os.open` / `os.stat` 这类底层调用不管
 ——覆盖它们要维护一张平台相关的语义表，收益却只是极少数直接玩 fd 的脚本。
 覆盖不到的那些由 CompatBench 如实记账，不靠猜。
@@ -129,12 +142,17 @@ import json
 import os
 import pathlib
 import re
+import sys
 
 __all__ = [
     "savefig_stem",
     "collect_pyplot_figures",
     "fallback_stems",
     "install_relative_read_fallback",
+    "unused_imports",
+    "reaches_main",
+    "install_unused_import_placeholders",
+    "SIDE_EFFECT_FREE_IMPORTS",
     "InputObserver",
     "observed_local_modules",
     "INPUT_OBSERVER_MAX_FILES",
@@ -601,7 +619,7 @@ def collect_pyplot_figures(
     return stems, dropped
 
 
-#: 输入观察（统一实施包 U09，ADR 0070）：脚本经 Python 的 `open` 读到的项目内文件最多记这么多条；
+#: 输入观察（统一实施包 U09，ADR 0070）：脚本经 Python 的 `open`（与 numpy 的 `DataSource.open`）读到的项目内文件最多记这么多条；
 #: 超过就 `truncated=True`——回执有界，不是全系统审计。
 INPUT_OBSERVER_MAX_FILES = 256
 #: 每个观察到的文件最多为它算 hash 的字节数；再大只记大小，`sha256` 为 None（大文件的 hash 归数据绑定
@@ -627,7 +645,7 @@ def _within(real: str, root: str, *, pathmod=os.path) -> bool:
 
 
 class InputObserver:
-    """记下脚本执行期间经 `builtins.open` / `io.open` / `Path.open` **以只读模式成功打开**的、落在项目根之内的
+    """记下脚本执行期间经 `builtins.open` / `io.open` / `Path.open` / numpy 的 `DataSource.open` **以只读模式成功打开**的、落在项目根之内的
     文件（ExecutionReceipt 的「已观察的数据身份」，ADR 0070）。
 
     观察到的就是观察到的：h5py / netCDF / 自家 C 扩展直接调 `H5Fopen` / `fopen`，`np.memmap` 走 `os.open`，
@@ -645,6 +663,8 @@ class InputObserver:
         self._seen: dict[str, str] = {}  # realpath → 项目相对 POSIX 路径
         self.truncated = False
         self._uninstall = None
+        #: 实际装上了的观察通道（`report()` 的 `channels`）：numpy 没载入时就没有 `numpy_datasource`
+        self._channels: list[str] = []
 
     # ---- 记账 ----
     def _note(self, file) -> None:
@@ -670,7 +690,7 @@ class InputObserver:
             return
 
     def install(self):
-        """装上三处 open 的观察包装；返回卸载函数。"""
+        """装上 open 的观察包装（三处 Python open + numpy 的 `DataSource.open`）；返回卸载函数。"""
         real_open = builtins.open
         real_io_open = io.open
         real_path_open = pathlib.Path.open
@@ -695,10 +715,30 @@ class InputObserver:
         io.open = _wrap(real_io_open)
         pathlib.Path.open = observed_path_open
 
+        # numpy 的 `DataSource.open`（`np.loadtxt` / `np.genfromtxt`）：它的文件打开器在 numpy
+        # 载入时就绑好了**原来的** `io.open`，上面三处包装都看不见它读了什么。记的是它**实际
+        # 打开的那个文件**（文件对象的 `.name`，gzip / bz2 也有）——相对路径由它按自己的
+        # destpath 解，拿请求里的字符串去猜会记错文件。只包已载入的 numpy，不替脚本 import。
+        datasource = getattr(sys.modules.get("numpy.lib._datasource"), "DataSource", None)
+        real_ds_open = getattr(datasource, "open", None)
+
+        def observed_datasource_open(self_ds, path, mode="r", *args, **kwargs):
+            fh = real_ds_open(self_ds, path, mode, *args, **kwargs)
+            if _readonly_mode(mode):
+                observer._note(getattr(fh, "name", None))
+            return fh
+
+        self._channels = ["python_open"]
+        if real_ds_open is not None:
+            datasource.open = observed_datasource_open
+            self._channels.append("numpy_datasource")
+
         def uninstall() -> None:
             builtins.open = real_open
             io.open = real_io_open
             pathlib.Path.open = real_path_open
+            if real_ds_open is not None:
+                datasource.open = real_ds_open
 
         self._uninstall = uninstall
         return uninstall
@@ -728,7 +768,7 @@ class InputObserver:
             files.append(entry)
         return {
             "observation": OBSERVATION_PARTIAL,
-            "channels": ["python_open"],
+            "channels": list(self._channels) or ["python_open"],
             "unobserved": list(INPUT_OBSERVER_UNOBSERVED),
             "truncated": bool(self.truncated),
             "files": files,
@@ -856,6 +896,15 @@ def install_relative_read_fallback(
             return None
         return cand
 
+    def _is_cwd(destpath) -> bool:
+        """DataSource 的 destpath 就是此刻的 cwd：相对路径在它那里与在真正的 open 里是同一处。"""
+        if not isinstance(destpath, str) or not destpath:
+            return False
+        try:
+            return os.path.realpath(destpath) == os.path.realpath(os.getcwd())
+        except OSError:
+            return False
+
     def _readonly(mode) -> bool:
         if not isinstance(mode, str):
             return False
@@ -889,9 +938,289 @@ def install_relative_read_fallback(
     # 3.10 的 pathlib 两个都不走，只好直接包它自己。
     pathlib.Path.open = guarded_path_open
 
+    # 第四个：numpy 的 `DataSource.open`（`loadtxt` / `genfromtxt` 经它读，先 exists 再 open，
+    # 见模块头）。只包已经载入的 numpy，不替脚本 import。
+    datasource = getattr(sys.modules.get("numpy.lib._datasource"), "DataSource", None)
+    real_ds_open = getattr(datasource, "open", None)
+
+    def _datasource_candidates(ds, path) -> list:
+        """numpy 自己会试的那串名字：原名，再依次加 `.gz` / `.bz2` / `.xz` …（`_possible_names`）。
+        `np.loadtxt("values")` 而旁边只有 `values.gz` 时 numpy 照样读得到——回退得按同一串名字找。"""
+        if not isinstance(path, (str, os.PathLike)):
+            return [path]
+        name = os.fspath(path)
+        possible = getattr(ds, "_possible_names", None)
+        try:
+            names = list(possible(name)) if possible is not None else [name]
+        except Exception:  # noqa: BLE001 —— numpy 内部接口变了就只认原名
+            names = [name]
+        return names or [name]
+
+    def guarded_datasource_open(self, path, mode="r", *args, **kwargs):
+        if _readonly(mode) and _is_cwd(getattr(self, "_destpath", None)):
+            names = _datasource_candidates(self, path)
+            # 这串名字里只要有一个在 cwd（沙盒）下存在，numpy 自己就会读到它——不改道
+            # （`_fallback_path` 对单个名字已经是这条判据，这里把它扩到整串）
+            if not any(isinstance(n, str) and os.path.exists(n) for n in names):
+                for n in names:
+                    alt = _fallback_path(n)
+                    if alt is not None:
+                        return real_ds_open(self, alt, mode, *args, **kwargs)
+        return real_ds_open(self, path, mode, *args, **kwargs)
+
+    if real_ds_open is not None:
+        datasource.open = guarded_datasource_open
+
     def uninstall() -> None:
         builtins.open = real_open
         io.open = real_io_open
         pathlib.Path.open = real_path_open
+        if real_ds_open is not None:
+            datasource.open = real_ds_open
 
     return uninstall
+
+
+# ---------------------------------------------------------------- 未使用的缺失 import
+
+#: 只有这些顶级模块会被判「未使用」（评审 #555 两条 P1）：绑定没被读**证明不了** import 没用——
+#: 别名同样可以只为副作用而写：`import cmocean as cm` 注册色图、`import scienceplots as _sp` 注册样式、
+#: `import requests as _r` 改 warnings 过滤器并装 logging handler。占位不执行这些，之后的行为就悄悄
+#: 变了（或报一句误导的错），而不是「请装它」。
+#: 判据是一份**进程级副作用快照**（唯一出处 `tests/support/import_side_effects.py`）：全新解释器
+#: `-I` 里 import 前后比 matplotlib 是否进 `sys.modules`、`os.environ`、warnings 过滤器、logging、
+#: `sys.path` / `meta_path` / `path_hooks`、信号处理器、各 excepthook / displayhook、atexit、builtins、
+#: codec 注册与 locale……**任何一项变了就不进**。实测（Python 3.13 / matplotlib 3.11.2，2026-09-24）
+#: 16 个候选只剩下面 6 个：requests / astropy / sklearn 装 logger handler，numba / joblib / h5py /
+#: xarray / netCDF4 / openpyxl / numexpr 改 warnings 过滤器、atexit、环境变量或 meta_path；cmocean /
+#: scienceplots / colorcet / cmasher / seaborn / lmfit 还会装 matplotlib。sympy 唯一的变化是给它
+#: **自己的** `SymPyDeprecationWarning` 加的过滤器（包不在，这个类就不存在）——快照里唯一的豁免。
+#: 表外的名字一律照旧准备——宁可多问一次，不猜；扩名单要用同一份快照实测。
+#: `tests/test_unused_missing_import.py` 在 worker 解释器里对装了的那些现量一遍。
+SIDE_EFFECT_FREE_IMPORTS = frozenset(
+    {"sympy", "tqdm", "statsmodels", "networkx", "tabulate", "yaml"}
+)
+
+#: 出现任何一个就判不清「名字有没有被读」：`globals()["smp"]` / `vars()` / `eval("smp")` /
+#: `exec(...)` / `__import__` / `compile` / `m.__dict__` 都能不经 Name 节点读到绑定。
+_OPAQUE_NAMES = frozenset(
+    {"globals", "vars", "locals", "eval", "exec", "compile", "__import__", "__dict__"}
+)
+
+
+def unused_imports(tree) -> frozenset[str]:
+    """脚本里**被 import 了、但绑定的名字从未被读取**的顶级模块名——判不清的一律不算。
+
+    「未使用的缺失 import 不挡图」（ADR 0061 §二 2026-09-24 修订）的唯一判据：父进程
+    （`importscan` → 联合计划不把它算进 needed）与 worker（`install_unused_import_placeholders`
+    的名单）各调一次。只认 AST 能证明的形状，任一条不成立就不收：
+
+    * 这个模块在脚本里出现的**每一处**都是 `import X as Y`，X 不带点（`import X.sub` 要真装载
+      子模块；`from X import …` 本身就是在用它）。**裸 `import X` 一律不收**：没读过的裸 import
+      常常是为了副作用（`import scienceplots` 之后 `plt.style.use("science")`、`import cmocean` 注册
+      色图）——占位会把「请装 scienceplots」换成一句看不懂的「样式不存在」。起了别名 = 写的人
+      打算用那个名字，一次没用才是遗留；
+    * X 在 `SIDE_EFFECT_FREE_IMPORTS` 里——别名同样可以只为副作用而起（`import cmocean as cm`），
+      所以「绑定没读」之外还要「import 它本身什么都不改」，这一条只能靠实测过的名单；
+    * 这些 import 都不在 `try` / `with` 里（`try: import X; HAVE_X = True` 的分支走向
+      取决于它 import 得到与否——占位会把「没装」变成「装了」）；
+    * 绑定的名字（Y 或 X）在别处**一次都不出现**：Name（读 / 写 / 删）、形参、
+      global / nonlocal、函数 / 类名、except 名、match 捕获、别的 import 的绑定、属性名、
+      关键字参数名，一律算出现（宁可多判「用到了」）；
+    * X 与绑定名都不作为字符串常量出现（`sys.modules["X"]` / `importlib.import_module("X")` /
+      `getattr(mod, "Y")` / `__all__`）；
+    * 脚本里没有 `_OPAQUE_NAMES` 里的任何一个（出现就整份放弃：判不清）。
+
+    判据只看脚本自己这一份文件：本地模块里的 import 不在这里判（它们照旧按 needed 走）。
+    """
+    import ast  # noqa: PLC0415 — 只有这里用，worker 与 Flask 侧都是标准库
+
+    guarded: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Try, ast.With, ast.AsyncWith)) or type(node).__name__ == "TryStar":
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Import):
+                    guarded.add(id(inner))
+
+    candidates: dict[str, set[str]] = {}  # 顶级模块名 → 绑定名
+    rejected: set[str] = set()
+    own_aliases: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".", 1)[0]
+                if alias.asname is None or "." in alias.name or id(node) in guarded:
+                    rejected.add(top)
+                    continue
+                candidates.setdefault(top, set()).add(alias.asname or alias.name)
+                own_aliases.add(id(alias))
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            rejected.add(node.module.split(".", 1)[0])
+
+    seen: set[str] = set()
+    strings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            seen.add(node.id)
+        elif isinstance(node, ast.arg):
+            seen.add(node.arg)
+        elif isinstance(node, ast.Attribute):
+            seen.add(node.attr)
+        elif isinstance(node, ast.keyword) and node.arg:
+            seen.add(node.arg)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            seen.update(node.names)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            seen.add(node.name)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            seen.add(node.name)
+        elif isinstance(node, ast.alias) and id(node) not in own_aliases:
+            seen.add(node.asname or node.name.split(".", 1)[0])
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            strings.add(node.value)
+        else:
+            for attr in ("name", "rest"):  # match 的捕获（MatchAs / MatchStar / MatchMapping）
+                value = (
+                    getattr(node, attr, None) if type(node).__name__.startswith("Match") else None
+                )
+                if isinstance(value, str):
+                    seen.add(value)
+    if seen & _OPAQUE_NAMES:
+        return frozenset()
+
+    def _mentioned(text: str) -> bool:
+        return any(s == text or s.startswith(text + ".") for s in strings)
+
+    out = set()
+    for top, bound in candidates.items():
+        if top not in SIDE_EFFECT_FREE_IMPORTS or top in rejected or _mentioned(top):
+            continue
+        if any(name in seen or _mentioned(name) for name in bound):
+            continue
+        out.add(top)
+    return frozenset(out)
+
+
+#: 本地模块里出现这些名字（Name 或属性）就可能借到脚本的全局：`sys._getframe(1).f_globals["smp"]`、
+#: `inspect.currentframe().f_back.f_globals`、`inspect.stack()`。
+#: `stack` 单列：`np.stack` 太常见，只认 `inspect.stack` 与 `from inspect import stack`。
+_FRAME_NAMES = frozenset({"_getframe", "currentframe", "f_globals", "f_locals", "f_back"})
+
+
+def reaches_main(tree, script_stem: str) -> bool:
+    """一个被跟进的**本地模块**能不能够到脚本自己的命名空间（评审 #555 P2）——能就说明脚本的别名可能
+    被它借走（`from __main__ import smp` 之后 `smp.Symbol(...)`），「脚本里没读」不再证明没用到。
+
+    `importscan` 对每个跟进到的本地模块调一次；任何一个为真，脚本的全部 `unused` 一律作废（按整份脚本、
+    不按名字：`from __main__ import *`、`getattr(__main__, 变量)`、经栈帧取 globals 都给不出名字，按名字
+    精确保留在静态上做不完备）。认的形状：
+
+    * `import __main__` / `from __main__ import …`；以及 import 脚本自己的模块名（`entry` 不是 `__main__`
+      时脚本是按 stem 作为模块 import 的，`from plot import smp` 同样借得到）；
+    * 字符串常量 `"__main__"` 或脚本的 stem（`sys.modules["__main__"]`、`import_module("__main__")`）——
+      **`__name__ == "__main__"` 那种入口守卫里的不算**，否则带入口守卫的本地模块全都会被误判；
+    * 经栈帧取调用方的全局（`_FRAME_NAMES`）。
+    """
+    import ast  # noqa: PLC0415
+
+    targets = {"__main__", script_stem}
+    guard_constants: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            sides = [node.left, *node.comparators]
+            if any(isinstance(x, ast.Name) and x.id == "__name__" for x in sides):
+                guard_constants.update(id(x) for x in sides if isinstance(x, ast.Constant))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name.split(".", 1)[0] in targets for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if not node.level and (node.module or "").split(".", 1)[0] in targets:
+                return True
+            if node.module == "inspect" and any(a.name == "stack" for a in node.names):
+                return True
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value in targets and id(node) not in guard_constants:
+                return True
+        elif isinstance(node, ast.Name) and node.id in _FRAME_NAMES | {"__main__"}:
+            return True
+        elif isinstance(node, ast.Attribute) and (
+            node.attr in _FRAME_NAMES
+            or (
+                node.attr == "stack"
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "inspect"
+            )
+        ):
+            return True
+    return False
+
+
+def install_unused_import_placeholders(script: str, names) -> None:
+    """让脚本里**被证明未使用**（`unused_imports`）又确实装不上的那几条 `import X` 成功。
+
+    只在四条同时成立时换成占位模块，其余一律原样交给真正的 `__import__`：
+
+    * 发起 import 的是脚本自己（调用方 globals 的 `__file__` 就是这个脚本）——库里的
+      `try: import X except ImportError` 永远看不到占位；
+    * `level == 0`、没有 fromlist、名字在名单里；
+    * 真的 import 抛了 `ModuleNotFoundError` 且缺的就是 X 本身（这一条只是短路：X 装了、它的依赖坏了时
+      异常名是那个依赖，不必再问 `find_spec`——真正挡住这种情形的是下一条，X 找得到）；
+    * **而且 import 系统确实找不到它**：`importlib.util.find_spec(X) is None`（评审 #555 P2）。`exc.name == X`
+      只说明异常这么写着——一个找得到的同名模块（项目里的 `sympy.py`）初始化到一半自己抛
+      `ModuleNotFoundError(name="sympy")`，它已经执行过的副作用不会因为占位而撤销，失败必须照常抛出。
+      顶层名的 `find_spec` 只问 finder、不执行模块代码；它自己抛任何异常都按「判不清」处理，照常抛出。
+
+    占位**不进 `sys.modules`**（别处再 import X 仍然是真实的失败）；读它的任何非 dunder
+    属性抛 `ModuleNotFoundError("No module named 'X'")`——判据若错了，失败形状与原来逐字
+    相同，运行后的缺包修复照旧接手。装了就不卸：脚本定义的函数在渲染期仍可能执行 import。
+    """
+    import importlib.util  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+    import types  # noqa: PLC0415
+
+    names = frozenset(names or ())
+    if not names:
+        return
+    real_import = builtins.__import__
+    target = os.path.normcase(os.path.realpath(script))
+    verdict: dict[str, bool] = {}
+
+    def _from_script(globals_) -> bool:
+        file = globals_.get("__file__") if isinstance(globals_, dict) else None
+        if not isinstance(file, str):
+            return False
+        if file not in verdict:
+            verdict[file] = os.path.normcase(os.path.realpath(file)) == target
+        return verdict[file]
+
+    class _Unused(types.ModuleType):
+        def __getattr__(self, attr):
+            if attr.startswith("__") and attr.endswith("__"):
+                raise AttributeError(attr)
+            raise ModuleNotFoundError(f"No module named '{self.__name__}'", name=self.__name__)
+
+    def _not_findable(name: str) -> bool:
+        """区分「import 系统没找到」与「找到了、loader 执行时自己抛了同名的错」：只有前者给占位。"""
+        try:
+            return importlib.util.find_spec(name) is None
+        except Exception:  # noqa: BLE001 — 判不清就不给占位
+            return False
+
+    def _import(name, globals=None, locals=None, fromlist=(), level=0):
+        if level or fromlist or name not in names or not _from_script(globals):
+            return real_import(name, globals, locals, fromlist, level)
+        try:
+            return real_import(name, globals, locals, fromlist, level)
+        except ModuleNotFoundError as exc:
+            # `exc.name != name` 只是省一次 find_spec 的短路；判据是「import 系统找不到 X」
+            if exc.name != name or not _not_findable(name):
+                raise
+            print(
+                f"[deps] {name} 没有安装；脚本 import 了它但没有用到，已用占位代替"
+                f"（真用到时会报 No module named '{name}'）",
+                file=sys.stderr,
+            )
+            return _Unused(name)
+
+    builtins.__import__ = _import

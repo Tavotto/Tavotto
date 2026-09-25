@@ -399,8 +399,31 @@ export const openProjectApi = (path: string, create = false) =>
     body: JSON.stringify({ path, create }),
   })
 
-export const fetchRecentProjects = () =>
-  jsonFetch<{ recent: RecentProject[] }>('/api/projects/recent').then((r) => r.recent)
+/**
+ * 最近与收藏两份列表（同一个端点、同一种条目）。收藏是左栏「工作区」抽屉的；
+ * 老后端没有这个字段——当成「没有收藏」，而不是整份请求失败。
+ */
+export const fetchProjectLists = () =>
+  jsonFetch<{ recent: RecentProject[]; pinned?: RecentProject[] }>('/api/projects/recent').then(
+    (r) => ({ recent: r.recent, pinned: r.pinned ?? [] }),
+  )
+
+/**
+ * 对收藏列表做**一个操作**，回新列表。按路径认对象、由后端对照最新那份执行
+ * （`config.edit_pinned`）——不发整张列表：两个标签页各自从旧列表算出的整张列表
+ * 会互相盖掉，按下标排队的挪动也会移错项。
+ */
+export type PinnedOp =
+  | { op: 'add' | 'remove'; path: string }
+  | { op: 'move'; path: string; delta: number }
+  | { op: 'move'; path: string; to_path: string }
+
+export const postPinnedOp = (op: PinnedOp) =>
+  jsonFetch<{ pinned: RecentProject[] }>('/api/projects/pinned', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(op),
+  }).then((r) => r.pinned)
 
 export const removeRecentProject = (path: string) =>
   jsonFetch<{ ok: boolean }>('/api/projects/remove', {
@@ -1527,8 +1550,9 @@ export interface ManifestElement {
   anchor?: [number, number]
   drag_prop?: string
   /**
-   * 图内独立箭头（脚本 add_patch 的 FancyArrowPatch）的两个端点
-   * （figure 分数、y 向下）。有它 = 可整体拖动、可拖单个端点，
+   * 图内箭头的两个端点 [尾, 头]（figure 分数、y 向下）：脚本 add_patch 的独立
+   * FancyArrowPatch，以及纯箭头注释 `annotate("", xy=…, xytext=…)`（引擎改的是注释的
+   * 两个锚点；有字的注释不出）。有它 = 可整体拖动、可拖单个端点，
    * 写 endpoints_frac override（[ax, ay, bx, by]）。
    */
   arrow_endpoints?: [number, number][]

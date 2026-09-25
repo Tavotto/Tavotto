@@ -74,7 +74,7 @@ _PSEUDONYM_KEYS = ("install_id", "anonymous_id", "distinct_id")
 #: 用户自己的「东西清单」：项目名 + 路径逐条列着，对排障零帮助，
 #: 对隐私却是实打实的暴露面（用户在往 issue 上贴自己所有课题的名字）。
 #: 只留条数。当前打开的那个项目仍在 report.json 的 project 段里。
-_USER_INVENTORY_KEYS = ("recent_projects", "projects")
+_USER_INVENTORY_KEYS = ("recent_projects", "pinned_projects", "projects")
 
 
 def _install_id() -> str:
@@ -143,7 +143,10 @@ def project_roots(project: dict | None = None) -> list[tuple[str, str]]:
     if project and isinstance(project.get("figures_dir"), str):
         paths.append(project["figures_dir"])
     try:
-        paths += [e["path"] for e in config.load().get("recent_projects", [])]
+        cfg = config.load()
+        # 收藏与最近列表是同一种东西（用户自己的项目路径），两份都要换成记号
+        for key in ("recent_projects", "pinned_projects"):
+            paths += [e["path"] for e in cfg.get(key, [])]
     except Exception:  # noqa: BLE001 — 配置读不出来不该拖垮诊断
         pass
     out: list[tuple[str, str]] = []

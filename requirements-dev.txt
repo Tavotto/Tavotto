@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest==9.0.3
+# 测试的独立读取器（退役的 PyMuPDF，ADR 0072 / D15）：只在这里与 pyproject 的 legacy-pymupdf extra 里，
+# 绝不进 requirements.txt——那份是应用闭包。
+pymupdf==1.28.2

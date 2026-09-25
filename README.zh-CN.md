@@ -251,16 +251,15 @@ pipx install "tavotto[worker]"
 然后**关闭当前 Codex 会话并新开一个会话**。插件的 skill 与 MCP 工具不会在已经
 打开的会话里热重载。
 
-**Windows 上还要再跑一条**（macOS / Linux 不需要）：
+**Windows 上若「插件已启用，工具一个都没有」**（升级插件后又出现也一样），再跑一条：
 
 ```sh
 tavotto codex install
 ```
 
-**升级插件之后要再跑一次。** 插件钉的启动命令是 `python3`，Windows 上这个名字
-常常是微软商店的别名——命令在、却起不来，表现是「插件已启用，工具一个都没有」。
-这条命令会真的跑一遍看启动器起不起得来，起不来就把已装副本的启动命令换成一个
-验证过的解释器（`tavotto codex doctor` 只诊断不改）。成因与症状见
+插件用自带的启动器起 MCP server：它会找一个真能跑的 Python，并跳过微软商店的
+`python3` 别名；一个都找不到时，这条命令把已装副本的启动命令钉到一个验证过的
+解释器（`tavotto codex doctor` 只诊断不改）。成因与症状见
 [`codex-plugin/README.md`](codex-plugin/README.md)。
 
 新会话里可以直接说：
@@ -353,7 +352,8 @@ Windows 约 89 MB，装完约半个 GB**。只付一次，而且完全离线。
 
 > macOS 版**按架构各发一个 `.dmg`**，各自在对应架构的机器上原生构建和冒烟；
 > 按你的 Mac 选（Apple 菜单 →「关于本机」：写「芯片」的是 Apple Silicon，写「处理器 … Intel」的是
-> Intel）。没有 Linux 安装包；Linux 走 PyPI（浏览器模式，beta）。
+> Intel）。系统要求：**Apple Silicon 需 macOS 14 及以上，Intel 需 macOS 15 及以上**——这条下限来自
+> 渲染器自带的 PDF 库（pikepdf / PDFium）。没有 Linux 安装包；Linux 走 PyPI（浏览器模式，beta）。
 > Windows 安装包是否经过代码签名，以各版 Release 页的说明为准；未签名的安装包
 > 首次运行会弹 **SmartScreen** 提示（点「更多信息 → 仍要运行」，或先对照
 > Release 页的 `SHA256SUMS.txt` 核验下载）。支持 / beta / 不支持的唯一权威
@@ -410,6 +410,7 @@ tavotto
 ```sh
 git clone https://github.com/Tavotto/Tavotto.git && cd Tavotto
 python -m venv .venv && .venv/bin/pip install -e ".[worker,dev]"
+.venv/bin/python scripts/fetch_fonts.py   # 批准字体（不进 git）
 python scripts/build_frontend.py
 .venv/bin/tavotto
 ```

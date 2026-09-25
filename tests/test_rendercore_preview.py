@@ -545,6 +545,22 @@ def test_a_result_being_handed_out_by_another_get_survives_a_concurrent_pruner(c
     assert c.prune() == 1 and not result["a"].exists()  # 都 return 了没人钉着：再 prune 才删得动 A
 
 
+def test_a_held_result_survives_prune_until_the_caller_releases_it(cache, tmp_path):
+    """Codex #539：从 `get()` 返回到调用方打开文件之间，别的请求的 prune 可以删掉它。`hold=True` 让交出的文件
+    继续钉着，直到调用方 `release()`。对照组（不 hold）同样的 prune 当场删掉——尺子是活的。"""
+    c, host = cache
+    src = _pdf(tmp_path)
+    held = c.get("figs/a.pdf", src, 400, hold=True)
+    loose = c.get("figs/a.pdf", src, 200)
+    c.max_bytes = 1
+    c.prune()
+    assert held.exists(), "hold 住的成品被 prune 删了"
+    assert not loose.exists(), "对照组没被删：预算没起作用，这条什么都没验"
+    c.release(held)
+    c.prune()
+    assert not held.exists(), "release 之后应当删得动"
+
+
 def test_prune_leaves_in_flight_part_files_and_the_just_published_one_alone(cache, tmp_path):
     """Codex #471 第五轮 P2：`prune()` 的 glob 会把别人正在写的 `<key>.<pid>-<tid>.part.png` 当缓存删掉——那个
     请求随后在 `os.replace` 上 FileNotFoundError；预算够小时连刚发布、马上要交出去的那张也删。现在只认成品名

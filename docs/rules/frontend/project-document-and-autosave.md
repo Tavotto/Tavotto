@@ -15,13 +15,43 @@
 - 文档模型可选字段（schema 仍为 2，旧文档兼容）：
   `PanelObject.lockedGids / flipH / flipV`、`ObjectBase.layoutPinned`、
   `FigureDocument.layoutGroups`（行/列/网格约束，id 即 groupId，
-  尺寸变化自动重排、undo/redo 不触发）。
+  尺寸变化自动重排）。**自动重排只跟用户编辑**（`startLayoutAutoReflow`，按
+  `historyMove` 在栈上认：新条目 = 编辑，条目在 past / future 间挪格 = 撤销 / 重做，
+  `loadSeq` / 画布换了 = 换文档）：撤销 / 重做 / 载入 / 切画布之后、下一次用户编辑
+  之前，文档停在历史的某一格上，这期间不进历史的写入（渲染同步 silent 补图幅、文字
+  自适应高度）只记尺寸不重排——重排是一条 commit，会清空 future、给打开的文档添
+  一条用户没做过的历史。紧跟在用户编辑之后的派生同步（改图幅 override → 渲染回来
+  → 补图幅）照常重排。事务松手（`endTxn` 不换 doc 引用）从栈上认，不看 doc；
+  收尾修正在事务还开着时写，与松手那条是同一次编辑，不单独触发。防抖窗口里被撤销作废的
+  重排锚在作废那一刻最新的一条历史上（按条目身份），重做一路放回到那一条时补上；
+  只重做到更早的一条不补——补排是 commit，会冲掉 future 里的新条目。
 - **撤销防线（2026-08-17，数据损坏级）**：`txnUpdate` 在无事务时**丢弃更新**
   ——绝不静默直写 doc（拖动中事务被外部 endTxn/undo 结束后，pointermove 落进
   静默分支 = 位移绕过历史、撤销永远找不回，真实用户撞见过）。一切撤销入口
   （键盘 / 顶栏按钮 / 桌面菜单加速键）必须走 `runUndoRedo`（带
   undoRedoBlocked 守卫）；undo/redo 的 applyPatches 有 try/catch，坏补丁丢弃
   该条而不是让栈与文档错位。
+- **事务收尾修正（2026-09-24，#543 评审）**：`documentStore.registerTxnFinalizer(fn)`
+  登记一个 recipe；`endTxn` 在把事务压成**一条历史之前**依次跑一遍登记过的修正，
+  改动并进这条事务（与手势本身同一条撤销记录）。**丢弃的事务不跑**（`discard` 或
+  没有补丁）：回滚后由派生方自己 silent 补。它给「手势进行中不许写、手势结束时
+  必须和手势一起进历史」的派生值用——中途写不行，缩放 / 裁剪 / 属性栏数值拖动都在
+  按下时抓了几何、每帧按它写绝对的 w/h，会把中途的派生修正盖回去；手势后 silent
+  写也不行，不在这条历史里，撤销 / 重做 / 取消就不自洽。第一个使用者是
+  `useEngineSync` 的**原生图幅同步**：事务开着时一个字都不写（`txnOpen` 在 effect
+  依赖里，空事务回滚不换 doc 也能补上），收尾时按同一比例把 w/h 换到新图幅；
+  撤销整体回到手势前的旧图幅（同步器随即 silent 补一次），重做回到松手那一刻。
+  **锚点是这一处换算的参数**：手势开事务后用 `setTxnAnchor(id, 页面点)` 登记它刻意
+  钉住的那一点（缩放 = 被拖手柄的对侧手柄：角柄取对角，边柄取对边的中点——
+  另一轴取中点，否则两轴图幅同时变时对边手柄会漂；裁剪 = 未裁剪整图的中心），收尾修正用
+  `txnAnchorOf(id)` 读出来传给换算；换算先算新的 w/h，再让包围盒绕锚点按同一对比例
+  伸缩反推 x/y——**只有这一处写 x/y**，别处不另写位置修正。没登记（数值拖动、
+  事务外的 silent 同步）= 默认锚点左上角，x/y 不动。锚点只活在当前事务里：开新事务、
+  事务结束（含丢弃）都清空。
+  **已知代价**：渲染在手势中途回来时，画布上的框到松手那一刻才换比例（中途仍按
+  旧图幅的纵横比）。看护：`hooks/useEngineSync.test.ts` 的「几何事务进行中收到
+  改了图幅的渲染」「渲染到达之后又有拖动帧」两组（真实 `startResizeDrag` /
+  `startCropDrag` 驱动，含西 / 北边柄单轴与两轴图幅变化、裁剪整图锚点）。
 - **自动保存**：磁盘为主（`PUT /api/autosave/<docId>` 原子写
   `layouts/_autosave/`），localStorage 只留索引 + 崩溃兜底副本
   （写盘成功即清、读取按 updatedAt 取新）。失败发
@@ -57,7 +87,7 @@
 - **派生字段 vs 用户数据**（`panelSourceSync.ts` 的表）：只有
   `script` / `cost` / `fileKind` / `pxW` 由 `/api/panels` 说了算；
   几何、`nativeW/nativeH`、crop、rotation、overrides、成组、锁定、选择一律
-  不碰。**图幅不是派生字段**——它是几何（`useEngineSync` 盯着它调 `h`），
+  不碰。**图幅不是派生字段**——它是几何（`useEngineSync` 盯着它按同一比例调 `w/h`，事务中推迟到收尾），
   而且权威在这个变体自己渲染回来的 manifest 上，不在磁盘文件上。runtime 面板
   整个跳过（`runtime:` 前缀的 id 永远不在 `/api/panels` 里）。
   **素材不在清单里 ≠ 脚本关系失效**：前者只记 `missing`、对象一个字节不动

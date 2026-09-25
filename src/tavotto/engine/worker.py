@@ -22,7 +22,7 @@
       {"cmd":"build"}                                → 导入脚本、跑入口、捕获全部 Figure
       {"cmd":"override","stem":s,"patches":[...]}    → 应用全量 override，重导出预览 SVG
       {"cmd":"export","stem":s,"patches":[...],
-       "path":p,"format":"pdf","dpi":600}            → 全质量导出（供 PyMuPDF 合成）
+       "path":p,"format":"pdf","dpi":600}            → 全质量导出（供画布合成）
       {"cmd":"ping"} / {"cmd":"shutdown"}
 
 安全措施：
@@ -366,7 +366,7 @@ class Worker(wireproto.V1Handler):
         # 写法在 `python figure.py` 下是天经地义的。只读、只在沙盒里确实没有
         # 这个文件时、且换算后仍落在图库内才生效——写/删/改一个字节都不经过
         # 它，沙盒作为**写入**边界完全没有松动（语义与理由见 figcapture）。
-        # 输入观察（U09，ADR 0070）：脚本经 Python `open` 只读打开的项目内文件记进回执（数据身份）。
+        # 输入观察（U09，ADR 0070）：脚本经 Python `open` / numpy `DataSource.open` 只读打开的项目内文件记进回执（数据身份）。
         # **先于**只读回退装——回退换出来的那条路径经它记下，正是脚本实际读到的那份。装了就不卸：
         # 卸会把叠在外层的回退一起摘掉；观察器只记不改，留着也只是多几条项目外的忽略。
         self._input_observer = figcapture.InputObserver(str(self.figures_dir))
@@ -388,6 +388,17 @@ class Worker(wireproto.V1Handler):
         # **排在 paper_style 之前**：那份私有模块也是用户代码，import 期间就可能
         # 解析参数（评审 #443）。
         sys.argv = [str(self.script)]
+
+        # 脚本 import 了却从未用到、又没装的包不挡图（ADR 0061 §二 2026-09-24 修订）：判据与
+        # 父进程的联合计划同一份（`figcapture.unused_imports`）——计划没要求装它，这里就得让
+        # 那一行 import 过得去。读不了 / 解析不了就不装：脚本随后会以它自己的错误结束。
+        try:
+            import ast  # noqa: PLC0415
+
+            unused = figcapture.unused_imports(ast.parse(self.script.read_bytes()))
+        except (OSError, SyntaxError, ValueError):
+            unused = frozenset()
+        figcapture.install_unused_import_placeholders(str(self.script), unused)
 
         t_script = time.perf_counter()
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /

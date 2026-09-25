@@ -29,8 +29,8 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   （「平铺列表要让出哪几条」）**从这张表算出来，不手抄**。
 * **画布文字的字体族是闭集**（`serif` / `sans-serif` / `monospace`），与
   `pdfbackend.CANVAS_TEXT_FAMILIES` 严格同源（顺序也比）。合成跑在没有
-  matplotlib 的 Flask 进程里，画得出来的就是 PyMuPDF 的 base-14；摆一个画不
-  出来的选项 = 静默替换。`TextObject.fontFamily` 是**可选字段**，缺席 = 没设过
+  matplotlib 的 Flask 进程里，画得出来的就是批准字体集合里的 Liberation 三族
+  （ADR 0060 / 0072）；摆一个画不出来的选项 = 静默替换。`TextObject.fontFamily` 是**可选字段**，缺席 = 没设过
   = 继承默认族，回到默认值时**删字段**。
 * **写入**：invalid 输入不开事务、不 commit、不进历史，校验**不 clamp**；
   连续输入合并成一条历史，且 `write()` **自己会开一轮**——打字那条路没有

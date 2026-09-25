@@ -885,7 +885,11 @@ def _interpreter_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -
             code=ERR_INTERPRETER,
             detail=f"读不出 {mcp_path} 里的 mcpServers[...].command",
         )
-    ok, detail = launcher_starts(command, server)
+    # 发行件的 command 是插件自带的 `./mcp/launch.cmd`（#266）：Codex 按 `.mcp.json` 的
+    # `cwd`（插件根）解析它，这里也必须按插件根解析——按本进程的 cwd 解析会把一个
+    # 好好的启动器判成「起不来」，然后把它换掉。
+    runnable = str(plugin_dir / command[2:]) if command.startswith("./") else command
+    ok, detail = launcher_starts(runnable, server)
     if ok:
         return _step("interpreter", ok=True, skipped=True, detail=f"`{command}`：{detail}")
     if not apply:

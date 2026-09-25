@@ -18,7 +18,8 @@
    都要**——没有它，用户得先自己装 Python，而这正是这条链要消灭的东西。
    已有一份且平台/锁文件都对得上时直接复用（重建一次要下 25 MiB + 装 300 MiB）。
 5. sidecar：PyInstaller onedir（packaging/tavotto.spec，刻意不含 matplotlib，
-   不用 onefile——科学场景的启动解压等不起）→ dist/Tavotto/。同一份 Analysis
+   不用 onefile——科学场景的启动解压等不起）→ dist/Tavotto/。之前先按 allowlist 取
+   批准字体（scripts/fetch_fonts.py，U10 起 RenderCore 是默认渲染后端，字体随包走）。同一份 Analysis
    里还出一个 console 版 `tavotto-cli`，那是外部程序（Codex 插件）唯一能当
    命令行调的入口——GUI 子系统的 exe 没有 stdout，交接的 JSON 会落进 app.log。
 6. Tauri：pnpm dlx @tauri-apps/cli build，把 dist/Tavotto 作为资源打进壳
@@ -34,6 +35,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -194,6 +196,10 @@ def main() -> None:
     run([sys.executable, str(ROOT / "scripts" / "build_frontend.py")])
     build_workerd()
     build_runtime(args.skip_runtime, args.rebuild_runtime)
+    # 批准字体（U10，ADR 0060 / 0072）：不进 git，按 allowlist 的 sha256 取到 src/tavotto/resources/fonts/，
+    # tavotto.spec 的 `resources/` datas 整棵带走；spec 自己还会再核一遍，缺了拒绝打包。
+    run([sys.executable, str(ROOT / "scripts" / "fetch_fonts.py")])
+    run([sys.executable, str(ROOT / "scripts" / "fetch_fonts.py"), "--check"])
     run(
         [
             sys.executable,
@@ -308,9 +314,27 @@ def main() -> None:
     if not os.environ.get("TAURI_SIGNING_PRIVATE_KEY"):
         print("* 没有 TAURI_SIGNING_PRIVATE_KEY：本次不产出更新包（安装包照打）")
         cmd += ["--config", json.dumps({"bundle": {"createUpdaterArtifacts": False}})]
+    arch_config = tauri_arch_config()
+    if arch_config:
+        print(f"* macOS x86_64：叠 {INTEL_TAURI_CONFIG.name}（最低系统 15.0）")
+    cmd += arch_config
     run(cmd)
     out = ROOT / "src-tauri" / "target" / "release" / "bundle"
     print(f"* 产物目录: {out}")
+
+
+#: Intel 腿叠在 tauri.conf.json 上的配置（最低 macOS 15.0；ADR 0072 §2）。**与 desktop-tauri.yml 同一个文件**：
+#: CI 与本地构建走同一条判据，不然本地 Intel 构建拿到的是 Apple Silicon 的 14.0（Codex #539）。
+INTEL_TAURI_CONFIG = ROOT / "src-tauri" / "tauri.intel.conf.json"
+
+
+def tauri_arch_config(system: str | None = None, machine: str | None = None) -> list[str]:
+    """按目标平台挑 Tauri 的叠加配置：只有 macOS x86_64 叠 Intel 那份；其余（Apple Silicon、Windows）用默认。"""
+    system = sys.platform if system is None else system
+    machine = (platform.machine() if machine is None else machine).lower()
+    if system == "darwin" and machine in ("x86_64", "amd64"):
+        return ["--config", str(INTEL_TAURI_CONFIG)]
+    return []
 
 
 if __name__ == "__main__":

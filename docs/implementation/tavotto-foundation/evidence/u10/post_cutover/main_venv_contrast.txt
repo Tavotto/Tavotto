@@ -1,0 +1,5 @@
+渲染后端不可用: 缺 RenderCore 的运行时依赖 ['pypdfium2']：pip install -r requirements.txt（U10 起是运行时依赖，不是 extra；闭包不完整的安装物不该发出去——ADR 0072）
+default: rendercore
+text_width -> CandidatePackagesMissing 缺 RenderCore 的运行时依赖 ['pikepdf', 'fontTools', 'uharfbuzz']：pip install -r requirements.txt（U10 起是运行时依赖，不是 extra；闭包不完整的安装物
+/api/render -> 500 {"code": "backend_unavailable", "error": "缺 RenderCore 的运行时依赖 ['pypdfium2']：pip install -r requirements.txt（U10 起是运行时依赖，不是 extra；闭包不完整的安装物不该发出去——ADR 0072）", "pa
+/api/export -> 500 export_failed {"code": "export_failed", "params": {"error": "缺 RenderCore 的运行时依赖 ['pikepdf', 'fontTools', 'uharfbuzz']：pip install -r requirements.txt（U10 起是运行时依赖，不是 extra；闭包

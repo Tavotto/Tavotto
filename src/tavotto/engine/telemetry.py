@@ -2,7 +2,7 @@
 
 设计取舍，每一条都有理由：
 
-- **没有 PostHog SDK**。Flask 父进程的依赖只有 flask + pymupdf（见 CLAUDE.md
+- **没有 PostHog SDK**。Flask 父进程的依赖只有 flask + packaging + RenderCore 的几个包（见 AGENTS.md
   的「进程与依赖边界」）。为了埋点往那儿加一个分析 SDK，等于让一个可选的、
   失败无所谓的功能拥有让主进程起不来的权力。`urllib.request` 够用。
 - **默认不发**。同意态是**三档** unset / enabled / disabled——「没设置」不等于
@@ -313,11 +313,11 @@ def public_settings() -> dict:
 
 
 def _save(patch: dict) -> dict:
-    with _LOCK:
-        cfg = config.load()
+    # 模块锁管本模块的其它状态；配置的读-改-写走 config 的共享事务（与收藏、最近
+    # 列表等所有写入方同一把锁，Codex #550）。锁序固定：模块锁 → config 锁
+    with _LOCK, config.transaction() as cfg:
         merged = {**(cfg.get("telemetry") or {}), **patch}
         cfg["telemetry"] = {k: v for k, v in merged.items() if v is not None}
-        config.save(cfg)
     return settings()
 
 

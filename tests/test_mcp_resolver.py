@@ -608,3 +608,332 @@ def test_degraded_health_reports_what_provision_would_build_on(tmp_path, monkeyp
     assert report["provision"]["base"] is None
     assert report["provision"]["tried"] == tried
     assert any("no_supported_python" in n for n in report["notes"])
+
+
+# ------------------------- 自管环境落后于插件（#487） -------------------------
+def _stale_resolution(tmp_path) -> dict:
+    """自管 venv 的解释器在、却 import 不过——插件升级后环境还是上一版引擎的形状。"""
+    managed = _touch_exe(Path(launcher.managed_python()))
+    return {
+        "python": None,
+        "source": None,
+        "tried": [
+            {"python": managed, "source": "managed", "exists": True, "importable": False, "ms": 1}
+        ],
+    }
+
+
+class _FakePopen:
+    calls: "list[dict]" = []
+
+    def __init__(self, argv, **kwargs):
+        _FakePopen.calls.append({"argv": argv, **kwargs})
+
+
+@pytest.fixture()
+def fake_popen(monkeypatch):
+    _FakePopen.calls = []
+    monkeypatch.setattr(launcher.subprocess, "Popen", _FakePopen)
+    monkeypatch.delenv(launcher.NO_AUTO_PROVISION_ENV, raising=False)
+    return _FakePopen.calls
+
+
+def test_a_managed_env_that_exists_but_does_not_import_is_its_own_code(tmp_path):
+    """#487：它不是「没装」也不是「桌面版」——那两格的恢复步骤会让用户去装 pipx 或桌面版，
+    而他缺的只是把**已有的**自管环境重装到插件的版本。"""
+    code, hint = launcher.diagnose_resolved(
+        {"cmd": None, "desktop": None}, _stale_resolution(tmp_path)
+    )
+    assert code == "managed_runtime_stale"
+    assert "--provision" in hint
+    steps = launcher._recovery_steps(code)
+    assert any("--provision" in s for s in steps) and any("新开" in s for s in steps)
+    assert not any("pipx install" in s for s in steps), "旧了不是没装：不许把人支去另装一份"
+
+
+def test_a_missing_managed_env_is_not_called_stale(tmp_path):
+    """自管环境根本不存在时不是「旧了」：仍走原来的三/四态。"""
+    resolution = {
+        "python": None,
+        "source": None,
+        "tried": [
+            {
+                "python": launcher.managed_python(),
+                "source": "managed",
+                "exists": False,
+                "importable": False,
+                "ms": 0,
+            }
+        ],
+    }
+    code, _ = launcher.diagnose_resolved({"cmd": None, "desktop": None}, resolution)
+    assert code == "tavotto_missing"
+
+
+def test_an_explicit_override_still_wins_over_a_stale_managed_env(tmp_path):
+    """用户显式指的解释器坏了，要先指名道姓报它——不能被「自管环境旧了」盖住。"""
+    resolution = _stale_resolution(tmp_path)
+    bad = _touch_exe(tmp_path / "bad" / "python3")
+    resolution["tried"].insert(
+        0, {"python": bad, "source": "mcp_env", "exists": True, "importable": False, "ms": 1}
+    )
+    code, _ = launcher.diagnose_resolved({"cmd": None, "desktop": None}, resolution)
+    assert code == "engine_unavailable"
+
+
+def test_background_provision_can_be_switched_off(tmp_path, fake_popen, monkeypatch):
+    monkeypatch.setenv(launcher.NO_AUTO_PROVISION_ENV, "1")
+    out = launcher.kick_background_provision()
+    assert out["started"] is False and out["reason"] == "disabled"
+    assert fake_popen == []
+
+
+def _run_main_degraded(monkeypatch, resolution, stdin_lines) -> "list[dict]":
+    monkeypatch.setattr(launcher, "_current_engine_ok", lambda: False)
+    monkeypatch.setattr(launcher, "resolve", lambda found: resolution)
+    monkeypatch.setattr(
+        launcher._plugin_locator(), "find_tavotto", lambda: {"cmd": None, "desktop": None}
+    )
+    monkeypatch.delenv(launcher._EXECED_ENV, raising=False)
+    monkeypatch.setattr(sys, "argv", ["server.py"])
+    monkeypatch.setattr(
+        sys, "stdin", io.StringIO("".join(json.dumps(r) + "\n" for r in stdin_lines))
+    )
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    launcher.main()
+    return [json.loads(ln) for ln in out.getvalue().strip().splitlines()]
+
+
+def test_startup_with_a_stale_managed_env_kicks_the_upgrade_and_says_so(
+    tmp_path, fake_popen, monkeypatch
+):
+    """端到端（启动器 main）：自管环境旧了 → 本次会话降级、**后台已起重装**、并对用户
+    说「新开会话」——而不是 #487 里 Codex 那句「当前会话未提供 tavotto_open_figure」。"""
+    resolution = _stale_resolution(tmp_path)
+    (res,) = _run_main_degraded(
+        monkeypatch,
+        resolution,
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "tavotto_open_figure", "arguments": {}},
+            }
+        ],
+    )
+    body = res["result"]["structuredContent"]
+    assert body["code"] == "managed_runtime_stale"
+    assert body["auto_provision"]["started"] is True
+    assert "已在后台" in body["error"] and "新开" in body["error"]
+    assert len(fake_popen) == 1
+
+
+def test_background_provision_spawns_detached_and_skips_while_a_provision_holds_the_lock(
+    tmp_path, fake_popen
+):
+    """主语是**起了几个 pip**：一次 `--provision` 正持有重装锁时不再起第二个；进程要脱离
+    本 server（host 关掉 server 不连带杀掉装了一半的 pip），命令就是本文件的 `--provision`。"""
+    held = launcher._acquire_provision_lock()
+    assert held is not None
+    try:
+        busy = launcher.kick_background_provision()
+        assert busy["started"] is False and busy["reason"] == "already_running"
+        assert fake_popen == []
+    finally:
+        launcher._release_provision_lock(held)
+
+    first = launcher.kick_background_provision()
+    assert first["started"] is True
+    assert len(fake_popen) == 1
+    call = fake_popen[0]
+    assert call["argv"][1:] == [os.path.abspath(launcher.__file__), "--provision"]
+    if os.name == "nt":
+        assert call["creationflags"]
+    else:
+        assert call["start_new_session"] is True
+    assert launcher._EXECED_ENV not in call["env"], "交棒标记传下去会让 --provision 以外的路径走偏"
+    fd = launcher._acquire_provision_lock()
+    assert fd is not None, "探锁之后锁没放"
+    launcher._release_provision_lock(fd)
+
+
+def test_only_one_of_several_concurrent_provisions_may_hold_the_lock(tmp_path):
+    """真正的互斥在改环境的那一方：几个会话同时起、各起一个 `--provision` 时，
+    同一时刻只有一个拿得到锁（#548 评审 P2）。"""
+    import threading
+
+    gate = threading.Barrier(8)
+    got = []
+
+    def worker():
+        gate.wait()
+        got.append(launcher._acquire_provision_lock())
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    holders = [fd for fd in got if fd is not None]
+    try:
+        assert len(holders) == 1, got
+    finally:
+        for fd in holders:
+            launcher._release_provision_lock(fd)
+
+
+def test_a_dead_holder_never_leaves_a_stale_lock(tmp_path):
+    """持锁的进程被杀（崩溃、断电前的强退）：内核随进程释放锁，下一次立刻拿得到——
+    不存在要等过期、要接管的「死锁文件」。这里用真子进程持锁，然后 kill 掉它。"""
+    import subprocess as sp
+
+    code = (
+        "import importlib.util, sys, time\n"
+        f"spec = importlib.util.spec_from_file_location('launcher', {launcher.__file__!r})\n"
+        "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+        "fd = m._acquire_provision_lock()\n"
+        "print('held' if fd is not None else 'busy', flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    child = sp.Popen(
+        [sys.executable, "-c", code], stdout=sp.PIPE, encoding="utf-8", env=dict(os.environ)
+    )
+    try:
+        assert child.stdout.readline().strip() == "held"
+        assert launcher._acquire_provision_lock() is None, "子进程持锁时本进程也拿到了锁"
+    finally:
+        child.kill()
+        child.wait()
+    # Windows 文档：进程终止后由系统解锁，「时间取决于可用资源」——给几秒，不是等过期
+    import time
+
+    deadline = time.monotonic() + 5
+    fd = launcher._acquire_provision_lock()
+    while fd is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+        fd = launcher._acquire_provision_lock()
+    assert fd is not None, "持锁进程死后锁没有随之释放"
+    launcher._release_provision_lock(fd)
+
+
+def _run_provision_main(monkeypatch, provision):
+    monkeypatch.setattr(launcher, "provision", provision)
+    monkeypatch.setattr(sys, "argv", ["server.py", "--provision"])
+    return launcher.main()
+
+
+def test_a_manual_provision_waits_its_turn_instead_of_mutating_alongside(
+    tmp_path, monkeypatch, capsys
+):
+    """#548 评审 P2：手动 `--provision` / `tavotto codex install` 与后台那次同时跑会各自
+    `venv --clear` + pip 同一个环境。拿不到锁就**不动环境**，并明确说在等谁。"""
+    ran = []
+    held = launcher._acquire_provision_lock()
+    try:
+        rc = _run_provision_main(monkeypatch, lambda spec, python_base=None: ran.append(1))
+    finally:
+        launcher._release_provision_lock(held)
+    report = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert rc != 0 and report["code"] == "provision_in_progress"
+    assert ran == [], "别人持锁时仍改了环境"
+
+
+def test_a_provision_releases_the_lock_whatever_happens(tmp_path, monkeypatch, capsys):
+    """成功、失败、抛异常都放锁——否则下一次修复被自己挡住。"""
+
+    def boom(spec, python_base=None):
+        raise RuntimeError("pip exploded")
+
+    with pytest.raises(RuntimeError):
+        _run_provision_main(monkeypatch, boom)
+    fd = launcher._acquire_provision_lock()
+    assert fd is not None, "抛异常后锁没放"
+    launcher._release_provision_lock(fd)
+
+    assert _run_provision_main(monkeypatch, lambda spec, python_base=None: ({"ok": True}, 0)) == 0
+    fd = launcher._acquire_provision_lock()
+    assert fd is not None, "成功后锁没放"
+    launcher._release_provision_lock(fd)
+
+
+def test_the_lock_is_not_left_behind_when_no_descriptor_can_be_opened(
+    tmp_path, fake_popen, monkeypatch
+):
+    """#548 评审 P2：日志打不开往往是进程级 EMFILE——此刻什么都 open 不了。探锁已经
+    放掉，没起子进程也不会留下任何挡路的东西：下一次照常起。"""
+    import errno
+
+    def no_fds(*_a, **_kw):
+        raise OSError(errno.EMFILE, "Too many open files")
+
+    monkeypatch.setattr(launcher, "open", no_fds, raising=False)
+    out = launcher.kick_background_provision()
+    assert out["started"] is False and out["reason"].startswith("cannot_write")
+    monkeypatch.delattr(launcher, "open")
+    assert launcher.kick_background_provision()["started"] is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="模拟的是 POSIX flock 的错误码")
+def test_a_broken_lock_subsystem_is_not_mistaken_for_a_running_provision(
+    tmp_path, fake_popen, monkeypatch, capsys
+):
+    """#548 评审 P2：ENOLCK / EIO / 文件系统不支持锁，不是「别人在装」——报成
+    provision_in_progress 会让人永远等一个不存在的持有者。只有 EWOULDBLOCK 才算被占用。"""
+    import errno
+    import fcntl
+
+    def broken(fd, op):
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(fcntl, "flock", broken)
+    with pytest.raises(OSError):
+        launcher._acquire_provision_lock()
+    out = launcher.kick_background_provision()
+    assert out["started"] is False and out["reason"].startswith("lock_failed"), out
+
+    ran = []
+    rc = _run_provision_main(monkeypatch, lambda spec, python_base=None: ran.append(1))
+    report = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert rc != 0 and report["code"] == "provision_lock_failed", report
+    assert ran == []
+
+
+def test_no_rebuild_is_started_from_inside_the_venv_it_must_clear(
+    tmp_path, fake_popen, monkeypatch
+):
+    """#548 评审 P2：本 server 跑在自管 venv 的 python.exe 上、且它的版本在区间外时，
+    --provision 要 `venv --clear` 重建——Windows 删不掉正在跑的 python.exe，每次启动都
+    白失败一遍。不起，说清楚；区间内（只需 pip 升级、不重建）照常起。"""
+    monkeypatch.setattr(launcher, "_running_executable_is_locked", lambda: True)
+    monkeypatch.setattr(launcher.sys, "executable", launcher.managed_python())
+    in_range = (launcher.PYTHON_MIN, launcher.PYTHON_MAX_EXCLUSIVE)
+    monkeypatch.setattr(launcher, "PYTHON_MIN", (3, 99))
+    monkeypatch.setattr(launcher, "PYTHON_MAX_EXCLUSIVE", (3, 100))
+    out = launcher.kick_background_provision()
+    assert out["started"] is False and out["reason"] == "venv_in_use", out
+    assert fake_popen == []
+
+    monkeypatch.setattr(launcher, "PYTHON_MIN", in_range[0])
+    monkeypatch.setattr(launcher, "PYTHON_MAX_EXCLUSIVE", in_range[1])
+    assert launcher.kick_background_provision()["started"] is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="模拟的是 POSIX flock 的错误码")
+@pytest.mark.parametrize("name", ["EAGAIN", "EWOULDBLOCK", "EACCES"])
+def test_every_documented_contention_errno_means_someone_holds_the_lock(
+    tmp_path, monkeypatch, name
+):
+    """#548 评审 P2：flock 报「被占用」可以是 EAGAIN / EWOULDBLOCK，也可以是 EACCES
+    （PermissionError 而不是 BlockingIOError）——都要判成「有人在装」，不是锁坏了。"""
+    import errno
+    import fcntl
+
+    code = getattr(errno, name)
+
+    def busy(fd, op):
+        raise OSError(code, os.strerror(code))
+
+    monkeypatch.setattr(fcntl, "flock", busy)
+    assert launcher._acquire_provision_lock() is None

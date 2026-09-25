@@ -453,7 +453,8 @@
     "problemsCount_one": "Problems · {{count}}",
     "problemsCount_other": "Problems · {{count}}",
     "readiness": "Project readiness",
-    "settings": "Settings"
+    "settings": "Settings",
+    "workspace": "Workspace"
   },
   "readiness": {
     "bannerSummary": "{{total}} figures found: {{editable}} editable, {{pending}} waiting to connect, {{layoutOnly}} layout only.",

@@ -31,19 +31,32 @@
   （同目录/静态产物名/main()/模板）、publication-style（尺寸/字号/克制/组图）、
   desktop-handoff（交接与退出码）、issue-reporting（脱敏草稿 + 用户同意）、
   compatibility（能改什么）。**SKILL.md 里必须写清什么情况读哪份**。
-- **`.mcp.json` 的 `command` 是引导默认值，不是「哪儿都能跑」的保证**（issue #172）。
+- **`.mcp.json` 的 `command` 是插件自带的 `./mcp/launch.cmd`**（#172 → #266，2026-09-24）。
   Codex 的 `.mcp.json` 没有按平台分支的字段、没有候选链，`command` 也**不过 shell**
-  （实测：`command` 与 `args` 分开传，相对路径按 `cwd` 解析），所以一个字符串覆盖不了
-  POSIX 与 Windows：POSIX 上只有 `python3` 靠得住，Windows 上 `python3` 往往是微软商店
-  的 App Execution Alias（命令**存在**、退出码 9009、零输出）——启动器一次都不跑，连
-  降级 server 都没有，而 Codex 不为 MCP server 起不来报任何错。Windows 那一格由
-  `tavotto codex install` 的 **interpreter 步**在**已装副本**上解决：跑一遍看它起不起
-  得来（`launcher_starts()`——判据是执行，不是 `shutil.which` 也不是 `os.name`），起不
-  来就把命令换成插件 `--health` 自己解析出来的解释器绝对路径，**`.mcp.json` 与
-  `openai.yaml` 两侧一起换**（stdio 依赖按 command 匹配，只换一侧会再弹一次安装提示）。
-  仓库里那份**永远保持裸名字**——绝对路径只属于那一台机器。插件升级会把目录整个换掉，
-  钉过的命令跟着没，所以升级后要重跑（README 与 `references/first-run-and-recovery.md`
-  都写了，`tests/test_codex_plugin.py` 看护）。
+  （实测：`command` 与 `args` 分开传，相对路径按 `cwd` 解析），一个裸名字盖不住 POSIX 与
+  Windows（`python3` 在 Windows 上常是商店别名：命令存在、9009、零输出，连降级 server
+  都起不来）。所以 command 是一份 **sh / cmd 双语**启动器：POSIX 上就是
+  `exec python3 "$@"`（与改动前逐字同义），Windows 上按 显式 `TAVOTTO_MCP_PYTHON` →
+  插件自管环境（**仅当它在引擎区间内**，区间与 server.py 的 `PYTHON_MIN`/`PYTHON_MAX_EXCLUSIVE`
+  同源；区间外的自管 venv 要被 `--provision` 重建，Windows 删不掉正在跑的 python.exe，
+  所以它只垫底）→ `py -3` → PATH 上 `python`/`python3` → `%LOCALAPPDATA%\Programs\Python`
+  → 区间外的自管环境 的顺序**真跑**一句判版本的探测（≥ 3.8；Python 2 也能 `import sys`，
+  却解析不了 server.py），第一个过得了的接过全部参数；引擎定位仍只归
+  `server.py` 的 resolver。**形态约束**（`test_the_dual_launcher_keeps_its_platform_contract`
+  看护）：第一行 shebang（Rust 起不认无 shebang 的脚本，实测 Exec format error）、git 模式
+  100755（Codex 缓存副本保留执行位，0.156.1 实测）、全文 LF（`.gitattributes` 钉 `eol=lf`：
+  Windows 检出默认 autocrlf，CRLF 下 shebang 与 heredoc 终止行都失效）、批处理段纯 ASCII、不用
+  goto / call :label；**每条探测都经 `call`**（候选可能本身是批处理——pyenv-win 的 shim 是
+  python.bat——不经 call 跑批处理不会返回，启动器会停在第一条探测）。cmd 会把第一行回显进 stdout **一次**：rmcp 3.2+ 跳过非 JSON 行，
+  2.x 回一条 parse error 后继续，≤1.x 会断连——`test_codex_style_spawn_…` 钉住「最多这一行」。
+  `args` 仍是 `["./mcp/server.py"]`：`tavotto codex install` 的 interpreter 步照旧按执行
+  判（按**插件根**解析相对 command，不按本进程 cwd），起不来才把**已装副本**的 command
+  钉成解释器绝对路径，**`.mcp.json` 与 `openai.yaml` 两侧一起换**（stdio 依赖按 command
+  匹配）。发行件里只许裸名字或这种 `./` 相对、真在插件里的启动器
+  （`pluginmanifest._is_bundled_launcher`，且须 100755），机器相关的绝对路径只属于已装副本。插件升级会把
+  钉过的绝对路径换回启动器——它自己找 Python，多数机器上不用再做什么。
+  真 Windows + Codex Desktop 上的一次实跑是 #266 的关闭条件，CI 的 windows 腿只替它跑了
+  cmd.exe 那半边（`test_windows_launcher_skips_a_python_that_does_not_run`）。
 - `agents/openai.yaml` 的 `dependencies.tools` 声明本插件的 MCP server 依赖：
   `type: mcp` + `value` == `.mcp.json` 的 server key（`tavotto`）+
   `transport: stdio` + `command` == `.mcp.json` 的 `command`。schema 来自
@@ -256,6 +269,20 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   （`test_provision_python_range_mirrors_the_engine` 对拍），改 `requires-python` 要一起改。
   **装完插件/引擎必须新开 Codex 会话**——已开的会话不重载工具，
   `codex plugin list` 的 enabled 不代表 server 健康（README 里写明了）。
+- **自管环境落后于插件时启动器自己重装**（#487，2026-09-24）：插件升级会换掉插件目录，
+  配置目录里的 `mcp-runtime/venv` 却原样留着上一版引擎，import 不过新桥就落到降级。
+  这一格单独报 `managed_runtime_stale`（不是 `tavotto_missing`——恢复步骤不许把人支去
+  另装 pipx），并且 `main()` 在降级前 **spawn 一个脱离本进程的 `--provision`**（不在
+  启动路径上同步跑 pip：`startup_timeout_sec` 只有 30 s）。互斥用 `mcp-runtime/provision.lock`
+  上的**内核文件锁**（POSIX `fcntl.flock` / Windows `msvcrt.locking`），**不许**退回「锁文件
+  + mtime + 令牌」：那套在纯文件语义下「核对所有权再删 / 续 / 接管」永远不原子，#548 的
+  Codex 评审一轮轮挖出新的竞态；内核锁随持有进程退出（含崩溃、被杀）自动释放，没有
+  过期锁可言。**改环境的一方拿锁**：`--provision`（后台的与手动 / `tavotto codex install`
+  跑的同一条路）动 venv 之前非阻塞地拿，拿不到就不动、报 `provision_in_progress`；
+  启动器只探一下锁（拿到即放）省掉明显多余的 spawn，多起一个子进程也只会有一个真跑 pip。
+  `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 关掉。本次会话仍是降级、payload 带 `auto_provision`，
+  文案说「后台在装、装完新开会话」。**只管「在、却 import 不过」**：能 import 但版本旧的
+  自管环境不在这里重装（它此刻正被本会话用着）。看护 `tests/test_mcp_resolver.py` 末节。
 - **导出先预检**：有 error **或 `not_verifiable`** 且没有 `explicit_confirm` 时
   一张图都不出（`needs_confirm`，与导出对话框同一判据；`blocking` 仍只表示
   error）。PNG 的 dpi 与 profile 的 `min_raster_dpi` 比一次，复用同一个

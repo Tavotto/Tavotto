@@ -620,6 +620,105 @@ def test_spec_ships_runtime_when_it_exists():
     assert '"runtime"' in spec, "runtime 要作为 datas 进包"
 
 
+def test_spec_ships_every_tracked_package_data_file():
+    """`Analysis` 只把 .py 编进 PYZ：包内任何非 .py 的数据文件都要有一条 datas 才会进冻结产物，而源码树 /
+    wheel 里它们自然在——漏一条的表现是桌面版第一次用到那份数据时 ENOENT（U10 的 `rendercore/fonts_allowlist.json`
+    就是这么在冻结产物真导出时才露头的）。判据从 `git ls-files` 反推：src/tavotto 下每个跟踪的非 .py 文件，
+    要么它的目录被 datas 整棵收了（`profiles/` / `resources/`），要么它被逐条点名。"""
+    import subprocess
+
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    tracked = subprocess.run(
+        ["git", "ls-files", "src/tavotto"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.split()
+    data_files = [
+        p
+        for p in tracked
+        if not p.endswith(".py")
+        and not p.startswith("src/tavotto/web/")
+        and Path(p).name != "AGENTS.md"
+    ]
+    assert data_files, "src/tavotto 下没有跟踪的数据文件——判据量在空集合上"
+    whole_dirs = [
+        m.group(1) for m in re.finditer(r'\(str\(PKG / "([a-z_]+)"\), "tavotto/\1"\)', spec)
+    ]
+    assert "resources" in whole_dirs and "profiles" in whole_dirs
+    missing = []
+    for p in data_files:
+        rel = Path(p).relative_to("src/tavotto")
+        if rel.parts[0] in whole_dirs:
+            continue
+        needle = 'str(PKG / "' + '" / "'.join(rel.parts) + '")'
+        if needle not in spec:
+            missing.append(p)
+    assert not missing, f"这些包内数据文件不在 tavotto.spec 的 datas 里（冻结产物会缺）：{missing}"
+
+
+def test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fonts():
+    """U10（ADR 0072）：RenderCore 是默认后端，冻结产物要带三样东西——PDFium 的共享库（住在 pypdfium2_raw
+    的包目录里，依赖分析看不见）、pikepdf 的 qpdf 库、批准字体（`resources/` datas；字体不进 git）。
+    缺前两样的表现是「装完的桌面版一导出就 render_child_died / ImportError」，缺字体是 fonts_dir_missing
+    ——都只在用户机器上发作。所以 spec 自己：显式收前两样、缺字体拒绝打包、不再排除 PIL（Pillow 是
+    rasterio 的直接依赖），并把退役的 pymupdf / fitz 列进 excludes（打包机上装着测试读取器也不进包）。"""
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    assert 'collect_dynamic_libs("pypdfium2_raw")' in spec
+    assert 'collect_all("pikepdf")' in spec
+    assert "from fetch_fonts import check as check_fonts" in spec and "check_fonts(" in spec
+    excludes = re.search(r"excludes=\[(.*?)\]", spec, re.S)
+    assert excludes, "spec 里读不出 excludes"
+    names = set(re.findall(r'"([^"]+)"', excludes.group(1)))
+    assert "PIL" not in names, "Pillow 是 RenderCore 的运行时依赖（rasterio），不能再排除"
+    assert {"pymupdf", "fitz"} <= names, "退役的 PyMuPDF 要显式挡在冻结产物之外"
+    # 冻结产物里 child 以同一个 exe 加 --render-child 自起（renderchild.child_argv）：入口要先分派它
+    entry = (REPO / "packaging" / "entry.py").read_text(encoding="utf-8")
+    assert 'RENDER_CHILD_FLAG = "--render-child"' in entry
+    # 按 AST 判顺序（不靠相邻注释的文字）：main() 里判 RENDER_CHILD_FLAG 的那条 if 要在第一次
+    # _redirect_streams() 之前（child 在 stdout 上说 JSON），分支里先 _reopen_child_pipes()（Windows
+    # console=False 的 exe 里标准流是 None，Codex #539），CA 证书（#541）在改道之后
+    import ast
+
+    main_fn = next(
+        n for n in ast.parse(entry).body if isinstance(n, ast.FunctionDef) and n.name == "main"
+    )
+
+    def _calls(node):
+        return [
+            c.func.id
+            for c in ast.walk(node)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+        ]
+
+    order = []
+    for stmt in main_fn.body:
+        if isinstance(stmt, ast.If) and "RENDER_CHILD_FLAG" in ast.dump(stmt.test):
+            order.append("render_child_branch")
+            branch_calls = _calls(stmt)
+            assert branch_calls and branch_calls[0] == "_reopen_child_pipes", branch_calls
+        else:
+            order.extend(c for c in _calls(stmt) if c in ("_redirect_streams", "_ensure_ca_bundle"))
+    assert order[:3] == ["render_child_branch", "_redirect_streams", "_ensure_ca_bundle"], (
+        f"render child 的分派必须在 _redirect_streams 之前，CA 证书在改道之后：{order}"
+    )
+    from tavotto.rendercore import renderchild
+
+    assert renderchild.child_argv() == [sys.executable, "-m", "tavotto.rendercore.renderchild"]
+    frozen = renderchild.child_argv.__globals__["sys"]
+    saved = getattr(frozen, "frozen", None)
+    frozen.frozen = True
+    try:
+        assert renderchild.child_argv() == [sys.executable, "--render-child"]
+    finally:
+        if saved is None:
+            del frozen.frozen
+        else:
+            frozen.frozen = saved
+
+
 def test_spec_ships_every_module_the_worker_imports():
     """worker 平铺 import 的**整条传递闭包**都必须作为真 .py 进包。
 
@@ -706,15 +805,23 @@ def test_spec_ships_every_backend_the_contract_layer_can_select():
 
     上一条只算 worker 的平铺闭包，看不见 Flask 侧的动态委托——这一条钉住：**契约层能选到的每个
     后端实现模块都得在 spec 的 hiddenimports 里**，而且清单取自契约层自己的 `_IMPL_MODULES`
-    （spec 里不许抄第二份，U10 删旧后端时两边才不会分叉）。每个目标还得在干净解释器里真 import
-    得到（清单指着一个不存在的模块，PyInstaller 只会警告一句然后照常出一个坏包）。
+    （spec 里不许抄第二份：U10 删旧后端时两边才不会分叉——今天闭集只剩 `rendercore/facade.py`，
+    ADR 0072）。每个目标还得在干净解释器里真 import 得到（清单指着一个不存在的模块，PyInstaller
+    只会警告一句然后照常出一个坏包）。反向：退役的 `pymupdf_backend` 既不在表里也不在 spec 里
+    （模块已删，hidden import 残留 = 打包机上找不到模块）。产物级证据不在这里：ci.yml 的
+    windows-exe-smoke / macos-app-smoke 用 `smoke_app.py --exe` 让冻结产物走 `/api/render` + 导出
+    （都经 `_impl()`），再 `retirement_scan.py --dist` 扫它。
     """
     import subprocess
 
     from tavotto import pdfbackend
 
     impls = sorted(pdfbackend._IMPL_MODULES.values())
-    assert len(impls) >= 2 and all(m.startswith("tavotto.") for m in impls), impls
+    assert impls == ["tavotto.rendercore.facade"], impls
+    assert set(pdfbackend._IMPL_MODULES) == set(pdfbackend.BACKENDS)
+    assert not (set(pdfbackend.BACKEND_RETIRED) & set(pdfbackend._IMPL_MODULES)), (
+        "退役名不能再指向实现"
+    )
     spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
     # spec 从契约层取清单并铺进 hiddenimports，不手写模块名
     assert "_pdfbackend._IMPL_MODULES.values()" in spec and "*BACKEND_IMPLS," in spec, (
@@ -722,6 +829,7 @@ def test_spec_ships_every_backend_the_contract_layer_can_select():
     )
     for m in impls:
         assert f'"{m}"' not in spec, f"spec 里手写了 {m}——清单只许从契约层取"
+    assert "pymupdf_backend" not in spec, "退役模块的 hidden import 要随模块一起删"
     # 目标模块在干净进程里 import 得到（-I：不带当前目录 / 用户站点 / PYTHONPATH，仓库 src 显式插进 sys.path）
     for m in impls:
         code = f"import sys; sys.path.insert(0, {str(REPO / 'src')!r}); import importlib; importlib.import_module({m!r})"
@@ -977,3 +1085,58 @@ def test_built_runtime_does_not_write_into_itself_while_rendering():
     after = {p for p in RUNTIME_DIR.rglob("*") if p.is_file()}
     created = after - before
     assert not created, f"渲染往安装目录里写了东西: {sorted(created)[:10]}"
+
+
+_CHILD_PIPE_PROBE = r"""
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("tavotto_entry", sys.argv[1])
+entry = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(entry)
+# 模拟 Windows 上 console=False 的 Tavotto.exe：bootloader 把三个标准流都设成 None
+sys.stdin = sys.stdout = sys.stderr = None
+if sys.argv[2] == "reopen":
+    entry._reopen_child_pipes()
+# render child 的用法：按字节读 stdin 的一行、按字节写 stdout
+line = sys.stdin.buffer.readline()
+sys.stdout.buffer.write(b"echo:" + line)
+sys.stdout.flush()
+"""
+
+
+@pytest.mark.parametrize("mode", ["reopen", "no-reopen"])
+def test_render_child_gets_real_pipes_even_when_the_gui_exe_has_none(mode):
+    """Codex #539：Windows 的 console=False 冻结 exe 里 sys.stdin / stdout 是 None，render child 以同一个 exe
+    自起时，入口必须按 fd 把父进程给的管道重新包成流——否则 child 一碰 `sys.stdout.buffer` 就崩，桌面版的预览
+    与导出全报 `render_child_died`。`no-reopen` 是活的尺子：不重新打开时这条路确实走不通。"""
+    import subprocess
+
+    proc = subprocess.run(
+        [sys.executable, "-c", _CHILD_PIPE_PROBE, str(REPO / "packaging" / "entry.py"), mode],
+        input=b'{"op":"ping"}\n',
+        capture_output=True,
+        timeout=60,
+    )
+    if mode == "reopen":
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout == b'echo:{"op":"ping"}\n'
+    else:
+        assert proc.returncode != 0 and proc.stdout == b""
+
+
+def test_reopen_child_pipes_leaves_existing_streams_alone(monkeypatch):
+    """有真终端 / 流本来就在的（源码模式、console=True 的 tavotto-cli），一个都不换。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("tavotto_entry", REPO / "packaging" / "entry.py")
+    entry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(entry)
+    before = (sys.stdin, sys.stdout, sys.stderr)
+    entry._reopen_child_pipes()
+    assert (sys.stdin, sys.stdout, sys.stderr) == before
+    assert (
+        "_reopen_child_pipes()"
+        in (REPO / "packaging" / "entry.py")
+        .read_text(encoding="utf-8")
+        .split("if sys.argv[1:2] == [RENDER_CHILD_FLAG]:", 1)[1]
+        .split("from tavotto.rendercore import renderchild", 1)[0]
+    ), "render child 分支里必须先重新打开管道"

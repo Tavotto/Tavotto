@@ -78,3 +78,8 @@ docs/implementation/tavotto-foundation/evidence/u07/**/*.png binary
 # `tests/test_rendercore_evidence.py` 按 `read_bytes()` 逐字节核——不是生成物，是人写的 JSON，但同样
 # 「字节必须确定」。u06-rendercore.yml 的 Windows 腿红过一次：CRLF 检出后哈希 abd2b64e… 变成 ab9a94c8…。
 src/tavotto/rendercore/fonts_allowlist.json text eol=lf
+# Codex 插件的 sh / cmd 双语启动器（#266）：第一行必须是 `#!/bin/sh\n`、heredoc 终止行必须
+# 是 `::TAVOTTO_WINDOWS\n`——CRLF 检出后 sh 会把 `\r` 读进 shebang 与终止行，整个启动器失效。
+# 看护：tests/test_codex_plugin.py 的 test_the_dual_launcher_keeps_its_platform_contract
+# （PR #548 backend-platforms windows 片 2：检出成 CRLF 后该用例与两条 Windows 用例同时红）。
+codex-plugin/mcp/launch.cmd text eol=lf

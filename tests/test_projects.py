@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pymupdf
 import pytest
+from werkzeug.exceptions import NotFound
 
 from tavotto import app as m
 from tavotto.engine import (
@@ -53,6 +54,7 @@ def _fake_ctx(path):
 def test_config_defaults_when_missing():
     assert engine_config.load() == {
         "recent_projects": [],
+        "pinned_projects": [],
         "projects": {},
         "ai": {},
         "updates": {},
@@ -77,6 +79,145 @@ def test_recent_ordering_and_remove(tmp_path):
     assert engine_config.remove_recent(str(b)) is True
     assert engine_config.remove_recent(str(b)) is False
     assert [e["path"] for e in engine_config.recent_projects()] == [str(a)]
+
+
+def _pins():
+    return [e["path"] for e in engine_config.pinned_projects()]
+
+
+def test_pinned_ops_by_identity_and_names(tmp_path):
+    """add 追加、重复 add 不变；名字沿用最近列表里的，没有就用目录名；remove 幂等。"""
+    a, b = tmp_path / "a", tmp_path / "b"
+    engine_config.touch_recent(str(a), name="Paper A")
+    engine_config.edit_pinned("add", str(b))
+    stored = engine_config.edit_pinned("add", str(a))
+    engine_config.edit_pinned("add", str(b))
+    assert [(e["path"], e["name"]) for e in stored] == [(str(b), "b"), (str(a), "Paper A")]
+    assert _pins() == [str(b), str(a)]
+    engine_config.edit_pinned("remove", str(tmp_path / "never"))
+    engine_config.edit_pinned("remove", str(b))
+    assert _pins() == [str(a)]
+
+
+def test_pinned_two_stale_writers_both_land(tmp_path):
+    """两个标签页各自只见过旧列表：A 加 X、B 加 Y——都按操作落在最新那份上，谁也不盖谁
+    （整张替换时 B 的 [old, Y] 会把 X 抹掉；Codex #550）。"""
+    old, x, y = (str(tmp_path / n) for n in ("old", "x", "y"))
+    engine_config.edit_pinned("add", old)
+    engine_config.edit_pinned("add", x)  # 标签页 A
+    engine_config.edit_pinned("add", y)  # 标签页 B（它的界面还是 [old]）
+    assert _pins() == [old, x, y]
+
+
+def test_pinned_moves_resolve_by_path_at_execution(tmp_path):
+    """连点两次「A 下移」：按路径执行 → A 走到末尾；按下标排队的话第二次会把 B 挪回去。
+    前面排着的 remove 挪动了下标，后面的 move 仍然作用在它点名的那一条上。"""
+    a, b, c, d = (str(tmp_path / n) for n in "abcd")
+    for p in (a, b, c):
+        engine_config.edit_pinned("add", p)
+    engine_config.edit_pinned("move", a, delta=1)
+    engine_config.edit_pinned("move", a, delta=1)
+    assert _pins() == [b, c, a]
+    engine_config.edit_pinned("move", a, delta=5)  # 夹在末尾
+    assert _pins() == [b, c, a]
+    engine_config.edit_pinned("add", d)
+    engine_config.edit_pinned("remove", b)
+    engine_config.edit_pinned("move", d, to_path=c)  # 拖到 c 此刻的位置
+    assert _pins() == [d, c, a]
+    engine_config.edit_pinned("move", str(tmp_path / "gone"), delta=-1)  # 不在列表里 = 不动
+    engine_config.edit_pinned("move", a, to_path=str(tmp_path / "gone"))
+    assert _pins() == [d, c, a]
+
+
+def test_pinned_full_says_so(client, tmp_path, monkeypatch):
+    """满了还要加：409 + `pinned_full`（带上限），配置不变——不回 200 假装加上了。"""
+    monkeypatch.setattr(engine_config, "PINNED_KEEP", 2)
+    for n in ("a", "b"):
+        engine_config.edit_pinned("add", str(tmp_path / n))
+    resp = client.post("/api/projects/pinned", json={"op": "add", "path": str(tmp_path / "c")})
+    assert resp.status_code == 409
+    body = resp.get_json()
+    assert body["code"] == "pinned_full" and body["params"] == {"max": 2}
+    assert _pins() == [str(tmp_path / "a"), str(tmp_path / "b")]
+    # 已在列表里的再 add 仍然是「什么都不做」，不因为满了就报错
+    assert (
+        client.post(
+            "/api/projects/pinned", json={"op": "add", "path": str(tmp_path / "a")}
+        ).status_code
+        == 200
+    )
+
+
+def test_pinned_survives_other_config_writes(tmp_path):
+    """load() 是白名单：漏收 `pinned_projects` 的话，下一次任何 save() 都会把收藏抹掉。"""
+    a = tmp_path / "a"
+    engine_config.edit_pinned("add", str(a))
+    engine_config.touch_recent(str(tmp_path / "other"))
+    engine_config.remove_recent(str(a))  # 从最近列表移除 ≠ 取消收藏
+    assert _pins() == [str(a)]
+
+
+def test_pinned_endpoint_roundtrip(client, tmp_path):
+    figs = _make_figs(tmp_path)
+    gone = tmp_path / "gone"
+    for p in (gone, figs):
+        resp = client.post("/api/projects/pinned", json={"op": "add", "path": str(p)})
+        assert resp.status_code == 200
+    assert [e["path"] for e in resp.get_json()["pinned"]] == [str(gone), str(figs)]
+    listed = client.get("/api/projects/recent").get_json()
+    assert [(e["path"], e["exists"]) for e in listed["pinned"]] == [
+        (str(gone), False),
+        (str(figs), True),
+    ]
+    assert not gone.exists()  # 收藏不创建目录
+    resp = client.post("/api/projects/pinned", json={"op": "move", "path": str(figs), "delta": -1})
+    assert [e["path"] for e in resp.get_json()["pinned"]] == [str(figs), str(gone)]
+    for bad in (
+        {},
+        {"op": "replace", "path": "x"},
+        {"op": "add", "path": " "},
+        {"op": "add", "path": "x", "delta": 1},
+        {"op": "move", "path": "x"},
+        {"op": "move", "path": "x", "delta": 0},
+        {"op": "move", "path": "x", "delta": True},
+        {"op": "move", "path": "x", "delta": 1, "to_path": "y"},
+        {"paths": [str(figs)]},  # 老的整张替换形状：不再接受
+    ):
+        r = client.post("/api/projects/pinned", json=bad)
+        assert r.status_code == 400 and r.get_json()["code"] == "bad_request", bad
+    assert _pins() == [str(figs), str(gone)]  # 坏请求不改配置
+
+
+def test_project_lists_read_open_projects_under_the_lock(client, tmp_path, monkeypatch):
+    """两份列表的条目要读「哪些项目开着」：必须在 `_PROJECT_LOCK` 里取快照。别的标签页同时
+    开 / 关项目会改 PROJECTS，不持锁的遍历会抛 RuntimeError；收藏端点走到那里时配置已经
+    写了，500 会让界面按失败保留旧列表。判据不靠线程赛跑：遍历时锁没被持有就当场红。"""
+
+    class GuardedProjects(dict):
+        def values(self):
+            assert m._PROJECT_LOCK.locked(), "遍历 PROJECTS 时没持 _PROJECT_LOCK"
+            return super().values()
+
+    figs = _make_figs(tmp_path)
+    m.open_project(str(figs))
+    monkeypatch.setattr(m, "PROJECTS", GuardedProjects(m.PROJECTS))
+    assert client.get("/api/projects/recent").status_code == 200
+    resp = client.post("/api/projects/pinned", json={"op": "add", "path": str(figs)})
+    assert resp.status_code == 200
+    assert resp.get_json()["pinned"][0]["opened"] is True  # 快照确实读到了开着的项目
+
+
+def test_pinned_op_with_stale_project_changes_nothing(client, tmp_path):
+    """标签页的 pj 失效（项目已关 / 后端重启）：409，而且配置**一个字都没改**——
+    先写后校验的话，界面按失败保留旧列表，重开后那次「失败」的收藏又冒出来。"""
+    engine_config.edit_pinned("add", str(tmp_path / "keep"))
+    resp = client.post(
+        "/api/projects/pinned",
+        json={"op": "add", "path": str(tmp_path / "other")},
+        headers={"X-Tavotto-Project": "no-such-project"},
+    )
+    assert resp.status_code == 409
+    assert _pins() == [str(tmp_path / "keep")]
 
 
 def test_project_settings_roundtrip(tmp_path):
@@ -589,6 +730,37 @@ def test_render_failed_event_carries_pj(client, tmp_path, monkeypatch, sse_spy):
     sent = dict(sse_spy)
     assert sent["render.started"]["pj"] == pid
     assert sent["render.failed"]["pj"] == pid
+    assert "render.done" not in sent
+
+
+@pytest.mark.parametrize(
+    ("exc", "status"),
+    [
+        (RuntimeError("不是 WorkerError 的异常"), 500),
+        (OSError("磁盘炸了"), 500),
+        # 重试路上 `_engine_worker` 在注册表变了时 abort(404)：状态码原样保留
+        (NotFound("面板不在注册表里"), 404),
+    ],
+)
+def test_render_failed_is_published_for_any_exception_after_started(
+    client, tmp_path, monkeypatch, sse_spy, exc, status
+):
+    """render.started 之后必有 done 或 failed，与异常类型无关（#478）。
+
+    前端文件级 building 表只由这两个事件清；以前只有 WorkerError 发 failed，
+    其它异常 500 之后右栏「正在构建图表…」一直挂到刷新。按生产形态关掉
+    异常外抛（TESTING 默认会把异常直接抛给测试客户端），量的是真实响应码。
+    """
+    figs = _make_figs(tmp_path, "sse_any_exc")
+    pid = client.post("/api/projects/open", json={"path": str(figs)}).get_json()["id"]
+    _stub_engine(monkeypatch, _FakeWorker(exc))
+    monkeypatch.setitem(m.app.config, "PROPAGATE_EXCEPTIONS", False)
+
+    resp = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
+    assert resp.status_code == status
+    sent = dict(sse_spy)
+    assert sent["render.started"]["pj"] == pid
+    assert sent["render.failed"] == {"pj": pid, "id": "p1.pdf", "error": str(exc)}
     assert "render.done" not in sent
 
 

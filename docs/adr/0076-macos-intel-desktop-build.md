@@ -9,7 +9,8 @@
 
 到 v0.16.0 为止，macOS 桌面版只发 Apple Silicon。原因不是依赖：`macos-x86_64` 的锁早就在，
 科学栈（numpy / scipy / pandas / matplotlib / pillow / contourpy / kiwisolver / fonttools）
-和 PyMuPDF 在 PyPI 上都有 cp313 的 macOS x86_64 wheel，python-build-standalone 也发
+和 PyMuPDF 在 PyPI 上都有 cp313 的 macOS x86_64 wheel（ADR 0072 起 PyMuPDF 换成 RenderCore 的 pikepdf / pypdfium2，
+它们也有，但 pikepdf 的 x86_64 wheel 要求 macOS 15，于是 Intel 桌面版的最低系统是 15.0，见 ADR 0072 §2），python-build-standalone 也发
 `x86_64-apple-darwin`。卡住的是**验证**：CI 只有 Apple Silicon runner，Intel 目标从没被构建和冒烟过，
 按「空转的门禁比没有门禁更坏」只能标 `shipped: false`、对外不写支持。
 

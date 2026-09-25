@@ -18,6 +18,47 @@ A contributor agreement grants rights over *contributions*. It has no effect
 whatsoever on a dependency's licence. Every component below is governed solely
 by its own terms.
 
+## Addendum 2026-09-22 — PyMuPDF retired (ADR 0072, not a re-baseline)
+
+The tables below are the audited snapshot at `7952ceb7`; they are left as
+written. What changed after it, recorded here so the headline is not read as
+current fact:
+
+* **PyMuPDF left the runtime closure.** Unified implementation pack U10 switched
+  the default renderer to RenderCore and deleted `pdfbackend/pymupdf_backend.py`.
+  `pymupdf` is not in `pyproject.toml` `dependencies`, `requirements.txt`, the
+  wheel's runtime `Requires-Dist` or the PyInstaller output; the desktop closure
+  lock (`packaging/runtime-lock.json`) never contained it. It remains available
+  only through the optional `legacy-pymupdf` extra as an independent reader for
+  tests and for two maintainer asset scripts — none of which ship. Enforcement:
+  `scripts/ci/retirement_scan.py` (source AST, declared dependency closure,
+  import blocker in a clean process, native-library listing of built artifacts,
+  SBOM) plus `tests/test_retirement_scan.py`.
+* **Replacement components and their terms** (from the installed distributions'
+  metadata; obligations per ADR 0060 §2):
+
+  | Dependency | Version (pinned) | License | Distributed? | Notes |
+  |---|---|---|---|---|
+  | pikepdf | 10.13.0.post1 | MPL-2.0 (weak/file-level copyleft) | pip dep + bundled | MPL §3.2: tell recipients how to obtain the MPL-covered source when distributing in executable form — same class as the existing MPL Rust crates in the NOTICE chain (#182). Hard deps: Pillow, lxml (BSD-3-Clause), packaging |
+  | qpdf (inside pikepdf wheels) | 12.x | Apache-2.0 | bundled via pikepdf | Notice |
+  | pypdfium2 | 5.13.0 | Apache-2.0 / BSD-3-Clause | pip dep + bundled | PDFium itself BSD-3-Clause; notice |
+  | uharfbuzz | 0.56.1 | Apache-2.0 | pip dep + bundled | HarfBuzz MIT-old; notice |
+  | fontTools | 4.65.0 | MIT | pip dep + bundled | Notice |
+  | Pillow | 12.3.0 | HPND (MIT-CMU) | pip dep + bundled (was already in the desktop closure) | Notice |
+  | Liberation Fonts 2.1.5 | — | SIL OFL 1.1 (RFN: Arimo / Tinos / Cousine) | bundled (`resources/fonts/`) | Ship licence text + copyright (done: same directory); embedding subsets in PDFs is permitted (OFL §1); not sold separately |
+  | Noto Sans SC (Sans2.004, SC subset) | — | SIL OFL 1.1 (RFN: "Noto") | bundled | Same |
+
+  Under the classification used below, none of these is a **BLOCKER**; pikepdf
+  is **REVIEW** (MPL-2.0 notice obligation, already the class of the existing
+  MPL crates). A full re-baseline of the tables — and the counsel review this
+  document keeps asking for before any proprietary distribution — is a separate
+  task; this addendum only records the delta and its evidence.
+* Wheel availability of the replacement closure across the support matrix is
+  measured in `docs/implementation/tavotto-foundation/evidence/u10/wheel_matrix.json`
+  (every formal cell has a wheel; pikepdf 10.x's macOS wheels require macOS 14
+  on arm64 and 15 on x86_64, which sets the desktop minimum — a distribution fact,
+  not a licence one; see ADR 0072 §1, corrected 2026-09-24).
+
 ## Audited baseline
 
 Commit **`7952ceb7e13b7518bd53308b945e61c2811dde96`** (`main`), re-measured

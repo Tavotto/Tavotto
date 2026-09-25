@@ -263,7 +263,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -546,7 +545,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -851,7 +849,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -966,7 +963,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -1047,7 +1043,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -1344,7 +1339,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -1726,7 +1720,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      },
      {
@@ -1981,7 +1974,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      },
      {
@@ -2236,7 +2228,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": true
      }
     ],
@@ -2721,7 +2712,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -3029,7 +3019,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -3312,7 +3301,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -3620,7 +3608,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -3923,7 +3910,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -4209,7 +4195,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -4514,7 +4499,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -4838,7 +4822,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -5163,7 +5146,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -5468,7 +5450,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -5734,7 +5715,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -6015,7 +5995,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -6260,7 +6239,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -6563,7 +6541,6 @@
       "stale": true,
       "render_error": "boom",
       "unapplied_overrides": 3,
-      "bitmap_embed": true,
       "hidden": false
      }
     ],
@@ -6640,19 +6617,6 @@
      "detail": {
       "count": 3
      }
-    },
-    {
-     "id": "bitmap-embed",
-     "severity": "warn",
-     "message": {
-      "key": "bitmapEmbed",
-      "params": {}
-     },
-     "object_ids": [
-      "p1"
-     ],
-     "gids": [],
-     "detail": {}
     }
    ]
   },
@@ -6952,7 +6916,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -7286,7 +7249,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -7633,7 +7595,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -7938,7 +7899,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -8291,7 +8251,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -8619,7 +8578,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -8950,7 +8908,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -8995,29 +8952,7 @@
      }
     ]
    },
-   "expected": [
-    {
-     "id": "glyph-substituted",
-     "severity": "suggestion",
-     "message": {
-      "key": "textGlyphSubstituted",
-      "params": {
-       "chars": "⁵",
-       "count": "1"
-      }
-     },
-     "object_ids": [
-      "t-sup"
-     ],
-     "gids": [],
-     "detail": {
-      "chars": [
-       "⁵"
-      ],
-      "family": "serif"
-     }
-    }
-   ]
+   "expected": []
   },
   {
    "name": "canvas-text-glyph-scientific-mode",
@@ -9281,7 +9216,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -9599,7 +9533,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -9999,7 +9932,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -10531,7 +10463,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -10836,7 +10767,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],
@@ -11305,7 +11235,6 @@
       "stale": false,
       "render_error": null,
       "unapplied_overrides": 0,
-      "bitmap_embed": false,
       "hidden": false
      }
     ],

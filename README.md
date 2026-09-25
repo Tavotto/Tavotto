@@ -303,13 +303,12 @@ It never installs or upgrades the Codex CLI itself, and it never reinstalls a
 component that is already healthy. `tavotto codex uninstall` removes the plugin and
 the marketplace entry (it leaves the engine alone).
 
-**On Windows, run `tavotto codex install` as well** (macOS and Linux do not need it),
-and **run it again after upgrading the plugin**. The plugin pins `python3` as the
-command that starts its MCP server, and on Windows that name is usually a Microsoft
-Store alias that exists but never starts — the plugin then shows up enabled with no
-tools at all. The command checks whether the launcher really starts and pins a
-verified interpreter into the installed copy if it does not; the mechanism and the
-symptoms are in [`codex-plugin/README.md`](codex-plugin/README.md).
+**On Windows, if the plugin shows up enabled but with no tools**, run
+`tavotto codex install` (again after upgrading the plugin, if the tools disappear).
+The plugin starts its MCP server through a bundled launcher that looks for a Python
+that really runs and skips the Microsoft Store `python3` alias; when it finds none,
+this command pins a verified interpreter into the installed copy. The mechanism and
+the symptoms are in [`codex-plugin/README.md`](codex-plugin/README.md).
 
 Desktop-app-only users: the desktop installer deliberately does not touch your `PATH`,
 so a bare `tavotto` is not available — run the two `codex plugin` commands above
@@ -422,7 +421,9 @@ installed.** Paid once, and offline.
 
 > macOS ships **one `.dmg` per architecture**, each built and smoke-tested natively on
 > that architecture; pick the one that matches your Mac (Apple menu → About This Mac: *Chip*
-> means Apple Silicon, *Processor … Intel* means Intel). There is no Linux installer; Linux runs from
+> means Apple Silicon, *Processor … Intel* means Intel). They need **macOS 14 or later on
+> Apple Silicon and macOS 15 or later on Intel** — the floor set by the PDF libraries the
+> renderer ships with (pikepdf / PDFium). There is no Linux installer; Linux runs from
 > PyPI (browser mode, beta). On Windows, each release page states whether its
 > installer is code signed; an unsigned installer makes Windows show a
 > **SmartScreen** prompt on first run (choose *More info → Run anyway*, or verify
@@ -487,6 +488,7 @@ interface):
 ```sh
 git clone https://github.com/Tavotto/Tavotto.git && cd Tavotto
 python -m venv .venv && .venv/bin/pip install -e ".[worker,dev]"
+.venv/bin/python scripts/fetch_fonts.py   # approved fonts (not in git)
 python scripts/build_frontend.py
 .venv/bin/tavotto
 ```

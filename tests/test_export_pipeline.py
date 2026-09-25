@@ -240,23 +240,13 @@ def test_nothing_is_left_behind_when_a_format_fails(env, monkeypatch):
     都是说谎，只是方向相反。
     """
     client, _ = env
-    real_save = m.pdfbackend.compose
+    from tavotto.rendercore import job as rc_job
 
-    class Boom(Exception):
-        pass
+    def fail(*a, **kw):
+        raise OSError("PNG 写不出来")
 
-    def broken_compose(w, h, transparent=False):
-        canvas = real_save(w, h, transparent)
-        original = canvas.save_png
-
-        def fail(*a, **kw):
-            raise Boom("PNG 写不出来")
-
-        canvas.save_png = fail
-        assert original is not None
-        return canvas
-
-    monkeypatch.setattr(m.pdfbackend, "compose", broken_compose)
+    # 注在 PNG 编码那一步（U10 之前是旧 `compose().save_png`，ADR 0072）：PDF 已经写好、PNG 写不出来
+    monkeypatch.setattr(rc_job.raster, "encode_png", fail)
     _, body = _post(client, _canvas(formats=["pdf", "png"], ppi=300))
     assert body["status"] == "partial"
     assert _out(body, "pdf")["status"] == "done"

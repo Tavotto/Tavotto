@@ -6,7 +6,7 @@ import { createDismissTimer } from '@/lib/dismissTimer'
 import type { Severity } from '@/lib/profile'
 import type { ProblemCursor, ProblemScope } from '@/lib/problemList'
 
-export type LeftTab = 'canvases' | 'assets' | 'layers' | 'elements' | 'problems'
+export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'problems'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
 export type RightTab = 'properties' | 'assistant' | 'canvas'
 export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'

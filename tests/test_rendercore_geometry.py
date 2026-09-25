@@ -1,38 +1,47 @@
 """形状 / 箭头 → 路径（统一实施包 U06，ADR 0059）。
 
-两条严格同源对（`web/src/lib/shapeGeometry.ts` ↔ `_polygon_points` / `_dash_pattern`）在
-RenderCore 里换了宿主，数字必须与旧 facade 逐位相同——这里直接拿旧实现当 oracle 对拍
-（它在 U08 之前仍是权威）。其余形状只钉几何合同：描边内缩半线宽、箭头帽的长宽与回缩、
-line 的缺省端点。完整的「与旧产物逐点一致」归 U07。
+两条严格同源对（`web/src/lib/shapeGeometry.ts` ↔ `rendercore/geometry.py` 的 `polygon_points` /
+`dash_pattern`）由**共享向量** `tests/golden/shape_geometry_vectors.json` 接住：数字是退役前从旧 facade
+（`_polygon_points` / `_dash_pattern`，当年的权威）记下的，pytest 与 vitest（`shapeGeometry.golden.test.ts`）
+各跑一遍同一份（U10，ADR 0072；U08 之前这里直接拿旧实现当 oracle）。其余形状只钉几何合同：描边内缩
+半线宽、箭头帽的长宽与回缩、line 的缺省端点。
 """
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
 import pytest
 
-from tavotto.pdfbackend import pymupdf_backend as old
 from tavotto.rendercore import geometry, ir
 
+VECTORS = json.loads(
+    (Path(__file__).resolve().parent / "golden" / "shape_geometry_vectors.json").read_text(
+        encoding="utf-8"
+    )
+)
 
-@pytest.mark.parametrize("sides", [2, 3, 5, 6, 12, 13])
-@pytest.mark.parametrize("box", [(40.0, 20.0, 0.5), (10.0, 10.0, 2.0)])
-def test_polygon_points_match_the_old_facade_exactly(sides, box):
-    w, h, inset = box
-    assert geometry.polygon_points(sides, w, h, inset) == old._polygon_points(sides, w, h, inset)
+
+@pytest.mark.parametrize("vec", VECTORS["polygon"], ids=lambda v: f"{v['sides']}@{v['w']}x{v['h']}")
+def test_polygon_points_match_the_shared_vectors_exactly(vec):
+    got = geometry.polygon_points(vec["sides"], vec["w"], vec["h"], vec["inset"])
+    assert [[round(x, 12), round(y, 12)] for x, y in got] == vec["points"]
 
 
-@pytest.mark.parametrize("dash", ["dashed", "dotted", None, "solid"])
-@pytest.mark.parametrize("sw", [0.05, 1.0, 2.5])
-def test_dash_pattern_numbers_match_the_old_facade(dash, sw):
-    mine = geometry.dash_pattern(dash, sw)
-    theirs = old._dash_pattern(dash, sw)
-    if theirs is None:
-        assert mine == ()
-    else:
-        nums = [float(v) for v in theirs.strip("[] 0").split()]
-        assert list(mine) == pytest.approx(nums, abs=1e-3)
+@pytest.mark.parametrize("vec", VECTORS["dash"], ids=lambda v: f"{v['dash']}@{v['stroke_pt']}")
+def test_dash_pattern_numbers_match_the_shared_vectors(vec):
+    mine = list(geometry.dash_pattern(vec["dash"], vec["stroke_pt"]))
+    assert mine == pytest.approx(vec["pattern"], abs=1e-3)
+
+
+def test_the_shared_vectors_cover_the_edge_cases_the_formula_clamps():
+    """向量集不是随手抄的：边数 2 / 13 要被夹到 3 / 12，dotted 在细线上要碰到 0.01 pt 下限（`pdf_floor`）。"""
+    sides = {v["sides"] for v in VECTORS["polygon"]}
+    assert {2, 13} <= sides and len({len(v["points"]) for v in VECTORS["polygon"]}) >= 4
+    assert any(v["pdf_floor"] for v in VECTORS["dash"])
+    assert all(v["pattern"] == [] for v in VECTORS["dash"] if v["dash"] in (None, "solid"))
 
 
 def test_rect_stroke_is_inset_by_half_the_line_width():

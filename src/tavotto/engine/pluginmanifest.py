@@ -17,7 +17,8 @@ doctor` 体检已装副本）都消费它。前两者按路径 import（scripts/
 会把已装副本 `.mcp.json` 与 `openai.yaml` 的启动 `command` 一起钉成本机解释器的
 绝对路径。`installed=True` 按**具体字段**验：两份 command 相等，且要么等于发行原值、
 要么是本机一个真实存在的绝对路径；这两份文件其余内容（换行归一后）与发行时一致；
-其它任何文件都不许改。发行件本身不许含任何路径形态的 command。
+其它任何文件都不许改。发行件本身不许含机器相关的路径形态 command——唯一例外是
+插件自带、可执行、按 `./` 相对插件根给出的那一个启动器（`./mcp/launch.cmd`，#266）。
 
 **纯标准库，不 import 本包的任何其它模块**——脚本按路径加载它时没有包上下文。
 """
@@ -113,6 +114,44 @@ def rel(plugin_dir: Path, p: Path) -> str:
 
 def _is_path_like(command: str) -> bool:
     return os.path.isabs(command) or "\\" in command or "/" in command
+
+
+#: 插件自带的启动器（#266）：发行件的 command 唯一允许的路径形态。
+BUNDLED_LAUNCHER = "mcp/launch.cmd"
+
+
+def _fs_exec_bit_observable() -> bool:
+    """文件系统能不能回答「可执行吗」：Windows 上没有执行位（`os.access(X_OK)` 对任何文件都真）。"""
+    return os.name != "nt"
+
+
+def _launcher_mode(plugin_dir: Path, modes: dict[str, str] | None) -> str:
+    """启动器的 git 模式：清单 / staging 给了就用它，没给才看文件系统。
+
+    Windows 上文件系统量不出执行位，又没有清单可查（旧发行件、没带模式的调用方）时，
+    **不在这里判死**：执行位的把关交给有模式来源的那一方——发行构建从 git index 取
+    100755 写进清单，清单在时这里照清单判（#548 CI windows：否则 Windows 上连自带的
+    启动器都被当成「路径形 command」拒掉）。"""
+    if modes and BUNDLED_LAUNCHER in modes:
+        return modes[BUNDLED_LAUNCHER]
+    if not _fs_exec_bit_observable():
+        return "100755"
+    path = plugin_dir / BUNDLED_LAUNCHER
+    return "100755" if os.access(path, os.X_OK) else "100644"
+
+
+def _is_bundled_launcher(command: str, plugin_dir: Path, modes: dict[str, str] | None) -> bool:
+    """`./mcp/launch.cmd` 且它真在插件里、且是 100755——发行件里 command 唯一允许的路径形态。
+
+    只认**这一个**文件，不是「插件里任何一个存在的文件」：`./mcp/server.py` 也在插件里，
+    可它不是可执行文件，POSIX 上 Codex 起它就是 permission denied，正好又回到零工具
+    （#548 Codex 评审 P2）。机器相关的绝对路径仍然只许出现在**已装副本**里。
+    """
+    if command != "./" + BUNDLED_LAUNCHER:
+        return False
+    if not (plugin_dir / BUNDLED_LAUNCHER).is_file():
+        return False
+    return _launcher_mode(plugin_dir, modes) == "100755"
 
 
 # ------------------------------------------------------------------ 画布
@@ -228,16 +267,20 @@ def describe(plugin_dir: Path, modes: dict[str, str]) -> tuple[list[dict], dict[
             continue
         data = p.read_bytes()
         mode = modes.get(path, "100644")
+        if path == BUNDLED_LAUNCHER and path not in modes:
+            # 与下面放行它的判据同一个来源：否则这里记 100644、verify_dir 照清单又把
+            # 刚放行的启动器拒掉（#548 Codex 评审 P2）
+            mode = _launcher_mode(plugin_dir, modes)
         entries.append(
             {"path": path, "sha256": sha256_bytes(data), "size": len(data), "mode": mode}
         )
         if is_pinnable(path):
             canon, commands = canonical(path, data)
             for cmd in commands:
-                if _is_path_like(cmd):
+                if _is_path_like(cmd) and not _is_bundled_launcher(cmd, plugin_dir, modes):
                     raise PluginManifestError(
-                        f"{path} 里的 command 是一条路径（{cmd}）——发行件里只许是裸名字，"
-                        f"绝对路径只属于装它的那台机器"
+                        f"{path} 里的 command 是一条路径（{cmd}）——发行件里只许是裸名字"
+                        f"或插件自带且可执行的 ./{BUNDLED_LAUNCHER}，绝对路径只属于装它的那台机器"
                     )
             pinnable[path] = {"canonical_sha256": sha256_bytes(canon), "commands": commands}
     return sorted(entries, key=lambda e: e["path"]), pinnable
@@ -377,6 +420,7 @@ def verify_dir(
         if path not in have:
             problems.append(f"缺少必需文件 {path}")
 
+    listed_modes = {e["path"]: e["mode"] for e in (manifest or {}).get("files", [])}
     seen_commands: dict[str, list[str]] = {}
     for path, p in have.items():
         if is_pinnable(path):
@@ -388,13 +432,20 @@ def verify_dir(
             seen_commands[path] = commands
             if not installed:
                 for cmd in commands:
-                    if _is_path_like(cmd):
+                    if _is_path_like(cmd) and not _is_bundled_launcher(
+                        cmd, plugin_dir, listed_modes
+                    ):
                         problems.append(
                             f"{path} 里的 command 是一条路径（{cmd}），发行件里只许裸名字"
+                            f"或插件自带且可执行的 ./{BUNDLED_LAUNCHER}"
                         )
             else:
                 for cmd in commands:
-                    if _is_path_like(cmd) and not Path(cmd).is_file():
+                    if (
+                        _is_path_like(cmd)
+                        and not _is_bundled_launcher(cmd, plugin_dir, listed_modes)
+                        and not Path(cmd).is_file()
+                    ):
                         problems.append(f"{path} 的 command 指向不存在的解释器 {cmd}")
     if installed:
         # 严格同源对：不管有没有清单，两份的 command 都必须一致

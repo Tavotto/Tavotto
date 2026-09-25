@@ -2,6 +2,7 @@ import { Fragment } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ClipboardList,
+  Folder,
   Images,
   Layers,
   LayoutGrid,
@@ -24,6 +25,8 @@ import { Tip } from '../ui/Tooltip'
  * 有问题时出现，抽屉收起时它是唯一的提示。
  */
 const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
+  // 工作区（项目一级）排最上：范围从外到内——项目 → 画布 → 素材 → 图层 → 图内
+  { id: 'workspace', icon: Folder },
   { id: 'canvases', icon: LayoutGrid },
   { id: 'assets', icon: Images },
   { id: 'layers', icon: Layers },
@@ -32,7 +35,7 @@ const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
 ]
 
 /**
- * 常驻图标轨道：三个上下文各占一格，点击打开对应抽屉，再点一次收起。
+ * 常驻图标轨道：每个上下文各占一格，点击打开对应抽屉，再点一次收起。
  * 选中态用浅灰底色标记（比 hover 深一档），不用品牌蓝；状态语义靠 aria-expanded。
  *
  * 钮 28×28、图标仍 16（2026-09-15 全面打磨拍板）：轨钮原先是全产品唯一的 32px

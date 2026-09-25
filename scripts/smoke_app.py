@@ -55,6 +55,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -110,6 +111,16 @@ def _free_port() -> int:
 _AUTH: dict[str, str] = {}
 
 
+def _get_bytes(url: str, timeout: float = 30) -> bytes:
+    req = urllib.request.Request(url, headers=_AUTH)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")[:1500]
+        raise SmokeError(f"{e.code} {e.reason} ← {url}\n{body}") from e
+
+
 def _get(url: str, timeout: float = 30) -> dict:
     req = urllib.request.Request(url, headers=dict(_AUTH))
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -123,8 +134,14 @@ def _post(url: str, payload: dict, timeout: float = 30) -> dict:
         headers={"Content-Type": "application/json", **_AUTH},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # 产品的错误答复是 JSON（稳定 code + 原文）：只报 "HTTP Error 500" 等于把结论扔掉——
+        # 冻结产物里一条 ImportError 与源码树上永远复现不了的那类问题全靠这一段（U10 实测）
+        body = e.read().decode("utf-8", errors="replace")[:1500]
+        raise SmokeError(f"{e.code} {e.reason} ← {url}\n{body}") from e
 
 
 def _assert_auth_enforced(base: str, data_dir: Path, port: int) -> None:
@@ -476,6 +493,24 @@ def run_smoke(
             raise SmokeError("示例项目里一个面板都没扫到")
         scripted = [p for p in panels if p.get("script")]
         print(f"✓ 面板 {len(panels)} 个，其中可参数化 {len(scripted)} 个")
+
+        # 画布预览走 render child（RenderCore 的 PDFium 子进程；冻结产物里由同一个 exe 以 --render-child
+        # 自起，ADR 0066 / 0072）：这一步只有真产物能验——源码树上 child 是 `-m renderchild`，永远起得来。
+        # 判据是「交回来的是一张桶宽的 PNG」，不是 200。
+        pdf_panel = next((p for p in panels if str(p["id"]).lower().endswith(".pdf")), None)
+        if pdf_panel is None:
+            raise SmokeError("示例项目里没有 PDF 面板——预览路径没验到")
+        t0 = time.time()
+        png = _get_bytes(f"{base}/api/render?id={urllib.parse.quote(pdf_panel['id'])}&w=400", 120)
+        timings["preview_s"] = time.time() - t0
+        if png[:8] != b"\x89PNG\r\n\x1a\n":
+            raise SmokeError(f"/api/render 交回来的不是 PNG（前 16 字节 {png[:16]!r}）")
+        width = int.from_bytes(png[16:20], "big")
+        if width != 400:
+            raise SmokeError(f"/api/render 的 PNG 宽 {width}，要的是 400")
+        print(
+            f"✓ 画布预览 {pdf_panel['id']}: PNG {width} px（render child，{timings['preview_s']:.1f}s）"
+        )
 
         if scripted:
             target = scripted[0]

@@ -1735,6 +1735,9 @@ export default interface Resources {
       "ai_start_failed": "无法启动 AI 任务：{{reason}}",
       "annotations_need_pdf": "该素材没有矢量 PDF，标注暂时无法写回原图。",
       "artifact_rejected": "导出文件没有通过 {{policy}} 检查（{{failed}}），未发布到导出目录。",
+      "backend_retired": "环境变量 TAVOTTO_RENDER_BACKEND={{value}} 指向已退役的 PyMuPDF 渲染后端。去掉这个变量即用默认渲染后端。",
+      "backend_unavailable": "渲染后端不可用（依赖或字体缺失）：{{reason}}。请重新安装。",
+      "backend_unknown": "环境变量 TAVOTTO_RENDER_BACKEND={{value}} 不是可用的渲染后端。去掉这个变量即用默认渲染后端。",
       "bad_background": "无法识别背景设置：{{value}}。",
       "bad_filename": "文件名无法使用：{{reason}}。换一个再试。",
       "bad_formats": "导出格式需要是列表。",
@@ -1817,6 +1820,7 @@ export default interface Resources {
       "perf_report_rejected": "性能报告格式不对，没有保存（{{reason}}）",
       "perf_report_write_failed": "性能报告没能写进数据目录",
       "permission_denied": "无权限读取：{{path}}",
+      "pinned_full": "收藏最多 {{max}} 个。先取消收藏几个再加。",
       "ppi_out_of_range": "分辨率 {{value}} 超出范围，应在 {{min}} 到 {{max}} 之间。",
       "preparation_not_found": "没有这个准备任务（或它属于别的项目）：{{id}}",
       "preparation_plan_stale": "工作目录的授权在计划之后变了，这份准备计划已作废；请重新准备。",
@@ -2131,7 +2135,6 @@ export default interface Resources {
     "preflight": {
       "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",
       "barWithoutErrorbar": "柱状图没有误差棒。柱子若是多次测量的均值，规范要求标出误差。",
-      "bitmapEmbed": "翻转或半透明的图按导出 DPI 位图嵌入 PDF，矢量文字不保留。",
       "cjkFallbackMissing": "含中日韩字符的文字用了 {{family}}，没有声明回退字体，导出 PDF 里是方框。",
       "cjkFallbackUnaccepted": "含中日韩字符的文字由 {{face}} 画出（正文字体 {{family}}），不在规范接受的中文字体里。",
       "discouragedColormap": "色谱 {{cmap}} 不是感知均匀的，规范推荐 {{recommended}}",
@@ -2266,7 +2269,6 @@ export default interface Resources {
       "title": {
         "axis-label-format": "坐标轴标题格式不符",
         "bar-without-errorbar": "柱状图没有误差棒",
-        "bitmap-embed": "将嵌入为位图",
         "cjk-fallback-missing": "缺中文字体回退",
         "discouraged-colormap": "不推荐的色谱",
         "element-outside-figure": "元素超出图幅",
@@ -2978,9 +2980,6 @@ export default interface Resources {
       "aspectLocked": "宽高比已锁定，调整尺寸时等比缩放",
       "aspectTip": "保持宽度，按原始长宽比修正高度",
       "aspectUnlocked": "宽高比已解锁，W 与 H 互不影响",
-      "bitmapBoth": "翻转与不透明度都会使这张图在导出的 PDF 中以位图嵌入，矢量文字将不可选中。",
-      "bitmapFlip": "翻转的图在导出 PDF 里按导出 DPI 嵌入为位图。矢量文字不再可选中。",
-      "bitmapOpacity": "不透明度低于 100% 时，这张图在 PDF 中导出为高分辨率位图。矢量文字不再可选中。",
       "building": "正在构建…",
       "coldBuilding": "正在冷启动，可能需要几分钟…",
       "crop": "裁剪",
@@ -3577,19 +3576,36 @@ export default interface Resources {
       "tutorialUnavailable": "教程资源不完整。请重新安装 Tavotto。"
     },
     "switcher": {
-      "allProjects": "全部项目…",
-      "browse": "浏览目录…",
-      "create": "新建项目…",
-      "current": "当前项目",
       "newTabLabel": "在新标签页打开",
       "newTabTip": "在新标签页打开，可切到另一个项目",
-      "openInNewTab": "在新标签页打开本项目",
-      "opened": "已打开",
+      "trigger": "当前项目 {{name}}，点击切换"
+    },
+    "workspace": {
+      "current": "当前",
+      "currentActions": "当前项目的更多操作",
+      "emptyRecent": "打开过的项目会出现在这里",
+      "filter": "按名称或路径筛选",
+      "filterLabel": "筛选项目",
+      "listLabel": "{{section}}项目",
+      "moveDown": "下移",
+      "moveUp": "上移",
+      "newProject": "新建项目…",
+      "noMatch": "没有匹配的项目",
+      "openFolder": "打开文件夹…",
+      "openInNewTab": "在新标签页打开",
+      "openedElsewhere": "已打开",
+      "pin": "收藏",
+      "pinLabel": "收藏 {{name}}",
+      "pinned": "收藏",
       "readOnlySuffix": " · 只读",
       "recent": "最近",
       "registry": "项目接入状态…",
+      "removeFromList": "从最近列表移除",
+      "removeMissing_other": "移除 {{count}} 个已不存在的",
+      "rowActions": "{{name}} 的更多操作",
       "scriptCount_other": "{{count}} 个已关联脚本",
-      "trigger": "当前项目 {{name}}，点击切换"
+      "unpin": "取消收藏",
+      "unpinLabel": "取消收藏 {{name}}"
     }
   },
   "shortcuts": {
@@ -4088,7 +4104,8 @@ export default interface Resources {
       "problems": "问题",
       "problemsCount_other": "问题 · {{count}}",
       "readiness": "项目接入状态",
-      "settings": "设置"
+      "settings": "设置",
+      "workspace": "工作区"
     },
     "readiness": {
       "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅排版。",

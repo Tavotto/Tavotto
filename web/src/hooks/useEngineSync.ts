@@ -7,7 +7,12 @@
 import { useEffect } from 'react'
 import { isJustBakedBaselineOf, type BakedBaselineFacts } from '@/lib/bakedBaseline'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
+import {
+  registerTxnFinalizer,
+  txnAnchorOf,
+  useDocumentStore,
+  type TxnAnchor,
+} from '@/store/documentStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { requestRender } from '@/store/renderScheduler'
 import { sampleDisplayState } from '@/diagnostics'
@@ -16,6 +21,7 @@ import {
   panelRotation,
   rotationSwaps,
   type CanvasObject,
+  type FigureDocument,
   type PanelObject,
 } from '@/types/document'
 
@@ -161,31 +167,92 @@ function useEngineRenderSync() {
     syncEngine(useDocumentStore.getState().doc.objects, useUiStore.getState().elementPanelId)
   }, [byKey, tracked])
 
-  // 渲染回来的图幅尺寸变了（改了 size_mm）→ 同步面板原生尺寸并按新纵横比调高度。
-  // 按**面板自己那份变体**取尺寸：size_mm 本身就是可以被 override 的，
-  // 同文件的另一个副本改了图幅，不该把这个副本一起拽走。
+  const txnOpen = useDocumentStore((s) => s.txn != null)
+
+  // 渲染回来的图幅尺寸变了（改了 size_mm）→ 同步面板原生尺寸，页面尺寸按同一比例跟着走。
+  // 平时是由渲染反推的派生值，不进历史（silent）。**事务开着时一个字都不写**：
+  // 缩放 / 裁剪 / 数值拖动都在按下时抓了几何，每一帧按它写绝对的 w/h——中途改掉
+  // nativeW，下一帧就把缩放后的尺寸盖回旧几何，而 nativeW 已经对上、这里从此不再修，
+  // 横纵缩放比就此不一致。留到事务收尾（`registerTxnFinalizer`）在压缩前并进同一条
+  // 历史：撤销整体回到事务前的旧图幅（同步器随即 silent 补一次），重做回到松手那一刻。
+  // 丢弃的事务不跑收尾，回滚后由这里 silent 补（txnOpen 在依赖里：空事务回滚不换 doc）
   useEffect(() => {
-    const fixes: { id: string; wMm: number; hMm: number }[] = []
-    for (const o of objects) {
-      if (o.type !== 'panel') continue
-      const size = byKey[renderKeyOf(o)]?.manifest?.size_mm
-      if (!size) continue
-      const [wMm, hMm] = size
-      if (Math.abs(o.nativeW - wMm) <= 0.05 && Math.abs(o.nativeH - hMm) <= 0.05) continue
-      fixes.push({ id: o.id, wMm, hMm })
+    if (txnOpen) return
+    const fixes = nativeSizeFixes(objects, byKey)
+    if (fixes.length) useDocumentStore.getState().silent((d) => applyNativeSizeFixes(d, fixes))
+  }, [byKey, objects, txnOpen])
+
+  useEffect(
+    () =>
+      registerTxnFinalizer((d) =>
+        applyNativeSizeFixes(
+          d,
+          nativeSizeFixes(d.objects, useRenderStore.getState().byKey).map((f) => ({
+            ...f,
+            // 手势刻意钉住的那一点（缩放的对边 / 裁剪的整图锚点）
+            anchor: txnAnchorOf(f.id),
+          })),
+        ),
+      ),
+    [],
+  )
+}
+
+type NativeSizeFix = {
+  id: string
+  wMm: number
+  hMm: number
+  /** 换算时在页面上不动的点；不给 = 包围盒左上角（x/y 不变） */
+  anchor?: TxnAnchor
+}
+
+/**
+ * 按**面板自己那份变体**取渲染回来的尺寸：size_mm 本身就是可以被 override 的，
+ * 同文件的另一个副本改了图幅，不该把这个副本一起拽走。
+ */
+function nativeSizeFixes(
+  objects: readonly CanvasObject[],
+  byKey: ReturnType<typeof useRenderStore.getState>['byKey'],
+): NativeSizeFix[] {
+  const fixes: NativeSizeFix[] = []
+  for (const o of objects) {
+    if (o.type !== 'panel') continue
+    const size = byKey[renderKeyOf(o)]?.manifest?.size_mm
+    if (!size) continue
+    const [wMm, hMm] = size
+    if (Math.abs(o.nativeW - wMm) <= 0.05 && Math.abs(o.nativeH - hMm) <= 0.05) continue
+    fixes.push({ id: o.id, wMm, hMm })
+  }
+  return fixes
+}
+
+function applyNativeSizeFixes(d: FigureDocument, fixes: readonly NativeSizeFix[]) {
+  for (const fix of fixes) {
+    const o = d.objects.find((x) => x.id === fix.id)
+    if (o?.type !== 'panel') continue
+    // x/y/w/h 是旋转后的页面包围盒：90/270 时内容的长宽是互换的
+    const swaps = rotationSwaps(panelRotation(o))
+    const [w0, h0] = [o.w, o.h]
+    if (o.nativeW > 0 && o.nativeH > 0) {
+      // **缩放比不变**：页面上的尺寸跟着原生图幅按同一比例走。只调高、
+      // 不调宽的话，磁盘 PDF（`bbox_inches="tight"` 裁过，73.3 mm）换成
+      // 脚本 figsize（80 mm）之后缩放比静默变成 0.917——读者量到的每个
+      // 字号、线宽都凭空小了 8%，预检据此报出一串假问题，「全部处理」再
+      // 照着这个比例把本来合规的图改掉（`addPanel` 按 100% 放入的约定也
+      // 就此失效）。裁剪是比例，不用跟着动
+      const kx = fix.wMm / o.nativeW
+      const ky = fix.hMm / o.nativeH
+      o.w *= swaps ? ky : kx
+      o.h *= swaps ? kx : ky
+    } else if (swaps) o.w = o.h * (fix.hMm / fix.wMm)
+    else o.h = o.w * (fix.hMm / fix.wMm)
+    // 位置按锚点反推：包围盒绕锚点按同一对比例伸缩，锚点在页面上不动。
+    // 默认锚点是左上角——x/y 原样；只有这一处写 x/y
+    if (fix.anchor) {
+      if (w0 > 0) o.x = fix.anchor.x + (o.x - fix.anchor.x) * (o.w / w0)
+      if (h0 > 0) o.y = fix.anchor.y + (o.y - fix.anchor.y) * (o.h / h0)
     }
-    if (!fixes.length) return
-    useDocumentStore.getState().silent((d) => {
-      for (const fix of fixes) {
-        const o = d.objects.find((x) => x.id === fix.id)
-        if (o?.type !== 'panel') continue
-        o.nativeW = fix.wMm
-        o.nativeH = fix.hMm
-        // x/y/w/h 是旋转后的页面包围盒：90/270 时内容的长宽是互换的，
-        // 直接按 hMm/wMm 调 o.h 会把旋转过的面板越调越偏
-        if (rotationSwaps(panelRotation(o))) o.w = o.h * (fix.hMm / fix.wMm)
-        else o.h = o.w * (fix.hMm / fix.wMm)
-      }
-    })
-  }, [byKey, objects])
+    o.nativeW = fix.wMm
+    o.nativeH = fix.hMm
+  }
 }

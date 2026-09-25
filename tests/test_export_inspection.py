@@ -100,18 +100,24 @@ def test_every_published_output_carries_a_manifest_whose_sha_is_the_published_by
     assert body["files"]  # 旧投影照旧（RC-090）
 
 
-def test_the_old_backend_never_claims_a_verified_text_layer_without_an_expected_text(env):
-    """D08 / RC-088：量不到的就是 unknown / not_applicable，不显示成绿。旧后端没有计划里的文字行。"""
-    from tavotto import pdfbackend
+def test_a_manifest_without_a_plan_never_claims_a_verified_text_layer(env, monkeypatch):
+    """D08 / RC-088：量不到的就是 unknown / not_applicable，不显示成绿。生产者没交计划半张（U10 之前旧后端
+    走的就是这条路：没有计划里的文字行；退役后同一形状仍存在——MCP 直出路 / 别的生产者），文字层不许 verified。"""
+    from tavotto.engine import artifactinspect
 
-    if pdfbackend.selected() != pdfbackend.BACKEND_PYMUPDF:
-        pytest.skip("旧后端专属（候选侧的文字层判据在 tests/test_rendercore_app.py）")
     client, _ = env
+    real = artifactinspect.plan_half
+
+    def no_plan(job, produced, *, backend):
+        half = real(job, produced, backend=backend)
+        half.pop("text", None)  # 计划里没有期望文字行
+        return half
+
+    monkeypatch.setattr(artifactinspect, "plan_half", no_plan)
     body = client.post("/api/export", json=_canvas(formats=["pdf"])).get_json()
     mf = _out(body, "pdf")["manifest"]
-    assert mf["checks"]["text_layer"] in ("unknown", "not_applicable")
-    assert mf["checks"]["fonts_embedded"] != "verified"
-    assert mf["backend"] == "pymupdf"
+    assert mf["checks"]["text_layer"] in ("unknown", "not_applicable"), mf["checks"]
+    assert mf["backend"] == "rendercore"
 
 
 # ---------------------------------------------------------------------------

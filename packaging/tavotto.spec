@@ -16,6 +16,10 @@
 
 2. **Flask 主进程里不打包 matplotlib**。科学栈跑在 worker 子进程里，主进程
    有它没用，白白多出一两百 MB，还会把「主程序 / 渲染环境分离」这条边界废掉。
+   主进程自己的渲染闭包是 RenderCore（pikepdf / fontTools / uharfbuzz / Pillow +
+   PDFium render child；U10 起 PyMuPDF 退役，ADR 0072）：PDFium 与 qpdf 的共享库要
+   显式收（下面 `collect_dynamic_libs` / `collect_all`），批准字体随 `resources/` datas
+   整棵进包（构建前先 `scripts/fetch_fonts.py`，缺了在这里就失败）。
 
 3. **两个桌面平台都把内置渲染 runtime 一起带上**（`runtime/`，由
    `scripts/build_worker_runtime.py` 生成）。这样没装过 Python 的用户装完就能
@@ -70,6 +74,19 @@ if not (PKG / "web" / "index.html").is_file():
     raise SystemExit(
         "缺少前端构建产物 src/tavotto/web/——先跑 python scripts/build_frontend.py")
 
+# **批准字体必须在**（统一实施包 U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git，
+# 由 scripts/fetch_fonts.py 按 allowlist 的 sha256 取到 resources/fonts/，再随下面那条 `resources/`
+# datas 整棵进包。漏了这一步的表现是「装完的桌面版一导出就 fonts_dir_missing」，而源码树上一切
+# 正常——与前端产物同一种坏法，同一种拦法：在这里就失败，不留到用户机器上。判据与
+# `fetch_fonts.py --check` 同源（逐张脸算 sha256），不是数文件。
+sys.path.insert(0, str(ROOT / "scripts"))
+from fetch_fonts import check as check_fonts  # noqa: E402
+
+_font_problems = check_fonts(PKG / "resources" / "fonts")
+if _font_problems:
+    raise SystemExit(
+        "批准字体不齐（先跑 python scripts/fetch_fonts.py）:\n  " + "\n  ".join(_font_problems))
+
 datas = [
     # 前端构建产物：app.py 按 PKG_ROOT/"web" 找，冻结后 PKG_ROOT 落在 _MEIPASS/tavotto
     (str(PKG / "web"), "tavotto/web"),
@@ -84,6 +101,9 @@ datas = [
     (str(PKG / "profiles"), "tavotto/profiles"),
     (str(PKG / "resources"), "tavotto/resources"),
     (str(PKG / "pdfbackend" / "canvas_coverage.json"), "tavotto/pdfbackend"),
+    #   rendercore/fonts_allowlist.json  批准字体 allowlist（fonts.load_allowlist 读它：字体注册表按它的 sha256 收脸，
+    #               ADR 0060）。U10 切默认后冻结产物第一次真导出就是在这里 ENOENT 的——源码树 / wheel 里它自然在
+    (str(PKG / "rendercore" / "fonts_allowlist.json"), "tavotto/rendercore"),
 ]
 # 执行侧子进程要用的源码（见文件头说明 1）。两条入口：
 #   safe worker      —— worker.py 及它平铺 import 的传递闭包；
@@ -108,7 +128,6 @@ _MANIFEST = RUNTIME / "runtime-manifest.json"
 # 「这份 runtime 配不配得上这次构建」的判据只有一份，在构建脚本里
 # （build_desktop.py 复用同一个函数）。分头各写一遍的话，迟早一边放行
 # 另一边拦住，而放行的那一边才是发出去的。
-sys.path.insert(0, str(ROOT / "scripts"))
 from build_worker_runtime import BuildError, check_runtime_dir  # noqa: E402
 
 if _MANIFEST.is_file():
@@ -145,16 +164,35 @@ binaries = [(str(WORKERD), ".")]
 print(f"[tavotto.spec] Rust supervisor: {WORKERD}")
 
 # PDF 后端契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 用 importlib **按名字**装载
-# 实现模块（U08，ADR 0067）——静态分析看不见这条边，冻结产物里就没有 `pymupdf_backend`，
-# 表现是 `probe_asset` 一调就 ModuleNotFoundError、「示例项目里一个面板都没扫到」，而源码模式
-# 一切正常（2026-09-22 #476 的 macOS / Windows 三条冒烟腿）。清单从契约层自己的
-# `_IMPL_MODULES` 取，**不在这里抄第二份**：U10 删旧后端 / 换默认时它自动跟着变；
+# 实现模块（U08，ADR 0067）——静态分析看不见这条边，冻结产物里就没有那个模块，表现是 `probe_asset`
+# 一调就 ModuleNotFoundError、「示例项目里一个面板都没扫到」，而源码模式一切正常（2026-09-22 #476 的
+# macOS / Windows 三条冒烟腿）。清单从契约层自己的 `_IMPL_MODULES` 取，**不在这里抄第二份**：U10 删旧
+# 后端 / 换默认时它自动跟着变（今天只剩 rendercore/facade）；
 # tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select 看护。
 sys.path.insert(0, str(ROOT / "src"))
 from tavotto import pdfbackend as _pdfbackend  # noqa: E402
 
 BACKEND_IMPLS = sorted(_pdfbackend._IMPL_MODULES.values())
 print(f"[tavotto.spec] 后端实现模块（hiddenimports）: {', '.join(BACKEND_IMPLS)}")
+
+# RenderCore 的原生闭包（U10，ADR 0072）：PDFium 的共享库住在 pypdfium2_raw 的包目录里（不是
+# Python 扩展，PyInstaller 的依赖分析看不见它），pikepdf 的 qpdf 库同理——两者都要显式收。
+# 少了前者的表现是 render child 起来就 `render_child_died`（找不到 libpdfium），少了后者是
+# 导出时 ImportError。配方与 scripts/dev/u07_freeze_child.py 的 --collect-binaries / --collect-all
+# 同一份（那份在四个平台上验过 child 自起、真渲染）。
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs  # noqa: E402
+
+binaries += collect_dynamic_libs("pypdfium2_raw")
+_pk_datas, _pk_binaries, _pk_hidden = collect_all("pikepdf")
+datas += _pk_datas
+binaries += _pk_binaries
+_pdfium_libs = [b for b in binaries if "pdfium" in os.path.basename(b[0]).lower()]
+if not _pdfium_libs:
+    raise SystemExit(
+        "pypdfium2_raw 里没找到 PDFium 共享库——打包环境里没装 pypdfium2？"
+        "（pip install -r requirements.txt）")
+print(f"[tavotto.spec] PDFium: {[os.path.basename(b[0]) for b in _pdfium_libs]}；"
+      f"pikepdf 收进 {len(_pk_binaries)} 个二进制")
 
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
@@ -164,15 +202,21 @@ a = Analysis(
     hiddenimports=[
         # Flask 的这几个依赖是运行时按名字取的，静态分析看不见
         "jinja2", "markupsafe", "itsdangerous", "click", "werkzeug",
-        # 契约层按名字装载的两个后端实现（见上）
+        # render child 在冻结产物里由同一个 exe 以 `--render-child` 自起（packaging/entry.py 分派），
+        # child_main 里才 import pypdfium2——入口没有静态 import 它，点名收进 PYZ
+        "tavotto.rendercore.renderchild", "tavotto.rendercore.renderhost", "pypdfium2",
+        # 契约层按名字装载的后端实现（见上；清单取自 _IMPL_MODULES，不手写）
         *BACKEND_IMPLS,
+        *_pk_hidden,
     ],
     hookspath=[],
     runtime_hooks=[],
     # 科学栈刻意排除（见文件头说明 2）：主进程不需要，打包机上装了也不要进包。
-    # 内置 runtime 里的那一套走 datas，与这里互不影响。
-    excludes=["matplotlib", "numpy", "scipy", "pandas", "PIL", "tkinter",
-              "pytest", "setuptools", "pip"],
+    # 内置 runtime 里的那一套走 datas，与这里互不影响。**PIL 不在这张表上**（U10 起）：
+    # Pillow 是 RenderCore 的直接依赖（rasterio 解码位图素材、pikepdf 的硬依赖，ADR 0066），
+    # 排除它的表现是导出位图面板时 ImportError——源码树上永远复现不了。
+    excludes=["matplotlib", "numpy", "scipy", "pandas", "tkinter",
+              "pytest", "setuptools", "pip", "pymupdf", "fitz"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

@@ -10,9 +10,7 @@ import io
 
 import pytest
 
-pytest.importorskip(
-    "PIL", reason="RenderCore 候选包没装（pip install -r requirements-rendercore.txt）"
-)
+pytest.importorskip("PIL", reason="RenderCore 依赖没装（pip install -r requirements.txt）")
 pytest.importorskip("pypdfium2", reason="RenderCore 候选包没装")
 
 from PIL import Image  # noqa: E402

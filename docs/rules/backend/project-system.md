@@ -7,7 +7,12 @@
   同时端着多个图库，`DEFAULT_PROJECT` 只是「不带 pj 的请求落到哪」。未打开项目时
   API 回 409 `code=no_project`，前端渲染 ProjectPicker。用户级配置在
   `engine/config.py`（macOS `~/Library/Application Support/Tavotto/config.json`，
-  测试用 `TAVOTTO_CONFIG_DIR` 重定向——conftest 已全局隔离）。
+  测试用 `TAVOTTO_CONFIG_DIR` 重定向——conftest 已全局隔离；用例里**别调
+  `monkeypatch.undo()`**，它会连这层隔离一起撤掉，要局部换东西用 `monkeypatch.context()`）。
+  **读-改-写配置只有 `with config.transaction() as cfg:` 一个入口**（与收藏、最近列表
+  同一把锁）：各模块各持各的锁再 `load()` → `save()` 会互相丢更新（Codex #550）；
+  `config.py` 之外直接调 `config.save()` 由 `tests/test_config_transaction.py` 的 AST
+  门禁拦下。
   每项目设置（导出/备份目录、`allow_write_back` 只读）经
   `PATCH /api/project/settings`；写回类端点先过 `_write_back_forbidden()`。
 - **每标签页一个项目**：请求靠 `pj` 认领（`_request_ctx()`）——**查询参数与
@@ -81,9 +86,10 @@
   * **物理密度先量后猜**：PNG 的 `pHYs`、JPEG 的 JFIF 密度、JFIF 只给长宽比
     时 Exif 的 `XResolution`/`YResolution`（纯标准库解析）。读不到才落到
     `ASSUMED_DPI`（取值与改造前逐位相同）并报 `dpi_source: "assumed"`。
-  * **别改回 MuPDF 的 `Pixmap.xres`**：实测（PyMuPDF 1.28.2）它对「没有
-    pHYs」与「写着 96 dpi」一律回 96，两个不同的答案被压成同一个值——而
-    「不知道」正是这里最需要分出来的那一档。
+  * **别把密度交给图像库的「默认 dpi」**：旧后端时代实测（PyMuPDF 1.28.2 的
+    `Pixmap.xres`）它对「没有 pHYs」与「写着 96 dpi」一律回 96，两个不同的答案被压成
+    同一个值——而「不知道」正是这里最需要分出来的那一档。RenderCore 的 `rasterio.header_info()`
+    同样只报文件自己声明的密度。
   * pHYs 存每米整数像素，300 dpi 读回来是 299.9994；量化误差上界 0.0127 dpi，
     所以「离最近整数 < 0.02 就还原成整数」是去掉编码损失，不是四舍五入。
   * 没测量的维度一律 `None`：矢量不编像素数与 dpi，位图不编 viewBox，

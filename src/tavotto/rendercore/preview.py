@@ -237,8 +237,13 @@ class PreviewCache:
         *,
         transparent: bool = False,
         page: int = 0,
+        hold: bool = False,
     ) -> Path:
         """命中就回缓存文件；否则渲染、临时发布、回最终文件。任何失败抛 `PreviewError`。
+
+        `hold=True`：交出的文件**仍然钉着**，调用方用完（比如 `send_file` 已经打开它）必须 `release(path)`。
+        不钉的话，从 `get()` 返回到调用方打开文件之间，别的请求发布新预览触发的 `prune()` 可以把它删掉，
+        那次请求就 404 / 500（Codex #539）。额外那一层钉在自身那层放掉之前加上，中间没有空窗。
 
         两条路：**指纹快路**——文件的 `sources.file_fingerprint` 与上次抄副本时相同，就用那次副本上算出的内容
         sha256 算键，成品在就直接交出（不抄、不读源）；**副本路**——其余一切（指纹变了 / 第一次见 / 成品不在），
@@ -273,6 +278,8 @@ class PreviewCache:
                 try:
                     if self._usable(cached):
                         self.fast_hits += 1
+                        if hold:
+                            self._pin(cached)
                         return before, cached
                 finally:
                     self._unpin(cached)
@@ -295,9 +302,13 @@ class PreviewCache:
                 self._pin(cached)
                 try:
                     if self._usable(cached):
+                        if hold:
+                            self._pin(cached)
                         return cached
                     with self._lock_for(str(cached)):
                         if self._usable(cached):
+                            if hold:
+                                self._pin(cached)
                             return cached
                         cached.unlink(missing_ok=True)  # 零字节 = 上一次写到一半就断电 / 被杀
                         self._write(
@@ -309,11 +320,17 @@ class PreviewCache:
                             kind=kind_of(path),
                         )
                         self.prune()
+                    if hold:
+                        self._pin(cached)
                     return cached
                 finally:
                     self._unpin(cached)
             finally:
                 staged.unlink(missing_ok=True)
+
+    def release(self, cached: Path) -> None:
+        """放掉 `get(..., hold=True)` 多钉的那一层。"""
+        self._unpin(cached)
 
     def _pin(self, cached: Path) -> None:
         with self._pins_guard:

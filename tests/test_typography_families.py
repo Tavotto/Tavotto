@@ -1,27 +1,44 @@
 """画布文字的字体族：闭集、跨语言同源、真的画进 PDF。
 
-Prompt 13 之前画布文字（标注 / 自由文字）**只有一个字体**——`_draw_text` 里
-写死了 Times + PyMuPDF 自带的 CJK 脸。「标注文字不能设置字体」是这一轮要修
-的那条，这组用例守住修完之后不许再退回去的三件事：
+Prompt 13 之前画布文字（标注 / 自由文字）**只有一个字体**——旧 `_draw_text` 里
+写死了 Times + PyMuPDF 自带的 CJK 脸。「标注文字不能设置字体」是那一轮修的，这组
+用例守住修完之后不许再退回去的三件事：
 
 1. 能选的族是一个**闭集**，两侧一个字不差（前端摆出来的选项后端必须画得出，
    否则就是「界面上选得中、导出时悄悄换一个」）；
 2. 族真的走到了 PDF 的字体资源上，而不是只在前端预览里换了个样子；
 3. 认不出来的族**按默认画**，不抛异常也不去解析一个不存在的字体名。
+
+U10（ADR 0072）起脸来自批准字体集合（ADR 0060）：base-14 的名字（`Times-Roman` / `Helvetica` /
+`Courier-Oblique`）按 D07 一次批准迁移成 Liberation 的 PostScript 名——「默认新合法字体仍必须叫
+Times-Roman」是实现细节（01 §3），三条用户合同一字未变。
 """
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
-import pymupdf
 import pytest
 
 from tavotto import pdfbackend
-from tavotto.pdfbackend import pymupdf_backend as impl
 from tests.support.tsconst import exported_string, exported_string_array
 
 ROOT = Path(__file__).resolve().parents[1]
+HAS = all(importlib.util.find_spec(m) is not None for m in ("pikepdf", "uharfbuzz", "PIL"))
+needs_fonts = pytest.mark.skipif(not HAS, reason="RenderCore 依赖未装（not_run，不是绿）")
+
+
+@pytest.fixture(scope="module")
+def provider():
+    if not HAS:
+        pytest.skip("RenderCore 依赖未装（not_run）")
+    from tavotto.rendercore import facade, fonts
+
+    reg = fonts.FontRegistry.discover()
+    if reg.missing:
+        pytest.skip(f"批准字体不全（not_run）：缺 {reg.missing}；先跑 scripts/fetch_fonts.py")
+    return facade.provider()
 
 
 def test_the_family_set_is_one_closed_set_on_both_sides():
@@ -46,27 +63,37 @@ def test_the_family_set_is_one_closed_set_on_both_sides():
 @pytest.mark.parametrize(
     ("family", "bold", "italic", "want"),
     [
-        ("serif", False, False, "Times-Roman"),
-        ("serif", True, True, "Times-BoldItalic"),
-        ("sans-serif", False, False, "Helvetica"),
-        ("sans-serif", True, False, "Helvetica-Bold"),
-        ("monospace", False, True, "Courier-Oblique"),
+        ("serif", False, False, "LiberationSerif"),
+        ("serif", True, True, "LiberationSerif-BoldItalic"),
+        ("sans-serif", False, False, "LiberationSans"),
+        ("sans-serif", True, False, "LiberationSans-Bold"),
+        ("monospace", False, True, "LiberationMono-Italic"),
     ],
 )
-def test_each_family_maps_to_its_own_base14_face(family, bold, italic, want):
-    assert impl.latin_font(bold, italic, family).name == want
+def test_each_family_maps_to_its_own_approved_face(family, bold, italic, want, provider):
+    """族 × 粗斜 → 批准集合里各自的那张脸（D07 迁移后的名字：ADR 0060 §4 那张表的第一行）。"""
+    face = provider.face_for(family, bold, italic)
+    assert face.resource.postscript_name == want
+    assert (face.resource.family, face.resource.bold, face.resource.italic) == (
+        family,
+        bold,
+        italic,
+    )
 
 
 @pytest.mark.parametrize("bad", [None, "", "Times New Roman", "Arial", "宋体", 7])
-def test_an_unknown_family_falls_back_to_the_default_instead_of_resolving_it(bad):
+def test_an_unknown_family_falls_back_to_the_default_instead_of_resolving_it(bad, provider):
     """认不出来的名字**不当成用户指定的字体去解析**。
 
-    那条路的终点是 PyMuPDF 抛异常（导出整个失败）或者悄悄给一张别的脸
+    那条路的终点是抛异常（导出整个失败）或者悄悄给一张别的脸
     （导出的图与画布不一样）。两个结果都比「按默认画」更坏，而界面从一开始
     就不会让用户选到这里——闭集是上一条用例守的。
     """
-    assert impl.latin_family(bad) == "serif"
-    assert impl.latin_font(False, False, bad).name == "Times-Roman"
+    from tavotto.rendercore import typography
+
+    assert typography.latin_family(bad) == "serif"
+    faces = typography.faces_for(provider, bad, False, False)
+    assert faces.primary.resource.postscript_name == "LiberationSerif"
 
 
 def _text(y_mm: float, **kw) -> dict:
@@ -86,12 +113,17 @@ def _text(y_mm: float, **kw) -> dict:
     }
 
 
-def test_the_family_reaches_the_pdf_font_resources(tmp_path):
+@needs_fonts
+def test_the_family_reaches_the_pdf_font_resources(tmp_path, provider):
     """族要走到**产物**里，不能只在前端预览里换个样子。
 
-    判据量的是 PDF 页面的字体资源表——「画布上看着变了」与「导出的文件里
-    真的是那个字体」是两个答案，本轮加的能力必须两个都成立。
+    判据量的是 PDF 页面的字体资源表（独立读取器 `tests/support/pdfread.py` 直接读对象）——「画布上看着
+    变了」与「导出的文件里真的是那个字体」是两个答案，本轮加的能力必须两个都成立。缺省那一条
+    （没有 font_family）画的仍然是衬线——老文档不重排（ADR 0073 的布局政策：Times-Roman → Liberation Serif，
+    位置 / 内容 / 框尺寸保持）。
     """
+    from tests.support import pdfread
+
     out = tmp_path / "families.pdf"
     with pdfbackend.compose(80, 60) as canvas:
         canvas.place(_text(5.0), dpi=300, resolve_panel=lambda o, d: None)
@@ -100,10 +132,10 @@ def test_the_family_reaches_the_pdf_font_resources(tmp_path):
         )
         canvas.place(_text(35.0, font_family="monospace"), dpi=300, resolve_panel=lambda o, d: None)
         canvas.save_pdf(out)
-    with pymupdf.open(out) as doc:
-        names = {f[3] for f in doc[0].get_fonts(full=True)}
-    # 缺省那一条（没有 font_family）画的仍然是 Times——老文档一个像素不变
-    assert {"Times-Roman", "Helvetica", "Courier"} <= names
+    objs = pdfread.objects(out.read_bytes())
+    head, _content = pdfread.page(objs)
+    names = {f["base"] for f in pdfread.fonts(objs, head).values()}
+    assert {"LiberationSerif", "LiberationSans", "LiberationMono"} <= names
 
 
 def test_measuring_uses_the_same_family_as_writing():
@@ -120,10 +152,17 @@ def test_measuring_uses_the_same_family_as_writing():
     assert pdfbackend.text_width("Export", 10.0, family="nonsense") == serif
 
 
-def test_the_cjk_face_does_not_change_with_the_family():
-    """中日韩那一半**不跟着族走**——PyMuPDF 这一版的四个 china-* 别名回的是
-    同一张脸。这条用例是那句注释的看护：注释是断言，没量过的断言迟早变成
+def test_the_cjk_face_does_not_change_with_the_family(provider):
+    """中日韩那一半**不跟着族走**——三个族 × 粗斜的 FaceSet 里 cjk 都是同一张脸（批准集合里唯一的
+    Noto Sans SC）。这条用例是那句注释的看护：注释是断言，没量过的断言迟早变成
     「界面说换了、字形没换」。"""
-    faces = {impl.get_font(n).name for n in ("china-ss", "china-s", "china-ssb", "china-sb")}
+    from tavotto.rendercore import typography
+
+    faces = {
+        typography.faces_for(provider, fam, b, i).cjk.resource.sha256
+        for fam in pdfbackend.CANVAS_TEXT_FAMILIES
+        for b in (False, True)
+        for i in (False, True)
+    }
     assert len(faces) == 1
-    assert impl.cjk_font().name in faces
+    assert provider.cjk_face().resource.sha256 in faces

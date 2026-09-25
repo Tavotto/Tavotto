@@ -80,18 +80,35 @@
     "tutorialUnavailable": "教程资源不完整。请重新安装 Tavotto。"
   },
   "switcher": {
-    "allProjects": "全部项目…",
-    "browse": "浏览目录…",
-    "create": "新建项目…",
-    "current": "当前项目",
     "newTabLabel": "在新标签页打开",
     "newTabTip": "在新标签页打开，可切到另一个项目",
-    "openInNewTab": "在新标签页打开本项目",
-    "opened": "已打开",
+    "trigger": "当前项目 {{name}}，点击切换"
+  },
+  "workspace": {
+    "current": "当前",
+    "currentActions": "当前项目的更多操作",
+    "emptyRecent": "打开过的项目会出现在这里",
+    "filter": "按名称或路径筛选",
+    "filterLabel": "筛选项目",
+    "listLabel": "{{section}}项目",
+    "moveDown": "下移",
+    "moveUp": "上移",
+    "newProject": "新建项目…",
+    "noMatch": "没有匹配的项目",
+    "openFolder": "打开文件夹…",
+    "openInNewTab": "在新标签页打开",
+    "openedElsewhere": "已打开",
+    "pin": "收藏",
+    "pinLabel": "收藏 {{name}}",
+    "pinned": "收藏",
     "readOnlySuffix": " · 只读",
     "recent": "最近",
     "registry": "项目接入状态…",
+    "removeFromList": "从最近列表移除",
+    "removeMissing_other": "移除 {{count}} 个已不存在的",
+    "rowActions": "{{name}} 的更多操作",
     "scriptCount_other": "{{count}} 个已关联脚本",
-    "trigger": "当前项目 {{name}}，点击切换"
+    "unpin": "取消收藏",
+    "unpinLabel": "取消收藏 {{name}}"
   }
 }

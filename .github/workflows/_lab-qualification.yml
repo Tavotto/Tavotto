@@ -386,6 +386,9 @@ jobs:
           rm -rf dist
           "${{ steps.venv.outputs.python }}" scripts/build_frontend.py
           "${{ steps.venv.outputs.python }}" -m pip install -q build
+          # 批准字体随 wheel 走（ADR 0072）：干净 checkout 上不取就是一个没有字体的 wheel（Codex #539）
+          "${{ steps.venv.outputs.python }}" scripts/fetch_fonts.py
+          "${{ steps.venv.outputs.python }}" scripts/fetch_fonts.py --check
           "${{ steps.venv.outputs.python }}" -m build --wheel
           shopt -s nullglob
           WHEELS=(dist/*.whl)

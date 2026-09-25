@@ -182,17 +182,23 @@ describe('科学文本解释', () => {
     expect(el.querySelectorAll('span[style]').length).toBe(0)
   })
 
+  it('scientific 档不动主脸自己画得出的上标（`⁵` 是 Liberation 自带的 primary）', () => {
+    // U10 之前 base-14 没有它，同一档会折成 `×105`（ADR 0072 §2 的用户可见变化表）
+    expect(renderOne({ text: '×10⁵', interpretation: 'scientific' }).textContent).toBe('×10⁵')
+  })
+
   it('scientific 档合成上标：基础字符 + 缩小抬高的 span', () => {
-    const el = renderOne({ text: '×10⁵', interpretation: 'scientific' })
-    expect(el.textContent).toBe('×105')
+    // 只合成主脸画不出的：`⁻`（U+207B）哪张批准脸都没有（ADR 0060 §1），整段 `⁻²` 一起折成上标 `-2`
+    const el = renderOne({ text: 'm⁻²', interpretation: 'scientific' })
+    expect(el.textContent).toBe('m-2')
     const sup = [...el.querySelectorAll('span')].find((s) => s.style.verticalAlign)
-    expect(sup?.textContent).toBe('5')
+    expect(sup?.textContent).toBe('-2')
     // 抬高是正值（vertical-align 正 = 往上）；字号按 SCRIPT_SIZE 缩
     expect(parseFloat(sup!.style.verticalAlign)).toBeGreaterThan(0)
     expect(parseFloat(sup!.style.fontSize)).toBeLessThan(mmPxOf(el))
   })
 
-  it('`m²` 两档都不动——那是 base-14 自己画得出的设计字形', () => {
+  it('`m²` 两档都不动——那是主脸自己画得出的设计字形', () => {
     expect(renderOne({ text: 'm²', interpretation: 'scientific' }).textContent).toBe('m²')
   })
 })

@@ -716,6 +716,35 @@ def test_recent_project_inventory_is_reduced_to_a_count(client, tmp_path, monkey
     assert "paper-a" not in raw
 
 
+def test_pinned_projects_are_redacted_like_recent_ones(client, tmp_path, monkeypatch):
+    """收藏（左栏「工作区」抽屉）与最近列表是同一种东西：用户自己的项目名与路径。
+
+    两处都要跟上：配置快照里只留条数；日志里提到收藏项目的路径时换成项目记号。
+    收藏的项目不一定还在最近列表里（最近列表封顶 20 条），所以不能指望它顺带被抹掉。
+    """
+    from tavotto.engine import config as engine_config
+
+    pinned_dir = os.path.join(REAL_HOME, "PINNED_ONLY_DIR")
+    cfg = tmp_path / "config.json"
+    cfg.write_text(
+        json.dumps({"pinned_projects": [{"path": pinned_dir, "name": SECRET_TITLE}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(engine_config, "config_path", lambda: cfg)
+    log = tmp_path / "app.log"
+    log.write_text(f"2026-09-24 ERROR tavotto: 打开失败: {pinned_dir}/fig.py\n", encoding="utf-8")
+    monkeypatch.setattr(engine_diagnostics, "_log_path", lambda: log)
+
+    z = open_bundle(client.get("/api/diagnostics/bundle").data)
+    assert json.loads(z.read("config.json"))["pinned_projects"] == {"count": 1}
+    for name in z.namelist():
+        body = z.read(name).decode("utf-8", errors="replace")
+        assert SECRET_TITLE not in body, name
+        assert "PINNED_ONLY_DIR" not in body, name
+    # 反证落点：日志确实进了包，而且那条路径换成了项目记号（不是整行被丢掉）
+    assert any("<project:" in z.read(n).decode("utf-8", errors="replace") for n in z.namelist())
+
+
 # ---------------------------------------------------------------------------
 # 项目路径（2026-09-23 beta 诊断包实测）：云盘目录名带邮箱、课题目录带人名，
 # 以前只把主目录换成 `~`，其余原样进 report.json / app.log / 复制诊断

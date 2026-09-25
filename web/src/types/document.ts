@@ -21,7 +21,7 @@ export interface ObjectBase {
   layoutPinned?: boolean
   /**
    * 任意角度旋转（度，顺时针，绕包围盒中心）。只对 text/arrow/shape 生效；
-   * 面板仍走 90° 步进的 rotation（PyMuPDF 矢量置入的语义限制）。
+   * 面板仍走 90° 步进的 rotation（矢量置入的语义限制：非 90 倍数不填满目标矩形）。
    * x/y/w/h 始终是未旋转的包围盒。
    */
   rotationDeg?: number
@@ -67,7 +67,7 @@ export interface CropRect {
   h: number
 }
 
-/** 面板旋转只做 90° 步进：PyMuPDF 合成时非 90 倍数不填满目标矩形，语义对不上。 */
+/** 面板旋转只做 90° 步进：合成时非 90 倍数不填满目标矩形，语义对不上（`rendercore/placement.py` 同一合同）。 */
 export type PanelRotation = 0 | 90 | 180 | 270
 
 /**
@@ -124,12 +124,12 @@ export interface PanelObject extends ObjectBase {
    * 内容（未旋转）的显示尺寸在 90/270 时与 w/h 互换 —— 见 panelContentSize。
    */
   rotation?: PanelRotation
-  /** 0–1；<1 时导出的 PDF 里该面板改为位图嵌入（矢量 xobject 没有整体 alpha）。 */
+  /** 0–1；导出时是透明组（整体 alpha，仍是矢量，ADR 0065；旧后端时代 <1 会退成位图）。 */
   opacity?: number
   /**
    * 水平 / 垂直翻转（作用于内容空间，先翻转后旋转，与 CSS transform 一致）。
-   * 导出时翻转面板按导出 DPI 位图嵌入（PyMuPDF 矢量置入不支持镜像），
-   * 与 opacity<1 相同的明示取舍。
+   * 导出时翻转面板是 `cm` 里的负缩放，仍是矢量（U10 起 RenderCore，ADR 0065；
+   * 旧后端时代按导出 DPI 位图嵌入，与 opacity<1 相同的明示取舍——已不再需要）。
    */
   flipH?: boolean
   flipV?: boolean
@@ -147,7 +147,7 @@ export interface TextObject extends ObjectBase {
    * `lib/typography.effectiveCanvasFamily()` 取，别处不许写第二个默认值。
    *
    * 取值是三个通用族的闭集（`CANVAS_TEXT_FAMILIES`）——合成跑在没有
-   * matplotlib 的 Flask 进程里，画得出来的就是 PyMuPDF 的 base-14。
+   * matplotlib 的 Flask 进程里，画得出来的就是批准字体集合里的 Liberation 三族。
    */
   fontFamily?: 'serif' | 'sans-serif' | 'monospace'
   /**

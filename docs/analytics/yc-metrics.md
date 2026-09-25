@@ -69,6 +69,19 @@ which is exactly what a self-owned `DEFAULT_ENDPOINT` exists to prevent.
 Revisit when there is evidence of mainland usage worth measuring — GitHub
 installer downloads with no matching product events would be one such signal.
 
+### Known bias: macOS desktop through v0.16.0 sent nothing (#439)
+
+The frozen macOS sidecar up to and including v0.16.0 had no usable CA
+certificates: the bundled OpenSSL looked in the build machine's python.org
+framework directory, which does not exist on users' Macs, so every public HTTPS
+request failed with `CERTIFICATE_VERIFY_FAILED` and telemetry was dropped
+silently. **macOS `distribution=desktop` events from those versions are zero
+because of a defect, not user behaviour** — exclude that platform and period
+from any period-over-period comparison or platform mix. The fix points the
+frozen process at the system bundle (`/etc/ssl/cert.pem`) in
+`packaging/entry.py`; count macOS desktop only from the first release that
+ships it. Windows desktop and pip installs were not affected.
+
 ## North Star
 
 ### Weekly Successful Exporters (WSE)

@@ -284,7 +284,7 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
           label: ob('openOwnProject'),
           onClick: () => {
             useOnboardingStore.getState().complete()
-            useProjectStore.setState({ phase: 'none' })
+            useProjectStore.getState().showPicker()
           },
         }
       : null

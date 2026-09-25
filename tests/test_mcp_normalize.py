@@ -263,6 +263,17 @@ def _files_in(out_dir: Path) -> list[str]:
 
 
 # ------------------------------ 零修改往返 ------------------------------------
+#: 像素阈值**按 case 记**（03 §6：跨 renderer 校准，不全局放大）。字形栅格化的抖动在 1% 像素以内、布局移位
+#: 会到几个百分点；`Two`（errorbar + 对数轴，Type 3 字形最密）在 PDFium 下实测 3.28% / mean 1.33
+#: （MuPDF 时代 < 2% / 0.5；ADR 0067 §2 记的 3.3%，U10 切默认后照实钉；ADR 0072）——另外两个 case 仍在
+#: 2% / 0.5 之内，阈值不动。
+_ROUNDTRIP_THRESHOLDS = {
+    "two": {"pixels": 0.04, "mean": 1.6},
+    "manual": {"pixels": 0.02, "mean": 0.5},
+    "tight": {"pixels": 0.02, "mean": 0.5},
+}
+
+
 @pytest.mark.parametrize(
     "name, script, stem",
     [
@@ -272,7 +283,7 @@ def _files_in(out_dir: Path) -> list[str]:
     ],
 )
 def test_zero_edit_roundtrip_keeps_page_size_and_pixels(tmp_path, name, script, stem):
-    """导入 → 不编辑 → 导出：页面尺寸逐位相同，像素只差字体嵌入方式（Type 3 vs 42）。"""
+    """导入 → 不编辑 → 导出：页面尺寸逐位相同，像素只差字体嵌入方式（Type 3 vs 42）与栅格器抗锯齿。"""
     project = _project(tmp_path, name, script, stem)
     sid = _open(project, stem)
     out_dir = tmp_path / "out"
@@ -285,9 +296,9 @@ def test_zero_edit_roundtrip_keeps_page_size_and_pixels(tmp_path, name, script, 
     pdfbackend.render_preview_png(orig, 1200, pa)
     pdfbackend.render_preview_png(exported, 1200, pb)
     diff = pdfbackend.compare_png(pa, pb)
-    # 字形栅格化的抖动在 1% 像素以内；布局移位会到几个百分点
-    assert diff["changed_pixel_ratio"] < 0.02, diff
-    assert diff["mean_abs_diff"] < 0.5, diff
+    thr = _ROUNDTRIP_THRESHOLDS[name]
+    assert diff["changed_pixel_ratio"] < thr["pixels"], diff
+    assert diff["mean_abs_diff"] < thr["mean"], diff
     assert bridge.get_session(sid).patches == []
 
 

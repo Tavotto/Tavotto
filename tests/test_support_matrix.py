@@ -249,3 +249,113 @@ def test_readme_explains_smartscreen():
         assert "SmartScreen" in readme, (
             f"{name} 必须解释未签名安装包会触发 SmartScreen 及用户该怎么办"
         )
+
+
+# ---------------------------------------------------------------------------
+# macOS 最低系统版本（ADR 0072 §2）：矩阵的 min_os、Tauri 的 minimumSystemVersion、
+# 打进去的原生 wheel 要求的下限，三处必须一致。第一次漏掉是因为谁都没量「要求多高」：
+# 声明 11.0、pikepdf 却是按 14.0 / 15.0 编的——装得上、打得开，渲染时才出事。
+# ---------------------------------------------------------------------------
+
+WHEEL_MATRIX = (
+    ROOT
+    / "docs"
+    / "implementation"
+    / "tavotto-foundation"
+    / "evidence"
+    / "u10"
+    / "wheel_matrix.json"
+)
+#: 矩阵目标 → （wheel 表里的目标, 这一档的 Tauri 配置）
+_MACOS_DESKTOP = {
+    "macos-arm64-desktop": ("macos-arm64", ROOT / "src-tauri" / "tauri.conf.json"),
+    "macos-x86_64-desktop": ("macos-x86_64", ROOT / "src-tauri" / "tauri.intel.conf.json"),
+}
+
+
+def _ver(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in v.split("."))
+
+
+def _tauri_min(conf: Path) -> str:
+    return json.loads(conf.read_text(encoding="utf-8"))["bundle"]["macOS"]["minimumSystemVersion"]
+
+
+def _requirements_pins() -> dict[str, str]:
+    pins = {}
+    for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if "==" in line:
+            name, ver = line.split("==", 1)
+            pins[name.strip().lower()] = ver.strip()
+    return pins
+
+
+def test_wheel_floor_evidence_is_for_the_pinned_versions():
+    """下限是按 requirements.txt 钉死的版本量的；钉的版本换了而表没重生成，下面那条就在旧事实上判绿。"""
+    table = json.loads(WHEEL_MATRIX.read_text(encoding="utf-8"))
+    pins = _requirements_pins()
+    measured = {p: v for p, v in table["packages"].items() if p in pins}
+    assert measured, "wheel 表里一个钉死的包都没有——判据量在空集合上"
+    stale = {p: (v, pins[p]) for p, v in measured.items() if pins[p] != v}
+    assert not stale, (
+        f"wheel 表量的版本与 requirements.txt 不一致 {stale}："
+        "重跑 scripts/dev/u10_wheel_matrix.py --out docs/implementation/tavotto-foundation/evidence/u10"
+    )
+    assert set(table["macos_floor"]) == {t for t, _ in _MACOS_DESKTOP.values()}
+
+
+@pytest.mark.parametrize("target", sorted(_MACOS_DESKTOP))
+def test_macos_min_os_covers_the_bundled_wheels(target):
+    wheel_target, conf = _MACOS_DESKTOP[target]
+    min_os = _targets()[target]["min_os"]
+    floor, who = json.loads(WHEEL_MATRIX.read_text(encoding="utf-8"))["macos_floor"][wheel_target]
+    assert floor, f"{wheel_target} 一个 macOS wheel 的下限都没读到"
+    assert _ver(min_os) >= _ver(floor), (
+        f"{target} 的 min_os={min_os} 低于打进去的 {who} 要求的 macOS {floor}"
+    )
+    assert _tauri_min(conf) == min_os, (
+        f"{conf.name} 的 minimumSystemVersion={_tauri_min(conf)} 与矩阵 {target}.min_os={min_os} 不一致"
+    )
+    assert f"macOS {_ver(min_os)[0]} or later" in _targets()[target]["en"], (
+        "发行页的英文成文要写出最低系统"
+    )
+
+
+def test_intel_leg_layers_its_own_minimum_and_checks_the_real_app():
+    """Intel 腿叠 tauri.intel.conf.json；两条 macOS 腿都在真 .app 上逐个 Mach-O 核 minos。"""
+    wf = (ROOT / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
+    assert "--config src-tauri/tauri.intel.conf.json" in wf
+    assert 'runner.os }}" = "macOS" ] && [ "${{ matrix.arch }}" = "x86_64"' in wf, (
+        "Windows 腿的 arch 也是 x86_64：叠 Intel 配置的条件必须带上 runner.os"
+    )
+    assert "--expect-min-os" in wf
+
+
+def test_readmes_state_the_macos_minimums():
+    for name, words in (
+        ("README.md", ("macOS 14", "macOS 15")),
+        ("README.zh-CN.md", ("macOS 14", "macOS 15")),
+    ):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        for w in words:
+            assert w in text, f"{name} 要写出最低系统 {w}"
+
+
+def test_local_desktop_build_layers_the_same_intel_config_as_ci():
+    """Codex #539：文档里的本地构建 `scripts/build_desktop.py` 与 desktop-tauri.yml 用同一条判据叠 Intel 配置——
+    本地 Intel 构建不许拿到 Apple Silicon 的最低系统。"""
+    spec = importlib.util.spec_from_file_location(
+        "build_desktop", ROOT / "scripts" / "build_desktop.py"
+    )
+    bd = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bd)
+    intel = bd.tauri_arch_config("darwin", "x86_64")
+    assert intel == ["--config", str(ROOT / "src-tauri" / "tauri.intel.conf.json")], intel
+    assert bd.tauri_arch_config("darwin", "arm64") == []
+    assert bd.tauri_arch_config("win32", "AMD64") == [], (
+        "Windows 的 arch 也叫 x86_64 / AMD64，不许叠 Intel 配置"
+    )
+    wf = (ROOT / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
+    assert f"--config src-tauri/{Path(intel[1]).name}" in wf, "CI 与本地叠的必须是同一个文件"
+    assert _tauri_min(Path(intel[1])) == _targets()["macos-x86_64-desktop"]["min_os"]

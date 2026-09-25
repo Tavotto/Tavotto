@@ -122,31 +122,44 @@ The consequence is the one most easily missed:
 
 The current audit is
 [COMMERCIALIZATION_DEPENDENCY_AUDIT.md](COMMERCIALIZATION_DEPENDENCY_AUDIT.md).
-Its headline finding:
+Its headline finding at the audited baseline (2026-08-28) was:
 
 > **PyMuPDF** is dual-licensed `Dual Licensed - GNU AFFERO GPL 3.0 or Artifex
 > Commercial License`, and Tavotto takes it under the AGPL arm. That is entirely
 > correct for an AGPL-3.0-only project and creates **no issue whatsoever for the
 > community edition**. It is the one component that would block a proprietary
-> edition on today's terms: continuing to distribute AGPL-obtained PyMuPDF in a
-> proprietary product may create incompatible obligations. Before any
-> proprietary distribution, Tavotto must confirm Artifex commercial licensing,
-> replace the backend, or obtain other appropriate authorisation.
+> edition on today's terms.
 
-This is precisely why `src/tavotto/pdfbackend/pymupdf_backend.py` is the only
-module in the repository permitted to `import pymupdf`. That boundary was
-introduced for replaceability and is enforced as a repository invariant; it is
-also a licensing control, and it should not be relaxed.
+**Since 2026-09-22 (ADR 0072, unified implementation pack U10) PyMuPDF is no longer
+part of Tavotto's application, wheel or desktop closure.** PDF reading, writing and
+rasterising go through the render core (`src/tavotto/rendercore/`): pikepdf
+(MPL-2.0, over qpdf Apache-2.0), fontTools (MIT), uharfbuzz (Apache-2.0, over
+HarfBuzz), pypdfium2 (Apache-2.0 / BSD-3-Clause, over PDFium BSD-3-Clause) and
+Pillow, plus the approved OFL 1.1 fonts (Liberation 2.1.5, Noto Sans SC). The
+`pdfbackend/` contract layer that made the swap possible stays: no module above
+`rendercore/` imports a PDF or font library, and `scripts/ci/retirement_scan.py`
+keeps `pymupdf` / `fitz` out of the source set, the declared dependency closure
+and the built artifacts. PyMuPDF survives only as an *independent test reader* in
+the optional `legacy-pymupdf` extra, which is never a runtime dependency. The
+audit document has not been re-baselined yet; the addendum at its top records the
+change and the licences of the replacement components. The "third-party audit
+before any proprietary build" requirement stands regardless — the components
+changed, the rule did not.
 
 ## Third-party components at a glance
 
 | Component | License | Used for |
 |---|---|---|
-| [PyMuPDF](https://github.com/pymupdf/PyMuPDF) | AGPL-3.0 / Artifex commercial (dual) | PDF reading, rasterising, vector composition |
+| [pikepdf](https://github.com/pikepdf/pikepdf) (qpdf) | MPL-2.0 (qpdf Apache-2.0); pulls in lxml (BSD-3-Clause) | PDF object model, imported-page composition, writing (render core) |
+| [pypdfium2](https://github.com/pypdfium2-team/pypdfium2) (PDFium) | Apache-2.0 / BSD-3-Clause | Rasterising and probing in the render child (render core) |
+| [uharfbuzz](https://github.com/harfbuzz/uharfbuzz) (HarfBuzz) | Apache-2.0 (HarfBuzz MIT-old) | Text shaping (render core) |
+| [fontTools](https://github.com/fonttools/fonttools) | MIT | Font subsetting (render core) |
+| [Liberation Fonts](https://github.com/liberationfonts/liberation-fonts) 2.1.5, [Noto Sans SC](https://github.com/notofonts/noto-cjk) | SIL OFL 1.1 (licence text ships next to the fonts) | Approved canvas-text faces (`rendercore/fonts_allowlist.json`) |
+| ~~[PyMuPDF](https://github.com/pymupdf/PyMuPDF)~~ | AGPL-3.0 / Artifex commercial (dual) | **Retired 2026-09-22 (ADR 0072)** — test-only reader via the `legacy-pymupdf` extra |
 | [Flask](https://flask.palletsprojects.com/) | BSD-3-Clause | Local HTTP server |
 | [matplotlib](https://matplotlib.org/) | matplotlib licence (PSF-based) | Rendering worker |
 | [NumPy](https://numpy.org/) / [SciPy](https://scipy.org/) / [pandas](https://pandas.pydata.org/) / [seaborn](https://seaborn.pydata.org/) | BSD-3-Clause | Bundled scientific stack |
-| [Pillow](https://python-pillow.org/) | MIT-CMU | Image handling |
+| [Pillow](https://python-pillow.org/) | MIT-CMU (HPND) | Image handling; bitmap panel decoding in the render core |
 | CPython | PSF License | Bundled interpreter (desktop) |
 | [React](https://react.dev/) / [Vite](https://vite.dev/) / [Tailwind](https://tailwindcss.com/) / [Radix UI](https://www.radix-ui.com/) | MIT | Web interface |
 | [Tauri](https://tauri.app/) | MIT / Apache-2.0 | Desktop shell |
