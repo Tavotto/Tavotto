@@ -237,4 +237,58 @@ describe('换项目时的依赖修复状态（issue #590）', () => {
     expect(retry).not.toHaveBeenCalled()
     expect(JSON.stringify(useEnvStore.getState().env ?? {})).not.toContain('/envs/a')
   })
+
+  it('A 的联合计划绑定在途时切到 B：绑定回来不在 B 上执行，也不显示', async () => {
+    useEnvStore.getState().requestDependencyPreparation(offer('a.py'))
+    holding.add('/api/engine/dependencies/plan')
+    const pending = useDepRepairStore.getState().prepare('tavotto_managed')
+    await vi.waitFor(() => expect(held.has('/api/engine/dependencies/plan')).toBe(true))
+    await switchTo('p2')
+    held.get('/api/engine/dependencies/plan')?.({ plan: { plan_id: 'jp-a', requirements: ['lmfit'] } })
+    await pending
+    expect(useDepRepairStore.getState().jointPlan).toBeNull()
+    expect(useDepRepairStore.getState().progress).toBeNull()
+    expect(calls.some((c) => c.url.includes('/api/engine/dependencies/prepare'))).toBe(false)
+  })
+
+  it('A 的「不准备直接运行」在途时切到 B：不关 B 的框、不重排 B 的渲染', async () => {
+    useEnvStore.getState().requestDependencyPreparation(offer('a.py'))
+    holding.add('/api/engine/dependencies/skip')
+    const pending = useDepRepairStore.getState().skipPreparation()
+    await vi.waitFor(() => expect(held.has('/api/engine/dependencies/skip')).toBe(true))
+    await switchTo('p2')
+    useEnvStore.getState().requestDependencyPreparation(offer('b.py'))
+    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
+    held.get('/api/engine/dependencies/skip')?.({ ok: true, script: 'a.py', skipped: true })
+    await pending
+    expect(useEnvStore.getState().dependencyPreparation?.script).toBe('b.py')
+    expect(retry).not.toHaveBeenCalled()
+  })
+
+  it('A 的重建在途时切到 B：B 不显示重建进度，切回 A 接得上', async () => {
+    holding.add('/api/engine/environment/managed/rebuild')
+    const pending = useDepRepairStore.getState().rebuildManaged()
+    await vi.waitFor(() => expect(held.has('/api/engine/environment/managed/rebuild')).toBe(true))
+    holding.clear()
+    await switchTo('p2')
+    held.get('/api/engine/environment/managed/rebuild')?.({ started: true, requirements: [] })
+    await pending
+    expect(useDepRepairStore.getState().progress).toBeNull()
+    await switchTo('p1')
+    expect(useDepRepairStore.getState().progress?.plan_id).toBe('managed-rebuild')
+  })
+
+  it('A 的「改用系统解释器」在途时切到 B：不重排 B 的渲染', async () => {
+    let release: (v: string | null) => void = () => {}
+    vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockReturnValue(
+      new Promise<string | null>((r) => (release = r)),
+    )
+    const pending = useDepRepairStore.getState().adoptSystemPython('/usr/bin/python3', 'lmfit')
+    await switchTo('p2')
+    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
+    release(null)
+    await pending
+    expect(retry).not.toHaveBeenCalled()
+    expect(useDepRepairStore.getState().busy).toBe(false)
+  })
 })
