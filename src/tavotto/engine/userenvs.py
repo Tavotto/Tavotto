@@ -422,6 +422,19 @@ def _probe(python: str, modules: tuple[str, ...]) -> dict:
     return health
 
 
+def imports_missing(python: str, modules: list[str]) -> list[str]:
+    """`modules` 里此刻这个解释器**确实** import 不到的那几个（ADR 0079 修订 2026-09-25）。
+
+    与 `evaluate()` 同一条体检（同一个缓存）。判不出的不算缺：体检起不来、结果里没有这一项
+    （`modules_ok` 只有真 import 过的才有 True / False）——拿「没量到」去触发发现，就是在一个
+    根本没问过的解释器上替用户换环境。"""
+    mods = tuple(dict.fromkeys(m for m in modules if m))
+    if not mods:
+        return []
+    ok_map = _probe(python, mods).get("modules_ok") or {}
+    return [m for m in mods if ok_map.get(m) is False]
+
+
 def evaluate(
     candidates: list[dict], needed: list[dict], unknown: list[str], *, use_cache: bool = True
 ) -> list[dict]:

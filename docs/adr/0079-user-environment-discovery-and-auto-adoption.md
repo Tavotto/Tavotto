@@ -3,6 +3,7 @@
 日期：2026-09-23 · 状态：**Accepted**
 修订：[0018 项目 Python 环境解析](0018-project-python-environment-resolution.md) §三（不做 Conda / pyenv 发现）、
 [0044 系统解释器作为修复候选](0044-system-interpreter-as-repair-candidate.md) §二（不无感切换）
+本 ADR 自身的修订：文末「修订（2026-09-25）」——映射不到包名的 import 也触发发现（QA ENV-08-B1）
 相关：[0057 首开的环境与工作目录](0057-first-open-environment-and-workdir.md)、
 [0061 联合依赖准备](0061-joint-dependency-preparation.md) §六（跑前的门）、
 [0053 准备接口的公开投影](0053-foundation-contracts-and-preparation.md) §二（投影不带机器路径）
@@ -114,6 +115,36 @@ Conda / pyenv 名、版本、还缺什么；SSE 同样不带路径。弹窗里�
   import，运行时才暴露的缺包仍走 ADR 0044 的那一层。
 * Windows 上的登录 shell（PowerShell profile）：不问。Conda / pyenv-win / 项目线索照常发现。
 
+## 修订（2026-09-25）：映射不到包名、此刻又确实 import 不到的 import，也去找用户环境
+
+**动机。** QA 2026-09-24 ENV-08-B1（PR #583 的证据 `env/logs/verify/env08_conda_layout_feasibility.py`）：隔离 HOME 里
+摆出 Conda 布局，base 只有 matplotlib、具名环境 `lab` 装着脚本要的 `qa_probe_pkg`，项目里 `environment.yml` 写着
+`name: lab`。`qa_probe_pkg` 不在映射表里（`depresolve` 解析不出分发名），联合计划把它列进 `unknown`、永远不装
+（FO-034），于是计划是 `nothing_needed` 而不是 `ready`——§四「计划 `ready` 时先做三步」这道前提把发现整个跳过了：
+`user_environments` 为空，脚本照样在 base / 内置环境里跑、以 `missing_dependency` 收场。这正是本 ADR 要解决的那位
+beta 用户的形状（她的包在自己的 Conda 环境里），只是换成了一个映射表外的包（实验室自家库、小众领域库最常见）。
+用户 2026-09-25 拍板：补上这一支（PR #598 列出的选项 B）。
+
+**裁决。** 联合计划 `nothing_needed`、且有**无条件**的 `unknown` import 时，先在**此刻的解释器**里量一次它们
+import 不 import 得到（`deprepair.unknown_imports_missing` → `userenvs.imports_missing`：与 §二「装齐」同一条体检
+`projectenv.probe_environment(modules=…)`、同一个缓存，不新造子进程协议）。有**确实** import 不到的，就按 §一–§三
+同样的三步发现、评估、排序（结果形状仍是 `user_environments`），§四的「机器替用户挑的才自动改用」原样适用：
+`decide_environment()` 把「计划 `ready`」放宽成「计划 `ready`，或 `unknown_missing` 非空」。offer 多一个字段
+`unknown_missing`（只有 import 名，不带路径，§五不变）。
+
+**边界。**
+
+* 只在「此刻的解释器**确实** import 不到」时触发：import 得到的不找；体检起不来 / 结果里没有这一项 = 判不出，
+  不算缺（拿没量到的东西去换环境是替用户做了一个没根据的决定）。
+* 条件式 import（`try/except ImportError` 包着的、函数里延后的）不触发：它们本来就不在 `unknown` 里
+  （`depplan` 只收 `CONTEXT_UNCONDITIONAL`）。
+* **仍然绝不安装**：unknown 的 import 永远不猜包名、不装（FO-034 不变），这一支只找、只改用。
+* 门（`gate()`）不因此弹依赖弹窗：那个弹窗是「授权安装」，这里没有可装的东西。自动改用走原来的通知轨
+  （`engine.environment_adopted`）；用户决定过的（§四那五种）一个都不碰，此时行为与修订前相同——脚本照跑，
+  缺包走运行后的修复卡片。
+* `blocked` 的计划不走这一支（声明本身有问题，先停在那里）；干净机器不走（没有解释器可量）；开关
+  `TAVOTTO_USER_ENV_DISCOVERY=0` 关着时连量都不量。
+
 ## 看护
 
 `tests/test_user_environments.py`：发现的顺序 / 来源 / 标签 / 去重（假 HOME 目录树）、线索不出项目
@@ -121,5 +152,8 @@ Conda / pyenv 名、版本、还缺什么；SSE 同样不带路径。弹窗里�
 「装齐」按 import 判、挑选排序三把尺子、决定自动改用 + 门只读 + 通知不带路径、五种用户决定一个都不碰、
 决定先于租约检查（worker 不起在被占用的环境上）、正被改动的环境不采用、采用前按此刻计划复核、
 公开载荷不带路径、正缺包的解释器不体检、真解释器逐个模块回报。
+2026-09-25 修订：`tests/test_user_environments.py` 的「映射不到包名」一组——隔离 HOME 的 Conda 布局里装着那个包的
+具名环境被发现并自动改用、base 不被用；此刻的解释器 import 得到时不发现也不体检候选；条件式 import 不触发；
+全程不装（前后 `pip freeze` 一致）。
 前端：`DependencyPrepareDialog.test.tsx`「用户自己的环境」、`notificationRail.test.tsx`「已改用你的环境」、
 `useServerEvents.test.ts` 的 `engine.environment_adopted`。

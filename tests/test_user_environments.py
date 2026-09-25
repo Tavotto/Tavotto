@@ -818,3 +818,158 @@ def test_the_switch_turns_discovery_off(tmp_path, monkeypatch):
     plan = {"missing": [{"import_name": "openpyxl", "distribution": "openpyxl"}], "unknown": []}
     assert deprepair.user_environment_offer(tmp_path, "fig.py", plan, "") == []
     assert called == []
+
+
+# ------------------------------------------------ 映射不到包名的 import（ADR 0079 修订 2026-09-25）
+#
+# QA ENV-08-B1：脚本唯一缺的 import 映射不到分发名 → 计划是 `nothing_needed` 而不是 `ready` → 以前从不
+# 去找用户环境。这一组用**真解释器**：隔离 HOME 里摆 Conda 的目录布局（base = ~/miniforge3，具名环境
+# = ~/miniforge3/envs/lab，都是真 venv），lab 里多一个 `qa_probe_pkg`。
+
+try:
+    _WORKER_PY = engine_pool.find_worker_python()
+except engine_pool.WorkerError:
+    _WORKER_PY = None
+
+_needs_worker = pytest.mark.skipif(
+    _WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
+
+_FIGURE_TAIL = (
+    "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+    "fig, ax = plt.subplots()\nax.plot([0, 1])\nfig.savefig('Fig1.png')\n"
+)
+
+
+def _freeze(python: str) -> str:
+    import subprocess
+
+    out = subprocess.run(
+        [python, "-m", "pip", "freeze", "--all"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=300,
+        check=True,
+    )
+    return out.stdout
+
+
+@pytest.fixture
+def conda_layout(tmp_path, home, monkeypatch):
+    """`env08_conda_layout_feasibility.py` 的场景，落成正式用例的夹具。"""
+    from support import venvfixture
+
+    base = venvfixture.make_project_venv(home, "miniforge3", python=_WORKER_PY)
+    (base / "envs").mkdir()
+    lab = venvfixture.make_project_venv(base / "envs", "lab", python=_WORKER_PY)
+    site = next(p for p in lab.rglob("site-packages") if p.is_dir())
+    (site / "qa_probe_pkg").mkdir()
+    (site / "qa_probe_pkg" / "__init__.py").write_text("VALUE = 7\n", encoding="utf-8")
+    (home / ".conda").mkdir()
+    (home / ".conda" / "environments.txt").write_text(f"{base}\n{lab}\n", encoding="utf-8")
+    project = tmp_path / "paper"
+    project.mkdir()
+    (project / "environment.yml").write_text("name: lab\ndependencies:\n  - matplotlib\n")
+    # 这台机器上真实的系统 Python 不进候选：结果不许随机器变
+    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [])
+    discovered = []
+    real_discover = userenvs.discover
+    monkeypatch.setattr(userenvs, "discover", lambda *a: discovered.append(a) or real_discover(*a))
+    pythons = {
+        "base": projectenv.interpreter_of(base),
+        "lab": projectenv.interpreter_of(lab),
+        "current": engine_pool.find_worker_python(),
+    }
+    frozen = {k: _freeze(v) for k, v in pythons.items()}
+    yield {"project": project, "pythons": pythons, "discovered": discovered, "lab": lab}
+    engine_pool.shutdown_all(str(project), wait=True)
+    # 全程无安装：三个解释器前后 `pip freeze` 逐字相同
+    for k, v in pythons.items():
+        assert _freeze(v) == frozen[k], f"{k} 的已装包变了——这一支只找、只改用，绝不安装"
+
+
+@POSIX
+@_needs_worker
+def test_an_unmapped_import_finds_and_adopts_the_named_conda_env_that_has_it(conda_layout):
+    """变异反证：拿掉 `_preparation_offer` 里 `nothing_needed` 那一支，或把 `decide_environment` 的条件改回
+    只认 `ready`，脚本就在此刻的解释器里跑（`runtime.prefix` 不是 lab）。"""
+    project, py = conda_layout["project"], conda_layout["pythons"]
+    (project / "figure.py").write_text("import qa_probe_pkg\n" + _FIGURE_TAIL, encoding="utf-8")
+    offer = deprepair.preparation_offer(project, "figure.py")
+    assert offer["plan"]["status"] == "nothing_needed", offer["plan"]["status"]
+    assert offer["plan"]["unknown"] == ["qa_probe_pkg"]
+    assert offer["unknown_missing"] == ["qa_probe_pkg"]
+    complete = [e for e in offer["user_environments"] if e["satisfies"]]
+    assert [e["label"] for e in complete] == ["lab"], offer["user_environments"]
+    assert str(conda_layout["lab"]) not in json.dumps(offer), "载荷不带路径（ADR 0053 §二）"
+    # 起会话：决定在解析解释器之前（`pool.ENVIRONMENT_DECIDERS`）
+    worker, resp = engine_pool.build("figure.py", str(project), "__main__")
+    assert Path(resp["runtime"]["prefix"]).resolve() == conda_layout["lab"].resolve()
+    # 同一个环境的 `python` / `python3` 两个别名是一个候选（ADR 0079 §一的去重键按所在目录）
+    assert Path(worker.python).parent == Path(py["lab"]).parent
+    assert Path(worker.python).parent != Path(py["base"]).parent, "base 不被使用"
+    record = projectenv.remembered_record(project)
+    assert record["automatic"] is True and record["trigger"] == deprepair.TRIGGER_USER_ENVIRONMENT
+    assert Path(record["path"]).parent == Path(py["lab"]).parent
+
+
+@POSIX
+@_needs_worker
+def test_an_unmapped_import_the_current_interpreter_has_triggers_no_discovery(conda_layout):
+    """对照组：`pyparsing` 映射不到包名（进 `unknown`），但 matplotlib 依赖它、此刻的解释器 import 得到——
+    不发现、不体检候选、不换环境。变异反证：`userenvs.imports_missing` 不看体检、把 unknown 全当缺，
+    `discover` 就被调用。"""
+    project = conda_layout["project"]
+    (project / "figure.py").write_text("import pyparsing\n" + _FIGURE_TAIL, encoding="utf-8")
+    offer = deprepair.preparation_offer(project, "figure.py")
+    assert offer["plan"]["unknown"] == ["pyparsing"], "前提：它确实是 unknown"
+    assert offer["unknown_missing"] == [] and offer["user_environments"] == []
+    worker, _ = engine_pool.build("figure.py", str(project), "__main__")
+    assert engine_pool.same_python(worker.python, conda_layout["pythons"]["current"])
+    assert conda_layout["discovered"] == []
+    assert projectenv.remembered_record(project) is None
+
+
+@POSIX
+@_needs_worker
+def test_a_conditional_unmapped_import_triggers_no_discovery(conda_layout):
+    """对照组：`try/except ImportError` 包着的 import 不在 `unknown` 里（只进 `possible`），缺了是脚本自己
+    兜住的——不为它换环境。变异反证：`depplan` 收 unknown 时不再只认 `CONTEXT_UNCONDITIONAL`，lab 就被采用。"""
+    project = conda_layout["project"]
+    (project / "figure.py").write_text(
+        "try:\n    import qa_probe_pkg\nexcept ImportError:\n    qa_probe_pkg = None\n"
+        + _FIGURE_TAIL,
+        encoding="utf-8",
+    )
+    offer = deprepair.preparation_offer(project, "figure.py")
+    assert offer["plan"]["unknown"] == [] and offer["unknown_missing"] == []
+    worker, _ = engine_pool.build("figure.py", str(project), "__main__")
+    assert engine_pool.same_python(worker.python, conda_layout["pythons"]["current"])
+    assert conda_layout["discovered"] == []
+    assert projectenv.remembered_record(project) is None
+
+
+def test_an_import_that_could_not_be_measured_is_not_counted_as_missing(monkeypatch):
+    """判不出的不算缺：体检起不来（没有 `modules_ok`）、或结果里没有这一项，都不触发发现。
+    变异反证：`imports_missing` 用 `is not True` 代替 `is False`，这里回出两个名字。"""
+    monkeypatch.setattr(
+        projectenv, "probe_environment", lambda python, module=None, *, modules=(): {"ok": False}
+    )
+    assert userenvs.imports_missing("/nowhere/python", ["qa_a", "qa_b"]) == []
+    userenvs.reset_cache()
+    monkeypatch.setattr(
+        projectenv,
+        "probe_environment",
+        lambda python, module=None, *, modules=(): {"ok": True, "modules_ok": {"qa_a": False}},
+    )
+    assert userenvs.imports_missing("/nowhere/python", ["qa_a", "qa_b"]) == ["qa_a"]
+
+
+def test_the_switch_also_stops_measuring_unknown_imports(monkeypatch):
+    monkeypatch.setenv("TAVOTTO_USER_ENV_DISCOVERY", "0")
+    called = []
+    monkeypatch.setattr(userenvs, "imports_missing", lambda *a: called.append(a) or ["x"])
+    assert deprepair.unknown_imports_missing({"unknown": ["x"]}, "/p/python") == []
+    assert called == []

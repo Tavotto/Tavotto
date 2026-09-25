@@ -43,6 +43,11 @@
   （`projectenv` 不 import `userenvs`：它要 import 本模块的体检）。`TAVOTTO_USER_ENV_DISCOVERY=0` 整个关掉，
   **测试进程默认关**（`tests/conftest.py`，否则用例结果随 CI 机器上碰巧装了什么而变）；`script` 可来自请求体，
   `discover()` 先过 `projectenv.contained_path()`，下游只用净化器回的值（CodeQL `py/path-injection`）。
+  **映射不到包名的 import 也触发（ADR 0079 修订 2026-09-25，QA ENV-08-B1）**：计划 `nothing_needed` 但有无条件
+  `unknown` 时，先经 `deprepair.unknown_imports_missing` → `userenvs.imports_missing` 在此刻的解释器里量一次（同一条体检、
+  同一个缓存）；只有**确实** import 不到（`modules_ok` 为 False，量不出不算）才做同样的发现 / 评估 / 自动改用，offer
+  多带 `unknown_missing`（只有 import 名）。条件式 import 不在 `unknown` 里、不触发；仍然绝不安装；`gate()` 不因此弹框
+  （没有可装的），用户决定过的照旧不碰。
 - **体检的启动条件与 worker 对齐**：`probe_environment` 不带 `-I`、env 原样继承
   （`execspec.worker_argv` 起用户解释器就是这样），cwd 换成空临时目录挡住
   父进程 cwd 进 `sys.path[0]`。以前的 `-I` 关掉了用户 site 与 `PYTHONPATH`，
