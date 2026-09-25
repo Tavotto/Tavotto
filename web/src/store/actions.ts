@@ -725,9 +725,20 @@ export function setOverride(
   value: unknown,
   immediate: boolean | RenderPolicy = false,
 ) {
+  // 同值写入是 no-op：不改数组、不进历史、不渲染（GEO-B6）。按 JSON 比——override
+  // 数组的 JSON 就是变体键，这里与键同一把尺子
+  const current = findObject(panelId)
+  if (
+    current?.type === 'panel' &&
+    current.overrides.some(
+      (p) => p.gid === gid && p.prop === prop && JSON.stringify(p.value) === JSON.stringify(value),
+    )
+  )
+    return
+  // 原地 upsert（与批量 setOverrides 同一个 upsertOverrides）：filter + push 会把命中的
+  // 那条挪到数组末尾，顺序一变变体键就变
   updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel(prop) }), (o) => {
-    o.overrides = o.overrides.filter((p) => !(p.gid === gid && p.prop === prop))
-    o.overrides.push({ gid, prop, value })
+    upsertOverrides(o, [{ gid, prop, value }])
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, immediate)
