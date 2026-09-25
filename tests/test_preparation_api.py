@@ -254,6 +254,79 @@ def test_a_worker_error_is_reported_with_its_code_and_module(client, tmp_path, f
     assert body["result"]["receipt"] is None
 
 
+def _resp_capturing(*stems: str):
+    def make():
+        resp = _build_resp()
+        resp["stems"] = {s: {"size_mm": [50, 25], "source": "savefig"} for s in stems}
+        resp["descriptors"] = [{"stem": s, "script": "fig.py"} for s in stems]
+        return resp
+
+    return make
+
+
+@pytest.mark.parametrize(
+    "stems,log_tail,code",
+    [
+        # 一张图都没捕获、脚本自己说了为什么（沙盒里先 exists 再读的形状）
+        ((), "数据文件不存在：points.csv\n", "no_figures_captured"),
+        # 一张都没有、一个字都没打印
+        ((), "", "no_figures_captured_silent"),
+        # 捕获到了别的图，唯独没有这张面板
+        (("other",), "", "unknown_stem"),
+    ],
+)
+def test_a_build_that_did_not_capture_the_panel_is_not_ready(
+    client, tmp_path, fake_pool, stems, log_tail, code
+):
+    """QA 2026-09-24 PATH-B1：脚本跑完了、请求的面板没被捕获，准备接口曾给 `ready`（`error=None`、
+    `descriptors=[]`），只有渲染入口报 `no_figures_captured`。`ready` 是「这张面板可以编辑」的证据：
+    给 `error` + **渲染入口会给的那个 code**（`pool.missing_stem_error` 与渲染同一条换码路）。回执留着。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+
+    def factory():
+        w = _FakeWorker(root)
+        w.script_name = "fig.py"
+        w._log_tail = lambda n=30: log_tail
+        return w
+
+    fake_pool["worker_factory"] = factory
+    fake_pool["build_resp"] = _resp_capturing(*stems)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    body = _wait(client, resp.get_json()["plan"]["plan_id"])
+    result = body["result"]
+    assert result["status"] == preparation.STATUS_ERROR, result
+    assert result["error"]["code"] == code
+    assert set(result["error"]) == {"code", "message"}
+    assert result["receipt"] is not None and result["receipt"]["completeness"] == "complete"
+    assert result["trace"]["failed_phase"] == "execute"
+
+
+def test_a_build_that_captured_the_panel_among_others_is_ready(client, tmp_path, fake_pool):
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    fake_pool["build_resp"] = _resp_capturing("other", "fig")
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    body = _wait(client, resp.get_json()["plan"]["plan_id"])
+    assert body["result"]["status"] == preparation.STATUS_READY, body["result"]
+    assert body["result"]["error"] is None
+
+
+def test_a_reused_runtime_without_the_panel_is_not_ready(client, tmp_path, fake_pool):
+    """复用那条路同一个判据：已 build 的会话里没有这张面板，不因为「复用」就给 `ready`。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    existing = _FakeWorker(root, generation=2, built=True)
+    existing.last_build_descriptors = []
+    existing.last_build_runtime = _build_resp()["runtime"]
+    fake_pool["peek"] = existing
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    body = _wait(client, resp.get_json()["plan"]["plan_id"])
+    assert body["result"]["status"] == preparation.STATUS_ERROR
+    assert body["result"]["error"]["code"] == "no_figures_captured_silent"
+    assert fake_pool["build_calls"] == 0
+
+
 # ---------------------------------------------------------------- 取消
 
 

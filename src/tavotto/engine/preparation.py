@@ -365,6 +365,20 @@ def plan_for(
     )
 
 
+def _captured_stems(build_resp) -> list[str] | None:
+    """build 响应里捕获到的 stem 表：`stems`（v1 build 一直带着）优先，没有就按 `descriptors`；两样都没有
+    = 说不出（None，不判）。"""
+    if not isinstance(build_resp, dict):
+        return None
+    stems = build_resp.get("stems")
+    if isinstance(stems, dict):
+        return [str(s) for s in stems]
+    descriptors = build_resp.get("descriptors")
+    if isinstance(descriptors, list):
+        return [str(d.get("stem")) for d in descriptors if isinstance(d, dict) and d.get("stem")]
+    return None
+
+
 def _project_relative(root: str, path: str) -> str | None:
     """项目内的路径 → 项目相对 POSIX；项目外 → None（**不回绝对路径**，它不进公开投影）。"""
     try:
@@ -548,6 +562,8 @@ class PreparationService:
             note = "复用现有 runtime，没有重新执行脚本"
             if check["matched"] is False:
                 note += "；它读到的数据与此刻预检记下的不同（图是旧快照，重算请重建会话）"
+            if self._stem_missing(entry, existing, _captured_stems(reusable)):
+                return
             self._finish(entry, STATUS_READY, note=note)
             return
         tr.mark("spawn")
@@ -621,7 +637,22 @@ class PreparationService:
             return
         if self._binding_mismatch(entry, rcpt, executed=True):
             return
+        if self._stem_missing(entry, worker, _captured_stems(resp)):
+            return
         self._finish(entry, STATUS_READY)
+
+    def _stem_missing(self, entry: _Entry, worker, known) -> bool:
+        """请求的面板没被捕获（一张图都没有 / 捕获到的里没有它）→ 与渲染入口**同一个 code** 的 `error`
+        （`no_figures_captured` / `no_figures_captured_silent` / `unknown_stem`，`pool.missing_stem_error` 是
+        同一条换码路）。`ready` 是「这张面板可以编辑」的证据，不能在渲染入口会报错的时候给（PATH-B1）。
+        回执照样留着：脚本确实跑过，它读了什么、在哪个解释器里跑的都是事实。"""
+        err = pool.missing_stem_error(worker, entry.plan.stem, known)
+        if err is None:
+            return False
+        entry.result.trace.fail("execute", err.code)
+        entry.result.error = {"code": err.code, "message": str(err)}
+        self._finish(entry, STATUS_ERROR, note="脚本跑完了，但这张面板没有被捕获")
+        return True
 
     @staticmethod
     def _stale_reason(plan: PreparationPlan) -> tuple[str, dict] | None:
