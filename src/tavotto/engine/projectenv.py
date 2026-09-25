@@ -330,6 +330,8 @@ except Exception as exc:
 if out["matplotlib_version"]:
     import importlib.util, os
     sys.path.insert(0, engine_dir)
+    dont_write = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     try:
         # **就是 worker 自己的启动导入链**，不是它的一个子集：以前这里只 import
         # figcapture / manifest / overrides，而 worker.py 还要 matplotlib.figure
@@ -340,6 +342,9 @@ if out["matplotlib_version"]:
         # sitecustomize / .pth 若已经 import 过一个不相干的顶层 `worker`，import 语句
         # 拿到的是缓存里那一个、体检就绿了；真 worker 是 `python worker.py` 起的，
         # 与这里一样执行的是文件。
+        # 按文件执行 worker.py 时 SourceFileLoader 会把 `worker.cpython-3xx.pyc` 写进
+        # engine 目录（= 安装目录，macOS 上在签过名的 .app 里，QA REL-01-B1）：只在这一段
+        # 关掉字节码写入（上面那两行）。worker 自己装引擎模块那一段由 bridgeboot 同样关着。
         spec = importlib.util.spec_from_file_location(
             "tavotto_probe_worker", os.path.join(engine_dir, "worker.py")
         )
@@ -347,6 +352,8 @@ if out["matplotlib_version"]:
         out["tavotto_worker_ok"] = True
     except BaseException as exc:  # SystemExit 也算：起不来就是起不来
         out["error"] = "worker: %s: %s" % (type(exc).__name__, exc)
+    finally:
+        sys.dont_write_bytecode = dont_write
 if module:
     out["requested_module"] = module
     try:

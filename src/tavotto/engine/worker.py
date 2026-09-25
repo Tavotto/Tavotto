@@ -80,7 +80,14 @@ _boot_spec = importlib.util.spec_from_file_location(
 )
 bridgeboot = importlib.util.module_from_spec(_boot_spec)
 sys.modules["tavotto_bridge_boot"] = bridgeboot
-_boot_spec.loader.exec_module(bridgeboot)
+# 按文件装载同样会把 `__pycache__/bridgeboot.*.pyc` 写进安装目录（QA REL-01-B1）：
+# 只在这一下关掉字节码写入，之后还原——理由见 `bridgeboot.load_engine_modules`。
+_dont_write_bytecode = sys.dont_write_bytecode
+sys.dont_write_bytecode = True
+try:
+    _boot_spec.loader.exec_module(bridgeboot)
+finally:
+    sys.dont_write_bytecode = _dont_write_bytecode
 
 import matplotlib  # noqa: E402 —— safe 档由 Tavotto 挑解释器，backend 在装引擎之前钉死
 

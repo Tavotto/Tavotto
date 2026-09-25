@@ -242,6 +242,61 @@ def test_busy_port_falls_back_instead_of_crashing():
         s.close()
 
 
+def _leave_time_wait_on_a_port() -> int:
+    """造一个只剩 TIME_WAIT 的端口：服务端先关连接（主动关闭方进 TIME_WAIT），再关 listener。
+
+    就是「上一个 Tavotto 实例刚退出」那一刻的形状：端口上没人 listen，但还挂着
+    服务端这一侧的 TIME_WAIT。
+    """
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    cli = socket.create_connection(("127.0.0.1", port), timeout=5)
+    conn, _ = srv.accept()
+    conn.close()  # 服务端主动关 → 它这一侧（本地端口 = port）进 TIME_WAIT
+    assert cli.recv(1) == b""  # 读到 EOF 再关，四次挥手走完
+    cli.close()
+    srv.close()
+    return port
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="Windows 的 bind 本来就不被 TIME_WAIT 挡住，探测刻意不带 SO_REUSEADDR"
+)
+def test_a_port_left_in_time_wait_by_the_last_instance_counts_as_free():
+    """QA STATE-08-B1：上一个实例留下的 TIME_WAIT 不算「占用」。
+
+    真正 listen 的 server（`localserver.LocalWSGIServer`，`allow_reuse_address`）bind 得上
+    这个端口；探测却判占用的话，浏览器模式同端口快速重启会被顺延到下一个端口，按源存的
+    localStorage（「上次文档」）就丢了。
+
+    前提断言防空转：不带 `SO_REUSEADDR` 的裸 bind 在这一刻**确实**失败——否则这台机器上
+    TIME_WAIT 根本没留下，下面那条绿了也什么都没证明。
+    """
+    port = _leave_time_wait_on_a_port()
+    bare = socket.socket()
+    try:
+        with pytest.raises(OSError):
+            bare.bind(("127.0.0.1", port))
+    finally:
+        bare.close()
+    assert m.port_is_free(port), "TIME_WAIT 被当成占用：同端口重启会被顺延"
+
+
+def test_a_port_with_a_live_listener_is_still_busy():
+    """另一条边：有人正 listen 的端口仍然是占用（带不带 `SO_REUSEADDR` 都不许放行）。
+    任何平台都跑——Windows 上若误带 `SO_REUSEADDR`，这条会绿→红。"""
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        assert not m.port_is_free(s.getsockname()[1])
+    finally:
+        s.close()
+
+
 def test_the_port_probe_raises_above_the_ceiling_instead_of_saying_busy():
     """**这条是下一条的前提，先把它钉住。**
 
