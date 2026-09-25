@@ -284,26 +284,26 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   rebuildManaged: async () => {
     if (get().busy || get().rebuildRunning) return
     const epoch = projectEpoch
-    // 所属项目在发请求**之前**记：响应回来时可能已经切到 B
+    // 所属项目、单飞、乐观进度**全在发请求之前**落定（#605 评审第二轮 P1）：后端的线程可能比 POST 的响应先
+    // 推进度——所属登记在 await 之后的话，那几条会被当成「不是自己起的」丢掉；立刻失败的终局还会被响应之后
+    // 才写的乐观 `creating_env` 盖回去，单飞却已经放开，第一次的结局谁都看不见。与 `install()` 同一顺序
     const owner = currentProjectId()
-    // 单飞从发请求这一刻就占住（在途的那一次也算）：否则 A 的请求还没回来、切到 B 又点一次，照样两次
-    set({ busy: true, errorCode: '', errorText: '', rebuildRunning: true })
+    startedPlans.set(REBUILD_ID, owner)
+    const started: DependencyProgress = { plan_id: REBUILD_ID, state: 'creating_env', log: '', error: null, code: '' }
+    set({ busy: true, errorCode: '', errorText: '', rebuildRunning: true, progress: started })
     try {
       await rebuildManagedEnvironment()
-      startedPlans.set(REBUILD_ID, owner)
-      const started: DependencyProgress = { plan_id: REBUILD_ID, state: 'creating_env', log: '', error: null, code: '' }
-      if (epoch !== projectEpoch) {
-        // 重建在 A 上起了、界面已经在 B：进度收进 A 那格，B 不显示
-        set({ parked: { ...get().parked, [projectKey(owner)]: started } })
-        return
-      }
-      set({ busy: false, progress: started })
+      // 进度此后只由 SSE 推进（切走时 `clear()` 已经把它收进 A 那格），这里不再写进度
+      if (epoch !== projectEpoch) return
+      set({ busy: false })
     } catch (e) {
-      // 没起来：单飞放开（与哪个项目开着无关）
+      // 没起来：结局交给所属那格（此刻开着就是当前卡片），再撤掉所属与单飞
+      if (epoch !== projectEpoch) lateFailure(REBUILD_ID, e)
+      startedPlans.delete(REBUILD_ID)
       set({ rebuildRunning: false })
       if (epoch !== projectEpoch) return
       const { code, text } = failure(e)
-      set({ busy: false, errorCode: code, errorText: text })
+      set({ busy: false, progress: null, errorCode: code, errorText: text })
     }
   },
 

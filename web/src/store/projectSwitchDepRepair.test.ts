@@ -440,3 +440,55 @@ describe('A → B → A 之后才被拒（#605 评审 P2）', () => {
     expect(s.errorCode).toBe('dependency_install_not_allowed')
   })
 })
+
+describe('重建的所属与单飞在发请求之前落定（#605 评审第二轮 P1）', () => {
+  const rebuild = (state: DependencyProgress['state'], over: Partial<DependencyProgress> = {}) =>
+    progress(state, { plan_id: 'managed-rebuild', ...over })
+
+  it('POST 回来之前进度就到了、而且立刻失败：结局留在卡片上，不被乐观的 creating_env 盖回去', async () => {
+    const armed = holdOnce('/api/engine/environment/managed/rebuild')
+    const pending = useDepRepairStore.getState().rebuildManaged()
+    const release = await armed
+    useDepRepairStore.getState().onProgress(rebuild('installing'))
+    expect(useDepRepairStore.getState().progress?.state).toBe('installing') // 尺子是活的：早到的进度认得出是自己的
+    useDepRepairStore.getState().onProgress(rebuild('failed', { code: 'managed_rebuild_failed', error: '建不起来' }))
+    expect(useDepRepairStore.getState().rebuildRunning).toBe(false)
+    release({ started: true, requirements: [] })
+    await pending
+    const s = useDepRepairStore.getState()
+    expect(s.progress?.state).toBe('failed')
+    expect(s.errorCode).toBe('managed_rebuild_failed')
+    expect(s.busy).toBe(false)
+  })
+
+  it('请求本身失败：所属与单飞都撤掉，之后的同 id 进度不再认领，可以再起一次', async () => {
+    const armed = holdOnce('/api/engine/environment/managed/rebuild')
+    const pending = useDepRepairStore.getState().rebuildManaged()
+    const release = await armed
+    release({ error: '忙', code: 'environment_mutating' }, 409)
+    await pending
+    let s = useDepRepairStore.getState()
+    expect(s.rebuildRunning).toBe(false)
+    expect(s.progress).toBeNull()
+    expect(s.errorCode).toBe('environment_mutating')
+    useDepRepairStore.getState().onProgress(rebuild('installing'))
+    expect(useDepRepairStore.getState().progress).toBeNull()
+    await useDepRepairStore.getState().rebuildManaged()
+    s = useDepRepairStore.getState()
+    expect(s.progress?.plan_id).toBe('managed-rebuild')
+  })
+
+  it('请求在切项目之后才失败：A 那格记成失败、单飞放开，B 不动', async () => {
+    const armed = holdOnce('/api/engine/environment/managed/rebuild')
+    const pending = useDepRepairStore.getState().rebuildManaged()
+    const release = await armed
+    await switchTo('p2')
+    release({ error: '忙', code: 'environment_mutating' }, 409)
+    await pending
+    expect(useDepRepairStore.getState().rebuildRunning).toBe(false)
+    expect(useDepRepairStore.getState().errorCode).toBe('')
+    await switchTo('p1')
+    expect(useDepRepairStore.getState().progress?.state).toBe('failed')
+    expect(useDepRepairStore.getState().errorCode).toBe('environment_mutating')
+  })
+})
