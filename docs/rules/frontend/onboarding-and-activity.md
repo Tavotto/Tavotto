@@ -101,6 +101,8 @@
   那一帧在 -9999）直接出现，两框外接矩形碰到锚点也直接跳，其余才带 left/top 过渡。曾经落位与过渡同
   一帧生效，第 1 步的卡片从屏幕外斜着飞进来、半路改道扫过素材卡，慢机器上双击的第二下落在飞过来的
   「跳过此步」上——教程被推到第 2 步、图却没打开，合并组里连踢三个无关 PR。
+  **滑行中卡片 `pointer-events: none`**（`transitionend` 复位，兜底 `DURATION.fast + 50` ms，卸载即清）：
+  `shouldGlide` 只护锚点，路上压过的其它目标靠这一条——移动中的浮层不接点击。
 * 看护：`onboardingStore.test.ts` / `activity.test.ts` / `selectionStore.test.ts` /
   `lib/onboarding/{position,flow,tutorial,hints}.test.ts` / `components/onboarding/onboardingLayer.test.tsx` /
   `e2e/tutorial.spec.ts`（完整走完 / 刷新恢复 + Esc + 更多菜单 + axe / 重新开始 / 启动恢复晚到时拖动 /

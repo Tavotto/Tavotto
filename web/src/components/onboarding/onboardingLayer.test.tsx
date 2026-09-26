@@ -7,6 +7,7 @@
 import { act, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DURATION } from '@/lib/motion'
 import { REAL_STEP_IDS, STEP_IDS } from '@/lib/onboarding/stepIds'
 import { useTutorialStore } from '@/lib/onboarding/tutorial'
 import type { TutorialMetadata } from '@/lib/api'
@@ -450,6 +451,56 @@ describe('锚点', () => {
       { at: '500px,150px', glide: true },
       { at: '500px,290px', glide: false },
     ])
+    anchor.remove()
+  })
+
+  it('滑行中卡片不接指针：过渡结束或兜底计时到了才恢复（#581）', async () => {
+    const anchor = document.createElement('div')
+    anchor.setAttribute('data-object-id', 'p2')
+    document.body.appendChild(anchor)
+    giveRect(anchor, { x: 200, y: 100, w: 80, h: 40 })
+    await mount()
+    await act(async () => {
+      ob().start({ projectId: 'p_tut', documentId: META.document_id })
+      ob().goTo('open_fast_edit')
+    })
+    await flush()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DURATION.fast + 50)
+    })
+    // 停着的卡片照常可点
+    expect(card()!.style.pointerEvents).toBe('')
+    const glideTo = async (x: number) => {
+      giveRect(anchor, { x, y: 100, w: 80, h: 40 })
+      await act(async () => {
+        window.dispatchEvent(new Event('resize'))
+      })
+    }
+    // 横着滑：路上不碰锚点 → 滑，滑的这段不接指针
+    await glideTo(500)
+    expect(card()!.style.transition).toContain('left')
+    expect(card()!.style.pointerEvents).toBe('none')
+    // 过渡结束事件到了就恢复（别的属性的 transitionend 不算）
+    const end = (prop: string) => {
+      const e = new Event('transitionend')
+      Object.defineProperty(e, 'propertyName', { value: prop })
+      card()!.dispatchEvent(e)
+    }
+    await act(async () => end('opacity'))
+    expect(card()!.style.pointerEvents).toBe('none')
+    await act(async () => end('left'))
+    expect(card()!.style.pointerEvents).toBe('')
+    // 事件不来（被打断 / 元素被挪走）：兜底计时器从最后一次滑行起算
+    await glideTo(300)
+    expect(card()!.style.pointerEvents).toBe('none')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DURATION.fast + 49)
+    })
+    expect(card()!.style.pointerEvents).toBe('none')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(card()!.style.pointerEvents).toBe('')
     anchor.remove()
   })
 

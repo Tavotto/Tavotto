@@ -157,6 +157,11 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
   } | null>(null)
   // 卡片此刻在屏幕上的框（容器坐标）；还没落过位是 null——挂载那一帧它在 -9999
   const shown = useRef<Box | null>(null)
+  // 正在滑：这段时间卡片不接指针（#581）。`shouldGlide` 只护着锚点，路上压过的别的可点目标
+  // 它不管；滑行中的卡片一律让点击穿过去，才是「移动中的浮层不抢点击」的通用保证。
+  // `moveSeq` 每滑一次 +1，让复位计时器从最后一次起算
+  const [moving, setMoving] = useState(false)
+  const [moveSeq, setMoveSeq] = useState(0)
   const [waitedOut, setWaitedOut] = useState(false)
   const revealed = useRef(false)
 
@@ -248,9 +253,36 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
       ? placeCoachmark(local, size, { w: frame.w, h: frame.h }, { margin: COACHMARK_MARGIN })
       : { ...placeCentered(size, { w: frame.w, h: frame.h }), side: 'center' as const }
     const next: Box = { x: p.x, y: p.y, w: size.w, h: size.h }
-    setPlacement({ ...p, glide: shouldGlide(shown.current, next, local) })
+    const glide = shouldGlide(shown.current, next, local)
+    const moved = !!shown.current && (shown.current.x !== next.x || shown.current.y !== next.y)
+    setPlacement({ ...p, glide })
     shown.current = next
+    if (glide && moved && !prefersReducedMotion()) {
+      setMoving(true)
+      setMoveSeq((n) => n + 1)
+    } else if (moved) {
+      // 跳过去了：上一段滑行（若有）已被打断，卡片此刻就停在落点上
+      setMoving(false)
+    }
   }, [measured, ctx])
+
+  // 滑完复位：过渡结束事件为准；它可能不来（被下一次落位打断、元素被挪走），兜底计时器
+  // 比过渡长 50 ms。两者都在卸载 / 换步骤时清掉（`ActiveStep` 按步骤 key 重挂），
+  // 旧步骤的计时器不会在新步骤上改状态
+  useEffect(() => {
+    if (!moveSeq) return
+    const card = cardRef.current
+    const done = () => setMoving(false)
+    const onEnd = (e: TransitionEvent) => {
+      if (e.target === card && (e.propertyName === 'left' || e.propertyName === 'top')) done()
+    }
+    card?.addEventListener('transitionend', onEnd)
+    const fallback = window.setTimeout(done, DURATION.fast + 50)
+    return () => {
+      card?.removeEventListener('transitionend', onEnd)
+      window.clearTimeout(fallback)
+    }
+  }, [moveSeq])
 
   const missing = measured === null
   const showMissing = missing && waitedOut
@@ -312,6 +344,7 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
       reduced || !placement?.glide
         ? undefined
         : `left ${DURATION.fast}ms ${EASE_STANDARD}, top ${DURATION.fast}ms ${EASE_STANDARD}`,
+    ...(moving ? { pointerEvents: 'none' as const } : {}),
   }
   const ring =
     measured?.box && !inDialog
