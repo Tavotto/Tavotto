@@ -99,6 +99,22 @@ bbox 的这两处变化，对拖动锚点没有影响：文字的 `anchor` 由 `
   落在一大块实心形状**内部**、却不碰它的边时，从前按 bbox 报风险，现在不报。Polygon / fill_between
   早就是这样，修法是 `fill` 的几何在 `_segments_hit_rect` 之外再判「矩形在内部」。
 
+- **快速编辑里 Fig1_kinetics 的 X 轴标题被切掉半截、点不中**（v0.16.0 起就有）：**是显示裁剪，不是命中区**。
+  脚本用 `savefig(bbox_inches="tight", pad_inches=0.02)` 存盘，磁盘原件是 75.26 × 58.68 mm，轴标题完好。
+  画布显示的是 live 图，图幅按 figsize 算，是 80 × 57.6 mm，轴标题的 bbox（y 0.980–1.030）有一半伸在图幅外，
+  SVG 在图幅边界被裁掉。真浏览器实测（隔离实例，94% 缩放）：
+  - 图幅内那条约 3 px 的可见部分**点得中**，选中的是 X 轴标题；
+  - 图幅外那半截点下去落在舞台上，选区不变；
+  - 选中框按 bbox 画，会伸出图幅外。
+
+  命中区与画出来的一致，这次没有可修的命中缺陷。根因是「tight 当不当图幅」，已登记在
+  `docs/rules/backend/figure-capture-and-execution.md` 与 ADR 0051 §3、0080，属于 ADR 级未决问题。
+  建议两步：
+  1. 把 savefig 的 kwargs 记进捕获描述符；
+  2. 由新 ADR 裁决是否把 tight 包围盒当作 live 图幅。这会改几何权威的坐标系、预览、导出与写回。
+
+  在那之前，用户可以做两件事：预检 `element-outside-figure` 会把裁切说出来；元素树里的「X 轴」一行可以选中它。
+
 ## 看护
 
 - `tests/test_series_shape_geometry.py`：误差棒四种写法、茎叶、上限整组退回、斜椭圆、阴影线、
