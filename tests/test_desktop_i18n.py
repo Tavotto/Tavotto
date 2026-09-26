@@ -96,7 +96,6 @@ SHARED_WITH_UI = {
     "edit_undo": ("workspace", "topbar.undo"),
     "edit_redo": ("workspace", "topbar.redo"),
     "file_export": ("workspace", "topbar.export"),
-    "file_save_layout": ("dialogs", "palette.commands.save-layout.label"),
     "edit_duplicate": ("workspace", "quickEdit.duplicate"),
     "edit_delete": ("common", "actions.delete"),
     "align_left": ("inspector", "alignMode.left"),
@@ -113,6 +112,26 @@ SHARED_WITH_UI = {
     "help_shortcuts": ("workspace", "topbar.shortcutHelp"),
     "help_diagnostics": ("dialogs", "settings.about.exportBundle"),
 }
+
+
+def test_menu_uses_the_four_ui_nouns():
+    """
+    界面名词只有四个：项目 / 排版 / 画布 / 项目包。「文档」「画布文件」是旧词——
+    菜单文案在 Rust 里，前端的名词检查扫不到这里，所以在这里单独看住。
+    `help_docs`（使用文档）指的是帮助手册，不是那个旧词，豁免。
+    """
+    old = {
+        k: v
+        for k, v in _table("ZH").items()
+        if k != "help_docs" and ("文档" in v or "画布文件" in v)
+    }
+    assert not old, f"菜单里还有旧名词：{old}"
+    old_en = {
+        k: v
+        for k, v in _table("EN").items()
+        if k != "help_docs" and re.search(r"\bdocument\b|canvas file", v, re.I)
+    }
+    assert not old_en, f"英文菜单里还有旧名词：{old_en}"
 
 
 def _dig(node: dict, dotted: str) -> str:
