@@ -6,6 +6,13 @@
 - **前端唯一桌面感知点是 `web/src/lib/desktop.ts`**：组件不得直接 import
   `@tauri-apps/*`；每个能力都有浏览器回退（vitest 看护）。菜单事件 id 与
   `src-tauri/src/main.rs` 严格同源（`tavotto:menu`）。
+- **菜单转发只有一个分派点 `hooks/menuActions.ts` 的 `runMenuAction()`**（2026-09-26）：
+  每一条都落到键盘 / 顶栏 / 命令面板 / 属性页已经在调的那个函数上，不新增能力。
+  菜单加速键可能先于 keydown 截获按键（Windows 一定如此），所以挂了加速键的几条与
+  `useKeyboard` 问**同一个**让位判据 `yieldsCanvasShortcuts()`——焦点在输入框 / 对话框里
+  时 ⌘D / ⌘0 / ⌘1 / ⌘± 什么都不做，⌘S 照存。不带修饰键的前端键位（Delete、?、工具字母）
+  **不挂**菜单加速键：挂上等于输入框里打不了那个字。看护 `hooks/menuActions.test.tsx`
+  （逐键比「按键」与「菜单转发」的效果，画布那一格必须真的有效果）。
 - `checkUpdateOnStartup()` 按 `isDesktop()` 只查一条更新通道（桌面归 Tauri，
   浏览器归 `/api/update/*`）。壳侧细节见 `src-tauri/AGENTS.md`。
 - **查到新版怎么说出口**（2026-09-12）：启动时弹一次 `components/UpdateNoticeDialog.tsx`

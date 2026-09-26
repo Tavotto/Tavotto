@@ -89,12 +89,49 @@ def test_interpolation_placeholders_match_across_languages():
 # 与界面说同一件事
 # --------------------------------------------------------------------------- #
 
-# Rust 字段 → 前端 (命名空间, 点分 key)。菜单项后面的省略号不参与比较。
+# Rust 字段 → 前端 (命名空间, 点分 key)。菜单项后面的省略号不参与比较；
+# 大小写也不比——macOS 菜单是 Title Case（Zoom In），界面是句首大写（Zoom in），
+# 那是各自平台的写法，不是两个词。
 SHARED_WITH_UI = {
     "edit_undo": ("workspace", "topbar.undo"),
     "edit_redo": ("workspace", "topbar.redo"),
     "file_export": ("workspace", "topbar.export"),
+    "edit_duplicate": ("workspace", "quickEdit.duplicate"),
+    "edit_delete": ("common", "actions.delete"),
+    "align_left": ("inspector", "alignMode.left"),
+    "align_hcenter": ("inspector", "alignMode.hcenter"),
+    "align_right": ("inspector", "alignMode.right"),
+    "align_top": ("inspector", "alignMode.top"),
+    "align_vcenter": ("inspector", "alignMode.vcenter"),
+    "align_bottom": ("inspector", "alignMode.bottom"),
+    "align_hdist": ("inspector", "alignMode.hdist"),
+    "align_vdist": ("inspector", "alignMode.vdist"),
+    "view_zoom_in": ("workspace", "topbar.zoomIn"),
+    "view_zoom_out": ("workspace", "topbar.zoomOut"),
+    "view_fit": ("workspace", "topbar.fitCanvas"),
+    "help_shortcuts": ("workspace", "topbar.shortcutHelp"),
+    "help_diagnostics": ("dialogs", "settings.about.exportBundle"),
 }
+
+
+def test_menu_uses_the_four_ui_nouns():
+    """
+    界面名词只有四个：项目 / 排版 / 画布 / 项目包。「文档」「画布文件」是旧词——
+    菜单文案在 Rust 里，前端的名词检查扫不到这里，所以在这里单独看住。
+    `help_docs`（使用文档）指的是帮助手册，不是那个旧词，豁免。
+    """
+    old = {
+        k: v
+        for k, v in _table("ZH").items()
+        if k != "help_docs" and ("文档" in v or "画布文件" in v)
+    }
+    assert not old, f"菜单里还有旧名词：{old}"
+    old_en = {
+        k: v
+        for k, v in _table("EN").items()
+        if k != "help_docs" and re.search(r"\bdocument\b|canvas file", v, re.I)
+    }
+    assert not old_en, f"英文菜单里还有旧名词：{old_en}"
 
 
 def _dig(node: dict, dotted: str) -> str:
@@ -110,7 +147,9 @@ def test_menu_and_ui_agree_on_shared_actions(locale: str, table: str):
     for field, (ns, key) in SHARED_WITH_UI.items():
         menu = rs[field].rstrip("…").strip()
         ui = _dig(_web(locale, ns), key).rstrip("…").strip()
-        assert menu == ui, f"{locale} 的「{field}」菜单写「{menu}」、界面写「{ui}」"
+        assert menu.casefold() == ui.casefold(), (
+            f"{locale} 的「{field}」菜单写「{menu}」、界面写「{ui}」"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -182,13 +221,76 @@ def test_set_menu_locale_is_declared_in_all_three_places():
     )
 
 
+def _menu_builder() -> str:
+    """`build_menu_in` 的函数体（菜单项 id 与加速键只该在这里出现）。"""
+    main_rs = (TAURI / "src" / "main.rs").read_text(encoding="utf-8")
+    start = main_rs.index("fn build_menu_in<R: tauri::Runtime>(")
+    return main_rs[start : main_rs.index("\n}\n", start)]
+
+
+# 自定义菜单项的加速键全集。每一条都是前端 `hooks/useKeyboard.ts` 本来就认的键
+# （⌘, 除外：前端没有这个键，它只在菜单里），菜单转发与 keydown 的让位判断同一条
+# （`web/src/hooks/menuActions.test.tsx` 逐键比）。**加一条就要回答它在输入框里
+# 会不会被菜单劫持**——Delete / ? 这类不带修饰键的键因此一律不挂。
+ACCELERATORS = {
+    "CmdOrCtrl+Comma",
+    "CmdOrCtrl+O",
+    "CmdOrCtrl+S",
+    "CmdOrCtrl+Shift+S",
+    "CmdOrCtrl+E",
+    "CmdOrCtrl+Z",
+    "CmdOrCtrl+Shift+Z",
+    "CmdOrCtrl+D",
+    "CmdOrCtrl+Equal",
+    "CmdOrCtrl+Minus",
+    "CmdOrCtrl+0",
+    "CmdOrCtrl+1",
+}
+
+
 def test_language_switch_does_not_touch_accelerators():
     """
     切语言只换显示文案：菜单项 id 与加速键必须只出现一次定义。
     改坏了的表现是「切成英文之后 ⌘Z 没反应」——用户不会往语言上联想。
     """
+    body = _menu_builder()
+    accels = re.findall(r'"(CmdOrCtrl\+[^"]+)"', body)
+    assert set(accels) == ACCELERATORS, f"加速键集合变了：{set(accels) ^ ACCELERATORS}"
+    for accel in ACCELERATORS:
+        assert accels.count(accel) == 1, f"{accel} 被写了不止一次"
+    ids = re.findall(r'"((?:menu|help)-[a-z-]+)"', body)
+    assert ids, "没解析出菜单项 id——解析逻辑跟着源码走样了"
+    for menu_id in set(ids):
+        assert ids.count(menu_id) == 1, f"{menu_id} 被写了不止一次"
+    # id 不许从 i18n 表里来（那样换语言就换了 id）
+    assert "with_id(m." not in body and "menu_item(handle, m." not in body
+
+
+def test_menu_ids_are_the_same_set_on_both_sides():
+    """
+    壳里转发的 `menu-*` 与前端 `MENU_ACTIONS` 严格同源：壳多一条 = 点了没反应，
+    前端多一条 = 死分支。`help-*` 由壳自己开链接，不进前端。
+    """
+    rust = set(re.findall(r'"(menu-[a-z-]+)"', _menu_builder()))
+    ts = (ROOT / "web" / "src" / "lib" / "desktop.ts").read_text(encoding="utf-8")
+    block = ts[ts.index("export const MENU_ACTIONS = [") :]
+    block = block[: block.index("] as const")]
+    front = set(re.findall(r"'(menu-[a-z-]+)'", block))
+    assert rust, "没解析出壳里的 menu-* id"
+    assert rust == front, f"壳与前端的菜单 id 对不上：{rust ^ front}"
+
+
+def test_shell_repo_url_mirrors_the_brand_constant():
+    """
+    壳在 webview 起来之前就建菜单，读不到前端常量，只能镜像一份 `REPO_URL`
+    （帮助菜单的链接与「关于」的网站）。三处必须是同一个地址。
+    """
     main_rs = (TAURI / "src" / "main.rs").read_text(encoding="utf-8")
-    for accel in ("CmdOrCtrl+Z", "CmdOrCtrl+Shift+Z", "CmdOrCtrl+O", "CmdOrCtrl+E"):
-        assert main_rs.count(f'accelerator("{accel}")') == 1, f"{accel} 被写了不止一次"
-    for menu_id in ("menu-undo", "menu-redo", "menu-open-project", "menu-export"):
-        assert main_rs.count(f'with_id("{menu_id}"') == 1, f"{menu_id} 被写了不止一次"
+    (rust,) = re.findall(r'^const REPO_URL: &str = "([^"]+)";', main_rs, re.M)
+    brand_ts = (ROOT / "web" / "src" / "lib" / "brand.ts").read_text(encoding="utf-8")
+    (ts,) = re.findall(r"^export const REPO_URL = '([^']+)'", brand_ts, re.M)
+    from tavotto.engine import brand
+
+    assert rust == ts == brand.REPO_URL
+    # 壳里不许再有第二处手写的仓库地址
+    assert main_rs.count("github.com/") == 1, "main.rs 里还有别处手写了仓库地址"
