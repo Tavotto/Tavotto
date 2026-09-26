@@ -127,7 +127,7 @@ describe('卡片上的状态', () => {
       ['Mystery.pdf', 'needs_probe', '需试运行'],
       ['Dup.pdf', 'conflict', '有冲突'],
       ['Gone.pdf', 'source_missing', '源脚本丢失'],
-      ['Photo.pdf', 'layout_only', '仅排版'],
+      ['Photo.pdf', 'layout_only', '仅版面'],
     ]
     await mount(cases.map(([id, st]) => panel(id, { capability: cap(st) })))
     for (const [id, , label] of cases) {
@@ -152,8 +152,8 @@ describe('卡片上的状态', () => {
   it('capability 缺席 = 这一轮还不知道，**不补一个默认状态**', async () => {
     await mount([panel('New.pdf')])
     const card = cardOf('New.pdf')
-    expect(card.textContent).not.toContain('仅排版')
-    expect(card.getAttribute('aria-label')).not.toContain('仅排版')
+    expect(card.textContent).not.toContain('仅版面')
+    expect(card.getAttribute('aria-label')).not.toContain('仅版面')
   })
 })
 
@@ -190,8 +190,8 @@ describe('选中卡片后的说明条', () => {
     await act(async () => cardOf('Photo.pdf').click())
     const box = notice()
     expect(box).not.toBeNull()
-    expect(box!.textContent).toContain('仅排版')
-    expect(box!.textContent).toMatch(/排版|裁剪|导出/)
+    expect(box!.textContent).toContain('仅版面')
+    expect(box!.textContent).toMatch(/摆放|裁剪|导出/)
     expect(box!.querySelector('button')).not.toBeNull()
     // 它在 listbox **外面**
     expect(box!.closest('[role="listbox"]')).toBeNull()
