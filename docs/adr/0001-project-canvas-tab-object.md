@@ -91,4 +91,5 @@ schema 2 → 3 迁移：整份旧文档变成唯一 Canvas，`name` 提升为 Ca
   ——改 key 代价大、与用户无关；开发者读到 `document` 时按本表对应到「排版」。
 - 每样东西存在哪、存什么，面向用户的说明在 README「文件都放在哪」；前端细则与看护
   在 `docs/rules/frontend/i18n.md`「界面名词」。看护：`tests/test_ui_terminology.py`
-  （扫 zh-CN / en-US 全部语言包 + `src-tauri/src/i18n.rs`，豁免按条枚举且必须仍命中）。
+  （扫 zh-CN / en-US 全部语言包，豁免按条枚举且必须仍命中）；壳内菜单文案由
+  `tests/test_desktop_i18n.py` 看护。
