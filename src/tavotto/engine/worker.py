@@ -162,6 +162,7 @@ def _patched_savefig(self, fname, *args, **kwargs):
     stem = figcapture.savefig_stem(fname)
     if stem and SESSION is not None:
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
+        SESSION.note_savefig(stem, self, figcapture.savefig_call(fname, kwargs))
     return None
 
 
@@ -428,9 +429,14 @@ class Worker(wireproto.V1Handler):
                     # 与 `_patched_savefig` 同一条来源记账：paper_style.save 是显式
                     # 「保存这张图」，来源就是 savefig（以前这里不记来源，靠读取端
                     # `.get(stem, SOURCE_SAVEFIG)` 兜底——结果一样，现在是显式的）。
-                    paper_style.save = lambda fig, stem, outdir="figures": SESSION.add_figure(
-                        stem, fig, figcapture.SOURCE_SAVEFIG
-                    )
+                    # 捷径整个被替换，它里面那句 savefig 带了什么参数这里看不见：
+                    # 记成「存过盘、参数没观察到」（None），不假装是「没有参数」。
+                    def _paper_style_save(fig, stem, outdir="figures"):
+                        claimed = SESSION.add_figure(stem, fig, figcapture.SOURCE_SAVEFIG)
+                        SESSION.note_savefig(stem, fig, None)
+                        return claimed  # 返回值与以前那个 lambda 逐字相同
+
+                    paper_style.save = _paper_style_save
                 if self.entry == "__main__":
                     import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
 

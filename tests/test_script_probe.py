@@ -643,7 +643,9 @@ class TestCaptureResults:
             "source_fingerprint",
             "can_writeback_artifact",
             "can_writeback_source",
+            "savefig_calls",
         }
+        assert d["savefig_calls"] == [], "show-only 脚本从没存过盘"
         rebuilt = figcapture.descriptor_from_payload(d).to_payload()
         assert rebuilt == d
         assert result["timings"].get("script_build_ms", 0) > 0
