@@ -348,8 +348,10 @@ Codex #547 r4104608121 的场景：绑定时 y 轴标签的字号刚好已合样
 7. **按 (gid, prop) 取 override 一律取生效的那条**（`lib/effectiveOverride`，重复条目 last-wins，#587；Codex #547
    r4109745742）：`effectiveChanges`（已合样式）、`ownedLive`（样式写的）、`writtenOverrides`（用户写过，按条目身份比）、
    一键修复的列表差都读最后一条。老文档里第一条恰好等于样式值、生效的最后一条不等时，读第一条会把它当成已合样式、
-   当成样式写的、或者以为没动过。`web/src/store/styleOverrideLookup.test.ts` 结构性地禁止这几份文件里再出现同时比
-   gid 与 prop 的 `find` / `findIndex`。
+   当成样式写的、或者以为没动过。`web/src/store/styleOverrideLookup.test.ts` 按 **TypeScript AST** 结构性地禁止这几份文件里
+   再出现按 (gid, prop) 取第一条的调用：`find` / `findIndex` / `filter(...)[0]` / `filter(...).at(0)`，回调同时比较自己参数
+   的 `gid` 与 `prop`（操作数顺序、箭头或块体、解构与改名都认得出；Codex #547 r4109901118：源码正则会被这些变形绕过）。
+   豁免只按函数名点名（`effectiveOverride` 一族的实现）；守卫带违规 / 放行样本自证。
 
 **override 写入点清单**（2026-09-25 逐一核过；`removeOverrides` 这个函数不存在，删除都是就地 `filter`）
 
