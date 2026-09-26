@@ -204,6 +204,9 @@ class LiveFigureSession:
         #: 产物可写回**——调用方如实带出去，别让上层以为「捕获到了」就等于
         #: 「磁盘上有一份原件」。
         self.capture_source: dict[str, str] = {}
+        #: stem -> 认领它的 savefig 调用（`figcapture.record_savefig_call` 记账；None =
+        #: 存过盘但参数没观察到）。只记不用：渲染与几何一概不读它（tight 图幅的决定之前）。
+        self.savefig_calls: dict[str, list | None] = {}
         #: stem -> FigState（`instrument()` 之后才有）
         self.states: dict[str, overrides_mod.FigState] = {}
         self._manifest_cache: dict[str, dict] = {}
@@ -234,6 +237,10 @@ class LiveFigureSession:
         self.capture[stem] = fig
         self.capture_source[stem] = source
         return True
+
+    def note_savefig(self, stem: str, fig, call: dict | None) -> None:
+        """记一次 savefig 调用（规则在 `figcapture.record_savefig_call`）。"""
+        figcapture.record_savefig_call(self.savefig_calls, self.capture, stem, fig, call)
 
     def instrument_all(self) -> None:
         """给捕获表里还没有 FigState 的图建状态并出一次预览。
@@ -313,6 +320,7 @@ class LiveFigureSession:
                     size_mm=figcapture.size_mm_of(self.states[stem].fig),
                     source_fingerprint=source_fingerprint,
                     original_artifact=artifact,
+                    savefig_calls=figcapture.savefig_calls_of(self.savefig_calls, stem, source),
                 ).to_payload()
             )
         return out
