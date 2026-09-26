@@ -751,6 +751,23 @@ jobs:
       # 是否过期）。缺翻译在这里必须**失败**，不是打条 warning 就放行——
       # 界面上一串 `project.actions.create` 是发出去才被用户发现的那类问题。
       - run: pnpm i18n:check
+      # 功能登记表（ADR 0097，docs/rules/ci/feature-registry.md）：用户可见的功能不能被后面的修改
+      # 悄悄关掉。静态这一半在快线上判——登记的每条 e2e 在 Playwright 自己的 `--list` 里存在、
+      # 没有声明期或运行期的 skip / fixme / fail（AST 扫描，扫描器先用内置样例自测）、带
+      # `@feature:` 标签的用例都登记了；以及与 base 比条目不许消失、active → removed 要打
+      # `feature:removal` 标签（merge_group 没有 PR 标签，只判前一条）。「真的执行并通过」那一半
+      # 在 posix-e2e（合并态那次真跑的报告）。
+      - name: 功能登记表：登记的 e2e 在、没被跳过、无孤儿标签
+        working-directory: ${{ github.workspace }}
+        run: |
+          node web/scripts/e2e-skip-scan.mjs --self-test
+          python3 scripts/ci/feature_registry.py check
+      - name: 功能登记表：条目不许消失，下线要带「feature:removal」标签
+        working-directory: ${{ github.workspace }}
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          LABELS: ${{ github.event_name == 'pull_request' && toJSON(github.event.pull_request.labels.*.name) || 'null' }}
+        run: python3 scripts/ci/feature_registry.py transitions --base "$BASE_SHA" --labels "$LABELS"
       - run: pnpm test
       # 真类型检查在 `pnpm build` 的 `tsc -b` 里。这里曾经是 `pnpm tsc --noEmit`：
       # 根 tsconfig 是 `files: []` + references 的方案文件，--noEmit 不走项目引用、
@@ -1901,6 +1918,8 @@ jobs:
         env:
           # 不设 TAVOTTO_EXE：这条腿刻意跑源码形态（见上）。
           TAVOTTO_PYTHON: ${{ steps.py.outputs.python-path }}
+          # 多写一份 JSON 报告给下一步的功能登记表核对（web/playwright.config.ts 见到它才加 json reporter）
+          TAVOTTO_E2E_JSON: ${{ runner.temp }}/e2e-results.json
         # **step 级上限 20 分钟**（job 级 45 不动）：CI00 实测这一步 7.4 分钟。理由与
         # windows-exe-smoke 那一步相同——job 级上限硬杀时 step 停在 in_progress、
         # `if: failure()` 的收集步骤不跑、日志 blob 与 artifact 都没有（PR #373 attempt 1）；
@@ -1910,6 +1929,14 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm exec playwright install --with-deps chromium
           pnpm e2e --project=chromium --project=chromium-en
+
+      # 功能登记表的「真跑」那一半（ADR 0097）：合并态这次运行的报告里，每个 active 功能登记的
+      # 用例都出现了、结论都是 expected / flaky。skipped 判红（skip 不是绿），报告里没有它也判红
+      # （没跑不是绿）——静态扫描看不见从别的模块 import 进来的 skip，这一步看得见。
+      - name: 功能登记表：登记的用例在合并态真的执行并通过
+        env:
+          TAVOTTO_E2E_JSON: ${{ runner.temp }}/e2e-results.json
+        run: python scripts/ci/feature_registry.py verify-run "$TAVOTTO_E2E_JSON"
 
       - name: 失败时收集 trace 与操作轨迹
         if: failure()

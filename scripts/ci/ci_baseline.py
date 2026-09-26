@@ -345,7 +345,9 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
             # U01（ADR 0053）：预期集合 + enforced 用例、闭集校验——都是判定；证据上传在 artifact 那条
             r"^首开 / 输出 harness|"
             # U10（ADR 0072）：退役扫描是对产物的判定
-            r"^退役扫描"
+            r"^退役扫描|"
+            # ADR 0097：功能登记表的三步（静态核对 / 与 base 比 / 合并态真跑的报告）都是判定
+            r"^功能登记表"
         ),
     ),
 )
