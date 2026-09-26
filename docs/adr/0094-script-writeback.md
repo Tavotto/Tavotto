@@ -1,6 +1,6 @@
 # ADR 0094：把图内调整写回原脚本——用户显式选择的导出动作：先备份、写前逐行看清、一键复原
 
-日期：2026-09-26 · 状态：**Proposed**（设计 + 可行性 spike；实现与是否进 1.0 待用户拍板，见文末「需要拍板」）
+日期：2026-09-26 · 状态：**Proposed**（设计 + 可行性 spike；十一个取舍已由用户 2026-09-26 拍板，见文末「已决定」；实施时转 Accepted）
 相关：[0083 override 的目标身份](0083-override-target-identity.md)（选择器的身份规则照搬它）、
 [0049 写回像素门](0049-write-back-pixel-verification.md) 与 `docs/rules/backend/writeback-transaction.md`（verify 用同一把尺、同一条纪律）、
 [0080 按规范修图的事务](0080-spec-fix-transaction.md)（「改完真的过了才提交，不过一个字不改」的先例）、
@@ -54,7 +54,9 @@ setter 实现静态估计，逐条是否等价要以 §五 的 verify 为准）�
 | --- | --- | --- | --- |
 | T1 | 有一个公开 matplotlib setter 与之对应 | 181（73%） | 颜色、线宽、线型、字号、字重、透明度、可见、文字内容、面色、网格、边框、刻度线 |
 | T2 | 公开 API 能表达，但要换算或连带 | 32（13%） | 文字 / 轴标签拖动（`pos_frac`）、图例拖动（`loc_frac`）、图例预设位置、子图位置、图幅、柱 / 误差棒 / 茎叶组 |
-| T3 | Tavotto 自己的模型重建，公开 API 表达不出等价物 | 36（14%） | 图例整体字号与间距（原生 `legend(fontsize=)` 语义要重建图例盒）、条目顺序 / 绑定、刻度定位模型、单条刻度文字、色条方向 / extend、标题拖动（要关自动定位）、3D 轴箭头、渐变色 |
+| T3 | Tavotto 自己的模型重建，第一轮认为公开 API 表达不出等价物 | 36（14%） | 图例整体字号与间距（原生 `legend(fontsize=)` 语义要重建图例盒）、条目顺序 / 绑定、刻度定位模型、单条刻度文字、色条方向 / extend、3D 轴箭头、渐变色 |
+
+第二轮 spike 逐个复核了这 36 个键并实测两条路线：只剩 6 个真的要靠私有 API；标题拖动（`pos_frac` 键本身在 T2，第一轮是按元素形态拒的）也用公开 API 救了回来。见 §十四。
 
 **图内与版面。** 以上是**图内**（改的是脚本画出来的那张 Figure）。画布上的摆放、缩放、裁剪、画布标注 / 箭头 /
 文字、面板标号属于**版面**，本来就不属于任何一个脚本，不写回（导出画布照旧由画布合成）。
@@ -88,7 +90,7 @@ override（字号、颜色、线宽、图例位置、文字位置），共 **82 
 B 只有 22% 能干净表达；D 类要「新增参数」，而新增在 `tight_layout()` / `fig.canvas.draw()` **之前**会改变布局输入
 （用户脚本甲先 `canvas.draw()` 再按子图的最终位置摆色条；用户脚本乙 `tight_layout()` 后 `bbox_inches='tight'`），
 与 Tavotto「脚本跑完之后再应用」的热态不再等价。B 唯一胜过 A 的地方是原生语义参数：用户脚本甲的图例
-`legend(fontsize=…)` 是 A 类（B 能改、A 在 T3 里写不了）。**结论：B 不做默认；可作为以后「精修」的补充，
+`legend(fontsize=…)` 是 A 类——第二轮实测（§14.2）钩子块的公开 API 重建恰好在这张图上失败、B 成功。**结论：B 不做默认；可作为以后「精修」的补充，
 只处理 A 类字面量。**
 
 **C. 旁挂文件 `<脚本>_tavotto.py`（或 `.mplstyle` / rcParams）+ 原脚本一行 import。** 机制与 A 相同，只是块放在另一
@@ -98,7 +100,7 @@ B 只有 22% 能干净表达；D 类要「新增参数」，而新增在 `tight_
 
 | 维度 | A 钩子块 | B 改字面量 | C 旁挂文件 |
 | --- | --- | --- | --- |
-| spike 5 类 override 覆盖 | 69/82 通过验证（84%），13 条按表不写，0 条被验证拒 | 18/82 可干净表达（22%） | 同 A |
+| spike 5 类 override 覆盖 | 第一轮 69/82 通过验证（84%），13 条按表不写，0 条被验证拒；第二轮开路线 1、2(a) 后 81/82（§十四） | 18/82 可干净表达（22%） | 同 A |
 | 多图 / 循环 / 函数封装 / 辅助模块里 savefig / 子图网格 | 按 stem 认图，全部成立（8/8 组合写回像素逐字节一致） | 循环与封装处连带改别的对象 | 同 A |
 | 可读性、之后还能手改吗 | 一段独立代码，每条调整一行公开 API，有注释说明改的是哪个元素；用户可以删掉任一行 | 最自然（就是用户自己的代码） | 两个文件 |
 | 二次写回 | 整段重新生成、替换旧段（幂等，spike 逐字节验过） | 要追踪上次改了哪些字面量 | 同 A |
@@ -173,8 +175,8 @@ del _tavotto_adjust
    仍是原路径」的装载方式——verify 期间用户目录零写入（spike 为了省事写了同目录的临时副本，产品不这样做）。
 3. **两条 spike 里量到、verify 必须挡住的失败形态**：
    - **看似等价的翻译其实不等价**：图例整体字号若按「逐条改字号」翻译，图例盒不随之重排——pg_kinetics 与用户脚本甲两处
-     都被几何门（图例 bbox 偏 0.014–0.025 figure 分数）与像素门（0.84%–1.95% 像素变化）拒掉。这正是这条
-     prop 放在 T3 的原因，也证明 verify 不是摆设。
+     都被几何门（图例 bbox 偏 0.014–0.025 figure 分数）与像素门（0.84%–1.95% 像素变化）拒掉。等价的写法是
+     按原生 `legend(fontsize=)` 语义重建图例（§14.2 路线 (a)）；这一条也证明 verify 不是摆设。
    - **部分写回打乱了广播与窄条目的先后**：图例整体字号（留作 override）在重放时排在「单条图例文字字号」之前；
      单条那条若写进脚本，就在 savefig 时先改、再被重放时的广播盖掉。生成器的规则：留作 override 的广播条目，其
      子孙同 prop 的窄条目一起留下。修之前 fig1 的组合写回被拒，修之后通过。
@@ -285,7 +287,8 @@ override，图看起来与写回前一样（Q9）。
 
 1. **worker 前置修正**：`paper_style.save` 捷径改经 `Figure.savefig`；worker 把 `TavottoAdjustmentWarning` 收进 warnings；
    一次性 worker 的 staging 源码装载（§五.2）。每条带真 worker 用例；不改任何用户可见行为。
-2. **生成器 `engine/scriptadjust.py`（纯标准库）**：(role, prop) → 写法的表、选择器、块模板、插入 / 删除 / 编码。
+2. **生成器 `engine/scriptadjust.py`（纯标准库）**：(role, prop) → 写法的表（含 §十四 的路线 1 `_title_to` 与路线 2(a)
+   `_legend_refont`）、选择器、块模板、插入 / 删除 / 编码。
    **枚举而不是白名单**：用例遍历 `HANDLERS` 的每个键，要么在写法表里，要么在 `NOT_WRITABLE` 里带原因——新增 prop 忘了表态
    就红。新增两对严格同源：块里的 axes 遍历 ↔ `axestraversal.ordered_axes`、块里的 stem ↔ `figcapture.savefig_stem`（各配
    golden 向量），写进 `docs/rules/repo/same-origin-pairs.md`。每个 T1 / T2 键用 `tests/support/overridesample.py` 的采样值在
@@ -332,9 +335,81 @@ release blocker）。**建议不进 1.0 GA，排在 1.0 之后的第一个 minor
 东西都不动。若用户决定进 1.0，最小可发范围是 PR 1–4 且只开 T1 + 文字 / 图例拖动（spike 已验证的那几类），T2 其余与二次写回
 合并编辑放到之后。
 
-## 需要拍板
+## 十四、覆盖率路线（2026-09-26 第二轮 spike）
 
-| # | 问题 | 选项 | 建议 |
+用户追问「为什么不能 100%」。这一轮把第一轮写不了的两类（标题拖动 7 条、图例整体字号 6 条）各实测了能想到的路，
+并把 36 个 T3 键逐个对着 setter 复核。数字出处：`docs/spikes/0094-script-writeback/evidence/results_routes.json`
+（路线 1 与 2(a)）、`results_legend_ast.json`（路线 2(b)）；第一轮原样留在 `results_round1.json`。
+spike 仍只在 scratch 里跑，数据目录、配置目录、`HOME` 三者都指向 scratch。
+
+### 14.1 路线 1：标题拖动用公开的 `set_title(..., y=...)`（成立，T3 → T2）
+
+matplotlib 3.8.4（读 wheel 源码）与 3.11.2（读已装源码）的 `Axes.set_title` 是同一段：`y` 为 None 时取
+`rcParams['axes.titley']`，仍为 None 才置 1.0；**否则 `self._autotitlepos = False`**。`_update_title_position`
+开头见到 `_autotitlepos` 为 False 就直接返回。所以显式传 y 就是关自动定位的公开入口。
+
+代价是 `set_title` 会把字号 / 字重 / 对齐重置成 rcParams，并把标题间距（pad）重置成 `axes.titlepad`。块里的
+`_title_to` 因此把此刻标题的 `FontProperties`、颜色、对齐、旋转、透明度作为参数原样带回去，最后按 Tavotto 同一个
+算法（当前 transform 的逆）把标题落到 figure 分数上——pad 被重置不影响终点，因为终点是在新 transform 上反算的。
+
+实测 7/7 通过 verify，含一份在脚本里显式设了字号、字重与标题间距的标题。已知限制：`_autotitlepos`
+是整个子图的开关，左 / 右标题会跟着停止自动定位（spike 用例里都没有左 / 右标题，未实测）；`title_left` /
+`title_right` 的拖动仍不写。
+
+### 14.2 路线 2：图例整体字号与间距
+
+| 路 | 做法 | 6 条实测 | 失败形态 |
+| --- | --- | --- | --- |
+| (a) 钩子块里用公开 API 重建 | 条目取 `ax.get_legend_handles_labels()` 里按文字唯一匹配到的源对象；位置、锚点、列数、边框、各项间距、标题从 **manifest 的整份图例参数**烘进 `ax.legend(..., fontsize=新值)`；`borderaxespad` / `markerscale` / `numpoints` 等 manifest 没有的读旧图例的同名属性；文字的颜色 / 字体从旧文字逐条搬 | **5/6** | 用户脚本甲把改过的代理 handle 与一个自定义色带代理**显式**传给 `legend()`：matplotlib 没有公开接口读回原来传进去的 handle（`legend_handles` 是它派生出来的示意对象，自定义 handler 对不上），块里这一步告警跳过 → verify 拒 |
+| (b) 源码层精修（方案 B 作补充） | 脚本里恰好一处 `.legend(...)`、不在循环里、没有 `prop=` / `**kwargs` 时，就地改 `fontsize=` 的值，没有就新增这个参数 | **5/6** | 用户脚本乙的图例用锚点放在子图**外面**，`tight_layout()` 会把它算进边距：字号在 `legend()` 那一刻就变大，布局随之变化（子图框移动），与 Tavotto「脚本跑完再改」的热态不等价 → 几何门 + 像素门拒（3.9% 像素） |
+| (c) 维持不写 | 留作 override | 0/6 写入 | 在 Tavotto 里照样生效，终端产物里没有 |
+
+(a) 与 (b) 恰好互补：(a) 败在「显式代理 handle」，(b) 败在「图例参与布局」，两份失败用例互不重叠，**先 (a)、verify 不过再试 (b)** 时 6/6
+都能写进脚本。第一版 (a) 自己也踩了一个坑：用 `Text.update_from` 从旧文字搬样子，它连 transform 一起抄，新文字全落到
+旧图例的坐标上——5 条全部被几何门拒，改成只搬字体 / 颜色 / 透明度后通过。又一次说明「看起来等价」要靠 verify 来判。
+
+采用建议：v1 做 (a)，并在生成时就按 manifest 的图例条目绑定（0034）判断「条目是不是按 label 自动收集的」，不是就直接进报告、
+不等 verify 才发现。(b) 是另一类改动（改的是用户自己的一行代码，不在标记块里）：「删掉整段即恢复」对它不成立，恢复只能靠备份。
+所以 (b) 放到之后，作为确认界面里单独勾选的「精修」，不进 v1。间距类（`borderpad`、`labelspacing`、`handlelength`、
+`handletextpad`、`columnspacing`、`ncol`）与字号走同一条 `legend(...)` 参数路，机制相同，**未逐条实测**。
+
+### 14.3 T3 复核：36 个键的去向
+
+| 去向 | 键数 | 键 | 依据 |
+| --- | --- | --- | --- |
+| 本来就是公开 setter（第一轮分错档） | 4 | 图例 `title` / `title_fontsize` / `frame_linewidth` / `frame_rounded` | setter 就是 `set_title`、`get_title().set_fontsize`、`get_frame().set_linewidth / set_boxstyle` |
+| 路线 2（图例重建） | 9 | 图例 `fontsize`（实测）、`borderpad`、`labelspacing`、`handlelength`、`handletextpad`、`columnspacing`、`ncol`、`entry_order`（重排传入的 handle）、单条的 `binding`（换传入的 handle） | 都是 `legend(...)` 构建期参数或 handle 的选择 |
+| 单条图例示意线 | 5 | `handle_color` / `handle_linestyle` / `handle_linewidth` / `handle_marker` / `handle_markersize` | `legend_handles[k].set_*` 是公开 API；未实测 |
+| 路线 3（公开 locator / formatter） | 11 | 刻度 `major_mode` / `major_step` / `major_values` / `format` / `minor_*` 共 10 个，单条刻度文字 1 个 | Tavotto 自己就是用 `set_major_locator(MultipleLocator / FixedLocator)`、`set_major_formatter` 实现的，块里可以照写；未实测 |
+| 块里复刻 Tavotto 的算法 | 1 | 图像 `gradient_color` | 公开的 `get_array` / `set_data` 加一段 numpy 分解，可写但要把算法抄进块；未实测 |
+| **只能靠私有 API（Q10：永不写）** | **6** | 色条 `orientation` / `extend`（就地改 `cb._inside` 等再 `_draw_all()`）；3D 轴箭头 `axis_arrows` / `arrow_color` / `arrow_head` / `arrow_width`（Tavotto 自建的 artist 子类，依赖私有投影接口） | 这 6 个永远留作 override，在 Tavotto 里照样生效 |
+
+### 14.4 新的预估覆盖率，以及为什么仍不是 100%
+
+- **spike 的 82 条**：第一轮 69（84%）→ 开路线 1 与 2(a) 后 **81/82（98.8%）**，剩下 1 条就是 14.2 里的显式代理图例；
+  加上 2(b) 兜底为 82/82。组合写回 7/8 组与热态 PNG 逐字节相同；不过的那组正是用户脚本甲——只有那条图例被拒、整组 409，
+  符合 Q5 的「逐条诊断」流程。
+- **249 个键的上限**：只有 6 个（2.4%）在原则上写不了；其余 243 个（97.6%）有公开 API 路子，其中实测过的仍只是 spike 的
+  那几类（T1 的 181 个与路线 3 的 11 个都要按 §十一 的枚举用例逐条过 verify 才算数）。
+
+仍到不了 100% 的原因分三层，前两层与键无关、是**脚本形状**决定的：
+
+1. **原则上不写（Q10）**：上表 6 个私有 API 键。
+2. **这张图的结构让公开 API 无从下手**：显式代理 handle 的图例（14.2 (a)）、图例参与布局又没有安全的源码改法（14.2 (b)）、
+   脚本在 savefig 之后还改图（§十二.2）、只有 `plt.show()` 没有 savefig（Q11）、带布局引擎（constrained / tight 布局
+   引擎）的图上拖过的文字——Tavotto 用包住引擎 `execute` 的办法把它们钉住，公开 API 里没有等价物，本轮 spike 的 8 份脚本里
+   没有这种图，**未实测**。
+3. **定位不唯一**：无 label 的对象按位置定位（Q7），写进脚本之后用户再改结构可能落错——这是写得进去但不保证以后还对，不计入
+   覆盖率。
+
+所有写不进脚本的调整都**留作 override、在 Tavotto 里照样生效**，确认界面逐条列出。100% 只在 Tavotto 里成立；终端里
+`python fig.py` 的产物只含写进去的那部分。
+
+## 已决定（用户 2026-09-26）
+
+Q1–Q11 全部按「决定」一栏执行（用户原样采纳了当时的建议）。
+
+| # | 问题 | 选项 | 决定 |
 | --- | --- | --- | --- |
 | Q1 | 默认写回形态 | A 钩子块 / B 改字面量 / C 旁挂文件 | **A**；C 以后作为可选形态再议；B 只在将来做「精修」补充 |
 | Q2 | 备份放哪 | 两处 / 只 `tavottofile/` / 只数据目录 | **两处** |
@@ -345,5 +420,5 @@ release blocker）。**建议不进 1.0 GA，排在 1.0 之后的第一个 minor
 | Q7 | 无 label 对象的守卫 | 按位置（同 0083）/ 文字类另加内容守卫 | **按位置**并标注；与 0083 保持一条规则 |
 | Q8 | 进不进 1.0 | 进 / 1.0 后第一个 minor | **1.0 后第一个 minor** |
 | Q9 | 恢复原脚本时 | 把写进去的调整放回 override / 只恢复脚本 | **放回**（图与写回前一样），可取消勾选 |
-| Q10 | T3（标题拖动、图例整体字号……）能否用私有 API 换覆盖率 | 允许 / 不允许 | **不允许**：块要在用户以后的 matplotlib 上长期可跑 |
+| Q10 | 写不进去的调整能否用私有 API 换覆盖率 | 允许 / 不允许 | **不允许**：块要在用户以后的 matplotlib 上长期可跑；§14.3 那 6 个键永远留作 override |
 | Q11 | 只有 `plt.show()`、没有 savefig 的脚本 | v1 不支持 / 也钩 `pyplot.show` | **v1 不支持**，预览里说明原因 |

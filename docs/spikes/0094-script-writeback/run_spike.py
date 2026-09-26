@@ -230,7 +230,9 @@ def run_case(name: str, naive: bool) -> dict:
                 resp = hot.override(stem, patches)
                 row["hot_warnings"] = list(resp.get("warnings") or [])
                 m_hot = _manifest(hot, stem)
-                block, rep = emit.build_block({stem: patches}, {stem: base}, META, naive=naive)
+                block, rep = emit.build_block(
+                    {stem: patches}, {stem: base}, META, naive=naive, routes=ROUTES_ON
+                )
                 row["skipped"] = rep["skipped"]
                 row["written"] = len(rep["written"])
                 if not rep["written"]:
@@ -275,8 +277,14 @@ def run_case(name: str, naive: bool) -> dict:
     return res
 
 
+ROUTES_ON = emit.ROUTES
+
+
 def main(argv):
+    global ROUTES_ON
     naive = "--naive" in argv
+    if "--no-routes" in argv:  # 第一轮 spike 的口径：两条覆盖率路线都不开
+        ROUTES_ON = frozenset()
     names = [a for a in argv if not a.startswith("--")] or list(CASES)
     out = []
     for n in names:
@@ -288,7 +296,11 @@ def main(argv):
                 flush=True,
             )
         out.append(r)
-    dest = HERE / ("results_naive.json" if naive else "results.json")
+    dest = HERE / (
+        "results_naive.json"
+        if naive
+        else ("results_round1.json" if not ROUTES_ON else "results.json")
+    )
     dest.write_text(json.dumps(out, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
     print("wrote", dest)
 

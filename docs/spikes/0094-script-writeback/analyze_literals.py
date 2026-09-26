@@ -174,7 +174,7 @@ def run(case):
 
 def main():
     rows = []
-    res = json.loads((HERE / "results_final.json").read_text("utf-8"))
+    res = json.loads((HERE / "results_round1.json").read_text("utf-8"))
     for case_res in res:
         case = case_res["case"]
         try:

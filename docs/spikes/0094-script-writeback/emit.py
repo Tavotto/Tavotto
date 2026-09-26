@@ -127,8 +127,49 @@ def _script_label(el: dict | None) -> str | None:
     return None
 
 
-def _statement(el: dict | None, gid: str, prop: str, value, *, naive: bool) -> str:
+#: 覆盖率路线（ADR 0094「覆盖率路线」一节）。第一轮 spike 两条都没开。
+#:   title          标题拖动：公开的 `ax.set_title(..., y=...)` 显式给 y 就关掉自动定位
+#:   legend_rebuild 图例整体字号：用公开 API 按 manifest 的整份图例参数重建图例
+ROUTES = frozenset({"title", "legend_rebuild"})
+
+
+def _statement(
+    el: dict | None, gid: str, prop: str, value, *, naive: bool, routes=ROUTES, patches=()
+) -> str:
     role = (el or {}).get("role") or ("figure" if gid == "figure" else "")
+    m = _AX.match(gid)
+    if "title" in routes and prop == "pos_frac" and m and m.group(2) == "title":
+        fx, fy = float(value[0]), float(value[1])
+        return f"_title_to(_ax(fig, {int(m.group(1))}), fig, {fx!r}, {fy!r})"
+    if "legend_rebuild" in routes and role == "legend" and prop == "fontsize" and m:
+        spec = {f["prop"]: f.get("value") for f in (el or {}).get("editable", [])}
+        # 同一个图例上别的**可以放进 legend() 参数**的编辑一起进 spec
+        for p in patches:
+            if p["gid"] == gid and p["prop"] in spec:
+                spec[p["prop"]] = p["value"]
+        spec["fontsize"] = value
+        keep = (
+            "loc",
+            "loc_anchor",
+            "fontsize",
+            "frameon",
+            "visible",
+            "title",
+            "title_fontsize",
+            "facecolor",
+            "framealpha",
+            "edgecolor",
+            "ncol",
+            "borderpad",
+            "labelspacing",
+            "handlelength",
+            "handletextpad",
+            "columnspacing",
+            "frame_linewidth",
+            "frame_rounded",
+        )
+        spec = {k: spec.get(k) for k in keep}
+        return f"_legend_refont(_ax(fig, {int(m.group(1))}), {spec!r})"
     pre, obj = _selector(gid, el)
     v = _ident(value)
     if prop == "pos_frac" and role in ("text", "axis_label"):
@@ -264,6 +305,71 @@ def _legend_to(leg, fig, fx, fy):
     leg.set_loc(tuple(parent.inverted().transform(_disp(fig, fx, fy))))
 
 
+def _title_to(ax, fig, fx, fy):
+    # 公开 API 关自动定位：set_title 显式给 y（matplotlib 3.8 / 3.11 源码同一段：
+    # `if y is None: … else: self._autotitlepos = False`）。set_title 会把字号 / 字重 /
+    # 对齐 / 标题间距重置成 rcParams，所以把此刻的样子作为参数原样带回去，最后按
+    # 与 Tavotto 同一个算法落到 figure 分数上。
+    t = ax.title
+    look = dict(
+        fontproperties=t.get_fontproperties().copy(),
+        color=t.get_color(),
+        horizontalalignment=t.get_horizontalalignment(),
+        verticalalignment=t.get_verticalalignment(),
+        rotation=t.get_rotation(),
+        alpha=t.get_alpha(),
+    )
+    ax.set_title(t.get_text(), loc="center", y=t.get_position()[1], **look)
+    t.set_position(tuple(t.get_transform().inverted().transform(_disp(fig, fx, fy))))
+
+
+def _legend_refont(ax, spec):
+    # 公开 API 重建图例（= 原生 legend(fontsize=…) 语义）：条目取 get_legend_handles_labels
+    # 里按文字唯一匹配到的源对象；显式传进 legend() 的代理 handle 没有公开的读取口，取不回来就不做。
+    old = _legend(ax)
+    old_texts = old.get_texts()
+    labels = [t.get_text() for t in old_texts]
+    found = {}
+    for h, lab in zip(*ax.get_legend_handles_labels()):
+        found.setdefault(lab, []).append(h)
+    if any(len(found.get(lab, [])) != 1 for lab in labels):
+        raise _Skip("图例条目不是按 label 自动收集的，取不回原来的 handle")
+    kw = dict(
+        loc=spec["loc"],
+        fontsize=spec["fontsize"],
+        ncols=int(spec["ncol"]),
+        frameon=spec["frameon"],
+        framealpha=spec["framealpha"],
+        facecolor=spec["facecolor"],
+        edgecolor=spec["edgecolor"],
+        fancybox=spec["frame_rounded"],
+        borderpad=spec["borderpad"],
+        labelspacing=spec["labelspacing"],
+        handlelength=spec["handlelength"],
+        handletextpad=spec["handletextpad"],
+        columnspacing=spec["columnspacing"],
+        title=spec["title"] or None,
+        title_fontsize=spec["title_fontsize"],
+        borderaxespad=old.borderaxespad,
+        markerscale=old.markerscale,
+        numpoints=old.numpoints,
+        scatterpoints=old.scatterpoints,
+        shadow=old.shadow,
+    )
+    if spec["loc_anchor"] is not None:
+        kw["bbox_to_anchor"] = tuple(spec["loc_anchor"])
+    new = ax.legend([found[lab][0] for lab in labels], labels, **kw)
+    new.get_frame().set_linewidth(spec["frame_linewidth"])
+    new.set_zorder(old.get_zorder())
+    new.set_visible(spec["visible"])
+    for n, o in zip(new.get_texts(), old_texts):
+        # 只搬「样子」：Artist.update_from 连 transform 一起抄，文字会落到旧图例的坐标上
+        n.set_fontproperties(o.get_fontproperties().copy())
+        n.set_color(o.get_color())
+        n.set_alpha(o.get_alpha())
+        n.set_fontsize(spec["fontsize"])
+
+
 def _stem(fname):
     if not isinstance(fname, (str, _os.PathLike)):
         return ""
@@ -302,6 +408,7 @@ def build_block(
     meta: dict,
     *,
     naive: bool = False,
+    routes=ROUTES,
     ascii_only: bool = False,
     indent: str = "    ",
 ) -> tuple[str, dict]:
@@ -315,7 +422,9 @@ def build_block(
         for p in patches:
             gid, prop, value = p["gid"], p["prop"], p["value"]
             try:
-                stmt = _statement(els.get(gid), gid, prop, value, naive=naive)
+                stmt = _statement(
+                    els.get(gid), gid, prop, value, naive=naive, routes=routes, patches=patches
+                )
             except Unsupported as exc:
                 report["skipped"].append(
                     {"stem": stem, "gid": gid, "prop": prop, "reason": str(exc)}
@@ -346,7 +455,11 @@ def build_block(
                 ]
                 continue
             kept.append((what, stmt))
-        steps = kept
+        # 重建图例会换掉图例对象：它排在同一个图例的其余步骤（位置、单条文字）之前
+        steps = sorted(
+            kept,
+            key=lambda s: 0 if "_legend_refont(" in s[1] else (1 if ".legend" in s[0] else 2),
+        )
         if not steps:
             continue
         for k, (what, stmt) in enumerate(steps):
