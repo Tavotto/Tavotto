@@ -24,11 +24,16 @@ const text = (id: string, t: string): TextObject => ({
 
 /** 模拟后端：项目按路径给 id；自动保存槽位按 id 存（忽略 pj） */
 const diskSlots = new Map<string, string>()
+/** 发出去还没回完的 `/api/autosave` 请求数（写盘成功后写入器会清本机副本，见 `settleDisk`） */
+let diskInFlight = 0
 const PROJECT_IDS: Record<string, string> = { '/figs/a': 'p_a', '/figs/b': 'p_b' }
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = String(url)
   const m = u.match(/\/api\/autosave\/([^/?]+)/)
   if (m) {
+    diskInFlight += 1
+    // 回完之后再减：写入器在拿到响应之后的那个微任务里才清本机副本
+    setTimeout(() => (diskInFlight -= 1), 0)
     const id = decodeURIComponent(m[1])
     if (init?.method === 'PUT') {
       diskSlots.set(id, String(init.body))
@@ -56,6 +61,18 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   if (u.includes('/api/panels')) return new Response('{"figures_dir":"/figs","panels":[]}', { status: 200 })
   return new Response('{}', { status: 200 })
 }) as typeof fetch
+
+/**
+ * 等自动保存的写盘全部落定：写入器在 PUT 成功之后会清掉这份文档的本机副本（`dropLocalCopy`），
+ * 还在路上的那次若晚于用例自己放进去的副本，就会把它当成「已经写进盘的旧副本」清掉——
+ * 用例量到的就不是它想量的时序了（Node 22 上的调度正好让它晚到，#643 的 CI 红）。
+ */
+async function settleDisk() {
+  for (let quiet = 0; quiet < 3; ) {
+    await new Promise((r) => setTimeout(r, 0))
+    quiet = diskInFlight === 0 ? quiet + 1 : 0
+  }
+}
 
 const s = () => useDocumentStore.getState()
 const p = () => useProjectStore.getState()
@@ -117,6 +134,21 @@ describe('切项目', () => {
     expect(p().project?.id).toBe('p_a')
     expect(p().phase).toBe('open')
     expect(p().lastDocumentIssue).toBeNull()
+  })
+
+  it('切回来时槽位里有比磁盘新的本机副本：换回那份文档，并把恢复副本交给横幅（#643 评审）', async () => {
+    await makeContentDoc('d_a', 'Fig A')
+    await p().open('/figs/b')
+    await settleDisk()
+    // 本机留着一份比磁盘新的 d_a（上次写盘没成）
+    const disk = JSON.parse(diskSlots.get('d_a')!) as ProjectDocument
+    localStorage.setItem(
+      'tavotto.autosave.d_a',
+      JSON.stringify({ ...disk, updatedAt: (disk.updatedAt ?? 0) + 1000 }),
+    )
+    await p().open('/figs/a')
+    expect(s().documentId).toBe('d_a')
+    expect(s().docNotice).toMatchObject({ kind: 'recovery', docId: 'd_a' })
   })
 
   it('记录在、槽位读不回来：说出名字并给重试；重试成功后横幅收起', async () => {

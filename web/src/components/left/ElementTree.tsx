@@ -44,6 +44,7 @@ import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Tip } from '../ui/Tooltip'
+import { isEffectiveOverrideAt } from '@/lib/effectiveOverride'
 
 /**
  * 图内元素导航器。
@@ -388,7 +389,11 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
     () =>
       new Set(
         panel.overrides
-          .filter((o) => o.prop === 'visible' && o.value === false)
+          // 认生效的那条（重复的旧条目被后面的 visible=true 遮住时不算隐藏）
+          .filter(
+            (o, i) =>
+              o.prop === 'visible' && o.value === false && isEffectiveOverrideAt(panel.overrides, i),
+          )
           .map((o) => o.gid),
       ),
     [panel.overrides],

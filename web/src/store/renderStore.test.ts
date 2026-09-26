@@ -7,7 +7,14 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EngineRenderOptions, Manifest } from '@/lib/api'
-import { panelRender, renderKey, renderKeyOf, useRenderStore } from './renderStore'
+import {
+  exactPanelManifest,
+  panelDisplayView,
+  panelRender,
+  renderKey,
+  renderKeyOf,
+  useRenderStore,
+} from './renderStore'
 import { EDITOR_SVG_HARD_LIMIT_BYTES } from '@/lib/previewBudget'
 import type { PanelObject } from '@/types/document'
 
@@ -332,5 +339,147 @@ describe('native 图与文档不一致（Codex #549 第八轮）：文件级，�
     await useRenderStore.getState().render(ID, [])
     useRenderStore.getState().reset(ID)
     expect(useRenderStore.getState().inconsistent[ID]).toBeUndefined()
+  })
+})
+
+describe('项目代际（STATE-06）：clear() 之前发出的渲染，回包不落进换过之后的项目', () => {
+  /** 挂起下一次 engineRender，返回它的 resolve / reject 两个把手 */
+  const holdNextRender = () => {
+    const h: { resolve: (v: unknown) => void; reject: (e: unknown) => void } = {
+      resolve: () => {},
+      reject: () => {},
+    }
+    engineRender.mockImplementationOnce(
+      () =>
+        new Promise((res, rej) => {
+          h.resolve = res
+          h.reject = rej
+        }),
+    )
+    return h
+  }
+  const ok = (stem: string) => ({ rev: 7, manifest: manifest(stem), svg: `<svg>${stem}</svg>` })
+  // 两个项目里都有一张叫 fig1.pdf 的图、面板都没有 override：变体键完全相同
+  const b = panel('pB', 'fig1.pdf')
+
+  it('A 的成功回包在切到 B 之后才到：B 的 byKey / latest / 几何权威里都没有它', async () => {
+    const a = holdNextRender()
+    const pendingA = useRenderStore.getState().render('fig1.pdf', [])
+    await Promise.resolve()
+    useRenderStore.getState().clear() // resetForNewProject() 做的正是这一句
+
+    a.resolve(ok('A-fig1'))
+    await pendingA
+
+    const st = useRenderStore.getState()
+    expect(st.byKey[renderKeyOf(b)]).toBeUndefined()
+    expect(st.latest['fig1.pdf']).toBeUndefined()
+    expect(st.recent['fig1.pdf']).toBeUndefined()
+    expect(exactPanelManifest(st, b)).toBeNull()
+    expect(panelDisplayView(st, b)?.kind).toBe('empty')
+  })
+
+  it('B 自己的同键渲染先回来、A 的旧回包后到：B 的几何权威不被覆盖', async () => {
+    const a = holdNextRender()
+    const pendingA = useRenderStore.getState().render('fig1.pdf', [])
+    await Promise.resolve()
+    useRenderStore.getState().clear()
+
+    engineRender.mockResolvedValueOnce({ ...ok('B-fig1'), rev: 1 })
+    await useRenderStore.getState().render('fig1.pdf', [])
+    expect(exactPanelManifest(useRenderStore.getState(), b)?.stem).toBe('B-fig1')
+
+    a.resolve(ok('A-fig1'))
+    await pendingA
+    const st = useRenderStore.getState()
+    expect(exactPanelManifest(st, b)?.stem).toBe('B-fig1')
+    expect(st.byKey[renderKeyOf(b)].rev).toBe(1)
+    expect(st.byKey[renderKeyOf(b)].svg).toContain('B-fig1')
+  })
+
+  it('A → B → A 来回切：pj 又对上了，旧回包照样作废（只比 pj 挡不住这一条）', async () => {
+    const { setCurrentProjectId } = await import('@/lib/session')
+    setCurrentProjectId('proj-a')
+    try {
+      const a = holdNextRender()
+      const pendingA = useRenderStore.getState().render('fig1.pdf', [])
+      await Promise.resolve()
+      setCurrentProjectId('proj-b')
+      useRenderStore.getState().clear()
+      setCurrentProjectId('proj-a')
+      useRenderStore.getState().clear()
+
+      a.resolve(ok('stale-A'))
+      await pendingA
+      expect(useRenderStore.getState().byKey[renderKeyOf(b)]).toBeUndefined()
+      expect(useRenderStore.getState().latest['fig1.pdf']).toBeUndefined()
+    } finally {
+      setCurrentProjectId(null)
+    }
+  })
+
+  it('A 的失败回包在切到 B 之后才到：B 里不出现 A 的错误块', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const a = holdNextRender()
+    const pendingA = useRenderStore.getState().render('fig1.pdf', [])
+    await Promise.resolve()
+    useRenderStore.getState().clear()
+
+    a.reject(new EngineError('A 的脚本炸了', '', 'script_error', ''))
+    await pendingA
+    expect(useRenderStore.getState().byKey[renderKeyOf(b)]).toBeUndefined()
+  })
+
+  it('对照：没换项目时同一个挂起的回包照常入库（闸不是把所有迟到的都挡了）', async () => {
+    const a = holdNextRender()
+    const pendingA = useRenderStore.getState().render('fig1.pdf', [])
+    await Promise.resolve()
+    a.resolve(ok('A-fig1'))
+    await pendingA
+    const st = useRenderStore.getState()
+    expect(st.byKey[renderKeyOf(b)].manifest?.stem).toBe('A-fig1')
+    expect(st.latest['fig1.pdf']).toBe(renderKeyOf(b))
+  })
+
+  it('防抖窗口里换了项目：旧项目排下的那次到点也不发、不落进新项目（Codex #597 P2）', async () => {
+    // 代际要在**排渲染那一刻**记下，不是到点发出那一刻——到点时 clear() 早换过代了，
+    // 那时再取就是新项目的代，旧请求会带着新代际一路畅通地写进新项目
+    const { requestRender } = await import('./renderScheduler')
+    vi.useFakeTimers()
+    try {
+      requestRender(panel('pA', 'fig1.pdf'), 'defer')
+      useRenderStore.getState().clear()
+      engineRender.mockResolvedValue(ok('A-fig1'))
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(engineRender).not.toHaveBeenCalled()
+      expect(useRenderStore.getState().byKey[renderKeyOf(b)]).toBeUndefined()
+      expect(useRenderStore.getState().latest['fig1.pdf']).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('对照：防抖窗口里没换项目，到点照常发出并入库', async () => {
+    const { requestRender } = await import('./renderScheduler')
+    vi.useFakeTimers()
+    try {
+      engineRender.mockResolvedValue(ok('A-fig1'))
+      requestRender(panel('pA', 'fig1.pdf'), 'defer')
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(engineRender).toHaveBeenCalledTimes(1)
+      expect(useRenderStore.getState().byKey[renderKeyOf(b)].manifest?.stem).toBe('A-fig1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('对照：没换项目时挂起的失败照常落成错误块', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const a = holdNextRender()
+    const pendingA = useRenderStore.getState().render('fig1.pdf', [])
+    await Promise.resolve()
+    a.reject(new EngineError('炸了', '', 'script_error', ''))
+    await pendingA
+    expect(useRenderStore.getState().byKey[renderKeyOf(b)].status).toBe('error')
   })
 })

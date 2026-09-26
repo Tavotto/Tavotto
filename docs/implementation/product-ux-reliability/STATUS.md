@@ -653,7 +653,7 @@ BLOCKED — 不建议发布
 | Gate 1–5 全部通过 | ✅（01–22 各自的结果表 + 本轮审计未发现空门禁） |
 | P0 为 0 | ✅ |
 | P1 为 0 或有批准的例外 | ❌ **未满足**：main 上 #225（#226 已 CLOSED），**本分支的全量里还有 #240**（`test_ctrl_c…`，P1 门禁空转，性质未定）。#240 不是本分支引入的，但要让「本分支 P1 = 0」成立，得有一条**批准的例外**——目前没有，所以它计入 |
-| 全量自动化真实通过 | ⚠️ **不是绿的**：Session 23 终审两次全量都是 `1 failed`（`test_ctrl_c_reaches_the_script_and_leaves_no_orphan`，见上方 Session 23 结果表）。这一格在 #240 定性并处置之前**不算通过** |
+| 全量自动化真实通过 | ⚠️ Session 23 终审两次全量都是 `1 failed`（`test_ctrl_c_reaches_the_script_and_leaves_no_orphan`，见上方 Session 23 结果表）。**#240 已定性并处置（2026-09-26）**：两个形状两个成因——① 90 s 超时 = 用例继承了 `cmd &` 给的 SIG_IGN（判据前提，用例已改成 spawn 时摆出默认处置）；② 退出码 1 = runner 把控制连接的 reset 当成失败（真缺陷，`bridge_runner.Control` 已把 reset 与 EOF 归成同一结论）。这一格要换成「通过」，还差修复落地后**有负载的全量连过 3 次**的记录 |
 | 关键 E2E 通过 | ✅ 见上方 Session 23 结果表：Playwright 三个 project 全量 125 passed / 1 skipped / 0 failed，改动前 2 红的流程 B / D 已绿 |
 | 文档 migration / 保存 / recovery | ✅（Gate 1 用例 + 本轮 round-trip / 未来 schema 拒绝） |
 | original / canvas export fidelity | ✅（既有像素 / 尺寸用例 + 本轮 PDF 文本层矩阵） |
@@ -696,7 +696,7 @@ BLOCKED — 不建议发布
 | 桌面壳无 CloseRequested 处理 | P2（待真机） | #223 | desktop |
 | MCP 插件第二份导出实现 | P2 | #224 | codex-plugin |
 | 原图写回**已经是原子的**（`os.replace` + 备份 + 回滚），只缺 fsync | P3 | #252，直接换 `publish_file` 会引入半应用路径 | 择机 |
-| `test_ctrl_c_reaches_the_script…` 在全量里红、窄范围绿（06 / 15 / 23×2 红，07 / 16 绿） | **P1（门禁）** | **#240**；性质未定：`tavotto run` 真缺陷 vs 判据的时序前提，两者都没被排除。**上方门禁清单「全量自动化真实通过」那一格指的就是这张红表** | tavotto run 线 |
+| `test_ctrl_c_reaches_the_script…` 在全量里红、窄范围绿（06 / 15 / 23×2 红，07 / 16 绿） | **P1（门禁）** | **#240**；已定性（2026-09-26）：超时形状 = 判据前提（继承 SIG_IGN），退出码 1 形状 = `tavotto run` 真缺陷（控制连接 reset 归错类），两者都已处置，见 #240 的修复 PR。**上方门禁清单「全量自动化真实通过」那一格指的就是这张红表** | tavotto run 线 |
 | 前端主 chunk 1.85 MB / gzip 574 kB（R-17） | P3 | **#246**；`pnpm build` 告警，`vite.config.ts` 无 `manualChunks` | 择机 |
 | README 两张预检截图是旧规范拍的 | P3 | **#247**；alt 如实，图过期——alt 里的「8.5 pt 与 8 pt 两条下限」在 ADR 0029 之后只剩一条 8 pt | 择机 |
 | `problem_focused` / `export_completed.scope` 两条事件未加 | P3 | **#245**；两侧同源对（`engine/telemetry.py` ↔ `services/telemetry_proxy/.../contract.py`）必须一起改 | 下次遥测扩容 |

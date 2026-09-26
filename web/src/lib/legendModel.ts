@@ -1,5 +1,6 @@
 import type { Manifest, ManifestElement } from '@/lib/api'
 import type { PanelObject, PanelOverride } from '@/types/document'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /**
  * 图例条目模型的前端投影（ADR 0034）。引擎那侧是
@@ -71,7 +72,7 @@ export function legendGidOfEntry(el: ManifestElement): string | null {
 }
 
 function currentValue(panel: PanelObject, el: ManifestElement, prop: string): unknown {
-  const ov = panel.overrides.find((o) => o.gid === el.gid && o.prop === prop)
+  const ov = effectiveOverride(panel.overrides, el.gid, prop)
   if (ov) return ov.value
   return el.editable.find((f) => f.prop === prop)?.value
 }
@@ -149,7 +150,7 @@ export function entryBinding(panel: PanelObject, el: ManifestElement): LegendBin
   const info = el.legend_entry
   if (!info?.source_gid) return null
   if (hasStyleOverride(panel, el.gid)) return 'custom'
-  const ov = panel.overrides.find((o) => o.gid === el.gid && o.prop === 'binding')
+  const ov = effectiveOverride(panel.overrides, el.gid, 'binding')
   if (ov && (LEGEND_BINDINGS as readonly unknown[]).includes(ov.value)) {
     return ov.value as LegendBinding
   }

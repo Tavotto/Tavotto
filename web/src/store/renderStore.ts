@@ -240,12 +240,15 @@ interface RenderState {
   noteBuilding: (fileId: string, info: { cold: boolean; cost: string } | null) => void
   /** 渲染并取回 SVG（与 manifest 同一响应）；同键渲染中重复调用只保留最后一次待办。
    *  `policy` 只进诊断事件，**不影响任何渲染行为**——它是「这次是定稿还是防抖」
-   *  的说明，缺省按 immediate 记。 */
+   *  的说明，缺省按 immediate 记。
+   *  `epoch`：延迟发起的调用方在**排渲染那一刻**取的 `renderEpoch()`；与当前代际不符
+   *  时整次作废。同步调用不传，按调用那一刻的代际算。 */
   render: (
     fileId: string,
     patches: unknown[],
     previewDpi?: number,
     policy?: RenderRequestPolicy,
+    epoch?: number,
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
@@ -447,6 +450,23 @@ function dropSvgPayload(v: PanelRender): PanelRender {
 let requestSeq = 0
 
 /**
+ * 项目代际（web/AGENTS.md「会在项目之间存活的 store 都有项目代际」）：`clear()` 换代，
+ * `render()` 在请求进来那一刻记下它，回包（成功与失败两支）先对代际——换过就整个丢弃：
+ * 不写 byKey、不挪 latest、不弹 toast / 确认框。只对 pj 不够：同名文件在两个项目里键完全
+ * 相同，而 A → B → A 来回切时 pj 又对上了，旧回包照样会落进「新的」A。
+ */
+let projectEpoch = 0
+
+/**
+ * 此刻的项目代际。**延迟发起渲染的调用方**（`renderScheduler` 的防抖计时器）在排渲染
+ * 那一刻取它、到点时原样交给 `render()`：到点那一刻 `clear()` 可能早换过代了，
+ * 那时再取就是新项目的代，旧项目排下的请求会一路畅通地写进新项目（Codex #597 P2）。
+ */
+export function renderEpoch(): number {
+  return projectEpoch
+}
+
+/**
  * 渲染请求看门狗：fetch 永不 settle（服务重启留下的半开连接、代理悬挂）时
  * busy 永远不释放，该面板从此渲染不动。它按脚本 cost 取档、刻意宽松——heavy
  * 冷启动本身就是分钟级；本意是兜连接悬挂，不是性能预算。
@@ -500,12 +520,16 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       return { building: { ...s.building, [fileId]: info } }
     }),
 
-  render: async (fileId, patches, previewDpi, policy) => {
+  render: async (fileId, patches, previewDpi, policy, epoch) => {
+    // 排渲染时的项目已经不是当前项目：连请求都不发（发出去 pj 是新项目的，
+    // 渲染的却是旧项目的 fileId 与 patches）
+    if (epoch !== undefined && epoch !== projectEpoch) return
     const key = renderKey(fileId, patches)
     // 序号在**请求进来的那一刻**取，不是发出的那一刻：忙时排队的那次要带着
     // 自己的序号走完全程，否则一个早就该被覆盖的旧变体会因为「重试发得晚」
     // 而显得最新，把 latest 拽回去（撤销之后画面弹回对齐后的样子）。
     let seq = ++requestSeq
+    const epochAtStart = projectEpoch
     const slot = inflight.get(key) ?? { busy: false, queued: null }
     inflight.set(key, slot)
     if (slot.busy) {
@@ -564,6 +588,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             ? await transport.render(fileId, current, opts)
             : await engineRender(fileId, current, opts)
           perfRenderResponse(perfHandle, true, res.timings, res.svg?.length)
+          // 在途期间换过项目：这份图属于旧项目，一个字都不落进当前项目（STATE-06）。
+          // 性能探针照记「回包到了」，`applied` 留空——它确实没上屏
+          if (epochAtStart !== projectEpoch) return
           if (res.environment_switched) {
             // 内置环境缺包，Tavotto 自己找到并换用了项目的 .venv（ADR 0018）。
             // 一条轻量 toast 就够——**不弹阻断式对话框**：用户点的是「渲染」，
@@ -669,6 +696,8 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             // 那两样里装着用户的脚本与路径
             code: timedOut ? 'timeout' : err instanceof EngineError ? err.code : 'unknown',
           })
+          // 换过项目：旧项目的失败同样不落进当前项目（条目、确认框、排队的重试都不要）
+          if (epochAtStart !== projectEpoch) return
           // 在途期间又排了新请求：直接跑最新那次，别停在旧请求的错误上
           // （否则 wantPatches 已等于新改动，同步器会永远跳过它）
           if (slot.queued != null) {
@@ -878,6 +907,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
   },
 
   clear: () => {
+    projectEpoch += 1
     inflight.clear()
     liveKeys.clear()
     set({

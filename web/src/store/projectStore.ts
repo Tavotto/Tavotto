@@ -24,7 +24,7 @@ import {
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { openRecentDocument } from '@/store/actions'
 import { useAssetBrowseStore } from '@/store/assetBrowseStore'
-import { flushAutosave, readAutosaveDoc, useDocumentStore } from '@/store/documentStore'
+import { flushAutosave, loadAutosavedDocument, useDocumentStore } from '@/store/documentStore'
 import { useAssetStore } from '@/store/assetStore'
 import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { useRenderStore } from '@/store/renderStore'
@@ -144,9 +144,7 @@ export interface ProjectState {
  */
 async function restoreProjectDocument(ref: ProjectDocumentRef): Promise<boolean> {
   try {
-    const { doc } = await readAutosaveDoc(ref.id)
-    if (!doc) return false
-    return await useDocumentStore.getState().switchDocument(doc, ref.id)
+    return (await loadAutosavedDocument(ref.id)).loaded
   } catch {
     return false
   }

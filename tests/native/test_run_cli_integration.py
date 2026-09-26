@@ -423,17 +423,27 @@ def test_ctrl_c_reaches_the_script_and_leaves_no_orphan(tmp_path):
     """
     nativekit.write(tmp_path / "figure.py", LONG_SCRIPT)
     before = nativekit.pending_ids()
-    proc = subprocess.Popen(  # noqa: S603
-        nativekit.cli_argv("run", "--x-no-desktop", "--", nativekit.USER_PYTHON, "figure.py"),
-        cwd=str(tmp_path),
-        env=nativekit.cli_env(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        start_new_session=True,  # 自己一个进程组 = 模拟"前台作业"
-    )
+    # **「前台作业」的前提要摆出来，不能继承**：终端前台作业的 SIGINT 是默认处置；而
+    # pytest 若是被 `cmd &` 起的（非交互 shell 的后台作业——分块并行跑全量就是这样），
+    # SIGINT 是 SIG_IGN，它跨 exec 继承，CLI 与用户脚本的 Python 都不会装
+    # KeyboardInterrupt，killpg 之后谁都不动：90 秒超时、stdout 只有 READY——#240 里
+    # 「负载下超时」那个形状（2026-09-26 用 `&` 起的 12 路并行 168/168 复现）。
+    # spawn 那一下把本进程的 SIGINT 换成非忽略的处理器，exec 之后孩子拿到的就是默认处置。
+    saved_sigint = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        proc = subprocess.Popen(  # noqa: S603
+            nativekit.cli_argv("run", "--x-no-desktop", "--", nativekit.USER_PYTHON, "figure.py"),
+            cwd=str(tmp_path),
+            env=nativekit.cli_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            start_new_session=True,  # 自己一个进程组 = 模拟"前台作业"
+        )
+    finally:
+        signal.signal(signal.SIGINT, saved_sigint)
     session = None
     try:
         native_id = nativekit.wait_for_pending(before)

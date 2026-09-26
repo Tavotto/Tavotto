@@ -1,6 +1,7 @@
 import type { ManifestElement } from './api'
 import type { Rect4 } from './axesLayout'
 import type { PanelObject, PanelOverride } from '@/types/document'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /**
  * 图例**整体缩放**（像拖子图手柄那样拖图例的角）落成哪几条 override。
@@ -45,7 +46,7 @@ export interface LegendScaleBase {
 
 /** 当前值：优先文档里尚未渲染回来的 override，否则 manifest 上报的值 */
 function currentValue(panel: PanelObject, el: ManifestElement, prop: string): unknown {
-  const ov = panel.overrides.find((o) => o.gid === el.gid && o.prop === prop)
+  const ov = effectiveOverride(panel.overrides, el.gid, prop)
   if (ov) return ov.value
   return el.editable.find((f) => f.prop === prop)?.value
 }

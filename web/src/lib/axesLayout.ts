@@ -22,14 +22,18 @@ const T = (r: Rect4) => r[1]
 const B = (r: Rect4) => r[1] + r[3]
 
 /**
- * round4 之后逐位相等 = 这次对齐对它**没有可表示的位移**。
+ * round4 之后逐位相等 = 这次对齐 / 拖动对它**没有可表示的位移**。
+ *
+ * 「没有视觉位移就不写 override」的唯一判据：对齐（`layoutBoxes`）与图内拖动的
+ * 松手（`interactions.ts` 的单拖 / 整组平移 / 子图移动与缩放 / 箭头 / 成组缩放）
+ * 共用这一份，按**终点净位移**判，不按途中是否越过拖动阈值判（GEO-07）。
  *
  * 阈值不是拍脑袋取的：写出去的 override 本来就要过 `round4`（figure 分数保留
  * 四位），比它更小的位移落到文件里是同一个数。200mm 宽的图上 1e-4 ≈ 0.02mm，
  * 远在任何印刷分辨率之下。
  */
-const sameBox = (a: Rect4, b: Rect4): boolean =>
-  a.every((v, i) => round4(v) === round4(b[i]))
+export const sameAfterRound4 = (a: readonly number[], b: readonly number[]): boolean =>
+  a.length === b.length && a.every((v, i) => round4(v) === round4(b[i]))
 
 /**
  * 对一组元素做对齐 / 分布，返回**真正需要改动**的新框（top-origin 分数坐标）。
@@ -55,7 +59,7 @@ export function layoutBoxes(items: AlignItem[], mode: AlignMode): Map<string, Re
 
   const put = (it: AlignItem, box: Rect4) => {
     const next = box.map(round4) as Rect4
-    if (sameBox(next, it.box)) return
+    if (sameAfterRound4(next, it.box)) return
     out.set(it.key, next)
   }
 

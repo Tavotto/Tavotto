@@ -8,7 +8,7 @@ import type { PanelInfo, TutorialMetadata } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore, isAutosaveSuspendedFor } from '@/store/documentStore'
+import { useDocumentStore, isAutosaveSuspendedFor, restoreSession } from '@/store/documentStore'
 import { startDocumentLoadSync, syncLoadedDocument } from '@/store/liveSync'
 import {
   configureOnboardingPersistence,
@@ -370,6 +370,27 @@ describe('startTutorial', () => {
     stubFetch({ '/api/tutorial': () => json({ available: false, problems: ['missing README.md'] }) })
     const st = await loadTutorialStatus()
     expect(st?.available).toBe(false)
+  })
+})
+
+describe('教程文档带着恢复副本（#643 评审：待裁决事项不许丢）', () => {
+  it('教程文档有待裁决的恢复副本：打开教程时横幅要问；工作台挂载的恢复不再读盘，也不重复', async () => {
+    // 同一副本再开（`created: false`）：本机槽位不会被当成上一份副本的残留清掉
+    stubFetch({
+      '/api/autosave/tavotto-tutorial': () => json({ ...LAYOUT, updatedAt: 1 }),
+      '/api/tutorial/open': () =>
+        json({ project: PROJECT, tutorial: META, reset: false, created: false, repaired: [] }),
+    })
+    // 上一轮没裁决完的恢复副本（恢复槽位）：换项目时的索引清理不碰它
+    localStorage.setItem('tavotto.recovery.tavotto-tutorial', JSON.stringify({ ...LAYOUT, updatedAt: 5 }))
+    expect((await startTutorial('picker')).ok).toBe(true)
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    expect(useDocumentStore.getState().docNotice).toMatchObject({ kind: 'recovery', docId: 'tavotto-tutorial' })
+    // 工作台挂载：文档已经装好，不读盘；那句提示还在，而且只有这一句
+    const reads = calls.filter((c) => c.url === '/api/autosave/tavotto-tutorial' && c.method === 'GET').length
+    expect(await restoreSession()).toBe(false)
+    expect(calls.filter((c) => c.url === '/api/autosave/tavotto-tutorial' && c.method === 'GET').length).toBe(reads)
+    expect(useDocumentStore.getState().docNotice).toMatchObject({ kind: 'recovery', docId: 'tavotto-tutorial' })
   })
 })
 

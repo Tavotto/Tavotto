@@ -44,6 +44,7 @@ import {
 } from '@/diagnostics'
 import type { AuthorityView } from '@/diagnostics'
 import type { PanelObject } from '@/types/document'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /** 拒绝的原因；调用方据此决定提示什么（都不写文档、不进历史、不渲染） */
 export type AlignBlocked =
@@ -175,7 +176,7 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
   // 值与现有 override 逐字相同的不重写：override 数组顺序也是变体键的一部分，
   // 白写一条等于换一个键 = 一次完全没必要的重渲染
   const fresh = patches.filter((p) => {
-    const cur = panel.overrides.find((o) => o.gid === p.gid && o.prop === p.prop)
+    const cur = effectiveOverride(panel.overrides, p.gid, p.prop)
     return !cur || JSON.stringify(cur.value) !== JSON.stringify(p.value)
   })
   if (!fresh.length && !moves.length) return blocked(panelId, mode, 'noop')

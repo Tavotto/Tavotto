@@ -10,7 +10,7 @@
  * 两节点环换成三节点环）。`hooks/useEngineSync` 只剩订阅与生命周期装配。
  */
 import { useDocumentStore } from '@/store/documentStore'
-import { panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { panelRender, renderEpoch, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import type { PanelObject } from '@/types/document'
 
 /** 文字/数值输入合并成一次渲染的窗口；颜色、开关、拖动结束走 immediate */
@@ -87,9 +87,11 @@ export function requestRender(panel: PanelObject, immediate: boolean | RenderPol
   const dpi = policy !== 'defer' || !hasImageElement(panel) ? undefined : INTERACTIVE_PREVIEW_DPI
   const patches = panel.overrides
   const fileId = panel.fileId
+  // 项目代际在**排渲染这一刻**取：防抖窗口里切了项目的话，到点那一次整个作废
+  const epoch = renderEpoch()
   const fire = () => {
     timers.delete(panel.id)
-    void store.render(fileId, patches, dpi, policy)
+    void store.render(fileId, patches, dpi, policy, epoch)
   }
   cancelScheduledRender(panel.id)
   if (policy === 'none') return
