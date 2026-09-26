@@ -77,7 +77,7 @@ describe('画布标签条', () => {
     const [first, second] = tabs()
     expect(first.getAttribute('aria-selected')).toBe('true')
     // 钉的是**选中 / 未选中这两套词**取自 `tabClass`，不是把它整串抄一遍：
-    // 共同的那几类（h-full 之流）会被 tab 自己的 h-9 合并掉，抄整串等于钉一件不成立的事
+    // 共同的那几类会被 tab 自己的类合并掉，抄整串等于钉一件不成立的事
     const only = (a: string, b: string) => a.split(' ').filter((c) => !b.split(' ').includes(c))
     for (const cls of only(tabClass(true), tabClass(false))) {
       expect(first.className, '选中态的词来自 tabClass').toContain(cls)
@@ -89,9 +89,16 @@ describe('画布标签条', () => {
     expect(second.className, '未选中不加粗').not.toContain('font-semibold')
   })
 
-  it('条高 36：与右栏页签同档（此前 32）', () => {
+  it('条高 36：与右栏页签同档（此前 32）；页签填满条的内容盒，不另写 36', () => {
     mount()
-    for (const t of tabs()) expect(t.className).toContain('h-9')
+    const strip = host.querySelector('[data-canvas-tabs]') as HTMLElement
+    expect(strip.parentElement!.className, '条本身 36').toContain('h-9')
+    // 条带 border-b，内容盒只剩 35：页签再写 h-9 就纵向多出 1px，横滚条的 overflow-y 被算成
+    // auto，WebKit 画出一根竖滚动条。像素由 e2e/canvas-tabs-scroll.spec.ts 在真浏览器里量
+    for (const t of tabs()) {
+      expect(t.className).toContain('h-full')
+      expect(t.className).not.toContain('h-9')
+    }
   })
 
   it('下划线挂在文字盒上，不是整个 tab——可关闭的那个不会把线延到 × 底下', () => {

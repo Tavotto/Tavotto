@@ -59,6 +59,9 @@ export default defineConfig({
         // 性能探针（ADR 0075）量的就是用户那台 WKWebView：rAF / MessageChannel 的
         // 时序与合成 PointerEvent 在 WebKit 里成不成立，只有这一腿答得了
         'perf-probe.spec.ts',
+        // 画布页签条的纵向溢出：只有 WebKit 把那 1px 画成一根常驻的竖滚动条（用户截图），
+        // chromium 量得到数、画不出条——用户那台引擎必须亲自量一遍
+        'canvas-tabs-scroll.spec.ts',
       ],
     },
     // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；
