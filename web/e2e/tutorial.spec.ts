@@ -296,6 +296,51 @@ test('教程刚打开就拖：工作台挂载时的启动恢复晚到，也不�
   expect((await fracX()) - frac0).toBeGreaterThan(0.05)
 })
 
+test('coachmark 落位时不从锚点上扫过：双击素材卡的第二下不会落在「跳过此步」上', async ({ app, page }) => {
+  // windows-exe-smoke 上连着踢了三个合并组（issue #581）：第 1 步的 coachmark 挂载时先在 -9999 处
+  // 量一次尺寸，随后落位与 left/top 过渡同一帧生效，于是它从屏幕外**斜着飞进来**；中途锚点量到了、
+  // 改道去卡片下方，这一段恰好扫过卡片中心。慢机器上双击的第二下落在飞过来的「跳过此步」上：
+  // 教程被推到第 2 步，图却没打开。这里把页面上的动画放慢 20 倍，让那几十毫秒的窗口在任何机器上
+  // 都够宽，逐帧看卡片中心最上面是谁。
+  test.setTimeout(120_000)
+  const a = await app({ noProject: true })
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await openTutorialFromPicker(page, a.baseURL)
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Animation.enable')
+  await cdp.send('Animation.setPlaybackRate', { playbackRate: 0.05 })
+  await page.evaluate(() => {
+    const w = window as unknown as { __covered: string[]; __frames: number }
+    w.__covered = []
+    w.__frames = 0
+    const until = performance.now() + 4000
+    const tick = () => {
+      const card = document.querySelector('[data-card="Fig2_correlation.pdf"]')
+      if (card && document.querySelector('[data-onboarding-coachmark]')) {
+        w.__frames++
+        const r = card.getBoundingClientRect()
+        const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)
+        if (top?.closest('[data-onboarding-coachmark]')) w.__covered.push((top.textContent ?? '').trim().slice(0, 12))
+      }
+      if (performance.now() < until) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+  await coachmark(page).getByRole('button', { name: '开始' }).click()
+  await expect(coachmark(page)).toContainText('打开一张图')
+  await page.waitForTimeout(4000)
+  const { covered, frames } = await page.evaluate(() => {
+    const w = window as unknown as { __covered: string[]; __frames: number }
+    return { covered: w.__covered, frames: w.__frames }
+  })
+  // 尺子是活的：采样确实跑过了（量了零帧的话「从没挡住」恒真）
+  expect(frames).toBeGreaterThan(30)
+  expect(covered, 'coachmark 在落位途中挡住了它指着的那张卡片').toEqual([])
+  await cdp.send('Animation.setPlaybackRate', { playbackRate: 1 })
+  await page.locator('[data-card="Fig2_correlation.pdf"]').dblclick()
+  await expect(page.locator('[data-exit-element-edit]')).toBeVisible({ timeout: 30_000 })
+})
+
 test('切到别的项目自动暂停，切回来自动继续', async ({ app, page }) => {
   test.setTimeout(240_000)
   const a = await app()

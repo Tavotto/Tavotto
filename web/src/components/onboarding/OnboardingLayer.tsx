@@ -9,6 +9,7 @@ import {
   offscreen,
   placeCentered,
   placeCoachmark,
+  shouldGlide,
   unionBoxes,
   type Box,
   type CoachmarkSide,
@@ -147,7 +148,15 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
   const cardRef = useRef<HTMLDivElement>(null)
   const [ctx, setCtx] = useState<StepContext>(() => currentContext())
   const [measured, setMeasured] = useState<Measured | null>(null)
-  const [placement, setPlacement] = useState<{ x: number; y: number; side: CoachmarkSide | 'center' } | null>(null)
+  const [placement, setPlacement] = useState<{
+    x: number
+    y: number
+    side: CoachmarkSide | 'center'
+    /** 从上一个位置滑过来，还是直接出现（`shouldGlide`：途中不许扫过锚点） */
+    glide: boolean
+  } | null>(null)
+  // 卡片此刻在屏幕上的框（容器坐标）；还没落过位是 null——挂载那一帧它在 -9999
+  const shown = useRef<Box | null>(null)
   const [waitedOut, setWaitedOut] = useState(false)
   const revealed = useRef(false)
 
@@ -232,14 +241,15 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
           return { x: r.left, y: r.top, w: r.width, h: r.height }
         })()
       : { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }
-    if (!measured?.box) {
-      const c = placeCentered(size, { w: frame.w, h: frame.h })
-      setPlacement({ x: c.x, y: c.y, side: 'center' })
-      return
-    }
-    const local: Box = { ...measured.box, x: measured.box.x - frame.x, y: measured.box.y - frame.y }
-    const p = placeCoachmark(local, size, { w: frame.w, h: frame.h }, { margin: COACHMARK_MARGIN })
-    setPlacement(p)
+    const local: Box | null = measured?.box
+      ? { ...measured.box, x: measured.box.x - frame.x, y: measured.box.y - frame.y }
+      : null
+    const p = local
+      ? placeCoachmark(local, size, { w: frame.w, h: frame.h }, { margin: COACHMARK_MARGIN })
+      : { ...placeCentered(size, { w: frame.w, h: frame.h }), side: 'center' as const }
+    const next: Box = { x: p.x, y: p.y, w: size.w, h: size.h }
+    setPlacement({ ...p, glide: shouldGlide(shown.current, next, local) })
+    shown.current = next
   }, [measured, ctx])
 
   const missing = measured === null
@@ -299,7 +309,7 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
     zIndex: 60,
     // 时长与曲线只来自 token（宪法第七节）：此前是写死的 120ms + ease-out（打磨 G1）
     transition:
-      reduced || !placement
+      reduced || !placement?.glide
         ? undefined
         : `left ${DURATION.fast}ms ${EASE_STANDARD}, top ${DURATION.fast}ms ${EASE_STANDARD}`,
   }

@@ -95,3 +95,24 @@ export function unionBoxes(boxes: Box[]): Box | null {
   const y1 = Math.max(...real.map((b) => b.y + b.h))
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
 }
+
+/**
+ * 卡片从 `from` 挪到 `to` 该不该**滑过去**（left/top 过渡），还是直接出现在新位置。
+ *
+ * 滑行途中卡片是可点的：它扫过的地方，用户点下去点到的是卡片——锚点正是用户
+ * 此刻要点的东西。第 1 步的卡片曾从屏幕外斜着飞进来、半路改道扫过素材卡中心，
+ * 慢机器上双击的第二下落在飞过来的「跳过此步」上，教程被推到下一步、图却没打开
+ * （issue #581）。所以：
+ *   - 没有旧位置（刚挂载、还没在屏幕上出现过）→ 不滑，直接出现；
+ *   - 扫过的区域（两框的外接矩形，比真实扫过的平行四边形只大不小）碰到锚点 → 不滑；
+ *   - 其余照常滑。
+ */
+export function shouldGlide(from: Box | null, to: Box, anchor: Box | null): boolean {
+  if (!from) return false
+  if (!anchor) return true
+  const x0 = Math.min(from.x, to.x)
+  const y0 = Math.min(from.y, to.y)
+  const x1 = Math.max(from.x + from.w, to.x + to.w)
+  const y1 = Math.max(from.y + from.h, to.y + to.h)
+  return !(x0 < anchor.x + anchor.w && anchor.x < x1 && y0 < anchor.y + anchor.h && anchor.y < y1)
+}

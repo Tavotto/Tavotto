@@ -4,7 +4,7 @@
  * 前置缺 → 说清缺什么 + 一颗真实行动按钮，**不「等待」**（审计 T36）；
  * Esc 暂停；锚点在对话框里 → portal 进对话框；reduced motion 下不带位移过渡。
  */
-import { act } from 'react'
+import { act, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { REAL_STEP_IDS, STEP_IDS } from '@/lib/onboarding/stepIds'
@@ -394,6 +394,63 @@ describe('锚点', () => {
     expect(parseFloat(c.style.top)).toBe(120 - 50 + 24 + 10)
     expect(c.textContent).toContain('原图')
     dialog.remove()
+  })
+
+  it('落位不扫过锚点：第一次直接出现；之后路上碰到锚点就跳过去，碰不到才滑（issue #581）', async () => {
+    // 曾经：挂载那一帧卡片在 -9999，落位与 left/top 过渡同一帧生效 → 从屏幕外斜着飞进来，
+    // 半路扫过它指着的素材卡；慢机器上双击的第二下落在飞过来的「跳过此步」上。
+    // 看的是**位置变化那一次提交**带没带过渡：停在原地时过渡开着无所谓（没东西可滑）。
+    // 一次提交里 React 逐条改 style 属性，MutationObserver 看到的中间态不是任何一帧会画出来
+    // 的东西，微任务分批又会把几次提交并成一批——所以用 Profiler：每次提交之后取一次
+    const styles: string[] = ['left: -9999px; top: -9999px;']
+    const onCommit = () => {
+      const v = card()?.getAttribute('style')
+      if (v && v !== styles.at(-1)) styles.push(v)
+    }
+    // 每一次位置变化的那一版：挪到哪、带没带过渡
+    const pos = (v: string) => /left: ([^;]+);.*top: ([^;]+);/.exec(v)?.slice(1).join(',')
+    const moves = () =>
+      styles
+        .filter((v, i) => i > 0 && pos(v) !== pos(styles[i - 1]))
+        .map((v) => ({ at: pos(v), glide: /transition: left/.test(v) }))
+    const anchor = document.createElement('div')
+    anchor.setAttribute('data-object-id', 'p2')
+    document.body.appendChild(anchor)
+    giveRect(anchor, { x: 200, y: 100, w: 80, h: 40 })
+    await act(async () => {
+      root.render(
+        <Profiler id="coachmark" onRender={onCommit}>
+          <OnboardingLayer />
+        </Profiler>,
+      )
+    })
+    await flush()
+    await act(async () => {
+      ob().start({ projectId: 'p_tut', documentId: META.document_id })
+      ob().goTo('open_fast_edit')
+    })
+    await flush()
+    // 锚点横着挪：卡片（jsdom 量不出尺寸，按 300×120 算）从 (200,150) 到 (500,150)，
+    // 路上碰不到锚点 → 滑
+    giveRect(anchor, { x: 500, y: 100, w: 80, h: 40 })
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    // 锚点往下挪进卡片原来那片的范围：卡片要从它上面经过 → 跳
+    giveRect(anchor, { x: 500, y: 240, w: 80, h: 40 })
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    await flush()
+    expect(moves()).toEqual([
+      // 从 -9999 出来：直接出现（挂载那一刻锚点还没量，先居中）
+      { at: '362px,324px', glide: false },
+      // 量到锚点：从居中处挪到锚点下方，整段都在锚点下沿之下 → 滑
+      { at: '200px,150px', glide: true },
+      { at: '500px,150px', glide: true },
+      { at: '500px,290px', glide: false },
+    ])
+    anchor.remove()
   })
 
   it('reduced motion：卡片不带位移过渡、高亮环不带进场动画', async () => {
