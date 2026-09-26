@@ -301,7 +301,9 @@ test('coachmark 落位时不从锚点上扫过：双击素材卡的第二下不�
   // 量一次尺寸，随后落位与 left/top 过渡同一帧生效，于是它从屏幕外**斜着飞进来**；中途锚点量到了、
   // 改道去卡片下方，这一段恰好扫过卡片中心。慢机器上双击的第二下落在飞过来的「跳过此步」上：
   // 教程被推到第 2 步，图却没打开。这里把页面上的动画放慢 20 倍，让那几十毫秒的窗口在任何机器上
-  // 都够宽，逐帧看卡片中心最上面是谁。
+  // 都够宽，逐帧量 coachmark **渲染出来的**框（过渡中途那一帧的位置）与卡片相不相交。
+  // 只看卡片中心那一点不够：落点随改道时机漂，同一份代码三次里红两次——判据要的是
+  // 「路上碰没碰到锚点」，不是「恰好压没压到某个点」
   test.setTimeout(120_000)
   const a = await app({ noProject: true })
   await page.setViewportSize({ width: 1400, height: 900 })
@@ -316,11 +318,15 @@ test('coachmark 落位时不从锚点上扫过：双击素材卡的第二下不�
     const until = performance.now() + 4000
     const tick = () => {
       const card = document.querySelector('[data-card="Fig2_correlation.pdf"]')
-      if (card && document.querySelector('[data-onboarding-coachmark]')) {
+      const cm = document.querySelector('[data-onboarding-coachmark]')
+      if (card && cm) {
         w.__frames++
-        const r = card.getBoundingClientRect()
-        const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)
-        if (top?.closest('[data-onboarding-coachmark]')) w.__covered.push((top.textContent ?? '').trim().slice(0, 12))
+        // 渲染出来的位置（过渡中途的那一帧），不是 style 里写的终点
+        const a = card.getBoundingClientRect()
+        const b = cm.getBoundingClientRect()
+        if (b.left < a.right && a.left < b.right && b.top < a.bottom && a.top < b.bottom) {
+          w.__covered.push(`${Math.round(b.left)},${Math.round(b.top)}`)
+        }
       }
       if (performance.now() < until) requestAnimationFrame(tick)
     }
