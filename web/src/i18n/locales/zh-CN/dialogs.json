@@ -327,7 +327,7 @@
       },
       "readiness": {
         "label": "显示项目接入状态",
-        "keywords": "readiness status editable jr jieru 接入 可编辑 仅排版 为什么不能编辑"
+        "keywords": "readiness status editable jr jieru 接入 可编辑 仅版面 仅排版 为什么不能编辑"
       },
       "hints-reset": {
         "label": "重新显示操作提示",
@@ -613,7 +613,7 @@
     "emptyTitle": "项目里还没有图",
     "group": {
       "editable": "可编辑",
-      "layout_only": "仅排版",
+      "layout_only": "仅版面",
       "pending": "需要处理"
     },
     "link": "连接",
@@ -655,7 +655,7 @@
     "staleReport": "显示上次成功取回的状态，可能已过期。",
     "summary": {
       "editable": "可编辑",
-      "layoutOnly": "仅排版",
+      "layoutOnly": "仅版面",
       "pending": "待连接",
       "total": "总计"
     },
@@ -1388,7 +1388,7 @@
       "noTextSelected": "先选中图里的一段文字（标题或坐标轴标签）。",
       "editPanelNotRendered": "{{name}} 还没渲染过，问题面板里不会有它的检查结果，先打开它一次。",
       "otherPanelMissing": "画布上只有一张教程图，多选对齐至少要两张，先把 {{name}} 加进来。",
-      "notInLayout": "多选要在画布排版里进行，先回到画布。"
+      "notInLayout": "多选要在画布上进行，先回到画布。"
     },
     "action": {
       "openFigure": "打开 {{name}}",
@@ -1475,7 +1475,7 @@
         "body": "再次打开「导出」，确认输出范围是「画布」，然后关闭面板。",
         "scope": {
           "title": "看看画布导出",
-          "body": "「画布」按页面尺寸和排版输出整个版面。确认后关闭面板继续。"
+          "body": "「画布」按页面尺寸和摆放输出整个版面。确认后关闭面板继续。"
         }
       },
       "done": {

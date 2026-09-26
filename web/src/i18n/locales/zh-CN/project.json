@@ -67,7 +67,7 @@
     "removeAllMissing": "全部移除",
     "removeFromList": "从列表移除 {{name}}，不删除磁盘文件。",
     "removeFromListTitle": "从列表移除，不删文件",
-    "tagline": "项目是论文图与脚本所在的目录。选择一个开始排版。",
+    "tagline": "项目是论文图与脚本所在的目录。选择一个开始做图。",
     "tutorial": {
       "start": "用示例了解 Tavotto",
       "resume": "继续教程",

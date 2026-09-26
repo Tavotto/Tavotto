@@ -418,7 +418,7 @@ export default interface Resources {
         "editPanelNotRendered": "{{name}} 还没渲染过，问题面板里不会有它的检查结果，先打开它一次。",
         "noTextSelected": "先选中图里的一段文字（标题或坐标轴标签）。",
         "notInElementEdit": "这一步要在 {{name}} 的图内编辑里进行，先打开它。",
-        "notInLayout": "多选要在画布排版里进行，先回到画布。",
+        "notInLayout": "多选要在画布上进行，先回到画布。",
         "otherPanelMissing": "画布上只有一张教程图，多选对齐至少要两张，先把 {{name}} 加进来。"
       },
       "progress": "第 {{n}} 步，共 {{total}} 步",
@@ -459,7 +459,7 @@ export default interface Resources {
         "export_canvas": {
           "body": "再次打开「导出」，确认输出范围是「画布」，然后关闭面板。",
           "scope": {
-            "body": "「画布」按页面尺寸和排版输出整个版面。确认后关闭面板继续。",
+            "body": "「画布」按页面尺寸和摆放输出整个版面。确认后关闭面板继续。",
             "title": "看看画布导出"
           },
           "title": "看看画布导出"
@@ -579,7 +579,7 @@ export default interface Resources {
           "label": "新建空白排版"
         },
         "readiness": {
-          "keywords": "readiness status editable jr jieru 接入 可编辑 仅排版 为什么不能编辑",
+          "keywords": "readiness status editable jr jieru 接入 可编辑 仅版面 仅排版 为什么不能编辑",
           "label": "显示项目接入状态"
         },
         "refresh-project": {
@@ -935,7 +935,7 @@ export default interface Resources {
       "emptyTitle": "项目里还没有图",
       "group": {
         "editable": "可编辑",
-        "layout_only": "仅排版",
+        "layout_only": "仅版面",
         "pending": "需要处理"
       },
       "link": "连接",
@@ -977,7 +977,7 @@ export default interface Resources {
       "staleReport": "显示上次成功取回的状态，可能已过期。",
       "summary": {
         "editable": "可编辑",
-        "layoutOnly": "仅排版",
+        "layoutOnly": "仅版面",
         "pending": "待连接",
         "total": "总计"
       },
@@ -1926,7 +1926,7 @@ export default interface Resources {
       "dependencyTarget_tavotto_managed": "Tavotto 隔离环境",
       "incompleteAfter": "——请重新安装 Tavotto。如果是杀毒软件误删，装好后把 Tavotto 的安装目录加入白名单。",
       "incompleteBefore": "Tavotto 渲染环境",
-      "incompleteHint": "排版、标注和导出不受影响，只有图内元素编辑需要渲染环境。设置 →「环境诊断」可以导出诊断包。",
+      "incompleteHint": "摆放、标注和导出不受影响，只有图内元素编辑需要渲染环境。设置 →「环境诊断」可以导出诊断包。",
       "incompleteInvalid": "已损坏",
       "incompleteMissing": "不见了",
       "incompleteTitle": "安装文件不完整",
@@ -1935,7 +1935,7 @@ export default interface Resources {
       "managedEnvInstalled": "已安装：{{packages}}",
       "managedEnvRebuild": "重建 Tavotto 环境",
       "managedEnvUsing": "本项目的 {{product}} 环境：Python {{version}}",
-      "missingBody": "图内元素编辑需要一个装了 matplotlib 的 Python——Tavotto 运行的是你自己的脚本，解释器得能 import 它们用到的库。排版、标注和导出不受影响。",
+      "missingBody": "图内元素编辑需要一个装了 matplotlib 的 Python——Tavotto 运行的是你自己的脚本，解释器得能 import 它们用到的库。摆放、标注和导出不受影响。",
       "missingModuleBody": "脚本需要额外的 Python 包，切换到你常用的 Python 或 Conda 环境即可。",
       "missingModulePackage": "这个包",
       "missingModuleTitle": "渲染环境里没有 {{module}}",
@@ -2880,7 +2880,7 @@ export default interface Resources {
       "tickLocator": "刻度定位",
       "tickMarks": "刻度线",
       "ticks": "刻度",
-      "typography": "排版",
+      "typography": "文字样式",
       "view": "视角"
     },
     "hiddenState": "已隐藏",
@@ -2957,7 +2957,7 @@ export default interface Resources {
       "followHint": "图例示意由图中对象派生；断开关联后才能单独修改颜色、线型和标记。",
       "hide": "隐藏",
       "hideEntry": "隐藏图例项 “{{label}}”",
-      "layoutDetails": "排版详情",
+      "layoutDetails": "布局详情",
       "linkedTo": "链接到：{{label}}",
       "moveDown": "下移 “{{label}}”",
       "moveUp": "上移 “{{label}}”",
@@ -3363,7 +3363,7 @@ export default interface Resources {
       "color": "文字颜色",
       "italic": "斜体",
       "italicStyle": "字形 · {{value}}",
-      "layout": "排版与层级",
+      "layout": "文字样式与层级",
       "prop": {
         "alpha": "不透明度",
         "bbox_alpha": "不透明度",
@@ -3567,7 +3567,7 @@ export default interface Resources {
       "removeAllMissing": "全部移除",
       "removeFromList": "从列表移除 {{name}}，不删除磁盘文件。",
       "removeFromListTitle": "从列表移除，不删文件",
-      "tagline": "项目是论文图与脚本所在的目录。选择一个开始排版。",
+      "tagline": "项目是论文图与脚本所在的目录。选择一个开始做图。",
       "tutorial": {
         "restart": "再看一遍教程",
         "resume": "继续教程",
@@ -3878,16 +3878,16 @@ export default interface Resources {
       "addedForEditLive": "已为编辑加入本排版，移除即撤销这一步。",
       "alreadyOnCanvas": "{{name}} 已经在画布上",
       "connectSource": "连接源脚本",
-      "crumbTitle": "返回画布排版",
+      "crumbTitle": "返回画布",
       "figureMissing": "项目里找不到 {{name}}",
-      "layoutOnly": "未连接源脚本。可排版，不能改图内元素。",
+      "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。",
       "removeAdded": "移除"
     },
     "hints": {
       "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
       "multi_select": "用选区旁的浮动栏对齐和分布。",
       "panel_editable": "双击进入图内编辑。",
-      "panel_layout_only": "图可排版；连接源脚本后可编辑图内元素。",
+      "panel_layout_only": "这张图可在版面上摆放；连接源脚本后可编辑图内元素。",
       "problem_found": "左侧「问题」可定位对象和属性字段。"
     },
     "history": {
@@ -3905,7 +3905,7 @@ export default interface Resources {
       "applyStyle": "应用样式「{{name}}」",
       "arrowEndpoint": "调整箭头端点",
       "autoReflow": "自动重排布局组",
-      "bindStyle": "按样式「{{name}}」排版当前画布",
+      "bindStyle": "给当前画布套用样式「{{name}}」",
       "cancelCrop": "取消裁剪",
       "clearGuides": "清除参考线",
       "clearProp": "恢复{{prop}}",
@@ -4126,13 +4126,13 @@ export default interface Resources {
       "workspace": "工作区"
     },
     "readiness": {
-      "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅排版。",
+      "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅版面。",
       "openCenter": "查看接入状态",
       "reason": {
         "multiple_source_candidates": "多个脚本都声称生成这张图，选择用哪一个。",
-        "no_source_candidate": "没有找到生成它的脚本。它仍然可以排版、裁剪、标注和导出。",
+        "no_source_candidate": "没有找到生成它的脚本。它仍然可以摆放、裁剪、标注和导出。",
         "project_read_only": "找到了 {{script}}，但项目是只读的，无法保存连接。",
-        "registered_script_missing": "原来的脚本 {{script}} 已经不在了。这张图仍然可以排版、裁剪和导出。",
+        "registered_script_missing": "原来的脚本 {{script}} 已经不在了。这张图仍然可以摆放、裁剪和导出。",
         "registered_source": "由 {{script}} 生成，可以直接改图里的内容。",
         "registry_invalid": "找到了 {{script}}，但记录来源的文件读不回来，暂时连不上。",
         "registry_write_failed": "找到了 {{script}}，但连接结果没能保存下来。",
@@ -4144,7 +4144,7 @@ export default interface Resources {
         "auto_linkable": "待连接",
         "conflict": "有冲突",
         "editable": "可编辑",
-        "layout_only": "仅排版",
+        "layout_only": "仅版面",
         "needs_probe": "需试运行",
         "source_missing": "源脚本丢失"
       },
@@ -4280,8 +4280,8 @@ export default interface Resources {
       "renderFailedWithError": "无法渲染 {{name}}。{{error}}",
       "scriptChanged_other": "脚本已更新，{{count}} 张图已重新渲染",
       "sourceLinked_other": "已找到源脚本，双击图即可编辑图内元素（{{count}} 张）",
-      "sourceLostEditing": "源脚本关系已失效，已返回画布。图片和排版没有删除。",
-      "sourceLost_other": "源脚本关系已失效，{{count}} 张图已改为普通图片。图片和排版没有删除。",
+      "sourceLostEditing": "源脚本关系已失效，已返回画布。图片和它在画布上的摆放都保留着。",
+      "sourceLost_other": "源脚本关系已失效，{{count}} 张图已改为普通图片。图片和它们在画布上的摆放都保留着。",
       "styleCopiedArrow": "已复制箭头样式（线宽 / 颜色 / 端型 / 线型）",
       "styleCopiedPanel": "已复制图的样式（裁剪 / 旋转 / 不透明度）",
       "styleCopiedShape": "已复制形状样式（描边 / 填充 / 圆角 / 线型）",
@@ -4332,7 +4332,7 @@ export default interface Resources {
       "saveFailedPlain": "样式没存上，画布没有改",
       "sizeOf": "{{row}}字号",
       "unbound": "不跟随样式",
-      "unboundHint": "选一套样式，这张画布上的图就按它排版；之后改它，图跟着变。",
+      "unboundHint": "选一套样式，这张画布上的图就按它显示；之后改它，图跟着变。",
       "upgradedLegacy": "样式「{{name}}」是旧版本存的，已改为按页面上的实际大小计",
       "waitingRender": "这张图的这一版还在渲染，渲染完才能改"
     },
