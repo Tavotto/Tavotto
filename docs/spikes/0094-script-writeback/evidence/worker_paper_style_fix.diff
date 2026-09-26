@@ -1,0 +1,15 @@
+--- a/tavotto/engine/worker.py
++++ b/tavotto/engine/worker.py
+@@ -428,9 +428,9 @@
+                     # 与 `_patched_savefig` 同一条来源记账：paper_style.save 是显式
+                     # 「保存这张图」，来源就是 savefig（以前这里不记来源，靠读取端
+                     # `.get(stem, SOURCE_SAVEFIG)` 兜底——结果一样，现在是显式的）。
+-                    paper_style.save = lambda fig, stem, outdir="figures": SESSION.add_figure(
+-                        stem, fig, figcapture.SOURCE_SAVEFIG
+-                    )
++                    paper_style.save = lambda fig, stem, outdir="figures": fig.savefig(
++                        f"{stem}.pdf"
++                    )  # ADR 0094 spike：经 Figure.savefig（被拦截、不落盘），写回块的钩子才触发
+                 if self.entry == "__main__":
+                     import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
+ 
