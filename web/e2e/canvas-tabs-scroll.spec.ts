@@ -118,3 +118,42 @@ test('画布页签条没有纵向溢出、不画滚动条，页签多了仍能�
   await expect(strip.getByRole('tab').last()).toHaveAttribute('aria-selected', 'true')
   await expect.poll(async () => JSON.stringify(await activeTabInView(strip))).toContain('"inView":true')
 })
+
+test('页签少但放不下时也给「全部画布」菜单，能切到条外的页签', async ({ app, page }) => {
+  // 4 个画布、全都打开：原来的两个条件（有未打开的 / 多于 6 个）都不成立，
+  // 只剩「条放不下」这一条能让菜单出现
+  await page.setViewportSize({ width: 600, height: 700 })
+  const a = await app()
+  await page.goto(a.baseURL)
+  await page.locator('[data-canvas-stage]').waitFor({ timeout: 60_000 })
+
+  const strip = page.locator('[data-canvas-tabs]')
+  const menu = page.locator('[data-all-canvases]')
+  const newCanvas = page.getByRole('button', { name: '新建画布', exact: true }).first()
+  for (let i = 0; i < 3; i++) await newCanvas.click()
+  const tabs = strip.getByRole('tab')
+  await expect(tabs).toHaveCount(4)
+  await expect(menu, '默认短名放得下：没有菜单').toHaveCount(0)
+
+  for (let i = 0; i < 4; i++) {
+    await tabs.nth(i).dblclick()
+    const input = strip.getByRole('textbox')
+    await input.fill(`很长很长的画布名字第${i + 1}个`)
+    await input.press('Enter')
+    await expect(strip.getByRole('textbox')).toHaveCount(0)
+  }
+  const sizes = await strip.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }))
+  expect(sizes.sw, JSON.stringify(sizes)).toBeGreaterThan(sizes.cw)
+  await expect(menu, '放不下：菜单出现').toHaveCount(1)
+
+  // 回到第一页、条滚回开头，再从菜单切到条外的最后一个
+  await strip.evaluate((el) => (el.scrollLeft = 0))
+  await tabs.first().click()
+  await expect(tabs.first()).toHaveAttribute('aria-selected', 'true')
+  const lastName = (await tabs.last().getAttribute('title'))!
+  expect((await activeTabInView(strip)).scrollLeft).toBe(0)
+  await menu.click()
+  await page.getByRole('menuitem', { name: lastName, exact: true }).click()
+  await expect(tabs.last()).toHaveAttribute('aria-selected', 'true')
+  await expect.poll(async () => JSON.stringify(await activeTabInView(strip))).toContain('"inView":true')
+})

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Plus, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -46,6 +46,23 @@ export function CanvasTabs() {
     if (left < el.scrollLeft) el.scrollLeft = left
     else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth
   }, [activeId, openTabs])
+
+  // 条放不下时也给「全部画布」菜单：横滚条不画之后，只有鼠标、又不在 macOS 上按 Shift 的人
+  // 没有别的办法够到条外的页签。每次渲染量一次（页签增删、改名都会重渲染），窗口 / 抽屉
+  // 改宽度不重渲染，交给 ResizeObserver——与 `ui/slidingIndicator` 同一写法
+  const [overflowing, setOverflowing] = useState(false)
+  const measureOverflow = useCallback(() => {
+    const el = strip.current
+    if (el) setOverflowing(el.scrollWidth > el.clientWidth + 1)
+  }, [])
+  useLayoutEffect(measureOverflow)
+  useEffect(() => {
+    const el = strip.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measureOverflow)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [measureOverflow])
 
   const nameOf = (id: string) =>
     id === activeId ? activeName : (canvases.find((c) => c.id === id)?.name ?? '')
@@ -103,7 +120,7 @@ export function CanvasTabs() {
       </Tip>
       <span className="flex-1" />
 
-      {canvases.length > openTabs.length || canvases.length > 6 ? (
+      {canvases.length > openTabs.length || canvases.length > 6 || overflowing ? (
         <AllCanvasesMenu activate={activate} />
       ) : null}
     </div>
