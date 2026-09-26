@@ -390,7 +390,9 @@ def _container_ok(func: ast.AST, name: str, parents: dict[ast.AST, ast.AST], dep
             continue
         p = parents.get(node)
         if isinstance(node.ctx, ast.Store):
-            if isinstance(p, (ast.Assign, ast.AnnAssign)) and isinstance(p.value, (ast.List, ast.ListComp)):
+            if isinstance(p, (ast.Assign, ast.AnnAssign)) and isinstance(
+                p.value, (ast.List, ast.ListComp)
+            ):
                 targets = p.targets if isinstance(p, ast.Assign) else [p.target]
                 if targets == [node]:
                     continue
@@ -431,7 +433,9 @@ def _container_ok(func: ast.AST, name: str, parents: dict[ast.AST, ast.AST], dep
     return True
 
 
-def _emitted_as_is(node: ast.AST, parents: dict[ast.AST, ast.AST], func: ast.AST, depth: int = 0) -> bool:
+def _emitted_as_is(
+    node: ast.AST, parents: dict[ast.AST, ast.AST], func: ast.AST, depth: int = 0
+) -> bool:
     """这个表达式（字段字面量或装着它的容器）是不是原样交出去的；认不出就 False。"""
     if depth > 8:
         return False
@@ -476,7 +480,11 @@ def _emitted_as_is(node: ast.AST, parents: dict[ast.AST, ast.AST], func: ast.AST
 
 
 def _dict_keys(node: ast.AST) -> set[str]:
-    return {k.value for k in node.keys if isinstance(k, ast.Constant)} if isinstance(node, ast.Dict) else set()
+    return (
+        {k.value for k in node.keys if isinstance(k, ast.Constant)}
+        if isinstance(node, ast.Dict)
+        else set()
+    )
 
 
 def _value_key_writes(path: Path) -> list[str]:
@@ -511,7 +519,11 @@ def _value_key_writes(path: Path) -> list[str]:
             and ("value" in _dict_keys(node.left) or "value" in _dict_keys(node.right))
         ):
             what = '… | {"value": …}'
-        elif isinstance(node, ast.AugAssign) and isinstance(node.op, ast.BitOr) and "value" in _dict_keys(node.value):
+        elif (
+            isinstance(node, ast.AugAssign)
+            and isinstance(node.op, ast.BitOr)
+            and "value" in _dict_keys(node.value)
+        ):
             what = '|= {"value": …}'
         elif isinstance(node, ast.Dict) and None in node.keys and "value" in _dict_keys(node):
             spread_at = node.keys.index(None)
