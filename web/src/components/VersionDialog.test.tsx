@@ -220,6 +220,24 @@ describe('恢复：先存「恢复前」，再写，⌘Z 能退回', () => {
     expect(ids()).toEqual(['now'])
   })
 
+  it('布局组跟着对象恢复：对象身上的 groupId 指向的是那一版的组', async () => {
+    const withGroup: FigureDocument = {
+      ...snapshot(),
+      objects: [
+        { ...text('old', '甲'), groupId: 'g1' },
+        { ...text('old2', '乙'), groupId: 'g1' },
+      ],
+      layoutGroups: [{ id: 'g1', kind: 'row', order: ['old', 'old2'], gap: 2, align: 'start' }],
+    }
+    mockDoc.mockResolvedValue({ ...meta(), doc: withGroup })
+    await mount([meta()])
+    await act(async () => rows()[0].click())
+    await flush()
+    await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
+    await flush()
+    expect(useDocumentStore.getState().doc.layoutGroups?.map((g) => g.id)).toEqual(['g1'])
+  })
+
   it('「恢复前」存不下来就不恢复：当前排版原样', async () => {
     mockCreate.mockRejectedValueOnce(new Error('disk full'))
     await mount([meta()])
