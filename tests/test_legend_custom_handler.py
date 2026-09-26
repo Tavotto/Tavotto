@@ -706,6 +706,12 @@ def test_changing_the_mesh_colormap_recolours_the_band(hot_mesh, tmp_path_factor
     got = _legend_pixels(hot_mesh, MESH_STEM, patches, "band-plasma", inset=3)
     assert got == _native_band(tmp_path_factory, "plasma", "legend-band-native-plasma")
     assert got != _legend_pixels(hot_mesh, MESH_STEM, [], "band-orig", inset=3)
+    # 再走一遍重建（内边距「改」成现值）：色带仍是整格、仍是新色图——不能从网格按默认
+    # handler 派生成一块纯色（那样热态与重放一起错，下面的重放用例量不出来）
+    pad = _fields(_src_man_of(hot_mesh), LEG)["borderpad"]["value"]
+    rebuilt = patches + [{"gid": LEG, "prop": "borderpad", "value": pad}]
+    _src_man_of(hot_mesh, rebuilt)
+    assert _legend_pixels(hot_mesh, MESH_STEM, rebuilt, "band-plasma-rebuilt", inset=3) == got
     _src_man_of(hot_mesh)
 
 
