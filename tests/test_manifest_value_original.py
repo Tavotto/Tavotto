@@ -228,3 +228,48 @@ def test_without_a_reader_the_field_stays_absent_rather_than_guessed():
     """采不到（没登记读法 / 读的时候出错）就不发：缺席 = 不知道，前端按保守路径走（不让位）。"""
     got = _run(NO_READER)
     assert got == {"value": 8.0, "has": False}, got
+
+
+RESTORE_DEBT = """
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+ax.set_title("T", fontsize=10)
+st = overrides.FigState(fig); manifest.instrument(st)
+gid = next(e["gid"] for e in build(st)["elements"] if e["role"] == "title")
+key = ("text", "fontsize")
+out = {}
+overrides.apply(st, [{"gid": gid, "prop": "fontsize", "value": 8}])
+
+def boom(*_a, **_k):
+    raise RuntimeError("还原坏了")
+
+had, prev = key in overrides._RESTORE, overrides._RESTORE.get(key)
+overrides._RESTORE[key] = boom
+try:
+    out["warn"] = overrides.apply(st, [])
+    out["owed"] = (gid, "fontsize") in getattr(st, "unrestored", set())
+    out["during"] = field(build(st), gid, "fontsize")
+finally:
+    if had:
+        overrides._RESTORE[key] = prev
+    else:
+        overrides._RESTORE.pop(key, None)
+out["retry_warn"] = overrides.apply(st, [])
+out["after"] = field(build(st), gid, "fontsize")
+out["left"] = [list(k) for k in st.original_values]
+print(json.dumps(out, default=str))
+"""
+
+
+def test_value_original_survives_a_restore_debt_and_goes_with_it():
+    """#549 × §十三 的交叉点：撤掉一条 override 时还原抛了（#549：不销账，下一次 apply 重试），
+    欠账期间这个键仍在 applied 里、图上仍是 override 的值——`value_original` 必须照样报**脚本原样**，
+    否则前端在这段时间里读到「不知道」，样式写的 override 该让位时不让位。还原修好之后它与
+    originals 一起销掉，不留一条没人回收的记录。
+    """
+    got = _run(RESTORE_DEBT)
+    assert got["owed"] and any("还原失败" in w for w in got["warn"]), got  # 前提：真的欠着账
+    assert got["during"]["value_original"] == 10, got["during"]
+    assert not any("还原失败" in w for w in got["retry_warn"]), got["retry_warn"]
+    assert "value_original" not in got["after"] and got["after"]["value"] == 10, got["after"]
+    assert got["left"] == [], got["left"]

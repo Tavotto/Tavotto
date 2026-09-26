@@ -367,8 +367,8 @@ Codex #547 r4104608121 的场景：绑定时 y 轴标签的字号刚好已合样
 | §十 旧样式升级：0.6 的图上输入 9 → 页面 9、标记写入、一次撤销退回画布（库保留升级后的那一份）、缩放比 1 的图不变；设置与样式对话框同一规则 | `styleBinding.test.ts`「旧样式…第一次被编辑」组、`profilesSettings.test.tsx`、`StyleDialog.test.tsx` |
 | §十一 各条（重载同一份文档不写、换绑定欠账作废、旧样式 0.6 上输入 6、只认当前变体、排空补跑） | `styleBinding.test.ts`「第二轮评审」组 |
 | §十二 撤销只退画布：撤销不写库、已脱离、再编辑后不跟回来、别的画布照样跟上、重做回到跟随并以库此刻为准、重新选中恢复跟随、撤销「按样式更新」也脱离；`undoAlso` 撤销 / 重做 / 再撤销一致；选择器与提示；读档带上标记 | `styleBinding.test.ts`「撤销只退画布」组、`documentStore.test.ts`「commit 的 undoAlso」组、`stylePanel.test.tsx`、`migrate.style.test.ts` |
-| §十三 重跑后脚本赢：没 override 的属性被脚本改了不自动写、计入不一致、「对齐」一条历史可撤销；新 gid 不自动写；样式写的 override 在脚本改了之后让位（一条历史、撤销连登记一起回来）；脚本没改不让位；手改（含改成与样式相同的值）注销且不让位、不计入；老文档 / 老引擎不让位；离线改脚本重开后让位；改值沿用基线；解绑 / 恢复原样随绑定消失、样式写的孤儿一起清、用户的孤儿不动 | `styleBinding.test.ts`「重跑后脚本赢」组、`stylePanel.test.tsx`（不一致提示与「对齐」）、`migrate.style.test.ts` |
-| §十三 `value_original`：样式能写的每一项与没 override 时的 `value` 同值（全写 / 逐条）、元素联动不串味、rebase 重采、键名同源 | `tests/test_manifest_value_original.py`、`tests/native/test_native_barrier_semantics.py`、`tests/test_value_original_pair.py`；`owned` 落盘 `tests/test_document_persistence.py` |
+| §十三 重跑后脚本赢：没 override 的属性被脚本改了不自动写、计入不一致、「对齐」一条历史可撤销；新 gid 不自动写；样式写的 override 在脚本改了之后让位（一条历史、撤销连登记一起回来）；脚本没改不让位；手改（含改成与样式相同的值）注销且不让位、不计入；老文档 / 老引擎不让位；离线改脚本重开后让位；改值沿用基线；解绑 / 恢复原样随绑定消失、样式写的孤儿一起清、用户的孤儿不动 | `styleBinding.test.ts`「重跑后脚本赢」组、`stylePanel.test.tsx`（不一致提示与「对齐」）、`migrate.style.test.ts`；一键修复（#549 整张换上裁决后的列表）按新旧列表的差注销、没动的保留 `styleOwnedIssueFix.test.ts` |
+| §十三 `value_original`：样式能写的每一项与没 override 时的 `value` 同值（全写 / 逐条）、元素联动不串味、rebase 重采、还原失败欠账期间（#549）照样报脚本原样且修好后一起销掉、键名同源 | `tests/test_manifest_value_original.py`、`tests/native/test_native_barrier_semantics.py`、`tests/test_value_original_pair.py`；`owned` 落盘 `tests/test_document_persistence.py` |
 | §九各条（异步回来画布变了、欠账补上、渲染到齐再跟随、交互结束补看、恢复等 manifest、副本回滚） | 同上「Codex #547 评审」组；`stylePresets.test.ts`、`stylePanel.test.tsx`、`profilesSettings.test.tsx`、`tests/test_profile_store.py` |
 | 面板里改值在绑定时走样式本身；选择器反映绑定；恢复原样 | `web/src/components/left/stylePanel.test.tsx` |
 | 设置「用于当前画布」= 同一个绑定函数；样式对话框只编辑不应用 | `profilesSettings.test.tsx`、`StyleDialog.test.tsx` |
