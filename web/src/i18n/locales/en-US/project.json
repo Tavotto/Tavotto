@@ -54,7 +54,7 @@
     "missingGroupExpand": "Expand folders that no longer exist",
     "missingHint": "These folders are gone from disk; removing them from the list deletes nothing.",
     "nativeCreateTitle": "Choose where to create the new project",
-    "nativePickerTitle": "Choose the folder containing your figures",
+    "nativePickerTitle": "Choose a project folder (where your plotting scripts are)",
     "openButton": "Open",
     "openMatch": "Open {{name}}",
     "openProject": "Open project {{name}}",
@@ -68,7 +68,7 @@
     "removeAllMissing": "Remove all",
     "removeFromList": "Remove {{name}} from the list. Nothing on disk is deleted.",
     "removeFromListTitle": "Remove from the list — deletes nothing",
-    "tagline": "A project is the folder that holds your figures and scripts. Choose one to start.",
+    "tagline": "A project is the folder that holds your plotting scripts. Choose one to start laying out.",
     "tutorial": {
       "start": "Learn Tavotto with a sample",
       "resume": "Resume tutorial",
@@ -79,6 +79,52 @@
     "tutorialLabel": "Tutorial",
     "tutorialOpening": "Preparing…",
     "tutorialUnavailable": "The tutorial resources are incomplete. Reinstall Tavotto."
+  },
+  "home": {
+    "backHome": "Back to home",
+    "browseMore": "Browse more projects",
+    "import": {
+      "dropNoPath": "Your system didn’t tell {{product}} which folder “{{name}}” is in. Select it in the window that opens next.",
+      "dropNotScript": "“{{name}}” isn’t a Python script. Drop a .py file.",
+      "droppedMany": "You dropped {{total}} items; only “{{name}}” was used to open a project",
+      "folderTitle": "Choose the folder that contains your script",
+      "nativeTitle": "Choose a Python plotting script",
+      "openedFolder": "Opened the project “{{name}}”",
+      "openedScript": "Opened the project that contains “{{name}}”"
+    },
+    "menuOpen": "Open",
+    "more": "More",
+    "newcomer": {
+      "bundled": "A sample script ships with the app. Click to try the whole flow.",
+      "import": "Import my script",
+      "lead": "Import your plotting script, let the figures it makes be found automatically, and arrange them on a layout canvas into a finished paper figure.",
+      "step1Body": "Choose a .py file with your plotting code. {{product}} reads and analyzes it.",
+      "step1Title": "Import a Python script",
+      "step2Body": "{{product}} finds the figures your script makes — no hunting for files.",
+      "step2Title": "Figures are found for you",
+      "step3Body": "Arrange freely on a visual canvas: resize, align, restyle and export quickly.",
+      "step3Title": "Lay them out on the canvas",
+      "stepsLabel": "Three steps to start",
+      "tipBody": "Drag to arrange, snap to alignment guides, resize quickly — tidy and export your figures in one place.",
+      "tipTitle": "Once you’re in the editor, it’s simple",
+      "title": "Lay out paper figures straight from your Python scripts",
+      "tryResume": "Resume the sample tutorial",
+      "tryStart": "Try it with a sample"
+    },
+    "openedAgo": "Opened {{when}}",
+    "otherWays": "New project or open by path",
+    "recentMenu": "More actions for {{name}}",
+    "returning": {
+      "dropChoose": "click to choose a file",
+      "dropHint": "Drop a .py file or a project folder",
+      "dropHintPicker": "After dropping a .py file you’ll pick its folder once in the window that opens",
+      "dropOr": "or ",
+      "dropRelease": "Release to import",
+      "dropTitle": "Drag a Python script here",
+      "lead": "Turn your Python plotting scripts into editable paper figures.",
+      "sample": "Try a sample script",
+      "sampleHint": "{{product}} finds the figures the script makes and opens the layout view."
+    }
   },
   "switcher": {
     "newTabLabel": "Open in a new tab",

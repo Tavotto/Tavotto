@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { Inspector } from '@/components/inspector/Inspector'
 import { ProjectPicker } from '@/components/ProjectPicker'
+import { useOnboardingStore } from '@/store/onboardingStore'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { TopBar } from '@/components/TopBar'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -96,21 +97,37 @@ const switchTo = async (locale: Locale) => {
 describe('ProjectPicker', () => {
   beforeEach(() => {
     useProjectStore.setState({ recent: [], project: null })
+    useOnboardingStore.setState({ status: 'not_started' })
   })
 
-  it('中文界面：标题与主动作是中文', () => {
+  const showAll = () =>
+    act(() => document.querySelector<HTMLButtonElement>('[data-home-all]')!.click())
+
+  it('中文界面：主页与「全部项目」的标题与主动作是中文', () => {
     mount(<ProjectPicker />)
-    const text = uiText()
+    let text = uiText()
     expect(text).toContain('选择项目')
+    expect(text).toContain('用 Python 脚本，轻松完成论文图排版')
+    expect(text).toContain('导入我的脚本')
+    showAll()
+    text = uiText()
     expect(text).toContain('新建项目')
     expect(text).toContain('浏览目录…')
   })
 
-  it('英文界面：同样的位置换成英文，且一个汉字都不剩', async () => {
+  it('英文界面：同样的位置换成英文，且一个汉字都不剩（主页两版 + 全部项目）', async () => {
     mount(<ProjectPicker />)
     await switchTo('en-US')
-    const text = uiText()
+    let text = uiText()
     expect(text).toContain('Choose a project')
+    expect(text).toContain('Import my script')
+    expect(hasCjk(text)).toBe(false)
+    act(() => useOnboardingStore.setState({ status: 'completed' }))
+    text = uiText()
+    expect(text).toContain('Drag a Python script here')
+    expect(hasCjk(text)).toBe(false)
+    showAll()
+    text = uiText()
     expect(text).toContain('New project')
     expect(text).toContain('Browse folder…')
     expect(hasCjk(text)).toBe(false)

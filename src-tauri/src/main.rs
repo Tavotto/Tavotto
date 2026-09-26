@@ -3,7 +3,10 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod drop_paths;
 mod i18n;
+#[cfg(target_os = "macos")]
+mod native_drop;
 mod sidecar;
 
 use std::fmt::Write as _;
@@ -208,6 +211,20 @@ fn reveal_export(app: tauri::AppHandle, dir: String, name: String) -> Result<(),
     app.opener()
         .reveal_item_in_dir(&path)
         .map_err(|e| e.to_string())
+}
+
+/// 主页拖放能不能拿到真实路径（ADR 0092）：macOS 上旁听装好了才是 true，其余平台
+/// 一律 false，前端据此走「提示文件名 + 选择器」的降级。只读、无参数。
+#[tauri::command]
+fn native_file_drop() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        native_drop::installed()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }
 
 /// 「安装 Codex 集成」/「重新诊断」——**壳里没有第二套安装器**（ADR 0012）。
@@ -819,7 +836,8 @@ fn main() {
             set_menu_locale,
             codex_integration,
             arm_close_guard,
-            resolve_close_request
+            resolve_close_request,
+            native_file_drop
         ])
         .on_window_event(|window, event| {
             // 只看主窗口：壳只有这一个，但事件回调是全局的。
@@ -869,7 +887,8 @@ fn main() {
             .min_inner_size(1024.0, 680.0)
             // Tauri 默认接管窗口的拖放事件（tauri://drag-drop），代价是 webview 里
             // 的 HTML5 drag&drop 整个失效——「素材拖入画布」在桌面壳里就是这么坏的。
-            // 我们不消费 OS 文件拖放（素材来自图库目录扫描），关掉它把 DnD 还给页面。
+            // 关掉它把 DnD 还给页面。主页要的 OS 文件路径不靠它：macOS 上由 native_drop
+            // 只旁听 performDragOperation 拿（ADR 0092），页面的 HTML5 拖放一个字节不变。
             .disable_drag_drop_handler()
             .on_navigation(move |url| match navigation_allowed(url, &port_cell) {
                 NavDecision::Allow => true,
@@ -880,6 +899,13 @@ fn main() {
                 }
             })
             .build()?;
+            // 主页拖放拿真实路径：只旁听 performDragOperation，不装 Tauri 的拖放处理器
+            // （上面那条注释说的 HTML5 拖放照旧归页面）。见 native_drop.rs 与 ADR 0092。
+            #[cfg(target_os = "macos")]
+            {
+                let drop_handle = handle.clone();
+                let _ = win.with_webview(move |pw| native_drop::install(pw.inner(), drop_handle));
+            }
             let _ = win.set_focus();
             spawn_e2e_update_if_requested(handle.clone());
             spawn_sidecar_and_navigate(handle);

@@ -56,7 +56,8 @@ export type TutorialFailure =
   | 'no_api'
 
 export type TutorialOutcome =
-  | { ok: true; kind: 'started' | 'resumed' | 'restarted' }
+  /** `opened` = 只打开示例项目、不带引导（`startTutorial(source, { guide: false })`） */
+  | { ok: true; kind: 'started' | 'resumed' | 'restarted' | 'opened' }
   | { ok: false; reason: TutorialFailure; message: UiMessage }
 
 interface TutorialState {
@@ -197,17 +198,28 @@ function mutating(): boolean {
   return b === 'open' || b === 'reset' || useProjectStore.getState().switching
 }
 
-export async function startTutorial(source?: TutorialEntrySource): Promise<TutorialOutcome> {
+/**
+ * `guide: false`：只把示例项目打开（同一条认领链路、同一份教程画布），**不动 onboarding
+ * 状态**——主页老手版的「使用示例脚本试试看」用它。走完过教程的人点一下示例不该被重新
+ * 拉进引导，更不该因此把「已完成」改回「进行中」：主页的新手 / 老手两版正是按这个状态分的
+ * （`homeVariant`），派生出来的一次点击不许覆盖它。
+ */
+export async function startTutorial(
+  source?: TutorialEntrySource,
+  opts: { guide?: boolean } = {},
+): Promise<TutorialOutcome> {
   if (mutating()) return fail('open_failed')
+  const guide = opts.guide ?? true
   // 请求 + 认领是一次切换：请求在路上时别的打开就得排在它后面（Codex #550）
   return useProjectStore
     .getState()
-    .switchTransaction((adopt) => startTutorialNow(adopt, source))
+    .switchTransaction((adopt) => startTutorialNow(adopt, source, guide))
 }
 
 async function startTutorialNow(
   adopt: AdoptProject,
-  source?: TutorialEntrySource,
+  source: TutorialEntrySource | undefined,
+  guide: boolean,
 ): Promise<TutorialOutcome> {
   useTutorialStore.setState({ busy: 'open', failure: null })
   // 手里这份就是教程画布时先把它从自动保存链路上摘下来（与重置同一条路）。open 可能换
@@ -227,7 +239,7 @@ async function startTutorialNow(
   // 后端刚建了一份全新的副本（首次 / 资源升级换了目录）并清了磁盘上的槽位；
   // 本机这格不忘掉的话 readAutosaveDoc 会把上一份副本的排版推回来——与重置同一条路
   if (res.created) forgetLocalDocument(res.tutorial.document_id)
-  const out = await landTutorial(res, 'start', adopt, source)
+  const out = await landTutorial(res, guide ? 'start' : 'open', adopt, source)
   if (suspended) resumeAutosave()
   return out
 }
@@ -308,7 +320,7 @@ type AdoptProject = ProjectState['adoptOpenedProject']
 
 async function landTutorial(
   res: TutorialOpenResult,
-  how: 'start' | 'reset',
+  how: 'start' | 'reset' | 'open',
   adopt: AdoptProject,
   source?: TutorialEntrySource,
 ): Promise<TutorialOutcome> {
@@ -336,6 +348,13 @@ async function landTutorial(
     }
   }
   if (!docOk) return fail('document_failed')
+
+  if (how === 'open') {
+    // 不带引导：onboarding 一个字段都不碰，也不记 tutorial_started（这不是开始教程）
+    useTutorialStore.setState({ busy: null, failure: null })
+    useUiStore.getState().setStatus(msg('onboarding.landed.opened', undefined, 'dialogs'))
+    return { ok: true, kind: 'opened' }
+  }
 
   const ob = useOnboardingStore.getState()
   const sameRun =
@@ -388,6 +407,30 @@ export async function runTutorialEntry(source: TutorialEntrySource): Promise<Tut
   const out = await startTutorial(source)
   if (!out.ok) useUiStore.getState().setStatus(out.message, 'error')
   return out
+}
+
+/** 主页老手版「使用示例脚本试试看」：打开示例项目，不带引导、不改 onboarding 状态 */
+export async function openSampleProject(source: TutorialEntrySource): Promise<TutorialOutcome> {
+  const out = await startTutorial(source, { guide: false })
+  if (!out.ok) useUiStore.getState().setStatus(out.message, 'error')
+  return out
+}
+
+export type HomeVariant = 'newcomer' | 'returning'
+
+/**
+ * 主页显示哪一版。**纯读 onboarding 状态，不另设标志、不写任何东西**：
+ *   * 已完成 / 已跳过（用户明确走完或明确说了「跳过教程」）→ 老手版；
+ *   * 没开始 / 进行中 / 中途暂停 → 新手版（暂停的人主按钮是「继续」，见 `tutorialEntry`）。
+ *
+ * 状态只在 `store/onboardingStore`（`tavotto.onboarding` 那一格）：清掉本机数据 = 回到
+ * 没开始 = 新手版；「重置教程项目」会把状态改回进行中 = 新手版。各窗口各读各的那份
+ * store（启动时从 localStorage 读），另一个窗口里刚走完教程，这个窗口下次启动才换版。
+ */
+export function homeVariant(
+  status: OnboardingStatus = useOnboardingStore.getState().status,
+): HomeVariant {
+  return status === 'completed' || status === 'skipped' ? 'returning' : 'newcomer'
 }
 
 /** 「重置提示」：所有一次性情境提示重新可见 */

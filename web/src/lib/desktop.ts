@@ -100,6 +100,46 @@ export async function onDesktopOpen(
 }
 
 /* -------------------------------------------------------------------------- */
+/*  主页拖放：系统交来的真实路径（ADR 0092）                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 壳分派好的一次放下（与 `src-tauri/src/drop_paths.rs` 的 `DropTarget` 严格同源，
+ * `tests/test_desktop_file_drop.py` 逐个比 kind）。路径都是壳 canonicalize 过、真实存在的
+ * 本地绝对路径；打开项目仍走 `/api/projects/open`（会话认证不绕过）。
+ */
+export type NativeFileDrop =
+  | { kind: 'script'; folder: string; script: string; name: string; ignored: number }
+  | { kind: 'folder'; folder: string; name: string; ignored: number }
+  | { kind: 'unsupported'; name: string }
+
+/**
+ * 这个壳能不能在拖放时交出真实路径（macOS 上旁听装好了才是 true）。浏览器模式、
+ * 其它平台、命令被拒（ACL 漏登记）一律 false——调用方走「提示文件名 + 选择器」的降级。
+ */
+export async function nativeFileDropAvailable(): Promise<boolean> {
+  if (!isDesktop()) return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return (await invoke<boolean>('native_file_drop')) === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 订阅系统拖放（`tavotto:file-drop`）。壳在每次有文件放进窗口、页面又接受了这次拖动时
+ * 都发；**只有主页订阅**——编辑器不订阅，事件落空，画布的 HTML5 拖放照旧。浏览器模式是空订阅。
+ */
+export async function onNativeFileDrop(
+  handler: (drop: NativeFileDrop) => void,
+): Promise<() => void> {
+  if (!isDesktop()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen<NativeFileDrop>('tavotto:file-drop', (e) => handler(e.payload))
+}
+
+/* -------------------------------------------------------------------------- */
 /*  关窗询问闸（issue #223）                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -164,6 +204,23 @@ export async function pickDirectory(title?: string): Promise<string | null> {
   if (!isDesktop()) return null
   const { open } = await import('@tauri-apps/plugin-dialog')
   const picked = await open({ directory: true, multiple: false, title })
+  return typeof picked === 'string' ? picked : null
+}
+
+/**
+ * 原生文件选择器，只收 `.py`（主页「导入我的脚本」用）。取消返回 null；
+ * 浏览器模式返回 null，调用方回退到服务器端目录浏览器（选脚本所在的文件夹）。
+ * 与 `pickDirectory` 同一条 `dialog:allow-open` 权限，壳侧不用加 ACL。
+ */
+export async function pickScriptFile(title?: string): Promise<string | null> {
+  if (!isDesktop()) return null
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const picked = await open({
+    directory: false,
+    multiple: false,
+    title,
+    filters: [{ name: 'Python', extensions: ['py'] }],
+  })
   return typeof picked === 'string' ? picked : null
 }
 

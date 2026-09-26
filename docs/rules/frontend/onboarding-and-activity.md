@@ -21,6 +21,14 @@
   因资源升级换副本（新项目 id → 走认领，认领第一句就是把当前文档冲刷落盘），不挂起的话旧布局会在
   同一个教程 documentId 下落回槽位、装回来的还是它；换到教程画布时 `switchDocument` 自动恢复，
   没换文档 / 没做成就 `resumeAutosave` 接回。
+* **主页两版只按 onboarding 状态分（2026-09-26）**：`lib/onboarding/tutorial.homeVariant(status)`
+  是唯一判据——`completed` / `skipped` → 老手版，`not_started` / `active` / `paused` → 新手版；
+  **不另设标志、渲染主页不写任何东西**（派生出来的版式不许回写偏好）。新手版的主按钮就是教程入口
+  （`runTutorialEntry('picker')`，锚点 `tutorial-entry`，暂停过的显示「继续」）；老手版的「使用示例
+  脚本试试看」走 `openSampleProject()` = `startTutorial(source, { guide: false })`：同一条认领链路打开
+  示例项目，**onboarding 一个字段都不碰**、不记 `tutorial_started`——否则一次「看看示例」就把
+  `completed` 改回 `active`，下次回主页又成了新手版。「重新开始教程」照旧在「全部项目」视图、帮助菜单、
+  命令面板、设置里。「已随安装包内置示例脚本」只在 `GET /api/tutorial` 回 `available: true` 时显示。
 * **完成条件在 `lib/onboarding/steps.ts`**：状态可说清的读 store，说不清的读 `StepSignals`（引擎按
   信号累计、按 `consumes` 消费）。教程要编辑的是带 `spec_issue` 的那张（T-108）。**不用 DOM 文案 /
   CSS class 猜状态；不为教程复制任何 action。**
@@ -106,6 +114,7 @@
   `shouldGlide` 只护锚点，路上压过的其它目标靠这一条——移动中的浮层不接点击。
 * 看护：`onboardingStore.test.ts` / `activity.test.ts` / `selectionStore.test.ts` /
   `lib/onboarding/{position,flow,tutorial,hints}.test.ts` / `components/onboarding/onboardingLayer.test.tsx` /
+  `components/home/HomeView.test.tsx`（两版判据、示例入口不改状态）/ `e2e/home.spec.ts` /
   `e2e/tutorial.spec.ts`（完整走完 / 刷新恢复 + Esc + 更多菜单 + axe / 重新开始 / 启动恢复晚到时拖动 /
   落位不扫过锚点（动画放慢 20 倍逐帧量渲染框）/ 切项目暂停继续）。
   jsdom 里所有盒子都是 0×0：层的用例要给锚点 `getBoundingClientRect` 假矩形；用假计时器时 flush 要
