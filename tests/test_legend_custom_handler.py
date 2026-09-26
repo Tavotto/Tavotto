@@ -280,14 +280,17 @@ def test_detaching_a_following_multi_artist_entry_keeps_the_whole_cell(tmp_path_
         pool.discard(w)
 
 
-def _legend_pixels(worker, stem, patches, tag):
-    """预览 PNG 里图例框那一块的像素（按 manifest 的图例 bbox：图幅分数、y 向下）。"""
+def _legend_pixels(worker, stem, patches, tag, inset=0):
+    """预览 PNG 里图例框那一块的像素（按 manifest 的图例 bbox：图幅分数、y 向下）。
+
+    `inset` 把四边各收进这么多像素：框边上的抗锯齿像素混着框后面的图（网格换了色图那边就不同）。"""
     man = worker.override(stem, list(patches))["manifest"]
     x, y, bw, bh = next(e for e in man["elements"] if e["gid"] == LEG)["bbox"]
     w, h, n, px = pdfread.decode_png_any(
         worker.preview_png(stem, list(patches), 380, tag).read_bytes()
     )
     x0, y0, x1, y1 = int(x * w), int(y * h), int((x + bw) * w), int((y + bh) * h)
+    x0, y0, x1, y1 = x0 + inset, y0 + inset, x1 - inset, y1 - inset
     return b"".join(px[(r * w + x0) * n : (r * w + x1) * n] for r in range(y0, y1))
 
 
@@ -615,3 +618,159 @@ def test_an_explicit_artist_alpha_replaces_the_colour_alpha(tmp_path_factory):
     finally:
         pool.discard(w)
     assert "handle_color" in fields
+
+
+# ---------------------------------------------------------------------------
+# 色带跟随它描述的那块网格的色图（2026-09-26，用户 Figure2 (c)：「图例无法与背景颜色相关联」）
+# ---------------------------------------------------------------------------
+#: 同一个色带 handler，图里多一块用**同一个色图**上色的网格——色带说的就是这块背景。
+#: 图例框不透明：比对图例那一块像素时，框后面的网格换没换色都透不过来。
+MESH_SCRIPT = "fig_legend_colormap_band.py"
+MESH_STEM = "Band"
+MESH_LIBRARY = (
+    LIBRARY.replace(
+        "    x = np.linspace(0.0, 2.0, 20)\n",
+        "    x = np.linspace(0.0, 2.0, 20)\n"
+        '    cmap = mpl.colormaps["viridis"]\n'
+        "    z = np.outer(np.linspace(0.0, 1.0, 12), np.linspace(0.2, 1.0, 16))\n"
+        "    ax.pcolormesh(np.linspace(0.0, 2.0, 17), np.linspace(0.0, 1.0, 13), z, cmap=cmap)\n",
+    )
+    .replace(
+        'handles.append(ColormapKey(mpl.colormaps["viridis"]))',
+        "handles.append(ColormapKey(cmap))",
+    )
+    .replace(
+        'loc="upper left", handlelength=3.0,',
+        'loc="upper left", handlelength=3.0, framealpha=1.0,',
+    )
+    .replace('fig.savefig("Custom.pdf")', 'fig.savefig("Band.pdf")')
+)
+MESH = "axes_0.collections_0"
+
+
+def _mesh_library(tmp_path_factory, tag, text=MESH_LIBRARY):
+    figs = tmp_path_factory.mktemp(tag)
+    (figs / MESH_SCRIPT).write_text(text, encoding="utf-8")
+    return figs
+
+
+@pytest.fixture(scope="module")
+def mesh_figs(tmp_path_factory):
+    return _mesh_library(tmp_path_factory, "legend-colormap-band")
+
+
+@pytest.fixture(scope="module")
+def hot_mesh(mesh_figs):
+    w = pool.one_shot(MESH_SCRIPT, str(mesh_figs), ENTRY)
+    w.ensure_built()
+    try:
+        yield w
+    finally:
+        pool.discard(w)
+
+
+def _native_band(tmp_path_factory, cmap_name, tag):
+    """脚本自己就用 `cmap_name` 画网格与色带时，图例那一块的像素（对拍的另一侧：不经 Tavotto 改色）。"""
+    figs = _mesh_library(
+        tmp_path_factory,
+        tag,
+        MESH_LIBRARY.replace('colormaps["viridis"]', f'colormaps["{cmap_name}"]'),
+    )
+    w = pool.one_shot(MESH_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        return _legend_pixels(w, MESH_STEM, [], f"native-{cmap_name}", inset=3)
+    finally:
+        pool.discard(w)
+
+
+def _src_man_of(worker, patches=()):
+    resp = worker.override(MESH_STEM, list(patches))
+    assert not (resp.get("warnings") or []), resp["warnings"]
+    return resp["manifest"]
+
+
+def test_the_band_is_linked_to_the_mesh_it_describes(hot_mesh):
+    """色带认出了它画的是网格的色图：有源、脚本原样跟随，界面有「链接到」；仍不摆 handle_*。"""
+    man = _src_man_of(hot_mesh)
+    assert _entry(man, BAND) == {"index": 2, "source_gid": MESH, "binding_default": "follow_source"}
+    fields = _fields(man, BAND)
+    assert fields["binding"]["value"] == "follow_source"
+    assert not [p for p in fields if p.startswith("handle_")]
+
+
+def test_changing_the_mesh_colormap_recolours_the_band(hot_mesh, tmp_path_factory):
+    """换网格的色图：图例那一块与「脚本本来就用 plasma」逐像素相同。修之前色带还是 viridis。"""
+    patches = [{"gid": MESH, "prop": "cmap", "value": "plasma"}]
+    _src_man_of(hot_mesh, patches)
+    got = _legend_pixels(hot_mesh, MESH_STEM, patches, "band-plasma", inset=3)
+    assert got == _native_band(tmp_path_factory, "plasma", "legend-band-native-plasma")
+    assert got != _legend_pixels(hot_mesh, MESH_STEM, [], "band-orig", inset=3)
+    # 再走一遍重建（内边距「改」成现值）：色带仍是整格、仍是新色图——不能从网格按默认
+    # handler 派生成一块纯色（那样热态与重放一起错，下面的重放用例量不出来）
+    pad = _fields(_src_man_of(hot_mesh), LEG)["borderpad"]["value"]
+    rebuilt = patches + [{"gid": LEG, "prop": "borderpad", "value": pad}]
+    _src_man_of(hot_mesh, rebuilt)
+    assert _legend_pixels(hot_mesh, MESH_STEM, rebuilt, "band-plasma-rebuilt", inset=3) == got
+    _src_man_of(hot_mesh)
+
+
+def test_unlinking_or_undoing_brings_back_the_script_colours(hot_mesh, tmp_path_factory):
+    """断开关联（换了色图也不跟）与撤销色图，都退回脚本画的那组颜色。"""
+    viridis = _native_band(tmp_path_factory, "viridis", "legend-band-native-viridis")
+    assert _legend_pixels(hot_mesh, MESH_STEM, [], "band-orig2", inset=3) == viridis
+    unlinked = [
+        {"gid": MESH, "prop": "cmap", "value": "plasma"},
+        {"gid": BAND, "prop": "binding", "value": "custom"},
+    ]
+    _src_man_of(hot_mesh, [unlinked[0]])  # 先跟着变过色，再断开
+    assert _legend_pixels(hot_mesh, MESH_STEM, unlinked, "band-unlinked", inset=3) == viridis
+    _src_man_of(hot_mesh, [unlinked[0]])
+    assert _legend_pixels(hot_mesh, MESH_STEM, [], "band-undone", inset=3) == viridis
+
+
+def test_recoloured_band_hot_equals_fresh_replay(hot_mesh, mesh_figs):
+    """色图 + 走重建的布局改动（列数 / 顺序）：热会话与全新 worker 一次性重放逐像素相同。"""
+    patches = [
+        {"gid": MESH, "prop": "cmap", "value": "magma"},
+        {"gid": LEG, "prop": "ncol", "value": 2},
+        {"gid": LEG, "prop": "entry_order", "value": [2, 0, 1]},
+    ]
+    hot_png = hot_mesh.preview_png(MESH_STEM, list(patches), 380, "band-hot").read_bytes()
+    w = pool.one_shot(MESH_SCRIPT, str(mesh_figs), ENTRY)
+    w.ensure_built()
+    try:
+        fresh_png = w.preview_png(MESH_STEM, list(patches), 380, "band-fresh").read_bytes()
+    finally:
+        pool.discard(w)
+    assert hot_png == fresh_png
+    _src_man_of(hot_mesh)
+
+
+@pytest.mark.parametrize(
+    ("tag", "edit"),
+    [
+        # 网格用的是别的色图：色带不是它的
+        ("other-cmap", lambda s: s.replace("z, cmap=cmap)", 'z, cmap="magma")')),
+        # 两块网格都用这个色图、各自一个 norm（不是同一个色阶）：认不出是哪块，不伪造
+        (
+            "ambiguous",
+            lambda s: s.replace(
+                "z, cmap=cmap)\n",
+                "z, cmap=cmap)\n"
+                "    ax.pcolormesh(np.linspace(2.0, 3.0, 17), np.linspace(0.0, 1.0, 13), z,"
+                " cmap=cmap)\n",
+            ),
+        ),
+    ],
+)
+def test_no_link_when_the_band_is_not_unambiguously_one_meshs(tmp_path_factory, tag, edit):
+    figs = _mesh_library(tmp_path_factory, f"legend-band-{tag}", edit(MESH_LIBRARY))
+    w = pool.one_shot(MESH_SCRIPT, str(figs), ENTRY)
+    w.ensure_built()
+    try:
+        man = _src_man_of(w)
+    finally:
+        pool.discard(w)
+    assert "source_gid" not in _entry(man, BAND)
+    assert "binding" not in _fields(man, BAND)

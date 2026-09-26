@@ -465,7 +465,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                 <ViewAngleRow panel={panel} element={element} />
               ) : element?.role === 'legend' ? (
                 /* 图例页：条目列表（有项时）+ 排版详情（审计 T17：五条间距
-                   标签独占一行、不截断，默认折叠，改过自动展开） */
+                   标签独占一行、不截断；默认展开，改过的必定展开） */
                 <>
                   {legendCardCoversSelf && (
                     <LegendCard panel={panel} manifest={manifest} legend={element} labelWidth={LABEL_W} />
