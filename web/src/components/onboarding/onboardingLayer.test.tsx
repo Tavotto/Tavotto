@@ -548,6 +548,43 @@ describe('锚点', () => {
     anchor.remove()
   })
 
+  it('上一段滑完了才改道：整段路收回成终点那一个框，照常滑（Codex #654）', async () => {
+    const { onCommit, moves } = trackMoves()
+    const anchor = document.createElement('div')
+    anchor.setAttribute('data-object-id', 'p2')
+    document.body.appendChild(anchor)
+    const moveAnchor = async (x: number, y: number) => {
+      giveRect(anchor, { x, y, w: 40, h: 40 })
+      await act(async () => {
+        window.dispatchEvent(new Event('resize'))
+      })
+    }
+    giveRect(anchor, { x: 100, y: 100, w: 40, h: 40 })
+    await mountTracked(onCommit)
+    await act(async () => {
+      ob().start({ projectId: 'p_tut', documentId: META.document_id })
+      ob().goTo('open_fast_edit')
+    })
+    await flush()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DURATION.fast + 50)
+    })
+    // 与上一条同一条路线，只差在第二次改道之前过渡结束了：卡片停在右下角的终点上，
+    // 从那儿到新落点碰不到锚点 → 滑（区域只增不收的话，起点那片还挂在账上，这里会一直跳）
+    await moveAnchor(600, 700)
+    const e = new Event('transitionend')
+    Object.defineProperty(e, 'propertyName', { value: 'left' })
+    await act(async () => {
+      card()!.dispatchEvent(e)
+    })
+    await moveAnchor(150, 300)
+    expect(moves().slice(-2)).toEqual([
+      { at: '600px,570px', glide: true },
+      { at: '150px,350px', glide: true },
+    ])
+    anchor.remove()
+  })
+
   it('reduced motion：卡片不带位移过渡、高亮环不带进场动画', async () => {
     reduced = true
     const anchor = document.createElement('div')
