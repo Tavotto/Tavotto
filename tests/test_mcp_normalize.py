@@ -456,10 +456,22 @@ def test_new_collisions_are_detected_and_an_unsolvable_width_exits_cleanly(tmp_p
     # 边距那一轮修掉了裁切；剩下的是图例压数据，且图例候选都试过了
     assert any(r.get("step") == "margins" for r in out["rounds"])
     assert any(str(r.get("step", "")).startswith("legend") for r in out["rounds"])
-    # 剩下的全是图例装不进自己子图的那一族（压数据 / 压到自己的刻度与轴标题）
+    # 剩下的全是图例装不进自己子图的那一族（压数据 / 压到自己的刻度与轴标题 / 比子图还宽、
+    # 从图幅边上伸出去）。「伸出去」那一格取决于边距那步的贪心估算收不收敛：图例锚在子图
+    # 右下，它伸出子图左边多少又取决于子图宽度——#576 把文字框换成与导出 PDF 同一把尺后，
+    # 这张图在最后一轮差 0.5 mm 没收敛（旧量法下恰好收敛）。主语只许是图例本身。
     left = out["verdict"]["blocking"]
-    assert left and {b["id"] for b in left} <= {"legend-over-data", "text-overlap"}
+    assert left and {b["id"] for b in left} <= {
+        "legend-over-data",
+        "text-overlap",
+        "element-outside-figure",
+    }
     assert all(any(".legend" in g for g in b["gids"]) for b in left)
+    assert all(
+        all(g.endswith(".legend") for g in b["gids"])
+        for b in left
+        if b["id"] == "element-outside-figure"
+    )
     # 没有一个预设位置让图例干干净净：一条图例调整都不许记成「已做的局部调整」
     # （换到一个还在压别的东西的位置不叫修好，只是把问题换了个地方）
     assert not any(a["prop"] == "loc" for a in out["adjustments"])

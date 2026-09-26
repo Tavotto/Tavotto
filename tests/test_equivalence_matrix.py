@@ -708,9 +708,10 @@ def _g_alias_legend(_getbase):
     全量重放是一次性给全表，两条路只有在广播先于窄的、且窄的在广播之后被
     重放时才会收敛到同一张图。
 
-    窄端刻意取 `texts_1` 而不是 `texts_0`：manifest 的 `legend.fontsize` 报的
+    窄端刻意取 `texts_1` 而不是 `texts_0`：manifest 的 `legend.fontsize` 过去报的
     是 `sizes[0]`（第一条图例项的字号），覆盖第 0 条会让「广播落没落」与
-    「窄的落没落」在 manifest 上分不开，`_assert_effect` 也就失去意义。
+    「窄的落没落」在 manifest 上分不开。2026-09-25 起它报 `Legend._fontsize`
+    （原生语义），不再有这个耦合；柱形系列的整组字段仍报成员 0，窄端照旧避开。
 
     **别名组分两种形状，这里只放得下第一种**：
       * 一对多（整组 vs 其中一个）—— `legend.fontsize` → `texts_j`、

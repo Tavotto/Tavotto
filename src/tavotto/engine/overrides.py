@@ -130,6 +130,10 @@ class FigState:
         # 按此刻的实况——热会话里 position 可能已经先改过，全量重放里它还没轮到，
         # 只看实况两条路就会算出不同的位置。
         self.pending: dict[tuple, object] = {}
+        # 元素表换过对象的代号：族模块重建（图例重排）换掉 artist 并接回 index /
+        # elements 之后加一。apply 里按对象身份反查 gid 的缓存认它——不认的话，重建
+        # 之后的新对象反查不到，别名组的组员静默变空（撤销图例字号冲掉单条字号）。
+        self.index_generation = 0
 
     def index_ids(self) -> set[int]:
         """已登记 artist 的 `id()` 集合（伪元素也在，它们不是真 artist 但不碍事）。"""
@@ -3510,7 +3514,9 @@ def _alias_same_element(narrow_prop: str):
 #:     管住了（刻度文字永远最后、且每次重放）。
 ALIAS_GROUPS: dict[tuple[str, str], object] = {
     # 图例整体字号 → 每一条图例项的字号
-    ("legend", "fontsize"): _alias_by_artists(lambda leg: list(leg.get_texts()), "fontsize"),
+    # 组员 = 全部图例项（含隐藏的）：整组字号连隐藏项一起写（见 `legendmodel._set_legend_fontsize`），
+    # 隐藏项上的单条字号被盖掉之后也要进脏组重放
+    ("legend", "fontsize"): _alias_by_artists(legendmodel.legend_entry_texts, "fontsize"),
     # 图例标题字号 → 图例标题那个 Text（它不在 get_texts() 里，单独一条）
     ("legend", "title_fontsize"): _alias_by_artists(lambda leg: [leg.get_title()], "fontsize"),
     # 色条刻度 → 色条轴上的刻度组（tick_params 默认写 x/y 两条）
@@ -3681,12 +3687,14 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     # ---------------- 别名组（见 ALIAS_GROUPS）----------------
     # 反查表按需建：它是 O(元素数) 的，而绝大多数 apply 一个广播型 prop 都
     # 没碰到，不该为它们付这笔钱。
+    # 缓存认 `state.index_generation`：同一次 apply 里图例重建会换掉文字对象，旧表里
+    # 查不到新对象（图例字号的 setter / 撤销都会重建）。
     _rev: dict[int, str] = {}
-    _rev_built = False
+    _rev_gen: int | None = None
 
     def _reverse_index() -> dict:
-        nonlocal _rev, _rev_built
-        if not _rev_built:
+        nonlocal _rev, _rev_gen
+        if _rev_gen != state.index_generation:
             _rev = {id(el["artist"]): el["gid"] for el in state.elements}
             # **别名 gid 也算组员**。容器消费掉的成员（stem 的 markerline）只在
             # `state.index` 里留了一条旧 gid 别名，元素表里没有它——而别名与
@@ -3698,7 +3706,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
             # 元素表里已有的 gid 优先（setdefault）：别名是补充，不是改名。
             for _gid, _artist in state.index.items():
                 _rev.setdefault(id(_artist), _gid)
-            _rev_built = True
+            _rev_gen = state.index_generation
         return _rev
 
     def _alias_members(key: tuple, artist) -> list[tuple]:

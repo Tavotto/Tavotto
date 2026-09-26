@@ -6,30 +6,21 @@ import { effectiveOverride } from '@/lib/effectiveOverride'
 /**
  * 图例**整体缩放**（像拖子图手柄那样拖图例的角）落成哪几条 override。
  *
- * matplotlib 的图例盒尺寸 = 文字字号 × 一组「以字号为单位」的构建期参数：
- * 边距 `borderpad`、行距 `labelspacing`、示意线长 `handlelength`、线与字的间距
- * `handletextpad`、列距 `columnspacing`——乘的都是 `Legend._fontsize`。而引擎的
- * 图例 `fontsize` override 只改每条文字的字号（`legendmodel._set_legend_fontsize`），
- * `_fontsize` 不动：只写字号的话字变大了、边距和示意线原样，框不是等比放大。
+ * matplotlib 的图例盒尺寸 = 字号 × 一组「以字号为单位」的构建期参数：边距 `borderpad`、
+ * 行距 `labelspacing`、示意线长 `handlelength`、线与字的间距 `handletextpad`、列距
+ * `columnspacing`，连行高下限都乘的是 `Legend._fontsize`。引擎的图例 `fontsize` 是
+ * matplotlib 原生语义（ADR 0034 2026-09-25 修订：改 `_fontsize` 并重排整个盒），所以
+ * **只写字号，框就等比缩放**——这五个间距以字号为单位，自己跟着走，不再乘倍数
+ * （乘了就是缩两次）。它们仍是属性页上可单独调的属性，缩放不碰它们。
  *
- * 所以整体缩放 s 倍 = 文字字号、标题字号 **与** 这五个间距参数各乘 s。全部是已有的、
- * 可写回、可重放的属性（属性页的「图例」卡与「间距」卡上就是它们），引擎不需要
- * 新属性，写回事务的语义原样成立。
+ * 标题字号另写：原生 `legend(fontsize=…)` 也不动标题。
  *
  * 不缩放的：`ncol`（不是尺寸）、标记大小（matplotlib 自己改字号时也不缩，
  * 由 `markerscale` 管）、边框线宽（与子图边框线宽保持一致更重要）。
  */
-export const LEGEND_SCALE_PROPS = [
-  'fontsize',
-  'title_fontsize',
-  'borderpad',
-  'labelspacing',
-  'handlelength',
-  'handletextpad',
-  'columnspacing',
-] as const
+export const LEGEND_SCALE_PROPS = ['fontsize', 'title_fontsize'] as const
 
-/** 字号按 0.1 pt 落值，间距按 0.01 个字号落值（与属性页的步进同一量级） */
+/** 字号按 0.1 pt 落值（与属性页的步进同一量级） */
 const ROUND: Record<string, number> = { fontsize: 10, title_fontsize: 10 }
 const roundFor = (prop: string, v: number) => {
   const k = ROUND[prop] ?? 100
