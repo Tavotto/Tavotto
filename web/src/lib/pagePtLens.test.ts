@@ -177,6 +177,8 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
   const FORBIDDEN = new Set(['panelScale', 'toPageValue', 'toScriptValue', 'pageField'])
   const ALLOW: Record<string, string[]> = {
     '/src/components/StyleDialog.tsx': ['panelScale'],
+    // 规范修复事务（ADR 0080）：缩放比原样随请求交给后端去判，自己不换算任何页面 pt 值
+    '/src/store/issueFixActions.ts': ['panelScale'],
     // 写入器本身：按缩放比 memo 住换好的字段表（与 `lens.field` 同一个函数，不是第二份换算）
     '/src/components/inspector/textStyleAdapter.ts': ['pageField'],
   }
