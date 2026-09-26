@@ -161,20 +161,208 @@ describe('上下界与取整', () => {
 /**
  * 换算只有一处：界面与 store（`components/` / `canvas/` / `store/`——样式绑定 `styleBinding` 与设置页
  * 都是 `withPageBasis` 的调用方，它们只打口径标记，不做乘除）**不许自己拿缩放比做乘除**——拿到
- * `panelScale` / `toPageValue` / `toScriptValue` 的界面文件就是第二份换算的起点（属性页以前
+ * `panelScale` / `toPageValue` / `toScriptValue` / `pageField` 的界面文件就是第二份换算的起点（属性页以前
  * 正是没有这一步才与样式面板差出 0.6 倍）。界面一律过写入器，写入器过 `pagePtLens`。
  *
- * 判的是 import 声明（AST），不是子串：注释里提到这几个名字不算。
- * 豁免两条：样式对话框把 `panelScale` 交给 `extractFromManifest`（提取在 `stylePresets` 里
- * 换算，对话框自己不乘）；写入器 `useTextStyleAdapter` 按缩放比 memo 换好的字段表。
+ * 判的是模块依赖（AST），不是子串：注释里提到这几个名字不算。主语是「界面文件能不能拿到换算函数」，
+ * 所以拿到它的**每一种**合法 TS 写法都要判（#557 评审 P1：从前只看具名 import，
+ * `import * as preflight` 后 `preflight.panelScale(...)` 整条绕过）：
+ *
+ * - 换算模块：`src/` 里导出这几个名字的模块，**现场从源码认**（定义它的、`export { … } from` /
+ *   `export * from` / `export * as` / `export default` 转出去的，按不动点一路传下去，别名也跟着走）——
+ *   不是写死两个路径，新开一个转出口的模块自动进视野。
+ * - 从换算模块：具名 import 取到换算名（含 `as` 改名）、namespace import、default import、
+ *   `import x = require()`、`export … from` 转出（含 `export *`）、字面量路径的动态 `import()`
+ *   一律红；namespace / default 不去解析后面的成员访问（`ns['panel' + 'Scale']`、把 ns 传出去都追不清），
+ *   直接判红，偏严不偏松。纯类型的 import（`import type`、`{ type X }`）拿不到值，不算。
+ * - 动态 `import()` 的路径不是字面量：看不见它指向哪，按红算。
+ *
+ * 盲点（静态看不到，写在明处）：`lib/` 里若有别的函数**包一层**再导出（`export const s = (p) =>
+ * panelScale(p)`），界面 import `s` 这把尺子看不见——包装函数不是转出，名字与值都换了；界面文件
+ * 自己写一遍乘除（不 import 任何东西）也看不见。`require()` 调用（非 `import x = require`）不在视野里，
+ * 前端源码是 ESM，不用它。
+ *
+ * 豁免三条（按具名 import 点名，namespace / default 不给豁免）：样式对话框把 `panelScale` 交给
+ * `extractFromManifest`（提取在 `stylePresets` 里换算，对话框自己不乘）；规范修复事务把缩放比交给后端；
+ * 写入器 `useTextStyleAdapter` 按缩放比 memo 换好的字段表。
  */
+const FORBIDDEN = new Set(['panelScale', 'toPageValue', 'toScriptValue', 'pageField'])
+
+type Sources = Record<string, string>
+
+const parse = (path: string, src: string) =>
+  ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+
+/** import 路径 → `src/` 里的模块键（`/src/lib/preflight`，去扩展名、去 `/index`）；包名回 null */
+function resolveModule(from: string, spec: string): string | null {
+  let parts: string[]
+  if (spec.startsWith('@/')) parts = ['', 'src', ...spec.slice(2).split('/')]
+  else if (spec.startsWith('./') || spec.startsWith('../')) {
+    parts = from.split('/').slice(0, -1)
+    for (const seg of spec.split('/')) {
+      if (seg === '.' || seg === '') continue
+      if (seg === '..') parts.pop()
+      else parts.push(seg)
+    }
+  } else return null
+  return parts
+    .join('/')
+    .replace(/\.(tsx?|jsx?|mjs)$/, '')
+    .replace(/\/index$/, '')
+}
+
+const moduleKey = (path: string) => path.replace(/\.(tsx?)$/, '').replace(/\/index$/, '')
+
+const hasExport = (node: ts.Node) =>
+  ts.canHaveModifiers(node) &&
+  (ts.getModifiers(node) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+
+const specText = (node: ts.Expression | undefined) =>
+  node && ts.isStringLiteralLike(node) ? node.text : undefined
+
+/**
+ * 每个模块导出的「换算名」（值层面指向换算函数的导出名）：定义者导出 `FORBIDDEN` 里的名字；
+ * 转出者按它从谁转、怎么转（具名 / 改名 / `export *` / `export * as` / `export default`）继承，
+ * 按不动点传到底。`export * as ns` 与 default 转出记成导出名 `ns` / `default`。
+ */
+function conversionExports(sources: Sources): Map<string, Set<string>> {
+  const files = Object.entries(sources)
+    .filter(([p]) => !/\.test\.tsx?$/.test(p))
+    .map(([p, s]) => [p, parse(p, s)] as const)
+  const out = new Map<string, Set<string>>()
+  const add = (key: string, name: string) => {
+    const set = out.get(key) ?? new Set<string>()
+    const before = set.size
+    set.add(name)
+    out.set(key, set)
+    return set.size > before
+  }
+  for (let changed = true; changed; ) {
+    changed = false
+    for (const [path, file] of files) {
+      const key = moduleKey(path)
+      // 本模块里值层面叫换算名的局部绑定：自己定义的 + 从换算模块 import 进来的
+      const local = new Set<string>()
+      for (const st of file.statements) {
+        if (ts.isFunctionDeclaration(st) && st.name && FORBIDDEN.has(st.name.text)) {
+          local.add(st.name.text)
+          if (hasExport(st)) changed = add(key, st.name.text) || changed
+        }
+        if (ts.isVariableStatement(st)) {
+          for (const d of st.declarationList.declarations) {
+            if (ts.isIdentifier(d.name) && FORBIDDEN.has(d.name.text)) {
+              local.add(d.name.text)
+              if (hasExport(st)) changed = add(key, d.name.text) || changed
+            }
+          }
+        }
+        if (ts.isImportDeclaration(st) && !st.importClause?.isTypeOnly) {
+          const src = resolveModule(path, specText(st.moduleSpecifier) ?? '')
+          const theirs = src ? out.get(src) : undefined
+          const named = st.importClause?.namedBindings
+          if (theirs && named && ts.isNamedImports(named)) {
+            for (const el of named.elements) {
+              if (!el.isTypeOnly && theirs.has((el.propertyName ?? el.name).text)) local.add(el.name.text)
+            }
+          }
+        }
+      }
+      for (const st of file.statements) {
+        if (ts.isExportAssignment(st) && ts.isIdentifier(st.expression) && local.has(st.expression.text)) {
+          changed = add(key, 'default') || changed
+        }
+        if (!ts.isExportDeclaration(st) || st.isTypeOnly) continue
+        const from = specText(st.moduleSpecifier)
+        const theirs = from ? out.get(resolveModule(path, from) ?? '') : local
+        if (!theirs || theirs.size === 0) continue
+        const clause = st.exportClause
+        if (!clause) {
+          for (const n of theirs) if (n !== 'default') changed = add(key, n) || changed // export *
+        } else if (ts.isNamespaceExport(clause)) {
+          changed = add(key, clause.name.text) || changed // export * as ns
+        } else {
+          for (const el of clause.elements) {
+            if (!el.isTypeOnly && theirs.has((el.propertyName ?? el.name).text)) {
+              changed = add(key, el.name.text) || changed
+            }
+          }
+        }
+      }
+    }
+  }
+  return out
+}
+
+/** 一个界面文件拿到换算函数的每一处（豁免只认具名 import 的原名） */
+function conversionImports(
+  path: string,
+  src: string,
+  exportsOf: Map<string, Set<string>>,
+  allow: readonly string[] = [],
+): string[] {
+  const hits: string[] = []
+  const file = parse(path, src)
+  const conv = (spec: string | undefined) => {
+    const key = spec === undefined ? null : resolveModule(path, spec)
+    const names = key ? exportsOf.get(key) : undefined
+    return names && names.size > 0 ? names : null
+  }
+  for (const st of file.statements) {
+    if (ts.isImportDeclaration(st)) {
+      const names = conv(specText(st.moduleSpecifier))
+      const clause = st.importClause
+      if (!names || !clause || clause.isTypeOnly) continue
+      if (clause.name) hits.push(`${path}: default import`)
+      const nb = clause.namedBindings
+      if (nb && ts.isNamespaceImport(nb)) hits.push(`${path}: import * as ${nb.name.text}`)
+      if (nb && ts.isNamedImports(nb)) {
+        for (const el of nb.elements) {
+          const name = (el.propertyName ?? el.name).text
+          if (!el.isTypeOnly && names.has(name) && !allow.includes(name)) hits.push(`${path}: ${name}`)
+        }
+      }
+    } else if (ts.isImportEqualsDeclaration(st) && !st.isTypeOnly) {
+      const ref = st.moduleReference
+      if (ts.isExternalModuleReference(ref) && conv(specText(ref.expression))) {
+        hits.push(`${path}: import ${st.name.text} = require()`)
+      }
+    } else if (ts.isExportDeclaration(st) && st.moduleSpecifier && !st.isTypeOnly) {
+      const names = conv(specText(st.moduleSpecifier))
+      if (!names) continue
+      const clause = st.exportClause
+      if (!clause || ts.isNamespaceExport(clause)) hits.push(`${path}: export * from`)
+      else {
+        for (const el of clause.elements) {
+          const name = (el.propertyName ?? el.name).text
+          if (!el.isTypeOnly && names.has(name)) hits.push(`${path}: export { ${name} } from`)
+        }
+      }
+    }
+  }
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const spec = specText(node.arguments[0])
+      if (spec === undefined) hits.push(`${path}: import(<非字面量>)`)
+      else if (conv(spec)) hits.push(`${path}: import('${spec}')`)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return hits
+}
+
 describe('界面代码与 store 不自己做页面 pt 换算', () => {
   const SOURCES = import.meta.glob('/src/{components,canvas,store}/**/*.{ts,tsx}', {
     eager: true,
     query: '?raw',
     import: 'default',
-  }) as Record<string, string>
-  const FORBIDDEN = new Set(['panelScale', 'toPageValue', 'toScriptValue', 'pageField'])
+  }) as Sources
+  /** 换算模块从整个 `src/` 里现场认，不写死路径 */
+  const ALL = import.meta.glob('/src/**/*.{ts,tsx}', {
+    eager: true,
+    query: '?raw',
+    import: 'default',
+  }) as Sources
   const ALLOW: Record<string, string[]> = {
     '/src/components/StyleDialog.tsx': ['panelScale'],
     // 规范修复事务（ADR 0080）：缩放比原样随请求交给后端去判，自己不换算任何页面 pt 值
@@ -182,25 +370,84 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     // 写入器本身：按缩放比 memo 住换好的字段表（与 `lens.field` 同一个函数，不是第二份换算）
     '/src/components/inspector/textStyleAdapter.ts': ['pageField'],
   }
+  const EXPORTS = conversionExports(ALL)
 
-  it('没有界面文件 import 换算函数（豁免表之外）', () => {
+  it('换算模块是从源码里认出来的：定义这几个函数的两处都在视野里', () => {
+    expect([...(EXPORTS.get('/src/lib/preflight') ?? [])]).toContain('panelScale')
+    expect([...(EXPORTS.get('/src/lib/stylePresets') ?? [])].sort()).toEqual(
+      ['pageField', 'toPageValue', 'toScriptValue'].sort(),
+    )
+  })
+
+  it('没有界面文件拿到换算函数（豁免表之外）', () => {
     const hits: string[] = []
     let scanned = 0
     for (const [path, src] of Object.entries(SOURCES)) {
       if (/\.test\.tsx?$/.test(path)) continue
       scanned++
-      const file = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-      for (const st of file.statements) {
-        if (!ts.isImportDeclaration(st)) continue
-        const named = st.importClause?.namedBindings
-        if (!named || !ts.isNamedImports(named)) continue
-        for (const spec of named.elements) {
-          const name = (spec.propertyName ?? spec.name).text
-          if (FORBIDDEN.has(name) && !(ALLOW[path] ?? []).includes(name)) hits.push(`${path}: ${name}`)
-        }
-      }
+      hits.push(...conversionImports(path, src, EXPORTS, ALLOW[path]))
     }
     expect(scanned, '扫描面该覆盖到界面代码').toBeGreaterThan(100)
     expect(hits).toEqual([])
+  })
+
+  // ---- 尺子自证（#557 评审 P1）：每一种拿到换算函数的写法都红，拿不到值的写法不红 ----
+
+  const UI = '/src/components/inspector/Fake.tsx'
+  const red = (src: string, exportsOf = EXPORTS, path = UI) =>
+    conversionImports(path, src, exportsOf, ALLOW[path])
+
+  it.each([
+    ["import * as preflight from '@/lib/preflight'\npreflight.panelScale(p)"],
+    ["import * as sp from '../../lib/stylePresets'\nsp['toPage' + 'Value'](a, b, c)"],
+    ["import { panelScale as ps } from '@/lib/preflight'"],
+    ["import { pagePtLens, toScriptValue } from '@/lib/stylePresets.ts'"],
+    ["import preflight from '@/lib/preflight'\npreflight.panelScale(p)"],
+    ["import preflight, { type EditableField } from '@/lib/preflight'"],
+    ["import preflight = require('@/lib/preflight')"],
+    ["export * from '@/lib/stylePresets'"],
+    ["export * as sp from '@/lib/stylePresets'"],
+    ["export { panelScale } from '@/lib/preflight'"],
+    ["export { toPageValue as page } from '@/lib/stylePresets'"],
+    ["const m = await import('@/lib/preflight')\nm.panelScale(p)"],
+    ["const { panelScale } = await import('../../lib/preflight')"],
+    ['const m = await import(`@/lib/preflight`)'],
+    ["const m = await import(where)"],
+  ])('红：%s', (src) => {
+    expect(red(src)).not.toEqual([])
+  })
+
+  it.each([
+    ["import type * as preflight from '@/lib/preflight'"],
+    ["import type { panelScale } from '@/lib/preflight'"],
+    // 换算名必须真的由这个模块导出：写成别的模块的名字，这条样本就量不到 `type` 的豁免
+    ["import { type toPageValue, pagePtLens } from '@/lib/stylePresets'"],
+    ["import { pagePtLens, PT_DECIMALS } from '@/lib/stylePresets'"],
+    ["import * as api from '@/lib/api'"],
+    ["const { useRenderStore } = await import('@/store/renderStore')"],
+    ["// import * as preflight from '@/lib/preflight'"],
+  ])('不红：%s', (src) => {
+    expect(red(src)).toEqual([])
+  })
+
+  it('豁免只认具名 import 的原名：豁免文件改用 namespace import 照样红', () => {
+    const path = '/src/components/StyleDialog.tsx'
+    expect(red("import { panelScale } from '@/lib/preflight'", EXPORTS, path)).toEqual([])
+    expect(red("import * as pf from '@/lib/preflight'", EXPORTS, path)).not.toEqual([])
+    expect(red("import { toPageValue } from '@/lib/stylePresets'", EXPORTS, path)).not.toEqual([])
+  })
+
+  it.each([
+    ["export * from './preflight'", "import { panelScale } from '@/lib/relay'"],
+    ["export { panelScale as scaleOf } from './preflight'", "import { scaleOf } from '@/lib/relay'"],
+    ["export * as pf from './preflight'", "import { pf } from '@/lib/relay'"],
+    ["import { panelScale } from './preflight'\nexport { panelScale as s }", "import { s } from '@/lib/relay'"],
+    ["import { panelScale } from './preflight'\nexport default panelScale", "import s from '@/lib/relay'"],
+    ["export * from './preflight'", "import * as relay from '@/lib/relay/index'"],
+  ])('转出口也是换算模块（不动点传到底、别名跟着走）：%s', (relay, ui) => {
+    const withRelay = conversionExports({ ...ALL, '/src/lib/relay.ts': relay })
+    expect(red(ui, withRelay)).not.toEqual([])
+    // 同一句 import 在没有转出口时不红：红来自对转出口的识别，不是别处
+    expect(red(ui)).toEqual([])
   })
 })
