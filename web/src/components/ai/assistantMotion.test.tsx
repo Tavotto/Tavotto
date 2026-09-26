@@ -52,6 +52,7 @@ const panel = (): PanelObject =>
 
 const session = (over: Partial<AiSession> = {}): AiSession => ({
   id: 's1',
+  project: null,
   agent: 'codex',
   agentLabel: 'Codex',
   prompt: '把图例移到左上角',
@@ -206,7 +207,8 @@ describe('发送 ↔ 中止同一颗按钮', () => {
     expect(btn.disabled).toBe(false)
 
     await act(async () => btn.click())
-    expect(aiCancel).toHaveBeenCalledWith('s1')
+    // 第二个参数是会话所属的项目（#589：中止钉在会话自己的项目上）；夹具的会话不属于任何项目
+    expect(aiCancel).toHaveBeenCalledWith('s1', null)
     // cancel 之后会话不再 running → 同一颗按钮回到发送（输入框空着，所以禁用）
     expect(sendButton().dataset.aiSend).toBe('send')
     expect(sendButton().getAttribute('aria-label')).toBe(ai('panel.sendAria'))
