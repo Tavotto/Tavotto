@@ -329,6 +329,201 @@ def _enclosing_function(parents: dict[ast.AST, ast.AST], node: ast.AST) -> ast.A
     return cur
 
 
+# ---- 字段字面量的去处：只许原样交出去，外层任何能覆盖取值的写法都红（#557 评审六轮 P1）----
+#
+# 逐个 `ast.Dict` 判 `value` 看不见外层：`{"prop": …, "value": round(v, 2)} | {"value": float(v)}`、
+# `dict(d, value=…)`、`{**d, "value": …}`、`d.update(…)`、`d["value"] = …`、`fields[0]["value"] = …`
+# 都会在运行时把取好整的值换掉，而字面量本身照样合格。能覆盖的写法数不完，所以反过来 **fail closed**：
+# 只认下面这几种「原样交出去」的去处，认不出的父表达式一律红。
+#
+# - `return {…}`；
+# - 列表 / 元组字面量的元素、`*` 展开进列表、条件表达式的分支——再看那个容器的去处（递归）；
+# - `for f in ({…}, {…})` 的推导式，且推导式产出的就是 `f` 本身——再看推导式的去处；
+# - `X.append({…})` / `X.insert(i, {…})`、`X = [{…}]` / `X += [{…}]`——`X` 是本函数里的局部列表，
+#   它的每一处使用也只许是 `X.append / extend / insert(…)`、`return X`、`X += […]`、放进要交出去的列表；
+#   下标、迭代、别名、当实参传给别的函数……一律红（外面拿到元素就能改它）。
+#
+# 字段字面量本身绑到名字上（`d = {…}`）一律红：之后的 `d["value"] = …` / `d.update` / `d | …`
+# 看全就得做别名分析，引擎里没有这种写法。
+
+_CONTAINER_METHODS = frozenset({"append", "extend", "insert"})
+
+
+def _pure_filter(comp: ast.AST | None, gen: ast.comprehension) -> bool:
+    """`[f for f in X if …]`：产出的就是迭代变量本身，条件里对它只有 `f[常量]` 的读取（不传出去、不改）。"""
+    if not (
+        isinstance(comp, ast.ListComp)
+        and len(comp.generators) == 1
+        and isinstance(gen.target, ast.Name)
+        and isinstance(comp.elt, ast.Name)
+        and comp.elt.id == gen.target.id
+        and not gen.is_async
+    ):
+        return False
+    var = gen.target.id
+    for cond in gen.ifs:
+        cparents = {c: p for p in ast.walk(cond) for c in ast.iter_child_nodes(p)}
+        for n in ast.walk(cond):
+            if isinstance(n, ast.NamedExpr):
+                return False
+            if isinstance(n, ast.Name) and n.id == var:
+                p = cparents.get(n)
+                if not (
+                    isinstance(p, ast.Subscript)
+                    and p.value is n
+                    and isinstance(p.ctx, ast.Load)
+                    and isinstance(p.slice, ast.Constant)
+                ):
+                    return False
+    return True
+
+
+def _container_ok(func: ast.AST, name: str, parents: dict[ast.AST, ast.AST], depth: int) -> bool:
+    """局部列表 `name` 的每一处出现都是「往里加」或「原样交出去」。"""
+    if isinstance(func, ast.Module):
+        return False  # 模块级的列表谁都能改
+    for node in ast.walk(func):
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names:
+            return False  # 声明成全局 / 外层的，也是谁都能改
+    for node in ast.walk(func):
+        if not (isinstance(node, ast.Name) and node.id == name):
+            continue
+        p = parents.get(node)
+        if isinstance(node.ctx, ast.Store):
+            if isinstance(p, (ast.Assign, ast.AnnAssign)) and isinstance(p.value, (ast.List, ast.ListComp)):
+                targets = p.targets if isinstance(p, ast.Assign) else [p.target]
+                if targets == [node]:
+                    continue
+            # `X += …`：只往后接，不碰已有的元素（接进来的是什么由它自己的字面量判）
+            if isinstance(p, ast.AugAssign) and p.target is node and isinstance(p.op, ast.Add):
+                continue
+            return False
+        # 纯过滤：`[f for f in X if f["prop"] …]`——元素原样留下，条件里只许读 `f[常量]`
+        if isinstance(p, ast.comprehension) and p.iter is node:
+            comp = parents.get(p)
+            if _pure_filter(comp, p):
+                holder = parents.get(comp)
+                back_to_self = (
+                    isinstance(holder, ast.Assign)
+                    and holder.value is comp
+                    and len(holder.targets) == 1
+                    and isinstance(holder.targets[0], ast.Name)
+                    and holder.targets[0].id == name
+                )
+                if back_to_self or _emitted_as_is(comp, parents, func, depth + 1):
+                    continue
+            return False
+        if (
+            isinstance(p, ast.Attribute)
+            and p.value is node
+            and p.attr in _CONTAINER_METHODS
+            and isinstance(parents.get(p), ast.Call)
+            and parents[p].func is p
+        ):
+            continue
+        if isinstance(p, ast.Starred) or (isinstance(p, (ast.List, ast.Tuple)) and node in p.elts):
+            if _emitted_as_is(node, parents, func, depth + 1):
+                continue
+            return False
+        if isinstance(p, ast.Return):
+            continue
+        return False
+    return True
+
+
+def _emitted_as_is(node: ast.AST, parents: dict[ast.AST, ast.AST], func: ast.AST, depth: int = 0) -> bool:
+    """这个表达式（字段字面量或装着它的容器）是不是原样交出去的；认不出就 False。"""
+    if depth > 8:
+        return False
+    p = parents.get(node)
+    if isinstance(p, ast.Return):
+        return True
+    if isinstance(p, (ast.List, ast.Tuple)) and node in p.elts:
+        gp = parents.get(p)
+        if isinstance(gp, ast.comprehension) and gp.iter is p:
+            comp = parents.get(gp)
+            return (
+                isinstance(comp, (ast.ListComp, ast.GeneratorExp))
+                and isinstance(gp.target, ast.Name)
+                and isinstance(comp.elt, ast.Name)
+                and comp.elt.id == gp.target.id
+                and _emitted_as_is(comp, parents, func, depth + 1)
+            )
+        return _emitted_as_is(p, parents, func, depth + 1)
+    if isinstance(p, ast.Starred):
+        return isinstance(parents.get(p), (ast.List, ast.Tuple)) and _emitted_as_is(p, parents, func, depth + 1)
+    if isinstance(p, ast.IfExp) and node in (p.body, p.orelse):
+        return _emitted_as_is(p, parents, func, depth + 1)
+    if (
+        isinstance(p, ast.Call)
+        and isinstance(p.func, ast.Attribute)
+        and isinstance(p.func.value, ast.Name)
+        and not p.keywords
+        and (
+            (p.func.attr == "append" and p.args == [node])
+            or (p.func.attr == "extend" and p.args == [node] and not isinstance(node, ast.Dict))
+            or (p.func.attr == "insert" and len(p.args) == 2 and p.args[1] is node)
+        )
+    ):
+        return _container_ok(func, p.func.value.id, parents, depth)
+    if isinstance(node, ast.Dict):
+        return False  # 字段字面量绑名字、进运算、当别的参数：一律红
+    if isinstance(p, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+        targets = p.targets if isinstance(p, ast.Assign) else [p.target]
+        if len(targets) == 1 and isinstance(targets[0], ast.Name) and p.value is node:
+            if isinstance(p, ast.AugAssign) and not isinstance(p.op, ast.Add):
+                return False
+            return _container_ok(func, targets[0].id, parents, depth)
+    return False
+
+
+def _dict_keys(node: ast.AST) -> set[str]:
+    return {k.value for k in node.keys if isinstance(k, ast.Constant)} if isinstance(node, ast.Dict) else set()
+
+
+def _value_key_writes(path: Path) -> list[str]:
+    """下游改写：引擎里任何字面量地写 `"value"` 这个键的地方（不管写的是谁）。
+
+    字段列表交出去之后在别的函数里改（`fields[0]["value"] = …`、`f.update(value=…)`）是跨函数的，
+    `_emitted_as_is` 只看得到本函数；这里把「写 value 键」这件事在整个模块里按红算——引擎里本来一处都没有。
+    写键的方式看不出键名的（`d.update(other)`、`d[k] = …`）不在视野里，写在盲点里。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    bad: list[str] = []
+    for node in ast.walk(tree):
+        what = None
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and _const_key(node.slice) == "value"
+        ):
+            what = 'x["value"] = …'
+        elif isinstance(node, ast.Call):
+            f = node.func
+            named = any(k.arg == "value" for k in node.keywords)
+            literal = any("value" in _dict_keys(a) for a in node.args)
+            first = bool(node.args) and _const_key(node.args[0]) == "value"
+            if isinstance(f, ast.Attribute) and f.attr in _MUTATORS and (named or literal or first):
+                what = f".{f.attr}(value …)"
+            elif isinstance(f, ast.Name) and f.id == "dict" and named:
+                what = "dict(…, value=…)"
+        elif (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, ast.BitOr)
+            and ("value" in _dict_keys(node.left) or "value" in _dict_keys(node.right))
+        ):
+            what = '… | {"value": …}'
+        elif isinstance(node, ast.AugAssign) and isinstance(node.op, ast.BitOr) and "value" in _dict_keys(node.value):
+            what = '|= {"value": …}'
+        elif isinstance(node, ast.Dict) and None in node.keys and "value" in _dict_keys(node):
+            spread_at = node.keys.index(None)
+            if any(_const_key(k) == "value" for k in node.keys[spread_at + 1 :] if k is not None):
+                what = '{**d, "value": …}'
+        if what:
+            bad.append(f"{path.name}:{node.lineno} 改写 value 键：{what}")
+    return bad
+
+
 def _field_violations(path: Path, wanted: set[str], seen: set[str]) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
@@ -342,7 +537,8 @@ def _field_violations(path: Path, wanted: set[str], seen: set[str]) -> list[str]
         if "prop" not in entries or "value" not in entries:
             continue
         func = _enclosing_function(parents, node) or tree
-        spread = None in node.keys  # `**extra` 可能在运行时盖掉 value
+        # `**extra` 可能在运行时盖掉 value；外层的 `|` / `dict(…)` / 下标赋值 / `.update` 同理（六轮 P1）
+        spread = None in node.keys or not _emitted_as_is(node, parents, func)
         names = _prop_names(entries["prop"])
         if not names and _is_number_field(entries):
             # 属性名不是字面量（`"prop": prop`、认不出的 f-string）：看不出它是不是表里的，
@@ -373,6 +569,7 @@ def test_every_page_pt_field_is_reported_with_two_decimals():
     bad: list[str] = []
     for path in sorted(ENGINE.glob("*.py")):
         bad.extend(_field_violations(path, wanted, seen))
+        bad.extend(_value_key_writes(path))
     assert bad == []
     assert wanted - seen == set(), "表里有属性没在引擎的字段字面量里找到：尺子没接上"
 
@@ -544,3 +741,111 @@ def test_the_real_declaration_with_a_continuation_is_a_red(suffix):
     mutated = src[:close] + suffix + src[close + 1 :]
     with pytest.raises(AssertionError):
         exported_string_array(mutated, "PAGE_PT_PROPS")
+
+
+# ---- #557 第六轮：字段字面量的去处（外层能覆盖取值的写法）----
+
+_F = '{"prop": "bbox_linewidth", "type": "number", "value": round(float(v), 2)}'
+
+
+def _wrapped_violations(tmp_path: Path, body: str) -> list[str]:
+    """函数体 `body` 里用 `F` 代表一个合格的字段字面量；字段判据与 value 键改写判据一起跑。"""
+    lines = body.replace("F", _F).splitlines()
+    src = "def fields(v, extra, other):\n" + "".join(f"    {line}\n" for line in lines)
+    path = tmp_path / "fields.py"
+    path.write_text(src, encoding="utf-8")
+    return _field_violations(path, {"bbox_linewidth"}, set()) + _value_key_writes(path)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # 评审给的形状：外层 `|` 盖掉 value
+        'return [F | {"value": float(v)}]',
+        "return [F | extra]",
+        "return [extra | F]",
+        "return [dict(F, value=float(v))]",
+        "return [dict(F)]",
+        'return [{**F, "value": float(v)}]',
+        "return [{**F}]",
+        # 字段字面量绑到名字上
+        "d = F\nreturn [d]",
+        'd = F\nd["value"] = float(v)\nreturn [d]',
+        "d = F\nd.update(value=float(v))\nreturn [d]",
+        'd = F\nd |= {"value": float(v)}\nreturn [d]',
+        # 容器交出去之前被改 / 被带出去
+        'fields = [F]\nfields[0]["value"] = float(v)\nreturn fields',
+        "fields = [F]\nfields[0].update(extra)\nreturn fields",
+        'fields = [F]\nfor f in fields:\n    f["value"] = float(v)\nreturn fields',
+        "fields = [F]\nalias = fields\nreturn alias",
+        "fields = [F]\nmutate(fields)\nreturn fields",
+        "fields = [F]\nfields = fields * 2\nreturn fields",
+        "fields = [F]\nfields |= other\nreturn fields",
+        "global G\nG = [F]",
+        # 过滤推导式：条件里把元素传出去 / 海象 / 产出的不是元素本身
+        "fields = [F]\nreturn [f for f in fields if mutate(f)]",
+        "fields = [F]\nreturn [f for f in fields if (g := f)]",
+        "fields = [F]\nreturn [dict(f) for f in fields]",
+        # 认不出的父表达式
+        "return list(map(fix, [F]))",
+        "return fix(F)",
+        "yield F",
+        "return {'x': F}['x']",
+        "return (F, 1)[0]",
+    ],
+)
+def test_a_parent_that_can_overwrite_the_value_is_a_red(tmp_path, body):
+    assert _wrapped_violations(tmp_path, body), body
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "return F",
+        "return [F]",
+        "return [F, F]",
+        "return [*([F] if v else [])]",
+        "return F if v else F",
+        "fields = [F]\nfields.append(F)\nfields.insert(0, F)\nfields.extend([F])\n"
+        "fields += [F]\nfields += other\nreturn fields",
+        "fields: list = []\nfields.append(F)\nreturn [*fields]",
+        'fields = [F]\nfields = [f for f in fields if f["prop"] != "x"]\nreturn fields',
+        'fields = [F]\nreturn [f for f in fields if f["prop"] != "x"]',
+        "return [*[f for f in (F, F)]]",
+    ],
+)
+def test_emitting_the_literal_as_is_still_passes(tmp_path, body):
+    assert _wrapped_violations(tmp_path, body) == [], body
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'x["value"] = 1',
+        'del x["value"]',
+        'x["value"] += 1',
+        "x.update(value=1)",
+        'x.update({"value": 1})',
+        'x.setdefault("value", 1)',
+        'x.pop("value")',
+        "y = dict(x, value=1)",
+        'y = x | {"value": 1}',
+        'y = {"value": 1} | x',
+        'x |= {"value": 1}',
+        'y = {**x, "value": 1}',
+    ],
+)
+def test_writing_the_value_key_anywhere_in_the_engine_is_a_red(tmp_path, line):
+    """交出去以后在别的函数里改也算：模块里任何字面量地写 value 键都红（下游改写）。"""
+    path = tmp_path / "other.py"
+    path.write_text(f"def g(x):\n    {line}\n", encoding="utf-8")
+    assert _value_key_writes(path), line
+
+
+def test_reading_the_value_key_is_not_a_write(tmp_path):
+    path = tmp_path / "other.py"
+    path.write_text(
+        'def g(x):\n    y = x["value"]\n    z = {"value": 1, **x}\n    return x.get("value")\n',
+        encoding="utf-8",
+    )
+    assert _value_key_writes(path) == []
