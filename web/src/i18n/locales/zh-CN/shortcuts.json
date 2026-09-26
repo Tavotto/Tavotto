@@ -34,6 +34,8 @@
     "pan": "平移画布",
     "saveDocument": "保存当前文档",
     "saveLayout": "保存为画布文件",
+    "timeline": "打开 / 关闭排版时间线",
+    "saveNamed": "把现在存为命名节点",
     "script": "上标 / 下标（属性面板文字框内）",
     "selectAll": "全选",
     "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",

@@ -64,6 +64,8 @@ import {
   rotateVec,
   rotationSwaps,
 } from '@/types/document'
+import { markMoment } from '@/lib/timelineCheckpoint'
+import { useTimelineStore } from './timelineStore'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -343,6 +345,10 @@ export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) 
       d.page = structuredClone(version.page)
       d.objects = structuredClone(version.objects)
       d.guides = structuredClone(version.guides)
+      // 布局组跟着对象走：对象身上的 groupId 指向的是**那一版**的组。只换对象
+      // 不换组，恢复出来的对象会挂在当前排版里不存在（或成员不同）的组上
+      if (version.layoutGroups?.length) d.layoutGroups = structuredClone(version.layoutGroups)
+      else delete d.layoutGroups
     },
     { overrides: 'restored' },
   )
@@ -529,6 +535,8 @@ export async function runManualSave(): Promise<void> {
   const state = await saveNow()
   if (state === 'saved' || state === 'clean') {
     ui.setStatus(msg('save.done', undefined, 'workspace'))
+    // 排版时间线的关键时刻（ADR 0101）：⌘S 真的存完了
+    void markMoment('save')
   } else if (state === 'conflict') {
     ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
   } else if (state === 'save_error') {
@@ -536,6 +544,22 @@ export async function runManualSave(): Promise<void> {
   }
   // dirty / saving：保存期间用户又改了，或又排了一次写。那不是失败，
   // 顶栏的状态会继续往下走，这里不再多说一句话。
+}
+
+/** 打开 / 关闭排版时间线（顶栏时钟钮、⇧⌘H、命令面板共用；ADR 0101） */
+export function toggleTimeline(): void {
+  const ui = useUiStore.getState()
+  ui.setVersionsOpen(!ui.versionsOpen)
+}
+
+/**
+ * 「把现在存为命名节点」（⌥⌘S、命令面板；ADR 0101）：打开时间线、把焦点送进名字框。
+ * 名字要用户自己起——命名节点的全部意义就是「这个名字是我起的」，所以不替他编一个。
+ */
+export function startNamedNode(): void {
+  finishActiveGesture()
+  useUiStore.getState().setVersionsOpen(true)
+  useTimelineStore.getState().requestNameFocus()
 }
 
 export async function newBlankDocument(): Promise<void> {

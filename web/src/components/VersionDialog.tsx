@@ -1,23 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bookmark, Copy, Layers2, Pencil, RotateCcw, Trash2, X,
-  RotateCcwClock,
-} from '@/components/ui/icons'
+import { Bookmark, Ellipsis, RotateCcw, RotateCcwClock, X } from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
 import {
   backendErrorText,
-  createVersion,
   deleteVersion,
   duplicateVersion,
+  fetchTimeline,
   fetchVersionDoc,
-  fetchVersions,
   panelSrc,
   updateVersion,
+  versionThumbUrl,
   type LayoutVersionMeta,
+  type TimelineBudget,
 } from '@/lib/api'
-import { cn } from '@/lib/utils'
+import { modKey, cn } from '@/lib/utils'
 import { resolveRestoreTarget } from '@/lib/versionTarget'
 import {
   comparableEarlier,
@@ -25,12 +24,15 @@ import {
   versionSummary,
   versionSummaryText,
 } from '@/lib/versionSummary'
+import { groupTimeline, versionKind, type TimelineGroup } from '@/lib/timelineGroups'
+import { takeCheckpoint } from '@/lib/timelineCheckpoint'
 import { formatMessage, msg, t as translate } from '@/i18n'
-import { formatTime } from '@/i18n/format'
+import { formatDate, formatTime } from '@/i18n/format'
 import { restoreLayoutVersion } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
+import { useTimelineStore } from '@/store/timelineStore'
 import { useVariantPng } from '@/hooks/useVariantPng'
 import {
   documentDigest,
@@ -46,39 +48,26 @@ import {
   THUMB_TEXT_CHARS,
 } from './CanvasThumb'
 import { DrawerCount } from './left/DrawerCount'
+import { Badge } from './ui/Badge'
 import { Button, IconButton } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
-import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
-import { Tab, TabList, TabPanel } from './ui/Tabs'
+import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
+import { Toggle } from './ui/Toggle'
 
 /**
- * 布局版本时间线 —— 右侧抽屉形态，画布保持可见，恢复前后可直接对照。
+ * 排版时间线（ADR 0101）—— 右侧抽屉形态，画布保持可见；点一个节点，画布区域
+ * 盖一层**只读**的那一刻的排版（`TimelinePreview`），「恢复到这里」才真的写。
  *
  * 与两套已有机制的边界：
  * - 本机自动保存（localStorage）：浏览器里的工作副本，无版本概念 —— 保留不动。
  * - 「写回原始文件」历史（baked_overrides）：作用于单张图的源文件 —— 完全无关。
- * 这里的版本是**整份布局文档**的服务器快照；恢复只改文档内容（可撤销），
+ * 这里的节点是**整份排版**的服务器快照；恢复只改排版内容（可撤销），
  * 不触碰 figures 里的任何文件。
  */
 /** 本抽屉的文案在 dialogs:versions.* 下 */
 const vd = (key: string, values?: Record<string, unknown>) =>
   translate(`versions.${key}`, { ns: 'dialogs', ...(values ?? {}) })
-
-/**
- * 「当前这一份检查点拍的是谁」—— doc + 画布身份，**一起取，一次取**。
- *
- * 分开取的话总有一天会有人只取 doc（改造前全仓就是这样），于是检查点在
- * 时间线上看着好好的，恢复时才发现它不知道自己来自哪张画布（R-03）。
- */
-function activeCanvasIdentity() {
-  const { doc, activeCanvasId, canvases } = useDocumentStore.getState()
-  return {
-    doc,
-    canvasId: activeCanvasId,
-    canvasName: canvases.find((c) => c.id === activeCanvasId)?.name ?? doc.name,
-  }
-}
 
 export function VersionDrawer() {
   useTranslation(['dialogs', 'common'])
@@ -88,26 +77,32 @@ export function VersionDrawer() {
   // 版本行第三行「来自画布 X」只在它能区分什么的时候才说（左栏审计 L21）
   const canvases = useDocumentStore((s) => s.canvases)
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
+  const rev = useTimelineStore((s) => s.rev)
+  const preview = useTimelineStore((s) => s.preview)
+  const focusNameRequest = useTimelineStore((s) => s.focusNameRequest)
 
   const [versions, setVersions] = useState<LayoutVersionMeta[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
-  const [selectedDoc, setSelectedDoc] = useState<FigureDocument | null>(null)
+  const [budget, setBudget] = useState<TimelineBudget | null>(null)
+  const [namedOnly, setNamedOnly] = useState(false)
+  const [renaming, setRenaming] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saveName, setSaveName] = useState('')
   const [busy, setBusy] = useState(false)
   const asideRef = useRef<HTMLElement>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
+  const selected = preview?.docId === docId ? preview.meta.id : null
 
   const reload = useCallback(async () => {
     try {
-      // 草图随列表一次带回来：缩略图不该让「打开版本面板」变成拉 120 份正文，
-      // 而列表端点为了数对象数本来就已经把整份文件解析过一遍了。
-      // 尺寸取值来自缩略图组件自己（那个数字只有那一处）。
-      const list = await fetchVersions(docId, {
+      // 草图随列表一次带回来：没有位图缩略图的旧节点靠它，而列表端点为了数
+      // 对象数本来就已经把整份文件解析过一遍了。尺寸取值来自缩略图组件自己。
+      const res = await fetchTimeline(docId, {
         objects: THUMB_OBJECT_LIMIT,
         textChars: THUMB_TEXT_CHARS,
       })
-      setVersions(list.slice().reverse()) // 最新在上
+      setVersions(res.versions.slice().reverse()) // 最新在上
+      setBudget(res.budget ?? null)
       setError(null)
     } catch (e) {
       setError(backendErrorText(e))
@@ -116,53 +111,63 @@ export function VersionDrawer() {
 
   useEffect(() => {
     if (!open) return
-    setSelected(null)
-    setSelectedDoc(null)
     setSaveName('')
-    void reload()
+    setRenaming(null)
     // 打开时记住触发点，关闭后把焦点还回去
     restoreFocus.current = document.activeElement as HTMLElement | null
-    const id = requestAnimationFrame(() =>
-      asideRef.current?.querySelector<HTMLElement>('input, button')?.focus(),
-    )
+    // 焦点进名字框：它是抽屉里第一件能做的事；落在关闭钮上的话，关闭钮的气泡
+    // 会一直挂在抽屉头上
+    const id = requestAnimationFrame(() => nameRef.current?.focus())
     return () => {
       cancelAnimationFrame(id)
+      // 抽屉关了，预览跟着退出：没有抽屉的只读大图没有出口
+      useTimelineStore.getState().setPreview(null)
       restoreFocus.current?.focus?.()
     }
-  }, [open, reload])
+  }, [open])
 
-  // 选中版本后取完整文档快照（列表只有元信息）
+  // 打开、换排版、节点有变（新拍 / 改名 / 删除 / 挂上缩略图）时重取
   useEffect(() => {
-    if (!selected) {
-      setSelectedDoc(null)
+    if (open) void reload()
+  }, [open, reload, rev])
+
+  // ⌥⌘S / 命令面板「把现在存为命名节点」：抽屉开着时把焦点送进名字框
+  useEffect(() => {
+    if (open && focusNameRequest) requestAnimationFrame(() => nameRef.current?.focus())
+  }, [open, focusNameRequest])
+
+  const select = useCallback(
+    (meta: LayoutVersionMeta | null) => {
+      const tl = useTimelineStore.getState()
+      if (!meta || meta.id === selected) {
+        tl.setPreview(null)
+        return
+      }
+      tl.setPreview({ docId, meta, doc: null })
+      fetchVersionDoc(docId, meta.id)
+        .then((v) => {
+          // 期间换了节点 / 退出了预览：这份正文作废
+          const cur = useTimelineStore.getState().preview
+          if (cur?.docId === docId && cur.meta.id === meta.id) {
+            useTimelineStore.getState().setPreview({ docId, meta, doc: v.doc })
+          }
+        })
+        .catch((e) => setError(backendErrorText(e)))
+    },
+    [docId, selected],
+  )
+
+  const saveNamed = async () => {
+    const name = saveName.trim()
+    if (!name) {
+      nameRef.current?.focus()
       return
     }
-    let alive = true
-    fetchVersionDoc(docId, selected)
-      .then((v) => alive && setSelectedDoc(v.doc))
-      .catch((e) => alive && setError(backendErrorText(e)))
-    return () => {
-      alive = false
-    }
-  }, [docId, selected])
-
-  const saveNow = async () => {
     setBusy(true)
     try {
-      const created = await createVersion(docId, {
-        name: saveName.trim() || undefined,
-        ...activeCanvasIdentity(),
-      })
-      recordDiagnosticEvent({
-        type: 'layout_version.save',
-        // **只有 id 的 hash**：saveName 是用户自己敲的版本名，一个字都不取
-        version: created.version ? versionHash(created.version.id) : null,
-        document_hash: documentDigest(useDocumentStore.getState().doc),
-        auto: false,
-      })
+      await takeCheckpoint({ auto: false, name, allowEmpty: true })
       setSaveName('')
-      await reload()
-      useUiStore.getState().setStatus(msg('versions.saved', undefined, 'dialogs'))
+      useUiStore.getState().setStatus(msg('versions.saved', { name }, 'dialogs'))
     } catch (e) {
       setError(backendErrorText(e))
     } finally {
@@ -170,19 +175,27 @@ export function VersionDrawer() {
     }
   }
 
+  const groups = useMemo(
+    () => groupTimeline(versions, { namedOnly, now: Date.now() }),
+    [versions, namedOnly],
+  )
+
   if (!open) return null
 
-  const meta = versions.find((v) => v.id === selected) ?? null
+  const current = versions.find((v) => v.id === selected) ?? null
 
   return (
     <aside
       ref={asideRef}
       role="dialog"
       aria-label={vd('drawerLabel')}
+      data-timeline-drawer
       onKeyDown={(e) => {
         if (e.key === 'Escape' && !busy) {
           e.stopPropagation()
-          setOpen(false)
+          // 逐层退出：先退预览，再关抽屉
+          if (useTimelineStore.getState().preview) useTimelineStore.getState().setPreview(null)
+          else setOpen(false)
         }
       }}
       // 覆盖在画布上的浮板只留投影：`shadow-pop` 自带 1px 环，再画一条实色 border
@@ -190,8 +203,7 @@ export function VersionDrawer() {
       className="absolute inset-y-0 right-0 z-40 flex w-[400px] max-w-[92vw] flex-col bg-surface shadow-pop"
     >
       {/* 抽屉头与左抽屉同一副骨架：36 高、type-section 标题、DrawerCount 计数、IconButton
-          关闭钮。此前 44 高 + 手写计数 + 手写 Button，两个抽屉两套头部骨架、两种标题字号、
-          两种关闭钮写法（左栏审计 L20 / L01 / L13 / L14） */}
+          关闭钮（左栏审计 L20 / L01 / L13 / L14） */}
       <div className="flex h-9 shrink-0 items-center gap-1.5 px-3">
         <h2 className="type-section">{vd('title')}</h2>
         {versions.length > 0 && <DrawerCount value={versions.length} />}
@@ -207,104 +219,85 @@ export function VersionDrawer() {
       </div>
       <div className="flex shrink-0 gap-1.5 px-3 pb-2">
         <TextInput
+          ref={nameRef}
           value={saveName}
+          data-timeline-name-input
+          aria-label={vd('versionName')}
           onChange={(e) => setSaveName(e.target.value)}
           onKeyDown={(e) => {
             e.stopPropagation()
-            if (e.key === 'Enter') void saveNow()
+            if (e.key === 'Enter') void saveNamed()
+            if (e.key === 'Escape' && saveName) setSaveName('')
           }}
           placeholder={vd('namePlaceholder')}
           className="min-w-0 flex-1"
         />
-        <Button variant="secondary" size="sm" loading={busy} onClick={saveNow}>
+        <Button
+          variant="secondary"
+          size="sm"
+          loading={busy}
+          disabled={!saveName.trim()}
+          data-timeline-save-named
+          onClick={saveNamed}
+        >
           <Bookmark size={ICON_SIZE.sm} />
           {vd('save')}
         </Button>
       </div>
+      <div className="flex shrink-0 items-center justify-between gap-2 px-3 pb-1.5">
+        <label id="timeline-named-only" htmlFor="timeline-named-only-toggle" className="text-xs text-ink-2">
+          {vd('namedOnly')}
+        </label>
+        <Toggle
+          id="timeline-named-only-toggle"
+          aria-labelledby="timeline-named-only"
+          checked={namedOnly}
+          onChange={setNamedOnly}
+        />
+      </div>
+      {budget?.namedOver && (
+        // 命名节点超出字节上限：**不删**，照实说，请用户自己删（ADR 0101）
+        <p role="alert" data-timeline-budget className="mx-3 mb-2 rounded-sm bg-warn-subtle px-2 py-1.5 text-xs leading-relaxed text-warn">
+          {vd('budgetOver', {
+            used: ((budget.namedBytes ?? 0) / 1048576).toFixed(1),
+            limit: Math.round(budget.limit / 1048576),
+          })}
+        </p>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {versions.length === 0 ? (
-          <EmptyState icon={RotateCcwClock} title={vd('emptyTitle')} />
+          <EmptyState icon={RotateCcwClock} title={vd('emptyTitle')} hint={vd('emptyBody')} />
+        ) : groups.length === 0 ? (
+          <EmptyState icon={Bookmark} title={vd('noNamed')} />
         ) : (
-          <ul aria-label={vd('listLabel')}>
-            {versions.map((v, i) => (
-              <li key={v.id}>
-                <button
-                  onClick={() => setSelected(v.id === selected ? null : v.id)}
-                  aria-expanded={v.id === selected}
-                  className={cn(
-                    'flex w-full items-start gap-2 rounded-sm px-3 py-1.5 text-left outline-none focus-visible:focus-ring',
-                    v.id === selected
-                      ? 'bg-selected'
-                      : 'hover:bg-surface-hover',
-                  )}
-                >
-                  {/* 缩略图 → 时间 → 变化摘要 → 哪张画布。
-                      缩略图与画布列表是**同一个组件**（喂的是列表端点发来的
-                      草图），所以「哪一版」这件事两处长得一样。画不出来的那些
-                      版本（页面尺寸缺席的旧/坏文档）留一个同尺寸的占位，不画
-                      一张比例是编的图。 */}
-                  {v.sketch ? (
-                    <CanvasThumb page={v.sketch.page} objects={v.sketch.objects} />
-                  ) : (
-                    <span
-                      aria-hidden
-                      className="h-10 w-14 shrink-0 rounded-xs border border-dashed border-border"
-                    />
-                  )}
-                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    {/* 自动检查点的名字由后端按时间生成，与这里的时间重复，
-                        所以只显示**用户起的**名字（`versionDisplayName`）。 */}
-                    <span className="flex items-center gap-1.5">
-                      {/* 时间与名字是这一行的主文字（12），下面两行元数据 11——
-                          此前三行同为 11，只靠颜色分层（左栏审计 L02） */}
-                      <span
-                        className={cn(
-                          'shrink-0 text-sm',
-                          v.id === selected ? 'font-medium text-ink' : 'text-ink',
-                        )}
-                      >
-                        {formatTime(v.ts)}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-sm text-ink-2">
-                        {versionDisplayName(v)}
-                      </span>
-                      {/* 「自动」是一个元数据词，不是第二种徽章：Badge 是全站唯一的胶囊
-                          文字元素，这里手写的方角实边小片就是第二副（左栏审计 L22） */}
-                      {v.auto && <span className="shrink-0 type-meta">{vd('autoBadge')}</span>}
-                    </span>
-                    <span className="text-xs text-ink-3">
-                      {versionSummaryText(versionSummary(v, comparableEarlier(versions, i)))
-                        .map(formatMessage)
-                        .join(' · ')}
-                    </span>
-                    {/* 这一版拍的是哪张画布（R-03）。旧检查点没有这个字段，
-                        **照实说"不知道"**，不猜成当前画布——所以「不知道」那一档照常出现，
-                        被省掉的只有「每一行都是当前这张画布」这种什么都没说的情形
-                        （左栏审计 L21）。颜色也从 ink-faint 提到 type-meta：ink-faint
-                        对白只有 2.54:1，不给要读的字用（宪法第一节）。 */}
-                    {(canvases.length > 1 || v.canvasId !== activeCanvasId) && (
-                      <span className="truncate type-meta">
-                        {v.canvasId
-                          ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
-                          : vd('fromUnknownCanvas')}
-                      </span>
-                    )}
-                  </span>
-                </button>
-                {v.id === selected && meta && (
-                  <VersionDetail
+          <div aria-label={vd('listLabel')} role="list" data-timeline-list>
+            {groups.map((g) => (
+              <TimelineDay key={g.key} group={g}>
+                {g.items.map((v) => (
+                  <TimelineRow
+                    key={v.id}
                     docId={docId}
-                    meta={meta}
-                    versionDoc={selectedDoc}
-                    onChanged={reload}
-                    onClose={() => setOpen(false)}
-                    setBusy={setBusy}
-                  />
-                )}
-              </li>
+                    meta={v}
+                    all={versions}
+                    selected={v.id === selected}
+                    renaming={renaming === v.id}
+                    showCanvas={canvases.length > 1 || v.canvasId !== activeCanvasId}
+                    onSelect={() => select(v)}
+                    onRename={(on) => setRenaming(on ? v.id : null)}
+                    onChanged={async () => {
+                      await reload()
+                    }}
+                    onError={setError}
+                  >
+                    {v.id === selected && current && (
+                      <NodeDetail meta={current} versionDoc={preview?.doc ?? null} />
+                    )}
+                  </TimelineRow>
+                ))}
+              </TimelineDay>
             ))}
-          </ul>
+          </div>
         )}
         {error && <p className="px-3 py-2 text-xs text-danger">{error}</p>}
       </div>
@@ -312,11 +305,247 @@ export function VersionDrawer() {
   )
 }
 
+/** 一天一组：今天 / 昨天 / 具体日期 */
+function TimelineDay({ group, children }: { group: TimelineGroup; children: React.ReactNode }) {
+  const label =
+    group.day.kind === 'today'
+      ? vd('today')
+      : group.day.kind === 'yesterday'
+        ? vd('yesterday')
+        : formatDate(group.day.ts)
+  return (
+    <section role="listitem" data-timeline-day={group.key}>
+      <h3 className="sticky top-0 z-10 bg-surface px-3 pb-1 pt-2 text-xs text-ink-3">{label}</h3>
+      <ul aria-label={label}>{children}</ul>
+    </section>
+  )
+}
+
+/** 节点的类型标记：命名 = accent 胶囊；关键时刻 = 中性胶囊写是什么时刻；自动 / 手动 = 元数据词 */
+function KindMark({ meta }: { meta: LayoutVersionMeta }) {
+  const kind = versionKind(meta)
+  if (kind === 'named') {
+    return (
+      <Badge tone="accent" data-timeline-kind="named">
+        {vd('kind.named')}
+      </Badge>
+    )
+  }
+  if (kind === 'moment' && meta.moment) {
+    return (
+      <Badge data-timeline-kind="moment" data-timeline-moment={meta.moment}>
+        {vd(`moment.${meta.moment}`)}
+      </Badge>
+    )
+  }
+  return (
+    <span className="shrink-0 type-meta" data-timeline-kind={kind}>
+      {vd(`kind.${kind}`)}
+    </span>
+  )
+}
+
+function RowThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
+  // 位图缩略图 = 拍节点那一刻带 overrides 的样子；旧节点 / 拍图失败的退回草图
+  // （画的是当前磁盘素材，回答「哪一版」）；连草图都画不出来留同尺寸占位
+  if (meta.thumb) {
+    return (
+      <img
+        src={versionThumbUrl(docId, meta)}
+        alt=""
+        data-timeline-thumb
+        className="h-10 w-14 shrink-0 rounded-xs bg-white object-contain"
+      />
+    )
+  }
+  if (meta.sketch) return <CanvasThumb page={meta.sketch.page} objects={meta.sketch.objects} />
+  return (
+    <span
+      aria-hidden
+      className="h-10 w-14 shrink-0 rounded-xs border border-dashed border-border"
+    />
+  )
+}
+
+function TimelineRow({
+  docId,
+  meta: v,
+  all,
+  selected,
+  renaming,
+  showCanvas,
+  onSelect,
+  onRename,
+  onChanged,
+  onError,
+  children,
+}: {
+  docId: string
+  meta: LayoutVersionMeta
+  all: LayoutVersionMeta[]
+  selected: boolean
+  renaming: boolean
+  showCanvas: boolean
+  onSelect: () => void
+  onRename: (on: boolean) => void
+  onChanged: () => Promise<void>
+  onError: (e: string | null) => void
+  children?: React.ReactNode
+}) {
+  const named = versionKind(v) === 'named'
+  const [draft, setDraft] = useState(named ? v.name : '')
+  useEffect(() => {
+    if (renaming) setDraft(named ? v.name : '')
+  }, [renaming, named, v.name])
+
+  const commitName = async () => {
+    const name = draft.trim()
+    onRename(false)
+    if (!name || (named && name === v.name)) return
+    try {
+      await updateVersion(docId, v.id, { name })
+      onError(null)
+    } catch (e) {
+      onError(backendErrorText(e))
+    }
+    await onChanged()
+  }
+
+  const act = (fn: () => Promise<unknown>) => async () => {
+    try {
+      await fn()
+      onError(null)
+    } catch (e) {
+      onError(backendErrorText(e))
+    }
+    await onChanged()
+  }
+
+  const remove = async () => {
+    const ok = await askConfirm({
+      title: msg('versions.deleteTitle', { name: versionDisplayName(v) || formatTime(v.ts) }, 'dialogs'),
+      body: msg('versions.deleteBody', undefined, 'dialogs'),
+      confirmLabel: msg('actions.delete', undefined, 'common'),
+      danger: true,
+    })
+    if (!ok) return
+    if (selected) useTimelineStore.getState().setPreview(null)
+    await act(() => deleteVersion(docId, v.id))()
+  }
+
+  const index = all.indexOf(v)
+  return (
+    <li data-timeline-node={v.id} data-timeline-named={named || undefined}>
+      <div
+        className={cn(
+          'group flex items-start gap-1 rounded-sm pr-1.5',
+          selected ? 'bg-selected' : 'hover:bg-surface-hover',
+        )}
+      >
+        <button
+          type="button"
+          onClick={onSelect}
+          onDoubleClick={(e) => {
+            e.preventDefault()
+            onRename(true)
+          }}
+          aria-pressed={selected}
+          data-timeline-row
+          className="flex min-w-0 flex-1 items-start gap-2 rounded-sm py-1.5 pl-3 text-left outline-none focus-visible:focus-ring"
+        >
+          <RowThumb docId={docId} meta={v} />
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="flex items-center gap-1.5">
+              <span className={cn('shrink-0 text-sm tabular-nums text-ink', selected && 'font-medium')}>
+                {formatTime(v.ts)}
+              </span>
+              {named && <Bookmark size={ICON_SIZE.xs} filled className="shrink-0 text-accent" aria-hidden />}
+              {/* 自动节点的名字由后端按时间生成，与这里的时间重复，所以只显示
+                  **用户起的**名字（`versionDisplayName`）；命名节点的名字加重 */}
+              {!renaming && (
+                <span
+                  className={cn(
+                    'min-w-0 flex-1 truncate text-sm',
+                    named ? 'font-medium text-ink' : 'text-ink-2',
+                  )}
+                  data-timeline-name
+                >
+                  {versionDisplayName(v)}
+                </span>
+              )}
+              {renaming && <span className="flex-1" />}
+              <KindMark meta={v} />
+            </span>
+            <span className="text-xs text-ink-3">
+              {versionSummaryText(versionSummary(v, comparableEarlier(all, index)))
+                .map(formatMessage)
+                .join(' · ')}
+            </span>
+            {/* 这一版拍的是哪张画布（R-03）。旧节点没有这个字段，**照实说「不知道」**，
+                不猜成当前画布（左栏审计 L21）。 */}
+            {showCanvas && (
+              <span className="truncate type-meta">
+                {v.canvasId
+                  ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
+                  : vd('fromUnknownCanvas')}
+              </span>
+            )}
+          </span>
+        </button>
+        <Menu
+          align="end"
+          trigger={
+            <IconButton iconSize="sm" label={vd('more')} className="mt-1.5 shrink-0" data-timeline-more>
+              <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
+            </IconButton>
+          }
+        >
+          <MenuItem onSelect={() => onRename(true)}>{vd(named ? 'rename' : 'name')}</MenuItem>
+          {named && (
+            <MenuItem onSelect={act(() => updateVersion(docId, v.id, { named: false }))}>
+              {vd('unname')}
+            </MenuItem>
+          )}
+          <MenuItem onSelect={act(() => duplicateVersion(docId, v.id))}>{vd('duplicate')}</MenuItem>
+          <MenuSeparator />
+          <MenuItem onSelect={() => void remove()}>
+            <span className="text-danger">{vd('delete')}</span>
+          </MenuItem>
+        </Menu>
+      </div>
+      {renaming && (
+        <div className="px-3 pb-1.5">
+          <input
+            autoFocus
+            value={draft}
+            aria-label={vd('versionName')}
+            placeholder={vd('namePlaceholder')}
+            data-timeline-rename
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => void commitName()}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+              if (e.key === 'Escape') {
+                setDraft(named ? v.name : '')
+                onRename(false)
+              }
+            }}
+            // 行内改名框是「可编辑框」那一副（fieldBox，左栏审计 L31）
+            className={cn('h-7 w-full px-1.5 outline-none', FIELD_BOX, FIELD_FOCUS)}
+          />
+        </div>
+      )}
+      {children}
+    </li>
+  )
+}
+
 /**
  * 恢复落点的四条岔路（R-03）。返回 false = 用户取消，一个字节都不写。
  *
  * 判据本身在 `lib/versionTarget.ts`；这里只负责"每一条该说什么话"。
- * 会覆盖当前画布的那两条（原画布已删除 / 检查点没有画布身份）措辞最重，
+ * 会覆盖当前画布的那两条（原画布已删除 / 节点没有画布身份）措辞最重，
  * 因为它们是唯一会盖掉**别的画布**内容的路径。
  */
 async function confirmRestoreTarget(meta: LayoutVersionMeta): Promise<boolean> {
@@ -352,243 +581,107 @@ async function confirmRestoreTarget(meta: LayoutVersionMeta): Promise<boolean> {
   })
 }
 
-/* ------------------------------- 详情面板 --------------------------------- */
+/**
+ * 恢复到一个节点（ADR 0101）。抽屉里的按钮与预览横幅上的按钮**共用这一份**。
+ *
+ * 1. 先收掉还开着的连续编辑（否则这次 commit 会被并进上一条历史，一次撤销同时
+ *    吐出「刚才那笔编辑」和「整份恢复」；issue #131）；
+ * 2. 落点由**节点自己的画布身份**决定（R-03），要切画布先切；
+ * 3. **先把当前状态存成「恢复前」关键时刻节点**——存不下来就不恢复：那个节点是
+ *    恢复这件事本身能被撤销的保证（ADR 0101），没有它的恢复就是一次覆盖；
+ * 4. 一次 `commit`（`restoreLayoutVersion`）写入：⌘Z 一步退回恢复之前。
+ *
+ * 返回 true = 写进去了。
+ */
+export async function restoreNode(
+  meta: LayoutVersionMeta,
+  versionDoc: FigureDocument,
+): Promise<boolean> {
+  finishActiveGesture()
+  if (!(await confirmRestoreTarget(meta))) return false
+  // 原画布还在 → 切过去再写（「恢复前」拍的因此是**即将被覆盖的那张**）；
+  // 已删除 / 没有身份 → 用户刚点头同意写进当前画布
+  const target = resolveRestoreTarget(meta, useDocumentStore.getState())
+  if (target.kind === 'other') useDocumentStore.getState().switchCanvas(target.canvasId)
+  const hashBefore = documentDigest(useDocumentStore.getState().doc)
+  recordDiagnosticEvent({
+    type: 'layout_version.restore.request',
+    version: versionHash(meta.id),
+    document_hash: hashBefore,
+    past_count: useDocumentStore.getState().past.length,
+    future_count: useDocumentStore.getState().future.length,
+  })
+  try {
+    await takeCheckpoint({
+      auto: true,
+      moment: 'before_restore',
+      name: vd('beforeRestore', { time: formatTime(Date.now()) }),
+      programName: true,
+      allowEmpty: true,
+    })
+  } catch (e) {
+    useUiStore
+      .getState()
+      .setStatus(msg('versions.restoreFailed', { error: backendErrorText(e) }, 'dialogs'), 'error')
+    return false
+  }
+  const label = versionDisplayName(meta) || formatTime(meta.ts)
+  // 面板 overrides 的身份原样恢复，不按此刻的 manifest 重抄（ADR 0083）
+  restoreLayoutVersion(msg('versions.restoreHistory', { name: label }, 'dialogs'), versionDoc)
+  recordDiagnosticEvent({
+    type: 'layout_version.restore.complete',
+    version: versionHash(meta.id),
+    document_hash_before: hashBefore,
+    document_hash_after: documentDigest(useDocumentStore.getState().doc),
+    auto_backup_created: true,
+    past_count: useDocumentStore.getState().past.length,
+    future_count: useDocumentStore.getState().future.length,
+  })
+  useTimelineStore.getState().setPreview(null)
+  useUiStore
+    .getState()
+    .setStatus(msg('versions.restored', { name: label, undo: modKey('Z') }, 'dialogs'))
+  return true
+}
 
-function VersionDetail({
-  docId,
+/* ------------------------------- 节点详情 --------------------------------- */
+
+function NodeDetail({
   meta,
   versionDoc,
-  onChanged,
-  onClose,
-  setBusy,
 }: {
-  docId: string
   meta: LayoutVersionMeta
   versionDoc: FigureDocument | null
-  onChanged: () => Promise<void>
-  onClose: () => void
-  setBusy: (v: boolean) => void
 }) {
   useTranslation(['dialogs', 'common'])
   const activeDoc = useDocumentStore((s) => s.doc)
   const canvases = useDocumentStore((s) => s.canvases)
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
   /**
-   * 「当前」指的是**这个检查点所属画布**的当前内容，不是恰好激活的那张。
-   * 拿激活画布去和另一张画布的检查点做 diff，差异栏里全是无中生有的
-   * "新增 12 个对象"，而用户以为自己在看这一版改了什么（R-03）。
+   * 「当前」指的是**这个节点所属画布**的当前内容，不是恰好激活的那张。
+   * 拿激活画布去和另一张画布的节点做 diff，差异栏里全是无中生有的
+   * "新增 12 个对象"（R-03）。
    */
   const currentDoc = useMemo(() => {
     if (!meta.canvasId || meta.canvasId === activeCanvasId) return activeDoc
     const c = canvases.find((x) => x.id === meta.canvasId)
     return c ? canvasToDoc(c) : activeDoc
   }, [meta.canvasId, activeCanvasId, activeDoc, canvases])
-  const [view, setView] = useState<'version' | 'current'>('version')
-  const [compareOpen, setCompareOpen] = useState(false)
-  const [renaming, setRenaming] = useState(false)
-  const [draft, setDraft] = useState(meta.name)
-  /** 有面板的图内修改渲染不出来 → 详情下方明确标「近似预览」 */
-  const [approximate, setApproximate] = useState(false)
-  /**
-   * 对比对话框有**自己的**一份标记：它是 modal，盖住了详情里那句说明。
-   * 不单独标的话，用户会拿一张磁盘原图当成这一版的样子去和当前布局对比
-   * ——那正是这次要修掉的「无提示地冒充版本视觉状态」。
-   */
-  const [compareApproximate, setCompareApproximate] = useState(false)
-
-  useEffect(() => {
-    setDraft(meta.name)
-    setRenaming(false)
-    setApproximate(false)
-    setCompareApproximate(false)
-  }, [meta.id, meta.name])
 
   const diff = useMemo(
     () => (versionDoc ? diffDocs(versionDoc, currentDoc) : []),
     [versionDoc, currentDoc],
   )
 
-  const restore = async () => {
-    if (!versionDoc) return
-    // 恢复是离散动作：先收掉还开着的连续编辑（否则这次 commit 会被并进
-    // 上一条历史，一次撤销同时吐出「刚才那笔编辑」和「整份恢复」）。
-    // 收尾也保证了自动存档存下去的是**真正的当前状态**，而不是一个
-    // 事务开着、值还没落定的中间态（issue #131）。
-    finishActiveGesture()
-    // 落点由**检查点自己的画布身份**决定，不是"恰好激活的那张"（R-03）。
-    // 三条岔路各自要用户点头，因为它们盖掉的东西不一样。
-    if (!(await confirmRestoreTarget(meta))) return
-    // 原画布还在 → 切过去再写（自动存档因此拍的是**即将被覆盖的那张**）；
-    // 已删除 / 没有身份 → 用户刚点头同意写进当前画布
-    const target = resolveRestoreTarget(meta, useDocumentStore.getState())
-    if (target.kind === 'other') useDocumentStore.getState().switchCanvas(target.canvasId)
-    setBusy(true)
-    const hashBefore = documentDigest(useDocumentStore.getState().doc)
-    recordDiagnosticEvent({
-      type: 'layout_version.restore.request',
-      version: versionHash(meta.id),
-      document_hash: hashBefore,
-      past_count: useDocumentStore.getState().past.length,
-      future_count: useDocumentStore.getState().future.length,
-    })
-    let backupCreated = false
-    try {
-      // 先把当前状态自动存档：恢复默认产生新版本，绝不覆盖当前工作
-      await createVersion(docId, {
-        name: vd('beforeRestore', { time: formatTime(Date.now()) }),
-        auto: true,
-        ...activeCanvasIdentity(),
-      })
-      backupCreated = true
-      // 面板 overrides 的身份原样恢复，不按此刻的 manifest 重抄（ADR 0083）
-      restoreLayoutVersion(msg('versions.restoreHistory', { name: meta.name }, 'dialogs'), versionDoc)
-      recordDiagnosticEvent({
-        type: 'layout_version.restore.complete',
-        version: versionHash(meta.id),
-        document_hash_before: hashBefore,
-        document_hash_after: documentDigest(useDocumentStore.getState().doc),
-        auto_backup_created: backupCreated,
-        past_count: useDocumentStore.getState().past.length,
-        future_count: useDocumentStore.getState().future.length,
-      })
-      await onChanged()
-      useUiStore
-        .getState()
-        .setStatus(msg('versions.restored', { name: meta.name }, 'dialogs'))
-      onClose()
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const rename = async () => {
-    const name = draft.trim()
-    setRenaming(false)
-    if (!name || name === meta.name) return
-    await updateVersion(docId, meta.id, { name })
-    await onChanged()
-  }
-
-  const remove = async () => {
-    if (
-      !(await askConfirm({
-        title: msg('versions.deleteTitle', { name: meta.name }, 'dialogs'),
-        body: msg('versions.deleteBody', undefined, 'dialogs'),
-        confirmLabel: msg('actions.delete', undefined, 'common'),
-        danger: true,
-      }))
-    ) {
-      return
-    }
-    await deleteVersion(docId, meta.id)
-    await onChanged()
-  }
-
   return (
-    <div className="flex flex-col gap-2 bg-surface-2/60 px-3 py-2">
-      <div className="flex items-center gap-0.5">
-        {renaming ? (
-          <input
-            autoFocus
-            value={draft}
-            aria-label={vd('versionName')}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={rename}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-              if (e.key === 'Escape') {
-                setDraft(meta.name)
-                setRenaming(false)
-              }
-            }}
-            // 行内改名框是「可编辑框」那一副（fieldBox），三处此前三种高度 / 圆角 / 边色
-            // （左栏审计 L31）
-            className={cn('h-7 min-w-0 flex-1 px-1.5 outline-none', FIELD_BOX, FIELD_FOCUS)}
-          />
-        ) : (
-          <span className="min-w-0 flex-1" />
-        )}
-        {/* 图标钮走 IconButton：名字与气泡是同一份，不再 Tip 手包一层 + aria-label
-            另写一遍（宪法第四、五节；左栏审计 L14） */}
-        <IconButton iconSize="sm" label={vd('rename')} onClick={() => setRenaming(true)}>
-          <Pencil size={ICON_SIZE.sm} className="text-ink-3" />
-        </IconButton>
-        <IconButton
-          iconSize="sm"
-          label={vd('duplicate')}
-          onClick={async () => {
-            await duplicateVersion(docId, meta.id)
-            await onChanged()
-          }}
-        >
-          <Copy size={ICON_SIZE.sm} className="text-ink-3" />
-        </IconButton>
-        {meta.auto && (
-          <Button
-            size="sm"
-            className="text-ink-2"
-            title={vd('keepTitle')}
-            onClick={async () => {
-              await updateVersion(docId, meta.id, { auto: false })
-              await onChanged()
-            }}
-          >
-            {vd('keep')}
-          </Button>
-        )}
-        <IconButton iconSize="sm" label={vd('delete')} onClick={remove}>
-          <Trash2 size={ICON_SIZE.sm} className="text-danger" />
-        </IconButton>
-      </div>
-
+    <div className="flex flex-col gap-2 bg-surface-2/60 px-3 py-2" data-timeline-detail>
       {!versionDoc ? (
-        <p className="py-4 text-center text-xs text-ink-3">{vd('loadingSnapshot')}</p>
+        <p className="py-2 text-center text-xs text-ink-3">{vd('loadingSnapshot')}</p>
       ) : (
         <>
-          <div className="flex items-center justify-between gap-1.5">
-            {/* 「该版本 / 当前」是看哪一页的预览，不是一个取值：下划线页签（`Tabs`），
-                与右栏「属性 / 画布」同一条线；取值控件是 `Segmented` */}
-            {/* 页签条 36：同一个 Tabs 原语不能左栏 32、右栏 36（左栏审计 L25） */}
-            <div className="flex h-9 min-w-0 flex-1 items-center border-b border-border">
-              <TabList label={vd('viewLabel')}>
-                {(['version', 'current'] as const).map((v) => (
-                  <Tab key={v} panelId={`version-view-${v}`} active={view === v} onClick={() => setView(v)}>
-                    {vd(v === 'version' ? 'viewVersion' : 'viewCurrent')}
-                  </Tab>
-                ))}
-              </TabList>
-            </div>
-            <IconButton
-              iconSize="sm"
-              label={vd('compareAria')}
-              tip={vd('compareTip')}
-              onClick={() => setCompareOpen(true)}
-            >
-              <Layers2 size={ICON_SIZE.sm} className="text-ink-2" />
-            </IconButton>
-          </div>
-
-          <TabPanel id={`version-view-${view}`}>
-            <LayoutSnapshot
-              doc={view === 'version' ? versionDoc : currentDoc}
-              renderOverrides
-              onApproximate={setApproximate}
-            />
-          </TabPanel>
-          {approximate && (
-            <p className="text-xs leading-relaxed text-ink-3">{vd('previewApproximate')}</p>
-          )}
-
-          {/* 这一段唯一的 primary，字号与其它 primary 同一档；右对齐落在上面动作条
-              同一条边线上——此前是产品里唯一的全宽块钮（左栏审计 L23） */}
-          <div className="flex justify-end">
-            <Button variant="primary" size="md" onClick={restore}>
-              <RotateCcw size={ICON_SIZE.sm} />
-              {vd('restore')}
-            </Button>
-          </div>
-
+          {/* 「恢复到这里」不在这里：选中节点时画布上的预览横幅就有它，一屏两颗填色
+              主按钮是同一个动作说两遍（宪法：每个上下文最多一个填色主动作）。这里
+              只回答「和现在比变了什么」 */}
           {diff.length === 0 ? (
             <p className="text-xs text-ink-3">{vd('noDiff')}</p>
           ) : (
@@ -601,8 +694,7 @@ function VersionDetail({
                   <span
                     className={cn(
                       'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
-                      // 「新增」是语义色 ok，不是 accent——accent 只给焦点 / 链接 / AI /
-                      // 选择框（宪法第一节；左栏审计 L33）
+                      // 「新增」是语义色 ok，不是 accent（宪法第一节；左栏审计 L33）
                       d.kind === 'add' && 'bg-ok',
                       d.kind === 'remove' && 'bg-danger',
                       d.kind !== 'add' && d.kind !== 'remove' && 'bg-ink-faint',
@@ -613,33 +705,102 @@ function VersionDetail({
               ))}
             </ul>
           )}
-
-          <Dialog
-            open={compareOpen}
-            onOpenChange={setCompareOpen}
-            title={vd('compareTitle')}
-            description={vd('compareDescription')}
-            size="lg"
-          >
-            {/* 对比叠加：底图按**版本自己的** overrides 出，上层是当前布局的轮廓 */}
-            <div className="relative mx-auto" style={{ maxWidth: 480 }}>
-              <LayoutSnapshot
-                doc={versionDoc}
-                renderOverrides
-                onApproximate={setCompareApproximate}
-              />
-              <div className="absolute inset-0 opacity-55">
-                <LayoutSnapshot doc={currentDoc} outline />
-              </div>
-            </div>
-            {compareApproximate && (
-              <p className="mt-2 text-xs leading-relaxed text-ink-3">
-                {vd('previewApproximate')}
-              </p>
-            )}
-          </Dialog>
         </>
       )}
+    </div>
+  )
+}
+
+/* ------------------------------- 只读预览 --------------------------------- */
+
+/**
+ * 画布区域上的只读预览（ADR 0101）：选中一个节点时盖在画布上，显示**那一刻**的
+ * 排版（面板按那一刻自己的 overrides 出图），横幅上两个出口：恢复到这里 / 退出预览。
+ *
+ * 它**不是第二个画布**：不挂命中层、不进 documentStore、不 commit——画的是
+ * `LayoutSnapshot` 那张静态图。盖住画布是有意的：预览期间在底下的真画布上
+ * 拖一下，用户分不清改的是哪一个。
+ *
+ * 抽屉浮在整行右侧，会盖住画布列的右边一截；预览按抽屉此刻的左边界让出位置，
+ * 否则大图的右半边藏在抽屉底下。
+ */
+export function TimelinePreview() {
+  useTranslation(['dialogs'])
+  const preview = useTimelineStore((s) => s.preview)
+  const docId = useDocumentStore((s) => s.documentId)
+  const open = useUiStore((s) => s.versionsOpen)
+  const ref = useRef<HTMLDivElement>(null)
+  const [rightInset, setRightInset] = useState(0)
+  const [approximate, setApproximate] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const active = open && preview && preview.docId === docId ? preview : null
+
+  useLayoutEffect(() => {
+    if (!active) return
+    const measure = () => {
+      const el = ref.current
+      const drawer = document.querySelector<HTMLElement>('[data-timeline-drawer]')
+      if (!el || !drawer) return setRightInset(0)
+      const a = el.getBoundingClientRect()
+      const b = drawer.getBoundingClientRect()
+      setRightInset(Math.max(0, Math.min(a.width, a.right - b.left)))
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [active])
+
+  useEffect(() => setApproximate(false), [active?.meta.id])
+
+  if (!active) return null
+  const { meta, doc } = active
+  const restore = async () => {
+    if (!doc) return
+    setBusy(true)
+    try {
+      await restoreNode(meta, doc)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div
+      ref={ref}
+      role="region"
+      aria-label={vd('previewLabel')}
+      data-timeline-preview={meta.id}
+      className="absolute inset-0 z-30 flex flex-col bg-canvas"
+      style={{ paddingRight: rightInset }}
+    >
+      <div className="flex h-11 shrink-0 items-center gap-2 bg-surface px-3 shadow-card">
+        <RotateCcwClock size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
+        <span className="min-w-0 flex-1 truncate text-sm text-ink">
+          {vd('previewing', { time: `${formatDate(meta.ts)} ${formatTime(meta.ts)}` })}
+          {versionDisplayName(meta) && (
+            <span className="ml-1.5 font-medium">{versionDisplayName(meta)}</span>
+          )}
+        </span>
+        <Button size="sm" onClick={() => useTimelineStore.getState().setPreview(null)} data-timeline-exit-preview>
+          {vd('exitPreview')}
+        </Button>
+        <Button variant="primary" size="sm" loading={busy} disabled={!doc} onClick={restore} data-timeline-preview-restore>
+          <RotateCcw size={ICON_SIZE.sm} />
+          {vd('restore')}
+        </Button>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 overflow-auto p-6">
+        {doc ? (
+          <div className="w-full max-w-[min(100%,900px)]" style={{ maxHeight: '100%' }}>
+            <LayoutSnapshot doc={doc} renderOverrides onApproximate={setApproximate} />
+          </div>
+        ) : (
+          <p className="text-xs text-ink-3">{vd('loadingSnapshot')}</p>
+        )}
+        {approximate && (
+          <p className="text-xs leading-relaxed text-ink-3">{vd('previewApproximate')}</p>
+        )}
+      </div>
     </div>
   )
 }

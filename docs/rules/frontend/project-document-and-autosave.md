@@ -148,6 +148,15 @@
   新项目再换空白文档，而换文档第一句就是把旧文档冲刷落盘。当前项目名的投影在
   `lib/projectLabel.ts`（由 `projectStore` 写、`documentStore` 读，避免两个 store
   互相 import 成环）。旧条目没有这两个字段 = **不知道**，什么都不标。
+- **排版时间线（ADR 0101，2026-09-27）**：打节点只有一个入口
+  `lib/timelineCheckpoint.takeCheckpoint()`——自动节点、关键时刻（`markMoment()`）、命名节点、
+  「恢复前」全走它，它在**第一个 await 之前**同步取走 pj / 文档 / 画布身份 / 缩略图图源（离开
+  项目那一刻紧跟着就是换 pj、清 renderStore）。`markMoment()` 只在 `startVersionCheckpoints`
+  挂上时才发请求。恢复只有 `VersionDialog.restoreNode()` 一处：先 await「恢复前」节点，存不下来
+  就不恢复，再一次 `restoreLayoutVersion` commit（⌘Z 一步退回；布局组跟着对象恢复）。
+  预览是 `timelineStore.preview` 上的一张只读图（`TimelinePreview`），不进 documentStore、
+  换项目时 `clear()`。自动间隔 15 s 停顿 / 2 分钟，e2e 只经
+  `window.__TAVOTTO_TIMELINE_TIMING__` 注入，产品默认值不动。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

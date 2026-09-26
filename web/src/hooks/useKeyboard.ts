@@ -14,6 +14,8 @@ import {
   hideElements,
   nudgeSelected,
   selectAll,
+  startNamedNode,
+  toggleTimeline,
 } from '@/store/actions'
 import { cancelActivePointerGesture } from '@/canvas/interactions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -21,6 +23,7 @@ import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { useTimelineStore } from '@/store/timelineStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
@@ -136,6 +139,14 @@ export function useKeyboard() {
       // 另存对话框——用户以为自己存了文档，存下来的是一张 HTML。
       // 这是 inEditableTarget 之前**唯一**的例外：其余快捷键在输入框里都该
       // 让位给原生编辑行为。
+      // ⌥⌘S = 把现在存为命名节点（ADR 0101）。按 `code` 判：⌥ 会把 macOS 上的
+      // `key` 变成 ß；必须排在 ⌘S 前面——Windows 上 Ctrl+Alt+S 的 `key` 仍是 s，
+      // 落进下一条就成了「保存」
+      if (mod && e.altKey && !e.shiftKey && e.code === 'KeyS') {
+        e.preventDefault()
+        startNamedNode()
+        return
+      }
       if (mod && e.key.toLowerCase() === 's') {
         e.preventDefault()
         // ⇧⌘S = 另存为一份命名的画布文件；⌘S = 真的保存当前文档
@@ -147,6 +158,13 @@ export function useKeyboard() {
       if (inEditableTarget(e)) return
       const doc = useDocumentStore.getState()
 
+      // ⇧⌘H = 打开 / 关闭排版时间线（ADR 0101；⌥⌘H 是 macOS 的「隐藏其他」，
+      // ⇧⌘Y 会落进下面 ⌘Y 的重做分支）
+      if (mod && e.shiftKey && !e.altKey && e.code === 'KeyH') {
+        e.preventDefault()
+        toggleTimeline()
+        return
+      }
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         runUndoRedo(e.shiftKey)
@@ -223,8 +241,10 @@ export function useKeyboard() {
       }
       if (e.key === 'Escape') {
         e.preventDefault()
-        // 最上层浮层优先：版本抽屉开着就先关它
-        if (ui.versionsOpen) ui.setVersionsOpen(false)
+        // 最上层浮层优先：时间线在预览就先退预览，再关抽屉
+        if (ui.versionsOpen && useTimelineStore.getState().preview) {
+          useTimelineStore.getState().setPreview(null)
+        } else if (ui.versionsOpen) ui.setVersionsOpen(false)
         else if (ui.editingTextId) ui.setEditingText(null)
         else if (ui.elementPanelId) {
           // 先退选中的图内元素，再退整个图内编辑态；

@@ -19,7 +19,7 @@ import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
 import { DocumentBanner } from '@/components/DocumentBanner'
 import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
-import { VersionDrawer } from '@/components/VersionDialog'
+import { TimelinePreview, VersionDrawer } from '@/components/VersionDialog'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
 import { CanvasHud, NotificationRail } from '@/components/StatusBar'
@@ -229,6 +229,8 @@ function Workspace() {
           {left.mounted && <LeftPanel overlay={overlay} state={left.state} />}
           <div className="relative flex min-w-0 flex-1 flex-col">
             <CanvasStage />
+            {/* 时间线节点的只读预览：盖在画布上，不是第二个画布（ADR 0101） */}
+            <TimelinePreview />
             <CanvasHud />
             <NativeSessionCards />
             <NotificationRail />

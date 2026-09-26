@@ -598,6 +598,10 @@ export default interface Resources {
           "keywords": "save layout bc baocun",
           "label": "保存为画布文件…"
         },
+        "save-named-version": {
+          "keywords": "named version bookmark snapshot mingming jiedian mmjd",
+          "label": "把现在存为命名节点…"
+        },
         "select-all": {
           "keywords": "select all qx quanxuan",
           "label": "全选"
@@ -631,8 +635,8 @@ export default interface Resources {
           "label": "取消成组"
         },
         "versions": {
-          "keywords": "version history timeline bb sjx banben",
-          "label": "文档版本…"
+          "keywords": "version history timeline banben shijianxian sjx lishi",
+          "label": "排版时间线…"
         }
       },
       "listLabel": "命令",
@@ -1623,16 +1627,12 @@ export default interface Resources {
       "upgrading": "正在升级…"
     },
     "versions": {
-      "autoBadge": "自动",
       "beforeRestore": "恢复前（{{time}}）",
-      "close": "关闭文档版本",
-      "compareAria": "叠加对比",
-      "compareDescription": "底图 = 该版本；半透明描边 = 当前画布",
-      "compareTip": "大尺寸叠加对比（底图 = 该版本，描边 = 当前）",
-      "compareTitle": "叠加对比",
-      "delete": "删除版本",
-      "deleteBody": "删除后无法找回，当前文档不受影响。",
-      "deleteTitle": "删除版本「{{name}}」？",
+      "budgetOver": "命名节点已占用 {{used}} MB，超过 {{limit}} MB 的上限。它们不会被自动删除，但删掉几个之前不能再命名新节点。",
+      "close": "关闭排版时间线",
+      "delete": "删除节点",
+      "deleteBody": "删除后无法找回，当前排版不受影响。",
+      "deleteTitle": "删除节点「{{name}}」？",
       "diff": {
         "added": "当前新增：{{name}}",
         "assetReplaced": "{{name}}：素材已替换",
@@ -1656,30 +1656,50 @@ export default interface Resources {
         "unlocked": "{{name}}：已解锁",
         "zorder": "对象层级顺序不同"
       },
-      "drawerLabel": "文档版本",
-      "duplicate": "复制版本",
-      "emptyTitle": "还没有版本",
+      "drawerLabel": "排版时间线",
+      "duplicate": "复制节点",
+      "emptyBody": "编辑停顿后，最多每 2 分钟会自动留一个节点；导出、写回、保存、打开和离开项目时也会留一个。",
+      "emptyTitle": "还没有节点",
+      "exitPreview": "退出预览",
       "fromCanvas": "来自画布「{{name}}」",
-      "fromUnknownCanvas": "旧检查点，画布未知",
-      "keep": "保留",
-      "keepTitle": "自动检查点会随时间清理；保留后按手动版本留存。",
-      "listLabel": "版本列表",
-      "loadingSnapshot": "正在载入快照…",
-      "namePlaceholder": "版本名称（可留空）",
+      "fromUnknownCanvas": "旧节点，画布未知",
+      "kind": {
+        "auto": "自动",
+        "manual": "手动",
+        "named": "命名"
+      },
+      "listLabel": "时间线节点",
+      "loadingSnapshot": "正在载入这一刻的排版…",
+      "moment": {
+        "before_restore": "恢复前",
+        "close": "离开项目",
+        "export": "导出",
+        "open": "打开项目",
+        "save": "保存",
+        "writeback": "写回"
+      },
+      "more": "节点操作",
+      "name": "命名…",
+      "namePlaceholder": "给现在起个名字，如「投稿前」",
+      "namedOnly": "只看命名",
       "noDiff": "与当前画布没有差异",
-      "previewApproximate": "图内修改预览不可用，下方缩略图是磁盘原图。",
-      "rename": "重命名版本",
-      "restore": "恢复为新版本",
-      "restoreHistory": "恢复文档版本「{{name}}」",
-      "restoreMissingCanvasBody": "这个检查点来自已删除的画布「{{from}}」。继续会写进当前画布「{{to}}」，覆盖现有内容。",
+      "noNamed": "还没有命名节点。给任意节点起个名字，它就不会被自动清理。",
+      "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
+      "previewLabel": "节点预览",
+      "previewing": "正在预览 {{time}} 的排版（只读）",
+      "rename": "改名…",
+      "restore": "恢复到这里",
+      "restoreFailed": "恢复前没能先存下当前排版，这次没有恢复：{{error}}",
+      "restoreHistory": "恢复排版节点「{{name}}」",
+      "restoreMissingCanvasBody": "这个节点来自已删除的画布「{{from}}」。继续会写进当前画布「{{to}}」，覆盖现有内容。",
       "restoreMissingCanvasTitle": "原画布已不存在",
-      "restoreOtherCanvasBody": "这个检查点拍自画布「{{from}}」，你当前在「{{to}}」。恢复会切到「{{from}}」写入，不动当前画布。",
+      "restoreOtherCanvasBody": "这个节点拍自画布「{{from}}」，你当前在「{{to}}」。恢复会切到「{{from}}」写入，不动当前画布。",
       "restoreOtherCanvasTitle": "恢复到画布「{{name}}」？",
-      "restoreUnknownCanvasBody": "它由旧版本留下，未记录来自哪张画布。继续会写进当前画布「{{to}}」，覆盖现有内容。",
-      "restoreUnknownCanvasTitle": "这个检查点没有来源画布",
-      "restored": "已恢复文档版本「{{name}}」，可撤销，未改动源文件。",
-      "save": "存版本",
-      "saved": "已把当前文档存成新版本",
+      "restoreUnknownCanvasBody": "它由旧版本留下，没有记录来自哪张画布。继续会写进当前画布「{{to}}」，覆盖现有内容。",
+      "restoreUnknownCanvasTitle": "这个节点没有来源画布",
+      "restored": "已恢复到「{{name}}」。恢复前的排版已存成节点，也可以按 {{undo}} 撤销。",
+      "save": "存为命名节点",
+      "saved": "已把现在存为命名节点「{{name}}」",
       "summary": {
         "added_other": "新增 {{count}} 个对象",
         "baseline_other": "{{count}} 个对象",
@@ -1688,11 +1708,11 @@ export default interface Resources {
         "resized": "图幅 {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
         "sameMetrics": "对象数与图幅未变"
       },
-      "title": "文档版本",
-      "versionName": "版本名称",
-      "viewCurrent": "当前",
-      "viewLabel": "预览哪一版",
-      "viewVersion": "该版本"
+      "title": "排版时间线",
+      "today": "今天",
+      "unname": "删除名字",
+      "versionName": "节点名称",
+      "yesterday": "昨天"
     }
   },
   "errors": {
@@ -1770,6 +1790,7 @@ export default interface Resources {
       "multiple_stem_conflict": "产出的图名已属于其它脚本：{{detail}}。请在「项目接入状态」里指定用哪个，再重试。",
       "name_exhausted": "同名文件太多。换个文件名再导出。",
       "name_missing": "缺少名称",
+      "named_budget_exceeded": "命名节点已占用 {{used}} MB，超过时间线 {{limit}} MB 的上限，这次没有命名。先在时间线里删掉几个用不到的命名节点。",
       "native_asset_conflict": "该图已绑定另一个 Tavotto Run 会话。等它结束后再试。",
       "native_attach_cancelled": "已取消。脚本没有运行。",
       "native_attach_failed": "Tavotto 桌面没能连上这次运行。",
@@ -1880,6 +1901,8 @@ export default interface Resources {
       "user_environment_gone": "这个 Python 环境已经找不到了，请重新检查",
       "user_environment_incomplete": "这个 Python 环境里还缺 {{packages}}，请重新检查",
       "user_environment_unverifiable": "现在算不出这个脚本需要哪些包，没法确认这个环境装齐了，请重新检查",
+      "version_moment_invalid": "不认识的关键时刻：{{moment}}",
+      "version_thumb_invalid": "节点缩略图格式不对或太大，没有保存。",
       "versions_unreadable": "无法读取版本历史，这次检查点没有写入。磁盘上的历史没有改动。",
       "workdir_confirmation_required": "要先选择脚本的运行目录",
       "workdir_mode_invalid": "不认识的工作目录模式：{{mode}}",
@@ -3651,8 +3674,10 @@ export default interface Resources {
       "quickEdit": "按对象打开快捷编辑菜单",
       "saveDocument": "保存当前文档",
       "saveLayout": "保存为画布文件",
+      "saveNamed": "把现在存为命名节点",
       "script": "上标 / 下标（属性面板文字框内）",
       "selectAll": "全选",
+      "timeline": "打开 / 关闭排版时间线",
       "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",
       "tutorialPause": "暂停教程（教程卡片有焦点时）",
       "undoRedo": "撤销 / 重做",
@@ -4392,6 +4417,7 @@ export default interface Resources {
       "saveStateTitle": "{{mod}}S 保存当前文档；⇧{{mod}}S 另存为命名的画布文件",
       "shortcutHelp": "快捷键帮助",
       "subLabelsTip": "按阅读顺序添加 (a)(b)(c) 标签",
+      "timelineButton": "排版时间线",
       "tutorial": {
         "restart": "再看一遍教程",
         "resume": "继续教程",
@@ -4400,7 +4426,7 @@ export default interface Resources {
       "undo": "撤销",
       "undoWith": "撤销 {{label}}",
       "updateAvailable": "有新版本 {{version}}",
-      "versionTimeline": "文档版本…",
+      "versionTimeline": "排版时间线…",
       "zoomIn": "放大",
       "zoomOut": "缩小",
       "zoomValue": "缩放 {{percent}}%"

@@ -127,6 +127,26 @@ describe('命令集', () => {
     spy.mockRestore()
   })
 
+  it('排版时间线（ADR 0101）：「排版时间线…」打开抽屉；「把现在存为命名节点…」打开并请求名字框焦点', async () => {
+    const { useTimelineStore } = await import('@/store/timelineStore')
+    useUiStore.setState({ versionsOpen: false })
+    useTimelineStore.setState({ focusNameRequest: 0 })
+    mount()
+    const find = (t: string) =>
+      Array.from(document.querySelectorAll('[role=option] button')).find((b) =>
+        b.textContent?.includes(t),
+      ) as HTMLButtonElement
+    act(() => find('把现在存为命名节点').click())
+    expect(useUiStore.getState().versionsOpen).toBe(true)
+    expect(useTimelineStore.getState().focusNameRequest).toBe(1)
+    useUiStore.setState({ versionsOpen: false })
+    act(() => root?.unmount())
+    usePalette.setState({ open: true })
+    mount()
+    act(() => find('排版时间线').click())
+    expect(useUiStore.getState().versionsOpen).toBe(true)
+  })
+
   it('英文界面下按英文关键词能搜到', async () => {
     await i18n.changeLanguage('en-US')
     mount()

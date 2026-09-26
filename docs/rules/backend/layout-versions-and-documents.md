@@ -25,6 +25,16 @@
   `canvasId` 取那**一张**画布（缩略图画的是一张页面）；页面尺寸取不出来就
   整条不发草图——**「不知道」是独立一档**，编一个 A4 出来的话用户会看到一张
   比例是假的图而没有任何提示。坏文档只赔掉自己那张缩略图，不让整条时间线 500。
+- **排版时间线（ADR 0101，2026-09-27）**：节点类型 named / moment / auto / manual 的判据只在
+  `app._version_kind`（前端不从 auto + name 自己猜）。**命名节点永不自动清理**：条数上限只数
+  未命名节点、`_sacrifice_order` 里没有命名节点；命名节点自己超出 `VERSION_KEEP_BYTES` 时
+  **拒绝再命名**（409 `named_budget_exceeded`，写之前判、磁盘零改动），已有的一条不删，
+  删名字 / 删节点永远放行。未命名的牺牲顺序：普通自动 → 关键时刻 → 手动。关键时刻是闭集
+  `VERSION_MOMENTS`（与前端 `LAYOUT_MOMENTS` 严格同源），**不去重**。节点缩略图存
+  `versions/thumbs/<排版 id>/<vid>.<webp|png>`，**不进时间线 JSON**（有没有 = 文件在不在；
+  记进 JSON 的话每挂一张图就多一次整写），`_sweep_version_thumbs` 按目录清孤儿、只认
+  `_VERSION_ID_RE` 的名字。列表端点的 `budget` 在文件没超上限时不量 `namedBytes`（缺席，
+  不冒充 0）。
 - **论文样式**：`/api/styles`（`layouts/_styles.json`）；前端按角色映射成
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
@@ -86,7 +96,7 @@
 下面是当时写在那一格、而本文上面没有逐字出现的要点，原文照搬、一字未改；
 它们与上文同等有效，改规则时一并改这里。
 
-- 版本上限条数 + 字节两条
+- 版本上限条数 + 字节两条；命名节点不参与裁剪、超上限拒绝再命名（ADR 0101）
 - 文档落盘只有 `atomicio`（NaN/∞ 落盘前拒）、读侧同样有闸
 - `project_layout_dir()` 是收纳规则唯一出处
 - 另存为与自动保存共用 `_revision_conflict`、锁不可重入、GET 不用 `send_file`

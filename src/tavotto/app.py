@@ -6983,8 +6983,13 @@ VERSIONS_DIR = (
     LAYOUT_DIR / engine_documents.VERSIONS_DIRNAME
 )  # 旧位置：只读兼容（新写入进项目 tavottofile/versions/）
 _VERSIONS_LOCK = threading.Lock()
-VERSION_KEEP_AUTO = 40  # 自动检查点保留数
-VERSION_KEEP_TOTAL = 120  # 单文档版本总数上限（先裁自动、再裁最旧）
+#: 未命名的普通自动检查点保留数。间隔从 5 分钟调到 2 分钟（ADR 0101）之后，
+#: 40 条只盖得住约 80 分钟的连续编辑，所以提到 60（约 2 小时）；大排版照旧先被
+#: 下面的字节上限咬住。
+VERSION_KEEP_AUTO = 60
+#: 单排版**未命名**节点的总数上限（先裁自动、再裁关键时刻、再裁手动）。
+#: 命名节点不计入、不参与裁剪（ADR 0101）——它们只受 `_named_budget_refusal` 管。
+VERSION_KEEP_TOTAL = 120
 #: 单文档版本时间线的**字节上限**（见 `_save_versions`）。
 #:
 #: 条数上限单独用不住体积：条目里存的是整份文档，于是文件大小 = 条数 × 文档
@@ -7134,8 +7139,12 @@ def _save_versions(doc_id: str, versions: list[dict]) -> None:
             break
         dropped.add(i)
         size -= len(blobs[i]) + len(sep)
+    # 裁完仍超上限，只可能是命名节点本身占满了预算：**命名节点一条都不删**
+    # （ADR 0101），文件照写；再命名新的节点由 `_named_budget_refusal` 拒绝，
+    # 界面从列表的 `budget` 读到超限并请用户自己删。
     chunks = [b for i, b in enumerate(blobs) if i not in dropped]
     engine_atomicio.write_bytes(_versions_path(doc_id), head + sep.join(chunks) + tail)
+    _sweep_version_thumbs(doc_id, {v.get("id") for i, v in enumerate(versions) if i not in dropped})
 
 
 def _sacrifice_order(versions: list[dict]) -> list[int]:
@@ -7152,22 +7161,156 @@ def _sacrifice_order(versions: list[dict]) -> list[int]:
     条数上限与字节上限**共用这一个顺序**。改造中途它们各有一套：条数那边按
     自动/手动分档，字节那边是纯粹的「留最新一段」——同一份契约在同一个文件里
     有两个答案，而字节那条会把手工检查点交给自动检查点去顶。
+
+    **命名节点也不参与牺牲**（ADR 0101）：名字是用户说「这一版我要留着」的唯一
+    方式，按时间或体积把它挤掉就等于没有这个功能。它们只受
+    `_named_budget_refusal` 管——超预算时拒绝**再命名**，已有的一条不动。
+    未命名的三档：普通自动 → 关键时刻（导出 / 写回 / 打开…，自动打的点但记着
+    「这里发生过一件事」）→ 手动。
     """
     keep_newest = len(versions) - 1
-    autos = [i for i, v in enumerate(versions) if v.get("auto") and i != keep_newest]
-    manual = [i for i, v in enumerate(versions) if not v.get("auto") and i != keep_newest]
-    return autos + manual  # 各自已按下标（= 时间）升序
+    tiers: dict[str, list[int]] = {"auto": [], "moment": [], "manual": []}
+    for i, v in enumerate(versions):
+        kind = _version_kind(v)
+        if i != keep_newest and kind in tiers:
+            tiers[kind].append(i)
+    return tiers["auto"] + tiers["moment"] + tiers["manual"]  # 各自已按下标（= 时间）升序
 
 
 def _prune_versions(versions: list[dict]) -> list[dict]:
-    autos = [v for v in versions if v.get("auto")]
+    autos = [v for v in versions if _version_kind(v) == "auto"]
     if len(autos) > VERSION_KEEP_AUTO:
         drop = {id(v) for v in autos[: len(autos) - VERSION_KEEP_AUTO]}
         versions = [v for v in versions if id(v) not in drop]
-    if len(versions) > VERSION_KEEP_TOTAL:
-        drop_idx = set(_sacrifice_order(versions)[: len(versions) - VERSION_KEEP_TOTAL])
+    # 条数上限数的是**未命名**节点：命名节点不计入（ADR 0101）
+    unnamed = sum(1 for v in versions if not _is_named(v))
+    if unnamed > VERSION_KEEP_TOTAL:
+        drop_idx = set(_sacrifice_order(versions)[: unnamed - VERSION_KEEP_TOTAL])
         versions = [v for i, v in enumerate(versions) if i not in drop_idx]
     return versions
+
+
+#: 关键时刻的闭集（ADR 0101）。不认识的值 400，不静默当成普通自动节点——
+#: 那样一个拼错的 moment 会在时间线上没有标记、还跟普通自动节点一起先被裁。
+VERSION_MOMENTS = frozenset({"export", "writeback", "open", "close", "before_restore", "save"})
+
+#: 后端给未命名节点起的名字（`api_versions_create` 的 `strftime`）。只在读**旧**
+#: 条目时用：`named` 字段出现之前，手动存的那一版名字要么是用户敲的、要么是这个
+#: 时间串——用户敲过名字的旧节点认作命名节点，升级不让它们变得可以被裁。
+_DEFAULT_VERSION_NAME = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}$")
+
+
+def _is_named(v: dict) -> bool:
+    """这一条是不是**命名节点**：用户亲手起了名字、永不被自动清理。"""
+    if "named" in v:
+        return bool(v["named"])
+    # 旧条目（ADR 0101 之前）没有这个字段。自动检查点（含旧的「恢复前」）的名字
+    # 是程序起的，不算；手动的看名字是不是默认时间串。
+    if v.get("auto"):
+        return False
+    name = str(v.get("name") or "").strip()
+    return bool(name) and not _DEFAULT_VERSION_NAME.match(name)
+
+
+def _version_kind(v: dict) -> str:
+    """named / moment / auto / manual —— 类型标记与裁剪档位的唯一出处。"""
+    if _is_named(v):
+        return "named"
+    if v.get("moment") in VERSION_MOMENTS:
+        return "moment"
+    return "auto" if v.get("auto") else "manual"
+
+
+def _versions_budget(versions: list[dict], file_size: int | None = None) -> dict:
+    """这份时间线里**命名节点**占了多少字节——超限提示与拒绝再命名的事实来源。
+
+    量的是 `_save_versions` 会写出的同一种字节（逐条 `dumps_json`），不另估。
+
+    `file_size` 是列表端点的捷径：整个文件都没超上限，命名节点就不可能超，
+    不必把它们再序列化一遍（实测 24 MB、百来个命名节点时这一遍约 150 ms，
+    而列表每打开一次抽屉就调一次）。此时 `namedBytes` 缺席——「没量」不冒充「0」。
+    """
+    if file_size is not None and file_size <= VERSION_KEEP_BYTES:
+        return {"limit": VERSION_KEEP_BYTES, "namedOver": False}
+    named = sum(len(engine_atomicio.dumps_json(v)) for v in versions if _is_named(v))
+    return {
+        "namedBytes": named,
+        "limit": VERSION_KEEP_BYTES,
+        "namedOver": named > VERSION_KEEP_BYTES,
+    }
+
+
+def _named_budget_refusal(versions: list[dict]):
+    """假如这次操作成功，命名节点会不会超出字节上限；超了回 409，放行回 `None`。
+
+    只在操作会**新增**命名节点时调用（命名 / 存为命名 / 复制一个命名节点）；删名字、
+    删节点永远放行——那正是用户腾地方的出口。拒绝发生在写之前：磁盘零改动。
+    """
+    budget = _versions_budget(versions)
+    if not budget["namedOver"]:
+        return None
+    return jsonify(
+        {
+            "error": "命名节点已经占满了这份排版的时间线空间，这次没有命名——"
+            "先删掉几个用不到的命名节点。",
+            "code": "named_budget_exceeded",
+            "params": {
+                "used": f"{budget['namedBytes'] / 1048576:.1f}",
+                "limit": f"{budget['limit'] / 1048576:.0f}",
+            },
+            "budget": budget,
+        }
+    ), 409
+
+
+# ---- 节点缩略图（ADR 0101）：一个节点一张小图，单独存，随节点一起裁剪 ----
+#: 单张缩略图的上限。前端合成的是 ~200 px 宽的小图（几 KB 到几十 KB）；这里只挡误传。
+VERSION_THUMB_MAX_BYTES = 256 * 1024
+#: 允许的格式 → 扩展名。WKWebView 编不出 webp 时前端退回 png。
+_VERSION_THUMB_TYPES = {"image/webp": "webp", "image/png": "png"}
+_VERSION_ID_RE = re.compile(r"^v[0-9a-f]+-[0-9a-f]+$")
+
+
+def _version_thumbs_dir(doc_id: str) -> Path:
+    """`<versions>/thumbs/<排版 id>/`：按排版分目录，清理时只扫这一份的。"""
+    p = _versions_path(doc_id)
+    return p.parent / "thumbs" / p.stem
+
+
+def _version_thumb_path(doc_id: str, vid: object) -> Path | None:
+    """这个节点**此刻磁盘上**的缩略图；没有就 `None`。
+
+    有没有缩略图是**文件在不在**，不记进时间线 JSON：记进去的话每挂一张图都要把
+    整份时间线（大排版十几 MB）再整写一遍，自动节点的写入代价就翻了一倍
+    （实测见 ADR 0101）。两种格式都看：同一个节点只会留一张（PUT 会删另一种）。
+    """
+    if not isinstance(vid, str) or not _VERSION_ID_RE.match(vid):
+        return None
+    d = _version_thumbs_dir(doc_id)
+    for ext in _VERSION_THUMB_TYPES.values():
+        p = d / f"{vid}.{ext}"
+        if p.is_file():
+            return p
+    return None
+
+
+def _sweep_version_thumbs(doc_id: str, kept_ids: set) -> None:
+    """删掉**不属于任何留下来的节点**的缩略图（裁剪 / 删除之后）。
+
+    按目录扫而不是按「这次删了谁」：进程在写完 JSON、删图之前被杀留下的孤儿图，
+    下一次任何写入都会顺手清掉。失败只记日志——缩略图是附属物，删不掉不能让这次
+    保存报错（JSON 已经原子写完了）。只认 `_VERSION_ID_RE` 的名字，别的文件不碰。
+    """
+    d = _version_thumbs_dir(doc_id)
+    if not d.is_dir():
+        return
+    for f in d.iterdir():
+        if f.stem in kept_ids or not _VERSION_ID_RE.match(f.stem):
+            continue
+        try:
+            f.unlink()
+        except OSError as exc:
+            LOG.warning("版本缩略图删不掉（下次再试）: %s: %s", f, exc)
 
 
 def _version_meta(v: dict) -> dict:
@@ -7177,10 +7320,16 @@ def _version_meta(v: dict) -> dict:
         "name": v.get("name", ""),
         "ts": v.get("ts", 0),
         "auto": bool(v.get("auto")),
+        # 时间线的类型标记（ADR 0101）：named / moment / auto / manual，判据只在
+        # `_version_kind`；前端不再从 auto + name 自己猜。
+        "kind": _version_kind(v),
+        "named": _is_named(v),
         "description": v.get("description", ""),
         "objects": len(_doc_objects(doc)),
         "page": doc.get("page"),
     }
+    if v.get("moment") in VERSION_MOMENTS:
+        meta["moment"] = v["moment"]
     # 检查点存的是**某一张画布**的内容，却按 documentId（= 整个项目）归档。
     # 不记下是哪一张，恢复时就只能往「当前激活的那张」上盖——在画布 B 上产生
     # 的检查点会把 B 的内容和名字盖到 A 头上（R-03）。
@@ -7323,8 +7472,12 @@ def _sketch_limits() -> tuple[int, int]:
 def api_versions_list(doc_id):
     max_objects, max_text = _sketch_limits()
     out = []
-    for v in _load_versions(doc_id):
+    versions = _load_versions(doc_id)
+    for v in versions:
         meta = _version_meta(v)
+        thumb = _version_thumb_path(doc_id, v.get("id"))
+        if thumb is not None:
+            meta["thumb"] = thumb.suffix[1:]
         if max_objects > 0:
             sketch = _version_sketch(v, max_objects, max_text)
             # 画不出来就**不带这个键**，不发一份空草图：空草图与「这一版真的
@@ -7332,7 +7485,12 @@ def api_versions_list(doc_id):
             if sketch is not None:
                 meta["sketch"] = sketch
         out.append(meta)
-    return jsonify({"versions": out})
+    src = _versions_source_path(doc_id)
+    try:
+        size = src.stat().st_size if src is not None else 0
+    except OSError:
+        size = None
+    return jsonify({"versions": out, "budget": _versions_budget(versions, size)})
 
 
 @app.get("/api/versions/<doc_id>/<vid>")
@@ -7347,14 +7505,30 @@ def api_versions_get(doc_id, vid):
 def api_versions_create(doc_id):
     body = request.get_json(force=True)
     doc = engine_documents.validate_document(body.get("doc"))
+    given = str(body.get("name") or "").strip()
+    # 命名节点（ADR 0101）= 调用方明确说 `named` 且真给了名字。只给名字不说
+    # named 的（「恢复前 10:32」这类程序起的名字）不算：名字是谁起的才是判据。
+    named = bool(body.get("named")) and bool(given)
+    moment = body.get("moment")
+    if moment is not None and moment not in VERSION_MOMENTS:
+        return jsonify(
+            {
+                "error": f"未知的关键时刻: {moment}",
+                "code": "version_moment_invalid",
+                "params": {"moment": str(moment)[:40]},
+            }
+        ), 400
     ver = {
         "id": _new_version_id(),
-        "name": str(body.get("name") or "").strip() or time.strftime("%m-%d %H:%M"),
+        "name": given or time.strftime("%m-%d %H:%M"),
         "ts": int(time.time() * 1000),
         "auto": bool(body.get("auto")),
+        "named": named,
         "description": str(body.get("description") or ""),
         "doc": doc,
     }
+    if moment is not None:
+        ver["moment"] = moment
     # 画布身份（R-03）：只在调用方真的给了的时候记；给了空串等于没给。
     if body.get("canvasId"):
         ver["canvasId"] = str(body["canvasId"])
@@ -7370,8 +7544,10 @@ def api_versions_create(doc_id):
             refusal = _refuse_blind_full_overwrite(doc_id)
             if refusal is not None:
                 return refusal
-        # 自动检查点若与最近一版内容相同则跳过（刷新/空转不该刷版本）
-        if ver["auto"] and versions:
+        # 自动检查点若与最近一版内容相同则跳过（刷新/空转不该刷版本）。
+        # 关键时刻**不跳过**：「导出成功」那一刻内容没变也是一件发生过的事，
+        # 它的标记正是用户要找的东西（ADR 0101）。
+        if ver["auto"] and moment is None and versions:
             last = versions[-1]
             # 画布身份也参与去重判据：两张画布内容恰好相同（复制一张画布之后
             # 很常见）时，只比 doc 会把**另一张画布**的检查点判成重复而跳过，
@@ -7382,6 +7558,10 @@ def api_versions_create(doc_id):
             ):
                 return jsonify({"skipped": True, "version": _version_meta(last)})
         versions.append(ver)
+        if named:
+            refusal = _named_budget_refusal(versions)
+            if refusal is not None:
+                return refusal
         versions = _prune_versions(versions)
         _save_versions(doc_id, versions)
     return jsonify({"version": _version_meta(ver)})
@@ -7394,12 +7574,26 @@ def api_versions_rename(doc_id, vid):
         versions = _load_versions(doc_id)
         for v in versions:
             if v["id"] == vid:
+                was_named = _is_named(v)
                 if "name" in body:
-                    v["name"] = str(body["name"]).strip() or v["name"]
+                    # 起名 / 改名 = 命名节点（ADR 0101）。空名字不改名
+                    name = str(body["name"]).strip()
+                    if name:
+                        v["name"] = name
+                        v["named"] = True
+                if body.get("named") is False:
+                    # 删掉名字：变回普通节点，名字回到它自己时刻的时间串（不是
+                    # 「现在」——那会让一个旧节点看起来像刚拍的）
+                    v["named"] = False
+                    v["name"] = time.strftime("%m-%d %H:%M", time.localtime(v.get("ts", 0) / 1000))
                 if "description" in body:
                     v["description"] = str(body["description"])
                 if "auto" in body:  # 「保留此检查点」= 转正为手动版本
                     v["auto"] = bool(body["auto"])
+                if _is_named(v) and not was_named:
+                    refusal = _named_budget_refusal(versions)
+                    if refusal is not None:
+                        return refusal
                 _save_versions(doc_id, versions)
                 return jsonify({"version": _version_meta(v)})
     abort(404)
@@ -7417,8 +7611,14 @@ def api_versions_duplicate(doc_id, vid):
                     "name": f"{v.get('name', '')} 副本",
                     "ts": int(time.time() * 1000),
                     "auto": False,
+                    "named": _is_named(v),
                 }
+                copy.pop("moment", None)  # 副本不是那个时刻本身（缩略图按 id 存，副本也没有）
                 versions.append(copy)
+                if copy["named"]:
+                    refusal = _named_budget_refusal(versions)
+                    if refusal is not None:
+                        return refusal
                 _save_versions(doc_id, _prune_versions(versions))
                 return jsonify({"version": _version_meta(copy)})
     abort(404)
@@ -7433,6 +7633,55 @@ def api_versions_delete(doc_id, vid):
             abort(404)
         _save_versions(doc_id, kept)
     return jsonify({"ok": True})
+
+
+@app.put("/api/versions/<doc_id>/<vid>/thumb")
+def api_versions_thumb_put(doc_id, vid):
+    """给一个节点挂缩略图（ADR 0101）。只写图文件（atomicio），时间线 JSON 不动。
+
+    节点必须还在（拍图与裁剪赛跑时它可能已经被裁掉了：404，图不落盘）——判据与
+    写图在同一把锁里，裁剪不会在两者之间把节点拿走、留下一张孤儿图。
+    """
+    ext = _VERSION_THUMB_TYPES.get((request.mimetype or "").lower())
+    if ext is None:
+        return jsonify({"error": "缩略图只收 webp / png", "code": "version_thumb_invalid"}), 400
+    data = request.get_data(cache=False)
+    if not data or len(data) > VERSION_THUMB_MAX_BYTES:
+        return jsonify({"error": "缩略图为空或太大", "code": "version_thumb_invalid"}), 400
+    if not _VERSION_ID_RE.match(vid):
+        abort(404)
+    with _VERSIONS_LOCK:
+        ids = {v.get("id") for v in _load_versions(doc_id)}
+        if vid not in ids:
+            abort(404)
+        # 顺手清孤儿（已经读出节点清单了，扫一遍目录不另花什么）
+        _sweep_version_thumbs(doc_id, ids)
+        d = _version_thumbs_dir(doc_id)
+        engine_atomicio.write_bytes(d / f"{vid}.{ext}", data)
+        for other in _VERSION_THUMB_TYPES.values():
+            if other != ext:
+                try:
+                    (d / f"{vid}.{other}").unlink()
+                except FileNotFoundError:
+                    pass
+    return jsonify({"ok": True, "thumb": ext})
+
+
+@app.get("/api/versions/<doc_id>/<vid>/thumb")
+def api_versions_thumb_get(doc_id, vid):
+    path = _version_thumb_path(doc_id, vid)
+    if path is None:
+        abort(404)
+    try:
+        data = path.read_bytes()
+    except OSError:
+        abort(404)
+    # 读一次、发这一份：`send_file` 留下的句柄在 Windows 上会挡住下一次
+    # `os.replace` / 删除（与 GET /api/layouts 同一条教训）
+    resp = Response(data, mimetype=f"image/{path.suffix[1:]}")
+    # 同一个 vid 的图可能被重拍（换格式），不做长缓存
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 # ------------------------- Style / Spec profile ------------------------------

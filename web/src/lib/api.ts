@@ -753,11 +753,27 @@ export const deleteAutosave = (docId: string) =>
  * 恢复布局版本只改文档内容，不碰 figures 里的任何文件。
  */
 
+/**
+ * 时间线节点的类型标记（ADR 0101）。判据只在后端 `_version_kind`：
+ * named = 用户起了名字、永不自动清理；moment = 关键时刻自动打的点；
+ * auto = 编辑停顿的自动节点；manual = 手动存的、没起名字。
+ */
+export type LayoutVersionKind = 'named' | 'moment' | 'auto' | 'manual'
+/** 关键时刻的闭集，与后端 `VERSION_MOMENTS` 严格同源（`tests/test_layout_timeline.py`）。 */
+export const LAYOUT_MOMENTS = ['export', 'writeback', 'open', 'close', 'before_restore', 'save'] as const
+export type LayoutMoment = (typeof LAYOUT_MOMENTS)[number]
+
 export interface LayoutVersionMeta {
   id: string
   name: string
   ts: number
   auto: boolean
+  /** 老后端不发这两个字段：读的地方经 `versionKind()` 取，别处不猜 */
+  kind?: LayoutVersionKind
+  named?: boolean
+  moment?: LayoutMoment
+  /** 有缩略图时是它的格式（`/api/versions/<id>/<vid>/thumb`）；没有就缺席 */
+  thumb?: 'webp' | 'png'
   description: string
   objects: number
   page?: { w: number; h: number }
@@ -820,12 +836,48 @@ export async function postDiagnosticsBundle(payload: unknown): Promise<Blob> {
 export const fetchVersions = (
   docId: string,
   sketch?: { objects: number; textChars: number },
+) => fetchTimeline(docId, sketch).then((r) => r.versions)
+
+/**
+ * 时间线此刻的体积（ADR 0101）。`namedOver` = 命名节点自己就超出了字节上限：
+ * 它们一条都不会被删，但再命名会被拒——界面据此请用户自己删。
+ */
+export interface TimelineBudget {
+  /** 只在文件超过上限、真的量过时才有（「没量」不冒充 0） */
+  namedBytes?: number
+  limit: number
+  namedOver: boolean
+}
+
+/** 列表 + 体积，一次请求（老后端没有 `budget`） */
+export const fetchTimeline = (
+  docId: string,
+  sketch?: { objects: number; textChars: number },
 ) => {
   const q = sketch ? `?sketch=${sketch.objects}&sketchText=${sketch.textChars}` : ''
-  return jsonFetch<{ versions: LayoutVersionMeta[] }>(
+  return jsonFetch<{ versions: LayoutVersionMeta[]; budget?: TimelineBudget }>(
     `/api/versions/${encodeURIComponent(docId)}${q}`,
-  ).then((r) => r.versions)
+  )
 }
+
+/** 节点缩略图的地址（`<img src>`）。没有缩略图的节点别调它。 */
+export const versionThumbUrl = (docId: string, v: Pick<LayoutVersionMeta, 'id' | 'thumb'>) =>
+  apiUrl(
+    `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(v.id)}/thumb?f=${v.thumb ?? ''}`,
+  )
+
+/** 给节点挂缩略图。`pj` = 拍节点那一刻的项目（关项目 / 回主页时它随后就变了） */
+export const putVersionThumb = (
+  docId: string,
+  vid: string,
+  thumb: { blob: Blob; type: string },
+  pj?: string | null,
+) =>
+  jsonFetch<{ ok: true; thumb: 'webp' | 'png' }>(
+    `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/thumb`,
+    { method: 'PUT', headers: { 'Content-Type': thumb.type }, body: thumb.blob },
+    pj,
+  )
 
 export const fetchVersionDoc = (docId: string, vid: string) =>
   jsonFetch<{ doc: FigureDocument } & LayoutVersionMeta>(
@@ -838,10 +890,14 @@ export const createVersion = (
     name?: string
     description?: string
     auto?: boolean
+    /** 用户起的名字才是命名节点（ADR 0101）；程序起的名字（「恢复前」）不带它 */
+    named?: boolean
+    moment?: LayoutMoment
     doc: FigureDocument
     canvasId?: string
     canvasName?: string
   },
+  pj?: string | null,
 ) =>
   jsonFetch<{ version?: LayoutVersionMeta; skipped?: boolean }>(
     `/api/versions/${encodeURIComponent(docId)}`,
@@ -850,12 +906,14 @@ export const createVersion = (
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     },
+    pj,
   )
 
 export const updateVersion = (
   docId: string,
   vid: string,
-  patch: { name?: string; description?: string; auto?: boolean },
+  /** `name` 非空 = 命名 / 改名；`named: false` = 删掉名字，变回普通节点 */
+  patch: { name?: string; named?: false; description?: string; auto?: boolean },
 ) =>
   jsonFetch<{ version: LayoutVersionMeta }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
