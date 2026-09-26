@@ -57,7 +57,10 @@
   会话（用户自己的 Python）兜不了。看护 `tests/test_restore_failure_retry.py`（含热态 == 冷
   启动重放的逐字节不变量；把 `continue` 改回落到 pop，五条全红）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
-  `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处）：
+  `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处；ADR 0098 在最前面加了
+  一档 `figure.frame`（`_RANK_FRAME = -1`：图幅按 figsize 还是按脚本存盘的裁切框——之后每一档
+  的尺寸与分数都以它为准；它这一轮换了，`_FRAME_RELATIVE` 里的 `size_mm` / `position` /
+  三个 `*_frac` 值没变也重放）：
   图幅 size_mm → 色条方向 → 色条 extend → 子图 position → 刻度类型
   （set_[xy]scale 会把 locator/formatter 整套换掉）→ 其余（列表序）→
   刻度定位模型 → 单条刻度文字（冻结整条轴，必须最后）。色条方向必须先于

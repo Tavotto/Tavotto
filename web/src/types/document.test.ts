@@ -26,6 +26,8 @@ const legacyDoc = (): FigureDocument => ({
       nativeW: 35, nativeH: 17, x: 1.5, y: 2.5, w: 35, h: 17,
       overrides: [{ gid: 'axes_0.title', prop: 'text', value: 'T' }],
       crop: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 }, rotation: 90,
+      // 本构建写出的面板带图幅记号（ADR 0098）；不带的是升级前的，迁移另有用例（lib/figureFrame.test.ts）
+      figureFrame: 1,
     },
     {
       id: 'o2', type: 'text', text: 'hello', sizePt: 9, bold: true,
@@ -90,6 +92,7 @@ describe('AssetSource 双形态（ADR 0013）', () => {
       captureSource: 'pyplot', fingerprint: 'sha256:x', sizeMm: [120, 90],
     },
     overrides: [{ gid: 'axes_0.title', prop: 'text', value: 'T' }],
+    figureFrame: 1,
   })
 
   it('panelKind 判别三种已知形态，未知取值 fail closed', () => {

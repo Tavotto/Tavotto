@@ -1,6 +1,7 @@
 /** 文档模型 —— 单位一律 mm，数组顺序即 z 序（末尾在最上）。 */
 import { t } from '@/i18n'
 import { newId } from '@/lib/id'
+import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 
 export interface ObjectBase {
   id: string
@@ -142,6 +143,12 @@ export interface PanelObject extends ObjectBase {
   flipV?: boolean
   /** 宽高比锁定，缺省 true = 现状的等比联动；显式关掉后 W/H 各改各的。 */
   aspectLocked?: boolean
+  /**
+   * 图幅语义的记号（ADR 0098）：`1` = 按「脚本 savefig 的裁切框就是图幅」放上来 / 迁移过。
+   * 缺席 = 升级前的面板，读档时由 `lib/figureFrameMigration.migrateFigureFrames` 迁移（必要时补一条
+   * `figure.frame = "figsize"`，保持它导出过的样子）。磁盘格式不升版。
+   */
+  figureFrame?: 1
 }
 
 export interface TextObject extends ObjectBase {
@@ -472,6 +479,18 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
   }
 }
 
+/** 升级前的面板迁到 ADR 0098 的图幅语义（没有要改的原样返回，引用不变） */
+function withFigureFrames(pd: ProjectDocument): ProjectDocument {
+  let changed = false
+  const canvases = pd.canvases.map((c) => {
+    const objects = Array.isArray(c.objects) ? migrateFigureFrames(c.objects) : c.objects
+    if (objects === c.objects) return c
+    changed = true
+    return { ...c, objects }
+  })
+  return changed ? { ...pd, canvases } : pd
+}
+
 /**
  * 读档统一入口：schema 2 迁移为单画布项目（内容逐字段搬运、不改值），
  * schema 3 原样校验通过。不认识的负载返回 null。
@@ -480,13 +499,13 @@ export function migrateToProject(raw: unknown): ProjectDocument | null {
   const d = raw as Record<string, unknown> | null
   if (!d || typeof d !== 'object') return null
   if (d.schema === 3 && Array.isArray(d.canvases) && d.canvases.length > 0) {
-    const pd = d as unknown as ProjectDocument
+    const pd = withFigureFrames(d as unknown as ProjectDocument)
     const active = pd.canvases.some((c) => c.id === pd.activeCanvasId)
     return active ? pd : { ...pd, activeCanvasId: pd.canvases[0].id }
   }
   if (d.schema === 2 && Array.isArray(d.objects)) {
     const legacy = d as unknown as FigureDocument
-    const canvas = docToCanvas(legacy, newId('c'))
+    const canvas = docToCanvas({ ...legacy, objects: migrateFigureFrames(legacy.objects) }, newId('c'))
     return {
       schema: 3,
       project: { id: newId('p'), name: canvas.name },

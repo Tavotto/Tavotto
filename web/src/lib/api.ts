@@ -1,6 +1,7 @@
 import { apiUrl, apiUrlFor, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
+import type { ManifestFrame } from '@/lib/figureFrame'
 import type { PreviewMetadata } from '@/lib/previewBudget'
 import type { ThumbObject } from '@/types/thumb'
 
@@ -1630,6 +1631,11 @@ export interface Manifest {
    * 字体下拉把它并在首选项（`options`）之后；老引擎不发它，下拉照旧只有首选项。
    */
   font_families?: string[]
+  /**
+   * 脚本存盘时按 `bbox_inches` 裁过的图才有（ADR 0098）：脚本那个图幅在 figsize 里的位置、此刻
+   * 生不生效。前端只拿它给升级前的面板提示与「内容不动」的换算；几何照旧只认 `size_mm` 与分数。
+   */
+  frame?: ManifestFrame
 }
 
 export interface EngineRenderResponse {
@@ -3563,6 +3569,24 @@ export interface CapturedFigureDescriptor {
   source_fingerprint: string
   can_writeback_artifact: boolean
   can_writeback_source: boolean
+  /**
+   * 认领这个 stem 的 savefig 调用（按调用顺序）。`null` / 缺席 = 没观察到（旧后端、
+   * `paper_style.save` 捷径）；`[]` = pyplot 捕获、从没存过盘。只记不用（tight 图幅的决定之前）。
+   */
+  savefig_calls?: SavefigCall[] | null
+}
+
+/** 一次 savefig 调用的实效参数（`figcapture.savefig_call` 的形态） */
+export interface SavefigCall {
+  format: string | null
+  /** `"tight"` / null（按 figsize）/ 显式 Bbox 的 [x0, y0, x1, y1]（英寸） */
+  bbox_inches: 'tight' | [number, number, number, number] | string | null
+  pad_inches: number | 'layout' | string | null
+  dpi: number | 'figure' | string | null
+  transparent: boolean
+  facecolor: string | null
+  edgecolor: string | null
+  bbox_extra_artists: number | null
 }
 
 /** 试运行失败的结构化错误：稳定 code + params；traceback 只是诊断详情 */

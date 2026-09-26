@@ -1042,8 +1042,8 @@ def normalize_report_lines(out: dict) -> list[str]:
     if orig.get("mismatch"):
         lines.append(
             f"! 原始文件 {orig.get('path')} 的页面 {orig.get('size_mm')} mm 与脚本重跑的图幅 "
-            f"{(out.get('baseline') or {}).get('size_mm')} mm 不一致（常见原因：savefig 用了 "
-            "bbox_inches）。规范化以脚本重跑结果为基准，原始文件未被替换。"
+            f"{(out.get('baseline') or {}).get('size_mm')} mm 不一致（常见原因：原件是别的机器或别的 "
+            "matplotlib 存的、或脚本在存盘之后改过）。规范化以脚本重跑结果为基准，原始文件未被替换。"
         )
     adjustments = out.get("adjustments") or []
     if adjustments:

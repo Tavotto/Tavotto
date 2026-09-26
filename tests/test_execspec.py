@@ -351,6 +351,7 @@ class TestDescriptorSerialization:
             "source_fingerprint": "sha256:feed",
             "can_writeback_artifact": False,
             "can_writeback_source": False,
+            "savefig_calls": None,
         }
 
     def test_invalid_enums_are_rejected(self):

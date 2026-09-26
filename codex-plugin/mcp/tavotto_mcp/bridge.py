@@ -2091,7 +2091,8 @@ def _profile_issues(session: Session, profile: dict) -> list[dict]:
 def _original_artifact_facts(session: Session) -> dict:
     """B0 的证据之一：用户磁盘上的原始产物与脚本重跑出来的 live 图对不对得上。
 
-    对不上（最常见：脚本 `savefig(bbox_inches="tight")`，磁盘原件被裁成内容范围）
+    对不上（ADR 0098 起 tight 存盘的图按原件的裁切框出图，不再因此对不上；还会对不上的是原件出自
+    别的机器 / 别的 matplotlib，或脚本在存盘之后改过）
     时**不替换原件、不改脚本、不猜谁更权威**，只把两个尺寸都记下来，报告里说出口。
     """
     rel = engine_figcapture.find_original_artifact(session.project, session.stem)

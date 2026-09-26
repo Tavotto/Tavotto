@@ -17,6 +17,9 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
 三件事这里是唯一出处：
 
 * `savefig_stem()` —— `savefig(路径)` 里那个 stem 怎么取；
+* `savefig_call()` —— 一次 savefig 调用决定产物长相的那几个参数（`bbox_inches` /
+  `pad_inches` / `dpi` / `transparent` / 底色 / 格式）按 matplotlib 自己的解析顺序
+  记成 JSON（`savefig_calls` 进描述符，见函数 docstring）；
 * `collect_pyplot_figures()` —— 脚本跑完之后还活着的 pyplot Figure 怎么补进
   捕获表（去重、命名、保序）；
 * `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
@@ -146,6 +149,13 @@ import sys
 
 __all__ = [
     "savefig_stem",
+    "savefig_call",
+    "record_savefig_call",
+    "savefig_calls_of",
+    "frame_call",
+    "frame_extra_artists",
+    "FRAME_ATTR",
+    "MAX_SAVEFIG_CALLS",
     "collect_pyplot_figures",
     "fallback_stems",
     "install_relative_read_fallback",
@@ -201,6 +211,15 @@ PROFILE_NATIVE = "native"
 _PROFILES = (PROFILE_SAFE, PROFILE_NATIVE)
 _SOURCES = (SOURCE_SAVEFIG, SOURCE_PYPLOT)
 
+#: 一个 stem 最多记几次 savefig 调用。同一张图存 pdf + png（+ svg）是常态，循环里
+#: 反复存同一个名字也见过；再多的调用对「产物长什么样」不再有新信息，记下来只是
+#: 让 build 响应变胖。超出的丢掉、不报错（前 8 次已足够说明脚本的意图）。
+MAX_SAVEFIG_CALLS = 8
+
+#: 根 Figure 上挂图幅（frame，ADR 0098）四边外伸的属性名。唯一的写入方是
+#: `pathgeom.set_frame`（它那边的 `FRAME_ATTR` 与这里是同一个字面量，用例钉住）。
+FRAME_ATTR = "_mm_frame"
+
 #: 已知的图产物扩展名——「什么算一份原始产物」的唯一出处（顺序即优先级）。
 #: `discover.OUT_EXTS` 与 `handoff.OUT_EXTS` 是它的镜像别名：静态扫描认产物、
 #: 交接找产物、描述符判「有没有原件」必须是同一张表，否则三处各认一套，
@@ -219,8 +238,16 @@ def size_mm_of(fig) -> tuple[float, float]:
     与 manifest 的 `size_mm` 同一个公式（inches × 25.4，round 2）。描述符在
     build 阶段就要报尺寸，而 browser 侧那时还没建 manifest——两边都从 Figure
     直接算，公式只有这一份，worker/browser 的描述符才比得齐。
+
+    脚本按 `bbox_inches` 存盘的图报的是**图幅（frame，ADR 0098）**的尺寸：figsize 加上
+    挂在 Figure 上的四边外伸（`FRAME_ATTR`，由 `pathgeom.set_frame` 写）。
     """
     w_in, h_in = (float(v) for v in fig.get_size_inches())
+    attrs = getattr(fig, "__dict__", {})
+    out = attrs.get(FRAME_ATTR)
+    if out is not None and not attrs.get("_mm_frame_suppressed"):
+        left, bottom, right, top = out
+        w_in, h_in = w_in + right - left, h_in + top - bottom
     return (round(w_in * 25.4, 2), round(h_in * 25.4, 2))
 
 
@@ -333,10 +360,18 @@ class CapturedFigureDescriptor:
     source_fingerprint: str
     can_writeback_artifact: bool  # 只能由工厂派生（见 build_descriptor）
     can_writeback_source: bool  # v1 恒 False（不改写用户脚本，ADR 0013 §7）
+    #: 认领这个 stem 的 savefig 调用（`savefig_call()` 的形态，按调用顺序，最多
+    #: `MAX_SAVEFIG_CALLS` 次）。三档，「不知道」是独立一档：
+    #: `None` = 没观察到（`paper_style.save` 捷径整个被替换、看不见参数；旧 payload
+    #: 没有这个键也是这一档）；`()` = 确实没有 savefig（pyplot 捕获）；非空 = 记下的调用。
+    savefig_calls: tuple | None = None
 
     def to_payload(self) -> dict:
         out = dataclasses.asdict(self)
         out["size_mm"] = [float(v) for v in self.size_mm]
+        out["savefig_calls"] = (
+            None if self.savefig_calls is None else [dict(c) for c in self.savefig_calls]
+        )
         return out
 
 
@@ -350,6 +385,7 @@ def build_descriptor(
     size_mm,
     source_fingerprint: str,
     original_artifact: str | None = None,
+    savefig_calls=None,
 ) -> CapturedFigureDescriptor:
     """描述符工厂——**writeback 能力只能派生，不能指定**。
 
@@ -359,7 +395,9 @@ def build_descriptor(
     * `can_writeback_artifact` = savefig 来源 **且** 原件真实在磁盘上。
       磁盘上碰巧躺着同名文件而来源是 pyplot 时它必须是 False——那份文件
       不是这张图写的，往上写回就是覆盖一个不相干的文件；
-    * `can_writeback_source`（改写用户脚本）v1 一律 False。
+    * `can_writeback_source`（改写用户脚本）v1 一律 False；
+    * `savefig_calls`：None（没观察到）/ 调用列表；pyplot 捕获从没 savefig 过，
+      给了非空列表就抛（同一条「来源标错当场炸」）。
     """
     script = normalize_relative_script(script)
     if not isinstance(entry, str) or not entry:
@@ -383,6 +421,14 @@ def build_descriptor(
         )
     if original_artifact is not None:
         original_artifact = original_artifact.replace("\\", "/")
+    if savefig_calls is not None:
+        if not isinstance(savefig_calls, (list, tuple)) or not all(
+            isinstance(c, dict) for c in savefig_calls
+        ):
+            raise ValueError(f"savefig_calls 必须是对象列表或 None: {savefig_calls!r}")
+        if capture_source == SOURCE_PYPLOT and savefig_calls:
+            raise ValueError("pyplot 捕获的 Figure 没有 savefig 调用，savefig_calls 必须为空")
+        savefig_calls = tuple(dict(c) for c in savefig_calls)
     return CapturedFigureDescriptor(
         asset_id=runtime_asset_id(script, stem),
         script=script,
@@ -395,6 +441,7 @@ def build_descriptor(
         source_fingerprint=source_fingerprint,
         can_writeback_artifact=(capture_source == SOURCE_SAVEFIG and original_artifact is not None),
         can_writeback_source=False,
+        savefig_calls=savefig_calls,
     )
 
 
@@ -415,6 +462,7 @@ def descriptor_from_payload(data: dict) -> CapturedFigureDescriptor:
         size_mm=tuple(data.get("size_mm") or ()),
         source_fingerprint=data.get("source_fingerprint"),
         original_artifact=data.get("original_artifact"),
+        savefig_calls=data.get("savefig_calls"),
     )
     for key in ("asset_id", "can_writeback_artifact", "can_writeback_source"):
         if key in data and data[key] != getattr(desc, key):
@@ -563,6 +611,142 @@ def savefig_stem(fname) -> str:
     if not isinstance(fname, (str, os.PathLike)):
         return ""  # BytesIO / 文件对象：不是一份产物
     return os.path.splitext(os.path.basename(os.fspath(fname)))[0]
+
+
+def savefig_call(fname, kwargs: dict) -> dict:
+    """一次 `fig.savefig(fname, **kwargs)` 里决定产物长相的参数 → JSON 对象。
+
+    拦截只取 stem 的年代（2026-09 之前）这些参数一个都没记，`bbox_inches="tight"`
+    的脚本于是在 Tavotto 里按 figsize 出图、紧贴图幅的轴标题被切掉半截（审计
+    T14 / T33）。这里只**记**，不改任何渲染——怎么用它是 tight 图幅那份 ADR 的事。
+
+    取值是**这一次调用的实效值**，按 matplotlib 自己的解析顺序：显式参数优先，
+    缺省（或显式 None）取调用那一刻的 `rcParams["savefig.*"]`——`rc_context` 里存的
+    图、`savefig.bbox: tight` 写在 matplotlibrc 里的图，参数表上一个字都没有，
+    产物照样是 tight 的。两个「推迟到图上」的取值原样保留、不在这里代求：
+    `dpi == "figure"`（图的 dpi 之后还能变）与底色 `"auto"`（取图自己的底色）。
+
+    * `format`：显式 `format=` > 文件名后缀 > `rcParams["savefig.format"]`，小写；
+    * `bbox_inches`：`"tight"` / `None`（按 figsize）/ 显式 Bbox 的 `[x0, y0, x1, y1]`
+      （英寸，figure 左下为原点）；认不出的形态记成 `str`，不猜；
+    * `pad_inches`：数值或 `"layout"`（matplotlib 3.8+）；
+    * `dpi`：数值或 `"figure"`；`transparent`：布尔；
+    * `facecolor` / `edgecolor`：`#rrggbbaa`、`"auto"` 或 `"none"`；认不出的记 `str`；
+    * `bbox_extra_artists`：给了几个（对象本身进不了 JSON）；没给是 None。
+
+    纯标准库：matplotlib 此刻必然已载入（调用方手里就有一张 Figure），按
+    `sys.modules` 取，不替调用方 import。
+    """
+    mpl = sys.modules.get("matplotlib")
+    rc = getattr(mpl, "rcParams", None) or {}
+    colors = sys.modules.get("matplotlib.colors")
+
+    def _pick(key: str, rc_key: str):
+        value = kwargs.get(key)
+        return rc.get(rc_key) if value is None else value
+
+    def _num(value):
+        if value is None or isinstance(value, str):
+            return value
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return str(value)
+
+    def _color(value):
+        if value is None or (isinstance(value, str) and value in ("auto", "none")):
+            return value
+        try:
+            return colors.to_hex(value, keep_alpha=True)
+        except Exception:  # noqa: BLE001 - 认不出的颜色原样记成字符串，记录不许挡住捕获
+            return str(value)
+
+    fmt = kwargs.get("format")
+    if fmt is None and isinstance(fname, (str, os.PathLike)):
+        fmt = os.path.splitext(os.fspath(fname))[1][1:] or None
+    if fmt is None:
+        fmt = rc.get("savefig.format")
+
+    bbox = _pick("bbox_inches", "savefig.bbox")
+    if bbox is not None and not isinstance(bbox, str):
+        try:
+            bbox = [round(float(v), 6) for v in bbox.extents]
+        except (AttributeError, TypeError, ValueError):
+            bbox = str(bbox)
+    extra = kwargs.get("bbox_extra_artists")
+    try:
+        extra_count = None if extra is None else len(extra)
+    except TypeError:
+        extra_count = None
+    return {
+        "format": str(fmt).lower() if fmt else None,
+        "bbox_inches": bbox,
+        "pad_inches": _num(_pick("pad_inches", "savefig.pad_inches")),
+        "dpi": _num(_pick("dpi", "savefig.dpi")),
+        "transparent": bool(_pick("transparent", "savefig.transparent")),
+        "facecolor": _color(_pick("facecolor", "savefig.facecolor")),
+        "edgecolor": _color(_pick("edgecolor", "savefig.edgecolor")),
+        "bbox_extra_artists": extra_count,
+    }
+
+
+def record_savefig_call(calls: dict, capture: dict, stem: str, fig, call: dict | None) -> bool:
+    """把一次 savefig 调用记到 `calls[stem]` 名下——三条入口（safe worker、native bridge、
+    浏览器 playground）的同一条记账规则。
+
+    * 只记**认领了这个 stem 的那张图**的调用：同名 stem 已被另一张图认领时，这次
+      调用的产物在磁盘上会覆盖前者，但捕获表里那张不是它，参数也就不是它的；
+    * `call is None` = 这次存盘发生了、参数没观察到（`paper_style.save` 捷径）：整份
+      变成「不知道」并保持下去——只记到一部分的列表会被当成全貌；
+    * 最多 `MAX_SAVEFIG_CALLS` 次，多的丢掉。
+
+    返回这次调用是否被记下（调用方据此把同一次调用里进不了 JSON 的
+    `bbox_extra_artists` 对象按同一个下标另存）。
+    """
+    if not stem or capture.get(stem) is not fig:
+        return False
+    if call is None:
+        calls[stem] = None
+        return False
+    seq = calls.setdefault(stem, [])
+    if seq is not None and len(seq) < MAX_SAVEFIG_CALLS:
+        seq.append(call)
+        return True
+    return False
+
+
+def frame_call(calls, original_artifact: str | None):
+    """哪一次 savefig 定义这张图的图幅（ADR 0098 §一）：与写回原件同格式的第一次调用；
+    没有原件（或没有同格式的调用）取第一次。没有调用 / 没观察到回 None。"""
+    if not calls:
+        return None
+    if original_artifact:
+        ext = os.path.splitext(original_artifact)[1].lstrip(".").lower()
+        ext = {"jpeg": "jpg", "tif": "tiff"}.get(ext, ext)
+        for call in calls:
+            fmt = str(call.get("format") or "").lower()
+            if {"jpeg": "jpg", "tif": "tiff"}.get(fmt, fmt) == ext:
+                return call
+    return calls[0]
+
+
+def frame_extra_artists(calls, extras, call):
+    """与 `call` 同一次调用的 `bbox_extra_artists` 对象（`extras` 与 `calls` 逐项对齐）。"""
+    if not calls or call is None or not extras:
+        return None
+    for i, c in enumerate(calls):
+        if c is call:
+            return extras[i] if i < len(extras) else None
+    return None
+
+
+def savefig_calls_of(calls: dict, stem: str, capture_source: str):
+    """描述符的 `savefig_calls`：pyplot 捕获 = `[]`（确实没存过盘）；savefig 捕获
+    取记下的调用，没有记录 = None（没观察到，不是「没有」）。"""
+    if capture_source == SOURCE_PYPLOT:
+        return []
+    seq = calls.get(stem)
+    return None if seq is None else list(seq)
 
 
 def fallback_stems(taken, script_stem: str, count: int) -> list[str]:

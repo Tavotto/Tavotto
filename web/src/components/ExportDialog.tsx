@@ -15,13 +15,13 @@
  *
  * ### 尺寸只有一个出处
  *
- * 原图 = `hooks/useOriginalSpec`（第 ① 档 manifest `size_mm` = 脚本 figsize，与
- * `do_export` 出的页面一致），画布 = `doc.page`。界面上只在对象头部显示一次。
- * 它与磁盘原件不同**只有一种情况**：脚本保存时 `bbox_inches='tight'` 把页面裁 /
- * 垫到了内容范围——判据是素材是矢量源且 `logical_w_mm` / `logical_h_mm` 与图幅
- * 差过 0.05 mm，满足时多说一句「磁盘上的原件是 … ；这里按图幅 … 出图」。审计
- * 里 80×57.6 与 75.3×58.7 并排出现，前者是图幅、后者是磁盘原件（旧 memo 没重
- * 算——已由 `useOriginalSpec` 收成一处），现在只显示图幅并解释另一个数从哪来。
+ * 原图 = `hooks/useOriginalSpec`（第 ① 档 manifest `size_mm` = 这张图的图幅，与
+ * `do_export` 出的页面一致；脚本按 `bbox_inches` 存盘的图，图幅就是 savefig 裁出来的那个框，
+ * ADR 0098），画布 = `doc.page`。界面上只在对象头部显示一次。
+ * 它与磁盘原件仍可能不同：升级前的排版按 figsize 保留着（`figure.frame = "figsize"`）、或原件
+ * 是别的机器 / 别的 matplotlib 存的（文字度量差零点几毫米）——判据是素材是矢量源且
+ * `logical_w_mm` / `logical_h_mm` 与图幅差过 0.05 mm，满足时多说一句「磁盘上的原件是 … ；
+ * 这里按图幅 … 出图」。
  *
  * ### 这里**不做**的事
  *
@@ -1538,9 +1538,8 @@ const SIZE_EPS = 0.05;
 /**
  * 磁盘原件与图幅不一致时多说一句（审计 T33 的 80×57.6 vs 75.3×58.7）。
  *
- * **只有一种情况会不一致**：矢量源的脚本保存时 `bbox_inches='tight'` 把页面裁 /
- * 垫到了内容范围——磁盘上的 PDF 页面于是不等于 figsize，而导出按 figsize 出
- * （`do_export` 出的页面就是它）。判据：素材是矢量源，且它的 `logical_w_mm` /
+ * 图幅按脚本 savefig 的裁切框之后（ADR 0098）两者通常一致；不一致的是升级前按 figsize 保留
+ * 的排版、或原件出自别的机器 / 别的 matplotlib。判据：素材是矢量源，且它的 `logical_w_mm` /
  * `logical_h_mm` 与图幅差过 0.05 mm。位图源没有这回事；图幅还是占位值时另有一句
  * 醒目的警告（`ScopeNote`），这里不重复。
  */

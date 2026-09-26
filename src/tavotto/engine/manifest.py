@@ -3292,7 +3292,10 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                 {
                     "prop": "position",
                     "type": "rect",
-                    "value": [round(float(v), 4) for v in ax.get_position().bounds],
+                    "value": [
+                        round(float(v), 4)
+                        for v in pathgeom.axes_rect_to_frame(ax.figure, ax.get_position().bounds)
+                    ],
                 }
             ]
         ),
@@ -3527,7 +3530,10 @@ def _axes3d_fields(ax) -> list[dict]:
         {
             "prop": "position",
             "type": "rect",
-            "value": [round(float(v), 4) for v in ax.get_position().bounds],
+            "value": [
+                round(float(v), 4)
+                for v in pathgeom.axes_rect_to_frame(ax.figure, ax.get_position().bounds)
+            ],
         },
         {"prop": "visible", "type": "bool", "value": bool(ax.get_visible())},
         {
@@ -3798,7 +3804,7 @@ def _with_value_original(fields: list[dict], state: FigState, gid: str) -> list[
 def _fields_for(el, state: FigState) -> list[dict]:
     artist, role, gid = el["artist"], el["role"], el["gid"]
     if role == "figure":
-        w, h = artist.get_size_inches()
+        w, h = pathgeom.frame_size_inches(artist)
         return [
             {
                 "prop": "size_mm",
@@ -4289,6 +4295,20 @@ def build_manifest(state: FigState, stem: str) -> dict:
 def _build_manifest(state: FigState, stem: str, arm) -> dict:
     fig = state.fig
     renderer = _ensure_agg_canvas(fig)
+    # 图幅（ADR 0098）：布局在上面那次 draw 里已经在 figsize 上跑过（与 `print_figure` 的
+    # 顺序相同），接下来在同一个 `adjust_bbox(F)` 里量——显示坐标原点与 `fig.bbox` 就是 F，
+    # 每个包围盒、分数、`size_mm` 都是出图那一刻的数。没有 frame 时这层什么都不做。
+    # 进来之后与 `print_figure` 一样再画一遍、布局关掉：轴标签 / 标题的落点是 draw 那一刻按
+    # 显示坐标写死的，原点挪到 F 之后不重画，它们还停在 figsize 的坐标上。
+    with pathgeom.in_frame(fig, renderer) as frame:
+        if frame.active:
+            with fig._cm_set(layout_engine="none"), image_pixels_skipped(fig):  # noqa: SLF001
+                fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+        return _measure_manifest(state, stem, arm, fig, renderer)
+
+
+def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
     # 布局 draw 之后才换尺：之后的全部测量与画布上的矢量 SVG 同一把尺（`vector_text_metrics`）
     arm(renderer)
     W, H = float(fig.bbox.width), float(fig.bbox.height)
@@ -4742,7 +4762,7 @@ def _build_manifest(state: FigState, stem: str, arm) -> dict:
             file=sys.stderr,
         )
 
-    w_in, h_in = fig.get_size_inches()
+    w_in, h_in = pathgeom.frame_size_inches(fig)
     out = {
         "stem": stem,
         "size_mm": [round(float(w_in) * 25.4, 2), round(float(h_in) * 25.4, 2)],
@@ -4751,6 +4771,10 @@ def _build_manifest(state: FigState, stem: str, arm) -> dict:
         # 加字段协议：老前端不认识它会原样忽略，字体下拉照旧只有首选项。
         "font_families": list(installed_font_families()),
     }
+    frame = pathgeom.frame_report(fig)
+    if frame is not None:
+        # 加字段协议：老前端原样忽略；没有 frame 的图不出现这个键（ADR 0098）
+        out["frame"] = frame
     # 诊断字段：画在图上、却没进元素表的 artist（`census` 在 instrument 里采）。
     # 可选、只在非空时出现——旧前端不认识它会原样忽略，写回自检只比 gid 集合
     # 与几何，不看这里。有它才谈得上「知道自己漏了什么」（§35）。

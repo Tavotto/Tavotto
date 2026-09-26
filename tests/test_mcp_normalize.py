@@ -155,7 +155,7 @@ if __name__ == "__main__":
 """
 )
 
-#: 原件是 bbox_inches="tight" 存的：磁盘页面 ≠ figsize。
+#: 原件是 bbox_inches="tight" 存的：磁盘页面 ≠ figsize（ADR 0098 起 live 图的图幅就是这个页面）。
 SCRIPT_TIGHTBBOX = SCRIPT_MANUAL.replace(
     'fig.savefig(OUT / "Manual.pdf")', 'fig.savefig(OUT / "Cropped.pdf", bbox_inches="tight")'
 )
@@ -653,8 +653,33 @@ def test_final_formats_are_verified_on_disk(tmp_path):
     }
 
 
-def test_original_artifact_mismatch_is_reported_not_replaced(tmp_path):
+def test_a_tight_original_now_matches_the_live_figure(tmp_path):
+    """ADR 0098：tight 存盘的图按原件的裁切框出图——B0 的原件尺寸对得上，报告里不再有那句警告。"""
     project = _project(tmp_path, "cropped", SCRIPT_TIGHTBBOX, "Cropped")
+    sid = _open(project, "Cropped")
+    out = bridge.normalize_figure(
+        sid, targets={"font_family": AVAILABLE_FONT}, formats=["pdf"], out_dir=str(tmp_path / "out")
+    )
+    facts = out["baseline"]["original_artifact"]
+    assert facts["path"] == "Cropped.pdf" and facts["mismatch"] is False
+    assert "未被替换" not in "\n".join(server.normalize_report_lines(out))
+
+
+def test_original_artifact_mismatch_is_reported_not_replaced(tmp_path):
+    """原件与脚本重跑对不上（这里：磁盘上是一份别的尺寸的旧文件）→ 只报告，不替换原件。"""
+    project = _project(tmp_path, "cropped", SCRIPT_TIGHTBBOX, "Cropped")
+    stale = subprocess.run(
+        [
+            WORKER_PY,
+            "-c",
+            "import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; "
+            "plt.figure(figsize=(2, 2)).savefig('Cropped.pdf')",
+        ],
+        cwd=project,
+        capture_output=True,
+        text=True,
+    )
+    assert stale.returncode == 0, stale.stderr
     orig_sha = _sha(project / "Cropped.pdf")
     sid = _open(project, "Cropped")
     out = bridge.normalize_figure(
@@ -664,7 +689,7 @@ def test_original_artifact_mismatch_is_reported_not_replaced(tmp_path):
     assert facts["path"] == "Cropped.pdf" and facts["mismatch"] is True
     assert _sha(project / "Cropped.pdf") == orig_sha
     text = "\n".join(server.normalize_report_lines(out))
-    assert "bbox_inches" in text and "未被替换" in text
+    assert "不一致" in text and "未被替换" in text
 
 
 # ------------------------------ 插件链路 --------------------------------------
