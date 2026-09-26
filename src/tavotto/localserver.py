@@ -25,6 +25,8 @@ macOS 起服务那步 48 s vs 其它腿 13 s。werkzeug 3.1.8 没有覆写 `serv
 
 from __future__ import annotations
 
+import os
+import socket
 import socketserver
 
 from flask import Flask
@@ -32,19 +34,73 @@ from flask.cli import show_server_banner
 from werkzeug.serving import ThreadedWSGIServer
 
 
+def bind_options(os_name: str = os.name, *, exclusive: bool) -> tuple[str, ...]:
+    """本机 socket bind 之前要设的 `SOL_SOCKET` 选项名——**平台策略只在这一处**（#650 / QA STATE-08-B1）。
+
+    * **POSIX：`SO_REUSEADDR`**。上一个实例刚退出留下的 TIME_WAIT（macOS 实测约 31 s）挡不住它；不带的话同端口
+      重启会被顺延到下一个端口，浏览器按源存的 localStorage（「上次文档」）换了源就读不到。POSIX 上它**不**允许与
+      正在 listen 的 socket 共用端口，排他性不受影响。
+    * **Windows：绝不带 `SO_REUSEADDR`**——那里它的语义是「允许与正在 listen 的 socket 共用端口」：两个同时启动的
+      实例都带它的话**两个都 bind 得上**，占端口就不再是裁判（Codex #651 P1）；探测带它会把别的程序正占着的端口
+      判成空闲。Windows 的 bind 本来就不被 TIME_WAIT 挡住，不需要它。
+      `exclusive=True`（要 listen 的 socket）再加 `SO_EXCLUSIVEADDRUSE`：别的 socket 即使带 `SO_REUSEADDR`
+      也 bind 不上这个端口。探测（`exclusive=False`）只问「此刻有没有人」，不加。
+
+    回的是名字而不是常量：`SO_EXCLUSIVEADDRUSE` 只在 Windows 的 `socket` 模块里有，名字让策略在任何平台都能被单测。
+    """
+    if os_name != "nt":
+        return ("SO_REUSEADDR",)
+    return ("SO_EXCLUSIVEADDRUSE",) if exclusive else ()
+
+
+def apply_bind_options(sock: socket.socket, *, exclusive: bool) -> None:
+    """按 `bind_options` 给一个还没 bind 的 socket 设选项（这个平台没有的常量跳过）。"""
+    for name in bind_options(exclusive=exclusive):
+        opt = getattr(socket, name, None)
+        if opt is not None:
+            sock.setsockopt(socket.SOL_SOCKET, opt, 1)
+
+
 class LocalWSGIServer(ThreadedWSGIServer):
-    """`ThreadedWSGIServer`，但 bind → listen 之间不解析主机名。"""
+    """`ThreadedWSGIServer`，但 bind → listen 之间不解析主机名，socket 选项走 `bind_options`。"""
+
+    #: 不让 socketserver 按类属性设 `SO_REUSEADDR`（它在 Windows 上也设）：选项由 `apply_bind_options` 按平台定
+    allow_reuse_address = False
 
     def server_bind(self) -> None:
         # 跳过 http.server.HTTPServer.server_bind 里的 socket.getfqdn(host)：
         # 直接调 TCPServer 那层做 bind，再把 HTTPServer 会填的两个属性填上。
+        apply_bind_options(self.socket, exclusive=True)
         socketserver.TCPServer.server_bind(self)
         host, port = self.server_address[:2]
         self.server_name = host
         self.server_port = port
 
 
-def serve_browser(app: Flask, host: str, port: int) -> None:
+def claim(host: str, port: int) -> socket.socket:
+    """先把浏览器模式的端口 bind + listen 下来，拿着它做完启动再起服务（#650）；占不到抛 `OSError`。
+
+    为什么要先占：`app.main()` 在端口复用判定之后、起服务之前还要做秒级的启动（预热 PDF 后端、开项目）。
+    只**探**不**占**的话，两个几乎同时启动的实例会探到同一个空闲端口、各自启动几秒，后 bind 的那个
+    EADDRINUSE 退出——而不是认出端口上已经是 Tavotto、走复用。占住之后，这个端口在启动期间对别的实例
+    就是「有人在 listen」：它们的复用探测连得上，等到这边起服务就答。
+
+    socket 选项与 `LocalWSGIServer` 自己 bind 时同一份（`apply_bind_options(exclusive=True)`：POSIX 上
+    `SO_REUSEADDR`，Windows 上 `SO_EXCLUSIVEADDRUSE`、绝不带 `SO_REUSEADDR`——否则 Windows 上两个同时 claim 都会成功）。
+    交给 `serve_browser` 之后 werkzeug 经 `fd=` 接管：不再 setsockopt、不再 bind，选项随 socket 本身走。
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        apply_bind_options(sock, exclusive=True)
+        sock.bind((host, port))
+        sock.listen(LocalWSGIServer.request_queue_size)
+    except BaseException:
+        sock.close()
+        raise
+    return sock
+
+
+def serve_browser(app: Flask, host: str, port: int, listener: socket.socket | None = None) -> None:
     """浏览器模式的服务循环：与 `app.run(host, port, threaded=True)` 逐项等价。
 
     `app.run` → `run_simple` 今天实际做的事，逐项对照：
@@ -65,9 +121,19 @@ def serve_browser(app: Flask, host: str, port: int) -> None:
       reloader 的子进程接管，产品没有 reloader，不做；
     * `.env` / `.flaskenv` 加载：python-dotenv 不是依赖，从来没有生效过，不做；
     * `FLASK_RUN_FROM_CLI` 守卫：只对 `flask run` 有意义，产品入口不是它，不做。
+
+    `listener` 是 `claim()` 先占下的监听 socket（werkzeug 的 `fd=` 接管，reloader 用的同一条路）：
+    server 从它 dup 一份，这里的原件随即关掉。没有就照旧自己 bind（占不到时 werkzeug 报错退出）。
     """
     show_server_banner(False, app.name)
-    srv = LocalWSGIServer(host, port, app)
+    if listener is None:
+        srv = LocalWSGIServer(host, port, app)
+    else:
+        srv = LocalWSGIServer(host, port, app, fd=listener.fileno())
+        listener.close()
+        # fd 路径不走 server_bind：把 HTTPServer 会填的两个属性照 `server_bind` 那样填上
+        srv.server_name = host
+        srv.server_port = srv.port
     srv.log_startup()
     srv.log("info", "Press CTRL+C to quit")
     srv.serve_forever()
