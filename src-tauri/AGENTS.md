@@ -33,6 +33,10 @@
   **必须留看门狗**（没有它 = 一个关不掉的窗口；拦的唯一入口是 `hold_window()`，
   行为有 Rust 单测钉住，别退回「在源码里搜 token」那种空门禁）。
   ⌘Q 与系统注销不走这条路。
+- **主页拖放拿真实路径**（ADR 0092）：`disable_drag_drop_handler()` 必须留着（装上 Tauri 的处理器
+  页面 HTML5 拖放整片失效）；macOS 上 `native_drop.rs` 只旁听 `performDragOperation:` 读路径、发
+  `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测），
+  视图分派在前端（只有主页订阅）；两侧同源由 `tests/test_desktop_file_drop.py` 看护。
 - 桌面交接契约 argv `--open <目录> [--stem <stem>]`：生产者唯一
   `handoff.desktop_argv()`，消费者唯一 `src-tauri/src/main.rs::parse_open_args()`，
   两侧各有单测，改一边必须同步另一边（完整交接语义见

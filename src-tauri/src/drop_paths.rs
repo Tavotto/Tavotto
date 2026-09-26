@@ -183,6 +183,10 @@ mod tests {
         // 不存在的 .py、相对路径：都不算；一个能用的都没有就什么都不发
         assert_eq!(classify(&[d.join("ghost.py")]), None);
         assert_eq!(classify(&[PathBuf::from("relative/plot.py")]), None);
+        // 相对路径哪怕按当前目录解得出来（cargo test 的 cwd 是包根，`src` 与 `Cargo.toml` 都在）也不认：
+        // 拖放交来的必须本来就是绝对路径，不替它挑一个基准目录
+        assert_eq!(classify(&[PathBuf::from("src")]), None);
+        assert_eq!(classify(&[PathBuf::from("Cargo.toml")]), None);
         assert_eq!(classify(&[]), None);
         // `..` 与符号链接被规范化：交出去的是真实位置
         let real = d.join("real");

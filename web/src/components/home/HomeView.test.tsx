@@ -324,7 +324,6 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
     await act(async () => desktop.state.handler!(d))
   }
   const status = () => useUiStore.getState().status
-  const statusKey = () => (status()?.message as { key?: string } | undefined)?.key ?? (status() as { key?: string } | null)?.key
 
   it('.py：直接打开它所在的文件夹，不弹选择器；通知说出是哪个脚本', async () => {
     await mount()
