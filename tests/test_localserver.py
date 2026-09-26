@@ -210,3 +210,80 @@ def test_the_product_listens_without_waiting_for_a_hostname_lookup(tmp_path):
     assert ready_after < INJECTED_DNS_DELAY_S, (
         f"就绪用了 {ready_after:.1f}s，不早于注入的 {INJECTED_DNS_DELAY_S:.0f}s 反查延迟"
     )
+
+
+# ---------------------------------------------------------------------------
+# 端口占用的排他性（#650 / Codex #651 P1）：平台策略只在 `localserver.bind_options`
+# ---------------------------------------------------------------------------
+def test_the_bind_policy_is_exclusive_on_windows_and_reusable_on_posix():
+    """Windows 上 `SO_REUSEADDR` 允许与正在 listen 的 socket 共用端口——两个同时 claim 都会成功，占端口就不再是
+    裁判；所以要 listen 的 socket 绝不带它、改带 `SO_EXCLUSIVEADDRUSE`，探测两样都不带。POSIX 上带 `SO_REUSEADDR`
+    （TIME_WAIT 不挡同端口重启，且它在 POSIX 上不允许与 listener 共用）。按名字判，任何平台都跑。"""
+    assert localserver.bind_options("nt", exclusive=True) == ("SO_EXCLUSIVEADDRUSE",)
+    assert localserver.bind_options("nt", exclusive=False) == ()
+    for exclusive in (True, False):
+        assert localserver.bind_options("posix", exclusive=exclusive) == ("SO_REUSEADDR",)
+    # 服务端自己 bind 时也走这份策略，不让 socketserver 按类属性在 Windows 上也设 SO_REUSEADDR
+    assert localserver.LocalWSGIServer.allow_reuse_address is False
+
+
+def _opt(sock: socket.socket, name: str) -> int:
+    return sock.getsockopt(socket.SOL_SOCKET, getattr(socket, name))
+
+
+def test_claim_and_the_server_socket_carry_the_platform_policy(monkeypatch):
+    """`claim()` 占下的 socket 带着本平台的选项；werkzeug 经 `fd=` 接管之后选项原样在（不重设、不重 bind）；
+    Windows 上 `SO_REUSEADDR` 始终是 0。"""
+    monkeypatch.setattr(socket, "getfqdn", lambda *a: pytest.fail("不许反查主机名"))
+    sock = localserver.claim("127.0.0.1", 0)
+    port = sock.getsockname()[1]
+    srv = localserver.LocalWSGIServer("127.0.0.1", port, appmod.app, fd=sock.fileno())
+    sock.close()
+    try:
+        assert srv.socket.getsockname()[1] == port
+        for name in localserver.bind_options(exclusive=True):
+            assert _opt(srv.socket, name), f"接管之后 {name} 丢了"
+        if os.name == "nt":
+            assert not _opt(srv.socket, "SO_REUSEADDR"), "Windows 上监听 socket 带了 SO_REUSEADDR"
+    finally:
+        srv.server_close()
+
+
+def test_a_second_claim_on_a_claimed_port_fails():
+    """两个同时启动的实例：先占到的赢，后来者 bind 失败（`app.claim_port` 据此重新判定、走复用）。
+    Windows 上这条正是 Codex #651 P1 的主语——两边都带 SO_REUSEADDR 时第二个会成功。"""
+    first = localserver.claim("127.0.0.1", 0)
+    try:
+        with pytest.raises(OSError):
+            localserver.claim("127.0.0.1", first.getsockname()[1]).close()
+    finally:
+        first.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="SO_REUSEADDR 抢占已 listen 端口只在 Windows 上成立")
+def test_a_reuseaddr_socket_cannot_take_a_claimed_port_on_windows():
+    """`SO_EXCLUSIVEADDRUSE` 的那一半：别的 socket 即使带 `SO_REUSEADDR` 也 bind 不上已占的端口。"""
+    first = localserver.claim("127.0.0.1", 0)
+    try:
+        with socket.socket() as other:
+            other.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            with pytest.raises(OSError):
+                other.bind(("127.0.0.1", first.getsockname()[1]))
+    finally:
+        first.close()
+
+
+def test_a_claimed_port_can_be_claimed_again_right_after_the_last_instance_exits():
+    """同端口重启（QA STATE-08-B1）：上一个实例 accept 过连接、由服务端先关（留下 TIME_WAIT），再关 listener——
+    紧接着再 claim 同一个端口必须成功。POSIX 靠 SO_REUSEADDR；Windows 上排他 bind 不能因为这一刻而失败。
+    前提断言防空转：连接确实走完了（读到 EOF）。"""
+    first = localserver.claim("127.0.0.1", 0)
+    port = first.getsockname()[1]
+    cli = socket.create_connection(("127.0.0.1", port), timeout=5)
+    conn, _ = first.accept()
+    conn.close()  # 服务端主动关 → 它这一侧进 TIME_WAIT
+    assert cli.recv(1) == b""
+    cli.close()
+    first.close()
+    again = localserver.claim("127.0.0.1", port)
+    again.close()

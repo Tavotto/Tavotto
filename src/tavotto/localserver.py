@@ -25,6 +25,7 @@ macOS 起服务那步 48 s vs 其它腿 13 s。werkzeug 3.1.8 没有覆写 `serv
 
 from __future__ import annotations
 
+import os
 import socket
 import socketserver
 
@@ -33,12 +34,43 @@ from flask.cli import show_server_banner
 from werkzeug.serving import ThreadedWSGIServer
 
 
+def bind_options(os_name: str = os.name, *, exclusive: bool) -> tuple[str, ...]:
+    """本机 socket bind 之前要设的 `SOL_SOCKET` 选项名——**平台策略只在这一处**（#650 / QA STATE-08-B1）。
+
+    * **POSIX：`SO_REUSEADDR`**。上一个实例刚退出留下的 TIME_WAIT（macOS 实测约 31 s）挡不住它；不带的话同端口
+      重启会被顺延到下一个端口，浏览器按源存的 localStorage（「上次文档」）换了源就读不到。POSIX 上它**不**允许与
+      正在 listen 的 socket 共用端口，排他性不受影响。
+    * **Windows：绝不带 `SO_REUSEADDR`**——那里它的语义是「允许与正在 listen 的 socket 共用端口」：两个同时启动的
+      实例都带它的话**两个都 bind 得上**，占端口就不再是裁判（Codex #651 P1）；探测带它会把别的程序正占着的端口
+      判成空闲。Windows 的 bind 本来就不被 TIME_WAIT 挡住，不需要它。
+      `exclusive=True`（要 listen 的 socket）再加 `SO_EXCLUSIVEADDRUSE`：别的 socket 即使带 `SO_REUSEADDR`
+      也 bind 不上这个端口。探测（`exclusive=False`）只问「此刻有没有人」，不加。
+
+    回的是名字而不是常量：`SO_EXCLUSIVEADDRUSE` 只在 Windows 的 `socket` 模块里有，名字让策略在任何平台都能被单测。
+    """
+    if os_name != "nt":
+        return ("SO_REUSEADDR",)
+    return ("SO_EXCLUSIVEADDRUSE",) if exclusive else ()
+
+
+def apply_bind_options(sock: socket.socket, *, exclusive: bool) -> None:
+    """按 `bind_options` 给一个还没 bind 的 socket 设选项（这个平台没有的常量跳过）。"""
+    for name in bind_options(exclusive=exclusive):
+        opt = getattr(socket, name, None)
+        if opt is not None:
+            sock.setsockopt(socket.SOL_SOCKET, opt, 1)
+
+
 class LocalWSGIServer(ThreadedWSGIServer):
-    """`ThreadedWSGIServer`，但 bind → listen 之间不解析主机名。"""
+    """`ThreadedWSGIServer`，但 bind → listen 之间不解析主机名，socket 选项走 `bind_options`。"""
+
+    #: 不让 socketserver 按类属性设 `SO_REUSEADDR`（它在 Windows 上也设）：选项由 `apply_bind_options` 按平台定
+    allow_reuse_address = False
 
     def server_bind(self) -> None:
         # 跳过 http.server.HTTPServer.server_bind 里的 socket.getfqdn(host)：
         # 直接调 TCPServer 那层做 bind，再把 HTTPServer 会填的两个属性填上。
+        apply_bind_options(self.socket, exclusive=True)
         socketserver.TCPServer.server_bind(self)
         host, port = self.server_address[:2]
         self.server_name = host
@@ -53,23 +85,19 @@ def claim(host: str, port: int) -> socket.socket:
     EADDRINUSE 退出——而不是认出端口上已经是 Tavotto、走复用。占住之后，这个端口在启动期间对别的实例
     就是「有人在 listen」：它们的复用探测连得上，等到这边起服务就答。
 
-    socket 选项与 `LocalWSGIServer` 自己 bind 时**同一份**（`socketserver.TCPServer.server_bind` 按类属性
-    `allow_reuse_address` / `allow_reuse_port` 设、`server_activate` 按 `request_queue_size` listen），不手抄
-    平台策略；bind 与 listen 之间同样不反查主机名。
+    socket 选项与 `LocalWSGIServer` 自己 bind 时同一份（`apply_bind_options(exclusive=True)`：POSIX 上
+    `SO_REUSEADDR`，Windows 上 `SO_EXCLUSIVEADDRUSE`、绝不带 `SO_REUSEADDR`——否则 Windows 上两个同时 claim 都会成功）。
+    交给 `serve_browser` 之后 werkzeug 经 `fd=` 接管：不再 setsockopt、不再 bind，选项随 socket 本身走。
     """
-    tmp = socketserver.TCPServer(
-        (host, port), socketserver.BaseRequestHandler, bind_and_activate=False
-    )
-    tmp.allow_reuse_address = LocalWSGIServer.allow_reuse_address
-    tmp.allow_reuse_port = getattr(LocalWSGIServer, "allow_reuse_port", False)
-    tmp.request_queue_size = LocalWSGIServer.request_queue_size
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        tmp.server_bind()
-        tmp.server_activate()
+        apply_bind_options(sock, exclusive=True)
+        sock.bind((host, port))
+        sock.listen(LocalWSGIServer.request_queue_size)
     except BaseException:
-        tmp.server_close()
+        sock.close()
         raise
-    return tmp.socket
+    return sock
 
 
 def serve_browser(app: Flask, host: str, port: int, listener: socket.socket | None = None) -> None:
