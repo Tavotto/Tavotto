@@ -3338,12 +3338,20 @@ export const setDependencyGroups = (groups: string[]) =>
     body: JSON.stringify({ groups }),
   })
 
-/** 删掉并重建当前项目的 Tavotto 隔离环境（用户自己的 .venv 没有这个操作） */
-export const rebuildManagedEnvironment = () =>
-  jsonFetch<{ started: boolean; requirements: string[] }>(
-    '/api/engine/environment/managed/rebuild',
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
-  )
+/**
+ * 删掉并重建当前项目的 Tavotto 隔离环境（用户自己的 .venv 没有这个操作）。`progressId` 是这次重建的进度 id，
+ * 由调用方在发请求**之前**生成（`depRepairStore.newRebuildProgressId()`，与后端 `REBUILD_PROGRESS_ID_RE` 同源，#606）
+ */
+export const rebuildManagedEnvironment = (progressId: string) =>
+  jsonFetch<{ started: boolean; progress_id: string }>('/api/engine/environment/managed/rebuild', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ progress_id: progressId }),
+  })
+
+/** 某个计划 / 作业此刻的进度（SSE 断了、或发起请求本身失败之后问实况；没到过后端的 id 回 `idle`） */
+export const fetchDependencyState = (planId: string) =>
+  jsonFetch<DependencyProgress>(`/api/engine/dependency/state?plan_id=${encodeURIComponent(planId)}`)
 
 // ---------------------------------------------------------------------------
 // 包管理（设置 → 包管理，ADR 0038）

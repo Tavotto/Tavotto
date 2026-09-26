@@ -182,9 +182,13 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     const epoch = projectEpoch
     try {
       const env = await setEngineEnvironment(path)
-      // 全局解释器已经改了（它不属于哪个项目）；但响应里带着发请求那个项目的 `project`，切过就不写，
-      // 换项目时那次 refresh 会拿到新项目的整份
-      if (epoch !== projectEpoch) return null
+      // 全局解释器已经改了（它不属于哪个项目），但响应里带着发请求那个项目的 `project`，切过就不写它。
+      // 也不能就此丢掉（#606 第 4 条）：切项目时那次 refresh 可能比这次 PATCH 先回，B 显示的还是旧的全局
+      // 解释器——这里按**此刻的**项目重新问一次（refresh 自己按代际判，属于 B）
+      if (epoch !== projectEpoch) {
+        await get().refresh()
+        return null
+      }
       set({ env })
       // PATCH 的响应现在与 GET 同形（带 `project`）；老服务端没带的话整体替换会把
       // 受管环境 / 工作目录那几行藏到下一次无关刷新——补一次 GET（Codex 评审 P2）

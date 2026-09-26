@@ -1786,6 +1786,7 @@ export default interface Resources {
       "invalid_path": "路径无效",
       "invalid_preview_dpi": "preview_dpi 无效：{{value}}",
       "invalid_profile": "没有收到完整的出版规范，无法按规范修复。",
+      "invalid_progress_id": "重建请求的编号不对，请重试",
       "invalid_scale": "面板缩放比无效：{{value}}",
       "invalid_width": "宽度应为整数：{{value}}",
       "missing_dependency": "缺少依赖包：{{module}}",

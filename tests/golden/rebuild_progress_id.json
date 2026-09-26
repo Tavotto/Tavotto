@@ -1,0 +1,17 @@
+{
+  "_comment": "重建受管环境的进度 id 格式（#606）：后端 deprepair.REBUILD_PROGRESS_ID_RE 与前端 depRepairStore.newRebuildProgressId() 的同源对。两侧各读这份，不读对方源码。legacy 是没给 id 的请求（升级前的前端）用的旧固定 id：只由后端给出，新前端从不发它，也生成不出它（它不合 pattern）。",
+  "pattern": "^[0-9a-f]{32}$",
+  "accept": [
+    "0123456789abcdef0123456789abcdef",
+    "ffffffffffffffffffffffffffffffff"
+  ],
+  "reject": [
+    "managed-rebuild",
+    "0123456789ABCDEF0123456789ABCDEF",
+    "0123456789abcdef0123456789abcde",
+    "0123456789abcdef0123456789abcdef0",
+    "g123456789abcdef0123456789abcdef",
+    ""
+  ],
+  "legacy": "managed-rebuild"
+}

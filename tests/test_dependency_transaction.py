@@ -767,8 +767,7 @@ class TestJointTransaction:
         )
         assert _prepare(project)["state"] == deprepair.STATE_DONE
         old_gen = managedenv.active_generation(project)
-        deprepair.rebuild_managed_async(project)
-        rec = wait_for(deprepair.REBUILD_PROGRESS_ID)
+        rec = wait_for(deprepair.rebuild_managed_async(project))
         assert rec["state"] == deprepair.STATE_DONE, rec
         assert sorted(rec["restored"]) if "restored" in rec else True
         new_gen = managedenv.active_generation(project)
@@ -800,7 +799,7 @@ class TestJointTransaction:
         （Codex #461 P1：此前 register 把 active 改成 incomplete、create 把它 rmtree）。"""
         project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
         assert _prepare(project)["state"] == deprepair.STATE_DONE
-        # 同步跑：`REBUILD_PROGRESS_ID` 是固定的，异步 + 轮询会把上一次的终态当成这一次的
+        # 同步跑（每次重建的进度 id 各不相同，#606；这里只要结果，同步最简单）
         assert deprepair.rebuild_managed(project)["ok"]
         active = managedenv.active_generation(project)
         active_dir = managedenv.generation_dir(project, active)

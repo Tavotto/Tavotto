@@ -383,12 +383,15 @@ def test_managed_environment_can_be_rebuilt(client, project, wheelhouse, offline
     before = managedenv.python_of(project)
     assert before
 
-    resp = client.post("/api/engine/environment/managed/rebuild", json={})
+    # 新前端的那条路：进度 id 由调用方在发请求之前生成（#606）；没给 id 的老前端那条路（旧固定 id）由
+    # `tests/test_env_project_attribution.py` 的单元用例看着，这里只真建一次
+    progress_id = deprepair.new_rebuild_progress_id()
+    resp = client.post("/api/engine/environment/managed/rebuild", json={"progress_id": progress_id})
     assert resp.status_code == 200, resp.get_json()
     # 端点只负责「开始」——拆旧（读账 + 删除）已经搬进重建线程的那把环境锁里
     # （Codex 评审 P1：删除在锁外时，一个已形成的 plan 能往正被删的 venv 里装）
-    assert resp.get_json() == {"started": True}
-    final = wait_for(deprepair.REBUILD_PROGRESS_ID)
+    assert resp.get_json() == {"started": True, "progress_id": progress_id}
+    final = wait_for(progress_id)
     assert final["state"] == deprepair.STATE_DONE, final
 
     after = managedenv.python_of(project)
