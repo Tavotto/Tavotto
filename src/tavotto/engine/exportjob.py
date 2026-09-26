@@ -55,6 +55,16 @@ STATUS_PARTIAL = "partial"
 STATUS_FAILED = "failed"
 STATUS_CANCELLED = "cancelled"
 STATUS_CONFLICT = "conflict"
+#: 全部状态（闭集；诊断日志按它放行明文，`engine/logsafe.known`）。
+STATUSES = (
+    STATUS_PENDING,
+    STATUS_RUNNING,
+    STATUS_DONE,
+    STATUS_PARTIAL,
+    STATUS_FAILED,
+    STATUS_CANCELLED,
+    STATUS_CONFLICT,
+)
 
 #: 本模块会发出的**全部**错误码（同 `exportreq.ERROR_CODES` 的理由：
 #: `job.error_code` 是赋值不是字面量响应，正则扫不到）。

@@ -22,7 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, envlease, execspec, patchspec, projectenv, runtime, workdir
+from . import config, envlease, execspec, logsafe, patchspec, projectenv, runtime, workdir
 
 LOG = logging.getLogger("tavotto.engine")
 
@@ -1004,7 +1004,7 @@ def select_worker_python() -> tuple[str, str]:
         seen.add(cand)  # 同一个解释器不重复探测（每次探测最多 30s）
         if _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED):
             _worker_python, _worker_source = cand, source
-            LOG.info("渲染解释器: %s（来源 %s）", cand, source)
+            LOG.info("渲染解释器: %s（来源 %s）", cand, logsafe.known(source, SOURCE_LABELS))
             return cand, source
         if source in _EXPLICIT_SOURCES:
             raise _explicit_unusable(source, cand, "no_matplotlib")
@@ -1223,6 +1223,10 @@ def _project_python_unusable(python: str, reason: str, record: dict) -> "WorkerE
     return err
 
 
+#: 会话重建的原因（闭集，诊断日志按它放行明文）。
+_REBUILD_REASONS = ("已死", "入口已变", "渲染解释器已变")
+
+
 def _invalidate_remembered(figures_dir: str | Path, python: str, reason: str, record: dict) -> None:
     """自动记住的项目解释器已失效：作废记录（回到「没记住」），把事实留下。"""
     LOG.warning("项目自动记住的解释器已不可用（%s），作废并重新发现: %s", reason, python)
@@ -1408,7 +1412,10 @@ class EngineWorker:
             cwd_mode=workdir.mode_for(figures_dir),
         )
         LOG.info(
-            "worker 启动: %s（entry=%s，解释器来源=%s）", script_name, entry, self.python_source
+            "worker 启动: %s（entry=%s，解释器来源=%s）",
+            script_name,
+            entry,
+            logsafe.known(self.python_source, SOURCE_LABELS),
         )
         self.proc = subprocess.Popen(
             execspec.worker_argv(
@@ -2116,7 +2123,7 @@ class WorkerdWorker:
             "workerd 会话打开: %s（entry=%s，解释器来源=%s）",
             self.script_name,
             self.entry,
-            self.python_source,
+            logsafe.known(self.python_source, SOURCE_LABELS),
         )
         # 这一代从日志的哪个字节开始：workerd 也是 append 到同一个文件
         self._log_offset = start_log_generation(self.log_path)
@@ -2757,7 +2764,9 @@ def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorke
                 # 没失败，这里看不见——它随后会自己再跑一次 build；这一窗口与起会话本身的竞态同形，不在这里加锁。
                 _workdir_gate(figures_dir, script_name)
             if why:
-                LOG.warning("worker %s，重建: %s", why, script_name)
+                LOG.warning(
+                    "worker %s，重建: %s", logsafe.known(why, _REBUILD_REASONS), script_name
+                )
                 w.shutdown()
                 w = None
             if w is None:
