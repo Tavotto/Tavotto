@@ -66,6 +66,10 @@ def main():
     eb = ax.errorbar(xs, np.full(5, 8.0), yerr=0.4, fmt="o", capsize=3)
     for cap in eb[1]:
         cap.set_visible(False)
+    # errorbar_4：脚本把帽换成**实心**圆点，数据线却是连着的折线
+    eb4 = ax.errorbar(xs, [9.0, 9.4, 9.0, 9.4, 9.0], yerr=0.3, fmt="-", capsize=3)
+    for cap in eb4[1]:
+        cap.set_marker("o")
     ax.set_xlim(0.0, 10.0)
     ax.set_ylim(0.0, 10.0)
     fig.savefig("SeriesFig.pdf")
@@ -239,6 +243,15 @@ def test_errorbar_with_a_connected_line_has_no_fill_semantics(manifests):
     # 横竖两组误差线各 5 根，帽各 10 个
     assert len(seg) == 30
     assert geom["fill"] is False and geom["stroke"] is True
+
+
+def test_filled_caps_do_not_turn_a_connected_data_line_into_a_polygon(manifests):
+    """帽是实心圆点（闭合、有填充），数据线是连着的折线：整份 `fill` 必须是 False——
+    否则前端把折线也当面积，折线与它的弦之间那一大块空白全成了误差棒的内部。"""
+    geom = _el(manifests("SeriesFig"), "axes_0.errorbar_4")["geometry"]
+    _, poly, closed = _split(geom)
+    assert len(poly) == 1 and len(closed) == 10, "一条折线 + 十个实心圆点帽"
+    assert geom["fill"] is False
 
 
 def test_errorbar_without_data_line_has_only_bars_and_caps(manifests):
