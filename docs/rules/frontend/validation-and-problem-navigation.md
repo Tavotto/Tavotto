@@ -71,7 +71,9 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   以及后端说 `replay_required` / `worker_retired`（事务里有一次渲染不干净、worker 已作废）的，
   没提交时一律按此刻的列表重放 worker。**native 图（`tavotto run`）不修**：`isNativePanelIssue`
   （判据与面板角标同源：`runtimeAssetStore.profile`，未知按 safe）为真的问题照常列出，修复按钮
-  不可用、悬停一句说明，不发请求；后端的 `specfix_native_unsupported` 同样收成 `native_unsupported`、不重放。**画布层**（标注字号、页宽）仍在 `lib/issueFix.planFix()`。
+  不可用、悬停一句说明，不发请求；后端的 `specfix_native_unsupported` 同样收成 `native_unsupported`、不重放。
+  渲染报 `unrestored > 0` 的 native 图由 `renderStore.inconsistent` → `nativePanelState` 标成
+  `'inconsistent'`（角标，与 offline 同一套）。**画布层**（标注字号、页宽）仍在 `lib/issueFix.planFix()`。
   可修规则集 `ENGINE_FIX_RULES` ↔ `specfix.FIXABLE_RULES` 是严格同源对。
   「全部处理」的集合唯一出处 `batchable()`（**不含建议档**；组头的「全部修复」
   是点名那一组，带 `includeSuggestions`）；计数与执行是同一个集合。修复在跑时

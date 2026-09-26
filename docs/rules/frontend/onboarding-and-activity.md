@@ -96,9 +96,18 @@
 * **coachmark 没有遮罩、不改偏好**：`reveal()` 露出折叠侧栏直接 `uiStore.setState`（不经 `setLeftTab`
   的 persist）；画布对象被平移出 `[data-canvas-stage]` 时只调 `viewportStore.revealRect`。锚点在
   `[role=dialog]` 里就 portal 进那个节点（模态层外面点不到）。Esc 只在焦点落在卡片里时暂停。
+* **卡片挪位不许从锚点上扫过（2026-09-26，#581）**：滑行途中卡片是可点的，而锚点正是用户此刻要点
+  的东西。`lib/onboarding/position.ts` 的 `shouldGlide(from, to, anchor)` 是唯一判据：没落过位（挂载
+  那一帧在 -9999）直接出现，两框外接矩形碰到锚点也直接跳，其余才带 left/top 过渡。`from` 是卡片**此刻
+  可能在**的区域：滑行中是起点区域与终点的外接矩形，滑完才收回成终点——半路改道时拿上一段终点当起点会漏判。曾经落位与过渡同
+  一帧生效，第 1 步的卡片从屏幕外斜着飞进来、半路改道扫过素材卡，慢机器上双击的第二下落在飞过来的
+  「跳过此步」上——教程被推到第 2 步、图却没打开，合并组里连踢三个无关 PR。
+  **滑行中卡片 `pointer-events: none`**（`transitionend` 复位，兜底 `DURATION.fast + 50` ms，卸载即清）：
+  `shouldGlide` 只护锚点，路上压过的其它目标靠这一条——移动中的浮层不接点击。
 * 看护：`onboardingStore.test.ts` / `activity.test.ts` / `selectionStore.test.ts` /
   `lib/onboarding/{position,flow,tutorial,hints}.test.ts` / `components/onboarding/onboardingLayer.test.tsx` /
-  `e2e/tutorial.spec.ts`（四条：完整走完 / 刷新恢复 + Esc + 更多菜单 + axe / 重新开始 / 切项目暂停继续）。
+  `e2e/tutorial.spec.ts`（完整走完 / 刷新恢复 + Esc + 更多菜单 + axe / 重新开始 / 启动恢复晚到时拖动 /
+  落位不扫过锚点（动画放慢 20 倍逐帧量渲染框）/ 切项目暂停继续）。
   jsdom 里所有盒子都是 0×0：层的用例要给锚点 `getBoundingClientRect` 假矩形；用假计时器时 flush 要
   `advanceTimersByTimeAsync`，别等真的 setTimeout。
 

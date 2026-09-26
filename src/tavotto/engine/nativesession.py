@@ -57,7 +57,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import envlease, nativerelay, pool, runcodes
+from . import envlease, nativerelay, patchspec, pool, runcodes
 from .runcodes import RunError
 
 #: 带外事件的键——**与 `bridge_runner.EVENT_KEY` 严格同源**。
@@ -315,6 +315,22 @@ class NativeSession:
         self._on_change = None
         #: 本会话占着的环境租约有没有被释放过（只释放一次）。
         self._lease_released = False
+        #: 「与文档不一致」的图：stem → 让它停在这一档的那份全量列表的 canonical hash。
+        #: 引擎报 `unrestored > 0`（撤掉的改动还原不回去）时记下，下一次 render 报 0 时解除。
+        #: 这期间只放行**同一份列表**的重渲染（它会重试还原），换列表的编辑与导出一律
+        #: `native_figure_inconsistent`——与 offline 同一条 409 路。会话是用户的进程，
+        #: 不杀不断开；重新运行原命令 = 新会话、新 Figure，这张表自然是空的（Codex #549 第八轮）
+        self.inconsistent: dict[str, str] = {}
+        #: 「查 `inconsistent` → 发请求 → 按响应更新它」必须是一整段（Codex #549 第九轮）。
+        #: 传输支持多个等待者并发，两个 Flask 请求重叠时都会在第一个响应记下标记之前通过
+        #: 检查，第二个（换了列表的渲染 / 导出 / continue）就在不一致的 Figure 上执行了，
+        #: 晚到的响应还会把标记改回旧的那一次。bridge 本来就串行执行，这把锁只是让检查与
+        #: 执行同序。会话粒度（不是 stem）：continue / detach 看的是**所有** stem。
+        self._figure_lock = threading.Lock()
+        #: 每张图最近一次渲染的那份全量列表（canonical hash）——即会话此刻的列表。export /
+        #: preview 临时套用别的列表、还原回它时失败，被标「不一致」的是**它**：之后放行的
+        #: 重渲染是这一份（重试还原）。没渲染过就记空串，任何渲染都不放行（只能重跑）
+        self._session_list: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # 状态机
@@ -478,43 +494,80 @@ class NativeSession:
         inline_svg=...)`——第三个是**位置**参数。原来的 `**kw` 收不下它，
         native 面板每一次渲染都是 TypeError。
         """
-        self.rev += 1
+        want = patchspec.patch_hash(patches)
         payload = {"cmd": "override", "stem": stem, "patches": patches}
         # 不给就**一个字段都不加**：信封形状与 safe worker 一字不差
         if preview_dpi:
             payload["preview_dpi"] = int(preview_dpi)
         if inline_svg:
             payload["inline_svg"] = True
-        return self._request(payload, REQUEST_TIMEOUT)
+        with self._figure_lock:
+            owed = self.inconsistent.get(stem)
+            if owed is not None and owed != want:
+                raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
+            self.rev += 1
+            resp = self._request(payload, REQUEST_TIMEOUT)
+            self._session_list[stem] = want
+            if self._owes(resp):
+                self.inconsistent[stem] = want
+            else:
+                self.inconsistent.pop(stem, None)
+            return resp
+
+    @staticmethod
+    def _owes(resp: dict) -> bool:
+        """结果说这张图还欠着还原（v1 的 `unrestored`；老 bridge 不给 = 0）。"""
+        n = resp.get("unrestored")
+        return isinstance(n, int) and n > 0
+
+    def _note_temporary(self, stem: str, resp: dict) -> None:
+        """export / preview 临时套用、还原回会话列表之后的账（Codex #549 第九轮 P1）：还原
+        失败就标「不一致」，锚在会话列表上。调用方持有 `_figure_lock`。"""
+        if self._owes(resp):
+            self.inconsistent[stem] = self._session_list.get(stem, "")
+
+    def _require_consistent(self, stem: str | None = None) -> None:
+        """导出 / 历史预览拿的是 live Figure：图与文档不一致时不许拿它交差。
+        `stem=None` 问的是整条会话（continue / detach：脚本会看到**每一张**图）。
+        调用方必须持有 `_figure_lock`。"""
+        if self.inconsistent if stem is None else stem in self.inconsistent:
+            raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
 
     def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
-        return self._request(
-            {
-                "cmd": "export",
-                "stem": stem,
-                "patches": patches,
-                "path": path,
-                "format": fmt,
-                "dpi": dpi,
-            },
-            EXPORT_TIMEOUT,
-        )
+        with self._figure_lock:
+            self._require_consistent(stem)
+            resp = self._request(
+                {
+                    "cmd": "export",
+                    "stem": stem,
+                    "patches": patches,
+                    "path": path,
+                    "format": fmt,
+                    "dpi": dpi,
+                },
+                EXPORT_TIMEOUT,
+            )
+            self._note_temporary(stem, resp)
+            return resp
 
     def render_png(self, stem: str, width_px: int) -> Path:
         self._request({"cmd": "render_png", "stem": stem, "width": int(width_px)}, REQUEST_TIMEOUT)
         return self.out_dir / f"{stem}_w{int(width_px)}.png"
 
     def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
-        self._request(
-            {
-                "cmd": "preview_png",
-                "stem": stem,
-                "patches": patches,
-                "width": int(width_px),
-                "tag": tag,
-            },
-            REQUEST_TIMEOUT,
-        )
+        with self._figure_lock:
+            self._require_consistent(stem)
+            resp = self._request(
+                {
+                    "cmd": "preview_png",
+                    "stem": stem,
+                    "patches": patches,
+                    "width": int(width_px),
+                    "tag": tag,
+                },
+                REQUEST_TIMEOUT,
+            )
+            self._note_temporary(stem, resp)
         return self.out_dir / f"{stem}__{tag}.png"
 
     def svg_path(self, stem: str) -> Path:
@@ -526,9 +579,7 @@ class NativeSession:
         **runner 侧会先把 Figure 恢复成脚本原样**（ADR 0021 §8）——那一步在
         用户的进程里做，这里只是发一条 `continue`。
         """
-        resp = self._request({"cmd": "continue"}, REQUEST_TIMEOUT)
-        self._set_state(CONTINUING)
-        return resp
+        return self._release(CONTINUING)
 
     def detach(self) -> dict:
         """放手：脚本继续正常跑完，Tavotto 不再控制它。
@@ -537,11 +588,33 @@ class NativeSession:
         屏障的恢复语义两者相同（runner 侧的 `release_barrier`），所以脚本
         无论如何都看不到 Tavotto 的 override。
         """
-        resp = self._request({"cmd": "continue"}, REQUEST_TIMEOUT)
-        self._set_state(DETACHED)
+        resp = self._release(DETACHED)
         if self.transport is not None:
             self.transport.close()
         return resp
+
+    def _release(self, then: str) -> dict:
+        """continue / detach 共用的放行：**任何一张图与文档不一致就不放**（Codex #549 第九轮）。
+
+        放行之前 runner 要把 Figure 恢复成脚本原样（ADR 0021 §8.1），而欠着还原的图恰恰
+        恢复不回去——放行等于让脚本带着 Tavotto 半改的 Figure 往下跑。这里先挡一层；
+        runner 侧 `release_barrier()` 还原失败时同样拒绝（它回 `native_figure_inconsistent`，
+        这里原样翻成同一个码），不只靠这一层。`terminate` 不走这里：脚本不会再往下跑。
+
+        状态切到 `then`（CONTINUING / DETACHED）**也在锁里**（Codex #549 第九轮 P1）：runner 收到
+        continue 就离开了控制循环，锁一放、状态还停在 BARRIER 的那一瞬，等锁的渲染会通过
+        `_require_barrier()` 把帧发给一个不再读它的 runner。
+        """
+        with self._figure_lock:
+            self._require_consistent()
+            try:
+                resp = self._request({"cmd": "continue"}, REQUEST_TIMEOUT)
+            except pool.WorkerError as exc:
+                if getattr(exc, "code", "") == runcodes.NATIVE_FIGURE_INCONSISTENT:
+                    raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT) from exc
+                raise
+            self._set_state(then)
+            return resp
 
     def terminate(self) -> dict:
         """结束用户脚本——**明确的危险操作，不伪装成 continue**。
