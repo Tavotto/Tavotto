@@ -103,6 +103,41 @@ describe('关键时刻', () => {
   })
 })
 
+describe('关键时刻挂在各自的成功点上', () => {
+  const job = (status: string) =>
+    ({ job_id: 'j1', status, outputs: [], warnings: [], conflicts: [], error: null }) as never
+
+  it('导出交付了文件（done / partial）打一个 export；失败不打；同一作业只打一次', async () => {
+    const { applyExportJob, useExportStore } = await import('@/store/exportStore')
+    const stop = startVersionCheckpoints()
+    edit('t1')
+    useExportStore.setState({ ownedJobId: 'j1', job: null })
+    applyExportJob(job('running'))
+    applyExportJob(job('done'))
+    applyExportJob(job('done')) // 晚到的重复快照
+    await Promise.resolve()
+    useExportStore.setState({ ownedJobId: 'j2', job: null })
+    applyExportJob({ ...(job('failed') as object), job_id: 'j2' } as never)
+    await vi.waitFor(() => expect(posts.length).toBeGreaterThan(0))
+    await new Promise((r) => setTimeout(r, 0))
+    stop()
+    expect(posts.map((p) => p.body.moment)).toEqual(['export'])
+  })
+
+  it('回主页（showPicker）打一个 close，拍的是离开的那个项目', async () => {
+    const { useProjectStore } = await import('@/store/projectStore')
+    const stop = startVersionCheckpoints()
+    setCurrentProjectId('p_A')
+    edit('t1')
+    useProjectStore.setState({ phase: 'open', switching: false, project: { open: true, id: 'p_A' } } as never)
+    useProjectStore.getState().showPicker()
+    await vi.waitFor(() => expect(posts).toHaveLength(1))
+    stop()
+    expect(posts[0].body.moment).toBe('close')
+    expect(posts[0].headers['X-Tavotto-Project']).toBe('p_A')
+  })
+})
+
 describe('自动节点的间隔（2 分钟）', () => {
   it('停顿 15 s 拍第一个；2 分钟内的第二段编辑等到满 2 分钟才拍', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
