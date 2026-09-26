@@ -270,35 +270,40 @@ function Newcomer({ importer }: { importer: Importer }) {
         <p className="mt-3 max-w-[34em] text-base leading-relaxed text-ink-2">{t('home.newcomer.lead')}</p>
       </header>
 
-      <ol aria-label={t('home.newcomer.stepsLabel')} className="mt-8 grid grid-cols-1 gap-8 md:grid-cols-3">
-        {steps.map((s, i) => (
-          <li
-            key={i}
-            className="relative flex flex-col rounded-md border border-border bg-surface p-4"
-          >
-            <div className="flex items-start gap-3">
-              <span
-                aria-hidden
-                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-field text-lg font-medium text-ink"
-              >
-                {i + 1}
-              </span>
-              <div className="min-w-0">
-                <h2 className="text-lg font-medium text-ink">{s.title}</h2>
-                <p className="mt-1 text-sm leading-relaxed text-ink-2">{s.body}</p>
+      <div className="relative mt-8">
+        <ol aria-label={t('home.newcomer.stepsLabel')} className="grid grid-cols-1 gap-8 md:grid-cols-3">
+          {steps.map((s, i) => (
+            <li key={i} className="flex flex-col rounded-md border border-border bg-surface p-4">
+              <div className="flex items-start gap-3">
+                <span
+                  aria-hidden
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-field text-lg font-medium text-ink"
+                >
+                  {i + 1}
+                </span>
+                <div className="min-w-0">
+                  <h2 className="text-lg font-medium text-ink">{s.title}</h2>
+                  <p className="mt-1 text-sm leading-relaxed text-ink-2">{s.body}</p>
+                </div>
               </div>
-            </div>
-            <div className="mt-4 h-[120px] rounded-sm bg-bg">{s.art}</div>
-            {i < steps.length - 1 && (
-              <ChevronRight
-                size={ICON_SIZE.lg}
-                aria-hidden
-                className="absolute -right-7 top-1/2 hidden -translate-y-1/2 text-ink-faint md:block"
-              />
-            )}
-          </li>
-        ))}
-      </ol>
+              <div className="mt-4 h-[120px] rounded-sm bg-bg">{s.art}</div>
+            </li>
+          ))}
+        </ol>
+        {/* 卡片之间的「→」：挂在列表外、落在两道 2rem 间隙的正中（列宽 = (100% − 4rem) / 3）。
+            挂在卡片里往外探的话卡片自己的滚动宽度会被撑大（e2e/overflow.ts 量得到）；
+            铺一整层透明容器来放它们又会盖住卡片里的字，axe 就算不出那些字的背景色 */}
+        <ChevronRight
+          size={ICON_SIZE.lg}
+          aria-hidden
+          className="pointer-events-none absolute left-[calc((100%-4rem)/3+1rem)] top-1/2 hidden -translate-x-1/2 -translate-y-1/2 text-ink-faint md:block"
+        />
+        <ChevronRight
+          size={ICON_SIZE.lg}
+          aria-hidden
+          className="pointer-events-none absolute left-[calc((100%-4rem)*2/3+3rem)] top-1/2 hidden -translate-x-1/2 -translate-y-1/2 text-ink-faint md:block"
+        />
+      </div>
 
       <div className="mt-4 rounded-md bg-field px-6 py-4 text-center">
         <p className="flex items-center justify-center gap-1.5 text-lg font-medium text-ink">
@@ -540,7 +545,6 @@ function RecentItem({
 }) {
   const { t } = useTranslation('project')
   const when = entry.last_opened > 0 ? formatRelativeTime(entry.last_opened) : null
-  const Icon = layout === 'card' ? Folder : FileCodeCorner
   const sub = entry.tutorial ? (
     <span className="block text-sm text-ink-3">{t('picker.tutorialBadge')}</span>
   ) : layout === 'row' ? (
@@ -567,7 +571,8 @@ function RecentItem({
           'hover:bg-surface-hover focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40',
         )}
       >
-        <Icon size={ICON_SIZE.lg} className="shrink-0 text-ink-3" aria-hidden />
+        {/* 项目是目录（不是设计稿里的单个脚本文件）：两种版式都用文件夹 */}
+        <Folder size={ICON_SIZE.lg} className="shrink-0 text-ink-3" aria-hidden />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
             <span className="truncate text-base text-ink">{entry.name}</span>
