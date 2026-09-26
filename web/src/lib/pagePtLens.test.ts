@@ -220,8 +220,8 @@ const CODE_EXTENSIONS: Readonly<Record<string, ts.ScriptKind>> = {
   '.cjs': ts.ScriptKind.JS,
 }
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-/** 最长的先配（`.mts` 不能被当成 `.ts`） */
-const CODE_EXT_LIST = Object.keys(CODE_EXTENSIONS).sort((a, b) => b.length - a.length)
+/** 表里没有谁是谁的后缀（`.mts` 不以 `.ts` 结尾），按「以它结尾」认不会认错；有一条用例钉住这个前提 */
+const CODE_EXT_LIST = Object.keys(CODE_EXTENSIONS)
 const CODE_EXT_RE = CODE_EXT_LIST.map(escapeRe).join('|')
 const codeExtOf = (path: string) => CODE_EXT_LIST.find((e) => path.toLowerCase().endsWith(e))
 
@@ -811,7 +811,10 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     expect(scanned.sort()).toEqual(expected)
     expect(stripped.sort()).toEqual(expected)
     expect(parsedAs.sort()).toEqual(expected)
-    // 最长的先配：`.mts` / `.cts` 不被当成 `.ts`，`.jsx` 不被当成 `.js`
+    // 前提：表里没有谁是另一个的后缀（否则「以它结尾」会认错，要改成最长先配）
+    for (const a of CODE_EXT_LIST) {
+      for (const b of CODE_EXT_LIST) if (a !== b) expect(a.endsWith(b), `${a} / ${b}`).toBe(false)
+    }
     expect(codeExtOf('/src/a.mts')).toBe('.mts')
     expect(codeExtOf('/src/a.jsx')).toBe('.jsx')
   })
