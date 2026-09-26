@@ -79,3 +79,57 @@ interpreter decision and the data binding; any mismatch is
 whose data changed after it ran keeps showing the figure it made, marked
 as an old snapshot (`binding_check.matched = false`) until you rebuild;
 your edits are kept. (ADR 0070, 0071)
+
+**Dragging inside a figure snaps, and legends resize from their corners.**
+Trigger: dragging text, an axis label, a legend or a subplot inside a
+figure. Before: nothing snapped — only canvas objects did — so lining up
+"Vacuum" with "Superconductor" or two axis labels was done by eye, and a
+legend could only be resized one font-size / spacing field at a time in the
+inspector. Now in-figure drags snap to other elements' left / centre / right
+and top / middle / bottom edges and to the figure's centre lines, with the
+same guides as canvas objects; hold ⌘ or Ctrl to drag without snapping. A selected legend has four corner handles: drag one to scale the
+whole legend with the opposite corner fixed and a live preview; one drag is
+one undo step. Moving the main plot together with a colorbar (⇧-click to
+multi-select) now carries labels you had moved, such as "(a)", the same way
+dragging the plot alone already did. (#575)
+
+## Changed
+
+**A legend's font size now scales the whole legend box, as
+`ax.legend(fontsize=…)` does in matplotlib.** Trigger: setting a legend's
+font size in the inspector, dragging a legend corner, or applying a paper
+style / publication profile that sets legend font size (the built-in style
+does, for every legend). Before: only the entry text changed size; the
+padding, row spacing, handle length, handle–text gap, column spacing and
+minimum row height stayed at the script's size, so the box did not scale
+with its text and corner-dragging overshot or undershot. Now all of those
+follow the font size. Border padding, label spacing, handle length, handle
+text padding and column spacing can still be set on their own in the legend's
+layout details, on top of the new size. The legend title keeps its own size
+(`title_fontsize`), as in matplotlib. **Migration:** documents saved with a
+legend font size override — set by hand, or by applying a style or profile —
+redraw that legend with a proportionally larger or smaller box when opened
+(for example a 10 pt legend set to 7 pt: 97 × 42 px → 82 × 33 px at 100 dpi).
+Text size is unchanged; the right and top edges of a dragged legend move.
+Adjust the spacing fields if you need the old look. (#579, ADR 0034)
+
+## Fixed
+
+**A legend placed with a preset location no longer jumps the first time it
+is dragged.** Trigger: a legend anchored with `loc="upper right"` and the
+like, dragged for the first time. Before: it landed a few pixels away from
+where you let go (about 6 px for a 6.9 pt legend), because Tavotto measured
+text on a 100 dpi bitmap renderer while the canvas draws vector SVG. Now
+text is measured the way the canvas draws it, so the legend stays where you
+drop it and selection boxes, hit areas and snap guides of in-figure text
+line up with the glyphs. Bitmap preview and PNG export still lay out for
+pixels. (#576, #579)
+
+**Letting go of a drag no longer flashes "Rendering…".** Trigger: releasing
+a drag of a figure element. Before: the "Rendering…" badge lit up on every
+release and the figure could blur for a moment while the new version's
+embedded images decoded. Now the badge appears only when an ordinary
+re-render takes longer than 700 ms (a cold start still says so at once), and
+the previous picture — at the dragged position — stays while the new one's
+images decode, for at most 250 ms; after that the new picture is shown
+anyway. (#575)
