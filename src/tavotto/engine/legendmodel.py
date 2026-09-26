@@ -375,6 +375,8 @@ class LegendEntries:
         self.source_gids: list[str | None] = [None] * n
         self.default_binding: list[str] = ["custom"] * n
         self.binding_override: dict[int, str] = {}
+        #: 画的是某个映射图元色图的定格格子（色带）：它在色图上的位置，见 `ColormapRamp`
+        self.ramps: list = [None] * n
         for j, t in enumerate(self.texts):
             t._mm_legend_entry = (leg, j)  # noqa: SLF001
 
@@ -406,14 +408,18 @@ class LegendEntries:
         判据是**有效绑定**，不是「有没有源」：同名同类型的源找到了、指纹却对不上的项
         默认就是 custom（`bind_legend_entries` 第 3 条），它照样该从脚本原样复刻（#544 评审）。
         跟随中的项从源派生，照旧（有源的误差棒就是这样）。"""
-        return self.frozen[j] is not None and self.effective_binding(j) != "follow_source"
+        if self.frozen[j] is None:
+            return False
+        # 色带跟随的是源的**色图**，不是源派生出的示意线：跟随中也照样整格复刻、再按色图重着色
+        return self.ramps[j] is not None or self.effective_binding(j) != "follow_source"
 
     def is_script_drawn(self, j: int) -> bool:
         """定格的这一格是**脚本自己画的**（自定义 handler：色带等；默认就不跟随源）。与之相对的是
         「本来跟随源派生、被断开了」的格子（有源的误差棒）：那种格子原本就有按示意线类型给的控件，
         断开后照旧给——改完控件消失是「宣称了却改不动」（不变式 capability truthfulness）。"""
-        return self.is_frozen(j) and not (
-            self.sources[j] is not None and self.default_binding[j] == "follow_source"
+        return self.is_frozen(j) and (
+            self.ramps[j] is not None
+            or not (self.sources[j] is not None and self.default_binding[j] == "follow_source")
         )
 
     def frozen_color_uniform(self, j: int) -> bool:
@@ -450,6 +456,9 @@ class LegendEntries:
 
     def base_of(self, j: int):
         """重建 / 同步时这一项该从谁派生：跟随的从源，定格的原样复刻，其余从脚本原样快照。"""
+        if self.ramps[j] is not None:
+            # 色带：整格复刻，颜色由 `sync_legends` 按源此刻的色图补上
+            return self.frozen[j]
         if self.effective_binding(j) == "follow_source":
             return self.sources[j]
         if self.is_frozen(j):
@@ -709,6 +718,141 @@ def _freeze_entry(leg: Legend, h, box):
     return FrozenLegendHandle(kids, box, modes)
 
 
+class ColormapRamp:
+    """图例里一格**色带**与它描述的那块映射图元（网格 / 位图）之间的关联（2026-09-26，用户 Figure2 (c)）。
+
+    脚本用自定义 handler 画了一格色带（24 段矩形，颜色取自网格的色图），告诉读者「背景颜色 = 这个量」。
+    在 Tavotto 里从色条 / 网格换色图，背景变了、色带还是脚本原来那组颜色，图例与背景就对不上了。
+    matplotlib 不知道这格与网格有关（代理 handle 只是拿着同一个色图对象），关联只能按颜色认出来：
+    格子里每一段看得见的填充色都落在某块映射图元的色图上（`_RAMP_TOL` 以内）、至少
+    `_RAMP_MIN_STEPS` 个不同的位置、铺开色图全长的 `_RAMP_MIN_SPAN` 以上（`colormap_ramp`）。
+
+    `positions` 与定格副本的 artist 一一对应：那一段在色图上的位置（按色图自己的第几格取中点），
+    不是填充的（描边等）是 None。`cmap` 是绑定那一刻（脚本原样）的色图——源的色图与它相同时
+    格子画脚本原件的颜色（逐字节原样），不同才按 `positions` 从新色图重新取色，透明度保留脚本的。
+    """
+
+    def __init__(self, cmap, positions: list) -> None:
+        self.cmap = cmap
+        self.positions = list(positions)
+
+
+#: 色带的一段算「在色图上」：RGB 每个通道与色图某一格相差不超过这么多（8 位量化的两级）
+_RAMP_TOL = 2.0 / 255.0
+#: 至少这么多个不同的色图格——两三块同色系的纯色不是色带
+_RAMP_MIN_STEPS = 3
+#: 铺开色图全长的比例下限
+_RAMP_MIN_SPAN = 0.25
+
+
+def _fill_rgba(a):
+    """artist 看得见的**单一**填充色（RGBA）；不填充、全透明、或一个 Collection 里不止一种面色回 None。"""
+    if isinstance(a, Patch):
+        if not a.get_fill():
+            return None
+        c = mcolors.to_rgba(a.get_facecolor())
+    elif isinstance(a, Collection) and not isinstance(a, LineCollection):
+        fc = np.asarray(a.get_facecolor(), dtype=float)
+        if fc.ndim != 2 or len(fc) != 1:
+            return None
+        c = tuple(float(x) for x in fc[0])
+    else:
+        return None
+    return c if c[3] > 0 else None
+
+
+def colormap_ramp(frozen: FrozenLegendHandle, cmap) -> list | None:
+    """定格的这一格是不是 `cmap` 的一段色带：是就回每个 artist 在色图上的位置（见 `ColormapRamp`）。"""
+    n = int(getattr(cmap, "N", 0) or 0)
+    if n < _RAMP_MIN_STEPS:
+        return None
+    lut = np.asarray(cmap(np.arange(n)), dtype=float)[:, :3]
+    positions: list = []
+    steps: set[int] = set()
+    for a in frozen.artists:
+        c = _fill_rgba(a)
+        if c is None:
+            positions.append(None)
+            continue
+        d = np.abs(lut - np.asarray(c[:3])).max(axis=1)
+        i = int(d.argmin())
+        if d[i] > _RAMP_TOL:
+            return None  # 有一段不在这个色图上：不是它的色带（不伪造关联）
+        positions.append((i + 0.5) / n)
+        steps.add(i)
+    if len(steps) < _RAMP_MIN_STEPS or (max(steps) - min(steps)) / (n - 1) < _RAMP_MIN_SPAN:
+        return None
+    return positions
+
+
+def _same_cmap(a, b) -> bool:
+    if a is b:
+        return True
+    try:
+        return a.N == b.N and np.array_equal(a(np.arange(a.N)), b(np.arange(b.N)))
+    except Exception:  # noqa: BLE001 — 比不出来就当不同（重新取色，结果仍是这个色图的颜色）
+        return False
+
+
+def bind_colormap_swatches(leg: Legend, candidates: list[tuple[str, object]]) -> None:
+    """给没有源、定格了的格子找它画的是**谁的色图**（instrument 时跑一次，紧跟 `bind_legend_entries`）。
+
+    `candidates` 是 (gid, 映射图元)：此刻真在按数组上色、色图可编辑的网格 / 位图 / 散点。
+    认出来的项有了源（`source_gid` 指向那块图元）、脚本原样是 `follow_source`：界面上是一条普通的
+    「链接到」，断开 = 色带回到脚本画的颜色、不再随色图变。几块图元都对得上、又不是同一个色阶
+    （共用 norm 对象，见 `colorbarmodel.scale_siblings`）时不绑——绑错一条比不绑更坏。
+    """
+    model = legend_entries(leg)
+    if model is None:
+        return
+    for j in range(model.n):
+        if model.sources[j] is not None or model.frozen[j] is None:
+            continue
+        hits = []
+        for gid, art in candidates:
+            try:
+                cmap = art.get_cmap()
+                pos = colormap_ramp(model.frozen[j], cmap)
+            except Exception:  # noqa: BLE001 — 认不出就不认
+                pos = None
+            if pos is not None:
+                hits.append((gid, art, cmap, pos))
+        if not hits or len({id(getattr(h[1], "norm", None)) for h in hits}) != 1:
+            continue
+        gid, art, cmap, pos = hits[0]
+        model.sources[j] = art
+        model.source_gids[j] = gid
+        model.default_binding[j] = "follow_source"
+        model.ramps[j] = ColormapRamp(cmap, pos)
+
+
+def _sync_ramp(leg: Legend, k: int, model: LegendEntries, j: int) -> None:
+    """色带那一格按源此刻的色图上色（跟随中）；断开了、或色图没变，就是脚本原件的颜色。
+
+    派生显示，与 `sync_legends` 其余部分一样不进 applied：每轮 apply 的尾部从模型现算，
+    热态与全量重放是同一个结果；撤销色图 / 断开之后退回原件颜色也走这一条。"""
+    ramp, frozen = model.ramps[j], model.frozen[j]
+    boxes = _entry_boxes(leg)
+    if k >= len(boxes):
+        return
+    kids = list(boxes[k][0].get_children())
+    if len(kids) != len(frozen.artists):
+        return
+    cmap = None
+    if model.effective_binding(j) == "follow_source":
+        cur = model.sources[j].get_cmap()
+        if not _same_cmap(cur, ramp.cmap):
+            cmap = cur
+    for a, orig, t in zip(kids, frozen.artists, ramp.positions):
+        if t is None:
+            continue
+        if cmap is None:
+            a.set_facecolor(orig.get_facecolor())
+        else:
+            alpha = _fill_rgba(orig)[3]
+            a.set_facecolor((*(float(x) for x in cmap(t)[:3]), alpha))
+
+
 def _is_cell_transform(t, box) -> bool:
     """`t` 就是这一格的变换：`DrawingArea.get_transform()` 每次现拼 `dpi_transform + offset_transform`，
     按**对象身份**认这两个成员，不按数值比——定格判定跑在还没排版的图例上，那时格子变换在数值上
@@ -791,7 +935,9 @@ def sync_legends(state: RebuildState) -> None:
         for k, j in enumerate(model.shown()):
             binding = model.effective_binding(j)
             try:
-                if binding == "follow_source":
+                if model.ramps[j] is not None:
+                    _sync_ramp(leg, k, model, j)
+                elif binding == "follow_source":
                     _legend_replace_handle(leg, k, model.sources[j])
                 elif not model.has_style_override(j):
                     # custom 而没有 override：示意线该是脚本原样的样子（撤掉

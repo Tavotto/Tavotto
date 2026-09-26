@@ -15,12 +15,13 @@ import { ResetChip, labeledWithState } from './textRows'
 /**
  * 图例的「排版详情」（审计 T17）：示意线长度、线与文字间距、行距、列距、内边距。
  *
- * 这五条是 matplotlib 按**字号的倍数**（em）计的，引擎发 `unit: "em"`；它们
- * 不是选中图例后最先要改的东西，所以收进一个默认折叠的小节，位置 / 列数 /
- * 边框留在首屏。折叠段里标签独占一列、**不截断**——「线与文字间距」在 72px
- * 的标签列里只剩「线与文字间…」，正是审计点名的那一条。
+ * 这五条是 matplotlib 按**字号的倍数**（em）计的，引擎发 `unit: "em"`。小节
+ * **默认展开**（2026-09-26 用户反馈：默认折叠时找不到列距 / 间距在哪改——
+ * 「排版详情」这个小字链接不像入口）；仍可收起，收起只在这次选中里有效，
+ * 不存偏好：换个图例再选中又是展开的。段里标签独占一列、**不截断**——「线与
+ * 文字间距」在 72px 的标签列里只剩「线与文字间…」，正是审计点名的那一条。
  *
- * 用户改过任何一条时小节自动展开（override 不因折叠而不可发现，与「更多」
+ * 用户改过任何一条时小节必定展开（override 不因折叠而不可发现，与「更多」
  * 同一条纪律）。列距只在多列时出现（`fieldVisible`，与通用列表同一份判据）。
  */
 /**
@@ -51,7 +52,7 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
     fieldVisible(element.role, p, { isOverridden: overridden, read: w.read }),
   )
   const modified = props.filter(overridden).length
-  const [openPref, setOpenPref] = useState(false)
+  const [openPref, setOpenPref] = useState(true)
   const open = openPref || modified > 0
 
   if (!props.length) return null
