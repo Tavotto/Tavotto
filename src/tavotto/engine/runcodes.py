@@ -183,8 +183,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         " Re-run the original command to resume object-level editing.",
     },
     NATIVE_FIGURE_INCONSISTENT: {
-        "zh": "这张图有改动没能还原，与文档不一致。重新运行原命令后可继续编辑与导出。",
-        "en": "Some edits to this figure couldn’t be undone, so it no longer matches the document."
+        "zh": "这张图有改动没能还原，与排版里记下的不一致。重新运行原命令后可继续编辑与导出。",
+        "en": "Some edits to this figure couldn’t be undone, so it no longer matches the layout."
         " Re-run the original command to resume editing and export.",
     },
     NATIVE_SESSION_ENDED: {

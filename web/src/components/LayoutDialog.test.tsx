@@ -215,12 +215,12 @@ describe('另存 / 打开是两屏', () => {
 
   it('名字撞上已有文档时当场说出来（写盘之前）', async () => {
     await open(['Fig 1'], 'save')
-    expect(dialog().textContent).toContain('已有同名文档')
+    expect(dialog().textContent).toContain('已有同名排版')
     expect(mockSave).not.toHaveBeenCalled()
   })
 
   it('名字没撞上就不吓唬用户', async () => {
     await open(['Something Else'], 'save')
-    expect(dialog().textContent).not.toContain('已有同名文档')
+    expect(dialog().textContent).not.toContain('已有同名排版')
   })
 })

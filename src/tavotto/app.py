@@ -1589,7 +1589,7 @@ def api_package():
     body = request.get_json(force=True)
     doc = body.get("doc")
     if not isinstance(doc, dict) or doc.get("schema") not in (2, 3):
-        return jsonify({"error": "无效的布局文档", "code": "invalid_document"}), 400
+        return jsonify({"error": "无效的排版", "code": "invalid_document"}), 400
     default_stem = (
         (doc.get("project") or {}).get("name") if doc.get("schema") == 3 else doc.get("name")
     )
@@ -6804,7 +6804,7 @@ def _external_change(current: str | None, path: Path):
     """
     return jsonify(
         {
-            "error": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过",
+            "error": "磁盘上的这份排版已被 Tavotto 之外的改动覆盖过",
             "code": "external_change",
             "revision": current,
             "summary": document_summary(path),
@@ -6860,7 +6860,7 @@ def api_autosave_put(doc_id):
             if theirs is not None:
                 return jsonify(
                     {
-                        "error": "该文档已在其他窗口保存了更新的版本",
+                        "error": "这份排版已在其他窗口保存了更新的版本",
                         "code": "stale_write",
                         "theirs": theirs,
                     }
@@ -7098,7 +7098,7 @@ def _refuse_blind_full_overwrite(doc_id: str):
     LOG.warning("版本时间线读不出来，已拒绝整份写回（原文件未动）: %s", src)
     return jsonify(
         {
-            "error": "这份文档的版本历史读不出来，这次的检查点没有写入——"
+            "error": "这份排版的版本历史读不出来，这次的检查点没有写入——"
             "磁盘上那份历史一个字节都没动，仍在原处。",
             "code": "versions_unreadable",
         }

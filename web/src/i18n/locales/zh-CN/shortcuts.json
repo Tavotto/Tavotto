@@ -20,7 +20,7 @@
     "tutorial": "教程"
   },
   "key": {
-    "copyPaste": "复制 / 粘贴对象，可跨文档",
+    "copyPaste": "复制 / 粘贴对象，可跨排版",
     "delete": "删除对象；图内编辑时改为隐藏，可恢复。",
     "duplicate": "原位复制所选",
     "enter": "编辑所选：文字进入编辑，可编辑的图进入图内编辑",
@@ -32,8 +32,8 @@
     "nudge": "微移 0.5 mm / 5 mm",
     "palette": "命令面板",
     "pan": "平移画布",
-    "saveDocument": "保存当前文档",
-    "saveLayout": "保存为画布文件",
+    "saveDocument": "保存排版",
+    "saveLayout": "另存为新排版",
     "script": "上标 / 下标（属性面板文字框内）",
     "selectAll": "全选",
     "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",

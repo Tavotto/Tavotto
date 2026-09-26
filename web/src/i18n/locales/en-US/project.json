@@ -91,6 +91,7 @@
     "emptyRecent": "Projects you open will show up here",
     "filter": "Filter by name or path",
     "filterLabel": "Filter projects",
+    "hint": "A project is your script folder; one project can hold several layouts.",
     "listLabel": "{{section}} projects",
     "moveDown": "Move down",
     "moveUp": "Move up",

@@ -1,6 +1,6 @@
 {
   "closeGuard": {
-    "body": "This document has unsaved changes. Save before closing?",
+    "body": "This layout has unsaved changes. Save before closing?",
     "discard": "Don’t save",
     "save": "Save and close",
     "saveFailed": "Saving failed, so the window stays open. Resolve the problem, or choose “Don’t save” to close anyway.",
@@ -28,7 +28,7 @@
     "conflict": "The export folder already has {{files}}.",
     "conflictRename": "Save a copy",
     "conflictReplace": "Replace",
-    "editedDuringExport": "This document changed during export. The files hold what it looked like when you pressed Export.",
+    "editedDuringExport": "This layout changed during export. The files hold what it looked like when you pressed Export.",
     "epsHint": "Vector · no transparency",
     "epsUnavailable": {
       "canvas_scope": "EPS is available only for a single figure at original size. The canvas is composed by the PDF engine, which doesn’t produce PostScript.",
@@ -142,18 +142,18 @@
     }
   },
   "layout": {
-    "conflict": "A document named “{{name}}” already exists on disk, written by another window or tool.",
+    "conflict": "A layout named “{{name}}” already exists on disk, written by another window or tool.",
     "conflictDisk": "On disk: {{canvases}} canvases / {{objects}} objects",
-    "empty": "No named documents in this project yet",
+    "empty": "No layouts in this project yet",
     "load": "Load",
-    "nameLabel": "Document name",
-    "namePlaceholder": "Document name",
-    "nameTaken": "A document with this name already exists; saving replaces it.",
-    "openTitle": "Open document",
+    "nameLabel": "Layout name",
+    "namePlaceholder": "Layout name",
+    "nameTaken": "A layout with this name already exists; saving replaces it.",
+    "openTitle": "Open layout",
     "overwrite": "Overwrite anyway",
     "saveAs": "Save as",
-    "saveTitle": "Save document as",
-    "saved": "Saved as document: {{name}}",
+    "saveTitle": "Save layout as",
+    "saved": "Saved as a new layout: {{name}}",
     "saving": "Saving…",
     "savesIntoLabel": "Save into"
   },
@@ -269,24 +269,24 @@
         "label": "Open layers"
       },
       "load-layout": {
-        "keywords": "open load document canvas file",
-        "label": "Load canvas file…"
+        "keywords": "open load layout canvas file",
+        "label": "Open layout…"
       },
       "new-doc": {
-        "keywords": "new blank document empty",
-        "label": "New blank document"
+        "keywords": "new blank layout empty",
+        "label": "New blank layout"
       },
       "rulers": {
         "keywords": "ruler guides measure",
         "label": "Show / hide rulers"
       },
       "save-document": {
-        "keywords": "save document write disk",
-        "label": "Save this document"
+        "keywords": "save layout write disk",
+        "label": "Save layout"
       },
       "save-layout": {
-        "keywords": "save as document canvas file",
-        "label": "Save as canvas file…"
+        "keywords": "save as layout copy canvas file",
+        "label": "Save layout as…"
       },
       "select-all": {
         "keywords": "select all everything",
@@ -310,7 +310,7 @@
       },
       "versions": {
         "keywords": "version history timeline snapshot",
-        "label": "Document versions…"
+        "label": "Layout versions…"
       },
       "tutorial-start": {
         "label": "Start tutorial",
@@ -692,7 +692,7 @@
     "refCount_other": " (referenced by {{count}} figures)",
     "selectAria": "Choose a replacement asset for {{name}}",
     "skipPanel": "Skip this figure",
-    "titleDoc": "Figures in this document are missing assets",
+    "titleDoc": "Figures in this layout are missing assets",
     "titlePaste": "The pasted figures are missing assets"
   },
   "settings": {
@@ -1191,7 +1191,7 @@
       "restartAfter": " to use it. This process is still running the old code.",
       "restartBefore": "Upgrade complete. ",
       "restartStrong": "Restart Tavotto",
-      "signatureNote": "Update packages are officially signed, and the signature is checked before installing; if it fails, nothing is installed. Projects, canvases and settings live in your user data folder, so upgrades don’t touch them.",
+      "signatureNote": "Update packages are officially signed, and the signature is checked before installing; if it fails, nothing is installed. Your projects, layouts and settings live outside the app’s install folder, so upgrades don’t touch them.",
       "sourceUpgrade": "For a source checkout, run",
       "upgrading": "Upgrading…",
       "lastCheckedNoUpdate": "{{time}} · No new version",
@@ -1218,7 +1218,7 @@
     "annotationGroup": "Annotations and page",
     "annotationText": "Annotation text",
     "bold": "Bold",
-    "deleteBody": "It can’t be recovered. Edits already applied to the document are unaffected.",
+    "deleteBody": "It can’t be recovered. Edits already applied to the layout are unaffected.",
     "deleteTitle": "Delete style “{{name}}”?",
     "descriptionEmpty": "Save font sizes, line widths, ticks and palettes as a named style, then apply it in bulk. Only figure edits are written; source files stay untouched.",
     "emptyBody": "No styles saved yet. Select a rendered, editable figure to extract its font sizes, line widths, ticks and palette as a start.",
@@ -1312,13 +1312,13 @@
   "versions": {
     "autoBadge": "Auto",
     "beforeRestore": "Before restore ({{time}})",
-    "close": "Close document versions",
+    "close": "Close layout versions",
     "compareAria": "Overlay comparison",
     "compareDescription": "Base = this version; translucent outline = current canvas",
     "compareTip": "Large overlay comparison (base = this version, outline = current)",
     "compareTitle": "Overlay comparison",
     "delete": "Delete version",
-    "deleteBody": "Deleted versions can’t be recovered. Your current document isn’t affected.",
+    "deleteBody": "Deleted versions can’t be recovered. Your current layout isn’t affected.",
     "deleteTitle": "Delete version “{{name}}”?",
     "diff": {
       "added": "Added since: {{name}}",
@@ -1343,7 +1343,7 @@
       "unlocked": "{{name}}: unlocked",
       "zorder": "Stacking order differs"
     },
-    "drawerLabel": "Document versions",
+    "drawerLabel": "Layout versions",
     "duplicate": "Duplicate version",
     "emptyTitle": "No versions yet",
     "fromCanvas": "From canvas “{{name}}”",
@@ -1357,16 +1357,16 @@
     "previewApproximate": "Figure-edit preview unavailable. The thumbnail below shows the original file.",
     "rename": "Rename version",
     "restore": "Restore as a new version",
-    "restoreHistory": "Restore document version “{{name}}”",
+    "restoreHistory": "Restore layout version “{{name}}”",
     "restoreMissingCanvasBody": "This checkpoint came from canvas “{{from}}”, now deleted. Continuing writes into the current canvas “{{to}}”, replacing what’s there.",
     "restoreMissingCanvasTitle": "Original canvas is gone",
     "restoreOtherCanvasBody": "This checkpoint was taken on canvas “{{from}}”; you’re on “{{to}}”. Restoring switches to “{{from}}” and writes there, leaving the current canvas alone.",
     "restoreOtherCanvasTitle": "Restore into canvas “{{name}}”?",
     "restoreUnknownCanvasBody": "It was left by an older version and doesn’t record its canvas. Continuing writes into the current canvas “{{to}}”, replacing what’s there.",
     "restoreUnknownCanvasTitle": "This checkpoint has no source canvas",
-    "restored": "Restored document version “{{name}}”. You can undo this; no source file was touched.",
+    "restored": "Restored layout version “{{name}}”. You can undo this; no source file was touched.",
     "save": "Save version",
-    "saved": "Current document saved as a new version",
+    "saved": "Current layout saved as a new version",
     "summary": {
       "added_one": "{{count}} object added",
       "added_other": "{{count}} objects added",
@@ -1378,7 +1378,7 @@
       "resized": "Figure size {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
       "sameMetrics": "Same object count and figure size"
     },
-    "title": "Document versions",
+    "title": "Layout versions",
     "versionName": "Version name",
     "viewLabel": "Which version to preview",
     "viewCurrent": "Current",
@@ -1419,14 +1419,14 @@
       "unavailable": "Tutorial resources are incomplete. Reinstall Tavotto.",
       "open_failed": "Couldn’t open the tutorial project. Try again, or open your own project.",
       "locked": "A file in the tutorial project is in use by another program. Close it and try again.",
-      "document_failed": "Couldn’t read the tutorial canvas — incompatible version or missing file. Try “Reset tutorial project”.",
+      "document_failed": "Couldn’t read the tutorial layout — incompatible version or missing file. Try “Reset tutorial project”.",
       "cancelled": "Cancelled.",
       "no_api": "This environment does not provide the tutorial."
     },
     "reset": {
       "title": "Reset the tutorial project?",
       "body": "The tutorial project goes back to how it was installed. Your edits, written-back figures, and progress are cleared; other projects are untouched.",
-      "bodyWithLayouts": "The tutorial project goes back to how it was installed, and the canvas files you saved in it are cleared too: {{names}}. Export them first to keep them; other projects are untouched.",
+      "bodyWithLayouts": "The tutorial project goes back to how it was installed, and the layouts you saved in it are cleared too: {{names}}. Export them first to keep them; other projects are untouched.",
       "confirm": "Reset and start over"
     },
     "steps": {

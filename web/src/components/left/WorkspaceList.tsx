@@ -168,6 +168,12 @@ export function WorkspaceList() {
           ))}
       </div>
 
+      {/* 名词说明（2026-09-26 用户拍板四个名词，ADR 0001 修订）：项目 ≠ 排版。一行 meta
+          字压在两个入口上方，不占列表的位置 */}
+      <p className="shrink-0 px-3 pb-2 type-meta" data-workspace-hint>
+        {ws('hint')}
+      </p>
+
       {/* 两个入口平级，都不是这一屏的主动作：不给填色（宪法：每个上下文最多一个填色主动作，
           而左栏这一格没有「那一个」） */}
       <div className="flex shrink-0 gap-1.5 border-t border-border px-3 py-2">

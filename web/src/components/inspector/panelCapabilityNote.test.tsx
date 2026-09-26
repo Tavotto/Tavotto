@@ -98,8 +98,8 @@ afterEach(async () => {
 
 it('仅排版：说清它还能做什么，并给出查看入口', async () => {
   await mount(panel(), asset(capabilityOf('layout_only')))
-  expect(host.textContent).toContain('仅排版')
-  expect(host.textContent).toMatch(/排版|裁剪|导出/)
+  expect(host.textContent).toContain('仅版面')
+  expect(host.textContent).toMatch(/摆放|裁剪|导出/)
   expect(host.querySelector('[role="alert"]')).toBeNull()
   expect(host.querySelector('button')).not.toBeNull()
 })

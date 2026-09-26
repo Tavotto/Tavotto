@@ -224,7 +224,7 @@ def dumps_json(obj: Any, *, indent: int | None = None) -> bytes:
     except ValueError as exc:
         raise AtomicWriteError(
             "non_finite_number",
-            f"文档里含有无法保存的数值（NaN 或 ∞）：{exc}",
+            f"排版里含有无法保存的数值（NaN 或 ∞）：{exc}",
             Path("."),
         ) from exc
     return text.encode("utf-8")

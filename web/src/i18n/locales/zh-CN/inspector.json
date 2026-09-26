@@ -542,7 +542,7 @@
     "tickLocator": "刻度定位",
     "tickMarks": "刻度线",
     "ticks": "刻度",
-    "typography": "排版",
+    "typography": "文字样式",
     "view": "视角",
     "legendEntry": "图例项"
   },
@@ -993,7 +993,7 @@
     "color": "文字颜色",
     "italic": "斜体",
     "italicStyle": "字形 · {{value}}",
-    "layout": "排版与层级",
+    "layout": "文字样式与层级",
     "prop": {
       "alpha": "不透明度",
       "bbox_alpha": "不透明度",
@@ -1154,7 +1154,7 @@
     "customHint": "示意线不再由图中对象派生；恢复链接会回到由它派生的样子。",
     "customHintStyled": "示意线用的是你在这里改的样式；恢复链接会一并撤销这些修改。",
     "viewSource": "查看源对象：{{label}}",
-    "layoutDetails": "排版详情",
+    "layoutDetails": "布局详情",
     "linkedTo": "链接到：{{label}}",
     "unlinkedFrom": "已断开 · 来源：{{label}}",
     "unlinkAction": "断开链接",

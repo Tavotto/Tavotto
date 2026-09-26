@@ -259,7 +259,7 @@ interface UiState extends Persisted {
   problemFilter: Severity[] | null
   /**
    * 问题面板的范围（`lib/problemList.ts`）：`null` = 没选过，跟着现场走——
-   * 有正在编辑的图就看它，否则看整个文档。同 `problemFilter`，UI 会话状态。
+   * 有正在编辑的图就看它，否则看整份排版。同 `problemFilter`，UI 会话状态。
    */
   problemScope: ProblemScope | null
   /**

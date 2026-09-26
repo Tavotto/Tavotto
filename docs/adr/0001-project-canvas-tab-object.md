@@ -66,3 +66,30 @@ schema 2 → 3 迁移：整份旧文档变成唯一 Canvas，`name` 提升为 Ca
 - Tab 状态属于 UI 持久层（per-project），不进 schema。
 - 拒绝的备选：多文件（每 Canvas 一文件）工作态——跨画布原子性与重命名复杂度
   高于单 manifest；数据量（JSON 数百 KB 级）不构成瓶颈。
+
+## 修订 2026-09-26：界面名词固定为四个（用户拍板）
+
+上面「UI 文案：不再出现『布局文件 / 文档』」这条一直没有看护，后来的文案又用回了
+「文档」「画布文件」「另存为文档」「项目文档」「本机最近文档」；同一个 ⇧⌘S 在快捷键
+帮助里叫「保存为画布文件」、在对话框里叫「另存为文档」；「画布」一词同时被拿来指一张图
+和整份文件。用户于 2026-09-26 拍板：界面名词**只有这四个**——
+
+| 界面名词 | English | 指什么 | 对应代码概念 |
+|---|---|---|---|
+| 项目 | Project | 用户的脚本文件夹（左栏「工作区」里的条目） | 上表的 **Project**（`project_status.figures_dir`） |
+| 排版 | Layout | schema 3 的一份 JSON，可以包含多张画布；⌘S 存它、⇧⌘S 另存它、版本时间线记它 | `ProjectDocument` / `TavottoProject`（`documentStore.buildProject()`），后端 `layouts/` 与 `tavottofile/*.json` |
+| 画布 | Canvas | 排版里的一张图（标签页） | 上表的 **Canvas** |
+| 项目包 | Project package | 导出的 `.tavotto` 单文件，用于分享 | `api_package`（kind=`tavotto-package`） |
+
+- 「排版」取代界面上的「文档 / 画布文件 / 项目文档」；中文「文档」与英文
+  document(s) 作为这个概念从界面上彻底去掉。「使用文档 / Documentation」指帮助手册，
+  不是这个概念，按条豁免。
+- 这一修订**改的是界面名词，不是上表的层级**：上表把 schema 3 顶层叫 Project，是当时
+  「一个项目一份文件」的设想；实际落地后一个项目文件夹里可以有多份排版（`tavottofile/`
+  下每个命名 JSON 一份），所以界面上「项目」只指文件夹，那份 JSON 叫「排版」。代码里的
+  `ProjectDocument` / `documentId` / i18n key 名（`topbar.saveDocumentAs` 等）**不改名**
+  ——改 key 代价大、与用户无关；开发者读到 `document` 时按本表对应到「排版」。
+- 每样东西存在哪、存什么，面向用户的说明在 README「文件都放在哪」；前端细则与看护
+  在 `docs/rules/frontend/i18n.md`「界面名词」。看护：`tests/test_ui_terminology.py`
+  （扫 zh-CN / en-US 全部语言包，豁免按条枚举且必须仍命中）；壳内菜单文案由
+  `tests/test_desktop_i18n.py` 看护。
