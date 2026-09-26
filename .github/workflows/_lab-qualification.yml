@@ -162,6 +162,20 @@ jobs:
       - name: 清理上一轮残留
         run: python3 scripts/ci/cleanup.py
 
+      # 发行档的批准字体取自将要发出去的那份 wheel：lab 机器解析不了字体来源的
+      # objects.githubusercontent.com / raw.githubusercontent.com（2026-09-26 两次
+      # `Temporary failure in name resolution`），而 Actions 产物走的通道是通的。
+      # 取到的字节随后由 `fetch_fonts.py --check` 按 allowlist 的 sha256 逐张核对。
+      - name: 取回候选产物里的批准字体（发行档）
+        if: inputs.use_prebuilt_dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: ${{ runner.temp }}/fonts-source-dist
+          repository: Tavotto/Tavotto
+          run-id: ${{ inputs.source_run_id || github.run_id }}
+          github-token: ${{ secrets.TAVOTTO_PUBLIC_TOKEN }}
+
       - name: 建一次性验证环境
         id: venv
         run: |
@@ -175,7 +189,34 @@ jobs:
           "$VENV/bin/pip" install -q -e ".[dev,ci]"
           # 批准字体不进 git（ADR 0060），editable 安装读的是源码树里的 resources/fonts/：
           # 不在跑套件之前取，RenderCore 一律 backend_unavailable（U10 #539 之后 lab 连红的根因）。
-          "$VENV/bin/python" scripts/fetch_fonts.py
+          if [ "${{ inputs.use_prebuilt_dist }}" = "true" ]; then
+            # 内联而不是 scripts/ 下的新文件：workflow 定义取自 @main，脚本却取自被验的
+            # inputs.sha——旧发行 SHA 里没有新脚本。这里只搬字节，真伪由下面的 --check 判。
+            "$VENV/bin/python" - "$RUNNER_TEMP/fonts-source-dist" <<'PY'
+          import shutil, sys, zipfile
+          from pathlib import Path, PurePosixPath
+          wheels = sorted(Path(sys.argv[1]).glob("*.whl"))
+          if len(wheels) != 1:
+              sys.exit(f"候选产物里应有且仅有一个 wheel，实际 {len(wheels)} 个")
+          prefix = PurePosixPath("tavotto/resources/fonts")
+          dest = Path("src/tavotto/resources/fonts")
+          with zipfile.ZipFile(wheels[0]) as zf:
+              members = [n for n in zf.namelist() if not n.endswith("/") and prefix in PurePosixPath(n).parents]
+              if not members:
+                  sys.exit(f"{wheels[0].name} 里没有 {prefix}/ 下的字体")
+              shutil.rmtree(dest, ignore_errors=True)
+              for n in members:
+                  rel = PurePosixPath(n).relative_to(prefix)
+                  if ".." in rel.parts:
+                      sys.exit(f"wheel 里的路径越界：{n}")
+                  out = dest.joinpath(*rel.parts)
+                  out.parent.mkdir(parents=True, exist_ok=True)
+                  out.write_bytes(zf.read(n))
+          print(f"从 {wheels[0].name} 解出 {len(members)} 个字体目录文件")
+          PY
+          else
+            "$VENV/bin/python" scripts/fetch_fonts.py
+          fi
           "$VENV/bin/python" scripts/fetch_fonts.py --check
           # **科学栈版本取自 packaging/runtime-lock.json**，不用 `pip install matplotlib`。
           # 视觉基线是像素级的：matplotlib 换个小版本就可能改掉抗锯齿或字体度量，
