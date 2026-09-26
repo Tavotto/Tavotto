@@ -234,7 +234,9 @@ function annotatedLibrary(): string {
       '    ax.annotate("", xy=(7.5, -0.9), xytext=(5.5, -0.3), arrowprops=dict(arrowstyle="->"))',
       '    ax.set_ylim(-1.3, 1.3)',
       '    ax.legend(loc="upper right")',
-      '    fig.savefig("Fig_annot.pdf", bbox_inches="tight", pad_inches=0.02)',
+      // 不用 bbox_inches="tight"：图幅就是保存下来的那个框（ADR 0098），tight 会把上面给子图
+      // 右边留的余量裁掉，子图走一步就贴边被钳住
+      '    fig.savefig("Fig_annot.pdf")',
       '',
     ].join('\n'),
     'utf-8',
