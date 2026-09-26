@@ -20,6 +20,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
+import { DURATION } from '@/lib/motion'
 import type { EditableField, EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
@@ -200,6 +201,10 @@ describe('图例的排版详情（审计 T17）', () => {
     await mount()
     await click(cardToggle())
     expect(cardToggle()?.getAttribute('aria-expanded')).toBe('false')
+    // 收起有一段退场动画（`Reveal` 在 DURATION.exit 之后才卸载内容），等它走完再数
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, DURATION.exit + 50))
+    })
     for (const prop of ['handlelength', 'handletextpad', 'labelspacing', 'borderpad']) {
       expect(allRows(prop)).toHaveLength(0)
     }
