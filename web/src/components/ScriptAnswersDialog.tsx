@@ -9,6 +9,9 @@ import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
 
+/** 选择器的空值必须是同一个引用：每次新建 `[]` 会让 zustand 判成「变了」而无限重渲染 */
+const NONE: RememberedAnswer[] = []
+
 const si = (key: string, values?: Record<string, unknown>) =>
   translate(`scriptInput.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
@@ -20,7 +23,7 @@ const si = (key: string, values?: Record<string, unknown>) =>
 export function ScriptAnswersDialog() {
   useTranslation('dialogs')
   const script = useScriptInputStore((s) => s.managing)
-  const answers = useScriptInputStore((s) => (script ? (s.answers?.[script] ?? []) : []))
+  const answers = useScriptInputStore((s) => (script ? (s.answers?.[script] ?? NONE) : NONE))
   const location = useScriptInputStore((s) => s.location)
 
   if (!script) return null
