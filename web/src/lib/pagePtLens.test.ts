@@ -240,14 +240,24 @@ const QUOTA: Record<string, Quota> = {
 }
 
 /** `.ts` 按 TS 解析、`.tsx` 按 TSX 解析（`.ts` 里的 `<T>(x) => …` 在 TSX 下会解析错） */
-const parse = (path: string, src: string) =>
-  ts.createSourceFile(
-    path,
-    src,
-    ts.ScriptTarget.Latest,
-    true,
-    path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  )
+const parse = (path: string, src: string): ts.SourceFile => {
+  // 同一份源码只解析一次：全量扫描在收集阶段做一次，之后的用例（加几个样本文件再判）只解析新文件
+  // ——CI 慢机上每条用例重扫整个 src 会超 5 s（a0e2d342 的 frontend job）
+  const key = `${path}\0${src}`
+  let file = PARSED.get(key)
+  if (!file) {
+    file = ts.createSourceFile(
+      path,
+      src,
+      ts.ScriptTarget.Latest,
+      true,
+      path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    )
+    PARSED.set(key, file)
+  }
+  return file
+}
+const PARSED = new Map<string, ts.SourceFile>()
 
 /** 语法错误：AST 不完整，判不了就按红算 */
 const hasSyntaxErrors = (file: ts.SourceFile) =>
@@ -712,8 +722,20 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     query: '?raw',
     import: 'default',
   }) as Sources
+  // 全量扫描在收集阶段只做一次（不进任何用例的 5 s 预算）；用例只查询结果
   const REAL = scanAll(ALL)
-  const topDir = (p: string) => (p.split('/').length > 3 ? p.split('/')[2] : '(src 根)')
+  /**
+   * 在真实 src 上加几个样本文件再判：定义者按「真实 + 样本」重新认（解析走缓存，只多解析样本），
+   * 命中只判样本文件本身——真实文件的结论已由 `REAL` 钉住（它们不 import 样本文件）。
+   */
+  const scanWith = (extra: Sources) => {
+    const defs = definersOf({ ...ALL, ...extra })
+    const hits = Object.entries(extra)
+      .filter(([p]) => isProduction(p))
+      .flatMap(([p, s]) => conversionHits(p, s, defs, ALLOW[p], QUOTA[p]))
+    return { defs, hits }
+  }
+  const topDir =(p: string) => (p.split('/').length > 3 ? p.split('/')[2] : '(src 根)')
 
   it('定义者是从源码里认出来的，恰好是期望的两处（多出一处 = 多了一份换算）', () => {
     expect([...REAL.defs.values()].sort()).toEqual(['/src/lib/preflight.ts', '/src/lib/stylePresets.ts'])
@@ -906,7 +928,7 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
       },
     ]
     for (const extra of chains) {
-      const { hits } = scanAll({ ...ALL, ...extra })
+      const { hits } = scanWith(extra)
       expect(hits.some((h) => h.startsWith('/src/lib/relay1.ts:')), JSON.stringify(hits)).toBe(true)
     }
   })
@@ -1028,7 +1050,7 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
   it('目录导入解析到 index.ts(x)：目录、带尾斜杠、显式 index 三种写法都红', () => {
     const extra = { '/src/lib/scale/index.tsx': 'export function panelScale() { return 1 }' }
     for (const spec of ['@/lib/scale', '@/lib/scale/', '../lib/scale/index.tsx', '../lib/Scale/./']) {
-      const { hits } = scanAll({ ...ALL, ...extra, [UI]: `import { panelScale } from '${spec}'` })
+      const { hits } = scanWith({ ...extra, [UI]: `import { panelScale } from '${spec}'` })
       expect(hits.some((h) => h.startsWith(`${UI}:`)), spec).toBe(true)
     }
   })
@@ -1043,7 +1065,7 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     ['类', 'export class panelScale {}'],
   ])('定义者是现场认的（%s）：别处新声明或导出一个换算名，它就成了定义者，从它取值照样红', (_what, decl) => {
     const extra = { '/src/lib/scale2.ts': decl }
-    const { defs, hits } = scanAll({ ...ALL, ...extra, [UI]: "import { panelScale } from '@/lib/scale2'" })
+    const { defs, hits } = scanWith({ ...extra, [UI]: "import { panelScale } from '@/lib/scale2'" })
     expect([...defs.keys()], decl).toContain('/src/lib/scale2')
     expect(hits.some((h) => h.startsWith(`${UI}:`)), decl).toBe(true)
   })
