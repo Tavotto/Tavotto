@@ -51,7 +51,7 @@ const isTest = (path: string) => /\.test\.tsx?$/.test(path)
  * 哪个会失去信息？答不上来就不该加。
  */
 const SVG_ALLOWLIST: Record<string, number> = {
-  '/src/components/ui/icons/createIcon.tsx': 1, // 图标集本体：141 个图标都从这一个 <svg> 出来
+  '/src/components/ui/icons/createIcon.tsx': 1, // 图标集本体：142 个图标都从这一个 <svg> 出来
   '/src/canvas/ShapeView.tsx': 1, // 画布形状本体
   '/src/canvas/ArrowView.tsx': 1, // 画布箭头本体
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层

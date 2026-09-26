@@ -32,7 +32,7 @@ import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
 import { insertShape } from '@/lib/presets'
 import { PresetsDialog } from './PresetsDialog'
-import { ProjectSwitcher } from './ProjectSwitcher'
+import { HomeButton, ProjectSwitcher } from './ProjectSwitcher'
 import { WriteBackTopBarButton } from './inspector/UpdateSourceButton'
 import { usePalette } from '@/components/CommandPalette'
 import { runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
@@ -92,6 +92,8 @@ export function TopBar() {
   return (
     <header className="flex h-11 shrink-0 items-center justify-between gap-3 bg-surface px-3">
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        {/* 回到项目列表：左上角是「离开这里」的位置（桌面壳用系统标题栏，红绿灯不在网页里） */}
+        <HomeButton />
         <Brand />
         {/* 项目（图库目录）→ 文档（画布）：从大到小，与对象层级一致 */}
         <ProjectSwitcher />
