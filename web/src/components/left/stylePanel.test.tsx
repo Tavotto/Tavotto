@@ -29,7 +29,6 @@ import { useWorkspaceStore } from '@/store/workspace'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { bindCanvasStyle, resetStyleBindingSession } from '@/store/styleBinding'
-import { SEVERITY_INK, severityLabel } from '@/lib/validationText'
 import { StylePanel } from './StylePanel'
 
 declare global {
@@ -345,8 +344,8 @@ describe('画布跟随样式（ADR 0081）：底部选择器 = 绑定，绑定�
   })
 })
 
-describe('不合规的那一格 → 问题面板里的那一条', () => {
-  it('标题在页面上只有 4.2 pt：那一格带标记，点它切到问题面板、游标落在这一条上', async () => {
+describe('问题只在「问题」面板里看（用户 2026-09-26）：样式页不渲染问题记号', () => {
+  it('标题在页面上只有 4.2 pt、预检报了阻断：样式页每条控件行里只有控件格，没有等级图标、没有跳转钮', async () => {
     // 7 pt × 0.6 = 4.2 pt，低于默认规范的绝对下限 8 pt
     await seed(panel, manifest(7))
     runValidation()
@@ -356,21 +355,21 @@ describe('不合规的那一格 → 问题面板里的那一条', () => {
       .issues.find((i) => i.objectRef.gid === 'axes_0.title' && i.propertyPath === 'fontsize')
     expect(issue, '夹具该让预检报出这一条').toBeTruthy()
     expect(input('标题字号').value).toBe('4.2')
-    // 记号落在出问题那一格所在的那一行（字号那一行），不在字体那一行；没问题的行没有记号
-    const mark = container.querySelector('[data-style-line="title.size"] [data-style-issue="title"]')!
-    expect(mark, '字号那一行带记号').toBeTruthy()
-    expect(container.querySelector('[data-style-line="title.family"] [data-style-issue]')).toBeNull()
-    expect(container.querySelector('[data-style-line="axis_label.size"] [data-style-issue]')).toBeNull()
-    // 等级与问题面板同一套：阻断 = 红色（不再和警告共用一种颜色）
-    expect(mark.getAttribute('data-severity')).toBe(issue!.severity)
-    expect(mark.className).toContain(SEVERITY_INK[issue!.severity])
-    expect(mark.getAttribute('aria-label')).toContain(severityLabel(issue!.severity))
-
-    await click(mark)
-    const ui = useUiStore.getState()
-    expect(ui.leftTab).toBe('problems')
-    expect(ui.problemScope).toBe('figure')
-    expect(ui.problemCursor?.issueId).toBe(issue!.issueId)
+    const lines = [...container.querySelectorAll('[data-style-line]')]
+    expect(lines.length, '判据要量到控件行').toBeGreaterThan(4)
+    // 正面形式：每条控件行的子节点都是一格控件（`data-style-cell`）或粗 / 斜体开关（`data-style-face`）
+    for (const line of lines) {
+      for (const child of line.children) {
+        expect(
+          child.hasAttribute('data-style-cell') || child.hasAttribute('data-style-face'),
+          `${line.getAttribute('data-style-line')} 里多了一个不是控件的子节点：${child.outerHTML.slice(0, 120)}`,
+        ).toBe(true)
+      }
+    }
+    // 行只有两列：标签 + 控件列
+    const row = container.querySelector('[data-style-row="title"]')!
+    expect(row.children).toHaveLength(2)
+    expect(row.className).toContain('grid-cols-[4rem_minmax(0,1fr)]')
   })
 })
 
@@ -537,7 +536,7 @@ describe('粗体 / 斜体（2026-09-26 用户反馈：样式栏能改的太少�
   })
 })
 
-describe('排版：三列网格、「多个值」放得下且有说明', () => {
+describe('排版：两列网格、「多个值」放得下且有说明', () => {
   it('「多个值」的数字框：输入框铺满定宽的值格，悬停说明「输入一个值会把它们统一」', async () => {
     await seed()
     await mount()
@@ -549,7 +548,7 @@ describe('排版：三列网格、「多个值」放得下且有说明', () => {
     )
   })
 
-  it('每条控件行都带一个定宽的状态格（有没有问题都占着）；值格与刻度方向下拉同一个宽', async () => {
+  it('值格与刻度方向下拉同一个宽、都从控件列左缘起排', async () => {
     await seed(panel, {
       ...manifest(),
       elements: [
@@ -561,9 +560,6 @@ describe('排版：三列网格、「多个值」放得下且有说明', () => {
       ],
     })
     await mount()
-    const lines = [...container.querySelectorAll('[data-style-line]')]
-    expect(lines.length).toBeGreaterThan(4)
-    for (const l of lines) expect(l.lastElementChild!.className).toContain('w-5')
     const valueW = (sel: Element) => sel.className.match(/w-\[[^\]]+\]/)?.[0]
     const size = input('标题字号').closest('.group')!
     const direction = container.querySelector('[data-style-cell="tickDirection"] [role="combobox"]')!

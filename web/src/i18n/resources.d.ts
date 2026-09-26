@@ -4309,7 +4309,6 @@ export default interface Resources {
       "familyOf": "{{row}}字体",
       "groupLines": "线条",
       "groupText": "文字",
-      "issueJump": "{{severity}}：{{title}}。点按在问题中查看",
       "italicOf": "{{row}}倾斜",
       "load": "读取样式",
       "manage": "管理样式…",

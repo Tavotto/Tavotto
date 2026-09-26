@@ -1,26 +1,17 @@
-import { memo, useCallback, useEffect, useMemo, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bold, Italic, Paintbrush, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
-import { focusFailureMessage, openProblemAt } from '@/lib/issueFocus'
 import { profileName } from '@/lib/profileText'
 import {
-  CANVAS_FAMILY_PATH,
-  CANVAS_SIZE_PATH,
-  CANVAS_STYLE_PATH,
-  CANVAS_WEIGHT_PATH,
-  cellIssues,
   elementsWith,
   FIGURE_LINE_ROWS,
   FIGURE_TEXT_ROWS,
-  type CellSubject,
 } from '@/lib/stylePanelModel'
 import { isSubLabel, styleOverrideTargets } from '@/lib/stylePresets'
 import { CANVAS_TEXT_FAMILIES, nextToggle, toggleStateOf, type TypographyValue } from '@/lib/typography'
-import type { ValidationIssue } from '@/lib/validation'
-import { issueTitle, SEVERITY_ICON, SEVERITY_INK, severityLabel } from '@/lib/validationText'
 import { enterElementEdit } from '@/store/actions'
 import {
   alignCanvasToStyle,
@@ -41,14 +32,13 @@ import {
   useRenderStore,
 } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
-import { useValidationStore } from '@/store/validationStore'
 import type { PanelObject, TextObject } from '@/types/document'
 import { useCanvasTypography } from '../inspector/typographyAdapter'
 import { optionLabel } from '../inspector/roles/registry'
 import { useTextStyleAdapter } from '../inspector/textStyleAdapter'
 import type { ControlValue } from '../inspector/textStyleModel'
 import { StyleToggle } from '../inspector/controls/textRows'
-import { Button, IconButton } from '../ui/Button'
+import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Section } from '../ui/Field'
 import { NumberField } from '../ui/Input'
@@ -73,15 +63,12 @@ const ROW_LABEL: Record<string, () => string> = {
   tickWidth: () => sp('row.tickWidth'),
 }
 
-/** 没有任何问题时给格子的稳定空数组（每次新建会让 memo 的行白白重画） */
-const NO_ISSUES: ValidationIssue[] = []
-
 /**
  * 左栏「样式」：**当前图长什么样**，随时看、随时改。
  *
- * 与「问题」并列、各管一半：这里管「长什么样」，问题面板管「哪里不合规」。一格与规范
- * 不符时它只**认回**问题清单里已有的那一条（`stylePanelModel.cellIssues`），点那颗
- * 记号跳过去（`issueFocus.openProblemAt`）——不在这里再判一遍规范。
+ * 与「问题」并列、各管一半：这里管「长什么样」，问题面板管「哪里不合规」。**这里不显示任何
+ * 问题记号**（用户 2026-09-26：行尾的八角 / 三角去掉，问题只在左侧图标栏的「问题」面板里看，
+ * 那颗图标带计数角标）——字号被阻断这类情况这里也不提示，不判规范、也不认回问题清单。
  *
  * * **当前图**与问题面板同一个判据（`useCurrentFigure`），不写第二份。
  * * **数字是页面上读者量到的 pt**：换算在写入器里（`useTextStyleAdapter` 过
@@ -154,21 +141,12 @@ export function StylePanel() {
 function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest: Manifest; exact: boolean }) {
   const bound = useDocumentStore((s) => !!s.doc.style && !s.doc.style.detached)
   const locked = !bound && !exact
-  const all = useValidationStore((s) => s.issues)
   const texts = useDocumentStore((s) => s.doc.objects)
   const annotations = useMemo(
     // 子图序号标签 (a)(b)(c) 在样式里是另一项（`subLabel`），不跟普通标注一起改（Codex #547）
     () => texts.filter((o): o is TextObject => o.type === 'text' && !isSubLabel(o)),
     [texts],
   )
-  const jump = useCallback(
-    (issue: ValidationIssue) => {
-      const outcome = openProblemAt(issue, useValidationStore.getState().issues, panel.id)
-      if (!outcome.ok) useUiStore.getState().setStatus(focusFailureMessage(outcome.reason), 'error')
-    },
-    [panel.id],
-  )
-
   return (
     <>
       <Section title={sp('groupText')}>
@@ -181,14 +159,12 @@ function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest:
             sizeRole={row.sizeRole}
             familyRole={row.familyRole}
             faceRole={row.faceRole}
-            issues={all}
-            onJump={jump}
             bound={bound}
             locked={locked}
           />
         ))}
         {annotations.length > 0 && (
-          <AnnotationRow texts={annotations} issues={all} onJump={jump} bound={bound} />
+          <AnnotationRow texts={annotations} bound={bound} />
         )}
       </Section>
       <Section title={sp('groupLines')}>
@@ -200,8 +176,6 @@ function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest:
             manifest={manifest}
             role={row.role}
             prop={row.prop}
-            issues={all}
-            onJump={jump}
             bound={bound}
             locked={locked}
           />
@@ -214,14 +188,14 @@ function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest:
 /* ---------------------------------- 行 ----------------------------------- */
 
 /**
- * 一行的骨架：**三列固定网格**（2026-09-26 用户反馈：各行的控件左缘、宽度对不齐）。
+ * 一行的骨架：**两列固定网格**（2026-09-26 用户反馈：各行的控件左缘、宽度对不齐）。
  *
  * * 标签列 `4rem`：行名，放不下时截断、悬停看全名；
  * * 控件列弹性：一行或几行控件（`ControlLine`；文字行 = 字体一行 + 「字号 · 粗体 · 斜体」一行）。
  *   每一行里「值」那一格（字号 / 线宽 / 刻度方向）都是同一个宽度 `VALUE_W`、都从控件列的左缘
- *   起排，所以上下各行的数字框在同一条竖线上；
- * * 状态列 `1.25rem`：问题记号，**每条控件行都占着**（有没有问题各行都在同一条竖线收），记号
- *   落在出问题的那一格**所在的那一行**上。
+ *   起排，所以上下各行的数字框在同一条竖线上。
+ *
+ * 没有状态列：问题只在「问题」面板里看（见 `StylePanel` 的说明）。
  */
 function StyleRow({ id, children }: { id: string; children: ReactNode }) {
   const label = ROW_LABEL[id]()
@@ -235,44 +209,11 @@ function StyleRow({ id, children }: { id: string; children: ReactNode }) {
   )
 }
 
-/**
- * 控件列里的一行：高 28，控件从左缘起排，行尾是状态列。
- *
- * 状态记号与问题面板**同一个图标、同一个颜色**（`SEVERITY_ICON` / `SEVERITY_INK`：阻断 = 红色八角，
- * 警告 = 琥珀三角……）；气泡与可达名说等级与问题名，点它去问题面板里的那一条。
- */
-function ControlLine({
-  line,
-  rowId,
-  issue,
-  onJump,
-  children,
-}: {
-  /** 这一行的名字（`data-style-line`）：`<行>.family` / `<行>.size` / 线条行就是行 id */
-  line: string
-  rowId: string
-  issue: ValidationIssue | null
-  onJump: (issue: ValidationIssue) => void
-  children: ReactNode
-}) {
-  const Icon = issue ? SEVERITY_ICON[issue.severity] : null
+/** 控件列里的一行：高 28，控件从左缘起排 */
+function ControlLine({ line, children }: { line: string; children: ReactNode }) {
   return (
-    <div data-style-line={line} className="flex h-7 min-w-0 items-center gap-1.5">
-      <div className="flex min-w-0 flex-1 items-center gap-1">{children}</div>
-      <span className="flex w-5 shrink-0 items-center justify-center">
-        {issue && Icon && (
-          <IconButton
-            data-style-issue={rowId}
-            data-severity={issue.severity}
-            iconSize="xs"
-            label={sp('issueJump', { severity: severityLabel(issue.severity), title: issueTitle(issue) })}
-            className={SEVERITY_INK[issue.severity]}
-            onClick={() => onJump(issue)}
-          >
-            <Icon size={ICON_SIZE.sm} aria-hidden />
-          </IconButton>
-        )}
-      </span>
+    <div data-style-line={line} className="flex h-7 min-w-0 items-center gap-1">
+      {children}
     </div>
   )
 }
@@ -289,11 +230,6 @@ const VALUE_W = 'w-[5.5rem] shrink-0'
  */
 type CellValue = ControlValue | TypographyValue
 
-/**
- * 不合规的那一格**不再另描一圈警告色的边**（2026-09-26 用户反馈：带问题的框与普通框长得不一样、
- * 颜色还和行尾记号不一致）。框只有 `fieldBox` 一副；「哪里不合规」由行尾记号说——它的气泡写着
- * 等级与问题名，点它去问题面板看是哪一格、差多少。
- */
 
 /** 字体下拉：mixed 时空值走占位（「多个值」），不谎报其中某一个 */
 function FamilySelect({
@@ -445,11 +381,7 @@ interface FigureRowProps {
   locked: boolean
   panel: PanelObject
   manifest: Manifest
-  issues: ValidationIssue[]
-  onJump: (issue: ValidationIssue) => void
 }
-
-const gidsOf = (els: ManifestElement[]) => els.map((e) => e.gid)
 
 /**
  * 图内文字的一行：字体（在 `familyRole` 上）；页面上的字号（在 `sizeRole` 上）+ 粗体 / 斜体
@@ -463,8 +395,6 @@ const FigureTextRow = memo(function FigureTextRow({
   sizeRole,
   familyRole,
   faceRole,
-  issues,
-  onJump,
   bound,
   locked,
 }: FigureRowProps & { id: string; sizeRole: string; familyRole: string; faceRole: string | null }) {
@@ -490,9 +420,6 @@ const FigureTextRow = memo(function FigureTextRow({
   if (!sizeEls.length && !familyEls.length) return null
 
   const label = ROW_LABEL[id]()
-  const rowGids = [...gidsOf(sizeEls), ...gidsOf(familyEls), ...gidsOf(weightEls), ...gidsOf(styleEls)]
-  const at = (props: string[]): CellSubject => ({ objectIds: [panel.id], gids: rowGids, props })
-  const first = (props: string[]) => (issues.length ? (cellIssues(issues, at(props))[0] ?? null) : null)
   const familyField = family.fieldOf('fontfamily')
   const sizeField = size.fieldOf('fontsize')
   const weightVal = faceRole && weight.fieldOf('weight') ? faceValue(weight.valueOf('weight')) : null
@@ -505,7 +432,7 @@ const FigureTextRow = memo(function FigureTextRow({
   return (
     <StyleRow id={id}>
       {familyField && (
-        <ControlLine line={`${id}.family`} rowId={id} issue={first(['fontfamily'])} onJump={onJump}>
+        <ControlLine line={`${id}.family`}>
           <div data-style-cell={`${id}.family`} className="flex min-w-0 flex-1">
             <FamilySelect
               label={sp('familyOf', { row: label })}
@@ -522,7 +449,7 @@ const FigureTextRow = memo(function FigureTextRow({
         </ControlLine>
       )}
       {(sizeField || weightVal || styleVal) && (
-        <ControlLine line={`${id}.size`} rowId={id} issue={first(['fontsize', 'weight', 'style'])} onJump={onJump}>
+        <ControlLine line={`${id}.size`}>
           {sizeField && (
             <div data-style-cell={`${id}.size`} className="contents">
               <PtField
@@ -566,8 +493,6 @@ const FigureLineRow = memo(function FigureLineRow({
   manifest,
   role,
   prop,
-  issues,
-  onJump,
   bound,
   locked,
 }: FigureRowProps & { id: string; role: string; prop: string }) {
@@ -579,16 +504,13 @@ const FigureLineRow = memo(function FigureLineRow({
   if (!els.length || !field) return null
 
   const label = ROW_LABEL[id]()
-  const found = issues.length
-    ? cellIssues(issues, { objectIds: [panel.id], gids: gidsOf(els), props: [prop] })
-    : NO_ISSUES
   const value = adapter.valueOf(prop)
   const write = (v: unknown) =>
     bound ? void editBoundStyle({ kind: 'element', role, prop, value: v }) : adapter.writeOnce(prop, v)
 
   return (
     <StyleRow id={id}>
-      <ControlLine line={id} rowId={id} issue={found[0] ?? null} onJump={onJump}>
+      <ControlLine line={id}>
         <div data-style-cell={id} className="contents">
           {field.type === 'enum' ? (
             <Select
@@ -615,24 +537,18 @@ const FigureLineRow = memo(function FigureLineRow({
 /** 画布标注：字号本来就是页面上的 pt（不换算），字体是画布文字的闭集；粗体 / 斜体是 `TextObject` 的 `bold` / `italic` */
 function AnnotationRow({
   texts,
-  issues,
-  onJump,
   bound,
 }: {
   bound: boolean
   texts: TextObject[]
-  issues: ValidationIssue[]
-  onJump: (issue: ValidationIssue) => void
 }) {
   const adapter = useCanvasTypography(texts)
   const label = ROW_LABEL.annotation()
-  const ids = texts.map((o) => o.id)
-  const first = (props: string[]) => cellIssues(issues, { objectIds: ids, gids: null, props })[0] ?? null
   const face = (prop: 'weight' | 'style'): TypographyValue | null =>
     adapter.fieldOf(prop) ? adapter.valueOf(prop) : null
   return (
     <StyleRow id="annotation">
-      <ControlLine line="annotation.family" rowId="annotation" issue={first([CANVAS_FAMILY_PATH])} onJump={onJump}>
+      <ControlLine line="annotation.family">
         <div data-style-cell="annotation.family" className="flex min-w-0 flex-1">
           <FamilySelect
             label={sp('familyOf', { row: label })}
@@ -644,12 +560,7 @@ function AnnotationRow({
           />
         </div>
       </ControlLine>
-      <ControlLine
-        line="annotation.size"
-        rowId="annotation"
-        issue={first([CANVAS_SIZE_PATH, CANVAS_WEIGHT_PATH, CANVAS_STYLE_PATH])}
-        onJump={onJump}
-      >
+      <ControlLine line="annotation.size">
         <div data-style-cell="annotation.size" className="contents">
           <PtField
             label={sp('sizeOf', { row: label })}
@@ -738,8 +649,8 @@ function ApplyStyle() {
 
   return (
     <section data-style-apply className="shrink-0 border-t border-border px-3 pb-3 pt-2">
-      {/* 与上面各行同一副三列网格：「跟随样式」的下拉与各行控件左右缘都对齐（状态列空着） */}
-      <div className="grid h-7 grid-cols-[4rem_minmax(0,1fr)_1.25rem] items-center gap-x-1.5">
+      {/* 与上面各行同一副两列网格：「跟随样式」的下拉与各行控件左右缘都对齐 */}
+      <div className="grid h-7 grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-1.5">
         <span className="truncate text-xs text-ink-2" title={sp('bindLabel')}>
           {sp('bindLabel')}
         </span>

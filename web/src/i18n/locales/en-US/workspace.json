@@ -592,7 +592,6 @@
     "boldOf": "{{row}} bold",
     "italicOf": "{{row}} italic",
     "mixedHint": "These differ within the figure; enter a value to make them all the same",
-    "issueJump": "{{severity}}: {{title}}. Click to view in Problems",
     "manage": "Manage styles…",
     "restore_one": "Restore original · {{count}}",
     "restore_other": "Restore original · {{count}}",

@@ -567,7 +567,6 @@
     "boldOf": "{{row}}加粗",
     "italicOf": "{{row}}倾斜",
     "mixedHint": "这张图里这几处的值不一样；输入一个值会把它们统一",
-    "issueJump": "{{severity}}：{{title}}。点按在问题中查看",
     "manage": "管理样式…",
     "restore_other": "恢复原样 · {{count}} 项",
     "bindLabel": "跟随样式",

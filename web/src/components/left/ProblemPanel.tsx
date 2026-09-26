@@ -32,7 +32,6 @@ import {
   issueValues,
   severityLabel,
   SEVERITY_ICON,
-  SEVERITY_INK,
   subjectName,
   technicalDetailLines,
 } from '@/lib/validationText'
@@ -405,6 +404,14 @@ const DOT: Record<Severity, string> = {
   warn: 'bg-warn',
   not_verifiable: 'bg-ink-3',
   suggestion: 'bg-ink-faint',
+}
+
+/** 组头的等级图标：只有 14px 的图标本身带色，不铺底色 */
+const SEVERITY_INK: Record<Severity, string> = {
+  error: 'text-danger',
+  warn: 'text-warn',
+  not_verifiable: 'text-ink-3',
+  suggestion: 'text-ink-3',
 }
 
 function SeverityStat({
