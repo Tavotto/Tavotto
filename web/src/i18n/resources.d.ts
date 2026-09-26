@@ -2093,6 +2093,7 @@ export default interface Resources {
       "workdirChooseLater": "稍后",
       "workdirChooseRootEvidence": "{{script}} 读的数据只有在项目根目录下才找得到。选一个运行目录，这个项目只问这一次。",
       "workdirChooseRun": "运行",
+      "workdirChooseScriptDirEvidence": "{{script}} 在当前目录里查找数据文件（glob / listdir / exists），在沙盒里找不到——它要在自己的目录里运行。选一个运行目录，这个项目只问这一次。",
       "workdirChooseSuggest": "这张图还没决定在哪个目录里运行。",
       "workdirChooseTitle": "脚本在哪个目录里运行？",
       "workdirChooseWrites": "在真实目录里运行时，脚本用相对路径写出的文件会像在终端里一样落进项目目录，并改写同名文件。Tavotto 不会替它保存图片，并会拦下删除、改名和移动。",

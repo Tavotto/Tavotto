@@ -33,7 +33,8 @@ Tavotto 自己起的 safe worker（ADR 0021 §1 的所有权约束一个字没�
 * `{"mode": "project" | "project_root", "granted_at": t}` —— 决定过且授予了真实 cwd 写入许可。
 
 `resolve_mode()` 是三条 spawn 路径**之前**的那道门：决定过的直接回模式；没决定过而证据说
-默认（沙盒 + 只读回退到脚本目录）不够用、或两处都有同名而内容不同的数据时，抛
+默认（沙盒 + 只读回退到脚本目录）不够用（数据只在项目根；或脚本用 `glob` / `listdir` / `exists`
+探路、只在脚本目录找得到——回退救不回它们，ADR 0084）、或两处都有同名而内容不同的数据时，抛
 `ConfirmationRequired`（带选项与证据）——**不猜、不就近替换、不自动切到真实 cwd**
 （ADR 0047「不自动切换」原样成立）。证据说不出话（没有相对路径字面量 / 一处都找不到）
 时走默认，真跑出来的失败仍经既有的 `no_figures_captured` 路径可见。
@@ -66,7 +67,27 @@ ERROR_CODES = (ERROR_MODE_INVALID, ERROR_CONFIRMATION_REQUIRED)
 #: 需要确认的两种理由（闭集；界面按它换文案）。
 REASON_PROJECT_ROOT_EVIDENCE = "project_root_evidence"
 REASON_AMBIGUOUS_DATA = "ambiguous_data"
-CONFIRMATION_REASONS = (REASON_PROJECT_ROOT_EVIDENCE, REASON_AMBIGUOUS_DATA)
+#: 脚本用 `glob` / `listdir` / `exists` 这类探路调用找数据、只有脚本目录下找得到（ADR 0084）：
+#: 沙盒的只读回退救不回它们，推荐「脚本所在目录」。
+REASON_SCRIPT_DIR_EVIDENCE = "script_dir_evidence"
+CONFIRMATION_REASONS = (
+    REASON_PROJECT_ROOT_EVIDENCE,
+    REASON_AMBIGUOUS_DATA,
+    REASON_SCRIPT_DIR_EVIDENCE,
+)
+#: 结论 → 要问的理由；不在表里的结论不问。
+_REASON_OF_VERDICT = {
+    databinding.VERDICT_PROJECT_ROOT: REASON_PROJECT_ROOT_EVIDENCE,
+    databinding.VERDICT_AMBIGUOUS: REASON_AMBIGUOUS_DATA,
+    databinding.VERDICT_SCRIPT_PARENT: REASON_SCRIPT_DIR_EVIDENCE,
+}
+_MESSAGE_OF_REASON = {
+    REASON_PROJECT_ROOT_EVIDENCE: "脚本读的数据只有在项目根目录下才找得到，请先选择它的运行目录",
+    REASON_AMBIGUOUS_DATA: "脚本目录与项目根目录各有一份同名数据且内容不同，请先选择它的运行目录",
+    REASON_SCRIPT_DIR_EVIDENCE: (
+        "脚本在当前目录里查找数据文件（glob / listdir / exists），在沙盒里找不到，请先选择它的运行目录"
+    ),
+}
 
 
 def _stored(figures_dir: str | Path) -> dict | None:
@@ -176,39 +197,44 @@ def confirmation_payload(script: str, evidence: dict) -> dict:
     """证据 → 「需要输入」的结构化载荷（机器路径一个都不带；`found` 只有字面量）。
 
     `options` 按固定顺序列三档（项目根 / 脚本目录 / 沙盒），每档带**这一档下找得到的
-    字面量**；`recommended` 只在证据唯一指向项目根时给（歧义时 None——界面不预选，
-    机器不裁决）。
+    字面量**（探路目标——glob 模式、列的目录——也算，但沙盒那档不算：回退救不回它们）；
+    `recommended` 只在证据唯一指向一个目录时给（项目根 / 脚本目录；歧义时 None——界面不
+    预选，机器不裁决）。
     """
     cands = evidence.get("candidates") or {}
-    in_root = sorted((cands.get(databinding.CANDIDATE_PROJECT_ROOT) or {}).get("found") or {})
-    in_parent = sorted((cands.get(databinding.CANDIDATE_SCRIPT_PARENT) or {}).get("found") or {})
+    root_cand = cands.get(databinding.CANDIDATE_PROJECT_ROOT) or {}
+    parent_cand = cands.get(databinding.CANDIDATE_SCRIPT_PARENT) or {}
+    in_root = sorted(root_cand.get("found") or {})
+    in_parent = sorted(parent_cand.get("found") or {})
+    probes_root = list((root_cand.get("probes") or {}).get("found") or [])
+    probes_parent = list((parent_cand.get("probes") or {}).get("found") or [])
     verdict = evidence.get("verdict")
-    reason = (
-        REASON_AMBIGUOUS_DATA
-        if verdict == databinding.VERDICT_AMBIGUOUS
-        else REASON_PROJECT_ROOT_EVIDENCE
-    )
-    recommended = MODE_PROJECT_ROOT if verdict == databinding.VERDICT_PROJECT_ROOT else None
+    reason = _REASON_OF_VERDICT.get(verdict, REASON_PROJECT_ROOT_EVIDENCE)
+    recommended = {
+        databinding.VERDICT_PROJECT_ROOT: MODE_PROJECT_ROOT,
+        databinding.VERDICT_SCRIPT_PARENT: MODE_PROJECT,
+    }.get(verdict)
     options = [
         {
             "mode": MODE_PROJECT_ROOT,
             "cwd_origin": execspec.CWD_ORIGIN_PROJECT_ROOT,
             "write_mode": execspec.WRITE_MODE_PROJECT_DIR,
-            "found": in_root,
+            "found": in_root + probes_root,
             "recommended": recommended == MODE_PROJECT_ROOT,
         },
         {
             "mode": MODE_PROJECT,
             "cwd_origin": execspec.CWD_ORIGIN_SCRIPT_PARENT,
             "write_mode": execspec.WRITE_MODE_PROJECT_DIR,
-            "found": in_parent,
-            "recommended": False,
+            "found": in_parent + probes_parent,
+            "recommended": recommended == MODE_PROJECT,
         },
         {
             "mode": MODE_SANDBOX,
             "cwd_origin": execspec.CWD_ORIGIN_SANDBOX,
             "write_mode": execspec.WRITE_MODE_SANDBOXED,
-            # 沙盒的只读回退看的是脚本目录，所以它「找得到」的与脚本目录那档相同
+            # 沙盒的只读回退看的是脚本目录，所以它「找得到」的是脚本目录那档的打开类字面量；
+            # 探路目标不算——回退救不回 glob / listdir / exists（ADR 0084）
             "found": in_parent,
             "recommended": False,
         },
@@ -222,11 +248,8 @@ def confirmation_payload(script: str, evidence: dict) -> dict:
         "options": options,
         "conflicts": list(evidence.get("conflicts") or []),
         "reads": list(evidence.get("reads") or []),
-        "message": (
-            "脚本读的数据只有在项目根目录下才找得到，请先选择它的运行目录"
-            if reason == REASON_PROJECT_ROOT_EVIDENCE
-            else "脚本目录与项目根目录各有一份同名数据且内容不同，请先选择它的运行目录"
-        ),
+        "probes": list(evidence.get("probes") or []),
+        "message": _MESSAGE_OF_REASON[reason],
         # 怎么回答：四类入口同一条路（PATCH /api/engine/workdir {mode}）
         "answer": {"http": "PATCH /api/engine/workdir", "body": {"mode": "<options[*].mode>"}},
     }
@@ -251,7 +274,7 @@ def decision_for(figures_dir: str | Path, script: str) -> dict:
         }
     script_path = Path(root) / figcapture.normalize_relative_script(script)
     ev = databinding.evidence(script_path, root)
-    needs = ev["verdict"] in (databinding.VERDICT_PROJECT_ROOT, databinding.VERDICT_AMBIGUOUS)
+    needs = ev["verdict"] in _REASON_OF_VERDICT
     return {
         "mode": MODE_SANDBOX,
         "decided": False,

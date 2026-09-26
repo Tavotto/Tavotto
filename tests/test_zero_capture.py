@@ -7,7 +7,7 @@ worker 的 cwd 是沙盒，全部「未找到」→ 零张图；界面只说「s
 
 import pytest
 
-from tavotto.engine import pool as engine_pool
+from tavotto.engine import pool as engine_pool, workdir
 
 try:
     WORKER_PY = engine_pool.find_worker_python()
@@ -39,8 +39,12 @@ def figs(tmp_path):
     (root / "run_all.py").write_text(SCRIPT, encoding="utf-8")
     (root / "1").mkdir()
     (root / "1" / "etch_5-5.lammpstrj").write_text("", encoding="utf-8")  # 数据明明在项目里
+    # 用户在首开的确认框里选了「继续沙盒」（没决定过的话 `exists` 是首开证据，先问，ADR 0084）：
+    # 这之后零张图这条路仍要说清楚
+    workdir.set_mode(root, workdir.MODE_SANDBOX)
     yield root
     engine_pool.shutdown_all(str(root), wait=True)
+    workdir.forget(root)
 
 
 def test_zero_figures_report_the_script_output_not_unknown_stem(figs):
