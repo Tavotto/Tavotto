@@ -13,6 +13,7 @@ Tavotto — 论文多面板图可视化排版工具
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import logging
@@ -25,6 +26,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
@@ -6630,13 +6632,21 @@ def api_layout_get(name):
     for d in _layout_read_dirs():
         p = layout_path(name, d)
         if p.exists():
-            return serve_document(p)
+            resp = serve_document(p)
+            ctx = _request_ctx()
+            if ctx is not None:
+                # ⌘S 会把这份写到哪（ADR 0096）：永远是当前项目 `tavottofile/` 下的那个名字，
+                # 哪怕这次是从旧位置读出来的（保存后以 tavottofile/ 为准）。收纳规则只有
+                # `project_layout_dir()` 一份，前端不自己拼。百分号编码：header 只能是 latin-1。
+                target = layout_path(name, project_layout_dir(ctx)).relative_to(ctx.path)
+                resp.headers["X-Tavotto-Layout-File"] = urllib.parse.quote(target.as_posix())
+            return resp
     abort(404)
 
 
 @app.post("/api/layouts/<name>")
 def api_layout_save(name):
-    """用户的「另存为」。
+    """用户点名的那次保存：「另存为」，以及 ⌘S 写回项目里绑定的那份排版（ADR 0096）。
 
     2026-08-29 之前这里是 `write_text` 直接盖：写到一半失败（磁盘满、断电、
     进程被杀）留下的是一个**截断的文件**，而它已经把上一份好文件顶掉了——
@@ -6649,7 +6659,21 @@ def api_layout_save(name):
     `atomicio` 挡（那种文档写出去谁都读不回来）。
     """
     body = engine_documents.validate_document(request.get_json(force=True))
-    path = layout_path(name, project_layout_dir())
+    # `target=project`：⌘S 写回**项目里**那份排版文件（ADR 0096）。它不许退回数据
+    # 目录——没打开项目时 `project_layout_dir()` 会静默落到 `layouts/`，用户以为存进
+    # 了项目，换台电脑才发现项目文件夹里什么都没有。于是这一档先要项目（409 no_project）。
+    ctx = current_ctx() if request.args.get("target") == "project" else _request_ctx()
+    if ctx is not None:
+        path = _project_layout_target(name, ctx)
+        if path is None:
+            return jsonify(
+                {
+                    "error": "排版文件只能保存在当前项目的 tavottofile/ 里",
+                    "code": "layout_outside_project",
+                }
+            ), 400
+    else:
+        path = layout_path(name, project_layout_dir(ctx))
     # 外部修改检测走**自动保存那一份**判据（`_revision_conflict` / `REVISION_ABSENT` /
     # `_external_change`，都定义在下面的自动保存那一段）。另写一份判据是这条
     # issue 的反面：同一个问题在产品里有两个答案，而「另存为」那个答案是
@@ -6664,11 +6688,54 @@ def api_layout_save(name):
             current = engine_atomicio.content_revision(path)
             if _revision_conflict(base_revision, current):
                 return _external_change(current, path)
-        engine_atomicio.write_json(path, body, indent=1)
+        try:
+            engine_atomicio.write_json(path, body, indent=1)
+        except engine_atomicio.AtomicWriteError as exc:
+            if ctx is not None and _is_read_only_failure(exc):
+                return _layout_read_only()
+            raise
         # **在锁里读**：放到锁外读的话，交回去的可能是另一个窗口刚写下的那份
         # 内容的 hash，于是下一次写会带着一个「不是我写的」基线过来。
         revision = engine_atomicio.content_revision(path)
-    return jsonify({"ok": True, "revision": revision})
+    out = {"ok": True, "revision": revision, "name": path.stem}
+    if ctx is not None:
+        # 「已保存到项目：tavottofile/<名>.json」——相对项目根、正斜杠。名字经过
+        # `layout_path` 的净化，用户输入的和落盘的可能不是同一个字符串，界面要说后者。
+        out["file"] = path.relative_to(ctx.path).as_posix()
+    return jsonify(out)
+
+
+#: 「这个卷 / 目录不让写」的 errno：只读卷（EROFS）与没有写权限（EACCES / EPERM）。
+#: 用户的下一步都一样——换个位置或改权限，重试不会变好，所以不报成可重试的 500。
+_READ_ONLY_ERRNOS = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
+
+
+def _is_read_only_failure(exc: "engine_atomicio.AtomicWriteError") -> bool:
+    cause = exc.__cause__
+    return isinstance(cause, OSError) and cause.errno in _READ_ONLY_ERRNOS
+
+
+def _layout_read_only():
+    return jsonify({"error": "项目文件夹是只读的，排版没有写进去", "code": "layout_read_only"}), 403
+
+
+def _project_layout_target(name: str, ctx: "ProjectCtx") -> Path | None:
+    """项目里一份排版文件的落盘路径，**只能**落在这个项目的 `tavottofile/` 下。
+
+    名字这一维由 `layout_path` 的净化管住（`/`、`..` 都会变成 `_`）；剩下两条逃逸
+    路径都是符号链接，净化看不见：
+
+    * `tavottofile/` 本身是一条指向项目外的链接——原子写跟着它把文件写到别处；
+    * `tavottofile/<名>.json` 是一条链接——`os.replace` 会把链接换成普通文件，
+      用户在项目里摆好的链接被静默拆掉，而链接指着的那份（可能在项目外）停在旧版本。
+
+    两种都拒（`None` → 调用方回 400 `layout_outside_project`），不替用户挑一个解释。
+    """
+    base = project_layout_dir(ctx)
+    path = layout_path(name, base)
+    if not base.resolve().is_relative_to(ctx.path.resolve()) or path.is_symlink():
+        return None
+    return path
 
 
 # ------------------------- 文档自动保存（磁盘） ------------------------------

@@ -139,7 +139,7 @@ export function useKeyboard() {
       if (mod && e.key.toLowerCase() === 's') {
         e.preventDefault()
         // ⇧⌘S = 另存为一份命名的画布文件；⌘S = 真的保存当前文档
-        if (e.shiftKey) useUiStore.getState().setLayoutOpen(true)
+        if (e.shiftKey) useUiStore.getState().setLayoutOpen(true, 'save')
         else void runManualSave()
         return
       }

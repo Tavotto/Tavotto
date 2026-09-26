@@ -153,6 +153,9 @@
     "overwrite": "Overwrite anyway",
     "saveAs": "Save as",
     "saveTitle": "Save document as",
+    "saveToProject": "Save to project",
+    "saveToProjectHint": "This layout is only on this computer so far. Once it’s in the project, saving again updates this file in the project.",
+    "saveToProjectTitle": "Save to project",
     "saved": "Saved as document: {{name}}",
     "saving": "Saving…",
     "savesIntoLabel": "Save into"

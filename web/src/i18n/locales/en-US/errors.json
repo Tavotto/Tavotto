@@ -65,6 +65,8 @@
     "invalid_only": "The list of issues to fix is malformed.",
     "invalid_progress_id": "The rebuild request had an invalid id. Try again.",
     "invalid_width": "Width needs to be an integer: {{value}}",
+    "layout_outside_project": "Layouts can only be saved in this project’s tavottofile/ folder, and that path leads outside the project (a symbolic link). Nothing was written.",
+    "layout_read_only": "The project folder is read-only, so the layout wasn’t saved into the project. Your changes are still kept on this computer — save elsewhere or check the folder’s permissions.",
     "missing_dependency": "Missing dependency: {{module}}",
     "missing_figure": "The original-size export didn’t specify which figure to use.",
     "missing_original": "The original-size export is missing this figure’s details. Reload the page and try again.",

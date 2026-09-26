@@ -89,6 +89,17 @@
   `lib/autosave/diskWriter.ts`（`createDiskWriter(ports)`，不认识 store、不碰 window /
   localStorage / 遥测），`documentStore` 只装配端口；用例 `lib/autosave/diskWriter.test.ts`
   用假端口 + 手动 gate 直接量时序。
+- **⌘S 保存到项目（ADR 0096，2026-09-26）**：排版可以**绑定**项目里的一个文件
+  （`lib/projectFile.ts`，按 documentId 存 `tavotto.projectFile.<id>`，不进文档）——从「项目里的
+  排版」打开的、存进项目的（「存进项目」与开着项目时的另存为）都绑定。`runManualSave` 三条路：
+  绑定了当前项目的文件 → 先 `saveNow()` 再 `store/projectSave.writeBoundProjectFile()`
+  （`target=project`，基线是**绑定里的修订号**：这份工作副本基于项目文件的哪一版，刷新后照样成立，
+  与只活一个窗口的 `lib/layoutRevision.ts` 不是同一个量）；开着项目没绑定 → 弹 `saveToProject`
+  命名框（预填**排版名** `projectMeta.name`，不是画布名）；没开项目 → 只存本机、说「存在本机」。
+  本机那一份 `conflict` 时不写项目文件。绑定只认当前项目（`bindingForProject`），别的项目的
+  绑定不抹掉。**自动保存仍只写本机**；绑定里的 `dirty` 是项目文件那根轴，只跟用户编辑（与
+  `saveState` 推 `dirty` 同一处，外加改排版名），派生同步不置位，不进关闭保护。409 `external_change`
+  带着冲突打开命名框（`uiStore.layoutConflict`），出口与另存为同一个。
 - **启动恢复不覆盖已经装好的文档（2026-09-26）**：工作台挂载时 `restoreSession()` 读
   `tavotto.currentDoc` 那一份——但教程 / 切项目的 `prepareDocument` 往往**挂载前**就把它装好了，
   这时再读盘整份替换，读到的是用户第一次编辑还没落盘时的旧一版（慢机器上教程一打开就拖，拖动被盖回去，
@@ -161,3 +172,4 @@
 - 派生字段只有 `script / cost / fileKind / pxW`，图幅不是派生字段
 - 素材不在清单 ≠ 脚本关系失效
 - 切项目回到上次文档、旧条目「不知道」不标
+- ⌘S 写回绑定的项目文件（基线是绑定里的修订号）、自动保存只写本机、项目文件的 dirty 只跟用户编辑

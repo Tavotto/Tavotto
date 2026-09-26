@@ -226,6 +226,9 @@ USER_VISIBLE_CODES = {
     "stale_write": set(),
     # --- Prompt 03（R-08）：磁盘上那份被 Tavotto 之外的改动覆盖过 ---
     "external_change": set(),
+    # ⌘S 写回项目里的排版（ADR 0096）：符号链接逃逸 / 只读的项目文件夹
+    "layout_outside_project": set(),
+    "layout_read_only": set(),
     # --- Prompt 04：统一项目刷新（engine/project_refresh.py）---
     "registry_reload_failed": {"reason"},
     # AI 改完脚本、统一刷新之前项目已被关闭（`app._after_ai_change`）：进

@@ -30,6 +30,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 import { ApiError, REVISION_ABSENT, fetchLayout, fetchLayoutNames, saveLayout } from '@/lib/api'
 import { LayoutDialog } from '@/components/LayoutDialog'
 import { forgetLayoutRevisions } from '@/lib/layoutRevision'
+import { setCurrentProjectId } from '@/lib/session'
+import { formatMessage } from '@/i18n'
+import { setProjectFile, useDocumentStore } from '@/store/documentStore'
+import type { ProjectDocument } from '@/types/document'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -63,7 +67,7 @@ const conflictError = (revision: string) =>
 
 let root: Root
 
-async function open(names: string[] = ['Fig 1'], intent: 'save' | 'load' = 'save') {
+async function open(names: string[] = ['Fig 1'], intent: 'save' | 'saveToProject' | 'load' = 'save') {
   mockNames.mockResolvedValue(names)
   useUiStore.setState({ layoutOpen: true, layoutIntent: intent })
   const mountEl = document.createElement('div')
@@ -92,7 +96,7 @@ beforeEach(() => {
   forgetLayoutRevisions()
   useProjectStore.setState({ project: { open: true, id: 'p1', document_dir: '/figs/a/tavottofile' } })
   mockSave.mockResolvedValue({ ok: true, revision: 'rev-new' })
-  mockFetch.mockResolvedValue({ doc: LAYOUT, revision: 'rev-disk' })
+  mockFetch.mockResolvedValue({ doc: LAYOUT, revision: 'rev-disk', file: null })
 })
 
 afterEach(async () => {
@@ -222,5 +226,102 @@ describe('另存 / 打开是两屏', () => {
   it('名字没撞上就不吓唬用户', async () => {
     await open(['Something Else'], 'save')
     expect(dialog().textContent).not.toContain('已有同名文档')
+  })
+})
+
+/**
+ * ⌘S 保存到项目（ADR 0096）：第一次 ⌘S 的「存进项目」与另存为是同一个表单；
+ * 存进项目的、从项目里打开的都绑定那个文件，之后 ⌘S 直接写回。
+ */
+describe('存进项目与绑定', () => {
+  beforeEach(async () => {
+    setCurrentProjectId('p1')
+    localStorage.clear()
+    const pd: ProjectDocument = {
+      ...LAYOUT,
+      schema: 3,
+      project: { id: 'p', name: '我的排版' },
+      canvases: [{ ...LAYOUT.canvases[0], name: 'Figure 1' }],
+    }
+    await useDocumentStore.getState().switchDocument(pd, 'd_bind')
+  })
+  afterEach(() => setCurrentProjectId(null))
+
+  it('「存进项目」预填排版名（不是画布名 Figure 1），要求写进项目，写成即绑定', async () => {
+    mockSave.mockResolvedValue({
+      ok: true,
+      revision: 'rev-p',
+      name: '我的排版',
+      file: 'tavottofile/我的排版.json',
+    })
+    await open([], 'saveToProject')
+    expect(dialog().textContent).toContain('存进项目')
+    const input = dialog().querySelector<HTMLInputElement>('#layout-save-name')!
+    expect(input.value).toBe('我的排版')
+    await act(async () => {
+      buttonByText('存进项目')!.click()
+    })
+    expect(mockSave.mock.calls[0][0]).toBe('我的排版')
+    expect(mockSave.mock.calls[0][3]).toEqual({ target: 'project' })
+    expect(useDocumentStore.getState().projectFile).toEqual({
+      projectId: 'p1',
+      name: '我的排版',
+      file: 'tavottofile/我的排版.json',
+      revision: 'rev-p',
+      dirty: false,
+    })
+    expect(formatMessage(useUiStore.getState().status)).toContain('tavottofile/我的排版.json')
+  })
+
+  it('另存为进了项目同样绑定；没打开项目（后端不给 file）就不绑定', async () => {
+    mockSave.mockResolvedValue({ ok: true, revision: 'r', name: '我的排版', file: 'tavottofile/我的排版.json' })
+    await open([], 'save')
+    await clickSave()
+    expect(mockSave.mock.calls[0][3]).toBeUndefined() // 另存为不带 target，行为不变
+    expect(useDocumentStore.getState().projectFile?.file).toBe('tavottofile/我的排版.json')
+
+    await act(async () => root.unmount())
+    setProjectFile(null)
+    mockSave.mockResolvedValue({ ok: true, revision: 'r', name: '我的排版' })
+    await open([], 'save')
+    await clickSave()
+    expect(useDocumentStore.getState().projectFile).toBeNull()
+  })
+
+  it('从「项目里的排版」打开：新会话绑定那个文件，基线是这次读到的那一份', async () => {
+    mockFetch.mockResolvedValue({ doc: LAYOUT, revision: 'rev-disk', file: 'tavottofile/Fig 1.json' })
+    await open(['Fig 1'], 'load')
+    await act(async () => {
+      buttonByText('载入')!.click()
+    })
+    const s = useDocumentStore.getState()
+    expect(s.documentId).not.toBe('d_bind')
+    expect(s.projectFile).toEqual({
+      projectId: 'p1',
+      name: 'Fig 1',
+      file: 'tavottofile/Fig 1.json',
+      revision: 'rev-disk',
+      dirty: false,
+    })
+  })
+
+  it('⌘S 写回撞上外部修改：带着冲突打开，「仍然覆盖」拿 409 的 hash、仍写进项目', async () => {
+    useUiStore.getState().setLayoutOpen(true, 'saveToProject', {
+      name: '我的排版',
+      conflict: { name: '我的排版', revision: 'rev-theirs', summary: null },
+    })
+    mockNames.mockResolvedValue([])
+    const mountEl = document.createElement('div')
+    document.body.appendChild(mountEl)
+    root = createRoot(mountEl)
+    await act(async () => {
+      root.render(<LayoutDialog />)
+    })
+    expect(buttonByText('仍然覆盖')).toBeTruthy()
+    await act(async () => {
+      buttonByText('仍然覆盖')!.click()
+    })
+    expect(mockSave.mock.calls[0][2]).toBe('rev-theirs')
+    expect(mockSave.mock.calls[0][3]).toEqual({ target: 'project' })
   })
 })
