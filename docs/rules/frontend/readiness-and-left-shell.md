@@ -103,10 +103,9 @@
   移除不取消收藏）。收藏里是用户的项目路径：诊断包的条数化与路径记号两处都要带上它。
   看护：`components/left/workspaceList.test.tsx`、`store/projectSwitchSerial.test.ts`、`tests/test_projects.py` 的 pinned 六条、
   `tests/test_diagnostics_bundle.py::test_pinned_projects_are_redacted_like_recent_ones`。
-- **左栏「样式」面板（2026-09-24）**：`components/left/StylePanel.tsx`，排在「问题」前面、两者互相
-  跳转。**当前图**与问题面板同一个判据（`useCurrentFigure`）；面板**不判规范**——「这一格不合规」只按
-  对象 · gid · `propertyPath` 认回问题清单里已有的那一条（`lib/stylePanelModel.cellIssues`），点行尾记号走
-  `issueFocus.openProblemAt`（定位仍是 `focusObject`，再把问题面板的范围 / 筛选 / 游标摆好）。数字是**页面上
+- **左栏「样式」面板（2026-09-24）**：`components/left/StylePanel.tsx`，排在「问题」前面。
+  **当前图**与问题面板同一个判据（`useCurrentFigure`）；面板**不判规范、也不显示问题**（用户 2026-09-26：
+  行尾的等级记号去掉，字号被阻断这类情况样式页不提示，问题只在左侧图标栏带计数角标的「问题」面板里看）。数字是**页面上
   的 pt**（× `panelScale`，写入 ÷ 回去，与样式应用同一个换算）；图内元素经 `useTextStyleAdapter`、画布标注经
   `useCanvasTypography` 写（Inspector 同一条路，一次改动一次 commit）；多个值是「多个值」不压扁。底部是**画布跟随
   样式**（ADR 0081，唯一实现 `store/styleBinding.ts`）：选一套 = 绑定并立刻对齐整张画布（一次 commit）；已绑定时各格
@@ -119,6 +118,12 @@
   `style.owned`（连同写入时脚本的原生值），精确 manifest 的 `value_original` 与基线不等时让位（`yieldToScript`，一次
   commit「脚本改动优先于样式」）；登记只在 override 仍是那个值时算数（`lib/styleOwned.ownedLive`），用户经
   `updateObject` / 混排对齐 / 一键修复写过的那一条当场注销；老文档、老引擎不让位；恢复原样连样式写的孤儿（gid 已不在 manifest 里）一起清，解绑只清孤儿；恢复原样挑「样式管得到的」要求此刻 manifest 确实暴露这条属性（用户的孤儿不删）；按 (gid, prop) 取 override 一律走 `effectiveOverride`（重复条目 last-wins，#587），`styleOverrideLookup.test.ts` 按 TS AST 结构性看护（不用源码正则）。
+  **能改哪些、怎么排**（2026-09-26 用户反馈）：文字各行 = 字体 + 字号 + 粗体 / 斜体（`FIGURE_TEXT_ROWS.faceRole`；
+  图例的在 `legend_text` 上；刻度文字的引擎字段没有 `weight` / `style`，不摆开关；画布标注写 `bold` / `italic`，
+  绑定时存成样式里的 boolean），线条 = 数据线宽 / 边框线宽 / 刻度方向 / 刻度长度 / 刻度线宽。行是两列固定网格：
+  标签列 `4rem`、控件列（字号 / 线宽 / 方向这类「值」格同一个宽 `VALUE_W`，从左缘起排）；没有状态列，控件行里只有
+  控件（`data-style-cell` / `data-style-face`），框只有 `fieldBox` 一副。文字颜色、线条 / 边框颜色没进面板：取色是连续手势，绑定时每一下都要存一次库，得先有「一轮取色 = 一次
+  存库」的收口。
   看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
@@ -145,6 +150,6 @@
 - 侧栏「偏好」与「此刻开着」是两件事、自动让位绝不写回偏好
 - 切项目的列表只有工作区抽屉一份、顶栏项目名只开抽屉、收藏按路径发单个操作（不发整张列表）、切项目与改收藏各自串行
 - 元素树行 memo、props 只收显示字段（不收 `panel` / `el`）、回调树级稳定
-- 样式面板（ADR 0081）不判规范（「不合规」只按对象 · gid · `propertyPath` 认回问题清单已有的那一条，`cellIssues`）、数字是页面 pt（× `panelScale`，写入 ÷ 回去）、多个值不压扁
+- 样式面板（ADR 0081）不判规范、不显示问题（2026-09-26 起问题只在问题面板里看）、数字是页面 pt（× `panelScale`，写入 ÷ 回去）、多个值不压扁
 - **应用样式只有绑定一条路**（`styleBinding`）：库写入一条队列、写文档前比代次、只认精确 manifest、欠账、写入前过 `effectiveChanges`（已合样式零 commit）、future 非空时不自动写、撤销只退画布并标「已脱离」（不推回库）
 - 重跑后脚本赢：不自动对齐，面板给「N 处不一致」+「对齐」，样式写的 override 登记在 `style.owned`、脚本改了（`value_original` ≠ 基线）就让位，用户写过的当场注销（ADR 0081 §十三）
