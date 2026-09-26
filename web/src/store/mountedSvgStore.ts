@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { Manifest } from '@/lib/api'
-import { useExactPanelRender } from '@/store/renderStore'
+import { exactPanelRender, useExactPanelRender, useRenderStore, type PanelRender } from '@/store/renderStore'
 import type { PanelObject } from '@/types/document'
 
 /**
@@ -42,6 +42,18 @@ export const useMountedSvgStore = create<MountedSvgState>((set) => ({
 export function useDisplayedExactManifest(panel: PanelObject | null | undefined): Manifest | null {
   const render = useExactPanelRender(panel)
   const mounted = useMountedSvgStore((s) => (panel ? s.byPanel[panel.id] : undefined))
+  return displayedOf(render, mounted)
+}
+
+/** 同一判据的非 hook 版：键盘动作（方向键微调）在事件里现取 */
+export function displayedExactManifest(panel: PanelObject): Manifest | null {
+  return displayedOf(
+    exactPanelRender(useRenderStore.getState(), panel),
+    useMountedSvgStore.getState().byPanel[panel.id],
+  )
+}
+
+function displayedOf(render: PanelRender | null, mounted: string | undefined): Manifest | null {
   if (!render?.manifest) return null
   if (mounted !== undefined && render.svg != null && render.svg !== mounted) return null
   return render.manifest
