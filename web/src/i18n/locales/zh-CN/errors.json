@@ -9,7 +9,7 @@
     "ai_agent_probe_timeout": "验证 {{path}} 超时。可以再试，原设置不变。",
     "ai_agent_unknown": "无法识别该编码 Agent：{{agent}}。",
     "ai_revert_conflict": "{{script}} 在这次 AI 修改之后又改过，回滚会覆盖后来的改动，已取消。",
-    "ai_revert_failed":"无法撤销 AI 修改：{{reason}}",
+    "ai_revert_failed": "无法撤销 AI 修改：{{reason}}",
     "ai_start_failed": "无法启动 AI 任务：{{reason}}",
     "annotations_need_pdf": "该素材没有矢量 PDF，标注暂时无法写回原图。",
     "artifact_rejected": "导出文件没有通过 {{policy}} 检查（{{failed}}），未发布到导出目录。",
@@ -192,7 +192,12 @@
     "write_back_persist_failed": "无法写回：备份或新文件没能写入磁盘（{{reason}}）。原文件未做任何改动，请检查磁盘空间与目录权限后重试。",
     "write_back_warnings": "无法写回：重放时出现了警告。",
     "write_failed": "无法写入磁盘。本机副本仍在，可重试：{{reason}}",
-    "pinned_full": "收藏最多 {{max}} 个。先取消收藏几个再加。"
+    "pinned_full": "收藏最多 {{max}} 个。先取消收藏几个再加。",
+    "script_input_invalid": "这个答案不能保存（太长或不是文字）。",
+    "script_input_not_found": "没有找到这条记住的答案，可能已被删除。",
+    "script_input_not_pending": "这个问题已经不在等待作答了（脚本可能已经结束或被停止）。",
+    "script_input_timeout": "脚本在等输入「{{prompt}}」，等了 10 分钟没有回答，按输入结束处理后脚本失败了。重新运行并作答即可。",
+    "script_needs_input": "脚本需要输入：「{{prompt}}」。请在 Tavotto 界面里运行一次这个脚本并作答，答案会按项目记住。"
   },
   "engine": {
     "apply": "应用",

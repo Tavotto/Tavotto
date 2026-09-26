@@ -40,6 +40,7 @@ import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
 import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
+import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { resetPreview } from '@/store/svgPreviewStore'
 import { clearDiagnosticTrace } from '@/diagnostics'
@@ -197,6 +198,9 @@ async function resetForNewProject() {
   // 脚本运行状态机换代（在途 probe 响应作废，绝不落进新项目）+ 脚本清单清空
   useScriptRunStore.getState().clear()
   useScriptLibraryStore.getState().clear()
+  // 脚本 input() 的问答与记住的答案都属于旧项目（ADR 0099）：换代清空。**后端那一问不取消**——
+  // A 的脚本照样在等，切回 A 时 `loadAnswers()` 从 pending 把对话框接回来
+  useScriptInputStore.getState().clear()
   // 多 Figure 选择器（交接的 pick）属于旧项目，跟着关掉
   useFigurePickerStore.getState().close()
   // native 会话换代：卡片与在途响应都属于旧项目。**用户的脚本一个都不动**

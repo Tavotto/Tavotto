@@ -10,6 +10,8 @@ import { LayoutDialog } from '@/components/LayoutDialog'
 import { CommandPalette } from '@/components/CommandPalette'
 import { FigurePickerDialog } from '@/components/FigurePickerDialog'
 import { NativeConfirmDialog } from '@/components/NativeConfirmDialog'
+import { ScriptAnswersDialog } from '@/components/ScriptAnswersDialog'
+import { ScriptInputDialog } from '@/components/ScriptInputDialog'
 import { NativeSessionCards } from '@/components/NativeSessionCards'
 import { RegistryDialog } from '@/components/RegistryDialog'
 import { RelinkDialog } from '@/components/RelinkDialog'
@@ -263,6 +265,9 @@ function Workspace() {
         <RegistryDialog />
         <FigurePickerDialog />
         <NativeConfirmDialog />
+        {/* 脚本里的 input()（ADR 0099）：等作答的问 + 记住的答案 */}
+        <ScriptInputDialog />
+        <ScriptAnswersDialog />
       <RelinkDialog />
         <TelemetryConsentDialog />
         <UpdateNoticeDialog />

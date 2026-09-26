@@ -112,6 +112,7 @@ _ENGINE_MODULES = (
     "preview_hybrid",
     "figsession",
     "wireproto",
+    "scriptinput",
 )
 _PKG = bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)
 
@@ -127,6 +128,8 @@ figcapture = _PKG.figcapture
 # 禁止，而分叉的表现是同一张图在两条入口里 gid 不一样（数据级错位）。
 figsession = _PKG.figsession
 wireproto = _PKG.wireproto
+# 脚本里的 input() / sys.stdin / getpass 桥接（ADR 0099）：每一问经会话缓存目录里的文件会合交给父进程
+scriptinput = _PKG.scriptinput
 
 #: 本 worker 的常驻会话。`_patched_savefig` 是模块级函数（要顶掉
 #: `Figure.savefig` 这个类属性），拿不到 Worker 实例，只能走模块级引用。
@@ -178,6 +181,9 @@ _CLI_PARSER_MODULES = frozenset(
 #: 两者对用户是两件事：前者是「脚本要参数，Tavotto 不带参数运行」——出路是给默认值
 #: 或 `tavotto run`；后者是「脚本自己 exit 了」——出路是去掉那句 exit。
 SCRIPT_NEEDS_ARGUMENTS = "script_needs_arguments"
+#: 脚本要输入而没有人能答（ADR 0099 §五）/ 有一问等到超时、脚本没接住 EOF（§三）。
+SCRIPT_NEEDS_INPUT = "script_needs_input"
+SCRIPT_INPUT_TIMEOUT = "script_input_timeout"
 SCRIPT_EXITED = "script_exited"
 
 
@@ -231,6 +237,17 @@ def _script_exit_error(exc: SystemExit) -> ProtocolError:
     )
 
 
+def _needs_input_error(exc) -> ProtocolError:
+    """脚本要输入而没有人能答 → 结构化错误（ADR 0099 §五）。提示原文进 message：CLI / MCP 读的就是这一句。"""
+    return ProtocolError(
+        SCRIPT_NEEDS_INPUT,
+        f"脚本需要输入：{exc.prompt or '（读取标准输入）'}，请在 Tavotto 界面里运行一次这个脚本并作答。",
+        retryable=False,
+        traceback_text=traceback.format_exc(),
+        extra={"prompt": exc.prompt, "reason": exc.reason},
+    )
+
+
 def _exit_status(code) -> int:
     """`SystemExit.code` → 进程真正会用的退出状态（CPython `handle_system_exit` 的规则）：
     None → 0，整数原样，其它载荷打印到 stderr 后以 1 退出。"""
@@ -280,6 +297,8 @@ class Worker(wireproto.V1Handler):
         #: 回执的 `inputs`（U09）：build 那一刻定格的输入观察（`figcapture.InputObserver.report()`）。
         self._input_observer: figcapture.InputObserver | None = None
         self._inputs_report: dict | None = None
+        #: 本次 build 的问答通道（ADR 0099）：build 开始时建，响应的 `script_inputs` 从它取。
+        self._input_channel: "scriptinput.Channel | None" = None
         SESSION = SafeSession(self.out_dir, self.preview_dpi)
         super().__init__(SESSION)
 
@@ -408,6 +427,21 @@ class Worker(wireproto.V1Handler):
             unused = frozenset()
         figcapture.install_unused_import_placeholders(str(self.script), unused)
 
+        # 脚本里的 input() / sys.stdin / getpass（ADR 0099）：sys.stdin 此刻是协议管道，不换的话脚本会
+        # 阻塞在它上面、甚至把父进程的下一条命令当答案读走。会合目录在本会话的 out_dir 里（Tavotto 自己的
+        # 缓存，不是用户目录）；stdout 经 `StdoutTail` 转进 worker.log，同时留最近一段给界面看编号清单。
+        try:
+            rel_script = self.script.relative_to(self.figures_dir).as_posix()
+        except ValueError:
+            rel_script = self.script.name
+        stdout_tail = scriptinput.StdoutTail(sys.stderr)
+        channel = scriptinput.Channel(
+            self.out_dir / scriptinput.DIRNAME, rel_script, tail=stdout_tail
+        )
+        channel.reset()
+        self._input_channel = channel
+        scriptinput.install(channel)
+
         t_script = time.perf_counter()
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
         # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
@@ -416,7 +450,7 @@ class Worker(wireproto.V1Handler):
         # 里连一行 traceback 都没有。与 `python fig.py` 的语义对齐：退出码 0 /
         # None 就是脚本正常结束（已经画好的图照常捕获），非零才是它自己报的失败。
         # paper_style 的 import 也在这道保护里：它是用户代码，import 期间一样能 exit。
-        with contextlib.redirect_stdout(sys.stderr):
+        with contextlib.redirect_stdout(stdout_tail):
             try:
                 # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
                 # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
@@ -447,6 +481,11 @@ class Worker(wireproto.V1Handler):
             except SystemExit as exc:
                 if exc.code not in (None, 0):
                     raise _script_exit_error(exc) from exc
+            except scriptinput.ScriptNeedsInput as exc:
+                raise _needs_input_error(exc) from None
+            finally:
+                # 脚本跑完了：之后再有谁读 stdin 一律 EOF，绝不再发问（也绝不再碰协议管道）
+                channel.closed = True
         script_ms = _ms(t_script)
 
         # pyplot 兜底：从不 savefig 的脚本（`plt.plot(...); plt.show()` 这种
@@ -599,6 +638,23 @@ class Worker(wireproto.V1Handler):
             # build 自己已经分好类的（脚本要命令行参数 / 脚本主动 exit）原样上抛
             raise
         except Exception as exc:  # noqa: BLE001 — 转成结构化错误，进程不退出
+            timed_out = [
+                r
+                for r in (self._input_channel.record if self._input_channel else [])
+                if r.get("timed_out")
+            ]
+            if timed_out:
+                # 有一问等到超时、按 EOF 交给了脚本，脚本没接住（ADR 0099 §三）：说「没人回答」，
+                # 不说笼统的「脚本执行失败」——用户的下一步是去作答，不是去改脚本
+                minutes = round(scriptinput.wait_timeout() / 60, 1)
+                raise ProtocolError(
+                    SCRIPT_INPUT_TIMEOUT,
+                    f"脚本在等输入，等了 {minutes:g} 分钟没有回答，按输入结束（EOF）处理后脚本失败了："
+                    f"{exc}",
+                    retryable=False,
+                    traceback_text=traceback.format_exc(),
+                    extra={"prompt": timed_out[-1].get("prompt", ""), "minutes": minutes},
+                ) from exc
             raise ProtocolError(
                 "script_error",
                 f"脚本执行失败: {exc}",
@@ -618,6 +674,11 @@ class Worker(wireproto.V1Handler):
             **self._stems_summary(),
             "descriptors": self._descriptor_cache,
             "runtime": figsession.runtime_report(inputs=self._inputs_report),
+            # 本次 build 实际用到的每一问（ADR 0099 §二）：写回的一次性重放按它严格重放
+            "script_inputs": [
+                {k: r[k] for k in ("index", "kind", "prompt", "answer")}
+                for r in (self._input_channel.record if self._input_channel else [])
+            ],
         }
 
 
@@ -662,7 +723,10 @@ def main() -> None:
 
     worker = Worker(ap.parse_args())
 
-    for line in sys.stdin:
+    # 协议管道的引用在这里定死：build 期间 `sys.stdin` 会被换成给脚本用的桥接对象（ADR 0099），
+    # 协议循环读的永远是这一个
+    protocol_in = sys.stdin
+    for line in protocol_in:
         line = line.strip()
         if not line:
             continue

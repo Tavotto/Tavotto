@@ -61,6 +61,9 @@ ERROR_STEM_CONFLICT = "multiple_stem_conflict"
 #: `script_probe_failed` 会把出路（给默认值或 `tavotto run` / 去掉那句 exit）说丢。
 ERROR_NEEDS_ARGUMENTS = "script_needs_arguments"
 ERROR_SCRIPT_EXITED = "script_exited"
+#: 脚本 `input()`（ADR 0099）：没人能答 / 等到超时脚本没接住 EOF。worker 原样透传。
+ERROR_NEEDS_INPUT = "script_needs_input"
+ERROR_INPUT_TIMEOUT = "script_input_timeout"
 
 #: traceback 进诊断详情的截断上限（完整日志仍在 worker.log）。
 _TRACEBACK_LIMIT = 4000
@@ -108,6 +111,15 @@ def _error_from_worker(
 
             out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)
         return out
+    if exc.code in (ERROR_NEEDS_INPUT, ERROR_INPUT_TIMEOUT):
+        # 脚本要输入而没人能答 / 等到超时（ADR 0099）：提示原文走 params，界面按 code 翻
+        extra = getattr(exc, "extra", None) or {}
+        return _err(
+            exc.code,
+            str(exc),
+            params={"prompt": str(extra.get("prompt") or "")},
+            traceback_text=exc.traceback_text,
+        )
     if exc.code in (ERROR_NEEDS_ARGUMENTS, ERROR_SCRIPT_EXITED):
         # 文案由前端按 code 翻；`error` 给 `script_exited` 的占位符（`SystemExit: 2`
         # 那一行），`script_needs_arguments` 的 usage 在 traceback 里（pool 已接上）。

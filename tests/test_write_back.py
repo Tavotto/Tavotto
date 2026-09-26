@@ -1138,3 +1138,19 @@ def test_hot_manifest_is_matched_per_stem_not_per_worker(tmp_path):
     hot = Hot()
     assert m._hot_manifest(hot, "Fig2_yield", patches) is not None  # 这个才可比
     assert m._hot_manifest(hot, "Fig2_correlation", patches) is None  # 另一个不可比
+
+
+def test_verify_replay_answers_script_input_with_the_hot_answers(client, tmp_path, monkeypatch):
+    """脚本 `input()` 的答案（ADR 0099 §五）：一次性重放拿的是热会话 build 时**实际用到**的那一组——
+    不是此刻记住的、也不是空的。热态 == 重放靠它成立。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    hot.last_build_script_inputs = [
+        {"index": 1, "kind": "input", "prompt": "which: ", "answer": "2"}
+    ]
+    _use(monkeypatch, hot, fresh)
+    seen: list = []
+    monkeypatch.setattr(m.engine_pool, "one_shot", lambda *a, **k: (seen.append(k), fresh)[1])
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    assert seen == [{"script_inputs": hot.last_build_script_inputs}]

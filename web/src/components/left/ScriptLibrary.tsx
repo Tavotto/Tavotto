@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Ban, Copy, Play, Settings, Square } from '@/components/ui/icons'
+import { Ban, Copy, CornerDownLeft, Play, Settings, Square } from '@/components/ui/icons'
 import { listRowClass } from '@/components/ui/listRow'
 import { cn } from '@/lib/utils'
 import { Details, Summary } from '@/components/ui/Details'
@@ -9,6 +9,7 @@ import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntr
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { addRuntimePanel } from '@/store/actions'
+import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import {
   isBusyPhase,
@@ -56,9 +57,15 @@ export function ScriptLibrary({ query }: { query: string }) {
   const error = useScriptLibraryStore((s) => s.error)
   const runStates = useScriptRunStore((s) => s.byScript)
 
+  const answersLoaded = useScriptInputStore((s) => s.answers !== null)
+
   useEffect(() => {
     if (!loaded) void useScriptLibraryStore.getState().load()
   }, [loaded])
+  // 脚本 input() 记住的答案（ADR 0099）：有答案的脚本行才出现「记住的输入」入口
+  useEffect(() => {
+    if (!answersLoaded) void useScriptInputStore.getState().loadAnswers()
+  }, [answersLoaded])
 
   const q = query.trim().toLowerCase()
   const scripts = (view?.all_scripts ?? []).filter(
@@ -141,6 +148,7 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
   const run = useScriptRunStore((s) => s.byScript[entry.script])
   const busy = !!run && isBusyPhase(run.phase)
   const [resultsOpen, setResultsOpen] = useState(false)
+  const hasAnswers = useScriptInputStore((s) => (s.answers?.[entry.script]?.length ?? 0) > 0)
 
   const onRunOrCancel = () => {
     const store = useScriptRunStore.getState()
@@ -161,6 +169,19 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
           {entry.script}
         </span>
         <StatusLine entry={entry} stems={stems} run={run} onViewResults={() => setResultsOpen(true)} />
+        {/* 脚本 input() 记住的答案（ADR 0099）：只在这个脚本真有答案时出现，其余行一个像素不变 */}
+        {hasAnswers && (
+          <IconButton
+            iconSize="sm"
+            label={translate('scriptInput.manageAria', { ns: 'dialogs', script: entry.script })}
+            tip={translate('scriptInput.manageTip', { ns: 'dialogs' })}
+            data-script-answers={entry.script}
+            onClick={() => useScriptInputStore.getState().openManager(entry.script)}
+            className="text-ink-3 group-hover:text-ink focus-visible:text-ink"
+          >
+            <CornerDownLeft size={ICON_SIZE.sm} />
+          </IconButton>
+        )}
         <IconButton
           iconSize="sm"
           label={

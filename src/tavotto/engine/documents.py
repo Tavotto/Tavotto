@@ -41,9 +41,12 @@ AUTOSAVE_DIRNAME = "_autosave"
 #: 布局版本时间线目录（旧位置；新写入进项目 `tavottofile/versions/`）。
 VERSIONS_DIRNAME = "_versions"
 
+#: 脚本 `input()` 记住的答案（ADR 0099 §四，`engine/scriptanswers.py`）。
+SCRIPT_INPUTS_FILENAME = "_script_inputs.json"
+
 #: 收纳目录里**不是用户文档**的 `*.json` 文件名（不含目录，目录本来就不会被
 #: `glob("*.json")` 命中）。
-RESERVED_DOCUMENT_FILENAMES = frozenset({STYLES_FILENAME})
+RESERVED_DOCUMENT_FILENAMES = frozenset({STYLES_FILENAME, SCRIPT_INPUTS_FILENAME})
 RESERVED_DOCUMENT_STEMS = frozenset(Path(n).stem for n in RESERVED_DOCUMENT_FILENAMES)
 
 

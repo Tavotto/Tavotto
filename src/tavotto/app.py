@@ -72,6 +72,7 @@ from .engine import (
     exportreq as engine_exportreq,
     figcapture as engine_figcapture,
     handoff as engine_handoff,
+    inputbroker as engine_inputbroker,
     locate as engine_locate,
     logsafe as engine_logsafe,
     managedenv as engine_managedenv,
@@ -95,6 +96,7 @@ from .engine import (
     runcodes as engine_runcodes,
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
+    scriptanswers as engine_scriptanswers,
     session_client as engine_session_client,
     specfix as engine_specfix,
     telemetry as engine_telemetry,
@@ -586,6 +588,10 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
     if stage:
         body["stage"] = stage
+    if exc.code in ("script_needs_input", "script_input_timeout"):
+        # 脚本要输入（ADR 0099）：界面按 code 翻译，提示原文走 params
+        extra = getattr(exc, "extra", None) or {}
+        body["params"] = {"prompt": str(extra.get("prompt") or "")}
     if getattr(exc, "module", ""):
         body["module"] = exc.module
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
@@ -1737,12 +1743,27 @@ def sse_publish(event: str, data: dict) -> None:
             pass
 
 
+#: 此刻连着的、声明能答脚本 `input()` 的事件流数（ADR 0099 §五）。只有主界面带这个标记；
+#: 它是同一条 `/api/events` 的查询参数，认证与普通事件流完全相同（ADR 0008），不是新通道。
+_answerer_subs = 0
+_answerer_lock = threading.Lock()
+
+
+def _has_script_input_answerer() -> bool:
+    return _answerer_subs > 0
+
+
 @app.get("/api/events")
 def api_events():
     q: queue.Queue = queue.Queue(maxsize=200)
     _sse_subs.append(q)
+    answers = request.args.get("answers") == "1"
 
     def gen():
+        global _answerer_subs
+        if answers:
+            with _answerer_lock:
+                _answerer_subs += 1
         try:
             yield ": connected\n\n"
             while True:
@@ -1754,12 +1775,34 @@ def api_events():
                 yield f"event: {ev}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
         finally:
             _sse_subs.remove(q)
+            if answers:
+                with _answerer_lock:
+                    _answerer_subs -= 1
 
     return Response(
         gen(),
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+def _project_ids_at(project: str | Path) -> list[str]:
+    """这个路径此刻对应哪些已打开的项目 id（按真实路径比）。不拿 `_PROJECT_LOCK`：调用方可能在起 worker 的门里。"""
+    try:
+        target = Path(project).resolve()
+    except OSError:
+        target = Path(project)
+    return [pid for pid, ctx in dict(PROJECTS).items() if Path(ctx.path).resolve() == target]
+
+
+def _publish_script_input(event: str, project: str, data: dict) -> None:
+    """脚本 `input()` 的三条事件（ADR 0099）：只发给那个项目。项目此刻没打开就不发——空 `pj` 会被每个
+    标签页收下（#606 第 2 条）。"""
+    for pid in _project_ids_at(project):
+        sse_publish(event, {"pj": pid, **data})
+
+
+engine_inputbroker.set_frontend(_publish_script_input, _has_script_input_answerer)
 
 
 def _publish_user_environment_adopted(project: str, entry: dict) -> None:
@@ -3120,6 +3163,117 @@ def api_registry_probe_cancel():
     ev.set()  # 先置标志再杀：probe 醒来时答案已经在了
     engine_pool.force_cancel(script, str(ctx.path))
     return jsonify({"cancelling": True})
+
+
+# ------------------------- 脚本 input() 的作答与答案管理（ADR 0099） -----------
+def _script_input_pending_of(ctx: "ProjectCtx", pending_id: str):
+    """这一问是不是**本项目**的。别的项目的 id 一律当作不存在（404），不跨项目作答。"""
+    p = engine_inputbroker.get_pending(pending_id)
+    if p is None:
+        return None
+    try:
+        same = Path(p.project_root).resolve() == ctx.path.resolve()
+    except OSError:
+        same = False
+    return p if same else None
+
+
+def _script_input_gone():
+    return jsonify({"error": "这一问已经不在等待作答了", "code": "script_input_not_pending"}), 404
+
+
+@app.post("/api/script_input/answer")
+def api_script_input_answer():
+    """界面作答：`{id, answer}`，或 `{id, eof: true}`（「结束输入」）。答案按项目记住（getpass 的除外）。"""
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    pending_id = str(body.get("id") or "")
+    if _script_input_pending_of(ctx, pending_id) is None:
+        return _script_input_gone()
+    eof = bool(body.get("eof"))
+    answer = body.get("answer")
+    if not eof and not isinstance(answer, str):
+        return jsonify({"error": "answer 必须是字符串", "code": "bad_request"}), 400
+    try:
+        done = engine_inputbroker.answer(pending_id, None if eof else answer, eof=eof)
+    except ValueError as exc:
+        return jsonify({"error": str(exc), "code": "script_input_invalid"}), 400
+    if done is None:
+        return _script_input_gone()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/script_input/stop")
+def api_script_input_stop():
+    """「停止脚本」：不再等这一问，并当场硬杀这条会话（与试运行的取消同一条路：`pool.force_cancel`）。"""
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    p = _script_input_pending_of(ctx, str(body.get("id") or ""))
+    if p is None:
+        return _script_input_gone()
+    engine_inputbroker.discard(p.id, "stopped")
+    # 正在试运行的话先置取消标志：那条请求随即以 execution_cancelled 落地（与试运行的取消同一语义）
+    with _PROBES_LOCK:
+        ev = _PROBES.get((ctx.id, p.script))
+    if ev is not None:
+        ev.set()
+    engine_pool.force_cancel(p.script, str(ctx.path))
+    return jsonify({"ok": True})
+
+
+def _script_answers_payload(ctx: "ProjectCtx") -> dict:
+    root = ctx.path
+    try:
+        location = engine_scriptanswers.answers_path(root).resolve().relative_to(root.resolve())
+        where = location.as_posix()
+    except (OSError, ValueError):
+        where = ""
+    pending = [
+        p.event_payload()
+        for p in engine_inputbroker.pending()
+        if _script_input_pending_of(ctx, p.id) is not None
+    ]
+    return {"scripts": engine_scriptanswers.load(root), "location": where, "pending": pending}
+
+
+@app.get("/api/script_input/answers")
+def api_script_input_answers():
+    """这个项目记住的全部答案 + 此刻还在等作答的问（界面重连后据此把对话框接回来）。"""
+    return jsonify(_script_answers_payload(current_ctx()))
+
+
+def _after_script_answers_changed(ctx: "ProjectCtx", script: str) -> None:
+    """答案变了必须重跑（ADR 0099 §七）：作废热会话 + `panel.file_changed`（reason=script_input）。"""
+    engine_pool.invalidate(script, str(ctx.path))
+    _script_change_handler(ctx, "script_input")([script])
+
+
+@app.post("/api/script_input/answers")
+def api_script_input_answers_update():
+    """答案管理：`{script, index, answer}` 改一条；`{script, index, forget: true}` 删一条；
+    `{script, forget: true}` 删这个脚本的全部。改了就重跑。"""
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    script = str(body.get("script") or "")
+    index = body.get("index")
+    if index is not None and (not isinstance(index, int) or isinstance(index, bool)):
+        return jsonify({"error": "index 必须是整数", "code": "bad_request"}), 400
+    if not script or script not in engine_scriptanswers.load(ctx.path):
+        return jsonify({"error": "这个脚本没有记住的答案", "code": "script_input_not_found"}), 404
+    if body.get("forget"):
+        changed = engine_scriptanswers.forget(ctx.path, script, index)
+    else:
+        answer = body.get("answer")
+        if index is None or not isinstance(answer, str):
+            return jsonify({"error": "需要 index 与 answer", "code": "bad_request"}), 400
+        try:
+            changed = engine_scriptanswers.update(ctx.path, script, index, answer)
+        except ValueError as exc:
+            return jsonify({"error": str(exc), "code": "script_input_invalid"}), 400
+    if not changed:
+        return jsonify({"error": "没有这一条答案", "code": "script_input_not_found"}), 404
+    _after_script_answers_changed(ctx, script)
+    return jsonify(_script_answers_payload(ctx))
 
 
 # ------------------------- Runtime Figure 素材（ADR 0013） -------------------
@@ -4836,7 +4990,13 @@ def _write_source_files(
     man_hot = _hot_manifest(worker, stem, patches)
 
     # ---- verify：全新 worker 全量重放，staging 也从它出 ----------------------
-    fresh = engine_pool.one_shot(worker.script_name, worker.figures_dir, worker.entry)
+    # 脚本 `input()` 的答案：严格重放热态 build 时实际用到的那一组（ADR 0099 §五），从不问人
+    fresh = engine_pool.one_shot(
+        worker.script_name,
+        worker.figures_dir,
+        worker.entry,
+        script_inputs=getattr(worker, "last_build_script_inputs", None) or [],
+    )
     tmps: list[tuple[Path, Path]] = []
     warnings: list[str] = []
     try:
