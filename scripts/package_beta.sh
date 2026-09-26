@@ -23,6 +23,15 @@ OUT="$ROOT/dist-beta"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# 下面两步（中文路径冒烟、RenderCore 检查）都会起 sidecar。它们各自把 TAVOTTO_DATA_DIR /
+# TAVOTTO_CONFIG_DIR / HOME 指到临时目录；这里再从外面看一眼：用户真实 config.json 的 mtime
+# 跑前跑后必须相同（b2 / b3 打包时 RenderCore 检查只隔离了 DATA_DIR，往里写过 recent_projects）。
+# 只 stat，不读内容。注意：用户自己开着的 Tavotto 恰好在这几分钟里写配置，也会让这一步失败。
+USER_CONFIG="$HOME/Library/Application Support/Tavotto/config.json"
+config_mtime() { "$PY" -c 'import os,sys;p=sys.argv[1];print(os.stat(p).st_mtime_ns if os.path.exists(p) else "absent")' "$USER_CONFIG"; }
+CONFIG_BEFORE="$(config_mtime)"
+echo "· 用户 config.json mtime（跑前）：$CONFIG_BEFORE"
+
 [ -d "$SRC" ] || { echo "找不到 $SRC，先跑 build_desktop.py" >&2; exit 1; }
 
 APP="$WORK/stage/Tavotto Beta.app"
@@ -51,6 +60,14 @@ codesign --verify --deep --strict "$SMOKE/Tavotto Beta.app"
 "$PY" "$ROOT/scripts/beta_rendercore_check.py" \
   --exe "$SMOKE/Tavotto Beta.app/Contents/Resources/sidecar/Tavotto/Tavotto" \
   --figures "$ROOT/examples/figures"
+
+CONFIG_AFTER="$(config_mtime)"
+echo "· 用户 config.json mtime（跑后）：$CONFIG_AFTER"
+if [ "$CONFIG_BEFORE" != "$CONFIG_AFTER" ]; then
+  echo "✗ 用户 config.json 在打包检查期间被改过（$CONFIG_BEFORE → $CONFIG_AFTER）：某一步没隔离配置目录" >&2
+  exit 1
+fi
+echo "✓ 用户 config.json 没被动过"
 
 ln -s /Applications "$WORK/stage/Applications"
 cp "$ROOT/docs/beta/README-性能测试版.md" "$WORK/stage/先看我-安装说明.md"
