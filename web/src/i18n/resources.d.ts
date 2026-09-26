@@ -3596,7 +3596,7 @@ export default interface Resources {
       "missingGroupExpand": "展开已不存在的目录",
       "missingHint": "目录已不在磁盘上；从列表移除不会删除文件。",
       "nativeCreateTitle": "选择新项目所在的上级目录",
-      "nativePickerTitle": "选择论文图所在目录",
+      "nativePickerTitle": "选择项目文件夹（绘图脚本所在的文件夹）",
       "openButton": "打开",
       "openMatch": "打开 {{name}}",
       "openProject": "打开项目 {{name}}",
@@ -3610,7 +3610,7 @@ export default interface Resources {
       "removeAllMissing": "全部移除",
       "removeFromList": "从列表移除 {{name}}，不删除磁盘文件。",
       "removeFromListTitle": "从列表移除，不删文件",
-      "tagline": "项目是论文图与脚本所在的目录。选择一个开始排版。",
+      "tagline": "项目是绘图脚本所在的文件夹。选择一个开始排版。",
       "tutorial": {
         "restart": "再看一遍教程",
         "resume": "继续教程",
