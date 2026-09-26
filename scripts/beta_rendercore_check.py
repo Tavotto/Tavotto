@@ -67,7 +67,15 @@ def main() -> int:
     (figures / "beta-raster-probe.png").write_bytes(_png_bytes())
     port = _free_port()
     log = work / "sidecar.log"
-    env = {"TAVOTTO_DATA_DIR": str(work / "data"), "PATH": "/usr/bin:/bin", "HOME": str(Path.home())}
+    # 数据 / 配置 / HOME 三件套全在 work 里：只设 DATA_DIR 时应用照样把 recent_projects 写进用户真实的
+    # ~/Library/Application Support/Tavotto/config.json（b2 / b3 打包各留下一条 beta-rc-*）
+    (work / "home").mkdir()
+    env = {
+        "TAVOTTO_DATA_DIR": str(work / "data"),
+        "TAVOTTO_CONFIG_DIR": str(work / "config"),
+        "HOME": str(work / "home"),
+        "PATH": "/usr/bin:/bin",
+    }
     with log.open("w") as fh:
         proc = subprocess.Popen(
             [args.exe, "--figures", str(figures), "--no-browser", "--insecure-no-auth", "--port", str(port)],
@@ -142,6 +150,8 @@ def main() -> int:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+            proc.wait()
+        shutil.rmtree(work, ignore_errors=True)
 
 
 if __name__ == "__main__":
