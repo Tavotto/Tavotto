@@ -53,6 +53,12 @@ DATA_ROLES = (
     "stem_series",
 )
 
+#: 有 `geometry` 也仍按包围盒（只标风险）判的数据角色。误差棒 / 茎叶系列的 geometry
+#: 是 ADR 0086 为**选中轮廓**加的；拿它把「图例压住数据」从风险升成确定，会让保形归一化
+#: 在它们身上从「完成」变成「约束冲突」（`test_mcp_normalize` 的 Two：缩到 120 mm 后图例
+#: 左上角压着橙色误差棒的折线）——那是归一化契约的改变，要单独裁决，不搭选中轮廓的车。
+BBOX_BASIS_ROLES = ("errorbar", "stem_series")
+
 CHECK_TEXT_OVERLAP = "text-overlap"
 CHECK_TEXT_OVER_AXES = "text-over-axes"
 CHECK_LEGEND_OVER_DATA = "legend-over-data"
@@ -333,6 +339,8 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
             if dr is None or _intersect(dr, leg_rect) is None:
                 continue
             geom = d.get("geometry")
+            if d.get("role") in BBOX_BASIS_ROLES:
+                geom = None
             if isinstance(geom, dict) and isinstance(geom.get("paths"), list):
                 if _segments_hit_rect(geom["paths"], leg_rect):
                     certain_hits.append(dg)

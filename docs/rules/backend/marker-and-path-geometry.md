@@ -92,7 +92,15 @@
   `clip` 照发，仍**不逐 cell 描**（22 万个 cell 就是 22 万条路径）。`offsets` 按渲染器口径处理：
   一条（或全相同）的偏移经 `offset_transform` 加到轮廓上，多条不同的偏移让 cell 各奔东西、
   退回 bbox。bbox 一个字节不动。
-  前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`。
+  **误差棒 / 茎叶系列出成员几何的并、Patch 全家族描真实路径、注释文字框只是字**（2026-09-26，
+  用户：选中误差棒时高亮贴不住、点这组选中那组；ADR 0086）：`pathgeom.series_group_geometry`
+  让每个成员按自己那一族出几何（与单独登记时同一份 `element_geometry`）再合成一份，画着东西的成员
+  给不出就整组退回 bbox；`fill` 只在没有多于两点的开放折线时成立（连线的数据线不能被当成多边形）。
+  圆 / 椭圆 / 扇形 / 圆角框 / span 矩形与 Polygon 同一条 `get_path()` + `get_transform()`，只有阴影线的
+  形状内部也算墨迹。带字注释的箭头（不出端点的那种）描真实箭杆、只按描边命中
+  （`element_geometry(arrow_path=True)`）；注释文字的 bbox 不含箭头、带底框文字的 bbox 含底框
+  （`manifest._text_ink_extent`）。
+  前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`、`tests/test_series_shape_geometry.py`。
 * **manifest 量文字用矢量输出的那把尺**（2026-09-25，#576，`manifest.vector_text_metrics`）：
   manifest 在文档 dpi（通常 100）的 Agg 渲染器上量，而画布挂的是矢量 SVG（字形经 `TextToPath`
   在 100 pt、不带 hinting 下度量）、导出的是 PDF。Agg 的度量带 hinting、按像素取整，小字差一圈
@@ -124,3 +132,4 @@
 - geometry 是渲染派生数据不进文档
 - 散点 / 纯 marker 线 / 柱逐个描，超过 `MAX_MARKERS` 整组退回 bbox
 - 彩色网格只描外轮廓 + 裁剪框，不逐 cell
+- 误差棒 / 茎叶出成员几何的并，一个成员给不出整组退回；Patch 全家族描路径；注释文字框不含箭头（ADR 0086）

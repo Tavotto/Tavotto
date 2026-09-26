@@ -3933,6 +3933,40 @@ def _collection_datalim(artist):
     return bb
 
 
+def _text_ink_extent(t: Text, bb, renderer):
+    """文字元素的框 = **它自己画出来的那块**：字 + 它的底框（`bbox=dict(...)`），不含注释箭头。
+
+    `Text.get_window_extent` 只量字形的排版框，底框（`FancyBboxPatch`，带 pad、圆角）
+    伸在它外面——一段带底框的文字，点在底色上选不中它，选中框也只圈着字，框外那圈
+    底色看着像另一个东西。`Annotation.get_window_extent` 反过来把**箭头**也并进来：
+    「peak」两个字的选中框一直伸到箭头尖，点箭头与文字之间的空白也选中这段字，而
+    箭头自己是另一个元素（`texts_j.arrow`）。两处都换成画出来的那块（ADR 0086）。
+
+    `bb` 是 artist 自己量的那一个：注释在 `annotation_clip` 下不画时它回 `Bbox.unit()`
+    等不可用的框，这种情况原样交回，不另作主张。
+    """
+    from matplotlib.text import Annotation
+    from matplotlib.transforms import Bbox
+
+    if isinstance(t, Annotation):
+        if t.arrow_patch is None or not t.get_visible() or not t._check_xy(renderer):  # noqa: SLF001
+            base = bb
+        else:
+            base = Text.get_window_extent(t, renderer)
+    else:
+        base = bb
+    patch = t.get_bbox_patch()
+    if patch is None or not patch.get_visible() or not _finite_box(base):
+        return base
+    try:
+        pb = patch.get_window_extent(renderer)
+    except Exception:  # noqa: BLE001 — 底框量不出就只报字
+        return base
+    if not _finite_box(pb) or (pb.width <= 0 and pb.height <= 0):
+        return base
+    return Bbox.union([base, pb])
+
+
 def _padded_bbox(bb, W: float, H: float) -> list[float]:
     """display Bbox → figure 分数（top-origin），零厚度的边垫到可点中。"""
     w = max(float(bb.width), _MIN_HIT_PX)
@@ -4574,6 +4608,8 @@ def _build_manifest(state: FigState, stem: str, arm) -> dict:
         else:
             try:
                 bb = artist.get_window_extent(renderer)
+                if isinstance(artist, Text):
+                    bb = _text_ink_extent(artist, bb, renderer)
                 if not _finite_box(bb) or (bb.width <= 0 and bb.height <= 0):
                     # 这一支只剩**非 Collection** 的 artist（上面那支已经把
                     # 整族接走了），它们没有数据范围可换算——量不出框就如实
@@ -4610,6 +4646,13 @@ def _build_manifest(state: FigState, stem: str, arm) -> dict:
             geom = pathgeom.patch_group_geometry(artist.artists, W, H, budget)
             if geom is not None:
                 entry["geometry"] = geom
+        elif el["role"] in ("errorbar", "stem_series"):
+            # 误差棒 / 茎叶系列同样是伪元素：并集 bbox 把数据点、误差线、帽与其间的
+            # 空白一起罩住，几组交错时还互相罩住、点这组选中那组（ADR 0086）。
+            # 几何 = 各成员按自己那一族出的几何的并（`series_group_geometry`）。
+            geom = pathgeom.series_group_geometry(artist.members(), W, H, budget)
+            if geom is not None:
+                entry["geometry"] = geom
         # 箭头：端点（figure 分数、top-origin，[尾, 头]）随 manifest 下发，前端据此画
         # 端点手柄、整体拖动 / 单端拖动都写 endpoints_frac override。两类出端点：
         # 独立箭头（端点就是 patch 自己的 posA / posB）与**纯箭头注释**（端点是注释的
@@ -4632,6 +4675,13 @@ def _build_manifest(state: FigState, stem: str, arm) -> dict:
                 entry["arrow_endpoints"] = [
                     [round(float(x) / W, 4), round(1.0 - float(y) / H, 4)] for x, y in disp
                 ]
+            else:
+                # 不出端点的箭头（带字注释的箭头、坐标系逆算不回去的）从前只有 bbox：
+                # 弯箭杆的 bbox 是一大块空白，点空白也选中它（ADR 0086）。描真实的
+                # 箭杆与箭头；它不能单独拖，没有端点契约可冲突。
+                geom = pathgeom.element_geometry(artist, W, H, budget, arrow_path=True)
+                if geom is not None:
+                    entry["geometry"] = geom
         # 裁剪框（figure 分数、top-origin）：matplotlib 会在这个框处把这个元素
         # 切掉，框外的部分一笔都不会画。**bbox 不含这一维**——数据远超坐标轴
         # 范围的散点 / 曲线，`get_window_extent` / `get_datalim` 给的是**未裁剪的
