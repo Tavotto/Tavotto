@@ -39,6 +39,9 @@ Peucker 抽稀，超过 `_MAX_POINTS` 就按 `_TOL_GROWTH` 逐档放大容差重
 
 柱形系列（`ax.bar()` 的 BarContainer，`patch_group_geometry`）出的是**每一根柱
 的轮廓**：一根柱一条闭合子路径，同一个上限、同一种降级。
+
+误差棒 / 茎叶系列（`series_group_geometry`）是成员几何的**并**：数据线、误差线、
+帽、茎各按自己那一族出，合成一份——一个成员给不出就整组退回 bbox。
 """
 
 from __future__ import annotations
@@ -51,7 +54,7 @@ from matplotlib.colors import to_rgba
 from matplotlib.figure import SubFigure
 from matplotlib.lines import Line2D, _mark_every_path
 from matplotlib.markers import MarkerStyle
-from matplotlib.patches import FancyArrowPatch, PathPatch, Polygon
+from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.transforms import Affine2D
 
@@ -680,17 +683,21 @@ def _stamp_markers(
     return [sub for i in sorted(slot) for sub in slot[i]]
 
 
-def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
+def element_geometry(
+    artist, W: float, H: float, budget: Budget, *, arrow_path: bool = False
+) -> dict | None:
     """一个 artist 的路径几何；不支持的类型返回 None（前端退回 bbox）。
 
     **散点（PathCollection）与只有 marker 的 Line2D 给的是每一颗 marker 的轮廓**
     （2026-09-06，用户反馈：选中散点时罩一个大矩形、而不是像曲线那样描出各个
     点）。标记数超过 `MAX_MARKERS` 整组退回 bbox，是**有意的降级**，stderr 上说明。
-    **箭头（FancyArrowPatch）不给**：它有自己的 `arrow_endpoints` 契约
-    （端点手柄、沿线命中、shift 锁角），通用 geometry 插进来只会两套并存。
+    **箭头（FancyArrowPatch）默认不给**：出端点的箭头有自己的 `arrow_endpoints`
+    契约（端点手柄、沿线命中、shift 锁角），通用 geometry 插进来只会两套并存。
+    `arrow_path=True` 留给**不出端点**的箭头（带字注释的箭头：端点归注释管、
+    不能单独拖）——它从前只有一个罩住弯箭杆的 bbox，现在描真实的箭杆与箭头。
     """
     try:
-        if isinstance(artist, FancyArrowPatch):
+        if isinstance(artist, FancyArrowPatch) and not arrow_path:
             return None
         if isinstance(artist, PathCollection):
             subs = _marker_subpaths(artist, budget)
@@ -853,14 +860,28 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
                 budget=budget,
                 thinned=True,
             )
-        if isinstance(artist, (Polygon, PathPatch)):
+        if isinstance(artist, Patch):
+            # **整个 Patch 家族**都走 artist 自己的 `get_path()` + `get_transform()`
+            # （`Patch.draw` 同一条路）。从前只有 Polygon / PathPatch 有轮廓，圆、椭圆、
+            # 饼图的扇形、圆角框、axhspan 的矩形都退回 bbox：斜椭圆的四角空白能选中它、
+            # 描边伸在 bbox 外的那半圈线宽点不中，饼图相邻扇形的 bbox 互相罩住——点大扇形
+            # 选中的是 bbox 更小的邻居（2026-09-26 命中排查，ADR 0086）。
+            # 注释的箭头（`annotate("text", arrowprops=…)`）走到这里时 `get_path()` 已是
+            # 画出来的那条（箭杆 + 箭头，display 坐标经 `get_transform()` 逆算）；箭杆是开放
+            # 曲线，按填充算会把弧与弦之间那块空白也算成它，所以箭头只按描边命中。
             subs = _display_subpaths(artist.get_path(), artist.get_transform())
+            arrow = isinstance(artist, FancyArrowPatch)
             return _pack(
                 subs,
                 W,
                 H,
-                fill=bool(artist.get_fill()) and _has_paint(artist.get_facecolor()),
-                stroke=_has_paint(artist.get_edgecolor()) and artist.get_linewidth() > 0,
+                # 阴影线（hatch）画在内部：只有阴影线、没填色的形状，内部照样是墨迹
+                fill=not arrow
+                and (
+                    (bool(artist.get_fill()) and _has_paint(artist.get_facecolor()))
+                    or bool(artist.get_hatch())
+                ),
+                stroke=arrow or (_has_paint(artist.get_edgecolor()) and artist.get_linewidth() > 0),
                 stroke_pt=float(artist.get_linewidth() or 0.0),
                 clip=_clip_rect(artist, W, H),
                 budget=budget,
@@ -924,3 +945,77 @@ def patch_group_geometry(patches, W: float, H: float, budget: Budget) -> dict | 
     except Exception as exc:  # noqa: BLE001 — 取几何失败只是少一条轮廓，不拦渲染
         print(f"[geometry] 柱形系列取路径失败: {exc}", file=sys.stderr)
     return None
+
+
+def _member_draws(m) -> bool:
+    """成员此刻有没有东西画出来——给不出几何时，据此分辨「本来就空」与「给不出」。"""
+    if not m.get_visible():
+        return False
+    if isinstance(m, Line2D):
+        if len(m.get_xydata()) == 0:
+            return False
+        no_line = str(m.get_linestyle()).lower() in ("none", "", " ")
+        no_marker = str(m.get_marker()).lower() in ("none", "", " ")
+        return not (no_line and no_marker)
+    if isinstance(m, Collection):
+        return len(m.get_paths()) > 0
+    return True
+
+
+def series_group_geometry(members, W: float, H: float, budget: Budget) -> dict | None:
+    """误差棒 / 茎叶系列（伪元素）的路径几何：**各成员几何的并**。
+
+    这两种系列在 SVG 里没有自己的节点，manifest 从前只给成员的并集 bbox——选中
+    一组误差棒画出来的是一个把数据点、误差线、帽连同其间大片空白一起罩住的矩形，
+    点在两根误差线之间的空白也选中它；几组误差棒交错时 bbox 互相罩住，点在这一组
+    的误差线上，选中的常是 bbox 更小的另一组（2026-09-26 用户反馈，ADR 0086）。
+
+    每个成员按**自己那一族**出几何（`element_geometry`，与它单独登记时同一份实现）：
+    连线的数据线描折线、只有 marker 的数据线 / 茎叶的 markerline 逐颗描 marker、
+    误差线 / 茎（LineCollection）逐条描线段、帽（只有 marker 的 Line2D，`|` / `_`
+    或 lolims 的箭头）逐颗描。隐藏的成员不描。
+
+    **一个画着东西的成员给不出几何（marker 超过 `MAX_MARKERS`、预算不够）就整组
+    退回 bbox**：只描一部分的话，那一部分墨迹既点不中也框不到——比 bbox 更糟。
+
+    合并规则（geometry 的 `fill` / `stroke` 是整份一个标志）：
+    * `fill`：任一成员是实心的（实心 marker），**且**没有别的成员带着多于两个点的
+      开放路径——前端把「闭合或 fill」的子路径一律按面积算，一条连线的数据线混进
+      fill 会被当成多边形（`element_geometry` 里「有连线又有 marker 只描折线」同一个
+      理由）。误差线与 `|` 帽都是两点线段，按面积算是空的，不受影响。
+    * `stroke` 任一成员有描边即是，容差取最粗的那一个；`clip` 各成员一致才发。
+    """
+    parts = []
+    for m in members:
+        if m is None or not m.get_visible():
+            continue
+        # 每个成员先记在一份临时账上，合成之后按总点数一次过真账
+        g = element_geometry(m, W, H, Budget(budget.left))
+        if g is None:
+            if _member_draws(m):
+                return None
+            continue
+        parts.append(g)
+    if not parts:
+        return None
+    paths = [p for g in parts for p in g["paths"]]
+    total = sum(len(p["points"]) for p in paths)
+    if not budget.take(total):
+        return None
+    open_long = any(
+        not p["closed"] and len(p["points"]) > 2 for g in parts if not g["fill"] for p in g["paths"]
+    )
+    fill = any(g["fill"] for g in parts) and not open_long
+    stroked = [g.get("stroke_pt", 0.0) for g in parts if g["stroke"]]
+    clips = {tuple(g["clip"]) if g.get("clip") else None for g in parts}
+    geom = {
+        "kind": "multi_path" if len(paths) > 1 else ("path" if paths[0]["closed"] else "polyline"),
+        "paths": paths,
+        "fill": bool(fill),
+        "stroke": bool(stroked),
+    }
+    if stroked and max(stroked) > 0:
+        geom["stroke_pt"] = round(float(max(stroked)), 3)
+    if len(clips) == 1 and None not in clips:
+        geom["clip"] = list(next(iter(clips)))
+    return geom
