@@ -22,6 +22,8 @@ import {
   type ProjectDocumentRef,
 } from '@/lib/projectDocs'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
+import { pushPickerEntry } from '@/lib/pickerHistory'
+import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { openRecentDocument } from '@/store/actions'
 import { useAssetBrowseStore } from '@/store/assetBrowseStore'
 import { flushAutosave, loadAutosavedDocument, useDocumentStore } from '@/store/documentStore'
@@ -126,7 +128,9 @@ export interface ProjectState {
   /** 后端不认本标签页的项目了（409 no_project）：退回 Project Picker */
   dropProject: () => void
   /**
-   * 去 Project Picker（设置「切换项目」、桌面菜单「打开项目」、教程收尾「打开自己的项目」）。
+   * 去 Project Picker（顶栏左上角的「回到项目列表」、设置「切换项目」、桌面菜单「打开项目」、
+   * 教程收尾「打开自己的项目」）。离开前收尾连续编辑并冲刷自动保存，再在浏览器历史里
+   * 占一格（`lib/pickerHistory.ts`），后退键回到编辑器。
    * **切换进行中什么都不做**：换代完成时 `adoptNow` 会把 phase 写回 open，用户这一下
    * 会被悄悄吞掉；而 Picker 里的入口在切换期间本来就全灰（Codex #550）。
    */
@@ -444,7 +448,14 @@ export const useProjectStore = create<ProjectState>((set, get) => {
 
   showPicker: () => {
     if (get().switching) return
+    // 去 Picker = 工作台整个卸载：自动保存的防抖计时器被取消、beforeunload 兜底被摘掉，
+    // 开着的连续编辑（改字号的安静计时器）只注销不收尾。所以离开之前先把那一轮收干净、
+    // 再立刻冲刷一次——防抖窗口里的最后一下改动，不能等到用户在 Picker 上关掉窗口才发现没了。
+    // 与切项目（`resetForNewProject`）、`dropProject` 是同一句 `flushAutosave()`。
+    finishActiveGesture()
+    flushAutosave()
     set({ phase: 'none' })
+    pushPickerEntry()
   },
 
   returnToCurrent: () => {
