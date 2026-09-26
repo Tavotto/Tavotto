@@ -13,6 +13,7 @@
  *   代次，回来时对不上就不写（不拿旧基准上的结果覆盖用户刚做的改动）。
  * * **只走 documentStore**：dirty、undo、autosave 全部照常，与用户手改一模一样。
  */
+import { effectiveOverride } from '@/lib/effectiveOverride'
 import { releaseOwned } from '@/lib/styleOwned'
 import { msg, type UiMessage } from '@/i18n'
 import { EngineError, engineSpecfix, type SpecFixResponse } from '@/lib/api'
@@ -503,9 +504,13 @@ function commitFixes(
       const obj = d.objects.find((o) => o.id === id)
       if (obj?.type !== 'panel') continue
       // 一键修复是用户的动作：这次改过 / 删掉的那几条从「样式写的」登记里注销（ADR 0081 §十三），脚本重跑不让位
-      const same = (x: PanelOverride, list: PanelOverride[]) =>
-        list.some((y) => y.gid === x.gid && y.prop === x.prop && JSON.stringify(y.value) === JSON.stringify(x.value))
-      const written = [...overrides.filter((x) => !same(x, obj.overrides)), ...obj.overrides.filter((x) => !same(x, overrides))]
+      // 按键比**生效的那条**（重复条目 last-wins，#587）：值变了、有了、没了的都算写过
+      const eff = (list: PanelOverride[], x: PanelOverride) => effectiveOverride(list, x.gid, x.prop)
+      const written = [...obj.overrides, ...overrides].filter((x) => {
+        const a = eff(obj.overrides, x)
+        const b = eff(overrides, x)
+        return !a || !b || JSON.stringify(a.value) !== JSON.stringify(b.value)
+      })
       obj.overrides = overrides
       releaseOwned(d, obj, written)
     }

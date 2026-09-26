@@ -165,11 +165,23 @@ describe('「恢复原样」清的范围 = 样式能写的范围', () => {
       { gid: 'axes_0.title', prop: 'text', value: '改过的标题' },
       { gid: 'axes_0.legend', prop: 'loc', value: 'upper left' },
     ])
-    expect(styleOverrideTargets(panel, manifest())).toEqual([
+    // 曲线此刻暴露 color（真 manifest 的样子）：配色那一格要求元素确实暴露这条属性
+    const m = manifest()
+    m.elements.find((e) => e.gid === 'axes_0.lines_0')!.editable.push(field('color', '#1f77b4') as never)
+    expect(styleOverrideTargets(panel, m)).toEqual([
       { gid: 'axes_0.title', prop: 'fontsize' },
       { gid: 'axes_0.xticks', prop: 'fontfamily' },
       { gid: 'axes_0.lines_0', prop: 'color' },
     ])
+  })
+
+  it('Codex #547 r4109745746：角色白名单里有、但此刻元素不暴露的属性不挑（用户的孤儿 override 不被恢复原样删掉）', () => {
+    const panel = panelAt(80, [
+      { gid: 'axes_0.xticks', prop: 'direction', value: 'out' },
+      { gid: 'axes_0.xticks', prop: 'length', value: 5 },
+    ])
+    // xticks 此刻暴露 direction、不暴露 length（夹具里没有这个字段）
+    expect(styleOverrideTargets(panel, manifest())).toEqual([{ gid: 'axes_0.xticks', prop: 'direction' }])
   })
 })
 

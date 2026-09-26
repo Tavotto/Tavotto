@@ -18,7 +18,7 @@ import { literal } from '@/i18n'
 import type { ProfileRecord } from '@/lib/api'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject, type ProjectDocument } from '@/types/document'
-import { setOverride, startLayoutAutoReflow } from './actions'
+import { clearOverride, setOverride, setOverrides, startLayoutAutoReflow } from './actions'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { useInteractionStore } from './interactionStore'
@@ -1616,6 +1616,95 @@ describe('重跑后脚本赢：不自动对齐，显示不一致、一键对齐�
     bindCanvasStyle(null)
     expect(s().doc.style).toBeUndefined()
     expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBeUndefined()
+  })
+
+  /* ---- Codex #547 r4109745742：重复的 (gid, prop) 读生效的那条（last-wins，#587） ---- */
+
+  /** 一张图的 x 轴标签带两条重复的 fontsize override：第一条是过期的 `first`，生效的是最后一条 `last` */
+  async function seedDuplicate(first: number, last: number, owned?: { value: unknown; base?: unknown }) {
+    const p = {
+      ...panel('a', 'FigA'),
+      overrides: [
+        { gid: 'axes_0.xlabel', prop: 'fontsize', value: first },
+        { gid: 'axes_0.xlabel', prop: 'fontsize', value: last },
+      ],
+    }
+    await seed([p], (proj) => {
+      if (owned) proj.canvases[0].style = { id: 's1', snapshot: USER.data, owned: { 'a@FigA': { 'axes_0.xlabel': { fontsize: owned } } } }
+    })
+    // 引擎按 last-wins 画：manifest 报的是最后一条
+    seedExactRender(panelById('a'), fig('FigA', { value: last, original: 9 }) as never)
+  }
+  const effective = () => {
+    const list = panelById('a').overrides.filter((o) => o.gid === 'axes_0.xlabel' && o.prop === 'fontsize')
+    return list.at(-1)?.value
+  }
+
+  it('Codex r4109745742：重复条目第一条恰好等于样式值、生效的最后一条不等——绑定照样写，画面落到样式值', async () => {
+    await seedDuplicate(10, 14)
+    bindCanvasStyle('s1')
+    expect(effective(), '生效的那条被写成样式的 10').toBe(10)
+  })
+
+  it('重复条目：登记的值只等于过期的第一条、生效的最后一条是用户的值——这一条不算样式写的，脚本改了也不让位', async () => {
+    await seedDuplicate(10, 14, { value: 10, base: 9 })
+    stop = startStyleBindingSync()
+    useRenderStore.getState().markStale(['FigA'])
+    seedExactRender(panelById('a'), fig('FigA', { value: 14, original: 12 }) as never)
+    expect(effective(), '用户的 14 留着').toBe(14)
+    expect(styleMismatchCount(), '用户的值不计入不一致').toBe(0)
+  })
+
+  it('重复条目：属性页改生效的那一条（最后一条）——按条目身份认出写过，登记当场注销', async () => {
+    await seedDuplicate(12, 10, { value: 10, base: 9 })
+    setOverride('a', 'axes_0.xlabel', 'fontsize', 14, true)
+    expect(effective()).toBe(14)
+    expect(owned('a'), '改的是生效那条：注销').toBeUndefined()
+  })
+
+  it('按条目身份认「写过」：批量写入（setOverrides）把样式写的那一条原样再写一遍，也是用户的写入，登记注销', async () => {
+    await bound()
+    setOverrides('a', literal('多选一起设字号'), [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 10 }])
+    expect(owned('a')).toBeUndefined()
+  })
+
+  it('按条目身份认「写过」：删掉排在前面的另一条 override（数组位置都挪了），样式写的那条登记不受牵连', async () => {
+    await bound()
+    s().commit(literal('用户在前面加一条'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides.unshift({ gid: 'axes_0.title', prop: 'color', value: '#333333' })
+    })
+    clearOverride('a', 'axes_0.title', 'color')
+    expect(owned('a')).toEqual({ value: 10, base: 9 })
+  })
+
+  /* ---- Codex #547 r4109745746：恢复原样按此刻的可编辑性挑目标 ---- */
+
+  it('Codex r4109745746：重跑后刻度不再暴露 direction，用户手改的 direction 在恢复原样后保留；脚本再暴露出来时值还在', async () => {
+    const ticks = (withDirection: boolean) => ({
+      gid: 'axes_0.xticks',
+      role: 'ticks',
+      label: 'x ticks',
+      bbox: [0, 0, 1, 1],
+      draggable: false,
+      editable: withDirection ? [{ prop: 'direction', type: 'enum', value: 'in', options: ['in', 'out', 'inout'] }] : [num('fontsize', 9)],
+    })
+    const withTicks = (dir: boolean) => {
+      const m = fig('FigA', { value: 10, original: 9 })
+      return { ...m, elements: [...m.elements, ticks(dir)] }
+    }
+    await bound()
+    s().commit(literal('用户手改刻度方向'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides.push({ gid: 'axes_0.xticks', prop: 'direction', value: 'in' })
+    })
+    // 脚本重跑：同一个 gid、同一个角色，这一版不再暴露 direction（比如变成了 3D）
+    useRenderStore.getState().markStale(['FigA'])
+    seedExactRender(panelById('a'), withTicks(false) as never)
+    expect(restoreCanvasStyle()).toBe(true)
+    expect(ov('a', 'axes_0.xticks', 'direction'), '用户的孤儿 override 不被恢复原样删掉').toBe('in')
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '样式写的照常清掉').toBeUndefined()
+    // 脚本又把 direction 暴露出来：用户的值还在
+    seedExactRender(panelById('a'), withTicks(true) as never)
+    expect(ov('a', 'axes_0.xticks', 'direction')).toBe('in')
   })
 
   it('反向：孤儿但归用户的 override（没登记）不动——恢复原样与不跟随样式都留着', async () => {

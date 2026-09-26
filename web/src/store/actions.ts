@@ -275,7 +275,8 @@ export function addSubLabels() {
  * `upsertOverrides` 的原地替换都会换一个新对象，没动过的那几条在草稿里还是同一个对象。
  */
 function writtenOverrides(before: PanelOverride[], after: PanelOverride[]): { gid: string; prop: string }[] {
-  const at = (list: PanelOverride[], x: PanelOverride) => list.find((o) => o.gid === x.gid && o.prop === x.prop)
+  // 比**生效的那条**（重复条目 last-wins，#587）：写入改的是最后一条，按第一条比会以为没动过
+  const at = (list: PanelOverride[], x: PanelOverride) => effectiveOverride(list, x.gid, x.prop)
   return [...before, ...after].filter((x) => at(before, x) !== at(after, x))
 }
 

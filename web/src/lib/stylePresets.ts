@@ -376,19 +376,23 @@ const legendTitle = (el: ManifestElement): boolean => {
 
 /**
  * 一张图上「样式管得到」的那些 override：role × prop 落在 `STYLE_ROLE_PROPS` 里，
- * 或者是配色循环承接颜色的那一格（`PALETTE_PROP`）。「恢复原样」清的正是这批——
- * 与 `planStyle` 能写的范围同一张表，不另立一份。
+ * 或者是配色循环承接颜色的那一格（`PALETTE_PROP`），**并且此刻 manifest 上这个元素确实暴露这条属性**。
+ * 「恢复原样」清的正是这批——与 `planStyle` 能写的范围同一张表、同一个可编辑判据，不另立一份。
+ *
+ * 只看角色白名单的话，重跑后元素还在、却不再暴露某条属性（刻度变成 3D、没有 `direction`）时，
+ * 用户手改的那条 override 成了孤儿也会被挑中删掉，脚本日后再暴露它时用户的值没了（Codex #547 P1）。
+ * 样式写的孤儿由 `style.owned` 那一支负责清（`styleBinding.restoreCanvasStyle`）。
  */
 export function styleOverrideTargets(
   panel: PanelObject,
   manifest: Manifest,
 ): { gid: string; prop: string }[] {
-  const roleOf = new Map(manifest.elements.map((e) => [e.gid, e.role]))
+  const byGid = new Map(manifest.elements.map((e) => [e.gid, e]))
   return panel.overrides
     .filter((o) => {
-      const role = roleOf.get(o.gid)
-      if (!role) return false
-      return !!STYLE_ROLE_PROPS[role]?.includes(o.prop) || PALETTE_PROP[role] === o.prop
+      const el = byGid.get(o.gid)
+      if (!el || !el.editable.some((f) => f.prop === o.prop)) return false
+      return !!STYLE_ROLE_PROPS[el.role]?.includes(o.prop) || PALETTE_PROP[el.role] === o.prop
     })
     .map((o) => ({ gid: o.gid, prop: o.prop }))
 }
@@ -516,7 +520,8 @@ export function effectiveChanges(
     .map((pp) => {
       const manifest = manifestOf(pp.panel)
       const patches = pp.patches.filter((p) => {
-        const ov = pp.panel.overrides.find((o) => o.gid === p.gid && o.prop === p.prop)
+        // 生效的那条（重复条目 last-wins，#587）：读第一条会把「过期的同值」当成已合样式（Codex #547 P1）
+        const ov = effectiveOverride(pp.panel.overrides, p.gid, p.prop)
         const now = ov
           ? ov.value
           : manifest?.elements.find((e) => e.gid === p.gid)?.editable.find((f) => f.prop === p.prop)?.value

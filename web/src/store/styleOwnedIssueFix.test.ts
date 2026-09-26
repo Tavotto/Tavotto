@@ -31,7 +31,7 @@ afterEach(() => {
 const STYLE_X = { value: 10, base: 9 }
 const STYLE_Y = { value: 10, base: 9 }
 
-async function seed() {
+async function seed(dupX?: number) {
   const panel: PanelObject = {
     id: 'a',
     type: 'panel',
@@ -46,6 +46,8 @@ async function seed() {
     w: 80,
     h: 60,
     overrides: [
+      // 重复条目（老文档）：过期的第一条在前，生效的是后面那条（last-wins，#587）
+      ...(dupX !== undefined ? [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: dupX }] : []),
       { gid: 'axes_0.xlabel', prop: 'fontsize', value: 10 },
       { gid: 'axes_0.ylabel', prop: 'fontsize', value: 10 },
     ],
@@ -112,5 +114,32 @@ describe('一键修复（#549 后端事务）与样式写的 override 登记（A
     ]
     await applyIssueFix(issue())
     expect(owned()).toEqual({ 'axes_0.xlabel': { fontsize: STYLE_X }, 'axes_0.ylabel': { fontsize: STYLE_Y } })
+  })
+
+  it('重复条目（过期的第一条 12、生效的 10）：修复换上的列表里 x 仍是 10——生效值没变，登记保留', async () => {
+    await seed(12)
+    verdict = [
+      { gid: 'axes_0.xlabel', prop: 'fontsize', value: 10 },
+      { gid: 'axes_0.ylabel', prop: 'fontsize', value: 10 },
+      { gid: 'axes_0.title', prop: 'fontsize', value: 11 },
+    ]
+    await applyIssueFix(issue())
+    expect(owned()?.['axes_0.xlabel']?.fontsize, '按生效那条比：没改').toEqual(STYLE_X)
+  })
+
+  it('重复条目（过期的第一条 10、生效的 12）：修复把 x 换成 10——生效值变了，登记注销', async () => {
+    await seed(10)
+    // 这一份里生效的 x 是 10：造一份「第一条 10、生效 12」的文档
+    s().commit(literal('生效的改成 12'), (d) => {
+      const o = d.objects[0] as PanelObject
+      o.overrides[1] = { ...o.overrides[1], value: 12 }
+    })
+    verdict = [
+      { gid: 'axes_0.xlabel', prop: 'fontsize', value: 10 },
+      { gid: 'axes_0.ylabel', prop: 'fontsize', value: 10 },
+    ]
+    await applyIssueFix(issue())
+    expect(owned()?.['axes_0.xlabel'], '按生效那条比：12 → 10 是一次写入').toBeUndefined()
+    expect(owned()?.['axes_0.ylabel']?.fontsize).toEqual(STYLE_Y)
   })
 })

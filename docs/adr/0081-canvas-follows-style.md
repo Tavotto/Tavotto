@@ -339,10 +339,17 @@ Codex #547 r4104608121 的场景：绑定时 y 轴标签的字号刚好已合样
 6. **样式写的孤儿随绑定一起走**（Codex #547 r4105655215）：脚本重跑删掉了某个 gid（或那一项不在此刻的精确 manifest
    里），它身上样式写的 override 就成了孤儿——此刻看不见，只按 manifest 遍历的清理会漏掉它；等脚本哪天把 gid 加回来，
    旧样式值会在已经解绑的画布上悄悄生效。所以「恢复原样」清的集合 = 此刻 manifest 上样式管得到的 ∪ `owned` 里仍然
-   算数的全部；「不跟随样式」保持此刻的样子，只清其中的孤儿（拿不到精确 manifest 的图认不出谁是孤儿，不动）。
-   用户的孤儿 override 不在登记里，一律不动。「对齐」与「让位」没有这个漏洞：对齐只往此刻 manifest 上有的目标写，
+   算数的全部——前一半要求**此刻 manifest 上这个元素确实暴露这条属性**（`styleOverrideTargets`，Codex #547
+   r4109745746：重跑后刻度变成 3D、不再暴露 `direction` 时，用户手改的那条成了孤儿，只看角色白名单会把它删掉）；
+   「不跟随样式」保持此刻的样子，只清其中的孤儿（拿不到精确 manifest 的图认不出谁是孤儿，不动）。
+   用户的孤儿 override 不在登记里，一律不动。「对齐」与「不一致计数」只往此刻 manifest 上暴露了的字段写（`planStyle` 找不到字段就进 `unmappable`），本来就按可编辑性。「对齐」与「让位」也没有孤儿漏洞：对齐只往此刻 manifest 上有的目标写，
    孤儿不在其中；让位要拿 `value_original` 与基线比，孤儿此刻说不出脚本值，留着；绑定还在时 gid 回来，那条样式
    override 本来就该生效（脚本也改了的话照常让位）。
+7. **按 (gid, prop) 取 override 一律取生效的那条**（`lib/effectiveOverride`，重复条目 last-wins，#587；Codex #547
+   r4109745742）：`effectiveChanges`（已合样式）、`ownedLive`（样式写的）、`writtenOverrides`（用户写过，按条目身份比）、
+   一键修复的列表差都读最后一条。老文档里第一条恰好等于样式值、生效的最后一条不等时，读第一条会把它当成已合样式、
+   当成样式写的、或者以为没动过。`web/src/store/styleOverrideLookup.test.ts` 结构性地禁止这几份文件里再出现同时比
+   gid 与 prop 的 `find` / `findIndex`。
 
 **override 写入点清单**（2026-09-25 逐一核过；`removeOverrides` 这个函数不存在，删除都是就地 `filter`）
 
@@ -369,7 +376,7 @@ Codex #547 r4104608121 的场景：绑定时 y 轴标签的字号刚好已合样
 | §十 旧样式升级：0.6 的图上输入 9 → 页面 9、标记写入、一次撤销退回画布（库保留升级后的那一份）、缩放比 1 的图不变；设置与样式对话框同一规则 | `styleBinding.test.ts`「旧样式…第一次被编辑」组、`profilesSettings.test.tsx`、`StyleDialog.test.tsx` |
 | §十一 各条（重载同一份文档不写、换绑定欠账作废、旧样式 0.6 上输入 6、只认当前变体、排空补跑） | `styleBinding.test.ts`「第二轮评审」组 |
 | §十二 撤销只退画布：撤销不写库、已脱离、再编辑后不跟回来、别的画布照样跟上、重做回到跟随并以库此刻为准、重新选中恢复跟随、撤销「按样式更新」也脱离；`undoAlso` 撤销 / 重做 / 再撤销一致；选择器与提示；读档带上标记 | `styleBinding.test.ts`「撤销只退画布」组、`documentStore.test.ts`「commit 的 undoAlso」组、`stylePanel.test.tsx`、`migrate.style.test.ts` |
-| §十三 重跑后脚本赢：没 override 的属性被脚本改了不自动写、计入不一致、「对齐」一条历史可撤销；新 gid 不自动写；样式写的 override 在脚本改了之后让位（一条历史、撤销连登记一起回来）；脚本没改不让位；手改注销且不让位、不计入（改回样式的值也仍归用户；同值写入按 #587 是 no-op、登记保留）；老文档 / 老引擎不让位；离线改脚本重开后让位；改值沿用基线；解绑 / 恢复原样随绑定消失、样式写的孤儿一起清、用户的孤儿不动 | `styleBinding.test.ts`「重跑后脚本赢」组、`stylePanel.test.tsx`（不一致提示与「对齐」）、`migrate.style.test.ts`；一键修复（#549 整张换上裁决后的列表）按新旧列表的差注销、没动的保留 `styleOwnedIssueFix.test.ts` |
+| §十三 重跑后脚本赢：没 override 的属性被脚本改了不自动写、计入不一致、「对齐」一条历史可撤销；新 gid 不自动写；样式写的 override 在脚本改了之后让位（一条历史、撤销连登记一起回来）；脚本没改不让位；手改注销且不让位、不计入（改回样式的值也仍归用户；同值写入按 #587 是 no-op、登记保留）；老文档 / 老引擎不让位；离线改脚本重开后让位；改值沿用基线；解绑 / 恢复原样随绑定消失、样式写的孤儿一起清、用户的孤儿不动（含不再暴露的属性）；重复条目读生效的那条（绑定、登记、属性页写入、批量同值写入、前面的条目被删） | `styleBinding.test.ts`「重跑后脚本赢」组、`stylePanel.test.tsx`（不一致提示与「对齐」）、`migrate.style.test.ts`；一键修复（#549 整张换上裁决后的列表）按新旧列表的差注销、没动的保留、重复条目按生效那条比 `styleOwnedIssueFix.test.ts`；按 (gid, prop) 取第一条的写法 `styleOverrideLookup.test.ts` |
 | §十三 `value_original`：样式能写的每一项与没 override 时的 `value` 同值（全写 / 逐条）、元素联动不串味、rebase 重采、还原失败欠账期间（#549）照样报脚本原样且修好后一起销掉、键名同源 | `tests/test_manifest_value_original.py`、`tests/native/test_native_barrier_semantics.py`、`tests/test_value_original_pair.py`；`owned` 落盘 `tests/test_document_persistence.py` |
 | §九各条（异步回来画布变了、欠账补上、渲染到齐再跟随、交互结束补看、恢复等 manifest、副本回滚） | 同上「Codex #547 评审」组；`stylePresets.test.ts`、`stylePanel.test.tsx`、`profilesSettings.test.tsx`、`tests/test_profile_store.py` |
 | 面板里改值在绑定时走样式本身；选择器反映绑定；恢复原样 | `web/src/components/left/stylePanel.test.tsx` |

@@ -7,6 +7,7 @@
  *
  * 这里只放**纯函数**（`store/actions` 与 `store/styleBinding` 两边都要用，放在任一边都会成环）。
  */
+import { effectiveOverride } from '@/lib/effectiveOverride'
 import { sameReading } from '@/lib/stylePresets'
 import type { FigureDocument, PanelObject, StyleOwnedOverride } from '@/types/document'
 
@@ -25,7 +26,8 @@ export function ownedLive(
 ): StyleOwnedOverride | null {
   const e = doc.style?.owned?.[figKey(p)]?.[gid]?.[prop]
   if (!e) return null
-  const o = p.overrides.find((x) => x.gid === gid && x.prop === prop)
+  // 生效的那条（重复条目 last-wins，#587）
+  const o = effectiveOverride(p.overrides, gid, prop)
   return o && sameReading(o.value, e.value) ? e : null
 }
 
