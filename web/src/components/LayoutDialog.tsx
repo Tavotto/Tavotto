@@ -14,9 +14,10 @@ import {
 } from '@/lib/api'
 import { knownLayoutRevision, rememberLayoutRevision } from '@/lib/layoutRevision'
 import { normalizeLayout } from '@/lib/migrate'
+import { currentProjectId } from '@/lib/session'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
-import { useDocumentStore } from '@/store/documentStore'
+import { projectFileSnapshot, setProjectFile, useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { dirTail } from '@/lib/pathDisplay'
@@ -40,12 +41,25 @@ import { TextInput } from './ui/Input'
  *
  * 词汇统一到**项目 > 文档 > 画布**：这里存取的是一份文档（schema 3，含它
  * 全部画布），所以不再叫「画布文件」，字段也不再叫「布局名称」。
+ *
+ * 第三种形态 `saveToProject`（ADR 0096）：⌘S 时这份排版还没有项目文件。表单与
+ * 另存为是同一个，只是标题与按钮说「存进项目」，写的时候要求开着项目（不退回数据
+ * 目录）。**存进项目的——不管从哪一屏——都绑定到那个文件**，之后 ⌘S 直接写回；
+ * 从「项目里的排版」打开的同样绑定。没开项目时另存为照旧写数据目录、不绑定。
  */
 export function LayoutDialog() {
   const { t } = useTranslation(['dialogs', 'common'])
   const open = useUiStore((s) => s.layoutOpen)
   const setOpen = useUiStore((s) => s.setLayoutOpen)
-  const docName = useDocumentStore((s) => s.doc.name)
+  /**
+   * 预填的是**排版名**（`projectMeta.name`），不是激活画布的名字——后者是「Figure 1」，
+   * 存成 `tavottofile/Figure 1.json` 的话项目里每一份排版都叫这个。⌘S 写回撞上冲突时
+   * 预填绑定的那个文件名（`layoutName`）。
+   */
+  const layoutName = useDocumentStore((s) => s.projectMeta.name)
+  const presetName = useUiStore((s) => s.layoutName)
+  const presetConflict = useUiStore((s) => s.layoutConflict)
+  const docName = presetName ?? layoutName
   /**
    * 文档落在哪个目录——**后端说了算**（`project_status.document_dir`）。
    * 「项目内 tavottofile/」这条规则的出处只有 `app.project_layout_dir()`，
@@ -55,7 +69,8 @@ export function LayoutDialog() {
   const documentDir = useProjectStore((s) => s.project?.document_dir)
 
   const intent = useUiStore((s) => s.layoutIntent)
-  const saving = intent === 'save'
+  const toProject = intent === 'saveToProject'
+  const saving = intent === 'save' || toProject
   const [names, setNames] = useState<string[]>([])
   const [name, setName] = useState(docName)
   const [busy, setBusy] = useState(false)
@@ -78,13 +93,13 @@ export function LayoutDialog() {
     if (!open) return
     setName(docName)
     setError(null)
-    setConflict(null)
+    setConflict(presetConflict)
     // 另存那一屏也要这份清单：撞名的裁决在后端，但「这个名字已经有了」
     // 要在用户按下按钮之前就说
     fetchLayoutNames()
       .then(setNames)
       .catch((e) => setError(backendErrorText(e)))
-  }, [open, docName])
+  }, [open, docName, presetConflict])
 
   // 从菜单进来时焦点直接落在用户选的那件事上。
   // 要等一帧：弹窗自己的焦点陷阱在挂载后也会抢焦点，抢早了会被它覆盖。
@@ -116,11 +131,38 @@ export function LayoutDialog() {
       // 保存整份文档（schema 3，含全部画布）；文件名即文档名
       const store = useDocumentStore.getState()
       store.renameProject(stem)
+      const { documentId } = useDocumentStore.getState()
+      const pj = currentProjectId()
+      const edited = projectFileSnapshot()
       const baseRevision = overwrite ?? knownLayoutRevision(stem) ?? REVISION_ABSENT
-      const res = await saveLayout(stem, useDocumentStore.getState().buildProject(), baseRevision)
-      rememberLayoutRevision(stem, res.revision)
+      const res = await saveLayout(
+        stem,
+        useDocumentStore.getState().buildProject(),
+        baseRevision,
+        toProject ? { target: 'project' } : undefined,
+      )
+      rememberLayoutRevision(res.name ?? stem, res.revision)
+      // 存进了项目（后端交回了项目里的相对路径）→ 绑定，之后 ⌘S 写回这个文件
+      if (pj && res.file) {
+        setProjectFile(
+          {
+            projectId: pj,
+            name: res.name ?? stem,
+            file: res.file,
+            revision: res.revision,
+            dirty: edited(),
+          },
+          documentId,
+        )
+      }
       setNames(await fetchLayoutNames())
-      useUiStore.getState().setStatus(msg('layout.saved', { name: stem }, 'dialogs'))
+      useUiStore
+        .getState()
+        .setStatus(
+          res.file
+            ? msg('save.doneProject', { file: res.file }, 'workspace')
+            : msg('layout.saved', { name: stem }, 'dialogs'),
+        )
       setOpen(false)
     } catch (e) {
       const revision =
@@ -146,10 +188,15 @@ export function LayoutDialog() {
     setError(null)
     setConflict(null)
     try {
-      const { doc, revision } = await fetchLayout(target)
+      const { doc, revision, file } = await fetchLayout(target)
       // 读到了就记下基线：之后覆盖这个名字不必再打扰用户一次
       rememberLayoutRevision(target, revision)
-      openLayoutDocument(normalizeLayout(doc, target))
+      const pj = currentProjectId()
+      // 从项目里打开的排版绑定那个文件：之后 ⌘S 写回它，基线是这次读到的那一份
+      await openLayoutDocument(
+        normalizeLayout(doc, target),
+        pj && file ? { projectId: pj, name: target, file, revision, dirty: false } : undefined,
+      )
       setOpen(false)
     } catch (e) {
       setError(backendErrorText(e))
@@ -162,7 +209,13 @@ export function LayoutDialog() {
     <Dialog
       open={open}
       onOpenChange={setOpen}
-      title={t(saving ? 'dialogs:layout.saveTitle' : 'dialogs:layout.openTitle')}
+      title={t(
+        toProject
+          ? 'dialogs:layout.saveToProjectTitle'
+          : saving
+            ? 'dialogs:layout.saveTitle'
+            : 'dialogs:layout.openTitle',
+      )}
       size="md"
       busy={busy}
       footer={
@@ -181,7 +234,7 @@ export function LayoutDialog() {
               onClick={() => doSave()}
             >
               <Save size={ICON_SIZE.md} />
-              {t('dialogs:layout.saveAs')}
+              {t(toProject ? 'dialogs:layout.saveToProject' : 'dialogs:layout.saveAs')}
             </Button>
           )}
         </>
@@ -219,6 +272,9 @@ export function LayoutDialog() {
             )}
             {names.includes(name.trim()) && (
               <p className="text-xs text-ink-2">{t('dialogs:layout.nameTaken')}</p>
+            )}
+            {toProject && !conflict && (
+              <p className="text-xs text-ink-3">{t('dialogs:layout.saveToProjectHint')}</p>
             )}
           </div>
         ) : names.length === 0 ? (

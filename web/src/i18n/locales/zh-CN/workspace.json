@@ -479,8 +479,11 @@
   },
   "save": {
     "conflict": "文档已在别处改过，请先处理冲突。",
-    "done": "已保存到磁盘",
-    "failed": "无法保存。改动仍在，请检查磁盘空间后重试。"
+    "doneLocal": "已保存在本机（没有打开项目）",
+    "doneProject": "已保存到项目：{{file}}",
+    "failed": "无法保存。改动仍在，请检查磁盘空间后重试。",
+    "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
+    "projectFailed": "没能存进项目里的 {{file}}：{{reason}}"
   },
   "scrim": {
     "collapse": "收起侧栏"
@@ -697,6 +700,7 @@
     "paperStyles": "论文样式…",
     "presets": "科研预设与符号…",
     "projectDocuments": "项目文档",
+    "projectFileUnsaved": "项目里的 {{file}} 有未保存的改动",
     "readiness": "项目接入状态",
     "recentDocuments": "本机最近文档",
     "recentEntryMulti_other": "{{name}} · {{canvases}} 张画布 · {{count}} 个对象",
@@ -705,15 +709,19 @@
     "redoWith": "重做 {{label}}",
     "refreshProject": "刷新项目",
     "renameDocument": "重命名文档…",
-    "saveClean": "已保存 {{time}}",
-    "saveCleanNoTime": "已保存",
     "saveConflict": "外部冲突",
     "saveDirty": "有未保存修改",
     "saveDocumentAs": "另存为文档…",
     "saveError": "保存失败",
-    "saveSaved": "已保存",
+    "saveLocal": "已存在本机",
+    "saveLocalAt": "已存在本机 {{time}}",
+    "saveProjectPending": "未存进项目",
+    "saveProjectSaved": "已保存到项目",
     "saveSaving": "正在保存…",
-    "saveStateTitle": "{{mod}}S 保存当前文档；⇧{{mod}}S 另存为命名的画布文件",
+    "saveTitleLocal": "已保存在本机（没有打开项目）。{{mod}}S 保存；⇧{{mod}}S 另存为新排版",
+    "saveTitleLocalInProject": "这份排版只存在本机，还没有存进项目。{{mod}}S 存进项目",
+    "saveTitleProject": "已保存到项目：{{file}}。{{mod}}S 保存到这个文件；⇧{{mod}}S 另存为新排版",
+    "saveTitleProjectPending": "项目里的 {{file}} 有未保存的改动（改动已暂存在本机）。{{mod}}S 保存到这个文件",
     "shortcutHelp": "快捷键帮助",
     "subLabelsTip": "按阅读顺序添加 (a)(b)(c) 标签",
     "tutorial": {

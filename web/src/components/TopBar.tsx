@@ -30,6 +30,8 @@ import { createPackage, openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
+import { bindingForProject } from '@/lib/projectFile'
+import { useProjectStore } from '@/store/projectStore'
 import { insertShape } from '@/lib/presets'
 import { PresetsDialog } from './PresetsDialog'
 import { ProjectSwitcher } from './ProjectSwitcher'
@@ -237,50 +239,79 @@ function RecoveryNotice() {
   )
 }
 
-function SaveStateLabel() {
+/**
+ * 这份排版此刻能写回的项目文件（ADR 0096）。项目换了要重新判一次：订阅
+ * `projectStore` 的项目 id 只为触发重渲染，判据本身用 `currentProjectId()`
+ * （与 ⌘S 那条路同一个值——换代窗口里 `project` 字段还是旧的，#589）。
+ */
+function useActiveProjectFile() {
+  useProjectStore((s) => s.project?.id ?? null)
+  const binding = useDocumentStore((s) => s.projectFile)
+  return bindingForProject(binding, currentProjectId())
+}
+
+/**
+ * 顶栏的保存状态。两根轴（ADR 0096）：`saveState` 说本机自动保存走到哪一步；
+ * 绑定的项目文件说「项目里那份是不是最新」。落定之后的那句话说**去向**——
+ * 「已保存到项目」「已存在本机」，tooltip 给出项目里的相对路径。
+ */
+export function SaveStateLabel() {
   const { t } = useTranslation('workspace')
   const saveState = useDocumentStore((s) => s.saveState)
   const lastPersisted = useDocumentStore((s) => s.lastPersisted)
   const hasContent = useDocumentStore(
     (s) => s.doc.objects.length > 0 || s.doc.guides.length > 0 || s.canvases.length > 1,
   )
-  if (!hasContent) return null
+  const bound = useActiveProjectFile()
+  const projectOpen = useProjectStore((s) => !!s.project?.open) && currentProjectId() !== null
+  if (!hasContent && !bound) return null
 
+  const settled = saveState === 'clean' || saveState === 'saved'
   const text =
     saveState === 'saving'
       ? t('topbar.saveSaving')
       : saveState === 'dirty'
         ? t('topbar.saveDirty')
-        : saveState === 'saved'
-          ? t('topbar.saveSaved')
-          : saveState === 'save_error'
-            ? t('topbar.saveError')
-            : saveState === 'conflict'
-              ? t('topbar.saveConflict')
-              : lastPersisted
-                ? t('topbar.saveClean', { time: formatTime(lastPersisted) })
-                : t('topbar.saveCleanNoTime')
+        : saveState === 'save_error'
+          ? t('topbar.saveError')
+          : saveState === 'conflict'
+            ? t('topbar.saveConflict')
+            : bound
+              ? t(bound.dirty ? 'topbar.saveProjectPending' : 'topbar.saveProjectSaved')
+              : saveState === 'saved'
+                ? t('topbar.saveLocal')
+                : lastPersisted
+                  ? t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })
+                  : t('topbar.saveLocal')
   const bad = saveState === 'save_error' || saveState === 'conflict'
+  const title = bound
+    ? t(bound.dirty || !settled ? 'topbar.saveTitleProjectPending' : 'topbar.saveTitleProject', {
+        file: bound.file,
+        mod: MOD,
+      })
+    : t(projectOpen ? 'topbar.saveTitleLocalInProject' : 'topbar.saveTitleLocal', { mod: MOD })
 
   return (
     <span
       aria-live="polite"
+      data-save-destination={bound ? 'project' : 'local'}
       className={cn(
         'hidden shrink-0 text-xs min-[900px]:inline',
         bad ? 'text-danger' : 'text-ink-3',
       )}
-      title={t('topbar.saveStateTitle', { mod: MOD })}
+      title={title}
     >
       {text}
     </span>
   )
 }
 
-function DocumentMenu() {
+export function DocumentMenu() {
   const { t } = useTranslation('workspace')
   const name = useDocumentStore((s) => s.projectMeta.name)
   const documentId = useDocumentStore((s) => s.documentId)
   const recentDocs = useDocumentStore((s) => s.recentDocs)
+  const projectFile = useActiveProjectFile()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
 
@@ -322,6 +353,15 @@ function DocumentMenu() {
       trigger={
         <Button size="md" className="max-w-52 text-ink-2" aria-label={t('topbar.documentLabel', { name })}>
           <span className="truncate">{name}</span>
+          {/* 项目里的文件落后于这份排版（ADR 0096）：与画布页签的「未保存」同一颗圆点 */}
+          {projectFile?.dirty && (
+            <span
+              data-project-file-dirty
+              aria-label={t('topbar.projectFileUnsaved', { file: projectFile.file })}
+              title={t('topbar.projectFileUnsaved', { file: projectFile.file })}
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-3"
+            />
+          )}
           <ChevronDown size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
         </Button>
       }

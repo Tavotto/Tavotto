@@ -151,6 +151,9 @@
     "overwrite": "仍然覆盖",
     "saveAs": "另存为",
     "saveTitle": "另存为文档",
+    "saveToProject": "存进项目",
+    "saveToProjectHint": "这份排版还只在本机。存进项目之后，再保存会直接更新项目里的这个文件。",
+    "saveToProjectTitle": "存进项目",
     "saved": "已另存为文档：{{name}}",
     "saving": "正在保存…",
     "savesIntoLabel": "保存到"

@@ -500,8 +500,11 @@
   },
   "save": {
     "conflict": "This document was changed elsewhere. Resolve the conflict first.",
-    "done": "Saved to disk",
-    "failed": "Save failed. Your changes are safe — check disk space and try again."
+    "doneLocal": "Saved on this computer (no project open)",
+    "doneProject": "Saved to project: {{file}}",
+    "failed": "Save failed. Your changes are safe — check disk space and try again.",
+    "projectConflict": "{{file}} in the project was changed elsewhere, so nothing was written. Decide in the dialog.",
+    "projectFailed": "Couldn’t save {{file}} in the project: {{reason}}"
   },
   "scrim": {
     "collapse": "Collapse side panels"
@@ -742,6 +745,7 @@
     "paperStyles": "Paper styles…",
     "presets": "Research presets and symbols…",
     "projectDocuments": "Project documents",
+    "projectFileUnsaved": "{{file}} in the project has unsaved changes",
     "readiness": "Project readiness",
     "recentDocuments": "Recent documents on this machine",
     "recentEntryMulti_one": "{{name}} · {{canvases}} canvases · {{count}} object",
@@ -752,15 +756,19 @@
     "redoWith": "Redo {{label}}",
     "refreshProject": "Refresh project",
     "renameDocument": "Rename document…",
-    "saveClean": "Saved {{time}}",
-    "saveCleanNoTime": "Saved",
     "saveConflict": "External conflict",
     "saveDirty": "Unsaved changes",
     "saveDocumentAs": "Save document as…",
     "saveError": "Save failed",
-    "saveSaved": "Saved",
+    "saveLocal": "Saved on this computer",
+    "saveLocalAt": "Saved on this computer {{time}}",
+    "saveProjectPending": "Not saved to project",
+    "saveProjectSaved": "Saved to project",
     "saveSaving": "Saving…",
-    "saveStateTitle": "{{mod}}S saves this document; ⇧{{mod}}S saves a named canvas file",
+    "saveTitleLocal": "Saved on this computer (no project open). {{mod}}S saves; ⇧{{mod}}S saves as a new layout",
+    "saveTitleLocalInProject": "This layout is only on this computer, not in the project yet. {{mod}}S saves it to the project",
+    "saveTitleProject": "Saved to project: {{file}}. {{mod}}S saves to this file; ⇧{{mod}}S saves as a new layout",
+    "saveTitleProjectPending": "{{file}} in the project has unsaved changes (they’re kept on this computer). {{mod}}S saves to this file",
     "shortcutHelp": "Keyboard shortcuts",
     "subLabelsTip": "Add (a)(b)(c) labels in reading order",
     "tutorial": {

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { pushRecent } from '@/lib/commandRanking'
 import type { UiMessage } from '@/i18n'
+import type { DiskDocumentSummary } from '@/lib/api'
 import { emitActivity } from '@/lib/activity'
 import { createDismissTimer } from '@/lib/dismissTimer'
 import type { Severity } from '@/lib/profile'
@@ -12,6 +13,16 @@ export type RightTab = 'properties' | 'assistant' | 'canvas'
 export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'
 /** 工作区断点：≥1440 可双栏钉住 / 1024–1439 左右互斥 / <1024 覆盖式抽屉 */
 export type WorkspaceLayout = 'wide' | 'medium' | 'narrow'
+
+/** 「画布文件」弹窗的三种来路：另存为（⇧⌘S）/ 第一次 ⌘S 存进项目 / 打开 */
+export type LayoutIntent = 'save' | 'saveToProject' | 'load'
+
+/** 409 `external_change` 的那份裁决材料（后端 `_external_change` 的形状） */
+export interface LayoutConflict {
+  name: string
+  revision: string
+  summary: DiskDocumentSummary | null
+}
 
 /**
  * 参与「一次只显示一个主对话框」的三个主对话框（审计 T35）。
@@ -307,8 +318,17 @@ interface UiState extends Persisted {
   settingsOpen: boolean
   /** 打开设置时直接跳到哪一节（如顶栏「有新版本」→ 检查更新）；null = 沿用上次 */
   settingsSection: string | null
-  /** 打开「画布文件」弹窗时用户想做的是哪件事，决定焦点落在保存还是载入 */
-  layoutIntent: 'save' | 'load'
+  /**
+   * 打开「画布文件」弹窗时用户想做的是哪件事，决定焦点落在保存还是载入。
+   * `saveToProject` = ⌘S 时这份排版还没有项目文件（ADR 0096）：同一个命名表单，
+   * 存进项目之后绑定，之后的 ⌘S 直接写回。
+   */
+  layoutIntent: LayoutIntent
+  /**
+   * ⌘S 写回绑定的项目文件时撞上外部修改（409 `external_change`）：弹窗带着这个
+   * 岔口打开，出口与另存为那一屏同一个（「仍然覆盖」拿 409 里回的 hash 当基线）。
+   */
+  layoutConflict: LayoutConflict | null
   /** 全局确认框；由 askConfirm() 写入，ConfirmDialog 渲染 */
   confirm: ConfirmRequest | null
   /** 当前断点，由 useWorkspaceLayout 上报；侧栏互斥规则依赖它 */
@@ -350,7 +370,13 @@ interface UiState extends Persisted {
   toggleSelectedGid: (gid: string) => void
   setTool: (tool: Tool) => void
   setExportOpen: (v: boolean) => void
-  setLayoutOpen: (v: boolean, intent?: 'save' | 'load') => void
+  setLayoutOpen: (
+    v: boolean,
+    intent?: LayoutIntent,
+    opts?: { name?: string; conflict?: LayoutConflict | null },
+  ) => void
+  /** 弹窗预填的名字（⌘S 写回撞上冲突时是绑定的那个文件名）；null = 用排版名 */
+  layoutName: string | null
   setVersionsOpen: (v: boolean) => void
   /** `presetId`：打开时预选哪一条已存样式（设置页「应用到当前图」带过来的） */
   setStylesOpen: (v: boolean, opts?: { presetId?: string | null }) => void
@@ -441,6 +467,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   settingsOpen: false,
   settingsSection: null,
   layoutIntent: 'save',
+  layoutConflict: null,
+  layoutName: null,
   confirm: null,
   layout: typeof window === 'undefined' ? 'wide' : layoutFor(window.innerWidth),
 
@@ -625,8 +653,14 @@ export const useUiStore = create<UiState>((set, get) => ({
     }))
     if (exportOpen && !was) emitActivity({ kind: 'export.dialog_opened' })
   },
-  setLayoutOpen: (layoutOpen, intent) =>
-    set(intent ? { layoutOpen, layoutIntent: intent } : { layoutOpen }),
+  setLayoutOpen: (layoutOpen, intent, opts) =>
+    set({
+      layoutOpen,
+      ...(intent ? { layoutIntent: intent } : {}),
+      // 每次打开都重新给：上一次的冲突 / 预填名是上一次的事
+      layoutConflict: layoutOpen ? (opts?.conflict ?? null) : null,
+      layoutName: layoutOpen ? (opts?.name ?? null) : null,
+    }),
   setVersionsOpen: (versionsOpen) => set({ versionsOpen }),
   setStylesOpen: (stylesOpen, opts = undefined) =>
     set((s) => ({

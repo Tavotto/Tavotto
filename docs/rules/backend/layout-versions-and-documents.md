@@ -67,6 +67,16 @@
   `_document_lock(path)`（按落盘路径，自动保存 / 另存为 / 槽位清理共用，
   **不可重入**）。GET 交出 `X-Tavotto-Revision` 且不用 `send_file`
   （句柄会在 Windows 上挡住下一次 `os.replace`）。
+- **⌘S 写回项目里绑定的排版文件（ADR 0096，2026-09-26）**：同一个端点
+  `POST /api/layouts/<name>?target=project`，**不加端点**。这一档必须开着项目
+  （`current_ctx()`，否则 409 `no_project`——不许静默退回数据目录）；冲突判据、锁、
+  原子写与另存为一字不差（`_revision_conflict` / `_document_lock` / `atomicio`）。
+  开着项目时（含另存为）落点只能在当前项目的 `tavottofile/` 下：`_project_layout_target`
+  拒两种符号链接逃逸（`tavottofile/` 解析后不在项目根内、目标文件本身是链接）→
+  400 `layout_outside_project`；只读卷 / 无写权限（EROFS / EACCES / EPERM）→ 403
+  `layout_read_only`，磁盘满照旧 atomicio 的通用映射。响应带 `name` / `file`（相对项目根），
+  GET 开着项目时带 `X-Tavotto-Layout-File`（⌘S 会写到哪，百分号编码）——界面原样说，不自己拼。
+  **自动保存仍只写数据目录的槽位**，不写项目文件。
 - **自动保存槽位有磁盘兜底上限**（2026-09-03，issue #221）：
   `AUTOSAVE_KEEP_SLOTS=64` / `AUTOSAVE_KEEP_BYTES=64 MB`，写完之后在锁**外**
   跑 `_prune_autosave_slots()`，按 mtime 从旧到新删，永不动刚写的那一份，
@@ -91,3 +101,4 @@
 - `project_layout_dir()` 是收纳规则唯一出处
 - 另存为与自动保存共用 `_revision_conflict`、锁不可重入、GET 不用 `send_file`
 - 槽位清理顺带 `atomicio.reap_orphan_tmps`（只认 `_next_tmp` 的名字，年龄 + pid 已死，一天后只看年龄）
+- ⌘S 写回项目（ADR 0096）：`target=project` 必须开着项目、落点只在 `tavottofile/`（符号链接逃逸拒）、只读卷有自己的 code

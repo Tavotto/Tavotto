@@ -65,6 +65,8 @@
     "invalid_only": "要修复的问题清单格式不对。",
     "invalid_progress_id": "重建请求的编号不对，请重试",
     "invalid_width": "宽度应为整数：{{value}}",
+    "layout_outside_project": "排版文件只能保存在当前项目的 tavottofile/ 文件夹里；那里指向了项目外（符号链接），这次没有写入。",
+    "layout_read_only": "项目文件夹是只读的，排版没有存进项目。改动仍在本机，可以另存到别处或检查文件夹权限。",
     "missing_dependency": "缺少依赖包：{{module}}",
     "missing_figure": "按原图导出没有指定用哪张图。",
     "missing_original": "按原图导出缺少该图的信息。刷新页面后重试。",

@@ -612,6 +612,11 @@ export const fetchLayoutNames = () =>
 export interface FetchedLayout {
   doc: unknown
   revision: string | null
+  /**
+   * 开着项目时：⌘S 会把这份写回到哪（相对项目根，`tavottofile/<名>.json`，ADR 0096）。
+   * 后端按 `project_layout_dir()` 算好交过来，界面不自己拼。没开项目 = null。
+   */
+  file: string | null
 }
 
 export async function fetchLayout(name: string): Promise<FetchedLayout> {
@@ -626,7 +631,21 @@ export async function fetchLayout(name: string): Promise<FetchedLayout> {
     noteProjectGone(res.status, body)
     throw new ApiError(typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`, res.status, body)
   }
-  return { doc: await res.json(), revision: res.headers.get('X-Tavotto-Revision') }
+  const file = res.headers.get('X-Tavotto-Layout-File')
+  return {
+    doc: await res.json(),
+    revision: res.headers.get('X-Tavotto-Revision'),
+    file: file ? decodeURIComponent(file) : null,
+  }
+}
+
+export interface SavedLayout {
+  ok: boolean
+  revision: string | null
+  /** 落盘的文件名（去掉 `.json`，经后端净化）；旧后端不给 */
+  name?: string
+  /** 开着项目时：相对项目根的路径 `tavottofile/<名>.json` */
+  file?: string
 }
 
 /**
@@ -636,21 +655,29 @@ export async function fetchLayout(name: string): Promise<FetchedLayout> {
  * 与 `putAutosave` 是同一条判据的同一个哨兵（后端 `_revision_conflict` 只有
  * 一份）。少了它，两个窗口对同名画布各另存一次，后写的整份盖掉先写的，
  * **而两边都收到 200**。
+ *
+ * `target: 'project'` = ⌘S 写回项目里绑定的那份（ADR 0096）：后端要求此刻开着项目，
+ * 不退回数据目录（`no_project`）；另存为不带它，行为不变。
  */
 export const saveLayout = (
   name: string,
   doc: FigureDocument | ProjectDocument,
   baseRevision?: string,
-) =>
-  jsonFetch<{ ok: boolean; revision: string | null }>(
-    `/api/layouts/${encodeURIComponent(name)}` +
-      (baseRevision === undefined ? '' : `?base_revision=${encodeURIComponent(baseRevision)}`),
+  opts?: { target?: 'project' },
+) => {
+  const params = new URLSearchParams()
+  if (baseRevision !== undefined) params.set('base_revision', baseRevision)
+  if (opts?.target) params.set('target', opts.target)
+  const qs = params.toString()
+  return jsonFetch<SavedLayout>(
+    `/api/layouts/${encodeURIComponent(name)}` + (qs ? `?${qs}` : ''),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(doc),
     },
   )
+}
 
 /* --------------------------- 文档自动保存（磁盘） ---------------------------- */
 /** 文档主体的可靠落盘（后端原子写）；localStorage 只留索引与崩溃兜底副本 */
