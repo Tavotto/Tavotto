@@ -36,6 +36,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { findFigurePanel } from '@/store/workspace'
 import type { FilenameReason } from '@/lib/exportName'
 import { filenameProblem } from '@/lib/exportRequest'
+import { markMoment } from '@/lib/timelineCheckpoint'
 
 /** 轮询间隔。SSE 通的时候它几乎不出场；不通的时候它是唯一的通道 */
 const POLL_MS = 600
@@ -153,6 +154,9 @@ export function applyExportJob(job: ExportJob): void {
   if (s.job && s.job.job_id === job.job_id && TERMINAL.has(s.job.status)) return
   const terminal = TERMINAL.has(job.status)
   if (terminal) stopPolling()
+  // 排版时间线的关键时刻（ADR 0101）：导出**交付了文件**的那一刻打一个点。
+  // 上面那道闸保证同一个作业只会进一次终局，所以这里不会重复打
+  if (job.status === 'done' || job.status === 'partial') void markMoment('export')
   useExportStore.setState({
     job,
     running: !terminal,

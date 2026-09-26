@@ -23,6 +23,7 @@ import {
   openLayoutDocument,
   openRecentDocument,
   setDocumentName,
+  toggleTimeline,
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
@@ -46,7 +47,7 @@ import { useUpdateStore } from '@/store/updateStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { Numbers } from '@sfinterface/numbers'
 import { BrandMark } from './ui/BrandMark'
-import { Button } from './ui/Button'
+import { Button, IconButton } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 import { TextInput } from './ui/Input'
 import { Tip } from './ui/Tooltip'
@@ -101,6 +102,7 @@ export function TopBar() {
         </span>
         <DocumentMenu />
         <SaveStateLabel />
+        <TimelineButton />
         <RecoveryNotice />
       </div>
 
@@ -276,6 +278,30 @@ function SaveStateLabel() {
   )
 }
 
+/**
+ * 排版时间线的常驻入口（ADR 0101）：保存状态旁一颗时钟钮。
+ *
+ * 用户反馈「不知道有这个功能」——它此前只在排版菜单的第六项里。放在保存状态旁边，
+ * 是因为两者回答的是同一件事的两半：「存到哪一步了」与「能回到哪一步」。
+ * 抽屉开着时按下态（`aria-pressed`），再点一下收起。
+ */
+function TimelineButton() {
+  const { t } = useTranslation('workspace')
+  const open = useUiStore((s) => s.versionsOpen)
+  return (
+    <IconButton
+      label={t('topbar.timelineButton')}
+      shortcut={`⇧${MOD}H`}
+      aria-pressed={open}
+      data-timeline-button
+      className={cn('shrink-0', open && 'bg-selected')}
+      onClick={toggleTimeline}
+    >
+      <RotateCcwClock size={ICON_SIZE.md} className="text-ink-2" />
+    </IconButton>
+  )
+}
+
 function DocumentMenu() {
   const { t } = useTranslation('workspace')
   const name = useDocumentStore((s) => s.projectMeta.name)
@@ -340,7 +366,7 @@ function DocumentMenu() {
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
         {t('topbar.openDocument')}
       </MenuItem>
-      <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)}>
+      <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)} shortcut={`⇧${MOD}H`}>
         {t('topbar.versionTimeline')}
       </MenuItem>
       <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>

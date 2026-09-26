@@ -24,6 +24,7 @@ import { Dialog } from '../ui/Dialog'
 import { CopyButton } from '../settings/CopyButton'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
+import { markMoment } from '@/lib/timelineCheckpoint'
 
 const stemOf = (fileId: string) => fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? fileId
 
@@ -248,6 +249,8 @@ export function WriteBackDialog({
         useAnn ? annMap : undefined,
       )
       setResult(res)
+      // 排版时间线的关键时刻（ADR 0101）：写回成功，原图已经变了
+      void markMoment('writeback')
       if (useAnn) {
         // 标注已经烙进原图：画布上的原件移除（可撤销），否则成图里会出现两份
         const ids = [...annMap.values()].flatMap((a) => a.objectIds)

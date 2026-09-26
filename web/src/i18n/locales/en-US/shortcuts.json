@@ -34,6 +34,8 @@
     "pan": "Pan the canvas",
     "saveDocument": "Save this document",
     "saveLayout": "Save as canvas file",
+    "timeline": "Open / close the layout timeline",
+    "saveNamed": "Save now as a named point",
     "script": "Superscript / subscript (in the properties panel text box)",
     "selectAll": "Select all",
     "tools": "Select / text / arrow / rectangle / ellipse / line",

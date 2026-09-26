@@ -724,7 +724,8 @@
     "undo": "撤销",
     "undoWith": "撤销 {{label}}",
     "updateAvailable": "有新版本 {{version}}",
-    "versionTimeline": "文档版本…",
+    "versionTimeline": "排版时间线…",
+    "timelineButton": "排版时间线",
     "zoomIn": "放大",
     "zoomOut": "缩小",
     "zoomValue": "缩放 {{percent}}%"

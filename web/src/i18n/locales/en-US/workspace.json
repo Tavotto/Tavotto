@@ -771,7 +771,8 @@
     "undo": "Undo",
     "undoWith": "Undo {{label}}",
     "updateAvailable": "Update available: {{version}}",
-    "versionTimeline": "Document versions…",
+    "versionTimeline": "Layout timeline…",
+    "timelineButton": "Layout timeline",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "zoomValue": "Zoom {{percent}}%"

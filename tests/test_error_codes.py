@@ -305,6 +305,11 @@ USER_VISIBLE_CODES = {
     "tutorial_locked": {"reason"},
     # --- #264：版本时间线读不出来时拒绝整份写回（写入侧那道闸）---
     "versions_unreadable": set(),
+    # --- ADR 0101：排版时间线。命名节点超出字节上限时拒绝再命名（已有的一条不删）；
+    #     关键时刻是闭集；缩略图只收小的 webp / png ---
+    "named_budget_exceeded": {"used", "limit"},
+    "version_moment_invalid": {"moment"},
+    "version_thumb_invalid": set(),
     # --- issue #534：TIFF 素材。范围之外的 TIFF 在 `/api/panels` 的 `unsupported`、`safe_resolve`
     #     的 422 与导出作业里都报同一个 code，params 只有文件名 ---
     **{code: {"file"} for code in tiffprobe.ERROR_CODES},

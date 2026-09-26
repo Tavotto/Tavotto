@@ -59,6 +59,9 @@ export default defineConfig({
         // 性能探针（ADR 0075）量的就是用户那台 WKWebView：rAF / MessageChannel 的
         // 时序与合成 PointerEvent 在 WebKit 里成不成立，只有这一腿答得了
         'perf-probe.spec.ts',
+        // 排版时间线（ADR 0101）：节点缩略图在浏览器里用 canvas 合成——WKWebView 编不出
+        // webp（退回 png）、画 SVG 会不会 taint 画布，只有这个引擎答得了
+        'layout-timeline.spec.ts',
       ],
     },
     // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；
