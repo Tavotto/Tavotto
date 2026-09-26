@@ -7,7 +7,7 @@ import { useDecodedSvg } from '@/lib/useDecodedSvg'
 import { useHtmlMarkup } from '@/lib/useHtmlMarkup'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { engineTransport } from '@/lib/engineTransport'
-import { alignEntries, geomGid, geomTarget, segIntersectsRect } from '@/lib/elementGeom'
+import { alignEntries, geomGid, segIntersectsRect } from '@/lib/elementGeom'
 import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
 import { geomHitsRect } from '@/lib/pathGeom'
 import { pickBucket } from '@/lib/units'
@@ -57,10 +57,8 @@ import {
   cycleOverlapAt,
   isElementHidden,
   pickElement,
-  startArrowDrag,
-  startAxesDrag,
-  startElementDrag,
   startElementGroupMove,
+  startInFigureDrag,
   trackPointer,
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
@@ -769,11 +767,9 @@ function ElementHitLayer({
         // 收窄多选仍有退路——点图内空白命中 figure 即可。
         const keepSelection = !!hit && ui.selectedGids.length > 1 && ui.selectedGids.includes(hit.gid)
         if (!keepSelection) ui.setSelectedGid(hit?.gid ?? 'figure')
-        // 保持选区归保持选区，该拖的照样拖：位图没有自己的几何属性，
-        // 拖它等于拖宿主子图
-        if (hit?.resizable) startAxesDrag(e, obj, geomTarget(manifest, hit), layout, 'move')
-        else if (hit?.arrow_endpoints) startArrowDrag(e, obj, hit, layout, 'both')
-        else if (hit?.draggable && hit.anchor) startElementDrag(e, obj, hit, layout)
+        // 保持选区归保持选区，该拖的照样拖：位图没有自己的几何属性，拖它等于拖宿主
+        // 子图。按哪一种平移走只在 `inFigureMoveOf` 判（方向键微调认的是同一处）
+        if (hit) startInFigureDrag(e, obj, manifest, hit, layout)
       }}
       onContextMenu={(e) => {
         e.preventDefault()

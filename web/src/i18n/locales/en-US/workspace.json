@@ -333,6 +333,7 @@
   },
   "hud": {
     "cursor": "Cursor",
+    "offset": "Offset",
     "size": "Size"
   },
   "layerTree": {
@@ -657,6 +658,7 @@
     "notInAnyGroup": "The selected objects aren’t in a group.",
     "nothingToRedo": "Nothing to redo",
     "nothingToUndo": "Nothing to undo",
+    "nudgeNotMovable": "The selected element can't be moved",
     "objectCopied": "Copied {{name}}",
     "objectsCopied": "Copied {{count}} objects — you can paste them into another document",
     "overridesCleared": "Cleared this figure’s edits",

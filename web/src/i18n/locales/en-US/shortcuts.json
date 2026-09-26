@@ -1,7 +1,7 @@
 {
   "combo": {
     "altDrag": "{{alt}}+drag a corner",
-    "arrowKeys": "Arrow keys / ⇧+arrow keys",
+    "arrowKeys": "Arrow keys / ⇧+arrow keys / {{alt}}+arrow keys",
     "newline": "{{alt}}⏎ or {{mod}}⏎ (while editing text)",
     "spaceDrag": "Space+drag",
     "tools": "V / T / A / R / O / L",
@@ -29,7 +29,7 @@
     "freeResize": "Free resize (aspect ratio unlocked)",
     "help": "This help",
     "newline": "Insert a line break; plain ⏎ commits",
-    "nudge": "Nudge 0.5 mm / 5 mm",
+    "nudge": "Nudge the selection or in-figure elements by 0.5 mm / 5 mm / 0.1 mm on the page; a run of presses undoes as one step",
     "palette": "Command palette",
     "pan": "Pan the canvas",
     "saveDocument": "Save this document",

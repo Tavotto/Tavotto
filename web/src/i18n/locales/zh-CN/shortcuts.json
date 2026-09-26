@@ -1,7 +1,7 @@
 {
   "combo": {
     "altDrag": "{{alt}}+拖角点",
-    "arrowKeys": "方向键 / ⇧+方向键",
+    "arrowKeys": "方向键 / ⇧+方向键 / {{alt}}+方向键",
     "newline": "{{alt}}⏎ 或 {{mod}}⏎（文字编辑中）",
     "spaceDrag": "Space+拖动",
     "tools": "V / T / A / R / O / L",
@@ -29,7 +29,7 @@
     "freeResize": "自由缩放（不锁定宽高比）",
     "help": "本帮助",
     "newline": "插入换行；单按 ⏎ 提交",
-    "nudge": "微移 0.5 mm / 5 mm",
+    "nudge": "微移选中对象或图内元素：0.5 mm / 5 mm / 0.1 mm（页面上的距离）；连按算一步撤销",
     "palette": "命令面板",
     "pan": "平移画布",
     "saveDocument": "保存当前文档",

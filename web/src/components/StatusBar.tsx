@@ -51,17 +51,19 @@ export function CanvasHud() {
   const { t } = useTranslation('workspace')
   const kind = useInteractionStore((s) => s.kind)
   const cursor = useInteractionStore((s) => s.cursor)
+  const nudge = useInteractionStore((s) => s.nudge)
   const tool = useUiStore((s) => s.tool)
   const objects = useDocumentStore((s) => s.doc.objects)
   const ids = useSelectionStore((s) => s.ids)
 
-  const interacting = GEOMETRY_KINDS.has(kind)
+  // 方向键微调这一段也算交互中：读数盒先报这一段挪了多少（ADR 0093）
+  const interacting = GEOMETRY_KINDS.has(kind) || !!nudge
   const hint = !interacting && tool !== 'select' ? t(`toolHint.${tool}`) : null
 
   const selected = objects.filter((o) => ids.includes(o.id))
   const bounds = selected.length > 0 ? boundsOf(selected) : null
   // 交互中但既没有光标也没有选区时什么都不画——不留一只空边框盒子
-  const showReadings = interacting && (!!cursor || !!bounds)
+  const showReadings = interacting && (!!nudge || !!cursor || !!bounds)
   if (!showReadings && !hint) return null
 
   const sizeFirst = SIZE_FIRST_KINDS.has(kind)
@@ -72,8 +74,19 @@ export function CanvasHud() {
       aria-hidden={interacting ? undefined : true}
     >
       {showReadings && (
-        <div className={cn(HUD_BOX, 'tabular-nums')} data-hud-mode={sizeFirst ? 'size' : 'cursor'}>
-          {cursor && (
+        <div
+          className={cn(HUD_BOX, 'tabular-nums')}
+          data-hud-mode={nudge ? 'offset' : sizeFirst ? 'size' : 'cursor'}
+        >
+          {nudge && (
+            <span className="inline-flex items-baseline gap-1.75 whitespace-nowrap" data-hud-offset>
+              <span className="text-xs text-ink-3">{t('hud.offset')}</span>
+              <span className="inline-block min-w-[13ch] font-medium text-ink">
+                {translate('measure.mmPair', { a: signedMm(nudge.dx), b: signedMm(nudge.dy) })}
+              </span>
+            </span>
+          )}
+          {!nudge && cursor && (
             <span className="inline-flex items-baseline gap-1.75 whitespace-nowrap">
               <span className="text-xs text-ink-3">{t('hud.cursor')}</span>
               {/* 固定最小宽度 + 等宽数字：拖动时数字变长变短，盒子不跟着跳 */}
@@ -91,7 +104,7 @@ export function CanvasHud() {
             <span
               className={cn(
                 'inline-flex items-baseline gap-1.75 whitespace-nowrap',
-                cursor && 'border-l border-border pl-2.5',
+                (nudge || cursor) && 'border-l border-border pl-2.5',
               )}
             >
               <span className="text-xs text-ink-3">{t('hud.size')}</span>
@@ -110,6 +123,13 @@ export function CanvasHud() {
       {hint && <p className={cn(HUD_BOX, 'text-ink-2')}>{hint}</p>}
     </div>
   )
+}
+
+/** 位移读数带正负号：「+1.5」「−0.5」「0.0」 */
+function signedMm(v: number): string {
+  const s = formatMm(Math.abs(v))
+  if (s === formatMm(0)) return s
+  return v > 0 ? `+${s}` : `−${s}`
 }
 
 /**

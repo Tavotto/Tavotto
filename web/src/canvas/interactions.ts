@@ -27,6 +27,7 @@ import {
   elementBoxOf,
   elementSnapCandidates,
   fracBoxToMm,
+  geomTarget,
   groupBoxes,
   inFigureSnapCandidates,
   groupPatches,
@@ -272,7 +273,7 @@ function contentAxisLock(
  * 拖动时排除锁定对象；成组对象整组跟着走，**组内有锁定成员则整组都不动**
  * （规则唯一出处是 actions 的 movableTargets，方向键微调走的是同一个）。
  */
-function draggableSelection(): { targets: CanvasObject[]; blockedGroups: number } {
+export function draggableSelection(): { targets: CanvasObject[]; blockedGroups: number } {
   const { objects, blockedGroups } = movableTargets(useSelectionStore.getState().ids)
   return { targets: objects.filter((o) => !o.hidden), blockedGroups }
 }
@@ -1307,43 +1308,83 @@ function previewCarried(items: CarriedItem[], dfx: number, dfy: number, on: bool
   }
 }
 
-export function startElementDrag(
+/* -------------------------------------------------------------------------- */
+/*  图内平移：拖动与方向键微调共用的一份移动规则（ADR 0093）                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 图内一次**平移**：起手时量好基准（锚点 / position / 端点 / 组框）、随行元素与形状
+ * 装着的内容，之后只接「累计的内容分数位移」（y 向下）。
+ *
+ * 指针拖动（`trackInFigureMove`）与方向键微调（`canvas/nudge.ts`）是它仅有的两个输入端：
+ * 谁能动、带谁走、贴边怎么钳、拖回原处不写（GEO-07）、一次提交写哪几条 override，
+ * 只在这里算一遍——两边各写一份的话，迟早一边带着随行元素走、另一边不带。
+ *
+ * 构造时就开预览会话（`beginElementPreview`），之后必须以 `commit` 或 `cancel` 收尾。
+ */
+export interface InFigureMove {
+  /** 吸附用：被移动的框（内容分数、top-origin）；null = 这类移动不吸附 */
+  snapBox: Rect4 | null
+  /** 吸附候选里要排除的：被移动的元素、它们的后代、随行元素与被带着走的内容 */
+  moving: (gid: string) => boolean
+  /** 按住 / 松开 ⌘ / Ctrl 时要切换预览的那些被带着走的内容（`watchCarryKeys`） */
+  carryPreview: CarriedItem[]
+  /** 预览到累计位移：只改 SVG DOM 与覆盖层，不写文档、不进历史、不发后端 */
+  preview: (dfx: number, dfy: number, carry: boolean) => void
+  /** 以累计位移提交：一条撤销、一次权威渲染。净位移为零时与取消同样处理，回 false */
+  commit: (dfx: number, dfy: number, carry: boolean) => boolean
+  /** 还原预览、不写文档；`cancelled` = 被系统 / Esc 作废（诊断用） */
+  cancel: (cancelled: boolean) => void
+}
+
+/**
+ * 单个图内元素按哪一种平移走。PanelView 按下时的分派与方向键微调都认这一处：
+ * 能缩放的（子图、位图经 geom 代理到宿主子图）挪 position，独立箭头整体平移端点，
+ * 其余可拖的挪锚点；都不是 = 这个元素不能移动。
+ */
+export function inFigureMoveOf(
+  panel: PanelObject,
+  manifest: Manifest | null | undefined,
+  el: ManifestElement,
+): InFigureMove | null {
+  if (el.resizable) return axesMove(panel, geomTarget(manifest, el))
+  if (el.arrow_endpoints) return arrowMove(panel, el)
+  if (el.draggable && el.anchor) return elementMove(panel, el)
+  return null
+}
+
+/** 按下图内元素开始拖动（PanelView 的单选分派）。回 false = 这个元素不能移动 */
+export function startInFigureDrag(
   e: ReactPointerEvent,
   panel: PanelObject,
-  element: ManifestElement,
+  manifest: Manifest | null | undefined,
+  el: ManifestElement,
   layout: { width: number; height: number },
-) {
-  if (!element.anchor || !element.drag_prop) return
-  e.stopPropagation()
-  const dragProp = element.drag_prop
-  // 基准走 anchorOf：它优先取文档里已写下的 override（见那边的说明）
-  const anchor = anchorOf(panel, element) ?? element.anchor
-  // 形状带着装在里面的字 / 形状 / 箭头端点一起走（`patchContents`）——读的是几何，
-  // 只认权威那一份 manifest
-  const manifest =
-    element.role === 'patch' ? exactPanelManifest(useRenderStore.getState(), panel) : null
-  const carried = manifest ? patchContents(panel, manifest, [element.gid]) : []
+): boolean {
+  const mv = inFigureMoveOf(panel, manifest, el)
+  if (!mv) return false
+  trackInFigureMove(e, panel, layout, mv)
+  return true
+}
 
+/**
+ * 指针这一端：屏幕位移 → 内容分数（旋转、倍率变化见 `contentDelta`）→ shift 锁向 →
+ * 吸附 → 交给 move。松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove，
+ * 重读松手坐标的话 shift 先于抬指松开时落点会与预览差一口气。
+ */
+function trackInFigureMove(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  layout: { width: number; height: number },
+  mv: InFigureMove,
+) {
+  e.stopPropagation()
   interaction().begin('element')
-  beginElementPreview(panel)
-  noteDragBegin(
-    'element.drag.begin',
-    panel,
-    element.gid,
-    dragProp,
-    hasOverride(panel, element.gid, dragProp),
-  )
-  // 面板可能被旋转过：屏幕位移要先转回内容坐标系，图内的分数坐标才对得上
   const toContent = contentDelta(panel, layout)
-  // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove，若重读松手坐标，
-  // shift 先于抬指松开时落点会与预览差一口气
   let last: [number, number] = [0, 0]
-  const unwatchKeys = watchCarryKeys(carried, () => last)
-  // 吸附：被拖的框 = 起手时的墨迹框；图例的条目是它的后代、形状装着的内容跟着它走，都不出线
-  const box0 = elementBoxOf(panel, element)
-  const snapper = box0
-    ? inFigureSnapper(panel, underAny([element.gid, ...carried.map((c) => c.gid)]))
-    : null
+  const unwatchKeys = watchCarryKeys(mv.carryPreview, () => last)
+  const box0 = mv.snapBox
+  const snapper = box0 ? inFigureSnapper(panel, mv.moving) : null
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
@@ -1359,53 +1400,130 @@ export function startElementDrag(
         dfy += sy
       }
       last = [dfx, dfy]
-      previewTransform(element.gid, dfx, dfy)
-      if (carried.length) previewCarried(carried, dfx, dfy, carriesContents(ev))
-      interaction().setGidDrag({ gid: element.gid, dfx, dfy })
+      mv.preview(dfx, dfy, carriesContents(ev))
     },
     onEnd: (moved, ev, end) => {
       unwatchKeys()
       interaction().end()
-      if (!moved || end.cancelled) {
-        cancelElementPreview()
-        recordDiagnosticEvent({
-          type: 'element.drag.cancel',
-          panel: panelHash(panel.id),
-          gid: element.gid,
-          cancelled: end.cancelled,
-        })
-        return
-      }
-      const [dfx, dfy] = last
+      if (!moved || end.cancelled) mv.cancel(end.cancelled)
+      // 跟随集合按松手那一下的修饰键定（见 carriesContents）
+      else mv.commit(last[0], last[1], carriesContents(ev))
+    },
+  })
+}
+
+/** 可拖的图内文字 / 图例 / 形状：挪锚点（`drag_prop`，pos_frac / loc_frac …） */
+export function elementMove(panel: PanelObject, element: ManifestElement): InFigureMove | null {
+  if (!element.anchor || !element.drag_prop) return null
+  const dragProp = element.drag_prop
+  // 基准走 anchorOf：它优先取文档里已写下的 override（见那边的说明）
+  const anchor = anchorOf(panel, element) ?? element.anchor
+  // 形状带着装在里面的字 / 形状 / 箭头端点一起走（`patchContents`）——读的是几何，
+  // 只认权威那一份 manifest
+  const manifest =
+    element.role === 'patch' ? exactPanelManifest(useRenderStore.getState(), panel) : null
+  const carried = manifest ? patchContents(panel, manifest, [element.gid]) : []
+
+  beginElementPreview(panel)
+  noteDragBegin(
+    'element.drag.begin',
+    panel,
+    element.gid,
+    dragProp,
+    hasOverride(panel, element.gid, dragProp),
+  )
+  const noteCancel = (cancelled: boolean) =>
+    recordDiagnosticEvent({
+      type: 'element.drag.cancel',
+      panel: panelHash(panel.id),
+      gid: element.gid,
+      cancelled,
+    })
+
+  return {
+    // 吸附：被拖的框 = 起手时的墨迹框；图例的条目是它的后代、形状装着的内容跟着它走，都不出线
+    snapBox: elementBoxOf(panel, element),
+    moving: underAny([element.gid, ...carried.map((c) => c.gid)]),
+    carryPreview: carried,
+    preview: (dfx, dfy, carry) => {
+      previewTransform(element.gid, dfx, dfy)
+      if (carried.length) previewCarried(carried, dfx, dfy, carry)
+      interaction().setGidDrag({ gid: element.gid, dfx, dfy })
+    },
+    commit: (dfx, dfy, carry) => {
       const own = { gid: element.gid, prop: dragProp, value: [anchor[0] + dfx, anchor[1] + dfy] }
       // 拖出去又拖回原处：终点没有可表示的位移 = 与点一下同样处理（GEO-07）。写一条
       // 等于原锚点的 pos_frac 会把标题 / 轴标签钉出 matplotlib 的自动布局
       if (sameAfterRound4(own.value, anchor)) {
         cancelElementPreview()
-        recordDiagnosticEvent({
-          type: 'element.drag.cancel',
-          panel: panelHash(panel.id),
-          gid: element.gid,
-          cancelled: false,
-        })
-        return
+        noteCancel(false)
+        return false
       }
-      // 跟随集合按松手那一下的修饰键定（见 carriesContents）
-      const followers = carriesContents(ev) ? carried.map((c) => c.shift(dfx, dfy)) : []
+      const followers = carry ? carried.map((c) => c.shift(dfx, dfy)) : []
       // 带着内容走时一次 setOverrides = 一条撤销 = 一次权威渲染
       if (followers.length)
         setOverrides(panel.id, hist('moveElement', { label: element.label }), [own, ...followers], true)
       else setOverride(panel.id, element.gid, dragProp, own.value, true)
       commitElementPreview(panel.id)
       noteDragCommit('element.drag.commit', panel.id, element.gid, dragProp, 1 + followers.length)
+      return true
     },
-  })
+    cancel: (cancelled) => {
+      cancelElementPreview()
+      noteCancel(cancelled)
+    },
+  }
+}
+
+export function startElementDrag(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  element: ManifestElement,
+  layout: { width: number; height: number },
+) {
+  const mv = elementMove(panel, element)
+  if (mv) trackInFigureMove(e, panel, layout, mv)
+}
+
+/** 图内独立箭头（FancyArrowPatch）的整体平移：两个端点同走一个位移，写 endpoints_frac */
+export function arrowMove(panel: PanelObject, element: ManifestElement): InFigureMove | null {
+  const pts = arrowEndpointsOf(panel, element)
+  if (!pts) return null
+  beginElementPreview(panel)
+  const at = (dfx: number, dfy: number) => [
+    pts[0][0] + dfx,
+    pts[0][1] + dfy,
+    pts[1][0] + dfx,
+    pts[1][1] + dfy,
+  ]
+  return {
+    // 箭头是线不是块，不参与吸附（与拖端点同一取舍）
+    snapBox: null,
+    moving: underAny([element.gid]),
+    carryPreview: [],
+    preview: (dfx, dfy) => {
+      previewTransform(element.gid, dfx, dfy)
+      interaction().setGidDrag({ gid: element.gid, dfx, dfy })
+    },
+    commit: (dfx, dfy) => {
+      const v = at(dfx, dfy)
+      // 终点净位移为零（拖回原处）同样不写（GEO-07）
+      if (sameAfterRound4(v, [...pts[0], ...pts[1]])) {
+        cancelElementPreview()
+        return false
+      }
+      setOverride(panel.id, element.gid, 'endpoints_frac', v.map(round4), true)
+      commitElementPreview(panel.id)
+      return true
+    },
+    cancel: () => cancelElementPreview(),
+  }
 }
 
 /**
  * 拖动图内独立箭头（FancyArrowPatch）：整体平移或拖单个端点。
- * 整体平移时顺带平移 SVG <g> 做乐观预览；单端拖动改变形状，SVG 预览会骗人，
- * 改在覆盖层画一条虚线（OverlaySvg 读 arrowPreview），松手写 endpoints_frac。
+ * 整体平移走 `arrowMove`（顺带平移 SVG <g> 做乐观预览）；单端拖动改变形状，SVG 预览
+ * 会骗人，改在覆盖层画一条虚线（OverlaySvg 读 arrowPreview），松手写 endpoints_frac。
  *
  * shift（Illustrator 语义，与画布箭头同一套档位）：整体拖动锁水平 / 垂直 / 45°，
  * 拖单端点相对固定端锁 15° 角。端点是 figure 分数坐标（x/y 分别除以图宽图高），
@@ -1418,6 +1536,11 @@ export function startArrowDrag(
   layout: { width: number; height: number },
   which: 'both' | 'start' | 'end',
 ) {
+  if (which === 'both') {
+    const mv = arrowMove(panel, element)
+    if (mv) trackInFigureMove(e, panel, layout, mv)
+    return
+  }
   const pts = arrowEndpointsOf(panel, element)
   if (!pts) return
   e.stopPropagation()
@@ -1429,15 +1552,6 @@ export function startArrowDrag(
   const H = layout.height
 
   const compute = (dfx: number, dfy: number, shift: boolean) => {
-    if (which === 'both') {
-      if (shift) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
-      return {
-        dfx,
-        dfy,
-        a: [pts[0][0] + dfx, pts[0][1] + dfy] as [number, number],
-        b: [pts[1][0] + dfx, pts[1][1] + dfy] as [number, number],
-      }
-    }
     const fixed = pts[which === 'start' ? 1 : 0] as [number, number]
     const moving = pts[which === 'start' ? 0 : 1]
     let mx = moving[0] + dfx
@@ -1452,9 +1566,7 @@ export function startArrowDrag(
       my = fixed[1] + (Math.sin(ang) * len) / H
     }
     const moved: [number, number] = [mx, my]
-    return which === 'start'
-      ? { dfx, dfy, a: moved, b: fixed }
-      : { dfx, dfy, a: fixed, b: moved }
+    return which === 'start' ? { a: moved, b: fixed } : { a: fixed, b: moved }
   }
 
   // 松手写 onMove 最后一次的结果：shift 锁角只作用于 onMove，重读松手坐标会
@@ -1466,13 +1578,8 @@ export function startArrowDrag(
       const [dfx, dfy] = toContent(dxPx, dyPx)
       const r = compute(dfx, dfy, ev.shiftKey)
       last = r
-      if (which === 'both') {
-        previewTransform(element.gid, r.dfx, r.dfy)
-        interaction().setGidDrag({ gid: element.gid, dfx: r.dfx, dfy: r.dfy })
-      } else {
-        // 单端拖动改的是形状，平移 SVG 会骗人：预览交给覆盖层的虚线
-        interaction().setArrowPreview({ gid: element.gid, a: r.a, b: r.b })
-      }
+      // 单端拖动改的是形状，平移 SVG 会骗人：预览交给覆盖层的虚线
+      interaction().setArrowPreview({ gid: element.gid, a: r.a, b: r.b })
     },
     onEnd: (moved, _ev, end) => {
       interaction().end()
@@ -1597,13 +1704,89 @@ const underAny = (roots: readonly string[]) => (gid: string) =>
 /* -------------------------------------------------------------------------- */
 
 /**
- * 拖动整个子图或它的八个手柄，改的是 matplotlib 的 axes position（figure 占比）。
- * 移动时顺带平移 SVG 里的 <g> 做预览；缩放不做 SVG 预览——matplotlib 重排后
- * 刻度和字号并不会跟着线性缩放，假预览会骗人，只给一个覆盖层线框。
+ * 整个子图的平移，改的是 matplotlib 的 axes position（figure 占比）。顺带平移 SVG 里的
+ * <g> 做预览，并带上随行元素（被手动摆过的标签、色条轴、孪生轴，见 `axesCompanions`）
+ * ——设置里可关。贴到画布边上钳住；随行元素照着钳位后的净位移走，不照原始位移。
  *
- * 整体平移会带上随行元素（被手动摆过的标签、色条轴、孪生轴，见
- * `axesCompanions`）——设置里可关。缩放不带：随行元素该缩到哪里没有可信答案，
- * matplotlib 自己重排出来的才算数。
+ * element 必须已经过 geomTarget 解析：点位图时传进来的是它的宿主子图。
+ */
+export function axesMove(panel: PanelObject, element: ManifestElement): InFigureMove | null {
+  const start = positionOf(panel, element)
+  if (!start) return null
+  // 随行元素的落点由 manifest 的 follow_gids 与 override 共同决定 —— 几何写操作，
+  // 只认权威那一份
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  const companions =
+    manifest && useUiStore.getState().dragAxesWithCompanions
+      ? axesCompanions(panel, manifest, element.gid)
+      : []
+  beginElementPreview(panel)
+  // 基准是 positionOf(panel, element)——它优先取文档里已写下的 position override
+  noteDragBegin(
+    'axes.drag.begin',
+    panel,
+    element.gid,
+    'position',
+    hasOverride(panel, element.gid, 'position'),
+  )
+  const [x0, y0, w, h] = start
+  // 屏幕向下 = bottom-origin 的 y 变小
+  const rectAt = (dfx: number, dfy: number): Rect4 => [
+    clamp(x0 + dfx, 0, 1 - w),
+    clamp(y0 - dfy, 0, 1 - h),
+    w,
+    h,
+  ]
+  /**
+   * 落在子图上的**净位移**（内容分数、y 向下）。
+   * 取钳位后的结果反推，而不是用光标的原始位移：贴到画布边上时子图停了，
+   * 随行元素要是照着原始位移继续走，一组东西就被拆散了。
+   */
+  const netDelta = (rect: Rect4): [number, number] => [rect[0] - x0, y0 - rect[1]]
+
+  return {
+    snapBox: flipY(start),
+    // 随行元素一起动，不出线
+    moving: underAny([element.gid, ...(element.follow_gids ?? []), ...companions.map((c) => c.gid)]),
+    carryPreview: [],
+    preview: (dfx, dfy) => {
+      const rect = rectAt(dfx, dfy)
+      interaction().setElementPreview({ boxes: { [element.gid]: flipY(rect) } })
+      const [ndx, ndy] = netDelta(rect)
+      previewTransform(element.gid, ndx, ndy)
+      // 后代不单独平移：它们嵌在宿主的 <g> 里，已经跟着动了
+      for (const c of companions) {
+        if (c.previewsSeparately) previewTransform(c.gid, ndx, ndy)
+      }
+    },
+    commit: (dfx, dfy) => {
+      const rect = rectAt(dfx, dfy)
+      // 终点净位移为零（拖回原处 / 贴边钳回原位）同样不写（GEO-07）
+      if (sameAfterRound4(rect, start)) {
+        cancelElementPreview()
+        return false
+      }
+      const patches = [
+        { gid: element.gid, prop: 'position', value: rect.map(round4) },
+        ...companions.map((c) => c.shift(...netDelta(rect))),
+      ]
+      // 一次 setOverrides = 一条撤销 = 一次权威渲染
+      if (patches.length > 1)
+        setOverrides(panel.id, hist('moveElement', { label: element.label }), patches, true)
+      else setOverride(panel.id, element.gid, 'position', rect.map(round4), true)
+      commitElementPreview(panel.id)
+      noteDragCommit('axes.drag.commit', panel.id, element.gid, 'position', patches.length)
+      return true
+    },
+    cancel: () => cancelElementPreview(),
+  }
+}
+
+/**
+ * 拖动整个子图（`axesMove`）或它的八个手柄（缩放子图占比）。
+ * 缩放不做 SVG 预览——matplotlib 重排后刻度和字号并不会跟着线性缩放，假预览会骗人，
+ * 只给一个覆盖层线框；也不带随行元素：它们该缩到哪里没有可信答案，matplotlib
+ * 自己重排出来的才算数。
  *
  * element 必须已经过 geomTarget 解析：点位图时传进来的是它的宿主子图。
  */
@@ -1614,59 +1797,30 @@ export function startAxesDrag(
   layout: { width: number; height: number },
   mode: 'move' | ResizeDir,
 ) {
+  if (mode === 'move') {
+    const mv = axesMove(panel, element)
+    if (mv) trackInFigureMove(e, panel, layout, mv)
+    return
+  }
   const start = positionOf(panel, element)
   if (!start) return
   e.stopPropagation()
 
   const MIN = 0.05
-  // 随行元素的落点由 manifest 的 follow_gids 与 override 共同决定 —— 几何写操作，
-  // 只认权威那一份
-  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
-  const companions =
-    mode === 'move' && manifest && useUiStore.getState().dragAxesWithCompanions
-      ? axesCompanions(panel, manifest, element.gid)
-      : []
   interaction().begin('element')
   beginElementPreview(panel)
-  // 基准是 positionOf(panel, element)——它优先取文档里已写下的 position override
   noteDragBegin(
-    mode === 'move' ? 'axes.drag.begin' : 'resize.begin',
+    'resize.begin',
     panel,
     element.gid,
     'position',
     hasOverride(panel, element.gid, 'position'),
   )
   const toContent = contentDelta(panel, layout)
-  // 整体拖动才吸附（缩放没有 SVG 预览、线框本来就是示意）；随行元素一起动，不出线
-  const snapper =
-    mode === 'move'
-      ? inFigureSnapper(
-          panel,
-          underAny([element.gid, ...(element.follow_gids ?? []), ...companions.map((c) => c.gid)]),
-        )
-      : null
 
-  const compute = (
-    dxPx: number,
-    dyPx: number,
-    ev: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean } | null = null,
-  ) => {
-    let [dfx, dfy] = toContent(dxPx, dyPx)
+  const compute = (dxPx: number, dyPx: number): Rect4 => {
+    const [dfx, dfy] = toContent(dxPx, dyPx)
     let [x, y, w, h] = start
-
-    if (mode === 'move') {
-      // 整体拖动支持 shift 锁向（与画布对象移动一致）；缩放手柄不参与
-      if (ev?.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
-      if (snapper && ev) {
-        const b = flipY(start)
-        const [sx, sy] = snapper([b[0] + dfx, b[1] + dfy, b[2], b[3]], ev, [dfx, dfy])
-        dfx += sx
-        dfy += sy
-      }
-      x = clamp(x + dfx, 0, 1 - w)
-      y = clamp(y - dfy, 0, 1 - h) // 屏幕向下 = bottom-origin 的 y 变小
-      return { rect: [x, y, w, h] as Rect4, dfx, dfy }
-    }
     if (mode.includes('e')) w = clamp(w + dfx, MIN, 1 - x)
     else if (mode.includes('w')) {
       const nx = clamp(x + dfx, 0, x + w - MIN)
@@ -1680,35 +1834,20 @@ export function startAxesDrag(
     } else if (mode.includes('n')) {
       h = clamp(h - dfy, MIN, 1 - y)
     }
-    return { rect: [x, y, w, h] as Rect4, dfx, dfy }
+    return [x, y, w, h]
   }
 
-  /**
-   * 落在子图上的**净位移**（内容分数、y 向下）。
-   * 取钳位后的结果反推，而不是用光标的原始位移：贴到画布边上时子图停了，
-   * 随行元素要是照着原始位移继续走，一组东西就被拆散了。
-   */
-  const netDelta = (rect: Rect4): [number, number] => [rect[0] - start[0], start[1] - rect[1]]
-
-  // 松手写 onMove 最后一次的结果：shift 锁向只作用于 onMove（见 startArrowDrag）
+  // 松手写 onMove 最后一次的结果（与 trackInFigureMove 同一取舍）
   let last: Rect4 | null = null
 
   trackPointer(e, {
-    onMove: (ev, dxPx, dyPx) => {
-      const { rect } = compute(dxPx, dyPx, ev)
+    onMove: (_ev, dxPx, dyPx) => {
+      const rect = compute(dxPx, dyPx)
       last = rect
+      // 只给覆盖层线框：缩放要 matplotlib 重排（刻度、字号、图例都不会跟着线性缩放），
+      // 假装缩放只会画出一张必然被纠正的图——线框如实表达「框会变成这么大」，
+      // 成图由权威渲染说了算
       interaction().setElementPreview({ boxes: { [element.gid]: flipY(rect) } })
-      // 只有纯平移的 SVG 预览是准的。缩放要 matplotlib 重排（刻度、字号、
-      // 图例都不会跟着线性缩放），假装缩放只会画出一张必然被纠正的图——
-      // 覆盖层线框如实表达「框会变成这么大」，成图由权威渲染说了算
-      if (mode === 'move') {
-        const [ndx, ndy] = netDelta(rect)
-        previewTransform(element.gid, ndx, ndy)
-        // 后代不单独平移：它们嵌在宿主的 <g> 里，已经跟着动了
-        for (const c of companions) {
-          if (c.previewsSeparately) previewTransform(c.gid, ndx, ndy)
-        }
-      }
     },
     onEnd: (moved, _ev, end) => {
       interaction().end()
@@ -1717,23 +1856,9 @@ export function startAxesDrag(
         cancelElementPreview()
         return
       }
-      const rect = last
-      const patches = [
-        { gid: element.gid, prop: 'position', value: rect.map(round4) },
-        ...companions.map((c) => c.shift(...netDelta(rect))),
-      ]
-      // 一次 setOverrides = 一条撤销 = 一次权威渲染
-      if (patches.length > 1)
-        setOverrides(panel.id, hist('moveElement', { label: element.label }), patches, true)
-      else setOverride(panel.id, element.gid, 'position', rect.map(round4), true)
+      setOverride(panel.id, element.gid, 'position', last.map(round4), true)
       commitElementPreview(panel.id)
-      noteDragCommit(
-        mode === 'move' ? 'axes.drag.commit' : 'resize.commit',
-        panel.id,
-        element.gid,
-        'position',
-        patches.length,
-      )
+      noteDragCommit('resize.commit', panel.id, element.gid, 'position', 1)
     },
   })
 }
@@ -1815,11 +1940,11 @@ export function startLegendScale(
 }
 
 /**
- * 图内多选整组平移：拖动多选里的任一成员，全体按同一位移走。
+ * 图内多选整组平移：全体按同一位移走。
  *
  * 每个成员写自己的那条 override —— 子图与位图（经 geom 代理）写 position、
  * 文字写 pos_frac、图例写 loc_frac —— 具体写法由 alignEntries 的 write 决定，
- * 这里只负责把「同一个分数位移」发给每个成员。松手一次 setOverrides =
+ * 这里只负责把「同一个分数位移」发给每个成员。提交一次 setOverrides =
  * 一条撤销 = 一次渲染。
  *
  * 不把成员钳进画布：一旦有成员贴边，钳位会让整组卡住、相对布局也被拆散，
@@ -1828,17 +1953,9 @@ export function startLegendScale(
  * 选区里的形状照样带着装在里面的内容走（`patchContents`，与单拖一个形状同一判据、
  * 同一个 ⌘ / Ctrl 出口），全部进这同一次 setOverrides。
  */
-export function startElementGroupMove(
-  e: ReactPointerEvent,
-  panel: PanelObject,
-  entries: AlignEntry[],
-  layout: { width: number; height: number },
-) {
-  e.stopPropagation()
-  interaction().begin('element')
+export function groupMove(panel: PanelObject, entries: AlignEntry[]): InFigureMove {
   // 纯平移的乐观预览是准的（不像缩放会触发 matplotlib 重排），SVG 一起跟手
   beginElementPreview(panel)
-  const toContent = contentDelta(panel, layout)
   // 选区里的形状照样带着各自的内容走（与单拖一个形状同一判据）；已经在选区里的
   // 不重复算——它们按选区的位移走
   const manifest = exactPanelManifest(useRenderStore.getState(), panel)
@@ -1870,7 +1987,7 @@ export function startElementGroupMove(
     entries.map((en) => [en.box[0] + dfx, en.box[1] + dfy, en.box[2], en.box[3]])
 
   // 祖先也在选区里的成员不单独平移 SVG（GEO-03）：它的 <g> 嵌在祖先的 <g> 里，祖先一平移
-  // 它已经跟着动了，再来一次就是 2Δ、权威图一到又跳回 Δ。与 startAxesDrag 的
+  // 它已经跟着动了，再来一次就是 2Δ、权威图一到又跳回 Δ。与 axesMove 的
   // `previewsSeparately` 同一个前提：gid 前缀 = SVG 嵌套。只管预览——提交照样每个成员
   // 写自己那条（子图写 position、文字写 figure 锚定的 pos_frac），引擎里各走一次 Δ
   const keyList = [...keys]
@@ -1883,41 +2000,21 @@ export function startElementGroupMove(
     (c) => !(nestedInSelection(c.gid) && (!c.ends || (c.ends[0] && c.ends[1]))),
   )
 
-  // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove（见 startArrowDrag）
-  let last: [number, number] = [0, 0]
-  const unwatchKeys = watchCarryKeys(previewedCarried, () => last)
-  // 整组的包围框参与吸附；组员、它们的后代、随行元素与形状装着的内容一起动，不出线
-  const group0 = unionBox(entries.map((en) => en.box))
-  const snapper = group0
-    ? inFigureSnapper(
-        panel,
-        underAny([
-          ...keys,
-          ...previewCompanions,
-          ...carried.map((c) => c.gid),
-          ...entries.flatMap((en) =>
-            companionManifest
-              ? (companionManifest.elements.find((el) => el.gid === en.key)?.follow_gids ?? [])
-              : [],
-          ),
-        ]),
-      )
-    : null
-
-  trackPointer(e, {
-    onMove: (ev, dxPx, dyPx) => {
-      let [dfx, dfy] = toContent(dxPx, dyPx)
-      if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
-      if (snapper && group0) {
-        const [sx, sy] = snapper(
-          [group0[0] + dfx, group0[1] + dfy, group0[2], group0[3]],
-          ev,
-          [dfx, dfy],
-        )
-        dfx += sx
-        dfy += sy
-      }
-      last = [dfx, dfy]
+  return {
+    // 整组的包围框参与吸附；组员、它们的后代、随行元素与形状装着的内容一起动，不出线
+    snapBox: unionBox(entries.map((en) => en.box)),
+    moving: underAny([
+      ...keys,
+      ...previewCompanions,
+      ...carried.map((c) => c.gid),
+      ...entries.flatMap((en) =>
+        companionManifest
+          ? (companionManifest.elements.find((el) => el.gid === en.key)?.follow_gids ?? [])
+          : [],
+      ),
+    ]),
+    carryPreview: previewedCarried,
+    preview: (dfx, dfy, carry) => {
       const boxes = shifted(dfx, dfy)
       interaction().setElementPreview({
         boxes: Object.fromEntries(entries.map((en, i) => [en.key, boxes[i]])),
@@ -1925,26 +2022,36 @@ export function startElementGroupMove(
       })
       for (const k of previewKeys) previewTransform(k, dfx, dfy)
       for (const gid of previewedCompanions) previewTransform(gid, dfx, dfy)
-      if (previewedCarried.length) previewCarried(previewedCarried, dfx, dfy, carriesContents(ev))
+      if (previewedCarried.length) previewCarried(previewedCarried, dfx, dfy, carry)
     },
-    onEnd: (moved, ev, end) => {
-      unwatchKeys()
-      interaction().end()
-      const boxes = shifted(last[0], last[1])
+    commit: (dfx, dfy, carry) => {
+      const boxes = shifted(dfx, dfy)
       // 终点净位移为零（拖回原处）同样不写（GEO-07）：位移是全组共用的，看一个框就够
-      if (!moved || end.cancelled || entries.every((en, i) => sameAfterRound4(boxes[i], en.box))) {
+      if (entries.every((en, i) => sameAfterRound4(boxes[i], en.box))) {
         cancelElementPreview()
-        return
+        return false
       }
       const patches = entries.map((en, i) => en.write(boxes[i]))
       setOverrides(panel.id, hist('moveElements', { count: entries.length }), [
         ...patches,
         ...(companionManifest ? companionPatchesFor(panel, companionManifest, patches) : []),
-        ...(carriesContents(ev) ? carried.map((c) => c.shift(last[0], last[1])) : []),
+        ...(carry ? carried.map((c) => c.shift(dfx, dfy)) : []),
       ])
       commitElementPreview(panel.id)
+      return true
     },
-  })
+    cancel: () => cancelElementPreview(),
+  }
+}
+
+/** 拖动多选里的任一成员 = 整组平移（`groupMove`），且不改动选择 */
+export function startElementGroupMove(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  entries: AlignEntry[],
+  layout: { width: number; height: number },
+) {
+  trackInFigureMove(e, panel, layout, groupMove(panel, entries))
 }
 
 /**

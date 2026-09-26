@@ -3616,7 +3616,7 @@ export default interface Resources {
     "combo": {
       "altClick": "{{alt}}+点击",
       "altDrag": "{{alt}}+拖角点",
-      "arrowKeys": "方向键 / ⇧+方向键",
+      "arrowKeys": "方向键 / ⇧+方向键 / {{alt}}+方向键",
       "newline": "{{alt}}⏎ 或 {{mod}}⏎（文字编辑中）",
       "rightClick": "右键",
       "shiftClick": "⇧+点击",
@@ -3645,7 +3645,7 @@ export default interface Resources {
       "help": "本帮助",
       "multiSelect": "加选 / 减选对象或图内元素",
       "newline": "插入换行；单按 ⏎ 提交",
-      "nudge": "微移 0.5 mm / 5 mm",
+      "nudge": "微移选中对象或图内元素：0.5 mm / 5 mm / 0.1 mm（页面上的距离）；连按算一步撤销",
       "palette": "命令面板",
       "pan": "平移画布",
       "quickEdit": "按对象打开快捷编辑菜单",
@@ -3996,6 +3996,7 @@ export default interface Resources {
     },
     "hud": {
       "cursor": "光标",
+      "offset": "位移",
       "size": "尺寸"
     },
     "layerTree": {
@@ -4254,6 +4255,7 @@ export default interface Resources {
       "notInAnyGroup": "选中的对象不在任何组里",
       "nothingToRedo": "没有可重做的操作",
       "nothingToUndo": "没有可撤销的操作",
+      "nudgeNotMovable": "选中的图内元素不能移动",
       "objectCopied": "已复制 {{name}}",
       "objectsCopied": "已复制 {{count}} 个对象，可粘贴到其他文档",
       "overridesCleared": "已清空这张图的图内修改",
