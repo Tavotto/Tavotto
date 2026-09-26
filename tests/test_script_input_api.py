@@ -221,3 +221,17 @@ def test_binding_revision_is_unchanged_without_answers(tmp_path):
     with_answers = databinding.binding_for(root / "s.py", root, "sandbox")
     assert with_answers["script_inputs"].startswith("sha256:")
     assert with_answers["revision"] != plain["revision"]
+
+
+def test_only_event_streams_that_declare_answers_count_as_answerers(client):
+    """「能答题」只认主界面那条带 `answers=1` 的事件流；流断了就不再算（ADR 0099 §五）。"""
+    assert m._answerer_subs == 0
+    plain = client.get("/api/events", buffered=False)
+    next(plain.response)  # 连上
+    assert not m._has_script_input_answerer()
+    ui = client.get("/api/events?answers=1", buffered=False)
+    next(ui.response)
+    assert m._has_script_input_answerer()
+    ui.close()
+    plain.close()
+    assert m._answerer_subs == 0
