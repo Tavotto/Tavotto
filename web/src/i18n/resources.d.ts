@@ -3548,8 +3548,11 @@ export default interface Resources {
       "import": {
         "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
         "dropNotScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
+        "droppedMany": "拖入了 {{total}} 项，只用了「{{name}}」打开项目",
         "folderTitle": "选择脚本所在的文件夹",
-        "nativeTitle": "选择 Python 绘图脚本"
+        "nativeTitle": "选择 Python 绘图脚本",
+        "openedFolder": "已打开项目「{{name}}」",
+        "openedScript": "已打开「{{name}}」所在的项目"
       },
       "menuOpen": "打开",
       "more": "更多",
@@ -3575,7 +3578,8 @@ export default interface Resources {
       "recentMenu": "{{name}} 的更多操作",
       "returning": {
         "dropChoose": "点击选择文件",
-        "dropHint": "拖入 .py 文件",
+        "dropHint": "拖入 .py 文件或项目文件夹",
+        "dropHintPicker": "拖入 .py 文件后，还要在弹出的窗口里选一次它所在的文件夹",
         "dropOr": "或",
         "dropRelease": "松开即可导入",
         "dropTitle": "把 Python 脚本拖到这里",

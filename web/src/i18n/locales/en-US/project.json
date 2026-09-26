@@ -86,8 +86,11 @@
     "import": {
       "dropNoPath": "Your system didn’t tell {{product}} which folder “{{name}}” is in. Select it in the window that opens next.",
       "dropNotScript": "“{{name}}” isn’t a Python script. Drop a .py file.",
+      "droppedMany": "You dropped {{total}} items; only “{{name}}” was used to open a project",
       "folderTitle": "Choose the folder that contains your script",
-      "nativeTitle": "Choose a Python plotting script"
+      "nativeTitle": "Choose a Python plotting script",
+      "openedFolder": "Opened the project “{{name}}”",
+      "openedScript": "Opened the project that contains “{{name}}”"
     },
     "menuOpen": "Open",
     "more": "More",
@@ -113,7 +116,8 @@
     "recentMenu": "More actions for {{name}}",
     "returning": {
       "dropChoose": "click to choose a file",
-      "dropHint": "Drop a .py file",
+      "dropHint": "Drop a .py file or a project folder",
+      "dropHintPicker": "After dropping a .py file you’ll pick its folder once in the window that opens",
       "dropOr": "or ",
       "dropRelease": "Release to import",
       "dropTitle": "Drag a Python script here",

@@ -52,13 +52,15 @@ export function ProjectPicker() {
   const [error, setError] = useState<string | null>(null)
   const [busyPath, setBusyPath] = useState<string | null>(null)
 
-  const openPath = async (path: string, create = false) => {
+  const openPath = async (path: string, create = false): Promise<boolean> => {
     setError(null)
     setBusyPath(path)
     try {
       await open(path, create)
+      return true
     } catch (e) {
       setError(backendErrorText(e))
+      return false
     } finally {
       setBusyPath(null)
     }
@@ -70,7 +72,7 @@ export function ProjectPicker() {
         variant={variant}
         error={error}
         busyPath={busyPath}
-        openPath={(path) => void openPath(path)}
+        openPath={(path) => openPath(path)}
         onShowAll={() => {
           setError(null)
           setView('all')
@@ -112,7 +114,7 @@ function AllProjects({
 }: {
   error: string | null
   busyPath: string | null
-  openPath: (path: string, create?: boolean) => Promise<void>
+  openPath: (path: string, create?: boolean) => Promise<boolean>
   onBack: () => void
 }) {
   const { t } = useTranslation('project')

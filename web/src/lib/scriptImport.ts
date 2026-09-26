@@ -93,3 +93,43 @@ export function dropTargetOf(dt: DropData): DropTarget {
 /** 拖着的东西里有没有文件（dragover 时只能看 types，看不到内容） */
 export const dragHasFiles = (types: readonly string[]) =>
   [...types].includes('Files') || [...types].includes('text/uri-list')
+
+/**
+ * 同一次放下会从两条路到达主页：页面自己的 DOM `drop`（只有文件名），以及壳旁听到的
+ * 系统拖放事件（带真实路径，ADR 0092）。两者先后不定，壳那条是异步 IPC。
+ *
+ * 能拿到真实路径的壳里，DOM 那条**先不降级**：等 `graceMs`，期间壳的事件到了就只用它；
+ * 刚刚已经到过也不再降级；真没等到（旁听没装上、这次粘贴板里没路径）才走降级
+ * （提示文件名 + 选择器）。浏览器 / 不支持的平台不经过这里，直接降级。
+ */
+export function createDropArbiter(opts: {
+  graceMs: number
+  now?: () => number
+}) {
+  const now = opts.now ?? (() => Date.now())
+  let lastNative = Number.NEGATIVE_INFINITY
+  let pending: ReturnType<typeof setTimeout> | null = null
+  const cancel = () => {
+    if (pending !== null) clearTimeout(pending)
+    pending = null
+  }
+  return {
+    /** 壳的事件到了：取消等待中的降级，照它办 */
+    native(run: () => void) {
+      lastNative = now()
+      cancel()
+      run()
+    },
+    /** 页面的 drop 到了：壳刚发过就什么都不做，否则等一会儿再降级 */
+    dom(fallback: () => void) {
+      if (now() - lastNative < opts.graceMs) return
+      cancel()
+      pending = setTimeout(() => {
+        pending = null
+        fallback()
+      }, opts.graceMs)
+    },
+    dispose: cancel,
+  }
+}
+

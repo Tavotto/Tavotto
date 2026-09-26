@@ -1,4 +1,4 @@
-import { useEffect, useState, type DragEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowLeft,
@@ -13,7 +13,14 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { RecentProject } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
-import { isDesktop, pickScriptFile } from '@/lib/desktop'
+import {
+  isDesktop,
+  nativeFileDropAvailable,
+  onNativeFileDrop,
+  pickScriptFile,
+  type NativeFileDrop,
+} from '@/lib/desktop'
+import { msg } from '@/i18n'
 import { formatRelativeTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
 import {
@@ -24,10 +31,17 @@ import {
   useTutorialStore,
   type HomeVariant,
 } from '@/lib/onboarding/tutorial'
-import { dragHasFiles, dropTargetOf, folderForPath } from '@/lib/scriptImport'
+import {
+  createDropArbiter,
+  dragHasFiles,
+  dropTargetOf,
+  folderForPath,
+  type DropTarget,
+} from '@/lib/scriptImport'
 import { cn } from '@/lib/utils'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useUiStore } from '@/store/uiStore'
 import { BrandMark } from '../ui/BrandMark'
 import { Button, IconButton } from '../ui/Button'
 import { Menu, MenuItem } from '../ui/Menu'
@@ -55,7 +69,8 @@ export function HomeView({
   variant: HomeVariant
   error: string | null
   busyPath: string | null
-  openPath: (path: string) => void
+  /** 打开一个项目目录；成功回 true（失败的话错误已经摆在这一屏上） */
+  openPath: (path: string) => Promise<boolean>
   onShowAll: () => void
 }) {
   const { t } = useTranslation('project')
@@ -137,20 +152,61 @@ type Importer = ReturnType<typeof useScriptImport>
 /**
  * 「导入我的脚本」/ 拖放区 / 点击选择文件——三个入口一条路：得到一个目录 → `openPath`
  * （与打开任何项目同一条 `projectStore.open`）。桌面壳用原生文件选择器（只收 .py），
- * 浏览器回退到服务器端目录浏览器选脚本所在的文件夹。拖放拿不到路径时退回选择器，
- * 并说清是哪个文件（判据在 `lib/scriptImport`）。
+ * 浏览器回退到服务器端目录浏览器选脚本所在的文件夹。
+ *
+ * 拖放（ADR 0092）：macOS 桌面壳旁听系统拖放、交来 canonicalize 过的真实路径
+ * （`onNativeFileDrop`），`.py` 打开它所在的文件夹、文件夹直接当项目、别的说不收，
+ * 多拖了几个说一句只开了哪个。拿不到路径的宿主（浏览器、其它平台）退回选择器并说清是
+ * 哪个文件。同一次放下两条路都会到，谁先谁后不定，由 `createDropArbiter` 仲裁。
  */
-function useScriptImport(openPath: (path: string) => void) {
+function useScriptImport(openPath: (path: string) => Promise<boolean>) {
   const { t } = useTranslation('project')
   const [browsing, setBrowsing] = useState(false)
   const [notice, setNotice] = useState<{ tone: 'info' | 'error'; text: string } | null>(null)
+  const [native, setNative] = useState(false)
+  const arbiter = useRef<ReturnType<typeof createDropArbiter> | null>(null)
+  if (!arbiter.current) arbiter.current = createDropArbiter({ graceMs: NATIVE_DROP_GRACE_MS })
+
+  const openDropped = (drop: NativeFileDrop) => {
+    if (drop.kind === 'unsupported') {
+      setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: drop.name }) })
+      return
+    }
+    setNotice(null)
+    void openPath(drop.folder).then((ok) => {
+      if (!ok) return
+      // 页面已经换成编辑器：说明走通知轨。说出是哪个脚本（关联），多拖了的说只开了哪个
+      const values = { name: drop.name, total: drop.ignored + 1 }
+      const key = drop.ignored > 0 ? 'home.import.droppedMany' : drop.kind === 'script' ? 'home.import.openedScript' : 'home.import.openedFolder'
+      useUiStore.getState().setStatus(msg(key, values, 'project'))
+    })
+  }
+
+  // 只有主页挂着时订阅：编辑器里壳照样发，但没人听——画布的拖放不受影响
+  useEffect(() => {
+    let off: (() => void) | undefined
+    let disposed = false
+    void nativeFileDropAvailable().then((ok) => {
+      if (!disposed) setNative(ok)
+    })
+    void onNativeFileDrop((drop) => arbiter.current!.native(() => openDropped(drop))).then((u) => {
+      if (disposed) u()
+      else off = u
+    })
+    return () => {
+      disposed = true
+      off?.()
+      arbiter.current?.dispose()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const choose = () => {
     if (isDesktop()) {
       void pickScriptFile(t('home.import.nativeTitle')).then((path) => {
         if (path) {
           setNotice(null)
-          openPath(folderForPath(path))
+          void openPath(folderForPath(path))
         }
       })
     } else setBrowsing(true)
@@ -161,12 +217,12 @@ function useScriptImport(openPath: (path: string) => void) {
     choose()
   }
 
-  const drop = (dt: DataTransfer) => {
-    const target = dropTargetOf(dt)
+  /** 拿不到路径时的那条路（浏览器 / 不支持的平台，或壳这次没交来路径） */
+  const degrade = (target: DropTarget) => {
     switch (target.kind) {
       case 'path':
         setNotice(null)
-        openPath(target.folder)
+        void openPath(target.folder)
         return
       case 'no-path':
         setNotice({ tone: 'info', text: t('home.import.dropNoPath', { name: target.name }) })
@@ -178,6 +234,14 @@ function useScriptImport(openPath: (path: string) => void) {
       case 'none':
         return
     }
+  }
+
+  const drop = (dt: DataTransfer) => {
+    const target = dropTargetOf(dt)
+    if (target.kind === 'none') return
+    // 宿主自己给了 file:// 路径就直接用；能拿真实路径的壳里先等它的事件
+    if (!native || target.kind === 'path') degrade(target)
+    else arbiter.current!.dom(() => degrade(target))
   }
 
   const noticeView = notice && (
@@ -201,12 +265,15 @@ function useScriptImport(openPath: (path: string) => void) {
       onPick={(path) => {
         setBrowsing(false)
         setNotice(null)
-        openPath(path)
+        void openPath(path)
       }}
     />
   )
-  return { start, drop, noticeView, dialogs }
+  return { start, drop, native, noticeView, dialogs }
 }
+
+/** 页面的 drop 到了、壳的系统拖放事件还没到：最多等这么久再降级（IPC 通常几毫秒） */
+const NATIVE_DROP_GRACE_MS = 1500
 
 /* ------------------------------ 示例 / 教程入口 ------------------------------ */
 
@@ -389,7 +456,8 @@ function Returning({ importer, dragging }: { importer: Importer; dragging: boole
           {dragging ? t('home.returning.dropRelease') : t('home.returning.dropTitle')}
         </span>
         <span id="home-dropzone-hint" className="mt-2 flex flex-col items-center gap-0.5 text-base text-ink-2">
-          <span>{t('home.returning.dropHint')}</span>
+          {/* 拿得到真实路径（macOS 桌面壳）才说「拖进来就开」；否则如实说还要再选一次 */}
+          <span>{t(importer.native ? 'home.returning.dropHint' : 'home.returning.dropHintPicker')}</span>
           <span>
             {t('home.returning.dropOr')}
             <span className="underline underline-offset-2">{t('home.returning.dropChoose')}</span>
@@ -447,7 +515,7 @@ function RecentSection({
 }: {
   variant: HomeVariant
   busyPath: string | null
-  openPath: (path: string) => void
+  openPath: (path: string) => Promise<boolean>
   onShowAll: () => void
 }) {
   const { t } = useTranslation('project')
@@ -499,7 +567,7 @@ function RecentSection({
               layout="card"
               busy={busyPath === r.path}
               disabled={switching}
-              onOpen={() => openPath(r.path)}
+              onOpen={() => void openPath(r.path)}
               onRemove={() => void remove(r.path)}
             />
           ))}
@@ -513,7 +581,7 @@ function RecentSection({
               layout="row"
               busy={busyPath === r.path}
               disabled={switching}
-              onOpen={() => openPath(r.path)}
+              onOpen={() => void openPath(r.path)}
               onRemove={() => void remove(r.path)}
             />
           ))}

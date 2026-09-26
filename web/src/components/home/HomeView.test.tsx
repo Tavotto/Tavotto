@@ -11,6 +11,7 @@ import { ProjectPicker } from '@/components/ProjectPicker'
 import { configureOnboardingPersistence, useOnboardingStore, type OnboardingStatus } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useTutorialStore } from '@/lib/onboarding/tutorial'
+import { useUiStore } from '@/store/uiStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -18,10 +19,22 @@ declare global {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-const desktop = vi.hoisted(() => ({
-  isDesktop: vi.fn(() => true),
-  pickScriptFile: vi.fn(async (_title?: string): Promise<string | null> => '/Users/me/paper/plot.py'),
-}))
+const desktop = vi.hoisted(() => {
+  const state: { handler: ((d: unknown) => void) | null; offs: number } = { handler: null, offs: 0 }
+  return {
+    state,
+    isDesktop: vi.fn(() => true),
+    pickScriptFile: vi.fn(async (_title?: string): Promise<string | null> => '/Users/me/paper/plot.py'),
+    nativeFileDropAvailable: vi.fn(async () => false),
+    onNativeFileDrop: vi.fn(async (h: (d: unknown) => void) => {
+      state.handler = h
+      return () => {
+        state.handler = null
+        state.offs++
+      }
+    }),
+  }
+})
 vi.mock('@/lib/desktop', async (orig) => ({ ...(await orig<Record<string, unknown>>()), ...desktop }))
 
 const tutorial = vi.hoisted(() => ({
@@ -101,6 +114,10 @@ beforeEach(() => {
   remove.mockClear()
   desktop.isDesktop.mockReturnValue(true)
   desktop.pickScriptFile.mockClear()
+  desktop.nativeFileDropAvailable.mockResolvedValue(false)
+  desktop.state.handler = null
+  desktop.state.offs = 0
+  useUiStore.setState({ status: null })
   tutorial.runTutorialEntry.mockClear()
   tutorial.openSampleProject.mockClear()
 })
@@ -293,6 +310,97 @@ describe('老手版', () => {
     expect(items.map((i) => i.textContent)).toEqual(['打开', '从列表移除，不删文件'])
     await click(items[1])
     expect(remove).toHaveBeenCalledWith('/Users/me/Desktop/poster')
+  })
+})
+
+describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
+  beforeEach(() => {
+    setOnboarding('completed')
+    desktop.nativeFileDropAvailable.mockResolvedValue(true)
+  })
+  afterEach(() => vi.useRealTimers())
+
+  const fire = async (d: unknown) => {
+    await act(async () => desktop.state.handler!(d))
+  }
+  const status = () => useUiStore.getState().status
+  const statusKey = () => (status()?.message as { key?: string } | undefined)?.key ?? (status() as { key?: string } | null)?.key
+
+  it('.py：直接打开它所在的文件夹，不弹选择器；通知说出是哪个脚本', async () => {
+    await mount()
+    await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/plot.py', name: 'plot.py', ignored: 0 })
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+    expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+    expect(JSON.stringify(status())).toContain('home.import.openedScript')
+    expect(JSON.stringify(status())).toContain('plot.py')
+  })
+
+  it('文件夹直接当项目；多拖了几个说只用了哪个', async () => {
+    await mount()
+    await fire({ kind: 'folder', folder: '/Users/me/paper', name: 'paper', ignored: 0 })
+    expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+    expect(JSON.stringify(status())).toContain('home.import.openedFolder')
+    await fire({ kind: 'script', folder: '/a', script: '/a/b.py', name: 'b.py', ignored: 2 })
+    expect(JSON.stringify(status())).toContain('home.import.droppedMany')
+    expect(JSON.stringify(status())).toContain('"total":3')
+  })
+
+  it('不支持的类型：说不收，什么都不打开', async () => {
+    await mount()
+    await fire({ kind: 'unsupported', name: 'fig.pdf' })
+    expect(host.querySelector('[role="alert"]')!.textContent).toContain('fig.pdf')
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('页面自己的 drop（只有文件名）不再弹选择器：等壳的事件；壳没发才降级', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    await mount()
+    const dropFile = async () => {
+      const ev = new Event('drop', { bubbles: true, cancelable: true })
+      Object.defineProperty(ev, 'dataTransfer', {
+        value: { types: ['Files'], getData: () => '', files: [{ name: 'figure.py' }], dropEffect: 'none' },
+      })
+      await act(async () => {
+        main().dispatchEvent(ev)
+      })
+    }
+    await dropFile()
+    await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/figure.py', name: 'figure.py', ignored: 0 })
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+    expect(open).toHaveBeenCalledTimes(1)
+
+    // 壳这次没交来路径：等满了才退回选择器
+    open.mockClear()
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+    })
+    await dropFile()
+    expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('拖放区的说明跟着能力走：拿得到路径说「拖进来」，拿不到如实说还要选一次', async () => {
+    await mount()
+    expect(host.querySelector('[data-home-dropzone]')!.textContent).toContain('拖入 .py 文件或项目文件夹')
+    act(() => root.unmount())
+    host.remove()
+    desktop.nativeFileDropAvailable.mockResolvedValue(false)
+    await mount()
+    expect(host.querySelector('[data-home-dropzone]')!.textContent).toContain('还要在弹出的窗口里选一次')
+  })
+
+  it('只有主页订阅：离开主页（进编辑器 / 全部项目）就退订，壳的事件落空', async () => {
+    await mount()
+    expect(desktop.state.handler).not.toBeNull()
+    await click(host.querySelector<HTMLButtonElement>('[data-home-all]')!)
+    expect(desktop.state.handler).toBeNull()
+    expect(desktop.state.offs).toBe(1)
   })
 })
 

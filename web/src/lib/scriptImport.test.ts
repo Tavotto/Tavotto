@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  createDropArbiter,
   dragHasFiles,
   dropTargetOf,
   folderForPath,
@@ -74,5 +75,59 @@ describe('dropTargetOf', () => {
     expect(dragHasFiles(['Files'])).toBe(true)
     expect(dragHasFiles(['text/uri-list'])).toBe(true)
     expect(dragHasFiles(['text/plain'])).toBe(false)
+  })
+})
+
+describe('createDropArbiter：同一次放下的两条路（页面 drop / 壳的系统拖放）', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('壳的事件先到：随后的页面 drop 不降级', () => {
+    vi.useFakeTimers()
+    const a = createDropArbiter({ graceMs: 1500 })
+    const run = vi.fn()
+    const fallback = vi.fn()
+    a.native(run)
+    a.dom(fallback)
+    vi.advanceTimersByTime(5000)
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(fallback).not.toHaveBeenCalled()
+  })
+
+  it('页面 drop 先到：等待期内壳的事件到了，降级取消', () => {
+    vi.useFakeTimers()
+    const a = createDropArbiter({ graceMs: 1500 })
+    const fallback = vi.fn()
+    a.dom(fallback)
+    vi.advanceTimersByTime(1000)
+    a.native(() => {})
+    vi.advanceTimersByTime(5000)
+    expect(fallback).not.toHaveBeenCalled()
+  })
+
+  it('壳一直没发（旁听没装上 / 这次没路径）：等满才降级，只降一次', () => {
+    vi.useFakeTimers()
+    const a = createDropArbiter({ graceMs: 1500 })
+    const fallback = vi.fn()
+    a.dom(fallback)
+    vi.advanceTimersByTime(1499)
+    expect(fallback).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(fallback).toHaveBeenCalledTimes(1)
+  })
+
+  it('很久以前的壳事件不算数；dispose 清掉等待', () => {
+    vi.useFakeTimers()
+    let t = 0
+    const a = createDropArbiter({ graceMs: 1500, now: () => t })
+    a.native(() => {})
+    t = 10_000
+    const fallback = vi.fn()
+    a.dom(fallback)
+    a.dispose()
+    vi.advanceTimersByTime(5000)
+    expect(fallback).not.toHaveBeenCalled()
+    a.dom(fallback)
+    vi.advanceTimersByTime(1500)
+    expect(fallback).toHaveBeenCalledTimes(1)
   })
 })
