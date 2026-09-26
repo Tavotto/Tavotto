@@ -205,7 +205,28 @@ async function expectAccessible(
 test('项目选择器：axe 无违规、无未定性的「查不了」、自算对比度达标', async ({ app, page }) => {
   const a = await app({ noProject: true })
   await page.goto(a.baseURL)
-  await expect(page.getByRole('main')).toBeVisible()
+  // 主页新手版（第一次来的人看到的那一屏）
+  await expect(page.locator('main[data-home-variant="newcomer"]')).toBeVisible()
+  await expect(page.getByText('已随安装包内置示例脚本')).toBeVisible()
+  await expectAccessible(page)
+  // 「全部项目」（新建 / 路径 / 完整最近列表）
+  await page.locator('[data-home-all]').click()
+  await expect(page.locator('[data-home-back]')).toBeVisible()
+  await expectAccessible(page)
+})
+
+test('主页老手版：axe 无违规、无未定性的「查不了」、自算对比度达标', async ({ app, page }) => {
+  // 走完了教程的人（onboarding 那一格 = completed）
+  await page.addInitScript(() =>
+    window.localStorage.setItem(
+      'tavotto.onboarding',
+      JSON.stringify({ schemaVersion: 1, flowVersion: 2, status: 'completed', completedSteps: [], skippedSteps: [] }),
+    ),
+  )
+  const a = await app({ noProject: true })
+  await page.goto(a.baseURL)
+  await expect(page.locator('main[data-home-variant="returning"]')).toBeVisible()
+  await expect(page.locator('[data-home-sample]')).toBeEnabled()
   await expectAccessible(page)
 })
 

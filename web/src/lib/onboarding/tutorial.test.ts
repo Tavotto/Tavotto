@@ -19,6 +19,7 @@ import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject } from '@/types/document'
 import {
+  homeVariant,
   loadTutorialStatus,
   resetTutorial,
   startTutorial,
@@ -157,6 +158,52 @@ describe('tutorial_started 遥测（ADR 0041）', () => {
     calls = []
     await startTutorial('settings')
     expect(telemetryPosts()).toEqual([])
+  })
+})
+
+describe('主页两版的判据 homeVariant（只读 onboarding 状态）', () => {
+  it('已完成 / 已跳过 → 老手版；没开始 / 进行中 / 暂停 → 新手版', () => {
+    expect(homeVariant('completed')).toBe('returning')
+    expect(homeVariant('skipped')).toBe('returning')
+    expect(homeVariant('not_started')).toBe('newcomer')
+    expect(homeVariant('active')).toBe('newcomer')
+    expect(homeVariant('paused')).toBe('newcomer')
+  })
+
+  it('不传参就读 store 当前那份；清掉本机数据（resetOnboarding）回到新手版', () => {
+    useOnboardingStore.getState().start({ projectId: 'p', documentId: 'd' })
+    useOnboardingStore.getState().complete()
+    expect(homeVariant()).toBe('returning')
+    useOnboardingStore.getState().resetOnboarding()
+    expect(homeVariant()).toBe('newcomer')
+  })
+})
+
+describe('startTutorial(source, { guide: false })：只打开示例项目', () => {
+  it('同一条认领链路装教程画布，但 onboarding 一个字段都不动、不记 tutorial_started', async () => {
+    useOnboardingStore.getState().start({ projectId: 'p_tut', documentId: 'tavotto-tutorial' })
+    useOnboardingStore.getState().complete()
+    const before = { ...useOnboardingStore.getState() }
+    setTelemetryEnabled(true)
+    const out = await startTutorial('picker', { guide: false })
+    expect(out).toEqual({ ok: true, kind: 'opened' })
+    expect(useProjectStore.getState().project?.id).toBe('p_tut')
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    const after = useOnboardingStore.getState()
+    expect(after.status).toBe('completed')
+    expect(after.completedAt).toBe(before.completedAt)
+    expect(after.startedAt).toBe(before.startedAt)
+    expect(homeVariant()).toBe('returning')
+    const started = calls
+      .filter((c) => c.url === '/api/telemetry/event')
+      .map((c) => JSON.parse(c.body ?? '{}') as { event: string })
+      .filter((p) => p.event === 'tutorial_started')
+    expect(started).toEqual([])
+  })
+
+  it('默认（不给 guide）仍是开始教程：老入口行为不变', async () => {
+    expect(await startTutorial()).toEqual({ ok: true, kind: 'started' })
+    expect(useOnboardingStore.getState().status).toBe('active')
   })
 })
 

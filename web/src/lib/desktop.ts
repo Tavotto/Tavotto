@@ -168,6 +168,23 @@ export async function pickDirectory(title?: string): Promise<string | null> {
 }
 
 /**
+ * 原生文件选择器，只收 `.py`（主页「导入我的脚本」用）。取消返回 null；
+ * 浏览器模式返回 null，调用方回退到服务器端目录浏览器（选脚本所在的文件夹）。
+ * 与 `pickDirectory` 同一条 `dialog:allow-open` 权限，壳侧不用加 ACL。
+ */
+export async function pickScriptFile(title?: string): Promise<string | null> {
+  if (!isDesktop()) return null
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const picked = await open({
+    directory: false,
+    multiple: false,
+    title,
+    filters: [{ name: 'Python', extensions: ['py'] }],
+  })
+  return typeof picked === 'string' ? picked : null
+}
+
+/**
  * 在系统文件管理器里显示导出的文件（桌面里不该出现浏览器式下载页 / PDF 标签页）。
  * 成功返回 true；浏览器模式或失败返回 false，调用方保留原有 <a> 行为。
  */

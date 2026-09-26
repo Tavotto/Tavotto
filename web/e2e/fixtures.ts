@@ -291,3 +291,12 @@ export async function switchProjectVia(page: Page, target: { path: string } | { 
   }
   await row.locator('[data-workspace-open]').click()
 }
+
+/**
+ * 主页 → 「全部项目」（新建 / 打开文件夹 / 粘贴路径 / 完整最近列表）。主页两版上这颗
+ * 入口都在（没有最近项目时文案是「新建项目或按路径打开」），认的是 `data-home-all`。
+ */
+export async function showAllProjects(page: Page) {
+  await page.locator('[data-home-all]').click()
+  await expect(page.locator('[data-home-back]')).toBeVisible()
+}

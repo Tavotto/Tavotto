@@ -407,6 +407,7 @@ export default interface Resources {
       },
       "hintsReset": "情境提示已重置，会再各出现一次",
       "landed": {
+        "opened": "已打开示例项目",
         "restarted": "教程已重新开始",
         "resumed": "从上次停下的地方继续",
         "started": "教程已开始"
@@ -3540,6 +3541,48 @@ export default interface Resources {
       "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
       "projectOpened": "已打开项目 {{name}}",
       "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。"
+    },
+    "home": {
+      "backHome": "返回主页",
+      "browseMore": "浏览更多项目",
+      "import": {
+        "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
+        "dropNotScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
+        "folderTitle": "选择脚本所在的文件夹",
+        "nativeTitle": "选择 Python 绘图脚本"
+      },
+      "menuOpen": "打开",
+      "more": "更多",
+      "newcomer": {
+        "bundled": "已随安装包内置示例脚本，点击即可体验完整流程。",
+        "import": "导入我的脚本",
+        "lead": "导入你的绘图脚本，自动识别生成的图片，进入排版画布，轻松完成论文图的整理与排版。",
+        "step1Body": "选择包含绘图代码的 .py 文件，{{product}} 会读取并分析它。",
+        "step1Title": "导入 Python 脚本",
+        "step2Body": "{{product}} 会自动识别脚本生成的图片，无需手动查找。",
+        "step2Title": "自动识别图片",
+        "step3Body": "在可视化画布中自由排版，调整大小、对齐和样式，快速导出。",
+        "step3Title": "进入排版画布",
+        "stepsLabel": "三步开始",
+        "tipBody": "支持拖拽排版、对齐参考线、快速调整尺寸，一站式完成图的整理与导出。",
+        "tipTitle": "进入编辑器后，操作非常简单",
+        "title": "用 Python 脚本，轻松完成论文图排版",
+        "tryResume": "继续示例教程",
+        "tryStart": "用示例体验一次"
+      },
+      "openedAgo": "打开于 {{when}}",
+      "otherWays": "新建项目或按路径打开",
+      "recentMenu": "{{name}} 的更多操作",
+      "returning": {
+        "dropChoose": "点击选择文件",
+        "dropHint": "拖入 .py 文件",
+        "dropOr": "或",
+        "dropRelease": "松开即可导入",
+        "dropTitle": "把 Python 脚本拖到这里",
+        "lead": "将你的 Python 绘图脚本，转换为可编辑的论文图。",
+        "sample": "使用示例脚本试试看",
+        "sampleHint": "{{product}} 会自动识别脚本中生成的图片，并进入排版界面。"
+      }
     },
     "picker": {
       "backToCurrent": "返回当前项目",

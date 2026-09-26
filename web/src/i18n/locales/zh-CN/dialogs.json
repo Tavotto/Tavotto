@@ -1401,7 +1401,8 @@
     "landed": {
       "started": "教程已开始",
       "resumed": "从上次停下的地方继续",
-      "restarted": "教程已重新开始"
+      "restarted": "教程已重新开始",
+      "opened": "已打开示例项目"
     },
     "failure": {
       "unavailable": "教程资源不完整。请重新安装 Tavotto。",

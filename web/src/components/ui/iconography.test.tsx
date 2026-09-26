@@ -72,6 +72,8 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/inspector/controls/ProjectionPicker.tsx': 1, // 三维投影小立方体
   '/src/components/inspector/controls/ViewAngleDiagram.tsx': 1, // 三维三轴方向示意（按当前角度重画）
   '/src/components/settings/AgentIcon.tsx': 2, // Claude / OpenAI 两个品牌标
+  // 主页新手版三步卡片的示意：脚本文件 → 认出来的几张图 → 排版画布（画的是产品流程，图标集里没有对应物）
+  '/src/components/home/StepIllustrations.tsx': 3,
   '/src/components/settings/CompanionDiagram.tsx': 1, // 「一同移动关联对象」的前后空间关系
   '/src/components/settings/StyleSamplePreview.tsx': 1, // 样式示例图（viewBox 单位就是 pt）
   // 图例位置：子图容器边界 + 图例此刻落在哪（跟着 loc / bbox_to_anchor 走）+ 六个
