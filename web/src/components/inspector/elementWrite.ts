@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { beginElementPreview, commitElementPreview } from '@/canvas/elementPreview'
 import { flushRender } from '@/store/renderScheduler'
 import type { EditableField, ManifestElement } from '@/lib/api'
+import { pagePtLens } from '@/lib/stylePresets'
 import { canPreviewStyle } from '@/lib/svgStyle'
 import { msg, t, type UiMessage } from '@/i18n'
 import { setOverride } from '@/store/actions'
@@ -91,9 +92,19 @@ export function useFieldGesture(panel: PanelObject, defaultLabel: UiMessage | st
   return { start, end, touch, isOpen: () => open.current }
 }
 
+/**
+ * 以 pt 计的量（`stylePresets.PAGE_PT_PROPS`）**进出都是页面上的值**：`read` / `fieldOf` 给的、
+ * `write` 收的都是读者量到的 pt（`pagePtLens`，与样式面板、问题面板同一个换算）。
+ */
 export interface ElementWriter {
-  /** 当前值：用户改过的 override 优先于渲染时的初值 */
+  /** 当前值：用户改过的 override 优先于渲染时的初值（页面 pt 的量是换算、取整后的页面值） */
   read: (prop: string) => unknown
+  /**
+   * 同一个当前值，**脚本坐标系里的原值**（不换算、不取整）。只给「几个值是否一致」这类判断用：
+   * 两位小数的页面值会把本来不同的两个脚本值取整成同一个数（1.01 与 1.02 在 0.6 下都是 0.61），
+   * 「多个值」就被压扁了。显示与输入仍然走 `read` / `write`。
+   */
+  readScript: (prop: string) => unknown
   /** manifest 里有没有这条属性——没有就不该画出对应控件 */
   fieldOf: (prop: string) => EditableField | undefined
   has: (prop: string) => boolean
@@ -104,6 +115,8 @@ export interface ElementWriter {
   /** 这一轮结束（输入框失焦 / 取色盘关掉） */
   endGesture: () => void
   beginGesture: (label?: string) => void
+  /** 控件上写死的脚本坐标系的界 → 页面上的界（`pagePtLens.bound`） */
+  pageBound: (prop: string, value: number) => number
 }
 
 /** 图内属性写入的默认历史标题 */
@@ -120,15 +133,20 @@ export function useElementWriter(panel: PanelObject, element: ManifestElement): 
   const gesture = useFieldGesture(panel, defaultGestureLabel())
   const gid = element.gid
   const role = element.role
+  const lens = pagePtLens(panel)
 
-  const fieldOf = (prop: string) => element.editable.find((f) => f.prop === prop)
+  const rawField = (prop: string) => element.editable.find((f) => f.prop === prop)
+  const fieldOf = (prop: string) => lens.field(rawField(prop))
 
-  const read = (prop: string) => {
+  const readScript = (prop: string) => {
     const ov = effectiveOverride(panel.overrides, gid, prop)
-    return ov ? ov.value : fieldOf(prop)?.value
+    return ov ? ov.value : rawField(prop)?.value
   }
+  const read = (prop: string) => lens.toPage(prop, readScript(prop))
 
-  const write = (prop: string, value: unknown, immediate = false) => {
+  const write = (prop: string, pageValue: unknown, immediate = false) => {
+    // 预览与 override 拿同一个脚本值：局部预览贴在按脚本坐标系画的 SVG 上
+    const value = lens.toScript(prop, pageValue)
     const previewable = canPreviewStyle(role, prop)
     if (previewable && !gesture.isOpen()) {
       gesture.start(t('element.editProp', { ns: 'inspector', label: propLabel(prop, role) }))
@@ -145,11 +163,13 @@ export function useElementWriter(panel: PanelObject, element: ManifestElement): 
 
   return {
     read,
+    readScript,
     fieldOf,
-    has: (prop) => !!fieldOf(prop),
+    has: (prop) => !!rawField(prop),
     write,
     writeOnce,
     endGesture: gesture.end,
     beginGesture: gesture.start,
+    pageBound: lens.bound,
   }
 }

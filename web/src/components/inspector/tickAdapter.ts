@@ -1,5 +1,6 @@
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { msg, t as translate } from '@/i18n'
+import { pagePtLens } from '@/lib/stylePresets'
 import { canPreviewStyle } from '@/lib/svgStyle'
 import { clearOverride, setOverride } from '@/store/actions'
 import { previewStyle } from '@/store/svgPreviewStore'
@@ -52,12 +53,17 @@ export function useTickAxisAdapter(
   if (!element) return null
   const gid = element.gid
   const role = element.role
-  const fieldOf = (prop: string) => element.editable.find((f) => f.prop === prop)
+  // 刻度长宽是页面上的 pt（`pagePtLens`，与属性页其余各处、样式面板同一个换算）：
+  // 读出来、字段上下界、收进来的值都在页面上，写 override 之前换回脚本值
+  const lens = pagePtLens(panel)
+  const rawField = (prop: string) => element.editable.find((f) => f.prop === prop)
+  const fieldOf = (prop: string) => lens.field(rawField(prop))
   const read = (prop: string) => {
     const ov = effectiveOverride(panel.overrides, gid, prop)
-    return ov ? ov.value : fieldOf(prop)?.value
+    return lens.toPage(prop, ov ? ov.value : rawField(prop)?.value)
   }
-  const write = (prop: string, value: unknown, immediate = false) => {
+  const write = (prop: string, pageValue: unknown, immediate = false) => {
+    const value = lens.toScript(prop, pageValue)
     // 刻度是 manifest 的伪元素，gid 在 SVG 里不存在——预览必然失败，
     // 这里照旧问一次 canPreviewStyle 而不是写死 false：能力表是唯一权威，
     // 哪天引擎给刻度发了真 gid，这条路自动就通了
@@ -75,7 +81,7 @@ export function useTickAxisAdapter(
   return {
     axis,
     gid,
-    has: (prop) => !!fieldOf(prop),
+    has: (prop) => !!rawField(prop),
     fieldOf,
     read,
     // 与通用列表同一条「开关 → 从属字段」判据（次刻度关着收起长宽）

@@ -5,7 +5,6 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
 import { focusFailureMessage, openProblemAt } from '@/lib/issueFocus'
-import { panelScale } from '@/lib/preflight'
 import { profileName } from '@/lib/profileText'
 import {
   CANVAS_FAMILY_PATH,
@@ -14,10 +13,9 @@ import {
   elementsWith,
   FIGURE_LINE_ROWS,
   FIGURE_TEXT_ROWS,
-  pageValueOf,
   type CellSubject,
 } from '@/lib/stylePanelModel'
-import { isSubLabel, styleOverrideTargets, toScriptValue } from '@/lib/stylePresets'
+import { isSubLabel, styleOverrideTargets } from '@/lib/stylePresets'
 import { CANVAS_TEXT_FAMILIES, type TypographyValue } from '@/lib/typography'
 import { cn } from '@/lib/utils'
 import type { ValidationIssue } from '@/lib/validation'
@@ -82,9 +80,10 @@ const NO_ISSUES: ValidationIssue[] = []
  * 记号跳过去（`issueFocus.openProblemAt`）——不在这里再判一遍规范。
  *
  * * **当前图**与问题面板同一个判据（`useCurrentFigure`），不写第二份。
- * * **数字是页面上读者量到的 pt**：显示 = manifest 值 × `panelScale`，写入前 ÷ 回去
- *   （`stylePresets.toScriptValue`，与样式应用同一个换算）。面板缩到 60% 时这里写 9，
- *   读者量到的就是 9，而不是 5.4。画布标注的字号本来就是页面 pt，不换算。
+ * * **数字是页面上读者量到的 pt**：换算在写入器里（`useTextStyleAdapter` 过
+ *   `stylePresets.pagePtLens`，属性页用的是同一个），这里拿到的读数、字段上下界、交出去的
+ *   值都已经是页面上的。面板缩到 60% 时这里写 9，读者量到的就是 9，而不是 5.4。
+ *   画布标注的字号本来就是页面 pt，不换算。
  * * **改动走 Inspector 那条路**：图内元素经 `useTextStyleAdapter`（一次点击 = 一次
  *   `setOverrides` commit），画布标注经 `useCanvasTypography`。
  * * **值四档不压扁**：几个元素不一致时是「多个值」，不拿第一个冒充全部。
@@ -149,7 +148,6 @@ export function StylePanel() {
 }
 
 function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest: Manifest; exact: boolean }) {
-  const scale = panelScale(panel)
   const bound = useDocumentStore((s) => !!s.doc.style && !s.doc.style.detached)
   const locked = !bound && !exact
   const all = useValidationStore((s) => s.issues)
@@ -178,7 +176,6 @@ function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest:
             manifest={manifest}
             sizeRole={row.sizeRole}
             familyRole={row.familyRole}
-            scale={scale}
             issues={all}
             onJump={jump}
             bound={bound}
@@ -198,7 +195,6 @@ function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest:
             manifest={manifest}
             role={row.role}
             prop={row.prop}
-            scale={scale}
             issues={all}
             onJump={jump}
             bound={bound}
@@ -297,29 +293,26 @@ function PtField({
   label,
   value,
   field,
-  scale,
   step,
   onChange,
   locked,
 }: {
   label: string
   value: CellValue
-  /** 值域（脚本坐标系里的）；显示与钳位都换到页面上 */
+  /** 值域——写入器给的，已经换到页面上（`pagePtLens.field`） */
   field?: Pick<EditableField, 'min' | 'max'>
-  scale: number
   step: number
   onChange: (v: number) => void
   locked?: boolean
 }) {
   const shown = value.kind === 'uniform' || value.kind === 'inherit' ? value.value : undefined
-  const k = Number.isFinite(scale) && scale > 0 ? scale : 1
   return (
     <NumberField
       ariaLabel={label}
       value={value.kind === 'mixed' ? NaN : Number(shown ?? NaN)}
       mixed={value.kind === 'mixed'}
-      min={field?.min != null ? field.min * k : undefined}
-      max={field?.max != null ? field.max * k : undefined}
+      min={field?.min}
+      max={field?.max}
       step={step}
       precision={2}
       disabled={locked}
@@ -343,7 +336,6 @@ interface FigureRowProps {
   locked: boolean
   panel: PanelObject
   manifest: Manifest
-  scale: number
   issues: ValidationIssue[]
   onJump: (issue: ValidationIssue) => void
 }
@@ -360,7 +352,6 @@ const FigureTextRow = memo(function FigureTextRow({
   manifest,
   sizeRole,
   familyRole,
-  scale,
   issues,
   onJump,
   bound,
@@ -407,15 +398,14 @@ const FigureTextRow = memo(function FigureTextRow({
         <div data-style-cell={`${id}.size`} className={cellClass(sizeIssues.length > 0)}>
           <PtField
             label={sp('sizeOf', { row: label })}
-            value={pageValueOf(size.valueOf('fontsize'), 'fontsize', scale)}
+            value={size.valueOf('fontsize')}
             field={sizeField}
-            scale={scale}
             step={0.5}
             locked={locked}
             onChange={(v) =>
               bound
                 ? void editBoundStyle({ kind: 'element', role: sizeRole, prop: 'fontsize', value: v })
-                : size.writeOnce('fontsize', toScriptValue('fontsize', v, scale))
+                : size.writeOnce('fontsize', v)
             }
           />
         </div>
@@ -434,7 +424,6 @@ const FigureLineRow = memo(function FigureLineRow({
   manifest,
   role,
   prop,
-  scale,
   issues,
   onJump,
   bound,
@@ -474,15 +463,14 @@ const FigureLineRow = memo(function FigureLineRow({
         ) : (
           <PtField
             label={label}
-            value={pageValueOf(value, prop, scale)}
+            value={value}
             field={field}
-            scale={scale}
             step={0.05}
             locked={locked}
             onChange={(v) =>
               bound
                 ? void editBoundStyle({ kind: 'element', role, prop, value: v })
-                : adapter.writeOnce(prop, toScriptValue(prop, v, scale))
+                : adapter.writeOnce(prop, v)
             }
           />
         )}
@@ -525,7 +513,6 @@ function AnnotationRow({
         <PtField
           label={sp('sizeOf', { row: label })}
           value={adapter.valueOf('sizePt')}
-          scale={1}
           step={0.5}
           onChange={(v) =>
             bound ? void editBoundStyle({ kind: 'annotation', prop: 'sizePt', value: v }) : adapter.writeOnce('sizePt', v)

@@ -70,6 +70,27 @@ def test_a_value_it_cannot_read_exactly_is_a_red_not_a_guess():
         exported_string_array("export const E = ['a', ...OTHER] as const\n", "E")
 
 
+def test_a_readonly_set_of_string_literals_reads():
+    """`new Set([...])` 形状的闭集（`PAGE_PT_PROPS`）：数组里的纪律与普通数组相同。"""
+    src = "export const S: ReadonlySet<string> = new Set([\n  'a',\n  // 注释\n  'b',\n])\n"
+    assert exported_string_array(src, "S") == ["a", "b"]
+
+
+def test_a_spread_inside_a_set_is_a_red_not_a_silent_gap():
+    """#557 评审 P1：正则读法会静默漏掉展开进来的条目，而条数下限照样过。"""
+    with pytest.raises(AssertionError, match="别的东西"):
+        exported_string_array("export const S = new Set(['a', ...EXTRA])\n", "S")
+
+
+def test_a_set_built_from_something_else_is_a_red():
+    with pytest.raises(AssertionError, match="找到 0 处"):
+        exported_string_array("export const S = new Set(EXTRA)\n", "S")
+    with pytest.raises(AssertionError, match="不是紧跟着"):
+        exported_string_array("export const S = new Set(['a'], EXTRA)\n", "S")
+    with pytest.raises(AssertionError, match="找到 0 处"):
+        exported_string_array("export const S = Object.freeze(['a'])\n", "S")
+
+
 def test_type_annotated_declaration_still_reads():
     src = "export const E: readonly string[] = ['a', 'b'] as const\n"
     assert exported_string_array(src, "E") == ["a", "b"]
@@ -245,3 +266,57 @@ def test_interface_member_with_a_multiline_union_is_one_member():
     got = exported_interface_members(src, "F")
     assert list(got) == ["prop", "type", "value"]
     assert "'number'" in got["type"]
+
+
+# ---- 初始化式之后必须结束（#557 评审 P1：`new Set([...]).add('x')` 的 `'x'` 被静默丢掉）----
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "export const S: ReadonlySet<string> = new Set(['a']).add('x')\n",
+        "export const S = new Set(['a'])\n  .add('x')\n",
+        "export const S = new Set(['a']) // 注释\n  .add('x')\n",
+        "export const S = new Set(['a']) as ReadonlySet<string>\n",
+        "export const S = new Set(['a']) || OTHER\n",
+        "export const S = new Set(['a'])\n  ? A : B\n",
+        "export const S = new Set(['a'])\n`tag`\nexport const T = 1\n",
+        "export const E = ['a'].concat(['x'])\n",
+        "export const E = ['a']\n  .concat(EXTRA)\n",
+        "export const E = ['a', 'b'].filter((s) => s !== 'b')\n",
+        "export const E = ['a'] as const satisfies readonly string[]\n",
+        "export const E = [...['a']]\n",
+    ],
+)
+def test_a_continued_array_or_set_initializer_is_a_red(src):
+    with pytest.raises(AssertionError):
+        exported_string_array(src, src.split()[2].rstrip(":"))
+
+
+@pytest.mark.parametrize(
+    ("src", "name", "value"),
+    [
+        ("export const S = new Set(['a', 'b'])", "S", ["a", "b"]),  # 文件结束
+        ("export const S = new Set(['a', 'b',]);\nfoo()\n", "S", ["a", "b"]),
+        ("export const S = new Set([\n  'a',\n]) // 说明\n\nexport function f() {}\n", "S", ["a"]),
+        ("export const E = ['a'] as const\nconst x = 1\n", "E", ["a"]),
+        ("export const E = ['a'];\n", "E", ["a"]),
+    ],
+)
+def test_an_initializer_that_ends_there_still_reads(src, name, value):
+    assert exported_string_array(src, name) == value
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "export const D = 'a' + OTHER\n",
+        "export const D = 'a'.trim()\n",
+        "export const D = 'a'\n  .concat('b')\n",
+        "export const D = 'a' as string\n",
+        "export const D = 'a' ? 'b' : 'c'\n",
+    ],
+)
+def test_a_continued_string_initializer_is_a_red(src):
+    with pytest.raises(AssertionError):
+        exported_string(src, "D")

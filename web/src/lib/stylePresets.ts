@@ -1,4 +1,4 @@
-import type { Manifest, ManifestElement } from './api'
+import type { EditableField, Manifest, ManifestElement } from './api'
 import { t } from '@/i18n'
 import { panelScale } from './preflight'
 import { sameRules } from './specBinding'
@@ -129,12 +129,31 @@ export const PAGE_PT_PROPS: ReadonlySet<string> = new Set([
   'markersize',
   'capsize',
   'cap_thickness',
+  // 以下几条样式里不出现，但**属性页里**与上面那些并排摆着（2026-09-24，属性页改按页面 pt
+  // 显示）：边框卡的「全部」是 `spine_linewidth`、逐边是 `spine_<side>_linewidth`，一张卡里
+  // 一个页面值一个脚本值，「多个值」的判断就成了拿两种单位比大小。凡是 manifest 标 `pt`、
+  // 随面板**线性**缩放的量都在表里；`size`（散点面积，pt²）不在——它按缩放比的平方走
+  'spine_top_linewidth',
+  'spine_right_linewidth',
+  'spine_bottom_linewidth',
+  'spine_left_linewidth',
+  'grid_linewidth',
+  'bbox_linewidth',
+  'stroke_width',
+  'handle_markersize',
+  'axline_width',
+  'arrow_width',
+  'arrow_head',
+  'mutation_scale',
+  'labelpad',
 ])
 
 /**
  * 页面上的 pt → 写进 override 的脚本值。
  *
- * 取两位小数：manifest 把这些值按两位小数回报（`engine/manifest.py` 的 `round(…, 2)`），
+ * 取两位小数：manifest 把这些值按两位小数回报（`engine/manifest.py` 的 `round(…, 2)`；表里每一条
+ * 都是，`tests/test_page_pt_precision.py` 按 AST 看护——少一位的话输入 8.5 存 14.17、回报 14.2、
+ * 回显 8.52），
  * 预检读到的就是那两位——多写的位数下一轮就被截掉。用**就近**取整（误差 ≤ 0.005 × 缩放比）：
  * 一键修复知道自己要往规范的哪一侧走（`issueFix.writeFontSize` 按方向取整），样式不知道
  * 这个数贴着规范的哪条边，就近是唯一不偏向任何一侧的选择。缩放比算不出来时原样写。
@@ -142,14 +161,110 @@ export const PAGE_PT_PROPS: ReadonlySet<string> = new Set([
 export function toScriptValue(prop: string, value: unknown, scale: number): unknown {
   if (!PAGE_PT_PROPS.has(prop) || typeof value !== 'number') return value
   if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return value
-  return Math.round((value / scale) * 100) / 100
+  return roundPt(value / scale)
 }
 
 /** 脚本值 → 页面上的 pt（显示与提取用），同样两位小数 */
 export function toPageValue(prop: string, value: unknown, scale: number): unknown {
   if (!PAGE_PT_PROPS.has(prop) || typeof value !== 'number') return value
   if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return value
-  return Math.round(value * scale * 100) / 100
+  return roundPt(value * scale)
+}
+
+/**
+ * pt 数值的小数位——换算的取整与数字框的显示**同一个数**（`NumberField precision`）：
+ * 字号框以前显示一位小数，页面值 8.25 在属性页上成了 8.3、样式面板与问题面板却是 8.25。
+ */
+export const PT_DECIMALS = 2
+
+/**
+ * 两位小数就近，**用 `toFixed`**：问题面板的「当前 X pt」是预检的 `eff.toFixed(2)`（Python 侧
+ * `%.2f`，同一种按真实二进制值的就近），数字框显示也是 `toFixed`。`Math.round(v * 100)` 在
+ * 正好「半格」的值上会先乘出一个进位——缩放比 1.33 时脚本值 6.5 × 1.33 = 8.645（二进制里是
+ * 8.64499…），问题面板说 8.64，`Math.round` 却给 8.65：同一个字又是两个数。
+ */
+const roundPt = (v: number) => Number(v.toFixed(PT_DECIMALS))
+
+/**
+ * 一张面板的「页面 pt 透镜」：属性页、样式面板、浮动工具条读写图内以 pt 计的量时**都过它**
+ * （2026-09-24 用户拍板「统一按页面上的实际大小显示」）。
+ *
+ * 同一个刻度字号，属性页以前显示脚本里的 9、样式面板与问题面板显示页面上的 5.4——同一个字
+ * 三处两个数。换算因此只有这一份：`toPage` / `toScript` 就是上面两个函数，`field` 把 manifest
+ * 字段的当前值与上下界一起换到页面上。
+ *
+ * * **上下界约束的是脚本值**（引擎的字段说它接受什么），这里只是把它**换到页面上显示与钳位**
+ *   （`min × scale`），与样式面板的 `PtField` 同一个口径；不另造一套页面上的界。
+ * * **取整**：显示两位小数就近，写入两位小数就近（`toScriptValue` 的理由）。缩放比 ≤ 1 时
+ *   任何两位小数的页面值写进去再读回来都是原数；> 1 时页面上能表示的值间隔是 0.01 × 缩放比
+ *   （manifest 按两位小数回报脚本值），不可表示的输入真实渲染出来离它 ≤ 0.005 × 缩放比，显示出来差
+ *   一格（例：缩放比 1.33 时输入 8 回显 8.01，真实 8.0066 pt）。要消掉它得提高 manifest 的精度。
+ *   三处读的是同一个脚本值、同一个换算，所以无论哪种情况三处显示同一个数。
+ * * **缩放比算不出来**（`nativeW` 缺失；文档模型里它是必填，迁移时补成摆放宽度，渲染回来
+ *   按 manifest 的 `size_mm` 校正）：`scale = 1`，显示的就是脚本值。**不另外标「原始值」**：
+ *   预检在同一种情况下也按 1 量（`panelScale`），问题面板说的正是这个数——属性页单独标一句
+ *   「这是原始值」，反而是在宣称一个产品其余部分都不承认的差别。
+ * * 表外的属性、非数值原样进出，返回**同一个对象**（memo 不白白失效）。
+ */
+export interface PagePtLens {
+  /** 面板在页面上的缩放比；算不出来时为 1（与预检同一个兜底） */
+  scale: number
+  toPage: (prop: string, value: unknown) => unknown
+  toScript: (prop: string, value: unknown) => unknown
+  field: <F extends EditableField | undefined>(field: F) => F
+  /** 一个写死在控件上的**脚本坐标系**的界 → 页面上的界（表外原样；只乘不取整） */
+  bound: (prop: string, value: number) => number
+}
+
+export function pagePtLens(panel: PanelObject): PagePtLens {
+  const raw = panelScale(panel)
+  const scale = Number.isFinite(raw) && raw > 0 ? raw : 1
+  return {
+    scale,
+    toPage: (prop, value) => toPageValue(prop, value, scale),
+    toScript: (prop, value) => toScriptValue(prop, value, scale),
+    field: (f) => pageField(f, scale),
+    bound: (prop, value) => pageBound(prop, value, scale),
+  }
+}
+
+/**
+ * 脚本坐标系的上下界 → 页面上的界。**只乘不取整**：界是引擎接受什么的事实，钳到页面上的
+ * `min × scale` 再换回去正好是 `min`；取整反而可能让换回去的值落到界外一点点。
+ */
+function pageBound(prop: string, value: number, scale: number): number {
+  if (!PAGE_PT_PROPS.has(prop) || !Number.isFinite(scale) || scale <= 0 || scale === 1) return value
+  return value * scale
+}
+
+/** 什么都不换算的透镜：缩放比 1（缩放比为 1 时 `pagePtLens` 本来就原样进出） */
+const IDENTITY_LENS: PagePtLens = {
+  scale: 1,
+  toPage: (_prop, value) => value,
+  toScript: (_prop, value) => value,
+  field: (f) => f,
+  bound: (_prop, value) => value,
+}
+
+/**
+ * 应用一份样式到一张面板时用的透镜：样式的数字按 `pt_basis` 读——`'page'` 过这张面板的
+ * `pagePtLens`，缺席（旧版存下的样式，数字就是当年的脚本值）原样写。换算仍然只有
+ * `pagePtLens` 这一份；这里只决定「这份数字要不要过它」。
+ */
+export function styleLens(style: Pick<StyleProfileData, 'pt_basis'>, panel: PanelObject): PagePtLens {
+  return style.pt_basis === 'page' ? pagePtLens(panel) : IDENTITY_LENS
+}
+
+/** manifest 字段 → 页面上的字段（当前值两位小数；上下界见 `pageBound`） */
+export function pageField<F extends EditableField | undefined>(field: F, scale: number): F {
+  if (!field || !PAGE_PT_PROPS.has(field.prop) || field.type !== 'number') return field
+  if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return field
+  return {
+    ...field,
+    value: toPageValue(field.prop, field.value, scale),
+    ...(field.min != null ? { min: pageBound(field.prop, field.min, scale) } : {}),
+    ...(field.max != null ? { max: pageBound(field.prop, field.max, scale) } : {}),
+  }
 }
 
 /** 信封 → 编辑草稿。内容里的未知字段（`extra`）原样带着走。 */
@@ -294,9 +409,9 @@ export function planStyle(
     }
     const patches: PanelOverride[] = []
     const unmappable: string[] = []
-    // 样式里的 pt 是页面上的 pt：按这张面板的缩放比换回脚本坐标系再写。
-    // 不带 `pt_basis` 的旧样式存的是脚本值，原样写（缩放比当 1）
-    const scale = preset.pt_basis === 'page' ? panelScale(panel) : 1
+    // 样式里的 pt 是页面上的 pt：按这张面板的缩放比换回脚本坐标系再写（与属性页同一个透镜）。
+    // 不带 `pt_basis` 的旧样式存的是脚本值，原样写
+    const lens = styleLens(preset, panel)
     for (const [role, props] of Object.entries(preset.element)) {
       const els = manifest.elements.filter((e) => e.role === role)
       for (const el of els) {
@@ -308,7 +423,7 @@ export function planStyle(
             )
             continue
           }
-          patches.push({ gid: el.gid, prop, value: toScriptValue(prop, value, scale) })
+          patches.push({ gid: el.gid, prop, value: lens.toScript(prop, value) })
         }
       }
     }

@@ -43,12 +43,19 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   渲染表示，**raw text 一个字符不改**；`scientific` 的代价是 PDF 文本层里的
   `⁵` 变成 `5`，所以它必须由用户明确选。缺字形与「换了脸」是**两条规则、
   两句话**（`glyph-missing` / `glyph-substituted`）。
+* **图内以 pt 计的量按页面上的实际大小进出**（ADR 0082）：显示 = 脚本值 × `panelScale`、
+  输入是页面值、写 override 前换回脚本值，换算只在 `lib/stylePresets.pagePtLens` 一处，
+  装在写入器里（`useTextStyleAdapter` / `useElementWriter` / `useTickAxisAdapter` /
+  `FieldRow` / `BatchFieldRow` / `QuickEdit`）——控件拿到的已经是页面值，界面代码不许
+  import `panelScale` / `toPageValue` / `toScriptValue`（AST 看护）。局部预览拿换回去的脚本值
+  （与 override 同一个数）。两位小数、`toFixed`（与问题面板的 `eff.toFixed(2)` 同一种取整）。
+  上下界约束的是脚本值，换到页面上显示与钳位。画布标注的 `sizePt` 本来就是页面 pt，不换算。
 * 装不上的字体：`manifest` 的 `options_unavailable` → 界面**保留名字 +
   warning**，绝不换掉再改文档。
 * 图内中文（ADR 0045）：引擎给每段文字接了本机的中日韩回退链，manifest 用
   `cjk_family` 报是哪张脸画的；预检 `cjk-fallback-missing` 的主语是它（不是正文
   族名），`preflight.ts` 与 Python 侧同源，golden 向量看护。
-* 看护：`lib/typography.test.ts` / `components/inspector/typographyAdapter.test.tsx`
+* 看护：`lib/pagePtLens.test.ts` / `components/inspector/pagePtInspector.test.tsx` / `lib/typography.test.ts` / `components/inspector/typographyAdapter.test.tsx`
   / `lib/canvasTextFont.test.ts` / `TextSection.test.tsx` / `textStyleBar.test.tsx`
   / `canvas/TextView.test.tsx` / `canvas/contextBar.test.tsx`；Python 侧
   `tests/test_typography_families.py`。

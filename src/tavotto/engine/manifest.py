@@ -1347,7 +1347,7 @@ def _text_fields(t) -> list[dict]:
                 {
                     "prop": "labelpad",
                     "type": "number",
-                    "value": round(float(axis3d.labelpad), 1),
+                    "value": round(float(axis3d.labelpad), 2),
                     "min": -30,
                     "max": 60,
                     "step": 1,
@@ -2374,7 +2374,7 @@ def _arrowpatch_fields(a) -> list[dict]:
         {
             "prop": "mutation_scale",
             "type": "number",
-            "value": round(float(a.get_mutation_scale()), 1),
+            "value": round(float(a.get_mutation_scale()), 2),
             "min": 1,
             "max": 40,
             "step": 0.5,
@@ -3625,10 +3625,11 @@ def _axes3d_fields(ax) -> list[dict]:
         {
             "prop": "arrow_head",
             "type": "number",
-            "value": round(float(st["head"]), 1),
+            "value": round(float(st["head"]), 2),
             "min": 2,
             "max": 20,
             "step": 0.5,
+            "unit": "pt",
             "group": "轴箭头",
         },
     ]
