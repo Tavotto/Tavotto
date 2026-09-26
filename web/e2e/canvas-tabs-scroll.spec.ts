@@ -41,14 +41,18 @@ test('画布页签条没有纵向溢出，页签多了仍能横滚', async ({ ap
   for (let i = 0; i < 14; i++) await newCanvas.click()
   await expect(strip.getByRole('tab')).toHaveCount(15)
 
-  // 横向：放不下时仍然能滚——scrollWidth 超出，scrollLeft 真的改得动
+  // 横向：放不下时仍然能滚——scrollWidth 超出，scrollLeft 真的改得动。
+  // 光看 scrollLeft 不够：overflow-x: hidden 的盒子脚本照样能改 scrollLeft，用户却滚不动，
+  // 所以一并钉住 overflowX 是可滚的那两档
   const h = await strip.evaluate((el) => {
     const before = el.scrollLeft
     el.scrollLeft = 0
     const atStart = el.scrollLeft
     el.scrollLeft = el.scrollWidth
-    return { sw: el.scrollWidth, cw: el.clientWidth, before, atStart, atEnd: el.scrollLeft }
+    const overflowX = getComputedStyle(el).overflowX
+    return { sw: el.scrollWidth, cw: el.clientWidth, overflowX, before, atStart, atEnd: el.scrollLeft }
   })
+  expect(['auto', 'scroll'], JSON.stringify(h)).toContain(h.overflowX)
   expect(h.sw, JSON.stringify(h)).toBeGreaterThan(h.cw)
   expect(h.atStart, JSON.stringify(h)).toBe(0)
   expect(h.atEnd, JSON.stringify(h)).toBeGreaterThan(0)
