@@ -4,6 +4,7 @@ import { panelScale } from './preflight'
 import { sameRules } from './specBinding'
 import { effectiveCanvasFamily, type CanvasTextFamily } from './typography'
 import type { FigureDocument, PanelObject, PanelOverride, TextObject } from '@/types/document'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /**
  * 论文样式预设：一组可复用的排版规格（字号/线宽/刻度/图例/配色/页面）。
@@ -336,12 +337,11 @@ export function planStyle(
         i += 1
       }
     }
-    const overwrites = patches.filter((p) =>
-      panel.overrides.some(
-        (o) => o.gid === p.gid && o.prop === p.prop &&
-          JSON.stringify(o.value) !== JSON.stringify(p.value),
-      ),
-    ).length
+    // 比生效的那条（重复 (gid, prop) 时是最后一条，与写入同一判据）
+    const overwrites = patches.filter((p) => {
+      const cur = effectiveOverride(panel.overrides, p.gid, p.prop)
+      return cur !== undefined && JSON.stringify(cur.value) !== JSON.stringify(p.value)
+    }).length
     plans.push({ panel, patches, overwrites, unmappable })
   }
 

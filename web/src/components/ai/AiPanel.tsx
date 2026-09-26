@@ -22,6 +22,7 @@ import { SwapText } from '@/components/ui/SwapText'
 import {
   agentById,
   agentDisplayName,
+  backendErrorMsg,
   backendErrorText,
   aiRevert,
   deleteAiHistory,
@@ -985,10 +986,14 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
               className="text-danger"
               aria-label={ai('history.revert')}
               onClick={() =>
-                void aiRevert(entry.id).then(() => {
-                  useUiStore.getState().setStatus(msg('history.reverted', undefined, 'ai'))
-                  onChanged()
-                })
+                void aiRevert(entry.id).then(
+                  () => {
+                    useUiStore.getState().setStatus(msg('history.reverted', undefined, 'ai'))
+                    onChanged()
+                  },
+                  // 脚本在这次修改之后又变过（`ai_revert_conflict`）等：说出口，不装作已回滚
+                  (e) => useUiStore.getState().setStatus(backendErrorMsg(e), 'error'),
+                )
               }
             >
               <RotateCcw size={ICON_SIZE.xs} />
@@ -1220,7 +1225,13 @@ function ProcessRow({ kind, text }: { kind: string; text: string }) {
 }
 
 async function revertSession(session: AiSession) {
-  await useAiStore.getState().revert(session.id)
+  try {
+    await useAiStore.getState().revert(session.id)
+  } catch (e) {
+    // 脚本在这次修改之后又变过（`ai_revert_conflict`）等：说出口，不装作已回滚
+    useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
+    return
+  }
   // 回滚后 worker 会话同样失效，重建让画布自动回到改动前的样子
   if (session.fileId) useRenderStore.getState().markStale([session.fileId])
   useUiStore.getState().setStatus(msg('session.revertedStatus', undefined, 'ai'))

@@ -222,6 +222,117 @@ describe('多画布数据层', () => {
     }
   })
 
+  it('工作台挂载前已经装进来的文档，恢复不再从磁盘读一遍盖上去', async () => {
+    // 教程 / 切项目的 prepareDocument 先把文档装好了（documentId 就是 currentDoc），
+    // 用户随即开始编辑；启动恢复的那次读盘晚到的话，会把磁盘上旧一版盖回来——慢机器上
+    // 教程一打开就拖，拖动当场作废（windows-exe-smoke）
+    const s = () => useDocumentStore.getState()
+    s().commit(literal('加字'), (d) => {
+      d.objects.push(text('t1', 'x'))
+    })
+    expect(flushAutosave()).toBe('saved')
+    await tick()
+    const docId = s().documentId
+    localStorage.setItem('tavotto.currentDoc', docId)
+    // 内存里这份在磁盘那一版之后又改过
+    s().commit(literal('再加字'), (d) => {
+      d.objects.push(text('t2', 'y'))
+    })
+    let reads = 0
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (!init?.method || init.method === 'GET') reads += 1
+      return baseFetchImpl(url as string, init)
+    }) as typeof fetch
+    try {
+      expect(await restoreSession()).toBe(false)
+    } finally {
+      globalThis.fetch = baseFetchImpl
+    }
+    expect(reads).toBe(0)
+    expect(s().doc.objects.map((o) => o.id)).toEqual(['t1', 't2'])
+  })
+
+  it('读盘在路上时别处换过或改过文档：恢复让位，不把旧的盖回来', async () => {
+    const s = () => useDocumentStore.getState()
+    s().commit(literal('加字'), (d) => {
+      d.objects.push(text('t1', 'x'))
+    })
+    expect(flushAutosave()).toBe('saved')
+    await tick()
+    const docId = s().documentId
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
+    localStorage.setItem('tavotto.currentDoc', docId)
+    // 扣住那次读盘
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (!init?.method || init.method === 'GET') await gate
+      return baseFetchImpl(url as string, init)
+    }) as typeof fetch
+    try {
+      const restoring = restoreSession()
+      // 读盘还在路上，用户已经在当前文档上动手了
+      s().commit(literal('用户的编辑'), (d) => {
+        d.objects.push(text('mine', 'z'))
+      })
+      release()
+      expect(await restoring).toBe(false)
+    } finally {
+      globalThis.fetch = baseFetchImpl
+    }
+    expect(s().documentId).toBe('d_other')
+    expect(s().doc.objects.map((o) => o.id)).toEqual(['mine'])
+  })
+
+  it.each([
+    ['改项目名', () => useDocumentStore.getState().renameProject('用户刚改的名字')],
+    [
+      '挪动非激活画布的顺序',
+      () => {
+        useDocumentStore.getState().reorderCanvases(0, 1)
+      },
+    ],
+    [
+      '改非激活画布的名字',
+      () => {
+        const st = useDocumentStore.getState()
+        const other = st.canvases.find((c) => c.id !== st.activeCanvasId)!
+        st.renameCanvas(other.id, '用户刚改的画布名')
+      },
+    ],
+  ])('读盘在路上时%s（不动激活画布的 doc）：恢复同样让位', async (_label, edit) => {
+    const s = () => useDocumentStore.getState()
+    s().commit(literal('加字'), (d) => {
+      d.objects.push(text('t1', 'x'))
+    })
+    expect(flushAutosave()).toBe('saved')
+    await tick()
+    const docId = s().documentId
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
+    s().addCanvas() // 两张画布：第二张激活，第一张是「非激活」的那张
+    localStorage.setItem('tavotto.currentDoc', docId)
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (!init?.method || init.method === 'GET') await gate
+      return baseFetchImpl(url as string, init)
+    }) as typeof fetch
+    try {
+      const restoring = restoreSession()
+      const docRef = s().doc
+      edit()
+      expect(s().doc).toBe(docRef) // 这些编辑确实没碰激活画布的 doc——量的是另外几片
+      const after = { name: s().projectMeta.name, canvases: s().canvases }
+      release()
+      expect(await restoring).toBe(false)
+      expect(s().documentId).toBe('d_other')
+      expect(s().projectMeta.name).toBe(after.name)
+      expect(s().canvases).toBe(after.canvases)
+    } finally {
+      globalThis.fetch = baseFetchImpl
+    }
+  })
+
   it('自动保存：磁盘落 schema 3，成功后本机副本清空', async () => {
     const s = () => useDocumentStore.getState()
     s().commit(literal('加字'), (d) => {

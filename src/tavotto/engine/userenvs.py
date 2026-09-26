@@ -405,21 +405,37 @@ _SOURCE_RANK = {
     SOURCE_SYSTEM: 4,
 }
 
-_probe_cache: dict[tuple[tuple[str, str], tuple[str, ...]], dict] = {}
+_probe_cache: dict[tuple[tuple[str, str], tuple[str, ...], bool], dict] = {}
 
 
-def _probe(python: str, modules: tuple[str, ...]) -> dict:
+def _probe(python: str, modules: tuple[str, ...], *, bundled: bool = False) -> dict:
     from . import projectenv
 
-    key = (_key(python), modules)
+    key = (_key(python), modules, bundled)
     with _lock:
         hit = _probe_cache.get(key)
     if hit is not None:
         return hit
-    health = projectenv.probe_environment(python, modules=modules)
+    # 只在内置 runtime 时才带这个参数：用户环境的体检调用形状与以前逐字相同
+    extra = {"bundled": True} if bundled else {}
+    health = projectenv.probe_environment(python, modules=modules, **extra)
     with _lock:
         _probe_cache[key] = health
     return health
+
+
+def imports_missing(python: str, modules: list[str], *, bundled: bool = False) -> list[str]:
+    """`modules` 里此刻这个解释器**确实** import 不到的那几个（ADR 0079 修订 2026-09-25）。
+
+    与 `evaluate()` 同一条体检（同一个缓存）。判不出的不算缺：体检起不来、结果里没有这一项
+    （`modules_ok` 只有真 import 过的才有 True / False）——拿「没量到」去触发发现，就是在一个
+    根本没问过的解释器上替用户换环境。`bundled`：它是内置 runtime，按 worker 的环境与参数量
+    （`projectenv.probe_environment(bundled=True)`）。"""
+    mods = tuple(dict.fromkeys(m for m in modules if m))
+    if not mods:
+        return []
+    ok_map = _probe(python, mods, bundled=bundled).get("modules_ok") or {}
+    return [m for m in mods if ok_map.get(m) is False]
 
 
 def evaluate(

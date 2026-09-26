@@ -6,6 +6,7 @@ import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
 import { emitActivity } from '@/lib/activity'
+import { effectiveOverride, effectiveOverrideIndex } from '@/lib/effectiveOverride'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
 import { modKey } from '@/lib/utils'
@@ -749,9 +750,19 @@ export function setOverride(
   value: unknown,
   immediate: boolean | RenderPolicy = false,
 ) {
+  // 同值写入是 no-op：不改数组、不进历史、不渲染（GEO-B6）。按 JSON 比——override
+  // 数组的 JSON 就是变体键，这里与键同一把尺子
+  // 比的是**生效的那条**：载入的旧文档可能带重复的 (gid, prop)，引擎按 last-wins 取值
+  // （engine/patchspec.py），前面的重复条目同值不代表这次写入是 no-op
+  const current = findObject(panelId)
+  if (current?.type === 'panel') {
+    const i = effectiveOverrideIndex(current.overrides, gid, prop)
+    if (i >= 0 && JSON.stringify(current.overrides[i].value) === JSON.stringify(value)) return
+  }
+  // 原地 upsert（与批量 setOverrides 同一个 upsertOverrides）：filter + push 会把命中的
+  // 那条挪到数组末尾，顺序一变变体键就变
   updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel(prop) }), (o) => {
-    o.overrides = o.overrides.filter((p) => !(p.gid === gid && p.prop === prop))
-    o.overrides.push({ gid, prop, value })
+    upsertOverrides(o, [{ gid, prop, value }])
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, immediate)
@@ -942,7 +953,7 @@ export function setLegendPlacement(
     panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
   )
   const changes = plan.set.filter((t) => {
-    const cur = panel.overrides.find((p) => p.gid === t.gid && p.prop === t.prop)
+    const cur = effectiveOverride(panel.overrides, t.gid, t.prop)
     return !cur || JSON.stringify(cur.value) !== JSON.stringify(t.value)
   })
   if (!removes.length && !changes.length) return
@@ -1120,7 +1131,8 @@ function upsertOverrides(
   patches: { gid: string; prop: string; value: unknown }[],
 ) {
   for (const p of patches) {
-    const i = panel.overrides.findIndex((x) => x.gid === p.gid && x.prop === p.prop)
+    // 改生效的那条（重复条目时是最后一条，引擎 last-wins）；改第一条会被后面的遮住
+    const i = effectiveOverrideIndex(panel.overrides, p.gid, p.prop)
     if (i >= 0) panel.overrides[i] = { ...panel.overrides[i], ...p }
     else panel.overrides.push(p)
   }

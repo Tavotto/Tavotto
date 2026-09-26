@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils'
 import type { GuidedTaskSpec } from '../examples'
 import { pg } from '../pgText'
 import type { SourceIntegrity } from '../sourceIntegrity'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 export function GuidedTask({
   task,
@@ -57,9 +58,7 @@ export function GuidedTask({
 
   // 目标元素身上有任何 override = 用户已经选中并动过它，第 1 步早就过了
   const touchedTarget = panel.overrides.some((o) => o.gid === task.targetGid)
-  const override = panel.overrides.find(
-    (o) => o.gid === task.targetGid && o.prop === task.prop,
-  )
+  const override = effectiveOverride(panel.overrides, task.targetGid, task.prop)
   const valueHit =
     override != null && Number(override.value) === Number(task.targetValue)
 

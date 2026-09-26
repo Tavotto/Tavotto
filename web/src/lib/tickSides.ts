@@ -35,6 +35,7 @@
  * 要计划（一次点击 = 一份 patch 列表 = 一条历史），两处永远同源。
  */
 import type { Manifest, ManifestElement, SpineGeom, SpineSide } from './api'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 export type { SpineGeom, SpineSide }
 
@@ -237,7 +238,7 @@ const DIRECTIONS = new Set<string>(['in', 'out', 'inout'])
 
 /** 覆盖优先、其次 manifest 当前值 */
 function readProp(el: ManifestElement, overrides: readonly OverrideLike[], prop: string): unknown {
-  const ov = overrides.find((o) => o.gid === el.gid && o.prop === prop)
+  const ov = effectiveOverride(overrides, el.gid, prop)
   if (ov) return ov.value
   return el.editable.find((f) => f.prop === prop)?.value
 }

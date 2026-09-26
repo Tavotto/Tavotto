@@ -18,7 +18,7 @@ import {
   type ResizeDir,
 } from '@/lib/geometry'
 import type { Manifest, ManifestElement } from '@/lib/api'
-import { flipY, resizeGroup, round4, unionBox, type Rect4 } from '@/lib/axesLayout'
+import { flipY, resizeGroup, round4, sameAfterRound4, unionBox, type Rect4 } from '@/lib/axesLayout'
 import {
   anchorOf,
   arrowEndpointsOf,
@@ -1349,6 +1349,18 @@ export function startElementDrag(
       }
       const [dfx, dfy] = last
       const own = { gid: element.gid, prop: dragProp, value: [anchor[0] + dfx, anchor[1] + dfy] }
+      // 拖出去又拖回原处：终点没有可表示的位移 = 与点一下同样处理（GEO-07）。写一条
+      // 等于原锚点的 pos_frac 会把标题 / 轴标签钉出 matplotlib 的自动布局
+      if (sameAfterRound4(own.value, anchor)) {
+        cancelElementPreview()
+        recordDiagnosticEvent({
+          type: 'element.drag.cancel',
+          panel: panelHash(panel.id),
+          gid: element.gid,
+          cancelled: false,
+        })
+        return
+      }
       // 跟随集合按松手那一下的修饰键定（见 carriesContents）
       const followers = carriesContents(ev) ? carried.map((c) => c.shift(dfx, dfy)) : []
       // 带着内容走时一次 setOverrides = 一条撤销 = 一次权威渲染
@@ -1435,7 +1447,13 @@ export function startArrowDrag(
     },
     onEnd: (moved, _ev, end) => {
       interaction().end()
-      if (!moved || !last || end.cancelled) {
+      // 终点净位移为零（拖回原处）同样不写（GEO-07）
+      if (
+        !moved ||
+        !last ||
+        end.cancelled ||
+        sameAfterRound4([...last.a, ...last.b], [...pts[0], ...pts[1]])
+      ) {
         cancelElementPreview()
         return
       }
@@ -1642,7 +1660,8 @@ export function startAxesDrag(
     },
     onEnd: (moved, _ev, end) => {
       interaction().end()
-      if (!moved || !last || end.cancelled) {
+      // 终点净位移为零（拖回原处 / 贴边钳回原位）同样不写（GEO-07）
+      if (!moved || !last || end.cancelled || sameAfterRound4(last, start)) {
         cancelElementPreview()
         return
       }
@@ -1798,9 +1817,23 @@ export function startElementGroupMove(
   const shifted = (dfx: number, dfy: number): Rect4[] =>
     entries.map((en) => [en.box[0] + dfx, en.box[1] + dfy, en.box[2], en.box[3]])
 
+  // 祖先也在选区里的成员不单独平移 SVG（GEO-03）：它的 <g> 嵌在祖先的 <g> 里，祖先一平移
+  // 它已经跟着动了，再来一次就是 2Δ、权威图一到又跳回 Δ。与 startAxesDrag 的
+  // `previewsSeparately` 同一个前提：gid 前缀 = SVG 嵌套。只管预览——提交照样每个成员
+  // 写自己那条（子图写 position、文字写 figure 锚定的 pos_frac），引擎里各走一次 Δ
+  const keyList = [...keys]
+  const nestedInSelection = (gid: string) => keyList.some((k) => gid.startsWith(`${k}.`))
+  const previewKeys = keyList.filter((k) => !nestedInSelection(k))
+  // 随行元素同一个前提：嵌在某个选中成员 <g> 里的，交给祖先
+  const previewedCompanions = previewCompanions.filter((gid) => !nestedInSelection(gid))
+  // 被带着走的内容同理：整体平移的那些若嵌在选中的子图里，也交给祖先的 <g>
+  const previewedCarried = carried.filter(
+    (c) => !(nestedInSelection(c.gid) && (!c.ends || (c.ends[0] && c.ends[1]))),
+  )
+
   // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove（见 startArrowDrag）
   let last: [number, number] = [0, 0]
-  const unwatchKeys = watchCarryKeys(carried, () => last)
+  const unwatchKeys = watchCarryKeys(previewedCarried, () => last)
   // 整组的包围框参与吸附；组员、它们的后代、随行元素与形状装着的内容一起动，不出线
   const group0 = unionBox(entries.map((en) => en.box))
   const snapper = group0
@@ -1838,18 +1871,19 @@ export function startElementGroupMove(
         boxes: Object.fromEntries(entries.map((en, i) => [en.key, boxes[i]])),
         group: unionBox(boxes) ?? undefined,
       })
-      for (const en of entries) previewTransform(en.key, dfx, dfy)
-      for (const gid of previewCompanions) previewTransform(gid, dfx, dfy)
-      if (carried.length) previewCarried(carried, dfx, dfy, carriesContents(ev))
+      for (const k of previewKeys) previewTransform(k, dfx, dfy)
+      for (const gid of previewedCompanions) previewTransform(gid, dfx, dfy)
+      if (previewedCarried.length) previewCarried(previewedCarried, dfx, dfy, carriesContents(ev))
     },
     onEnd: (moved, ev, end) => {
       unwatchKeys()
       interaction().end()
-      if (!moved || end.cancelled) {
+      const boxes = shifted(last[0], last[1])
+      // 终点净位移为零（拖回原处）同样不写（GEO-07）：位移是全组共用的，看一个框就够
+      if (!moved || end.cancelled || entries.every((en, i) => sameAfterRound4(boxes[i], en.box))) {
         cancelElementPreview()
         return
       }
-      const boxes = shifted(last[0], last[1])
       const patches = entries.map((en, i) => en.write(boxes[i]))
       setOverrides(panel.id, hist('moveElements', { count: entries.length }), [
         ...patches,
@@ -1902,11 +1936,12 @@ export function startGroupResize(
     },
     onEnd: (moved, ev, end) => {
       interaction().end()
-      if (!moved || end.cancelled) {
+      const box = last ?? nextGroup(ev.clientX - e.clientX, ev.clientY - e.clientY)
+      // 终点净位移为零（拖回原处）同样不写（GEO-07）
+      if (!moved || end.cancelled || sameAfterRound4(box, group.box)) {
         cancelElementPreview()
         return
       }
-      const box = last ?? nextGroup(ev.clientX - e.clientX, ev.clientY - e.clientY)
       const patches = groupPatches(group, box)
       setOverrides(panel.id, hist('resizeAxes', { count: group.entries.length }), patches)
       commitElementPreview(panel.id)

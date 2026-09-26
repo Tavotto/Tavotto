@@ -30,12 +30,18 @@
   `gestureCoordinator.finishActiveGesture()`。**光调 `endTxn()` 不够**——
   `useFieldGesture` 自己还有 open 标记、安静计时器、SVG 预览会话和挂起的定稿
   渲染，事务被外人收掉而 hook 不知情的话那些状态会一直悬着。
-* **没有视觉位移就不写 override**：no-op 判据收在 `layoutBoxes()` 一处
-  （round4 之后逐位相等 = 没有可表示的位移，阈值与写出去的 override 精度同源）。
+* **没有视觉位移就不写 override**：no-op 判据只有 `axesLayout.sameAfterRound4()` 一份
+  （round4 之后逐位相等 = 没有可表示的位移，阈值与写出去的 override 精度同源），
+  对齐的 `layoutBoxes()` 与图内拖动的每个松手入口（单拖 / 整组平移 / 子图移动与缩放 /
+  箭头 / 成组缩放）共用；拖动按**终点净位移**判，拖出去又拖回原处 = 没动（QA GEO-07）。
   给「本来就在目标位置」的元素写一条等于当前值的绝对坐标，等于把标题/轴标签/
   图例从 matplotlib 自动布局里钉死，此后改字号改图幅它都不会再让位。
 * override 的 upsert **原地改值**，不许 `filter(...)+push(...)`：override 数组
-  的 JSON 就是变体键，顺序一变键就变 = 一次完全没必要的重渲染。
+  的 JSON 就是变体键，顺序一变键就变 = 一次完全没必要的重渲染。单条 `setOverride`
+  与批量 `setOverrides` 共用 `upsertOverrides`；单条的同值写入整个是 no-op（不进历史、
+  不渲染）。旧文档里重复的 (gid, prop) 按引擎的 last-wins：改的、比的、读的都是最后那条——
+  判据只有 `lib/effectiveOverride.ts` 一份，按 (gid, prop) 取 override 值不许再写 `overrides.find(...)`
+  （那回的是第一条：控件显示过期值、下一次拖动从过期值起跳）。
 * 撤销的落点要还在：每个文件保留最近 4 档成功变体（有界），`latest` 按**请求
   序号**推进——乱序返回时旧变体只入库、不挪 `latest`，也不丢弃（同文件的另一个
   副本可能还等着它）。
@@ -43,7 +49,7 @@
   `preview_png`），出不来就退回磁盘图并明确标「近似预览」，**不许无提示地拿
   磁盘原图冒充版本视觉状态**。只给用户当前展开的那一份渲染。
 * 看护：`store/geometryAuthority.test.ts`、`store/alignAction.test.ts`、
-  `canvas/alignUndoConvergence.test.tsx`、`diagnostics/store.test.ts`（追踪环已并入
+  `canvas/alignUndoConvergence.test.tsx`、`canvas/inFigureDragNoop.test.tsx`、`diagnostics/store.test.ts`（追踪环已并入
   诊断模块，ADR 0016）。
   测试里「这一版已经精确画好」用 `test/renderFixtures.ts` 的 `seedExactRender()`
   ——手写 `{manifest, status:'ready'}` 造出来的是真实渲染永远不会有的形状。

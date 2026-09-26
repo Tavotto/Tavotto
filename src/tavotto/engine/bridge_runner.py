@@ -357,7 +357,24 @@ def _take_token() -> str:
 
 
 class Control:
-    """与父进程的一条控制连接。**只在主线程上使用。**"""
+    """与父进程的一条控制连接。**只在主线程上使用。**
+
+    **握手之后，对端 reset 与对端 EOF 是同一件事：父进程走了**（#240）。
+    父进程关掉连接之后我们只要再写一个字节，对端内核就回 RST；紧接着的
+    `recv` 看到的是 EOF 还是 `ECONNRESET`，只取决于 RST 与这次 `recv`
+    谁先到——纯时序，不是两种情形。典型的一次：用户按 Ctrl+C，CLI 撤掉
+    relay（`runcli._wait_for_child_process`），脚本收尾后进"脚本结束"屏障，
+    先发 `barrier` 事件再读——读到 EOF 就放开屏障、透传脚本的退出码；
+    读到 reset 就是一串 Tavotto 的 traceback 和退出码 1，还替用户改了 Ctrl+C
+    的含义。所以两者**在这一个类里归成同一个结论**：`readline()` 返回 `""`，
+    之后的发送一律不做。
+    """
+
+    #: 握手之后在这条连接上出现就意味着"父进程走了"的错误。`ConnectionError`
+    #: 恰好是 reset / 对端已关（`EPIPE`）/ abort / refused 四个——**不放宽到
+    #: `OSError`**：别的 OSError（坏 fd、编码层之外的故障）不是"对端走了"，
+    #: 吞掉它等于把我们自己的缺陷也归成断线。
+    PARENT_GONE = (ConnectionError,)
 
     def __init__(self, host: str, port: int, token: str):
         self.sock = socket.create_connection((host, port), timeout=30.0)
@@ -370,7 +387,11 @@ class Control:
         # 因为协议就跑在它的 stdout 上）。这里协议在独立 socket 上，而用户的
         # stdio 是他程序的一部分——替他改编码就不是"与你自己敲那条命令等同"了。
         self.rfile = self.sock.makefile("r", encoding="utf-8", newline="\n")
-        self._send({HELLO_KEY: 1, "token": token, "pid": os.getpid(), "protocol_version": 1})
+        #: 父进程已经走了（EOF 或 reset）。握手期间不设它：那时一行用户代码
+        #: 还没跑，连不上就该大声失败（CLI 那边报 `bridge_child_exited`）。
+        self.gone = False
+        hello = {HELLO_KEY: 1, "token": token, "pid": os.getpid(), "protocol_version": 1}
+        self.sock.sendall((json.dumps(hello, ensure_ascii=False) + "\n").encode("utf-8"))
         line = self.rfile.readline()
         if not line:
             raise ConnectionError("父进程在握手时就关掉了连接")
@@ -379,7 +400,15 @@ class Control:
             raise ConnectionError(f"握手被拒绝: {resp.get('code') or resp}")
 
     def _send(self, obj: dict) -> None:
-        self.sock.sendall((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
+        self._sendline(json.dumps(obj, ensure_ascii=False))
+
+    def _sendline(self, line: str) -> None:
+        if self.gone:
+            return
+        try:
+            self.sock.sendall((line + "\n").encode("utf-8"))
+        except self.PARENT_GONE:
+            self.gone = True
 
     def event(self, name: str, **fields) -> None:
         self._send({EVENT_KEY: name, **fields})
@@ -401,10 +430,19 @@ class Control:
                 },
                 ensure_ascii=False,
             )
-        self.sock.sendall((line + "\n").encode("utf-8"))
+        self._sendline(line)
 
     def readline(self) -> str:
-        return self.rfile.readline()
+        """下一行；父进程走了（EOF **或** reset）一律是 `""`。"""
+        if self.gone:
+            return ""
+        try:
+            line = self.rfile.readline()
+        except self.PARENT_GONE:
+            line = ""
+        if not line:
+            self.gone = True
+        return line
 
     def close(self) -> None:
         with contextlib.suppress(OSError):

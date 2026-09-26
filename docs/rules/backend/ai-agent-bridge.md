@@ -5,7 +5,10 @@
 
 - `POST /api/ai/run` → spawn 本机的编码 Agent CLI（`codex exec` / `claude -p`），
   cwd=figures 目录；修改前快照到 `cache/ai_snapshots/`，结束后 diff 经 SSE
-  `ai.done` 推送；revert 恢复快照。**文件真的变了就在 `ai.done` 之前走统一刷新**
+  `ai.done` 推送；revert 恢复快照——**只回滚这次 AI 改完的那一版**：会话结束时
+  记下 `after_sha256`（内存会话 + sidecar），脚本此后又变过（人工 / 另一次 AI /
+  删除）就 409 `ai_revert_conflict`、原件零改动；没有记录（中断会话、老 sidecar）
+  是「不知道」一档，照旧放行（`tests/test_ai_revert_stale.py`，QA STATE-09）。**文件真的变了就在 `ai.done` 之前走统一刷新**
   （ADR 0041）：`ai_bridge.run(on_changed)` 是注入的钩子，app 层接
   `_after_ai_change(ctx, script)`——顺序与 watcher 的 `_dispatch` 逐字相同（作废
   worker → `refresh_project(reason="ai")` → `panel.file_changed`，payload 带

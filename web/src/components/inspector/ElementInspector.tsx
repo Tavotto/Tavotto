@@ -166,6 +166,7 @@ import {
   type LegendAnchor,
 } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /** 本文件的文案都在 inspector:element.* 下 */
 const el = (key: string, values?: Record<string, unknown>) =>
@@ -1835,7 +1836,7 @@ function BatchFieldRow({
 
 /** 当前值：优先取尚未渲染回来的 override，保证输入即时反馈 */
 function currentValue(panel: PanelObject, gid: string, field: EditableField): unknown {
-  const ov = panel.overrides.find((p) => p.gid === gid && p.prop === field.prop)
+  const ov = effectiveOverride(panel.overrides, gid, field.prop)
   return ov ? ov.value : field.value
 }
 
@@ -2869,7 +2870,7 @@ function UnsupportedNote({ role }: { role: string }) {
 function HiddenElements({ panel, manifest }: { panel: PanelObject; manifest?: Manifest | null }) {
   const [open, setOpen] = useState(false)
   const hidden = (manifest?.elements ?? []).filter((el) =>
-    panel.overrides.some((p) => p.gid === el.gid && p.prop === 'visible' && p.value === false),
+    effectiveOverride(panel.overrides, el.gid, 'visible')?.value === false,
   )
   if (!hidden.length) return null
 

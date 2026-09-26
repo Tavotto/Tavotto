@@ -31,7 +31,7 @@ import {
 } from '@/lib/api'
 import {
   forgetLocalDocument,
-  readAutosaveDoc,
+  loadAutosavedDocument,
   resumeAutosave,
   suspendAutosaveFor,
   useDocumentStore,
@@ -136,9 +136,9 @@ function fail(reason: TutorialFailure, e?: unknown): TutorialOutcome {
  */
 async function loadTutorialDocument(meta: TutorialMetadata): Promise<boolean> {
   const id = meta.document_id
-  const store = useDocumentStore.getState()
-  const { doc: saved } = await readAutosaveDoc(id)
-  if (saved) return store.switchDocument(saved, id)
+  // 槽位里有就切过去，读盘带回来的恢复副本 / schema 太新的提示由它挂上（切换之后）
+  const saved = await loadAutosavedDocument(id)
+  if (saved.loaded) return true
   let raw: unknown
   try {
     raw = (await fetchLayout(meta.document_name)).doc
@@ -147,7 +147,10 @@ async function loadTutorialDocument(meta: TutorialMetadata): Promise<boolean> {
   }
   const pd = migrateToProject(raw)
   if (!pd) return false
-  return useDocumentStore.getState().switchDocument(pd, id)
+  const ok = await useDocumentStore.getState().switchDocument(pd, id)
+  // 槽位读不了（schema 太新）才退到项目里的画布文件：那句提示同样要说，在这次切换之后挂上
+  if (ok && saved.notice) useDocumentStore.setState({ docNotice: saved.notice })
+  return ok
 }
 
 /**
