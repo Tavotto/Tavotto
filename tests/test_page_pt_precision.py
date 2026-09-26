@@ -451,7 +451,7 @@ def _emitted_as_is(node: ast.AST, parents: dict[ast.AST, ast.AST], func: ast.AST
             )
         return _emitted_as_is(p, parents, func, depth + 1)
     if isinstance(p, ast.Starred):
-        return isinstance(parents.get(p), (ast.List, ast.Tuple)) and _emitted_as_is(p, parents, func, depth + 1)
+        return _emitted_as_is(p, parents, func, depth + 1)
     if isinstance(p, ast.IfExp) and node in (p.body, p.orelse):
         return _emitted_as_is(p, parents, func, depth + 1)
     if (
@@ -471,8 +471,6 @@ def _emitted_as_is(node: ast.AST, parents: dict[ast.AST, ast.AST], func: ast.AST
     if isinstance(p, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
         targets = p.targets if isinstance(p, ast.Assign) else [p.target]
         if len(targets) == 1 and isinstance(targets[0], ast.Name) and p.value is node:
-            if isinstance(p, ast.AugAssign) and not isinstance(p.op, ast.Add):
-                return False
             return _container_ok(func, targets[0].id, parents, depth)
     return False
 
@@ -524,6 +522,11 @@ def _value_key_writes(path: Path) -> list[str]:
     return bad
 
 
+def _module_violations(path: Path, wanted: set[str], seen: set[str]) -> list[str]:
+    """一个引擎模块的全部判据：字段字面量（取值 + 去处）与下游的 value 键改写。"""
+    return _field_violations(path, wanted, seen) + _value_key_writes(path)
+
+
 def _field_violations(path: Path, wanted: set[str], seen: set[str]) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
@@ -568,8 +571,7 @@ def test_every_page_pt_field_is_reported_with_two_decimals():
     seen: set[str] = set()
     bad: list[str] = []
     for path in sorted(ENGINE.glob("*.py")):
-        bad.extend(_field_violations(path, wanted, seen))
-        bad.extend(_value_key_writes(path))
+        bad.extend(_module_violations(path, wanted, seen))
     assert bad == []
     assert wanted - seen == set(), "表里有属性没在引擎的字段字面量里找到：尺子没接上"
 
@@ -754,7 +756,7 @@ def _wrapped_violations(tmp_path: Path, body: str) -> list[str]:
     src = "def fields(v, extra, other):\n" + "".join(f"    {line}\n" for line in lines)
     path = tmp_path / "fields.py"
     path.write_text(src, encoding="utf-8")
-    return _field_violations(path, {"bbox_linewidth"}, set()) + _value_key_writes(path)
+    return _module_violations(path, {"bbox_linewidth"}, set())
 
 
 @pytest.mark.parametrize(
@@ -786,6 +788,15 @@ def _wrapped_violations(tmp_path: Path, body: str) -> list[str]:
         "fields = [F]\nreturn [f for f in fields if mutate(f)]",
         "fields = [F]\nreturn [f for f in fields if (g := f)]",
         "fields = [F]\nreturn [dict(f) for f in fields]",
+        # 各条判据单独隔开的样本（不写 value 键，免得被下游判据顺手判红）
+        "return [fix(f) for f in (F, F)]",
+        "return [1 if F else 2]",
+        "mutate(*[F])\nreturn []",
+        "fields = []\nfields.append(x, F)\nreturn fields",
+        "fields = []\nfields.append(F)\nmutate(fields)\nreturn fields",
+        "fields = [F]\nfields = other\nreturn fields",
+        "fields = [F]\nfields.pop().update(extra)\nreturn fields",
+        'fields = [F]\nreturn [f for f in fields if (g := f["prop"])]',
         # 认不出的父表达式
         "return list(map(fix, [F]))",
         "return fix(F)",
@@ -818,6 +829,13 @@ def test_emitting_the_literal_as_is_still_passes(tmp_path, body):
     assert _wrapped_violations(tmp_path, body) == [], body
 
 
+def test_a_module_level_list_is_a_red(tmp_path):
+    """模块级的列表谁都能改：字段字面量放进去就红。"""
+    path = tmp_path / "fields.py"
+    path.write_text(f"v = 1.0\nFIELDS = [{_F}]\n", encoding="utf-8")
+    assert _module_violations(path, {"bbox_linewidth"}, set())
+
+
 @pytest.mark.parametrize(
     "line",
     [
@@ -839,7 +857,8 @@ def test_writing_the_value_key_anywhere_in_the_engine_is_a_red(tmp_path, line):
     """交出去以后在别的函数里改也算：模块里任何字面量地写 value 键都红（下游改写）。"""
     path = tmp_path / "other.py"
     path.write_text(f"def g(x):\n    {line}\n", encoding="utf-8")
-    assert _value_key_writes(path), line
+    # 走真实引擎用的同一个入口：下游判据没接上，这里就红
+    assert _module_violations(path, set(), set()), line
 
 
 def test_reading_the_value_key_is_not_a_write(tmp_path):
