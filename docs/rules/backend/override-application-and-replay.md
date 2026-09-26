@@ -43,7 +43,9 @@
   `specfix_native_unsupported`——作废这条兜底对用户自己的进程不成立（ADR 0080）。判据先看
   描述符存的档案（`profile_of`）再解析会话；事务途中每次渲染前、提交前各再比一次，变成 native
   就中止（`_require_route_unchanged`）；事务里每一处解析 worker 都带 `safe_only=True`（入口 +
-  `_engine_attempt` 的依赖重试），拿到 native 会话在调它之前就拒（AST 守卫钉着）。
+  `_engine_attempt` 的依赖重试），拿到 native 会话在调它之前就拒（AST 守卫钉着）。任何渲染留下的欠账（v1 render / export / preview_png 结果的
+  `unrestored > 0`）在 native 上就是「与文档不一致」，挡编辑、导出与 continue
+  （`native_figure_inconsistent`，见 `tavotto-run-control-plane.md`）。
 - **还原失败不遗忘（Codex #549 第八轮 P1）**：`apply()` 撤掉一条 override 时还原抛了，
   这个键**不销账**——applied / originals / alias_seeded 原样留着，记进 `FigState.unrestored`；
   下一次 apply 自动重试，欠着一天每次都报 `还原失败` warning（写回遇 warning 即阻断），

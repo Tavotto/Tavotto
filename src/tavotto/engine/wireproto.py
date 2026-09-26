@@ -302,6 +302,12 @@ class V1Handler:
             result["timings"] = timings
         if preview:
             result["preview"] = preview
+        if cmd in PATCH_COMMANDS:
+            # 这张图还欠着几条还原（`FigState.unrestored`，Codex #549 第八轮）。只在 v1
+            # 上出现（与 `timings` / `preview` 同一条纪律，legacy 一字不动）：native 会话据此
+            # 把图标成「与文档不一致」，判据只看这个数，不解析 warning。export / preview_png
+            # 是临时套用一份列表再还原回会话列表，报的是**还原之后**的账（第九轮 P1）
+            result["unrestored"] = len(fig.states[stem].unrestored)
         return result
 
     def cancel(self, payload: dict) -> dict:

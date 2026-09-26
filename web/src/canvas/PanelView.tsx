@@ -29,7 +29,11 @@ import { diagnosticHash } from '@/diagnostics'
 import { applyTickSidePlan, isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { nativePanelState, useNativeSessionStore } from '@/store/nativeSessionStore'
+import {
+  nativePanelState,
+  useNativeSessionStore,
+  type NativePanelState,
+} from '@/store/nativeSessionStore'
 import {
   renderKeyOf,
   usePanelDisplayView,
@@ -970,13 +974,20 @@ const RUNTIME_BADGE: Record<string, { key: string; tone: 'error' | 'stale' }> = 
  * `native_session_offline`），而那两句话描述的是正常状态、不是故障——用错误
  * 弹窗讲正常状态最劝退。
  */
-function useNativePanelState(obj: PanelObject): 'running' | 'offline' | null {
+function useNativePanelState(obj: PanelObject): NativePanelState {
   const profile = useRuntimeAssetStore((s) =>
     panelKind(obj) === 'runtime' ? s.byId[obj.fileId]?.profile : undefined,
   )
   const sessions = useNativeSessionStore((s) => s.sessions)
-  return nativePanelState(sessions, obj.fileId, profile)
+  const inconsistent = useRenderStore((s) => !!s.inconsistent[obj.fileId])
+  return nativePanelState(sessions, obj.fileId, profile, inconsistent)
 }
+
+const NATIVE_BADGE = {
+  running: 'nativeRunning',
+  offline: 'nativeOffline',
+  inconsistent: 'nativeInconsistent',
+} as const
 
 /** 角标的内容。`hint` 只有需要解释的那一档才有（tooltip） */
 type BadgeInfo = {
@@ -1068,14 +1079,15 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
     // 409；而那时真正该告诉他的是「停下来才能编辑」。
     //
     // 这一档也压过下面 raster 的低内存预览角标（那条同样是信息性的），
-    // **同一条理由**：`'running'` 与 `'offline'` 都会让图内编辑撞 409
-    // （`_NATIVE_STATUS` 把两个码都映射成 409，`enginesession.resolve()`
-    // 在 profile=native、无活会话时直接抛），解锁动作不同但都失败。
+    // **同一条理由**：`'running'` / `'offline'` / `'inconsistent'` 都会让图内编辑撞 409
+    // （`_NATIVE_STATUS` 把三个码都映射成 409，`enginesession.resolve()`
+    // 在 profile=native、无活会话时直接抛，不一致的图由 `NativeSession` 拒绝换列表的
+    // 渲染与导出），解锁动作不同但都失败。
     if (nativeState) {
       return {
         tone: 'stale',
         cold: false,
-        text: badge(nativeState === 'running' ? 'nativeRunning' : 'nativeOffline'),
+        text: badge(NATIVE_BADGE[nativeState]),
       }
     }
     if (render?.stale) return { tone: 'stale', cold: false, text: badge('stale') }

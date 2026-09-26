@@ -520,6 +520,25 @@ describe('面板与会话的关系（角标判据）', () => {
     expect(nativePanelState(s, 'runtime:fig.py#Fig1', 'native')).toBe('offline')
   })
 
+  it('停在屏障上、但引擎说图与文档不一致：inconsistent（Codex #549 第八轮）', () => {
+    const s = bound({ state: 'barrier', editable: true })
+    expect(nativePanelState(s, 'runtime:fig.py#Fig1', 'native', true)).toBe('inconsistent')
+    // 干净了（下一次渲染报 0）就解除——判据只看这一位，不留尾巴
+    expect(nativePanelState(s, 'runtime:fig.py#Fig1', 'native', false)).toBeNull()
+  })
+
+  it('不一致但脚本正在跑 / 会话已结束：说此刻真正挡住编辑的那一句', () => {
+    const running = bound({ state: 'running_script', editable: false })
+    expect(nativePanelState(running, 'runtime:fig.py#Fig1', 'native', true)).toBe('running')
+    const ended = bound({ state: 'ended', editable: false })
+    expect(nativePanelState(ended, 'runtime:fig.py#Fig1', 'native', true)).toBe('offline')
+  })
+
+  it('safe 面板上的不一致标记不挂 native 角标', () => {
+    const s = bound({ state: 'barrier', editable: true })
+    expect(nativePanelState(s, 'Fig1.pdf', 'safe', true)).toBeNull()
+  })
+
   it('一条会话都没有、但这张图出自 native：同样是 offline', () => {
     expect(nativePanelState({}, 'runtime:fig.py#Fig1', 'native')).toBe('offline')
   })
