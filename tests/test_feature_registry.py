@@ -114,7 +114,7 @@ BASE_REG = _registry(
 )
 BASE_LIST = _listing(
     {
-        "a.spec.ts": [_spec("拖动", 10, tags=["@feature:canvas.drag"]), _spec("无关", 30)],
+        "a.spec.ts": [_spec("拖动", 10, tags=["feature:canvas.drag"]), _spec("无关", 30)],
         "b.spec.ts": [],
     },
     {"b.spec.ts": {"组": [_spec("挪图例", 12)]}},
@@ -209,28 +209,39 @@ def test_registry_pointing_at_nonexistent_test_is_red():
 
 def test_orphan_tag_is_red():
     listing = copy.deepcopy(BASE_LIST)
-    listing["suites"][0]["specs"][1]["tags"] = ["@feature:nobody.knows"]
+    listing["suites"][0]["specs"][1]["tags"] = ["feature:nobody.knows"]
     problems = _check(listing=listing)
     assert any("nobody.knows" in p and "孤儿" in p for p in problems), problems
 
 
 def test_tag_on_removed_feature_is_red():
     listing = copy.deepcopy(BASE_LIST)
-    listing["suites"][0]["specs"][1]["tags"] = ["@feature:old.thing"]
+    listing["suites"][0]["specs"][1]["tags"] = ["feature:old.thing"]
     problems = _check(listing=listing)
     assert any("old.thing" in p and "removed" in p for p in problems), problems
 
 
 def test_tag_without_listing_under_the_feature_is_red():
     listing = copy.deepcopy(BASE_LIST)
-    listing["suites"][0]["specs"][1]["tags"] = ["@feature:canvas.drag"]
+    listing["suites"][0]["specs"][1]["tags"] = ["feature:canvas.drag"]
     problems = _check(listing=listing)
     assert any("无关" in p and "没有列它" in p for p in problems), problems
 
 
+def test_tags_match_with_or_without_the_leading_at():
+    """Playwright 的 JSON 报告里 tags 没有前导 @（源码里写 `@feature:x`）：两种都要认。
+
+    合成输入曾经照源码写成 `@feature:x`，于是这组用例全绿，而对着真 `--list` 的反向判据
+    恒绿——自己捏的输入形状会说谎。真形状以不带 @ 为准，带 @ 的也认。"""
+    for tag in ("feature:nobody.knows", "@feature:nobody.knows"):
+        listing = copy.deepcopy(BASE_LIST)
+        listing["suites"][0]["specs"][1]["tags"] = [tag]
+        assert any("nobody.knows" in p and "孤儿" in p for p in _check(listing=listing)), tag
+
+
 def test_other_tags_are_ignored():
     listing = copy.deepcopy(BASE_LIST)
-    listing["suites"][0]["specs"][1]["tags"] = ["@slow", "@featureish"]
+    listing["suites"][0]["specs"][1]["tags"] = ["slow", "featureish"]
     assert _check(listing=listing) == []
 
 

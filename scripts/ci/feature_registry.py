@@ -284,7 +284,11 @@ def parse_scan(data: object) -> dict[tuple[str, int, int], list[dict]]:
 
 
 def feature_tags(rec: Listed) -> set[str]:
-    return {t[len(TAG_PREFIX) :] for t in rec.tags if t.startswith(TAG_PREFIX)}
+    # 源码里写的是 `@feature:<id>`，Playwright 的 JSON 报告里 tags **去掉了前导 @**
+    # （实测 1.5x：`{ tag: '@feature:x' }` → `"tags": ["feature:x"]`）。只认带 @ 的写法
+    # 会让反向判据恒绿——本 PR 的反证第一次跑就是这样漏的。两种都认，比较时统一去掉 @。
+    bare = TAG_PREFIX.lstrip("@")
+    return {t.lstrip("@")[len(bare) :] for t in rec.tags if t.lstrip("@").startswith(bare)}
 
 
 def check(
