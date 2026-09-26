@@ -35,7 +35,10 @@
   ② 装载是惰性的，`app.main()` 起服务前 `pdfbackend.warm()` 一次——第一次 probe 不再多付 import 的延迟，选了
   退役 / 不认识 / 装不上的后端在启动时就报、不退默认（`warm` 不在 `__all__`）。**只在这个进程要起服务时 warm**（浏览器模式与桌面 sidecar；#641）：端口上已经有
   Tavotto 的复用路径只换 nonce、把人指过去，不装载、不预热，也不做别的启动副作用——那个进程不提供服务，它起的
-  daemon 预热线程会在进程退出时撞上解释器收尾（py3.10 Linux 上 SIGSEGV / abort）。看护 `tests/test_app_main_startup.py`。
+  daemon 预热线程会在进程退出时撞上解释器收尾（py3.10 Linux 上 SIGSEGV / abort）。复用判定之后浏览器模式**当场占住
+  端口**（`app.claim_port` → `localserver.claim` bind + listen，`serve_browser(listener=…)` 用 werkzeug 的 `fd=` 接管；#650）：
+  否则两个同时启动的实例会挑中同一个空闲端口、各自启动完，后 bind 的那个 EADDRINUSE 退出；占不到（探完到 bind 之间被抢）
+  就重新判定，bind 才是裁判。桌面 sidecar 绑的是 0 号端口，没有这个窗口。看护 `tests/test_app_main_startup.py`。
 - **旧行为的参照只在批准资产里**（06 §3）：`tests/fixtures/legacy_pymupdf/`（退役前一提交上旧后端跑出的
   `oracle.json` / `preview_300.png` / `calibration/<case>.pdf`）与 `evidence/u10/*.pymupdf.json`
   （旧覆盖表 / 旧向量）。需要「旧实现当年怎么做」时读它们，不重新 import 旧库；重生成只能在装了

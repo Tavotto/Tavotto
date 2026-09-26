@@ -7536,6 +7536,31 @@ def resolve_port(preferred: int, tries: int = 20) -> int | None:
     return preferred  # 全占满了：交给 app.run 报错，至少日志里有据可查
 
 
+#: `claim_port` 探了又占不到时重新判定几次。占不到只有一种成因：探完到 bind 之间那几微秒被别人抢了
+#: ——多半就是同时启动的另一个 Tavotto，重新判定会认出它、走复用。
+CLAIM_ATTEMPTS = 3
+
+
+def claim_port(preferred: int, tries: int = 20) -> tuple[int, socket.socket | None] | None:
+    """判定端口复用并**当场占住**要用的端口（#650）：None = 该端口上已经有一个 Tavotto；否则
+    `(端口, 已 bind + listen 的 socket)`，交给 `localserver.serve_browser(listener=…)`。
+
+    判定仍是 `resolve_port`（探测 + 认 Tavotto + 顺延）；紧接着 `localserver.claim` 真的 bind。占不到
+    （探完到 bind 之间被抢）就重新判定——bind 本身才是裁判，探测只是挑候选。重试用完仍占不到，回
+    `(端口, None)`：交给 serve_browser 自己 bind 报错，与从前「全占满了」同一条出口。
+    """
+    port = preferred
+    for _ in range(CLAIM_ATTEMPTS):
+        port = resolve_port(preferred, tries)
+        if port is None:
+            return None
+        try:
+            return port, localserver.claim("127.0.0.1", port)
+        except OSError:
+            LOG.info("端口 %d 探测后被占，重新判定", port)
+    return port, None
+
+
 def main():
     # 启动信息里有中文。Windows 上 stdout 一旦不是真控制台（被重定向到文件、
     # 由启动器接管管道）就退回系统区域编码，print 会 UnicodeEncodeError 直接
@@ -7611,10 +7636,17 @@ def main():
     # 把 AI 会话标成中断改的是**在跑那个实例**正进行中的会话；预热线程是 daemon，本进程打印完就退，
     # 解释器收尾时它还在 import 原生扩展，Linux 上直接 SIGSEGV / abort（py3.10 CI 抓到，-11）。
     # 桌面 sidecar 不走端口复用（端口由壳分配），照旧在下面起服务前预热。
+    #
+    # 要起服务就**当场占住端口**（#650）：下面的启动要花几秒，只探不占的话两个同时启动的实例会挑中同一个
+    # 空闲端口，后 bind 的那个启动完才 EADDRINUSE 退出，而不是认出对面是 Tavotto、走复用。占住之后，别的
+    # 实例这几秒里看到的是「有人 listen」，复用探测连得上、等这边起服务就答。
     port = None
+    listener = None
     if not args.desktop_sidecar:
-        port = resolve_port(args.port)
-        if port is None:
+        claimed = claim_port(args.port)
+        if claimed is not None:
+            port, listener = claimed
+        else:
             # 端口上已经有一个 Tavotto 在跑：把浏览器指过去就够了，别再起一个。
             # 双击应用图标的用户没有终端可看，这里必须自己把事办圆。
             # 复用是一次**安全的 token 交接**：凭本机凭据文件向在跑的实例换一枚
@@ -7716,7 +7748,7 @@ def main():
     # 上连接是 timed out 而不是 refused），就绪探测全部干等。缺陷、证据与逐项
     # 对照见 localserver.py。
     try:
-        localserver.serve_browser(app, "127.0.0.1", port)
+        localserver.serve_browser(app, "127.0.0.1", port, listener=listener)
     finally:
         if not insecure:
             engine_session_client.remove_secret(port)

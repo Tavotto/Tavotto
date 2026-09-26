@@ -25,6 +25,7 @@ macOS 起服务那步 48 s vs 其它腿 13 s。werkzeug 3.1.8 没有覆写 `serv
 
 from __future__ import annotations
 
+import socket
 import socketserver
 
 from flask import Flask
@@ -44,7 +45,34 @@ class LocalWSGIServer(ThreadedWSGIServer):
         self.server_port = port
 
 
-def serve_browser(app: Flask, host: str, port: int) -> None:
+def claim(host: str, port: int) -> socket.socket:
+    """先把浏览器模式的端口 bind + listen 下来，拿着它做完启动再起服务（#650）；占不到抛 `OSError`。
+
+    为什么要先占：`app.main()` 在端口复用判定之后、起服务之前还要做秒级的启动（预热 PDF 后端、开项目）。
+    只**探**不**占**的话，两个几乎同时启动的实例会探到同一个空闲端口、各自启动几秒，后 bind 的那个
+    EADDRINUSE 退出——而不是认出端口上已经是 Tavotto、走复用。占住之后，这个端口在启动期间对别的实例
+    就是「有人在 listen」：它们的复用探测连得上，等到这边起服务就答。
+
+    socket 选项与 `LocalWSGIServer` 自己 bind 时**同一份**（`socketserver.TCPServer.server_bind` 按类属性
+    `allow_reuse_address` / `allow_reuse_port` 设、`server_activate` 按 `request_queue_size` listen），不手抄
+    平台策略；bind 与 listen 之间同样不反查主机名。
+    """
+    tmp = socketserver.TCPServer(
+        (host, port), socketserver.BaseRequestHandler, bind_and_activate=False
+    )
+    tmp.allow_reuse_address = LocalWSGIServer.allow_reuse_address
+    tmp.allow_reuse_port = getattr(LocalWSGIServer, "allow_reuse_port", False)
+    tmp.request_queue_size = LocalWSGIServer.request_queue_size
+    try:
+        tmp.server_bind()
+        tmp.server_activate()
+    except BaseException:
+        tmp.server_close()
+        raise
+    return tmp.socket
+
+
+def serve_browser(app: Flask, host: str, port: int, listener: socket.socket | None = None) -> None:
     """浏览器模式的服务循环：与 `app.run(host, port, threaded=True)` 逐项等价。
 
     `app.run` → `run_simple` 今天实际做的事，逐项对照：
@@ -65,9 +93,19 @@ def serve_browser(app: Flask, host: str, port: int) -> None:
       reloader 的子进程接管，产品没有 reloader，不做；
     * `.env` / `.flaskenv` 加载：python-dotenv 不是依赖，从来没有生效过，不做；
     * `FLASK_RUN_FROM_CLI` 守卫：只对 `flask run` 有意义，产品入口不是它，不做。
+
+    `listener` 是 `claim()` 先占下的监听 socket（werkzeug 的 `fd=` 接管，reloader 用的同一条路）：
+    server 从它 dup 一份，这里的原件随即关掉。没有就照旧自己 bind（占不到时 werkzeug 报错退出）。
     """
     show_server_banner(False, app.name)
-    srv = LocalWSGIServer(host, port, app)
+    if listener is None:
+        srv = LocalWSGIServer(host, port, app)
+    else:
+        srv = LocalWSGIServer(host, port, app, fd=listener.fileno())
+        listener.close()
+        # fd 路径不走 server_bind：把 HTTPServer 会填的两个属性照 `server_bind` 那样填上
+        srv.server_name = host
+        srv.server_port = srv.port
     srv.log_startup()
     srv.log("info", "Press CTRL+C to quit")
     srv.serve_forever()
