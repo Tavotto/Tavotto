@@ -13,12 +13,25 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { formatMessage } from '@/i18n'
 import type { ProjectStatus, RecentProject } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { ProjectSwitcher } from '@/components/ProjectSwitcher'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { WorkspaceList } from './WorkspaceList'
+
+/** 桌面能力由 `lib/desktop` 决定；这里按用例切「桌面 / 浏览器」，并记下 reveal 了哪条路径 */
+const desktop = vi.hoisted(() => ({ can: false, ok: true, revealed: [] as string[] }))
+vi.mock('@/lib/desktop', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/desktop')>()),
+  canRevealInFileManager: () => desktop.can,
+  fileManagerKind: () => 'finder',
+  revealProjectFolder: async (path: string) => {
+    desktop.revealed.push(path)
+    return desktop.ok
+  },
+}))
 
 declare global {
   // eslint-disable-next-line no-var
@@ -101,6 +114,9 @@ const pinButton = (path: string) =>
     .querySelector<HTMLButtonElement>('[data-workspace-pin]')!
 
 beforeEach(() => {
+  desktop.can = false
+  desktop.ok = true
+  desktop.revealed = []
   ops = []
   failPinned = false
   server = ['/a/Supplementary', '/b/Rebuttal']
@@ -289,5 +305,64 @@ describe('顶栏项目名', () => {
     expect(btn.getAttribute('aria-expanded')).toBe('true')
     await act(async () => btn.click())
     expect(useUiStore.getState().leftOpen).toBe(false)
+  })
+})
+
+describe('右键「在 Finder 中打开」', () => {
+  const row = (path: string) =>
+    host.querySelector<HTMLElement>(`[data-workspace-row][data-project-path="${path}"]`)!
+  const rightClick = (el: Element) => {
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 })
+    act(() => {
+      el.dispatchEvent(e)
+    })
+    return e
+  }
+  const menu = () => document.querySelector<HTMLElement>('[role="menu"]')
+  const reveal = () => document.querySelector<HTMLElement>('[data-workspace-reveal]')
+
+  it('桌面：右键行开出菜单，选它就按这一行的路径打开', async () => {
+    desktop.can = true
+    await mount()
+    expect(rightClick(row('/work/p-3')).defaultPrevented).toBe(true)
+    expect(menu()).not.toBeNull()
+    expect(reveal()?.textContent).toBe('在 Finder 中打开')
+    await act(async () => reveal()!.click())
+    expect(desktop.revealed).toEqual(['/work/p-3'])
+    expect(menu()).toBeNull()
+  })
+
+  it('桌面：右键当前项目的卡片也有这一项，打开的是当前项目', async () => {
+    desktop.can = true
+    await mount()
+    rightClick(host.querySelector('[data-workspace-current]')!)
+    await act(async () => reveal()!.click())
+    expect(desktop.revealed).toEqual([CURRENT])
+  })
+
+  it('失败不静默：状态栏报错并带上完整路径', async () => {
+    desktop.can = true
+    desktop.ok = false
+    await mount()
+    rightClick(row('/b/Rebuttal'))
+    await act(async () => reveal()!.click())
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(formatMessage(useUiStore.getState().status)).toContain('/b/Rebuttal')
+  })
+
+  it('已不存在的项目不给这一项', async () => {
+    desktop.can = true
+    useProjectStore.setState({ recent: [entryOf('/gone/x', { exists: false })] })
+    await mount()
+    rightClick(row('/gone/x'))
+    expect(menu()).not.toBeNull()
+    expect(reveal()).toBeNull()
+  })
+
+  it('浏览器模式不摆这一项（服务器可能不在这台机器上）', async () => {
+    await mount()
+    rightClick(row('/work/p-3'))
+    expect(menu()).not.toBeNull()
+    expect(reveal()).toBeNull()
   })
 })
