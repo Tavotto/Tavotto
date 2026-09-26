@@ -6429,7 +6429,8 @@ def api_ai_run():
             prompt,
             str(ctx.path),
             context=context,
-            on_event=sse_publish,
+            # 事件带上发起它的项目：SSE 是全进程一条流，切到 B 的标签页不许接 A 的任务的话（#589）
+            on_event=lambda event, data: sse_publish(event, {**data, "pj": ctx.id}),
             model=body.get("model") or None,
             effort=body.get("effort") or None,
             endpoint_id=body.get("endpoint"),

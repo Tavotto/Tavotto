@@ -25,6 +25,7 @@ import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { openRecentDocument } from '@/store/actions'
 import { useAssetBrowseStore } from '@/store/assetBrowseStore'
 import { flushAutosave, loadAutosavedDocument, useDocumentStore } from '@/store/documentStore'
+import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { useRenderStore } from '@/store/renderStore'
@@ -168,6 +169,9 @@ async function resetForNewProject() {
   // 新项目的 /api/panels 挂起或失败时 B 下面显示的是 A 的卡片和 A 的文件名（#577）；
   // 换代同时作废 A 还在飞的那次请求
   useAssetStore.getState().clear()
+  // 改图助手的对话属于旧项目：会话列表丢掉并换代，在途的发起 / 撤销 / 中止回来不落地（#589）。
+  // 后端任务不取消——它照样改完、记进 A 的历史，切回 A 在历史里看得到
+  useAiStore.getState().clear()
   // 版本缩略图按 (项目, 素材版本, 变体) 缓存 blob：换项目时整表释放，
   // 既是回收 blob，也是防止旧项目的图被当成新项目某个版本的预览
   clearVariantPngCache()
