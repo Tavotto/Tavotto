@@ -68,6 +68,7 @@ Fixes #
 
 ## Checklist
 
+- [ ] User-visible feature added → registered in `docs/features/registry.json` with at least one real-browser e2e tagged `@feature:<id>`; feature removed or weakened → its entry set to `"status": "removed"` (reason / date / approved_by, never deleted) and this PR labelled `feature:removal` (ADR 0097, `docs/rules/ci/feature-registry.md`)
 - [ ] A bug that only reproduces on Windows was turned into a case in `tests/test_windows_regressions.py` first, and that case was seen failing
 - [ ] Nothing new imports `pymupdf` outside `src/tavotto/pdfbackend/`
 - [ ] Nothing Flask imports gained a non-stdlib dependency (`engine/registry.py`, `pool.py`, `ai_bridge.py`, `config.py`, `updater.py`, `runtime.py`)
