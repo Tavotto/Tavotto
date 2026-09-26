@@ -33,6 +33,8 @@ import { bindingFor, resolveDocumentSpec, type SpecCatalogEntry } from '@/lib/sp
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
+import { isLegacyBasis, withPageBasis } from '@/lib/stylePresets'
+import { bindCanvasStyle } from '@/store/styleBinding'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
@@ -333,13 +335,23 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
     withBusy(async () => {
       if (!selected || !draft) return
       const api = useProfileStore.getState()
-      const saved = await api.save(kind, selected.id, draft)
+      // 样式：旧版存下的（没有 `pt_basis`）在这里第一次被编辑时升级成按页面 pt 记，
+      // 与样式面板同一条规则（`stylePresets.withPageBasis`）
+      const upgraded = kind === 'style' && isLegacyBasis(draft)
+      const payload = kind === 'style' ? withPageBasis(draft as { pt_basis?: 'page' }) : draft
+      const saved = await api.save(kind, selected.id, payload as Record<string, unknown>)
       if (!saved) return
       const trimmed = name.trim()
       if (trimmed && trimmed !== profileName(selected)) {
         await api.rename(kind, selected.id, trimmed)
       }
-      useUiStore.getState().setStatus(msg('profiles.saved', { name: trimmed }, 'dialogs'))
+      useUiStore
+        .getState()
+        .setStatus(
+          upgraded
+            ? msg('stylePanel.upgradedLegacy', { name: trimmed }, 'workspace')
+            : msg('profiles.saved', { name: trimmed }, 'dialogs'),
+        )
     })
 
   const remove = () =>
@@ -437,15 +449,14 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
   }
 
   /**
-   * 「应用样式到当前图」：交给样式对话框——那里才看得见影响范围与冲突。
-   *
-   * 设置**不关**：样式对话框是压在它上面的一步（`uiStore.dialogStack`），关掉
-   * 就回到这里、焦点回到这颗按钮；并且带着此刻选中的这一条——「空样式」与
-   * 刚才在设置里点的那条是什么关系，不该让用户猜（审计 T35）。
+   * 「用于当前画布」：当前画布**跟随**这套样式（ADR 0081：应用 = 绑定，唯一实现是
+   * `styleBinding.bindCanvasStyle`，左栏样式面板底部的选择器调的是同一个函数）。
+   * 绑完关掉设置、打开左栏样式面板——对齐的结果在画布上，看得见才知道改了什么。
    */
-  const applyToFigure = () => {
-    if (kind !== 'style') return
-    useUiStore.getState().setStylesOpen(true, { presetId: selected?.id ?? null })
+  const useForCanvas = () => {
+    if (kind !== 'style' || !selected || dirty) return
+    bindCanvasStyle(selected.id)
+    useUiStore.getState().openStylePanel()
   }
 
   const boundId = doc.profile?.id
@@ -720,8 +731,16 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                       </Button>
                     ))}
                   {kind === 'style' && (
-                    <Button variant="secondary" size="sm" onClick={applyToFigure}>
-                      {st('applyToFigure')}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      // 草稿没存：绑定用的是库里存着的那一版，关掉设置还会把没存的改动丢掉——
+                      // 先存再用（Codex #547）。原因写在 title 里，不是一颗按了没反应的钮
+                      disabled={dirty}
+                      title={dirty ? st('useForCanvasSaveFirst') : undefined}
+                      onClick={useForCanvas}
+                    >
+                      {st('useForCanvas')}
                     </Button>
                   )}
                   {editable ? (

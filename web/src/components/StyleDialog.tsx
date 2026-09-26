@@ -1,33 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
-import { Check, Ellipsis, Pipette, Plus, Trash2, TriangleAlert, X } from '@/components/ui/icons'
-import { Details, Summary } from '@/components/ui/Details'
+import { Ellipsis, Pipette, Plus, Trash2, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   draftToData,
   extractFromManifest,
   extractPalette,
   groupedEntries,
-  planStyle,
+  PAGE_PT_PROPS,
   presetEntries,
   profileToDraft,
   styleGroupLabel,
   styleRoleLabel,
-  styleScopeLabel,
-  targetPanels,
   type StylePreset,
-  type StyleScope,
 } from '@/lib/stylePresets'
-import { modKey } from '@/lib/utils'
-import { applyStylePlan } from '@/store/actions'
+import { panelScale } from '@/lib/preflight'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
 import { profileName } from '@/lib/profileText'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { askConfirm, dialogCovered, useUiStore } from '@/store/uiStore'
-import type { PanelObject } from '@/types/document'
 import { propLabel } from './inspector/roles/registry'
 import { FormRow } from './FormRow'
 import { Button, IconButton } from './ui/Button'
@@ -46,10 +40,14 @@ import { Toggle } from './ui/Toggle'
  *
  * ### 它是设置 / 导出之上的一步，不是叠在它们上面的第三层浮层（审计 T35）
  *
- * 从设置「应用到当前图」进来时带着那一条样式（`uiStore.stylesPresetId`）预选；
- * 设置本身被盖住但没关（`dialogStack`），这里关掉就回到设置、焦点回到那颗按钮。
- * 没带预选而草稿又是空的，就选第一条已存样式——「空样式」与用户刚才点的那条
- * 是什么关系，不该让用户猜。
+ * 带着一条样式打开时（`uiStore.stylesPresetId`）预选它；压在设置上打开时设置被盖住
+ * 但没关（`dialogStack`），这里关掉就回到设置。没带预选而草稿又是空的，就选第一条
+ * 已存样式——「空样式」与用户刚才点的那条是什么关系，不该让用户猜。
+ *
+ * **这里只编辑样式，不应用**（ADR 0081）：应用 = 让一张画布跟随一套样式，只在左栏「样式」
+ * 面板底部那一处（`store/styleBinding.bindCanvasStyle`）。这里存下的改动，跟随这套样式的
+ * 画布会自己跟上（按内容不等判断）。此前这里的「应用到 当前图 / 选中 / 同脚本 / 整个文档」
+ * 是与之并存的第二套应用流程，已删。
  */
 /** 本对话框的文案在 dialogs:style.* 下 */
 const sd = (key: string, values?: Record<string, unknown>) =>
@@ -84,8 +82,6 @@ export function StyleDialog() {
   }
 
   const [draft, setDraft] = useState<StylePreset>(EMPTY)
-  const [scope, setScope] = useState<StyleScope>('panel')
-  const [withAnnotations, setWithAnnotations] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -167,22 +163,13 @@ export function StyleDialog() {
     ? (panelRender({ byKey, latest }, primaryPanel)?.manifest ?? null)
     : null
 
-  const plan = useMemo(() => {
-    const panels = targetPanels(doc, scope, primaryPanel?.id ?? null, selectedIds)
-    return planStyle(
-      draft,
-      panels,
-      (p) => panelRender({ byKey, latest }, p)?.manifest,
-      doc,
-      withAnnotations,
-    )
-  }, [doc, scope, primaryPanel, selectedIds, draft, byKey, latest, withAnnotations])
-
   const extract = () => {
     if (!primaryManifest) return
     setDraft((d) => ({
       ...d,
-      element: extractFromManifest(primaryManifest),
+      // 提取的是**页面上**的 pt（× 这张面板的缩放比）：样式里的数字与预检量的同一个东西
+      element: extractFromManifest(primaryManifest, primaryPanel ? panelScale(primaryPanel) : 1),
+      pt_basis: 'page',
       palette: extractPalette(primaryManifest),
     }))
   }
@@ -215,32 +202,8 @@ export function StyleDialog() {
     useUiStore.getState().setStatus(msg('style.saved', { name: stored.display_name }, 'dialogs'))
   }
 
-  const apply = async () => {
-    const touched = plan.panels.filter((p) => p.patches.length)
-    const overwrites = plan.panels.reduce((t, p) => t + p.overwrites, 0)
-    if (
-      overwrites > 0 &&
-      !(await askConfirm({
-        title: msg('style.confirmTitle', { name: draft.name || sd('untitled') }, 'dialogs'),
-        body: msg('style.confirmBody', { count: overwrites, undo: modKey('Z') }, 'dialogs'),
-        confirmLabel: msg('style.confirmApply', undefined, 'dialogs'),
-      }))
-    ) {
-      return
-    }
-    applyStylePlan(plan, { ...draft, name: draft.name || sd('untitledStyle') })
-    setOpen(false)
-    void touched
-  }
-
   const entries = presetEntries(draft)
   const groups = groupedEntries(draft)
-  const applicable =
-    plan.panels.some((p) => p.patches.length) ||
-    plan.annotationIds.length > 0 ||
-    plan.subLabelIds.length > 0 ||
-    !!plan.page
-
   // 没有任何已存样式、草稿也是空的 → 单栏空状态，不画空列表和空影响范围框
   const draftHasContent =
     entries.length > 0 || !!draft.palette?.length || !!draft.annotation || !!draft.subLabel || !!draft.page
@@ -294,10 +257,6 @@ export function StyleDialog() {
         <>
           <Button variant="secondary" size="md" onClick={() => setOpen(false)}>
             {t('common:actions.close')}
-          </Button>
-          <Button variant="primary" size="md" disabled={!applicable} onClick={apply}>
-            <Check size={ICON_SIZE.md} />
-            {sd('applyTo', { scope: styleScopeLabel(scope) })}
           </Button>
         </>
       }
@@ -518,118 +477,6 @@ export function StyleDialog() {
             </div>
           </div>
 
-          {/* 底部：应用范围与影响。范围是一个取值 → 分段选择器；影响先说总账，
-              逐张明细折叠。标签是**标签**不是分区头，分段按内容定宽（全面打磨 D26）：
-              此前它用 `type-section` 的字重、又 `flex-1` 撑到 636 宽四格各 158，
-              是导出对话框同款控件的 4.8 倍 */}
-          <div className="flex flex-col gap-2 border-t border-border pt-3" data-style-scope>
-            <FormRow label={sd('applyScope')}>
-              <Segmented<StyleScope>
-                ariaLabel={sd('applyScope')}
-                // 按内容定宽：`Segmented` 默认 `w-full`，在这一行里会撑成 780 宽四格各 195，
-                // 是导出对话框同款控件的五倍（全面打磨 D26）
-                className="w-auto"
-                value={scope}
-                onChange={setScope}
-                items={(
-                  [
-                    ['panel', sd('scopePanel')],
-                    ['selection', sd('scopeSelection')],
-                    ['sameScript', sd('scopeSameScript')],
-                    ['document', sd('scopeDocument')],
-                  ] as const
-                ).map(([value, label]) => ({ value, label, title: styleScopeLabel(value) }))}
-              />
-            </FormRow>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-              <label className="flex h-7 items-center gap-1.5 text-xs text-ink-2">
-                <Toggle
-                  aria-label={sd('withAnnotations')}
-                  checked={withAnnotations}
-                  onChange={setWithAnnotations}
-                />
-                {sd('withAnnotations')}
-              </label>
-              {/* 作用对象与变化数先说总账：用户要的第一个答案是「会改到几张、改多少」 */}
-              {/* 空集时只说**下一步**（全面打磨 D27）：此前是「此范围内没有图会被改动。」
-                  句号之后再接「 · 先在画布上选中一张可编辑的图」——前一句是后一句的前提，
-                  说了等于把唯一能做的事推到第二句去 */}
-              <p data-style-affect-summary className="text-xs text-ink-2">
-                {plan.panels.length === 0
-                  ? sd(scope === 'panel' ? 'noPanelsPanel' : 'noPanelsScope')
-                  : sd('affectSummary', {
-                      count: plan.panels.length,
-                      patches: plan.panels.reduce((t, p) => t + p.patches.length, 0),
-                    })}
-              </p>
-            </div>
-            {(plan.panels.length > 0 ||
-              plan.unrendered.length > 0 ||
-              (withAnnotations && plan.annotationIds.length > 0 && draft.annotation) ||
-              (withAnnotations && plan.subLabelIds.length > 0 && draft.subLabel) ||
-              plan.page) && (
-              <Details>
-                <Summary className="h-7 text-xs text-ink-3 hover:text-ink">{sd('affectDetails')}</Summary>
-                <ul className="mt-1 flex max-h-32 flex-col gap-1 overflow-y-auto">
-                  {plan.panels.map((p) => (
-                    <li key={p.panel.id} className="text-xs leading-relaxed text-ink-2">
-                      <span className="text-ink">{p.panel.name ?? p.panel.fileId}</span>
-                      {sd('panelPatches', { count: p.patches.length })}
-                      {p.overwrites > 0 && (
-                        <span className="text-danger">
-                          {sd('panelOverwrites', { count: p.overwrites })}
-                        </span>
-                      )}
-                      {p.unmappable.length > 0 && (
-                        <span className="text-ink-3">
-                          {sd('panelUnmappable', { count: p.unmappable.length })}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                  {plan.unrendered.map((p: PanelObject) => (
-                    <li key={p.id} className="flex items-start gap-1 text-xs leading-relaxed text-ink-3">
-                      <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" />
-                      <span>{sd('unrendered', { name: p.name ?? p.fileId })}</span>
-                    </li>
-                  ))}
-                  {withAnnotations && plan.annotationIds.length > 0 && draft.annotation && (
-                    <li className="text-xs text-ink-2">
-                      {sd('annotationCount', { count: plan.annotationIds.length })}
-                    </li>
-                  )}
-                  {withAnnotations && plan.subLabelIds.length > 0 && draft.subLabel && (
-                    <li className="text-xs text-ink-2">
-                      {sd('subLabelCount', { count: plan.subLabelIds.length })}
-                    </li>
-                  )}
-                  {plan.page && (
-                    <li className="text-xs text-ink-2">
-                      {sd('pageSizeTo', { w: plan.page.w, h: plan.page.h })}
-                    </li>
-                  )}
-                  {plan.panels.some((p) => p.unmappable.length > 0) && (
-                    <li>
-                      <Details>
-                        <Summary className="text-xs text-ink-3 hover:text-ink">
-                          {sd('unmappableDetails')}
-                        </Summary>
-                        <ul className="mt-1 flex flex-col gap-0.5">
-                          {plan.panels.flatMap((p) =>
-                            p.unmappable.slice(0, 20).map((u, i) => (
-                              <li key={`${p.panel.id}-${i}`} className="text-xs text-ink-3">
-                                {u}
-                              </li>
-                            )),
-                          )}
-                        </ul>
-                      </Details>
-                    </li>
-                  )}
-                </ul>
-              </Details>
-            )}
-          </div>
       </div>
       {shownError && <p className="mt-2 text-xs text-danger">{shownError}</p>}
     </Dialog>
@@ -642,7 +489,8 @@ export function StyleDialog() {
  */
 const LIBRARY_AS_SEGMENTED = 4
 
-const EMPTY: StylePreset = { name: '', element: {} }
+/** 新建的样式一律按页面 pt 记数字（`StyleProfileData.pt_basis`） */
+const EMPTY: StylePreset = { name: '', element: {}, pt_basis: 'page' }
 
 /** 草稿是不是一张白纸（没名字、没条目、没配色、没标注 / 序号 / 页面尺寸） */
 function isEmptyDraft(d: StylePreset): boolean {
@@ -677,11 +525,17 @@ function EntryEditor({
     return <Toggle aria-label={propLabel(prop)} checked={value} onChange={onChange} />
   if (typeof value === 'number') {
     // `fill`：数字框铺满 224 的控件列，与同一列的下拉右缘对齐（全面打磨 D25）；
-    // 此前它只有 44 宽，一列控件的右缘参差不齐
+    // 此前它只有 44 宽，一列控件的右缘参差不齐。
+    // `precision={2}`：线宽档位是 0.75 这种两位小数，默认一位会把它显示成 0.8
+    // 而写进去的是 0.75——框里的数与文档里的数不是同一个（2026-09-24 实测）。
+    // 以 pt 计的量带单位：样式里的数字是页面上读者量到的 pt（`PAGE_PT_PROPS`）
     return (
       <NumberField
         value={value}
         step={prop.includes('size') ? 0.5 : 0.1}
+        precision={2}
+        unit={PAGE_PT_PROPS.has(prop) ? 'pt' : undefined}
+        ariaLabel={propLabel(prop)}
         fill
         onChange={onChange}
       />
@@ -698,13 +552,15 @@ function EntryEditor({
         value={value}
         onChange={onChange}
         options={opts.map((o) => ({ value: o, label: o }))}
-        ariaLabel={prop}
+        // 可达名是本地化的属性名，不是 `fontfamily` / `weight` / `direction` 这种原始键
+        ariaLabel={propLabel(prop)}
       />
     )
   }
   return (
     <TextInput
       value={String(value ?? '')}
+      aria-label={propLabel(prop)}
       onChange={(e) => onChange(e.target.value)}
     />
   )

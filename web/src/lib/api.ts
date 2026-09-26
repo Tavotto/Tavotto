@@ -1414,6 +1414,13 @@ export interface EditableField {
    * ——自定义色图的名字写不进 override，只能这么回去。
    */
   cmap_original?: ColormapFacts
+  /**
+   * **override 之前脚本的值**，与 `value` 同一口径（ADR 0081 §十三）。只有这个字段上有已应用的
+   * override 时才发；缺席 = 没有 override，或引擎说不出（老引擎）——**不知道**，不是「与 `value`
+   * 相同」。脚本重跑 / native 屏障 rebase 之后它是**新的**脚本值：样式写的 override 靠它判断
+   * 「脚本改过这一项没有」。严格同源：`engine/manifest.VALUE_ORIGINAL_KEY`。
+   */
+  value_original?: unknown
   /** 归到哪个可折叠小节（排版 / 背景 / 描边）；无值 = 基本属性，平铺在前 */
   group?: string
 }

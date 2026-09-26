@@ -128,3 +128,55 @@ describe('写操作', () => {
     }
   })
 })
+
+describe('写操作与清单请求的先后（Codex #547 P1）', () => {
+  const rec = (revision: number, fontsize: number) => ({
+    id: 's1', kind: 'style', revision, display_name: '我的', data: { element: { axis_label: { fontsize } } },
+  })
+
+  it('写之前发出的清单请求晚回来：不把刚存进去的那一条换回旧值，重拉一次拿到新的', async () => {
+    let disk = rec(1, 10)
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((r) => (releaseFirst = r))
+    let styleLoads = 0
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (init?.method === 'PATCH') {
+        disk = rec(2, 12)
+        return json({ profile: disk })
+      }
+      if (url.includes('/style')) {
+        const snapshot = disk // 发出那一刻的磁盘
+        if (++styleLoads === 1) await firstGate
+        return json({ profiles: [snapshot] })
+      }
+      return json({ profiles: [] })
+    }) as typeof fetch
+    useProfileStore.setState({ styles: [rec(1, 10) as never], loaded: true })
+    const loading = useProfileStore.getState().load()
+    await Promise.resolve()
+    expect(await useProfileStore.getState().save('style', 's1', { element: { axis_label: { fontsize: 12 } } })).not.toBeNull()
+    releaseFirst()
+    await loading
+    const s = useProfileStore.getState()
+    expect(s.styles[0].data).toEqual({ element: { axis_label: { fontsize: 12 } } })
+    expect(styleLoads, '被写操作盖过的那一次重拉了一次').toBe(2)
+    expect(s.loading).toBe(false)
+  })
+
+  it('写之后才发出的清单请求照常生效', async () => {
+    let disk = rec(1, 10)
+    stub((url, init) => {
+      if (init?.method === 'PATCH') {
+        disk = rec(2, 12)
+        return json({ profile: disk })
+      }
+      return json({ profiles: url.includes('/style') ? [disk] : [] })
+    })
+    useProfileStore.setState({ styles: [rec(1, 10) as never], loaded: true })
+    await useProfileStore.getState().save('style', 's1', { element: { axis_label: { fontsize: 12 } } })
+    disk = rec(3, 14) // 别处又改过
+    await useProfileStore.getState().load()
+    expect(useProfileStore.getState().styles[0].revision).toBe(3)
+  })
+})

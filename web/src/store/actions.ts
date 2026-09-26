@@ -2,7 +2,6 @@ import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
 import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
-import { listJoin } from '@/i18n/format'
 import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
@@ -24,6 +23,7 @@ import type { StylePlan, StylePreset, StyleTextEntry } from '@/lib/stylePresets'
 import { TEXT_EFFECTS } from '@/lib/textEffects'
 import { canvasTextDefaults, writeCanvasText } from '@/lib/typography'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
+import { releaseOwned } from '@/lib/styleOwned'
 import {
   switchKindLabel,
   switchObject,
@@ -276,6 +276,30 @@ export function addSubLabels() {
 
 /* ------------------------------- 编辑操作 --------------------------------- */
 
+/**
+ * 这一次 recipe 里**被写过**的 override（新加的、换过值的、删掉的）。按条目身份比：`filter` + `push`、
+ * `upsertOverrides` 的原地替换都会换一个新对象，没动过的那几条在草稿里还是同一个对象。
+ */
+function writtenOverrides(before: PanelOverride[], after: PanelOverride[]): { gid: string; prop: string }[] {
+  // 比**生效的那条**（重复条目 last-wins，#587）：写入改的是最后一条，按第一条比会以为没动过
+  const at = (list: PanelOverride[], x: PanelOverride) => effectiveOverride(list, x.gid, x.prop)
+  return [...before, ...after].filter((x) => at(before, x) !== at(after, x))
+}
+
+/**
+ * 用户对这张图的 override 动了手：动过的那几条从「样式写的」登记里注销（ADR 0081 §十三）——从此归用户，
+ * 脚本重跑不让位。样式自己的写入不走这里（`styleBinding` 直接 commit 并登记）。
+ */
+function withOwnedRelease(d: FigureDocument, o: CanvasObject, patch: () => void) {
+  if (o.type !== 'panel') {
+    patch()
+    return
+  }
+  const before = [...o.overrides]
+  patch()
+  releaseOwned(d, o, writtenOverrides(before, o.overrides))
+}
+
 export function updateObject<T extends CanvasObject>(
   id: string,
   label: UiMessage,
@@ -286,7 +310,7 @@ export function updateObject<T extends CanvasObject>(
     label,
     (d) => {
       const o = d.objects.find((x) => x.id === id) as T | undefined
-      if (o) patch(o)
+      if (o) withOwnedRelease(d, o, () => patch(o))
     },
     opts,
   )
@@ -326,7 +350,7 @@ export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) 
 
 export function updateObjects(ids: string[], label: UiMessage, patch: (o: CanvasObject) => void) {
   commit(label, (d) => {
-    for (const o of d.objects) if (ids.includes(o.id)) patch(o)
+    for (const o of d.objects) if (ids.includes(o.id)) withOwnedRelease(d, o, () => patch(o))
   })
 }
 
@@ -1219,7 +1243,7 @@ export function applyMixedAlign(
   if (!patches.length && !moves.length) return
   useDocumentStore.getState().commit(label, (d) => {
     const p = d.objects.find((o) => o.id === panelId)
-    if (p?.type === 'panel') upsertOverrides(p, patches)
+    if (p?.type === 'panel') withOwnedRelease(d, p, () => upsertOverrides(p, patches))
     for (const mv of moves) {
       const o = d.objects.find((x) => x.id === mv.id)
       if (o && !o.locked) {
@@ -1315,77 +1339,52 @@ export function enterElementEdit(
 /* ------------------------------ 论文样式应用 -------------------------------- */
 
 /**
- * 把样式计划一次性落进文档：多个面板的 override、标注文字、页面尺寸
- * 合成**一条**历史记录（⌘Z 一次全部撤销），然后统一触发重渲染。
+ * 把一份样式计划写进文档草稿（**只写，不开事务**——调用方在自己的那一次 `commit` 里调它）。
+ *
+ * 样式应用只有这一个写法（ADR 0081：应用 = 绑定，`store/styleBinding.ts` 是唯一调用方）：
+ * override 按 (gid, prop) 原地换掉；画布文字**经属性能力层写**（`writeCanvasText`），
+ * 不在这里手写第二遍 `bold ? … : …`——样式应用与手动编辑必须落成同一种形状，否则
+ * 「应用样式之后再手动改一下」会得到两个不同的字段集合；页面尺寸与背景是样式的一部分，
+ * 与其余项进同一条历史（`undefined` = 这份样式没管它，与「设成白色」是两个答案）。
  */
-export function applyStylePlan(plan: StylePlan, preset: StylePreset) {
-  const touched = plan.panels.filter((p) => p.patches.length)
-  if (
-    !touched.length &&
-    !plan.annotationIds.length &&
-    !plan.subLabelIds.length &&
-    !plan.page &&
-    !plan.background
-  ) {
-    status(note('styleEmpty'), 'error')
-    return
+export function writeStylePlan(d: FigureDocument, plan: StylePlan, preset: StylePreset): void {
+  for (const { panel, patches } of plan.panels) {
+    if (!patches.length) continue
+    const o = d.objects.find((x) => x.id === panel.id)
+    if (o?.type !== 'panel') continue
+    // 原地改值、只追加真正新的（与其它写入同一个 `upsertOverrides`）：override 数组的 JSON 就是
+    // 渲染变体的键，先删后追加会让「语义相同的一组 override」换一个键、白渲染一次（Codex #547 P1）
+    upsertOverrides(o, patches.map((p) => ({ gid: p.gid, prop: p.prop, value: p.value })))
   }
-  commit(hist('applyStyle', { name: preset.name }), (d) => {
-    for (const { panel, patches } of touched) {
-      const o = d.objects.find((x) => x.id === panel.id)
-      if (o?.type !== 'panel') continue
-      for (const p of patches) {
-        o.overrides = o.overrides.filter((x) => !(x.gid === p.gid && x.prop === p.prop))
-        o.overrides.push({ gid: p.gid, prop: p.prop, value: p.value })
-      }
-    }
-    /**
-     * 样式里的画布文字项 → 文档。**经属性能力层写**（`writeCanvasText`），
-     * 不在这里手写第二遍 `bold ? … : …`：样式应用与手动编辑必须落成同一种
-     * 形状，否则「应用样式之后再手动改一下」会得到两个不同的字段集合。
-     */
-    const applyText = (obj: TextObject, s: StyleTextEntry) => {
-      if (s.sizePt != null) writeCanvasText(obj, 'sizePt', s.sizePt)
-      if (s.bold != null) writeCanvasText(obj, 'weight', s.bold ? 'bold' : 'normal')
-      if (s.italic != null) writeCanvasText(obj, 'style', s.italic ? 'italic' : 'normal')
-      if (s.color != null) writeCanvasText(obj, 'color', s.color)
-      if (s.fontFamily != null) writeCanvasText(obj, 'fontFamily', s.fontFamily)
-    }
-    for (const id of plan.annotationIds) {
-      const obj = d.objects.find((x) => x.id === id)
-      if (obj?.type === 'text' && preset.annotation) applyText(obj, preset.annotation)
-    }
-    for (const id of plan.subLabelIds) {
-      const obj = d.objects.find((x) => x.id === id)
-      if (obj?.type === 'text' && preset.subLabel) applyText(obj, preset.subLabel)
-    }
-    if (plan.page) {
-      d.page.w = clamp(plan.page.w, 10, 1000)
-      d.page.h = clamp(plan.page.h, 10, 1000)
-    }
-    // 背景是**样式的一部分**（图长什么样），所以和其余项一起进同一条历史。
-    // `undefined` = 这份样式没管背景，与「设成白色」是两个不同的答案。
-    if (plan.background) d.page.bg = plan.background
-  })
-  for (const { panel } of touched) {
+  const applyText = (obj: TextObject, st: StyleTextEntry) => {
+    if (st.sizePt != null) writeCanvasText(obj, 'sizePt', st.sizePt)
+    if (st.bold != null) writeCanvasText(obj, 'weight', st.bold ? 'bold' : 'normal')
+    if (st.italic != null) writeCanvasText(obj, 'style', st.italic ? 'italic' : 'normal')
+    if (st.color != null) writeCanvasText(obj, 'color', st.color)
+    if (st.fontFamily != null) writeCanvasText(obj, 'fontFamily', st.fontFamily)
+  }
+  for (const id of plan.annotationIds) {
+    const obj = d.objects.find((x) => x.id === id)
+    if (obj?.type === 'text' && preset.annotation) applyText(obj, preset.annotation)
+  }
+  for (const id of plan.subLabelIds) {
+    const obj = d.objects.find((x) => x.id === id)
+    if (obj?.type === 'text' && preset.subLabel) applyText(obj, preset.subLabel)
+  }
+  if (plan.page) {
+    d.page.w = clamp(plan.page.w, 10, 1000)
+    d.page.h = clamp(plan.page.h, 10, 1000)
+  }
+  if (plan.background) d.page.bg = plan.background
+}
+
+/** 计划里动到的面板立刻重排一次渲染（写完文档之后调） */
+export function renderStylePlan(plan: StylePlan): void {
+  for (const { panel, patches } of plan.panels) {
+    if (!patches.length) continue
     const next = findObject(panel.id)
     if (next?.type === 'panel') requestRender(next, true)
   }
-  const parts = [
-    touched.length && t('status.stylePartPanels', { ns: 'workspace', count: touched.length }),
-    plan.annotationIds.length &&
-      t('status.stylePartAnnotations', { ns: 'workspace', count: plan.annotationIds.length }),
-    plan.subLabelIds.length &&
-      t('status.stylePartSubLabels', { ns: 'workspace', count: plan.subLabelIds.length }),
-    plan.page && t('status.stylePartPage', { ns: 'workspace' }),
-  ].filter(Boolean) as string[]
-  status(
-    note('styleApplied', {
-      name: preset.name,
-      parts: listJoin(parts),
-      undo: modKey('Z'),
-    }),
-  )
 }
 
 /* ------------------------------ 结构化布局组 -------------------------------- */

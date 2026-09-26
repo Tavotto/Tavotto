@@ -38,6 +38,7 @@ import re
 
 __all__ = [
     "blank_comments_and_strings",
+    "exported_interface_members",
     "exported_number",
     "exported_string",
     "exported_string_array",
@@ -250,3 +251,65 @@ def exported_number(src: str, name: str) -> int:
                 f"（只认 `;` 或换行后接 {sorted(_STATEMENT_STARTERS)}）"
             )
     return int(lit.group().replace("_", ""))
+
+
+def exported_interface_members(src: str, name: str) -> dict[str, str]:
+    """`export interface <name> { … }` 的**顶层**成员：成员名 → 类型的源码原文（按源码顺序）。
+
+    同一套结构性做法（先抹掉注释与字符串，再在代码上定位）：注释掉的成员声明不算数，
+    嵌套对象类型（`{ w: number; h: number }`）里的成员不是顶层成员。成员之间以换行或 `;`
+    分隔；`extends`、方法签名、索引签名一律红——读不出确切形状时宁可报错也不猜。
+    """
+    code, _ = blank_comments_and_strings(src)
+    decl = re.compile(r"\bexport\s+interface\s+" + re.escape(name) + r"\s*\{")
+    hits = list(decl.finditer(code))
+    if len(hits) != 1:
+        raise AssertionError(
+            f"源码里找到 {len(hits)} 处 `export interface {name} {{`——判据只认恰好一处活声明"
+        )
+    open_at = hits[0].end() - 1
+    depth = 0
+    close_at = -1
+    for k in range(open_at, len(code)):
+        if code[k] in "{[(<":
+            depth += 1
+        elif code[k] in "}])>":
+            depth -= 1
+            if depth == 0:
+                close_at = k
+                break
+    if close_at < 0:
+        raise AssertionError(f"{name} 的接口没有收尾花括号")
+    # 在顶层（深度 1）按换行 / 分号切成员
+    members: dict[str, str] = {}
+    depth = 0
+    start = open_at + 1
+    pieces: list[tuple[int, int]] = []
+    for k in range(open_at + 1, close_at + 1):
+        c = code[k]
+        if c in "{[(<":
+            depth += 1
+        elif c in "}])>":
+            depth -= 1
+        if (depth == 0 and c in "\n;") or k == close_at:
+            pieces.append((start, k))
+            start = k + 1
+    # 跨行的联合 / 交叉类型（`type:\n  | 'text'\n  | 'number'`）：以 `|` / `&` 开头的一行接在上一个成员后面
+    merged: list[tuple[int, int]] = []
+    for a, b in pieces:
+        if merged and code[a:b].strip()[:1] in ("|", "&"):
+            merged[-1] = (merged[-1][0], b)
+        else:
+            merged.append((a, b))
+    for a, b in merged:
+        text = code[a:b]
+        if not text.strip():
+            continue
+        m = re.fullmatch(r"\s*(readonly\s+)?([A-Za-z_]\w*)\??\s*:(.*)", text, re.S)
+        if not m:
+            raise AssertionError(f"{name} 的成员读不出形状（方法 / 索引签名？）：{src[a:b]!r}")
+        type_at = a + m.start(3)
+        members[m.group(2)] = src[type_at:b].strip()
+    if not members:
+        raise AssertionError(f"{name} 解析成空的——判据本身坏了")
+    return members

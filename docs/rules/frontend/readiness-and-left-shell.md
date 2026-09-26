@@ -103,6 +103,23 @@
   移除不取消收藏）。收藏里是用户的项目路径：诊断包的条数化与路径记号两处都要带上它。
   看护：`components/left/workspaceList.test.tsx`、`store/projectSwitchSerial.test.ts`、`tests/test_projects.py` 的 pinned 六条、
   `tests/test_diagnostics_bundle.py::test_pinned_projects_are_redacted_like_recent_ones`。
+- **左栏「样式」面板（2026-09-24）**：`components/left/StylePanel.tsx`，排在「问题」前面、两者互相
+  跳转。**当前图**与问题面板同一个判据（`useCurrentFigure`）；面板**不判规范**——「这一格不合规」只按
+  对象 · gid · `propertyPath` 认回问题清单里已有的那一条（`lib/stylePanelModel.cellIssues`），点行尾记号走
+  `issueFocus.openProblemAt`（定位仍是 `focusObject`，再把问题面板的范围 / 筛选 / 游标摆好）。数字是**页面上
+  的 pt**（× `panelScale`，写入 ÷ 回去，与样式应用同一个换算）；图内元素经 `useTextStyleAdapter`、画布标注经
+  `useCanvasTypography` 写（Inspector 同一条路，一次改动一次 commit）；多个值是「多个值」不压扁。底部是**画布跟随
+  样式**（ADR 0081，唯一实现 `store/styleBinding.ts`）：选一套 = 绑定并立刻对齐整张画布（一次 commit）；已绑定时各格
+  的改动改的是**这套样式本身**（先存库、存成功再一次 commit 对齐改了的那一项，内置样式先复制一份再改绑）；「不跟随
+  样式」只解绑；「恢复原样」清整张画布样式管得到的 override 并解绑。写入前一律过 `effectiveChanges`，已合样式的图零
+  commit。设置 › 样式页的「用于当前画布」调同一个 `bindCanvasStyle`；样式对话框只编辑、不应用。
+  **脚本重跑后脚本赢**（用户 2026-09-25 裁决，ADR 0081 §十三）：样式只在绑定 / 改值 / 库更新 / 新图第一次拿到 manifest
+  时自动写；重跑后的不一致（脚本改了的值、新 gid）由面板显示「N 处与样式不一致」+「对齐」（`styleMismatchPlan` /
+  `alignCanvasToStyle`，一次 commit，用户手改的不算不动，为 0 时整行不出现）。样式写的每条 override 登记在
+  `style.owned`（连同写入时脚本的原生值），精确 manifest 的 `value_original` 与基线不等时让位（`yieldToScript`，一次
+  commit「脚本改动优先于样式」）；登记只在 override 仍是那个值时算数（`lib/styleOwned.ownedLive`），用户经
+  `updateObject` / 混排对齐 / 一键修复写过的那一条当场注销；老文档、老引擎不让位；恢复原样连样式写的孤儿（gid 已不在 manifest 里）一起清，解绑只清孤儿；恢复原样挑「样式管得到的」要求此刻 manifest 确实暴露这条属性（用户的孤儿不删）；按 (gid, prop) 取 override 一律走 `effectiveOverride`（重复条目 last-wins，#587），`styleOverrideLookup.test.ts` 按 TS AST 结构性看护（不用源码正则）。
+  看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
   `components/DependencyPrepareDialog.test.tsx`、`components/notificationRail.test.tsx`（「已改用你的环境」）、
@@ -128,3 +145,6 @@
 - 侧栏「偏好」与「此刻开着」是两件事、自动让位绝不写回偏好
 - 切项目的列表只有工作区抽屉一份、顶栏项目名只开抽屉、收藏按路径发单个操作（不发整张列表）、切项目与改收藏各自串行
 - 元素树行 memo、props 只收显示字段（不收 `panel` / `el`）、回调树级稳定
+- 样式面板（ADR 0081）不判规范（「不合规」只按对象 · gid · `propertyPath` 认回问题清单已有的那一条，`cellIssues`）、数字是页面 pt（× `panelScale`，写入 ÷ 回去）、多个值不压扁
+- **应用样式只有绑定一条路**（`styleBinding`）：库写入一条队列、写文档前比代次、只认精确 manifest、欠账、写入前过 `effectiveChanges`（已合样式零 commit）、future 非空时不自动写、撤销只退画布并标「已脱离」（不推回库）
+- 重跑后脚本赢：不自动对齐，面板给「N 处不一致」+「对齐」，样式写的 override 登记在 `style.owned`、脚本改了（`value_original` ≠ 基线）就让位，用户写过的当场注销（ADR 0081 §十三）

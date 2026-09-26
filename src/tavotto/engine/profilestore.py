@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 import threading
 import time
@@ -148,12 +149,62 @@ def _builtin_spec_records() -> list[dict]:
     return out
 
 
+#: 字号落在人用的 0.5 pt 格子上——与前端 `lib/issueFix.ts` 的 `GRID` 是同一档
+#: （一键修复把 7.5 pt 提到「能通过的最小一档」用的也是它）。它不是规范里的
+#: 数，是「从规范派生一个人会写的数」时的取整粒度。
+_FONT_GRID_PT = 0.5
+
+
+def _num(v: Any) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def _secondary_font_pt(spec: dict, base: float) -> float:
+    """刻度与图例那一档：**规范允许的最小一档**，且不高于正文 `base`。
+
+    「允许」按规范自己的两条下限算：`absolute_min_font_size_pt` 那条边**不含等号**
+    （`eff <= floor` 算违规，ADR 0006 / 0029），`min_effective_font_size_pt` 含等号。
+    所以默认规范（8 / 8）下是 8.5 而不是 8——写成 8 的话，套完默认样式刻度与
+    图例当场红（`font-below-absolute-floor`）。两个键缺席时退到
+    `profiles.FALLBACK_MIN_FONT_SIZE_PT`（与求值器同一个兜底）。
+
+    正文比这一档还小（规范自己的正文就贴着下限）时取正文：层级是「不高于
+    轴标题」，不是「一定比它小一档」。
+    """
+    fallback = profiles_mod.FALLBACK_MIN_FONT_SIZE_PT
+    floor = _num(spec.get("absolute_min_font_size_pt"))
+    strict = _num(spec.get("min_effective_font_size_pt"))
+    floor = fallback if floor is None else floor
+    strict = fallback if strict is None else strict
+    step = math.ceil(max(floor, strict) / _FONT_GRID_PT - 1e-9) * _FONT_GRID_PT
+    if step <= floor:
+        step += _FONT_GRID_PT
+    return min(step, base)
+
+
 def _builtin_style_record() -> dict:
     """内置样式 = **从默认规范派生**的一份「默认样式」。
 
-    规范说「正文 9 pt、拉丁字体 Times New Roman、线宽用这几档」，样式就照它
+    规范说「正文 9 pt、拉丁字体 Times New Roman、边框线宽用这几档」，样式就照它
     生成一份可直接应用的默认值——**不在这里再写一遍数字**。规范改了，内置
     样式跟着变；两者从此不可能互相矛盾。
+
+    派生规则（2026-09-24 用户实测后修订，此前一律 9 pt + 最细线宽）：
+
+    * **字号保留层级**。标题 / 轴标题 / 图内文字 = 规范正文 `default_font_size_pt`；
+      刻度与图例 = `_secondary_font_pt()`（规范允许的最小一档、不高于正文），
+      图例再夹进 `legend_policy` 的区间。旧规则把所有文字角色抹成同一个 9 pt，
+      脚本里「刻度比轴标题小一号」的层级套完样式就没了。
+    * **字体覆盖所有带 `fontfamily` 的文字角色**：`text` / `title` / `axis_label`
+      之外还有 `ticks`（引擎的 `("ticks", "fontfamily")`，ADR 0051）与
+      `legend_text`（图例项；图例容器本身没有这个字段）。旧规则只给前三个，
+      「换成 Times」在刻度与图例上没落地。
+    * **数据曲线的线宽不在默认样式里统一**。线宽档位（`line_widths_pt`）是「允许哪几档」，
+      不是「该用哪一档」：主曲线 / 参考线 / 拟合线粗细不同是作图者的表达，
+      一刀切成同一个数（旧规则取最细的第一档 0.5 pt）会把它们抹平，数据线还变得
+      又细又淡。偏离档位的线由预检的 `line-width-off-preset` 报、一键修复逐条吸到
+      **最近**的档位——那条路保留了各条线之间的相对粗细。边框（`axes`）是结构
+      而不是数据，仍然统一到边框档位的第一档。
 
     派生不出来（规范文件坏了）时给一份**空样式**：宁可什么都不改，也不拿
     一组凭空的数字去改用户的图。
@@ -164,29 +215,29 @@ def _builtin_style_record() -> dict:
         spec = profiles_mod.load()
     except profiles_mod.ProfileError:
         spec = {}
-    base = spec.get("default_font_size_pt")
+    base = _num(spec.get("default_font_size_pt"))
     fam = (spec.get("font_family") or {}).get("latin")
-    widths = spec.get("line_widths_pt") or []
     legend = spec.get("legend_policy") or {}
     axis = spec.get("axis_policy") or {}
     weights = spec.get("text_weight_policy") or {}
-    if isinstance(base, (int, float)):
-        for role in ("text", "title", "axis_label", "ticks"):
-            element.setdefault(role, {})["fontsize"] = float(base)
-        legend_size = legend.get("max_font_size_pt")
-        element.setdefault("legend", {})["fontsize"] = float(
-            legend_size if isinstance(legend_size, (int, float)) else base
-        )
-    if isinstance(fam, str) and fam:
+    if base is not None:
         for role in ("text", "title", "axis_label"):
+            element.setdefault(role, {})["fontsize"] = base
+        second = _secondary_font_pt(spec, base)
+        element.setdefault("ticks", {})["fontsize"] = second
+        lo, hi = _num(legend.get("min_font_size_pt")), _num(legend.get("max_font_size_pt"))
+        legend_size = second if lo is None else max(second, lo)
+        if hi is not None:
+            legend_size = min(legend_size, hi)
+        element.setdefault("legend", {})["fontsize"] = legend_size
+    if isinstance(fam, str) and fam:
+        for role in ("text", "title", "axis_label", "ticks", "legend_text"):
             element.setdefault(role, {})["fontfamily"] = fam
     for role in ("title", "axis_label", "ticklabel", "legend_text", "annotation"):
         want = weights.get(role)
         target = {"ticklabel": "ticks", "legend_text": "legend"}.get(role, role)
         if want in ("normal", "bold") and target in ("title", "axis_label"):
             element.setdefault(target, {})["weight"] = want
-    if widths:
-        element.setdefault("line", {})["linewidth"] = float(widths[0])
     frame = axis.get("frame_linewidth_pt") or []
     if frame:
         element.setdefault("axes", {})["spine_linewidth"] = float(frame[0])
@@ -197,9 +248,11 @@ def _builtin_style_record() -> dict:
     data = {
         "element": element,
         "palette": palette,
-        "annotation": ({"sizePt": float(base)} if isinstance(base, (int, float)) else {}),
+        "annotation": ({"sizePt": base} if base is not None else {}),
         "background": "#ffffff",
         "derived_from_spec": spec.get("profile_id") or "",
+        # 派生出来的数字是规范里「读者量到的 pt」（正文 9 pt 说的是页面上的 9 pt）
+        "pt_basis": "page",
     }
     return _record(
         BUILTIN_STYLE_ID,
@@ -476,6 +529,9 @@ _STYLE_KEYS = (
     "page",
     "background",
     "derived_from_spec",
+    # 以 pt 计的数字按什么口径读：`"page"` = 页面上读者量到的 pt；缺席 = 旧版按脚本值存的样式
+    # （严格同源：`web/src/lib/stylePresets.StyleProfileData.pt_basis`）
+    "pt_basis",
 )
 
 
@@ -501,6 +557,8 @@ def _validate_style(data: dict) -> dict:
     src = data.get("derived_from_spec")
     if isinstance(src, str):
         out["derived_from_spec"] = src[:64]
+    if data.get("pt_basis") == "page":
+        out["pt_basis"] = "page"
     # `extra` **本身不是一个未知字段**：它是上一次收容未知字段的那只桶。
     # 不单独认出来的话，界面把读到的样式原样存回来（`extra` 也在里面）就会
     # 变成 `{extra: {extra: {...}}}`——每存一次多包一层，警告也从

@@ -127,7 +127,7 @@ export function registerOverrideStamper(fn: OverrideStamper): () => void {
  *   ——最常见的恢复——看起来和「原地改值」一模一样，推断不出来）。整次提交不抄，
  *   存的是什么就是什么，没带身份的也照旧不带（按位置，与引入身份之前一致）。
  */
-export type CommitOptions = { overrides?: 'edit' | 'restored' }
+export type CommitOptions = { overrides?: 'edit' | 'restored'; undoAlso?: Recipe }
 
 /** `produceWithPatches` + 身份抄写：两段补丁按时序拼成一份（反向补丁倒序）。 */
 function produceStamped(
@@ -237,6 +237,11 @@ interface DocumentState {
   /**
    * 一次用户操作 = 一条历史记录。`opts.overrides === 'restored'`：这次写进去的 override
    * 是从存储原样读回来的，身份不按此刻重抄（`CommitOptions`）。
+   *
+   * `opts.undoAlso`：撤销这一条时，除了回到操作之前，**再**落下这几处改动（重做时先把它们撤掉、
+   * 再重放操作）——两者都在这一条历史的补丁里，撤销 / 重做 / 再撤销都一致。用于「撤销之后
+   * 的状态不等于操作之前」的写入：撤销一次样式修改，画布回到旧值并标成「已脱离样式」
+   * （ADR 0081 §十二）。只用于独立的一条历史：事务开着时先收尾
    */
   commit: (label: UiMessage, recipe: Recipe, opts?: CommitOptions) => void
   /** 不进历史的即时修改（仅在事务中使用） */
@@ -389,9 +394,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   txn: null,
 
   commit: (label, recipe, opts) => {
+    if (opts?.undoAlso && get().txn) get().endTxn()
     const state = get()
     const [next, patches, inverse] = produceStamped(state.doc, recipe, opts)
     if (!patches.length) return
+    if (opts?.undoAlso) {
+      // 撤销落在「操作之前 + undoAlso」上：inverse 之后接 extra；重做先 extraInverse 回到操作之前
+      const [, extra, extraInverse] = produceWithPatches(state.doc, opts.undoAlso)
+      const entry = { label, patches: [...extraInverse, ...patches], inverse: [...inverse, ...extra] }
+      set({ doc: next, ...pushHistory(state, entry) })
+      noteCommit(label, state, next, patches, false)
+      return
+    }
     if (state.txn) {
       // 事务进行中的结构性操作也并入当前事务
       set({ doc: next, txn: history.accumulate(state.txn, patches, inverse) })

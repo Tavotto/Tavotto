@@ -112,6 +112,58 @@ def test_the_script_never_sees_a_tavotto_override(tmp_path):
     assert code == 0, f"脚本自己的断言没过: {err}"
 
 
+VALUE_ORIGINAL_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+ax.set_title("Script", fontsize=10)
+plt.show()                      # ← 屏障 1：Tavotto 把标题字号改成 8
+
+ax.title.set_fontsize(12)       # 脚本自己改了这一项（画图助手改脚本就是这个样子）
+plt.show()                      # ← 屏障 2：rebase 按新的脚本值重采 originals
+print("DONE")
+"""
+
+
+def _field_of(manifest: dict, gid: str, prop: str) -> dict:
+    el = next(e for e in manifest["elements"] if e["gid"] == gid)
+    return next(f for f in el["editable"] if f["prop"] == prop)
+
+
+def test_rebase_reports_the_new_script_value_as_value_original(tmp_path):
+    """`value_original`（ADR 0081 §十三）在 rebase 之后说的是**新的**脚本值。
+
+    前端靠它判断「脚本改过这一项没有」：样式写的 override 在脚本改过的那一项上让位。rebase
+    清空 originals、按脚本此刻的值重采——`value_original` 必须跟着换，否则脚本的改动永远被
+    判成「没改」，样式一直压着它。
+    """
+    nativekit.write(tmp_path / "figure.py", VALUE_ORIGINAL_SCRIPT)
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        stem = only_stem(session.ensure_built())
+        gid = title_gid(session, stem)
+        session.override(stem, [{"gid": gid, "prop": "fontsize", "value": 8}])
+        f1 = _field_of(manifest_of(session, stem), gid, "fontsize")
+        assert (f1["value"], f1.get("value_original")) == (8, 10), f1
+
+        session.resume()
+        nativekit.wait_state(session, [nativesession.BARRIER, nativesession.ENDED])
+        assert session.state == nativesession.BARRIER
+        session.ensure_built()
+        f2 = _field_of(manifest_of(session, stem), gid, "fontsize")
+        assert (f2["value"], f2.get("value_original")) == (8, 12), f2
+        code, out, err = nativekit.finish(session, proc)
+
+    assert "DONE" in out and code == 0, err
+
+
 def _text_of(manifest: dict, gid: str) -> str:
     """某个元素**当前**的文字。
 

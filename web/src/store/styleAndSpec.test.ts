@@ -10,8 +10,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { literal } from '@/i18n'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { bindingFor, builtinCatalog, resolveDocumentSpec, sameRules } from '@/lib/specBinding'
-import { planStyle, type StylePreset } from '@/lib/stylePresets'
-import { applyStylePlan } from './actions'
+import type { StylePreset } from '@/lib/stylePresets'
+import { seedExactRender } from '@/test/renderFixtures'
+import { useProfileStore } from './profileStore'
+import { bindCanvasStyle, resetStyleBindingSession } from './styleBinding'
 import { startAutosave, useDocumentStore } from './documentStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 
@@ -80,14 +82,38 @@ afterEach(() => {
   stopAutosave = null
 })
 
-describe('应用样式 = 一次可撤销的文档修改', () => {
-  it('override 与页面背景一起进同一条历史，⌘Z 一次全退回', () => {
-    const plan = planStyle(preset, [panel], () => manifest as never, s().doc, false)
-    applyStylePlan(plan, preset)
+describe('应用样式 = 绑定：一次可撤销的文档修改（ADR 0081）', () => {
+  const record = (data: Record<string, unknown>) => ({
+    id: 'st1',
+    kind: 'style',
+    schema_version: 1,
+    revision: 1,
+    display_name: '投稿用',
+    name_key: '',
+    version: '',
+    created_at: 0,
+    updated_at: 0,
+    built_in: false,
+    read_only: false,
+    is_default: false,
+    derived_from: '',
+    warnings: [],
+    data,
+  })
+
+  beforeEach(() => {
+    resetStyleBindingSession()
+    seedExactRender(panel, manifest as never)
+  })
+
+  it('绑定、override 与页面背景一起进同一条历史，⌘Z 一次全退回', () => {
+    useProfileStore.setState({ styles: [record(preset as never) as never], loaded: true })
+    bindCanvasStyle('st1')
 
     const after = s().doc.objects[0] as PanelObject
     expect(after.overrides).toEqual([{ gid: 'axes_0.title', prop: 'fontsize', value: 12 }])
     expect(s().doc.page.bg).toBe('#eeeeee')
+    expect(s().doc.style?.id).toBe('st1')
     expect(s().dirty).toBe(true)
 
     expect(s().undo()).not.toBeNull()
@@ -95,13 +121,13 @@ describe('应用样式 = 一次可撤销的文档修改', () => {
     expect(back.overrides).toEqual([])
     expect(back.w).toBe(80)
     expect(s().doc.page.bg).toBe('#ffffff')
+    expect(s().doc.style).toBeUndefined()
   })
 
   it('样式没管背景时**不动背景**（"没管"与"设成白色"不是一回事）', () => {
-    const noBg: StylePreset = { name: '只改字号', element: { title: { fontsize: 12 } } }
-    const plan = planStyle(noBg, [panel], () => manifest as never, s().doc, false)
-    expect(plan.background).toBeUndefined()
-    applyStylePlan(plan, noBg)
+    const noBg = { element: { title: { fontsize: 12 } } }
+    useProfileStore.setState({ styles: [record(noBg) as never], loaded: true })
+    bindCanvasStyle('st1')
     expect(s().doc.page.bg).toBe('#ffffff')
   })
 })

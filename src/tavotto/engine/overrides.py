@@ -111,6 +111,11 @@ class FigState:
         self.index: dict[str, object] = {}  # gid -> artist（"figure" -> Figure）
         self.applied: dict[tuple, object] = {}  # (gid,prop) -> 请求值
         self.originals: dict[tuple, object] = {}  # (gid,prop) -> 原生值
+        # (gid,prop) -> 同一份「脚本原样」**按 manifest 字段的口径**读出来的值（`value_original`，
+        # ADR 0081 §十三）。`originals` 存的是 getter 的原始对象（元组、Colormap、哨兵……），
+        # 前端拿它没法与 manifest 的 `value` 比；这一份在采 originals 的**同一时刻**、用 manifest
+        # 自己的字段读法（`set_original_reader`）读，与 originals 同生同灭。读不出的不记 = 不知道。
+        self.original_values: dict[tuple, object] = {}
         # 由**广播型 prop** 代为采下的「脚本原样」（见 ALIAS_GROUPS）。它们
         # 是 originals 里没有对应 applied 条目的那些，单独记一笔才能在广播
         # 撤销之后跟着清掉——否则 originals 里会留下永远没人回收的条目。
@@ -3677,6 +3682,17 @@ def _apply_rank(prop: str, artist, gid: str = "") -> int:
     return _RANK_REST
 
 
+#: 按 manifest 字段口径读一个元素此刻各字段值的函数：`(state, gid) -> {prop: value}`。
+#: manifest 在模块层 import 本模块（反过来会成环），所以由它在 import 时登记进来
+#: （`set_original_reader`）；没登记（只用 overrides 的场合）就不记 `original_values`。
+_ORIGINAL_READER = None
+
+
+def set_original_reader(reader) -> None:
+    global _ORIGINAL_READER
+    _ORIGINAL_READER = reader
+
+
 def snapshot(state: FigState) -> list[dict]:
     """当前已应用的 override，全量列表形状——**「会话此刻是哪份列表」的唯一出处**。
 
@@ -3868,6 +3884,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
             _mark_restored(key, artist)
         state.applied.pop(key)
         state.originals.pop(key, None)
+        state.original_values.pop(key, None)
         state.alias_seeded.discard(key)
         state.unrestored.discard(key)
 
@@ -3881,6 +3898,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
         if any(_b in new or _b in state.unrestored for _b in owner.get(_nkey, ())):
             continue
         state.originals.pop(_nkey, None)
+        state.original_values.pop(_nkey, None)
         state.alias_seeded.discard(_nkey)
 
     # 应用新值：七档规范顺序（组内保持列表序，sorted 稳定）
@@ -3890,6 +3908,32 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
         # 列表序怎么排都得落成同一张图——热会话与全量重放同序是写回自检的
         # 前提。默认 0，不影响任何非别名 prop 的既有相对顺序。
         return (_apply_rank(prop, state.resolve(gid), gid), 1 if (gid, prop) in owner else 0)
+
+    # 按 manifest 的字段读法记下「脚本原样」（`value_original`）。**在这一轮任何 setter 动手之前**
+    # 把这一轮要第一次采样的元素全读一遍：元素之间有联动（色条外框就是色条轴的边框，改
+    # `spine_linewidth` 会顺手改掉 `outline_width` 的读数），边改边读的话，后读的那个采到的是
+    # 被别的 override 改过的值（实测）。一个元素只读一次。
+    _field_snap: dict[str, dict] = {}
+
+    def _snapshot(gid: str) -> dict:
+        fields = _field_snap.get(gid)
+        if fields is None:
+            try:
+                fields = _ORIGINAL_READER(state, gid) if _ORIGINAL_READER is not None else {}
+            except Exception:  # noqa: BLE001 — 读不出 = 不知道，前端按保守路径走
+                fields = {}
+            _field_snap[gid] = fields
+        return fields
+
+    def _capture_original_value(k: tuple) -> None:
+        fields = _snapshot(k[0])
+        if k[1] in fields:
+            state.original_values[k] = fields[k[1]]
+
+    if _ORIGINAL_READER is not None:
+        for _k in new:
+            if _k not in state.originals:
+                _snapshot(_k[0])
 
     drawn_after_geometry = False
     try:
@@ -3949,6 +3993,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                     # 是「两个 gid 指着同一个值」。`fill` → `facecolor` 这类
                     # 改名换型的别名不适用，照旧读实况。
                     _seeded = _NOTHING
+                    _seeded_from = None
                     # 两条路都指向同一件事——「这个值的脚本原样已经有人采过了」：
                     #   ① 窄成员自己被采过（mappable 在元素表里的常规情形）；
                     #   ② 只有**对等的广播端**采过。独立 mappable
@@ -3983,6 +4028,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                         for _nk in _cands:
                             if _nk[1] == key[1] and _nk in state.originals:
                                 _seeded = state.originals[_nk]
+                                _seeded_from = _nk
                                 break
                     if _seeded is _NOTHING and _prim is not None:
                         # ② 对等广播端采过：**它也得把同一个窄成员当第一个组员**——
@@ -3994,8 +4040,18 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                             _bm = _alias_members(_b, state.resolve(_b[0]))
                             if _bm and _bm[0] == _prim:
                                 _seeded = state.originals[_b]
+                                _seeded_from = _b
                                 break
-                    state.originals[key] = getter(artist) if _seeded is _NOTHING else _seeded
+                    if _seeded is _NOTHING:
+                        _capture_original_value(key)
+                        state.originals[key] = getter(artist)
+                    else:
+                        # 借来的原样（对等广播端 / 组员采的，同名 prop、指着同一个值）：`value_original`
+                        # 也借它那一份——此刻自己的实况已经被对方改过，读不得。不借的话热会话（先改了对方）
+                        # 与全新重放（自己先采）报出两份不同的 manifest（`test_hot_equals_replay_after_removal`）
+                        state.originals[key] = _seeded
+                        if _seeded_from in state.original_values:
+                            state.original_values[key] = state.original_values[_seeded_from]
                 # 广播型 prop：**在自己动手之前**把组内窄 prop 的「脚本原样」
                 # 一起采下来。等窄 prop 自己被应用时再采就晚了——那时读到的
                 # 已经是被广播改过的值，撤销就回不到原样（这正是本 bug）。
@@ -4010,6 +4066,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                         if nh is None:
                             continue
                         try:
+                            _capture_original_value(nkey)
                             state.originals[nkey] = nh[0](nart)
                             state.alias_seeded.add(nkey)
                         except Exception:  # noqa: BLE001 — 采不到就退回旧行为

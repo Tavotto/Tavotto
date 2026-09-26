@@ -6,7 +6,7 @@ import { createDismissTimer } from '@/lib/dismissTimer'
 import type { Severity } from '@/lib/profile'
 import type { ProblemCursor, ProblemScope } from '@/lib/problemList'
 
-export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'problems'
+export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'style' | 'problems'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
 export type RightTab = 'properties' | 'assistant' | 'canvas'
 export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'
@@ -339,6 +339,8 @@ interface UiState extends Persisted {
   /** 命令面板跑完一条命令就记一笔（去重、最近在前、封顶） */
   pushRecentCommand: (id: string) => void
   setProblemCursor: (v: ProblemCursor | null) => void
+  /** 关掉设置、打开左栏「样式」面板（设置 › 样式页「用于当前画布」绑完之后去看结果） */
+  openStylePanel: () => void
   setFixing: (v: boolean) => void
   setCropTarget: (id: string | null, baseline?: CropBaseline | null) => void
   setElementPanel: (id: string | null) => void
@@ -579,6 +581,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     })),
   setProblemFilter: (problemFilter) => set({ problemFilter }),
   setProblemScope: (problemScope) => set({ problemScope }),
+  openStylePanel: () => {
+    get().setSettingsOpen(false)
+    get().setLeftTab('style')
+  },
   pushRecentCommand: (id) => {
     set({ recentCommands: pushRecent(get().recentCommands, id) })
     persist(get())

@@ -6,6 +6,7 @@ import {
   Images,
   Layers,
   LayoutGrid,
+  Paintbrush,
   Settings,
   TriangleAlert,
 } from '@/components/ui/icons'
@@ -20,6 +21,9 @@ import { Tip } from '../ui/Tooltip'
 /**
  * 标签名走 workspace:rail.<id>，图标与顺序留在代码里。
  *
+ * 「样式」（2026-09-24）排在「问题」前面：先看这张图长什么样，再看哪里不合规——
+ * 两者互相跳转（样式里不合规的那一格直达问题清单里的那一条）。
+ *
  * 「问题」（Prompt 11）**常驻**：它在没有问题时也要在——「一个问题都没有」
  * 本身就是用户要的答案，而按需出现的入口会让人以为功能坏了。角标只在真的
  * 有问题时出现，抽屉收起时它是唯一的提示。
@@ -31,6 +35,7 @@ const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
   { id: 'assets', icon: Images },
   { id: 'layers', icon: Layers },
   { id: 'elements', icon: EditableFigureIcon },
+  { id: 'style', icon: Paintbrush },
   { id: 'problems', icon: TriangleAlert },
 ]
 

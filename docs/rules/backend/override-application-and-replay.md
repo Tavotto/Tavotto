@@ -124,6 +124,25 @@
   同族先例：
   `_AUTOSCALE`（自动缩放）、`_NO_BBOX`（没有框）、`_get_coll_edgecolor`（映射通道）。
   哨兵只活在 `originals` 里，不进 patch、不过 JSON。看护 `tests/test_patch_edgecolor_mode.py`。
+- **`value_original`：override 之前脚本的值，与 `value` 同一口径（ADR 0081 §十三，2026-09-25）**。
+  前端拿它判「脚本重跑后改没改这一项」：样式写的 override 在脚本改过的那一项上让位（用户裁决：
+  重跑后脚本赢）。`originals` 存的是 getter 的原始对象（元组 / Colormap / 哨兵），前端没法拿它与
+  manifest 的 `value` 比，所以另记一份 `state.original_values`：
+  * **读法就是 manifest 的**（`manifest._field_values` → `_fields_for`），由 manifest 在 import 时登记
+    （`overrides.set_original_reader`，反过来 import 会成环）；没登记就不记。
+  * **在这一轮任何 setter 动手之前**，把这一轮要第一次采样的元素全读一遍：元素之间有联动（色条外框
+    就是色条轴的边框，同一轮先改 `spine_linewidth` 的话外框读到的是改后的值——实测踩到过）。
+    广播代采的组员（`alias_seeded`）同样记；借来的原样（对等广播端 / 组员的 `_seeded`）连 `value_original`
+    一起借对方那一份——此刻自己的实况已经被对方改过，读不得；不借的话热会话与全新重放报出两份不同的
+    manifest（`test_invariants_engine.py::test_hot_equals_replay_after_removal` 的色条共用组当场红过）。
+  * 与 `originals` **同生同灭**：还原 / 广播退场时一起删；rebase（native 屏障、脚本重跑）清空后按
+    新的脚本值重采。
+  * 只在 `state.applied` 有这一条时发（与 `marker_original` 同一判据）；采不到就缺席 = 不知道，前端按
+    保守路径走（不让位）。`marker_original` / `cmap_original` 不并进来：那两个是形状 / 色图的只读事实。
+  * 键名与前端严格同源（`manifest.VALUE_ORIGINAL_KEY` ↔ `EditableField.value_original`）。
+  看护 `tests/test_manifest_value_original.py`（样式能写的每一项全写 / 逐条写各一遍、rebase 重采、没登记
+  读法时缺席）、`tests/test_value_original_pair.py`、
+  `tests/native/test_native_barrier_semantics.py::test_rebase_reports_the_new_script_value_as_value_original`。
 - **override 的目标身份（2026-09-25，ADR 0083，QA SCI-03-B1）**：gid 是位置式的，脚本
   重排 / 插入 / 删除曲线或子图之后同一个 gid 指向别的对象。patch 可带 `identity`（写编辑
   那一刻 manifest 里这个 gid 的身份，前端提交时抄写）；`apply` 建 `new` 表时比对

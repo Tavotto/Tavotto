@@ -228,3 +228,20 @@ def test_regex_literal_is_blanked_but_not_a_string_span():
     assert len(code) == len(src)
     assert "ab" not in code and "gi" not in code
     assert [src[a:b] for a, b in spans] == ["d"]
+
+
+def test_interface_member_with_a_multiline_union_is_one_member():
+    """跨行的联合类型（`type:` 下面一行一个 `| '…'`）是**一个**成员，不是一串读不出形状的行。"""
+    from tests.support.tsconst import exported_interface_members
+
+    src = """export interface F {
+  prop: string
+  type:
+    | 'text'
+    | 'number'
+  value: unknown
+}
+"""
+    got = exported_interface_members(src, "F")
+    assert list(got) == ["prop", "type", "value"]
+    assert "'number'" in got["type"]

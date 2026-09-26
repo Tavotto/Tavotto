@@ -351,6 +351,47 @@ export interface DocumentProfile {
   follow?: boolean
 }
 
+/**
+ * 这张画布**跟随**哪套样式（ADR 0081）。**可选字段，旧文档没有它 = 没绑定**，
+ * schema 不升版。
+ *
+ * 与规范绑定（`DocumentProfile`）同一个形状思路：`id` 指向全局样式库里的那一条，
+ * `snapshot` 是**这张画布最后一次对齐到的样式内容**。判「样式变了没有」看的是
+ * 内容不等（`specBinding.sameRules`），不是版本号。与规范不同的是：规范只检查、
+ * 从不改图；样式绑定的意思就是「这张画布上的图长成这套样式的样子」，库里那一条
+ * 改了，画布跟着改（一条可撤销的历史）。全局那条找不到了（换了台电脑 / 删了）时
+ * 快照照样说了算。唯一出处 `store/styleBinding.ts`。
+ */
+export interface DocumentStyle {
+  id: string
+  /** 最后一次对齐到的样式内容（`StyleProfileData` 的形状）。**样式进文档只有这一个位置** */
+  snapshot: Record<string, unknown>
+  /**
+   * 已脱离样式：用户撤销过一次样式修改 / 跟随（ADR 0081 §十二）。画布停在撤销回去的样子，
+   * 不再跟随库；再明确选一次绑定才恢复。只由撤销落下（`commit` 的 `undoAlso`），重做把它撤掉
+   */
+  detached?: true
+  /**
+   * 哪些 override 是**样式写的**（ADR 0081 §十三）：`面板 id @ 素材` → gid → prop → 那一条。存在即表示
+   * 样式写的；不在表里的 override 一律是用户的（老文档没有这个字段 = 全是用户的，保守：不让位）。
+   * 只在「此刻那条 override 的值仍是 `value`」时算数：用户在属性页里改过它，它就归用户了。
+   * 随绑定一起进历史（撤销 / 重做与 override 同一次回退）；解绑 / 恢复原样随 `style` 一起消失。
+   */
+  owned?: Record<string, Record<string, Record<string, StyleOwnedOverride>>>
+}
+
+/** 样式写下的一条 override（ADR 0081 §十三） */
+export interface StyleOwnedOverride {
+  /** 样式写下的值（脚本坐标系，即 override 里那个值） */
+  value: unknown
+  /**
+   * 样式写入那一刻**脚本的原生值**（manifest 口径）。之后精确 manifest 的 `value_original` 与它不等 =
+   * 脚本改过这一项 → 样式让位。说不出（老引擎、写在用户 override 之上又没有 `value_original`）时缺席 =
+   * 不知道，永不让位
+   */
+  base?: unknown
+}
+
 export interface FigureDocument {
   schema: 2
   name: string
@@ -361,6 +402,8 @@ export interface FigureDocument {
   layoutGroups?: LayoutGroup[]
   /** 可选的出版规范绑定；缺省走默认 profile */
   profile?: DocumentProfile
+  /** 可选的样式绑定（ADR 0081）；缺省 = 不跟随任何样式 */
+  style?: DocumentStyle
 }
 
 /* ------------------------- schema 3：项目 / 画布 --------------------------- */
@@ -380,6 +423,8 @@ export interface CanvasData {
   layoutGroups?: LayoutGroup[]
   /** 每张画布各自的出版规范绑定；缺省走默认 profile */
   profile?: DocumentProfile
+  /** 每张画布各自的样式绑定（ADR 0081）；缺省 = 不跟随任何样式 */
+  style?: DocumentStyle
 }
 
 /**
@@ -410,6 +455,7 @@ export function canvasToDoc(c: CanvasData): FigureDocument {
     guides: c.guides,
     ...(c.layoutGroups ? { layoutGroups: c.layoutGroups } : {}),
     ...(c.profile ? { profile: c.profile } : {}),
+    ...(c.style ? { style: c.style } : {}),
   }
 }
 
@@ -422,6 +468,7 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
     guides: doc.guides,
     ...(doc.layoutGroups ? { layoutGroups: doc.layoutGroups } : {}),
     ...(doc.profile ? { profile: doc.profile } : {}),
+    ...(doc.style ? { style: doc.style } : {}),
   }
 }
 

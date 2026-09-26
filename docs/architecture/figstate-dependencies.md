@@ -17,6 +17,7 @@ main @ 77f23250 + PR D 第一步（`axestraversal` 已提出）的树上算出�
 | `index` | 4 | manifest |
 | `applied` | 4（apply / _set_ticklabel_text / _text_has_bbox_left / _reindex_legend_children） | manifest、figsession、browser |
 | `originals` | 1（apply） | manifest（`marker_original` / `cmap_original`） |
+| `original_values` | 1（apply，与 `originals` 同一时刻采、同生同灭） | manifest（`value_original`，ADR 0081 §十三） |
 | `pending` | 3（apply / _pending_inverted / _cb_target_rect） | — |
 | `alias_seeded` | 1（apply） | — |
 | `colorbar_axes` | 1（_refresh_axes_follow） | manifest、preview_complexity |

@@ -95,6 +95,19 @@ describe('renderTargets：按变体去重，不再裁一个赢家', () => {
   })
 })
 
+describe('绑定了样式的画布（ADR 0081）', () => {
+  it('「只带基线、还没动过」的面板也渲染一次：对齐它要先读到 manifest；没绑时照旧不渲染', () => {
+    const objects: CanvasObject[] = [panel('a', 'Fig1.pdf', 0)]
+    expect(renderTargets(objects, null, {}, {}, {}, false)).toEqual([])
+    expect(renderTargets(objects, null, {}, {}, {}, true).map((t) => t.id)).toEqual(['a'])
+  })
+
+  it('runtime 面板照旧不因为绑定而自动执行脚本', () => {
+    const rt = { ...panel('r', 'runtime:x', 0), fileKind: 'runtime' } as PanelObject
+    expect(renderTargets([rt], null, {}, {}, {}, true)).toEqual([])
+  })
+})
+
 describe('baked 基线的有效性（isJustBakedBaseline 经由 renderTargets）', () => {
   // panel() 造出来的 overrides 形状与这里的 baked 逐字相同（同一段生成逻辑）
   const bakedOf = (n: number) =>
