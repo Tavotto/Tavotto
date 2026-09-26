@@ -2969,6 +2969,32 @@ class TestApprovedFontsAndRetirementScan:
             "lab 的字体要在 editable 安装之后、第一次 pytest 之前取到并 --check"
         )
 
+    def test_lab_release_mode_takes_the_fonts_from_the_candidate_wheel(self):
+        # lab 机器解析不了字体来源（2026-09-26 两次 name resolution 失败），发行档从候选 wheel 解字体：
+        # 取回候选产物要在建环境之前（仍是唯一一处 download-artifact，见 test_release_workflow_contract）；
+        # 解包内联（workflow 取自 @main、脚本取自被验 SHA）；两条分支之后都要 --check，真伪只认 allowlist。
+        text = (WF / "_lab-qualification.yml").read_text(encoding="utf-8")
+        download = text.find("name: 取回候选产物（发行档）")
+        venv = text.find("name: 建一次性验证环境")
+        claim = text.find("name: 认领候选 wheel（发行档）")
+        assert -1 < download < venv < claim, (download, venv, claim)
+        assert "if: inputs.use_prebuilt_dist" in text[download:venv]
+        assert "path: dist" in text[download:venv]
+        block = _code(text[venv:])
+        branch = block.find('if [ "${{ inputs.use_prebuilt_dist }}" = "true" ]')
+        extract = block.find('"$VENV/bin/python" - dist <<')
+        fallback = block.find("scripts/fetch_fonts.py\n")
+        check = block.find("scripts/fetch_fonts.py --check")
+        use = block.find("-m pytest")
+        assert -1 < branch < extract < fallback < check < use, (
+            branch,
+            extract,
+            fallback,
+            check,
+            use,
+        )
+        assert "scripts/ci/fonts_from_wheel" not in text, "解包要内联：被验的旧 SHA 里没有新脚本"
+
     def test_the_artifact_jobs_run_the_retirement_scan_on_their_artifact(self):
         for job_id, (subject, after) in self.RETIREMENT.items():
             block = _code(_job(CI, job_id))

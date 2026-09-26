@@ -162,6 +162,24 @@ jobs:
       - name: 清理上一轮残留
         run: python3 scripts/ci/cleanup.py
 
+      # **发行档验的是调用方传进来的那一份 exact artifact**，不自己造包：
+      # 「同一个 commit 重新造一个差不多的东西」证明不了将要发出去的那份能用。
+      # 其余档位没有候选包，所以自己造一个——验的是「main 的当前状态造得出
+      # 一个装得上、跑得起来的包」。两者问的问题不同，都要有。
+      # 取回挪到建环境之前（2026-09-26）：发行档的批准字体从这份 wheel 里解（见下一步），
+      # lab 机器解析不了字体来源的 objects / raw.githubusercontent.com，Actions 产物通道是通的。
+      - name: 取回候选产物（发行档）
+        if: inputs.use_prebuilt_dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist
+          # 三个字段只在 github-token **非空**时被读（跨仓库调用）；同仓库调用时
+          # secret 不存在、token 是空串，走的仍是本 run 的内部路径——见抬头注释。
+          repository: Tavotto/Tavotto
+          run-id: ${{ inputs.source_run_id || github.run_id }}
+          github-token: ${{ secrets.TAVOTTO_PUBLIC_TOKEN }}
+
       - name: 建一次性验证环境
         id: venv
         run: |
@@ -175,7 +193,34 @@ jobs:
           "$VENV/bin/pip" install -q -e ".[dev,ci]"
           # 批准字体不进 git（ADR 0060），editable 安装读的是源码树里的 resources/fonts/：
           # 不在跑套件之前取，RenderCore 一律 backend_unavailable（U10 #539 之后 lab 连红的根因）。
-          "$VENV/bin/python" scripts/fetch_fonts.py
+          if [ "${{ inputs.use_prebuilt_dist }}" = "true" ]; then
+            # 内联而不是 scripts/ 下的新文件：workflow 定义取自 @main，脚本却取自被验的
+            # inputs.sha——旧发行 SHA 里没有新脚本。这里只搬字节，真伪由下面的 --check 判。
+            "$VENV/bin/python" - dist <<'PY'
+          import shutil, sys, zipfile
+          from pathlib import Path, PurePosixPath
+          wheels = sorted(Path(sys.argv[1]).glob("*.whl"))
+          if len(wheels) != 1:
+              sys.exit(f"候选产物里应有且仅有一个 wheel，实际 {len(wheels)} 个")
+          prefix = PurePosixPath("tavotto/resources/fonts")
+          dest = Path("src/tavotto/resources/fonts")
+          with zipfile.ZipFile(wheels[0]) as zf:
+              members = [n for n in zf.namelist() if not n.endswith("/") and prefix in PurePosixPath(n).parents]
+              if not members:
+                  sys.exit(f"{wheels[0].name} 里没有 {prefix}/ 下的字体")
+              shutil.rmtree(dest, ignore_errors=True)
+              for n in members:
+                  rel = PurePosixPath(n).relative_to(prefix)
+                  if ".." in rel.parts:
+                      sys.exit(f"wheel 里的路径越界：{n}")
+                  out = dest.joinpath(*rel.parts)
+                  out.parent.mkdir(parents=True, exist_ok=True)
+                  out.write_bytes(zf.read(n))
+          print(f"从 {wheels[0].name} 解出 {len(members)} 个字体目录文件")
+          PY
+          else
+            "$VENV/bin/python" scripts/fetch_fonts.py
+          fi
           "$VENV/bin/python" scripts/fetch_fonts.py --check
           # **科学栈版本取自 packaging/runtime-lock.json**，不用 `pip install matplotlib`。
           # 视觉基线是像素级的：matplotlib 换个小版本就可能改掉抗锯齿或字体度量，
@@ -353,22 +398,6 @@ jobs:
           cargo test --manifest-path workerd/Cargo.toml
 
       # ── 包验收 ────────────────────────────────────────────────
-      # **发行档验的是调用方传进来的那一份 exact artifact**，不自己造包：
-      # 「同一个 commit 重新造一个差不多的东西」证明不了将要发出去的那份能用。
-      # 其余档位没有候选包，所以自己造一个——验的是「main 的当前状态造得出
-      # 一个装得上、跑得起来的包」。两者问的问题不同，都要有。
-      - name: 取回候选产物（发行档）
-        if: inputs.use_prebuilt_dist
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: dist
-          path: dist
-          # 三个字段只在 github-token **非空**时被读（跨仓库调用）；同仓库调用时
-          # secret 不存在、token 是空串，走的仍是本 run 的内部路径——见抬头注释。
-          repository: Tavotto/Tavotto
-          run-id: ${{ inputs.source_run_id || github.run_id }}
-          github-token: ${{ secrets.TAVOTTO_PUBLIC_TOKEN }}
-
       - name: 认领候选 wheel（发行档）
         if: inputs.use_prebuilt_dist
         id: candidate
