@@ -9,6 +9,7 @@ import {
   offscreen,
   placeCentered,
   placeCoachmark,
+  shouldGlide,
   unionBoxes,
   type Box,
   type CoachmarkSide,
@@ -147,7 +148,23 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
   const cardRef = useRef<HTMLDivElement>(null)
   const [ctx, setCtx] = useState<StepContext>(() => currentContext())
   const [measured, setMeasured] = useState<Measured | null>(null)
-  const [placement, setPlacement] = useState<{ x: number; y: number; side: CoachmarkSide | 'center' } | null>(null)
+  const [placement, setPlacement] = useState<{
+    x: number
+    y: number
+    side: CoachmarkSide | 'center'
+    /** 从上一个位置滑过来，还是直接出现（`shouldGlide`：途中不许扫过锚点） */
+    glide: boolean
+  } | null>(null)
+  // 卡片此刻**可能在**的区域（容器坐标）：停着时就是它的框；滑行中是起点区域与终点的外接
+  // 矩形——半路再改道时卡片在那段直线上的某处，只拿上一段的终点当起点会漏判（Codex #654）。
+  // 还没落过位是 null（挂载那一帧它在 -9999）。`dest` 是最近一次的落点
+  const shown = useRef<Box | null>(null)
+  const dest = useRef<Box | null>(null)
+  // 正在滑：这段时间卡片不接指针（#581）。`shouldGlide` 只护着锚点，路上压过的别的可点目标
+  // 它不管；滑行中的卡片一律让点击穿过去，才是「移动中的浮层不抢点击」的通用保证。
+  // `moveSeq` 每滑一次 +1，让复位计时器从最后一次起算
+  const [moving, setMoving] = useState(false)
+  const [moveSeq, setMoveSeq] = useState(0)
   const [waitedOut, setWaitedOut] = useState(false)
   const revealed = useRef(false)
 
@@ -232,15 +249,49 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
           return { x: r.left, y: r.top, w: r.width, h: r.height }
         })()
       : { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }
-    if (!measured?.box) {
-      const c = placeCentered(size, { w: frame.w, h: frame.h })
-      setPlacement({ x: c.x, y: c.y, side: 'center' })
-      return
+    const local: Box | null = measured?.box
+      ? { ...measured.box, x: measured.box.x - frame.x, y: measured.box.y - frame.y }
+      : null
+    const p = local
+      ? placeCoachmark(local, size, { w: frame.w, h: frame.h }, { margin: COACHMARK_MARGIN })
+      : { ...placeCentered(size, { w: frame.w, h: frame.h }), side: 'center' as const }
+    const next: Box = { x: p.x, y: p.y, w: size.w, h: size.h }
+    const glide = shouldGlide(shown.current, next, local)
+    const prev = dest.current
+    const moved = !!prev && (prev.x !== next.x || prev.y !== next.y)
+    setPlacement({ ...p, glide })
+    dest.current = next
+    if (glide && moved && !prefersReducedMotion()) {
+      shown.current = unionBoxes([shown.current ?? next, next])
+      setMoving(true)
+      setMoveSeq((n) => n + 1)
+    } else if (moved || !prev) {
+      // 第一次落位 / 跳过去了：上一段滑行（若有）已被打断，卡片此刻就停在落点上
+      shown.current = next
+      setMoving(false)
     }
-    const local: Box = { ...measured.box, x: measured.box.x - frame.x, y: measured.box.y - frame.y }
-    const p = placeCoachmark(local, size, { w: frame.w, h: frame.h }, { margin: COACHMARK_MARGIN })
-    setPlacement(p)
   }, [measured, ctx])
+
+  // 滑完复位：过渡结束事件为准；它可能不来（被下一次落位打断、元素被挪走），兜底计时器
+  // 比过渡长 50 ms。两者都在卸载 / 换步骤时清掉（`ActiveStep` 按步骤 key 重挂），
+  // 旧步骤的计时器不会在新步骤上改状态
+  useEffect(() => {
+    if (!moveSeq) return
+    const card = cardRef.current
+    const done = () => {
+      shown.current = dest.current
+      setMoving(false)
+    }
+    const onEnd = (e: TransitionEvent) => {
+      if (e.target === card && (e.propertyName === 'left' || e.propertyName === 'top')) done()
+    }
+    card?.addEventListener('transitionend', onEnd)
+    const fallback = window.setTimeout(done, DURATION.fast + 50)
+    return () => {
+      card?.removeEventListener('transitionend', onEnd)
+      window.clearTimeout(fallback)
+    }
+  }, [moveSeq])
 
   const missing = measured === null
   const showMissing = missing && waitedOut
@@ -299,9 +350,10 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
     zIndex: 60,
     // 时长与曲线只来自 token（宪法第七节）：此前是写死的 120ms + ease-out（打磨 G1）
     transition:
-      reduced || !placement
+      reduced || !placement?.glide
         ? undefined
         : `left ${DURATION.fast}ms ${EASE_STANDARD}, top ${DURATION.fast}ms ${EASE_STANDARD}`,
+    ...(moving ? { pointerEvents: 'none' as const } : {}),
   }
   const ring =
     measured?.box && !inDialog

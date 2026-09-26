@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { offscreen, placeCentered, placeCoachmark, unionBoxes } from './position'
+import { offscreen, placeCentered, placeCoachmark, shouldGlide, unionBoxes } from './position'
 
 const vp = { w: 1000, h: 600 }
 const card = { w: 300, h: 120 }
@@ -63,5 +63,20 @@ describe('其余纯函数', () => {
         { x: 30, y: 12, w: 5, h: 20 },
       ]),
     ).toEqual({ x: 10, y: 10, w: 25, h: 22 })
+  })
+
+  it('shouldGlide：没落过位不滑；路上碰到锚点不滑；只有碰不到才滑（issue #581）', () => {
+    const anchor = { x: 198, y: 184, w: 134, h: 128 }
+    const below = { x: 198, y: 322, w: 300, h: 124 }
+    // 刚挂载（屏幕外）→ 直接出现
+    expect(shouldGlide(null, below, anchor)).toBe(false)
+    // 从左上方飞来、要经过锚点 → 跳
+    expect(shouldGlide({ x: 40, y: 150, w: 300, h: 124 }, below, anchor)).toBe(false)
+    // 从画布中央挪到锚点下方：整段都在锚点下沿之下 → 滑
+    expect(shouldGlide({ x: 550, y: 388, w: 300, h: 124 }, below, anchor)).toBe(true)
+    // 贴边不算碰：卡片上沿正好等于锚点下沿
+    expect(shouldGlide({ x: 198, y: 312, w: 300, h: 124 }, below, anchor)).toBe(true)
+    // 没有锚点（居中的欢迎页 / 等待目标）→ 没有要护着的东西
+    expect(shouldGlide(below, { x: 550, y: 388, w: 300, h: 124 }, null)).toBe(true)
   })
 })
