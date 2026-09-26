@@ -276,6 +276,7 @@
     "resizeObjects": "缩放对象",
     "restoreAspect": "恢复原始比例",
     "restoreNativeSize": "恢复原始尺寸",
+    "adoptScriptFrame": "改用脚本保存时的图幅",
     "restoreStyle": "恢复原样并解除样式跟随",
     "alignNewFigure": "按样式对齐新图",
     "alignNewText": "按样式对齐新标注",
@@ -393,7 +394,9 @@
     "runtimeNeedsRerun": "尚未在本机运行，进入编辑即重新生成",
     "runtimePossiblyStale": "脚本或环境可能有变，重新运行即可更新。",
     "runtimeRerunFailed": "重新运行失败",
-    "stale": "脚本已更新"
+    "stale": "脚本已更新",
+    "frameLegacy": "按 figsize 显示",
+    "frameLegacyHint": "脚本保存的原图裁得不一样。选中这张图，在右侧属性里可以改用原图的图幅。"
   },
   "quickEdit": {
     "aria": "快捷编辑",

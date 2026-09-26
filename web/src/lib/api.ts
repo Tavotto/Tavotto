@@ -1,6 +1,7 @@
 import { apiUrl, apiUrlFor, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
+import type { ManifestFrame } from '@/lib/figureFrame'
 import type { PreviewMetadata } from '@/lib/previewBudget'
 import type { ThumbObject } from '@/types/thumb'
 
@@ -1630,6 +1631,11 @@ export interface Manifest {
    * 字体下拉把它并在首选项（`options`）之后；老引擎不发它，下拉照旧只有首选项。
    */
   font_families?: string[]
+  /**
+   * 脚本存盘时按 `bbox_inches` 裁过的图才有（ADR 0098）：脚本那个图幅在 figsize 里的位置、此刻
+   * 生不生效。前端只拿它给升级前的面板提示与「内容不动」的换算；几何照旧只认 `size_mm` 与分数。
+   */
+  frame?: ManifestFrame
 }
 
 export interface EngineRenderResponse {

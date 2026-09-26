@@ -55,6 +55,8 @@ const panel = (overrides: PanelOverride[]): PanelObject =>
     nativeH: 60,
     script: 'fig1.py',
     overrides,
+    // 本构建放上来的面板（ADR 0098 的图幅记号）：版本恢复的迁移不碰它
+    figureFrame: 1,
   }) as PanelObject
 
 const doc = (overrides: PanelOverride[]): FigureDocument => {

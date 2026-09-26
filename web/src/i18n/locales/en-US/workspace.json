@@ -289,6 +289,7 @@
     "resizeObjects": "Resize objects",
     "restoreAspect": "Restore original ratio",
     "restoreNativeSize": "Restore original size",
+    "adoptScriptFrame": "Use the figure size the script saved",
     "restoreStyle": "Restore original and stop following style",
     "alignNewFigure": "Match new figure to style",
     "alignNewText": "Match new annotation to style",
@@ -411,7 +412,9 @@
     "runtimeNeedsRerun": "Not run on this machine yet — enter editing to regenerate",
     "runtimePossiblyStale": "The script or its environment may have changed — re-run to refresh",
     "runtimeRerunFailed": "Re-run failed",
-    "stale": "Script changed"
+    "stale": "Script changed",
+    "frameLegacy": "Shown at figsize",
+    "frameLegacyHint": "The script saved this figure cropped differently. Select it and switch to the saved figure size in the properties on the right."
   },
   "quickEdit": {
     "aria": "Quick edit",
