@@ -1,7 +1,7 @@
 # ADR 0099：脚本里的 input() 在界面上作答，答案按项目记住
 
-日期：2026-09-26 · 状态：**Accepted**（通道形态、超时语义由用户 2026-09-26 拍板；答案存放位置暂按 §四 A，
-等用户最终确认——位置只收在 `scriptanswers.answers_path()` 一个函数里）
+日期：2026-09-26 · 状态：**Accepted**（通道形态、超时语义、答案存放位置（§四 A）均由用户 2026-09-26 拍板；
+位置只收在 `scriptanswers.answers_path()` 一个函数里）
 相关：[0003 worker 协议 v1](0003-worker-protocol-v1.md)（本 ADR **不**改协议信封，只给 build 响应加一个字段）、
 [0004 workerd supervisor](0004-workerd-supervisor.md)（Rust 一行不动）、[0008 会话认证](0008-unified-local-session-auth.md)、
 [0014 执行语义](0014-safe-native-execution-profiles.md) / [0020 native bridge](0020-native-matplotlib-bridge.md)（native 不桥接）、
@@ -74,9 +74,11 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
 - **键** = (脚本相对项目的 POSIX 路径, 本次运行里第 N 次读取, 提示原文)。提示文字变了就当成新问题重新问；
   同一序号的旧条目被新条目替换。`getpass` / `readline` / `read` 与 `input` 共用一个序号计数。
 - **位置**（用户拍板中，先按 A）：
-  - **A（当前实现）**：项目里的 `tavottofile/_script_inputs.json`。重跑、换电脑都能复现：随项目**文件夹**一起复制、
+  - **A（用户 2026-09-26 决定）**：项目里的 `tavottofile/_script_inputs.json`。重跑、换电脑都能复现：随项目**文件夹**一起复制、
     同步、进 git。**项目包（`/api/package`，只打画布 + 素材 + 脚本）不含它**——这是现状，不是为本 ADR 新加的剔除。
     登记进 `documents.RESERVED_DOCUMENT_FILENAMES`，免得被当成画布列出来。
+    **收件人打开项目包之后运行脚本，会重新弹框问**（包里没有答案）。项目包要不要带上答案是项目包的能力扩展，
+    另开跟进，不在本 ADR 里做。
   - B：本机 `data_dir` 按项目存。不外泄，但换电脑、分享项目后会重新问。
   - C：放在项目里，打项目包时剔除。
   位置**只**由 `scriptanswers.answers_path(project_root)` 决定，换成 B / C 只改这一个函数（外加 C 的剔除）。

@@ -221,7 +221,12 @@ def _serve(worker, directory: Path, stop: threading.Event) -> None:
 @contextlib.contextmanager
 def serving(worker):
     """在 `worker` 这一次 build 期间当它的答题方。退出时关掉还在等的问、删掉会合目录。"""
-    directory = Path(worker.out_dir) / scriptinput.DIRNAME
+    out_dir = getattr(worker, "out_dir", None)
+    if out_dir is None:
+        # 没有会话缓存目录的就没有会合目录可轮询（只有测试里的替身会这样）：脚本要输入时照样由 worker 自己到点回 EOF
+        yield
+        return
+    directory = Path(out_dir) / scriptinput.DIRNAME
     stop = threading.Event()
     thread = threading.Thread(
         target=_serve, args=(worker, directory, stop), name="tavotto-script-input", daemon=True
