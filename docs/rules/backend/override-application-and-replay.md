@@ -106,7 +106,20 @@
   分数。与 `PinnedTightLayoutEngine` 同一条理由：**布局的输入必须与「没拖过」逐位相同**，否则拖一个
   标题会让子图跳、文字又被跳走的子图带走（y 分量等于没写），热态与重放也不收敛到同一张图。
   撤销（`_restore_text_pos`）同时摘掉登记。没有布局引擎的图不装这层。看护
-  `tests/test_text_drag_anchor.py`。上游性质（与拖动无关）：**没拖过的** 'figure fraction' 注释
+  `tests/test_text_drag_anchor.py`。
+  **同一张 pin 表的其它住户（ADR 0100，2026-09-27 拖动全族排查）**：锚定框 / AnnotationBbox
+  （`("artist", "pos_frac")`）、图例（`loc_frac`，在 `legendmodel` 外包一层登记）、形状
+  （`("patch", "pos_frac")`）、独立箭头（`endpoints_frac`）与 **constrained 图上的子图**
+  （`position`）。放回原样 / 落回去各自怎么做只在 `_pin_put_native` / `_pin_place` 一处分派；
+  子图先落、其余按**收过长宽比之后**的子图框换算（hook 里先替 draw 做一次 `apply_aspect`，
+  否则带位图的子图上拖出去的图例差 4 mm）。constrained 的子图「原样」= 参与排版 + 色条轴
+  被解开的长宽比——`set_position` 会把轴踢出排版，不放回的话拖 A、B 跳 7.8 mm，拖色条则
+  `reposition_colorbar` 把长宽比按成 0、整张图画不出来。撤销各自摘掉登记。
+- **落位靠定位器的轴（ADR 0100）**：`_set_axes_position` 把 axes locator 摘下来
+  （`_release_axes_locator`；色条轴摘的是 `_ColorbarAxesLocator._orig_locator`），原定位器与
+  `set_position` 顺手改掉的 `in_layout` 记在 artist 上，撤销（`_restore_axes_position`）放回。
+  覆盖 `ax.inset_axes`、mpl_toolkits 的 `inset_axes`、`make_axes_locatable` / `ImageGrid`——
+  修前后三者宣称可拖、松手弹回原处。次坐标轴仍锁（`position_locked`）。上游性质（与拖动无关）：**没拖过的** 'figure fraction' 注释
   在 constrained 图里就会让子图每画一次挪一次（钉在 figure 上的注释进了布局，边距不收敛）。
 - **文字背景框的显隐只由 `bbox_visible` 决定（2026-09-19，#412）**：`true` 显示；显式 `false`
   或不在列表里 = 脚本原样（脚本 `set_bbox` 过就显示，没有就不显示）。`bbox_facecolor` 等五条
