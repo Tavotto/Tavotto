@@ -33,7 +33,8 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
 import { startStyleBindingSync } from '@/store/styleBinding'
 import { useBuildVersion } from '@/hooks/useBuildVersion'
-import { runUndoRedo, useKeyboard } from '@/hooks/useKeyboard'
+import { runMenuAction } from '@/hooks/menuActions'
+import { useKeyboard } from '@/hooks/useKeyboard'
 import { useWorkspaceLayout } from '@/hooks/useWorkspaceLayout'
 import { useServerEvents } from '@/hooks/useServerEvents'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
@@ -327,38 +328,14 @@ function useHandoff() {
 
 /**
  * 系统菜单（Tauri 壳）→ 现有 store action 的转发。浏览器模式下是空订阅。
- * 撤销/重做按焦点分派：文本框里交还原生文本撤销，画布上走文档 undo 栈——
- * 菜单加速键（⌘Z 等）在桌面里会先于 keydown 被吃掉，这里是唯一入口。
+ * 分派与让位判断在 `hooks/menuActions.ts`——菜单加速键（⌘Z 等）在桌面里会先于
+ * keydown 被吃掉，那里是唯一入口。
  */
 function useDesktopMenu() {
   useEffect(() => {
     let unlisten: (() => void) | undefined
     let disposed = false
-    void onDesktopMenu((action) => {
-      const ui = useUiStore.getState()
-      const el = document.activeElement
-      const inEditable =
-        el instanceof HTMLElement &&
-        (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))
-      switch (action) {
-        case 'menu-open-project':
-          useProjectStore.getState().showPicker()
-          break
-        case 'menu-export':
-          if (useProjectStore.getState().phase === 'open') ui.setExportOpen(true)
-          break
-        case 'menu-undo':
-          // 菜单加速键在拖动进行中也会触发——必须走带 undoRedoBlocked 守卫的
-          // 入口，否则会把进行中的事务当场结算掉，后续位移绕过历史（数据损坏）
-          if (inEditable) document.execCommand('undo')
-          else runUndoRedo(false)
-          break
-        case 'menu-redo':
-          if (inEditable) document.execCommand('redo')
-          else runUndoRedo(true)
-          break
-      }
-    }).then((u) => {
+    void onDesktopMenu(runMenuAction).then((u) => {
       if (disposed) u()
       else unlisten = u
     })

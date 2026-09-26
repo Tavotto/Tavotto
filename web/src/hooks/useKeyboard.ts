@@ -63,14 +63,48 @@ function hideSelectedElements(panelId: string, gids: string[]) {
   useUiStore.getState().setSelectedGid(null)
 }
 
-function inEditableTarget(e: KeyboardEvent) {
-  const el = e.target
+/**
+ * 焦点在这里时画布快捷键让位（输入框里的原生编辑、对话框自己的键）。
+ * keydown 按 `e.target` 问它，系统菜单的转发（`hooks/menuActions.ts`）按
+ * `document.activeElement` 问它——菜单加速键可能先于 keydown 截获按键，
+ * 两条路必须是同一条判据，否则 ⌘D 在输入框里会被菜单变成「创建副本」。
+ */
+export function yieldsCanvasShortcuts(el: EventTarget | null) {
   if (!(el instanceof HTMLElement)) return false
   return (
     el.isContentEditable ||
     /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ||
     el.closest('[role="dialog"]') != null
   )
+}
+
+const inEditableTarget = (e: KeyboardEvent) => yieldsCanvasShortcuts(e.target)
+
+/**
+ * Delete / Backspace 的画布动作（系统菜单「删除」也走这里）。
+ * 图内编辑时删的是「这个图内元素」（写 visible:false，可恢复），
+ * 而不是把整个面板从画布上删掉。
+ */
+export function deleteSelection() {
+  const ui = useUiStore.getState()
+  if (ui.elementPanelId && ui.selectedGids.length) {
+    hideSelectedElements(ui.elementPanelId, ui.selectedGids)
+    return
+  }
+  deleteSelected()
+}
+
+export type ZoomCommand = 'in' | 'out' | 'actual' | 'fit'
+
+/** ⌘+ / ⌘− / ⌘0 / ⌘1 的视口动作（系统菜单「显示」里的四条也走这里） */
+export function runZoomCommand(cmd: ZoomCommand) {
+  const vp = useViewportStore.getState()
+  if (cmd === 'in' || cmd === 'out') vp.zoomBy(cmd === 'out' ? 1 / 1.25 : 1.25)
+  else if (cmd === 'actual') vp.setZoomCentered(1)
+  else {
+    const page = useDocumentStore.getState().doc.page
+    vp.fitAnimated(page.w, page.h)
+  }
 }
 
 /**
@@ -192,19 +226,17 @@ export function useKeyboard() {
       }
       if (mod && (e.key === '=' || e.key === '+' || e.key === '-')) {
         e.preventDefault()
-        const vp = useViewportStore.getState()
-        vp.zoomBy(e.key === '-' ? 1 / 1.25 : 1.25)
+        runZoomCommand(e.key === '-' ? 'out' : 'in')
         return
       }
       if (mod && e.key === '0') {
         e.preventDefault()
-        useViewportStore.getState().setZoomCentered(1)
+        runZoomCommand('actual')
         return
       }
       if (mod && e.key === '1') {
         e.preventDefault()
-        const page = doc.doc.page
-        useViewportStore.getState().fitAnimated(page.w, page.h)
+        runZoomCommand('fit')
         return
       }
 
@@ -212,13 +244,7 @@ export function useKeyboard() {
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
-        // 图内编辑时删的是「这个图内元素」（写 visible:false，可恢复），
-        // 而不是把整个面板从画布上删掉
-        if (ui.elementPanelId && ui.selectedGids.length) {
-          hideSelectedElements(ui.elementPanelId, ui.selectedGids)
-          return
-        }
-        deleteSelected()
+        deleteSelection()
         return
       }
       if (e.key === 'Escape') {
