@@ -204,12 +204,54 @@ const FORBIDDEN = new Set(['panelScale', 'toPageValue', 'toScriptValue', 'pageFi
 
 type Sources = Record<string, string>
 
+/**
+ * 代码扩展名 → 解析语法：**唯一一张表**（#557 评审六轮 P1：只收 `.ts/.tsx`，`.mts` 模块整个不在视野里）。
+ * 扫描面（`isProduction`）、解析器（`parse` 的语法）、说明符去扩展名（`keyOfPath`）都从它派生，
+ * 有一条用例按行为核对三者认的是同一组扩展名。
+ */
+const CODE_EXTENSIONS: Readonly<Record<string, ts.ScriptKind>> = {
+  '.ts': ts.ScriptKind.TS,
+  '.tsx': ts.ScriptKind.TSX,
+  '.mts': ts.ScriptKind.TS,
+  '.cts': ts.ScriptKind.TS,
+  '.js': ts.ScriptKind.JS,
+  '.jsx': ts.ScriptKind.JSX,
+  '.mjs': ts.ScriptKind.JS,
+  '.cjs': ts.ScriptKind.JS,
+}
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** 最长的先配（`.mts` 不能被当成 `.ts`） */
+const CODE_EXT_LIST = Object.keys(CODE_EXTENSIONS).sort((a, b) => b.length - a.length)
+const CODE_EXT_RE = CODE_EXT_LIST.map(escapeRe).join('|')
+const codeExtOf = (path: string) => CODE_EXT_LIST.find((e) => path.toLowerCase().endsWith(e))
+
+/**
+ * src 下不是代码、也带不出函数值的文件：按扩展名显式点名，理由写在旁边。
+ * 代码表与这张表**之外**的扩展名一律红（fail closed：防下一个扩展名悄悄进来）。
+ */
+const DATA_EXTENSIONS: Readonly<Record<string, string>> = {
+  '.json': 'JSON 只有数据，import 进来拿不到函数',
+  '.css': '样式表',
+  '.webp': '图片',
+  '.py': 'playground 的示例脚本：在 Pyodide 里跑的 Python，不是 JS 模块',
+}
+/** 按文件名点名的非代码文件（不进 git 的本机杂物） */
+const DATA_BASENAMES: Readonly<Record<string, string>> = {
+  '.DS_Store': 'macOS Finder 的目录元数据，不进 git',
+}
+
 /** 扫描面的显式排除：不是生产代码的 */
 const EXCLUDED: ReadonlyArray<readonly [string, (path: string) => boolean]> = [
-  ['测试文件', (p) => /\.test\.tsx?$/.test(p)],
-  ['类型声明（没有值）', (p) => p.endsWith('.d.ts')],
+  ['测试文件', (p) => new RegExp(`\\.test(${CODE_EXT_RE})$`, 'i').test(p)],
+  ['类型声明（没有值）', (p) => /\.d\.[cm]?ts$/i.test(p)],
 ]
-const isProduction = (path: string) => /\.tsx?$/.test(path) && !EXCLUDED.some(([, hit]) => hit(path))
+const isProduction = (path: string) => codeExtOf(path) !== undefined && !EXCLUDED.some(([, hit]) => hit(path))
+
+/** 扩展名既不在代码表、也不在数据表里的文件（测试文件除外）：一律红 */
+const unknownKind = (path: string) =>
+  codeExtOf(path) === undefined &&
+  !Object.keys(DATA_EXTENSIONS).some((e) => path.toLowerCase().endsWith(e)) &&
+  !(path.split('/').pop()! in DATA_BASENAMES)
 
 /**
  * 豁免（只认具名 import 的原名；namespace / default / 转出 / 逃逸不给豁免）
@@ -251,7 +293,7 @@ const parse = (path: string, src: string): ts.SourceFile => {
       src,
       ts.ScriptTarget.Latest,
       true,
-      path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+      CODE_EXTENSIONS[codeExtOf(path) ?? '.ts'],
     )
     PARSED.set(key, file)
   }
@@ -304,7 +346,7 @@ function applyAlias(spec: string, aliases: readonly Alias[]): string | null {
 /** 规范路径 → 模块键：去扩展名、去 `/index`、小写 */
 const keyOfPath = (abs: string) =>
   abs
-    .replace(/\.(tsx?|jsx?|mjs|cjs|mts|cts)$/i, '')
+    .replace(new RegExp(`(${CODE_EXT_RE})$`, 'i'), '')
     .replace(/\/index$/i, '')
     .toLowerCase()
 
@@ -717,11 +759,18 @@ function scanAll(
 }
 
 describe('界面代码与 store 不自己做页面 pt 换算', () => {
-  const ALL = import.meta.glob('/src/**/*.{ts,tsx}', {
-    eager: true,
-    query: '?raw',
-    import: 'default',
-  }) as Sources
+  // 代码源码：扩展名与 `CODE_EXTENSIONS` 同一组（vite 要求模式是字面量，写不成从常量拼；下面有用例核对两边相等）。
+  // 点开头的文件 / 目录 glob 默认不收，单独写模式把它们也收进来
+  const ALL = import.meta.glob(
+    [
+      '/src/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}',
+      '/src/**/.*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}',
+      '/src/**/.*/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}',
+    ],
+    { eager: true, query: '?raw', import: 'default' },
+  ) as Sources
+  /** src 下的全部文件（不加载，只要路径）：判「扩展名认不认得」 */
+  const SRC_FILES = Object.keys(import.meta.glob(['/src/**/*', '/src/**/.*', '/src/**/.*/**/*']))
   // 全量扫描在收集阶段只做一次（不进任何用例的 5 s 预算）；用例只查询结果
   const REAL = scanAll(ALL)
   /**
@@ -740,6 +789,81 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
   it('定义者是从源码里认出来的，恰好是期望的两处（多出一处 = 多了一份换算）', () => {
     expect([...REAL.defs.values()].sort()).toEqual(['/src/lib/preflight.ts', '/src/lib/stylePresets.ts'])
   })
+
+  it('src 下每个文件的扩展名都认得：代码表或数据表之外的一律红（fail closed）', () => {
+    expect(SRC_FILES.length, '文件清单该是全量').toBeGreaterThan(500)
+    expect(SRC_FILES.filter(unknownKind)).toEqual([])
+    // 清单里的代码文件都进了源码表（glob 的扩展名与代码表是同一组）
+    const code = SRC_FILES.filter((p) => codeExtOf(p) !== undefined)
+    expect(code.filter((p) => !(p in ALL))).toEqual([])
+    expect(Object.keys(ALL).filter((p) => !SRC_FILES.includes(p))).toEqual([])
+  })
+
+  it('扫描面、解析器、说明符去扩展名认的是同一组扩展名（都从 CODE_EXTENSIONS 派生）', () => {
+    const candidates = [
+      ...Object.keys(CODE_EXTENSIONS),
+      ...['.vue', '.svelte', '.astro', '.json', '.css', '.wasm', '.coffee', '.es6', '.ts.orig', '.tsbuildinfo'],
+    ]
+    const scanned = candidates.filter((e) => isProduction(`/src/lib/x${e}`))
+    const stripped = candidates.filter((e) => keyOfPath(`/src/lib/x${e}`) === '/src/lib/x')
+    const parsedAs = candidates.filter((e) => codeExtOf(`/src/lib/x${e}`) !== undefined)
+    const expected = Object.keys(CODE_EXTENSIONS).sort()
+    expect(scanned.sort()).toEqual(expected)
+    expect(stripped.sort()).toEqual(expected)
+    expect(parsedAs.sort()).toEqual(expected)
+    // 最长的先配：`.mts` / `.cts` 不被当成 `.ts`，`.jsx` 不被当成 `.js`
+    expect(codeExtOf('/src/a.mts')).toBe('.mts')
+    expect(codeExtOf('/src/a.jsx')).toBe('.jsx')
+  })
+
+  it.each([
+    ['.mts', "import { panelScale } from '@/lib/preflight'\nexport const s = panelScale(p)"],
+    ['.cts', "import { panelScale } from '../lib/preflight'"],
+    ['.js', "import { panelScale } from '@/lib/preflight'"],
+    ['.jsx', "import { panelScale } from '@/lib/preflight'\nexport const C = () => <b>{panelScale(p)}</b>"],
+    ['.mjs', "export { panelScale } from '@/lib/preflight'"],
+    ['.cjs', "const { panelScale } = require('@/lib/preflight')"],
+  ])('%s 文件也在扫描面里、按它的语法解析，从定义者取值照样红', (ext, src) => {
+    const path = `/src/hooks/useScale${ext}`
+    expect(isProduction(path)).toBe(true)
+    const { hits } = scanWith({ [path]: src })
+    expect(hits.some((h) => h.startsWith(`${path}:`) && !/语法错误/.test(h)), JSON.stringify(hits)).toBe(true)
+    // 按它自己的语法解析：`.jsx` 里的 JSX、`.js` 里的写法都不该报语法错误
+    expect(hits.filter((h) => /语法错误/.test(h))).toEqual([])
+  })
+
+  it('测试文件与类型声明按全部代码扩展名排除', () => {
+    for (const ext of Object.keys(CODE_EXTENSIONS)) {
+      expect(isProduction(`/src/lib/a.test${ext}`), ext).toBe(false)
+    }
+    for (const p of ['/src/a.d.ts', '/src/a.d.mts', '/src/a.d.cts']) expect(isProduction(p), p).toBe(false)
+    expect(isProduction('/src/a.mts')).toBe(true)
+  })
+
+  it.each([
+    ['/src/lib/preflight.mts', 'export function panelScale() { return 1 }'],
+    ['/src/lib/scale3.js', 'export function panelScale() { return 1 }'],
+  ])('定义者也按全部代码扩展名认：%s', (path, src) => {
+    expect([...scanWith({ [path]: src }).defs.values()]).toContain(path)
+  })
+
+  it.each([
+    ['/src/lib/x.vue'],
+    ['/src/lib/x.svelte'],
+    ['/src/lib/x.wasm'],
+    ['/src/lib/x'],
+    ['/src/lib/.env'],
+    ['/src/lib/x.ts.orig'],
+  ])('认不得的扩展名一律红：%s', (path) => {
+    expect(unknownKind(path)).toBe(true)
+  })
+
+  it.each([['/src/i18n/x.json'], ['/src/index.css'], ['/src/p/a.webp'], ['/src/p/a.py'], ['/src/lib/.DS_Store']])(
+    '点了名的数据文件不红：%s',
+    (path) => {
+      expect(unknownKind(path)).toBe(false)
+    },
+  )
 
   it('扫描面覆盖 src 下每一个含生产源码的顶层目录（新增目录不会静默漏掉）', () => {
     const withProduction = new Set(Object.keys(ALL).filter(isProduction).map(topDir))
