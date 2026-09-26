@@ -423,7 +423,10 @@ def _ensure_text_pin_hook(fig) -> None:
                     # 这里先替它收一次——draw 里那一次按同样的输入再算，结果逐位相同
                     settled.add(id(ax))
                     loc = ax.get_axes_locator()
-                    ax.apply_aspect(loc(ax, f._get_renderer()) if loc else None)  # noqa: SLF001
+                    try:
+                        ax.apply_aspect(loc(ax, f._get_renderer()) if loc else None)  # noqa: SLF001
+                    except Exception:  # noqa: BLE001 — 收不了就按排版给的框落，draw 照常
+                        pass
                 _pin_place(t, v)
 
     engine.execute = execute
@@ -1138,17 +1141,36 @@ def _restore_patch_pos(p, orig) -> None:
 def offsetbox_draggable(a) -> bool:
     """这个锚定框 / 插框能不能**可靠地**拖到写下的 figure 分数上。
 
-    manifest 的 `draggable` 与 setter 共用这一份判据（与 `annotation_text_draggable` 同理）。"""
+    manifest 的 `draggable` 与 setter 共用这一份判据（与 `annotation_text_draggable` 同理）。
+
+    落位要动几个**私有**属性（见 `_OFFSETBOX_PRIVATE`）。3.8.4 / 3.10.8 / 3.11.1 / 3.11.2 上逐个
+    实测都在；将来哪一版改了名，这里回 False——manifest 不宣称可拖、前端拖起来说「暂不支持」，
+    而不是在 setter 里抛出 AttributeError（那会变成阻断写回的 warning，甚至让 manifest 建不出来）。"""
+    if not _offsetbox_api_ok(a):
+        return False
     if isinstance(a, AnchoredOffsetbox):
         return True
-    if not isinstance(a, AnnotationBbox):
-        return False
     if not _ann_coords_invertible(a.boxcoords, text_end=True):
         return False
     coords = a.boxcoords if isinstance(a.boxcoords, tuple) else (a.boxcoords,)
     if any(isinstance(c, str) and c.startswith("offset") for c in coords):
         return _ann_coords_invertible(a.xycoords, text_end=False)
     return True
+
+
+#: 锚定框 / 插框落位要读写的私有 API（公开的 setter 覆盖不了「原样放回」那一步）
+_OFFSETBOX_PRIVATE = {
+    AnchoredOffsetbox: ("loc", "borderpad", "_bbox_to_anchor", "_bbox_to_anchor_transform"),
+    AnnotationBbox: ("_box_alignment", "_get_xy_transform", "boxcoords", "xybox", "offsetbox"),
+}
+
+
+def _offsetbox_api_ok(a) -> bool:
+    """这一版 matplotlib 上，拖动要用的属性是不是都在（缺一个就不宣称可拖）。"""
+    for cls, names in _OFFSETBOX_PRIVATE.items():
+        if isinstance(a, cls):
+            return hasattr(Figure, "_get_renderer") and all(hasattr(a, n) for n in names)
+    return False
 
 
 def offsetbox_frame(a, renderer):
@@ -2467,6 +2489,10 @@ def _release_axes_locator(a) -> None:
     """
     loc = a.get_axes_locator()
     if loc is None:
+        return
+    if not hasattr(loc, "_orig_locator") and colorbarmodel._colorbar_of_axes(a) is not None:
+        # 色条轴的定位器认不出内层（`_orig_locator` 是私有名，3.8.4–3.11.2 实测都在）：
+        # 不摘——整个摘掉会连 extend 三角与长宽比一起丢。落位照旧只靠 set_position
         return
     if hasattr(loc, "_orig_locator"):
         if loc._orig_locator is None:  # noqa: SLF001

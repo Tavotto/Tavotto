@@ -22,6 +22,10 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from tavotto.engine import pool
@@ -108,9 +112,10 @@ def main():
 DELTA = (0.03, 0.02)
 #: 锚点 / 落位预算。正确实现的实测误差 ~1e-12；缺陷的误差 ≥ 1e-3
 TOL = 1e-6
-#: constrained 排版本身的数值噪声：同一张图不同次序画出来的子图框差 ~1e-6 figure 分数
-#: （0.0002 mm，迭代求解器的收敛尾巴）；缺陷的量级是 1e-2
-CONSTRAINED_TOL = 1e-5
+#: constrained 排版本身的数值噪声：同一张图不同次序画出来的子图框差 ~1e-6（3.11）到
+#: 1.3e-5（3.8.4，拖色条时邻居子图高度）figure 分数，≤ 0.002 mm，迭代求解器的收敛尾巴；
+#: 缺陷的量级是 1e-2（变异 E3 / E9 实测 8.5e-3 起）
+CONSTRAINED_TOL = 5e-5
 
 ANCHORED = {
     "AnchoredText": "axes_0.artists_0",
@@ -347,3 +352,66 @@ def test_fresh_replay_matches_the_hot_session(hot, figs):
             )
     finally:
         pool.discard(fresh)
+
+
+# ---------------------------------------------------------------------------
+# 私有 API 缺席时的回退（3.8.4 / 3.10.8 / 3.11.1 / 3.11.2 上都在；将来改名时不许崩）
+# ---------------------------------------------------------------------------
+
+ENGINE_DIR = Path(__file__).resolve().parent.parent / "src" / "tavotto" / "engine"
+
+#: 在 worker 那一侧的解释器里直接驱动引擎：把「拖动要用的私有属性」名单加一个不存在的名字，
+#: 模拟将来某一版 matplotlib 把它改了名
+_OLD_API_DRIVER = """\
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnchoredOffsetbox, AnchoredText, AnnotationBbox, TextArea
+
+import manifest
+import overrides
+
+for cls in (AnchoredOffsetbox, AnnotationBbox):
+    overrides._OFFSETBOX_PRIVATE[cls] += ("_renamed_in_some_future_release",)
+
+fig, ax = plt.subplots(figsize=(4, 3))
+ax.plot([0, 1], [0, 1])
+ax.add_artist(AnchoredText("(a)", loc="upper left"))
+ax.add_artist(AnnotationBbox(TextArea("note"), (0.5, 0.5)))
+st = overrides.FigState(fig)
+manifest.instrument(st)
+base = {e["gid"]: e for e in manifest.build_manifest(st, "Old")["elements"]}
+warnings = overrides.apply(st, [{"gid": "axes_0.artists_0", "prop": "pos_frac", "value": [0.3, 0.3]}])
+after = {e["gid"]: e for e in manifest.build_manifest(st, "Old")["elements"]}
+overrides.apply(st, [])
+back = {e["gid"]: e for e in manifest.build_manifest(st, "Old")["elements"]}
+print(json.dumps({
+    "draggable": [base[g]["draggable"] for g in ("axes_0.artists_0", "axes_0.artists_1")],
+    "anchor": [("anchor" in base[g]) for g in ("axes_0.artists_0", "axes_0.artists_1")],
+    "warnings": [str(w) for w in (warnings or [])],
+    "moved": after["axes_0.artists_0"]["bbox"] != base["axes_0.artists_0"]["bbox"],
+    "back": back["axes_0.artists_0"]["bbox"] == base["axes_0.artists_0"]["bbox"],
+}))
+"""
+
+
+def test_missing_private_api_falls_back_to_not_draggable():
+    """拖动要用的私有属性缺席时：manifest 照常建出来、不宣称可拖（前端拖起来说「暂不支持」）；
+    硬写一条 `pos_frac` 得到的是 warning，不是崩溃，框原地不动，撤销之后逐位原样。"""
+    proc = subprocess.run(
+        [WORKER_PY, "-c", _OLD_API_DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    got = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert got["draggable"] == [False, False], got
+    assert got["anchor"] == [False, False], got
+    assert got["warnings"], "不支持时必须给 warning"
+    assert got["moved"] is False and got["back"] is True, got
