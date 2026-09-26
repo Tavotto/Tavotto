@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
 import { expect, openElementsTab, test } from './fixtures'
@@ -417,6 +417,10 @@ test(
     // 产品没给主按钮 data 锚点：按可达名认，收在对话框里
     const start = dialog.getByRole('button', { name: /开始导出/ })
     await expect(start).toBeEnabled()
+    // 导出目录不一定是空的：夹具拷的是仓库里的 examples/figures，Windows 那条腿在 e2e 之前跑的
+    // 冒烟会往它的 tavottofile/export 里导出 smoke_*.pdf（#676 full-ci 首跑就红在这里）。
+    // 主语是**这一次导出写出的文件**：按修改时间认点「开始导出」之后写的（留 1 s 给文件系统的时间精度）
+    const t0 = Date.now() - 1000
     await start.click()
     const job = (await (await started).json()) as { export_dir?: string }
     expect(job.export_dir, 'start 回包里应当有导出目录').toBeTruthy()
@@ -436,11 +440,14 @@ test(
       const e = path.extname(f).toLowerCase()
       return e === '.tif' ? '.tiff' : e
     }
-    const listed = () => (existsSync(exportDir) ? readdirSync(exportDir) : [])
+    const listed = () =>
+      (existsSync(exportDir) ? readdirSync(exportDir) : []).filter(
+        (f) => statSync(path.join(exportDir, f)).mtimeMs >= t0,
+      )
     await expect
       .poll(() => Object.keys(magic).filter((e) => !listed().some((f) => extOf(f) === e)), {
         timeout: 60_000,
-        message: `导出目录里应当有 PDF / PNG / TIFF 三个文件：${exportDir}`,
+        message: `这次导出应当在 ${exportDir} 写出 PDF / PNG / TIFF 三个文件`,
       })
       .toEqual([])
     for (const ext of Object.keys(magic)) {
