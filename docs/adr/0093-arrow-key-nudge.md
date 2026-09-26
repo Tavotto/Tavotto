@@ -110,6 +110,10 @@ Figma / Illustrator 的方向键同样不吸。这是与拖动**唯一刻意不�
 - `web/e2e/arrow-nudge.spec.ts`（真浏览器 + 真 matplotlib）：画布里进图内编辑、选中图例按 → 6 次，
   图例位移 = 6 × 画布对象一步的像素数（误差 0.01 px，预算 0.5 px）、面板不动、按键期间 0 次渲染、
   收尾 1 次；撤销一次回原位；重做、保存、重开后位置与热态逐像素一致；快速编辑里图例能动。
+  另一条现造一张带标注的图，**图内每一类鼠标能拖的对象**（子图、图例、自由文字、带文字的标注、
+  纯箭头、标题、y 轴标题）各按 → 6 次：位移都等于 6 × 页面步长（误差 ≤ 0.02 px）、挪的不是整个子图；
+  然后经顶栏「写回」走写回事务，必须报「已通过干净重放校验」且原件被改写；重开后七个对象的位置
+  与热态逐像素一致。前后截图、写回后的原件都挂在 test-results 里。
 - `web/src/canvas/groupLockDrag.test.ts`：组内锁定语义，方向键这一侧改为走键盘路径。
 - 拖动这一侧行为不变：既有的 `inFigureDrag` / `patchCarryDrag` / `axesCompanionDrag` /
   `fakeRealtimeDrag` / `dragGestureLifecycle` 与 e2e 全部原样通过。
