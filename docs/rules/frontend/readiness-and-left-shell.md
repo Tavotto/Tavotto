@@ -119,6 +119,14 @@
   `style.owned`（连同写入时脚本的原生值），精确 manifest 的 `value_original` 与基线不等时让位（`yieldToScript`，一次
   commit「脚本改动优先于样式」）；登记只在 override 仍是那个值时算数（`lib/styleOwned.ownedLive`），用户经
   `updateObject` / 混排对齐 / 一键修复写过的那一条当场注销；老文档、老引擎不让位；恢复原样连样式写的孤儿（gid 已不在 manifest 里）一起清，解绑只清孤儿；恢复原样挑「样式管得到的」要求此刻 manifest 确实暴露这条属性（用户的孤儿不删）；按 (gid, prop) 取 override 一律走 `effectiveOverride`（重复条目 last-wins，#587），`styleOverrideLookup.test.ts` 按 TS AST 结构性看护（不用源码正则）。
+  **能改哪些、怎么排**（2026-09-26 用户反馈）：文字各行 = 字体 + 字号 + 粗体 / 斜体（`FIGURE_TEXT_ROWS.faceRole`；
+  图例的在 `legend_text` 上；刻度文字的引擎字段没有 `weight` / `style`，不摆开关；画布标注写 `bold` / `italic`，
+  绑定时存成样式里的 boolean），线条 = 数据线宽 / 边框线宽 / 刻度方向 / 刻度长度 / 刻度线宽。行是三列固定网格：
+  标签列 `4rem`、控件列（字号 / 线宽 / 方向这类「值」格同一个宽 `VALUE_W`，从左缘起排）、状态列 `1.25rem`
+  （每条控件行都占着）；问题记号落在出问题那一格所在的那条控件行上，图标与颜色与问题面板同一份
+  （`validationText.SEVERITY_ICON` / `SEVERITY_INK`），气泡说等级 + 问题名；不合规的框不另描边（框只有 `fieldBox`
+  一副）。文字颜色、线条 / 边框颜色没进面板：取色是连续手势，绑定时每一下都要存一次库，得先有「一轮取色 = 一次
+  存库」的收口。
   看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
