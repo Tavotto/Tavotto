@@ -174,6 +174,10 @@ FS = ("axes_0.legend", "fontsize")
 N0 = ("axes_0.legend.texts_0", "fontsize")
 # 广播端 + 一条窄端：广播代采了 texts_1 的原样
 overrides.apply(st, [p(*FS, 14.0), p(*N0, 20.0)])
+# 图例字号是原生语义（改 `_fontsize` 并重建图例盒，ADR 0034 2026-09-25 修订）：重建换掉了
+# 文字对象，要从元素表重新取，之前取的 t0 / t1 已经不在图里
+leg = st.resolve("axes_0.legend")
+t0, t1 = leg.get_texts()
 assert t0.get_fontsize() == 20.0 and t1.get_fontsize() == 14.0
 with Broken("legend", "fontsize"):
     assert restored(overrides.apply(st, [p(*N0, 20.0)]))

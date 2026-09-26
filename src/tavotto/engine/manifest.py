@@ -13,10 +13,11 @@ from __future__ import annotations
 import math
 import re
 import sys
+from contextlib import contextmanager
 from functools import lru_cache
 
 import matplotlib as mpl
-from matplotlib import colors as mcolors, font_manager
+from matplotlib import colors as mcolors, font_manager, text as mtext
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
 from matplotlib.collections import (
@@ -34,6 +35,7 @@ from matplotlib.markers import MarkerStyle
 from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.text import Text
+from matplotlib.textpath import text_to_path
 
 import pathgeom
 from axestraversal import axis_drawn, frame_drawn, ordered_axes
@@ -2697,7 +2699,11 @@ def _colorbar_fields(p, state: FigState, gid: str) -> list[dict]:
 
 
 def _legend_fields(leg) -> list[dict]:
-    sizes = [t.get_fontsize() for t in leg.get_texts()]
+    # 图例级字号报 matplotlib 的 `_fontsize`（原生语义，ADR 0034 2026-09-25 修订）：盒按它排、
+    # 写 `fontsize` 改的也是它。不报第一条文字的字号——那条单独设过字号（脚本或
+    # `texts_0.fontsize`）时，拖角缩放会从错的基准乘倍数（7 pt 的图例首条 13 pt，×1.5 写成
+    # 19.5）。单条文字各有自己的 `fontsize` 字段，预检的最小字号逐条查它们。
+    size = float(getattr(leg, "_fontsize", 0) or 0)
     frame = leg.get_frame()
     loc_name = _legend_loc_name(leg)
     loc_opts = (["custom"] if loc_name == "custom" else []) + _LEGEND_LOCS
@@ -2707,7 +2713,7 @@ def _legend_fields(leg) -> list[dict]:
         {
             "prop": "fontsize",
             "type": "number",
-            "value": round(float(sizes[0]), 2) if sizes else 8,
+            "value": round(size, 2) if size > 0 else 8,
             "min": 3,
             "max": 24,
             "step": 0.5,
@@ -4078,6 +4084,81 @@ def _clip_bbox(artist, W: float, H: float):
     return rect
 
 
+def _clear_text_metrics_cache(renderer) -> None:
+    """清掉 matplotlib 记在这个渲染器上的文字度量缓存（键里**不含度量方式**）。
+
+    两代实现都要认：3.11 起是每个渲染器一份 lru（`_get_text_metrics_function`），只清
+    这一份；3.8 / 3.10 是一份全局 lru（`_get_text_metrics_with_cache_impl`），只能整份清。
+    认不出时宁可什么都不做也不抛——代价是量到旧值，由 `test_manifest_vector_text_metrics`
+    在三档 matplotlib 上看着。
+    """
+    per_renderer = getattr(mtext, "_get_text_metrics_function", None)
+    if per_renderer is not None:
+        per_renderer(renderer).cache_clear()
+        return
+    impl = getattr(mtext, "_get_text_metrics_with_cache_impl", None)
+    if impl is not None:
+        impl.cache_clear()
+
+
+def _measure_like_vector(renderer) -> None:
+    """让这个 Agg 渲染器按**矢量输出的那把尺**量文字（实例属性，调用方负责撤掉）。
+
+    画布上挂的是矢量 SVG（`svg.fonttype='path'`，字形经 `TextToPath` 在 100 pt、
+    不带 hinting 下度量），导出的 PDF 同样不带 hinting；而 Agg 在文档 dpi（通常 100）
+    下量的是 hinting 后、按像素取整的字形。小字差得很多：6.9 pt 的图例高 0.135 vs
+    0.121（figure 分数，#576）。锚在预设位置的图例、tight 布局这类**位置取决于文字
+    尺寸**的东西因此在 manifest 里落在别处——拖一下写成绝对位置就跳。
+
+    换成与 SVG 同一个 `TextToPath` 度量后，全图文字包围盒与 SVG 逐位一致。usetex 的
+    文字两边本来就同走 dvi，不动。
+    """
+    agg = renderer.get_text_width_height_descent
+
+    def measure(s, prop, ismath):
+        if ismath == "TeX":
+            return agg(s, prop, ismath)
+        w, h, d = text_to_path.get_text_width_height_descent(s, prop, ismath)
+        k = renderer.points_to_pixels(1.0)
+        return w * k, h * k, d * k
+
+    renderer.get_text_width_height_descent = measure
+
+
+@contextmanager
+def vector_text_metrics():
+    """manifest 的**测量阶段**用矢量的文字度量；交出 `arm(renderer)`，布局 draw 之后再挂。
+
+    **布局那一次 draw 不换尺**：`constrained_layout` 这类布局的结果在 ulp 级依赖上一次
+    draw 留下的位置，Agg 的 26.6 定点度量把这种末位噪声吸收掉了；换成连续的矢量度量后，
+    「上一张预览是 hybrid 还是纯矢量」会让 manifest 末位不同（`test_preview_hybrid` 的
+    逐字节不变量在 3.10 上抓到）。而用户看得见的偏差不在布局里：图例的位置是
+    `get_window_extent` 时现算的（`OffsetBox.get_offset`），文字框也是现量的——测量阶段
+    换尺就够。图例子项的偏移是 draw 时写死的，由 `_layout_legends_for_measure` 在一次性
+    渲染器上按同一把尺补排版。
+
+    **只挂在这一段**：预览位图 / 导出 PNG 仍是 Agg 自己的度量。两件事缺一不可：
+
+    * 挂在 canvas 的**那个**渲染器实例上：`FigureCanvasAgg.get_renderer()` 在尺寸与 dpi
+      不变时复用同一个对象，各处不带参数的 `get_window_extent()` 拿到的都是它；
+    * 挂上与撤掉时各清一次度量缓存：缓存键里有渲染器实例却没有度量方式——挂上不清，
+      量到的是布局 draw 留下的 hinting 值；撤掉不清，之后同 dpi 的位图绘制会用上矢量值。
+    """
+    armed: list = []
+
+    def arm(renderer) -> None:
+        _clear_text_metrics_cache(renderer)
+        _measure_like_vector(renderer)
+        armed.append(renderer)
+
+    try:
+        yield arm
+    finally:
+        for renderer in armed:
+            renderer.__dict__.pop("get_text_width_height_descent", None)
+            _clear_text_metrics_cache(renderer)
+
+
 def _ensure_agg_canvas(fig):
     """保证 fig 挂着 Agg canvas，然后返回 renderer。
 
@@ -4097,16 +4178,14 @@ def _ensure_agg_canvas(fig):
     return fig.canvas.get_renderer()
 
 
-def _legend_would_not_draw(leg) -> bool:
-    """这次 `fig.canvas.draw()` 会不会跳过这个图例：自己不可见，或它住的 axes 不可见。"""
-    if not leg.get_visible():
-        return True
-    parent = getattr(leg, "parent", None)
-    return parent is not None and not parent.get_visible()
+def _layout_legends_for_measure(state: FigState, fig) -> None:
+    """把每个图例的子项按**文档 dpi + 测量用的矢量度量**重新排一次版，manifest 才能量它的文字。
 
+    两个理由，同一个做法：
 
-def _layout_undrawn_legends(state: FigState, fig) -> None:
-    """把 draw 跳过的图例按**文档 dpi** 重新排一次版，manifest 才能量它的文字。
+    * 布局 draw 用的是 Agg 度量（见 `vector_text_metrics`：布局不换尺），子项偏移按那把尺写死，
+      而图例本体的框是测量时按矢量度量现算的——不补排，框与框里的字各用一把尺；
+    * 下面这段（#413）：draw 跳过的图例，子项偏移冻结在上一次画它的那一回。
 
     图例文字的像素位置不是现算的：`Legend.draw` 走到 `OffsetBox.draw` 时才把每个
     `TextArea` 的偏移写死成当时 renderer 下的像素（`TextArea.set_offset`），之后
@@ -4124,12 +4203,14 @@ def _layout_undrawn_legends(state: FigState, fig) -> None:
     """
     scratch = None
     for el in state.elements:
-        if el["role"] != "legend" or not _legend_would_not_draw(el["artist"]):
+        if el["role"] != "legend":
             continue
         if scratch is None:
             from matplotlib.backends.backend_agg import RendererAgg
 
             scratch = RendererAgg(int(fig.bbox.width), int(fig.bbox.height), fig.dpi)
+            # 与 manifest 其余部分同一把尺（`vector_text_metrics`）；一次性的，用完即弃
+            _measure_like_vector(scratch)
         el["artist"]._legend_box.draw(scratch)  # noqa: SLF001
 
 
@@ -4192,17 +4273,19 @@ def build_manifest(state: FigState, stem: str) -> dict:
     调用边界：进来先 draw、出去之前不动图。谁把它挪到别处，得先重新证明那个
     前提在新位置还成立。
     """
-    with ticklabel_memo():
-        return _build_manifest(state, stem)
+    with ticklabel_memo(), vector_text_metrics() as arm:
+        return _build_manifest(state, stem, arm)
 
 
-def _build_manifest(state: FigState, stem: str) -> dict:
+def _build_manifest(state: FigState, stem: str, arm) -> dict:
     fig = state.fig
     renderer = _ensure_agg_canvas(fig)
+    # 布局 draw 之后才换尺：之后的全部测量与画布上的矢量 SVG 同一把尺（`vector_text_metrics`）
+    arm(renderer)
     W, H = float(fig.bbox.width), float(fig.bbox.height)
     # draw 跳过的图例（隐藏 / 住在隐藏的 axes 里）按文档 dpi 补排一次版，否则它的
     # 文字几何是上一次画它那回的像素（#413）
-    _layout_undrawn_legends(state, fig)
+    _layout_legends_for_measure(state, fig)
     # 刻度伪元素按**当前**刻度状态对齐（必须在 draw 之后：标签的文字是 draw
     # 那一刻由 Formatter 填进去的）
     sync_tick_elements(state)

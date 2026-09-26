@@ -1,6 +1,16 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { inflateRawSync } from 'node:zlib'
 import { expect, openWorkspace, test, writeRuntimeNamedProject } from './fixtures'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
@@ -175,16 +185,76 @@ test('AI CLI 不存在时，设置里说清「找过哪些位置」', async ({ a
   }
 })
 
-test('导出诊断包：能下载，且不含密钥与主目录', async ({ app, page }) => {
-  const a = await app()
+/** 诊断包 zip → { 文件名: 文本 }。包是 deflate 压缩的：直接在字节流里搜字符串恒搜不到
+ *  （QA 2026-09-24 指出旧判据是空的），必须先解开。只认中央目录里的条目，方法 0 / 8。 */
+function unzipTexts(buf: Buffer): Map<string, string> {
+  const out = new Map<string, string>()
+  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]))
+  expect(eocd).toBeGreaterThanOrEqual(0)
+  const count = buf.readUInt16LE(eocd + 10)
+  let p = buf.readUInt32LE(eocd + 16)
+  for (let i = 0; i < count; i++) {
+    const method = buf.readUInt16LE(p + 10)
+    const size = buf.readUInt32LE(p + 20)
+    const nameLen = buf.readUInt16LE(p + 28)
+    const extraLen = buf.readUInt16LE(p + 30)
+    const commentLen = buf.readUInt16LE(p + 32)
+    const local = buf.readUInt32LE(p + 42)
+    const name = buf.toString('utf8', p + 46, p + 46 + nameLen)
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28)
+    const data = buf.subarray(start, start + size)
+    out.set(name, (method === 8 ? inflateRawSync(data) : data).toString('utf8'))
+    p += 46 + nameLen + extraLen + commentLen
+  }
+  return out
+}
+
+test('导出诊断包：能下载，且不含主目录、用户脚本的报错文字与文件名、请求参数', async ({ app, page }) => {
+  // 主语（REL-05）：用户脚本 raise 的文字、脚本文件名、项目所在的主目录、请求的查询串——
+  // 每一样都先证明它**确实流经了日志**（完整的 app.log 里有），再断言包里每个文件都没有。
+  const CANARY = 'DIAGCANARY_q7'
+  const ERR = `${CANARY}_errmsg`
+  // Windows 的 os.tmpdir() 是 8.3 短名（`C:\\Users\\RUNNER~1\\…`），应用日志里写的是长名
+  // （`runneradmin`）：拿短名当主语，对照断言恒红、「包里没有它」恒真。先展开成长名。
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-diag-')))
+  const home = path.join(root, 'home')
+  const figures = path.join(home, `${CANARY}_proj`)
+  copyTree(path.join(REPO, 'examples', 'figures'), figures)
+  writeFileSync(path.join(figures, `${CANARY}_boom.py`), `def main():\n    raise ValueError("${ERR}")\n`)
+  copyFileSync(path.join(figures, 'Fig1_kinetics.pdf'), path.join(figures, `${CANARY}_boom.pdf`))
+  const regPath = path.join(figures, 'tavotto_registry.json')
+  const reg = JSON.parse(readFileSync(regPath, 'utf8'))
+  reg.scripts[`${CANARY}_boom.py`] = { entry: 'main', cost: 'light', stems: [`${CANARY}_boom`] }
+  writeFileSync(regPath, JSON.stringify(reg))
+
+  const a = await app({ figures, env: { HOME: home, USERPROFILE: home } })
   await page.goto(a.baseURL)
+  const render = await page.request.post(`${a.baseURL}/api/engine/render`, {
+    data: { id: `${CANARY}_boom.pdf`, patches: [] },
+  })
+  expect(render.status()).toBe(500)
+  const missing = await page.request.get(`${a.baseURL}/api/render?id=${CANARY}_missing.pdf&w=10`)
+  expect(missing.ok()).toBe(false)
 
   const resp = await page.request.get(`${a.baseURL}/api/diagnostics/bundle`)
   expect(resp.ok()).toBe(true)
   expect(resp.headers()['content-type']).toContain('zip')
-  const body = await resp.body()
-  expect(body.length).toBeGreaterThan(200)
-  expect(body.toString('latin1')).not.toContain(a.home) // 个人路径已抹掉
+  const entries = unzipTexts(await resp.body())
+  expect([...entries.keys()]).toEqual(expect.arrayContaining(['report.json', 'app.log', 'README.txt']))
+
+  // 对照：这些东西确实写进了完整日志——包里没有它们才说明是脱敏的结果
+  const raw = readFileSync(path.join(a.dataDir, 'cache', 'app.log'), 'utf8')
+  for (const needle of [ERR, `${CANARY}_boom.py`, `id=${CANARY}_missing`, home]) {
+    expect(raw).toContain(needle)
+  }
+  for (const [name, text] of entries) {
+    expect(text, name).not.toContain(CANARY)
+    expect(text, name).not.toContain(home)
+  }
+  // 反证落点：包里的日志确实是这次的（不是空的才搜不到）
+  const log = entries.get('app.log') ?? ''
+  expect(log).toContain('引擎渲染失败')
+  expect(log).toContain('"GET /api/render HTTP/1.1"')
 })
 
 test('导出 PDF 后文件真的落盘', async ({ app, page }) => {

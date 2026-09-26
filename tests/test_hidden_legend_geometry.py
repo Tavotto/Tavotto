@@ -3,7 +3,7 @@
 机制：图例文字的像素位置在 `Legend.draw → OffsetBox.draw → TextArea.set_offset` 里写死；
 图例隐藏后 `Legend.draw` 直接返回，这组像素就冻结在上一次画它那回。`preview_png` /
 `export` 在别的 dpi 上 savefig 恰好会画一回——之后再藏图例，manifest 量到的六个文字
-bbox 就是那次 dpi 的坐标除以文档像素。修法在 `manifest._layout_undrawn_legends`：
+bbox 就是那次 dpi 的坐标除以文档像素。修法在 `manifest._layout_legends_for_measure`：
 draw 跳过的图例在一次性 renderer 上按文档 dpi 补排一次版再量。
 
 判据：**同一份 override 列表下，经历过预览 / 导出的热 worker 与从没预览过的对照 worker

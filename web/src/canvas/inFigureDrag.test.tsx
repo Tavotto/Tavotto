@@ -4,8 +4,8 @@
  * 1. **吸附**：拖图内文字 / 轴标题 / 图例 / 子图时，吸到别的元素的左中右、上中下
  *    （用户原话：拖「Vacuum」吸不到「Superconductor」，轴标题也不吸）。以前图内拖动
  *    一条候选线都没有，只有画布对象层会吸。
- * 2. **图例整体缩放**：拖图例的四个角，字号、标题字号与五个以字号为单位的间距同乘
- *    一个倍数，对角不动（`loc_frac` 钉住）。
+ * 2. **图例整体缩放**：拖图例的四个角，字号与标题字号乘一个倍数（以字号为单位的间距由
+ *    引擎随字号等比，不写），对角不动（`loc_frac` 钉住）。
  *
  * 钉住的事实：吸附只改位移不改写法（仍是一条 pos_frac / position）；⌘ / Ctrl、总开关、
  * 「吸附到对象」任一关掉就不吸；被拖的元素自己的后代不出线（否则一起动的东西会把
@@ -353,7 +353,7 @@ describe('拖图例的角 = 整体缩放', () => {
   // 沿对角线拖：宽高各放大到 1.5 倍
   const diag = (s: number) => [0.2 * layout.width * (s - 1), 0.1 * layout.height * (s - 1)] as const
 
-  it('右下角：字号与五个间距同乘一个倍数，左上角不动（loc_frac = 新框左下角）', async () => {
+  it('右下角：只写字号（间距随字号等比、不另写），左上角不动（loc_frac = 新框左下角）', async () => {
     await setup()
     const [dx, dy] = diag(1.5)
     startLegendScale(down(0, 0), livePanel(), legendOf(), layout, 'se')
@@ -364,11 +364,10 @@ describe('拖图例的角 = 整体缩放', () => {
     fire('pointerup', dx, dy)
 
     expect(overrideOf('axes_1.legend', 'fontsize')).toBeCloseTo(10.5, 6)
-    expect(overrideOf('axes_1.legend', 'borderpad')).toBeCloseTo(0.6, 6)
-    expect(overrideOf('axes_1.legend', 'labelspacing')).toBeCloseTo(0.75, 6)
-    expect(overrideOf('axes_1.legend', 'handlelength')).toBeCloseTo(3, 6)
-    expect(overrideOf('axes_1.legend', 'handletextpad')).toBeCloseTo(1.2, 6)
-    expect(overrideOf('axes_1.legend', 'columnspacing')).toBeCloseTo(3, 6)
+    // 引擎的图例字号是原生语义，间距以字号为单位自己跟着走——再乘一遍就是缩两次
+    for (const prop of ['borderpad', 'labelspacing', 'handlelength', 'handletextpad', 'columnspacing']) {
+      expect(overrideOf('axes_1.legend', prop)).toBeUndefined()
+    }
     // 不是尺寸的不碰；没有标题就不写标题字号
     expect(overrideOf('axes_1.legend', 'ncol')).toBeUndefined()
     expect(overrideOf('axes_1.legend', 'title_fontsize')).toBeUndefined()
@@ -409,15 +408,14 @@ describe('拖图例的角 = 整体缩放', () => {
     expect(overrideOf('axes_1.legend', 'fontsize')).toBeCloseTo(12, 6)
   })
 
-  it('拖过头：倍数夹在属性的取值范围里（间距 borderpad 最大 3 → 最多 7.5 倍，再被 4 倍的理智上限截住）', async () => {
+  it('拖过头：倍数夹在字号的取值范围里（7 pt、最大 24 → 最多 24/7 倍，比 4 倍的理智上限更紧）', async () => {
     await setup()
     const [dx, dy] = diag(20)
     startLegendScale(down(0, 0), livePanel(), legendOf(), layout, 'se')
     dragTo(dx, dy)
     fire('pointerup', dx, dy)
-    // handlelength 2 最大 5 → 2.5 倍是最紧的那一条
-    expect(overrideOf('axes_1.legend', 'handlelength')).toBeCloseTo(5, 6)
-    expect(overrideOf('axes_1.legend', 'fontsize')).toBeCloseTo(17.5, 6)
+    expect(overrideOf('axes_1.legend', 'fontsize')).toBeCloseTo(24, 6)
+    expect(overrideOf('axes_1.legend', 'handlelength')).toBeUndefined()
   })
 
   it('取消：DOM 还原，文档零改动，不渲染', async () => {

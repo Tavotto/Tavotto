@@ -19,7 +19,7 @@
   只活在会话里，重放拿不到，热态 ≠ 重放；`custom_base` 字段已删）。「定格此刻」由前端
   「断开」把五条样式写成 override 兑现（`store/actions.detachLegendEntry`）。重建型
   prop（ncol / borderpad / labelspacing /
-  handlelength / handletextpad / columnspacing / entry_order / 条目 visible）
+  handlelength / handletextpad / columnspacing / entry_order / 条目 visible / **fontsize**）
   一律走 `rebuild_legend`：素材是源对象或脚本原样快照，**不许把
   `leg.legend_handles` 副本喂回 `_init_legend_box`**（误差棒退化成 Line2D、
   markerscale 复利、标题字号丢——当年的 P2 就是这么来的）；重建后
@@ -61,12 +61,25 @@
   `render_png` 在别的 dpi 上的 savefig 恰好会画一回，之后 manifest 量到的六个文字 bbox
   就是那次 dpi 的坐标除以文档像素（连常规 `render` 的 SVG 那次 `PREVIEW_DPI` draw 都会
   留下来）。契约：**隐藏图例文字的 bbox = 它在当前状态、文档 dpi 下显示时的 bbox**，与
-  历史上谁画过它无关。落地在 `manifest._layout_undrawn_legends`：draw 会跳过的图例在一张
-  一次性 `RendererAgg(W, H, fig.dpi)` 上走一遍 `_legend_box.draw`（`_findoffset` 也在这条
+  历史上谁画过它无关。落地在 `manifest._layout_legends_for_measure`：draw 会跳过的图例在一张
+  一次性 `RendererAgg(W, H, fig.dpi)`（文字度量与 manifest 其余部分同一把矢量尺，见
+  `marker-and-path-geometry.md`）上走一遍 `_legend_box.draw`（`_findoffset` 也在这条
   路上，`loc='best'` 照常），真 canvas 不碰。**不用「preview 之后补一次文档 dpi 的 draw」**：
   预览里图例可见、会话里图例隐藏时，补的那次 draw 同样跳过图例（3.8.4 / 3.10.8 / 3.11.1
   都量过）。看护 `tests/test_hidden_legend_geometry.py`（七条：三种别的 dpi 的 draw、预览
   显示 / 会话隐藏那格、藏 axes、隐藏 == 显示、可见图例不受影响）。
+- **图例字号 = matplotlib 原生语义（2026-09-25，ADR 0034 修订）**：`legend.fontsize` 的标量值等于
+  `ax.legend(fontsize=v)`——改 `Legend._fontsize`（`prop` 先拷一份再改，不碰脚本传进来的
+  FontProperties）再 `rebuild_legend`，边距 / 行距 / 示意线长 / 线字间距 / 列距 / 行高下限都以它为单位、
+  随之等比；那五条间距仍是各自的 override（以字号为单位的倍数），叠在新字号上单独调。标题字号不跟
+  （原生也不跟，归 `title_fontsize`）。getter 仍回逐条列表：列表值 = **撤销形态**，盒按脚本原样的
+  `_fontsize`（第一次改动前记在 `_mm_script_fontsize`）重排 + 文字逐条放回——只写回逐条字号的话框停在
+  改过的尺寸上。广播语义不变（广播先于窄的，单条字号由重建后的接回重放保住）。**重建换掉文字对象后
+  `_reindex_legend_children` 递增 `state.index_generation`**：`apply` 里按对象身份反查 gid 的缓存认这个
+  代号，不认的话撤销图例字号时别名组组员静默变空、单条字号被冲掉。看护
+  `tests/test_legend_fontsize_native.py`（对拍的另一侧是脚本自己的 `legend(fontsize=…)`）、
+  `tests/test_worker_roundtrip.py::test_overlapping_override_undo_of_the_broadcast_keeps_the_narrow_one`、
+  `tests/test_invariants_engine.py` 的 `A-legend-drop-broadcast`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
@@ -78,6 +91,6 @@
 - 脱开的项 = 脚本原样 + 文档里的 handle_*（没有会话内的 custom_base）
 - 三条位置 prop 写槽位再整体重建，拖动过即绝对定位
 - `loc_anchor` 的 `null` 是取值
-- 隐藏图例的文字几何按文档 dpi 现排（`manifest._layout_undrawn_legends`），不靠上一次 draw
+- 隐藏图例的文字几何按文档 dpi 现排（`manifest._layout_legends_for_measure`），不靠上一次 draw
 - 自定义 handler 画的整格在不跟随时定格复刻
 - 指纹带虚线节奏
