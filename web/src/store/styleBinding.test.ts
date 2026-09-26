@@ -1516,8 +1516,19 @@ describe('重跑后脚本赢：不自动对齐，显示不一致、一键对齐�
     expect(styleMismatchCount()).toBe(0)
   })
 
-  it('用户在属性页把它「改」成与样式相同的值：同样注销（那是用户的决定）', async () => {
+  it('属性页写一个与此刻相同的值：按 #587 是 no-op（不进历史），登记保留，脚本改了照常让位', async () => {
     await bound()
+    const before = s().past.length
+    setOverride('a', 'axes_0.xlabel', 'fontsize', 10, true)
+    expect(s().past.length - before, '同值写入不产生历史').toBe(0)
+    expect(owned('a')).toEqual({ value: 10, base: 9 })
+    rerun('a', 12, 10)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBeUndefined()
+  })
+
+  it('用户改成别的值、再改回样式的值：第一次改时就归了用户，改回来也不再是样式的，脚本改了不让位', async () => {
+    await bound()
+    setOverride('a', 'axes_0.xlabel', 'fontsize', 14, true)
     setOverride('a', 'axes_0.xlabel', 'fontsize', 10, true)
     expect(owned('a')).toBeUndefined()
     renderWith('a', 9, 10)
