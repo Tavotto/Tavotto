@@ -46,6 +46,7 @@ export function CanvasTabs() {
           role 挂在真正装着 TabItem 的滚动条上；「+」与画布菜单在 tablist 外 */}
       <div
         ref={strip}
+        data-canvas-tabs
         role="tablist"
         aria-label={t('tabs.listLabel')}
         className="flex h-full min-w-0 shrink items-center gap-4 overflow-x-auto"
@@ -194,8 +195,11 @@ function TabItem({
       className={cn(
         // 选中态与右栏页签同一副语法（`tabClass`：600 + ink + 2px 线，宪法第五节）：
         // 此前这里只借了那条线，选中仍是 400——同一屏两种「选中」（2026-09-15 打磨 B1）
+        // 高度取 tabClass 的 h-full，不另写 h-9：条是 h-9 + border-b，里面只剩 35px，36px 的页签
+        // 让横滚条的 overflow-y 被算成 auto、多出 1px 纵向滚动——WebKit 当场在「+」左边画一根
+        // 竖滚动条（e2e/canvas-tabs-scroll.spec.ts 量 scrollHeight ≤ clientHeight）
         tabClass(active),
-        'group flex h-9 max-w-44 shrink-0 cursor-default items-center gap-1',
+        'group flex max-w-44 shrink-0 cursor-default items-center gap-1',
         // 关闭键仍绝对定位，只在右边留出它那一格：左缘因此是文字本身（T8）
         closable && 'pr-5',
         // 拖动排序的落点提示：不只靠颜色，加背景块让目标一眼可辨
