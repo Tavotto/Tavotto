@@ -5,8 +5,8 @@
 1. **manifest**：色条伪元素（`axes_i.colorbar`）宣称 `resizable` 并把几何代理到
    它的轴（`geom_gid = axes_i`，与位图代理到宿主子图同一套机制）。从前色条元素
    与色条轴 bbox 逐位相同，命中测试里色条元素恒胜（容器有降权），于是点色条
-   选中的是一个既没有手柄也拖不动的伪元素。色条轴落位不归 Tavotto 管时
-   （插图里的色条）不宣称。
+   选中的是一个既没有手柄也拖不动的伪元素。插图里的色条从前不宣称（色条轴落位
+   归定位器），ADR 0100 起落 position 时把定位器摘下来，同样宣称。
 2. **引擎**：`fig.colorbar(im, ax=ax)` 造的色条轴带着 `box_aspect=20`，
    `set_position` 给多宽都会被 `apply_aspect` 按回高度的 1/20——用户把色条拖粗，
    下一帧弹回去。落 position override 那一刻把长宽比解开（与方向翻转同一处置），
@@ -34,7 +34,7 @@ ENTRY = "main"
 STEM_GS = "CbarGrid"
 #: `fig.colorbar(im, cax=fig.add_axes([...]))`：用户自己摆的轴，没有 box_aspect
 STEM_CAX = "CbarCax"
-#: 挂在插图上的色条：色条轴是子 axes、落位归 locator，不宣称 resizable
+#: 挂在插图上的色条：色条轴是子 axes、落位归定位器；落 position 时摘掉（ADR 0100）
 STEM_INSET = "CbarInset"
 #: 带延伸三角的 gridspec 色条：locator 每帧按 extend 收缩，落位仍要归用户
 STEM_EXT = "CbarExtend"
@@ -126,14 +126,20 @@ def test_colorbar_element_proxies_its_geometry_to_the_colorbar_axes(library, ste
     assert len(_position(man, cbax["gid"])) == 4
 
 
-def test_inset_colorbar_does_not_claim_a_geometry_it_cannot_keep(library):
-    """插图里的色条：色条轴是子 axes、落位由父级 locator 每帧重算，`position`
-    是个死开关——色条元素也不许宣称 resizable（两处判据同源）。"""
+def test_inset_colorbar_position_holds(library):
+    """插图里的色条：色条轴是子 axes、落位由定位器每帧重算。ADR 0100 之前 `position`
+    是个死开关、色条不宣称 resizable；现在落 position 时把定位器摘下来（撤销放回），
+    所以宣称了、也钉得住——写下的位置就是画出来的位置。"""
     man = _render(library, STEM_INSET)
     cb = _colorbar(man)
-    assert "resizable" not in cb and "geom_gid" not in cb
-    cbax = next(e for e in man["elements"] if e.get("colorbar_gid") == cb["gid"])
-    assert cbax["resizable"] is False
+    assert cb.get("resizable") is True, cb
+    cbax_gid = cb["geom_gid"]
+    x0, y0, w0, h0 = _position(man, cbax_gid)
+    want = [round(x0 - 0.05, 4), round(y0 + 0.03, 4), w0, h0]
+    after = _render(library, STEM_INSET, [{"gid": cbax_gid, "prop": "position", "value": want}])
+    assert _position(after, cbax_gid) == pytest.approx(want, abs=1e-4)
+    # 对照：没摘定位器的时候这里回的是原位（误差 = 整段位移），尺子是活的
+    assert abs(_position(after, cbax_gid)[0] - x0) > 0.04
 
 
 def test_user_placed_colorbar_axes_takes_any_rectangle(library):

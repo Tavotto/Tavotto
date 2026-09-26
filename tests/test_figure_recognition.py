@@ -123,11 +123,12 @@ def test_lines_and_series_are_not_area_fields(facts):
 
 
 @pytest.mark.parametrize("gid", ["axes_6.collections_0", "axes_7.images_0"])
-def test_proxy_is_not_claimed_when_the_host_cannot_move(facts, gid):
-    """插图的落位归父级 locator：网格与位图都不宣称代理（与色条同一条判据）。
-    位图从前无条件宣称，前端拿着它发一个落不下去的 position。"""
+def test_inset_host_proxy_is_claimed(facts, gid):
+    """插图里的网格与位图代理到插图本身。插图的落位从前归父级定位器、`position` 落不下去，
+    所以不宣称；ADR 0100 起落 position 时摘下定位器，插图钉得住，于是与普通子图一样宣称
+    （宿主落位归不归 Tavotto 管，仍与色条同一条判据：`position_locked`）。"""
     el = facts["area_fields"][gid]
-    assert el["resizable"] is None and el["geom_gid"] is None
+    assert el["resizable"] is True and el["geom_gid"] == gid.split(".")[0]
 
 
 # ============================================================ 色条 ↔ 位图

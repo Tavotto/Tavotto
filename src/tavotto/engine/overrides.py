@@ -26,10 +26,11 @@ from matplotlib.axes._base import _AxesBase
 from matplotlib.collections import Collection, LineCollection, PathCollection, QuadMesh, TriMesh
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
-from matplotlib.layout_engine import TightLayoutEngine
+from matplotlib.layout_engine import ConstrainedLayoutEngine, TightLayoutEngine
 from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
+from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox
 from matplotlib.patches import BoxStyle, FancyArrowPatch, Patch, Rectangle
 from matplotlib.text import Annotation, Text
 from matplotlib.transforms import ScaledTranslation
@@ -350,7 +351,11 @@ def _place_text(t: Text, value) -> None:
 
 
 def _text_pins(fig) -> "weakref.WeakKeyDictionary":
-    """根 Figure 上「拖过的文字 → (figure 分数, 脚本原样)」表。弱引用：文字被删了不续命。"""
+    """根 Figure 上「拖过的东西 → (写下的位置, 脚本原样)」表。弱引用：被删了不续命。
+
+    名字沿用最早的主语（文字）；ADR 0100 起同一张表还收锚定框、图例、形状、独立箭头与
+    constrained 图上的子图——排版前放回原样、排完落回去，各自怎么放、怎么落在
+    `_pin_put_native` / `_pin_place` 一处分派。"""
     root = pathgeom.root_figure(fig)
     pins = root.__dict__.get("_mm_text_pins")
     if pins is None:
@@ -400,13 +405,26 @@ def _ensure_text_pin_hook(fig) -> None:
         pins = [
             (t, v, n) for t, (v, n) in list(_text_pins(f).items()) if t.get_figure() is not None
         ]
+        # 子图先落位：文字 / 锚定框按「此刻」的子图框把 figure 分数换算进自己的坐标系，
+        # 子图在它们之后才挪的话它们就被带走了
+        pins.sort(key=lambda p: not isinstance(p[0], _AxesBase))
         for t, _v, native in pins:
-            _put_text_native(t, native)
+            _pin_put_native(t, native)
         try:
             native_execute(f)
         finally:
+            settled: set[int] = set()
             for t, v, _native in pins:
-                _place_text(t, v)
+                ax = None if isinstance(t, _AxesBase) else getattr(t, "axes", None)
+                if ax is not None and id(ax) not in settled:
+                    # 排版之后、画之前，`Axes.draw` 还会按长宽比（`imshow` 的 equal、饼图……）
+                    # 把子图框收一次。按 transAxes / transData 换算的东西要在**收过之后**的框里
+                    # 算，不然一画就跟着框走（ADR 0100 排查：带位图的子图上拖出去的图例差 4 mm）。
+                    # 这里先替它收一次——draw 里那一次按同样的输入再算，结果逐位相同
+                    settled.add(id(ax))
+                    loc = ax.get_axes_locator()
+                    ax.apply_aspect(loc(ax, f._get_renderer()) if loc else None)  # noqa: SLF001
+                _pin_place(t, v)
 
     engine.execute = execute
     engine._mm_text_pin_hook = True  # noqa: SLF001
@@ -416,6 +434,47 @@ def _frame_mode(value) -> str:
     if value not in ("savefig", "figsize"):
         raise ValueError(f"frame 只能是 'savefig' 或 'figsize': {value!r}")
     return value
+
+
+def _pin_put_native(a, native) -> None:
+    """布局引擎排版之前把拖过的东西放回脚本原样：文字、锚定框、constrained 图上的子图
+    （ADR 0100）各有各的原样。"""
+    if isinstance(a, Text):
+        _put_text_native(a, native)
+    elif isinstance(a, Legend):
+        legendmodel.put_legend_frac(a, None)
+    elif isinstance(a, FancyArrowPatch):
+        if native is not None:
+            a.set_positions(native[0], native[1])
+    elif isinstance(a, Patch):
+        a.set_transform(_patch_base_transform(a))
+    elif isinstance(a, _AxesBase):
+        # 子图的「原样」：参与排版，色条轴还有被解开的长宽比。constrained 按网格算位置、
+        # 按装饰物的大小算边距，与它此刻摆在哪无关——两样放回去，排出来的就与「没拖过」
+        # 逐位相同（长宽比不放回的话色条按解开后的宽度算边距，邻居子图宽度差 1.3 mm）
+        a.set_in_layout(a.__dict__.get("_mm_in_layout0", True))
+        colorbarmodel._cb_restore_aspect(a)
+    else:
+        _put_offsetbox_native(a, native)
+
+
+def _pin_place(a, value) -> None:
+    """排完之后按排好的子图把它落回写下的 figure 分数。"""
+    if isinstance(a, Text):
+        _place_text(a, value)
+    elif isinstance(a, Legend):
+        legendmodel.put_legend_frac(a, list(value))
+    elif isinstance(a, FancyArrowPatch):
+        _place_arrow(a, value)
+    elif isinstance(a, Patch):
+        _place_patch(a, value)
+    elif isinstance(a, _AxesBase):
+        a.set_position(list(value))
+        # 色条轴：排版前放回的长宽比、`reposition_colorbar` 按 `_colorbar_info['aspect']`
+        # 装回去的长宽比，都要再解开一次（位置归用户，厚度也归用户）
+        colorbarmodel._cb_release_aspect(a)
+    else:
+        _place_offsetbox(a, value)
 
 
 def _set_text_pos_frac(t: Text, value) -> None:
@@ -943,6 +1002,18 @@ def _set_arrow_endpoints(a, value, state=None) -> None:
     if ann is not None:
         _set_annotation_arrow(ann, da, db)
         return
+    # 独立箭头：与形状同一个理由挂进布局引擎的 pin 表（ADR 0100），排版前放回脚本原样、
+    # 排完按排好的子图再落一次
+    a.__dict__.setdefault("_mm_arrow_native", _get_arrow_endpoints(a))
+    _place_arrow(a, value)
+    _text_pins(fig)[a] = (tuple(float(v) for v in value), a._mm_arrow_native)  # noqa: SLF001
+    _ensure_text_pin_hook(fig)
+
+
+def _place_arrow(a, value) -> None:
+    fig = a.get_figure()
+    da = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
+    db = pathgeom.frac_to_display(fig, float(value[2]), float(value[3]))
     inv = a.get_transform().inverted()
     a.set_positions(tuple(inv.transform(da)), tuple(inv.transform(db)))
 
@@ -969,6 +1040,10 @@ def _restore_arrow_endpoints(a, orig) -> None:
     if isinstance(orig, _AnnAnchors):
         _put_ann_anchors(a._mm_annotation, orig)  # noqa: SLF001
         return
+    fig = a.get_figure()
+    if fig is not None:
+        _text_pins(fig).pop(a, None)
+    a.__dict__.pop("_mm_arrow_native", None)
     if orig is not None:
         a.set_positions(orig[0], orig[1])
 
@@ -1000,6 +1075,15 @@ def _set_patch_pos_frac(p, value) -> None:
     平移量以**英寸**记在 `dpi_scale_trans` 上，不是像素：导出时 dpi 会变
     （`savefig(dpi=600)`），钉像素的话预览里挪了 3 mm、导出里只挪 1 mm。
     """
+    _place_patch(p, value)
+    # 布局引擎下挂进 pin 表（ADR 0100）：基准 transform 多半是 transData，而子图框随排版
+    # 按 dpi 微调（字形度量取整），只在 apply 那一刻换算一次的话，预览（72 dpi）与
+    # manifest（图的 dpi）两次排版之间形状差 0.1 mm；每次排完按排好的子图再落一次
+    _text_pins(p.get_figure())[p] = ((float(value[0]), float(value[1])), None)
+    _ensure_text_pin_hook(p.get_figure())
+
+
+def _place_patch(p, value) -> None:
     fig = pathgeom.root_figure(p.get_figure())  # SubFigure 里也按根 Figure 的分数算
     base = _patch_base_transform(p)
     p.set_transform(base)  # 先回到基准再量：这一段要幂等（重放 / 二次拖动）
@@ -1016,10 +1100,125 @@ def _get_patch_pos(p):
 
 
 def _restore_patch_pos(p, orig) -> None:
+    fig = p.get_figure()
+    if fig is not None:
+        _text_pins(fig).pop(p, None)
     p.set_transform(orig)
     # 基准记号一并清掉：下一次拖动从实况重新采（脚本原样不会变，清不清结果
     # 相同；清掉是为了不让一个「我们挪过」的记号留在还原后的 artist 上）
     p.__dict__.pop("_mm_pos_base", None)
+
+
+# ---------------------------------------------------------------------------
+# 锚定框与图片 / 文字插框的拖动（ADR 0100）
+#
+# `AnchoredText`（「(a)」这类角标最常见的画法）、比例尺 `AnchoredSizeBar`、
+# `AnchoredOffsetbox`（图例式的文字 / 图块框）与 `AnnotationBbox`（图里贴的图片 / 文字框）
+# 都经 `ax.add_artist` 进 `ax.artists`。它们从前按「认不出来的 Artist」登记，只开
+# visible / zorder：选得中、拖不动，而且拖的时候什么提示都没有。
+#
+# 落位写法与文字同一套：`pos_frac` = **框的左下角**该落到的 figure 分数（top-origin），
+# manifest 的 `anchor` 与 setter 量的是同一个框（`offsetbox_frame`）。
+#
+# 拖过之后框改成**以左下角挂在那个点上**：
+# * AnchoredOffsetbox：`loc` 换成 lower left、`borderpad` 归零、锚框换成 figure 分数里的
+#   那一个点；
+# * AnnotationBbox：`box_alignment` 换成 (0, 0)、`xybox` 按它自己的 `boxcoords` 逆算那个点
+#   ——与注释文字 `xyann` 同一个算法、同一张可逆表（`_ann_coords_invertible`）；
+#   'offset pixels' 这类随 dpi 漂的不宣称可拖。箭头尖仍指 `xy`。
+# 不保留原来的挂点（右上角 / 中心）再平移锚框，是因为框的像素宽高随 dpi 不成比例地变
+# （字形度量取整）：预览按 72 dpi、manifest 按图的 dpi 画，挂在右上角的框左下角两边差
+# 0.1–0.3 mm（本 ADR 排查实测）。挂在左下角，写下的点就是量到的点。
+#
+# 两者都先放回脚本原样再落（幂等：重放 / 二次拖动 / 布局引擎每次 draw 都从同一个基准算），
+# 布局引擎下挂进文字那张 pin 表（`_text_pins`）：排版的输入与「没拖过」逐位相同。
+# ---------------------------------------------------------------------------
+
+
+def offsetbox_draggable(a) -> bool:
+    """这个锚定框 / 插框能不能**可靠地**拖到写下的 figure 分数上。
+
+    manifest 的 `draggable` 与 setter 共用这一份判据（与 `annotation_text_draggable` 同理）。"""
+    if isinstance(a, AnchoredOffsetbox):
+        return True
+    if not isinstance(a, AnnotationBbox):
+        return False
+    if not _ann_coords_invertible(a.boxcoords, text_end=True):
+        return False
+    coords = a.boxcoords if isinstance(a.boxcoords, tuple) else (a.boxcoords,)
+    if any(isinstance(c, str) and c.startswith("offset") for c in coords):
+        return _ann_coords_invertible(a.xycoords, text_end=False)
+    return True
+
+
+def offsetbox_frame(a, renderer):
+    """拖动量的那个框（display 像素）：锚定框是它自己的外框；AnnotationBbox 量里面那个框
+    （图片 / 文字本身），不含外框的留白与指向 `xy` 的箭头——箭头尖不跟着走，含进来的话
+    左下角会随箭头方向乱跳；外框开不开都是同一把尺。"""
+    if isinstance(a, AnnotationBbox):
+        a.update_positions(renderer)
+        return a.offsetbox.get_window_extent(renderer)
+    return a.get_window_extent(renderer)
+
+
+def _offsetbox_native_state(a):
+    if isinstance(a, AnchoredOffsetbox):
+        return (a.loc, a.borderpad, a._bbox_to_anchor, a._bbox_to_anchor_transform)  # noqa: SLF001
+    return (tuple(a.xybox), tuple(a._box_alignment))  # noqa: SLF001
+
+
+def _put_offsetbox_native(a, native) -> None:
+    if isinstance(a, AnchoredOffsetbox):
+        # 锚框直接放回属性：原锚框多半是个 TransformedBbox，交给 `set_bbox_to_anchor` 会被
+        # 再包一层变换（与 `legendmodel.legend_pos_cfg` 的 orig 同一个坑）
+        a.loc, a.borderpad, a._bbox_to_anchor, a._bbox_to_anchor_transform = native  # noqa: SLF001
+    else:
+        a.xybox, a._box_alignment = native  # noqa: SLF001
+    a.stale = True
+
+
+def _place_offsetbox(a, value) -> None:
+    """把框的左下角挂到 figure 分数 `value`（top-origin）上（见本节开头）。"""
+    if not offsetbox_draggable(a):
+        raise ValueError(f"{type(a).__name__} 的坐标系不支持拖动定位")
+    a.__dict__.setdefault("_mm_offsetbox_native", _offsetbox_native_state(a))
+    fig = pathgeom.root_figure(a.get_figure())
+    if isinstance(a, AnchoredOffsetbox):
+        fx, fy = fig.transFigure.inverted().transform(
+            pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
+        )
+        a.loc = 3  # lower left
+        a.borderpad = 0.0
+        a.set_bbox_to_anchor((float(fx), float(fy)), transform=fig.transFigure)
+    else:
+        a._box_alignment = (0.0, 0.0)  # noqa: SLF001
+        tr = a._get_xy_transform(fig._get_renderer(), a.boxcoords)  # noqa: SLF001
+        x, y = tr.inverted().transform(
+            pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
+        )
+        a.xybox = (float(x), float(y))
+    a.stale = True
+
+
+def _set_offsetbox_pos_frac(a, value) -> None:
+    """拖动锚定框 / 插框；布局引擎下登记进 pin 表（见 `_ensure_text_pin_hook`）。"""
+    _place_offsetbox(a, value)
+    fig = a.get_figure()
+    _text_pins(fig)[a] = ((float(value[0]), float(value[1])), a._mm_offsetbox_native)  # noqa: SLF001
+    _ensure_text_pin_hook(fig)
+
+
+def _get_offsetbox_pos(a):
+    """原样 = 脚本给的锚框 / `xybox`（还原就是放回去）。"""
+    return a.__dict__.get("_mm_offsetbox_native") or _offsetbox_native_state(a)
+
+
+def _restore_offsetbox_pos(a, orig) -> None:
+    fig = a.get_figure()
+    if fig is not None:
+        _text_pins(fig).pop(a, None)
+    _put_offsetbox_native(a, orig)
+    a.__dict__.pop("_mm_offsetbox_native", None)
 
 
 # ---------------------------------------------------------------------------
@@ -2230,11 +2429,53 @@ def _set_axes_position(a, v) -> None:
     #
     # 这与 #190 那一族是同一句话：不可逆的那一步排在了可能失败的那一步之前。
     # 校验长度只挡得住这一种坏输入，换顺序挡得住 `set_position` 的**每一种**失败。
+    in_layout = a.get_in_layout()
     a.set_position(bounds)
-    engine = ensure_pinnable_layout_engine(getattr(a, "get_figure", lambda: None)())
+    # `set_position` 顺手把这个轴踢出布局（matplotlib：「外部调用的不参与排版」）。脚本
+    # 原样记在 artist 上，撤销时还回去——否则 constrained 图上拖一下子图再撤销，它从此
+    # 不参与排版，整张图与重开后重放出来的差 0.3 mm（ADR 0100 排查实测）
+    a.__dict__.setdefault("_mm_in_layout0", in_layout)
+    _release_axes_locator(a)
+    fig = getattr(a, "get_figure", lambda: None)()
+    engine = ensure_pinnable_layout_engine(fig)
     if engine is not None:
         engine.pin(a, bounds)
     colorbarmodel._cb_release_aspect(a)
+    if fig is not None and isinstance(
+        pathgeom.root_figure(fig).get_layout_engine(), ConstrainedLayoutEngine
+    ):
+        # constrained 图：`set_position` 把这个轴踢出了排版，于是整张图按「少了一个子图」
+        # 重排——拖 A、B 跳（ADR 0100 排查实测 7.8 mm）；色条轴则被 `reposition_colorbar`
+        # 按网格拽回去、长宽比按成 0 当场抛。与持久 tight 的 `PinnedTightLayoutEngine`
+        # 同一个思路：排版时放回布局、排完再钉回写下的位置（挂在文字那张 pin 表上）
+        _text_pins(fig)[a] = (tuple(bounds), None)
+        _ensure_text_pin_hook(fig)
+
+
+def _release_axes_locator(a) -> None:
+    """落位由定位器（axes locator）每次 draw 重算的轴：把定位器摘下来，位置才钉得住。
+
+    插图（`ax.inset_axes`）、`mpl_toolkits` 的 `inset_axes`、`make_axes_locatable` /
+    `ImageGrid` 分出来的轴都靠定位器落位——`set_position` 之后 draw 一次就被算回去：
+    拖了、画面也跟手了、松手弹回原处，而且什么都不说（ADR 0100 排查：误差 2–4 mm，
+    正好是整段位移）。摘下来之后这个轴的落位就是写下的 figure 分数，与拖过的文字、
+    锚定框同一语义；原定位器记在 artist 上，撤销时放回去（`_restore_axes_position`）。
+
+    色条轴的 `_ColorbarAxesLocator` 不摘：它负责 extend 三角与长宽比，自己在
+    `_orig_locator` 缺席时就按 `get_position(original=True)` 落位——摘的是它包着的那个
+    原定位器（插图里的色条、`append_axes` 出来的色条）。
+    """
+    loc = a.get_axes_locator()
+    if loc is None:
+        return
+    if hasattr(loc, "_orig_locator"):
+        if loc._orig_locator is None:  # noqa: SLF001
+            return
+        a.__dict__.setdefault("_mm_locator0", ("inner", loc._orig_locator))  # noqa: SLF001
+        loc._orig_locator = None  # noqa: SLF001
+    else:
+        a.__dict__.setdefault("_mm_locator0", ("outer", loc))
+        a.set_axes_locator(None)
 
 
 def _restore_axes_position(a, orig) -> None:
@@ -2246,11 +2487,22 @@ def _restore_axes_position(a, orig) -> None:
     tight 会在下一次 draw 里重新算它，实测逐位回到「从没被 override 过」的位置。
     色条轴另有一件要还的：`_cb_release_aspect` 解开的长宽比（见那里）。
     """
-    engine = pinnable_layout_engine(getattr(a, "get_figure", lambda: None)())
+    fig = getattr(a, "get_figure", lambda: None)()
+    engine = pinnable_layout_engine(fig)
     if engine is not None:
         engine.unpin(a)
+    if fig is not None:
+        _text_pins(fig).pop(a, None)
     colorbarmodel._cb_restore_aspect(a)
     a.set_position([float(x) for x in orig])
+    # 定位器与「参不参与排版」一并还回去（见 `_set_axes_position` / `_release_axes_locator`）
+    kind, loc = a.__dict__.pop("_mm_locator0", (None, None))
+    if kind == "outer":
+        a.set_axes_locator(loc)
+    elif kind == "inner":
+        a.get_axes_locator()._orig_locator = loc  # noqa: SLF001
+    if "_mm_in_layout0" in a.__dict__:
+        a.set_in_layout(a.__dict__.pop("_mm_in_layout0"))
 
 
 # ---------------------------------------------------------------------------
@@ -2953,6 +3205,8 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # transform 上（一份实现盖住整个 Patch family），原样是基准 transform。
     # **不给 `bar`**：柱是数据，位置由 x 与宽度决定，挪一根柱等于改数据。
     ("patch", "pos_frac"): (_get_patch_pos, _set_patch_pos_frac),
+    # 锚定框 / 插框（ADR 0100）：cls_key 仍是 `artist`，setter 自己认类型，认不出来就抛
+    ("artist", "pos_frac"): (_get_offsetbox_pos, _set_offsetbox_pos_frac),
     ("arrowpatch", "arrowstyle"): (lambda a: a.get_arrowstyle(), _set_arrowstyle),
     ("arrowpatch", "linestyle"): (
         lambda a: a.get_linestyle(),
@@ -3289,6 +3543,7 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("collection", "marker"): _restore_scatter_marker,
     ("arrowpatch", "endpoints_frac"): _restore_arrow_endpoints,
     ("patch", "pos_frac"): _restore_patch_pos,
+    ("artist", "pos_frac"): _restore_offsetbox_pos,
     ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),
     ("arrowpatch", "linestyle"): lambda a, orig: a.set_linestyle(orig),
     ("text", "pos_frac"): _restore_text_pos,
@@ -3305,6 +3560,31 @@ _RESTORE.update(tickmodel.RESTORE)
 _RESTORE.update(colorbarmodel.RESTORE)
 _RESTORE.update(legendmodel.RESTORE)
 _RESTORE.update(spinemodel.RESTORE)
+
+
+# 图例拖动（`loc_frac`）挂进布局引擎那张 pin 表（ADR 0100）：条目模型本身在
+# `legendmodel`（族模块是叶子，不认识布局引擎），登记与撤销在这里包一层
+_legend_frac_get, _legend_frac_set = HANDLERS[("legend", "loc_frac")]
+_legend_frac_restore = _RESTORE[("legend", "loc_frac")]
+
+
+def _set_legend_loc_frac(leg, v) -> None:
+    _legend_frac_set(leg, v)
+    fig = leg.get_figure()
+    if fig is not None:
+        _text_pins(fig)[leg] = ((float(v[0]), float(v[1])), None)
+        _ensure_text_pin_hook(fig)
+
+
+def _restore_legend_loc_frac(leg, orig) -> None:
+    fig = leg.get_figure()
+    if fig is not None:
+        _text_pins(fig).pop(leg, None)
+    _legend_frac_restore(leg, orig)
+
+
+HANDLERS[("legend", "loc_frac")] = (_legend_frac_get, _set_legend_loc_frac)
+_RESTORE[("legend", "loc_frac")] = _restore_legend_loc_frac
 # ---------------------------------------------------------------------------
 # 背景框（bbox_*）：六条 prop 写的是**同一个 patch**，而那个 patch 可能是被
 # 第一条 override 现建出来的。所以 handler 与 restore 必须成对登记——
