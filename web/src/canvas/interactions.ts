@@ -273,7 +273,7 @@ function contentAxisLock(
  * 拖动时排除锁定对象；成组对象整组跟着走，**组内有锁定成员则整组都不动**
  * （规则唯一出处是 actions 的 movableTargets，方向键微调走的是同一个）。
  */
-function draggableSelection(): { targets: CanvasObject[]; blockedGroups: number } {
+export function draggableSelection(): { targets: CanvasObject[]; blockedGroups: number } {
   const { objects, blockedGroups } = movableTargets(useSelectionStore.getState().ids)
   return { targets: objects.filter((o) => !o.hidden), blockedGroups }
 }

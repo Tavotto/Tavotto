@@ -61,7 +61,7 @@ export const GROUPS: { id: string; rows: Row[] }[] = [
       { keys: `${MOD}C / ${MOD}V`, desc: 'copyPaste' },
       { keys: `${MOD}D`, desc: 'duplicate' },
       { keys: 'Delete', desc: 'delete' },
-      { comboKey: 'arrowKeys', desc: 'nudge' },
+      { comboKey: 'arrowKeys', comboValues: { alt: ALT }, desc: 'nudge' },
       { comboKey: 'rightClick', desc: 'quickEdit' },
       { keys: `${MOD}↑ / ${MOD}↓`, desc: 'script' },
       { comboKey: 'newline', comboValues: { alt: ALT, mod: MOD }, desc: 'newline' },

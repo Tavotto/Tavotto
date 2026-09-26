@@ -4,7 +4,7 @@
  * 顶栏在 `mode === 'fast_edit'` 时把绘制工具那一组按钮藏了起来，
  * `openFastEdit()` 进来时也把工具收回 `select`——两处都说明作者知道这一屏上
  * 没有画布标注的位置。但 `useKeyboard` 不看模式：T/A/R/O/L 照样 `setTool()`，
- * 方向键照样 `nudgeSelected()`。于是在一个「除了这张图什么都不显示」的画面
+ * 方向键照样推面板的 x/y。于是在一个「除了这张图什么都不显示」的画面
  * 里，用户能画出一个看不见的矩形、把图在版上挪走，而两者都进文档、进历史、
  * 跟着导出。**只藏按钮不挡快捷键 = 藏的是入口不是能力。**
  *
@@ -17,6 +17,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { useKeyboard } from './useKeyboard'
+import { resetNudge } from '@/canvas/nudge'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -92,6 +93,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  resetNudge()
   act(() => root?.unmount())
   root = null
   document.body.innerHTML = ''

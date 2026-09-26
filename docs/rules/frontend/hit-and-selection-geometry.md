@@ -118,6 +118,26 @@
   单独跟手。缩放（单个 / 成组）仍然不带随行元素——该缩到哪里没有可信答案（原有取舍，
   `axesCompanionDrag.test` 钉着）。看护：`canvas/axesCompanionDrag.test.tsx`。
 
+- **方向键微调与拖动同一套移动规则**（ADR 0093，2026-09-26，用户：「按上下左右键可以微调位置」——
+  实测图内编辑态里选中图例按方向键挪的是整张图，快速编辑里什么都不动）。图内平移的规则只有
+  `canvas/interactions.ts` 的 `InFigureMove` 一份（`elementMove` / `arrowMove` / `axesMove` / `groupMove`，
+  单个元素走哪一种只在 `inFigureMoveOf` 判）：指针（`trackInFigureMove`，PanelView 按下时经
+  `startInFigureDrag`）与键盘（`canvas/nudge.ts`）是它仅有的两个输入端，**别在键盘那边另写一条
+  移动逻辑**——随行元素、形状带内容、子图贴边钳位、净位移为零不写（GEO-07）都靠这一份。
+  * 图内编辑态（含快速编辑）只推图内选中的元素，没选中时吃掉键、不推面板；锁定 / 隐藏的不动，
+    都不能动时说「选中的图内元素不能移动」。画布对象的可移动判据唯一出处 `draggableSelection`。
+  * 步长是**页面 mm**：0.5 / ⇧ 5 / ⌥ 0.1，图内按 `panelFullRect`（面板在页面上的实际大小，旋转换回
+    内容坐标系）折成分数。**不吸附**——这是与拖动唯一刻意不同的一条（固定步长一吸就离不开参考线）。
+  * 一段连续按键 = 一条撤销：方向键全部松开且停顿 `NUDGE_QUIET_MS` 才收尾（「停了」按有没有键按着判，
+    连发首延迟会长于阈值）；图内这一段只动预览平面、零渲染，收尾一次 `commit`。微调不占
+    `interactionStore.kind`（占了 ⌘Z 会被 `undoRedoBlocked` 挡掉），靠 `registerGesture` 与
+    `useKeyboard` 顶部的 `finishNudge` 在离散动作 / 别的键之前落定。
+  * 几何权威缺席（上一段的渲染还没回来）时不建 `InFigureMove`、不写文档，只记位移，权威挂上画面
+    （`displayedExactManifest`）再动；被要求立刻收尾就放弃。
+  * 焦点：输入框 / 对话框、控件已 `preventDefault` 的键、ARIA 复合控件（listbox / tree / radiogroup /
+    menu / slider …，`useKeyboard.arrowOwnedByWidget`）归它们；`toolbar` 不在此列。
+  看护：`canvas/arrowNudge.test.tsx`、`e2e/arrow-nudge.spec.ts`、`canvas/groupLockDrag.test.ts`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

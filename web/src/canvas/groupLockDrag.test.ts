@@ -6,20 +6,26 @@
  * 被悄悄改掉，且无任何提示。裁决：组的意义是保持相对排布，**组内任一成员锁定
  * 即整组不可移动**，并给一条提示。见 docs/audit/2026-08-17-ux-audit.md。
  *
- * 鼠标拖动（startMoveDrag）与方向键微调（useKeyboard → nudgeSelected）走的是
- * 同一个 movableTargets，两条路径在这里都断言一遍。
+ * 鼠标拖动（startMoveDrag）与方向键微调（useKeyboard → canvas/nudge）走的是
+ * 同一个 movableTargets（`draggableSelection`），两条路径在这里都断言一遍。
  */
 import { formatMessage, literal } from '@/i18n'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { nudgeSelected } from '@/store/actions'
+import { finishNudge, nudgeKeyDown, resetNudge } from './nudge'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type ShapeObject } from '@/types/document'
 import { startMoveDrag } from './interactions'
+
+/** 方向键微调一段：⇧→ 一下（5 mm）然后收尾 */
+function nudgeRight5() {
+  nudgeKeyDown(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true }))
+  finishNudge()
+}
 
 /* ------------------------------ 测试用对象 ------------------------------- */
 
@@ -63,6 +69,7 @@ function drag(id: string, dxMm: number) {
 /* ------------------------------- 场景搭建 -------------------------------- */
 
 beforeEach(async () => {
+  resetNudge()
   localStorage.clear()
   useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0, viewW: 900, viewH: 700 })
   // 关掉吸附：这里要的是位移原样落到 x/y，不掺吸附修正
@@ -137,7 +144,7 @@ describe('组内含锁定成员 → 整组不可移动', () => {
     makeGroup('g1', [{ id: 'a', x: 0 }, { id: 'b', x: 20, locked: true }])
     useSelectionStore.getState().set(['a', 'b'])
 
-    nudgeSelected(5, 0)
+    nudgeRight5()
 
     expect(byId('a').x).toBe(0)
     expect(byId('b').x).toBe(20)
@@ -147,7 +154,7 @@ describe('组内含锁定成员 → 整组不可移动', () => {
     makeGroup('g2', [{ id: 'c', x: 40 }, { id: 'd', x: 60 }])
     useSelectionStore.getState().set(['c', 'd'])
 
-    nudgeSelected(5, 0)
+    nudgeRight5()
 
     expect(byId('c').x).toBe(45)
     expect(byId('d').x).toBe(65)
@@ -159,7 +166,7 @@ describe('组内含锁定成员 → 整组不可移动', () => {
     makeGroup('g2', [{ id: 'c', x: 40 }, { id: 'd', x: 60, locked: true }])
     useSelectionStore.getState().set(['a', 'b', 'c', 'd'])
 
-    nudgeSelected(5, 0)
+    nudgeRight5()
 
     expect(byId('a').x).toBe(5)
     expect(byId('b').x).toBe(25)

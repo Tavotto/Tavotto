@@ -461,23 +461,6 @@ export function alignSelected(mode: AlignMode) {
   })
 }
 
-export function nudgeSelected(dx: number, dy: number) {
-  const ids = useSelectionStore.getState().ids
-  if (!ids.length) return
-  // 与鼠标拖动同一套规则：组内有锁定成员就整组不动（movableTargets）
-  const { objects, blockedGroups } = movableTargets(ids)
-  warnBlockedGroups(blockedGroups, objects.length > 0)
-  if (!objects.length) return
-  const moving = new Set(objects.map((o) => o.id))
-  commit(moveLabel(objects.length), (d) => {
-    for (const o of d.objects) {
-      if (!moving.has(o.id)) continue
-      o.x += dx
-      o.y += dy
-    }
-  })
-}
-
 /** 选中这些对象并把它们挪进视野——导出预检的警告点击后用 */
 export function revealObjects(ids: string[]) {
   const objs = doc().objects.filter((o) => ids.includes(o.id))
