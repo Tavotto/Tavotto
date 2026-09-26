@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures'
-import type { Page } from '@playwright/test'
+import type { Page, Request } from '@playwright/test'
 
 /**
  * 多选时的浮动栏（ADR 0089）——只放 jsdom 量不到的那几件事：
@@ -148,12 +148,32 @@ test('图内多选两个图例项：浮动栏改字号两个都变，撤销一�
   await page.keyboard.press('ControlOrMeta+z')
   await expect.poll(() => glyphHeights(page), { timeout: 60_000 }).toEqual(h0)
 
-  // 重做后刷新：文档里记着的就是新字号，重新渲染出来仍是它
+  // 重做后刷新：文档里记着的就是新字号，重新渲染出来仍是它。
+  // 「落盘了」的判据是**重做之后发出的**自动保存请求（PUT /api/autosave/…）成功返回——
+  // 不读顶栏的保存文案（#674 起那句话换了措辞），也不认重做之前就在路上的那一次
+  const saves: Promise<boolean>[] = []
+  const onRequest = (req: Request) => {
+    if (req.method() === 'PUT' && req.url().includes('/api/autosave/')) {
+      saves.push(
+        req.response().then(
+          (r) => !!r?.ok(),
+          () => false,
+        ),
+      )
+    }
+  }
+  page.on('request', onRequest)
   await page.keyboard.press('ControlOrMeta+Shift+z')
   await expect
     .poll(async () => (await glyphHeights(page)).every((h, i) => h > h0[i] * 1.2), { timeout: 60_000 })
     .toBe(true)
-  await expect(page.getByText('已保存').first()).toBeVisible({ timeout: 30_000 })
+  await expect
+    .poll(async () => (await Promise.all(saves)).some(Boolean), {
+      timeout: 30_000,
+      message: '重做之后应当有一次成功的自动保存',
+    })
+    .toBe(true)
+  page.off('request', onRequest)
   const n = renders.count()
   await page.reload()
   await expect.poll(renders.count, { timeout: 60_000 }).toBeGreaterThan(n)
