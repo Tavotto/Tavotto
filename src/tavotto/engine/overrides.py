@@ -412,6 +412,12 @@ def _ensure_text_pin_hook(fig) -> None:
     engine._mm_text_pin_hook = True  # noqa: SLF001
 
 
+def _frame_mode(value) -> str:
+    if value not in ("savefig", "figsize"):
+        raise ValueError(f"frame 只能是 'savefig' 或 'figsize': {value!r}")
+    return value
+
+
 def _set_text_pos_frac(t: Text, value) -> None:
     """拖动文字：落到 figure 分数 `value`，并登记成「拖过的」（布局引擎下见上面那段）。
 
@@ -2207,7 +2213,10 @@ def _set_axes_position(a, v) -> None:
     还要把这个 axes 还给 tight，否则撤销之后它会被钉在「脚本原样」那个数上，
     再也不跟着字号 / 标签变化重排——那是一个不声不响的语义降级。
     """
-    bounds = [float(x) for x in v]
+    # 值是图幅（frame，ADR 0098）里的分数——manifest 报的、前端写的都是它；落到 matplotlib
+    # 之前换成 figsize 的分数（没有 frame 时原样）。还原走 `_restore_axes_position`，那边
+    # 拿的是 getter 记下的 figsize 原值，不经这道换算。
+    bounds = pathgeom.axes_rect_to_figsize(a.get_figure(), [float(x) for x in v])
     # **顺序是这条函数的不变式**：可能失败的那一步（`set_position` 会对长度不是 4 的
     # bounds 抛 TypeError）必须排在**不可逆**的几步（换引擎、落 pin、解开色条轴的
     # 长宽比）之前。
@@ -2981,9 +2990,18 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # 单条刻度文字 + 刻度组的字号 / 颜色 / 朝向 / 显隐（模型在 tickmodel）
     **tickmodel.HANDLERS_TEXT,
     ("ticks", "fontfamily"): (_get_ticks_fontfamily, _set_ticks_fontfamily),
+    # 值是**这张图对外的尺寸**：脚本按 `bbox_inches` 存盘的图是图幅（frame）的尺寸，改它 = G
+    # 按同样的差值变、四边外伸不变（ADR 0098 §二）；没有 frame 时与 `set_size_inches` 逐位相同。
+    # getter 记的原样仍是 figsize 本身（`_RESTORE` 按它原样写回，与图幅开没开无关）
     ("figure", "size_mm"): (
         lambda f: [x * 25.4 for x in f.get_size_inches()],
-        lambda f, v: f.set_size_inches(float(v[0]) / 25.4, float(v[1]) / 25.4, forward=False),
+        lambda f, v: pathgeom.set_frame_size_inches(f, float(v[0]) / 25.4, float(v[1]) / 25.4),
+    ),
+    # 图幅用哪一个（ADR 0098 §三）：`"savefig"` = 脚本存盘时的裁切框（有的话），`"figsize"` =
+    # 按 figsize。升级前就在版面上的面板带着 `"figsize"`，保持它们导出过的样子不变
+    ("figure", "frame"): (
+        lambda f: "figsize" if pathgeom.frame_suppressed(f) else "savefig",
+        lambda f, v: pathgeom.suppress_frame(f, _frame_mode(v) == "figsize"),
     ),
     ("figure", "facecolor"): (
         lambda f: f.patch.get_facecolor(),
@@ -3361,6 +3379,9 @@ def to_hex(color) -> str:
 # 一变必须重放它们，否则「写回时看到的」与「重开后重放出来的」不是同一张图
 # （FigS3 文字全体错位就是这么来的）。
 _FRAC_ANCHORED = {"pos_frac", "loc_frac", "endpoints_frac"}
+#: 值以图幅为基准的 prop（ADR 0098）：`figure.frame` 这一轮换了，它们的值没变也要重放——
+#: 同一个数在另一个图幅里是另一个位置 / 尺寸，跳过它们热态就与全量重放分岔
+_FRAME_RELATIVE = _FRAC_ANCHORED | {"size_mm", "position"}
 
 
 def _is_geometry_key(prop: str, artist) -> bool:
@@ -3374,7 +3395,7 @@ def _is_geometry_key(prop: str, artist) -> bool:
     全量重放里 log 先于 pos_frac，落在声明的锚点上（2026-09-21 #472 评审实测，
     文字与形状同样中招）。第 0–4 档里只有它不算几何，补上之后档位与判据一致。
     """
-    if prop == "size_mm":
+    if prop in ("size_mm", "frame"):
         return isinstance(artist, Figure)
     if isinstance(artist, ColorbarProxy) and prop in ("orientation", "extend"):
         # 长短边互换 / 给延伸三角让地方，两者都让色条轴换了一块地方
@@ -3654,6 +3675,8 @@ _BROADCAST_PROPS = frozenset(prop for _cls, prop in ALIAS_GROUPS)
 #:   5 其余       列表序
 #:   6 刻度定位   locator / formatter 模型（依赖 4 与 5 的 xlim）
 #:   7 刻度文字   冻结整条轴，必须最后（先冻的会被后来的 locator 换掉）
+#: 图幅语义（`figure.frame`）排在一切之前：图幅尺寸、子图 position、figure 分数的换算都以它为准
+_RANK_FRAME = -1
 _RANK_FIGURE_SIZE, _RANK_CB_ORIENT, _RANK_CB_EXTEND = 0, 1, 2
 _RANK_POSITION, _RANK_SCALE = 3, 4
 _RANK_REST, _RANK_TICK_MODEL, _RANK_TICK_TEXT = 5, 6, 7
@@ -3665,6 +3688,8 @@ def _apply_rank(prop: str, artist, gid: str = "") -> int:
     # ——按对象归档会把它错排到刻度定位前面，于是永远解不出来
     if prop == "text" and tickmodel.TICKLABEL_GID.match(gid or ""):
         return _RANK_TICK_TEXT
+    if prop == "frame" and isinstance(artist, Figure):
+        return _RANK_FRAME
     if prop == "size_mm" and isinstance(artist, Figure):
         return _RANK_FIGURE_SIZE
     if prop == "orientation" and isinstance(artist, ColorbarProxy):
@@ -3776,6 +3801,9 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     # 出口处一定要清掉（下面 try/finally），不然下一次 apply 会拿着上一批的
     # patch 表去算落位
     state.pending = new
+    # 图幅语义这一轮换没换（ADR 0098）：要在下面的还原循环把它从 applied 里摘掉**之前**比
+    _frame_key = ("figure", "frame")
+    frame_toggled = state.applied.get(_frame_key, _NOTHING) != new.get(_frame_key, _NOTHING)
 
     # ---------------- 别名组（见 ALIAS_GROUPS）----------------
     # 反查表按需建：它是 O(元素数) 的，而绝大多数 apply 一个广播型 prop 都
@@ -3969,6 +3997,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                 # ③ 别名组里被同组其他成员盖掉的（见 ALIAS_GROUPS / dirty_groups）
                 if (
                     not (geometry_moved and prop in _FRAC_ANCHORED)
+                    and not (frame_toggled and prop in _FRAME_RELATIVE)
                     and not _must_replay(prop, artist, state)
                     and key not in dirty_groups
                     and not dirty_groups.intersection(owner.get(key, ()))

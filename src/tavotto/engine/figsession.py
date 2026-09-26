@@ -52,6 +52,7 @@ from pathlib import Path
 import figcapture
 import manifest as manifest_mod
 import overrides as overrides_mod
+import pathgeom
 import preview_hybrid
 import previewbudget
 
@@ -207,6 +208,14 @@ class LiveFigureSession:
         #: stem -> 认领它的 savefig 调用（`figcapture.record_savefig_call` 记账；None =
         #: 存过盘但参数没观察到）。只记不用：渲染与几何一概不读它（tight 图幅的决定之前）。
         self.savefig_calls: dict[str, list | None] = {}
+        #: stem -> 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` **对象**（进不了 JSON，
+        #: 只活在这个进程里；算图幅时要把同一批 artist 交回 savefig，ADR 0098 §一）
+        self.savefig_extras: dict[str, list] = {}
+        #: 项目根：定义图幅的那次调用按「与原件同格式」挑（`figcapture.frame_call`）；
+        #: None = 这条入口不谈原件（native bridge），取第一次调用
+        self.frame_project_root: str | None = None
+        #: stem -> 算不出图幅的原因（如实报告，不猜；ADR 0098 §一第 4 条）
+        self.frame_errors: dict[str, str] = {}
         #: stem -> FigState（`instrument()` 之后才有）
         self.states: dict[str, overrides_mod.FigState] = {}
         self._manifest_cache: dict[str, dict] = {}
@@ -238,9 +247,36 @@ class LiveFigureSession:
         self.capture_source[stem] = source
         return True
 
-    def note_savefig(self, stem: str, fig, call: dict | None) -> None:
+    def note_savefig(self, stem: str, fig, call: dict | None, extra_artists=None) -> None:
         """记一次 savefig 调用（规则在 `figcapture.record_savefig_call`）。"""
-        figcapture.record_savefig_call(self.savefig_calls, self.capture, stem, fig, call)
+        if figcapture.record_savefig_call(self.savefig_calls, self.capture, stem, fig, call):
+            self.savefig_extras.setdefault(stem, []).append(extra_artists)
+
+    def establish_frame(self, stem: str, fig) -> None:
+        """给这张图挂上图幅（ADR 0098）：定义它的那次 savefig 会裁到的框。
+
+        在脚本跑完之后、instrument 之前（一切 override 之前）调；热会话、写回的一次性
+        重放、native 屏障都走这一处，所以两边算出同一个框。没有调用 / 没观察到 /
+        `bbox_inches` 为 None → 不挂，一切与以前逐字节相同。算不出 → 不挂并记下原因。
+        """
+        if self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG) != figcapture.SOURCE_SAVEFIG:
+            return
+        artifact = None
+        if self.frame_project_root is not None:
+            artifact = figcapture.find_original_artifact(self.frame_project_root, stem)
+        calls = self.savefig_calls.get(stem)
+        call = figcapture.frame_call(calls, artifact)
+        extra = figcapture.frame_extra_artists(calls, self.savefig_extras.get(stem), call)
+        with self.real_output():
+            error = pathgeom.establish_frame(
+                fig, call, extra, lambda f, *a, **k: f.savefig(*a, **k)
+            )
+        if error is not None:
+            self.frame_errors[stem] = error
+            print(
+                f"[frame] {stem}: 算不出 savefig 的裁切框，按 figsize 显示（{error}）",
+                file=sys.stderr,
+            )
 
     def instrument_all(self) -> None:
         """给捕获表里还没有 FigState 的图建状态并出一次预览。
@@ -262,6 +298,10 @@ class LiveFigureSession:
             # 拿掉它不会红——它兜的是「直接用默认 FontProperties 新建 Text」
             # 这条今天还不存在的路。
             overrides_mod.ensure_rcparams_fallback()
+        # 图幅（ADR 0098）在一切之前定：字体回退尾巴与 override 都不该改变「脚本存盘时
+        # 裁成什么样」——原件是在它们之前存下的
+        for stem, fig in fresh:
+            self.establish_frame(stem, fig)
         for stem, fig in fresh:
             overrides_mod.ensure_figure_fallback(fig)
             state = overrides_mod.FigState(fig)
@@ -385,7 +425,7 @@ class LiveFigureSession:
 
         def _save(_plan) -> int:
             with self.real_output(), open(svg_path, "w", encoding="utf-8", newline="") as fh:
-                state.fig.savefig(fh, format="svg", dpi=dpi)
+                state.fig.savefig(fh, format="svg", dpi=dpi, **pathgeom.output_kwargs(state.fig))
             try:
                 return svg_path.stat().st_size
             except OSError:
@@ -501,11 +541,16 @@ class LiveFigureSession:
         """从 live figure 按目标像素宽出高清位图（imshow 类面板显示用）。"""
         self._own()
         state = self.states[stem]
-        w_in = float(state.fig.get_size_inches()[0])
+        w_in = pathgeom.frame_size_inches(state.fig)[0]
         path = self.out_dir / f"{stem}_w{int(width)}.png"
         self.out_dir.mkdir(parents=True, exist_ok=True)
         with self.real_output():
-            state.fig.savefig(path, format="png", dpi=max(50, int(width) / w_in))
+            state.fig.savefig(
+                path,
+                format="png",
+                dpi=max(50, int(width) / w_in),
+                **pathgeom.output_kwargs(state.fig),
+            )
         return {"path": str(path)}
 
     def do_preview_png(self, stem: str, patches: list, width: int, tag: str) -> dict:
@@ -518,11 +563,16 @@ class LiveFigureSession:
         # figure 上，此后前端手里的 lastPatches 与会话真实状态错位。
         try:
             overrides_mod.apply(state, patches)
-            w_in = float(state.fig.get_size_inches()[0])
+            w_in = pathgeom.frame_size_inches(state.fig)[0]
             path = self.out_dir / f"{stem}__{tag}.png"
             self.out_dir.mkdir(parents=True, exist_ok=True)
             with self.real_output():
-                state.fig.savefig(path, format="png", dpi=max(50, int(width) / w_in))
+                state.fig.savefig(
+                    path,
+                    format="png",
+                    dpi=max(50, int(width) / w_in),
+                    **pathgeom.output_kwargs(state.fig),
+                )
         finally:
             overrides_mod.apply(state, prev)
         return {"path": str(path)}
@@ -558,7 +608,13 @@ class LiveFigureSession:
             t1 = time.perf_counter()
             out.parent.mkdir(parents=True, exist_ok=True)
             with self.real_output(), export_font_context(fmt):
-                state.fig.savefig(out, format=fmt, dpi=int(dpi), **export_format_kwargs(fmt))
+                state.fig.savefig(
+                    out,
+                    format=fmt,
+                    dpi=int(dpi),
+                    **export_format_kwargs(fmt),
+                    **pathgeom.output_kwargs(state.fig),
+                )
             if timings is not None:
                 timings["patch_apply_ms"] = round((t1 - t0) * 1000.0, 3)
                 # 还原那一次的耗时**不算进 export_ms**：它是状态中立这条纪律的

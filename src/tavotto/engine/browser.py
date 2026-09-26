@@ -60,6 +60,7 @@ import figcapture  # noqa: E402
 import manifest as manifest_mod  # noqa: E402
 import overrides as overrides_mod  # noqa: E402
 import patchspec  # noqa: E402
+import pathgeom  # noqa: E402
 import preview_hybrid  # noqa: E402
 import previewbudget  # noqa: E402
 
@@ -101,14 +102,14 @@ def _patched_savefig(self, fname, *args, **kwargs):
         # 来源记账与 worker.CAPTURE_SOURCE 同语义：savefig 认领的 stem
         # **可能**有原始产物（在桌面上；这里的虚拟 FS 里永远没有）。
         _session_sources().setdefault(stem, figcapture.SOURCE_SAVEFIG)
-        if _ACTIVE is not None:
-            figcapture.record_savefig_call(
-                _ACTIVE.savefig_calls,
-                _ACTIVE.capture,
-                stem,
-                self,
-                figcapture.savefig_call(fname, kwargs),
-            )
+        if _ACTIVE is not None and figcapture.record_savefig_call(
+            _ACTIVE.savefig_calls,
+            _ACTIVE.capture,
+            stem,
+            self,
+            figcapture.savefig_call(fname, kwargs),
+        ):
+            _ACTIVE.savefig_extras.setdefault(stem, []).append(kwargs.get("bbox_extra_artists"))
     return None
 
 
@@ -191,6 +192,8 @@ class BrowserSession:
         self.capture_source: dict[str, str] = {}  # stem → figcapture.SOURCE_*
         #: stem → 认领它的 savefig 调用（与 worker 同一条记账：`figcapture.record_savefig_call`）
         self.savefig_calls: dict[str, list | None] = {}
+        #: stem → 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
+        self.savefig_extras: dict[str, list] = {}
         self.states: dict[str, overrides_mod.FigState] = {}
         self.revision = 0
         self.script_name = ""
@@ -287,13 +290,23 @@ class BrowserSession:
                 del self.capture[stem]
                 self.capture_source.pop(stem, None)
 
+        # 图幅（ADR 0098）：与桌面同一段逻辑（`pathgeom.establish_frame`）；虚拟 FS 里没有
+        # 原件，定义图幅的是第一次调用。算不出就按 figsize，与以前一样。
+        for stem, fig in self.capture.items():
+            if self.capture_source.get(stem) == figcapture.SOURCE_PYPLOT:
+                continue
+            calls = self.savefig_calls.get(stem)
+            call = figcapture.frame_call(calls, None)
+            extra = figcapture.frame_extra_artists(calls, self.savefig_extras.get(stem), call)
+            with _real_output():
+                pathgeom.establish_frame(fig, call, extra, _REAL_SAVEFIG)
+
         figures = []
         for stem, fig in self.capture.items():
-            w_in, h_in = (float(v) for v in fig.get_size_inches())
             figures.append(
                 {
                     "stem": stem,
-                    "size_mm": [round(w_in * 25.4, 2), round(h_in * 25.4, 2)],
+                    "size_mm": list(figcapture.size_mm_of(fig)),
                     "preview": self._thumb(fig),
                 }
             )
@@ -390,10 +403,16 @@ class BrowserSession:
     def _thumb(self, fig) -> str:
         """图选择器用的小 PNG（base64）。失败给空串，选择器退回文字条目。"""
         try:
-            w_in = float(fig.get_size_inches()[0]) or 1.0
+            w_in = pathgeom.frame_size_inches(fig)[0] or 1.0
             buf = io.BytesIO()
             with _real_output():
-                _REAL_SAVEFIG(fig, buf, format="png", dpi=max(50, THUMB_PX / w_in))
+                _REAL_SAVEFIG(
+                    fig,
+                    buf,
+                    format="png",
+                    dpi=max(50, THUMB_PX / w_in),
+                    **pathgeom.output_kwargs(fig),
+                )
             return base64.b64encode(buf.getvalue()).decode("ascii")
         except Exception:  # noqa: BLE001 - 缩略图失败不该挡住主流程
             return ""
@@ -467,10 +486,16 @@ class BrowserSession:
         prev = overrides_mod.snapshot(state)
         try:
             overrides_mod.apply(state, patches)
-            w_in = float(state.fig.get_size_inches()[0]) or 1.0
+            w_in = pathgeom.frame_size_inches(state.fig)[0] or 1.0
             buf = io.BytesIO()
             with _real_output():
-                _REAL_SAVEFIG(state.fig, buf, format="png", dpi=max(50, int(width) / w_in))
+                _REAL_SAVEFIG(
+                    state.fig,
+                    buf,
+                    format="png",
+                    dpi=max(50, int(width) / w_in),
+                    **pathgeom.output_kwargs(state.fig),
+                )
         except Exception:  # noqa: BLE001
             return _err("render_error", "位图预览失败", traceback=self._trim_tb())
         finally:
@@ -501,7 +526,13 @@ class BrowserSession:
             nonlocal buf
             buf = io.BytesIO()
             with _real_output():
-                _REAL_SAVEFIG(state.fig, buf, format="svg", dpi=preview_dpi or PREVIEW_DPI)
+                _REAL_SAVEFIG(
+                    state.fig,
+                    buf,
+                    format="svg",
+                    dpi=preview_dpi or PREVIEW_DPI,
+                    **pathgeom.output_kwargs(state.fig),
+                )
             return buf.tell()
 
         plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save)

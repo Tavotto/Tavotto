@@ -152,6 +152,9 @@ __all__ = [
     "savefig_call",
     "record_savefig_call",
     "savefig_calls_of",
+    "frame_call",
+    "frame_extra_artists",
+    "FRAME_ATTR",
     "MAX_SAVEFIG_CALLS",
     "collect_pyplot_figures",
     "fallback_stems",
@@ -213,6 +216,10 @@ _SOURCES = (SOURCE_SAVEFIG, SOURCE_PYPLOT)
 #: 让 build 响应变胖。超出的丢掉、不报错（前 8 次已足够说明脚本的意图）。
 MAX_SAVEFIG_CALLS = 8
 
+#: 根 Figure 上挂图幅（frame，ADR 0098）四边外伸的属性名。唯一的写入方是
+#: `pathgeom.set_frame`（它那边的 `FRAME_ATTR` 与这里是同一个字面量，用例钉住）。
+FRAME_ATTR = "_mm_frame"
+
 #: 已知的图产物扩展名——「什么算一份原始产物」的唯一出处（顺序即优先级）。
 #: `discover.OUT_EXTS` 与 `handoff.OUT_EXTS` 是它的镜像别名：静态扫描认产物、
 #: 交接找产物、描述符判「有没有原件」必须是同一张表，否则三处各认一套，
@@ -231,8 +238,16 @@ def size_mm_of(fig) -> tuple[float, float]:
     与 manifest 的 `size_mm` 同一个公式（inches × 25.4，round 2）。描述符在
     build 阶段就要报尺寸，而 browser 侧那时还没建 manifest——两边都从 Figure
     直接算，公式只有这一份，worker/browser 的描述符才比得齐。
+
+    脚本按 `bbox_inches` 存盘的图报的是**图幅（frame，ADR 0098）**的尺寸：figsize 加上
+    挂在 Figure 上的四边外伸（`FRAME_ATTR`，由 `pathgeom.set_frame` 写）。
     """
     w_in, h_in = (float(v) for v in fig.get_size_inches())
+    attrs = getattr(fig, "__dict__", {})
+    out = attrs.get(FRAME_ATTR)
+    if out is not None and not attrs.get("_mm_frame_suppressed"):
+        left, bottom, right, top = out
+        w_in, h_in = w_in + right - left, h_in + top - bottom
     return (round(w_in * 25.4, 2), round(h_in * 25.4, 2))
 
 
@@ -675,7 +690,7 @@ def savefig_call(fname, kwargs: dict) -> dict:
     }
 
 
-def record_savefig_call(calls: dict, capture: dict, stem: str, fig, call: dict | None) -> None:
+def record_savefig_call(calls: dict, capture: dict, stem: str, fig, call: dict | None) -> bool:
     """把一次 savefig 调用记到 `calls[stem]` 名下——三条入口（safe worker、native bridge、
     浏览器 playground）的同一条记账规则。
 
@@ -684,15 +699,45 @@ def record_savefig_call(calls: dict, capture: dict, stem: str, fig, call: dict |
     * `call is None` = 这次存盘发生了、参数没观察到（`paper_style.save` 捷径）：整份
       变成「不知道」并保持下去——只记到一部分的列表会被当成全貌；
     * 最多 `MAX_SAVEFIG_CALLS` 次，多的丢掉。
+
+    返回这次调用是否被记下（调用方据此把同一次调用里进不了 JSON 的
+    `bbox_extra_artists` 对象按同一个下标另存）。
     """
     if not stem or capture.get(stem) is not fig:
-        return
+        return False
     if call is None:
         calls[stem] = None
-        return
+        return False
     seq = calls.setdefault(stem, [])
     if seq is not None and len(seq) < MAX_SAVEFIG_CALLS:
         seq.append(call)
+        return True
+    return False
+
+
+def frame_call(calls, original_artifact: str | None):
+    """哪一次 savefig 定义这张图的图幅（ADR 0098 §一）：与写回原件同格式的第一次调用；
+    没有原件（或没有同格式的调用）取第一次。没有调用 / 没观察到回 None。"""
+    if not calls:
+        return None
+    if original_artifact:
+        ext = os.path.splitext(original_artifact)[1].lstrip(".").lower()
+        ext = {"jpeg": "jpg", "tif": "tiff"}.get(ext, ext)
+        for call in calls:
+            fmt = str(call.get("format") or "").lower()
+            if {"jpeg": "jpg", "tif": "tiff"}.get(fmt, fmt) == ext:
+                return call
+    return calls[0]
+
+
+def frame_extra_artists(calls, extras, call):
+    """与 `call` 同一次调用的 `bbox_extra_artists` 对象（`extras` 与 `calls` 逐项对齐）。"""
+    if not calls or call is None or not extras:
+        return None
+    for i, c in enumerate(calls):
+        if c is call:
+            return extras[i] if i < len(extras) else None
+    return None
 
 
 def savefig_calls_of(calls: dict, stem: str, capture_source: str):

@@ -73,6 +73,8 @@ const panel = (id: string, fileId: string, w = 80): PanelObject => ({
   w,
   h: (60 * w) / 80,
   overrides: [],
+  // 本构建放上来的面板（ADR 0098 的图幅记号）：读档迁移不碰它
+  figureFrame: 1,
 })
 
 const num = (prop: string, value: number) => ({ prop, type: 'number', value })

@@ -7,6 +7,8 @@ native 的 savefig 是透传（用户的文件照常写），记账与 safe work
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from support.bridgekit import write
@@ -48,6 +50,13 @@ def test_native_descriptor_carries_the_savefig_calls(tmp_path, bridge_session):
             }
         ]
         assert (proj / "Fig1.pdf").is_file(), "native 的 savefig 是透传：用户的文件照常写出"
+        # 图幅（ADR 0098）：native 也按脚本存盘的裁切框——与刚透传写出的那份 PDF 同一页
+        m = re.search(
+            rb"/MediaBox\s*\[\s*([\d.\-]+)\s+([\d.\-]+)\s+([\d.\-]+)\s+([\d.\-]+)",
+            (proj / "Fig1.pdf").read_bytes(),
+        )
+        page = [round((float(m.group(i + 2)) - float(m.group(i))) / 72 * 25.4, 2) for i in (1, 2)]
+        assert desc["size_mm"] == pytest.approx(page, abs=0.02)
         sess.resume()
         sess.wait_event("barrier")  # 脚本跑完那次
         sess.resume()

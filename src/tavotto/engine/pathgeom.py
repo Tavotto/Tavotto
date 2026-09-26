@@ -53,7 +53,7 @@ from matplotlib.lines import Line2D, _mark_every_path
 from matplotlib.markers import MarkerStyle
 from matplotlib.patches import FancyArrowPatch, PathPatch, Polygon
 from matplotlib.path import Path
-from matplotlib.transforms import Affine2D
+from matplotlib.transforms import Affine2D, Bbox
 
 #: RDP 抽稀容差（display 像素）。0.4px 在任何缩放下都看不出偏差，
 #: 而一条 5000 点的谱线通常能掉到两三百点。
@@ -272,9 +272,290 @@ def root_figure(fig):
 
 def frac_to_display(fig, fx: float, fy_top: float) -> tuple[float, float]:
     """figure 分数（top-origin）→ display 像素（bottom-origin）。`fig` 可以是 SubFigure，
-    一律按根 Figure 的 bbox 换算（见 `root_figure`）。"""
+    一律按根 Figure 的 bbox 换算（见 `root_figure`）。
+
+    分数是**图幅（frame，ADR 0098）里的分数**：脚本按 `bbox_inches` 存盘的图，对外的
+    「这张图」是 savefig 裁出来的那个框，不是 figsize。在 `in_frame()` 里（manifest 测量）
+    显示坐标本来就以 frame 为原点；在外面（override 应用）按 frame 换算回 figsize 的显示坐标。
+    """
     fig = root_figure(fig)
-    return fx * fig.bbox.width, (1.0 - fy_top) * fig.bbox.height
+    frame = frame_bbox(fig)
+    if frame is None or fig.__dict__.get(_IN_FRAME_ATTR):
+        return fx * fig.bbox.width, (1.0 - fy_top) * fig.bbox.height
+    dpi = float(fig.dpi)
+    return (
+        (frame.x0 + fx * frame.width) * dpi,
+        (frame.y0 + (1.0 - fy_top) * frame.height) * dpi,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 图幅（frame，ADR 0098）：脚本 savefig 裁出来的那个框就是这张图
+#
+# matplotlib 的 Figure 仍是 figsize（G）；frame（F）以「相对 G 的四边外伸（英寸）」挂在
+# 根 Figure 上：左、下是 F 左下角的坐标（可以为负），右、上是 F 右上角减去 G 的尺寸。
+# 这样改图幅（`set_size_inches`）时 F 跟着 G 走、四边外伸不变。没有 frame 的图（绝大多数）
+# 这一节的每个函数都回到原来那一行。
+# ---------------------------------------------------------------------------
+#: 根 Figure 上的外伸 `(left, bottom, right, top)`，英寸。与 `figcapture.FRAME_ATTR` 同一个字面量
+#: （figcapture 纯标准库、不能 import 本模块；`test_savefig_frame.py` 钉住两边相等）。
+FRAME_ATTR = "_mm_frame"
+#: 此刻正在 `adjust_bbox(F)` 里（显示坐标以 F 为原点）：值是进来之前的 figsize（英寸）——
+#: `adjust_bbox` 期间 `get_size_inches()` 回的是 F 的尺寸，换算要用的 G 只能在进来前记下
+_IN_FRAME_ATTR = "_mm_in_frame"
+
+
+def _figsize(fig) -> tuple[float, float]:
+    """G（英寸）：在 `in_frame()` 里也是进来之前那个 figsize。"""
+    saved = fig.__dict__.get(_IN_FRAME_ATTR)
+    if saved:
+        return saved
+    w, h = fig.get_size_inches()
+    return float(w), float(h)
+
+
+#: `figure.frame = "figsize"`：图幅按 figsize（升级前的版面，ADR 0098 §三）。外伸照旧挂着，
+#: manifest 据它告诉前端「脚本存盘的图幅是什么」，只是不生效
+_SUPPRESSED_ATTR = "_mm_frame_suppressed"
+
+
+def savefig_outsets(fig):
+    """脚本 savefig 定下的四边外伸（不管生不生效）；没有回 None。"""
+    return root_figure(fig).__dict__.get(FRAME_ATTR)
+
+
+def frame_suppressed(fig) -> bool:
+    return bool(root_figure(fig).__dict__.get(_SUPPRESSED_ATTR))
+
+
+def suppress_frame(fig, off: bool) -> None:
+    """`figure.frame` 的 setter：按 figsize（True）/ 按脚本存盘的图幅（False）。
+
+    figsize 本身不动：切换改的只是「对外的那一页」是哪个框。带着 `size_mm` override 的图在
+    切换那一轮会按新图幅重放那条 override（`overrides._FRAME_RELATIVE`），所以同一个数总是
+    同一张页面尺寸。没有 frame 的图切了也什么都不变。
+    """
+    fig = root_figure(fig)
+    if bool(fig.__dict__.get(_SUPPRESSED_ATTR)) == bool(off):
+        return
+    if off:
+        fig.__dict__[_SUPPRESSED_ATTR] = True
+    else:
+        fig.__dict__.pop(_SUPPRESSED_ATTR, None)
+
+
+def frame_outsets(fig):
+    """生效中的四边外伸：没有 frame、或被 `figure.frame = "figsize"` 关掉时回 None。"""
+    if frame_suppressed(fig):
+        return None
+    return savefig_outsets(fig)
+
+
+def frame_report(fig) -> dict | None:
+    """manifest 的 `frame` 字段（ADR 0098 §三）：这张图有脚本存盘的图幅时，告诉前端它在
+    figsize 里的哪一块（mm，top-origin：`savefig_mm = [左, 上, 宽, 高]`，左 / 上相对 figsize
+    左上角，可以为负）以及此刻生不生效。前端据此给升级前的面板提示并做「内容不动」的换算。
+    没有 frame 的图回 None——字段整个不出现，manifest 与以前逐字节相同。"""
+    out = savefig_outsets(fig)
+    if out is None:
+        return None
+    w, h = _figsize(root_figure(fig))
+    left, bottom, right, top = out
+    return {
+        "source": "savefig",
+        "active": not frame_suppressed(fig),
+        "figsize_mm": [round(w * 25.4, 2), round(h * 25.4, 2)],
+        "savefig_mm": [
+            round(left * 25.4, 2),
+            round(-top * 25.4, 2),
+            round((w + right - left) * 25.4, 2),
+            round((h + top - bottom) * 25.4, 2),
+        ],
+    }
+
+
+def frame_bbox(fig):
+    """F（英寸、G 左下为原点）；没有 frame 回 None。"""
+    out = frame_outsets(fig)
+    if out is None:
+        return None
+    w, h = _figsize(root_figure(fig))
+    left, bottom, right, top = out
+    return Bbox.from_extents(left, bottom, w + right, h + top)
+
+
+def set_frame(fig, bbox) -> None:
+    """按 F（英寸、G 左下为原点）挂上 frame；`bbox=None` 摘掉。"""
+    fig = root_figure(fig)
+    if bbox is None:
+        fig.__dict__.pop(FRAME_ATTR, None)
+        return
+    w, h = (float(v) for v in fig.get_size_inches())
+    fig.__dict__[FRAME_ATTR] = (
+        float(bbox.x0),
+        float(bbox.y0),
+        float(bbox.x1) - w,
+        float(bbox.y1) - h,
+    )
+
+
+def frame_size_inches(fig) -> tuple[float, float]:
+    """这张图对外的尺寸（英寸）：有 frame 是 F 的尺寸，否则是 figsize。"""
+    frame = frame_bbox(fig)
+    if frame is None:
+        return _figsize(root_figure(fig))
+    return float(frame.width), float(frame.height)
+
+
+def set_frame_size_inches(fig, w: float, h: float) -> None:
+    """把这张图对外的尺寸改成 `w × h`：G 按同样的差值变，四边外伸不变（ADR 0098 §二）。
+    没有 frame 时就是 `set_size_inches(w, h, forward=False)`，与以前逐位相同。"""
+    fig = root_figure(fig)
+    out = frame_outsets(fig)
+    left, bottom, right, top = out if out is not None else (0.0, 0.0, 0.0, 0.0)
+    fig.set_size_inches(w - (right - left), h - (top - bottom), forward=False)
+
+
+def output_kwargs(fig) -> dict:
+    """引擎自己出图（预览 / 探针 / 导出）时给 `savefig` 的额外参数：有 frame 就按它裁，
+    与脚本自己的 savefig 走同一条 `print_figure` 路径。"""
+    frame = frame_bbox(fig)
+    return {} if frame is None else {"bbox_inches": frame}
+
+
+def axes_rect_to_figsize(fig, rect) -> list:
+    """`axes.position` 的值（F 里的分数，bottom-origin 的 `[x, y, w, h]`）→ figsize 的分数。"""
+    frame = frame_bbox(fig)
+    if frame is None:
+        return [float(v) for v in rect]
+    w, h = _figsize(root_figure(fig))
+    x, y, rw, rh = (float(v) for v in rect)
+    return [
+        (frame.x0 + x * frame.width) / w,
+        (frame.y0 + y * frame.height) / h,
+        rw * frame.width / w,
+        rh * frame.height / h,
+    ]
+
+
+def axes_rect_to_frame(fig, rect) -> list:
+    """figsize 的分数（`ax.get_position().bounds`）→ F 里的分数。`axes_rect_to_figsize` 的逆。"""
+    frame = frame_bbox(fig)
+    if frame is None:
+        return [float(v) for v in rect]
+    w, h = _figsize(root_figure(fig))
+    x, y, rw, rh = (float(v) for v in rect)
+    return [
+        (x * w - frame.x0) / frame.width,
+        (y * h - frame.y0) / frame.height,
+        rw * w / frame.width,
+        rh * h / frame.height,
+    ]
+
+
+def _adjust_bbox(fig, bbox, renderer):
+    """`matplotlib._tight_bbox.adjust_bbox`，兼容 3.8（没有 renderer 参数）与 3.10+ 的签名。"""
+    import inspect
+
+    from matplotlib import _tight_bbox
+
+    if "renderer" in inspect.signature(_tight_bbox.adjust_bbox).parameters:
+        return _tight_bbox.adjust_bbox(fig, bbox, renderer)
+    return _tight_bbox.adjust_bbox(fig, bbox)
+
+
+class in_frame:
+    """在 F 里测量：与 `print_figure` 出图时同一个 `adjust_bbox`——`fig.bbox` 与显示坐标原点
+    就是 F、子图落位冻结（布局在进来之前那次 draw 里已经跑过）。没有 frame 时什么都不做。"""
+
+    def __init__(self, fig, renderer=None):
+        self.fig = root_figure(fig)
+        self.renderer = renderer
+        self._restore = None
+
+    @property
+    def active(self) -> bool:
+        """这一层真的进了 `adjust_bbox`（有 frame、且不是嵌套进来的）。"""
+        return self._restore is not None
+
+    def __enter__(self):
+        frame = frame_bbox(self.fig)
+        if frame is not None and not self.fig.__dict__.get(_IN_FRAME_ATTR):
+            size = _figsize(self.fig)
+            self._restore = _adjust_bbox(self.fig, frame, self.renderer)
+            self.fig.__dict__[_IN_FRAME_ATTR] = size
+        return self
+
+    def __exit__(self, *exc):
+        if self._restore is not None:
+            self.fig.__dict__.pop(_IN_FRAME_ATTR, None)
+            self._restore()
+        return False
+
+
+def establish_frame(fig, call, extra_artists, real_savefig) -> str | None:
+    """给一张刚跑完脚本的图挂上图幅——三条入口（safe worker / native bridge / 浏览器）的
+    同一段逻辑。挂不上时回原因；挂上了或本来就没有 frame 回 None。
+
+    `call` 是定义图幅的那次调用（调用方按 `figcapture.frame_call` 挑），`extra_artists` 是
+    同一次调用的 `bbox_extra_artists` 对象（`figcapture.frame_extra_artists`）。同一张图
+    认领了两个 stem 时第一次定下的为准。没有调用 / `bbox_inches` 为 None → 不挂（与以前
+    逐字节相同）。
+    """
+    if savefig_outsets(fig) is not None or call is None or call.get("bbox_inches") is None:
+        return None
+    try:
+        bbox = savefig_frame(fig, call, extra_artists, real_savefig)
+    except Exception as exc:  # noqa: BLE001 - 用户的图、用户的 artist：什么都可能抛
+        return f"{type(exc).__name__}: {exc}"
+    if bbox is None or not (bbox.width > 0 and bbox.height > 0):
+        return None
+    set_frame(fig, bbox)
+    return None
+
+
+def savefig_frame(fig, call: dict, extra_artists, real_savefig):
+    """定义这张图的那次 savefig 会把图裁成什么框（英寸，G 左下为原点）；不裁回 None。
+
+    **不复刻 tight 的算法**（ADR 0098 §一）：`bbox_inches` 是显式框就用它；是 `"tight"` 就用
+    记下的参数真跑一遍 matplotlib 的 savefig 写进内存，读它交给 `adjust_bbox` 的那个框
+    （已加过 pad；`pad_inches="layout"`、`bbox_extra_artists`、布局引擎都按这一版 matplotlib
+    自己的规则，用的是那个格式自己的 renderer）。`real_savefig` 是没被拦截的那个
+    `Figure.savefig`。观察不到就抛 `RuntimeError`，由调用方如实报告，不猜。
+    """
+    import io
+
+    from matplotlib import _tight_bbox
+
+    bbox = call.get("bbox_inches")
+    if bbox is None:
+        return None
+    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+        return Bbox.from_extents(*(float(v) for v in bbox))
+    if bbox != "tight":
+        raise RuntimeError(f"认不出的 bbox_inches: {bbox!r}")
+    kwargs = {"bbox_inches": "tight", "format": call.get("format") or "png"}
+    for key in ("pad_inches", "dpi"):
+        if call.get(key) is not None:
+            kwargs[key] = call[key]
+    if extra_artists is not None:
+        kwargs["bbox_extra_artists"] = extra_artists
+    seen = []
+    native = _tight_bbox.adjust_bbox
+
+    def _observe(f, bbox_inches, *a, **k):
+        if f is fig and not seen:
+            seen.append(bbox_inches.frozen())
+        return native(f, bbox_inches, *a, **k)
+
+    _tight_bbox.adjust_bbox = _observe
+    try:
+        real_savefig(fig, io.BytesIO(), **kwargs)
+    finally:
+        _tight_bbox.adjust_bbox = native
+    if not seen:
+        raise RuntimeError("savefig 没有经过 adjust_bbox（这一版 matplotlib 的内部路径变了）")
+    return seen[0]
 
 
 def _clip_rect(artist, W: float, H: float):

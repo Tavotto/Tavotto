@@ -134,6 +134,9 @@ SESSION: "SafeSession | None" = None
 
 _intercept = True
 _REAL_SAVEFIG = mfigure.Figure.savefig
+#: 正在用户的 `paper_style.save(fig, stem)` 里：其间的 savefig 一律记到这个 stem 名下
+#: （`save` 里存成 `f"{stem}_final.pdf"` 的图库，按文件名取 stem 会让已有 override 挂空）
+_SAVE_AS: "str | None" = None
 
 #: 协议常量的唯一出处在 `wireproto`；这里 re-export 是为了「手工 echo 一条
 #: 请求进来调试」时不必知道模块拆分（`worker.PROTOCOL_VERSION` 是老口径）。
@@ -159,11 +162,45 @@ def _patched_savefig(self, fname, *args, **kwargs):
     """通用兜底：raw fig.savefig 的脚本也被捕获；同 stem 的 pdf/png 只记一次。"""
     if not _intercept:
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
-    stem = figcapture.savefig_stem(fname)
+    stem = _SAVE_AS or figcapture.savefig_stem(fname)
     if stem and SESSION is not None:
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
-        SESSION.note_savefig(stem, self, figcapture.savefig_call(fname, kwargs))
+        SESSION.note_savefig(
+            stem,
+            self,
+            figcapture.savefig_call(fname, kwargs),
+            kwargs.get("bbox_extra_artists"),
+        )
     return None
+
+
+def _wrap_paper_style_save(native_save):
+    """`paper_style.save(fig, stem, ...)` 捷径（ADR 0098 §四，同时是 ADR 0094 §五.4 的前置修正）。
+
+    以前整个换成一个只登记 stem 的 lambda：用户那份 `save` 从没执行，里面那句
+    `savefig(bbox_inches="tight", ...)` 的参数看不见，经 `Figure.savefig` 的钩子也永远不触发。
+    现在**照常调用用户那份 `save`**：先按 `stem` 认领（它里面一句 savefig 都没有也照样捕获，
+    与以前一样），其间的每一次 savefig 被拦截、不落盘、记到这个 `stem` 名下。`save` 里的
+    `plt.close(fig)`、建输出目录（沙盒里）、改样式照常发生——与 `python fig.py` 一致。
+    `save` 不是可调用对象的图库照旧只登记（脚本在终端里调用它本来就会报错）。
+    """
+    if not callable(native_save):
+
+        def _register_only(fig, stem, outdir="figures"):
+            return SESSION.add_figure(stem, fig, figcapture.SOURCE_SAVEFIG)
+
+        return _register_only
+
+    def save(fig, stem, *args, **kwargs):
+        global _SAVE_AS
+        SESSION.add_figure(stem, fig, figcapture.SOURCE_SAVEFIG)
+        prev, _SAVE_AS = _SAVE_AS, stem
+        try:
+            return native_save(fig, stem, *args, **kwargs)
+        finally:
+            _SAVE_AS = prev
+
+    return save
 
 
 #: 命令行参数解析库：`SystemExit` 从这些模块的帧里抛出来 = 脚本要参数而 Tavotto 没给。
@@ -281,6 +318,7 @@ class Worker(wireproto.V1Handler):
         self._input_observer: figcapture.InputObserver | None = None
         self._inputs_report: dict | None = None
         SESSION = SafeSession(self.out_dir, self.preview_dpi)
+        SESSION.frame_project_root = str(self.figures_dir)
         super().__init__(SESSION)
 
     # ---------------- build ----------------
@@ -426,17 +464,7 @@ class Worker(wireproto.V1Handler):
                 except ImportError:
                     pass
                 else:
-                    # 与 `_patched_savefig` 同一条来源记账：paper_style.save 是显式
-                    # 「保存这张图」，来源就是 savefig（以前这里不记来源，靠读取端
-                    # `.get(stem, SOURCE_SAVEFIG)` 兜底——结果一样，现在是显式的）。
-                    # 捷径整个被替换，它里面那句 savefig 带了什么参数这里看不见：
-                    # 记成「存过盘、参数没观察到」（None），不假装是「没有参数」。
-                    def _paper_style_save(fig, stem, outdir="figures"):
-                        claimed = SESSION.add_figure(stem, fig, figcapture.SOURCE_SAVEFIG)
-                        SESSION.note_savefig(stem, fig, None)
-                        return claimed  # 返回值与以前那个 lambda 逐字相同
-
-                    paper_style.save = _paper_style_save
+                    paper_style.save = _wrap_paper_style_save(paper_style.save)
                 if self.entry == "__main__":
                     import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
 

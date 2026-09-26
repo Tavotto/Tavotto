@@ -96,21 +96,30 @@
 - **live-figure 会话**：worker 跑一次脚本（拦截 `Figure.savefig` + `paper_style.save`，
   不写真实文件），Figure 常驻内存；override 直接 mutate artist 再导出带 gid 的
   SVG（dpi≈120 预览）——冷启动秒到分钟级，热态 ~40ms。
-  * **savefig 的参数记进捕获描述符（`savefig_calls`，2026-09-26）**：以前拦截只取
+  * **savefig 的参数记进捕获描述符（`savefig_calls`，PR #675）**：以前拦截只取
     stem，`bbox_inches` / `pad_inches` / `dpi` / `transparent` 一个都没记。后果（审计
     T14 / T33 实测，教程 Fig1_kinetics）：脚本 `savefig(bbox_inches="tight", pad_inches=0.02)`
-    的磁盘原件是 75.26 × 58.68 mm，live 图的框却是 figsize 80 × 57.6，紧贴图幅的 x 轴
-    标题在原件里完好、在预览与 `do_export` 出的 PDF 里被切掉半截（预检
-    `element-outside-figure` 把裁切说出来）。现在三条入口（safe worker 的
-    `_patched_savefig`、native bridge 的透传钩子、浏览器 playground）都经
-    `figcapture.savefig_call()` 记下每次调用的**实效值**（显式参数 > 调用那一刻的
-    `rcParams["savefig.*"]`），记账规则唯一出处 `figcapture.record_savefig_call()`：
-    只记认领这个 stem 的那张图的调用、最多 `MAX_SAVEFIG_CALLS` 次。字段三档，「不知道」
-    独立一档：`None` = 没观察到（`paper_style.save` 捷径整个被替换、看不见它里面那句
-    savefig；旧 payload 没这个键也是这一档）、`[]` = pyplot 捕获从没存过盘、非空 = 调用
-    列表。**只记不用**——渲染、几何、导出一个字节都不读它；它不进 fingerprint。
-    怎么用（tight 当不当图幅）是另一份 ADR 的决定（tight 图幅）。看护 `tests/test_savefig_capture_params.py`、
-    `tests/bridge/test_bridge_savefig_params.py`。
+    的磁盘原件是 tight 的，live 图的框却是 figsize，紧贴图幅的 x 轴标题在预览与导出里被切掉半截。
+    三条入口（safe worker 的 `_patched_savefig`、native bridge 的透传钩子、浏览器 playground）
+    都经 `figcapture.savefig_call()` 记下每次调用的**实效值**（显式参数 > 调用那一刻的
+    `rcParams["savefig.*"]`），记账规则唯一出处 `figcapture.record_savefig_call()`：只记认领
+    这个 stem 的那张图的调用、最多 `MAX_SAVEFIG_CALLS` 次。字段三档，「不知道」独立一档：
+    `None` = 没观察到、`[]` = pyplot 捕获从没存过盘、非空 = 调用列表。它不进 fingerprint。
+    看护 `tests/test_savefig_capture_params.py`、`tests/bridge/test_bridge_savefig_params.py`。
+  * **图幅（frame，ADR 0098）**：定义这张图的那次 savefig（`figcapture.frame_call`：与原件
+    同格式的第一次，否则第一次）会裁到的框就是这张图。**不复刻 tight 算法**：
+    `pathgeom.savefig_frame` 用记下的参数真跑一遍 savefig 到内存、读它交给
+    `_tight_bbox.adjust_bbox` 的框；三条入口都经 `pathgeom.establish_frame`，在脚本跑完、
+    instrument 之前（一切 override 之前）挂上，编辑不移动它。对外一切以 F 为准（`size_mm`、
+    分数、预览、导出、描述符）；对内 Figure 仍是 figsize，F 只落在三处：输出
+    `bbox_inches=F`（`pathgeom.output_kwargs`）、manifest 在 `pathgeom.in_frame`
+    （同一个 `adjust_bbox`）里量、输入 `frac_to_display` 与 `axes.position` 的 setter 换算。
+    `figure.frame = "figsize"` 关掉它（升级前的排版，ADR 0098 §三）。没有 `bbox_inches` 的
+    脚本这几处都回到原来那一行，逐字节不变。看护 `tests/test_savefig_frame.py`。
+  * **`paper_style.save` 捷径执行用户那份 `save`（ADR 0098 §四；也是 #667「写回原脚本」设计里点名的前置修正）**：
+    以前整个换成只登记 stem 的 lambda，里面的 savefig 从没执行。现在先按 `stem` 认领，再调用
+    原来的 `save`，其间每一次 savefig 被拦截、不落盘、记到这个 `stem` 名下（worker 的
+    `_SAVE_AS`）；`save` 不可调用时照旧只登记。
 - 安全：worker `cwd=沙盒`（挡相对路径写出/删除）+ `Path.unlink` 守卫
   （挡 fig6 的绝对路径删除）；脚本 stdout 重定向到 stderr 保护 JSON 协议。
 - **paper_style 是图库方言，不是引擎依赖**：worker 的 `import paper_style` 必须留在

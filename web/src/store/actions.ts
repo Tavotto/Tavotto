@@ -9,6 +9,12 @@ import { emitActivity } from '@/lib/activity'
 import { effectiveOverride, effectiveOverrideIndex } from '@/lib/effectiveOverride'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
+import {
+  FIGURE_FRAME_VERSION,
+  frameSwitchAvailable,
+  frameSwitchPatch,
+  migrateFigureFrames,
+} from '@/lib/figureFrame'
 import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
 import {
@@ -51,7 +57,7 @@ import {
 } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useInteractionStore } from './interactionStore'
-import { renderKeyOf, useRenderStore } from './renderStore'
+import { exactPanelManifest, renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore } from './uiStore'
 import { useViewportStore } from './viewportStore'
@@ -117,6 +123,7 @@ export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
     // 继承「写回原始文件」的基线，这样编辑态看到的就是文件当前的样子
     overrides: info.baked_overrides ? structuredClone(info.baked_overrides) : [],
     name: info.name,
+    figureFrame: FIGURE_FRAME_VERSION,
     x: clamp(atX != null ? atX - w / 2 : (page.w - w) / 2, -w * 0.9, page.w - w * 0.1),
     y: clamp(atY != null ? atY - h / 2 : (page.h - h) / 2, -h * 0.9, page.h - h * 0.1),
     w,
@@ -157,6 +164,7 @@ export function addRuntimePanel(desc: CapturedFigureDescriptor, atX?: number, at
     },
     overrides: [],
     name: desc.stem,
+    figureFrame: FIGURE_FRAME_VERSION,
     x: clamp(atX != null ? atX - w / 2 : (page.w - w) / 2, -w * 0.9, page.w - w * 0.1),
     y: clamp(atY != null ? atY - h / 2 : (page.h - h) / 2, -h * 0.9, page.h - h * 0.1),
     w,
@@ -341,7 +349,8 @@ export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) 
     (d) => {
       d.name = version.name
       d.page = structuredClone(version.page)
-      d.objects = structuredClone(version.objects)
+      // 升级前存下的检查点里的面板照样按 ADR 0098 迁移（与读档同一个函数）
+      d.objects = migrateFigureFrames(structuredClone(version.objects))
       d.guides = structuredClone(version.guides)
     },
     { overrides: 'restored' },
@@ -2147,6 +2156,33 @@ export function restorePanelAspect(ids: string[]) {
 }
 
 /** 恢复原始尺寸：回到素材自身的 mm 尺寸（裁剪比例仍生效） */
+/**
+ * 「改用脚本保存时的图幅」（ADR 0098 §三）：去掉升级前那条 `figure.frame = "figsize"`，面板落位与
+ * 分数类 override 一起换算——内容在页面上不动、外框变。一次提交，⌘Z 整体撤回。换算依据是这张
+ * 面板**精确**的 manifest（ADR 0017）；拿不到就不做。
+ */
+export function adoptScriptFrame(panelId: string): boolean {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return false
+  const frame = frameSwitchAvailable(panel, exactPanelManifest(useRenderStore.getState(), panel))
+  if (!frame) return false
+  const patch = frameSwitchPatch(panel, frame)
+  commit(hist('adoptScriptFrame'), (d) => {
+    const o = d.objects.find((x) => x.id === panelId)
+    if (o?.type !== 'panel') return
+    o.overrides = patch.overrides
+    o.x = patch.x
+    o.y = patch.y
+    o.w = patch.w
+    o.h = patch.h
+    o.nativeW = patch.nativeW
+    o.nativeH = patch.nativeH
+    if (patch.crop) o.crop = patch.crop
+    else delete o.crop
+  })
+  return true
+}
+
 export function restorePanelNativeSize(ids: string[]) {
   updatePanels(ids, hist('restoreNativeSize'), (o) => {
     setContentSize(o, o.nativeW * (o.crop?.w ?? 1), o.nativeH * (o.crop?.h ?? 1))
