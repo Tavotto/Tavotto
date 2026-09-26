@@ -36,6 +36,17 @@ export const SEVERITY_ICON: Record<Severity, typeof TriangleAlert> = {
   suggestion: Lightbulb,
 }
 
+/**
+ * 等级图标的颜色：只有图标本身带色，不铺底色。问题面板的组头与左栏样式面板的行尾记号
+ * **同一份**——此前样式面板把阻断与警告都涂成 warn 色，八角与三角并排时读不出差别。
+ */
+export const SEVERITY_INK: Record<Severity, string> = {
+  error: 'text-danger',
+  warn: 'text-warn',
+  not_verifiable: 'text-ink-3',
+  suggestion: 'text-ink-3',
+}
+
 export const severityLabel = (s: Severity): string =>
   pr(`severity.${s === 'not_verifiable' ? 'notVerifiable' : s}`)
 

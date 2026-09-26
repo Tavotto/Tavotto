@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Paintbrush, RotateCcw } from '@/components/ui/icons'
+import { Bold, Italic, Paintbrush, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
@@ -9,6 +9,8 @@ import { profileName } from '@/lib/profileText'
 import {
   CANVAS_FAMILY_PATH,
   CANVAS_SIZE_PATH,
+  CANVAS_STYLE_PATH,
+  CANVAS_WEIGHT_PATH,
   cellIssues,
   elementsWith,
   FIGURE_LINE_ROWS,
@@ -16,10 +18,9 @@ import {
   type CellSubject,
 } from '@/lib/stylePanelModel'
 import { isSubLabel, styleOverrideTargets } from '@/lib/stylePresets'
-import { CANVAS_TEXT_FAMILIES, type TypographyValue } from '@/lib/typography'
-import { cn } from '@/lib/utils'
+import { CANVAS_TEXT_FAMILIES, nextToggle, toggleStateOf, type TypographyValue } from '@/lib/typography'
 import type { ValidationIssue } from '@/lib/validation'
-import { issueTitle, SEVERITY_ICON } from '@/lib/validationText'
+import { issueTitle, SEVERITY_ICON, SEVERITY_INK, severityLabel } from '@/lib/validationText'
 import { enterElementEdit } from '@/store/actions'
 import {
   alignCanvasToStyle,
@@ -46,6 +47,7 @@ import { useCanvasTypography } from '../inspector/typographyAdapter'
 import { optionLabel } from '../inspector/roles/registry'
 import { useTextStyleAdapter } from '../inspector/textStyleAdapter'
 import type { ControlValue } from '../inspector/textStyleModel'
+import { StyleToggle } from '../inspector/controls/textRows'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Section } from '../ui/Field'
@@ -67,6 +69,8 @@ const ROW_LABEL: Record<string, () => string> = {
   dataLine: () => sp('row.dataLine'),
   frame: () => sp('row.frame'),
   tickDirection: () => sp('row.tickDirection'),
+  tickLength: () => sp('row.tickLength'),
+  tickWidth: () => sp('row.tickWidth'),
 }
 
 /** 没有任何问题时给格子的稳定空数组（每次新建会让 memo 的行白白重画） */
@@ -176,6 +180,7 @@ function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest:
             manifest={manifest}
             sizeRole={row.sizeRole}
             familyRole={row.familyRole}
+            faceRole={row.faceRole}
             issues={all}
             onJump={jump}
             bound={bound}
@@ -209,32 +214,59 @@ function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest:
 /* ---------------------------------- 行 ----------------------------------- */
 
 /**
- * 一行的骨架：行名 + 控件 + 行尾的问题记号。记号那一格**总是占着**（28px），
- * 有没有问题各行的控件都从同一条竖线起排、在同一条竖线收。
+ * 一行的骨架：**三列固定网格**（2026-09-26 用户反馈：各行的控件左缘、宽度对不齐）。
+ *
+ * * 标签列 `4rem`：行名，放不下时截断、悬停看全名；
+ * * 控件列弹性：一行或几行控件（`ControlLine`；文字行 = 字体一行 + 「字号 · 粗体 · 斜体」一行）。
+ *   每一行里「值」那一格（字号 / 线宽 / 刻度方向）都是同一个宽度 `VALUE_W`、都从控件列的左缘
+ *   起排，所以上下各行的数字框在同一条竖线上；
+ * * 状态列 `1.25rem`：问题记号，**每条控件行都占着**（有没有问题各行都在同一条竖线收），记号
+ *   落在出问题的那一格**所在的那一行**上。
  */
-function StyleRow({
-  id,
-  children,
+function StyleRow({ id, children }: { id: string; children: ReactNode }) {
+  const label = ROW_LABEL[id]()
+  return (
+    <div data-style-row={id} className="grid grid-cols-[4rem_minmax(0,1fr)] items-start gap-x-1.5 py-0.5">
+      <span className="h-7 truncate text-xs leading-7 text-ink-2" title={label}>
+        {label}
+      </span>
+      <div className="flex min-w-0 flex-col gap-1">{children}</div>
+    </div>
+  )
+}
+
+/**
+ * 控件列里的一行：高 28，控件从左缘起排，行尾是状态列。
+ *
+ * 状态记号与问题面板**同一个图标、同一个颜色**（`SEVERITY_ICON` / `SEVERITY_INK`：阻断 = 红色八角，
+ * 警告 = 琥珀三角……）；气泡与可达名说等级与问题名，点它去问题面板里的那一条。
+ */
+function ControlLine({
+  line,
+  rowId,
   issue,
   onJump,
+  children,
 }: {
-  id: string
-  children: ReactNode
+  /** 这一行的名字（`data-style-line`）：`<行>.family` / `<行>.size` / 线条行就是行 id */
+  line: string
+  rowId: string
   issue: ValidationIssue | null
   onJump: (issue: ValidationIssue) => void
+  children: ReactNode
 }) {
-  const label = ROW_LABEL[id]()
   const Icon = issue ? SEVERITY_ICON[issue.severity] : null
   return (
-    <div data-style-row={id} className="flex h-7 items-center gap-1.5">
-      <span className="w-14 shrink-0 truncate text-xs text-ink-2">{label}</span>
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">{children}</div>
-      <span className="flex w-7 shrink-0 justify-center">
+    <div data-style-line={line} className="flex h-7 min-w-0 items-center gap-1.5">
+      <div className="flex min-w-0 flex-1 items-center gap-1">{children}</div>
+      <span className="flex w-5 shrink-0 items-center justify-center">
         {issue && Icon && (
           <IconButton
-            data-style-issue={id}
-            label={sp('issueJump', { title: issueTitle(issue) })}
-            className="text-warn"
+            data-style-issue={rowId}
+            data-severity={issue.severity}
+            iconSize="xs"
+            label={sp('issueJump', { severity: severityLabel(issue.severity), title: issueTitle(issue) })}
+            className={SEVERITY_INK[issue.severity]}
             onClick={() => onJump(issue)}
           >
             <Icon size={ICON_SIZE.sm} aria-hidden />
@@ -246,13 +278,22 @@ function StyleRow({
 }
 
 /**
+ * 「值」那一格的宽度：字号 / 线宽的数字框与刻度方向的下拉**同一个宽**。放得下「多个值 pt」
+ * 与英文的「Outward」；280 px 的最窄侧栏里「值 + 粗体 + 斜体」仍排得下一行。
+ */
+const VALUE_W = 'w-[5.5rem] shrink-0'
+
+/**
  * 一格的读数：图内那侧是 `ControlValue`（uniform / mixed / unavailable），画布标注那侧是
  * 属性能力层的 `TypographyValue`（多一档 inherit——没设过、显示继承来的值）。两边都不压扁。
  */
 type CellValue = ControlValue | TypographyValue
 
-/** 不合规的那一格：警告色的一圈描边（记号在行尾，这一圈说「是这一格」） */
-const cellClass = (bad: boolean) => cn('min-w-0 rounded-sm', bad && 'ring-1 ring-warn')
+/**
+ * 不合规的那一格**不再另描一圈警告色的边**（2026-09-26 用户反馈：带问题的框与普通框长得不一样、
+ * 颜色还和行尾记号不一致）。框只有 `fieldBox` 一副；「哪里不合规」由行尾记号说——它的气泡写着
+ * 等级与问题名，点它去问题面板看是哪一格、差多少。
+ */
 
 /** 字体下拉：mixed 时空值走占位（「多个值」），不谎报其中某一个 */
 function FamilySelect({
@@ -288,7 +329,12 @@ function FamilySelect({
   )
 }
 
-/** 页面 pt 的数字框：mixed 留空 + 占位；两位小数（0.75 不显示成 0.8） */
+/**
+ * 页面 pt 的数字框：mixed 留空 + 占位「多个值」；两位小数（0.75 不显示成 0.8）。
+ *
+ * 宽度是 `VALUE_W`、输入框铺满（`fill`）：此前框按 4 个等宽字符定宽，占位「多个值」被裁成
+ * 「多个僮」。mixed 时悬停说明这是什么意思、输入一个数会怎样。
+ */
 function PtField({
   label,
   value,
@@ -306,23 +352,86 @@ function PtField({
   locked?: boolean
 }) {
   const shown = value.kind === 'uniform' || value.kind === 'inherit' ? value.value : undefined
+  const mixed = value.kind === 'mixed'
   return (
     <NumberField
       ariaLabel={label}
-      value={value.kind === 'mixed' ? NaN : Number(shown ?? NaN)}
-      mixed={value.kind === 'mixed'}
+      value={mixed ? NaN : Number(shown ?? NaN)}
+      mixed={mixed}
       min={field?.min}
       max={field?.max}
       step={step}
       precision={2}
       disabled={locked}
-      title={locked ? sp('waitingRender') : undefined}
+      title={locked ? sp('waitingRender') : mixed ? sp('mixedHint') : undefined}
       unit="pt"
-      className="shrink-0"
+      fill
+      className={VALUE_W}
       onChange={onChange}
     />
   )
 }
+
+/**
+ * 粗体 / 斜体两颗开关（与属性页 `TypographyControls` 同一个 `StyleToggle`、同一套三态：
+ * mixed 画成按钮底部一道短线，不拿其中一个冒充全部）。某一条不支持（`null`）就不摆那一颗。
+ */
+function FaceToggles({
+  row,
+  weight,
+  style,
+  onWeight,
+  onStyle,
+  locked,
+}: {
+  row: string
+  weight: TypographyValue | null
+  style: TypographyValue | null
+  onWeight: (next: string) => void
+  onStyle: (next: string) => void
+  locked?: boolean
+}) {
+  const mixedText = translate('element.mixedValues', { ns: 'inspector' })
+  const tb = (key: string, values?: Record<string, unknown>) =>
+    translate(`textBar.${key}`, { ns: 'inspector', ...(values ?? {}) })
+  const hint = (state: 'on' | 'off' | 'mixed', key: string, on: string, off: string) =>
+    locked ? sp('waitingRender') : tb(key, { value: state === 'mixed' ? mixedText : tb(state === 'on' ? on : off) })
+  const boldState = weight ? toggleStateOf(weight, 'bold') : 'off'
+  const italicState = style ? toggleStateOf(style, 'italic') : 'off'
+  return (
+    <>
+      {weight && (
+        <span className="contents" data-style-face={`${row}.weight`}>
+          <StyleToggle
+            state={boldState}
+            label={sp('boldOf', { row: ROW_LABEL[row]() })}
+            hint={hint(boldState, 'boldWeight', 'weightBold', 'weightNormal')}
+            disabled={locked}
+            onClick={() => onWeight(nextToggle(weight, 'bold', 'normal'))}
+          >
+            <Bold size={ICON_SIZE.sm} />
+          </StyleToggle>
+        </span>
+      )}
+      {style && (
+        <span className="contents" data-style-face={`${row}.style`}>
+          <StyleToggle
+            state={italicState}
+            label={sp('italicOf', { row: ROW_LABEL[row]() })}
+            hint={hint(italicState, 'italicStyle', 'styleItalic', 'styleNormal')}
+            disabled={locked}
+            onClick={() => onStyle(nextToggle(style, 'italic', 'normal'))}
+          >
+            <Italic size={ICON_SIZE.sm} />
+          </StyleToggle>
+        </span>
+      )}
+    </>
+  )
+}
+
+/** 图内写入器的读数 → 开关用的三态读数；`unavailable`（有元素不暴露这条）= 不摆开关 */
+const faceValue = (v: ControlValue): TypographyValue | null => (v.kind === 'unavailable' ? null : v)
 
 interface FigureRowProps {
   /** 当前画布绑了样式：改一格 = 改这套样式本身（`editBoundStyle`），画布上所有图跟着对齐 */
@@ -343,8 +452,9 @@ interface FigureRowProps {
 const gidsOf = (els: ManifestElement[]) => els.map((e) => e.gid)
 
 /**
- * 图内文字的一行：字体（在 `familyRole` 上）+ 页面上的字号（在 `sizeRole` 上）。
- * 两格各用一份 Inspector 的写入器（`useTextStyleAdapter`）：一次改动 = 一次 commit。
+ * 图内文字的一行：字体（在 `familyRole` 上）；页面上的字号（在 `sizeRole` 上）+ 粗体 / 斜体
+ * （在 `faceRole` 上）。每一格各用一份 Inspector 的写入器（`useTextStyleAdapter`）：一次改动 =
+ * 一次 commit。
  */
 const FigureTextRow = memo(function FigureTextRow({
   id,
@@ -352,11 +462,12 @@ const FigureTextRow = memo(function FigureTextRow({
   manifest,
   sizeRole,
   familyRole,
+  faceRole,
   issues,
   onJump,
   bound,
   locked,
-}: FigureRowProps & { id: string; sizeRole: string; familyRole: string }) {
+}: FigureRowProps & { id: string; sizeRole: string; familyRole: string; faceRole: string | null }) {
   // memo 的行 props 不随语言变：自己订阅，切语言时行名 / 选项名跟着换（Codex #547）
   useTranslation(['workspace', 'inspector'])
   const sizeEls = useMemo(() => elementsWith(manifest, sizeRole, 'fontsize'), [manifest, sizeRole])
@@ -364,60 +475,91 @@ const FigureTextRow = memo(function FigureTextRow({
     () => elementsWith(manifest, familyRole, 'fontfamily'),
     [manifest, familyRole],
   )
+  const weightEls = useMemo(
+    () => (faceRole ? elementsWith(manifest, faceRole, 'weight') : NO_ELEMENTS),
+    [manifest, faceRole],
+  )
+  const styleEls = useMemo(
+    () => (faceRole ? elementsWith(manifest, faceRole, 'style') : NO_ELEMENTS),
+    [manifest, faceRole],
+  )
   const size = useTextStyleAdapter(panel, sizeEls, SIZE_PROPS)
   const family = useTextStyleAdapter(panel, familyEls, FAMILY_PROPS)
+  const weight = useTextStyleAdapter(panel, weightEls, WEIGHT_PROPS)
+  const style = useTextStyleAdapter(panel, styleEls, STYLE_PROPS)
   if (!sizeEls.length && !familyEls.length) return null
 
   const label = ROW_LABEL[id]()
-  const rowGids = [...gidsOf(sizeEls), ...gidsOf(familyEls)]
+  const rowGids = [...gidsOf(sizeEls), ...gidsOf(familyEls), ...gidsOf(weightEls), ...gidsOf(styleEls)]
   const at = (props: string[]): CellSubject => ({ objectIds: [panel.id], gids: rowGids, props })
-  const sizeIssues = issues.length ? cellIssues(issues, at(['fontsize'])) : NO_ISSUES
-  const familyIssues = issues.length ? cellIssues(issues, at(['fontfamily'])) : NO_ISSUES
-  const worst = [...familyIssues, ...sizeIssues].sort(bySeverity)[0] ?? null
+  const first = (props: string[]) => (issues.length ? (cellIssues(issues, at(props))[0] ?? null) : null)
   const familyField = family.fieldOf('fontfamily')
   const sizeField = size.fieldOf('fontsize')
+  const weightVal = faceRole && weight.fieldOf('weight') ? faceValue(weight.valueOf('weight')) : null
+  const styleVal = faceRole && style.fieldOf('style') ? faceValue(style.valueOf('style')) : null
+  const writeFace = (prop: 'weight' | 'style', v: string) =>
+    bound && faceRole
+      ? void editBoundStyle({ kind: 'element', role: faceRole, prop, value: v })
+      : (prop === 'weight' ? weight : style).writeOnce(prop, v)
 
   return (
-    <StyleRow id={id} issue={worst} onJump={onJump}>
+    <StyleRow id={id}>
       {familyField && (
-        <div data-style-cell={`${id}.family`} className={cn(cellClass(familyIssues.length > 0), 'flex-1')}>
-          <FamilySelect
-            label={sp('familyOf', { row: label })}
-            value={family.valueOf('fontfamily')}
-            options={familyField.options ?? []}
-            locked={locked}
-            onChange={(v) =>
-              bound
-                ? void editBoundStyle({ kind: 'element', role: familyRole, prop: 'fontfamily', value: v })
-                : family.writeOnce('fontfamily', v)
-            }
-          />
-        </div>
+        <ControlLine line={`${id}.family`} rowId={id} issue={first(['fontfamily'])} onJump={onJump}>
+          <div data-style-cell={`${id}.family`} className="flex min-w-0 flex-1">
+            <FamilySelect
+              label={sp('familyOf', { row: label })}
+              value={family.valueOf('fontfamily')}
+              options={familyField.options ?? []}
+              locked={locked}
+              onChange={(v) =>
+                bound
+                  ? void editBoundStyle({ kind: 'element', role: familyRole, prop: 'fontfamily', value: v })
+                  : family.writeOnce('fontfamily', v)
+              }
+            />
+          </div>
+        </ControlLine>
       )}
-      {sizeField && (
-        <div data-style-cell={`${id}.size`} className={cellClass(sizeIssues.length > 0)}>
-          <PtField
-            label={sp('sizeOf', { row: label })}
-            value={size.valueOf('fontsize')}
-            field={sizeField}
-            step={0.5}
+      {(sizeField || weightVal || styleVal) && (
+        <ControlLine line={`${id}.size`} rowId={id} issue={first(['fontsize', 'weight', 'style'])} onJump={onJump}>
+          {sizeField && (
+            <div data-style-cell={`${id}.size`} className="contents">
+              <PtField
+                label={sp('sizeOf', { row: label })}
+                value={size.valueOf('fontsize')}
+                field={sizeField}
+                step={0.5}
+                locked={locked}
+                onChange={(v) =>
+                  bound
+                    ? void editBoundStyle({ kind: 'element', role: sizeRole, prop: 'fontsize', value: v })
+                    : size.writeOnce('fontsize', v)
+                }
+              />
+            </div>
+          )}
+          <FaceToggles
+            row={id}
+            weight={weightVal}
+            style={styleVal}
             locked={locked}
-            onChange={(v) =>
-              bound
-                ? void editBoundStyle({ kind: 'element', role: sizeRole, prop: 'fontsize', value: v })
-                : size.writeOnce('fontsize', v)
-            }
+            onWeight={(v) => writeFace('weight', v)}
+            onStyle={(v) => writeFace('style', v)}
           />
-        </div>
+        </ControlLine>
       )}
     </StyleRow>
   )
 })
 
+const NO_ELEMENTS: ManifestElement[] = []
 const SIZE_PROPS = ['fontsize'] as const
 const FAMILY_PROPS = ['fontfamily'] as const
+const WEIGHT_PROPS = ['weight'] as const
+const STYLE_PROPS = ['style'] as const
 
-/** 「线条」的一行：一条属性（线宽换算到页面 pt；刻度方向是枚举） */
+/** 「线条」的一行：一条属性（线宽 / 刻度长度换算到页面 pt；刻度方向是枚举） */
 const FigureLineRow = memo(function FigureLineRow({
   id,
   panel,
@@ -441,45 +583,36 @@ const FigureLineRow = memo(function FigureLineRow({
     ? cellIssues(issues, { objectIds: [panel.id], gids: gidsOf(els), props: [prop] })
     : NO_ISSUES
   const value = adapter.valueOf(prop)
+  const write = (v: unknown) =>
+    bound ? void editBoundStyle({ kind: 'element', role, prop, value: v }) : adapter.writeOnce(prop, v)
 
   return (
-    <StyleRow id={id} issue={found[0] ?? null} onJump={onJump}>
-      <div data-style-cell={id} className={cn(cellClass(found.length > 0), field.type === 'enum' && 'flex-1')}>
-        {field.type === 'enum' ? (
-          <Select
-            className="min-w-0 flex-1"
-            ariaLabel={label}
-            value={value.kind === 'uniform' ? String(value.value) : ''}
-            placeholder={
-              value.kind === 'mixed' ? translate('element.mixedValues', { ns: 'inspector' }) : undefined
-            }
-            onChange={(v) =>
-              bound ? void editBoundStyle({ kind: 'element', role, prop, value: v }) : adapter.writeOnce(prop, v)
-            }
-            disabled={locked}
-            title={locked ? sp('waitingRender') : undefined}
-            options={(field.options ?? []).map((o) => ({ value: o, label: optionLabel(prop, o) }))}
-          />
-        ) : (
-          <PtField
-            label={label}
-            value={value}
-            field={field}
-            step={0.05}
-            locked={locked}
-            onChange={(v) =>
-              bound
-                ? void editBoundStyle({ kind: 'element', role, prop, value: v })
-                : adapter.writeOnce(prop, v)
-            }
-          />
-        )}
-      </div>
+    <StyleRow id={id}>
+      <ControlLine line={id} rowId={id} issue={found[0] ?? null} onJump={onJump}>
+        <div data-style-cell={id} className="contents">
+          {field.type === 'enum' ? (
+            <Select
+              className={VALUE_W}
+              ariaLabel={label}
+              value={value.kind === 'uniform' ? String(value.value) : ''}
+              placeholder={
+                value.kind === 'mixed' ? translate('element.mixedValues', { ns: 'inspector' }) : undefined
+              }
+              onChange={write}
+              disabled={locked}
+              title={locked ? sp('waitingRender') : value.kind === 'mixed' ? sp('mixedHint') : undefined}
+              options={(field.options ?? []).map((o) => ({ value: o, label: optionLabel(prop, o) }))}
+            />
+          ) : (
+            <PtField label={label} value={value} field={field} step={0.05} locked={locked} onChange={write} />
+          )}
+        </div>
+      </ControlLine>
     </StyleRow>
   )
 })
 
-/** 画布标注：字号本来就是页面上的 pt（不换算），字体是画布文字的闭集 */
+/** 画布标注：字号本来就是页面上的 pt（不换算），字体是画布文字的闭集；粗体 / 斜体是 `TextObject` 的 `bold` / `italic` */
 function AnnotationRow({
   texts,
   issues,
@@ -494,38 +627,55 @@ function AnnotationRow({
   const adapter = useCanvasTypography(texts)
   const label = ROW_LABEL.annotation()
   const ids = texts.map((o) => o.id)
-  const sizeIssues = cellIssues(issues, { objectIds: ids, gids: null, props: [CANVAS_SIZE_PATH] })
-  const familyIssues = cellIssues(issues, { objectIds: ids, gids: null, props: [CANVAS_FAMILY_PATH] })
-  const worst = [...familyIssues, ...sizeIssues].sort(bySeverity)[0] ?? null
+  const first = (props: string[]) => cellIssues(issues, { objectIds: ids, gids: null, props })[0] ?? null
+  const face = (prop: 'weight' | 'style'): TypographyValue | null =>
+    adapter.fieldOf(prop) ? adapter.valueOf(prop) : null
   return (
-    <StyleRow id="annotation" issue={worst} onJump={onJump}>
-      <div data-style-cell="annotation.family" className={cn(cellClass(familyIssues.length > 0), 'flex-1')}>
-        <FamilySelect
-          label={sp('familyOf', { row: label })}
-          value={adapter.valueOf('fontFamily')}
-          options={CANVAS_TEXT_FAMILIES}
-          onChange={(v) =>
-            bound ? void editBoundStyle({ kind: 'annotation', prop: 'fontFamily', value: v }) : adapter.writeOnce('fontFamily', v)
+    <StyleRow id="annotation">
+      <ControlLine line="annotation.family" rowId="annotation" issue={first([CANVAS_FAMILY_PATH])} onJump={onJump}>
+        <div data-style-cell="annotation.family" className="flex min-w-0 flex-1">
+          <FamilySelect
+            label={sp('familyOf', { row: label })}
+            value={adapter.valueOf('fontFamily')}
+            options={CANVAS_TEXT_FAMILIES}
+            onChange={(v) =>
+              bound ? void editBoundStyle({ kind: 'annotation', prop: 'fontFamily', value: v }) : adapter.writeOnce('fontFamily', v)
+            }
+          />
+        </div>
+      </ControlLine>
+      <ControlLine
+        line="annotation.size"
+        rowId="annotation"
+        issue={first([CANVAS_SIZE_PATH, CANVAS_WEIGHT_PATH, CANVAS_STYLE_PATH])}
+        onJump={onJump}
+      >
+        <div data-style-cell="annotation.size" className="contents">
+          <PtField
+            label={sp('sizeOf', { row: label })}
+            value={adapter.valueOf('sizePt')}
+            step={0.5}
+            onChange={(v) =>
+              bound ? void editBoundStyle({ kind: 'annotation', prop: 'sizePt', value: v }) : adapter.writeOnce('sizePt', v)
+            }
+          />
+        </div>
+        <FaceToggles
+          row="annotation"
+          weight={face('weight')}
+          style={face('style')}
+          onWeight={(v) =>
+            bound ? void editBoundStyle({ kind: 'annotation', prop: 'bold', value: v === 'bold' }) : adapter.writeOnce('weight', v)
+          }
+          onStyle={(v) =>
+            bound ? void editBoundStyle({ kind: 'annotation', prop: 'italic', value: v === 'italic' }) : adapter.writeOnce('style', v)
           }
         />
-      </div>
-      <div data-style-cell="annotation.size" className={cellClass(sizeIssues.length > 0)}>
-        <PtField
-          label={sp('sizeOf', { row: label })}
-          value={adapter.valueOf('sizePt')}
-          step={0.5}
-          onChange={(v) =>
-            bound ? void editBoundStyle({ kind: 'annotation', prop: 'sizePt', value: v }) : adapter.writeOnce('sizePt', v)
-          }
-        />
-      </div>
+      </ControlLine>
     </StyleRow>
   )
 }
 
-const SEVERITY_ORDER = ['error', 'warn', 'not_verifiable', 'suggestion']
-const bySeverity = (a: ValidationIssue, b: ValidationIssue) =>
-  SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
 
 /* ------------------------------- 绑定 / 恢复 ------------------------------- */
 
@@ -588,10 +738,13 @@ function ApplyStyle() {
 
   return (
     <section data-style-apply className="shrink-0 border-t border-border px-3 pb-3 pt-2">
-      <div className="flex h-7 items-center gap-1.5">
-        <span className="w-14 shrink-0 text-xs text-ink-2">{sp('bindLabel')}</span>
+      {/* 与上面各行同一副三列网格：「跟随样式」的下拉与各行控件左右缘都对齐（状态列空着） */}
+      <div className="grid h-7 grid-cols-[4rem_minmax(0,1fr)_1.25rem] items-center gap-x-1.5">
+        <span className="truncate text-xs text-ink-2" title={sp('bindLabel')}>
+          {sp('bindLabel')}
+        </span>
         <Select
-          className="min-w-0 flex-1"
+          className="min-w-0"
           ariaLabel={sp('bindLabel')}
           value={detached ? DETACHED : (binding?.id ?? UNBOUND)}
           onChange={(id) => id !== DETACHED && bindCanvasStyle(id === UNBOUND ? null : id)}

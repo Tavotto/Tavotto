@@ -6,8 +6,8 @@
  * 「哪个对象 · 哪些元素 · 哪条属性」把已有的问题认回到格子上——不写第二份判据。
  *
  * 行 → 角色 × 属性的对应与 `lib/stylePresets.STYLE_ROLE_PROPS` 同一套：字号在
- * `legend` 容器上（引擎把它广播给每一条图例项），字体在 `legend_text` 上（容器没有
- * `fontfamily`）。
+ * `legend` 容器上（引擎把它广播给每一条图例项），字体与粗 / 斜体在 `legend_text` 上（容器没有
+ * `fontfamily` / `weight` / `style`）。
  */
 import type { Manifest, ManifestElement } from './api'
 import { SEVERITIES } from './profile'
@@ -16,19 +16,25 @@ import { toPageValue } from './stylePresets'
 import type { ValidationIssue } from './validation'
 import type { ControlValue } from '@/components/inspector/textStyleModel'
 
-/** 「文字」分组里图内的四行：字号在 `sizeRole` 上、字体在 `familyRole` 上 */
+/**
+ * 「文字」分组里图内的四行：字号在 `sizeRole` 上、字体在 `familyRole` 上、粗体 / 斜体
+ * （`weight` / `style`）在 `faceRole` 上。刻度文字的引擎字段里没有 `weight` / `style`
+ * （`manifest._tick_fields`），`faceRole` 为 null：不摆一个点了不生效的开关。
+ */
 export const FIGURE_TEXT_ROWS = [
-  { id: 'title', sizeRole: 'title', familyRole: 'title' },
-  { id: 'axis_label', sizeRole: 'axis_label', familyRole: 'axis_label' },
-  { id: 'ticks', sizeRole: 'ticks', familyRole: 'ticks' },
-  { id: 'legend', sizeRole: 'legend', familyRole: 'legend_text' },
+  { id: 'title', sizeRole: 'title', familyRole: 'title', faceRole: 'title' },
+  { id: 'axis_label', sizeRole: 'axis_label', familyRole: 'axis_label', faceRole: 'axis_label' },
+  { id: 'ticks', sizeRole: 'ticks', familyRole: 'ticks', faceRole: null },
+  { id: 'legend', sizeRole: 'legend', familyRole: 'legend_text', faceRole: 'legend_text' },
 ] as const
 
-/** 「线条」分组：数据线宽、边框线宽、刻度方向 */
+/** 「线条」分组：数据线宽、边框线宽、刻度方向、刻度长度、刻度线宽 */
 export const FIGURE_LINE_ROWS = [
   { id: 'dataLine', role: 'line', prop: 'linewidth' },
   { id: 'frame', role: 'axes', prop: 'spine_linewidth' },
   { id: 'tickDirection', role: 'ticks', prop: 'direction' },
+  { id: 'tickLength', role: 'ticks', prop: 'length' },
+  { id: 'tickWidth', role: 'ticks', prop: 'width' },
 ] as const
 
 export type FigureTextRowId = (typeof FIGURE_TEXT_ROWS)[number]['id']
@@ -86,3 +92,5 @@ export function cellIssues(issues: readonly ValidationIssue[], cell: CellSubject
 /** 画布标注那一行两格认的属性路径（与预检报的同一张表） */
 export const CANVAS_SIZE_PATH = propertyPathOf('canvasText', 'sizePt') ?? 'sizePt'
 export const CANVAS_FAMILY_PATH = propertyPathOf('canvasText', 'fontFamily') ?? 'fontFamily'
+export const CANVAS_WEIGHT_PATH = propertyPathOf('canvasText', 'weight') ?? 'bold'
+export const CANVAS_STYLE_PATH = propertyPathOf('canvasText', 'style') ?? 'italic'

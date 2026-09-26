@@ -29,6 +29,7 @@ import { useWorkspaceStore } from '@/store/workspace'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { bindCanvasStyle, resetStyleBindingSession } from '@/store/styleBinding'
+import { SEVERITY_INK, severityLabel } from '@/lib/validationText'
 import { StylePanel } from './StylePanel'
 
 declare global {
@@ -355,11 +356,17 @@ describe('不合规的那一格 → 问题面板里的那一条', () => {
       .issues.find((i) => i.objectRef.gid === 'axes_0.title' && i.propertyPath === 'fontsize')
     expect(issue, '夹具该让预检报出这一条').toBeTruthy()
     expect(input('标题字号').value).toBe('4.2')
-    const cell = container.querySelector('[data-style-cell="title.size"]')!
-    expect(cell.className).toContain('ring-warn')
-    expect(container.querySelector('[data-style-cell="axis_label.size"]')!.className).not.toContain('ring-warn')
+    // 记号落在出问题那一格所在的那一行（字号那一行），不在字体那一行；没问题的行没有记号
+    const mark = container.querySelector('[data-style-line="title.size"] [data-style-issue="title"]')!
+    expect(mark, '字号那一行带记号').toBeTruthy()
+    expect(container.querySelector('[data-style-line="title.family"] [data-style-issue]')).toBeNull()
+    expect(container.querySelector('[data-style-line="axis_label.size"] [data-style-issue]')).toBeNull()
+    // 等级与问题面板同一套：阻断 = 红色（不再和警告共用一种颜色）
+    expect(mark.getAttribute('data-severity')).toBe(issue!.severity)
+    expect(mark.className).toContain(SEVERITY_INK[issue!.severity])
+    expect(mark.getAttribute('aria-label')).toContain(severityLabel(issue!.severity))
 
-    await click(container.querySelector('[data-style-issue="title"]')!)
+    await click(mark)
     const ui = useUiStore.getState()
     expect(ui.leftTab).toBe('problems')
     expect(ui.problemScope).toBe('figure')
@@ -416,5 +423,153 @@ describe('Codex #547 第七轮评审', () => {
       seedExactRender(current(), manifest() as never)
     })
     expect(input('标题字号').disabled).toBe(false)
+  })
+})
+
+describe('粗体 / 斜体（2026-09-26 用户反馈：样式栏能改的太少）', () => {
+  const enumOf = (prop: string, value: string, options: string[]) => ({ prop, type: 'enum', value, options })
+  const w = (v: string) => enumOf('weight', v, ['normal', 'bold'])
+  const st = (v: string) => enumOf('style', v, ['normal', 'italic'])
+  /** 标题正体；两条轴标题一粗一细（「多个值」）；图例项有 weight / style；刻度组没有（与引擎一致） */
+  const faceManifest = () => ({
+    ...manifest(),
+    elements: [
+      ...manifest().elements.filter((e) => e.role !== 'axis_label' && e.role !== 'title'),
+      el('axes_0.title', 'title', [num('fontsize', 15), fam('serif'), w('normal'), st('normal')]),
+      el('axes_0.xlabel', 'axis_label', [num('fontsize', 15), fam('serif'), w('bold'), st('normal')]),
+      el('axes_0.ylabel', 'axis_label', [num('fontsize', 15), fam('serif'), w('normal'), st('normal')]),
+      el('axes_0.legend', 'legend', [num('fontsize', 10)]),
+      el('axes_0.legend.texts_0', 'legend_text', [fam('serif'), w('normal'), st('normal')]),
+    ],
+  })
+  const button = (label: string) =>
+    container.querySelector<HTMLButtonElement>(`button[aria-label^="${label}"]`)
+
+  it('没绑样式：点「标题加粗」写一条 weight override，一次 commit、⌘Z 一次撤回；再点回正常', async () => {
+    await seed(panel, faceManifest())
+    await mount()
+    expect(button('标题加粗')!.getAttribute('aria-pressed')).toBe('false')
+    const before = s().past.length
+    await click(button('标题加粗')!)
+    expect(current().overrides).toEqual([{ gid: 'axes_0.title', prop: 'weight', value: 'bold' }])
+    expect(s().past.length - before).toBe(1)
+    expect(s().undo()).not.toBeNull()
+    expect(current().overrides).toEqual([])
+  })
+
+  it('两条轴标题一粗一细：开关是「多个值」三态（不拿第一个冒充全部）；点一下两条都加粗', async () => {
+    await seed(panel, faceManifest())
+    await mount()
+    const bold = button('轴标题加粗')!
+    expect(bold.getAttribute('aria-pressed')).toBe('mixed')
+    const before = s().past.length
+    await click(bold)
+    const weights = Object.fromEntries(
+      current()
+        .overrides.filter((o) => o.prop === 'weight')
+        .map((o) => [o.gid, o.value]),
+    )
+    expect(weights['axes_0.ylabel']).toBe('bold')
+    expect(Object.values(weights).every((v) => v === 'bold')).toBe(true)
+    expect(s().past.length - before).toBe(1)
+  })
+
+  it('图例的粗 / 斜体写在图例项（legend_text）上；刻度组的引擎字段里没有 weight / style，不摆开关', async () => {
+    await seed(panel, faceManifest())
+    await mount()
+    await click(button('图例倾斜')!)
+    expect(current().overrides).toEqual([{ gid: 'axes_0.legend.texts_0', prop: 'style', value: 'italic' }])
+    expect(button('刻度加粗')).toBeNull()
+    expect(button('刻度倾斜')).toBeNull()
+  })
+
+  it('绑了样式：点「标题加粗」= 改样式本身（element.title.weight 存进样式库），画布跟着对齐', async () => {
+    await seed(panel, faceManifest())
+    const saves: { data: { element: Record<string, Record<string, unknown>> } }[] = []
+    useProfileStore.setState({
+      save: async (_k, _id, data) => {
+        saves.push({ data } as never)
+        const rec = { ...styleRecord, data } as never
+        useProfileStore.setState({ styles: [rec] })
+        return rec
+      },
+    })
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), faceManifest() as never)
+    await mount()
+    await click(button('标题加粗')!)
+    await act(async () => {})
+    expect(saves).toHaveLength(1)
+    expect(saves[0].data.element.title.weight).toBe('bold')
+    expect(current().overrides.find((o) => o.gid === 'axes_0.title' && o.prop === 'weight')?.value).toBe('bold')
+  })
+
+  it('画布标注：粗体写 TextObject.bold（没绑）；绑了样式时存成样式里 annotation.bold = true', async () => {
+    await seed()
+    s().commit(literal('标注'), (d) => {
+      d.objects.push({
+        id: 't1', type: 'text', text: '注释', sizePt: 9, bold: false, color: '#000000', align: 'left', x: 0, y: 0, w: 10, h: 5,
+      } as never)
+    })
+    await mount()
+    await click(button('画布标注加粗')!)
+    expect((s().doc.objects.find((o) => o.id === 't1') as { bold: boolean }).bold).toBe(true)
+
+    const saves: { data: { annotation?: { italic?: unknown } } }[] = []
+    useProfileStore.setState({
+      save: async (_k, _id, data) => {
+        saves.push({ data } as never)
+        const rec = { ...styleRecord, data } as never
+        useProfileStore.setState({ styles: [rec] })
+        return rec
+      },
+    })
+    await act(async () => bindCanvasStyle('s1'))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+      seedExactRender(current(), manifest() as never)
+    })
+    await click(button('画布标注倾斜')!)
+    await act(async () => {})
+    expect(saves.at(-1)?.data.annotation?.italic).toBe(true)
+    expect((s().doc.objects.find((o) => o.id === 't1') as { italic?: boolean }).italic).toBe(true)
+  })
+})
+
+describe('排版：三列网格、「多个值」放得下且有说明', () => {
+  it('「多个值」的数字框：输入框铺满定宽的值格，悬停说明「输入一个值会把它们统一」', async () => {
+    await seed()
+    await mount()
+    const ticks = input('刻度字号')
+    expect(ticks.placeholder).toBe('多个值')
+    expect(ticks.className, '不再按 4 个等宽字符定宽（那样「多个值」被裁成「多个僮」）').toContain('w-full')
+    expect(ticks.closest('[title]')?.getAttribute('title')).toBe(
+      '这张图里这几处的值不一样；输入一个值会把它们统一',
+    )
+  })
+
+  it('每条控件行都带一个定宽的状态格（有没有问题都占着）；值格与刻度方向下拉同一个宽', async () => {
+    await seed(panel, {
+      ...manifest(),
+      elements: [
+        ...manifest().elements,
+        el('axes_0.yticks2', 'ticks', [
+          { prop: 'direction', type: 'enum', value: 'in', options: ['out', 'in', 'inout'] },
+          num('length', 3.5),
+        ]),
+      ],
+    })
+    await mount()
+    const lines = [...container.querySelectorAll('[data-style-line]')]
+    expect(lines.length).toBeGreaterThan(4)
+    for (const l of lines) expect(l.lastElementChild!.className).toContain('w-5')
+    const valueW = (sel: Element) => sel.className.match(/w-\[[^\]]+\]/)?.[0]
+    const size = input('标题字号').closest('.group')!
+    const direction = container.querySelector('[data-style-cell="tickDirection"] [role="combobox"]')!
+    expect(valueW(size)).toBeTruthy()
+    expect(valueW(direction)).toBe(valueW(size))
+    // 刻度长度是页面 pt：3.5 × 0.6 = 2.1
+    expect(input('刻度长度').value).toBe('2.1')
   })
 })

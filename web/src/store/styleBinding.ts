@@ -89,6 +89,8 @@ const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
 export type StyleEdit =
   | { kind: 'element'; role: string; prop: string; value: unknown }
   | { kind: 'annotation'; prop: 'sizePt' | 'fontFamily'; value: unknown }
+  // 粗体 / 斜体按样式里的磁盘形状存（`StyleTextEntry.bold` / `italic` 是 boolean）
+  | { kind: 'annotation'; prop: 'bold' | 'italic'; value: boolean }
 
 /* ------------------------------- 读 ---------------------------------------- */
 

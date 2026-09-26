@@ -96,7 +96,8 @@ export const STYLE_ROLE_PROPS: Record<string, string[]> = {
   axis_label: ['fontsize', 'color', 'weight', 'style', 'fontfamily'],
   ticks: ['fontsize', 'fontfamily', 'color', 'direction', 'length', 'width', 'minor_length', 'minor_width'],
   legend: ['fontsize', 'frameon', 'framealpha', 'edgecolor'],
-  legend_text: ['fontfamily'],
+  // 粗体 / 斜体也在图例项上（与字体同一处；容器没有 `weight` / `style`）
+  legend_text: ['fontfamily', 'weight', 'style'],
   line: ['linewidth', 'linestyle', 'marker', 'markersize'],
   errorbar: ['linewidth', 'capsize', 'cap_thickness'],
   bar_series: ['linewidth', 'edgecolor'],
