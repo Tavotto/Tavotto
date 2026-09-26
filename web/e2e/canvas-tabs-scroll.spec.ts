@@ -40,6 +40,39 @@ async function activeTabInView(strip: Locator) {
   })
 }
 
+/**
+ * 每个页签的左缘、宽度与关闭钮的左缘。× 是 opacity-0 常驻布局里的，boundingBox 量得到。
+ * 激活一个页签不许改变其中任何一个：双击改名的第二下要落在第一下的同一个东西上
+ */
+async function tabGeometry(strip: Locator) {
+  return strip.evaluate((el) =>
+    [...el.querySelectorAll('[role="tab"]')].map((t) => {
+      const r = t.getBoundingClientRect()
+      const close = t.querySelector('button')?.getBoundingClientRect()
+      return { x: r.left, w: r.width, closeX: close ? close.left : null }
+    }),
+  )
+}
+
+/** 点一个非当前页签，前后几何必须逐项相同（0.5px 以内） */
+async function expectActivationKeepsGeometry(strip: Locator, index: number) {
+  const tabs = strip.getByRole('tab')
+  await expect(tabs.nth(index)).toHaveAttribute('aria-selected', 'false')
+  const before = await tabGeometry(strip)
+  await tabs.nth(index).click()
+  await expect(tabs.nth(index)).toHaveAttribute('aria-selected', 'true')
+  const after = await tabGeometry(strip)
+  const msg = JSON.stringify({ before, after })
+  expect(after.length, msg).toBe(before.length)
+  for (const [i, b] of before.entries()) {
+    const a = after[i]
+    expect(Math.abs(a.x - b.x), msg).toBeLessThanOrEqual(0.5)
+    expect(Math.abs(a.w - b.w), msg).toBeLessThanOrEqual(0.5)
+    expect(a.closeX === null, msg).toBe(b.closeX === null)
+    if (a.closeX !== null && b.closeX !== null) expect(Math.abs(a.closeX - b.closeX), msg).toBeLessThanOrEqual(0.5)
+  }
+}
+
 test('画布页签条没有纵向溢出、不画滚动条，页签多了仍能横滚', async ({ app, page }) => {
   // 窄一点的窗口：十几个默认名页签就放不下，横滚才真的发生
   await page.setViewportSize({ width: 900, height: 700 })
@@ -135,6 +168,10 @@ test('页签少但放不下时也给「全部画布」菜单，能切到条外�
   await expect(tabs).toHaveCount(4)
   await expect(menu, '默认短名放得下：没有菜单').toHaveCount(0)
 
+  // 激活不改几何：此前「未保存」的点只长在当前页签的 flex 里，激活就宽 10px、× 右移；
+  // 双击非当前页签改名时第二下落到挪过来的 × 上，把页签关了（WebKit 6 次红 5 次）
+  await expectActivationKeepsGeometry(strip, 1)
+
   for (let i = 0; i < 4; i++) {
     await tabs.nth(i).dblclick()
     const input = strip.getByRole('textbox')
@@ -145,6 +182,9 @@ test('页签少但放不下时也给「全部画布」菜单，能切到条外�
   const sizes = await strip.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }))
   expect(sizes.sw, JSON.stringify(sizes)).toBeGreaterThan(sizes.cw)
   await expect(menu, '放不下：菜单出现').toHaveCount(1)
+  // 长名（被 max-w 截断、加粗宽度更大）同样不许动
+  await strip.evaluate((el) => (el.scrollLeft = 0))
+  await expectActivationKeepsGeometry(strip, 0)
 
   // 回到第一页、条滚回开头，再从菜单切到条外的最后一个
   await strip.evaluate((el) => (el.scrollLeft = 0))

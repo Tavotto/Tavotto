@@ -233,8 +233,11 @@ function TabItem({
         // 竖滚动条（e2e/canvas-tabs-scroll.spec.ts 量 scrollHeight ≤ clientHeight）
         tabClass(active),
         'group flex max-w-44 shrink-0 cursor-default items-center gap-1',
-        // 关闭键仍绝对定位，只在右边留出它那一格：左缘因此是文字本身（T8）
-        closable && 'pr-5',
+        // 关闭键仍绝对定位，只在右边留出它那一格：左缘因此是文字本身（T8）。
+        // 未保存的点也住在这一格里（悬停时让给 ×）：此前它是 flex 里的第三个子元素、只在当前页签
+        // 出现，激活一个页签它就宽 10px、× 跟着右移——双击非当前页签改名时，第二下落在挪过来的
+        // × 上把页签关了（WebKit，e2e/canvas-tabs-scroll.spec.ts）。多页签时这一格常驻，激活不改宽度
+        (closable || dirty) && 'pr-5',
         // 拖动排序的落点提示：不只靠颜色，加背景块让目标一眼可辨
         dragOver && 'rounded-sm bg-selected text-ink',
       )}
@@ -253,15 +256,21 @@ function TabItem({
       </span>
       {dirty && (
         <span
-          aria-label={t('tabs.unsaved')}
-          className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-3"
-        />
+          className={cn(
+            'pointer-events-none absolute right-0 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center',
+            closable && 'group-hover:opacity-0',
+          )}
+        >
+          <span aria-label={t('tabs.unsaved')} className="h-1.5 w-1.5 rounded-full bg-ink-3" />
+        </span>
       )}
       {closable && (
         <button
           aria-label={t('tabs.closeTab', { name })}
           onClick={(e) => {
             e.stopPropagation()
+            // 第二道防线：双击的第二下（detail ≥ 2）落到 × 上不算关闭——那一下是冲着改名去的
+            if (e.detail >= 2) return
             onClose()
           }}
           className={cn(
