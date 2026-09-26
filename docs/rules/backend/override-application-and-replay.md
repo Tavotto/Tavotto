@@ -122,6 +122,20 @@
   同族先例：
   `_AUTOSCALE`（自动缩放）、`_NO_BBOX`（没有框）、`_get_coll_edgecolor`（映射通道）。
   哨兵只活在 `originals` 里，不进 patch、不过 JSON。看护 `tests/test_patch_edgecolor_mode.py`。
+- **override 的目标身份（2026-09-25，ADR 0083，QA SCI-03-B1）**：gid 是位置式的，脚本
+  重排 / 插入 / 删除曲线或子图之后同一个 gid 指向别的对象。patch 可带 `identity`（写编辑
+  那一刻 manifest 里这个 gid 的身份，前端提交时抄写）；`apply` 建 `new` 表时比对
+  `state.identity`：对不上（含此刻没有身份、带了却不是非空串）的那条**当作不在列表里**
+  （上次应用过的照常还原）并报「编辑的对象已找不到（脚本结构可能已改动，未应用）: gid.prop」
+  ——写回一条 warning 即阻断；gid 整个不存在仍走「元素不存在」；不带 `identity` 按位置
+  匹配（旧文档、跨图同步），不认识的方案前缀不核对。身份唯一出处
+  `overrides.artist_identity`：**只取脚本显式起的 label**（`_` 开头与空串不算）的摘要
+  `l1:` + 16 位十六进制，不取类型 / 数据 / 父 axes / 文字内容（取舍表见 ADR）；在
+  **baseline 那一刻**由 `manifest._register` 采进 `FigState.identity`（`instrument` 清表重采，
+  label 是可编辑 prop，编辑之后再采就采成了用户的编辑），manifest 元素发 `identity`。
+  已应用条目带来的身份记在 `FigState.applied_identity`，`FigSession.snapshot()` 原样交出——native
+  屏障离开时存的就是这份快照，丢了身份，下一个屏障 rebase 又按位置落到别的对象上（#602 评审）。
+  看护 `tests/test_override_identity.py`、`tests/native/test_native_barrier_semantics.py::test_target_identity_survives_the_barrier_snapshot`。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。
 

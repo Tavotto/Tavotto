@@ -8,7 +8,8 @@ override patch 是「谁（gid）的哪个属性（prop）改成什么（value�
 规范化的三条规则（**改任何一条都是破坏性变更**）：
 
 1. **形状校验**：条目必须是对象，`gid`/`prop` 为非空字符串，`value` 是 JSON 值
-   （null / bool / 整数 / 有限浮点 / 字符串 / 数组 / 键为字符串的对象）。
+   （null / bool / 整数 / 有限浮点 / 字符串 / 数组 / 键为字符串的对象）；
+   可选的 `identity`（目标身份，ADR 0083）若出现必须是非空字符串。
    不合规的条目**不静默丢弃**——`canonicalize_with_diagnostics()` 把它们连同
    原因一起交出来，调用方才有机会把「前端发了脏数据」报出来。
 2. **去重 last-wins**：同一个 (gid, prop) 只留最后一条（与 `overrides.apply`
@@ -37,9 +38,11 @@ import hashlib
 import json
 import math
 
-#: 规范条目只有这三个键——多出来的字段一律丢弃（它们不参与身份判定；
-#: 真要加新字段，那是协议版本升级，不是这里悄悄放行）。
-_FIELDS = ("gid", "prop", "value")
+#: 规范条目的键。`identity`（ADR 0083，目标身份）是**可选**的第四个：带了它，
+#: 渲染结果就取决于它（对不上的那条不应用），所以它必须参与身份判定；没带的
+#: 条目规范形与哈希与引入它之前逐字节相同（存量文档 / 基线里的 patch_hash 不变）。
+#: 其余多出来的字段一律丢弃——真要再加，同样是两侧 + 向量一起改，不是这里悄悄放行。
+_FIELDS = ("gid", "prop", "identity", "value")
 
 #: 整数的安全区间 = i64。Python 整数是任意精度，JSON 也不限位数，但 Rust 侧
 #: 的 serde_json 默认只认 i64/u64——放行一个 10^30 会让两边的序列化当场分叉。
@@ -103,7 +106,9 @@ def canonicalize_with_diagnostics(
         return [], [{"index": -1, "reason": "patches_not_a_list", "entry": _brief(patches)}]
 
     dropped: list[dict] = []
-    merged: dict[tuple[str, str], object] = {}
+    # (gid, prop) -> (identity 或 None, value)：last-wins 以**整条**为单位，
+    # 后一条没带 identity 就是没有 identity，不从前一条继承
+    merged: dict[tuple[str, str], tuple[str | None, object]] = {}
     for i, entry in enumerate(patches):
         if not isinstance(entry, dict):
             dropped.append({"index": i, "reason": "not_an_object", "entry": _brief(entry)})
@@ -118,15 +123,22 @@ def canonicalize_with_diagnostics(
         if "value" not in entry:
             dropped.append({"index": i, "reason": "missing_value", "entry": _brief(entry)})
             continue
+        identity = entry.get("identity")
+        if "identity" in entry and (not isinstance(identity, str) or not identity):
+            dropped.append({"index": i, "reason": "bad_identity", "entry": _brief(entry)})
+            continue
         problem = _value_problem(entry["value"])
         if problem:
             dropped.append({"index": i, "reason": problem, "entry": _brief(entry)})
             continue
-        merged[(gid, prop)] = entry["value"]  # last-wins
+        merged[(gid, prop)] = (identity, entry["value"])  # last-wins
 
-    canonical = [
-        {"gid": gid, "prop": prop, "value": value} for (gid, prop), value in sorted(merged.items())
-    ]
+    canonical = []
+    for (gid, prop), (identity, value) in sorted(merged.items()):
+        item = {"gid": gid, "prop": prop, "value": value}
+        if identity is not None:
+            item["identity"] = identity
+        canonical.append(item)
     return canonical, dropped
 
 

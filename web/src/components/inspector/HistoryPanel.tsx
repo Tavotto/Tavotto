@@ -11,7 +11,7 @@ import {
   type HistoryVersion,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { updateObject } from '@/store/actions'
+import { restorePanelOverrides } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useRenderStore } from '@/store/renderStore'
@@ -177,9 +177,8 @@ function RestoreDialog({
       const mtime = useAssetStore.getState().byId[panel.fileId]?.mtime
       const res = await restoreHistory(panel.fileId, version.n, mtime)
       // 文件、基线、当前面板的 overrides 三者对齐，否则下次进编辑态又会打架
-      updateObject<PanelObject>(panel.id, msg('history.restoreVersion', undefined, 'inspector'), (o) => {
-        o.overrides = structuredClone(res.patches)
-      })
+      // 恢复来的条目带着它们写下那一刻的身份，原样放回（ADR 0083）
+      restorePanelOverrides(panel.id, msg('history.restoreVersion', undefined, 'inspector'), res.patches)
       await useAssetStore.getState().load()
       useRenderStore.getState().markStale([panel.fileId])
       useUiStore

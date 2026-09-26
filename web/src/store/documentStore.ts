@@ -98,6 +98,51 @@ export function registerTxnFinalizer(fn: Recipe): () => void {
   }
 }
 
+/**
+ * 提交后的**override 目标身份**抄写（ADR 0083）：给这一次新写 / 改了值的 override
+ * 抄上写它时那一版 manifest 的 `identity`。挂在 commit / txnUpdate 这两个唯一的
+ * 文档写入口上，而不是散在二十来个 override 写入点里——新增一个写 override 的动作
+ * 不会因为忘了抄而静默退回「按位置匹配」。抄写本身在 `lib/overrideIdentity`（纯函数），
+ * 它要读渲染态，所以由渲染同步方登记（`useEngineSync`），这里不 import 渲染态。
+ * 抄写的补丁并进同一条历史 / 同一个事务：撤销一次连身份一起打回。
+ */
+type OverrideStamper = (draft: FigureDocument, base: FigureDocument, next: FigureDocument) => void
+let overrideStamper: OverrideStamper | null = null
+
+/** 登记 override 身份抄写，返回注销函数（只注销自己登记的那一个）。 */
+export function registerOverrideStamper(fn: OverrideStamper): () => void {
+  overrideStamper = fn
+  return () => {
+    if (overrideStamper === fn) overrideStamper = null
+  }
+}
+
+/**
+ * 一次提交里的 override **从哪来**（ADR 0083）——由调用方显式说，不从数据里推断：
+ *
+ * - `'edit'`（默认）：用户此刻的编辑，新写 / 改了值的条目抄身份；
+ * - `'restored'`：从存储原样读回来的一整份（布局版本、写回历史、写回基线）。这些条目的
+ *   身份是**它们写下那一刻**的事实，按此刻的 manifest 重抄等于把旧编辑按位置绑到新对象上
+ *   （#602 评审 P1：同一 (gid, prop) 在当前文档与要恢复的版本里记着同一个身份、只是值不同
+ *   ——最常见的恢复——看起来和「原地改值」一模一样，推断不出来）。整次提交不抄，
+ *   存的是什么就是什么，没带身份的也照旧不带（按位置，与引入身份之前一致）。
+ */
+export type CommitOptions = { overrides?: 'edit' | 'restored' }
+
+/** `produceWithPatches` + 身份抄写：两段补丁按时序拼成一份（反向补丁倒序）。 */
+function produceStamped(
+  base: FigureDocument,
+  recipe: Recipe,
+  opts?: CommitOptions,
+): [FigureDocument, Patch[], Patch[]] {
+  const [next, patches, inverse] = produceWithPatches(base, recipe)
+  const stamp = opts?.overrides === 'restored' ? null : overrideStamper
+  if (!patches.length || !stamp) return [next, patches, inverse]
+  const [stamped, more, moreInverse] = produceWithPatches(next, (d) => stamp(d, base, next))
+  if (!more.length) return [next, patches, inverse]
+  return [stamped, [...patches, ...more], [...moreInverse, ...inverse]]
+}
+
 /** 页面坐标里的一个点（mm）。 */
 export type TxnAnchor = { x: number; y: number }
 
@@ -189,8 +234,11 @@ interface DocumentState {
   /** 进行中的拖动事务：pointerdown 开启，pointerup 合并成一条历史 */
   txn: { label: UiMessage; patches: Patch[]; inverse: Patch[] } | null
 
-  /** 一次用户操作 = 一条历史记录 */
-  commit: (label: UiMessage, recipe: Recipe) => void
+  /**
+   * 一次用户操作 = 一条历史记录。`opts.overrides === 'restored'`：这次写进去的 override
+   * 是从存储原样读回来的，身份不按此刻重抄（`CommitOptions`）。
+   */
+  commit: (label: UiMessage, recipe: Recipe, opts?: CommitOptions) => void
   /** 不进历史的即时修改（仅在事务中使用） */
   beginTxn: (label: UiMessage) => void
   txnUpdate: (recipe: Recipe) => void
@@ -340,9 +388,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   future: [],
   txn: null,
 
-  commit: (label, recipe) => {
+  commit: (label, recipe, opts) => {
     const state = get()
-    const [next, patches, inverse] = produceWithPatches(state.doc, recipe)
+    const [next, patches, inverse] = produceStamped(state.doc, recipe, opts)
     if (!patches.length) return
     if (state.txn) {
       // 事务进行中的结构性操作也并入当前事务
@@ -402,7 +450,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const txn = state.txn
     // 性能探针（ADR 0075）：拖动中每个 pointermove 一次，是热路径上最可疑的一段
     perfSpan('doc.txn_update', () => {
-      const [next, patches, inverse] = produceWithPatches(state.doc, recipe)
+      const [next, patches, inverse] = produceStamped(state.doc, recipe)
       if (!patches.length) return
       set({ doc: next, txn: history.accumulate(txn, patches, inverse) })
     })

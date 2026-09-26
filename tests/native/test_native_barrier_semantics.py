@@ -294,6 +294,83 @@ def test_an_orphan_patch_is_reported_not_guessed(tmp_path):
 
 
 # --------------------------------------------------------------------------
+MOVED_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots()
+(alpha,) = ax.plot([0, 1], [0, 1], color="#1f77b4", label="alpha")
+ax.plot([0, 1], [1, 0], color="#2ca02c", label="beta")
+plt.show()                       # 屏障 1：Tavotto 把 alpha 改成洋红（带目标身份）
+
+alpha.remove()                   # 脚本删掉 alpha：beta 挪到 alpha 原来的 gid 上
+plt.show()                       # 屏障 2：那条编辑不许按位置落到 beta 上
+print("DONE")
+"""
+
+
+def _line_colors(manifest: dict) -> dict[str, tuple[str, str]]:
+    """{label: (gid, color)}——按 label（独立真值）找曲线，不信 gid。"""
+    out = {}
+    for el in manifest["elements"]:
+        if el.get("role") != "line":
+            continue
+        ed = {f["prop"]: f.get("value") for f in el.get("editable") or []}
+        out[str(ed.get("label"))] = (el["gid"], str(ed.get("color", "")).lower())
+    return out
+
+
+def test_target_identity_survives_the_barrier_snapshot(tmp_path):
+    """ADR 0083 × 屏障基准（#602 评审 P1）：离开屏障时存下的快照必须带着目标身份。
+
+    快照只存 gid / prop / value 的话，下一个屏障 rebase 重放时这条编辑就没有身份了，
+    脚本在两个屏障之间删 / 插 / 重排带 label 的对象，编辑又按位置落到别的对象上、
+    而且没有任何 warning——正是 SCI-03-B1 从 native 这条路绕回来。
+    """
+    nativekit.write(tmp_path / "figure.py", MOVED_SCRIPT)
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        stem = only_stem(session.ensure_built())
+        man = manifest_of(session, stem)
+        alpha = next(
+            el
+            for el in man["elements"]
+            if el.get("role") == "line"
+            and any(f.get("prop") == "label" and f.get("value") == "alpha" for f in el["editable"])
+        )
+        assert alpha.get("identity"), "alpha 有显式 label，manifest 必须给出目标身份"
+        session.override(
+            stem,
+            [
+                {
+                    "gid": alpha["gid"],
+                    "prop": "color",
+                    "value": "#ff00ff",
+                    "identity": alpha["identity"],
+                }
+            ],
+        )
+        assert _line_colors(manifest_of(session, stem))["alpha"][1] == "#ff00ff"
+        session.resume()
+        nativekit.wait_state(session, [nativesession.BARRIER, nativesession.ENDED])
+        assert session.state == nativesession.BARRIER
+        session.ensure_built()
+        lines = _line_colors(manifest_of(session, stem))
+        assert lines["beta"][0] == alpha["gid"], f"用例前提：beta 挪到了 alpha 的 gid 上 {lines}"
+        assert lines["beta"][1] != "#ff00ff", "屏障重放把编辑按位置落到了 beta 上"
+        # 判据只钉「没落到别的对象上」。rebase 的 warning 走的是 bridge 的 barrier 事件
+        # （`rebase_warnings`），宿主侧的会话事件表目前不收它——与上面孤儿用例同一处
+        # 既有边界，不在本条的主语里。
+        _code, out, err = nativekit.finish(session, proc)
+    assert "DONE" in out, f"{out}\n{err}"
+
+
+# --------------------------------------------------------------------------
 def test_editing_is_refused_while_the_script_runs(tmp_path):
     """`running_script` 时**当场拒绝**，不排队（ADR 0021 §9.3）。"""
     nativekit.write(tmp_path / "figure.py", NEW_FIGURE_SCRIPT)

@@ -428,7 +428,12 @@ class LiveFigureSession:
 
     # ---------------- 命令原语（两套信封 / 两条入口共用同一份实现） ----------------
     def snapshot(self, stem: str) -> list[dict]:
-        """当前会话已应用的 override，作为「全量列表」形状的快照。"""
+        """当前会话已应用的 override，作为「全量列表」形状的快照。
+
+        带着目标身份（ADR 0083）：native 屏障离开时存的正是这份快照，下一个屏障
+        rebase 按它重放——只存 gid / prop / value 的话，脚本在两个屏障之间删 / 插 /
+        重排带 label 的对象，编辑又会按位置静默落到别的对象上。
+        """
         state = self.states[stem]
         return overrides_mod.snapshot(state)
 

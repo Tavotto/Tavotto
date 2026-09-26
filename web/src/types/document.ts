@@ -57,6 +57,13 @@ export interface PanelOverride {
   gid: string
   prop: string
   value: unknown
+  /**
+   * 目标身份（ADR 0083）：写这条编辑那一刻 manifest 里这个 gid 的 `identity`。
+   * gid 是位置式的，脚本结构改了会指向别的对象；引擎按它核对，对不上不应用、报
+   * warning。可选：旧文档没有它 = 按位置匹配（与引入前一致）。只由
+   * `lib/overrideIdentity.stampOverrideIdentities` 在提交时抄写，写入点不手填。
+   */
+  identity?: string
 }
 
 /** 裁剪框：相对原图的归一化比例（0–1），undefined 表示不裁剪。 */
