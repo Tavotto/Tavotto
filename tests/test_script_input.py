@@ -145,6 +145,8 @@ def figs(tmp_path, monkeypatch):
     root = tmp_path / "figs"
     root.mkdir()
     monkeypatch.setenv("SI_RESULT", str(tmp_path / "result.json"))
+    # 等人作答的上限缩到秒级：回归时用例在几十秒内红，而不是挂满 10 分钟（超时用例自己再改小）
+    monkeypatch.setenv(scriptinput.TIMEOUT_ENV, "20")
     yield root
     pool.shutdown_all(str(root), wait=True)
 

@@ -19,6 +19,7 @@ from tavotto.engine import (
     pool as engine_pool,
     project_watch as engine_watch,
     scriptanswers,
+    scriptinput,
 )
 
 try:
@@ -48,6 +49,12 @@ def client():
     yield m.app.test_client()
     m.reset_projects()
     engine_watch.stop()
+
+
+@pytest.fixture(autouse=True)
+def bounded_wait(monkeypatch):
+    """等人作答的上限缩到秒级：回归时用例在几十秒内红，而不是挂满 10 分钟。"""
+    monkeypatch.setenv(scriptinput.TIMEOUT_ENV, "20")
 
 
 @pytest.fixture
@@ -202,8 +209,10 @@ def test_answers_file_is_not_listed_as_a_canvas(client, tmp_path):
     client.post("/api/projects/open", json={"path": str(figs)})
     scriptanswers.remember(figs, "s.py", 1, "p: ", "1")
     assert scriptanswers.answers_path(figs).is_file()
-    listed = client.get("/api/layouts").get_json()
-    names = [x if isinstance(x, str) else x.get("name") for x in listed]
+    # 对照：同一个目录里的一份真画布是列得出来的（尺子是活的）
+    (scriptanswers.answers_path(figs).parent / "mine.json").write_text("{}", encoding="utf-8")
+    names = client.get("/api/layouts").get_json()["layouts"]
+    assert "mine" in names
     assert "_script_inputs" not in names
 
 
@@ -235,3 +244,13 @@ def test_only_event_streams_that_declare_answers_count_as_answerers(client):
     ui.close()
     plain.close()
     assert m._answerer_subs == 0
+
+
+def test_render_endpoint_error_body_carries_the_prompt():
+    """渲染端点那条出口（`_worker_error_payload`）也带 params.prompt——界面按 code 翻译时要它。"""
+    for code in ("script_needs_input", "script_input_timeout"):
+        err = engine_pool.WorkerError("脚本需要输入", "", code=code)
+        err.extra = {"prompt": "numbers: "}
+        body = m._worker_error_payload(err)
+        assert body["code"] == code
+        assert body["params"] == {"prompt": "numbers: "}

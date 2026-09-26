@@ -241,7 +241,7 @@ def _needs_input_error(exc) -> ProtocolError:
     """脚本要输入而没有人能答 → 结构化错误（ADR 0099 §五）。提示原文进 message：CLI / MCP 读的就是这一句。"""
     return ProtocolError(
         SCRIPT_NEEDS_INPUT,
-        f"脚本需要输入：{exc.prompt or '（读取标准输入）'}，请在 Tavotto 界面里运行一次这个脚本并作答。",
+        f"脚本需要输入：{exc.prompt.strip() or '（读取标准输入）'}，请在 Tavotto 界面里运行一次这个脚本并作答。",
         retryable=False,
         traceback_text=traceback.format_exc(),
         extra={"prompt": exc.prompt, "reason": exc.reason},
