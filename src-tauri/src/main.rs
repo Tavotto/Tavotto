@@ -193,7 +193,8 @@ enum NavDecision {
 }
 
 /// 在导出目录里定位文件并在文件管理器中显示。前端只能传「目录 + 纯文件名」，
-/// 文件名不得含路径分隔符——这是暴露给（本机 sidecar 页面的）IPC 的唯一文件类能力。
+/// 文件名不得含路径分隔符。暴露给（本机 sidecar 页面的）IPC 的文件类能力只有两条，
+/// 都只 reveal 不 open：这一条与下面的 `reveal_project_dir`。
 #[tauri::command]
 fn reveal_export(app: tauri::AppHandle, dir: String, name: String) -> Result<(), String> {
     if name.contains('/') || name.contains('\\') || name.contains("..") || name.is_empty() {
@@ -208,6 +209,57 @@ fn reveal_export(app: tauri::AppHandle, dir: String, name: String) -> Result<(),
     app.opener()
         .reveal_item_in_dir(&path)
         .map_err(|e| e.to_string())
+}
+
+/// 左栏工作区右键「在 Finder 中打开」：在文件管理器里打开项目文件夹。
+///
+/// 项目里有脚本就选中（按名字排第一个的）顶层 `.py`——文件管理器开的正是项目文件夹；
+/// 一个都没有就选中项目文件夹本身（开的是它的上一级）。
+///
+/// 只 reveal、从不 open：macOS 上 `.app` 也是目录，`open_path` 一个目录会把它当应用
+/// 启动——webview 递进来的路径只配「在文件夹中显示」这一种效果。路径必须是绝对路径、
+/// 此刻真实存在的目录（先 canonicalize，符号链接落到它指向的地方）。失败回稳定 code，
+/// 前端不显示原文，只说「没能打开」并给出完整路径。
+#[tauri::command]
+fn reveal_project_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let dir = checked_project_dir(&path)?;
+    app.opener()
+        .reveal_item_in_dir(reveal_target(&dir))
+        .map_err(|e| e.to_string())
+}
+
+/// 要选中的那一项：顶层第一个（按文件名）非隐藏的 `.py` 文件，没有就是目录本身。
+fn reveal_target(dir: &std::path::Path) -> PathBuf {
+    let mut scripts: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("py"))
+                && !p
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+        })
+        .collect();
+    scripts.sort();
+    scripts
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| dir.to_path_buf())
+}
+
+fn checked_project_dir(path: &str) -> Result<PathBuf, String> {
+    let raw = PathBuf::from(path);
+    if path.is_empty() || !raw.is_absolute() {
+        return Err("not_absolute".into());
+    }
+    let dir = std::fs::canonicalize(&raw).map_err(|_| "not_found".to_string())?;
+    if !dir.is_dir() {
+        return Err("not_a_directory".into());
+    }
+    Ok(dir)
 }
 
 /// 「安装 Codex 集成」/「重新诊断」——**壳里没有第二套安装器**（ADR 0012）。
@@ -816,6 +868,7 @@ fn main() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             reveal_export,
+            reveal_project_dir,
             set_menu_locale,
             codex_integration,
             arm_close_guard,
@@ -930,6 +983,49 @@ mod tests {
                 "build_menu 里碰了 path()：那时 PathResolver 还没被 manage：{code}"
             );
         }
+    }
+
+    /// 工作区右键 reveal 只收「此刻存在的绝对目录」：文件、相对路径、不存在的路径一律拒。
+    #[test]
+    fn reveal_project_dir_accepts_only_existing_absolute_dirs() {
+        let tmp = std::env::temp_dir().join(format!("tavotto-reveal-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("plot.py");
+        std::fs::write(&file, b"").unwrap();
+
+        let ok = checked_project_dir(tmp.to_str().unwrap()).unwrap();
+        assert_eq!(ok, std::fs::canonicalize(&tmp).unwrap());
+        assert_eq!(
+            checked_project_dir(file.to_str().unwrap()).unwrap_err(),
+            "not_a_directory"
+        );
+        assert_eq!(
+            checked_project_dir(tmp.join("gone").to_str().unwrap()).unwrap_err(),
+            "not_found"
+        );
+        assert_eq!(checked_project_dir("figs").unwrap_err(), "not_absolute");
+        assert_eq!(checked_project_dir("").unwrap_err(), "not_absolute");
+
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// 有脚本选中按名字排第一的顶层 `.py`（隐藏文件、子目录里的、别的扩展名都不算）；
+    /// 没有就选中项目文件夹本身。
+    #[test]
+    fn reveal_target_prefers_the_first_top_level_script() {
+        let tmp = std::env::temp_dir().join(format!("tavotto-reveal-t-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("aaa")).unwrap();
+        std::fs::write(tmp.join("aaa").join("0.py"), b"").unwrap();
+        std::fs::write(tmp.join(".hidden.py"), b"").unwrap();
+        std::fs::write(tmp.join("a.txt"), b"").unwrap();
+        assert_eq!(reveal_target(&tmp), tmp);
+
+        std::fs::write(tmp.join("plot_b.py"), b"").unwrap();
+        std::fs::write(tmp.join("Fig1.PY"), b"").unwrap();
+        assert_eq!(reveal_target(&tmp), tmp.join("Fig1.PY"));
+
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]

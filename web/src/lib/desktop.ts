@@ -183,6 +183,46 @@ export async function revealExportedFile(dir: string, name: string): Promise<boo
 }
 
 /**
+ * 「在 Finder 中打开」这类入口能不能摆出来：只有桌面壳做得到。
+ *
+ * 浏览器模式**不走后端补这一条**：服务器不一定和浏览器在同一台机器上（`ssh -L`
+ * 转发时它在远端，文件管理器会开在别人看不见的屏幕上），为此新增一个会 spawn
+ * 进程的端点也不值。所以浏览器里直接不摆这一项，而不是摆一个点了没用的。
+ */
+export function canRevealInFileManager(): boolean {
+  return isDesktop()
+}
+
+/** 系统文件管理器叫什么（决定菜单文案）：Finder / 文件资源管理器 / 其余统称文件管理器 */
+export type FileManagerKind = 'finder' | 'explorer' | 'files'
+
+export function fileManagerKind(
+  userAgent: string = typeof navigator !== 'undefined' ? navigator.userAgent : '',
+): FileManagerKind {
+  if (/Macintosh|Mac OS X/.test(userAgent)) return 'finder'
+  if (/Windows/.test(userAgent)) return 'explorer'
+  return 'files'
+}
+
+/**
+ * 在系统文件管理器里打开项目文件夹：有顶层脚本就选中（按名字排第一的）那个 `.py`，
+ * 没有就选中文件夹本身。壳只 reveal、不 open，且只收此刻存在的绝对目录
+ * （`src-tauri/src/main.rs::reveal_project_dir`）。
+ * 成功返回 true；浏览器模式、老壳（ACL 拒）或失败返回 false——调用方必须把完整路径
+ * 告诉用户，不许静默。
+ */
+export async function revealProjectFolder(path: string): Promise<boolean> {
+  if (!isDesktop() || !path) return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('reveal_project_dir', { path })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * 把界面语言告诉壳，让原生菜单跟着换。
  *
  * 原生菜单是 Rust 在 webview 起来之前建的，那套文案在 `src-tauri/src/i18n.rs`

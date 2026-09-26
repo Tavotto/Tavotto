@@ -100,7 +100,9 @@
   收藏队列、一条切项目队列（`projectStore.serialQueue`），切换期间所有「打开」入口置灰；
   `init` / `refreshRecent` 回来时若收藏修订号已变就不写 `pinned`。界面以回包为准、失败
   不动列表；PUT/POST 前先解析 pj，失效时 409 且配置不变。与最近列表互相独立（从最近
-  移除不取消收藏）。收藏里是用户的项目路径：诊断包的条数化与路径记号两处都要带上它。
+  移除不取消收藏）。行与当前卡片的右键开出与「…」**同一份**清单（`PointMenu`，一份 JSX 两个入口）；
+  其中「在 Finder 中打开」只在桌面壳摆出（`lib/desktop.canRevealInFileManager`，文案按
+  `fileManagerKind` 分三档），失败把完整路径说出口。收藏里是用户的项目路径：诊断包的条数化与路径记号两处都要带上它。
   看护：`components/left/workspaceList.test.tsx`、`store/projectSwitchSerial.test.ts`、`tests/test_projects.py` 的 pinned 六条、
   `tests/test_diagnostics_bundle.py::test_pinned_projects_are_redacted_like_recent_ones`。
 - **左栏「样式」面板（2026-09-24）**：`components/left/StylePanel.tsx`，排在「问题」前面、两者互相
