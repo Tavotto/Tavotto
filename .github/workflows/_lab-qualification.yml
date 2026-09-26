@@ -173,6 +173,10 @@ jobs:
           python3 -m venv "$VENV"
           "$VENV/bin/pip" install -q --disable-pip-version-check --upgrade pip
           "$VENV/bin/pip" install -q -e ".[dev,ci]"
+          # 批准字体不进 git（ADR 0060），editable 安装读的是源码树里的 resources/fonts/：
+          # 不在跑套件之前取，RenderCore 一律 backend_unavailable（U10 #539 之后 lab 连红的根因）。
+          "$VENV/bin/python" scripts/fetch_fonts.py
+          "$VENV/bin/python" scripts/fetch_fonts.py --check
           # **科学栈版本取自 packaging/runtime-lock.json**，不用 `pip install matplotlib`。
           # 视觉基线是像素级的：matplotlib 换个小版本就可能改掉抗锯齿或字体度量，
           # 让整片 corpus 在一次与产品无关的依赖升级里同时变红。用锁文件还有第二个

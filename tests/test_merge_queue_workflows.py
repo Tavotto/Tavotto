@@ -2954,6 +2954,21 @@ class TestApprovedFontsAndRetirementScan:
             assert fetch != -1 and check != -1, f"{job_id} 没有取字体 + --check"
             assert use != -1 and fetch < use, f"{job_id}：字体要在 `{before}` 之前取到"
 
+    def test_lab_qualification_fetches_the_fonts_before_its_first_pytest(self):
+        # 上一条只看 ci.yml：lab（main / release 资格）的常规套件同样跑在 editable 安装上，
+        # 漏取字体时 RenderCore 全体 backend_unavailable，lab 从 #539 合入起连红而这里是绿的。
+        block = _code((WF / "_lab-qualification.yml").read_text(encoding="utf-8"))
+        install = block.find('install -q -e ".[dev,ci]"')
+        fetch = block.find("scripts/fetch_fonts.py")
+        check = block.find("scripts/fetch_fonts.py --check")
+        use = block.find("-m pytest")
+        assert install != -1 and use != -1, (
+            "_lab-qualification.yml 的安装 / 套件步骤变了——回到这里重新定主语"
+        )
+        assert install < fetch < use and fetch <= check < use, (
+            "lab 的字体要在 editable 安装之后、第一次 pytest 之前取到并 --check"
+        )
+
     def test_the_artifact_jobs_run_the_retirement_scan_on_their_artifact(self):
         for job_id, (subject, after) in self.RETIREMENT.items():
             block = _code(_job(CI, job_id))
