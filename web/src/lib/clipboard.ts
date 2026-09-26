@@ -223,7 +223,8 @@ export function materializeRelink(resolved: MissingAsset[]): void {
       o.name = info.name
       o.overrides = info.baked_overrides ? structuredClone(info.baked_overrides) : []
     }
-  })
+    // 新素材的写回基线原样放进来（身份不按旧素材的 manifest 重抄，ADR 0083）
+  }, { overrides: 'restored' })
   useUiStore.getState().setStatus(note('relinked', { count: relink.length, undo: modKey('Z') }))
 }
 

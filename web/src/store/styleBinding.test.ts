@@ -16,14 +16,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { literal } from '@/i18n'
 import type { ProfileRecord } from '@/lib/api'
+import { stampOverrideIdentities } from '@/lib/overrideIdentity'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject, type ProjectDocument } from '@/types/document'
 import { clearOverride, setOverride, setOverrides, startLayoutAutoReflow } from './actions'
 import { useAssetStore } from './assetStore'
-import { useDocumentStore } from './documentStore'
+import { registerOverrideStamper, useDocumentStore } from './documentStore'
 import { useInteractionStore } from './interactionStore'
 import { useProfileStore } from './profileStore'
-import { renderKeyOf, useRenderStore } from './renderStore'
+import { panelRender, renderKeyOf, useRenderStore } from './renderStore'
 import {
   alignCanvasToStyle,
   alignNewFigures,
@@ -1675,6 +1676,36 @@ describe('重跑后脚本赢：不自动对齐，显示不一致、一键对齐�
     })
     clearOverride('a', 'axes_0.title', 'color')
     expect(owned('a')).toEqual({ value: 10, base: 9 })
+  })
+
+  /* ---- #602（ADR 0083）目标身份 × 样式登记 ---- */
+
+  it('#602：样式写的 override 提交时同样抄上目标身份（身份抄写不是用户写入，登记保留）；之后用户改值才注销', async () => {
+    // 与 useEngineSync 登记的同一个抄写器：按用户此刻看着的那一版 manifest 抄
+    const off = registerOverrideStamper((draft, base, next) =>
+      stampOverrideIdentities(draft, base, next, (p) => panelRender(useRenderStore.getState(), p)?.manifest),
+    )
+    try {
+      const withId = () => {
+        const m = fig('FigA', { value: 9 }, { value: 10 })
+        return { ...m, elements: m.elements.map((e) => (e.gid === 'axes_0.xlabel' ? { ...e, identity: 'l1:00000000000000aa' } : e)) }
+      }
+      await seed([panel('a', 'FigA')])
+      seedExactRender(panelById('a'), withId() as never)
+      bindCanvasStyle('s1')
+      const x = () => panelById('a').overrides.find((o) => o.gid === 'axes_0.xlabel')
+      expect(x()?.value).toBe(10)
+      expect(x()?.identity, '样式写的也抄上身份（ADR 0083 §四：提交口统一抄）').toBe('l1:00000000000000aa')
+      expect(owned('a'), '抄身份不算用户写入').toEqual({ value: 10, base: 9 })
+      const m = withId()
+      m.elements[0].editable = [{ ...num('fontsize', 10), value_original: 9 } as never]
+      seedExactRender(panelById('a'), m as never)
+      setOverride('a', 'axes_0.xlabel', 'fontsize', 14, true)
+      expect(owned('a')).toBeUndefined()
+      expect(x()?.identity).toBe('l1:00000000000000aa')
+    } finally {
+      off()
+    }
   })
 
   /* ---- Codex #547 r4109745746：恢复原样按此刻的可编辑性挑目标 ---- */

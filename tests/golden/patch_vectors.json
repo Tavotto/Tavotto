@@ -613,6 +613,137 @@
       "dropped": [],
       "canonical_json": "[{\"gid\":\"axes_0.legend\",\"prop\":\"loc\",\"value\":\"upper left\"},{\"gid\":\"axes_0.legend\",\"prop\":\"loc_anchor\",\"value\":[1.02,1.0]},{\"gid\":\"axes_1.legend\",\"prop\":\"loc_anchor\",\"value\":[-0.02,0.5]},{\"gid\":\"fig.legend_0\",\"prop\":\"loc_anchor\",\"value\":null}]",
       "hash": "sha256:402168c950e88015be3b9b89148711ff50b7eb0547807a00059c2a3c9d56b135"
+    },
+    {
+      "name": "identity_participates",
+      "description": "目标身份（ADR 0083）参与身份判定：键序 gid < identity < prop < value；没带 identity 的条目与引入它之前逐字节相同",
+      "input": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#ff00ff",
+          "identity": "l1:5f2b0b1a9c3d7e44"
+        },
+        {
+          "gid": "axes_0.lines_1",
+          "prop": "linewidth",
+          "value": 4.5
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#ff00ff",
+          "identity": "l1:5f2b0b1a9c3d7e44"
+        },
+        {
+          "gid": "axes_0.lines_1",
+          "prop": "linewidth",
+          "value": 4.5
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"axes_0.lines_0\",\"identity\":\"l1:5f2b0b1a9c3d7e44\",\"prop\":\"color\",\"value\":\"#ff00ff\"},{\"gid\":\"axes_0.lines_1\",\"prop\":\"linewidth\",\"value\":4.5}]",
+      "hash": "sha256:81bfe6676b14ca34ac69068741a1125d659dda0d17bd926722117d9beacd9edb"
+    },
+    {
+      "name": "identity_last_wins_whole_entry",
+      "description": "同一 (gid, prop) 以整条为单位 last-wins：后一条没带 identity 就是没有，不从前一条继承",
+      "input": [
+        {
+          "gid": "g",
+          "prop": "color",
+          "value": "#000000",
+          "identity": "l1:aaaaaaaaaaaaaaaa"
+        },
+        {
+          "gid": "g",
+          "prop": "color",
+          "value": "#ffffff"
+        },
+        {
+          "gid": "h",
+          "prop": "color",
+          "value": "#111111"
+        },
+        {
+          "gid": "h",
+          "prop": "color",
+          "value": "#222222",
+          "identity": "l1:bbbbbbbbbbbbbbbb"
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "g",
+          "prop": "color",
+          "value": "#ffffff"
+        },
+        {
+          "gid": "h",
+          "prop": "color",
+          "value": "#222222",
+          "identity": "l1:bbbbbbbbbbbbbbbb"
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"g\",\"prop\":\"color\",\"value\":\"#ffffff\"},{\"gid\":\"h\",\"identity\":\"l1:bbbbbbbbbbbbbbbb\",\"prop\":\"color\",\"value\":\"#222222\"}]",
+      "hash": "sha256:7402565bd0e599d5513a6a0e6572b4c6d06b0a9433432b437a197cf561669f94"
+    },
+    {
+      "name": "bad_identity_dropped",
+      "description": "identity 出现就必须是非空字符串，否则整条剔除（原因 bad_identity）；不认识的方案前缀照样是合法字符串",
+      "input": [
+        {
+          "gid": "g",
+          "prop": "a",
+          "value": 1,
+          "identity": ""
+        },
+        {
+          "gid": "g",
+          "prop": "b",
+          "value": 1,
+          "identity": 3
+        },
+        {
+          "gid": "g",
+          "prop": "c",
+          "value": 1,
+          "identity": null
+        },
+        {
+          "gid": "g",
+          "prop": "d",
+          "value": 1,
+          "identity": "x:unknown-scheme"
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "g",
+          "prop": "d",
+          "value": 1,
+          "identity": "x:unknown-scheme"
+        }
+      ],
+      "dropped": [
+        {
+          "index": 0,
+          "reason": "bad_identity"
+        },
+        {
+          "index": 1,
+          "reason": "bad_identity"
+        },
+        {
+          "index": 2,
+          "reason": "bad_identity"
+        }
+      ],
+      "canonical_json": "[{\"gid\":\"g\",\"identity\":\"x:unknown-scheme\",\"prop\":\"d\",\"value\":1}]",
+      "hash": "sha256:d52fb4750f3cf5df3ae1ada38793569d093ed8cf1344407738093d29895f9e73"
     }
   ]
 }

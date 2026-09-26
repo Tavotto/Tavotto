@@ -27,6 +27,7 @@ import {
 } from '@/lib/versionSummary'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
+import { restoreLayoutVersion } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
@@ -439,14 +440,8 @@ function VersionDetail({
         ...activeCanvasIdentity(),
       })
       backupCreated = true
-      useDocumentStore
-        .getState()
-        .commit(msg('versions.restoreHistory', { name: meta.name }, 'dialogs'), (d) => {
-          d.name = versionDoc.name
-          d.page = structuredClone(versionDoc.page)
-          d.objects = structuredClone(versionDoc.objects)
-          d.guides = structuredClone(versionDoc.guides)
-        })
+      // 面板 overrides 的身份原样恢复，不按此刻的 manifest 重抄（ADR 0083）
+      restoreLayoutVersion(msg('versions.restoreHistory', { name: meta.name }, 'dialogs'), versionDoc)
       recordDiagnosticEvent({
         type: 'layout_version.restore.complete',
         version: versionHash(meta.id),

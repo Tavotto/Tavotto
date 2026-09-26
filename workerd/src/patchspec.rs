@@ -41,11 +41,13 @@ impl Dropped {
     }
 }
 
-/// 规范化结果的一条：键序固定 gid < prop < value。
+/// 规范化结果的一条：键序固定 gid < identity < prop < value（`identity` 可选，
+/// ADR 0083 的目标身份；没带的条目序列化出来与引入它之前逐字节相同）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonEntry {
     pub gid: String,
     pub prop: String,
+    pub identity: Option<String>,
     pub value: Value,
 }
 
@@ -63,7 +65,8 @@ pub fn canonicalize_with_diagnostics(patches: &Value) -> (Vec<CanonEntry>, Vec<D
     let mut dropped = Vec::new();
     // BTreeMap 同时办了 last-wins（insert 覆盖）与排序（迭代即有序）。
     // Rust 的 String Ord 是 UTF-8 字节序，与 Python 的码点序在合法字符串上等价。
-    let mut merged: BTreeMap<(String, String), Value> = BTreeMap::new();
+    // last-wins 以整条为单位：后一条没带 identity 就是没有，不从前一条继承。
+    let mut merged: BTreeMap<(String, String), (Option<String>, Value)> = BTreeMap::new();
 
     for (i, entry) in items.iter().enumerate() {
         let idx = i as i64;
@@ -95,16 +98,33 @@ pub fn canonicalize_with_diagnostics(patches: &Value) -> (Vec<CanonEntry>, Vec<D
                 continue;
             }
         };
+        // identity 出现就必须是非空字符串（与 Python 同一个原因串）
+        let identity = match obj.get("identity") {
+            None => None,
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            Some(_) => {
+                dropped.push(Dropped::new(idx, "bad_identity"));
+                continue;
+            }
+        };
         if let Some(problem) = value_problem(value, 0) {
             dropped.push(Dropped::new(idx, problem));
             continue;
         }
-        merged.insert((gid.to_string(), prop.to_string()), value.clone());
+        merged.insert(
+            (gid.to_string(), prop.to_string()),
+            (identity, value.clone()),
+        );
     }
 
     let canonical = merged
         .into_iter()
-        .map(|((gid, prop), value)| CanonEntry { gid, prop, value })
+        .map(|((gid, prop), (identity, value))| CanonEntry {
+            gid,
+            prop,
+            identity,
+            value,
+        })
         .collect();
     (canonical, dropped)
 }
@@ -123,9 +143,13 @@ pub fn canonical_json(patches: &Value) -> String {
         if i > 0 {
             out.push(',');
         }
-        // 键序 gid < prop < value 正是 sort_keys 的结果，写死即可。
+        // 键序 gid < identity < prop < value 正是 sort_keys 的结果，写死即可。
         out.push_str("{\"gid\":");
         write_string(&entry.gid, &mut out);
+        if let Some(identity) = &entry.identity {
+            out.push_str(",\"identity\":");
+            write_string(identity, &mut out);
+        }
         out.push_str(",\"prop\":");
         write_string(&entry.prop, &mut out);
         out.push_str(",\"value\":");

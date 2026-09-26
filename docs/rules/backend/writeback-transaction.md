@@ -43,8 +43,9 @@
     `replay: "fresh_only"`——假报一次，用户学到的就是「这个提示可以无视」；
     比过且过了才在 `verification` 里报 `pixels: "ok"`。manifest 经 JSON 落盘，
     numpy 标量可能被 `default=` 写成字符串，比之前一律 `float()` 化。
-    worker 的 warnings（元素不存在 / 属性不支持 / 应用失败 / 还原失败）
-    **一条即阻断**，回 409 `code=write_back_warnings` + warnings 列表。
+    worker 的 warnings（元素不存在 / 编辑的对象已找不到（目标身份对不上，ADR 0083）/
+    属性不支持 / 应用失败 / 还原失败）**一条即阻断**，回 409 `code=write_back_warnings`
+    + warnings 列表。
     staging 阶段**任何异常都要 unlink 掉所有 `.updating` 临时文件**
     （以前只有 file_locked 那条路径清理，PDF 成功 PNG 失败就留垃圾）。
     三个失败出口（verify / 落盘准备 / 替换撞锁）的清理都走 `_discard_updating`，

@@ -351,7 +351,21 @@ Codex #547 r4104608121 的场景：绑定时 y 轴标签的字号刚好已合样
    当成样式写的、或者以为没动过。`web/src/store/styleOverrideLookup.test.ts` 按 **TypeScript AST** 结构性地禁止这几份文件里
    再出现按 (gid, prop) 取第一条的调用：`find` / `findIndex` / `filter(...)[0]` / `filter(...).at(0)`，回调同时比较自己参数
    的 `gid` 与 `prop`（操作数顺序、箭头或块体、解构与改名都认得出；Codex #547 r4109901118：源码正则会被这些变形绕过）。
-   豁免只按函数名点名（`effectiveOverride` 一族的实现）；守卫带违规 / 放行样本自证。
+   谓词提成本文件里的变量或函数时解析回声明再判，解析不了的（import 进来的、参数传进来的）保守判违规（Codex #547
+   r4110033885）。豁免只按函数名点名（`effectiveOverride` 一族的实现）；守卫带违规 / 放行样本自证。
+8. **与 #602（ADR 0083 目标身份）的交叉**（2026-09-26 合入时逐条核）：
+   - 身份对不上被拒的 patch 当作不在列表里：上次应用过的照常还原，`value_original` 随 originals 一起销掉；
+     第一次就被拒的不进 `new`，也就不进「setter 之前的预读」，不采样。所以被拒的键不报 `value_original`，
+     前端不会拿它判让位（`test_manifest_value_original.py::test_a_patch_refused_by_target_identity_leaves_no_value_original`）。
+   - 身份在 `documentStore.commit` 出口统一抄写（ADR 0083 §四），样式写入走同一个 commit，写出的 override 同样带身份，
+     不在 `planStyle` / `writeStylePlan` 里手填。抄写是 recipe 之后的第二段 produce，不经过 `updateObject`，
+     不算用户写入，登记保留；登记按值比（`ownedLive`），不看 `identity` 字段（`styleBinding.test.ts`「#602：样式写的
+     override 提交时同样抄上目标身份…」）。
+   - `effectiveOverride`（last-wins）与引擎「同一 (gid, prop) 以最后一条为准，最后一条被拒整个键不应用」一致：两边都只看
+     最后一条、都不回退到前面的重复条目。最后一条身份失效时，它仍是登记 / 比较的对象；引擎不应用它，也就不报
+     `value_original`，不会让位，界面按 ADR 0083 列进「清除失效修改」。
+   - 恢复（`restorePanelOverrides` 经 `updateObject`，`{ overrides: 'restored' }` 只关掉抄写）仍按条目身份注销被换掉的登记；
+     `restoreLayoutVersion` 整份换对象，登记按第 1 条（值对不上即不算数）失效。
 
 **override 写入点清单**（2026-09-25 逐一核过；`removeOverrides` 这个函数不存在，删除都是就地 `filter`）
 

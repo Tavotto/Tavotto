@@ -273,3 +273,47 @@ def test_value_original_survives_a_restore_debt_and_goes_with_it():
     assert not any("还原失败" in w for w in got["retry_warn"]), got["retry_warn"]
     assert "value_original" not in got["after"] and got["after"]["value"] == 10, got["after"]
     assert got["left"] == [], got["left"]
+
+
+IDENTITY_REFUSED = """
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1], lw=1.5, label="alpha")
+st = overrides.FigState(fig); manifest.instrument(st)
+m0 = build(st)
+el = next(e for e in m0["elements"] if e["role"] == "line")
+gid, ident = el["gid"], el.get("identity")
+out = {"ident": ident}
+ok = [{"gid": gid, "prop": "linewidth", "value": 3, "identity": ident}]
+bad = [{"gid": gid, "prop": "linewidth", "value": 3, "identity": "l1:" + "0" * 16}]
+# 身份对得上：照常应用，value_original 是脚本的 1.5
+overrides.apply(st, ok)
+out["ok"] = field(build(st), gid, "linewidth")
+# 同一条换成对不上的身份（脚本结构变了）：被拒 = 当作不在列表里，上次应用过的照常还原
+out["refused_warn"] = overrides.apply(st, bad)
+out["refused"] = field(build(st), gid, "linewidth")
+out["left_after_refuse"] = [list(k) for k in st.original_values]
+# 从没应用过、第一次就被拒：不采样，不留 value_original
+st2 = overrides.FigState(fig); manifest.instrument(st2)
+out["fresh_warn"] = overrides.apply(st2, bad)
+out["fresh"] = field(build(st2), gid, "linewidth")
+out["left_fresh"] = [list(k) for k in st2.original_values]
+print(json.dumps(out, default=str))
+"""
+
+
+def test_a_patch_refused_by_target_identity_leaves_no_value_original():
+    """#602（ADR 0083）× §十三 的交叉点：带 `identity` 的 patch 对不上目标身份时被拒（当作不在列表里）。
+
+    - 上次应用过、这次被拒：还原成脚本原样，`value_original` 与 originals 一起销掉；
+    - 第一次就被拒：根本不采样（被拒的键不进 `new`，也就不进「setter 之前先读一遍」的预读）。
+
+    两种情况下 manifest 都不许报 `value_original`——那一项此刻是脚本的值，报了前端会拿它去判让位。
+    """
+    got = _run(IDENTITY_REFUSED)
+    assert got["ident"] and got["ident"].startswith("l1:"), got  # 前提：这条曲线有身份
+    assert got["ok"]["value"] == 3 and got["ok"]["value_original"] == 1.5, got["ok"]
+    assert any("编辑的对象已找不到" in w for w in got["refused_warn"]), got["refused_warn"]
+    assert got["refused"]["value"] == 1.5 and "value_original" not in got["refused"], got["refused"]
+    assert got["left_after_refuse"] == [], got["left_after_refuse"]
+    assert any("编辑的对象已找不到" in w for w in got["fresh_warn"]), got["fresh_warn"]
+    assert "value_original" not in got["fresh"] and got["left_fresh"] == [], got

@@ -35,14 +35,20 @@ import type {
   CanvasObject,
   FigureDocument,
   LayoutGroup,
-  PanelOverride,
   PanelObject,
+  PanelOverride,
   ShapeObject,
   TextObject,
 } from '@/types/document'
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
 import { useAssetStore } from './assetStore'
-import { readAutosaveDoc, saveNow, useDocumentStore, type HistoryEntry } from './documentStore'
+import {
+  readAutosaveDoc,
+  saveNow,
+  useDocumentStore,
+  type CommitOptions,
+  type HistoryEntry,
+} from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useInteractionStore } from './interactionStore'
 import { renderKeyOf, useRenderStore } from './renderStore'
@@ -75,8 +81,8 @@ export const moveLabel = (count: number): UiMessage =>
   count === 1 ? hist('moveObject') : hist('moveObjects', { count })
 
 const doc = () => useDocumentStore.getState().doc
-const commit = (label: UiMessage, recipe: (d: FigureDocument) => void) =>
-  useDocumentStore.getState().commit(label, recipe)
+const commit = (label: UiMessage, recipe: (d: FigureDocument) => void, opts?: CommitOptions) =>
+  useDocumentStore.getState().commit(label, recipe, opts)
 const select = (ids: string[]) => useSelectionStore.getState().set(ids)
 const status = (message: UiMessage, tone?: 'info' | 'error') =>
   useUiStore.getState().setStatus(message, tone)
@@ -294,11 +300,52 @@ function withOwnedRelease(d: FigureDocument, o: CanvasObject, patch: () => void)
   releaseOwned(d, o, writtenOverrides(before, o.overrides))
 }
 
-export function updateObject<T extends CanvasObject>(id: string, label: UiMessage, patch: (o: T) => void) {
-  commit(label, (d) => {
-    const o = d.objects.find((x) => x.id === id) as T | undefined
-    if (o) withOwnedRelease(d, o, () => patch(o))
-  })
+export function updateObject<T extends CanvasObject>(
+  id: string,
+  label: UiMessage,
+  patch: (o: T) => void,
+  opts?: CommitOptions,
+) {
+  commit(
+    label,
+    (d) => {
+      const o = d.objects.find((x) => x.id === id) as T | undefined
+      if (o) withOwnedRelease(d, o, () => patch(o))
+    },
+    opts,
+  )
+}
+
+/*
+ * 「从存储原样读回来」的两种恢复（ADR 0083，#602 评审 P1）：写进文档的 override 带着
+ * **它们写下那一刻**的目标身份，不许按此刻的 manifest 重抄——恢复的来源在这里显式
+ * 说出口（`{ overrides: 'restored' }`），不靠「身份等不等」去猜。
+ */
+
+/** 写回历史恢复：面板的 overrides 整份换成那一版存下的（身份原样）。 */
+export function restorePanelOverrides(panelId: string, label: UiMessage, patches: readonly PanelOverride[]) {
+  updateObject<PanelObject>(
+    panelId,
+    label,
+    (o) => {
+      o.overrides = structuredClone(patches) as PanelOverride[]
+    },
+    { overrides: 'restored' },
+  )
+}
+
+/** 布局版本恢复：当前画布的内容整份换成那一版（面板 overrides 的身份原样）。 */
+export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) {
+  commit(
+    label,
+    (d) => {
+      d.name = version.name
+      d.page = structuredClone(version.page)
+      d.objects = structuredClone(version.objects)
+      d.guides = structuredClone(version.guides)
+    },
+    { overrides: 'restored' },
+  )
 }
 
 export function updateObjects(ids: string[], label: UiMessage, patch: (o: CanvasObject) => void) {
@@ -1234,9 +1281,15 @@ export function seedBakedOverrides(panelId: string): number {
   if (panel?.type !== 'panel' || panel.overrides.length) return 0
   const baked = useAssetStore.getState().byId[panel.fileId]?.baked_overrides
   if (!baked?.length) return 0
-  updateObject<PanelObject>(panelId, hist('seedBaked'), (o) => {
-    o.overrides = structuredClone(baked)
-  })
+  // 写回基线是存下来的 patches：身份原样（ADR 0083）
+  updateObject<PanelObject>(
+    panelId,
+    hist('seedBaked'),
+    (o) => {
+      o.overrides = structuredClone(baked)
+    },
+    { overrides: 'restored' },
+  )
   return baked.length
 }
 
@@ -2133,7 +2186,9 @@ export async function replacePanelAsset(panelId: string, info: PanelInfo): Promi
     o.cost = info.cost
     o.name = info.name
     o.overrides = info.baked_overrides ? structuredClone(info.baked_overrides) : []
-  })
+    // 新素材的写回基线原样放进来：身份是那份基线存下的；此刻能拿到的 manifest 还是
+    // **旧素材**的，按它抄会抄到另一张图的对象上（ADR 0083）
+  }, { overrides: 'restored' })
   useAssetStore.getState().markUsed(info.id)
   status(note('assetReplaced', { name: info.name }))
   return true

@@ -8,16 +8,18 @@ import { useEffect } from 'react'
 import { isJustBakedBaselineOf, type BakedBaselineFacts } from '@/lib/bakedBaseline'
 import { useAssetStore } from '@/store/assetStore'
 import {
+  registerOverrideStamper,
   registerTxnFinalizer,
   txnAnchorOf,
   useDocumentStore,
   type TxnAnchor,
 } from '@/store/documentStore'
-import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { requestRender } from '@/store/renderScheduler'
 import { sampleDisplayState } from '@/diagnostics'
 import { useUiStore } from '@/store/uiStore'
 import { syncPanelNativeSize } from '@/lib/panelNativeSize'
+import { stampOverrideIdentities } from '@/lib/overrideIdentity'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 
 /**
@@ -203,6 +205,17 @@ function useEngineRenderSync() {
             anchor: txnAnchorOf(f.id),
           })),
         ),
+      ),
+    [],
+  )
+
+  // override 的目标身份（ADR 0083）：提交时给新写 / 改了值的 override 抄上**用户此刻
+  // 看着的那一版** manifest 里的身份（显示用的就行：身份是脚本结构的事实，与这个面板
+  // 的 overrides 无关；退回来的同文件另一版同样作数）
+  useEffect(
+    () =>
+      registerOverrideStamper((draft, base, next) =>
+        stampOverrideIdentities(draft, base, next, (panel) => panelRender(useRenderStore.getState(), panel)?.manifest),
       ),
     [],
   )

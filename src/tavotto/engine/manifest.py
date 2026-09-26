@@ -88,6 +88,7 @@ from overrides import (
     annotation_arrow_display,
     annotation_arrow_owner,
     annotation_text_draggable,
+    artist_identity,
     cjk_fallback_candidates,
     collection_caps,
     color_mapping_is_live,
@@ -175,6 +176,12 @@ def _register(
     """
     artist.set_gid(gid)
     state.index[gid] = artist
+    # 目标身份（ADR 0083）：登记就是 baseline 那一刻（`instrument` 在任何 apply 之前跑，
+    # native 屏障 rebase 前先 `apply([])` 退回脚本原样再重登记）。setdefault：万一将来
+    # 有别的路在编辑之后补登记，也不许拿用户改过的 label 覆盖脚本里的那一个。
+    ident = artist_identity(artist)
+    if ident is not None:
+        state.identity.setdefault(gid, ident)
     state.elements.append(
         {
             "gid": gid,
@@ -440,6 +447,7 @@ def instrument(state: FigState) -> None:
     fig = state.fig
     state.elements.clear()
     state.index.clear()
+    state.identity.clear()
 
     # figure 本体（点击空白处选中，可改尺寸）——不占用 artist gid
     state.index["figure"] = fig
@@ -4344,6 +4352,11 @@ def _build_manifest(state: FigState, stem: str, arm) -> dict:
             "draggable": el["draggable"],
             "editable": _with_value_original(_fields_for(el, state), state, el["gid"]),
         }
+        # 目标身份（ADR 0083）：前端写 override 时抄进 patch 的 `identity`，
+        # 之后脚本结构变了，`overrides.apply` 拿它核对 gid 此刻指向的是不是同一个对象
+        ident = state.identity.get(el["gid"])
+        if ident is not None:
+            entry["identity"] = ident
         # 文字类元素的显示名跟着**当前**文字走：登记名是 build 那一刻的快照，
         # 改过字（或色条翻转把标签搬了家）之后它就成了旧内容，元素树里对不上
         if el["role"] in ("title", "axis_label", "text", "legend_text"):

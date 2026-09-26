@@ -11,6 +11,7 @@ worker 在此转换为各 artist 自己的坐标系。
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import sys
 import weakref
@@ -139,6 +140,14 @@ class FigState:
         # elements 之后加一。apply 里按对象身份反查 gid 的缓存认它——不认的话，重建
         # 之后的新对象反查不到，别名组的组员静默变空（撤销图例字号冲掉单条字号）。
         self.index_generation = 0
+        # gid -> 目标身份（ADR 0083）。**在 baseline 那一刻采**（`manifest.instrument`
+        # 登记时），不随 override 变：label 本身就是可编辑的 prop，改过之后再采，
+        # 采到的是用户的编辑而不是脚本里的那个对象。没有身份的元素不在表里。
+        self.identity: dict[str, str] = {}
+        # (gid, prop) -> 这条已应用 override 带来的目标身份（ADR 0083）。`applied` 只存值；
+        # 会话快照（`FigSession.snapshot`）要把身份一起交出去——native 屏障离开时存的就是
+        # 那份快照，下一个屏障 rebase 重放它，丢了身份就又按位置落到别的对象上。
+        self.applied_identity: dict[tuple, str] = {}
 
     def index_ids(self) -> set[int]:
         """已登记 artist 的 `id()` 集合（伪元素也在，它们不是真 artist 但不碍事）。"""
@@ -202,6 +211,37 @@ class FigState:
         handler = HANDLERS.get((_cls_key(artist), prop))
         if handler is not None:
             handler[1](artist, value)
+
+
+#: 目标身份的方案前缀（ADR 0083）。`l1` = 脚本给这个对象起的 label 的摘要。
+#: 不认识的前缀**不核对**（老构建写不出、新方案的文档落到这一版上时退回
+#: 按位置匹配），认识的前缀对不上一律不应用——绝不「成功」套到另一个对象上。
+IDENTITY_SCHEME = "l1:"
+
+
+def artist_identity(artist) -> str | None:
+    """一个可编辑元素的目标身份：脚本显式给的 label 的摘要；没有就是 None。
+
+    **只认用户显式起的名字**（`label=` 那个，图例里显示的那个），不认位置、
+    不认数据：gid 本身就是位置，拿位置核位置等于没核；数据点数 / 数据摘要在
+    用户换了一批数据重跑时会变，那时编辑本该跟着同一条曲线走，按数据核会把
+    正确的编辑也拒掉。`_` 开头的是 matplotlib 自动起的（`_child3` 按加入顺序
+    编号、`_nolegend_`），本质上还是位置，同样不算。
+
+    存的是摘要不是原文：文档与诊断包里只会出现这串十六进制，label 原文不出门。
+    """
+    owner = artist.container if isinstance(artist, SeriesGroup) else artist
+    get_label = getattr(owner, "get_label", None)
+    if get_label is None:
+        return None
+    try:
+        label = get_label()
+    except Exception:  # noqa: BLE001 — 取不到就当没有名字（退回按位置匹配）
+        return None
+    if not isinstance(label, str) or not label or label.startswith("_"):
+        return None
+    digest = hashlib.sha256(label.encode("utf-8")).hexdigest()[:16]
+    return IDENTITY_SCHEME + digest
 
 
 class SeriesGroup:
@@ -3659,12 +3699,21 @@ def snapshot(state: FigState) -> list[dict]:
     还原失败、欠着账的键（`state.unrestored`）不算：用户已经把它撤了，它留在 applied
     里只是为了下一次 apply 重试还原。把它算进来的话，状态中立的预览在收尾时会把它
     **重新应用**回去，屏障离开时保存的列表也会把它带进下一次 rebase 的重放。
+
+    带着目标身份（ADR 0083，`state.applied_identity`）：native 屏障离开时存的正是这份快照，
+    下一个屏障 rebase 按它重放——只存 gid / prop / value 的话，脚本在两个屏障之间删 / 插 /
+    重排带 label 的对象，编辑又会按位置静默落到别的对象上（#602 评审 P1）。
     """
-    return [
-        {"gid": g, "prop": p, "value": v}
-        for (g, p), v in state.applied.items()
-        if (g, p) not in state.unrestored
-    ]
+    out: list[dict] = []
+    for key, v in state.applied.items():
+        if key in state.unrestored:
+            continue
+        entry = {"gid": key[0], "prop": key[1], "value": v}
+        ident = state.applied_identity.get(key)
+        if ident is not None:
+            entry["identity"] = ident
+        out.append(entry)
+    return out
 
 
 def apply(state: FigState, patches: list[dict]) -> list[str]:
@@ -3690,9 +3739,37 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
         )
     warnings: list[str] = []
     new: dict[tuple, object] = {}
+    # 目标身份核对（ADR 0083）：带着 `identity` 的 patch 只落在**写它时那个对象**上。
+    # 脚本重排 / 插入 / 删除曲线或子图之后，同一个位置式 gid 指向了别的对象——
+    # 对不上就当这条 patch 不在列表里（上次应用过的照常还原），并报一条 warning：
+    # 写回一条 warning 即阻断，界面把它列为失效修改。没带 `identity` 的（旧文档、
+    # 跨图同步这类有意按位置映射的）照旧按位置匹配。last-wins 与 patchspec 同语义：
+    # 同一 (gid, prop) 以最后一条为准，最后一条被拒就是整个 key 不应用。
+    refused: dict[tuple, None] = {}
+    carried: dict[tuple, str] = {}
     for p in patches:
         key = (str(p["gid"]), str(p["prop"]))
+        want = p.get("identity")
+        # 带了却不是非空字符串 = 脏数据：patchspec 把它记成 `bad_identity` 剔除，
+        # 这里同样不应用（不许退回按位置匹配——那正是这道核对要堵的路）
+        malformed = "identity" in p and (not isinstance(want, str) or not want)
+        if malformed or (
+            isinstance(want, str)
+            and want.startswith(IDENTITY_SCHEME)
+            and state.resolve(key[0]) is not None
+            and state.identity.get(key[0]) != want
+        ):
+            new.pop(key, None)
+            refused[key] = None
+            continue
+        refused.pop(key, None)
         new[key] = p["value"]
+        if isinstance(want, str):
+            carried[key] = want
+        else:
+            carried.pop(key, None)
+    for gid, prop in refused:
+        warnings.append(f"编辑的对象已找不到（脚本结构可能已改动，未应用）: {gid}.{prop}")
 
     geometry_moved = False
     # 结构性 setter 要按「这一次改完之后」的落位算几何，见 FigState.pending。
@@ -4006,6 +4083,8 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     finally:
         # 下一次 apply 绝不能拿着上一批的 patch 表去算落位
         state.pending = {}
+        # 已应用的那些 key 各自带来的身份（快照原样交出去，见 FigState.applied_identity）
+        state.applied_identity = {k: v for k, v in carried.items() if k in state.applied}
 
     # 图例项跟随源对象（派生显示，不进 applied）。放在整轮之后：源对象的
     # 改动与还原都已落定，此刻派生出来的才是「这一次改完之后」的样子。

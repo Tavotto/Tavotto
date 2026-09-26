@@ -12,6 +12,10 @@
  * - `cb` 是箭头函数或函数表达式，它**自己的第一个参数**上的 `gid` 与 `prop` 都出现在相等比较
  *   （`===` / `==`，左右不限）里——参数可以是标识符（`o.gid`）或解构（`{ gid, prop }`，含改名）。
  *
+ * - 谓词是**标识符**（`const matches = (o) => …; xs.find(matches)`、`function matches(o) {…}`）时，在同一个
+ *   SourceFile 里按名字解析回它的声明，再套同一个判据（Codex #547 r4110033885）；解析不了的（从别的模块
+ *   import 进来的、参数传进来的）**保守判为违规**，除非名字在豁免名单里。
+ *
  * 同时比 gid 与 prop 的，是在取一条 override；只比 gid 的是在 manifest 里找元素（gid 唯一）。嵌在
  * 里面、比的是**另一个参数**的 prop（`e.editable.some((f) => f.prop === p)`）也不算。
  * 豁免只按函数名精确点名：`EXEMPT` 里的函数体内不判（`effectiveOverride` 一族自己的实现）。
@@ -75,9 +79,11 @@ function keyReader(param: ts.ParameterDeclaration): ((e: ts.Expression) => Key |
   return null
 }
 
+type Fn = ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration
+
 /** 这个回调是不是「在按 gid + prop 取一条」 */
-function comparesGidAndProp(cb: ts.Node): boolean {
-  if (!(ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) || !cb.parameters.length) return false
+function comparesGidAndProp(cb: Fn): boolean {
+  if (!cb.parameters.length || !cb.body) return false
   const read = keyReader(cb.parameters[0])
   if (!read) return false
   const seen = new Set<Key>()
@@ -110,10 +116,40 @@ function takesFirst(call: ts.CallExpression): boolean {
   )
 }
 
+/** 同一个 SourceFile 里的具名函数：`function x(…)` 与 `const x = (…) => …` / `const x = function (…) {…}` */
+function localFunctions(sf: ts.SourceFile): Map<string, Fn> {
+  const out = new Map<string, Fn>()
+  const visit = (n: ts.Node) => {
+    if (ts.isFunctionDeclaration(n) && n.name) out.set(n.name.text, n)
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.initializer &&
+      (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))
+    ) {
+      out.set(n.name.text, n.initializer)
+    }
+    n.forEachChild(visit)
+  }
+  visit(sf)
+  return out
+}
+
 /** 源码里违规的调用（返回源码片段） */
 function firstMatchLookups(src: string, fileName = 'sample.ts'): string[] {
   const kind = fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   const sf = ts.createSourceFile(fileName, src, ts.ScriptTarget.Latest, true, kind)
+  const locals = localFunctions(sf)
+  /** 谓词是不是「按 gid + prop 取一条」：函数字面量直接判；标识符解析回本文件的声明再判，解析不了保守判是 */
+  const lookup = (cb: ts.Expression): boolean => {
+    if (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) return comparesGidAndProp(cb)
+    if (ts.isIdentifier(cb)) {
+      if (EXEMPT.has(cb.text)) return false
+      const decl = locals.get(cb.text)
+      return decl ? comparesGidAndProp(decl) : true
+    }
+    return false
+  }
   const out: string[] = []
   const visit = (n: ts.Node) => {
     if (ts.isFunctionDeclaration(n) && n.name && EXEMPT.has(n.name.text)) return
@@ -122,8 +158,8 @@ function firstMatchLookups(src: string, fileName = 'sample.ts'): string[] {
       const cb = n.arguments[0]
       const hit =
         method === 'find' || method === 'findIndex'
-          ? comparesGidAndProp(cb)
-          : method === 'filter' && comparesGidAndProp(cb) && takesFirst(n)
+          ? lookup(cb)
+          : method === 'filter' && lookup(cb) && takesFirst(n)
       if (hit) out.push(n.getText(sf))
     }
     n.forEachChild(visit)
@@ -144,6 +180,11 @@ describe('按 (gid, prop) 取 override 走生效的那条（#587 last-wins，TS 
     ['filter()[0]', 'const x = xs.filter((o) => o.gid === g && o.prop === p)[0]'],
     ['filter().at(0)', 'const x = xs.filter((o) => o.prop === p && o.gid === g).at(0)'],
     ['括号包着的操作数', 'xs.find((o) => (o.gid) === g && (o.prop) === p)'],
+    ['谓词提成变量', 'const matches = (o) => o.gid === gid && o.prop === prop\nxs.find(matches)'],
+    ['谓词提成函数声明', 'function matches(o) { return o.prop === prop && o.gid === gid }\nxs.findIndex(matches)'],
+    ['谓词提成变量再 filter()[0]', 'const m = ({ gid: a, prop: b }) => a === g && b === p\nconst x = xs.filter(m)[0]'],
+    ['从别处 import 的谓词（解析不了，保守判违规）', "import { matches } from './somewhere'\nxs.find(matches)"],
+    ['参数传进来的谓词（解析不了，保守判违规）', 'function pick(xs, matches) { return xs.find(matches) }'],
   ])('违规：%s', (_name, src) => {
     expect(firstMatchLookups(src)).toHaveLength(1)
   })
@@ -156,6 +197,8 @@ describe('按 (gid, prop) 取 override 走生效的那条（#587 last-wins，TS 
     ['删除用的 filter（不取 [0]）', 'xs = xs.filter((o) => !(o.gid === g && o.prop === p))'],
     ['filter 之后取最后一条', 'const x = xs.filter((o) => o.gid === g && o.prop === p).at(-1)'],
     ['注释里的反例', '// xs.find((o) => o.gid === g && o.prop === p)'],
+    ['本文件里只比 gid 的具名谓词', 'const byGid = (e) => e.gid === g\nm.elements.find(byGid)'],
+    ['豁免名单里的名字', "import { effectiveOverride } from './x'\nxs.find(effectiveOverride)"],
     [
       '豁免：按函数名点名的实现',
       'export function effectiveOverrideIndex(xs, gid, prop) { return xs.findIndex((o) => o.gid === gid && o.prop === prop) }',
