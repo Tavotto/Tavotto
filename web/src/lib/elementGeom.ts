@@ -384,6 +384,25 @@ export function axesCompanions(
     })
   }
 
+  // 宿主（与随行 axes）的插图里被用户挪过的那些：它们从此钉在图幅上（ADR 0100），不再由
+  // 定位器带着宿主走，所以要写同样的位移。SVG 里插图嵌在宿主的 <g> 里，不单独预览
+  const hosts = new Set([axesGid, ...followGids])
+  for (const e of manifest.elements) {
+    if (!e.inset_of || !hosts.has(e.inset_of)) continue
+    if (!effectiveOverride(panel.overrides, e.gid, 'position')) continue
+    const pos = positionOf(panel, e)
+    if (!pos) continue
+    out.push({
+      gid: e.gid,
+      previewsSeparately: false,
+      shift: (dfx, dfy) => ({
+        gid: e.gid,
+        prop: 'position',
+        value: [pos[0] + dfx, pos[1] - dfy, pos[2], pos[3]].map(round4),
+      }),
+    })
+  }
+
   // 宿主与随行 axes 底下、被用户挪过位置的后代
   for (const d of movedDescendants(panel, [axesGid, ...followGids])) {
     out.push({

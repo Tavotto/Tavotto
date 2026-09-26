@@ -621,6 +621,16 @@
     "dismissError": "关闭错误提示",
     "documentLoaded_other": "已载入：{{name}}（{{count}} 张画布）",
     "documentReopened_other": "已切回：{{name}}（{{count}} 张画布）",
+    "dragNotMovable": {
+      "annotationArrow": "标注的箭头尖指向数据点、尾巴跟着文字走：拖标注的文字即可挪动它",
+      "axisLabel3d": "3D 坐标轴标题的位置由视角决定，不能拖；可在属性页调它离坐标轴的距离",
+      "hostPlaced": "「{{label}}」的位置由宿主子图决定，会跟着宿主走；拖宿主子图即可",
+      "legendEntry": "图例项跟着图例走：拖图例本身即可挪动",
+      "pixelCoords": "「{{label}}」按像素或字号单位定位，换分辨率导出时位置会漂，暂不支持拖动",
+      "series": "「{{label}}」的位置由数据决定，不能拖；要挪整个子图，请拖子图空白处或在元素树里选中子图",
+      "ticks": "刻度文字跟着刻度走，不能单独拖；刻度的位置与方向在属性页修改",
+      "unsupported": "暂不支持拖动「{{label}}」这类对象"
+    },
     "elementCycled": "已选中「{{label}}」（此处第 {{index}}/{{total}} 个重叠元素）",
     "elementHidden": "已隐藏「{{label}}」，可在「已隐藏元素」里恢复",
     "elementLocked": "已锁定「{{label}}」，画布点击将跳过它",

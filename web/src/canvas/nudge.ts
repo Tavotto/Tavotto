@@ -32,7 +32,13 @@ import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { moveLabel, warnBlockedGroups } from '@/store/actions'
 import { panelRotation, unrotateVec, type PanelObject } from '@/types/document'
-import { draggableSelection, groupMove, inFigureMoveOf, type InFigureMove } from './interactions'
+import {
+  draggableSelection,
+  groupMove,
+  immovableMessage,
+  inFigureMoveOf,
+  type InFigureMove,
+} from './interactions'
 
 /** 步长（页面 mm）：普通 / ⇧ 大步 / ⌥ 细调 */
 export const NUDGE_STEP_MM = { base: 0.5, large: 5, fine: 0.1 } as const
@@ -106,6 +112,21 @@ const inFastEdit = () => useWorkspaceStore.getState().mode === 'fast_edit'
 const interaction = () => useInteractionStore.getState()
 const status = (key: string) =>
   useUiStore.getState().setStatus(msg(`status.${key}`, undefined, 'workspace'))
+
+/**
+ * 选中的图内元素都不能动：只选了一个时说出**为什么**（与拖动同一句话，`immovableMessage`，
+ * ADR 0100），多个时说总的那句。
+ */
+function announceUnmovable(b: FigureBurst): void {
+  const panel = findPanel(b.panelId)
+  const manifest = panel ? displayedExactManifest(panel) : null
+  const el = b.gids.length === 1 ? manifest?.elements.find((e) => e.gid === b.gids[0]) : undefined
+  // 锁定 / 隐藏的不动是另一回事（用户自己锁的），不按「按设计」解释
+  const own =
+    el && el.gid !== 'figure' && !(panel?.lockedGids ?? []).includes(el.gid) && !isElementHidden(el)
+  if (own) useUiStore.getState().setStatus(immovableMessage(el))
+  else status('nudgeNotMovable')
+}
 
 /** 此刻方向键该推的是谁：图内编辑态只推图内选中的元素，否则推画布选区 */
 function currentTargetKey(): string | null {
@@ -214,7 +235,7 @@ function beginBurst(key: string): boolean {
     }
     const made = startMover(b)
     if (made === 'unmovable') {
-      status('nudgeNotMovable')
+      announceUnmovable(b)
       return false
     }
   } else {
@@ -283,7 +304,7 @@ function watchAuthority(b: FigureBurst): void {
     if (made == null) return
     stopWatching(b)
     if (made === 'unmovable') {
-      status('nudgeNotMovable')
+      announceUnmovable(b)
       dropBurst()
       return
     }

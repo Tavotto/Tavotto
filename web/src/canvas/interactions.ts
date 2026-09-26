@@ -1387,6 +1387,61 @@ export function guardStale<E extends { type: string; stopPropagation(): void; pr
   }
 }
 
+/**
+ * `inFigureMoveOf` 回 null 时，**为什么**不能移动（ADR 0100）。用户说「拖不动」多半是
+ * 这一刻什么都没发生：按下、拖、松手，画面一动不动、也没有一句话。判据紧挨着
+ * `inFigureMoveOf`、只读同一份 manifest 事实，别在别处另写一份「谁能拖」。
+ *
+ * - `series`：数据系列（曲线、散点、柱、误差棒、等值线……）——位置就是数据，按设计不拖；
+ * - `annotationArrow`：带文字的标注的箭头——尖钉在数据点上、尾巴跟着文字走，拖文字；
+ * - `legendEntry`：图例项跟着图例走；`ticks`：刻度文字跟着刻度走；
+ * - `axisLabel3d`：3D 轴标题的位置由视角算，属性页调它离轴的距离；
+ * - `pixelCoords`：按像素 / 字号单位定位的文字或插框，换分辨率导出时会漂，不宣称可拖；
+ * - `hostPlaced`：次坐标轴 / 寄生轴，落位由宿主子图决定（引擎给了 `position` 的理由码）；
+ * - `unsupported`：其余（表格、认不出来的 Artist）——暂不支持，说实话。
+ */
+export type ImmovableReason =
+  | 'series'
+  | 'annotationArrow'
+  | 'legendEntry'
+  | 'ticks'
+  | 'axisLabel3d'
+  | 'pixelCoords'
+  | 'hostPlaced'
+  | 'unsupported'
+
+const SERIES_ROLES = new Set([
+  'line',
+  'scatter',
+  'bar',
+  'bar_series',
+  'errorbar',
+  'stem_series',
+  'fill',
+  'collection',
+  'linecoll',
+])
+
+export function inFigureImmovableReason(el: ManifestElement): ImmovableReason {
+  if (SERIES_ROLES.has(el.role)) return 'series'
+  if (el.role === 'arrow_patch') return 'annotationArrow'
+  if (el.role === 'legend_text') return 'legendEntry'
+  if (el.role === 'ticks' || el.role === 'ticklabel') return 'ticks'
+  if (el.role === 'axis_label') return 'axisLabel3d'
+  if (el.role === 'text' || el.role === 'title') return 'pixelCoords'
+  if (el.role === 'axes' || el.role === 'axes3d' || el.role === 'colorbar') return 'hostPlaced'
+  return 'unsupported'
+}
+
+/** 「为什么拖不动」那句话（toast 走 `setStatus`，`StatusToasts` 自带 aria-live） */
+export function immovableMessage(el: ManifestElement): UiMessage {
+  return msg(
+    `status.dragNotMovable.${inFigureImmovableReason(el)}`,
+    { label: engineLabel(el.label) },
+    'workspace',
+  )
+}
+
 /** 按下图内元素开始拖动（PanelView 的单选分派）。回 false = 这个元素不能移动 */
 export function startInFigureDrag(
   e: ReactPointerEvent,
@@ -1396,9 +1451,28 @@ export function startInFigureDrag(
   layout: { width: number; height: number },
 ): boolean {
   const mv = inFigureMoveOf(panel, manifest, el)
-  if (!mv) return false
+  if (!mv) {
+    explainImmovableDrag(e, el)
+    return false
+  }
   trackInFigureMove(e, panel, layout, mv)
   return true
+}
+
+/**
+ * 按下的是不能移动的元素：点一下照常只是选中；**真的拖起来**（过了阈值）才说一句为什么，
+ * 一次手势只说一次。不写文档、不进历史、不占 `interactionStore.kind`。
+ */
+function explainImmovableDrag(e: ReactPointerEvent, el: ManifestElement) {
+  let told = false
+  trackPointer(e, {
+    onMove: () => {
+      if (told) return
+      told = true
+      useUiStore.getState().setStatus(immovableMessage(el))
+    },
+    onEnd: () => {},
+  })
 }
 
 /**

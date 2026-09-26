@@ -556,7 +556,8 @@ describe('图内元素：与拖动同一套移动规则', () => {
     settle()
     expect(livePanel().overrides).toHaveLength(0)
     expect(livePanel().x).toBe(20)
-    expect(status()).toContain('nudgeNotMovable')
+    // 单选一个按设计不能拖的元素：说出为什么（与拖动同一句，ADR 0100）
+    expect(status()).toContain('dragNotMovable.series')
   })
 
   it('上一段的权威渲染还没回来：不拿旧几何写文档，先记位移，权威一到再移动并提交', async () => {
