@@ -33,6 +33,20 @@ export function CanvasTabs() {
   /** 拖动经过的目标标签，给一个可见的落点提示 */
   const [dragOver, setDragOver] = useState<number | null>(null)
 
+  // 激活的页签在可视范围外时滚进来（新建的画布排在最后、从「全部画布」菜单切过去的可能在
+  // 条外）：条没有滚动条可看，不滚的话用户不知道当前是哪一页。只动这条自己的 scrollLeft，
+  // 不用 scrollIntoView——它会连带滚动外层；用 offsetLeft 而不是 getBoundingClientRect，
+  // 重排时 useFlip 的 transform 动画不影响量值
+  useEffect(() => {
+    const el = strip.current
+    const tab = el?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+    if (!el || !tab) return
+    const left = tab.offsetLeft
+    const right = left + tab.offsetWidth
+    if (left < el.scrollLeft) el.scrollLeft = left
+    else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth
+  }, [activeId, openTabs])
+
   const nameOf = (id: string) =>
     id === activeId ? activeName : (canvases.find((c) => c.id === id)?.name ?? '')
 
@@ -49,7 +63,9 @@ export function CanvasTabs() {
         data-canvas-tabs
         role="tablist"
         aria-label={t('tabs.listLabel')}
-        className="flex h-full min-w-0 shrink items-center gap-4 overflow-x-auto"
+        // scrollbar-none：横滚条不画（用户拍板），滚动靠触控板横滑 / Shift+滚轮 / 激活时自动滚到；
+        // relative 让页签的 offsetLeft 以这条为基准，下面「滚进视野」用它量
+        className="scrollbar-none relative flex h-full min-w-0 shrink items-center gap-4 overflow-x-auto"
       >
         {openTabs.map((id, i) => (
           <TabItem
@@ -259,7 +275,7 @@ function AllCanvasesMenu({ activate }: { activate: (id: string) => void }) {
       width={208}
       align="end"
       trigger={
-        <Button size="icon-sm" aria-label={t('tabs.allCanvases')}>
+        <Button size="icon-sm" data-all-canvases aria-label={t('tabs.allCanvases')}>
           <ChevronDown size={ICON_SIZE.xs} className="text-ink-2" />
         </Button>
       }
