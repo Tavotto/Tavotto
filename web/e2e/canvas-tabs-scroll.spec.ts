@@ -172,9 +172,13 @@ test('页签少但放不下时也给「全部画布」菜单，能切到条外�
   // 双击非当前页签改名时第二下落到挪过来的 × 上，把页签关了（WebKit 6 次红 5 次）
   await expectActivationKeepsGeometry(strip, 1)
 
+  // 双击刚改完名的邻居：改名让后面的页签开始 FLIP 滑动，Playwright 的「稳定」判据放行时
+  // 滑动常常还在收尾。此前激活那一下的重渲染会把半路的 translate 当成位置、从半路再起一段
+  // 反向滑动，第二下落到挪走之后的空白上（WebKit 8 次红 3 次）。改名框必须每次都出来
   for (let i = 0; i < 4; i++) {
     await tabs.nth(i).dblclick()
     const input = strip.getByRole('textbox')
+    await expect(input, `双击第 ${i + 1} 个页签应进入改名`).toBeVisible()
     await input.fill(`很长很长的画布名字第${i + 1}个`)
     await input.press('Enter')
     await expect(strip.getByRole('textbox')).toHaveCount(0)
