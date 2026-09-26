@@ -2971,17 +2971,18 @@ class TestApprovedFontsAndRetirementScan:
 
     def test_lab_release_mode_takes_the_fonts_from_the_candidate_wheel(self):
         # lab 机器解析不了字体来源（2026-09-26 两次 name resolution 失败），发行档从候选 wheel 解字体：
-        # 下载要在建环境之前、条件与候选产物同一个；解包内联（workflow 取自 @main、脚本取自被验 SHA）；
-        # 两条分支之后都要 --check，真伪只认 allowlist 的 sha256。
+        # 取回候选产物要在建环境之前（仍是唯一一处 download-artifact，见 test_release_workflow_contract）；
+        # 解包内联（workflow 取自 @main、脚本取自被验 SHA）；两条分支之后都要 --check，真伪只认 allowlist。
         text = (WF / "_lab-qualification.yml").read_text(encoding="utf-8")
-        download = text.find("name: 取回候选产物里的批准字体（发行档）")
+        download = text.find("name: 取回候选产物（发行档）")
         venv = text.find("name: 建一次性验证环境")
-        assert download != -1 and venv != -1 and download < venv
+        claim = text.find("name: 认领候选 wheel（发行档）")
+        assert -1 < download < venv < claim, (download, venv, claim)
         assert "if: inputs.use_prebuilt_dist" in text[download:venv]
-        assert "fonts-source-dist" in text[download:venv]
+        assert "path: dist" in text[download:venv]
         block = _code(text[venv:])
         branch = block.find('if [ "${{ inputs.use_prebuilt_dist }}" = "true" ]')
-        extract = block.find('"$VENV/bin/python" - "$RUNNER_TEMP/fonts-source-dist"')
+        extract = block.find('"$VENV/bin/python" - dist <<')
         fallback = block.find("scripts/fetch_fonts.py\n")
         check = block.find("scripts/fetch_fonts.py --check")
         use = block.find("-m pytest")

@@ -162,16 +162,20 @@ jobs:
       - name: 清理上一轮残留
         run: python3 scripts/ci/cleanup.py
 
-      # 发行档的批准字体取自将要发出去的那份 wheel：lab 机器解析不了字体来源的
-      # objects.githubusercontent.com / raw.githubusercontent.com（2026-09-26 两次
-      # `Temporary failure in name resolution`），而 Actions 产物走的通道是通的。
-      # 取到的字节随后由 `fetch_fonts.py --check` 按 allowlist 的 sha256 逐张核对。
-      - name: 取回候选产物里的批准字体（发行档）
+      # **发行档验的是调用方传进来的那一份 exact artifact**，不自己造包：
+      # 「同一个 commit 重新造一个差不多的东西」证明不了将要发出去的那份能用。
+      # 其余档位没有候选包，所以自己造一个——验的是「main 的当前状态造得出
+      # 一个装得上、跑得起来的包」。两者问的问题不同，都要有。
+      # 取回挪到建环境之前（2026-09-26）：发行档的批准字体从这份 wheel 里解（见下一步），
+      # lab 机器解析不了字体来源的 objects / raw.githubusercontent.com，Actions 产物通道是通的。
+      - name: 取回候选产物（发行档）
         if: inputs.use_prebuilt_dist
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: dist
-          path: ${{ runner.temp }}/fonts-source-dist
+          path: dist
+          # 三个字段只在 github-token **非空**时被读（跨仓库调用）；同仓库调用时
+          # secret 不存在、token 是空串，走的仍是本 run 的内部路径——见抬头注释。
           repository: Tavotto/Tavotto
           run-id: ${{ inputs.source_run_id || github.run_id }}
           github-token: ${{ secrets.TAVOTTO_PUBLIC_TOKEN }}
@@ -192,7 +196,7 @@ jobs:
           if [ "${{ inputs.use_prebuilt_dist }}" = "true" ]; then
             # 内联而不是 scripts/ 下的新文件：workflow 定义取自 @main，脚本却取自被验的
             # inputs.sha——旧发行 SHA 里没有新脚本。这里只搬字节，真伪由下面的 --check 判。
-            "$VENV/bin/python" - "$RUNNER_TEMP/fonts-source-dist" <<'PY'
+            "$VENV/bin/python" - dist <<'PY'
           import shutil, sys, zipfile
           from pathlib import Path, PurePosixPath
           wheels = sorted(Path(sys.argv[1]).glob("*.whl"))
@@ -394,22 +398,6 @@ jobs:
           cargo test --manifest-path workerd/Cargo.toml
 
       # ── 包验收 ────────────────────────────────────────────────
-      # **发行档验的是调用方传进来的那一份 exact artifact**，不自己造包：
-      # 「同一个 commit 重新造一个差不多的东西」证明不了将要发出去的那份能用。
-      # 其余档位没有候选包，所以自己造一个——验的是「main 的当前状态造得出
-      # 一个装得上、跑得起来的包」。两者问的问题不同，都要有。
-      - name: 取回候选产物（发行档）
-        if: inputs.use_prebuilt_dist
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: dist
-          path: dist
-          # 三个字段只在 github-token **非空**时被读（跨仓库调用）；同仓库调用时
-          # secret 不存在、token 是空串，走的仍是本 run 的内部路径——见抬头注释。
-          repository: Tavotto/Tavotto
-          run-id: ${{ inputs.source_run_id || github.run_id }}
-          github-token: ${{ secrets.TAVOTTO_PUBLIC_TOKEN }}
-
       - name: 认领候选 wheel（发行档）
         if: inputs.use_prebuilt_dist
         id: candidate
